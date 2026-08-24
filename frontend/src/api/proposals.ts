@@ -8,7 +8,9 @@ import type {
   UpdateProposalDiscountRequest,
   UpdateProposalStatusRequest,
 } from '@crm-lab/shared';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { http } from './client';
+import { queryKeys } from './query-keys';
 import type { QueryParams } from './client';
 
 /**
@@ -56,3 +58,96 @@ export const proposalsApi = {
   reject: (id: string, body: RejectProposalRequest) =>
     http.patch<ApproveProposalResponse>(`/proposals/${id}/reject`, body),
 };
+
+/* ── React Query Hooks ──────────────────────────────────────────────────── */
+
+export function useProposalList(filters: ListProposalsQuery = {}) {
+  return useQuery({
+    queryKey: queryKeys.proposals(filters),
+    queryFn: async () => {
+      const res = await proposalsApi.list(filters);
+      return res.proposals;
+    },
+  });
+}
+
+export function useProposalDetail(proposalId: string) {
+  return useQuery({
+    queryKey: queryKeys.proposal(proposalId),
+    queryFn: async () => {
+      return await proposalsApi.get(proposalId);
+    },
+  });
+}
+
+export function useCreateProposal() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: CreateProposalRequest) => {
+      return await proposalsApi.create(data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.proposals() });
+    },
+  });
+}
+
+export function useUpdateProposalStatus() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: { proposalId: string } & UpdateProposalStatusRequest) => {
+      const { proposalId, ...body } = data;
+      return await proposalsApi.updateStatus(proposalId, body);
+    },
+    onSuccess: (_, { proposalId }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.proposal(proposalId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.proposals() });
+    },
+  });
+}
+
+export function useUpdateProposalDiscount() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: { proposalId: string } & UpdateProposalDiscountRequest) => {
+      const { proposalId, ...body } = data;
+      return await proposalsApi.updateDiscount(proposalId, body);
+    },
+    onSuccess: (_, { proposalId }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.proposal(proposalId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.proposals() });
+    },
+  });
+}
+
+export function useApproveProposal() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (proposalId: string) => {
+      return await proposalsApi.approve(proposalId);
+    },
+    onSuccess: (_, proposalId) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.proposal(proposalId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.proposals() });
+    },
+  });
+}
+
+export function useRejectProposal() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: { proposalId: string; reason: string }) => {
+      const { proposalId, reason } = data;
+      return await proposalsApi.reject(proposalId, { reason });
+    },
+    onSuccess: (_, { proposalId }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.proposal(proposalId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.proposals() });
+    },
+  });
+}

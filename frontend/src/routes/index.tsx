@@ -2,7 +2,6 @@ import type { RouteObject } from 'react-router-dom';
 import { AppShell, PlatformShell } from '@/components/layout';
 import {
   AnalyticsPlaceholder,
-  BudgetPlaceholder,
   CatalogPlaceholder,
   ChannelsSettingsPlaceholder,
   InternalChatPlaceholder,
@@ -17,6 +16,7 @@ import {
 } from '@/pages/_placeholders';
 import { Attendance } from '@/pages/Attendance';
 import { Login } from '@/pages/Login';
+import BudgetNew from '@/pages/Budget/New';
 import { RequireAuth, RequireRoles, RoleHomeRedirect } from './guards';
 import { ADMIN_ONLY, MANAGER_PLUS, PLATFORM_ONLY, TENANT_ROLES } from './route-config';
 
@@ -52,7 +52,7 @@ export const appRoutes: RouteObject[] = [
             children: [
               { path: 'attendance', element: <Attendance /> },
               { path: 'patients/:id', element: <PatientPlaceholder /> },
-              { path: 'budget/new', element: <BudgetPlaceholder /> },
+              { path: 'budget/new', element: <BudgetNew /> },
               { path: 'proposals', element: <ProposalsPlaceholder /> },
               { path: 'catalog', element: <CatalogPlaceholder /> },
               { path: 'analytics', element: <AnalyticsPlaceholder /> },

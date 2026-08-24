@@ -41,7 +41,7 @@ export default function CatalogSegments({ onAddItem }: CatalogSegmentsProps) {
           { label: 'Pacotes', value: 'packages' },
         ]}
         value={segment}
-        onChange={(val) => setSegment(val as any)}
+        onChange={(val) => setSegment(val as 'catalog' | 'medical' | 'ai' | 'packages')}
       />
 
       <SegmentedControl
@@ -50,7 +50,7 @@ export default function CatalogSegments({ onAddItem }: CatalogSegmentsProps) {
           { label: 'Convênio', value: 'insurance' },
         ]}
         value={pricingMode}
-        onChange={(val) => setPricingMode(val as any)}
+        onChange={(val) => setPricingMode(val as 'private' | 'insurance')}
       />
 
       <SearchInput

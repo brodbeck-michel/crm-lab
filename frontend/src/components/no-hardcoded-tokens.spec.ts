@@ -30,7 +30,7 @@ function collectTsx(dir: string): string[] {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) {
       found.push(...collectTsx(full));
-    } else if (entry.endsWith('.tsx')) {
+    } else if (entry.endsWith('.tsx') && !entry.endsWith('.spec.tsx')) {
       found.push(full);
     }
   }

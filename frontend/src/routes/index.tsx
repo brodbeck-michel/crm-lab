@@ -10,13 +10,13 @@ import {
   PatientPlaceholder,
   PlatformBillingPlaceholder,
   PlatformTenantsPlaceholder,
-  ProposalsPlaceholder,
   ThemeSettingsPlaceholder,
   UsersSettingsPlaceholder,
 } from '@/pages/_placeholders';
 import { Attendance } from '@/pages/Attendance';
 import { Login } from '@/pages/Login';
 import BudgetNew from '@/pages/Budget/New';
+import Proposals from '@/pages/Proposals';
 import { RequireAuth, RequireRoles, RoleHomeRedirect } from './guards';
 import { ADMIN_ONLY, MANAGER_PLUS, PLATFORM_ONLY, TENANT_ROLES } from './route-config';
 
@@ -53,7 +53,7 @@ export const appRoutes: RouteObject[] = [
               { path: 'attendance', element: <Attendance /> },
               { path: 'patients/:id', element: <PatientPlaceholder /> },
               { path: 'budget/new', element: <BudgetNew /> },
-              { path: 'proposals', element: <ProposalsPlaceholder /> },
+              { path: 'proposals', element: <Proposals /> },
               { path: 'catalog', element: <CatalogPlaceholder /> },
               { path: 'analytics', element: <AnalyticsPlaceholder /> },
               { path: 'internal-chat', element: <InternalChatPlaceholder /> },

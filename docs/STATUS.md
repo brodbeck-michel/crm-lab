@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-08-23
+**Última atualização:** 2026-08-24
 
 ---
 
@@ -64,7 +64,7 @@ Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avança
 | Tela Conversão (Analytics) | ui | ⬜ | Agent-UI-Analytics | Task 5: dashboard com funil, receita, motivos de perda, top performers |
 | Tela Personalização (Settings/theme) | ui | ⬜ | Agent-UI-Theme | Task 6: selector de 5 presets + custom color picker |
 | Tela Usuários (Settings/users) | ui | ⬜ | Agent-UI-Users | Task 7: CRUD de usuários, papéis, alçada, ativo/inativo |
-| E2E fluxos 1-3 | qa | ⬜ | Agent-QA-E2E | Task 9: `flow-1-new-budget.spec.ts`, `flow-2-approval.spec.ts`, `flow-3-win-loss.spec.ts`. Cobre orçamento, aprovação, ganho/perda |
+| E2E fluxos 1-3 | qa | ✅ 2026-08-24 | Agent-QA-E2E | Task 9: `e2e/workflows/` com `playwright.config.ts`, `helpers.ts`, `flow-1-new-budget.spec.ts`, `flow-2-approval.spec.ts`, `flow-3-win-loss.spec.ts`. 3 specs testando fluxos críticos: orçamento novo, aprovação de desconto alto, ganho/perda. Importa constantes de `backend/src/db/seeds/e2e-fixtures.ts`. Typecheck ✅ |
 
 ## Onda 5 — Analytics, Tema e Plataforma
 

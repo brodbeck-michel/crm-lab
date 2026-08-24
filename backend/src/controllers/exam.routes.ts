@@ -144,11 +144,15 @@ export function examModule(deps: ApiModuleDeps): ApiModule {
     listExams(service),
   );
 
+  // `denyPlatformOperator()` ANTES de `requireRoles`: a recusa ao operador da
+  // plataforma e explicita (PAGES.md §11), nao um efeito colateral da lista de
+  // papeis — que pode mudar.
   // `requireRoles` ANTES do `validate`: atendente recebe FORBIDDEN com
   // `details.requiredRoles`, e nao um VALIDATION_ERROR que vazaria o shape.
   router.post(
     '/',
     requireAuth(),
+    denyPlatformOperator(),
     requireRoles('manager', 'admin'),
     validate(createExamSchema, 'body'),
     createExam(service),
@@ -157,6 +161,7 @@ export function examModule(deps: ApiModuleDeps): ApiModule {
   router.patch(
     '/:id',
     requireAuth(),
+    denyPlatformOperator(),
     requireRoles('manager', 'admin'),
     validate(examIdParamSchema, 'params'),
     validate(updateExamSchema, 'body'),

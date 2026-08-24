@@ -1,5 +1,5 @@
 import type { Theme } from './theme.types.js';
-import type { IsoDateTime } from './api.types.js';
+import type { IsoDateTime, PaginationMeta } from './api.types.js';
 
 /** Perfis de usuario (README.md "Perfis de Usuario"). */
 export type UserRole = 'attendant' | 'manager' | 'admin' | 'platform_operator';
@@ -45,9 +45,19 @@ export interface RefreshRequest {
   refreshToken: string;
 }
 
+/**
+ * Resposta de `POST /auth/refresh` (API_CONTRACTS.md §1).
+ *
+ * `refreshToken` NAO e opcional: a rotacao a cada uso (D-014/SECURITY.md) revoga
+ * o token enviado, entao o substituto vem SEMPRE na resposta. Declarar o campo
+ * como opcional deixaria o cliente achar que pode ignora-lo — e perder a sessao.
+ */
 export interface RefreshResponse {
   accessToken: string;
+  /** Segundos ate expirar o accessToken. */
   expiresIn: number;
+  /** Novo refresh token rotacionado. O cliente DEVE substituir o guardado. */
+  refreshToken: string;
 }
 
 export interface LogoutResponse {
@@ -102,5 +112,5 @@ export interface UpdateUserRequest {
 
 export interface ListUsersResponse {
   users: ManagedUser[];
-  pagination: import('./api.types.js').PaginationMeta;
+  pagination: PaginationMeta;
 }

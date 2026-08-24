@@ -44,15 +44,6 @@ import * as userRepo from '../repositories/user.repository.js';
 import type { AuditService } from './audit.service.js';
 import type { ThemeService } from './theme.service.js';
 
-/**
- * `POST /auth/refresh` devolve TAMBEM o novo refresh token (D-014): sem isso o
- * cliente perderia a sessao no primeiro uso, ja que a rotacao revoga o antigo.
- * Campo aditivo — `RefreshResponse` continua valido.
- */
-export interface RefreshResult extends RefreshResponse {
-  refreshToken: string;
-}
-
 /** Metadados da request; nunca influenciam tenant/role, so auditoria. */
 export interface RequestMeta {
   ip: string;
@@ -61,7 +52,7 @@ export interface RequestMeta {
 
 export interface AuthService {
   login(email: string, password: string, meta: RequestMeta): Promise<LoginResponse>;
-  refresh(refreshToken: string, meta: RequestMeta): Promise<RefreshResult>;
+  refresh(refreshToken: string, meta: RequestMeta): Promise<RefreshResponse>;
   logout(refreshToken: string, meta: RequestMeta): Promise<LogoutResponse>;
   validateToken(token: string): Promise<JwtPayload>;
 }
@@ -224,7 +215,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     };
   };
 
-  const refresh = async (token: string, meta: RequestMeta): Promise<RefreshResult> => {
+  const refresh = async (token: string, meta: RequestMeta): Promise<RefreshResponse> => {
     const verified = verifyRefreshToken(token);
     if (!verified.ok) throw new BusinessError('REFRESH_TOKEN_INVALID');
 

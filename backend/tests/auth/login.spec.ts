@@ -211,4 +211,45 @@ describe('POST /auth/login', () => {
 
     expect(blocked.body.error.code).toBe('RATE_LIMIT_EXCEEDED');
   });
+
+  /**
+   * REGRESSAO D-057. A chave do lockout e `login-failures:<email>:<ip>`. Se o
+   * `<ip>` sair de um header que o proprio cliente escreve, o atacante ganha um
+   * contador novo a cada tentativa e a politica de 5/15min nunca dispara —
+   * forca bruta ilimitada contra qualquer e-mail conhecido.
+   */
+  it('variar X-Forwarded-For NAO burla o lockout de 5 tentativas', async () => {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await app.agent
+        .post('/api/v1/auth/login')
+        .set('X-Forwarded-For', `10.0.0.${attempt}`)
+        .send({ email: user.email, password: 'errada' })
+        .expect(401);
+    }
+
+    const blocked = await app.agent
+      .post('/api/v1/auth/login')
+      .set('X-Forwarded-For', '198.51.100.77')
+      .send({ email: user.email, password: DEFAULT_TEST_PASSWORD })
+      .expect(429);
+
+    expect(blocked.body.error.code).toBe('RATE_LIMIT_EXCEEDED');
+  });
+
+  it('o audit log de login grava o IP da conexao, nao o que o cliente mandou (D-057)', async () => {
+    await app.agent
+      .post('/api/v1/auth/login')
+      .set('X-Forwarded-For', '203.0.113.66')
+      .send({ email: user.email, password: DEFAULT_TEST_PASSWORD })
+      .expect(200);
+
+    const rows = await db.withoutTenant((tx) =>
+      tx.query<{ ip_address: string | null }>(
+        `SELECT ip_address FROM audit_logs WHERE action = 'login'`,
+      ),
+    );
+
+    expect(rows.rows).toHaveLength(1);
+    expect(String(rows.rows[0]?.ip_address)).not.toContain('203.0.113.66');
+  });
 });

@@ -45,7 +45,12 @@ import {
 } from '@crm-lab/shared';
 import type { DbClient, DbTx } from '../db/types.js';
 import type { TenantContext } from '../http/context.js';
+import type { CacheService } from '../lib/cache.js';
 import type { WsHub } from '../lib/ws-hub.js';
+import { logger } from '../lib/logger.js';
+// A analytics e a dona do formato da chave; importar daqui garante um formato
+// so. A dependencia e de mao unica: o AnalyticsService nao conhece propostas.
+import { cachePrefix as analyticsCachePrefix } from './analytics.service.js';
 import { BusinessError, notFound } from '../http/errors.js';
 import type { AuditService } from './audit.service.js';
 import type { ExamCatalogService } from './exam-catalog.service.js';
@@ -81,6 +86,12 @@ export interface ProposalServiceDeps {
   examCatalog: ExamCatalogService;
   /** ApprovalService — injetado como interface para nao criar ciclo. */
   approvals: ApprovalRequester;
+  /**
+   * O MESMO cache que o AnalyticsService le. Toda mutacao de proposta muda
+   * algum numero de relatorio, entao a mutacao invalida — ver
+   * `invalidateAnalytics`.
+   */
+  cache: CacheService;
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +199,40 @@ export class ProposalService {
   constructor(private readonly deps: ProposalServiceDeps) {}
 
   /**
+   * Derruba o cache de analytics DO TENANT depois de uma mutacao de proposta.
+   *
+   * ========================================================================
+   * POR QUE O PREFIXO INTEIRO, E NAO UMA CHAVE
+   * ========================================================================
+   * A chave de analytics e
+   * `analytics:<tenant>:<escopo>:<relatorio>:<periodo>`. Uma unica proposta
+   * fechada aparece em varias entradas ao mesmo tempo: no escopo `all` do
+   * gestor E no `user:<autor>` do atendente; no funil E no pipeline; e em
+   * todo periodo que contenha a data. Invalidar so a do autor era exatamente
+   * o bug observado na Onda 5 — a parcial do atendente (722) ficou MAIOR que
+   * o total do laboratorio (622), porque o gestor tinha lido antes e ficou
+   * com a entrada `all` congelada por 5 minutos. Um numero que nao existe.
+   *
+   * O prefixo carrega o `tenantId`: `delByPrefix` nunca alcanca outro
+   * laboratorio (regra 1). O custo e recalcular na proxima leitura — o cache
+   * de 5 min continua valendo para o trafego de leitura, que e a maioria.
+   *
+   * Falha de cache NAO derruba a mutacao: a proposta ja esta gravada e
+   * auditada. O pior caso de um erro aqui e voltar ao numero velho por ate
+   * `ANALYTICS_CACHE_TTL_SECONDS`, entao o erro e registrado e engolido.
+   */
+  private async invalidateAnalytics(tenantId: string): Promise<void> {
+    try {
+      await this.deps.cache.delByPrefix(analyticsCachePrefix(tenantId));
+    } catch (err) {
+      logger.warn('analytics.cache_invalidation_failed', {
+        tenantId,
+        detail: err instanceof Error ? err.message : 'erro desconhecido',
+      });
+    }
+  }
+
+  /**
    * WORKFLOWS §2 passo 5, na ordem exata:
    * conversa -> precos ATUAIS -> total -> alcada -> `novo_contato` + historico
    * -> auditoria. Nada de preco vindo do cliente em lugar nenhum.
@@ -293,6 +338,9 @@ export class ProposalService {
         })),
       },
     });
+
+    // Proposta nova entra no funil e no pipeline na hora.
+    await this.invalidateAnalytics(ctx.tenantId);
 
     if (!created.withinLimit) {
       // Fluxo 3 de WORKFLOWS: post em #aprovacoes + WS para os gestores.
@@ -464,6 +512,9 @@ export class ProposalService {
       },
     });
 
+    // Transicao muda o funil, a conversao e — quando e terminal — a receita.
+    await this.invalidateAnalytics(ctx.tenantId);
+
     return outcome.proposal;
   }
 
@@ -541,6 +592,9 @@ export class ProposalService {
         approvalStatus: outcome.proposal.approvalStatus,
       },
     });
+
+    // O total mudou: valor do pipeline e ticket medio mudam junto.
+    await this.invalidateAnalytics(ctx.tenantId);
 
     if (!outcome.withinLimit) {
       await approvals.requestApproval(ctx, id);

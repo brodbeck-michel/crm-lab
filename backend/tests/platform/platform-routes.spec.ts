@@ -9,6 +9,7 @@
  */
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { conversationModule } from '../../src/controllers/conversation.routes.js';
+import { examModule } from '../../src/controllers/exam.routes.js';
 import { internalChatModule } from '../../src/controllers/internal-chat.routes.js';
 import { platformModule } from '../../src/controllers/platform.routes.js';
 import { proposalModule } from '../../src/controllers/proposal.routes.js';
@@ -41,7 +42,14 @@ beforeEach(async () => {
   await resetDatabase(db);
   app = await createTestApp({
     db,
-    modules: [platformModule, themeModule, conversationModule, proposalModule, internalChatModule],
+    modules: [
+      platformModule,
+      themeModule,
+      conversationModule,
+      proposalModule,
+      internalChatModule,
+      examModule,
+    ],
   });
   const plataforma = await createTenant({ name: 'Plataforma', slug: 'plataforma', db });
   operator = await createUser({
@@ -93,6 +101,41 @@ describe('o operador NAO acessa dado de laboratorio', () => {
     ]) {
       const res = await app.agent.get(path).set(headers).expect(403);
       expect(res.body.error.code).toBe('FORBIDDEN');
+    }
+  });
+
+  /**
+   * As rotas de escrita reservadas a gestor/admin tambem precisam do
+   * `denyPlatformOperator()` EXPLICITO. Sem ele o 403 vem por tabela — do
+   * `requireRoles('manager','admin')` — e some no dia em que alguem afrouxar
+   * os papeis. A assercao olha `details.requiredRoles`: os papeis de
+   * LABORATORIO (`attendant/manager/admin`) provam que quem recusou foi o
+   * guard de plataforma, nao a checagem de papel.
+   */
+  it('rotas de aprovacao e de catalogo recusam pelo guard de plataforma', async () => {
+    const headers = app.auth(operator);
+    const proposalId = '00000000-0000-4000-8000-000000000001';
+    const examId = '00000000-0000-4000-8000-000000000002';
+
+    const responses = await Promise.all([
+      app.agent.patch(`/api/v1/proposals/${proposalId}/approve`).set(headers),
+      app.agent
+        .patch(`/api/v1/proposals/${proposalId}/reject`)
+        .set(headers)
+        .send({ reason: 'nao autorizado' }),
+      app.agent.post('/api/v1/exams').set(headers).send({
+        name: 'Hemograma',
+        code: 'HEM-001',
+        pricePrivate: 50,
+        priceInsurance: 30,
+      }),
+      app.agent.patch(`/api/v1/exams/${examId}`).set(headers).send({ isActive: false }),
+    ]);
+
+    for (const res of responses) {
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('FORBIDDEN');
+      expect(res.body.error.details.requiredRoles).toEqual(['attendant', 'manager', 'admin']);
     }
   });
 });

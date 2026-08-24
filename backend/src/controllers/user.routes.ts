@@ -7,6 +7,16 @@
  * `denyPlatformOperator()` fecha o console de plataforma para fora das rotas de
  * laboratorio (SECURITY.md "Console de Plataforma") — mesmo que um operador
  * tivesse papel `admin`, nao teria caminho aqui.
+ *
+ * INCLUSIVE `GET /users/me`, e isso e DELIBERADO (revisado em auditoria):
+ * PAGES.md §11 manda o `platform_operator` ficar restrito a `/platform/*`
+ * ("requisito, nao configuracao"), e AGENTS.md manda resolver ambiguidade pela
+ * interpretacao mais restritiva. O console tambem nao precisa desta rota: o
+ * proprio perfil ja vem no corpo de `POST /auth/login` / `POST /auth/refresh`
+ * (`LoginResponse.user`), que e a fonte do `useAuthStore`. Abrir `/me` aqui
+ * daria ao operador uma rota de tenant e um `tenant.theme` de laboratorio —
+ * exatamente o acoplamento que §11 proibe. Ha teste do 403 em
+ * `tests/kernel/route-tenant-isolation.spec.ts`.
  */
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';

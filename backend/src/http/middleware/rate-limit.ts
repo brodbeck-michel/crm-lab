@@ -6,13 +6,33 @@
  * guardando os timestamps das requisicoes da janela. Com Redis, o mesmo codigo
  * passa a valer para todas as instancias.
  *
- * Chave: userId quando autenticado; IP quando anonimo (login, health).
+ * ==========================================================================
+ * A CHAVE: usuario autenticado quando ha token; IP nas rotas publicas.
+ * ==========================================================================
+ * O limitador roda no kernel, ANTES dos routers — logo antes de qualquer
+ * `requireAuth()`, que e por rota. Enquanto a chave dependia de `req.ctx`
+ * (preenchido SO pelo `requireAuth`), o ramo `user:<id>` nunca era alcancado:
+ * todo o trafego autenticado, de todos os tenants, dividia UM balde por IP.
+ * Atras de load balancer ou NAT isso e um laboratorio inteiro se
+ * autobloqueando — foi o que derrubou a suite E2E com 429 em cascata (D-050).
+ *
+ * A correcao NAO e afrouxar o limite: e a chave enxergar quem esta chamando.
+ * `rateLimitKey` verifica a assinatura do proprio Bearer token e usa o
+ * `userId` de dentro dele. O que ela deliberadamente NAO faz e escrever em
+ * `req.ctx`: popular o contexto fora do `requireAuth` daria contexto valido de
+ * brinde a qualquer rota que esquecesse o middleware — trocaria um bug de
+ * disponibilidade por um de autorizacao.
+ *
+ * Token ausente, expirado ou adulterado cai no balde por IP. Se ganhasse balde
+ * proprio, trocar o token a cada request seria um bypass trivial do limite.
  */
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { env } from '../../config/env.js';
 import type { CacheService } from '../../lib/cache.js';
+import { verifyAccessToken } from '../../lib/tokens.js';
 import { clientIp } from '../context.js';
 import { BusinessError } from '../errors.js';
+import { bearerToken } from './auth.js';
 
 export interface RateLimitOptions {
   cache: CacheService;
@@ -27,14 +47,31 @@ export interface RateLimitOptions {
 
 export const RATE_LIMIT_PREFIX = 'ratelimit:';
 
-function defaultKey(req: Request): string {
-  return req.ctx ? `user:${req.ctx.userId}` : `ip:${clientIp(req)}`;
+/**
+ * Identidade do chamador para efeito de limite.
+ *
+ * `req.ctx` vem primeiro so por eficiencia: se o limitador for montado depois
+ * de um `requireAuth()`, o token ja foi verificado e nao ha por que refazer.
+ * Exportada para ser testada direto — a regra e importante demais para so
+ * existir dentro de um closure.
+ */
+export function rateLimitKey(req: Request): string {
+  const userId = req.ctx?.userId ?? verifiedUserId(req);
+  return userId !== null ? `user:${userId}` : `ip:${clientIp(req)}`;
+}
+
+/** `userId` do Bearer token, SE a assinatura conferir. Nao toca em `req`. */
+function verifiedUserId(req: Request): string | null {
+  const token = bearerToken(req);
+  if (token === null) return null;
+  const result = verifyAccessToken(token);
+  return result.ok ? result.payload.userId : null;
 }
 
 export function rateLimit(options: RateLimitOptions): RequestHandler {
   const limit = options.limit ?? env.RATE_LIMIT_PER_MINUTE;
   const windowMs = options.windowMs ?? 60_000;
-  const resolveKey = options.keyResolver ?? defaultKey;
+  const resolveKey = options.keyResolver ?? rateLimitKey;
   const now = options.now ?? (() => Date.now());
 
   return (req: Request, res: Response, next: NextFunction): void => {

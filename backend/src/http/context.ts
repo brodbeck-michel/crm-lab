@@ -38,11 +38,17 @@ export function getContext(req: Request): TenantContext {
   return req.ctx;
 }
 
+/**
+ * IP do cliente para rate limit, lockout de login e audit log (D-057).
+ *
+ * NAO le `X-Forwarded-For`. O header e escrito pelo cliente e so vira dado
+ * confiavel depois de passar pela cadeia de proxies configurada — quem faz esse
+ * corte e o Express, via `app.set('trust proxy', env.trustProxy)`. `req.ip` ja
+ * e o resultado desse corte; ler o header aqui desfaria a protecao inteira e
+ * daria ao atacante um balde de rate limit e um contador de lockout novos a
+ * cada requisicao.
+ */
 export function clientIp(req: Request): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string' && forwarded.length > 0) {
-    return forwarded.split(',')[0]?.trim() ?? req.ip ?? 'unknown';
-  }
   return req.ip ?? req.socket.remoteAddress ?? 'unknown';
 }
 

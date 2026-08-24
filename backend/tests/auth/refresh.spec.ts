@@ -3,7 +3,7 @@
  * e revogacao. SECURITY.md "Autenticacao".
  */
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import type { LoginResponse } from '@crm-lab/shared';
+import type { LoginResponse, RefreshResponse } from '@crm-lab/shared';
 import type { DbClient } from '../../src/db/types.js';
 import { authModule } from '../../src/controllers/auth.routes.js';
 import { hashRefreshToken } from '../../src/repositories/refresh-token.repository.js';
@@ -77,6 +77,26 @@ describe('rotacao de refresh token', () => {
     );
     expect(old?.revoked_at).not.toBeNull();
     expect(fresh?.revoked_at).toBeNull();
+  });
+
+  /**
+   * O tipo compartilhado e o contrato: se `RefreshResponse` nao declarar
+   * `refreshToken`, esta leitura nao compila. Antes da correcao do tipo, este
+   * teste falhava no `tsc` — que e onde o contrato vive.
+   */
+  it('a resposta cabe em RefreshResponse de @crm-lab/shared, refreshToken incluso', async () => {
+    const session = await login();
+
+    const refreshed = await app.agent
+      .post('/api/v1/auth/refresh')
+      .send({ refreshToken: session.refreshToken })
+      .expect(200);
+
+    const body = refreshed.body as RefreshResponse;
+    expect(typeof body.accessToken).toBe('string');
+    expect(typeof body.expiresIn).toBe('number');
+    expect(typeof body.refreshToken).toBe('string');
+    expect(body.refreshToken).not.toBe(session.refreshToken);
   });
 
   it('o novo refresh token continua funcionando na rodada seguinte', async () => {

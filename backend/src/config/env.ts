@@ -34,6 +34,14 @@ const numberFrom = (fallback: number) =>
     return Number.isFinite(n) ? n : v;
   }, z.number().int().positive());
 
+/** Igual a `numberFrom`, mas aceita 0 (usado por `TRUST_PROXY_HOPS`). */
+const nonNegativeNumberFrom = (fallback: number) =>
+  z.preprocess((v) => {
+    if (v === undefined || v === null || v === '') return fallback;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : v;
+  }, z.number().int().min(0).max(10));
+
 const DEV_JWT_SECRET = 'dev-only-insecure-jwt-secret';
 const DEV_JWT_REFRESH_SECRET = 'dev-only-insecure-jwt-refresh-secret';
 
@@ -67,6 +75,14 @@ const envSchema = z
 
     CORS_ORIGIN: z.string().default('http://localhost:5173'),
     RATE_LIMIT_PER_MINUTE: numberFrom(100),
+
+    /**
+     * Quantos proxies reversos NOSSOS ficam na frente do app (D-057).
+     * `0` (default) = nao confia em `X-Forwarded-For` nenhum.
+     */
+    TRUST_PROXY_HOPS: nonNegativeNumberFrom(0),
+    /** Lista de IPs/CIDRs de proxy confiavel. Tem precedencia sobre a contagem. */
+    TRUSTED_PROXIES: optionalString,
   })
   .superRefine((value, ctx) => {
     if (value.NODE_ENV !== 'production') return;
@@ -116,6 +132,27 @@ export interface Env extends Omit<RawEnv, 'JWT_SECRET' | 'JWT_REFRESH_SECRET'> {
   readonly isDevelopment: boolean;
   /** Origens permitidas no CORS, ja separadas por virgula. */
   readonly corsOrigins: string[];
+  /**
+   * Valor pronto para `app.set('trust proxy', ...)` (D-057).
+   *
+   * `false` = nenhum proxy e confiavel, entao `req.ip` e o endereco do socket e
+   * `X-Forwarded-For` e ignorado. Este e o DEFAULT: confiar por omissao deixaria
+   * rate limit, lockout de login e audit log a merce de um header do cliente.
+   */
+  readonly trustProxy: number | string[] | false;
+}
+
+/**
+ * Traduz `TRUSTED_PROXIES` / `TRUST_PROXY_HOPS` para o formato do Express.
+ * Lista explicita vence a contagem; sem nenhum dos dois, nao confia em ninguem.
+ */
+function resolveTrustProxy(value: RawEnv): number | string[] | false {
+  const list = (value.TRUSTED_PROXIES ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (list.length > 0) return list;
+  return value.TRUST_PROXY_HOPS > 0 ? value.TRUST_PROXY_HOPS : false;
 }
 
 export class EnvValidationError extends Error {
@@ -143,6 +180,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     corsOrigins: value.CORS_ORIGIN.split(',')
       .map((o) => o.trim())
       .filter(Boolean),
+    trustProxy: resolveTrustProxy(value),
   };
 }
 

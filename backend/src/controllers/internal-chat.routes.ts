@@ -20,11 +20,11 @@ import { getContext } from '../http/context.js';
 import { denyPlatformOperator, requireAuth } from '../http/middleware/auth.js';
 import { validate, validated } from '../http/middleware/validate.js';
 import {
-  InternalChatService,
   MAX_CONTENT_LENGTH,
   MAX_LIMIT,
   createInternalChatService,
 } from '../services/internal-chat.service.js';
+import type { InternalChatService } from '../services/internal-chat.service.js';
 
 export const channelIdParamSchema = z.object({ id: z.string().uuid() });
 

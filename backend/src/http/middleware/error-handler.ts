@@ -7,7 +7,7 @@
  *   ZodError      -> VALIDATION_ERROR com `details.fields: { campo: motivo }`
  *   desconhecido  -> INTERNAL_ERROR, logado com correlationId, SEM stack na resposta
  */
-import type { ErrorRequestHandler, Request, Response } from 'express';
+import type { ErrorRequestHandler, Request, RequestHandler, Response } from 'express';
 import { ZodError } from 'zod';
 import type { ApiErrorBody } from '@crm-lab/shared';
 import { BusinessError, toErrorBody } from '../errors.js';
@@ -63,7 +63,7 @@ export function errorHandler(): ErrorRequestHandler {
 }
 
 /** 404 padrao para rota inexistente — mantem o envelope do catalogo. */
-export function notFoundHandler(): import('express').RequestHandler {
+export function notFoundHandler(): RequestHandler {
   return (_req, res): void => {
     const body = toErrorBody('NOT_FOUND');
     res.status(body.error.statusCode).json(body);

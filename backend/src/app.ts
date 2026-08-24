@@ -65,12 +65,28 @@ export function mountApiModules(
   return [...seen.values()];
 }
 
+/**
+ * Cadeia de proxies confiavel (D-057) — ponto UNICO onde `X-Forwarded-For`
+ * ganha (ou nao) credibilidade.
+ *
+ * O valor sai de `TRUSTED_PROXIES` / `TRUST_PROXY_HOPS`, com default `false`:
+ * sem configuracao explicita o header e ignorado e `req.ip` e o endereco do
+ * socket. `trust proxy: true` (o que havia aqui) confia em QUALQUER proxy, o
+ * que na pratica e confiar no cliente — e o cliente alimenta o balde do rate
+ * limit, o contador de lockout de login e o `ip_address` do audit log.
+ *
+ * Exportada para que os testes montem um app com a MESMA configuracao do real.
+ */
+export function applyTrustProxy(app: Express): void {
+  app.set('trust proxy', env.trustProxy);
+}
+
 export function createApp(deps: AppDeps): BuiltApp {
   const cache = deps.cache ?? createCache();
   const wsHub = deps.wsHub ?? noopWsHub;
   const app = express();
 
-  app.set('trust proxy', true);
+  applyTrustProxy(app);
   app.disable('x-powered-by');
 
   app.use(helmet());
@@ -96,6 +112,11 @@ export function createApp(deps: AppDeps): BuiltApp {
     res.json({ status: 'ok', driver: deps.db.driver, uptime: process.uptime() });
   });
 
+  // O limitador fica aqui de proposito, ANTES dos routers: `requireAuth()` e
+  // por rota, entao nao existe ponto unico "depois da autenticacao" onde
+  // montar. Quem resolve a identidade e a propria chave — `rateLimitKey`
+  // verifica o Bearer token e limita por usuario; rota publica (login,
+  // refresh, webhook) fica por IP. Ver o cabecalho de `rate-limit.ts`.
   app.use(rateLimit({ cache }));
 
   const api = Router();

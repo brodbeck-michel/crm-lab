@@ -12,7 +12,9 @@
  * periodo e testada em UTC de verdade, e nao no fuso da maquina que roda a
  * suite.
  */
+import type { UserRole } from '@crm-lab/shared';
 import type { DbClient } from '../../src/db/types.js';
+import type { TenantContext } from '../../src/http/context.js';
 import { createProposal, type CreateProposalInput } from '../helpers/factories.js';
 import { getTestDb } from '../helpers/test-db.js';
 
@@ -62,9 +64,9 @@ export async function createDatedProposal(input: DatedProposalInput): Promise<{ 
 export function ctxOf(user: {
   id: string;
   tenantId: string;
-  role: import('@crm-lab/shared').UserRole;
+  role: UserRole;
   discountLimit?: number;
-}): import('../../src/http/context.js').TenantContext {
+}): TenantContext {
   return {
     userId: user.id,
     tenantId: user.tenantId,

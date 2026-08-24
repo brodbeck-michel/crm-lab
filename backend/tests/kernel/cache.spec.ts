@@ -1,5 +1,80 @@
 import { describe, expect, it } from 'vitest';
-import { MemoryCache } from '../../src/lib/cache.js';
+import {
+  MemoryCache,
+  RedisCache,
+  verifyCacheReady,
+  type RedisClientLike,
+} from '../../src/lib/cache.js';
+
+/**
+ * Redis de mentira, mas com a semantica de verdade: guarda STRINGS, expira por
+ * TTL e responde SCAN por padrao glob. Serve para provar que `RedisCache` fala
+ * o protocolo — o que o stub antigo (delegando para memoria) nao provava.
+ */
+class FakeRedis implements RedisClientLike {
+  readonly store = new Map<string, { value: string; expiresAt: number }>();
+  pingFails = false;
+  quitCalls = 0;
+
+  constructor(private readonly now: () => number = () => Date.now()) {}
+
+  private live(key: string): string | null {
+    const entry = this.store.get(key);
+    if (!entry) return null;
+    if (entry.expiresAt <= this.now()) {
+      this.store.delete(key);
+      return null;
+    }
+    return entry.value;
+  }
+
+  async get(key: string): Promise<string | null> {
+    return this.live(key);
+  }
+
+  async setEx(key: string, value: string, ttlSeconds: number): Promise<void> {
+    this.store.set(key, { value, expiresAt: this.now() + ttlSeconds * 1000 });
+  }
+
+  async del(keys: string[]): Promise<void> {
+    for (const key of keys) this.store.delete(key);
+  }
+
+  async scan(cursor: string, pattern: string, count: number): Promise<{ cursor: string; keys: string[] }> {
+    const all = [...this.store.keys()].filter((key) => globMatch(pattern, key));
+    const from = Number(cursor);
+    const page = all.slice(from, from + count);
+    const next = from + count >= all.length ? '0' : String(from + count);
+    return { cursor: next, keys: page };
+  }
+
+  async ping(): Promise<void> {
+    if (this.pingFails) throw new Error('ECONNREFUSED 127.0.0.1:6379');
+  }
+
+  async quit(): Promise<void> {
+    this.quitCalls += 1;
+  }
+}
+
+function escapeRe(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Glob do Redis reduzido ao que `delByPrefix` usa: literais, `\` e `*`. */
+function globMatch(pattern: string, key: string): boolean {
+  let regex = '';
+  for (let i = 0; i < pattern.length; i += 1) {
+    const ch = pattern[i];
+    if (ch === '\\') {
+      i += 1;
+      regex += escapeRe(pattern[i] ?? '');
+      continue;
+    }
+    regex += ch === '*' ? '.*' : escapeRe(ch ?? '');
+  }
+  return new RegExp(`^${regex}$`).test(key);
+}
 
 describe('CacheService (in-memory)', () => {
   it('get/set/del basicos', async () => {
@@ -65,5 +140,122 @@ describe('CacheService (in-memory)', () => {
     const cache = new MemoryCache();
     await cache.set('efemera', 1, 0);
     expect(await cache.get('efemera')).toBeNull();
+  });
+});
+
+/**
+ * D-058: `RedisCache` deixou de ser stub. O que importa aqui e que ele FALE com
+ * o cliente injetado — se voltar a delegar para um `MemoryCache` interno, o
+ * balde de rate limit, o contador de lockout e a invalidacao de analytics
+ * voltam a ser por processo (com N instancias, N x o limite).
+ */
+describe('RedisCache (cliente injetado)', () => {
+  it('get/set/del passam pelo cliente Redis, nao por memoria local', async () => {
+    const client = new FakeRedis();
+    const cache = new RedisCache('redis://fake:6379', () => client);
+
+    await cache.set('analytics:t1:funnel', { revenue: 179.8 }, 300);
+    // A prova de que nao ha memoria paralela: o dado esta NO cliente.
+    expect(client.store.has('analytics:t1:funnel')).toBe(true);
+    expect(await cache.get<{ revenue: number }>('analytics:t1:funnel')).toEqual({ revenue: 179.8 });
+
+    await cache.del('analytics:t1:funnel');
+    expect(client.store.size).toBe(0);
+    expect(await cache.get('analytics:t1:funnel')).toBeNull();
+  });
+
+  it('duas instancias do processo compartilham o MESMO Redis', async () => {
+    const client = new FakeRedis();
+    const instanciaA = new RedisCache('redis://fake:6379', () => client);
+    const instanciaB = new RedisCache('redis://fake:6379', () => client);
+
+    await instanciaA.set('login-failures:joao@lab.com:10.0.0.1', 5, 900);
+    // Sem isto, o lockout de 5/15min vira 5 x N instancias.
+    expect(await instanciaB.get<number>('login-failures:joao@lab.com:10.0.0.1')).toBe(5);
+  });
+
+  it('serializa como JSON e sobrevive ao round-trip de string', async () => {
+    const client = new FakeRedis();
+    const cache = new RedisCache('redis://fake:6379', () => client);
+
+    await cache.set('ratelimit:ip:1.2.3.4', [1, 2, 3], 60);
+    expect(client.store.get('ratelimit:ip:1.2.3.4')?.value).toBe('[1,2,3]');
+    expect(await cache.get<number[]>('ratelimit:ip:1.2.3.4')).toEqual([1, 2, 3]);
+  });
+
+  it('valor corrompido no Redis vira miss, nao excecao', async () => {
+    const client = new FakeRedis();
+    client.store.set('quebrado', { value: '{nao-e-json', expiresAt: Date.now() + 60_000 });
+    const cache = new RedisCache('redis://fake:6379', () => client);
+
+    expect(await cache.get('quebrado')).toBeNull();
+  });
+
+  it('respeita o TTL (analytics 5min)', async () => {
+    let clock = 0;
+    const client = new FakeRedis(() => clock);
+    const cache = new RedisCache('redis://fake:6379', () => client);
+
+    await cache.set('analytics:t1:conversion', { rate: 0.42 }, 300);
+    clock += 299_000;
+    expect(await cache.get('analytics:t1:conversion')).not.toBeNull();
+    clock += 2_000;
+    expect(await cache.get('analytics:t1:conversion')).toBeNull();
+  });
+
+  it('TTL zero nao grava (mesma semantica do MemoryCache)', async () => {
+    const client = new FakeRedis();
+    const cache = new RedisCache('redis://fake:6379', () => client);
+
+    await cache.set('efemera', 1, 0);
+    expect(await cache.get('efemera')).toBeNull();
+    expect(client.store.size).toBe(0);
+  });
+
+  it('delByPrefix varre por SCAN e nao encosta em outro tenant (regra 1)', async () => {
+    const client = new FakeRedis();
+    const cache = new RedisCache('redis://fake:6379', () => client);
+
+    for (let i = 0; i < 25; i += 1) {
+      await cache.set(`analytics:tenant-a:relatorio-${i}`, i, 300);
+    }
+    await cache.set('analytics:tenant-b:relatorio-0', 'do outro lab', 300);
+
+    await cache.delByPrefix('analytics:tenant-a:');
+
+    expect([...client.store.keys()]).toEqual(['analytics:tenant-b:relatorio-0']);
+  });
+
+  it('close encerra a conexao', async () => {
+    const client = new FakeRedis();
+    const cache = new RedisCache('redis://fake:6379', () => client);
+    await cache.get('qualquer');
+    await cache.close();
+    expect(client.quitCalls).toBe(1);
+  });
+});
+
+/**
+ * D-058: fail-closed. Com `REDIS_URL` definido e Redis fora do ar, o boot
+ * PARA — nao degrada em silencio para memoria (um `warn` que ninguem le nao
+ * protege rate limit, lockout nem invalidacao de analytics).
+ */
+describe('verifyCacheReady', () => {
+  it('MemoryCache passa (dev/CI sem Redis continua subindo)', async () => {
+    await expect(verifyCacheReady(new MemoryCache())).resolves.toBeUndefined();
+  });
+
+  it('Redis fora do ar derruba o boot com mensagem clara', async () => {
+    const client = new FakeRedis();
+    client.pingFails = true;
+    const cache = new RedisCache('redis://indisponivel:6379', () => client);
+
+    await expect(verifyCacheReady(cache)).rejects.toThrow(/REDIS_URL/);
+    await expect(verifyCacheReady(cache)).rejects.toThrow(/ECONNREFUSED/);
+  });
+
+  it('Redis no ar passa', async () => {
+    const cache = new RedisCache('redis://fake:6379', () => new FakeRedis());
+    await expect(verifyCacheReady(cache)).resolves.toBeUndefined();
   });
 });

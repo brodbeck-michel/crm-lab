@@ -126,6 +126,8 @@ export function createProposalServices(deps: ApiModuleDeps): ProposalModuleServi
     audit,
     examCatalog,
     approvals,
+    // Mesmo cache do AnalyticsService: mutacao de proposta invalida relatorio.
+    cache: deps.cache,
   });
   return { proposals, approvals };
 }
@@ -273,11 +275,16 @@ export function proposalModule(deps: ApiModuleDeps): ApiModule {
     updateProposalDiscount(services.proposals),
   );
 
+  // `denyPlatformOperator()` ANTES de `requireRoles`: o operador da plataforma
+  // nao tem caminho para dado de laboratorio por decisao propria (PAGES.md §11),
+  // e nao de tabela — hoje ele tambem cairia no `requireRoles`, mas essa defesa
+  // sumiria no dia em que os papeis fossem afrouxados.
   // `requireRoles` ANTES do `validate`: atendente recebe FORBIDDEN com
   // `details.requiredRoles`, e nao um VALIDATION_ERROR que vazaria o shape.
   router.patch(
     '/:id/approve',
     requireAuth(),
+    denyPlatformOperator(),
     requireRoles('manager', 'admin'),
     validate(proposalIdParamSchema, 'params'),
     approveProposal(services),
@@ -286,6 +293,7 @@ export function proposalModule(deps: ApiModuleDeps): ApiModule {
   router.patch(
     '/:id/reject',
     requireAuth(),
+    denyPlatformOperator(),
     requireRoles('manager', 'admin'),
     validate(proposalIdParamSchema, 'params'),
     validate(rejectSchema, 'body'),

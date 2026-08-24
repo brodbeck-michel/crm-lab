@@ -11,6 +11,7 @@ import { createApp } from '../../src/app.js';
 import type { ApiModuleFactory } from '../../src/http/api-module.js';
 import type { DbClient } from '../../src/db/types.js';
 import { MemoryCache, type CacheService } from '../../src/lib/cache.js';
+import type { UserRole } from '@crm-lab/shared';
 import { signAccessToken } from '../../src/lib/tokens.js';
 import { FakeWsHub } from './fake-ws.js';
 import { getTestDb } from './test-db.js';
@@ -18,7 +19,7 @@ import { getTestDb } from './test-db.js';
 export interface AuthenticatableUser {
   id: string;
   tenantId: string;
-  role: import('@crm-lab/shared').UserRole;
+  role: UserRole;
   discountLimit: number;
 }
 

@@ -5,13 +5,17 @@ import http from 'node:http';
 import { createApp } from './app.js';
 import { env, safeEnv } from './config/env.js';
 import { closeDb, getDb } from './db/index.js';
-import { createCache } from './lib/cache.js';
+import { createCache, verifyCacheReady } from './lib/cache.js';
 import { logger } from './lib/logger.js';
 import { createWsHub } from './lib/ws-hub.js';
 
 async function bootstrap(): Promise<void> {
   const db = await getDb();
   const cache = createCache();
+  // FAIL-CLOSED (D-058): com REDIS_URL setado e Redis fora do ar, o boot para
+  // aqui. Degradar para memoria em silencio quebraria rate limit, lockout de
+  // login e invalidacao de analytics em qualquer deploy com mais de 1 instancia.
+  await verifyCacheReady(cache);
   const wsHub = createWsHub();
 
   const { app, modules } = createApp({ db, cache, wsHub });

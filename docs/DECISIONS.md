@@ -386,6 +386,205 @@ carregar 50 mensagens.
 
 ---
 
+## 2026-08-24 — Decisões de CI/CD e imagens de produção (Agent-Infra-CI)
+
+### D-049: Contexto de build das imagens é a raiz do monorepo
+**Decisão:** `backend/Dockerfile` e `frontend/Dockerfile` são construídos com
+`context: .` (raiz), nunca com o contexto da própria pasta:
+`docker build -f backend/Dockerfile .`.
+**Motivo:** os dois workspaces importam `@crm-lab/shared`, e o `package-lock.json` é único
+(npm workspaces). Um contexto por pasta não enxergaria `shared/` nem o lock — só restaria
+copiar `node_modules` pronto de fora, que é exatamente o que uma imagem reprodutível não pode
+fazer. Os `COPY` de `package.json` de todos os workspaces vêm antes do código para que a
+camada de `npm ci` só invalide quando o lock mudar.
+**Impacto:** infra. `.dockerignore` na raiz mantém `e2e/package.json` no contexto — `npm ci`
+falha se um workspace declarado estiver ausente.
+
+### D-050: A imagem do backend empacota um shim de `@crm-lab/shared`
+**Decisão:** no estágio de runtime, `node_modules/@crm-lab/shared` deixa de ser o link do
+workspace e passa a ser um diretório real apontando para o JS já compilado em
+`dist/shared/types/`. O `CMD` é `node dist/backend/src/main.js`.
+**Motivo:** dois fatos verificados executando a imagem, não por leitura. (a)
+`tsconfig.build.json` usa `rootDir: ".."`, então a saída é `dist/backend/src/**` +
+`dist/shared/types/**` — o script `start` de `backend/package.json` (`node dist/main.js`)
+aponta para um caminho que não existe. (b) O JS emitido mantém o import bare
+`@crm-lab/shared`, que resolve para `shared/types/index.ts`; o Node tenta carregar
+TypeScript e morre com `ERR_MODULE_NOT_FOUND .../shared/types/api.types.js`. Sem o shim, a
+API compilada simplesmente não sobe. O shim é empacotamento puro — nenhuma linha de
+`backend/src`, `shared/` ou `backend/package.json` foi tocada (ownership).
+**Impacto:** infra, api. Pedido ao Agent-API/Agent-Kernel: corrigir o script `start` para o
+caminho real, ou fazer o build emitir `@crm-lab/shared` como JS resolvível. Enquanto isso,
+`npm start` no backend não funciona e a única forma suportada de rodar a API compilada é a
+imagem Docker.
+
+### D-051: Mesmo origin em produção — o nginx do frontend faz proxy de `/api` e `/ws`
+**Decisão:** a imagem do frontend serve o bundle **e** encaminha `/api/` e `/ws` para
+`API_UPSTREAM` (default `http://backend:3000`). Os `ARG` de build default para
+`VITE_API_URL=/api/v1` e `VITE_WS_URL=/ws`. No `docker-compose.prod.yml`, backend, Postgres
+e Redis não publicam porta nenhuma.
+**Motivo:** as variáveis `VITE_*` são inlinadas no bundle em tempo de build — apontá-las para
+um host externo fixa a URL da API dentro de um artefato público e obriga a rebuildar a imagem
+a cada mudança de domínio, além de exigir CORS e preflight em toda requisição. Caminho
+relativo elimina os três problemas de uma vez e reduz a superfície exposta a uma única porta.
+**Impacto:** infra. `CORS_ORIGIN` continua obrigatória (o backend valida), mas em operação
+normal o browser nunca faz requisição cross-origin.
+
+### D-052: O job de E2E falha de verdade — nada de `continue-on-error`
+**Decisão:** o job `e2e` do CI é bloqueante. Se a suíte não passar, o run fica vermelho.
+Em caso de falha, publica `playwright-report` (`e2e/playwright-report/` + `e2e/test-results/`)
+e o log dos servidores.
+**Motivo:** `continue-on-error` num job de E2E produz o pior resultado possível — um check
+verde que não afirma nada, e que ninguém percebe estar quebrado até o dia em que importa.
+TESTING.md trata a suíte de isolamento como bloqueante de release; o mesmo critério vale para
+os fluxos críticos. Se a suíte estiver instável, o caminho é consertá-la ou desabilitá-la
+explicitamente — não mascarar o resultado.
+**Impacto:** infra, qa. O job usa `NODE_ENV=development` (não `test`: `test` força PGlite em
+memória por D-008 e o seed iria para um banco descartável) e sobe API e UI com `npm run dev`,
+como `e2e/playwright.config.ts` documenta (`webServer: undefined`).
+
+### D-053: `RefreshResponse` declara `refreshToken` — obrigatório, não opcional
+**Decisão:** `shared/types/auth.types.ts` ganha `refreshToken: string` em
+`RefreshResponse`. O tipo local `RefreshResult` do `auth.service.ts` foi removido.
+**Motivo:** D-014 chamou o campo de "aditivo, portanto opcional" e por isso ele ficou fora
+do tipo compartilhado, com o backend contornando por um `interface RefreshResult extends
+RefreshResponse` — exatamente o "redeclarar shape de API localmente" que CLAUDE.md proíbe.
+A premissa estava errada: a rotação a cada uso é **incondicional**, então `/auth/refresh`
+devolve `refreshToken` em 100% das respostas de sucesso. Um campo opcional descreveria uma
+resposta que o servidor nunca produz, e deixaria o frontend achar que pode ignorá-lo — e
+perder a sessão. A regra "campos novos são opcionais até os dois lados suportarem" vale
+durante a transição; os dois lados já suportam desde a Onda 2.
+**Impacto:** api, ui. Nenhuma mudança de runtime — o campo já vinha no fio e o frontend já
+o consumia (`frontend/src/api/client.ts`). `API_CONTRACTS.md` §1 perdeu a nota de
+divergência. D-014 continua válido no mérito; só a nota sobre opcionalidade é superada aqui.
+
+### D-054: A chave do rate limit deriva do Bearer token, não de `req.ctx`
+**Decisão:** `rateLimitKey` (em `http/middleware/rate-limit.ts`) verifica a assinatura do
+access token da própria requisição e limita por `user:<userId>`; sem token válido, cai em
+`ip:<clientIp>`. O middleware continua montado no kernel, antes dos routers.
+**Motivo:** a chave anterior lia `req.ctx`, que só existe **depois** de `requireAuth()` — e
+`requireAuth` é por rota, montado depois do limitador. O ramo `user:<id>` era código morto:
+todo o tráfego autenticado, de todos os tenants, dividia um único balde de 100/min por IP.
+Atrás de load balancer ou NAT isso é um laboratório inteiro se autobloqueando; foi o que
+derrubou a suíte E2E com 429 em cascata. Aumentar o limite trataria o sintoma e deixaria o
+acoplamento IP↔tenant de pé.
+Duas alternativas foram descartadas: (a) mover o limitador para depois da autenticação exige
+repeti-lo em cada módulo, e a primeira rota que esquecesse ficaria sem limite nenhum;
+(b) um `optionalAuth()` que preenchesse `req.ctx` antes do limitador daria contexto válido
+de brinde a qualquer rota que esquecesse `requireAuth` — trocaria um bug de disponibilidade
+por um de autorização. Por isso `rateLimitKey` lê o token e **não escreve em `req`**.
+Token ausente, expirado ou adulterado cai no balde por IP de propósito: se ganhasse balde
+próprio, trocar o token a cada requisição seria um bypass trivial do limite.
+**Impacto:** api. Rotas públicas (login, refresh, webhook do WhatsApp) seguem por IP, que é
+o comportamento desejado para força bruta. `SECURITY.md` "OWASP" continua satisfeito.
+
+### D-055: Mutação de proposta invalida o cache de analytics do tenant inteiro
+**Decisão:** `ProposalService.create`, `updateStatus` e `updateDiscount` chamam
+`cache.delByPrefix('analytics:<tenantId>:')` depois de gravar. O `ProposalServiceDeps`
+ganhou `cache`. O TTL de 5 min (SERVICES.md §9) continua valendo para leitura pura.
+**Motivo:** a chave de analytics é `analytics:<tenant>:<escopo>:<relatório>:<período>`, e o
+escopo multiplica as entradas. Rodando a aplicação na Onda 5 apareceu o efeito: a visão do
+gestor mostrava 622 e a "parcial" do atendente 722 — a parcial de UMA pessoa maior que o
+total do laboratório, por até 5 minutos. Não é "dado um pouco atrasado": é um estado que não
+existe, e que faz desconfiar do relatório inteiro. Invalidar só a entrada do autor deixaria
+a do gestor velha, que é precisamente o bug; por isso o prefixo inteiro — todos os escopos,
+relatórios e períodos.
+A inconsistência de até 5 min NÃO foi aceita como contrato: o número é o argumento de venda
+da tela de conversão, e o custo da invalidação é recalcular na próxima leitura, num caminho
+que já é dominado por leitura.
+**Impacto:** api. O prefixo carrega o `tenantId`, então `delByPrefix` nunca alcança outro
+laboratório (regra 1) — há teste para isso em
+`backend/tests/analytics/cache-invalidation.spec.ts`. Falha do cache é registrada no logger e
+engolida: a proposta já está gravada e auditada, e o pior caso é voltar ao TTL de 5 min.
+
+### D-056: `npm start` do backend aponta para `dist/backend/src/main.js` e o build emite o shim
+**Decisão:** `backend/package.json` passa a ter `"start": "node dist/backend/src/main.js"`, e
+`build` roda `tsc -p tsconfig.build.json && npm run build:shared-link`, que escreve
+`dist/node_modules/@crm-lab/shared/{package.json,index.js}` reexportando
+`../../../shared/types/index.js` (o JS já compilado, dentro do próprio `dist`).
+**Motivo:** fecha o pedido registrado em D-050. Com `rootDir: ".."` a saída é
+`dist/backend/src/**` + `dist/shared/types/**`, então `node dist/main.js` aponta para um
+caminho inexistente; e o JS emitido mantém o import bare `@crm-lab/shared`, que pelo link do
+workspace resolve para `shared/types/index.ts` e mata o processo com
+`ERR_MODULE_NOT_FOUND .../shared/types/api.types.js`. `tsc` não reescreve especificador bare —
+é o Node que precisa achar um JS ali. O shim dentro de `dist/` resolve mais perto que
+`node_modules/` da raiz e é auto-contido: o `dist` inteiro pode ser copiado sozinho.
+Verificado executando: `npm run build && PORT=3987 npm start` sobe e `GET /health` responde
+`{"status":"ok","driver":"pg"}`.
+**Impacto:** api, infra. Não conflita com D-050 — o shim da imagem e este apontam para os
+mesmos arquivos emitidos; o do `dist` só vence por proximidade. A estratégia de build não
+mudou (`rootDir`/`outDir` intactos). O arranjo mais limpo a longo prazo — `shared/` com build
+próprio e `exports` condicional, dispensando shim dos dois lados — continua sendo do
+Agent-Infra: mexe em `shared/package.json` e no Dockerfile, fora do domínio da API.
+
+### D-057: O IP do cliente vem da cadeia de proxies configurada, nunca do header cru
+**Decisão:** `clientIp()` passa a devolver apenas `req.ip` (com fallback para o endereço do
+socket) e **não lê mais `X-Forwarded-For`**. Quem decide se o header vale é o Express, via
+`app.set('trust proxy', env.trustProxy)`, agora configurado por duas env vars novas
+(documentadas em `backend/.env.example`):
+- `TRUST_PROXY_HOPS` — quantos proxies reversos nossos ficam na frente. **Default `0` = não
+  confia em `X-Forwarded-For` nenhum.**
+- `TRUSTED_PROXIES` — lista de IPs/CIDRs confiáveis; se preenchida, vence a contagem.
+
+`app.ts` deixou de fazer `app.set('trust proxy', true)`. A configuração ficou em
+`applyTrustProxy()`, exportada para que os testes montem um app com a MESMA regra do real.
+
+**Motivo:** `trust proxy: true` confia em qualquer proxy — na prática, confia no cliente. E
+`clientIp()` lia o header cru, então nem isso importava. O IP alimenta **três** controles de
+segurança e os três estavam anulados:
+1. **Rate limit** — o balde por IP é o que protege as rotas públicas (`/auth/login`,
+   `/auth/refresh`, `/webhooks/*`), justamente as que a D-054 deixa fora do ramo por token.
+   Com limite 3, 50 requisições variando `X-Forwarded-For: 10.0.0.<i>` passavam todas.
+2. **Lockout de login** (o pior) — a chave é `login-failures:<email>:<ip>`. Variando o header,
+   cada tentativa ganhava um contador zerado: força bruta ilimitada contra qualquer e-mail,
+   contra a política de 5 tentativas / 15 min de `SECURITY.md`.
+3. **Audit log** — `ip_address` de `login` gravava o endereço que o atacante escolhesse.
+
+Contar hops a MAIS é o erro perigoso (cada hop excedente é uma posição do header que o
+cliente controla), por isso o default é `0` e subir esse número é ato deliberado de deploy.
+
+**Impacto:** api, infra. **PENDÊNCIA PARA O AGENT-INFRA:** `docker-compose.prod.yml` põe
+exatamente um nginx na frente do backend (`API_UPSTREAM: http://backend:3000`), então o serviço
+`backend` precisa de `TRUST_PROXY_HOPS: 1` no `environment` — arquivo fora do domínio da API.
+Sem isso todo o tráfego colapsa no IP do proxy e um laboratório inteiro passa
+a dividir um balde — é o cenário da D-050, e a correção é configuração, não voltar a confiar
+no header. (Enquanto não for setado o comportamento é seguro, só pessimista.) Regressões em `tests/kernel/client-ip.spec.ts` (header ignorado sem proxy
+confiável; com 1 hop vale o último da cadeia), `tests/kernel/rate-limit.spec.ts` (50 requests
+variando o header ainda batem no limite de 3) e `tests/auth/login.spec.ts` (lockout dispara
+mesmo variando o header; audit log grava o IP da conexão).
+
+### D-058: `RedisCache` de verdade (ioredis) e boot fail-closed quando o Redis não responde
+**Decisão:** duas coisas, na ordem:
+(a) `RedisCache` deixou de ser stub. Fala Redis de verdade via `ioredis` (dependência nova em
+`backend/package.json`): `GET`, `SET ... EX`, `DEL` e `SCAN MATCH <prefixo>* COUNT 100` para
+`delByPrefix`. Valores trafegam como JSON; TTL `<= 0` apaga a chave, para casar com a semântica
+do `MemoryCache`. A conexão é injetável (`RedisClientLike`), então o comportamento é testado
+com um duplo que guarda strings, expira por TTL e responde SCAN por glob — sem subir servidor.
+(b) `CacheService` ganhou `ping()`, e `main.ts` chama `verifyCacheReady(cache)` no boot: com
+`REDIS_URL` definido e o Redis fora do ar, o processo **morre** com `CacheUnavailableError`
+explicando o que fazer. `MemoryCache.ping()` é no-op — dev/CI sem Redis continuam subindo.
+
+**Motivo:** o stub delegava tudo para um `MemoryCache` in-process e emitia **um** `warn`.
+`docker-compose.prod.yml` define `REDIS_URL`, então produção rodava no stub. Isso deixa **por
+processo** as três coisas que dependem deste cache: o balde do rate limit (com N instâncias o
+limite efetivo vira N × 100/min), o contador de lockout de login (N × 5 tentativas) e a
+invalidação de analytics da D-055 (o relatório obsoleto sobrevive na instância que não recebeu
+a mutação — exatamente o bug que a D-055 existe para matar). Um `warn` que ninguém lê não é
+controle de segurança.
+
+A opção "só falhar o boot, sem cliente Redis" foi descartada porque tornaria impossível rodar
+mais de uma instância — e o precedente de fail-fast do `env.ts` (recusar segredo fraco em
+produção) resolve o silêncio, não o problema de estado compartilhado. Fazer as duas coisas
+custa uma dependência e fecha os dois buracos: o cache funciona de verdade, e se não funcionar
+ninguém descobre pelo relatório errado três semanas depois.
+
+**Impacto:** api, infra. `REDIS_URL` virou compromisso: definida = Redis tem que estar de pé.
+Quem rodava dev com `REDIS_URL` apontando para um Redis inexistente precisa apagar a variável
+(o `.env.example` explica). O ambiente de teste ignora `REDIS_URL` como antes (`env.isTest`).
+Testes em `tests/kernel/cache.spec.ts`, incluindo o de `delByPrefix` que prova que o SCAN não
+encosta em chave de outro tenant (regra 1).
+
+---
+
 ## Template para novas decisões
 
 ```

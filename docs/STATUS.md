@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-08-24
+**Última atualização:** 2026-08-24 (fim da Onda 5)
 
 ---
 
@@ -51,22 +51,22 @@ Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avança
 | Tela Login | ui | ✅ 2026-08-23 | Agent-UI-Attendance | `src/pages/Login.tsx` + `Login.spec.tsx` (9 testes). Tema aplicado do payload do login (sem request extra); erro genérico único para credencial errada / e-mail inexistente / conta inativa |
 | Tela Atendimento (inbox funcional) | ui | ✅ 2026-08-23 | Agent-UI-Attendance | `src/pages/Attendance/` + `components/conversation/` (`ConversationItem`, `MessageBubble`, `Composer`). 3 colunas, chips com contagem do servidor, markAsRead ao abrir, estados de carregando/vazio/erro. **Sem mocks**: consome `GET /conversations` real — a tela fica no estado de erro enquanto o ConversationService não existir |
 
-## Onda 4 — Propostas (Backend ✅ | UI + E2E em andamento)
+## Onda 4 — Propostas ✅ (concluída em 2026-08-24)
 
 | Tarefa | Domínio | Status | Agente | Notas |
 |--------|---------|--------|--------|-------|
 | ProposalService (alçada + cálculo) | api | ✅ 2026-08-23 | Agent-API-Proposals | `services/proposal.service.ts` + `repositories/proposal.repository.ts` + `controllers/proposal.routes.ts`. `GET/POST /proposals`, `GET /proposals/:id`, `PATCH /:id/status|discount|approve|reject`. Total sempre derivado (`calculateTotal` de shared), snapshot D-004, alçada lida do banco, matriz de `ALLOWED_TRANSITIONS`, histórico + WS + auditoria. 64 testes em `tests/proposals/` |
 | ApprovalService | api | ✅ 2026-08-23 | Agent-API-Proposals | `services/approval.service.ts` (+ `internal-chat.service.ts` e `controllers/internal-chat.routes.ts`, SERVICES.md §7). Pedido postado em `#aprovacoes` com proposta anexada + WS `approval.requested`; aprova só manager/admin dentro da própria alçada; sem auto-aprovação (D-046). 23 testes em `tests/approvals/` e `tests/internal-chat/` |
 | **Plano: 7 Telas UI + Validador** | ui+qa | 🔄 planejado | — | Plano em `docs/superpowers/plans/2026-08-24-onda-4-ui-screens.md`. 7 agentes paralelos (Novo Orçamento, Pipeline, Modal Proposta, Catálogo, Conversão, Personalização, Usuários) + E2E. Execução: `superpowers:subagent-driven-development` ou `superpowers:dispatching-parallel-agents` |
-| Tela Novo Orçamento (Budget/new) | ui | ⬜ | Agent-UI-Budget | Task 1 do plano: catálogo segmentado, desconto com validação, resumo com total derivado |
-| Tela Pipeline (Proposals) + Modal | ui | ⬜ | Agent-UI-Proposals + Agent-UI-ProposalModal | Tasks 2-3: 6 colunas kanban, cartões clicáveis, modal com histórico, aprovação, win/loss |
-| Tela Catálogo (Catalog) | ui | ⬜ | Agent-UI-Catalog | Task 4: tabela de exames, atendente lê, gestor cria/edita |
-| Tela Conversão (Analytics) | ui | ⬜ | Agent-UI-Analytics | Task 5: dashboard com funil, receita, motivos de perda, top performers |
-| Tela Personalização (Settings/theme) | ui | ⬜ | Agent-UI-Theme | Task 6: selector de 5 presets + custom color picker |
-| Tela Usuários (Settings/users) | ui | ⬜ | Agent-UI-Users | Task 7: CRUD de usuários, papéis, alçada, ativo/inativo |
+| Tela Novo Orçamento (Budget/new) | ui | ✅ 2026-08-24 | Agent-UI-Budget | Task 1 do plano: catálogo segmentado, desconto com validação, resumo com total derivado |
+| Tela Pipeline (Proposals) + Modal | ui | ✅ 2026-08-24 | Agent-UI-Proposals + Agent-UI-ProposalModal | Tasks 2-3: 6 colunas kanban, cartões clicáveis, modal com histórico, aprovação, win/loss |
+| Tela Catálogo (Catalog) | ui | ✅ 2026-08-24 | Agent-UI-Catalog | Task 4: tabela de exames, atendente lê, gestor cria/edita |
+| Tela Conversão (Analytics) | ui | ✅ 2026-08-24 | Agent-UI-Analytics | Task 5: dashboard com funil, receita, motivos de perda, top performers |
+| Tela Personalização (Settings/theme) | ui | ✅ 2026-08-24 | Agent-UI-Theme | Task 6: selector de 5 presets + custom color picker |
+| Tela Usuários (Settings/users) | ui | ✅ 2026-08-24 | Agent-UI-Users | Task 7: CRUD de usuários, papéis, alçada, ativo/inativo |
 | E2E fluxos 1-3 | qa | ✅ 2026-08-24 | Agent-QA-E2E | Task 9: `e2e/workflows/` com `playwright.config.ts`, `helpers.ts`, `flow-1-new-budget.spec.ts`, `flow-2-approval.spec.ts`, `flow-3-win-loss.spec.ts`. 3 specs testando fluxos críticos: orçamento novo, aprovação de desconto alto, ganho/perda. Importa constantes de `backend/src/db/seeds/e2e-fixtures.ts`. Typecheck ✅ |
 
-## Onda 5 — Analytics, Tema e Plataforma
+## Onda 5 — Analytics, Tema e Plataforma ✅ (concluída em 2026-08-24)
 
 | Tarefa | Domínio | Status | Agente | Notas |
 |--------|---------|--------|--------|-------|
@@ -74,11 +74,14 @@ Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avança
 | PlatformService (console isolado) | api | ✅ 2026-08-23 | Agent-API-Analytics | `services/platform.service.ts` + `repositories/platform.repository.ts` + `controllers/platform.routes.ts`. `GET\|POST /platform/tenants`, `GET /platform/billing`. Só `platform_operator`; `withoutTenant` como exceção auditada; onboarding atômico (tenant + tema Terracota + `#geral`/`#aprovacoes` + admin). 29 testes em `tests/platform/` |
 | ThemeService | api | ✅ 2026-08-23 | Agent-API-Auth | `services/theme.service.ts` + `controllers/theme.routes.ts`. `GET/PATCH /themes/current`, `GET /themes/presets` (5 presets estáticos). Só cores base (D-005); hex validado. 11 testes em `tests/theme/` |
 | AuditService | api | ✅ 2026-08-23 | Agent-API-Auth | `services/audit.service.ts` (append-only, `log()` nunca lança, `failures` inspecionável) + `GET /audit` admin. **Infraestrutura compartilhada** — ver pedido abaixo. 9 testes em `tests/users/audit.spec.ts` |
-| Tela Conversão | ui | ⬜ | — | |
-| Tela Personalização | ui | ⬜ | — | |
-| Tela Usuários & Permissões | ui | ⬜ | — | Backend pronto: `GET/POST /users`, `PATCH /users/:id`, `GET /audit` (Agent-API-Auth) |
-| CI/CD pipeline | infra | ⬜ | — | |
-| E2E completo + isolamento multitenant | qa | ⬜ | — | |
+| Tela Conversão | ui | ✅ 2026-08-24 | Agent-UI-Analytics | `pages/Analytics.tsx`. Aviso de **versão parcial** (`partial: true`) para atendente entregue na rodada de correção |
+| Tela Personalização | ui | ✅ 2026-08-24 | Agent-UI-Theme | `pages/Settings/Theme.tsx`. A troca de tema **aplica e sobrevive ao reload** desde a correção do `auth.store.setTheme` |
+| Tela Usuários & Permissões | ui | ✅ 2026-08-24 | Agent-UI-Users | `pages/Settings/Users.tsx` + `components/users/`. Edição passou a receber a linha que a tabela já tem em mãos — antes pedia `limit: 1000` contra um schema que corta em 100, então o modal abria **vazio** e o submit morria na validação |
+| Console da Plataforma (Tenants + Billing) | ui | ✅ 2026-08-24 | Agent-UI-Platform | `pages/Platform/{Tenants,Billing}.tsx` + 14 testes. Onboarding em modal, guarda de papel que **não dispara request** para quem não é `platform_operator` |
+| Tela Chat Interno (`#aprovacoes`) | ui | ✅ 2026-08-24 | Agent-UI-InternalChat | `pages/InternalChat/`. [Aprovar]/[Rejeitar] sobre `PATCH /proposals/:id/approve\|reject`; sem otimismo — auto-aprovação (D-046) vira toast. Fecha o pedido do Agent-UI-Attendance |
+| CI/CD pipeline | infra | ✅ 2026-08-24 | Agent-Infra-CI | `.github/workflows/ci.yml`: `quality` → `build` (verifica **artefatos emitidos**, não só exit 0) → `docker` (2 imagens, não-root) → `e2e` (Postgres 16 + migrate + seed, **bloqueante**). `backend/Dockerfile`, `frontend/Dockerfile`, `nginx/frontend.conf`, `docker-compose.prod.yml`, `docs/guides/DEPLOYMENT.md` |
+| E2E completo + isolamento multitenant | qa | ✅ 2026-08-24 | Agent-QA-E2E | `e2e/workflows/`: flows 1-3 reescritos + `flow-4-analytics`, `flow-5-theme`, `flow-6-users`, `flow-7-catalog`, `flow-isolation` — 65 testes, zero `test.skip`. Backend: `tests/kernel/route-tenant-isolation.spec.ts` varre as **29** rotas de laboratório com 2 tenants |
+| Rodada de validação independente | todos | ✅ 2026-08-24 | Validador-Contratos · Validador-Segurança · Validador-Verificação | 3 auditores sem participação na implementação. Achados viraram as correções D-057 (IP confiável) e D-058 (Redis real + fail-closed), mais as correções de tema/CI sem decisão nova, e as pendências abaixo |
 
 ---
 
@@ -107,7 +110,7 @@ Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avança
 | Agent-Kernel | Agent-Infra | `backend/tsconfig.json` tinha `rootDir: "."`, incompatível com o `include` de `../shared/types`. Alterado para `".."` (igual ao `tsconfig.build.json`) para o typecheck passar. | ⬜ aberto |
 | Agent-DB | Agent-Infra | O runner de migrações aplica `backend/migrations/*.sql` em ordem lexical, cada arquivo inteiro em uma transação, registrando o nome em `schema_migrations` (tabela criada pelo runner, não pelas migrações). | ⬜ aberto |
 | Agent-UI-Foundation | Agent-UI (telas/shell) | `frontend/index.html` aponta para `/src/main.tsx`, que ainda nao existe (fora do dominio da fundacao). O bootstrap precisa importar `@/styles/tokens.css` e envolver a arvore em `<ToastProvider>`. | ✅ atendido pelo Agent-UI-Shell em `src/main.tsx` + `src/App.tsx` |
-| Agent-UI-Shell | Agent-API | `API_CONTRACTS.md` não documenta `GET/PATCH /themes/current`, `/internal-chat/*`, `/users` (lista/criação/edição), `/audit` e `/platform/*` — só WORKFLOWS.md e PAGES.md os citam. O frontend está tipado contra os shapes de `shared/types` (`Theme`, `Channel`, `ManagedUser`, `AuditEntry`, `TenantSummary`, `BillingResponse`). Documentar os endpoints em API_CONTRACTS.md ao implementar. | ⬜ aberto |
+| Agent-UI-Shell | Agent-API | `API_CONTRACTS.md` não documenta `GET/PATCH /themes/current`, `/internal-chat/*`, `/users` (lista/criação/edição), `/audit` e `/platform/*` — só WORKFLOWS.md e PAGES.md os citam. O frontend está tipado contra os shapes de `shared/types` (`Theme`, `Channel`, `ManagedUser`, `AuditEntry`, `TenantSummary`, `BillingResponse`). Documentar os endpoints em API_CONTRACTS.md ao implementar. | ✅ atendido na Onda 5 pelo Agent-Docs-Contracts: `/themes/*`, `/internal-chat/*`, `/users`, `/audit`, `/platform/*` e o `counts`/`?scope=` de `/conversations` documentados por engenharia reversa do controller (não do que se supunha) |
 | Agent-UI-Shell | Agent-API | `PATCH /proposals/:id/reject` foi assumido simétrico a `/approve` (o shape `RejectProposalRequest` já existe em `shared/types`, mas o endpoint não está em API_CONTRACTS.md). Confirmar o caminho ao implementar o ApprovalService. | ✅ confirmado: `PATCH /proposals/:id/reject` existe, com `{ reason }` obrigatório, e devolve o mesmo shape de `/approve`. Documentado em API_CONTRACTS.md §3 |
 | Agent-UI-Shell | Agent-UI (telas) | Para plugar uma tela: crie `src/pages/<Tela>.tsx` e troque o `element:` do placeholder em `src/routes/index.tsx`. Guard, papéis, shell, sidebar, toast e camada de API já estão montados — ver PAGES.md "Implementação do Shell". | ⬜ aberto |
 | Agent-UI-Shell | Agent-UI (telas) | Dado de servidor SÓ via TanStack Query com as chaves de `src/api/query-keys.ts`. Copiar para Zustand quebra `auth.store.spec.ts` (teste de fronteira). | ⬜ aberto |
@@ -145,6 +148,34 @@ Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avança
 | Agent-API-Conversations | Agent-Kernel | `express.json()` global consome o stream antes do router do webhook, então o HMAC é calculado sobre `JSON.stringify(req.body)` (D-026). Pedido: `express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } })` em `createApp`. O código já prefere `req.rawBody` quando existir — é pré-requisito para ligar a API real da Meta. | ⬜ aberto |
 | Agent-API-Conversations | Agent-UI | `GET /conversations` agora responde `{ conversations, pagination, counts: { mine, unassigned } }` — os chips leem `counts`, e eles NÃO mudam com `?scope=`. `GET /conversations/:id` marca como lida (D-027), então o `useMarkAsRead` atual está correto; se preferir não carregar o histórico, existe `POST /conversations/:id/read` (204). Erros novos: `CONVERSATION_ALREADY_ASSIGNED` (409, com `details.assignedToName`) ao assumir/transferir e `CONVERSATION_ARCHIVED` (409) ao enviar em conversa arquivada. | ⬜ aberto |
 | Agent-API-Conversations | Agent-Infra | A URL do webhook configurada no provedor precisa incluir o slug do laboratório: `POST /api/v1/webhooks/whatsapp/<slug>` (e `.../status`). `WHATSAPP_WEBHOOK_SECRET` é obrigatória para o webhook aceitar qualquer coisa — segredo vazio recusa tudo, de propósito. | ⬜ aberto |
+
+---
+
+## Pendências abertas ao fim da Onda 5
+
+Achados dos validadores independentes que **não** foram corrigidos nesta onda, com o motivo. Nenhum é
+bloqueio de funcionalidade; todos têm dono sugerido.
+
+| Item | Origem | Por que ficou aberto | Dono sugerido |
+|------|--------|----------------------|---------------|
+| **`as any` em specs** (18 ocorrências) | Validador-Contratos | `eslint.config.js:42-44` desliga `no-explicit-any` em `**/*.spec.*` e `**/tests/**`, mas a regra 6 do CLAUDE.md não abre exceção. Pior: em `UserModal.spec.tsx` as duas metades mockam `useUserList` com **shapes incompatíveis** (`data: [...]` vs `data: { users, pagination }`) sem que nada reclame — o mock encosta na fronteira real e ninguém vê | Agent-QA |
+| **`ProposalCard`, `Analytics.spec`, `mockImplementationOnce` dependente de ordem** | Validador-Verificação | `Analytics.spec.tsx` mocka 1 de 3 queries com `mockImplementationOnce`; passa hoje, mas amarra a ordem de disparo do TanStack Query. Risco latente, não defeito | Agent-UI |
+| **`cache-invalidation.spec.ts`: 1 dos 6 testes é verde por construção** | Validador-Verificação | O teste "fechar no Lab A não toca o cache do Lab B" continua verde com a invalidação desligada — é um teste de "não faz X". Protege contra invalidação larga demais, não prova invalidação. Os outros 5 carregam o peso | Agent-API |
+| **`'a mesma rota com id próprio não devolve 404'` aceita 500** | Validador-Verificação | Usa `.not.toMatchObject({status: 404})`, então um 500 passaria. Espelho do teste de isolamento, não o teste principal | Agent-QA |
+| **`Channel.unreadCount` nunca zera** | Agent-UI-InternalChat | Não existe endpoint de "marcar canal como lido" no contrato nem no service, e `PAGES.md` §9 não define o comportamento. A tela mostra o badge; ele não baixa | Agent-API + doc |
+| **Paginação de `/internal-chat/.../messages` é `created_at ASC` + OFFSET** | Agent-UI-InternalChat | Abrir no mais recente custa 2 requests (`fetchTail` lê `totalPages` antes). O padrão de chat seria página 1 = mais recentes, ou cursor. Contrato não define — mudar exige doc primeiro | Agent-API + doc |
+| **`/proposals` e `/catalog` carregam só a 1ª página** | Agent-QA-E2E | `// TODO: Paginação` nas duas telas, limite 20 — dado antigo fica inalcançável pela UI | Agent-UI |
+| **Envelope de resposta inconsistente** | Agent-UI-Cleanup | `POST /platform/tenants` devolve `{ tenant }`; `POST /users` e `POST /internal-chat/.../messages` devolvem o objeto cru. Padronizar, ou registrar a exceção no doc | Agent-API + doc |
+| **Espaçamento: `p-5`/`gap-4`/`mb-4` convivendo com `p-md`/`gap-sm`** | Agent-UI-Cleanup | Não viola a regra 5 (que trata de hex/raio/fonte), mas são duas convenções de espaçamento no mesmo app. A escala tipográfica já foi unificada; falta a de espaço | Agent-UI |
+| **Telas ainda em placeholder** | — | Ficha do Paciente, Canais & Equipe, Gestão da Operação. **Sem service de backend correspondente** — fora do escopo da Onda 5 por dependência, não por esquecimento | Onda 6 |
+
+### Lição de processo desta onda
+
+O Validador-Contratos apontou um padrão que vale registrar: três violações vieram acompanhadas de
+comentários longos e bem escritos **documentando a própria violação** ("DIVERGÊNCIA CONHECIDA",
+"reportada ao coordenador"). Nenhuma tinha chegado a este arquivo. Comentário em código não é o
+contrato — `docs/` é. Um agente que descobre uma divergência e não a registra aqui deixou o trabalho
+pela metade, por mais bem explicado que esteja o comentário.
 
 ---
 

@@ -82,6 +82,11 @@ enviado e emite um novo, devolvido em `refreshToken` (D-014). O cliente DEVE sub
 o token guardado. Reusar um refresh já rotacionado é tratado como roubo: devolve
 `REFRESH_TOKEN_INVALID` e revoga toda a família de tokens do usuário (D-015).
 
+`RefreshResponse` em `shared/types/auth.types.ts` declara os três campos, `refreshToken`
+**obrigatório** — a rotação é incondicional, então um campo opcional descreveria uma
+resposta que não existe (D-053). A divergência aberta na Onda 5 está fechada: não há mais
+tipo local no `auth.service`.
+
 **Erros:** `REFRESH_TOKEN_INVALID` (401), `USER_INACTIVE` (403), `TENANT_INACTIVE` (403)
 
 ### POST /auth/logout
@@ -118,15 +123,24 @@ Informações do usuário logado.
 }
 ```
 
+Shape: `CurrentUserResponse` (`shared/types/auth.types.ts`) — **sem** `isActive` e
+`lastLoginAt`, que são exclusivos de `ManagedUser`. Qualquer papel de laboratório
+acessa; `platform_operator` recebe `403` (o console não tem caminho para `/users`).
+
+**Erros:** `NOT_FOUND` (404 — token ainda válido de usuário já removido),
+`FORBIDDEN` (403, `platform_operator`)
+
 ### GET /users (admin apenas)
 Tabela da tela `/settings/users`.
 
 **Query Params:**
 ```
-?page=1&limit=20
-?search=joão            (nome ou e-mail)
+?page=1&limit=20        (limit máx. 100)
+?search=joão            (nome OU e-mail, `ILIKE %termo%`)
 ?isActive=true
 ```
+
+Ordenação fixa por `name ASC` — não há `sortBy` nesta rota.
 
 **Response (200):**
 ```json
@@ -168,10 +182,16 @@ Criar usuário no próprio tenant.
 - `discountLimit` é opcional: o default vem de `DEFAULT_DISCOUNT_LIMIT[role]`
   (`@crm-lab/shared`, BUSINESS_RULES §2).
 - `password`: mínimo 8 caracteres (SECURITY.md).
+- `name`: 2..255 caracteres. `discountLimit`: inteiro de 0 a 100.
+- O e-mail é normalizado (trim + minúsculas) antes de gravar.
+- Criação gera audit log `create_user`.
 
-**Response (201):** o `ManagedUser` criado (mesmo shape dos itens de `GET /users`).
+**Response (201):** o `ManagedUser` criado **sem envelope** (mesmo shape dos itens de
+`GET /users`; `lastLoginAt` nasce `null`).
 
-**Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403), `CONFLICT` (409, e-mail já usado no tenant)
+**Erros:** `VALIDATION_ERROR` (400, `details.fields`), `FORBIDDEN` (403,
+`details.requiredRoles: ["admin"]`), `CONFLICT` (409, e-mail já usado no tenant —
+`details.field: "email"`)
 
 ### PATCH /users/:id (admin apenas)
 Editar papel, alçada, nome ou status. **Não existe DELETE**: desativa-se com
@@ -190,9 +210,11 @@ Editar papel, alçada, nome ou status. **Não existe DELETE**: desativa-se com
 Mudança de `role`, `discountLimit` ou `isActive` gera audit log
 (`update_user_permissions`). Ninguém altera o próprio papel, a própria alçada ou o
 próprio status — nem o admin (D-013) → `FORBIDDEN` com
-`details.reason: "self_privilege_change"`.
+`details.reason: "self_privilege_change"` e `details.fields: ["role", ...]` (os campos
+que o usuário tentou mudar em si mesmo). Renomear-se a si próprio é permitido e **não**
+gera audit log: só papel, alçada e status geram — e só quando o valor de fato mudou.
 
-**Response (200):** o `ManagedUser` atualizado.
+**Response (200):** o `ManagedUser` atualizado, **sem envelope**.
 
 **Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403), `NOT_FOUND` (404 — inexistente
 **ou de outro tenant**; nunca 403, para não vazar existência)
@@ -203,6 +225,10 @@ próprio status — nem o admin (D-013) → `FORBIDDEN` com
 
 Tela `/settings/theme`. D-005: o backend guarda **só** as 5 cores base + `radiusId` +
 `fontId` + brand; as 27 variações são derivadas no frontend por `color-mix(in oklab)`.
+
+Leitura (`GET /themes/current`, `GET /themes/presets`) é aberta a **qualquer usuário
+autenticado do laboratório** — o preview da tela precisa dos presets. Só o `PATCH` é
+admin. `platform_operator` recebe `403` em toda a seção.
 
 ### GET /themes/current
 Tema do tenant logado. Tenant sem personalização recebe o tema padrão (preset
@@ -249,6 +275,9 @@ Salvar personalização. PATCH parcial: campo não enviado permanece.
 - Cores: `#rrggbb` exato (6 dígitos, forma curta recusada) → `VALIDATION_ERROR` com
   `details.fields`
 - `radiusId` ∈ `reto | suave | redondo`; `fontId` ∈ `figtree | playfair | system`
+- `brandName` máx. 255, `logoUrl` máx. 500 — ambos anuláveis. Enviar `null` **apaga**
+  o valor; omitir o campo o preserva (essa é a diferença entre `null` e ausente)
+- Corpo vazio (`{}`) ou campo desconhecido → `VALIDATION_ERROR` (o schema é `strict`)
 
 **Response (200):** `{ "theme": { ... } }` — o tema salvo. Gera audit log `update_theme`.
 
@@ -274,7 +303,19 @@ Os 5 temas prontos de `docs/design/DESIGN_TOKENS.md`. Estático — não toca o 
 }
 ```
 
-Ids: `terracota`, `jaleco`, `esteril`, `hemograma`, `diagnostico`.
+Ordem e nomes, exatamente como saem do backend:
+
+| id | name |
+|---|---|
+| `terracota` | Terracota & Sálvia |
+| `jaleco` | Azul Jaleco |
+| `esteril` | Verde Esterilizado |
+| `hemograma` | Hemograma |
+| `diagnostico` | Lilás Diagnóstico |
+
+O preset **não** carrega `fontId`/`radiusId`/brand (`ThemePreset` = id + name + as 5
+cores): aplicar um preset troca só as cores. O primeiro item é a origem do tema padrão
+de `GET /themes/current`.
 
 ---
 
@@ -286,12 +327,12 @@ PATCH nem DELETE de audit log (SECURITY.md — logs nunca são editáveis via AP
 
 **Query Params:**
 ```
-?page=1&limit=20
-?action=update_user_permissions
-?entityType=proposal
-?entityId=<uuid>
-?userId=<uuid>
-?order=desc            (default: desc, por timestamp)
+?page=1&limit=20       (limit máx. 100)
+?action=update_user_permissions    (máx. 100 caracteres, casamento exato)
+?entityType=proposal               (máx. 50 caracteres, casamento exato)
+?entityId=<uuid>                   (uuid — outro formato é VALIDATION_ERROR)
+?userId=<uuid>                     (uuid)
+?order=asc|desc        (default: desc, por timestamp; desempate pelo id)
 ```
 
 **Response (200):**
@@ -315,8 +356,17 @@ PATCH nem DELETE de audit log (SECURITY.md — logs nunca são editáveis via AP
 }
 ```
 
-Ações registradas por este domínio: `login`, `logout`, `refresh_token_reuse_detected`,
-`create_user`, `update_user_permissions`, `update_theme`. Entrada de outro tenant nunca
+`userId`, `userName`, `oldValues`, `newValues` e `ipAddress` são **anuláveis**
+(`AuditEntry` em `shared/types/audit.types.ts`): ação de sistema não tem autor, e
+criação não tem `oldValues`.
+
+Ações registradas hoje: `login`, `logout`, `refresh_token_reuse_detected`, `create_user`,
+`update_user_permissions`, `update_theme`, `create_conversation`, `assign_conversation`,
+`update_conversation_status`, `create_proposal`, `update_proposal_status`,
+`update_proposal_discount`, `approve_discount`, `reject_discount` e `create_tenant`
+(este último nasce no console e é gravado sob o tenant do **operador**, não sob o
+laboratório recém-criado — logo não aparece no `/audit` do lab novo).
+`action` é `string` livre no tipo — não há enum fechado. Entrada de outro tenant nunca
 aparece (RLS).
 
 **Erros:** `FORBIDDEN` (403, `details.requiredRoles: ["admin"]`)
@@ -337,9 +387,14 @@ laboratório. `platform_operator` recebe `FORBIDDEN` (PAGES.md §11).
 ?status=active|archived|closed
 ?scope=mine|unassigned|all        # default: all — os chips da coluna 1
 ?page=1&limit=20                  # limit máx. 100
-?search=joão                      # nome do paciente OU telefone (só dígitos)
+?search=joão                      # máx. 120 caracteres
 ?sortBy=lastMessageAt|createdAt|unreadCount|patientName&order=desc
 ```
+
+`sortBy` default `lastMessageAt`, `order` default `desc` (qualquer valor diferente de
+`asc` cai no default). `search` casa busca textual no nome do paciente (full-text
+`portuguese`) **OU** o telefone: o termo é reduzido a dígitos e só entra na busca por
+telefone quando sobram **3 dígitos ou mais**.
 
 **Response (200):**
 ```json
@@ -350,9 +405,11 @@ laboratório. `platform_operator` recebe `FORBIDDEN` (PAGES.md §11).
       "patientName": "João Santos",
       "patientPhone": "(11) 98765-4321",
       "assignedTo": "uuid",
+      "assignedToName": "Maria Souza",
       "channel": "whatsapp",
       "status": "active",
       "unreadCount": 3,
+      "lastMessagePreview": "Olá, quanto custa um hemograma?",
       "lastMessageAt": "2024-08-23T14:30:00Z",
       "tags": ["orçamento", "hemograma"],
       "createdAt": "2024-08-20T10:00:00Z"
@@ -375,16 +432,23 @@ Por isso eles **não** mudam quando `?scope=` muda: o chip não clicado continua
 mostrando o próprio número, e `pagination.total` é que acompanha o escopo.
 
 Cada item traz `assignedToName` e `lastMessagePreview` já resolvidos (o frontend não
-faz request extra por conversa).
+faz request extra por conversa). Shape completo: `Conversation` em
+`shared/types/conversation.types.ts`. Anuláveis: `patientName`, `assignedTo`,
+`assignedToName`, `lastMessagePreview`, `lastMessageAt`.
+
+**Erros:** `FORBIDDEN` (403, `platform_operator`), `VALIDATION_ERROR` (400, query fora
+do enum — `scope`, `status`, `sortBy`, `order`, `limit` > 100)
 
 ### GET /conversations/:id
 Detalhes de uma conversa + histórico de mensagens.
 
-**Marca a conversa como lida** (PAGES.md §2, "Ao abrir: markAsRead"): zera
+**Marca a conversa como lida** (**D-035**; PAGES.md §2, "Ao abrir: markAsRead"): zera
 `unreadCount` e passa as mensagens do paciente para `status: "read"` — é por isso que
 o exemplo abaixo mostra `unreadCount: 0` enquanto a mesma conversa aparece na listagem
 com `3`. Quem precisa do efeito sem carregar o histórico usa
-`POST /conversations/:id/read`.
+`POST /conversations/:id/read`. O `markAsRead` roda **antes** da leitura e aplica o
+recorte por papel: conversa fora do escopo do usuário devolve `404` sem ter tocado em
+nada.
 
 Mensagens vêm em ordem cronológica **crescente**; `page=1` é a página mais recente.
 `messageLimit` default 50, máx. 100.
@@ -393,6 +457,10 @@ Mensagens vêm em ordem cronológica **crescente**; `page=1` é a página mais r
 ```
 ?messageLimit=50&page=1
 ```
+
+`messageLimit` é o nome do contrato; `limit` é aceito como alias tolerante e vale o
+mesmo (`messageLimit` ganha quando os dois vêm). Valor acima de 100 é recusado com
+`VALIDATION_ERROR` — não é silenciosamente reduzido.
 
 **Response (200):**
 ```json
@@ -403,9 +471,12 @@ Mensagens vêm em ordem cronológica **crescente**; `page=1` é a página mais r
     "patientPhone": "(11) 98765-4321",
     "patientEmail": "joao@email.com",
     "assignedTo": "uuid",
+    "assignedToName": "Maria Souza",
     "channel": "whatsapp",
     "status": "active",
     "unreadCount": 0,
+    "lastMessagePreview": "Oi João! Um hemograma custa R$ 89,90.",
+    "lastMessageAt": "2024-08-23T14:27:00Z",
     "customFields": { "document": "123.456.789-00" },
     "tags": ["orçamento"],
     "createdAt": "2024-08-20T10:00:00Z"
@@ -437,10 +508,18 @@ Mensagens vêm em ordem cronológica **crescente**; `page=1` é a página mais r
   "pagination": {
     "page": 1,
     "limit": 50,
-    "total": 120
+    "total": 120,
+    "totalPages": 3
   }
 }
 ```
+
+`conversation` é `ConversationDetail` (= `Conversation` + `patientEmail` +
+`customFields`); `messages[]` é `Message`, com `senderName`, `attachmentUrl` e `readAt`
+anuláveis. `pagination` é o `PaginationMeta` padrão — os quatro campos, sempre.
+
+**Erros:** `NOT_FOUND` (404 — inexistente, de outro tenant **ou de outro atendente**;
+nunca 403), `FORBIDDEN` (403, `platform_operator`), `VALIDATION_ERROR` (400, `:id` não-uuid)
 
 ### POST /conversations/:id/messages
 Enviar mensagem em uma conversa.
@@ -454,6 +533,13 @@ Enviar mensagem em uma conversa.
 }
 ```
 
+- `content`: 1..4000 caracteres (trim aplicado)
+- `messageType` (opcional, default `text`) ∈ `text | image | audio | pdf | doc`
+- `attachmentUrl` (opcional, anulável): máx. 500 caracteres
+
+O recorte por papel é aplicado **antes** de escrever: conversa que o usuário não
+enxerga devolve `NOT_FOUND`.
+
 **Response (201):**
 ```json
 {
@@ -461,17 +547,27 @@ Enviar mensagem em uma conversa.
   "conversationId": "uuid",
   "senderType": "agent",
   "senderId": "uuid",
+  "senderName": "Maria Souza",
   "content": "Ótimo! Vou criar um orçamento para você.",
   "messageType": "text",
+  "attachmentUrl": null,
   "status": "sent",
+  "readAt": null,
   "createdAt": "2024-08-23T14:35:00Z"
 }
 ```
+
+**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404), `CONVERSATION_ARCHIVED` (409),
+`MESSAGE_SEND_FAILED` (502, canal externo falhou após os retries), `FORBIDDEN` (403,
+`platform_operator`)
 
 ### POST /conversations/:id/read
 Marcar a conversa como lida sem carregar o histórico. Idempotente.
 
 **Response:** `204 No Content`
+
+**Erros:** `NOT_FOUND` (404 — inexistente, de outro tenant ou fora do recorte do
+usuário), `VALIDATION_ERROR` (400, `:id` não-uuid), `FORBIDDEN` (403, `platform_operator`)
 
 ### PATCH /conversations/:id
 Atualizar conversa (status, tags, assigned_to).
@@ -502,9 +598,20 @@ Atualizar conversa (status, tags, assigned_to).
   "id": "uuid",
   "status": "archived",
   "assignedTo": "uuid",
+  "assignedToName": "Maria Souza",
   "tags": ["orçamento", "realizado"]
 }
 ```
+
+Os três campos são opcionais no corpo, mas ao menos um é obrigatório →
+`VALIDATION_ERROR`. `tags`: no máximo 20, cada uma de 1 a 50 caracteres. A ordem de
+aplicação é **status → tags → atribuição** (deliberada: quem transfere e arquiva na
+mesma chamada perderia a visibilidade no meio do caminho se a atribuição viesse antes).
+Mudança de status gera audit log `update_conversation_status`; atribuição gera
+`assign_conversation`.
+
+**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404),
+`CONVERSATION_ALREADY_ASSIGNED` (409), `FORBIDDEN` (403, `platform_operator`)
 
 ---
 
@@ -851,7 +958,11 @@ proposta anexada. O console de plataforma **não** acessa estes canais (PAGES.md
 ```
 
 `unreadCount` é sempre `0` enquanto não houver estado de leitura por usuário no schema
-(D-044).
+(D-044). `lastMessageAt` é anulável (canal sem mensagem). Ordem fixa: `kind ASC`,
+depois `key ASC` — `channel` antes de `dm`, sem parâmetro de ordenação. Sem paginação:
+a resposta é `{ channels }`, só isso.
+
+**Erros:** `FORBIDDEN` (403, `platform_operator`)
 
 ### GET /internal-chat/channels/:id/messages
 
@@ -879,7 +990,11 @@ proposta anexada. O console de plataforma **não** acessa estes canais (PAGES.md
 }
 ```
 
-**Erros:** `NOT_FOUND` (404 — canal inexistente **ou de outro tenant**)
+Ordenação fixa `created_at ASC, id ASC` — não há `sortBy` nem `order` aqui.
+
+**Erros:** `NOT_FOUND` (404 — canal inexistente **ou de outro tenant**),
+`VALIDATION_ERROR` (400 — `:id` não-uuid, `limit` > 100), `FORBIDDEN` (403,
+`platform_operator`)
 
 ### POST /internal-chat/channels/:id/messages
 
@@ -895,8 +1010,14 @@ proposta anexada. O console de plataforma **não** acessa estes canais (PAGES.md
 - `attachedProposalId` (opcional) precisa existir **no mesmo tenant** → senão `NOT_FOUND`;
   o frontend renderiza a proposta anexada como cartão clicável
 
-**Response (201):** o `InternalMessage` criado (mesmo shape dos itens acima).
-Emite `internal_chat.new_message` no WebSocket (room = tenantId).
+**Response (201):** o `InternalMessage` criado **sem envelope** (mesmo shape dos itens
+acima). Emite `internal_chat.new_message` no WebSocket (room = tenantId).
+Mensagem de usuário nasce com `isSystem: false` e `senderId`/`senderName` do autor;
+`isSystem: true` é exclusivo do que o próprio sistema posta (pedido de aprovação).
+
+**Erros:** `VALIDATION_ERROR` (400 — `content` vazio ou > 4000, `attachedProposalId`
+não-uuid, campo desconhecido), `NOT_FOUND` (404 — canal ou proposta anexada de outro
+tenant), `FORBIDDEN` (403, `platform_operator`)
 
 ---
 
@@ -1131,8 +1252,15 @@ contrapartida vale nos dois sentidos:
 - todas exigem `requireRoles('platform_operator')` → qualquer outro papel recebe `403 FORBIDDEN`
   com `details.requiredRoles: ["platform_operator"]`;
 - o operador **não tem caminho** para `/conversations`, `/proposals`, `/internal-chat`,
-  `/themes`, `/users`, `/audit` nem `/analytics` — todas respondem `403` para ele
-  (`denyPlatformOperator()`). Isolamento é requisito, não configuração.
+  `/themes`, `/users`, `/audit`, `/exams` nem `/analytics` — todas respondem `403` para
+  ele. Isolamento é requisito, não configuração.
+
+O `403` chega por dois caminhos, com `details.requiredRoles` diferente:
+`denyPlatformOperator()` responde `{ requiredRoles: ["attendant", "manager", "admin"] }`;
+nas rotas que já exigem papel elevado (`PATCH /proposals/:id/approve` e `/reject`,
+`POST /exams`, `PATCH /exams/:id`) quem barra é o próprio `requireRoles`, e o
+`details.requiredRoles` é `["manager", "admin"]`. O frontend faz switch no `code`, não
+no `details` — mas quem escreve teste precisa saber qual dos dois vai ver.
 
 Nenhuma resposta desta seção carrega dado clínico ou de conversa: sem nome/telefone/e-mail de
 paciente, sem conteúdo de mensagem, sem canal interno e sem valor de proposta. Contagem
@@ -1141,6 +1269,12 @@ agregada (`userCount`, `proposalCount`, `messagesUsed`) é o limite — número 
 ### GET /platform/tenants
 
 **Query Params:** `?page=1&limit=20&search=vida&isActive=true&plan=starter|pro|enterprise`
+
+`limit` máx. 100 (default 20). `search` casa **nome ou slug** (`ILIKE %termo%`, máx. 255).
+`isActive` só aceita `"true"`/`"false"`. Ordenação fixa `created_at DESC, name ASC`.
+O shape da query é `ListTenantsQuery` (`shared/types/platform.types.ts`) — **fonte única**:
+backend e frontend importam de lá, nenhum dos dois redeclara os filtros localmente.
+`subscriptionUntil` é `IsoDate` (`YYYY-MM-DD`, sem hora) e é anulável.
 
 **Response (200):**
 ```json
@@ -1177,11 +1311,20 @@ passo falhar, nada é gravado e o `slug` continua livre.
   "adminPassword": "senha-super-segura"
 }
 ```
-`slug` é canonizado (minúsculo, `a-z0-9-`) antes de decidir duplicidade.
+`slug` é canonizado (minúsculo, `a-z0-9-`) antes de decidir duplicidade; depois de
+canonizado precisa ter ao menos 2 caracteres. `name` e `adminName`: 2..255.
+`adminEmail`: e-mail válido, máx. 255. `adminPassword`: 8..200 caracteres. Campo
+desconhecido no corpo é recusado (schema `strict`). O admin inicial nasce com a alçada
+padrão do papel `admin` (`DEFAULT_DISCOUNT_LIMIT.admin`).
 
-**Response (201):** `{ "tenant": TenantSummary }` — o mesmo shape de `GET /platform/tenants`.
-`slug` já existente → `409 CONFLICT` com `details.field: "slug"`. DTO inválido →
-`400 VALIDATION_ERROR` com `details.fields`.
+O tema criado é o `DEFAULT_THEME` (preset `terracota`, `fontId: "figtree"`,
+`radiusId: "suave"`) com `brandName` já preenchido com o **nome do laboratório** —
+não `null`, ao contrário de um tenant que nunca passou pelo onboarding.
+
+**Response (201):** `{ "tenant": TenantSummary }` — o mesmo shape de `GET /platform/tenants`,
+tipado como `CreateTenantResponse` em `shared/types/platform.types.ts`.
+`slug` já existente → `409 CONFLICT` com `details: { field: "slug", slug }`. DTO
+inválido → `400 VALIDATION_ERROR` com `details.fields`.
 
 ### GET /platform/billing
 Assinaturas & Uso. Mensalidade = plano + excedente de mensagens do **mês corrente** (UTC).
@@ -1206,8 +1349,27 @@ Assinaturas & Uso. Mensalidade = plano + excedente de mensagens do **mês corren
 ```
 `extraMessages` é **derivado** (`max(0, messagesUsed - messagesIncluded)`), não lido de
 `tenants.extra_messages` — contador materializado seria uma segunda origem para o mesmo
-número (BUSINESS_RULES.md §5). Tabela de planos e preço do excedente: **D-019**. `totals.mrr`
-e `totals.tenants` contam apenas laboratórios **ativos**.
+número (BUSINESS_RULES.md §5).
+
+Planos e excedente, como estão no código (`PLAN_CATALOG`, `EXTRA_MESSAGE_PRICE` —
+**D-019**):
+
+| plano | `monthlyPrice` base | `messagesIncluded` |
+|---|---|---|
+| `starter` | 299 | 1000 |
+| `pro` | 799 | 5000 |
+| `enterprise` | 1999 | 20000 |
+
+Excedente: **R$ 0,10** por mensagem. `monthlyPrice` da resposta é
+`base + extraMessages × 0.10` (no exemplo: `799 + 250 × 0,10 = 824`). Dinheiro é número
+decimal, nunca string formatada.
+
+Recorte dos agregados — **não é o mesmo para os três**:
+- `usage[]` lista **todos** os laboratórios, ativos ou não;
+- `totals.mrr` soma o `monthlyPrice` **só dos ativos** (lab suspenso não fatura) e
+  `totals.tenants` conta **só os ativos**;
+- `totals.messages` soma `messagesUsed` de **todos** os laboratórios da lista,
+  inclusive inativos — é volume de tráfego, não faturamento.
 
 ---
 

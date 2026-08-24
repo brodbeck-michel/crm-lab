@@ -149,6 +149,42 @@ color: var(--color-accent-600);       /* ✓ Mínimo para corpo */
 | 13px | Body | 400 | Corpo e prévia |
 | 11px | Body | 600 | Cabeçalho de tabela (caixa alta) |
 
+### Nomes dos degraus (classes Tailwind)
+
+A escala acima existe como `theme.extend.fontSize` em `frontend/tailwind.config.js`.
+**São estes sete nomes e nenhum outro** — não existe `text-body-md`, `text-body-sm`,
+`text-sm`, `text-xs` nem `text-lg` neste projeto.
+
+| Classe | Tamanho | Papel |
+|--------|---------|-------|
+| `text-display` | 32px heading | Título de tela (`h1`) |
+| `text-metric` | 30px heading | Indicador numérico de cartão |
+| `text-section` | 21px heading | Título de seção (`h2`, `h3`) |
+| `text-label` | 13.5px / 600 | Rótulo de item, nome em lista, rótulo de campo |
+| `text-body` | 13px | Corpo, prévia, célula de tabela |
+| `text-caption` | 12px | Legenda, meta, paginação, chip |
+| `text-micro` | 11px / 600 caixa alta | Cabeçalho de tabela, rótulo de indicador |
+
+**A escala default do Tailwind (`text-xs`…`text-3xl`) é proibida.** Ela continua existindo
+no tema resolvido — `extend` faz *merge* com o default — mas usá-la coloca duas escalas
+tipográficas no mesmo app. Vale o mesmo para cor: a rampa neutra vai de **100 a 900**;
+`neutral-50` não é nossa, é o `#fafafa` fixo do Tailwind, imune a `applyTheme()`.
+
+Quem garante isso é `frontend/src/components/tailwind-theme-classes.spec.ts`, que valida
+toda classe `text-*`/`bg-*` de `src/` contra `theme.extend` (não contra o tema resolvido:
+o merge com o default É o problema).
+
+### Cor em biblioteca de gráfico (Recharts)
+
+O Recharts pinta eixo, grade e série por **prop**, não por classe. Os tokens chegam até ele
+por `frontend/src/components/analytics/chartTokens.ts` — e são os mesmos papéis da tabela
+acima, sem token novo: eixo/legenda `--color-neutral-600`, grade e borda de tooltip
+`--color-neutral-300`, série primária/de atenção `--color-accent`, série positiva/receita
+`--color-accent-2`, fundo do tooltip `--color-surface`.
+
+Não existem `--color-text-secondary`, `--color-border`, `--color-success` nem
+`--color-warning`: são sinônimos inventados de tokens que já existem.
+
 ### Aplicação em CSS
 
 ```css

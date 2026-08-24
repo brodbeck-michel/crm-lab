@@ -1,0 +1,121 @@
+# Stack de producao (single-host). Ver docs/guides/DEPLOYMENT.md.
+#
+#   cp .env.prod.example .env    # NAO existe no repo: monte a partir de
+#                                # backend/.env.example + as chaves daqui
+#   docker compose -f docker-compose.prod.yml build
+#   docker compose -f docker-compose.prod.yml run --rm migrate
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# NENHUM valor aqui e segredo. Toda chave sensivel vem do ambiente
+# (`${VAR:?mensagem}` = falha explicita se nao estiver definida).
+
+name: crm-lab-prod
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?defina POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-crm_lab}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # Sem `ports:` — o banco so existe na rede interna do compose.
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  # Job de migracao: roda ate o fim e sai. `run --rm migrate` antes de todo
+  # `up` que inclua migracao nova (DEPLOYMENT.md "Passo de migracao").
+  migrate:
+    image: crm-lab-backend:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: 'no'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?defina DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?defina JWT_REFRESH_SECRET}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    command: ['node', 'dist/backend/src/db/cli/migrate.js']
+
+  backend:
+    image: crm-lab-backend:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: ${DATABASE_URL:?defina DATABASE_URL}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?defina JWT_REFRESH_SECRET}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-900}
+      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-604800}
+      CORS_ORIGIN: ${CORS_ORIGIN:?defina CORS_ORIGIN}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-100}
+      # Um unico proxy (o servico `frontend`/nginx) fica entre o cliente e a API.
+      # Sem isto o default seguro (0) ignora o X-Forwarded-For e TODO o trafego
+      # anonimo colapsa no IP do nginx — o balde por IP vira global. Contar hops
+      # a mais e o erro perigoso: o cliente volta a forjar a origem (D-057).
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
+      WHATSAPP_API_URL: ${WHATSAPP_API_URL:-}
+      WHATSAPP_API_TOKEN: ${WHATSAPP_API_TOKEN:-}
+      WHATSAPP_WEBHOOK_SECRET: ${WHATSAPP_WEBHOOK_SECRET:-}
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    # Sem `ports:` — quem expoe a API e o nginx do frontend, no mesmo origin.
+
+  frontend:
+    image: crm-lab-frontend:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        # Mesmo origin: o nginx da propria imagem faz proxy de /api e /ws.
+        VITE_API_URL: ${VITE_API_URL:-/api/v1}
+        VITE_WS_URL: ${VITE_WS_URL:-/ws}
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      API_UPSTREAM: http://backend:3000
+    ports:
+      - '${HTTP_PORT:-8080}:8080'
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  postgres-data:
+  redis-data:

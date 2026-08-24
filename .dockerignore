@@ -1,0 +1,26 @@
+# Contexto de build = raiz do monorepo. Tudo que nao entra nas imagens.
+**/node_modules
+**/dist
+**/build
+**/coverage
+**/.vite
+.git
+.github
+docs
+# `e2e/` NAO entra aqui: `npm ci` na raiz exige o package.json de todo workspace
+# declarado. Apenas os artefatos dele sao ignorados.
+e2e/workflows
+playwright-report
+test-results
+.pglite
+**/*.log
+**/*.tsbuildinfo
+
+# Segredos e artefatos locais — NUNCA dentro de uma imagem.
+**/.env
+**/.env.*
+!**/.env.example
+
+*.docx
+Design System CRM.dc.html
+.superpowers

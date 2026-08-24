@@ -5,12 +5,25 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
+# Um run por ref: push novo cancela o anterior que ainda estiver rodando.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '22'
+
 jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Qualidade — typecheck, lint e as suites unitarias/integracao.
+  #    Nao precisa de servico externo: as suites de backend rodam em PGlite
+  #    (Postgres 16 embutido no processo Node) — ver DECISIONS.md D-008.
+  # ---------------------------------------------------------------------------
   quality:
     name: Typecheck, lint e testes
     runs-on: ubuntu-latest
@@ -19,53 +32,249 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - name: Instalar dependências
+      - name: Instalar dependencias
         run: npm ci
 
-      - name: Typecheck (shared + backend + frontend)
+      - name: Typecheck (shared + backend + frontend + e2e)
         run: npm run typecheck
 
       - name: Lint
         run: npm run lint
 
-      # As suítes de integração e de isolamento multitenant rodam contra PGlite
-      # (Postgres 16 embutido) — não exigem serviço externo. Ver DECISIONS.md D-008.
       - name: Testes de backend
         run: npm run test:backend
 
       - name: Testes de frontend
         run: npm run test:frontend
 
-  e2e:
-    name: E2E (Playwright)
+  # ---------------------------------------------------------------------------
+  # 2. Build — prova que os tres workspaces COMPILAM de verdade, nao so que
+  #    passam no typecheck. `npm run build` = shared -> backend (tsc emit)
+  #    -> frontend (vite build). O passo de verificacao existe porque um build
+  #    que "passa" sem emitir arquivo nenhum e um falso verde.
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build de producao
     runs-on: ubuntu-latest
-    needs: quality
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - name: Instalar dependências
+      - name: Instalar dependencias
         run: npm ci
 
-      - name: Instalar navegador
-        run: npx playwright install --with-deps chromium
-
-      - name: Build
+      - name: Build (shared + backend + frontend)
         run: npm run build
 
-      - name: Rodar E2E
+      - name: Verificar artefatos gerados
+        run: |
+          set -euo pipefail
+          test -f backend/dist/backend/src/main.js \
+            || { echo "::error::backend/dist/backend/src/main.js nao foi emitido"; exit 1; }
+          test -f backend/dist/shared/types/index.js \
+            || { echo "::error::shared nao foi compilado junto do backend"; exit 1; }
+          test -f frontend/dist/index.html \
+            || { echo "::error::frontend/dist/index.html nao foi emitido"; exit 1; }
+          echo "Artefatos OK."
+
+      - name: Publicar artefatos de build
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-dist
+          path: |
+            backend/dist/
+            frontend/dist/
+          retention-days: 3
+
+  # ---------------------------------------------------------------------------
+  # 3. Imagens de producao — valida que os Dockerfiles constroem. Nao publica
+  #    em registry (nenhuma credencial no CI); so garante que o build nao quebra.
+  # ---------------------------------------------------------------------------
+  docker:
+    name: Build das imagens
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build da imagem do backend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./backend/Dockerfile
+          push: false
+          load: true
+          tags: crm-lab-backend:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build da imagem do frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./frontend/Dockerfile
+          push: false
+          load: true
+          tags: crm-lab-frontend:ci
+          build-args: |
+            VITE_API_URL=/api/v1
+            VITE_WS_URL=/ws
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test das imagens
+        run: |
+          set -euo pipefail
+          # backend: sobe sem DATABASE_URL nao — mas o processo precisa ao menos
+          # existir dentro da imagem e rodar como usuario nao-root.
+          test "$(docker run --rm crm-lab-backend:ci id -u)" != "0" \
+            || { echo "::error::imagem do backend roda como root"; exit 1; }
+          test "$(docker run --rm --entrypoint id crm-lab-frontend:ci -u)" != "0" \
+            || { echo "::error::imagem do frontend roda como root"; exit 1; }
+          echo "Imagens rodam como usuario nao-root."
+
+  # ---------------------------------------------------------------------------
+  # 4. E2E — Postgres 16 de verdade (o unico lugar do CI que usa banco externo),
+  #    migracoes + seed fixo, API e UI subindo como em DEVELOPMENT.md, e a suite
+  #    Playwright rodando contra elas.
+  #
+  #    Este job NAO usa `continue-on-error`: se a suite quebrar, o CI fica
+  #    vermelho. E deliberado (ver DECISIONS.md D-052).
+  # ---------------------------------------------------------------------------
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    needs: [quality, build]
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: crm
+          POSTGRES_PASSWORD: crm
+          POSTGRES_DB: crm_lab
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U crm -d crm_lab"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Banco efemero do runner. Usuario/senha sao os do docker-compose de dev:
+      # nao ha segredo aqui, o servico morre com o job.
+      DATABASE_URL: postgres://crm:crm@localhost:5432/crm_lab
+      # NAO pode ser `test`: NODE_ENV=test forca o driver PGlite em memoria
+      # (D-008) e o seed iria para um banco que morre com o processo.
+      NODE_ENV: development
+      LOG_LEVEL: warn
+      PORT: '3000'
+      # `POST /auth/login` e ANONIMO: nao ha Bearer para chavear, entao cai no
+      # balde por IP — e a suite inteira (~34 logins de UI, mais os `apiLogin`
+      # que perdem o cache do worker, mais `retries: 2`) sai de um IP so, junto
+      # com o polling anonimo de /health do passo de espera. O default de 100/min
+      # estoura no meio do caminho.
+      #
+      # NAO e o bug antigo do `req.ctx` sempre `undefined`: D-054 corrigiu isso
+      # e o trafego AUTENTICADO ja tem balde por usuario. O que sobra e so o
+      # login anonimo, que nao tem como ser chaveado de outro jeito.
+      #
+      # 2000 e nao 100000: o limitador continua montado e funcional (um loop
+      # descontrolado ainda e barrado); desliga-lo aqui seria mascarar.
+      RATE_LIMIT_PER_MINUTE: '2000'
+      CORS_ORIGIN: http://localhost:5173
+      VITE_API_URL: http://localhost:3000/api/v1
+      VITE_WS_URL: ws://localhost:3000/ws
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Gerar segredos efemeros de JWT
+        run: |
+          set -euo pipefail
+          {
+            echo "JWT_SECRET=$(openssl rand -hex 32)"
+            echo "JWT_REFRESH_SECRET=$(openssl rand -hex 32)"
+          } >> "$GITHUB_ENV"
+
+      - name: Cache dos navegadores do Playwright
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: playwright-${{ runner.os }}-
+
+      - name: Instalar navegador
+        run: npm run e2e:install --workspace e2e
+
+      - name: Aplicar migracoes
+        run: npm run migrate
+
+      - name: Semear dataset fixo de E2E
+        run: npm run seed:e2e
+
+      - name: Subir API e UI
+        run: |
+          set -euo pipefail
+          nohup npm run dev > /tmp/servers.log 2>&1 &
+          echo "servers_pid=$!" >> "$GITHUB_ENV"
+
+      - name: Aguardar API e UI ficarem prontas
+        run: |
+          set -euo pipefail
+          wait_for() {
+            local url="$1" name="$2"
+            for _ in $(seq 1 60); do
+              if curl -sfo /dev/null "$url"; then
+                echo "$name pronto em $url"
+                return 0
+              fi
+              sleep 2
+            done
+            echo "::error::$name nao respondeu em $url apos 120s"
+            tail -n 200 /tmp/servers.log || true
+            return 1
+          }
+          wait_for http://localhost:3000/health API
+          wait_for http://localhost:5173/ UI
+
+      - name: Rodar suite E2E
         run: npm run e2e
 
-      - uses: actions/upload-artifact@v4
+      - name: Publicar relatorio do Playwright
         if: failure()
+        uses: actions/upload-artifact@v4
         with:
           name: playwright-report
-          path: playwright-report/
+          path: |
+            e2e/playwright-report/
+            e2e/test-results/
           retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Publicar log dos servidores
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-logs
+          path: /tmp/servers.log
+          retention-days: 7
+          if-no-files-found: ignore

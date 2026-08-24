@@ -13,11 +13,12 @@
     "test": "npm run test --workspace backend && npm run test --workspace frontend",
     "test:backend": "npm run test --workspace backend",
     "test:frontend": "npm run test --workspace frontend",
-    "typecheck": "npm run typecheck --workspace shared && npm run typecheck --workspace backend && npm run typecheck --workspace frontend",
+    "typecheck": "npm run typecheck --workspace shared && npm run typecheck --workspace backend && npm run typecheck --workspace frontend && npm run typecheck --workspace e2e",
     "lint": "eslint .",
     "format": "prettier --write \"**/*.{ts,tsx,json,css,md}\"",
     "migrate": "npm run migrate --workspace backend",
     "seed": "npm run seed --workspace backend",
+    "seed:e2e": "npm run seed:e2e --workspace backend",
     "e2e": "npm run e2e --workspace e2e",
     "e2e:headed": "npm run e2e:headed --workspace e2e"
   },

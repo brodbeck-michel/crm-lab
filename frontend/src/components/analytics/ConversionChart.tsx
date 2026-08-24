@@ -1,4 +1,13 @@
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { formatCount } from '@/lib/format';
+import {
+  CHART_ACCENT_COLOR,
+  CHART_GRID_COLOR,
+  CHART_TICK,
+  CHART_TOOLTIP_CONTENT_STYLE,
+  CHART_TOOLTIP_LABEL_STYLE,
+  toChartNumber,
+} from './chartTokens';
 
 interface ConversionChartProps {
   data?: Array<{ stage: string; count: number }>;
@@ -7,36 +16,33 @@ interface ConversionChartProps {
 export default function ConversionChart({ data = [] }: ConversionChartProps) {
   if (!data || data.length === 0) {
     return (
-      <div className="bg-white p-5 rounded-md shadow-sm">
-        <h3 className="text-heading-16 font-semibold mb-4">Funil de Conversão</h3>
+      <div className="bg-neutral-100 p-5 rounded-md shadow-sm">
+        <h3 className="font-heading text-section mb-4">Funil de Conversão</h3>
         <div className="h-80 flex items-center justify-center text-neutral-500">Nenhum dado disponível</div>
       </div>
     );
   }
 
   return (
-    <div className="bg-white p-5 rounded-md shadow-sm">
-      <h3 className="text-heading-16 font-semibold mb-4">Funil de Conversão</h3>
+    <div className="bg-neutral-100 p-5 rounded-md shadow-sm">
+      <h3 className="font-heading text-section mb-4">Funil de Conversão</h3>
       <ResponsiveContainer width="100%" height={300}>
         <BarChart data={data}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+          <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_COLOR} />
           <XAxis
             dataKey="stage"
-            tick={{ fill: 'var(--color-text-secondary)', fontSize: 12 }}
+            tick={CHART_TICK}
             angle={-45}
             textAnchor="end"
             height={100}
           />
-          <YAxis tick={{ fill: 'var(--color-text-secondary)', fontSize: 12 }} />
+          <YAxis tick={CHART_TICK} />
           <Tooltip
-            contentStyle={{
-              backgroundColor: 'var(--color-surface)',
-              border: '1px solid var(--color-border)',
-            }}
-            labelStyle={{ color: 'var(--color-text)' }}
-            formatter={(value) => [(value ?? 0).toLocaleString('pt-BR'), 'Propostas']}
+            contentStyle={CHART_TOOLTIP_CONTENT_STYLE}
+            labelStyle={CHART_TOOLTIP_LABEL_STYLE}
+            formatter={(value) => [formatCount(toChartNumber(value)), 'Propostas']}
           />
-          <Bar dataKey="count" fill="var(--color-accent)" name="Propostas" />
+          <Bar dataKey="count" fill={CHART_ACCENT_COLOR} name="Propostas" />
         </BarChart>
       </ResponsiveContainer>
     </div>

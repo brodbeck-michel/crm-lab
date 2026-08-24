@@ -40,6 +40,13 @@ export interface AuthState {
   setSession: (response: LoginResponse) => void;
   /** Só o access token — usado pelo interceptor de refresh. */
   setAccessToken: (accessToken: string, expiresIn: number) => void;
+  /**
+   * Personalização salva (`PATCH /themes/current`): guarda o tema novo na
+   * sessão E o aplica. Sem isso a troca não sobrevive ao reload — o
+   * `onRehydrateStorage` reaplicaria o tema que veio do login
+   * (docs/domain/WORKFLOWS.md §9).
+   */
+  setTheme: (theme: Theme) => void;
   /** Logout / refresh inválido. Volta ao tema padrão. */
   clearSession: () => void;
   /** Reaplica o tema da sessão restaurada (chamado no bootstrap). */
@@ -88,6 +95,11 @@ export const useAuthStore = create<AuthState>()(
         set({
           tokens: { ...current, accessToken, expiresAt: Date.now() + expiresIn * 1000 },
         });
+      },
+
+      setTheme: (theme) => {
+        set({ theme });
+        applyTheme(theme);
       },
 
       clearSession: () => {

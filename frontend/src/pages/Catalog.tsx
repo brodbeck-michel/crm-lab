@@ -4,13 +4,13 @@ import { useAuthStore } from '@/stores/auth.store';
 import ExamTable from '@/components/catalog/ExamTable';
 import ExamModal from '@/components/catalog/ExamModal';
 import { Button, SearchInput } from '@/components/ui';
-import type { ListExamsQuery } from '@crm-lab/shared';
+import type { Exam, ListExamsQuery } from '@crm-lab/shared';
 
 export default function Catalog() {
   const user = useAuthStore((s) => s.user);
   const [search, setSearch] = useState('');
   const [showModal, setShowModal] = useState(false);
-  const [editExamId, setEditExamId] = useState<string | undefined>();
+  const [editExam, setEditExam] = useState<Exam | undefined>();
 
   const filters: ListExamsQuery = {
     limit: 20,
@@ -21,20 +21,20 @@ export default function Catalog() {
 
   const canEdit = user?.role !== 'attendant';
 
-  const handleEditClick = (examId: string) => {
-    setEditExamId(examId);
+  const handleEditClick = (exam: Exam) => {
+    setEditExam(exam);
     setShowModal(true);
   };
 
   const handleCloseModal = () => {
     setShowModal(false);
-    setEditExamId(undefined);
+    setEditExam(undefined);
   };
 
   return (
     <div className="flex flex-col gap-lg p-lg h-full">
       <div className="flex justify-between items-center">
-        <h1 className="text-heading-32">Catálogo de Exames</h1>
+        <h1 className="font-heading text-display">Catálogo de Exames</h1>
         {canEdit && (
           <Button variant="primary" onClick={() => setShowModal(true)}>
             + Novo Exame
@@ -63,7 +63,7 @@ export default function Catalog() {
 
       {showModal && (
         <ExamModal
-          examId={editExamId}
+          exam={editExam}
           onClose={handleCloseModal}
         />
       )}

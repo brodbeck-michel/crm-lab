@@ -61,6 +61,23 @@ export function formatMoney(value: number, variant: MoneyVariant = 'full'): stri
   }
 }
 
+const INTEGER = new Intl.NumberFormat('pt-BR', {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 0,
+});
+
+/**
+ * Contagem inteira em pt-BR: `formatCount(1234)` → `1.234`.
+ *
+ * Existe para que gráfico, indicador e tabela não repitam
+ * `toLocaleString('pt-BR')` cada um do seu jeito. Trunca (não arredonda):
+ * "1,7 propostas" não é contagem.
+ */
+export function formatCount(value: number): string {
+  if (!Number.isFinite(value)) return INTEGER.format(0);
+  return INTEGER.format(Math.trunc(value));
+}
+
 const DATE_TIME = new Intl.DateTimeFormat('pt-BR', {
   day: '2-digit',
   month: '2-digit',
@@ -108,6 +125,20 @@ export function formatDateTime(iso: string): string {
   if (Number.isNaN(date.getTime())) return '';
   // pt-BR devolve "23/08/2026, 14:30" — a vírgula não faz parte do formato pedido.
   return DATE_TIME.format(date).replace(',', '');
+}
+
+/**
+ * Data SEM hora (`IsoDate`, `YYYY-MM-DD`) → `DD/MM/AAAA`.
+ *
+ * Reordenação de campos de propósito, sem `new Date()`: `subscriptionUntil`
+ * não tem hora, e construir um Date a partir dela traria fuso — em UTC-3 o dia
+ * volta um. Usa só os 10 primeiros caracteres, então também aceita um
+ * `IsoDateTime` quando a hora é irrelevante.
+ */
+export function formatIsoDay(iso: string): string {
+  const [year, month, day] = iso.slice(0, 10).split('-');
+  if (!year || !month || !day) return iso;
+  return `${day}/${month}/${year}`;
 }
 
 /**

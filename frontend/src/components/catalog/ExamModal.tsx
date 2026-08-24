@@ -1,15 +1,23 @@
 import { useState, useEffect } from 'react';
-import { useCreateExam, useUpdateExam, useExamList } from '@/api/exams';
-import type { CreateExamRequest, UpdateExamRequest } from '@crm-lab/shared';
+import { useCreateExam, useUpdateExam } from '@/api/exams';
+import type { CreateExamRequest, Exam, UpdateExamRequest } from '@crm-lab/shared';
 import { Modal } from '@/components/shared';
 import { Input, Button } from '@/components/ui';
 
 interface ExamModalProps {
-  examId?: string;
+  /**
+   * Exame da linha clicada (modo edição). Ausente ⇒ criação.
+   *
+   * O registro vem PRONTO da tabela. `docs/api/API_CONTRACTS.md` §4 não expõe
+   * `GET /exams/:id`, e varrer `GET /exams?limit=1000` volta 400 (o zod do
+   * controller corta em 100) — o formulário abria vazio.
+   */
+  exam?: Exam;
   onClose: () => void;
 }
 
-export default function ExamModal({ examId, onClose }: ExamModalProps) {
+export default function ExamModal({ exam, onClose }: ExamModalProps) {
+  const examId = exam?.id;
   const [form, setForm] = useState({
     name: '',
     code: '',
@@ -24,24 +32,20 @@ export default function ExamModal({ examId, onClose }: ExamModalProps) {
   const createExam = useCreateExam();
   const updateExam = useUpdateExam();
 
-  // Fetch exam if editing
-  const { data: allExams } = useExamList({ limit: 1000 });
-  const editingExam = examId && allExams?.find((e) => e.id === examId);
-
   useEffect(() => {
-    if (editingExam) {
+    if (exam) {
       setForm({
-        name: editingExam.name,
-        code: editingExam.code,
-        description: editingExam.description || '',
-        preparation: editingExam.preparation || '',
-        turnaroundHours: editingExam.turnaroundHours?.toString() || '',
-        pricePrivate: editingExam.pricePrivate.toString(),
-        priceInsurance: editingExam.priceInsurance.toString(),
-        isActive: editingExam.isActive,
+        name: exam.name,
+        code: exam.code,
+        description: exam.description || '',
+        preparation: exam.preparation || '',
+        turnaroundHours: exam.turnaroundHours?.toString() || '',
+        pricePrivate: exam.pricePrivate.toString(),
+        priceInsurance: exam.priceInsurance.toString(),
+        isActive: exam.isActive,
       });
     }
-  }, [editingExam]);
+  }, [exam]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

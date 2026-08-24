@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  formatCount,
   formatDateTime,
+  formatIsoDay,
   formatMoney,
   formatPercent,
   formatRelativeDate,
@@ -112,6 +114,36 @@ describe('formatPercent', () => {
 
   it('valor não finito devolve 0%', () => {
     expect(norm(formatPercent(Number.NaN))).toBe('0%');
+  });
+});
+
+describe('formatCount', () => {
+  it('agrupa milhares em pt-BR', () => {
+    expect(norm(formatCount(1234))).toBe('1.234');
+    expect(norm(formatCount(0))).toBe('0');
+  });
+
+  it('trunca — contagem nao tem casa decimal', () => {
+    expect(norm(formatCount(1999.9))).toBe('1.999');
+  });
+
+  it('valor nao finito devolve 0', () => {
+    expect(norm(formatCount(Number.NaN))).toBe('0');
+  });
+});
+
+describe('formatIsoDay', () => {
+  it('reordena IsoDate sem passar por Date (sem fuso)', () => {
+    expect(formatIsoDay('2026-12-31')).toBe('31/12/2026');
+    expect(formatIsoDay('2026-01-01')).toBe('01/01/2026');
+  });
+
+  it('aceita IsoDateTime, ignorando a hora', () => {
+    expect(formatIsoDay('2026-08-24T02:00:00.000Z')).toBe('24/08/2026');
+  });
+
+  it('entrada fora de formato volta intacta', () => {
+    expect(formatIsoDay('sem-data')).toBe('sem-data');
   });
 });
 

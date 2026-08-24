@@ -6,7 +6,8 @@ import { Button } from '@/components/ui';
 interface ExamTableProps {
   exams: Exam[];
   canEdit: boolean;
-  onEdit?: (examId: string) => void;
+  /** Recebe o exame INTEIRO — o modal de edição não precisa refazer o fetch. */
+  onEdit?: (exam: Exam) => void;
 }
 
 export default function ExamTable({ exams, canEdit, onEdit }: ExamTableProps) {
@@ -62,7 +63,7 @@ export default function ExamTable({ exams, canEdit, onEdit }: ExamTableProps) {
               size="sm"
               onClick={(e) => {
                 e.stopPropagation();
-                onEdit?.(exam.id);
+                onEdit?.(exam);
               }}
             >
               Editar

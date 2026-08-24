@@ -48,6 +48,7 @@ import { randomUUID } from 'node:crypto';
 import type {
   BillingResponse,
   CreateTenantRequest,
+  ListTenantsQuery,
   ListTenantsResponse,
   PaginationMeta,
   SubscriptionPlan,
@@ -125,13 +126,10 @@ export function billingFor(
   };
 }
 
-export interface ListTenantsQuery {
-  page?: number;
-  limit?: number;
-  search?: string;
-  isActive?: boolean;
-  plan?: SubscriptionPlan;
-}
+// `ListTenantsQuery` vive em @crm-lab/shared (platform.types.ts): o mesmo shape
+// era declarado aqui e de novo na tela, contra um contrato ja documentado.
+// Reexportado porque `platform.routes.ts` importa o tipo deste modulo.
+export type { ListTenantsQuery };
 
 export interface PlatformService {
   listTenants(ctx: TenantContext, query: ListTenantsQuery): Promise<ListTenantsResponse>;

@@ -28,50 +28,50 @@ export default function AuditLogTable({ entries, pagination, onPageChange }: Aud
   if (entries.length === 0) {
     return (
       <div className="flex items-center justify-center h-full">
-        <p className="text-body-md text-neutral-500">Nenhuma entrada de auditoria encontrada</p>
+        <p className="text-label text-neutral-600">Nenhuma entrada de auditoria encontrada</p>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-lg">
-      <div className="overflow-x-auto border border-neutral-200 rounded-md">
+      <div className="overflow-x-auto border border-neutral-200 rounded-md bg-neutral-100">
         <table className="w-full">
           <thead>
-            <tr className="border-b border-neutral-200 bg-neutral-50">
-              <th className="px-lg py-md text-left text-body-sm font-semibold text-neutral-700">Data/Hora</th>
-              <th className="px-lg py-md text-left text-body-sm font-semibold text-neutral-700">Usuário</th>
-              <th className="px-lg py-md text-left text-body-sm font-semibold text-neutral-700">Ação</th>
-              <th className="px-lg py-md text-left text-body-sm font-semibold text-neutral-700">Entidade</th>
-              <th className="px-lg py-md text-left text-body-sm font-semibold text-neutral-700">Alterações</th>
-              <th className="px-lg py-md text-left text-body-sm font-semibold text-neutral-700">IP</th>
+            <tr className="border-b border-neutral-300">
+              <th className="px-lg py-md text-left text-micro font-semibold uppercase text-neutral-600">Data/Hora</th>
+              <th className="px-lg py-md text-left text-micro font-semibold uppercase text-neutral-600">Usuário</th>
+              <th className="px-lg py-md text-left text-micro font-semibold uppercase text-neutral-600">Ação</th>
+              <th className="px-lg py-md text-left text-micro font-semibold uppercase text-neutral-600">Entidade</th>
+              <th className="px-lg py-md text-left text-micro font-semibold uppercase text-neutral-600">Alterações</th>
+              <th className="px-lg py-md text-left text-micro font-semibold uppercase text-neutral-600">IP</th>
             </tr>
           </thead>
           <tbody>
             {entries.map((entry) => (
-              <tr key={entry.id} className="border-b border-neutral-200 hover:bg-neutral-50 transition-colors">
-                <td className="px-lg py-md text-body-sm text-neutral-900">
+              <tr key={entry.id} className="border-b border-neutral-200 hover:bg-accent-100 transition-colors">
+                <td className="px-lg py-md text-body text-neutral-900">
                   <DateDisplay value={entry.timestamp} variant="relative" />
                 </td>
-                <td className="px-lg py-md text-body-sm text-neutral-900">
+                <td className="px-lg py-md text-body text-neutral-900">
                   {entry.userName || '-'}
                 </td>
-                <td className="px-lg py-md text-body-sm text-neutral-900">
+                <td className="px-lg py-md text-body text-neutral-900">
                   {ACTION_LABELS[entry.action] || entry.action}
                 </td>
-                <td className="px-lg py-md text-body-sm text-neutral-900">
+                <td className="px-lg py-md text-body text-neutral-900">
                   <div className="flex flex-col gap-xs">
                     <span>{ENTITY_TYPE_LABELS[entry.entityType] || entry.entityType}</span>
-                    <span className="text-neutral-500 font-mono text-xs">{entry.entityId}</span>
+                    <span className="text-caption text-neutral-600 font-mono">{entry.entityId}</span>
                   </div>
                 </td>
-                <td className="px-lg py-md text-body-sm text-neutral-900">
+                <td className="px-lg py-md text-body text-neutral-900">
                   {entry.oldValues || entry.newValues ? (
                     <div className="space-y-xs max-w-xs">
                       {entry.oldValues && (
                         <div className="text-neutral-600">
                           <span className="font-medium">Anterior:</span>
-                          <pre className="text-xs bg-neutral-100 p-xs rounded mt-xs overflow-auto max-h-24">
+                          <pre className="text-caption bg-neutral-200 p-xs rounded-sm mt-xs overflow-auto max-h-24">
                             {JSON.stringify(entry.oldValues, null, 2)}
                           </pre>
                         </div>
@@ -79,7 +79,7 @@ export default function AuditLogTable({ entries, pagination, onPageChange }: Aud
                       {entry.newValues && (
                         <div className="text-neutral-600">
                           <span className="font-medium">Novo:</span>
-                          <pre className="text-xs bg-neutral-100 p-xs rounded mt-xs overflow-auto max-h-24">
+                          <pre className="text-caption bg-neutral-200 p-xs rounded-sm mt-xs overflow-auto max-h-24">
                             {JSON.stringify(entry.newValues, null, 2)}
                           </pre>
                         </div>
@@ -89,7 +89,7 @@ export default function AuditLogTable({ entries, pagination, onPageChange }: Aud
                     <span className="text-neutral-500">-</span>
                   )}
                 </td>
-                <td className="px-lg py-md text-body-sm text-neutral-500 font-mono">
+                <td className="px-lg py-md text-body text-neutral-600 font-mono">
                   {entry.ipAddress || '-'}
                 </td>
               </tr>
@@ -101,7 +101,7 @@ export default function AuditLogTable({ entries, pagination, onPageChange }: Aud
       {/* Paginação */}
       {pagination.totalPages > 1 && (
         <div className="flex justify-between items-center">
-          <p className="text-body-sm text-neutral-600">
+          <p className="text-caption text-neutral-600">
             Mostrando {entries.length} de {pagination.total} entradas
           </p>
           <div className="flex gap-sm">
@@ -113,7 +113,7 @@ export default function AuditLogTable({ entries, pagination, onPageChange }: Aud
             >
               Anterior
             </Button>
-            <span className="text-body-sm text-neutral-600 flex items-center">
+            <span className="text-caption text-neutral-600 flex items-center">
               Página {pagination.page} de {pagination.totalPages}
             </span>
             <Button

@@ -10,6 +10,7 @@ import type {
   ListProposalsResponse,
   Message,
 } from '@crm-lab/shared';
+import type * as ApiModule from '@/api';
 
 const listMock = vi.fn();
 const getMock = vi.fn();
@@ -17,7 +18,7 @@ const sendMessageMock = vi.fn();
 const listProposalsMock = vi.fn();
 
 vi.mock('@/api', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/api')>();
+  const actual = await importOriginal<typeof ApiModule>();
   return {
     ...actual,
     api: {

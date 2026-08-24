@@ -1,12 +1,19 @@
-import { useState, useEffect } from 'react';
-import { useCreateUser, useUpdateUser, useUserList } from '@/api';
+import { useState, useEffect, useId } from 'react';
+import { useCreateUser, useUpdateUser } from '@/api';
 import { Modal } from '@/components/shared';
 import { Input, Select, Button, Toggle } from '@/components/ui';
-import type { CreateUserRequest, UpdateUserRequest, UserRole } from '@crm-lab/shared';
+import type { CreateUserRequest, ManagedUser, UpdateUserRequest, UserRole } from '@crm-lab/shared';
 import { DEFAULT_DISCOUNT_LIMIT } from '@crm-lab/shared';
 
 interface UserModalProps {
-  userId?: string;
+  /**
+   * Usuário da linha clicada (modo edição). Ausente ⇒ criação.
+   *
+   * O registro vem PRONTO da tabela — a listagem já o carregou. Não existe
+   * `GET /users/:id` em docs/api/API_CONTRACTS.md, e varrer `GET /users?limit=1000`
+   * volta 400 (o zod do controller corta em 100).
+   */
+  user?: ManagedUser;
   onClose: () => void;
 }
 
@@ -16,7 +23,9 @@ const ROLE_OPTIONS = [
   { value: 'admin', label: 'Administrador' },
 ];
 
-export default function UserModal({ userId, onClose }: UserModalProps) {
+export default function UserModal({ user, onClose }: UserModalProps) {
+  const userId = user?.id;
+  const discountFieldId = useId();
   const [form, setForm] = useState({
     email: '',
     name: '',
@@ -31,23 +40,18 @@ export default function UserModal({ userId, onClose }: UserModalProps) {
   const createUser = useCreateUser();
   const updateUser = useUpdateUser();
 
-  // Fetch all users if editing
-  const { data: usersResponse } = useUserList({ limit: 1000 });
-  const allUsers = usersResponse?.users ?? [];
-  const editingUser = userId && allUsers.find((u) => u.id === userId);
-
   useEffect(() => {
-    if (editingUser) {
+    if (user) {
       setForm({
-        email: editingUser.email,
-        name: editingUser.name,
+        email: user.email,
+        name: user.name,
         password: '',
-        role: editingUser.role as UserRole,
-        discountLimit: editingUser.discountLimit,
-        isActive: editingUser.isActive,
+        role: user.role,
+        discountLimit: user.discountLimit,
+        isActive: user.isActive,
       });
     }
-  }, [editingUser]);
+  }, [user]);
 
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -174,13 +178,16 @@ export default function UserModal({ userId, onClose }: UserModalProps) {
         {/* Alçada de Desconto */}
         <div className="space-y-sm">
           <div className="flex justify-between items-center">
-            <label className="text-body-sm font-medium text-neutral-900">Alçada de Desconto</label>
-            <span className="text-body-sm text-neutral-500">
+            <label htmlFor={discountFieldId} className="text-label font-semibold text-neutral-900">
+              Alçada de Desconto
+            </label>
+            <span className="text-caption text-neutral-600">
               Padrão: {defaultLimit}%
             </span>
           </div>
           <div className="flex items-center gap-md">
             <Input
+              id={discountFieldId}
               type="number"
               min="0"
               max="100"
@@ -192,15 +199,16 @@ export default function UserModal({ userId, onClose }: UserModalProps) {
               error={errors.discountLimit}
               placeholder="0"
             />
-            <span className="text-body-sm text-neutral-600">%</span>
+            <span className="text-body text-neutral-600">%</span>
           </div>
         </div>
 
         {/* Status Ativo (apenas na edição) */}
         {userId && (
           <div className="flex items-center justify-between">
-            <label className="text-body-sm font-medium text-neutral-900">Usuário Ativo</label>
+            <span className="text-label font-semibold text-neutral-900">Usuário Ativo</span>
             <Toggle
+              aria-label="Usuário Ativo"
               checked={form.isActive}
               onChange={(checked) => setForm(prev => ({ ...prev, isActive: checked }))}
             />

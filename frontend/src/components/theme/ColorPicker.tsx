@@ -62,7 +62,7 @@ export default function ColorPicker({ color, onChange, isPending }: ColorPickerP
           disabled={isPending}
           label="Valor Hex"
         />
-        <p className="text-xs text-neutral-500 mt-xs">
+        <p className="text-caption text-neutral-600 mt-xs">
           Formato: rrggbb (6 dígitos hexadecimais)
         </p>
       </div>

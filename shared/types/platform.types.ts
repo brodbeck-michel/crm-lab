@@ -1,4 +1,4 @@
-import type { IsoDate, IsoDateTime, PaginationMeta } from './api.types.js';
+import type { IsoDate, IsoDateTime, PaginationMeta, PaginationQuery } from './api.types.js';
 
 export type SubscriptionPlan = 'starter' | 'pro' | 'enterprise';
 
@@ -14,6 +14,21 @@ export interface TenantSummary {
   createdAt: IsoDateTime;
 }
 
+/**
+ * Query de `GET /platform/tenants` (API_CONTRACTS.md §5b).
+ *
+ * FONTE UNICA: backend e frontend importam DAQUI. Antes existiam duas copias
+ * do mesmo shape — `ListTenantsQuery` no service e `TenantFilters` na tela —
+ * que podiam divergir do contrato sem que nada quebrasse.
+ *
+ * `search` casa nome ou slug (max. 255); `limit` max. 100 (default 20).
+ */
+export interface ListTenantsQuery extends PaginationQuery {
+  search?: string;
+  isActive?: boolean;
+  plan?: SubscriptionPlan;
+}
+
 export interface ListTenantsResponse {
   tenants: TenantSummary[];
   pagination: PaginationMeta;
@@ -26,6 +41,11 @@ export interface CreateTenantRequest {
   adminEmail: string;
   adminName: string;
   adminPassword: string;
+}
+
+/** `201` de `POST /platform/tenants` — envelopado (API_CONTRACTS.md §5b). */
+export interface CreateTenantResponse {
+  tenant: TenantSummary;
 }
 
 export interface TenantUsage {

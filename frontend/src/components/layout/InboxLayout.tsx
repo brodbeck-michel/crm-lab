@@ -15,6 +15,12 @@ import { cn } from '@/components/ui';
 export interface InboxLayoutProps {
   /** Coluna 1 — lista de conversas (336px). */
   list: ReactNode;
+  /**
+   * `aria-label` da coluna 1. Default `"Conversas"` (Atendimento); o Chat
+   * Interno reaproveita o layout com uma lista de CANAIS, e o rótulo precisa
+   * dizer isso.
+   */
+  listLabel?: string;
   /** Coluna 2 — conversa aberta (flex, mínimo 440px). */
   conversation: ReactNode;
   /** Coluna 3 — contexto do paciente (316px, recolhível). */
@@ -30,6 +36,7 @@ export const INBOX_CONTEXT_WIDTH = 316;
 
 export function InboxLayout({
   list,
+  listLabel = 'Conversas',
   conversation,
   context,
   contextOpen,
@@ -45,7 +52,7 @@ export function InboxLayout({
     >
       <section
         data-testid="inbox-list"
-        aria-label="Conversas"
+        aria-label={listLabel}
         style={{ flex: `0 0 ${INBOX_LIST_WIDTH}px`, width: INBOX_LIST_WIDTH }}
         className="flex flex-col overflow-y-auto border-r border-neutral-300 bg-surface"
       >

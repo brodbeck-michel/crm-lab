@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { useState } from 'react';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Modal } from './Modal';
@@ -78,6 +79,36 @@ describe('Modal', () => {
     closeButton.focus();
     await userEvent.tab({ shift: true });
     expect(innerButton).toHaveFocus();
+  });
+
+  /**
+   * Regressão: o efeito de foco tinha `onClose` nas dependências e chamava
+   * `card.focus()` a cada execução. Com um `onClose` recriado a cada render
+   * (o caso normal de um formulário controlado dentro do modal), cada tecla
+   * digitada roubava o foco do input e só o 1º caractere sobrevivia.
+   */
+  it('não rouba o foco do input quando onClose é recriado a cada render', async () => {
+    function FormInsideModal() {
+      const [value, setValue] = useState('');
+      // `onClose` recriado a cada render — identidade nova em toda tecla.
+      return (
+        <Modal open onClose={() => setValue('')} title="Novo Tenant">
+          <input
+            aria-label="Nome"
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+          />
+        </Modal>
+      );
+    }
+
+    render(<FormInsideModal />);
+    const input = screen.getByLabelText('Nome');
+    input.focus();
+    await userEvent.keyboard('Laboratório Vida');
+
+    expect(input).toHaveValue('Laboratório Vida');
+    expect(input).toHaveFocus();
   });
 
   it('cartão usa radius-lg, shadow-lg e largura máxima de 720px', () => {

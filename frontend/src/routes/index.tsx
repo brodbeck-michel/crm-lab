@@ -2,12 +2,9 @@ import type { RouteObject } from 'react-router-dom';
 import { AppShell, PlatformShell } from '@/components/layout';
 import {
   ChannelsSettingsPlaceholder,
-  InternalChatPlaceholder,
   NotFoundPlaceholder,
   OperationSettingsPlaceholder,
   PatientPlaceholder,
-  PlatformBillingPlaceholder,
-  PlatformTenantsPlaceholder,
 } from '@/pages/_placeholders';
 import { Attendance } from '@/pages/Attendance';
 import { Login } from '@/pages/Login';
@@ -17,6 +14,9 @@ import Catalog from '@/pages/Catalog';
 import Analytics from '@/pages/Analytics';
 import ThemeSettings from '@/pages/Settings/Theme';
 import UsersSettings from '@/pages/Settings/Users';
+import InternalChat from '@/pages/InternalChat';
+import PlatformTenants from '@/pages/Platform/Tenants';
+import PlatformBilling from '@/pages/Platform/Billing';
 import { RequireAuth, RequireRoles, RoleHomeRedirect } from './guards';
 import { ADMIN_ONLY, MANAGER_PLUS, PLATFORM_ONLY, TENANT_ROLES } from './route-config';
 
@@ -56,7 +56,7 @@ export const appRoutes: RouteObject[] = [
               { path: 'proposals', element: <Proposals /> },
               { path: 'catalog', element: <Catalog /> },
               { path: 'analytics', element: <Analytics /> },
-              { path: 'internal-chat', element: <InternalChatPlaceholder /> },
+              { path: 'internal-chat', element: <InternalChat /> },
             ],
           },
         ],
@@ -97,8 +97,8 @@ export const appRoutes: RouteObject[] = [
           {
             element: <PlatformShell />,
             children: [
-              { path: 'platform/tenants', element: <PlatformTenantsPlaceholder /> },
-              { path: 'platform/billing', element: <PlatformBillingPlaceholder /> },
+              { path: 'platform/tenants', element: <PlatformTenants /> },
+              { path: 'platform/billing', element: <PlatformBilling /> },
             ],
           },
         ],

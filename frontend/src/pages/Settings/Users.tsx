@@ -4,14 +4,14 @@ import UserTable from '@/components/users/UserTable';
 import UserModal from '@/components/users/UserModal';
 import AuditLogTable from '@/components/users/AuditLogTable';
 import { Button, SegmentedControl } from '@/components/ui';
-import type { PaginationQuery } from '@crm-lab/shared';
+import type { ManagedUser, PaginationQuery } from '@crm-lab/shared';
 
 type Tab = 'users' | 'audit';
 
 export default function UsersSettings() {
   const [tab, setTab] = useState<Tab>('users');
   const [showModal, setShowModal] = useState(false);
-  const [editUserId, setEditUserId] = useState<string | undefined>();
+  const [editUser, setEditUser] = useState<ManagedUser | undefined>();
   const [filters, setFilters] = useState<PaginationQuery>({
     page: 1,
     limit: 20,
@@ -20,14 +20,14 @@ export default function UsersSettings() {
   const { data: usersData = { users: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } }, isLoading: usersLoading } = useUserList(filters);
   const { data: auditData = { entries: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } }, isLoading: auditLoading } = useAuditList(tab === 'audit' ? filters : {});
 
-  const handleEditClick = (userId: string) => {
-    setEditUserId(userId);
+  const handleEditClick = (user: ManagedUser) => {
+    setEditUser(user);
     setShowModal(true);
   };
 
   const handleCloseModal = () => {
     setShowModal(false);
-    setEditUserId(undefined);
+    setEditUser(undefined);
   };
 
   const handlePageChange = (newPage: number) => {
@@ -38,8 +38,8 @@ export default function UsersSettings() {
     <div className="flex flex-col gap-lg p-lg h-full">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-heading-32">Usuários & Permissões</h1>
-          <p className="text-body-md text-neutral-600 mt-sm">
+          <h1 className="font-heading text-display">Usuários & Permissões</h1>
+          <p className="text-body text-neutral-600 mt-sm">
             Gerencie usuários, funções e permissões do laboratório
           </p>
         </div>
@@ -95,7 +95,7 @@ export default function UsersSettings() {
 
       {showModal && (
         <UserModal
-          userId={editUserId}
+          user={editUser}
           onClose={handleCloseModal}
         />
       )}

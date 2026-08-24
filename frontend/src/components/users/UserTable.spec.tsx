@@ -107,7 +107,8 @@ describe('UserTable', () => {
     expect(editButtons.length).toBeGreaterThan(0);
     editButtons[0]!.click();
 
-    expect(mockOnEdit).toHaveBeenCalledWith('1');
+    // Entrega o registro INTEIRO: o modal edita sem refazer o fetch.
+    expect(mockOnEdit).toHaveBeenCalledWith(expect.objectContaining({ id: '1' }));
   });
 
   it('should show empty state when no users', () => {

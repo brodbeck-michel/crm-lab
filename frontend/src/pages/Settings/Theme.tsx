@@ -29,8 +29,8 @@ export default function ThemeSettings() {
   return (
     <div className="flex flex-col gap-lg p-lg h-full">
       <div>
-        <h1 className="text-heading-32">Personalização</h1>
-        <p className="text-body-md text-neutral-600 mt-sm">
+        <h1 className="font-heading text-display">Personalização</h1>
+        <p className="text-body text-neutral-600 mt-sm">
           Customize as cores do seu laboratório
         </p>
       </div>
@@ -39,22 +39,22 @@ export default function ThemeSettings() {
         {/* Left column: Presets and color picker */}
         <div className="flex flex-col gap-lg">
           {/* Presets */}
-          <div className="bg-white rounded-md p-lg shadow-sm border border-neutral-200">
-            <h3 className="text-heading-16 font-semibold mb-md">Temas Predefinidos</h3>
+          <div className="bg-neutral-100 rounded-md p-lg shadow-sm border border-neutral-200">
+            <h3 className="font-heading text-section mb-md">Temas Predefinidos</h3>
             <div className="space-y-sm">
               {presets.map((preset) => (
                 <button
                   key={preset.id}
                   onClick={() => handleApplyPreset(preset)}
-                  className="w-full flex items-center gap-md p-md border border-neutral-200 rounded-md hover:bg-neutral-50 transition-colors text-left"
+                  className="w-full flex items-center gap-md p-md border border-neutral-200 rounded-md hover:bg-accent-100 transition-colors text-left"
                 >
                   <div
                     className="w-6 h-6 rounded-md flex-shrink-0 border border-neutral-300"
                     style={{ backgroundColor: preset.accent }}
                   />
                   <div>
-                    <p className="text-sm font-medium">{preset.name}</p>
-                    <p className="text-xs text-neutral-500">{preset.accent}</p>
+                    <p className="text-label font-semibold">{preset.name}</p>
+                    <p className="text-caption text-neutral-600">{preset.accent}</p>
                   </div>
                 </button>
               ))}
@@ -62,8 +62,8 @@ export default function ThemeSettings() {
           </div>
 
           {/* Custom color picker */}
-          <div className="bg-white rounded-md p-lg shadow-sm border border-neutral-200">
-            <h3 className="text-heading-16 font-semibold mb-md">Cor Personalizada</h3>
+          <div className="bg-neutral-100 rounded-md p-lg shadow-sm border border-neutral-200">
+            <h3 className="font-heading text-section mb-md">Cor Personalizada</h3>
             <ColorPicker
               color={currentTheme.accent}
               onChange={(accent) => updateTheme.mutate({ accent })}
@@ -73,8 +73,8 @@ export default function ThemeSettings() {
         </div>
 
         {/* Right column: Preview */}
-        <div className="bg-white rounded-md p-lg shadow-sm border border-neutral-200">
-          <h3 className="text-heading-16 font-semibold mb-md">Preview</h3>
+        <div className="bg-neutral-100 rounded-md p-lg shadow-sm border border-neutral-200">
+          <h3 className="font-heading text-section mb-md">Preview</h3>
           <ThemePreview theme={currentTheme} />
         </div>
       </div>

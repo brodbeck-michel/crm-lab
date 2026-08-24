@@ -29,6 +29,17 @@ export function Modal({ open, onClose, title, children, footer }: ModalProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
 
+  /**
+   * `onClose` numa ref: a maioria dos chamadores passa uma arrow inline, que
+   * ganha identidade nova a cada render. Se ela entrasse nas dependências do
+   * efeito abaixo, o efeito re-rodaria a cada tecla e `card.focus()` roubaria
+   * o foco de um input dentro do modal — só o 1º caractere sobreviveria.
+   */
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
   const trapFocus = useCallback((event: KeyboardEvent) => {
     const card = cardRef.current;
     if (!card) return;
@@ -63,7 +74,7 @@ export function Modal({ open, onClose, title, children, footer }: ModalProps) {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.stopPropagation();
-        onClose();
+        onCloseRef.current();
       } else if (event.key === 'Tab') {
         trapFocus(event);
       }
@@ -74,7 +85,9 @@ export function Modal({ open, onClose, title, children, footer }: ModalProps) {
       document.removeEventListener('keydown', onKeyDown);
       previouslyFocused.current?.focus();
     };
-  }, [open, onClose, trapFocus]);
+    // `onClose` NÃO entra aqui de propósito (ver `onCloseRef` acima): o foco
+    // inicial acontece UMA vez por abertura, não a cada render.
+  }, [open, trapFocus]);
 
   if (!open) return null;
 

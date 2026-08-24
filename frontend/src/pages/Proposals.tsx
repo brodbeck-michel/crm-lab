@@ -24,7 +24,7 @@ export default function Proposals() {
 
   return (
     <div className="flex flex-col gap-lg p-lg h-full">
-      <h1 className="text-heading-32">Pipeline de Propostas</h1>
+      <h1 className="font-heading text-display">Pipeline de Propostas</h1>
 
       <ProposalsFilters filters={filters} onChange={setFilters} />
 

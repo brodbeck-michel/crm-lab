@@ -5,20 +5,23 @@ import ConversionChart from '@/components/analytics/ConversionChart';
 import RevenueChart from '@/components/analytics/RevenueChart';
 import LossReasonsChart from '@/components/analytics/LossReasonsChart';
 import { Input } from '@/components/ui/Input';
+import { Chip } from '@/components/ui';
+import { MoneyDisplay } from '@/components/shared';
 
 export default function Analytics() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
 
   const { data: conversion, isLoading } = useAnalyticsConversion({
-    startDate: startDate ? (startDate as any) : undefined,
-    endDate: endDate ? (endDate as any) : undefined,
+    // `IsoDate` é `string` em @crm-lab/shared — nenhum cast é necessário.
+    startDate: startDate === '' ? undefined : startDate,
+    endDate: endDate === '' ? undefined : endDate,
   });
 
   if (isLoading) {
     return (
       <div className="p-5 space-y-6">
-        <h1 className="text-heading-32">Conversão</h1>
+        <h1 className="font-heading text-display">Conversão</h1>
         <div>Carregando dados...</div>
       </div>
     );
@@ -27,7 +30,7 @@ export default function Analytics() {
   if (!conversion) {
     return (
       <div className="p-5 space-y-6">
-        <h1 className="text-heading-32">Conversão</h1>
+        <h1 className="font-heading text-display">Conversão</h1>
         <div>Nenhum dado disponível</div>
       </div>
     );
@@ -60,7 +63,22 @@ export default function Analytics() {
 
   return (
     <div className="p-5 space-y-6">
-      <h1 className="text-heading-32">Conversão</h1>
+      <h1 className="font-heading text-display">Conversão</h1>
+
+      {/*
+        Atendente recebe `partial: true` do backend e só as próprias métricas
+        (docs/frontend/PAGES.md §8 · pedido do Agent-API-Analytics em
+        docs/STATUS.md). Sem este aviso o número parece ser o do laboratório.
+      */}
+      {conversion.partial && (
+        <div role="status" className="flex flex-wrap items-center gap-sm">
+          <Chip tone="attention">Versão parcial</Chip>
+          <span className="font-body text-body text-neutral-600">
+            Você está vendo apenas as suas métricas. As métricas do time ficam
+            disponíveis para gestor e administrador.
+          </span>
+        </div>
+      )}
 
       {/* Period Filters */}
       <div className="flex gap-4 flex-wrap">
@@ -106,22 +124,17 @@ export default function Analytics() {
 
       {/* Top Performers Section (if available and not partial view) */}
       {conversion.topPerformers && conversion.topPerformers.length > 0 && !conversion.partial && (
-        <div className="bg-white p-5 rounded-md shadow-sm space-y-4">
-          <h3 className="text-heading-20 font-semibold">Melhores Desempenhos</h3>
+        <div className="bg-neutral-100 p-5 rounded-md shadow-sm space-y-4">
+          <h3 className="font-heading text-section">Melhores Desempenhos</h3>
           <div className="space-y-2">
             {conversion.topPerformers.map((performer) => (
-              <div key={performer.userId} className="flex justify-between items-center p-3 border rounded">
+              <div key={performer.userId} className="flex justify-between items-center p-3 border border-neutral-200 rounded-md">
                 <div>
                   <p className="font-medium">{performer.name}</p>
-                  <p className="text-sm text-neutral-600">{performer.conversions} conversões</p>
+                  <p className="text-caption text-neutral-600">{performer.conversions} conversões</p>
                 </div>
-                <div className="text-right">
-                  <p className="font-semibold">
-                    {new Intl.NumberFormat('pt-BR', {
-                      style: 'currency',
-                      currency: 'BRL',
-                    }).format(performer.revenue)}
-                  </p>
+                <div className="text-right font-semibold">
+                  <MoneyDisplay value={performer.revenue} />
                 </div>
               </div>
             ))}

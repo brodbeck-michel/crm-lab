@@ -31,7 +31,7 @@ export default function CatalogSegments({ onAddItem }: CatalogSegmentsProps) {
 
   return (
     <div className="flex flex-col gap-4 p-5 h-full">
-      <h2 className="text-heading-32 font-semibold">Catálogo</h2>
+      <h2 className="font-heading text-section">Catálogo</h2>
 
       <SegmentedControl
         options={[
@@ -75,9 +75,9 @@ export default function CatalogSegments({ onAddItem }: CatalogSegmentsProps) {
               className="w-full flex justify-between items-center p-3 hover:bg-neutral-100 rounded-md transition-colors text-left"
             >
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">{exam.name}</p>
+                <p className="text-label font-semibold truncate">{exam.name}</p>
                 {exam.code && (
-                  <p className="text-xs text-neutral-600">{exam.code}</p>
+                  <p className="text-caption text-neutral-600">{exam.code}</p>
                 )}
               </div>
               <MoneyDisplay

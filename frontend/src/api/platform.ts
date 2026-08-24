@@ -1,9 +1,9 @@
 import type {
   BillingResponse,
   CreateTenantRequest,
+  CreateTenantResponse,
+  ListTenantsQuery,
   ListTenantsResponse,
-  PaginationQuery,
-  TenantSummary,
 } from '@crm-lab/shared';
 import { http } from './client';
 import type { QueryParams } from './client';
@@ -17,11 +17,16 @@ import type { QueryParams } from './client';
  * enxerga a lista de tenants, e essa é justamente a exceção auditada.
  */
 export const platformApi = {
-  tenants: (query: PaginationQuery = {}) =>
+  tenants: (query: ListTenantsQuery = {}) =>
     http.get<ListTenantsResponse>('/platform/tenants', query as QueryParams),
 
+  /**
+   * `201 { tenant: TenantSummary }` — resposta ENVELOPADA (API_CONTRACTS.md
+   * §5b), tipada por `CreateTenantResponse` em @crm-lab/shared. Quem quiser só
+   * o tenant desempacota com `.tenant`.
+   */
   createTenant: (body: CreateTenantRequest) =>
-    http.post<TenantSummary>('/platform/tenants', body),
+    http.post<CreateTenantResponse>('/platform/tenants', body),
 
   billing: () => http.get<BillingResponse>('/platform/billing'),
 };

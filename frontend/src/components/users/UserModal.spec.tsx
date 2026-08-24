@@ -1,8 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ManagedUser } from '@crm-lab/shared';
 import UserModal from './UserModal';
 import * as usersApi from '@/api/users';
+
+const EXISTING_USER: ManagedUser = {
+  id: '1',
+  email: 'user@lab.com',
+  name: 'Existing User',
+  role: 'attendant',
+  discountLimit: 15,
+  isActive: true,
+  lastLoginAt: '2026-08-23T10:00:00Z',
+  createdAt: '2026-08-01T10:00:00Z',
+};
 
 // Mock API hooks
 vi.mock('@/api/users', async () => {
@@ -40,9 +52,9 @@ describe('UserModal', () => {
     } as any);
   });
 
-  const renderComponent = (userId?: string) => {
+  const renderComponent = (user?: ManagedUser) => {
     return render(
-      <UserModal userId={userId} onClose={mockOnClose} />
+      <UserModal user={user} onClose={mockOnClose} />
     );
   };
 
@@ -85,27 +97,8 @@ describe('UserModal', () => {
   });
 
   describe('Edit Mode', () => {
-    beforeEach(() => {
-      vi.mocked(usersApi.useUserList).mockReturnValue({
-        data: [
-          {
-            id: '1',
-            email: 'user@lab.com',
-            name: 'Existing User',
-            role: 'attendant',
-            discountLimit: 15,
-            isActive: true,
-            lastLoginAt: '2026-08-23T10:00:00Z',
-            createdAt: '2026-08-01T10:00:00Z',
-          },
-        ],
-        isLoading: false,
-        error: null,
-      } as any);
-    });
-
     it('should render edit user form with title', async () => {
-      renderComponent('1');
+      renderComponent(EXISTING_USER);
 
       await waitFor(() => {
         const dialog = screen.getByRole('dialog');
@@ -114,7 +107,7 @@ describe('UserModal', () => {
     });
 
     it('should not show password field in edit mode', async () => {
-      renderComponent('1');
+      renderComponent(EXISTING_USER);
 
       await waitFor(() => {
         expect(screen.queryByPlaceholderText('Mínimo 8 caracteres')).not.toBeInTheDocument();
@@ -122,7 +115,7 @@ describe('UserModal', () => {
     });
 
     it('should show isActive toggle in edit mode', async () => {
-      renderComponent('1');
+      renderComponent(EXISTING_USER);
 
       await waitFor(() => {
         expect(screen.getByText('Usuário Ativo')).toBeInTheDocument();
@@ -168,5 +161,41 @@ describe('UserModal', () => {
 
       expect(mockOnClose).toHaveBeenCalled();
     });
+  });
+});
+
+/**
+ * Defeito QA-E2E #1: o modal varria `useUserList({ limit: 1000 })` para achar o
+ * registro. O zod do controller corta em `.max(100)` → 400 → formulário vazio.
+ * O registro tem que chegar pela linha clicada.
+ */
+describe('Edição sem varrer a lista', () => {
+  const mockOnCloseEdit = vi.fn();
+  const rowUser = EXISTING_USER;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(usersApi.useCreateUser).mockReturnValue({ mutate: vi.fn(), isPending: false } as any);
+    vi.mocked(usersApi.useUpdateUser).mockReturnValue({ mutate: vi.fn(), isPending: false } as any);
+    vi.mocked(usersApi.useUserList).mockReturnValue({
+      data: { users: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } },
+      isLoading: false,
+      error: null,
+    } as any);
+  });
+
+  it('preenche o formulário com o usuário recebido da linha', async () => {
+    render(<UserModal user={rowUser} onClose={mockOnCloseEdit} />);
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('usuario@lab.com')).toHaveValue('user@lab.com');
+      expect(screen.getByPlaceholderText('Nome Completo')).toHaveValue('Existing User');
+    });
+  });
+
+  it('não lista usuários para editar (limit > 100 volta 400)', () => {
+    render(<UserModal user={rowUser} onClose={mockOnCloseEdit} />);
+
+    expect(vi.mocked(usersApi.useUserList)).not.toHaveBeenCalled();
   });
 });

@@ -18,7 +18,7 @@ export default function ThemePreview({ theme }: ThemePreviewProps) {
       }}
     >
       <div className="space-y-sm">
-        <h4 className="text-sm font-medium" style={{ color: theme.text }}>
+        <h4 className="text-label font-semibold" style={{ color: theme.text }}>
           Paleta de Cores
         </h4>
         <div className="grid grid-cols-2 gap-sm">
@@ -27,28 +27,28 @@ export default function ThemePreview({ theme }: ThemePreviewProps) {
               className="h-12 rounded-md border border-neutral-300"
               style={{ backgroundColor: theme.accent }}
             />
-            <p className="text-xs font-mono text-neutral-700">{theme.accent}</p>
-            <p className="text-xs text-neutral-600">Cor de Ação</p>
+            <p className="text-caption font-mono text-neutral-700">{theme.accent}</p>
+            <p className="text-caption text-neutral-600">Cor de Ação</p>
           </div>
           <div className="flex flex-col gap-xs">
             <div
               className="h-12 rounded-md border border-neutral-300"
               style={{ backgroundColor: theme.accent2 }}
             />
-            <p className="text-xs font-mono text-neutral-700">{theme.accent2}</p>
-            <p className="text-xs text-neutral-600">Cor Positiva</p>
+            <p className="text-caption font-mono text-neutral-700">{theme.accent2}</p>
+            <p className="text-caption text-neutral-600">Cor Positiva</p>
           </div>
         </div>
       </div>
 
       <div className="space-y-sm pt-lg border-t border-neutral-300">
-        <h4 className="text-sm font-medium" style={{ color: theme.text }}>
+        <h4 className="text-label font-semibold" style={{ color: theme.text }}>
           Componentes
         </h4>
 
         <div className="space-y-sm">
           <div style={{ color: theme.text }}>
-            <p className="text-sm font-medium mb-xs">Botões</p>
+            <p className="text-label font-semibold mb-xs">Botões</p>
             <div className="flex gap-sm">
               <Button
                 variant="primary"
@@ -66,7 +66,7 @@ export default function ThemePreview({ theme }: ThemePreviewProps) {
           </div>
 
           <div style={{ color: theme.text }}>
-            <p className="text-sm font-medium mb-xs">Indicadores</p>
+            <p className="text-label font-semibold mb-xs">Indicadores</p>
             <div className="flex gap-sm flex-wrap">
               <Chip tone="positive">Positivo</Chip>
               <Chip tone="attention">Atenção</Chip>
@@ -81,13 +81,13 @@ export default function ThemePreview({ theme }: ThemePreviewProps) {
               color: theme.text,
             }}
           >
-            <p className="text-sm font-medium">Superfície</p>
-            <p className="text-xs opacity-75 mt-xs">Exemplo de cor de superfície</p>
+            <p className="text-label font-semibold">Superfície</p>
+            <p className="text-caption opacity-75 mt-xs">Exemplo de cor de superfície</p>
           </div>
         </div>
       </div>
 
-      <div className="text-xs text-neutral-600 pt-lg border-t border-neutral-300">
+      <div className="text-caption text-neutral-600 pt-lg border-t border-neutral-300">
         <p>Font: {theme.fontId}</p>
         <p>Radius: {theme.radiusId}</p>
       </div>

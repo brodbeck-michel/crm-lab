@@ -24,7 +24,7 @@ export default function ProposalCard({ proposal }: ProposalCardProps) {
   return (
     <button
       onClick={() => openModal({ kind: 'proposal', id: proposal.id })}
-      className="w-full text-left bg-white p-md rounded-md shadow-sm hover:shadow-md transition-shadow border border-neutral-200"
+      className="w-full text-left bg-neutral-100 p-md rounded-md shadow-sm hover:shadow-md transition-shadow border border-neutral-200"
     >
       <div className="flex items-start justify-between gap-sm mb-sm">
         <div className="flex-1 min-w-0">

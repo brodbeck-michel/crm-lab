@@ -3,12 +3,14 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LoginResponse } from '@crm-lab/shared';
+import type * as ApiModule from '@/api';
+import type * as ThemeModule from '@/lib/theme';
 
 const loginMock = vi.fn();
 const applyThemeMock = vi.fn();
 
 vi.mock('@/api', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/api')>();
+  const actual = await importOriginal<typeof ApiModule>();
   return {
     ...actual,
     api: { ...actual.api, auth: { ...actual.api.auth, login: loginMock } },
@@ -16,7 +18,7 @@ vi.mock('@/api', async (importOriginal) => {
 });
 
 vi.mock('@/lib/theme', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/theme')>();
+  const actual = await importOriginal<typeof ThemeModule>();
   return { ...actual, applyTheme: applyThemeMock };
 });
 

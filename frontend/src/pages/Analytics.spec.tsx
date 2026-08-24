@@ -5,6 +5,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { useAuthStore } from '@/stores/auth.store';
 import { QueryClient } from '@tanstack/react-query';
 import Analytics from './Analytics';
+import { http } from '@/api/client';
 
 // Mock the API calls
 vi.mock('@/api/client', async () => {
@@ -158,6 +159,60 @@ describe('Analytics', () => {
       expect(screen.getByTestId('conversion-chart')).toBeInTheDocument();
       expect(screen.getByTestId('revenue-chart')).toBeInTheDocument();
     });
+  });
+
+  /**
+   * Defeito QA-E2E #3: o backend devolve `partial: true` para atendente
+   * (docs/STATUS.md — pedido do Agent-API-Analytics; PAGES.md §8 "versão
+   * PARCIAL"), mas a tela não exibia aviso nenhum.
+   */
+  it('exibe o aviso de versão parcial quando partial: true', async () => {
+    vi.mocked(http.get).mockImplementationOnce(() =>
+      Promise.resolve({
+        period: { startDate: '2026-01-01', endDate: '2026-12-31' },
+        funnel: {
+          novoContato: 4,
+          orcamentoEnviado: 3,
+          followUp: 2,
+          negociacao: 1,
+          ganho: 1,
+          perdido: 1,
+          conversionRate: 25,
+        },
+        lossReasons: { preco_alto: 1 },
+        revenue: 1000,
+        averageTicket: 1000,
+        topPerformers: [],
+        partial: true,
+      }),
+    );
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter>
+          <Analytics />
+        </BrowserRouter>
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(/vers[aã]o parcial/i);
+    });
+  });
+
+  it('não exibe o aviso de versão parcial quando partial: false', async () => {
+    render(
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter>
+          <Analytics />
+        </BrowserRouter>
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('conversion-chart')).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
   it('renders loss reasons chart', async () => {

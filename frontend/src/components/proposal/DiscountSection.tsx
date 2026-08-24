@@ -17,9 +17,9 @@ export default function DiscountSection({
 
   return (
     <div className="space-y-2">
-      <label className="block text-sm font-medium">Desconto (%)</label>
       <div className="flex gap-2 items-center">
         <Input
+          label="Desconto (%)"
           type="number"
           min={0}
           max={100}
@@ -28,7 +28,7 @@ export default function DiscountSection({
           placeholder="0"
           disabled={readOnly}
         />
-        <span className="text-sm text-neutral-600 whitespace-nowrap">
+        <span className="text-caption text-neutral-600 whitespace-nowrap">
           Alçada: {discountLimit}%
         </span>
       </div>

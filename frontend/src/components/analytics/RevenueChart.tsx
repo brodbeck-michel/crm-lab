@@ -1,4 +1,13 @@
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { formatMoney } from '@/lib/format';
+import {
+  CHART_GRID_COLOR,
+  CHART_POSITIVE_COLOR,
+  CHART_TICK,
+  CHART_TOOLTIP_CONTENT_STYLE,
+  CHART_TOOLTIP_LABEL_STYLE,
+  toChartNumber,
+} from './chartTokens';
 
 interface RevenueChartProps {
   data?: Array<{ month: string; revenue: number }>;
@@ -7,53 +16,40 @@ interface RevenueChartProps {
 export default function RevenueChart({ data = [] }: RevenueChartProps) {
   if (!data || data.length === 0) {
     return (
-      <div className="bg-white p-5 rounded-md shadow-sm">
-        <h3 className="text-heading-16 font-semibold mb-4">Receita Acumulada</h3>
+      <div className="bg-neutral-100 p-5 rounded-md shadow-sm">
+        <h3 className="font-heading text-section mb-4">Receita Acumulada</h3>
         <div className="h-80 flex items-center justify-center text-neutral-500">Nenhum dado disponível</div>
       </div>
     );
   }
 
   return (
-    <div className="bg-white p-5 rounded-md shadow-sm">
-      <h3 className="text-heading-16 font-semibold mb-4">Receita Acumulada</h3>
+    <div className="bg-neutral-100 p-5 rounded-md shadow-sm">
+      <h3 className="font-heading text-section mb-4">Receita Acumulada</h3>
       <ResponsiveContainer width="100%" height={300}>
         <LineChart data={data}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+          <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_COLOR} />
           <XAxis
             dataKey="month"
-            tick={{ fill: 'var(--color-text-secondary)', fontSize: 12 }}
+            tick={CHART_TICK}
           />
           <YAxis
-            tick={{ fill: 'var(--color-text-secondary)', fontSize: 12 }}
-            tickFormatter={(value) => {
-              if (value >= 1000) {
-                return `R$ ${(value / 1000).toFixed(0)}k`;
-              }
-              return `R$ ${value}`;
-            }}
+            tick={CHART_TICK}
+            // Eixo estreito: `thousands` é a variante de escala grande de lib/format.
+            tickFormatter={(value) => formatMoney(toChartNumber(value), 'thousands')}
           />
           <Tooltip
-            contentStyle={{
-              backgroundColor: 'var(--color-surface)',
-              border: '1px solid var(--color-border)',
-            }}
-            labelStyle={{ color: 'var(--color-text)' }}
-            formatter={(value) => [
-              new Intl.NumberFormat('pt-BR', {
-                style: 'currency',
-                currency: 'BRL',
-              }).format(value as number),
-              'Receita',
-            ]}
+            contentStyle={CHART_TOOLTIP_CONTENT_STYLE}
+            labelStyle={CHART_TOOLTIP_LABEL_STYLE}
+            formatter={(value) => [formatMoney(toChartNumber(value)), 'Receita']}
           />
           <Legend />
           <Line
             type="monotone"
             dataKey="revenue"
-            stroke="var(--color-success)"
+            stroke={CHART_POSITIVE_COLOR}
             name="Receita"
-            dot={{ fill: 'var(--color-success)', r: 4 }}
+            dot={{ fill: CHART_POSITIVE_COLOR, r: 4 }}
             activeDot={{ r: 6 }}
           />
         </LineChart>

@@ -87,7 +87,7 @@ vi.mock('@/components/analytics/LossReasonsChart', () => ({
 }));
 
 vi.mock('@/components/analytics/MetricTile', () => ({
-  default: ({ label, value }: any) => (
+  default: ({ label, value }: { label: string; value: number }) => (
     <div data-testid={`metric-tile-${label}`}>
       {label}: {value}
     </div>

@@ -1,0 +1,278 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type {
+  Conversation,
+  GetConversationResponse,
+  ListConversationsResponse,
+  ListProposalsResponse,
+  Message,
+} from '@crm-lab/shared';
+
+const listMock = vi.fn();
+const getMock = vi.fn();
+const sendMessageMock = vi.fn();
+const listProposalsMock = vi.fn();
+
+vi.mock('@/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api')>();
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      conversations: {
+        ...actual.api.conversations,
+        list: listMock,
+        get: getMock,
+        sendMessage: sendMessageMock,
+      },
+      proposals: { ...actual.api.proposals, list: listProposalsMock },
+    },
+  };
+});
+
+const { ToastProvider } = await import('@/components/ui');
+const { useAuthStore, useUIStore } = await import('@/stores');
+const { Attendance } = await import('./index');
+
+/**
+ * Atendimento — PAGES.md §2.
+ * O que este teste protege: as contagens dos chips vêm do SERVIDOR, abrir a
+ * conversa marca como lida, e nenhum dos três estados (carregando, vazio,
+ * erro) deixa área em branco.
+ */
+
+function conversation(overrides: Partial<Conversation> = {}): Conversation {
+  return {
+    id: 'c-1',
+    patientName: 'Marina Alves',
+    patientPhone: '(11) 98765-4321',
+    assignedTo: 'u-1',
+    assignedToName: 'Marina',
+    channel: 'whatsapp',
+    status: 'active',
+    unreadCount: 3,
+    lastMessagePreview: 'Quanto fica hemograma?',
+    lastMessageAt: '2026-08-23T09:12:00Z',
+    tags: ['Orçamento'],
+    createdAt: '2026-08-20T10:00:00Z',
+    ...overrides,
+  };
+}
+
+function listResponse(
+  conversations: Conversation[],
+  counts = { mine: 7, unassigned: 2 },
+): ListConversationsResponse {
+  return {
+    conversations,
+    counts,
+    pagination: { page: 1, limit: 20, total: conversations.length, totalPages: 1 },
+  };
+}
+
+function message(overrides: Partial<Message> = {}): Message {
+  return {
+    id: 'm-1',
+    conversationId: 'c-1',
+    senderType: 'patient',
+    senderId: null,
+    senderName: 'Marina Alves',
+    content: 'Quanto fica hemograma?',
+    messageType: 'text',
+    attachmentUrl: null,
+    status: 'read',
+    readAt: null,
+    createdAt: '2026-08-23T09:12:00Z',
+    ...overrides,
+  };
+}
+
+function detailResponse(messages: Message[] = [message()]): GetConversationResponse {
+  return {
+    conversation: {
+      ...conversation({ unreadCount: 0 }),
+      patientEmail: 'marina@email.com',
+      customFields: { documento: '123.456.789-00' },
+    },
+    messages,
+    pagination: { page: 1, limit: 50, total: messages.length, totalPages: 1 },
+  };
+}
+
+const NO_PROPOSALS: ListProposalsResponse = {
+  proposals: [],
+  pagination: { page: 1, limit: 20, total: 0, totalPages: 1 },
+};
+
+function renderScreen() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <ToastProvider>
+        <MemoryRouter initialEntries={['/attendance']}>
+          <Attendance />
+        </MemoryRouter>
+      </ToastProvider>
+    </QueryClientProvider>,
+  );
+}
+
+beforeEach(() => {
+  listMock.mockReset();
+  getMock.mockReset();
+  sendMessageMock.mockReset();
+  listProposalsMock.mockReset();
+  listProposalsMock.mockResolvedValue(NO_PROPOSALS);
+  localStorage.clear();
+  useUIStore.setState({ sidebarCollapsed: true, contextPanelOpen: true, activeModal: null });
+  useAuthStore.setState({
+    user: {
+      id: 'u-1',
+      email: 'a@lab.com',
+      name: 'Marina Alves',
+      role: 'attendant',
+      discountLimit: 15,
+    },
+    tenant: null,
+    theme: null,
+    tokens: { accessToken: 'a', refreshToken: 'r', expiresAt: Date.now() + 60_000 },
+  });
+});
+
+describe('Atendimento — lista de conversas', () => {
+  it('mostra estado de carregando', () => {
+    listMock.mockReturnValue(new Promise(() => undefined));
+    renderScreen();
+
+    expect(screen.getByText('Carregando conversas…')).toBeInTheDocument();
+  });
+
+  it('as contagens dos chips vêm do servidor, não da lista carregada', async () => {
+    listMock.mockResolvedValue(listResponse([conversation()], { mine: 7, unassigned: 2 }));
+    renderScreen();
+
+    expect(await screen.findByRole('button', { name: 'Minhas 7' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Não atribuídas 2' })).toBeInTheDocument();
+    // uma conversa carregada, sete no contador: a conta é do servidor.
+    expect(screen.getAllByTestId('conversation-item')).toHaveLength(1);
+  });
+
+  it('chip filtra pelo scope e o filtro desligado volta a mostrar tudo', async () => {
+    listMock.mockResolvedValue(listResponse([conversation()]));
+    renderScreen();
+
+    await screen.findByTestId('conversation-item');
+    expect(listMock).toHaveBeenCalledWith(expect.objectContaining({ scope: 'mine' }));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Não atribuídas 2' }));
+    await waitFor(() => {
+      expect(listMock).toHaveBeenCalledWith(expect.objectContaining({ scope: 'unassigned' }));
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Não atribuídas 2' }));
+    await waitFor(() => {
+      expect(listMock).toHaveBeenCalledWith(expect.objectContaining({ scope: 'all' }));
+    });
+  });
+
+  it('lista vazia não deixa área em branco', async () => {
+    listMock.mockResolvedValue(listResponse([], { mine: 0, unassigned: 0 }));
+    renderScreen();
+
+    expect(await screen.findByText('Nenhuma conversa por aqui')).toBeInTheDocument();
+  });
+
+  it('falha de rede mostra erro com ação de tentar de novo', async () => {
+    listMock.mockRejectedValue(new Error('rede caiu'));
+    renderScreen();
+
+    expect(await screen.findByText('Não foi possível carregar as conversas')).toBeInTheDocument();
+
+    listMock.mockResolvedValue(listResponse([conversation()]));
+    await userEvent.click(screen.getByRole('button', { name: 'Tentar novamente' }));
+
+    expect(await screen.findByTestId('conversation-item')).toBeInTheDocument();
+  });
+});
+
+describe('Atendimento — abrir conversa', () => {
+  it('abrir a conversa dispara markAsRead e refaz a listagem', async () => {
+    listMock.mockResolvedValue(listResponse([conversation()]));
+    getMock.mockResolvedValue(detailResponse());
+    renderScreen();
+
+    await userEvent.click(await screen.findByTestId('conversation-item'));
+
+    await waitFor(() => {
+      expect(getMock).toHaveBeenCalledWith('c-1', { limit: 50 });
+    });
+    // markAsRead invalida a listagem para o badge e as contagens caírem.
+    await waitFor(() => {
+      expect(listMock.mock.calls.length).toBeGreaterThan(1);
+    });
+  });
+
+  it('renderiza a conversa aberta com header, bolhas e composer', async () => {
+    listMock.mockResolvedValue(listResponse([conversation()]));
+    getMock.mockResolvedValue(detailResponse());
+    renderScreen();
+
+    await userEvent.click(await screen.findByTestId('conversation-item'));
+
+    expect(await screen.findByRole('button', { name: 'Novo Orçamento' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Arquivar' })).toBeInTheDocument();
+    expect(screen.getByTestId('message-bubble')).toHaveAttribute('data-type', 'received');
+    expect(screen.getByTestId('composer')).toBeInTheDocument();
+  });
+
+  it('conversa sem mensagem tem estado vazio próprio', async () => {
+    listMock.mockResolvedValue(listResponse([conversation()]));
+    getMock.mockResolvedValue(detailResponse([]));
+    renderScreen();
+
+    await userEvent.click(await screen.findByTestId('conversation-item'));
+
+    expect(await screen.findByText('Nenhuma mensagem ainda')).toBeInTheDocument();
+  });
+
+  it('envia mensagem pelo composer', async () => {
+    listMock.mockResolvedValue(listResponse([conversation()]));
+    getMock.mockResolvedValue(detailResponse());
+    sendMessageMock.mockResolvedValue(message({ id: 'm-2', senderType: 'agent' }));
+    renderScreen();
+
+    await userEvent.click(await screen.findByTestId('conversation-item'));
+    const composer = await screen.findByTestId('composer');
+    await userEvent.type(within(composer).getByLabelText('Mensagem'), 'Bom dia!');
+    await userEvent.click(within(composer).getByRole('button', { name: 'Enviar' }));
+
+    await waitFor(() => {
+      expect(sendMessageMock).toHaveBeenCalledWith('c-1', {
+        content: 'Bom dia!',
+        messageType: 'text',
+      });
+    });
+  });
+
+  it('sem conversa selecionada, a coluna do meio orienta em vez de ficar em branco', async () => {
+    listMock.mockResolvedValue(listResponse([conversation()]));
+    renderScreen();
+
+    expect(await screen.findByText('Selecione uma conversa')).toBeInTheDocument();
+  });
+
+  it('falha ao carregar a conversa mostra erro na coluna do meio', async () => {
+    listMock.mockResolvedValue(listResponse([conversation()]));
+    getMock.mockRejectedValue(new Error('rede caiu'));
+    renderScreen();
+
+    await userEvent.click(await screen.findByTestId('conversation-item'));
+
+    expect(await screen.findByText('Não foi possível carregar a conversa')).toBeInTheDocument();
+  });
+});

@@ -1,0 +1,199 @@
+/**
+ * Design tokens — implementação literal de docs/design/DESIGN_TOKENS.md
+ * + contrato de derivação de `Design System CRM.dc.html` (seção 03).
+ *
+ * REGRA (CLAUDE.md §5): nenhum componente declara hex, nome de fonte ou raio em px.
+ * O ThemeService entrega SÓ as 5 cores base + radiusId + fontId (D-005);
+ * as 27 variações nascem aqui, via color-mix(in oklab, ...).
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* ---------------------------------------------------------------
+     * 5 cores base — Tema 1: Terracota & Sálvia (padrão).
+     * applyTheme() reescreve exatamente estas 5 em document.documentElement.
+     * --------------------------------------------------------------- */
+    --color-accent: #c67139;
+    --color-accent-2: #7a8a5e;
+    --color-bg: #f5ead8;
+    --color-surface: #ebddc5;
+    --color-text: #1a1a1a;
+
+    /* ---------------------------------------------------------------
+     * Rampa do acento — mix(accent, 12–54%, bg) para preenchimentos,
+     * 500 = base, mix(accent, 84–28%, text) para pressionado e texto.
+     * --------------------------------------------------------------- */
+    --color-accent-100: color-mix(in oklab, var(--color-accent) 12%, var(--color-bg));
+    --color-accent-200: color-mix(in oklab, var(--color-accent) 26%, var(--color-bg));
+    --color-accent-300: color-mix(in oklab, var(--color-accent) 40%, var(--color-bg));
+    --color-accent-400: color-mix(in oklab, var(--color-accent) 54%, var(--color-bg));
+    --color-accent-500: var(--color-accent);
+    --color-accent-600: color-mix(in oklab, var(--color-accent) 84%, var(--color-text));
+    --color-accent-700: color-mix(in oklab, var(--color-accent) 70%, var(--color-text));
+    --color-accent-800: color-mix(in oklab, var(--color-accent) 56%, var(--color-text));
+    --color-accent-900: color-mix(in oklab, var(--color-accent) 28%, var(--color-text));
+
+    /* Rampa do acento 2 — mesmas proporções do acento (ver COMPONENTS.md). */
+    --color-accent-2-100: color-mix(in oklab, var(--color-accent-2) 12%, var(--color-bg));
+    --color-accent-2-200: color-mix(in oklab, var(--color-accent-2) 26%, var(--color-bg));
+    --color-accent-2-300: color-mix(in oklab, var(--color-accent-2) 40%, var(--color-bg));
+    --color-accent-2-400: color-mix(in oklab, var(--color-accent-2) 54%, var(--color-bg));
+    --color-accent-2-500: var(--color-accent-2);
+    --color-accent-2-600: color-mix(in oklab, var(--color-accent-2) 84%, var(--color-text));
+    --color-accent-2-700: color-mix(in oklab, var(--color-accent-2) 70%, var(--color-text));
+    --color-accent-2-800: color-mix(in oklab, var(--color-accent-2) 56%, var(--color-text));
+    --color-accent-2-900: color-mix(in oklab, var(--color-accent-2) 28%, var(--color-text));
+
+    /* ---------------------------------------------------------------
+     * Neutros: NÃO são um cinza fixo. A base sai de --color-text sobre
+     * --color-bg, então o cinza acompanha o tema do tenant.
+     * neutral-100 = mix(bg, 86%, white) — cartão elevado sem virar branco puro.
+     * neutral-200…900 = mix(bg, 94–12%, text) — bordas, divisores, texto 2º nível.
+     * --------------------------------------------------------------- */
+    --color-neutral: color-mix(in oklab, var(--color-text) 41%, var(--color-bg));
+    --color-neutral-100: color-mix(in oklab, var(--color-bg) 86%, white);
+    --color-neutral-200: color-mix(in oklab, var(--color-bg) 94%, var(--color-text));
+    --color-neutral-300: color-mix(in oklab, var(--color-bg) 82%, var(--color-text));
+    --color-neutral-400: color-mix(in oklab, var(--color-bg) 71%, var(--color-text));
+    --color-neutral-500: var(--color-neutral);
+    --color-neutral-600: color-mix(in oklab, var(--color-bg) 47%, var(--color-text));
+    --color-neutral-700: color-mix(in oklab, var(--color-bg) 35%, var(--color-text));
+    --color-neutral-800: color-mix(in oklab, var(--color-bg) 24%, var(--color-text));
+    --color-neutral-900: color-mix(in oklab, var(--color-bg) 12%, var(--color-text));
+
+    /* Backdrop do modal — escuro translúcido, independente do tema. */
+    --color-backdrop: rgba(0, 0, 0, 0.45);
+
+    /* --------------------------------------------------------------- */
+    /* Tipografia                                                       */
+    /* --------------------------------------------------------------- */
+    --font-heading: 'Playfair Display', 'Caprasimo', serif;
+    --font-body: 'Figtree', system-ui, sans-serif;
+
+    /* --------------------------------------------------------------- */
+    /* Raio — pílula é 999px LITERAL, nunca variável (DESIGN_TOKENS.md)  */
+    /* --------------------------------------------------------------- */
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+
+    /* --------------------------------------------------------------- */
+    /* Sombra                                                           */
+    /* --------------------------------------------------------------- */
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.08);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.15);
+    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.2);
+
+    /* --------------------------------------------------------------- */
+    /* Espaçamento                                                      */
+    /* --------------------------------------------------------------- */
+    --padding-pill: 10px 18px;
+    --padding-card: 14px 16px;
+    --gap-xs: 4px;
+    --gap-sm: 8px;
+    --gap-md: 12px;
+    --gap-lg: 16px;
+    --gap-xl: 24px;
+  }
+
+  /* Remapeamento de raio por radiusId (ThemeService → dataset.radius). */
+  :root[data-radius='reto'] {
+    --radius-sm: 0px;
+    --radius-md: 2px;
+    --radius-lg: 4px;
+  }
+
+  :root[data-radius='suave'] {
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+  }
+
+  :root[data-radius='redondo'] {
+    --radius-sm: 8px;
+    --radius-md: 14px;
+    --radius-lg: 20px;
+  }
+
+  /* Remapeamento de fonte por fontId (ThemeService → dataset.font). */
+  :root[data-font='figtree'] {
+    --font-heading: 'Figtree', system-ui, sans-serif;
+    --font-body: 'Figtree', system-ui, sans-serif;
+  }
+
+  :root[data-font='playfair'] {
+    --font-heading: 'Playfair Display', 'Caprasimo', serif;
+    --font-body: 'Figtree', system-ui, sans-serif;
+  }
+
+  :root[data-font='system'] {
+    --font-heading: system-ui, sans-serif;
+    --font-body: system-ui, sans-serif;
+  }
+
+  /* --------------------------------------------------------------- */
+  /* Estilos de base                                                  */
+  /* --------------------------------------------------------------- */
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1 {
+    font-family: var(--font-heading);
+    font-size: 32px;
+    font-weight: 400;
+    letter-spacing: -0.015em;
+    line-height: 1.08;
+    margin: 0;
+  }
+
+  h2 {
+    font-family: var(--font-heading);
+    font-size: 21px;
+    font-weight: 400;
+    letter-spacing: -0.015em;
+    line-height: 1.2;
+    margin: 0;
+  }
+
+  a {
+    color: var(--color-accent-700);
+    text-decoration: none;
+    text-underline-offset: 3px;
+  }
+
+  a:hover {
+    color: var(--color-accent-600);
+    text-decoration: underline;
+  }
+
+  ::selection {
+    background: var(--color-accent-300);
+  }
+
+  /* Foco de teclado — em tudo que é interativo, sem exceção. */
+  *:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+}

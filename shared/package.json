@@ -1,0 +1,13 @@
+{
+  "name": "@crm-lab/shared",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./types/index.ts",
+  "types": "./types/index.ts",
+  "exports": { ".": "./types/index.ts" },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit"
+  }
+}

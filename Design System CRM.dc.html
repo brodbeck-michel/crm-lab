@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/organic-4cbd5cdf-f580-4dd8-b032-434e2fea92d6/styles.css">
+<script src="_ds/organic-4cbd5cdf-f580-4dd8-b032-434e2fea92d6/_ds_bundle.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caprasimo&family=Figtree:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap">
+<style>
+  html, body { margin: 0; padding: 0; background: var(--color-bg); color: var(--color-text); font-family: var(--font-body), "Figtree", system-ui, sans-serif; }
+  * { box-sizing: border-box; }
+  a { color: var(--color-accent-700); text-decoration: none; text-underline-offset: 3px; }
+  a:hover { color: var(--color-accent-600); text-decoration: underline; }
+  ::selection { background: var(--color-accent-300); }
+  :focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; }
+</style>
+</helmet>
+
+<div style="display: flex; min-height: 100vh; background: var(--color-bg); color: var(--color-text); font-size: 15px; line-height: 1.55;">
+
+  <aside style="width: 250px; flex: 0 0 250px; position: sticky; top: 0; align-self: flex-start; height: 100vh; overflow-y: auto; background: var(--color-surface); padding: 26px 16px; display: flex; flex-direction: column; gap: 22px;">
+    <div>
+      <div style="font-family: var(--font-heading); font-size: 22px; letter-spacing: -0.02em; line-height: 1.15;">Design System</div>
+      <div style="font-size: 12.5px; color: var(--color-neutral-600); margin-top: 4px;">CRM de laboratórios · handoff para desenvolvimento</div>
+    </div>
+    <nav style="display: flex; flex-direction: column; gap: 2px;">
+      <sc-for list="{{ toc }}" as="t" hint-placeholder-count="10">
+        <a href="{{ t.href }}" style="display: flex; align-items: baseline; gap: 9px; padding: 7px 12px; border-radius: 999px; font-size: 13.5px; color: var(--color-text); text-decoration: none;" style-hover="background: var(--color-accent-100); text-decoration: none">
+          <span style="font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--color-neutral-600);">{{ t.n }}</span>
+          <span>{{ t.label }}</span>
+        </a>
+      </sc-for>
+    </nav>
+    <div style="margin-top: auto; background: var(--color-neutral-100); border-radius: var(--radius-lg); padding: 14px 16px; font-size: 12px; color: var(--color-neutral-700);">
+      Base: <strong>Organic</strong> · tokens em <code>_ds/organic-…/styles.css</code>. Nada de hex fixo no produto.
+    </div>
+  </aside>
+
+  <main style="flex: 1; min-width: 0; padding: 48px 56px 96px; max-width: 1100px;">
+
+    <header style="display: flex; flex-direction: column; gap: 14px;">
+      <span style="align-self: flex-start; background: var(--color-accent-200); color: var(--color-accent-800); border-radius: 999px; padding: 3px 12px; font-size: 11.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;">v1 · implementado em CRM Laboratorio.dc.html</span>
+      <h1 style="margin: 0; font-family: var(--font-heading); font-size: 52px; line-height: 1.08; letter-spacing: -0.02em; max-width: 20ch;">Sistema de design do CRM</h1>
+      <p style="margin: 0; font-size: 17px; color: var(--color-neutral-700); max-width: 62ch; text-wrap: pretty;">Especificação das decisões visuais e estruturais já aplicadas no protótipo, para que a implementação em produção reproduza o mesmo comportamento sem reinterpretar cada tela. Toda cor, raio e tipografia vem de variáveis CSS — é isso que permite a tela de Personalização trocar o tema inteiro em tempo real.</p>
+      <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px;">
+        <sc-for list="{{ heroFacts }}" as="f" hint-placeholder-count="4">
+          <div style="background: var(--color-surface); border-radius: var(--radius-lg); padding: 14px 18px; min-width: 150px;">
+            <div style="font-size: 11.5px; color: var(--color-neutral-600);">{{ f.k }}</div>
+            <div style="font-family: var(--font-heading); font-size: 22px; margin-top: 3px; letter-spacing: -0.015em;">{{ f.v }}</div>
+          </div>
+        </sc-for>
+      </div>
+    </header>
+
+    <section id="principios" style="margin-top: 64px;">
+      <div style="font-size: 11.5px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--color-neutral-600);">01 · Princípios</div>
+      <h2 style="margin: 8px 0 0; font-family: var(--font-heading); font-size: 34px; letter-spacing: -0.015em;">Cinco regras que decidem as dúvidas</h2>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(268px, 1fr)); gap: 16px; margin-top: 24px;">
+        <sc-for list="{{ principles }}" as="p" hint-placeholder-count="5">
+          <div style="background: var(--color-neutral-100); border-radius: var(--radius-lg); padding: 22px; box-shadow: var(--shadow-sm);">
+            <div style="font-family: var(--font-heading); font-size: 19px; letter-spacing: -0.015em;">{{ p.title }}</div>
+            <div style="font-size: 13.5px; color: var(--color-neutral-700); margin-top: 8px; text-wrap: pretty;">{{ p.body }}</div>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+
+    <section id="tokens" style="margin-top: 72px;">
+      <div style="font-size: 11.5px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--color-neutral-600);">02 · Tokens</div>
+      <h2 style="margin: 8px 0 0; font-family: var(--font-heading); font-size: 34px; letter-spacing: -0.015em;">Cor, tipografia, raio, sombra</h2>
+      <p style="margin: 10px 0 0; font-size: 15px; color: var(--color-neutral-700); max-width: 66ch;">Nenhum componente declara hex, nome de fonte ou raio em px. Toda a superfície do produto usa as variáveis abaixo; o tema as reescreve em <code>document.documentElement</code>.</p>
+
+      <div style="margin-top: 26px;">
+        <div style="font-size: 12px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-neutral-600);">Papéis de cor</div>
+        <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 14px;">
+          <sc-for list="{{ colorRoles }}" as="r" hint-placeholder-count="7">
+            <div style="display: flex; align-items: center; gap: 16px; background: var(--color-neutral-100); border-radius: var(--radius-md); padding: 12px 16px; box-shadow: var(--shadow-sm); flex-wrap: wrap;">
+              <span style="width: 40px; height: 40px; flex: 0 0 40px; border-radius: 999px; background: {{ r.swatch }}; border: 1px solid var(--color-neutral-300);"></span>
+              <span style="flex: 1 1 220px; min-width: 200px;">
+                <code style="display: block; font-size: 12.5px; font-weight: 600;">{{ r.token }}</code>
+                <span style="display: block; font-size: 12.5px; color: var(--color-neutral-700); margin-top: 2px; text-wrap: pretty;">{{ r.use }}</span>
+              </span>
+              <span style="font-size: 12px; color: var(--color-neutral-600); flex: 0 1 240px;">{{ r.where }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="margin-top: 30px;">
+        <div style="font-size: 12px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-neutral-600);">Rampas 100→900</div>
+        <p style="margin: 8px 0 0; font-size: 13.5px; color: var(--color-neutral-700); max-width: 66ch;">Cada papel tem nove passos. Regra de uso: 100–300 para preenchimentos e hovers, 500 como base, 700–900 para texto sobre preenchimento tingido. Texto em corpo nunca usa o passo 500 do acento — contraste insuficiente.</p>
+        <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 16px;">
+          <sc-for list="{{ ramps }}" as="ramp" hint-placeholder-count="3">
+            <div>
+              <div style="font-size: 12.5px; font-weight: 600; margin-bottom: 6px;">{{ ramp.name }}</div>
+              <div style="display: flex; border-radius: var(--radius-md); overflow: hidden; border: 1px solid var(--color-neutral-300);">
+                <sc-for list="{{ ramp.steps }}" as="s" hint-placeholder-count="9">
+                  <span style="flex: 1; height: 52px; background: {{ s.value }}; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 5px; font-size: 10.5px; font-weight: 700; color: {{ s.ink }};">{{ s.n }}</span>
+                </sc-for>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; margin-top: 30px;">
+        <div style="background: var(--color-surface); border-radius: var(--radius-lg); padding: 22px;">
+          <div style="font-family: var(--font-heading); font-size: 19px;">Tipografia</div>
+          <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 14px;">
+            <sc-for list="{{ typeScale }}" as="t" hint-placeholder-count="6">
+              <div style="display: flex; align-items: baseline; gap: 12px; border-bottom: 1px solid var(--color-neutral-300); padding-bottom: 10px;">
+                <span style="flex: 1; min-width: 0; font-family: {{ t.family }}; font-size: {{ t.size }}; font-weight: {{ t.weight }}; letter-spacing: -0.015em; line-height: 1.15; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ t.sample }}</span>
+                <span style="font-size: 11.5px; color: var(--color-neutral-700); white-space: nowrap;">{{ t.spec }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="font-size: 12.5px; color: var(--color-neutral-700); margin-top: 14px; text-wrap: pretty;">Títulos em <code>var(--font-heading)</code>; corpo sempre Figtree 400/600. Números de indicador usam a fonte de título com <code>white-space: nowrap</code>.</div>
+        </div>
+
+        <div style="background: var(--color-surface); border-radius: var(--radius-lg); padding: 22px;">
+          <div style="font-family: var(--font-heading); font-size: 19px;">Raio e elevação</div>
+          <div style="display: flex; gap: 10px; margin-top: 16px;">
+            <sc-for list="{{ radii }}" as="r" hint-placeholder-count="3">
+              <div style="flex: 1; text-align: center;">
+                <div style="height: 64px; background: var(--color-neutral-100); border: 1px solid var(--color-neutral-300); border-radius: {{ r.token }};"></div>
+                <div style="font-size: 11.5px; margin-top: 7px;"><code>{{ r.name }}</code></div>
+                <div style="font-size: 11px; color: var(--color-neutral-600);">{{ r.use }}</div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display: flex; gap: 10px; margin-top: 20px;">
+            <sc-for list="{{ shadows }}" as="s" hint-placeholder-count="3">
+              <div style="flex: 1; text-align: center;">
+                <div style="height: 56px; background: var(--color-neutral-100); border-radius: var(--radius-md); box-shadow: {{ s.token }};"></div>
+                <div style="font-size: 11.5px; margin-top: 7px;"><code>{{ s.name }}</code></div>
+                <div style="font-size: 11px; color: var(--color-neutral-600);">{{ s.use }}</div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="font-size: 12.5px; color: var(--color-neutral-700); margin-top: 16px; text-wrap: pretty;">Pílulas (botões, chips, campos, avatares) usam <code>999px</code> literal — são sempre redondas, independentes do tema.</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tema" style="margin-top: 72px;">
+      <div style="font-size: 11.5px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--color-neutral-600);">03 · Temas</div>
+      <h2 style="margin: 8px 0 0; font-family: var(--font-heading); font-size: 34px; letter-spacing: -0.015em;">Cinco temas e um tema livre</h2>
+      <p style="margin: 10px 0 0; font-size: 15px; color: var(--color-neutral-700); max-width: 68ch;">O admin do laboratório escolhe um tema pronto ou define cinco cores. A partir dessas cinco, as 27 variações do sistema são derivadas por <code>color-mix(in oklab, …)</code> — nunca informadas à mão. É isso que garante contraste em chips, hovers e estados sem revisão manual por tema.</p>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(228px, 1fr)); gap: 14px; margin-top: 24px;">
+        <sc-for list="{{ themes }}" as="t" hint-placeholder-count="5">
+          <div style="background: var(--color-neutral-100); border-radius: var(--radius-lg); padding: 18px; box-shadow: var(--shadow-sm);">
+            <div style="display: flex; gap: 6px;">
+              <span style="width: 30px; height: 30px; border-radius: 999px; background: {{ t.accent }};"></span>
+              <span style="width: 30px; height: 30px; border-radius: 999px; background: {{ t.accent2 }};"></span>
+              <span style="width: 30px; height: 30px; border-radius: 999px; background: {{ t.surface }}; border: 1px solid rgba(0,0,0,.1);"></span>
+              <span style="width: 30px; height: 30px; border-radius: 999px; background: {{ t.bg }}; border: 1px solid rgba(0,0,0,.1);"></span>
+            </div>
+            <div style="font-family: var(--font-heading); font-size: 17px; margin-top: 12px; letter-spacing: -0.015em;">{{ t.name }}</div>
+            <div style="font-size: 12px; color: var(--color-neutral-700); margin-top: 4px; text-wrap: pretty;">{{ t.note }}</div>
+            <code style="display: block; font-size: 11px; color: var(--color-neutral-600); margin-top: 8px;">{{ t.id }}</code>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="background: var(--color-surface); border-radius: var(--radius-lg); padding: 24px; margin-top: 22px;">
+        <div style="font-family: var(--font-heading); font-size: 19px;">Contrato de derivação</div>
+        <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 14px;">
+          <sc-for list="{{ derivation }}" as="d" hint-placeholder-count="5">
+            <div style="display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap;">
+              <code style="flex: 0 1 300px; font-size: 12.5px; font-weight: 600;">{{ d.formula }}</code>
+              <span style="flex: 1 1 240px; font-size: 13px; color: var(--color-neutral-700);">{{ d.note }}</span>
+            </div>
+          </sc-for>
+        </div>
+        <div style="font-size: 13px; color: var(--color-neutral-700); margin-top: 16px; text-wrap: pretty;">Entradas do tema: <code>accent</code>, <code>accent2</code>, <code>bg</code>, <code>surface</code>, <code>text</code>, mais <code>radiusId</code> (reto/suave/redondo), <code>fontId</code> e <code>brand</code>. Em produção isso é uma linha por tenant; a aplicação lê e escreve as variáveis no elemento raiz.</div>
+      </div>
+    </section>
+
+    <section id="componentes" style="margin-top: 72px;">
+      <div style="font-size: 11.5px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--color-neutral-600);">04 · Componentes</div>
+      <h2 style="margin: 8px 0 0; font-family: var(--font-heading); font-size: 34px; letter-spacing: -0.015em;">Inventário com regras de uso</h2>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 18px; margin-top: 24px;">
+
+        <div style="background: var(--color-neutral-100); border-radius: var(--radius-lg); padding: 22px; box-shadow: var(--shadow-sm);">
+          <div style="font-family: var(--font-heading); font-size: 19px;">Botões</div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px;">
+            <button style="background: var(--color-accent); color: var(--color-bg); border: 0; border-radius: 999px; padding: 10px 18px; font-size: 13px; font-weight: 600; cursor: pointer;" style-hover="background: var(--color-accent-600)">Primário</button>
+            <button style="background: transparent; border: 1px solid var(--color-neutral-400); border-radius: 999px; padding: 9px 16px; font-size: 13px; cursor: pointer; color: var(--color-text);" style-hover="background: var(--color-neutral-200)">Secundário</button>
+            <button style="background: var(--color-accent-2); color: var(--color-bg); border: 0; border-radius: 999px; padding: 10px 18px; font-size: 13px; font-weight: 600; cursor: pointer;" style-hover="background: var(--color-accent-2-700)">Confirmação</button>
+            <button style="background: transparent; border: 0; color: var(--color-accent-700); border-radius: 999px; padding: 9px 12px; font-size: 13px; font-weight: 600; cursor: pointer;" style-hover="background: var(--color-accent-100)">Destrutivo</button>
+          </div>
+          <div style="font-size: 12.5px; color: var(--color-neutral-700); margin-top: 14px; text-wrap: pretty;">Um primário por área. O acento 2 é reservado a “concluir/positivo” (ganho, aprovar, enviar interno); o fantasma em acento-700 carrega ações de perda e remoção.</div>
+        </div>
+
+        <div style="background: var(--color-neutral-100); border-radius: var(--radius-lg); padding: 22px; box-shadow: var(--shadow-sm);">
+          <div style="font-family: var(--font-heading); font-size: 19px;">Chips e badges</div>
+          <div style="display: flex; gap: 7px; flex-wrap: wrap; margin-top: 14px;">
+            <span style="background: var(--color-accent-2-200); color: var(--color-accent-2-800); border-radius: 999px; padding: 3px 11px; font-size: 12px; font-weight: 600;">Orçamento</span>
+            <span style="background: var(--color-accent-200); color: var(--color-accent-800); border-radius: 999px; padding: 3px 11px; font-size: 12px; font-weight: 700;">Aprovação pendente</span>
+            <span style="background: var(--color-neutral-200); border-radius: 999px; padding: 3px 11px; font-size: 12px;">Não atribuídas 14</span>
+            <span style="background: var(--color-accent); color: var(--color-bg); border-radius: 999px; padding: 3px 11px; font-size: 12px; font-weight: 700;">Minhas 23</span>
+            <span style="min-width: 20px; height: 20px; border-radius: 999px; background: var(--color-accent-2); color: var(--color-bg); font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; padding: 0 6px;">3</span>
+          </div>
+          <div style="font-size: 12.5px; color: var(--color-neutral-700); margin-top: 14px; text-wrap: pretty;">Sálvia = estado neutro/positivo e contagem de não lidas. Terracota = exige ação humana. Cinza = filtro inativo. Nunca dois chips terracota no mesmo cartão.</div>
+        </div>
+
+        <div style="background: var(--color-neutral-100); border-radius: var(--radius-lg); padding: 22px; box-shadow: var(--shadow-sm);">
+          <div style="font-family: var(--font-heading); font-size: 19px;">Item de conversa</div>
+          <div style="display: flex; gap: 11px; align-items: flex-start; background: var(--color-bg); border-radius: var(--radius-md); padding: 12px 14px; margin-top: 14px;">
+            <span style="width: 36px; height: 36px; flex: 0 0 36px; border-radius: 999px; background: var(--color-accent-2-200); color: var(--color-accent-2-800); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700;">MA</span>
+            <span style="flex: 1; min-width: 0;">
+              <span style="display: flex; align-items: baseline; gap: 8px;">
+                <span style="font-weight: 600; font-size: 13.5px;">Marina Alves</span>
+                <span style="margin-left: auto; font-size: 11px; color: var(--color-accent-2-700); font-weight: 700;">09:12</span>
+              </span>
+              <span style="display: flex; align-items: center; gap: 8px; margin-top: 3px;">
+                <span style="flex: 1; min-width: 0; font-size: 12.5px; color: var(--color-neutral-700); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Quanto fica hemograma, TSH e vitamina D?</span>
+                <span style="min-width: 20px; height: 20px; border-radius: 999px; background: var(--color-accent-2); color: var(--color-bg); font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; padding: 0 6px;">3</span>
+              </span>
+              <span style="display: flex; gap: 6px; margin-top: 7px;">
+                <span style="background: var(--color-accent-2-200); color: var(--color-accent-2-800); border-radius: 999px; padding: 2px 9px; font-size: 11px; font-weight: 600;">Orçamento</span>
+                <span style="font-size: 11px; color: var(--color-accent-700); font-weight: 600;">aguardando 4 min</span>
+              </span>
+            </span>
+          </div>
+          <div style="font-size: 12.5px; color: var(--color-neutral-700); margin-top: 14px; text-wrap: pretty;">Padrão WhatsApp: hora em sálvia-700 quando há não lidas (cinza quando lido), badge circular com a contagem, prévia truncada em uma linha. Selecionado = superfície clara + <code>--shadow-sm</code>.</div>
+        </div>
+
+        <div style="background: var(--color-neutral-100); border-radius: var(--radius-lg); padding: 22px; box-shadow: var(--shadow-sm);">
+          <div style="font-family: var(--font-heading); font-size: 19px;">Bolhas de mensagem</div>
+          <div style="display: flex; flex-direction: column; gap: 9px; margin-top: 14px;">
+            <div style="align-self: flex-start; max-width: 78%; background: var(--color-surface); border-radius: var(--radius-md) var(--radius-md) var(--radius-md) var(--radius-sm); padding: 11px 15px; font-size: 13.5px;">Recebida do paciente</div>
+            <div style="align-self: flex-end; max-width: 78%; background: var(--color-accent-200); border-radius: var(--radius-md) var(--radius-md) var(--radius-sm) var(--radius-md); padding: 11px 15px; font-size: 13.5px;">Enviada pela recepção</div>
+            <div style="align-self: center; background: var(--color-accent-2-100); border: 1px solid var(--color-accent-2-300); border-radius: 999px; padding: 5px 14px; font-size: 12px; color: var(--color-accent-2-800);">Evento do sistema</div>
+          </div>
+          <div style="font-size: 12.5px; color: var(--color-neutral-700); margin-top: 14px; text-wrap: pretty;">Três tipos, nunca mais: recebida, enviada e evento. O canto “apontado” marca a origem; largura máxima 62% no inbox para preservar a leitura.</div>
+        </div>
+
+        <div style="background: var(--color-neutral-100); border-radius: var(--radius-lg); padding: 22px; box-shadow: var(--shadow-sm);">
+          <div style="font-family: var(--font-heading); font-size: 19px;">Campos</div>
+          <div style="display: flex; flex-direction: column; gap: 9px; margin-top: 14px;">
+            <input placeholder="Buscar paciente, telefone ou exame" style="background: var(--color-bg); border: 1px solid var(--color-neutral-300); border-radius: 999px; padding: 10px 16px; font-size: 13.5px; color: var(--color-text); font-family: inherit;">
+            <div style="display: flex; gap: 4px; background: var(--color-bg); border-radius: 999px; padding: 4px;">
+              <span style="flex: 1; text-align: center; background: var(--color-accent); color: var(--color-bg); border-radius: 999px; padding: 7px; font-size: 12.5px; font-weight: 600;">Particular</span>
+              <span style="flex: 1; text-align: center; padding: 7px; font-size: 12.5px; color: var(--color-neutral-700);">Convênio</span>
+            </div>
+            <textarea rows="2" placeholder="Nota interna…" style="background: var(--color-bg); border: 1px solid var(--color-neutral-300); border-radius: var(--radius-md); padding: 10px 14px; font-size: 13.5px; color: var(--color-text); resize: none; font-family: inherit;"></textarea>
+          </div>
+          <div style="font-size: 12.5px; color: var(--color-neutral-700); margin-top: 14px; text-wrap: pretty;">Campo de uma linha = pílula; multilinha = <code>--radius-md</code>. Segmentado é sempre trilho com pílula deslizante, nunca abas sublinhadas.</div>
+        </div>
+
+        <div style="background: var(--color-neutral-100); border-radius: var(--radius-lg); padding: 22px; box-shadow: var(--shadow-sm);">
+          <div style="font-family: var(--font-heading); font-size: 19px;">Cartão de proposta</div>
+          <div style="background: var(--color-bg); border-radius: var(--radius-md); padding: 14px 16px; margin-top: 14px; box-shadow: var(--shadow-sm); cursor: pointer;">
+            <div style="display: flex; align-items: baseline; gap: 8px;">
+              <span style="font-weight: 700; font-size: 13.5px;">Diego Ramos</span>
+              <span style="margin-left: auto; font-size: 11px; color: var(--color-neutral-600);">#4776</span>
+            </div>
+            <div style="font-size: 12px; color: var(--color-neutral-700); margin-top: 4px;">Pediu 15% de desconto</div>
+            <div style="display: flex; align-items: center; gap: 8px; margin-top: 10px;">
+              <span style="font-family: var(--font-heading); font-size: 16px;">R$ 227,80</span>
+              <span style="margin-left: auto; font-size: 11px; color: var(--color-neutral-600);">7 dias</span>
+            </div>
+            <span style="display: inline-block; margin-top: 10px; background: var(--color-accent-200); color: var(--color-accent-800); border-radius: 999px; padding: 2px 10px; font-size: 11px; font-weight: 700;">Aprovação pendente</span>
+          </div>
+          <div style="font-size: 12.5px; color: var(--color-neutral-700); margin-top: 14px; text-wrap: pretty;">Todo cartão é clicável e abre o modal da proposta. O valor exibido é sempre derivado dos itens e do desconto — nunca um número armazenado à parte.</div>
+        </div>
+      </div>
+
+      <div style="background: var(--color-surface); border-radius: var(--radius-lg); padding: 24px; margin-top: 20px;">
+        <div style="font-family: var(--font-heading); font-size: 19px;">Tabelas e modais</div>
+        <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 14px;">
+          <sc-for list="{{ tableRules }}" as="r" hint-placeholder-count="5">
+            <div style="display: flex; gap: 12px; align-items: baseline;">
+              <span style="width: 7px; height: 7px; border-radius: 999px; background: var(--color-accent); margin-top: 7px; flex: 0 0 7px;"></span>
+              <span style="font-size: 13.5px; color: var(--color-neutral-800); text-wrap: pretty;">{{ r }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </section>
+
+    <section id="layout" style="margin-top: 72px;">
+      <div style="font-size: 11.5px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--color-neutral-600);">05 · Layout</div>
+      <h2 style="margin: 8px 0 0; font-family: var(--font-heading); font-size: 34px; letter-spacing: -0.015em;">Casca da aplicação</h2>
+      <p style="margin: 10px 0 0; font-size: 15px; color: var(--color-neutral-700); max-width: 66ch;">Uma casca só, para todos os perfis: trilho lateral + conteúdo. O que muda por perfil é o conteúdo do trilho, não a estrutura.</p>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; margin-top: 24px;">
+        <sc-for list="{{ layoutSpecs }}" as="l" hint-placeholder-count="4">
+          <div style="background: var(--color-neutral-100); border-radius: var(--radius-lg); padding: 22px; box-shadow: var(--shadow-sm);">
+            <div style="font-family: var(--font-heading); font-size: 18px;">{{ l.name }}</div>
+            <div style="display: flex; flex-direction: column; gap: 7px; margin-top: 12px;">
+              <sc-for list="{{ l.rows }}" as="row" hint-placeholder-count="3">
+                <div style="display: flex; gap: 10px; align-items: baseline; font-size: 13px;">
+                  <span style="color: var(--color-neutral-700); flex: 1 1 auto;">{{ row.k }}</span>
+                  <code style="font-size: 12px; font-weight: 600; text-align: right;">{{ row.v }}</code>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="background: var(--color-accent-2-100); border: 1px solid var(--color-accent-2-300); border-radius: var(--radius-lg); padding: 24px; margin-top: 20px;">
+        <div style="font-family: var(--font-heading); font-size: 19px; color: var(--color-accent-2-800);">Regras de largura que evitaram os bugs do protótipo</div>
+        <div style="display: flex; flex-direction: column; gap: 11px; margin-top: 14px;">
+          <sc-for list="{{ widthRules }}" as="w" hint-placeholder-count="5">
+            <div style="display: flex; gap: 12px; align-items: baseline;">
+              <span style="width: 7px; height: 7px; border-radius: 999px; background: var(--color-accent-2); margin-top: 7px; flex: 0 0 7px;"></span>
+              <span style="font-size: 13.5px; color: var(--color-neutral-800); text-wrap: pretty;">{{ w }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </section>
+
+    <section id="telas" style="margin-top: 72px;">
+      <div style="font-size: 11.5px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--color-neutral-600);">06 · Telas e perfis</div>
+      <h2 style="margin: 8px 0 0; font-family: var(--font-heading); font-size: 34px; letter-spacing: -0.015em;">Quem vê o quê</h2>
+      <div style="background: var(--color-neutral-100); border-radius: var(--radius-lg); padding: 8px 24px 20px; margin-top: 22px; box-shadow: var(--shadow-sm); overflow-x: auto;">
+        <div style="min-width: 720px;">
+          <div style="display: grid; grid-template-columns: 1.5fr 1.9fr repeat(4, 0.75fr); gap: 12px; padding: 16px 0 11px; border-bottom: 1px solid var(--color-neutral-300); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-neutral-600);">
+            <span>Tela</span><span>Papel na jornada</span><span>Atend.</span><span>Gestor</span><span>Admin</span><span>Platf.</span>
+          </div>
+          <sc-for list="{{ screens }}" as="s" hint-placeholder-count="12">
+            <div style="display: grid; grid-template-columns: 1.5fr 1.9fr repeat(4, 0.75fr); gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--color-neutral-200); font-size: 13px; align-items: baseline;">
+              <span style="font-weight: 600;">{{ s.name }}</span>
+              <span style="color: var(--color-neutral-700); font-size: 12.5px; text-wrap: pretty;">{{ s.role }}</span>
+              <span>{{ s.a }}</span><span>{{ s.g }}</span><span>{{ s.d }}</span><span>{{ s.p }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+      <div style="font-size: 13px; color: var(--color-neutral-700); margin-top: 14px; text-wrap: pretty;">O console da plataforma é um espaço separado: sem caixa de conversas, sem canais internos do laboratório e sem acesso a dado de paciente. Isolamento é requisito, não configuração.</div>
+    </section>
+
+    <section id="dados" style="margin-top: 72px;">
+      <div style="font-size: 11.5px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--color-neutral-600);">07 · Dados e formatação</div>
+      <h2 style="margin: 8px 0 0; font-family: var(--font-heading); font-size: 34px; letter-spacing: -0.015em;">Regras que mantêm os números coerentes</h2>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; margin-top: 24px;">
+        <sc-for list="{{ dataRules }}" as="d" hint-placeholder-count="6">
+          <div style="background: var(--color-neutral-100); border-radius: var(--radius-lg); padding: 22px; box-shadow: var(--shadow-sm);">
+            <div style="font-family: var(--font-heading); font-size: 18px;">{{ d.title }}</div>
+            <div style="font-size: 13.5px; color: var(--color-neutral-700); margin-top: 8px; text-wrap: pretty;">{{ d.body }}</div>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+
+    <section id="estados" style="margin-top: 72px;">
+      <div style="font-size: 11.5px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--color-neutral-600);">08 · Estados e acessibilidade</div>
+      <h2 style="margin: 8px 0 0; font-family: var(--font-heading); font-size: 34px; letter-spacing: -0.015em;">Nada de padrão do navegador</h2>
+      <div style="background: var(--color-surface); border-radius: var(--radius-lg); padding: 24px; margin-top: 22px;">
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+          <sc-for list="{{ stateRules }}" as="s" hint-placeholder-count="7">
+            <div style="display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap;">
+              <span style="flex: 0 1 168px; font-size: 13px; font-weight: 700;">{{ s.k }}</span>
+              <span style="flex: 1 1 300px; font-size: 13.5px; color: var(--color-neutral-800); text-wrap: pretty;">{{ s.v }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </section>
+
+    <section id="entrega" style="margin-top: 72px;">
+      <div style="font-size: 11.5px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--color-neutral-600);">09 · Entrega</div>
+      <h2 style="margin: 8px 0 0; font-family: var(--font-heading); font-size: 34px; letter-spacing: -0.015em;">Como consumir isto no código</h2>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; margin-top: 24px;">
+        <sc-for list="{{ handoff }}" as="h" hint-placeholder-count="4">
+          <div style="background: var(--color-neutral-100); border-radius: var(--radius-lg); padding: 22px; box-shadow: var(--shadow-sm);">
+            <div style="font-family: var(--font-heading); font-size: 18px;">{{ h.title }}</div>
+            <div style="font-size: 13.5px; color: var(--color-neutral-700); margin-top: 8px; text-wrap: pretty;">{{ h.body }}</div>
+          </div>
+        </sc-for>
+      </div>
+      <div style="background: var(--color-accent-200); border-radius: var(--radius-lg); padding: 24px; margin-top: 20px;">
+        <div style="font-family: var(--font-heading); font-size: 19px; color: var(--color-accent-900);">Pendências conhecidas</div>
+        <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 12px;">
+          <sc-for list="{{ openItems }}" as="o" hint-placeholder-count="4">
+            <div style="display: flex; gap: 12px; align-items: baseline;">
+              <span style="width: 7px; height: 7px; border-radius: 999px; background: var(--color-accent-700); margin-top: 7px; flex: 0 0 7px;"></span>
+              <span style="font-size: 13.5px; color: var(--color-accent-900); text-wrap: pretty;">{{ o }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{}">
+const RAMP_INK = n => (n <= 300 ? 'var(--color-text)' : 'var(--color-bg)');
+
+class Component extends DCLogic {
+  renderVals() {
+    const steps = prefix => [100, 200, 300, 400, 500, 600, 700, 800, 900].map(n => ({
+      n: String(n), value: 'var(--color-' + prefix + '-' + n + ')', ink: RAMP_INK(n)
+    }));
+
+    return {
+      toc: [
+        { n: '01', label: 'Princípios', href: '#principios' },
+        { n: '02', label: 'Tokens', href: '#tokens' },
+        { n: '03', label: 'Temas', href: '#tema' },
+        { n: '04', label: 'Componentes', href: '#componentes' },
+        { n: '05', label: 'Layout', href: '#layout' },
+        { n: '06', label: 'Telas e perfis', href: '#telas' },
+        { n: '07', label: 'Dados', href: '#dados' },
+        { n: '08', label: 'Estados', href: '#estados' },
+        { n: '09', label: 'Entrega', href: '#entrega' }
+      ],
+      heroFacts: [
+        { k: 'Perfis de acesso', v: '4' },
+        { k: 'Telas', v: '12' },
+        { k: 'Temas prontos', v: '5' },
+        { k: 'Variáveis de cor', v: '32' }
+      ],
+      principles: [
+        { title: 'A conversa é o produto', body: 'Toda tela existe para encurtar o caminho entre a primeira mensagem e a coleta agendada. Se um elemento não ajuda nisso, ele sai da tela do atendente.' },
+        { title: 'Tema é dado, não código', body: 'Cor, raio, fonte e nome da marca são configuração por tenant. Componente que declara hex quebra a personalização — é bug, não estilo.' },
+        { title: 'Um número, uma origem', body: 'Valor de proposta, total por estágio e indicadores derivam dos mesmos itens. Nunca há dois campos que possam divergir.' },
+        { title: 'Densidade sem aperto', body: '400 conversas/dia exigem listas compactas, mas as formas são redondas e precisam de ar: 12–14px de padding interno, gap explícito, nunca margens improvisadas.' },
+        { title: 'Isolamento visível', body: 'O usuário precisa ver de que lado está: laboratório ou plataforma, paciente ou nota interna. A cor de apoio marca o interno; o console da plataforma tem identidade própria.' }
+      ],
+      colorRoles: [
+        { token: '--color-bg', swatch: 'var(--color-bg)', use: 'Fundo de toda a aplicação', where: 'Corpo, área de conteúdo' },
+        { token: '--color-surface', swatch: 'var(--color-surface)', use: 'Superfície tingida de segundo nível', where: 'Trilho lateral, cartões de resumo, coluna de orçamento' },
+        { token: '--color-neutral-100', swatch: 'var(--color-neutral-100)', use: 'Cartão elevado sobre o fundo', where: 'Tabelas, cartões clicáveis, painéis' },
+        { token: '--color-text', swatch: 'var(--color-text)', use: 'Texto principal', where: 'Títulos e corpo' },
+        { token: '--color-accent', swatch: 'var(--color-accent)', use: 'Ação e atenção', where: 'Primário, filtro ativo, itens que exigem decisão' },
+        { token: '--color-accent-2', swatch: 'var(--color-accent-2)', use: 'Estado positivo e âmbito interno', where: 'Não lidas, ganho, aprovar, chat interno, plataforma' },
+        { token: '--color-neutral-300', swatch: 'var(--color-neutral-300)', use: 'Bordas e divisores', where: 'Linhas de tabela, contorno de campo' }
+      ],
+      ramps: [
+        { name: 'Acento (terracota no tema padrão)', steps: steps('accent') },
+        { name: 'Acento 2 (sálvia no tema padrão)', steps: steps('accent-2') },
+        { name: 'Neutros derivados do fundo', steps: steps('neutral') }
+      ],
+      typeScale: [
+        { sample: 'Título de tela', family: 'var(--font-heading)', size: '32px', weight: '400', spec: 'heading 32 / -0.015em' },
+        { sample: 'Título de seção', family: 'var(--font-heading)', size: '21px', weight: '400', spec: 'heading 21' },
+        { sample: 'Indicador 38%', family: 'var(--font-heading)', size: '30px', weight: '400', spec: 'heading 30 · nowrap' },
+        { sample: 'Rótulo de item', family: 'var(--font-body)', size: '13.5px', weight: '600', spec: 'body 13.5 / 600' },
+        { sample: 'Corpo e prévia de mensagem', family: 'var(--font-body)', size: '13px', weight: '400', spec: 'body 13 / 400' },
+        { sample: 'CABEÇALHO DE TABELA', family: 'var(--font-body)', size: '11px', weight: '600', spec: 'body 11 · 0.09em · caixa alta' }
+      ],
+      radii: [
+        { name: '--radius-sm', token: 'var(--radius-sm)', use: 'canto apontado da bolha' },
+        { name: '--radius-md', token: 'var(--radius-md)', use: 'cartões de lista, campos multilinha' },
+        { name: '--radius-lg', token: 'var(--radius-lg)', use: 'painéis, colunas, modal' }
+      ],
+      shadows: [
+        { name: '--shadow-sm', token: 'var(--shadow-sm)', use: 'cartão em repouso' },
+        { name: '--shadow-md', token: 'var(--shadow-md)', use: 'hover de cartão arrastável' },
+        { name: '--shadow-lg', token: 'var(--shadow-lg)', use: 'modal' }
+      ],
+      themes: [
+        { id: 'terracota', name: 'Terracota & sálvia', note: 'Padrão. Recepção acolhedora, base do Organic.', accent: '#c67139', accent2: '#7a8a5e', bg: '#f5ead8', surface: '#ebddc5' },
+        { id: 'jaleco', name: 'Azul jaleco', note: 'Clínico e sóbrio; leitura longa em plantão.', accent: '#2f6f9f', accent2: '#4f9d8b', bg: '#eef3f7', surface: '#dbe6ef' },
+        { id: 'esteril', name: 'Verde esterilizado', note: 'Sala de coleta: verde cirúrgico com menta.', accent: '#2f7d5f', accent2: '#6d8f4e', bg: '#eef5f0', surface: '#d9e8de' },
+        { id: 'hemograma', name: 'Hemograma', note: 'Bordô de tubo de coleta com lilás de laudo.', accent: '#a63a3a', accent2: '#7a6b8a', bg: '#f7efee', surface: '#ecdad8' },
+        { id: 'diagnostico', name: 'Lilás diagnóstico', note: 'Reagente e microscopia com petróleo de apoio.', accent: '#6a4f9c', accent2: '#3f8a9a', bg: '#f3f1f8', surface: '#e2dcef' }
+      ],
+      derivation: [
+        { formula: 'accent-100…400 = mix(accent, 12–70%, bg)', note: 'Preenchimentos tingidos e hovers sobre o fundo claro.' },
+        { formula: 'accent-500 = accent', note: 'A cor informada pelo admin, usada só em fill sólido e ícones.' },
+        { formula: 'accent-600…900 = mix(accent, 84–28%, text)', note: 'Pressionado e texto sobre preenchimento tingido.' },
+        { formula: 'neutral-100 = mix(bg, 86%, white)', note: 'Cartão que precisa se destacar do fundo sem virar branco puro.' },
+        { formula: 'neutral-200…900 = mix(bg, 94–12%, text)', note: 'Bordas, divisores e texto secundário acompanham o fundo escolhido.' }
+      ],
+      tableRules: [
+        'Toda tabela vive dentro de um contêiner com min-width e overflow-x — coluna nunca colapsa sob o conteúdo (foi a causa do texto invadindo colunas vizinhas).',
+        'Cabeçalho em caixa alta 11px, régua de 1px em neutral-300; linhas separadas por neutral-200, sem zebra.',
+        'Valor monetário e status alinhados à direita quando a coluna é a última; nunca centralizados.',
+        'Modal: backdrop escuro translúcido, cartão em --radius-lg com --shadow-lg, largura máxima 720px, rolagem interna e fechamento por × e clique fora (com stopPropagation no cartão).',
+        'Ações do modal em uma linha: primárias à esquerda, conclusão positiva à direita, destrutiva como fantasma no fim.'
+      ],
+      layoutSpecs: [
+        { name: 'Trilho lateral', rows: [
+          { k: 'Expandido', v: '244px' },
+          { k: 'Recolhido', v: '72px' },
+          { k: 'Recolhe sozinho', v: 'atendente + inbox' },
+          { k: 'Itens recolhidos', v: '38px · flex 0 0' }
+        ] },
+        { name: 'Inbox (3 colunas)', rows: [
+          { k: 'Lista de conversas', v: '336px fixo' },
+          { k: 'Conversa', v: 'flex 1 · min 440px' },
+          { k: 'Contexto', v: '316px · recolhível' },
+          { k: 'Estreito', v: 'overflow-x na linha' }
+        ] },
+        { name: 'Orçamento', rows: [
+          { k: 'Catálogo', v: 'flex 1 · min 520px' },
+          { k: 'Resumo', v: '372px fixo' },
+          { k: 'Modos', v: 'segmentado de 4' },
+          { k: 'Total', v: 'rodapé fixo da coluna' }
+        ] },
+        { name: 'Grades e páginas', rows: [
+          { k: 'Indicadores', v: 'auto-fit minmax(224px)' },
+          { k: 'Cartões de conteúdo', v: 'auto-fit minmax(300px)' },
+          { k: 'Página de leitura', v: 'max-width 1180px' },
+          { k: 'Padding de página', v: '30px 36px 48px' }
+        ] }
+      ],
+      widthRules: [
+        'Coluna flexível sempre com min-width explícito; sem isso ela colapsa abaixo do conteúdo e o texto vaza para a vizinha.',
+        'Todo elemento redondo (avatar, badge, ponto) leva flex: 0 0 <tamanho> — senão é comprimido em containers apertados.',
+        'Grade de indicadores usa auto-fit + minmax, nunca repeat(N, 1fr): com 4 ou 5 colunas fixas os números quebram em telas médias.',
+        'Número de indicador e valor monetário levam white-space: nowrap.',
+        'Linha de chips que pode estourar usa overflow-x com flex: 0 0 auto + nowrap nos filhos, em vez de flex-wrap, quando a altura é escassa (compositor).'
+      ],
+      screens: [
+        { name: 'Atendimento', role: 'Fila do atendente, conversa e contexto do paciente', a: 'Sim', g: 'Sim', d: 'Sim', p: '—' },
+        { name: 'Ficha do paciente', role: 'Histórico completo de interações, cadastro, LGPD', a: 'Sim', g: 'Sim', d: 'Sim', p: '—' },
+        { name: 'Novo orçamento', role: 'Catálogo, pedido médico, IA e pacotes + desconto', a: 'Sim', g: 'Sim', d: 'Sim', p: '—' },
+        { name: 'Propostas', role: 'Pipeline por estágio, follow-ups e motivos de perda', a: 'Sim', g: 'Sim', d: 'Sim', p: '—' },
+        { name: 'Modal da proposta', role: 'Itens, desconto, alerta, histórico e desfecho', a: 'Sim', g: 'Sim', d: 'Sim', p: '—' },
+        { name: 'Catálogo de exames', role: 'Preços particular e convênio, preparo, prazo', a: 'Ler', g: 'Editar', d: 'Editar', p: '—' },
+        { name: 'Conversão', role: 'Funil, motivos de perda, desempenho da equipe', a: 'Parcial', g: 'Sim', d: 'Sim', p: '—' },
+        { name: 'Chat interno', role: 'Canais e diretas com anexo de orçamento e handoff', a: 'Sim', g: 'Sim', d: 'Sim', p: 'Próprio' },
+        { name: 'Canais & equipe', role: 'WhatsApp, distribuição e mensagens automáticas', a: '—', g: 'Ler', d: 'Sim', p: '—' },
+        { name: 'Gestão da operação', role: 'Fila agora, unidades, carga e decisões pendentes', a: '—', g: 'Sim', d: 'Sim', p: '—' },
+        { name: 'Usuários & permissões', role: 'Papéis, limites de desconto e auditoria', a: '—', g: '—', d: 'Sim', p: '—' },
+        { name: 'Personalização', role: 'Tema, cores, cantos, fonte e nome exibido', a: '—', g: '—', d: 'Sim', p: '—' },
+        { name: 'Laboratórios clientes', role: 'Base de tenants, onboarding, saúde da plataforma', a: '—', g: '—', d: '—', p: 'Sim' },
+        { name: 'Assinaturas & uso', role: 'Planos, faturas, excedente de mensagens', a: '—', g: '—', d: '—', p: 'Sim' }
+      ],
+      dataRules: [
+        { title: 'Moeda', body: 'Sempre pt-BR com duas casas: R$ 1.350,00. Em cartões de resumo e colunas estreitas, valores agregados sem centavos (R$ 24.400) e escalas grandes em mil (R$ 96,4 mil).' },
+        { title: 'Proposta é a fonte da verdade', body: 'Itens + percentual de desconto geram valor do cartão, total do modal, soma do estágio e o “em aberto” do dashboard. Nenhum desses é digitado.' },
+        { title: 'Escala coerente', body: '400 conversas/dia por laboratório → ~12 mil/mês. Funil, ticket médio, receita diária e contagem por estágio precisam fechar entre si; número solto em tela é defeito.' },
+        { title: 'Estágios da proposta', body: 'Seis: novo contato, orçamento enviado, follow-up, negociação, ganho, perdido. Os quatro primeiros contam como “em aberto”; ganho e perdido são do período.' },
+        { title: 'Motivo de perda obrigatório', body: 'Sair para “perdido” exige motivo — preço, silêncio, exame indisponível, prazo, outros. É o que alimenta o painel de conversão.' },
+        { title: 'Desconto e alçada', body: 'Limite por usuário (atendente 10–15%, coordenação 30%). Acima do limite a proposta entra em aprovação e aparece no chat interno com o orçamento anexado.' }
+      ],
+      stateRules: [
+        { k: 'Hover', v: 'Tinta do tema — accent-100 em item de menu, neutral-200 em botão secundário, --shadow-md em cartão arrastável. Nunca cinza do navegador.' },
+        { k: 'Selecionado', v: 'Fundo tingido (accent-200 no menu, neutral-100 no item de lista) + sombra sm. Sem borda de destaque.' },
+        { k: 'Foco de teclado', v: 'outline 2px solid var(--color-accent) com offset 2px, em tudo que é interativo.' },
+        { k: 'Pressionado', v: 'Um passo além da base: accent-600 sobre fundo claro.' },
+        { k: 'Vazio', v: 'Frase curta centrada em neutral-600 no lugar da lista (ex.: “Nenhum exame ainda”), nunca área em branco.' },
+        { k: 'Alvo de toque', v: 'Mínimo 36px de altura em desktop; 44px quando a tela for usada em tablet na recepção.' },
+        { k: 'Truncamento', v: 'Uma linha com elipse em nome, prévia e e-mail; texto longo de conteúdo usa text-wrap: pretty em vez de cortar.' }
+      ],
+      handoff: [
+        { title: 'Camada de tema', body: 'Um objeto por tenant (accent, accent2, bg, surface, text, radiusId, fontId, brand). Na inicialização, escreva as variáveis derivadas no elemento raiz; nenhum componente lê o objeto direto.' },
+        { title: 'Componentes', body: 'Os blocos da seção 04 são a lista completa: botão, chip/badge, item de conversa, bolha, campo, segmentado, cartão de lista, tabela, modal. Não introduzir variantes novas sem entrar aqui.' },
+        { title: 'Permissões', body: 'A matriz da seção 06 é contrato de back-end também: a UI esconde, o servidor recusa. Desconto acima da alçada e exportação LGPD são checados nos dois lados.' },
+        { title: 'Multitenant', body: 'Tenant no contexto de toda requisição. O console da plataforma usa credenciais e rotas próprias, sem caminho para conversas ou canais internos de um laboratório.' }
+      ],
+      openItems: [
+        'Arrastar-e-soltar real no pipeline (hoje o cartão abre o modal; o gesto de mover entre estágios ainda não está especificado).',
+        'Anexos no chat do paciente: áudio e PDF do pedido médico precisam de estados de upload e falha.',
+        'Notificações fora da aba (som, título e badge) e comportamento quando a conversa é assumida por outro atendente ao mesmo tempo.',
+        'Tema escuro: as fórmulas de derivação suportam, mas os pares de contraste precisam ser revalidados antes de liberar.'
+      ]
+    };
+  }
+}
+
+</script>
+</body>
+</html>

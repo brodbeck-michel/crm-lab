@@ -8,7 +8,6 @@ import {
   PatientPlaceholder,
   PlatformBillingPlaceholder,
   PlatformTenantsPlaceholder,
-  UsersSettingsPlaceholder,
 } from '@/pages/_placeholders';
 import { Attendance } from '@/pages/Attendance';
 import { Login } from '@/pages/Login';
@@ -17,6 +16,7 @@ import Proposals from '@/pages/Proposals';
 import Catalog from '@/pages/Catalog';
 import Analytics from '@/pages/Analytics';
 import ThemeSettings from '@/pages/Settings/Theme';
+import UsersSettings from '@/pages/Settings/Users';
 import { RequireAuth, RequireRoles, RoleHomeRedirect } from './guards';
 import { ADMIN_ONLY, MANAGER_PLUS, PLATFORM_ONLY, TENANT_ROLES } from './route-config';
 
@@ -83,7 +83,7 @@ export const appRoutes: RouteObject[] = [
           {
             element: <AppShell />,
             children: [
-              { path: 'settings/users', element: <UsersSettingsPlaceholder /> },
+              { path: 'settings/users', element: <UsersSettings /> },
               { path: 'settings/theme', element: <ThemeSettings /> },
             ],
           },

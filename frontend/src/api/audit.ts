@@ -1,5 +1,7 @@
 import type { ListAuditQuery, ListAuditResponse } from '@crm-lab/shared';
+import { useQuery } from '@tanstack/react-query';
 import { http } from './client';
+import { queryKeys } from './query-keys';
 import type { QueryParams } from './client';
 
 /**
@@ -9,3 +11,16 @@ import type { QueryParams } from './client';
 export const auditApi = {
   list: (query: ListAuditQuery = {}) => http.get<ListAuditResponse>('/audit', query as QueryParams),
 };
+
+/* ── React Query Hooks ──────────────────────────────────────────────────── */
+
+export function useAuditList(filters?: ListAuditQuery) {
+  return useQuery({
+    queryKey: queryKeys.audit(filters),
+    queryFn: async () => {
+      const res = await auditApi.list(filters);
+      return res;
+    },
+    staleTime: 60000, // 1 minuto
+  });
+}

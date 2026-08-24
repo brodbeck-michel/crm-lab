@@ -41,9 +41,9 @@ export type {
 export { examsApi } from './exams';
 export { analyticsApi } from './analytics';
 export { themesApi } from './themes';
-export { usersApi } from './users';
+export { usersApi, useUserList, useCreateUser, useUpdateUser } from './users';
 export { internalChatApi } from './internal-chat';
-export { auditApi } from './audit';
+export { auditApi, useAuditList } from './audit';
 export { platformApi } from './platform';
 
 import { analyticsApi } from './analytics';

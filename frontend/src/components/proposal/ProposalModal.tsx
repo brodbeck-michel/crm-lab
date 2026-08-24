@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { ProposalStatus } from '@crm-lab/shared';
+import type { ProposalStatus, LossReason } from '@crm-lab/shared';
 import { useProposalDetail, useUpdateProposalStatus } from '@/api/proposals';
 import { Modal, MoneyDisplay } from '@/components/shared';
 import ItemsList from './ItemsList';
@@ -31,8 +31,8 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
     updateStatus.mutate({ proposalId, status: 'ganho' });
   };
 
-  const handleMarkLost = (reasonLost: string) => {
-    updateStatus.mutate({ proposalId, status: 'perdido', reasonLost: reasonLost as any });
+  const handleMarkLost = (reasonLost: LossReason) => {
+    updateStatus.mutate({ proposalId, status: 'perdido', reasonLost });
     setShowLostForm(false);
   };
 

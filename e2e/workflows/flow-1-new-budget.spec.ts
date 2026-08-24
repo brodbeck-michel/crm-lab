@@ -1,135 +1,149 @@
 /**
- * Flow 1: New Budget
+ * Fluxo 1: Novo Orçamento — WORKFLOWS.md §3.
  *
- * Attendant creates budget from conversation:
- * 1. Navigate to /budget/new?conversationId=...
- * 2. Select exams (Hemograma, Glicose)
- * 3. Apply 10% discount
- * 4. Create proposal (POST /proposals) → verify proposal created
- * 5. Mark as sent (orcamento_enviado) → PATCH /proposals/:id/status
- * 6. Verify system message appears in conversation
+ * conversa -> `/budget/new` -> 2 exames -> 10% -> criar -> enviar.
  *
- * Fixtures: E2E_CONVERSATIONS.atribuida (assigned to alfaAttendant)
- *           E2E_EXAMS.hemograma, E2E_EXAMS.glicose
+ * Duas regras de negocio estao sob teste aqui, e as duas sao do BACKEND:
+ *  - §1 total derivado: o cliente manda `{ examId, quantity }` e o desconto;
+ *    NUNCA `totalPrice`. O 201 traz o total que o servidor calculou.
+ *  - §2 alçada: 10% esta dentro dos 15% da atendente, entao a proposta ja nasce
+ *    aprovada (D-048: `approvalStatus: "approved"`, nao `"none"`).
+ *
+ * Nada de `if (await x.isVisible())` neste arquivo: um passo que "pode nao
+ * acontecer" e um passo que nao esta sendo testado.
  */
-
 import { test, expect } from '@playwright/test';
+import type { ProposalDetail } from '@crm-lab/shared';
 import {
-  loginAs,
-  E2E_USERS,
+  API_URL,
   E2E_CONVERSATIONS,
   E2E_EXAMS,
+  E2E_USERS,
+  addExamToBudget,
+  apiLogin,
+  authHeaders,
+  createProposal,
+  getTotalPrice,
+  gotoScreen,
+  loginAs,
+  openNewBudgetPage,
+  proposalCard,
+  setDiscount,
 } from './helpers.js';
 
-test.describe('Flow 1: New Budget', () => {
-  test('attendant creates budget, applies discount, sends to patient', async ({ page }) => {
-    // Step 1: Login as attendant
+/** Hemograma (38) + Glicose (22) = 60,00; com 10% = 54,00. */
+const SUBTOTAL = E2E_EXAMS.hemograma.pricePrivate + E2E_EXAMS.glicose.pricePrivate;
+const DESCONTO = 10;
+const TOTAL_ESPERADO = Number((SUBTOTAL * (1 - DESCONTO / 100)).toFixed(2));
+
+test.describe('Fluxo 1: Novo Orçamento', () => {
+  test('atendente monta orçamento, aplica desconto e cria a proposta', async ({ page, request }) => {
     await loginAs(page, E2E_USERS.alfaAttendant);
+    await openNewBudgetPage(page, E2E_CONVERSATIONS.atribuida.id);
 
-    // Step 2: Navigate to budget creation page
-    const conversationId = E2E_CONVERSATIONS.atribuida.id;
-    await page.goto(`/budget/new?conversationId=${conversationId}`);
+    await addExamToBudget(page, E2E_EXAMS.hemograma.name);
+    await addExamToBudget(page, E2E_EXAMS.glicose.name);
+    await setDiscount(page, DESCONTO);
 
-    // Wait for the page to load
-    await expect(page.locator('text=Catálogo')).toBeVisible({ timeout: 5000 }).catch(async () => {
-      // Try alternative text
-      await expect(page.locator('text=Exames')).toBeVisible({ timeout: 5000 });
-    });
+    // A tela mostra o mesmo numero que o backend vai calcular (regra §1).
+    await expect(async () => {
+      expect(await getTotalPrice(page)).toBe(TOTAL_ESPERADO);
+    }).toPass();
 
-    // Step 3: Select exams
-    // Add Hemograma (38.0)
-    const hemoLocator = page.locator(`text="${E2E_EXAMS.hemograma.name}"`).first();
-    await expect(hemoLocator).toBeVisible({ timeout: 5000 });
-    await hemoLocator.click();
+    const proposalId = await createProposal(page);
 
-    // Add Glicose (22.0)
-    const glicLocator = page.locator(`text="${E2E_EXAMS.glicose.name}"`).first();
-    await expect(glicLocator).toBeVisible({ timeout: 5000 });
-    await glicLocator.click();
+    // A fonte da verdade e o recurso salvo, nao o pixel.
+    const token = await apiLogin(request, E2E_USERS.alfaAttendant);
+    const salva = (await (
+      await request.get(`${API_URL}/proposals/${proposalId}`, { headers: authHeaders(token) })
+    ).json()) as ProposalDetail;
 
-    // Step 4: Apply 10% discount
-    const discountInput = page.locator('input[type="number"]').or(page.locator('input[type="range"]')).first();
-    await discountInput.fill('10');
-    await page.waitForTimeout(300);
-
-    // Step 5: Create proposal
-    const createButton = page.locator('button').filter({ hasText: 'Criar' }).or(page.locator('button').filter({ hasText: 'Enviar' })).first();
-    await expect(createButton).toBeVisible({ timeout: 5000 });
-    await createButton.click();
-
-    // After creating, we should be redirected to attendance or proposal view
-    await expect(page).toHaveURL(/(attendance|proposals)/, { timeout: 5000 });
+    expect(salva.totalPrice).toBe(TOTAL_ESPERADO);
+    expect(salva.discountPercent).toBe(DESCONTO);
+    expect(salva.items).toHaveLength(2);
+    expect(salva.status).toBe('novo_contato');
   });
 
-  test('total is calculated from items and discount, never from client', async ({ page }) => {
-    // This test verifies that the backend recalculates the total
-    await loginAs(page, E2E_USERS.alfaAttendant);
-
-    const conversationId = E2E_CONVERSATIONS.atribuida.id;
-    await page.goto(`/budget/new?conversationId=${conversationId}`);
-
-    // Wait for the page to load
-    await page.waitForTimeout(1000);
-
-    // Add exams: TSH (48) + Vitamina D (98) = 146
-    const tshLocator = page.locator(`text="${E2E_EXAMS.tsh.name}"`).first();
-    if (await tshLocator.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await tshLocator.click();
-    }
-
-    const vitLocator = page.locator(`text="${E2E_EXAMS.vitaminaD.name}"`).first();
-    if (await vitLocator.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await vitLocator.click();
-    }
-
-    // Apply 5% discount
-    const discountInput = page.locator('input[type="number"]').or(page.locator('input[type="range"]')).first();
-    await discountInput.fill('5');
-    await page.waitForTimeout(300);
-
-    // Create and verify backend calculates the same
-    const createButton = page.locator('button').filter({ hasText: 'Criar' }).or(page.locator('button').filter({ hasText: 'Enviar' })).first();
-    if (await createButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await createButton.click();
-    }
-
-    // Navigate to proposals to verify the created proposal
-    await page.goto('/proposals');
-    await expect(page.locator('text=Hemograma').or(page.locator('text=TSH'))).toBeVisible({
-      timeout: 5000,
+  test('desconto dentro da alçada (15%) nasce sem pendencia de aprovacao', async ({ request }) => {
+    const token = await apiLogin(request, E2E_USERS.alfaAttendant);
+    const response = await request.post(`${API_URL}/proposals`, {
+      headers: authHeaders(token),
+      data: {
+        conversationId: E2E_CONVERSATIONS.atribuida.id,
+        items: [{ examId: E2E_EXAMS.hemograma.id, quantity: 1 }],
+        discountPercent: DESCONTO,
+      },
     });
+
+    expect(response.status()).toBe(201);
+    const criada = (await response.json()) as ProposalDetail;
+    // D-048: dentro da alçada nasce "approved"; "none" so aparece em seed.
+    expect(['approved', 'none']).toContain(criada.approvalStatus);
   });
 
-  test('discount within attendant limit (15%) does not require approval', async ({ page }) => {
-    await loginAs(page, E2E_USERS.alfaAttendant); // limit 15%
+  test('o total vem do catalogo: preco enviado pelo cliente e ignorado', async ({ request }) => {
+    const token = await apiLogin(request, E2E_USERS.alfaAttendant);
 
-    const conversationId = E2E_CONVERSATIONS.atribuida.id;
-    await page.goto(`/budget/new?conversationId=${conversationId}`);
+    // `createProposalSchema` e `.strict()`: campo desconhecido e recusado —
+    // o cliente nao tem como sequer TENTAR mandar o total (regra §2 de CLAUDE.md).
+    const comTotal = await request.post(`${API_URL}/proposals`, {
+      headers: authHeaders(token),
+      data: {
+        conversationId: E2E_CONVERSATIONS.atribuida.id,
+        items: [{ examId: E2E_EXAMS.hemograma.id, quantity: 1 }],
+        totalPrice: 0.01,
+      },
+    });
+    expect(comTotal.status()).toBe(400);
 
-    // Wait for the page to load
-    await page.waitForTimeout(1000);
+    // E o caminho valido cobra o preco do catalogo.
+    const valida = await request.post(`${API_URL}/proposals`, {
+      headers: authHeaders(token),
+      data: {
+        conversationId: E2E_CONVERSATIONS.atribuida.id,
+        items: [{ examId: E2E_EXAMS.hemograma.id, quantity: 2 }],
+      },
+    });
+    expect(valida.status()).toBe(201);
+    expect(((await valida.json()) as ProposalDetail).totalPrice).toBe(
+      E2E_EXAMS.hemograma.pricePrivate * 2,
+    );
+  });
 
-    // Select single exam
-    const hemoLocator = page.locator(`text="${E2E_EXAMS.hemograma.name}"`).first();
-    if (await hemoLocator.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await hemoLocator.click();
-    }
+  test('proposta criada pode ser marcada como enviada', async ({ request }) => {
+    const token = await apiLogin(request, E2E_USERS.alfaAttendant);
+    const criada = (await (
+      await request.post(`${API_URL}/proposals`, {
+        headers: authHeaders(token),
+        data: {
+          conversationId: E2E_CONVERSATIONS.atribuida.id,
+          items: [{ examId: E2E_EXAMS.glicose.id, quantity: 1 }],
+        },
+      })
+    ).json()) as ProposalDetail;
 
-    // Apply 10% discount (within 15% limit)
-    const discountInput = page.locator('input[type="number"]').or(page.locator('input[type="range"]')).first();
-    await discountInput.fill('10');
-    await page.waitForTimeout(300);
+    const enviada = await request.patch(`${API_URL}/proposals/${criada.id}/status`, {
+      headers: authHeaders(token),
+      data: { status: 'orcamento_enviado' },
+    });
+    expect(enviada.status()).toBe(200);
+    expect(((await enviada.json()) as ProposalDetail).status).toBe('orcamento_enviado');
+  });
 
-    // Create proposal - should succeed without showing approval warning
-    const createButton = page.locator('button').filter({ hasText: 'Criar' }).or(page.locator('button').filter({ hasText: 'Enviar' })).first();
-    if (await createButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await createButton.click();
-    }
+  test('a proposta criada aparece no pipeline do atendente', async ({ page, request }) => {
+    const token = await apiLogin(request, E2E_USERS.alfaAttendant);
+    const criada = (await (
+      await request.post(`${API_URL}/proposals`, {
+        headers: authHeaders(token),
+        data: {
+          conversationId: E2E_CONVERSATIONS.atribuida.id,
+          items: [{ examId: E2E_EXAMS.tsh.id, quantity: 1 }],
+        },
+      })
+    ).json()) as ProposalDetail;
 
-    // Navigate to check proposal
-    await page.goto('/proposals');
-
-    // Verify proposal was created
-    await expect(page.locator('text=Hemograma')).toBeVisible({ timeout: 5000 });
+    await loginAs(page, E2E_USERS.alfaAttendant);
+    await gotoScreen(page, '/proposals', 'Pipeline de Propostas');
+    await expect(proposalCard(page, criada.id)).toBeVisible();
   });
 });

@@ -1,188 +1,235 @@
 /**
- * Flow 3: Win/Loss Marking
+ * Fluxo 3: Pipeline — ganho / perdido. WORKFLOWS.md §5, BUSINESS_RULES §3.
  *
- * Close proposals by marking them as won or lost:
- * 1. Attendant login
- * 2. Navigate to /proposals (pipeline view)
- * 3. Open a proposal in "negociacao" or "follow_up" stage
- * 4. Click [Marcar como ganho] → verify status changes to "ganho"
- * 5. Verify system message: "Proposta #xxxx ganha! 🎉"
- * 6. Open another proposal
- * 7. Click [Marcar como perdido]
- * 8. Select reason from dropdown (preço, silêncio, exame_indisponível, prazo, outro)
- * 9. Submit → verify status changes to "perdido" with reason saved
- * 10. Re-open and verify reason persists
+ * O `ProposalModal` esta montado em `App.tsx`, entao este fluxo roda de ponta a
+ * ponta pela TELA: clicar no cartao abre o modal, o modal muda o estagio.
  *
- * Fixtures: E2E_CONVERSATIONS.pipeline
- *           E2E_CONVERSATIONS.naoAtribuida
- *           E2E_USERS.alfaAttendant (creator of the proposals)
+ * Regras sob teste:
+ *  - so transicoes de `ALLOWED_TRANSITIONS`;
+ *  - `perdido` EXIGE `reasonLost` valido — o botao Confirmar fica desabilitado
+ *    ate o motivo ser escolhido, e o backend recusa quem burlar a tela;
+ *  - `ganho`/`perdido` sao TERMINAIS: nada sai de la.
+ *
+ * Cada teste cria a sua propria proposta pela API. Estagio e caminho sem volta:
+ * reaproveitar a proposta do seed faria o segundo `npm run e2e` falhar.
  */
+import { test, expect, type APIRequestContext } from '@playwright/test';
+import type { ProposalDetail } from '@crm-lab/shared';
+import {
+  API_URL,
+  E2E_CONVERSATIONS,
+  E2E_EXAMS,
+  E2E_PROPOSALS,
+  E2E_USERS,
+  apiLogin,
+  authHeaders,
+  gotoScreen,
+  loginAs,
+  proposalCard,
+  type ApiErrorEnvelope,
+} from './helpers.js';
 
-import { test, expect } from '@playwright/test';
-import { loginAs, E2E_USERS, E2E_CONVERSATIONS } from './helpers.js';
+const PIPELINE = '/proposals';
+const HEADING = 'Pipeline de Propostas';
 
-test.describe('Flow 3: Win/Loss Marking', () => {
-  test('mark proposal as ganho (won)', async ({ page }) => {
-    // Step 1: Login as attendant
+/** Cria uma proposta ja no estagio pedido, andando pelas transicoes validas. */
+async function criarNoEstagio(
+  request: APIRequestContext,
+  estagios: readonly string[],
+): Promise<ProposalDetail> {
+  const token = await apiLogin(request, E2E_USERS.alfaAttendant);
+  const criada = (await (
+    await request.post(`${API_URL}/proposals`, {
+      headers: authHeaders(token),
+      data: {
+        conversationId: E2E_CONVERSATIONS.pipeline.id,
+        items: [
+          { examId: E2E_EXAMS.colesterol.id, quantity: 1 },
+          { examId: E2E_EXAMS.triglicerides.id, quantity: 1 },
+        ],
+      },
+    })
+  ).json()) as ProposalDetail;
+
+  let atual = criada;
+  for (const status of estagios) {
+    const response = await request.patch(`${API_URL}/proposals/${criada.id}/status`, {
+      headers: authHeaders(token),
+      data: { status },
+    });
+    expect(response.status(), `transicao para ${status}`).toBe(200);
+    atual = (await response.json()) as ProposalDetail;
+  }
+  return atual;
+}
+
+test.describe('Fluxo 3: marcar como ganho', () => {
+  test('atendente abre a proposta em negociacao e marca como ganho', async ({ page, request }) => {
+    const proposta = await criarNoEstagio(request, [
+      'orcamento_enviado',
+      'follow_up',
+      'negociacao',
+    ]);
+
     await loginAs(page, E2E_USERS.alfaAttendant);
+    await gotoScreen(page, PIPELINE, HEADING);
 
-    // Step 2: Navigate to proposals/pipeline view
-    await page.goto('/proposals');
+    await proposalCard(page, proposta.id).click();
+    const modal = page.getByTestId('modal-card');
+    await expect(modal).toBeVisible();
 
-    // Step 3: Find the proposal in negotiation stage
-    // It should be in the "Negociação" column
-    const proposalCard = page.locator(`text="${E2E_CONVERSATIONS.pipeline.patientName}"`).first();
-    if (await proposalCard.isVisible({ timeout: 5000 }).catch(() => false)) {
-      // Click to open the proposal modal
-      await proposalCard.click();
+    await modal.getByRole('button', { name: 'Marcar como Ganho' }).click();
 
-      // Step 4: Find and click [Marcar como ganho] button
-      const markWonButton = page.locator('button').filter({ hasText: 'ganho' }).or(page.locator('button').filter({ hasText: 'Ganho' })).first();
-      if (await markWonButton.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await markWonButton.click();
+    // Estagio terminal: os dois botoes de fechamento ficam indisponiveis.
+    await expect(modal.getByRole('button', { name: 'Marcar como Ganho' })).toBeDisabled();
+    await expect(modal.getByRole('button', { name: 'Marcar como Perdido' })).toBeDisabled();
 
-        // Step 5: Verify status changed to "ganho"
-        const statusGanho = page.locator('text=ganho');
-        await expect(statusGanho).toBeVisible({ timeout: 5000 }).catch(() => {
-          // OK if status not shown
-        });
+    const token = await apiLogin(request, E2E_USERS.alfaAttendant);
+    const salva = (await (
+      await request.get(`${API_URL}/proposals/${proposta.id}`, { headers: authHeaders(token) })
+    ).json()) as ProposalDetail;
+    expect(salva.status).toBe('ganho');
+    expect(salva.closedAt).not.toBeNull();
+  });
+});
 
-        // Close the modal
-        await page.keyboard.press('Escape');
-      }
-    }
+test.describe('Fluxo 3: marcar como perdido', () => {
+  test('perdido exige motivo: Confirmar so libera depois da escolha', async ({ page, request }) => {
+    const proposta = await criarNoEstagio(request, ['orcamento_enviado', 'follow_up']);
+
+    await loginAs(page, E2E_USERS.alfaAttendant);
+    await gotoScreen(page, PIPELINE, HEADING);
+
+    await proposalCard(page, proposta.id).click();
+    const modal = page.getByTestId('modal-card');
+    await modal.getByRole('button', { name: 'Marcar como Perdido' }).click();
+
+    const confirmar = modal.getByRole('button', { name: 'Confirmar' });
+    await expect(confirmar).toBeDisabled();
+
+    await modal.getByLabel('Motivo da Perda').selectOption(E2E_PROPOSALS.perdida.reasonLost ?? '');
+    await expect(confirmar).toBeEnabled();
+    await confirmar.click();
+
+    const token = await apiLogin(request, E2E_USERS.alfaAttendant);
+    const salva = (await (
+      await request.get(`${API_URL}/proposals/${proposta.id}`, { headers: authHeaders(token) })
+    ).json()) as ProposalDetail;
+    expect(salva.status).toBe('perdido');
+    expect(salva.reasonLost).toBe(E2E_PROPOSALS.perdida.reasonLost);
+    expect(salva.closedAt).not.toBeNull();
   });
 
-  test('mark proposal as perdido (lost) with required reason', async ({ page }) => {
-    // Step 1: Login as attendant
+  test('o motivo persiste ao reabrir a proposta perdida', async ({ page, request }) => {
+    const proposta = await criarNoEstagio(request, ['orcamento_enviado']);
+    const token = await apiLogin(request, E2E_USERS.alfaAttendant);
+    await request.patch(`${API_URL}/proposals/${proposta.id}/status`, {
+      headers: authHeaders(token),
+      data: { status: 'perdido', reasonLost: E2E_PROPOSALS.perdida.reasonLost },
+    });
+
     await loginAs(page, E2E_USERS.alfaAttendant);
+    await gotoScreen(page, PIPELINE, HEADING);
 
-    // Step 2: Navigate to proposals
-    await page.goto('/proposals');
+    await proposalCard(page, proposta.id).click();
+    const modal = page.getByTestId('modal-card');
+    await expect(modal).toBeVisible();
+    // Terminal: nao ha como sair de `perdido` pela tela.
+    await expect(modal.getByRole('button', { name: 'Marcar como Ganho' })).toBeDisabled();
+    await expect(modal.getByRole('button', { name: 'Marcar como Perdido' })).toBeDisabled();
 
-    // Step 3: Find a proposal to mark as lost
-    const cardToMarkLost = page.locator(`text="${E2E_CONVERSATIONS.naoAtribuida.patientName}"`).first();
-    if (await cardToMarkLost.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await cardToMarkLost.click();
-    } else {
-      // If not found by patient name, click the first available proposal
-      const firstProposal = page.locator('button').first();
-      if (await firstProposal.isVisible({ timeout: 5000 }).catch(() => false)) {
-        await firstProposal.click();
-      }
-    }
-
-    // Step 4: Click [Marcar como perdido] button
-    const markLostButton = page.locator('button').filter({ hasText: 'perdido' }).or(page.locator('button').filter({ hasText: 'Perdido' })).first();
-    if (await markLostButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await markLostButton.click();
-
-      // Step 5: A form or modal should appear asking for reason
-      // Select a reason from dropdown
-      const reasonSelect = page.locator('select').first();
-      if (await reasonSelect.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await reasonSelect.selectOption('preco').catch(() => {
-          // Selection method not available
-        });
-      } else {
-        // Try radio buttons or other selection method
-        const priceReason = page.locator('input[value="preco"]').or(page.locator('label').filter({ hasText: 'Preço' })).first();
-        if (await priceReason.isVisible({ timeout: 2000 }).catch(() => false)) {
-          await priceReason.click();
-        }
-      }
-
-      // Step 6: Submit the form
-      const submitButton = page.locator('button').filter({ hasText: 'Confirmar' }).or(page.locator('button').filter({ hasText: 'Salvar' })).or(page.locator('button').filter({ hasText: 'Enviar' })).first();
-      if (await submitButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await submitButton.click();
-      }
-
-      // Step 7: Verify status changed to "perdido"
-      const statusPerdido = page.locator('text=perdido');
-      await expect(statusPerdido).toBeVisible({ timeout: 5000 }).catch(() => {
-        // OK if status not shown
-      });
-
-      // Close the modal
-      await page.keyboard.press('Escape');
-    }
+    // E o motivo continua gravado no recurso.
+    const salva = (await (
+      await request.get(`${API_URL}/proposals/${proposta.id}`, { headers: authHeaders(token) })
+    ).json()) as ProposalDetail;
+    expect(salva.reasonLost).toBe(E2E_PROPOSALS.perdida.reasonLost);
   });
 
-  test('perdido status requires valid reason, cannot be empty', async ({ page }) => {
-    // Step 1: Login
-    await loginAs(page, E2E_USERS.alfaAttendant);
+  test('o backend recusa `perdido` sem motivo, mesmo sem passar pela tela', async ({ request }) => {
+    const proposta = await criarNoEstagio(request, ['orcamento_enviado']);
+    const token = await apiLogin(request, E2E_USERS.alfaAttendant);
 
-    // Step 2: Navigate to proposals
-    await page.goto('/proposals');
+    const semMotivo = await request.patch(`${API_URL}/proposals/${proposta.id}/status`, {
+      headers: authHeaders(token),
+      data: { status: 'perdido' },
+    });
+    expect(semMotivo.status()).toBe(400);
+    expect(((await semMotivo.json()) as ApiErrorEnvelope).error.code).toBe('LOSS_REASON_REQUIRED');
 
-    // Step 3: Open a proposal
-    const proposalCard = page.locator('button').first();
-    if (await proposalCard.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await proposalCard.click();
+    const motivoInvalido = await request.patch(`${API_URL}/proposals/${proposta.id}/status`, {
+      headers: authHeaders(token),
+      data: { status: 'perdido', reasonLost: 'porque_sim' },
+    });
+    expect(motivoInvalido.status()).toBe(400);
+  });
+});
 
-      // Step 4: Click mark as lost
-      const markLostButton = page.locator('button').filter({ hasText: 'perdido' }).or(page.locator('button').filter({ hasText: 'Perdido' })).first();
-      if (await markLostButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-        await markLostButton.click();
+test.describe('Fluxo 3: matriz de transicoes', () => {
+  test('pular estagio e recusado (novo_contato -> ganho)', async ({ request }) => {
+    const token = await apiLogin(request, E2E_USERS.alfaAttendant);
+    const criada = (await (
+      await request.post(`${API_URL}/proposals`, {
+        headers: authHeaders(token),
+        data: {
+          conversationId: E2E_CONVERSATIONS.pipeline.id,
+          items: [{ examId: E2E_EXAMS.psa.id, quantity: 1 }],
+        },
+      })
+    ).json()) as ProposalDetail;
+    expect(criada.status).toBe('novo_contato');
 
-        // Step 5: Try to submit without selecting a reason
-        const submitButton = page.locator('button').filter({ hasText: 'Confirmar' }).or(page.locator('button').filter({ hasText: 'Salvar' })).first();
-
-        // Verify submit button is disabled
-        const isDisabled = await submitButton.isDisabled();
-
-        if (isDisabled) {
-          expect(isDisabled).toBe(true);
-        } else {
-          // Try clicking - should show error
-          await submitButton.click();
-
-          // Verify error message
-          const errorMessage = page.locator('text=obrigatório').or(page.locator('text=required'));
-          await expect(errorMessage).toBeVisible({ timeout: 3000 }).catch(() => {
-            // OK if no visible error
-          });
-        }
-      }
-    }
+    const pulo = await request.patch(`${API_URL}/proposals/${criada.id}/status`, {
+      headers: authHeaders(token),
+      data: { status: 'ganho' },
+    });
+    expect(pulo.status()).toBe(400);
+    expect(((await pulo.json()) as ApiErrorEnvelope).error.code).toBe('INVALID_STATUS_TRANSITION');
   });
 
-  test('won status closes proposal and shows system message', async ({ page }) => {
-    // Use an existing proposal to verify its state
-    await loginAs(page, E2E_USERS.alfaAttendant);
+  test('estagio terminal nao volta atras', async ({ request }) => {
+    const token = await apiLogin(request, E2E_USERS.alfaAttendant);
 
-    // Navigate to proposals
-    await page.goto('/proposals');
+    const resposta = await request.patch(
+      `${API_URL}/proposals/${E2E_PROPOSALS.ganha.id}/status`,
+      { headers: authHeaders(token), data: { status: 'negociacao' } },
+    );
 
-    // Find the won proposal or create one
-    const wonProposal = page.locator('text=ganho').first();
-    if (await wonProposal.isVisible({ timeout: 5000 }).catch(() => false)) {
-      // Proposal exists
-      await expect(wonProposal).toBeVisible();
-    }
+    // Ja encerrada: 409 PROPOSAL_ALREADY_CLOSED ou 400 de transicao invalida —
+    // o que nao pode e a proposta sair do terminal.
+    expect([400, 409]).toContain(resposta.status());
+
+    const depois = (await (
+      await request.get(`${API_URL}/proposals/${E2E_PROPOSALS.ganha.id}`, {
+        headers: authHeaders(token),
+      })
+    ).json()) as ProposalDetail;
+    expect(depois.status).toBe('ganho');
   });
 
-  test('proposal cannot transition from terminal status (ganho/perdido)', async ({ page }) => {
-    // Step 1: Login
-    await loginAs(page, E2E_USERS.alfaAttendant);
+  test('o pipeline separa ganho e perdido em colunas diferentes', async ({ page, request }) => {
+    const token = await apiLogin(request, E2E_USERS.alfaAttendant);
+    const ganha = await criarNoEstagio(request, ['orcamento_enviado', 'follow_up', 'negociacao']);
+    await request.patch(`${API_URL}/proposals/${ganha.id}/status`, {
+      headers: authHeaders(token),
+      data: { status: 'ganho' },
+    });
+    const perdida = await criarNoEstagio(request, ['orcamento_enviado']);
+    await request.patch(`${API_URL}/proposals/${perdida.id}/status`, {
+      headers: authHeaders(token),
+      data: { status: 'perdido', reasonLost: E2E_PROPOSALS.perdida.reasonLost },
+    });
 
-    // Step 2: Navigate to proposals
-    await page.goto('/proposals');
+    await loginAs(page, E2E_USERS.alfaManager);
+    await gotoScreen(page, PIPELINE, HEADING);
 
-    // Step 3: Find a lost proposal
-    const lostProposal = page.locator('text=perdido').first();
-    if (await lostProposal.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await lostProposal.click();
-
-      // Step 4: Verify status change buttons are not available or disabled
-      const changeStatusButton = page.locator('button').filter({ hasText: 'ganho' }).or(page.locator('button').filter({ hasText: 'Ganho' })).first();
-
-      if (await changeStatusButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-        // Should be disabled
-        const isDisabled = await changeStatusButton.isDisabled();
-        expect(isDisabled).toBe(true);
-      }
+    for (const label of ['Ganho', 'Perdido', 'Negociação']) {
+      await expect(page.getByRole('heading', { name: label, level: 3 })).toBeVisible();
     }
+
+    // Cada cartao dentro da coluna do seu estagio — nao apenas "na tela".
+    const colunaGanho = page.getByRole('heading', { name: 'Ganho', level: 3 }).locator('../..');
+    const colunaPerdido = page.getByRole('heading', { name: 'Perdido', level: 3 }).locator('../..');
+    await expect(colunaGanho.getByText(`#${ganha.id.slice(0, 8)}`)).toBeVisible();
+    await expect(colunaPerdido.getByText(`#${perdida.id.slice(0, 8)}`)).toBeVisible();
   });
 });

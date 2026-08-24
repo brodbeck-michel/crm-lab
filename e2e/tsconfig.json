@@ -1,5 +1,12 @@
 {
   "extends": "../tsconfig.base.json",
-  "compilerOptions": { "noEmit": true, "types": ["node"] },
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"],
+    // `page.evaluate()` roda no navegador: o callback usa `document`,
+    // `window` e `getComputedStyle`. Sem `DOM` no lib, o typecheck do
+    // workspace nao reconhece esses globais dentro do callback.
+    "lib": ["ES2022", "DOM"]
+  },
   "include": ["**/*.ts", "../shared/types/**/*.ts"]
 }

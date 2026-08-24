@@ -1,240 +1,220 @@
 /**
- * Flow 2: Discount Approval
+ * Fluxo 2: Aprovação de Desconto — WORKFLOWS.md §4, BUSINESS_RULES §2.
  *
- * When attendant's discount exceeds their limit, manager must approve:
- * 1. Attendant login (limit 15%)
- * 2. Create proposal with 25% discount
- * 3. Verify approvalStatus: "pending" (no "Enviar" button available)
- * 4. Verify approval request posted in #aprovacoes channel with @gestor mention
- * 5. Manager login
- * 6. Open #aprovacoes channel, find the approval card
- * 7. Click [Aprovar]
- * 8. Verify attendant is notified (chat/WS) that approval was granted
- * 9. Attendant can now send the proposal
+ * Atendente (alçada 15%) pede 25% -> a proposta NASCE com
+ * `approvalStatus: "pending"` e **201**, nao 403 (D-045) -> o pedido e postado
+ * em `#aprovacoes` com o texto de `E2E_APPROVAL_POST` -> o GESTOR aprova ->
+ * so entao a proposta pode ser enviada.
  *
- * Fixtures: E2E_CONVERSATIONS.aprovacao
- *           E2E_USERS.alfaAttendant (limit 15%)
- *           E2E_USERS.alfaManager (limit 30%)
+ * Dois usuarios distintos, sempre: aprovar a propria proposta falha por
+ * projeto (D-046), entao um spec que usasse um usuario so estaria testando o
+ * caminho errado.
+ *
+ * LIMITE DE AMBIENTE, dito com todas as letras: `/internal-chat` ainda e
+ * `InternalChatPlaceholder` em `frontend/src/routes/index.tsx`. O cartao com
+ * [Aprovar] / [Rejeitar] nao existe na tela, entao a metade "gestor clica em
+ * Aprovar no canal" e verificada pelo CONTRATO (`PATCH /proposals/:id/approve`
+ * + conteudo de `#aprovacoes` via API), nao por clique. Quando a tela existir,
+ * o teste de clique entra aqui — e nao ha `test.skip` escondendo isso.
  */
-
-import { test, expect } from '@playwright/test';
+import { test, expect, type APIRequestContext } from '@playwright/test';
+import type {
+  Channel,
+  ListChannelsResponse,
+  ListInternalMessagesResponse,
+  ProposalDetail,
+} from '@crm-lab/shared';
 import {
-  loginAs,
-  E2E_USERS,
+  API_URL,
+  E2E_APPROVAL_POST,
+  E2E_CHANNELS,
   E2E_CONVERSATIONS,
   E2E_EXAMS,
+  E2E_PROPOSALS,
+  E2E_USERS,
+  apiLogin,
+  authHeaders,
+  discountField,
+  gotoScreen,
+  loginAs,
+  proposalCard,
+  type ApiErrorEnvelope,
 } from './helpers.js';
 
-test.describe('Flow 2: Discount Approval', () => {
-  test('high discount requires manager approval before sending', async ({ page, browser }) => {
-    // Step 1: Attendant login (limit 15%)
-    await loginAs(page, E2E_USERS.alfaAttendant);
+const PIPELINE_HEADING = 'Pipeline de Propostas';
 
-    // Step 2: Create budget with 25% discount (above limit)
-    const conversationId = E2E_CONVERSATIONS.aprovacao.id;
-    await page.goto(`/budget/new?conversationId=${conversationId}`);
+/** Cria uma proposta de 25% (acima da alçada da atendente) e devolve o detalhe. */
+async function criarPendente(
+  request: APIRequestContext,
+): Promise<ProposalDetail> {
+  const token = await apiLogin(request, E2E_USERS.alfaAttendant);
+  const response = await request.post(`${API_URL}/proposals`, {
+    headers: authHeaders(token),
+    data: {
+      conversationId: E2E_CONVERSATIONS.aprovacao.id,
+      items: [
+        { examId: E2E_EXAMS.vitaminaD.id, quantity: 1 },
+        { examId: E2E_EXAMS.tsh.id, quantity: 1 },
+        { examId: E2E_EXAMS.hemograma.id, quantity: 1 },
+      ],
+      discountPercent: E2E_PROPOSALS.pendenteAprovacao.discountPercent,
+    },
+  });
+  // D-045: acima da alçada e 201 com pendencia, nunca 403.
+  expect(response.status()).toBe(201);
+  return (await response.json()) as ProposalDetail;
+}
 
-    // Wait for page to load
-    await page.waitForTimeout(1000);
+test.describe('Fluxo 2: Aprovação de Desconto', () => {
+  test('desconto acima da alçada nasce pendente, com o total do catalogo', async ({ request }) => {
+    const criada = await criarPendente(request);
 
-    // Add exams: Vitamina D (98) + TSH (48) + Hemograma (38) = 184
-    // 25% discount = 138.0
-    const vitLocator = page.locator(`text="${E2E_EXAMS.vitaminaD.name}"`).first();
-    if (await vitLocator.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await vitLocator.click();
-    }
-
-    const tshLocator = page.locator(`text="${E2E_EXAMS.tsh.name}"`).first();
-    if (await tshLocator.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await tshLocator.click();
-    }
-
-    const hemoLocator = page.locator(`text="${E2E_EXAMS.hemograma.name}"`).first();
-    if (await hemoLocator.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await hemoLocator.click();
-    }
-
-    // Apply 25% discount
-    const discountInput = page.locator('input[type="number"]').or(page.locator('input[type="range"]')).first();
-    await discountInput.fill('25');
-    await page.waitForTimeout(300);
-
-    // Step 3: Create proposal
-    const createButton = page.locator('button').filter({ hasText: 'Criar' }).or(page.locator('button').filter({ hasText: 'Enviar' })).first();
-    if (await createButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await createButton.click();
-    }
-
-    // Navigate to proposals to verify it was created
-    await page.goto('/proposals');
-
-    // Verify the proposal appears
-    await expect(page.locator('text=Juliana').or(page.locator('text=138'))).toBeVisible({
-      timeout: 5000,
-    });
-
-    // Step 4: Open internal chat to verify approval request was posted
-    await page.goto('/internal-chat');
-
-    // Find the #aprovacoes channel
-    const aprovacaoChannel = page.locator('text=aprovacoes').or(page.locator('text=#aprovacoes')).first();
-    if (await aprovacaoChannel.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await aprovacaoChannel.click();
-    }
-
-    // Verify the approval post appears
-    await expect(page.locator('text=gestor').or(page.locator('text=aprovação'))).toBeVisible({
-      timeout: 5000,
-    });
-
-    // Step 5: Manager login in a new context
-    const managerContext = await browser.newContext();
-    const managerPage = await managerContext.newPage();
-
-    await loginAs(managerPage, E2E_USERS.alfaManager);
-
-    // Step 6: Manager navigates to #aprovacoes channel
-    await managerPage.goto('/internal-chat');
-
-    const managerAprovacaoChannel = managerPage.locator('text=aprovacoes').or(managerPage.locator('text=#aprovacoes')).first();
-    if (await managerAprovacaoChannel.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await managerAprovacaoChannel.click();
-    }
-
-    // Step 7: Click [Aprovar] button
-    const approveButton = managerPage.locator('button').filter({ hasText: 'Aprovar' }).or(managerPage.locator('button').filter({ hasText: 'Approve' })).first();
-    if (await approveButton.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await approveButton.click();
-
-      // Wait for success message
-      await expect(managerPage.locator('text=aprovada').or(managerPage.locator('text=sucesso'))).toBeVisible({
-        timeout: 5000,
-      }).catch(() => {
-        // OK if no visible success message
-      });
-    }
-
-    // Step 8: Back in attendant page, refresh to see notification
-    await page.reload();
-
-    // Navigate to proposals
-    await page.goto('/proposals');
-
-    // Verify the proposal status changed
-    await expect(page.locator('text=Juliana').or(page.locator('text=138'))).toBeVisible({
-      timeout: 5000,
-    });
-
-    // Cleanup
-    await managerPage.close();
-    await managerContext.close();
+    expect(criada.approvalStatus).toBe('pending');
+    // 98 + 48 + 38 = 184,00 - 25% = 138,00 (o mesmo total do seed).
+    expect(criada.totalPrice).toBe(E2E_PROPOSALS.pendenteAprovacao.expectedTotal);
   });
 
-  test('manager cannot approve discount above their own limit', async ({ page, browser }) => {
-    // Attendant (15% limit) creates 35% discount proposal
-    await loginAs(page, E2E_USERS.alfaAttendant);
+  test('proposta pendente nao pode ser enviada ao paciente', async ({ request }) => {
+    const criada = await criarPendente(request);
+    const token = await apiLogin(request, E2E_USERS.alfaAttendant);
 
-    const conversationId = E2E_CONVERSATIONS.aprovacao.id;
-    await page.goto(`/budget/new?conversationId=${conversationId}`);
+    const envio = await request.patch(`${API_URL}/proposals/${criada.id}/status`, {
+      headers: authHeaders(token),
+      data: { status: 'orcamento_enviado' },
+    });
 
-    await page.waitForTimeout(1000);
-
-    // Create high discount proposal
-    const tshLocator = page.locator(`text="${E2E_EXAMS.tsh.name}"`).first();
-    if (await tshLocator.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await tshLocator.click();
-    }
-
-    const vitLocator = page.locator(`text="${E2E_EXAMS.vitaminaD.name}"`).first();
-    if (await vitLocator.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await vitLocator.click();
-    }
-
-    // Apply 35% discount
-    const discountInput = page.locator('input[type="number"]').or(page.locator('input[type="range"]')).first();
-    await discountInput.fill('35');
-    await page.waitForTimeout(300);
-
-    const createButton = page.locator('button').filter({ hasText: 'Criar' }).or(page.locator('button').filter({ hasText: 'Enviar' })).first();
-    if (await createButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await createButton.click();
-    }
-
-    // Manager tries to approve but hits limit error
-    const managerContext = await browser.newContext();
-    const managerPage = await managerContext.newPage();
-
-    await loginAs(managerPage, E2E_USERS.alfaManager); // limit 30%
-
-    await managerPage.goto('/internal-chat');
-
-    const aprovacaoChannel = managerPage.locator('text=aprovacoes').or(managerPage.locator('text=#aprovacoes')).first();
-    if (await aprovacaoChannel.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await aprovacaoChannel.click();
-    }
-
-    // Try to approve - should fail or show error
-    const approveButton = managerPage.locator('button').filter({ hasText: 'Aprovar' }).first();
-    if (await approveButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-      // Click approve
-      await approveButton.click();
-
-      // Should show error that approval exceeds their limit
-      const errorMessage = managerPage.locator('text=alçada').or(managerPage.locator('text=limit'));
-      await expect(errorMessage).toBeVisible({ timeout: 3000 }).catch(() => {
-        // OK - error might not show visually
-      });
-    }
-
-    await managerPage.close();
-    await managerContext.close();
+    expect(envio.status()).toBe(409);
+    const body = (await envio.json()) as ApiErrorEnvelope;
+    expect(body.error.code).toBe('PROPOSAL_PENDING_APPROVAL');
+    expect(body.error.details?.approvalStatus).toBe('pending');
   });
 
-  test('creator cannot approve their own proposal', async ({ page }) => {
-    // Create proposal with pending approval
+  test('o autor NAO aprova a propria proposta', async ({ request }) => {
+    const criada = await criarPendente(request);
+    const autor = await apiLogin(request, E2E_USERS.alfaAttendant);
+
+    const tentativa = await request.patch(`${API_URL}/proposals/${criada.id}/approve`, {
+      headers: authHeaders(autor),
+    });
+
+    // Atendente nem tem o papel; e mesmo com papel, D-046 barra o autor.
+    expect(tentativa.status()).toBe(403);
+    expect(((await tentativa.json()) as ApiErrorEnvelope).error.code).toBe('FORBIDDEN');
+  });
+
+  test('o gestor aprova e a proposta passa a poder ser enviada', async ({ request }) => {
+    const criada = await criarPendente(request);
+
+    const gestor = await apiLogin(request, E2E_USERS.alfaManager);
+    const aprovacao = await request.patch(`${API_URL}/proposals/${criada.id}/approve`, {
+      headers: authHeaders(gestor),
+    });
+    expect(aprovacao.status()).toBe(200);
+
+    const atendente = await apiLogin(request, E2E_USERS.alfaAttendant);
+    const depois = (await (
+      await request.get(`${API_URL}/proposals/${criada.id}`, { headers: authHeaders(atendente) })
+    ).json()) as ProposalDetail;
+    expect(depois.approvalStatus).toBe('approved');
+
+    const envio = await request.patch(`${API_URL}/proposals/${criada.id}/status`, {
+      headers: authHeaders(atendente),
+      data: { status: 'orcamento_enviado' },
+    });
+    expect(envio.status()).toBe(200);
+  });
+
+  test('rejeicao exige motivo e bloqueia o envio', async ({ request }) => {
+    const criada = await criarPendente(request);
+    const gestor = await apiLogin(request, E2E_USERS.alfaManager);
+
+    const semMotivo = await request.patch(`${API_URL}/proposals/${criada.id}/reject`, {
+      headers: authHeaders(gestor),
+      data: {},
+    });
+    expect(semMotivo.status()).toBe(400);
+
+    const comMotivo = await request.patch(`${API_URL}/proposals/${criada.id}/reject`, {
+      headers: authHeaders(gestor),
+      data: { reason: 'Margem insuficiente para este desconto.' },
+    });
+    expect(comMotivo.status()).toBe(200);
+
+    // D-047: rejeitada tambem nao vai para `orcamento_enviado`.
+    const atendente = await apiLogin(request, E2E_USERS.alfaAttendant);
+    const envio = await request.patch(`${API_URL}/proposals/${criada.id}/status`, {
+      headers: authHeaders(atendente),
+      data: { status: 'orcamento_enviado' },
+    });
+    expect(envio.status()).toBe(409);
+    expect(((await envio.json()) as ApiErrorEnvelope).error.code).toBe('PROPOSAL_PENDING_APPROVAL');
+  });
+
+  test('o pedido aparece em #aprovacoes com o texto do contrato', async ({ request }) => {
+    const gestor = await apiLogin(request, E2E_USERS.alfaManager);
+    const headers = authHeaders(gestor);
+
+    const canais = ((await (
+      await request.get(`${API_URL}/internal-chat/channels`, { headers })
+    ).json()) as ListChannelsResponse).channels;
+
+    const aprovacoes: Channel | undefined = canais.find(
+      (c) => c.key === E2E_CHANNELS.aprovacoes.key,
+    );
+    expect(aprovacoes, `canal ${E2E_CHANNELS.aprovacoes.name} deve existir`).toBeDefined();
+
+    const mensagens = ((await (
+      await request.get(`${API_URL}/internal-chat/channels/${aprovacoes?.id}/messages?limit=100`, {
+        headers,
+      })
+    ).json()) as ListInternalMessagesResponse).messages;
+
+    // Texto exato acordado com o Agent-DB-Seeds (`E2E_APPROVAL_POST`).
+    expect(mensagens.map((m) => m.content)).toContain(E2E_APPROVAL_POST);
+  });
+});
+
+test.describe('Fluxo 2: o que a tela mostra hoje', () => {
+  // A proposta e criada pelo teste, nao lida do seed: `/proposals` carrega
+  // apenas a PRIMEIRA pagina (limite 20, sem paginacao na tela), entao um
+  // cartao semeado deixa de ser alcancavel assim que o laboratorio passa de 20
+  // propostas. O cartao recem-criado e sempre o mais novo.
+  test('o cartao da proposta pendente avisa que aguarda aprovacao', async ({ page, request }) => {
+    const criada = await criarPendente(request);
+
+    await loginAs(page, E2E_USERS.alfaManager);
+    await gotoScreen(page, '/proposals', PIPELINE_HEADING);
+
+    const cartao = proposalCard(page, criada.id);
+    await expect(cartao).toBeVisible();
+    await expect(cartao).toContainText('Aguardando aprovação');
+  });
+
+  test('o modal da proposta pendente mostra o alerta de aprovacao', async ({ page, request }) => {
+    const criada = await criarPendente(request);
+
+    await loginAs(page, E2E_USERS.alfaManager);
+    await gotoScreen(page, '/proposals', PIPELINE_HEADING);
+
+    await proposalCard(page, criada.id).click();
+    const modal = page.getByTestId('modal-card');
+    await expect(modal).toBeVisible();
+    await expect(modal.getByText('Aguardando aprovação do gestor')).toBeVisible();
+  });
+
+  test('o atendente ve o aviso de aprovacao ao passar da alçada no orçamento', async ({ page }) => {
     await loginAs(page, E2E_USERS.alfaAttendant);
+    await page.goto(`/budget/new?conversationId=${E2E_CONVERSATIONS.aprovacao.id}`);
+    await expect(page.getByTestId('budget-catalog')).toBeVisible();
 
-    const conversationId = E2E_CONVERSATIONS.aprovacao.id;
-    await page.goto(`/budget/new?conversationId=${conversationId}`);
+    const resumo = page.getByTestId('budget-summary');
+    await page
+      .getByTestId('budget-catalog')
+      .getByRole('button', { name: new RegExp(E2E_EXAMS.vitaminaD.name) })
+      .click();
+    await discountField(page).fill('25');
 
-    await page.waitForTimeout(1000);
-
-    // Add exams with high discount
-    const vitLocator = page.locator(`text="${E2E_EXAMS.vitaminaD.name}"`).first();
-    if (await vitLocator.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await vitLocator.click();
-    }
-
-    const tshLocator = page.locator(`text="${E2E_EXAMS.tsh.name}"`).first();
-    if (await tshLocator.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await tshLocator.click();
-    }
-
-    const discountInput = page.locator('input[type="number"]').or(page.locator('input[type="range"]')).first();
-    await discountInput.fill('25');
-    await page.waitForTimeout(300);
-
-    const createButton = page.locator('button').filter({ hasText: 'Criar' }).or(page.locator('button').filter({ hasText: 'Enviar' })).first();
-    if (await createButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await createButton.click();
-    }
-
-    // Navigate to internal chat
-    await page.goto('/internal-chat');
-
-    // Find approval request
-    const aprovacaoChannel = page.locator('text=aprovacoes').or(page.locator('text=#aprovacoes')).first();
-    if (await aprovacaoChannel.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await aprovacaoChannel.click();
-    }
-
-    // Try to find and click approve button
-    const approveButton = page.locator('button').filter({ hasText: 'Aprovar' }).first();
-
-    // Button should be disabled or not present for the creator
-    if (await approveButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-      const isDisabled = await approveButton.isDisabled();
-      expect(isDisabled).toBe(true);
-    }
+    // "A UI esconde, o servidor recusa": o aviso e UX; a regra e do backend.
+    await expect(resumo.getByText('Exigirá aprovação do gestor')).toBeVisible();
   });
 });

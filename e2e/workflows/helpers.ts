@@ -20,32 +20,46 @@
  * `locator.or(outroLocator)`, do proprio Playwright.
  */
 import { expect, type APIRequestContext, type Locator, type Page } from '@playwright/test';
-import type { LoginResponse, Theme, UserRole } from '@crm-lab/shared';
+import type { Channel, ListChannelsResponse, LoginResponse, Theme, UserRole } from '@crm-lab/shared';
 import {
   E2E_APPROVAL_POST,
+  E2E_CHANNEL_READS,
+  E2E_CHANNEL_UNREAD,
   E2E_CHANNELS,
   E2E_CONVERSATIONS,
   E2E_EXAMS,
   E2E_EXAMS_BETA,
   E2E_PASSWORD,
+  E2E_PATIENTS,
   E2E_PROPOSALS,
+  E2E_TENANT_CHANNELS,
+  E2E_TENANT_SETTINGS,
+  E2E_TENANT_WITHOUT_SETTINGS,
   E2E_TENANTS,
   E2E_USERS,
+  type E2ePatient,
+  type E2eTenantChannel,
   type E2eUser,
 } from '../../backend/src/db/seeds/e2e-fixtures.js';
 
 export {
   E2E_APPROVAL_POST,
+  E2E_CHANNEL_READS,
+  E2E_CHANNEL_UNREAD,
   E2E_CHANNELS,
   E2E_CONVERSATIONS,
   E2E_EXAMS,
   E2E_EXAMS_BETA,
   E2E_PASSWORD,
+  E2E_PATIENTS,
   E2E_PROPOSALS,
+  E2E_TENANT_CHANNELS,
+  E2E_TENANT_SETTINGS,
+  E2E_TENANT_WITHOUT_SETTINGS,
   E2E_TENANTS,
   E2E_USERS,
 };
-export type { E2eUser };
+export type { E2ePatient, E2eTenantChannel, E2eUser };
 
 /** Base da API. O Playwright fala com o backend direto nos testes de contrato. */
 export const API_URL = process.env.E2E_API_URL ?? 'http://localhost:3000/api/v1';
@@ -302,4 +316,68 @@ export async function fetchCurrentTheme(
   const response = await request.get(`${API_URL}/themes/current`, { headers: authHeaders(token) });
   expect(response.status()).toBe(200);
   return ((await response.json()) as { theme: Theme }).theme;
+}
+
+// ---------------------------------------------------------------------------
+// Chat interno (`/internal-chat`) — Onda 6, D-068
+// ---------------------------------------------------------------------------
+
+/**
+ * Lista os canais internos do usuario do token.
+ *
+ * Os ids dos canais e2e sao derivados por hash no seed (`e2e-fixtures.ts`
+ * guarda a CHAVE, nunca o id): quem precisa do id pergunta a API.
+ */
+export async function fetchChannels(
+  request: APIRequestContext,
+  token: string,
+): Promise<Channel[]> {
+  const response = await request.get(`${API_URL}/internal-chat/channels`, {
+    headers: authHeaders(token),
+  });
+  expect(response.status(), `GET /internal-chat/channels: ${await response.text()}`).toBe(200);
+  return ((await response.json()) as ListChannelsResponse).channels;
+}
+
+/** Canal pela CHAVE (`geral` / `aprovacoes`). Falha se o canal nao existir. */
+export async function fetchChannelByKey(
+  request: APIRequestContext,
+  token: string,
+  key: string,
+): Promise<Channel> {
+  const channels = await fetchChannels(request, token);
+  const found = channels.find((channel) => channel.key === key);
+  expect(found, `canal #${key} nao existe para este usuario`).toBeDefined();
+  return found as Channel;
+}
+
+/** Marca o canal como lido (D-068). Devolve `204` e e idempotente. */
+export async function markChannelRead(
+  request: APIRequestContext,
+  token: string,
+  channelId: string,
+): Promise<void> {
+  const response = await request.post(
+    `${API_URL}/internal-chat/channels/${channelId}/read`,
+    { headers: authHeaders(token) },
+  );
+  expect(response.status(), `POST .../read: ${await response.text()}`).toBe(204);
+}
+
+/**
+ * Badge de nao lidas do canal na coluna da esquerda do Chat Interno.
+ *
+ * O `Badge` NAO renderiza nada quando a contagem e `0` — entao "badge zerado"
+ * se prova com `toHaveCount(0)`, e "badge com N" com o texto do circulo.
+ */
+export function channelUnreadBadge(page: Page, channelName: string): Locator {
+  return page
+    .getByTestId('channel-item')
+    .filter({ hasText: channelName })
+    .locator('[aria-label*="mensagens não lidas"]');
+}
+
+/** Botao do canal na coluna de canais do Chat Interno. */
+export function channelButton(page: Page, channelName: string): Locator {
+  return page.getByTestId('channel-item').filter({ hasText: channelName });
 }

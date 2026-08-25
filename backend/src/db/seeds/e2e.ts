@@ -18,13 +18,19 @@ import {
   E2E_CONVERSATIONS,
   E2E_EXAMS,
   E2E_EXAMS_BETA,
+  E2E_CHANNEL_READS,
   E2E_PASSWORD,
+  E2E_PATIENTS,
   E2E_PROPOSALS,
+  E2E_TENANT_CHANNELS,
+  E2E_TENANT_SETTINGS,
   E2E_TENANTS,
   E2E_USERS,
   type E2eConversation,
   type E2eExam,
+  type E2ePatient,
   type E2eProposal,
+  type E2eTenantChannel,
   type E2eUser,
 } from './e2e-fixtures.js';
 import { seedUuid } from './ids.js';
@@ -37,12 +43,16 @@ import {
 import {
   insertAuditLog,
   insertChannel,
+  insertChannelRead,
   insertConversation,
   insertExam,
   insertInternalMessage,
   insertMessage,
+  insertPatient,
   insertProposal,
   insertTenant,
+  insertTenantChannel,
+  insertTenantSettings,
   insertTheme,
   insertUser,
   type SeedStatusStep,
@@ -134,6 +144,57 @@ export async function seedE2e(tx: DbTx, now: Date): Promise<{ users: number; pro
     }
   }
 
+  // ---- canais conectados do laboratorio (D-064) -----------------------------
+  const tenantChannels: readonly E2eTenantChannel[] = Object.values(E2E_TENANT_CHANNELS);
+  for (const channel of tenantChannels) {
+    await insertTenantChannel(tx, {
+      id: channel.id,
+      tenantId: channel.tenantId,
+      channel: channel.channel,
+      displayName: channel.displayName,
+      phoneNumberId: channel.phoneNumberId,
+      phoneNumber: channel.phoneNumber,
+      apiToken: channel.apiToken,
+      webhookSecret: channel.webhookSecret,
+      isActive: channel.isActive,
+      connectedAt: createdAt,
+      createdAt,
+    });
+  }
+
+  // ---- configuracao operacional (D-065) -------------------------------------
+  // SO o Alfa ganha linha. O Beta fica SEM linha de proposito: "linha ausente =
+  // defaults" e o caminho normal, e semear os dois o esconderia.
+  await insertTenantSettings(tx, {
+    tenantId: E2E_TENANT_SETTINGS.alfa.tenantId,
+    distributionMode: E2E_TENANT_SETTINGS.alfa.distributionMode,
+    greeting: { ...E2E_TENANT_SETTINGS.alfa.greeting },
+    offHours: { ...E2E_TENANT_SETTINGS.alfa.offHours },
+    businessHours: {
+      timezone: E2E_TENANT_SETTINGS.alfa.businessHours.timezone,
+      days: { ...E2E_TENANT_SETTINGS.alfa.businessHours.days },
+    },
+    createdAt,
+  });
+
+  // ---- pacientes (D-059) ----------------------------------------------------
+  // Vem ANTES das conversas: `conversations.patient_id` aponta para eles.
+  const patients: readonly E2ePatient[] = Object.values(E2E_PATIENTS);
+  for (const patient of patients) {
+    await insertPatient(tx, {
+      id: patient.id,
+      tenantId: patient.tenantId,
+      phone: patient.phone,
+      name: patient.name,
+      email: patient.email,
+      birthDate: patient.birthDate,
+      document: patient.document,
+      notes: patient.notes,
+      tags: [...patient.tags],
+      createdAt,
+    });
+  }
+
   // ---- catalogo -------------------------------------------------------------
   const byCode = new Map(EXAM_CATALOG.map((exam) => [exam.code, exam]));
   const allExams: readonly E2eExam[] = [
@@ -166,6 +227,7 @@ export async function seedE2e(tx: DbTx, now: Date): Promise<{ users: number; pro
       patientName: conversation.patientName,
       patientPhone: conversation.patientPhone,
       patientEmail: null,
+      patientId: conversation.patientId,
       assignedTo: conversation.assignedTo,
       channel: 'whatsapp',
       status: 'active',
@@ -295,6 +357,22 @@ export async function seedE2e(tx: DbTx, now: Date): Promise<{ users: number; pro
     isSystem: false,
     createdAt: new Date(now.getTime() - 4 * 60 * MIN_MS),
   });
+
+  // ---- estado de leitura do chat interno (D-068) ----------------------------
+  // O GESTOR fica SEM linha em #aprovacoes de proposito: e assim que o badge
+  // nasce em 1 e o E2E consegue provar que `POST .../read` o zera.
+  for (const read of E2E_CHANNEL_READS) {
+    const channelId = channelIds.get(`${read.tenantId}:${read.channelKey}`);
+    if (!channelId) {
+      throw new Error(`Fixture de leitura aponta para canal inexistente: ${read.channelKey}`);
+    }
+    await insertChannelRead(tx, {
+      tenantId: read.tenantId,
+      channelId,
+      userId: read.userId,
+      lastReadAt: new Date(now.getTime() - read.readHoursAgo * 60 * MIN_MS),
+    });
+  }
 
   return { users: users.length, proposals: proposals.length };
 }

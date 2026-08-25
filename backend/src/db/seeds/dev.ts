@@ -17,9 +17,11 @@
  *   - conversas nao atribuidas e com `unread_count > 0` (chips do inbox).
  *   - `created_at` espalhado no tempo — datas relativas fazem sentido.
  */
+import { randomBytes } from 'node:crypto';
 import {
   DEFAULT_DISCOUNT_LIMIT,
   type ConversationChannel,
+  type DistributionMode,
   type LossReason,
   type ProposalStatus,
   type UserRole,
@@ -38,12 +40,16 @@ import {
 import {
   insertAuditLog,
   insertChannel,
+  insertChannelRead,
   insertConversation,
   insertExam,
   insertInternalMessage,
   insertMessage,
+  insertPatient,
   insertProposal,
   insertTenant,
+  insertTenantChannel,
+  insertTenantSettings,
   insertTheme,
   insertUser,
   type SeedProposalItem,
@@ -61,12 +67,21 @@ export interface DevCredential {
   tenantSlug: string;
 }
 
+/** Segredo do webhook sorteado para um laboratorio do seed (D-074/D-076). */
+export interface DevWebhookSecret {
+  tenantSlug: string;
+  secret: string;
+}
+
 export interface DevSeedSummary {
   credentials: DevCredential[];
+  /** Impresso no resumo: sem isso, ninguem consegue assinar webhook em dev. */
+  webhookSecrets: DevWebhookSecret[];
   counts: {
     tenants: number;
     users: number;
     exams: number;
+    patients: number;
     conversations: number;
     messages: number;
     proposals: number;
@@ -210,6 +225,12 @@ interface TenantPlan {
   /** Multiplicador aplicado ao STATUS_PLAN (o tenant 2 e menor, mas nao vazio). */
   proposalScale: number;
   randomSeed: number;
+  /**
+   * `undefined` = NENHUMA linha em `tenant_settings`. Linha ausente = defaults
+   * (D-065), e esse e o caminho normal em producao: um dos dois laboratorios do
+   * dataset fica assim de proposito, para que o caminho apareca em dev.
+   */
+  distributionMode?: DistributionMode;
 }
 
 const TENANT_PLANS: readonly TenantPlan[] = [
@@ -229,6 +250,8 @@ const TENANT_PLANS: readonly TenantPlan[] = [
     conversationCount: 90,
     proposalScale: 1,
     randomSeed: 20260823,
+    /** Lab Vida distribui automaticamente; Lab Central fica no default (D-065). */
+    distributionMode: 'round_robin',
   },
   {
     slug: 'lab-central',
@@ -271,13 +294,28 @@ interface SeededExam {
   exam: SeedExam;
 }
 
+/**
+ * Segredo de webhook do seed. `DEV_WEBHOOK_SECRET` quando o ambiente define um
+ * (util para homologacao com o provedor de verdade); senao, 24 bytes
+ * aleatorios POR EXECUCAO. O que ele nunca e: derivado do slug, que e publico.
+ */
+function devWebhookSecret(): string {
+  const configured = process.env.DEV_WEBHOOK_SECRET;
+  if (typeof configured === 'string' && configured.trim().length >= 16) {
+    return configured.trim();
+  }
+  return randomBytes(24).toString('hex');
+}
+
 export async function seedDevelopment(tx: DbTx, now: Date): Promise<DevSeedSummary> {
   const passwordHash = await hashPassword(DEV_PASSWORD);
   const credentials: DevCredential[] = [];
+  const webhookSecrets: DevWebhookSecret[] = [];
   const counts: DevSeedSummary['counts'] = {
     tenants: 0,
     users: 0,
     exams: 0,
+    patients: 0,
     conversations: 0,
     messages: 0,
     proposals: 0,
@@ -328,26 +366,30 @@ export async function seedDevelopment(tx: DbTx, now: Date): Promise<DevSeedSumma
     counts.tenants += 1;
     counts.users += summary.users;
     counts.exams += summary.exams;
+    counts.patients += summary.patients;
     counts.conversations += summary.conversations;
     counts.messages += summary.messages;
     counts.proposals += summary.proposals;
     counts.won += summary.won;
     counts.lost += summary.lost;
     credentials.push(...summary.credentials);
+    webhookSecrets.push(summary.webhookSecret);
   }
 
-  return { credentials, counts };
+  return { credentials, webhookSecrets, counts };
 }
 
 interface TenantSummary {
   users: number;
   exams: number;
+  patients: number;
   conversations: number;
   messages: number;
   proposals: number;
   won: number;
   lost: number;
   credentials: DevCredential[];
+  webhookSecret: DevWebhookSecret;
 }
 
 async function seedTenant(
@@ -430,6 +472,63 @@ async function seedTenant(
     createdAt: tenantCreatedAt,
   });
 
+  // ---- canal conectado do laboratorio (D-064) -------------------------------
+  // Um por tenant. A tela mostra apenas `apiTokenMasked` e `webhookSecretSet`,
+  // nunca o valor em claro.
+  //
+  // O SEGREDO DO WEBHOOK NAO SAI DO SLUG. Ele era
+  // `dev-webhook-secret-${plan.slug}` — computavel por qualquer um que soubesse
+  // o slug, que vai na URL PUBLICA do webhook. O `NODE_ENV=production` recusa o
+  // seed, mas homologacao/staging rodam com `NODE_ENV=development` e ficavam
+  // com um segredo de HMAC adivinhavel, ou seja: escrita em `messages`.
+  // Agora ele e sorteado por execucao (ou vem de `DEV_WEBHOOK_SECRET`) e sai
+  // impresso no resumo do seed, que e onde o dev ja procura credencial.
+  const webhookSecret = devWebhookSecret();
+  await insertTenantChannel(tx, {
+    id: seedUuid('dev', 'tenant-channel', plan.slug, 'whatsapp'),
+    tenantId,
+    channel: 'whatsapp',
+    displayName: `WhatsApp ${plan.brandName}`,
+    phoneNumberId: `dev-phone-id-${plan.slug}`,
+    phoneNumber: `+55 48 3333-${plan.slug === 'lab-vida' ? '1001' : '2001'}`,
+    apiToken: `dev-token-${plan.slug}-0000`,
+    webhookSecret,
+    isActive: true,
+    connectedAt: new Date(tenantCreatedAt.getTime() + DAY_MS),
+    createdAt: tenantCreatedAt,
+  });
+
+  // ---- configuracao operacional (D-065) -------------------------------------
+  // Sem `distributionMode` no plano => NENHUMA linha. Linha ausente = defaults;
+  // manter um dos laboratorios assim faz esse caminho existir em dev.
+  if (plan.distributionMode) {
+    await insertTenantSettings(tx, {
+      tenantId,
+      distributionMode: plan.distributionMode,
+      greeting: {
+        enabled: true,
+        message: 'Olá! Recebemos sua mensagem e já vamos te atender. 😊',
+      },
+      offHours: {
+        enabled: true,
+        message: 'Nosso atendimento é de segunda a sexta, das 8h às 18h. Retornamos em breve!',
+      },
+      businessHours: {
+        timezone: 'America/Sao_Paulo',
+        days: {
+          mon: { start: '08:00', end: '18:00' },
+          tue: { start: '08:00', end: '18:00' },
+          wed: { start: '08:00', end: '18:00' },
+          thu: { start: '08:00', end: '18:00' },
+          fri: { start: '08:00', end: '17:00' },
+          sat: { start: '08:00', end: '12:00' },
+          sun: null,
+        },
+      },
+      createdAt: tenantCreatedAt,
+    });
+  }
+
   // ---- catalogo -------------------------------------------------------------
   const exams: SeededExam[] = [];
   for (const exam of plan.exams) {
@@ -453,6 +552,15 @@ async function seedTenant(
   }
   const conversations: SeededConversation[] = [];
   let messageCount = 0;
+
+  /**
+   * Cadastro do paciente por telefone (D-059). O Map e o que garante o
+   * invariante da tabela — UNIQUE (tenant_id, phone) — mesmo que duas conversas
+   * do dataset compartilhem o numero: o segundo encontro REUSA o cadastro, que
+   * e exatamente o que `findOrCreateByPhone` faz em producao.
+   */
+  const patientIdByPhone = new Map<string, string>();
+  let patientCount = 0;
 
   for (let i = 0; i < plan.conversationCount; i += 1) {
     const patientName = PATIENT_NAMES[i % PATIENT_NAMES.length] as string;
@@ -524,14 +632,39 @@ async function seedTenant(
     // Não lidas: toda a fila livre + parte das atribuídas.
     const unreadCount = !assignedTo ? rnd.int(1, 4) : i % 5 === 0 ? rnd.int(1, 3) : 0;
 
+    const patientPhone = `+55489${String(90000000 + i * 137).slice(0, 8)}`;
+    const patientEmail = rnd.bool(0.4)
+      ? `${patientName.toLowerCase().replace(/[^a-z]+/g, '.')}@email.com`
+      : null;
+
+    let patientId = patientIdByPhone.get(patientPhone);
+    if (!patientId) {
+      patientId = seedUuid('dev', 'patient', plan.slug, patientPhone);
+      await insertPatient(tx, {
+        id: patientId,
+        tenantId,
+        phone: patientPhone,
+        name: patientName,
+        email: patientEmail,
+        // Parte do cadastro fica incompleta de proposito: o paciente nasce de um
+        // webhook que so conhece o telefone, e a ficha precisa saber exibir isso.
+        birthDate: i % 3 === 0 ? `19${70 + (i % 30)}-0${1 + (i % 9)}-1${i % 10}` : null,
+        document: i % 4 === 0 ? String(10000000000 + i * 7919).slice(0, 11) : null,
+        notes: i % 11 === 0 ? 'Prefere coleta pela manhã. Já fez exames aqui antes.' : null,
+        tags: rnd.sample(TAG_POOL, rnd.int(0, 2)),
+        createdAt,
+      });
+      patientIdByPhone.set(patientPhone, patientId);
+      patientCount += 1;
+    }
+
     await insertConversation(tx, {
       id: conversationId,
       tenantId,
       patientName,
-      patientPhone: `+55489${String(90000000 + i * 137).slice(0, 8)}`,
-      patientEmail: rnd.bool(0.4)
-        ? `${patientName.toLowerCase().replace(/[^a-z]+/g, '.')}@email.com`
-        : null,
+      patientPhone,
+      patientEmail,
+      patientId,
       assignedTo: assignedTo?.id ?? null,
       channel: rnd.pick(CHANNELS),
       status: ageDays > 70 ? 'archived' : 'active',
@@ -755,12 +888,14 @@ async function seedTenant(
   return {
     users: users.length,
     exams: exams.length,
+    patients: patientCount,
     conversations: conversations.length,
     messages: messageCount,
     proposals: plannedStatuses.length,
     won,
     lost,
     credentials,
+    webhookSecret: { tenantSlug: plan.slug, secret: webhookSecret },
   };
 }
 
@@ -827,6 +962,27 @@ async function seedInternalChat(
       hoursAgo: 25,
     },
   ];
+
+  // ---- estado de leitura (D-068) --------------------------------------------
+  // O badge do chat interno so prova alguma coisa se nascer DIFERENTE por
+  // usuario. Por isso:
+  //   - gestor leu #geral depois do ultimo post          -> #geral zerado
+  //   - admin leu #geral ANTES dos posts dos outros dois -> #geral com 2
+  //   - ninguem tem linha de #aprovacoes                 -> badge do pedido de
+  //     aprovacao aceso para todo mundo (mensagem de sistema conta)
+  //   - atendentes nao tem linha nenhuma                 -> tudo nao lido
+  await insertChannelRead(tx, {
+    tenantId,
+    channelId: geralId,
+    userId: input.manager.id,
+    lastReadAt: new Date(now.getTime() - 60 * MIN_MS),
+  });
+  await insertChannelRead(tx, {
+    tenantId,
+    channelId: geralId,
+    userId: input.admin.id,
+    lastReadAt: new Date(now.getTime() - 27 * 60 * MIN_MS),
+  });
 
   for (const [index, post] of geral.entries()) {
     await insertInternalMessage(tx, {

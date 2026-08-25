@@ -17,8 +17,10 @@ import {
   isTransitionAllowed,
   TERMINAL_STATUSES,
   type ApprovalStatus,
+  type BusinessHours,
   type ConversationChannel,
   type ConversationStatus,
+  type DistributionMode,
   type FontId,
   type LossReason,
   type MessageStatus,
@@ -167,6 +169,157 @@ export async function insertExam(
   return input.id;
 }
 
+// --------------------------------------------------------------------- patient
+
+export interface SeedPatientInput {
+  id: string;
+  tenantId: string;
+  /** Identidade do paciente no tenant — UNIQUE (tenant_id, phone) (D-059). */
+  phone: string;
+  name: string | null;
+  email: string | null;
+  birthDate: string | null; // 'YYYY-MM-DD'
+  document: string | null; // CPF, so digitos
+  notes: string | null;
+  tags: string[];
+  createdAt: Date;
+}
+
+export async function insertPatient(tx: DbTx, input: SeedPatientInput): Promise<string> {
+  if (input.document && !/^\d{11}$/.test(input.document)) {
+    throw new Error(`Paciente ${input.id}: document precisa ser CPF só dígitos (11).`);
+  }
+  await tx.query(
+    `INSERT INTO patients (id, tenant_id, phone, name, email, birth_date, document, notes,
+                           tags, custom_fields, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '{}'::jsonb, $10, $10)`,
+    [
+      input.id,
+      input.tenantId,
+      input.phone,
+      input.name,
+      input.email,
+      input.birthDate,
+      input.document,
+      input.notes,
+      JSON.stringify(input.tags),
+      iso(input.createdAt),
+    ],
+  );
+  return input.id;
+}
+
+// -------------------------------------------------------------- tenant_channel
+
+export interface SeedTenantChannelInput {
+  id: string;
+  tenantId: string;
+  channel: ConversationChannel;
+  displayName: string;
+  phoneNumberId: string;
+  phoneNumber: string;
+  /** SEGREDO: nunca sai do backend (D-064). Aqui e valor de dev/teste. */
+  apiToken: string;
+  webhookSecret: string;
+  isActive: boolean;
+  connectedAt: Date;
+  createdAt: Date;
+}
+
+export async function insertTenantChannel(
+  tx: DbTx,
+  input: SeedTenantChannelInput,
+): Promise<string> {
+  await tx.query(
+    `INSERT INTO tenant_channels (id, tenant_id, channel, display_name, phone_number_id,
+                                  phone_number, api_token, webhook_secret, is_active,
+                                  connected_at, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)`,
+    [
+      input.id,
+      input.tenantId,
+      input.channel,
+      input.displayName,
+      input.phoneNumberId,
+      input.phoneNumber,
+      input.apiToken,
+      input.webhookSecret,
+      input.isActive,
+      iso(input.connectedAt),
+      iso(input.createdAt),
+    ],
+  );
+  return input.id;
+}
+
+// ------------------------------------------------------------- tenant_settings
+
+export interface SeedTenantSettingsInput {
+  tenantId: string;
+  distributionMode: DistributionMode;
+  greeting: { enabled: boolean; message: string | null };
+  offHours: { enabled: boolean; message: string | null };
+  businessHours: BusinessHours;
+  createdAt: Date;
+}
+
+/**
+ * LINHA AUSENTE = DEFAULTS (D-065). O seed so grava para o tenant que precisa
+ * DIVERGIR do default — semear a linha em todos escondera o caminho "sem linha",
+ * que e o normal em producao.
+ */
+export async function insertTenantSettings(
+  tx: DbTx,
+  input: SeedTenantSettingsInput,
+): Promise<string> {
+  if (input.greeting.enabled && !input.greeting.message) {
+    throw new Error(`Settings ${input.tenantId}: saudação ligada exige mensagem.`);
+  }
+  if (input.offHours.enabled && !input.offHours.message) {
+    throw new Error(`Settings ${input.tenantId}: mensagem de fora de horário ligada exige texto.`);
+  }
+  await tx.query(
+    `INSERT INTO tenant_settings (tenant_id, distribution_mode, greeting_enabled, greeting_message,
+                                  offhours_enabled, offhours_message, business_hours,
+                                  created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $8)`,
+    [
+      input.tenantId,
+      input.distributionMode,
+      input.greeting.enabled,
+      input.greeting.message,
+      input.offHours.enabled,
+      input.offHours.message,
+      JSON.stringify(input.businessHours),
+      iso(input.createdAt),
+    ],
+  );
+  return input.tenantId;
+}
+
+// --------------------------------------------------------------- channel_reads
+
+export interface SeedChannelReadInput {
+  tenantId: string;
+  channelId: string;
+  userId: string;
+  lastReadAt: Date;
+}
+
+/**
+ * Estado de leitura por usuario (D-068). AUSENCIA de linha e significativa:
+ * "nunca abriu o canal" => `lastReadAt: null` e `unreadCount` conta tudo que
+ * nao e do proprio usuario. Por isso o seed deixa combinacoes de proposito sem
+ * linha — e assim que o badge do chat interno nasce diferente de zero.
+ */
+export async function insertChannelRead(tx: DbTx, input: SeedChannelReadInput): Promise<void> {
+  await tx.query(
+    `INSERT INTO channel_reads (tenant_id, channel_id, user_id, last_read_at, updated_at)
+     VALUES ($1, $2, $3, $4, $4)`,
+    [input.tenantId, input.channelId, input.userId, iso(input.lastReadAt)],
+  );
+}
+
 // ---------------------------------------------------------------- conversation
 
 export interface SeedConversationInput {
@@ -175,6 +328,12 @@ export interface SeedConversationInput {
   patientName: string;
   patientPhone: string;
   patientEmail: string | null;
+  /**
+   * D-059: liga a conversa ao cadastro. `null` e legitimo (linha anterior ao
+   * backfill), mas o seed sempre preenche — dataset com conversa orfa esconderia
+   * bug de ficha do paciente.
+   */
+  patientId: string | null;
   /** `null` = fila "Não atribuídas" do inbox. */
   assignedTo: string | null;
   channel: ConversationChannel;
@@ -188,9 +347,9 @@ export interface SeedConversationInput {
 export async function insertConversation(tx: DbTx, input: SeedConversationInput): Promise<string> {
   await tx.query(
     `INSERT INTO conversations (id, tenant_id, patient_phone, patient_name, patient_email,
-                                assigned_to, channel, status, last_message_at, unread_count,
-                                tags, custom_fields, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, '{}'::jsonb, $12, $12)`,
+                                patient_id, assigned_to, channel, status, last_message_at,
+                                unread_count, tags, custom_fields, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $13, $6, $7, $8, $9, $10, $11, '{}'::jsonb, $12, $12)`,
     [
       input.id,
       input.tenantId,
@@ -204,6 +363,7 @@ export async function insertConversation(tx: DbTx, input: SeedConversationInput)
       input.unreadCount,
       JSON.stringify(input.tags),
       iso(input.createdAt),
+      input.patientId,
     ],
   );
   return input.id;
@@ -364,8 +524,8 @@ export async function insertProposal(
   for (const [index, item] of input.items.entries()) {
     await tx.query(
       `INSERT INTO proposal_items (id, tenant_id, proposal_id, exam_id, quantity,
-                                   unit_price, exam_name, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                                   unit_price, exam_name, "position", created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [
         deriveItemId(input.id, index),
         input.tenantId, // D-002: sempre o tenant da proposta pai
@@ -374,6 +534,7 @@ export async function insertProposal(
         item.quantity,
         item.unitPrice,
         item.examName,
+        index, // D-071: ordem em que o atendente montou o orcamento (base 0)
         iso(input.createdAt),
       ],
     );

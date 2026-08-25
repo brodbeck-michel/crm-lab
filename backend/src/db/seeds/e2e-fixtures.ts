@@ -12,7 +12,14 @@
  * estas constantes — inclusive que cada `expectedTotal` e igual a
  * `calculateTotal(items, discountPercent)` de `@crm-lab/shared` (BR §1).
  */
-import type { LossReason, ProposalStatus, UserRole } from '@crm-lab/shared';
+import type {
+  BusinessHours,
+  ConversationChannel,
+  DistributionMode,
+  LossReason,
+  ProposalStatus,
+  UserRole,
+} from '@crm-lab/shared';
 
 /** Senha unica de todos os usuarios e2e — o Playwright nao precisa de mais nada. */
 export const E2E_PASSWORD = 'E2e#Senha2026';
@@ -187,9 +194,97 @@ export const E2E_EXAMS_BETA = {
   },
 } as const satisfies Record<string, E2eExam>;
 
+/**
+ * Cadastro do paciente (D-059). O telefone e a identidade dentro do tenant:
+ * `UNIQUE (tenant_id, phone)`. A conversa aponta para o cadastro por `patientId`
+ * e continua carregando as copias denormalizadas (passo 1 da regra dos 3 passos).
+ */
+export interface E2ePatient {
+  id: string;
+  tenantId: string;
+  phone: string;
+  name: string;
+  email: string | null;
+  /** 'YYYY-MM-DD' ou `null` — o paciente nasce de um webhook que so sabe o telefone. */
+  birthDate: string | null;
+  /** CPF, so digitos. `null` e o caso normal. */
+  document: string | null;
+  notes: string | null;
+  tags: readonly string[];
+}
+
+export const E2E_PATIENTS = {
+  /** Ficha completa — o cenario "Paciente" abre esta e edita o cadastro. */
+  carla: {
+    id: 'a0000000-0000-4000-8000-000000000501',
+    tenantId: E2E_TENANTS.alfa.id,
+    phone: '+5548999110001',
+    name: 'Carla Pereira',
+    email: 'carla.pereira@email.com',
+    birthDate: '1985-04-12',
+    document: '12345678901',
+    notes: 'Prefere coleta pela manhã.',
+    tags: ['particular'],
+  },
+  /** Cadastro minimo: so telefone e nome, como sai do webhook. */
+  marcos: {
+    id: 'a0000000-0000-4000-8000-000000000502',
+    tenantId: E2E_TENANTS.alfa.id,
+    phone: '+5548999110002',
+    name: 'Marcos Antunes',
+    email: null,
+    birthDate: null,
+    document: null,
+    notes: null,
+    tags: [],
+  },
+  juliana: {
+    id: 'a0000000-0000-4000-8000-000000000503',
+    tenantId: E2E_TENANTS.alfa.id,
+    phone: '+5548999110003',
+    name: 'Juliana Prado',
+    email: 'juliana.prado@email.com',
+    birthDate: '1992-11-30',
+    document: null,
+    notes: null,
+    tags: ['convenio'],
+  },
+  rafael: {
+    id: 'a0000000-0000-4000-8000-000000000504',
+    tenantId: E2E_TENANTS.alfa.id,
+    phone: '+5548999110004',
+    name: 'Rafael Nunes',
+    email: null,
+    birthDate: null,
+    document: null,
+    notes: null,
+    tags: [],
+  },
+  /**
+   * Cenario "Isolamento": se `/patients` do Alfa devolver esta linha — ou se o
+   * nome/telefone/anotacao aparecerem em qualquer tela do Alfa — o isolamento
+   * vazou. O telefone e proposital e deliberadamente DIFERENTE dos do Alfa: o
+   * spec de isolamento usa a string como "nao pode aparecer", e um telefone
+   * compartilhado (legitimo entre tenants) tornaria essa asserção ambigua.
+   */
+  betaSecreto: {
+    id: 'b0000000-0000-4000-8000-000000000501',
+    tenantId: E2E_TENANTS.beta.id,
+    phone: '+5551988220001',
+    name: 'Paciente Confidencial Beta',
+    email: null,
+    birthDate: null,
+    document: null,
+    notes: 'Anotação interna do Beta — nunca pode aparecer no Alfa.',
+    tags: [],
+  },
+} as const satisfies Record<string, E2ePatient>;
+
 export interface E2eConversation {
   id: string;
   tenantId: string;
+  /** Cadastro correspondente (D-059). */
+  patientId: string;
   patientName: string;
   patientPhone: string;
   /** `null` = fila "Não atribuídas". */
@@ -202,8 +297,9 @@ export const E2E_CONVERSATIONS = {
   atribuida: {
     id: 'a0000000-0000-4000-8000-000000000301',
     tenantId: E2E_TENANTS.alfa.id,
-    patientName: 'Carla Pereira',
-    patientPhone: '+5548999110001',
+    patientId: E2E_PATIENTS.carla.id,
+    patientName: E2E_PATIENTS.carla.name,
+    patientPhone: E2E_PATIENTS.carla.phone,
     assignedTo: E2E_USERS.alfaAttendant.id,
     unreadCount: 0,
   },
@@ -211,8 +307,9 @@ export const E2E_CONVERSATIONS = {
   naoAtribuida: {
     id: 'a0000000-0000-4000-8000-000000000302',
     tenantId: E2E_TENANTS.alfa.id,
-    patientName: 'Marcos Antunes',
-    patientPhone: '+5548999110002',
+    patientId: E2E_PATIENTS.marcos.id,
+    patientName: E2E_PATIENTS.marcos.name,
+    patientPhone: E2E_PATIENTS.marcos.phone,
     assignedTo: null,
     unreadCount: 3,
   },
@@ -220,8 +317,9 @@ export const E2E_CONVERSATIONS = {
   aprovacao: {
     id: 'a0000000-0000-4000-8000-000000000303',
     tenantId: E2E_TENANTS.alfa.id,
-    patientName: 'Juliana Prado',
-    patientPhone: '+5548999110003',
+    patientId: E2E_PATIENTS.juliana.id,
+    patientName: E2E_PATIENTS.juliana.name,
+    patientPhone: E2E_PATIENTS.juliana.phone,
     assignedTo: E2E_USERS.alfaAttendant.id,
     unreadCount: 1,
   },
@@ -229,8 +327,9 @@ export const E2E_CONVERSATIONS = {
   pipeline: {
     id: 'a0000000-0000-4000-8000-000000000304',
     tenantId: E2E_TENANTS.alfa.id,
-    patientName: 'Rafael Nunes',
-    patientPhone: '+5548999110004',
+    patientId: E2E_PATIENTS.rafael.id,
+    patientName: E2E_PATIENTS.rafael.name,
+    patientPhone: E2E_PATIENTS.rafael.phone,
     assignedTo: E2E_USERS.alfaAttendant.id,
     unreadCount: 0,
   },
@@ -238,8 +337,9 @@ export const E2E_CONVERSATIONS = {
   betaSecreta: {
     id: 'b0000000-0000-4000-8000-000000000301',
     tenantId: E2E_TENANTS.beta.id,
-    patientName: 'Paciente Confidencial Beta',
-    patientPhone: '+5551988220001',
+    patientId: E2E_PATIENTS.betaSecreto.id,
+    patientName: E2E_PATIENTS.betaSecreto.name,
+    patientPhone: E2E_PATIENTS.betaSecreto.phone,
     assignedTo: E2E_USERS.betaAttendant.id,
     unreadCount: 2,
   },
@@ -408,3 +508,170 @@ export const E2E_CHANNELS = {
  */
 export const E2E_APPROVAL_POST =
   '@gestor Pedido de aprovação de desconto: Juliana Prado - R$ 138,00 (25% — acima da alçada de 15%)';
+
+/**
+ * Canal conectado por laboratorio (D-064). `apiToken` e `webhookSecret` sao
+ * valores de TESTE: existem aqui para o E2E provar que a API devolve
+ * `apiTokenMasked` / `webhookSecretSet` e NUNCA o valor em claro.
+ */
+export interface E2eTenantChannel {
+  id: string;
+  tenantId: string;
+  channel: ConversationChannel;
+  displayName: string;
+  phoneNumberId: string;
+  phoneNumber: string;
+  apiToken: string;
+  webhookSecret: string;
+  isActive: boolean;
+  /** O que a API deve devolver no lugar do token: '••••••••' + 4 ultimos. */
+  expectedApiTokenMasked: string;
+}
+
+export const E2E_TENANT_CHANNELS = {
+  alfaWhatsapp: {
+    id: 'a0000000-0000-4000-8000-000000000601',
+    tenantId: E2E_TENANTS.alfa.id,
+    channel: 'whatsapp',
+    displayName: 'WhatsApp do Alfa',
+    phoneNumberId: '111111111111111',
+    phoneNumber: '+55 48 3333-1001',
+    apiToken: 'EAAG-alfa-token-abcd',
+    webhookSecret: 'alfa-webhook-secret',
+    isActive: true,
+    expectedApiTokenMasked: '••••••••abcd',
+  },
+  betaWhatsapp: {
+    id: 'b0000000-0000-4000-8000-000000000601',
+    tenantId: E2E_TENANTS.beta.id,
+    channel: 'whatsapp',
+    displayName: 'WhatsApp do Beta',
+    phoneNumberId: '222222222222222',
+    phoneNumber: '+55 51 3333-2001',
+    apiToken: 'EAAG-beta-token-wxyz',
+    webhookSecret: 'beta-webhook-secret',
+    isActive: true,
+    expectedApiTokenMasked: '••••••••wxyz',
+  },
+} as const satisfies Record<string, E2eTenantChannel>;
+
+/**
+ * Configuracao operacional (D-065).
+ *
+ * O ALFA tem linha (round_robin, saudacao ligada); o BETA **nao tem linha
+ * nenhuma** de proposito — linha ausente = defaults, e esse e o caminho normal
+ * em producao. Semear os dois esconderia justamente o caso que o `GET` precisa
+ * responder sem gravar.
+ */
+export interface E2eTenantSettings {
+  tenantId: string;
+  distributionMode: DistributionMode;
+  greeting: { enabled: boolean; message: string | null };
+  offHours: { enabled: boolean; message: string | null };
+  businessHours: BusinessHours;
+}
+
+export const E2E_TENANT_SETTINGS = {
+  alfa: {
+    tenantId: E2E_TENANTS.alfa.id,
+    distributionMode: 'round_robin',
+    greeting: {
+      enabled: true,
+      message: 'Olá! Recebemos sua mensagem e já vamos te atender.',
+    },
+    offHours: {
+      enabled: true,
+      message: 'Estamos fora do horário de atendimento. Respondemos amanhã a partir das 8h.',
+    },
+    businessHours: {
+      timezone: 'America/Sao_Paulo',
+      days: {
+        mon: { start: '08:00', end: '18:00' },
+        tue: { start: '08:00', end: '18:00' },
+        wed: { start: '08:00', end: '18:00' },
+        thu: { start: '08:00', end: '18:00' },
+        fri: { start: '08:00', end: '17:00' },
+        sat: { start: '08:00', end: '12:00' },
+        sun: null,
+      },
+    },
+  },
+} as const satisfies Record<string, E2eTenantSettings>;
+
+/**
+ * Tenant SEM linha em `tenant_settings` — o `GET` responde os defaults de D-065
+ * sem gravar nada. Constante nomeada para que o spec diga o que testa.
+ */
+export const E2E_TENANT_WITHOUT_SETTINGS = E2E_TENANTS.beta.id;
+
+/**
+ * Estado de leitura do chat interno (D-068).
+ *
+ * O canal e identificado pela CHAVE (`geral` / `aprovacoes`), nao por id: os ids
+ * dos canais e2e sao derivados por hash no seed, e repeti-los aqui criaria uma
+ * segunda fonte para o mesmo valor.
+ */
+export interface E2eChannelRead {
+  tenantId: string;
+  channelKey: 'geral' | 'aprovacoes';
+  userId: string;
+  /** Quantas horas antes de `now` o usuario abriu o canal pela ultima vez. */
+  readHoursAgo: number;
+}
+
+export const E2E_CHANNEL_READS = [
+  /** Gestor ja leu #geral depois do unico post => badge zerado. */
+  {
+    tenantId: E2E_TENANTS.alfa.id,
+    channelKey: 'geral',
+    userId: E2E_USERS.alfaManager.id,
+    readHoursAgo: 1,
+  },
+  /**
+   * Admin abriu #aprovacoes ANTES do pedido de aprovacao (que e de 3h atras):
+   * a linha existe e mesmo assim o badge conta 1. Prova que o `unreadCount`
+   * compara com `last_read_at`, e nao apenas "tem linha / nao tem".
+   */
+  {
+    tenantId: E2E_TENANTS.alfa.id,
+    channelKey: 'aprovacoes',
+    userId: E2E_USERS.alfaAdmin.id,
+    readHoursAgo: 24,
+  },
+] as const satisfies readonly E2eChannelRead[];
+
+/**
+ * `unreadCount` esperado por (usuario, canal) logo apos o seed — DERIVADO das
+ * mensagens e de `E2E_CHANNEL_READS`, nunca materializado (BUSINESS_RULES §5).
+ *
+ * O cenario do badge do chat interno e o do GESTOR em #aprovacoes: ele nao tem
+ * linha de leitura, entao abre com 1 nao lida (o post de sistema conta — D-068)
+ * e `POST /internal-chat/channels/:id/read` tem que zerar.
+ */
+export const E2E_CHANNEL_UNREAD = {
+  managerAprovacoes: {
+    tenantId: E2E_TENANTS.alfa.id,
+    channelKey: 'aprovacoes',
+    userId: E2E_USERS.alfaManager.id,
+    expected: 1,
+  },
+  managerGeral: {
+    tenantId: E2E_TENANTS.alfa.id,
+    channelKey: 'geral',
+    userId: E2E_USERS.alfaManager.id,
+    expected: 0,
+  },
+  adminAprovacoes: {
+    tenantId: E2E_TENANTS.alfa.id,
+    channelKey: 'aprovacoes',
+    userId: E2E_USERS.alfaAdmin.id,
+    expected: 1,
+  },
+  /** O unico post de #geral e do proprio admin — mensagem propria nunca conta. */
+  adminGeral: {
+    tenantId: E2E_TENANTS.alfa.id,
+    channelKey: 'geral',
+    userId: E2E_USERS.alfaAdmin.id,
+    expected: 0,
+  },
+} as const;

@@ -45,6 +45,10 @@ const DATA_TABLES = [
   'internal_channels',
   'internal_messages',
   'audit_logs',
+  'patients',
+  'tenant_channels',
+  'tenant_settings',
+  'channel_reads',
 ] as const;
 
 describe('seed de desenvolvimento', () => {
@@ -351,6 +355,92 @@ describe('seed de desenvolvimento', () => {
     expect(actions).toContain('reject_discount');
   });
 
+  it('cria um cadastro por telefone e nenhuma conversa fica sem paciente (D-059)', async () => {
+    const duplicated = await db.withoutTenant((tx) =>
+      tx.query<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM (
+           SELECT tenant_id, phone FROM patients GROUP BY tenant_id, phone HAVING COUNT(*) > 1
+         ) d`,
+      ),
+    );
+    expect(duplicated.rows[0]?.n, 'telefone repetido dentro do tenant').toBe(0);
+
+    const bad = await db.withoutTenant((tx) =>
+      tx.query<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM conversations c
+           LEFT JOIN patients p ON p.id = c.patient_id
+          WHERE c.patient_id IS NULL
+             OR p.tenant_id <> c.tenant_id
+             OR p.phone <> c.patient_phone`,
+      ),
+    );
+    expect(bad.rows[0]?.n, 'conversa órfã ou ligada ao paciente errado').toBe(0);
+
+    // O cadastro nasce incompleto de proposito (webhook so conhece o telefone):
+    // a ficha precisa dos DOIS casos no dataset.
+    const shape = await db.withoutTenant((tx) =>
+      tx.query<{ completos: number; minimos: number }>(
+        `SELECT COUNT(*) FILTER (WHERE document IS NOT NULL AND birth_date IS NOT NULL)::int AS completos,
+                COUNT(*) FILTER (WHERE document IS NULL AND birth_date IS NULL)::int AS minimos
+           FROM patients`,
+      ),
+    );
+    expect(shape.rows[0]?.completos).toBeGreaterThan(0);
+    expect(shape.rows[0]?.minimos).toBeGreaterThan(0);
+  });
+
+  it('conecta um canal por laboratório e deixa UM tenant sem tenant_settings (D-065)', async () => {
+    const channels = await db.withoutTenant((tx) =>
+      tx.query<{ slug: string; channel: string }>(
+        `SELECT t.slug, ch.channel FROM tenant_channels ch
+           JOIN tenants t ON t.id = ch.tenant_id ORDER BY t.slug`,
+      ),
+    );
+    // So os LABORATORIOS: o tenant da plataforma nao atende paciente nenhum.
+    expect(channels.rows.map((r) => r.slug)).toEqual(['lab-central', 'lab-vida']);
+    expect(new Set(channels.rows.map((r) => r.channel))).toEqual(new Set(['whatsapp']));
+
+    const settings = await db.withoutTenant((tx) =>
+      tx.query<{ slug: string; distribution_mode: string }>(
+        `SELECT t.slug, s.distribution_mode FROM tenant_settings s
+           JOIN tenants t ON t.id = s.tenant_id`,
+      ),
+    );
+    // Lab Vida em round_robin; Lab Central SEM LINHA (o caminho "defaults").
+    expect(settings.rows).toHaveLength(1);
+    expect(settings.rows[0]?.slug).toBe('lab-vida');
+    expect(settings.rows[0]?.distribution_mode).toBe('round_robin');
+  });
+
+  it('o unreadCount do chat interno nasce diferente por usuário (D-068)', async () => {
+    const rows = await db.withoutTenant((tx) =>
+      tx.query<{ role: string; key: string; unread: number }>(
+        `SELECT u.role, ch.key,
+                COUNT(*) FILTER (
+                  WHERE m.created_at > COALESCE(r.last_read_at, '-infinity'::timestamp)
+                    AND m.sender_id IS DISTINCT FROM u.id
+                )::int AS unread
+           FROM users u
+           JOIN tenants t ON t.id = u.tenant_id AND t.slug = 'lab-vida'
+           JOIN internal_channels ch ON ch.tenant_id = u.tenant_id
+           LEFT JOIN internal_messages m ON m.channel_id = ch.id
+           LEFT JOIN channel_reads r ON r.channel_id = ch.id AND r.user_id = u.id
+          GROUP BY u.role, ch.key, u.id`,
+      ),
+    );
+    expect(rows.rows.length).toBeGreaterThan(0);
+
+    // O gestor leu #geral depois do ultimo post -> zerado.
+    const managerGeral = rows.rows.find((r) => r.role === 'manager' && r.key === 'geral');
+    expect(Number(managerGeral?.unread)).toBe(0);
+
+    // Ninguem tem linha de #aprovacoes -> badge aceso para todos (o pedido de
+    // aprovacao e mensagem de sistema, e mensagem de sistema conta).
+    const aprovacoes = rows.rows.filter((r) => r.key === 'aprovacoes');
+    expect(aprovacoes.length).toBeGreaterThan(0);
+    expect(aprovacoes.every((r) => Number(r.unread) > 0)).toBe(true);
+  });
+
   describe('isolamento entre tenants', () => {
     /** Toda FK que aponta para uma tabela com tenant_id: os dois lados batem? */
     const CROSS_TENANT_FKS: ReadonlyArray<[child: string, column: string, parent: string]> = [
@@ -368,6 +458,9 @@ describe('seed de desenvolvimento', () => {
       ['internal_messages', 'sender_id', 'users'],
       ['internal_messages', 'attached_proposal_id', 'proposals'],
       ['audit_logs', 'user_id', 'users'],
+      ['conversations', 'patient_id', 'patients'],
+      ['channel_reads', 'channel_id', 'internal_channels'],
+      ['channel_reads', 'user_id', 'users'],
     ];
 
     it('nenhuma linha de um tenant referencia entidade de outro', async () => {
@@ -414,5 +507,39 @@ describe('seed de desenvolvimento', () => {
         expect(visible.foreign, `${tenant.slug} enxerga conversa de outro tenant`).toBe(0);
       }
     });
+  });
+});
+
+/**
+ * O segredo do webhook do seed nao pode ser DERIVADO DO SLUG.
+ *
+ * Ele era `dev-webhook-secret-${slug}`. O `NODE_ENV=production` recusa o seed,
+ * mas homologacao e staging rodam como `development`: qualquer um que soubesse
+ * o slug — que vai na URL PUBLICA do webhook — computava o segredo de HMAC do
+ * laboratorio, e segredo de HMAC e permissao de ESCRITA em `messages`.
+ */
+describe('segredo do webhook do seed (D-074)', () => {
+  it('nao contem o slug, e cada laboratorio tem o seu', async () => {
+    const client = await getTestDb();
+    await runSeeds(client, { now: NOW, print: false });
+
+    const rows = await client.withoutTenant((tx) =>
+      tx.query<{ slug: string; webhook_secret: string | null }>(
+        `SELECT t.slug, ch.webhook_secret FROM tenant_channels ch
+           JOIN tenants t ON t.id = ch.tenant_id ORDER BY t.slug`,
+      ),
+    );
+    expect(rows.rows.length).toBeGreaterThan(1);
+
+    const secrets = new Set<string>();
+    for (const row of rows.rows) {
+      const secret = row.webhook_secret ?? '';
+      expect(secret.length).toBeGreaterThanOrEqual(32);
+      // O ponto: nada no segredo sai de um valor publico.
+      expect(secret).not.toContain(row.slug);
+      expect(secret).not.toContain('dev-webhook-secret');
+      secrets.add(secret);
+    }
+    expect(secrets.size).toBe(rows.rows.length);
   });
 });

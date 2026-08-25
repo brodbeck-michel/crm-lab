@@ -12,10 +12,16 @@ import { verifyPassword } from '../../src/lib/password.js';
 import { runSeeds } from '../../src/db/seeds/index.js';
 import {
   E2E_APPROVAL_POST,
+  E2E_CHANNEL_READS,
+  E2E_CHANNEL_UNREAD,
   E2E_CONVERSATIONS,
   E2E_EXAMS,
   E2E_PASSWORD,
+  E2E_PATIENTS,
   E2E_PROPOSALS,
+  E2E_TENANT_CHANNELS,
+  E2E_TENANT_SETTINGS,
+  E2E_TENANT_WITHOUT_SETTINGS,
   E2E_TENANTS,
   E2E_USERS,
 } from '../../src/db/seeds/e2e-fixtures.js';
@@ -51,6 +57,8 @@ describe('seed e2e', () => {
       'proposal_status_history',
       'internal_channels',
       'internal_messages',
+      'patients',
+      'tenant_channels',
     ];
     const before: Record<string, string[]> = {};
     for (const table of tables) before[table] = await ids(table);
@@ -177,17 +185,105 @@ describe('seed e2e', () => {
     expect(Number(byId.get(E2E_CONVERSATIONS.naoAtribuida.id)?.unread_count)).toBeGreaterThan(0);
   });
 
+  it('cria os pacientes de E2E_PATIENTS e liga TODA conversa ao seu cadastro', async () => {
+    const patients = await db.withoutTenant((tx) =>
+      tx.query<{ id: string; tenant_id: string; phone: string; name: string | null }>(
+        `SELECT id, tenant_id, phone, name FROM patients ORDER BY id`,
+      ),
+    );
+    const expected = Object.values(E2E_PATIENTS);
+    expect(patients.rows.map((r) => r.id)).toEqual(
+      [...expected].map((p) => p.id).sort((a, b) => (a < b ? -1 : 1)),
+    );
+    const byId = new Map(patients.rows.map((r) => [r.id, r]));
+    for (const patient of expected) {
+      expect(byId.get(patient.id)?.phone, patient.id).toBe(patient.phone);
+      expect(byId.get(patient.id)?.name, patient.id).toBe(patient.name);
+      expect(byId.get(patient.id)?.tenant_id, patient.id).toBe(patient.tenantId);
+    }
+
+    // Nenhuma conversa orfa, e o vinculo bate tenant E telefone.
+    const bad = await db.withoutTenant((tx) =>
+      tx.query<{ id: string }>(
+        `SELECT c.id FROM conversations c
+           LEFT JOIN patients p ON p.id = c.patient_id
+          WHERE c.patient_id IS NULL
+             OR p.tenant_id <> c.tenant_id
+             OR p.phone <> c.patient_phone`,
+      ),
+    );
+    expect(bad.rows).toEqual([]);
+  });
+
+  it('conecta um canal por tenant, com o segredo gravado (D-064)', async () => {
+    const rows = await db.withoutTenant((tx) =>
+      tx.query<{ tenant_id: string; channel: string; api_token: string; webhook_secret: string }>(
+        `SELECT tenant_id, channel, api_token, webhook_secret FROM tenant_channels ORDER BY tenant_id`,
+      ),
+    );
+    expect(rows.rows).toHaveLength(2);
+    for (const fixture of Object.values(E2E_TENANT_CHANNELS)) {
+      const row = rows.rows.find((r) => r.tenant_id === fixture.tenantId);
+      expect(row?.channel, fixture.id).toBe(fixture.channel);
+      expect(row?.api_token, fixture.id).toBe(fixture.apiToken);
+      expect(row?.webhook_secret, fixture.id).toBe(fixture.webhookSecret);
+      // O mascarado que a API vai devolver deriva do token real, nao de outra fonte.
+      expect(`••••••••${fixture.apiToken.slice(-4)}`).toBe(fixture.expectedApiTokenMasked);
+    }
+  });
+
+  it('grava tenant_settings só do Alfa; o Beta fica sem linha (defaults de D-065)', async () => {
+    const rows = await db.withoutTenant((tx) =>
+      tx.query<{ tenant_id: string; distribution_mode: string; greeting_enabled: boolean }>(
+        `SELECT tenant_id, distribution_mode, greeting_enabled FROM tenant_settings`,
+      ),
+    );
+    expect(rows.rows).toHaveLength(1);
+    expect(rows.rows[0]?.tenant_id).toBe(E2E_TENANT_SETTINGS.alfa.tenantId);
+    expect(rows.rows[0]?.distribution_mode).toBe('round_robin');
+    expect(rows.rows[0]?.greeting_enabled).toBe(true);
+    expect(rows.rows.some((r) => r.tenant_id === E2E_TENANT_WITHOUT_SETTINGS)).toBe(false);
+  });
+
+  it('o unreadCount derivado bate com E2E_CHANNEL_UNREAD (badge != 0 antes do read)', async () => {
+    expect(E2E_CHANNEL_READS.length).toBeGreaterThan(0);
+
+    for (const [key, scenario] of Object.entries(E2E_CHANNEL_UNREAD)) {
+      const result = await db.withoutTenant((tx) =>
+        tx.query<{ unread: number }>(
+          `SELECT COUNT(*) FILTER (
+                    WHERE m.created_at > COALESCE(r.last_read_at, '-infinity'::timestamp)
+                      AND m.sender_id IS DISTINCT FROM $3
+                  )::int AS unread
+             FROM internal_channels ch
+             LEFT JOIN internal_messages m ON m.channel_id = ch.id
+             LEFT JOIN channel_reads r ON r.channel_id = ch.id AND r.user_id = $3
+            WHERE ch.tenant_id = $1 AND ch.key = $2`,
+          [scenario.tenantId, scenario.channelKey, scenario.userId],
+        ),
+      );
+      expect(Number(result.rows[0]?.unread), key).toBe(scenario.expected);
+    }
+
+    // Pelo menos um caso NAO ZERO — sem ele o E2E do badge nao teria o que zerar.
+    expect(Object.values(E2E_CHANNEL_UNREAD).some((s) => s.expected > 0)).toBe(true);
+  });
+
   it('isola os dois tenants: o Alfa não enxerga nada do Beta', async () => {
     const seen = await db.withTenant(E2E_TENANTS.alfa.id, async (tx) => {
       const conversations = await tx.query<{ id: string }>(`SELECT id FROM conversations`);
       const proposals = await tx.query<{ id: string }>(`SELECT id FROM proposals`);
       const exams = await tx.query<{ id: string }>(`SELECT id FROM exam_catalog`);
       const tenants = await tx.query<{ id: string }>(`SELECT id FROM tenants`);
+      const patients = await tx.query<{ id: string }>(`SELECT id FROM patients`);
+      const channels = await tx.query<{ id: string }>(`SELECT id FROM tenant_channels`);
       return {
         conversations: conversations.rows.map((r) => r.id),
         proposals: proposals.rows.map((r) => r.id),
         exams: exams.rows.map((r) => r.id),
         tenants: tenants.rows.map((r) => r.id),
+        patients: patients.rows.map((r) => r.id),
+        tenantChannels: channels.rows.map((r) => r.id),
       };
     });
 
@@ -196,5 +292,12 @@ describe('seed e2e', () => {
     expect(seen.proposals).not.toContain(E2E_PROPOSALS.betaSecreta.id);
     expect(seen.conversations).toContain(E2E_CONVERSATIONS.atribuida.id);
     expect(seen.exams).toContain(E2E_EXAMS.hemograma.id);
+
+    // Onda 6: o cadastro e o canal do Beta tambem ficam invisiveis — e o do
+    // Alfa continua visivel (controle positivo: sem ele, tabela vazia passaria).
+    expect(seen.patients).not.toContain(E2E_PATIENTS.betaSecreto.id);
+    expect(seen.patients).toContain(E2E_PATIENTS.carla.id);
+    expect(seen.tenantChannels).not.toContain(E2E_TENANT_CHANNELS.betaWhatsapp.id);
+    expect(seen.tenantChannels).toContain(E2E_TENANT_CHANNELS.alfaWhatsapp.id);
   });
 });

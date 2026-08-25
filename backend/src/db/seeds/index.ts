@@ -133,7 +133,8 @@ function printDevSummary(summary: DevSeedSummary): void {
   line('  ─────────────────────────────────────────────────────────────');
   line(
     `  ${counts.tenants} tenants · ${counts.users} usuários · ${counts.exams} exames · ` +
-      `${counts.conversations} conversas · ${counts.messages} mensagens`,
+      `${counts.patients} pacientes · ${counts.conversations} conversas · ` +
+      `${counts.messages} mensagens`,
   );
   line(
     `  ${counts.proposals} propostas · ${counts.won} ganhas · ${counts.lost} perdidas · ` +
@@ -147,6 +148,14 @@ function printDevSummary(summary: DevSeedSummary): void {
       `  ${credential.email.padEnd(30)} ${DEV_PASSWORD.padEnd(10)} ` +
         `${(ROLE_LABEL[credential.role] ?? credential.role).padEnd(10)} ${credential.tenantSlug}`,
     );
+  }
+  line();
+  // Sorteado por execucao (nunca derivado do slug, que e publico): sem imprimir
+  // aqui, nao ha como assinar o webhook em dev. Ver `devWebhookSecret`.
+  line('  SEGREDO DO WEBHOOK (HMAC, muda a cada seed)');
+  line('  ─────────────────────────────────────────────────────────────');
+  for (const entry of summary.webhookSecrets) {
+    line(`  ${entry.tenantSlug.padEnd(30)} ${entry.secret}`);
   }
   line();
   line('  Tenant 1: lab-vida    (tema Terracota & Sálvia)');

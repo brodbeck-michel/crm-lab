@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { QueryClientProvider } from '@tanstack/react-query';
+import type { ProposalDetail, UpdateProposalStatusRequest } from '@crm-lab/shared';
+import { querySuccess, mutationIdle } from '@/test/query-mocks';
+import type { UpdateProposalStatusResponse } from '@/api/proposals';
 import ProposalModal from './ProposalModal';
 import * as proposalsApi from '@/api/proposals';
 import { queryClient } from '@/api/query-client';
@@ -13,7 +16,7 @@ describe('ProposalModal', () => {
   });
 
   it('renders items, discount, total, and history', () => {
-    const mockProposal = {
+    const mockProposal: ProposalDetail = {
       id: 'prop-1',
       conversationId: 'conv-1',
       patientName: 'João Silva',
@@ -53,20 +56,16 @@ describe('ProposalModal', () => {
       ],
     };
 
-    vi.mocked(proposalsApi.useProposalDetail).mockReturnValue({
-      data: mockProposal,
-      isLoading: false,
-      error: null,
-    } as any);
+    vi.mocked(proposalsApi.useProposalDetail).mockReturnValue(
+      querySuccess<ProposalDetail>(mockProposal),
+    );
 
-    vi.mocked(proposalsApi.useUpdateProposalStatus).mockReturnValue({
-      mutate: vi.fn(),
-      isPending: false,
-      isSuccess: false,
-      isError: false,
-      data: null,
-      error: null,
-    } as any);
+    vi.mocked(proposalsApi.useUpdateProposalStatus).mockReturnValue(
+      mutationIdle<
+        UpdateProposalStatusResponse,
+        { proposalId: string } & UpdateProposalStatusRequest
+      >(),
+    );
 
     render(
       <QueryClientProvider client={queryClient}>
@@ -80,7 +79,7 @@ describe('ProposalModal', () => {
   });
 
   it('renders approval alert when approvalStatus is pending', () => {
-    const mockProposal = {
+    const mockProposal: ProposalDetail = {
       id: 'prop-1',
       conversationId: 'conv-1',
       patientName: 'João Silva',
@@ -105,20 +104,16 @@ describe('ProposalModal', () => {
       history: [],
     };
 
-    vi.mocked(proposalsApi.useProposalDetail).mockReturnValue({
-      data: mockProposal,
-      isLoading: false,
-      error: null,
-    } as any);
+    vi.mocked(proposalsApi.useProposalDetail).mockReturnValue(
+      querySuccess<ProposalDetail>(mockProposal),
+    );
 
-    vi.mocked(proposalsApi.useUpdateProposalStatus).mockReturnValue({
-      mutate: vi.fn(),
-      isPending: false,
-      isSuccess: false,
-      isError: false,
-      data: null,
-      error: null,
-    } as any);
+    vi.mocked(proposalsApi.useUpdateProposalStatus).mockReturnValue(
+      mutationIdle<
+        UpdateProposalStatusResponse,
+        { proposalId: string } & UpdateProposalStatusRequest
+      >(),
+    );
 
     render(
       <QueryClientProvider client={queryClient}>

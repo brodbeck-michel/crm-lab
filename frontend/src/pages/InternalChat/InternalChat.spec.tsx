@@ -8,6 +8,7 @@ import type {
   InternalMessage,
   ListChannelsResponse,
   ListInternalMessagesResponse,
+  PaginationQuery,
   ProposalDetail,
 } from '@crm-lab/shared';
 import type * as ApiModule from '@/api';
@@ -15,6 +16,7 @@ import type * as ApiModule from '@/api';
 const channelsMock = vi.fn();
 const messagesMock = vi.fn();
 const sendMock = vi.fn();
+const markReadMock = vi.fn();
 const getProposalMock = vi.fn();
 const approveMock = vi.fn();
 const rejectMock = vi.fn();
@@ -30,6 +32,7 @@ vi.mock('@/api', async (importOriginal) => {
         channels: channelsMock,
         messages: messagesMock,
         send: sendMock,
+        markRead: markReadMock,
       },
       proposals: {
         ...actual.api.proposals,
@@ -61,6 +64,7 @@ const GERAL: Channel = {
   name: '#geral',
   kind: 'channel',
   unreadCount: 0,
+  lastReadAt: '2026-08-23T09:00:00Z',
   lastMessageAt: '2026-08-23T09:00:00Z',
 };
 
@@ -70,6 +74,8 @@ const APROVACOES: Channel = {
   name: '#aprovacoes',
   kind: 'channel',
   unreadCount: 2,
+  // Nunca lido: e o que faz `unreadCount` valer 2 (D-068).
+  lastReadAt: null,
   lastMessageAt: '2026-08-23T10:00:00Z',
 };
 
@@ -79,6 +85,7 @@ const DM: Channel = {
   name: 'Marina Alves',
   kind: 'dm',
   unreadCount: 0,
+  lastReadAt: null,
   lastMessageAt: null,
 };
 
@@ -190,6 +197,7 @@ beforeEach(() => {
     ),
   );
   sendMock.mockResolvedValue(message({ id: 'm-3', content: 'Combinado' }));
+  markReadMock.mockResolvedValue(undefined);
   getProposalMock.mockResolvedValue(proposal());
   approveMock.mockResolvedValue({
     id: PROPOSAL_ID,
@@ -313,5 +321,170 @@ describe('Chat Interno', () => {
 
     expect(await screen.findByText(/Pedido de aprovação de desconto/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Aprovar' })).not.toBeInTheDocument();
+  });
+  /**
+   * ─────────────────────────────────────────────────────────────────────────
+   *  Estado de leitura do canal — D-068 · PAGES.md §9
+   * ─────────────────────────────────────────────────────────────────────────
+   * A Onda 5 fechou com o badge subindo e nunca descendo (defeito D5). O
+   * backend passou a expor `POST /internal-chat/channels/:id/read`; o que
+   * faltava era a TELA ligar o fio. Estes testes provam o fio inteiro: o POST
+   * sai ao abrir, a lista de canais é revalidada depois dele, o badge some — e
+   * nada disso acontece para canal que ninguém abriu.
+   */
+  describe('marcar canal como lido (D-068)', () => {
+    /** Faz `GET /channels` responder com `#aprovacoes` zerado depois do POST. */
+    function channelsThatZeroOnRead(): string[] {
+      const lidos: string[] = [];
+      markReadMock.mockImplementation((channelId: string) => {
+        lidos.push(channelId);
+        return Promise.resolve();
+      });
+      channelsMock.mockImplementation(() => {
+        const aprovacoes: Channel = lidos.includes(APROVACOES.id)
+          ? { ...APROVACOES, unreadCount: 0, lastReadAt: '2026-08-23T11:00:00Z' }
+          : APROVACOES;
+        const response: ListChannelsResponse = { channels: [GERAL, aprovacoes, DM] };
+        return Promise.resolve(response);
+      });
+      return lidos;
+    }
+
+    it('chama POST /read ao abrir o canal e o badge desce', async () => {
+      channelsThatZeroOnRead();
+
+      const user = userEvent.setup({ delay: null });
+      renderScreen();
+
+      // O badge existe ANTES de abrir — senão o teste provaria o nada.
+      expect(
+        await screen.findByLabelText('2 mensagens não lidas em #aprovacoes'),
+      ).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /#aprovacoes/ }));
+
+      await waitFor(() => {
+        expect(markReadMock).toHaveBeenCalledWith(APROVACOES.id);
+      });
+
+      // Invalidação da lista de canais: o badge some da tela.
+      await waitFor(() => {
+        expect(
+          screen.queryByLabelText('2 mensagens não lidas em #aprovacoes'),
+        ).not.toBeInTheDocument();
+      });
+    });
+
+    /**
+     * O primeiro canal da lista é selecionado pela TELA, não pelo usuário. Como
+     * a ordem é fixa (`kind ASC, key ASC`), esse canal seria quase sempre
+     * `#aprovacoes` — apagar o badge dele só por entrar na tela apagaria o
+     * aviso que a pessoa entrou para ver. Só o clique marca.
+     */
+    it('não marca nada só por abrir a tela, nem canal que o usuário não clicou', async () => {
+      renderScreen();
+      await screen.findByText('Bom dia, equipe!');
+
+      // O canal auto-selecionado já renderizou suas mensagens e ainda assim
+      // nenhum POST /read saiu.
+      expect(markReadMock).not.toHaveBeenCalled();
+    });
+
+    it('marca só o canal clicado', async () => {
+      const user = userEvent.setup({ delay: null });
+      renderScreen();
+      await screen.findByText('Bom dia, equipe!');
+
+      await user.click(await screen.findByRole('button', { name: /#aprovacoes/ }));
+
+      await waitFor(() => {
+        expect(markReadMock).toHaveBeenCalledWith(APROVACOES.id);
+      });
+      expect(markReadMock).not.toHaveBeenCalledWith(DM.id);
+    });
+
+    it('marca UMA vez por clique, mesmo com a lista de canais revalidando', async () => {
+      const lidos = channelsThatZeroOnRead();
+
+      const user = userEvent.setup({ delay: null });
+      renderScreen();
+      await screen.findByText('Bom dia, equipe!');
+
+      await user.click(await screen.findByRole('button', { name: /#aprovacoes/ }));
+      await screen.findByRole('button', { name: /Aprovar/ });
+
+      // A revalidação disparada pelo POST já voltou do servidor: se ela
+      // realimentasse o marcar-como-lido, o contador abaixo cresceria sem
+      // parar.
+      await waitFor(() => {
+        expect(channelsMock.mock.calls.length).toBeGreaterThan(1);
+      });
+
+      expect(lidos.filter((id) => id === APROVACOES.id)).toHaveLength(1);
+    });
+  });
+
+  /**
+   * ─────────────────────────────────────────────────────────────────────────
+   *  Paginação do histórico — D-069 · PAGES.md §9
+   * ─────────────────────────────────────────────────────────────────────────
+   * `page=1` é a fatia das mensagens MAIS RECENTES. Antes, a tela assumia o
+   * contrário e lia a última página em DOIS requests — com mais de 50
+   * mensagens o canal abria nas mais antigas.
+   */
+  describe('paginação do histórico (D-069)', () => {
+    const ANTIGA = message({ id: 'm-antiga', content: 'Bloco anterior' });
+    const RECENTE = message({ id: 'm-recente', content: 'Bloco recente' });
+
+    /** Canal com 2 páginas: `page=1` = recente, `page=2` = bloco anterior. */
+    function paginatedChannel() {
+      messagesMock.mockImplementation((_channelId: string, query: PaginationQuery = {}) => {
+        const page = query.page ?? 1;
+        const response: ListInternalMessagesResponse = {
+          messages: page === 2 ? [ANTIGA] : [RECENTE],
+          pagination: { page, limit: 50, total: 60, totalPages: 2 },
+        };
+        return Promise.resolve(response);
+      });
+    }
+
+    it('abre no bloco mais recente com UM único request', async () => {
+      paginatedChannel();
+      renderScreen();
+
+      expect(await screen.findByText('Bloco recente')).toBeInTheDocument();
+      expect(screen.queryByText('Bloco anterior')).not.toBeInTheDocument();
+
+      // Um request, não dois: o `fetchTail` (ler `totalPages`, depois buscar a
+      // última página) deixou de existir.
+      expect(messagesMock).toHaveBeenCalledTimes(1);
+      expect(messagesMock).toHaveBeenCalledWith(GERAL.id, { page: 1, limit: 50 });
+    });
+
+    it('"carregar anteriores" pede a página SEGUINTE e a coloca acima', async () => {
+      paginatedChannel();
+
+      const user = userEvent.setup({ delay: null });
+      renderScreen();
+      await screen.findByText('Bloco recente');
+
+      await user.click(screen.getByRole('button', { name: 'Carregar mensagens anteriores' }));
+
+      expect(await screen.findByText('Bloco anterior')).toBeInTheDocument();
+      expect(messagesMock).toHaveBeenCalledWith(GERAL.id, { page: 2, limit: 50 });
+
+      // Ordem cronológica na tela: o bloco anterior vem ANTES do recente.
+      const renderizado = screen.getAllByText(/^Bloco /).map((node) => node.textContent);
+      expect(renderizado).toEqual(['Bloco anterior', 'Bloco recente']);
+    });
+
+    it('não oferece "carregar anteriores" quando o canal cabe em uma página', async () => {
+      renderScreen();
+      await screen.findByText('Bom dia, equipe!');
+
+      expect(
+        screen.queryByRole('button', { name: 'Carregar mensagens anteriores' }),
+      ).not.toBeInTheDocument();
+    });
   });
 });

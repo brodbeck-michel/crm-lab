@@ -1,7 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { ManagedUser } from '@crm-lab/shared';
+import type {
+  CreateUserRequest,
+  ListUsersResponse,
+  ManagedUser,
+  UpdateUserRequest,
+} from '@crm-lab/shared';
+import { querySuccess, mutationIdle, mutationPending } from '@/test/query-mocks';
 import UserModal from './UserModal';
 import * as usersApi from '@/api/users';
 
@@ -14,6 +20,18 @@ const EXISTING_USER: ManagedUser = {
   isActive: true,
   lastLoginAt: '2026-08-23T10:00:00Z',
   createdAt: '2026-08-01T10:00:00Z',
+};
+
+/**
+ * `useUserList` NAO e usado pelo modal (o registro chega pela linha clicada) —
+ * o mock existe so para o caso de alguem reintroduzir a varredura. Ele agora e
+ * TIPADO: as duas metades deste arquivo mockavam o MESMO hook com shapes
+ * incompativeis (`data: []` aqui, `data: { users, pagination }` la embaixo) e o
+ * `as any` engolia a divergencia. Fonte unica: `EMPTY_USER_LIST`.
+ */
+const EMPTY_USER_LIST: ListUsersResponse = {
+  users: [],
+  pagination: { page: 1, limit: 20, total: 0, totalPages: 0 },
 };
 
 // Mock API hooks
@@ -35,21 +53,11 @@ describe('UserModal', () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    vi.mocked(usersApi.useCreateUser).mockReturnValue({
-      mutate: mockCreateUser,
-      isPending: false,
-    } as any);
+    vi.mocked(usersApi.useCreateUser).mockReturnValue(mutationIdle(mockCreateUser));
 
-    vi.mocked(usersApi.useUpdateUser).mockReturnValue({
-      mutate: mockUpdateUser,
-      isPending: false,
-    } as any);
+    vi.mocked(usersApi.useUpdateUser).mockReturnValue(mutationIdle(mockUpdateUser));
 
-    vi.mocked(usersApi.useUserList).mockReturnValue({
-      data: [],
-      isLoading: false,
-      error: null,
-    } as any);
+    vi.mocked(usersApi.useUserList).mockReturnValue(querySuccess(EMPTY_USER_LIST));
   });
 
   const renderComponent = (user?: ManagedUser) => {
@@ -141,10 +149,18 @@ describe('UserModal', () => {
     });
 
     it('should disable submit button while loading', async () => {
-      vi.mocked(usersApi.useCreateUser).mockReturnValue({
-        mutate: mockCreateUser,
-        isPending: true,
-      } as any);
+      vi.mocked(usersApi.useCreateUser).mockReturnValue(
+        mutationPending<ManagedUser, CreateUserRequest>(
+          {
+            email: 'new@lab.com',
+            name: 'New User',
+            password: 'senha123',
+            role: 'attendant',
+            discountLimit: 15,
+          },
+          mockCreateUser,
+        ),
+      );
 
       renderComponent();
 
@@ -175,13 +191,14 @@ describe('Edição sem varrer a lista', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(usersApi.useCreateUser).mockReturnValue({ mutate: vi.fn(), isPending: false } as any);
-    vi.mocked(usersApi.useUpdateUser).mockReturnValue({ mutate: vi.fn(), isPending: false } as any);
-    vi.mocked(usersApi.useUserList).mockReturnValue({
-      data: { users: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } },
-      isLoading: false,
-      error: null,
-    } as any);
+    vi.mocked(usersApi.useCreateUser).mockReturnValue(
+      mutationIdle<ManagedUser, CreateUserRequest>(),
+    );
+    vi.mocked(usersApi.useUpdateUser).mockReturnValue(
+      mutationIdle<ManagedUser, { id: string; data: UpdateUserRequest }>(),
+    );
+    // MESMO shape do bloco de cima — antes divergia, e nada reclamava.
+    vi.mocked(usersApi.useUserList).mockReturnValue(querySuccess(EMPTY_USER_LIST));
   });
 
   it('preenche o formulário com o usuário recebido da linha', async () => {

@@ -309,7 +309,12 @@ function OnboardingModal({ open, onClose }: OnboardingModalProps) {
 
   const createTenant = useMutation({
     mutationFn: (body: CreateTenantRequest) => platformApi.createTenant(body),
-    onSuccess: () => {
+    /**
+     * `tenant` é o `TenantSummary` CRU — sem envelope `{ tenant }` (D-070).
+     * A anotação não é decorativa: se o backend voltar a envelopar, isto para
+     * de compilar em vez de virar `undefined` silencioso no onboarding.
+     */
+    onSuccess: (_tenant: TenantSummary) => {
       // Invalida o escopo inteiro: a listagem tem filtro e página no cache.
       void queryClient.invalidateQueries({ queryKey: queryScopes.platform });
       close();

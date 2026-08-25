@@ -20,7 +20,7 @@ export default function Analytics() {
 
   if (isLoading) {
     return (
-      <div className="p-5 space-y-6">
+      <div className="p-lg space-y-xl">
         <h1 className="font-heading text-display">Conversão</h1>
         <div>Carregando dados...</div>
       </div>
@@ -29,7 +29,7 @@ export default function Analytics() {
 
   if (!conversion) {
     return (
-      <div className="p-5 space-y-6">
+      <div className="p-lg space-y-xl">
         <h1 className="font-heading text-display">Conversão</h1>
         <div>Nenhum dado disponível</div>
       </div>
@@ -62,7 +62,7 @@ export default function Analytics() {
     conversion.funnel.perdido;
 
   return (
-    <div className="p-5 space-y-6">
+    <div className="p-lg space-y-xl">
       <h1 className="font-heading text-display">Conversão</h1>
 
       {/*
@@ -81,7 +81,7 @@ export default function Analytics() {
       )}
 
       {/* Period Filters */}
-      <div className="flex gap-4 flex-wrap">
+      <div className="flex gap-lg flex-wrap">
         <Input
           type="date"
           value={startDate}
@@ -99,7 +99,7 @@ export default function Analytics() {
       </div>
 
       {/* Metric Tiles Grid */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-4 gap-lg">
         <MetricTile label="Receita" value={conversion.revenue} variant="money" />
         <MetricTile label="Ticket Médio" value={conversion.averageTicket} variant="money" />
         <MetricTile label="Taxa de Conversão" value={conversion.funnel.conversionRate} variant="percent" />
@@ -107,7 +107,7 @@ export default function Analytics() {
       </div>
 
       {/* Charts Grid */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-2 gap-lg">
         <ConversionChart data={funnelData} />
         <RevenueChart
           data={[
@@ -124,11 +124,11 @@ export default function Analytics() {
 
       {/* Top Performers Section (if available and not partial view) */}
       {conversion.topPerformers && conversion.topPerformers.length > 0 && !conversion.partial && (
-        <div className="bg-neutral-100 p-5 rounded-md shadow-sm space-y-4">
+        <div className="bg-neutral-100 p-lg rounded-md shadow-sm space-y-lg">
           <h3 className="font-heading text-section">Melhores Desempenhos</h3>
-          <div className="space-y-2">
+          <div className="space-y-sm">
             {conversion.topPerformers.map((performer) => (
-              <div key={performer.userId} className="flex justify-between items-center p-3 border border-neutral-200 rounded-md">
+              <div key={performer.userId} className="flex justify-between items-center p-md border border-neutral-200 rounded-md">
                 <div>
                   <p className="font-medium">{performer.name}</p>
                   <p className="text-caption text-neutral-600">{performer.conversions} conversões</p>

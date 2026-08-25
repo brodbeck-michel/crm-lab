@@ -23,7 +23,7 @@ export default function LostReasonForm({ onSubmit, isPending = false }: LostReas
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-3">
+    <form onSubmit={handleSubmit} className="space-y-md">
       <Select
         label="Motivo da Perda"
         options={LOSS_REASONS.map((r) => ({
@@ -34,7 +34,7 @@ export default function LostReasonForm({ onSubmit, isPending = false }: LostReas
         onChange={handleSelectChange}
         required
       />
-      <div className="flex gap-2">
+      <div className="flex gap-sm">
         <Button
           variant="confirmation"
           type="submit"

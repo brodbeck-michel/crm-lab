@@ -14,6 +14,7 @@ import type { ConversationPanelProps } from './ConversationPanel';
 
 const CONVERSATION: ConversationDetail = {
   id: 'c-1',
+  patientId: 'p-1',
   patientName: 'Marina Alves',
   patientPhone: '(11) 98765-4321',
   patientEmail: null,

@@ -16,8 +16,8 @@ export default function DiscountSection({
   const exceedsLimit = discountPercent > discountLimit;
 
   return (
-    <div className="space-y-2">
-      <div className="flex gap-2 items-center">
+    <div className="space-y-sm">
+      <div className="flex gap-sm items-center">
         <Input
           label="Desconto (%)"
           type="number"

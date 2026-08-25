@@ -1,17 +1,15 @@
 import type { RouteObject } from 'react-router-dom';
 import { AppShell, PlatformShell } from '@/components/layout';
-import {
-  ChannelsSettingsPlaceholder,
-  NotFoundPlaceholder,
-  OperationSettingsPlaceholder,
-  PatientPlaceholder,
-} from '@/pages/_placeholders';
+import { NotFoundPlaceholder } from '@/pages/_placeholders';
 import { Attendance } from '@/pages/Attendance';
+import PatientProfile from '@/pages/Patients';
 import { Login } from '@/pages/Login';
 import BudgetNew from '@/pages/Budget/New';
 import Proposals from '@/pages/Proposals';
 import Catalog from '@/pages/Catalog';
 import Analytics from '@/pages/Analytics';
+import ChannelsSettings from '@/pages/Settings/Channels';
+import OperationSettings from '@/pages/Settings/Operation';
 import ThemeSettings from '@/pages/Settings/Theme';
 import UsersSettings from '@/pages/Settings/Users';
 import InternalChat from '@/pages/InternalChat';
@@ -51,7 +49,7 @@ export const appRoutes: RouteObject[] = [
             element: <AppShell />,
             children: [
               { path: 'attendance', element: <Attendance /> },
-              { path: 'patients/:id', element: <PatientPlaceholder /> },
+              { path: 'patients/:id', element: <PatientProfile /> },
               { path: 'budget/new', element: <BudgetNew /> },
               { path: 'proposals', element: <Proposals /> },
               { path: 'catalog', element: <Catalog /> },
@@ -69,8 +67,8 @@ export const appRoutes: RouteObject[] = [
           {
             element: <AppShell />,
             children: [
-              { path: 'settings/channels', element: <ChannelsSettingsPlaceholder /> },
-              { path: 'settings/operation', element: <OperationSettingsPlaceholder /> },
+              { path: 'settings/channels', element: <ChannelsSettings /> },
+              { path: 'settings/operation', element: <OperationSettings /> },
             ],
           },
         ],

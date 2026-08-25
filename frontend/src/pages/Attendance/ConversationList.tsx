@@ -1,7 +1,8 @@
-import type { Conversation } from '@crm-lab/shared';
+import type { Conversation, PatientListItem } from '@crm-lab/shared';
 import { Button, Chip, SearchInput } from '@/components/ui';
 import { EmptyState } from '@/components/shared';
 import { ConversationItem } from '@/components/conversation';
+import { PatientResults } from './PatientResults';
 
 /**
  * Coluna 1 do inbox (336px) — PAGES.md §2.
@@ -10,6 +11,10 @@ import { ConversationItem } from '@/components/conversation';
  * As contagens vêm de `counts` da resposta (`ListConversationsResponse`):
  * derivadas no servidor, nunca contadas no cliente
  * (FRONTEND_BACKEND.md §5).
+ *
+ * A MESMA busca alimenta duas listas (D-079): as conversas (`GET /conversations`)
+ * e os pacientes (`GET /patients`, §2c — "a tela chega aqui pela busca do
+ * inbox"). Sem termo digitado o bloco de pacientes não existe.
  */
 
 /** `scope` de `ListConversationsQuery`. `all` = nenhum chip ligado. */
@@ -26,6 +31,11 @@ export interface ConversationListProps {
   isLoading: boolean;
   isError: boolean;
   onRetry: () => void;
+  /** Termo em vigor — o bloco de pacientes só aparece quando há busca. */
+  searchTerm: string;
+  patients: PatientListItem[];
+  patientsLoading: boolean;
+  patientsError: boolean;
 }
 
 export function ConversationList({
@@ -39,6 +49,10 @@ export function ConversationList({
   isLoading,
   isError,
   onRetry,
+  searchTerm,
+  patients,
+  patientsLoading,
+  patientsError,
 }: ConversationListProps) {
   /** Clicar no chip ligado desliga o filtro (volta a ver tudo). */
   const toggle = (next: Exclude<ConversationScope, 'all'>) =>
@@ -110,6 +124,13 @@ export function ConversationList({
             />
           ))}
       </div>
+
+      <PatientResults
+        term={searchTerm}
+        patients={patients}
+        isLoading={patientsLoading}
+        isError={patientsError}
+      />
     </div>
   );
 }

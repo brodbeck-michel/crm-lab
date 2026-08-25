@@ -16,6 +16,15 @@ import type { QueryParams } from './client';
 export const internalChatApi = {
   channels: () => http.get<ListChannelsResponse>('/internal-chat/channels'),
 
+  /**
+   * `POST /internal-chat/channels/:id/read` — 204, sem corpo, idempotente.
+   * É o que zera `Channel.unreadCount` (D-068). A tela chama ao ABRIR o canal:
+   * `messages` abaixo NÃO marca como lido de propósito (ler página antiga do
+   * histórico não é ter visto a mensagem nova).
+   */
+  markRead: (channelId: string) =>
+    http.post<void>(`/internal-chat/channels/${channelId}/read`),
+
   messages: (channelId: string, query: PaginationQuery = {}) =>
     http.get<ListInternalMessagesResponse>(
       `/internal-chat/channels/${channelId}/messages`,

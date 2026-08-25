@@ -6,6 +6,8 @@ export { Modal } from './Modal';
 export type { ModalProps } from './Modal';
 export { DataTable } from './DataTable';
 export type { DataTableProps, DataTableColumn } from './DataTable';
+export { Pagination } from './Pagination';
+export type { PaginationProps } from './Pagination';
 export { MoneyDisplay } from './MoneyDisplay';
 export type { MoneyDisplayProps } from './MoneyDisplay';
 export { DateDisplay } from './DateDisplay';

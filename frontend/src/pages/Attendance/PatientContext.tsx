@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import type { ConversationDetail, Proposal } from '@crm-lab/shared';
 import { PROPOSAL_STATUS_LABELS, TERMINAL_STATUSES } from '@crm-lab/shared';
 import { Button, Chip } from '@/components/ui';
@@ -6,6 +7,11 @@ import { Avatar, DateDisplay, EmptyState, MoneyDisplay } from '@/components/shar
 /**
  * Coluna 3 do inbox (316px, recolhível) — PAGES.md §2.
  * Cadastro resumido · propostas da conversa (cartões clicáveis) · tags.
+ *
+ * É AQUI que a Ficha do Paciente (PAGES.md §3) ganha porta de entrada: o link
+ * "Ver ficha completa" usa `conversation.patientId` (D-079). Conversa anterior
+ * ao backfill da migração 003 tem `patientId: null` e o link simplesmente NÃO
+ * aparece — mostrar link quebrado ou botão morto seria pior que não mostrar.
  */
 
 export interface PatientContextProps {
@@ -53,6 +59,16 @@ export function PatientContext({
           <span className="truncate text-caption text-neutral-600">{conversation.patientPhone}</span>
         </div>
       </div>
+
+      {conversation.patientId !== null && (
+        <Link
+          data-testid="patient-profile-link"
+          to={`/patients/${conversation.patientId}`}
+          className="rounded-md border border-neutral-300 px-md py-sm text-center text-caption font-semibold text-accent-700 no-underline transition-colors hover:border-accent"
+        >
+          Ver ficha completa
+        </Link>
+      )}
 
       <section className="flex flex-col gap-sm">
         <h2 className="m-0 font-heading text-section text-text">Cadastro</h2>

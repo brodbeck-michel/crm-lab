@@ -55,18 +55,18 @@ export default function SummaryColumn({
   };
 
   return (
-    <div className="flex flex-col gap-4 p-5 h-full">
+    <div className="flex flex-col gap-lg p-lg h-full">
       <h2 className="font-heading text-section">Resumo</h2>
 
       <div className="flex-1 overflow-y-auto min-h-0">
         {items.length === 0 ? (
           <p className="text-body text-neutral-600">Nenhum exame adicionado</p>
         ) : (
-          <div data-testid="summary-items" className="space-y-2">
+          <div data-testid="summary-items" className="space-y-sm">
             {items.map((item) => (
               <div
                 key={item.examId}
-                className="flex justify-between items-center text-body p-2 rounded-md hover:bg-accent-100"
+                className="flex justify-between items-center text-body p-sm rounded-md hover:bg-accent-100"
               >
                 <div className="flex-1 min-w-0">
                   <p className="font-medium truncate">{item.examName}</p>
@@ -74,7 +74,7 @@ export default function SummaryColumn({
                     Qtd: {item.quantity}
                   </p>
                 </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
+                <div className="flex items-center gap-sm flex-shrink-0">
                   <MoneyDisplay value={item.unitPrice * item.quantity} />
                   <button
                     onClick={() => onRemoveItem(item.examId)}
@@ -90,8 +90,8 @@ export default function SummaryColumn({
         )}
       </div>
 
-      <div className="space-y-4 border-t pt-4">
-        <div className="space-y-1 text-body">
+      <div className="space-y-lg border-t pt-lg">
+        <div className="space-y-xs text-body">
           <div className="flex justify-between">
             <span className="text-neutral-600">Subtotal</span>
             <MoneyDisplay value={subtotal} />
@@ -104,7 +104,7 @@ export default function SummaryColumn({
           onChange={setDiscountPercent}
         />
 
-        <div className="border-t pt-3">
+        <div className="border-t pt-md">
           <div className="flex justify-between font-heading text-section">
             <span>Total</span>
             <MoneyDisplay value={total} />

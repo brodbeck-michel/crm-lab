@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import type { ListAuditResponse, ListUsersResponse } from '@crm-lab/shared';
+import { querySuccess } from '@/test/query-mocks';
 import UsersSettings from './Users';
 import * as usersApi from '@/api/users';
 import * as auditApi from '@/api/audit';
@@ -23,7 +25,7 @@ vi.mock('@/api/audit', async () => {
   };
 });
 
-const mockUsersData = {
+const mockUsersData: ListUsersResponse = {
   users: [
     {
       id: '1',
@@ -49,7 +51,7 @@ const mockUsersData = {
   pagination: { page: 1, limit: 20, total: 2, totalPages: 1 },
 };
 
-const mockAuditData = {
+const mockAuditData: ListAuditResponse = {
   entries: [
     {
       id: 'audit-1',
@@ -70,17 +72,13 @@ const mockAuditData = {
 describe('UsersSettings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(usersApi.useUserList).mockReturnValue({
-      data: mockUsersData,
-      isLoading: false,
-      error: null,
-    } as any);
+    vi.mocked(usersApi.useUserList).mockReturnValue(
+      querySuccess<ListUsersResponse>(mockUsersData),
+    );
 
-    vi.mocked(auditApi.useAuditList).mockReturnValue({
-      data: mockAuditData,
-      isLoading: false,
-      error: null,
-    } as any);
+    vi.mocked(auditApi.useAuditList).mockReturnValue(
+      querySuccess<ListAuditResponse>(mockAuditData),
+    );
   });
 
   const renderComponent = () => {

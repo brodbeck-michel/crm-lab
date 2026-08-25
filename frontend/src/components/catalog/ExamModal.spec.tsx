@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
-import type { Exam } from '@crm-lab/shared';
+import type { Exam, ListExamsResponse } from '@crm-lab/shared';
+import { querySuccess, mutationIdle } from '@/test/query-mocks';
 import ExamModal from './ExamModal';
 import * as examsApi from '@/api/exams';
 
@@ -41,19 +42,14 @@ describe('ExamModal', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(examsApi.useCreateExam).mockReturnValue({
-      mutate: mockCreateExam,
-      isPending: false,
-    } as any);
-    vi.mocked(examsApi.useUpdateExam).mockReturnValue({
-      mutate: mockUpdateExam,
-      isPending: false,
-    } as any);
-    vi.mocked(examsApi.useExamList).mockReturnValue({
-      data: [],
-      isLoading: false,
-      error: null,
-    } as any);
+    vi.mocked(examsApi.useCreateExam).mockReturnValue(mutationIdle(mockCreateExam));
+    vi.mocked(examsApi.useUpdateExam).mockReturnValue(mutationIdle(mockUpdateExam));
+    vi.mocked(examsApi.useExamList).mockReturnValue(
+      querySuccess<ListExamsResponse>({
+        exams: [],
+        pagination: { page: 1, limit: 20, total: 0, totalPages: 0 },
+      }),
+    );
   });
 
   it('abre em modo de criação com os campos vazios', () => {

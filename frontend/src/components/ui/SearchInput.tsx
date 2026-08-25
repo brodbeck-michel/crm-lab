@@ -47,7 +47,20 @@ export function SearchInput({
 }: SearchInputProps) {
   const [term, setTerm] = useState(defaultValue);
   const onSearchRef = useRef(onSearch);
-  const isFirstRun = useRef(true);
+  /**
+   * Guarda de montagem. A versão anterior era um `isFirstRun` desarmado DENTRO
+   * do efeito: no `StrictMode` do React 18 o efeito da montagem é invocado,
+   * limpo e invocado de novo — na segunda invocação o ref já valia `false`, o
+   * `setTimeout` era agendado e um `onSearch(defaultValue)` FANTASMA saía 300ms
+   * depois da tela abrir. Quem escutava reagia como se o usuário tivesse
+   * buscado: `/catalog?page=2` voltava sozinha para a página 1.
+   *
+   * O guard agora é armado pelo próprio evento do usuário (`onChange`), não
+   * pela contagem de execuções do efeito — quantas vezes o efeito roda na
+   * montagem deixa de importar. O contrato público não muda: nada é emitido na
+   * montagem, tudo o que o usuário digita (inclusive limpar o campo) é.
+   */
+  const userTyped = useRef(false);
 
   useEffect(() => {
     onSearchRef.current = onSearch;
@@ -55,10 +68,7 @@ export function SearchInput({
 
   useEffect(() => {
     // Não emite na montagem: só quando o usuário mexe.
-    if (isFirstRun.current) {
-      isFirstRun.current = false;
-      return;
-    }
+    if (!userTyped.current) return;
     const id = setTimeout(() => onSearchRef.current(term), debounceMs);
     return () => clearTimeout(id);
   }, [term, debounceMs]);
@@ -72,7 +82,10 @@ export function SearchInput({
       disabled={disabled}
       value={term}
       prefix={<SearchIcon />}
-      onChange={(event) => setTerm(event.target.value)}
+      onChange={(event) => {
+        userTyped.current = true;
+        setTerm(event.target.value);
+      }}
     />
   );
 }

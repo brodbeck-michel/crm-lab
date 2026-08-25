@@ -60,6 +60,29 @@ function codeLines(source: string): Array<{ line: number; text: string }> {
 }
 
 const HEX = /#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3}(?:[0-9a-fA-F]{2})?)?\b/;
+
+/**
+ * Espaçamento fora da escala de tokens (D9 da Onda 5).
+ *
+ * O app tinha DUAS convenções vivas no mesmo arquivo: `p-5`/`gap-4`/`mb-4` da
+ * escala numérica default do Tailwind e `p-md`/`gap-sm` dos tokens de
+ * DESIGN_TOKENS.md. Como a escala numérica NÃO passa por `var(--gap-*)`, um
+ * `gap-4` é 16px cravado: ignora o token e produz ritmo diferente do vizinho.
+ *
+ * Só as propriedades de espaçamento entram aqui — `w-80`, `h-12`, `min-w-0`
+ * são DIMENSÃO, que a escala de tokens não cobre e o doc não define.
+ *
+ * Aceitos de propósito:
+ *   · `p-0` / `m-0` — zero é reset, não um degrau da escala
+ *   · `top-1/2`, `w-1/2` — frações
+ *   · `px-[18px]` — valor arbitrário explícito (já coberto por revisão de raio)
+ */
+const SPACING_PREFIXES =
+  'px|py|pt|pb|pl|pr|p|mx|my|mt|mb|ml|mr|m|gap-x|gap-y|gap|space-x|space-y';
+const RAW_SPACING = new RegExp(
+  `(?<![\\w-])(?:${SPACING_PREFIXES})-[1-9]\\d*(?![\\w/.\\-])`,
+  'g',
+);
 const FONT_FAMILY = /font-?[fF]amily\s*[:=]/;
 const RADIUS_PX = /(?:border-?[rR]adius\s*[:=]\s*|rounded(?:-[a-z]+)?-\[)\s*['"]?(-?\d+(?:\.\d+)?)px/g;
 
@@ -107,6 +130,28 @@ describe('nenhum token hardcoded nos componentes', () => {
     expect(
       offenders,
       `Use rounded-sm/md/lg (var(--radius-*)) ou rounded-pill (999px):\n${offenders.join('\n')}`,
+    ).toEqual([]);
+  });
+
+  it.each(files)('%s usa a escala de espaçamento em tokens', (file) => {
+    const offenders: string[] = [];
+
+    for (const { line, text } of codeLines(readFileSync(file, 'utf8'))) {
+      RAW_SPACING.lastIndex = 0;
+      const matches = text.match(RAW_SPACING);
+      if (matches) {
+        offenders.push(`linha ${line}: ${matches.join(', ')} — ${text.trim()}`);
+      }
+    }
+
+    expect(
+      offenders,
+      'Espaçamento vem da escala de tokens (DESIGN_TOKENS.md §Espaçamento):\n' +
+        '  4px → xs · 8px → sm · 12px → md · 16px → lg · 24px → xl\n' +
+        'Ex.: p-4 → p-lg · gap-2 → gap-sm · mb-3 → mb-md · space-y-6 → space-y-xl.\n' +
+        'Falta um degrau? Documente-o em DESIGN_TOKENS.md ANTES de usar — não\n' +
+        'volte para a escala numérica do Tailwind, que não passa por var(--gap-*).\n' +
+        `${offenders.join('\n')}`,
     ).toEqual([]);
   });
 });

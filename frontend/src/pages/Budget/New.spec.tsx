@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router-dom';
 import { useAuthStore } from '@/stores/auth.store';
+import { DEFAULT_THEME } from '@/lib/theme';
 import { QueryClient } from '@tanstack/react-query';
 import BudgetNew from './New';
 
@@ -13,7 +14,12 @@ vi.mock('@/api/client', async () => {
     ...actual,
     http: {
       get: vi.fn(() =>
-        Promise.resolve({ exams: [], pagination: { total: 0, limit: 50, offset: 0 } })
+        // Shape de `ListExamsResponse` — `pagination` é `PaginationMeta`
+        // (`page/limit/total/totalPages`), não `offset`.
+        Promise.resolve({
+          exams: [],
+          pagination: { page: 1, limit: 50, total: 0, totalPages: 0 },
+        })
       ),
       post: vi.fn(() =>
         Promise.resolve({
@@ -43,11 +49,17 @@ describe('BudgetNew', () => {
     });
 
     useAuthStore.setState({
-      user: { id: 'user1', discountLimit: 10, role: 'attendant', name: 'Test User' },
-      tenant: { id: 'tenant1', name: 'Test Tenant' },
+      user: {
+        id: 'user1',
+        email: 'atendente@lab.com',
+        discountLimit: 10,
+        role: 'attendant',
+        name: 'Test User',
+      },
+      tenant: { id: 'tenant1', name: 'Test Tenant', slug: 'test-tenant', theme: DEFAULT_THEME },
       theme: null,
       tokens: null,
-    } as any);
+    });
   });
 
   it('renders 2 columns: catalog and summary', async () => {

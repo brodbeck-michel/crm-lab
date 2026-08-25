@@ -147,7 +147,8 @@ describe('PlatformTenants', () => {
      * em vez de devolvê-la.
      */
     const user = userEvent.setup({ delay: null });
-    createTenantMock.mockResolvedValue({ tenant: listResponse.tenants[0]! });
+    // D-070: `201` devolve o `TenantSummary` CRU, sem envelope `{ tenant }`.
+    createTenantMock.mockResolvedValue(listResponse.tenants[0]!);
 
     renderPage();
     await screen.findByText('Laboratório Vida');

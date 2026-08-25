@@ -141,6 +141,46 @@ export function formatIsoDay(iso: string): string {
   return `${day}/${month}/${year}`;
 }
 
+const SECONDS_IN_MINUTE = 60;
+const SECONDS_IN_HOUR = 60 * SECONDS_IN_MINUTE;
+const SECONDS_IN_DAY = 24 * SECONDS_IN_HOUR;
+
+/**
+ * DURAÇÃO em segundos → texto curto (`1h30`), para tempos de espera.
+ *
+ * Existe porque `/operations/overview` entrega `waitingSeconds` e
+ * `oldestWaitSeconds` já calculados em UTC no SQL (D-021, API_CONTRACTS §7):
+ * a tela **formata**, nunca subtrai datas para obter a espera — em UTC-3 a
+ * subtração no cliente erra por horas.
+ *
+ * Faixas: < 1 min → "menos de 1 min" · < 1 h → "N min" · < 24 h → "1h30"
+ * (a hora cheia sai como "2h") · daí em diante → "3d 4h" / "3d".
+ *
+ * Negativo ou não finito devolve "menos de 1 min": relógio do servidor à
+ * frente do cálculo não é motivo para exibir "-3 min" numa fila.
+ */
+export function formatDurationSeconds(totalSeconds: number): string {
+  if (!Number.isFinite(totalSeconds) || totalSeconds < SECONDS_IN_MINUTE) {
+    return 'menos de 1 min';
+  }
+
+  const seconds = Math.floor(totalSeconds);
+
+  if (seconds < SECONDS_IN_HOUR) {
+    return `${Math.floor(seconds / SECONDS_IN_MINUTE)} min`;
+  }
+
+  if (seconds < SECONDS_IN_DAY) {
+    const hours = Math.floor(seconds / SECONDS_IN_HOUR);
+    const minutes = Math.floor((seconds % SECONDS_IN_HOUR) / SECONDS_IN_MINUTE);
+    return minutes === 0 ? `${hours}h` : `${hours}h${String(minutes).padStart(2, '0')}`;
+  }
+
+  const days = Math.floor(seconds / SECONDS_IN_DAY);
+  const hours = Math.floor((seconds % SECONDS_IN_DAY) / SECONDS_IN_HOUR);
+  return hours === 0 ? `${days}d` : `${days}d ${hours}h`;
+}
+
 /**
  * Percentual pt-BR. `formatPercent(0.384)` → `38%`; com `fractionDigits: 1` → `38,4%`.
  * Recebe a FRAÇÃO (0–1), não o número já multiplicado.

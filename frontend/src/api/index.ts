@@ -45,6 +45,9 @@ export { usersApi, useUserList, useCreateUser, useUpdateUser } from './users';
 export { internalChatApi } from './internal-chat';
 export { auditApi, useAuditList } from './audit';
 export { platformApi } from './platform';
+export { settingsApi } from './settings';
+export { operationApi } from './operation';
+export { patientsApi } from './patients';
 
 import { analyticsApi } from './analytics';
 import { auditApi } from './audit';
@@ -52,7 +55,10 @@ import { authApi } from './auth';
 import { conversationsApi } from './conversations';
 import { examsApi } from './exams';
 import { internalChatApi } from './internal-chat';
+import { operationApi } from './operation';
+import { patientsApi } from './patients';
 import { platformApi } from './platform';
+import { settingsApi } from './settings';
 import { proposalsApi } from './proposals';
 import { themesApi } from './themes';
 import { usersApi } from './users';
@@ -69,4 +75,7 @@ export const api = {
   internalChat: internalChatApi,
   audit: auditApi,
   platform: platformApi,
+  settings: settingsApi,
+  operation: operationApi,
+  patients: patientsApi,
 } as const;

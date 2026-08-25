@@ -21,9 +21,13 @@ export const platformApi = {
     http.get<ListTenantsResponse>('/platform/tenants', query as QueryParams),
 
   /**
-   * `201 { tenant: TenantSummary }` — resposta ENVELOPADA (API_CONTRACTS.md
-   * §5b), tipada por `CreateTenantResponse` em @crm-lab/shared. Quem quiser só
-   * o tenant desempacota com `.tenant`.
+   * `201 TenantSummary` — o recurso CRU, **sem envelope** (D-070).
+   *
+   * Era `{ tenant: TenantSummary }`, o único ponto da API que envelopava um
+   * recurso singular; todo o resto (`POST /exams`, `POST /users`, `PATCH
+   * /proposals/:id`) já devolvia o objeto direto. `CreateTenantResponse` é hoje
+   * um alias de `TenantSummary` em @crm-lab/shared — quem consome lê os campos
+   * direto, sem `.tenant`.
    */
   createTenant: (body: CreateTenantRequest) =>
     http.post<CreateTenantResponse>('/platform/tenants', body),

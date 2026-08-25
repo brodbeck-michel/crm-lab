@@ -16,8 +16,8 @@ interface LossReasonsChartProps {
 export default function LossReasonsChart({ data = [] }: LossReasonsChartProps) {
   if (!data || data.length === 0) {
     return (
-      <div className="bg-neutral-100 p-5 rounded-md shadow-sm">
-        <h3 className="font-heading text-section mb-4">Motivos de Perda</h3>
+      <div className="bg-neutral-100 p-lg rounded-md shadow-sm">
+        <h3 className="font-heading text-section mb-lg">Motivos de Perda</h3>
         <div className="h-64 flex items-center justify-center text-neutral-500">Nenhum dado disponível</div>
       </div>
     );
@@ -30,8 +30,8 @@ export default function LossReasonsChart({ data = [] }: LossReasonsChartProps) {
   }));
 
   return (
-    <div className="bg-neutral-100 p-5 rounded-md shadow-sm">
-      <h3 className="font-heading text-section mb-4">Motivos de Perda</h3>
+    <div className="bg-neutral-100 p-lg rounded-md shadow-sm">
+      <h3 className="font-heading text-section mb-lg">Motivos de Perda</h3>
       <ResponsiveContainer width="100%" height={300}>
         <BarChart data={formattedData} layout="vertical">
           <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_COLOR} />

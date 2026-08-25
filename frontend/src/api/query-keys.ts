@@ -3,7 +3,10 @@ import type {
   ListAuditQuery,
   ListConversationsQuery,
   ListExamsQuery,
+  ListPatientTimelineQuery,
+  ListPatientsQuery,
   ListProposalsQuery,
+  OperationOverviewQuery,
   PaginationQuery,
 } from '@crm-lab/shared';
 
@@ -25,6 +28,14 @@ export const queryKeys = {
   /** ['conversation', id] */
   conversation: (id: string) => ['conversation', id] as const,
 
+  /** ['patients', filters] — busca de pacientes (`GET /patients`, §2c) */
+  patients: (filters?: ListPatientsQuery) => ['patients', filters ?? {}] as const,
+  /** ['patient', id] — cadastro + contadores da ficha (D-060) */
+  patient: (id: string) => ['patient', id] as const,
+  /** ['patient', id, 'timeline', filters] — paginada, filtro por `kind`/`order` */
+  patientTimeline: (id: string, filters?: ListPatientTimelineQuery) =>
+    ['patient', id, 'timeline', filters ?? {}] as const,
+
   /** ['proposals', filters] */
   proposals: (filters?: ListProposalsQuery) => ['proposals', filters ?? {}] as const,
   /** ['proposal', id] */
@@ -32,6 +43,16 @@ export const queryKeys = {
 
   /** ['exams', filters] */
   exams: (filters?: ListExamsQuery) => ['exams', filters ?? {}] as const,
+  /**
+   * ['exams', 'infinite', filters] — o seletor de `/budget/new` acumula
+   * páginas em vez de trocá-las (D-080). Chave separada de `exams()` de
+   * propósito: o cache de `useInfiniteQuery` guarda `{ pages, pageParams }`,
+   * um shape diferente do `ListExamsResponse` de `useExamList`, e as duas
+   * telas não podem se servir da mesma entrada. Continua sob o escopo
+   * `['exams']`, então `queryScopes.exams` invalida as duas de uma vez.
+   */
+  examsInfinite: (filters?: Omit<ListExamsQuery, 'page'>) =>
+    ['exams', 'infinite', filters ?? {}] as const,
 
   /** ['analytics', period] */
   analytics: (period?: AnalyticsQuery) => ['analytics', period ?? {}] as const,
@@ -54,6 +75,13 @@ export const queryKeys = {
   /** ['audit', filters] */
   audit: (filters?: ListAuditQuery) => ['audit', filters ?? {}] as const,
 
+  /** ['settings', 'channels'] — Canais & Equipe (API_CONTRACTS.md §6) */
+  channelSettings: () => ['settings', 'channels'] as const,
+
+  /** ['operations', 'overview', query] — retrato único da operação (D-067) */
+  operationOverview: (query?: OperationOverviewQuery) =>
+    ['operations', 'overview', query ?? {}] as const,
+
   /** ['platform', 'tenants'] */
   platformTenants: (filters?: PaginationQuery) => ['platform', 'tenants', filters ?? {}] as const,
   /** ['platform', 'billing'] */
@@ -64,6 +92,10 @@ export const queryKeys = {
 export const queryScopes = {
   conversations: ['conversations'] as const,
   conversation: ['conversation'] as const,
+  /** Pega cadastro E timeline do paciente — a timeline é `['patient', id, 'timeline', …]`. */
+  patient: ['patient'] as const,
+  /** Listagens/buscas de paciente, com qualquer filtro. */
+  patients: ['patients'] as const,
   proposals: ['proposals'] as const,
   proposal: ['proposal'] as const,
   exams: ['exams'] as const,
@@ -73,6 +105,8 @@ export const queryScopes = {
   users: ['users'] as const,
   audit: ['audit'] as const,
   platform: ['platform'] as const,
+  settings: ['settings'] as const,
+  operations: ['operations'] as const,
 } as const;
 
 /**
@@ -81,6 +115,17 @@ export const queryScopes = {
  */
 export const staleTimes = {
   conversations: 10_000,
+  /**
+   * Busca de paciente do inbox (D-079): o cadastro muda devagar e a busca é
+   * digitada — 30s evita repetir a mesma consulta a cada ida e volta do foco.
+   */
+  patients: 30_000,
   exams: 60 * 60_000,
   analytics: 5 * 60_000,
+  /**
+   * Operação é painel de "agora" e o servidor não guarda cache (§7): 15s é
+   * curto o bastante para não mostrar fila velha e longo o bastante para dois
+   * cliques seguidos na aba não repetirem a agregação.
+   */
+  operation: 15_000,
 } as const;

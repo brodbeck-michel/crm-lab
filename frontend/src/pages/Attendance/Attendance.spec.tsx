@@ -1,10 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useParams } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   Conversation,
+  ListPatientsResponse,
+  PatientListItem,
   GetConversationResponse,
   ListConversationsResponse,
   ListProposalsResponse,
@@ -16,6 +18,7 @@ const listMock = vi.fn();
 const getMock = vi.fn();
 const sendMessageMock = vi.fn();
 const listProposalsMock = vi.fn();
+const listPatientsMock = vi.fn();
 
 vi.mock('@/api', async (importOriginal) => {
   const actual = await importOriginal<typeof ApiModule>();
@@ -30,6 +33,7 @@ vi.mock('@/api', async (importOriginal) => {
         sendMessage: sendMessageMock,
       },
       proposals: { ...actual.api.proposals, list: listProposalsMock },
+      patients: { ...actual.api.patients, list: listPatientsMock },
     },
   };
 });
@@ -48,6 +52,7 @@ const { Attendance } = await import('./index');
 function conversation(overrides: Partial<Conversation> = {}): Conversation {
   return {
     id: 'c-1',
+    patientId: 'p-1',
     patientName: 'Marina Alves',
     patientPhone: '(11) 98765-4321',
     assignedTo: 'u-1',
@@ -108,6 +113,34 @@ const NO_PROPOSALS: ListProposalsResponse = {
   pagination: { page: 1, limit: 20, total: 0, totalPages: 1 },
 };
 
+function patient(overrides: Partial<PatientListItem> = {}): PatientListItem {
+  return {
+    id: 'p-1',
+    phone: '(11) 98765-4321',
+    name: 'Marina Alves',
+    email: null,
+    birthDate: null,
+    document: null,
+    notes: null,
+    tags: [],
+    customFields: {},
+    anonymizedAt: null,
+    lastInteractionAt: '2026-08-23T09:12:00Z',
+    createdAt: '2026-08-01T09:12:00Z',
+    updatedAt: '2026-08-01T09:12:00Z',
+    ...overrides,
+  };
+}
+
+function patientsResponse(patients: PatientListItem[]): ListPatientsResponse {
+  return {
+    patients,
+    pagination: { page: 1, limit: 5, total: patients.length, totalPages: 1 },
+  };
+}
+
+const NO_PATIENTS: ListPatientsResponse = patientsResponse([]);
+
 function renderScreen() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -129,6 +162,8 @@ beforeEach(() => {
   sendMessageMock.mockReset();
   listProposalsMock.mockReset();
   listProposalsMock.mockResolvedValue(NO_PROPOSALS);
+  listPatientsMock.mockReset();
+  listPatientsMock.mockResolvedValue(NO_PATIENTS);
   localStorage.clear();
   useUIStore.setState({ sidebarCollapsed: true, contextPanelOpen: true, activeModal: null });
   useAuthStore.setState({
@@ -275,5 +310,103 @@ describe('Atendimento — abrir conversa', () => {
     await userEvent.click(await screen.findByTestId('conversation-item'));
 
     expect(await screen.findByText('Não foi possível carregar a conversa')).toBeInTheDocument();
+  });
+});
+
+/**
+ * A porta de entrada da Ficha do Paciente (D-079).
+ *
+ * O defeito que estes testes fecham: a rota `/patients/:id` existia, tinha
+ * permissão registrada e nenhum link no produto inteiro — só se chegava lá
+ * digitando a URL. Por isso as asserções são sobre NAVEGAÇÃO REAL (o `<a>` e o
+ * destino renderizado), não sobre o dado ter chegado na tela.
+ */
+
+/** Marcador da rota de destino: prova que o clique chegou à ficha certa. */
+function PatientProfileStub() {
+  const { id } = useParams<{ id: string }>();
+  return <p data-testid="ficha-do-paciente">{`ficha:${id ?? ''}`}</p>;
+}
+
+function renderWithPatientRoute() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <ToastProvider>
+        <MemoryRouter initialEntries={['/attendance']}>
+          <Routes>
+            <Route path="/attendance" element={<Attendance />} />
+            <Route path="/patients/:id" element={<PatientProfileStub />} />
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>
+    </QueryClientProvider>,
+  );
+}
+
+describe('Atendimento — porta de entrada da Ficha do Paciente (D-079)', () => {
+  it('coluna 3: com patientId o link existe e leva à ficha DAQUELE paciente', async () => {
+    listMock.mockResolvedValue(listResponse([conversation()]));
+    getMock.mockResolvedValue(detailResponse());
+    renderWithPatientRoute();
+
+    await userEvent.click(await screen.findByTestId('conversation-item'));
+
+    const link = await screen.findByTestId('patient-profile-link');
+    expect(link).toHaveAttribute('href', '/patients/p-1');
+
+    await userEvent.click(link);
+    expect(await screen.findByTestId('ficha-do-paciente')).toHaveTextContent('ficha:p-1');
+  });
+
+  it('coluna 3: conversa anterior ao backfill (patientId null) NÃO mostra o link', async () => {
+    listMock.mockResolvedValue(listResponse([conversation({ patientId: null })]));
+    getMock.mockResolvedValue({
+      ...detailResponse(),
+      conversation: {
+        ...detailResponse().conversation,
+        patientId: null,
+      },
+    });
+    renderWithPatientRoute();
+
+    await userEvent.click(await screen.findByTestId('conversation-item'));
+
+    // A coluna 3 carregou (o cadastro está lá) — o que falta é só o link.
+    expect(await screen.findByText('Cadastro')).toBeInTheDocument();
+    expect(screen.queryByTestId('patient-profile-link')).not.toBeInTheDocument();
+  });
+
+  it('a busca do inbox consulta GET /patients e cada resultado abre a ficha', async () => {
+    listMock.mockResolvedValue(listResponse([conversation()]));
+    listPatientsMock.mockResolvedValue(patientsResponse([patient({ id: 'p-9', name: 'Carla Dias' })]));
+    renderWithPatientRoute();
+
+    await screen.findByTestId('conversation-item');
+    await userEvent.type(screen.getByLabelText('Buscar paciente, telefone ou exame'), 'Carla{Enter}');
+
+    await waitFor(() => {
+      expect(listPatientsMock).toHaveBeenCalledWith(
+        expect.objectContaining({ search: 'Carla', limit: 5 }),
+      );
+    });
+
+    const result = await screen.findByTestId('patient-result');
+    expect(result).toHaveAttribute('href', '/patients/p-9');
+
+    await userEvent.click(result);
+    expect(await screen.findByTestId('ficha-do-paciente')).toHaveTextContent('ficha:p-9');
+  });
+
+  it('sem termo de busca a coluna 1 não pede pacientes nem mostra o bloco', async () => {
+    listMock.mockResolvedValue(listResponse([conversation()]));
+    renderWithPatientRoute();
+
+    await screen.findByTestId('conversation-item');
+
+    expect(listPatientsMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole('region', { name: 'Pacientes encontrados' })).not.toBeInTheDocument();
   });
 });

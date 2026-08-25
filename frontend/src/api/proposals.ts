@@ -61,12 +61,18 @@ export const proposalsApi = {
 
 /* ── React Query Hooks ──────────────────────────────────────────────────── */
 
+/**
+ * Devolve a resposta INTEIRA (`proposals` + `pagination`).
+ *
+ * Antes devolvia só `res.proposals` e jogava fora o `pagination` — com isso a
+ * tela não tinha como saber que existia página 2, e toda proposta fora das
+ * primeiras 20 ficava inalcançável pela UI (D7 da Onda 5).
+ */
 export function useProposalList(filters: ListProposalsQuery = {}) {
   return useQuery({
     queryKey: queryKeys.proposals(filters),
     queryFn: async () => {
-      const res = await proposalsApi.list(filters);
-      return res.proposals;
+      return await proposalsApi.list(filters);
     },
   });
 }

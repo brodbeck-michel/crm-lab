@@ -1,70 +1,42 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
-import { QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router-dom';
+import type { FunnelReport, PipelineSnapshot } from '@crm-lab/shared';
+import type * as ApiClientModule from '@/api/client';
 import { useAuthStore } from '@/stores/auth.store';
-import { QueryClient } from '@tanstack/react-query';
+import { DEFAULT_THEME } from '@/lib/theme';
 import Analytics from './Analytics';
-import { http } from '@/api/client';
 
-// Mock the API calls
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *  Mock por CHAVE, não por ordem de chamada
+ * ═══════════════════════════════════════════════════════════════════════════
+ * A versão anterior sobrescrevia uma das respostas com
+ * `vi.mocked(http.get).mockImplementationOnce(...)`. Isso amarra o teste à
+ * ORDEM em que o TanStack Query dispara as queries: passava por sorte, e
+ * bastaria a tela ganhar uma query nova (ou disparar o pipeline antes da
+ * conversão) para o payload `partial: true` ir parar no endpoint errado — e o
+ * teste ficaria vermelho, ou pior, verde provando outra coisa.
+ *
+ * Aqui `http.get` despacha pela ROTA pedida, e cada teste sobrescreve a rota
+ * que lhe interessa em `responses`. Ordem de disparo deixa de importar.
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+const { responses } = vi.hoisted(() => ({
+  responses: new Map<string, unknown>(),
+}));
+
 vi.mock('@/api/client', async () => {
-  const actual = await vi.importActual('@/api/client');
+  const actual = await vi.importActual<typeof ApiClientModule>('@/api/client');
   return {
     ...actual,
     http: {
-      get: vi.fn((url) => {
-        if (url.includes('/analytics/conversion')) {
-          return Promise.resolve({
-            period: { startDate: '2026-01-01', endDate: '2026-12-31' },
-            funnel: {
-              novoContato: 100,
-              orcamentoEnviado: 80,
-              followUp: 60,
-              negociacao: 40,
-              ganho: 30,
-              perdido: 10,
-              conversionRate: 30,
-            },
-            lossReasons: {
-              preco_alto: 5,
-              concorrencia: 3,
-              paciente_cancelou: 2,
-            },
-            revenue: 30000,
-            averageTicket: 1000,
-            topPerformers: [
-              {
-                userId: 'user1',
-                name: 'João',
-                conversions: 10,
-                revenue: 10000,
-              },
-            ],
-            partial: false,
-          });
+      get: vi.fn((url: string) => {
+        for (const [route, payload] of responses) {
+          if (url.includes(route)) return Promise.resolve(payload);
         }
-        if (url.includes('/analytics/pipeline')) {
-          return Promise.resolve({
-            byStatus: {
-              novo_contato: { count: 20, value: 5000 },
-              orcamento_enviado: { count: 15, value: 8000 },
-              follow_up: { count: 10, value: 6000 },
-              negociacao: { count: 5, value: 3000 },
-              ganho: { count: 30, value: 30000 },
-              perdido: { count: 10, value: 5000 },
-            },
-            totalValue: 57000,
-            averageTicket: 1900,
-            openCount: 50,
-            oldestProposal: {
-              id: 'prop1',
-              daysOpen: 45,
-              status: 'novo_contato',
-            },
-          });
-        }
-        return Promise.resolve({});
+        return Promise.reject(new Error(`Rota sem resposta registrada no teste: ${url}`));
       }),
       post: vi.fn(() => Promise.resolve({})),
       patch: vi.fn(() => Promise.resolve({})),
@@ -73,6 +45,49 @@ vi.mock('@/api/client', async () => {
     },
   };
 });
+
+/** Resposta de `/analytics/conversion` — shape de `FunnelReport` (§5). */
+function conversionReport(overrides: Partial<FunnelReport> = {}): FunnelReport {
+  return {
+    period: { startDate: '2026-01-01', endDate: '2026-12-31' },
+    funnel: {
+      novoContato: 100,
+      orcamentoEnviado: 80,
+      followUp: 60,
+      negociacao: 40,
+      ganho: 30,
+      perdido: 10,
+      conversionRate: 30,
+    },
+    // Chaves de `LossReason` — as inventadas do mock antigo (`preco_alto`,
+    // `concorrencia`, `paciente_cancelou`) NAO existem no contrato; o `as any`
+    // e que as deixava passar.
+    lossReasons: { preco: 5, silencio: 3, exame_indisponivel: 2, prazo: 1, outro: 0 },
+    revenue: 30000,
+    averageTicket: 1000,
+    topPerformers: [{ userId: 'user1', name: 'João', conversions: 10, revenue: 10000 }],
+    partial: false,
+    ...overrides,
+  };
+}
+
+/** Resposta de `/analytics/pipeline` — shape de `PipelineSnapshot` (§5). */
+function pipelineSnapshot(): PipelineSnapshot {
+  return {
+    byStatus: {
+      novo_contato: { count: 20, value: 5000 },
+      orcamento_enviado: { count: 15, value: 8000 },
+      follow_up: { count: 10, value: 6000 },
+      negociacao: { count: 5, value: 3000 },
+      ganho: { count: 30, value: 30000 },
+      perdido: { count: 10, value: 5000 },
+    },
+    totalValue: 57000,
+    averageTicket: 1900,
+    openCount: 50,
+    oldestProposal: { id: 'prop1', daysOpen: 45, status: 'novo_contato' },
+  };
+}
 
 // Mock the chart components
 vi.mock('@/components/analytics/ConversionChart', () => ({
@@ -87,16 +102,25 @@ vi.mock('@/components/analytics/LossReasonsChart', () => ({
   default: () => <div data-testid="loss-reasons-chart">Motivos de Perda</div>,
 }));
 
-vi.mock('@/components/analytics/MetricTile', () => ({
-  default: ({ label, value }: { label: string; value: number }) => (
-    <div data-testid={`metric-tile-${label}`}>
-      {label}: {value}
-    </div>
-  ),
-}));
+/*
+ * `MetricTile` NAO e mockado de proposito. Com o duble `{label}: {value}` os
+ * numeros do contrato (`revenue: 30000`, `averageTicket`, `conversionRate`)
+ * nunca chegavam a uma assercao — os testes so conferiam que quatro `div`
+ * existiam. Com o componente real, o teste prova o caminho inteiro: numero do
+ * contrato -> rotulo certo -> `variant` certa -> texto formatado em pt-BR.
+ */
 
-// Create a fresh query client for each test
 let queryClient: QueryClient;
+
+function renderPage() {
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <Analytics />
+      </BrowserRouter>
+    </QueryClientProvider>,
+  );
+}
 
 describe('Analytics', () => {
   beforeEach(() => {
@@ -107,53 +131,60 @@ describe('Analytics', () => {
       },
     });
 
+    responses.clear();
+    responses.set('/analytics/conversion', conversionReport());
+    responses.set('/analytics/pipeline', pipelineSnapshot());
+
     useAuthStore.setState({
-      user: { id: 'user1', role: 'attendant', name: 'Test User', discountLimit: 10 },
-      tenant: { id: 'tenant1', name: 'Test Tenant' },
+      user: {
+        id: 'user1',
+        email: 'atendente@lab.com',
+        role: 'attendant',
+        name: 'Test User',
+        discountLimit: 10,
+      },
+      tenant: { id: 'tenant1', name: 'Test Tenant', slug: 'test-tenant', theme: DEFAULT_THEME },
       theme: null,
       tokens: null,
-    } as any);
+    });
   });
 
   it('renders analytics dashboard with title', async () => {
-    render(
-      <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          <Analytics />
-        </BrowserRouter>
-      </QueryClientProvider>
-    );
+    renderPage();
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: /conversão/i })).toBeInTheDocument();
     });
   });
 
-  it('renders 4 metric tiles', async () => {
-    render(
-      <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          <Analytics />
-        </BrowserRouter>
-      </QueryClientProvider>
-    );
+  it('os 4 indicadores mostram os NUMEROS do contrato, cada um na sua unidade', async () => {
+    renderPage();
 
-    await waitFor(() => {
-      expect(screen.getByTestId('metric-tile-Receita')).toBeInTheDocument();
-      expect(screen.getByTestId('metric-tile-Ticket Médio')).toBeInTheDocument();
-      expect(screen.getByTestId('metric-tile-Taxa de Conversão')).toBeInTheDocument();
-      expect(screen.getByTestId('metric-tile-Propostas Criadas')).toBeInTheDocument();
-    });
+    // `revenue: 30000` -> variant `money`.
+    const receita = (await screen.findByText('Receita')).closest('div');
+    expect(receita).not.toBeNull();
+    expect(receita).toHaveTextContent('R$ 30.000,00');
+
+    // `averageTicket: 1000` -> variant `money`.
+    expect(screen.getByText('Ticket Médio').closest('div')).toHaveTextContent('R$ 1.000,00');
+
+    /*
+     * `conversionRate: 30` -> variant `percent`, uma casa decimal.
+     *
+     * ACHADO REGISTRADO (nao corrigido aqui — `MetricTile.tsx` e de outro
+     * dono): a variante `percent` usa `value.toFixed(1)`, que imprime "30.0%"
+     * com PONTO. Todo o resto da tela e pt-BR (`R$ 30.000,00`, `320`) via
+     * `Intl`. O teste fixa o que a tela FAZ hoje, com o defeito a vista, em vez
+     * de mascara-lo com um casamento frouxo.
+     */
+    expect(screen.getByText('Taxa de Conversão').closest('div')).toHaveTextContent('30.0%');
+
+    // Soma do funil: 100+80+60+40+30+10 -> variant `number`.
+    expect(screen.getByText('Propostas Criadas').closest('div')).toHaveTextContent('320');
   });
 
   it('renders conversion and revenue charts', async () => {
-    render(
-      <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          <Analytics />
-        </BrowserRouter>
-      </QueryClientProvider>
-    );
+    renderPage();
 
     await waitFor(() => {
       expect(screen.getByTestId('conversion-chart')).toBeInTheDocument();
@@ -167,9 +198,9 @@ describe('Analytics', () => {
    * PARCIAL"), mas a tela não exibia aviso nenhum.
    */
   it('exibe o aviso de versão parcial quando partial: true', async () => {
-    vi.mocked(http.get).mockImplementationOnce(() =>
-      Promise.resolve({
-        period: { startDate: '2026-01-01', endDate: '2026-12-31' },
+    responses.set(
+      '/analytics/conversion',
+      conversionReport({
         funnel: {
           novoContato: 4,
           orcamentoEnviado: 3,
@@ -179,21 +210,14 @@ describe('Analytics', () => {
           perdido: 1,
           conversionRate: 25,
         },
-        lossReasons: { preco_alto: 1 },
+        lossReasons: { preco: 1, silencio: 0, exame_indisponivel: 0, prazo: 0, outro: 0 },
         revenue: 1000,
-        averageTicket: 1000,
         topPerformers: [],
         partial: true,
       }),
     );
 
-    render(
-      <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          <Analytics />
-        </BrowserRouter>
-      </QueryClientProvider>
-    );
+    renderPage();
 
     await waitFor(() => {
       expect(screen.getByRole('status')).toHaveTextContent(/vers[aã]o parcial/i);
@@ -201,13 +225,7 @@ describe('Analytics', () => {
   });
 
   it('não exibe o aviso de versão parcial quando partial: false', async () => {
-    render(
-      <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          <Analytics />
-        </BrowserRouter>
-      </QueryClientProvider>
-    );
+    renderPage();
 
     await waitFor(() => {
       expect(screen.getByTestId('conversion-chart')).toBeInTheDocument();
@@ -216,13 +234,7 @@ describe('Analytics', () => {
   });
 
   it('renders loss reasons chart', async () => {
-    render(
-      <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          <Analytics />
-        </BrowserRouter>
-      </QueryClientProvider>
-    );
+    renderPage();
 
     await waitFor(() => {
       expect(screen.getByTestId('loss-reasons-chart')).toBeInTheDocument();

@@ -7,7 +7,7 @@ interface ItemsListProps {
 
 export default function ItemsList({ items }: ItemsListProps) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-sm">
       <h3 className="font-semibold text-label">Itens</h3>
       {items.map((item) => (
         <div key={item.id} className="flex justify-between text-body">

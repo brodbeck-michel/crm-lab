@@ -15,6 +15,7 @@ const NOW = new Date('2026-08-23T09:16:00Z');
 function conversation(overrides: Partial<Conversation> = {}): Conversation {
   return {
     id: 'c-1',
+    patientId: 'p-1',
     patientName: 'Marina Alves',
     patientPhone: '(11) 98765-4321',
     assignedTo: 'u-1',

@@ -38,8 +38,8 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
 
   return (
     <Modal open onClose={onClose} title={proposal.patientName || 'Proposta'}>
-      <div className="space-y-6">
-        <div className="space-y-4">
+      <div className="space-y-xl">
+        <div className="space-y-lg">
           <ItemsList items={proposal.items} />
 
           <DiscountSection
@@ -49,7 +49,7 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
             readOnly
           />
 
-          <div className="border-t pt-3">
+          <div className="border-t pt-md">
             <div className="flex justify-between">
               <span className="font-semibold">Total</span>
               <MoneyDisplay value={proposal.totalPrice} />

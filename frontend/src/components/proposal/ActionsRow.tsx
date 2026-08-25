@@ -34,8 +34,8 @@ export default function ActionsRow({
   };
 
   return (
-    <div className="space-y-3 border-t pt-4">
-      <div className="flex gap-2">
+    <div className="space-y-md border-t pt-lg">
+      <div className="flex gap-sm">
         <Select
           label="Mudar estágio"
           options={PROPOSAL_STATUSES.filter(
@@ -49,7 +49,7 @@ export default function ActionsRow({
         />
       </div>
 
-      <div className="flex gap-2 justify-end">
+      <div className="flex gap-sm justify-end">
         <Button
           variant="confirmation"
           onClick={onMarkWon}

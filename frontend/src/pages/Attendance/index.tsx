@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ListConversationsQuery } from '@crm-lab/shared';
+import type { ListConversationsQuery, ListPatientsQuery } from '@crm-lab/shared';
 import { api, queryKeys, queryScopes, staleTimes } from '@/api';
 import { useToast } from '@/components/ui';
 import { InboxLayout } from '@/components/layout';
@@ -24,6 +24,11 @@ import { MESSAGE_PAGE_SIZE, conversationDetailOptions, useMarkAsRead } from './q
  * `conversation.new_message` invalida essas chaves — a tela não faz patch
  * manual de cache.
  */
+
+/** Mínimo de caracteres para a busca de paciente sair (ver `patientsQuery`). */
+const PATIENT_SEARCH_MIN = 2;
+/** A coluna tem 336px: mais que isto vira rolagem sem ajudar a achar ninguém. */
+const PATIENT_RESULT_LIMIT = 5;
 
 export function Attendance() {
   const navigate = useNavigate();
@@ -54,6 +59,29 @@ export function Attendance() {
     queryKey: queryKeys.conversations(filters),
     queryFn: () => api.conversations.list(filters),
     staleTime: staleTimes.conversations,
+  });
+
+  /**
+   * A mesma busca também procura PACIENTE (D-079) — é o consumidor de
+   * `GET /patients` e a porta de entrada da Ficha (API_CONTRACTS.md §2c: "a
+   * tela chega aqui pela busca do inbox ou por link direto").
+   *
+   * Só dispara com 2+ caracteres: um caractere casaria com meio laboratório e
+   * gastaria uma busca full-text por tecla. O servidor já aplica o recorte por
+   * papel (D-060), então o atendente nunca recebe cadastro que não poderia
+   * abrir.
+   */
+  const patientTerm = search.trim();
+  const patientFilters = useMemo<ListPatientsQuery>(
+    () => ({ search: patientTerm, limit: PATIENT_RESULT_LIMIT }),
+    [patientTerm],
+  );
+
+  const patientsQuery = useQuery({
+    queryKey: queryKeys.patients(patientFilters),
+    queryFn: () => api.patients.list(patientFilters),
+    enabled: patientTerm.length >= PATIENT_SEARCH_MIN,
+    staleTime: staleTimes.patients,
   });
 
   const detailQuery = useQuery({
@@ -143,6 +171,10 @@ export function Attendance() {
           isLoading={listQuery.isPending}
           isError={listQuery.isError}
           onRetry={() => void listQuery.refetch()}
+          searchTerm={patientTerm.length >= PATIENT_SEARCH_MIN ? patientTerm : ''}
+          patients={patientsQuery.data?.patients ?? []}
+          patientsLoading={patientsQuery.isPending}
+          patientsError={patientsQuery.isError}
         />
       }
       conversation={

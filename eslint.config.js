@@ -39,9 +39,16 @@ export default tseslint.config(
     },
   },
   {
+    // A regra 6 do CLAUDE.md ("`any` proibido") NAO abre excecao para teste, e
+    // ate a Onda 6 este bloco desligava `no-explicit-any` justamente aqui — a
+    // fronteira em que um `as any` esconde divergencia de shape em vez de
+    // revelar (foi assim que `UserModal.spec.tsx` escondeu um defeito, a
+    // pendencia D1). Com os specs de backend e de frontend ja tipados, o
+    // desligamento nao suprimia mais nada: removido, o lint continua com o
+    // mesmo numero de erros. `no-console` fica desligado de proposito — a
+    // regra 10 e sobre o backend em producao, nao sobre depurar um teste.
     files: ['**/*.spec.ts', '**/*.spec.tsx', '**/tests/**/*.ts', '**/e2e/**/*.ts'],
     rules: {
-      '@typescript-eslint/no-explicit-any': 'off',
       'no-console': 'off',
     },
   },

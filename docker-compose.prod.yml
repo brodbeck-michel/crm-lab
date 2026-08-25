@@ -90,6 +90,9 @@ services:
       WHATSAPP_API_URL: ${WHATSAPP_API_URL:-}
       WHATSAPP_API_TOKEN: ${WHATSAPP_API_TOKEN:-}
       WHATSAPP_WEBHOOK_SECRET: ${WHATSAPP_WEBHOOK_SECRET:-}
+      # Cifra `tenant_channels.api_token`/`webhook_secret` em repouso (D-076).
+      # Sem ela o backend NAO SOBE em producao — e proposital.
+      CHANNEL_SECRET_KEY: ${CHANNEL_SECRET_KEY:?defina CHANNEL_SECRET_KEY (>=32 caracteres)}
     read_only: true
     tmpfs:
       - /tmp

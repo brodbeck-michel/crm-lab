@@ -254,7 +254,70 @@ Achados que **não** foram corrigidos, com o motivo. Nenhum é bloqueio de funci
 | **`MetricTile` variante `percent` fora do pt-BR** | Agent-Fix-Evidence | `value.toFixed(1)` imprime `30.0%` com ponto, enquanto o resto da tela é `Intl` pt-BR. O teste fixa o comportamento atual **com o defeito à vista** e um comentário, em vez de mascarar com casamento frouxo | Dono de `components/analytics/` |
 | **Exames do andaime do `flow-12` ficam inativos no banco** | Agent-Fix-Budget | O produto não apaga exame (D-004: desativação é `PATCH { isActive: false }`), então a limpeza do teste desativa em vez de remover. Inerte para as telas; `/catalog` sem filtro acumula linhas entre execuções sem re-seed. É o desenho, não dívida | — |
 | **Comentário obsoleto em `flow-7`** | Agent-Fix-Budget | Diz que `/catalog` "carrega só a primeira página" — falso desde a Onda 5. Achado fora de escopo fechado; não afeta resultado, mas é exatamente o padrão que a lição da Onda 5 mandou vigiar | Agent-QA |
+| **Evento WS `user.came_online` é contrato sem implementação** | Agent-Docs-Arquitetura | Declarado em `shared/types/websocket.types.ts` e tratado em `frontend/src/api/ws.ts`, mas **nenhum service o emite**. Ou entra num service, ou sai do tipo — é decisão de domínio, e um tipo compartilhado que promete evento inexistente é contrato mentiroso | Agent-API + Agent-Kernel |
 | **`oldestWaitSeconds`: a ordenação da fila é contrato** | Agent-Fix-Evidence | O campo só é distinguível de `Math.max(itens devolvidos)` porque a fila ordena por espera DESC com `NULLS FIRST`. Se alguém mudar a ordenação, o campo continua correto mas o teste perde o poder de separá-los. Vale escrever em `SERVICES.md §14` que a ordenação é contrato | Agent-API + doc |
+
+---
+
+## Próximos passos (proposta de Onda 7 — aguardando decisão)
+
+Esta seção é **proposta**, não compromisso. Nenhuma onda anterior deixou os próximos passos
+escritos, e a falta disso apareceu na Onda 6: a pendência D7 foi registrada com nome de tela
+("`/proposals` e `/catalog`") em vez de nome de comportamento, e por isso o fechamento parou nas duas
+telas conhecidas e deixou a terceira (`/budget/new`) quebrada por mais uma onda.
+
+### O que o negócio pede a seguir
+
+`docs/integracoes/` traz a **solicitação formal de integração com o Bitlab** (o LIS do laboratório,
+sistema proprietário da própria Unimed Tubarão). Ela define o CRM como a etapa *anterior* ao pedido —
+da primeira mensagem do paciente até o orçamento aceito — com o Bitlab permanecendo como
+sistema-mestre. A Fase 1 é **somente leitura** e resolve dois problemas nomeados no documento:
+
+1. catálogo e preços são hoje digitados e mantidos à mão no CRM, o que gera **divergência entre o
+   valor informado ao paciente e o valor real praticado**;
+2. não há como confirmar se um orçamento virou requisição e foi recebido — o desfecho comercial é
+   marcado à mão pela atendente, sem confronto com o que aconteceu no LIS.
+
+### O que já está pronto para receber isso, e o que não está
+
+| Necessidade da Fase 1 | Situação no CRM hoje |
+|---|---|
+| Código/mnemônico, nome, categoria, ativo/inativo | ✅ `exam_catalog` já tem |
+| Preparo, prazo (TAT) | ✅ `preparation`, `turnaround_hours` |
+| Preço particular | ✅ `price_private` |
+| **Preços por convênio, com código TUSS/AMB** | ❌ existe um único `price_insurance`; não há convênio como entidade nem código TUSS |
+| **Sinônimos do exame** | ❌ a busca casa nome e código, não sinônimo |
+| **Composição de painéis / exames vinculados** | ❌ não modelado — é o que evita orçamento incompleto ou item duplicado |
+| **Material/recipiente** | ❌ não modelado |
+| **Origem do dado (interno × espelhado do LIS)** | ❌ não existe. Sem isso, a sincronização diária e a edição manual brigam pela mesma linha |
+| **Sincronização diária + carga incremental** | ❌ existe `QueueService` (driver em memória, D-011), não um agendador |
+| **Conciliação orçamento → requisição → baixa financeira** | ❌ conceito novo; hoje `ganho`/`perdido` é decisão só do CRM |
+
+### Proposta de recorte
+
+**Trilha A — preparar o catálogo para ser espelhado** (não depende de resposta do Bitlab)
+Convênio como entidade, preço por convênio com TUSS/AMB, sinônimos, painéis, material, e a coluna de
+**origem** que decide quem vence quando o LIS e a atendente discordam da mesma linha. É a mudança
+estrutural mais pesada desde a Onda 1 e pode começar já, porque não depende de contrato externo.
+
+**Trilha B — pendências que bloqueiam produção** (ver seção acima)
+A mais urgente é o **HMAC sobre JSON reserializado**: ele falha fechado, então hoje ninguém percebe,
+mas significa que o webhook do WhatsApp **nunca foi exercitado contra a Meta real**. Enquanto isso
+não for resolvido, a integração com o canal só funciona com o driver mock. O pedido ao kernel
+(`express.json({ verify })`) está aberto desde a Onda 3.
+
+**Trilha C — conciliação comercial** (depende do Bitlab responder)
+Bloco B da solicitação. Só faz sentido depois de saber o que a API do Bitlab expõe sobre requisição e
+baixa financeira. **Não começar antes da resposta** — seria inventar contrato externo, exatamente o
+que a Regra Zero proíbe.
+
+### Duas perguntas em aberto para o produto
+
+- **D-019 continua de pé:** a tabela de planos (`PLAN_CATALOG`) é provisória — preço, franquia de
+  mensagens e valor do excedente foram definidos por um agente para que `GET /platform/billing`
+  tivesse resposta. Ninguém confirmou com o produto, e isso vira faturamento real.
+- **Hospedagem:** os dois documentos de integração têm `[PREENCHER: nuvem ou on-premise, e faixa de
+  IP de saída]`. A resposta muda o `DEPLOYMENT.md` e provavelmente a decisão de rede.
 
 ---
 

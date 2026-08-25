@@ -16,14 +16,31 @@ Cada agente trabalha em um domínio. Um domínio = um conjunto de pastas que só
 
 | Agente | Domínio | Pastas | Documentos de referência |
 |--------|---------|--------|--------------------------|
-| **Agent-DB** | Banco de dados | `backend/migrations/`, `backend/seeds/` | `docs/database/SCHEMA.md` |
-| **Agent-API** | Backend/API | `backend/src/` | `docs/api/API_CONTRACTS.md`, `docs/backend/SERVICES.md` |
+| **Agent-DB** | Banco de dados | `backend/migrations/`, `backend/src/db/seeds/` | `docs/database/SCHEMA.md` |
+| **Agent-Kernel** | Kernel do backend | `backend/src/{config,db,http,lib}`, `app.ts`, `main.ts`, `tests/helpers` | `docs/guides/CONVENTIONS.md` |
+| **Agent-API** | Backend/API | `backend/src/{controllers,services,repositories}` | `docs/api/API_CONTRACTS.md`, `docs/backend/SERVICES.md` |
 | **Agent-UI** | Frontend | `frontend/src/` | `docs/frontend/*`, `docs/design/DESIGN_TOKENS.md` |
-| **Agent-Infra** | Infraestrutura | `docker-compose.yml`, `.github/`, `nginx/` | `docs/guides/DEPLOYMENT.md` |
-| **Agent-QA** | Testes E2E | `e2e/`, `*.test.ts` review | `docs/guides/TESTING.md` |
+| **Agent-Infra** | Infraestrutura | `docker-compose*.yml`, `.github/`, `nginx/`, `*/Dockerfile` | `docs/guides/DEPLOYMENT.md` |
+| **Agent-QA** | Testes E2E | `e2e/`, review de `*.spec.ts` | `docs/guides/TESTING.md` |
+| **Agent-Docs** | Documentação | `docs/**` (fora dos docs de domínio de outro agente) | este arquivo, `docs/DECISIONS.md` |
+
+**Sufixo de onda e de recorte.** A partir da Onda 4 os agentes recebem sufixo pelo recorte real do
+trabalho, dentro do mesmo domínio: `Agent-API-Patients`, `Agent-API-Operation`, `Agent-API-Fixes`,
+`Agent-API-Link`, `Agent-UI-Patient`, `Agent-UI-Operation`, `Agent-UI-Cleanup`,
+`Agent-UI-Fixes-Onda6`, `Agent-DB-Onda6`, `Agent-QA-Onda6`, `Agent-Docs-Onda6`, `Agent-Fix-*`.
+O sufixo não cria domínio novo — o ownership de pastas continua sendo o da tabela acima.
+
+**Validadores (desde a Onda 5, obrigatório ao fim de cada onda).** `Validador-Contratos`,
+`Validador-Segurança` e `Validador-Verificação` são agentes **sem participação na implementação**
+daquela onda. Eles **não escrevem código nem docs**: produzem achados classificados
+(crítico/alto/médio), que viram tarefas de correção para agentes `Agent-Fix-*`. Na Onda 6 foram
+2 críticos, 3 altos e ~12 médios, todos corrigidos antes do fechamento.
 
 **Arquivos compartilhados** (qualquer agente pode ler, mudanças exigem atualizar o doc correspondente):
 - `docs/**` — atualize o doc do seu domínio quando implementar algo
+- `shared/types/` — **fonte única** dos shapes de API. Corrigir um tipo errado é permitido, desde
+  que `docs/api/API_CONTRACTS.md` seja atualizado no MESMO commit. Nunca redeclare um shape de API
+  localmente no backend ou no frontend
 - `package.json` — adicionar dependência é permitido; remover exige nota em `docs/DECISIONS.md`
 
 ---
@@ -69,7 +86,9 @@ A integração entre os domínios acontece por 3 contratos. **Eles nunca são vi
 
 ### Ao terminar:
 
-1. Rodar os testes do seu domínio (`npm run test`)
+1. Rodar `npm run typecheck` (todos os workspaces) e os testes do seu domínio
+   (`npm run test:backend` / `npm run test:frontend`) — **têm que passar**. Nunca declare pronto
+   sem ter visto a saída verde do comando
 2. Atualizar `docs/STATUS.md`: marcar tarefa como ✅ com data
 3. Atualizar o doc do seu domínio se a implementação divergiu do planejado
 4. Se expôs nova interface (endpoint, componente, evento): confirmar que está documentada
@@ -122,27 +141,99 @@ Onda 4:
 └── Agent-QA: E2E dos fluxos 1-3 (docs/domain/WORKFLOWS.md)
 
 Onda 5:
-├── Agent-API: AnalyticsService + ThemeService + AuditService
-├── Agent-UI: Conversão + Personalização + Usuários & Permissões
-├── Agent-Infra: CI/CD pipeline
+├── Agent-API: AnalyticsService + ThemeService + AuditService + PlatformService
+├── Agent-UI: Conversão + Personalização + Usuários & Permissões + Console + Chat interno
+├── Agent-Infra: CI/CD pipeline + imagens de produção
 └── Agent-QA: E2E completo + testes de isolamento multitenant
+
+Onda 6 (Paciente, Operação e fechamento de pendências) — FASE 0 BLOQUEANTE:
+├── Fase 0 · Agent-Docs: contratos da onda ANTES de qualquer implementação (Regra Zero)
+│     API_CONTRACTS §2c/§6/§7 · SERVICES §12-§14 · SCHEMA §14-§17
+│     shared/types/{patient,settings,operation}.types.ts · D-059→D-071
+├── Agent-DB: migrações 003 (patients, tenant_channels, tenant_settings, channel_reads,
+│     conversations.patient_id, proposal_items.position) + 004 (RLS das 4 novas) + backfill + seeds
+├── Agent-API: PatientService (timeline, export e anonimização LGPD) ·
+│     ChannelSettingsService + OperationService · leitura de canal, paginação do chat,
+│     regra de envelope, `?patientId=` · vínculo paciente↔conversa e credenciais por tenant
+├── Agent-UI: Ficha do Paciente · Canais & Equipe · Gestão da Operação ·
+│     paginação, escala de espaçamento e mocks tipados
+├── Agent-QA: fluxos E2E 8-12 + inventário de isolamento de rota (30 → 39 rotas)
+└── Validadores (Contratos · Segurança · Verificação) → Agent-Fix-* (D-074→D-080)
 ```
 
 **Critério de "pronto" de cada onda:** todos os testes passam + docs atualizados + integração real (mocks da onda anterior removidos).
+
+**Duas regras de fechamento que a Onda 6 tornou obrigatórias:**
+
+1. **Quem coordena roda a suíte INTEIRA antes de declarar a onda fechada — verde por escopo não
+   compõe.** Na Onda 6, nove agentes e três validadores viram verde cada um no seu recorte,
+   e a suíte E2E completa estava vermelha: um spec criava 25 exames por execução sem limpá-los e
+   empurrava para fora da primeira página o exame que outros dois specs clicavam. Ninguém tinha
+   como ver isso olhando só o próprio escopo. Debaixo da poluição havia um defeito de produto real.
+2. **Pendência se escreve pelo COMPORTAMENTO, não pela tela onde foi vista.** "Listagem sem
+   paginação", não "paginação de /proposals" — senão o fechamento para na primeira ocorrência
+   conhecida e a terceira tela com o mesmo defeito passa batida.
+
+**E uma que já valia e reapareceu:** comentário no código **não é contrato**. Divergência
+documentada só em comentário e nunca registrada em `docs/` apareceu duas vezes na Onda 6
+(um repositório afirmando que `proposal_items` não tinha coluna de posição — falso desde a
+migração do mesmo commit; um spec afirmando que a tela não chamava `POST /read` — falso desde a
+correção pós-QA). Se o comentário descreve o contrato, o contrato está no doc.
 
 ---
 
 ## Regras Críticas Compartilhadas (TODOS os agentes)
 
-Estas regras vêm de `docs/domain/BUSINESS_RULES.md` e se aplicam a qualquer código:
+Estas regras vêm de `docs/domain/BUSINESS_RULES.md` e do `CLAUDE.md` da raiz, e se aplicam a
+qualquer código. **A lista abaixo é a mesma do `CLAUDE.md` — se divergirem, o `CLAUDE.md` vence
+e este arquivo é que precisa ser corrigido.**
 
-1. **Multitenant:** toda query/endpoint/tela filtra por `tenant_id` — sem exceção
-2. **Proposta é fonte da verdade:** `totalPrice` é sempre calculado de items + desconto, nunca digitado
+1. **Multitenant:** toda query/endpoint/tela filtra por `tenant_id` — sem exceção. Tabela nova
+   entra com policy de RLS na MESMA leva de migrações: tabela sem policy não trava, **vaza**
+   (o `ALTER DEFAULT PRIVILEGES` da 002 já concedeu escrita a `crm_app` no `CREATE TABLE`)
+2. **Proposta é fonte da verdade:** `totalPrice` é sempre calculado no backend de items +
+   desconto, nunca digitado nem enviado pelo cliente
 3. **Alçada de desconto:** validada no backend SEMPRE (frontend só para UX)
-4. **Estágios:** apenas transições válidas (ver WORKFLOWS.md §4); perdido exige motivo
-5. **Design:** nenhum hex/fonte/raio hardcoded — só tokens CSS
-6. **TypeScript:** `any` proibido; tipos compartilhados espelham os contratos de API
+4. **Estágios:** apenas transições de `ALLOWED_TRANSITIONS` (WORKFLOWS.md §4); `perdido` exige
+   `reasonLost` válido
+5. **Design:** nenhum hex, raio em px, nome de fonte **ou espaçamento cru** em componente — só
+   tokens CSS. Desde a Onda 6 o espaçamento também é verificado por
+   `no-hardcoded-tokens.spec.ts`, que varre `src/components/` e `src/pages/`
+6. **TypeScript:** `any` proibido (use `unknown` + narrowing); os tipos de API vêm de
+   `@crm-lab/shared`, nunca redeclarados localmente
 7. **Auditoria:** ações críticas (proposta, aprovação, permissão) geram audit log
+8. **Erros:** backend lança `BusinessError` tipada; o middleware converte para o formato de
+   `docs/api/API_ERRORS.md`. **Recurso de outro tenant → `NOT_FOUND`, nunca `FORBIDDEN`**
+9. **Dinheiro no fio:** número decimal (`179.80`), nunca string formatada. Datas: ISO 8601 UTC
+10. **Sem `console.log` no backend** — use o logger. **Sem segredo hardcoded** — env var
+11. **Módulos ESM:** import relativo no backend leva extensão `.js` mesmo apontando para `.ts`;
+    no frontend, alias `@/`
+
+### Nuances que a Onda 6 acrescentou
+
+- **Envelope de resposta (D-070) — três formas, sem quarta.** Listagem: chave nomeada no plural
+  + `pagination`. Recurso único (GET, POST ou PATCH): objeto **cru**. Resposta composta: uma
+  chave por parte. Sem corpo: `204`. As exceções são explícitas e estão listadas em
+  `API_CONTRACTS.md`; fora delas, envelope de recurso único é **bug de contrato**. Na mesma
+  varredura o campo `message` em pt-BR saiu de `/approve` e `/reject`: **texto de interface é do
+  frontend (i18n)** — não devolva string de UI em resposta de API.
+- **LGPD (D-063, emendada por D-075).** Apagamento de paciente é **anonimização, não `DELETE`**.
+  O efeito precisa alcançar as cópias denormalizadas (`conversations`),
+  `messages.attachment_url` e os **valores** gravados no audit log (substituídos por
+  `"[ERASED]"`, preservando linha, ação, autor, timestamp e chaves) — senão o direito ao
+  esquecimento fica reversível por uma rota suportada. Limitação declarada: o **texto** das
+  mensagens não é reescrito.
+- **Segredo de terceiro é write-only e cifrado em repouso (D-064/D-076).** Credencial de canal
+  nunca volta em claro por API (só máscara, montada no SQL); em repouso vai cifrada com
+  AES-256-GCM e a chave mora em `CHANNEL_SECRET_KEY`, **fora do banco** — é isso que faz um dump
+  de backup não bastar. `''` é sentinela de revogação, `null` é "nunca configurado": nenhum dos
+  dois é cifrado.
+- **Dado de paciente não é dado de plataforma.** Todo router que sirva dado de laboratório usa
+  `denyPlatformOperator()`. Rota nova entra no inventário de isolamento do QA — há meta-teste que
+  reprova rota nova sem declaração.
+- **Tempo é UTC explícito (D-078/D-021).** `TIMESTAMP` sem timezone volta do driver no fuso da
+  máquina. Onde uma data vira número na resposta, formate como UTC no próprio SQL ou compare
+  dentro do banco.
 
 ---
 
@@ -153,7 +244,8 @@ Estas regras vêm de `docs/domain/BUSINESS_RULES.md` e se aplicam a qualquer có
 | Dois agentes precisam do mesmo arquivo | O dono do domínio faz a mudança; o outro registra pedido em STATUS.md |
 | Contrato documentado está ambíguo | Interpretação mais restritiva + nota em DECISIONS.md |
 | Implementação existente viola BUSINESS_RULES.md | A regra vence — refatorar o código, anotar em DECISIONS.md |
-| Doc e código divergem | O doc é a intenção; verificar DECISIONS.md; se não houver decisão registrada, o doc vence |
+| Doc e código divergem | O doc é a intenção; verificar DECISIONS.md; se não houver decisão registrada, o doc vence — **exceto** no caso abaixo |
+| Doc **descritivo de raiz** (ARCHITECTURE.md) divergindo do código | Aqui o código vence: esses docs descrevem o que existe, não o que se pretende. Corrigir por **engenharia reversa do código**, e marcar o que for intenção ainda não implementada com `⚠️ NÃO IMPLEMENTADO` em vez de deixar ambíguo |
 | Dependência de outra onda não pronta | Mock com shape do contrato + registrar em STATUS.md |
 
 ---

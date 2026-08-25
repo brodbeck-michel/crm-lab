@@ -63,6 +63,16 @@ export const DEFAULT_LIMIT = 20;
 export const MAX_LIMIT = 100;
 export const MAX_ITEMS = 100;
 
+/**
+ * Teto de `page`. Sem ele, `?page=9007199254740991&limit=100` faz o `COUNT(*)`
+ * completo e um scan com OFFSET absurdo — trabalho caro no banco por um
+ * parametro de query. Com o teto de `limit` em 100, 10.000 paginas cobrem
+ * 1.000.000 de linhas: muito alem de qualquer navegacao real, e o excedente e
+ * grampeado (nao e erro) para seguir a mesma convencao do resto do clamp.
+ */
+export const MAX_PAGE = 10_000;
+
+
 /** Mensagem de UX devolvida por `POST /proposals` quando cai em aprovacao. */
 export const PENDING_APPROVAL_MESSAGE = 'Proposta criada. Aguardando aprovação do gestor.';
 
@@ -70,6 +80,8 @@ export interface ProposalFilters {
   /** Lista separada por virgula na query string (`?status=a,b`). */
   status?: string;
   conversationId?: string;
+  /** Propostas do paciente (D-060) — a ficha lista por aqui, sem endpoint proprio. */
+  patientId?: string;
   createdBy?: string;
   startDate?: string;
   endDate?: string;
@@ -359,9 +371,9 @@ export class ProposalService {
     });
   }
 
-  /** `?status=a,b`, periodo, conversa e autor. Envelope nomeado (D-009). */
+  /** `?status=a,b`, periodo, conversa, paciente (D-060) e autor. Envelope nomeado (D-009). */
   async list(ctx: TenantContext, filters: ProposalFilters): Promise<ListProposalsResponse> {
-    const page = clamp(filters.page, DEFAULT_PAGE, 1, Number.MAX_SAFE_INTEGER);
+    const page = clamp(filters.page, DEFAULT_PAGE, 1, MAX_PAGE);
     const limit = clamp(filters.limit, DEFAULT_LIMIT, 1, MAX_LIMIT);
     const sortBy =
       filters.sortBy !== undefined && repo.isProposalSortBy(filters.sortBy)
@@ -387,6 +399,10 @@ export class ProposalService {
         ...(filters.conversationId !== undefined
           ? { conversationId: filters.conversationId }
           : {}),
+        // Paciente inexistente ou invisivel devolve lista VAZIA, nao 404: o
+        // filtro nao e oraculo de existencia (D-060, como o `?createdBy=` de
+        // D-042). O recorte por papel acima continua valendo por cima dele.
+        ...(filters.patientId !== undefined ? { patientId: filters.patientId } : {}),
         ...(createdBy !== undefined ? { createdBy } : {}),
         ...(filters.startDate !== undefined ? { startDate: filters.startDate } : {}),
         ...(filters.endDate !== undefined ? { endDate: filters.endDate } : {}),

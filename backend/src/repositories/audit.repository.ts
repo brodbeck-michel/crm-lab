@@ -1,9 +1,11 @@
 /**
  * Acesso a tabela `audit_logs`.
  *
- * APPEND-ONLY (SECURITY.md "Auditoria"): este arquivo expoe INSERT e SELECT e
- * mais nada. Nao existe — e nao pode passar a existir — caminho de UPDATE ou
- * DELETE em `audit_logs` a partir da API.
+ * APPEND-ONLY (SECURITY.md "Auditoria"), com UMA excecao: o apagamento LGPD.
+ * Este arquivo expoe INSERT, SELECT e `eraseEntityValues` — e mais nada. Nao
+ * existe DELETE, nao existe UPDATE de `action`/`entity`/`user`/`timestamp`, e
+ * nenhum controller alcanca a excecao: ela e chamada so de dentro da transacao
+ * de `PatientRepository.anonymize` (D-075).
  */
 import type { AuditEntry } from '@crm-lab/shared';
 import type { DbTx } from '../db/types.js';
@@ -39,6 +41,51 @@ export async function insert(tx: DbTx, input: InsertAuditInput): Promise<void> {
       input.userAgent ? input.userAgent.slice(0, 500) : null,
     ],
   );
+}
+
+/** Marcador que substitui o VALOR de um campo apagado a pedido do titular. */
+export const ERASED = '[ERASED]';
+
+/**
+ * Apagamento LGPD dentro do audit log (D-075) — a UNICA escrita nao-append
+ * deste arquivo.
+ *
+ * O problema que resolve: `PATCH /patients/:id` grava `oldValues`/`newValues`
+ * com nome, e-mail, nascimento, CPF e a anotacao interna. A anonimizacao
+ * (D-063) zerava a ficha e nao tocava aqui, entao
+ * `GET /audit?entityType=patient&entityId=<id>` devolvia tudo isso em claro
+ * depois do apagamento: o direito ao esquecimento era reversivel por uma rota
+ * suportada.
+ *
+ * O que sobrevive: a linha, `action`, `user_id`, `timestamp`, `ip_address` e as
+ * CHAVES dos objetos. O log continua provando QUE a edicao aconteceu e QUAL
+ * campo mudou — perde so o VALOR, que e o dado pessoal. Provar a edicao e
+ * obrigacao de auditoria; guardar o CPF depois do apagamento nao e.
+ *
+ * `jsonb_object_agg` sobre objeto vazio devolve NULL, dai o `COALESCE`.
+ * Idempotente: rodar de novo troca `"[ERASED]"` por `"[ERASED]"`.
+ */
+export async function eraseEntityValues(
+  tx: DbTx,
+  entityType: string,
+  entityId: string,
+): Promise<number> {
+  const erase = (column: string): string =>
+    `CASE WHEN ${column} IS NULL THEN NULL ELSE COALESCE(
+       (SELECT jsonb_object_agg(kv.key, to_jsonb($3::text)) FROM jsonb_each(${column}) AS kv),
+       '{}'::jsonb) END`;
+
+  const result = await tx.query<{ id: string }>(
+    `UPDATE audit_logs
+        SET old_values = ${erase('old_values')},
+            new_values = ${erase('new_values')}
+      WHERE entity_type = $1
+        AND entity_id = $2
+        AND (old_values IS NOT NULL OR new_values IS NOT NULL)
+      RETURNING id`,
+    [entityType, entityId, ERASED],
+  );
+  return result.rows.length;
 }
 
 interface AuditRow {

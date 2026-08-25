@@ -22,22 +22,28 @@
  *    O relogio e injetavel, entao o teste de retry roda em milissegundos.
  *
  * ============================================================================
- * CREDENCIAIS POR TENANT
+ * CREDENCIAIS POR TENANT — TABELA PRIMEIRO, ENV VAR DEPOIS (D-024)
  * ============================================================================
  * Cada laboratorio conecta o proprio numero, entao `send` e o webhook operam
  * sobre `WhatsAppCredentials` resolvidas POR TENANT — nunca sobre uma constante
- * global. Enquanto o schema nao tem tabela de canal (pedido registrado em
- * STATUS.md para o Agent-DB), o resolver default deriva as credenciais das env
- * vars e a IDENTIDADE do tenant do slug que vem na URL do webhook. Trocar isso
- * por uma consulta a tabela e trocar a implementacao do resolver: nenhum outro
- * arquivo muda.
+ * global. A fonte agora e `tenant_channels`, lida por
+ * `ChannelSettingsService.resolveCredentials` (o UNICO ponto que le o segredo em
+ * claro, D-064). Cada campo cai para a env var correspondente quando a tabela
+ * nao tem valor: um ambiente que ja rodava so com env var continua rodando, e
+ * um laboratorio que conectou o proprio numero passa a mandar no proprio.
+ *
+ * A IDENTIDADE do tenant continua vindo do slug/uuid da URL do webhook — o que
+ * a tabela resolve e a CREDENCIAL, inclusive o segredo do HMAC.
  */
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import type { MessageStatus, MessageType } from '@crm-lab/shared';
+import type { ConversationChannel, MessageStatus, MessageType } from '@crm-lab/shared';
 import { env } from '../config/env.js';
 import type { DbClient } from '../db/types.js';
 import { logger } from '../lib/logger.js';
 import { createQueue, type QueueService } from '../lib/queue.js';
+import type { ChannelCredentials } from '../repositories/channel-settings.repository.js';
+import { createAuditService } from './audit.service.js';
+import { createChannelSettingsService } from './channel-settings.service.js';
 
 // ---------------------------------------------------------------------------
 // Credenciais
@@ -52,6 +58,17 @@ export interface WhatsAppCredentials {
   apiToken: string;
   /** Segredo do HMAC do webhook deste tenant. */
   webhookSecret: string;
+  /**
+   * Canal LIGADO (D-074). `false` = `tenant_channels.is_active = FALSE`:
+   * o webhook nao e aceito e o envio nao sai. Sem linha na tabela (ambiente
+   * so-env-var) o canal e considerado ligado.
+   */
+  isActive: boolean;
+  /**
+   * O laboratorio APAGOU o token deliberadamente (D-073 emendada). Diferente de
+   * "nunca configurou": revogado nao volta para o token global da instalacao.
+   */
+  apiTokenRevoked: boolean;
 }
 
 /**
@@ -64,8 +81,33 @@ export interface WhatsAppCredentialsResolver {
   byWebhookIdentity(identity: string): Promise<WhatsAppCredentials | null>;
 }
 
+/** Credenciais das env vars — o fallback de quem ainda nao conectou o canal. */
+export function envCredentials(): Omit<WhatsAppCredentials, 'tenantId'> {
+  return {
+    phoneNumberId: env.WHATSAPP_API_TOKEN ? 'default' : 'mock',
+    apiUrl: env.WHATSAPP_API_URL ?? '',
+    apiToken: env.WHATSAPP_API_TOKEN ?? '',
+    webhookSecret: env.WHATSAPP_WEBHOOK_SECRET ?? '',
+    isActive: true,
+    apiTokenRevoked: false,
+  };
+}
+
 /**
- * Resolver default.
+ * Fonte das credenciais em claro. A implementacao real e
+ * `ChannelSettingsService.resolveCredentials`; a interface existe para o teste
+ * injetar uma linha de tabela sem montar o service inteiro.
+ */
+export interface ChannelCredentialsSource {
+  resolveCredentials(
+    tenantId: string,
+    channel: ConversationChannel,
+  ): Promise<ChannelCredentials | null>;
+}
+
+/**
+ * Resolver que so conhece env var. Continua exportado porque a IDENTIDADE do
+ * tenant (slug/uuid -> id) e resolvida aqui e nao muda com a tabela.
  *
  * O `withoutTenant()` aqui e o MESMO caso do login: o tenant ainda nao e
  * conhecido (o webhook chega sem sessao) e a unica coisa lida e o `id` a partir
@@ -73,12 +115,7 @@ export interface WhatsAppCredentialsResolver {
  * dentro de `withTenant()`.
  */
 export function createEnvCredentialsResolver(db: DbClient): WhatsAppCredentialsResolver {
-  const base = {
-    phoneNumberId: env.WHATSAPP_API_TOKEN ? 'default' : 'mock',
-    apiUrl: env.WHATSAPP_API_URL ?? '',
-    apiToken: env.WHATSAPP_API_TOKEN ?? '',
-    webhookSecret: env.WHATSAPP_WEBHOOK_SECRET ?? '',
-  };
+  const base = envCredentials();
 
   return {
     async forTenant(tenantId: string): Promise<WhatsAppCredentials> {
@@ -97,6 +134,89 @@ export function createEnvCredentialsResolver(db: DbClient): WhatsAppCredentialsR
       );
       const id = found.rows[0]?.id;
       return id ? { tenantId: id, ...base } : null;
+    },
+  };
+}
+
+/**
+ * Aplica a precedencia de D-024, CAMPO A CAMPO: o que `tenant_channels` guarda
+ * vence; o que estiver ausente (linha inexistente ou coluna nula) cai na env
+ * var. Merge por campo, e nao "linha existe => ignora env", porque um
+ * laboratorio pode ter conectado o numero e ainda nao ter girado o segredo do
+ * webhook — nesse meio do caminho o webhook precisa continuar validando.
+ *
+ * ============================================================================
+ * "NUNCA CONFIGUROU" x "REVOGOU" (D-073 emendada)
+ * ============================================================================
+ * O fallback so vale para o primeiro caso. A coluna guarda `NULL` quando o
+ * laboratorio nunca configurou (fallback legitimo) e `''` quando ele mandou
+ * `{"webhookSecret": null}` no PATCH (revogacao). O `??` abaixo respeita a
+ * diferenca sozinho — `'' ?? x` e `''` —, e e por isso que a sentinela e string
+ * vazia e nao `NULL`.
+ *
+ * Sem essa distincao, revogar o segredo devolveria `WHATSAPP_WEBHOOK_SECRET`,
+ * que e um valor SO PARA A INSTALACAO INTEIRA: quem o conhecesse (operador de
+ * infra, `.env` vazado, outro laboratorio da mesma instalacao) assinaria
+ * webhook valido para qualquer tenant que ainda nao tivesse girado o proprio —
+ * e o slug vai na URL, que e publica. Escrita cross-tenant em
+ * `messages`/`conversations`/`patients`.
+ *
+ * `apiUrl` nao mora na tabela: e endereco da API do canal, nao credencial do
+ * laboratorio (e e ela que decide driver mock x driver real).
+ */
+export function mergeCredentials(
+  tenantId: string,
+  stored: ChannelCredentials | null,
+  fallback: Omit<WhatsAppCredentials, 'tenantId'> = envCredentials(),
+): WhatsAppCredentials {
+  return {
+    tenantId,
+    phoneNumberId: stored?.phoneNumberId ?? fallback.phoneNumberId,
+    apiUrl: fallback.apiUrl,
+    apiToken: stored?.apiToken ?? fallback.apiToken,
+    // Segredo vazio continua recusando TUDO (`verifyWebhookSignature`): nada
+    // aqui transforma "nao configurado" em "autentico".
+    webhookSecret: stored?.webhookSecret ?? fallback.webhookSecret,
+    // Sem linha na tabela o canal esta ligado (ambiente so-env-var).
+    isActive: stored?.isActive ?? fallback.isActive,
+    apiTokenRevoked: stored?.apiToken === '' ? true : fallback.apiTokenRevoked,
+  };
+}
+
+/**
+ * Resolver default de producao (D-024): tabela primeiro, env var como fallback.
+ *
+ * A leitura da tabela acontece FORA de qualquer transacao de escrita — o
+ * webhook resolve as credenciais antes de tocar no banco —, entao o
+ * `db.withTenant` interno de `resolveCredentials` nao aninha com nada.
+ */
+export function createTenantCredentialsResolver(
+  db: DbClient,
+  options: {
+    /** Default: `ChannelSettingsService`. O teste injeta uma fonte de mentira. */
+    source?: ChannelCredentialsSource;
+    /** Default: `envCredentials()`. O teste injeta env vars deterministicas. */
+    fallback?: Omit<WhatsAppCredentials, 'tenantId'>;
+  } = {},
+): WhatsAppCredentialsResolver {
+  const identities = createEnvCredentialsResolver(db);
+  const channels: ChannelCredentialsSource =
+    options.source ?? createChannelSettingsService({ db, audit: createAuditService(db) });
+  const fallback = options.fallback ?? envCredentials();
+
+  const withStored = async (tenantId: string): Promise<WhatsAppCredentials> => {
+    const stored = await channels.resolveCredentials(tenantId, 'whatsapp');
+    return mergeCredentials(tenantId, stored, fallback);
+  };
+
+  return {
+    async forTenant(tenantId: string): Promise<WhatsAppCredentials> {
+      return withStored(tenantId);
+    },
+    async byWebhookIdentity(identity: string): Promise<WhatsAppCredentials | null> {
+      const found = await identities.byWebhookIdentity(identity);
+      if (!found) return null;
+      return withStored(found.tenantId);
     },
   };
 }
@@ -288,6 +408,20 @@ function asString(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
+/**
+ * `conversations.patient_name` e `patients.name` sao VARCHAR(255) (SCHEMA.md).
+ * O nome vem do PERFIL do canal, escolhido por terceiro, e nao tem limite la:
+ * um apelido de 400 caracteres estourava a coluna, o handler subia com erro
+ * 22001 e a mensagem do paciente era descartada em silencio (o canal responde
+ * 200 e nao reentrega). Truncar o enfeite e melhor que perder a mensagem.
+ */
+const PROFILE_NAME_MAX = 255;
+
+function profileName(value: string | null): string | null {
+  if (value === null) return null;
+  return value.length > PROFILE_NAME_MAX ? value.slice(0, PROFILE_NAME_MAX) : value;
+}
+
 function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
@@ -366,6 +500,17 @@ export class WhatsAppService {
    */
   async send(tenantId: string, phone: string, content: string): Promise<SendResult> {
     const credentials = await this.credentials.forTenant(tenantId);
+
+    // D-074: canal desligado NAO envia. Antes da fila, porque isso nao e falha
+    // transitoria — repetir tres vezes so atrasaria o `failed` do atendente.
+    if (!credentials.isActive) {
+      throw new Error('canal whatsapp desativado para este laboratorio (isActive: false)');
+    }
+    // D-073 emendada: token revogado nao volta a sair pelo numero global.
+    if (credentials.apiTokenRevoked) {
+      throw new Error('token do canal whatsapp foi revogado por este laboratorio');
+    }
+
     return this.queue.run(
       'whatsapp.send',
       () => this.driver.send(credentials, phone, content),
@@ -402,7 +547,7 @@ export class WhatsAppService {
         const { content, url } = contentOf(message);
         out.push({
           phone: from,
-          patientName: names.get(from) ?? null,
+          patientName: profileName(names.get(from) ?? null),
           content,
           messageType: TYPE_MAP[asString(message.type) ?? 'text'] ?? 'text',
           attachmentUrl: url,
@@ -418,7 +563,7 @@ export class WhatsAppService {
       if (from && content) {
         out.push({
           phone: from,
-          patientName: flat ? asString(flat.name) : null,
+          patientName: profileName(flat ? asString(flat.name) : null),
           content,
           messageType: TYPE_MAP[(flat && asString(flat.type)) ?? 'text'] ?? 'text',
           attachmentUrl: null,
@@ -464,7 +609,7 @@ export function createWhatsAppService(
   overrides: Partial<WhatsAppServiceDeps> = {},
 ): WhatsAppService {
   return new WhatsAppService({
-    credentials: overrides.credentials ?? createEnvCredentialsResolver(db),
+    credentials: overrides.credentials ?? createTenantCredentialsResolver(db),
     ...(overrides.driver !== undefined ? { driver: overrides.driver } : {}),
     ...(overrides.queue !== undefined ? { queue: overrides.queue } : {}),
     ...(overrides.attempts !== undefined ? { attempts: overrides.attempts } : {}),

@@ -111,6 +111,45 @@ describe('ProposalService', () => {
       expect(relida.items.map((item) => item.examName)).toEqual(nomes);
     });
 
+    // D-071: a ordem vive em `position`, nao no timestamp. Achatar `created_at`
+    // simula o que um reprocessamento/importacao faz — antes da coluna, a lista
+    // caia no desempate por `id` (UUID aleatorio) e voltava embaralhada.
+    it('mantem a ordem dos itens quando todos compartilham o mesmo created_at', async () => {
+      const tenant = await createTenant();
+      const user = await createUser({ tenantId: tenant.id, role: 'attendant' });
+      const conversation = await createConversation({ tenantId: tenant.id });
+      const nomes = ['Zinco', 'Alfa', 'Meio', 'Beta', 'Omega', 'Delta'];
+      const exames = [];
+      for (const name of nomes) {
+        exames.push(await createExam({ tenantId: tenant.id, name, pricePrivate: 10 }));
+      }
+
+      const created = await h.proposals.create(ctxOf(user), {
+        conversationId: conversation.id,
+        items: exames.map((exam) => ({ examId: exam.id, quantity: 1 })),
+      });
+
+      // O INSERT gravou o indice do array (base 0), nao tudo em 0.
+      const posicoes = await db.withoutTenant((tx) =>
+        tx.query<{ position: number; exam_name: string }>(
+          `SELECT "position", exam_name FROM proposal_items
+            WHERE proposal_id = $1 ORDER BY "position" ASC`,
+          [created.id],
+        ),
+      );
+      expect(posicoes.rows.map((r) => r.position)).toEqual([0, 1, 2, 3, 4, 5]);
+      expect(posicoes.rows.map((r) => r.exam_name)).toEqual(nomes);
+
+      // Timestamps identicos: o unico criterio que resta e `position`.
+      await db.withoutTenant((tx) =>
+        tx.query(`UPDATE proposal_items SET created_at = TIMESTAMP '2020-01-01 00:00:00'
+                   WHERE proposal_id = $1`, [created.id]),
+      );
+
+      const relida = await h.proposals.getById(ctxOf(user), created.id);
+      expect(relida.items.map((item) => item.examName)).toEqual(nomes);
+    });
+
     it('multiplica pela quantidade', async () => {
       const tenant = await createTenant();
       const user = await createUser({ tenantId: tenant.id, role: 'attendant' });

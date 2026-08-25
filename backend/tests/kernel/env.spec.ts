@@ -6,6 +6,9 @@ const PROD_BASE = {
   DATABASE_URL: 'postgres://crm:crm@db:5432/crm_lab',
   JWT_SECRET: 'x'.repeat(48),
   JWT_REFRESH_SECRET: 'y'.repeat(48),
+  // D-076: cifra as credenciais de canal em repouso. Sem ela o boot de
+  // producao falha — de proposito.
+  CHANNEL_SECRET_KEY: 'z'.repeat(48),
 };
 
 describe('config/env', () => {
@@ -50,6 +53,17 @@ describe('config/env', () => {
     expect(() => loadEnv({ ...PROD_BASE, JWT_SECRET: 'curto' })).toThrow(/32 caracteres/);
   });
 
+  it('exige CHANNEL_SECRET_KEY em producao, com 32+ caracteres (D-076)', () => {
+    expect(() => loadEnv({ ...PROD_BASE, CHANNEL_SECRET_KEY: undefined })).toThrow(
+      /CHANNEL_SECRET_KEY/,
+    );
+    expect(() => loadEnv({ ...PROD_BASE, CHANNEL_SECRET_KEY: 'curta' })).toThrow(
+      /32 caracteres/,
+    );
+    // Fora de producao continua opcional: dev e CI sobem sem chave nenhuma.
+    expect(loadEnv({ NODE_ENV: 'development' }).CHANNEL_SECRET_KEY).toBeUndefined();
+  });
+
   it('exige DATABASE_URL em producao', () => {
     expect(() => loadEnv({ ...PROD_BASE, DATABASE_URL: undefined })).toThrow(/DATABASE_URL/);
   });
@@ -80,6 +94,7 @@ describe('config/env', () => {
     expect(safe.JWT_SECRET).toBe('***');
     expect(safe.JWT_REFRESH_SECRET).toBe('***');
     expect(safe.DATABASE_URL).toBe('***');
+    expect(safe.CHANNEL_SECRET_KEY).toBe('***');
     expect(JSON.stringify(safe)).not.toContain(PROD_BASE.JWT_SECRET);
   });
 });

@@ -138,6 +138,16 @@ async function authenticate(
     return null;
   }
 
+  // KILL SWITCH (D-074). `isActive: false` e o unico jeito de desligar um canal
+  // pelo contrato (nao existe remocao em `PATCH /settings/channels`), entao ele
+  // precisa desligar a ENTRADA tambem: um admin que descobre que o segredo
+  // vazou desliga o canal e a partir dai assinatura valida nao entra mais.
+  // Antes do HMAC de proposito — canal desligado nem chega a usar o segredo.
+  if (!credentials.isActive) {
+    logger.warn('whatsapp.webhook_channel_disabled', { tenantId: credentials.tenantId });
+    return null;
+  }
+
   // HMAC ANTES de olhar o conteudo. Nada foi escrito ate aqui.
   const valid = verifyWebhookSignature(
     rawBodyOf(req),
@@ -176,22 +186,44 @@ export function whatsappInbound(services: WebhookServices): RequestHandler {
     const { tenantId } = authenticated;
 
     const inbound = await services.whatsapp.handleWebhook(req.body);
+    let processed = 0;
+    let rejected = 0;
     for (const dto of inbound) {
-      // WORKFLOWS §1: acha/cria a conversa, grava a mensagem, emite o WS.
-      const conversation = await services.conversations.findOrCreateByPhone(
-        tenantId,
-        dto.phone,
-        dto.patientName,
-      );
-      await services.messages.createFromPatient(tenantId, conversation.id, {
-        content: dto.content,
-        messageType: dto.messageType,
-        attachmentUrl: dto.attachmentUrl,
-        externalId: dto.externalId,
-      });
+      // A Meta entrega LOTE. Uma mensagem ruim (telefone fora do formato,
+      // por exemplo) nao pode derrubar o lote inteiro: sem este `try`, o erro
+      // subiria ate `safeHandle` e as mensagens SEGUINTES — validas — seriam
+      // descartadas junto, sem reentrega pelo canal.
+      try {
+        // WORKFLOWS §1: acha/cria a conversa, grava a mensagem, emite o WS.
+        const conversation = await services.conversations.findOrCreateByPhone(
+          tenantId,
+          dto.phone,
+          dto.patientName,
+        );
+        await services.messages.createFromPatient(tenantId, conversation.id, {
+          content: dto.content,
+          messageType: dto.messageType,
+          attachmentUrl: dto.attachmentUrl,
+          externalId: dto.externalId,
+        });
+        processed += 1;
+      } catch (err) {
+        rejected += 1;
+        // Telefone/nome do paciente NUNCA vao para o log (SECURITY.md): so o
+        // motivo e o id do canal, que ja e um identificador do proprio canal.
+        logger.error('whatsapp.inbound_message_rejected', {
+          tenantId,
+          externalId: dto.externalId,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
-    logger.info('whatsapp.webhook_processed', { tenantId, messages: inbound.length });
+    logger.info('whatsapp.webhook_processed', {
+      tenantId,
+      messages: processed,
+      rejected,
+    });
     acknowledge(res);
   });
 }

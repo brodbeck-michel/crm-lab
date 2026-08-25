@@ -69,7 +69,9 @@ export class InternalChatService {
     assertLabMember(ctx);
     return this.db.withTenant(ctx.tenantId, async (tx) => {
       await ensureDefaultChannels(tx, ctx.tenantId);
-      return chatRepo.listChannels(tx);
+      // `unreadCount`/`lastReadAt` sao DO USUARIO que pergunta (D-068): dois
+      // usuarios do mesmo tenant recebem numeros diferentes, e isso e o contrato.
+      return chatRepo.listChannels(tx, ctx.userId);
     });
   }
 
@@ -84,9 +86,12 @@ export class InternalChatService {
 
     return this.db.withTenant(ctx.tenantId, async (tx) => {
       // Canal de outro tenant fica invisivel pelo RLS -> NOT_FOUND, nunca 403.
-      const channel = await chatRepo.findChannelById(tx, channelId);
+      const channel = await chatRepo.findChannelById(tx, channelId, ctx.userId);
       if (!channel) throw notFound({ resource: 'channel', id: channelId });
 
+      // NAO marca como lido de proposito (D-068): ler pagina antiga do
+      // historico nao e ter visto a mensagem nova. Diferenca deliberada para
+      // `GET /conversations/:id` (D-035), onde a pagina 1 E o fim da conversa.
       const result = await chatRepo.listMessages(tx, channelId, { page: pageNumber, limit });
       const pagination: PaginationMeta = {
         page: pageNumber,
@@ -113,7 +118,7 @@ export class InternalChatService {
     }
 
     const message = await this.db.withTenant(ctx.tenantId, async (tx) => {
-      const channel = await chatRepo.findChannelById(tx, channelId);
+      const channel = await chatRepo.findChannelById(tx, channelId, ctx.userId);
       if (!channel) throw notFound({ resource: 'channel', id: channelId });
 
       const attachedProposalId = dto.attachedProposalId ?? null;
@@ -144,6 +149,27 @@ export class InternalChatService {
       messageId: message.id,
     });
     return message;
+  }
+
+  /**
+   * Zera o `unreadCount` do canal para o usuario do contexto (D-068).
+   *
+   * Idempotente: um `INSERT ... ON CONFLICT DO UPDATE` sem leitura previa —
+   * chamar em canal ja lido nao e erro, so move `last_read_at` para agora.
+   * Canal inexistente ou de outro tenant (invisivel pelo RLS) -> `NOT_FOUND`,
+   * nunca 403. Nao gera audit log: leitura de canal nao e acao critica.
+   */
+  async markChannelRead(ctx: TenantContext, channelId: string): Promise<void> {
+    assertLabMember(ctx);
+    await this.db.withTenant(ctx.tenantId, async (tx) => {
+      const channel = await chatRepo.findChannelById(tx, channelId, ctx.userId);
+      if (!channel) throw notFound({ resource: 'channel', id: channelId });
+      await chatRepo.markChannelRead(tx, {
+        tenantId: ctx.tenantId,
+        channelId,
+        userId: ctx.userId,
+      });
+    });
   }
 
   /**

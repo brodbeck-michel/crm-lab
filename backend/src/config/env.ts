@@ -73,6 +73,15 @@ const envSchema = z
     WHATSAPP_API_TOKEN: optionalString,
     WHATSAPP_WEBHOOK_SECRET: optionalString,
 
+    /**
+     * Chave que cifra `tenant_channels.api_token`/`webhook_secret` em repouso
+     * (D-076). Vazia em dev/CI = segredo gravado em claro; OBRIGATORIA em
+     * producao — sem ela um dump de backup entrega o segredo de HMAC de todos
+     * os laboratorios, e o segredo de HMAC e permissao de ESCRITA.
+     * Trocar a chave invalida as credenciais ja gravadas.
+     */
+    CHANNEL_SECRET_KEY: optionalString,
+
     CORS_ORIGIN: z.string().default('http://localhost:5173'),
     RATE_LIMIT_PER_MINUTE: numberFrom(100),
 
@@ -117,6 +126,28 @@ const envSchema = z
         code: z.ZodIssueCode.custom,
         path: ['DATABASE_URL'],
         message: 'DATABASE_URL e obrigatoria em NODE_ENV=production',
+      });
+    }
+    // D-076: sem chave, o segredo de HMAC de todo laboratorio fica em claro no
+    // dump. Aviso nao resolve — quem le aviso ja tem o dump.
+    if (!value.CHANNEL_SECRET_KEY) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['CHANNEL_SECRET_KEY'],
+        message:
+          'CHANNEL_SECRET_KEY e obrigatoria em NODE_ENV=production (cifra as credenciais de canal em repouso, D-076)',
+      });
+    } else if (value.CHANNEL_SECRET_KEY.length < 32) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['CHANNEL_SECRET_KEY'],
+        message: 'CHANNEL_SECRET_KEY precisa de ao menos 32 caracteres em producao',
+      });
+    } else if (PLACEHOLDER_SECRETS.has(value.CHANNEL_SECRET_KEY)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['CHANNEL_SECRET_KEY'],
+        message: 'CHANNEL_SECRET_KEY ainda usa o valor de exemplo — gere um segredo unico',
       });
     }
   });
@@ -193,6 +224,7 @@ export function safeEnv(source: Env = env): Record<string, unknown> {
     'REDIS_URL',
     'WHATSAPP_API_TOKEN',
     'WHATSAPP_WEBHOOK_SECRET',
+    'CHANNEL_SECRET_KEY',
   ];
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(source)) {

@@ -33,8 +33,15 @@ export class PgDriver implements DbClient {
   readonly driver = 'pg' as const;
   private readonly pool: pg.Pool;
 
+  /**
+   * `options: '-c timezone=UTC'` fixa o `TimeZone` da SESSAO do banco (D-078).
+   * Sem isso, o fuso vem do servidor: `NOW() - <coluna TIMESTAMP sem tz>`
+   * converte a coluna pelo fuso da sessao e um servidor em `America/Sao_Paulo`
+   * devolveria os tempos de espera 10.800 s errados (mesmo defeito de D-021).
+   * Vai no pacote de startup — vale para toda conexao do pool, sem round-trip.
+   */
   constructor(connectionString: string) {
-    this.pool = new Pool({ connectionString, max: 10 });
+    this.pool = new Pool({ connectionString, max: 10, options: '-c timezone=UTC' });
   }
 
   async query<R = Row>(sql: string, params?: unknown[]): Promise<QueryResult<R>> {

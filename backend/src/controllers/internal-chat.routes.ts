@@ -2,6 +2,7 @@
  * Rotas do chat interno — WORKFLOWS.md §6, SERVICES.md §7.
  *
  *   GET  /api/v1/internal-chat/channels
+ *   POST /api/v1/internal-chat/channels/:id/read      marca lido (204, D-068)
  *   GET  /api/v1/internal-chat/channels/:id/messages
  *   POST /api/v1/internal-chat/channels/:id/messages
  *
@@ -67,6 +68,16 @@ export function listMessages(service: InternalChatService): RequestHandler {
   });
 }
 
+/** `204 No Content` — sem corpo, idempotente (D-068 / regra de envelope D-070). */
+export function markChannelRead(service: InternalChatService): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const { id } = validated<{ id: string }>(req, 'params');
+    await service.markChannelRead(ctx, id);
+    res.status(204).end();
+  });
+}
+
 export function sendMessage(service: InternalChatService): RequestHandler {
   return handle(async (req, res) => {
     const ctx = getContext(req);
@@ -85,6 +96,14 @@ export function internalChatModule(deps: ApiModuleDeps): ApiModule {
   const router = Router();
 
   router.get('/channels', requireAuth(), denyPlatformOperator(), listChannels(service));
+
+  router.post(
+    '/channels/:id/read',
+    requireAuth(),
+    denyPlatformOperator(),
+    validate(channelIdParamSchema, 'params'),
+    markChannelRead(service),
+  );
 
   router.get(
     '/channels/:id/messages',

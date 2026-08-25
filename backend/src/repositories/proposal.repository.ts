@@ -256,11 +256,11 @@ export async function insertProposal(tx: DbTx, input: ProposalInsert): Promise<s
 /**
  * Snapshot de nome e preco (D-004). `tenant_id` repetido por exigencia do schema.
  *
- * `created_at` recebe um deslocamento de 1 microssegundo por posicao: dentro de
- * uma transacao `NOW()` e constante, e sem o deslocamento a ordem dos itens
- * cairia no desempate por `id` (UUID aleatorio) — a lista voltaria embaralhada,
- * diferente da que o atendente montou. `proposal_items` nao tem coluna de
- * posicao (schema e dominio do Agent-DB), entao a ordem vive no timestamp.
+ * A ordem em que o atendente montou o orcamento vive em `position` (D-071,
+ * migracao 003): o indice do item no array do request, base 0. O deslocamento
+ * de 1 microssegundo em `created_at` que existia aqui foi removido — ele usava
+ * uma coluna de tempo como coluna de ordem, e `position` agora e o criterio
+ * primario de toda leitura (`position ASC, created_at ASC`).
  */
 export async function insertItems(
   tx: DbTx,
@@ -272,8 +272,8 @@ export async function insertItems(
   for (const item of items) {
     await tx.query(
       `INSERT INTO proposal_items (tenant_id, proposal_id, exam_id, quantity,
-                                   unit_price, exam_name, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, NOW() + ($7::int * INTERVAL '1 microsecond'))`,
+                                   unit_price, exam_name, "position")
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [
         tenantId,
         proposalId,
@@ -376,7 +376,8 @@ export async function findRowById(tx: DbTx, id: string): Promise<ProposalRow | n
 export async function findItems(tx: DbTx, proposalId: string): Promise<ProposalItem[]> {
   const result = await tx.query<ProposalItemRow>(
     `SELECT id, exam_id, exam_name, quantity, unit_price
-       FROM proposal_items WHERE proposal_id = $1 ORDER BY created_at ASC, id ASC`,
+       FROM proposal_items WHERE proposal_id = $1
+      ORDER BY "position" ASC, created_at ASC, id ASC`,
     [proposalId],
   );
   return result.rows.map(mapItem);
@@ -438,6 +439,8 @@ export function isProposalSortBy(value: string): value is ProposalSortBy {
 export interface ProposalListCriteria {
   statuses?: ProposalStatus[];
   conversationId?: string;
+  /** D-060: resolvido por `conversations.patient_id` — proposta nao tem coluna de paciente. */
+  patientId?: string;
   createdBy?: string;
   approvalStatus?: ApprovalStatus;
   startDate?: string;
@@ -464,6 +467,13 @@ export async function list(tx: DbTx, criteria: ProposalListCriteria): Promise<Pr
   if (criteria.conversationId !== undefined) {
     params.push(criteria.conversationId);
     where.push(`p.conversation_id = $${params.length}`);
+  }
+  if (criteria.patientId !== undefined) {
+    // A proposta nasce de uma conversa; o paciente mora la (D-060). O JOIN com
+    // `conversations` ja existe nas duas queries abaixo, entao o filtro nao
+    // custa nada — e continua dentro do `withTenant`, ou seja, sob RLS.
+    params.push(criteria.patientId);
+    where.push(`c.patient_id = $${params.length}`);
   }
   if (criteria.createdBy !== undefined) {
     params.push(criteria.createdBy);

@@ -126,7 +126,7 @@ describe('fechamento de proposta invalida o cache de analytics', () => {
     expect(depois.byStatus.ganho.count).toBe(1);
   });
 
-  it('a invalidacao respeita o tenant: fechar no Lab A nao toca no cache do Lab B', async () => {
+  it('a invalidacao respeita o tenant: fechar no Lab A limpa A e nao toca em B', async () => {
     const labB = await createTenant({ slug: 'lab-b', name: 'Lab B', db });
     const gestorB = await createUser({ tenantId: labB.id, role: 'manager', db });
 
@@ -138,21 +138,29 @@ describe('fechamento de proposta invalida o cache de analytics', () => {
       db,
     });
 
-    // Aquece o cache do Lab B.
-    await analytics.getConversionFunnel(ctxOf({ ...gestorB, discountLimit: 30 }), {});
-    const chaveB = await harness.cache.get(`${cachePrefix(labB.id)}all:pipeline:now`);
-    await analytics.getPipelineSnapshot(ctxOf({ ...gestorB, discountLimit: 30 }));
-    expect(chaveB).toBeNull();
+    const chaveA = `${cachePrefix(lab.id)}all:pipeline:now`;
+    const chaveB = `${cachePrefix(labB.id)}all:pipeline:now`;
 
-    const antesDeFechar = await harness.cache.get(`${cachePrefix(labB.id)}all:pipeline:now`);
-    expect(antesDeFechar).not.toBeNull();
+    // Aquece as DUAS entradas: a de A e o CONTROLE POSITIVO deste teste.
+    // Sem ela o teste provaria apenas "nao mexeu em B" — o que continua
+    // verdadeiro com a invalidacao DESLIGADA, e por isso nao provava nada
+    // (achado do Validador-Verificacao da Onda 5).
+    await analytics.getPipelineSnapshot(ctxOf({ ...gestor, discountLimit: 30 }));
+    await analytics.getPipelineSnapshot(ctxOf({ ...gestorB, discountLimit: 30 }));
+
+    const antesA = await harness.cache.get(chaveA);
+    const antesB = await harness.cache.get(chaveB);
+    expect(antesA).not.toBeNull();
+    expect(antesB).not.toBeNull();
 
     await fechar(proposta.id);
 
-    // A entrada do Lab B continua exatamente onde estava.
-    const depoisDeFechar = await harness.cache.get(`${cachePrefix(labB.id)}all:pipeline:now`);
-    expect(depoisDeFechar).toEqual(antesDeFechar);
+    // Controle positivo: a entrada do Lab A SUMIU — a invalidacao aconteceu.
+    expect(await harness.cache.get(chaveA)).toBeNull();
+    // E a do Lab B continua exatamente onde estava.
+    expect(await harness.cache.get(chaveB)).toEqual(antesB);
   });
+
 });
 
 describe('as outras mutacoes de proposta tambem invalidam', () => {

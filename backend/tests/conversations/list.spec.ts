@@ -10,6 +10,7 @@ import { conversationModule } from '../../src/controllers/conversation.routes.js
 import { createConversation, createTenant, createUser } from '../helpers/factories.js';
 import { createTestApp, type TestApp } from '../helpers/test-app.js';
 import { resetDatabase } from '../helpers/test-db.js';
+import { createPatient, linkConversation } from '../patients/helpers.js';
 import { seedMessage } from './helpers.js';
 
 describe('GET /conversations', () => {
@@ -57,6 +58,7 @@ describe('GET /conversations', () => {
       'id',
       'lastMessageAt',
       'lastMessagePreview',
+      'patientId',
       'patientName',
       'patientPhone',
       'status',
@@ -347,5 +349,93 @@ describe('GET /conversations/:id', () => {
       .get(`/api/v1/conversations/${doBruno.id}`)
       .set(app.auth(gestor))
       .expect(200);
+  });
+});
+
+/**
+ * `patientId` no contrato de conversa (D-079) — a porta de entrada da Ficha do
+ * Paciente. Sem este campo a tela nao tem como linkar para `/patients/:id`, e o
+ * defeito e invisivel: a resposta continua valida, so nao leva a lugar nenhum.
+ *
+ * Os tres casos que a UI depende:
+ *   1. conversa ligada  -> vem o id do paciente CERTO (nao o da conversa);
+ *   2. conversa anterior ao backfill -> `null` (a UI esconde o link);
+ *   3. o mesmo vale no detalhe (`GET /conversations/:id`), que e de onde a
+ *      coluna 3 do inbox le.
+ */
+describe('patientId na conversa (D-079)', () => {
+  let app: TestApp;
+
+  beforeAll(async () => {
+    app = await createTestApp({ modules: [conversationModule] });
+  });
+
+  beforeEach(async () => {
+    await resetDatabase();
+  });
+
+  it('listagem: devolve o id do paciente ligado e null para conversa sem paciente', async () => {
+    const tenant = await createTenant();
+    const attendant = await createUser({ tenantId: tenant.id, role: 'attendant' });
+
+    const paciente = await createPatient({ tenantId: tenant.id, name: 'Carla Dias' });
+    const outro = await createPatient({ tenantId: tenant.id, name: 'Outro Paciente' });
+    const comFicha = await createConversation({
+      tenantId: tenant.id,
+      assignedTo: attendant.id,
+      patientName: 'Carla Dias',
+    });
+    await linkConversation(comFicha.id, paciente.id);
+
+    // Conversa anterior ao backfill: existe, mas nunca foi religada.
+    const semFicha = await createConversation({
+      tenantId: tenant.id,
+      assignedTo: attendant.id,
+      patientName: 'Legado',
+    });
+
+    const response = await app.agent
+      .get('/api/v1/conversations?limit=100')
+      .set(app.auth(attendant))
+      .expect(200);
+
+    const byId = new Map<string, string | null>(
+      (response.body.conversations as Array<{ id: string; patientId: string | null }>).map(
+        (item) => [item.id, item.patientId],
+      ),
+    );
+
+    expect(byId.get(comFicha.id)).toBe(paciente.id);
+    // O id do PACIENTE, nao o da conversa nem o de qualquer outro cadastro.
+    expect(byId.get(comFicha.id)).not.toBe(comFicha.id);
+    expect(byId.get(comFicha.id)).not.toBe(outro.id);
+    expect(byId.get(semFicha.id)).toBeNull();
+  });
+
+  it('detalhe: mesmo campo, mesmo valor (a coluna 3 le daqui)', async () => {
+    const tenant = await createTenant();
+    const attendant = await createUser({ tenantId: tenant.id, role: 'attendant' });
+    const paciente = await createPatient({ tenantId: tenant.id, name: 'Carla Dias' });
+    const conversation = await createConversation({
+      tenantId: tenant.id,
+      assignedTo: attendant.id,
+    });
+    await linkConversation(conversation.id, paciente.id);
+
+    const ligada = await app.agent
+      .get(`/api/v1/conversations/${conversation.id}`)
+      .set(app.auth(attendant))
+      .expect(200);
+    expect(ligada.body.conversation.patientId).toBe(paciente.id);
+
+    const semPaciente = await createConversation({
+      tenantId: tenant.id,
+      assignedTo: attendant.id,
+    });
+    const solta = await app.agent
+      .get(`/api/v1/conversations/${semPaciente.id}`)
+      .set(app.auth(attendant))
+      .expect(200);
+    expect(solta.body.conversation.patientId).toBeNull();
   });
 });

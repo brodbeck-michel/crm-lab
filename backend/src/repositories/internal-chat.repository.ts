@@ -23,6 +23,9 @@ interface ChannelRow {
   name: string;
   kind: string;
   last_message_at: unknown;
+  /** Ausente nas leituras internas (`ensureChannel`), que nao servem a tela. */
+  last_read_at?: unknown;
+  unread_count?: number | string | null;
 }
 
 interface MessageRow {
@@ -42,9 +45,10 @@ export function mapChannel(row: ChannelRow): Channel {
     key: row.key,
     name: row.name,
     kind: row.kind === 'dm' ? 'dm' : 'channel',
-    // Nao ha tabela de leitura por usuario no schema: o contador nasce em 0.
-    // Ver D-044 em docs/DECISIONS.md.
-    unreadCount: 0,
+    // Derivado de `channel_reads` a cada leitura, nunca materializado
+    // (D-068 / SCHEMA.md §17 — supera o `0` fixo de D-044).
+    unreadCount: Number(row.unread_count ?? 0),
+    lastReadAt: toIsoOrNull(row.last_read_at ?? null),
     lastMessageAt: toIsoOrNull(row.last_message_at),
   };
 }
@@ -62,28 +66,73 @@ export function mapMessage(row: MessageRow): InternalMessage {
   };
 }
 
-export async function listChannels(tx: DbTx): Promise<Channel[]> {
+/**
+ * SELECT canonico do canal PARA UM USUARIO (SCHEMA.md §17, D-068).
+ *
+ * `$1` e o id do usuario que pergunta: `last_read_at` vem da linha DELE em
+ * `channel_reads` (ausente = nunca abriu -> `-infinity`, tudo conta) e o
+ * `unread_count` ignora o que ele mesmo escreveu. Mensagem de sistema
+ * (`sender_id IS NULL`) CONTA de proposito — o pedido de aprovacao em
+ * `#aprovacoes` e justamente o que precisa piscar.
+ *
+ * `IS DISTINCT FROM` (e nao `<>`) porque `sender_id` e anulavel: com `<>` a
+ * comparacao viraria NULL na mensagem de sistema e ela deixaria de contar.
+ */
+const SELECT_CHANNEL_FOR_USER = `
+  SELECT ch.id, ch.key, ch.name, ch.kind,
+         MAX(m.created_at) AS last_message_at,
+         r.last_read_at,
+         COUNT(*) FILTER (
+           WHERE m.created_at > COALESCE(r.last_read_at, '-infinity'::timestamp)
+             AND m.sender_id IS DISTINCT FROM $1::uuid
+         )::int AS unread_count
+    FROM internal_channels ch
+    LEFT JOIN channel_reads r ON r.channel_id = ch.id AND r.user_id = $1::uuid
+    LEFT JOIN internal_messages m ON m.channel_id = ch.id`;
+
+const GROUP_CHANNEL = 'GROUP BY ch.id, ch.key, ch.name, ch.kind, r.last_read_at';
+
+export async function listChannels(tx: DbTx, userId: string): Promise<Channel[]> {
   const result = await tx.query<ChannelRow>(
-    `SELECT ch.id, ch.key, ch.name, ch.kind,
-            (SELECT MAX(m.created_at) FROM internal_messages m WHERE m.channel_id = ch.id)
-              AS last_message_at
-       FROM internal_channels ch
-      ORDER BY ch.kind ASC, ch.key ASC`,
+    `${SELECT_CHANNEL_FOR_USER}
+     ${GROUP_CHANNEL}
+     ORDER BY ch.kind ASC, ch.key ASC`,
+    [userId],
   );
   return result.rows.map(mapChannel);
 }
 
-export async function findChannelById(tx: DbTx, id: string): Promise<Channel | null> {
+export async function findChannelById(
+  tx: DbTx,
+  id: string,
+  userId: string,
+): Promise<Channel | null> {
   const result = await tx.query<ChannelRow>(
-    `SELECT ch.id, ch.key, ch.name, ch.kind,
-            (SELECT MAX(m.created_at) FROM internal_messages m WHERE m.channel_id = ch.id)
-              AS last_message_at
-       FROM internal_channels ch
-      WHERE ch.id = $1`,
-    [id],
+    `${SELECT_CHANNEL_FOR_USER}
+      WHERE ch.id = $2
+     ${GROUP_CHANNEL}`,
+    [userId, id],
   );
   const row = result.rows[0];
   return row ? mapChannel(row) : null;
+}
+
+/**
+ * Marca o canal como lido AGORA para o usuario (D-068).
+ *
+ * Idempotente por construcao: `ON CONFLICT` sem leitura previa. Nao ha
+ * `SELECT` antes — duas chamadas simultaneas nao podem duplicar a linha.
+ */
+export async function markChannelRead(
+  tx: DbTx,
+  input: { tenantId: string; channelId: string; userId: string },
+): Promise<void> {
+  await tx.query(
+    `INSERT INTO channel_reads (tenant_id, channel_id, user_id, last_read_at)
+     VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (channel_id, user_id) DO UPDATE SET last_read_at = NOW()`,
+    [input.tenantId, input.channelId, input.userId],
+  );
 }
 
 export async function findChannelByKey(tx: DbTx, key: string): Promise<Channel | null> {
@@ -165,7 +214,18 @@ export interface MessagePage {
   total: number;
 }
 
-/** Pagina de mensagens em ordem cronologica (a mais antiga primeiro). */
+/**
+ * Fatia do historico contada A PARTIR DO FIM (D-069).
+ *
+ * `page=1` e o bloco das mensagens MAIS RECENTES; `page=2`, o imediatamente
+ * anterior. Dentro da pagina os itens seguem em ordem cronologica crescente —
+ * a paginacao escolhe QUAL fatia, nao a ordem dos itens.
+ *
+ * O `OFFSET` bruto e `total - page * limit`. Quando negativo, a pagina esbarra
+ * no comeco do historico: o offset vira 0 e o LIMIT encolhe para o resto (a
+ * pagina mais antiga e a unica que pode vir com menos itens que `limit`).
+ * Pagina alem do fim devolve lista vazia, sem tocar no banco.
+ */
 export async function listMessages(
   tx: DbTx,
   channelId: string,
@@ -177,12 +237,16 @@ export async function listMessages(
   );
   const total = Number(counted.rows[0]?.total ?? 0);
 
-  const offset = (page.page - 1) * page.limit;
+  const rawOffset = total - page.page * page.limit;
+  const offset = Math.max(0, rawOffset);
+  const limit = rawOffset >= 0 ? page.limit : Math.max(0, page.limit + rawOffset);
+  if (limit === 0) return { rows: [], total };
+
   const result = await tx.query<MessageRow>(
     `${SELECT_MESSAGE} WHERE m.channel_id = $1
       ORDER BY m.created_at ASC, m.id ASC
       LIMIT $2 OFFSET $3`,
-    [channelId, page.limit, offset],
+    [channelId, limit, offset],
   );
   return { rows: result.rows.map(mapMessage), total };
 }

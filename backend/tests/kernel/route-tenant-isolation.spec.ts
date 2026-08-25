@@ -26,16 +26,22 @@ import type {
   ListChannelsResponse,
   ListConversationsResponse,
   ListExamsResponse,
+  ChannelSettingsResponse,
+  ListPatientsResponse,
   ListProposalsResponse,
   ListUsersResponse,
+  OperationOverviewResponse,
   PipelineSnapshot,
   TeamReport,
 } from '@crm-lab/shared';
 import { analyticsModule } from '../../src/controllers/analytics.routes.js';
 import { auditModule } from '../../src/controllers/audit.routes.js';
+import { channelSettingsModule } from '../../src/controllers/channel-settings.routes.js';
 import { conversationModule } from '../../src/controllers/conversation.routes.js';
 import { examModule } from '../../src/controllers/exam.routes.js';
 import { internalChatModule } from '../../src/controllers/internal-chat.routes.js';
+import { operationModule } from '../../src/controllers/operation.routes.js';
+import { patientModule } from '../../src/controllers/patient.routes.js';
 import { proposalModule } from '../../src/controllers/proposal.routes.js';
 import { themeModule } from '../../src/controllers/theme.routes.js';
 import { userModule } from '../../src/controllers/user.routes.js';
@@ -52,6 +58,11 @@ import {
   type TenantRecord,
   type UserRecord,
 } from '../helpers/factories.js';
+import {
+  createPatient,
+  linkConversation,
+  type PatientRecord,
+} from '../patients/helpers.js';
 import { MemoryCache } from '../../src/lib/cache.js';
 import { FakeWsHub } from '../helpers/fake-ws.js';
 import { createTestApp, type AuthenticatableUser, type TestApp } from '../helpers/test-app.js';
@@ -61,9 +72,12 @@ import { getTestDb, resetDatabase } from '../helpers/test-db.js';
 const LAB_MODULES = [
   analyticsModule,
   auditModule,
+  channelSettingsModule,
   conversationModule,
   examModule,
   internalChatModule,
+  operationModule,
+  patientModule,
   proposalModule,
   themeModule,
   userModule,
@@ -79,8 +93,20 @@ interface Lab {
   manager: UserRecord;
   attendant: UserRecord;
   conversation: ConversationRecord;
+  /** Cadastro do paciente (D-059), ligado a `conversation`. */
+  patient: PatientRecord;
   exam: ExamRecord;
+  /** Proposta GANHA (terminal) — e a que carrega a receita nos relatorios. */
   proposal: ProposalRecord;
+  /**
+   * Proposta ABERTA e ja aprovada. Existe para que a varredura "id proprio
+   * devolve o status de SUCESSO" tenha um alvo em que mudar de estagio e
+   * mexer no desconto sao operacoes legitimas — na proposta terminal acima,
+   * as duas devolvem `409 PROPOSAL_ALREADY_CLOSED`, que nao e sucesso.
+   */
+  openProposal: ProposalRecord;
+  /** Proposta aberta AGUARDANDO alcada — alvo legitimo de approve/reject. */
+  pendingProposal: ProposalRecord;
   /** `#geral` — criado sob demanda pelo InternalChatService no primeiro GET. */
   channel: Channel;
 }
@@ -99,6 +125,19 @@ interface LabRoute {
    * varredura "id do outro tenant -> 404".
    */
   readonly addressable: boolean;
+  /**
+   * Status que a rota devolve quando o id e do PROPRIO tenant — o controle
+   * positivo do 404.
+   *
+   * Antes daqui a asserção era `not.toMatchObject({ status: 404 })`, e por isso
+   * um `500` passava: qualquer explosao interna satisfaz "nao e 404" e o
+   * isolamento parecia provado (defeito D4 da Onda 5). Agora cada rota declara
+   * o SEU status de sucesso, e ele e conferido exatamente.
+   *
+   * So faz sentido em rota enderecavel; as demais ja sao exercitadas com 200
+   * na varredura de listagens.
+   */
+  readonly ownStatus?: number;
 }
 
 /**
@@ -111,7 +150,7 @@ interface LabRoute {
 const LAB_ROUTES: readonly LabRoute[] = [
   // --- conversas ---
   { name: 'GET /conversations', method: 'get', path: () => '/api/v1/conversations', actor: 'attendant', addressable: false },
-  { name: 'GET /conversations/:id', method: 'get', path: (l) => `/api/v1/conversations/${l.conversation.id}`, actor: 'attendant', addressable: true },
+  { name: 'GET /conversations/:id', method: 'get', path: (l) => `/api/v1/conversations/${l.conversation.id}`, actor: 'attendant', addressable: true, ownStatus: 200 },
   {
     name: 'PATCH /conversations/:id',
     method: 'patch',
@@ -119,6 +158,7 @@ const LAB_ROUTES: readonly LabRoute[] = [
     body: () => ({ status: 'archived' }),
     actor: 'admin',
     addressable: true,
+    ownStatus: 200,
   },
   {
     name: 'POST /conversations/:id/messages',
@@ -127,12 +167,13 @@ const LAB_ROUTES: readonly LabRoute[] = [
     body: () => ({ content: 'sonda de isolamento' }),
     actor: 'attendant',
     addressable: true,
+    ownStatus: 201,
   },
-  { name: 'POST /conversations/:id/read', method: 'post', path: (l) => `/api/v1/conversations/${l.conversation.id}/read`, actor: 'attendant', addressable: true },
+  { name: 'POST /conversations/:id/read', method: 'post', path: (l) => `/api/v1/conversations/${l.conversation.id}/read`, actor: 'attendant', addressable: true, ownStatus: 204 },
 
   // --- propostas ---
   { name: 'GET /proposals', method: 'get', path: () => '/api/v1/proposals', actor: 'admin', addressable: false },
-  { name: 'GET /proposals/:id', method: 'get', path: (l) => `/api/v1/proposals/${l.proposal.id}`, actor: 'admin', addressable: true },
+  { name: 'GET /proposals/:id', method: 'get', path: (l) => `/api/v1/proposals/${l.proposal.id}`, actor: 'admin', addressable: true, ownStatus: 200 },
   {
     name: 'POST /proposals',
     method: 'post',
@@ -142,29 +183,45 @@ const LAB_ROUTES: readonly LabRoute[] = [
     addressable: false,
   },
   {
+    // Alvo aberto e ja aprovado: `novo_contato -> orcamento_enviado` e uma
+    // transicao legitima, entao o sucesso e 200 de verdade. Na proposta
+    // GANHA (terminal) esta rota devolve 409 PROPOSAL_ALREADY_CLOSED, que
+    // passaria no antigo `not.toMatchObject({ status: 404 })` sem provar nada.
     name: 'PATCH /proposals/:id/status',
     method: 'patch',
-    path: (l) => `/api/v1/proposals/${l.proposal.id}/status`,
+    path: (l) => `/api/v1/proposals/${l.openProposal.id}/status`,
     body: () => ({ status: 'orcamento_enviado' }),
     actor: 'admin',
     addressable: true,
+    ownStatus: 200,
   },
   {
     name: 'PATCH /proposals/:id/discount',
     method: 'patch',
-    path: (l) => `/api/v1/proposals/${l.proposal.id}/discount`,
+    path: (l) => `/api/v1/proposals/${l.openProposal.id}/discount`,
     body: () => ({ discountPercent: 5 }),
     actor: 'admin',
     addressable: true,
+    ownStatus: 200,
   },
-  { name: 'PATCH /proposals/:id/approve', method: 'patch', path: (l) => `/api/v1/proposals/${l.proposal.id}/approve`, actor: 'manager', addressable: true },
+  {
+    // Aprovar/rejeitar exige `approvalStatus: 'pending'` e um decisor que nao
+    // seja o autor (D-046) — dai o alvo ser a proposta pendente e o ator, o gestor.
+    name: 'PATCH /proposals/:id/approve',
+    method: 'patch',
+    path: (l) => `/api/v1/proposals/${l.pendingProposal.id}/approve`,
+    actor: 'manager',
+    addressable: true,
+    ownStatus: 200,
+  },
   {
     name: 'PATCH /proposals/:id/reject',
     method: 'patch',
-    path: (l) => `/api/v1/proposals/${l.proposal.id}/reject`,
+    path: (l) => `/api/v1/proposals/${l.pendingProposal.id}/reject`,
     body: () => ({ reason: 'sonda de isolamento' }),
     actor: 'manager',
     addressable: true,
+    ownStatus: 200,
   },
 
   // --- catalogo ---
@@ -185,7 +242,48 @@ const LAB_ROUTES: readonly LabRoute[] = [
     body: () => ({ isActive: false }),
     actor: 'manager',
     addressable: true,
+    ownStatus: 200,
   },
+
+  // --- pacientes (Onda 6 — D-059..D-063) ---
+  { name: 'GET /patients', method: 'get', path: () => '/api/v1/patients', actor: 'admin', addressable: false },
+  { name: 'GET /patients/:id', method: 'get', path: (l) => `/api/v1/patients/${l.patient.id}`, actor: 'admin', addressable: true, ownStatus: 200 },
+  {
+    name: 'PATCH /patients/:id',
+    method: 'patch',
+    path: (l) => `/api/v1/patients/${l.patient.id}`,
+    body: () => ({ notes: 'sonda de isolamento' }),
+    actor: 'admin',
+    addressable: true,
+    ownStatus: 200,
+  },
+  { name: 'GET /patients/:id/timeline', method: 'get', path: (l) => `/api/v1/patients/${l.patient.id}/timeline`, actor: 'admin', addressable: true, ownStatus: 200 },
+  // Exportar e anonimizar sao ADMIN (D-062/D-063): o papel e checado no
+  // service, o guard de plataforma e da rota.
+  { name: 'GET /patients/:id/export', method: 'get', path: (l) => `/api/v1/patients/${l.patient.id}/export`, actor: 'admin', addressable: true, ownStatus: 200 },
+  {
+    name: 'POST /patients/:id/anonymize',
+    method: 'post',
+    path: (l) => `/api/v1/patients/${l.patient.id}/anonymize`,
+    body: () => ({ reason: 'sonda de isolamento' }),
+    actor: 'admin',
+    addressable: true,
+    ownStatus: 200,
+  },
+
+  // --- canais & equipe (Onda 6 — D-064..D-066) ---
+  { name: 'GET /settings/channels', method: 'get', path: () => '/api/v1/settings/channels', actor: 'manager', addressable: false },
+  {
+    name: 'PATCH /settings/channels',
+    method: 'patch',
+    path: () => '/api/v1/settings/channels',
+    body: () => ({ distributionMode: 'manual' }),
+    actor: 'admin',
+    addressable: false,
+  },
+
+  // --- gestao da operacao (Onda 6 — D-067) ---
+  { name: 'GET /operations/overview', method: 'get', path: () => '/api/v1/operations/overview', actor: 'manager', addressable: false },
 
   // --- usuarios & auditoria ---
   { name: 'GET /users/me', method: 'get', path: () => '/api/v1/users/me', actor: 'attendant', addressable: false },
@@ -210,6 +308,7 @@ const LAB_ROUTES: readonly LabRoute[] = [
     body: () => ({ isActive: false }),
     actor: 'admin',
     addressable: true,
+    ownStatus: 200,
   },
   { name: 'GET /audit', method: 'get', path: () => '/api/v1/audit', actor: 'admin', addressable: false },
 
@@ -238,6 +337,15 @@ const LAB_ROUTES: readonly LabRoute[] = [
     path: (l) => `/api/v1/internal-chat/channels/${l.channel.id}/messages`,
     actor: 'attendant',
     addressable: true,
+    ownStatus: 200,
+  },
+  {
+    name: 'POST /internal-chat/channels/:id/read',
+    method: 'post',
+    path: (l) => `/api/v1/internal-chat/channels/${l.channel.id}/read`,
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 204,
   },
   {
     name: 'POST /internal-chat/channels/:id/messages',
@@ -246,6 +354,7 @@ const LAB_ROUTES: readonly LabRoute[] = [
     body: () => ({ content: 'sonda de isolamento' }),
     actor: 'attendant',
     addressable: true,
+    ownStatus: 201,
   },
 ] as const;
 
@@ -258,6 +367,8 @@ let operator: UserRecord;
 /** Marcadores que jamais podem aparecer numa resposta do outro tenant. */
 const BETA_SECRETS = {
   patient: 'Paciente Confidencial Beta',
+  /** Anotacao interna do cadastro (D-059): so a ficha do Beta pode mostrar. */
+  notes: 'Anotacao Confidencial Beta',
   exam: 'Exame Confidencial Beta',
   user: 'Bruno Confidencial Beta',
   revenue: 4321.99,
@@ -288,6 +399,17 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     pricePrivate: secret ? BETA_SECRETS.revenue : 100,
     db,
   });
+  // O cadastro do paciente (D-059) e a conversa apontando para ele — e o que
+  // a migracao 003 faz no backfill, e o que a ficha e a timeline leem.
+  const patient = await createPatient({
+    tenantId: tenant.id,
+    phone: conversation.patientPhone,
+    name: secret ? BETA_SECRETS.patient : `Paciente ${prefix}`,
+    notes: secret ? BETA_SECRETS.notes : null,
+    db,
+  });
+  await linkConversation(conversation.id, patient.id, { db });
+
   const proposal = await createProposal({
     tenantId: tenant.id,
     conversationId: conversation.id,
@@ -295,6 +417,30 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     status: 'ganho',
     approvalStatus: 'pending',
     totalPrice: secret ? BETA_SECRETS.revenue : 100,
+    items: [{ examId: exam.id, examName: exam.name, unitPrice: secret ? BETA_SECRETS.revenue : 100 }],
+    db,
+  });
+
+  // Alvos do controle positivo do 404 (ver `LabRoute.ownStatus`): a proposta
+  // ganha acima e terminal, e mudar estagio ou desconto nela devolve 409.
+  const openProposal = await createProposal({
+    tenantId: tenant.id,
+    conversationId: conversation.id,
+    createdBy: attendant.id,
+    status: 'novo_contato',
+    approvalStatus: 'approved',
+    totalPrice: secret ? BETA_SECRETS.revenue : 100,
+    items: [{ examId: exam.id, examName: exam.name, unitPrice: secret ? BETA_SECRETS.revenue : 100 }],
+    db,
+  });
+  const pendingProposal = await createProposal({
+    tenantId: tenant.id,
+    conversationId: conversation.id,
+    createdBy: attendant.id,
+    status: 'novo_contato',
+    discountPercent: 25,
+    approvalStatus: 'pending',
+    totalPrice: secret ? BETA_SECRETS.revenue : 75,
     items: [{ examId: exam.id, examName: exam.name, unitPrice: secret ? BETA_SECRETS.revenue : 100 }],
     db,
   });
@@ -308,7 +454,19 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
   const channel = list[0];
   if (!channel) throw new Error(`Nenhum canal interno criado para ${prefix}`);
 
-  return { tenant, admin, manager, attendant, conversation, exam, proposal, channel };
+  return {
+    tenant,
+    admin,
+    manager,
+    attendant,
+    conversation,
+    patient,
+    exam,
+    proposal,
+    openProposal,
+    pendingProposal,
+    channel,
+  };
 }
 
 function actorOf(lab: Lab, actor: Actor): AuthenticatableUser {
@@ -378,8 +536,10 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 29 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
-    expect(LAB_ROUTES).toHaveLength(29);
+  it('sao 39 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+    // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
+    // `GET /operations/overview`.
+    expect(LAB_ROUTES).toHaveLength(39);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)
@@ -413,21 +573,45 @@ describe('recurso do tenant B enderecado por um usuario do tenant A', () => {
       // Nem o nome, nem o preco, nem o total do tenant B aparecem no erro.
       const serialized = JSON.stringify(response.body);
       expect(serialized).not.toContain(BETA_SECRETS.patient);
+      expect(serialized).not.toContain(BETA_SECRETS.notes);
       expect(serialized).not.toContain(BETA_SECRETS.exam);
       expect(serialized).not.toContain(BETA_SECRETS.user);
       expect(serialized).not.toContain(String(BETA_SECRETS.revenue));
     });
   }
 
-  it('a mesma rota com o id do PROPRIO tenant nao devolve 404 — o 404 e do isolamento, nao da rota', async () => {
-    for (const route of addressable) {
+  /*
+   * CONTROLE POSITIVO DO 404 (defeito D4 da Onda 5).
+   *
+   * A versao anterior era um laco unico com
+   * `expect({ status }).not.toMatchObject({ status: 404 })`. Duas falhas:
+   *  (a) "nao e 404" aceita QUALQUER coisa — um 500 passava, e a suite dizia
+   *      que o 404 vinha do isolamento quando na verdade a rota estava quebrada;
+   *  (b) o laco reusava o MESMO laboratorio, entao aprovar antes de rejeitar
+   *      deixava a segunda chamada com o estado ja consumido.
+   *
+   * Agora cada rota e um caso proprio (portanto um `beforeEach` proprio, com
+   * laboratorio novo) e afirma o SEU status de sucesso, declarado em
+   * `ownStatus`.
+   */
+  for (const route of addressable) {
+    it(`${route.name} com o id do PROPRIO tenant devolve ${route.ownStatus} — o 404 e do isolamento, nao da rota`, async () => {
       const headers = app.auth(actorOf(alfa, route.actor));
       const response = await call(route, alfa, headers, alfa);
-      expect({ route: route.name, status: response.status }).not.toMatchObject({
-        route: route.name,
-        status: 404,
-      });
-    }
+
+      expect(
+        { route: route.name, status: response.status, body: response.body as unknown },
+      ).toMatchObject({ route: route.name, status: route.ownStatus });
+    });
+  }
+
+  it('toda rota enderecavel declara o status de sucesso que espera', () => {
+    // Sem isto, uma rota nova sem `ownStatus` cairia em
+    // `toMatchObject({ status: undefined })`, que passa com qualquer status.
+    const semDeclaracao = addressable
+      .filter((route) => route.ownStatus === undefined)
+      .map((route) => route.name);
+    expect(semDeclaracao).toEqual([]);
   });
 
   it('POST /proposals com conversa do tenant B devolve 404', async () => {
@@ -506,7 +690,47 @@ describe('listagens e relatorios do tenant A', () => {
   it('GET /proposals lista so as propostas de A', async () => {
     const response = await app.agent.get('/api/v1/proposals').set(app.auth(alfa.admin)).expect(200);
     const body = response.body as ListProposalsResponse;
-    expect(body.proposals.map((p) => p.id)).toEqual([alfa.proposal.id]);
+    expect(body.proposals.map((p) => p.id).sort()).toEqual(
+      [alfa.proposal.id, alfa.openProposal.id, alfa.pendingProposal.id].sort(),
+    );
+  });
+
+  it('GET /patients lista so os pacientes de A', async () => {
+    const response = await app.agent.get('/api/v1/patients').set(app.auth(alfa.admin)).expect(200);
+    const body = response.body as ListPatientsResponse;
+    expect(body.patients.map((p) => p.id)).toEqual([alfa.patient.id]);
+    expect(JSON.stringify(body)).not.toContain(BETA_SECRETS.notes);
+  });
+
+  it('busca de paciente pelo telefone do outro tenant nao acha nada', async () => {
+    const response = await app.agent
+      .get(`/api/v1/patients?search=${encodeURIComponent(beta.patient.phone)}`)
+      .set(app.auth(alfa.admin))
+      .expect(200);
+    expect((response.body as ListPatientsResponse).patients).toHaveLength(0);
+  });
+
+  it('GET /settings/channels e GET /operations/overview so enxergam A', async () => {
+    const canais = await app.agent
+      .get('/api/v1/settings/channels')
+      .set(app.auth(alfa.admin))
+      .expect(200);
+    const equipe = (canais.body as ChannelSettingsResponse).team.map((m) => m.id).sort();
+    expect(equipe).toEqual([alfa.admin.id, alfa.manager.id, alfa.attendant.id].sort());
+
+    const operacao = await app.agent
+      .get('/api/v1/operations/overview')
+      .set(app.auth(alfa.manager))
+      .expect(200);
+    const overview = operacao.body as OperationOverviewResponse;
+    expect(overview.workload.map((row) => row.userId)).not.toContain(beta.attendant.id);
+    expect(overview.queue.items.map((item) => item.conversationId)).not.toContain(
+      beta.conversation.id,
+    );
+    expect(overview.pendingDecisions.items.map((item) => item.proposalId)).not.toContain(
+      beta.pendingProposal.id,
+    );
+    expect(JSON.stringify(overview)).not.toContain(BETA_SECRETS.patient);
   });
 
   it('GET /exams lista so o catalogo de A', async () => {

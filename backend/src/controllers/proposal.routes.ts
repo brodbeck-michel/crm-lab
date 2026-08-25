@@ -45,6 +45,8 @@ export const listProposalsQuerySchema = z.object({
   /** Lista separada por virgula: `?status=novo_contato,orcamento_enviado`. */
   status: z.string().max(200).optional(),
   conversationId: z.string().uuid().optional(),
+  /** `?patientId=` — propostas do paciente (D-060). */
+  patientId: z.string().uuid().optional(),
   createdBy: z.string().uuid().optional(),
   startDate: z.string().min(4).max(40).optional(),
   endDate: z.string().min(4).max(40).optional(),
@@ -204,11 +206,12 @@ export function approveProposal(services: ProposalModuleServices): RequestHandle
     const { id } = validated<{ id: string }>(req, 'params');
     await services.approvals.approve(ctx, id);
     const detail = await services.proposals.getById(ctx, id);
+    // Projecao parcial registrada na tabela de excecoes de D-070. Sem `message`:
+    // texto de UI e do frontend (i18n), e `approvalStatus` ja diz o que houve.
     res.status(200).json({
       id: detail.id,
       approvalStatus: detail.approvalStatus,
       approvedAt: detail.approvedAt,
-      message: 'Proposta aprovada com sucesso',
     });
   });
 }
@@ -220,11 +223,11 @@ export function rejectProposal(services: ProposalModuleServices): RequestHandler
     const dto = validated<RejectBody>(req, 'body');
     await services.approvals.reject(ctx, id, dto.reason);
     const detail = await services.proposals.getById(ctx, id);
+    // Simetrico a /approve: projecao parcial, sem texto de UI (ver D-070).
     res.status(200).json({
       id: detail.id,
       approvalStatus: detail.approvalStatus,
       approvedAt: detail.approvedAt,
-      message: 'Proposta rejeitada',
     });
   });
 }

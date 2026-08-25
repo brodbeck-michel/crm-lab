@@ -19,6 +19,9 @@ export function testCredentialsResolver(
     apiUrl: '',
     apiToken: '',
     webhookSecret: TEST_WEBHOOK_SECRET,
+    // Canal ligado e token nunca revogado: o cenario default (D-074).
+    isActive: true,
+    apiTokenRevoked: false,
   });
   return {
     forTenant: async (tenantId) => build(tenantId),

@@ -3,6 +3,7 @@
  *
  * O bloco "isolamento multitenant" e BLOQUEANTE de release (TESTING.md).
  */
+import { randomUUID } from 'node:crypto';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { ALLOWED_TRANSITIONS, type ApiErrorBody, type ListProposalsResponse, type ProposalDetail } from '@crm-lab/shared';
 import type { DbClient } from '../../src/db/types.js';
@@ -87,6 +88,31 @@ describe('/api/v1/proposals', () => {
   // -------------------------------------------------------------------------
   // POST /proposals
   // -------------------------------------------------------------------------
+
+  /**
+   * Cria um paciente e o liga a conversa (D-059/D-060). Feito com SQL direto
+   * de proposito: a fabrica de pacientes e do Agent-API-Patients, e este teste
+   * so precisa do vinculo `conversations.patient_id` que o filtro resolve.
+   */
+  async function vincularPaciente(
+    tenantId: string,
+    conversationId: string,
+    phone: string,
+  ): Promise<string> {
+    const patientId = randomUUID();
+    await db.withoutTenant(async (tx) => {
+      await tx.query(
+        'INSERT INTO patients (id, tenant_id, name, phone) VALUES ($1, $2, $3, $4)',
+        [patientId, tenantId, `Paciente ${phone}`, phone],
+      );
+      await tx.query('UPDATE conversations SET patient_id = $1 WHERE id = $2', [
+        patientId,
+        conversationId,
+      ]);
+    });
+    return patientId;
+  }
+
   describe('POST /proposals', () => {
     it('cria proposta e devolve o shape de API_CONTRACTS.md', async () => {
       const c = await cenario();
@@ -234,6 +260,97 @@ describe('/api/v1/proposals', () => {
         .set(app.auth(c.manager))
         .expect(200);
       expect((porConversa.body as ListProposalsResponse).proposals).toHaveLength(1);
+    });
+
+    // ?patientId= — D-060: a ficha do paciente lista as propostas por aqui.
+    it('filtra por patientId (conversations.patient_id, D-060)', async () => {
+      const c = await cenario();
+      const outraConversa = await createConversation({ tenantId: c.tenantId });
+      const paciente = await vincularPaciente(c.tenantId, c.conversationId, '+5548999990001');
+      await vincularPaciente(c.tenantId, outraConversa.id, '+5548999990002');
+
+      await createProposal({
+        tenantId: c.tenantId,
+        createdBy: c.attendant.id,
+        conversationId: c.conversationId,
+      });
+      await createProposal({
+        tenantId: c.tenantId,
+        createdBy: c.attendant.id,
+        conversationId: outraConversa.id,
+      });
+
+      const response = await app.agent
+        .get(`/api/v1/proposals?patientId=${paciente}`)
+        .set(app.auth(c.manager))
+        .expect(200);
+      const body = response.body as ListProposalsResponse;
+      expect(body.proposals).toHaveLength(1);
+      expect(body.proposals[0]?.conversationId).toBe(c.conversationId);
+      expect(body.pagination.total).toBe(1);
+    });
+
+    it('patientId respeita o recorte por papel: atendente so ve as proprias (D-042)', async () => {
+      const c = await cenario();
+      const paciente = await vincularPaciente(c.tenantId, c.conversationId, '+5548999990003');
+      await createProposal({
+        tenantId: c.tenantId,
+        createdBy: c.manager.id,
+        conversationId: c.conversationId,
+      });
+
+      // O gestor ve a proposta do paciente...
+      const doGestor = await app.agent
+        .get(`/api/v1/proposals?patientId=${paciente}`)
+        .set(app.auth(c.manager))
+        .expect(200);
+      expect((doGestor.body as ListProposalsResponse).proposals).toHaveLength(1);
+
+      // ...e o atendente, que nao a criou, ve lista vazia na MESMA ficha.
+      const doAtendente = await app.agent
+        .get(`/api/v1/proposals?patientId=${paciente}`)
+        .set(app.auth(c.attendant))
+        .expect(200);
+      expect((doAtendente.body as ListProposalsResponse).proposals).toHaveLength(0);
+    });
+
+    it('patientId de outro tenant -> lista VAZIA, nao 404 (filtro nao e oraculo)', async () => {
+      const c = await cenario();
+      await createProposal({
+        tenantId: c.tenantId,
+        createdBy: c.attendant.id,
+        conversationId: c.conversationId,
+      });
+
+      const outro = await createTenant();
+      const conversaAlheia = await createConversation({ tenantId: outro.id });
+      const pacienteAlheio = await vincularPaciente(
+        outro.id,
+        conversaAlheia.id,
+        '+5548999990004',
+      );
+
+      const response = await app.agent
+        .get(`/api/v1/proposals?patientId=${pacienteAlheio}`)
+        .set(app.auth(c.manager))
+        .expect(200);
+      expect((response.body as ListProposalsResponse).proposals).toHaveLength(0);
+
+      // Paciente que nao existe em lugar nenhum: mesma resposta.
+      const inexistente = await app.agent
+        .get(`/api/v1/proposals?patientId=${randomUUID()}`)
+        .set(app.auth(c.manager))
+        .expect(200);
+      expect((inexistente.body as ListProposalsResponse).proposals).toHaveLength(0);
+    });
+
+    it('patientId nao-uuid -> VALIDATION_ERROR', async () => {
+      const c = await cenario();
+      const response = await app.agent
+        .get('/api/v1/proposals?patientId=nao-e-uuid')
+        .set(app.auth(c.manager))
+        .expect(400);
+      expect((response.body as ApiErrorBody).error.code).toBe('VALIDATION_ERROR');
     });
 
     it('status invalido na query -> VALIDATION_ERROR', async () => {
@@ -429,11 +546,11 @@ describe('/api/v1/proposals', () => {
         .set(app.auth(c.manager))
         .expect(200);
 
+      // Projecao parcial de D-070, sem texto de UI em pt-BR.
       expect(Object.keys(response.body as object).sort()).toEqual([
         'approvalStatus',
         'approvedAt',
         'id',
-        'message',
       ]);
       expect((response.body as { approvalStatus: string }).approvalStatus).toBe('approved');
     });

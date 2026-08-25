@@ -35,6 +35,7 @@ import type {
   ConversationStatus,
 } from '@crm-lab/shared';
 import type { DbClient, DbTx } from '../db/types.js';
+import { upsertPatientByPhone } from './patient.repository.js';
 import { toIso, toIsoOrNull, toNumber } from './row-mappers.js';
 
 /** Colunas ordenaveis expostas na query string -> coluna real (whitelist). */
@@ -68,6 +69,7 @@ const phoneDigitsSql = (column: string): string => `regexp_replace(${column}, '[
 
 interface ConversationRow {
   id: string;
+  patient_id: string | null;
   patient_name: string | null;
   patient_phone: string;
   patient_email: string | null;
@@ -83,7 +85,7 @@ interface ConversationRow {
   created_at: Date | string;
 }
 
-const LIST_COLUMNS = `c.id, c.patient_name, c.patient_phone, c.patient_email, c.assigned_to,
+const LIST_COLUMNS = `c.id, c.patient_id, c.patient_name, c.patient_phone, c.patient_email, c.assigned_to,
        u.name AS assigned_to_name, c.channel, c.status, c.unread_count, c.last_message_at,
        c.tags, c.custom_fields, c.created_at, lm.content AS last_message_preview`;
 
@@ -142,6 +144,9 @@ function toStatus(value: string): ConversationStatus {
 export function toConversation(row: ConversationRow): Conversation {
   return {
     id: row.id,
+    // Porta de entrada da Ficha do Paciente (D-079). `null` em conversa anterior
+    // ao backfill da 003 que ainda nao passou por `findOrCreateByPhone` (D-072).
+    patientId: row.patient_id,
     patientName: row.patient_name,
     patientPhone: row.patient_phone,
     assignedTo: row.assigned_to,
@@ -305,27 +310,68 @@ export class ConversationRepository {
    * Acha pelo telefone ou cria. Roda dentro de UMA transacao: entre o SELECT e
    * o INSERT nao ha janela para duas mensagens do mesmo paciente criarem duas
    * conversas.
+   *
+   * -------------------------------------------------------------------------
+   * PACIENTE E CONVERSA NASCEM JUNTOS (D-059/D-072)
+   * -------------------------------------------------------------------------
+   * Antes desta mudanca so o backfill da migracao 003 preenchia
+   * `conversations.patient_id`: toda conversa criada pelo webhook DEPOIS da
+   * migracao ficava com `patient_id NULL` e o paciente nunca aparecia em
+   * `/patients/:id`.
+   *
+   * A ligacao acontece na MESMA transacao que cria a conversa — por isso a
+   * chamada e a `upsertPatientByPhone(tx, ...)` (funcao de repositorio sobre a
+   * transacao aberta) e nao a `PatientService`/`PatientRepository`, que abririam
+   * um segundo `withTenant`: transacao nao aninha e o driver de teste tem uma
+   * conexao so (D-008). Mesmo caminho ja adotado em
+   * `proposal.repository.findConversation`.
+   *
+   * Conversa PREEXISTENTE sem `patient_id` tambem e religada aqui: e o unico
+   * ponto por onde o canal passa, e deixar a ligacao so no backfill repetiria o
+   * bug para toda base migrada antes de um contato novo.
    */
   async findOrCreateByPhone(
     tenantId: string,
     data: ConversationInsert,
   ): Promise<{ conversation: ConversationDetail; created: boolean }> {
     return this.db.withTenant(tenantId, async (tx) => {
-      const foundId = await selectIdByPhone(tx, data.patientPhone);
-      if (foundId) {
-        const conversation = await selectDetail(tx, foundId);
+      const found = await selectByPhone(tx, data.patientPhone);
+      if (found) {
+        // O telefone do cadastro sai da PROPRIA conversa, nao do payload: a
+        // busca casa por digitos ("+55 11 9..." acha "5511 9..."), e usar a
+        // string crua do canal criaria um segundo paciente para o mesmo numero.
+        const patient = await upsertPatientByPhone(
+          tx,
+          tenantId,
+          found.patientPhone,
+          data.patientName ?? null,
+        );
+        await tx.query(
+          `UPDATE conversations SET patient_id = $1
+            WHERE id = $2 AND patient_id IS DISTINCT FROM $1`,
+          [patient.id, found.id],
+        );
+        const conversation = await selectDetail(tx, found.id);
         if (!conversation) throw new Error('conversa desapareceu dentro da transacao');
         return { conversation, created: false };
       }
 
+      const patient = await upsertPatientByPhone(
+        tx,
+        tenantId,
+        data.patientPhone,
+        data.patientName ?? null,
+      );
+
       const inserted = await tx.query<{ id: string }>(
         `INSERT INTO conversations
-           (tenant_id, patient_phone, patient_name, patient_email, channel, status,
+           (tenant_id, patient_id, patient_phone, patient_name, patient_email, channel, status,
             unread_count, last_message_at)
-         VALUES ($1, $2, $3, $4, $5, 'active', 0, NOW())
+         VALUES ($1, $2, $3, $4, $5, $6, 'active', 0, NOW())
          RETURNING id`,
         [
           tenantId,
+          patient.id,
           data.patientPhone,
           data.patientName ?? null,
           data.patientEmail ?? null,
@@ -440,15 +486,23 @@ export class ConversationRepository {
   }
 }
 
-async function selectIdByPhone(tx: DbTx, phone: string): Promise<string | null> {
-  const found = await tx.query<{ id: string }>(
-    `SELECT id FROM conversations
+async function selectByPhone(
+  tx: DbTx,
+  phone: string,
+): Promise<{ id: string; patientPhone: string } | null> {
+  const found = await tx.query<{ id: string; patient_phone: string }>(
+    `SELECT id, patient_phone FROM conversations
      WHERE ${phoneDigitsSql('patient_phone')} = $1
      ORDER BY created_at DESC, id ASC
      LIMIT 1`,
     [phoneDigits(phone)],
   );
-  return found.rows[0]?.id ?? null;
+  const row = found.rows[0];
+  return row ? { id: row.id, patientPhone: row.patient_phone } : null;
+}
+
+async function selectIdByPhone(tx: DbTx, phone: string): Promise<string | null> {
+  return (await selectByPhone(tx, phone))?.id ?? null;
 }
 
 /** SELECT de uma conversa completa dentro de uma transacao ja com tenant. */

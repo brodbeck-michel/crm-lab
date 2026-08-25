@@ -170,6 +170,12 @@ export class ConversationService {
    * Ponto de entrada do webhook (WORKFLOWS §1): acha a conversa do telefone ou
    * cria uma nova, ja na fila nao atribuida.
    *
+   * A conversa nasce JA LIGADA ao paciente (`conversations.patient_id`, D-059):
+   * o repositorio cria/reaproveita a linha de `patients` dentro da MESMA
+   * transacao. Chamar o `PatientService` daqui abriria uma segunda transacao
+   * (D-008: o driver de teste tem uma conexao so), entao a ligacao mora no
+   * repositorio — ver `conversation.repository.findOrCreateByPhone`.
+   *
    * Recebe `tenantId` e nao `TenantContext` porque quem chama e o canal
    * externo, sem usuario logado — a assinatura de SERVICES.md §2.
    */

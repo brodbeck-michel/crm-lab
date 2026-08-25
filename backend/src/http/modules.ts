@@ -31,6 +31,9 @@ import { proposalModule } from '../controllers/proposal.routes.js';
 import { internalChatModule } from '../controllers/internal-chat.routes.js';
 import { conversationModule } from '../controllers/conversation.routes.js';
 import { webhookModule } from '../controllers/webhook.routes.js';
+import { channelSettingsModule } from '../controllers/channel-settings.routes.js';
+import { operationModule } from '../controllers/operation.routes.js';
+import { patientModule } from '../controllers/patient.routes.js';
 
 export const apiModuleFactories: ApiModuleFactory[] = [
   examModule, // GET/POST/PATCH /exams — API_CONTRACTS.md §4
@@ -44,5 +47,8 @@ export const apiModuleFactories: ApiModuleFactory[] = [
   internalChatModule, // GET|POST /internal-chat/channels[/:id/messages] — SERVICES.md §7
   conversationModule, // GET|PATCH /conversations[/:id], POST /:id/messages|read — API_CONTRACTS.md §2
   webhookModule, // POST /webhooks/whatsapp[/:tenant][/status] — PUBLICO, autenticado por HMAC
+  patientModule, // GET|PATCH /patients[/:id], /:id/timeline|export|anonymize — API_CONTRACTS.md §2c
+  channelSettingsModule, // GET|PATCH /settings/channels — API_CONTRACTS.md §6
+  operationModule, // GET /operations/overview — API_CONTRACTS.md §7
   // <- agentes de API: adicione o factory do seu modulo aqui
 ];

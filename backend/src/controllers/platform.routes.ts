@@ -83,7 +83,10 @@ export function platformModule(deps: ApiModuleDeps): ApiModule {
       const dto = validated<CreateTenantRequest>(req, 'body');
       platform
         .createTenant(getContext(req), dto)
-        .then((tenant) => res.status(201).json({ tenant }))
+        // Recurso unico viaja CRU (D-070 / regra de envelope de
+        // API_CONTRACTS.md): era `{ tenant }`, o unico envelope de recurso
+        // unico do projeto fora da excecao registrada de `/themes/current`.
+        .then((tenant) => res.status(201).json(tenant))
         .catch(next);
     },
   );

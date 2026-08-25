@@ -23,6 +23,52 @@ JWT inclui: `{ userId, tenantId, role, exp }`
 
 ---
 
+## Envelope de resposta (regra do projeto — D-070)
+
+Vale para **todo** endpoint, existente ou novo. Três casos, sem quarta opção:
+
+| Caso | Forma | Exemplos |
+|------|-------|----------|
+| **Listagem** | chave nomeada no plural + `pagination` (D-009) | `{ users, pagination }`, `{ proposals, pagination }`, `{ patients, pagination }` |
+| **Recurso único** (GET, POST, PATCH) | o objeto **cru**, sem envelope | `POST /users`, `PATCH /users/:id`, `GET /users/me`, `POST /exams`, `GET /proposals/:id`, `POST /internal-chat/.../messages`, `GET /patients/:id` |
+| **Resposta composta** (mais de um recurso, ou recurso + meta) | chaves nomeadas, uma por parte | `{ conversation, messages, pagination }`, `{ channels, distributionMode, ... }`, `{ patient, conversationsAffected }` |
+
+Sem corpo (`204`): `POST /conversations/:id/read`, `POST /internal-chat/channels/:id/read`.
+
+**Como decidir:** se a resposta descreve **uma** entidade e nada mais, ela é a entidade. Se
+carrega uma segunda coisa (lista + paginação, entidade + contador, duas entidades), cada parte
+ganha nome. Envelopar um recurso único só adiciona um nível que o cliente tem que desembrulhar
+sem ganhar nada em troca — e a maioria esmagadora dos endpoints já era crua.
+
+### Ajustes exigidos por esta regra (dono: **Agent-API-Fixes**)
+
+| Endpoint | Era | Passa a ser |
+|----------|-----|-------------|
+| `POST /platform/tenants` (201) | `{ "tenant": TenantSummary }` | `TenantSummary` cru |
+
+`CreateTenantResponse` em `shared/types/platform.types.ts` já é `TenantSummary` (alias) —
+backend e frontend seguem o tipo. É a única mudança: os demais endpoints de recurso único já
+respondiam crus.
+
+### Exceção explícita, registrada
+
+| Endpoint | Forma | Por quê |
+|----------|-------|---------|
+| `GET /themes/current` e `PATCH /themes/current` | `{ "theme": Theme }` | O mesmo objeto viaja aninhado em `tenant.theme` no `POST /auth/login`; desembrulhar aqui criaria duas formas do mesmo dado no bootstrap, e o ganho seria zero |
+| `PATCH /proposals/:id/status` | `{ id, status, reasonLost, updatedAt }` | **Projeção parcial**, não envelope: devolve só os campos que a transição mudou. O recurso inteiro sai em `GET /proposals/:id`; recarregar a proposta toda a cada arrastar de card no Kanban seria desperdício |
+| `PATCH /proposals/:id/discount` | `{ id, discountPercent, totalPrice }` | Mesma razão: só o que o recálculo mudou (§1) |
+| `PATCH /proposals/:id/approve` e `PATCH /proposals/:id/reject` | `{ id, approvalStatus, approvedAt }` | Mesma razão. **Não carregam mais `message`** (Onda 6): texto de interface em pt-BR vindo do backend não tem quem o traduza — i18n é do frontend, e `approvalStatus` já carrega toda a informação |
+| `POST /webhooks/whatsapp` (e variantes por tenant) | `{ "received": true }` | **Não é recurso:** é o ACK que a Meta exige. Não expõe nada do domínio e é idêntico em todos os caminhos, inclusive nos ignorados (§4) |
+
+`POST /proposals` devolve `ProposalDetail` **cru** com um campo extra opcional `message`
+(`CreateProposalResponse`, `shared/types/proposal.types.ts`) quando a proposta cai em aprovação.
+É o último texto de UI em pt-BR que sai do backend; está tipado no contrato compartilhado e
+documentado em §3, mas **não** cria precedente — endpoint novo não acrescenta `message`.
+
+Fora dessas linhas, qualquer envelope de recurso único é bug de contrato, não estilo.
+
+---
+
 ## 1. Authentication & Users
 
 ### POST /auth/login
@@ -363,7 +409,8 @@ criação não tem `oldValues`.
 Ações registradas hoje: `login`, `logout`, `refresh_token_reuse_detected`, `create_user`,
 `update_user_permissions`, `update_theme`, `create_conversation`, `assign_conversation`,
 `update_conversation_status`, `create_proposal`, `update_proposal_status`,
-`update_proposal_discount`, `approve_discount`, `reject_discount` e `create_tenant`
+`update_proposal_discount`, `approve_discount`, `reject_discount`, `update_patient`,
+`export_patient_data`, `anonymize_patient`, `update_channel_settings` e `create_tenant`
 (este último nasce no console e é gravado sob o tenant do **operador**, não sob o
 laboratório recém-criado — logo não aparece no `/audit` do lab novo).
 `action` é `string` livre no tipo — não há enum fechado. Entrada de outro tenant nunca
@@ -402,6 +449,7 @@ telefone quando sobram **3 dígitos ou mais**.
   "conversations": [
     {
       "id": "uuid",
+      "patientId": "3f1c9b0e-2d54-4a7b-9c11-8e2a6d5f4b30",
       "patientName": "João Santos",
       "patientPhone": "(11) 98765-4321",
       "assignedTo": "uuid",
@@ -433,8 +481,16 @@ mostrando o próprio número, e `pagination.total` é que acompanha o escopo.
 
 Cada item traz `assignedToName` e `lastMessagePreview` já resolvidos (o frontend não
 faz request extra por conversa). Shape completo: `Conversation` em
-`shared/types/conversation.types.ts`. Anuláveis: `patientName`, `assignedTo`,
+`shared/types/conversation.types.ts`. Anuláveis: `patientId`, `patientName`, `assignedTo`,
 `assignedToName`, `lastMessagePreview`, `lastMessageAt`.
+
+`patientId` é o **id do cadastro** (`patients.id`, D-059) — a porta de entrada da Ficha do
+Paciente (`/patients/:id`, PAGES.md §3). Campo **opcional acrescentado em D-079**: backward
+compatible, cliente que não conhece o campo ignora. É `null` para conversa anterior ao backfill
+da migração 003 que ainda não passou por `findOrCreateByPhone` (D-072) — e nesse caso a UI
+**não mostra o link**, em vez de mostrar um link quebrado. Os campos denormalizados
+`patientName`/`patientPhone` continuam sendo o que a lista renderiza (D-059): `patientId` serve
+para navegar, não para exibir.
 
 **Erros:** `FORBIDDEN` (403, `platform_operator`), `VALIDATION_ERROR` (400, query fora
 do enum — `scope`, `status`, `sortBy`, `order`, `limit` > 100)
@@ -467,6 +523,7 @@ mesmo (`messageLimit` ganha quando os dois vêm). Valor acima de 100 é recusado
 {
   "conversation": {
     "id": "uuid",
+    "patientId": "3f1c9b0e-2d54-4a7b-9c11-8e2a6d5f4b30",
     "patientName": "João Santos",
     "patientPhone": "(11) 98765-4321",
     "patientEmail": "joao@email.com",
@@ -515,7 +572,8 @@ mesmo (`messageLimit` ganha quando os dois vêm). Valor acima de 100 é recusado
 ```
 
 `conversation` é `ConversationDetail` (= `Conversation` + `patientEmail` +
-`customFields`); `messages[]` é `Message`, com `senderName`, `attachmentUrl` e `readAt`
+`customFields`) — inclui `patientId`, que é de onde a coluna 3 do inbox tira o link para a
+ficha (D-079); `messages[]` é `Message`, com `senderName`, `attachmentUrl` e `readAt`
 anuláveis. `pagination` é o `PaginationMeta` padrão — os quatro campos, sempre.
 
 **Erros:** `NOT_FOUND` (404 — inexistente, de outro tenant **ou de outro atendente**;
@@ -661,6 +719,365 @@ duplica linha nem evento.
 
 ---
 
+## 2c. Patients (Ficha do Paciente)
+
+Tela `/patients/:id` (PAGES.md §3) e a entidade `patients` (D-059, SCHEMA.md §14). Shapes em
+`shared/types/patient.types.ts`.
+
+**Papéis:** `attendant`, `manager` e `admin` acessam a seção; `platform_operator` recebe `403
+FORBIDDEN` em **todas** as rotas (`denyPlatformOperator()`, PAGES.md §11 — o console não tem
+caminho para dado de paciente). `GET /patients/:id/export` e `POST /patients/:id/anonymize`
+exigem `admin`.
+
+**Visibilidade por papel (D-060), igual à de conversas:** o atendente enxerga apenas os
+pacientes que têm **ao menos uma conversa visível para ele** — atribuída a ele ou na fila não
+atribuída. Gestor e admin veem todos os do laboratório. Paciente fora da visibilidade responde
+`404 NOT_FOUND`, nunca `403` (CLAUDE.md regra 8) — e o mesmo recorte se aplica **dentro** da
+ficha: contadores e timeline só contam o que o solicitante já podia ver por outro caminho.
+
+**Não existe `POST /patients`.** O paciente nasce do canal: `findOrCreateByPhone` resolve ou
+cria a linha pelo telefone dentro do tenant (`UNIQUE (tenant_id, phone)`) quando a conversa
+chega. Não há fluxo de UI para cadastrar paciente sem conversa, e um `POST` criaria uma segunda
+origem para a mesma entidade. `phone` também não é editável por `PATCH` — é a chave de
+deduplicação.
+
+**Não existe `DELETE /patients/:id`.** O caminho LGPD de apagamento é
+`POST /patients/:id/anonymize` (D-063).
+
+### GET /patients
+Busca da ficha (a tela chega aqui pela busca do inbox ou por link direto).
+
+**Consumidor real:** a busca da coluna 1 do Atendimento (PAGES.md §2) — com 2+ caracteres ela
+consulta este endpoint com `limit=5` e mostra o bloco "Pacientes" abaixo da fila de conversas
+(D-079). Cada resultado leva a `/patients/:id`.
+
+**Query Params:**
+```
+?page=1&limit=20                      (limit máx. 100 — PaginationMeta de D-009)
+?search=joão                          (máx. 120 caracteres)
+?sortBy=name|lastInteractionAt|createdAt|updatedAt&order=asc|desc
+```
+
+`search` casa **três** coisas, em OR: nome (full-text `portuguese`, mesma expressão do índice
+GIN de SCHEMA.md §14), telefone (o termo é reduzido a dígitos e só entra quando sobram **3
+dígitos ou mais**, igual a `/conversations`) e documento (dígitos, casamento por prefixo).
+`sortBy` default `lastInteractionAt`, `order` default `desc`; qualquer valor fora do enum →
+`VALIDATION_ERROR`.
+
+**Response (200):**
+```json
+{
+  "patients": [
+    {
+      "id": "3f1c9b0e-2d54-4a7b-9c11-8e2a6d5f4b30",
+      "phone": "(11) 98765-4321",
+      "name": "João Santos",
+      "email": "joao@email.com",
+      "birthDate": "1984-03-12",
+      "document": "12345678900",
+      "notes": "Prefere coleta pela manhã.",
+      "tags": ["convênio", "recorrente"],
+      "customFields": { "convenio": "Unimed" },
+      "anonymizedAt": null,
+      "lastInteractionAt": "2026-08-23T14:30:00.000Z",
+      "createdAt": "2026-06-02T10:00:00.000Z",
+      "updatedAt": "2026-08-20T09:15:00.000Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 20, "total": 137, "totalPages": 7 }
+}
+```
+
+`lastInteractionAt` é derivado (`MAX(conversations.last_message_at)` das conversas **visíveis**),
+nunca coluna materializada — BUSINESS_RULES §5. É `null` para paciente sem interação visível.
+
+**Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403, `platform_operator`)
+
+### GET /patients/:id
+Cadastro + contadores. **Não** embute timeline nem propostas (D-060): a timeline é paginada e
+cresce sem limite, e as propostas já têm listagem própria com visibilidade e paginação
+prontas. Embutir as três coisas faria a abertura da ficha carregar centenas de linhas para
+mostrar as 10 primeiras, e os três blocos da tela têm ciclos de atualização diferentes.
+
+A tela faz três chamadas, cada uma com sua chave de cache:
+
+| Bloco da tela | Chamada |
+|---|---|
+| Cadastro + contadores | `GET /patients/:id` |
+| Histórico de interações | `GET /patients/:id/timeline` |
+| Propostas do paciente | `GET /proposals?patientId=<id>` |
+
+**Response (200):** o `PatientDetail` **cru** (regra de envelope).
+```json
+{
+  "id": "3f1c9b0e-2d54-4a7b-9c11-8e2a6d5f4b30",
+  "phone": "(11) 98765-4321",
+  "name": "João Santos",
+  "email": "joao@email.com",
+  "birthDate": "1984-03-12",
+  "document": "12345678900",
+  "notes": "Prefere coleta pela manhã.",
+  "tags": ["convênio", "recorrente"],
+  "customFields": { "convenio": "Unimed" },
+  "anonymizedAt": null,
+  "conversationCount": 4,
+  "proposalCount": 2,
+  "lastInteractionAt": "2026-08-23T14:30:00.000Z",
+  "createdAt": "2026-06-02T10:00:00.000Z",
+  "updatedAt": "2026-08-20T09:15:00.000Z"
+}
+```
+
+`conversationCount` e `proposalCount` contam **o que o solicitante enxerga**: para o atendente,
+suas conversas mais as não atribuídas, e as propostas que ele criou (D-042). Dois usuários
+podem ver números diferentes na mesma ficha — é o comportamento correto, e a tela não deve
+prometer "total do laboratório".
+
+**Erros:** `NOT_FOUND` (404 — inexistente, de outro tenant **ou fora da visibilidade**),
+`VALIDATION_ERROR` (400, `:id` não-uuid), `FORBIDDEN` (403, `platform_operator`)
+
+### PATCH /patients/:id
+Edita o cadastro. Qualquer papel de laboratório que enxergue o paciente pode editar (a ficha é
+a tela de trabalho do atendente).
+
+**Request:** (todos opcionais, ao menos um → senão `VALIDATION_ERROR`)
+```json
+{
+  "name": "João Santos",
+  "email": "joao@email.com",
+  "birthDate": "1984-03-12",
+  "document": "123.456.789-00",
+  "notes": "Prefere coleta pela manhã.",
+  "tags": ["convênio", "recorrente"],
+  "customFields": { "convenio": "Unimed" }
+}
+```
+
+- **`null` apaga, campo ausente preserva** — a mesma semântica de `PATCH /themes/current`.
+- `phone` **não** é aceito: enviar → `VALIDATION_ERROR` (o schema é `strict`; campo desconhecido
+  também é recusado).
+- `name` 1..255 · `email` e-mail válido, máx. 255 · `notes` máx. 4000.
+- `birthDate`: `YYYY-MM-DD`, data existente, **não futura** → senão `VALIDATION_ERROR`.
+- `document`: aceita formatado ou só dígitos; é **normalizado para 11 dígitos** antes de gravar.
+  Dígito verificador de CPF é validado → `VALIDATION_ERROR` com `details.fields.document`.
+- `tags`: no máximo 20, cada uma de 1 a 50 caracteres (mesmo limite de `/conversations`).
+- `customFields`: no máximo 30 chaves, chave de 1 a 50 e valor de 0 a 500 caracteres, tudo
+  string (valor não-string → `VALIDATION_ERROR`).
+- **As colunas denormalizadas de `conversations` NÃO são atualizadas por este PATCH** (D-059):
+  elas são o histórico do que o canal informou; a ficha é o cadastro. Enquanto as duas
+  existirem, `/conversations` continua respondendo o valor denormalizado.
+- Gera audit log `update_patient` com `oldValues`/`newValues` apenas dos campos que mudaram.
+- Paciente anonimizado → `409 CONFLICT` com `details.reason: "patient_anonymized"`.
+
+**Response (200):** o `PatientDetail` atualizado, **cru** (mesmo shape do `GET`).
+
+**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404), `CONFLICT` (409, anonimizado),
+`FORBIDDEN` (403, `platform_operator`)
+
+### GET /patients/:id/timeline
+Histórico de interações: mensagens, propostas e mudanças de estágio em **uma** linha do tempo.
+
+**Query Params:**
+```
+?page=1&limit=50          (default 50, máx. 100)
+?kind=message|conversation_started|proposal_created|proposal_stage_changed
+?order=desc|asc           (default: desc — mais recente primeiro)
+```
+
+**Response (200):**
+```json
+{
+  "entries": [
+    {
+      "id": "proposal_stage_changed:8c2e1f77-0b13-4a3d-9d54-1f0e6b7a2c19",
+      "kind": "proposal_stage_changed",
+      "at": "2026-08-23T15:00:00.000Z",
+      "proposalId": "6d9a4c2b-71e5-4f18-8b0a-3c5d2e9f1a44",
+      "from": "orcamento_enviado",
+      "to": "follow_up",
+      "changedByName": "Maria Souza"
+    },
+    {
+      "id": "proposal_created:6d9a4c2b-71e5-4f18-8b0a-3c5d2e9f1a44",
+      "kind": "proposal_created",
+      "at": "2026-08-23T14:40:00.000Z",
+      "proposalId": "6d9a4c2b-71e5-4f18-8b0a-3c5d2e9f1a44",
+      "status": "orcamento_enviado",
+      "discountPercent": 10,
+      "totalPrice": 179.80,
+      "createdByName": "Maria Souza"
+    },
+    {
+      "id": "message:b1d4e7a9-5c62-4e30-9f81-2a7c8b3d6e05",
+      "kind": "message",
+      "at": "2026-08-23T14:25:00.000Z",
+      "conversationId": "a7f3c2d1-4e58-49b6-8c02-7d1e5f9a3b64",
+      "senderType": "patient",
+      "senderName": "João Santos",
+      "messageType": "text",
+      "preview": "Olá, quanto custa um hemograma?"
+    },
+    {
+      "id": "conversation_started:a7f3c2d1-4e58-49b6-8c02-7d1e5f9a3b64",
+      "kind": "conversation_started",
+      "at": "2026-08-20T10:00:00.000Z",
+      "conversationId": "a7f3c2d1-4e58-49b6-8c02-7d1e5f9a3b64",
+      "channel": "whatsapp"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 50, "total": 128, "totalPages": 3 }
+}
+```
+
+- `entries[]` é a união discriminada `PatientTimelineEntry` — o frontend faz switch em `kind`.
+- `id` é `"<kind>:<uuid da origem>"`: as quatro origens são tabelas diferentes, e um uuid
+  sozinho colidiria entre `proposal_created` e `proposal_stage_changed` da mesma proposta.
+  Serve de `key` de lista; não é identificador de recurso e não é aceito em nenhuma rota.
+- Ordenação: `at DESC, id DESC` (o desempate por `id` mantém a página estável quando duas
+  origens têm o mesmo instante). `order=asc` inverte os dois.
+- `preview` é o `content` da mensagem **truncado em 160 caracteres** pelo backend, sem
+  reticências adicionadas — a tela decide como indicar o corte. Anexo sem texto vira string
+  vazia; `messageType` diz o que era.
+- **Mesmo recorte de visibilidade da ficha:** entram só mensagens/aberturas de conversas
+  visíveis ao solicitante e propostas visíveis por D-042. Sem isso a timeline seria um caminho
+  lateral para o atendente ler a conversa de outro atendente.
+- `total` conta as entradas do recorte, não as do laboratório.
+
+**Erros:** `NOT_FOUND` (404), `VALIDATION_ERROR` (400), `FORBIDDEN` (403, `platform_operator`)
+
+### GET /patients/:id/export — LGPD (admin apenas)
+Exportação dos dados do titular (SECURITY.md "LGPD"; PAGES.md §3 "seção LGPD — checada também
+no servidor").
+
+**Papel:** `admin`. Gestor e atendente recebem `403 FORBIDDEN` com
+`details.requiredRoles: ["admin"]`. Motivo (D-062): atender pedido de titular é ato de
+controlador de dados, e o export junta num arquivo só tudo que o laboratório tem sobre a
+pessoa — inclusive conversas que o solicitante não veria pela UI. Por isso o export **não**
+aplica o recorte por papel da ficha: ele é o dado completo do titular no tenant, e a defesa é a
+restrição de papel + auditoria, não um filtro parcial que produziria uma exportação incompleta
+(e portanto errada, do ponto de vista da LGPD).
+
+**Formato:** JSON (`Content-Type: application/json; charset=utf-8`) com
+`Content-Disposition: attachment; filename="paciente-<id>-<YYYYMMDD>.json"`. JSON e não CSV
+porque o dado é aninhado (conversas → mensagens, propostas → itens); um CSV exigiria achatar e
+perderia estrutura. Sem paginação: é um dump.
+
+**Response (200):** `PatientExport`.
+```json
+{
+  "generatedAt": "2026-08-24T12:00:00.000Z",
+  "patient": { "id": "3f1c9b0e-...", "phone": "(11) 98765-4321", "name": "João Santos", "...": "..." },
+  "conversations": [
+    {
+      "id": "a7f3c2d1-4e58-49b6-8c02-7d1e5f9a3b64",
+      "channel": "whatsapp",
+      "status": "active",
+      "createdAt": "2026-08-20T10:00:00.000Z",
+      "messages": [
+        {
+          "id": "b1d4e7a9-5c62-4e30-9f81-2a7c8b3d6e05",
+          "senderType": "patient",
+          "senderName": "João Santos",
+          "content": "Olá, quanto custa um hemograma?",
+          "messageType": "text",
+          "createdAt": "2026-08-23T14:25:00.000Z"
+        }
+      ]
+    }
+  ],
+  "proposals": [
+    {
+      "id": "6d9a4c2b-71e5-4f18-8b0a-3c5d2e9f1a44",
+      "status": "orcamento_enviado",
+      "discountPercent": 10,
+      "totalPrice": 179.80,
+      "items": [ { "examName": "Hemograma", "quantity": 1, "unitPrice": 89.90 } ],
+      "createdAt": "2026-08-23T14:40:00.000Z"
+    }
+  ]
+}
+```
+
+**Entra:** o cadastro inteiro — inclusive `notes`, `tags` e `customFields`. São anotações
+internas (BUSINESS_RULES §7), mas são dado pessoal do titular, e a LGPD não isenta anotação por
+ela ser interna. Mensagens de sistema (`senderType: "system"`) também entram: fazem parte do
+histórico da conversa dele.
+
+`discountPercent` e `totalPrice` entram porque são o orçamento que o titular recebeu.
+
+**Não entra** — é dado do laboratório, não do titular: `approvalStatus`, alçada do atendente,
+quem aprovou ou rejeitou e o motivo, chat interno da equipe, audit log.
+
+Gera audit log `export_patient_data` (`entityType: "patient"`, `entityId: :id`) — SECURITY.md
+exige registro da exportação.
+
+**Erros:** `FORBIDDEN` (403, `details.requiredRoles: ["admin"]`), `NOT_FOUND` (404),
+`VALIDATION_ERROR` (400, `:id` não-uuid)
+
+### POST /patients/:id/anonymize — LGPD (admin apenas)
+Apagamento a pedido do titular (D-063). **Não** deleta linha: anonimiza.
+
+**Request:**
+```json
+{ "reason": "Pedido de exclusão do titular via e-mail em 2026-08-24" }
+```
+`reason` obrigatório, 1..500 caracteres → senão `VALIDATION_ERROR`. Vai para o audit log.
+
+**Efeito, em uma única transação:**
+
+1. `patients`: `name`, `email`, `birth_date`, `document`, `notes` → `NULL`; `tags` → `[]`;
+   `custom_fields` → `{}`; `phone` → `'anon-' || substring(id::text, 1, 8)`;
+   `anonymized_at` → `NOW()`.
+2. `conversations` com `patient_id = :id`: `patient_name` e `patient_email` → `NULL`,
+   `patient_phone` → o mesmo placeholder. São **cópias** denormalizadas da identidade do
+   paciente (SCHEMA.md §3); deixá-las intactas tornaria a anonimização decorativa — o nome
+   continuaria na lista do inbox.
+3. `proposals`, `proposal_items`, `messages`, `internal_messages` e `audit_logs` ficam
+   **intactos**. A proposta histórica continua válida e somando no funil: `patientName` já é
+   anulável em `Proposal`, então ela passa a aparecer sem nome. Reescrever valor de proposta ou
+   apagar audit log para "sumir" com o paciente quebraria a integridade contábil e a regra de
+   log append-only.
+4. Audit log `anonymize_patient` com `newValues: { reason }` — **nunca** com os valores antigos
+   (gravar o nome apagado no log seria desfazer a anonimização em outra tabela).
+
+**Limitação conhecida, documentada:** o **conteúdo** das mensagens não é reescrito. O texto é
+registro da conversa e pode conter o nome; expurgo de mensagem é a política de retenção
+mencionada em SECURITY.md "LGPD" ("config futura"), não este endpoint.
+
+**Response (200):**
+```json
+{
+  "patient": {
+    "id": "3f1c9b0e-2d54-4a7b-9c11-8e2a6d5f4b30",
+    "phone": "anon-3f1c9b0e",
+    "name": null,
+    "email": null,
+    "birthDate": null,
+    "document": null,
+    "notes": null,
+    "tags": [],
+    "customFields": {},
+    "anonymizedAt": "2026-08-24T12:05:00.000Z",
+    "createdAt": "2026-06-02T10:00:00.000Z",
+    "updatedAt": "2026-08-24T12:05:00.000Z"
+  },
+  "conversationsAffected": 4
+}
+```
+
+**Idempotente:** paciente já anonimizado devolve `200` com o mesmo estado e
+`conversationsAffected: 0` — não `409`. Repetir o pedido do titular não é conflito, e um erro
+aqui empurraria o operador a procurar outro caminho.
+
+Depois de anonimizado, `PATCH /patients/:id` responde `409 CONFLICT`
+(`details.reason: "patient_anonymized"`); `GET` e `export` continuam funcionando e mostram o
+cadastro vazio — é a prova de que o apagamento aconteceu.
+
+**Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403, `details.requiredRoles: ["admin"]`),
+`NOT_FOUND` (404)
+
+---
+
 ## 3. Proposals (Orçamentos)
 
 ### GET /proposals
@@ -672,12 +1089,24 @@ Listar propostas com filtros.
 ?page=1&limit=20                          // default page=1, limit=20, máximo 100
 ?sortBy=createdAt&order=desc              // sortBy: createdAt|updatedAt|totalPrice|status
 ?conversationId=uuid
+?patientId=uuid                           // propostas do paciente (D-060)
 ?createdBy=uuid
 ?startDate=2026-08-01&endDate=2026-08-31  // filtra por createdAt
 ```
 
 `pagination` é o mesmo `PaginationMeta` de toda listagem (D-009):
-`{ page, limit, total, totalPages }`.
+`{ page, limit, total, totalPages }`. `limit` é grampeado em 100 e **`page` em 10.000**
+(`MAX_PAGE`) — igual em `/patients`: sem teto, `?page=9007199254740991` custaria um `COUNT(*)`
+inteiro e um scan com OFFSET absurdo. Valor acima é grampeado, não recusado.
+
+**`?patientId=` (D-060)** é como a ficha do paciente (§2c) lista as propostas dele — não há
+`GET /patients/:id/proposals`. O filtro resolve por `conversations.patient_id` (a proposta não
+tem coluna de paciente; ela nasce de uma conversa), e herda de graça o que já existe aqui:
+visibilidade por papel de D-042 (atendente só vê as que criou), paginação, ordenação e o mesmo
+shape de item. Um endpoint próprio duplicaria as quatro coisas e faria o `PatientService` ler a
+tabela `proposals`, que é de outro domínio (SERVICES.md "Convenções Transversais").
+Paciente inexistente ou fora da visibilidade devolve **lista vazia**, não `404` — o filtro não
+é oráculo de existência, exatamente como `?createdBy=` de outro usuário (D-042).
 
 **Response (200):**
 ```json
@@ -885,10 +1314,11 @@ Aprovar proposta que está em `approvalStatus: "pending"`.
 {
   "id": "uuid",
   "approvalStatus": "approved",
-  "approvedAt": "2024-08-23T15:05:00Z",
-  "message": "Proposta aprovada com sucesso"
+  "approvedAt": "2024-08-23T15:05:00Z"
 }
 ```
+Projeção parcial de `ProposalDetail` — exceção registrada na tabela de D-070. **Sem
+`message`:** texto de interface é do frontend (i18n); `approvalStatus` já diz o que houve.
 
 **Regras (SERVICES.md §6, WORKFLOWS.md §3):**
 - Só `manager`/`admin`, **e só dentro da própria alçada**: um gestor de 30% não aprova 40%
@@ -916,10 +1346,10 @@ Rejeitar o desconto pendente. Simétrico a `/approve`.
 {
   "id": "uuid",
   "approvalStatus": "rejected",
-  "approvedAt": null,
-  "message": "Proposta rejeitada"
+  "approvedAt": null
 }
 ```
+Mesma projeção parcial de `/approve`, e igualmente sem texto de UI.
 
 - `reason` é obrigatório (1..500 caracteres) → `VALIDATION_ERROR`
 - `approvedBy`/`approvedAt` continuam `null`: null significa "não foi aprovada"
@@ -950,19 +1380,48 @@ proposta anexada. O console de plataforma **não** acessa estes canais (PAGES.md
       "key": "aprovacoes",
       "name": "#aprovacoes",
       "kind": "channel",
-      "unreadCount": 0,
+      "unreadCount": 2,
+      "lastReadAt": "2026-08-23T14:10:00.000Z",
       "lastMessageAt": "2026-08-23T14:40:00.000Z"
     }
   ]
 }
 ```
 
-`unreadCount` é sempre `0` enquanto não houver estado de leitura por usuário no schema
-(D-044). `lastMessageAt` é anulável (canal sem mensagem). Ordem fixa: `kind ASC`,
-depois `key ASC` — `channel` antes de `dm`, sem parâmetro de ordenação. Sem paginação:
-a resposta é `{ channels }`, só isso.
+**`unreadCount` agora é de verdade (D-068 — supera D-044).** É derivado a cada leitura da
+tabela `channel_reads` (SCHEMA.md §17), nunca materializado: conta as mensagens do canal com
+`created_at > lastReadAt` que **não** foram escritas pelo próprio usuário. Mensagem de sistema
+(`senderId: null`) conta — o pedido de aprovação em `#aprovacoes` é justamente o que precisa
+piscar. Usuário que nunca abriu o canal tem `lastReadAt: null` e vê todas as mensagens de
+terceiros contadas.
+
+`lastReadAt` é a última leitura **deste** usuário neste canal (anulável). A tela usa para
+desenhar o divisor "novas mensagens"; dois usuários recebem números diferentes na mesma
+resposta, e isso é o esperado.
+
+`lastMessageAt` é anulável (canal sem mensagem). Ordem fixa: `kind ASC`, depois `key ASC` —
+`channel` antes de `dm`, sem parâmetro de ordenação. Sem paginação: a resposta é
+`{ channels }`, só isso.
 
 **Erros:** `FORBIDDEN` (403, `platform_operator`)
+
+### POST /internal-chat/channels/:id/read
+Marcar o canal como lido pelo usuário logado. É o que zera `unreadCount` (D-068) — fecha a
+pendência D5 da Onda 5, em que o badge subia e nunca descia.
+
+Sem corpo. Faz `INSERT ... ON CONFLICT (channel_id, user_id) DO UPDATE SET last_read_at = NOW()`
+em `channel_reads` — **idempotente**, e chamar em canal já lido não é erro.
+
+**Response:** `204 No Content`
+
+A tela chama ao abrir o canal (mesma ergonomia de `POST /conversations/:id/read`). Diferente de
+conversas, `GET /internal-chat/channels/:id/messages` **não** marca como lido: ler página
+antiga do histórico não significa ter visto a mensagem nova, e o `GET` com efeito colateral de
+`/conversations` (D-035) existe porque lá a página 1 É o fim da conversa. Não gera audit log:
+leitura de canal não é ação crítica (SECURITY.md "Auditoria").
+
+**Erros:** `NOT_FOUND` (404 — canal inexistente **ou de outro tenant**),
+`VALIDATION_ERROR` (400, `:id` não-uuid), `FORBIDDEN` (403, `platform_operator`)
 
 ### GET /internal-chat/channels/:id/messages
 
@@ -971,7 +1430,22 @@ a resposta é `{ channels }`, só isso.
 ?page=1&limit=50           // default page=1, limit=50, máximo 100
 ```
 
-**Response (200):** ordem cronológica (mais antiga primeiro).
+**Paginação (D-069): `page=1` é a página das mensagens MAIS RECENTES**, e os itens dentro dela
+vêm em ordem cronológica **crescente** (a mais antiga da página primeiro). `page=2` traz o
+bloco imediatamente anterior, e assim por diante — subir no histórico é aumentar `page`.
+
+É a mesma convenção já documentada em `GET /conversations/:id` ("`page=1` é a página mais
+recente"), e existe pelo mesmo motivo: um chat abre no fim. A implementação anterior fatiava
+do começo (`created_at ASC` + `OFFSET` a partir da mensagem número 1), então abrir um canal
+no estado útil custava **dois** requests — um para descobrir `totalPages`, outro para buscar a
+última página. Quem implementa segue o que está escrito aqui: o `OFFSET` é contado a partir do
+fim (`total - page * limit`, com o resto virando a última página do histórico).
+
+A última página (a mais antiga) pode vir com menos itens que `limit`; a página 1 vem cheia
+sempre que houver mensagens suficientes. `totalPages = ceil(total / limit)`, como em toda
+listagem.
+
+**Response (200):** itens em ordem cronológica crescente dentro da página.
 ```json
 {
   "messages": [
@@ -990,7 +1464,9 @@ a resposta é `{ channels }`, só isso.
 }
 ```
 
-Ordenação fixa `created_at ASC, id ASC` — não há `sortBy` nem `order` aqui.
+Ordenação fixa `created_at ASC, id ASC` **dentro da página** — não há `sortBy` nem `order`
+aqui. O que a paginação escolhe é qual fatia do histórico a página cobre (a mais recente
+primeiro, D-069), não a ordem dos itens.
 
 **Erros:** `NOT_FOUND` (404 — canal inexistente **ou de outro tenant**),
 `VALIDATION_ERROR` (400 — `:id` não-uuid, `limit` > 100), `FORBIDDEN` (403,
@@ -1066,6 +1542,13 @@ Listar catálogo de exames do laboratório.
 `pagination` é o mesmo `PaginationMeta` de toda listagem (D-009). Não existe
 `DELETE /exams/:id`: desativar é `PATCH /exams/:id { "isActive": false }`, porque propostas
 históricas referenciam o exame (D-004).
+
+**Dois consumidores, dois usos das MESMAS chaves — o contrato não muda para nenhum** (D-080):
+`/catalog` é tabela e TROCA de página (`?page=2` na URL); o seletor de `/budget/new` ACUMULA
+páginas (`page=1,2,3…&active=true`) e usa `?search=` como recorte principal. `search` casa nome e
+código no banco, sobre o catálogo inteiro — nunca sobre as linhas já carregadas pelo cliente. É a
+combinação que torna todo exame ativo alcançável na tela de orçamento; antes dela a tela pedia uma
+página só e o resto do catálogo era invisível.
 
 ### POST /exams (manager/admin apenas)
 Criar novo exame no catálogo.
@@ -1321,8 +1804,9 @@ O tema criado é o `DEFAULT_THEME` (preset `terracota`, `fontId: "figtree"`,
 `radiusId: "suave"`) com `brandName` já preenchido com o **nome do laboratório** —
 não `null`, ao contrário de um tenant que nunca passou pelo onboarding.
 
-**Response (201):** `{ "tenant": TenantSummary }` — o mesmo shape de `GET /platform/tenants`,
-tipado como `CreateTenantResponse` em `shared/types/platform.types.ts`.
+**Response (201):** `TenantSummary` **cru** (D-070) — o mesmo shape de
+`GET /platform/tenants`, tipado como `CreateTenantResponse` (alias de `TenantSummary`) em
+`shared/types/platform.types.ts`. Sem envelope `{ "tenant": ... }`.
 `slug` já existente → `409 CONFLICT` com `details: { field: "slug", slug }`. DTO
 inválido → `400 VALIDATION_ERROR` com `details.fields`.
 
@@ -1370,6 +1854,305 @@ Recorte dos agregados — **não é o mesmo para os três**:
   `totals.tenants` conta **só os ativos**;
 - `totals.messages` soma `messagesUsed` de **todos** os laboratórios da lista,
   inclusive inativos — é volume de tráfego, não faturamento.
+
+---
+
+## 6. Channel Settings (Canais & Equipe)
+
+Tela `/settings/channels` (PAGES.md §10). Shapes em `shared/types/settings.types.ts`; tabelas
+`tenant_channels` e `tenant_settings` (SCHEMA.md §15 e §16).
+
+**Papéis:** `GET` é **gestor e admin** (a tela é leitura para o gestor). `PATCH` é **admin**.
+`attendant` recebe `403 FORBIDDEN` com `details.requiredRoles: ["manager","admin"]` no `GET` e
+`["admin"]` no `PATCH`; `platform_operator` recebe `403` em ambos.
+
+### Segredo nunca volta na resposta
+
+`apiToken` e `webhookSecret` são **write-only**. Nenhuma resposta desta seção — nem de nenhuma
+outra — devolve o valor em claro, mascarado no meio, "só para o admin" ou "só logo depois de
+salvar". A leitura expressa apenas:
+
+| Campo da resposta | O que é |
+|---|---|
+| `apiTokenMasked` | `'••••••••' + últimos 4 caracteres` do token, ou `null` se não há token |
+| `webhookSecretSet` | `true`/`false`. **Sem prévia**: o segredo é curto e assina HMAC, e mostrar 4 caracteres dele reduz o espaço de busca |
+
+Vale também para log e audit log: `update_channel_settings` grava
+`"apiToken": "[REDACTED]"` / `"webhookSecret": "[REDACTED]"` em `newValues`, nunca o valor.
+
+### GET /settings/channels
+
+**Response (200):** composta — cada bloco da tela é uma chave (regra de envelope).
+```json
+{
+  "channels": [
+    {
+      "id": "b8e2a1c4-6d39-4f70-9a12-5c8e3b7d1f06",
+      "channel": "whatsapp",
+      "displayName": "WhatsApp do Vida",
+      "phoneNumberId": "109876543210987",
+      "phoneNumber": "+55 48 3621-0000",
+      "isActive": true,
+      "apiTokenMasked": "••••••••9f2a",
+      "webhookSecretSet": true,
+      "connectedAt": "2026-07-02T11:20:00.000Z",
+      "updatedAt": "2026-08-19T08:45:00.000Z"
+    }
+  ],
+  "distributionMode": "round_robin",
+  "autoMessages": {
+    "greeting": {
+      "enabled": true,
+      "message": "Olá! Somos o Laboratório Vida. Em que podemos ajudar?"
+    },
+    "offHours": {
+      "enabled": true,
+      "message": "Nosso atendimento é de segunda a sexta, das 8h às 18h. Retornamos em breve."
+    }
+  },
+  "businessHours": {
+    "timezone": "America/Sao_Paulo",
+    "days": {
+      "mon": { "start": "08:00", "end": "18:00" },
+      "tue": { "start": "08:00", "end": "18:00" },
+      "wed": { "start": "08:00", "end": "18:00" },
+      "thu": { "start": "08:00", "end": "18:00" },
+      "fri": { "start": "08:00", "end": "18:00" },
+      "sat": { "start": "08:00", "end": "12:00" },
+      "sun": null
+    }
+  },
+  "team": [
+    { "id": "4a1b8e6c-5d72-4931-b0f8-2e7a9c1d4b55", "name": "Maria Souza", "role": "attendant", "isActive": true },
+    { "id": "7c3d5f92-1a48-4c60-8e21-9b5d7a3f2c11", "name": "Gestora Ana", "role": "manager", "isActive": true }
+  ]
+}
+```
+
+- `channels` traz **um item por canal configurado**; laboratório sem canal responde `[]` (não
+  é erro, é o estado inicial). Ordem fixa por `channel ASC`.
+- **Laboratório sem linha em `tenant_settings` recebe os defaults** — `distributionMode:
+  "manual"`, as duas mensagens com `enabled: false` e `message: null`, `timezone:
+  "America/Sao_Paulo"` e `days: {}` — sem que nada seja gravado. O onboarding não cria a linha;
+  o primeiro `PATCH` cria (D-065).
+- **`team` (D-066)** é a equipe do laboratório: usuários com papel `attendant`, `manager` ou
+  `admin`, ordenados por `name ASC`, **incluindo inativos** (`isActive: false`) — o gestor
+  precisa ver quem está fora do rodízio. `platform_operator` nunca aparece.
+  O recorte é deliberadamente mínimo: id, nome, papel e status, **sem e-mail e sem alçada**.
+  Assim a tela funciona para o gestor sem alargar `GET /users` (que é admin) e sem expor por
+  uma tela de configuração o dado que a tela de usuários já governa.
+
+**Erros:** `FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]` — ou
+`["attendant","manager","admin"]` quando quem chama é `platform_operator`)
+
+### PATCH /settings/channels (admin apenas)
+PATCH parcial: chave ausente permanece. Corpo vazio (`{}`) ou campo desconhecido →
+`VALIDATION_ERROR` (o schema é `strict`).
+
+**Request:**
+```json
+{
+  "channels": [
+    {
+      "channel": "whatsapp",
+      "displayName": "WhatsApp do Vida",
+      "phoneNumberId": "109876543210987",
+      "phoneNumber": "+55 48 3621-0000",
+      "isActive": true,
+      "apiToken": "EAAG...token-em-claro",
+      "webhookSecret": "um-segredo-de-no-minimo-16-chars"
+    }
+  ],
+  "distributionMode": "round_robin",
+  "autoMessages": {
+    "greeting": { "enabled": true, "message": "Olá! Somos o Laboratório Vida." }
+  },
+  "businessHours": {
+    "timezone": "America/Sao_Paulo",
+    "days": { "mon": { "start": "08:00", "end": "18:00" }, "sun": null }
+  }
+}
+```
+
+**`channels[]` é upsert pela chave `channel`** (não pelo `id`): `UNIQUE (tenant_id, channel)`
+garante uma linha por canal, e a tela edita "o WhatsApp do laboratório", não uma linha por id.
+Canal ausente do array **não** é apagado — não existe remoção de canal nesta rota; desligar é
+`isActive: false`.
+
+Semântica dos segredos, em três estados:
+
+| `apiToken` / `webhookSecret` no corpo | Efeito |
+|---|---|
+| ausente | preserva o valor guardado |
+| `null` | **apaga** o segredo (`apiTokenMasked` volta a `null`, `webhookSecretSet` volta a `false`) |
+| string | grava o novo valor |
+
+String vazia (`""`) → `VALIDATION_ERROR`: apagar é `null`, explicitamente.
+
+Validações:
+- `channel` ∈ `whatsapp | sms | web | direct`; repetido no mesmo array → `VALIDATION_ERROR`
+- `apiToken`: 10..500 caracteres · `webhookSecret`: 16..255 caracteres (abaixo disso o HMAC
+  não vale nada) · `displayName` e `phoneNumberId` máx. 255 · `phoneNumber` máx. 30 — os
+  quatro anuláveis
+- `distributionMode` ∈ `manual | round_robin`
+- `autoMessages`: PATCH parcial por mensagem (enviar só `greeting` preserva `offHours`).
+  `enabled: true` com `message` nulo ou vazio → `VALIDATION_ERROR` com
+  `details.fields["autoMessages.greeting.message"]` — mensagem automática ligada e vazia
+  enviaria uma bolha em branco ao paciente. `message`: 1..1000 caracteres
+- `businessHours`: `timezone` é IANA válido; dia ∈ `mon..sun`; `start`/`end` no formato `HH:MM`
+  (24h) com `start < end` → senão `VALIDATION_ERROR`. **É substituição, não merge**: o objeto
+  enviado vira o novo `businessHours` inteiro (dia omitido = fechado). Merge por dia deixaria
+  impossível fechar um dia sem inventar um sentinela extra
+- `connectedAt` é do servidor: preenchido na primeira gravação de `apiToken` e nunca aceito no
+  corpo
+
+Gera audit log `update_channel_settings` (`entityType: "tenant_settings"`, `entityId` = o
+`tenantId`), com segredos redigidos.
+
+**Response (200):** o mesmo shape do `GET` — o estado completo depois da escrita, já mascarado.
+
+**Erros:** `VALIDATION_ERROR` (400, `details.fields`), `FORBIDDEN` (403,
+`details.requiredRoles: ["admin"]`)
+
+---
+
+## 7. Operation (Gestão da Operação)
+
+Tela `/settings/operation` (PAGES.md §10) — **somente leitura, gestor+**. Shapes em
+`shared/types/operation.types.ts`.
+
+**Papéis:** `manager` e `admin`. `attendant` → `403 FORBIDDEN` com
+`details.requiredRoles: ["manager","admin"]` (a tela é de gestão de time: mostra a carga de
+todos, e um atendente não enxerga a fila alheia em nenhum outro lugar do produto).
+`platform_operator` → `403`.
+
+**Tudo é derivado** de `conversations` e `proposals` a cada request (BUSINESS_RULES §5): nenhuma
+tabela nova, nenhum número digitado, nenhum contador materializado. Sem cache — é um painel de
+"agora", e 5 minutos de TTL mostrariam uma fila que já não existe.
+
+**Tempos são inteiros de SEGUNDOS calculados dentro do SQL, em UTC (D-021):**
+`EXTRACT(EPOCH FROM (NOW() - COALESCE(c.last_message_at, c.created_at)))::int`. As colunas são
+`TIMESTAMP` sem timezone guardando UTC; se a subtração acontecesse em JavaScript, o driver
+interpretaria a coluna no fuso da máquina e a espera sairia com horas de erro numa máquina em
+UTC-3 — o mesmo defeito que a D-021 registrou em `daysOpen`. A formatação ("há 12 min") é do
+frontend.
+
+### GET /operations/overview
+**Um** endpoint, não três (D-067): os três blocos da tela são um retrato do mesmo instante e
+saem das mesmas duas tabelas. Três rotas triplicariam o polling e permitiriam a tela exibir uma
+fila de 14:03 ao lado de uma carga de 14:05 — precisamente o tipo de incoerência que
+BUSINESS_RULES §5 existe para evitar.
+
+**Query Params:**
+```
+?queueLimit=25           // itens da fila devolvidos — default 25, máx. 100
+?decisionsLimit=25       // decisões pendentes devolvidas — default 25, máx. 100
+```
+Acima do máximo → `VALIDATION_ERROR` (não é reduzido em silêncio).
+
+**Response (200):**
+```json
+{
+  "generatedAt": "2026-08-24T17:32:10.000Z",
+  "queue": {
+    "unassigned": 7,
+    "waiting": 3,
+    "oldestWaitSeconds": 5400,
+    "items": [
+      {
+        "conversationId": "a7f3c2d1-4e58-49b6-8c02-7d1e5f9a3b64",
+        "patientId": "3f1c9b0e-2d54-4a7b-9c11-8e2a6d5f4b30",
+        "patientName": "João Santos",
+        "channel": "whatsapp",
+        "reason": "unassigned",
+        "assignedTo": null,
+        "assignedToName": null,
+        "unreadCount": 2,
+        "waitingSeconds": 5400,
+        "lastMessageAt": "2026-08-24T16:02:10.000Z"
+      },
+      {
+        "conversationId": "c1d9e4b7-3a26-4c85-9e10-6b4f2d8a7c33",
+        "patientId": null,
+        "patientName": "Ana Lima",
+        "channel": "whatsapp",
+        "reason": "waiting",
+        "assignedTo": "4a1b8e6c-5d72-4931-b0f8-2e7a9c1d4b55",
+        "assignedToName": "Maria Souza",
+        "unreadCount": 1,
+        "waitingSeconds": 780,
+        "lastMessageAt": "2026-08-24T17:19:10.000Z"
+      }
+    ]
+  },
+  "workload": [
+    {
+      "userId": "4a1b8e6c-5d72-4931-b0f8-2e7a9c1d4b55",
+      "name": "Maria Souza",
+      "role": "attendant",
+      "activeConversations": 12,
+      "unreadMessages": 4,
+      "openProposals": 5,
+      "pendingApprovals": 1
+    }
+  ],
+  "pendingDecisions": {
+    "total": 2,
+    "items": [
+      {
+        "proposalId": "6d9a4c2b-71e5-4f18-8b0a-3c5d2e9f1a44",
+        "patientName": "João Santos",
+        "createdBy": "4a1b8e6c-5d72-4931-b0f8-2e7a9c1d4b55",
+        "createdByName": "Maria Souza",
+        "status": "orcamento_enviado",
+        "discountPercent": 25,
+        "totalPrice": 150.00,
+        "createdAt": "2026-08-24T14:40:00.000Z",
+        "waitingSeconds": 10330
+      }
+    ],
+    "pagination": { "page": 1, "limit": 25, "total": 2, "totalPages": 1 }
+  }
+}
+```
+
+**Definições — o que cada número significa, sem margem para interpretação:**
+
+| Campo | Definição exata |
+|---|---|
+| `queue.unassigned` | conversas com `status = 'active'` e `assigned_to IS NULL` |
+| `queue.waiting` | conversas com `status = 'active'`, `assigned_to IS NOT NULL` e `unread_count > 0` |
+| `queue.oldestWaitSeconds` | maior `waitingSeconds` da fila **inteira**, não só dos itens listados. `null` quando a fila está vazia |
+| `queue.items` | união das duas condições acima, `reason` dizendo qual delas casou, ordenada por `waitingSeconds DESC, conversationId ASC`, recortada por `queueLimit` |
+| `waitingSeconds` | segundos desde `COALESCE(last_message_at, created_at)` |
+| `workload[]` | uma linha por usuário **ativo** de papel `attendant`/`manager`/`admin`, ordenada por `name ASC`. Quem não tem carga aparece **zerado**, não some |
+| `activeConversations` | conversas `active` atribuídas a ele |
+| `unreadMessages` | soma de `unread_count` dessas conversas |
+| `openProposals` | propostas criadas por ele em estágio **não terminal** (`TERMINAL_STATUSES` de `@crm-lab/shared`) |
+| `pendingApprovals` | propostas criadas por ele com `approvalStatus = 'pending'` |
+| `pendingDecisions` | propostas do tenant com `approvalStatus = 'pending'`, ordenadas por `createdAt ASC` (a mais velha primeiro — é uma fila de decisão), recortadas por `decisionsLimit` |
+
+"Em espera" é `unread_count > 0` de propósito: é o mesmo número que o inbox mostra no badge, e
+derivá-lo de "a última mensagem é do paciente" criaria uma segunda definição de "esperando
+resposta" no mesmo produto — duas origens para o mesmo número.
+
+`pendingDecisions.total` é a contagem completa (não o tamanho de `items`), e `pagination` é o
+`PaginationMeta` padrão descrevendo **sempre a primeira página** (`page: 1`, `limit:
+decisionsLimit`). **Este endpoint não pagina** (D-077): não existe `decisionsPage`, e o
+`OperationOverviewQuery` não tem onde recebê-lo. O papel de `pagination` aqui é dizer à tela
+*quantas decisões ficaram de fora* (`total`, `totalPages`) para ela oferecer o link "ver todas"
+— a lista completa e paginável é `GET /proposals` filtrado por aprovação pendente. Um segundo
+parâmetro de página não resolveria: a resposta é um retrato único do mesmo instante (D-067) e
+pedir a página 2 das decisões refaz fila e carga junto.
+`patientId` é `null` em conversa anterior ao backfill de D-059 — a tela só linka para a ficha
+quando ele existe.
+
+Este endpoint **não** aplica recorte por atendente: quem chega aqui é gestor ou admin, que já
+enxergam todo o laboratório em `/conversations` e `/proposals`. Também **não** gera audit log:
+é leitura.
+
+**Erros:** `VALIDATION_ERROR` (400, `queueLimit`/`decisionsLimit` fora da faixa),
+`FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
 
 ---
 

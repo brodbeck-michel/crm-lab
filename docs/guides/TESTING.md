@@ -112,7 +112,18 @@ Cobrem os fluxos de `docs/domain/WORKFLOWS.md`:
 | Aprovação | atendente cria 25% → pending → gestor aprova em #aprovacoes → atendente notificado |
 | Pipeline | mover estágio via modal → perdido exige motivo |
 | Personalização | admin troca tema → cores mudam em tempo real → persiste após relogin |
+| Catálogo | atendente lê · gestor cria/edita · desativar é `PATCH { isActive: false }` |
+| Ficha do Paciente | abre por `patients.id` → edita cadastro e persiste → timeline na página 2 → cartão abre o Modal da Proposta → LGPD: admin exporta, não-admin não vê a seção |
+| Canais & Equipe | admin salva e persiste · gestor em modo leitura · **campo de segredo em branco PRESERVA o token** (com o controle positivo: token novo troca a máscara) |
+| Gestão da Operação | fila, carga e decisões pendentes conferidas contra o dado semeado · atendente barrado na tela e na API |
+| Badge do chat interno | `#aprovacoes` nasce em 1 para o gestor → `POST .../read` zera → mensagem nova sobe de novo (pendência D5 da Onda 5) |
+| Paginação | `/proposals` e `/catalog`: a página 2 alcança registro que a página 1 não mostra (pendência D7 da Onda 5) |
 | Isolamento | usuário do tenant A não vê NADA do tenant B |
+
+> A varredura EXAUSTIVA de rotas (todas as rotas de laboratório × 2 tenants ×
+> `platform_operator`) vive em `backend/tests/kernel/route-tenant-isolation.spec.ts`,
+> não no Playwright: lá os dois tenants nascem do zero em PGlite e o inventário
+> é comparado por igualdade com o que os routers expõem.
 
 Rodam contra ambiente com seeds (`npm run seed:e2e`), em CI a cada PR para main.
 

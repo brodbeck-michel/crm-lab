@@ -278,6 +278,8 @@ incluem marcação de leitura de canal interno), e o campo é obrigatório em `C
 0 é honesto e estável; inventar um contador derivado de "mensagens desde o login" seria um
 número sem origem (BUSINESS_RULES §5).
 **Impacto:** api, ui. Pedido registrado em STATUS.md para o Agent-DB.
+**SUPERADA por D-068** (Onda 6): a tabela `channel_reads` existe, `unreadCount` passou a ser
+derivado de verdade e `POST /internal-chat/channels/:id/read` zera o contador.
 
 ### D-045: `DISCOUNT_EXCEEDS_LIMIT` é o bloqueio de `updateDiscount` sobre proposta de terceiro
 **Decisão:** criar proposta com desconto acima da alçada **não** é erro — vai para `pending`
@@ -582,6 +584,446 @@ Quem rodava dev com `REDIS_URL` apontando para um Redis inexistente precisa apag
 (o `.env.example` explica). O ambiente de teste ignora `REDIS_URL` como antes (`env.isTest`).
 Testes em `tests/kernel/cache.spec.ts`, incluindo o de `delByPrefix` que prova que o SCAN não
 encosta em chave de outro tenant (regra 1).
+
+---
+
+## 2026-08-24 — Contrato da Onda 6 (Agent-Docs-Onda6)
+
+Fase 0 do plano `docs/superpowers/plans/2026-08-24-onda-6.md`: paciente como entidade, canais
+e operação, e as pendências de doc da Onda 5. Nada de implementação — só contrato.
+
+### D-059: Paciente vira entidade própria; as colunas denormalizadas ficam
+**Decisão:** nasce a tabela `patients` (`UNIQUE (tenant_id, phone)`, SCHEMA.md §14) e a coluna
+`conversations.patient_id UUID NULL`. As colunas `conversations.patient_name/patient_phone/
+patient_email` **permanecem** nesta onda, e **nenhum contrato de `/conversations` muda**.
+**Motivo:** a ficha `/patients/:id` (PAGES.md §3) pede cadastro completo editável — e um
+cadastro que mora denormalizado em N conversas não tem onde ser editado uma vez só: editar o
+nome numa conversa deixaria as outras N-1 com o valor velho, e não existiria linha para
+`birth_date`, `document`, `notes` ou o marcador de LGPD. Manter as colunas antigas é o passo 1
+da regra dos 3 passos de AGENTS.md (criar novo → migrar dados → remover antigo): remover na
+mesma onda em que se cria obrigaria backend, frontend e E2E a mudarem juntos, e qualquer
+caminho esquecido viraria erro em produção.
+**Impacto:** db, api, ui. `patient_id` é nullable de propósito (linha anterior ao backfill é
+legítima). `findOrCreateByPhone` passa a resolver o paciente pelo telefone no mesmo caminho do
+webhook, com `ON CONFLICT (tenant_id, phone)` — duas mensagens simultâneas não podem criar dois
+pacientes. A remoção das colunas denormalizadas é trabalho de uma onda futura.
+
+### D-060: A ficha do paciente são três chamadas, e as propostas dele saem de `/proposals`
+**Decisão:** `GET /patients/:id` devolve **cadastro + contadores** e nada mais. A timeline tem
+rota própria (`GET /patients/:id/timeline`, paginada) e as propostas do paciente saem de
+`GET /proposals?patientId=<uuid>` — não existe `GET /patients/:id/proposals`. Os três blocos
+aplicam o mesmo recorte por papel: atendente enxerga apenas pacientes com ao menos uma conversa
+visível a ele (dele ou não atribuída); gestor/admin veem tudo; fora disso, `404`.
+**Motivo:** embutir timeline e propostas faria a abertura da ficha carregar centenas de linhas
+para mostrar as dez primeiras, e os três blocos têm ciclos de atualização diferentes. Para as
+propostas, o filtro reusa de graça o que `/proposals` já tem: visibilidade de D-042, paginação,
+ordenação e o shape do item — um endpoint próprio duplicaria as quatro coisas e faria o
+`PatientService` ler a tabela `proposals`, de outro domínio (SERVICES.md "Convenções
+Transversais"). O recorte por papel na timeline não é detalhe: sem ele, a ficha seria um caminho
+lateral para o atendente ler a conversa de outro atendente, contrariando SERVICES.md §2.
+**Impacto:** api, ui. Contadores (`conversationCount`, `proposalCount`, `lastInteractionAt`)
+são derivados no recorte de quem pergunta — dois usuários podem ver números diferentes na mesma
+ficha, e a tela não deve rotulá-los como "total do laboratório". `?patientId=` de paciente
+invisível devolve **lista vazia**, não 404 (filtro não é oráculo de existência, como em D-042).
+
+### D-061: Não existe `POST /patients` nem edição de telefone
+**Decisão:** o paciente é criado exclusivamente por `findOrCreateByPhone`, no caminho do canal.
+`PATCH /patients/:id` recusa `phone` (`VALIDATION_ERROR`), e não há `DELETE`.
+**Motivo:** `phone` é a chave de deduplicação `(tenant_id, phone)`; deixá-lo editável permitiria
+fundir ou órfãos dois cadastros por digitação, sem nenhum fluxo de merge para consertar. E não
+há tela que cadastre paciente fora de uma conversa — um `POST` criaria uma segunda origem para
+a mesma entidade, com o risco de dois cadastros do mesmo telefone competindo pela unicidade.
+**Impacto:** api, ui. Corrigir um telefone errado é assunto de uma onda futura (exigiria fusão
+de cadastros); a UI não oferece o campo.
+
+### D-062: Exportação LGPD é admin e NÃO aplica o recorte por papel
+**Decisão:** `GET /patients/:id/export` exige `admin` e devolve o dado completo do titular no
+tenant — conversas e propostas que o solicitante não veria pela UI inclusive. Formato JSON com
+`Content-Disposition: attachment`; gera audit log `export_patient_data`.
+**Motivo:** atender pedido de titular é ato de controlador de dados, não tarefa de atendimento.
+Uma exportação filtrada pela visibilidade de quem clicou seria uma resposta **incompleta** a um
+pedido legal — pior que negar. A defesa correta é restringir o papel e auditar, não entregar
+meia verdade. JSON, e não CSV, porque o dado é aninhado (conversas → mensagens, propostas →
+itens) e achatar perderia estrutura.
+**Impacto:** api, ui, segurança. Gestor e atendente recebem `403` com
+`details.requiredRoles: ["admin"]`. Entram cadastro (inclusive `notes`, que é interno mas é
+dado pessoal), conversas, mensagens — inclusive as de sistema — e propostas com itens e total.
+Não entram `approvalStatus`, alçadas, quem aprovou/rejeitou, chat interno e audit log: são dados
+do laboratório (BUSINESS_RULES §7).
+
+### D-063: Apagamento LGPD é anonimização, não `DELETE`
+**Decisão:** `POST /patients/:id/anonymize` (admin, `reason` obrigatório) limpa o cadastro,
+troca `phone` por `'anon-' || substring(id::text, 1, 8)`, grava `anonymized_at` e limpa as
+cópias denormalizadas em `conversations` — tudo em uma transação. Propostas, itens, mensagens e
+audit logs ficam intactos. Idempotente (repetir devolve 200). Depois disso, `PATCH` responde
+`409 CONFLICT` com `details.reason: "patient_anonymized"`.
+**Motivo:** apagar a linha quebraria o histórico — propostas apontam para conversas que apontam
+para o paciente, e o funil e a receita passariam a mentir. Por outro lado, deixar as colunas
+denormalizadas de `conversations` intactas tornaria a anonimização decorativa: o nome
+continuaria aparecendo na lista do inbox. Por isso o efeito atravessa as duas tabelas enquanto
+as denormalizadas existirem (D-059) — é a única escrita do `PatientService` fora da sua tabela,
+e está registrada como exceção em SERVICES.md §12. O audit log grava só o `reason`: gravar os
+valores antigos seria desfazer a anonimização em outra tabela.
+**Impacto:** api, db, ui, segurança. **Limitação conhecida e documentada:** o conteúdo das
+mensagens não é reescrito — o texto é registro da conversa, e expurgo de mensagem é a política
+de retenção que SECURITY.md "LGPD" deixa como config futura. `patientName` já é anulável em
+`Proposal`, então propostas históricas passam a aparecer sem nome, sem quebrar.
+
+> **Emenda (Onda 6, ver D-075).** Duas frases desta decisão estavam erradas por omissão:
+> 1. **"audit logs ficam intactos" não vale mais.** `PATCH /patients/:id` grava
+>    `oldValues`/`newValues` com nome, e-mail, `birthDate`, CPF e `notes`, e
+>    `GET /audit?entityType=patient&entityId=<id>` devolvia tudo em claro **depois** do
+>    apagamento — o direito ao esquecimento era reversível por uma rota suportada. Agora a
+>    anonimização substitui o **valor** desses campos por `"[ERASED]"` na mesma transação,
+>    preservando linha, ação, autor, timestamp e as **chaves**. Detalhe em D-075.
+> 2. **`messages.attachment_url` é limpo.** "O conteúdo das mensagens não é reescrito" cobre o
+>    TEXTO. A URL do anexo aponta para um arquivo do titular (foto, PDF de exame) e não é
+>    conteúdo de conversa em nenhum sentido útil — ela vira `NULL`. O texto continua intacto, e
+>    essa continua sendo a limitação declarada.
+
+### D-064: `tenant_channels`, com segredo write-only
+**Decisão:** nasce `tenant_channels (tenant_id, channel, phone_number_id, phone_number,
+api_token, webhook_secret, is_active, ...)` com `UNIQUE (tenant_id, channel)`. A API **nunca**
+devolve `api_token` nem `webhook_secret`: a leitura expressa `apiTokenMasked`
+(`'••••••••' + 4 últimos`) e `webhookSecretSet: boolean`. Escrita em três estados: campo ausente
+preserva, `null` apaga, string grava; `""` é `VALIDATION_ERROR`.
+**Motivo:** fecha o pedido do Agent-API-Conversations (D-024), que hoje deriva credenciais de
+env var e identidade de tenant do slug da URL — arranjo que impede dois laboratórios com números
+diferentes na mesma instalação. Sobre o mascaramento: um token que volta na resposta vaza por
+onde a resposta passar (log de proxy, devtools, cache de query, print de tela em suporte), e
+"só para o admin" não resolve nenhum desses. O `webhookSecret` não tem nem prévia de 4
+caracteres: ele é curto e assina HMAC, então qualquer pedaço reduz o espaço de busca.
+**Impacto:** db, api, ui, segurança. O repositório projeta colunas explicitamente — `SELECT *`
+devolvendo a linha ao controller é bug de segurança, não estilo. `update_channel_settings` grava
+`"[REDACTED]"` no audit log. `ChannelSettingsService.resolveCredentials` é o único método que lê
+o valor em claro, e cai nas env vars quando o laboratório não configurou o canal (dev e CI
+continuam subindo sem nenhuma linha na tabela).
+
+### D-065: Distribuição, mensagens automáticas e horário moram em `tenant_settings`
+**Decisão:** tabela nova `tenant_settings` (1:1 com `tenants`, `tenant_id` como PK), com
+`distribution_mode`, as duas mensagens automáticas e `business_hours JSONB`. **Linha ausente =
+defaults**: o `GET` responde `manual`, mensagens desligadas e `America/Sao_Paulo` sem gravar
+nada; o primeiro `PATCH` faz `INSERT ... ON CONFLICT`.
+**Motivo:** as três alternativas foram pesadas. Em `tenants`: é a tabela raiz, escrita pelo
+console da plataforma (identidade, plano, assinatura) e sob RLS por `id` — o `PATCH` de uma tela
+de admin de laboratório passaria a escrever na mesma linha que o billing edita, e a policy teria
+forma diferente de todas as outras. Em `tenant_channels`: a configuração é do laboratório, não
+do canal; duplicaria por canal um valor que é único. Tabela própria com `tenant_id` como PK
+**e** chave da policy padrão mantém o mesmo formato das demais 16 tabelas. Não criar a linha no
+onboarding evita que o `POST /platform/tenants` ganhe mais um passo transacional para gravar
+exatamente os defaults.
+**Impacto:** db, api, ui. `business_hours` é JSONB por ser lido inteiro e nunca filtrado por
+parte, e é **substituído**, não mesclado por dia — merge por dia tornaria impossível fechar um
+dia sem inventar um sentinela.
+
+### D-066: A equipe vem embutida em `GET /settings/channels`, não de `GET /users`
+**Decisão:** a resposta traz `team[]` com id, nome, papel e status — **sem e-mail e sem
+alçada**, incluindo inativos, ordenado por nome. `GET /users` continua admin-only, inalterado.
+**Motivo:** a tela é lida pelo gestor (PAGES.md §10) e `GET /users` é admin. As saídas eram:
+alargar `/users` para gestor, o que entregaria e-mail e alçada de todo mundo por causa de uma
+lista de nomes; ou servir o recorte mínimo aqui. A segunda é a interpretação mais restritiva
+que AGENTS.md manda escolher, e mantém a tela de Usuários & Permissões como o único lugar que
+governa papel e alçada.
+**Impacto:** api, ui. Se a tela um dia precisar de qualquer campo além destes quatro, o caminho
+é `GET /users` (e a discussão de papel volta), não engordar `team`.
+
+### D-067: `/operations/overview` é UM endpoint, não três
+**Decisão:** fila, carga por atendente e decisões pendentes vêm de uma única rota
+(`GET /operations/overview`, gestor+), com `generatedAt` e sem cache.
+**Motivo:** os três blocos são o retrato do mesmo instante e saem das mesmas duas tabelas.
+Três rotas triplicariam o polling e permitiriam a tela mostrar uma fila de 14:03 ao lado de uma
+carga de 14:05 — a incoerência que BUSINESS_RULES §5 existe para evitar, e que aqui seria
+visível ao gestor (a soma da carga não bateria com a fila). Sem cache porque é um painel de
+"agora": 5 minutos de TTL mostrariam uma fila que já não existe.
+**Impacto:** api, ui. Tudo é derivado de `conversations` e `proposals` — nenhuma tabela nova.
+"Em espera" é definido como `unread_count > 0`, deliberadamente o mesmo número do badge do
+inbox: derivá-lo de "a última mensagem é do paciente" criaria uma segunda definição de
+"esperando resposta" no mesmo produto. Os tempos saem em **segundos**, calculados no SQL em UTC
+(`EXTRACT(EPOCH FROM (NOW() - COALESCE(last_message_at, created_at)))::int`) — subtrair datas em
+JavaScript reintroduziria o defeito de fuso de D-021.
+
+### D-068: `channel_reads` e `POST /internal-chat/channels/:id/read` (supera D-044)
+**Decisão:** nasce `channel_reads (tenant_id, channel_id, user_id, last_read_at)`, PK
+`(channel_id, user_id)`. `Channel.unreadCount` passa a ser derivado dela — mensagens com
+`created_at > last_read_at` cujo `sender_id` não é o do usuário — e `Channel` ganha
+`lastReadAt`. `POST /internal-chat/channels/:id/read` devolve `204` e é idempotente.
+**Motivo:** D-044 servia `0` fixo por não haver tabela de leitura, o que produziu o defeito D5
+da Onda 5: o badge subia e nunca descia. Contar "mensagens desde o login" seria número sem
+origem (BUSINESS_RULES §5); a origem correta é o estado de leitura por usuário. O `unreadCount`
+continua **derivado**, nunca materializado — contador incrementado é a segunda origem que a
+regra proíbe. Mensagem de sistema conta de propósito: o pedido de aprovação em `#aprovacoes` é
+o que mais precisa piscar. Mensagem do próprio autor nunca conta.
+**Impacto:** db, api, ui. `listMessages` **não** marca como lido — ler página antiga do
+histórico não é ter visto a mensagem nova. É a diferença deliberada para `GET /conversations/:id`
+(D-035), onde a página 1 é literalmente o fim da conversa. A leitura não gera audit log.
+
+### D-069: No chat interno, `page=1` é a página das mensagens mais recentes
+**Decisão:** `GET /internal-chat/channels/:id/messages` pagina **do fim**: `page=1` cobre as
+mensagens mais recentes, com os itens em ordem cronológica crescente dentro da página; `page=2`
+é o bloco anterior. O `OFFSET` é `max(0, total - page * limit)`.
+**Motivo:** a implementação da Onda 5 fatiava do começo (`created_at ASC` + `OFFSET` a partir da
+primeira mensagem), então abrir um canal no estado útil custava **dois** requests: um só para
+descobrir `totalPages` e outro para buscar a última página. Um chat abre no fim. A alternativa
+seria cursor (`before=<id>`), mais correto sob escrita concorrente, mas mudaria o shape de
+`pagination` só nesta rota e exigiria uma segunda convenção de paginação no projeto — e
+`GET /conversations/:id` já documenta exatamente esta ("`page=1` é a página mais recente"). A
+consistência interna venceu.
+**Impacto:** api, ui. A última página (a mais antiga) pode vir com menos itens que `limit`;
+a página 1 vem cheia sempre que houver mensagens suficientes. `totalPages` continua
+`ceil(total / limit)`. Quem implementa segue esta regra — o `fetchTail` de dois requests some.
+
+### D-070: Regra de envelope — listagem tem chave nomeada, recurso único viaja cru
+**Decisão:** três formas, sem quarta. Listagem: chave nomeada no plural + `pagination` (D-009).
+Recurso único (GET, POST ou PATCH): o objeto **cru**. Resposta composta (mais de um recurso, ou
+recurso + meta): uma chave por parte. Sem corpo: `204`.
+**Motivo:** a Onda 5 terminou com duas convenções convivendo (defeito D8): `POST
+/platform/tenants` devolvia `{ tenant }` enquanto `POST /users` e
+`POST /internal-chat/.../messages` devolviam o objeto cru. Duas formas para o mesmo caso obrigam
+quem escreve cliente a consultar o doc endpoint a endpoint. A maioria esmagadora dos endpoints
+já era crua, então essa é a regra que muda menos código; e envelopar um recurso único só
+acrescenta um nível para desembrulhar, sem carregar informação nenhuma.
+**Impacto:** api, ui. **Muda exatamente um endpoint:** `POST /platform/tenants` passa a
+devolver `TenantSummary` cru, e `CreateTenantResponse` (`shared/types/platform.types.ts`) virou
+alias de `TenantSummary`. Dono da correção: **Agent-API-Fixes** (controller) + o cliente
+`frontend/src/api/platform.ts`. **Exceção explícita registrada:** `GET`/`PATCH
+/themes/current` continuam em `{ theme }`, porque o mesmo objeto viaja aninhado em
+`tenant.theme` no login e desembrulhar aqui criaria duas formas do mesmo dado no bootstrap, sem
+ganho.
+**Varredura completa (Onda 6):** as demais formas fora das tres regras estao registradas na
+tabela de excecoes de `API_CONTRACTS.md` §"Excecao explicita, registrada" — as projecoes
+parciais de `PATCH /proposals/:id/{status,discount,approve,reject}` (devolvem so o que a
+operacao mudou; o recurso inteiro sai em `GET /proposals/:id`) e o ACK `{ received: true }` do
+webhook da Meta (nao e recurso). Na mesma varredura o campo `message` em pt-BR saiu de
+`/approve` e `/reject`: texto de interface e do frontend (i18n), e `approvalStatus` ja carrega
+a informacao. Fora dessas linhas, qualquer envelope de recurso unico e bug de contrato.
+
+### D-071: `proposal_items.position INT NOT NULL DEFAULT 0`
+**Decisão:** a coluna entra na migração 003; o `INSERT` grava o índice do item no array do
+request, e toda leitura ordena por `position ASC, created_at ASC`.
+**Motivo:** fecha o pedido do Agent-API-Proposals em STATUS.md. Hoje a ordem em que o atendente
+montou o orçamento é preservada deslocando `created_at` em 1 microssegundo por item, porque o
+desempate por `id` (UUID aleatório) embaralhava a lista. Isso é uma coluna de tempo sendo usada
+como coluna de ordem: qualquer reprocessamento, importação ou migração que normalize timestamps
+embaralha o orçamento, e o defeito só aparece na tela do paciente.
+**Impacto:** db, api. `DEFAULT 0` torna a migração compatível com o dado existente — nenhum
+backfill é obrigatório, e o segundo critério (`created_at`) mantém as propostas antigas na ordem
+atual. Sem mudança de contrato externo: `ProposalItem` já é um array ordenado.
+
+### D-072: Paciente nasce junto da conversa; nome do canal preenche, nunca sobrescreve
+**Decisão:** `ConversationRepository.findOrCreateByPhone` passa a criar/reaproveitar a linha de
+`patients` e a gravar `conversations.patient_id` na **mesma transação** (funcao de repositorio sobre
+a `DbTx` ja aberta, nao chamada de service — transacao nao aninha, D-008). Tres regras sobre o nome
+que vem do perfil do canal: (1) **nunca sobrescreve** nome ja cadastrado; (2) **preenche** quando o
+cadastro esta sem nome (`COALESCE(p.name, EXCLUDED.name)`); (3) **paciente anonimizado nao volta a
+existir** — a anonimizacao (D-063) troca o telefone por `anon-<id>`, entao o `ON CONFLICT
+(tenant_id, phone)` de um numero real nunca alcanca a linha morta e o contato seguinte cria cadastro
+novo.
+**Motivo:** ate aqui **so o backfill da migracao 003** preenchia `conversations.patient_id`. Todo
+paciente que chegasse pelo webhook depois da Onda 6 nasceria com `patient_id NULL` e ficaria
+invisivel na Ficha do Paciente — um defeito que funciona na demo e morre em producao. Quanto ao
+nome: o cadastro e editado pelo atendente, enquanto o nome do perfil do WhatsApp e apelido escolhido
+por terceiro ("Jhow 🔥") e nao pode vencer o dado de negocio.
+**Impacto:** api, db. Consequencia aceita e desejada: o historico anterior ao pedido de apagamento
+**nao** e reanexado ao cadastro novo — e exatamente o que "direito ao esquecimento" significa. O
+`CASE WHEN p.anonymized_at IS NOT NULL` no upsert e cinto de seguranca caso alguem, no futuro,
+anonimize sem embaralhar o telefone. Bug pre-existente corrigido no caminho: o upsert usava CTE com
+`JOIN` de volta e a parte principal da query enxerga o snapshot anterior ao statement, entao
+**nenhum paciente novo era retornado** — so o caminho `DO UPDATE` funcionava. O metodo ainda nao
+tinha consumidor, por isso ninguem tinha visto.
+
+### D-073: Credenciais de canal saem da tabela, com fallback campo a campo para env var
+**Decisão:** `WhatsAppCredentialsResolver` le `tenant_channels` via
+`ChannelSettingsService.resolveCredentials`, caindo nas env vars **campo a campo** (linha ausente ou
+coluna nula). `apiUrl` continua so em env var. Segredo de webhook vazio continua recusando tudo.
+**Motivo:** fecha o D-024, que registrava a ausencia de tabela de canal por tenant como divida. O
+fallback e campo a campo, e nao "linha existe ⇒ ignora env", porque um laboratorio pode ter
+conectado o numero sem ainda ter girado o segredo do webhook — e um ambiente ja configurado nao pode
+quebrar no deploy desta onda.
+**Impacto:** api, infra. `apiUrl` fica fora porque e endereco da API do canal (e decide driver mock
+x real), nao credencial do laboratorio.
+
+> **Emenda (Onda 6): o fallback distingue "nunca configurou" de "revogou".** Como escrito, o
+> fallback campo a campo tornava **inócuo** o `null` do contrato: `{"webhookSecret": null}` apaga a
+> coluna e a resposta volta `webhookSecretSet: false` — mas o resolver então devolvia
+> `WHATSAPP_WEBHOOK_SECRET`, que é **um valor para a instalação inteira**. Quem conhecesse esse
+> segredo (operador de infra, um `.env` vazado, outro laboratório da mesma instalação) assinaria
+> webhook válido para **todo** tenant que ainda não tivesse girado o próprio — e o slug vai na
+> URL, que é pública. Isso é escrita cross-tenant em `messages`/`conversations`/`patients`. O
+> mesmo valia para `apiToken: null`, que devolvia o envio ao número global.
+>
+> A coluna passa a ter **três** estados, e o fallback só vale para o primeiro:
+>
+> | coluna | significado | resolver |
+> |--------|-------------|----------|
+> | `NULL` | o laboratório nunca configurou | **cai na env var** (dev, CI e o ambiente que já rodava só com env var continuam funcionando) |
+> | `''`   | o laboratório **revogou** (`null` no PATCH) | **sem fallback**: o webhook recusa tudo e o envio recusa sair |
+> | texto  | o valor (cifrado em repouso, D-076) | usa o valor do laboratório |
+>
+> A sentinela é string vazia — e não uma coluna nova — porque `''` já era o valor que a leitura
+> da tela tratava como "não configurado" (`webhook_secret <> ''`): o contrato de §6 não muda, a
+> tela não vê diferença entre os dois primeiros estados e nenhuma migração é necessária. `''`
+> nunca é cifrado: é estado, não segredo.
+
+### D-079: `patientId` entra no contrato de conversa (campo opcional, não reabre a D-059)
+**Decisão:** `Conversation` (e portanto `ConversationDetail`) ganha `patientId: string | null`,
+mapeado de `conversations.patient_id` em `toConversation`. A Ficha do Paciente passa a ter porta de
+entrada no produto: coluna 3 do Atendimento (PAGES.md §2), fila da Gestão da Operação (§10, via
+`QueueItem.patientId`, que já existia na resposta e era descartado) e a busca de pacientes do inbox,
+que passa a consumir `GET /patients` (PAGES.md §2/§3). Onde `patientId` é `null` o link **não é
+renderizado** — não é link quebrado nem botão desabilitado sem explicação.
+**Motivo:** a D-059 congelou `/conversations` para não quebrar cliente existente, e a leitura estrita
+disso deixou `/patients/:id` sem nenhum caminho de navegação: as únicas ocorrências da rota eram a
+declaração e o registro de permissão, e `patientsApi.list` não tinha chamador nenhum. Um atendente
+logado não conseguia abrir a ficha de ninguém — o E2E não pegava porque entrava por URL direta.
+Acrescentar campo **opcional** é backward compatible e é o padrão do projeto (AGENTS.md: "campos
+novos são sempre opcionais até ambos os lados suportarem"): quem não conhece `patientId` ignora, e
+nada do que já existia mudou de forma ou de significado. Os denormalizados `patientName`/
+`patientPhone` continuam sendo o que a lista exibe — `patientId` serve para navegar, não para
+mostrar.
+**Impacto:** api, ui, docs. `GET /conversations` e `GET /conversations/:id` passam a devolver mais um
+campo (API_CONTRACTS.md §2). Multitenant e recorte por papel valem para o link: `patientId` só chega
+em conversa que o solicitante já enxerga, e `GET /patients/:id` reaplica o recorte de D-060 (404,
+nunca 403) — o link nunca revela paciente que o usuário não poderia ver por outro caminho.
+
+### D-077: `/operations/overview` não pagina as decisões pendentes — `pagination` é só o "quantas ficaram de fora"
+**Decisão:** o contrato deixa de prometer paginação incremental em `pendingDecisions`.
+`OperationOverviewQuery` continua com `queueLimit`/`decisionsLimit` e **nada mais**;
+`pendingDecisions.pagination` continua sendo o `PaginationMeta` padrão, mas descrevendo sempre
+`page: 1`. Quem precisa da lista completa e paginável vai para `GET /proposals` filtrado por
+aprovação pendente.
+**Motivo:** o shape e a implementação já diziam isso (`operation.service.ts` fixa `page: 1`; não
+existe `decisionsPage` para receber). O texto de API_CONTRACTS §7 justificava o campo com "para
+a tela paginar a lista de decisões sem recarregar a fila" — algo que este endpoint **não pode**
+entregar: a resposta é um retrato único do mesmo instante (D-067), então pedir a página 2 das
+decisões refaz fila e carga junto. Acrescentar o parâmetro seria implementar uma paginação que
+recarrega tudo a cada página para uma lista que, por definição de fila de decisão, é curta —
+custo real por um ganho imaginário. Corrigir o texto é a opção honesta.
+**Impacto:** docs (API_CONTRACTS §7). Nenhuma mudança de código nem de shape: `pagination`
+segue no `OperationPendingDecisions` porque `total`/`totalPages` são o que a tela usa para
+oferecer o "ver todas". Endpoint novo que recortar lista sem paginar de verdade documenta isso
+explicitamente, como aqui.
+
+### D-078: `TimeZone=UTC` fixado na conexão, e aritmética de tempo explícita em UTC
+**Decisão:** duas travas, de propósito. (1) `PgDriver` abre o pool com
+`options: '-c timezone=UTC'`, fixando o `TimeZone` da sessão do banco. (2) toda aritmética entre
+`NOW()` e coluna `TIMESTAMP` sem fuso usa **`NOW() AT TIME ZONE 'UTC'`**, não `NOW()` cru —
+hoje as duas ocorrências em `operation.repository.ts` (espera da fila e espera da decisão).
+**Motivo:** defeito **provado**, não suspeitado. `last_message_at`, `created_at` e afins são
+`TIMESTAMP` **sem** fuso, gravados em UTC; `NOW()` é `timestamptz`. Subtrair um do outro faz o
+Postgres converter a coluna pelo `TimeZone` da **sessão**, e nada fixava esse fuso: nem o
+`docker-compose.yml`, nem o driver. Sondagem em PGlite (Postgres 16), mesma linha, mesmo
+instante:
+```
+TimeZone=UTC                -> EXTRACT(EPOCH FROM (NOW() - ts))::int =      0
+TimeZone=America/Sao_Paulo  -> EXTRACT(EPOCH FROM (NOW() - ts))::int = -10800
+```
+E com o cenário real da tela, sob `America/Sao_Paulo`, a espera de 3 h da fila voltava como
+`0` s. Hoje passa despercebido só porque a imagem oficial do Postgres roda em UTC — num servidor
+em `America/Sao_Paulo` a Gestão da Operação mentiria em horas. É o mesmo defeito que D-021
+registrou, reaparecendo por outro caminho.
+**Impacto:** api, infra. Fixar o fuso na conexão elimina a classe inteira de bug e custa uma
+linha; a aritmética explícita é o cinto que continua segurando se alguém trocar o driver ou
+apontar para um pool externo que não passe `options`. `generatedAt` já era imune
+(`to_char(NOW() AT TIME ZONE 'UTC', ...)`) e segue igual. Regressão coberta por
+`tests/operation/operation-overview.spec.ts` → "esperas nao mudam com o TimeZone da sessao do
+banco", que faz `SET TimeZone='America/Sao_Paulo'` antes de ler o retrato. Query nova que
+subtrai `NOW()` de coluna `TIMESTAMP` escreve `AT TIME ZONE 'UTC'` — não é estilo.
+
+### D-074: `isActive: false` desliga o canal nos DOIS sentidos
+**Decisão:** `tenant_channels.is_active` passa a valer para valer. `false` significa: (1) o
+webhook do tenant é **recusado** — antes do HMAC, sem tocar no banco, com a mesma resposta
+`200 {received:true}` de todos os outros caminhos; (2) `WhatsAppService.send` **lança antes de
+enfileirar**, e o `MessageService` reflete isso como `status: failed` + `MESSAGE_SEND_FAILED`
+(502). Linha ausente na tabela = canal ligado (o ambiente só-env-var não muda).
+**Motivo:** `isActive: false` é o **único** desligamento que o contrato oferece —
+API_CONTRACTS.md §6 diz literalmente "não existe remoção de canal nesta rota; desligar é
+`isActive: false`". Ele não fazia nada: a tela mostrava o canal inativo e o webhook com HMAC
+válido continuava criando paciente + conversa + mensagem, enquanto o envio continuava saindo
+pelo token guardado. É o gesto que um admin faz **justamente quando descobre que o token
+vazou** — o momento em que um controle decorativo é pior que controle nenhum, porque ele
+acredita ter contido o incidente. Recusar antes do HMAC (e não depois) é de propósito: canal
+desligado não chega nem a usar o segredo.
+**Impacto:** api, segurança. A resposta do webhook continua invariável — desligado, ligado,
+tenant inexistente e assinatura errada respondem a mesma coisa, senão a rota vira oráculo de
+enumeração. O envio falha **rápido**: a fila não tenta 3 vezes o que não é falha transitória.
+Religar é `isActive: true` — o kill switch não é via de mão única.
+
+### D-075: o apagamento LGPD alcança o audit log e o anexo
+**Decisão:** `PatientRepository.anonymize` passa a fazer, na **mesma transação**, mais duas
+coisas além do cadastro e das cópias denormalizadas: (3) `messages.attachment_url = NULL` nas
+mensagens das conversas do titular; (4) em `audit_logs` com
+`entity_type = 'patient' AND entity_id = <id>`, o **valor** de cada chave de
+`old_values`/`new_values` vira `"[ERASED]"`. Linha, `action`, `user_id`, `timestamp`,
+`ip_address` e as **chaves** dos objetos permanecem. É a **única** escrita não-append de
+`audit_logs` no projeto, vive em `auditRepo.eraseEntityValues` e **nenhum controller a
+alcança** — só a transação de anonimização.
+**Motivo:** `PATCH /patients/:id` grava o valor anterior e o novo de cada campo alterado, o que
+inclui `document` (CPF), `name`, `email`, `birthDate` e `notes`. Com o audit log intacto,
+`GET /api/v1/audit?entityType=patient&entityId=<id>` — rota suportada, admin — devolvia a
+ficha "apagada" inteira em claro. O produto prometia apagamento e não apagava, e a promessa é
+jurídica. A saída **não** é apagar a linha de auditoria: auditoria existe para provar **que** a
+edição aconteceu, e isso continua provado (quem, quando, de onde, qual campo). O que ela não
+precisa guardar depois do pedido do titular é o **valor** do dado pessoal. Manter as chaves é o
+que separa "auditoria com o dado redigido" de "auditoria destruída".
+**Impacto:** api, db, segurança, LGPD. Emenda D-063 (ver lá). O escopo é **por entidade**:
+apagar o titular X não toca na auditoria do titular Y nem em `entity_type` diferente de
+`patient`. Idempotente (`"[ERASED]"` reescrito continua `"[ERASED]"`). SECURITY.md "Auditoria"
+passa a dizer "append-only, com uma exceção nomeada" em vez de "nunca editável" — a regra que
+não admite exceção é a de **não haver DELETE**, e essa continua valendo.
+
+### D-076: credencial de canal é cifrada em repouso, com chave em env var
+**Decisão:** `tenant_channels.api_token` e `tenant_channels.webhook_secret` são gravados
+cifrados com **AES-256-GCM** (`backend/src/lib/secret-box.ts`), com chave derivada de
+`CHANNEL_SECRET_KEY`. A env var é **obrigatória em `NODE_ENV=production`** (mínimo 32
+caracteres, validada em `env.ts`: sem ela o processo não sobe) e **opcional em dev/CI**, onde o
+valor é gravado em claro. A leitura aceita os dois formatos, então a migração do dado existente
+é preguiçosa — acontece na próxima escrita. Nenhuma coluna nova.
+**Motivo:** SECURITY.md dizia "segredos só em env vars" e o precedente do projeto é
+`refresh_tokens`, guardado **hasheado** (SCHEMA.md §14) — mas estes dois valores precisam
+voltar em claro (o token vai no `Authorization` da API do canal; o segredo assina o HMAC), então
+hash não serve. Aceitar o risco foi considerado e recusado: o ativo em jogo não é só leitura. O
+`webhook_secret` é **permissão de escrita** — quem o tem injeta mensagem de paciente em nome do
+laboratório —, o dump é multitenant (um backup entrega **todos** os laboratórios de uma vez) e
+backup é justamente o artefato que mais circula fora do perímetro do banco. Cifrar com uma chave
+que **não mora no banco** faz o dump sozinho não bastar, e essa é a diferença que importa.
+**Impacto:** api, infra, segurança. **Exige do ambiente:** `CHANNEL_SECRET_KEY` no `.env` de
+produção (já em `.env.example` e em `docker-compose.prod.yml`, que também recusa subir sem
+ela); **trocar a chave invalida as credenciais gravadas** — os laboratórios precisam reconectar
+o canal, e não há rotação automática (dívida assumida). Consequência de projeto:
+`apiTokenMasked` não sai mais de `RIGHT(api_token, 4)` no SQL — `RIGHT` sobre ciphertext seria
+mentira — e é montado no repositório, depois de decifrar; a fronteira de D-064 continua sendo o
+repositório, mudou de camada e não de lugar. **Risco residual aceito e declarado:** quem tem o
+dump **e** a env var lê tudo; a chave é única para a instalação (não por tenant); e a cifra não
+protege contra um backend comprometido em execução — ele precisa dos valores em claro para
+operar.
+
+### D-080: o catálogo do orçamento é seletor — busca server-side + carga incremental, não `Pagination`
+**Decisão:** a coluna de catálogo de `/budget/new` (`CatalogSegments`) alcança o catálogo inteiro por
+**busca server-side + carga incremental** (`useInfiniteQuery` via `useExamListInfinite`, botão
+`Carregar mais`, rodapé `N de M exames`), e **não** pelo componente `Pagination` numerado que
+`/proposals` e `/catalog` usam. A página **não** vai para a URL nesta tela. Chave de cache própria,
+`queryKeys.examsInfinite` (`['exams','infinite',filtros]`), dentro do escopo `['exams']`.
+**Motivo:** a tela renderizava `useExamList(...).exams` com `limit: 50` — uma página só. Laboratório
+com mais de 50 exames ativos **não conseguia montar orçamento** com os demais: eles não eram
+alcançáveis por gesto nenhum da tela. É a D7 da Onda 5, fechada nas duas telas listadas e não aqui,
+porque ninguém olhou para o seletor; o E2E não pegava porque o seed tem 14 exames.
+A forma é diferente das outras duas porque o problema é diferente. `/proposals` e `/catalog` são
+**tabelas**, onde trocar de página é o gesto esperado e "a página" é estado compartilhável (por isso
+mora na URL). Isto é um **seletor**: o usuário monta um carrinho na coluna da direita enquanto
+procura na esquerda, e substituir o conteúdo da lista sob ele tiraria da tela o que ele acabou de
+ver sem devolver nada em troca — ninguém quer "voltar à linha 47" de um seletor, quer achar um
+exame. Acumular páginas preserva o que já foi lido; a busca, que o backend já implementa
+(`GET /exams?search=`, API_CONTRACTS §4, dobra de caixa e acento no repositório), recorta o catálogo
+inteiro no banco, não as linhas carregadas. As duas juntas cobrem os dois modos de procurar: sei o
+nome (busco) e não sei (rolo).
+Chave separada porque `useInfiniteQuery` guarda `{ pages, pageParams }`, shape incompatível com o
+`ListExamsResponse` de `useExamList`; mantida sob `['exams']` para que `queryScopes.exams` continue
+invalidando as duas de uma vez quando o catálogo muda.
+**Impacto:** ui, docs. Nenhuma mudança de contrato: `page`/`limit`/`search` de `GET /exams` já
+existiam e o backend não muda. `PAGES.md §4` passa a fixar a forma. `Pagination` continua sendo o
+padrão de **tabela** — esta decisão não o enfraquece, delimita onde ele se aplica. E2E:
+`flow-12-pagination.spec.ts` prova o alcance com um recorte de 55 exames (maior que o `limit: 50`
+antigo de propósito — um lote menor passaria com o defeito).
 
 ---
 

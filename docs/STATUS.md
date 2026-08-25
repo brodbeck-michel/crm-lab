@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-08-24 (fim da Onda 5)
+**Última atualização:** 2026-08-25 (fim da Onda 6)
 
 ---
 
@@ -85,6 +85,64 @@ Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avança
 
 ---
 
+## Onda 6 — Paciente, Operação e Fechamento de Pendências ✅ (concluída em 2026-08-25)
+
+Fecha as três telas que a Onda 5 deixou em placeholder — que estavam paradas por **não existir
+service de backend**, não por esquecimento — e as dez pendências dos validadores.
+
+| Tarefa | Domínio | Status | Agente | Notas |
+|--------|---------|--------|--------|-------|
+| Contratos da onda (Fase 0, bloqueante) | docs | ✅ 2026-08-25 | Agent-Docs-Onda6 | API_CONTRACTS §2c/§6/§7, SERVICES §12-§14, SCHEMA §14-§17, `shared/types/{patient,settings,operation}.types.ts`, D-059→D-071. Nenhuma linha de implementação antes disto (Regra Zero) |
+| Migração 003/004 + backfill + seeds | db | ✅ 2026-08-25 | Agent-DB-Onda6 | `patients`, `tenant_channels`, `tenant_settings`, `channel_reads`, `conversations.patient_id`, `proposal_items.position`. RLS fail-closed nas 4 novas. O teste do backfill monta um banco só com 001/002, escreve dado "pré-Onda 6" e **só então** aplica 003/004 — no banco de teste compartilhado o backfill passaria por vacuidade |
+| PatientService + timeline + LGPD | api | ✅ 2026-08-25 | Agent-API-Patients | `GET/PATCH /patients[/:id]`, `/timeline`, `/export`, `/anonymize`. O recorte por papel (D-060) vive no MESMO `LATERAL` que produz os contadores — é estruturalmente impossível o contador dizer 4 e a listagem enxergar 2 |
+| ChannelSettingsService + OperationService | api | ✅ 2026-08-25 | Agent-API-Operation | `GET/PATCH /settings/channels`, `GET /operations/overview`. Máscara do segredo montada no SQL; tudo da operação derivado de `conversations`+`proposals`, sem contador materializado |
+| Leitura de canal, paginação do chat, envelope, `?patientId=` | api | ✅ 2026-08-25 | Agent-API-Fixes | D-068, D-069, D-070 e o teste de cache que era verde por construção |
+| Vínculo paciente↔conversa e credenciais por tenant | api | ✅ 2026-08-25 | Agent-API-Link | D-072, D-073. Corrigiu de passagem um bug pré-existente: o upsert de paciente usava CTE com JOIN de volta e **nenhum paciente novo era retornado** — só o caminho `DO UPDATE` funcionava, e o método ainda não tinha consumidor |
+| Ficha do Paciente | ui | ✅ 2026-08-25 | Agent-UI-Patient | `pages/Patients/Profile.tsx`. `switch` exaustivo na timeline (uma 5ª espécie quebra o typecheck em vez de renderizar vazio); PATCH por diferença; LGPD com confirmação dupla |
+| Canais & Equipe + Gestão da Operação | ui | ✅ 2026-08-25 | Agent-UI-Operation | Para o gestor os controles de escrita **não existem** no DOM (não são `disabled`). Canal intocado não entra no corpo do PATCH — senão o 1º "salvar" criaria canal fantasma |
+| Paginação, escala de espaçamento, mocks tipados | ui | ✅ 2026-08-25 | Agent-UI-Cleanup | D7, D2, D9, D1 (metade de frontend). 57 ocorrências de espaçamento unificadas; `no-hardcoded-tokens.spec.ts` estendido para reprovar espaçamento cru |
+| E2E das telas novas + isolamento das rotas novas | qa | ✅ 2026-08-25 | Agent-QA-Onda6 | Flows 8-12; inventário de isolamento 30 → 39 rotas; D4 fechado com `ownStatus` por rota + meta-teste que reprova rota nova sem declaração |
+| Correções pós-QA no frontend | ui | ✅ 2026-08-25 | Agent-UI-Fixes-Onda6 | A tela do chat **nunca chamava** `POST /read` (o backend fechou D-068 e a UI não ligou o fio); `fetchTail` obsoleto pela D-069; `SearchInput` derrubava a paginação |
+| Rodada de validação independente | todos | ✅ 2026-08-25 | Validador-Contratos · Validador-Segurança · Validador-Verificação | 3 auditores sem participação na implementação. 2 críticos, 3 altos e ~12 médios — todos corrigidos nas Fases 5/6 abaixo |
+| Correções dos validadores | vários | ✅ 2026-08-25 | Agent-Fix-{Entrypoint,Contracts,Security,Evidence} | D-074→D-079 + emendas a D-063 e D-073 |
+| Catálogo do orçamento e poluição de teste | ui/qa | ✅ 2026-08-25 | Agent-Fix-Budget | D-080. Achado pelo coordenador ao rodar a suíte E2E **completa** — ver lição abaixo |
+
+**Verificação final, rodada pelo coordenador (não pelos autores):**
+
+| Comando | Resultado |
+|---------|-----------|
+| `npm run typecheck` (4 workspaces) | verde |
+| `npm run lint` | limpo |
+| `npm run test:backend` | 43 arquivos · **674** testes |
+| `npm run test:frontend` | 52 arquivos · **728** testes |
+| `npm run e2e` (suíte completa, banco resemeado) | **103 passed**, 0 failed, 0 skip |
+
+### Lição de processo desta onda
+
+**Nove agentes e três validadores viram verde; a suíte completa não estava verde.** Cada agente rodou
+os fluxos do próprio escopo, e o `flow-12` criava 25 exames por execução sem limpá-los — o Playwright
+roda em ordem alfabética, então `flow-12` corre **antes** de `flow-2` e `flow-isolation`, e o exame que
+esses dois clicam era empurrado para fora da primeira página do seletor. Ninguém tinha como ver isso
+olhando só o próprio escopo.
+
+Debaixo da poluição havia um defeito de produto real: o catálogo da tela de Novo Orçamento carregava
+só a primeira página. É a **mesma pendência D7** que a onda fechou em `/proposals` e `/catalog` — e
+que ninguém levou para a terceira tela que lista exames, porque a pendência foi escrita com nome de
+tela em vez de nome de comportamento. Laboratório com mais de 50 exames ativos não conseguia montar
+orçamento com o resto.
+
+Duas regras que ficam: **(1)** quem coordena roda a suíte inteira antes de declarar a onda fechada —
+verde por escopo não compõe; **(2)** pendência se escreve pelo comportamento ("listagem sem paginação"),
+não pela tela onde ela foi vista, senão o fechamento para na primeira ocorrência conhecida.
+
+O padrão da Onda 5 — divergência documentada em comentário e nunca registrada em `docs/` — reapareceu
+duas vezes, em menor escala, e o Validador-Contratos pegou as duas: `proposal.repository.ts` afirmava
+que `proposal_items` não tinha coluna de posição (falso desde a migração 003, do mesmo commit) e
+`flow-11` afirmava que a tela não chamava `POST /read` (falso desde a correção pós-QA). Comentário
+não é contrato.
+
+---
+
 ## Mocks Ativos
 
 | Mock | Localização | Substituir quando | Registrado por |
@@ -151,10 +209,12 @@ Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avança
 
 ---
 
-## Pendências abertas ao fim da Onda 5
+## Pendências da Onda 5 — todas fechadas na Onda 6 ✅
 
-Achados dos validadores independentes que **não** foram corrigidos nesta onda, com o motivo. Nenhum é
-bloqueio de funcionalidade; todos têm dono sugerido.
+As dez pendências abaixo foram registradas ao fim da Onda 5 e **todas foram fechadas na Onda 6**,
+com teste que falharia antes da correção. Mantidas aqui como histórico do que era e de quem fechou:
+D1/D4 (Agent-QA-Onda6 + Agent-UI-Cleanup), D2/D7/D9 (Agent-UI-Cleanup), D3/D5/D6/D8
+(Agent-API-Fixes), D10 (as três telas — Blocos A/B/C da Onda 6).
 
 | Item | Origem | Por que ficou aberto | Dono sugerido |
 |------|--------|----------------------|---------------|
@@ -176,6 +236,25 @@ comentários longos e bem escritos **documentando a própria violação** ("DIVE
 "reportada ao coordenador"). Nenhuma tinha chegado a este arquivo. Comentário em código não é o
 contrato — `docs/` é. Um agente que descobre uma divergência e não a registra aqui deixou o trabalho
 pela metade, por mais bem explicado que esteja o comentário.
+
+---
+
+## Pendências abertas ao fim da Onda 6
+
+Achados que **não** foram corrigidos, com o motivo. Nenhum é bloqueio de funcionalidade.
+
+| Item | Origem | Por que ficou aberto | Dono sugerido |
+|------|--------|----------------------|---------------|
+| **HMAC calculado sobre JSON reserializado** | Validador-Segurança | Sem `req.rawBody`, o HMAC do webhook é conferido sobre `JSON.stringify(req.body)`: ordem de chaves e escape unicode do provedor não sobrevivem. **Falha fechada** (recusa), não aberta — mas significa que o caminho HMAC nunca foi exercitado contra a Meta real. O pedido ao kernel (`express.json({ verify })`) está aberto desde a Onda 3 | Agent-Kernel |
+| **Chave de cifra única por instalação, sem rotação** | D-076 | Trocar `CHANNEL_SECRET_KEY` invalida as credenciais gravadas e obriga cada laboratório a reconectar o canal. Chave por tenant exigiria guardar a chave derivada no mesmo banco, anulando o ganho contra dump. Risco aceito conscientemente | Produto + Infra |
+| **Conteúdo de mensagem não é reescrito na anonimização** | D-063 (delimitada na Onda 6) | O apagamento LGPD cobre cadastro, colunas denormalizadas de `conversations`, `attachment_url` e os valores no audit log. O **texto** das mensagens permanece — reescrevê-lo destruiria o histórico de atendimento de terceiros na mesma conversa. Limitação declarada, não esquecida | Produto + jurídico |
+| **Telefone fora do formato é recusado, não normalizado** | Validador-Segurança / Agent-Fix-Security | Normalizar mudaria a chave de dedupe `(tenant_id, phone)` e poderia fundir ou duplicar cadastros existentes. A perda deixou de ser silenciosa (log próprio + o resto do lote segue), mas o canal ainda não reentrega | Agent-API-Conversations |
+| **`page` sem teto em 3 services** | Agent-Fix-Contracts | `MAX_PAGE` foi aplicado em `/patients` e `/proposals`. `conversation`, `exam-catalog` e `platform` seguem com `Number.MAX_SAFE_INTEGER` — mesmo padrão, escopo fechado da correção | Agent-API |
+| **`message` em pt-BR em `POST /proposals`** | Agent-Fix-Contracts | Último texto de UI saindo do backend. Removido de `/approve` e `/reject`; em `POST /proposals` está tipado em `shared/types` e documentado, então mexer sairia do escopo. Registrado no doc que **não cria precedente** | Dono de `proposal.types.ts` |
+| **`MetricTile` variante `percent` fora do pt-BR** | Agent-Fix-Evidence | `value.toFixed(1)` imprime `30.0%` com ponto, enquanto o resto da tela é `Intl` pt-BR. O teste fixa o comportamento atual **com o defeito à vista** e um comentário, em vez de mascarar com casamento frouxo | Dono de `components/analytics/` |
+| **Exames do andaime do `flow-12` ficam inativos no banco** | Agent-Fix-Budget | O produto não apaga exame (D-004: desativação é `PATCH { isActive: false }`), então a limpeza do teste desativa em vez de remover. Inerte para as telas; `/catalog` sem filtro acumula linhas entre execuções sem re-seed. É o desenho, não dívida | — |
+| **Comentário obsoleto em `flow-7`** | Agent-Fix-Budget | Diz que `/catalog` "carrega só a primeira página" — falso desde a Onda 5. Achado fora de escopo fechado; não afeta resultado, mas é exatamente o padrão que a lição da Onda 5 mandou vigiar | Agent-QA |
+| **`oldestWaitSeconds`: a ordenação da fila é contrato** | Agent-Fix-Evidence | O campo só é distinguível de `Math.max(itens devolvidos)` porque a fila ordena por espera DESC com `NULLS FIRST`. Se alguém mudar a ordenação, o campo continua correto mas o teste perde o poder de separá-los. Vale escrever em `SERVICES.md §14` que a ordenação é contrato | Agent-API + doc |
 
 ---
 

@@ -73,6 +73,11 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 ### Coluna 1 — Lista de conversas
 - Filtros em chips: "Minhas N" (accent sólido), "Não atribuídas N" (cinza)
 - Busca (pílula): paciente, telefone ou exame
+- **A mesma busca também procura PACIENTE** (D-079): com 2+ caracteres a coluna consulta
+  `GET /patients?search=&limit=5` e mostra um bloco "Pacientes" abaixo da fila; cada linha leva
+  a `/patients/:id`. Sem termo digitado o bloco não existe. É o consumidor de `GET /patients`
+  e a busca que API_CONTRACTS §2c chama de "a busca do inbox". A lista já vem recortada por
+  papel pelo servidor (D-060): o atendente só recebe paciente que ele poderia abrir
 - `ConversationItem` (ver COMPONENTS): avatar iniciais, nome, hora (sálvia-700 se não lidas), prévia truncada 1 linha, badge contagem, chips de status
 - Dados: `GET /conversations` + WS `conversation.new_message` (refetch)
 
@@ -85,13 +90,54 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 
 ### Coluna 3 — Contexto do paciente (recolhível)
 - Cadastro resumido, propostas da conversa (cartões clicáveis → modal), tags
+- **Link "Ver ficha completa" → `/patients/:id`**, a porta de entrada da Ficha (§3). Usa
+  `conversation.patientId` (D-079), que vem em `GET /conversations/:id`. Conversa anterior ao
+  backfill da migração 003 tem `patientId: null` e **o link não é renderizado** — nem link
+  quebrado, nem botão desabilitado sem explicação
 
 ---
 
 ## 3. Ficha do Paciente (`/patients/:id`)
 
-- Cadastro completo (editável), histórico de interações (timeline), propostas, seção LGPD (exportação de dados — checada também no servidor)
 - Página de leitura: max-width 1180px, padding 30px 36px 48px
+- `:id` é o **id do paciente** (`patients.id`, D-059), não o da conversa. O inbox chega aqui
+  pelo `patientId` da conversa; conversa anterior ao backfill tem `patientId: null` e o link
+  não aparece
+- **Portas de entrada** (D-079) — a ficha não é alcançável só por URL:
+  1. Atendimento, coluna 3: "Ver ficha completa" (`conversation.patientId`);
+  2. Atendimento, coluna 1: bloco "Pacientes" da busca (`GET /patients`);
+  3. Gestão da Operação (§10): nome do paciente na fila (`QueueItem.patientId`).
+  Em todas, `patientId: null` vira texto puro — o link só existe quando o cadastro existe
+
+**Três chamadas, três blocos** — a ficha NÃO vem em um payload só (D-060). Cada bloco tem seu
+ciclo de atualização e sua paginação:
+
+| Bloco | Chamada | Observação |
+|-------|---------|------------|
+| Cadastro completo (editável) | `GET /patients/:id` → `PATCH /patients/:id` | `PatientDetail` cru; `null` apaga campo, ausente preserva; `phone` **não** é editável |
+| Contadores (conversas, propostas, última interação) | vêm no mesmo `GET /patients/:id` | derivados, e no **recorte do usuário** — dois usuários podem ver números diferentes |
+| Histórico de interações (timeline) | `GET /patients/:id/timeline?page&limit&kind&order` | união de mensagens, aberturas de conversa, criação de proposta e mudança de estágio; `desc` por padrão |
+| Propostas do paciente | `GET /proposals?patientId=<id>` | não há endpoint próprio: reusa a listagem, a visibilidade (D-042) e o `ProposalCard`/modal de §6 |
+| Seção LGPD | `GET /patients/:id/export` e `POST /patients/:id/anonymize` | **admin apenas** — esconder para os demais é UX; o servidor recusa (403) de qualquer forma |
+
+**Timeline:** cada entrada é uma união discriminada por `kind`
+(`conversation_started | message | proposal_created | proposal_stage_changed`) — o componente
+faz switch em `kind`, nunca em heurística de campo presente. `entry.id` é
+`"<kind>:<uuid>"` e serve **só** de `key` de lista. `preview` da mensagem já chega truncado em
+160 caracteres pelo backend: a tela não re-trunca nem promete texto completo.
+
+**Seção LGPD:**
+- **Exportar dados** baixa um JSON (`Content-Disposition: attachment`) com cadastro, conversas,
+  mensagens e propostas do titular. Gera audit log no servidor.
+- **Anonimizar** exige `reason` (1..500) e é **irreversível**: pede confirmação explícita
+  dizendo o que acontece — o cadastro esvazia, o nome some do inbox, e as propostas históricas
+  permanecem (sem nome). É idempotente: repetir devolve 200, não erro.
+- Paciente com `anonymizedAt != null` renderiza o cadastro em estado vazio e **desabilita a
+  edição** (o `PATCH` responde `409 CONFLICT` com `details.reason: "patient_anonymized"`).
+
+**Papéis:** a rota é `attendant · manager · admin`. O atendente só abre a ficha de paciente com
+conversa visível a ele — fora disso a API responde `404` e a tela mostra "não encontrado",
+nunca "sem permissão" (não vazar existência).
 
 ---
 
@@ -103,7 +149,30 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 - Segmentado de 4 modos: [Catálogo | Pedido médico | IA | Pacotes]
 - Busca + lista de exames com preço (toggle Particular/Convênio — segmentado)
 - Clique adiciona ao resumo
-- Dados: `GET /exams?active=true`
+- Dados: `GET /exams?active=true` (20 por página, `useExamListInfinite`)
+- **Alcance do catálogo — busca server-side + carga incremental (D-080).**
+  Esta coluna também carregava só a primeira página: `useExamList` +
+  `data.exams`, `limit: 50`. Num laboratório com mais de 50 exames ativos os
+  demais ficavam INALCANÇÁVEIS — não dava para montar orçamento com eles. Era a
+  metade da D7 da Onda 5 que ficou aberta (fechada em `/proposals` e `/catalog`,
+  esquecida aqui).
+  Aqui **não** entra o `Pagination` numerado das outras duas telas: isto é um
+  *seletor*, não uma tabela — o usuário monta um carrinho na coluna da direita
+  enquanto procura na esquerda, e trocar a página sob ele tiraria da tela o que
+  ele acabou de ver sem devolver nada (não existe "voltar à linha 47" num
+  seletor). O que existe é:
+  1. **busca server-side** — o `search` vai para `GET /exams` e recorta o
+     catálogo inteiro no banco, não as linhas já carregadas;
+  2. **carga incremental** — botão `Carregar mais` acumula páginas
+     (`useInfiniteQuery`), com rodapé `N de M exames` enquanto houver resto.
+     Sem o contador, "Carregar mais" não distingue "faltam 3" de "faltam 300".
+  A página **não** vai para a URL (ao contrário de `/proposals` e `/catalog`):
+  não há estado de página a compartilhar — `/budget/new?conversationId=` é uma
+  tela de rascunho, e o que a URL carrega é a conversa.
+  Chave de cache própria (`queryKeys.examsInfinite`, `['exams','infinite',…]`):
+  `useInfiniteQuery` guarda `{ pages, pageParams }`, shape diferente do
+  `ListExamsResponse` de `useExamList`. Continua sob o escopo `['exams']`, então
+  uma invalidação do catálogo pega as duas.
 
 ### Coluna direita — Resumo
 - Itens adicionados (nome, preço, remover)
@@ -122,6 +191,11 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 - Todo cartão clicável → Modal da Proposta
 - Filtros: período, atendente (gestor+), valor
 - Dados: `GET /proposals` agrupado por status
+- **Paginação** (`Pagination`, 20 por página): a tela lia só a página 1 e
+  descartava `pagination`, o que tornava proposta antiga INALCANÇÁVEL pela UI
+  (D7 da Onda 5). A página vive na URL (`?page=3`) — compartilhável, sobrevive
+  ao F5, volta pelo botão do navegador; **nunca no Zustand**. Trocar filtro
+  volta para a página 1.
 - *(v1: mover estágio via modal; drag-and-drop é pendência conhecida)*
 
 ---
@@ -143,6 +217,8 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 - Tabela: nome, código, preparo, prazo, preço particular, preço convênio, status
 - Regras de tabela: container com min-width + overflow-x, cabeçalho 11px caixa alta, valores à direita
 - Atendente: somente leitura. Gestor/Admin: criar/editar (modal)
+- **Paginação** (`Pagination`, 20 por página) com a página na URL (`?page=2`),
+  mesma regra de `/proposals`. Buscar volta para a página 1.
 - Dados: `GET /exams`, `POST/PATCH /exams` (gestor+)
 
 ---
@@ -164,15 +240,74 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 - Canal `#aprovacoes`: pedidos de aprovação com botões [Aprovar] [Rejeitar] (gestor+)
 - Dados: `GET /internal-chat/*` + WS
 
+### Estado de leitura do canal (D-068 — fecha a pendência D5 da Onda 5)
+
+- `Channel.unreadCount` agora **zera de verdade**: ao abrir um canal, a tela chama
+  `POST /internal-chat/channels/:id/read` (204, idempotente) e depois invalida
+  `queryKeys.internalChannels()` — nessa ordem, senão o badge velho volta. É a mesma sequência
+  do `useMarkAsRead` do inbox.
+- "Abrir" é o **clique do usuário no canal**, não a auto-seleção do primeiro item da lista.
+  A ordem dos canais é fixa (`kind ASC, key ASC`), então o auto-selecionado é quase sempre
+  `#aprovacoes`: marcá-lo como lido só porque a tela montou apagaria justamente o aviso que a
+  pessoa entrou para ver. Entrar em `/internal-chat` não mexe em `channel_reads`.
+- Ler o histórico **não** marca como lido: `GET /internal-chat/channels/:id/messages` não tem
+  efeito colateral. Rolar para trás não deve apagar o badge de uma mensagem nova.
+- `Channel.lastReadAt` (anulável) é a última leitura **deste** usuário: é o que posiciona o
+  divisor "novas mensagens". `null` = nunca abriu.
+- Mensagem de sistema conta como não lida — o pedido de aprovação em `#aprovacoes` é o caso
+  que mais precisa piscar. Mensagem do próprio usuário nunca conta.
+
+### Paginação do histórico (D-069)
+
+`page=1` é a página das mensagens **mais recentes**, com os itens em ordem cronológica
+crescente dentro dela; `page=2` é o bloco anterior. A tela abre o canal com **um** request e
+rola para o fim — o `fetchTail` de dois requests (ler `totalPages`, depois buscar a última
+página) deixa de existir.
+
 ---
 
 ## 10. Telas de Configuração
 
 ### Canais & Equipe (`/settings/channels`) — admin edita, gestor lê
-- Conexão WhatsApp, modo de distribuição (manual/round-robin), mensagens automáticas
+- Dados: `GET /settings/channels` (gestor+) · `PATCH /settings/channels` (admin)
+- Uma chamada só devolve os quatro blocos da tela: `channels`, `distributionMode`,
+  `autoMessages`, `businessHours` e `team`
+- **Conexão WhatsApp:** por canal — nome exibido, `phoneNumberId`, número, ativo/inativo,
+  token e segredo do webhook
+  - **O segredo nunca volta do servidor.** A tela recebe `apiTokenMasked`
+    (`••••••••` + 4 últimos) e `webhookSecretSet: boolean`; o campo de senha nasce **vazio** e
+    exibe "configurado"/"não configurado". Não existe "revelar token": não há o que revelar
+  - Salvar sem tocar no campo de segredo **preserva** o valor (o campo simplesmente não vai no
+    corpo). Para apagar, o botão "Remover token" envia `null` explicitamente. Campo em branco
+    nunca é enviado como `""` — o servidor recusa
+- **Modo de distribuição:** `manual | round_robin` (rádio). O que muda no produto: em `manual`
+  a conversa nova cai na fila "Não atribuídas" e alguém assume (§2)
+- **Mensagens automáticas:** saudação e fora-do-horário, cada uma com liga/desliga e texto
+  (1..1000). Ligar sem texto é erro de validação — a tela desabilita o "salvar" antes disso
+- **Horário de atendimento:** por dia da semana + timezone. Enviar `businessHours` **substitui**
+  o objeto inteiro (dia ausente = fechado): a tela sempre manda o estado completo do formulário
+- **Equipe:** `team` traz id, nome, papel e status — **sem e-mail e sem alçada** (D-066). É de
+  propósito: assim o gestor lê a tela sem depender de `GET /users`, que é admin. Quem precisa
+  editar papel ou alçada vai para `/settings/users`. Usuários inativos aparecem marcados
+- Gestor vê tudo em modo leitura: campos desabilitados, sem botão salvar. O servidor recusa o
+  `PATCH` dele de qualquer forma (403)
 
 ### Gestão da Operação (`/settings/operation`) — gestor+
-- Fila agora (tempo real), carga por atendente, decisões pendentes
+- Dados: `GET /operations/overview?queueLimit&decisionsLimit` — **somente leitura**
+- Um endpoint, um retrato (D-067): os três blocos vêm do mesmo instante. Não fazer três
+  chamadas separadas — a tela exibiria uma fila e uma carga de momentos diferentes
+- **Fila agora:** `queue.unassigned` (ativas sem dono) + `queue.waiting` (atribuídas com
+  mensagem não lida) e `queue.items` ordenada pela maior espera. Clique na linha leva à
+  conversa; o **nome do paciente é link para a ficha** (`/patients/:id`) quando
+  `QueueItem.patientId` existe, e texto puro quando é `null` (§7, D-079)
+- **Carga por atendente:** `workload[]` — conversas ativas, mensagens não lidas, propostas em
+  aberto e aprovações pendentes. Quem está sem carga aparece **zerado**, não some da tabela
+- **Decisões pendentes:** `pendingDecisions` — propostas em `approvalStatus: "pending"`, mais
+  antiga primeiro; clique abre o Modal da Proposta (§6), onde [Aprovar]/[Rejeitar] já existem
+- Todo tempo chega em **segundos** (`waitingSeconds`, `oldestWaitSeconds`), calculado em UTC no
+  servidor (D-021). A tela só formata ("há 1h30") — nunca subtrai datas para obter a espera
+- Sem cache no servidor: use `staleTime` curto e refetch ao focar a janela. Nada aqui é
+  digitado ou configurável: é tudo derivado de conversas e propostas
 
 ### Usuários & Permissões (`/settings/users`) — admin
 - Tabela de usuários: nome, email, papel, limite de desconto, status

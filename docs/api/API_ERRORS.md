@@ -41,7 +41,56 @@ Formato padrão e catálogo completo de códigos. Backend emite EXATAMENTE estes
 |--------|------|--------|
 | `NOT_FOUND` | 404 | Recurso inexistente OU de outro tenant (não vazar existência) |
 | `VALIDATION_ERROR` | 400 | DTO inválido — `details.fields: { campo: motivo }` |
-| `CONFLICT` | 409 | Violação de unicidade (ex.: código de exame duplicado) |
+| `CONFLICT` | 409 | Violação de unicidade (ex.: código de exame duplicado) OU estado que impede a escrita — `details.reason` diz qual |
+
+## Pacientes & LGPD (Onda 6)
+
+A seção `/patients` **não introduz código novo**: o catálogo acima já cobre todos os casos, e
+`ApiErrorCode` (`shared/types/api.types.ts`) fica inalterado. O que é novo é o `details`:
+
+| Código | HTTP | Quando | details |
+|--------|------|--------|---------|
+| `NOT_FOUND` | 404 | Paciente inexistente, de outro tenant **ou fora da visibilidade do atendente** (D-060) | — |
+| `CONFLICT` | 409 | `PATCH /patients/:id` em paciente já anonimizado (D-063) | `{ reason: "patient_anonymized" }` |
+| `FORBIDDEN` | 403 | `/export` e `/anonymize` pedidos por não-admin | `{ requiredRoles: ["admin"] }` |
+| `VALIDATION_ERROR` | 400 | CPF com DV inválido, `birthDate` futura, `phone` no corpo do PATCH | `{ fields }` |
+
+**Por que não um `PATIENT_ANONYMIZED` próprio:** o frontend já trata `CONFLICT` de forma
+genérica e o caso é raro; um código a mais no catálogo obrigaria os dois lados a um switch novo
+para exibir a mesma mensagem. Se a UI vier a precisar de fluxo específico, o código entra pelo
+processo de "Adicionando um Código Novo" no fim deste arquivo.
+
+`POST /patients/:id/anonymize` repetido **não** é erro: é idempotente e devolve `200`.
+
+## Configurações e Operação (Onda 6)
+
+Também sem código novo:
+
+| Código | HTTP | Quando | details |
+|--------|------|--------|---------|
+| `FORBIDDEN` | 403 | `GET /settings/channels` por atendente · `PATCH` por não-admin · `/operations/*` por atendente | `{ requiredRoles }` — `["manager","admin"]` ou `["admin"]` |
+| `VALIDATION_ERROR` | 400 | Segredo vazio (`""`), `channel` repetido no array, mensagem automática ligada sem texto, `HH:MM` inválido, `queueLimit`/`decisionsLimit` > 100 | `{ fields }` |
+
+**Segredos nunca aparecem em `details`** — nem o valor recusado, nem parte dele. `details.fields`
+carrega o nome do campo e o motivo ("mínimo 16 caracteres"), jamais o conteúdo enviado.
+
+### Convenção de `details.fields` — a chave é o caminho que a TELA conhece
+
+`details.fields` só existe para uma coisa: a tela achar o campo e mostrar o motivo ao lado dele.
+Uma chave que a tela não sabe procurar não é um erro no lugar errado, é **erro nenhum** — o
+formulário conclui que há erro de campo, apaga a mensagem geral, e nenhum campo casa. O usuário
+toma `400` e acha que salvou. Por isso a chave segue o **identificador estável do recurso**, não
+a posição no corpo da requisição:
+
+| Caso | Chave | Por quê |
+|------|-------|---------|
+| Campo simples | `distributionMode`, `businessHours.timezone` | caminho do próprio corpo |
+| Item de coleção **com chave natural** | `channels.whatsapp.apiToken` | o array do `PATCH` é esparso (só os canais sujos vão) — o índice `0` não corresponde a nada na tela |
+| Dia da semana | `businessHours.days.mon` | idem: a chave é o dia, não a ordem |
+| Item **sem** chave natural utilizável | `channels.0.channel` | quando o próprio `channel` é inválido ou ausente, não há nome — o índice é o único identificador possível, e a tela cai na mensagem geral |
+
+Quem escreve tela: mostre uma **mensagem geral** para toda chave de `fields` que a tela não
+renderiza. "Não sei onde mostrar" nunca pode virar silêncio.
 
 ## Propostas
 
@@ -82,6 +131,7 @@ switch (error.code) {
   case 'REFRESH_TOKEN_INVALID': return redirectToLogin();
   case 'RATE_LIMIT_EXCEEDED':  return toastRetry(error.details.retryAfter);
   case 'VALIDATION_ERROR':     return mapFieldErrors(error.details.fields);
+  //                             (+ mensagem geral para as chaves que a tela não renderiza)
   default:                     return toast(error.message);
 }
 // Casos específicos (ex.: DISCOUNT_EXCEEDS_LIMIT no form de orçamento)

@@ -91,6 +91,12 @@ Ver "Convenções Transversais" — o contexto é sempre o primeiro parâmetro.
 - `markAsRead` zera `unread_count` e marca mensagens. `GET /conversations/:id` chama-o
   (PAGES.md §2 "Ao abrir: markAsRead"); `POST /conversations/:id/read` é o caminho
   explícito
+- **`findOrCreateByPhone` cria ou reaproveita o paciente e grava `conversations.patient_id`
+  na mesma transação (D-072).** A ligação mora no *repositório*, sobre a `DbTx` já aberta —
+  chamar `PatientService` daqui abriria um segundo `withTenant` e travaria (D-008, uma
+  conexão só). O nome vindo do perfil do canal **preenche** cadastro sem nome e **nunca**
+  sobrescreve nome existente; paciente anonimizado (D-063) não é revivido. Conversa legada
+  com `patient_id NULL` é religada no primeiro contato novo
 
 ---
 
@@ -244,6 +250,9 @@ interface InternalChatService {
   listMessages(ctx: TenantContext, channelId: string, page: Pagination): Promise<Paginated<InternalMessage>>;
   send(ctx: TenantContext, channelId: string, dto: { content: string; attachedProposalId?: string }): Promise<InternalMessage>;
   createSystemPost(tenantId: string, channelKey: string, content: string, attachedProposalId?: string): Promise<void>;
+
+  /** Onda 6 (D-068): zera o unreadCount do canal para o usuário do ctx. Idempotente. */
+  markChannelRead(ctx: TenantContext, channelId: string): Promise<void>;
 }
 ```
 
@@ -251,6 +260,21 @@ interface InternalChatService {
 - Canais padrão criados no onboarding: `#geral`, `#aprovacoes`
 - Proposta anexada renderiza como cartão (frontend resolve via GET /proposals/:id)
 - Console de plataforma tem chat PRÓPRIO, isolado (sem acesso aos canais de labs)
+- **`unreadCount` é derivado de `channel_reads` (D-068, SCHEMA.md §17), não mais `0` fixo**
+  (supera D-044): conta mensagens do canal com `created_at > last_read_at` cujo `sender_id` não
+  é o do usuário. Mensagem de sistema conta. Sem linha de leitura, conta todas as de terceiros.
+  `Channel.lastReadAt` acompanha, para a tela desenhar o divisor de "novas mensagens"
+- `markChannelRead` é
+  `INSERT ... ON CONFLICT (channel_id, user_id) DO UPDATE SET last_read_at = NOW()` — idempotente
+  por construção, sem leitura prévia. Canal de outro tenant → `NOT_FOUND`. Não gera audit log
+- **`listMessages` pagina do fim (D-069):** `page=1` é a fatia das mensagens **mais recentes**,
+  com os itens em ordem cronológica crescente **dentro** da página; `page=2` é o bloco
+  anterior. O `OFFSET` é `max(0, total - page * limit)` e o `LIMIT` da última página é o resto.
+  Um chat abre no fim; paginar do começo obrigava a tela a fazer dois requests (um só para
+  descobrir `totalPages`)
+- `listMessages` **não** marca o canal como lido: ler página antiga do histórico não é ter
+  visto a mensagem nova. É a diferença deliberada para `GET /conversations/:id` (D-035), onde
+  a página 1 é literalmente o fim da conversa
 
 ---
 
@@ -333,9 +357,16 @@ Nenhum dos dois lança: payload malformado devolve lista vazia.
 
 **Regras:**
 - Credenciais por tenant (cada lab conecta seu número) — resolvidas por
-  `WhatsAppCredentialsResolver`. Enquanto não há tabela de canal no schema, o resolver
-  default deriva as credenciais das env vars e a identidade do tenant do slug na URL
-  do webhook (D-024); trocar por consulta a tabela é trocar a implementação do resolver
+  `WhatsAppCredentialsResolver`. **A tabela existe a partir da Onda 6**: o resolver passa a
+  consultar `ChannelSettingsService.resolveCredentials(tenantId, 'whatsapp')`
+  (`tenant_channels`, SCHEMA.md §15) e cai nas env vars **campo a campo** — linha ausente ou
+  coluna nula (D-073), e não "linha existe ⇒ ignora env": um laboratório pode ter conectado o
+  número sem ainda ter girado o segredo do webhook. É isso que mantém dev e CI funcionando sem
+  nenhuma linha na tabela. Fecha o pedido de D-024; a identidade do tenant continua vindo do
+  slug na URL do webhook. `apiUrl` fica fora da tabela: é endereço da API do canal (e decide
+  driver mock × real), não credencial do laboratório
+- **Aberto:** `findCredentials` não filtra `is_active` — um canal desativado na tela continua
+  alimentando o webhook. Comportamento não definido em contrato; ver `docs/STATUS.md`
 - Webhook: validar assinatura HMAC antes de processar, com `crypto.timingSafeEqual`
   (comparação de string vaza o dígito certo pelo tempo de resposta)
 - Envio em fila com retry exponencial (3 tentativas) → status `failed` após esgotar.
@@ -343,6 +374,178 @@ Nenhum dos dois lança: payload malformado devolve lista vazia.
   da mesma interface — D-011). O relógio é injetável, então o retry é testável em
   milissegundos
 - Em dev/teste: driver mock que ecoa mensagens (escolhido por `WHATSAPP_API_URL` vazia)
+
+---
+
+## 12. PatientService (Onda 6 — D-059)
+
+**Responsabilidade:** cadastro do paciente, timeline de interações e os dois caminhos de LGPD.
+Dono da tabela `patients` (SCHEMA.md §14) e da coluna `conversations.patient_id`.
+
+```typescript
+interface PatientService {
+  list(ctx: TenantContext, filters: ListPatientsQuery): Promise<ListPatientsResponse>;
+  getById(ctx: TenantContext, id: string): Promise<PatientDetail>;
+  update(ctx: TenantContext, id: string, dto: UpdatePatientRequest): Promise<PatientDetail>;
+  timeline(
+    ctx: TenantContext,
+    id: string,
+    query: ListPatientTimelineQuery,
+  ): Promise<ListPatientTimelineResponse>;
+
+  /** LGPD — admin. Dump completo do titular, SEM recorte por papel (D-062). */
+  exportData(ctx: TenantContext, id: string): Promise<PatientExport>;
+
+  /** LGPD — admin. Anonimiza cadastro + cópias denormalizadas (D-063). Idempotente. */
+  anonymize(
+    ctx: TenantContext,
+    id: string,
+    dto: AnonymizePatientRequest,
+  ): Promise<AnonymizePatientResponse>;
+}
+```
+
+**Não existe `PatientService.findOrCreateByPhone`.** O paciente nasce do canal, e nasce dentro
+da transação da conversa — ver a regra de nascimento abaixo.
+
+**Regras:**
+- **Visibilidade (D-060):** atendente enxerga apenas pacientes com ao menos uma conversa
+  visível para ele (atribuída a ele **ou** não atribuída) — o mesmo recorte do
+  ConversationService §2. Gestor/admin veem todos. Fora da visibilidade: `NOT_FOUND`, nunca
+  `FORBIDDEN`. O recorte vale para `list`, `getById`, `update` e `timeline`, **e também para os
+  contadores e as entradas da timeline** — senão a ficha viraria um caminho lateral para ler a
+  conversa de outro atendente.
+- `conversationCount`, `proposalCount` e `lastInteractionAt` são **derivados na query**, nunca
+  colunas (BUSINESS_RULES §5).
+- `update` não toca em `conversations.patient_name/phone/email`: são o registro do que o canal
+  informou, e continuam servindo `/conversations` até a onda que as remover (D-059).
+  `phone` não é editável (chave de deduplicação).
+- `document` é normalizado para 11 dígitos e tem o DV validado antes de gravar.
+- `timeline` é a união de 4 origens (`conversations`, `messages`, `proposals`,
+  `proposal_status_history`) ordenada por `at DESC, id DESC`, paginada com o `PaginationMeta`
+  padrão. `preview` da mensagem é truncado em 160 caracteres **no SQL** (`left(content, 160)`),
+  não em memória: truncar depois de trazer 50 mensagens completas é trazer o que não se usa.
+- **Nascimento do paciente (D-072):** quem cria é `upsertPatientByPhone(tx, ...)`, função de
+  repositório em `patient.repository.ts`, chamada por
+  **`ConversationRepository.findOrCreateByPhone`** — não por este service. A chamada é sobre a
+  transação **já aberta** pela conversa, porque paciente e `conversations.patient_id` precisam
+  nascer no mesmo commit; um método de service abriria um segundo `withTenant`, e transação não
+  aninha (D-008). Um wrapper `findOrCreateByPhone` em `PatientService`/`PatientRepository` não
+  teria consumidor de produção, e por isso **não existe**.
+  A corrida entre duas mensagens simultâneas do mesmo telefone morre no banco:
+  ```sql
+  INSERT INTO patients AS p (tenant_id, phone, name) VALUES ($1, $2, $3)
+  ON CONFLICT (tenant_id, phone) DO UPDATE
+    SET name = CASE WHEN p.anonymized_at IS NOT NULL THEN p.name
+                    ELSE COALESCE(p.name, EXCLUDED.name) END,
+        updated_at = NOW()
+  RETURNING <colunas>
+  ```
+  O `DO UPDATE` também escreve `name`, com as três regras de D-072: nunca sobrescreve nome já
+  cadastrado, preenche quando o cadastro está sem nome, e paciente anonimizado (D-063) não
+  recebe nome de volta. O `RETURNING` sai do próprio `INSERT` — um `WITH ... SELECT FROM
+  patients` enxergaria o snapshot anterior ao statement e não acharia a linha recém-inserida.
+- `exportData` é o **único** método que ignora o recorte por papel, e por isso é `admin`:
+  exportação parcial seria uma resposta errada a um pedido de titular. Registra
+  `export_patient_data` no AuditService.
+- `anonymize` roda tudo em **uma transação**: limpa o cadastro, troca `phone` pelo placeholder
+  `'anon-' || substring(id::text, 1, 8)` (preserva `NOT NULL` e a unicidade), limpa as cópias
+  denormalizadas das conversas do paciente e grava `anonymized_at`. Não apaga proposta,
+  mensagem nem audit log. Registra `anonymize_patient` com o `reason` — **nunca** com os
+  valores antigos.
+- Depois de anonimizado, `update` lança `BusinessError('CONFLICT', { reason:
+  'patient_anonymized' })`; `getById` e `exportData` continuam funcionando.
+- **Exceção de ownership registrada:** `anonymize` escreve nas colunas denormalizadas de
+  `conversations` — é o único caminho que faz isso. Enquanto essas colunas existirem, elas são
+  cópia da identidade do paciente, e o dono da identidade é este service. Não passa pelo
+  `ConversationService` porque a escrita precisa estar na mesma transação da anonimização.
+- **Exceção de ownership registrada (simétrica, Onda 6):** `ConversationRepository` escreve em
+  `patients` — via `upsertPatientByPhone` — e em `conversations.patient_id`, ambas colunas cujo
+  dono é este service. É a contrapartida da exceção acima: a identidade do paciente e a conversa
+  do canal nascem no mesmo commit, e a única forma de garantir isso com transação que não aninha
+  (D-008) é a conversa chamar a função de repositório do paciente sobre a `DbTx` já aberta.
+  Fora deste ponto e do `anonymize` acima, continua valendo "nenhum service acessa tabela de
+  outro domínio" (Convenções Transversais).
+
+---
+
+## 13. ChannelSettingsService (Onda 6 — D-064/D-065/D-066)
+
+**Responsabilidade:** canais conectados do laboratório, modo de distribuição, mensagens
+automáticas e horário de atendimento. Dono de `tenant_channels` (SCHEMA.md §15) e
+`tenant_settings` (§16).
+
+```typescript
+interface ChannelSettingsService {
+  /** manager/admin. NUNCA devolve segredo em claro. */
+  get(ctx: TenantContext): Promise<ChannelSettingsResponse>;
+
+  /** admin. Upsert de canais por `channel` + patch parcial das configurações. */
+  update(ctx: TenantContext, dto: UpdateChannelSettingsRequest): Promise<ChannelSettingsResponse>;
+
+  /** Consumido pelo WhatsAppCredentialsResolver — fecha D-024. */
+  resolveCredentials(
+    tenantId: string,
+    channel: ConversationChannel,
+  ): Promise<{ phoneNumberId: string | null; apiToken: string | null; webhookSecret: string | null } | null>;
+}
+```
+
+**Regras:**
+- **Segredo nunca sai pela API.** O repositório de leitura da tela projeta colunas
+  explicitamente e já devolve `apiTokenMasked` (`'••••••••' + últimos 4`) e
+  `webhookSecretSet: boolean`; `SELECT *` nesta tabela devolvendo a linha ao controller é bug
+  de segurança, não estilo. `resolveCredentials` é o **único** método que lê os valores em
+  claro, e o retorno dele não passa por controller nenhum — só pelo adapter do canal.
+- Semântica de escrita de segredo: ausente preserva · `null` apaga · string grava.
+  `""` → `VALIDATION_ERROR`.
+- `update` faz `INSERT ... ON CONFLICT (tenant_id, channel) DO UPDATE` por canal e
+  `INSERT ... ON CONFLICT (tenant_id) DO UPDATE` em `tenant_settings`. Canal fora do array
+  **não** é removido: desligar é `isActive: false`.
+- `get` responde os **defaults** quando não há linha em `tenant_settings`, sem gravar (D-065).
+- `businessHours` é substituído inteiro, não mesclado por dia.
+- `team` sai de `users` (papéis de laboratório, ativos e inativos, `name ASC`) com o recorte
+  mínimo de D-066: id, nome, papel, status — sem e-mail e sem alçada. É leitura de tabela de
+  outro domínio pela **projeção mais estreita possível**; qualquer campo além destes quatro
+  passa a exigir `GET /users`, que é admin.
+- Auditoria: `update_channel_settings`, com `"[REDACTED]"` no lugar de qualquer segredo em
+  `oldValues`/`newValues`.
+- `resolveCredentials` devolve `null` quando o tenant não tem o canal configurado — o resolver
+  então cai nas env vars, que é o comportamento de hoje (D-024). Isso mantém dev e CI
+  funcionando sem nenhuma linha em `tenant_channels`.
+
+---
+
+## 14. OperationService (Onda 6 — D-067)
+
+**Responsabilidade:** o retrato "agora" da operação para `/settings/operation`. **READ-ONLY**,
+como o AnalyticsService §9.
+
+```typescript
+interface OperationService {
+  /** manager/admin. Um retrato, um instante, uma query por bloco. */
+  getOverview(ctx: TenantContext, query: OperationOverviewQuery): Promise<OperationOverviewResponse>;
+}
+```
+
+**Regras:**
+- **Nenhuma tabela nova.** Fila, carga e decisões pendentes derivam de `conversations` e
+  `proposals` (BUSINESS_RULES §5). Nada é digitado, nada é materializado.
+- **Sem cache.** É um painel de "agora"; o TTL de 5 min do AnalyticsService mostraria uma fila
+  que já não existe. Por isso também não invalida nada.
+- **Todo tempo é calculado no SQL, em UTC** (D-021):
+  `EXTRACT(EPOCH FROM (NOW() - COALESCE(last_message_at, created_at)))::int`. Nenhuma subtração
+  de data em JavaScript — as colunas são `TIMESTAMP` sem timezone e o driver as devolveria no
+  fuso da máquina.
+- `generatedAt` sai do mesmo `NOW()` das contagens, formatado como UTC no SQL.
+- Definições fixas (API_CONTRACTS.md §7 traz a tabela completa): `unassigned` = ativa sem
+  `assigned_to`; `waiting` = ativa, atribuída e com `unread_count > 0` — o mesmo número do
+  badge do inbox, deliberadamente, para não criar uma segunda definição de "esperando".
+- `workload` lista **todo** usuário ativo de papel de laboratório, zerado inclusive — some da
+  tabela é pior que aparecer com zero, porque esconde quem está ocioso.
+- Papel: `manager`/`admin`. Atendente → `FORBIDDEN` com
+  `details.requiredRoles: ["manager","admin"]`. `denyPlatformOperator()` no router, como toda
+  rota de dado de laboratório.
 
 ---
 

@@ -292,6 +292,33 @@ box-shadow: var(--shadow-lg);
 }
 ```
 
+**A escala é fechada: 4 · 8 · 12 · 16 · 24.** Não existe degrau de 20px nem de
+32px — quem precisava deles encosta no vizinho (`p-5` virou `p-lg`, `py-8` virou
+`py-xl`). Precisa mesmo de um degrau novo? **Documente-o AQUI primeiro**, some a
+`tailwind.config.js` (`theme.extend.spacing`) e só então use.
+
+**No Tailwind** todo espaçamento sai destes tokens — `p-lg`, `gap-sm`, `mb-md`,
+`space-y-xl` —, nunca da escala numérica default (`p-5`, `gap-4`, `mb-4`). A
+numérica não passa por `var(--gap-*)`: é pixel cravado no componente, e num
+arquivo com as duas convenções o ritmo vertical muda de linha para linha
+(Onda 6 — D9 da Onda 5; 57 ocorrências unificadas).
+
+| px | Token | Classe Tailwind |
+|----|-------|-----------------|
+| 4  | `--gap-xs` | `p-xs` `gap-xs` `mb-xs` |
+| 8  | `--gap-sm` | `p-sm` `gap-sm` `mb-sm` |
+| 12 | `--gap-md` | `p-md` `gap-md` `mb-md` |
+| 16 | `--gap-lg` | `p-lg` `gap-lg` `mb-lg` |
+| 24 | `--gap-xl` | `p-xl` `gap-xl` `mb-xl` |
+
+Únicas exceções numéricas: `p-0` / `m-0` (zero é reset, não degrau) e frações
+(`top-1/2`). Largura e altura (`w-80`, `h-12`, `min-w-0`) são **dimensão**, não
+espaçamento — a escala não as cobre.
+
+> Regra **testada**: `frontend/src/components/no-hardcoded-tokens.spec.ts` lê
+> todo `.tsx` de `src/components/` e `src/pages/` e falha em espaçamento fora
+> da escala, além de hex, `font-family` literal e raio em px.
+
 ---
 
 ## Componentes

@@ -43,10 +43,13 @@ export interface CreateTenantRequest {
   adminPassword: string;
 }
 
-/** `201` de `POST /platform/tenants` — envelopado (API_CONTRACTS.md §5b). */
-export interface CreateTenantResponse {
-  tenant: TenantSummary;
-}
+/**
+ * `201` de `POST /platform/tenants` — o `TenantSummary` CRU, sem envelope (D-070).
+ * Ate a Onda 5 a resposta vinha em `{ tenant }`, a unica escrita de recurso unico
+ * envelopada do projeto; a regra de envelope de API_CONTRACTS.md ("Envelope de
+ * resposta") a alinhou com `POST /users` e `POST /exams`.
+ */
+export type CreateTenantResponse = TenantSummary;
 
 export interface TenantUsage {
   tenantId: string;

@@ -150,6 +150,12 @@ export interface ListProposalsQuery extends PaginationQuery {
   /** Lista separada por virgula na query string. */
   status?: string;
   conversationId?: string;
+  /**
+   * Propostas do paciente (via `conversations.patient_id`). E como a ficha do
+   * paciente lista as propostas dele — sem endpoint proprio, reusando a
+   * visibilidade por papel de D-042 (D-060).
+   */
+  patientId?: string;
   createdBy?: string;
   startDate?: string;
   endDate?: string;

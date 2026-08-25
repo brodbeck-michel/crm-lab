@@ -145,6 +145,19 @@ Anatomia (padrão WhatsApp):
 - Cabeçalho 11px caixa alta, régua neutral-300, linhas neutral-200, sem zebra
 - Última coluna monetária/status: alinhada à direita
 
+### Pagination
+```tsx
+<Pagination pagination={data.pagination} onPageChange={setPage} itemLabel="propostas" />
+```
+- Recebe o `pagination` (`{ page, limit, total, totalPages }`) que TODA listagem
+  devolve (API_CONTRACTS.md — D-009) e emite a página pedida; não guarda estado
+  e não busca dado
+- Rende `N <itemLabel> · página X de Y` + [Anterior] [Próxima] (`Button` `secondary`/`sm`)
+- **Não renderiza nada** com `total === 0` ou `totalPages <= 1`
+- `<nav aria-label="Paginação de <itemLabel>">` — navegável por teclado
+- Onde a página é guardada é decisão da tela (URL ou `useState`); **nunca Zustand**
+- Usado em `/proposals` e `/catalog`
+
 ### Modal
 - Backdrop translúcido escuro, cartão radius-lg + shadow-lg, máx 720px
 - Rolagem interna; fecha por × e clique-fora (stopPropagation no cartão)

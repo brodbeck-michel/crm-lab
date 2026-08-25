@@ -234,6 +234,7 @@ CREATE TABLE conversations (
   patient_phone VARCHAR(20) NOT NULL,
   patient_name VARCHAR(255),
   patient_email VARCHAR(255),
+  patient_id UUID,               -- D-059 (migração 003): FK para patients(id)
   assigned_to UUID, -- User ID
   channel VARCHAR(50), -- 'whatsapp', 'sms', 'web', 'direct'
   status VARCHAR(50) DEFAULT 'active', -- active, archived, closed
@@ -245,14 +246,27 @@ CREATE TABLE conversations (
   updated_at TIMESTAMP DEFAULT NOW(),
   
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
-  FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE SET NULL
+  FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE SET NULL,
+  FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE SET NULL   -- migração 003
 );
 
 CREATE INDEX idx_conversations_tenant_id ON conversations(tenant_id);
 CREATE INDEX idx_conversations_assigned_to ON conversations(assigned_to);
 CREATE INDEX idx_conversations_created_at ON conversations(created_at);
 CREATE INDEX idx_conversations_phone ON conversations(patient_phone);
+CREATE INDEX idx_conversations_patient_id ON conversations(patient_id);  -- migração 003
 ```
+
+**`patient_id` é NULLABLE de propósito (D-059).** As colunas `patient_name`, `patient_phone` e
+`patient_email` **permanecem** e continuam sendo a origem de tudo que `/conversations` responde
+— nenhum contrato de §2 de API_CONTRACTS.md muda nesta onda. Isso é o passo 1 da regra dos 3
+passos de AGENTS.md (criar novo → migrar dados → remover antigo): a coluna nova é preenchida
+por backfill na migração 003 e pelo `findOrCreateByPhone` daqui em diante; a remoção das
+denormalizadas fica para uma onda futura, quando nenhum caminho de leitura depender delas.
+
+Linha com `patient_id IS NULL` é legítima (conversa criada antes do backfill em uma réplica
+antiga): a ficha do paciente simplesmente não a lista, e o próximo webhook daquele telefone a
+religa.
 
 ### 4. `messages`
 Mensagens dentro de uma conversa.
@@ -338,6 +352,7 @@ CREATE TABLE proposal_items (
   exam_id UUID NOT NULL,
   quantity INT DEFAULT 1,
   unit_price NUMERIC(12,2) NOT NULL,
+  position INT NOT NULL DEFAULT 0,  -- D-071 (migração 003): ordem em que o atendente montou
   
   -- Snapshot do nome do exame (para histórico)
   exam_name VARCHAR(255) NOT NULL,
@@ -352,7 +367,24 @@ CREATE TABLE proposal_items (
 
 CREATE INDEX idx_proposal_items_proposal_id ON proposal_items(proposal_id);
 CREATE INDEX idx_proposal_items_tenant_id ON proposal_items(tenant_id);
+CREATE INDEX idx_proposal_items_proposal_position                    -- migração 003
+  ON proposal_items(proposal_id, "position");
 ```
+
+**`position` (D-071)** fecha o pedido do Agent-API-Proposals em STATUS.md. A ordem dos itens é
+a que o atendente montou. Até a Onda 6 ela era mantida deslocando `created_at` em 1
+microssegundo por item, porque o desempate por `id` (UUID aleatório) embaralhava a lista; esse
+truque **foi removido** junto com a coluna — uma coluna de tempo servindo de coluna de ordem
+sobrevive a qualquer reprocessamento que normalize timestamps. Com a coluna:
+
+- o `INSERT` grava `position` = índice do item no array do request (base 0);
+- toda leitura de itens ordena por **`position ASC, created_at ASC`** (o segundo critério cobre
+  as linhas antigas, todas com `position = 0`);
+- o `DEFAULT 0` torna a migração compatível com o dado existente — nenhum backfill seria
+  *obrigatório*. A 003 mesmo assim preenche `position` a partir da ordem atual
+  (`ROW_NUMBER() OVER (PARTITION BY proposal_id ORDER BY created_at ASC, id ASC) - 1`), para que
+  uma proposta já existente não dependa do segundo critério para não embaralhar. O desempate por
+  `id` torna o resultado estável quando dois itens compartilham o mesmo `created_at`.
 
 ### 7. `exam_catalog`
 Catálogo de exames por laboratório.
@@ -540,6 +572,206 @@ Token válido = `revoked_at IS NULL AND expires_at > NOW()`.
 
 ---
 
+### 14. `patients` (migração 003 — D-059)
+Entidade própria do paciente. Antes da Onda 6, nome/telefone/e-mail viviam denormalizados em
+`conversations`; a ficha `/patients/:id` (PAGES.md §3) exige cadastro editável, e um cadastro
+que mora em N conversas não tem onde ser editado uma vez só.
+
+```sql
+CREATE TABLE patients (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL,
+  phone VARCHAR(20) NOT NULL,             -- identidade do paciente no tenant
+  name VARCHAR(255),
+  email VARCHAR(255),
+  birth_date DATE,
+  document VARCHAR(14),                   -- CPF, só dígitos
+  notes TEXT,                             -- interno (BUSINESS_RULES §7)
+  tags JSONB NOT NULL DEFAULT '[]',
+  custom_fields JSONB NOT NULL DEFAULT '{}',
+  anonymized_at TIMESTAMP,                -- LGPD (D-063). NOT NULL = cadastro apagado
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, phone)
+);
+
+CREATE INDEX idx_patients_tenant_id ON patients(tenant_id);
+CREATE INDEX idx_patients_document ON patients(tenant_id, document);
+CREATE INDEX idx_patients_name
+  ON patients USING GIN (to_tsvector('portuguese', COALESCE(name, '')));
+
+CREATE TRIGGER trg_patients_updated_at
+  BEFORE UPDATE ON patients
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+```
+
+- **`UNIQUE (tenant_id, phone)`** é o que faz o webhook deduplicar: `findOrCreateByPhone`
+  resolve o paciente pelo telefone dentro do tenant. Dois laboratórios podem ter o mesmo
+  telefone — são pacientes distintos, e a unicidade é por tenant, nunca global.
+- **Não há `DELETE`.** Propostas históricas apontam para conversas que apontam para o paciente;
+  apagar a linha quebraria o histórico. O caminho LGPD é `anonymized_at` (D-063).
+- `phone` continua `NOT NULL` depois da anonimização: o valor é substituído por
+  `'anon-' || substring(id::text, 1, 8)`, que preserva `NOT NULL` **e** a unicidade.
+- `document` é gravado só com dígitos (o CPF formatado é assunto do frontend). O índice
+  `(tenant_id, document)` serve a busca por documento; não é `UNIQUE` — cadastro sem CPF é o
+  caso normal, e dois cadastros do mesmo CPF em telefones diferentes acontecem na prática.
+- O índice GIN usa **exatamente** a mesma expressão da busca por nome
+  (`to_tsvector('portuguese', COALESCE(name, ''))`); expressão diferente = índice não usado.
+
+**Backfill (migração 003):** uma linha por `(tenant_id, patient_phone)` distinto de
+`conversations`. `name` e `email` recebem o valor **não nulo mais recente** daquele telefone
+(`ARRAY_AGG(... ORDER BY last_message_at DESC NULLS LAST, created_at DESC) FILTER (WHERE ... IS
+NOT NULL)`), e os dois campos são escolhidos **independentemente**: uma conversa recente sem
+e-mail não apaga o e-mail que a conversa anterior conhecia — o cadastro fica com o melhor de
+cada campo, não com o retrato de uma única conversa. `created_at` do paciente é o `MIN` das
+conversas daquele telefone. Em seguida, `UPDATE conversations SET patient_id = ...` casando por
+`(tenant_id, patient_phone)`.
+
+---
+
+### 15. `tenant_channels` (migração 003 — D-064)
+Conexão de canal por laboratório. Fecha o pedido do Agent-API-Conversations em STATUS.md
+(D-024): enquanto esta tabela não existia, as credenciais vinham de env var e a identidade do
+tenant, do slug na URL do webhook.
+
+```sql
+CREATE TABLE tenant_channels (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL,
+  channel VARCHAR(50) NOT NULL,          -- whatsapp | sms | web | direct
+  display_name VARCHAR(255),
+  phone_number_id VARCHAR(255),          -- id público do número no provedor
+  phone_number VARCHAR(30),
+  api_token TEXT,                        -- SEGREDO: nunca sai do backend
+  webhook_secret TEXT,                   -- SEGREDO: nunca sai do backend
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  connected_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, channel),
+  CHECK (channel IN ('whatsapp', 'sms', 'web', 'direct'))
+);
+
+CREATE INDEX idx_tenant_channels_tenant_id ON tenant_channels(tenant_id);
+
+CREATE TRIGGER trg_tenant_channels_updated_at
+  BEFORE UPDATE ON tenant_channels
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+```
+
+**`api_token` e `webhook_secret` não aparecem em nenhuma resposta de API** — nem mascarados no
+banco, nem em log, nem em audit log (`newValues` grava `"api_token": "[REDACTED]"`). A API
+devolve `apiTokenMasked` (`'••••••••' + últimos 4`) e `webhookSecretSet: boolean`. Ver
+API_CONTRACTS.md §6. Repositório que fizer `SELECT *` nesta tabela e devolver a linha ao
+controller é bug de segurança: o repositório projeta colunas explicitamente.
+
+`UNIQUE (tenant_id, channel)` é o que permite ao `PATCH /settings/channels` fazer upsert pela
+chave `channel` em vez de exigir o `id` na tela.
+
+---
+
+### 16. `tenant_settings` (migração 003 — D-065)
+Configuração **operacional** do laboratório: modo de distribuição, mensagens automáticas e
+horário de atendimento. 1:1 com `tenants`.
+
+```sql
+CREATE TABLE tenant_settings (
+  tenant_id UUID PRIMARY KEY,
+  distribution_mode VARCHAR(20) NOT NULL DEFAULT 'manual',  -- manual | round_robin
+  greeting_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  greeting_message TEXT,
+  offhours_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  offhours_message TEXT,
+  business_hours JSONB NOT NULL DEFAULT '{"timezone":"America/Sao_Paulo","days":{}}',
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  CHECK (distribution_mode IN ('manual', 'round_robin'))
+);
+
+CREATE TRIGGER trg_tenant_settings_updated_at
+  BEFORE UPDATE ON tenant_settings
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+```
+
+**Por que tabela própria e não colunas em `tenants`:** `tenants` é a tabela raiz, escrita pelo
+console da plataforma (identidade, plano, assinatura) e sob RLS por `id`, não por `tenant_id`.
+Misturar configuração de operação do laboratório ali significaria o `PATCH` de uma tela de
+admin de tenant escrevendo na mesma linha que o console de billing edita, e uma policy de RLS
+com forma diferente das outras. `tenant_settings` tem `tenant_id` como PK **e** chave da policy
+padrão — o mesmo formato das demais 15 tabelas.
+
+`business_hours` é JSONB por ser configuração de exibição/decisão lida inteira, nunca filtrada
+por parte. Shape (validado no service, tipado em `shared/types/settings.types.ts`):
+
+```json
+{ "timezone": "America/Sao_Paulo",
+  "days": { "mon": { "start": "08:00", "end": "18:00" }, "sat": null } }
+```
+
+Dia ausente ou `null` = fechado. **Linha ausente = defaults** (`manual`, mensagens desligadas,
+`America/Sao_Paulo`, sem dias): o `GET` responde os defaults sem gravar, e o primeiro `PATCH`
+faz `INSERT ... ON CONFLICT (tenant_id) DO UPDATE`. O onboarding
+(`POST /platform/tenants`) **não** precisa criar a linha.
+
+---
+
+### 17. `channel_reads` (migração 003 — D-068)
+Estado de leitura de canal interno, por usuário. É o que faz `Channel.unreadCount` zerar
+(pendência D5 da Onda 5; supera D-044, que servia `0` fixo por falta de tabela).
+
+```sql
+CREATE TABLE channel_reads (
+  tenant_id UUID NOT NULL,
+  channel_id UUID NOT NULL,
+  user_id UUID NOT NULL,
+  last_read_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+
+  PRIMARY KEY (channel_id, user_id),
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (channel_id) REFERENCES internal_channels(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_channel_reads_tenant_id ON channel_reads(tenant_id);
+CREATE INDEX idx_channel_reads_user ON channel_reads(user_id);
+
+CREATE TRIGGER trg_channel_reads_updated_at
+  BEFORE UPDATE ON channel_reads
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+```
+
+- `tenant_id` é redundante com o canal, e obrigatório pelo mesmo motivo de `proposal_items`
+  (D-002 + AGENTS.md Contrato 2): sem ele a policy precisaria de um `EXISTS` no canal.
+- Ausência de linha = usuário nunca abriu o canal → `lastReadAt: null` e `unreadCount` conta
+  todas as mensagens de terceiros.
+- `POST /internal-chat/channels/:id/read` faz
+  `INSERT ... ON CONFLICT (channel_id, user_id) DO UPDATE SET last_read_at = NOW()`.
+  Idempotente por construção.
+- A policy de `channel_reads` (migração 004) isola por `tenant_id` como as demais **e**, no
+  `WITH CHECK`, exige que `channel_id` e `user_id` existam no tenant do contexto: as FKs são
+  verificadas fora do RLS, então sem isso um `INSERT` feito no contexto de A poderia gravar a
+  leitura do usuário de B — linha válida para o banco e atravessando a fronteira do produto.
+- `unreadCount` do canal é **derivado**, nunca materializado (BUSINESS_RULES §5):
+
+```sql
+COUNT(*) FILTER (
+  WHERE m.created_at > COALESCE(r.last_read_at, '-infinity'::timestamp)
+    AND (m.sender_id IS DISTINCT FROM :userId)
+)
+```
+
+Mensagem de sistema (`sender_id IS NULL`) **conta** — o pedido de aprovação em `#aprovacoes` é
+justamente o que precisa aparecer como não lido.
+
+---
+
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
 
 O isolamento multitenant não é convenção: é imposto pelo banco. O backend conecta com o papel
@@ -637,8 +869,20 @@ Nenhum outro caminho de código deve usar `withoutTenant()`.
 | `internal_channels` | ✅ | |
 | `internal_messages` | ✅ | |
 | `refresh_tokens` | ✅ | |
+| `patients` | ✅ | migração `004_rls_onda6.sql` |
+| `tenant_channels` | ✅ | idem — e o segredo nunca sai do repositório (projeção explícita) |
+| `tenant_settings` | ✅ | idem — policy pela coluna `tenant_id`, que aqui também é a PK |
+| `channel_reads` | ✅ | idem — via `tenant_id` próprio |
 
-Verificado em PGlite (D-008) com 2 tenants, nas **13** tabelas: com `app.tenant_id` = tenant A,
+As **4 tabelas da migração 003** entram sob RLS na `004_rls_onda6.sql`, com a policy padrão
+(mesma forma, mesmo `NULLIF(current_setting('app.tenant_id', true), '')::uuid`). A prova é a
+mesma das outras: com contexto do tenant A, nenhuma linha de B em `SELECT`/`UPDATE`/`DELETE`,
+e `INSERT` com `tenant_id` de B rejeitado pelo `WITH CHECK`. Tabela nova sem policy é
+**fail-open** — o `GRANT` de `ALTER DEFAULT PRIVILEGES` já dá `SELECT` a `crm_app` no momento
+do `CREATE TABLE`, então esquecer a policy é vazar entre laboratórios, não travar.
+
+Verificado em PGlite (D-008) com 2 tenants, nas **13** tabelas da migração 001 (e,
+em `onda6-schema.spec.ts`, nas 4 da migração 003): com `app.tenant_id` = tenant A,
 nenhuma linha do tenant B aparece em `SELECT`/`UPDATE`/`DELETE`; `SELECT * FROM tenants` devolve
 exatamente 1 linha (a de A); `INSERT` com `tenant_id` (ou `id`) de B é rejeitado pelo `WITH CHECK`;
 sem `app.tenant_id` setado, todas as tabelas devolvem 0 linhas. O mesmo SQL roda em Postgres 16
@@ -680,8 +924,15 @@ Todas as migrações estão em `backend/migrations/`:
 migrations/
 ├── 001_initial_schema.sql        # todas as 13 tabelas + índices + triggers de updated_at
 ├── 002_row_level_security.sql    # papel crm_app + GRANTs + policies por tenant_id
+├── 003_patients_and_channels.sql # patients, tenant_channels, tenant_settings, channel_reads,
+│                                 # conversations.patient_id (+ backfill), proposal_items.position
+├── 004_rls_onda6.sql             # policies das 4 tabelas da 003
 └── ...
 ```
+
+A 003 e a 004 são arquivos separados de propósito: o backfill da 003 roda **antes** de existir
+policy nas tabelas novas (ele escreve linhas de todos os tenants de uma vez, como o seed), e
+juntar as duas coisas no mesmo arquivo obrigaria o backfill a rodar sob RLS já ligado.
 
 Rodar migrações:
 ```bash
@@ -782,7 +1033,9 @@ exportadas de **`backend/src/db/seeds/e2e-fixtures.ts`**, módulo sem dependênc
 de runtime (só `import type`) para que o Playwright importe direto em vez de
 repetir strings soltas: `E2E_TENANTS`, `E2E_USERS`, `E2E_PASSWORD`, `E2E_EXAMS`,
 `E2E_EXAMS_BETA`, `E2E_CONVERSATIONS`, `E2E_PROPOSALS`, `E2E_CHANNELS`,
-`E2E_APPROVAL_POST`.
+`E2E_APPROVAL_POST` e, desde a Onda 6, `E2E_PATIENTS`, `E2E_TENANT_CHANNELS`,
+`E2E_TENANT_SETTINGS`, `E2E_TENANT_WITHOUT_SETTINGS`, `E2E_CHANNEL_READS` e
+`E2E_CHANNEL_UNREAD` (o `unreadCount` esperado por usuário/canal).
 
 Cobre os 7 cenários de `docs/guides/TESTING.md`: login · atendimento · orçamento
 · aprovação de 25% · pipeline · personalização · isolamento (tenants `e2e-alfa`
@@ -790,14 +1043,30 @@ e `e2e-beta`, com catálogos e conversas sem nenhum ID em comum).
 
 ### Testes (`backend/tests/seeds/`)
 
-`seed-dev.spec.ts` e `seed-e2e.spec.ts` (26 testes) verificam: roda em banco
+`seed-dev.spec.ts` e `seed-e2e.spec.ts` (33 testes) verificam: roda em banco
 limpo; roda duas vezes sem duplicar; todo `total_price` bate com
 `calculateTotal()`; todo `perdido` tem `reason_lost` válido e nenhum outro
 estágio tem; todo histórico só usa transições de `ALLOWED_TRANSITIONS`; toda
 proposta terminal tem `closed_at` e nenhuma não-terminal tem; proporções do
 funil plausíveis; os dois tenants existem e nenhuma linha de um referencia o
 outro (varredura de todas as FKs cross-tenant); e o dataset e2e é determinístico
-(mesmos IDs em duas execuções).
+(mesmos IDs em duas execuções). Da Onda 6: um cadastro por `(tenant, telefone)` e
+**nenhuma conversa sem `patient_id`**; um `tenant_channels` por laboratório; um
+tenant **com** `tenant_settings` (`round_robin`) e outro **sem linha** (o caminho
+"linha ausente = defaults" de D-065); e o `unreadCount` derivado batendo com
+`E2E_CHANNEL_UNREAD` — com pelo menos um caso **diferente de zero**, que é o que
+o E2E do badge precisa ter para provar que `POST .../read` zera.
+
+`backend/tests/kernel/onda6-schema.spec.ts` prova as migrações 003/004: monta um
+banco com **apenas 001 e 002** aplicadas, escreve dados como se fossem anteriores
+à Onda 6 e só então aplica 003/004 pelo runner — é o único jeito de o backfill
+não passar por vacuidade. Verifica 1 paciente por `(tenant, telefone)` distinto
+(mesmo telefone em dois tenants = dois cadastros), nome/e-mail escolhidos
+independentemente, conversa de telefone em branco sem cadastro, nenhuma conversa
+com telefone conhecido em `patient_id NULL`, `proposal_items.position`
+preservando a ordem atual, reaplicação do bloco de backfill sem nenhuma
+diferença (inclusive `conversations.updated_at`), e RLS ligado com policy nas 4
+tabelas novas — com 2 tenants e controle positivo em cada asserção.
 
 ---
 

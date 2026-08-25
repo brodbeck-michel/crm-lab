@@ -9,6 +9,15 @@ export type MessageStatus = 'sent' | 'delivered' | 'read' | 'failed';
 /** Item da lista de conversas (coluna 1 do inbox). */
 export interface Conversation {
   id: string;
+  /**
+   * Cadastro do paciente por tras da conversa (`patients.id`, D-059) — a porta
+   * de entrada da Ficha do Paciente (`/patients/:id`, PAGES.md §3).
+   *
+   * `null` quando a conversa e anterior ao backfill da migracao 003 e ainda nao
+   * passou por `findOrCreateByPhone` (D-072). Nesse caso a UI NAO mostra o link:
+   * link quebrado e pior que link ausente (D-079).
+   */
+  patientId: string | null;
   patientName: string | null;
   patientPhone: string;
   assignedTo: string | null;

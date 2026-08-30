@@ -39,6 +39,7 @@ import { auditModule } from '../../src/controllers/audit.routes.js';
 import { channelSettingsModule } from '../../src/controllers/channel-settings.routes.js';
 import { conversationModule } from '../../src/controllers/conversation.routes.js';
 import { examModule } from '../../src/controllers/exam.routes.js';
+import { insuranceModule } from '../../src/controllers/insurance.routes.js';
 import { internalChatModule } from '../../src/controllers/internal-chat.routes.js';
 import { operationModule } from '../../src/controllers/operation.routes.js';
 import { patientModule } from '../../src/controllers/patient.routes.js';
@@ -75,6 +76,7 @@ const LAB_MODULES = [
   channelSettingsModule,
   conversationModule,
   examModule,
+  insuranceModule,
   internalChatModule,
   operationModule,
   patientModule,
@@ -109,6 +111,8 @@ interface Lab {
   pendingProposal: ProposalRecord;
   /** `#geral` — criado sob demanda pelo InternalChatService no primeiro GET. */
   channel: Channel;
+  /** Convenio do laboratorio (Onda 7 — D-081/D-082). */
+  insurance: { id: string; name: string };
 }
 
 interface LabRoute {
@@ -245,6 +249,26 @@ const LAB_ROUTES: readonly LabRoute[] = [
     ownStatus: 200,
   },
 
+  // --- convenios (Onda 7 — D-081/D-082) ---
+  { name: 'GET /insurances', method: 'get', path: () => '/api/v1/insurances', actor: 'attendant', addressable: false },
+  {
+    name: 'POST /insurances',
+    method: 'post',
+    path: () => '/api/v1/insurances',
+    body: () => ({ name: 'Convênio sonda', type: 'seguradora' }),
+    actor: 'manager',
+    addressable: false,
+  },
+  {
+    name: 'PATCH /insurances/:id',
+    method: 'patch',
+    path: (l) => `/api/v1/insurances/${l.insurance.id}`,
+    body: () => ({ isActive: false }),
+    actor: 'manager',
+    addressable: true,
+    ownStatus: 200,
+  },
+
   // --- pacientes (Onda 6 — D-059..D-063) ---
   { name: 'GET /patients', method: 'get', path: () => '/api/v1/patients', actor: 'admin', addressable: false },
   { name: 'GET /patients/:id', method: 'get', path: (l) => `/api/v1/patients/${l.patient.id}`, actor: 'admin', addressable: true, ownStatus: 200 },
@@ -372,6 +396,7 @@ const BETA_SECRETS = {
   exam: 'Exame Confidencial Beta',
   user: 'Bruno Confidencial Beta',
   revenue: 4321.99,
+  insurance: 'Convênio Confidencial Beta',
 } as const;
 
 async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
@@ -445,6 +470,17 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     db,
   });
 
+  const insuranceRow = await db.withoutTenant((tx) =>
+    tx.query<{ id: string }>(
+      `INSERT INTO insurances (tenant_id, name, type) VALUES ($1, $2, 'cooperativa') RETURNING id`,
+      [tenant.id, secret ? BETA_SECRETS.insurance : `Convênio ${prefix}`],
+    ),
+  );
+  const insurance = {
+    id: insuranceRow.rows[0]?.id as string,
+    name: secret ? BETA_SECRETS.insurance : `Convênio ${prefix}`,
+  };
+
   // O primeiro GET cria `#geral`/`#aprovacoes` do tenant (InternalChatService).
   const channels = await app.agent
     .get('/api/v1/internal-chat/channels')
@@ -466,6 +502,7 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     openProposal,
     pendingProposal,
     channel,
+    insurance,
   };
 }
 
@@ -536,10 +573,10 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 39 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 42 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
-    // `GET /operations/overview`.
-    expect(LAB_ROUTES).toHaveLength(39);
+    // `GET /operations/overview`. Onda 7 soma 3: `/insurances`.
+    expect(LAB_ROUTES).toHaveLength(42);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)
@@ -577,6 +614,7 @@ describe('recurso do tenant B enderecado por um usuario do tenant A', () => {
       expect(serialized).not.toContain(BETA_SECRETS.exam);
       expect(serialized).not.toContain(BETA_SECRETS.user);
       expect(serialized).not.toContain(String(BETA_SECRETS.revenue));
+      expect(serialized).not.toContain(BETA_SECRETS.insurance);
     });
   }
 
@@ -669,7 +707,7 @@ describe('listagens e relatorios do tenant A', () => {
         status: 200,
       });
       const serialized = JSON.stringify(response.body);
-      for (const secret of [BETA_SECRETS.patient, BETA_SECRETS.exam, BETA_SECRETS.user]) {
+      for (const secret of [BETA_SECRETS.patient, BETA_SECRETS.exam, BETA_SECRETS.user, BETA_SECRETS.insurance]) {
         expect({ route: route.name, leaked: serialized.includes(secret) }).toMatchObject({
           route: route.name,
           leaked: false,
@@ -737,6 +775,12 @@ describe('listagens e relatorios do tenant A', () => {
     const response = await app.agent.get('/api/v1/exams').set(app.auth(alfa.attendant)).expect(200);
     const body = response.body as ListExamsResponse;
     expect(body.exams.map((e) => e.id)).toEqual([alfa.exam.id]);
+  });
+
+  it('GET /insurances lista so os convenios de A', async () => {
+    const response = await app.agent.get('/api/v1/insurances').set(app.auth(alfa.attendant)).expect(200);
+    const body = response.body as { insurances: Array<{ id: string }> };
+    expect(body.insurances.map((i) => i.id)).toEqual([alfa.insurance.id]);
   });
 
   it('GET /users lista so os usuarios de A', async () => {

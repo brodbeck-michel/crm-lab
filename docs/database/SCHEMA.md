@@ -902,11 +902,11 @@ CREATE TRIGGER trg_exam_prices_updated_at
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 ```
 
-Linha ausente para um (exame, convênio) não é erro: `InsuranceService.resolvePrice`
-(SERVICES.md §15) cai em `exam_catalog.price_private`, marcando `priceSource: "private"` — o
-fallback nunca bloqueia o orçamento (decisão 4 do spec da Onda 7). `PUT /exams/:id/prices`
-(API_CONTRACTS.md §4) faz upsert em lote com semântica de estado completo: linha ausente do
-corpo do PUT é removida da tabela.
+Linha ausente para um (exame, convênio) não é erro: `ExamCatalogService.list`/
+`resolveActiveByIds` (SERVICES.md §5, com `insuranceId`) cai em `exam_catalog.price_private`,
+marcando `priceSource: "private"` — o fallback nunca bloqueia o orçamento (decisão 4 do spec da
+Onda 7). `PUT /exams/:id/prices` (API_CONTRACTS.md §4) faz upsert em lote com semântica de
+estado completo: linha ausente do corpo do PUT é removida da tabela.
 
 ### 20. `exam_synonyms` (migração 005 — Onda 7)
 Nomes alternativos do exame, para a busca de `GET /exams?search=` casar também por sinônimo.

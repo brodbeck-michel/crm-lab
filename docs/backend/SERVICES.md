@@ -164,21 +164,49 @@ interface ProposalService {
 
 ```typescript
 interface ExamCatalogService {
+  /**
+   * Onda 7: `filters.insuranceId?: string`. Quando presente, cada `Exam` do resultado vem
+   * com `effectivePrice: number` e `priceSource: 'insurance' | 'private'` (fallback para
+   * `pricePrivate` quando não há linha em `exam_prices` para o par exame/convênio).
+   */
   list(tenantId: string, filters: ExamFilters): Promise<Paginated<Exam>>;
 
   /** Ativos E inativos, na ordem dos ids pedidos. Ids desconhecidos são omitidos. */
   getByIds(tenantId: string, ids: string[]): Promise<Exam[]>;
 
-  /** Versão estruturada de getByIds para quem precisa saber o que falhou. */
-  resolveActiveByIds(tenantId: string, ids: string[]): Promise<ExamResolution>;
+  /**
+   * Versão estruturada de getByIds para quem precisa saber o que falhou.
+   * Onda 7: 3º parâmetro `insuranceId?: string` — quando presente, cada entrada de `byId`
+   * ganha `effectivePrice`/`priceSource` com a mesma lógica de fallback de `list`. **É esta
+   * assinatura que o ProposalService (§4) consome** para precificar por convênio.
+   */
+  resolveActiveByIds(tenantId: string, ids: string[], insuranceId?: string): Promise<ExamResolution>;
 
   create(ctx: TenantContext, dto: CreateExamRequest): Promise<Exam>;     // manager/admin
   update(ctx: TenantContext, id: string, dto: UpdateExamRequest): Promise<Exam>; // manager/admin
+
+  /** Onda 7. Uma linha por convênio COM preço cadastrado para este exame. Qualquer papel do tenant. */
+  listPrices(ctx: TenantContext, examId: string): Promise<ExamPrice[]>;
+
+  /**
+   * Onda 7. Upsert em lote — semântica de PUT (estado completo): linha ausente do corpo é
+   * removida. manager/admin. Valida que cada `insuranceId` do corpo existe e está ativo no
+   * tenant, senão `NOT_FOUND`/`VALIDATION_ERROR`. Invalida `cache.delByPrefix('exams:<tenantId>:')`.
+   */
+  upsertPrices(ctx: TenantContext, examId: string, dto: UpdateExamPricesRequest): Promise<ExamPrice[]>;
 }
+// Nota de camada: `listPrices`/`upsertPrices` devolvem ARRAY cru (`ExamPrice[]`), não
+// `ListExamPricesResponse`. Cada forma está certa na sua camada — o service devolve o dado, e
+// é `exam.routes.ts` (GET/PUT /exams/:id/prices) quem embrulha em `{ prices }` na resposta
+// HTTP, obedecendo a regra de envelope de listagem (D-070, API_CONTRACTS.md §4). Não é
+// divergência a "consertar": `ListExamPricesResponse` é forma de fio HTTP, não de retorno de
+// service — o mesmo padrão de `list()` acima, que devolve `Paginated<Exam>` e não
+// `ListExamsResponse`.
 
 interface ExamResolution {
   found: Exam[];            // somente ATIVOS, na ordem dos ids pedidos
-  byId: Map<string, Exam>;  // os mesmos de `found`, indexados
+  byId: Map<string, Exam>;  // os mesmos de `found`, indexados — com effectivePrice/priceSource
+                             // quando `insuranceId` foi passado (Onda 7)
   invalidIds: string[];     // missingIds + inactiveIds — vai direto em details.examIds
   missingIds: string[];     // não existem neste tenant (ou pertencem a outro)
   inactiveIds: string[];    // existem mas estão com isActive:false
@@ -190,31 +218,50 @@ interface ExamResolution {
   pelo índice único (`23505` convertido para `CONFLICT`, nunca 500)
 - Desativar (`isActive: false`) em vez de deletar — propostas históricas referenciam.
   **Não há endpoint DELETE**; `getByIds` continua devolvendo o exame desativado
-- Cache 1h (`EXAM_CACHE_TTL_SECONDS = 3600`), invalidado em create/update
-- Busca (`?search=`) por **nome e código**, sem sensibilidade a caixa nem a acento
-  (dobra via `translate` no SQL — `unaccent` não está disponível no PGlite dos testes)
+- Cache 1h (`EXAM_CACHE_TTL_SECONDS = 3600`), invalidado em create/update **e em
+  `upsertPrices`** (Onda 7)
+- Busca (`?search=`) por **nome, código e sinônimo** (Onda 7), sem sensibilidade a caixa nem a
+  acento (dobra via `translate` no SQL — `unaccent` não está disponível no PGlite dos testes).
+  Sinônimo é o terceiro ramo do `OR`, sobre `exam_synonyms` (SCHEMA.md §20)
 - Filtros: `?active=`, `?category=` (também sem acento/caixa), `?page`/`?limit`
-  (default 1/20, máx. 100), `?sortBy`/`?order` (whitelist de colunas)
+  (default 1/20, máx. 100), `?sortBy`/`?order` (whitelist de colunas), `?insuranceId=` (Onda 7)
+- **Onda 7 — TUSS/AMB/material/sinônimos:** `create`/`update` aceitam `tussCode`, `ambCode`,
+  `material` (colunas simples) e `synonyms?: string[]` — regravado por
+  delete-then-insert em `exam_synonyms`, **dentro da mesma transação** do create/update
+  (semântica de PUT sobre a coleção filha: enviar `synonyms` substitui o conjunto inteiro).
+  `list`/`getByIds` populam `synonyms: string[]` via `LEFT JOIN LATERAL` (`[]` quando nenhum).
+  Código TUSS/AMB não confirmado é `null`, nunca inventado (D-081).
+- **Onda 7 — preço por convênio:** `listPrices`/`upsertPrices` são donos de `exam_prices`
+  (SCHEMA.md §19), com o mesmo padrão transacional de sinônimos (delete-then-insert). No `list`
+  com `insuranceId`, o SQL faz `LEFT JOIN exam_prices ep ON ep.exam_id = e.id AND
+  ep.insurance_id = $insuranceId` e projeta
+  `COALESCE(ep.price, e.price_private) AS effective_price,
+  CASE WHEN ep.price IS NOT NULL THEN 'insurance' ELSE 'private' END AS price_source`
+  — **o fallback nunca bloqueia** (decisão 4 do spec da Onda 7). A chave de cache da listagem
+  (`listCacheKey`) incorpora `insuranceId` no hash.
 
 **Cache — chave e invalidação:**
-- Chave: `exams:<tenantId>:list:<filtros normalizados>`. O `tenantId` é o **primeiro
-  segmento**: cache que vaza entre tenants é falha de isolamento igual a uma query sem
-  `WHERE tenant_id`.
-- Invalidação: `cache.delByPrefix('exams:<tenantId>:')` em create/update — derruba todas as
-  combinações de filtro daquele tenant e de nenhum outro.
+- Chave: `exams:<tenantId>:list:<filtros normalizados>` (inclui `insuranceId` desde a Onda 7).
+  O `tenantId` é o **primeiro segmento**: cache que vaza entre tenants é falha de isolamento
+  igual a uma query sem `WHERE tenant_id`.
+- Invalidação: `cache.delByPrefix('exams:<tenantId>:')` em create/update/`upsertPrices` —
+  derruba todas as combinações de filtro daquele tenant e de nenhum outro.
 
 **`getByIds` / `resolveActiveByIds` NÃO passam pelo cache** — de propósito. O ProposalService
 lê por aqui o preço **atual** do catálogo (BUSINESS_RULES §1, WORKFLOWS §2 passo 5); servir esse
 caminho de cache arriscaria gravar uma proposta com preço obsoleto. Custo: uma query por PK.
+Vale também para o preço por convênio (Onda 7): `resolveActiveByIds(..., insuranceId)` não lê
+`exams:<tenantId>:` — preço de convênio nunca sai obsoleto, mesma razão do preço particular.
 
-Uso pelo ProposalService:
+Uso pelo ProposalService (Onda 7 — com convênio):
 
 ```typescript
-const resolution = await examCatalog.resolveActiveByIds(ctx.tenantId, ids);
+const resolution = await examCatalog.resolveActiveByIds(ctx.tenantId, ids, dto.insuranceId ?? undefined);
 if (resolution.invalidIds.length > 0) {
   throw new BusinessError('EXAM_NOT_FOUND_OR_INACTIVE', { examIds: resolution.invalidIds });
 }
-// resolution.found / resolution.byId trazem os preços atuais
+// resolution.byId[examId].effectivePrice / .priceSource viram o snapshot do item
+// (unitPrice / priceSource em proposal_items, D-004 estendido)
 ```
 
 ---
@@ -551,37 +598,25 @@ interface OperationService {
 
 ## 15. InsuranceService (Onda 7 — D-081/D-082)
 
-**Responsabilidade:** convênios do laboratório e preço por (exame, convênio). Dono das tabelas
-`insurances` (SCHEMA.md §18) e `exam_prices` (§19).
+**Responsabilidade:** cadastro dos convênios do laboratório. Dono da tabela `insurances`
+(SCHEMA.md §18). **Não tem método de preço** — `listPrices`/`upsertPrices` (dono de
+`exam_prices`, §19) e a resolução de preço por convênio vivem no `ExamCatalogService` (§5,
+`resolveActiveByIds`/`list` com `insuranceId`), porque preço é dado do catálogo, não do
+convênio: o mesmo repositório que já lê `exam_catalog` faz o `LEFT JOIN`/`COALESCE` contra
+`exam_prices` numa query só, sem um segundo service no meio.
 
 ```typescript
-interface InsuranceService {
-  list(ctx: TenantContext, filters: ListInsurancesQuery): Promise<ListInsurancesResponse>;
+// backend/src/services/insurance.service.ts
+export const MAX_PAGE = 10_000;
+
+export interface InsuranceService {
+  list(ctx: TenantContext, query: ListInsurancesQuery): Promise<ListInsurancesResponse>;
+  getById(ctx: TenantContext, id: string): Promise<Insurance>;
   create(ctx: TenantContext, dto: CreateInsuranceRequest): Promise<Insurance>;   // manager/admin
   update(ctx: TenantContext, id: string, dto: UpdateInsuranceRequest): Promise<Insurance>; // manager/admin
-
-  /** Uma linha por convênio COM preço cadastrado para este exame. */
-  listPrices(ctx: TenantContext, examId: string): Promise<ListExamPricesResponse>;
-
-  /** Upsert em lote. Semântica de PUT: linha ausente do corpo é removida. manager/admin. */
-  updatePrices(
-    ctx: TenantContext,
-    examId: string,
-    dto: UpdateExamPricesRequest,
-  ): Promise<ListExamPricesResponse>;
-
-  /**
-   * Preço efetivo de um exame para um convênio (ou particular, se `insuranceId` for `null`).
-   * Consumido por ExamCatalogService (para `effectivePrice`/`priceSource` de `GET /exams`) e
-   * por ProposalService (para o preço unitário no momento da criação). NÃO passa por cache
-   * (mesma razão de `resolveActiveByIds`, §5: preço nunca sai obsoleto).
-   */
-  resolvePrice(
-    tenantId: string,
-    examId: string,
-    insuranceId: string | null,
-  ): Promise<{ price: number; source: 'insurance' | 'private' }>;
 }
+
+export function createInsuranceService(deps: { db: DbClient; audit: AuditService }): InsuranceService;
 ```
 
 **Regras:**
@@ -589,20 +624,14 @@ interface InsuranceService {
   (verificado antes do INSERT + `isUniqueViolation` na corrida).
 - Não há `DELETE`: desativar é `PATCH { isActive: false }` — propostas históricas podem
   referenciar o convênio usado (mesmo padrão de `/exams`, D-004).
-- **"Particular" nunca é uma linha desta tabela** (D-082). `resolvePrice(tenantId, examId,
-  null)` devolve sempre `{ price: exam.pricePrivate, source: 'private' }`, sem consultar
-  `exam_prices`.
-- `resolvePrice(tenantId, examId, insuranceId)` com `insuranceId` não-nulo: busca
-  `exam_prices(exam_id, insurance_id)`; **linha ausente cai no particular**
-  (`{ price: exam.pricePrivate, source: 'private' }`) — o fallback nunca bloqueia o orçamento
-  (decisão 4 do spec da Onda 7). Convênio inexistente/inativo no tenant tem o mesmo
-  comportamento do fallback: o chamador (ProposalService) já validou `insuranceId` antes de
-  chegar aqui.
-- `updatePrices`: `price >= 0`; `insuranceId` precisa existir e estar `isActive: true` no
-  tenant, senão `VALIDATION_ERROR`; linha do corpo com `insuranceId` repetido →
-  `VALIDATION_ERROR`. Auditado (`update_exam_prices`, `entityType: "exam"`, `entityId` =
-  `examId`, com o array de preços em `newValues`).
-- `create`/`update` de convênio auditados (`create_insurance`/`update_insurance`).
+- **"Particular" nunca é uma linha desta tabela** (D-082) — não existe aqui, nem em
+  `exam_prices`, nenhuma entrada "Particular". Ver §5 para como o fallback é resolvido.
+- `list`: `MAX_PAGE = 10_000` aplicado em `clampInt(query.page, 1, 1, MAX_PAGE)` — página acima
+  do teto devolve lista vazia, não erro (mesmo padrão de `/patients`, `/proposals`).
+- `create`/`update` restritos a `manager`/`admin`; auditados
+  (`create_insurance`/`update_insurance`, via `audit.record(ctx, { action, entityType:
+  'insurance', entityId, oldValues?, newValues? })`).
+- `getById`/`update` de convênio de outro tenant → `NOT_FOUND` (nunca `FORBIDDEN`).
 - Busca (`?search=`) por **nome e razão social**, mesma dobra de caixa/acento do catálogo
   (`translate` no SQL — `unaccent` indisponível no PGlite).
 
@@ -675,9 +704,10 @@ interface ChannelSettingsServiceQrExtension {
 - `handleWebhook` reusa o caminho inteiro de `MessageService.createFromPatient` /
   `ConversationRepository.findOrCreateByPhone` para `MESSAGES_UPSERT` — nenhum caminho de
   ingestão paralelo.
-- **Versão da imagem fixada** (D-083, `docker-compose.yml`/`.prod.yml`, domínio infra) — este
-  service não depende de versão específica, só do contrato HTTP do gateway (`/instance/*`,
-  `/message/sendText/*`), que D-083 documenta como estável entre as duas versões aceitas.
+- **Versão da imagem fixada em v2.3.7** (D-083, `docker-compose.yml`/`.prod.yml`, domínio
+  infra), com a linha 2.4.x como fallback documentado — este service não depende de versão
+  específica, só do contrato HTTP do gateway (`/instance/*`, `/message/sendText/*`), que D-083
+  documenta como estável entre as duas versões.
 - **Teste:** driver e webhook cobertos por um **gateway fake** (servidor HTTP de teste que
   responde como o Evolution) — mesmo padrão do driver mock atual de `WhatsAppService`. O
   pareamento QR real com um número de verdade **não é testável em CI**; fica documentado como

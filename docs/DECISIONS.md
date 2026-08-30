@@ -1054,8 +1054,9 @@ o restante entra `NULL` com nota, não é lacuna a "resolver depois" por adivinh
 ### D-082: "Particular" é ausência de convênio, não linha de `insurances`
 **Decisão:** não existe convênio "Particular" cadastrado em `insurances`. Uma proposta
 particular é `proposals.insurance_id = NULL` (SCHEMA.md §5); um exame sem preço de convênio
-cadastrado usa `exam_catalog.price_private` via fallback do `InsuranceService.resolvePrice`
-(SERVICES.md §15), nunca uma linha de `exam_prices` apontando para um convênio fantasma.
+cadastrado usa `exam_catalog.price_private` via fallback do `ExamCatalogService.resolveActiveByIds`/
+`list` (SERVICES.md §5, quarto parâmetro `insuranceId` opcional), nunca uma linha de
+`exam_prices` apontando para um convênio fantasma.
 **Motivo:** modelar "Particular" como convênio exigiria espelhar `price_private` dentro de
 `exam_prices` para manter os dois caminhos consistentes — criando uma **segunda origem** para o
 mesmo número (BUSINESS_RULES.md §5, "um número, uma origem"). Toda vez que `price_private`
@@ -1070,21 +1071,26 @@ nunca a serve.
 ### D-083: Gateway Evolution separado do monolito; versão fixada com fallback documentado
 **Decisão:** WhatsApp sem API oficial da Meta usa **Evolution API** como gateway self-hosted,
 um serviço próprio no `docker-compose.yml`/`.prod.yml` (nunca lib embutida no backend Express).
-A imagem roda com versão **fixada**: a escolha operacional é a última **2.4.x** estável (com a
-ativação gratuita de licença da Evolution Foundation documentada como dependência operacional —
-heartbeat a cada ~30 min contra o servidor deles), e a **v2.3.7** (última versão sem exigência
-de ativação) fica registrada como **fallback**, pronta para uso se a dependência do servidor de
-licenças de terceiro virar um problema operacional (indisponibilidade deles derrubando conexões
-nossas). Baileys embutido e WAHA foram avaliados e descartados para este papel.
-**Motivo:** sessões de WhatsApp são **stateful e de vida longa** (o pareamento sobrevive entre
-deploys); o backend Express é stateless e reiniciável por design (D-007) — embutir a sessão no
-processo do backend acoplaria o ciclo de vida de dois recursos com requisitos opostos, e um
-redeploy de rotina derrubaria conexões pareadas. Gateway separado também isola o efeito de
+A imagem roda com versão **fixada na v2.3.7** — a **última versão sem exigência de ativação de
+licença** — e a linha **2.4.x** (que exige ativação gratuita de licença da Evolution Foundation,
+com heartbeat a cada ~30 min contra o servidor deles) fica registrada como **fallback**: subir
+para 2.4.x é o caminho se v2.3.7 se mostrar insuficiente (bug corrigido só na linha nova,
+recurso necessário ausente), aceitando nesse momento a dependência operacional externa que a
+v2.3.7 evita hoje. Baileys embutido e WAHA foram avaliados e descartados para este papel.
+**Motivo:** entre exigir uma dependência de disponibilidade de terceiro (o servidor de licenças
+da Evolution Foundation) de saída e adotá-la só se e quando for necessário, a segunda é mais
+conservadora — começar sem essa dependência e subi-la sob demanda documentada é reversível na
+direção certa; o inverso (já operar dependente de um serviço externo de terceiro para o WhatsApp
+do laboratório continuar funcionando) não seria uma escolha revisitável sem esforço.
+Adicionalmente: sessões de WhatsApp são **stateful e de vida longa** (o pareamento sobrevive
+entre deploys); o backend Express é stateless e reiniciável por design (D-007) — embutir a
+sessão no processo do backend acoplaria o ciclo de vida de dois recursos com requisitos opostos,
+e um redeploy de rotina derrubaria conexões pareadas. Gateway separado também isola o efeito de
 mudança de protocolo da Meta: quando ela muda, o conserto é trocar a tag da imagem, sem tocar em
 uma linha do código do CRM. A versão fixada (em vez de `latest`) evita que uma atualização
 automática do gateway mude comportamento sem aviso; o fallback documentado antes de precisar
 dele é o que torna a migração de versão uma decisão de infra rápida, não uma investigação sob
-pressão no dia em que o servidor de licenças cair.
+pressão no dia em que a v2.3.7 se mostrar insuficiente.
 **Impacto:** infra, api, segurança. `EVOLUTION_API_URL`, `EVOLUTION_API_KEY` e
 `EVOLUTION_WEBHOOK_TOKEN` são env vars novas, validadas em `env.ts`; ausentes ⇒
 `CHANNEL_QR_UNAVAILABLE` (nunca crash no boot). Cada tenant é uma instância nomeada

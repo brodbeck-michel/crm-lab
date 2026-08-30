@@ -1172,6 +1172,7 @@ Paciente inexistente ou fora da visibilidade devolve **lista vazia**, não `404`
       "status": "orcamento_enviado",
       "discountPercent": 10,
       "totalPrice": 179.80,
+      "insuranceId": "8f2a1c4b-6d39-4f70-9a12-5c8e3b7d1f06",
       "createdBy": "uuid",
       "approvalStatus": "none",
       "createdAt": "2024-08-23T14:40:00Z"
@@ -1183,6 +1184,9 @@ Paciente inexistente ou fora da visibilidade devolve **lista vazia**, não `404`
   }
 }
 ```
+
+`insuranceId` (Onda 7) é `null` numa proposta particular — mesmo campo de `GET /proposals/:id`
+abaixo.
 
 ### GET /proposals/:id
 Detalhes completos de uma proposta.
@@ -1197,18 +1201,21 @@ Detalhes completos de uma proposta.
   "status": "orcamento_enviado",
   "discountPercent": 10,
   "totalPrice": 179.80,
+  "insuranceId": "8f2a1c4b-6d39-4f70-9a12-5c8e3b7d1f06",
   "items": [
     {
       "id": "uuid",
       "examName": "Hemograma",
       "quantity": 1,
-      "unitPrice": 89.90
+      "unitPrice": 72.50,
+      "priceSource": "insurance"
     },
     {
       "id": "uuid",
-      "examName": "Glicose",
+      "examName": "Vitamina D 25-OH",
       "quantity": 1,
-      "unitPrice": 89.90
+      "unitPrice": 120.00,
+      "priceSource": "private"
     }
   ],
   "createdBy": "uuid",
@@ -1232,6 +1239,12 @@ Detalhes completos de uma proposta.
 }
 ```
 
+`insuranceId` (Onda 7) é `null` numa proposta particular. `items[].priceSource` é o snapshot de
+onde `unitPrice` veio no momento da criação: `"insurance"` quando havia preço cadastrado em
+`exam_prices` para o convênio da proposta, `"private"` quando caiu no fallback (segundo item do
+exemplo — a proposta tem convênio, mas o exame não tinha preço cadastrado para ele). A UI marca
+o item com badge "particular" quando `priceSource === "private"` numa proposta **com** convênio.
+
 ### POST /proposals
 Criar nova proposta.
 
@@ -1239,6 +1252,7 @@ Criar nova proposta.
 ```json
 {
   "conversationId": "uuid",
+  "insuranceId": "8f2a1c4b-6d39-4f70-9a12-5c8e3b7d1f06",
   "items": [
     { "examId": "uuid", "quantity": 1 },
     { "examId": "uuid", "quantity": 1 }
@@ -1247,11 +1261,19 @@ Criar nova proposta.
 }
 ```
 
+`insuranceId` (Onda 7) é opcional: `null`/ausente = particular (D-082). Quando presente, o
+preço de cada item é resolvido por convênio (`ExamCatalogService.resolveActiveByIds(...,
+insuranceId)`, SERVICES.md §5) com fallback automático para `pricePrivate` quando o exame não
+tem preço cadastrado para aquele convênio — o fallback **nunca bloqueia** a criação da proposta
+(decisão 4 do spec da Onda 7).
+
 **Validações:**
 - `discountPercent` não pode exceder alçada do usuário
 - Se exceder: vai para `approvalStatus: "pending"`
 - Exames devem existir no catálogo
 - Quantidade > 0
+- `insuranceId`, se enviado, deve existir e estar ativo no tenant — convênio inexistente/de
+  outro tenant/inativo → `VALIDATION_ERROR`
 
 **Response (201):**
 ```json
@@ -1260,12 +1282,33 @@ Criar nova proposta.
   "conversationId": "uuid",
   "status": "novo_contato",
   "discountPercent": 10,
-  "totalPrice": 179.80,
-  "items": [...],
+  "totalPrice": 173.25,
+  "insuranceId": "8f2a1c4b-6d39-4f70-9a12-5c8e3b7d1f06",
+  "items": [
+    {
+      "id": "uuid",
+      "examName": "Hemograma",
+      "quantity": 1,
+      "unitPrice": 72.50,
+      "priceSource": "insurance"
+    },
+    {
+      "id": "uuid",
+      "examName": "Vitamina D 25-OH",
+      "quantity": 1,
+      "unitPrice": 120.00,
+      "priceSource": "private"
+    }
+  ],
   "approvalStatus": "pending",
   "message": "Proposta criada. Aguardando aprovação do gestor."
 }
 ```
+
+**`PATCH /proposals/:id` não permite trocar `insuranceId` após a criação, nesta onda** — não há
+campo `insuranceId` em nenhum `PATCH` de proposta (nem no schema Zod que os valida). Trocar de
+convênio re-precificaria itens com snapshot já gravado (D-004) — comportamento novo que
+exigiria decisão própria, registrado aqui como **limitação declarada** da Onda 7 (spec §3.3).
 
 **Desconto acima da alçada NÃO é erro nesta rota** (D-045): a proposta é criada com
 `approvalStatus: "pending"` e o `message` acima explica a pendência — é o fluxo de

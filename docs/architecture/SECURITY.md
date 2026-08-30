@@ -120,12 +120,13 @@ de acesso entre tenants dentro do gateway.
   (`crypto.timingSafeEqual` contra `EVOLUTION_WEBHOOK_TOKEN`), não HMAC — o gateway Evolution
   não assina o corpo, então o token é a única defesa contra injeção de mensagem falsa; kill
   switch `is_active` verificado **antes** do token (D-074).
-- **Dependência do servidor de licenças da Evolution Foundation** (versões ≥ 2.4.0, heartbeat
-  periódico contra o servidor deles): versão da imagem **fixada** para reduzir a superfície de
-  mudança inesperada; a v2.3.7 (última sem exigência de ativação) fica documentada como
-  fallback operacional se essa dependência externa virar problema (D-083). Trocar a imagem é
-  configuração de infra, sem tocar no código do CRM — o driver fala o mesmo contrato HTTP
-  (`/instance/*`, `/message/sendText/*`) nas duas versões.
+- **Imagem fixada em v2.3.7** (D-083) — a última versão do gateway **sem** exigência de
+  ativação de licença, evitando de saída a dependência de disponibilidade de um servidor de
+  licenças de terceiro (Evolution Foundation) para o WhatsApp do laboratório continuar
+  funcionando. A linha 2.4.x (que exige essa ativação, com heartbeat periódico contra o servidor
+  deles) fica documentada como **fallback**, para subir só se e quando for necessário. Trocar a
+  imagem é configuração de infra, sem tocar no código do CRM — o driver fala o mesmo contrato
+  HTTP (`/instance/*`, `/message/sendText/*`) nas duas versões.
 
 ## Segredos — onde cada um mora
 

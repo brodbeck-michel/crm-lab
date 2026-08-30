@@ -85,7 +85,7 @@ const LAB_MODULES = [
   userModule,
 ];
 
-type Method = 'get' | 'post' | 'patch';
+type Method = 'get' | 'post' | 'patch' | 'put';
 type Actor = 'admin' | 'manager' | 'attendant';
 
 /** Um laboratorio completo: tudo que uma rota de laboratorio consegue endereçar. */
@@ -244,6 +244,23 @@ const LAB_ROUTES: readonly LabRoute[] = [
     path: (l) => `/api/v1/exams/${l.exam.id}`,
     // Desativacao e PATCH { isActive: false } — nao existe DELETE /exams/:id.
     body: () => ({ isActive: false }),
+    actor: 'manager',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    name: 'GET /exams/:id/prices',
+    method: 'get',
+    path: (l) => `/api/v1/exams/${l.exam.id}/prices`,
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    name: 'PUT /exams/:id/prices',
+    method: 'put',
+    path: (l) => `/api/v1/exams/${l.exam.id}/prices`,
+    body: (l) => ({ prices: [{ insuranceId: l.insurance.id, price: 10 }] }),
     actor: 'manager',
     addressable: true,
     ownStatus: 200,
@@ -573,10 +590,11 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 42 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 44 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
-    // `GET /operations/overview`. Onda 7 soma 3: `/insurances`.
-    expect(LAB_ROUTES).toHaveLength(42);
+    // `GET /operations/overview`. Onda 7 soma 5: as 3 de `/insurances` e as 2
+    // de `GET|PUT /exams/:id/prices` (preco por convenio).
+    expect(LAB_ROUTES).toHaveLength(44);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

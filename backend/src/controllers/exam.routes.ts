@@ -1,9 +1,11 @@
 /**
  * Rotas do catalogo de exames — API_CONTRACTS.md §4.
  *
- *   GET   /api/v1/exams        qualquer papel autenticado do laboratorio
- *   POST  /api/v1/exams        manager/admin
- *   PATCH /api/v1/exams/:id    manager/admin
+ *   GET   /api/v1/exams              qualquer papel autenticado do laboratorio
+ *   POST  /api/v1/exams              manager/admin
+ *   PATCH /api/v1/exams/:id          manager/admin
+ *   GET   /api/v1/exams/:id/prices   qualquer papel autenticado (Onda 7)
+ *   PUT   /api/v1/exams/:id/prices   manager/admin (Onda 7)
  *
  * NAO existe DELETE: o catalogo se desativa com `PATCH { isActive: false }`,
  * porque propostas historicas referenciam o exame (D-004, SERVICES.md §5).
@@ -13,12 +15,19 @@
  */
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { z } from 'zod';
-import type { Exam, ListExamsResponse } from '@crm-lab/shared';
+import type {
+  Exam,
+  ExamPrice,
+  ListExamPricesResponse,
+  ListExamsResponse,
+  UpdateExamPricesRequest,
+} from '@crm-lab/shared';
 import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
 import { getContext } from '../http/context.js';
 import { denyPlatformOperator, requireAuth, requireRoles } from '../http/middleware/auth.js';
 import { validate, validated } from '../http/middleware/validate.js';
 import { ExamRepository } from '../repositories/exam.repository.js';
+import { createAuditService } from '../services/audit.service.js';
 import { ExamCatalogService, MAX_LIMIT, type ExamFilters } from '../services/exam-catalog.service.js';
 
 /** `?active=true` chega como string; no JSON de teste pode chegar como boolean. */
@@ -40,6 +49,12 @@ const optionalText = (max: number) =>
 /** NUMERIC(12,2): dinheiro decimal no fio, nunca string formatada (regra 9). */
 const money = z.number().finite().nonnegative().max(9_999_999_999);
 
+/** Codigo TUSS/AMB nao confirmado e `null`, nunca inventado (D-081). */
+const codeField = z.string().trim().min(1).max(20).nullish();
+const materialField = z.string().trim().min(1).max(255).nullish();
+/** `synonyms` substitui o conjunto inteiro (semantica de PUT sobre a colecao filha). */
+const synonymsField = z.array(z.string().trim().min(1).max(255)).max(20).optional();
+
 export const listExamsQuerySchema = z.object({
   active: booleanish.optional(),
   category: optionalText(100),
@@ -50,6 +65,8 @@ export const listExamsQuerySchema = z.object({
     .enum(['name', 'code', 'category', 'pricePrivate', 'priceInsurance', 'createdAt', 'updatedAt'])
     .optional(),
   order: z.enum(['asc', 'desc']).optional(),
+  // Onda 7: acrescenta effectivePrice/priceSource a cada item do resultado.
+  insuranceId: z.string().uuid().optional(),
 });
 
 export const createExamSchema = z.object({
@@ -61,6 +78,10 @@ export const createExamSchema = z.object({
   pricePrivate: money,
   priceInsurance: money,
   category: z.string().trim().max(100).nullish(),
+  tussCode: codeField,
+  ambCode: codeField,
+  material: materialField,
+  synonyms: synonymsField,
 });
 
 export const updateExamSchema = z
@@ -73,17 +94,35 @@ export const updateExamSchema = z
     priceInsurance: money,
     category: z.string().trim().max(100).nullable(),
     isActive: z.boolean(),
+    tussCode: codeField,
+    ambCode: codeField,
+    material: materialField,
+    synonyms: synonymsField,
   })
   .partial();
 
 export const examIdParamSchema = z.object({ id: z.string().uuid() });
 
+/** Corpo de `PUT /exams/:id/prices` — upsert em lote, estado completo (Onda 7). */
+export const examPricesBodySchema = z.object({
+  prices: z.array(
+    z.object({
+      insuranceId: z.string().uuid(),
+      price: money,
+    }),
+  ),
+});
+
 type CreateExamBody = z.infer<typeof createExamSchema>;
 type UpdateExamBody = z.infer<typeof updateExamSchema>;
 
-/** Monta service + repository a partir das dependencias do kernel. */
+/** Monta service + repository + auditoria a partir das dependencias do kernel. */
 export function createExamCatalogService(deps: ApiModuleDeps): ExamCatalogService {
-  return new ExamCatalogService(new ExamRepository(deps.db), deps.cache);
+  return new ExamCatalogService(
+    new ExamRepository(deps.db),
+    deps.cache,
+    createAuditService(deps.db),
+  );
 }
 
 /** `Promise` rejeitada em handler async precisa chegar no error-handler. */
@@ -117,6 +156,10 @@ export function createExam(service: ExamCatalogService): RequestHandler {
       pricePrivate: dto.pricePrivate,
       priceInsurance: dto.priceInsurance,
       category: dto.category ?? null,
+      tussCode: dto.tussCode ?? null,
+      ambCode: dto.ambCode ?? null,
+      material: dto.material ?? null,
+      synonyms: dto.synonyms,
     });
     res.status(201).json(exam);
   });
@@ -129,6 +172,29 @@ export function updateExam(service: ExamCatalogService): RequestHandler {
     const dto = validated<UpdateExamBody>(req, 'body');
     const exam: Exam = await service.update(ctx, id, dto);
     res.status(200).json(exam);
+  });
+}
+
+/** Onda 7. Qualquer papel autenticado do tenant. */
+export function listExamPrices(service: ExamCatalogService): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const { id } = validated<{ id: string }>(req, 'params');
+    const prices: ExamPrice[] = await service.listPrices(ctx, id);
+    const body: ListExamPricesResponse = { prices };
+    res.status(200).json(body);
+  });
+}
+
+/** Onda 7. manager/admin. Estado completo — linha ausente do corpo e removida. */
+export function upsertExamPrices(service: ExamCatalogService): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const { id } = validated<{ id: string }>(req, 'params');
+    const dto = validated<UpdateExamPricesRequest>(req, 'body');
+    const prices: ExamPrice[] = await service.upsertPrices(ctx, id, dto);
+    const body: ListExamPricesResponse = { prices };
+    res.status(200).json(body);
   });
 }
 
@@ -166,6 +232,25 @@ export function examModule(deps: ApiModuleDeps): ApiModule {
     validate(examIdParamSchema, 'params'),
     validate(updateExamSchema, 'body'),
     updateExam(service),
+  );
+
+  // Onda 7 — preco por convenio (`exam_prices`, SCHEMA.md §19).
+  router.get(
+    '/:id/prices',
+    requireAuth(),
+    denyPlatformOperator(),
+    validate(examIdParamSchema, 'params'),
+    listExamPrices(service),
+  );
+
+  router.put(
+    '/:id/prices',
+    requireAuth(),
+    denyPlatformOperator(),
+    requireRoles('manager', 'admin'),
+    validate(examIdParamSchema, 'params'),
+    validate(examPricesBodySchema, 'body'),
+    upsertExamPrices(service),
   );
 
   return { basePath: '/exams', router, requiresAuth: true };

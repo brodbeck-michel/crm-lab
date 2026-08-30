@@ -12,6 +12,7 @@ import { MemoryCache } from '../../src/lib/cache.js';
 import type { TenantContext } from '../../src/http/context.js';
 import { isBusinessError } from '../../src/http/errors.js';
 import { ExamRepository } from '../../src/repositories/exam.repository.js';
+import { createAuditService } from '../../src/services/audit.service.js';
 import {
   cachePrefix,
   EXAM_CACHE_TTL_SECONDS,
@@ -46,7 +47,7 @@ describe('ExamCatalogService', () => {
     await resetDatabase(db);
     clock = Date.UTC(2026, 7, 23, 12, 0, 0);
     cache = new MemoryCache(() => clock);
-    service = new ExamCatalogService(new ExamRepository(db), cache);
+    service = new ExamCatalogService(new ExamRepository(db), cache, createAuditService(db));
   });
 
   // -------------------------------------------------------------------------

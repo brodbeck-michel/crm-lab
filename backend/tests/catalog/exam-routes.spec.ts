@@ -8,11 +8,17 @@ import type { Exam, ListExamsResponse } from '@crm-lab/shared';
 import type { DbClient } from '../../src/db/types.js';
 import { MemoryCache } from '../../src/lib/cache.js';
 import { examModule } from '../../src/controllers/exam.routes.js';
+import { createAuditService } from '../../src/services/audit.service.js';
+import { createInsuranceService } from '../../src/services/insurance.service.js';
 import { getTestDb, resetDatabase } from '../helpers/test-db.js';
 import { createExam, createTenant, createUser } from '../helpers/factories.js';
 import { createTestApp, type TestApp } from '../helpers/test-app.js';
 
-/** Chaves EXATAS de `Exam` em `@crm-lab/shared` — o contrato do fio. */
+/**
+ * Chaves EXATAS de `Exam` em `@crm-lab/shared` — o contrato do fio. Sem
+ * `?insuranceId=` na query, `effectivePrice`/`priceSource` NAO aparecem
+ * (sao aditivos — ver EXAM_KEYS_WITH_PRICE abaixo).
+ */
 const EXAM_KEYS = [
   'id',
   'name',
@@ -24,9 +30,16 @@ const EXAM_KEYS = [
   'priceInsurance',
   'category',
   'isActive',
+  'tussCode',
+  'ambCode',
+  'material',
+  'source',
+  'synonyms',
   'createdAt',
   'updatedAt',
 ].sort();
+
+const EXAM_KEYS_WITH_PRICE = [...EXAM_KEYS, 'effectivePrice', 'priceSource'].sort();
 
 describe('/api/v1/exams', () => {
   let db: DbClient;
@@ -280,6 +293,49 @@ describe('/api/v1/exams', () => {
       expect(response.body.error.code).toBe('VALIDATION_ERROR');
       expect(response.body.error.details.fields).toHaveProperty('pricePrivate');
     });
+
+    it('aceita tussCode/ambCode/material/synonyms e devolve source manual (Onda 7)', async () => {
+      const tenant = await createTenant();
+      const manager = await createUser({ tenantId: tenant.id, role: 'manager' });
+
+      const response = await app.agent
+        .post('/api/v1/exams')
+        .set(app.auth(manager))
+        .send({
+          ...payload,
+          code: 'TUSS1',
+          tussCode: '40304361',
+          ambCode: null,
+          material: 'Sangue — tubo tampa roxa (EDTA)',
+          synonyms: ['sinônimo 1', 'sinônimo 2'],
+        })
+        .expect(201);
+
+      const exam = response.body as Exam;
+      expect(Object.keys(exam).sort()).toEqual(EXAM_KEYS);
+      expect(exam.tussCode).toBe('40304361');
+      expect(exam.ambCode).toBeNull();
+      expect(exam.material).toBe('Sangue — tubo tampa roxa (EDTA)');
+      expect(exam.source).toBe('manual');
+      expect(exam.synonyms.sort()).toEqual(['sinônimo 1', 'sinônimo 2'].sort());
+    });
+
+    it('tussCode/ambCode/material/synonyms omitidos -> null/[] (nunca inventado, D-081)', async () => {
+      const tenant = await createTenant();
+      const manager = await createUser({ tenantId: tenant.id, role: 'manager' });
+
+      const response = await app.agent
+        .post('/api/v1/exams')
+        .set(app.auth(manager))
+        .send({ ...payload, code: 'SEMCOD' })
+        .expect(201);
+
+      const exam = response.body as Exam;
+      expect(exam.tussCode).toBeNull();
+      expect(exam.ambCode).toBeNull();
+      expect(exam.material).toBeNull();
+      expect(exam.synonyms).toEqual([]);
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -333,6 +389,37 @@ describe('/api/v1/exams', () => {
         tx.query<{ id: string }>('SELECT id FROM exam_catalog WHERE id = $1', [exam.id]),
       );
       expect(rows.rows).toHaveLength(1);
+    });
+
+    it('synonyms no PATCH substitui o conjunto inteiro; omitido preserva', async () => {
+      const tenant = await createTenant();
+      const manager = await createUser({ tenantId: tenant.id, role: 'manager' });
+      const created = await app.agent
+        .post('/api/v1/exams')
+        .set(app.auth(manager))
+        .send({
+          name: 'Colesterol HDL',
+          code: 'HDL001',
+          pricePrivate: 20,
+          priceInsurance: 15,
+          synonyms: ['hdl', 'bom colesterol'],
+        })
+        .expect(201);
+      const examId = (created.body as Exam).id;
+
+      const patched = await app.agent
+        .patch(`/api/v1/exams/${examId}`)
+        .set(app.auth(manager))
+        .send({ synonyms: ['colesterol bom'] })
+        .expect(200);
+      expect((patched.body as Exam).synonyms).toEqual(['colesterol bom']);
+
+      const preserved = await app.agent
+        .patch(`/api/v1/exams/${examId}`)
+        .set(app.auth(manager))
+        .send({ pricePrivate: 22 })
+        .expect(200);
+      expect((preserved.body as Exam).synonyms).toEqual(['colesterol bom']);
     });
 
     it('nao existe DELETE /exams/:id', async () => {
@@ -490,6 +577,138 @@ describe('/api/v1/exams', () => {
 
       const after = await app.agent.get('/api/v1/exams').set(app.auth(admin)).expect(200);
       expect((after.body as ListExamsResponse).exams.map((e) => e.name)).toEqual(['Recem criado']);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Preco por convenio — GET/PUT /exams/:id/prices (Onda 7)
+  // -------------------------------------------------------------------------
+  describe('GET /exams?insuranceId= e /exams/:id/prices', () => {
+    async function createInsurance(tenantId: string, name: string): Promise<{ id: string }> {
+      const audit = createAuditService(db);
+      const service = createInsuranceService({ db, audit });
+      return service.create(
+        { userId: (await createUser({ tenantId, role: 'admin' })).id, tenantId, role: 'admin', discountLimit: 100, ip: '127.0.0.1', userAgent: 'vitest' },
+        { name, type: 'cooperativa' },
+      );
+    }
+
+    it('?insuranceId= acrescenta effectivePrice/priceSource a cada exame', async () => {
+      const tenant = await createTenant();
+      const user = await createUser({ tenantId: tenant.id, role: 'attendant' });
+      const manager = await createUser({ tenantId: tenant.id, role: 'manager' });
+      const exam = await createExam({ tenantId: tenant.id, name: 'Hemograma', pricePrivate: 40 });
+      const insurance = await createInsurance(tenant.id, 'Unimed Tubarão');
+
+      await app.agent
+        .put(`/api/v1/exams/${exam.id}/prices`)
+        .set(app.auth(manager))
+        .send({ prices: [{ insuranceId: insurance.id, price: 28 }] })
+        .expect(200);
+
+      const response = await app.agent
+        .get(`/api/v1/exams?insuranceId=${insurance.id}`)
+        .set(app.auth(user))
+        .expect(200);
+
+      const body = response.body as ListExamsResponse;
+      expect(Object.keys(body.exams[0] as Exam).sort()).toEqual(EXAM_KEYS_WITH_PRICE);
+      const found = body.exams.find((e) => e.id === exam.id);
+      expect(found?.effectivePrice).toBe(28);
+      expect(found?.priceSource).toBe('insurance');
+    });
+
+    it('GET /exams/:id/prices devolve so os convenios com preco cadastrado', async () => {
+      const tenant = await createTenant();
+      const user = await createUser({ tenantId: tenant.id, role: 'attendant' });
+      const manager = await createUser({ tenantId: tenant.id, role: 'manager' });
+      const exam = await createExam({ tenantId: tenant.id });
+      const insurance = await createInsurance(tenant.id, 'Bradesco Saúde');
+
+      await app.agent
+        .put(`/api/v1/exams/${exam.id}/prices`)
+        .set(app.auth(manager))
+        .send({ prices: [{ insuranceId: insurance.id, price: 33.5 }] })
+        .expect(200);
+
+      const response = await app.agent
+        .get(`/api/v1/exams/${exam.id}/prices`)
+        .set(app.auth(user))
+        .expect(200);
+
+      expect(response.body).toEqual({ prices: [{ insuranceId: insurance.id, price: 33.5 }] });
+    });
+
+    it('PUT /exams/:id/prices exige manager/admin — atendente recebe FORBIDDEN', async () => {
+      const tenant = await createTenant();
+      const attendant = await createUser({ tenantId: tenant.id, role: 'attendant' });
+      const exam = await createExam({ tenantId: tenant.id });
+
+      const response = await app.agent
+        .put(`/api/v1/exams/${exam.id}/prices`)
+        .set(app.auth(attendant))
+        .send({ prices: [] })
+        .expect(403);
+
+      expect(response.body.error.code).toBe('FORBIDDEN');
+    });
+
+    it('PUT /exams/:id/prices de exame de outro tenant -> NOT_FOUND', async () => {
+      const tenantA = await createTenant();
+      const tenantB = await createTenant();
+      const managerA = await createUser({ tenantId: tenantA.id, role: 'manager' });
+      const examB = await createExam({ tenantId: tenantB.id });
+      const insuranceA = await createInsurance(tenantA.id, 'Amil');
+
+      const response = await app.agent
+        .put(`/api/v1/exams/${examB.id}/prices`)
+        .set(app.auth(managerA))
+        .send({ prices: [{ insuranceId: insuranceA.id, price: 10 }] })
+        .expect(404);
+
+      expect(response.body.error.code).toBe('NOT_FOUND');
+    });
+
+    it('PUT /exams/:id/prices com insuranceId inexistente -> VALIDATION_ERROR', async () => {
+      const tenant = await createTenant();
+      const manager = await createUser({ tenantId: tenant.id, role: 'manager' });
+      const exam = await createExam({ tenantId: tenant.id });
+
+      const response = await app.agent
+        .put(`/api/v1/exams/${exam.id}/prices`)
+        .set(app.auth(manager))
+        .send({ prices: [{ insuranceId: '11111111-1111-4111-8111-111111111111', price: 10 }] })
+        .expect(400);
+
+      expect(response.body.error.code).toBe('VALIDATION_ERROR');
+      expect(Object.keys(response.body.error.details.fields)[0]).toMatch(/^prices\./);
+    });
+
+    it('PUT substitui o conjunto — a linha ausente do corpo some do GET seguinte', async () => {
+      const tenant = await createTenant();
+      const manager = await createUser({ tenantId: tenant.id, role: 'manager' });
+      const exam = await createExam({ tenantId: tenant.id });
+      const insA = await createInsurance(tenant.id, 'Amil');
+      const insB = await createInsurance(tenant.id, 'SulAmérica');
+
+      await app.agent
+        .put(`/api/v1/exams/${exam.id}/prices`)
+        .set(app.auth(manager))
+        .send({
+          prices: [
+            { insuranceId: insA.id, price: 10 },
+            { insuranceId: insB.id, price: 20 },
+          ],
+        })
+        .expect(200);
+
+      const response = await app.agent
+        .put(`/api/v1/exams/${exam.id}/prices`)
+        .set(app.auth(manager))
+        .send({ prices: [{ insuranceId: insA.id, price: 10 }] })
+        .expect(200);
+
+      expect(response.body).toEqual({ prices: [{ insuranceId: insA.id, price: 10 }] });
     });
   });
 });

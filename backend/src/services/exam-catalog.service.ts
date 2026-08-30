@@ -6,7 +6,7 @@
  *  - desativar (`isActive:false`) em vez de deletar: propostas historicas
  *    referenciam o exame (D-004). Nao existe `delete()` — de proposito.
  *  - cache 1h (D-011 escolhe Redis ou memoria pela env var), invalidado em
- *    create/update, SEMPRE prefixado por tenant.
+ *    create/update/upsertPrices, SEMPRE prefixado por tenant.
  *
  * ---------------------------------------------------------------------------
  * CACHE — por que a chave comeca pelo tenant
@@ -15,21 +15,26 @@
  * motivos: (1) uma listagem de A nunca pode ser servida a B — cache que vaza e
  * falha de isolamento tanto quanto uma query sem `WHERE tenant_id`;
  * (2) invalidar vira `delByPrefix('exams:<tenantId>:')`, que derruba todas as
- * combinacoes de filtro daquele tenant e de mais nenhum.
+ * combinacoes de filtro daquele tenant e de mais nenhum. Onda 7: a chave
+ * incorpora `insuranceId` — filtro diferente, preco diferente, cache diferente.
  *
  * ---------------------------------------------------------------------------
- * getByIds NAO passa pelo cache
+ * getByIds / resolveActiveByIds NAO passam pelo cache
  * ---------------------------------------------------------------------------
  * O ProposalService le o preco ATUAL do catalogo por aqui (BUSINESS_RULES §1,
  * WORKFLOWS §2 passo 5) e ignora qualquer preco vindo do cliente. Servir esse
  * caminho de um cache seria arriscar precificar uma proposta com valor velho.
  * Custo: uma query indexada por PK. Beneficio: impossivel gravar preco obsoleto.
+ * Vale tambem para o preco por convenio (Onda 7): `resolveActiveByIds(...,
+ * insuranceId)` nao le `exams:<tenantId>:` pelo mesmo motivo.
  */
 import type {
   CreateExamRequest,
   Exam,
+  ExamPrice,
   ListExamsQuery,
   Paginated,
+  UpdateExamPricesRequest,
   UpdateExamRequest,
 } from '@crm-lab/shared';
 import type { CacheService } from '../lib/cache.js';
@@ -42,6 +47,7 @@ import {
   type ExamSortBy,
   type SortOrder,
 } from '../repositories/exam.repository.js';
+import type { AuditService } from './audit.service.js';
 
 /** TTL do catalogo: 1 hora (SERVICES.md §5). */
 export const EXAM_CACHE_TTL_SECONDS = 3600;
@@ -95,6 +101,7 @@ export function listCacheKey(tenantId: string, criteria: ExamListCriteria): stri
     `a${criteria.active === undefined ? '*' : String(criteria.active)}`,
     `c${criteria.category ?? '*'}`,
     `q${criteria.search ?? '*'}`,
+    `i${criteria.insuranceId ?? '*'}`,
   ];
   return `${cachePrefix(tenantId)}list:${parts.join('|')}`;
 }
@@ -116,6 +123,7 @@ export function toCriteria(filters: ExamFilters): ExamListCriteria {
     active: filters.active,
     category: category !== undefined && category.length > 0 ? category : undefined,
     search: search !== undefined && search.length > 0 ? search : undefined,
+    insuranceId: filters.insuranceId,
     page: clampInt(filters.page, DEFAULT_PAGE, 1, Number.MAX_SAFE_INTEGER),
     limit: clampInt(filters.limit, DEFAULT_LIMIT, 1, MAX_LIMIT),
     sortBy,
@@ -145,9 +153,17 @@ function assertCanWrite(ctx: TenantContext): void {
 }
 
 export class ExamCatalogService {
+  /**
+   * `audit` e opcional de proposito: o ProposalService (Task 4) instancia este
+   * service so para `getByIds`/`resolveActiveByIds`/`list` — caminhos que
+   * nunca escrevem preco e por isso nunca precisam de auditoria. Exigir o
+   * parametro quebraria a compilacao de todo consumidor que so le o catalogo.
+   * So `upsertPrices` (dono da escrita auditada) depende dele.
+   */
   constructor(
     private readonly repository: ExamRepository,
     private readonly cache: CacheService,
+    private readonly audit?: AuditService,
   ) {}
 
   /** Listagem paginada e cacheada (1h). Envelope nomeado fica na rota (D-009). */
@@ -199,8 +215,17 @@ export class ExamCatalogService {
    *
    * Diferenca para `getByIds`: `found` traz SOMENTE ativos, e todo id que nao
    * existe ou esta inativo aparece em `invalidIds`.
+   *
+   * Onda 7: `insuranceId` opcional acrescenta `effectivePrice`/`priceSource`
+   * a cada exame de `found`/`byId`, com o mesmo fallback de `list`. Continua
+   * sem ler cache — preco de convenio nao pode sair obsoleto, mesma razao do
+   * preco particular.
    */
-  async resolveActiveByIds(tenantId: string, ids: string[]): Promise<ExamResolution> {
+  async resolveActiveByIds(
+    tenantId: string,
+    ids: string[],
+    insuranceId?: string,
+  ): Promise<ExamResolution> {
     const unique = [...new Set(ids)];
     const resolution: ExamResolution = {
       found: [],
@@ -211,7 +236,7 @@ export class ExamCatalogService {
     };
     if (unique.length === 0) return resolution;
 
-    const rows = await this.repository.findByIds(tenantId, unique);
+    const rows = await this.repository.findByIds(tenantId, unique, insuranceId);
     const all = new Map(rows.map((exam) => [exam.id, exam]));
 
     for (const id of unique) {
@@ -253,6 +278,10 @@ export class ExamCatalogService {
         pricePrivate: dto.pricePrivate,
         priceInsurance: dto.priceInsurance,
         category: dto.category ?? null,
+        tussCode: dto.tussCode ?? null,
+        ambCode: dto.ambCode ?? null,
+        material: dto.material ?? null,
+        synonyms: dto.synonyms ?? [],
       });
     } catch (err) {
       // Corrida entre o SELECT acima e o INSERT: o indice unico decide.
@@ -268,7 +297,9 @@ export class ExamCatalogService {
    * manager/admin. Id de outro tenant -> `NOT_FOUND` (o RLS ja escondeu a
    * linha; vazar `FORBIDDEN` confirmaria a existencia — CLAUDE.md regra 8).
    *
-   * `isActive:false` e o unico "delete" do catalogo.
+   * `isActive:false` e o unico "delete" do catalogo. `synonyms`, quando
+   * enviado, substitui o conjunto inteiro (semantica de PUT); omitido,
+   * preserva os sinonimos atuais.
    */
   async update(ctx: TenantContext, id: string, dto: UpdateExamRequest): Promise<Exam> {
     assertCanWrite(ctx);
@@ -282,12 +313,82 @@ export class ExamCatalogService {
       ...(dto.priceInsurance !== undefined ? { priceInsurance: dto.priceInsurance } : {}),
       ...(dto.category !== undefined ? { category: dto.category } : {}),
       ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+      ...(dto.tussCode !== undefined ? { tussCode: dto.tussCode } : {}),
+      ...(dto.ambCode !== undefined ? { ambCode: dto.ambCode } : {}),
+      ...(dto.material !== undefined ? { material: dto.material } : {}),
+      ...(dto.synonyms !== undefined ? { synonyms: dto.synonyms } : {}),
     });
 
     if (!updated) throw notFound({ resource: 'exam', id });
 
     await this.invalidate(ctx.tenantId);
     return updated;
+  }
+
+  /** Onda 7. Uma linha por convenio COM preco cadastrado. Qualquer papel do tenant. */
+  async listPrices(ctx: TenantContext, examId: string): Promise<ExamPrice[]> {
+    await this.requireExam(ctx.tenantId, examId);
+    return this.repository.findPrices(ctx.tenantId, examId);
+  }
+
+  /**
+   * Onda 7. Upsert em lote — semantica de PUT (estado completo): linha
+   * ausente do corpo e removida. manager/admin. Cada `insuranceId` do corpo
+   * precisa existir e estar ATIVO no tenant, senao `VALIDATION_ERROR`
+   * (`details.fields["prices.<insuranceId>"]`) — nao vaza se o convenio
+   * existe em outro tenant, so que ele "nao serve" para este upsert.
+   * `insuranceId` repetido no array tambem e `VALIDATION_ERROR`.
+   *
+   * Exame de outro tenant -> `NOT_FOUND` (recurso PRINCIPAL da rota; CLAUDE.md
+   * regra 8), verificado ANTES da validacao do corpo.
+   */
+  async upsertPrices(
+    ctx: TenantContext,
+    examId: string,
+    dto: UpdateExamPricesRequest,
+  ): Promise<ExamPrice[]> {
+    assertCanWrite(ctx);
+    await this.requireExam(ctx.tenantId, examId);
+
+    const fields: Record<string, string> = {};
+    const seen = new Set<string>();
+    for (const item of dto.prices) {
+      const key = `prices.${item.insuranceId}`;
+      if (seen.has(item.insuranceId)) {
+        fields[key] = 'Convênio repetido no corpo';
+      }
+      seen.add(item.insuranceId);
+    }
+    for (const item of dto.prices) {
+      const key = `prices.${item.insuranceId}`;
+      if (key in fields) continue; // ja marcado como duplicado
+      const active = await this.repository.activeInsuranceExists(ctx.tenantId, item.insuranceId);
+      if (!active) fields[key] = 'Convênio inexistente ou inativo neste laboratório';
+    }
+    if (Object.keys(fields).length > 0) {
+      throw new BusinessError('VALIDATION_ERROR', { fields });
+    }
+
+    const oldPrices = await this.repository.findPrices(ctx.tenantId, examId);
+    const updated = await this.repository.upsertPrices(ctx.tenantId, examId, dto.prices);
+    await this.invalidate(ctx.tenantId);
+
+    await this.audit?.record(ctx, {
+      action: 'update_exam_prices',
+      entityType: 'exam',
+      entityId: examId,
+      oldValues: { prices: oldPrices },
+      newValues: { prices: updated },
+    });
+
+    return updated;
+  }
+
+  /** Exame inexistente OU de outro tenant -> `NOT_FOUND` (nunca `FORBIDDEN`). */
+  private async requireExam(tenantId: string, examId: string): Promise<Exam> {
+    const exam = await this.repository.findById(tenantId, examId);
+    if (!exam) throw notFound({ resource: 'exam', id: examId });
+    return exam;
   }
 
   /** Derruba TODAS as listagens cacheadas deste tenant — e so deste tenant. */

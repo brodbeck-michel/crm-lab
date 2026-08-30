@@ -136,6 +136,12 @@ export async function insertUser(tx: DbTx, input: SeedUserInput): Promise<string
 
 // ------------------------------------------------------------------------ exam
 
+/**
+ * Grava o exame e, na MESMA transação, os sinônimos (`exam.synonyms`, Onda 7 —
+ * Apêndice C do spec). `tussCode`/`ambCode` são `null` quando a pesquisa do
+ * seed não confirmou o código — nunca inventados (D-081). `source` sempre
+ * `'manual'` no seed: nenhum exame nasce do LIS nesta onda.
+ */
 export async function insertExam(
   tx: DbTx,
   input: { id: string; tenantId: string; exam: SeedExam; createdAt: Date },
@@ -150,8 +156,9 @@ export async function insertExam(
   await tx.query(
     `INSERT INTO exam_catalog (id, tenant_id, name, code, description, preparation,
                                turnaround_hours, price_private, price_insurance,
-                               is_active, category, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE, $10, $11, $11)`,
+                               is_active, category, tuss_code, amb_code, material,
+                               source, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE, $10, $11, $12, $13, 'manual', $14, $14)`,
     [
       input.id,
       input.tenantId,
@@ -163,10 +170,87 @@ export async function insertExam(
       exam.pricePrivate,
       exam.priceInsurance,
       exam.category,
+      exam.tussCode ?? null,
+      exam.ambCode ?? null,
+      exam.material ?? null,
+      iso(input.createdAt),
+    ],
+  );
+
+  for (const synonym of exam.synonyms ?? []) {
+    await insertExamSynonym(tx, {
+      tenantId: input.tenantId,
+      examId: input.id,
+      synonym,
+      createdAt: input.createdAt,
+    });
+  }
+
+  return input.id;
+}
+
+// ------------------------------------------------------------------ insurance
+
+export interface SeedInsuranceInput {
+  id: string;
+  tenantId: string;
+  name: string;
+  officialName: string | null;
+  ansCode: string | null;
+  type: 'cooperativa' | 'medicina_grupo' | 'seguradora' | 'autogestao' | 'especial';
+  createdAt: Date;
+}
+
+export async function insertInsurance(tx: DbTx, input: SeedInsuranceInput): Promise<string> {
+  await tx.query(
+    `INSERT INTO insurances (id, tenant_id, name, official_name, ans_code, type,
+                             is_active, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7, $7)`,
+    [
+      input.id,
+      input.tenantId,
+      input.name,
+      input.officialName,
+      input.ansCode,
+      input.type,
       iso(input.createdAt),
     ],
   );
   return input.id;
+}
+
+// ------------------------------------------------------------------ exam_price
+
+export interface SeedExamPriceInput {
+  tenantId: string;
+  examId: string;
+  insuranceId: string;
+  price: number;
+  createdAt: Date;
+}
+
+export async function insertExamPrice(tx: DbTx, input: SeedExamPriceInput): Promise<void> {
+  await tx.query(
+    `INSERT INTO exam_prices (tenant_id, exam_id, insurance_id, price, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $5)`,
+    [input.tenantId, input.examId, input.insuranceId, input.price, iso(input.createdAt)],
+  );
+}
+
+// --------------------------------------------------------------- exam_synonym
+
+export interface SeedExamSynonymInput {
+  tenantId: string;
+  examId: string;
+  synonym: string;
+  createdAt: Date;
+}
+
+export async function insertExamSynonym(tx: DbTx, input: SeedExamSynonymInput): Promise<void> {
+  await tx.query(
+    `INSERT INTO exam_synonyms (tenant_id, exam_id, synonym, created_at) VALUES ($1, $2, $3, $4)`,
+    [input.tenantId, input.examId, input.synonym, iso(input.createdAt)],
+  );
 }
 
 // --------------------------------------------------------------------- patient

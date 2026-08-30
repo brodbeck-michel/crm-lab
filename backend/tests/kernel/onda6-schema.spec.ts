@@ -170,7 +170,13 @@ describe('003/004 — backfill sobre base ja populada', () => {
     expect(before.rows[0]?.count).toBe(0);
 
     const result = await runMigrations(db);
-    expect(result.applied).toEqual(['003_patients_and_channels.sql', '004_rls_onda6.sql']);
+    // `arrayContaining`, não igualdade exata: o runner aplica TODAS as
+    // migracoes pendentes, e migracoes de ondas futuras (005+) sao esperadas
+    // aqui sem quebrar este teste — o que ele prova e que 003/004 aplicaram,
+    // não que sejam as únicas migrações do repositório neste ponto do tempo.
+    expect(result.applied).toEqual(
+      expect.arrayContaining(['003_patients_and_channels.sql', '004_rls_onda6.sql']),
+    );
   }, 120_000);
 
   afterAll(async () => {

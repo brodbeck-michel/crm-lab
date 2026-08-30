@@ -30,6 +30,7 @@ import { hashPassword } from '../../lib/password.js';
 import type { DbTx } from '../types.js';
 import { EXAM_CATALOG, EXAM_CATALOG_SECONDARY, type SeedExam } from './catalog.js';
 import { makeRandom, seedUuid } from './ids.js';
+import { INSURANCE_SEED } from './insurances.js';
 import {
   THEME_AZUL_JALECO,
   THEME_TERRACOTA,
@@ -43,6 +44,7 @@ import {
   insertChannelRead,
   insertConversation,
   insertExam,
+  insertInsurance,
   insertInternalMessage,
   insertMessage,
   insertPatient,
@@ -81,6 +83,7 @@ export interface DevSeedSummary {
     tenants: number;
     users: number;
     exams: number;
+    insurances: number;
     patients: number;
     conversations: number;
     messages: number;
@@ -315,6 +318,7 @@ export async function seedDevelopment(tx: DbTx, now: Date): Promise<DevSeedSumma
     tenants: 0,
     users: 0,
     exams: 0,
+    insurances: 0,
     patients: 0,
     conversations: 0,
     messages: 0,
@@ -366,6 +370,7 @@ export async function seedDevelopment(tx: DbTx, now: Date): Promise<DevSeedSumma
     counts.tenants += 1;
     counts.users += summary.users;
     counts.exams += summary.exams;
+    counts.insurances += summary.insurances;
     counts.patients += summary.patients;
     counts.conversations += summary.conversations;
     counts.messages += summary.messages;
@@ -382,6 +387,7 @@ export async function seedDevelopment(tx: DbTx, now: Date): Promise<DevSeedSumma
 interface TenantSummary {
   users: number;
   exams: number;
+  insurances: number;
   patients: number;
   conversations: number;
   messages: number;
@@ -540,6 +546,24 @@ async function seedTenant(
       createdAt: new Date(tenantCreatedAt.getTime() + DAY_MS),
     });
     exams.push({ id, exam });
+  }
+
+  // ---- convênios (Onda 7, D-081/D-082) --------------------------------------
+  // Os dois tenants de laboratório ganham o mesmo catálogo de convênios
+  // (Apêndice A do spec) — não o tenant de plataforma, que não guarda dado de
+  // laboratório nenhum.
+  let insuranceCount = 0;
+  for (const insurance of INSURANCE_SEED) {
+    await insertInsurance(tx, {
+      id: seedUuid('dev', 'insurance', plan.slug, insurance.name),
+      tenantId,
+      name: insurance.name,
+      officialName: insurance.officialName ?? null,
+      ansCode: insurance.ansCode ?? null,
+      type: insurance.type,
+      createdAt: new Date(tenantCreatedAt.getTime() + DAY_MS),
+    });
+    insuranceCount += 1;
   }
 
   // ---- conversas + mensagens ------------------------------------------------
@@ -888,6 +912,7 @@ async function seedTenant(
   return {
     users: users.length,
     exams: exams.length,
+    insurances: insuranceCount,
     patients: patientCount,
     conversations: conversations.length,
     messages: messageCount,

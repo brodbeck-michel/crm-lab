@@ -16,9 +16,11 @@ import {
   E2E_APPROVAL_POST,
   E2E_CHANNELS,
   E2E_CONVERSATIONS,
+  E2E_EXAM_PRICES,
   E2E_EXAMS,
   E2E_EXAMS_BETA,
   E2E_CHANNEL_READS,
+  E2E_INSURANCES,
   E2E_PASSWORD,
   E2E_PATIENTS,
   E2E_PROPOSALS,
@@ -28,6 +30,7 @@ import {
   E2E_USERS,
   type E2eConversation,
   type E2eExam,
+  type E2eInsurance,
   type E2ePatient,
   type E2eProposal,
   type E2eTenantChannel,
@@ -46,6 +49,8 @@ import {
   insertChannelRead,
   insertConversation,
   insertExam,
+  insertExamPrice,
+  insertInsurance,
   insertInternalMessage,
   insertMessage,
   insertPatient,
@@ -213,6 +218,35 @@ export async function seedE2e(tx: DbTx, now: Date): Promise<{ users: number; pro
         pricePrivate: fixture.pricePrivate,
         priceInsurance: fixture.priceInsurance,
       },
+      createdAt,
+    });
+  }
+
+  // ---- convênios (Onda 7, D-081/D-082) --------------------------------------
+  // Só o Alfa ganha convênio — o Beta fica sem, de propósito (cenário
+  // "Isolamento" cobre também /insurances).
+  const insurances: readonly E2eInsurance[] = Object.values(E2E_INSURANCES);
+  for (const insurance of insurances) {
+    await insertInsurance(tx, {
+      id: insurance.id,
+      tenantId: insurance.tenantId,
+      name: insurance.name,
+      officialName: insurance.officialName,
+      ansCode: insurance.ansCode,
+      type: insurance.type,
+      createdAt,
+    });
+  }
+
+  // ---- preço por (exame, convênio) — só 2 linhas, de propósito (spec §3.6) --
+  // O suficiente para o teste de resolução de preço e o de fallback (exame
+  // SEM linha aqui cai em price_private, mesmo numa proposta com convênio).
+  for (const examPrice of E2E_EXAM_PRICES) {
+    await insertExamPrice(tx, {
+      tenantId: E2E_TENANTS.alfa.id,
+      examId: examPrice.examId,
+      insuranceId: examPrice.insuranceId,
+      price: examPrice.price,
       createdAt,
     });
   }

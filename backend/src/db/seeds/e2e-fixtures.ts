@@ -16,6 +16,7 @@ import type {
   BusinessHours,
   ConversationChannel,
   DistributionMode,
+  InsuranceType,
   LossReason,
   ProposalStatus,
   UserRole,
@@ -193,6 +194,53 @@ export const E2E_EXAMS_BETA = {
     priceInsurance: 14.0,
   },
 } as const satisfies Record<string, E2eExam>;
+
+/**
+ * Convênio do tenant Alfa (Onda 7, D-081/D-082). Só o Alfa ganha convênio —
+ * o Beta fica sem, para que o cenário "Isolamento" também cubra `/insurances`.
+ *
+ * "Particular" NÃO é uma fixture desta tabela: é `insuranceId: null|ausente`
+ * no `POST /proposals` — nenhuma constante representa isso porque não há
+ * linha nenhuma para representar (D-082).
+ */
+export interface E2eInsurance {
+  id: string;
+  tenantId: string;
+  name: string;
+  officialName: string | null;
+  ansCode: string | null;
+  type: InsuranceType;
+}
+
+export const E2E_INSURANCES = {
+  unimedTubarao: {
+    id: 'a0000000-0000-4000-8000-000000000701',
+    tenantId: E2E_TENANTS.alfa.id,
+    name: 'Unimed Tubarão',
+    officialName: 'Unimed de Tubarão Cooperativa de Trabalho Médico',
+    ansCode: '364860',
+    type: 'cooperativa',
+  },
+} as const satisfies Record<string, E2eInsurance>;
+
+/**
+ * Preço por (exame, convênio) — só 2 linhas, de propósito (D-081, spec §3.6):
+ * o suficiente para o teste de resolução de preço (`hemograma` tem preço
+ * cadastrado para a Unimed Tubarão) e o teste de fallback (qualquer outro
+ * exame de `E2E_EXAMS`, ex. `glicose`, NÃO tem linha aqui — cai em
+ * `pricePrivate` com `priceSource: 'private'`, mesmo numa proposta com
+ * convênio escolhido).
+ */
+export interface E2eExamPrice {
+  examId: string;
+  insuranceId: string;
+  price: number;
+}
+
+export const E2E_EXAM_PRICES = [
+  { examId: E2E_EXAMS.hemograma.id, insuranceId: E2E_INSURANCES.unimedTubarao.id, price: 32.0 },
+  { examId: E2E_EXAMS.tsh.id, insuranceId: E2E_INSURANCES.unimedTubarao.id, price: 40.0 },
+] as const satisfies readonly E2eExamPrice[];
 
 /**
  * Cadastro do paciente (D-059). O telefone e a identidade dentro do tenant:

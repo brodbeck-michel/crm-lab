@@ -133,8 +133,8 @@ function printDevSummary(summary: DevSeedSummary): void {
   line('  ─────────────────────────────────────────────────────────────');
   line(
     `  ${counts.tenants} tenants · ${counts.users} usuários · ${counts.exams} exames · ` +
-      `${counts.patients} pacientes · ${counts.conversations} conversas · ` +
-      `${counts.messages} mensagens`,
+      `${counts.insurances} convênios · ${counts.patients} pacientes · ` +
+      `${counts.conversations} conversas · ${counts.messages} mensagens`,
   );
   line(
     `  ${counts.proposals} propostas · ${counts.won} ganhas · ${counts.lost} perdidas · ` +

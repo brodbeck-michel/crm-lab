@@ -7,6 +7,18 @@
  *   - `code` unico (o schema tem UNIQUE (tenant_id, code));
  *   - toda linha tem categoria, preparo e prazo — as tres colunas aparecem na
  *     tela de catalogo e no modal do orcamento.
+ *
+ * Onda 7 (D-081) acrescenta `tussCode`, `material` e `synonyms`:
+ *   - `tussCode`: código TUSS (tabela 22) confirmado pela pesquisa do
+ *     Apêndice B do spec da Onda 7. `null` quando NÃO confirmado — nunca
+ *     inventado (inventar código de faturamento é o pior defeito possível
+ *     aqui, viraria cobrança errada a convênio). Hormônios sempre no
+ *     subgrupo `40316xxx` (nunca `40712xxx`, radioimunoensaio legado).
+ *   - `material`: recipiente/amostra, breve, para exibição no catálogo.
+ *   - `synonyms`: nomes alternativos (Apêndice C do spec), gravados em
+ *     `exam_synonyms` no mesmo INSERT transacional do exame (ver
+ *     `insertExam` em `writers.ts`). Lista vazia quando o spec não registra
+ *     sinônimo para o exame.
  */
 
 export interface SeedExam {
@@ -18,6 +30,18 @@ export interface SeedExam {
   turnaroundHours: number;
   pricePrivate: number;
   priceInsurance: number;
+  /** Código TUSS (tabela 22). `null` = não confirmado pela pesquisa (D-081). */
+  tussCode: string | null;
+  /**
+   * Código AMB legado (de-para do faturamento). Nenhum confirmado nesta onda
+   * — o Apêndice B do spec só traz TUSS; `amb_code` fica `NULL` no seed
+   * inteiro até uma pesquisa própria (mesma disciplina: nunca inventar).
+   */
+  ambCode?: string | null;
+  /** Recipiente/amostra de coleta, ex.: "Sangue — tubo tampa roxa (EDTA)". */
+  material: string;
+  /** Nomes alternativos para a busca (`GET /exams?search=`), Apêndice C. */
+  synonyms?: readonly string[];
 }
 
 const JEJUM_8 = 'Jejum de 8 horas. Manter a medicação de uso contínuo.';
@@ -37,6 +61,9 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 38.0,
     priceInsurance: 21.5,
+    tussCode: '40304361',
+    material: 'Sangue — tubo tampa roxa (EDTA)',
+    synonyms: ['sangue completo', 'exame de sangue', 'hemograma com plaquetas', 'HMG', 'CBC'],
   },
   {
     code: 'HEM002',
@@ -47,6 +74,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 32.0,
     priceInsurance: 18.0,
+    tussCode: null,
+    material: 'Sangue — tubo tampa roxa (EDTA)',
   },
   {
     code: 'HEM003',
@@ -57,6 +86,9 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 24.0,
     priceInsurance: 13.5,
+    tussCode: '40304370',
+    material: 'Sangue — tubo tampa roxa (EDTA)',
+    synonyms: ['hemossedimentação'],
   },
   {
     code: 'HEM004',
@@ -67,6 +99,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 72,
     pricePrivate: 96.0,
     priceInsurance: 54.0,
+    tussCode: null,
+    material: 'Sangue — tubo tampa roxa (EDTA)',
   },
   {
     code: 'HEM005',
@@ -77,6 +111,9 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 62.0,
     priceInsurance: 34.0,
+    tussCode: '40316270',
+    material: 'Sangue — tubo tampa roxa (EDTA)',
+    synonyms: ['estoque de ferro'],
   },
   {
     code: 'HEM006',
@@ -87,6 +124,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 34.0,
     priceInsurance: 19.0,
+    tussCode: '40301842',
+    material: 'Sangue — tubo tampa roxa (EDTA)',
   },
   {
     code: 'HEM007',
@@ -97,6 +136,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 38.0,
     priceInsurance: 21.0,
+    tussCode: null,
+    material: 'Sangue — tubo tampa roxa (EDTA)',
   },
   {
     code: 'HEM008',
@@ -107,6 +148,9 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 28.0,
     priceInsurance: 15.5,
+    tussCode: '40304299',
+    material: 'Sangue — tubo tampa roxa (EDTA)',
+    synonyms: ['tipagem sanguínea', 'tipo de sangue', 'fator Rh'],
   },
 
   // ---------------------------------------------------------------- Coagulação
@@ -119,6 +163,9 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 34.0,
     priceInsurance: 19.0,
+    tussCode: '40304590',
+    material: 'Sangue — tubo tampa azul (citrato de sódio)',
+    synonyms: ['coagulograma', 'exame de coagulação', 'TAP', 'RNI', 'controle do Marevan'],
   },
   {
     code: 'COA002',
@@ -129,6 +176,9 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 34.0,
     priceInsurance: 19.0,
+    tussCode: '40304639',
+    material: 'Sangue — tubo tampa azul (citrato de sódio)',
+    synonyms: ['coagulograma', 'exame de coagulação', 'KTTP'],
   },
   {
     code: 'COA003',
@@ -139,6 +189,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 42.0,
     priceInsurance: 23.5,
+    tussCode: null,
+    material: 'Sangue — tubo tampa azul (citrato de sódio)',
   },
   {
     code: 'COA004',
@@ -149,6 +201,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 88.0,
     priceInsurance: 49.0,
+    tussCode: '40304906',
+    material: 'Sangue — tubo tampa azul (citrato de sódio)',
   },
 
   // ---------------------------------------------------------------- Bioquímica
@@ -161,6 +215,9 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 12,
     pricePrivate: 22.0,
     priceInsurance: 12.5,
+    tussCode: '40302040',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
+    synonyms: ['glicemia', 'glicemia de jejum', 'açúcar no sangue', 'dextro'],
   },
   {
     code: 'BIO002',
@@ -171,6 +228,9 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 52.0,
     priceInsurance: 29.0,
+    tussCode: '40302733',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
+    synonyms: ['glicada', 'HbA1c', 'A1c', 'hemoglobina glicosilada'],
   },
   {
     code: 'BIO003',
@@ -181,6 +241,9 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 78.0,
     priceInsurance: 43.0,
+    tussCode: '40301680',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
+    synonyms: ['TOTG', 'TTGO', 'teste de tolerância à glicose', 'dextrosol'],
   },
   {
     code: 'BIO004',
@@ -191,6 +254,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 68.0,
     priceInsurance: 38.0,
+    tussCode: '40316360',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'BIO005',
@@ -201,6 +266,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 12,
     pricePrivate: 24.0,
     priceInsurance: 13.5,
+    tussCode: '40301605',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'BIO006',
@@ -211,6 +278,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 12,
     pricePrivate: 26.0,
     priceInsurance: 14.5,
+    tussCode: '40301583',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'BIO007',
@@ -221,6 +290,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 12,
     pricePrivate: 26.0,
     priceInsurance: 14.5,
+    tussCode: '40301591',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'BIO008',
@@ -231,6 +302,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 12,
     pricePrivate: 22.0,
     priceInsurance: 12.0,
+    tussCode: '40302695',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'BIO009',
@@ -241,6 +314,9 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 12,
     pricePrivate: 26.0,
     priceInsurance: 14.5,
+    tussCode: '40302547',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
+    synonyms: ['triglicérides', 'triglicerídios', 'TG'],
   },
   {
     code: 'BIO010',
@@ -251,6 +327,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 12,
     pricePrivate: 20.0,
     priceInsurance: 11.0,
+    tussCode: '40302580',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'BIO011',
@@ -261,6 +339,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 12,
     pricePrivate: 20.0,
     priceInsurance: 11.0,
+    tussCode: '40301630',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'BIO012',
@@ -271,6 +351,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 12,
     pricePrivate: 22.0,
     priceInsurance: 12.5,
+    tussCode: '40301150',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'BIO013',
@@ -281,6 +363,9 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 12,
     pricePrivate: 22.0,
     priceInsurance: 12.5,
+    tussCode: '40302504',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
+    synonyms: ['AST', 'transaminases', 'exame do fígado'],
   },
   {
     code: 'BIO014',
@@ -291,6 +376,9 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 12,
     pricePrivate: 22.0,
     priceInsurance: 12.5,
+    tussCode: '40302512',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
+    synonyms: ['ALT', 'transaminases', 'exame do fígado'],
   },
   {
     code: 'BIO015',
@@ -301,6 +389,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 26.0,
     priceInsurance: 14.5,
+    tussCode: '40301990',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'BIO016',
@@ -311,6 +401,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 26.0,
     priceInsurance: 14.5,
+    tussCode: '40301885',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'BIO017',
@@ -321,6 +413,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 30.0,
     priceInsurance: 16.5,
+    tussCode: '40301397',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'BIO018',
@@ -331,6 +425,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 30.0,
     priceInsurance: 16.5,
+    tussCode: null,
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'BIO019',
@@ -341,6 +437,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 24.0,
     priceInsurance: 13.0,
+    tussCode: null,
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'BIO020',
@@ -351,6 +449,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 32.0,
     priceInsurance: 18.0,
+    tussCode: null,
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'BIO021',
@@ -361,6 +461,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 36.0,
     priceInsurance: 20.0,
+    tussCode: null,
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'BIO022',
@@ -371,6 +473,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 12,
     pricePrivate: 20.0,
     priceInsurance: 11.0,
+    tussCode: '40302423',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'BIO023',
@@ -381,6 +485,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 12,
     pricePrivate: 20.0,
     priceInsurance: 11.0,
+    tussCode: '40302318',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'BIO024',
@@ -391,6 +497,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 24.0,
     priceInsurance: 13.0,
+    tussCode: '40301400',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'BIO025',
@@ -401,6 +509,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 38.0,
     priceInsurance: 21.0,
+    tussCode: '40301419',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'BIO026',
@@ -411,6 +521,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 28.0,
     priceInsurance: 15.5,
+    tussCode: '40302237',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'BIO027',
@@ -421,6 +533,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 24.0,
     priceInsurance: 13.0,
+    tussCode: null,
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'BIO028',
@@ -431,6 +545,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 34.0,
     priceInsurance: 19.0,
+    tussCode: null,
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'BIO029',
@@ -441,6 +557,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 30.0,
     priceInsurance: 16.5,
+    tussCode: null,
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
 
   // ---------------------------------------------------------------- Hormônios
@@ -453,6 +571,9 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 48.0,
     priceInsurance: 27.0,
+    tussCode: '40316521',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
+    synonyms: ['tireoide', 'exame da tireoide', 'TSH ultrassensível'],
   },
   {
     code: 'HOR002',
@@ -463,6 +584,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 48.0,
     priceInsurance: 27.0,
+    tussCode: '40316491',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'HOR003',
@@ -473,6 +596,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 46.0,
     priceInsurance: 25.5,
+    tussCode: '40316556',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'HOR004',
@@ -483,6 +608,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 78.0,
     priceInsurance: 43.0,
+    tussCode: null,
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'HOR005',
@@ -493,6 +620,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 62.0,
     priceInsurance: 34.0,
+    tussCode: '40316190',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'HOR006',
@@ -503,6 +632,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 56.0,
     priceInsurance: 31.0,
+    tussCode: '40316416',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'HOR007',
@@ -513,6 +644,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 68.0,
     priceInsurance: 38.0,
+    tussCode: '40316513',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'HOR008',
@@ -523,6 +656,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 62.0,
     priceInsurance: 34.0,
+    tussCode: '40316246',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'HOR009',
@@ -533,6 +668,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 56.0,
     priceInsurance: 31.0,
+    tussCode: '40316289',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'HOR010',
@@ -543,6 +680,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 56.0,
     priceInsurance: 31.0,
+    tussCode: '40316335',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'HOR011',
@@ -553,6 +692,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 58.0,
     priceInsurance: 32.0,
+    tussCode: '40316408',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'HOR012',
@@ -563,6 +704,9 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 12,
     pricePrivate: 58.0,
     priceInsurance: 32.0,
+    tussCode: '40316327',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
+    synonyms: ['teste de gravidez', 'BHCG', 'HCG', 'exame de gravidez de sangue'],
   },
   {
     code: 'HOR013',
@@ -573,6 +717,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 72,
     pricePrivate: 92.0,
     priceInsurance: 51.0,
+    tussCode: null,
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
 
   // ---------------------------------------------------------------- Imunologia
@@ -585,6 +731,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 42.0,
     priceInsurance: 23.5,
+    tussCode: '40307646',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'IMU002',
@@ -595,6 +743,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 44.0,
     priceInsurance: 24.5,
+    tussCode: null,
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'IMU003',
@@ -605,6 +755,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 72,
     pricePrivate: 86.0,
     priceInsurance: 48.0,
+    tussCode: null,
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'IMU004',
@@ -615,6 +767,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 40.0,
     priceInsurance: 22.0,
+    tussCode: null,
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
 
   // ---------------------------------------------------------------- Sorologia
@@ -627,6 +781,9 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 72.0,
     priceInsurance: 40.0,
+    tussCode: '40307182',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
+    synonyms: ['teste de HIV', 'anti-HIV'],
   },
   {
     code: 'SOR002',
@@ -637,6 +794,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 64.0,
     priceInsurance: 35.5,
+    tussCode: '40307018',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'SOR003',
@@ -647,6 +806,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 68.0,
     priceInsurance: 38.0,
+    tussCode: '40307026',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'SOR004',
@@ -657,6 +818,9 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 38.0,
     priceInsurance: 21.0,
+    tussCode: '40307760',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
+    synonyms: ['exame de sífilis', 'sorologia para sífilis'],
   },
   {
     code: 'SOR005',
@@ -667,6 +831,9 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 82.0,
     priceInsurance: 45.5,
+    tussCode: '40307824',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
+    synonyms: ['toxo', 'doença do gato'],
   },
   {
     code: 'SOR006',
@@ -677,6 +844,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 78.0,
     priceInsurance: 43.0,
+    tussCode: '40307697',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'SOR007',
@@ -687,6 +856,9 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 84.0,
     priceInsurance: 46.5,
+    tussCode: '40306666',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
+    synonyms: ['CMV', 'citomegalo'],
   },
   {
     code: 'SOR008',
@@ -697,6 +869,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 88.0,
     priceInsurance: 49.0,
+    tussCode: null,
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
 
   // ------------------------------------------------------- Marcadores tumorais
@@ -709,6 +883,9 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 72.0,
     priceInsurance: 40.0,
+    tussCode: '40316149',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
+    synonyms: ['exame da próstata'],
   },
   {
     code: 'MAR002',
@@ -719,6 +896,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 76.0,
     priceInsurance: 42.0,
+    tussCode: '40316130',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'MAR003',
@@ -729,6 +908,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 72,
     pricePrivate: 96.0,
     priceInsurance: 53.0,
+    tussCode: null,
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'MAR004',
@@ -739,6 +920,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 72,
     pricePrivate: 88.0,
     priceInsurance: 49.0,
+    tussCode: null,
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
 
   // ---------------------------------------------------------------- Vitaminas
@@ -751,6 +934,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 98.0,
     priceInsurance: 54.0,
+    tussCode: '40302830',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
   {
     code: 'VIT002',
@@ -761,6 +946,9 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 74.0,
     priceInsurance: 41.0,
+    tussCode: '40316572',
+    material: 'Sangue — tubo tampa amarela (gel separador)',
+    synonyms: ['B12', 'cianocobalamina'],
   },
   {
     code: 'VIT003',
@@ -771,6 +959,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 68.0,
     priceInsurance: 38.0,
+    tussCode: null,
+    material: 'Sangue — tubo tampa amarela (gel separador)',
   },
 
   // ---------------------------------------------------------------- Uroanálise
@@ -783,6 +973,9 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 24,
     pricePrivate: 26.0,
     priceInsurance: 14.5,
+    tussCode: '40311210',
+    material: 'Urina — frasco estéril (primeira urina da manhã)',
+    synonyms: ['EAS (RJ)', 'urina 1', 'urina tipo 1', 'EQU (RS)', 'sumário de urina (NE)', 'parcial de urina (PR/SC)', 'urina rotina'],
   },
   {
     code: 'URI002',
@@ -793,6 +986,9 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 72,
     pricePrivate: 58.0,
     priceInsurance: 32.0,
+    tussCode: '40310213',
+    material: 'Urina — frasco estéril (jato médio)',
+    synonyms: ['cultura de urina', 'urina com antibiograma'],
   },
   {
     code: 'URI003',
@@ -803,6 +999,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 48.0,
     priceInsurance: 26.5,
+    tussCode: null,
+    material: 'Urina — amostra isolada em frasco limpo',
   },
   {
     code: 'URI004',
@@ -813,6 +1011,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 56.0,
     priceInsurance: 31.0,
+    tussCode: '40301508',
+    material: 'Urina — coletor de 24 horas',
   },
 
   // ------------------------------------------------------------- Parasitologia
@@ -825,6 +1025,9 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 72,
     pricePrivate: 42.0,
     priceInsurance: 23.0,
+    tussCode: '40303110',
+    material: 'Fezes — frasco com conservante (3 amostras)',
+    synonyms: ['exame de fezes', 'EPF', 'protoparasitológico', 'exame de verme'],
   },
   {
     code: 'PAR002',
@@ -835,6 +1038,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 48,
     pricePrivate: 46.0,
     priceInsurance: 25.5,
+    tussCode: '40303136',
+    material: 'Fezes — frasco limpo',
   },
   {
     code: 'PAR003',
@@ -845,6 +1050,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 96,
     pricePrivate: 62.0,
     priceInsurance: 34.0,
+    tussCode: null,
+    material: 'Fezes — frasco estéril',
   },
 
   // ------------------------------------------------------------ Microbiologia
@@ -857,6 +1064,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 96,
     pricePrivate: 72.0,
     priceInsurance: 40.0,
+    tussCode: null,
+    material: 'Secreção — swab com meio de transporte',
   },
   {
     code: 'MIC002',
@@ -867,6 +1076,8 @@ export const EXAM_CATALOG: readonly SeedExam[] = [
     turnaroundHours: 72,
     pricePrivate: 66.0,
     priceInsurance: 36.5,
+    tussCode: null,
+    material: 'Swab nasal — swab estéril',
   },
 ];
 

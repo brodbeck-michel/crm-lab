@@ -717,6 +717,59 @@ Efeitos do caminho autenticado:
 **Idempotente:** reentrega com o mesmo `id` de mensagem (`external_message_id`) não
 duplica linha nem evento.
 
+### Webhook do gateway Evolution (WhatsApp QR, Onda 7 — Bloco B) — PÚBLICO
+
+```
+POST /webhooks/evolution/:tenant
+```
+
+`:tenant` é o `slug` (ou uuid) do laboratório, mesmo padrão de `/webhooks/whatsapp/:tenant`
+acima (D-032). Autentica por **token estático** em vez de HMAC — o gateway Evolution não assina
+o corpo; a defesa é a comparação em tempo constante
+(`crypto.timingSafeEqual`) do header contra `EVOLUTION_WEBHOOK_TOKEN`:
+
+```
+x-evolution-webhook-token: <EVOLUTION_WEBHOOK_TOKEN>
+```
+
+Mesma disciplina do webhook Meta: **kill switch `is_active` verificado antes de tudo** (D-074,
+antes até do token), e resposta invariável para não dar oráculo de enumeração.
+
+**Request (formato Evolution), três eventos traduzidos para os DTOs internos existentes:**
+```json
+{ "event": "MESSAGES_UPSERT", "instance": "tenant-8f2a1c4b", "data": { "key": { "remoteJid": "554899990000@s.whatsapp.net", "id": "3EB0C767D26A1D2F4B" }, "message": { "conversation": "Bom dia, gostaria de orçamento" }, "messageTimestamp": 1756555200 } }
+```
+```json
+{ "event": "CONNECTION_UPDATE", "instance": "tenant-8f2a1c4b", "data": { "state": "open" } }
+```
+```json
+{ "event": "QRCODE_UPDATED", "instance": "tenant-8f2a1c4b", "data": { "qrcode": { "base64": "data:image/png;base64,..." } } }
+```
+
+**Response (sempre):**
+```json
+{ "received": true }
+```
+`200` em TODOS os caminhos — token válido, token inválido, tenant desconhecido, canal
+desativado ou payload malformado. Try/catch **por mensagem** dentro de `MESSAGES_UPSERT` (a
+Evolution também pode entregar lote): uma mensagem malformada no meio do lote não derruba as
+demais.
+
+Efeitos:
+- `MESSAGES_UPSERT` → **reusa o caminho inteiro** do webhook Meta:
+  `findOrCreateByPhone` → `MessageService.createFromPatient` (dedupe por `externalId`,
+  `unreadCount`, `lastMessageAt`, WS `conversation.new_message`). A tela de Atendimento não
+  muda — é o mesmo dado entrando por um canal diferente.
+- `CONNECTION_UPDATE` com `state: "open"` → grava `connected_at`, `phone_number` (informado
+  pelo gateway), `connection_mode: "qr"`, `is_active: true` em `tenant_channels`.
+- `CONNECTION_UPDATE` com `state: "close"` (inclusive `loggedOut`, que é como o gateway informa
+  desconexão/banimento) → marca desconectado; a UI mostra "Reconectar". O contrato não distingue
+  desconexão voluntária de banimento — ver a nota de risco em `docs/architecture/SECURITY.md`.
+- `QRCODE_UPDATED` → atualiza o QR vigente lido por `GET /settings/channels/whatsapp/qr`.
+
+**Idempotente:** mesma disciplina do webhook Meta — reentrega da mesma mensagem
+(`externalId`/`key.id`) não duplica linha nem evento.
+
 ---
 
 ## 2c. Patients (Ficha do Paciente)
@@ -1499,6 +1552,10 @@ tenant), `FORBIDDEN` (403, `platform_operator`)
 
 ## 4. Exam Catalog
 
+Shapes em `shared/types/exam.types.ts`. Onda 7 acrescenta TUSS/AMB, material, sinônimos e
+`source` ao catálogo, e o preço por convênio (`shared/types/insurance.types.ts`, SCHEMA.md
+§19) — ver D-081/D-082/D-083 em `docs/DECISIONS.md`.
+
 ### GET /exams
 Listar catálogo de exames do laboratório.
 
@@ -1506,18 +1563,19 @@ Listar catálogo de exames do laboratório.
 ```
 ?active=true                 // omitido = ativos e inativos
 ?category=hemograma          // sem sensibilidade a caixa nem a acento
-?search=glicose              // casa NOME e CÓDIGO, sem caixa nem acento
+?search=glicose              // casa NOME, CÓDIGO e SINÔNIMO, sem caixa nem acento (Onda 7)
 ?page=1&limit=50             // default page=1, limit=20, limite máximo 100
 ?sortBy=name&order=asc       // sortBy: name|code|category|pricePrivate|priceInsurance|createdAt|updatedAt
+?insuranceId=uuid            // Onda 7: acrescenta effectivePrice/priceSource a cada item
 ```
 
-**Response (200):**
+**Response (200), sem `?insuranceId=`:**
 ```json
 {
   "exams": [
     {
       "id": "uuid",
-      "name": "Hemograma",
+      "name": "Hemograma completo",
       "code": "HC",
       "description": "Análise completa do sangue",
       "preparation": "Jejum de 8 horas",
@@ -1526,6 +1584,11 @@ Listar catálogo de exames do laboratório.
       "priceInsurance": 75.00,
       "category": "hemograma",
       "isActive": true,
+      "tussCode": "40304361",
+      "ambCode": null,
+      "material": "Sangue — tubo tampa roxa (EDTA)",
+      "source": "manual",
+      "synonyms": ["sangue completo", "exame de sangue", "hemograma com plaquetas", "HMG", "CBC"],
       "createdAt": "2026-08-23T14:30:00.000Z",
       "updatedAt": "2026-08-23T14:30:00.000Z"
     }
@@ -1539,9 +1602,61 @@ Listar catálogo de exames do laboratório.
 }
 ```
 
+**Response (200), com `?insuranceId=<uuid>`** — cada item ganha `effectivePrice` e
+`priceSource` (aditivo, backward compatible; sem o parâmetro os dois campos não aparecem):
+```json
+{
+  "exams": [
+    {
+      "id": "uuid",
+      "name": "Hemograma completo",
+      "code": "HC",
+      "pricePrivate": 89.90,
+      "priceInsurance": 75.00,
+      "tussCode": "40304361",
+      "ambCode": null,
+      "material": "Sangue — tubo tampa roxa (EDTA)",
+      "source": "manual",
+      "synonyms": ["sangue completo", "exame de sangue"],
+      "isActive": true,
+      "createdAt": "2026-08-23T14:30:00.000Z",
+      "updatedAt": "2026-08-23T14:30:00.000Z",
+      "effectivePrice": 72.50,
+      "priceSource": "insurance"
+    },
+    {
+      "id": "uuid",
+      "name": "Vitamina D 25-OH",
+      "code": "VITD",
+      "pricePrivate": 120.00,
+      "priceInsurance": 95.00,
+      "tussCode": "40302830",
+      "ambCode": null,
+      "material": "Sangue — tubo tampa amarela (gel separador)",
+      "source": "manual",
+      "synonyms": [],
+      "isActive": true,
+      "createdAt": "2026-08-23T14:30:00.000Z",
+      "updatedAt": "2026-08-23T14:30:00.000Z",
+      "effectivePrice": 120.00,
+      "priceSource": "private"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 20, "total": 150, "totalPages": 8 }
+}
+```
+
+O segundo item não tem linha em `exam_prices` para o convênio pedido — cai no `pricePrivate`
+(fallback nunca bloqueia, decisão 4 do spec) e `priceSource: "private"` marca a origem para a
+UI exibir o badge "particular".
+
 `pagination` é o mesmo `PaginationMeta` de toda listagem (D-009). Não existe
 `DELETE /exams/:id`: desativar é `PATCH /exams/:id { "isActive": false }`, porque propostas
 históricas referenciam o exame (D-004).
+
+A chave de cache da listagem (`exams:<tenantId>:list:<filtros>`) incorpora `insuranceId`;
+mutação de `exam_prices` ou `insurances` invalida o mesmo prefixo `exams:<tenantId>:` que
+mutação de `exam_catalog` já invalida.
 
 **Dois consumidores, dois usos das MESMAS chaves — o contrato não muda para nenhum** (D-080):
 `/catalog` é tabela e TROCA de página (`?page=2` na URL); o seletor de `/budget/new` ACUMULA
@@ -1563,9 +1678,17 @@ Criar novo exame no catálogo.
   "turnaroundHours": 24,
   "pricePrivate": 100.00,
   "priceInsurance": 80.00,
-  "category": "hemograma"
+  "category": "hemograma",
+  "tussCode": "40304361",
+  "ambCode": null,
+  "material": "Sangue — tubo tampa roxa (EDTA)",
+  "synonyms": ["sinônimo 1", "sinônimo 2"]
 }
 ```
+
+`tussCode`, `ambCode`, `material` e `synonyms` são opcionais; ausentes ⇒ `null`/`[]`. Código
+não confirmado é **`null`**, nunca inventado (D-081) — a tela também não inventa: campo vazio
+grava `null`. `synonyms` é gravado na tabela filha `exam_synonyms` na mesma transação do POST.
 
 **Response (201):**
 ```json
@@ -1573,6 +1696,11 @@ Criar novo exame no catálogo.
   "id": "uuid",
   "name": "Novo Exame",
   "code": "NE",
+  "tussCode": "40304361",
+  "ambCode": null,
+  "material": "Sangue — tubo tampa roxa (EDTA)",
+  "source": "manual",
+  "synonyms": ["sinônimo 1", "sinônimo 2"],
   ...
 }
 ```
@@ -1585,9 +1713,14 @@ Atualizar exame.
 {
   "pricePrivate": 110.00,
   "priceInsurance": 90.00,
+  "material": "Sangue — tubo tampa amarela (gel separador)",
+  "synonyms": ["sinônimo novo"],
   "isActive": false
 }
 ```
+
+Enviar `synonyms` **substitui o conjunto inteiro** (semântica de PUT sobre a coleção filha,
+regravado na mesma transação do PATCH); omitir preserva os sinônimos atuais.
 
 **Response (200):**
 ```json
@@ -1595,9 +1728,59 @@ Atualizar exame.
   "id": "uuid",
   "pricePrivate": 110.00,
   "priceInsurance": 90.00,
+  "material": "Sangue — tubo tampa amarela (gel separador)",
+  "synonyms": ["sinônimo novo"],
   "isActive": false
 }
 ```
+
+### GET /exams/:id/prices
+Preço do exame por convênio (todos do tenant).
+
+**Response (200):**
+```json
+{
+  "prices": [
+    { "insuranceId": "8f2a1c4b-6d39-4f70-9a12-5c8e3b7d1f06", "price": 72.50 },
+    { "insuranceId": "b1e2a1c4-6d39-4f70-9a12-5c8e3b7d1f07", "price": 68.00 }
+  ]
+}
+```
+Uma linha por convênio **cadastrado** para este exame — convênio sem preço definido para ele
+simplesmente não aparece (é o caso que cai em `priceSource: "private"` no orçamento).
+
+**Erros:** `NOT_FOUND` (exame inexistente ou de outro tenant)
+
+### PUT /exams/:id/prices (manager/admin apenas)
+Upsert em lote. **Semântica de PUT — estado completo**: linha ausente do corpo é **removida**.
+Auditado (`update_exam_prices`).
+
+**Request:**
+```json
+{
+  "prices": [
+    { "insuranceId": "8f2a1c4b-6d39-4f70-9a12-5c8e3b7d1f06", "price": 72.50 },
+    { "insuranceId": "b1e2a1c4-6d39-4f70-9a12-5c8e3b7d1f07", "price": 68.00 }
+  ]
+}
+```
+
+**Response (200):** o mesmo shape do `GET` — o estado completo depois da escrita.
+```json
+{
+  "prices": [
+    { "insuranceId": "8f2a1c4b-6d39-4f70-9a12-5c8e3b7d1f06", "price": 72.50 },
+    { "insuranceId": "b1e2a1c4-6d39-4f70-9a12-5c8e3b7d1f07", "price": 68.00 }
+  ]
+}
+```
+
+**Validações:** `price >= 0`; `insuranceId` precisa existir e estar ativo no tenant, senão
+`VALIDATION_ERROR` (`details.fields["prices.<insuranceId>"]`); `insuranceId` repetido no array
+→ `VALIDATION_ERROR`.
+
+**Erros:** `NOT_FOUND` (exame de outro tenant), `VALIDATION_ERROR` (400, `details.fields`),
+`FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
 
 ---
 
@@ -2014,6 +2197,92 @@ Gera audit log `update_channel_settings` (`entityType: "tenant_settings"`, `enti
 **Erros:** `VALIDATION_ERROR` (400, `details.fields`), `FORBIDDEN` (403,
 `details.requiredRoles: ["admin"]`)
 
+### 6.1 Conexão WhatsApp por QR (Evolution API, Onda 7 — Bloco B)
+
+**Papéis:** as 4 rotas são **admin apenas**, `denyPlatformOperator()`, auditadas, no inventário
+de isolamento. Fecham `TenantChannel.connectionMode: "qr"` (`shared/types/settings.types.ts`).
+Ver D-083 (versão do gateway) e a nota de risco em `docs/architecture/SECURITY.md`.
+
+**Indisponibilidade do gateway:** com `EVOLUTION_API_URL`, `EVOLUTION_API_KEY` ou
+`EVOLUTION_WEBHOOK_TOKEN` ausentes, as 4 rotas respondem `503` com `CHANNEL_QR_UNAVAILABLE` —
+nunca crash (`ApiErrorCode` de `@crm-lab/shared`).
+
+#### POST /settings/channels/whatsapp/connect
+Cria (ou reaproveita, idempotente) a instância do tenant no gateway e devolve o QR.
+
+**Request:**
+```json
+{ "acceptTerms": true }
+```
+Exige aceite prévio (`accepted_terms_at` já gravado) **ou** `acceptTerms: true` neste corpo —
+faltando os dois, `VALIDATION_ERROR` (`details.fields.acceptTerms`). Quando o corpo traz
+`acceptTerms: true`, o backend grava `accepted_terms_at = NOW()`, `accepted_terms_by =
+<userId do ctx>` e o audit log `accept_whatsapp_qr_terms`, antes de falar com o gateway.
+
+**Response (200):**
+```json
+{
+  "qrcode": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...",
+  "status": "pairing",
+  "expiresInSeconds": 20
+}
+```
+`qrcode` é `null` quando a instância já está `connected` (reconectar em canal já pareado devolve
+o status atual em vez de um QR novo). Shape: `WhatsAppQrResponse`.
+
+**Erros:** `VALIDATION_ERROR` (400, aceite ausente), `FORBIDDEN` (403,
+`details.requiredRoles: ["admin"]`), `CHANNEL_QR_UNAVAILABLE` (503, gateway sem configuração ou
+fora do ar)
+
+#### GET /settings/channels/whatsapp/qr
+QR vigente + status. É o endpoint que o modal faz **polling de ~2s** (até `connected` ou
+timeout ~90s) enquanto o gateway renova o QR por trás (`QRCODE_UPDATED`, webhook).
+
+**Response (200):**
+```json
+{
+  "qrcode": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...",
+  "status": "pairing",
+  "expiresInSeconds": 14
+}
+```
+Depois de conectado:
+```json
+{ "qrcode": null, "status": "connected", "expiresInSeconds": null }
+```
+Sem conexão iniciada (`connect` nunca chamado, ou desconectado): `{ "qrcode": null, "status":
+"disconnected", "expiresInSeconds": null }`.
+
+**Erros:** `FORBIDDEN` (403), `CHANNEL_QR_UNAVAILABLE` (503)
+
+#### GET /settings/channels/whatsapp/status
+Status do canal para o card de Canais & Equipe, sem QR — não faz polling.
+
+**Response (200):**
+```json
+{
+  "status": "connected",
+  "phoneNumber": "+55 48 99999-0000",
+  "connectedAt": "2026-08-30T11:20:00.000Z"
+}
+```
+Shape: `WhatsAppStatusResponse`. Sem conexão: `{ "status": "disconnected", "phoneNumber": null,
+"connectedAt": null }`.
+
+**Erros:** `FORBIDDEN` (403), `CHANNEL_QR_UNAVAILABLE` (503)
+
+#### POST /settings/channels/whatsapp/disconnect
+Logout da instância no gateway + atualiza o canal (`is_active` inalterado — desconectar não é
+desativar o canal na tela; são dois controles distintos).
+
+**Response (204)** — sem corpo.
+
+Também alcançável sem chamar esta rota: a pessoa remove o dispositivo no celular → o gateway
+emite `loggedOut` pelo webhook → o CRM marca desconectado do mesmo jeito. A UI não distingue
+desconexão voluntária de banimento — o termo de aceite avisa disso antecipadamente.
+
+**Erros:** `FORBIDDEN` (403), `CHANNEL_QR_UNAVAILABLE` (503)
+
 ---
 
 ## 7. Operation (Gestão da Operação)
@@ -2153,6 +2422,131 @@ enxergam todo o laboratório em `/conversations` e `/proposals`. Também **não*
 
 **Erros:** `VALIDATION_ERROR` (400, `queueLimit`/`decisionsLimit` fora da faixa),
 `FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
+
+---
+
+## 8. Insurances (Convênios)
+
+Tela `/settings/insurances` (PAGES.md §10). Módulo novo `/insurances`, mesmo padrão de
+`/exams`. Shapes em `shared/types/insurance.types.ts`; tabela `insurances` (SCHEMA.md §18).
+Ver D-081/D-082 em `docs/DECISIONS.md`.
+
+**Papéis:** `GET` é para **todos os papéis do tenant** (é o que alimenta o seletor de convênio
+em `/budget/new`, usado por qualquer atendente). `POST` e `PATCH` são **manager/admin**.
+`platform_operator` → `403` nas três (`denyPlatformOperator()`); rota entra no inventário de
+isolamento (`route-tenant-isolation.spec.ts`).
+
+**"Particular" não é uma linha desta tabela** — é a ausência de convênio (`insuranceId: null`
+em `POST /proposals`, §3). Um convênio fantasma "Particular" exigiria espelhar `pricePrivate`
+em `exam_prices`, criando uma segunda origem para o mesmo número (D-082).
+
+Não existe `DELETE /insurances/:id`: desativar é `PATCH { "isActive": false }` — mesmo padrão
+de `/exams` (D-004: preço histórico de propostas antigas referencia o convênio usado).
+
+### GET /insurances
+
+**Query Params:**
+```
+?active=true              // omitido = ativos e inativos
+?search=unimed            // casa NOME e RAZÃO SOCIAL, sem caixa nem acento
+?page=1&limit=20          // default page=1, limit=20, máximo 100
+?sortBy=name&order=asc    // sortBy: name|type|createdAt|updatedAt
+```
+
+**Response (200):**
+```json
+{
+  "insurances": [
+    {
+      "id": "8f2a1c4b-6d39-4f70-9a12-5c8e3b7d1f06",
+      "name": "Unimed Tubarão",
+      "officialName": "Unimed de Tubarão Cooperativa de Trabalho Médico",
+      "ansCode": "364860",
+      "type": "cooperativa",
+      "isActive": true,
+      "createdAt": "2026-08-30T10:00:00.000Z",
+      "updatedAt": "2026-08-30T10:00:00.000Z"
+    },
+    {
+      "id": "b1e2a1c4-6d39-4f70-9a12-5c8e3b7d1f07",
+      "name": "SC Saúde",
+      "officialName": "Sistema de Assistência à Saúde dos Servidores de SC",
+      "ansCode": null,
+      "type": "especial",
+      "isActive": true,
+      "createdAt": "2026-08-30T10:00:00.000Z",
+      "updatedAt": "2026-08-30T10:00:00.000Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 20, "total": 21, "totalPages": 2 }
+}
+```
+
+**Erros:** nenhum específico (autenticado + do tenant já basta).
+
+### POST /insurances (manager/admin apenas)
+Criar convênio.
+
+**Request:**
+```json
+{
+  "name": "Bradesco Saúde",
+  "officialName": "Bradesco Saúde S.A.",
+  "ansCode": "005711",
+  "type": "seguradora"
+}
+```
+`officialName` e `ansCode` são opcionais (nem todo convênio regional tem registro ANS
+confirmado — D-081). `type` ∈ `cooperativa | medicina_grupo | seguradora | autogestao |
+especial`.
+
+**Response (201):**
+```json
+{
+  "id": "c2f3b5d6-7e40-4a81-8b13-6d9f4c8e2a17",
+  "name": "Bradesco Saúde",
+  "officialName": "Bradesco Saúde S.A.",
+  "ansCode": "005711",
+  "type": "seguradora",
+  "isActive": true,
+  "createdAt": "2026-08-30T10:05:00.000Z",
+  "updatedAt": "2026-08-30T10:05:00.000Z"
+}
+```
+
+Gera audit log `create_insurance`.
+
+**Erros:** `CONFLICT` (409, `name` duplicado no tenant — corrida coberta por
+`isUniqueViolation`, mesmo padrão de `/exams`), `VALIDATION_ERROR` (400, `details.fields`),
+`FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
+
+### PATCH /insurances/:id (manager/admin apenas)
+Atualizar convênio, inclusive desativar.
+
+**Request:**
+```json
+{ "isActive": false }
+```
+
+**Response (200):**
+```json
+{
+  "id": "c2f3b5d6-7e40-4a81-8b13-6d9f4c8e2a17",
+  "name": "Bradesco Saúde",
+  "officialName": "Bradesco Saúde S.A.",
+  "ansCode": "005711",
+  "type": "seguradora",
+  "isActive": false,
+  "createdAt": "2026-08-30T10:05:00.000Z",
+  "updatedAt": "2026-08-30T10:06:00.000Z"
+}
+```
+
+Gera audit log `update_insurance`.
+
+**Erros:** `NOT_FOUND` (convênio de outro tenant), `CONFLICT` (409, renomear para nome já
+usado), `VALIDATION_ERROR` (400, `details.fields`), `FORBIDDEN` (403,
+`details.requiredRoles: ["manager","admin"]`)
 
 ---
 

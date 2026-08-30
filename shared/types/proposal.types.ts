@@ -76,6 +76,8 @@ export interface ProposalItem {
   quantity: number;
   /** Snapshot do preco no momento da criacao (D-004). */
   unitPrice: number;
+  /** Origem do `unitPrice`, snapshot no momento da criacao (Onda 7 — fallback nunca bloqueia). */
+  priceSource: 'insurance' | 'private';
 }
 
 /** Proposta na listagem / pipeline. */
@@ -94,6 +96,8 @@ export interface Proposal {
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
   closedAt: IsoDateTime | null;
+  /** Convênio da proposta. `null` = particular (Onda 7). Imutável após a criação. */
+  insuranceId: string | null;
 }
 
 export interface ProposalStageHistoryEntry {
@@ -126,6 +130,9 @@ export interface CreateProposalRequest {
   conversationId: string;
   items: CreateProposalItemInput[];
   discountPercent?: number;
+  /** Convênio da proposta. `null`/ausente = particular (Onda 7). Imutável após a criação —
+   * `PATCH` não permite trocar (re-precificaria itens com snapshot, D-004). */
+  insuranceId?: string | null;
 }
 
 export interface CreateProposalResponse extends ProposalDetail {

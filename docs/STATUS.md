@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-08-25 (fim da Onda 6)
+**Última atualização:** 2026-08-30 (Onda 7 — Fase 0 concluída, em andamento)
 
 ---
 
@@ -140,6 +140,32 @@ duas vezes, em menor escala, e o Validador-Contratos pegou as duas: `proposal.re
 que `proposal_items` não tinha coluna de posição (falso desde a migração 003, do mesmo commit) e
 `flow-11` afirmava que a tela não chamava `POST /read` (falso desde a correção pós-QA). Comentário
 não é contrato.
+
+---
+
+## Onda 7 — Convênios/TUSS, Conexão WhatsApp por QR e Fechamento de Pendências 🔄 (em andamento)
+
+Convênio como entidade + preço por convênio + TUSS/AMB + sinônimos + material no catálogo
+(pedido da integração Bitlab Fase 1 — Trilha A); conexão do WhatsApp do próprio laboratório via
+QR code (Evolution API), sem depender da API oficial da Meta; e as 7 pendências do Bloco C do
+spec. Plano: `docs/superpowers/plans/2026-08-30-onda-7.md`. Spec:
+`docs/superpowers/specs/2026-08-30-onda-7-design.md`.
+
+| Tarefa | Domínio | Status | Agente | Notas |
+|--------|---------|--------|--------|-------|
+| Contratos da onda (Fase 0, bloqueante) | docs | ✅ 2026-08-30 | Agent-Docs-Onda7 | API_CONTRACTS §4 estendido/§6.1 QR/§8 novo (Convênios), SERVICES §15-§16, SCHEMA §18-§20 + colunas novas em `exam_catalog`/`proposals`/`proposal_items`/`tenant_channels`, `shared/types/insurance.types.ts` (novo) + `exam`/`proposal`/`settings.types.ts` estendidos, nota de risco em SECURITY.md, D-081→D-085. Nenhuma linha de implementação antes disto (Regra Zero). **Por decisão do coordenador, `websocket.types.ts` e o campo `message` de `proposal.types.ts` NÃO foram tocados nesta fase** — a remoção fica para as tasks de código da Fase 2, no mesmo commit que remove o código consumidor (D-084/D-085), para não quebrar o typecheck das demais tasks paralelas |
+| Migrações 005/006, seeds enriquecidos, fixtures e2e | db | ⬜ | — | Fase 1, bloqueante. `insurances`, `exam_prices`, `exam_synonyms` + colunas novas; RLS fail-closed provada com 2 tenants; Apêndices A-C do spec (convênios, TUSS, sinônimos) |
+| `/insurances` + preços + sinônimos na busca + extensões `/exams` | api | ⬜ | Agent-API-Insurances | Fase 2 |
+| `insuranceId` na proposta + resolução/fallback + snapshot `priceSource` | api | ⬜ | Agent-API-Proposals7 | Fase 2 |
+| Driver Evolution + endpoints connect/qr/status/disconnect + webhook | api | ⬜ | Agent-API-Channel-QR | Fase 2 |
+| HMAC sobre `rawBody` (pendência C1) | api/kernel | ⬜ | Agent-Kernel-RawBody | Fase 2 |
+| Pendências C2-C7 (`MAX_PAGE` em `internal-chat`, `MetricTile` pt-BR, comentário obsoleto `flow-7`, contrato de ordenação em SERVICES §14, remoção de `user.came_online` e de `message`) | api/ui/docs | ⬜ | Agent-Fix-Pendencias | Fase 2. Executa D-084 e D-085 (tipo + código no mesmo commit) |
+| Convênios + Catálogo (UI) | ui | ⬜ | Agent-UI-Catalog7 | Fase 2 |
+| Seletor de convênio + badges no orçamento | ui | ⬜ | Agent-UI-Budget7 | Fase 2 |
+| Modal QR + termo de aceite | ui | ⬜ | Agent-UI-Connect | Fase 2 |
+| `docker-compose` + env vars + CI | infra | ⬜ | Agent-Infra7 | Fase 2 |
+| E2E das telas novas + inventário de isolamento (39 → ~44 rotas) | qa | ⬜ | Agent-QA-Onda7 | Fase 3 |
+| Validação independente | todos | ⬜ | Validador-Contratos · Validador-Segurança · Validador-Verificação | Fase 4 |
 
 ---
 

@@ -336,6 +336,19 @@ CREATE INDEX idx_proposals_status ON proposals(status);
 CREATE INDEX idx_proposals_created_at ON proposals(created_at);
 ```
 
+**Coluna nova (migração `005_insurances_and_catalog.sql`, Onda 7):**
+
+```sql
+ALTER TABLE proposals
+  ADD COLUMN insurance_id UUID NULL,
+  ADD CONSTRAINT fk_proposals_insurance
+    FOREIGN KEY (insurance_id) REFERENCES insurances(id);
+```
+
+`NULL` = particular (D-082). **Imutável após a criação** nesta onda — `PATCH` não permite
+trocar `insuranceId` (trocar re-precificaria itens com snapshot, D-004; comportamento novo que
+exigiria decisão própria, registrado como limitação em API_CONTRACTS.md §3).
+
 ### 6. `proposal_items`
 Itens dentro de uma proposta (exames selecionados).
 
@@ -386,6 +399,19 @@ sobrevive a qualquer reprocessamento que normalize timestamps. Com a coluna:
   uma proposta já existente não dependa do segundo critério para não embaralhar. O desempate por
   `id` torna o resultado estável quando dois itens compartilham o mesmo `created_at`.
 
+**Coluna nova (migração `005_insurances_and_catalog.sql`, Onda 7):**
+
+```sql
+ALTER TABLE proposal_items
+  ADD COLUMN price_source VARCHAR(20) NOT NULL DEFAULT 'private',
+  ADD CONSTRAINT proposal_items_price_source_check CHECK (price_source IN ('insurance', 'private'));
+```
+
+Snapshot: com que origem o `unit_price` do item foi resolvido no momento da criação (D-004 —
+mesma disciplina de `exam_name`/`unit_price`). `DEFAULT 'private'` cobre o dado existente (todas
+as propostas anteriores à Onda 7 eram particulares por definição, já que `insurance_id` não
+existia).
+
 ### 7. `exam_catalog`
 Catálogo de exames por laboratório.
 
@@ -412,6 +438,25 @@ CREATE TABLE exam_catalog (
 CREATE INDEX idx_exam_catalog_tenant_id ON exam_catalog(tenant_id);
 CREATE INDEX idx_exam_catalog_active ON exam_catalog(is_active);
 ```
+
+**Colunas novas (migração `005_insurances_and_catalog.sql`, Onda 7 — D-081):**
+
+```sql
+ALTER TABLE exam_catalog
+  ADD COLUMN tuss_code VARCHAR(10),                       -- Código TUSS (tabela 22), 8 dígitos
+  ADD COLUMN amb_code VARCHAR(20),                        -- Código AMB legado (de-para do faturamento)
+  ADD COLUMN material VARCHAR(255),                       -- Ex.: "Sangue — tubo tampa roxa (EDTA)"
+  ADD COLUMN source VARCHAR(20) NOT NULL DEFAULT 'manual', -- CHECK: manual | lis
+  ADD CONSTRAINT exam_catalog_source_check CHECK (source IN ('manual', 'lis'));
+```
+
+`tuss_code` e `amb_code` são `NULL` quando o código não foi confirmado pela pesquisa do seed —
+**nunca inventados** (D-081). `source` só existe e é exibida nesta onda; a sincronização LIS que
+decide quem vence numa edição concorrente é de onda futura, pós-resposta do Bitlab.
+`price_insurance` (coluna única atual) **permanece** — passo 1 da regra dos 3 passos de
+AGENTS.md: deixa de ser exibida/editável na UI (o preço por convênio passa a viver em
+`exam_prices`, §19), e a remoção (passo 3) é pendência registrada com dono em `docs/STATUS.md`
+para onda futura. Nenhum contrato de leitura existente quebra.
 
 ### 8. `themes`
 Temas/Personalização visual por tenant.
@@ -672,6 +717,27 @@ controller é bug de segurança: o repositório projeta colunas explicitamente.
 `UNIQUE (tenant_id, channel)` é o que permite ao `PATCH /settings/channels` fazer upsert pela
 chave `channel` em vez de exigir o `id` na tela.
 
+**Colunas novas (migração `005_insurances_and_catalog.sql`, Onda 7 — Bloco B):**
+
+```sql
+ALTER TABLE tenant_channels
+  ADD COLUMN connection_mode VARCHAR(20) NOT NULL DEFAULT 'cloud_api',
+  ADD CONSTRAINT tenant_channels_connection_mode_check CHECK (connection_mode IN ('cloud_api', 'qr')),
+  ADD COLUMN accepted_terms_at TIMESTAMP NULL,
+  ADD COLUMN accepted_terms_by UUID NULL,
+  ADD CONSTRAINT fk_tenant_channels_accepted_terms_by
+    FOREIGN KEY (accepted_terms_by) REFERENCES users(id) ON DELETE SET NULL;
+```
+
+`connection_mode` decide o driver de envio no `WhatsAppCredentialsResolver` (SERVICES.md §11/
+§16): `cloud_api` é a API oficial da Meta (comportamento de hoje, default — linha ausente ou
+coluna antiga também vale `cloud_api`); `qr` é o número próprio pareado via QR code no gateway
+Evolution, sem API oficial. `accepted_terms_at`/`accepted_terms_by` registram o aceite do termo
+de risco do QR (banimento, violação de ToS) — é dado do **canal**, não só do audit log: a UI
+precisa saber, na abertura da tela, se o termo já foi aceito, sem depender de uma consulta a
+`audit_logs`. Quando `apikey` é gravada para uma instância `qr`, ela usa o mesmo `api_token`
+desta tabela, cifrada com a mesma infra da D-076 (`CHANNEL_SECRET_KEY`).
+
 ---
 
 ### 16. `tenant_settings` (migração 003 — D-065)
@@ -769,6 +835,105 @@ COUNT(*) FILTER (
 
 Mensagem de sistema (`sender_id IS NULL`) **conta** — o pedido de aprovação em `#aprovacoes` é
 justamente o que precisa aparecer como não lido.
+
+---
+
+### 18. `insurances` (migração 005 — Onda 7, D-081/D-082)
+Convênio do laboratório. Fecha o pedido da integração Bitlab Fase 1 (Trilha A) de modelar
+convênio como entidade, em vez de um único `price_insurance` em `exam_catalog`.
+
+```sql
+CREATE TABLE insurances (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL,
+  name VARCHAR(255) NOT NULL,            -- nome usual: "Unimed Tubarão"
+  official_name VARCHAR(255),            -- razão social, opcional
+  ans_code VARCHAR(20),                  -- registro ANS, opcional (SC Saúde não tem)
+  type VARCHAR(30) NOT NULL,             -- CHECK: cooperativa|medicina_grupo|seguradora|autogestao|especial
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, name),
+  CHECK (type IN ('cooperativa', 'medicina_grupo', 'seguradora', 'autogestao', 'especial'))
+);
+
+CREATE INDEX idx_insurances_tenant_id ON insurances(tenant_id);
+CREATE INDEX idx_insurances_active ON insurances(is_active);
+
+CREATE TRIGGER trg_insurances_updated_at
+  BEFORE UPDATE ON insurances
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+```
+
+**"Particular" NÃO é uma linha desta tabela** (D-082): particular é a ausência de convênio
+(`proposals.insurance_id NULL`). Um convênio fantasma "Particular" exigiria espelhar
+`price_private` em `exam_prices` — uma segunda origem para o mesmo número
+(BUSINESS_RULES.md §5). Sem `DELETE`: desativação por `PATCH { isActive: false }`, mesmo padrão
+do catálogo (D-004).
+
+### 19. `exam_prices` (migração 005 — Onda 7)
+Preço por (exame, convênio). É a tabela que o espelhamento do Bitlab (quando houver resposta
+deles) vai escrever — a coluna `exam_catalog.source` (§7) decide quem vence numa edição
+concorrente, de onda futura.
+
+```sql
+CREATE TABLE exam_prices (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL,
+  exam_id UUID NOT NULL,
+  insurance_id UUID NOT NULL,
+  price NUMERIC(12,2) NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (exam_id) REFERENCES exam_catalog(id) ON DELETE CASCADE,
+  FOREIGN KEY (insurance_id) REFERENCES insurances(id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, exam_id, insurance_id),
+  CHECK (price >= 0)
+);
+
+CREATE INDEX idx_exam_prices_tenant_id ON exam_prices(tenant_id);
+CREATE INDEX idx_exam_prices_exam_id ON exam_prices(exam_id);
+CREATE INDEX idx_exam_prices_insurance_id ON exam_prices(insurance_id);
+
+CREATE TRIGGER trg_exam_prices_updated_at
+  BEFORE UPDATE ON exam_prices
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+```
+
+Linha ausente para um (exame, convênio) não é erro: `InsuranceService.resolvePrice`
+(SERVICES.md §15) cai em `exam_catalog.price_private`, marcando `priceSource: "private"` — o
+fallback nunca bloqueia o orçamento (decisão 4 do spec da Onda 7). `PUT /exams/:id/prices`
+(API_CONTRACTS.md §4) faz upsert em lote com semântica de estado completo: linha ausente do
+corpo do PUT é removida da tabela.
+
+### 20. `exam_synonyms` (migração 005 — Onda 7)
+Nomes alternativos do exame, para a busca de `GET /exams?search=` casar também por sinônimo.
+
+```sql
+CREATE TABLE exam_synonyms (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL,
+  exam_id UUID NOT NULL,
+  synonym VARCHAR(255) NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (exam_id) REFERENCES exam_catalog(id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, exam_id, synonym)
+);
+
+CREATE INDEX idx_exam_synonyms_tenant_id ON exam_synonyms(tenant_id);
+CREATE INDEX idx_exam_synonyms_exam_id ON exam_synonyms(exam_id);
+```
+
+Sem trigger de `updated_at`: a linha inteira é regravada (delete + insert) a cada PATCH que
+enviar `synonyms`, nunca atualizada em lugar — não há coluna para atualizar além da própria
+string. Busca: `EXISTS (SELECT 1 FROM exam_synonyms s WHERE s.tenant_id = e.tenant_id AND
+s.exam_id = e.id AND folded(s.synonym) LIKE ...)` como terceiro ramo do `OR` de
+`exam.repository.ts`, mesma dobra de caixa/acento (`folded()` = `translate + lower`,
+`unaccent` indisponível no PGlite) já usada para nome e código. Por ser comportamento do
+endpoint, vale automaticamente para `/catalog`, `/budget/new` e qualquer consumidor futuro.
 
 ---
 
@@ -873,20 +1038,25 @@ Nenhum outro caminho de código deve usar `withoutTenant()`.
 | `tenant_channels` | ✅ | idem — e o segredo nunca sai do repositório (projeção explícita) |
 | `tenant_settings` | ✅ | idem — policy pela coluna `tenant_id`, que aqui também é a PK |
 | `channel_reads` | ✅ | idem — via `tenant_id` próprio |
+| `insurances` | ✅ | migração `006_rls_onda7.sql` |
+| `exam_prices` | ✅ | idem |
+| `exam_synonyms` | ✅ | idem |
 
-As **4 tabelas da migração 003** entram sob RLS na `004_rls_onda6.sql`, com a policy padrão
-(mesma forma, mesmo `NULLIF(current_setting('app.tenant_id', true), '')::uuid`). A prova é a
-mesma das outras: com contexto do tenant A, nenhuma linha de B em `SELECT`/`UPDATE`/`DELETE`,
-e `INSERT` com `tenant_id` de B rejeitado pelo `WITH CHECK`. Tabela nova sem policy é
-**fail-open** — o `GRANT` de `ALTER DEFAULT PRIVILEGES` já dá `SELECT` a `crm_app` no momento
-do `CREATE TABLE`, então esquecer a policy é vazar entre laboratórios, não travar.
+As **4 tabelas da migração 003** entram sob RLS na `004_rls_onda6.sql`, e as **3 tabelas da
+migração 005** entram na `006_rls_onda7.sql` — sempre a policy padrão (mesma forma, mesmo
+`NULLIF(current_setting('app.tenant_id', true), '')::uuid`), na mesma leva de migrações que cria
+a tabela (lição da Onda 6: tabela sem policy não trava, vaza). A prova é a mesma das outras: com
+contexto do tenant A, nenhuma linha de B em `SELECT`/`UPDATE`/`DELETE`, e `INSERT` com
+`tenant_id` de B rejeitado pelo `WITH CHECK`. Tabela nova sem policy é **fail-open** — o `GRANT`
+de `ALTER DEFAULT PRIVILEGES` já dá `SELECT` a `crm_app` no momento do `CREATE TABLE`, então
+esquecer a policy é vazar entre laboratórios, não travar.
 
 Verificado em PGlite (D-008) com 2 tenants, nas **13** tabelas da migração 001 (e,
-em `onda6-schema.spec.ts`, nas 4 da migração 003): com `app.tenant_id` = tenant A,
-nenhuma linha do tenant B aparece em `SELECT`/`UPDATE`/`DELETE`; `SELECT * FROM tenants` devolve
-exatamente 1 linha (a de A); `INSERT` com `tenant_id` (ou `id`) de B é rejeitado pelo `WITH CHECK`;
-sem `app.tenant_id` setado, todas as tabelas devolvem 0 linhas. O mesmo SQL roda em Postgres 16
-no docker.
+em `onda6-schema.spec.ts`, nas 4 da migração 003; em `onda7-schema.spec.ts`, nas 3 da migração
+005): com `app.tenant_id` = tenant A, nenhuma linha do tenant B aparece em
+`SELECT`/`UPDATE`/`DELETE`; `SELECT * FROM tenants` devolve exatamente 1 linha (a de A);
+`INSERT` com `tenant_id` (ou `id`) de B é rejeitado pelo `WITH CHECK`; sem `app.tenant_id`
+setado, todas as tabelas devolvem 0 linhas. O mesmo SQL roda em Postgres 16 no docker.
 
 ---
 
@@ -927,12 +1097,18 @@ migrations/
 ├── 003_patients_and_channels.sql # patients, tenant_channels, tenant_settings, channel_reads,
 │                                 # conversations.patient_id (+ backfill), proposal_items.position
 ├── 004_rls_onda6.sql             # policies das 4 tabelas da 003
+├── 005_insurances_and_catalog.sql # insurances, exam_prices, exam_synonyms + colunas novas em
+│                                  # exam_catalog, proposals, proposal_items, tenant_channels
+├── 006_rls_onda7.sql             # policies das 3 tabelas da 005
 └── ...
 ```
 
-A 003 e a 004 são arquivos separados de propósito: o backfill da 003 roda **antes** de existir
-policy nas tabelas novas (ele escreve linhas de todos os tenants de uma vez, como o seed), e
-juntar as duas coisas no mesmo arquivo obrigaria o backfill a rodar sob RLS já ligado.
+A 003/004 e a 005/006 seguem o mesmo padrão de arquivos separados: quando a migração tem
+backfill de dado pré-existente, ele roda **antes** de existir policy nas tabelas novas (escreve
+linhas de todos os tenants de uma vez, como o seed), e juntar as duas coisas no mesmo arquivo
+obrigaria o backfill a rodar sob RLS já ligado. A 005 não tem backfill de dado do usuário (as 3
+tabelas nascem vazias; o seed as popula depois), mas a separação por onda facilita rastrear qual
+migração pertence a qual entrega.
 
 Rodar migrações:
 ```bash

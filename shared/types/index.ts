@@ -4,6 +4,7 @@ export * from './theme.types.js';
 export * from './conversation.types.js';
 export * from './patient.types.js';
 export * from './exam.types.js';
+export * from './insurance.types.js';
 export * from './proposal.types.js';
 export * from './analytics.types.js';
 export * from './internal-chat.types.js';

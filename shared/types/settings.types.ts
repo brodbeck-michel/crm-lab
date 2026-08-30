@@ -31,6 +31,36 @@ export interface TenantChannel {
   /** Quando o canal foi conectado (primeiro token gravado). */
   connectedAt: IsoDateTime | null;
   updatedAt: IsoDateTime;
+  /**
+   * Como o canal fala com o provedor. `cloud_api` = API oficial da Meta (token/segredo desta
+   * interface); `qr` = número próprio pareado via QR code, sem API oficial (Onda 7, Bloco B).
+   */
+  connectionMode: 'cloud_api' | 'qr';
+  /** Quando o termo de risco do QR foi aceito. `null` = nunca aceito. Só relevante para `qr`. */
+  acceptedTermsAt: IsoDateTime | null;
+}
+
+/** Corpo de `POST /settings/channels/whatsapp/connect` quando o aceite ainda não foi dado. */
+export interface WhatsAppQrConnectRequest {
+  acceptTerms: true;
+}
+
+export type WhatsAppConnectionStatus = 'pairing' | 'connected' | 'disconnected';
+
+/** Resposta de `POST /settings/channels/whatsapp/connect` e `GET .../whatsapp/qr`. */
+export interface WhatsAppQrResponse {
+  /** Base64 PNG. `null` quando já conectado. */
+  qrcode: string | null;
+  status: WhatsAppConnectionStatus;
+  /** `null` quando não há QR pendente (ex.: já conectado). */
+  expiresInSeconds: number | null;
+}
+
+/** Resposta de `GET /settings/channels/whatsapp/status` — status do canal, sem QR. */
+export interface WhatsAppStatusResponse {
+  status: WhatsAppConnectionStatus;
+  phoneNumber: string | null;
+  connectedAt: IsoDateTime | null;
 }
 
 /** Como a conversa nova (fila) chega ao atendente. */

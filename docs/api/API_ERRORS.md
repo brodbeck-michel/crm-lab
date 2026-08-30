@@ -113,6 +113,19 @@ renderiza. "Não sei onde mostrar" nunca pode virar silêncio.
 | `CONVERSATION_ARCHIVED` | 409 | Enviar mensagem em conversa arquivada |
 | `MESSAGE_SEND_FAILED` | 502 | Canal externo (WhatsApp) falhou após retries |
 
+## Canais — conexão WhatsApp por QR (Onda 7)
+
+| Código | HTTP | Quando |
+|--------|------|--------|
+| `CHANNEL_QR_UNAVAILABLE` | 503 | `EVOLUTION_API_URL`, `EVOLUTION_API_KEY` ou `EVOLUTION_WEBHOOK_TOKEN` ausentes, ou o gateway não respondeu. Nas 4 rotas de `/settings/channels/whatsapp/*` (API_CONTRACTS.md §6.1) — nunca crash |
+
+## Convênios e preço por convênio (Onda 7)
+
+Sem código novo além do acima: `/insurances` e `/exams/:id/prices` reusam o catálogo geral —
+`NOT_FOUND` (convênio/exame de outro tenant), `CONFLICT` (nome de convênio duplicado),
+`VALIDATION_ERROR` (`details.fields`, ver API_CONTRACTS.md §4/§8) e `FORBIDDEN`
+(`details.requiredRoles`).
+
 ## Sistema
 
 | Código | HTTP | Quando |

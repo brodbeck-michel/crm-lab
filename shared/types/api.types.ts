@@ -57,6 +57,8 @@ export type ApiErrorCode =
   | 'CONVERSATION_ALREADY_ASSIGNED'
   | 'CONVERSATION_ARCHIVED'
   | 'MESSAGE_SEND_FAILED'
+  // Canais (Onda 7 — WhatsApp QR)
+  | 'CHANNEL_QR_UNAVAILABLE'
   // Sistema
   | 'RATE_LIMIT_EXCEEDED'
   | 'INTERNAL_ERROR';

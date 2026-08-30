@@ -549,6 +549,142 @@ interface OperationService {
 
 ---
 
+## 15. InsuranceService (Onda 7 — D-081/D-082)
+
+**Responsabilidade:** convênios do laboratório e preço por (exame, convênio). Dono das tabelas
+`insurances` (SCHEMA.md §18) e `exam_prices` (§19).
+
+```typescript
+interface InsuranceService {
+  list(ctx: TenantContext, filters: ListInsurancesQuery): Promise<ListInsurancesResponse>;
+  create(ctx: TenantContext, dto: CreateInsuranceRequest): Promise<Insurance>;   // manager/admin
+  update(ctx: TenantContext, id: string, dto: UpdateInsuranceRequest): Promise<Insurance>; // manager/admin
+
+  /** Uma linha por convênio COM preço cadastrado para este exame. */
+  listPrices(ctx: TenantContext, examId: string): Promise<ListExamPricesResponse>;
+
+  /** Upsert em lote. Semântica de PUT: linha ausente do corpo é removida. manager/admin. */
+  updatePrices(
+    ctx: TenantContext,
+    examId: string,
+    dto: UpdateExamPricesRequest,
+  ): Promise<ListExamPricesResponse>;
+
+  /**
+   * Preço efetivo de um exame para um convênio (ou particular, se `insuranceId` for `null`).
+   * Consumido por ExamCatalogService (para `effectivePrice`/`priceSource` de `GET /exams`) e
+   * por ProposalService (para o preço unitário no momento da criação). NÃO passa por cache
+   * (mesma razão de `resolveActiveByIds`, §5: preço nunca sai obsoleto).
+   */
+  resolvePrice(
+    tenantId: string,
+    examId: string,
+    insuranceId: string | null,
+  ): Promise<{ price: number; source: 'insurance' | 'private' }>;
+}
+```
+
+**Regras:**
+- `name` único por tenant → `CONFLICT` (409), mesma disciplina de `code` em `/exams`
+  (verificado antes do INSERT + `isUniqueViolation` na corrida).
+- Não há `DELETE`: desativar é `PATCH { isActive: false }` — propostas históricas podem
+  referenciar o convênio usado (mesmo padrão de `/exams`, D-004).
+- **"Particular" nunca é uma linha desta tabela** (D-082). `resolvePrice(tenantId, examId,
+  null)` devolve sempre `{ price: exam.pricePrivate, source: 'private' }`, sem consultar
+  `exam_prices`.
+- `resolvePrice(tenantId, examId, insuranceId)` com `insuranceId` não-nulo: busca
+  `exam_prices(exam_id, insurance_id)`; **linha ausente cai no particular**
+  (`{ price: exam.pricePrivate, source: 'private' }`) — o fallback nunca bloqueia o orçamento
+  (decisão 4 do spec da Onda 7). Convênio inexistente/inativo no tenant tem o mesmo
+  comportamento do fallback: o chamador (ProposalService) já validou `insuranceId` antes de
+  chegar aqui.
+- `updatePrices`: `price >= 0`; `insuranceId` precisa existir e estar `isActive: true` no
+  tenant, senão `VALIDATION_ERROR`; linha do corpo com `insuranceId` repetido →
+  `VALIDATION_ERROR`. Auditado (`update_exam_prices`, `entityType: "exam"`, `entityId` =
+  `examId`, com o array de preços em `newValues`).
+- `create`/`update` de convênio auditados (`create_insurance`/`update_insurance`).
+- Busca (`?search=`) por **nome e razão social**, mesma dobra de caixa/acento do catálogo
+  (`translate` no SQL — `unaccent` indisponível no PGlite).
+
+---
+
+## 16. Extensões para conexão WhatsApp por QR (Onda 7 — Bloco B)
+
+**Responsabilidade:** conectar o WhatsApp do próprio laboratório via QR code (Evolution API),
+sem depender da API oficial da Meta. Estende `WhatsAppService` (§11) e `ChannelSettingsService`
+(§13); nenhuma tabela nova além das colunas de `tenant_channels` (SCHEMA.md §15).
+
+```typescript
+/** Acréscimo a WhatsAppService (§11): fala com o gateway Evolution self-hosted. */
+interface EvolutionWhatsAppDriver {
+  /** Cria a instância no gateway se não existir (idempotente) e devolve o QR vigente. */
+  connect(tenantId: string): Promise<WhatsAppQrResponse>;
+
+  /** QR/estado atuais, sem criar nada. Usado pelo polling do frontend. */
+  getQrStatus(tenantId: string): Promise<WhatsAppQrResponse>;
+
+  /** Status do canal para o card (sem QR). */
+  getStatus(tenantId: string): Promise<WhatsAppStatusResponse>;
+
+  /** Logout da instância no gateway. */
+  disconnect(tenantId: string): Promise<void>;
+
+  /** Traduz MESSAGES_UPSERT/CONNECTION_UPDATE/QRCODE_UPDATED para os DTOs internos existentes
+   * (InboundMessageDTO[]) e para os efeitos de estado do canal. Nunca lança — payload malformado
+   * é ignorado por item, dentro de um try/catch por mensagem. */
+  handleWebhook(payload: unknown): Promise<InboundMessageDTO[]>;
+}
+
+/** Acréscimo a ChannelSettingsService (§13): aceite do termo de risco do QR. */
+interface ChannelSettingsServiceQrExtension {
+  /**
+   * Grava `accepted_terms_at`/`accepted_terms_by` + audit log `accept_whatsapp_qr_terms`.
+   * Idempotente: reaceitar apenas atualiza o timestamp.
+   */
+  acceptWhatsAppQrTerms(ctx: TenantContext): Promise<void>;
+}
+```
+
+**Regras:**
+- **Escolha do driver por tenant** vem de `tenant_channels.connection_mode`
+  (`cloud_api | qr`), resolvida no `WhatsAppCredentialsResolver` já existente (§11, D-024/D-032)
+  — não um `if` espalhado pelo `WhatsAppService.send`. `connection_mode` ausente (linha antiga,
+  ou tenant sem linha) = `cloud_api`, o comportamento de hoje.
+- **Cada tenant = uma instância** no gateway, nomeada `tenant-<tenantId>`, com apikey e webhook
+  próprios. A apikey da instância é gravada **cifrada** em `tenant_channels.api_token`
+  (AES-256-GCM via `secret-box.ts`, `CHANNEL_SECRET_KEY` — a mesma infra da D-076, reusada; não
+  uma segunda chave).
+- **`connect` exige aceite prévio** (`accepted_terms_at` gravado) **ou** `acceptTerms: true` no
+  corpo — a rota chama `acceptWhatsAppQrTerms` primeiro, então fala com o gateway. Sem os dois,
+  `VALIDATION_ERROR`.
+- `connect` é **idempotente**: reconectar reaproveita a instância existente no gateway
+  (`POST /instance/create` seguido de `GET /instance/connect`; instância já criada não
+  re-cria, só busca o QR).
+- **Salvaguarda anti-ban no envio:** o `EvolutionWhatsAppDriver` de envio (`send`, herdado de
+  §11) aplica espaçamento mínimo configurável entre mensagens por tenant (default ~1.5s +
+  jitter) na fila. **Não existe, e não entra**, nenhum endpoint de disparo em massa.
+- **`EVOLUTION_API_URL`, `EVOLUTION_API_KEY` e `EVOLUTION_WEBHOOK_TOKEN` ausentes** → toda a
+  superfície de QR (as 4 rotas de `/settings/channels/whatsapp/*` e o webhook) responde
+  `CHANNEL_QR_UNAVAILABLE` (503 nas rotas autenticadas; o webhook — sempre `200 {received:
+  true}` — apenas não processa e loga). Nunca crash no boot: a env var só é validada quando o
+  caminho é exercitado.
+- Webhook: autentica por **token estático** em tempo constante
+  (`crypto.timingSafeEqual` contra `EVOLUTION_WEBHOOK_TOKEN`), não HMAC — o gateway Evolution
+  não assina o corpo. Kill switch `is_active` verificado **antes** do token, mesma disciplina de
+  D-074.
+- `handleWebhook` reusa o caminho inteiro de `MessageService.createFromPatient` /
+  `ConversationRepository.findOrCreateByPhone` para `MESSAGES_UPSERT` — nenhum caminho de
+  ingestão paralelo.
+- **Versão da imagem fixada** (D-083, `docker-compose.yml`/`.prod.yml`, domínio infra) — este
+  service não depende de versão específica, só do contrato HTTP do gateway (`/instance/*`,
+  `/message/sendText/*`), que D-083 documenta como estável entre as duas versões aceitas.
+- **Teste:** driver e webhook cobertos por um **gateway fake** (servidor HTTP de teste que
+  responde como o Evolution) — mesmo padrão do driver mock atual de `WhatsAppService`. O
+  pareamento QR real com um número de verdade **não é testável em CI**; fica documentado como
+  verificação manual.
+
+---
+
 ## Convenções Transversais
 
 - Todo método recebe `tenantId` ou `TenantContext` como primeiro parâmetro — NUNCA lê de variável global

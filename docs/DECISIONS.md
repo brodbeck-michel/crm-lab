@@ -1027,6 +1027,113 @@ antigo de propósito — um lote menor passaria com o defeito).
 
 ---
 
+## 2026-08-30 — Contrato da Onda 7 (Agent-Docs-Onda7)
+
+Fase 0 do plano `docs/superpowers/plans/2026-08-30-onda-7.md`: convênios/TUSS no catálogo,
+conexão WhatsApp por QR (Evolution API) e fechamento de pendências. Nada de implementação — só
+contrato. Fonte: `docs/superpowers/specs/2026-08-30-onda-7-design.md` (aprovado pelo lead
+técnico em 2026-08-30).
+
+### D-081: Código TUSS/AMB nulo nunca é inventado
+**Decisão:** `exam_catalog.tuss_code` e `exam_catalog.amb_code` (SCHEMA.md §7) são `NULL` para
+todo exame cujo código não foi confirmado pela pesquisa registrada no spec da Onda 7 (Apêndice
+B). Nenhum código é adivinhado por padrão de nomenclatura, proximidade textual ou "parece
+certo". O mesmo vale para `insurances.ans_code`: convênio sem registro ANS confirmado (a
+maioria dos regionais) fica `NULL`, nunca um código de outro convênio ou um placeholder.
+**Motivo:** TUSS é código regulatório usado na guia SP/SADT de faturamento de convênio — um
+código errado não é um dado incompleto, é uma **guia rejeitada ou uma cobrança sobre o
+procedimento errado**. A tentação de inferir por proximidade (ex.: preencher hormônios pelos
+`40712xxx` de radioimunoensaio legado, que aparecem em tabelas antigas, em vez dos `40316xxx`
+vigentes) produziria dado com aparência de certo e consequência financeira real. `NULL` é
+honesto; um código plausível e errado não é.
+**Impacto:** db, api, ui. `POST/PATCH /exams` aceita `tussCode`/`ambCode` como `string | null`
+explícito — a tela não pré-preenche esses campos com sugestão nenhuma. O seed do catálogo (~60
+dos 106 exames com TUSS confirmado, Onda 7 — Fase 1) documenta caso a caso a fonte da pesquisa;
+o restante entra `NULL` com nota, não é lacuna a "resolver depois" por adivinhação.
+
+### D-082: "Particular" é ausência de convênio, não linha de `insurances`
+**Decisão:** não existe convênio "Particular" cadastrado em `insurances`. Uma proposta
+particular é `proposals.insurance_id = NULL` (SCHEMA.md §5); um exame sem preço de convênio
+cadastrado usa `exam_catalog.price_private` via fallback do `InsuranceService.resolvePrice`
+(SERVICES.md §15), nunca uma linha de `exam_prices` apontando para um convênio fantasma.
+**Motivo:** modelar "Particular" como convênio exigiria espelhar `price_private` dentro de
+`exam_prices` para manter os dois caminhos consistentes — criando uma **segunda origem** para o
+mesmo número (BUSINESS_RULES.md §5, "um número, uma origem"). Toda vez que `price_private`
+mudasse, a linha espelhada teria que mudar junto, e um esquecimento divergiria os dois preços
+sem nenhum erro visível. `NULL` como sentinela de "sem convênio" já é o padrão do projeto
+(BUSINESS_RULES.md §10) e não custa uma tabela.
+**Impacto:** db, api, ui. `CreateProposalRequest.insuranceId` é opcional; `null`/ausente = 
+particular. O seletor de convênio em `/budget/new` (Onda 7 — Fase 2) tem "Particular" como
+opção da UI, não como item vindo de `GET /insurances` — a tela sintetiza a opção, o backend
+nunca a serve.
+
+### D-083: Gateway Evolution separado do monolito; versão fixada com fallback documentado
+**Decisão:** WhatsApp sem API oficial da Meta usa **Evolution API** como gateway self-hosted,
+um serviço próprio no `docker-compose.yml`/`.prod.yml` (nunca lib embutida no backend Express).
+A imagem roda com versão **fixada**: a escolha operacional é a última **2.4.x** estável (com a
+ativação gratuita de licença da Evolution Foundation documentada como dependência operacional —
+heartbeat a cada ~30 min contra o servidor deles), e a **v2.3.7** (última versão sem exigência
+de ativação) fica registrada como **fallback**, pronta para uso se a dependência do servidor de
+licenças de terceiro virar um problema operacional (indisponibilidade deles derrubando conexões
+nossas). Baileys embutido e WAHA foram avaliados e descartados para este papel.
+**Motivo:** sessões de WhatsApp são **stateful e de vida longa** (o pareamento sobrevive entre
+deploys); o backend Express é stateless e reiniciável por design (D-007) — embutir a sessão no
+processo do backend acoplaria o ciclo de vida de dois recursos com requisitos opostos, e um
+redeploy de rotina derrubaria conexões pareadas. Gateway separado também isola o efeito de
+mudança de protocolo da Meta: quando ela muda, o conserto é trocar a tag da imagem, sem tocar em
+uma linha do código do CRM. A versão fixada (em vez de `latest`) evita que uma atualização
+automática do gateway mude comportamento sem aviso; o fallback documentado antes de precisar
+dele é o que torna a migração de versão uma decisão de infra rápida, não uma investigação sob
+pressão no dia em que o servidor de licenças cair.
+**Impacto:** infra, api, segurança. `EVOLUTION_API_URL`, `EVOLUTION_API_KEY` e
+`EVOLUTION_WEBHOOK_TOKEN` são env vars novas, validadas em `env.ts`; ausentes ⇒
+`CHANNEL_QR_UNAVAILABLE` (nunca crash no boot). Cada tenant é uma instância nomeada
+(`tenant-<tenantId>`) isolada por apikey própria, cifrada com a infra de D-076. Ver a nota de
+risco em `docs/architecture/SECURITY.md` (ToS/banimento, dado de saúde no gateway self-hosted).
+
+### D-084: `user.came_online` sai do contrato de WebSocket — execução registrada, não feita nesta onda
+**Decisão:** `websocket.types.ts` (`WsEventName`/`WsEventPayloads` de `@crm-lab/shared`) e o
+`case` correspondente em `ws.ts` do backend **devem** perder a entrada `user.came_online`. Esta
+tarefa (Fase 0, só contrato) **não executa** a remoção — o tipo compartilhado continua com o
+campo por enquanto. A remoção de tipo e de código acontece **atomicamente, no mesmo commit**,
+numa task de implementação da Fase 2 desta mesma onda (pendência C6 do spec).
+**Motivo:** o evento nunca teve emissor — nenhum caminho do backend publica
+`user.came_online`, então o contrato descrevia uma notificação que o frontend podia assinar e
+nunca receberia (contrato mentiroso). A ordem de execução muda em relação ao texto original do
+plano por decisão do coordenador: as 11 tasks da Fase 2 rodam com
+`npm run typecheck --workspace backend`/`--workspace frontend` como critério de pronto, e
+remover o campo do tipo compartilhado **antes** de remover o `case` que o lê quebraria o
+typecheck de toda tarefa que tocar nesses workspaces até a remoção de código acontecer — um
+custo desnecessário espalhado por várias tasks paralelas, por uma limpeza que uma tarefa só
+resolve num commit. Documentar a decisão agora (Fase 0) e adiar a execução (Fase 2) mantém a
+Regra Zero (o contrato final está registrado desde já) sem quebrar o critério de pronto das
+tasks intermediárias.
+**Impacto:** api, ui, docs. Se presença de usuário voltar a ser feature, o evento retorna junto
+com o service que o emite — não como campo solto no tipo. `API_CONTRACTS.md` "WebSocket Events"
+(exemplo `socket.on('user.came_online', ...)`) também será atualizado no commit que executa a
+remoção, fora do escopo desta Fase 0.
+
+### D-085: `message` de `POST /proposals` sai do contrato — execução registrada, não feita nesta onda
+**Decisão:** `CreateProposalResponse.message` (`shared/types/proposal.types.ts`) e a linha
+correspondente em `proposal.service.ts`/`proposal.routes.ts` **devem** ser removidas — é a
+pendência C7 do spec da Onda 7. Esta tarefa (Fase 0, só contrato) **não executa** a remoção — o
+tipo compartilhado continua com o campo opcional por enquanto, como API_CONTRACTS.md §"Envelope
+de resposta" já documentava ("é o último texto de UI em pt-BR que sai do backend"). A remoção de
+tipo e de código acontece **atomicamente, no mesmo commit**, numa task de implementação da Fase
+2 desta mesma onda (`Agent-Fix-Pendencias`).
+**Motivo:** o mesmo da D-084, aplicado ao mesmo padrão de campo — texto de interface em pt-BR
+vindo do backend é i18n do frontend (D-070), e `approvalStatus` já carrega toda a informação que
+`message` descreve em prosa. A ordem de execução muda pela mesma razão da D-084: remover o
+campo do tipo compartilhado antes de remover o código que o produz quebraria
+`npm run typecheck --workspace backend` de qualquer task da Fase 2 que toque
+`proposal.service.ts` antes da limpeza — custo espalhado por tarefas paralelas para uma limpeza
+que uma tarefa só resolve num commit.
+**Impacto:** api, ui, docs. `API_CONTRACTS.md` §3 (`POST /proposals`) e a nota na seção
+"Envelope de resposta" também serão atualizados no commit que executa a remoção, fora do escopo
+desta Fase 0.
+
+---
+
 ## Template para novas decisões
 
 ```

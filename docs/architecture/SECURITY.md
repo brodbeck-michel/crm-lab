@@ -73,11 +73,66 @@ CREATE POLICY tenant_isolation ON conversations
   instalação. Coluna `NULL` = nunca configurou (cai na env var); `''` = revogado (recusa tudo).
   Ver a emenda de D-073.
 
+## Conexão WhatsApp por QR (Evolution API, Onda 7 — Bloco B)
+
+**Risco aceito, não mitigado por completo — decisão de produto consciente (lead técnico,
+2026-08-30, D-083).** Conectar o número do próprio laboratório sem a API oficial da Meta viola
+os Termos de Serviço do WhatsApp e pode resultar em **banimento permanente do número** — a
+Meta detecta e bane automações não oficiais, sem aviso prévio nem recurso. Não há mitigação
+técnica que elimine esse risco; as salvaguardas abaixo reduzem a chance e limitam o dano, elas
+não o removem.
+
+**Salvaguardas obrigatórias (registradas em `docs/DECISIONS.md`):**
+- **Termo de aceite explícito e auditado.** `POST /settings/channels/whatsapp/connect` exige
+  aceite prévio (checkbox na UI) antes de criar a instância; grava `accepted_terms_at`/
+  `accepted_terms_by` em `tenant_channels` (SCHEMA.md §15) **e** audit log
+  `accept_whatsapp_qr_terms` — dois registros independentes do mesmo fato, um para a tela
+  consultar sem ir ao audit log, outro para a trilha imutável. O termo lista: risco de
+  banimento permanente, violação dos ToS, recomendação de número dedicado (não o pessoal),
+  necessidade de abrir o app no celular a cada ~14 dias, e que as mensagens transitam pelo
+  gateway do CRM.
+- **Rate-limit de envio.** Espaçamento mínimo configurável entre mensagens por tenant
+  (default ~1.5s + jitter), aplicado na fila de envio (`QueueService`, D-011) — reduz o padrão
+  de tráfego que a detecção antiautomação da Meta reconhece.
+- **Sem disparo em massa.** Nenhum endpoint de broadcast/campanha existe, e nenhum entra nesta
+  onda nem em ondas futuras sem decisão própria — é o uso que mais aproxima o padrão de tráfego
+  do de um bot de spam.
+- **A UI não distingue banimento de desconexão voluntária** (SERVICES.md §16): o evento
+  `loggedOut` do gateway cobre os dois casos e o contrato não tenta diferenciá-los — o termo de
+  aceite é o lugar onde o risco é comunicado, não uma mensagem de erro que tentaria adivinhar a
+  causa.
+
+**Dado de saúde no gateway self-hosted.** O gateway Evolution roda **dentro da nossa
+infraestrutura** (Docker, `docker-compose.yml`/`.prod.yml` — nunca um SaaS de terceiro), então
+nenhuma mensagem de paciente sai do nosso perímetro por causa dele. Ainda assim, dois pontos
+exigem atenção: (1) **a cifra fim-a-fim do WhatsApp termina no dispositivo vinculado** — o
+celular que escaneou o QR — e não no gateway; do ponto de vista do CRM, o texto das mensagens
+trafega em claro entre o gateway e o backend, exatamente como já acontece com a API oficial da
+Meta hoje (nenhuma mudança de superfície nesse ponto, só de operador do endpoint). (2) o gateway
+é **stateful** (sessão do WhatsApp de vida longa) e guarda localmente o que a Evolution precisa
+para manter o pareamento — por isso ele não é multi-tenant "de graça": cada laboratório é uma
+**instância nomeada** (`tenant-<tenantId>`) isolada por apikey própria, e a apikey é a fronteira
+de acesso entre tenants dentro do gateway.
+- **apikey por instância cifrada em repouso**: gravada em `tenant_channels.api_token` com a
+  **mesma infra** de D-076 (AES-256-GCM, `CHANNEL_SECRET_KEY`) — não uma segunda chave nem um
+  segredo em claro novo.
+- **Webhook autenticado por token estático** em tempo constante
+  (`crypto.timingSafeEqual` contra `EVOLUTION_WEBHOOK_TOKEN`), não HMAC — o gateway Evolution
+  não assina o corpo, então o token é a única defesa contra injeção de mensagem falsa; kill
+  switch `is_active` verificado **antes** do token (D-074).
+- **Dependência do servidor de licenças da Evolution Foundation** (versões ≥ 2.4.0, heartbeat
+  periódico contra o servidor deles): versão da imagem **fixada** para reduzir a superfície de
+  mudança inesperada; a v2.3.7 (última sem exigência de ativação) fica documentada como
+  fallback operacional se essa dependência externa virar problema (D-083). Trocar a imagem é
+  configuração de infra, sem tocar no código do CRM — o driver fala o mesmo contrato HTTP
+  (`/instance/*`, `/message/sendText/*`) nas duas versões.
+
 ## Segredos — onde cada um mora
 
 | Segredo | Onde | Forma |
 |---------|------|-------|
 | `JWT_SECRET`, `JWT_REFRESH_SECRET`, `CHANNEL_SECRET_KEY` | env var | claro (nunca no banco, nunca em log — `safeEnv()`) |
+| `EVOLUTION_API_KEY` (admin do gateway), `EVOLUTION_WEBHOOK_TOKEN` (Onda 7) | env var | claro. Ausência desliga a superfície de QR (`CHANNEL_QR_UNAVAILABLE`), nunca crash |
 | `users.password_hash` | banco | hash (bcrypt) |
 | `refresh_tokens.token_hash` | banco | hash (SCHEMA.md §14) |
 | `tenant_channels.api_token`, `tenant_channels.webhook_secret` | banco | **cifrado** AES-256-GCM com `CHANNEL_SECRET_KEY` (D-076) |

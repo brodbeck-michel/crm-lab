@@ -1698,8 +1698,12 @@ UI exibir o badge "particular".
 históricas referenciam o exame (D-004).
 
 A chave de cache da listagem (`exams:<tenantId>:list:<filtros>`) incorpora `insuranceId`;
-mutação de `exam_prices` ou `insurances` invalida o mesmo prefixo `exams:<tenantId>:` que
-mutação de `exam_catalog` já invalida.
+mutação de `exam_prices` (via `upsertPrices`) invalida o mesmo prefixo `exams:<tenantId>:` que
+mutação de `exam_catalog` já invalida. Mutação de `insurances` **não** invalida esse prefixo:
+`effectivePrice` deriva só de `exam_prices` e de `exam_catalog.price_private` — o estado
+(`isActive`) do convênio não entra no cálculo da listagem, só no caminho de escrita de
+`upsertPrices` (que recusa `insuranceId` inativo). Fazer `InsuranceService` invalidar o
+catálogo seria invalidação sem efeito.
 
 **Dois consumidores, dois usos das MESMAS chaves — o contrato não muda para nenhum** (D-080):
 `/catalog` é tabela e TROCA de página (`?page=2` na URL); o seletor de `/budget/new` ACUMULA

@@ -49,9 +49,29 @@ const optionalText = (max: number) =>
 /** NUMERIC(12,2): dinheiro decimal no fio, nunca string formatada (regra 9). */
 const money = z.number().finite().nonnegative().max(9_999_999_999);
 
+/**
+ * String opcional que vira `null` quando vazia — formulario HTML manda `''`
+ * para campo esvaziado (Task 7 constroi a tela de TUSS/AMB/material sobre
+ * este contrato), e `''` != "nao informado" no dominio: os dois significam a
+ * mesma coisa e o cliente nao deveria ter que saber disso. `undefined`
+ * continua distinto (chave ausente no PATCH = preserva o valor atual).
+ */
+function emptyStringToNull(max: number) {
+  return z
+    .string()
+    .trim()
+    .max(max)
+    .nullish()
+    .transform((value) => {
+      if (value === undefined) return undefined;
+      if (value === null || value.length === 0) return null;
+      return value;
+    });
+}
+
 /** Codigo TUSS/AMB nao confirmado e `null`, nunca inventado (D-081). */
-const codeField = z.string().trim().min(1).max(20).nullish();
-const materialField = z.string().trim().min(1).max(255).nullish();
+const codeField = emptyStringToNull(20);
+const materialField = emptyStringToNull(255);
 /** `synonyms` substitui o conjunto inteiro (semantica de PUT sobre a colecao filha). */
 const synonymsField = z.array(z.string().trim().min(1).max(255)).max(20).optional();
 

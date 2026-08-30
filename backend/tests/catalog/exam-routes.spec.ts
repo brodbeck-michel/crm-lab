@@ -336,6 +336,24 @@ describe('/api/v1/exams', () => {
       expect(exam.material).toBeNull();
       expect(exam.synonyms).toEqual([]);
     });
+
+    it('tussCode/ambCode/material vazio (string) vira null, nunca VALIDATION_ERROR', async () => {
+      // Formulario HTML manda '' para campo esvaziado (Task 7 constroi essa
+      // tela em cima deste contrato) — '' e "nao informado" sao a mesma coisa.
+      const tenant = await createTenant();
+      const manager = await createUser({ tenantId: tenant.id, role: 'manager' });
+
+      const response = await app.agent
+        .post('/api/v1/exams')
+        .set(app.auth(manager))
+        .send({ ...payload, code: 'VAZIO1', tussCode: '', ambCode: '', material: '' })
+        .expect(201);
+
+      const exam = response.body as Exam;
+      expect(exam.tussCode).toBeNull();
+      expect(exam.ambCode).toBeNull();
+      expect(exam.material).toBeNull();
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -420,6 +438,32 @@ describe('/api/v1/exams', () => {
         .send({ pricePrivate: 22 })
         .expect(200);
       expect((preserved.body as Exam).synonyms).toEqual(['colesterol bom']);
+    });
+
+    it('PATCH com tussCode vazio grava null e devolve 200 (limpar campo pela tela)', async () => {
+      const tenant = await createTenant();
+      const manager = await createUser({ tenantId: tenant.id, role: 'manager' });
+      const created = await app.agent
+        .post('/api/v1/exams')
+        .set(app.auth(manager))
+        .send({
+          name: 'Hemograma',
+          code: 'HEMTUSS1',
+          pricePrivate: 40,
+          priceInsurance: 30,
+          tussCode: '40304361',
+        })
+        .expect(201);
+      const examId = (created.body as Exam).id;
+      expect((created.body as Exam).tussCode).toBe('40304361');
+
+      const response = await app.agent
+        .patch(`/api/v1/exams/${examId}`)
+        .set(app.auth(manager))
+        .send({ tussCode: '' })
+        .expect(200);
+
+      expect((response.body as Exam).tussCode).toBeNull();
     });
 
     it('nao existe DELETE /exams/:id', async () => {

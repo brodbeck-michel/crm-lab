@@ -158,7 +158,9 @@ export class ExamCatalogService {
    * service so para `getByIds`/`resolveActiveByIds`/`list` — caminhos que
    * nunca escrevem preco e por isso nunca precisam de auditoria. Exigir o
    * parametro quebraria a compilacao de todo consumidor que so le o catalogo.
-   * So `upsertPrices` (dono da escrita auditada) depende dele.
+   * So `upsertPrices` (dono da escrita auditada) depende dele — e RECUSA a
+   * escrita se `audit` nao foi passado (CLAUDE.md regra 7), em vez de gravar
+   * preco sem rastro. Opcional no tipo, obrigatorio no caminho de escrita.
    */
   constructor(
     private readonly repository: ExamRepository,
@@ -369,11 +371,20 @@ export class ExamCatalogService {
       throw new BusinessError('VALIDATION_ERROR', { fields });
     }
 
+    // CLAUDE.md regra 7: acao critica gera audit log — nunca so "se tiver
+    // audit". `audit` e opcional no construtor so para consumidores que NUNCA
+    // escrevem preco (ex.: ProposalService, que so le catalogo); quem chega
+    // aqui sem audit configurado tem um bug de wiring, e a escrita recusa em
+    // vez de gravar preco sem rastro.
+    if (!this.audit) {
+      throw new Error('ExamCatalogService sem AuditService nao pode escrever preco (upsertPrices)');
+    }
+
     const oldPrices = await this.repository.findPrices(ctx.tenantId, examId);
     const updated = await this.repository.upsertPrices(ctx.tenantId, examId, dto.prices);
     await this.invalidate(ctx.tenantId);
 
-    await this.audit?.record(ctx, {
+    await this.audit.record(ctx, {
       action: 'update_exam_prices',
       entityType: 'exam',
       entityId: examId,

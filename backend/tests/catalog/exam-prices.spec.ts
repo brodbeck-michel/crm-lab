@@ -268,6 +268,28 @@ describe('preco por convenio', () => {
     await expect(examService.listPrices(contextOf(tenant.id, 'attendant'), exam.id)).resolves.toEqual([]);
   });
 
+  it('service SEM AuditService recusa upsertPrices — nunca grava preco sem rastro (CLAUDE.md regra 7)', async () => {
+    const tenant = await createTenant();
+    const ctx = contextOf(tenant.id, 'manager');
+    // Instanciado sem o 3o parametro — o caminho que o ProposalService (Task 4)
+    // usa, mas que NUNCA deveria chegar em upsertPrices.
+    const serviceSemAudit = new ExamCatalogService(new ExamRepository(db), new MemoryCache());
+    const exam = await serviceSemAudit.create(ctx, {
+      name: 'Colesterol Total',
+      code: 'COLTOT1',
+      pricePrivate: 25,
+      priceInsurance: 18,
+    });
+    const insurance = await insuranceService.create(ctx, { name: 'Amil', type: 'medicina_grupo' });
+
+    await expect(
+      serviceSemAudit.upsertPrices(ctx, exam.id, { prices: [{ insuranceId: insurance.id, price: 20 }] }),
+    ).rejects.toThrow(/AuditService/);
+
+    // Nada foi gravado: a recusa acontece ANTES da escrita em exam_prices.
+    expect(await serviceSemAudit.listPrices(ctx, exam.id)).toEqual([]);
+  });
+
   it('upsertPrices gera audit log update_exam_prices e invalida o cache de listagem', async () => {
     const tenant = await createTenant();
     const user = await createUser({ tenantId: tenant.id, role: 'admin' });

@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import type { ProposalStatus, LossReason } from '@crm-lab/shared';
 import { useProposalDetail, useUpdateProposalStatus } from '@/api/proposals';
+import { useInsuranceList } from '@/api/insurances';
 import { Modal, MoneyDisplay } from '@/components/shared';
+import { Chip } from '@/components/ui';
 import ItemsList from './ItemsList';
 import DiscountSection from './DiscountSection';
 import ApprovalAlert from './ApprovalAlert';
@@ -17,11 +19,22 @@ interface ProposalModalProps {
 export default function ProposalModal({ proposalId, onClose }: ProposalModalProps) {
   const { data: proposal, isLoading } = useProposalDetail(proposalId);
   const updateStatus = useUpdateProposalStatus();
+  // Sem `active: true`: uma proposta pode referenciar um convênio já
+  // desativado, e o nome ainda precisa resolver.
+  const { data: insurancesData } = useInsuranceList({ limit: 100 });
   const [showLostForm, setShowLostForm] = useState(false);
 
   if (isLoading || !proposal) {
     return null;
   }
+
+  // `Proposal`/`ProposalDetail` não embutem o nome do convênio (só o id) —
+  // resolvido aqui via `useInsuranceList`. Enquanto a lista carrega, mostra
+  // um rótulo genérico em vez de nada (ajuste de UX menor, não bloqueante).
+  const insuranceName = proposal.insuranceId
+    ? (insurancesData?.insurances.find((insurance) => insurance.id === proposal.insuranceId)
+        ?.name ?? 'Convênio')
+    : 'Particular';
 
   const handleChangeStatus = (newStatus: ProposalStatus) => {
     updateStatus.mutate({ proposalId, status: newStatus });
@@ -40,7 +53,12 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
     <Modal open onClose={onClose} title={proposal.patientName || 'Proposta'}>
       <div className="space-y-xl">
         <div className="space-y-lg">
-          <ItemsList items={proposal.items} />
+          <div className="flex items-center gap-sm">
+            <span className="text-caption text-neutral-600">Convênio</span>
+            <Chip tone="inactive">{insuranceName}</Chip>
+          </div>
+
+          <ItemsList items={proposal.items} insuranceId={proposal.insuranceId} />
 
           <DiscountSection
             discountPercent={proposal.discountPercent}

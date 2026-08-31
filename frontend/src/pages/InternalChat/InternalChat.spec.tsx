@@ -148,6 +148,10 @@ function proposal(overrides: Partial<ProposalDetail> = {}): ProposalDetail {
     updatedAt: '2026-08-23T09:50:00Z',
     closedAt: null,
     ...overrides,
+    // `overrides` é `Partial<ProposalDetail>`: `insuranceId` chega opcional
+    // (`string | null | undefined`), mas o tipo exige `string | null`. Sem
+    // esta linha depois do spread, o `undefined` vaza pro retorno.
+    insuranceId: overrides.insuranceId ?? null,
   };
 }
 

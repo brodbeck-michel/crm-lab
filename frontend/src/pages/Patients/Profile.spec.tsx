@@ -143,6 +143,7 @@ const proposalsResponse: ListProposalsResponse = {
       createdAt: '2026-08-23T14:40:00.000Z',
       updatedAt: '2026-08-23T15:00:00.000Z',
       closedAt: null,
+      insuranceId: null,
     },
   ],
   pagination: { page: 1, limit: 12, total: 1, totalPages: 1 },

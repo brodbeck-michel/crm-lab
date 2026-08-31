@@ -86,7 +86,7 @@ function renderCatalog(onAddItem = vi.fn()) {
   });
   render(
     <QueryClientProvider client={queryClient}>
-      <CatalogSegments onAddItem={onAddItem} />
+      <CatalogSegments insuranceId={null} onInsuranceChange={() => {}} onAddItem={onAddItem} />
     </QueryClientProvider>,
   );
   return onAddItem;
@@ -136,7 +136,7 @@ describe('CatalogSegments — alcance do catálogo (D-080)', () => {
     expect(screen.queryByRole('button', { name: 'Carregar mais' })).not.toBeInTheDocument();
 
     await user.click(screen.getByText('Exame 54'));
-    expect(onAddItem).toHaveBeenCalledWith('exam-54', 'Exame 54', 64);
+    expect(onAddItem).toHaveBeenCalledWith('exam-54', 'Exame 54', 64, 'private');
   });
 
   it('a busca vai para o servidor — alcança exame que nunca esteve na tela', async () => {
@@ -159,6 +159,6 @@ describe('CatalogSegments — alcance do catálogo (D-080)', () => {
     expect(get).toHaveBeenCalledWith('/exams', expect.objectContaining({ search: 'EX54' }));
 
     await user.click(screen.getByText('Exame 54'));
-    expect(onAddItem).toHaveBeenCalledWith('exam-54', 'Exame 54', 64);
+    expect(onAddItem).toHaveBeenCalledWith('exam-54', 'Exame 54', 64, 'private');
   });
 });

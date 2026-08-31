@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useCreateProposal } from '@/api/proposals';
 import { useAuthStore } from '@/stores/auth.store';
-import { Button } from '@/components/ui';
+import { Button, Chip } from '@/components/ui';
 import DiscountSection from '@/components/proposal/DiscountSection';
 import { MoneyDisplay } from '@/components/shared/MoneyDisplay';
 import { calculateTotal } from '@crm-lab/shared';
@@ -11,17 +11,21 @@ interface BudgetItem {
   examName: string;
   unitPrice: number;
   quantity: number;
+  priceSource: 'insurance' | 'private';
 }
 
 interface SummaryColumnProps {
   conversationId?: string;
   items: BudgetItem[];
+  /** Convênio da proposta em montagem (D-082). `null` = particular. */
+  insuranceId: string | null;
   onRemoveItem: (examId: string) => void;
 }
 
 export default function SummaryColumn({
   conversationId,
   items,
+  insuranceId,
   onRemoveItem,
 }: SummaryColumnProps) {
   const user = useAuthStore((s) => s.user);
@@ -51,6 +55,7 @@ export default function SummaryColumn({
         quantity: item.quantity,
       })),
       discountPercent,
+      insuranceId,
     });
   };
 
@@ -75,6 +80,19 @@ export default function SummaryColumn({
                   </p>
                 </div>
                 <div className="flex items-center gap-sm flex-shrink-0">
+                  {/*
+                    Convênio selecionado mas ESTE item caiu no preço
+                    particular (sem tabela própria no convênio) — exceção que
+                    precisa ficar visível. Com `insuranceId` null tudo já é
+                    particular; o badge seria redundante.
+                  */}
+                  {insuranceId && item.priceSource === 'private' && (
+                    <span data-testid="price-source-badge">
+                      <Chip tone="inactive" title="Sem tabela para este convênio — preço particular">
+                        Particular
+                      </Chip>
+                    </span>
+                  )}
                   <MoneyDisplay value={item.unitPrice * item.quantity} />
                   <button
                     onClick={() => onRemoveItem(item.examId)}

@@ -1,18 +1,26 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { QueryClientProvider } from '@tanstack/react-query';
-import type { ProposalDetail, UpdateProposalStatusRequest } from '@crm-lab/shared';
+import type { ListInsurancesResponse, ProposalDetail, UpdateProposalStatusRequest } from '@crm-lab/shared';
 import { querySuccess, mutationIdle } from '@/test/query-mocks';
 import type { UpdateProposalStatusResponse } from '@/api/proposals';
 import ProposalModal from './ProposalModal';
 import * as proposalsApi from '@/api/proposals';
+import * as insurancesApi from '@/api/insurances';
 import { queryClient } from '@/api/query-client';
 
 vi.mock('@/api/proposals');
+vi.mock('@/api/insurances');
 
 describe('ProposalModal', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(insurancesApi.useInsuranceList).mockReturnValue(
+      querySuccess<ListInsurancesResponse>({
+        insurances: [],
+        pagination: { page: 1, limit: 100, total: 0, totalPages: 0 },
+      }),
+    );
   });
 
   it('renders items, discount, total, and history', () => {
@@ -29,6 +37,7 @@ describe('ProposalModal', () => {
           examName: 'Hemograma',
           quantity: 1,
           unitPrice: 50,
+          priceSource: 'private' as const,
         },
       ],
       discountPercent: 10,
@@ -46,6 +55,7 @@ describe('ProposalModal', () => {
       closedAt: null,
       createdAt: '2026-08-24T10:00:00Z',
       updatedAt: '2026-08-24T10:00:00Z',
+      insuranceId: null,
       history: [
         {
           status: 'novo_contato' as const,
@@ -101,6 +111,7 @@ describe('ProposalModal', () => {
       closedAt: null,
       createdAt: '2026-08-24T10:00:00Z',
       updatedAt: '2026-08-24T10:00:00Z',
+      insuranceId: null,
       history: [],
     };
 

@@ -2,12 +2,21 @@ import { useState } from 'react';
 import { useExamListInfinite } from '@/api/exams';
 import { Button, SearchInput, SegmentedControl } from '@/components/ui';
 import { MoneyDisplay } from '@/components/shared/MoneyDisplay';
+import InsuranceSelector from './InsuranceSelector';
 
 /** Mesmo default do backend (`docs/api/API_CONTRACTS.md` §4). */
 const PAGE_SIZE = 20;
 
 interface CatalogSegmentsProps {
-  onAddItem: (examId: string, examName: string, price: number) => void;
+  /** Convênio da proposta em montagem (Onda 7, D-082). `null` = particular. */
+  insuranceId: string | null;
+  onInsuranceChange: (insuranceId: string | null) => void;
+  onAddItem: (
+    examId: string,
+    examName: string,
+    price: number,
+    priceSource: 'insurance' | 'private'
+  ) => void;
 }
 
 /**
@@ -26,28 +35,44 @@ interface CatalogSegmentsProps {
  * páginas. Assim todo exame ativo é alcançável, com quantos exames o
  * laboratório tiver.
  */
-export default function CatalogSegments({ onAddItem }: CatalogSegmentsProps) {
+export default function CatalogSegments({
+  insuranceId,
+  onInsuranceChange,
+  onAddItem,
+}: CatalogSegmentsProps) {
   const [search, setSearch] = useState('');
   const [segment, setSegment] = useState<'catalog' | 'medical' | 'ai' | 'packages'>('catalog');
-  const [pricingMode, setPricingMode] = useState<'private' | 'insurance'>('private');
 
   const { data, isLoading, hasNextPage, isFetchingNextPage, fetchNextPage } = useExamListInfinite({
     active: true,
     search: search || undefined,
     limit: PAGE_SIZE,
+    insuranceId: insuranceId ?? undefined,
   });
 
   /** Todas as páginas já trazidas, na ordem em que vieram (`name ASC`). */
   const exams = data?.pages.flatMap((page) => page.exams) ?? [];
   const total = data?.pages[0]?.pagination.total ?? 0;
 
+  /**
+   * Sem convênio selecionado o preço é sempre o particular. Com convênio, o
+   * backend já devolve `effectivePrice`/`priceSource` — com fallback para o
+   * particular quando o exame não tem preço próprio na tabela do convênio
+   * (D-004, "fallback nunca bloqueia"). `unitPrice` aqui é só a prévia na
+   * tela: o backend recalcula os dois em `POST /proposals`.
+   */
   const handleAddExam = (examId: string, examName: string) => {
     const exam = exams.find((e) => e.id === examId);
-    if (exam) {
-      const price =
-        pricingMode === 'private' ? exam.pricePrivate : exam.priceInsurance;
-      onAddItem(examId, examName, price);
+    if (!exam) return;
+
+    if (!insuranceId) {
+      onAddItem(examId, examName, exam.pricePrivate, 'private');
+      return;
     }
+
+    const price = exam.effectivePrice ?? exam.pricePrivate;
+    const priceSource = exam.priceSource ?? 'private';
+    onAddItem(examId, examName, price, priceSource);
   };
 
   return (
@@ -65,14 +90,7 @@ export default function CatalogSegments({ onAddItem }: CatalogSegmentsProps) {
         onChange={(val) => setSegment(val as 'catalog' | 'medical' | 'ai' | 'packages')}
       />
 
-      <SegmentedControl
-        options={[
-          { label: 'Particular', value: 'private' },
-          { label: 'Convênio', value: 'insurance' },
-        ]}
-        value={pricingMode}
-        onChange={(val) => setPricingMode(val as 'private' | 'insurance')}
-      />
+      <InsuranceSelector value={insuranceId} onChange={onInsuranceChange} />
 
       <SearchInput
         placeholder="Buscar exame..."
@@ -101,13 +119,7 @@ export default function CatalogSegments({ onAddItem }: CatalogSegmentsProps) {
                   <p className="text-caption text-neutral-600">{exam.code}</p>
                 )}
               </div>
-              <MoneyDisplay
-                value={
-                  pricingMode === 'private'
-                    ? exam.pricePrivate
-                    : exam.priceInsurance
-                }
-              />
+              <MoneyDisplay value={exam.effectivePrice ?? exam.pricePrivate} />
             </button>
           ))}
 

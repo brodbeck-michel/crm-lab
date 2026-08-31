@@ -149,9 +149,22 @@ nunca "sem permissão" (não vazar existência).
 
 ### Coluna esquerda — Catálogo
 - Segmentado de 4 modos: [Catálogo | Pedido médico | IA | Pacotes]
-- Busca + lista de exames com preço (toggle Particular/Convênio — segmentado)
-- Clique adiciona ao resumo
-- Dados: `GET /exams?active=true` (20 por página, `useExamListInfinite`)
+- **Seletor de convênio (`InsuranceSelector`, Onda 7, D-082):** `Select` sobre
+  `useInsuranceList({ active: true })`, com "Particular" fixo no topo — nunca
+  vem da API, é o mapeamento local para `insuranceId: null` (a ausência de
+  convênio, não uma linha de `insurances`). Nasce em "Particular". Substituiu
+  o toggle local Particular/Convênio da Onda 6: aquele fixava o preço exibido
+  sem refletir o convênio de fato escolhido para a proposta — duas fontes de
+  verdade para o mesmo dado.
+- Busca + lista de exames com preço. Sem convênio selecionado, sempre
+  `pricePrivate`; com convênio, `GET /exams?insuranceId=` devolve
+  `effectivePrice`/`priceSource` por exame (fallback para `pricePrivate`/
+  `'private'` quando o exame não tem preço próprio no convênio — "fallback
+  nunca bloqueia", D-004) e a lista mostra `effectivePrice`
+- Clique adiciona ao resumo, carregando também o `priceSource` do exame
+- Trocar o convênio refaz a busca (`insuranceId` faz parte da chave de cache
+  de `useExamListInfinite`)
+- Dados: `GET /exams?active=true[&insuranceId=]` (20 por página, `useExamListInfinite`)
 - **Alcance do catálogo — busca server-side + carga incremental (D-080).**
   Esta coluna também carregava só a primeira página: `useExamList` +
   `data.exams`, `limit: 50`. Num laboratório com mais de 50 exames ativos os
@@ -178,10 +191,16 @@ nunca "sem permissão" (não vazar existência).
 
 ### Coluna direita — Resumo
 - Itens adicionados (nome, preço, remover)
+- **Badge "Particular" por item (Onda 7, D-082):** só aparece quando HÁ
+  convênio selecionado E o item caiu no preço particular por fallback (sem
+  tabela própria no convênio) — a exceção que precisa ficar visível. Com
+  "Particular" selecionado (`insuranceId: null`) todo item já é particular; o
+  badge seria redundante e não aparece
 - Desconto: input % com validação visual contra `user.discountLimit`
   - Acima da alçada: aviso "Exigirá aprovação do gestor" (chip terracota)
 - **Total: rodapé fixo da coluna**, sempre derivado (nunca digitado)
-- Botão [Criar orçamento] → `POST /proposals` → redirect para conversa
+- Botão [Criar orçamento] → `POST /proposals` (com o `insuranceId` escolhido)
+  → redirect para conversa
 
 ---
 
@@ -207,7 +226,12 @@ nunca "sem permissão" (não vazar existência).
 **Aberto de:** pipeline, conversa, chat interno (anexo), ficha do paciente
 
 - Máx 720px, radius-lg, shadow-lg, backdrop escuro, rolagem interna, fecha por × e clique-fora (stopPropagation no cartão)
-- Conteúdo: itens + preços, desconto, total derivado, alerta de aprovação (se pending), histórico de estágios, ações
+- Conteúdo: **convênio da proposta** (chip — nome resolvido via
+  `useInsuranceList`, já que `Proposal`/`ProposalDetail` só trazem
+  `insuranceId`; "Particular" quando `null`), itens + preços (badge
+  "Particular" por item nas mesmas condições da coluna de resumo de
+  `/budget/new`), desconto, total derivado, alerta de aprovação (se pending),
+  histórico de estágios, ações
 - Ações (uma linha): [Mudar estágio ▾] à esquerda, [Marcar como ganho] (accent-2) à direita, [Marcar como perdido] fantasma ao fim
 - "Perdido" abre sub-form com motivo OBRIGATÓRIO (select: preço, silêncio, exame indisponível, prazo, outro)
 - Dados: `GET /proposals/:id`, `PATCH /proposals/:id/status`

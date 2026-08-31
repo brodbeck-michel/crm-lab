@@ -55,6 +55,7 @@ import { BusinessError, notFound } from '../http/errors.js';
 import type { AuditService } from './audit.service.js';
 import type { ExamCatalogService } from './exam-catalog.service.js';
 import type { ApprovalRequester } from './approval.service.js';
+import type { InsuranceRepository } from '../repositories/insurance.repository.js';
 import * as repo from '../repositories/proposal.repository.js';
 import type { ProposalRow } from '../repositories/proposal.repository.js';
 
@@ -98,6 +99,13 @@ export interface ProposalServiceDeps {
   examCatalog: ExamCatalogService;
   /** ApprovalService — injetado como interface para nao criar ciclo. */
   approvals: ApprovalRequester;
+  /**
+   * Onda 7: valida `insuranceId` em `create` (existe e esta ativo no tenant).
+   * `findById` ja roda sob `withTenant` — convenio de outro tenant e invisivel
+   * pelo RLS, entao "inexistente" e "de outro tenant" caem no mesmo `null`
+   * (API_CONTRACTS.md §3).
+   */
+  insurances: InsuranceRepository;
   /**
    * O MESMO cache que o AnalyticsService le. Toda mutacao de proposta muda
    * algum numero de relatorio, entao a mutacao invalida — ver
@@ -250,7 +258,7 @@ export class ProposalService {
    * -> auditoria. Nada de preco vindo do cliente em lugar nenhum.
    */
   async create(ctx: TenantContext, dto: CreateProposalRequest): Promise<CreateProposalResponse> {
-    const { db, examCatalog, audit, approvals } = this.deps;
+    const { db, examCatalog, audit, approvals, insurances } = this.deps;
 
     if (dto.items.length === 0 || dto.items.length > MAX_ITEMS) {
       throw new BusinessError('VALIDATION_ERROR', {
@@ -272,16 +280,34 @@ export class ProposalService {
       });
     }
 
+    // `insuranceId` (Onda 7): se enviado, precisa existir e estar ATIVO neste
+    // tenant (API_CONTRACTS.md §3) — convenio inexistente/de outro
+    // tenant/inativo e VALIDATION_ERROR, e nao chega a resolver preco nenhum.
+    const insuranceId = dto.insuranceId ?? null;
+    if (insuranceId !== null) {
+      const insurance = await insurances.findById(ctx.tenantId, insuranceId);
+      if (!insurance || !insurance.isActive) {
+        throw new BusinessError('VALIDATION_ERROR', {
+          fields: { insuranceId: 'Convênio inválido ou inativo' },
+        });
+      }
+    }
+
     // Precos do CATALOGO (sem cache), nunca do payload — BUSINESS_RULES §1.
+    // Quando `insuranceId` esta presente, `resolveActiveByIds` acrescenta
+    // `effectivePrice`/`priceSource` por exame, com fallback para o particular
+    // quando o convenio nao tem preco cadastrado — o fallback NUNCA bloqueia.
     const resolution = await examCatalog.resolveActiveByIds(
       ctx.tenantId,
       dto.items.map((item) => item.examId),
+      insuranceId ?? undefined,
     );
     if (resolution.invalidIds.length > 0) {
       throw new BusinessError('EXAM_NOT_FOUND_OR_INACTIVE', { examIds: resolution.invalidIds });
     }
 
-    // Snapshot de nome e preco no momento da criacao (D-004).
+    // Snapshot de nome, preco e origem do preco no momento da criacao (D-004,
+    // estendido pela Onda 7 com `priceSource`).
     const items = dto.items.map((item) => {
       const exam = resolution.byId.get(item.examId);
       if (!exam) throw new BusinessError('EXAM_NOT_FOUND_OR_INACTIVE', { examIds: [item.examId] });
@@ -289,7 +315,8 @@ export class ProposalService {
         examId: exam.id,
         examName: exam.name,
         quantity: item.quantity,
-        unitPrice: exam.pricePrivate,
+        unitPrice: exam.effectivePrice ?? exam.pricePrivate,
+        priceSource: exam.priceSource ?? 'private',
       };
     });
 
@@ -318,6 +345,7 @@ export class ProposalService {
         // Dentro da alcada: aprovada por si mesma (BUSINESS_RULES §2).
         approvedBy: withinLimit ? ctx.userId : null,
         approvedAt: withinLimit ? now : null,
+        insuranceId,
       });
 
       await repo.insertItems(tx, ctx.tenantId, id, items);
@@ -347,6 +375,7 @@ export class ProposalService {
           examName: item.examName,
           quantity: item.quantity,
           unitPrice: item.unitPrice,
+          priceSource: item.priceSource,
         })),
       },
     });

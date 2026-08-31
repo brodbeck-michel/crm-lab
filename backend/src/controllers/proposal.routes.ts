@@ -30,6 +30,7 @@ import { getContext } from '../http/context.js';
 import { denyPlatformOperator, requireAuth, requireRoles } from '../http/middleware/auth.js';
 import { validate, validated } from '../http/middleware/validate.js';
 import { ExamRepository } from '../repositories/exam.repository.js';
+import { InsuranceRepository } from '../repositories/insurance.repository.js';
 import { ExamCatalogService } from '../services/exam-catalog.service.js';
 import { createAuditService } from '../services/audit.service.js';
 import { createInternalChatService } from '../services/internal-chat.service.js';
@@ -71,6 +72,9 @@ export const createProposalSchema = z
       .min(1)
       .max(100),
     discountPercent: z.number().min(0).max(100).optional(),
+    // Onda 7: convenio da proposta. Ausente/`null` = particular. Imutavel apos
+    // a criacao — nao existe campo equivalente em `updateDiscountSchema`.
+    insuranceId: z.string().uuid().nullable().optional(),
   })
   .strict();
 
@@ -130,6 +134,8 @@ export function createProposalServices(deps: ApiModuleDeps): ProposalModuleServi
     approvals,
     // Mesmo cache do AnalyticsService: mutacao de proposta invalida relatorio.
     cache: deps.cache,
+    // Onda 7: valida `insuranceId` em `create` (existe e ativo no tenant).
+    insurances: new InsuranceRepository(deps.db),
   });
   return { proposals, approvals };
 }
@@ -160,6 +166,7 @@ export function createProposal(service: ProposalService): RequestHandler {
       conversationId: dto.conversationId,
       items: dto.items,
       ...(dto.discountPercent !== undefined ? { discountPercent: dto.discountPercent } : {}),
+      ...(dto.insuranceId !== undefined ? { insuranceId: dto.insuranceId } : {}),
     });
     res.status(201).json(created);
   });

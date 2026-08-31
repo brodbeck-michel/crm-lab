@@ -48,6 +48,8 @@ export interface ProposalRow {
   closed_at: unknown;
   created_at: unknown;
   updated_at: unknown;
+  /** Convenio da proposta. `null` = particular (Onda 7). Imutavel apos a criacao. */
+  insurance_id: string | null;
 }
 
 interface ProposalItemRow {
@@ -56,6 +58,8 @@ interface ProposalItemRow {
   exam_name: string;
   quantity: unknown;
   unit_price: unknown;
+  /** Origem do snapshot de preco (Onda 7). */
+  price_source: string;
 }
 
 interface HistoryRow {
@@ -75,7 +79,8 @@ const SELECT_PROPOSAL = `
          c.patient_name, c.patient_phone,
          p.status, p.discount_percent, p.total_price, p.reason_lost,
          p.approval_status, p.approved_by, a.name AS approved_by_name,
-         p.approved_at, p.sent_at, p.closed_at, p.created_at, p.updated_at
+         p.approved_at, p.sent_at, p.closed_at, p.created_at, p.updated_at,
+         p.insurance_id
     FROM proposals p
     JOIN conversations c ON c.id = p.conversation_id
     LEFT JOIN users u ON u.id = p.created_by
@@ -97,6 +102,7 @@ export function mapProposal(row: ProposalRow): Proposal {
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
     closedAt: toIsoOrNull(row.closed_at),
+    insuranceId: row.insurance_id,
   };
 }
 
@@ -107,6 +113,7 @@ export function mapItem(row: ProposalItemRow): ProposalItem {
     examName: row.exam_name,
     quantity: toNumber(row.quantity, 1),
     unitPrice: toNumber(row.unit_price),
+    priceSource: row.price_source as ProposalItem['priceSource'],
   };
 }
 
@@ -220,6 +227,8 @@ export interface ProposalInsert {
   approvalStatus: ApprovalStatus;
   approvedBy: string | null;
   approvedAt: string | null;
+  /** Convenio da proposta. `null` = particular (Onda 7). Imutavel apos a criacao. */
+  insuranceId: string | null;
 }
 
 export interface ProposalItemInsert {
@@ -227,14 +236,16 @@ export interface ProposalItemInsert {
   examName: string;
   quantity: number;
   unitPrice: number;
+  /** Origem do snapshot de preco (Onda 7 — fallback nunca bloqueia). */
+  priceSource: ProposalItem['priceSource'];
 }
 
 export async function insertProposal(tx: DbTx, input: ProposalInsert): Promise<string> {
   const result = await tx.query<{ id: string }>(
     `INSERT INTO proposals (tenant_id, conversation_id, created_by, status,
                             discount_percent, total_price, approval_status,
-                            approved_by, approved_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                            approved_by, approved_at, insurance_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      RETURNING id`,
     [
       input.tenantId,
@@ -246,6 +257,7 @@ export async function insertProposal(tx: DbTx, input: ProposalInsert): Promise<s
       input.approvalStatus,
       input.approvedBy,
       input.approvedAt,
+      input.insuranceId,
     ],
   );
   const row = result.rows[0];
@@ -272,8 +284,8 @@ export async function insertItems(
   for (const item of items) {
     await tx.query(
       `INSERT INTO proposal_items (tenant_id, proposal_id, exam_id, quantity,
-                                   unit_price, exam_name, "position")
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                                   unit_price, exam_name, "position", price_source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [
         tenantId,
         proposalId,
@@ -282,6 +294,7 @@ export async function insertItems(
         item.unitPrice,
         item.examName,
         position,
+        item.priceSource,
       ],
     );
     position += 1;
@@ -375,7 +388,7 @@ export async function findRowById(tx: DbTx, id: string): Promise<ProposalRow | n
 
 export async function findItems(tx: DbTx, proposalId: string): Promise<ProposalItem[]> {
   const result = await tx.query<ProposalItemRow>(
-    `SELECT id, exam_id, exam_name, quantity, unit_price
+    `SELECT id, exam_id, exam_name, quantity, unit_price, price_source
        FROM proposal_items WHERE proposal_id = $1
       ORDER BY "position" ASC, created_at ASC, id ASC`,
     [proposalId],

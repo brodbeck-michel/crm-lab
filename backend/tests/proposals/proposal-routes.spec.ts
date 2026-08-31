@@ -42,6 +42,7 @@ const DETAIL_KEYS = [
   'createdAt',
   'updatedAt',
   'closedAt',
+  'insuranceId',
 ].sort();
 
 describe('/api/v1/proposals', () => {

@@ -3,6 +3,7 @@ import type {
   ListAuditQuery,
   ListConversationsQuery,
   ListExamsQuery,
+  ListInsurancesQuery,
   ListPatientTimelineQuery,
   ListPatientsQuery,
   ListProposalsQuery,
@@ -54,6 +55,14 @@ export const queryKeys = {
   examsInfinite: (filters?: Omit<ListExamsQuery, 'page'>) =>
     ['exams', 'infinite', filters ?? {}] as const,
 
+  /** ['exam-prices', examId] — `GET /exams/:id/prices` (§4/§8, D-081/D-082). */
+  examPrices: (examId: string) => ['exam-prices', examId] as const,
+
+  /** ['insurances', filters] — `/settings/insurances` e o seletor de `/budget/new` (§8). */
+  insurances: (filters?: ListInsurancesQuery) => ['insurances', filters ?? {}] as const,
+  /** ['insurance', id] */
+  insurance: (id: string) => ['insurance', id] as const,
+
   /** ['analytics', period] */
   analytics: (period?: AnalyticsQuery) => ['analytics', period ?? {}] as const,
   /** ['analytics', 'pipeline'] — snapshot atual, sem período */
@@ -99,6 +108,7 @@ export const queryScopes = {
   proposals: ['proposals'] as const,
   proposal: ['proposal'] as const,
   exams: ['exams'] as const,
+  insurances: ['insurances'] as const,
   analytics: ['analytics'] as const,
   theme: ['theme'] as const,
   internalChat: ['internal-chat'] as const,

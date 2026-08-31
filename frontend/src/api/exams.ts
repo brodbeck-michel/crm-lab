@@ -1,8 +1,10 @@
 import type {
   CreateExamRequest,
   Exam,
+  ListExamPricesResponse,
   ListExamsQuery,
   ListExamsResponse,
+  UpdateExamPricesRequest,
   UpdateExamRequest,
 } from '@crm-lab/shared';
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -17,6 +19,13 @@ export const examsApi = {
   create: (body: CreateExamRequest) => http.post<Exam>('/exams', body),
 
   update: (id: string, body: UpdateExamRequest) => http.patch<Exam>(`/exams/${id}`, body),
+
+  /** `GET /exams/:id/prices` (§4/§8) — todos os papéis do tenant. */
+  prices: (id: string) => http.get<ListExamPricesResponse>(`/exams/${id}/prices`),
+
+  /** `PUT /exams/:id/prices` (§4/§8, manager/admin) — semântica de PUT: estado completo. */
+  updatePrices: (id: string, body: UpdateExamPricesRequest) =>
+    http.put<ListExamPricesResponse>(`/exams/${id}/prices`, body),
 };
 
 /* ── React Query Hooks ──────────────────────────────────────────────────── */
@@ -87,6 +96,33 @@ export function useUpdateExam() {
       return await examsApi.update(id, data);
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.exams() });
+    },
+  });
+}
+
+/** Preço do exame por convênio — aba "Preços por convênio" de `ExamModal`. */
+export function useExamPrices(examId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.examPrices(examId ?? ''),
+    queryFn: async () => {
+      return await examsApi.prices(examId as string);
+    },
+    enabled: !!examId,
+  });
+}
+
+export function useUpdateExamPrices() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: UpdateExamPricesRequest }) => {
+      return await examsApi.updatePrices(id, data);
+    },
+    onSuccess: (result, { id }) => {
+      queryClient.setQueryData(queryKeys.examPrices(id), result);
+      // `updatePrices` também muda `effectivePrice` do catálogo (§4) — mesmo
+      // prefixo que `useUpdateExam` invalida.
       queryClient.invalidateQueries({ queryKey: queryKeys.exams() });
     },
   });

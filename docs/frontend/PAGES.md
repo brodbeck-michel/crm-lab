@@ -18,6 +18,7 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 /internal-chat                → Chat Interno
 /settings/channels            → Canais & Equipe          (admin; gestor lê)
 /settings/operation           → Gestão da Operação        (gestor+)
+/settings/insurances          → Convênios                 (gestor+)
 /settings/users               → Usuários & Permissões     (admin)
 /settings/theme               → Personalização            (admin)
 /platform/tenants             → Laboratórios Clientes     (operador plataforma)
@@ -41,6 +42,7 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 | `/internal-chat` | attendant · manager · admin | sim |
 | `/settings/channels` | manager · admin | sim |
 | `/settings/operation` | manager · admin | sim |
+| `/settings/insurances` | manager · admin | sim |
 | `/settings/users` | admin | sim |
 | `/settings/theme` | admin | sim |
 | `/platform/tenants` | platform_operator | sim |
@@ -214,12 +216,22 @@ nunca "sem permissão" (não vazar existência).
 
 ## 7. Catálogo de Exames (`/catalog`)
 
-- Tabela: nome, código, preparo, prazo, preço particular, preço convênio, status
+- Tabela: nome, código, preparo, **TUSS, material**, prazo, preço particular, preço convênio, status
 - Regras de tabela: container com min-width + overflow-x, cabeçalho 11px caixa alta, valores à direita
 - Atendente: somente leitura. Gestor/Admin: criar/editar (modal)
 - **Paginação** (`Pagination`, 20 por página) com a página na URL (`?page=2`),
   mesma regra de `/proposals`. Buscar volta para a página 1.
 - Dados: `GET /exams`, `POST/PATCH /exams` (gestor+)
+- **Modal do exame (Onda 7 — D-081/D-082):** além dos campos anteriores, código TUSS
+  (tabela 22 TISS/ANS), código AMB legado e material de coleta — os três `null` quando não
+  confirmados, nunca inventados; sinônimos como chips removíveis (`exam_synonyms`, substituídos
+  por inteiro a cada gravação). Em **modo edição**, uma segunda aba "Preços por convênio" grava
+  o preço do exame por convênio (`ExamPricesTab`): grid convênio × preço, um `Input` por
+  convênio ativo, em branco = "sem preço específico — orçamento cai no particular"
+  (`priceSource: "private"`). Só existe em edição — não há `examId` para consultar em criação.
+- Dados da aba de preços: `GET /exams/:id/prices` (todos os papéis) ·
+  `PUT /exams/:id/prices` (gestor+) — semântica de PUT: convênio ausente do corpo tem o preço
+  **removido**, não preservado.
 
 ---
 
@@ -308,6 +320,23 @@ página) deixa de existir.
   servidor (D-021). A tela só formata ("há 1h30") — nunca subtrai datas para obter a espera
 - Sem cache no servidor: use `staleTime` curto e refetch ao focar a janela. Nada aqui é
   digitado ou configurável: é tudo derivado de conversas e propostas
+
+### Convênios (`/settings/insurances`) — gestor+ (Onda 7, D-081/D-082)
+- Dados: `GET /insurances` (todos os papéis do tenant) ·
+  `POST /insurances`, `PATCH /insurances/:id` (gestor+)
+- Tabela: nome, razão social, código ANS, tipo (`cooperativa | medicina_grupo | seguradora |
+  autogestao | especial`), status
+- Criar/editar (modal): nome, razão social, código ANS (`Select` para o tipo, `Toggle` para
+  ativo — o `Toggle` só aparece em edição, porque `POST` não aceita `isActive`)
+- **Sem `DELETE`:** desativar é `PATCH { isActive: false }` (mesmo padrão de `/catalog`) —
+  proposta antiga referencia o convênio usado, apagar quebraria o histórico
+- **"Particular" não é uma linha desta tabela** — é a ausência de convênio
+  (`insuranceId: null` em `POST /proposals`). O preço por (exame, convênio) fica na aba
+  "Preços por convênio" do modal do exame em `/catalog` (§7), não aqui
+- Botão "Novo Convênio" e a coluna de ações ficam **ausentes do DOM** para quem não é
+  manager/admin (mesmo padrão de `Settings/Channels.tsx`): não há controle de escrita a
+  desabilitar porque não existe nenhum — o servidor recusaria o `POST`/`PATCH` de qualquer
+  forma (403)
 
 ### Usuários & Permissões (`/settings/users`) — admin
 - Tabela de usuários: nome, email, papel, limite de desconto, status

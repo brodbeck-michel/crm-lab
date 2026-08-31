@@ -28,6 +28,16 @@ export default function ExamTable({ exams, canEdit, onEdit }: ExamTableProps) {
       render: (exam) => exam.preparation || '—',
     },
     {
+      key: 'tussCode',
+      header: 'TUSS',
+      render: (exam) => exam.tussCode || '—',
+    },
+    {
+      key: 'material',
+      header: 'Material',
+      render: (exam) => exam.material || '—',
+    },
+    {
       key: 'turnaroundHours',
       header: 'Prazo (h)',
       render: (exam) => exam.turnaroundHours || '—',
@@ -78,7 +88,7 @@ export default function ExamTable({ exams, canEdit, onEdit }: ExamTableProps) {
       columns={columns}
       rows={exams}
       rowKey={(exam) => exam.id}
-      minWidth={900}
+      minWidth={1100}
     />
   );
 }

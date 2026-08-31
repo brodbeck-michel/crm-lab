@@ -10,6 +10,7 @@ import Catalog from '@/pages/Catalog';
 import Analytics from '@/pages/Analytics';
 import ChannelsSettings from '@/pages/Settings/Channels';
 import OperationSettings from '@/pages/Settings/Operation';
+import Insurances from '@/pages/Settings/Insurances';
 import ThemeSettings from '@/pages/Settings/Theme';
 import UsersSettings from '@/pages/Settings/Users';
 import InternalChat from '@/pages/InternalChat';
@@ -69,6 +70,7 @@ export const appRoutes: RouteObject[] = [
             children: [
               { path: 'settings/channels', element: <ChannelsSettings /> },
               { path: 'settings/operation', element: <OperationSettings /> },
+              { path: 'settings/insurances', element: <Insurances /> },
             ],
           },
         ],

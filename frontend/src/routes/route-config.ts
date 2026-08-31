@@ -19,6 +19,7 @@ export type NavIcon =
   | 'chat'
   | 'channels'
   | 'operation'
+  | 'insurances'
   | 'users'
   | 'theme'
   | 'tenants'
@@ -93,6 +94,13 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requiredRoles: MANAGER_PLUS,
     inSidebar: true,
     icon: 'operation',
+  },
+  {
+    path: '/settings/insurances',
+    label: 'Convênios',
+    requiredRoles: MANAGER_PLUS,
+    inSidebar: true,
+    icon: 'insurances',
   },
   {
     path: '/settings/users',

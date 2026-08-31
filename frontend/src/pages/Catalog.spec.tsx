@@ -26,6 +26,11 @@ const mockExams: Exam[] = [
     isActive: true,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+    tussCode: '40304361',
+    ambCode: null,
+    material: 'Sangue — tubo tampa roxa (EDTA)',
+    source: 'manual',
+    synonyms: ['sangue completo'],
   },
 ];
 
@@ -210,6 +215,13 @@ describe('Catalog', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('tabela mostra coluna TUSS e material', () => {
+    renderPage();
+
+    expect(screen.getByText('40304361')).toBeInTheDocument();
+    expect(screen.getByText(/tubo tampa roxa/i)).toBeInTheDocument();
   });
 
   it('não mostra paginação quando cabe tudo em uma página', () => {

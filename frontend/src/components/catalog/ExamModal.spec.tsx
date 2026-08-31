@@ -38,6 +38,11 @@ describe('ExamModal', () => {
     isActive: true,
     createdAt: '2026-08-01T10:00:00Z',
     updatedAt: '2026-08-01T10:00:00Z',
+    tussCode: '40304361',
+    ambCode: null,
+    material: 'Sangue — tubo tampa roxa (EDTA)',
+    source: 'manual',
+    synonyms: ['sangue completo'],
   };
 
   beforeEach(() => {
@@ -74,5 +79,33 @@ describe('ExamModal', () => {
     render(<ExamModal exam={rowExam} onClose={mockOnClose} />);
 
     expect(vi.mocked(examsApi.useExamList)).not.toHaveBeenCalled();
+  });
+
+  it('preenche TUSS, AMB e material com o exame recebido', async () => {
+    render(<ExamModal exam={rowExam} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Código TUSS')).toHaveValue('40304361');
+      expect(screen.getByLabelText('Código AMB')).toHaveValue('');
+      expect(screen.getByLabelText('Material')).toHaveValue('Sangue — tubo tampa roxa (EDTA)');
+    });
+  });
+
+  it('lista os sinônimos do exame como chips removíveis', async () => {
+    render(<ExamModal exam={rowExam} onClose={mockOnClose} />);
+
+    expect(await screen.findByText('sangue completo ×')).toBeInTheDocument();
+  });
+
+  it('modal do exame tem aba "Preços por convênio" em modo edição', () => {
+    render(<ExamModal exam={rowExam} onClose={mockOnClose} />);
+
+    expect(screen.getByRole('tab', { name: /preços por convênio/i })).toBeInTheDocument();
+  });
+
+  it('modo de criação não mostra a aba de preços (não há exame ainda)', () => {
+    render(<ExamModal onClose={mockOnClose} />);
+
+    expect(screen.queryByRole('tab', { name: /preços por convênio/i })).not.toBeInTheDocument();
   });
 });

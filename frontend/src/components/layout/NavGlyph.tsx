@@ -13,6 +13,7 @@ const PATHS: Record<NavIcon, string> = {
   chat: 'M4 4h16v11H9l-5 4V4z',
   channels: 'M4 7h16M4 12h16M4 17h10',
   operation: 'M12 3v4M12 17v4M3 12h4M17 12h4M7 7l3 3M17 17l-3-3M7 17l3-3M17 7l-3 3',
+  insurances: 'M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4zM9 12l2 2 4-4',
   users: 'M8 11a3 3 0 100-6 3 3 0 000 6zM2 20c0-3 3-5 6-5s6 2 6 5M17 11a3 3 0 100-6M16 15c3 0 6 2 6 5',
   theme: 'M12 3a9 9 0 100 18h2a3 3 0 003-3 3 3 0 013-3 3 3 0 003-3 9 9 0 00-11-9z',
   tenants: 'M4 20V8l7-4 7 4v12M9 20v-5h6v5M4 20h16',

@@ -4,16 +4,18 @@ import type {
   ChannelSettingsResponse,
   ChannelTeamMember,
   DistributionMode,
+  TenantChannel,
   UpdateChannelSettingsRequest,
   UserRole,
   WeekDay,
 } from '@crm-lab/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { isApiError, queryKeys, settingsApi } from '@/api';
+import { isApiError, queryKeys, settingsApi, useWhatsAppDisconnect, useWhatsAppStatus } from '@/api';
 import { PageContainer, PageHeader } from '@/components/layout';
-import { DataTable, EmptyState } from '@/components/shared';
+import { DataTable, EmptyState, Modal } from '@/components/shared';
 import type { DataTableColumn } from '@/components/shared';
-import { Button, Chip, Input, TextArea, Toggle } from '@/components/ui';
+import { WhatsAppConnectModal } from '@/components/settings/WhatsAppConnectModal';
+import { Button, Chip, Input, TextArea, Toggle, useToast } from '@/components/ui';
 import { useAuthStore } from '@/stores';
 import {
   CHANNEL_LABEL,
@@ -82,6 +84,124 @@ function Section({ title, description, children }: SectionProps) {
       </div>
       {children}
     </section>
+  );
+}
+
+interface WhatsAppQrConnectionProps {
+  /** `undefined` quando o laboratório ainda não tem linha `whatsapp` em `settings.channels`. */
+  channel: TenantChannel | undefined;
+}
+
+/**
+ * Conexão por QR (Onda 7 — Bloco B, `docs/api/API_CONTRACTS.md` §6.1) —
+ * alternativa à API oficial da Meta dentro do MESMO cartão do canal WhatsApp.
+ * As 4 rotas de QR são **admin apenas**: este bloco só é montado dentro do
+ * ramo `canEdit` do cartão (ver abaixo), então nem o `GET /status` sai para
+ * quem não é admin — a UI esconde, o servidor recusaria de qualquer forma.
+ *
+ * Desconectar NÃO desativa o canal (`is_active` intocado) — são dois
+ * controles distintos, por isso a confirmação abaixo é explícita sobre isso
+ * em vez de deixar o admin supor que "desconectar" é "desligar".
+ */
+function WhatsAppQrConnection({ channel }: WhatsAppQrConnectionProps) {
+  const { toast } = useToast();
+  const statusQuery = useWhatsAppStatus();
+  const disconnect = useWhatsAppDisconnect();
+
+  const [connectOpen, setConnectOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [disconnectError, setDisconnectError] = useState<string | null>(null);
+
+  const status = statusQuery.data;
+  const isConnected = channel?.connectionMode === 'qr' && status?.status === 'connected';
+
+  return (
+    <div className="flex flex-col gap-sm rounded-md border border-neutral-200 bg-neutral-100 p-md">
+      <div className="flex flex-wrap items-center justify-between gap-sm">
+        <div className="flex flex-col gap-xs">
+          <span className="font-body text-label font-semibold text-text">
+            Conexão por QR (número próprio)
+          </span>
+          <span className="font-body text-caption text-neutral-600">
+            Alternativa à API oficial: pareia o WhatsApp do celular do laboratório escaneando um
+            QR code.
+          </span>
+        </div>
+
+        {isConnected ? (
+          <div className="flex flex-wrap items-center gap-sm">
+            <Chip tone="positive">
+              Conectado{status?.phoneNumber ? ` — ${status.phoneNumber}` : ''}
+            </Chip>
+            <Button variant="destructive" onClick={() => setConfirmOpen(true)}>
+              Desconectar
+            </Button>
+          </div>
+        ) : (
+          <Button variant="secondary" onClick={() => setConnectOpen(true)}>
+            Conectar WhatsApp
+          </Button>
+        )}
+      </div>
+
+      <WhatsAppConnectModal
+        open={connectOpen}
+        onClose={() => setConnectOpen(false)}
+        acceptedTermsAt={channel?.acceptedTermsAt ?? null}
+      />
+
+      <Modal
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        title="Desconectar WhatsApp"
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => setConfirmOpen(false)}
+              disabled={disconnect.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              loading={disconnect.isPending}
+              onClick={() => {
+                setDisconnectError(null);
+                disconnect.mutate(undefined, {
+                  onSuccess: () => {
+                    setConfirmOpen(false);
+                    toast('WhatsApp desconectado.', { tone: 'neutral' });
+                  },
+                  onError: (error: unknown) => {
+                    setDisconnectError(
+                      isApiError(error)
+                        ? error.message
+                        : 'Não foi possível desconectar. Tente novamente.',
+                    );
+                  },
+                });
+              }}
+            >
+              Confirmar desconexão
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-md">
+          <p className="m-0 font-body text-body text-text">
+            O celular deixa de responder pelo CRM. O canal <strong>continua ativo</strong> na
+            tela — desconectar não desativa o canal, são dois controles distintos. Dá para
+            conectar de novo depois.
+          </p>
+          {disconnectError && (
+            <p role="alert" className="m-0 font-body text-caption text-accent-700">
+              {disconnectError}
+            </p>
+          )}
+        </div>
+      </Modal>
+    </div>
   );
 }
 
@@ -418,6 +538,12 @@ export default function ChannelsSettings() {
                       updateChannel(draft.channel, { removeWebhookSecret, webhookSecretInput: '' })
                     }
                   />
+
+                  {canEdit && draft.channel === 'whatsapp' && (
+                    <WhatsAppQrConnection
+                      channel={settings.channels.find((channel) => channel.channel === 'whatsapp')}
+                    />
+                  )}
                 </div>
               ))}
             </div>

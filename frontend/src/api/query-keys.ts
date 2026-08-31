@@ -87,6 +87,11 @@ export const queryKeys = {
   /** ['settings', 'channels'] — Canais & Equipe (API_CONTRACTS.md §6) */
   channelSettings: () => ['settings', 'channels'] as const,
 
+  /** ['settings', 'channels', 'whatsapp', 'qr'] — QR vigente, alvo do polling (§6.1) */
+  whatsappQr: () => ['settings', 'channels', 'whatsapp', 'qr'] as const,
+  /** ['settings', 'channels', 'whatsapp', 'status'] — status do card, sem QR (§6.1) */
+  whatsappStatus: () => ['settings', 'channels', 'whatsapp', 'status'] as const,
+
   /** ['operations', 'overview', query] — retrato único da operação (D-067) */
   operationOverview: (query?: OperationOverviewQuery) =>
     ['operations', 'overview', query ?? {}] as const,

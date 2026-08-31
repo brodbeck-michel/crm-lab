@@ -48,8 +48,17 @@ export { platformApi } from './platform';
 export { settingsApi } from './settings';
 export { operationApi } from './operation';
 export { patientsApi } from './patients';
+export {
+  channelsApi,
+  qrRefetchInterval,
+  useWhatsAppConnect,
+  useWhatsAppQr,
+  useWhatsAppStatus,
+  useWhatsAppDisconnect,
+} from './channels';
 
 import { analyticsApi } from './analytics';
+import { channelsApi } from './channels';
 import { auditApi } from './audit';
 import { authApi } from './auth';
 import { conversationsApi } from './conversations';
@@ -78,4 +87,5 @@ export const api = {
   settings: settingsApi,
   operation: operationApi,
   patients: patientsApi,
+  channels: channelsApi,
 } as const;

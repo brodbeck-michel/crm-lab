@@ -5,6 +5,8 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChannelSettingsResponse, UserRole } from '@crm-lab/shared';
 import { settingsApi } from '@/api/settings';
+import { mutationIdle, querySuccess } from '@/test/query-mocks';
+import { ToastProvider } from '@/components/ui';
 import { useAuthStore } from '@/stores';
 import ChannelsSettings from './Channels';
 import { buildUpdateRequest, toForm } from './channels-form';
@@ -15,6 +17,15 @@ vi.mock('@/api/settings', () => ({
     updateChannels: vi.fn(),
   },
 }));
+
+/**
+ * O cartão do WhatsApp embute o bloco de conexão por QR (Onda 7 — Bloco B),
+ * montado só para `canEdit` (admin). `useWhatsAppStatus`/`useWhatsAppConnect`/
+ * `useWhatsAppQr` precisam de mock aqui mesmo quando o teste não fala sobre
+ * QR nenhum — sem isso o `render` do admin quebra, porque os hooks rodam a
+ * cada render independente do modal estar aberto.
+ */
+vi.mock('@/api/channels');
 
 const channelsMock = vi.mocked(settingsApi.channels);
 const updateChannelsMock = vi.mocked(settingsApi.updateChannels);
@@ -33,6 +44,8 @@ const settings: ChannelSettingsResponse = {
       webhookSecretSet: true,
       connectedAt: '2026-07-02T11:20:00.000Z',
       updatedAt: '2026-08-19T08:45:00.000Z',
+      connectionMode: 'cloud_api',
+      acceptedTermsAt: null,
     },
   ],
   distributionMode: 'round_robin',
@@ -67,18 +80,31 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <ChannelsSettings />
-      </MemoryRouter>
+      <ToastProvider>
+        <MemoryRouter>
+          <ChannelsSettings />
+        </MemoryRouter>
+      </ToastProvider>
     </QueryClientProvider>,
   );
 }
 
 describe('ChannelsSettings', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     channelsMock.mockResolvedValue(settings);
     updateChannelsMock.mockResolvedValue(settings);
+
+    const { useWhatsAppConnect, useWhatsAppQr, useWhatsAppStatus, useWhatsAppDisconnect } =
+      await import('@/api/channels');
+    vi.mocked(useWhatsAppConnect).mockReturnValue(mutationIdle());
+    vi.mocked(useWhatsAppQr).mockReturnValue(
+      querySuccess({ qrcode: null, status: 'disconnected', expiresInSeconds: null }),
+    );
+    vi.mocked(useWhatsAppStatus).mockReturnValue(
+      querySuccess({ status: 'disconnected', phoneNumber: null, connectedAt: null }),
+    );
+    vi.mocked(useWhatsAppDisconnect).mockReturnValue(mutationIdle());
   });
 
   afterEach(() => {
@@ -110,6 +136,26 @@ describe('ChannelsSettings', () => {
     expect(
       screen.getAllByText(/em branco PRESERVA o valor atual/i).length,
     ).toBeGreaterThan(0);
+  });
+
+  it('admin: clicar em "Conectar WhatsApp" abre o modal de conexão por QR', async () => {
+    const user = userEvent.setup();
+    signIn('admin');
+    renderPage();
+
+    await screen.findByDisplayValue('WhatsApp do Vida');
+    await user.click(screen.getByRole('button', { name: /conectar whatsapp/i }));
+
+    expect(await screen.findByRole('dialog', { name: /conectar whatsapp por qr/i })).toBeInTheDocument();
+    expect(screen.getByText(/risco de banimento/i)).toBeInTheDocument();
+  });
+
+  it('gestor não vê o botão "Conectar WhatsApp"', async () => {
+    signIn('manager');
+    renderPage();
+
+    await screen.findByText('WhatsApp do Vida');
+    expect(screen.queryByRole('button', { name: /conectar whatsapp/i })).not.toBeInTheDocument();
   });
 
   it('gestor lê a tela sem NENHUM controle de escrita', async () => {

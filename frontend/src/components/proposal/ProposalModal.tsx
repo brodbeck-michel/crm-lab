@@ -20,7 +20,15 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
   const { data: proposal, isLoading } = useProposalDetail(proposalId);
   const updateStatus = useUpdateProposalStatus();
   // Sem `active: true`: uma proposta pode referenciar um convênio já
-  // desativado, e o nome ainda precisa resolver.
+  // desativado, e o nome ainda precisa resolver. `limit: 100` é o teto
+  // documentado de `GET /insurances` (API_CONTRACTS.md §8) — não existe
+  // `GET /insurances/:id` no contrato, então isto é o único jeito de resolver
+  // um nome a partir de um id sem inventar endpoint (Regra Zero). Efeito
+  // colateral aceito: um tenant com MAIS de 100 convênios cujo
+  // `insuranceId` caia fora dessa primeira página resolve para o fallback
+  // genérico "Convênio" abaixo — indistinguível, na tela, do estado "ainda
+  // carregando" ou de um convênio removido. Hoje os tenants semeados têm
+  // ~20 convênios (docs/STATUS.md); risco aceito, não corrigido nesta task.
   const { data: insurancesData } = useInsuranceList({ limit: 100 });
   const [showLostForm, setShowLostForm] = useState(false);
 

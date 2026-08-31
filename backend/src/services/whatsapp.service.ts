@@ -346,7 +346,22 @@ export class EvolutionWhatsAppDriver implements WhatsAppDriver {
     content: string,
   ): Promise<SendResult> {
     const instanceName = evolutionInstanceName(credentials.tenantId);
-    const { externalId } = await this.client.sendText(instanceName, phone, content);
+    // Fix do Important 6 da revisao da Task 5: a apikey DA INSTANCIA
+    // (`credentials.apiToken`, gravada cifrada por `connectWhatsAppQr` e
+    // decifrada aqui pelo MESMO caminho de `resolveCredentials`, D-076) —
+    // NUNCA a apikey administrativa do gateway. Privilegio minimo: este envio
+    // so precisa falar com a PROPRIA instancia do tenant.
+    if (!credentials.apiToken) {
+      throw new Error(
+        'canal whatsapp em connectionMode "qr" sem apikey de instancia gravada — reconecte por QR',
+      );
+    }
+    const { externalId } = await this.client.sendText(
+      instanceName,
+      phone,
+      content,
+      credentials.apiToken,
+    );
     return { externalId };
   }
 }

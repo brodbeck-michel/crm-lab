@@ -1,15 +1,18 @@
 /**
  * `POST /webhooks/evolution/:tenant` (+ `/status`) — gateway Evolution API
- * self-hosted (Onda 7, Bloco B). Autentica por `EVOLUTION_WEBHOOK_TOKEN`
- * (header `apikey`, tempo constante), nao por HMAC — o gateway manda a chave
- * configurada, nao assina o corpo.
+ * self-hosted (Onda 7, Bloco B). Autentica pelo header DOCUMENTADO
+ * `x-evolution-webhook-token` (API_CONTRACTS.md:729-735), com `apikey` tolerado
+ * como alternativa (ruling do coordenador, Critical 2 da revisao). Tempo
+ * constante, nao HMAC — o gateway manda a chave configurada, nao assina o
+ * corpo.
  *
- * O teste que mais importa (mesma logica do webhook da Meta, D-SECURITY
+ * O teste que mais importa (mesma logica do webhook da Meta, SECURITY.md
  * "Webhooks"): token invalido/ausente NUNCA toca o banco, e a resposta e
  * IDENTICA ao caminho feliz — nao vira oraculo.
  */
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { makeWebhookModule } from '../../src/controllers/webhook.routes.js';
+import { evolutionInstanceName } from '../../src/lib/evolution-client.js';
 import { createInMemoryQueue } from '../../src/lib/queue.js';
 import type { DbClient } from '../../src/db/types.js';
 import {
@@ -26,15 +29,22 @@ import { getTestDb, resetDatabase } from '../helpers/test-db.js';
 const TOKEN = 'segredo-do-gateway-evolution-teste';
 const WEBHOOK = '/api/v1/webhooks/evolution';
 
-/** Resolver simples: slug -> tenantId, canal sempre ligado (D-074). */
-function evolutionCredentialsResolver(slugToId: Map<string, string>): WhatsAppCredentialsResolver {
+/**
+ * Resolver simples: slug -> tenantId, canal ligado por default (D-074).
+ * `disabled` deixa o teste do kill switch (M9 da revisao da Task 5) forjar
+ * `isActive: false` sem precisar de uma escrita real em `tenant_channels`.
+ */
+function evolutionCredentialsResolver(
+  slugToId: Map<string, string>,
+  disabled: Set<string> = new Set(),
+): WhatsAppCredentialsResolver {
   const build = (tenantId: string): WhatsAppCredentials => ({
     tenantId,
     phoneNumberId: 'numero-do-lab',
     apiUrl: '',
     apiToken: '',
     webhookSecret: '',
-    isActive: true,
+    isActive: !disabled.has(tenantId),
     apiTokenRevoked: false,
     connectionMode: 'qr',
   });
@@ -48,6 +58,7 @@ function evolutionCredentialsResolver(slugToId: Map<string, string>): WhatsAppCr
 }
 
 function messagesUpsertPayload(options: {
+  instance: string;
   phone: string;
   text: string;
   name?: string;
@@ -55,6 +66,7 @@ function messagesUpsertPayload(options: {
 }): Record<string, unknown> {
   return {
     event: 'MESSAGES_UPSERT',
+    instance: options.instance,
     data: {
       key: { remoteJid: `${options.phone}@s.whatsapp.net`, id: options.externalId ?? 'EVO-1' },
       message: { conversation: options.text },
@@ -63,9 +75,14 @@ function messagesUpsertPayload(options: {
   };
 }
 
-function connectionUpdatePayload(state: 'open' | 'close' | 'connecting', owner?: string) {
+function connectionUpdatePayload(
+  instance: string,
+  state: 'open' | 'close' | 'connecting',
+  owner?: string,
+) {
   return {
     event: 'CONNECTION_UPDATE',
+    instance,
     data: { state, ...(owner ? { owner: `${owner}@s.whatsapp.net` } : {}) },
   };
 }
@@ -73,10 +90,11 @@ function connectionUpdatePayload(state: 'open' | 'close' | 'connecting', owner?:
 let db: DbClient;
 let app: TestApp;
 const slugToId = new Map<string, string>();
+const disabledTenants = new Set<string>();
 
 async function buildApp(): Promise<TestApp> {
   const whatsapp = new WhatsAppService({
-    credentials: evolutionCredentialsResolver(slugToId),
+    credentials: evolutionCredentialsResolver(slugToId, disabledTenants),
     driver: new MockWhatsAppDriver(),
     queue: createInMemoryQueue({ sleep: async () => undefined }),
   });
@@ -87,19 +105,33 @@ beforeEach(async () => {
   db = await getTestDb();
   await resetDatabase(db);
   slugToId.clear();
+  disabledTenants.clear();
   process.env.EVOLUTION_WEBHOOK_TOKEN = TOKEN;
   app = await buildApp();
 });
 
+afterEach(() => {
+  delete process.env.EVOLUTION_WEBHOOK_TOKEN;
+});
+
 describe('POST /webhooks/evolution/:tenant — MESSAGES_UPSERT', () => {
-  it('token valido cria a conversa e grava a mensagem', async () => {
+  it('header documentado x-evolution-webhook-token cria a conversa e grava a mensagem', async () => {
     const tenant = await createTenant({ slug: 'lab-evo' });
     slugToId.set('lab-evo', tenant.id);
 
+    // Critical 2 da revisao: o header DOCUMENTADO (API_CONTRACTS.md:729-735)
+    // e o que a infra configura — antes deste fix, so `apikey` funcionava.
     const response = await app.agent
       .post(`${WEBHOOK}/lab-evo`)
-      .set('apikey', TOKEN)
-      .send(messagesUpsertPayload({ phone: '5548999998888', text: 'Ola', name: 'Maria' }));
+      .set('x-evolution-webhook-token', TOKEN)
+      .send(
+        messagesUpsertPayload({
+          instance: evolutionInstanceName(tenant.id),
+          phone: '5548999998888',
+          text: 'Ola',
+          name: 'Maria',
+        }),
+      );
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ received: true });
@@ -116,17 +148,40 @@ describe('POST /webhooks/evolution/:tenant — MESSAGES_UPSERT', () => {
     expect(row.rows[0]?.unread_count).toBe(1);
   });
 
+  it('header apikey (tolerado) tambem funciona', async () => {
+    const tenant = await createTenant({ slug: 'lab-evo-apikey' });
+    slugToId.set('lab-evo-apikey', tenant.id);
+
+    const response = await app.agent
+      .post(`${WEBHOOK}/lab-evo-apikey`)
+      .set('apikey', TOKEN)
+      .send(
+        messagesUpsertPayload({
+          instance: evolutionInstanceName(tenant.id),
+          phone: '5548999998888',
+          text: 'Ola',
+        }),
+      );
+    expect(response.status).toBe(200);
+    expect(await countMessages(tenant.id)).toBe(1);
+  });
+
   it('reentrega do mesmo externalId nao duplica mensagem', async () => {
     const tenant = await createTenant({ slug: 'lab-evo-dedupe' });
     slugToId.set('lab-evo-dedupe', tenant.id);
     const payload = messagesUpsertPayload({
+      instance: evolutionInstanceName(tenant.id),
       phone: '5548999998888',
       text: 'Ola',
       externalId: 'EVO-UNICO',
     });
 
     for (let i = 0; i < 3; i += 1) {
-      await app.agent.post(`${WEBHOOK}/lab-evo-dedupe`).set('apikey', TOKEN).send(payload).expect(200);
+      await app.agent
+        .post(`${WEBHOOK}/lab-evo-dedupe`)
+        .set('x-evolution-webhook-token', TOKEN)
+        .send(payload)
+        .expect(200);
     }
 
     expect(await countConversations(tenant.id)).toBe(1);
@@ -136,11 +191,15 @@ describe('POST /webhooks/evolution/:tenant — MESSAGES_UPSERT', () => {
   it('token invalido/ausente nao toca no banco — mesma resposta do caminho feliz', async () => {
     const tenant = await createTenant({ slug: 'lab-evo-sem-token' });
     slugToId.set('lab-evo-sem-token', tenant.id);
-    const payload = messagesUpsertPayload({ phone: '5548999998888', text: 'invasao' });
+    const payload = messagesUpsertPayload({
+      instance: evolutionInstanceName(tenant.id),
+      phone: '5548999998888',
+      text: 'invasao',
+    });
 
     const errado = await app.agent
       .post(`${WEBHOOK}/lab-evo-sem-token`)
-      .set('apikey', 'token-errado')
+      .set('x-evolution-webhook-token', 'token-errado')
       .send(payload);
     expect(errado.status).toBe(200);
     expect(errado.body).toEqual({ received: true });
@@ -153,11 +212,85 @@ describe('POST /webhooks/evolution/:tenant — MESSAGES_UPSERT', () => {
     expect(await countMessages(tenant.id)).toBe(0);
   });
 
+  it('kill switch (isActive: false) recusa mesmo com token valido — mecanismo do Critical 1', async () => {
+    // M9 da revisao: esta era a UNICA branch nao testada no caminho Evolution,
+    // e e o exato mecanismo que travava o canal (Critical 1) — um resolver que
+    // sempre devolve isActive:true nunca provaria a recusa.
+    const tenant = await createTenant({ slug: 'lab-evo-desligado' });
+    slugToId.set('lab-evo-desligado', tenant.id);
+    disabledTenants.add(tenant.id);
+
+    const response = await app.agent
+      .post(`${WEBHOOK}/lab-evo-desligado`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send(
+        messagesUpsertPayload({
+          instance: evolutionInstanceName(tenant.id),
+          phone: '5548999998888',
+          text: 'canal desligado',
+        }),
+      );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ received: true });
+    expect(await countConversations(tenant.id)).toBe(0);
+    expect(await countMessages(tenant.id)).toBe(0);
+  });
+
+  it('instance do payload diferente da resolvida pela URL e recusada (Important 4)', async () => {
+    // Quem so tem o token (unico para a instalacao) e um slug PUBLICO nao
+    // consegue mais injetar mensagem alheia: precisa tambem acertar
+    // `evolutionInstanceName(tenantId)`, que depende do UUID interno.
+    const vitima = await createTenant({ slug: 'lab-evo-vitima' });
+    const outraInstancia = await createTenant({ slug: 'lab-evo-atacante' });
+    slugToId.set('lab-evo-vitima', vitima.id);
+    slugToId.set('lab-evo-atacante', outraInstancia.id);
+
+    const response = await app.agent
+      .post(`${WEBHOOK}/lab-evo-vitima`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send(
+        messagesUpsertPayload({
+          instance: evolutionInstanceName(outraInstancia.id), // instance ERRADA
+          phone: '5548999998888',
+          text: 'mensagem forjada',
+        }),
+      );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ received: true });
+    expect(await countMessages(vitima.id)).toBe(0);
+  });
+
+  it('instance AUSENTE no payload tambem e recusada', async () => {
+    const tenant = await createTenant({ slug: 'lab-evo-sem-instance' });
+    slugToId.set('lab-evo-sem-instance', tenant.id);
+
+    const payload = messagesUpsertPayload({
+      instance: evolutionInstanceName(tenant.id),
+      phone: '5548999998888',
+      text: 'oi',
+    });
+    delete (payload as { instance?: unknown }).instance;
+
+    const response = await app.agent
+      .post(`${WEBHOOK}/lab-evo-sem-instance`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send(payload);
+
+    expect(response.status).toBe(200);
+    expect(await countMessages(tenant.id)).toBe(0);
+  });
+
   it('tenant desconhecido e ignorado, com a mesma resposta', async () => {
-    const payload = messagesUpsertPayload({ phone: '5548999998888', text: 'oi' });
+    const payload = messagesUpsertPayload({
+      instance: 'tenant-fantasma',
+      phone: '5548999998888',
+      text: 'oi',
+    });
     const response = await app.agent
       .post(`${WEBHOOK}/lab-que-nao-existe`)
-      .set('apikey', TOKEN)
+      .set('x-evolution-webhook-token', TOKEN)
       .send(payload);
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ received: true });
@@ -169,15 +302,15 @@ describe('POST /webhooks/evolution/:tenant — MESSAGES_UPSERT', () => {
 
     const lixos: unknown[] = [
       {},
-      { event: 'MESSAGES_UPSERT' },
-      { event: 'MESSAGES_UPSERT', data: { key: {} } },
-      { event: 'MESSAGES_UPSERT', data: null },
+      { event: 'MESSAGES_UPSERT', instance: evolutionInstanceName(tenant.id) },
+      { event: 'MESSAGES_UPSERT', instance: evolutionInstanceName(tenant.id), data: { key: {} } },
+      { event: 'MESSAGES_UPSERT', instance: evolutionInstanceName(tenant.id), data: null },
       [1, 2, 3],
     ];
     for (const lixo of lixos) {
       const response = await app.agent
         .post(`${WEBHOOK}/lab-evo-lixo`)
-        .set('apikey', TOKEN)
+        .set('x-evolution-webhook-token', TOKEN)
         .send(lixo as object);
       expect(response.status).toBe(200);
       expect(response.body).toEqual({ received: true });
@@ -194,8 +327,14 @@ describe('POST /webhooks/evolution/:tenant — MESSAGES_UPSERT', () => {
 
     await app.agent
       .post(`${WEBHOOK}/lab-evo-alfa`)
-      .set('apikey', TOKEN)
-      .send(messagesUpsertPayload({ phone: '5548999998888', text: 'oi alfa' }))
+      .set('x-evolution-webhook-token', TOKEN)
+      .send(
+        messagesUpsertPayload({
+          instance: evolutionInstanceName(alfa.id),
+          phone: '5548999998888',
+          text: 'oi alfa',
+        }),
+      )
       .expect(200);
 
     expect(await countMessages(alfa.id)).toBe(1);
@@ -217,8 +356,8 @@ describe('POST /webhooks/evolution/:tenant — CONNECTION_UPDATE', () => {
 
     const response = await app.agent
       .post(`${WEBHOOK}/lab-evo-connect`)
-      .set('apikey', TOKEN)
-      .send(connectionUpdatePayload('open', '5511987654321'));
+      .set('x-evolution-webhook-token', TOKEN)
+      .send(connectionUpdatePayload(evolutionInstanceName(tenant.id), 'open', '5511987654321'));
 
     expect(response.status).toBe(200);
     expect(await countMessages(tenant.id)).toBe(0);
@@ -234,7 +373,7 @@ describe('POST /webhooks/evolution/:tenant — CONNECTION_UPDATE', () => {
     expect(row.rows[0]?.phone_number).toBe('5511987654321');
   });
 
-  it('state close marca o canal desconectado (loggedOut/banimento)', async () => {
+  it('state close NAO desativa o canal (is_active inalterado, API_CONTRACTS.md:2325) — so zera connected_at', async () => {
     const tenant = await createTenant({ slug: 'lab-evo-close' });
     slugToId.set('lab-evo-close', tenant.id);
     await db.withoutTenant((tx) =>
@@ -247,8 +386,8 @@ describe('POST /webhooks/evolution/:tenant — CONNECTION_UPDATE', () => {
 
     await app.agent
       .post(`${WEBHOOK}/lab-evo-close`)
-      .set('apikey', TOKEN)
-      .send(connectionUpdatePayload('close'))
+      .set('x-evolution-webhook-token', TOKEN)
+      .send(connectionUpdatePayload(evolutionInstanceName(tenant.id), 'close'))
       .expect(200);
 
     const row = await db.withoutTenant((tx) =>
@@ -257,8 +396,56 @@ describe('POST /webhooks/evolution/:tenant — CONNECTION_UPDATE', () => {
         [tenant.id],
       ),
     );
-    expect(row.rows[0]?.is_active).toBe(false);
+    // Critical 1 da revisao: `is_active` e o MESMO kill switch que
+    // `authenticateEvolution` confere antes do token. Se este evento o
+    // apagasse, o proximo `CONNECTION_UPDATE state: 'open'` (reconexao por QR)
+    // seria recusado pelo proprio kill switch e o canal travaria para sempre.
+    expect(row.rows[0]?.is_active).toBe(true);
     expect(row.rows[0]?.connected_at).toBeNull();
+  });
+
+  it('reconectar apos close volta a aceitar MESSAGES_UPSERT — prova end-to-end do Critical 1', async () => {
+    const tenant = await createTenant({ slug: 'lab-evo-reconecta' });
+    slugToId.set('lab-evo-reconecta', tenant.id);
+    const instance = evolutionInstanceName(tenant.id);
+    await db.withoutTenant((tx) =>
+      tx.query(
+        `INSERT INTO tenant_channels (tenant_id, channel, connection_mode, is_active, connected_at)
+         VALUES ($1, 'whatsapp', 'qr', TRUE, NOW())`,
+        [tenant.id],
+      ),
+    );
+
+    // 1) O celular e desconectado (ou o admin desconecta) — `state: 'close'`.
+    await app.agent
+      .post(`${WEBHOOK}/lab-evo-reconecta`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send(connectionUpdatePayload(instance, 'close'))
+      .expect(200);
+
+    // 2) O admin re-escaneia o QR e o gateway confirma o pareamento.
+    await app.agent
+      .post(`${WEBHOOK}/lab-evo-reconecta`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send(connectionUpdatePayload(instance, 'open', '5511987654321'))
+      .expect(200);
+
+    // 3) Uma mensagem do paciente TEM que ser aceita — se o kill switch tivesse
+    // ficado preso em `is_active = FALSE` depois do passo 1, isto falharia
+    // silenciosamente com 200 e zero mensagens gravadas (Critical 1).
+    await app.agent
+      .post(`${WEBHOOK}/lab-evo-reconecta`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send(
+        messagesUpsertPayload({
+          instance,
+          phone: '5548999998888',
+          text: 'mensagem depois de reconectar',
+        }),
+      )
+      .expect(200);
+
+    expect(await countMessages(tenant.id)).toBe(1);
   });
 });
 
@@ -275,7 +462,7 @@ describe('POST /webhooks/evolution/:tenant/status', () => {
 
     await app.agent
       .post(`${WEBHOOK}/lab-evo-status/status`)
-      .set('apikey', TOKEN)
+      .set('x-evolution-webhook-token', TOKEN)
       .send({ state: 'open', owner: '5511987654321@s.whatsapp.net' })
       .expect(200);
 

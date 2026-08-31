@@ -22,8 +22,18 @@ describe('EvolutionClient', () => {
         return;
       }
       if (req.method === 'GET' && req.url === '/instance/connect/tenant-abc') {
+        // Formato REAL do Evolution v2 enquanto pareando: sem `status`
+        // (a `status: 'pairing'` extra aqui prova que o cliente NAO depende
+        // dela — ver o teste "ignora um `status` inventado no corpo").
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ base64: 'data:image/png;base64,AAAA', status: 'pairing' }));
+        return;
+      }
+      if (req.method === 'GET' && req.url === '/instance/connect/tenant-ja-conectado') {
+        // Formato REAL quando a instancia JA esta conectada: sem `base64`,
+        // `instance.state: 'open'` (Minor 7 da revisao da Task 5).
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ instance: { instanceName: 'tenant-ja-conectado', state: 'open' } }));
         return;
       }
       if (req.method === 'GET' && req.url === '/instance/connectionState/tenant-connected') {
@@ -78,6 +88,18 @@ describe('EvolutionClient', () => {
     expect(result.qrcode).toContain('base64');
   });
 
+  it('getQr numa instancia JA CONECTADA (sem base64, sem status) devolve connected', async () => {
+    // Fix do Minor 7: o gateway real nao manda `status` neste endpoint; uma
+    // instancia conectada devolve so `instance.state: 'open'`. Antes deste
+    // fix o cliente caia no fallback `qrcode ? 'pairing' : 'disconnected'` e
+    // respondia `disconnected` para um canal saudavel — o modal de QR do
+    // frontend (Task 9) nunca via `connected` e rodava ate o timeout de ~90s.
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    const result = await client.getQr('tenant-ja-conectado');
+    expect(result.status).toBe('connected');
+    expect(result.qrcode).toBeNull();
+  });
+
   it('getStatus mapeia state open -> connected e devolve o numero', async () => {
     const client = createEvolutionClient(baseUrl, 'admin-key');
     const result = await client.getStatus('tenant-connected');
@@ -97,10 +119,21 @@ describe('EvolutionClient', () => {
     await expect(client.logout('tenant-abc')).resolves.toBeUndefined();
   });
 
-  it('sendText devolve o externalId da mensagem', async () => {
+  it('sendText devolve o externalId da mensagem, autenticado pela apikey DA INSTANCIA', async () => {
+    // Fix do Important 6 da revisao da Task 5: sendText NUNCA pode sair com a
+    // apikey administrativa do gateway (privilegio maximo) — so com a apikey
+    // da PROPRIA instancia, a mesma que fica cifrada em repouso em
+    // `tenant_channels.api_token`.
     const client = createEvolutionClient(baseUrl, 'admin-key');
-    const result = await client.sendText('tenant-abc', '5511987654321', 'Ola');
+    const result = await client.sendText(
+      'tenant-abc',
+      '5511987654321',
+      'Ola',
+      'apikey-da-instancia-tenant-abc',
+    );
     expect(result.externalId).toBe('EVO123');
+    expect(lastApikeyHeader).toBe('apikey-da-instancia-tenant-abc');
+    expect(lastApikeyHeader).not.toBe('admin-key');
   });
 
   it('resposta HTTP nao-2xx lanca Error com o corpo anexado (nao BusinessError)', async () => {

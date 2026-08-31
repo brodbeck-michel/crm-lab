@@ -318,6 +318,13 @@ export async function findCredentials(
  * precisa saber se ja foi aceito). Cria a linha se ainda nao existir: aceitar
  * o termo e SEMPRE o primeiro passo de `connectWhatsAppQr`, antes de qualquer
  * chamada ao gateway.
+ *
+ * IDEMPOTENTE de proposito (fix do Important 5 da revisao da Task 5):
+ * `accepted_terms_at`/`accepted_terms_by` so mudam na PRIMEIRA chamada
+ * (`COALESCE`) — reconectar (aceite ja gravado) chama esta funcao de novo
+ * (o `connect` passa a aceitar `accepted_terms_at` ja gravado OU
+ * `acceptTerms: true` neste corpo, API_CONTRACTS.md:2260-2266) sem sobrescrever
+ * o registro LGPD de QUANDO o laboratorio aceitou o risco pela primeira vez.
  */
 export async function acceptWhatsAppQrTerms(
   tx: DbTx,
@@ -328,7 +335,9 @@ export async function acceptWhatsAppQrTerms(
     `INSERT INTO tenant_channels (tenant_id, channel, connection_mode, accepted_terms_at, accepted_terms_by)
           VALUES ($1, 'whatsapp', 'qr', NOW(), $2)
      ON CONFLICT (tenant_id, channel)
-     DO UPDATE SET connection_mode = 'qr', accepted_terms_at = NOW(), accepted_terms_by = $2`,
+     DO UPDATE SET connection_mode = 'qr',
+                   accepted_terms_at = COALESCE(tenant_channels.accepted_terms_at, NOW()),
+                   accepted_terms_by = COALESCE(tenant_channels.accepted_terms_by, $2)`,
     [tenantId, userId],
   );
 }
@@ -399,12 +408,23 @@ export async function markWhatsAppConnected(
  * contrario do canal `cloud_api` (onde a data e fato historico preservado, ver
  * `upsertChannel`), aqui ela alimenta o polling do frontend — precisa refletir
  * "desconectado agora", nao "conectou uma vez".
+ *
+ * `is_active` NAO e tocado (fix do Critical 1 da revisao da Task 5,
+ * API_CONTRACTS.md:2325: "`is_active` inalterado — desconectar nao e desativar
+ * o canal na tela; sao dois controles distintos"). `is_active` e o MESMO campo
+ * que `authenticateEvolution` confere como kill switch (D-074) antes do token —
+ * apaga-lo aqui travava o canal para sempre: reconectar por QR criava uma
+ * instancia nova, mas o evento `CONNECTION_UPDATE state: 'open'` do gateway
+ * batia no kill switch (`is_active = FALSE` nunca restaurado por
+ * `markWhatsAppConnected`, que so roda DEPOIS de passar pelo kill switch) e
+ * toda mensagem seguinte era descartada em silencio com `200 {received:true}`.
+ * Quem desliga o canal de proposito e o `PATCH /settings/channels` existente
+ * (`isActive: false`), um controle deliberadamente separado.
  */
 export async function markWhatsAppDisconnected(tx: DbTx, tenantId: string): Promise<void> {
   await tx.query(
     `UPDATE tenant_channels
-        SET is_active = FALSE,
-            connected_at = NULL
+        SET connected_at = NULL
       WHERE tenant_id = $1 AND channel = 'whatsapp'`,
     [tenantId],
   );

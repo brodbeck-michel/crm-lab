@@ -39,6 +39,7 @@ import { Router, type Request, type RequestHandler, type Response } from 'expres
 import { env } from '../config/env.js';
 import type { DbClient } from '../db/types.js';
 import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
+import { evolutionInstanceName } from '../lib/evolution-client.js';
 import { logger } from '../lib/logger.js';
 import * as channelSettingsRepo from '../repositories/channel-settings.repository.js';
 import { ConversationRepository } from '../repositories/conversation.repository.js';
@@ -290,10 +291,21 @@ function phoneFromJid(jid: unknown): string | null {
   return phone && phone.length > 0 ? phone : null;
 }
 
-/** Header que carrega o segredo do webhook Evolution (o gateway manda `apikey`). */
+/**
+ * Header que carrega o segredo do webhook Evolution.
+ *
+ * `x-evolution-webhook-token` e o header DOCUMENTADO (API_CONTRACTS.md:729-735
+ * — Regra Zero, e o que a infra configura no gateway self-hosted). `apikey` e
+ * TOLERADO como alternativa (ruling do coordenador na revisao da Task 5,
+ * Critical 2): mesmo segredo, mesma comparacao em tempo constante, entao
+ * aceitar os dois nao enfraquece nada — mas o header documentado tem que
+ * funcionar, e antes so `apikey` funcionava.
+ */
 function evolutionTokenOf(req: Request): string | undefined {
-  const header = req.headers.apikey;
-  return typeof header === 'string' && header.length > 0 ? header : undefined;
+  const documented = req.headers['x-evolution-webhook-token'];
+  if (typeof documented === 'string' && documented.length > 0) return documented;
+  const tolerated = req.headers.apikey;
+  return typeof tolerated === 'string' && tolerated.length > 0 ? tolerated : undefined;
 }
 
 function evolutionTokenValid(req: Request): boolean {
@@ -412,6 +424,27 @@ export function evolutionInbound(services: WebhookServices, db: DbClient): Reque
 
     const body = asRecord(req.body);
     const event = body ? asNonEmptyString(body.event) : null;
+
+    // I4 da revisao da Task 5: o `:tenant` da URL e um SLUG PUBLICO, e o token
+    // e UNICO PARA A INSTALACAO INTEIRA (D-073 emendada, mesmo risco de
+    // `whatsapp.service.ts` — ver o comentario de `mergeCredentials`) — quem
+    // conhece o token pode POSTar em QUALQUER slug. O payload documentado
+    // (API_CONTRACTS.md) carrega o nome real da instancia que o gerou
+    // (`instance: "tenant-<uuid>"`, exemplo em API_CONTRACTS.md:743); EXIGIR e
+    // conferir esse campo contra `evolutionInstanceName(tenantId)` fecha a
+    // substituicao de slug de verdade — um payload SEM o campo ou que afirma
+    // vir de OUTRA instancia e recusado antes de qualquer escrita, mesmo com
+    // token valido (quem so tem o token e o slug publico nao sabe o uuid
+    // interno do tenant alheio, que e o que `evolutionInstanceName` usa).
+    const instanceClaim = body ? asNonEmptyString(body.instance) : null;
+    if (
+      (event === 'MESSAGES_UPSERT' || event === 'CONNECTION_UPDATE') &&
+      instanceClaim !== evolutionInstanceName(tenantId)
+    ) {
+      logger.warn('evolution.webhook_instance_mismatch', { tenantId, event });
+      acknowledge(res);
+      return;
+    }
 
     if (event === 'MESSAGES_UPSERT') {
       const inbound = evolutionInboundOf(body?.data);

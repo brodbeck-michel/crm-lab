@@ -53,6 +53,7 @@ import type {
   WhatsAppQrResponse,
   WhatsAppStatusResponse,
 } from '@crm-lab/shared';
+import { env } from '../config/env.js';
 import type { DbClient, DbTx } from '../db/types.js';
 import type { TenantContext } from '../http/context.js';
 import { BusinessError } from '../http/errors.js';
@@ -724,9 +725,23 @@ export function createChannelSettingsService(
 
   const evolutionClient = deps.evolutionClient ?? createDefaultEvolutionClient();
 
-  /** `EVOLUTION_API_URL`/`EVOLUTION_API_KEY` ausentes => erro claro, nunca crash. */
+  /**
+   * `EVOLUTION_API_URL`/`EVOLUTION_API_KEY`/`EVOLUTION_WEBHOOK_TOKEN` ausentes
+   * => erro claro, nunca crash (API_ERRORS.md:120, API_CONTRACTS.md:2253-2255
+   * — as TRES, nao so as duas do cliente HTTP). `EVOLUTION_WEBHOOK_TOKEN` nao
+   * afeta o CLIENTE do gateway (ele so autentica o webhook DE ENTRADA), mas sem
+   * ele nenhuma mensagem/evento de conexao consegue voltar — deixar o admin
+   * parear um numero real nessa condicao criaria um canal que parece
+   * conectado e nunca recebe nada (fix do Important 3 da revisao da Task 5).
+   */
   function requireEvolutionClient(): EvolutionClient {
     if (!evolutionClient) {
+      throw new BusinessError('CHANNEL_QR_UNAVAILABLE');
+    }
+    // `process.env` primeiro, mesmo padrao de `secret-box.ts`/`webhook.routes.ts`:
+    // le no momento da chamada, para o teste poder trocar o valor sem recarregar `env`.
+    const webhookToken = process.env.EVOLUTION_WEBHOOK_TOKEN ?? env.EVOLUTION_WEBHOOK_TOKEN;
+    if (!webhookToken || webhookToken.length === 0) {
       throw new BusinessError('CHANNEL_QR_UNAVAILABLE');
     }
     return evolutionClient;
@@ -747,9 +762,24 @@ export function createChannelSettingsService(
     assertWriteRole(ctx);
 
     const raw: unknown = dto;
-    if (!isRecord(raw) || raw.acceptTerms !== true) {
+    const acceptTermsNow = isRecord(raw) && raw.acceptTerms === true;
+
+    // API_CONTRACTS.md:2260-2266: exige aceite PREVIO (`accepted_terms_at` ja
+    // gravado) OU `acceptTerms: true` NESTE corpo — faltando os dois,
+    // VALIDATION_ERROR. Sem este OR, o fluxo de reconexao do frontend (que le
+    // `acceptedTermsAt` de `GET /settings/channels`, ve que ja foi aceito e
+    // pula o checkbox, `POST {}`) tomava 400 num campo que o usuario nem via
+    // (Important 5 da revisao da Task 5).
+    const priorState = await db.withTenant(ctx.tenantId, (tx) =>
+      channelSettingsRepo.findConnectionState(tx, ctx.tenantId, 'whatsapp'),
+    );
+    const alreadyAccepted = priorState?.acceptedTermsAt != null;
+
+    if (!acceptTermsNow && !alreadyAccepted) {
       throw new BusinessError('VALIDATION_ERROR', {
-        fields: { acceptTerms: 'E preciso aceitar o termo de risco para conectar por QR' },
+        fields: {
+          acceptTerms: 'E preciso aceitar o termo de risco para conectar por QR',
+        },
       });
     }
 
@@ -761,15 +791,21 @@ export function createChannelSettingsService(
 
     // 1) Aceite do termo: dado do CANAL (nao so do audit log), gravado primeiro
     // — mesmo que a chamada ao gateway falhe depois, o aceite fica registrado.
+    // Idempotente: reconectar com aceite previo NAO sobrescreve
+    // `accepted_terms_at`/`by` (ver `acceptWhatsAppQrTerms`).
     await db.withTenant(ctx.tenantId, (tx) =>
       channelSettingsRepo.acceptWhatsAppQrTerms(tx, ctx.tenantId, ctx.userId),
     );
-    await audit.record(ctx, {
-      action: 'accept_whatsapp_qr_terms',
-      entityType: 'tenant_channels',
-      entityId: ctx.tenantId,
-      newValues: { channel: 'whatsapp' },
-    });
+    // Audita a ACEITACAO em si so quando ela de fato acontece agora — uma
+    // reconexao que reusa o aceite previo nao e um novo evento de aceite.
+    if (acceptTermsNow && !alreadyAccepted) {
+      await audit.record(ctx, {
+        action: 'accept_whatsapp_qr_terms',
+        entityType: 'tenant_channels',
+        entityId: ctx.tenantId,
+        newValues: { channel: 'whatsapp' },
+      });
+    }
 
     // 2) Cria/reaproveita a instancia no gateway — idempotente do lado do
     // Evolution (POST /instance/create com o mesmo nome reaproveita).

@@ -17,7 +17,7 @@
  * A lista `LAB_ROUTES` e a fonte unica: rota nova entra ali e passa a ser
  * varrida pelos tres invariantes de uma vez.
  */
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type {
   ApiErrorBody,
   Channel,
@@ -593,6 +593,17 @@ function call(route: LabRoute, target: Lab, headers: Record<string, string>, bod
 
 beforeAll(async () => {
   db = await getTestDb();
+  // As rotas de /settings/channels/whatsapp/* tambem exigem
+  // EVOLUTION_WEBHOOK_TOKEN configurado (Important 3 da revisao da Task 5) —
+  // sem ele `requireEvolutionClient` recusa com 503 mesmo com o
+  // `evolutionClient` de mentira injetado, e o sweep generico desta suite
+  // (que so declara comportamento, nunca segredo especifico de uma rota)
+  // esperaria 200.
+  process.env.EVOLUTION_WEBHOOK_TOKEN = 'evolution-webhook-token-de-teste';
+});
+
+afterAll(() => {
+  delete process.env.EVOLUTION_WEBHOOK_TOKEN;
 });
 
 beforeEach(async () => {

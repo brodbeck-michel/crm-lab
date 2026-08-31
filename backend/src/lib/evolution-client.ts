@@ -55,7 +55,21 @@ export interface EvolutionClient {
   getQr(instanceName: string): Promise<EvolutionQrResult>;
   getStatus(instanceName: string): Promise<EvolutionStatusResult>;
   logout(instanceName: string): Promise<void>;
-  sendText(instanceName: string, phone: string, text: string): Promise<EvolutionSendResult>;
+  /**
+   * `apikey` e a chave DA INSTANCIA (a mesma que `createInstance` devolveu e
+   * `ChannelSettingsService` cifra em `tenant_channels.api_token`, D-076) —
+   * NAO a `adminApiKey` deste cliente. Fix do Important 6 da revisao da
+   * Task 5: envio com privilegio de administrador do gateway, para uma
+   * operacao que so precisa falar com a PROPRIA instancia, era o oposto de
+   * privilegio minimo — e deixava a apikey cifrada em repouso sem NENHUM
+   * consumidor.
+   */
+  sendText(
+    instanceName: string,
+    phone: string,
+    text: string,
+    apikey: string,
+  ): Promise<EvolutionSendResult>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -91,12 +105,17 @@ function statusOf(state: unknown): EvolutionConnectionStatus {
 export function createEvolutionClient(baseUrl: string, adminApiKey: string): EvolutionClient {
   const base = baseUrl.replace(/\/+$/, '');
 
-  async function request(path: string, init: RequestInit = {}): Promise<unknown> {
+  /** `apikeyOverride` sobrescreve `adminApiKey` — usado so por `sendText` (I6). */
+  async function request(
+    path: string,
+    init: RequestInit = {},
+    apikeyOverride?: string,
+  ): Promise<unknown> {
     const response = await fetch(`${base}${path}`, {
       ...init,
       headers: {
         'Content-Type': 'application/json',
-        apikey: adminApiKey,
+        apikey: apikeyOverride ?? adminApiKey,
         ...(init.headers ?? {}),
       },
     });
@@ -135,12 +154,20 @@ export function createEvolutionClient(baseUrl: string, adminApiKey: string): Evo
       });
       const record = isRecord(body) ? body : {};
       const qrcode = asString(record.base64);
-      const status =
-        typeof record.status === 'string'
-          ? (record.status as EvolutionConnectionStatus)
-          : qrcode
-            ? 'pairing'
-            : 'disconnected';
+      // Fix do Minor 7 da revisao da Task 5: `/instance/connect` do Evolution
+      // real NAO devolve `status` — devolve `{pairingCode, code, base64, ...}`
+      // enquanto pareando e `{instance: {instanceName, state: "open"}}` quando
+      // JA CONECTADO (sem `base64`). O cast antigo em `record.status` nunca
+      // batia contra um gateway de verdade e caia sempre no fallback; agora a
+      // instancia ja conectada e detectada por `record.instance.state` via
+      // `statusOf` (a MESMA funcao de `getStatus`, nao um cast solto), e so
+      // na ausencia de `instance` o `qrcode` decide entre pairing/disconnected.
+      const instance = isRecord(record.instance) ? record.instance : null;
+      const status: EvolutionConnectionStatus = instance
+        ? statusOf(instance.state)
+        : qrcode
+          ? 'pairing'
+          : 'disconnected';
       return { qrcode, status };
     },
 
@@ -166,11 +193,13 @@ export function createEvolutionClient(baseUrl: string, adminApiKey: string): Evo
       instanceName: string,
       phone: string,
       text: string,
+      apikey: string,
     ): Promise<EvolutionSendResult> {
-      const body = await request(`/message/sendText/${encodeURIComponent(instanceName)}`, {
-        method: 'POST',
-        body: JSON.stringify({ number: phone, text }),
-      });
+      const body = await request(
+        `/message/sendText/${encodeURIComponent(instanceName)}`,
+        { method: 'POST', body: JSON.stringify({ number: phone, text }) },
+        apikey,
+      );
       const record = isRecord(body) ? body : {};
       const key = isRecord(record.key) ? record.key : {};
       const externalId = asString(key.id);

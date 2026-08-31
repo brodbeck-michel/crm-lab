@@ -713,6 +713,66 @@ interface ChannelSettingsServiceQrExtension {
   pareamento QR real com um número de verdade **não é testável em CI**; fica documentado como
   verificação manual.
 
+### 16.1 Contrato assumido do gateway Evolution (implementação, Task 5)
+
+O contrato acima descreve **o quê** (`connect`/`getQrStatus`/`getStatus`/`disconnect`); esta
+seção registra **como** — os endpoints HTTP e os formatos de resposta que
+`backend/src/lib/evolution-client.ts` assume, escritos aqui porque não estavam documentados em
+lugar nenhum antes da rodada de correção da Task 5 (Minor 10 da revisão). Os dois primeiros
+(`create`, `connect`) e o envio vêm do §4.2/4.3 do spec da Onda 7; os outros dois são **inferência
+da Task 5** contra a superfície real da Evolution API v2 — confirmados corretos pela revisão
+(caminho e verbo), mas os **formatos de resposta abaixo são suposição**, a verificar no
+pareamento manual com um gateway real:
+
+| Endpoint | Verbo | Uso | Formato assumido |
+|---|---|---|---|
+| `/instance/create` | `POST` | `createInstance` | `{ instance: { instanceName }, hash: { apikey } }` |
+| `/instance/connect/{instance}` | `GET` | `getQr` | Pareando: `{ base64, pairingCode, code, count }` (sem `status`). Já conectada: `{ instance: { instanceName, state: "open" } }` (sem `base64`) |
+| `/instance/connectionState/{instance}` | `GET` | `getStatus` | `{ instance: { instanceName, state } }`, `state ∈ {open, connecting, close}` |
+| `/instance/logout/{instance}` | `DELETE` | `logout` | Corpo ignorado |
+| `/message/sendText/{instance}` | `POST` | `sendText` | `{ key: { id } }` |
+
+Autenticação: header `apikey` em **todas** as chamadas, com a apikey ADMINISTRATIVA
+(`EVOLUTION_API_KEY`) — **exceto `sendText`**, que usa a apikey DA INSTÂNCIA
+(`credentials.apiToken`, resolvida por `WhatsAppCredentialsResolver`/`resolveCredentials`,
+D-024). Essa exceção é deliberada (fix do Important 6 da revisão): as demais chamadas
+gerenciam instâncias (`create`/`connectionState`/`logout`), o que exige privilégio
+administrativo; enviar uma mensagem só precisa falar com a própria instância, e usar a chave
+administrativa ali era privilégio maior que o necessário — e deixava a apikey cifrada em
+repouso (D-076) sem nenhum consumidor.
+
+**`phoneNumber` é best-effort, não garantido (Minor 8 diferido).** `getStatus` lê
+`instance.owner` e o webhook lê `data.owner ?? data.wuid` no evento `CONNECTION_UPDATE` — nenhum
+dos dois é confirmado no formato real de resposta desses dois endpoints (o número pareado
+plausivelmente só aparece em `/instance/fetchInstances`, um sexto endpoint não implementado: a
+correção trocaria uma suposição não verificada por outra). Efeito conhecido: contra um gateway
+real, `tenant_channels.phone_number` pode nunca ser preenchido no caminho QR, e a tela mostra o
+canal conectado sem número. **Verificar no pareamento manual** e, se confirmado, abrir o sexto
+endpoint como correção separada — não represada nesta rodada.
+
+**Header do webhook de entrada:** `x-evolution-webhook-token` é o header documentado
+(API_CONTRACTS.md, seção "Webhook do gateway Evolution" — infra configura o gateway para mandar
+este), com `apikey` tolerado como alternativa (ruling do coordenador na revisão da Task 5,
+Critical 2 — mesmo segredo, mesma comparação em tempo constante `safeEquals`, então aceitar os
+dois não abre superfície nova).
+
+**`instance` do payload é conferido contra `evolutionInstanceName(tenantId)` antes de qualquer
+escrita (fix do Important 4 da revisão).** O `:tenant` da URL é um slug/uuid **público** e
+`EVOLUTION_WEBHOOK_TOKEN` é **único para a instalação inteira** (mesmo formato de risco de
+D-073 emendada, §11) — sem esta checagem, quem tivesse o token conseguia POSTar em qualquer
+slug e injetar mensagem/estado em outro laboratório. `MESSAGES_UPSERT`/`CONNECTION_UPDATE` sem
+`instance` ou com `instance` que não bate com o tenant resolvido pela URL são recusados (`200`
+sem gravar nada, mesma disciplina de "nunca oráculo"). `QRCODE_UPDATED` não é escrito no banco
+e portanto não passa por essa checagem.
+
+**`is_active` nunca é tocado por `disconnect`/`CONNECTION_UPDATE state:'close'` (fix do Critical
+1 da revisão).** É o mesmo campo que o kill switch do webhook confere antes do token
+(D-074) — zerá-lo ali travava o canal: a reconexão por QR criava instância nova, mas o
+`CONNECTION_UPDATE state:'open'` seguinte batia no kill switch e nenhuma mensagem voltava a
+entrar, sempre com `200 {received:true}`. Só `PATCH /settings/channels {isActive}` liga/desliga
+o canal de propósito — um controle deliberadamente separado de "conectado agora"
+(`connected_at`).
+
 ---
 
 ## Convenções Transversais

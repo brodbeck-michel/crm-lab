@@ -5,17 +5,26 @@
  * O gateway e uma fake em memoria (mesmo padrao do `MockWhatsAppDriver`):
  * nenhuma chamada de rede real em teste/CI. O que estas specs provam:
  *
- *  - Aceite do termo e OBRIGATORIO (`acceptTerms: true`, nunca implicito) e
- *    fica gravado no CANAL (`accepted_terms_at`/`by`), nao so no audit log.
+ *  - Aceite do termo: `acceptTerms: true` NESTE corpo OU `accepted_terms_at`
+ *    ja gravado de uma conexao anterior (API_CONTRACTS.md:2260-2266) — nunca
+ *    os dois ausentes. Fica gravado no CANAL (`accepted_terms_at`/`by`), nao
+ *    so no audit log, e SOBREVIVE a reconexoes (nao e sobrescrito).
  *  - Papel: SO admin conecta/desconecta/le — `manager` e recusado (D-064/D-066
  *    seguem o mesmo padrao de escrita restrita a admin).
  *  - A apikey da instancia volta CIFRADA em `tenant_channels.api_token`
- *    (D-076, mesmo caminho do token cloud_api).
- *  - `EVOLUTION_API_URL`/`EVOLUTION_API_KEY` ausentes -> `CHANNEL_QR_UNAVAILABLE`
- *    (503), nunca crash.
+ *    (D-076, mesmo caminho do token cloud_api) — provado com
+ *    `CHANNEL_SECRET_KEY` configurada, nao so por `toBeTruthy()`.
+ *  - `EVOLUTION_API_URL`/`EVOLUTION_API_KEY`/`EVOLUTION_WEBHOOK_TOKEN`
+ *    ausentes -> `CHANNEL_QR_UNAVAILABLE` (503), nunca crash (as TRES, nao so
+ *    as duas do cliente HTTP — Important 3 da revisao da Task 5).
+ *  - `disconnect` NUNCA mexe em `is_active` (Critical 1 — `is_active` e o
+ *    kill switch do webhook; desligar e um controle separado,
+ *    `PATCH /settings/channels`).
+ *  - Auditoria das tres acoes (`accept_whatsapp_qr_terms`, `connect_whatsapp_qr`,
+ *    `disconnect_whatsapp`) sem apikey/QR no `new_values` (Regra 7 e D-064).
  *  - Isolamento: o canal QR de um tenant nunca aparece para outro.
  */
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { WhatsAppQrResponse, WhatsAppStatusResponse } from '@crm-lab/shared';
 import { makeChannelSettingsModule } from '../../src/controllers/channel-settings.routes.js';
 import type {
@@ -23,26 +32,33 @@ import type {
   EvolutionConnectionStatus,
 } from '../../src/lib/evolution-client.js';
 import type { DbClient } from '../../src/db/types.js';
+import { EvolutionWhatsAppDriver, type WhatsAppCredentials } from '../../src/services/whatsapp.service.js';
 import { createTenant, createUser, type UserRecord } from '../helpers/factories.js';
 import { createTestApp, type TestApp } from '../helpers/test-app.js';
 import { getTestDb, resetDatabase } from '../helpers/test-db.js';
 
 const URL = '/api/v1/settings/channels/whatsapp';
+const WEBHOOK_TOKEN = 'evolution-webhook-token-de-teste';
 
 /** Gateway Evolution de mentira: guarda estado em memoria, por instanceName. */
 function fakeEvolutionClient(): EvolutionClient & {
   setStatus(instanceName: string, status: EvolutionConnectionStatus, phoneNumber?: string): void;
   createdInstances: string[];
   loggedOutInstances: string[];
+  lastSendApikey: string | undefined;
 } {
   const instances = new Map<string, { apikey: string }>();
   const statuses = new Map<string, { status: EvolutionConnectionStatus; phoneNumber: string | null }>();
   const createdInstances: string[] = [];
   const loggedOutInstances: string[] = [];
+  let lastSendApikey: string | undefined;
 
   return {
     createdInstances,
     loggedOutInstances,
+    get lastSendApikey() {
+      return lastSendApikey;
+    },
     setStatus(instanceName, status, phoneNumber) {
       statuses.set(instanceName, { status, phoneNumber: phoneNumber ?? null });
     },
@@ -68,7 +84,8 @@ function fakeEvolutionClient(): EvolutionClient & {
       loggedOutInstances.push(instanceName);
       statuses.set(instanceName, { status: 'disconnected', phoneNumber: null });
     },
-    async sendText(instanceName: string) {
+    async sendText(instanceName: string, _phone: string, _text: string, apikey: string) {
+      lastSendApikey = apikey;
       return { externalId: `evo-${instanceName}-${Date.now()}` };
     },
   };
@@ -116,6 +133,18 @@ async function rawChannelState(target: string): Promise<
   return result.rows[0];
 }
 
+async function auditActions(target: string): Promise<
+  Array<{ action: string; user_id: string | null; new_values: unknown }>
+> {
+  const result = await db.withoutTenant((tx) =>
+    tx.query<{ action: string; user_id: string | null; new_values: unknown }>(
+      `SELECT action, user_id, new_values FROM audit_logs WHERE tenant_id = $1 ORDER BY "timestamp" ASC`,
+      [target],
+    ),
+  );
+  return result.rows;
+}
+
 beforeEach(async () => {
   db = await getTestDb();
   await resetDatabase(db);
@@ -125,12 +154,22 @@ beforeEach(async () => {
   admin = await createUser({ tenantId, role: 'admin', name: 'Admin QR', db });
   manager = await createUser({ tenantId, role: 'manager', name: 'Gestora QR', discountLimit: 30, db });
 
+  // Important 3 da revisao: as 4 rotas exigem TAMBEM o token do webhook, nao
+  // so URL/KEY do cliente — sem ele o admin nao consegue nem comecar a parear
+  // um numero que depois nao vai receber nada.
+  process.env.EVOLUTION_WEBHOOK_TOKEN = WEBHOOK_TOKEN;
+
   evolution = fakeEvolutionClient();
   app = await buildApp(evolution);
 });
 
+afterEach(() => {
+  delete process.env.EVOLUTION_WEBHOOK_TOKEN;
+  delete process.env.CHANNEL_SECRET_KEY;
+});
+
 describe('POST /settings/channels/whatsapp/connect', () => {
-  it('sem aceite do termo (acceptTerms ausente ou false) -> VALIDATION_ERROR', async () => {
+  it('sem aceite do termo (acceptTerms ausente ou false) e SEM aceite previo -> VALIDATION_ERROR', async () => {
     const semCampo = await app.agent.post(`${URL}/connect`).set(app.auth(admin)).send({}).expect(400);
     expect(semCampo.body.error.code).toBe('VALIDATION_ERROR');
     expect(semCampo.body.error.details.fields).toHaveProperty('acceptTerms');
@@ -165,11 +204,46 @@ describe('POST /settings/channels/whatsapp/connect', () => {
     expect(row?.accepted_terms_by).toBe(admin.id);
     // A apikey em claro NUNCA aparece no corpo da resposta.
     expect(JSON.stringify(res.body)).not.toContain('apikey-tenant');
-    // Mas esta gravada (cifrada em repouso quando CHANNEL_SECRET_KEY existe;
-    // em teste sem a chave, gravada em claro — o que importa aqui e que NAO
-    // e o valor mascarado/placeholder).
     expect(row?.api_token).toBeTruthy();
     expect(evolution.createdInstances).toContain(`tenant-${tenantId}`);
+  });
+
+  it('apikey da instancia e CIFRADA em repouso quando CHANNEL_SECRET_KEY existe (D-076)', async () => {
+    // M9 (parcial) da revisao: `toBeTruthy()` nao prova cifra — qualquer
+    // string nao vazia passa. Aqui a chave e configurada de verdade e o valor
+    // gravado e comparado contra o texto em claro que o fake gateway devolveu.
+    process.env.CHANNEL_SECRET_KEY = 'chave-de-teste-com-mais-de-32-caracteres-000';
+
+    await app.agent.post(`${URL}/connect`).set(app.auth(admin)).send({ acceptTerms: true }).expect(200);
+
+    const row = await rawChannelState(tenantId);
+    const plaintext = `apikey-tenant-${tenantId}`;
+    expect(row?.api_token).not.toBe(plaintext);
+    expect(row?.api_token).not.toBeNull();
+    expect(row?.api_token?.startsWith('enc:v1:')).toBe(true);
+  });
+
+  it('reconectar SEM acceptTerms no corpo funciona quando ja aceito antes, e NAO reescreve accepted_terms_at/by', async () => {
+    // Important 5 da revisao: API_CONTRACTS.md:2260-2266 — aceite previo OU
+    // `acceptTerms: true` neste corpo. O frontend de reconexao le
+    // `acceptedTermsAt` de `GET /settings/channels`, ve que ja foi aceito, e
+    // esta autorizado a pular o checkbox e mandar `{}`.
+    await app.agent.post(`${URL}/connect`).set(app.auth(admin)).send({ acceptTerms: true }).expect(200);
+    const primeiraAceite = (await rawChannelState(tenantId))?.accepted_terms_at;
+    expect(primeiraAceite).not.toBeNull();
+
+    const outroAdmin = await createUser({ tenantId, role: 'admin', name: 'Outro Admin', db });
+    const res = await app.agent
+      .post(`${URL}/connect`)
+      .set(app.auth(outroAdmin))
+      .send({})
+      .expect(200);
+    expect((res.body as WhatsAppQrResponse).status).toBe('pairing');
+
+    const row = await rawChannelState(tenantId);
+    // O registro LGPD de QUEM/QUANDO aceitou pela primeira vez sobrevive.
+    expect(row?.accepted_terms_at).toEqual(primeiraAceite);
+    expect(row?.accepted_terms_by).toBe(admin.id);
   });
 
   it('gestor nao pode conectar (admin apenas) -> FORBIDDEN', async () => {
@@ -182,7 +256,7 @@ describe('POST /settings/channels/whatsapp/connect', () => {
     expect(evolution.createdInstances).toHaveLength(0);
   });
 
-  it('sem gateway configurado -> CHANNEL_QR_UNAVAILABLE (503), nunca crash', async () => {
+  it('sem gateway configurado (URL/KEY) -> CHANNEL_QR_UNAVAILABLE (503), nunca crash', async () => {
     const semGateway = await createTestApp({
       db,
       modules: [makeChannelSettingsModule({})],
@@ -193,6 +267,19 @@ describe('POST /settings/channels/whatsapp/connect', () => {
       .send({ acceptTerms: true })
       .expect(503);
     expect(res.body.error.code).toBe('CHANNEL_QR_UNAVAILABLE');
+  });
+
+  it('sem EVOLUTION_WEBHOOK_TOKEN (gateway OK) -> CHANNEL_QR_UNAVAILABLE (503)', async () => {
+    // Important 3: sem o token do webhook, um "conectado" nunca recebe nada —
+    // o admin nao pode nem comecar.
+    delete process.env.EVOLUTION_WEBHOOK_TOKEN;
+    const res = await app.agent
+      .post(`${URL}/connect`)
+      .set(app.auth(admin))
+      .send({ acceptTerms: true })
+      .expect(503);
+    expect(res.body.error.code).toBe('CHANNEL_QR_UNAVAILABLE');
+    expect(evolution.createdInstances).toHaveLength(0);
   });
 });
 
@@ -239,7 +326,7 @@ describe('GET /settings/channels/whatsapp/status', () => {
 });
 
 describe('POST /settings/channels/whatsapp/disconnect', () => {
-  it('chama logout no gateway e zera connected_at/is_active', async () => {
+  it('chama logout no gateway e zera connected_at — is_active FICA INALTERADO (Critical 1, API_CONTRACTS.md:2325)', async () => {
     await app.agent.post(`${URL}/connect`).set(app.auth(admin)).send({ acceptTerms: true }).expect(200);
     await db.withTenant(tenantId, (tx) =>
       tx.query(
@@ -253,7 +340,86 @@ describe('POST /settings/channels/whatsapp/disconnect', () => {
     expect(evolution.loggedOutInstances).toContain(`tenant-${tenantId}`);
     const row = await rawChannelState(tenantId);
     expect(row?.connected_at).toBeNull();
-    expect(row?.is_active).toBe(false);
+    // "Desconectar nao e desativar o canal na tela; sao dois controles
+    // distintos." Um `markWhatsAppDisconnected` que apagasse `is_active`
+    // travava o kill switch do webhook para sempre (Critical 1) — o unico
+    // jeito de desligar de proposito e `PATCH /settings/channels`.
+    expect(row?.is_active).toBe(true);
+  });
+});
+
+describe('auditoria das 3 acoes (Regra 7)', () => {
+  it('accept_whatsapp_qr_terms e connect_whatsapp_qr sao gravados no connect, sem apikey/QR', async () => {
+    const res = await app.agent
+      .post(`${URL}/connect`)
+      .set(app.auth(admin))
+      .send({ acceptTerms: true })
+      .expect(200);
+
+    const entries = await auditActions(tenantId);
+    const actions = entries.map((e) => e.action);
+    expect(actions).toEqual(
+      expect.arrayContaining(['accept_whatsapp_qr_terms', 'connect_whatsapp_qr']),
+    );
+    for (const entry of entries) {
+      expect(entry.user_id).toBe(admin.id);
+      const serialized = JSON.stringify(entry.new_values);
+      expect(serialized).not.toContain('apikey-tenant');
+      expect(serialized).not.toContain((res.body as WhatsAppQrResponse).qrcode ?? '__nunca__');
+    }
+  });
+
+  it('reconectar sem novo aceite NAO duplica accept_whatsapp_qr_terms', async () => {
+    await app.agent.post(`${URL}/connect`).set(app.auth(admin)).send({ acceptTerms: true }).expect(200);
+    await app.agent.post(`${URL}/connect`).set(app.auth(admin)).send({}).expect(200);
+
+    const entries = await auditActions(tenantId);
+    const aceites = entries.filter((e) => e.action === 'accept_whatsapp_qr_terms');
+    expect(aceites).toHaveLength(1);
+  });
+
+  it('disconnect_whatsapp e gravado', async () => {
+    await app.agent.post(`${URL}/connect`).set(app.auth(admin)).send({ acceptTerms: true }).expect(200);
+    await app.agent.post(`${URL}/disconnect`).set(app.auth(admin)).expect(204);
+
+    const entries = await auditActions(tenantId);
+    expect(entries.map((e) => e.action)).toContain('disconnect_whatsapp');
+  });
+});
+
+describe('EvolutionWhatsAppDriver.send (Important 6)', () => {
+  it('usa a apikey DA INSTANCIA (credentials.apiToken), nunca a apikey admin', async () => {
+    const driver = new EvolutionWhatsAppDriver(evolution);
+    const credentials: WhatsAppCredentials = {
+      tenantId,
+      phoneNumberId: 'numero-do-lab',
+      apiUrl: '',
+      apiToken: 'apikey-da-instancia-real',
+      webhookSecret: '',
+      isActive: true,
+      apiTokenRevoked: false,
+      connectionMode: 'qr',
+    };
+
+    await driver.send(credentials, '5511987654321', 'Ola');
+
+    expect(evolution.lastSendApikey).toBe('apikey-da-instancia-real');
+  });
+
+  it('sem apiToken gravado, lanca em vez de sair com privilegio de admin', async () => {
+    const driver = new EvolutionWhatsAppDriver(evolution);
+    const credentials: WhatsAppCredentials = {
+      tenantId,
+      phoneNumberId: 'numero-do-lab',
+      apiUrl: '',
+      apiToken: '',
+      webhookSecret: '',
+      isActive: true,
+      apiTokenRevoked: false,
+      connectionMode: 'qr',
+    };
+
+    await expect(driver.send(credentials, '5511987654321', 'Ola')).rejects.toThrow();
   });
 });
 

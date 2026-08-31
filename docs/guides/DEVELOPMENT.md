@@ -45,6 +45,17 @@ cd frontend && npm run dev         # http://localhost:5173
 
 Em dev, o WhatsAppService usa driver MOCK (env `WHATSAPP_API_URL` vazia) — mensagens "enviadas" aparecem no log e um eco simulado retorna após 2s.
 
+⚠️ **Volume `postgres-data` de antes da Onda 7?** O gateway `evolution`
+(WhatsApp por QR, D-083) precisa do banco `evolution`, criado por
+`postgres-init/` — que só roda na primeira inicialização de um volume
+**vazio**. Volume já existente de uma versão anterior = script não roda de
+novo. O próprio gateway costuma criar o banco sozinho no boot (Prisma migrate,
+usando o `crm`, que é superusuário do cluster) — verificado ao vivo contra um
+volume pré-existente sem o banco `evolution`. Se `crm-lab-evolution` ainda
+assim ficar reiniciando: `docker compose exec -T postgres createdb -U crm
+evolution` (sem apagar nada) ou `docker compose down -v` + subir de novo
+(apaga Postgres e Redis locais).
+
 ---
 
 ## Ciclo de Trabalho (por tarefa)

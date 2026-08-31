@@ -10,6 +10,13 @@
 # `crm_lab`. Em .sh (ao contrario de .sql) a imagem oficial injeta
 # $POSTGRES_USER de verdade, o que funciona tanto no `crm` fixo do dev quanto
 # no usuario variavel do prod.
+#
+# ⚠️ NAO RODA em quem ja tinha o volume `postgres-data` de antes da Onda 7 —
+# "primeiro init de volume VAZIO" nao inclui um volume ja provisionado por
+# uma versao anterior deste compose. Caveat + recuperacao documentados em
+# docs/QUICK_START.md, docs/guides/DEVELOPMENT.md (dev) e
+# docs/guides/DEPLOYMENT.md (prod) — nao repita a explicacao aqui, so
+# aponte para la se mexer neste arquivo.
 set -euo pipefail
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres <<-EOSQL

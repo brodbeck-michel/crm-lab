@@ -100,6 +100,27 @@ npm run migrate
 npm run seed
 ```
 
+> ⚠️ **Já tinha este projeto rodando antes da Onda 7?** O `docker-compose.yml`
+> ganhou um serviço `evolution` (gateway WhatsApp por QR, D-083) que depende
+> de um banco `evolution` próprio. Esse banco é criado por um script em
+> `postgres-init/`, mas o Postgres **só executa scripts de
+> `/docker-entrypoint-initdb.d` na primeira inicialização de um volume
+> vazio** — se seu volume `postgres-data` já existe de uma versão anterior
+> do compose, o script não roda e o container `evolution` pode não achar o
+> banco. Na prática o próprio gateway costuma se recuperar sozinho (ele roda
+> `prisma migrate` na subida e cria o banco `evolution` se estiver faltando,
+> usando o mesmo usuário `crm` — que é superusuário do cluster no Postgres
+> do compose, então tem permissão para isso). Se mesmo assim o container
+> `crm-lab-evolution` ficar reiniciando (`docker compose ps`), resolva com
+> uma das duas opções:
+>
+> - **Sem apagar nada** (cria só o banco que falta):
+>   `docker compose exec -T postgres createdb -U crm evolution`
+> - **Recriando os volumes do zero** (apaga TODO o dado local — Postgres e
+>   Redis, incluindo seed/migrações já rodadas):
+>   `docker compose down -v && docker-compose up -d` (repita `npm run
+>   migrate`/`npm run seed` depois)
+
 ### 4. Rodar aplicação
 ```bash
 # Terminal 1 - Backend (na pasta backend)

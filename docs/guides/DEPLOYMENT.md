@@ -165,6 +165,10 @@ docker compose -f docker-compose.prod.yml run --rm migrate
 
 # 4. Subir
 docker compose -f docker-compose.prod.yml up -d
+#    ⚠️ Primeiro deploy do servico `evolution` (D-083) num host que JA TINHA
+#    o volume `postgres-data` provisionado de antes da Onda 7: o script que
+#    cria o banco `evolution` (`postgres-init/`) so roda em volume vazio —
+#    ver "Pegadinhas conhecidas" (§6) para o sintoma e a recuperacao
 
 # 5. Conferir
 curl -fsS http://localhost:${HTTP_PORT:-8080}/healthz          # nginx
@@ -255,6 +259,7 @@ possível e evita a rota (2).
 | Webhook do WhatsApp recusa tudo | `WHATSAPP_WEBHOOK_SECRET` vazia (comportamento intencional) | definir o segredo e usar a URL com slug do tenant |
 | E2E passa local e falha no CI | `retries: 2` e `forbidOnly` só ligam com `CI=true` | reproduzir com `CI=true npm run e2e` |
 | Vite sobe em 5174 em vez de 5173 | porta ocupada; o config não usa `strictPort` | liberar a 5173 — o gate de readiness do CI falha de propósito |
+| `evolution` reinicia em loop após o primeiro deploy da Onda 7 | volume `postgres-data` **já existia** antes deste deploy (host anterior à Onda 7) — o script de `postgres-init/` que cria o banco `evolution` só roda em volume vazio (D-083) | o próprio gateway costuma se recuperar sozinho (roda `prisma migrate` no boot e cria o banco se faltar, usando `$POSTGRES_USER` — superusuário do cluster); se `docker compose ps` mostrar `evolution` reiniciando mesmo assim: `docker compose -f docker-compose.prod.yml exec -T postgres createdb -U "$POSTGRES_USER" evolution` (não apaga nada — nunca use `down -v` em produção) |
 
 ---
 

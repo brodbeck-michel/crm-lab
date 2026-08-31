@@ -21,6 +21,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-crm_lab}
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      # So roda no primeiro init do volume. Cria o banco `evolution` — o
+      # compose so provisiona o banco de POSTGRES_DB (`crm_lab`).
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
       interval: 10s
@@ -90,6 +93,13 @@ services:
       WHATSAPP_API_URL: ${WHATSAPP_API_URL:-}
       WHATSAPP_API_TOKEN: ${WHATSAPP_API_TOKEN:-}
       WHATSAPP_WEBHOOK_SECRET: ${WHATSAPP_WEBHOOK_SECRET:-}
+      # Gateway Evolution API (D-083, Onda 7 Bloco B) — conexao WhatsApp por QR.
+      # As tres vazias = funcionalidade desligada com erro claro
+      # (CHANNEL_QR_UNAVAILABLE), nunca crash de boot; WHATSAPP_API_* acima
+      # continua funcionando sem elas.
+      EVOLUTION_API_URL: ${EVOLUTION_API_URL:-}
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:-}
+      EVOLUTION_WEBHOOK_TOKEN: ${EVOLUTION_WEBHOOK_TOKEN:-}
       # Cifra `tenant_channels.api_token`/`webhook_secret` em repouso (D-076).
       # Sem ela o backend NAO SOBE em producao — e proposital.
       CHANNEL_SECRET_KEY: ${CHANNEL_SECRET_KEY:?defina CHANNEL_SECRET_KEY (>=32 caracteres)}
@@ -118,6 +128,35 @@ services:
       - '${HTTP_PORT:-8080}:8080'
     security_opt:
       - no-new-privileges:true
+
+  # Gateway Evolution API self-hosted (D-083) — conexao WhatsApp por QR (Onda 7,
+  # Bloco B). Versao fixada na v2.3.7 (ultima sem exigencia de ativacao de
+  # licenca). SEM `ports:` de proposito — um Evolution admin API exposto
+  # publicamente com chave conhecida e sequestro total do WhatsApp do
+  # laboratorio; so o nginx do `frontend` expoe porta (D-051). A chave e a
+  # MESMA `EVOLUTION_API_KEY` que o `backend` usa para chamar o gateway.
+  evolution:
+    image: evoapicloud/evolution-api:v2.3.7
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Placeholder obvio quando a integracao QR nao esta em uso — quem
+      # configura EVOLUTION_API_KEY de verdade sobrescreve os dois lados
+      # (aqui e no `backend` acima) de uma vez, pela mesma variavel.
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:-troque-esta-chave-antes-de-usar}
+      DATABASE_ENABLED: 'true'
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/evolution
+      CACHE_REDIS_ENABLED: 'true'
+      CACHE_REDIS_URI: redis://redis:6379/1
+    security_opt:
+      - no-new-privileges:true
+    # Sem `ports:` — so acessivel na rede interna do compose (o `backend`
+    # fala com ele por `http://evolution:8080`).
 
 volumes:
   postgres-data:

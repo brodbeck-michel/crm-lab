@@ -56,9 +56,6 @@ test.describe('Fluxo 7: Catálogo (atendente le)', () => {
     await loginAs(page, E2E_USERS.alfaAttendant);
     await gotoScreen(page, CATALOG_PATH, HEADING);
 
-    // Busca primeiro, sempre: a tela carrega so a PRIMEIRA pagina (limite 20,
-    // e o proprio componente traz `// TODO: Paginação`). Num catalogo real, um
-    // exame semeado nao esta necessariamente entre os 20 primeiros.
     await page.getByRole('searchbox').fill(E2E_EXAMS.hemograma.code);
     await expect(page.getByRole('cell', { name: E2E_EXAMS.hemograma.name })).toBeVisible();
     await expect(page.getByRole('cell', { name: E2E_EXAMS.hemograma.code })).toBeVisible();

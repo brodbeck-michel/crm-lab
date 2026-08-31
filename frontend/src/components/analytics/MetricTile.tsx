@@ -1,6 +1,17 @@
 import { MoneyDisplay } from '@/components/shared/MoneyDisplay';
 import { formatCount } from '@/lib/format';
 
+/**
+ * `value` da variante `percent` já vem em PONTOS percentuais do contrato
+ * (`conversionRate: 30` = 30%, API_CONTRACTS.md — não é fração 0–1). Por
+ * isso o formatador é `decimal`, não o `style: 'percent'` do `Intl` — esse
+ * estilo multiplica por 100, o que dobraria a escala aqui.
+ */
+const PERCENT = new Intl.NumberFormat('pt-BR', {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
+
 interface MetricTileProps {
   label: string;
   value?: number;
@@ -17,7 +28,7 @@ export default function MetricTile({ label, value, variant = 'number' }: MetricT
       case 'money':
         return <MoneyDisplay value={value} emphasis />;
       case 'percent':
-        return <span className="font-heading text-section">{value.toFixed(1)}%</span>;
+        return <span className="font-heading text-section">{PERCENT.format(value)}%</span>;
       case 'number':
       default:
         return <span className="font-heading text-section">{formatCount(value)}</span>;

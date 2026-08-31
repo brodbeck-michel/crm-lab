@@ -118,10 +118,6 @@ export function applyWsEvent(
       void queryClient.invalidateQueries({ queryKey: queryKeys.internalMessages(data.channelId) });
       return;
     }
-
-    case 'user.came_online':
-      // Presença não alimenta nenhuma query — nada a invalidar.
-      return;
   }
 }
 

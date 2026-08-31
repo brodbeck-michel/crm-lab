@@ -153,8 +153,8 @@ describe('WebSocketHub', () => {
 
   it('emitir para tenant sem sockets nao quebra', () => {
     expect(() =>
-      hub.emitToTenant('cccccccc-cccc-cccc-cccc-cccccccccccc', 'user.came_online', {
-        userId: 'x',
+      hub.emitToTenant('cccccccc-cccc-cccc-cccc-cccccccccccc', 'approval.requested', {
+        proposalId: 'prop-x',
       }),
     ).not.toThrow();
   });

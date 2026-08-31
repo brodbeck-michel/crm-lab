@@ -8,8 +8,7 @@ export type WsEventName =
   | 'proposal.status_changed'
   | 'approval.requested'
   | 'approval.decided'
-  | 'internal_chat.new_message'
-  | 'user.came_online';
+  | 'internal_chat.new_message';
 
 export interface WsEventPayloads {
   'conversation.new_message': { conversationId: string; messageId: string };
@@ -17,7 +16,6 @@ export interface WsEventPayloads {
   'approval.requested': { proposalId: string };
   'approval.decided': { proposalId: string; decision: 'approved' | 'rejected' };
   'internal_chat.new_message': { channelId: string; messageId: string };
-  'user.came_online': { userId: string };
 }
 
 export interface WsEvent<E extends WsEventName = WsEventName> {

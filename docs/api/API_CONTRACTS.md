@@ -2659,7 +2659,7 @@ Conexão: `ws://localhost:3000/ws?token=JWT`
 socket.on('conversation.new_message', (data) => {...})
 socket.on('proposal.status_changed', (data) => {...})
 socket.on('approval.requested', (data) => {...})
-socket.on('user.came_online', (data) => {...})
+socket.on('internal_chat.new_message', (data) => {...})
 ```
 
 **Eventos Emit:**

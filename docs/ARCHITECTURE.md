@@ -412,7 +412,6 @@ Contrato em `shared/types/websocket.types.ts`; hub em `src/lib/ws-hub.ts`, com
 | `approval.requested` | ApprovalService | tenant |
 | `approval.decided` | ApprovalService | usuário que criou a proposta |
 | `internal_chat.new_message` | InternalChatService | tenant |
-| `user.came_online` | **⚠️ NÃO IMPLEMENTADO** — declarado no tipo e tratado no cliente (`frontend/src/api/ws.ts`), mas nenhum service o emite | — |
 
 ---
 

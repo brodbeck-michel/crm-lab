@@ -168,16 +168,9 @@ describe('Analytics', () => {
     // `averageTicket: 1000` -> variant `money`.
     expect(screen.getByText('Ticket Médio').closest('div')).toHaveTextContent('R$ 1.000,00');
 
-    /*
-     * `conversionRate: 30` -> variant `percent`, uma casa decimal.
-     *
-     * ACHADO REGISTRADO (nao corrigido aqui — `MetricTile.tsx` e de outro
-     * dono): a variante `percent` usa `value.toFixed(1)`, que imprime "30.0%"
-     * com PONTO. Todo o resto da tela e pt-BR (`R$ 30.000,00`, `320`) via
-     * `Intl`. O teste fixa o que a tela FAZ hoje, com o defeito a vista, em vez
-     * de mascara-lo com um casamento frouxo.
-     */
-    expect(screen.getByText('Taxa de Conversão').closest('div')).toHaveTextContent('30.0%');
+    // `conversionRate: 30` -> variant `percent`, uma casa decimal, pt-BR
+    // (vírgula) — `MetricTile.tsx` corrigido na Onda 7 (pendência C3).
+    expect(screen.getByText('Taxa de Conversão').closest('div')).toHaveTextContent('30,0%');
 
     // Soma do funil: 100+80+60+40+30+10 -> variant `number`.
     expect(screen.getByText('Propostas Criadas').closest('div')).toHaveTextContent('320');

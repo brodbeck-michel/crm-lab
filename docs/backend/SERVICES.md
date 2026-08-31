@@ -734,12 +734,24 @@ pareamento manual com um gateway real:
 
 Autenticação: header `apikey` em **todas** as chamadas, com a apikey ADMINISTRATIVA
 (`EVOLUTION_API_KEY`) — **exceto `sendText`**, que usa a apikey DA INSTÂNCIA
-(`credentials.apiToken`, resolvida por `WhatsAppCredentialsResolver`/`resolveCredentials`,
-D-024). Essa exceção é deliberada (fix do Important 6 da revisão): as demais chamadas
-gerenciam instâncias (`create`/`connectionState`/`logout`), o que exige privilégio
-administrativo; enviar uma mensagem só precisa falar com a própria instância, e usar a chave
-administrativa ali era privilégio maior que o necessário — e deixava a apikey cifrada em
-repouso (D-076) sem nenhum consumidor.
+(resolvida por `WhatsAppCredentialsResolver`/`resolveCredentials`, D-024). Essa exceção é
+deliberada (fix do Important 6 da revisão): as demais chamadas gerenciam instâncias
+(`create`/`connectionState`/`logout`), o que exige privilégio administrativo; enviar uma
+mensagem só precisa falar com a própria instância, e usar a chave administrativa ali era
+privilégio maior que o necessário — e deixava a apikey cifrada em repouso (D-076) sem nenhum
+consumidor.
+
+**N1 da re-revisão (rodada 2): `WhatsAppCredentials.qrInstanceApiKey`, um campo SEM
+fallback.** `sendText` não lê `credentials.apiToken` — esse campo cai para
+`WHATSAPP_API_TOKEN` (a API OFICIAL da Meta, outro provedor) quando a linha de
+`tenant_channels` não tem valor (`mergeCredentials`, `whatsapp.service.ts`), e
+`connectWhatsAppQr` pode deixar a linha com `connection_mode='qr'` e `api_token` ainda `NULL`
+na janela entre aceitar o termo e `createInstance` ter sucesso. `EvolutionWhatsAppDriver.send`
+lê `credentials.qrInstanceApiKey`, um campo que `mergeCredentials` preenche SOMENTE a partir de
+`stored?.apiToken` — nunca do fallback — e lança `EvolutionCredentialError` (tipado) quando é
+`null`. Um segredo de um provedor não pode alcançar o host do outro por nenhum caminho,
+inclusive um inconsistente; a checagem fica no DRIVER (o portão de última instância), não só
+na ordem de escrita do service.
 
 **`phoneNumber` é best-effort, não garantido (Minor 8 diferido).** `getStatus` lê
 `instance.owner` e o webhook lê `data.owner ?? data.wuid` no evento `CONNECTION_UPDATE` — nenhum
@@ -757,13 +769,25 @@ Critical 2 — mesmo segredo, mesma comparação em tempo constante `safeEquals`
 dois não abre superfície nova).
 
 **`instance` do payload é conferido contra `evolutionInstanceName(tenantId)` antes de qualquer
-escrita (fix do Important 4 da revisão).** O `:tenant` da URL é um slug/uuid **público** e
-`EVOLUTION_WEBHOOK_TOKEN` é **único para a instalação inteira** (mesmo formato de risco de
-D-073 emendada, §11) — sem esta checagem, quem tivesse o token conseguia POSTar em qualquer
-slug e injetar mensagem/estado em outro laboratório. `MESSAGES_UPSERT`/`CONNECTION_UPDATE` sem
-`instance` ou com `instance` que não bate com o tenant resolvido pela URL são recusados (`200`
-sem gravar nada, mesma disciplina de "nunca oráculo"). `QRCODE_UPDATED` não é escrito no banco
-e portanto não passa por essa checagem.
+escrita, nas DUAS rotas que escrevem (fix do Important 4 da revisão, estendido na re-revisão).**
+O `:tenant` da URL é um slug/uuid **público** e `EVOLUTION_WEBHOOK_TOKEN` é **único para a
+instalação inteira** (mesmo formato de risco de D-073 emendada, §11) — sem esta checagem, quem
+tivesse o token conseguia POSTar em qualquer slug e injetar mensagem/estado em outro
+laboratório. A checagem mora em `instanceClaimMatches` (`webhook.routes.ts`), uma função
+COMPARTILHADA pelas duas rotas que gravam em `tenant_channels`/`messages`/`conversations`:
+
+- `evolutionInbound` (`POST /webhooks/evolution/:tenant`): `MESSAGES_UPSERT`/`CONNECTION_UPDATE`
+  sem `instance` ou com `instance` que não bate com o tenant resolvido pela URL são recusados
+  (`200` sem gravar nada, mesma disciplina de "nunca oráculo"). `QRCODE_UPDATED` não é escrito
+  no banco e portanto não entra nesta checagem.
+- `evolutionStatus` (`POST /webhooks/evolution/:tenant/status`): a re-revisão apontou que a
+  rodada 1 tinha aplicado a checagem SÓ na rota principal — `/status` grava exatamente o mesmo
+  efeito (`markWhatsAppConnected`/`Disconnected`) por um segundo caminho, inclusive no formato
+  achatado sem envelope de evento, e um payload recusado em `/webhooks/evolution/:tenant` por
+  `instance` errado passava batido só adicionando `/status` na URL. Agora `instance` é EXIGIDO
+  também aqui, nos dois formatos que a rota aceita (achatado e `{event, data, instance}`) — a
+  tolerância de formato (deviation 4 da revisão original) continua valendo só para a ausência do
+  ENVELOPE `{event, data}`, nunca para a ausência do `instance`.
 
 **`is_active` nunca é tocado por `disconnect`/`CONNECTION_UPDATE state:'close'` (fix do Critical
 1 da revisão).** É o mesmo campo que o kill switch do webhook confere antes do token
@@ -771,7 +795,15 @@ e portanto não passa por essa checagem.
 `CONNECTION_UPDATE state:'open'` seguinte batia no kill switch e nenhuma mensagem voltava a
 entrar, sempre com `200 {received:true}`. Só `PATCH /settings/channels {isActive}` liga/desliga
 o canal de propósito — um controle deliberadamente separado de "conectado agora"
-(`connected_at`).
+(`connected_at`). O teste que prova esse elo (`tenant_channels.is_active` real → kill switch do
+webhook) usa o resolver de PRODUÇÃO (`createTenantCredentialsResolver`) contra uma linha gravada
+direto no banco — um teste que usa um resolver fake com `isActive` computado em memória, por
+mais que exercite o `if` do kill switch, não prova que a COLUNA chega até ele.
+
+**Auditoria de `disconnect_whatsapp` não afirma `isActive: false` (fix do N2 da re-revisão).**
+Depois do fix do Critical 1, desconectar não muda `is_active` — um `new_values` que dissesse o
+contrário registraria uma desativação que não aconteceu (Regra 7: um registro de auditoria
+falso é pior que nenhum). O campo gravado agora é `{channel: 'whatsapp', connected: false}`.
 
 ---
 

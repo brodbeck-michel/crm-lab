@@ -413,6 +413,35 @@ async function applyEvolutionConnectionUpdate(
   );
 }
 
+/**
+ * `true` quando o payload afirma vir da instancia CERTA para este tenant.
+ *
+ * I4 da revisao da Task 5 (fechada na rodada 1, estendida na rodada 2): o
+ * `:tenant` da URL e um SLUG PUBLICO, e o token e UNICO PARA A INSTALACAO
+ * INTEIRA (D-073 emendada, mesmo risco de `whatsapp.service.ts` — ver o
+ * comentario de `mergeCredentials`) — quem conhece o token pode POSTar em
+ * QUALQUER slug. O payload documentado (API_CONTRACTS.md) carrega o nome real
+ * da instancia que o gerou (`instance: "tenant-<uuid>"`, exemplo em
+ * API_CONTRACTS.md:743); EXIGIR e conferir esse campo contra
+ * `evolutionInstanceName(tenantId)` fecha a substituicao de slug de verdade —
+ * um payload SEM o campo ou que afirma vir de OUTRA instancia e recusado
+ * antes de qualquer escrita, mesmo com token valido (quem so tem o token e o
+ * slug publico nao sabe o uuid interno do tenant alheio, que e o que
+ * `evolutionInstanceName` usa).
+ *
+ * NAO e so `evolutionInbound`: `evolutionStatus` (`/status`) grava exatamente
+ * o mesmo efeito (`markWhatsAppConnected`/`Disconnected`) por um caminho
+ * SEPARADO, inclusive no formato achatado (sem envelope de evento) — a
+ * rodada 1 checou so a rota principal e deixou este bypass de um segmento de
+ * URL (achado da re-revisao). As DUAS rotas chamam esta MESMA funcao, sobre o
+ * MESMO corpo (`body`, nunca so `body.data`), porque o campo `instance` vive
+ * no nivel do envelope, nao dentro de `data`.
+ */
+function instanceClaimMatches(body: Record<string, unknown> | null, tenantId: string): boolean {
+  const instanceClaim = body ? asNonEmptyString(body.instance) : null;
+  return instanceClaim === evolutionInstanceName(tenantId);
+}
+
 export function evolutionInbound(services: WebhookServices, db: DbClient): RequestHandler {
   return safeHandle(async (req, res) => {
     const authenticated = await authenticateEvolution(req, services);
@@ -425,21 +454,9 @@ export function evolutionInbound(services: WebhookServices, db: DbClient): Reque
     const body = asRecord(req.body);
     const event = body ? asNonEmptyString(body.event) : null;
 
-    // I4 da revisao da Task 5: o `:tenant` da URL e um SLUG PUBLICO, e o token
-    // e UNICO PARA A INSTALACAO INTEIRA (D-073 emendada, mesmo risco de
-    // `whatsapp.service.ts` — ver o comentario de `mergeCredentials`) — quem
-    // conhece o token pode POSTar em QUALQUER slug. O payload documentado
-    // (API_CONTRACTS.md) carrega o nome real da instancia que o gerou
-    // (`instance: "tenant-<uuid>"`, exemplo em API_CONTRACTS.md:743); EXIGIR e
-    // conferir esse campo contra `evolutionInstanceName(tenantId)` fecha a
-    // substituicao de slug de verdade — um payload SEM o campo ou que afirma
-    // vir de OUTRA instancia e recusado antes de qualquer escrita, mesmo com
-    // token valido (quem so tem o token e o slug publico nao sabe o uuid
-    // interno do tenant alheio, que e o que `evolutionInstanceName` usa).
-    const instanceClaim = body ? asNonEmptyString(body.instance) : null;
     if (
       (event === 'MESSAGES_UPSERT' || event === 'CONNECTION_UPDATE') &&
-      instanceClaim !== evolutionInstanceName(tenantId)
+      !instanceClaimMatches(body, tenantId)
     ) {
       logger.warn('evolution.webhook_instance_mismatch', { tenantId, event });
       acknowledge(res);
@@ -493,11 +510,28 @@ export function evolutionStatus(services: WebhookServices, db: DbClient): Reques
       acknowledge(res);
       return;
     }
+    const { tenantId } = authenticated;
     const body = asRecord(req.body);
-    const data = body && asNonEmptyString(body.event) === 'CONNECTION_UPDATE' ? body.data : body;
-    await applyEvolutionConnectionUpdate(db, authenticated.tenantId, data);
 
-    logger.info('evolution.status_processed', { tenantId: authenticated.tenantId });
+    // Mesma checagem de `evolutionInbound` (I4, re-revisao da Task 5): esta
+    // rota grava o MESMO efeito (`markWhatsAppConnected`/`Disconnected`) por
+    // um caminho SEPARADO — sem isto, um payload recusado em
+    // `/webhooks/evolution/:tenant` por `instance` errado passava batido so
+    // por adicionar `/status` na URL. O campo `instance` e exigido tambem no
+    // formato achatado (sem envelope): o gateway real inclui `instance` no
+    // corpo independente de `webhookByEvents`, entao a tolerancia de formato
+    // (deviation 4 da revisao) continua valendo so para a AUSENCIA do
+    // envelope `{event, data}`, nunca para a ausencia do `instance`.
+    if (!instanceClaimMatches(body, tenantId)) {
+      logger.warn('evolution.webhook_instance_mismatch', { tenantId, event: 'status' });
+      acknowledge(res);
+      return;
+    }
+
+    const data = body && asNonEmptyString(body.event) === 'CONNECTION_UPDATE' ? body.data : body;
+    await applyEvolutionConnectionUpdate(db, tenantId, data);
+
+    logger.info('evolution.status_processed', { tenantId });
     acknowledge(res);
   });
 }

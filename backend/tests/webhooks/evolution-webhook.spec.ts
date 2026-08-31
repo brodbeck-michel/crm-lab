@@ -18,6 +18,7 @@ import type { DbClient } from '../../src/db/types.js';
 import {
   MockWhatsAppDriver,
   WhatsAppService,
+  createTenantCredentialsResolver,
   type WhatsAppCredentials,
   type WhatsAppCredentialsResolver,
 } from '../../src/services/whatsapp.service.js';
@@ -47,6 +48,7 @@ function evolutionCredentialsResolver(
     isActive: !disabled.has(tenantId),
     apiTokenRevoked: false,
     connectionMode: 'qr',
+    qrInstanceApiKey: null,
   });
   return {
     forTenant: async (tenantId) => build(tenantId),
@@ -404,7 +406,18 @@ describe('POST /webhooks/evolution/:tenant — CONNECTION_UPDATE', () => {
     expect(row.rows[0]?.connected_at).toBeNull();
   });
 
-  it('reconectar apos close volta a aceitar MESSAGES_UPSERT — prova end-to-end do Critical 1', async () => {
+  it('sequencia close -> open -> mensagem (smoke test, NAO a prova do kill switch — ver descricao abaixo)', async () => {
+    // CORRECAO da re-revisao da Task 5: o report da rodada 1 afirmava que este
+    // teste "teria pego a regressao" do Critical 1. Isso e FALSO e a
+    // afirmacao foi removida — `evolutionCredentialsResolver` acima calcula
+    // `isActive` de um `Set` em memoria e NUNCA le `tenant_channels`, entao
+    // reintroduzir `is_active = FALSE` em `markWhatsAppDisconnected` NAO
+    // derrubaria este teste (a fake continuaria devolvendo `isActive: true`
+    // não importa o que a coluna diga). Quem prova o mecanismo do Critical 1
+    // sao as DUAS asserções diretas de coluna acima ("state close NAO
+    // desativa...") e o teste grounded na coluna REAL logo abaixo. Este teste
+    // fica como smoke test da SEQUENCIA (close -> open -> mensagem passa),
+    // nao como regressao do kill switch.
     const tenant = await createTenant({ slug: 'lab-evo-reconecta' });
     slugToId.set('lab-evo-reconecta', tenant.id);
     const instance = evolutionInstanceName(tenant.id);
@@ -416,23 +429,18 @@ describe('POST /webhooks/evolution/:tenant — CONNECTION_UPDATE', () => {
       ),
     );
 
-    // 1) O celular e desconectado (ou o admin desconecta) — `state: 'close'`.
     await app.agent
       .post(`${WEBHOOK}/lab-evo-reconecta`)
       .set('x-evolution-webhook-token', TOKEN)
       .send(connectionUpdatePayload(instance, 'close'))
       .expect(200);
 
-    // 2) O admin re-escaneia o QR e o gateway confirma o pareamento.
     await app.agent
       .post(`${WEBHOOK}/lab-evo-reconecta`)
       .set('x-evolution-webhook-token', TOKEN)
       .send(connectionUpdatePayload(instance, 'open', '5511987654321'))
       .expect(200);
 
-    // 3) Uma mensagem do paciente TEM que ser aceita — se o kill switch tivesse
-    // ficado preso em `is_active = FALSE` depois do passo 1, isto falharia
-    // silenciosamente com 200 e zero mensagens gravadas (Critical 1).
     await app.agent
       .post(`${WEBHOOK}/lab-evo-reconecta`)
       .set('x-evolution-webhook-token', TOKEN)
@@ -449,8 +457,105 @@ describe('POST /webhooks/evolution/:tenant — CONNECTION_UPDATE', () => {
   });
 });
 
+describe('kill switch — GROUNDED na coluna real de tenant_channels.is_active', () => {
+  it('is_active = FALSE gravado direto no banco recusa o webhook, mesmo com token valido', async () => {
+    // M9 da re-revisao: o teste de kill switch da rodada 1 exercitava so a
+    // FAKE (`evolutionCredentialsResolver`, `disabled: Set`), nunca a coluna.
+    // Este teste usa o RESOLVER DE PRODUCAO (`createTenantCredentialsResolver`,
+    // o MESMO que `createWhatsAppService` usa fora de teste) contra uma linha
+    // de `tenant_channels` gravada DIRETO — a unica forma de provar que
+    // `is_active = FALSE` na tabela de verdade chega ate `authenticateEvolution`.
+    // Se alguem reintroduzir `is_active = FALSE` em
+    // `markWhatsAppDisconnected` amanha, este teste continua passando (nao e
+    // o que ele prova); o que ele prova e o elo OPOSTO: que a coluna, quando
+    // desligada, desliga o webhook.
+    const tenant = await createTenant({ slug: 'lab-evo-kill-switch-real' });
+    await db.withoutTenant((tx) =>
+      tx.query(
+        `INSERT INTO tenant_channels (tenant_id, channel, connection_mode, is_active)
+         VALUES ($1, 'whatsapp', 'qr', FALSE)`,
+        [tenant.id],
+      ),
+    );
+
+    const realApp = await createTestApp({
+      db,
+      modules: [
+        makeWebhookModule({
+          whatsapp: new WhatsAppService({
+            credentials: createTenantCredentialsResolver(db),
+            driver: new MockWhatsAppDriver(),
+            queue: createInMemoryQueue({ sleep: async () => undefined }),
+          }),
+        }),
+      ],
+    });
+
+    const response = await realApp.agent
+      .post(`${WEBHOOK}/lab-evo-kill-switch-real`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send(
+        messagesUpsertPayload({
+          instance: evolutionInstanceName(tenant.id),
+          phone: '5548999998888',
+          text: 'canal desligado de verdade',
+        }),
+      );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ received: true });
+    expect(await countMessages(tenant.id)).toBe(0);
+    expect(await countConversations(tenant.id)).toBe(0);
+  });
+
+  it('is_active = TRUE gravado direto no banco aceita — controle positivo do teste acima', async () => {
+    const tenant = await createTenant({ slug: 'lab-evo-kill-switch-ligado' });
+    await db.withoutTenant((tx) =>
+      tx.query(
+        `INSERT INTO tenant_channels (tenant_id, channel, connection_mode, is_active)
+         VALUES ($1, 'whatsapp', 'qr', TRUE)`,
+        [tenant.id],
+      ),
+    );
+
+    const realApp = await createTestApp({
+      db,
+      modules: [
+        makeWebhookModule({
+          whatsapp: new WhatsAppService({
+            credentials: createTenantCredentialsResolver(db),
+            driver: new MockWhatsAppDriver(),
+            queue: createInMemoryQueue({ sleep: async () => undefined }),
+          }),
+        }),
+      ],
+    });
+
+    await realApp.agent
+      .post(`${WEBHOOK}/lab-evo-kill-switch-ligado`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send(
+        messagesUpsertPayload({
+          instance: evolutionInstanceName(tenant.id),
+          phone: '5548999998888',
+          text: 'canal ligado de verdade',
+        }),
+      )
+      .expect(200);
+
+    expect(await countMessages(tenant.id)).toBe(1);
+  });
+});
+
 describe('POST /webhooks/evolution/:tenant/status', () => {
-  it('aceita o payload achatado (sem envelope de evento) e atualiza o estado', async () => {
+  // I4 da re-revisao da Task 5: `/status` grava o MESMO efeito que
+  // `evolutionInbound` (`markWhatsAppConnected`/`Disconnected`), e a rodada 1
+  // so aplicou a checagem de `instance` na rota principal — era possivel
+  // contornar a mitigacao inteira so acrescentando `/status` na URL. Estes
+  // testes provam que a MESMA checagem agora vale aqui tambem, nos dois
+  // formatos de payload que a rota aceita.
+
+  it('payload achatado COM instance certo e atualiza o estado', async () => {
     const tenant = await createTenant({ slug: 'lab-evo-status' });
     slugToId.set('lab-evo-status', tenant.id);
     await db.withoutTenant((tx) =>
@@ -463,7 +568,105 @@ describe('POST /webhooks/evolution/:tenant/status', () => {
     await app.agent
       .post(`${WEBHOOK}/lab-evo-status/status`)
       .set('x-evolution-webhook-token', TOKEN)
-      .send({ state: 'open', owner: '5511987654321@s.whatsapp.net' })
+      .send({
+        instance: evolutionInstanceName(tenant.id),
+        state: 'open',
+        owner: '5511987654321@s.whatsapp.net',
+      })
+      .expect(200);
+
+    const row = await db.withoutTenant((tx) =>
+      tx.query<{ is_active: boolean }>(
+        `SELECT is_active FROM tenant_channels WHERE tenant_id = $1 AND channel = 'whatsapp'`,
+        [tenant.id],
+      ),
+    );
+    expect(row.rows[0]?.is_active).toBe(true);
+  });
+
+  it('payload achatado SEM instance e recusado — nao grava nada', async () => {
+    const tenant = await createTenant({ slug: 'lab-evo-status-sem-instance' });
+    slugToId.set('lab-evo-status-sem-instance', tenant.id);
+    await db.withoutTenant((tx) =>
+      tx.query(
+        `INSERT INTO tenant_channels (tenant_id, channel, connection_mode, is_active)
+         VALUES ($1, 'whatsapp', 'qr', FALSE)`,
+        [tenant.id],
+      ),
+    );
+
+    const response = await app.agent
+      .post(`${WEBHOOK}/lab-evo-status-sem-instance/status`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send({ state: 'open', owner: '5511987654321@s.whatsapp.net' });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ received: true });
+
+    const row = await db.withoutTenant((tx) =>
+      tx.query<{ is_active: boolean }>(
+        `SELECT is_active FROM tenant_channels WHERE tenant_id = $1 AND channel = 'whatsapp'`,
+        [tenant.id],
+      ),
+    );
+    // Continua FALSE: sem `instance`, o evento nao pode religar um canal que
+    // o admin desligou (era exatamente isto que o bypass explorava).
+    expect(row.rows[0]?.is_active).toBe(false);
+  });
+
+  it('instance de OUTRO tenant e recusado, mesmo com token valido — bypass da rodada 1 fechado', async () => {
+    const vitima = await createTenant({ slug: 'lab-evo-status-vitima' });
+    const outraInstancia = await createTenant({ slug: 'lab-evo-status-atacante' });
+    slugToId.set('lab-evo-status-vitima', vitima.id);
+    slugToId.set('lab-evo-status-atacante', outraInstancia.id);
+    await db.withoutTenant((tx) =>
+      tx.query(
+        `INSERT INTO tenant_channels (tenant_id, channel, connection_mode, is_active)
+         VALUES ($1, 'whatsapp', 'qr', FALSE)`,
+        [vitima.id],
+      ),
+    );
+
+    // Este e exatamente o bypass que a re-revisao apontou: recusado na rota
+    // principal (instance errada), o mesmo payload continuava passando so
+    // com `/status` no fim da URL, antes deste fix.
+    const response = await app.agent
+      .post(`${WEBHOOK}/lab-evo-status-vitima/status`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send({
+        instance: evolutionInstanceName(outraInstancia.id), // instance ERRADA
+        state: 'open',
+        owner: '5511987654321@s.whatsapp.net',
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ received: true });
+
+    const row = await db.withoutTenant((tx) =>
+      tx.query<{ is_active: boolean }>(
+        `SELECT is_active FROM tenant_channels WHERE tenant_id = $1 AND channel = 'whatsapp'`,
+        [vitima.id],
+      ),
+    );
+    // O canal que o admin desligou continua desligado — nao foi
+    // silenciosamente reativado por quem so tinha o token da instalacao.
+    expect(row.rows[0]?.is_active).toBe(false);
+  });
+
+  it('envelope { event: CONNECTION_UPDATE, data, instance } tambem exige instance certo', async () => {
+    const tenant = await createTenant({ slug: 'lab-evo-status-envelope' });
+    slugToId.set('lab-evo-status-envelope', tenant.id);
+    await db.withoutTenant((tx) =>
+      tx.query(
+        `INSERT INTO tenant_channels (tenant_id, channel, connection_mode) VALUES ($1, 'whatsapp', 'qr')`,
+        [tenant.id],
+      ),
+    );
+
+    await app.agent
+      .post(`${WEBHOOK}/lab-evo-status-envelope/status`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send(connectionUpdatePayload(evolutionInstanceName(tenant.id), 'open', '5511987654321'))
       .expect(200);
 
     const row = await db.withoutTenant((tx) =>

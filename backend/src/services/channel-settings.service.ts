@@ -865,7 +865,13 @@ export function createChannelSettingsService(
       action: 'disconnect_whatsapp',
       entityType: 'tenant_channels',
       entityId: ctx.tenantId,
-      newValues: { channel: 'whatsapp', isActive: false },
+      // N2 da re-revisao da Task 5: `isActive: false` seria FALSO depois do
+      // fix do Critical 1 — `markWhatsAppDisconnected` nao toca mais
+      // `is_active` (so `connected_at`). Um registro de auditoria que afirma
+      // uma desativacao que nao aconteceu e pior que nenhum registro (Regra
+      // 7): quem le o log concluiria que o canal foi desligado quando o
+      // unico efeito real foi "parou de estar pareado agora".
+      newValues: { channel: 'whatsapp', connected: false },
     });
   };
 

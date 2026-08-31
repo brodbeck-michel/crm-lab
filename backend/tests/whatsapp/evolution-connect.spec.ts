@@ -387,26 +387,8 @@ describe('auditoria das 3 acoes (Regra 7)', () => {
   });
 });
 
-describe('EvolutionWhatsAppDriver.send (Important 6)', () => {
-  it('usa a apikey DA INSTANCIA (credentials.apiToken), nunca a apikey admin', async () => {
-    const driver = new EvolutionWhatsAppDriver(evolution);
-    const credentials: WhatsAppCredentials = {
-      tenantId,
-      phoneNumberId: 'numero-do-lab',
-      apiUrl: '',
-      apiToken: 'apikey-da-instancia-real',
-      webhookSecret: '',
-      isActive: true,
-      apiTokenRevoked: false,
-      connectionMode: 'qr',
-    };
-
-    await driver.send(credentials, '5511987654321', 'Ola');
-
-    expect(evolution.lastSendApikey).toBe('apikey-da-instancia-real');
-  });
-
-  it('sem apiToken gravado, lanca em vez de sair com privilegio de admin', async () => {
+describe('EvolutionWhatsAppDriver.send (Important 6 + N1)', () => {
+  it('usa credentials.qrInstanceApiKey (a apikey DA INSTANCIA), nunca a apikey admin', async () => {
     const driver = new EvolutionWhatsAppDriver(evolution);
     const credentials: WhatsAppCredentials = {
       tenantId,
@@ -417,9 +399,55 @@ describe('EvolutionWhatsAppDriver.send (Important 6)', () => {
       isActive: true,
       apiTokenRevoked: false,
       connectionMode: 'qr',
+      qrInstanceApiKey: 'apikey-da-instancia-real',
+    };
+
+    await driver.send(credentials, '5511987654321', 'Ola');
+
+    expect(evolution.lastSendApikey).toBe('apikey-da-instancia-real');
+  });
+
+  it('sem qrInstanceApiKey gravado, lanca em vez de sair com privilegio de admin', async () => {
+    const driver = new EvolutionWhatsAppDriver(evolution);
+    const credentials: WhatsAppCredentials = {
+      tenantId,
+      phoneNumberId: 'numero-do-lab',
+      apiUrl: '',
+      apiToken: '',
+      webhookSecret: '',
+      isActive: true,
+      apiTokenRevoked: false,
+      connectionMode: 'qr',
+      qrInstanceApiKey: null,
     };
 
     await expect(driver.send(credentials, '5511987654321', 'Ola')).rejects.toThrow();
+    expect(evolution.lastSendApikey).toBeUndefined();
+  });
+
+  it('N1 da re-revisao: apiToken presente (fallback de OUTRO provedor) NUNCA vaza quando qrInstanceApiKey e null', async () => {
+    // Reproduz exatamente o estado que a re-revisao apontou: uma linha
+    // `connection_mode='qr'` sem apikey de instancia gravada (janela entre
+    // aceitar o termo e `createInstance` ter sucesso), com `apiToken`
+    // carregando o que seria o fallback de `WHATSAPP_API_TOKEN` (Meta, outro
+    // provedor) se o merge de credenciais ainda tivesse esse `??` — o driver
+    // tem que recusar independente do que `apiToken` contenha.
+    const driver = new EvolutionWhatsAppDriver(evolution);
+    const credentials: WhatsAppCredentials = {
+      tenantId,
+      phoneNumberId: 'numero-do-lab',
+      apiUrl: '',
+      apiToken: 'token-da-api-oficial-da-meta-NUNCA-pode-vazar',
+      webhookSecret: '',
+      isActive: true,
+      apiTokenRevoked: false,
+      connectionMode: 'qr',
+      qrInstanceApiKey: null,
+    };
+
+    await expect(driver.send(credentials, '5511987654321', 'Ola')).rejects.toThrow();
+    // Nem o gateway fake recebeu a chamada, muito menos o segredo da Meta.
+    expect(evolution.lastSendApikey).toBeUndefined();
   });
 });
 

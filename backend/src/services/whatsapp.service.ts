@@ -82,6 +82,20 @@ export interface WhatsAppCredentials {
    * escolhe o proprio caminho.
    */
   connectionMode: 'cloud_api' | 'qr';
+  /**
+   * Apikey da instancia Evolution — SOMENTE da LINHA de `tenant_channels`,
+   * NUNCA de env var (N1 da revisao da Task 5, rodada 2). Campo separado de
+   * `apiToken` de proposito: `apiToken` cai para `WHATSAPP_API_TOKEN` (o
+   * token da API OFICIAL da Meta, outro provedor) quando a linha nao tem
+   * valor — o `EvolutionWhatsAppDriver` nao pode ler esse campo, ou um tenant
+   * cujo `connectWhatsAppQr` falhou entre gravar `connection_mode='qr'` e
+   * gravar a apikey (janela fechada pela propria Task 5, mas defesa em
+   * profundidade) mandaria o segredo do provedor A (Meta) num header
+   * endereçado ao host do provedor B (Evolution self-hosted). `null` = a
+   * linha nao tem apikey gravada — o driver Evolution tem que RECUSAR enviar,
+   * nunca cair em outro valor.
+   */
+  qrInstanceApiKey: string | null;
 }
 
 /**
@@ -107,6 +121,8 @@ export function envCredentials(): Omit<WhatsAppCredentials, 'tenantId'> {
     // sempre (API oficial via env var). `qr` so existe depois de um
     // `connectWhatsAppQr` bem-sucedido, que grava a linha.
     connectionMode: 'cloud_api',
+    // Nao existe env var para isto — a apikey da instancia SO vem da tabela.
+    qrInstanceApiKey: null,
   };
 }
 
@@ -200,6 +216,12 @@ export function mergeCredentials(
     // `connectionMode` so existe na tabela (nunca em env var): sem linha, so
     // resta `cloud_api`.
     connectionMode: stored?.connectionMode ?? fallback.connectionMode,
+    // N1 da revisao (rodada 2): SEM `?? fallback`, de proposito. `fallback`
+    // pode carregar `WHATSAPP_API_TOKEN` (Meta, outro provedor) — deixar isto
+    // cair nele faria o driver Evolution herdar um segredo que nao e dele.
+    // `null` sem linha, ou sem apikey gravada na linha, e o unico
+    // comportamento correto aqui.
+    qrInstanceApiKey: stored?.apiToken ?? null,
   };
 }
 
@@ -328,6 +350,21 @@ export class HttpWhatsAppDriver implements WhatsAppDriver {
 }
 
 /**
+ * Credencial ausente/errada para o driver Evolution — tipado de proposito
+ * (N1 da revisao da Task 5, rodada 2) para nunca ser confundido com uma falha
+ * de rede do `EvolutionClient` (que lanca `Error` simples): esta e uma
+ * recusa DELIBERADA do proprio driver, antes de qualquer chamada HTTP.
+ */
+export class EvolutionCredentialError extends Error {
+  constructor(tenantId: string) {
+    super(
+      `canal whatsapp (tenant ${tenantId}) em connectionMode "qr" sem apikey de instancia gravada na tabela — reconecte por QR`,
+    );
+    this.name = 'EvolutionCredentialError';
+  }
+}
+
+/**
  * Driver `connectionMode: 'qr'` (Onda 7, Bloco B) — fala com o gateway Evolution
  * self-hosted em vez da API oficial da Meta. Mesma interface de
  * `HttpWhatsAppDriver`: `WhatsAppService.send` nao sabe qual dos dois esta
@@ -346,21 +383,24 @@ export class EvolutionWhatsAppDriver implements WhatsAppDriver {
     content: string,
   ): Promise<SendResult> {
     const instanceName = evolutionInstanceName(credentials.tenantId);
-    // Fix do Important 6 da revisao da Task 5: a apikey DA INSTANCIA
-    // (`credentials.apiToken`, gravada cifrada por `connectWhatsAppQr` e
-    // decifrada aqui pelo MESMO caminho de `resolveCredentials`, D-076) —
-    // NUNCA a apikey administrativa do gateway. Privilegio minimo: este envio
-    // so precisa falar com a PROPRIA instancia do tenant.
-    if (!credentials.apiToken) {
-      throw new Error(
-        'canal whatsapp em connectionMode "qr" sem apikey de instancia gravada — reconecte por QR',
-      );
+    // Fix do Important 6 (rodada 1) + N1 (rodada 2) da revisao da Task 5: a
+    // apikey DA INSTANCIA vem de `credentials.qrInstanceApiKey` — um campo
+    // que `mergeCredentials` preenche SOMENTE a partir da LINHA de
+    // `tenant_channels`, sem cair em `WHATSAPP_API_TOKEN` (o token da API
+    // OFICIAL da Meta, outro provedor). `credentials.apiToken` NAO e lido
+    // aqui de proposito: ele tem fallback para a env var da Meta, e um
+    // segredo de um provedor nunca pode chegar ao host do outro, nem numa
+    // janela estreita (tenant com `connection_mode='qr'` mas sem apikey
+    // gravada — `connectWhatsAppQr` fecha essa janela na origem, mas o driver
+    // e o portao de ultima instancia e recusa de qualquer forma).
+    if (!credentials.qrInstanceApiKey) {
+      throw new EvolutionCredentialError(credentials.tenantId);
     }
     const { externalId } = await this.client.sendText(
       instanceName,
       phone,
       content,
-      credentials.apiToken,
+      credentials.qrInstanceApiKey,
     );
     return { externalId };
   }

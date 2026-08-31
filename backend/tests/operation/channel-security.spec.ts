@@ -62,6 +62,7 @@ const ENV_FALLBACK: Omit<WhatsAppCredentials, 'tenantId'> = {
   isActive: true,
   apiTokenRevoked: false,
   connectionMode: 'cloud_api',
+  qrInstanceApiKey: null,
 };
 
 let db: DbClient;

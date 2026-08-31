@@ -39,6 +39,7 @@ const ENV_FALLBACK: Omit<WhatsAppCredentials, 'tenantId'> = {
   isActive: true,
   apiTokenRevoked: false,
   connectionMode: 'cloud_api',
+  qrInstanceApiKey: null,
 };
 
 interface ChannelSeed {
@@ -122,6 +123,10 @@ describe('mergeCredentials — precedencia campo a campo', () => {
       isActive: true,
       apiTokenRevoked: false,
       connectionMode: 'cloud_api',
+      // Vem da LINHA (`stored.apiToken`), nunca de `ENV_FALLBACK` (N1 da
+      // revisao, rodada 2) — mesmo valor de `apiToken` aqui porque o teste
+      // nao distingue provedor, mas o CAMINHO e diferente (sem `?? fallback`).
+      qrInstanceApiKey: 'token-do-lab',
     });
 
     // Linha existe mas o laboratorio ainda nao girou o segredo do webhook.
@@ -140,6 +145,14 @@ describe('mergeCredentials — precedencia campo a campo', () => {
     expect(parcial.apiToken).toBe('token-da-env');
     expect(parcial.webhookSecret).toBe(ENV_SECRET);
     expect(parcial.connectionMode).toBe('qr');
+    // N1 da revisao (rodada 2): `connectionMode: 'qr'` SEM apikey gravada na
+    // linha (o exato estado que uma `connectWhatsAppQr` que falhou entre
+    // aceitar o termo e criar a instancia deixaria) NAO PODE herdar
+    // `ENV_FALLBACK.apiToken` — que e o token da API OFICIAL da Meta, um
+    // provedor diferente do Evolution. Seria esse valor que
+    // `EvolutionWhatsAppDriver.send` mandaria para o gateway self-hosted se
+    // este campo caisse no `?? fallback` como `apiToken` cai.
+    expect(parcial.qrInstanceApiKey).toBeNull();
 
     // Sem linha nenhuma: tudo da env var.
     expect(mergeCredentials('t1', null, ENV_FALLBACK)).toEqual({ tenantId: 't1', ...ENV_FALLBACK });

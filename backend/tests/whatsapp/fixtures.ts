@@ -23,6 +23,7 @@ export function testCredentialsResolver(
     isActive: true,
     apiTokenRevoked: false,
     connectionMode: 'cloud_api',
+    qrInstanceApiKey: null,
   });
   return {
     forTenant: async (tenantId) => build(tenantId),

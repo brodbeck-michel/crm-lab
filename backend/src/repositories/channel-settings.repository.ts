@@ -84,6 +84,10 @@ export interface ChannelRow {
   webhookSecretSet: boolean;
   connectedAt: string | null;
   updatedAt: string;
+  /** `cloud_api` | `qr` (Onda 7, Bloco B — SCHEMA.md §15). */
+  connectionMode: string;
+  /** Aceite do termo de risco do QR. `null` = nunca aceito. */
+  acceptedTermsAt: string | null;
 }
 
 /**
@@ -119,6 +123,8 @@ export async function listChannels(tx: DbTx, tenantId: string): Promise<ChannelR
     webhook_secret_set: boolean;
     connected_at: unknown;
     updated_at: unknown;
+    connection_mode: string;
+    accepted_terms_at: unknown;
   }>(
     `SELECT id,
             channel,
@@ -129,7 +135,9 @@ export async function listChannels(tx: DbTx, tenantId: string): Promise<ChannelR
             api_token,
             (webhook_secret IS NOT NULL AND webhook_secret <> '') AS webhook_secret_set,
             to_char(connected_at, ${ISO_UTC}) AS connected_at,
-            to_char(updated_at, ${ISO_UTC}) AS updated_at
+            to_char(updated_at, ${ISO_UTC}) AS updated_at,
+            connection_mode,
+            to_char(accepted_terms_at, ${ISO_UTC}) AS accepted_terms_at
        FROM tenant_channels
       WHERE tenant_id = $1
       ORDER BY channel ASC`,
@@ -147,6 +155,8 @@ export async function listChannels(tx: DbTx, tenantId: string): Promise<ChannelR
     webhookSecretSet: row.webhook_secret_set === true,
     connectedAt: toIsoOrNull(row.connected_at),
     updatedAt: toIso(row.updated_at),
+    connectionMode: row.connection_mode,
+    acceptedTermsAt: toIsoOrNull(row.accepted_terms_at),
   }));
 }
 
@@ -261,6 +271,8 @@ export interface ChannelCredentials {
    * o webhook para de ser aceito e o envio para de sair.
    */
   isActive: boolean;
+  /** `cloud_api` | `qr` (Onda 7). Decide o driver de envio (D-024/D-032). */
+  connectionMode: 'cloud_api' | 'qr';
 }
 
 /**
@@ -279,8 +291,9 @@ export async function findCredentials(
     api_token: string | null;
     webhook_secret: string | null;
     is_active: boolean;
+    connection_mode: string;
   }>(
-    `SELECT phone_number_id, api_token, webhook_secret, is_active
+    `SELECT phone_number_id, api_token, webhook_secret, is_active, connection_mode
        FROM tenant_channels
       WHERE tenant_id = $1 AND channel = $2`,
     [tenantId, channel],
@@ -292,7 +305,109 @@ export async function findCredentials(
     apiToken: decryptSecret(row.api_token),
     webhookSecret: decryptSecret(row.webhook_secret),
     isActive: row.is_active === true,
+    connectionMode: row.connection_mode === 'qr' ? 'qr' : 'cloud_api',
   };
+}
+
+// ---------------------------------------------------------------------------
+// tenant_channels — conexao WhatsApp por QR (Onda 7, Bloco B)
+// ---------------------------------------------------------------------------
+
+/**
+ * Aceite do termo de risco do QR (dado do CANAL, nao so do audit log — a UI
+ * precisa saber se ja foi aceito). Cria a linha se ainda nao existir: aceitar
+ * o termo e SEMPRE o primeiro passo de `connectWhatsAppQr`, antes de qualquer
+ * chamada ao gateway.
+ */
+export async function acceptWhatsAppQrTerms(
+  tx: DbTx,
+  tenantId: string,
+  userId: string,
+): Promise<void> {
+  await tx.query(
+    `INSERT INTO tenant_channels (tenant_id, channel, connection_mode, accepted_terms_at, accepted_terms_by)
+          VALUES ($1, 'whatsapp', 'qr', NOW(), $2)
+     ON CONFLICT (tenant_id, channel)
+     DO UPDATE SET connection_mode = 'qr', accepted_terms_at = NOW(), accepted_terms_by = $2`,
+    [tenantId, userId],
+  );
+}
+
+/**
+ * Estado de conexao do canal QR, para `getWhatsAppStatus`/`connectWhatsAppQr`.
+ * Separado de `ChannelRow` (leitura da TELA) e de `ChannelCredentials`
+ * (leitura do ADAPTER) porque nenhum dos dois carrega exatamente este recorte.
+ */
+export interface ConnectionState {
+  connectionMode: 'cloud_api' | 'qr';
+  connectedAt: string | null;
+  phoneNumber: string | null;
+  acceptedTermsAt: string | null;
+}
+
+export async function findConnectionState(
+  tx: DbTx,
+  tenantId: string,
+  channel: string,
+): Promise<ConnectionState | null> {
+  const result = await tx.query<{
+    connection_mode: string;
+    phone_number: string | null;
+    connected_at: unknown;
+    accepted_terms_at: unknown;
+  }>(
+    `SELECT connection_mode, phone_number,
+            to_char(connected_at, ${ISO_UTC}) AS connected_at,
+            to_char(accepted_terms_at, ${ISO_UTC}) AS accepted_terms_at
+       FROM tenant_channels
+      WHERE tenant_id = $1 AND channel = $2`,
+    [tenantId, channel],
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    connectionMode: row.connection_mode === 'qr' ? 'qr' : 'cloud_api',
+    phoneNumber: row.phone_number,
+    connectedAt: toIsoOrNull(row.connected_at),
+    acceptedTermsAt: toIsoOrNull(row.accepted_terms_at),
+  };
+}
+
+/**
+ * Canal pareado com sucesso (webhook `CONNECTION_UPDATE` com `state: 'open'`,
+ * ou logo apos o QR ser escaneado). `phoneNumber` `null` preserva o valor
+ * anterior — nem todo evento do gateway carrega o numero.
+ */
+export async function markWhatsAppConnected(
+  tx: DbTx,
+  tenantId: string,
+  phoneNumber: string | null,
+): Promise<void> {
+  await tx.query(
+    `UPDATE tenant_channels
+        SET is_active = TRUE,
+            connected_at = NOW(),
+            phone_number = COALESCE($2, phone_number)
+      WHERE tenant_id = $1 AND channel = 'whatsapp'`,
+    [tenantId, phoneNumber],
+  );
+}
+
+/**
+ * Desconectado — pelo admin (`disconnectWhatsApp`) ou pelo gateway (`loggedOut`
+ * no celular, banimento). `connected_at` volta a `NULL` de proposito: ao
+ * contrario do canal `cloud_api` (onde a data e fato historico preservado, ver
+ * `upsertChannel`), aqui ela alimenta o polling do frontend — precisa refletir
+ * "desconectado agora", nao "conectou uma vez".
+ */
+export async function markWhatsAppDisconnected(tx: DbTx, tenantId: string): Promise<void> {
+  await tx.query(
+    `UPDATE tenant_channels
+        SET is_active = FALSE,
+            connected_at = NULL
+      WHERE tenant_id = $1 AND channel = 'whatsapp'`,
+    [tenantId],
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -38,6 +38,7 @@ const ENV_FALLBACK: Omit<WhatsAppCredentials, 'tenantId'> = {
   webhookSecret: ENV_SECRET,
   isActive: true,
   apiTokenRevoked: false,
+  connectionMode: 'cloud_api',
 };
 
 interface ChannelSeed {
@@ -108,6 +109,7 @@ describe('mergeCredentials — precedencia campo a campo', () => {
         apiToken: 'token-do-lab',
         webhookSecret: TABLE_SECRET,
         isActive: true,
+        connectionMode: 'cloud_api',
       },
       ENV_FALLBACK,
     );
@@ -119,17 +121,25 @@ describe('mergeCredentials — precedencia campo a campo', () => {
       webhookSecret: TABLE_SECRET,
       isActive: true,
       apiTokenRevoked: false,
+      connectionMode: 'cloud_api',
     });
 
     // Linha existe mas o laboratorio ainda nao girou o segredo do webhook.
     const parcial = mergeCredentials(
       't1',
-      { phoneNumberId: 'numero-do-lab', apiToken: null, webhookSecret: null, isActive: true },
+      {
+        phoneNumberId: 'numero-do-lab',
+        apiToken: null,
+        webhookSecret: null,
+        isActive: true,
+        connectionMode: 'qr',
+      },
       ENV_FALLBACK,
     );
     expect(parcial.phoneNumberId).toBe('numero-do-lab');
     expect(parcial.apiToken).toBe('token-da-env');
     expect(parcial.webhookSecret).toBe(ENV_SECRET);
+    expect(parcial.connectionMode).toBe('qr');
 
     // Sem linha nenhuma: tudo da env var.
     expect(mergeCredentials('t1', null, ENV_FALLBACK)).toEqual({ tenantId: 't1', ...ENV_FALLBACK });

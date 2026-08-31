@@ -58,6 +58,12 @@ export const ERROR_CATALOG = {
   CONVERSATION_ARCHIVED: { statusCode: 409, message: 'Conversa arquivada' },
   MESSAGE_SEND_FAILED: { statusCode: 502, message: 'Falha ao enviar a mensagem pelo canal' },
 
+  // --- Canais (Onda 7 — WhatsApp QR) ---
+  CHANNEL_QR_UNAVAILABLE: {
+    statusCode: 503,
+    message: 'Conexao por QR indisponivel: gateway nao configurado',
+  },
+
   // --- Sistema ---
   RATE_LIMIT_EXCEEDED: { statusCode: 429, message: 'Limite de requisicoes excedido' },
   INTERNAL_ERROR: { statusCode: 500, message: 'Erro interno do servidor' },

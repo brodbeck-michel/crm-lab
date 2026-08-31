@@ -36,8 +36,11 @@
  * caminho deste arquivo grava com `withoutTenant()`.
  */
 import { Router, type Request, type RequestHandler, type Response } from 'express';
+import { env } from '../config/env.js';
+import type { DbClient } from '../db/types.js';
 import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
 import { logger } from '../lib/logger.js';
+import * as channelSettingsRepo from '../repositories/channel-settings.repository.js';
 import { ConversationRepository } from '../repositories/conversation.repository.js';
 import { MessageRepository } from '../repositories/message.repository.js';
 import { createAuditService } from '../services/audit.service.js';
@@ -45,6 +48,7 @@ import { ConversationService } from '../services/conversation.service.js';
 import { MessageService } from '../services/message.service.js';
 import {
   createWhatsAppService,
+  safeEquals,
   verifyWebhookSignature,
   type WhatsAppService,
 } from '../services/whatsapp.service.js';
@@ -247,8 +251,227 @@ export function whatsappStatus(services: WebhookServices): RequestHandler {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Evolution API — WhatsApp por QR (Onda 7, Bloco B)
+//
+//   POST /api/v1/webhooks/evolution/:tenant           mensagem/estado
+//   POST /api/v1/webhooks/evolution/:tenant/status     variante so de estado
+//
+// Autentica por `EVOLUTION_WEBHOOK_TOKEN` (segredo UNICO da instalacao, header
+// `apikey`, comparado em tempo constante — mesma logica de `safeEquals` do HMAC
+// acima), NAO por assinatura HMAC do corpo: o gateway Evolution nao assina, ele
+// manda a chave configurada. O kill switch (`isActive`) e a resolucao do
+// tenant continuam vindo de `WhatsAppService.resolveWebhookTenant`, que ja le
+// `tenant_channels` — reuso total do que a Meta ja usa (D-024).
+//
+// Eventos traduzidos para os MESMOS caminhos internos do webhook da Meta
+// (`findOrCreateByPhone` -> `createFromPatient`, dedupe por `externalId`):
+//   MESSAGES_UPSERT    -> mensagem do paciente
+//   CONNECTION_UPDATE  -> estado do canal (conectado/desconectado), SEM mensagem
+//   QRCODE_UPDATED     -> sem efeito (o QR e servido por polling em
+//                         GET /settings/channels/whatsapp/qr, nao pelo webhook)
+// ---------------------------------------------------------------------------
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function asNonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+/** `"5548999998888@s.whatsapp.net"` -> `"5548999998888"`. `null` sem telefone. */
+function phoneFromJid(jid: unknown): string | null {
+  const raw = asNonEmptyString(jid);
+  if (!raw) return null;
+  const [phone] = raw.split('@');
+  return phone && phone.length > 0 ? phone : null;
+}
+
+/** Header que carrega o segredo do webhook Evolution (o gateway manda `apikey`). */
+function evolutionTokenOf(req: Request): string | undefined {
+  const header = req.headers.apikey;
+  return typeof header === 'string' && header.length > 0 ? header : undefined;
+}
+
+function evolutionTokenValid(req: Request): boolean {
+  // `process.env` primeiro, igual a `secret-box.ts`: le NO MOMENTO DA CHAMADA
+  // (nao congelado no import), o que permite ao teste trocar o token no mesmo
+  // processo sem recarregar `env`.
+  const expected = process.env.EVOLUTION_WEBHOOK_TOKEN ?? env.EVOLUTION_WEBHOOK_TOKEN;
+  if (!expected || expected.length === 0) return false;
+  const token = evolutionTokenOf(req);
+  if (!token) return false;
+  return safeEquals(token, expected);
+}
+
 /**
- * Rotas publicas: NAO usam `requireAuth`. Quem autentica e o HMAC.
+ * Autentica o webhook Evolution: resolve o tenant (mesma identidade da URL do
+ * webhook da Meta), confere o kill switch (D-074) e o token — nesta ordem, por
+ * consistencia com `authenticate()` acima. `null` = recusado; o chamador
+ * responde 200 e para (nunca vira oraculo).
+ */
+async function authenticateEvolution(
+  req: Request,
+  services: WebhookServices,
+): Promise<{ tenantId: string } | null> {
+  const identity = tenantIdentityOf(req);
+  const credentials = await services.whatsapp.resolveWebhookTenant(identity);
+  if (!credentials) {
+    logger.warn('evolution.webhook_unknown_tenant', { path: req.originalUrl });
+    return null;
+  }
+  if (!credentials.isActive) {
+    logger.warn('evolution.webhook_channel_disabled', { tenantId: credentials.tenantId });
+    return null;
+  }
+  if (!evolutionTokenValid(req)) {
+    logger.warn('evolution.webhook_invalid_token', { tenantId: credentials.tenantId });
+    return null;
+  }
+  return { tenantId: credentials.tenantId };
+}
+
+interface EvolutionInboundMessage {
+  phone: string;
+  text: string;
+  name: string | null;
+  externalId: string | null;
+}
+
+/** `data` de um evento `MESSAGES_UPSERT`. `null` quando faltar telefone ou texto. */
+function evolutionInboundOf(data: unknown): EvolutionInboundMessage | null {
+  const record = asRecord(data);
+  if (!record) return null;
+  const key = asRecord(record.key);
+  const phone = phoneFromJid(key?.remoteJid);
+  if (!phone) return null;
+
+  const message = asRecord(record.message);
+  const text =
+    (message && asNonEmptyString(message.conversation)) ??
+    (message && asNonEmptyString(asRecord(message.extendedTextMessage)?.text));
+  if (!text) return null;
+
+  return {
+    phone,
+    text,
+    name: asNonEmptyString(record.pushName),
+    externalId: key ? asNonEmptyString(key.id) : null,
+  };
+}
+
+interface EvolutionConnectionState {
+  connected: boolean;
+  phoneNumber: string | null;
+}
+
+/**
+ * `data` de um evento `CONNECTION_UPDATE`. `state: 'open'` -> conectado
+ * (`owner`/`wuid` carrega o numero pareado, quando o gateway manda);
+ * `'close'` -> desconectado (logout no celular ou banimento — a UI nao
+ * distingue, spec §4.2). `'connecting'`/estado desconhecido -> `null`
+ * (sem efeito: nem conectado nem desconectado ainda).
+ */
+function evolutionConnectionStateOf(data: unknown): EvolutionConnectionState | null {
+  const record = asRecord(data);
+  if (!record) return null;
+  if (record.state === 'open') {
+    return { connected: true, phoneNumber: phoneFromJid(record.owner ?? record.wuid) };
+  }
+  if (record.state === 'close') {
+    return { connected: false, phoneNumber: null };
+  }
+  return null;
+}
+
+async function applyEvolutionConnectionUpdate(
+  db: DbClient,
+  tenantId: string,
+  data: unknown,
+): Promise<void> {
+  const state = evolutionConnectionStateOf(data);
+  if (!state) return;
+  await db.withTenant(tenantId, (tx) =>
+    state.connected
+      ? channelSettingsRepo.markWhatsAppConnected(tx, tenantId, state.phoneNumber)
+      : channelSettingsRepo.markWhatsAppDisconnected(tx, tenantId),
+  );
+}
+
+export function evolutionInbound(services: WebhookServices, db: DbClient): RequestHandler {
+  return safeHandle(async (req, res) => {
+    const authenticated = await authenticateEvolution(req, services);
+    if (!authenticated) {
+      acknowledge(res);
+      return;
+    }
+    const { tenantId } = authenticated;
+
+    const body = asRecord(req.body);
+    const event = body ? asNonEmptyString(body.event) : null;
+
+    if (event === 'MESSAGES_UPSERT') {
+      const inbound = evolutionInboundOf(body?.data);
+      if (inbound) {
+        try {
+          // WORKFLOWS §1, mesmo caminho do webhook da Meta.
+          const conversation = await services.conversations.findOrCreateByPhone(
+            tenantId,
+            inbound.phone,
+            inbound.name,
+          );
+          await services.messages.createFromPatient(tenantId, conversation.id, {
+            content: inbound.text,
+            messageType: 'text',
+            attachmentUrl: null,
+            externalId: inbound.externalId,
+          });
+        } catch (err) {
+          logger.error('evolution.inbound_message_rejected', {
+            tenantId,
+            externalId: inbound.externalId,
+            reason: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    } else if (event === 'CONNECTION_UPDATE') {
+      await applyEvolutionConnectionUpdate(db, tenantId, body?.data);
+    }
+    // QRCODE_UPDATED e eventos desconhecidos: sem efeito no banco de proposito.
+
+    logger.info('evolution.webhook_processed', { tenantId, event: event ?? 'desconhecido' });
+    acknowledge(res);
+  });
+}
+
+/**
+ * Variante so de estado — mesmo padrao de `/whatsapp/status`. Aceita tanto o
+ * envelope `{ event: 'CONNECTION_UPDATE', data }` quanto um payload ja achatado
+ * (`{ state, owner }`), porque o gateway pode ser configurado com uma URL de
+ * webhook dedicada por evento (`webhookByEvents`).
+ */
+export function evolutionStatus(services: WebhookServices, db: DbClient): RequestHandler {
+  return safeHandle(async (req, res) => {
+    const authenticated = await authenticateEvolution(req, services);
+    if (!authenticated) {
+      acknowledge(res);
+      return;
+    }
+    const body = asRecord(req.body);
+    const data = body && asNonEmptyString(body.event) === 'CONNECTION_UPDATE' ? body.data : body;
+    await applyEvolutionConnectionUpdate(db, authenticated.tenantId, data);
+
+    logger.info('evolution.status_processed', { tenantId: authenticated.tenantId });
+    acknowledge(res);
+  });
+}
+
+/**
+ * Rotas publicas: NAO usam `requireAuth`. Quem autentica e o HMAC (Meta) ou o
+ * token (Evolution).
  * `requiresAuth: false` deixa isso explicito no registro de modulos.
  */
 export function makeWebhookModule(
@@ -272,6 +495,9 @@ function buildWebhookModule(
   router.post('/whatsapp/status', whatsappStatus(services));
   router.post('/whatsapp/:tenant', whatsappInbound(services));
   router.post('/whatsapp/:tenant/status', whatsappStatus(services));
+
+  router.post('/evolution/:tenant', evolutionInbound(services, deps.db));
+  router.post('/evolution/:tenant/status', evolutionStatus(services, deps.db));
 
   return { basePath: '/webhooks', router, requiresAuth: false };
 }

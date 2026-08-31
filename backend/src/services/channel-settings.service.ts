@@ -48,10 +48,19 @@ import type {
   UpdateTenantChannelInput,
   UserRole,
   WeekDay,
+  WhatsAppConnectionStatus,
+  WhatsAppQrConnectRequest,
+  WhatsAppQrResponse,
+  WhatsAppStatusResponse,
 } from '@crm-lab/shared';
 import type { DbClient, DbTx } from '../db/types.js';
 import type { TenantContext } from '../http/context.js';
 import { BusinessError } from '../http/errors.js';
+import {
+  createDefaultEvolutionClient,
+  evolutionInstanceName,
+  type EvolutionClient,
+} from '../lib/evolution-client.js';
 import * as channelSettingsRepo from '../repositories/channel-settings.repository.js';
 import type { AuditService } from './audit.service.js';
 
@@ -96,12 +105,37 @@ export interface ChannelSettingsService {
     tenantId: string,
     channel: ConversationChannel,
   ): Promise<channelSettingsRepo.ChannelCredentials | null>;
+  /**
+   * admin. Aceita o termo de risco (se preciso), cria/reaproveita a instancia
+   * no gateway Evolution e devolve o QR vigente (Onda 7, Bloco B).
+   */
+  connectWhatsAppQr(
+    ctx: TenantContext,
+    dto: WhatsAppQrConnectRequest,
+  ): Promise<WhatsAppQrResponse>;
+  /** admin. QR vigente + status — alimenta o polling do frontend. */
+  getWhatsAppQr(ctx: TenantContext): Promise<WhatsAppQrResponse>;
+  /** admin. Status do canal QR, sem QR (para o card). */
+  getWhatsAppStatus(ctx: TenantContext): Promise<WhatsAppStatusResponse>;
+  /** admin. Logout da instancia no gateway + marca o canal desconectado. */
+  disconnectWhatsApp(ctx: TenantContext): Promise<void>;
 }
 
 export interface ChannelSettingsServiceDeps {
   db: DbClient;
   audit: AuditService;
+  /**
+   * Cliente do gateway Evolution API (Onda 7, Bloco B). `undefined` quando
+   * `EVOLUTION_API_URL`/`EVOLUTION_API_KEY` nao estao configuradas — as 4
+   * operacoes de QR lancam `CHANNEL_QR_UNAVAILABLE` nesse caso, nunca crasham
+   * o boot (funcionalidade opcional, ao contrario do Redis fail-closed de
+   * D-058). O teste injeta um cliente de mentira.
+   */
+  evolutionClient?: EvolutionClient;
 }
+
+/** Quanto tempo o QR devolvido continua valido, para `expiresInSeconds` (spec §4.2: ~20s). */
+const QR_EXPIRES_SECONDS = 20;
 
 // ---------------------------------------------------------------------------
 // Defaults (D-065)
@@ -493,6 +527,10 @@ function toDistributionMode(value: string): DistributionMode {
     : 'manual';
 }
 
+function toConnectionMode(value: string): 'cloud_api' | 'qr' {
+  return value === 'qr' ? 'qr' : 'cloud_api';
+}
+
 function toTenantChannel(row: channelSettingsRepo.ChannelRow): TenantChannel {
   return {
     id: row.id,
@@ -505,6 +543,8 @@ function toTenantChannel(row: channelSettingsRepo.ChannelRow): TenantChannel {
     webhookSecretSet: row.webhookSecretSet,
     connectedAt: row.connectedAt,
     updatedAt: row.updatedAt,
+    connectionMode: toConnectionMode(row.connectionMode),
+    acceptedTermsAt: row.acceptedTermsAt,
   };
 }
 
@@ -678,5 +718,128 @@ export function createChannelSettingsService(
   ): Promise<channelSettingsRepo.ChannelCredentials | null> =>
     db.withTenant(tenantId, (tx) => channelSettingsRepo.findCredentials(tx, tenantId, channel));
 
-  return { get, update, resolveCredentials };
+  // -------------------------------------------------------------------------
+  // Conexao WhatsApp por QR (Onda 7, Bloco B)
+  // -------------------------------------------------------------------------
+
+  const evolutionClient = deps.evolutionClient ?? createDefaultEvolutionClient();
+
+  /** `EVOLUTION_API_URL`/`EVOLUTION_API_KEY` ausentes => erro claro, nunca crash. */
+  function requireEvolutionClient(): EvolutionClient {
+    if (!evolutionClient) {
+      throw new BusinessError('CHANNEL_QR_UNAVAILABLE');
+    }
+    return evolutionClient;
+  }
+
+  function toQrResponse(qr: { qrcode: string | null; status: WhatsAppConnectionStatus }): WhatsAppQrResponse {
+    return {
+      qrcode: qr.qrcode,
+      status: qr.status,
+      expiresInSeconds: qr.status === 'pairing' ? QR_EXPIRES_SECONDS : null,
+    };
+  }
+
+  const connectWhatsAppQr = async (
+    ctx: TenantContext,
+    dto: WhatsAppQrConnectRequest,
+  ): Promise<WhatsAppQrResponse> => {
+    assertWriteRole(ctx);
+
+    const raw: unknown = dto;
+    if (!isRecord(raw) || raw.acceptTerms !== true) {
+      throw new BusinessError('VALIDATION_ERROR', {
+        fields: { acceptTerms: 'E preciso aceitar o termo de risco para conectar por QR' },
+      });
+    }
+
+    // O gateway so e chamado DEPOIS de confirmar que a rota tem como responder
+    // um erro claro se ele nao estiver configurado — antes de gravar qualquer
+    // coisa no canal.
+    const client = requireEvolutionClient();
+    const instanceName = evolutionInstanceName(ctx.tenantId);
+
+    // 1) Aceite do termo: dado do CANAL (nao so do audit log), gravado primeiro
+    // — mesmo que a chamada ao gateway falhe depois, o aceite fica registrado.
+    await db.withTenant(ctx.tenantId, (tx) =>
+      channelSettingsRepo.acceptWhatsAppQrTerms(tx, ctx.tenantId, ctx.userId),
+    );
+    await audit.record(ctx, {
+      action: 'accept_whatsapp_qr_terms',
+      entityType: 'tenant_channels',
+      entityId: ctx.tenantId,
+      newValues: { channel: 'whatsapp' },
+    });
+
+    // 2) Cria/reaproveita a instancia no gateway — idempotente do lado do
+    // Evolution (POST /instance/create com o mesmo nome reaproveita).
+    const handle = await client.createInstance(instanceName);
+    // A apikey da instancia e cifrada em repouso pelo MESMO caminho do token
+    // cloud_api (D-076): `upsertChannel` chama `encryptSecret` internamente.
+    await db.withTenant(ctx.tenantId, (tx) =>
+      channelSettingsRepo.upsertChannel(tx, ctx.tenantId, {
+        channel: 'whatsapp',
+        apiToken: handle.apikey,
+      }),
+    );
+    await audit.record(ctx, {
+      action: 'connect_whatsapp_qr',
+      entityType: 'tenant_channels',
+      entityId: ctx.tenantId,
+      newValues: { channel: 'whatsapp', connectionMode: 'qr', instanceName },
+    });
+
+    const qr = await client.getQr(instanceName);
+    return toQrResponse(qr);
+  };
+
+  const getWhatsAppQr = async (ctx: TenantContext): Promise<WhatsAppQrResponse> => {
+    assertWriteRole(ctx);
+    const client = requireEvolutionClient();
+    const qr = await client.getQr(evolutionInstanceName(ctx.tenantId));
+    return toQrResponse(qr);
+  };
+
+  const getWhatsAppStatus = async (ctx: TenantContext): Promise<WhatsAppStatusResponse> => {
+    assertWriteRole(ctx);
+    const client = requireEvolutionClient();
+    const [live, stored] = await Promise.all([
+      client.getStatus(evolutionInstanceName(ctx.tenantId)),
+      db.withTenant(ctx.tenantId, (tx) =>
+        channelSettingsRepo.findConnectionState(tx, ctx.tenantId, 'whatsapp'),
+      ),
+    ]);
+    return {
+      status: live.status,
+      phoneNumber: live.phoneNumber ?? stored?.phoneNumber ?? null,
+      connectedAt: live.status === 'connected' ? (stored?.connectedAt ?? null) : null,
+    };
+  };
+
+  const disconnectWhatsApp = async (ctx: TenantContext): Promise<void> => {
+    assertWriteRole(ctx);
+    const client = requireEvolutionClient();
+    // Logout no gateway PRIMEIRO: se ele falhar, o canal continua marcado
+    // conectado (estado real), em vez de mentir "desconectado" para o admin.
+    await client.logout(evolutionInstanceName(ctx.tenantId));
+    await db.withTenant(ctx.tenantId, (tx) =>
+      channelSettingsRepo.markWhatsAppDisconnected(tx, ctx.tenantId),
+    );
+    await audit.record(ctx, {
+      action: 'disconnect_whatsapp',
+      entityType: 'tenant_channels',
+      entityId: ctx.tenantId,
+      newValues: { channel: 'whatsapp', isActive: false },
+    });
+  };
+
+  return {
+    get,
+    update,
+    resolveCredentials,
+    connectWhatsAppQr,
+    getWhatsAppQr,
+    getWhatsAppStatus,
+    disconnectWhatsApp,
+  };
 }

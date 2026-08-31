@@ -22,6 +22,7 @@ export function testCredentialsResolver(
     // Canal ligado e token nunca revogado: o cenario default (D-074).
     isActive: true,
     apiTokenRevoked: false,
+    connectionMode: 'cloud_api',
   });
   return {
     forTenant: async (tenantId) => build(tenantId),

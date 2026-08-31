@@ -61,6 +61,7 @@ const ENV_FALLBACK: Omit<WhatsAppCredentials, 'tenantId'> = {
   webhookSecret: ENV_SECRET,
   isActive: true,
   apiTokenRevoked: false,
+  connectionMode: 'cloud_api',
 };
 
 let db: DbClient;

@@ -74,6 +74,19 @@ const envSchema = z
     WHATSAPP_WEBHOOK_SECRET: optionalString,
 
     /**
+     * Gateway Evolution API (self-hosted) para conexao WhatsApp por QR (Onda 7,
+     * Bloco B). `EVOLUTION_API_URL`/`EVOLUTION_API_KEY` sao a base e a chave
+     * ADMINISTRATIVA do gateway (cria/gerencia instancias); `EVOLUTION_WEBHOOK_TOKEN`
+     * e o segredo que o gateway devolve nos webhooks para o CRM, comparado em
+     * tempo constante. Qualquer uma ausente => `connectWhatsAppQr` lanca
+     * `CHANNEL_QR_UNAVAILABLE` (funcionalidade OPCIONAL — ao contrario do Redis
+     * fail-closed de D-058, aqui a ausencia nao derruba o boot).
+     */
+    EVOLUTION_API_URL: optionalString,
+    EVOLUTION_API_KEY: optionalString,
+    EVOLUTION_WEBHOOK_TOKEN: optionalString,
+
+    /**
      * Chave que cifra `tenant_channels.api_token`/`webhook_secret` em repouso
      * (D-076). Vazia em dev/CI = segredo gravado em claro; OBRIGATORIA em
      * producao — sem ela um dump de backup entrega o segredo de HMAC de todos
@@ -225,6 +238,8 @@ export function safeEnv(source: Env = env): Record<string, unknown> {
     'WHATSAPP_API_TOKEN',
     'WHATSAPP_WEBHOOK_SECRET',
     'CHANNEL_SECRET_KEY',
+    'EVOLUTION_API_KEY',
+    'EVOLUTION_WEBHOOK_TOKEN',
   ];
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(source)) {

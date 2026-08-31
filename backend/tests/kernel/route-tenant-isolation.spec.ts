@@ -36,7 +36,7 @@ import type {
 } from '@crm-lab/shared';
 import { analyticsModule } from '../../src/controllers/analytics.routes.js';
 import { auditModule } from '../../src/controllers/audit.routes.js';
-import { channelSettingsModule } from '../../src/controllers/channel-settings.routes.js';
+import { makeChannelSettingsModule } from '../../src/controllers/channel-settings.routes.js';
 import { conversationModule } from '../../src/controllers/conversation.routes.js';
 import { examModule } from '../../src/controllers/exam.routes.js';
 import { insuranceModule } from '../../src/controllers/insurance.routes.js';
@@ -47,6 +47,7 @@ import { proposalModule } from '../../src/controllers/proposal.routes.js';
 import { themeModule } from '../../src/controllers/theme.routes.js';
 import { userModule } from '../../src/controllers/user.routes.js';
 import type { DbClient } from '../../src/db/types.js';
+import type { EvolutionClient } from '../../src/lib/evolution-client.js';
 import {
   createConversation,
   createExam,
@@ -69,11 +70,37 @@ import { FakeWsHub } from '../helpers/fake-ws.js';
 import { createTestApp, type AuthenticatableUser, type TestApp } from '../helpers/test-app.js';
 import { getTestDb, resetDatabase } from '../helpers/test-db.js';
 
+/**
+ * Gateway Evolution de mentira (Onda 7, Bloco B) — so o suficiente para as 4
+ * rotas de `/settings/channels/whatsapp/*` responderem 200/204 sem rede real.
+ * Inline de proposito (pre-flight da Onda 7): a extracao para um helper
+ * compartilhado fica para a Task 11 (E2E), que ja usa um gateway fake maior.
+ */
+function fakeEvolutionClient(): EvolutionClient {
+  return {
+    async createInstance(instanceName: string) {
+      return { instanceName, apikey: `apikey-${instanceName}` };
+    },
+    async getQr() {
+      return { qrcode: 'data:image/png;base64,QR', status: 'pairing' };
+    },
+    async getStatus() {
+      return { status: 'disconnected', phoneNumber: null };
+    },
+    async logout() {
+      return undefined;
+    },
+    async sendText() {
+      return { externalId: 'evo-sonda' };
+    },
+  };
+}
+
 /** Todos os modulos que servem dado de laboratorio, montados de uma vez. */
 const LAB_MODULES = [
   analyticsModule,
   auditModule,
-  channelSettingsModule,
+  makeChannelSettingsModule({ evolutionClient: fakeEvolutionClient() }),
   conversationModule,
   examModule,
   insuranceModule,
@@ -319,6 +346,37 @@ const LAB_ROUTES: readonly LabRoute[] = [
     method: 'patch',
     path: () => '/api/v1/settings/channels',
     body: () => ({ distributionMode: 'manual' }),
+    actor: 'admin',
+    addressable: false,
+  },
+
+  // --- conexao WhatsApp por QR (Onda 7, Bloco B) ---
+  {
+    name: 'POST /settings/channels/whatsapp/connect',
+    method: 'post',
+    path: () => '/api/v1/settings/channels/whatsapp/connect',
+    body: () => ({ acceptTerms: true }),
+    actor: 'admin',
+    addressable: false,
+  },
+  {
+    name: 'GET /settings/channels/whatsapp/qr',
+    method: 'get',
+    path: () => '/api/v1/settings/channels/whatsapp/qr',
+    actor: 'admin',
+    addressable: false,
+  },
+  {
+    name: 'GET /settings/channels/whatsapp/status',
+    method: 'get',
+    path: () => '/api/v1/settings/channels/whatsapp/status',
+    actor: 'admin',
+    addressable: false,
+  },
+  {
+    name: 'POST /settings/channels/whatsapp/disconnect',
+    method: 'post',
+    path: () => '/api/v1/settings/channels/whatsapp/disconnect',
     actor: 'admin',
     addressable: false,
   },
@@ -590,11 +648,12 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 44 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 48 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
-    // `GET /operations/overview`. Onda 7 soma 5: as 3 de `/insurances` e as 2
-    // de `GET|PUT /exams/:id/prices` (preco por convenio).
-    expect(LAB_ROUTES).toHaveLength(44);
+    // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
+    // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
+    // `/settings/channels/whatsapp/*` (conexao por QR, Bloco B).
+    expect(LAB_ROUTES).toHaveLength(48);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

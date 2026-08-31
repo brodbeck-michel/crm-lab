@@ -39,6 +39,11 @@ import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { ConversationChannel, MessageStatus, MessageType } from '@crm-lab/shared';
 import { env } from '../config/env.js';
 import type { DbClient } from '../db/types.js';
+import {
+  createDefaultEvolutionClient,
+  evolutionInstanceName,
+  type EvolutionClient,
+} from '../lib/evolution-client.js';
 import { logger } from '../lib/logger.js';
 import { createQueue, type QueueService } from '../lib/queue.js';
 import type { ChannelCredentials } from '../repositories/channel-settings.repository.js';
@@ -69,6 +74,14 @@ export interface WhatsAppCredentials {
    * "nunca configurou": revogado nao volta para o token global da instalacao.
    */
   apiTokenRevoked: boolean;
+  /**
+   * Como o canal fala com o provedor (Onda 7, Bloco B). `cloud_api` = API
+   * oficial da Meta (`HttpWhatsAppDriver`); `qr` = numero proprio pareado via
+   * QR no gateway Evolution (`EvolutionWhatsAppDriver`). Decide o driver em
+   * `WhatsAppService.send` — nunca uma constante global, porque cada tenant
+   * escolhe o proprio caminho.
+   */
+  connectionMode: 'cloud_api' | 'qr';
 }
 
 /**
@@ -90,6 +103,10 @@ export function envCredentials(): Omit<WhatsAppCredentials, 'tenantId'> {
     webhookSecret: env.WHATSAPP_WEBHOOK_SECRET ?? '',
     isActive: true,
     apiTokenRevoked: false,
+    // Sem linha em `tenant_channels`, o laboratorio so pode estar no caminho de
+    // sempre (API oficial via env var). `qr` so existe depois de um
+    // `connectWhatsAppQr` bem-sucedido, que grava a linha.
+    connectionMode: 'cloud_api',
   };
 }
 
@@ -180,6 +197,9 @@ export function mergeCredentials(
     // Sem linha na tabela o canal esta ligado (ambiente so-env-var).
     isActive: stored?.isActive ?? fallback.isActive,
     apiTokenRevoked: stored?.apiToken === '' ? true : fallback.apiTokenRevoked,
+    // `connectionMode` so existe na tabela (nunca em env var): sem linha, so
+    // resta `cloud_api`.
+    connectionMode: stored?.connectionMode ?? fallback.connectionMode,
   };
 }
 
@@ -305,6 +325,34 @@ export class HttpWhatsAppDriver implements WhatsAppDriver {
     if (!externalId) throw new Error('WhatsApp API nao devolveu id da mensagem');
     return { externalId };
   }
+}
+
+/**
+ * Driver `connectionMode: 'qr'` (Onda 7, Bloco B) — fala com o gateway Evolution
+ * self-hosted em vez da API oficial da Meta. Mesma interface de
+ * `HttpWhatsAppDriver`: `WhatsAppService.send` nao sabe qual dos dois esta
+ * chamando. `instanceName` e sempre `evolutionInstanceName(credentials.tenantId)`
+ * — o MESMO calculo que `ChannelSettingsService.connectWhatsAppQr` usa para criar
+ * a instancia, entao os dois nunca divergem.
+ */
+export class EvolutionWhatsAppDriver implements WhatsAppDriver {
+  readonly name = 'evolution';
+
+  constructor(private readonly client: EvolutionClient) {}
+
+  async send(
+    credentials: WhatsAppCredentials,
+    phone: string,
+    content: string,
+  ): Promise<SendResult> {
+    const instanceName = evolutionInstanceName(credentials.tenantId);
+    const { externalId } = await this.client.sendText(instanceName, phone, content);
+    return { externalId };
+  }
+}
+
+export function createEvolutionWhatsAppDriver(client: EvolutionClient): WhatsAppDriver {
+  return new EvolutionWhatsAppDriver(client);
 }
 
 function firstMessageId(payload: unknown): string | null {
@@ -474,7 +522,15 @@ function contentOf(message: Record<string, unknown>): { content: string; url: st
 
 export interface WhatsAppServiceDeps {
   credentials: WhatsAppCredentialsResolver;
+  /** Driver `connectionMode: 'cloud_api'` (default) — mock em dev/teste, HTTP em producao. */
   driver?: WhatsAppDriver;
+  /**
+   * Driver `connectionMode: 'qr'` (Onda 7). `undefined` quando o gateway
+   * Evolution nao esta configurado — `send` lanca nesse caso, so para um
+   * tenant que efetivamente escolheu `qr` (D-024: nunca afeta quem esta em
+   * `cloud_api`).
+   */
+  evolutionDriver?: WhatsAppDriver;
   queue?: QueueService;
   /** Tentativas totais do envio. SERVICES.md §11 exige 3. */
   attempts?: number;
@@ -482,6 +538,7 @@ export interface WhatsAppServiceDeps {
 
 export class WhatsAppService {
   readonly driver: WhatsAppDriver;
+  private readonly evolutionDriver: WhatsAppDriver | undefined;
   private readonly queue: QueueService;
   private readonly credentials: WhatsAppCredentialsResolver;
   private readonly attempts: number;
@@ -489,6 +546,7 @@ export class WhatsAppService {
   constructor(deps: WhatsAppServiceDeps) {
     this.credentials = deps.credentials;
     this.driver = deps.driver ?? createDefaultDriver();
+    this.evolutionDriver = deps.evolutionDriver;
     this.queue = deps.queue ?? createQueue();
     this.attempts = deps.attempts ?? 3;
   }
@@ -511,11 +569,25 @@ export class WhatsAppService {
       throw new Error('token do canal whatsapp foi revogado por este laboratorio');
     }
 
+    // Seleciona o driver PELO TENANT (D-024/D-032) — nunca um driver global: um
+    // laboratorio em `qr` nao pode acidentalmente sair pela API oficial de outro.
+    const driver = this.driverFor(credentials);
+
     return this.queue.run(
       'whatsapp.send',
-      () => this.driver.send(credentials, phone, content),
+      () => driver.send(credentials, phone, content),
       { attempts: this.attempts },
     );
+  }
+
+  private driverFor(credentials: WhatsAppCredentials): WhatsAppDriver {
+    if (credentials.connectionMode !== 'qr') return this.driver;
+    if (!this.evolutionDriver) {
+      throw new Error(
+        'canal whatsapp em connectionMode "qr" mas o gateway Evolution nao esta configurado',
+      );
+    }
+    return this.evolutionDriver;
   }
 
   /** Credenciais do tenant identificado pelo webhook. `null` = desconhecido. */
@@ -603,7 +675,13 @@ export class WhatsAppService {
   }
 }
 
-/** Monta o adapter com o driver e a fila default (mock em dev/teste). */
+/** `EVOLUTION_API_URL`/`EVOLUTION_API_KEY` ausentes => `undefined` (send em `qr` lanca). */
+function defaultEvolutionDriver(): WhatsAppDriver | undefined {
+  const client = createDefaultEvolutionClient();
+  return client ? createEvolutionWhatsAppDriver(client) : undefined;
+}
+
+/** Monta o adapter com os drivers e a fila default (mock em dev/teste). */
 export function createWhatsAppService(
   db: DbClient,
   overrides: Partial<WhatsAppServiceDeps> = {},
@@ -611,6 +689,7 @@ export function createWhatsAppService(
   return new WhatsAppService({
     credentials: overrides.credentials ?? createTenantCredentialsResolver(db),
     ...(overrides.driver !== undefined ? { driver: overrides.driver } : {}),
+    evolutionDriver: overrides.evolutionDriver ?? defaultEvolutionDriver(),
     ...(overrides.queue !== undefined ? { queue: overrides.queue } : {}),
     ...(overrides.attempts !== undefined ? { attempts: overrides.attempts } : {}),
   });

@@ -104,7 +104,19 @@ export function createApp(deps: AppDeps): BuiltApp {
       ],
     }),
   );
-  app.use(express.json({ limit: '1mb' }));
+  // `verify` guarda os bytes exatos do corpo em `req.rawBody` ANTES do parse.
+  // `rawBodyOf` (webhook.routes.ts) prefere esse campo para a verificacao HMAC
+  // do webhook: comparar contra uma reserializacao de `req.body` ja parseado
+  // (JSON.stringify) perde formatacao do corpo original (espacos, por
+  // exemplo) e faz a assinatura nunca bater, mesmo com o segredo certo.
+  app.use(
+    express.json({
+      limit: '1mb',
+      verify: (req, _res, buf) => {
+        (req as express.Request & { rawBody?: Buffer }).rawBody = buf;
+      },
+    }),
+  );
   app.use(requestContext());
 
   // Publico e fora do rate limit: usado por health check de container/LB.

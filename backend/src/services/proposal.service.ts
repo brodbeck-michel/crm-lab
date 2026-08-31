@@ -73,10 +73,6 @@ export const MAX_ITEMS = 100;
  */
 export const MAX_PAGE = 10_000;
 
-
-/** Mensagem de UX devolvida por `POST /proposals` quando cai em aprovacao. */
-export const PENDING_APPROVAL_MESSAGE = 'Proposta criada. Aguardando aprovação do gestor.';
-
 export interface ProposalFilters {
   /** Lista separada por virgula na query string (`?status=a,b`). */
   status?: string;
@@ -386,8 +382,9 @@ export class ProposalService {
     if (!created.withinLimit) {
       // Fluxo 3 de WORKFLOWS: post em #aprovacoes + WS para os gestores.
       await approvals.requestApproval(ctx, created.detail.id);
-      const refreshed = await this.getById(ctx, created.detail.id);
-      return { ...refreshed, message: PENDING_APPROVAL_MESSAGE };
+      // C7 (Onda 7): sem `message` pt-BR — `approvalStatus: 'pending'` ja diz
+      // o que houve, e texto de UI e do frontend (i18n).
+      return this.getById(ctx, created.detail.id);
     }
 
     return created.detail;

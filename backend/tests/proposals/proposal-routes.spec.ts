@@ -187,9 +187,11 @@ describe('/api/v1/proposals', () => {
         })
         .expect(201);
 
-      const body = response.body as ProposalDetail & { message?: string };
+      const body = response.body as ProposalDetail;
       expect(body.approvalStatus).toBe('pending');
-      expect(body.message).toBeDefined();
+      // C7 (Onda 7): sem `message` pt-BR no corpo — `approvalStatus` ja diz o
+      // que houve.
+      expect('message' in body).toBe(false);
     });
   });
 

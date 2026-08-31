@@ -593,6 +593,16 @@ interface OperationService {
 - Papel: `manager`/`admin`. Atendente → `FORBIDDEN` com
   `details.requiredRoles: ["manager","admin"]`. `denyPlatformOperator()` no router, como toda
   rota de dado de laboratório.
+- **Contrato de `oldestWaitSeconds` (Onda 7, pendência mecânica):** vem de
+  `MAX(CONVERSATION_WAIT) AS oldest_wait_seconds` sobre a fila **inteira** (todas as
+  conversas de `QUEUE_PREDICATE`), em `operation.repository.ts#queueTotals` — **não** dos itens
+  paginados por `queueLimit` (esses são uma pergunta diferente: "o topo da fila", não "a maior
+  espera"). Trocar esse `MAX()` por uma leitura do primeiro item de uma lista ordenada (ex.:
+  `ORDER BY waiting_seconds DESC LIMIT 1`) quebra a semântica em silêncio assim que a fila
+  passar do `queueLimit`: o número devolvido vira `Math.max` só dos itens **retornados**, que só
+  bate com o `MAX()` real por acidente enquanto a fila couber no limite. Qualquer mudança na
+  forma de calcular `oldestWaitSeconds` tem que preservar "maior espera de TODA a fila,
+  independente de paginação" e atualizar este parágrafo no mesmo commit.
 
 ---
 

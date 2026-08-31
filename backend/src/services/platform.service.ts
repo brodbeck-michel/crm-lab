@@ -70,6 +70,12 @@ import { DEFAULT_THEME, THEME_PRESETS } from './theme.service.js';
 export const DEFAULT_PAGE = 1;
 export const DEFAULT_LIMIT = 20;
 export const MAX_LIMIT = 100;
+/**
+ * Teto de `page` (Onda 7, pendencia mecanica — mesmo motivo de
+ * `proposal.service.ts`). Sem ele, `?page=9007199254740991` produz um
+ * `OFFSET` absurdo na consulta.
+ */
+export const MAX_PAGE = 10_000;
 export const MIN_PASSWORD_LENGTH = 8;
 
 export const SUBSCRIPTION_PLANS: readonly SubscriptionPlan[] = ['starter', 'pro', 'enterprise'];
@@ -260,7 +266,7 @@ export function createPlatformService(deps: PlatformServiceDeps): PlatformServic
 
     const search = query.search?.trim();
     const criteria = {
-      page: clampInt(query.page, DEFAULT_PAGE, 1, Number.MAX_SAFE_INTEGER),
+      page: clampInt(query.page, DEFAULT_PAGE, 1, MAX_PAGE),
       limit: clampInt(query.limit, DEFAULT_LIMIT, 1, MAX_LIMIT),
       ...(search !== undefined && search.length > 0 ? { search } : {}),
       ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),

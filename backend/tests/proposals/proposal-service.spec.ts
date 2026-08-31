@@ -320,7 +320,6 @@ describe('ProposalService', () => {
       expect(created.approvalStatus).toBe('approved');
       expect(created.approvedBy).toBe(c.user.id);
       expect(created.approvedAt).not.toBeNull();
-      expect(created.message).toBeUndefined();
     });
 
     it('acima do limite: pending + post em #aprovacoes + WS approval.requested', async () => {
@@ -333,7 +332,6 @@ describe('ProposalService', () => {
 
       expect(created.approvalStatus).toBe('pending');
       expect(created.approvedBy).toBeNull();
-      expect(created.message).toContain('aprovação');
 
       const posts = await channelPosts(db, c.tenantId, 'aprovacoes');
       expect(posts).toHaveLength(1);

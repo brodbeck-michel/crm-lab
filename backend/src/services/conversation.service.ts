@@ -72,6 +72,12 @@ import * as userRepo from '../repositories/user.repository.js';
 export const DEFAULT_PAGE = 1;
 export const DEFAULT_LIMIT = 20;
 export const MAX_LIMIT = 100;
+/**
+ * Teto de `page` (Onda 7, pendencia mecanica — mesmo motivo de
+ * `proposal.service.ts`). Sem ele, `?page=9007199254740991` produz um
+ * `OFFSET` absurdo na consulta.
+ */
+export const MAX_PAGE = 10_000;
 export const DEFAULT_SORT_BY: ConversationSortBy = 'lastMessageAt';
 export const DEFAULT_ORDER: SortOrder = 'desc';
 
@@ -103,7 +109,7 @@ export function toCriteria(
     scope: filters.scope ?? 'all',
     ...(filters.status !== undefined ? { status: filters.status } : {}),
     ...(search !== undefined && search.length > 0 ? { search } : {}),
-    page: clampInt(filters.page, DEFAULT_PAGE, 1, Number.MAX_SAFE_INTEGER),
+    page: clampInt(filters.page, DEFAULT_PAGE, 1, MAX_PAGE),
     limit: clampInt(filters.limit, DEFAULT_LIMIT, 1, MAX_LIMIT),
     sortBy,
     order: filters.order === 'asc' ? 'asc' : DEFAULT_ORDER,

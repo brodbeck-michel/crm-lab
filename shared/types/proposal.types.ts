@@ -135,10 +135,13 @@ export interface CreateProposalRequest {
   insuranceId?: string | null;
 }
 
-export interface CreateProposalResponse extends ProposalDetail {
-  /** Mensagem de UX quando a proposta cai em aprovacao. */
-  message?: string;
-}
+/**
+ * `POST /proposals` devolve `ProposalDetail` cru. Onda 7 removeu o campo
+ * `message` opcional (texto de UX pt-BR do backend) — i18n é do frontend, e
+ * `approvalStatus` já diz o que houve (mesma razão de `PATCH .../approve` e
+ * `.../reject`, Onda 6).
+ */
+export type CreateProposalResponse = ProposalDetail;
 
 export interface UpdateProposalStatusRequest {
   status: ProposalStatus;

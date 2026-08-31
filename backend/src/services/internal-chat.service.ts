@@ -33,6 +33,12 @@ export const DEFAULT_PAGE = 1;
 export const DEFAULT_LIMIT = 50;
 export const MAX_LIMIT = 100;
 export const MAX_CONTENT_LENGTH = 4000;
+/**
+ * Teto de `page` (Onda 7, pendencia mecanica — mesmo motivo de
+ * `proposal.service.ts`). Sem ele, `?page=9007199254740991` produz um
+ * `OFFSET` absurdo na consulta.
+ */
+export const MAX_PAGE = 10_000;
 
 export interface Pagination {
   page?: number;
@@ -81,7 +87,7 @@ export class InternalChatService {
     page: Pagination = {},
   ): Promise<ListInternalMessagesResponse> {
     assertLabMember(ctx);
-    const pageNumber = clamp(page.page, DEFAULT_PAGE, 1, Number.MAX_SAFE_INTEGER);
+    const pageNumber = clamp(page.page, DEFAULT_PAGE, 1, MAX_PAGE);
     const limit = clamp(page.limit, DEFAULT_LIMIT, 1, MAX_LIMIT);
 
     return this.db.withTenant(ctx.tenantId, async (tx) => {

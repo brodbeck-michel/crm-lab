@@ -55,6 +55,12 @@ export const EXAM_CACHE_TTL_SECONDS = 3600;
 export const DEFAULT_PAGE = 1;
 export const DEFAULT_LIMIT = 20;
 export const MAX_LIMIT = 100;
+/**
+ * Teto de `page` (Onda 7, pendencia mecanica — mesmo motivo de
+ * `proposal.service.ts`). Sem ele, `?page=9007199254740991` produz um
+ * `OFFSET` absurdo na consulta.
+ */
+export const MAX_PAGE = 10_000;
 export const DEFAULT_SORT_BY: ExamSortBy = 'name';
 export const DEFAULT_ORDER: SortOrder = 'asc';
 
@@ -124,7 +130,7 @@ export function toCriteria(filters: ExamFilters): ExamListCriteria {
     category: category !== undefined && category.length > 0 ? category : undefined,
     search: search !== undefined && search.length > 0 ? search : undefined,
     insuranceId: filters.insuranceId,
-    page: clampInt(filters.page, DEFAULT_PAGE, 1, Number.MAX_SAFE_INTEGER),
+    page: clampInt(filters.page, DEFAULT_PAGE, 1, MAX_PAGE),
     limit: clampInt(filters.limit, DEFAULT_LIMIT, 1, MAX_LIMIT),
     sortBy,
     order: filters.order === 'desc' ? 'desc' : DEFAULT_ORDER,

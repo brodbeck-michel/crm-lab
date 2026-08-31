@@ -60,10 +60,11 @@ respondiam crus.
 | `PATCH /proposals/:id/approve` e `PATCH /proposals/:id/reject` | `{ id, approvalStatus, approvedAt }` | Mesma razão. **Não carregam mais `message`** (Onda 6): texto de interface em pt-BR vindo do backend não tem quem o traduza — i18n é do frontend, e `approvalStatus` já carrega toda a informação |
 | `POST /webhooks/whatsapp` (e variantes por tenant) | `{ "received": true }` | **Não é recurso:** é o ACK que a Meta exige. Não expõe nada do domínio e é idêntico em todos os caminhos, inclusive nos ignorados (§4) |
 
-`POST /proposals` devolve `ProposalDetail` **cru** com um campo extra opcional `message`
-(`CreateProposalResponse`, `shared/types/proposal.types.ts`) quando a proposta cai em aprovação.
-É o último texto de UI em pt-BR que sai do backend; está tipado no contrato compartilhado e
-documentado em §3, mas **não** cria precedente — endpoint novo não acrescenta `message`.
+`POST /proposals` devolve `ProposalDetail` **cru**, sem campo extra (`CreateProposalResponse`,
+`shared/types/proposal.types.ts`, é hoje só um alias de `ProposalDetail`). Até a Onda 7 havia um
+`message` opcional em pt-BR quando a proposta caía em aprovação; foi removido (C7) pela mesma
+razão de `PATCH .../approve` e `.../reject` (Onda 6, linha acima): texto de interface é do
+frontend (i18n), e `approvalStatus: "pending"` já carrega toda a informação que a tela precisa.
 
 Fora dessas linhas, qualquer envelope de recurso único é bug de contrato, não estilo.
 
@@ -1300,8 +1301,7 @@ tem preço cadastrado para aquele convênio — o fallback **nunca bloqueia** a 
       "priceSource": "private"
     }
   ],
-  "approvalStatus": "pending",
-  "message": "Proposta criada. Aguardando aprovação do gestor."
+  "approvalStatus": "pending"
 }
 ```
 
@@ -1311,8 +1311,9 @@ convênio re-precificaria itens com snapshot já gravado (D-004) — comportamen
 exigiria decisão própria, registrado aqui como **limitação declarada** da Onda 7 (spec §3.3).
 
 **Desconto acima da alçada NÃO é erro nesta rota** (D-045): a proposta é criada com
-`approvalStatus: "pending"` e o `message` acima explica a pendência — é o fluxo de
-BUSINESS_RULES §2 e WORKFLOWS §3. O código `DISCOUNT_EXCEEDS_LIMIT` (403) aparece em
+`approvalStatus: "pending"`, que já diz que ela está aguardando aprovação do gestor — é o fluxo
+de BUSINESS_RULES §2 e WORKFLOWS §3 (texto de interface fica por conta do frontend, C7 da
+Onda 7). O código `DISCOUNT_EXCEEDS_LIMIT` (403) aparece em
 `PATCH /proposals/:id/discount` quando alguém tenta elevar, acima da própria alçada,
 o desconto de uma proposta que **não criou**:
 

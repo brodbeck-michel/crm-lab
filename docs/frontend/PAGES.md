@@ -328,6 +328,31 @@ página) deixa de existir.
 - Gestor vê tudo em modo leitura: campos desabilitados, sem botão salvar. O servidor recusa o
   `PATCH` dele de qualquer forma (403)
 
+#### Conexão por QR — número próprio (Onda 7, Bloco B · D-083 · API_CONTRACTS §6.1)
+Bloco dentro do MESMO cartão do canal WhatsApp, **só para admin** (as quatro rotas de QR são
+admin: o bloco inteiro é montado dentro do ramo de escrita, então nem o `GET /status` sai para
+gestor).
+
+- Dados: `POST /settings/channels/whatsapp/connect` · `GET .../qr` · `GET .../status` ·
+  `POST .../disconnect`
+- **Termo de aceite obrigatório** (`WhatsAppConnectModal`): risco de banimento do número, uso
+  fora dos ToS do WhatsApp é responsabilidade do laboratório, número dedicado (nunca pessoal),
+  o celular precisa abrir o WhatsApp a cada ~14 dias, e a mensagem do paciente (dado de saúde)
+  passa pelo gateway. Sem a caixa marcada o botão "Conectar" fica desabilitado; o servidor
+  recusa com `VALIDATION_ERROR` de qualquer forma
+- **Aceite é dado do canal, não do modal**: gravado em `accepted_terms_at/by` no primeiro
+  aceite e nunca sobrescrito. Reconexão já aceita **pula o checkbox** e envia corpo vazio
+- **Fluxo:** aceite → `connect` devolve o QR (`status: "pairing"`) → a tela faz polling de
+  `GET .../qr` a cada ~2s → `status: "connected"` fecha o modal com toast → o cartão passa a
+  mostrar `Conectado — <número>`. O polling **para sozinho** em qualquer estado terminal e no
+  primeiro erro (`qrRefetchInterval`) — não existe polling infinito
+- **QR expirado** (`pairing` → `disconnected`) mostra "gerar novamente"; `503
+  CHANNEL_QR_UNAVAILABLE` (gateway não configurado) é estado de operador, com mensagem própria
+- **Desconectar não desativa o canal** (`is_active` intocado) — são dois controles distintos,
+  e a confirmação diz isso explicitamente
+- Conectar por QR troca `connection_mode` para `qr` e **não há caminho de volta para
+  `cloud_api`** pela UI: a partir daí o envio sai pelo gateway Evolution
+
 ### Gestão da Operação (`/settings/operation`) — gestor+
 - Dados: `GET /operations/overview?queueLimit&decisionsLimit` — **somente leitura**
 - Um endpoint, um retrato (D-067): os três blocos vêm do mesmo instante. Não fazer três

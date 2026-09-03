@@ -17,9 +17,17 @@ import dotenv from 'dotenv';
 import { z } from 'zod';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-// src/config -> backend/.env  (e dist/backend/src/config -> ... tratado pelo cwd)
-dotenv.config({ path: path.resolve(here, '../../.env') });
-dotenv.config();
+// Em `test` o `.env` da MAQUINA nao entra: a suite afirma o comportamento
+// PADRAO (`RATE_LIMIT_PER_MINUTE` = 100, gateway Evolution ausente ->
+// CHANNEL_QR_UNAVAILABLE) e um valor local preenchido fazia o teste passar ou
+// falhar conforme a maquina de quem roda — inclusive verde por ausencia, que e
+// o pior dos casos. Teste que precisa de uma variavel a define no proprio
+// processo (`process.env.X = ...` no `beforeEach`).
+if (process.env.NODE_ENV !== 'test') {
+  // src/config -> backend/.env  (e dist/backend/src/config -> ... tratado pelo cwd)
+  dotenv.config({ path: path.resolve(here, '../../.env') });
+  dotenv.config();
+}
 
 /** Trata string vazia como "nao informado" — `.env.example` traz chaves vazias. */
 const optionalString = z.preprocess(

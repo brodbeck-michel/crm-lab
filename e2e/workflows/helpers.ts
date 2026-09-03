@@ -27,8 +27,10 @@ import {
   E2E_CHANNEL_UNREAD,
   E2E_CHANNELS,
   E2E_CONVERSATIONS,
+  E2E_EXAM_PRICES,
   E2E_EXAMS,
   E2E_EXAMS_BETA,
+  E2E_INSURANCES,
   E2E_PASSWORD,
   E2E_PATIENTS,
   E2E_PROPOSALS,
@@ -37,6 +39,8 @@ import {
   E2E_TENANT_WITHOUT_SETTINGS,
   E2E_TENANTS,
   E2E_USERS,
+  type E2eExamPrice,
+  type E2eInsurance,
   type E2ePatient,
   type E2eTenantChannel,
   type E2eUser,
@@ -48,8 +52,10 @@ export {
   E2E_CHANNEL_UNREAD,
   E2E_CHANNELS,
   E2E_CONVERSATIONS,
+  E2E_EXAM_PRICES,
   E2E_EXAMS,
   E2E_EXAMS_BETA,
+  E2E_INSURANCES,
   E2E_PASSWORD,
   E2E_PATIENTS,
   E2E_PROPOSALS,
@@ -59,7 +65,7 @@ export {
   E2E_TENANTS,
   E2E_USERS,
 };
-export type { E2ePatient, E2eTenantChannel, E2eUser };
+export type { E2eExamPrice, E2eInsurance, E2ePatient, E2eTenantChannel, E2eUser };
 
 /** Base da API. O Playwright fala com o backend direto nos testes de contrato. */
 export const API_URL = process.env.E2E_API_URL ?? 'http://localhost:3000/api/v1';

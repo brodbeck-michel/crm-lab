@@ -62,6 +62,32 @@ test.describe('Fluxo 1: Novo Orçamento', () => {
     expect(salva.discountPercent).toBe(DESCONTO);
     expect(salva.items).toHaveLength(2);
     expect(salva.status).toBe('novo_contato');
+
+    // Regressao explicita da Onda 7 contra a Onda 4: sem convenio escolhido o
+    // fluxo antigo continua identico — `insuranceId` nulo (particular e a
+    // AUSENCIA de convenio, D-082) e todo item com preco particular no
+    // snapshot. Sem esta asserção, um default errado em `insuranceId` passaria
+    // despercebido: o total seria o mesmo.
+    expect(salva.insuranceId).toBeNull();
+    for (const item of salva.items) {
+      expect(item.priceSource).toBe('private');
+    }
+    expect(salva.items.map((item) => item.unitPrice)).toEqual([
+      E2E_EXAMS.hemograma.pricePrivate,
+      E2E_EXAMS.glicose.pricePrivate,
+    ]);
+  });
+
+  test('o badge de origem de preco NAO aparece em orçamento particular', async ({ page }) => {
+    await loginAs(page, E2E_USERS.alfaAttendant);
+    await openNewBudgetPage(page, E2E_CONVERSATIONS.atribuida.id);
+    await addExamToBudget(page, E2E_EXAMS.hemograma.name);
+
+    // Sem convenio, TODO preco e particular — o badge seria redundante
+    // (`SummaryColumn`: so marca item que caiu no particular DENTRO de uma
+    // proposta com convenio).
+    await expect(page.getByTestId('summary-items')).toBeVisible();
+    await expect(page.getByTestId('price-source-badge')).toHaveCount(0);
   });
 
   test('desconto dentro da alçada (15%) nasce sem pendencia de aprovacao', async ({ request }) => {

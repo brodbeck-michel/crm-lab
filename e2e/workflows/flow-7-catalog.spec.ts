@@ -125,7 +125,9 @@ test.describe('Fluxo 7: Catálogo (gestor escreve)', () => {
     await page.getByRole('button', { name: /Novo Exame/ }).click();
     const modal = page.getByTestId('modal-card');
     await modal.getByLabel('Nome').fill(nome);
-    await modal.getByLabel('Código').fill(codigo);
+    // `exact`: a Onda 7 acrescentou "Código TUSS" e "Código AMB" ao mesmo modal,
+    // e o rotulo solto passou a casar tres campos.
+    await modal.getByLabel('Código', { exact: true }).fill(codigo);
     await modal.getByLabel('Preço Particular (R$)').fill('77.5');
     await modal.getByLabel('Preço Convênio (R$)').fill('40');
     await modal.getByRole('button', { name: 'Criar' }).click();

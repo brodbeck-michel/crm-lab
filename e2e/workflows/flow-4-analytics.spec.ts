@@ -57,9 +57,14 @@ test.describe('Fluxo 4: Conversão (gestor)', () => {
     await loginAs(page, E2E_USERS.alfaManager);
     await gotoScreen(page, ANALYTICS, HEADING);
 
-    // Indicadores do topo (PAGES.md §8).
+    // Indicadores do topo (PAGES.md §8). O rotulo do indicador e um
+    // `<p>` (`MetricTile`): o papel desambigua do "Receita" da LEGENDA do
+    // grafico, que so existe quando ha receita no periodo — sem isso o teste
+    // passa ou quebra conforme o dado semeado do dia.
     for (const label of ['Receita', 'Ticket Médio', 'Taxa de Conversão', 'Propostas Criadas']) {
-      await expect(page.getByText(label, { exact: true })).toBeVisible();
+      await expect(
+        page.getByRole('paragraph').filter({ hasText: new RegExp(`^${label}$`) }),
+      ).toBeVisible();
     }
 
     // Os tres graficos da tela.

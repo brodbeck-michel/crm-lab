@@ -94,6 +94,25 @@ export const E2E_USERS = {
     role: 'attendant',
     discountLimit: 15,
   },
+  /**
+   * Admin do tenant Beta — cenario "conexao WhatsApp por QR" (fluxo 14).
+   *
+   * A conexao por QR troca o MODO do canal (`connection_mode = 'qr'`, D-083) e
+   * nenhuma rota volta para `cloud_api` — so o re-seed. Rodar esse fluxo no
+   * tenant Alfa deixava as conversas dele apontando para um gateway Evolution
+   * que so existe durante aquele arquivo, e o envio de mensagem dos fluxos
+   * seguintes (fluxo 8) passava a responder 502. O Beta e o tenant que nenhum
+   * outro fluxo usa para enviar mensagem.
+   */
+  betaAdmin: {
+    id: 'b0000000-0000-4000-8000-000000000101',
+    tenantId: E2E_TENANTS.beta.id,
+    email: 'admin@e2e-beta.com.br',
+    password: E2E_PASSWORD,
+    name: 'Beatriz Admin',
+    role: 'admin',
+    discountLimit: 100,
+  },
   /** Atendente do tenant Beta — o lado "de fora" do teste de isolamento. */
   betaAttendant: {
     id: 'b0000000-0000-4000-8000-000000000103',

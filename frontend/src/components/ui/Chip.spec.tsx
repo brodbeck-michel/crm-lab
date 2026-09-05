@@ -49,6 +49,24 @@ describe('Chip', () => {
     expect(screen.getByRole('button')).toHaveAttribute('aria-pressed', 'true');
   });
 
+  it('chip ligado tem marca VISIVEL, nao so aria-pressed', () => {
+    // `shadow-sm` numa pilula pequena nao se le como "filtro ativo": quem
+    // trocava de aba no Atendimento nao sabia em qual estava.
+    const { rerender } = render(
+      <Chip tone="inactive" onClick={() => {}}>
+        Filtro
+      </Chip>,
+    );
+    expect(screen.getByRole('button').className).not.toContain('ring-2');
+
+    rerender(
+      <Chip tone="inactive" selected onClick={() => {}}>
+        Filtro
+      </Chip>,
+    );
+    expect(screen.getByRole('button').className).toContain('ring-2');
+  });
+
   it('não dispara quando disabled', async () => {
     const onClick = vi.fn();
     render(

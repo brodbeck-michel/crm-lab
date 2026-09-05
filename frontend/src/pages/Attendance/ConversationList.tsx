@@ -62,8 +62,15 @@ export function ConversationList({
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex flex-col gap-md border-b border-neutral-300 px-lg py-lg">
         <div className="flex items-center gap-sm overflow-x-auto">
+          {/*
+            O tom SEGUE a seleção: filtro ligado fica colorido, desligado fica
+            cinza (`inactive` é, por definição do Chip, "filtro desligado").
+            Antes o tom era fixo — "Minhas" nascia colorida e "Não atribuídas"
+            cinza o tempo todo, então trocar de aba não mudava nada na tela e a
+            aba desligada parecia a ligada.
+          */}
           <Chip
-            tone="attention"
+            tone={scope === 'mine' ? 'attention' : 'inactive'}
             selected={scope === 'mine'}
             onClick={() => toggle('mine')}
             title="Conversas atribuídas a você"
@@ -71,7 +78,7 @@ export function ConversationList({
             {`Minhas ${counts?.mine ?? 0}`}
           </Chip>
           <Chip
-            tone="inactive"
+            tone={scope === 'unassigned' ? 'attention' : 'inactive'}
             selected={scope === 'unassigned'}
             onClick={() => toggle('unassigned')}
             title="Fila livre — ninguém assumiu ainda"

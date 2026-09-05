@@ -54,6 +54,19 @@ describe('InboxLayout — larguras do doc', () => {
     renderLayout();
     expect(screen.getByTestId('inbox-layout').className).toContain('overflow-x-auto');
   });
+
+  it('altura EXATA de viewport — quem rola e a coluna, nunca a pagina', () => {
+    // `min-h-screen` deixava a caixa crescer com o conteudo: o `overflow-y-auto`
+    // das colunas nunca entrava em acao e o documento inteiro rolava — o
+    // composer da conversa saia da tela e exigia rolar a pagina para escrever.
+    renderLayout();
+    const root = screen.getByTestId('inbox-layout').className;
+    expect(root).toContain('h-screen');
+    expect(root).not.toContain('min-h-screen');
+    // Sem `min-h-0` o filho flex nao encolhe e o scroll interno nao acontece.
+    expect(screen.getByTestId('inbox-list').className).toContain('min-h-0');
+    expect(screen.getByTestId('inbox-conversation').className).toContain('min-h-0');
+  });
 });
 
 describe('InboxLayout — coluna de contexto recolhível', () => {

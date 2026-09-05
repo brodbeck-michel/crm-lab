@@ -9,7 +9,12 @@ import { cn } from '@/components/ui';
  * Regras de Largura aplicadas:
  *  1. a coluna flexível tem `min-width` EXPLÍCITO (440px);
  *  2. em tela estreita a LINHA ganha `overflow-x` — as colunas não colapsam
- *     (é justamente o bug do protótipo que a regra existe para evitar).
+ *     (é justamente o bug do protótipo que a regra existe para evitar);
+ *  3. a raiz tem altura EXATA de viewport (`h-screen`), não `min-h-screen`.
+ *     Com altura mínima a caixa cresce com o conteúdo, o `overflow-y-auto` das
+ *     colunas nunca entra em ação (altura indefinida não tem do que estourar) e
+ *     quem rola é o DOCUMENTO — o composer da conversa saía da tela e exigia
+ *     rolar a página inteira para escrever. Cada coluna rola por dentro.
  */
 
 export interface InboxLayoutProps {
@@ -48,13 +53,13 @@ export function InboxLayout({
   return (
     <div
       data-testid="inbox-layout"
-      className={cn('flex min-h-screen w-full overflow-x-auto bg-bg', className)}
+      className={cn('flex h-screen w-full overflow-x-auto bg-bg', className)}
     >
       <section
         data-testid="inbox-list"
         aria-label={listLabel}
         style={{ flex: `0 0 ${INBOX_LIST_WIDTH}px`, width: INBOX_LIST_WIDTH }}
-        className="flex flex-col overflow-y-auto border-r border-neutral-300 bg-surface"
+        className="flex min-h-0 flex-col overflow-y-auto border-r border-neutral-300 bg-surface"
       >
         {list}
       </section>
@@ -63,7 +68,7 @@ export function InboxLayout({
         data-testid="inbox-conversation"
         aria-label="Conversa"
         style={{ flex: '1 1 0%', minWidth: INBOX_CONVERSATION_MIN_WIDTH }}
-        className="flex flex-col"
+        className="flex min-h-0 flex-col"
       >
         {conversation}
       </section>
@@ -73,7 +78,7 @@ export function InboxLayout({
           data-testid="inbox-context"
           aria-label="Contexto do paciente"
           style={{ flex: `0 0 ${INBOX_CONTEXT_WIDTH}px`, width: INBOX_CONTEXT_WIDTH }}
-          className="flex flex-col overflow-y-auto border-l border-neutral-300 bg-surface"
+          className="flex min-h-0 flex-col overflow-y-auto border-l border-neutral-300 bg-surface"
         >
           {context}
         </aside>

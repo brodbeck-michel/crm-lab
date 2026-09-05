@@ -84,6 +84,14 @@ describe('ConversationItem', () => {
     expect(waiting.className).toContain('text-accent-700');
   });
 
+  it('espera longa sai em dias/horas, nao em minuto cru', () => {
+    // A fila real mostrava "aguardando 57871 min": ninguem le prioridade
+    // nisso. Mesma escala do resto do app (`formatDurationSeconds`).
+    const doisDias = new Date(new Date(NOW).getTime() - 50 * 60 * 60 * 1000).toISOString();
+    render(<ConversationItem conversation={conversation({ lastMessageAt: doisDias })} now={NOW} />);
+    expect(screen.getByTestId('conversation-waiting')).toHaveTextContent('aguardando 2d 2h');
+  });
+
   it('sem não lidas não existe espera', () => {
     render(<ConversationItem conversation={conversation({ unreadCount: 0 })} now={NOW} />);
     expect(screen.queryByTestId('conversation-waiting')).not.toBeInTheDocument();

@@ -35,6 +35,18 @@ const CLICKABLE_TONES: Record<ChipTone, string> = {
   inactive: 'hover:bg-neutral-300',
 };
 
+/**
+ * Estado LIGADO de um chip de filtro. Antes era só `shadow-sm` — uma sombra
+ * numa pílula pequena não se lê como "este filtro está ativo", e quem trocava
+ * de aba não sabia em qual estava. Contorno na cor do próprio tom: visível sem
+ * depender só de cor de fundo (a mesma pílula muda de forma, não só de matiz).
+ */
+const SELECTED_TONES: Record<ChipTone, string> = {
+  positive: 'ring-2 ring-accent2-800',
+  attention: 'ring-2 ring-accent-800',
+  inactive: 'ring-2 ring-neutral-700',
+};
+
 /** Etiqueta de estado/filtro. Clicável apenas quando recebe `onClick`. */
 export function Chip({
   tone = 'inactive',
@@ -65,7 +77,7 @@ export function Chip({
         TONES[tone],
         'cursor-pointer border-none transition-colors',
         CLICKABLE_TONES[tone],
-        selected && 'shadow-sm',
+        selected && SELECTED_TONES[tone],
         disabled && 'cursor-not-allowed opacity-50',
       )}
     >

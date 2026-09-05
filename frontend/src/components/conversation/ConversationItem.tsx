@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import type { Conversation } from '@crm-lab/shared';
 import { Badge, Chip, cn } from '@/components/ui';
 import { Avatar, DateDisplay } from '@/components/shared';
+import { formatDurationSeconds } from '@/lib/format';
 
 /**
  * ConversationItem — COMPONENTS.md (`conversation/`), anatomia padrão WhatsApp.
@@ -11,7 +12,10 @@ import { Avatar, DateDisplay } from '@/components/shared';
  *    cinza quando está lido;
  *  - prévia truncada em UMA linha com elipse;
  *  - Badge com a contagem de não lidas (não renderiza com 0);
- *  - chips de status + "aguardando N min" em accent-700;
+ *  - chips de status + tempo de espera em accent-700, formatado por
+ *    `formatDurationSeconds` (a mesma escala do resto do app): minuto cru
+ *    virava "aguardando 57871 min" — ilegivel, e quem le a fila precisa
+ *    decidir prioridade de relance, nao fazer divisao mental;
  *  - selecionado: fundo neutral-100 + shadow-sm.
  *
  * Nenhuma busca de dado aqui dentro: recebe `conversation` pronto do
@@ -129,7 +133,7 @@ export function ConversationItem({
                 data-testid="conversation-waiting"
                 className="flex-[0_0_auto] whitespace-nowrap text-micro font-semibold tracking-normal text-accent-700"
               >
-                {`aguardando ${waiting} min`}
+                {`aguardando ${formatDurationSeconds(waiting * 60)}`}
               </span>
             )}
           </span>

@@ -105,6 +105,11 @@ export function Sidebar() {
           )}
         </div>
       )}
+
+      {/* Versão do build — só o número, sem rótulo, quando o trilho recolhe. */}
+      <span className="truncate font-body text-caption text-neutral-600">
+        {collapsed ? __APP_VERSION__ : `v${__APP_VERSION__}`}
+      </span>
     </aside>
   );
 }

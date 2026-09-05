@@ -113,6 +113,9 @@ Anatomia (padrão WhatsApp):
 - 244px expandido / 72px recolhido; recolhe sozinho em atendente + inbox
 - Itens: ícone (flex 0 0 38px quando recolhido) + label; hover accent-100; ativo accent-200 + shadow-sm
 - Conteúdo do trilho muda por perfil — a ESTRUTURA não
+- Rodapé: versão do build (`v1.1.0`, só o número quando recolhido) — `__APP_VERSION__`
+  injetada em build-time pelo Vite a partir do `package.json` da raiz do monorepo
+  (`frontend/vite.config.ts`), sem chamada de rede
 
 ### InboxLayout
 - 3 colunas: 336px fixo | flex 1 min 440px | 316px recolhível

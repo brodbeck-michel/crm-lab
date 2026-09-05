@@ -111,7 +111,7 @@ export function Sidebar() {
         )}
       </div>
 
-      <nav className="flex min-h-0 flex-1 flex-col gap-xs">
+      <nav className="flex min-h-0 flex-1 flex-col gap-xs overflow-y-auto">
         {items.map((route) => (
           <NavLink
             key={route.path}

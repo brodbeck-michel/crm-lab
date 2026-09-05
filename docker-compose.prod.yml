@@ -60,6 +60,11 @@ services:
       JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?defina JWT_REFRESH_SECRET}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # O migrator carrega o MESMO `config/env.ts` do servidor, que em
+      # `NODE_ENV=production` exige esta chave (D-076) antes de rodar qualquer
+      # linha. Sem ela aqui o job morria no boot — migracao nenhuma era
+      # aplicada, apesar de o `backend` ja receber a variavel.
+      CHANNEL_SECRET_KEY: ${CHANNEL_SECRET_KEY:?defina CHANNEL_SECRET_KEY (>=32 caracteres)}
     command: ['node', 'dist/backend/src/db/cli/migrate.js']
 
   backend:

@@ -678,4 +678,32 @@ describe('ProposalService', () => {
       expect(lista.pagination).toEqual({ page: 1, limit: 20, total: 2, totalPages: 1 });
     });
   });
+
+  describe('busca por nome do paciente (?search=)', () => {
+    it('filtra por trecho do nome, ignorando maiusculas', async () => {
+      const tenant = await createTenant();
+      const gestor = await createUser({ tenantId: tenant.id, role: 'manager' });
+      const maria = await createConversation({ tenantId: tenant.id, patientName: 'Maria Souza' });
+      const joao = await createConversation({ tenantId: tenant.id, patientName: 'Joao Lima' });
+      await createProposal({ tenantId: tenant.id, conversationId: maria.id, createdBy: gestor.id });
+      await createProposal({ tenantId: tenant.id, conversationId: joao.id, createdBy: gestor.id });
+
+      const lista = await h.proposals.list(ctxOf(gestor), { search: 'sOuZ' });
+
+      expect(lista.proposals.map((p) => p.patientName)).toEqual(['Maria Souza']);
+      expect(lista.pagination.total).toBe(1);
+    });
+
+    it('nao escapa do recorte por papel: atendente segue vendo so as proprias', async () => {
+      const tenant = await createTenant();
+      const a = await createUser({ tenantId: tenant.id, role: 'attendant' });
+      const b = await createUser({ tenantId: tenant.id, role: 'attendant' });
+      const conv = await createConversation({ tenantId: tenant.id, patientName: 'Maria Souza' });
+      await createProposal({ tenantId: tenant.id, conversationId: conv.id, createdBy: b.id });
+
+      const lista = await h.proposals.list(ctxOf(a), { search: 'Maria' });
+
+      expect(lista.proposals).toHaveLength(0);
+    });
+  });
 });

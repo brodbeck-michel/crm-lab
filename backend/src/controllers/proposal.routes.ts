@@ -51,6 +51,8 @@ export const listProposalsQuerySchema = z.object({
   createdBy: z.string().uuid().optional(),
   startDate: z.string().min(4).max(40).optional(),
   endDate: z.string().min(4).max(40).optional(),
+  /** `?search=` — nome do paciente, case-insensitive. */
+  search: z.string().min(1).max(100).optional(),
   page: z.coerce.number().int().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(MAX_LIMIT).optional(),
   sortBy: z.enum(['createdAt', 'updatedAt', 'totalPrice', 'status']).optional(),

@@ -458,6 +458,8 @@ export interface ProposalListCriteria {
   approvalStatus?: ApprovalStatus;
   startDate?: string;
   endDate?: string;
+  /** Nome do paciente, case-insensitive. */
+  search?: string;
   page: number;
   limit: number;
   sortBy: ProposalSortBy;
@@ -503,6 +505,12 @@ export async function list(tx: DbTx, criteria: ProposalListCriteria): Promise<Pr
   if (criteria.endDate !== undefined) {
     params.push(criteria.endDate);
     where.push(`p.created_at <= $${params.length}::timestamp`);
+  }
+  if (criteria.search !== undefined && criteria.search.trim() !== '') {
+    // rangel: ILIKE simples resolve o volume de um laboratorio. Se a tabela
+    // crescer a ponto do seq scan doer, o upgrade e um indice trigram (pg_trgm).
+    params.push(`%${criteria.search.trim()}%`);
+    where.push(`c.patient_name ILIKE $${params.length}`);
   }
 
   const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';

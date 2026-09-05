@@ -82,6 +82,8 @@ export interface ProposalFilters {
   createdBy?: string;
   startDate?: string;
   endDate?: string;
+  /** Nome do paciente, case-insensitive (pipeline busca por aqui). */
+  search?: string;
   page?: number;
   limit?: number;
   sortBy?: string;
@@ -432,6 +434,7 @@ export class ProposalService {
         ...(createdBy !== undefined ? { createdBy } : {}),
         ...(filters.startDate !== undefined ? { startDate: filters.startDate } : {}),
         ...(filters.endDate !== undefined ? { endDate: filters.endDate } : {}),
+        ...(filters.search !== undefined ? { search: filters.search } : {}),
         page,
         limit,
         sortBy,

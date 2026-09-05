@@ -206,11 +206,41 @@ nunca "sem permissão" (não vazar existência).
 
 ## 5. Pipeline de Propostas (`/proposals`)
 
+- **Duas visões**, alternadas por `SegmentedControl` no cabeçalho e gravadas na URL
+  (`?view=lista`; kanban é o default e não escreve nada):
+  - **Kanban** — os 6 estágios em `grid grid-cols-6`: cabem todos na largura, sem scroll
+    horizontal, e cada coluna rola verticalmente por dentro. Carrega `limit=100` (o teto do
+    contrato) de uma vez e **não** pagina — pipeline picotado em "página 2" não é pipeline.
+    Acima de 100 a tela avisa o total e manda usar busca/filtros.
+  - **Lista** — grade de `ProposalCard` (1/2/3 colunas conforme a largura) com a `Pagination`
+    padrão e `limit=20`. Trocar de visão reinicia a página, porque os limites diferem.
 - Colunas por estágio: novo contato → orçamento enviado → follow-up → negociação | ganho | perdido
 - Header de coluna: nome + contagem + soma (derivada)
 - `ProposalCard`: nome, #id, nota, valor (heading nowrap), dias, chip status
 - Todo cartão clicável → Modal da Proposta
-- Filtros: período, atendente (gestor+), valor
+- **Arrastar o cartão** entre colunas move o estágio (HTML5 drag-and-drop nativo, sem
+  biblioteca). A proposta viaja no `dataTransfer` como JSON **e o estágio de origem viaja
+  também no nome do tipo** (`application/x-crm-proposal-status-<status>`): durante o `dragover`
+  o drag data store está em modo protegido pela spec do HTML5 — só `types` é legível,
+  `getData()` devolve `''`. Sem esse truque a coluna não teria como decidir se aceita, nunca
+  chamaria `preventDefault()` e o navegador nem dispararia o `drop`. Com o estágio de origem em
+  mãos a coluna confere `isTransitionAllowed(origem, destino)` — destino inválido nem realça nem
+  aceita o drop. Isso
+  é só economia de request: quem decide continua sendo o backend, e erro dele vira toast.
+  Soltar em **Perdido** não muta direto — abre o Modal da Proposta, porque a transição exige
+  `reasonLost` e o formulário de motivo já mora lá.
+- Filtros: busca por nome do paciente (`SearchInput`, debounce 300ms → `?search=`), período,
+  atendente (gestor+), valor
+- **[Novo atendimento]** no cabeçalho: a porta de entrada de quem não chegou pelo
+  WhatsApp (ligação, balcão, site). Abre `NewAttendanceModal` — nome, telefone,
+  e-mail opcional e **Origem** (`Select`: Ligação/Presencial → `direct`,
+  Site/Formulário → `web`, SMS → `sms`, gravado em `conversations.channel`).
+  Ao salvar: `POST /conversations` → `navigate('/budget/new?conversationId=…')`,
+  onde os itens são montados. O card só entra no pipeline quando a proposta
+  existe — o pipeline mostra propostas, não conversas.
+  Telefone já conhecido não vira conversa nova (dedupe do backend); se ele for
+  de **outro atendente**, o `CONVERSATION_ALREADY_ASSIGNED` (409) vira toast
+  pelo handler genérico e o modal continua aberto.
 - Dados: `GET /proposals` agrupado por status
 - **Paginação** (`Pagination`, 20 por página): a tela lia só a página 1 e
   descartava `pagination`, o que tornava proposta antiga INALCANÇÁVEL pela UI

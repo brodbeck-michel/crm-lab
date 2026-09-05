@@ -169,6 +169,8 @@ export interface ListProposalsQuery extends PaginationQuery {
   createdBy?: string;
   startDate?: string;
   endDate?: string;
+  /** Busca por nome do paciente (`conversations.patient_name`), case-insensitive. */
+  search?: string;
 }
 
 export interface ListProposalsResponse {

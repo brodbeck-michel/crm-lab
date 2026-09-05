@@ -496,6 +496,46 @@ para navegar, não para exibir.
 **Erros:** `FORBIDDEN` (403, `platform_operator`), `VALIDATION_ERROR` (400, query fora
 do enum — `scope`, `status`, `sortBy`, `order`, `limit` > 100)
 
+### POST /conversations
+Criar um atendimento que **não veio do WhatsApp** — ligação, balcão, formulário do site.
+É a porta de entrada manual do pipeline (PAGES.md §5): cria a conversa e a tela segue para
+`/budget/new?conversationId=`, onde a proposta é montada pelo caminho de sempre.
+
+**Request:**
+```json
+{
+  "patientPhone": "(48) 99999-1234",
+  "patientName": "Maria Souza",
+  "patientEmail": null,
+  "channel": "direct"
+}
+```
+
+- `patientPhone`: obrigatório, 10 a 13 dígitos depois de descartar máscara. É normalizado para
+  o mesmo formato que o webhook grava (`+5548999991234`) **antes** de procurar duplicata — sem
+  isso o mesmo paciente ganharia uma segunda conversa por ter sido digitado sem o código do país
+- `patientName`: obrigatório, 1..255
+- `patientEmail`: opcional/anulável, e-mail válido, máx. 255
+- `channel` ∈ `direct | web | sms`. **`whatsapp` é recusado** com `VALIDATION_ERROR`: conversa
+  desse canal nasce apenas pelo webhook, que deduplica por `externalId`. "Ligação" e "presencial"
+  caem as duas em `direct` — separá-las exigiria coluna nova (fora do escopo do v1)
+
+**Comportamento:** mesmo `findOrCreateByPhone` do webhook — a linha de `patients` é criada ou
+reaproveitada na MESMA transação (D-059). Duas diferenças: o canal vem do formulário e a conversa
+nasce **atribuída a quem cadastrou** (`assigned_to = usuário logado`), não na fila livre. Conversa
+**preexistente** naquele telefone é devolvida como está, **sem trocar de dono** — criar não
+reatribui; para isso existe `PATCH /conversations/:id`.
+
+**Response (201):** `ConversationDetail` cru — o mesmo shape do campo `conversation` de
+`GET /conversations/:id`. `201` também quando a conversa foi reaproveitada: o cliente não
+distingue os dois casos, e não precisa — o destino é o mesmo.
+
+**Erros:** `VALIDATION_ERROR` (400 — telefone/nome/e-mail inválidos, `channel` fora do enum),
+`CONVERSATION_ALREADY_ASSIGNED` (409, `details: { assignedTo, assignedToName }`) quando o telefone
+já tem conversa **de outro atendente**. Aqui o 409 é deliberado, e é a exceção à regra do 404:
+devolver `NOT_FOUND` mandaria o atendente montar orçamento numa conversa que ele não consegue
+abrir. `FORBIDDEN` (403, `platform_operator`).
+
 ### GET /conversations/:id
 Detalhes de uma conversa + histórico de mensagens.
 
@@ -1146,7 +1186,14 @@ Listar propostas com filtros.
 ?patientId=uuid                           // propostas do paciente (D-060)
 ?createdBy=uuid
 ?startDate=2026-08-01&endDate=2026-08-31  // filtra por createdAt
+?search=maria                             // nome do paciente, máx. 100 caracteres
 ```
+
+**`?search=`** casa trecho do nome do paciente (`conversations.patient_name`, `ILIKE %termo%`,
+case-insensitive) — é a busca do Pipeline (PAGES.md §5). Diferente de `/conversations`, aqui
+**não** há busca por telefone nem full-text: o campo do Kanban filtra cartão por nome. O termo
+é aparado; vazio equivale a não enviar. O recorte por papel de D-042 continua por cima —
+atendente que busca por nome segue vendo só as propostas que criou.
 
 `pagination` é o mesmo `PaginationMeta` de toda listagem (D-009):
 `{ page, limit, total, totalPages }`. `limit` é grampeado em 100 e **`page` em 10.000**

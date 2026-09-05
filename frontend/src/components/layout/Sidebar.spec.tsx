@@ -1,10 +1,17 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthTenant, AuthUser, UserRole } from '@crm-lab/shared';
 import { useAuthStore, useUIStore } from '@/stores';
 import { Sidebar } from './Sidebar';
+
+// Sidebar busca `pendingDecisions.total` para o sino de "Decisões" (PAGES.md §12).
+// Promise que nunca resolve: os testes daqui não afirmam nada sobre o contador.
+vi.mock('@/api/operation', () => ({
+  operationApi: { overview: vi.fn(() => new Promise(() => {})) },
+}));
 
 /**
  * Sidebar — COMPONENTS.md (`layout/`):
@@ -46,10 +53,13 @@ function login(role: UserRole): void {
 }
 
 function renderSidebar(path = '/proposals') {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <MemoryRouter initialEntries={[path]}>
-      <Sidebar />
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[path]}>
+        <Sidebar />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 

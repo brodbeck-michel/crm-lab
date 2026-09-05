@@ -1,9 +1,11 @@
 import { useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { cn } from '@/components/ui';
+import { useQuery } from '@tanstack/react-query';
+import { cn, Badge } from '@/components/ui';
 import { Avatar } from '@/components/shared';
 import { useAuthStore, useUIStore, selectRole, selectUser } from '@/stores';
 import { sidebarRoutesFor } from '@/routes/route-config';
+import { operationApi, queryKeys, staleTimes } from '@/api';
 import { NavGlyph } from './NavGlyph';
 
 /**
@@ -40,6 +42,18 @@ export function Sidebar() {
 
   const items = sidebarRoutesFor(role);
   const brand = tenant?.theme.brandName ?? tenant?.name ?? 'CRM Laboratório';
+
+  // Sino de "Decisões" (PAGES.md §12): mesmo retrato de §10, cache compartilhado
+  // com Operation.tsx e Decisions.tsx — não é uma segunda chamada.
+  const hasDecisionsRoute = items.some((route) => route.path === '/decisions');
+  const overviewQuery = useQuery({
+    queryKey: queryKeys.operationOverview({}),
+    queryFn: () => operationApi.overview({}),
+    enabled: hasDecisionsRoute,
+    staleTime: staleTimes.operation,
+    refetchInterval: 60_000,
+  });
+  const pendingDecisionsCount = overviewQuery.data?.pendingDecisions.total ?? 0;
 
   return (
     <aside
@@ -91,6 +105,12 @@ export function Sidebar() {
               {route.icon && <NavGlyph name={route.icon} />}
             </span>
             {!collapsed && <span className="min-w-0 truncate">{route.label}</span>}
+            {route.path === '/decisions' && (
+              <Badge
+                count={pendingDecisionsCount}
+                label={`${pendingDecisionsCount} decisão(ões) pendente(s)`}
+              />
+            )}
           </NavLink>
         ))}
       </nav>

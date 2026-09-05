@@ -16,6 +16,7 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 /catalog                      → Catálogo de Exames
 /analytics                    → Conversão
 /internal-chat                → Chat Interno
+/decisions                    → Decisões (aprovações)    (gestor+)
 /settings/channels            → Canais & Equipe          (admin; gestor lê)
 /settings/operation           → Gestão da Operação        (gestor+)
 /settings/insurances          → Convênios                 (gestor+)
@@ -40,6 +41,7 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 | `/catalog` | attendant · manager · admin | sim |
 | `/analytics` | attendant · manager · admin | sim |
 | `/internal-chat` | attendant · manager · admin | sim |
+| `/decisions` | manager · admin | sim |
 | `/settings/channels` | manager · admin | sim |
 | `/settings/operation` | manager · admin | sim |
 | `/settings/insurances` | manager · admin | sim |
@@ -436,6 +438,30 @@ gestor).
 - **Sem acesso:** conversas, pacientes, canais internos de labs (requisito, não configuração)
 - Laboratórios Clientes: lista tenants, onboarding, saúde
 - Assinaturas & Uso: planos, faturas, excedente de mensagens
+
+---
+
+## 12. Decisões (`/decisions`) — número próprio
+
+Gestor+. Página dedicada às propostas com `approvalStatus: "pending"` — hoje esse recorte também
+aparece dentro de `#aprovacoes` (§9) e no bloco "Decisões pendentes" de Gestão da Operação (§10);
+esta tela existe para quem só precisa DISSO, sem entrar no chat nem no resto do painel.
+
+- Mesmo dado de §10: `GET /operations/overview` (D-067), lendo só `pendingDecisions` — nenhum
+  endpoint novo, nenhum cálculo novo
+- Lista de cartões (mais antiga primeiro): paciente, % de desconto, total, quem pediu, tempo de
+  espera — reaproveita o cartão de §10
+- Clique no cartão abre o **Modal da Proposta** (§6), onde [Aprovar]/[Rejeitar] já existem
+  (`ApprovalActions`). Esta tela NÃO reimplementa a decisão de alçada — duplicar o botão duplicaria
+  a regra (CLAUDE.md §3)
+- Vazio: "Nenhuma decisão pendente"
+
+**Notificação (sino da Sidebar):** o item "Decisões" do trilho mostra um contador (`Badge`) com
+`pendingDecisions.total` para quem tem o item no menu (gestor+). Fonte: o MESMO
+`GET /operations/overview` (cache do TanStack Query compartilhado com §10 e com esta tela — não é
+uma segunda chamada). Fica live porque os eventos WS `approval.requested` e `approval.decided`
+(ws.ts) agora também invalidam `queryScopes.operations`, então o contador cai assim que alguém
+decide, sem esperar o refetch de 60s.
 
 ---
 

@@ -17,6 +17,7 @@ export type NavIcon =
   | 'catalog'
   | 'analytics'
   | 'chat'
+  | 'decisions'
   | 'channels'
   | 'operation'
   | 'insurances'
@@ -78,6 +79,13 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requiredRoles: TENANT_ROLES,
     inSidebar: true,
     icon: 'chat',
+  },
+  {
+    path: '/decisions',
+    label: 'Decisões',
+    requiredRoles: MANAGER_PLUS,
+    inSidebar: true,
+    icon: 'decisions',
   },
 
   // ── Configuração ────────────────────────────────────────────────────────

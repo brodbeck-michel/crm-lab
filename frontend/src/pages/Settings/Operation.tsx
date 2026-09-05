@@ -380,7 +380,7 @@ export default function OperationSettings() {
   );
 }
 
-interface PendingDecisionCardProps {
+export interface PendingDecisionCardProps {
   item: PendingDecisionItem;
   onOpen: () => void;
 }
@@ -388,9 +388,10 @@ interface PendingDecisionCardProps {
 /**
  * Cartão clicável que abre o Modal da Proposta existente (PAGES.md §6), onde
  * [Aprovar]/[Rejeitar] já vivem. Esta tela NÃO reimplementa a decisão de
- * alçada: duplicar o botão duplicaria a regra.
+ * alçada: duplicar o botão duplicaria a regra. Reaproveitado por
+ * `pages/Decisions.tsx` (PAGES.md §12) — mesmo cartão, mesma regra.
  */
-function PendingDecisionCard({ item, onOpen }: PendingDecisionCardProps) {
+export function PendingDecisionCard({ item, onOpen }: PendingDecisionCardProps) {
   return (
     <button
       type="button"

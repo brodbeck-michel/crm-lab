@@ -131,6 +131,7 @@ describe('ws — evento invalida a query certa', () => {
       queryScopes.internalChat,
       queryScopes.proposals,
       queryKeys.proposal('p-9'),
+      queryScopes.operations,
     ]);
   });
 
@@ -150,7 +151,11 @@ describe('ws — evento invalida a query certa', () => {
     });
 
     expect(toast).toHaveBeenCalledTimes(1);
-    expect(keysPassed()).toEqual([queryKeys.proposal('p-2'), queryScopes.proposals]);
+    expect(keysPassed()).toEqual([
+      queryKeys.proposal('p-2'),
+      queryScopes.proposals,
+      queryScopes.operations,
+    ]);
   });
 
   it('mensagem inválida não quebra nem invalida nada', () => {

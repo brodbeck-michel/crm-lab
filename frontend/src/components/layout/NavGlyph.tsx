@@ -11,6 +11,7 @@ const PATHS: Record<NavIcon, string> = {
   catalog: 'M5 4h11l3 3v13H5zM8 9h8M8 13h8M8 17h5',
   analytics: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
   chat: 'M4 4h16v11H9l-5 4V4z',
+  decisions: 'M12 3a9 9 0 100 18 9 9 0 000-18zM8 12l3 3 5-6',
   channels: 'M4 7h16M4 12h16M4 17h10',
   operation: 'M12 3v4M12 17v4M3 12h4M17 12h4M7 7l3 3M17 17l-3-3M7 17l3-3M17 7l-3 3',
   insurances: 'M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4zM9 12l2 2 4-4',

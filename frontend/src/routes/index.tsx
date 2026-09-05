@@ -14,6 +14,7 @@ import Insurances from '@/pages/Settings/Insurances';
 import ThemeSettings from '@/pages/Settings/Theme';
 import UsersSettings from '@/pages/Settings/Users';
 import InternalChat from '@/pages/InternalChat';
+import Decisions from '@/pages/Decisions';
 import PlatformTenants from '@/pages/Platform/Tenants';
 import PlatformBilling from '@/pages/Platform/Billing';
 import { RequireAuth, RequireRoles, RoleHomeRedirect } from './guards';
@@ -68,6 +69,7 @@ export const appRoutes: RouteObject[] = [
           {
             element: <AppShell />,
             children: [
+              { path: 'decisions', element: <Decisions /> },
               { path: 'settings/channels', element: <ChannelsSettings /> },
               { path: 'settings/operation', element: <OperationSettings /> },
               { path: 'settings/insurances', element: <Insurances /> },

@@ -373,6 +373,24 @@ que a Regra Zero proíbe.
 
 ---
 
+## 2026-09-05 — Página `/decisions` + sino de notificação na Sidebar ✅
+
+Pedido fora de onda: página dedicada só a decisões de alçada (gestor+), sem precisar abrir o Chat
+Interno nem o painel de Gestão da Operação inteiro. Zero endpoint novo — reaproveita
+`GET /operations/overview` (D-067) e o Modal da Proposta (§6) já existentes.
+
+- `frontend/src/pages/Decisions.tsx` — lista `pendingDecisions`, reaproveita `PendingDecisionCard`
+  (agora exportado de `pages/Settings/Operation.tsx`) e abre o Modal da Proposta ao clicar
+- Rota `/decisions` (gestor+) em `routes/route-config.ts` + `routes/index.tsx`; ícone `decisions`
+  em `NavGlyph`
+- Sino funcional: `Badge` no item "Decisões" da Sidebar com `pendingDecisions.total` — mesma query
+  (`queryKeys.operationOverview`), cache compartilhado, sem chamada extra
+- `approval.requested` e `approval.decided` (`api/ws.ts`) agora também invalidam
+  `queryScopes.operations`, então o contador cai ao vivo quando alguém decide, sem esperar o
+  refetch de 60s
+- Doc: `docs/frontend/PAGES.md` §12 (nova) e `docs/frontend/COMPONENTS.md` (Sidebar)
+- `npm run typecheck` e `npm run test:frontend` verdes (798 testes)
+
 ## Bloqueios Atuais
 
 Nenhum.

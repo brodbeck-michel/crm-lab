@@ -71,6 +71,15 @@ agindo recebem `TenantContext` no lugar de `tenantId` — `list(ctx, filters)`,
 continua recebendo só `tenantId`: quem chama é o webhook, sem usuário logado.
 Ver "Convenções Transversais" — o contexto é sempre o primeiro parâmetro.
 
+`createManual(ctx, dto)` é o `POST /conversations` (atendimento fora do WhatsApp,
+API_CONTRACTS.md §2). Passa pelo mesmo `findOrCreateByPhone` — o canal vem do DTO e
+`assignedTo` nasce com `ctx.userId`, em vez da fila livre. O telefone digitado é
+normalizado para `+55…` antes da busca (o webhook grava com código do país; sem isso o
+dedupe erraria justamente no paciente que já conversa pelo WhatsApp). Conversa
+preexistente **não** troca de dono; se ela for de outro atendente, lança
+`CONVERSATION_ALREADY_ASSIGNED` — o 404 do recorte por papel mandaria o atendente montar
+orçamento numa conversa que ele não abre.
+
 **Regras:**
 - `assign` com conflito simultâneo: primeira atribuição ganha. Implementado com
   `UPDATE ... WHERE assigned_to IS NULL` em vez do lock otimista por `updated_at`

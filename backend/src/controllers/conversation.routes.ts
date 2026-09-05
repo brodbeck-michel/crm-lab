@@ -2,6 +2,7 @@
  * Rotas de conversas — API_CONTRACTS.md §2.
  *
  *   GET   /api/v1/conversations             lista + counts dos chips
+ *   POST  /api/v1/conversations             atendimento manual (201)
  *   GET   /api/v1/conversations/:id         conversa + mensagens (marca como lida)
  *   POST  /api/v1/conversations/:id/messages  envia mensagem (201)
  *   PATCH /api/v1/conversations/:id         status / assignedTo / tags
@@ -17,6 +18,8 @@
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { z } from 'zod';
 import type {
+  CreateConversationRequest,
+  CreateConversationResponse,
   GetConversationResponse,
   ListConversationsQuery,
   ListConversationsResponse,
@@ -28,7 +31,7 @@ import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
 import { getContext } from '../http/context.js';
 import { denyPlatformOperator, requireAuth } from '../http/middleware/auth.js';
 import { validate, validated } from '../http/middleware/validate.js';
-import { ConversationRepository } from '../repositories/conversation.repository.js';
+import { ConversationRepository, phoneDigits } from '../repositories/conversation.repository.js';
 import { MessageRepository } from '../repositories/message.repository.js';
 import { createAuditService } from '../services/audit.service.js';
 import { ConversationService, MAX_LIMIT } from '../services/conversation.service.js';
@@ -57,6 +60,28 @@ export const getConversationQuerySchema = z.object({
   messageLimit: z.coerce.number().int().min(1).max(MAX_MESSAGE_LIMIT).optional(),
   limit: z.coerce.number().int().min(1).max(MAX_MESSAGE_LIMIT).optional(),
   page: z.coerce.number().int().min(1).optional(),
+});
+
+/**
+ * `POST /conversations` — atendimento que nao veio do WhatsApp.
+ *
+ * `channel` NAO aceita `whatsapp`: aquela conversa nasce so pelo webhook, que
+ * dedupe por `externalId`. Telefone e a chave de deduplicacao, entao vale a
+ * mesma normalizacao por digitos da busca (`phoneDigits`) — 10 a 13 digitos
+ * cobre fixo com DDD ate celular com codigo do pais.
+ */
+export const createConversationSchema = z.object({
+  patientPhone: z
+    .string()
+    .trim()
+    .max(20)
+    .refine((value) => {
+      const digits = phoneDigits(value).length;
+      return digits >= 10 && digits <= 13;
+    }, 'Telefone invalido'),
+  patientName: z.string().trim().min(1).max(255),
+  patientEmail: z.string().trim().email().max(255).nullish(),
+  channel: z.enum(['sms', 'web', 'direct']),
 });
 
 export const createMessageSchema = z.object({
@@ -160,6 +185,15 @@ export function getConversation(services: ConversationServices): RequestHandler 
   });
 }
 
+export function createConversation(service: ConversationService): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const dto = validated<CreateConversationRequest>(req, 'body');
+    const body: CreateConversationResponse = await service.createManual(ctx, dto);
+    res.status(201).json(body);
+  });
+}
+
 export function createMessage(services: ConversationServices): RequestHandler {
   return handle(async (req, res) => {
     const ctx = getContext(req);
@@ -233,6 +267,13 @@ function buildConversationModule(
     ...guards,
     validate(listConversationsQuerySchema, 'query'),
     listConversations(services.conversations),
+  );
+
+  router.post(
+    '/',
+    ...guards,
+    validate(createConversationSchema, 'body'),
+    createConversation(services.conversations),
   );
 
   router.get(

@@ -195,6 +195,12 @@ export interface ConversationInsert {
   patientName?: string | null;
   patientEmail?: string | null;
   channel?: ConversationChannel;
+  /**
+   * Dono da conversa RECEM-CRIADA. O webhook nao manda (nasce na fila livre);
+   * o atendimento manual manda quem cadastrou. Conversa PREEXISTENTE nunca e
+   * reatribuida por aqui — trocar de dono e `assign`.
+   */
+  assignedTo?: string | null;
 }
 
 interface CountRow {
@@ -366,8 +372,8 @@ export class ConversationRepository {
       const inserted = await tx.query<{ id: string }>(
         `INSERT INTO conversations
            (tenant_id, patient_id, patient_phone, patient_name, patient_email, channel, status,
-            unread_count, last_message_at)
-         VALUES ($1, $2, $3, $4, $5, $6, 'active', 0, NOW())
+            unread_count, last_message_at, assigned_to)
+         VALUES ($1, $2, $3, $4, $5, $6, 'active', 0, NOW(), $7)
          RETURNING id`,
         [
           tenantId,
@@ -376,6 +382,7 @@ export class ConversationRepository {
           data.patientName ?? null,
           data.patientEmail ?? null,
           data.channel ?? 'whatsapp',
+          data.assignedTo ?? null,
         ],
       );
       const id = inserted.rows[0]?.id;

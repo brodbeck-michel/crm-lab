@@ -181,6 +181,18 @@ interface LabRoute {
 const LAB_ROUTES: readonly LabRoute[] = [
   // --- conversas ---
   { name: 'GET /conversations', method: 'get', path: () => '/api/v1/conversations', actor: 'attendant', addressable: false },
+  {
+    name: 'POST /conversations',
+    method: 'post',
+    path: () => '/api/v1/conversations',
+    body: () => ({
+      patientPhone: '+5548988887777',
+      patientName: 'Paciente do balcao',
+      channel: 'direct',
+    }),
+    actor: 'attendant',
+    addressable: false,
+  },
   { name: 'GET /conversations/:id', method: 'get', path: (l) => `/api/v1/conversations/${l.conversation.id}`, actor: 'attendant', addressable: true, ownStatus: 200 },
   {
     name: 'PATCH /conversations/:id',
@@ -659,12 +671,13 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 48 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 49 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
-    // `/settings/channels/whatsapp/*` (conexao por QR, Bloco B).
-    expect(LAB_ROUTES).toHaveLength(48);
+    // `/settings/channels/whatsapp/*` (conexao por QR, Bloco B). Depois veio
+    // `POST /conversations` (atendimento manual, fora do WhatsApp): +1.
+    expect(LAB_ROUTES).toHaveLength(49);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

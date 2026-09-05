@@ -51,6 +51,21 @@ export interface Message {
   createdAt: IsoDateTime;
 }
 
+/**
+ * `POST /conversations` — atendimento que nao veio do WhatsApp (ligacao,
+ * balcao, site). `whatsapp` fica FORA do enum de propriedade: conversa desse
+ * canal so nasce pelo webhook, que dedupe por `externalId`.
+ */
+export interface CreateConversationRequest {
+  patientPhone: string;
+  patientName: string;
+  patientEmail?: string | null;
+  channel: Exclude<ConversationChannel, 'whatsapp'>;
+}
+
+/** Conversa criada — ou a que ja existia naquele telefone (dedupe por numero). */
+export type CreateConversationResponse = ConversationDetail;
+
 export interface ListConversationsQuery extends PaginationQuery {
   status?: ConversationStatus;
   /** 'mine' = atribuidas ao usuario logado; 'unassigned' = fila livre. */

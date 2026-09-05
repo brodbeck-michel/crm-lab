@@ -1,4 +1,6 @@
 import type {
+  CreateConversationRequest,
+  CreateConversationResponse,
   CreateMessageRequest,
   GetConversationResponse,
   ListConversationsQuery,
@@ -18,6 +20,10 @@ export const conversationsApi = {
 
   get: (id: string, query: PaginationQuery = {}) =>
     http.get<GetConversationResponse>(`/conversations/${id}`, query as QueryParams),
+
+  /** Atendimento manual — ligacao, balcao, site (nao vem do WhatsApp). */
+  create: (body: CreateConversationRequest) =>
+    http.post<CreateConversationResponse>('/conversations', body),
 
   sendMessage: (id: string, body: CreateMessageRequest) =>
     http.post<Message>(`/conversations/${id}/messages`, body),

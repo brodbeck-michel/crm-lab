@@ -49,6 +49,7 @@
 import type {
   Conversation,
   ConversationDetail,
+  CreateConversationRequest,
   ConversationStatus,
   ListConversationsQuery,
   ListConversationsResponse,
@@ -62,6 +63,7 @@ import type { AuditService } from './audit.service.js';
 import type { MessageService } from './message.service.js';
 import {
   isConversationSortBy,
+  phoneDigits,
   type ConversationListCriteria,
   type ConversationRepository,
   type ConversationSortBy,
@@ -80,6 +82,21 @@ export const MAX_LIMIT = 100;
 export const MAX_PAGE = 10_000;
 export const DEFAULT_SORT_BY: ConversationSortBy = 'lastMessageAt';
 export const DEFAULT_ORDER: SortOrder = 'desc';
+
+/**
+ * Telefone digitado a mao -> o mesmo formato que o webhook grava (`+5548...`).
+ *
+ * Sem isto o dedupe por telefone erraria justamente onde ele importa: o
+ * atendente digita "(48) 99999-1234" (11 digitos) para um paciente que ja
+ * conversa pelo WhatsApp como "+5548999991234" (13) — `selectByPhone` compara
+ * digito a digito e criaria uma SEGUNDA conversa e um segundo paciente.
+ * rangel: +55 fixo — produto pt-BR, tenant unico pais. Vira coluna do tenant
+ * quando existir laboratorio fora do Brasil.
+ */
+function toE164(phone: string): string {
+  const digits = phoneDigits(phone);
+  return digits.length <= 11 ? `+55${digits}` : `+${digits}`;
+}
 
 /** Papeis que enxergam TODAS as conversas do laboratorio. */
 const SUPERVISOR_ROLES = ['manager', 'admin'] as const;
@@ -199,6 +216,48 @@ export class ConversationService {
       await this.audit.log({
         tenantId,
         userId: null,
+        action: 'create_conversation',
+        entityType: 'conversation',
+        entityId: conversation.id,
+        newValues: { patientPhone: conversation.patientPhone, channel: conversation.channel },
+      });
+    }
+    return conversation;
+  }
+
+  /**
+   * Atendimento que NAO veio do WhatsApp: ligacao, balcao, site
+   * (API_CONTRACTS.md §2, PAGES.md §5).
+   *
+   * Mesmo caminho do webhook — `findOrCreateByPhone` dedupe por telefone e liga
+   * o cadastro de `patients` na MESMA transacao (D-059) —, com duas diferencas:
+   * o canal vem do formulario e a conversa nasce ATRIBUIDA a quem cadastrou.
+   */
+  async createManual(
+    ctx: TenantContext,
+    dto: CreateConversationRequest,
+  ): Promise<ConversationDetail> {
+    const { conversation, created } = await this.repository.findOrCreateByPhone(ctx.tenantId, {
+      patientPhone: toE164(dto.patientPhone),
+      patientName: dto.patientName,
+      patientEmail: dto.patientEmail ?? null,
+      channel: dto.channel,
+      assignedTo: ctx.userId,
+    });
+
+    // Telefone que ja e de OUTRO atendente. Nao rouba a conversa, e tambem nao
+    // devolve 404 como `getById`: aqui o 404 mandaria o atendente montar um
+    // orcamento numa conversa que ele nao consegue abrir. O 409 diz de quem e —
+    // a mesma informacao que a corrida de "Assumir" mostra.
+    if (!created && !this.canSee(ctx, conversation)) {
+      throw new BusinessError('CONVERSATION_ALREADY_ASSIGNED', {
+        assignedTo: conversation.assignedTo,
+        assignedToName: conversation.assignedToName,
+      });
+    }
+
+    if (created) {
+      await this.audit.record(ctx, {
         action: 'create_conversation',
         entityType: 'conversation',
         entityId: conversation.id,

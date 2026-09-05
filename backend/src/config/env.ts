@@ -93,6 +93,15 @@ const envSchema = z
     EVOLUTION_API_URL: optionalString,
     EVOLUTION_API_KEY: optionalString,
     EVOLUTION_WEBHOOK_TOKEN: optionalString,
+    /**
+     * Base publica do CRM **vista de dentro do gateway** — e para ca que o
+     * Evolution posta os eventos (`<base>/api/v1/webhooks/evolution/<tenantId>`).
+     * Nao da para derivar de `CORS_ORIGIN`: aquilo e o endereco do NAVEGADOR, e
+     * o gateway roda em outro container (`http://localhost:3000` la dentro
+     * aponta para ele mesmo). Ausente = instancia criada sem webhook: o QR
+     * pareia, mas nenhuma mensagem entra.
+     */
+    EVOLUTION_WEBHOOK_BASE_URL: optionalString,
 
     /**
      * Chave que cifra `tenant_channels.api_token`/`webhook_secret` em repouso

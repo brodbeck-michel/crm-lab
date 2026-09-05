@@ -105,6 +105,9 @@ services:
       EVOLUTION_API_URL: ${EVOLUTION_API_URL:-}
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:-}
       EVOLUTION_WEBHOOK_TOKEN: ${EVOLUTION_WEBHOOK_TOKEN:-}
+      # Endereco do backend VISTO DE DENTRO do container `evolution` (rede do
+      # compose), nao o do navegador: e para ca que o gateway posta os eventos.
+      EVOLUTION_WEBHOOK_BASE_URL: ${EVOLUTION_WEBHOOK_BASE_URL:-http://backend:3000}
       # Cifra `tenant_channels.api_token`/`webhook_secret` em repouso (D-076).
       # Sem ela o backend NAO SOBE em producao — e proposital.
       CHANNEL_SECRET_KEY: ${CHANNEL_SECRET_KEY:?defina CHANNEL_SECRET_KEY (>=32 caracteres)}

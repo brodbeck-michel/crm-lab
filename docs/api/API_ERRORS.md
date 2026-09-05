@@ -117,7 +117,7 @@ renderiza. "Não sei onde mostrar" nunca pode virar silêncio.
 
 | Código | HTTP | Quando |
 |--------|------|--------|
-| `CHANNEL_QR_UNAVAILABLE` | 503 | `EVOLUTION_API_URL`, `EVOLUTION_API_KEY` ou `EVOLUTION_WEBHOOK_TOKEN` ausentes, ou o gateway não respondeu. Nas 4 rotas de `/settings/channels/whatsapp/*` (API_CONTRACTS.md §6.1) — nunca crash |
+| `CHANNEL_QR_UNAVAILABLE` | 503 | `EVOLUTION_API_URL`, `EVOLUTION_API_KEY` ou `EVOLUTION_WEBHOOK_TOKEN` ausentes, ou o gateway falhou. Nas 4 rotas de `/settings/channels/whatsapp/*` (API_CONTRACTS.md §6.1) — nunca crash, nunca 500. **Exceção:** instância ausente no gateway (404 `does not exist`) **não** é este erro — `/qr` e `/status` devolvem `disconnected` (200) para a tela conseguir reconectar |
 
 ## Convênios e preço por convênio (Onda 7)
 

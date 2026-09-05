@@ -301,6 +301,18 @@ function phoneFromJid(jid: unknown): string | null {
  * aceitar os dois nao enfraquece nada — mas o header documentado tem que
  * funcionar, e antes so `apikey` funcionava.
  */
+/**
+ * O gateway v2.3.7 manda `messages.upsert`/`connection.update` — MINUSCULO e
+ * separado por PONTO. A documentacao (API_CONTRACTS.md) e esta rota assumiam
+ * `MESSAGES_UPSERT`/`CONNECTION_UPDATE`, entao a comparacao exata nunca batia
+ * contra um gateway de verdade: mensagem recebida sumia em silencio, estado da
+ * conexao nunca era gravado e a guarda de `instance` (substituicao de slug)
+ * virava codigo morto. Normalizar num lugar so aceita as DUAS grafias.
+ */
+function normalizeEvolutionEvent(raw: string | null): string | null {
+  return raw ? raw.toUpperCase().replace(/\./g, '_') : null;
+}
+
 function evolutionTokenOf(req: Request): string | undefined {
   const documented = req.headers['x-evolution-webhook-token'];
   if (typeof documented === 'string' && documented.length > 0) return documented;
@@ -354,11 +366,32 @@ interface EvolutionInboundMessage {
 }
 
 /** `data` de um evento `MESSAGES_UPSERT`. `null` quando faltar telefone ou texto. */
+/**
+ * Telefone do PACIENTE a partir do `key` da mensagem. Um unico ponto de decisao
+ * — `remoteJid` nem sempre e um telefone, e tratar como se fosse cria paciente
+ * fantasma que ninguem consegue responder:
+ *
+ * - `fromMe: true` -> `null`. E mensagem que o proprio numero do laboratorio
+ *   enviou (o atendente respondendo pelo celular). Nao e atendimento novo.
+ * - `@g.us` -> `null`. Id de GRUPO nao e paciente.
+ * - `@lid` -> o telefone vem em `remoteJidAlt`. O WhatsApp passou a enderecar
+ *   por LID (identificador privado, ex. `128999376343081@lid`); o LID nao e
+ *   discavel, nao casa com o cadastro do paciente e nao serve para responder.
+ *   Sem `remoteJidAlt` a mensagem e DESCARTADA de proposito (com log): uma
+ *   conversa presa a um LID seria pior que nenhuma — sem resposta e sem dedupe.
+ */
+function inboundPhoneOf(key: Record<string, unknown> | null): string | null {
+  if (!key || key.fromMe === true) return null;
+  const jid = asNonEmptyString(key.remoteJid);
+  if (!jid || jid.endsWith('@g.us')) return null;
+  return jid.endsWith('@lid') ? phoneFromJid(key.remoteJidAlt) : phoneFromJid(jid);
+}
+
 function evolutionInboundOf(data: unknown): EvolutionInboundMessage | null {
   const record = asRecord(data);
   if (!record) return null;
   const key = asRecord(record.key);
-  const phone = phoneFromJid(key?.remoteJid);
+  const phone = inboundPhoneOf(key);
   if (!phone) return null;
 
   const message = asRecord(record.message);
@@ -452,7 +485,7 @@ export function evolutionInbound(services: WebhookServices, db: DbClient): Reque
     const { tenantId } = authenticated;
 
     const body = asRecord(req.body);
-    const event = body ? asNonEmptyString(body.event) : null;
+    const event = normalizeEvolutionEvent(body ? asNonEmptyString(body.event) : null);
 
     if (
       (event === 'MESSAGES_UPSERT' || event === 'CONNECTION_UPDATE') &&

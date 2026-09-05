@@ -91,6 +91,43 @@ function fakeEvolutionClient(): EvolutionClient & {
   };
 }
 
+/**
+ * Gateway que responde como o Evolution de verdade quando a instancia sumiu
+ * (container recriado, banco do gateway limpo, admin apagou pelo manager):
+ * `404 ... instance does not exist`. Antes do fix isso virava 500 e a tela
+ * travava sem conseguir reconectar.
+ */
+function missingInstanceClient(): EvolutionClient {
+  const notFound = () =>
+    Promise.reject(
+      new Error(
+        'Evolution API respondeu 404 em /instance/connect/tenant-x: {"status":404,"response":{"message":["The \"tenant-x\" instance does not exist"]}}',
+      ),
+    );
+  return {
+    createInstance: async (instanceName: string) => ({
+      instanceName,
+      apikey: `apikey-${instanceName}`,
+    }),
+    getQr: notFound,
+    getStatus: notFound,
+    logout: notFound,
+    sendText: async () => ({ externalId: 'x' }),
+  };
+}
+
+/** Gateway fora do ar: qualquer chamada estoura com erro que NAO e 404. */
+function brokenGatewayClient(): EvolutionClient {
+  const boom = () => Promise.reject(new Error('Evolution API respondeu 502 em /instance/connect'));
+  return {
+    createInstance: boom,
+    getQr: boom,
+    getStatus: boom,
+    logout: boom,
+    sendText: async () => ({ externalId: 'x' }),
+  };
+}
+
 let db: DbClient;
 let app: TestApp;
 let admin: UserRecord;
@@ -460,5 +497,47 @@ describe('isolamento entre dois laboratorios', () => {
 
     expect(await rawChannelState(tenantId)).toBeUndefined();
     expect(evolution.createdInstances).toEqual([`tenant-${outro.id}`]);
+  });
+});
+
+describe('instancia ausente no gateway (404) vs gateway fora do ar', () => {
+  it('GET /status com a instancia ausente devolve disconnected, nunca 500', async () => {
+    // Antes do fix: o `Error` do cliente subia cru ate o error-handler -> 500
+    // com corpo vazio, e a tela de Canais travava sem permitir reconectar.
+    app = await buildApp(missingInstanceClient());
+    const res = await app.agent.get(`${URL}/status`).set(app.auth(admin)).expect(200);
+    const body = res.body as WhatsAppStatusResponse;
+    expect(body.status).toBe('disconnected');
+    expect(body.connectedAt).toBeNull();
+  });
+
+  it('GET /qr com a instancia ausente devolve disconnected sem QR, nunca 500', async () => {
+    app = await buildApp(missingInstanceClient());
+    const res = await app.agent.get(`${URL}/qr`).set(app.auth(admin)).expect(200);
+    const body = res.body as WhatsAppQrResponse;
+    expect(body.status).toBe('disconnected');
+    expect(body.qrcode).toBeNull();
+  });
+
+  it('DELETE /disconnect com a instancia ausente e idempotente (ja esta desconectado)', async () => {
+    await db.withoutTenant((tx) =>
+      tx.query(
+        `INSERT INTO tenant_channels (tenant_id, channel, connection_mode, connected_at)
+         VALUES ($1, 'whatsapp', 'qr', now())`,
+        [tenantId],
+      ),
+    );
+    app = await buildApp(missingInstanceClient());
+    await app.agent.post(`${URL}/disconnect`).set(app.auth(admin)).expect(204);
+    expect((await rawChannelState(tenantId))?.connected_at).toBeNull();
+  });
+
+  it('gateway fora do ar (erro que NAO e 404) continua CHANNEL_QR_UNAVAILABLE', async () => {
+    app = await buildApp(brokenGatewayClient());
+    const res = await app.agent.get(`${URL}/status`).set(app.auth(admin)).expect(503);
+    expect(res.body.error.code).toBe('CHANNEL_QR_UNAVAILABLE');
+
+    const qr = await app.agent.get(`${URL}/qr`).set(app.auth(admin)).expect(503);
+    expect(qr.body.error.code).toBe('CHANNEL_QR_UNAVAILABLE');
   });
 });

@@ -3,7 +3,7 @@
  * Onda 7 Bloco B). Testado contra um servidor HTTP fake, o mesmo padrao do
  * `MockWhatsAppDriver` (nenhuma chamada de rede real em teste/CI).
  */
-import { createServer } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createEvolutionClient } from '../../src/lib/evolution-client.js';
 
@@ -11,14 +11,48 @@ describe('EvolutionClient', () => {
   let fakeGateway: ReturnType<typeof createServer>;
   let baseUrl: string;
   let lastApikeyHeader: string | undefined;
+  /** Ultimo corpo recebido em /instance/create ou /webhook/set. */
+  let lastBody: Record<string, unknown> = {};
 
   beforeAll(async () => {
+    // O corpo e lido ANTES de rotear: `/instance/create` decide pelo
+    // `instanceName` do corpo (a URL e a mesma para todas as instancias).
     fakeGateway = createServer((req, res) => {
       lastApikeyHeader = req.headers.apikey as string | undefined;
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      req.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        lastBody = raw.length > 0 ? (JSON.parse(raw) as Record<string, unknown>) : {};
+        route(req, res);
+      });
+    });
 
+    function route(req: IncomingMessage, res: ServerResponse): void {
       if (req.method === 'POST' && req.url === '/instance/create') {
+        if (lastBody.instanceName === 'tenant-existe') {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              status: 403,
+              response: { message: ['This name "tenant-existe" is already in use.'] },
+            }),
+          );
+          return;
+        }
         res.writeHead(201, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ instance: { instanceName: 'tenant-abc' }, hash: { apikey: 'fake-key' } }));
+        // `hash` em STRING e o formato do gateway v2.3.7 de verdade.
+        res.end(JSON.stringify({ instance: { instanceName: 'tenant-abc' }, hash: 'fake-key' }));
+        return;
+      }
+      if (req.method === 'GET' && req.url === '/instance/fetchInstances?instanceName=tenant-existe') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify([{ name: 'tenant-existe', token: 'key-ja-existente' }]));
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/webhook/set/tenant-existe') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ enabled: true }));
         return;
       }
       if (req.method === 'GET' && req.url === '/instance/connect/tenant-abc') {
@@ -65,7 +99,8 @@ describe('EvolutionClient', () => {
       }
       res.writeHead(404);
       res.end();
-    });
+    }
+
     await new Promise<void>((resolve) => fakeGateway.listen(0, resolve));
     const address = fakeGateway.address();
     baseUrl = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
@@ -79,6 +114,31 @@ describe('EvolutionClient', () => {
     expect(handle.instanceName).toBe('tenant-abc');
     expect(handle.apikey).toBe('fake-key');
     expect(lastApikeyHeader).toBe('admin-key');
+  });
+
+  it('createInstance registra o webhook do tenant no proprio /instance/create', async () => {
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    await client.createInstance('tenant-abc', {
+      url: 'https://crm.local/api/v1/webhooks/evolution/t1',
+      token: 'segredo',
+    });
+    const webhook = lastBody.webhook as Record<string, unknown>;
+    expect(webhook.url).toBe('https://crm.local/api/v1/webhooks/evolution/t1');
+    expect(webhook.headers).toEqual({ 'x-evolution-webhook-token': 'segredo' });
+    expect(webhook.events).toEqual(['MESSAGES_UPSERT', 'CONNECTION_UPDATE']);
+  });
+
+  it('createInstance numa instancia que JA existe (403) adota a existente e reaplica o webhook', async () => {
+    // O gateway responde 403 `already in use` — e o caminho de TODA reconexao.
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    const handle = await client.createInstance('tenant-existe', {
+      url: 'https://crm.local/api/v1/webhooks/evolution/t1',
+      token: 'segredo',
+    });
+    expect(handle.apikey).toBe('key-ja-existente');
+    const webhook = (lastBody.webhook ?? {}) as Record<string, unknown>;
+    expect(webhook.enabled).toBe(true);
+    expect(webhook.url).toBe('https://crm.local/api/v1/webhooks/evolution/t1');
   });
 
   it('getQr devolve qrcode base64 e status pairing', async () => {

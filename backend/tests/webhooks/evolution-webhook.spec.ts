@@ -116,6 +116,184 @@ afterEach(() => {
   delete process.env.EVOLUTION_WEBHOOK_TOKEN;
 });
 
+/**
+ * Formato REAL do gateway v2.3.7: `messages.upsert`/`connection.update` —
+ * minusculo e separado por PONTO, nao o `MESSAGES_UPSERT` que a documentacao
+ * (e o resto desta suite) assumia. Verificado no log do container e no
+ * `WebhookController` do proprio Evolution. Com a comparacao exata antiga,
+ * NENHUM dos dois ramos rodava: mensagem recebida sumia em silencio e o
+ * estado da conexao nunca era gravado.
+ */
+describe('POST /webhooks/evolution/:tenant — nomes de evento do gateway REAL', () => {
+  it('messages.upsert (formato do gateway) cria a conversa e grava a mensagem', async () => {
+    const tenant = await createTenant({ slug: 'lab-evo-real' });
+    slugToId.set('lab-evo-real', tenant.id);
+
+    const response = await app.agent
+      .post(`${WEBHOOK}/lab-evo-real`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send({
+        ...messagesUpsertPayload({
+          instance: evolutionInstanceName(tenant.id),
+          phone: '5548999997777',
+          text: 'Oi',
+        }),
+        event: 'messages.upsert',
+      });
+
+    expect(response.status).toBe(200);
+    expect(await countConversations(tenant.id)).toBe(1);
+  });
+
+  it('connection.update (formato do gateway) grava o estado do canal', async () => {
+    const tenant = await createTenant({ slug: 'lab-evo-real2' });
+    slugToId.set('lab-evo-real2', tenant.id);
+    await db.withoutTenant((tx) =>
+      tx.query(
+        `INSERT INTO tenant_channels (tenant_id, channel, connection_mode) VALUES ($1, 'whatsapp', 'qr')`,
+        [tenant.id],
+      ),
+    );
+
+    const response = await app.agent
+      .post(`${WEBHOOK}/lab-evo-real2`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send({
+        ...connectionUpdatePayload(evolutionInstanceName(tenant.id), 'open', '5548999996666'),
+        event: 'connection.update',
+      });
+
+    expect(response.status).toBe(200);
+    const row = await db.withoutTenant((tx) =>
+      tx.query<{ connected_at: Date | null; phone_number: string | null }>(
+        `SELECT connected_at, phone_number FROM tenant_channels WHERE tenant_id = $1 AND channel = 'whatsapp'`,
+        [tenant.id],
+      ),
+    );
+    expect(row.rows[0]?.connected_at).not.toBeNull();
+    expect(row.rows[0]?.phone_number).toBe('5548999996666');
+  });
+
+  it('instance errado e recusado tambem no formato real (guarda nao pode virar codigo morto)', async () => {
+    const tenant = await createTenant({ slug: 'lab-evo-real3' });
+    slugToId.set('lab-evo-real3', tenant.id);
+
+    const response = await app.agent
+      .post(`${WEBHOOK}/lab-evo-real3`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send({
+        ...messagesUpsertPayload({
+          instance: 'tenant-de-outro-lab',
+          phone: '5548999995555',
+          text: 'Oi',
+        }),
+        event: 'messages.upsert',
+      });
+
+    expect(response.status).toBe(200);
+    expect(await countConversations(tenant.id)).toBe(0);
+  });
+});
+
+describe('POST /webhooks/evolution/:tenant — remoteJid @lid (privacidade do WhatsApp)', () => {
+  it('usa remoteJidAlt como telefone quando o remoteJid e um @lid', async () => {
+    const tenant = await createTenant({ slug: 'lab-lid' });
+    slugToId.set('lab-lid', tenant.id);
+
+    // Payload REAL capturado do gateway: o WhatsApp passou a enderecar por LID
+    // (identificador privado). `remoteJid` vira `<lid>@lid` e o telefone de
+    // verdade viaja em `remoteJidAlt`.
+    const response = await app.agent
+      .post(`${WEBHOOK}/lab-lid`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send({
+        event: 'messages.upsert',
+        instance: evolutionInstanceName(tenant.id),
+        data: {
+          key: {
+            id: 'EVO-LID-1',
+            fromMe: false,
+            remoteJid: '128999376343081@lid',
+            remoteJidAlt: '554888281057@s.whatsapp.net',
+            addressingMode: 'lid',
+          },
+          message: { conversation: 'Oi' },
+          pushName: 'Michel',
+        },
+      });
+
+    expect(response.status).toBe(200);
+    const rows = await db.withoutTenant((tx) =>
+      tx.query<{ patient_phone: string }>(
+        `SELECT patient_phone FROM conversations WHERE tenant_id = $1`,
+        [tenant.id],
+      ),
+    );
+    expect(rows.rows[0]?.patient_phone).toContain('554888281057');
+    expect(rows.rows[0]?.patient_phone).not.toContain('128999376343081');
+  });
+
+  it('@lid SEM remoteJidAlt nao cria conversa (LID nao e telefone: sem resposta, sem dedupe)', async () => {
+    const tenant = await createTenant({ slug: 'lab-lid2' });
+    slugToId.set('lab-lid2', tenant.id);
+
+    const response = await app.agent
+      .post(`${WEBHOOK}/lab-lid2`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send({
+        event: 'messages.upsert',
+        instance: evolutionInstanceName(tenant.id),
+        data: {
+          key: { id: 'EVO-LID-2', fromMe: false, remoteJid: '128999376343081@lid' },
+          message: { conversation: 'Oi' },
+        },
+      });
+
+    expect(response.status).toBe(200);
+    expect(await countConversations(tenant.id)).toBe(0);
+  });
+
+  it('mensagem de GRUPO (@g.us) e ignorada — id de grupo nao e paciente', async () => {
+    const tenant = await createTenant({ slug: 'lab-grupo' });
+    slugToId.set('lab-grupo', tenant.id);
+
+    const response = await app.agent
+      .post(`${WEBHOOK}/lab-grupo`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send({
+        event: 'messages.upsert',
+        instance: evolutionInstanceName(tenant.id),
+        data: {
+          key: { id: 'EVO-G-1', fromMe: false, remoteJid: '120363423909747775@g.us' },
+          message: { conversation: 'Kkkkkkk' },
+        },
+      });
+
+    expect(response.status).toBe(200);
+    expect(await countConversations(tenant.id)).toBe(0);
+  });
+
+  it('mensagem ENVIADA pelo proprio numero (fromMe) nao vira atendimento', async () => {
+    const tenant = await createTenant({ slug: 'lab-fromme' });
+    slugToId.set('lab-fromme', tenant.id);
+
+    const response = await app.agent
+      .post(`${WEBHOOK}/lab-fromme`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send({
+        event: 'messages.upsert',
+        instance: evolutionInstanceName(tenant.id),
+        data: {
+          key: { id: 'EVO-ME-1', fromMe: true, remoteJid: '554888281057@s.whatsapp.net' },
+          message: { conversation: 'resposta do atendente pelo celular' },
+        },
+      });
+
+    expect(response.status).toBe(200);
+    expect(await countConversations(tenant.id)).toBe(0);
+  });
+});
+
 describe('POST /webhooks/evolution/:tenant — MESSAGES_UPSERT', () => {
   it('header documentado x-evolution-webhook-token cria a conversa e grava a mensagem', async () => {
     const tenant = await createTenant({ slug: 'lab-evo' });

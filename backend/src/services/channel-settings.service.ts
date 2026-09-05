@@ -60,7 +60,9 @@ import { BusinessError } from '../http/errors.js';
 import {
   createDefaultEvolutionClient,
   evolutionInstanceName,
+  isInstanceNotFound,
   type EvolutionClient,
+  type EvolutionWebhookConfig,
 } from '../lib/evolution-client.js';
 import * as channelSettingsRepo from '../repositories/channel-settings.repository.js';
 import type { AuditService } from './audit.service.js';
@@ -747,6 +749,41 @@ export function createChannelSettingsService(
     return evolutionClient;
   }
 
+  /**
+   * Para onde o gateway posta os eventos deste tenant. `undefined` quando
+   * `EVOLUTION_WEBHOOK_BASE_URL` nao esta configurada: a instancia e criada
+   * mesmo assim (o QR pareia), so nao recebe mensagem — mesma escolha
+   * "opcional, nunca crash" do resto do bloco.
+   */
+  function evolutionWebhookOf(tenantId: string): EvolutionWebhookConfig | undefined {
+    const base = (process.env.EVOLUTION_WEBHOOK_BASE_URL ?? env.EVOLUTION_WEBHOOK_BASE_URL ?? '')
+      .replace(/\/+$/, '');
+    const token = process.env.EVOLUTION_WEBHOOK_TOKEN ?? env.EVOLUTION_WEBHOOK_TOKEN;
+    if (base.length === 0 || !token) return undefined;
+    return { url: `${base}/api/v1/webhooks/evolution/${tenantId}`, token };
+  }
+
+  /**
+   * Traduz a falha do gateway para o catalogo de erros da API — o cliente HTTP
+   * so lanca `Error` cru (ver o cabecalho de `evolution-client.ts`), e sem esta
+   * camada o `Error` subia ate o error-handler e virava **500 com corpo vazio**.
+   * `CHANNEL_QR_UNAVAILABLE` (503) e o codigo documentado em API_ERRORS.md:120.
+   *
+   * A instancia AUSENTE (404) NAO passa por aqui: quem chama trata como canal
+   * desconectado, para a tela conseguir reconectar em vez de travar num erro.
+   */
+  function gatewayFailure(error: unknown): BusinessError {
+    return error instanceof BusinessError ? error : new BusinessError('CHANNEL_QR_UNAVAILABLE');
+  }
+
+  async function callGateway<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      throw gatewayFailure(error);
+    }
+  }
+
   function toQrResponse(qr: { qrcode: string | null; status: WhatsAppConnectionStatus }): WhatsAppQrResponse {
     return {
       qrcode: qr.qrcode,
@@ -809,7 +846,9 @@ export function createChannelSettingsService(
 
     // 2) Cria/reaproveita a instancia no gateway — idempotente do lado do
     // Evolution (POST /instance/create com o mesmo nome reaproveita).
-    const handle = await client.createInstance(instanceName);
+    const handle = await callGateway(() =>
+      client.createInstance(instanceName, evolutionWebhookOf(ctx.tenantId)),
+    );
     // A apikey da instancia e cifrada em repouso pelo MESMO caminho do token
     // cloud_api (D-076): `upsertChannel` chama `encryptSecret` internamente.
     await db.withTenant(ctx.tenantId, (tx) =>
@@ -825,22 +864,33 @@ export function createChannelSettingsService(
       newValues: { channel: 'whatsapp', connectionMode: 'qr', instanceName },
     });
 
-    const qr = await client.getQr(instanceName);
+    const qr = await callGateway(() => client.getQr(instanceName));
     return toQrResponse(qr);
   };
 
   const getWhatsAppQr = async (ctx: TenantContext): Promise<WhatsAppQrResponse> => {
     assertWriteRole(ctx);
     const client = requireEvolutionClient();
-    const qr = await client.getQr(evolutionInstanceName(ctx.tenantId));
-    return toQrResponse(qr);
+    try {
+      return toQrResponse(await client.getQr(evolutionInstanceName(ctx.tenantId)));
+    } catch (error) {
+      // Instancia sumiu do gateway: e um canal DESCONECTADO, nao um erro —
+      // a tela precisa poder oferecer "Conectar" de novo.
+      if (!isInstanceNotFound(error)) throw gatewayFailure(error);
+      return toQrResponse({ qrcode: null, status: 'disconnected' });
+    }
   };
 
   const getWhatsAppStatus = async (ctx: TenantContext): Promise<WhatsAppStatusResponse> => {
     assertWriteRole(ctx);
     const client = requireEvolutionClient();
     const [live, stored] = await Promise.all([
-      client.getStatus(evolutionInstanceName(ctx.tenantId)),
+      client
+        .getStatus(evolutionInstanceName(ctx.tenantId))
+        .catch(async (error: unknown) => {
+          if (!isInstanceNotFound(error)) throw gatewayFailure(error);
+          return { status: 'disconnected' as const, phoneNumber: null };
+        }),
       db.withTenant(ctx.tenantId, (tx) =>
         channelSettingsRepo.findConnectionState(tx, ctx.tenantId, 'whatsapp'),
       ),
@@ -857,7 +907,11 @@ export function createChannelSettingsService(
     const client = requireEvolutionClient();
     // Logout no gateway PRIMEIRO: se ele falhar, o canal continua marcado
     // conectado (estado real), em vez de mentir "desconectado" para o admin.
-    await client.logout(evolutionInstanceName(ctx.tenantId));
+    // Instancia ausente = ja esta deslogada: segue para marcar desconectado no
+    // banco em vez de recusar, senao o canal fica preso em "conectado".
+    await client.logout(evolutionInstanceName(ctx.tenantId)).catch(async (error: unknown) => {
+      if (!isInstanceNotFound(error)) throw gatewayFailure(error);
+    });
     await db.withTenant(ctx.tenantId, (tx) =>
       channelSettingsRepo.markWhatsAppDisconnected(tx, ctx.tenantId),
     );

@@ -705,9 +705,20 @@ interface ChannelSettingsServiceQrExtension {
 - **`connect` exige aceite prévio** (`accepted_terms_at` gravado) **ou** `acceptTerms: true` no
   corpo — a rota chama `acceptWhatsAppQrTerms` primeiro, então fala com o gateway. Sem os dois,
   `VALIDATION_ERROR`.
-- `connect` é **idempotente**: reconectar reaproveita a instância existente no gateway
-  (`POST /instance/create` seguido de `GET /instance/connect`; instância já criada não
-  re-cria, só busca o QR).
+- `connect` é **idempotente**, mas o gateway **não** é: `POST /instance/create` com um nome já
+  existente responde `403 "This name ... is already in use."` (verificado contra o v2.3.7). O
+  cliente trata esse 403 como **adoção** — lê a apikey da instância em
+  `GET /instance/fetchInstances?instanceName=` e reaplica o webhook via `POST /webhook/set/:instance`.
+  Sem isso, só o primeiro pareamento de cada tenant funcionaria.
+- **Registro do webhook:** a URL de callback é enviada no próprio `/instance/create` (e no
+  `/webhook/set` do caminho de adoção), com header `x-evolution-webhook-token` e os eventos
+  `MESSAGES_UPSERT` e `CONNECTION_UPDATE`. A base vem de **`EVOLUTION_WEBHOOK_BASE_URL`** — o
+  endereço do CRM **visto de dentro do container do gateway** (`http://backend:3000` no compose;
+  `http://host.docker.internal:3000` em dev com o backend no host). Não é derivável de
+  `CORS_ORIGIN`, que é o endereço do navegador. Ausente ⇒ a instância é criada e o QR pareia,
+  mas nenhuma mensagem entra.
+- A apikey da instância vem em `hash`, que no v2.3.7 é uma **string** (`"hash": "38BD..."`); o
+  formato `{apikey}` do v1 continua aceito por compatibilidade.
 - **Salvaguarda anti-ban no envio:** o `EvolutionWhatsAppDriver` de envio (`send`, herdado de
   §11) aplica espaçamento mínimo configurável entre mensagens por tenant (default ~1.5s +
   jitter) na fila. **Não existe, e não entra**, nenhum endpoint de disparo em massa.
@@ -723,6 +734,25 @@ interface ChannelSettingsServiceQrExtension {
 - `handleWebhook` reusa o caminho inteiro de `MessageService.createFromPatient` /
   `ConversationRepository.findOrCreateByPhone` para `MESSAGES_UPSERT` — nenhum caminho de
   ingestão paralelo.
+- **Grafia do evento:** o gateway v2.3.7 manda `messages.upsert`/`connection.update`
+  (minúsculo, com PONTO), não o `MESSAGES_UPSERT` que este doc assumia. `normalizeEvolutionEvent`
+  (`toUpperCase()` + `.` → `_`) aceita as duas em um único ponto. Sem isso a comparação exata
+  nunca casava contra um gateway real e três coisas morriam juntas e em silêncio: mensagem
+  recebida descartada, estado da conexão nunca gravado (o telefone exibido ficava no valor
+  anterior) e a guarda de `instance` contra troca de slug virava código morto.
+- **`inboundPhoneOf` decide o que vira atendimento** (`webhook.routes.ts`, ponto único):
+  `fromMe: true` é ignorada (o próprio laboratório respondendo pelo celular), `@g.us` é ignorada
+  (grupo não é paciente), `@lid` tira o telefone de `remoteJidAlt` (endereçamento por LID do
+  WhatsApp — o LID não é discável nem casa com o cadastro) e, sem `remoteJidAlt`, a mensagem é
+  descartada de propósito: uma conversa presa a um LID não tem resposta nem dedupe.
+- **Instância AUSENTE no gateway (404 `does not exist`) não é erro de gateway:** `getWhatsAppQr`
+  e `getWhatsAppStatus` devolvem `disconnected` e `disconnectWhatsApp` segue marcando o canal
+  desconectado. Sem isso o `Error` cru do cliente subia até o error-handler e virava **500 com
+  corpo vazio** — a tela de Canais travava sem oferecer reconexão, exatamente no estado em que
+  reconectar é a única saída (container do gateway recriado, banco dele limpo, instância apagada
+  pelo manager). Qualquer OUTRA falha do gateway continua `CHANNEL_QR_UNAVAILABLE` (503),
+  traduzida por `callGateway`/`gatewayFailure` no service — o cliente HTTP nunca lança
+  `BusinessError` (ver o cabeçalho de `evolution-client.ts`).
 - **Versão da imagem fixada em v2.3.7** (D-083, `docker-compose.yml`/`.prod.yml`, domínio
   infra), com a linha 2.4.x como fallback documentado — este service não depende de versão
   específica, só do contrato HTTP do gateway (`/instance/*`, `/message/sendText/*`), que D-083

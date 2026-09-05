@@ -50,8 +50,21 @@ export interface EvolutionSendResult {
   externalId: string;
 }
 
+/**
+ * Para onde o gateway posta os eventos desta instancia. `token` vai como header
+ * `x-evolution-webhook-token` — o MESMO header documentado que
+ * `webhook.routes.ts` confere em tempo constante.
+ */
+export interface EvolutionWebhookConfig {
+  url: string;
+  token: string;
+}
+
 export interface EvolutionClient {
-  createInstance(instanceName: string): Promise<EvolutionInstanceHandle>;
+  createInstance(
+    instanceName: string,
+    webhook?: EvolutionWebhookConfig,
+  ): Promise<EvolutionInstanceHandle>;
   getQr(instanceName: string): Promise<EvolutionQrResult>;
   getStatus(instanceName: string): Promise<EvolutionStatusResult>;
   logout(instanceName: string): Promise<void>;
@@ -70,6 +83,45 @@ export interface EvolutionClient {
     text: string,
     apikey: string,
   ): Promise<EvolutionSendResult>;
+}
+
+/**
+ * Corpo do webhook aceito tanto por `/instance/create` quanto por
+ * `/webhook/set`. So os dois eventos que o CRM trata (`webhook.routes.ts`):
+ * mensagem que entra e mudanca de estado da conexao.
+ */
+function webhookBody(webhook: EvolutionWebhookConfig): Record<string, unknown> {
+  return {
+    url: webhook.url,
+    byEvents: false,
+    base64: true,
+    headers: { 'x-evolution-webhook-token': webhook.token },
+    events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE'],
+  };
+}
+
+/**
+ * `hash` do `/instance/create` e a apikey em STRING no gateway v2.3.7
+ * (`"hash":"38BD..."`). O formato `{apikey}` era o do v1 — aceito aqui so por
+ * compatibilidade.
+ */
+function apikeyOf(hash: unknown): string | null {
+  return asString(hash) ?? (isRecord(hash) ? asString(hash.apikey) : null);
+}
+
+/**
+ * 404 `The "x" instance does not exist` — a instancia sumiu do gateway (reset do
+ * container, banco do gateway limpo, admin apagou pelo manager). Nao e "gateway
+ * fora do ar": o CHAMADOR trata como canal desconectado, para a tela conseguir
+ * reconectar em vez de travar num erro.
+ */
+export function isInstanceNotFound(error: unknown): boolean {
+  return error instanceof Error && /does not exist/i.test(error.message);
+}
+
+/** 403 `This name "x" is already in use.` — instancia ja existe, nao e falha. */
+function isAlreadyInUse(error: unknown): boolean {
+  return error instanceof Error && /already in use/i.test(error.message);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -131,17 +183,57 @@ export function createEvolutionClient(baseUrl: string, adminApiKey: string): Evo
     return body;
   }
 
+  /** apikey da instancia ja existente — `token` no `/instance/fetchInstances`. */
+  async function fetchInstanceToken(instanceName: string): Promise<string> {
+    const body = await request(
+      `/instance/fetchInstances?instanceName=${encodeURIComponent(instanceName)}`,
+      { method: 'GET' },
+    );
+    const first = Array.isArray(body) && isRecord(body[0]) ? body[0] : null;
+    const apikey = first ? asString(first.token) : null;
+    if (!apikey) {
+      throw new Error(`Evolution API nao devolveu token da instancia ${instanceName}`);
+    }
+    return apikey;
+  }
+
+  async function setWebhook(instanceName: string, webhook: EvolutionWebhookConfig): Promise<void> {
+    await request(`/webhook/set/${encodeURIComponent(instanceName)}`, {
+      method: 'POST',
+      body: JSON.stringify({ webhook: { enabled: true, ...webhookBody(webhook) } }),
+    });
+  }
+
   return {
-    async createInstance(instanceName: string): Promise<EvolutionInstanceHandle> {
-      const body = await request('/instance/create', {
-        method: 'POST',
-        body: JSON.stringify({ instanceName, qrcode: true, integration: 'WHATSAPP-BAILEYS' }),
-      });
+    async createInstance(
+      instanceName: string,
+      webhook?: EvolutionWebhookConfig,
+    ): Promise<EvolutionInstanceHandle> {
+      let body: unknown;
+      try {
+        body = await request('/instance/create', {
+          method: 'POST',
+          body: JSON.stringify({
+            instanceName,
+            qrcode: true,
+            integration: 'WHATSAPP-BAILEYS',
+            ...(webhook ? { webhook: webhookBody(webhook) } : {}),
+          }),
+        });
+      } catch (error) {
+        // `/instance/create` NAO e idempotente: a segunda chamada com o mesmo
+        // nome responde 403 `already in use` (verificado contra o v2.3.7). Toda
+        // RECONEXAO cai aqui — sem esta adocao, so o primeiro pareamento de
+        // cada tenant funcionava.
+        if (!isAlreadyInUse(error)) throw error;
+        const apikey = await fetchInstanceToken(instanceName);
+        if (webhook) await setWebhook(instanceName, webhook);
+        return { instanceName, apikey };
+      }
       const record = isRecord(body) ? body : {};
       const instance = isRecord(record.instance) ? record.instance : {};
-      const hash = isRecord(record.hash) ? record.hash : {};
       const name = asString(instance.instanceName) ?? instanceName;
-      const apikey = asString(hash.apikey);
+      const apikey = apikeyOf(record.hash);
       if (!apikey) {
         throw new Error('Evolution API nao devolveu apikey da instancia em /instance/create');
       }

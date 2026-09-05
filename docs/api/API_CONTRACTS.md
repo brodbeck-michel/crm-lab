@@ -776,15 +776,27 @@ x-evolution-webhook-token: <EVOLUTION_WEBHOOK_TOKEN>
 Mesma disciplina do webhook Meta: **kill switch `is_active` verificado antes de tudo** (D-074,
 antes até do token), e resposta invariável para não dar oráculo de enumeração.
 
-**Request (formato Evolution), três eventos traduzidos para os DTOs internos existentes:**
+**Request (formato Evolution), três eventos traduzidos para os DTOs internos existentes.**
+
+> ⚠️ **Grafia do `event`:** o gateway v2.3.7 envia **`messages.upsert`** — minúsculo e separado
+> por **ponto** (verificado no `WebhookController` do container). A grafia `MESSAGES_UPSERT`
+> deste documento era uma suposição: com comparação exata, nenhum evento real casava e a
+> mensagem recebida sumia em silêncio. A rota normaliza (`toUpperCase()` + `.` → `_`) e aceita
+> **as duas**; os exemplos abaixo usam a forma real.
+
 ```json
-{ "event": "MESSAGES_UPSERT", "instance": "tenant-8f2a1c4b", "data": { "key": { "remoteJid": "554899990000@s.whatsapp.net", "id": "3EB0C767D26A1D2F4B" }, "message": { "conversation": "Bom dia, gostaria de orçamento" }, "messageTimestamp": 1756555200 } }
+{ "event": "messages.upsert", "instance": "tenant-8f2a1c4b", "data": { "key": { "remoteJid": "554899990000@s.whatsapp.net", "id": "3EB0C767D26A1D2F4B", "fromMe": false }, "message": { "conversation": "Bom dia, gostaria de orçamento" }, "messageTimestamp": 1756555200 } }
+```
+Endereçamento por **LID** (privacidade do WhatsApp): `remoteJid` vem como `<id>@lid` e o
+telefone real viaja em `remoteJidAlt`.
+```json
+{ "event": "messages.upsert", "instance": "tenant-8f2a1c4b", "data": { "key": { "remoteJid": "128999376343081@lid", "remoteJidAlt": "554899990000@s.whatsapp.net", "addressingMode": "lid", "fromMe": false }, "message": { "conversation": "Oi" } } }
 ```
 ```json
-{ "event": "CONNECTION_UPDATE", "instance": "tenant-8f2a1c4b", "data": { "state": "open" } }
+{ "event": "connection.update", "instance": "tenant-8f2a1c4b", "data": { "state": "open" } }
 ```
 ```json
-{ "event": "QRCODE_UPDATED", "instance": "tenant-8f2a1c4b", "data": { "qrcode": { "base64": "data:image/png;base64,..." } } }
+{ "event": "qrcode.updated", "instance": "tenant-8f2a1c4b", "data": { "qrcode": { "base64": "data:image/png;base64,..." } } }
 ```
 
 **Response (sempre):**
@@ -797,6 +809,18 @@ Evolution também pode entregar lote): uma mensagem malformada no meio do lote n
 demais.
 
 Efeitos:
+**Qual `key` vira atendimento** (`inboundPhoneOf`, um único ponto de decisão — `remoteJid` nem
+sempre é telefone, e tratá-lo como se fosse cria paciente fantasma que ninguém consegue
+responder):
+
+| `key` | Efeito |
+|---|---|
+| `fromMe: true` | **ignorada** — é o próprio número do laboratório respondendo pelo celular |
+| `remoteJid` termina em `@g.us` | **ignorada** — id de grupo não é paciente |
+| `remoteJid` termina em `@lid` | telefone lido de **`remoteJidAlt`** |
+| `@lid` sem `remoteJidAlt` | **descartada** — LID não é discável, não casa com o cadastro e não serve para responder; conversa presa a um LID seria pior que nenhuma |
+| `<telefone>@s.whatsapp.net` | telefone lido do próprio `remoteJid` |
+
 - `MESSAGES_UPSERT` → **reusa o caminho inteiro** do webhook Meta:
   `findOrCreateByPhone` → `MessageService.createFromPatient` (dedupe por `externalId`,
   `unreadCount`, `lastMessageAt`, WS `conversation.new_message`). A tela de Atendimento não

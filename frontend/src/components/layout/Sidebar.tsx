@@ -1,9 +1,10 @@
-import { useEffect } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { cn, Badge } from '@/components/ui';
 import { Avatar } from '@/components/shared';
 import { useAuthStore, useUIStore, selectRole, selectUser } from '@/stores';
+import { useLogout } from '@/hooks';
 import { sidebarRoutesFor } from '@/routes/route-config';
 import { operationApi, queryKeys, staleTimes } from '@/api';
 import { NavGlyph } from './NavGlyph';
@@ -54,6 +55,33 @@ export function Sidebar() {
     refetchInterval: 60_000,
   });
   const pendingDecisionsCount = overviewQuery.data?.pendingDecisions.total ?? 0;
+
+  const navigate = useNavigate();
+  const logout = useLogout();
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!userMenuOpen) return;
+    function onPointerDown(event: MouseEvent) {
+      if (!userMenuRef.current?.contains(event.target as Node)) setUserMenuOpen(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setUserMenuOpen(false);
+    }
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [userMenuOpen]);
+
+  const handleLogout = async () => {
+    setUserMenuOpen(false);
+    await logout();
+    navigate('/login');
+  };
 
   return (
     <aside
@@ -116,12 +144,41 @@ export function Sidebar() {
       </nav>
 
       {user && (
-        <div className="flex items-center gap-sm">
-          <Avatar name={user.name} size={36} />
-          {!collapsed && (
-            <span className="min-w-0 truncate font-body text-caption text-neutral-700">
-              {user.name}
-            </span>
+        <div ref={userMenuRef} className="relative">
+          <button
+            type="button"
+            onClick={() => setUserMenuOpen((open) => !open)}
+            aria-haspopup="menu"
+            aria-expanded={userMenuOpen}
+            title={collapsed ? user.name : undefined}
+            className="flex w-full min-w-0 items-center gap-sm rounded-md border-none bg-transparent p-0 text-left hover:bg-accent-100"
+          >
+            <Avatar name={user.name} size={36} />
+            {!collapsed && (
+              <span className="min-w-0 truncate font-body text-caption text-neutral-700">
+                {user.name}
+              </span>
+            )}
+          </button>
+
+          {userMenuOpen && (
+            <div
+              role="menu"
+              className={cn(
+                'absolute bottom-full z-50 mb-xs w-[180px] rounded-md border border-neutral-200',
+                'bg-surface py-xs shadow-md',
+                collapsed ? 'left-0' : 'left-0 right-0 w-auto',
+              )}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => void handleLogout()}
+                className="w-full cursor-pointer border-none bg-transparent px-md py-xs text-left font-body text-label text-text hover:bg-accent-100"
+              >
+                Sair
+              </button>
+            </div>
           )}
         </div>
       )}

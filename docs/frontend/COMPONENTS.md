@@ -115,6 +115,8 @@ Anatomia (padrão WhatsApp):
 - Conteúdo do trilho muda por perfil — a ESTRUTURA não
 - Item "Decisões" (gestor+): `Badge` com `pendingDecisions.total` de `GET /operations/overview`
   (PAGES.md §12) — some quando o total é zero
+- Rodapé: avatar + nome do usuário é um botão; clique abre menu com [Sair] (`useLogout`,
+  `POST /auth/logout` — API_CONTRACTS.md §1). Fecha ao clicar fora, `Esc` ou depois de sair
 - Rodapé: versão do build (`v1.1.0`, só o número quando recolhido) — `__APP_VERSION__`
   injetada em build-time pelo Vite a partir do `package.json` da raiz do monorepo
   (`frontend/vite.config.ts`), sem chamada de rede

@@ -461,6 +461,7 @@ telefone quando sobram **3 dígitos ou mais**.
       "lastMessagePreview": "Olá, quanto custa um hemograma?",
       "lastMessageAt": "2024-08-23T14:30:00Z",
       "tags": ["orçamento", "hemograma"],
+      "pinned": true,
       "createdAt": "2024-08-20T10:00:00Z"
     }
   ],
@@ -473,6 +474,11 @@ telefone quando sobram **3 dígitos ou mais**.
   "counts": { "mine": 12, "unassigned": 7 }
 }
 ```
+
+`pinned` é **do usuário que pediu** (Onda 8 §2.3): a mesma conversa vem `true` para quem
+a fixou e `false` para as colegas. Conversas fixadas vêm **primeiro**, e dentro de cada
+grupo a ordenação pedida (`sortBy`/`order`) continua valendo. Os `counts` **não** mudam:
+fixar é organização visual, não filtro.
 
 `counts` alimenta os chips "Minhas N" / "Não atribuídas N". Os dois números saem do
 MESMO `SELECT` da listagem (`COUNT(*) FILTER (...)`), com os mesmos filtros de
@@ -667,6 +673,52 @@ Marcar a conversa como lida sem carregar o histórico. Idempotente.
 
 **Erros:** `NOT_FOUND` (404 — inexistente, de outro tenant ou fora do recorte do
 usuário), `VALIDATION_ERROR` (400, `:id` não-uuid), `FORBIDDEN` (403, `platform_operator`)
+
+### GET /conversations/assignees
+Quem pode receber uma conversa neste laboratório — a lista do menu "Transferir"
+(PAGES.md §2). Aberta a **qualquer papel de tenant**, porque quem mais transfere é a
+atendente, e `GET /users` é admin-only.
+
+Devolve **só** `id`, `name` e `role` de usuários **ativos** com papel de tenant
+(`attendant`, `manager`, `admin`). Nada de e-mail, alçada ou estado de conta:
+afrouxar o `GET /users` existente vazaria a lista de pessoal completa para todo
+atendente — mudança de superfície de segurança que ninguém pediu.
+
+**Response (200):**
+```json
+{
+  "assignees": [
+    { "id": "uuid", "name": "Ana Lima", "role": "attendant" },
+    { "id": "uuid", "name": "Maria Souza", "role": "manager" }
+  ]
+}
+```
+
+Ordenado por nome. `platform_operator` nunca aparece na lista **e** recebe `FORBIDDEN`
+na rota (PAGES.md §11).
+
+A transferência em si continua sendo `PATCH /conversations/:id` com
+`{ "assignedTo": "<uuid>" | null }` — `null` devolve para a fila. Não há endpoint novo
+para transferir.
+
+**Erros:** `FORBIDDEN` (403, `platform_operator`), `UNAUTHORIZED` (401)
+
+### POST /conversations/:id/pin · DELETE /conversations/:id/pin
+Fixar / desafixar a conversa no topo da **sua** lista (Onda 8 §2.3). Qualquer papel de
+tenant. O pin é **pessoal**: não altera nada que as colegas vejam.
+
+**Response:** `204 No Content` nos dois verbos.
+
+**Idempotentes:** fixar o que já está fixado é `204`, não erro; desafixar o que não está
+fixado também. A chave `(user_id, conversation_id)` faz o trabalho no banco
+(`ON CONFLICT DO NOTHING`).
+
+Conversa inexistente, de outro tenant ou fora do recorte do usuário → `NOT_FOUND` (nunca
+`FORBIDDEN`, CLAUDE.md regra 8). Fixar **não** gera audit log: é preferência de tela, não
+ato sobre o atendimento.
+
+**Erros:** `NOT_FOUND` (404), `VALIDATION_ERROR` (400, `:id` não-uuid), `FORBIDDEN` (403,
+`platform_operator`)
 
 ### PATCH /conversations/:id
 Atualizar conversa (status, tags, assigned_to).

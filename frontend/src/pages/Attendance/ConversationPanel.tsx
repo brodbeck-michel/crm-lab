@@ -1,7 +1,7 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
-import type { ConversationDetail, Message } from '@crm-lab/shared';
-import { Button } from '@/components/ui';
+import type { ConversationAssignee, ConversationDetail, Message } from '@crm-lab/shared';
+import { Button, cn } from '@/components/ui';
 import { EmptyState } from '@/components/shared';
 import { Composer, MessageBubble, bubbleTypeFor } from '@/components/conversation';
 
@@ -21,9 +21,10 @@ export interface ConversationPanelProps {
   onRetry: () => void;
   onSend: (content: string) => void;
   sending: boolean;
-  onTransfer: () => void;
-  /** "Transferir" quando é sua; "Assumir" quando está na fila livre. */
-  transferLabel: string;
+  /** Quem pode receber a conversa — `GET /conversations/assignees`. */
+  assignees: ConversationAssignee[];
+  /** Atendente escolhida no menu, ou `null` para devolver à fila. */
+  onAssign: (userId: string | null) => void;
   onNewBudget: () => void;
   onArchive: () => void;
   onToggleContext: () => void;
@@ -68,6 +69,107 @@ function useMessageScroll(
   }, [ref, messages, conversationId]);
 }
 
+/**
+ * Menu "Transferir" — a lista de colegas + "Devolver para a fila"
+ * (spec Onda 8 §2.1). Quem já é dona da conversa não aparece na lista: a opção
+ * seria um no-op com cara de ação.
+ *
+ * rangel: mesmo padrão do menu do usuário na `Sidebar` (clique fora + Esc,
+ * `role="menu"`), sem biblioteca de popover para dois itens.
+ */
+function TransferMenu({
+  assignees,
+  assignedTo,
+  onAssign,
+}: {
+  assignees: ConversationAssignee[];
+  assignedTo: string | null;
+  onAssign: (userId: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: MouseEvent) {
+      if (!ref.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      setOpen(false);
+      // rangel: o gatilho é o primeiro <button> do bloco — `Button` não
+      // encaminha ref, e um forwardRef só para isto seria mudança de API.
+      ref.current?.querySelector('button')?.focus();
+    }
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  function choose(userId: string | null): void {
+    setOpen(false);
+    onAssign(userId);
+  }
+
+  const options = assignees.filter((assignee) => assignee.id !== assignedTo);
+
+  return (
+    <div ref={ref} className="relative">
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => setOpen((value) => !value)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        {assignedTo === null ? 'Atribuir' : 'Transferir'}
+      </Button>
+
+      {open && (
+        <div
+          role="menu"
+          className={cn(
+            'absolute right-0 top-full z-50 mt-xs max-h-[280px] w-[220px] overflow-y-auto',
+            'rounded-md border border-neutral-200 bg-surface py-xs shadow-md',
+          )}
+        >
+          {options.length === 0 && (
+            <p className="px-md py-xs font-body text-caption text-neutral-600">
+              Ninguém mais para receber esta conversa.
+            </p>
+          )}
+
+          {options.map((assignee) => (
+            <button
+              key={assignee.id}
+              type="button"
+              role="menuitem"
+              onClick={() => choose(assignee.id)}
+              className="w-full cursor-pointer border-none bg-transparent px-md py-xs text-left font-body text-label text-text hover:bg-accent-100"
+            >
+              {assignee.name}
+            </button>
+          ))}
+
+          {assignedTo !== null && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => choose(null)}
+              className="w-full cursor-pointer border-t border-neutral-200 bg-transparent px-md py-xs text-left font-body text-label text-text hover:bg-accent-100"
+            >
+              Devolver para a fila
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ConversationPanel({
   conversation,
   messages,
@@ -76,8 +178,8 @@ export function ConversationPanel({
   onRetry,
   onSend,
   sending,
-  onTransfer,
-  transferLabel,
+  assignees,
+  onAssign,
   onNewBudget,
   onArchive,
   onToggleContext,
@@ -141,9 +243,11 @@ export function ConversationPanel({
         </div>
 
         <div className="flex flex-[0_0_auto] items-center gap-sm">
-          <Button variant="secondary" size="sm" onClick={onTransfer}>
-            {transferLabel}
-          </Button>
+          <TransferMenu
+            assignees={assignees}
+            assignedTo={conversation.assignedTo}
+            onAssign={onAssign}
+          />
           <Button size="sm" onClick={onNewBudget}>
             Novo Orçamento
           </Button>

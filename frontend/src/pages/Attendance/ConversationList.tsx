@@ -33,6 +33,8 @@ export interface ConversationListProps {
   onRetry: () => void;
   /** Termo em vigor — o bloco de pacientes só aparece quando há busca. */
   searchTerm: string;
+  /** Fixar/desafixar (Onda 8 §2.3) — recebe o estado NOVO. */
+  onTogglePin: (id: string, pinned: boolean) => void;
   patients: PatientListItem[];
   patientsLoading: boolean;
   patientsError: boolean;
@@ -50,6 +52,7 @@ export function ConversationList({
   isError,
   onRetry,
   searchTerm,
+  onTogglePin,
   patients,
   patientsLoading,
   patientsError,
@@ -128,6 +131,7 @@ export function ConversationList({
               conversation={conversation}
               selected={conversation.id === selectedId}
               onClick={onSelect}
+              onTogglePin={onTogglePin}
             />
           ))}
       </div>

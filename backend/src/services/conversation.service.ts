@@ -48,6 +48,7 @@
  */
 import type {
   Conversation,
+  ConversationAssignee,
   ConversationDetail,
   CreateConversationRequest,
   ConversationStatus,
@@ -80,6 +81,8 @@ export const MAX_LIMIT = 100;
  * `OFFSET` absurdo na consulta.
  */
 export const MAX_PAGE = 10_000;
+/** Teto da lista de `GET /conversations/assignees` — equipe de laboratorio. */
+export const MAX_ASSIGNEES = 200;
 export const DEFAULT_SORT_BY: ConversationSortBy = 'lastMessageAt';
 export const DEFAULT_ORDER: SortOrder = 'desc';
 
@@ -334,6 +337,29 @@ export class ConversationService {
     return transferred;
   }
 
+  /**
+   * Quem pode receber uma conversa — a lista do menu "Transferir"
+   * (API_CONTRACTS.md §2). Aberta a qualquer papel de tenant porque quem mais
+   * transfere e a atendente, e `GET /users` e admin-only.
+   *
+   * Devolve so id/nome/papel: e-mail e alcada nao tem por que sair daqui.
+   * rangel: reaproveita `userRepo.list` com um teto alto em vez de uma query
+   * propria — equipe de laboratorio nao passa disso. Vira consulta paginada
+   * quando algum tenant encostar no limite.
+   */
+  async listAssignees(ctx: TenantContext): Promise<ConversationAssignee[]> {
+    const { users } = await this.db.withTenant(ctx.tenantId, (tx) =>
+      userRepo.list(tx, { page: 1, limit: MAX_ASSIGNEES, isActive: true }),
+    );
+    return users
+      .filter((user) => user.role !== 'platform_operator')
+      .map((user) => ({
+        id: user.id,
+        name: user.name,
+        role: user.role as ConversationAssignee['role'],
+      }));
+  }
+
   async updateStatus(
     ctx: TenantContext,
     id: string,
@@ -385,6 +411,19 @@ export class ConversationService {
     if (patch.tags !== undefined) current = await this.updateTags(ctx, id, patch.tags);
     if (patch.assignedTo !== undefined) current = await this.assign(ctx, id, patch.assignedTo);
     return current ?? (await this.getById(ctx, id));
+  }
+
+  /**
+   * Fixa/desafixa a conversa para o usuario logado (Onda 8 §2.3).
+   *
+   * O recorte por papel vem antes da escrita — `getById` ja converte conversa
+   * inexistente, de outro tenant ou de outra atendente em 404. Sem audit log:
+   * pin e preferencia de tela, nao ato sobre o atendimento.
+   */
+  async setPinned(ctx: TenantContext, id: string, pinned: boolean): Promise<void> {
+    await this.getById(ctx, id);
+    if (pinned) await this.repository.pin(ctx.tenantId, id, ctx.userId);
+    else await this.repository.unpin(ctx.tenantId, id, ctx.userId);
   }
 
   /** Zera `unread_count` e marca as mensagens do paciente como lidas. */

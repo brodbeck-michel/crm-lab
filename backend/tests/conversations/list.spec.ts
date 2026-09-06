@@ -61,6 +61,7 @@ describe('GET /conversations', () => {
       'patientId',
       'patientName',
       'patientPhone',
+      'pinned',
       'status',
       'tags',
       'unreadCount',

@@ -30,6 +30,7 @@ const CONVERSATION = {
   lastMessagePreview: null,
   lastMessageAt: null,
   tags: [],
+  pinned: false,
   customFields: {},
   createdAt: '2026-09-05T10:00:00Z',
 } satisfies ConversationDetail;

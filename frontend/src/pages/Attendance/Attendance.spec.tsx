@@ -62,6 +62,7 @@ function conversation(overrides: Partial<Conversation> = {}): Conversation {
     unreadCount: 3,
     lastMessagePreview: 'Quanto fica hemograma?',
     lastMessageAt: '2026-08-23T09:12:00Z',
+    pinned: false,
     tags: ['Orçamento'],
     createdAt: '2026-08-20T10:00:00Z',
     ...overrides,

@@ -24,6 +24,9 @@ import type {
  * pega todas as listagens de proposta, com qualquer filtro.
  */
 export const queryKeys = {
+  /** ['conversations', 'assignees'] — quem pode receber conversa. */
+  conversationAssignees: () => ['conversations', 'assignees'] as const,
+
   /** ['conversations', filters] */
   conversations: (filters?: ListConversationsQuery) => ['conversations', filters ?? {}] as const,
   /** ['conversation', id] */

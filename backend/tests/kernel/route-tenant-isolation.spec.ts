@@ -112,7 +112,7 @@ const LAB_MODULES = [
   userModule,
 ];
 
-type Method = 'get' | 'post' | 'patch' | 'put';
+type Method = 'get' | 'post' | 'patch' | 'put' | 'delete';
 type Actor = 'admin' | 'manager' | 'attendant';
 
 /** Um laboratorio completo: tudo que uma rota de laboratorio consegue endereçar. */
@@ -193,7 +193,10 @@ const LAB_ROUTES: readonly LabRoute[] = [
     actor: 'attendant',
     addressable: false,
   },
+  { name: 'GET /conversations/assignees', method: 'get', path: () => '/api/v1/conversations/assignees', actor: 'attendant', addressable: false },
   { name: 'GET /conversations/:id', method: 'get', path: (l) => `/api/v1/conversations/${l.conversation.id}`, actor: 'attendant', addressable: true, ownStatus: 200 },
+  { name: 'POST /conversations/:id/pin', method: 'post', path: (l) => `/api/v1/conversations/${l.conversation.id}/pin`, actor: 'attendant', addressable: true, ownStatus: 204 },
+  { name: 'DELETE /conversations/:id/pin', method: 'delete', path: (l) => `/api/v1/conversations/${l.conversation.id}/pin`, actor: 'attendant', addressable: true, ownStatus: 204 },
   {
     name: 'PATCH /conversations/:id',
     method: 'patch',
@@ -671,13 +674,13 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 49 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 52 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
     // `/settings/channels/whatsapp/*` (conexao por QR, Bloco B). Depois veio
     // `POST /conversations` (atendimento manual, fora do WhatsApp): +1.
-    expect(LAB_ROUTES).toHaveLength(49);
+    expect(LAB_ROUTES).toHaveLength(52);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

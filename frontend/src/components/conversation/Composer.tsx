@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { Button, cn } from '@/components/ui';
+import { EmojiPicker } from './EmojiPicker';
 
 /**
  * Composer — COMPONENTS.md (`conversation/`):
@@ -11,6 +12,9 @@ import { Button, cn } from '@/components/ui';
  * continua sendo a pílula do design system (999px, DESIGN_TOKENS.md).
  *
  * Componente burro: não conhece a API. Quem monta a tela passa `onSend`.
+ *
+ * O emoji entra NA POSIÇÃO DO CURSOR (Onda 8 §2.2): quem escreve "bom dia,
+ * tudo bem?" e volta o cursor para o meio não quer o emoji no fim da frase.
  */
 
 export interface ComposerProps {
@@ -64,6 +68,25 @@ export function Composer({
     fieldRef.current?.focus();
   }
 
+  /**
+   * Emoji na posição do cursor. `selectionStart/End` do textarea é a fonte —
+   * se o campo perdeu o foco (o popover é outro elemento), o navegador mantém
+   * a última seleção, que é exatamente onde a pessoa parou de escrever.
+   */
+  function insertEmoji(emoji: string): void {
+    const field = fieldRef.current;
+    const start = field?.selectionStart ?? value.length;
+    const end = field?.selectionEnd ?? value.length;
+    const next = value.slice(0, start) + emoji + value.slice(end);
+    setValue(next);
+    // O cursor precisa ficar DEPOIS do emoji; o estado só chega ao DOM no
+    // próximo frame, por isso o reposicionamento espera o React pintar.
+    requestAnimationFrame(() => {
+      const caret = start + emoji.length;
+      fieldRef.current?.setSelectionRange(caret, caret);
+    });
+  }
+
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
     // Shift+Enter cai no comportamento padrão do textarea: quebra de linha.
     if (event.key !== 'Enter' || event.shiftKey) return;
@@ -87,6 +110,12 @@ export function Composer({
           <AttachIcon />
         </Button>
       )}
+
+      <EmojiPicker
+        onPick={insertEmoji}
+        onClose={() => fieldRef.current?.focus()}
+        disabled={blocked}
+      />
 
       <textarea
         ref={fieldRef}

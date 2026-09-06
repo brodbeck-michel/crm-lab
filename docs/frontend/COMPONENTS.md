@@ -78,8 +78,17 @@ Anatomia (padrão WhatsApp):
 - Largura máx. 62% no inbox
 
 ### Composer
-- Input pílula + botão anexo + botão enviar (primary)
+- Input pílula + botão anexo + botão emoji + botão enviar (primary)
 - Enter envia, Shift+Enter quebra linha
+
+#### Emoji (Onda 8 §2.2)
+- Popover com grade de ~48 emojis de uso comum em atendimento; **sem
+  dependência** — um seletor com busca por nome custa centenas de KB para um
+  caso que não pede busca. Se a busca virar necessidade real, entra biblioteca,
+  e o popover já está isolado num componente (`EmojiPicker`).
+- Insere **na posição do cursor**, não no fim do texto.
+- Cada emoji é um `<button>` com `aria-label` (nome em pt-BR), navegável por
+  teclado; `Esc` fecha e devolve o foco ao campo.
 
 ---
 
@@ -354,7 +363,8 @@ tela passa tudo por props (o dado vem do TanStack Query).
 |------------|-----------|-------|
 | `ConversationItem` | `<ConversationItem conversation selected? onClick?(id) now? />` | `now` é injetável só para tornar "aguardando N min" determinístico em teste |
 | `MessageBubble` | `<MessageBubble type message maxWidth? showMeta? />` | `type` ∈ `received \| sent \| system` — os únicos 3 |
-| `Composer` | `<Composer onSend(content) onAttach? disabled? sending? placeholder? />` | Enter envia · Shift+Enter quebra linha |
+| `Composer` | `<Composer onSend(content) onAttach? disabled? sending? placeholder? />` | Enter envia · Shift+Enter quebra linha · emoji insere no cursor |
+| `EmojiPicker` | `<EmojiPicker onPick(emoji) disabled? />` | Grade fixa de 48, sem biblioteca · `Esc` fecha e devolve o foco |
 
 Exportações auxiliares (fonte única, para não duplicar regra em tela):
 

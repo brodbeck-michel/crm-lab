@@ -937,6 +937,32 @@ endpoint, vale automaticamente para `/catalog`, `/budget/new` e qualquer consumi
 
 ---
 
+### 21. `conversation_pins` (migração 007 — Onda 8 §2.3)
+Conversa fixada no topo da lista, **por atendente**. Fixar é ferramenta pessoal: uma
+atendente fixando não entope o topo da lista das outras.
+
+```sql
+CREATE TABLE conversation_pins (
+  tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, conversation_id)
+);
+
+CREATE INDEX conversation_pins_lookup ON conversation_pins (tenant_id, user_id);
+```
+
+**Por que tabela e não coluna:** `pinned_at` em `conversations` seria menor, mas seria
+estado COMPARTILHADO — o que uma pessoa fixa apareceria fixado para todo mundo. É assim
+que WhatsApp e Slack se comportam e a expectativa do usuário já está formada.
+
+Sem `id` próprio: a chave natural `(user_id, conversation_id)` já é a identidade da linha,
+e é ela que torna `POST /pin` idempotente (`ON CONFLICT DO NOTHING`). `tenant_id` existe
+para o RLS — `user_id` sozinho bastaria para a consulta, mas a policy precisa da coluna.
+
+---
+
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
 
 O isolamento multitenant não é convenção: é imposto pelo banco. O backend conecta com o papel
@@ -1100,8 +1126,13 @@ migrations/
 ├── 005_insurances_and_catalog.sql # insurances, exam_prices, exam_synonyms + colunas novas em
 │                                  # exam_catalog, proposals, proposal_items, tenant_channels
 ├── 006_rls_onda7.sql             # policies das 3 tabelas da 005
+├── 007_conversation_pins.sql     # conversation_pins + policy (Onda 8 §2.3)
 └── ...
 ```
+
+A 007 é arquivo ÚNICO (tabela + policy), diferente dos pares 003/004 e 005/006: a
+separação existe para o backfill poder rodar antes de a policy ligar, e a 007 não tem
+backfill — a tabela nasce vazia. Um segundo arquivo aqui seria cerimônia sem função.
 
 A 003/004 e a 005/006 seguem o mesmo padrão de arquivos separados: quando a migração tem
 backfill de dado pré-existente, ele roda **antes** de existir policy nas tabelas novas (escreve

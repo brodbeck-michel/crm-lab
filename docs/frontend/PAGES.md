@@ -83,12 +83,20 @@ Duas leituras registradas aqui porque o doc original não as fixava:
   e a busca que API_CONTRACTS §2c chama de "a busca do inbox". A lista já vem recortada por
   papel pelo servidor (D-060): o atendente só recebe paciente que ele poderia abrir
 - `ConversationItem` (ver COMPONENTS): avatar iniciais, nome, hora (sálvia-700 se não lidas), prévia truncada 1 linha, badge contagem, chips de status
+- **Fixar (Onda 8 §2.3):** alfinete à direita de cada item — `POST/DELETE /conversations/:id/pin`.
+  O pin é **pessoal**: fixadas vêm primeiro na SUA lista e nada muda para as colegas. Os chips
+  não mudam de número (fixar organiza, não filtra)
 - Dados: `GET /conversations` + WS `conversation.new_message` (refetch)
 
 ### Coluna 2 — Conversa
-- Header: nome, telefone, botões [Transferir] [Novo Orçamento] [Arquivar]
+- Header: nome, telefone, botões [Transferir ▾] [Novo Orçamento] [Arquivar]
+- **[Transferir ▾] abre menu** (Onda 8 §2.1) com as colegas que podem receber
+  (`GET /conversations/assignees`) e "Devolver para a fila". O rótulo é "Atribuir" enquanto a
+  conversa está livre. Quem já é dona não aparece na lista. Os dois caminhos são o mesmo
+  `PATCH /conversations/:id` — alçada e mensagem de sistema são do backend
 - Bolhas: recebida / enviada / evento de sistema (3 tipos, máx. 62% largura)
-- Composer: input pílula + anexos + enviar
+- Composer: input pílula + anexos + **emoji** + enviar. O emoji entra na posição do cursor
+  (Onda 8 §2.2), grade fixa de 48, sem dependência nova
 - Dados: `GET /conversations/:id`, `POST /conversations/:id/messages`
 - Ao abrir: `markAsRead`
 

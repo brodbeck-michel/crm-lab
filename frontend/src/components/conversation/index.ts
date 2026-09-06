@@ -9,3 +9,5 @@ export {
 export type { MessageBubbleProps, MessageBubbleType } from './MessageBubble';
 export { Composer } from './Composer';
 export type { ComposerProps } from './Composer';
+export { EmojiPicker, EMOJIS } from './EmojiPicker';
+export type { EmojiPickerProps } from './EmojiPicker';

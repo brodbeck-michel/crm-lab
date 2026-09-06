@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { ConversationDetail, Message } from '@crm-lab/shared';
 import { ConversationPanel } from './ConversationPanel';
@@ -26,6 +27,7 @@ const CONVERSATION: ConversationDetail = {
   lastMessagePreview: null,
   lastMessageAt: '2026-08-23T09:12:00Z',
   tags: [],
+  pinned: false,
   customFields: {},
   createdAt: '2026-08-20T10:00:00Z',
 };
@@ -55,8 +57,11 @@ function props(messages: Message[]): ConversationPanelProps {
     onRetry: vi.fn(),
     onSend: vi.fn(),
     sending: false,
-    onTransfer: vi.fn(),
-    transferLabel: 'Transferir',
+    assignees: [
+      { id: 'u-1', name: 'Marina', role: 'attendant' },
+      { id: 'u-2', name: 'Bruno', role: 'manager' },
+    ],
+    onAssign: vi.fn(),
     onNewBudget: vi.fn(),
     onArchive: vi.fn(),
     onToggleContext: vi.fn(),
@@ -111,5 +116,44 @@ describe('ConversationPanel — rolagem', () => {
     expect(
       screen.getByRole('button', { name: 'Carregar mensagens anteriores' }),
     ).toBeInTheDocument();
+  });
+});
+
+describe('ConversationPanel — menu de transferência', () => {
+  it('lista as colegas e "Devolver para a fila", sem quem já é dona da conversa', async () => {
+    const user = userEvent.setup();
+    const onAssign = vi.fn();
+    render(<ConversationPanel {...props([message('m-1')])} onAssign={onAssign} />);
+
+    await user.click(screen.getByRole('button', { name: 'Transferir' }));
+
+    // A conversa é da Marina (`assignedTo: 'u-1'`): ela não aparece na lista.
+    expect(screen.queryByRole('menuitem', { name: 'Marina' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('menuitem', { name: 'Bruno' }));
+    expect(onAssign).toHaveBeenCalledWith('u-2');
+  });
+
+  it('devolver para a fila chama onAssign(null)', async () => {
+    const user = userEvent.setup();
+    const onAssign = vi.fn();
+    render(<ConversationPanel {...props([message('m-1')])} onAssign={onAssign} />);
+
+    await user.click(screen.getByRole('button', { name: 'Transferir' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Devolver para a fila' }));
+    expect(onAssign).toHaveBeenCalledWith(null);
+  });
+
+  it('conversa livre: botão "Atribuir" e nenhuma opção de devolver à fila', async () => {
+    const user = userEvent.setup();
+    render(
+      <ConversationPanel
+        {...props([message('m-1')])}
+        conversation={{ ...CONVERSATION, assignedTo: null, assignedToName: null }}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Atribuir' }));
+    expect(screen.getByRole('menuitem', { name: 'Marina' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Devolver para a fila' })).not.toBeInTheDocument();
   });
 });

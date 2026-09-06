@@ -3,6 +3,7 @@ import type {
   CreateConversationResponse,
   CreateMessageRequest,
   GetConversationResponse,
+  ListAssigneesResponse,
   ListConversationsQuery,
   ListConversationsResponse,
   Message,
@@ -31,9 +32,18 @@ export const conversationsApi = {
   update: (id: string, body: UpdateConversationRequest) =>
     http.patch<UpdateConversationResponse>(`/conversations/${id}`, body),
 
+  /** Quem pode receber conversa — a lista do menu "Transferir". */
+  assignees: () => http.get<ListAssigneesResponse>('/conversations/assignees'),
+
   /** Atribuir a si mesmo / a outro atendente — `PATCH /conversations/:id`. */
   assign: (id: string, assignedTo: string | null) =>
     http.patch<UpdateConversationResponse>(`/conversations/${id}`, { assignedTo }),
+
+  /** Fixar/desafixar para o usuário logado — o pin é pessoal (Onda 8 §2.3). */
+  setPinned: (id: string, pinned: boolean) =>
+    pinned
+      ? http.post<void>(`/conversations/${id}/pin`, {})
+      : http.delete<void>(`/conversations/${id}/pin`),
 
   archive: (id: string) =>
     http.patch<UpdateConversationResponse>(`/conversations/${id}`, { status: 'archived' }),

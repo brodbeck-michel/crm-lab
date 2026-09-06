@@ -83,6 +83,8 @@ interface ConversationRow {
   tags: unknown;
   custom_fields: unknown;
   created_at: Date | string;
+  /** So a LISTAGEM traz (o pin depende de QUEM pediu) — ver `list`. */
+  pinned?: boolean | null;
 }
 
 const LIST_COLUMNS = `c.id, c.patient_id, c.patient_name, c.patient_phone, c.patient_email, c.assigned_to,
@@ -157,6 +159,9 @@ export function toConversation(row: ConversationRow): Conversation {
     lastMessagePreview: row.last_message_preview,
     lastMessageAt: toIsoOrNull(row.last_message_at),
     tags: toStringArray(row.tags),
+    // rangel: `false` fora da listagem. O pin e por usuario e so a lista sabe
+    // quem perguntou; o detalhe nao tem consumidor para o campo (Onda 8 §2.3).
+    pinned: row.pinned === true,
     createdAt: toIso(row.created_at),
   };
 }
@@ -283,10 +288,18 @@ export class ConversationRepository {
       const counts = counted.rows[0];
 
       const offset = (criteria.page - 1) * criteria.limit;
+      // O pin e PESSOAL: o JOIN casa so os pins de quem pediu, e por isso a
+      // MESMA conversa sai `pinned: true` para uma atendente e `false` para as
+      // outras. Fixadas primeiro; dentro de cada grupo vale a ordenacao pedida.
+      const pinParam = `$${params.length + 1}`;
       const paged = await tx.query<ConversationRow>(
-        `SELECT ${LIST_COLUMNS} ${LIST_FROM} ${whereSql} ${orderSql}
-         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
-        [...params, criteria.limit, offset],
+        `SELECT ${LIST_COLUMNS}, (pin.user_id IS NOT NULL) AS pinned
+         ${LIST_FROM}
+         LEFT JOIN conversation_pins pin
+                ON pin.conversation_id = c.id AND pin.user_id = ${pinParam}
+         ${whereSql} ${orderSql.replace('ORDER BY', 'ORDER BY pinned DESC,')}
+         LIMIT $${params.length + 2} OFFSET $${params.length + 3}`,
+        [...params, criteria.userId, criteria.limit, offset],
       );
 
       return {
@@ -460,6 +473,31 @@ export class ConversationRepository {
       const changedId = updated.rows[0]?.id;
       return changedId ? selectDetail(tx, changedId) : null;
     });
+  }
+
+  /**
+   * Fixa a conversa para UM usuario. Idempotente pela chave natural
+   * `(user_id, conversation_id)` — fixar o que ja esta fixado nao e erro.
+   */
+  async pin(tenantId: string, id: string, userId: string): Promise<void> {
+    await this.db.withTenant(tenantId, (tx) =>
+      tx.query(
+        `INSERT INTO conversation_pins (tenant_id, user_id, conversation_id)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (user_id, conversation_id) DO NOTHING`,
+        [tenantId, userId, id],
+      ),
+    );
+  }
+
+  /** Desafixar o que nao esta fixado tambem e no-op — o DELETE afeta 0 linhas. */
+  async unpin(tenantId: string, id: string, userId: string): Promise<void> {
+    await this.db.withTenant(tenantId, (tx) =>
+      tx.query('DELETE FROM conversation_pins WHERE user_id = $1 AND conversation_id = $2', [
+        userId,
+        id,
+      ]),
+    );
   }
 
   /**

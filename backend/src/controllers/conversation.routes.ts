@@ -2,11 +2,14 @@
  * Rotas de conversas — API_CONTRACTS.md §2.
  *
  *   GET   /api/v1/conversations             lista + counts dos chips
+ *   GET   /api/v1/conversations/assignees   quem pode receber conversa (menu Transferir)
  *   POST  /api/v1/conversations             atendimento manual (201)
  *   GET   /api/v1/conversations/:id         conversa + mensagens (marca como lida)
  *   POST  /api/v1/conversations/:id/messages  envia mensagem (201)
  *   PATCH /api/v1/conversations/:id         status / assignedTo / tags
  *   POST  /api/v1/conversations/:id/read    zera o contador de nao lidas (204)
+ *   POST  /api/v1/conversations/:id/pin     fixa a conversa para o usuario (204)
+ *   DELETE /api/v1/conversations/:id/pin    desafixa (204)
  *
  * `denyPlatformOperator()` em TODAS elas. PAGES.md §11 e explicito: o console
  * da plataforma nao acessa conversas nem pacientes — "requisito, nao
@@ -21,6 +24,7 @@ import type {
   CreateConversationRequest,
   CreateConversationResponse,
   GetConversationResponse,
+  ListAssigneesResponse,
   ListConversationsQuery,
   ListConversationsResponse,
   Message,
@@ -155,6 +159,15 @@ export function listConversations(service: ConversationService): RequestHandler 
   });
 }
 
+export function listAssignees(service: ConversationService): RequestHandler {
+  return handle(async (req, res) => {
+    const body: ListAssigneesResponse = {
+      assignees: await service.listAssignees(getContext(req)),
+    };
+    res.status(200).json(body);
+  });
+}
+
 export function getConversation(services: ConversationServices): RequestHandler {
   return handle(async (req, res) => {
     const ctx = getContext(req);
@@ -230,6 +243,18 @@ export function updateConversation(service: ConversationService): RequestHandler
   });
 }
 
+/** `POST /:id/pin` e `DELETE /:id/pin` — o mesmo handler, dois verbos. */
+export function setConversationPinned(
+  service: ConversationService,
+  pinned: boolean,
+): RequestHandler {
+  return handle(async (req, res) => {
+    const { id } = validated<{ id: string }>(req, 'params');
+    await service.setPinned(getContext(req), id, pinned);
+    res.status(204).end();
+  });
+}
+
 export function markConversationAsRead(service: ConversationService): RequestHandler {
   return handle(async (req, res) => {
     const ctx = getContext(req);
@@ -276,6 +301,10 @@ function buildConversationModule(
     createConversation(services.conversations),
   );
 
+  // ANTES de `/:id`: registrada depois, o validador de uuid rejeitaria
+  // "assignees" com 400 antes de este handler existir para o Express.
+  router.get('/assignees', ...guards, listAssignees(services.conversations));
+
   router.get(
     '/:id',
     ...guards,
@@ -298,6 +327,20 @@ function buildConversationModule(
     validate(conversationIdParamSchema, 'params'),
     validate(updateConversationSchema, 'body'),
     updateConversation(services.conversations),
+  );
+
+  router.post(
+    '/:id/pin',
+    ...guards,
+    validate(conversationIdParamSchema, 'params'),
+    setConversationPinned(services.conversations, true),
+  );
+
+  router.delete(
+    '/:id/pin',
+    ...guards,
+    validate(conversationIdParamSchema, 'params'),
+    setConversationPinned(services.conversations, false),
   );
 
   router.post(

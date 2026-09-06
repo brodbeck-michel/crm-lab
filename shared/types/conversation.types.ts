@@ -1,4 +1,5 @@
 import type { IsoDateTime, PaginationMeta, PaginationQuery } from './api.types.js';
+import type { UserRole } from './auth.types.js';
 
 export type ConversationStatus = 'active' | 'archived' | 'closed';
 export type ConversationChannel = 'whatsapp' | 'sms' | 'web' | 'direct';
@@ -28,6 +29,12 @@ export interface Conversation {
   lastMessagePreview: string | null;
   lastMessageAt: IsoDateTime | null;
   tags: string[];
+  /**
+   * Fixada no topo da lista **por quem pediu** (Onda 8 §2.3). A MESMA conversa
+   * vem `true` para quem fixou e `false` para as colegas: pin e pessoal, nao
+   * estado compartilhado da conversa.
+   */
+  pinned: boolean;
   createdAt: IsoDateTime;
 }
 
@@ -90,6 +97,21 @@ export interface CreateMessageRequest {
   content: string;
   messageType?: MessageType;
   attachmentUrl?: string | null;
+}
+
+/**
+ * Quem pode receber uma conversa — `GET /conversations/assignees`.
+ * So id, nome e papel: a lista alimenta o menu "Transferir", nao a tela de
+ * usuarios (que continua admin-only em `GET /users`).
+ */
+export interface ConversationAssignee {
+  id: string;
+  name: string;
+  role: Exclude<UserRole, 'platform_operator'>;
+}
+
+export interface ListAssigneesResponse {
+  assignees: ConversationAssignee[];
 }
 
 export interface UpdateConversationRequest {

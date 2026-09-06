@@ -129,6 +129,17 @@ export function Attendance() {
     onError: handleApiError,
   });
 
+  /**
+   * Fixar é PESSOAL e não muda os counts (Onda 8 §2.3): basta reconsultar a
+   * listagem, que já devolve `pinned` do usuário e as fixadas primeiro.
+   */
+  const togglePin = useMutation({
+    mutationFn: ({ id, pinned }: { id: string; pinned: boolean }) =>
+      api.conversations.setPinned(id, pinned),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryScopes.conversations }),
+    onError: handleApiError,
+  });
+
   const archive = useMutation({
     mutationFn: () => api.conversations.archive(selectedId as string),
     onSuccess: async () => {
@@ -140,18 +151,30 @@ export function Attendance() {
   });
 
   /**
-   * "Transferir" na distribuição manual (PAGES.md §10) é devolver a conversa
-   * para a fila livre — de lá qualquer atendente assume. Quando a conversa JÁ
-   * está na fila, o mesmo botão vira "Assumir".
+   * Transferir (spec Onda 8 §2.1): o botão abre o menu com as colegas e com
+   * "Devolver para a fila" (`assignedTo: null`). Os dois caminhos são o MESMO
+   * `PATCH /conversations/:id` — quem valida alçada e gera a mensagem de
+   * sistema é o backend.
    */
-  const isMine = conversation?.assignedTo != null && conversation.assignedTo === currentUser?.id;
-  const transfer = useMutation({
-    mutationFn: () =>
-      api.conversations.assign(selectedId as string, isMine ? null : (currentUser?.id ?? null)),
-    onSuccess: async () => {
-      toast(isMine ? 'Conversa devolvida à fila.' : 'Conversa atribuída a você.', {
-        tone: 'positive',
-      });
+  const assigneesQuery = useQuery({
+    queryKey: queryKeys.conversationAssignees(),
+    queryFn: () => api.conversations.assignees(),
+    staleTime: staleTimes.patients,
+  });
+
+  const assign = useMutation({
+    mutationFn: (userId: string | null) =>
+      api.conversations.assign(selectedId as string, userId),
+    onSuccess: async (_data, userId) => {
+      const name = assigneesQuery.data?.assignees.find((a) => a.id === userId)?.name;
+      toast(
+        userId === null
+          ? 'Conversa devolvida à fila.'
+          : userId === currentUser?.id
+            ? 'Conversa atribuída a você.'
+            : `Conversa transferida para ${name ?? 'a colega escolhida'}.`,
+        { tone: 'positive' },
+      );
       await invalidateConversation();
     },
     onError: handleApiError,
@@ -171,6 +194,7 @@ export function Attendance() {
           isLoading={listQuery.isPending}
           isError={listQuery.isError}
           onRetry={() => void listQuery.refetch()}
+          onTogglePin={(id, pinned) => togglePin.mutate({ id, pinned })}
           searchTerm={patientTerm.length >= PATIENT_SEARCH_MIN ? patientTerm : ''}
           patients={patientsQuery.data?.patients ?? []}
           patientsLoading={patientsQuery.isPending}
@@ -186,8 +210,8 @@ export function Attendance() {
           onRetry={() => void detailQuery.refetch()}
           onSend={(content) => sendMessage.mutate(content)}
           sending={sendMessage.isPending}
-          onTransfer={() => transfer.mutate()}
-          transferLabel={isMine ? 'Transferir' : 'Assumir'}
+          assignees={assigneesQuery.data?.assignees ?? []}
+          onAssign={(userId) => assign.mutate(userId)}
           onNewBudget={() => navigate(`/budget/new?conversationId=${selectedId ?? ''}`)}
           onArchive={() => archive.mutate()}
           onToggleContext={toggleContextPanel}

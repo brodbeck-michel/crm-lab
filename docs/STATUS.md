@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-05 (webhook do Evolution funcionando ponta a ponta com número real; falta a Fase 4, validação independente)
+**Última atualização:** 2026-09-05 (Onda 8 §2 entregue: transferência com menu, emoji e fixar conversa)
 
 ---
 
@@ -194,6 +194,19 @@ npm run dev                           # API :3000 + UI :5173
 Para a suíte E2E: `npm run seed:e2e` e, se o container `evolution` estiver de pé,
 `docker compose stop evolution` — o fluxo 14 sobe um gateway falso na porta 8080 e
 falha na subida (nunca em silêncio) se ela estiver ocupada.
+
+---
+
+## Onda 8 — Ferramentas de atendimento (transferência, emoji, fixar, macros, mídia) 🔄 (em andamento)
+
+Spec: `docs/superpowers/specs/2026-09-05-onda-8-atendimento-design.md`. Entrega em 3 ondas, do
+barato ao caro; cada uma commitada, testada e usável antes da seguinte.
+
+| Tarefa | Domínio | Status | Agente | Notas |
+|--------|---------|--------|--------|-------|
+| §2 Onda 1 — transferência, emoji e fixar | api + db + ui + qa | ✅ 2026-09-05 | coordenador | **Transferir:** o botão virou menu com as colegas + "Devolver para a fila"; rótulo "Atribuir" enquanto a conversa está livre, e quem já é dona não aparece na lista. Endpoint novo `GET /conversations/assignees` (qualquer papel de tenant, só `id`/`name`/`role`) — sem ele o menu ficaria vazio justamente para a atendente, já que `GET /users` é admin-only; afrouxar o `/users` existente vazaria a lista de pessoal inteira. A transferência em si continua sendo `PATCH /conversations/:id`: `assertCanReassign`, mensagem de sistema e audit log já existiam e só passaram a ser alcançáveis. **Emoji:** `EmojiPicker` novo, grade fixa de 48 com `aria-label` em pt-BR, **sem dependência**; insere na posição do cursor e `Esc` devolve o foco ao campo. **Fixar:** migração `007_conversation_pins.sql` (tabela + policy no mesmo arquivo — sem backfill, nada a proteger), RLS fail-closed provada com 2 tenants; `POST`/`DELETE /conversations/:id/pin` idempotentes (204); `GET /conversations` passa a devolver `pinned` **do usuário que pediu** e ordena fixadas primeiro, sem mexer nos counts dos chips. Pin é pessoal — tabela e não coluna, senão uma atendente entupiria o topo da lista das outras. **Um achado que só o navegador revelou:** a lista tinha N botões "Fixar conversa" idênticos — ambíguo para leitor de tela e impossível de endereçar; o rótulo passou a nomear a conversa (`Fixar conversa com <paciente>`). Inventário de isolamento: 49 → **52** rotas. Backend 866/866, frontend 814/814, `npm run typecheck` verde nos 4 workspaces, `flow-15-onda8-atendimento` (3 testes) verde no Chromium contra a stack de dev |
+| §3 Onda 2 — macros (respostas rápidas) | — | ⬜ | — | Não iniciar antes de validar e commitar a Onda 1 (decisão do lead) |
+| §4 Onda 3 — mídia (anexo e áudio) | — | ⬜ | — | Depende de armazenamento, que não existe no projeto hoje |
 
 ---
 

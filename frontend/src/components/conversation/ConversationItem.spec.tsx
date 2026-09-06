@@ -26,6 +26,7 @@ function conversation(overrides: Partial<Conversation> = {}): Conversation {
     lastMessagePreview: 'Quanto fica hemograma, TSH e vitamina D?',
     lastMessageAt: '2026-08-23T09:12:00Z',
     tags: ['Orçamento'],
+    pinned: false,
     createdAt: '2026-08-20T10:00:00Z',
     ...overrides,
   };
@@ -117,5 +118,49 @@ describe('ConversationItem', () => {
 
     await userEvent.click(screen.getByTestId('conversation-item'));
     expect(onClick).toHaveBeenCalledWith('c-1');
+  });
+});
+
+describe('ConversationItem — fixar (Onda 8 §2.3)', () => {
+  it('sem `onTogglePin` não existe botão de fixar (nada de botão morto)', () => {
+    render(<ConversationItem conversation={conversation()} now={NOW} />);
+    expect(screen.queryByRole('button', { name: /fixar/i })).not.toBeInTheDocument();
+  });
+
+  it('fixar chama o handler com o estado NOVO, e desafixar com o inverso', async () => {
+    const user = userEvent.setup();
+    const onTogglePin = vi.fn();
+
+    const { rerender } = render(
+      <ConversationItem conversation={conversation()} now={NOW} onTogglePin={onTogglePin} />,
+    );
+    await user.click(screen.getByRole('button', { name: 'Fixar conversa com Marina Alves' }));
+    expect(onTogglePin).toHaveBeenCalledWith('c-1', true);
+
+    rerender(
+      <ConversationItem
+        conversation={conversation({ pinned: true })}
+        now={NOW}
+        onTogglePin={onTogglePin}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: 'Desafixar conversa com Marina Alves' }));
+    expect(onTogglePin).toHaveBeenLastCalledWith('c-1', false);
+  });
+
+  it('fixar NÃO abre a conversa — o clique não vaza para o item', async () => {
+    const user = userEvent.setup();
+    const onClick = vi.fn();
+    render(
+      <ConversationItem
+        conversation={conversation()}
+        now={NOW}
+        onClick={onClick}
+        onTogglePin={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Fixar conversa com Marina Alves' }));
+    expect(onClick).not.toHaveBeenCalled();
   });
 });

@@ -119,6 +119,12 @@ renderiza. "Não sei onde mostrar" nunca pode virar silêncio.
 |--------|------|--------|
 | `CHANNEL_QR_UNAVAILABLE` | 503 | `EVOLUTION_API_URL`, `EVOLUTION_API_KEY` ou `EVOLUTION_WEBHOOK_TOKEN` ausentes, ou o gateway falhou. Nas 4 rotas de `/settings/channels/whatsapp/*` (API_CONTRACTS.md §6.1) — nunca crash, nunca 500. **Exceção:** instância ausente no gateway (404 `does not exist`) **não** é este erro — `/qr` e `/status` devolvem `disconnected` (200) para a tela conseguir reconectar |
 
+## Mídia — anexo e áudio (Onda 8 §4)
+
+| Código | HTTP | Quando |
+|--------|------|--------|
+| `MEDIA_TOO_LARGE` | 413 | `POST /conversations/:id/attachments` com arquivo acima de 15 MiB (`details: { byteSize, max }`). Nunca grava mensagem |
+
 ## Convênios e preço por convênio (Onda 7)
 
 Sem código novo além do acima: `/insurances` e `/exams/:id/prices` reusam o catálogo geral —

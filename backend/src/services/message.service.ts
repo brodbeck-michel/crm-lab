@@ -53,6 +53,7 @@ import type {
   CreateMessageRequest,
   Message,
   MessageStatus,
+  MessageType,
   PaginationMeta,
 } from '@crm-lab/shared';
 import type { ApiModuleDeps } from '../http/api-module.js';
@@ -62,6 +63,22 @@ import type { WsHub } from '../lib/ws-hub.js';
 import { ConversationRepository } from '../repositories/conversation.repository.js';
 import { MessageRepository } from '../repositories/message.repository.js';
 import { createWhatsAppService, type WhatsAppService } from './whatsapp.service.js';
+
+/** `image/jpeg` -> `'image'`; `audio/*` -> `'audio'`; `application/pdf` -> `'pdf'`; resto -> `'doc'`. */
+function messageTypeFromMime(mimeType: string): MessageType {
+  if (mimeType.startsWith('image/')) return 'image';
+  if (mimeType.startsWith('audio/')) return 'audio';
+  if (mimeType === 'application/pdf') return 'pdf';
+  return 'doc';
+}
+
+/** Anexo do atendente — o mesmo DTO que `MediaService.storeOutbound` produziu. */
+export interface OutboundAttachmentInput {
+  fileName: string;
+  mimeType: string;
+  attachmentUrl: string;
+  buffer: Buffer;
+}
 
 export const DEFAULT_MESSAGE_PAGE = 1;
 export const DEFAULT_MESSAGE_LIMIT = 50;
@@ -185,6 +202,55 @@ export class MessageService {
       // Retry ja esgotado dentro do adapter (3 tentativas, backoff exponencial).
       await this.messages.setStatus(tenantId, message.id, 'failed');
       logger.error('whatsapp.send_failed', {
+        tenantId,
+        conversationId,
+        messageId: message.id,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+      throw new BusinessError('MESSAGE_SEND_FAILED', { messageId: message.id });
+    }
+  }
+
+  /**
+   * Anexo do atendente (Onda 8 §4.3) — mesma disciplina de `createFromAgent`,
+   * mas o corpo enviado ao canal é o BUFFER da mídia, não texto.
+   */
+  async createAttachmentFromAgent(
+    tenantId: string,
+    conversationId: string,
+    senderId: string,
+    dto: OutboundAttachmentInput,
+  ): Promise<Message> {
+    const conversation = await this.conversations.findById(tenantId, conversationId);
+    if (!conversation) throw notFound({ resource: 'conversation', id: conversationId });
+    if (conversation.status !== 'active') {
+      throw new BusinessError('CONVERSATION_ARCHIVED', { status: conversation.status });
+    }
+
+    const message = await this.messages.insert(tenantId, {
+      conversationId,
+      senderType: 'agent',
+      senderId,
+      content: dto.fileName,
+      messageType: messageTypeFromMime(dto.mimeType),
+      attachmentUrl: dto.attachmentUrl,
+      status: 'sent',
+    });
+    this.emitNewMessage(tenantId, conversationId, message.id);
+
+    if (!this.whatsapp || conversation.channel !== 'whatsapp') return message;
+
+    try {
+      const { externalId } = await this.whatsapp.sendMedia(tenantId, conversation.patientPhone, {
+        buffer: dto.buffer,
+        mimeType: dto.mimeType,
+        fileName: dto.fileName,
+      });
+      const updated = await this.messages.setStatus(tenantId, message.id, 'sent', externalId);
+      return updated ?? message;
+    } catch (err) {
+      await this.messages.setStatus(tenantId, message.id, 'failed');
+      logger.error('whatsapp.send_media_failed', {
         tenantId,
         conversationId,
         messageId: message.id,

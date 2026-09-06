@@ -88,6 +88,10 @@ function fakeEvolutionClient(): EvolutionClient & {
       lastSendApikey = apikey;
       return { externalId: `evo-${instanceName}-${Date.now()}` };
     },
+    async sendMedia(instanceName: string, _phone, _media, apikey: string) {
+      lastSendApikey = apikey;
+      return { externalId: `evo-media-${instanceName}-${Date.now()}` };
+    },
   };
 }
 
@@ -113,6 +117,7 @@ function missingInstanceClient(): EvolutionClient {
     getStatus: notFound,
     logout: notFound,
     sendText: async () => ({ externalId: 'x' }),
+    sendMedia: async () => ({ externalId: 'x' }),
   };
 }
 
@@ -125,6 +130,7 @@ function brokenGatewayClient(): EvolutionClient {
     getStatus: boom,
     logout: boom,
     sendText: async () => ({ externalId: 'x' }),
+    sendMedia: async () => ({ externalId: 'x' }),
   };
 }
 

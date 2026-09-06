@@ -1,4 +1,5 @@
 import type {
+  CreateAttachmentRequest,
   CreateConversationRequest,
   CreateConversationResponse,
   CreateMessageRequest,
@@ -28,6 +29,10 @@ export const conversationsApi = {
 
   sendMessage: (id: string, body: CreateMessageRequest) =>
     http.post<Message>(`/conversations/${id}/messages`, body),
+
+  /** Anexo — base64 em JSON, não multipart (Onda 8 §4.3). */
+  sendAttachment: (id: string, body: CreateAttachmentRequest) =>
+    http.post<Message>(`/conversations/${id}/attachments`, body),
 
   update: (id: string, body: UpdateConversationRequest) =>
     http.patch<UpdateConversationResponse>(`/conversations/${id}`, body),

@@ -999,6 +999,40 @@ para a mensagem no momento do envio. O audit log guarda o conteúdo apagado.
 
 ---
 
+### 23. `message_media` (migração 009 — Onda 8 §4)
+Mídia de mensagem (foto, PDF, áudio) — o arquivo em si fica em disco (`MEDIA_DIR`,
+volume local, sem MinIO/S3 nesta onda); esta tabela guarda só o metadado.
+
+```sql
+CREATE TABLE message_media (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id   UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  message_id  UUID REFERENCES messages(id) ON DELETE CASCADE,
+  mime_type   TEXT NOT NULL,
+  file_name   TEXT NOT NULL,
+  byte_size   INTEGER NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX message_media_tenant_lookup ON message_media (tenant_id);
+```
+
+**`message_id` é NULLABLE de propósito.** O arquivo é gravado em disco — com o nome
+IGUAL ao `id` desta linha — antes de a mensagem existir, porque `messages.attachment_url`
+precisa do id para ser montado (`/api/v1/media/<id>`). A ordem é: insere a linha (sem
+`message_id`) → grava o arquivo → cria a mensagem com o `attachmentUrl` já resolvido →
+`UPDATE message_media SET message_id = ...`.
+
+**`file_name` nunca vira nome de arquivo em disco.** O arquivo é nomeado pelo `id`
+(UUID gerado pelo Postgres); `file_name` é só o que a tela mostra. Aceitar o nome que o
+usuário mandou no CAMINHO do disco é travessia de diretório pronta.
+
+`GET /media/:id` nunca é servido como arquivo estático público (`express.static`
+apontando para a pasta) — é exame e áudio de paciente, e UUID adivinhado sobre uma pasta
+estática seria vazamento de dado de saúde sem passar por autenticação nem por RLS.
+
+---
+
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
 
 O isolamento multitenant não é convenção: é imposto pelo banco. O backend conecta com o papel
@@ -1164,6 +1198,7 @@ migrations/
 ├── 006_rls_onda7.sql             # policies das 3 tabelas da 005
 ├── 007_conversation_pins.sql     # conversation_pins + policy (Onda 8 §2.3)
 ├── 008_quick_replies.sql         # quick_replies + policy (Onda 8 §3.2)
+├── 009_message_media.sql         # message_media + policy (Onda 8 §4)
 └── ...
 ```
 

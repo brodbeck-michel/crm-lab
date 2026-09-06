@@ -36,6 +36,7 @@ import { operationModule } from '../controllers/operation.routes.js';
 import { patientModule } from '../controllers/patient.routes.js';
 import { insuranceModule } from '../controllers/insurance.routes.js';
 import { quickReplyModule } from '../controllers/quick-reply.routes.js';
+import { mediaModule } from '../controllers/media.routes.js';
 
 export const apiModuleFactories: ApiModuleFactory[] = [
   examModule, // GET/POST/PATCH /exams — API_CONTRACTS.md §4
@@ -54,5 +55,6 @@ export const apiModuleFactories: ApiModuleFactory[] = [
   operationModule, // GET /operations/overview — API_CONTRACTS.md §7
   insuranceModule, // GET|POST /insurances, PATCH /insurances/:id — API_CONTRACTS.md §8
   quickReplyModule, // GET|POST /quick-replies, PATCH|DELETE /quick-replies/:id — API_CONTRACTS.md §9
+  mediaModule, // GET /media/:id — API_CONTRACTS.md §2d (Onda 8 §4)
   // <- agentes de API: adicione o factory do seu modulo aqui
 ];

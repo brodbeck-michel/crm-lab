@@ -29,6 +29,10 @@ class FlakyDriver implements WhatsAppDriver {
     if (this.calls <= this.failures) throw new Error('502 do gateway');
     return { externalId: `wamid.ok.${this.calls}` };
   }
+
+  async sendMedia(): Promise<{ externalId: string }> {
+    return this.send();
+  }
 }
 
 /** Atrasos coletados sem esperar de verdade. */

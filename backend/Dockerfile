@@ -94,7 +94,16 @@ RUN mkdir -p node_modules/@crm-lab/shared \
  && printf '%s\n' '{ "name": "crm-lab-backend-runtime", "private": true, "type": "module" }' \
       > package.json
 
-# `node` (uid 1000) ja existe na imagem base. Nada e escrito em disco em runtime.
+# `/data/media` (Onda 8 §4 — MEDIA_DIR) e a UNICA escrita em disco em runtime,
+# via o volume nomeado `media-data` do compose de producao. O Docker copia o
+# conteudo (e a permissao) deste diretorio da IMAGEM para dentro do volume na
+# primeira montagem — por isso ele precisa existir e ja pertencer a `node`
+# AQUI, antes do volume nascer, senao a primeira escrita falha com EACCES
+# (o mount point de um volume nomeado nasce `root:root` por padrao).
+RUN mkdir -p /data/media && chown node:node /data/media
+
+# `node` (uid 1000) ja existe na imagem base. Fora de `/data/media` (acima) e
+# `/tmp` (tmpfs do compose), nada mais e escrito em disco em runtime.
 USER node
 
 EXPOSE 3000

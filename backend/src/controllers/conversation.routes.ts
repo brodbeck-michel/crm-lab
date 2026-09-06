@@ -7,6 +7,7 @@
  *   GET   /api/v1/conversations/:id         conversa + mensagens (marca como lida)
  *   POST  /api/v1/conversations/:id/messages  envia mensagem (201)
  *   PATCH /api/v1/conversations/:id         status / assignedTo / tags
+ *   POST  /api/v1/conversations/:id/attachments  anexo (base64 em JSON, 201)
  *   POST  /api/v1/conversations/:id/read    zera o contador de nao lidas (204)
  *   POST  /api/v1/conversations/:id/pin     fixa a conversa para o usuario (204)
  *   DELETE /api/v1/conversations/:id/pin    desafixa (204)
@@ -21,6 +22,7 @@
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { z } from 'zod';
 import type {
+  CreateAttachmentRequest,
   CreateConversationRequest,
   CreateConversationResponse,
   GetConversationResponse,
@@ -36,9 +38,11 @@ import { getContext } from '../http/context.js';
 import { denyPlatformOperator, requireAuth } from '../http/middleware/auth.js';
 import { validate, validated } from '../http/middleware/validate.js';
 import { ConversationRepository, phoneDigits } from '../repositories/conversation.repository.js';
+import { MediaRepository } from '../repositories/media.repository.js';
 import { MessageRepository } from '../repositories/message.repository.js';
 import { createAuditService } from '../services/audit.service.js';
 import { ConversationService, MAX_LIMIT } from '../services/conversation.service.js';
+import { MediaService } from '../services/media.service.js';
 import { MAX_MESSAGE_LIMIT, MessageService } from '../services/message.service.js';
 import { createWhatsAppService, type WhatsAppService } from '../services/whatsapp.service.js';
 
@@ -107,6 +111,17 @@ export const updateConversationSchema = z
 
 export const conversationIdParamSchema = z.object({ id: z.string().uuid() });
 
+/**
+ * Base64 em JSON, nao multipart (spec Onda 8 §4.3): Express 4 nao faz
+ * multipart sozinho, e o Evolution ja resolve mídia em base64 nos dois
+ * sentidos. O teto de tamanho e do `MediaService` — o zod so garante formato.
+ */
+export const createAttachmentSchema = z.object({
+  fileName: z.string().trim().min(1).max(255),
+  mimeType: z.string().trim().min(1).max(127),
+  contentBase64: z.string().min(1),
+});
+
 type CreateMessageBody = z.infer<typeof createMessageSchema>;
 type GetConversationQuery = z.infer<typeof getConversationQuerySchema>;
 
@@ -118,6 +133,7 @@ export interface ConversationModuleOverrides {
 export interface ConversationServices {
   conversations: ConversationService;
   messages: MessageService;
+  media: MediaService;
 }
 
 /** Monta services + repositorios a partir das dependencias do kernel. */
@@ -140,7 +156,8 @@ export function createConversationServices(
     messages,
     audit,
   });
-  return { conversations, messages };
+  const media = new MediaService(new MediaRepository(deps.db));
+  return { conversations, messages, media };
 }
 
 /** `Promise` rejeitada em handler async precisa chegar no error-handler. */
@@ -221,6 +238,34 @@ export function createMessage(services: ConversationServices): RequestHandler {
       ...(dto.messageType !== undefined ? { messageType: dto.messageType } : {}),
       ...(dto.attachmentUrl !== undefined ? { attachmentUrl: dto.attachmentUrl } : {}),
     });
+    res.status(201).json(message);
+  });
+}
+
+/**
+ * `POST /:id/attachments` (Onda 8 §4.3). Grava a mídia ANTES da mensagem (o
+ * id do arquivo em disco e da linha de `message_media` precisa existir para
+ * compor `attachmentUrl`), e só depois liga `message_media.message_id` à
+ * mensagem recém-criada.
+ */
+export function createAttachment(services: ConversationServices): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const { id } = validated<{ id: string }>(req, 'params');
+    const dto = validated<CreateAttachmentRequest>(req, 'body');
+
+    // Recorte por papel antes de gravar: 404 para conversa que nao e visivel.
+    await services.conversations.getById(ctx, id);
+
+    const stored = await services.media.storeOutbound(ctx.tenantId, dto);
+    const message = await services.messages.createAttachmentFromAgent(ctx.tenantId, id, ctx.userId, {
+      fileName: dto.fileName,
+      mimeType: dto.mimeType,
+      attachmentUrl: `/api/v1/media/${stored.id}`,
+      buffer: stored.buffer,
+    });
+    await services.media.attachToMessage(ctx.tenantId, stored.id, message.id);
+
     res.status(201).json(message);
   });
 }
@@ -327,6 +372,14 @@ function buildConversationModule(
     validate(conversationIdParamSchema, 'params'),
     validate(updateConversationSchema, 'body'),
     updateConversation(services.conversations),
+  );
+
+  router.post(
+    '/:id/attachments',
+    ...guards,
+    validate(conversationIdParamSchema, 'params'),
+    validate(createAttachmentSchema, 'body'),
+    createAttachment(services),
   );
 
   router.post(

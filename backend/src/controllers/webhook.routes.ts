@@ -43,9 +43,11 @@ import { evolutionInstanceName } from '../lib/evolution-client.js';
 import { logger } from '../lib/logger.js';
 import * as channelSettingsRepo from '../repositories/channel-settings.repository.js';
 import { ConversationRepository } from '../repositories/conversation.repository.js';
+import { MediaRepository } from '../repositories/media.repository.js';
 import { MessageRepository } from '../repositories/message.repository.js';
 import { createAuditService } from '../services/audit.service.js';
 import { ConversationService } from '../services/conversation.service.js';
+import { MediaService, messageTypeFromMime } from '../services/media.service.js';
 import { MessageService } from '../services/message.service.js';
 import {
   createWhatsAppService,
@@ -105,6 +107,7 @@ export interface WebhookServices {
   whatsapp: WhatsAppService;
   conversations: ConversationService;
   messages: MessageService;
+  media: MediaService;
 }
 
 export function createWebhookServices(
@@ -125,7 +128,8 @@ export function createWebhookServices(
     messages,
     audit: createAuditService(deps.db),
   });
-  return { whatsapp, conversations, messages };
+  const media = new MediaService(new MediaRepository(deps.db));
+  return { whatsapp, conversations, messages, media };
 }
 
 /**
@@ -358,11 +362,61 @@ async function authenticateEvolution(
   return { tenantId: credentials.tenantId };
 }
 
+/** Mídia reconhecida em `message.<key>Message` (Onda 8 §4.2). */
+interface EvolutionInboundMedia {
+  mimeType: string;
+  fileName: string;
+  base64: string;
+}
+
 interface EvolutionInboundMessage {
   phone: string;
   text: string;
+  media: EvolutionInboundMedia | null;
   name: string | null;
   externalId: string | null;
+}
+
+const MEDIA_MESSAGE_KEYS = ['imageMessage', 'audioMessage', 'documentMessage'] as const;
+
+const DEFAULT_MEDIA_NAME: Record<(typeof MEDIA_MESSAGE_KEYS)[number], string> = {
+  imageMessage: 'imagem',
+  audioMessage: 'audio',
+  documentMessage: 'documento',
+};
+
+/**
+ * `message.imageMessage`/`audioMessage`/`documentMessage`, com o base64
+ * habilitado no webhook (`base64: true`, `evolution-client.ts`). O CAMPO exato
+ * onde o gateway v2.3.7 coloca o base64 nao foi confirmado contra um payload
+ * real (spec Onda 8 §7.4 exige essa verificacao antes de fechar a onda) —
+ * este parser tolera as duas posicoes mais prováveis (`base64` dentro do
+ * proprio submessage, ou no nivel do `message`) para nao ficar preso a uma
+ * suposicao unica.
+ */
+function evolutionInboundMediaOf(message: Record<string, unknown> | null): EvolutionInboundMedia | null {
+  if (!message) return null;
+  const topLevelBase64 = asNonEmptyString(message.base64);
+
+  for (const key of MEDIA_MESSAGE_KEYS) {
+    const media = asRecord(message[key]);
+    if (!media) continue;
+    const base64 = asNonEmptyString(media.base64) ?? topLevelBase64;
+    if (!base64) continue;
+    const mimeType = asNonEmptyString(media.mimetype) ?? 'application/octet-stream';
+    const fileName = asNonEmptyString(media.fileName) ?? DEFAULT_MEDIA_NAME[key];
+    return { mimeType, fileName, base64 };
+  }
+  return null;
+}
+
+function mediaCaption(message: Record<string, unknown> | null): string | null {
+  if (!message) return null;
+  for (const key of MEDIA_MESSAGE_KEYS) {
+    const caption = asNonEmptyString(asRecord(message[key])?.caption);
+    if (caption) return caption;
+  }
+  return null;
 }
 
 /** `data` de um evento `MESSAGES_UPSERT`. `null` quando faltar telefone ou texto. */
@@ -395,14 +449,18 @@ function evolutionInboundOf(data: unknown): EvolutionInboundMessage | null {
   if (!phone) return null;
 
   const message = asRecord(record.message);
+  const media = evolutionInboundMediaOf(message);
   const text =
     (message && asNonEmptyString(message.conversation)) ??
-    (message && asNonEmptyString(asRecord(message.extendedTextMessage)?.text));
-  if (!text) return null;
+    (message && asNonEmptyString(asRecord(message.extendedTextMessage)?.text)) ??
+    mediaCaption(message);
+  if (!text && !media) return null;
 
   return {
     phone,
-    text,
+    // Sem legenda: o nome do arquivo vira o preview da conversa em vez de "".
+    text: text ?? media?.fileName ?? '',
+    media,
     name: asNonEmptyString(record.pushName),
     externalId: key ? asNonEmptyString(key.id) : null,
   };
@@ -506,12 +564,29 @@ export function evolutionInbound(services: WebhookServices, db: DbClient): Reque
             inbound.phone,
             inbound.name,
           );
-          await services.messages.createFromPatient(tenantId, conversation.id, {
-            content: inbound.text,
-            messageType: 'text',
-            attachmentUrl: null,
-            externalId: inbound.externalId,
-          });
+
+          if (inbound.media) {
+            // Mídia recusada (tamanho, §4.2 "recusa com log explicito"): a
+            // mensagem NAO e criada — nao ha o que mostrar sem o arquivo, mas
+            // o webhook responde 200 do mesmo jeito (`acknowledge` no fim).
+            const stored = await services.media.storeInbound(tenantId, inbound.media);
+            if (stored) {
+              const message = await services.messages.createFromPatient(tenantId, conversation.id, {
+                content: inbound.text,
+                messageType: messageTypeFromMime(inbound.media.mimeType),
+                attachmentUrl: `/api/v1/media/${stored.id}`,
+                externalId: inbound.externalId,
+              });
+              await services.media.attachToMessage(tenantId, stored.id, message.id);
+            }
+          } else {
+            await services.messages.createFromPatient(tenantId, conversation.id, {
+              content: inbound.text,
+              messageType: 'text',
+              attachmentUrl: null,
+              externalId: inbound.externalId,
+            });
+          }
         } catch (err) {
           logger.error('evolution.inbound_message_rejected', {
             tenantId,

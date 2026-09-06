@@ -41,6 +41,7 @@ import { conversationModule } from '../../src/controllers/conversation.routes.js
 import { examModule } from '../../src/controllers/exam.routes.js';
 import { insuranceModule } from '../../src/controllers/insurance.routes.js';
 import { internalChatModule } from '../../src/controllers/internal-chat.routes.js';
+import { mediaModule } from '../../src/controllers/media.routes.js';
 import { operationModule } from '../../src/controllers/operation.routes.js';
 import { patientModule } from '../../src/controllers/patient.routes.js';
 import { proposalModule } from '../../src/controllers/proposal.routes.js';
@@ -67,6 +68,7 @@ import {
   type PatientRecord,
 } from '../patients/helpers.js';
 import { MemoryCache } from '../../src/lib/cache.js';
+import { writeMediaFile } from '../../src/lib/media-storage.js';
 import { FakeWsHub } from '../helpers/fake-ws.js';
 import { createTestApp, type AuthenticatableUser, type TestApp } from '../helpers/test-app.js';
 import { getTestDb, resetDatabase } from '../helpers/test-db.js';
@@ -94,6 +96,9 @@ function fakeEvolutionClient(): EvolutionClient {
     async sendText() {
       return { externalId: 'evo-sonda' };
     },
+    async sendMedia() {
+      return { externalId: 'evo-sonda-media' };
+    },
   };
 }
 
@@ -106,6 +111,7 @@ const LAB_MODULES = [
   examModule,
   insuranceModule,
   internalChatModule,
+  mediaModule,
   operationModule,
   patientModule,
   proposalModule,
@@ -144,6 +150,8 @@ interface Lab {
   insurance: { id: string; name: string };
   /** Resposta rapida do laboratorio (Onda 8 §3). */
   quickReply: { id: string; content: string };
+  /** Mídia de mensagem (Onda 8 §4). */
+  media: { id: string };
 }
 
 interface LabRoute {
@@ -220,6 +228,15 @@ const LAB_ROUTES: readonly LabRoute[] = [
     ownStatus: 201,
   },
   { name: 'POST /conversations/:id/read', method: 'post', path: (l) => `/api/v1/conversations/${l.conversation.id}/read`, actor: 'attendant', addressable: true, ownStatus: 204 },
+  {
+    name: 'POST /conversations/:id/attachments',
+    method: 'post',
+    path: (l) => `/api/v1/conversations/${l.conversation.id}/attachments`,
+    body: () => ({ fileName: 'sonda.txt', mimeType: 'text/plain', contentBase64: 'eA==' }),
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 201,
+  },
 
   // --- propostas ---
   { name: 'GET /proposals', method: 'get', path: () => '/api/v1/proposals', actor: 'admin', addressable: false },
@@ -358,6 +375,16 @@ const LAB_ROUTES: readonly LabRoute[] = [
     actor: 'attendant',
     addressable: true,
     ownStatus: 204,
+  },
+
+  // --- mídia (Onda 8 §4) ---
+  {
+    name: 'GET /media/:id',
+    method: 'get',
+    path: (l) => `/api/v1/media/${l.media.id}`,
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 200,
   },
 
   // --- pacientes (Onda 6 — D-059..D-063) ---
@@ -616,6 +643,16 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     content: secret ? BETA_SECRETS.quickReply : `Coleta ${prefix}`,
   };
 
+  const mediaRow = await db.withoutTenant((tx) =>
+    tx.query<{ id: string }>(
+      `INSERT INTO message_media (tenant_id, mime_type, file_name, byte_size)
+       VALUES ($1, 'text/plain', 'sonda.txt', 5) RETURNING id`,
+      [tenant.id],
+    ),
+  );
+  const media = { id: mediaRow.rows[0]?.id as string };
+  await writeMediaFile(media.id, Buffer.from('sonda'));
+
   // O primeiro GET cria `#geral`/`#aprovacoes` do tenant (InternalChatService).
   const channels = await app.agent
     .get('/api/v1/internal-chat/channels')
@@ -639,6 +676,7 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     channel,
     insurance,
     quickReply,
+    media,
   };
 }
 
@@ -720,15 +758,16 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 56 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 58 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
     // `/settings/channels/whatsapp/*` (conexao por QR, Bloco B). Depois veio
     // `POST /conversations` (atendimento manual, fora do WhatsApp): +1. A Onda 8
     // soma 4: as 3 de `/conversations/assignees|:id/pin` e, na segunda onda, as
-    // 4 de `/quick-replies` (macros do Composer).
-    expect(LAB_ROUTES).toHaveLength(56);
+    // 4 de `/quick-replies` (macros do Composer). A terceira onda soma 2:
+    // `POST /conversations/:id/attachments` e `GET /media/:id`.
+    expect(LAB_ROUTES).toHaveLength(58);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

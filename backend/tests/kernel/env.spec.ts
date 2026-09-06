@@ -9,6 +9,9 @@ const PROD_BASE = {
   // D-076: cifra as credenciais de canal em repouso. Sem ela o boot de
   // producao falha — de proposito.
   CHANNEL_SECRET_KEY: 'z'.repeat(48),
+  // Onda 8 §4.1: mídia em disco. Obrigatoria em producao, mesma razao de
+  // CHANNEL_SECRET_KEY.
+  MEDIA_DIR: '/data/media',
 };
 
 describe('config/env', () => {
@@ -62,6 +65,12 @@ describe('config/env', () => {
     );
     // Fora de producao continua opcional: dev e CI sobem sem chave nenhuma.
     expect(loadEnv({ NODE_ENV: 'development' }).CHANNEL_SECRET_KEY).toBeUndefined();
+  });
+
+  it('exige MEDIA_DIR em producao (Onda 8 §4.1)', () => {
+    expect(() => loadEnv({ ...PROD_BASE, MEDIA_DIR: undefined })).toThrow(/MEDIA_DIR/);
+    // Fora de producao continua opcional: default por ambiente resolve sozinho.
+    expect(loadEnv({ NODE_ENV: 'development' }).MEDIA_DIR.length).toBeGreaterThan(0);
   });
 
   it('exige DATABASE_URL em producao', () => {

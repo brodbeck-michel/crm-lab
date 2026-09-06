@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import type { ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ListConversationsQuery, ListPatientsQuery } from '@crm-lab/shared';
@@ -90,10 +91,7 @@ export function Attendance() {
     enabled: selectedId !== null,
   });
 
-  const proposalsFilters = useMemo(
-    () => ({ conversationId: selectedId ?? '' }),
-    [selectedId],
-  );
+  const proposalsFilters = useMemo(() => ({ conversationId: selectedId ?? '' }), [selectedId]);
 
   const proposalsQuery = useQuery({
     queryKey: queryKeys.proposals(proposalsFilters),
@@ -129,6 +127,36 @@ export function Attendance() {
     onSuccess: invalidateConversation,
     onError: handleApiError,
   });
+
+  /** Anexo (Onda 8 §4.3) — o clipe abre o seletor de arquivo do SO. */
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const sendAttachment = useMutation({
+    mutationFn: (file: { fileName: string; mimeType: string; contentBase64: string }) =>
+      api.conversations.sendAttachment(selectedId as string, file),
+    onSuccess: invalidateConversation,
+    onError: handleApiError,
+  });
+
+  function readFileAsBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(reader.error);
+      reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '');
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handleFileChange(event: ChangeEvent<HTMLInputElement>): Promise<void> {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    const contentBase64 = await readFileAsBase64(file);
+    sendAttachment.mutate({
+      fileName: file.name,
+      mimeType: file.type || 'application/octet-stream',
+      contentBase64,
+    });
+  }
 
   /**
    * Fixar é PESSOAL e não muda os counts (Onda 8 §2.3): basta reconsultar a
@@ -171,8 +199,7 @@ export function Attendance() {
   const quickRepliesQuery = useQuickReplyList();
 
   const assign = useMutation({
-    mutationFn: (userId: string | null) =>
-      api.conversations.assign(selectedId as string, userId),
+    mutationFn: (userId: string | null) => api.conversations.assign(selectedId as string, userId),
     onSuccess: async (_data, userId) => {
       const name = assigneesQuery.data?.assignees.find((a) => a.id === userId)?.name;
       toast(
@@ -189,59 +216,65 @@ export function Attendance() {
   });
 
   return (
-    <InboxLayout
-      list={
-        <ConversationList
-          conversations={listQuery.data?.conversations ?? []}
-          counts={listQuery.data?.counts}
-          scope={scope}
-          onScopeChange={setScope}
-          onSearch={setSearch}
-          selectedId={selectedId}
-          onSelect={handleSelect}
-          isLoading={listQuery.isPending}
-          isError={listQuery.isError}
-          onRetry={() => void listQuery.refetch()}
-          onTogglePin={(id, pinned) => togglePin.mutate({ id, pinned })}
-          searchTerm={patientTerm.length >= PATIENT_SEARCH_MIN ? patientTerm : ''}
-          patients={patientsQuery.data?.patients ?? []}
-          patientsLoading={patientsQuery.isPending}
-          patientsError={patientsQuery.isError}
-        />
-      }
-      conversation={
-        <ConversationPanel
-          conversation={conversation}
-          messages={messages}
-          isLoading={selectedId !== null && detailQuery.isPending}
-          isError={detailQuery.isError}
-          onRetry={() => void detailQuery.refetch()}
-          onSend={(content) => sendMessage.mutate(content)}
-          sending={sendMessage.isPending}
-          assignees={assigneesQuery.data?.assignees ?? []}
-          onAssign={(userId) => assign.mutate(userId)}
-          onNewBudget={() => navigate(`/budget/new?conversationId=${selectedId ?? ''}`)}
-          onArchive={() => archive.mutate()}
-          onToggleContext={toggleContextPanel}
-          onAttach={() =>
-            toast('Anexos chegam com a integração de mídia do WhatsApp.', { tone: 'neutral' })
-          }
-          quickReplies={quickRepliesQuery.data?.quickReplies ?? []}
-          contextOpen={contextOpen}
-          hasOlderMessages={!loadedAll}
-          onLoadOlder={() => setMessageLimit((limit) => limit + MESSAGE_PAGE_SIZE)}
-        />
-      }
-      context={
-        <PatientContext
-          conversation={conversation}
-          proposals={proposalsQuery.data?.proposals ?? []}
-          isLoading={selectedId !== null && proposalsQuery.isPending}
-          isError={proposalsQuery.isError}
-          onOpenProposal={(id) => openModal({ kind: 'proposal', id })}
-        />
-      }
-    />
+    <>
+      <input
+        ref={fileInputRef}
+        type="file"
+        hidden
+        onChange={(event) => void handleFileChange(event)}
+      />
+      <InboxLayout
+        list={
+          <ConversationList
+            conversations={listQuery.data?.conversations ?? []}
+            counts={listQuery.data?.counts}
+            scope={scope}
+            onScopeChange={setScope}
+            onSearch={setSearch}
+            selectedId={selectedId}
+            onSelect={handleSelect}
+            isLoading={listQuery.isPending}
+            isError={listQuery.isError}
+            onRetry={() => void listQuery.refetch()}
+            onTogglePin={(id, pinned) => togglePin.mutate({ id, pinned })}
+            searchTerm={patientTerm.length >= PATIENT_SEARCH_MIN ? patientTerm : ''}
+            patients={patientsQuery.data?.patients ?? []}
+            patientsLoading={patientsQuery.isPending}
+            patientsError={patientsQuery.isError}
+          />
+        }
+        conversation={
+          <ConversationPanel
+            conversation={conversation}
+            messages={messages}
+            isLoading={selectedId !== null && detailQuery.isPending}
+            isError={detailQuery.isError}
+            onRetry={() => void detailQuery.refetch()}
+            onSend={(content) => sendMessage.mutate(content)}
+            sending={sendMessage.isPending}
+            assignees={assigneesQuery.data?.assignees ?? []}
+            onAssign={(userId) => assign.mutate(userId)}
+            onNewBudget={() => navigate(`/budget/new?conversationId=${selectedId ?? ''}`)}
+            onArchive={() => archive.mutate()}
+            onToggleContext={toggleContextPanel}
+            onAttach={() => fileInputRef.current?.click()}
+            quickReplies={quickRepliesQuery.data?.quickReplies ?? []}
+            contextOpen={contextOpen}
+            hasOlderMessages={!loadedAll}
+            onLoadOlder={() => setMessageLimit((limit) => limit + MESSAGE_PAGE_SIZE)}
+          />
+        }
+        context={
+          <PatientContext
+            conversation={conversation}
+            proposals={proposalsQuery.data?.proposals ?? []}
+            isLoading={selectedId !== null && proposalsQuery.isPending}
+            isError={proposalsQuery.isError}
+            onOpenProposal={(id) => openModal({ kind: 'proposal', id })}
+          />
+        }
+      />
+    </>
   );
 }
 

@@ -64,6 +64,9 @@ export const ERROR_CATALOG = {
     message: 'Conexao por QR indisponivel: gateway nao configurado',
   },
 
+  // --- Mídia (Onda 8 §4) ---
+  MEDIA_TOO_LARGE: { statusCode: 413, message: 'Arquivo excede o tamanho maximo permitido' },
+
   // --- Sistema ---
   RATE_LIMIT_EXCEEDED: { statusCode: 429, message: 'Limite de requisicoes excedido' },
   INTERNAL_ERROR: { statusCode: 500, message: 'Erro interno do servidor' },

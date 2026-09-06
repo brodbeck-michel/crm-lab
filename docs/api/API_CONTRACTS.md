@@ -666,6 +666,58 @@ enxerga devolve `NOT_FOUND`.
 `MESSAGE_SEND_FAILED` (502, canal externo falhou após os retries), `FORBIDDEN` (403,
 `platform_operator`)
 
+### POST /conversations/:id/attachments
+Enviar um anexo (Onda 8 §4.3) — foto, PDF ou áudio para o paciente.
+
+**Base64 em JSON, não multipart:** Express 4 não faz multipart sozinho, e o
+gateway Evolution já resolve mídia em base64 nos dois sentidos. O custo é
+~33% mais bytes no fio — irrelevante para recado de voz e foto de pedido
+médico.
+
+**Request:**
+```json
+{
+  "fileName": "pedido-medico.jpg",
+  "mimeType": "image/jpeg",
+  "contentBase64": "/9j/4AAQSkZJRg..."
+}
+```
+
+- `fileName`: 1..255 caracteres (usado só para exibição — o arquivo em disco é
+  nomeado pelo id da mídia, nunca por este valor)
+- `mimeType`: 1..127 caracteres
+- `contentBase64`: obrigatório, decodificado e checado contra o teto de
+  tamanho (15 MiB por arquivo)
+
+O recorte por papel é aplicado **antes** de gravar: conversa que o usuário não
+enxerga devolve `NOT_FOUND`. `messageType` é derivado do `mimeType`
+(`image/* → image`, `audio/* → audio`, `application/pdf → pdf`, resto →
+`doc`) — o cliente não escolhe.
+
+**Response (201):** o mesmo shape de `POST /conversations/:id/messages`, com
+`attachmentUrl` apontando para `GET /media/:id` (nunca uma URL pública):
+
+```json
+{
+  "id": "uuid",
+  "conversationId": "uuid",
+  "senderType": "agent",
+  "senderId": "uuid",
+  "senderName": "Maria Souza",
+  "content": "pedido-medico.jpg",
+  "messageType": "image",
+  "attachmentUrl": "/api/v1/media/uuid",
+  "status": "sent",
+  "readAt": null,
+  "createdAt": "2026-09-06T14:35:00Z"
+}
+```
+
+**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404), `CONVERSATION_ARCHIVED` (409),
+`MEDIA_TOO_LARGE` (413, acima do teto de 15 MiB), `MESSAGE_SEND_FAILED` (502, canal
+externo falhou após os retries — a WhatsApp Cloud API `cloud_api` ainda não envia
+mídia, só o gateway Evolution `qr`), `FORBIDDEN` (403, `platform_operator`)
+
 ### POST /conversations/:id/read
 Marcar a conversa como lida sem carregar o histórico. Idempotente.
 
@@ -877,6 +929,13 @@ responder):
   `findOrCreateByPhone` → `MessageService.createFromPatient` (dedupe por `externalId`,
   `unreadCount`, `lastMessageAt`, WS `conversation.new_message`). A tela de Atendimento não
   muda — é o mesmo dado entrando por um canal diferente.
+  **Mídia (Onda 8 §4.2):** `message.imageMessage`/`audioMessage`/`documentMessage` são
+  reconhecidos ao lado de `conversation`/`extendedTextMessage` (o webhook é registrado com
+  `base64: true`). Arquivo acima do teto (15 MiB) é recusado com log — a mensagem não é
+  criada, mas o evento continua respondendo `200 {received:true}` do mesmo jeito. **Risco
+  aceito:** o campo exato onde o gateway v2.3.7 grava o base64 não foi confirmado contra um
+  payload real; o parser aceita tanto `message.<tipo>Message.base64` quanto o nível do
+  `message` — verificar contra o gateway de verdade antes de depender disto em produção.
 - `CONNECTION_UPDATE` com `state: "open"` → grava `connected_at`, `phone_number` (informado
   pelo gateway), `connection_mode: "qr"`, `is_active: true` em `tenant_channels`.
 - `CONNECTION_UPDATE` com `state: "close"` (inclusive `loggedOut`, que é como o gateway informa
@@ -1245,6 +1304,23 @@ cadastro vazio — é a prova de que o apagamento aconteceu.
 
 **Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403, `details.requiredRoles: ["admin"]`),
 `NOT_FOUND` (404)
+
+---
+
+## 2d. Media (Onda 8 §4)
+
+### GET /media/:id
+Baixa o arquivo de mídia de uma mensagem (foto, PDF ou áudio).
+
+**NUNCA servido como arquivo estático público** (`express.static`): é exame e
+áudio de paciente. Rota autenticada, filtrada por tenant (RLS) — mídia de
+outro tenant é `NOT_FOUND` (CLAUDE.md regra 8), nunca `FORBIDDEN`.
+
+**Response (200):** o corpo bruto do arquivo, com `Content-Type` do
+`mimeType` gravado e `Content-Disposition: inline; filename="..."`.
+
+**Erros:** `NOT_FOUND` (404 — inexistente ou de outro tenant), `VALIDATION_ERROR`
+(400, `:id` não-uuid), `FORBIDDEN` (403, `platform_operator`)
 
 ---
 

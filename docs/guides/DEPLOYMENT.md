@@ -114,6 +114,8 @@ Fonte única: **`backend/.env.example`**. Nenhum valor real aparece neste doc.
 | `DATABASE_URL` | obrigatória; sem ela o driver cai em PGlite (D-008) |
 | `JWT_SECRET` | obrigatória, **≥ 32 caracteres**, e não pode ser o placeholder do `.env.example` |
 | `JWT_REFRESH_SECRET` | idem |
+| `CHANNEL_SECRET_KEY` | obrigatória, **≥ 32 caracteres** — cifra credencial de canal em repouso (D-076) |
+| `MEDIA_DIR` | obrigatória (Onda 8 §4) — caminho do volume de mídia; no `docker-compose.prod.yml` é `/data/media`, montado do volume nomeado `media-data` |
 
 ### Backend (com default, ajuste conforme o ambiente)
 

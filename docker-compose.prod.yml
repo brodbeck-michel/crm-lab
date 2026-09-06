@@ -65,6 +65,11 @@ services:
       # linha. Sem ela aqui o job morria no boot — migracao nenhuma era
       # aplicada, apesar de o `backend` ja receber a variavel.
       CHANNEL_SECRET_KEY: ${CHANNEL_SECRET_KEY:?defina CHANNEL_SECRET_KEY (>=32 caracteres)}
+      # O migrator carrega o MESMO `config/env.ts`, que em produção exige
+      # `MEDIA_DIR` (Onda 8 §4) antes de rodar qualquer linha — mesmo o job de
+      # migração nunca gravando mídia. O valor não precisa bater com o volume
+      # do `backend`: este processo só valida e sai.
+      MEDIA_DIR: /data/media
     command: ['node', 'dist/backend/src/db/cli/migrate.js']
 
   backend:
@@ -111,9 +116,16 @@ services:
       # Cifra `tenant_channels.api_token`/`webhook_secret` em repouso (D-076).
       # Sem ela o backend NAO SOBE em producao — e proposital.
       CHANNEL_SECRET_KEY: ${CHANNEL_SECRET_KEY:?defina CHANNEL_SECRET_KEY (>=32 caracteres)}
+      # Mídia de mensagem (Onda 8 §4) — volume local, sem MinIO/S3 nesta onda.
+      # Obrigatoria em producao (mesma razao de CHANNEL_SECRET_KEY): sem ela o
+      # backend nao sobe. O caminho e o mount point do volume `media-data`
+      # logo abaixo — unica escrita permitida com `read_only: true` na raiz.
+      MEDIA_DIR: /data/media
     read_only: true
     tmpfs:
       - /tmp
+    volumes:
+      - media-data:/data/media
     security_opt:
       - no-new-privileges:true
     # Sem `ports:` — quem expoe a API e o nginx do frontend, no mesmo origin.
@@ -169,3 +181,4 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  media-data:

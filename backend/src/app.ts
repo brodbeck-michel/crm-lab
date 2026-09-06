@@ -111,7 +111,11 @@ export function createApp(deps: AppDeps): BuiltApp {
   // exemplo) e faz a assinatura nunca bater, mesmo com o segredo certo.
   app.use(
     express.json({
-      limit: '1mb',
+      // 25mb: mídia viaja em base64 dentro do JSON (Onda 8 §4.3, MediaService
+      // teto de 15 MiB por arquivo) — base64 infla ~33%, mais a margem do
+      // envelope JSON. O teto de negocio (`MEDIA_TOO_LARGE`, 413 explicito)
+      // continua sendo o de `MediaService`; este e so o limite de transporte.
+      limit: '25mb',
       verify: (req, _res, buf) => {
         (req as express.Request & { rawBody?: Buffer }).rawBody = buf;
       },

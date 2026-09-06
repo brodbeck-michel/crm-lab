@@ -11,6 +11,7 @@
  * Toda chave nova precisa entrar tambem em `backend/.env.example`
  * (CONVENTIONS.md "Variaveis de Ambiente").
  */
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
@@ -112,6 +113,16 @@ const envSchema = z
      */
     CHANNEL_SECRET_KEY: optionalString,
 
+    /**
+     * Pasta em disco onde a mídia de mensagem fica gravada (Onda 8 §4.1 — volume
+     * local, sem MinIO/S3 nesta onda). Ausente = default por ambiente (dev: pasta
+     * `media/` do backend; teste: pasta temporaria do SO, para nao sujar o repo).
+     * Obrigatoria em producao pela mesma razao de `CHANNEL_SECRET_KEY`: sem valor
+     * explicito, um deploy multi-instancia gravaria cada requisicao num disco
+     * diferente e o `GET /media/:id` erraria a instancia certa em metade dos casos.
+     */
+    MEDIA_DIR: optionalString,
+
     CORS_ORIGIN: z.string().default('http://localhost:5173'),
     RATE_LIMIT_PER_MINUTE: numberFrom(100),
 
@@ -180,13 +191,22 @@ const envSchema = z
         message: 'CHANNEL_SECRET_KEY ainda usa o valor de exemplo — gere um segredo unico',
       });
     }
+    if (!value.MEDIA_DIR) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['MEDIA_DIR'],
+        message: 'MEDIA_DIR e obrigatoria em NODE_ENV=production (Onda 8 §4.1)',
+      });
+    }
   });
 
 export type RawEnv = z.infer<typeof envSchema>;
 
-export interface Env extends Omit<RawEnv, 'JWT_SECRET' | 'JWT_REFRESH_SECRET'> {
+export interface Env extends Omit<RawEnv, 'JWT_SECRET' | 'JWT_REFRESH_SECRET' | 'MEDIA_DIR'> {
   JWT_SECRET: string;
   JWT_REFRESH_SECRET: string;
+  /** Sempre resolvida — default por ambiente quando `MEDIA_DIR` nao foi setada. */
+  MEDIA_DIR: string;
   /** true quando o driver de banco deve ser PGlite (D-008). */
   readonly isTest: boolean;
   readonly isProduction: boolean;
@@ -235,6 +255,11 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     ...value,
     JWT_SECRET: value.JWT_SECRET ?? DEV_JWT_SECRET,
     JWT_REFRESH_SECRET: value.JWT_REFRESH_SECRET ?? DEV_JWT_REFRESH_SECRET,
+    MEDIA_DIR:
+      value.MEDIA_DIR ??
+      (value.NODE_ENV === 'test'
+        ? path.join(os.tmpdir(), 'crm-lab-media-test')
+        : path.resolve(here, '../../media')),
     isTest: value.NODE_ENV === 'test',
     isProduction: value.NODE_ENV === 'production',
     isDevelopment: value.NODE_ENV === 'development',

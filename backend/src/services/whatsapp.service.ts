@@ -271,9 +271,20 @@ export interface SendResult {
   externalId: string;
 }
 
+export interface OutboundMedia {
+  buffer: Buffer;
+  mimeType: string;
+  fileName: string;
+}
+
 export interface WhatsAppDriver {
   readonly name: string;
   send(credentials: WhatsAppCredentials, phone: string, content: string): Promise<SendResult>;
+  sendMedia(
+    credentials: WhatsAppCredentials,
+    phone: string,
+    media: OutboundMedia,
+  ): Promise<SendResult>;
 }
 
 export interface MockSentMessage {
@@ -308,6 +319,23 @@ export class MockWhatsAppDriver implements WhatsAppDriver {
     });
     // Conteudo de mensagem de paciente NUNCA vai para o log (SECURITY.md).
     logger.debug('whatsapp.mock_send', { tenantId: credentials.tenantId, externalId });
+    return { externalId };
+  }
+
+  async sendMedia(
+    credentials: WhatsAppCredentials,
+    phone: string,
+    media: OutboundMedia,
+  ): Promise<SendResult> {
+    const externalId = `wamid.mock.${randomUUID()}`;
+    this.sent.push({
+      tenantId: credentials.tenantId,
+      phone,
+      content: `[mídia] ${media.fileName}`,
+      externalId,
+      at: new Date().toISOString(),
+    });
+    logger.debug('whatsapp.mock_send_media', { tenantId: credentials.tenantId, externalId });
     return { externalId };
   }
 
@@ -346,6 +374,17 @@ export class HttpWhatsAppDriver implements WhatsAppDriver {
     const externalId = firstMessageId(payload);
     if (!externalId) throw new Error('WhatsApp API nao devolveu id da mensagem');
     return { externalId };
+  }
+
+  // rangel: a API oficial da Meta exige upload multipart previo (endpoint
+  // `/media`) antes de referenciar o media id no envio — fluxo diferente do
+  // link-based do gateway Evolution, e nao verificado nesta onda (o ambiente
+  // de teste real e o QR/Evolution, spec Onda 8 §4). Sobe quando alguem
+  // conectar um tenant em `connectionMode: 'cloud_api'` e precisar de anexo.
+  async sendMedia(): Promise<SendResult> {
+    throw new Error(
+      'envio de mídia pela WhatsApp Cloud API (Meta) ainda nao implementado — use connectionMode "qr"',
+    );
   }
 }
 
@@ -400,6 +439,28 @@ export class EvolutionWhatsAppDriver implements WhatsAppDriver {
       instanceName,
       phone,
       content,
+      credentials.qrInstanceApiKey,
+    );
+    return { externalId };
+  }
+
+  async sendMedia(
+    credentials: WhatsAppCredentials,
+    phone: string,
+    media: OutboundMedia,
+  ): Promise<SendResult> {
+    const instanceName = evolutionInstanceName(credentials.tenantId);
+    if (!credentials.qrInstanceApiKey) {
+      throw new EvolutionCredentialError(credentials.tenantId);
+    }
+    const { externalId } = await this.client.sendMedia(
+      instanceName,
+      phone,
+      {
+        base64: media.buffer.toString('base64'),
+        mimeType: media.mimeType,
+        fileName: media.fileName,
+      },
       credentials.qrInstanceApiKey,
     );
     return { externalId };
@@ -631,6 +692,26 @@ export class WhatsAppService {
     return this.queue.run(
       'whatsapp.send',
       () => driver.send(credentials, phone, content),
+      { attempts: this.attempts },
+    );
+  }
+
+  /** Mesma disciplina de `send`, para mídia (Onda 8 §4.3). */
+  async sendMedia(tenantId: string, phone: string, media: OutboundMedia): Promise<SendResult> {
+    const credentials = await this.credentials.forTenant(tenantId);
+
+    if (!credentials.isActive) {
+      throw new Error('canal whatsapp desativado para este laboratorio (isActive: false)');
+    }
+    if (credentials.apiTokenRevoked) {
+      throw new Error('token do canal whatsapp foi revogado por este laboratorio');
+    }
+
+    const driver = this.driverFor(credentials);
+
+    return this.queue.run(
+      'whatsapp.send_media',
+      () => driver.sendMedia(credentials, phone, media),
       { attempts: this.attempts },
     );
   }

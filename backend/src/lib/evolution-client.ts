@@ -50,6 +50,13 @@ export interface EvolutionSendResult {
   externalId: string;
 }
 
+/** Mídia a enviar — base64 (o mesmo formato em que o gateway devolve mídia recebida). */
+export interface EvolutionMediaPayload {
+  base64: string;
+  mimeType: string;
+  fileName: string;
+}
+
 /**
  * Para onde o gateway posta os eventos desta instancia. `token` vai como header
  * `x-evolution-webhook-token` — o MESMO header documentado que
@@ -83,6 +90,20 @@ export interface EvolutionClient {
     text: string,
     apikey: string,
   ): Promise<EvolutionSendResult>;
+  /** Mesma disciplina de privilegio minimo do `sendText` — `apikey` da instancia. */
+  sendMedia(
+    instanceName: string,
+    phone: string,
+    media: EvolutionMediaPayload,
+    apikey: string,
+  ): Promise<EvolutionSendResult>;
+}
+
+/** `image/jpeg` -> `'image'`. `audio/*` -> `'audio'`. Resto -> `'document'` (contrato do `/message/sendMedia`). */
+function evolutionMediaType(mimeType: string): 'image' | 'audio' | 'document' {
+  if (mimeType.startsWith('image/')) return 'image';
+  if (mimeType.startsWith('audio/')) return 'audio';
+  return 'document';
 }
 
 /**
@@ -297,6 +318,35 @@ export function createEvolutionClient(baseUrl: string, adminApiKey: string): Evo
       const externalId = asString(key.id);
       if (!externalId) {
         throw new Error('Evolution API nao devolveu id da mensagem em /message/sendText');
+      }
+      return { externalId };
+    },
+
+    async sendMedia(
+      instanceName: string,
+      phone: string,
+      media: EvolutionMediaPayload,
+      apikey: string,
+    ): Promise<EvolutionSendResult> {
+      const body = await request(
+        `/message/sendMedia/${encodeURIComponent(instanceName)}`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            number: phone,
+            mediatype: evolutionMediaType(media.mimeType),
+            mimetype: media.mimeType,
+            fileName: media.fileName,
+            media: media.base64,
+          }),
+        },
+        apikey,
+      );
+      const record = isRecord(body) ? body : {};
+      const key = isRecord(record.key) ? record.key : {};
+      const externalId = asString(key.id);
+      if (!externalId) {
+        throw new Error('Evolution API nao devolveu id da mensagem em /message/sendMedia');
       }
       return { externalId };
     },

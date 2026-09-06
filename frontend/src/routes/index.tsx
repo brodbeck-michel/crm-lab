@@ -14,6 +14,7 @@ import Insurances from '@/pages/Settings/Insurances';
 import ThemeSettings from '@/pages/Settings/Theme';
 import UsersSettings from '@/pages/Settings/Users';
 import InternalChat from '@/pages/InternalChat';
+import QuickReplies from '@/pages/QuickReplies';
 import Decisions from '@/pages/Decisions';
 import PlatformTenants from '@/pages/Platform/Tenants';
 import PlatformBilling from '@/pages/Platform/Billing';
@@ -57,6 +58,7 @@ export const appRoutes: RouteObject[] = [
               { path: 'catalog', element: <Catalog /> },
               { path: 'analytics', element: <Analytics /> },
               { path: 'internal-chat', element: <InternalChat /> },
+              { path: 'quick-replies', element: <QuickReplies /> },
             ],
           },
         ],

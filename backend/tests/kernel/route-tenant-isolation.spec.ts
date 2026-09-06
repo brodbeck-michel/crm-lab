@@ -44,6 +44,7 @@ import { internalChatModule } from '../../src/controllers/internal-chat.routes.j
 import { operationModule } from '../../src/controllers/operation.routes.js';
 import { patientModule } from '../../src/controllers/patient.routes.js';
 import { proposalModule } from '../../src/controllers/proposal.routes.js';
+import { quickReplyModule } from '../../src/controllers/quick-reply.routes.js';
 import { themeModule } from '../../src/controllers/theme.routes.js';
 import { userModule } from '../../src/controllers/user.routes.js';
 import type { DbClient } from '../../src/db/types.js';
@@ -108,6 +109,7 @@ const LAB_MODULES = [
   operationModule,
   patientModule,
   proposalModule,
+  quickReplyModule,
   themeModule,
   userModule,
 ];
@@ -140,6 +142,8 @@ interface Lab {
   channel: Channel;
   /** Convenio do laboratorio (Onda 7 — D-081/D-082). */
   insurance: { id: string; name: string };
+  /** Resposta rapida do laboratorio (Onda 8 §3). */
+  quickReply: { id: string; content: string };
 }
 
 interface LabRoute {
@@ -328,6 +332,34 @@ const LAB_ROUTES: readonly LabRoute[] = [
     ownStatus: 200,
   },
 
+  // --- respostas rapidas (Onda 8 §3) ---
+  { name: 'GET /quick-replies', method: 'get', path: () => '/api/v1/quick-replies', actor: 'attendant', addressable: false },
+  {
+    name: 'POST /quick-replies',
+    method: 'post',
+    path: () => '/api/v1/quick-replies',
+    body: () => ({ shortcut: 'sonda-isolamento', title: 'Sonda', content: 'Sonda de isolamento' }),
+    actor: 'attendant',
+    addressable: false,
+  },
+  {
+    name: 'PATCH /quick-replies/:id',
+    method: 'patch',
+    path: (l) => `/api/v1/quick-replies/${l.quickReply.id}`,
+    body: () => ({ title: 'sonda de isolamento' }),
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    name: 'DELETE /quick-replies/:id',
+    method: 'delete',
+    path: (l) => `/api/v1/quick-replies/${l.quickReply.id}`,
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 204,
+  },
+
   // --- pacientes (Onda 6 — D-059..D-063) ---
   { name: 'GET /patients', method: 'get', path: () => '/api/v1/patients', actor: 'admin', addressable: false },
   { name: 'GET /patients/:id', method: 'get', path: (l) => `/api/v1/patients/${l.patient.id}`, actor: 'admin', addressable: true, ownStatus: 200 },
@@ -487,6 +519,7 @@ const BETA_SECRETS = {
   user: 'Bruno Confidencial Beta',
   revenue: 4321.99,
   insurance: 'Convênio Confidencial Beta',
+  quickReply: 'Macro Confidencial Beta',
 } as const;
 
 async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
@@ -571,6 +604,18 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     name: secret ? BETA_SECRETS.insurance : `Convênio ${prefix}`,
   };
 
+  const quickReplyRow = await db.withoutTenant((tx) =>
+    tx.query<{ id: string }>(
+      `INSERT INTO quick_replies (tenant_id, shortcut, title, content, created_by)
+       VALUES ($1, 'coleta', 'Coleta', $2, $3) RETURNING id`,
+      [tenant.id, secret ? BETA_SECRETS.quickReply : `Coleta ${prefix}`, attendant.id],
+    ),
+  );
+  const quickReply = {
+    id: quickReplyRow.rows[0]?.id as string,
+    content: secret ? BETA_SECRETS.quickReply : `Coleta ${prefix}`,
+  };
+
   // O primeiro GET cria `#geral`/`#aprovacoes` do tenant (InternalChatService).
   const channels = await app.agent
     .get('/api/v1/internal-chat/channels')
@@ -593,6 +638,7 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     pendingProposal,
     channel,
     insurance,
+    quickReply,
   };
 }
 
@@ -674,13 +720,15 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 52 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 56 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
     // `/settings/channels/whatsapp/*` (conexao por QR, Bloco B). Depois veio
-    // `POST /conversations` (atendimento manual, fora do WhatsApp): +1.
-    expect(LAB_ROUTES).toHaveLength(52);
+    // `POST /conversations` (atendimento manual, fora do WhatsApp): +1. A Onda 8
+    // soma 4: as 3 de `/conversations/assignees|:id/pin` e, na segunda onda, as
+    // 4 de `/quick-replies` (macros do Composer).
+    expect(LAB_ROUTES).toHaveLength(56);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)
@@ -719,6 +767,7 @@ describe('recurso do tenant B enderecado por um usuario do tenant A', () => {
       expect(serialized).not.toContain(BETA_SECRETS.user);
       expect(serialized).not.toContain(String(BETA_SECRETS.revenue));
       expect(serialized).not.toContain(BETA_SECRETS.insurance);
+      expect(serialized).not.toContain(BETA_SECRETS.quickReply);
     });
   }
 
@@ -811,7 +860,13 @@ describe('listagens e relatorios do tenant A', () => {
         status: 200,
       });
       const serialized = JSON.stringify(response.body);
-      for (const secret of [BETA_SECRETS.patient, BETA_SECRETS.exam, BETA_SECRETS.user, BETA_SECRETS.insurance]) {
+      for (const secret of [
+        BETA_SECRETS.patient,
+        BETA_SECRETS.exam,
+        BETA_SECRETS.user,
+        BETA_SECRETS.insurance,
+        BETA_SECRETS.quickReply,
+      ]) {
         expect({ route: route.name, leaked: serialized.includes(secret) }).toMatchObject({
           route: route.name,
           leaked: false,

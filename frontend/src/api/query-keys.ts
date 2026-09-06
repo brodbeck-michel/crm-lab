@@ -66,6 +66,9 @@ export const queryKeys = {
   /** ['insurance', id] */
   insurance: (id: string) => ['insurance', id] as const,
 
+  /** ['quick-replies'] — a lista inteira; o Composer filtra em memória (§9). */
+  quickReplies: () => ['quick-replies'] as const,
+
   /** ['analytics', period] */
   analytics: (period?: AnalyticsQuery) => ['analytics', period ?? {}] as const,
   /** ['analytics', 'pipeline'] — snapshot atual, sem período */
@@ -117,6 +120,7 @@ export const queryScopes = {
   proposal: ['proposal'] as const,
   exams: ['exams'] as const,
   insurances: ['insurances'] as const,
+  quickReplies: ['quick-replies'] as const,
   analytics: ['analytics'] as const,
   theme: ['theme'] as const,
   internalChat: ['internal-chat'] as const,

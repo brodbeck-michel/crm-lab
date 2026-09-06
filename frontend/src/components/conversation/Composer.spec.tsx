@@ -99,3 +99,105 @@ describe('Composer — emoji (Onda 8 §2.2)', () => {
     expect(screen.getByRole('button', { name: 'Inserir emoji' })).toBeDisabled();
   });
 });
+
+describe('Composer — respostas rápidas (Onda 8 §3.4)', () => {
+  const MACROS = [
+    {
+      id: 'a',
+      shortcut: 'coleta',
+      title: 'Horário de coleta',
+      content: 'Coleta de segunda a sexta, das 6h30 às 11h.',
+      createdBy: null,
+      createdAt: '2026-09-06T12:00:00.000Z',
+      updatedAt: '2026-09-06T12:00:00.000Z',
+    },
+    {
+      id: 'b',
+      shortcut: 'jejum',
+      title: 'Jejum',
+      content: 'Para glicemia, jejum de 8 horas.',
+      createdBy: null,
+      createdAt: '2026-09-06T12:00:00.000Z',
+      updatedAt: '2026-09-06T12:00:00.000Z',
+    },
+  ];
+
+  it('"/" com o campo VAZIO abre a lista e escolher substitui o texto', async () => {
+    const user = userEvent.setup();
+    render(<Composer onSend={vi.fn()} quickReplies={MACROS} />);
+
+    const field = screen.getByLabelText('Mensagem');
+    await user.type(field, '/');
+
+    expect(screen.getByRole('option', { name: /coleta/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('option', { name: /jejum/i }));
+
+    expect(field).toHaveValue('Para glicemia, jejum de 8 horas.');
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+  });
+
+  it('digitar depois da "/" filtra por atalho', async () => {
+    const user = userEvent.setup();
+    render(<Composer onSend={vi.fn()} quickReplies={MACROS} />);
+
+    await user.type(screen.getByLabelText('Mensagem'), '/jej');
+
+    expect(screen.getByRole('option', { name: /jejum/i })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /coleta/i })).not.toBeInTheDocument();
+  });
+
+  it('"/" NO MEIO do texto não abre nada — "km/h" e "24/48h" continuam digitáveis', async () => {
+    const user = userEvent.setup();
+    render(<Composer onSend={vi.fn()} quickReplies={MACROS} />);
+
+    const field = screen.getByLabelText('Mensagem');
+    await user.type(field, 'chega a 24/48h');
+
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(field).toHaveValue('chega a 24/48h');
+  });
+
+  it('Enter escolhe o item ativo em vez de enviar a mensagem', async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    render(<Composer onSend={onSend} quickReplies={MACROS} />);
+
+    const field = screen.getByLabelText('Mensagem');
+    await user.type(field, '/');
+    await user.keyboard('{ArrowDown}{Enter}');
+
+    expect(onSend).not.toHaveBeenCalled();
+    expect(field).toHaveValue('Para glicemia, jejum de 8 horas.');
+  });
+
+  it('Esc fecha o menu e a "/" continua no campo como texto normal', async () => {
+    const user = userEvent.setup();
+    render(<Composer onSend={vi.fn()} quickReplies={MACROS} />);
+
+    const field = screen.getByLabelText('Mensagem');
+    await user.type(field, '/');
+    await user.keyboard('{Escape}');
+
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(field).toHaveValue('/');
+  });
+
+  it('sem macro que case com o filtro, o menu fecha sozinho', async () => {
+    const user = userEvent.setup();
+    render(<Composer onSend={vi.fn()} quickReplies={MACROS} />);
+
+    await user.type(screen.getByLabelText('Mensagem'), '/zzz');
+
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+  });
+
+  it('sem macros cadastradas, "/" é apenas uma barra', async () => {
+    const user = userEvent.setup();
+    render(<Composer onSend={vi.fn()} quickReplies={[]} />);
+
+    await user.type(screen.getByLabelText('Mensagem'), '/');
+
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+  });
+});

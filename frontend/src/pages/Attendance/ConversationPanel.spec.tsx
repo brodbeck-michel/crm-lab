@@ -57,6 +57,7 @@ function props(messages: Message[]): ConversationPanelProps {
     onRetry: vi.fn(),
     onSend: vi.fn(),
     sending: false,
+    quickReplies: [],
     assignees: [
       { id: 'u-1', name: 'Marina', role: 'attendant' },
       { id: 'u-2', name: 'Bruno', role: 'manager' },

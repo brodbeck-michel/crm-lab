@@ -16,6 +16,7 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 /catalog                      → Catálogo de Exames
 /analytics                    → Conversão
 /internal-chat                → Chat Interno
+/quick-replies                → Respostas rápidas
 /decisions                    → Decisões (aprovações)    (gestor+)
 /settings/channels            → Canais & Equipe          (admin; gestor lê)
 /settings/operation           → Gestão da Operação        (gestor+)
@@ -41,6 +42,7 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 | `/catalog` | attendant · manager · admin | sim |
 | `/analytics` | attendant · manager · admin | sim |
 | `/internal-chat` | attendant · manager · admin | sim |
+| `/quick-replies` | attendant · manager · admin | sim |
 | `/decisions` | manager · admin | sim |
 | `/settings/channels` | manager · admin | sim |
 | `/settings/operation` | manager · admin | sim |
@@ -470,6 +472,43 @@ esta tela existe para quem só precisa DISSO, sem entrar no chat nem no resto do
 uma segunda chamada). Fica live porque os eventos WS `approval.requested` e `approval.decided`
 (ws.ts) agora também invalidam `queryScopes.operations`, então o contador cai assim que alguém
 decide, sem esperar o refetch de 60s.
+
+---
+
+## 13. Respostas rápidas (`/quick-replies`) — Onda 8 §3
+
+Página própria, **`TENANT_ROLES`** — atendente, gestor e admin criam, editam e apagam.
+
+**Por que não é uma aba de "Canais & Equipe" (§10):** aquela rota é `MANAGER_PLUS`, e
+barraria exatamente quem o lead quer que escreva as macros. Também não é o mesmo tipo de
+coisa — configurar canal de WhatsApp é ato de administração; escrever resposta pronta é
+ferramenta de trabalho diária. Misturar as duas obrigaria a inventar permissão por aba
+dentro de uma tela, que é a solução que ninguém consegue auditar depois.
+
+- Lista em cartões: `/atalho` em destaque, título, e o conteúdo em 2 linhas truncadas.
+  Fonte: `GET /quick-replies` (§9) — lista inteira, sem paginação
+- [Nova resposta] abre formulário inline com `shortcut`, `title` e `content`. O campo do
+  atalho mostra o `/` como prefixo fixo: a barra faz parte de como se usa, não do que se
+  grava
+- Editar reaproveita o mesmo formulário, preenchido. Apagar pede confirmação — é `DELETE`
+  real (§9), a linha não volta
+- Erro de atalho repetido chega como `VALIDATION_ERROR` com `details.fields.shortcut` e
+  marca **o campo**, não um toast genérico
+- Vazio: "Nenhuma resposta rápida ainda" + o que a funcionalidade faz, porque uma lista
+  vazia sem explicação não ensina que existe `/` no Composer
+
+**No trilho da Sidebar** (ícone próprio), junto com as telas de operação — não em
+Configuração: quem usa isso é quem atende.
+
+### Uso no Composer (§2)
+
+Digitar `/` **com o campo vazio** abre a lista sobre o Composer, filtrando por atalho
+conforme se digita. Escolher **substitui** o texto pelo `content`. Setas navegam, `Enter`
+escolhe, `Esc` fecha.
+
+A restrição "campo vazio" é deliberada: disparar em qualquer `/` atrapalharia quem escreve
+"km/h", "24/48h" ou uma URL. Sem macro que case com o filtro, o menu fecha sozinho e a
+`/` fica no campo como texto normal — o atalho nunca sequestra o que a pessoa quis digitar.
 
 ---
 

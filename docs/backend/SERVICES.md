@@ -23,6 +23,7 @@ ProposalService ←→ ExamCatalogService
 AnalyticsService (read-only sobre proposals)
 ThemeService
 AuditService (write-only, chamado por todos)
+QuickReplyService (macros do Composer, sem dependência de outro service)
 ```
 
 ---
@@ -853,6 +854,43 @@ mais que exercite o `if` do kill switch, não prova que a COLUNA chega até ele.
 Depois do fix do Critical 1, desconectar não muda `is_active` — um `new_values` que dissesse o
 contrário registraria uma desativação que não aconteceu (Regra 7: um registro de auditoria
 falso é pior que nenhum). O campo gravado agora é `{channel: 'whatsapp', connected: false}`.
+
+---
+
+## 17. QuickReplyService (Onda 8 §3)
+
+Dono da tabela `quick_replies`. Serve `GET|POST /quick-replies` e
+`PATCH|DELETE /quick-replies/:id` (API_CONTRACTS.md §9).
+
+| Método | Assinatura | Regra |
+|--------|-----------|-------|
+| `list` | `(ctx) → ListQuickRepliesResponse` | Todas as macros do tenant, ordenadas por `shortcut`. Sem paginação (§9) |
+| `create` | `(ctx, dto) → QuickReply` | Normaliza o `shortcut`, recusa duplicado, grava `created_by = ctx.userId`, audita |
+| `update` | `(ctx, id, dto) → QuickReply` | Patch parcial; id de outro tenant → `NOT_FOUND`; audita só o que mudou |
+| `remove` | `(ctx, id) → void` | `DELETE` real; audita com o conteúdo apagado em `oldValues` |
+
+**Sem `assertCanWrite`.** É o único service de escrita da API que não tem um — e é
+deliberado, não esquecimento: a permissão é `TENANT_ROLES`, a mesma lista que
+`requireAuth() + denyPlatformOperator()` já deixa passar. Um `assertCanWrite` aqui não
+recusaria ninguém que a rota já não tivesse recusado, e "confere de novo" que não pode
+falhar é código que ninguém consegue testar.
+
+**Atalho duplicado é `VALIDATION_ERROR`, não `CONFLICT`** — a divergência com
+`InsuranceService` (§15) é intencional. Convênio duplicado é um estado do servidor que a
+pessoa precisa investigar ("já existe esse convênio, veja a lista"); atalho duplicado é um
+campo do formulário que ela corrige na hora, e o frontend precisa do `details.fields.shortcut`
+para marcar o input certo. O erro carrega o mesmo shape das outras falhas de campo.
+
+**A corrida entre o SELECT e o INSERT quem decide é o índice único** (mesma disciplina do
+§15): o service tenta, e converte a violação `23505` no mesmo `VALIDATION_ERROR` que
+devolveria pelo caminho feliz. Sem isso, duas atendentes criando `/coleta` ao mesmo tempo
+receberiam um `DATABASE_ERROR` 500.
+
+**Normalização do `shortcut`:** `trim()` + `toLowerCase()` antes de validar. Quem digita
+`Coleta` no formulário quis dizer `coleta` — recusar por caixa alta seria rigor sem
+propósito. O que a normalização **não** faz é remover acento ou espaço: `/horário coleta`
+não vira `/horariocoleta` silenciosamente, porque adivinhar o atalho da pessoa produz uma
+macro que ela não sabe chamar. Aí é `VALIDATION_ERROR`, e ela escolhe.
 
 ---
 

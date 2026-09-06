@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ListConversationsQuery, ListPatientsQuery } from '@crm-lab/shared';
 import { api, queryKeys, queryScopes, staleTimes } from '@/api';
+import { useQuickReplyList } from '@/api/quick-replies';
 import { useToast } from '@/components/ui';
 import { InboxLayout } from '@/components/layout';
 import { useApiErrorHandler } from '@/hooks';
@@ -162,6 +163,13 @@ export function Attendance() {
     staleTime: staleTimes.patients,
   });
 
+  /**
+   * Macros do laboratório (Onda 8 §3.4). A lista inteira, uma vez: o Composer
+   * filtra em memória enquanto se digita depois da `/` — uma busca por request
+   * a cada tecla seria uma ida ao servidor por caractere.
+   */
+  const quickRepliesQuery = useQuickReplyList();
+
   const assign = useMutation({
     mutationFn: (userId: string | null) =>
       api.conversations.assign(selectedId as string, userId),
@@ -218,6 +226,7 @@ export function Attendance() {
           onAttach={() =>
             toast('Anexos chegam com a integração de mídia do WhatsApp.', { tone: 'neutral' })
           }
+          quickReplies={quickRepliesQuery.data?.quickReplies ?? []}
           contextOpen={contextOpen}
           hasOlderMessages={!loadedAll}
           onLoadOlder={() => setMessageLimit((limit) => limit + MESSAGE_PAGE_SIZE)}

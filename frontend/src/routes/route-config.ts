@@ -17,6 +17,7 @@ export type NavIcon =
   | 'catalog'
   | 'analytics'
   | 'chat'
+  | 'quick-replies'
   | 'decisions'
   | 'channels'
   | 'operation'
@@ -79,6 +80,13 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requiredRoles: TENANT_ROLES,
     inSidebar: true,
     icon: 'chat',
+  },
+  {
+    path: '/quick-replies',
+    label: 'Respostas rápidas',
+    requiredRoles: TENANT_ROLES,
+    inSidebar: true,
+    icon: 'quick-replies',
   },
   {
     path: '/decisions',

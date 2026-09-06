@@ -1,7 +1,9 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
+import type { QuickReply } from '@crm-lab/shared';
 import { Button, cn } from '@/components/ui';
 import { EmojiPicker } from './EmojiPicker';
+import { QuickReplyMenu, filterQuickReplies, quickReplyOptionId } from './QuickReplyMenu';
 
 /**
  * Composer — COMPONENTS.md (`conversation/`):
@@ -15,6 +17,11 @@ import { EmojiPicker } from './EmojiPicker';
  *
  * O emoji entra NA POSIÇÃO DO CURSOR (Onda 8 §2.2): quem escreve "bom dia,
  * tudo bem?" e volta o cursor para o meio não quer o emoji no fim da frase.
+ *
+ * As respostas rápidas (Onda 8 §3.4) abrem com `/` **e o campo vazio**. Em
+ * qualquer `/` o menu atrapalharia quem escreve "km/h", "24/48h" ou uma URL —
+ * e essa restrição é o que torna a funcionalidade invisível para quem não a
+ * está usando.
  */
 
 export interface ComposerProps {
@@ -27,6 +34,12 @@ export interface ComposerProps {
   /** Envio em voo: bloqueia o botão e mostra o indicador. */
   sending?: boolean;
   placeholder?: string;
+  /**
+   * Macros do laboratório (`GET /quick-replies`). Lista vazia ou ausente: a
+   * `/` é só uma barra. O Composer não busca nada — quem monta a tela é dono
+   * da chamada.
+   */
+  quickReplies?: readonly QuickReply[];
 }
 
 /** Clipe de papel em SVG inline — sem biblioteca de ícones (padrão do shell). */
@@ -55,10 +68,44 @@ export function Composer({
   disabled = false,
   sending = false,
   placeholder = 'Escreva uma mensagem',
+  quickReplies,
 }: ComposerProps) {
   const [value, setValue] = useState('');
+  // `false` enquanto a pessoa não abriu o menu nesta digitação — é o que faz
+  // `Esc` deixar a `/` no campo sem o menu voltar a abrir sozinho.
+  const [macroMenuOpen, setMacroMenuOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
   const fieldRef = useRef<HTMLTextAreaElement>(null);
   const blocked = disabled || sending;
+
+  /** O texto é um comando de macro enquanto for `/` + o que se digita depois. */
+  const macroFilter = value.startsWith('/') ? value.slice(1) : null;
+  const macroMatches = useMemo(
+    () =>
+      macroMenuOpen && macroFilter !== null
+        ? filterQuickReplies(quickReplies ?? [], macroFilter)
+        : [],
+    [macroMenuOpen, macroFilter, quickReplies],
+  );
+  const macroOpen = macroMatches.length > 0;
+  const activeMacro = macroMatches[Math.min(activeIndex, macroMatches.length - 1)];
+
+  /** Escolher SUBSTITUI o texto: o comando `/atalho` não faz parte da resposta. */
+  function pickMacro(reply: QuickReply): void {
+    setValue(reply.content);
+    setMacroMenuOpen(false);
+    setActiveIndex(0);
+    fieldRef.current?.focus();
+  }
+
+  function handleChange(next: string): void {
+    setValue(next);
+    setActiveIndex(0);
+    // Abre só quando a `/` é o texto INTEIRO — ou seja, campo vazio antes dela.
+    if (next === '/') setMacroMenuOpen(true);
+    // Apagou a barra: o comando acabou, e digitar `/` de novo recomeça.
+    else if (!next.startsWith('/')) setMacroMenuOpen(false);
+  }
 
   function submit(): void {
     const content = value.trim();
@@ -88,6 +135,34 @@ export function Composer({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+    if (macroOpen) {
+      // Com o menu aberto, estas teclas pertencem a ELE. Enter escolhendo a
+      // macro é o ponto: enviar `/jej` como mensagem seria enviar o comando.
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        const step = event.key === 'ArrowDown' ? 1 : -1;
+        setActiveIndex((index) => {
+          const next = index + step;
+          if (next < 0) return macroMatches.length - 1;
+          if (next >= macroMatches.length) return 0;
+          return next;
+        });
+        return;
+      }
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        if (activeMacro) pickMacro(activeMacro);
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        // A `/` FICA no campo: fechar o menu não pode apagar o que a pessoa
+        // digitou — ela pode estar começando "/dia sim /dia não".
+        setMacroMenuOpen(false);
+        return;
+      }
+    }
+
     // Shift+Enter cai no comportamento padrão do textarea: quebra de linha.
     if (event.key !== 'Enter' || event.shiftKey) return;
     event.preventDefault();
@@ -117,21 +192,37 @@ export function Composer({
         disabled={blocked}
       />
 
-      <textarea
-        ref={fieldRef}
-        rows={1}
-        value={value}
-        disabled={blocked}
-        onChange={(event) => setValue(event.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder={placeholder}
-        aria-label="Mensagem"
-        className={cn(
-          'min-h-[36px] min-w-0 flex-1 resize-none rounded-pill border border-neutral-300 bg-bg',
-          'px-lg py-[9px] font-body text-label text-text outline-none',
-          'placeholder:text-neutral-600 focus:border-accent disabled:cursor-not-allowed disabled:opacity-60',
+      <div className="relative flex min-w-0 flex-1">
+        {macroOpen && macroFilter !== null && (
+          <QuickReplyMenu
+            items={quickReplies ?? []}
+            filter={macroFilter}
+            activeIndex={Math.min(activeIndex, macroMatches.length - 1)}
+            onPick={pickMacro}
+          />
         )}
-      />
+        <textarea
+          ref={fieldRef}
+          rows={1}
+          value={value}
+          disabled={blocked}
+          onChange={(event) => handleChange(event.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={placeholder}
+          aria-label="Mensagem"
+          role={macroOpen ? 'combobox' : undefined}
+          aria-expanded={macroOpen || undefined}
+          aria-controls={macroOpen ? 'quick-reply-listbox' : undefined}
+          aria-activedescendant={
+            macroOpen && activeMacro ? quickReplyOptionId(activeMacro.id) : undefined
+          }
+          className={cn(
+            'min-h-[36px] w-full min-w-0 flex-1 resize-none rounded-pill border border-neutral-300 bg-bg',
+            'px-lg py-[9px] font-body text-label text-text outline-none',
+            'placeholder:text-neutral-600 focus:border-accent disabled:cursor-not-allowed disabled:opacity-60',
+          )}
+        />
+      </div>
 
       <Button onClick={submit} loading={sending} disabled={disabled || value.trim().length === 0}>
         Enviar

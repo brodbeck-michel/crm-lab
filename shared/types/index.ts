@@ -2,6 +2,7 @@ export * from './api.types.js';
 export * from './auth.types.js';
 export * from './theme.types.js';
 export * from './conversation.types.js';
+export * from './quick-reply.types.js';
 export * from './patient.types.js';
 export * from './exam.types.js';
 export * from './insurance.types.js';

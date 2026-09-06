@@ -963,6 +963,42 @@ para o RLS — `user_id` sozinho bastaria para a consulta, mas a policy precisa 
 
 ---
 
+### 22. `quick_replies` (migração 008 — Onda 8 §3.2)
+Respostas rápidas ("macros") do laboratório — o texto que a atendente dispara digitando
+`/atalho` no Composer.
+
+```sql
+CREATE TABLE quick_replies (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id  UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  shortcut   TEXT NOT NULL,          -- sem a barra: "horariocoleta"
+  title      TEXT NOT NULL,
+  content    TEXT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT quick_replies_shortcut_format CHECK (shortcut ~ '^[a-z0-9-]{2,32}$'),
+  UNIQUE (tenant_id, shortcut)
+);
+```
+
+**O CHECK não é decoração.** `shortcut` é o que a pessoa digita depois da `/`: se aceitasse
+maiúscula, acento ou espaço, `/Horário Coleta` viraria um atalho impossível de acertar no
+teclado, e o filtro do menu nunca encontraria a macro. O banco recusa antes de a linha
+existir; o service traduz a recusa em `VALIDATION_ERROR` com o campo `shortcut`.
+
+`UNIQUE (tenant_id, shortcut)` — não global: dois laboratórios podem ter `/coleta` com
+textos diferentes, e a unicidade só faz sentido dentro do tenant.
+
+`created_by ON DELETE SET NULL`: a macro é do laboratório, não de quem a escreveu. Remover
+a autora não pode apagar o texto que a equipe inteira usa todo dia.
+
+Não há `is_active`: `DELETE /quick-replies/:id` apaga de verdade. Diferente de convênio e
+exame, macro não é referenciada por proposta nem por histórico — o texto já foi copiado
+para a mensagem no momento do envio. O audit log guarda o conteúdo apagado.
+
+---
+
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
 
 O isolamento multitenant não é convenção: é imposto pelo banco. O backend conecta com o papel
@@ -1127,12 +1163,13 @@ migrations/
 │                                  # exam_catalog, proposals, proposal_items, tenant_channels
 ├── 006_rls_onda7.sql             # policies das 3 tabelas da 005
 ├── 007_conversation_pins.sql     # conversation_pins + policy (Onda 8 §2.3)
+├── 008_quick_replies.sql         # quick_replies + policy (Onda 8 §3.2)
 └── ...
 ```
 
-A 007 é arquivo ÚNICO (tabela + policy), diferente dos pares 003/004 e 005/006: a
-separação existe para o backfill poder rodar antes de a policy ligar, e a 007 não tem
-backfill — a tabela nasce vazia. Um segundo arquivo aqui seria cerimônia sem função.
+A 007 e a 008 são arquivos ÚNICOS (tabela + policy), diferente dos pares 003/004 e 005/006: a
+separação existe para o backfill poder rodar antes de a policy ligar, e nenhuma das duas
+tem backfill — as tabelas nascem vazias. Um segundo arquivo aqui seria cerimônia sem função.
 
 A 003/004 e a 005/006 seguem o mesmo padrão de arquivos separados: quando a migração tem
 backfill de dado pré-existente, ele roda **antes** de existir policy nas tabelas novas (escreve

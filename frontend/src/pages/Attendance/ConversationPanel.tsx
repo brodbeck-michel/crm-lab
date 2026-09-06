@@ -1,6 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
-import type { ConversationAssignee, ConversationDetail, Message } from '@crm-lab/shared';
+import type {
+  ConversationAssignee,
+  ConversationDetail,
+  Message,
+  QuickReply,
+} from '@crm-lab/shared';
 import { Button, cn } from '@/components/ui';
 import { EmptyState } from '@/components/shared';
 import { Composer, MessageBubble, bubbleTypeFor } from '@/components/conversation';
@@ -30,6 +35,8 @@ export interface ConversationPanelProps {
   onToggleContext: () => void;
   /** Anexo no composer. */
   onAttach: () => void;
+  /** Macros do laboratório — a `/` do composer (Onda 8 §3.4). */
+  quickReplies: QuickReply[];
   contextOpen: boolean;
   /** Ainda há mensagens anteriores no servidor. */
   hasOlderMessages: boolean;
@@ -184,6 +191,7 @@ export function ConversationPanel({
   onArchive,
   onToggleContext,
   onAttach,
+  quickReplies,
   contextOpen,
   hasOlderMessages,
   onLoadOlder,
@@ -295,7 +303,13 @@ export function ConversationPanel({
         )}
       </div>
 
-      <Composer onSend={onSend} onAttach={onAttach} sending={sending} disabled={archived} />
+      <Composer
+        onSend={onSend}
+        onAttach={onAttach}
+        sending={sending}
+        disabled={archived}
+        quickReplies={quickReplies}
+      />
     </div>
   );
 }

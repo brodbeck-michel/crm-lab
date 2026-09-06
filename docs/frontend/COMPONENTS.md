@@ -90,6 +90,17 @@ Anatomia (padrão WhatsApp):
 - Cada emoji é um `<button>` com `aria-label` (nome em pt-BR), navegável por
   teclado; `Esc` fecha e devolve o foco ao campo.
 
+#### Respostas rápidas (Onda 8 §3.4)
+- `/` **com o campo vazio** abre o `QuickReplyMenu` sobre o Composer; digitar
+  filtra por atalho. Escolher **substitui** o texto pelo `content` da macro.
+- Setas ↑/↓ navegam, `Enter` escolhe, `Esc` fecha. `aria-activedescendant`
+  aponta o item ativo — o foco continua no campo, que é onde a pessoa digita.
+- Só dispara com o campo vazio: em qualquer `/` atrapalharia quem escreve
+  "km/h", "24/48h" ou uma URL. Sem macro que case, o menu fecha e a `/` fica
+  como texto normal.
+- O Composer não busca nada: recebe a lista por prop (`quickReplies`). Quem
+  monta a tela é dono do `GET /quick-replies`.
+
 ---
 
 ## Proposta (`proposal/`)
@@ -363,8 +374,9 @@ tela passa tudo por props (o dado vem do TanStack Query).
 |------------|-----------|-------|
 | `ConversationItem` | `<ConversationItem conversation selected? onClick?(id) now? />` | `now` é injetável só para tornar "aguardando N min" determinístico em teste |
 | `MessageBubble` | `<MessageBubble type message maxWidth? showMeta? />` | `type` ∈ `received \| sent \| system` — os únicos 3 |
-| `Composer` | `<Composer onSend(content) onAttach? disabled? sending? placeholder? />` | Enter envia · Shift+Enter quebra linha · emoji insere no cursor |
+| `Composer` | `<Composer onSend(content) onAttach? disabled? sending? placeholder? quickReplies? />` | Enter envia · Shift+Enter quebra linha · emoji insere no cursor · `/` no campo vazio abre as macros |
 | `EmojiPicker` | `<EmojiPicker onPick(emoji) disabled? />` | Grade fixa de 48, sem biblioteca · `Esc` fecha e devolve o foco |
+| `QuickReplyMenu` | `<QuickReplyMenu items filter onPick(reply) onClose() />` | Aberto pela `/` no campo vazio · ↑↓ navega, Enter escolhe, Esc fecha |
 
 Exportações auxiliares (fonte única, para não duplicar regra em tela):
 

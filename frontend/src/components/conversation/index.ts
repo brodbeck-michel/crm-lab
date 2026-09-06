@@ -11,3 +11,5 @@ export { Composer } from './Composer';
 export type { ComposerProps } from './Composer';
 export { EmojiPicker, EMOJIS } from './EmojiPicker';
 export type { EmojiPickerProps } from './EmojiPicker';
+export { QuickReplyMenu, filterQuickReplies, quickReplyOptionId } from './QuickReplyMenu';
+export type { QuickReplyMenuProps } from './QuickReplyMenu';

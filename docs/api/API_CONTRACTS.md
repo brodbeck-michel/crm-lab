@@ -2721,6 +2721,117 @@ usado), `VALIDATION_ERROR` (400, `details.fields`), `FORBIDDEN` (403,
 
 ---
 
+## 9. Quick Replies (Respostas rápidas)
+
+Textos prontos que a atendente dispara no Composer digitando `/atalho` (Onda 8 §3). São
+**do laboratório**, não de quem escreveu: qualquer papel de tenant cria, edita e apaga.
+
+`shortcut` é o que se digita depois da `/` — minúsculo, sem acento e sem espaço
+(`^[a-z0-9-]{2,32}$`). O formato é validado, não sugerido: `/Horário Coleta` seria um
+atalho que ninguém consegue digitar sem errar.
+
+`platform_operator` não tem caminho para nenhuma destas rotas (PAGES.md §11).
+
+### GET /api/v1/quick-replies
+Todas as respostas rápidas do laboratório. Sem paginação: a lista alimenta o menu do
+Composer, que precisa dela inteira para filtrar enquanto se digita, e o teto do CHECK
+(`shortcut` de 32 caracteres) não é o que limita — o que limita é o uso: uma equipe com
+centenas de macros já perdeu a macro.
+
+**Roles:** `attendant`, `manager`, `admin`
+
+**Response (200):**
+```json
+{
+  "quickReplies": [
+    {
+      "id": "b0b1c2d3-4e5f-4a6b-8c9d-0e1f2a3b4c5d",
+      "shortcut": "horariocoleta",
+      "title": "Horário de coleta",
+      "content": "Nossa coleta é de segunda a sexta, das 6h30 às 11h, sem agendamento.",
+      "createdBy": "9f8e7d6c-5b4a-4392-8180-7f6e5d4c3b2a",
+      "createdAt": "2026-09-06T12:00:00.000Z",
+      "updatedAt": "2026-09-06T12:00:00.000Z"
+    }
+  ]
+}
+```
+
+Ordenado por `shortcut` (asc). Envelope de listagem sem `pagination` — é a exceção
+explícita ao D-070 que esta seção registra, e a razão está no parágrafo acima.
+
+`createdBy` é `null` quando o usuário que criou a macro foi removido
+(`ON DELETE SET NULL`): a macro é do laboratório e sobrevive a quem a escreveu.
+
+**Erros:** `FORBIDDEN` (403, `platform_operator`), `UNAUTHORIZED` (401)
+
+### POST /api/v1/quick-replies
+**Roles:** `attendant`, `manager`, `admin`
+
+**Request:**
+```json
+{
+  "shortcut": "horariocoleta",
+  "title": "Horário de coleta",
+  "content": "Nossa coleta é de segunda a sexta, das 6h30 às 11h, sem agendamento."
+}
+```
+
+| Campo | Regra |
+|-------|-------|
+| `shortcut` | obrigatório, `^[a-z0-9-]{2,32}$`, único no tenant |
+| `title` | obrigatório, 1–120 caracteres |
+| `content` | obrigatório, 1–2000 caracteres |
+
+**Response (201):** o objeto cru (recurso único — D-070), mesmo shape da listagem.
+
+Gera audit log `create_quick_reply`.
+
+**Erros:** `VALIDATION_ERROR` (400) — inclusive para atalho repetido no tenant, com
+`details.fields.shortcut`; **não** é `CONFLICT`, porque o que a pessoa precisa corrigir é
+um campo do formulário, e não um estado do servidor. `FORBIDDEN` (403,
+`platform_operator`), `UNAUTHORIZED` (401)
+
+### PATCH /api/v1/quick-replies/:id
+Atualização parcial. Qualquer subconjunto de `shortcut`, `title`, `content`; corpo vazio
+devolve a macro inalterada.
+
+**Roles:** `attendant`, `manager`, `admin`
+
+**Request:**
+```json
+{ "content": "Coleta de segunda a sexta, das 6h30 às 11h. Jejum de 8h para glicemia." }
+```
+
+**Response (200):** o objeto cru, com `updatedAt` novo.
+
+Gera audit log `update_quick_reply` (só quando algum valor mudou de fato).
+
+**Erros:** `NOT_FOUND` (404 — inexistente ou de outro tenant, nunca `FORBIDDEN`),
+`VALIDATION_ERROR` (400, formato ou atalho repetido), `FORBIDDEN` (403,
+`platform_operator`), `UNAUTHORIZED` (401)
+
+### DELETE /api/v1/quick-replies/:id
+Apaga de verdade — diferente de convênio e exame, que só desativam. Macro não é
+referenciada por proposta nem por histórico: o texto já foi copiado para a mensagem
+enviada no momento do uso.
+
+**Roles:** `attendant`, `manager`, `admin`
+
+Restringir a exclusão a gestor foi considerado e descartado: são textos de trabalho,
+versionados no audit log, e travar a exclusão só produziria uma lista suja que ninguém
+limpa.
+
+**Response:** `204 No Content`
+
+Gera audit log `delete_quick_reply` com o conteúdo apagado em `oldValues` — é o que torna
+a exclusão reversível por uma pessoa, já que a linha não fica.
+
+**Erros:** `NOT_FOUND` (404), `VALIDATION_ERROR` (400, `:id` não-uuid), `FORBIDDEN` (403,
+`platform_operator`), `UNAUTHORIZED` (401)
+
+---
+
 ## Error Responses
 
 Todos os erros seguem este formato:

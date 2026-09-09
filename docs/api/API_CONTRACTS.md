@@ -2179,9 +2179,40 @@ Nenhuma resposta desta seção carrega dado clínico ou de conversa: sem nome/te
 paciente, sem conteúdo de mensagem, sem canal interno e sem valor de proposta. Contagem
 agregada (`userCount`, `proposalCount`, `messagesUsed`) é o limite — número sem sujeito.
 
+### Entitlement por plano (Onda 9 — D-086/D-087)
+
+A partir da migração `010_plans_basic_plus.sql`, `subscription_plan` só aceita dois valores:
+`basic` e `plus` (substituem `starter`/`pro`/`enterprise` — D-086). `plus` é superconjunto de
+`basic`: todo tenant `plus` enxerga tudo que um `basic` enxerga, mais o que a tabela abaixo lista
+na coluna `plus`.
+
+O plano viaja **dentro do JWT** (`JwtPayload.plan`) — nunca em header, query ou body do cliente —
+e é copiado para `TenantContext.plan` por `requireAuth`. Um access token emitido **antes** desta
+onda não carrega `plan`; `requirePlan` trata a ausência como `basic` (nunca como `plus`), então um
+deploy em andamento nunca abre uma rota `plus` por engano.
+
+`requirePlan('plus')`, usado ao lado de `requireRoles(...)` nos routers que exigem o plano
+superior, falha com **`403 PLAN_REQUIRED`** e `details: { requiredPlan: "plus", currentPlan }`
+(API_ERRORS.md). Diferente de `FORBIDDEN`: o papel do usuário pode estar correto — é o **plano do
+tenant** que não cobre a rota.
+
+| Plano mínimo | Backend (routers) | Frontend (rotas) |
+|---|---|---|
+| **basic** | `/auth`, `/users`, `/themes`, `/audit`, `/exams`, `/insurances`, `/platform` | `/catalog` (sem preço), `/settings/users`, `/settings/theme`, `/settings/insurances` |
+| **plus** | `/conversations`, `/patients`, `/proposals`, `/internal-chat`, `/quick-replies`, `/media`, `/settings/channels`, `/operations`, `/analytics` | `/attendance`, `/patients/:id`, `/budget/new`, `/proposals`, `/analytics`, `/internal-chat`, `/quick-replies`, `/decisions`, `/settings/channels`, `/settings/operation` |
+
+`/webhooks/*` é caso à parte: **público** (autenticado por HMAC, não por `plan`/`role`). Tenant
+`basic` continua respondendo `200` ao gateway (nunca falha o webhook do provedor), mas a mensagem
+recebida **não é processada** — `basic` não tem `/conversations`.
+
+Rotas ainda não implementadas nesta onda (`/lis-imports`, `/lis-budgets`, `/sales`, `/attendants`,
+`/settings/commissions`, `/reports/executive` no backend; `/results`, `/reconciliation`,
+`/active-search`, `/sales`, `/settings/attendants`, `/settings/commissions` no frontend) entram no
+mesmo quadro na Onda 10/11 — o quadro acima já reserva o lugar delas em `basic`.
+
 ### GET /platform/tenants
 
-**Query Params:** `?page=1&limit=20&search=vida&isActive=true&plan=starter|pro|enterprise`
+**Query Params:** `?page=1&limit=20&search=vida&isActive=true&plan=basic|plus`
 
 `limit` máx. 100 (default 20). `search` casa **nome ou slug** (`ILIKE %termo%`, máx. 255).
 `isActive` só aceita `"true"`/`"false"`. Ordenação fixa `created_at DESC, name ASC`.

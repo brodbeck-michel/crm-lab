@@ -42,6 +42,13 @@ services:
     restart: unless-stopped
     ports:
       - '8080:8080'
+    # Docker Engine nativo (WSL2, sem Docker Desktop) nao resolve
+    # `host.docker.internal` por padrao — so o Desktop faz isso magicamente.
+    # `host-gateway` e um valor especial do proprio Docker (nao um IP fixo),
+    # entao isso nao viola a regra de portabilidade: funciona igual em
+    # qualquer maquina Linux com Docker Engine >=20.10.
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
     environment:
       # Placeholder obvio de dev — em producao vem de `${EVOLUTION_API_KEY:?...}`.
       AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:-dev-local-placeholder-key}

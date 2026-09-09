@@ -3,6 +3,7 @@ import {
   PROPOSAL_STATUSES,
   PROPOSAL_STATUS_LABELS,
   ALLOWED_TRANSITIONS,
+  NEXT_STAGE,
   TERMINAL_STATUSES,
 } from '@crm-lab/shared';
 import { Button, Select } from '@/components/ui';
@@ -13,6 +14,12 @@ interface ActionsRowProps {
   onMarkWon: () => void;
   onMarkLost: () => void;
   isPending: boolean;
+  /**
+   * "Enviar orçamento" (só existe em `novo_contato`, ver `ALLOWED_TRANSITIONS`):
+   * avança o estágio E leva para a conversa com a mensagem pronta. Omitido =
+   * botão não aparece — quem monta a tela decide se o fluxo existe ali.
+   */
+  onSendProposal?: () => void;
 }
 
 export default function ActionsRow({
@@ -21,10 +28,12 @@ export default function ActionsRow({
   onMarkWon,
   onMarkLost,
   isPending,
+  onSendProposal,
 }: ActionsRowProps) {
   const canWin = !TERMINAL_STATUSES.includes(status);
   const canLose = !TERMINAL_STATUSES.includes(status);
   const allowedNextStatuses = ALLOWED_TRANSITIONS[status];
+  const nextStage = NEXT_STAGE[status];
 
   const handleStatusChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value;
@@ -50,6 +59,21 @@ export default function ActionsRow({
       </div>
 
       <div className="flex gap-sm justify-end">
+        {status === 'novo_contato' && onSendProposal && (
+          <Button variant="primary" onClick={onSendProposal} disabled={isPending} loading={isPending}>
+            Enviar orçamento
+          </Button>
+        )}
+        {nextStage && (
+          <Button
+            variant="primary"
+            onClick={() => onChangeStatus(nextStage)}
+            disabled={isPending}
+            loading={isPending}
+          >
+            Avançar para {PROPOSAL_STATUS_LABELS[nextStage]}
+          </Button>
+        )}
         <Button
           variant="confirmation"
           onClick={onMarkWon}

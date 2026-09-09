@@ -1367,6 +1367,7 @@ Paciente inexistente ou fora da visibilidade devolve **lista vazia**, não `404`
   "proposals": [
     {
       "id": "uuid",
+      "proposalNumber": 123,
       "conversationId": "uuid",
       "patientName": "João Santos",
       "status": "orcamento_enviado",
@@ -1388,6 +1389,11 @@ Paciente inexistente ou fora da visibilidade devolve **lista vazia**, não `404`
 `insuranceId` (Onda 7) é `null` numa proposta particular — mesmo campo de `GET /proposals/:id`
 abaixo.
 
+`proposalNumber` é sequencial **POR TENANT** (não global), gerado no servidor em `POST
+/proposals` — o cliente nunca envia. Serve para rastreamento citável por telefone/WhatsApp
+(o UUID de `id` não é citável); a UI formata como `#000123` (`formatProposalNumber` em
+`@crm-lab/shared`).
+
 ### GET /proposals/:id
 Detalhes completos de uma proposta.
 
@@ -1395,6 +1401,7 @@ Detalhes completos de uma proposta.
 ```json
 {
   "id": "uuid",
+  "proposalNumber": 123,
   "conversationId": "uuid",
   "patientName": "João Santos",
   "patientPhone": "(11) 98765-4321",
@@ -1479,6 +1486,7 @@ tem preço cadastrado para aquele convênio — o fallback **nunca bloqueia** a 
 ```json
 {
   "id": "uuid",
+  "proposalNumber": 124,
   "conversationId": "uuid",
   "status": "novo_contato",
   "discountPercent": 10,

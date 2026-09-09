@@ -41,6 +41,8 @@ export interface ConversationPanelProps {
   /** Ainda há mensagens anteriores no servidor. */
   hasOlderMessages: boolean;
   onLoadOlder: () => void;
+  /** Mensagem pronta ao chegar aqui por "Enviar orçamento" (ver `Composer.initialValue`). */
+  draftMessage?: string;
 }
 
 /**
@@ -195,6 +197,7 @@ export function ConversationPanel({
   contextOpen,
   hasOlderMessages,
   onLoadOlder,
+  draftMessage,
 }: ConversationPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   useMessageScroll(scrollRef, messages, conversation?.id ?? null);
@@ -309,6 +312,7 @@ export function ConversationPanel({
         sending={sending}
         disabled={archived}
         quickReplies={quickReplies}
+        initialValue={draftMessage}
       />
     </div>
   );

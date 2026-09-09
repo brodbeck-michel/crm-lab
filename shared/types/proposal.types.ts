@@ -36,12 +36,19 @@ export const TERMINAL_STATUSES: readonly ProposalStatus[] = ['ganho', 'perdido']
 /**
  * Matriz de transicoes validas. WORKFLOWS.md §4.
  * Front e back leem DESTA constante — divergencia e impossivel por construcao.
+ *
+ * `orcamento_enviado`/`follow_up`/`negociacao` tambem voltam UM passo (D-105):
+ * atendente clicou "Enviar orçamento" errado, ou a negociação esfriou e
+ * precisa voltar para follow-up. `ganho`/`perdido` continuam TERMINAIS —
+ * `ProposalService.updateStatus` recusa qualquer transição a partir deles
+ * ANTES de consultar esta matriz (`isTerminal`), voltar não reabre proposta
+ * fechada.
  */
 export const ALLOWED_TRANSITIONS: Readonly<Record<ProposalStatus, readonly ProposalStatus[]>> = {
   novo_contato: ['orcamento_enviado', 'perdido'],
-  orcamento_enviado: ['follow_up', 'negociacao', 'ganho', 'perdido'],
-  follow_up: ['negociacao', 'ganho', 'perdido'],
-  negociacao: ['ganho', 'perdido'],
+  orcamento_enviado: ['novo_contato', 'follow_up', 'negociacao', 'ganho', 'perdido'],
+  follow_up: ['orcamento_enviado', 'negociacao', 'ganho', 'perdido'],
+  negociacao: ['follow_up', 'ganho', 'perdido'],
   ganho: [],
   perdido: [],
 } as const;
@@ -49,6 +56,20 @@ export const ALLOWED_TRANSITIONS: Readonly<Record<ProposalStatus, readonly Propo
 export function isTransitionAllowed(from: ProposalStatus, to: ProposalStatus): boolean {
   return ALLOWED_TRANSITIONS[from].includes(to);
 }
+
+/**
+ * Próximo estágio da sequência PRINCIPAL, sem pular (D-105) — o que o botão
+ * "Avançar para X" do modal usa. Diferente de `ALLOWED_TRANSITIONS`, que
+ * também permite pular estágios (ex: `orcamento_enviado` -> `ganho` direto,
+ * pelo seletor "Mudar estágio"). Sem entrada para `novo_contato` (a
+ * transição de saída dele é "Enviar orçamento", que já é seu próprio botão)
+ * nem para `negociacao`/`ganho`/`perdido` (dali a decisão é Ganho ou
+ * Perdido, com motivo — não um "próximo passo" automático).
+ */
+export const NEXT_STAGE: Readonly<Partial<Record<ProposalStatus, ProposalStatus>>> = {
+  orcamento_enviado: 'follow_up',
+  follow_up: 'negociacao',
+};
 
 /** Rotulos pt-BR dos estagios — unico lugar que os define. */
 export const PROPOSAL_STATUS_LABELS: Readonly<Record<ProposalStatus, string>> = {
@@ -83,6 +104,8 @@ export interface ProposalItem {
 /** Proposta na listagem / pipeline. */
 export interface Proposal {
   id: string;
+  /** Numero sequencial POR TENANT, para rastreamento (citavel por telefone/WhatsApp). */
+  proposalNumber: number;
   conversationId: string;
   patientName: string | null;
   status: ProposalStatus;
@@ -188,6 +211,14 @@ export function calculateSubtotal(items: Array<{ unitPrice: number; quantity: nu
     0,
   );
   return cents / 100;
+}
+
+/**
+ * `123` -> `"#000123"` — 6 digitos com zero a esquerda: citavel por telefone
+ * sem ambiguidade, e do mesmo jeito que numero de nota/pedido.
+ */
+export function formatProposalNumber(proposalNumber: number): string {
+  return `#${String(proposalNumber).padStart(6, '0')}`;
 }
 
 export function calculateTotal(

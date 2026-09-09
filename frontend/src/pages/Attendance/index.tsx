@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ListConversationsQuery, ListPatientsQuery } from '@crm-lab/shared';
 import { api, queryKeys, queryScopes, staleTimes } from '@/api';
@@ -34,6 +34,7 @@ const PATIENT_RESULT_LIMIT = 5;
 
 export function Attendance() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const handleApiError = useApiErrorHandler();
@@ -112,6 +113,19 @@ export function Attendance() {
     },
     [markAsRead, handleApiError],
   );
+
+  /**
+   * Deep link de "Enviar orçamento" (`ProposalModal`): `/attendance
+   * ?conversationId=…&draft=…` chega aqui já com a conversa e a mensagem
+   * prontas. Só roda no MOUNT — depois disso a navegação normal (clique na
+   * fila) manda em `selectedId`.
+   */
+  const initialConversationId = searchParams.get('conversationId');
+  const initialDraft = searchParams.get('draft') ?? undefined;
+  useEffect(() => {
+    if (initialConversationId) handleSelect(initialConversationId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const invalidateConversation = useCallback(async () => {
     if (!selectedId) return;
@@ -262,6 +276,7 @@ export function Attendance() {
             contextOpen={contextOpen}
             hasOlderMessages={!loadedAll}
             onLoadOlder={() => setMessageLimit((limit) => limit + MESSAGE_PAGE_SIZE)}
+            draftMessage={selectedId === initialConversationId ? initialDraft : undefined}
           />
         }
         context={

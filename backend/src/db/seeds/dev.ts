@@ -813,6 +813,7 @@ async function seedTenant(
     const result = await insertProposal(tx, {
       id: proposalId,
       tenantId,
+      proposalNumber: proposalIndex + 1,
       conversationId: conversation.id,
       createdBy: author.id,
       items,

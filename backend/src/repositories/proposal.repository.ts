@@ -30,6 +30,8 @@ import { toIso, toIsoOrNull, toNumber } from './row-mappers.js';
 
 export interface ProposalRow {
   id: string;
+  /** Numero sequencial POR TENANT (migracao 011) — rastreamento citavel. */
+  proposal_number: unknown;
   tenant_id: string;
   conversation_id: string;
   created_by: string;
@@ -74,7 +76,7 @@ interface HistoryRow {
  * duplicados em `proposals` (BUSINESS_RULES §5: um numero, uma origem).
  */
 const SELECT_PROPOSAL = `
-  SELECT p.id, p.tenant_id, p.conversation_id, p.created_by,
+  SELECT p.id, p.proposal_number, p.tenant_id, p.conversation_id, p.created_by,
          u.name AS created_by_name,
          c.patient_name, c.patient_phone,
          p.status, p.discount_percent, p.total_price, p.reason_lost,
@@ -90,6 +92,7 @@ const SELECT_PROPOSAL = `
 export function mapProposal(row: ProposalRow): Proposal {
   return {
     id: row.id,
+    proposalNumber: toNumber(row.proposal_number),
     conversationId: row.conversation_id,
     patientName: row.patient_name,
     status: row.status as ProposalStatus,
@@ -240,12 +243,30 @@ export interface ProposalItemInsert {
   priceSource: ProposalItem['priceSource'];
 }
 
+/**
+ * Proximo `proposal_number` DESTE tenant (migracao 011). `pg_advisory_xact_lock`
+ * serializa concorrentes na MESMA transacao do INSERT que segue — a trava
+ * some sozinha no COMMIT/ROLLBACK, sem tabela de contador dedicada. O hash e
+ * de texto (nao de UUID) para nao depender de nenhuma extensao alem da ja
+ * usada em `gen_random_uuid()`.
+ */
+async function nextProposalNumber(tx: DbTx, tenantId: string): Promise<number> {
+  await tx.query('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [tenantId]);
+  const result = await tx.query<{ next: unknown }>(
+    'SELECT COALESCE(MAX(proposal_number), 0) + 1 AS next FROM proposals WHERE tenant_id = $1',
+    [tenantId],
+  );
+  return toNumber(result.rows[0]?.next, 1);
+}
+
 export async function insertProposal(tx: DbTx, input: ProposalInsert): Promise<string> {
+  const proposalNumber = await nextProposalNumber(tx, input.tenantId);
+
   const result = await tx.query<{ id: string }>(
     `INSERT INTO proposals (tenant_id, conversation_id, created_by, status,
                             discount_percent, total_price, approval_status,
-                            approved_by, approved_at, insurance_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                            approved_by, approved_at, insurance_id, proposal_number)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      RETURNING id`,
     [
       input.tenantId,
@@ -258,6 +279,7 @@ export async function insertProposal(tx: DbTx, input: ProposalInsert): Promise<s
       input.approvedBy,
       input.approvedAt,
       input.insuranceId,
+      proposalNumber,
     ],
   );
   const row = result.rows[0];

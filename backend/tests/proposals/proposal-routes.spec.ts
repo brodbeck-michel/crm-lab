@@ -21,6 +21,7 @@ import { createTestApp, type TestApp } from '../helpers/test-app.js';
 /** Chaves EXATAS de `ProposalDetail` em `@crm-lab/shared` — o contrato do fio. */
 const DETAIL_KEYS = [
   'id',
+  'proposalNumber',
   'conversationId',
   'patientName',
   'patientPhone',

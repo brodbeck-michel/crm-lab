@@ -27,7 +27,7 @@ export function BudgetLayout({ catalog, summary, total, className }: BudgetLayou
   return (
     <div
       data-testid="budget-layout"
-      className={cn('flex min-h-screen w-full overflow-x-auto bg-bg', className)}
+      className={cn('flex h-screen w-full overflow-x-auto bg-bg', className)}
     >
       <section
         data-testid="budget-catalog"

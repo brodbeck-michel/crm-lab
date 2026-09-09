@@ -1,7 +1,11 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { ProposalStatus, LossReason } from '@crm-lab/shared';
+import { formatProposalNumber } from '@crm-lab/shared';
 import { useProposalDetail, useUpdateProposalStatus } from '@/api/proposals';
 import { useInsuranceList } from '@/api/insurances';
+import { useApiErrorHandler } from '@/hooks';
+import { formatMoney } from '@/lib/format';
 import { Modal, MoneyDisplay } from '@/components/shared';
 import { Chip } from '@/components/ui';
 import ItemsList from './ItemsList';
@@ -19,6 +23,8 @@ interface ProposalModalProps {
 export default function ProposalModal({ proposalId, onClose }: ProposalModalProps) {
   const { data: proposal, isLoading } = useProposalDetail(proposalId);
   const updateStatus = useUpdateProposalStatus();
+  const navigate = useNavigate();
+  const handleApiError = useApiErrorHandler();
   // Sem `active: true`: uma proposta pode referenciar um convênio já
   // desativado, e o nome ainda precisa resolver. `limit: 100` é o teto
   // documentado de `GET /insurances` (API_CONTRACTS.md §8) — não existe
@@ -57,10 +63,36 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
     setShowLostForm(false);
   };
 
+  /**
+   * "Enviar orçamento": avança para `orcamento_enviado` (só transição válida
+   * de `novo_contato` além de `perdido`) E leva para a conversa do paciente
+   * com a mensagem já pronta — um clique faz as duas coisas, em vez de
+   * exigir mudar o estágio manualmente depois de mandar a mensagem.
+   */
+  const handleSendProposal = () => {
+    const message = `Olá! Segue o orçamento nº ${formatProposalNumber(proposal.proposalNumber)}, no valor de ${formatMoney(proposal.totalPrice)}.`;
+    updateStatus.mutate(
+      { proposalId, status: 'orcamento_enviado' },
+      {
+        onSuccess: () => {
+          onClose();
+          navigate(
+            `/attendance?conversationId=${proposal.conversationId}&draft=${encodeURIComponent(message)}`,
+          );
+        },
+        onError: handleApiError,
+      },
+    );
+  };
+
   return (
     <Modal open onClose={onClose} title={proposal.patientName || 'Proposta'}>
       <div className="space-y-xl">
         <div className="space-y-lg">
+          <p className="text-caption text-neutral-600">
+            {formatProposalNumber(proposal.proposalNumber)}
+          </p>
+
           <div className="flex items-center gap-sm">
             <span className="text-caption text-neutral-600">Convênio</span>
             <Chip tone="inactive">{insuranceName}</Chip>
@@ -100,6 +132,7 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
             onChangeStatus={handleChangeStatus}
             onMarkWon={handleMarkWon}
             onMarkLost={() => setShowLostForm(true)}
+            onSendProposal={handleSendProposal}
             isPending={updateStatus.isPending}
           />
         )}

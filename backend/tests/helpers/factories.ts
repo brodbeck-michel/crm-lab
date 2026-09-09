@@ -249,6 +249,7 @@ export interface ProposalItemInput {
 
 export interface ProposalRecord {
   id: string;
+  proposalNumber: number;
   tenantId: string;
   conversationId: string;
   createdBy: string;
@@ -262,6 +263,8 @@ export interface ProposalRecord {
 export interface CreateProposalInput {
   id?: string;
   tenantId: string;
+  /** Se omitido, a factory numera sozinha (sequencial por tenant, migracao 011). */
+  proposalNumber?: number;
   conversationId?: string;
   createdBy?: string;
   status?: string;
@@ -274,6 +277,15 @@ export interface CreateProposalInput {
   db?: DbClient;
 }
 
+/** Contador de `proposal_number` por tenant, só para as factories de teste. */
+const testProposalNumbers = new Map<string, number>();
+
+function nextTestProposalNumber(tenantId: string): number {
+  const next = (testProposalNumbers.get(tenantId) ?? 0) + 1;
+  testProposalNumbers.set(tenantId, next);
+  return next;
+}
+
 /**
  * Cria proposta e, opcionalmente, seus itens. Quando `conversationId` ou
  * `createdBy` faltam, a factory cria as dependencias no mesmo tenant — assim o
@@ -283,6 +295,7 @@ export async function createProposal(input: CreateProposalInput): Promise<Propos
   const db = await client(input.db);
   const id = input.id ?? randomUUID();
   const tenantId = input.tenantId;
+  const proposalNumber = input.proposalNumber ?? nextTestProposalNumber(tenantId);
 
   const createdBy =
     input.createdBy ?? (await createUser({ tenantId, role: 'attendant', db })).id;
@@ -297,12 +310,13 @@ export async function createProposal(input: CreateProposalInput): Promise<Propos
 
   await db.withoutTenant(async (tx) => {
     await tx.query(
-      `INSERT INTO proposals (id, tenant_id, conversation_id, created_by, status,
+      `INSERT INTO proposals (id, tenant_id, proposal_number, conversation_id, created_by, status,
                               discount_percent, total_price, approval_status, reason_lost)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [
         id,
         tenantId,
+        proposalNumber,
         conversationId,
         createdBy,
         input.status ?? 'novo_contato',
@@ -330,6 +344,7 @@ export async function createProposal(input: CreateProposalInput): Promise<Propos
 
   return {
     id,
+    proposalNumber,
     tenantId,
     conversationId,
     createdBy,

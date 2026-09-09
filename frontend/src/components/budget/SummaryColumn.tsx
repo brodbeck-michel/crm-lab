@@ -1,6 +1,9 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useCreateProposal } from '@/api/proposals';
+import { useApiErrorHandler } from '@/hooks';
 import { useAuthStore } from '@/stores/auth.store';
+import { useUIStore } from '@/stores/ui.store';
 import { Button, Chip } from '@/components/ui';
 import DiscountSection from '@/components/proposal/DiscountSection';
 import { MoneyDisplay } from '@/components/shared/MoneyDisplay';
@@ -31,6 +34,9 @@ export default function SummaryColumn({
   const user = useAuthStore((s) => s.user);
   const [discountPercent, setDiscountPercent] = useState(0);
 
+  const navigate = useNavigate();
+  const openModal = useUIStore((s) => s.openModal);
+  const handleApiError = useApiErrorHandler();
   const createProposal = useCreateProposal();
 
   // Convert items to the format expected by calculateTotal
@@ -45,18 +51,32 @@ export default function SummaryColumn({
   );
   const total = calculateTotal(itemsForCalc, discountPercent);
 
+  /**
+   * Depois de criada, a proposta some do fluxo de montagem — o lugar dela é o
+   * pipeline. Reabrir aqui como modal (mesmo mecanismo do drag-and-drop em
+   * `Proposals.tsx`) poupa o usuário de caçar o card recém-criado na tela.
+   */
   const handleCreateProposal = () => {
     if (!conversationId || items.length === 0) return;
 
-    createProposal.mutate({
-      conversationId,
-      items: items.map((item) => ({
-        examId: item.examId,
-        quantity: item.quantity,
-      })),
-      discountPercent,
-      insuranceId,
-    });
+    createProposal.mutate(
+      {
+        conversationId,
+        items: items.map((item) => ({
+          examId: item.examId,
+          quantity: item.quantity,
+        })),
+        discountPercent,
+        insuranceId,
+      },
+      {
+        onSuccess: (proposal) => {
+          navigate('/proposals');
+          openModal({ kind: 'proposal', id: proposal.id });
+        },
+        onError: handleApiError,
+      },
+    );
   };
 
   return (

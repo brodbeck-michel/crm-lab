@@ -510,6 +510,8 @@ export interface SeedStatusStep {
 export interface SeedProposalInput {
   id: string;
   tenantId: string;
+  /** Numero sequencial DESTE tenant (migracao 011) — quem chama controla a ordem. */
+  proposalNumber: number;
   conversationId: string;
   createdBy: string;
   items: SeedProposalItem[];
@@ -581,14 +583,15 @@ export async function insertProposal(
   const closedAt = isTerminal ? last.changedAt : null;
 
   await tx.query(
-    `INSERT INTO proposals (id, tenant_id, conversation_id, created_by, status,
+    `INSERT INTO proposals (id, tenant_id, proposal_number, conversation_id, created_by, status,
                             discount_percent, total_price, reason_lost,
                             approval_status, approved_by, approved_at,
                             sent_at, closed_at, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
     [
       input.id,
       input.tenantId,
+      input.proposalNumber,
       input.conversationId,
       input.createdBy,
       status,

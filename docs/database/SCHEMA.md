@@ -349,6 +349,20 @@ ALTER TABLE proposals
 trocar `insuranceId` (trocar re-precificaria itens com snapshot, D-004; comportamento novo que
 exigiria decisão própria, registrado como limitação em API_CONTRACTS.md §3).
 
+**Coluna nova (migração `011_proposal_number.sql`):**
+
+```sql
+ALTER TABLE proposals ADD COLUMN proposal_number INTEGER NOT NULL;
+CREATE UNIQUE INDEX idx_proposals_tenant_number ON proposals(tenant_id, proposal_number);
+```
+
+Numeração sequencial **POR TENANT**, gerada no `ProposalRepository.insertProposal` (
+`pg_advisory_xact_lock(hashtext(tenant_id))` + `MAX(proposal_number) + 1`, na MESMA transação
+do `INSERT` — sem tabela de contador dedicada). Existe para rastreamento citável por
+telefone/WhatsApp (`id` é UUID, não citável) — exposta em `Proposal.proposalNumber`
+(API_CONTRACTS.md §3), formatada na UI como `#000123` (`formatProposalNumber`,
+`@crm-lab/shared`).
+
 ### 6. `proposal_items`
 Itens dentro de uma proposta (exames selecionados).
 

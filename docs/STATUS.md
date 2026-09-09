@@ -470,6 +470,65 @@ WhatsApp está de pé, suspender/reativar, trocar plano, resetar acesso de um ad
 - `npm run typecheck` (4 workspaces), `npm run test:backend` (63 arquivos / 937 testes) e
   `npm run test:frontend` verdes
 
+## 2026-09-09 — Propostas: numeração sequencial + fluxo "Enviar orçamento" ✅
+
+Pedido do usuário: 1) corrigir a tela de `/budget/new` (catálogo sem rolagem própria, barra
+lateral crescendo com a página, botão "Criar Orçamento" enterrado no fim de uma página gigante)
+e a navegação pós-criação (o botão não levava a lugar nenhum); 2) depois de criar, o orçamento
+precisava de número sequencial rastreável e um botão "Enviar orçamento" que abrisse o atendimento
+do paciente com uma mensagem pronta.
+
+- **Layout de `/budget/new`:** `BudgetLayout.tsx` usava `min-h-screen` (altura MÍNIMA, sem teto)
+  no container das duas colunas — sem um teto, `overflow-y-auto` de catálogo e resumo nunca tinha
+  o que rolar por dentro: a página inteira crescia para caber tudo, e o botão do resumo ficava lá
+  embaixo dela. Trocado para `h-screen` (mesmo padrão já usado no `Sidebar`) — catálogo e barra
+  lateral agora rolam cada um por dentro, do tamanho certo da tela.
+- **Navegação pós-criação:** `useCreateProposal` só invalidava cache, não navegava a lugar nenhum.
+  `SummaryColumn.handleCreateProposal` agora, ao criar com sucesso, volta para `/proposals` com o
+  modal da proposta recém-criada aberto (mesmo mecanismo do drag-and-drop do Kanban).
+- **`proposalNumber` (D-103):** sequencial **por
+  tenant** (não global), migração `011_proposal_number.sql` (coluna + backfill via `ROW_NUMBER()`
+  + índice único `(tenant_id, proposal_number)`). Gerado em
+  `ProposalRepository.insertProposal` via `pg_advisory_xact_lock(hashtext(tenant_id))` +
+  `MAX(proposal_number) + 1` na MESMA transação do `INSERT` — sem tabela de contador dedicada.
+  Exposto em `Proposal.proposalNumber` (`API_CONTRACTS.md` §3), formatado na UI como `#000123`
+  (`formatProposalNumber`, `@crm-lab/shared`). Seeds (`dev.ts`, `e2e.ts`, factory de teste
+  `createProposal`) numeram por tenant também.
+- **"Enviar orçamento" (D-104)** (`ActionsRow.tsx`, só visível em `novo_contato`): avança o estágio para
+  `orcamento_enviado` E navega para `/attendance?conversationId=…&draft=…` com a mensagem
+  `"Olá! Segue o orçamento nº #000123, no valor de R$ 179,80."` pré-preenchida no `Composer`
+  (`Composer.initialValue`, novo prop) — a pessoa ainda revisa e aperta "Enviar" ali, nada sai
+  sozinho. `Attendance/index.tsx` lê `conversationId`/`draft` da URL só no mount.
+- Doc: `api/API_CONTRACTS.md` §3 (`proposalNumber` nos 3 shapes de resposta),
+  `database/SCHEMA.md` (coluna nova em `proposals`).
+- `npm run typecheck` (4 workspaces) verde. `npm run test:backend` verde (63 arquivos / 937
+  testes). `npm run test:frontend`: verde exceto 2 falhas **não relacionadas** a esta mudança —
+  `tailwind-theme-classes.spec.ts` (pré-existente, `text-h4` em `Platform/TenantDetail.tsx`, fora
+  desta tarefa) e `CatalogSegments.spec.tsx` (timeout de 5s só no full-run; passa isolado —
+  flakiness de timing, não regressão).
+- Verificado ao vivo: `npm run migrate` aplicado no Postgres local, backfill conferido via
+  `psql` (numeração sequencial correta por tenant), backend (`tsx --watch`) recarregou sem erro.
+
+## 2026-09-09 — Pipeline: voltar um estágio + "Avançar para X" ✅
+
+Sequência do pedido anterior (numeração + "Enviar orçamento"): usuário testou ao vivo e pediu 2
+ajustes na máquina de estados do pipeline.
+
+- **Bug corrigido no caminho:** o botão "Enviar orçamento" (D-104) deixava a tela em branco ao
+  abrir qualquer card — `GlobalModals`/`ProposalModal` estava fora do `<RouterProvider>` em
+  `App.tsx` (irmão dele, não descendente), então `useNavigate()` derrubava a árvore inteira sem
+  contexto de rota. Movido para dentro de `AppShell.tsx` (elemento de ROTA, já dentro do router).
+- **D-105:** `ALLOWED_TRANSITIONS` ganha 3 arestas de volta (`orcamento_enviado → novo_contato`,
+  `follow_up → orcamento_enviado`, `negociacao → follow_up`) — `ganho`/`perdido` continuam
+  terminais, sem reabertura. Botão novo "Avançar para X" (`NEXT_STAGE`,
+  `orcamento_enviado → follow_up → negociacao`) soma ao seletor "Mudar estágio" já existente, que
+  também ganhou as transições de volta de graça (lê da mesma constante).
+- Doc: `BUSINESS_RULES.md` §3, `WORKFLOWS.md` §4, `DECISIONS.md` D-105.
+- `npm run typecheck` (shared/backend/frontend) verde. Backend: 229 testes relevantes
+  (`tests/proposals`, `tests/patients/patients-timeline.spec.ts`,
+  `tests/kernel/route-tenant-isolation.spec.ts`) verdes. Frontend: `Proposals.spec.tsx` (12) +
+  `ProposalModal.spec.tsx` (6) verdes.
+
 ## Bloqueios Atuais
 
 Nenhum.

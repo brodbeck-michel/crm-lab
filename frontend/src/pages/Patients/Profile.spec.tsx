@@ -131,6 +131,7 @@ const proposalsResponse: ListProposalsResponse = {
   proposals: [
     {
       id: '6d9a4c2b-71e5-4f18-8b0a-3c5d2e9f1a44',
+      proposalNumber: 1,
       conversationId: 'a7f3c2d1-4e58-49b6-8c02-7d1e5f9a3b64',
       patientName: 'João Santos',
       status: 'orcamento_enviado',

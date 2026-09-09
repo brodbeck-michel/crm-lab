@@ -309,6 +309,10 @@ export async function seedE2e(tx: DbTx, now: Date): Promise<{ users: number; pro
 
   // ---- propostas ------------------------------------------------------------
   const proposals: readonly E2eProposal[] = Object.values(E2E_PROPOSALS);
+  // Numero sequencial e POR TENANT (migracao 011) — os fixtures e2e cobrem 2
+  // tenants (alfa/beta) intercalados na mesma lista, entao a contagem precisa
+  // de um contador por tenant, não do indice cru do loop.
+  const proposalNumberByTenant = new Map<string, number>();
   for (const proposal of proposals) {
     const statuses = E2E_PATHS[proposal.id];
     if (!statuses) throw new Error(`Proposta e2e ${proposal.id} sem caminho de estágios definido.`);
@@ -327,9 +331,13 @@ export async function seedE2e(tx: DbTx, now: Date): Promise<{ users: number; pro
           : E2E_USERS.betaAttendant.id
         : null;
 
+    const proposalNumber = (proposalNumberByTenant.get(proposal.tenantId) ?? 0) + 1;
+    proposalNumberByTenant.set(proposal.tenantId, proposalNumber);
+
     const result = await insertProposal(tx, {
       id: proposal.id,
       tenantId: proposal.tenantId,
+      proposalNumber,
       conversationId: proposal.conversationId,
       createdBy: proposal.createdBy,
       items: proposal.items.map((item) => ({ ...item })),

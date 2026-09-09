@@ -4,8 +4,6 @@ import { ToastProvider } from '@/components/ui';
 import { queryClient } from '@/api/query-client';
 import { useAppWebSocket } from '@/hooks';
 import { appRoutes } from '@/routes';
-import { useUIStore } from '@/stores';
-import ProposalModal from '@/components/proposal/ProposalModal';
 import '@/stores'; // registra a ponte de sessão do client HTTP
 
 /**
@@ -25,26 +23,11 @@ function RealtimeBridge() {
   return null;
 }
 
-/** Modais globais montadas na raiz. */
-function GlobalModals() {
-  const modal = useUIStore((s) => s.activeModal);
-  const closeModal = useUIStore((s) => s.closeModal);
-
-  if (!modal) return null;
-
-  if (modal.kind === 'proposal' && modal.id) {
-    return <ProposalModal proposalId={modal.id} onClose={closeModal} />;
-  }
-
-  return null;
-}
-
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
         <RealtimeBridge />
-        <GlobalModals />
         <RouterProvider router={router} />
       </ToastProvider>
     </QueryClientProvider>

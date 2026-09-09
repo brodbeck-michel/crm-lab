@@ -29,6 +29,12 @@ export interface ComposerProps {
   onSend: (content: string) => void;
   /** Anexo — sem handler, o botão não aparece (nada de botão morto). */
   onAttach?: () => void;
+  /**
+   * Texto inicial do campo (ex.: "Enviar orçamento" chegando com a mensagem
+   * pronta). Só semeia o estado no MOUNT — o Composer continua dono do que
+   * a pessoa digita depois, sem virar componente controlado.
+   */
+  initialValue?: string;
   /** Conversa arquivada / sem permissão de escrita. */
   disabled?: boolean;
   /** Envio em voo: bloqueia o botão e mostra o indicador. */
@@ -69,8 +75,9 @@ export function Composer({
   sending = false,
   placeholder = 'Escreva uma mensagem',
   quickReplies,
+  initialValue,
 }: ComposerProps) {
-  const [value, setValue] = useState('');
+  const [value, setValue] = useState(initialValue ?? '');
   // `false` enquanto a pessoa não abriu o menu nesta digitação — é o que faz
   // `Esc` deixar a `/` no campo sem o menu voltar a abrir sozinho.
   const [macroMenuOpen, setMacroMenuOpen] = useState(false);

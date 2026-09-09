@@ -165,22 +165,28 @@ POST /proposals
 
 ```
 novo_contato ──→ orcamento_enviado ──→ follow_up ──→ negociacao ──┬─→ ganho
+                   ←──────────┘  ←──────────┘  ←──────────┘        │
                         │                   │             │        │
                         └───────────────────┴─────────────┴────────┴─→ perdido
                                                               (motivo obrigatório)
 ```
+
+`ganho`/`perdido` são terminais em qualquer direção — nenhuma seta sai deles, nem de volta.
 
 ### Transições válidas:
 
 | De | Para | Trigger |
 |----|------|---------|
 | novo_contato | orcamento_enviado | Atendente envia orçamento |
+| orcamento_enviado | novo_contato | Voltar (D-105) — "Enviar orçamento" clicado por engano |
 | orcamento_enviado | follow_up | Sem resposta (manual ou automação) |
 | orcamento_enviado | negociacao | Paciente pede desconto |
 | orcamento_enviado | ganho | Paciente aceita direto |
+| follow_up | orcamento_enviado | Voltar (D-105) — reavaliar antes do follow-up |
 | follow_up | negociacao | Paciente responde negociando |
 | follow_up | ganho | Paciente aceita |
 | follow_up | perdido | Sem resposta definitiva |
+| negociacao | follow_up | Voltar (D-105) — negociação esfriou |
 | negociacao | ganho | Acordo fechado |
 | negociacao | perdido | Sem acordo |
 | qualquer aberto | perdido | Com motivo |

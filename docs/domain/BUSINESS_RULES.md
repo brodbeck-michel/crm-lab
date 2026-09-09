@@ -146,6 +146,14 @@ novo_contato → orcamento_enviado → follow_up → negociacao → ganho/perdid
 | `ganho` | Proposta aceita | — (fim) | Cliente confirma coleta |
 | `perdido` | Proposta recusada | — (fim) | Com motivo obrigatório |
 
+**Voltar um passo (D-105):** além do avanço, `orcamento_enviado`, `follow_up` e `negociacao`
+também aceitam voltar UM estágio (`orcamento_enviado → novo_contato`,
+`follow_up → orcamento_enviado`, `negociacao → follow_up`) — atendente clicou "Enviar orçamento"
+por engano, ou a negociação esfriou e precisa voltar para follow-up. `ganho`/`perdido` continuam
+terminais: nenhuma transição sai deles, nem para trás. A lista exata e definitiva de transições
+válidas é sempre `ALLOWED_TRANSITIONS` em `shared/types/proposal.types.ts` — esta tabela é
+ilustrativa.
+
 ### Transições Proibidas:
 
 ```typescript

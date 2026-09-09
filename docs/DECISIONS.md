@@ -1202,6 +1202,64 @@ atualizados no mesmo commit).
 
 ---
 
+### D-103: Numeração sequencial de proposta, POR TENANT — não global
+**Decisão:** `proposals` ganha `proposal_number` (`INTEGER NOT NULL`, migração
+`011_proposal_number.sql`), único por `(tenant_id, proposal_number)`, gerado em
+`ProposalRepository.insertProposal` via `pg_advisory_xact_lock(hashtext(tenant_id))` seguido de
+`MAX(proposal_number) + 1`, na MESMA transação do `INSERT` — sem tabela de contador dedicada.
+Exposto em `Proposal.proposalNumber` (`API_CONTRACTS.md` §3), formatado na UI como `#000123`
+(`formatProposalNumber`, `@crm-lab/shared`).
+**Motivo:** o UUID de `id` não é citável por telefone/WhatsApp — o atendente precisa de um
+número curto para "orçamento tal" ser rastreável numa ligação ou mensagem. A numeração é POR
+TENANT (não uma sequence global) para seguir a mesma convenção do resto do schema (RLS por
+`tenant_id`, CLAUDE.md regra 1: nenhum dado de laboratório é compartilhado ou comparável entre
+tenants) — o primeiro orçamento de cada laboratório novo começa em 1, e dois laboratórios nunca
+competem pelo mesmo contador. A trava é advisory (não uma tabela de contador) porque o volume de
+um laboratório não justifica a complexidade extra, e a trava soma no `COMMIT`/`ROLLBACK` da
+própria transação sem estado residual.
+**Impacto:** db (migração 011: coluna + backfill via `ROW_NUMBER() OVER (PARTITION BY tenant_id
+ORDER BY created_at, id)` + índice único), api (`proposalNumber` em `Proposal`/`ProposalDetail`,
+somado nos 3 shapes de resposta de `API_CONTRACTS.md` §3), ui (`ProposalCard`, `ProposalModal`
+mostram `#000123` em vez do UUID truncado), seeds (`dev.ts`, `e2e.ts`, factory de teste
+`createProposal` numeram por tenant também).
+
+### D-104: "Enviar orçamento" avança estágio E entrega mensagem pronta na conversa
+**Decisão:** Botão "Enviar orçamento" em `ProposalModal`/`ActionsRow`, visível só quando
+`status === 'novo_contato'` (única transição de saída além de `perdido`, `ALLOWED_TRANSITIONS`).
+Um clique faz DUAS coisas: `PATCH /proposals/:id/status` para `orcamento_enviado`, e navega para
+`/attendance?conversationId=…&draft=…` com o `Composer` já preenchido com
+`"Olá! Segue o orçamento nº #000123, no valor de R$ 179,80."` — a pessoa ainda revisa e aperta
+"Enviar" no composer; nada sai sozinho.
+**Motivo:** o fluxo anterior exigia dois passos manuais desconectados (mudar o estágio pelo
+seletor, depois ir até o atendimento e escrever a mensagem do zero) — fácil de esquecer um dos
+dois, e sem garantia de que o valor citado na mensagem bate com o total real da proposta. Um
+clique que já entrega o texto certo elimina as duas fontes de erro; o composer continua exigindo
+confirmação humana antes de qualquer coisa realmente sair pelo WhatsApp.
+**Impacto:** ui (`ActionsRow.onSendProposal` novo prop opcional, `Composer.initialValue` novo
+prop — seeded no mount, o Composer continua não-controlado depois disso;
+`Attendance/index.tsx` lê `conversationId`/`draft` da query string só no mount, via
+`useSearchParams`). Nenhuma mudança de contrato de API (a rota `PATCH .../status` já existia).
+
+### D-105: Pipeline aceita voltar UM estágio, e ganha botão "Avançar para X"
+**Decisão:** `ALLOWED_TRANSITIONS` (`shared/types/proposal.types.ts`) ganha 3 arestas de volta:
+`orcamento_enviado → novo_contato`, `follow_up → orcamento_enviado`,
+`negociacao → follow_up`. `ganho`/`perdido` continuam terminais — `ProposalService.updateStatus`
+recusa qualquer transição a partir deles (`isTerminal`) ANTES de consultar a matriz, voltar não
+reabre proposta fechada. Nova constante `NEXT_STAGE` (`orcamento_enviado → follow_up`,
+`follow_up → negociacao`) alimenta um botão "Avançar para X" em `ActionsRow.tsx`, que soma-se
+(não substitui) ao seletor "Mudar estágio" já existente — que agora também lista as novas
+transições de volta, de graça, por já ler de `ALLOWED_TRANSITIONS`.
+**Motivo:** pedido do usuário — o atendente precisa desfazer um "Enviar orçamento" clicado por
+engano, ou voltar uma negociação que esfriou para follow-up, sem sair da tela normal do pipeline
+(reabrir `ganho`/`perdido` fechados foi discutido e explicitamente descartado — maior escopo,
+mexeria em histórico/auditoria/analytics de proposta encerrada). "Avançar para X" existe à parte
+de "voltar": um clique cobre o caminho comum sem o atendente precisar abrir o seletor toda vez.
+**Impacto:** shared (`ALLOWED_TRANSITIONS`, `NEXT_STAGE` novos em `proposal.types.ts` — backend e
+frontend leem da mesma constante, nenhuma mudança de código em `ProposalService.updateStatus`),
+ui (`ActionsRow.tsx`: botão novo "Avançar para X"; o Kanban de `Proposals.tsx` também passa a
+aceitar arrastar um card pra trás nessas 3 transições, de graça, mesmo mecanismo de
+`isTransitionAllowed`), docs (`BUSINESS_RULES.md` §3, `WORKFLOWS.md` §4).
+
 ## Template para novas decisões
 
 ```

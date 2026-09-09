@@ -130,6 +130,9 @@ async function writeLegacyData(db: DbClient): Promise<LegacyIds> {
     );
 
     await tx.query(
+      // Sem `proposal_number`: neste ponto (migracoes so ate 002) a coluna
+      // ainda nao existe — o backfill dela (migracao 011, quando `runMigrations`
+      // roda mais abaixo) e o que este describe verifica.
       `INSERT INTO proposals (id, tenant_id, conversation_id, created_by, status, total_price)
        VALUES ($1, $2, $3, $4, 'novo_contato', 120)`,
       [ids.proposal, ids.tenantA, ids.convA1, userA],

@@ -3,9 +3,31 @@ import { Outlet } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { cn } from '@/components/ui';
 import { applyTheme } from '@/lib/theme';
-import { useAuthStore } from '@/stores';
+import { useAuthStore, useUIStore } from '@/stores';
 import { PLATFORM_THEME } from '@/routes/platform-theme';
+import ProposalModal from '@/components/proposal/ProposalModal';
 import { Sidebar } from './Sidebar';
+
+/**
+ * Modais globais do tenant (proposta hoje). MORA DENTRO do `<AppShell/>`, que é
+ * um elemento de ROTA — `RouterProvider` só dá contexto de router (`useNavigate`
+ * etc.) para o que ele mesmo renderiza. Um irmão de `<RouterProvider/>` em
+ * `App.tsx` (como era antes) fica FORA dessa árvore: `ProposalModal` usa
+ * `useNavigate` (D-104, "Enviar orçamento"), e sem o contexto o React derruba
+ * a árvore inteira — tela em branco ao abrir qualquer card do pipeline.
+ */
+function GlobalModals() {
+  const modal = useUIStore((s) => s.activeModal);
+  const closeModal = useUIStore((s) => s.closeModal);
+
+  if (!modal) return null;
+
+  if (modal.kind === 'proposal' && modal.id) {
+    return <ProposalModal proposalId={modal.id} onClose={closeModal} />;
+  }
+
+  return null;
+}
 
 /**
  * AppShell — Sidebar + área de conteúdo com `<Outlet />`
@@ -21,6 +43,7 @@ export function AppShell() {
       <main className="flex min-w-0 flex-1 flex-col">
         <Outlet />
       </main>
+      <GlobalModals />
     </div>
   );
 }

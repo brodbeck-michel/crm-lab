@@ -33,9 +33,13 @@ const mutate = vi.fn();
  * "a pagina 2 mostra registro que a 1 nao mostra" — que E a pendencia D7 —
  * nao. Padrao de `Patients/Profile.spec.tsx`.
  */
+let proposalNumberSeq = 0;
+
 function proposta(id: string, patientName: string): Proposal {
+  proposalNumberSeq += 1;
   return {
     id,
+    proposalNumber: proposalNumberSeq,
     conversationId: 'conv-1',
     patientName,
     status: 'negociacao',

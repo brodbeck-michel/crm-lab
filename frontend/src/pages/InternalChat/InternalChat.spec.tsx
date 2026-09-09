@@ -143,6 +143,7 @@ function messagesResponse(messages: InternalMessage[]): ListInternalMessagesResp
 function proposal(overrides: Partial<ProposalDetail> = {}): ProposalDetail {
   return {
     id: PROPOSAL_ID,
+    proposalNumber: 1,
     conversationId: 'c-1',
     patientName: 'Marina Alves',
     patientPhone: '(11) 98765-4321',

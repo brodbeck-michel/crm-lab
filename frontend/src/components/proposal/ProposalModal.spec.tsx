@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import { QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import type {
   Insurance,
   ListInsurancesResponse,
@@ -10,6 +11,7 @@ import type {
 } from '@crm-lab/shared';
 import { querySuccess, mutationIdle } from '@/test/query-mocks';
 import type { UpdateProposalStatusResponse } from '@/api/proposals';
+import { ToastProvider } from '@/components/ui';
 import ProposalModal from './ProposalModal';
 import * as proposalsApi from '@/api/proposals';
 import * as insurancesApi from '@/api/insurances';
@@ -45,6 +47,7 @@ function buildItem(overrides: Partial<ProposalItem> = {}): ProposalItem {
 function buildProposal(overrides: Partial<ProposalDetail> = {}): ProposalDetail {
   return {
     id: 'prop-1',
+    proposalNumber: 1,
     conversationId: 'conv-1',
     patientName: 'João Silva',
     patientPhone: '11999999999',
@@ -96,7 +99,11 @@ function mockInsurances(insurances: Insurance[]) {
 function renderModal() {
   return render(
     <QueryClientProvider client={queryClient}>
-      <ProposalModal proposalId="prop-1" onClose={() => {}} />
+      <ToastProvider>
+        <MemoryRouter>
+          <ProposalModal proposalId="prop-1" onClose={() => {}} />
+        </MemoryRouter>
+      </ToastProvider>
     </QueryClientProvider>,
   );
 }
@@ -110,6 +117,7 @@ describe('ProposalModal', () => {
   it('renders items, discount, total, and history', () => {
     const mockProposal: ProposalDetail = {
       id: 'prop-1',
+      proposalNumber: 1,
       conversationId: 'conv-1',
       patientName: 'João Silva',
       patientPhone: '11999999999',
@@ -163,7 +171,11 @@ describe('ProposalModal', () => {
 
     render(
       <QueryClientProvider client={queryClient}>
-        <ProposalModal proposalId="prop-1" onClose={() => {}} />
+        <ToastProvider>
+          <MemoryRouter>
+            <ProposalModal proposalId="prop-1" onClose={() => {}} />
+          </MemoryRouter>
+        </ToastProvider>
       </QueryClientProvider>
     );
 
@@ -175,6 +187,7 @@ describe('ProposalModal', () => {
   it('renders approval alert when approvalStatus is pending', () => {
     const mockProposal: ProposalDetail = {
       id: 'prop-1',
+      proposalNumber: 1,
       conversationId: 'conv-1',
       patientName: 'João Silva',
       patientPhone: '11999999999',
@@ -212,7 +225,11 @@ describe('ProposalModal', () => {
 
     render(
       <QueryClientProvider client={queryClient}>
-        <ProposalModal proposalId="prop-1" onClose={() => {}} />
+        <ToastProvider>
+          <MemoryRouter>
+            <ProposalModal proposalId="prop-1" onClose={() => {}} />
+          </MemoryRouter>
+        </ToastProvider>
       </QueryClientProvider>
     );
 

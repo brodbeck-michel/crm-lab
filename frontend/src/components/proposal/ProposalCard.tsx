@@ -1,5 +1,5 @@
 import { useUIStore } from '@/stores/ui.store';
-import { type Proposal, PROPOSAL_STATUS_LABELS } from '@crm-lab/shared';
+import { type Proposal, PROPOSAL_STATUS_LABELS, formatProposalNumber } from '@crm-lab/shared';
 import { Chip } from '@/components/ui/Chip';
 import { MoneyDisplay } from '@/components/shared/MoneyDisplay';
 
@@ -47,7 +47,9 @@ export default function ProposalCard({ proposal, draggable = false }: ProposalCa
       <div className="flex items-start justify-between gap-sm mb-sm">
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-label truncate">{proposal.patientName || 'Sem paciente'}</p>
-          <p className="text-caption text-neutral-600">#{proposal.id.slice(0, 8)}</p>
+          <p className="text-caption text-neutral-600">
+            {formatProposalNumber(proposal.proposalNumber)}
+          </p>
         </div>
       </div>
 

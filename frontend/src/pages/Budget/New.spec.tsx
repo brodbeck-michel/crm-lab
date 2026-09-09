@@ -8,6 +8,7 @@ import { DEFAULT_THEME } from '@/lib/theme';
 import { QueryClient } from '@tanstack/react-query';
 import BudgetNew from './New';
 import SummaryColumn from '@/components/budget/SummaryColumn';
+import { ToastProvider } from '@/components/ui';
 import { http } from '@/api/client';
 import type { QueryParams } from '@/api/client';
 
@@ -133,9 +134,11 @@ describe('BudgetNew', () => {
   it('renders 2 columns: catalog and summary', async () => {
     render(
       <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          <BudgetNew />
-        </BrowserRouter>
+        <ToastProvider>
+          <BrowserRouter>
+            <BudgetNew />
+          </BrowserRouter>
+        </ToastProvider>
       </QueryClientProvider>
     );
 
@@ -148,9 +151,11 @@ describe('BudgetNew', () => {
   it('displays budget layout sections', async () => {
     render(
       <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          <BudgetNew />
-        </BrowserRouter>
+        <ToastProvider>
+          <BrowserRouter>
+            <BudgetNew />
+          </BrowserRouter>
+        </ToastProvider>
       </QueryClientProvider>
     );
 
@@ -170,9 +175,11 @@ describe('BudgetNew', () => {
 
     render(
       <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          <BudgetNew />
-        </BrowserRouter>
+        <ToastProvider>
+          <BrowserRouter>
+            <BudgetNew />
+          </BrowserRouter>
+        </ToastProvider>
       </QueryClientProvider>
     );
 
@@ -211,12 +218,16 @@ describe('BudgetNew', () => {
 
     const { rerender } = render(
       <QueryClientProvider client={queryClient}>
-        <SummaryColumn
-          conversationId="conv-1"
-          items={items}
-          insuranceId={UNIMED_ID}
-          onRemoveItem={() => {}}
-        />
+        <ToastProvider>
+          <MemoryRouter>
+            <SummaryColumn
+              conversationId="conv-1"
+              items={items}
+              insuranceId={UNIMED_ID}
+              onRemoveItem={() => {}}
+            />
+          </MemoryRouter>
+        </ToastProvider>
       </QueryClientProvider>
     );
 
@@ -228,12 +239,16 @@ describe('BudgetNew', () => {
     // seria redundante e não deve aparecer.
     rerender(
       <QueryClientProvider client={queryClient}>
-        <SummaryColumn
-          conversationId="conv-1"
-          items={items}
-          insuranceId={null}
-          onRemoveItem={() => {}}
-        />
+        <ToastProvider>
+          <MemoryRouter>
+            <SummaryColumn
+              conversationId="conv-1"
+              items={items}
+              insuranceId={null}
+              onRemoveItem={() => {}}
+            />
+          </MemoryRouter>
+        </ToastProvider>
       </QueryClientProvider>
     );
 
@@ -245,9 +260,11 @@ describe('BudgetNew', () => {
 
     render(
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={['/budget/new?conversationId=conv-77']}>
-          <BudgetNew />
-        </MemoryRouter>
+        <ToastProvider>
+          <MemoryRouter initialEntries={['/budget/new?conversationId=conv-77']}>
+            <BudgetNew />
+          </MemoryRouter>
+        </ToastProvider>
       </QueryClientProvider>
     );
 

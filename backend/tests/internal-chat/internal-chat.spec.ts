@@ -7,6 +7,7 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type {
   ApiErrorBody,
+  Channel,
   InternalMessage,
   ListChannelsResponse,
   ListInternalMessagesResponse,
@@ -25,6 +26,8 @@ const CHANNEL_KEYS = [
   'lastMessageAt',
   'lastReadAt',
   'name',
+  'otherUserId',
+  'otherUserName',
   'unreadCount',
 ];
 const MESSAGE_KEYS = [
@@ -384,5 +387,170 @@ describe('/api/v1/internal-chat', () => {
 
   it('sem token -> 401', async () => {
     await app.agent.get('/api/v1/internal-chat/channels').expect(401);
+  });
+
+  // -------------------------------------------------------------------------
+  // Diretorio de usuarios + DM — D-101
+  // -------------------------------------------------------------------------
+  describe('GET /internal-chat/users', () => {
+    it('lista usuarios ativos do tenant, exclui o proprio e inativos', async () => {
+      const tenant = await createTenant();
+      const eu = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Eu' });
+      const colega = await createUser({ tenantId: tenant.id, role: 'manager', name: 'Colega' });
+      await createUser({
+        tenantId: tenant.id,
+        role: 'attendant',
+        name: 'Inativo',
+        isActive: false,
+      });
+
+      const response = await app.agent
+        .get('/api/v1/internal-chat/users')
+        .set(app.auth(eu))
+        .expect(200);
+
+      const users = (response.body as { users: { id: string; name: string; role: string }[] })
+        .users;
+      expect(users.map((u) => u.id)).toEqual([colega.id]);
+      expect(users[0]).toEqual({ id: colega.id, name: 'Colega', role: 'manager' });
+    });
+
+    it('operador de plataforma -> 403', async () => {
+      const tenant = await createTenant();
+      const operador = await createUser({
+        tenantId: tenant.id,
+        role: 'platform_operator',
+        discountLimit: 0,
+      });
+
+      await app.agent
+        .get('/api/v1/internal-chat/users')
+        .set(app.auth(operador))
+        .expect(403);
+    });
+  });
+
+  describe('POST /internal-chat/dms', () => {
+    it('cria a DM na primeira chamada e reaproveita na segunda (get-or-create)', async () => {
+      const tenant = await createTenant();
+      const a = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Ana' });
+      const b = await createUser({ tenantId: tenant.id, role: 'manager', name: 'Beto' });
+
+      const primeira = await app.agent
+        .post('/api/v1/internal-chat/dms')
+        .set(app.auth(a))
+        .send({ userId: b.id })
+        .expect(200);
+      const canal = primeira.body as Channel;
+      expect(canal.kind).toBe('dm');
+      expect(canal.otherUserId).toBe(b.id);
+      expect(canal.otherUserName).toBe('Beto');
+
+      const segunda = await app.agent
+        .post('/api/v1/internal-chat/dms')
+        .set(app.auth(a))
+        .send({ userId: b.id })
+        .expect(200);
+      expect((segunda.body as Channel).id).toBe(canal.id);
+
+      // Do outro lado, mesmo canal, mas o "outro" e quem pediu do lado de ca.
+      const doB = await app.agent
+        .post('/api/v1/internal-chat/dms')
+        .set(app.auth(b))
+        .send({ userId: a.id })
+        .expect(200);
+      expect((doB.body as Channel).id).toBe(canal.id);
+      expect((doB.body as Channel).otherUserId).toBe(a.id);
+      expect((doB.body as Channel).otherUserName).toBe('Ana');
+    });
+
+    it('consigo mesmo -> VALIDATION_ERROR', async () => {
+      const tenant = await createTenant();
+      const user = await createUser({ tenantId: tenant.id, role: 'attendant' });
+
+      const response = await app.agent
+        .post('/api/v1/internal-chat/dms')
+        .set(app.auth(user))
+        .send({ userId: user.id })
+        .expect(400);
+      expect((response.body as ApiErrorBody).error.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('usuario inexistente ou de outro tenant -> 404', async () => {
+      const a = await createTenant();
+      const b = await createTenant();
+      const userA = await createUser({ tenantId: a.id, role: 'attendant' });
+      const userB = await createUser({ tenantId: b.id, role: 'attendant' });
+
+      const deOutroTenant = await app.agent
+        .post('/api/v1/internal-chat/dms')
+        .set(app.auth(userA))
+        .send({ userId: userB.id })
+        .expect(404);
+      expect((deOutroTenant.body as ApiErrorBody).error.code).toBe('NOT_FOUND');
+
+      const inexistente = await app.agent
+        .post('/api/v1/internal-chat/dms')
+        .set(app.auth(userA))
+        .send({ userId: '00000000-0000-0000-0000-000000000000' })
+        .expect(404);
+      expect((inexistente.body as ApiErrorBody).error.code).toBe('NOT_FOUND');
+    });
+
+    it('quem nao participa da DM nao a enxerga nem acessa por id (D-101)', async () => {
+      const tenant = await createTenant();
+      const a = await createUser({ tenantId: tenant.id, role: 'attendant' });
+      const b = await createUser({ tenantId: tenant.id, role: 'manager' });
+      const fora = await createUser({ tenantId: tenant.id, role: 'manager' });
+
+      const dm = (
+        await app.agent
+          .post('/api/v1/internal-chat/dms')
+          .set(app.auth(a))
+          .send({ userId: b.id })
+          .expect(200)
+      ).body as Channel;
+
+      const listaDoFora = await channelsOf(fora);
+      expect(listaDoFora.some((c) => c.id === dm.id)).toBe(false);
+
+      await app.agent
+        .get(`/api/v1/internal-chat/channels/${dm.id}/messages`)
+        .set(app.auth(fora))
+        .expect(404);
+      await app.agent
+        .post(`/api/v1/internal-chat/channels/${dm.id}/messages`)
+        .set(app.auth(fora))
+        .send({ content: 'intruso' })
+        .expect(404);
+    });
+
+    it('mensagem enviada na DM aparece para os dois participantes', async () => {
+      const tenant = await createTenant();
+      const a = await createUser({ tenantId: tenant.id, role: 'attendant' });
+      const b = await createUser({ tenantId: tenant.id, role: 'manager' });
+
+      const dm = (
+        await app.agent
+          .post('/api/v1/internal-chat/dms')
+          .set(app.auth(a))
+          .send({ userId: b.id })
+          .expect(200)
+      ).body as Channel;
+
+      await app.agent
+        .post(`/api/v1/internal-chat/channels/${dm.id}/messages`)
+        .set(app.auth(a))
+        .send({ content: 'oi, tudo bem?' })
+        .expect(201);
+
+      const resposta = await app.agent
+        .get(`/api/v1/internal-chat/channels/${dm.id}/messages`)
+        .set(app.auth(b))
+        .expect(200);
+      expect(
+        (resposta.body as ListInternalMessagesResponse).messages.map((m) => m.content),
+      ).toEqual(['oi, tudo bem?']);
+    });
   });
 });

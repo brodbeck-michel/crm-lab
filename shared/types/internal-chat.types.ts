@@ -1,4 +1,5 @@
 import type { IsoDateTime, PaginationMeta } from './api.types.js';
+import type { UserRole } from './auth.types.js';
 
 export interface Channel {
   id: string;
@@ -14,6 +15,29 @@ export interface Channel {
   /** Ultima leitura DESTE usuario neste canal (`channel_reads`). `null` = nunca abriu. */
   lastReadAt: IsoDateTime | null;
   lastMessageAt: IsoDateTime | null;
+  /**
+   * So preenchido quando `kind === 'dm'` (D-101): o OUTRO participante, visto por
+   * quem pergunta. `name` da linha do canal e um valor interno e nunca e exibido
+   * para DM — a tela usa sempre `otherUserName`.
+   */
+  otherUserId: string | null;
+  otherUserName: string | null;
+}
+
+/** Item de `GET /internal-chat/users` — diretorio de quem da para abrir DM (D-101). */
+export interface ChatDirectoryUser {
+  id: string;
+  name: string;
+  role: UserRole;
+}
+
+export interface ListChatDirectoryResponse {
+  users: ChatDirectoryUser[];
+}
+
+/** `POST /internal-chat/dms` — get-or-create idempotente (D-101). */
+export interface CreateDirectChannelRequest {
+  userId: string;
 }
 
 export interface InternalMessage {

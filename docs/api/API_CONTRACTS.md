@@ -1665,6 +1665,10 @@ Canais internos do laboratório (SERVICES.md §7, WORKFLOWS.md §6). Canais padr
 proposta anexada. O console de plataforma **não** acessa estes canais (PAGES.md §11):
 `platform_operator` recebe `FORBIDDEN`.
 
+Além dos canais fixos, um laboratório tem **mensagens diretas (DM)** — conversa 1:1 entre
+dois usuários do mesmo tenant (D-101). `GET /internal-chat/users` lista com quem dá para
+conversar; `POST /internal-chat/dms` abre (ou cria, na primeira vez) a DM.
+
 ### GET /internal-chat/channels
 
 **Response (200):**
@@ -1678,11 +1682,31 @@ proposta anexada. O console de plataforma **não** acessa estes canais (PAGES.md
       "kind": "channel",
       "unreadCount": 2,
       "lastReadAt": "2026-08-23T14:10:00.000Z",
-      "lastMessageAt": "2026-08-23T14:40:00.000Z"
+      "lastMessageAt": "2026-08-23T14:40:00.000Z",
+      "otherUserId": null,
+      "otherUserName": null
+    },
+    {
+      "id": "uuid",
+      "key": "dm:1111...:2222...",
+      "name": "dm:1111...:2222...",
+      "kind": "dm",
+      "unreadCount": 0,
+      "lastReadAt": null,
+      "lastMessageAt": null,
+      "otherUserId": "uuid",
+      "otherUserName": "João Santos"
     }
   ]
 }
 ```
+
+`otherUserId`/`otherUserName` só existem quando `kind: "dm"` — é o OUTRO participante,
+resolvido a partir de quem está perguntando (dois usuários da mesma DM veem nomes
+diferentes um do outro, nunca o próprio). `name` de uma linha `dm` é um valor interno
+(a própria `key`) e **não deve ser exibido** — a tela usa sempre `otherUserName` para DM
+(D-101). Uma DM só aparece para os dois participantes: um terceiro usuário do mesmo
+tenant não a vê nesta lista.
 
 **`unreadCount` agora é de verdade (D-068 — supera D-044).** É derivado a cada leitura da
 tabela `channel_reads` (SCHEMA.md §17), nunca materializado: conta as mensagens do canal com
@@ -1790,6 +1814,48 @@ Mensagem de usuário nasce com `isSystem: false` e `senderId`/`senderName` do au
 **Erros:** `VALIDATION_ERROR` (400 — `content` vazio ou > 4000, `attachedProposalId`
 não-uuid, campo desconhecido), `NOT_FOUND` (404 — canal ou proposta anexada de outro
 tenant), `FORBIDDEN` (403, `platform_operator`)
+
+### GET /internal-chat/users
+
+Diretório de usuários do laboratório com quem dá para abrir uma DM (D-101). **Não** é
+`GET /users` (admin-only, tela de gestão) — esta rota é acessível a qualquer membro do
+laboratório (attendant/manager/admin), porque é dado de "com quem posso conversar", não
+de administração.
+
+**Response (200):**
+```json
+{
+  "users": [
+    { "id": "uuid", "name": "João Santos", "role": "attendant" }
+  ]
+}
+```
+
+Exclui o próprio usuário que pergunta e usuários inativos (`is_active = false`). Ordenado
+por `name ASC`. Sem paginação, sem busca — o laboratório é pequeno o bastante para uma
+lista só.
+
+**Erros:** `FORBIDDEN` (403, `platform_operator`)
+
+### POST /internal-chat/dms
+
+Abre a DM com outro usuário do tenant — **cria na primeira vez, reaproveita nas
+seguintes** (get-or-create idempotente, D-101, mesmo padrão de
+`POST /settings/channels/whatsapp/connect`).
+
+**Request:**
+```json
+{ "userId": "uuid" }
+```
+
+**Response (200):** o `Channel` (mesmo shape de `GET /internal-chat/channels`, sem
+envelope), com `kind: "dm"` e `otherUserId`/`otherUserName` já preenchidos.
+
+**Erros:**
+- `VALIDATION_ERROR` (400 — `userId` não-uuid, ou igual ao próprio usuário do contexto:
+  não é possível abrir DM consigo mesmo)
+- `NOT_FOUND` (404 — `userId` inexistente, inativo, **ou de outro tenant**)
+- `FORBIDDEN` (403, `platform_operator`)
 
 ---
 

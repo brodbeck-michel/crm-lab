@@ -318,6 +318,26 @@ nunca "sem permissão" (não vazar existência).
 - Canal `#aprovacoes`: pedidos de aprovação com botões [Aprovar] [Rejeitar] (gestor+)
 - Dados: `GET /internal-chat/*` + WS
 
+### Buscar usuário (D-101) — iniciar conversa direta
+
+No topo da coluna esquerda, ACIMA dos grupos "Canais" e "Mensagens diretas", um campo de
+busca (`SearchInput`, debounce de 300ms) filtra em memória a lista de `GET
+/internal-chat/users` (exclui o próprio usuário e inativos, sem paginação — carregada
+inteira uma vez). A barra lateral **não** lista usuários permanentemente — só canais e
+DMs já abertas; a lista de resultados da busca aparece embaixo do campo apenas enquanto
+o usuário digita, e some ao selecionar um nome ou limpar o campo.
+
+Clicar num resultado chama `POST /internal-chat/dms { userId }` (get-or-create
+idempotente — clicar de novo num usuário com quem já existe DM só abre a conversa
+existente, nunca duplica), seleciona o canal devolvido (mesmo comportamento de clicar
+num canal da lista) e a busca é limpa — a partir daí a conversa aparece normalmente no
+grupo "Mensagens diretas".
+
+Uma DM mostra o nome do OUTRO participante (`Channel.otherUserName`), nunca o `name`
+bruto gravado no canal — dois usuários da mesma DM veem nomes diferentes um do outro.
+Sem notificação em tempo real de "nova DM": o destinatário só vê a conversa aparecer
+quando a primeira mensagem chega (mesmo evento `internal_chat.new_message` de sempre).
+
 ### Estado de leitura do canal (D-068 — fecha a pendência D5 da Onda 5)
 
 - `Channel.unreadCount` agora **zera de verdade**: ao abrir um canal, a tela chama

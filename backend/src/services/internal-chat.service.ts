@@ -18,6 +18,7 @@
  */
 import type {
   Channel,
+  ChatDirectoryUser,
   InternalMessage,
   ListInternalMessagesResponse,
   PaginationMeta,
@@ -206,6 +207,48 @@ export class InternalChatService {
       messageId: message.id,
     });
     return message;
+  }
+
+  /** Diretorio de quem da para abrir DM — exclui o proprio usuario e inativos (D-101). */
+  async listDirectory(ctx: TenantContext): Promise<ChatDirectoryUser[]> {
+    assertLabMember(ctx);
+    return this.db.withTenant(ctx.tenantId, (tx) => chatRepo.listDirectoryUsers(tx, ctx.userId));
+  }
+
+  /**
+   * Get-or-create idempotente da DM com `otherUserId` (D-101). Mesmo par de usuarios
+   * sempre devolve o MESMO canal — clicar de novo num usuario com quem ja existe DM
+   * so abre a conversa, nunca duplica.
+   */
+  async getOrCreateDirectChannel(ctx: TenantContext, otherUserId: string): Promise<Channel> {
+    assertLabMember(ctx);
+    if (otherUserId === ctx.userId) {
+      throw new BusinessError('VALIDATION_ERROR', {
+        fields: { userId: 'Não é possível iniciar uma conversa consigo mesmo' },
+      });
+    }
+
+    return this.db.withTenant(ctx.tenantId, async (tx) => {
+      // Inexistente, inativo OU de outro tenant (RLS ja esconde) — mesma resposta.
+      const other = await chatRepo.findActiveUserById(tx, otherUserId);
+      if (!other) throw notFound({ resource: 'user', id: otherUserId });
+
+      // Par ordenado canonico (D-101): garante uma unica linha por combinacao de
+      // dois usuarios, independente de quem clicou em quem primeiro.
+      const [dmUserAId, dmUserBId]: [string, string] =
+        ctx.userId < otherUserId ? [ctx.userId, otherUserId] : [otherUserId, ctx.userId];
+      const key = `dm:${dmUserAId}:${dmUserBId}`;
+
+      return chatRepo.getOrCreateDirectChannel(tx, {
+        tenantId: ctx.tenantId,
+        key,
+        name: key,
+        dmUserAId,
+        dmUserBId,
+        viewerUserId: ctx.userId,
+        otherUserName: other.name,
+      });
+    });
   }
 }
 

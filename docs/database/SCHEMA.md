@@ -547,21 +547,44 @@ Canais padrão criados no onboarding: `#geral` e `#aprovacoes`.
 CREATE TABLE internal_channels (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id UUID NOT NULL,
-  key VARCHAR(100) NOT NULL,                   -- 'geral', 'aprovacoes' ou chave da DM
-  name VARCHAR(255) NOT NULL,                  -- '#geral'
+  key VARCHAR(100) NOT NULL,                   -- 'geral', 'aprovacoes' ou 'dm:{menorId}:{maiorId}'
+  name VARCHAR(255) NOT NULL,                  -- '#geral'; em DM é valor interno (D-101)
   kind VARCHAR(20) NOT NULL DEFAULT 'channel', -- channel | dm
+  dm_user_a_id UUID,                           -- só em DM; dm_user_a_id < dm_user_b_id
+  dm_user_b_id UUID,                           -- migração 010 (D-101)
   created_at TIMESTAMP DEFAULT NOW(),
 
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (dm_user_a_id) REFERENCES users(id),
+  FOREIGN KEY (dm_user_b_id) REFERENCES users(id),
   UNIQUE (tenant_id, key),
-  CHECK (kind IN ('channel', 'dm'))
+  CHECK (kind IN ('channel', 'dm')),
+  CHECK (
+    (kind = 'dm' AND dm_user_a_id IS NOT NULL AND dm_user_b_id IS NOT NULL
+      AND dm_user_a_id < dm_user_b_id)
+    OR
+    (kind = 'channel' AND dm_user_a_id IS NULL AND dm_user_b_id IS NULL)
+  )
 );
 
 CREATE INDEX idx_internal_channels_tenant_id ON internal_channels(tenant_id);
+CREATE INDEX idx_internal_channels_dm_a ON internal_channels(dm_user_a_id);
+CREATE INDEX idx_internal_channels_dm_b ON internal_channels(dm_user_b_id);
 ```
 
 `UNIQUE (tenant_id, key)` é o que permite ao `createSystemPost(tenantId, channelKey, ...)`
-resolver o canal pela chave sem ambiguidade.
+resolver o canal pela chave sem ambiguidade — e também é o que torna
+`POST /internal-chat/dms` idempotente: a chave canônica `dm:{menorId}:{maiorId}` (D-101)
+garante um único canal por par de usuários, sem depender de checar `dm_user_a_id`/
+`dm_user_b_id` antes de inserir.
+
+`dm_user_a_id`/`dm_user_b_id` (migração `010_internal_chat_dm.sql`) existem para dois usos
+que a `key` sozinha não resolve bem: **(1)** filtrar quais DMs um usuário pode ver/acessar
+— `WHERE ch.kind = 'channel' OR $userId IN (dm_user_a_id, dm_user_b_id)`, usado por
+`listChannels` e `findChannelById` (D-101: um não-participante recebe `NOT_FOUND`, nunca
+enxerga a DM); **(2)** resolver o nome a exibir (`otherUserName`) sem parsear a `key`. O
+`CHECK dm_user_a_id < dm_user_b_id` é o par ordenado canônico — evita duas linhas para o
+mesmo par com a ordem trocada.
 
 ---
 

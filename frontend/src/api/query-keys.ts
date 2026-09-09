@@ -81,6 +81,8 @@ export const queryKeys = {
   internalChannels: () => ['internal-chat', 'channels'] as const,
   /** ['internal-chat', 'messages', channelId] */
   internalMessages: (channelId: string) => ['internal-chat', 'messages', channelId] as const,
+  /** ['internal-chat', 'users'] — diretório de quem dá para abrir DM (D-101). */
+  internalChatDirectory: () => ['internal-chat', 'users'] as const,
 
   /** ['users', filters] */
   users: (filters?: PaginationQuery) => ['users', filters ?? {}] as const,

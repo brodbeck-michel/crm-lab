@@ -5,7 +5,7 @@
  * (`db.withTenant`) e do service. Chat interno e dado de laboratorio — nenhum
  * caminho aqui usa `withoutTenant()`.
  */
-import type { Channel, InternalMessage } from '@crm-lab/shared';
+import type { Channel, ChatDirectoryUser, InternalMessage, UserRole } from '@crm-lab/shared';
 import type { DbTx } from '../db/types.js';
 import { toIso, toIsoOrNull } from './row-mappers.js';
 
@@ -26,6 +26,9 @@ interface ChannelRow {
   /** Ausente nas leituras internas (`ensureChannel`), que nao servem a tela. */
   last_read_at?: unknown;
   unread_count?: number | string | null;
+  /** So preenchidos em `kind = 'dm'` (D-101, migracao 010). */
+  dm_user_a_id?: string | null;
+  dm_user_b_id?: string | null;
 }
 
 interface MessageRow {
@@ -39,18 +42,57 @@ interface MessageRow {
   created_at: unknown;
 }
 
-export function mapChannel(row: ChannelRow): Channel {
+/**
+ * `otherUserName` vem de fora (segunda consulta em lote — ver `resolveOtherUserNames`
+ * abaixo) para nao complicar o `GROUP BY` de `SELECT_CHANNEL_FOR_USER` com um join a
+ * mais. `otherUserId` e derivado das colunas da propria linha: e SEMPRE o participante
+ * que NAO e `viewerUserId` (D-101) — nunca o proprio usuario que pergunta.
+ */
+export function mapChannel(
+  row: ChannelRow,
+  viewerUserId: string,
+  otherUserName: string | null = null,
+): Channel {
+  const isDm = row.kind === 'dm';
+  const otherUserId = isDm
+    ? (row.dm_user_a_id === viewerUserId ? row.dm_user_b_id : row.dm_user_a_id) ?? null
+    : null;
   return {
     id: row.id,
     key: row.key,
     name: row.name,
-    kind: row.kind === 'dm' ? 'dm' : 'channel',
+    kind: isDm ? 'dm' : 'channel',
     // Derivado de `channel_reads` a cada leitura, nunca materializado
     // (D-068 / SCHEMA.md §17 — supera o `0` fixo de D-044).
     unreadCount: Number(row.unread_count ?? 0),
     lastReadAt: toIsoOrNull(row.last_read_at ?? null),
     lastMessageAt: toIsoOrNull(row.last_message_at),
+    otherUserId,
+    otherUserName: isDm ? otherUserName : null,
   };
+}
+
+/**
+ * Resolve em LOTE o nome do outro participante de cada DM da lista (D-101) — uma
+ * segunda consulta simples, em vez de complicar o `GROUP BY` de
+ * `SELECT_CHANNEL_FOR_USER` com mais um join. Devolve um mapa `userId -> name`.
+ */
+async function resolveOtherUserNames(
+  tx: DbTx,
+  rows: ChannelRow[],
+  viewerUserId: string,
+): Promise<Map<string, string>> {
+  const ids = rows
+    .filter((row) => row.kind === 'dm')
+    .map((row) => (row.dm_user_a_id === viewerUserId ? row.dm_user_b_id : row.dm_user_a_id))
+    .filter((id): id is string => Boolean(id));
+  if (ids.length === 0) return new Map();
+
+  const result = await tx.query<{ id: string; name: string }>(
+    'SELECT id, name FROM users WHERE id = ANY($1::uuid[])',
+    [ids],
+  );
+  return new Map(result.rows.map((row) => [row.id, row.name]));
 }
 
 export function mapMessage(row: MessageRow): InternalMessage {
@@ -77,9 +119,16 @@ export function mapMessage(row: MessageRow): InternalMessage {
  *
  * `IS DISTINCT FROM` (e nao `<>`) porque `sender_id` e anulavel: com `<>` a
  * comparacao viraria NULL na mensagem de sistema e ela deixaria de contar.
+ *
+ * `ch.dm_user_a_id`/`dm_user_b_id` entram no SELECT sem entrar no `GROUP BY`: sao
+ * funcionalmente dependentes de `ch.id` (chave primaria de `internal_channels`, ja
+ * agrupada), o Postgres aceita por essa dependencia funcional. O `WHERE` de
+ * visibilidade (D-101) e o que torna uma DM invisivel/inacessivel para quem nao e
+ * um dos dois participantes — canal comum (`kind = 'channel'`) continua publico
+ * para todo mundo do tenant, como sempre foi.
  */
 const SELECT_CHANNEL_FOR_USER = `
-  SELECT ch.id, ch.key, ch.name, ch.kind,
+  SELECT ch.id, ch.key, ch.name, ch.kind, ch.dm_user_a_id, ch.dm_user_b_id,
          MAX(m.created_at) AS last_message_at,
          r.last_read_at,
          COUNT(*) FILTER (
@@ -88,7 +137,8 @@ const SELECT_CHANNEL_FOR_USER = `
          )::int AS unread_count
     FROM internal_channels ch
     LEFT JOIN channel_reads r ON r.channel_id = ch.id AND r.user_id = $1::uuid
-    LEFT JOIN internal_messages m ON m.channel_id = ch.id`;
+    LEFT JOIN internal_messages m ON m.channel_id = ch.id
+   WHERE (ch.kind = 'channel' OR $1::uuid IN (ch.dm_user_a_id, ch.dm_user_b_id))`;
 
 const GROUP_CHANNEL = 'GROUP BY ch.id, ch.key, ch.name, ch.kind, r.last_read_at';
 
@@ -99,7 +149,12 @@ export async function listChannels(tx: DbTx, userId: string): Promise<Channel[]>
      ORDER BY ch.kind ASC, ch.key ASC`,
     [userId],
   );
-  return result.rows.map(mapChannel);
+  const otherNames = await resolveOtherUserNames(tx, result.rows, userId);
+  return result.rows.map((row) => {
+    if (row.kind !== 'dm') return mapChannel(row, userId, null);
+    const otherId = row.dm_user_a_id === userId ? row.dm_user_b_id : row.dm_user_a_id;
+    return mapChannel(row, userId, otherId ? (otherNames.get(otherId) ?? null) : null);
+  });
 }
 
 export async function findChannelById(
@@ -109,12 +164,18 @@ export async function findChannelById(
 ): Promise<Channel | null> {
   const result = await tx.query<ChannelRow>(
     `${SELECT_CHANNEL_FOR_USER}
-      WHERE ch.id = $2
+      AND ch.id = $2
      ${GROUP_CHANNEL}`,
     [userId, id],
   );
   const row = result.rows[0];
-  return row ? mapChannel(row) : null;
+  if (!row) return null;
+  const otherNames = await resolveOtherUserNames(tx, [row], userId);
+  const otherId =
+    row.kind === 'dm'
+      ? (row.dm_user_a_id === userId ? row.dm_user_b_id : row.dm_user_a_id) ?? null
+      : null;
+  return mapChannel(row, userId, otherId ? (otherNames.get(otherId) ?? null) : null);
 }
 
 /**
@@ -135,29 +196,111 @@ export async function markChannelRead(
   );
 }
 
-export async function findChannelByKey(tx: DbTx, key: string): Promise<Channel | null> {
+/**
+ * `viewerUserId` so importa para canal `kind = 'dm'` (resolve `otherUserId`); os
+ * usos atuais (`ensureChannel`, canais fixos `#geral`/`#aprovacoes`) nunca passam
+ * por uma DM, entao o valor default e inofensivo ali. `otherUserName` NAO e
+ * resolvido aqui de proposito (chamador que precisar dele busca a parte — evita
+ * uma query extra nos caminhos que so querem confirmar existencia do canal).
+ */
+export async function findChannelByKey(
+  tx: DbTx,
+  key: string,
+  viewerUserId = '',
+): Promise<Channel | null> {
   const result = await tx.query<ChannelRow>(
-    `SELECT ch.id, ch.key, ch.name, ch.kind, NULL AS last_message_at
+    `SELECT ch.id, ch.key, ch.name, ch.kind, ch.dm_user_a_id, ch.dm_user_b_id,
+            NULL AS last_message_at
        FROM internal_channels ch WHERE ch.key = $1`,
     [key],
   );
   const row = result.rows[0];
-  return row ? mapChannel(row) : null;
+  return row ? mapChannel(row, viewerUserId) : null;
 }
 
+/** Só cria canal comum (`kind = 'channel'`) — DM tem seu próprio `getOrCreateDirectChannel`. */
 export async function insertChannel(
   tx: DbTx,
-  input: { tenantId: string; key: string; name: string; kind?: 'channel' | 'dm' },
+  input: { tenantId: string; key: string; name: string },
 ): Promise<Channel> {
   const result = await tx.query<ChannelRow>(
     `INSERT INTO internal_channels (tenant_id, key, name, kind)
-     VALUES ($1, $2, $3, $4)
-     RETURNING id, key, name, kind, NULL AS last_message_at`,
-    [input.tenantId, input.key, input.name, input.kind ?? 'channel'],
+     VALUES ($1, $2, $3, 'channel')
+     RETURNING id, key, name, kind, dm_user_a_id, dm_user_b_id, NULL AS last_message_at`,
+    [input.tenantId, input.key, input.name],
   );
   const row = result.rows[0];
   if (!row) throw new Error('INSERT em internal_channels nao retornou linha');
-  return mapChannel(row);
+  return mapChannel(row, '');
+}
+
+export interface DirectoryUserRow {
+  id: string;
+  name: string;
+  role: string;
+}
+
+/** `GET /internal-chat/users` (D-101): diretorio de quem da para abrir DM. */
+export async function listDirectoryUsers(
+  tx: DbTx,
+  excludeUserId: string,
+): Promise<ChatDirectoryUser[]> {
+  const result = await tx.query<DirectoryUserRow>(
+    `SELECT id, name, role FROM users
+      WHERE is_active = true AND id <> $1
+      ORDER BY name ASC`,
+    [excludeUserId],
+  );
+  return result.rows.map((row) => ({ id: row.id, name: row.name, role: row.role as UserRole }));
+}
+
+/** Existencia + nome do destinatario de uma DM, antes de criar o canal (D-101). */
+export async function findActiveUserById(
+  tx: DbTx,
+  id: string,
+): Promise<{ id: string; name: string } | null> {
+  const result = await tx.query<{ id: string; name: string }>(
+    'SELECT id, name FROM users WHERE id = $1 AND is_active = true',
+    [id],
+  );
+  return result.rows[0] ?? null;
+}
+
+/**
+ * Get-or-create idempotente da DM entre dois usuarios (D-101). `ON CONFLICT (tenant_id,
+ * key) DO NOTHING` seguido de fallback por `key` e o que evita duas linhas para o
+ * mesmo par sem precisar de uma transacao com `SELECT ... FOR UPDATE` a mais.
+ *
+ * `otherUserName` chega pronto do chamador (que ja validou o destinatario com
+ * `findActiveUserById` antes de chegar aqui) — evita mais uma query so pra repetir um
+ * nome que quem chamou acabou de ler.
+ */
+export async function getOrCreateDirectChannel(
+  tx: DbTx,
+  input: {
+    tenantId: string;
+    key: string;
+    name: string;
+    dmUserAId: string;
+    dmUserBId: string;
+    viewerUserId: string;
+    otherUserName: string;
+  },
+): Promise<Channel> {
+  const inserted = await tx.query<ChannelRow>(
+    `INSERT INTO internal_channels (tenant_id, key, name, kind, dm_user_a_id, dm_user_b_id)
+     VALUES ($1, $2, $3, 'dm', $4, $5)
+     ON CONFLICT (tenant_id, key) DO NOTHING
+     RETURNING id, key, name, kind, dm_user_a_id, dm_user_b_id, NULL AS last_message_at`,
+    [input.tenantId, input.key, input.name, input.dmUserAId, input.dmUserBId],
+  );
+  const insertedRow = inserted.rows[0];
+  if (insertedRow) return mapChannel(insertedRow, input.viewerUserId, input.otherUserName);
+
+  // Conflito: outra chamada (ou a mesma pessoa clicando duas vezes) ja criou a DM.
+  const existing = await findChannelByKey(tx, input.key, input.viewerUserId);
+  if (!existing) throw new Error('DM nao encontrada apos INSERT com conflito');
+  return { ...existing, otherUserName: input.otherUserName };
 }
 
 export interface InternalMessageInsert {

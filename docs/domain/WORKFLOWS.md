@@ -256,6 +256,19 @@ Nova conversa → sistema busca atendente online com menos conversas ativas → 
 - `#geral`
 - `#aprovacoes` (sistema posta pedidos de aprovação aqui)
 
+**Iniciar uma conversa direta (DM), D-101:**
+```
+1. GET /internal-chat/users → diretório do tenant (exclui o próprio, inativos), carregado
+   uma vez; a tela filtra em memória no campo de busca do topo da barra lateral
+2. Usuário digita e clica num resultado da busca
+3. POST /internal-chat/dms { "userId": "uuid" } → 200, get-or-create idempotente
+   (mesmo par de usuários sempre devolve o MESMO canal — clicar de novo não duplica)
+4. Tela seleciona o canal devolvido e segue o fluxo normal (passos 3-4 acima); a busca
+   é limpa e a conversa passa a aparecer no grupo "Mensagens diretas"
+```
+Uma DM só é visível para os dois participantes — outro usuário do mesmo tenant não a vê em
+`GET /internal-chat/channels` nem consegue acessá-la por id.
+
 ---
 
 ## 7. Fluxo de Onboarding de Tenant (Plataforma)

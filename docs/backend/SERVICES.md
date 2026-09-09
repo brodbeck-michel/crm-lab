@@ -310,6 +310,12 @@ interface InternalChatService {
 
   /** Onda 6 (D-068): zera o unreadCount do canal para o usuário do ctx. Idempotente. */
   markChannelRead(ctx: TenantContext, channelId: string): Promise<void>;
+
+  /** D-101: diretório de usuários do tenant elegíveis a DM (exclui o próprio ctx.userId e inativos). */
+  listDirectory(ctx: TenantContext): Promise<ChatDirectoryUser[]>;
+
+  /** D-101: get-or-create idempotente da DM com otherUserId. Mesmo par → mesmo canal sempre. */
+  getOrCreateDirectChannel(ctx: TenantContext, otherUserId: string): Promise<Channel>;
 }
 ```
 
@@ -317,6 +323,19 @@ interface InternalChatService {
 - Canais padrão criados no onboarding: `#geral`, `#aprovacoes`
 - Proposta anexada renderiza como cartão (frontend resolve via GET /proposals/:id)
 - Console de plataforma tem chat PRÓPRIO, isolado (sem acesso aos canais de labs)
+- **DM (D-101, migração `010_internal_chat_dm.sql`, SCHEMA.md §11):** `getOrCreateDirectChannel`
+  rejeita `otherUserId === ctx.userId` (`VALIDATION_ERROR`) e exige que `otherUserId` exista,
+  esteja ativo e no MESMO tenant (`NOT_FOUND` — RLS já esconde usuário de outro tenant). A chave
+  é `dm:{menorId}:{maiorId}` (par ordenado, `dm_user_a_id < dm_user_b_id`); `INSERT ... ON
+  CONFLICT (tenant_id, key) DO NOTHING` seguido de `SELECT` no conflito é o que torna a criação
+  idempotente sem duas linhas para o mesmo par
+- **Visibilidade de DM é por participante:** `listChannels` e `findChannelById` (usado por
+  `listMessages`/`send`/`markChannelRead`) filtram `kind = 'channel' OR ctx.userId IN
+  (dm_user_a_id, dm_user_b_id)` — uma DM alheia (mesmo tenant, mas o usuário não é um dos dois
+  participantes) é `NOT_FOUND`, nunca aparece em `listChannels` nem é acessível por id adivinhado
+- `Channel.otherUserId`/`otherUserName` só existem em `kind: "dm"` — é o OUTRO participante,
+  resolvido por quem pergunta; o `name` gravado na linha da DM é interno e nunca é exibido
+- `listDirectory` não pagina nem busca — laboratório pequeno o bastante para uma lista só
 - **`unreadCount` é derivado de `channel_reads` (D-068, SCHEMA.md §17), não mais `0` fixo**
   (supera D-044): conta mensagens do canal com `created_at > last_read_at` cujo `sender_id` não
   é o do usuário. Mensagem de sistema conta. Sem linha de leitura, conta todas as de terceiros.

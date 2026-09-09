@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-06 (Onda 8 §4 entregue: mídia — anexo e áudio)
+**Última atualização:** 2026-09-09 (DM no Chat Interno — lista de usuários estilo Teams, D-101)
 
 ---
 
@@ -405,6 +405,39 @@ Interno nem o painel de Gestão da Operação inteiro. Zero endpoint novo — re
   refetch de 60s
 - Doc: `docs/frontend/PAGES.md` §12 (nova) e `docs/frontend/COMPONENTS.md` (Sidebar)
 - `npm run typecheck` e `npm run test:frontend` verdes (798 testes)
+
+## 2026-09-09 — Mensagens diretas (DM) no Chat Interno — lista de usuários estilo Teams ✅
+
+Pedido fora de onda: mostrar quem dá para chamar no Chat Interno e abrir uma conversa 1:1 por
+texto (sem áudio/vídeo, confirmado com o usuário). D-101.
+
+- Migração `010_internal_chat_dm.sql`: `internal_channels` ganha `dm_user_a_id`/`dm_user_b_id`
+  (par ordenado, `CHECK dm_user_a_id < dm_user_b_id`) + 2 índices. Sem GRANT/policy novos (RLS já
+  cobre a tabela)
+- `GET /internal-chat/users` (diretório, exclui o próprio usuário e inativos) e
+  `POST /internal-chat/dms` (get-or-create idempotente, 200) — `internal-chat.repository.ts`
+  (`listDirectoryUsers`, `findActiveUserById`, `getOrCreateDirectChannel`, filtro de visibilidade
+  por participante em `SELECT_CHANNEL_FOR_USER`) + `internal-chat.service.ts`
+  (`listDirectory`, `getOrCreateDirectChannel`) + rotas em `internal-chat.routes.ts`
+- **Correção de segurança:** `findChannelById` (usado por `listMessages`/`send`/`markChannelRead`)
+  não filtrava DM por participante — corrigido junto, verificado ao vivo (gestor não-participante
+  → `404 NOT_FOUND` ao tentar ler/escrever numa DM alheia do mesmo tenant)
+- `Channel.otherUserId`/`otherUserName` (novos, só em `kind: "dm"`) — o `name` gravado na linha da
+  DM é interno, nunca exibido
+- Frontend, 1ª versão: `UserDirectory.tsx` — seção "Usuários" sempre visível, abaixo de
+  Canais/Mensagens diretas. **Revisado no mesmo dia** por feedback (ocupava espaço demais junto
+  dos canais): virou `UserSearch.tsx` — campo de busca (`SearchInput`, debounce 300ms, filtro em
+  memória sobre o diretório já carregado) no TOPO da barra lateral, resultados só aparecem
+  enquanto digita e somem ao escolher um nome; a barra lateral voltou a ter só Canais/Mensagens
+  diretas. `ChannelList.tsx` usa `otherUserName` para exibir o nome da DM; `index.tsx` com
+  `useMutation` de `startDirectChannel` selecionando o canal devolvido
+- Doc: `API_CONTRACTS.md` §3b, `SCHEMA.md` §11, `SERVICES.md` §7, `WORKFLOWS.md` §6,
+  `PAGES.md` §9 (atualizado de novo após a revisão de UX), `DECISIONS.md` D-101
+- Verificado ao vivo (`docker compose up -d` + `npm run dev`): diretório exclui o próprio usuário,
+  DM idempotente (mesmo `id` nas duas chamadas), `otherUserName` correto dos dois lados, DM some
+  da lista de quem não participa
+- `npm run typecheck` (4 workspaces), `npm run test:backend` e `npm run test:frontend` (59
+  arquivos / 843 testes) verdes
 
 ## Bloqueios Atuais
 

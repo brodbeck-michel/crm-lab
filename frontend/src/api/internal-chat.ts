@@ -1,5 +1,8 @@
 import type {
+  Channel,
+  CreateDirectChannelRequest,
   ListChannelsResponse,
+  ListChatDirectoryResponse,
   ListInternalMessagesResponse,
   InternalMessage,
   PaginationQuery,
@@ -33,4 +36,14 @@ export const internalChatApi = {
 
   send: (channelId: string, body: SendInternalMessageRequest) =>
     http.post<InternalMessage>(`/internal-chat/channels/${channelId}/messages`, body),
+
+  /** Diretório de quem dá para abrir DM (D-101) — exclui o próprio usuário e inativos. */
+  directory: () => http.get<ListChatDirectoryResponse>('/internal-chat/users'),
+
+  /**
+   * `POST /internal-chat/dms` — get-or-create idempotente (D-101, 200 não 201).
+   * Clicar num usuário com quem já existe DM só devolve o mesmo canal de novo.
+   */
+  startDirectChannel: (body: CreateDirectChannelRequest) =>
+    http.post<Channel>('/internal-chat/dms', body),
 };

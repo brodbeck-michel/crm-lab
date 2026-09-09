@@ -42,7 +42,9 @@ function ChannelButton({
           selected ? 'bg-accent-100 font-semibold' : 'hover:bg-neutral-200',
         )}
       >
-        <span className="min-w-0 flex-1 truncate">{channel.name}</span>
+        <span className="min-w-0 flex-1 truncate">
+          {channel.kind === 'dm' ? (channel.otherUserName ?? channel.name) : channel.name}
+        </span>
 
         {channel.lastMessageAt && (
           <span className="flex-[0_0_auto] font-body text-micro tracking-normal text-neutral-600">

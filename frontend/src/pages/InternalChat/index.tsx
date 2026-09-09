@@ -6,6 +6,7 @@ import { useApiErrorHandler } from '@/hooks';
 import { useAuthStore, selectUser } from '@/stores';
 import { ChannelList } from './ChannelList';
 import { MessagePanel } from './MessagePanel';
+import { UserSearch } from './UserSearch';
 import { internalMessagesOptions, useMarkChannelRead } from './queries';
 
 /**
@@ -42,6 +43,30 @@ export function InternalChat() {
   });
 
   const channels = useMemo(() => channelsQuery.data?.channels ?? [], [channelsQuery.data]);
+
+  const directoryQuery = useQuery({
+    queryKey: queryKeys.internalChatDirectory(),
+    queryFn: () => api.internalChat.directory(),
+  });
+  const directoryUsers = useMemo(
+    () => directoryQuery.data?.users ?? [],
+    [directoryQuery.data],
+  );
+
+  /**
+   * Clicar num usuário abre (ou cria, na primeira vez) a DM — get-or-create
+   * idempotente (D-101). A tela seleciona o canal devolvido, mesmo comportamento
+   * de clicar num canal já existente na lista.
+   */
+  const startDm = useMutation({
+    mutationFn: (userId: string) => api.internalChat.startDirectChannel({ userId }),
+    onSuccess: async (channel) => {
+      setSelectedId(channel.id);
+      setPageCount(1);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.internalChannels() });
+    },
+    onError: handleApiError,
+  });
 
   /** Sem canal escolhido, abre o primeiro da lista (normalmente `#geral`). */
   useEffect(() => {
@@ -102,14 +127,22 @@ export function InternalChat() {
       contextOpen={false}
       listLabel="Canais e conversas diretas"
       list={
-        <ChannelList
-          channels={channels}
-          selectedId={selectedId}
-          onSelect={handleSelect}
-          isLoading={channelsQuery.isPending}
-          isError={channelsQuery.isError}
-          onRetry={() => void channelsQuery.refetch()}
-        />
+        <>
+          <UserSearch
+            users={directoryUsers}
+            onSelectUser={(userId) => startDm.mutate(userId)}
+            isLoading={directoryQuery.isPending}
+            isError={directoryQuery.isError}
+          />
+          <ChannelList
+            channels={channels}
+            selectedId={selectedId}
+            onSelect={handleSelect}
+            isLoading={channelsQuery.isPending}
+            isError={channelsQuery.isError}
+            onRetry={() => void channelsQuery.refetch()}
+          />
+        </>
       }
       conversation={
         <MessagePanel

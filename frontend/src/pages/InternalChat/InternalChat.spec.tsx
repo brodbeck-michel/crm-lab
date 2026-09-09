@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   Channel,
+  ChatDirectoryUser,
   InternalMessage,
   ListChannelsResponse,
   ListInternalMessagesResponse,
@@ -17,6 +18,8 @@ const channelsMock = vi.fn();
 const messagesMock = vi.fn();
 const sendMock = vi.fn();
 const markReadMock = vi.fn();
+const directoryMock = vi.fn();
+const startDirectChannelMock = vi.fn();
 const getProposalMock = vi.fn();
 const approveMock = vi.fn();
 const rejectMock = vi.fn();
@@ -33,6 +36,8 @@ vi.mock('@/api', async (importOriginal) => {
         messages: messagesMock,
         send: sendMock,
         markRead: markReadMock,
+        directory: directoryMock,
+        startDirectChannel: startDirectChannelMock,
       },
       proposals: {
         ...actual.api.proposals,
@@ -66,6 +71,8 @@ const GERAL: Channel = {
   unreadCount: 0,
   lastReadAt: '2026-08-23T09:00:00Z',
   lastMessageAt: '2026-08-23T09:00:00Z',
+  otherUserId: null,
+  otherUserName: null,
 };
 
 const APROVACOES: Channel = {
@@ -77,17 +84,27 @@ const APROVACOES: Channel = {
   // Nunca lido: e o que faz `unreadCount` valer 2 (D-068).
   lastReadAt: null,
   lastMessageAt: '2026-08-23T10:00:00Z',
+  otherUserId: null,
+  otherUserName: null,
 };
+
+const MARINA_ID = '55555555-5555-4555-8555-555555555555';
 
 const DM: Channel = {
   id: '33333333-3333-4333-8333-333333333333',
-  key: 'dm-marina',
-  name: 'Marina Alves',
+  key: `dm:${MARINA_ID}:u-1`,
+  name: `dm:${MARINA_ID}:u-1`,
   kind: 'dm',
   unreadCount: 0,
   lastReadAt: null,
   lastMessageAt: null,
+  otherUserId: MARINA_ID,
+  otherUserName: 'Marina Alves',
 };
+
+const DIRECTORY_USERS: ChatDirectoryUser[] = [
+  { id: MARINA_ID, name: 'Marina Alves', role: 'attendant' },
+];
 
 const PROPOSAL_ID = '44444444-4444-4444-8444-444444444444';
 
@@ -202,6 +219,8 @@ beforeEach(() => {
   );
   sendMock.mockResolvedValue(message({ id: 'm-3', content: 'Combinado' }));
   markReadMock.mockResolvedValue(undefined);
+  directoryMock.mockResolvedValue({ users: DIRECTORY_USERS });
+  startDirectChannelMock.mockResolvedValue(DM);
   getProposalMock.mockResolvedValue(proposal());
   approveMock.mockResolvedValue({
     id: PROPOSAL_ID,
@@ -222,10 +241,48 @@ describe('Chat Interno', () => {
     expect(await screen.findByRole('button', { name: /#geral/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /#aprovacoes/ })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Mensagens diretas' })).toBeInTheDocument();
+    // A DM já aberta com Marina mostra o nome dela (vindo de `otherUserName`, D-101).
     expect(screen.getByRole('button', { name: /Marina Alves/ })).toBeInTheDocument();
+    // A barra lateral NÃO lista usuários permanentemente — só canais e DMs (feedback:
+    // a lista fixa ocupava espaço demais). Busca de usuário fica em `UserSearch`.
+    expect(screen.queryByRole('heading', { name: 'Usuários' })).not.toBeInTheDocument();
+    expect(screen.getByRole('searchbox', { name: /Buscar usuário/ })).toBeInTheDocument();
 
     // Abre `#geral` sozinho e mostra as mensagens dele.
     expect(await screen.findByText('Bom dia, equipe!')).toBeInTheDocument();
+  });
+
+  it('busca um usuário, clica no resultado e abre (ou cria) a DM com ele', async () => {
+    const user = userEvent.setup({ delay: null });
+    renderScreen();
+
+    const search = await screen.findByRole('searchbox', { name: /Buscar usuário/ });
+    await waitFor(() => expect(search).not.toBeDisabled());
+    await user.type(search, 'mari');
+
+    const result = await screen.findByTestId('user-search-result');
+    expect(result).toHaveTextContent('Marina Alves');
+    await user.click(result);
+
+    await waitFor(() => {
+      expect(startDirectChannelMock).toHaveBeenCalledWith({ userId: MARINA_ID });
+    });
+
+    // A busca limpa depois de escolher — o resultado some da tela.
+    await waitFor(() => {
+      expect(screen.queryByTestId('user-search-result')).not.toBeInTheDocument();
+    });
+  });
+
+  it('busca sem resultado mostra aviso, sem lançar erro', async () => {
+    const user = userEvent.setup({ delay: null });
+    renderScreen();
+
+    const search = await screen.findByRole('searchbox', { name: /Buscar usuário/ });
+    await waitFor(() => expect(search).not.toBeDisabled());
+    await user.type(search, 'ninguém com esse nome');
+
+    expect(await screen.findByText('Nenhum usuário encontrado')).toBeInTheDocument();
   });
 
   it('mostra o vazio do canal sem deixar área em branco', async () => {
@@ -241,6 +298,15 @@ describe('Chat Interno', () => {
 
     expect(await screen.findByText('Não foi possível carregar o canal')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Tentar novamente' })).toBeInTheDocument();
+  });
+
+  it('diretório indisponível desabilita a busca em vez de travar a tela', async () => {
+    directoryMock.mockRejectedValue(new ApiError('INTERNAL_ERROR', 'falhou', 500));
+    renderScreen();
+
+    // Canais continuam abrindo normalmente — a falha da busca não bloqueia o chat.
+    await screen.findByRole('button', { name: /#geral/ });
+    expect(await screen.findByRole('searchbox', { name: /Buscar usuário/ })).toBeDisabled();
   });
 
   it('envia mensagem para o canal aberto', async () => {

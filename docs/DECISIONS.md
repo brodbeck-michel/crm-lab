@@ -1138,6 +1138,37 @@ que uma tarefa só resolve num commit.
 "Envelope de resposta" também serão atualizados no commit que executa a remoção, fora do escopo
 desta Fase 0.
 
+### D-101: Mensagens diretas (DM) no Chat Interno — get-or-create idempotente, chave canônica e visibilidade por participante
+**Decisão:** `internal_channels` ganha `dm_user_a_id`/`dm_user_b_id` (migração
+`010_internal_chat_dm.sql`) para registrar os dois participantes de uma DM, com
+`CHECK (dm_user_a_id < dm_user_b_id)` — par ordenado canônico, sem depender de parsear a `key`.
+A chave da DM segue o padrão `dm:{menorId}:{maiorId}`. `POST /internal-chat/dms {userId}` é
+**get-or-create idempotente** (mesmo par sempre devolve o mesmo canal) e responde **200**, não
+201 — mesmo precedente de `POST /settings/channels/whatsapp/connect` ("cria ou reaproveita").
+O `name` gravado na linha de uma DM **não é exibido**: o nome mostrado é `Channel.otherUserName`,
+resolvido por quem pergunta (o outro participante, nunca o próprio). `GET /internal-chat/users`
+(diretório de usuários elegíveis a DM) fica sob `/internal-chat`, não sob `/users` — `/users` é
+admin-only (tela de gestão), e o diretório de chat precisa ser visível a qualquer membro do
+laboratório (attendant/manager/admin).
+**Motivo:** uma DM não pode aparecer, nem ser lida/escrita, por quem não é um dos dois
+participantes — o filtro de visibilidade (`ch.kind = 'channel' OR ctx.userId IN
+(dm_user_a_id, dm_user_b_id)`) estende a regra já existente "recurso de outro tenant →
+`NOT_FOUND`, nunca `FORBIDDEN`" (SECURITY.md camada 2) para "recurso do MESMO tenant do qual não
+participo → `NOT_FOUND`" — sem essa correção, `findChannelById` (compartilhado por
+`listChannels`, `GET/POST .../messages` e `.../read`) devolveria qualquer canal do tenant,
+inclusive DM alheia, para quem adivinhasse o id. Reaproveitar `/users` para o diretório
+misturaria dois contratos diferentes (gestão administrativa vs. "com quem posso conversar") e
+exigiria relaxar `requireRoles('admin')` numa rota já documentada — mais simples e mais seguro
+um endpoint novo com escopo próprio.
+**Impacto:** api (`GET /internal-chat/users`, `POST /internal-chat/dms` novos;
+`Channel.otherUserId`/`otherUserName` novos), db (migração 010 — ver nota de numeração abaixo),
+ui (seção "Usuários" na barra lateral do Chat Interno). Migração `010` foi reivindicada por esta
+feature; `docs/superpowers/specs/2026-09-08-fusao-crm-fluxolab-design.md` citava
+`010_plans_basic_plus.sql` para a Onda 9 (planos basic/plus), mas essa onda ainda não começou a
+ser implementada (só existe como spec) — quando começar, sua migração é renumerada para `011`.
+Sem WebSocket novo: criar uma DM sem enviar mensagem não notifica o outro lado em tempo real — só
+a primeira mensagem, via `internal_chat.new_message` já existente, faz a DM aparecer para ele.
+
 ---
 
 ## Template para novas decisões

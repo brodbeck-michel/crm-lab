@@ -4,6 +4,10 @@ import type {
   CreateTenantResponse,
   ListTenantsQuery,
   ListTenantsResponse,
+  ResetAdminPasswordResponse,
+  TenantDetail,
+  TenantSummary,
+  UpdateTenantRequest,
 } from '@crm-lab/shared';
 import { http } from './client';
 import type { QueryParams } from './client';
@@ -33,4 +37,15 @@ export const platformApi = {
     http.post<CreateTenantResponse>('/platform/tenants', body),
 
   billing: () => http.get<BillingResponse>('/platform/billing'),
+
+  /** Detalhe por tenant (D-102): status de canal + admins (só e-mail) + saúde de uso. */
+  tenant: (id: string) => http.get<TenantDetail>(`/platform/tenants/${id}`),
+
+  /** Suspende/reativa e/ou troca o plano. Resposta é `TenantSummary` cru (mesmo padrão D-070). */
+  updateTenant: (id: string, body: UpdateTenantRequest) =>
+    http.patch<TenantSummary>(`/platform/tenants/${id}`, body),
+
+  /** Senha temporária, exibida uma única vez pela tela — nunca persistida além do modal. */
+  resetAdminPassword: (tenantId: string, userId: string) =>
+    http.post<ResetAdminPasswordResponse>(`/platform/tenants/${tenantId}/users/${userId}/reset-password`),
 };

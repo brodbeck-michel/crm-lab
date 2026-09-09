@@ -14,6 +14,9 @@ import type {
   CreateTenantRequest,
   CreateTenantResponse,
   ListTenantsResponse,
+  ResetAdminPasswordResponse,
+  TenantDetail,
+  TenantSummary,
 } from '@crm-lab/shared';
 import { channelSettingsModule } from '../../src/controllers/channel-settings.routes.js';
 import { conversationModule } from '../../src/controllers/conversation.routes.js';
@@ -28,6 +31,7 @@ import type { DbClient } from '../../src/db/types.js';
 import { createTenant, createUser, type UserRecord } from '../helpers/factories.js';
 import { createTestApp, type TestApp } from '../helpers/test-app.js';
 import { getTestDb, resetDatabase } from '../helpers/test-db.js';
+import { insertChannel } from './helpers.js';
 
 const BASE = '/api/v1/platform';
 
@@ -123,6 +127,15 @@ describe('guarda de acesso ao console', () => {
 
       await app.agent.get(`${BASE}/billing`).set(headers).expect(403);
       await app.agent.post(`${BASE}/tenants`).set(headers).send(NEW_TENANT).expect(403);
+
+      // D-102: as 3 rotas novas herdam o mesmo `router.use(requireRoles('platform_operator'))`.
+      const fakeId = '00000000-0000-4000-8000-000000000042';
+      await app.agent.get(`${BASE}/tenants/${fakeId}`).set(headers).expect(403);
+      await app.agent.patch(`${BASE}/tenants/${fakeId}`).set(headers).send({ isActive: false }).expect(403);
+      await app.agent
+        .post(`${BASE}/tenants/${fakeId}/users/${fakeId}/reset-password`)
+        .set(headers)
+        .expect(403);
     }
   });
 });
@@ -346,5 +359,132 @@ describe('GET /platform/billing', () => {
     expect(alfa).toMatchObject({ plan: 'pro', messagesUsed: 0, extraMessages: 0 });
     // Dinheiro no fio e numero decimal, nunca string formatada (CLAUDE.md §9).
     expect(typeof alfa?.monthlyPrice).toBe('number');
+  });
+});
+
+describe('GET /platform/tenants/:id (D-102)', () => {
+  it('devolve o detalhe com status de canal e admins', async () => {
+    const lab = await createTenant({ name: 'Lab Vida', slug: 'lab-vida', db });
+    const admin = await createUser({
+      tenantId: lab.id,
+      role: 'admin',
+      email: 'admin@labvida.com.br',
+      db,
+    });
+    await insertChannel(db, {
+      tenantId: lab.id,
+      phoneNumber: '+5548999998888',
+      apiToken: 'segredo-nunca-sai',
+    });
+
+    const res = await app.agent
+      .get(`${BASE}/tenants/${lab.id}`)
+      .set(app.auth(operator))
+      .expect(200);
+    const body = bodyOf<TenantDetail>(res);
+
+    expect(body).toMatchObject({ name: 'Lab Vida', slug: 'lab-vida' });
+    expect(body.channels).toEqual([
+      expect.objectContaining({ channel: 'whatsapp', isActive: true }),
+    ]);
+    expect(body.admins).toEqual([{ id: admin.id, email: 'admin@labvida.com.br' }]);
+    expect(JSON.stringify(body)).not.toContain('+5548999998888');
+    expect(JSON.stringify(body)).not.toContain('segredo-nunca-sai');
+  });
+
+  it('id inexistente devolve 404 NOT_FOUND', async () => {
+    const res = await app.agent
+      .get(`${BASE}/tenants/00000000-0000-4000-8000-000000000099`)
+      .set(app.auth(operator))
+      .expect(404);
+    expect(errorOf(res).code).toBe('NOT_FOUND');
+  });
+
+  it(':id nao-uuid devolve 400 VALIDATION_ERROR', async () => {
+    const res = await app.agent
+      .get(`${BASE}/tenants/nao-e-uuid`)
+      .set(app.auth(operator))
+      .expect(400);
+    expect(errorOf(res).code).toBe('VALIDATION_ERROR');
+  });
+});
+
+describe('PATCH /platform/tenants/:id (D-102)', () => {
+  it('suspende o tenant', async () => {
+    const lab = await createTenant({ name: 'Lab Vida', slug: 'lab-vida', db });
+    const res = await app.agent
+      .patch(`${BASE}/tenants/${lab.id}`)
+      .set(app.auth(operator))
+      .send({ isActive: false })
+      .expect(200);
+    expect(bodyOf<TenantSummary>(res).isActive).toBe(false);
+  });
+
+  it('corpo vazio devolve 400 VALIDATION_ERROR', async () => {
+    const lab = await createTenant({ db });
+    const res = await app.agent
+      .patch(`${BASE}/tenants/${lab.id}`)
+      .set(app.auth(operator))
+      .send({})
+      .expect(400);
+    expect(errorOf(res).code).toBe('VALIDATION_ERROR');
+  });
+
+  it('recusa campo desconhecido no corpo', async () => {
+    const lab = await createTenant({ db });
+    await app.agent
+      .patch(`${BASE}/tenants/${lab.id}`)
+      .set(app.auth(operator))
+      .send({ isActive: false, name: 'Outro nome' })
+      .expect(400);
+  });
+
+  it('tenant inexistente devolve 404 NOT_FOUND', async () => {
+    const res = await app.agent
+      .patch(`${BASE}/tenants/00000000-0000-4000-8000-000000000099`)
+      .set(app.auth(operator))
+      .send({ isActive: false })
+      .expect(404);
+    expect(errorOf(res).code).toBe('NOT_FOUND');
+  });
+});
+
+describe('POST /platform/tenants/:id/users/:userId/reset-password (D-102)', () => {
+  it('gera senha temporaria em texto plano, uma vez', async () => {
+    const lab = await createTenant({ db });
+    const admin = await createUser({ tenantId: lab.id, role: 'admin', email: 'admin@lab.com.br', db });
+
+    const res = await app.agent
+      .post(`${BASE}/tenants/${lab.id}/users/${admin.id}/reset-password`)
+      .set(app.auth(operator))
+      .expect(200);
+    const body = bodyOf<ResetAdminPasswordResponse>(res);
+
+    expect(body.email).toBe('admin@lab.com.br');
+    expect(typeof body.temporaryPassword).toBe('string');
+    expect(body.temporaryPassword.length).toBeGreaterThan(0);
+  });
+
+  it('usuario de outro tenant devolve 404 NOT_FOUND', async () => {
+    const labA = await createTenant({ db });
+    const labB = await createTenant({ db });
+    const adminB = await createUser({ tenantId: labB.id, role: 'admin', db });
+
+    const res = await app.agent
+      .post(`${BASE}/tenants/${labA.id}/users/${adminB.id}/reset-password`)
+      .set(app.auth(operator))
+      .expect(404);
+    expect(errorOf(res).code).toBe('NOT_FOUND');
+  });
+
+  it('usuario que nao e admin devolve 404 NOT_FOUND', async () => {
+    const lab = await createTenant({ db });
+    const attendant = await createUser({ tenantId: lab.id, role: 'attendant', db });
+
+    const res = await app.agent
+      .post(`${BASE}/tenants/${lab.id}/users/${attendant.id}/reset-password`)
+      .set(app.auth(operator))
+      .expect(404);
+    expect(errorOf(res).code).toBe('NOT_FOUND');
   });
 });

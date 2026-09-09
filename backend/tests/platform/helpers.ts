@@ -49,6 +49,38 @@ export async function insertMessages(
   });
 }
 
+/** Insere uma linha de `tenant_channels` para exercitar o detalhe por tenant (D-102). */
+export async function insertChannel(
+  db: DbClient,
+  input: {
+    tenantId: string;
+    channel?: string;
+    isActive?: boolean;
+    connectionMode?: 'cloud_api' | 'qr';
+    connectedAt?: string | null;
+    phoneNumber?: string;
+    apiToken?: string;
+  },
+): Promise<void> {
+  await db.withoutTenant((tx) =>
+    tx.query(
+      `INSERT INTO tenant_channels
+         (id, tenant_id, channel, is_active, connection_mode, connected_at, phone_number, api_token)
+       VALUES ($1, $2, $3, $4, $5, $6::timestamp, $7, $8)`,
+      [
+        randomUUID(),
+        input.tenantId,
+        input.channel ?? 'whatsapp',
+        input.isActive ?? true,
+        input.connectionMode ?? 'cloud_api',
+        input.connectedAt ?? null,
+        input.phoneNumber ?? null,
+        input.apiToken ?? null,
+      ],
+    ),
+  );
+}
+
 /**
  * Envelopa o `DbClient` para que a transacao de `withoutTenant` FALHE no
  * primeiro comando que casar com `failOn`.

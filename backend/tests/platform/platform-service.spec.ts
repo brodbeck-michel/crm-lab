@@ -18,6 +18,7 @@ import {
   billingFor,
   createPlatformService,
   currentMonthBounds,
+  MIN_PASSWORD_LENGTH,
   normalizeSlug,
   PLAN_CATALOG,
   type PlatformService,
@@ -31,7 +32,7 @@ import {
   type UserRecord,
 } from '../helpers/factories.js';
 import { getTestDb, resetDatabase } from '../helpers/test-db.js';
-import { dbFailingOn, insertMessages, operatorCtx } from './helpers.js';
+import { dbFailingOn, insertChannel, insertMessages, operatorCtx } from './helpers.js';
 
 /** Mes de referencia fixo: a fatura nao pode depender do dia em que roda. */
 const NOW = new Date('2026-08-15T12:00:00.000Z');
@@ -397,6 +398,262 @@ describe('getBilling', () => {
       start: '2026-12-01 00:00:00',
       endExclusive: '2027-01-01 00:00:00',
     });
+  });
+});
+
+describe('getTenantDetail (D-102)', () => {
+  it('devolve status de canal, admins e saude de uso', async () => {
+    const lab = await createTenant({ name: 'Lab Vida', slug: 'lab-vida', db });
+    const admin = await createUser({ tenantId: lab.id, role: 'admin', email: 'admin@labvida.com.br', db });
+    await createUser({ tenantId: lab.id, role: 'attendant', isActive: false, db });
+    await insertChannel(db, {
+      tenantId: lab.id,
+      channel: 'whatsapp',
+      isActive: true,
+      connectionMode: 'cloud_api',
+      connectedAt: '2026-08-01 09:00:00',
+      phoneNumber: '+5548999998888',
+      apiToken: 'segredo-nunca-sai',
+    });
+    const conversa = await createConversation({ tenantId: lab.id, db });
+    await insertMessages(db, {
+      tenantId: lab.id,
+      conversationId: conversa.id,
+      count: 4,
+      createdAt: '2026-08-10 10:00:00',
+    });
+    const proposta = await createProposal({ tenantId: lab.id, createdBy: admin.id, totalPrice: 500, db });
+    // `createProposal` grava `created_at = NOW()` real — alinha ao mes mockado (NOW acima).
+    await db.withoutTenant((tx) =>
+      tx.query('UPDATE proposals SET created_at = $1::timestamp WHERE id = $2', [
+        '2026-08-12 10:00:00',
+        proposta.id,
+      ]),
+    );
+
+    const detail = await service().getTenantDetail(operatorCtx(operator), lab.id);
+
+    expect(detail).toMatchObject({ name: 'Lab Vida', slug: 'lab-vida', isActive: true });
+    expect(detail.channels).toEqual([
+      { channel: 'whatsapp', isActive: true, connectionMode: 'cloud_api', connectedAt: expect.any(String) },
+    ]);
+    expect(detail.admins).toEqual([{ id: admin.id, email: 'admin@labvida.com.br' }]);
+    expect(detail.usage).toEqual({
+      activeUsers: 1, // só o admin — o attendant nasceu inativo
+      totalUsers: 2,
+      lastLoginAt: null,
+      proposalsThisMonth: 1,
+      messagesThisMonth: 4,
+    });
+  });
+
+  it('canal e admin nunca vazam telefone, token ou nome', async () => {
+    const lab = await createTenant({ name: 'Lab Sigiloso', slug: 'lab-sigiloso', db });
+    await createUser({
+      tenantId: lab.id,
+      role: 'admin',
+      name: 'Admin Secreto',
+      email: 'admin@sigiloso.com.br',
+      db,
+    });
+    await insertChannel(db, {
+      tenantId: lab.id,
+      phoneNumber: '+5548999998888',
+      apiToken: 'segredo-nunca-sai',
+    });
+
+    const detail = await service().getTenantDetail(operatorCtx(operator), lab.id);
+    const payload = JSON.stringify(detail);
+
+    expect(payload).not.toContain('+5548999998888');
+    expect(payload).not.toContain('segredo-nunca-sai');
+    expect(payload).not.toContain('Admin Secreto');
+    expect(Object.keys(detail.channels[0] ?? {}).sort()).toEqual([
+      'channel',
+      'connectedAt',
+      'connectionMode',
+      'isActive',
+    ]);
+    expect(Object.keys(detail.admins[0] ?? {}).sort()).toEqual(['email', 'id']);
+  });
+
+  it('exclui manager e attendant de `admins`', async () => {
+    const lab = await createTenant({ db });
+    await createUser({ tenantId: lab.id, role: 'manager', email: 'gestor@lab.com.br', db });
+    await createUser({ tenantId: lab.id, role: 'attendant', email: 'atendente@lab.com.br', db });
+
+    const detail = await service().getTenantDetail(operatorCtx(operator), lab.id);
+    expect(detail.admins).toEqual([]);
+  });
+
+  it('tenant inexistente devolve NOT_FOUND', async () => {
+    await expect(
+      service().getTenantDetail(operatorCtx(operator), '00000000-0000-4000-8000-000000000099'),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('recusa quem nao e platform_operator', async () => {
+    const lab = await createTenant({ db });
+    const admin = await createUser({ tenantId: lab.id, role: 'admin', db });
+    const ctx = {
+      userId: admin.id,
+      tenantId: lab.id,
+      role: 'admin' as const,
+      discountLimit: 100,
+      ip: '127.0.0.1',
+      userAgent: 'vitest',
+    };
+    await expect(service().getTenantDetail(ctx, lab.id)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+  });
+});
+
+describe('updateTenant (D-102)', () => {
+  it('suspende o tenant e audita a mudanca', async () => {
+    const lab = await createTenant({ name: 'Lab Vida', slug: 'lab-vida', db });
+    const updated = await service().updateTenant(operatorCtx(operator), lab.id, {
+      isActive: false,
+    });
+    expect(updated.isActive).toBe(false);
+
+    const logs = await db.withoutTenant((tx) =>
+      tx.query<{ action: string; old_values: unknown; new_values: unknown }>(
+        "SELECT action, old_values, new_values FROM audit_logs WHERE action = 'update_tenant'",
+      ),
+    );
+    expect(logs.rows).toHaveLength(1);
+    expect(logs.rows[0]).toMatchObject({
+      action: 'update_tenant',
+      old_values: { isActive: true },
+      new_values: { isActive: false },
+    });
+  });
+
+  it('troca o plano', async () => {
+    const lab = await createTenant({ subscriptionPlan: 'starter', db });
+    const updated = await service().updateTenant(operatorCtx(operator), lab.id, {
+      subscriptionPlan: 'enterprise',
+    });
+    expect(updated.subscriptionPlan).toBe('enterprise');
+  });
+
+  it('PATCH que repete o valor atual nao grava audit log', async () => {
+    const lab = await createTenant({ isActive: true, db });
+    await service().updateTenant(operatorCtx(operator), lab.id, { isActive: true });
+
+    const logs = await db.withoutTenant((tx) =>
+      tx.query("SELECT id FROM audit_logs WHERE action = 'update_tenant'"),
+    );
+    expect(logs.rows).toHaveLength(0);
+  });
+
+  it('corpo vazio (nem isActive nem subscriptionPlan) e VALIDATION_ERROR', async () => {
+    const lab = await createTenant({ db });
+    await expect(service().updateTenant(operatorCtx(operator), lab.id, {})).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+    });
+  });
+
+  it('tenant inexistente devolve NOT_FOUND', async () => {
+    await expect(
+      service().updateTenant(operatorCtx(operator), '00000000-0000-4000-8000-000000000099', {
+        isActive: false,
+      }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('recusa quem nao e platform_operator', async () => {
+    const lab = await createTenant({ db });
+    const admin = await createUser({ tenantId: lab.id, role: 'admin', db });
+    const ctx = {
+      userId: admin.id,
+      tenantId: lab.id,
+      role: 'admin' as const,
+      discountLimit: 100,
+      ip: '127.0.0.1',
+      userAgent: 'vitest',
+    };
+    await expect(
+      service().updateTenant(ctx, lab.id, { isActive: false }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+});
+
+describe('resetAdminPassword (D-102)', () => {
+  it('gera senha temporaria, hasheia e audita sem a senha', async () => {
+    const lab = await createTenant({ db });
+    const admin = await createUser({ tenantId: lab.id, role: 'admin', email: 'admin@lab.com.br', db });
+
+    const result = await service().resetAdminPassword(operatorCtx(operator), lab.id, admin.id);
+    expect(result.email).toBe('admin@lab.com.br');
+    expect(result.temporaryPassword.length).toBeGreaterThanOrEqual(MIN_PASSWORD_LENGTH);
+
+    const row = await db.withoutTenant((tx) =>
+      tx.query<{ password_hash: string }>('SELECT password_hash FROM users WHERE id = $1', [
+        admin.id,
+      ]),
+    );
+    const hash = row.rows[0]?.password_hash;
+    expect(hash).not.toBe(result.temporaryPassword);
+    expect(await verifyPassword(result.temporaryPassword, hash ?? '')).toBe(true);
+
+    const logs = await db.withoutTenant((tx) =>
+      tx.query<{ action: string; entity_id: string; old_values: unknown; new_values: unknown }>(
+        "SELECT action, entity_id, old_values, new_values FROM audit_logs WHERE action = 'reset_admin_password'",
+      ),
+    );
+    expect(logs.rows).toHaveLength(1);
+    expect(logs.rows[0]?.entity_id).toBe(admin.id);
+    const serializado = JSON.stringify(logs.rows[0]);
+    expect(serializado).not.toContain(result.temporaryPassword);
+  });
+
+  it('usuario de outro tenant devolve NOT_FOUND, nunca FORBIDDEN', async () => {
+    const labA = await createTenant({ db });
+    const labB = await createTenant({ db });
+    const adminB = await createUser({ tenantId: labB.id, role: 'admin', db });
+
+    await expect(
+      service().resetAdminPassword(operatorCtx(operator), labA.id, adminB.id),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('usuario que nao e admin (manager/attendant) devolve NOT_FOUND', async () => {
+    const lab = await createTenant({ db });
+    const manager = await createUser({ tenantId: lab.id, role: 'manager', db });
+
+    await expect(
+      service().resetAdminPassword(operatorCtx(operator), lab.id, manager.id),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('tenant inexistente devolve NOT_FOUND', async () => {
+    const lab = await createTenant({ db });
+    const admin = await createUser({ tenantId: lab.id, role: 'admin', db });
+    await expect(
+      service().resetAdminPassword(
+        operatorCtx(operator),
+        '00000000-0000-4000-8000-000000000099',
+        admin.id,
+      ),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('recusa quem nao e platform_operator', async () => {
+    const lab = await createTenant({ db });
+    const admin = await createUser({ tenantId: lab.id, role: 'admin', db });
+    const ctx = {
+      userId: admin.id,
+      tenantId: lab.id,
+      role: 'admin' as const,
+      discountLimit: 100,
+      ip: '127.0.0.1',
+      userAgent: 'vitest',
+    };
+    await expect(
+      service().resetAdminPassword(ctx, lab.id, admin.id),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 });
 

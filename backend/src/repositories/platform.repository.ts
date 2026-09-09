@@ -20,6 +20,13 @@
  * Uso" precisa de excedente de mensagens e volume — mas sao `COUNT(*)`, jamais
  * `SELECT content`. Uma query nova que projete coluna de conteudo e um bug de
  * privacidade, ainda que o teste de tipo passe.
+ *
+ * EXCECAO MINIMA E NOMEADA (D-102): o detalhe por tenant (`tenantChannels`,
+ * `tenantAdmins`) projeta status de canal (`channel`/`is_active`/
+ * `connection_mode`/`connected_at` — NUNCA `phone_number`/`api_token`/
+ * `webhook_secret`) e e-mail de usuario `role = 'admin'` (NUNCA `name`, NUNCA
+ * `manager`/`attendant`). Fora dessas duas queries, nomeadas, a regra 2 acima
+ * continua absoluta.
  */
 import { randomUUID } from 'node:crypto';
 import type { DbTx } from '../db/types.js';
@@ -232,4 +239,173 @@ export async function billingUsage(
     messagesUsed: toNumber(row.messages_used),
     proposalCount: toNumber(row.proposal_count),
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Detalhe por tenant (D-102) — exceção mínima e nomeada ao "sem dado de lab":
+// status de canal (sem segredo/telefone) e e-mail de admin (sem nome/outro
+// papel). Ver cabeçalho do arquivo e `platform.service.ts`.
+// ---------------------------------------------------------------------------
+
+export interface TenantChannelRow {
+  channel: string;
+  is_active: boolean;
+  connection_mode: string;
+  connected_at: unknown;
+}
+
+export interface TenantChannelStatusEntity {
+  channel: string;
+  isActive: boolean;
+  connectionMode: 'cloud_api' | 'qr';
+  connectedAt: string | null;
+}
+
+/**
+ * Projeção deliberadamente mais estreita que `channel-settings.repository.ts#listChannels`
+ * (que serve `/settings/channels` e inclui `phoneNumber`/`apiTokenMasked`): aqui NUNCA
+ * seleciona telefone, id de telefone, token ou segredo — só o suficiente para "está
+ * conectado?". Não reusar `listChannels` para o console da plataforma.
+ */
+export async function tenantChannels(tx: DbTx, tenantId: string): Promise<TenantChannelStatusEntity[]> {
+  const result = await tx.query<TenantChannelRow>(
+    `SELECT channel, is_active, connection_mode, connected_at
+       FROM tenant_channels
+      WHERE tenant_id = $1
+      ORDER BY channel`,
+    [tenantId],
+  );
+  return result.rows.map((row) => ({
+    channel: row.channel,
+    isActive: row.is_active,
+    // CHECK (connection_mode IN ('cloud_api','qr')) no banco (SCHEMA.md §15) — cast seguro.
+    connectionMode: row.connection_mode === 'qr' ? 'qr' : 'cloud_api',
+    connectedAt: toIsoOrNull(row.connected_at),
+  }));
+}
+
+export interface TenantAdminRow {
+  id: string;
+  email: string;
+}
+
+/** Só `role = 'admin'`. Nunca `name`, nunca `manager`/`attendant` (D-102). */
+export async function tenantAdmins(tx: DbTx, tenantId: string): Promise<TenantAdminRow[]> {
+  const result = await tx.query<TenantAdminRow>(
+    `SELECT id, email FROM users WHERE tenant_id = $1 AND role = 'admin' ORDER BY email`,
+    [tenantId],
+  );
+  return result.rows;
+}
+
+export interface TenantUsageHealthEntity {
+  activeUsers: number;
+  totalUsers: number;
+  lastLoginAt: string | null;
+  proposalsThisMonth: number;
+  messagesThisMonth: number;
+}
+
+/**
+ * Agregados de um único tenant para o drill-down. Mesmo molde de `billingUsage`
+ * (`COUNT(*)` em subquery, nunca coluna de conteúdo) — só que por `tenant_id` fixo em vez de
+ * uma linha por tenant.
+ */
+export async function tenantUsageHealth(
+  tx: DbTx,
+  tenantId: string,
+  month: { start: string; endExclusive: string },
+): Promise<TenantUsageHealthEntity> {
+  const result = await tx.query<{
+    active_users: unknown;
+    total_users: unknown;
+    last_login_at: unknown;
+    proposals_this_month: unknown;
+    messages_this_month: unknown;
+  }>(
+    `SELECT
+        (SELECT COUNT(*)::int FROM users u WHERE u.tenant_id = $1 AND u.is_active) AS active_users,
+        (SELECT COUNT(*)::int FROM users u WHERE u.tenant_id = $1) AS total_users,
+        (SELECT MAX(u.last_login_at) FROM users u WHERE u.tenant_id = $1) AS last_login_at,
+        (SELECT COUNT(*)::int FROM proposals p
+          WHERE p.tenant_id = $1
+            AND p.created_at >= $2::timestamp AND p.created_at < $3::timestamp) AS proposals_this_month,
+        (SELECT COUNT(*)::int FROM messages m
+          WHERE m.tenant_id = $1
+            AND m.created_at >= $2::timestamp AND m.created_at < $3::timestamp) AS messages_this_month`,
+    [tenantId, month.start, month.endExclusive],
+  );
+  const row = result.rows[0];
+  return {
+    activeUsers: toNumber(row?.active_users),
+    totalUsers: toNumber(row?.total_users),
+    lastLoginAt: toIsoOrNull(row?.last_login_at),
+    proposalsThisMonth: toNumber(row?.proposals_this_month),
+    messagesThisMonth: toNumber(row?.messages_this_month),
+  };
+}
+
+export interface TenantUserRow {
+  id: string;
+  email: string;
+  role: string;
+}
+
+/**
+ * Usado SÓ pelo reset de senha, para confirmar que `userId` pertence a `tenantId` antes de
+ * trocar a senha. `null` em caso de mismatch (usuário de outro tenant, ou inexistente) — o
+ * service converte em `NOT_FOUND`, nunca `FORBIDDEN` (mesma regra do resto do projeto: não
+ * vazar existência nem papel).
+ */
+export async function findTenantUser(
+  tx: DbTx,
+  tenantId: string,
+  userId: string,
+): Promise<TenantUserRow | null> {
+  const result = await tx.query<TenantUserRow>(
+    'SELECT id, email, role FROM users WHERE id = $1 AND tenant_id = $2',
+    [userId, tenantId],
+  );
+  return result.rows[0] ?? null;
+}
+
+/** Só o reset de senha do console da plataforma escreve `password_hash` fora de `insert`. */
+export async function setUserPassword(tx: DbTx, userId: string, passwordHash: string): Promise<void> {
+  await tx.query('UPDATE users SET password_hash = $1 WHERE id = $2', [passwordHash, userId]);
+}
+
+export interface UpdateTenantPatch {
+  isActive?: boolean;
+  plan?: string;
+}
+
+/**
+ * Atualiza campos informados de `tenants`. Devolve `null` quando nenhuma linha foi afetada
+ * (id inexistente ou soft-deletado) — o service converte em `NOT_FOUND`. Mesmo padrão de
+ * `sets`/`params` dinâmico de `user.repository.ts#update`.
+ */
+export async function updateTenant(
+  tx: DbTx,
+  id: string,
+  patch: UpdateTenantPatch,
+): Promise<TenantSummaryEntity | null> {
+  const sets: string[] = [];
+  const params: unknown[] = [];
+
+  if (patch.isActive !== undefined) {
+    params.push(patch.isActive);
+    sets.push(`is_active = $${params.length}`);
+  }
+  if (patch.plan !== undefined) {
+    params.push(patch.plan);
+    sets.push(`subscription_plan = $${params.length}`);
+  }
+  if (sets.length === 0) return findTenantById(tx, id);
+
+  params.push(id);
+  await tx.query(
+    `UPDATE tenants SET ${sets.join(', ')} WHERE id = $${params.length} AND deleted_at IS NULL`,
+    params,
+  );
+  return findTenantById(tx, id);
 }

@@ -17,7 +17,7 @@
  */
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
-import type { CreateTenantRequest } from '@crm-lab/shared';
+import type { CreateTenantRequest, UpdateTenantRequest } from '@crm-lab/shared';
 import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
 import { getContext } from '../http/context.js';
 import { requireAuth, requireRoles } from '../http/middleware/auth.js';
@@ -56,6 +56,24 @@ const createTenantSchema = z
     adminPassword: z.string().min(MIN_PASSWORD_LENGTH).max(200),
   })
   .strict();
+
+const tenantIdParamsSchema = z.object({ id: z.string().uuid() });
+
+const tenantUserParamsSchema = z.object({
+  id: z.string().uuid(),
+  userId: z.string().uuid(),
+});
+
+/** D-102: ao menos um dos dois campos — corpo vazio e recusado pelo `.refine`. */
+const updateTenantSchema = z
+  .object({
+    isActive: z.boolean().optional(),
+    subscriptionPlan: z.enum(['starter', 'pro', 'enterprise']).optional(),
+  })
+  .strict()
+  .refine((value) => value.isActive !== undefined || value.subscriptionPlan !== undefined, {
+    message: 'Informe isActive e/ou subscriptionPlan',
+  });
 
 export function platformModule(deps: ApiModuleDeps): ApiModule {
   const audit = createAuditService(deps.db);
@@ -97,6 +115,47 @@ export function platformModule(deps: ApiModuleDeps): ApiModule {
       .then((billing) => res.status(200).json(billing))
       .catch(next);
   });
+
+  // D-102: detalhe por tenant — status de canal + admins (so e-mail) + saude de uso.
+  router.get(
+    '/tenants/:id',
+    validate(tenantIdParamsSchema, 'params'),
+    (req: Request, res: Response, next): void => {
+      const { id } = validated<{ id: string }>(req, 'params');
+      platform
+        .getTenantDetail(getContext(req), id)
+        .then((detail) => res.status(200).json(detail))
+        .catch(next);
+    },
+  );
+
+  // D-102: suspender/reativar e/ou trocar plano.
+  router.patch(
+    '/tenants/:id',
+    validate(tenantIdParamsSchema, 'params'),
+    validate(updateTenantSchema, 'body'),
+    (req: Request, res: Response, next): void => {
+      const { id } = validated<{ id: string }>(req, 'params');
+      const dto = validated<UpdateTenantRequest>(req, 'body');
+      platform
+        .updateTenant(getContext(req), id, dto)
+        .then((tenant) => res.status(200).json(tenant))
+        .catch(next);
+    },
+  );
+
+  // D-102: senha temporaria para um admin do laboratorio — texto plano, uma vez, nunca logado.
+  router.post(
+    '/tenants/:id/users/:userId/reset-password',
+    validate(tenantUserParamsSchema, 'params'),
+    (req: Request, res: Response, next): void => {
+      const { id, userId } = validated<{ id: string; userId: string }>(req, 'params');
+      platform
+        .resetAdminPassword(getContext(req), id, userId)
+        .then((result) => res.status(200).json(result))
+        .catch(next);
+    },
+  );
 
   return { basePath: '/platform', router, requiresAuth: true };
 }

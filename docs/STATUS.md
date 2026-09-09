@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-09 (DM no Chat Interno — lista de usuários estilo Teams, D-101)
+**Última atualização:** 2026-09-09 (Console da Plataforma: detalhe por tenant, D-102)
 
 ---
 
@@ -438,6 +438,37 @@ texto (sem áudio/vídeo, confirmado com o usuário). D-101.
   da lista de quem não participa
 - `npm run typecheck` (4 workspaces), `npm run test:backend` e `npm run test:frontend` (59
   arquivos / 843 testes) verdes
+
+## 2026-09-09 — Console da Plataforma: detalhe por tenant, status de canal e ações administrativas ✅
+
+Pedido fora de onda: o produto vai ser vendido a múltiplos laboratórios no mercado, e quem opera
+a plataforma comercialmente precisa gerenciar as empresas clientes — ver se a integração de
+WhatsApp está de pé, suspender/reativar, trocar plano, resetar acesso de um admin. D-102.
+
+- Exceção mínima e nomeada ao invariante "console não vê dado de laboratório"
+  (`platform.service.ts`, `platform.repository.ts`): status de canal (`tenant_channels.channel`/
+  `is_active`/`connection_mode`/`connected_at` — nunca telefone/token) e e-mail de usuário
+  `role: 'admin'` (nunca nome, nunca `manager`/`attendant`)
+- `GET /platform/tenants/:id` (`TenantDetail`: `channels[]` + `admins[]` + `usage` agregada —
+  usuários ativos/total, último login, propostas e mensagens do mês), `PATCH /platform/tenants/:id`
+  (suspende/reativa e/ou troca plano, diff-then-audit) e
+  `POST /platform/tenants/:id/users/:userId/reset-password` (senha temporária em texto plano só
+  na resposta, uma vez, nunca logada; só aceita `userId` `admin` do próprio tenant —
+  `NOT_FOUND` em qualquer outro caso) — `platform.repository.ts` (`tenantChannels`, `tenantAdmins`,
+  `tenantUsageHealth`, `findTenantUser`, `setUserPassword`, `updateTenant`) +
+  `platform.service.ts` (`getTenantDetail`, `updateTenant`, `resetAdminPassword`) +
+  `platform.routes.ts`
+- Frontend: `pages/Platform/TenantDetail.tsx` (drill-down em `/platform/tenants/:id`, chegada por
+  clique na linha de `Tenants.tsx` — não é item de sidebar) — integrações, saúde de uso,
+  suspender/reativar com confirmação, trocar plano, resetar senha (com escolha de admin quando há
+  mais de um) e modal de senha temporária com aviso de exibição única
+- **Correção de pré-existente, descoberta ao rodar a suíte completa:** `GET /internal-chat/users` e
+  `POST /internal-chat/dms` (D-101) nunca tinham entrado no inventário `LAB_ROUTES` de
+  `tests/kernel/route-tenant-isolation.spec.ts` — corrigido junto (58 → 60 rotas)
+- Doc: `DECISIONS.md` D-102, `architecture/SECURITY.md` "Console de Plataforma",
+  `api/API_CONTRACTS.md` §5b, `frontend/PAGES.md` §11.1
+- `npm run typecheck` (4 workspaces), `npm run test:backend` (63 arquivos / 937 testes) e
+  `npm run test:frontend` verdes
 
 ## Bloqueios Atuais
 

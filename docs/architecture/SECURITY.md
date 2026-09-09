@@ -29,6 +29,13 @@ CREATE POLICY tenant_isolation ON conversations
 - Credenciais, rotas (`/platform/*`) e guards PRÓPRIOS
 - Operador NÃO tem caminho para: conversas, mensagens, pacientes, propostas, canais internos de labs
 - Isolamento é REQUISITO, não configuração — testes E2E validam
+- **Exceção mínima e nomeada (D-102):** `GET /platform/tenants/:id` expõe status de canal
+  (`tenant_channels.channel`/`is_active`/`connection_mode`/`connected_at` — nunca
+  `phone_number`/`api_token`/`webhook_secret`) e o e-mail de usuários `role = 'admin'` (nunca
+  `name`, nunca `manager`/`attendant`). `PATCH /platform/tenants/:id` (ativar/desativar tenant,
+  trocar plano) e `POST /platform/tenants/:id/users/:userId/reset-password` (só contra usuário
+  `admin` do próprio tenant) são as únicas escritas do console sobre dado de laboratório, ambas
+  auditadas. Fora desta lista nomeada, o isolamento acima continua absoluto.
 
 ---
 

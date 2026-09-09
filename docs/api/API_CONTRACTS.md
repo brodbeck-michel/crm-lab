@@ -2382,6 +2382,90 @@ Recorte dos agregados — **não é o mesmo para os três**:
 - `totals.messages` soma `messagesUsed` de **todos** os laboratórios da lista,
   inclusive inativos — é volume de tráfego, não faturamento.
 
+### GET /platform/tenants/:id
+
+Detalhe de um laboratório (D-102). `:id` não-uuid → `400 VALIDATION_ERROR`. Tenant inexistente
+(ou soft-deletado) → `404 NOT_FOUND` (mesma regra de sempre, nunca `403`).
+
+**Response (200):** `TenantDetail` (`shared/types/platform.types.ts`) — o mesmo `TenantSummary`
+de `GET /platform/tenants`, mais:
+
+```json
+{
+  "id": "uuid", "name": "Laboratório Vida", "slug": "lab-vida", "isActive": true,
+  "subscriptionPlan": "pro", "subscriptionUntil": "2026-12-31", "userCount": 8,
+  "createdAt": "2026-01-10T12:00:00.000Z",
+  "channels": [
+    { "channel": "whatsapp", "isActive": true, "connectionMode": "cloud_api",
+      "connectedAt": "2026-02-01T09:00:00.000Z" }
+  ],
+  "admins": [
+    { "id": "uuid", "email": "admin@labvida.com.br" }
+  ],
+  "usage": {
+    "activeUsers": 6, "totalUsers": 8, "lastLoginAt": "2026-09-08T18:22:00.000Z",
+    "proposalsThisMonth": 44, "messagesThisMonth": 5250
+  }
+}
+```
+
+`channels` nunca inclui `phoneNumber`, `apiToken` ou `webhookSecret` (§6 abaixo — mesma proibição,
+aqui o corte é ainda mais estreito: nem `phoneNumberId`/`phoneNumber` entram). `admins` só lista
+usuários com `role: "admin"` — nunca `manager`/`attendant`, e nunca `name`. Laboratório sem canal
+configurado → `channels: []`; sem admin (não deveria acontecer, onboarding sempre cria um, mas
+não é impossível após edição manual) → `admins: []`.
+
+### PATCH /platform/tenants/:id
+
+Suspende/reativa o laboratório e/ou troca o plano (D-102). Corpo aceita `isActive` e/ou
+`subscriptionPlan` — **ao menos um** dos dois, nunca os dois ausentes (`{}` → `400
+VALIDATION_ERROR`). Campo desconhecido no corpo é recusado (schema `strict`).
+
+**Request:**
+```json
+{ "isActive": false }
+```
+ou
+```json
+{ "subscriptionPlan": "enterprise" }
+```
+ou os dois juntos.
+
+**Response (200):** `TenantSummary` cru, mesmo padrão sem envelope de `POST /platform/tenants`
+(D-070).
+
+**Erros:** `VALIDATION_ERROR` (400, corpo vazio ou `subscriptionPlan` fora do catálogo),
+`NOT_FOUND` (404, tenant inexistente), `FORBIDDEN` (403, `platform_operator` é quem PODE chamar
+esta rota — outro papel recebe `403` com `details.requiredRoles: ["platform_operator"]`, igual ao
+resto de §5b).
+
+Gera `audit_logs` (`action: "update_tenant"`) só quando algo de fato muda — `PATCH` que repete o
+valor atual não grava linha nova (mesmo padrão diff-then-audit de `PATCH /users/:id`).
+Desativar o tenant não derruba sessões já emitidas (`refresh_tokens` continuam válidos até
+expirar/serem usados) — a checagem de `tenants.is_active` acontece no login
+(`findLoginCandidatesByEmail`); revogar acesso imediato de sessão ativa não é escopo desta rota.
+
+### POST /platform/tenants/:id/users/:userId/reset-password
+
+Gera uma senha temporária para um admin do laboratório (D-102). Sem corpo. `:userId` precisa
+pertencer ao **mesmo** `:id` **e** ter `role: "admin"` — qualquer outro caso (usuário de outro
+tenant, usuário inexistente, ou `role` diferente de `admin`) responde `404 NOT_FOUND`, nunca
+`403` (não vazar existência nem papel do usuário).
+
+**Response (200):**
+```json
+{ "userId": "uuid", "email": "admin@labvida.com.br", "temporaryPassword": "kQ7f2m9Xp1zR" }
+```
+
+`temporaryPassword` aparece em texto plano **só nesta resposta, uma única vez** — não é
+recuperável depois, não é logada (`audit_logs` grava `action: "reset_admin_password"` sem
+`oldValues`/`newValues`, mesma regra de segredo nunca no payload do log de `POST
+/platform/tenants`). Repassar a senha ao cliente é responsabilidade de quem opera o console, fora
+do sistema.
+
+**Erros:** `NOT_FOUND` (404), `VALIDATION_ERROR` (400, `:id`/`:userId` não-uuid), `FORBIDDEN`
+(403, `platform_operator`).
+
 ---
 
 ## 6. Channel Settings (Canais & Equipe)

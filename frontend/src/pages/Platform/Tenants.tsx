@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   CreateTenantRequest,
@@ -87,6 +88,7 @@ function readFieldErrors(
 export function PlatformTenants() {
   const role = useAuthStore((state) => state.user?.role);
   const isOperator = role === 'platform_operator';
+  const navigate = useNavigate();
 
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
@@ -243,6 +245,7 @@ export function PlatformTenants() {
             rows={tenantsQuery.data?.tenants ?? []}
             rowKey={(tenant) => tenant.id}
             emptyMessage="Nenhum laboratório encontrado"
+            onRowClick={(tenant) => navigate(`/platform/tenants/${tenant.id}`)}
           />
 
           {pagination && pagination.total > 0 && (

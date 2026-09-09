@@ -34,8 +34,12 @@ interface StatTileProps {
   hint?: string;
 }
 
-/** Cartão de indicador do console — só tokens, sem cor/raio literal. */
-function StatTile({ label, children, hint }: StatTileProps) {
+/**
+ * Cartão de indicador do console — só tokens, sem cor/raio literal.
+ * Exportado para reuso em `Platform/TenantDetail.tsx` (D-102) — mesmo cartão,
+ * sem duplicar o componente.
+ */
+export function StatTile({ label, children, hint }: StatTileProps) {
   return (
     <div className="flex flex-col gap-xs rounded-lg bg-neutral-100 px-lg py-md shadow-sm">
       <span className="font-body text-micro font-semibold uppercase text-neutral-600">{label}</span>

@@ -108,6 +108,8 @@ export const queryKeys = {
   platformTenants: (filters?: PaginationQuery) => ['platform', 'tenants', filters ?? {}] as const,
   /** ['platform', 'billing'] */
   platformBilling: () => ['platform', 'billing'] as const,
+  /** ['platform', 'tenants', id] — detalhe por tenant (D-102) */
+  platformTenant: (id: string) => ['platform', 'tenants', id] as const,
 } as const;
 
 /** Prefixos usados para invalidar um escopo inteiro (todas as variações de filtro). */

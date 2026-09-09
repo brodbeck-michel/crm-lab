@@ -66,3 +66,52 @@ export interface BillingResponse {
   usage: TenantUsage[];
   totals: { mrr: number; tenants: number; messages: number };
 }
+
+/**
+ * Detalhe de um laboratório (D-102, `GET /platform/tenants/:id`).
+ *
+ * Exceção mínima e nomeada ao invariante "console não vê dado de laboratório":
+ * status de canal (sem segredo, sem telefone) e e-mail de admin (sem nome, sem
+ * outro papel). Ver `platform.service.ts` e `SECURITY.md` "Console de Plataforma".
+ */
+export interface TenantChannelStatus {
+  channel: string;
+  isActive: boolean;
+  connectionMode: 'cloud_api' | 'qr';
+  connectedAt: IsoDateTime | null;
+}
+
+export interface TenantAdminAccount {
+  id: string;
+  email: string;
+}
+
+export interface TenantUsageHealth {
+  activeUsers: number;
+  totalUsers: number;
+  lastLoginAt: IsoDateTime | null;
+  proposalsThisMonth: number;
+  messagesThisMonth: number;
+}
+
+export interface TenantDetail extends TenantSummary {
+  channels: TenantChannelStatus[];
+  admins: TenantAdminAccount[];
+  usage: TenantUsageHealth;
+}
+
+/** `PATCH /platform/tenants/:id` — ao menos um campo presente (validado no schema/service). */
+export interface UpdateTenantRequest {
+  isActive?: boolean;
+  subscriptionPlan?: SubscriptionPlan;
+}
+
+/**
+ * `POST /platform/tenants/:id/users/:userId/reset-password` — `temporaryPassword` viaja em
+ * texto plano só nesta resposta, uma única vez; nunca é logado nem recuperável depois.
+ */
+export interface ResetAdminPasswordResponse {
+  userId: string;
+  email: string;
+  temporaryPassword: string;
+}

@@ -469,6 +469,33 @@ gestor).
 - Laboratórios Clientes: lista tenants, onboarding, saúde
 - Assinaturas & Uso: planos, faturas, excedente de mensagens
 
+### 11.1 Detalhe do Laboratório (`/platform/tenants/:id`) — drill-down, D-102
+
+Não é item de sidebar — chega-se clicando numa linha da tabela de "Laboratórios Clientes"
+(`DataTable` já suporta `onRowClick`). Fonte: `GET /platform/tenants/:id`
+(`TenantDetail` — API_CONTRACTS.md §5b).
+
+- **Cabeçalho:** nome, slug, badge de plano, badge ativo/inativo, criado em — mesmos campos da
+  linha da lista, só que num card maior.
+- **Integrações:** um cartão por item de `channels[]` — nome do canal (WhatsApp/SMS/Web/Direct),
+  badge conectado/desconectado (`isActive`), modo de conexão (`cloud_api`/`qr`), "conectado
+  desde" (`connectedAt`, ou "nunca conectou" se nulo). Nunca mostra número de telefone nem
+  token — a tela não tem esse dado (a API não devolve).
+- **Saúde de uso:** `StatTile`s reaproveitados de "Assinaturas & Uso" (§Billing) — usuários
+  ativos/total, último login, propostas no mês, mensagens no mês. Mesma fonte agregada
+  (`usage`), sem nome de paciente nem conteúdo.
+- **Ação "Suspender"/"Reativar":** botão cujo rótulo muda conforme `isActive`; abre diálogo de
+  confirmação (mudar o acesso de um cliente pagante é ação séria, não é um toggle direto) →
+  `PATCH /platform/tenants/:id { isActive }`.
+- **Ação "Trocar plano":** select com os planos do catálogo + confirmação →
+  `PATCH /platform/tenants/:id { subscriptionPlan }`.
+- **Ação "Resetar senha do admin":** fonte é `admins[]` (só e-mails, nunca nome). Zero admins →
+  botão desabilitado ("nenhum admin cadastrado"); um → botão direto; mais de um → escolher o
+  e-mail antes de confirmar. Confirma → `POST
+  /platform/tenants/:id/users/:userId/reset-password` → a senha temporária aparece **uma vez**
+  num modal com aviso de que não será mostrada de novo e botão de copiar; o modal não guarda a
+  senha depois de fechado.
+
 ---
 
 ## 12. Decisões (`/decisions`) — número próprio

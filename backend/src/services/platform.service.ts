@@ -14,16 +14,22 @@
  *   - nome, slug, plano, validade da assinatura, ativo/inativo
  *   - quantidade de usuarios, quantidade de mensagens no mes, quantidade de
  *     propostas — `COUNT(*)`, numeros sem dono
+ *   - EXCECAO MINIMA E NOMEADA (D-102, so em `getTenantDetail`): status de
+ *     canal (`channel`/`isActive`/`connectionMode`/`connectedAt` — nunca
+ *     telefone nem segredo) e e-mail de usuario `role: 'admin'` (nunca nome,
+ *     nunca `manager`/`attendant`) — o minimo para o operador saber se a
+ *     integracao esta de pe e qual conta resetar em caso de suporte
  *
  * NAO PODE (e nao ha metodo que devolva):
  *   - conteudo de mensagem, nome/telefone/e-mail de paciente, titulo ou texto
  *     de conversa, canal interno do laboratorio, linha de proposta, valor de
- *     proposta, nome de usuario do laboratorio
+ *     proposta, nome de usuario do laboratorio, telefone ou token de canal
  *
  * A duvida se resolve para o lado conservador: campo que POSSA identificar
  * pessoa ou revelar conteudo nao entra no payload, mesmo que fosse conveniente
- * para a tela. `TenantSummary` e `BillingResponse` de `@crm-lab/shared` ja
- * refletem esse recorte — nao acrescente campo sem reler esta secao.
+ * para a tela. `TenantSummary`, `TenantDetail` e `BillingResponse` de
+ * `@crm-lab/shared` ja refletem esse recorte — nao acrescente campo sem reler
+ * esta secao.
  *
  * ============================================================================
  * `withoutTenant` — a excecao auditada
@@ -44,16 +50,19 @@
  * laboratorio sem admin, ou sem canal de aprovacao — e pior que nenhum: o
  * cliente nao consegue entrar e nao ha caminho de conserto pela UI.
  */
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import type {
   BillingResponse,
   CreateTenantRequest,
   ListTenantsQuery,
   ListTenantsResponse,
   PaginationMeta,
+  ResetAdminPasswordResponse,
   SubscriptionPlan,
+  TenantDetail,
   TenantSummary,
   TenantUsage,
+  UpdateTenantRequest,
 } from '@crm-lab/shared';
 import { DEFAULT_DISCOUNT_LIMIT } from '@crm-lab/shared';
 import type { DbClient, DbTx } from '../db/types.js';
@@ -141,6 +150,13 @@ export interface PlatformService {
   listTenants(ctx: TenantContext, query: ListTenantsQuery): Promise<ListTenantsResponse>;
   createTenant(ctx: TenantContext, dto: CreateTenantRequest): Promise<TenantSummary>;
   getBilling(ctx: TenantContext): Promise<BillingResponse>;
+  getTenantDetail(ctx: TenantContext, tenantId: string): Promise<TenantDetail>;
+  updateTenant(ctx: TenantContext, tenantId: string, dto: UpdateTenantRequest): Promise<TenantSummary>;
+  resetAdminPassword(
+    ctx: TenantContext,
+    tenantId: string,
+    userId: string,
+  ): Promise<ResetAdminPasswordResponse>;
 }
 
 export interface PlatformServiceDeps {
@@ -389,5 +405,123 @@ export function createPlatformService(deps: PlatformServiceDeps): PlatformServic
     };
   };
 
-  return { listTenants, createTenant, getBilling };
+  /** Detalhe por tenant (D-102): status de canal + admins (e-mail so) + saude de uso. */
+  const getTenantDetail = async (ctx: TenantContext, tenantId: string): Promise<TenantDetail> => {
+    assertOperator(ctx);
+    const month = currentMonthBounds(now());
+
+    return db.withoutTenant(async (tx) => {
+      const summary = await platformRepo.findTenantById(tx, tenantId);
+      if (!summary) throw new BusinessError('NOT_FOUND');
+
+      const [channels, admins, usage] = await Promise.all([
+        platformRepo.tenantChannels(tx, tenantId),
+        platformRepo.tenantAdmins(tx, tenantId),
+        platformRepo.tenantUsageHealth(tx, tenantId, month),
+      ]);
+
+      return {
+        ...toSummary(summary),
+        channels,
+        admins,
+        usage,
+      };
+    });
+  };
+
+  /**
+   * Suspende/reativa e/ou troca o plano (D-102). So audita quando algo de fato
+   * muda — mesmo padrao diff-then-audit de `user.service.ts#update`.
+   */
+  const updateTenant = async (
+    ctx: TenantContext,
+    tenantId: string,
+    dto: UpdateTenantRequest,
+  ): Promise<TenantSummary> => {
+    assertOperator(ctx);
+
+    if (dto.isActive === undefined && dto.subscriptionPlan === undefined) {
+      throw new BusinessError('VALIDATION_ERROR', {
+        fields: { body: 'Informe isActive e/ou subscriptionPlan' },
+      });
+    }
+    if (dto.subscriptionPlan !== undefined && !isPlan(dto.subscriptionPlan)) {
+      throw new BusinessError('VALIDATION_ERROR', {
+        fields: { subscriptionPlan: `Plano deve ser um de: ${SUBSCRIPTION_PLANS.join(', ')}` },
+      });
+    }
+
+    const { previous, updated } = await db.withoutTenant(async (tx) => {
+      const before = await platformRepo.findTenantById(tx, tenantId);
+      if (!before) throw new BusinessError('NOT_FOUND');
+
+      const after = await platformRepo.updateTenant(tx, tenantId, {
+        isActive: dto.isActive,
+        plan: dto.subscriptionPlan,
+      });
+      if (!after) throw new BusinessError('NOT_FOUND');
+      return { previous: before, updated: after };
+    });
+
+    const oldValues: Record<string, unknown> = {};
+    const newValues: Record<string, unknown> = {};
+    if (dto.isActive !== undefined && previous.isActive !== updated.isActive) {
+      oldValues.isActive = previous.isActive;
+      newValues.isActive = updated.isActive;
+    }
+    if (dto.subscriptionPlan !== undefined && previous.subscriptionPlan !== updated.subscriptionPlan) {
+      oldValues.subscriptionPlan = previous.subscriptionPlan;
+      newValues.subscriptionPlan = updated.subscriptionPlan;
+    }
+    if (Object.keys(newValues).length > 0) {
+      await audit.record(ctx, {
+        action: 'update_tenant',
+        entityType: 'tenant',
+        entityId: tenantId,
+        oldValues,
+        newValues,
+      });
+    }
+
+    return toSummary(updated);
+  };
+
+  /**
+   * Senha temporaria para um admin do laboratorio (D-102). So aceita `userId`
+   * do MESMO tenant com `role: 'admin'` — qualquer outro caso e `NOT_FOUND`,
+   * nunca `FORBIDDEN` (nao vazar existencia nem papel). Senha nunca entra no
+   * audit log (mesma regra ja aplicada em `createTenant`).
+   */
+  const resetAdminPassword = async (
+    ctx: TenantContext,
+    tenantId: string,
+    userId: string,
+  ): Promise<ResetAdminPasswordResponse> => {
+    assertOperator(ctx);
+
+    const temporaryPassword = randomBytes(12).toString('base64url');
+    const passwordHash = await hashPassword(temporaryPassword);
+
+    const email = await db.withoutTenant(async (tx) => {
+      const tenant = await platformRepo.findTenantById(tx, tenantId);
+      if (!tenant) throw new BusinessError('NOT_FOUND');
+
+      const user = await platformRepo.findTenantUser(tx, tenantId, userId);
+      if (!user || user.role !== 'admin') throw new BusinessError('NOT_FOUND');
+
+      await platformRepo.setUserPassword(tx, userId, passwordHash);
+      return user.email;
+    });
+
+    // Segredo nunca no payload do log — mesma regra de `createTenant`.
+    await audit.record(ctx, {
+      action: 'reset_admin_password',
+      entityType: 'user',
+      entityId: userId,
+    });
+
+    return { userId, email, temporaryPassword };
+  };
+
+  return { listTenants, createTenant, getBilling, getTenantDetail, updateTenant, resetAdminPassword };
 }

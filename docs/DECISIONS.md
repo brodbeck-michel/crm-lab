@@ -1169,6 +1169,37 @@ ser implementada (só existe como spec) — quando começar, sua migração é r
 Sem WebSocket novo: criar uma DM sem enviar mensagem não notifica o outro lado em tempo real — só
 a primeira mensagem, via `internal_chat.new_message` já existente, faz a DM aparecer para ele.
 
+### D-102: Console da plataforma ganha detalhe por tenant — status de canal, admin mínimo e ações administrativas
+**Decisão:** `GET /platform/tenants/:id` (novo) devolve `TenantDetail`: o `TenantSummary` de
+sempre, mais `channels[]` (projeção de `tenant_channels` limitada a `channel`, `isActive`,
+`connectionMode`, `connectedAt` — nunca `phoneNumber`/`apiToken`/`webhookSecret`), `admins[]`
+(projeção de `users` limitada a `id`+`email`, **só** `role = 'admin'`, nunca `name` nem
+`manager`/`attendant`) e `usage` (agregados: usuários ativos/total, `MAX(last_login_at)`,
+propostas e mensagens do mês corrente — mesmo molde de `COUNT(*)` já usado em `billingUsage`).
+Duas ações novas: `PATCH /platform/tenants/:id` (troca `isActive` e/ou `subscriptionPlan`, um ou
+outro, nunca corpo vazio) e `POST /platform/tenants/:id/users/:userId/reset-password` (gera senha
+temporária aleatória, devolvida em texto plano **uma única vez** na resposta, nunca logada; só
+aceita `userId` cujo `role` seja `admin` do próprio tenant — `NOT_FOUND` em qualquer outro caso,
+mesma regra de "recurso de outro tenant/fora de escopo → 404, nunca 403"). As duas ações são
+auditadas (`update_tenant`, `reset_admin_password`) com o mesmo padrão diff-then-audit de
+`user.service.ts#update` — `reset_admin_password` nunca grava a senha em `oldValues`/`newValues`.
+**Motivo:** o produto vai ser vendido a múltiplos laboratórios no mercado, e quem opera a
+plataforma comercialmente precisa saber, por cliente, se a integração de WhatsApp está de pé e
+conseguir agir (suspender inadimplente, reativar, trocar plano, resetar acesso de um admin que
+perdeu a senha) sem depender de acesso direto ao banco. Isso amplia deliberadamente o invariante
+de `platform.service.ts` ("o operador não vê canal nem nome de usuário do laboratório") em dois
+pontos mínimos e nomeados — status de canal (sem conteúdo, sem segredo, sem número de telefone) e
+e-mail do admin (nunca nome, nunca papel operacional) — porque sem esse mínimo a ação de suporte
+(saber qual conta resetar) não é executável. A dúvida se resolve para o lado conservador em tudo
+que não está nesta lista: continua proibido projetar `phoneNumber`, qualquer segredo, `name` de
+usuário, ou dado de `manager`/`attendant`.
+**Impacto:** api (3 rotas novas em `/platform`, todas atrás de `requireRoles('platform_operator')`
+já aplicado no router), db (nenhuma migração — só leitura/escrita de colunas existentes em
+`tenant_channels`/`users`/`tenants`), ui (nova página de drill-down `platform/tenants/:id`, linha
+clicável na listagem existente), docs (`SECURITY.md` "Console de Plataforma",
+`API_CONTRACTS.md` §5b, `PAGES.md` §11, comentário de cabeçalho de `platform.service.ts`
+atualizados no mesmo commit).
+
 ---
 
 ## Template para novas decisões

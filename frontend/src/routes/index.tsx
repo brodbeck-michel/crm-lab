@@ -17,6 +17,7 @@ import InternalChat from '@/pages/InternalChat';
 import QuickReplies from '@/pages/QuickReplies';
 import Decisions from '@/pages/Decisions';
 import PlatformTenants from '@/pages/Platform/Tenants';
+import PlatformTenantDetail from '@/pages/Platform/TenantDetail';
 import PlatformBilling from '@/pages/Platform/Billing';
 import { RequireAuth, RequireRoles, RoleHomeRedirect } from './guards';
 import { ADMIN_ONLY, MANAGER_PLUS, PLATFORM_ONLY, TENANT_ROLES } from './route-config';
@@ -102,6 +103,7 @@ export const appRoutes: RouteObject[] = [
             element: <PlatformShell />,
             children: [
               { path: 'platform/tenants', element: <PlatformTenants /> },
+              { path: 'platform/tenants/:id', element: <PlatformTenantDetail /> },
               { path: 'platform/billing', element: <PlatformBilling /> },
             ],
           },

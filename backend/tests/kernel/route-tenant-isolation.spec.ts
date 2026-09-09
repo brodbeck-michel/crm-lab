@@ -529,6 +529,17 @@ const LAB_ROUTES: readonly LabRoute[] = [
     addressable: true,
     ownStatus: 201,
   },
+  // D-101: DM — diretorio de usuarios e get-or-create do canal.
+  { name: 'GET /internal-chat/users', method: 'get', path: () => '/api/v1/internal-chat/users', actor: 'attendant', addressable: false },
+  {
+    name: 'POST /internal-chat/dms',
+    method: 'post',
+    path: () => '/api/v1/internal-chat/dms',
+    // Atendente inicia DM com o admin do MESMO tenant — par valido em qualquer lab.
+    body: (l) => ({ userId: l.admin.id }),
+    actor: 'attendant',
+    addressable: false,
+  },
 ] as const;
 
 let db: DbClient;
@@ -758,7 +769,7 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 58 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 60 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
@@ -766,8 +777,10 @@ describe('inventario de rotas de laboratorio', () => {
     // `POST /conversations` (atendimento manual, fora do WhatsApp): +1. A Onda 8
     // soma 4: as 3 de `/conversations/assignees|:id/pin` e, na segunda onda, as
     // 4 de `/quick-replies` (macros do Composer). A terceira onda soma 2:
-    // `POST /conversations/:id/attachments` e `GET /media/:id`.
-    expect(LAB_ROUTES).toHaveLength(58);
+    // `POST /conversations/:id/attachments` e `GET /media/:id`. D-101 soma 2:
+    // `GET /internal-chat/users` e `POST /internal-chat/dms` (faltavam neste
+    // inventario desde a implementacao da feature — corrigido junto com D-102).
+    expect(LAB_ROUTES).toHaveLength(60);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

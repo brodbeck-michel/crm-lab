@@ -196,4 +196,45 @@
     outline: 2px solid var(--color-accent);
     outline-offset: 2px;
   }
+
+  /**
+   * Barra de rolagem fina, tingida com os tokens do tema — substitui o
+   * scrollbar padrão do SO (grosso, cinza fixo) em TODA área de rolagem
+   * interna do app. Aplicada direto nas classes utilitárias de rolagem do
+   * Tailwind: qualquer `overflow-y-auto`/`overflow-x-auto`/`overflow-auto`
+   * já existente (DataTable, Modal, InboxLayout, ConversationPanel etc.)
+   * herda o padrão sem precisar de uma classe extra por componente.
+   */
+  .overflow-y-auto,
+  .overflow-x-auto,
+  .overflow-auto {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-neutral-400) transparent;
+  }
+
+  .overflow-y-auto::-webkit-scrollbar,
+  .overflow-x-auto::-webkit-scrollbar,
+  .overflow-auto::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .overflow-y-auto::-webkit-scrollbar-track,
+  .overflow-x-auto::-webkit-scrollbar-track,
+  .overflow-auto::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .overflow-y-auto::-webkit-scrollbar-thumb,
+  .overflow-x-auto::-webkit-scrollbar-thumb,
+  .overflow-auto::-webkit-scrollbar-thumb {
+    background: var(--color-neutral-400);
+    border-radius: 999px;
+  }
+
+  .overflow-y-auto::-webkit-scrollbar-thumb:hover,
+  .overflow-x-auto::-webkit-scrollbar-thumb:hover,
+  .overflow-auto::-webkit-scrollbar-thumb:hover {
+    background: var(--color-neutral-600);
+  }
 }

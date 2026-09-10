@@ -7,6 +7,7 @@ import type { NavIcon } from '@/routes/route-config';
 
 const PATHS: Record<NavIcon, string> = {
   inbox: 'M3 5h18v10H8l-5 4V5z',
+  patients: 'M9 11a3.5 3.5 0 100-7 3.5 3.5 0 000 7zM3 20c0-3.5 2.5-6 6-6s6 2.5 6 6M16 8a3 3 0 100-6M14 12c2.5 0 5 1.5 6 4',
   pipeline: 'M4 4h4v16H4zM10 4h4v11h-4zM16 4h4v7h-4z',
   catalog: 'M5 4h11l3 3v13H5zM8 9h8M8 13h8M8 17h5',
   analytics: 'M4 20V10M10 20V4M16 20v-7M22 20H2',

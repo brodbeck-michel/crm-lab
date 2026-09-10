@@ -93,7 +93,7 @@ export function Sidebar() {
         flex: `0 0 ${collapsed ? COLLAPSED_WIDTH : EXPANDED_WIDTH}px`,
         padding: '26px 16px',
       }}
-      className="sticky top-0 flex h-screen flex-col gap-xl overflow-y-auto bg-surface"
+      className="sticky top-0 flex h-screen flex-col gap-xl overflow-hidden bg-surface"
     >
       <div className="flex items-center gap-sm">
         <button

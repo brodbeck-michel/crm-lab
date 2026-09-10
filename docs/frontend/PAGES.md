@@ -10,6 +10,7 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 /login                        → Login (público)
 /                             → redirect por perfil (atendente → /attendance)
 /attendance                   → Atendimento (inbox 3 colunas)
+/patients                     → Busca de Pacientes
 /patients/:id                 → Ficha do Paciente
 /budget/new?conversationId=   → Novo Orçamento
 /proposals                    → Pipeline de Propostas
@@ -36,6 +37,7 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 | `/login` | — (público) | não |
 | `/` | qualquer sessão → redirect por perfil | não |
 | `/attendance` | attendant · manager · admin | sim |
+| `/patients` | attendant · manager · admin | sim |
 | `/patients/:id` | attendant · manager · admin | não |
 | `/budget/new` | attendant · manager · admin | não |
 | `/proposals` | attendant · manager · admin | sim |
@@ -111,6 +113,36 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 
 ---
 
+## 2a. Busca de Pacientes (`/patients`)
+
+Tela de consulta avulsa (fora do inbox): quem precisa achar um paciente sem estar numa conversa
+ativa — ex. telefone ligou perguntando de um orçamento antigo. **Não é tela nova de dado**: usa
+exatamente `GET /patients` (API_CONTRACTS.md §2c), o mesmo endpoint que já serve o bloco
+"Pacientes" da busca do inbox (§2), agora com página própria, paginação completa (não só
+`limit=5`) e sem exigir estar dentro do Atendimento.
+
+**Papéis:** attendant · manager · admin (mesmo recorte de `/patients/:id`, D-060 — cada papel só
+enxerga quem já veria por uma conversa). `platform_operator` não acessa (§11).
+
+**Layout:** `PageContainer` + `PageHeader` padrão (título "Pacientes"), um campo de busca e uma
+`DataTable` paginada.
+
+- **Busca (`SearchInput`, debounce 300ms):** um único campo, rotulado "Buscar por nome, CPF ou
+  telefone" — o servidor já casa as três coisas em OR dentro de `?search=` (nome por full-text,
+  telefone e documento por dígitos, mínimo 3 dígitos para os dois). Três campos separados exigiam
+  filtro AND por campo no backend, que o contrato não tem; um campo só já cobre o pedido de
+  "achar paciente por nome, CPF ou telefone" sem inventar parâmetro novo (Regra Zero).
+- **Tabela:** colunas Nome, Telefone, CPF (formatado `000.000.000-00` quando 11 dígitos,
+  senão o valor cru), Última interação (`DateDisplay`, `—` quando `null`). Linha clicável → 
+  `/patients/:id`.
+- **Paginação:** `Pagination` (`components/shared`), 20 por página (default do contrato).
+- **Vazio:** "Nenhum paciente encontrado" sem termo de busca preenchido também é possível
+  (tenant novo) — mesmo componente `EmptyState` da tabela.
+- Dados: `GET /patients?search=&page=&limit=` — sem WS, sem refetch automático (cadastro muda
+  devagar; `staleTimes.patients`, 30s, já cobre).
+
+---
+
 ## 3. Ficha do Paciente (`/patients/:id`)
 
 - Página de leitura: max-width 1180px, padding 30px 36px 48px
@@ -120,15 +152,21 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 - **Portas de entrada** (D-079) — a ficha não é alcançável só por URL:
   1. Atendimento, coluna 3: "Ver ficha completa" (`conversation.patientId`);
   2. Atendimento, coluna 1: bloco "Pacientes" da busca (`GET /patients`);
-  3. Gestão da Operação (§10): nome do paciente na fila (`QueueItem.patientId`).
+  3. Gestão da Operação (§10): nome do paciente na fila (`QueueItem.patientId`);
+  4. Busca de Pacientes (`/patients`, §2a).
   Em todas, `patientId: null` vira texto puro — o link só existe quando o cadastro existe
+- **Botão "Enviar mensagem"** no cabeçalho (D-107): chama `POST /conversations` com o telefone
+  e nome do paciente (`channel: "direct"` — mesmo `findOrCreateByPhone` de D-059/D-089, nenhum
+  endpoint novo) e navega para `/attendance?conversationId=<id>`, o mesmo deep-link de "Enviar
+  orçamento". `409 CONVERSATION_ALREADY_ASSIGNED` (telefone com conversa de outro atendente) vira
+  toast com o nome de quem está atendendo — não navega.
 
 **Três chamadas, três blocos** — a ficha NÃO vem em um payload só (D-060). Cada bloco tem seu
 ciclo de atualização e sua paginação:
 
 | Bloco | Chamada | Observação |
 |-------|---------|------------|
-| Cadastro completo (editável) | `GET /patients/:id` → `PATCH /patients/:id` | `PatientDetail` cru; `null` apaga campo, ausente preserva; `phone` **não** é editável |
+| Cadastro completo (editável) | `GET /patients/:id` → `PATCH /patients/:id` | `PatientDetail` cru; `null` apaga campo, ausente preserva; `phone` é editável (D-106) mas nunca apagável — número já usado por outro paciente vira `409 CONFLICT` |
 | Contadores (conversas, propostas, última interação) | vêm no mesmo `GET /patients/:id` | derivados, e no **recorte do usuário** — dois usuários podem ver números diferentes |
 | Histórico de interações (timeline) | `GET /patients/:id/timeline?page&limit&kind&order` | união de mensagens, aberturas de conversa, criação de proposta e mudança de estágio; `desc` por padrão |
 | Propostas do paciente | `GET /proposals?patientId=<id>` | não há endpoint próprio: reusa a listagem, a visibilidade (D-042) e o `ProposalCard`/modal de §6 |

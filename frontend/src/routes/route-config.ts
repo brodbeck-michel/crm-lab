@@ -13,6 +13,7 @@ import type { UserRole } from '@crm-lab/shared';
 
 export type NavIcon =
   | 'inbox'
+  | 'patients'
   | 'pipeline'
   | 'catalog'
   | 'analytics'
@@ -50,6 +51,13 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requiredRoles: TENANT_ROLES,
     inSidebar: true,
     icon: 'inbox',
+  },
+  {
+    path: '/patients',
+    label: 'Pacientes',
+    requiredRoles: TENANT_ROLES,
+    inSidebar: true,
+    icon: 'patients',
   },
   { path: '/patients/:id', label: 'Ficha do Paciente', requiredRoles: TENANT_ROLES, inSidebar: false },
   { path: '/budget/new', label: 'Novo Orçamento', requiredRoles: TENANT_ROLES, inSidebar: false },

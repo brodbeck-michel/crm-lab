@@ -2,7 +2,7 @@ import type { RouteObject } from 'react-router-dom';
 import { AppShell, PlatformShell } from '@/components/layout';
 import { NotFoundPlaceholder } from '@/pages/_placeholders';
 import { Attendance } from '@/pages/Attendance';
-import PatientProfile from '@/pages/Patients';
+import PatientProfile, { PatientsList } from '@/pages/Patients';
 import { Login } from '@/pages/Login';
 import BudgetNew from '@/pages/Budget/New';
 import Proposals from '@/pages/Proposals';
@@ -53,6 +53,7 @@ export const appRoutes: RouteObject[] = [
             element: <AppShell />,
             children: [
               { path: 'attendance', element: <Attendance /> },
+              { path: 'patients', element: <PatientsList /> },
               { path: 'patients/:id', element: <PatientProfile /> },
               { path: 'budget/new', element: <BudgetNew /> },
               { path: 'proposals', element: <Proposals /> },

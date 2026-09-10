@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-09 (Console da Plataforma: detalhe por tenant, D-102)
+**Última atualização:** 2026-09-09 (Busca de Pacientes: tela nova `/patients`)
 
 ---
 
@@ -528,6 +528,50 @@ ajustes na máquina de estados do pipeline.
   (`tests/proposals`, `tests/patients/patients-timeline.spec.ts`,
   `tests/kernel/route-tenant-isolation.spec.ts`) verdes. Frontend: `Proposals.spec.tsx` (12) +
   `ProposalModal.spec.tsx` (6) verdes.
+
+## 2026-09-09 — Busca de Pacientes: tela nova `/patients` ✅
+
+Pedido do usuário: uma tela para procurar a ficha de um paciente por nome, CPF ou telefone sem
+depender do inbox. Não existia — só `/patients/:id` (ficha) e o bloco de busca `limit=5` dentro
+do Atendimento.
+
+- **Nenhum endpoint novo.** `GET /patients` já casa nome, telefone e documento em OR dentro de um
+  único `?search=` (API_CONTRACTS.md §2c, D-060) — é o mesmo que o bloco "Pacientes" do inbox usa.
+  Um campo de busca só já cobre "procurar por nome, CPF ou telefone"; três caixas separadas
+  exigiriam filtro AND por campo que o contrato não tem, então a tela usa `SearchInput` único.
+- `frontend/src/pages/Patients/List.tsx` (`PatientsList`): `PageContainer` + `PageHeader` +
+  `SearchInput` + `DataTable` (Nome, Telefone, CPF formatado, Última interação) + `Pagination` —
+  todos componentes já existentes, mesmo padrão de `Platform/Tenants.tsx`. Linha clicável leva a
+  `/patients/:id`.
+- Rota `/patients` (attendant · manager · admin) registrada em `route-config.ts` — aparece no
+  trilho da Sidebar com ícone novo (`patients` em `NavGlyph.tsx`); guard e trilho já vêm de graça
+  por serem data-driven a partir dali.
+- Doc: `PAGES.md` §2a (nova) + linha em "Mapa de Rotas" e na tabela de papéis.
+- `npm run typecheck` verde nos 4 workspaces. Frontend: `Patients/List.spec.tsx` (5 testes novos)
+  + `Patients/Profile.spec.tsx` (19) verdes, suíte completa 858 testes (1 falha pré-existente e
+  não relacionada em `tailwind-theme-classes.spec.ts`, de `Platform/TenantDetail.tsx:185`).
+
+## 2026-09-09 — Telefone editável na Ficha do Paciente + botão "Enviar mensagem" ✅
+
+Pedido do usuário: corrigir telefone errado no cadastro (reverte D-061) e abrir o Atendimento
+direto da ficha, com o contato já carregado.
+
+- **`phone` editável (D-106).** `PATCH /patients/:id` aceita `phone` (nunca `null` — apagaria a
+  chave de dedupe do webhook), normaliza para o mesmo E.164 que o webhook grava e recusa com
+  `409 CONFLICT`/`phone_already_in_use` quando o número já pertence a outro paciente do tenant —
+  nunca funde os dois cadastros. `PatientRepository` ganha `isUniqueViolation` (mesmo padrão de
+  `exam.repository.ts`/`insurance.repository.ts`). `PatientProfileForm.tsx`: campo deixa de ser
+  `readOnly`, mostra erro de campo no conflito.
+- **Botão "Enviar mensagem" (D-107)** no cabeçalho da ficha: chama `POST /conversations`
+  (mesmo `findOrCreateByPhone` de "Enviar orçamento", nenhum endpoint novo) e navega para
+  `/attendance?conversationId=<id>`. `409 CONVERSATION_ALREADY_ASSIGNED` vira toast com o nome de
+  quem está atendendo, sem navegar.
+- Docs: `DECISIONS.md` D-106/D-107, `API_CONTRACTS.md` §2c (PATCH /patients/:id e a nota de
+  "Não existe POST /patients"), `PAGES.md` §3.
+- `npm run typecheck` verde nos 4 workspaces. Backend: suíte completa verde, incluindo os 2 testes
+  novos de `patients.routes.spec.ts` (edição + conflito de telefone). Frontend: `Profile.spec.tsx`
+  (20, com os 2 novos de telefone) verdes; suíte completa 864 testes, mesma 1 falha pré-existente
+  e não relacionada de `tailwind-theme-classes.spec.ts` (`Platform/TenantDetail.tsx:185`).
 
 ## Bloqueios Atuais
 

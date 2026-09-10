@@ -238,6 +238,8 @@ export interface PatientTimelinePage {
 
 /** Campos aceitos por `PATCH /patients/:id` (ja normalizados pelo service). */
 export interface PatientUpdate {
+  /** D-106: nunca `null` — apagar telefone deixaria o paciente sem chave de dedupe. */
+  phone?: string;
   name?: string | null;
   email?: string | null;
   birthDate?: string | null;
@@ -249,6 +251,7 @@ export interface PatientUpdate {
 
 /** Coluna real de cada campo do PATCH — whitelist: nada e interpolado do cliente. */
 const UPDATABLE_COLUMNS: Record<keyof PatientUpdate, { column: string; cast?: string }> = {
+  phone: { column: 'phone' },
   name: { column: 'name' },
   email: { column: 'email' },
   birthDate: { column: 'birth_date', cast: '::date' },
@@ -257,6 +260,17 @@ const UPDATABLE_COLUMNS: Record<keyof PatientUpdate, { column: string; cast?: st
   tags: { column: 'tags', cast: '::jsonb' },
   customFields: { column: 'custom_fields', cast: '::jsonb' },
 };
+
+/** SQLSTATE de violacao de unicidade — o service converte em `CONFLICT` (D-106). */
+export const UNIQUE_VIOLATION = '23505';
+
+export function isUniqueViolation(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const candidate = err as { code?: unknown; cause?: unknown };
+  if (candidate.code === UNIQUE_VIOLATION) return true;
+  // PGlite embrulha o erro do servidor em `cause` em alguns caminhos.
+  return isUniqueViolation(candidate.cause);
+}
 
 interface TimelineRow {
   entry_id: string;

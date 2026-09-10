@@ -52,6 +52,8 @@ import type { TenantContext } from '../http/context.js';
 import { BusinessError, notFound } from '../http/errors.js';
 import {
   isPatientSortBy,
+  isUniqueViolation,
+  phoneDigits,
   type PatientListCriteria,
   type PatientRepository,
   type PatientSortBy,
@@ -87,6 +89,16 @@ function isSupervisor(ctx: TenantContext): boolean {
 /** Papel -> recorte. `null` = ve tudo do laboratorio. */
 export function visibilityOf(ctx: TenantContext): PatientVisibility {
   return { visibleTo: isSupervisor(ctx) ? null : ctx.userId };
+}
+
+/**
+ * Telefone digitado a mao -> o mesmo formato que o webhook grava (D-106).
+ * Mesma logica de `toE164` em conversation.service.ts — sem isto o dedupe
+ * criaria um segundo cadastro para o paciente que ja fala pelo WhatsApp.
+ */
+function toE164(phone: string): string {
+  const digits = phoneDigits(phone);
+  return digits.length <= 11 ? `+55${digits}` : `+${digits}`;
 }
 
 function clampInt(value: number | undefined, fallback: number, min: number, max: number): number {
@@ -146,12 +158,17 @@ export class PatientService {
       throw new BusinessError('CONFLICT', { reason: 'patient_anonymized' });
     }
 
+    // D-106: mesmo formato que o webhook grava — sem isto o dedupe por
+    // telefone erraria (ver `toE164` de conversation.service.ts).
+    const normalizedDto: UpdatePatientRequest =
+      dto.phone === undefined ? dto : { ...dto, phone: toE164(dto.phone) };
+
     const patch: PatientUpdate = {};
     const oldValues: Record<string, unknown> = {};
     const newValues: Record<string, unknown> = {};
 
-    for (const key of Object.keys(dto) as Array<keyof UpdatePatientRequest>) {
-      const next = dto[key];
+    for (const key of Object.keys(normalizedDto) as Array<keyof UpdatePatientRequest>) {
+      const next = normalizedDto[key];
       if (next === undefined) continue;
       const previous = current[key];
       // Auditoria so dos campos que MUDARAM (contrato de §2c).
@@ -162,7 +179,16 @@ export class PatientService {
       assignPatch(patch, key, next);
     }
 
-    const updated = await this.repository.update(ctx.tenantId, id, patch, visibilityOf(ctx));
+    let updated: PatientDetail | null;
+    try {
+      updated = await this.repository.update(ctx.tenantId, id, patch, visibilityOf(ctx));
+    } catch (err) {
+      // Numero ja usado por outro paciente do tenant — nunca funde cadastros (D-106).
+      if (isUniqueViolation(err)) {
+        throw new BusinessError('CONFLICT', { reason: 'phone_already_in_use' });
+      }
+      throw err;
+    }
     if (!updated) throw notFound({ resource: 'patient', id });
 
     if (Object.keys(newValues).length > 0) {
@@ -319,6 +345,10 @@ function assignPatch(
       if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
         patch.customFields = value as Record<string, string>;
       }
+      break;
+    case 'phone':
+      // Nunca null (D-106) — o schema ja recusa `phone: null` antes de chegar aqui.
+      if (typeof value === 'string') patch.phone = value;
       break;
     default:
       patch[key] = typeof value === 'string' || value === null ? value : null;

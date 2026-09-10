@@ -1260,6 +1260,43 @@ ui (`ActionsRow.tsx`: botão novo "Avançar para X"; o Kanban de `Proposals.tsx`
 aceitar arrastar um card pra trás nessas 3 transições, de graça, mesmo mecanismo de
 `isTransitionAllowed`), docs (`BUSINESS_RULES.md` §3, `WORKFLOWS.md` §4).
 
+### D-106: `phone` passa a ser editável na Ficha do Paciente (reverte D-061)
+**Decisão:** `PATCH /patients/:id` aceita `phone` (string, **nunca** `null` — apagar deixaria o
+paciente sem chave de dedupe). O valor é normalizado para o mesmo formato E.164 que o webhook
+grava (`+5548999991234`, mesma lógica de `toE164` de `conversation.service.ts`) antes de gravar
+e antes de comparar para auditoria. O índice único `(tenant_id, phone)` continua sendo a única
+defesa contra duas linhas com o mesmo telefone: tentar salvar um número que já pertence a OUTRO
+paciente do tenant devolve `409 CONFLICT` (`details.reason: "phone_already_in_use"`) — a escrita
+é recusada, **nunca funde os dois cadastros**.
+**Motivo:** pedido do usuário — corrigir um telefone digitado errado no cadastro (ou atualizado
+pelo paciente por outro canal) hoje exige recriar o cadastro inteiro, o que D-061 não previa
+como fluxo aceitável no dia a dia. A fusão de dois cadastros que hoje têm o MESMO número
+continua fora de escopo (seria um fluxo de merge separado); esta mudança só resolve o caso
+comum, "consertar um número errado", bloqueando o caso ambíguo com um erro explícito em vez de
+implementar merge automático.
+**Impacto:** shared (`UpdatePatientRequest.phone` novo em `patient.types.ts`), api
+(`updatePatientSchema` aceita `phone`; `PatientService.update` normaliza e traduz violação de
+unicidade em `CONFLICT`; `PatientRepository` ganha `isUniqueViolation`, mesmo padrão de
+`exam.repository.ts`/`insurance.repository.ts`), ui (`PatientProfileForm.tsx`: campo deixa de
+ser `readOnly`, trata `CONFLICT`/`phone_already_in_use` com mensagem própria), docs
+(`API_CONTRACTS.md` §2c, `PAGES.md` §3).
+
+### D-107: Botão "Enviar mensagem" na Ficha do Paciente abre o Atendimento
+**Decisão:** a Ficha do Paciente (`/patients/:id`) ganha um botão "Enviar mensagem" no cabeçalho.
+Ao clicar, chama `POST /conversations` com `{ patientPhone: patient.phone, patientName:
+patient.name ?? 'Paciente', patientEmail: patient.email, channel: 'direct' }` — o MESMO
+`findOrCreateByPhone` de D-059/D-089 (nenhum endpoint novo): devolve a conversa existente daquele
+telefone ou cria uma atribuída a quem clicou. Em seguida navega para
+`/attendance?conversationId=<id>`, o mesmo deep-link que "Enviar orçamento" já usa. Erro
+`409 CONVERSATION_ALREADY_ASSIGNED` (telefone já tem conversa de OUTRO atendente) vira toast com
+o nome de quem está atendendo — não navega, porque abrir uma conversa fora da visibilidade do
+usuário devolveria `404` do outro lado.
+**Motivo:** pedido do usuário — a ficha era só leitura/edição de cadastro; não havia caminho de
+volta para o chat. Reusar `POST /conversations` (em vez de um endpoint novo) evita uma segunda
+forma de achar-ou-criar conversa por telefone divergindo da primeira.
+**Impacto:** ui (`Patients/Profile.tsx`: botão + mutation; nenhuma mudança de api/schema/backend
+— consome contrato já existente), docs (`PAGES.md` §3).
+
 ## Template para novas decisões
 
 ```

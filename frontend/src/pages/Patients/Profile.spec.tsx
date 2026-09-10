@@ -14,6 +14,7 @@ import { ApiError } from '@/api/client';
 import { patientsApi } from '@/api/patients';
 import type * as ProposalsApiModule from '@/api/proposals';
 import { proposalsApi } from '@/api/proposals';
+import { ToastProvider } from '@/components/ui';
 import { useAuthStore } from '@/stores';
 import { useUIStore } from '@/stores/ui.store';
 import PatientProfile from './Profile';
@@ -182,11 +183,13 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[`/patients/${PATIENT_ID}`]}>
-        <Routes>
-          <Route path="/patients/:id" element={<PatientProfile />} />
-        </Routes>
-      </MemoryRouter>
+      <ToastProvider>
+        <MemoryRouter initialEntries={[`/patients/${PATIENT_ID}`]}>
+          <Routes>
+            <Route path="/patients/:id" element={<PatientProfile />} />
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>
     </QueryClientProvider>,
   );
 }
@@ -237,13 +240,42 @@ describe('Ficha do Paciente', () => {
     );
   });
 
-  it('deixa escrito que o telefone não é editável, além de desabilitar o campo', async () => {
+  it('D-106: telefone é editável e entra no PATCH quando muda', async () => {
+    const user = userEvent.setup();
+    updateMock.mockResolvedValue({ ...patient, phone: '+5548987654321' });
     renderPage();
 
-    const phone = await screen.findByLabelText(/Telefone \(não editável\)/);
-    expect(phone).toBeDisabled();
+    const phone = await screen.findByLabelText('Telefone');
+    expect(phone).not.toBeDisabled();
     expect(phone).toHaveValue('(11) 98765-4321');
-    expect(screen.getByText(/o servidor recusa a alteração/i)).toBeInTheDocument();
+
+    await user.clear(phone);
+    await user.type(phone, '(48) 98765-4321');
+    await user.click(screen.getByRole('button', { name: 'Salvar cadastro' }));
+
+    await waitFor(() => {
+      expect(updateMock).toHaveBeenCalledWith(
+        PATIENT_ID,
+        expect.objectContaining({ phone: '(48) 98765-4321' }),
+      );
+    });
+  });
+
+  it('D-106: telefone já usado por outro paciente mostra erro no campo, não trava a tela', async () => {
+    const user = userEvent.setup();
+    updateMock.mockRejectedValue(
+      new ApiError('CONFLICT', 'Conflito', 409, { reason: 'phone_already_in_use' }),
+    );
+    renderPage();
+
+    const phone = await screen.findByLabelText('Telefone');
+    await user.clear(phone);
+    await user.type(phone, '(48) 99999-8888');
+    await user.click(screen.getByRole('button', { name: 'Salvar cadastro' }));
+
+    expect(
+      await screen.findByText('Este telefone já pertence a outro paciente.'),
+    ).toBeInTheDocument();
   });
 
   it('mostra "não encontrado" (não "sem permissão") quando a API responde 404', async () => {

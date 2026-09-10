@@ -1,19 +1,55 @@
 import type { ReactNode } from 'react';
-import { useParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useNavigate, useParams } from 'react-router-dom';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import type { PatientDetail } from '@crm-lab/shared';
 import { isApiError } from '@/api/client';
+import { conversationsApi } from '@/api/conversations';
 import { patientsApi } from '@/api/patients';
 import { queryKeys } from '@/api/query-keys';
 import { PageContainer, PageHeader } from '@/components/layout';
 import { DateDisplay, EmptyState } from '@/components/shared';
-import { Button, Chip } from '@/components/ui';
+import { Button, Chip, useToast } from '@/components/ui';
 import {
   PatientLgpdSection,
   PatientProfileForm,
   PatientProposals,
   PatientTimeline,
 } from '@/components/patients';
+import { useApiErrorHandler } from '@/hooks';
 import { useAuthStore } from '@/stores';
+
+/**
+ * "Enviar mensagem" (D-107): mesmo `findOrCreateByPhone` de `POST /conversations`
+ * usado por "Enviar orçamento" — devolve a conversa existente daquele telefone
+ * ou cria uma atribuída a quem clicou. Sem endpoint novo.
+ */
+function useSendMessage(patient: PatientDetail) {
+  const navigate = useNavigate();
+  const { toast } = useToast();
+  const handleApiError = useApiErrorHandler();
+
+  return useMutation({
+    mutationFn: () =>
+      conversationsApi.create({
+        patientPhone: patient.phone,
+        patientName: patient.name ?? 'Paciente',
+        patientEmail: patient.email,
+        channel: 'direct',
+      }),
+    onSuccess: (conversation) => navigate(`/attendance?conversationId=${conversation.id}`),
+    onError: (error: unknown) => {
+      if (isApiError(error) && error.code === 'CONVERSATION_ALREADY_ASSIGNED') {
+        const assignedToName =
+          typeof error.details?.assignedToName === 'string'
+            ? error.details.assignedToName
+            : 'outro atendente';
+        toast(`Esta conversa já está com ${assignedToName}.`, { tone: 'attention' });
+        return;
+      }
+      handleApiError(error);
+    },
+  });
+}
 
 /**
  * Ficha do Paciente — `/patients/:id` (PAGES.md §3, API_CONTRACTS.md §2c).
@@ -85,7 +121,10 @@ export function PatientProfile() {
         breadcrumb={[{ label: 'Atendimento', to: '/attendance' }, { label: 'Ficha do paciente' }]}
         description={patient.phone}
         actions={
-          patient.anonymizedAt !== null ? <Chip tone="attention">Anonimizado</Chip> : undefined
+          <div className="flex items-center gap-sm">
+            {patient.anonymizedAt !== null && <Chip tone="attention">Anonimizado</Chip>}
+            <SendMessageButton patient={patient} />
+          </div>
         }
       />
 
@@ -118,6 +157,20 @@ export function PatientProfile() {
           chamadas restritas chega a sair da tela (D-062, D-063). */}
       {role === 'admin' && <PatientLgpdSection patient={patient} />}
     </PageContainer>
+  );
+}
+
+function SendMessageButton({ patient }: { patient: PatientDetail }) {
+  const sendMessage = useSendMessage(patient);
+  return (
+    <Button
+      variant="secondary"
+      loading={sendMessage.isPending}
+      disabled={patient.anonymizedAt !== null}
+      onClick={() => sendMessage.mutate()}
+    >
+      Enviar mensagem
+    </Button>
   );
 }
 

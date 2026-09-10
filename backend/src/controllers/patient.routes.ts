@@ -35,7 +35,7 @@ import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
 import { getContext } from '../http/context.js';
 import { denyPlatformOperator, requireAuth } from '../http/middleware/auth.js';
 import { validate, validated } from '../http/middleware/validate.js';
-import { PatientRepository } from '../repositories/patient.repository.js';
+import { phoneDigits, PatientRepository } from '../repositories/patient.repository.js';
 import { createAuditService } from '../services/audit.service.js';
 import {
   MAX_LIMIT,
@@ -107,11 +107,21 @@ export const listPatientsQuerySchema = z.object({
 export const patientIdParamSchema = z.object({ id: z.string().uuid() });
 
 /**
- * `.strict()` recusa campo desconhecido — `phone` inclusive, que e a chave de
- * deduplicacao `(tenant_id, phone)` e nao e editavel (D-061).
+ * `.strict()` recusa campo desconhecido. `phone` e editavel desde D-106 —
+ * NUNCA `.nullable()`: apagar deixaria o paciente sem chave de dedupe do
+ * webhook. Conflito com o telefone de outro paciente do tenant vira
+ * `409 CONFLICT` no service (indice unico `(tenant_id, phone)`), nunca aqui.
  */
 export const updatePatientSchema = z
   .object({
+    phone: z
+      .string()
+      .trim()
+      .max(20)
+      .refine((value) => {
+        const digits = phoneDigits(value).length;
+        return digits >= 10 && digits <= 13;
+      }, 'Telefone invalido'),
     name: z.string().trim().min(1).max(255).nullable(),
     email: z.string().trim().email().max(255).nullable(),
     birthDate: z

@@ -18,9 +18,11 @@ import { Button, Chip, Input, TextArea } from '@/components/ui';
  * transformaria "não mexi nisso" em "apague isso" para qualquer campo que o
  * servidor tivesse preenchido entre a leitura e a escrita.
  *
- * `phone` NÃO é editável (D-061): é a chave de deduplicação
- * `UNIQUE (tenant_id, phone)` do webhook. O campo aparece, mas com o motivo
- * escrito — desabilitar em silêncio deixaria o usuário procurando o botão.
+ * `phone` é editável (D-106, reverte D-061). Continua sendo a chave de
+ * deduplicação `UNIQUE (tenant_id, phone)` do webhook — por isso, ao contrário
+ * dos outros campos, NUNCA vira `null` (`phonePatch` nunca devolve `null`,
+ * só `undefined` ou string) e um valor já usado por outro paciente do tenant
+ * é recusado pelo servidor com `409 CONFLICT` / `phone_already_in_use`.
  */
 
 export interface PatientProfileFormProps {
@@ -31,6 +33,7 @@ export interface PatientProfileFormProps {
 type TextField = 'name' | 'email' | 'birthDate' | 'document' | 'notes';
 
 interface FormState {
+  phone: string;
   name: string;
   email: string;
   birthDate: string;
@@ -42,6 +45,7 @@ interface FormState {
 
 function toFormState(patient: PatientDetail): FormState {
   return {
+    phone: patient.phone,
     name: patient.name ?? '',
     email: patient.email ?? '',
     birthDate: patient.birthDate ?? '',
@@ -50,6 +54,15 @@ function toFormState(patient: PatientDetail): FormState {
     tags: [...patient.tags],
     customFields: Object.entries(patient.customFields).map(([key, value]) => ({ key, value })),
   };
+}
+
+/**
+ * `phone` nunca apaga (diferente de `textPatch`): campo vazio ou intocado não
+ * entra no corpo — o servidor recusaria `null`/string vazia de qualquer forma.
+ */
+function phonePatch(current: string, original: string): string | undefined {
+  const trimmed = current.trim();
+  return trimmed.length === 0 || trimmed === original ? undefined : trimmed;
 }
 
 /**
@@ -88,6 +101,9 @@ function sameCustomFields(
 /** Monta o corpo do PATCH só com o que mudou. Vazio ⇒ nada a salvar. */
 export function buildPatientPatch(form: FormState, patient: PatientDetail): UpdatePatientRequest {
   const body: UpdatePatientRequest = {};
+
+  const phone = phonePatch(form.phone, patient.phone);
+  if (phone !== undefined) body.phone = phone;
 
   const fields: TextField[] = ['name', 'email', 'birthDate', 'document', 'notes'];
   for (const field of fields) {
@@ -159,11 +175,14 @@ export function PatientProfileForm({ patient }: PatientProfileFormProps) {
           break;
         }
         case 'CONFLICT':
-          setFormError(
-            error.details?.reason === 'patient_anonymized'
-              ? 'Este cadastro foi anonimizado e não pode mais ser editado.'
-              : error.message,
-          );
+          if (error.details?.reason === 'patient_anonymized') {
+            setFormError('Este cadastro foi anonimizado e não pode mais ser editado.');
+          } else if (error.details?.reason === 'phone_already_in_use') {
+            setFieldErrors({ phone: 'Este telefone já pertence a outro paciente.' });
+            setFormError(null);
+          } else {
+            setFormError(error.message);
+          }
           break;
         default:
           setFormError(error.message);
@@ -171,7 +190,7 @@ export function PatientProfileForm({ patient }: PatientProfileFormProps) {
     },
   });
 
-  const setField = (field: TextField, value: string) => {
+  const setField = (field: TextField | 'phone', value: string) => {
     setSaved(false);
     setForm((current) => ({ ...current, [field]: value }));
   };
@@ -245,13 +264,14 @@ export function PatientProfileForm({ patient }: PatientProfileFormProps) {
             onChange={(event) => setField('name', event.target.value)}
           />
 
-          {/* D-061: telefone é a identidade do paciente — motivo escrito, não só `disabled`. */}
+          {/* D-106: editável, mas continua sendo a chave que reconhece o paciente no WhatsApp. */}
           <Input
-            label="Telefone (não editável)"
-            value={patient.phone}
-            readOnly
-            disabled
-            hint="O telefone identifica o paciente no laboratório e é a chave usada para reconhecê-lo quando ele escreve. Corrigi-lo exige fusão de cadastros e ainda não tem fluxo — o servidor recusa a alteração."
+            label="Telefone"
+            value={form.phone}
+            disabled={anonymized}
+            error={fieldErrors.phone}
+            hint="É o número que identifica o paciente quando ele escreve. Um número já usado por outro cadastro é recusado."
+            onChange={(event) => setField('phone', event.target.value)}
           />
 
           <Input

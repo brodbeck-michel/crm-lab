@@ -59,9 +59,13 @@ export interface ListPatientsResponse {
 
 /**
  * PATCH parcial: campo ausente permanece, `null` apaga.
- * `phone` NAO e editavel nesta onda — e a chave de deduplicacao do webhook (D-059).
+ * `phone` e editavel desde D-106 — mas nunca apagavel (`string`, sem `| null`): e a
+ * chave de deduplicacao do webhook, tem que continuar existindo. Numero ja usado por
+ * OUTRO paciente do tenant -> `409 CONFLICT` (`details.reason: "phone_already_in_use"`),
+ * nunca funde os dois cadastros.
  */
 export interface UpdatePatientRequest {
+  phone?: string;
   name?: string | null;
   email?: string | null;
   birthDate?: IsoDate | null;

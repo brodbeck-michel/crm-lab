@@ -394,16 +394,23 @@ describe('PATCH /patients/:id', () => {
     expect(ruim.body.error.details.fields).toHaveProperty('document');
   });
 
-  it('recusa phone (D-061), campo desconhecido, corpo vazio e data futura', async () => {
+  it('recusa telefone invalido/nulo, campo desconhecido, corpo vazio e data futura', async () => {
     const patient = await createPatient({ tenantId: tenantA.id, db });
     const headers = app.auth(adminA);
 
-    const comPhone = await app.agent
+    const curto = await app.agent
       .patch(`${BASE}/${patient.id}`)
       .set(headers)
-      .send({ phone: '+5511999999999' })
+      .send({ phone: '123' })
       .expect(400);
-    expect(comPhone.body.error.code).toBe('VALIDATION_ERROR');
+    expect(curto.body.error.code).toBe('VALIDATION_ERROR');
+
+    // D-106: editavel, mas NUNCA `null` — apagaria a chave de dedupe do webhook.
+    await app.agent
+      .patch(`${BASE}/${patient.id}`)
+      .set(headers)
+      .send({ phone: null })
+      .expect(400);
 
     await app.agent.patch(`${BASE}/${patient.id}`).set(headers).send({ xpto: 1 }).expect(400);
     await app.agent.patch(`${BASE}/${patient.id}`).set(headers).send({}).expect(400);
@@ -420,6 +427,27 @@ describe('PATCH /patients/:id', () => {
       .set(headers)
       .send({ birthDate: '1984-02-31' })
       .expect(400);
+  });
+
+  it('D-106: edita o telefone, normaliza para E.164 e recusa numero de outro paciente', async () => {
+    const patient = await createPatient({ tenantId: tenantA.id, db });
+    const other = await createPatient({ tenantId: tenantA.id, db, phone: '+5548999998888' });
+    const headers = app.auth(adminA);
+
+    const edited = await app.agent
+      .patch(`${BASE}/${patient.id}`)
+      .set(headers)
+      .send({ phone: '(48) 98765-4321' })
+      .expect(200);
+    expect(edited.body.phone).toBe('+5548987654321');
+
+    const conflict = await app.agent
+      .patch(`${BASE}/${patient.id}`)
+      .set(headers)
+      .send({ phone: other.phone })
+      .expect(409);
+    expect(conflict.body.error.code).toBe('CONFLICT');
+    expect(conflict.body.error.details.reason).toBe('phone_already_in_use');
   });
 
   it('atendente edita o paciente que enxerga e nao o do colega', async () => {

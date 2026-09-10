@@ -967,8 +967,9 @@ ficha: contadores e timeline só contam o que o solicitante já podia ver por ou
 **Não existe `POST /patients`.** O paciente nasce do canal: `findOrCreateByPhone` resolve ou
 cria a linha pelo telefone dentro do tenant (`UNIQUE (tenant_id, phone)`) quando a conversa
 chega. Não há fluxo de UI para cadastrar paciente sem conversa, e um `POST` criaria uma segunda
-origem para a mesma entidade. `phone` também não é editável por `PATCH` — é a chave de
-deduplicação.
+origem para a mesma entidade. `phone` **é** editável por `PATCH` desde D-106 (ver seção do
+endpoint) — o índice único continua de pé, então dois pacientes nunca dividem o mesmo telefone;
+tentar salvar um duplicado é recusado com `409 CONFLICT`, não fundido.
 
 **Não existe `DELETE /patients/:id`.** O caminho LGPD de apagamento é
 `POST /patients/:id/anonymize` (D-063).
@@ -1072,6 +1073,7 @@ a tela de trabalho do atendente).
 **Request:** (todos opcionais, ao menos um → senão `VALIDATION_ERROR`)
 ```json
 {
+  "phone": "(48) 99999-1234",
   "name": "João Santos",
   "email": "joao@email.com",
   "birthDate": "1984-03-12",
@@ -1083,8 +1085,13 @@ a tela de trabalho do atendente).
 ```
 
 - **`null` apaga, campo ausente preserva** — a mesma semântica de `PATCH /themes/current`.
-- `phone` **não** é aceito: enviar → `VALIDATION_ERROR` (o schema é `strict`; campo desconhecido
-  também é recusado).
+  Exceção: **`phone` nunca aceita `null`** (schema recusa com `VALIDATION_ERROR`) — apagar
+  deixaria o paciente sem a chave de dedupe do webhook.
+- `phone` **é editável desde D-106** (reverte D-061): 10 a 13 dígitos depois de descartar
+  máscara (mesma validação de `POST /conversations`), normalizado para o formato que o webhook
+  grava (`+5548999991234`) antes de gravar. Telefone já usado por **outro** paciente do tenant →
+  `409 CONFLICT` com `details.reason: "phone_already_in_use"` — a escrita é recusada, nunca funde
+  os dois cadastros.
 - `name` 1..255 · `email` e-mail válido, máx. 255 · `notes` máx. 4000.
 - `birthDate`: `YYYY-MM-DD`, data existente, **não futura** → senão `VALIDATION_ERROR`.
 - `document`: aceita formatado ou só dígitos; é **normalizado para 11 dígitos** antes de gravar.
@@ -1094,14 +1101,16 @@ a tela de trabalho do atendente).
   string (valor não-string → `VALIDATION_ERROR`).
 - **As colunas denormalizadas de `conversations` NÃO são atualizadas por este PATCH** (D-059):
   elas são o histórico do que o canal informou; a ficha é o cadastro. Enquanto as duas
-  existirem, `/conversations` continua respondendo o valor denormalizado.
+  existirem, `/conversations` continua respondendo o valor denormalizado — inclusive quando
+  `phone` muda aqui.
 - Gera audit log `update_patient` com `oldValues`/`newValues` apenas dos campos que mudaram.
 - Paciente anonimizado → `409 CONFLICT` com `details.reason: "patient_anonymized"`.
 
 **Response (200):** o `PatientDetail` atualizado, **cru** (mesmo shape do `GET`).
 
-**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404), `CONFLICT` (409, anonimizado),
-`FORBIDDEN` (403, `platform_operator`)
+**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404),
+`CONFLICT` (409 — `patient_anonymized` ou `phone_already_in_use`), `FORBIDDEN` (403,
+`platform_operator`)
 
 ### GET /patients/:id/timeline
 Histórico de interações: mensagens, propostas e mudanças de estágio em **uma** linha do tempo.

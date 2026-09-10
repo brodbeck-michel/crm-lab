@@ -1,0 +1,295 @@
+Você está conectado ao código do produto CRM existente da Apexio.
+
+Precisamos avaliar como estruturar, posicionar e adaptar esse produto para laboratórios de análises clínicas.
+
+O produto já existe. Não crie uma solução nova do zero. Primeiro, investigue o código atual e entenda exatamente o que já está funcionando.
+
+Sua entrega principal será um documento completo em Markdown:
+
+`docs/diagnostico-crm-para-laboratorios.md`
+
+Se a pasta `docs` não existir, crie-a. Não altere o código do produto. Crie ou altere apenas esse arquivo Markdown.
+
+## Regra obrigatória
+
+Não invente informações.
+
+Quando uma informação não puder ser comprovada pelo código, escreva claramente uma destas classificações:
+
+- `CONFIRMADO`: existe evidência no código.
+- `INFERÊNCIA`: conclusão provável baseada no código.
+- `NÃO ENCONTRADO`: foi procurado, mas não localizado.
+- `NÃO SEI RESPONDER`: o código não permite responder.
+- `DECISÃO NECESSÁRIA`: depende de decisão do negócio ou do time.
+
+Toda informação confirmada deve indicar a evidência, com caminho do arquivo, rota, componente, modelo, API ou trecho relevante.
+
+Não invente:
+
+- clientes;
+- faturamento;
+- métricas;
+- preços;
+- resultados;
+- funcionalidades;
+- integrações;
+- casos de uso;
+- diferenciais;
+- informações sobre o negócio do Michel.
+
+## O que investigar
+
+Analise o produto seguindo o fluxo real:
+
+- arquitetura;
+- banco de dados;
+- entidades;
+- relacionamentos;
+- backend;
+- APIs;
+- frontend;
+- telas;
+- navegação;
+- autenticação;
+- usuários;
+- permissões;
+- onboarding;
+- cadastros;
+- empresas;
+- contatos;
+- oportunidades;
+- funil;
+- tarefas;
+- follow-ups;
+- histórico;
+- notificações;
+- dashboards;
+- relatórios;
+- integrações;
+- cobrança;
+- configurações.
+
+## Perguntas que o documento deve responder
+
+1. O que o produto é hoje?
+2. Qual problema ele resolve atualmente?
+3. Quais funcionalidades já existem?
+4. Qual fluxo o usuário percorre?
+5. Quem parece ser o cliente atual ou provável?
+6. Qual ICP é mais compatível com a solução existente?
+7. Quem compra?
+8. Quem usa?
+9. O produto atende prospecção?
+10. O produto atende gestão de parceiros?
+11. O produto atende atendimento?
+12. O produto atende pós-venda?
+13. O produto atende gestão comercial?
+14. Quais necessidades de laboratórios já são atendidas?
+15. Quais necessidades podem ser atendidas com configuração ou mudança de nomenclatura?
+16. Quais necessidades exigem desenvolvimento?
+17. O que não existe hoje?
+18. Qual dor real o produto consegue resolver?
+19. Qual dor ele ainda não consegue resolver?
+20. Qual promessa comercial pode ser feita sem exagero?
+21. Quais canais de venda fazem sentido?
+22. Instagram faz sentido? Por quê?
+23. LinkedIn faz sentido? Por quê?
+24. Blog faz sentido? Por quê?
+25. Venda direta faz sentido? Por quê?
+26. Parcerias fazem sentido? Quais?
+27. Já existe evidência de clientes ou tração?
+28. Qual modelo de negócio combina com a solução?
+29. Quais planos podem ser oferecidos?
+30. O que diferencia o produto de um CRM genérico?
+31. Qual MVP para laboratórios?
+32. O que deve ser prioridade?
+33. O que deve ser adiado?
+34. O que não deve ser construído agora?
+35. Quais perguntas continuam sem resposta?
+
+## Estrutura obrigatória do Markdown
+
+# Diagnóstico do CRM Apexio para Laboratórios
+
+## 1. Resumo executivo
+
+Explique, com base no código, o que o produto é e qual oportunidade existe.
+
+## 2. Escopo da análise
+
+Informe o que foi analisado e quais limitações existem.
+
+## 3. O produto atual
+
+Descreva o produto sem inventar posicionamento ou funcionalidades.
+
+## 4. Problema resolvido atualmente
+
+Separe:
+
+- confirmado;
+- inferência;
+- não comprovado.
+
+## 5. Funcionalidades existentes
+
+Use esta tabela:
+
+| Funcionalidade | Existe? | Classificação | Evidência | Relevância para laboratório |
+|---|---|---|---|---|
+
+## 6. Modelo de dados
+
+Liste entidades, campos relevantes e relacionamentos.
+
+## 7. Fluxo atual do usuário
+
+Descreva o caminho desde o acesso até as principais ações.
+
+## 8. Aderência ao laboratório
+
+Use esta tabela:
+
+| Necessidade do laboratório | Solução atual | Classificação | Evidência | O que falta |
+|---|---|---|---|---|
+
+## 9. ICP recomendado
+
+Apresente o perfil mais compatível com o produto atual.
+
+Não trate hipótese como fato.
+
+## 10. Comprador e usuários
+
+Descreva quem provavelmente compra e quem provavelmente usa.
+
+Marque o que precisa ser validado.
+
+## 11. Dor real
+
+Explique qual problema comercial o produto consegue resolver hoje para um laboratório.
+
+Também liste dores que o produto ainda não resolve.
+
+## 12. Posicionamento
+
+Proponha uma mensagem comercial baseada nas capacidades reais do produto.
+
+Inclua:
+
+- promessa possível;
+- promessa que não pode ser feita;
+- diferenciais comprovados;
+- diferenciais ainda inexistentes.
+
+## 13. Canais de venda
+
+Avalie:
+
+- venda direta;
+- indicação;
+- LinkedIn;
+- Instagram;
+- blog;
+- parceiros;
+- outros canais relevantes.
+
+Para cada canal, explique o motivo e o nível de prioridade.
+
+## 14. Modelo de negócio
+
+Proponha um modelo compatível com o produto atual.
+
+Se não houver informação suficiente para definir preços, escreva:
+
+`NÃO SEI RESPONDER: faltam dados para definir preço.`
+
+Depois liste quais dados precisam ser obtidos.
+
+## 15. Planos
+
+Proponha planos apenas usando funcionalidades existentes ou claramente planejadas.
+
+Separe:
+
+- funcionalidades atuais;
+- funcionalidades que exigem desenvolvimento;
+- decisões de preço ainda pendentes.
+
+## 16. Adaptações para laboratórios
+
+Classifique cada adaptação como:
+
+- configuração;
+- nomenclatura;
+- conteúdo;
+- experiência do usuário;
+- desenvolvimento;
+- integração;
+- decisão comercial.
+
+## 17. MVP
+
+Organize em:
+
+### P0 — necessário para validar
+
+### P1 — próximo após validação
+
+### P2 — futuro
+
+### Fora do escopo inicial
+
+Não inclua funcionalidades apenas porque parecem interessantes.
+
+## 18. Riscos e limitações
+
+Liste riscos técnicos, comerciais e de posicionamento.
+
+## 19. Perguntas sem resposta
+
+Liste claramente tudo que for:
+
+- `NÃO ENCONTRADO`;
+- `NÃO SEI RESPONDER`;
+- `DECISÃO NECESSÁRIA`.
+
+Não tente responder essas perguntas inventando.
+
+## 20. Plano de validação comercial
+
+Proponha os próximos testes com potenciais laboratórios:
+
+- entrevistas;
+- demonstrações;
+- pilotos;
+- perguntas de validação;
+- evidências que devem ser coletadas.
+
+## 21. Arquivos analisados
+
+Liste os principais arquivos, pastas, rotas, componentes, modelos e APIs consultados.
+
+## 22. Conclusão
+
+Responda objetivamente:
+
+1. Podemos vender o produto para laboratórios hoje?
+2. Para qual perfil de laboratório?
+3. Qual promessa podemos fazer?
+4. O que já está pronto?
+5. O que precisa ser adaptado?
+6. O que precisa ser construído?
+7. Qual é o próximo passo mais seguro?
+
+## Regras finais
+
+- Não implemente funcionalidades.
+- Não altere arquivos do produto.
+- Não crie dados fictícios.
+- Não apresente hipótese como fato.
+- Cite evidências do código.
+- Seja completo, mas objetivo.
+- Leia o Markdown inteiro depois de criá-lo.
+- Confirme no final que o arquivo foi criado.
+- Informe também as três principais descobertas e as três maiores incertezas.

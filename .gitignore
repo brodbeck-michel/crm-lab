@@ -20,3 +20,7 @@ docs/integracoes/
 
 # Mídia de mensagem em dev/teste (Onda 8 §4) — MEDIA_DIR default local.
 backend/media/
+
+# Config local do Claude Code — permissões e paths da máquina de quem está usando,
+# não do projeto (equivalente ao .env: cada dev/agente tem o seu).
+.claude/settings.local.json

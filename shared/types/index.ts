@@ -15,3 +15,4 @@ export * from './operation.types.js';
 export * from './audit.types.js';
 export * from './platform.types.js';
 export * from './websocket.types.js';
+export * from './lis.types.js';

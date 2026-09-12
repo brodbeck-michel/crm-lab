@@ -61,6 +61,8 @@ export type ApiErrorCode =
   | 'CHANNEL_QR_UNAVAILABLE'
   // Mídia (Onda 8 §4 — anexo e áudio)
   | 'MEDIA_TOO_LARGE'
+  // Vendas — domínio LIS (Onda 9)
+  | 'SALE_ATTENDANT_NOT_LINKED'
   // Sistema
   | 'RATE_LIMIT_EXCEEDED'
   | 'INTERNAL_ERROR';

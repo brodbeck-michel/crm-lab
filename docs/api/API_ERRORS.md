@@ -125,6 +125,12 @@ renderiza. "Não sei onde mostrar" nunca pode virar silêncio.
 |--------|------|--------|
 | `MEDIA_TOO_LARGE` | 413 | `POST /conversations/:id/attachments` com arquivo acima de 15 MiB (`details: { byteSize, max }`). Nunca grava mensagem |
 
+## Vendas — domínio LIS (Onda 9)
+
+| Código | HTTP | Quando |
+|--------|------|--------|
+| `SALE_ATTENDANT_NOT_LINKED` | 403 | `POST /sales` por um login de `attendant` sem vínculo em `attendants` (`attendants.user_id = ctx.userId`) — o vínculo é manual, feito por manager/admin em `PATCH /attendants/:id` (API_CONTRACTS.md §11/§12) |
+
 ## Convênios e preço por convênio (Onda 7)
 
 Sem código novo além do acima: `/insurances` e `/exams/:id/prices` reusam o catálogo geral —

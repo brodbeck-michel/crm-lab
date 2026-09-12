@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-12 (Onda 9 — Domínio LIS no backend: concluída — rotas de API, testes e isolamento multitenant)
+**Última atualização:** 2026-09-12 (Onda 10 — corrigidos 2 bugs de cálculo do LIS achados na validação (D-124/D-125) + /results redesenhado pela referência real — CRMLAB-3)
 
 ---
 
@@ -227,6 +227,28 @@ conciliação) não fazem parte deste escopo.
 
 **DoD (spec):** planilha real anonimizada do Santé importa e `GET /lis-budgets/summary` bate com
 o Dashboard antigo do FluxoLab no mesmo período; tenant B não vê nada.
+
+---
+
+## Onda 10 — Telas do LIS 🔄 (em andamento)
+
+Telas sobre o backend do domínio LIS (Onda 9, já commitado). Spec:
+`docs/superpowers/specs/2026-09-08-fusao-crm-fluxolab-design.md`. Card Jira: CRMLAB-3. Branch:
+`feature/CRMLAB-3-onda-10-telas-lis`.
+
+| Tarefa | Domínio | Status | Agente | Notas |
+|--------|---------|--------|--------|-------|
+| Contratos da onda (Fase 0, bloqueante) | docs | ✅ 2026-09-12 | coordenador | `PAGES.md` "Telas do LIS" (§14-19: `/results`, `/reconciliation`, `/active-search`, `/sales`, `/settings/attendants`, `/settings/commissions` + modal Importar + "Limpar base"), Mapa de Rotas e tabela de papéis atualizados; `COMPONENTS.md` seção `lis/` (`KpiCard`, `UploadDropzone`, `PeriodFilter`, `AgeBadge`); `DECISIONS.md` D-116 (PDF gerado no cliente, nunca no servidor) e D-117 (filtros de período/atendente/convênio como estado global em `useUIStore.lisFilters` + sessionStorage, compartilhado entre as 3 telas de leitura). Nenhuma linha de implementação antes disto (Regra Zero). **Correção feita durante a implementação:** `/results` (Resultados) NÃO tem seletor de atendente/convênio como o texto original previa — `GET /reports/executive` só aceita período (API_CONTRACTS §5c), e o PDF precisa ser o retrato exato do que a tela mostra (D-116); recorte por atendente/convênio já existe em Conferência/Busca Ativa, que consomem `/lis-budgets*`. PAGES.md §14 atualizado para refletir isso |
+| Frontend: `api/lis.ts`, `reports.ts`, `sales.ts`, `attendants.ts`, `commission-settings.ts` + 6 páginas + componentes `lis/` + PDFs | ui | ✅ 2026-09-12 | coordenador | Implementado sozinho (não dividido em 3 agentes — ver nota abaixo). `KpiCard`/`UploadDropzone`/`PeriodFilter`/`AgeBadge`/`MonthlySeriesChart`/`ImportModal`/`PurgeDialog` em `components/lis/`; `lib/pdf/executive-report.ts` + `active-search.ts` (jspdf + jspdf-autotable, lazy import, D-116); `useUIStore.lisFilters` persistido em sessionStorage (D-117); `/settings/attendants` lê o seletor de usuário de `GET /settings/channels` (`team`, D-066) — não de `GET /users`, que é admin apenas e bloquearia o gestor. Rotas plugadas em `route-config.ts`/`routes/index.tsx` + ícones novos em `NavGlyph.tsx`. `npm run typecheck` verde nos 4 workspaces |
+| Testes: component tests + `route-config.spec` | qa | ✅ 2026-09-12 | coordenador | `KpiCard`/`AgeBadge`/`PeriodFilter`.spec.tsx + specs de página para as 6 telas novas (Results/Reconciliation/ActiveSearch/Sales/Attendants/Commissions) + `routes/route-config.spec.ts` (atendente vê `/sales`, não vê as 5 telas gestor+). Suíte completa do frontend: **71 arquivos / 950 testes verdes**. Corrigido de passagem: `AgeBadge` usava `text-white` (fora do tema) e `TenantDetail.tsx` (Onda 9, não tocado por esta onda) usava `text-h4` inexistente — os dois travavam `tailwind-theme-classes.spec.ts`; trocados por tokens reais (`text-bg`/`text-section`) |
+| E2E `flow-17-lis-import-results` + `flow-18-sales` | qa | ⬜ | — | **Não implementado nesta sessão** — exigiria fixture `.xlsx` real (aliases de BUSINESS_RULES §11) + subir a stack Docker completa (Postgres + migrate + seed) para rodar de verdade; decisão consciente de não escrever specs Playwright sem rodá-los contra a stack (não declarar verde sem ter visto a saída). Pendência registrada para quem validar/continuar |
+| `/results` redesenhado a partir da referência visual real (FluxoLab/Santé) + correção de 2 bugs de cálculo (D-122 a D-125) | api+ui+db | ✅ 2026-09-12 | coordenador | Usuário reportou números divergentes da produção real ao importar a planilha; comparação linha a linha com `orcamentos-sante-main` (app de referência) achou: **(1)** `lis_budgets.total_value` (migração 012) somava `value_1+value_2+value_3` — errado, `insurance_2`/`insurance_3` são cotações ALTERNATIVAS do mesmo orçamento, não valores adicionais; corrigido pela migração `014_fix_lis_budgets_total_value.sql` (D-124) — verificado com SQL independente contra os dados reais já importados pelo usuário: **R$ 1.957.278,85 correto vs. R$ 2.096.520,68 que o bug antigo daria** (+7,1% inflado, R$ 139.241,83 de diferença, 5030 orçamentos). **(2)** "Em Requisição" tinha sido implementado com a definição de Busca Ativa (pendente de pagamento) — errado, é "convertido em requisição" (pago ou não); campo novo `requisition` em `LisBudgetsSummary`/`ExecutiveReport` (D-125), verificado do mesmo jeito (1767 requisições, R$ 611.381,12, batendo exato com SQL independente). Redesenho da tela: filtro de convênio de volta, 4 KpiCards no layout da referência (destaque + delta + barra de conversão), gráfico de atendentes (`byAttendantDetail`, sem corte de `MIN_ORC_RANKING` — D-122), donut de convênio, tabela "Detalhe por atendente" combinando orçamento+vendas com exportação em PDF e Excel (D-123, `xlsx`/SheetJS novo). Backend 72 arquivos/1026 testes, frontend 71 arquivos/968 testes, typecheck 4/4 verde |
+
+**DoD (spec):** um gestor reproduz a rotina completa do Santé de ponta a ponta na UI local,
+incluindo geração dos dois PDFs. **Atingido no nível de componente/unitário** (typecheck 4/4
+workspaces verde, backend 71 arquivos/1018 testes verde, frontend 71 arquivos/950 testes verde,
+lint sem novos erros) — **não verificado ainda via E2E real** (Playwright + stack Docker), que é
+a única lacuna desta onda.
 
 ---
 

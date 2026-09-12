@@ -182,7 +182,7 @@ export function PlatformTenantDetail() {
       </div>
 
       <section className="flex flex-col gap-md">
-        <h2 className="m-0 font-heading text-h4 text-text">Integrações</h2>
+        <h2 className="m-0 font-heading text-section text-text">Integrações</h2>
         {tenant.channels.length === 0 ? (
           <EmptyState message="Nenhum canal configurado" hint="O laboratório ainda não conectou nenhum canal." />
         ) : (
@@ -219,7 +219,7 @@ export function PlatformTenantDetail() {
       </section>
 
       <section className="flex flex-col gap-md">
-        <h2 className="m-0 font-heading text-h4 text-text">Saúde de uso</h2>
+        <h2 className="m-0 font-heading text-section text-text">Saúde de uso</h2>
         <div className="grid gap-md sm:grid-cols-4">
           <StatTile label="Usuários ativos" hint={`de ${tenant.usage.totalUsers} no total`}>
             <span className="font-heading text-metric tabular-nums">{tenant.usage.activeUsers}</span>
@@ -245,7 +245,7 @@ export function PlatformTenantDetail() {
       </section>
 
       <section className="flex flex-col gap-md">
-        <h2 className="m-0 font-heading text-h4 text-text">Administração</h2>
+        <h2 className="m-0 font-heading text-section text-text">Administração</h2>
         <div className="flex items-center gap-sm">
           <Button variant="secondary" onClick={openResetFlow} disabled={admins.length === 0}>
             Resetar senha do admin

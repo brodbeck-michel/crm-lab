@@ -185,3 +185,46 @@ export async function summarizeByKind(
     value: toNumber(row.value),
   }));
 }
+
+export interface SalesAttendantSummaryRow {
+  attendantId: string;
+  attendantName: string;
+  kind: string;
+  count: number;
+  value: number;
+}
+
+/**
+ * Agregado por (atendente, kind) — base de `SalesService.getSummary.byAttendant`
+ * (D-122, "Detalhe por atendente" de `/results`). Só chamado para manager/admin
+ * (visão do tenant inteiro); `attendant` nunca vê a lista de outros atendentes.
+ */
+export async function summarizeByAttendantAndKind(
+  tx: DbTx,
+  tenantId: string,
+  startDate: string,
+  endDate: string,
+): Promise<SalesAttendantSummaryRow[]> {
+  const result = await tx.query<{
+    attendant_id: string;
+    attendant_name: string;
+    kind: string;
+    count: number | string;
+    value: string | number;
+  }>(
+    `SELECT s.attendant_id, a.name AS attendant_name, s.kind,
+            COUNT(*)::int AS count, COALESCE(SUM(s.value), 0) AS value
+       FROM sales s
+       JOIN attendants a ON a.id = s.attendant_id
+      WHERE s.tenant_id = $1 AND s.sold_on BETWEEN $2 AND $3
+      GROUP BY s.attendant_id, a.name, s.kind`,
+    [tenantId, startDate, endDate],
+  );
+  return result.rows.map((row) => ({
+    attendantId: row.attendant_id,
+    attendantName: row.attendant_name,
+    kind: row.kind,
+    count: Number(row.count),
+    value: toNumber(row.value),
+  }));
+}

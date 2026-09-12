@@ -232,3 +232,58 @@ describe('GET /sales/summary — comissao (defaults 1,50% exames / 1,50% check-u
     expect(body.commissionTotal).toBe(22.5);
   });
 });
+
+describe('GET /sales/summary — byAttendant (D-122, "Detalhe por atendente" de /results)', () => {
+  it('manager sem attendantId na query recebe o detalhe por atendente', async () => {
+    const maria = await insertAttendant(tenantA.id, 'Maria');
+    const joao = await insertAttendant(tenantA.id, 'Joao');
+    await app.agent
+      .post(BASE)
+      .set(app.auth(managerA))
+      .send({ attendantId: maria, soldOn: '2026-08-10', value: 1000, kind: 'exams' })
+      .expect(201);
+    await app.agent
+      .post(BASE)
+      .set(app.auth(managerA))
+      .send({ attendantId: joao, soldOn: '2026-08-12', value: 200, kind: 'checkup' })
+      .expect(201);
+
+    const res = await app.agent
+      .get(`${BASE}/summary?startDate=2026-08-01&endDate=2026-08-31`)
+      .set(app.auth(managerA));
+    const body = res.body as SalesSummary;
+
+    expect(body.byAttendant).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          attendantId: maria,
+          attendantName: 'Maria',
+          totalValue: 1000,
+          commissionTotal: 15,
+        }),
+        expect.objectContaining({
+          attendantId: joao,
+          attendantName: 'Joao',
+          totalValue: 200,
+          commissionTotal: 3,
+        }),
+      ]),
+    );
+  });
+
+  it('attendant nao recebe byAttendant (so ve a propria comissao)', async () => {
+    const maria = await insertAttendant(tenantA.id, 'Maria', attendantUserA.id);
+    await app.agent
+      .post(BASE)
+      .set(app.auth(attendantUserA))
+      .send({ attendantId: maria, soldOn: '2026-08-10', value: 1000, kind: 'exams' })
+      .expect(201);
+
+    const res = await app.agent
+      .get(`${BASE}/summary?startDate=2026-08-01&endDate=2026-08-31`)
+      .set(app.auth(attendantUserA));
+    const body = res.body as SalesSummary;
+
+    expect(body.byAttendant).toBeUndefined();
+  });
+});

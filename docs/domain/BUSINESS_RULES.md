@@ -445,11 +445,31 @@ reinventadas — são o comportamento que os usuários do Santé já conhecem.
 
 ### 11.1 Dedupe por número (orçamento)
 Duas linhas da planilha (ou de duas planilhas diferentes) com o mesmo `ORCAMENTO` representam o
-mesmo orçamento reimportado — **a de maior `total_value` vence**. `total_value` é a soma de
-`value_1 + value_2 + value_3` (coluna gerada, SCHEMA.md §26). Implementado no
+mesmo orçamento reimportado — **a de maior `total_value` vence**. `total_value` é o valor do
+**convênio principal** — mesma seleção de §11.3, coluna gerada (SCHEMA.md §26). Implementado no
 `upsert ON CONFLICT (tenant_id, number) DO UPDATE ... WHERE EXCLUDED.total_value >=
 lis_budgets.total_value` — um total menor na reimportação **não regride** o dado já gravado
 (planilha desatualizada não apaga um valor mais completo já importado).
+
+**Correção D-124:** `total_value` foi implementada como `value_1 + value_2 + value_3` na Onda 9
+(migração 012) — **errado**, achado ao comparar com o app de referência do FluxoLab
+(`orcamentos-sante-main/src/lib/orcamento.ts`). `insurance_2`/`insurance_3` são **cotações
+alternativas** do mesmo orçamento (o mesmo exame precificado por outro convênio), não valores
+adicionais — somar os três infla "Total Orçado" em qualquer orçamento com mais de uma cotação
+preenchida. Corrigido pela migração `014_fix_lis_budgets_total_value.sql`: `total_value` passa a
+ser o valor **do mesmo par (nome, valor) que `principal_insurance_name` escolhe** (§11.3) — nunca
+a soma.
+
+**Correção D-126 — a linha PERDEDORA do dedupe não pode perder requisição/pagamento:** a versão
+original de `consolidateLisRows` substituía a linha inteira pela de maior `total_value` — se a
+mesma REQUISIÇÃO gera mais de uma linha de planilha com o mesmo número de ORÇAMENTO (ex.: um
+exame por linha) e só uma delas tem requisição/pagamento preenchidos, a linha vencedora podia
+não ser essa, e o pagamento era perdido por completo. Achado comparando "Recebido" com o app de
+referência na MESMA planilha real (167 pagos aqui contra 169 lá, mesmo período). Corrigido para
+mesclar como a referência (`consolidateOrcamentos`): `total_value` decide quem é a base (convênio,
+paciente, atendente), mas `requisition_number` cai para a outra linha se a vencedora não tiver, e
+`paid_value`/`paid_on`/`requisition_value` vêm de **qual das duas linhas tiver o maior
+`paid_value`** — nunca descartados junto com a perdedora do total.
 
 ### 11.2 Dedupe por requisição (KPI de pagamento)
 A mesma `REQUISICAO` pode aparecer em mais de uma linha de `lis_budgets` (o LIS atualiza o valor

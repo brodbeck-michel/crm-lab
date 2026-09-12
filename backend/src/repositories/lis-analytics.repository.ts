@@ -175,6 +175,52 @@ export async function getIssuedTotals(
   return { count: Number(row?.count ?? 0), totalValue: toNumber(row?.total_value) };
 }
 
+export interface RequisitionTotalsRow {
+  count: number;
+  totalValue: number;
+}
+
+/**
+ * "Em Requisição" (D-125) — orçamentos que foram convertidos em requisição
+ * (viraram venda efetiva no LIS), somando `requisition_value`. Janela de
+ * EMISSÃO (`issued_on`, igual a `getIssuedTotals`) — **não** filtra por
+ * pago/não pago: inclui TODA requisição do período, paga ou pendente. Dedupe
+ * por requisição (maior `paid_value` vence, mesmo critério de §11.2, para a
+ * linha representante ser a mesma que os outros KPIs de pagamento usam).
+ *
+ * Corrige a Onda 10: o card "Em Requisição" tinha sido implementado com a
+ * definição de Busca Ativa (pendente = sem pagamento), que é uma pergunta
+ * DIFERENTE — comparado com o app de referência do FluxoLab
+ * (`orcamentos-sante-main/src/lib/orcamento.ts`, `kpis.reqValue`).
+ */
+export async function getRequisitionTotals(
+  tx: DbTx,
+  tenantId: string,
+  filters: SummaryFilters,
+): Promise<RequisitionTotalsRow> {
+  const params: unknown[] = [tenantId, filters.startDate, filters.endDate];
+  const extra = summaryFilterClauses(filters, params);
+  const where = [
+    'tenant_id = $1',
+    'issued_on BETWEEN $2 AND $3',
+    'requisition_number IS NOT NULL',
+    ...extra,
+  ].join(' AND ');
+  const result = await tx.query<{ count: number | string; total_value: string | number | null }>(
+    `WITH req AS (
+       SELECT DISTINCT ON (requisition_number) requisition_value, paid_value
+         FROM lis_budgets
+        WHERE ${where}
+        ORDER BY requisition_number, paid_value DESC
+     )
+     SELECT COUNT(*)::int AS count, COALESCE(SUM(requisition_value), 0) AS total_value
+       FROM req`,
+    params,
+  );
+  const row = result.rows[0];
+  return { count: Number(row?.count ?? 0), totalValue: toNumber(row?.total_value) };
+}
+
 export interface PaidTotalsRow {
   count: number;
   totalValue: number;
@@ -217,6 +263,7 @@ export interface AttendantAggRow {
   attendantId: string;
   attendantName: string;
   issuedCount: number;
+  paidCount: number;
   paidValue: number;
 }
 
@@ -254,13 +301,13 @@ export async function getAttendantAgg(
         GROUP BY attendant_id`,
       issuedParams,
     ),
-    tx.query<{ attendant_id: string; paid_value: string | number | null }>(
+    tx.query<{ attendant_id: string; count: number | string; paid_value: string | number | null }>(
       `WITH req AS (
          SELECT DISTINCT ON (requisition_number) attendant_id, paid_value, paid_on
            FROM lis_budgets WHERE ${dedupeWhere}
            ORDER BY requisition_number, paid_value DESC
        )
-       SELECT attendant_id, COALESCE(SUM(paid_value), 0) AS paid_value
+       SELECT attendant_id, COUNT(*)::int AS count, COALESCE(SUM(paid_value), 0) AS paid_value
          FROM req
         WHERE paid_on BETWEEN $${startIdx} AND $${endIdx} AND COALESCE(paid_value, 0) > 0
         GROUP BY attendant_id`,
@@ -268,15 +315,19 @@ export async function getAttendantAgg(
     ),
   ]);
 
-  const paidByAttendant = new Map<string, number>(
-    paidResult.rows.map((row) => [row.attendant_id, toNumber(row.paid_value)]),
+  const paidByAttendant = new Map<string, { count: number; value: number }>(
+    paidResult.rows.map((row) => [
+      row.attendant_id,
+      { count: Number(row.count), value: toNumber(row.paid_value) },
+    ]),
   );
 
   return issuedResult.rows.map((row) => ({
     attendantId: row.attendant_id,
     attendantName: row.attendant_name,
     issuedCount: Number(row.count),
-    paidValue: paidByAttendant.get(row.attendant_id) ?? 0,
+    paidCount: paidByAttendant.get(row.attendant_id)?.count ?? 0,
+    paidValue: paidByAttendant.get(row.attendant_id)?.value ?? 0,
   }));
 }
 

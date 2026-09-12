@@ -201,6 +201,63 @@ Anatomia (padrão WhatsApp):
 
 ---
 
+## LIS (`lis/`) — Onda 10
+
+### KpiCard
+```tsx
+<KpiCard label="Orçamentos pagos" value={165} variant="money | percent | number"
+         deltaPct={12.4} deltaTone="positive | negative"? />
+```
+- Mesma base visual de `MetricTile` (`components/analytics/`, reaproveitado internamente:
+  `KpiCard` é `MetricTile` + o bloco opcional de `delta`) — não duplicar a formatação pt-BR de
+  valor, só acrescentar a variação
+- `deltaPct` opcional: `+12,4%`/`-3,1%` com seta, cor `positive` (sálvia)/`negative` (accent-700)
+  conforme o SINAL — a tela decide o sentido (ex.: "requisições em aberto" caindo é bom, então
+  passa `deltaTone` explícito em vez de a cor seguir automaticamente o sinal do número)
+- Sem `deltaPct`: renderiza igual a `MetricTile`, sem a segunda linha — usado nos cartões de
+  Busca Ativa (§16), que não têm "período anterior" para comparar
+- Usado em `/results` (§14), `/active-search` (§16)
+
+### UploadDropzone
+```tsx
+<UploadDropzone accept=".xlsx" maxSizeBytes={10 * 1024 * 1024} onFile={(file) => ...} />
+```
+- Área clicável + arrastar-e-soltar; um arquivo por vez, substituído se solto de novo antes de
+  enviar
+- Valida extensão e tamanho **no cliente** antes de chamar `onFile` — arquivo fora do aceito
+  mostra mensagem inline (nunca alert/toast) e não chama o callback
+- Estado de "enviando" é responsabilidade de quem usa (o componente só entrega o `File`); mostra
+  spinner próprio só enquanto lê o arquivo para base64
+- Usado no modal Importar (`/results` e `/reconciliation`, §14-15)
+
+### PeriodFilter
+```tsx
+<PeriodFilter value={{ startDate, endDate }} onChange={(period) => ...} />
+```
+- Atalhos comuns (Hoje, 7 dias, 30 dias, Mês atual) + dois `Input type="date"` para intervalo
+  livre; aplica a cada mudança (sem botão "Aplicar" — mesmo padrão de `/analytics`). `endDate <
+  startDate` mostra mensagem inline e a TELA que consome o componente segura o fetch
+  (`enabled: false` na query) até o intervalo ficar válido — sem round-trip ao servidor para
+  validar isso
+- Sem valor: aplica o padrão de 30 dias terminando hoje **visualmente** (mesmo default que o
+  servidor aplicaria na ausência de query params) — a tela nunca mostra os campos vazios com um
+  resultado já carregado, o que pareceria inconsistente
+- Usado em `/results`, `/reconciliation`, `/active-search`, `/sales` (período próprio de cada
+  tela, mas mesmo componente — só `/results`/`/reconciliation`/`/active-search` compartilham o
+  VALOR via `useUIStore.lisFilters`, D-117; `/sales` tem seu próprio estado de período)
+
+### AgeBadge
+```tsx
+<AgeBadge daysOpen={12} ageBand="8-15" />
+```
+- Pílula com o número de dias + a faixa, tom crescente de urgência: `0-7` neutral, `8-15`
+  atenção (accent-200/800), `16-30` e `30+` mais intensos (accent-300/900 e accent-500/branco) —
+  a escala é de tom, não de cor isolada (D5: nunca só cor carrega o significado, o número de
+  dias sempre está no mesmo elemento)
+- Usado em `/active-search` (§16)
+
+---
+
 ## Regras de Largura (evitam os bugs do protótipo)
 
 1. Coluna flexível SEMPRE com min-width explícito

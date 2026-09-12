@@ -14,10 +14,13 @@
   "dependencies": {
     "@crm-lab/shared": "*",
     "@tanstack/react-query": "^5.62.7",
+    "jspdf": "^2.5.2",
+    "jspdf-autotable": "^3.8.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.28.0",
     "recharts": "^3.10.1",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zustand": "^5.0.2"
   },
   "devDependencies": {

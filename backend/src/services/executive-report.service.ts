@@ -47,14 +47,16 @@ export function createExecutiveReportService(
 
       const [data, currentTheme, tenant] = await Promise.all([
         db.withTenant(ctx.tenantId, async (tx) => {
-          const [issued, paid, byAttendant, byInsurance, monthlySeries] = await Promise.all([
-            lisAnalyticsRepo.getIssuedTotals(tx, ctx.tenantId, filters),
-            lisAnalyticsRepo.getPaidTotals(tx, ctx.tenantId, filters),
-            lisAnalyticsRepo.getAttendantAgg(tx, ctx.tenantId, filters),
-            lisAnalyticsRepo.getInsuranceAgg(tx, ctx.tenantId, filters),
-            lisAnalyticsRepo.getMonthlySeries(tx, ctx.tenantId, period.endDate),
-          ]);
-          return { issued, paid, byAttendant, byInsurance, monthlySeries };
+          const [issued, requisition, paid, byAttendant, byInsurance, monthlySeries] =
+            await Promise.all([
+              lisAnalyticsRepo.getIssuedTotals(tx, ctx.tenantId, filters),
+              lisAnalyticsRepo.getRequisitionTotals(tx, ctx.tenantId, filters),
+              lisAnalyticsRepo.getPaidTotals(tx, ctx.tenantId, filters),
+              lisAnalyticsRepo.getAttendantAgg(tx, ctx.tenantId, filters),
+              lisAnalyticsRepo.getInsuranceAgg(tx, ctx.tenantId, filters),
+              lisAnalyticsRepo.getMonthlySeries(tx, ctx.tenantId, period.endDate),
+            ]);
+          return { issued, requisition, paid, byAttendant, byInsurance, monthlySeries };
         }),
         theme.getCurrent(ctx.tenantId),
         db.withTenant(ctx.tenantId, (tx) => findTenant(tx, ctx.tenantId)),
@@ -68,6 +70,10 @@ export function createExecutiveReportService(
           count: data.issued.count,
           totalValue: toMoney(data.issued.totalValue),
           averageTicket: average(data.issued.totalValue, data.issued.count),
+        },
+        requisition: {
+          count: data.requisition.count,
+          totalValue: toMoney(data.requisition.totalValue),
         },
         paid: {
           count: data.paid.count,

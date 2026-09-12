@@ -1,15 +1,24 @@
 import type {
   AnalyticsQuery,
+  LisBudgetsSummaryQuery,
+  ListAttendantsQuery,
   ListAuditQuery,
   ListConversationsQuery,
   ListExamsQuery,
   ListInsurancesQuery,
+  ListLisBudgetsQuery,
+  ListLisImportsQuery,
   ListPatientTimelineQuery,
   ListPatientsQuery,
+  ListPendingLisBudgetsQuery,
   ListProposalsQuery,
+  ListSalesQuery,
   OperationOverviewQuery,
   PaginationQuery,
+  PendingLisBudgetsSummaryQuery,
+  SalesSummaryQuery,
 } from '@crm-lab/shared';
+import type { ExecutiveReportQuery } from './reports';
 
 /**
  * Chaves de cache do TanStack Query — ÚNICO lugar que as define
@@ -110,6 +119,42 @@ export const queryKeys = {
   platformBilling: () => ['platform', 'billing'] as const,
   /** ['platform', 'tenants', id] — detalhe por tenant (D-102) */
   platformTenant: (id: string) => ['platform', 'tenants', id] as const,
+
+  // ── Domínio LIS (Onda 9/10 — API_CONTRACTS.md §5c/§6b/§10-12) ────────────
+
+  /** ['lis-budgets', filters] — Conferência (`/reconciliation`, PAGES.md §15) */
+  lisBudgets: (filters?: ListLisBudgetsQuery) => ['lis-budgets', filters ?? {}] as const,
+  /** ['lis-budgets', 'summary', filters] — KPIs de `/results` recortáveis (§14) */
+  lisBudgetsSummary: (filters?: LisBudgetsSummaryQuery) =>
+    ['lis-budgets', 'summary', filters ?? {}] as const,
+  /** ['lis-budgets', 'pending', filters] — Busca Ativa (`/active-search`, §16) */
+  lisBudgetsPending: (filters?: ListPendingLisBudgetsQuery) =>
+    ['lis-budgets', 'pending', filters ?? {}] as const,
+  /** ['lis-budgets', 'pending', 'summary', filters] — cartões por faixa (§16) */
+  lisBudgetsPendingSummary: (filters?: PendingLisBudgetsSummaryQuery) =>
+    ['lis-budgets', 'pending', 'summary', filters ?? {}] as const,
+  /** ['lis-budgets', 'filters'] — opções dos seletores de atendente/convênio */
+  lisBudgetsFilters: () => ['lis-budgets', 'filters'] as const,
+
+  /** ['lis-imports', filters] — histórico de importações/purges */
+  lisImports: (filters?: ListLisImportsQuery) => ['lis-imports', filters ?? {}] as const,
+  /** ['lis-imports', 'latest'] — "Última atualização em ..." (§14) */
+  lisImportsLatest: () => ['lis-imports', 'latest'] as const,
+
+  /** ['reports', 'executive', period] — Relatório Executivo + PDF (D-116) */
+  reportsExecutive: (period?: ExecutiveReportQuery) =>
+    ['reports', 'executive', period ?? {}] as const,
+
+  /** ['sales', filters] — `/sales` (§17); atendente só vê as próprias */
+  sales: (filters?: ListSalesQuery) => ['sales', filters ?? {}] as const,
+  /** ['sales', 'summary', filters] — cartão de comissão de `/sales` */
+  salesSummary: (filters?: SalesSummaryQuery) => ['sales', 'summary', filters ?? {}] as const,
+
+  /** ['attendants', filters] — `/settings/attendants` (§18) */
+  attendants: (filters?: ListAttendantsQuery) => ['attendants', filters ?? {}] as const,
+
+  /** ['settings', 'commissions'] — `/settings/commissions` (§19) */
+  commissionSettings: () => ['settings', 'commissions'] as const,
 } as const;
 
 /** Prefixos usados para invalidar um escopo inteiro (todas as variações de filtro). */
@@ -133,6 +178,17 @@ export const queryScopes = {
   platform: ['platform'] as const,
   settings: ['settings'] as const,
   operations: ['operations'] as const,
+  /**
+   * Prefixos do domínio LIS — TRÊS escopos distintos (`invalidateQueries` faz
+   * prefix-match; um array só não cobre os três). Invalidados juntos após
+   * import e após purge (§14/§15/§16), os dois únicos eventos que mudam
+   * `lis_budgets`.
+   */
+  lisBudgets: ['lis-budgets'] as const,
+  lisImports: ['lis-imports'] as const,
+  reportsExecutive: ['reports'] as const,
+  sales: ['sales'] as const,
+  attendants: ['attendants'] as const,
 } as const;
 
 /**
@@ -154,4 +210,9 @@ export const staleTimes = {
    * cliques seguidos na aba não repetirem a agregação.
    */
   operation: 15_000,
+  /**
+   * Domínio LIS (D-117): importação é esporádica, mas a tela precisa
+   * refletir uma importação recém-feita sem exigir F5 manual.
+   */
+  lis: 60_000,
 } as const;

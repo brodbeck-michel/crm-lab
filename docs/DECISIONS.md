@@ -1347,7 +1347,8 @@ backend (parser converte serial → `DATE` por componentes, nunca via `new Date(
 
 ### D-111: `principal_insurance_name` e `total_value` são colunas `GENERATED … STORED`
 **Decisão:** `lis_budgets.principal_insurance_name` (regra do convênio principal,
-BUSINESS_RULES.md §11.3) e `lis_budgets.total_value` (soma de `value_1..3`) são colunas
+BUSINESS_RULES.md §11.3) e `lis_budgets.total_value` (valor do convênio principal — mesma
+seleção; **não** a soma de `value_1..3`, correção de D-124) são colunas
 `GENERATED ALWAYS AS (...) STORED` (SCHEMA.md §26), não calculadas em código a cada leitura nem
 gravadas por um `INSERT` que replica a regra em TypeScript.
 **Motivo:** as duas são regra de negócio pura sobre outras colunas da mesma linha — o tipo de
@@ -1447,6 +1448,143 @@ desde já, mesmo sem nenhum caminho de escrita ligado ainda.
 **Impacto:** db (ALTER em `proposals`, SCHEMA.md §5 — nasce na 012), api (nenhuma mudança de
 contrato nesta onda; `API_CONTRACTS.md` §3 só muda na Onda 13), backend (`ProposalService`
 inalterado nesta onda — `markWonFromLis`/`transitionInTx` são construídos na Onda 13).
+
+### D-116: PDFs do LIS (Executivo e Busca Ativa) são gerados no cliente, nunca no servidor
+**Decisão:** os dois PDFs da Onda 10 (Relatório Executivo e Busca Ativa) são montados no
+navegador com `jspdf` + `jspdf-autotable` (lazy import), a partir do MESMO JSON que já preencheu
+a tela (`GET /reports/executive`, `GET /lis-budgets/pending*` — API_CONTRACTS.md §5c/§10.2). O
+backend nunca gera, assina nem armazena PDF. A marca do documento (nome, logo) vem de
+`theme.brandName`/`theme.logoUrl` do próprio tenant — nada de "Santé" fixo em nenhum template.
+**Motivo:** gerar PDF no servidor exigiria uma dependência de renderização (headless browser ou
+lib de layout) só para dois relatórios, além de um segundo caminho de dado que precisaria ficar
+sincronizado com o que a tela mostra — dois fetches do mesmo período podem retornar números
+diferentes se algo mudar entre eles (nova importação, por exemplo). Gerar a partir do JSON já
+carregado elimina essa divergência por construção: o PDF é sempre um retrato exato do que a
+pessoa está vendo na tela no momento do clique.
+**Impacto:** frontend (`jspdf`/`jspdf-autotable` como dependência nova, só carregada sob demanda
+— `document.title` e branding por tema, PAGES.md §14); backend/api (nenhuma mudança — os
+endpoints já existentes de §5c/§10.2 bastam, nenhuma rota de PDF é criada).
+
+### D-117: Filtros de período/atendente/convênio das telas de leitura do LIS são estado global
+**Decisão:** `/results`, `/reconciliation` e `/active-search` (PAGES.md, Telas do LIS) compartilham
+o mesmo filtro de período + atendente + convênio através de `useUIStore.lisFilters`, persistido
+em `sessionStorage` — não na URL de cada rota e não em três estados locais independentes.
+**Motivo:** as três telas respondem à mesma pergunta operacional ("como estão os orçamentos
+deste período, deste atendente, deste convênio") sob ângulos diferentes (visão executiva,
+listagem crua, fila de cobrança). Sem estado compartilhado, trocar o período em `/results` e
+abrir `/reconciliation` reapresentaria os últimos 30 dias por padrão, obrigando a pessoa a
+reconfigurar o mesmo filtro três vezes na mesma sessão de trabalho — o padrão de UX que o
+FluxoLab já resolvia (filtro persistente entre as abas do Dashboard). `sessionStorage` (não
+`localStorage`) porque o filtro é conveniência de sessão, não preferência duradoura: outra
+pessoa no mesmo computador não deve herdar o recorte de quem usou antes.
+**Impacto:** frontend (`useUIStore` ganha `lisFilters`, PAGES.md `## Estado Global`; `PeriodFilter`
+component, COMPONENTS.md); nenhuma mudança de contrato de API — os três endpoints já aceitam
+`startDate`/`endDate`/`attendantId`/`insuranceId` como query params independentes desde a Onda 9.
+
+### D-122: Detalhe por atendente em `/results` é relatório de comissão, não ranking — sem corte de `MIN_ORC_RANKING`, com vendas por atendente
+**Decisão:** validação da Onda 10 trouxe a tela real equivalente do FluxoLab/Santé como referência
+(screenshots) — ela tem uma tabela "Detalhe por atendente" (orçado, recebido, conversão, comissão
+sobre orçamento + vendas de exames + vendas de check-up, comissão total) que a Fase 0 original não
+previa. Dois campos aditivos entram no contrato:
+- `LisAttendantAgg` ganha `paidCount` (requisições pagas do atendente no período) — base de
+  `conversionQty` por linha.
+- `LisBudgetsSummary` ganha `byAttendantDetail: LisAttendantAgg[]` — TODOS os atendentes do
+  período, **sem** o corte de `MIN_ORC_RANKING` e **sem** o top-6 que `byAttendant` já tinha
+  (BUSINESS_RULES.md §11.5). `byAttendant` continua existindo, inalterado, para quem já consome o
+  ranking qualitativo (gráfico "Faturamento por atendente" e `/reports/executive`).
+- `SalesSummary` ganha `byAttendant?: SalesAttendantSummary[]` — só presente quando manager/admin
+  consulta sem `attendantId` (visão do tenant inteiro); `attendant` nunca recebe o campo (D-112,
+  ele só vê a própria comissão).
+**Motivo:** um relatório de comissão é documento contábil — esconder um atendente porque o
+laboratório importou poucos orçamentos no mês (`MIN_ORC_RANKING = 20`) pagaria menos comissão do
+que o devido sem ninguém perceber. `MIN_ORC_RANKING` existe para **rankings qualitativos**
+("top atendente do mês" não é significativo com amostra pequena) — não se aplica a "quanto essa
+pessoa tem a receber". As duas perguntas são diferentes; um único campo gated não serve às duas.
+**Impacto:** shared (`LisAttendantAgg.paidCount`, `LisBudgetsSummary.byAttendantDetail`,
+`SalesAttendantSummary` novo, `SalesSummary.byAttendant?`); backend (`lis-analytics.repository.ts`
+soma `paid_count` na mesma query já existente — sem nova tabela/coluna; `sales.repository.ts` ganha
+`summarizeByAttendantAndKind`; nenhuma migração de banco — tudo é agregação sobre colunas já
+existentes); api (`API_CONTRACTS.md` §10.2/§11 atualizados); frontend (`/results`, PAGES.md §14,
+combina os dois no CLIENTE por `attendantId` — nenhum endpoint novo, nenhum join no servidor entre
+`lis_budgets` e `sales`, que vivem em domínios de leitura separados por design D-108/D-112).
+
+### D-123: Exportação de comissão (PDF e Excel) — mesmo princípio de D-116, cliente escolhe o formato
+**Decisão:** o botão "Relatório de comissão" de `/results` gera o arquivo no CLIENTE, a partir da
+MESMA tabela "Detalhe por atendente" já montada na tela (mesmo princípio de D-116: nunca um
+segundo fetch que possa divergir do que a pessoa está vendo). Dois formatos, escolhidos num menu
+do próprio botão: PDF (`jspdf`/`jspdf-autotable`, já usado pelos outros dois relatórios) e Excel
+(`xlsx`/SheetJS, dependência nova — só para este relatório, os outros dois continuam PDF apenas).
+**Motivo:** a referência real (FluxoLab/Santé) oferece os dois formatos porque comissão costuma
+alimentar a folha de pagamento — algumas pessoas colam a planilha direto numa ferramenta externa,
+outras quatro só precisam do PDF pra arquivar. Gerar no servidor exigiria uma segunda dependência
+de lib de planilha no backend e um segundo caminho de dado (mesmo risco de divergência que D-116
+já rejeitou para os PDFs).
+**Impacto:** frontend (`xlsx` como dependência nova; `lib/excel/commission-report.ts` +
+`lib/pdf/commission-report.ts`, PAGES.md §14); backend/api (nenhuma mudança — usa os mesmos dados
+de D-122, já expostos por `/lis-budgets/summary` e `/sales/summary`).
+
+### D-124: `lis_budgets.total_value` corrigido — valor do convênio principal, não a soma de value_1..3
+**Decisão:** a migração `012_lis_domain.sql` (Onda 9) implementou `total_value` como
+`value_1 + value_2 + value_3`. Está errado. A migração `014_fix_lis_budgets_total_value.sql`
+corrige: `total_value` passa a ser o valor do **mesmo par (nome, valor) que
+`principal_insurance_name` já escolhe** (BUSINESS_RULES.md §11.3) — nunca a soma dos três.
+`backend/src/lib/lis-spreadsheet.ts#totalValue()` (usado na consolidação por número dentro do
+mesmo lote de import, §11.1) corrigido do mesmo jeito, com um terceiro fallback (valor > 0 sem
+nenhum nome de convênio) que replica o app de referência à risca.
+**Motivo:** achado comparando com o app de referência do FluxoLab
+(`orcamentos-sante-main/src/lib/orcamento.ts`) depois do usuário reportar que os números de
+`/results` não batiam com a produção real. `insurance_2`/`insurance_3` + `value_2`/`value_3` são
+**cotações alternativas** do mesmo orçamento — o mesmo exame precificado por um convênio
+diferente — nunca valores adicionais. Somar os três infla "Total Orçado" (e tudo que deriva
+dele: `byInsurance`, `monthlySeries.issuedValue`, o próprio `total_value` gravado) em qualquer
+orçamento com mais de uma cotação preenchida — o que é comum na planilha real do Santé.
+**Impacto:** db (migração 014 — `DROP`+`ADD` da coluna gerada, recalcula os valores já gravados
+automaticamente); backend (`lis-spreadsheet.ts#totalValue()`); docs (`SCHEMA.md` §26,
+`BUSINESS_RULES.md` §11.1, ambos com o SQL/pseudocódigo atualizado); nenhuma mudança de
+contrato de API (o *shape* de `total_value` não muda, só o valor fica correto).
+
+### D-125: "Em Requisição" é orçamentos convertidos em requisição, não Busca Ativa
+**Decisão:** o card "Em Requisição" de `/results` (e o KPI homônimo do PDF Executivo) soma
+`requisition_value` de TODA requisição emitida no período (dedupe por requisição, mesmo critério
+de `paid`) — **paga ou pendente**. Não é a mesma pergunta de Busca Ativa (§16, que é só a fatia
+sem pagamento). Campo novo `requisition: { count, totalValue }` em `LisBudgetsSummary`
+(`GET /lis-budgets/summary`, §10.2) e `ExecutiveReport` (`GET /reports/executive`, §5c) —
+`lis-analytics.repository.ts#getRequisitionTotals`, janela de EMISSÃO (`issued_on`, igual a
+`getIssuedTotals`).
+**Motivo:** a Onda 10 original implementou "Em Requisição" reaproveitando o resumo de Busca
+Ativa (`/lis-budgets/pending/summary`) — errado, achado comparando com o app de referência do
+FluxoLab (`orcamentos-sante-main/src/hooks` `useOrcamentos`/`Dashboard.tsx`, `kpis.reqValue`):
+lá, "Em requisição" é "quanto já virou requisição no sistema" (convertido em venda), um retrato
+de VOLUME convertido — não "quanto ainda falta receber", que é uma pergunta de cobrança
+(Busca Ativa). As duas coexistem na tela por perguntarem coisas diferentes, igual a
+`issued`/`paid` (D-020).
+**Impacto:** shared (`LisRequisitionTotals` novo; `LisBudgetsSummary.requisition`,
+`ExecutiveReport.requisition`); backend (`getRequisitionTotals` nova, chamada por
+`LisAnalyticsService.getSummary` e `ExecutiveReportService.getExecutiveReport`); api
+(`API_CONTRACTS.md` §5c/§10.2); frontend (`/results`, PAGES.md §14, troca a fonte do card "Em
+Requisição" de `/lis-budgets/pending/summary` para `summary.requisition`).
+
+### D-126: Dedupe de linhas duplicadas do mesmo orçamento MESCLA requisição/pagamento, nunca descarta
+**Decisão:** `consolidateLisRows` (`backend/src/lib/lis-spreadsheet.ts`) passa a mesclar campos
+entre as duas linhas quando há duplicata do mesmo `ORCAMENTO` dentro de uma importação, em vez de
+substituir a linha inteira pela de maior `total_value`. `total_value`/convênio/paciente/atendente
+continuam vindo da linha de maior total (regra original, §11.1) — mas `requisition_number` cai
+para a outra linha quando a vencedora não tem, e `paid_value`/`paid_on`/`requisition_value` vêm da
+linha com **maior `paid_value` entre as duas**, seja ela a vencedora do total ou não. Port exato
+de `consolidateOrcamentos` (app de referência do FluxoLab).
+**Motivo:** achado comparando "Recebido" com o app de referência usando a MESMA planilha real, no
+mesmo período: nosso sistema contava 167 pagos, a referência 169 — uma diferença real de
+R$ 3.516,76. A causa: a mesma REQUISIÇÃO pode gerar mais de uma linha na planilha (um exame por
+linha) sob o mesmo número de ORÇAMENTO; quando só uma das linhas tem requisição/pagamento
+preenchidos e ela não é a de maior `total_value`, a versão anterior jogava esse pagamento fora ao
+descartar a linha inteira. Um pagamento de verdade desaparecendo silenciosamente é o pior tipo de
+bug num sistema que alimenta comissão/folha de pagamento.
+**Impacto:** backend (`lis-spreadsheet.ts#consolidateLisRows`, único ponto de mudança — o
+`upsertBudget`/SQL de conflito entre IMPORTAÇÕES diferentes, ao longo do tempo, não muda: mesmo
+comportamento da referência, que também substitui por completo num reimport); nenhuma mudança de
+schema ou de contrato de API. **Dado já importado antes desta correção continua com o pagamento
+perdido** — precisa reimportar a mesma planilha para recuperar (o reimport é idempotente e
+upserta por número, então corrige as linhas afetadas sem duplicar as demais).
 
 ## Template para novas decisões
 

@@ -1180,8 +1180,23 @@ CREATE TABLE lis_budgets (
       ELSE NULL
     END
   ) STORED,
+  -- Valor do CONVÊNIO PRINCIPAL — mesma seleção de principal_insurance_name
+  -- acima, nunca a soma dos três (value_2/value_3 são cotações ALTERNATIVAS
+  -- do mesmo orçamento, não valores adicionais). Corrigido pela migração 014
+  -- (D-124) — a versão original de 012 somava os três por engano.
   total_value NUMERIC(12,2) GENERATED ALWAYS AS (
-    COALESCE(value_1, 0) + COALESCE(value_2, 0) + COALESCE(value_3, 0)
+    CASE
+      WHEN insurance_1 IS NOT NULL AND COALESCE(value_1, 0) > 0 THEN value_1
+      WHEN insurance_2 IS NOT NULL AND COALESCE(value_2, 0) > 0 THEN value_2
+      WHEN insurance_3 IS NOT NULL AND COALESCE(value_3, 0) > 0 THEN value_3
+      WHEN insurance_1 IS NOT NULL THEN COALESCE(value_1, 0)
+      WHEN insurance_2 IS NOT NULL THEN COALESCE(value_2, 0)
+      WHEN insurance_3 IS NOT NULL THEN COALESCE(value_3, 0)
+      WHEN COALESCE(value_1, 0) > 0 THEN value_1
+      WHEN COALESCE(value_2, 0) > 0 THEN value_2
+      WHEN COALESCE(value_3, 0) > 0 THEN value_3
+      ELSE 0
+    END
   ) STORED,
 
   insurance_id UUID NULL,                -- convênio resolvido; NULL = particular (D-082/D-114)

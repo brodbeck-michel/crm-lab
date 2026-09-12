@@ -19,9 +19,15 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 /internal-chat                → Chat Interno
 /quick-replies                → Respostas rápidas
 /decisions                    → Decisões (aprovações)    (gestor+)
+/results                      → Resultados (LIS)          (gestor+)
+/reconciliation               → Conferência (LIS)         (gestor+)
+/active-search                → Busca Ativa (LIS)         (gestor+)
+/sales                        → Vendas                    (atendente vê só as próprias)
 /settings/channels            → Canais & Equipe          (admin; gestor lê)
 /settings/operation           → Gestão da Operação        (gestor+)
 /settings/insurances          → Convênios                 (gestor+)
+/settings/attendants          → Atendentes (LIS)           (gestor+)
+/settings/commissions         → Comissão (LIS)            (gestor lê; admin edita)
 /settings/users               → Usuários & Permissões     (admin)
 /settings/theme               → Personalização            (admin)
 /platform/tenants             → Laboratórios Clientes     (operador plataforma)
@@ -46,9 +52,15 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 | `/internal-chat` | attendant · manager · admin | sim |
 | `/quick-replies` | attendant · manager · admin | sim |
 | `/decisions` | manager · admin | sim |
+| `/results` | manager · admin | sim |
+| `/reconciliation` | manager · admin | sim |
+| `/active-search` | manager · admin | sim |
+| `/sales` | attendant · manager · admin | sim |
 | `/settings/channels` | manager · admin | sim |
 | `/settings/operation` | manager · admin | sim |
 | `/settings/insurances` | manager · admin | sim |
+| `/settings/attendants` | manager · admin | sim |
+| `/settings/commissions` | manager · admin | sim |
 | `/settings/users` | admin | sim |
 | `/settings/theme` | admin | sim |
 | `/platform/tenants` | platform_operator | sim |
@@ -597,23 +609,269 @@ A restrição "campo vazio" é deliberada: disparar em qualquer `/` atrapalharia
 
 ---
 
+## Telas do LIS (Onda 10)
+
+Seis telas novas sobre o domínio "Orçamentos do LIS" da Onda 9 (`API_CONTRACTS.md` §5c/§6b/§10-12,
+`shared/types/lis.types.ts`). Nenhuma escreve em `lis_budgets` diretamente — a única entrada é a
+importação (§14). Filtros de período/atendente/convênio são **globais** entre `/results`,
+`/reconciliation` e `/active-search` (D-117, ver `## Estado Global` abaixo): trocar o período em
+uma tela e navegar para outra preserva a escolha, porque as três respondem à mesma pergunta
+operacional ("como estão os orçamentos deste período").
+
+### 14. Resultados (`/results`) — gestor+
+
+Home do domínio LIS — o "Dashboard" do FluxoLab, redesenhado a partir da referência visual real
+da tela equivalente (validação da Onda 10 trouxe screenshots do produto em produção). Duas fontes
+de dados coexistem, cada uma com um papel:
+
+- **`GET /lis-budgets/summary`** (período + convênio, §10.2) — KPIs, gráfico de atendentes,
+  distribuição por convênio e a base do "Detalhe por atendente". **Suporta filtro de convênio**
+  (ao contrário do que a Fase 0 original previa — a referência real tem esse filtro).
+- **`GET /reports/executive`** (só período, §5c) — usado **apenas** para "Exportar Relatório
+  Executivo": o PDF é o retrato do período inteiro, sem o filtro de convênio da tela (D-116 —
+  o PDF nunca pode secretamente refletir um filtro que a próxima pessoa a abrir a tela não vê
+  marcado). É por isso que os dois endpoints coexistem em vez de um só fazer as duas coisas.
+- **`GET /sales/summary`** (sem `attendantId`, §11) — `byAttendant` entra na tabela de comissão.
+- **`GET /settings/commissions`** — percentuais para os cálculos de comissão da tabela.
+
+#### Cabeçalho
+
+- `PeriodFilter` (padrão: últimos 30 dias, D-117) + botão **"Limpar período"** (volta ao
+  default) + `Select` de **Convênio** (`GET /lis-budgets/filters`, opção fixa "Todos os
+  convênios" no topo) — os três compartilhados com Conferência/Busca Ativa via
+  `useUIStore.lisFilters` (D-117).
+- **"Última atualização em ...":** `GET /lis-imports/latest` — nome do arquivo + data/hora;
+  `null` vira "Nenhuma importação ainda".
+- Botão **"Exportar Relatório Executivo"** — PDF via `GET /reports/executive` (ver acima).
+
+#### Grade de KPIs (4 `KpiCard`)
+
+1. **Total Orçado** — `issued.totalValue` + `issued.count` ("N orçamentos"). Cartão com destaque
+   visual (fundo escuro/accent) — é o número âncora da tela. `deltaPct`: variação vs. o período
+   **imediatamente anterior de mesma duração** — calculada no CLIENTE com um segundo fetch de
+   `/lis-budgets/summary` para esse período anterior (mesmo convênio, sem `attendantId`); sem
+   endpoint novo. `previous.issued.totalValue === 0` → sem `deltaPct` (evita `Infinity`/`NaN`,
+   mesma disciplina de `percent()`).
+2. **Em Requisição** — `requisition.totalValue`/`.count` (D-125: orçamentos **convertidos em
+   requisição** no período, pagos OU pendentes — **não é** a mesma pergunta de Busca Ativa, §16,
+   que é só a fatia sem pagamento) + "X% do total" = `requisition.totalValue / issued.totalValue`
+   (0 quando `issued.totalValue` é 0).
+3. **Recebido** — `paid.totalValue`/`.count` + "X% do total" (mesma fórmula) + barra de
+   `paid.conversionQty` (já capada em 100% pelo servidor — a tela nunca reaplica o cap).
+4. **Atendentes** — `byAttendantDetail.length` (quantos atendentes tiveram orçamento no
+   período) + rótulo "N ativo(s) no período".
+
+#### Gráficos
+
+- **Faturamento por atendente:** barras horizontais, `byAttendantDetail` (D-122 — TODOS os
+  atendentes, não só o top 6 de `byAttendant`) ordenado por `paidValue` desc. Eixo em `MoneyDisplay`
+  (variante `thousands` para caber).
+- **Distribuição por convênio:** donut (`byInsurance`, top 6) + legenda com nome, valor e "%
+  do total exibido" (`totalValue / soma dos 6`); quando `issued.totalValue` for maior que a soma
+  dos 6 mostrados, uma linha extra "Outros" fecha a diferença (`issued.totalValue - soma`) — nunca
+  inventa um valor negativo (`Math.max(0, …)`).
+
+#### Detalhe por atendente (tabela de comissão)
+
+Combinação, feita no CLIENTE, de `byAttendantDetail` (orçado/pago/conversão) + `salesSummary
+.byAttendant` (vendas de exames/check-up) + `commissionSettings` (percentuais) — por
+`attendantId`. **Nenhum endpoint novo faz esse join** (D-122): `lis_budgets` e `sales` são
+domínios de leitura separados por design (D-108/D-112), e a tela é o único lugar que precisa da
+visão combinada.
+
+Colunas: Atendente · Orçado (`issuedCount`) · Recebido (`paidValue`, `MoneyDisplay`) ·
+Conversão % (`paidCount / issuedCount`, capado em 100%, mesma fórmula do agregado) · Comissão
+sobre orçamento (`paidValue × commissionBudgetPct / 100`) · Vendas de exames · Comissão sobre
+exames (já vem calculada em `byKind.exams.commissionValue`) · Vendas de check-up · Comissão sobre
+check-up · **Comissão total** (soma das três comissões da linha). Linha **TOTAL** ao final,
+somando cada coluna — nunca recalculada de outro jeito que não seja a soma das linhas exibidas.
+Atendente sem venda no período aparece com as colunas de venda zeradas (`0`), não ausente da
+tabela — a base é `byAttendantDetail` (todo atendente com orçamento), `LEFT JOIN` com vendas.
+
+Badge **"% Comissão: X%"** ao lado do botão de exportar mostra `commissionBudgetPct` (o percentual
+usado na coluna "Comissão sobre orçamento" desta mesma tabela — os outros dois percentuais
+aparecem no cabeçalho de suas próprias colunas).
+
+**Exportar** (dois botões lado a lado, "Comissão em PDF" e "Comissão em Excel" — D-123, sem
+componente de menu novo): geram no CLIENTE a partir da MESMA tabela já montada (nunca um segundo
+fetch). PDF via `jspdf`/`jspdf-autotable` (mesmo padrão dos outros dois relatórios, paisagem por
+ter mais colunas); Excel via `xlsx` — uma aba, mesmas colunas da tabela, linha TOTAL ao final,
+nome de arquivo `comissoes-<startDate>-<endDate>.xlsx`.
+
+- **Sem dado no período:** cartões zerados + "Nenhum orçamento importado neste período" no lugar
+  dos gráficos/tabela — período sem movimento é estado normal, não falha.
+
+#### Modal Importar (usado em `/results` e `/reconciliation`)
+
+- `UploadDropzone` aceita **um único `.xlsx`**, convertido para base64 no cliente →
+  `POST /lis-imports { fileName, contentBase64 }` (§10.1). Arquivo maior que 10 MiB é recusado
+  **antes do upload** (checagem local, mesmo teto do servidor `LIS_IMPORT_MAX_BYTES`) — evita
+  gastar banda com um arquivo que o servidor rejeitaria de qualquer forma.
+- Enquanto processa: spinner com "Importando planilha..." (pode levar alguns segundos — chunks
+  no servidor). Sem barra de progresso real: o servidor responde uma vez, no fim.
+- Sucesso: resumo `rowsAccepted`/`rowsRejected` do `LisImport` retornado + toast; fecha o modal e
+  invalida as queries de `lis-budgets`/`lis-imports`/`reports`.
+- Erro `VALIDATION_ERROR` com `details.reason`: mensagem específica por `reason` —
+  `pdf_disguised` → "este arquivo é um PDF, não uma planilha"; `missing_column` → "a planilha
+  precisa ter a coluna ORÇAMENTO"; `empty` → "a planilha não tem nenhuma linha de dado". Nunca
+  um "erro genérico" para esses três casos — são os três jeitos reais de uma planilha do Santé
+  vir errada.
+- `MEDIA_TOO_LARGE` (413): mesma mensagem do teto local, caso a checagem do cliente falhe por
+  algum motivo (extensão errada no tamanho, etc.).
+
+#### "Limpar base" (purge) — admin apenas
+
+- Botão em `/results` (área de administração da tela, não no fluxo normal de leitura) abre
+  diálogo pedindo para **digitar `LIMPAR`** num campo de texto antes de habilitar o botão de
+  confirmação — mesma string exigida pelo servidor (`POST /lis-imports/purge { confirm:
+  "LIMPAR" }`, §10.1). Digitar qualquer outra coisa mantém o botão desabilitado; a tela não
+  chama o servidor para "adivinhar" se a confirmação está certa.
+  **Motivo do dígito exato (não um checkbox):** apagar toda a base de orçamentos do LIS do
+  tenant é irreversível — a barreira de UI espelha a barreira do servidor de propósito (D-109),
+  para que nem um clique automatizado nem um clique apressado do próprio admin passe batido.
+- Sucesso: toast + invalida todas as queries de `lis-budgets`/`reports`; a tela volta ao estado
+  "Nenhum orçamento importado ainda". O `LisImport` de `kind: "purge"` aparece no histórico de
+  "Última atualização" como qualquer outro evento.
+- Botão **ausente do DOM** para quem não é admin (mesmo padrão de `Settings/Insurances.tsx`,
+  §10) — não existe controle de escrita para desabilitar porque o papel não vê a área.
+
+### 15. Conferência (`/reconciliation`) — gestor+
+
+Listagem crua e paginada dos orçamentos importados — a tela de "olhar linha por linha", para
+quem a home (§14) não responde. Fonte: `GET /lis-budgets` (§10.2).
+
+- **Filtros** (compartilhados com §14/§16 via D-117): `PeriodFilter` (janela de **emissão**),
+  atendente, convênio, busca por nome de paciente (`SearchInput`, debounce 300ms).
+- **Tabela** (`DataTable` + `Pagination`, §Compartilhados): número, emitido em, paciente,
+  convênio principal, valor total, atendente, nº requisição, valor pago, pago em. Colunas de
+  data usam `DateDisplay`; valores usam `MoneyDisplay`.
+- **Ordenação** por cabeçalho de coluna (`sortBy`/`order` — só `issuedOn`, `number`,
+  `totalValue`, conforme o contrato); as demais colunas não ordenam pelo servidor e não fingem
+  que ordenam (sem seta de ordenação nelas).
+- Linha sem `paidValue`/`paidOn` (ainda não pago) mostra "—" nas duas colunas — não `R$ 0,00`,
+  que sugeriria pagamento de valor zero em vez de ausência de pagamento.
+- Botão **[Importar]** reaproveita o mesmo modal de §14 (mesmo componente, duas entradas).
+- Vazio (filtro sem resultado): "Nenhum orçamento neste filtro" — distinto de "nenhuma
+  importação ainda" (§14), que é vazio por ausência total de dado.
+
+### 16. Busca Ativa (`/active-search`) — gestor+
+
+Fila de cobrança: orçamentos com requisição emitida mas **sem pagamento recebido**. Fonte:
+`GET /lis-budgets/pending` + `GET /lis-budgets/pending/summary` (§10.2).
+
+- **Cartões de topo:** total (contagem + valor) e um `KpiCard` por faixa de idade
+  (`byAgeBand`: `0-7`, `8-15`, `16-30`, `30+`) — as **4 chaves sempre presentes**, `0`/`0` onde
+  não há linha (a tela não omite cartão de faixa vazia).
+- **Filtros:** atendente + `ageBand` (clicar num cartão de faixa filtra a tabela por ela —
+  atalho de UX, não substitui o seletor).
+- **Tabela:** número, paciente, convênio principal, valor total, atendente, nº requisição, valor
+  da requisição, emitido em, `AgeBadge` (dias em aberto + a faixa, com tom crescente de urgência
+  conforme a faixa — nunca cor isolada sem o número ao lado, D5 acessibilidade).
+- Ordenação fixa por `daysOpen DESC` (o mais antigo primeiro) — **sem** seletor de ordenação
+  nesta tela: é uma fila de cobrança, não um relatório para reordenar à vontade.
+- Vazio: "Nenhum orçamento em aberto" — estado bom (fila zerada), tela mostra com tom positivo,
+  não como ausência de dado.
+
+### 17. Vendas (`/sales`) — TENANT_ROLES, recorte por atendente (D-112)
+
+Lançamento de vendas avulsas de exame/check-up e o cálculo de comissão. Fonte: `GET /sales`,
+`POST /sales`, `DELETE /sales/:id`, `GET /sales/summary` (§11).
+
+- **Atendente** vê e lança **só as próprias vendas** — o filtro de atendente da tela nem aparece
+  para esse papel (o servidor já recorta por `attendants.user_id`, mas a tela não pede um dado
+  que o próprio atendente não escolhe). Login de atendente **sem vínculo** em `attendants`
+  (D-112 — vínculo é manual, feito em `/settings/attendants`, §18) recebe
+  `SALE_ATTENDANT_NOT_LINKED` ao tentar lançar: mensagem explícita "seu usuário ainda não está
+  ligado a um atendente — peça a um gestor para vincular em Configurações → Atendentes", nunca
+  um erro genérico de formulário.
+- **Gestor/admin** veem e lançam venda para qualquer atendente do tenant — campo "Atendente"
+  (`Select`) aparece só para esses papéis, populado por `GET /attendants?active=true`.
+- **Cartão de resumo:** `GET /sales/summary` — `byKind` (exames/check-up: contagem, valor,
+  `commissionValue`) + `totalValue` + `commissionTotal`. `commissionValue` já vem calculado pelo
+  servidor a partir dos percentuais de `/settings/commissions` (§19) — a tela nunca multiplica
+  percentual localmente.
+- **Lançar venda** (formulário/modal): data (não futura), código (opcional), valor (`> 0`),
+  exames (texto livre, opcional), tipo (`exames | check-up`). Sucesso invalida a lista e o
+  resumo.
+- **Apagar:** confirmação simples ("apagar esta venda?") — é `DELETE` real, sem histórico
+  dependente (§11); atendente só vê o botão nas próprias linhas, gestor/admin em todas.
+- **Filtros:** período (`soldOn`), tipo, e atendente (só para gestor/admin).
+
+### 18. Atendentes (`/settings/attendants`) — gestor+
+
+Cadastro do atendente do LIS, com vínculo opcional a um login do CRM (D-112). Fonte:
+`GET /attendants`, `POST /attendants`, `PATCH /attendants/:id` (§12).
+
+- **Tabela:** nome, status (ativo/inativo), usuário vinculado (`userName` ou "— sem login —"
+  quando `userId` é `null`). Busca por nome (`?search=`, sem caixa/acento).
+- **Criar/editar (modal):** nome + seletor opcional de usuário. A lista de logins vem de
+  `GET /settings/channels` (`team`, §6/D-066) — **não** de `GET /users`, que é admin apenas e
+  bloquearia o gestor de montar o seletor (a rota desta tela é gestor+). `team` já traz id/nome/
+  papel/status de todo o tenant; a tela filtra localmente por papel de laboratório
+  (`attendant | manager | admin`) e ativo. Nome duplicado por `foldedName`
+  (espaço/caixa não contam) → `CONFLICT`: mensagem "já existe um atendente com esse nome",
+  campo marcado — nunca cria uma segunda linha silenciosamente.
+- **Desvincular login:** no modal de edição, limpar o seletor de usuário e salvar envia
+  `userId: null` — desliga o vínculo sem apagar o atendente (útil para desfazer vínculo errado
+  da migração do Santé, D-120).
+- **Sem `DELETE`** (D-004, mesmo padrão de `/catalog` e `/settings/insurances`): desativar é
+  `PATCH { isActive: false }`. Atendente inativo continua aparecendo (com o vínculo histórico
+  em `lis_budgets`/`sales`), só sai dos seletores de "atendente ativo" de outras telas.
+- Botão "Novo Atendente" e coluna de ações **ausentes do DOM** para quem não é gestor/admin.
+
+### 19. Comissão (`/settings/commissions`) — gestor lê, admin edita
+
+Percentuais de comissão sobre venda de exame e de check-up (D-113 — antes viviam em
+`localStorage` no FluxoLab, agora por tenant). Fonte: `GET /settings/commissions`,
+`PATCH /settings/commissions` (§6b).
+
+- **Três campos numéricos** (`commissionBudgetPct`, `commissionExamsPct`,
+  `commissionCheckupPct`): 0 a 100, até 2 casas decimais. `commissionBudgetPct` fica visível
+  nesta tela mas **não é usado por nenhum cálculo desta onda** (`GET /sales/summary` só aplica
+  `commissionExamsPct`/`commissionCheckupPct`) — é comissão sobre orçamento conciliado, que só
+  passa a valer na Onda 13 (D-119). A tela não esconde o campo (ele já existe no contrato e o
+  admin pode querer configurar com antecedência), mas o rótulo indica "usado a partir da
+  conciliação de orçamentos".
+- Tenant sem configuração prévia recebe os defaults do servidor (2,00 / 1,50 / 1,50) sem gravar
+  nada — a tela não distingue esse caso de uma configuração explícita: os três campos aparecem
+  preenchidos do mesmo jeito.
+- **PATCH parcial:** salvar envia só os campos alterados (o formulário rastreia dirty fields);
+  campo fora de 0–100 é `VALIDATION_ERROR` com `details.fields`, marcado no campo, sem submeter.
+- Gestor vê os três campos **desabilitados**, sem botão salvar (mesmo padrão de leitura de
+  `/settings/insurances` para quem não edita) — o servidor recusaria o `PATCH` de qualquer
+  forma (403, `details.requiredRoles: ["admin"]`).
+
+---
+
 ## Estado Global (Zustand + TanStack Query)
 
 ```typescript
 // Zustand: estado de UI e sessão
 useAuthStore:    { user, tenant, theme, tokens }
-useUIStore:      { sidebarCollapsed, contextPanelOpen, activeModal }
+useUIStore:      { sidebarCollapsed, contextPanelOpen, activeModal,
+                   lisFilters: { startDate, endDate, attendantId, insuranceId } } // D-117
 
 // TanStack Query: TODOS os dados de servidor
 queryKeys: ['conversations', filters], ['conversation', id],
            ['proposals', filters], ['proposal', id],
-           ['exams', filters], ['analytics', period], ['theme']
+           ['exams', filters], ['analytics', period], ['theme'],
+           ['lis-budgets', filters], ['lis-budgets-summary', filters],
+           ['lis-budgets-pending', filters], ['lis-imports-latest'],
+           ['reports-executive', period], ['sales', filters],
+           ['sales-summary', filters], ['attendants', filters],
+           ['commission-settings']
 ```
 
 **Regras:**
 - Dados de servidor SEMPRE via TanStack Query (nunca copiar para Zustand)
 - WS events → `queryClient.invalidateQueries(...)` (refetch, não patch manual)
-- staleTime: conversas 10s, catálogo 1h, analytics 5min
+- staleTime: conversas 10s, catálogo 1h, analytics 5min, dados do LIS 1min (importação é
+  esporádica, mas a tela precisa refletir uma importação recém-feita sem exigir F5 manual — D-117)
+- `lisFilters` é o ÚNICO pedaço de estado de filtro que vive em `useUIStore` em vez de na URL —
+  exceção deliberada (D-117): as três telas de leitura do LIS (§14-16) compartilham o mesmo
+  período/atendente/convênio, e forçar cada uma a ler da URL obrigaria a propagar query params
+  em toda navegação entre elas. Persistido em `sessionStorage` (não `localStorage`): sobrevive a
+  F5, mas não vaza para a sessão seguinte de outra pessoa no mesmo computador.
 
 ---
 

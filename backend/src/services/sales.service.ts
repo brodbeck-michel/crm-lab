@@ -6,6 +6,7 @@ import type {
   CreateSaleRequest,
   Sale,
   SaleKind,
+  SalesAttendantSummary,
   SalesSummary,
   SalesSummaryQuery,
   ListSalesQuery,
@@ -235,7 +236,11 @@ export function createSalesService(deps: SalesServiceDeps): SalesService {
       if (own !== undefined && own === null) return emptySummary();
 
       const attendantId = own ?? query.attendantId;
-      const { rows, commission } = await db.withTenant(ctx.tenantId, async (tx) => ({
+      // D-122: detalhe por atendente só faz sentido pra visão do tenant inteiro
+      // (manager/admin) — attendant nunca vê a lista de outros atendentes.
+      const wantsByAttendant = own === undefined;
+
+      const { rows, byAttendantRows, commission } = await db.withTenant(ctx.tenantId, async (tx) => ({
         rows: await salesRepo.summarizeByKind(
           tx,
           ctx.tenantId,
@@ -243,6 +248,9 @@ export function createSalesService(deps: SalesServiceDeps): SalesService {
           period.endDate,
           attendantId,
         ),
+        byAttendantRows: wantsByAttendant
+          ? await salesRepo.summarizeByAttendantAndKind(tx, ctx.tenantId, period.startDate, period.endDate)
+          : [],
         commission: (await findCommissionSettings(tx, ctx.tenantId)) ?? DEFAULT_COMMISSION_SETTINGS,
       }));
 
@@ -261,6 +269,33 @@ export function createSalesService(deps: SalesServiceDeps): SalesService {
       summary.commissionTotal = toMoney(
         summary.byKind.exams.commissionValue + summary.byKind.checkup.commissionValue,
       );
+
+      if (wantsByAttendant) {
+        const byAttendantMap = new Map<string, SalesAttendantSummary>();
+        for (const row of byAttendantRows) {
+          if (row.kind !== 'exams' && row.kind !== 'checkup') continue;
+          const existing = byAttendantMap.get(row.attendantId) ?? {
+            attendantId: row.attendantId,
+            attendantName: row.attendantName,
+            byKind: {
+              exams: { count: 0, value: 0, commissionValue: 0 },
+              checkup: { count: 0, value: 0, commissionValue: 0 },
+            },
+            totalValue: 0,
+            commissionTotal: 0,
+          };
+          const commissionValue = toMoney((row.value * pctByKind[row.kind]) / 100);
+          existing.byKind[row.kind] = { count: row.count, value: row.value, commissionValue };
+          byAttendantMap.set(row.attendantId, existing);
+        }
+        summary.byAttendant = [...byAttendantMap.values()].map((entry) => ({
+          ...entry,
+          totalValue: toMoney(entry.byKind.exams.value + entry.byKind.checkup.value),
+          commissionTotal: toMoney(
+            entry.byKind.exams.commissionValue + entry.byKind.checkup.commissionValue,
+          ),
+        }));
+      }
 
       return summary;
     },

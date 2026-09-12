@@ -47,6 +47,8 @@ describe('GET /reports/executive', () => {
       .set(app.auth(managerA));
     expect(res.status).toBe(200);
     const body = res.body as ExecutiveReport;
+    // D-125: "Em Requisição" sem dado no tenant é {0,0}, nunca ausente.
+    expect(body.requisition).toEqual({ count: 0, totalValue: 0 });
     expect(body.monthlySeries).toHaveLength(12);
     expect(body.monthlySeries[body.monthlySeries.length - 1]?.month).toBe('2026-08');
     for (const point of body.monthlySeries) {

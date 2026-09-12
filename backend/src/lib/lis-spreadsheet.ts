@@ -282,16 +282,60 @@ export function principalInsuranceName(row: LisSpreadsheetRow): string | null {
   return null;
 }
 
-/** Soma de value_1..3 (NULL tratado como 0) — espelha `lis_budgets.total_value` gerada. */
+/**
+ * Valor do CONVÊNIO PRINCIPAL (mesma seleção de `principalInsuranceName`) —
+ * espelha `lis_budgets.total_value` gerada (SCHEMA.md §26, D-124).
+ * `insurance_2`/`insurance_3` são cotações ALTERNATIVAS do mesmo orçamento
+ * (o mesmo exame precificado por outro convênio), não valores adicionais —
+ * `value1 + value2 + value3` está ERRADO (era o bug de D-124, corrigido pela
+ * migração 014 depois de comparar com o app de referência do FluxoLab).
+ */
 export function totalValue(row: LisSpreadsheetRow): number {
-  return (row.value1 ?? 0) + (row.value2 ?? 0) + (row.value3 ?? 0);
+  const pairs: Array<[string | null, number | null]> = [
+    [row.insurance1, row.value1],
+    [row.insurance2, row.value2],
+    [row.insurance3, row.value3],
+  ];
+  for (const [name, value] of pairs) {
+    if (name !== null && (value ?? 0) > 0) return value ?? 0;
+  }
+  for (const [name, value] of pairs) {
+    if (name !== null) return value ?? 0;
+  }
+  // Nenhum dos três tem nome de convênio (planilha sem essa coluna
+  // preenchida) — usa o primeiro valor > 0 mesmo sem nome, igual ao app de
+  // referência (`opts.find(o => o.v > 0)`, terceiro fallback).
+  for (const [, value] of pairs) {
+    if ((value ?? 0) > 0) return value ?? 0;
+  }
+  return 0;
 }
 
 /**
- * Dedupe por `number` — a de maior `total_value` vence (BUSINESS_RULES.md
- * §11.1, port de `consolidateOrcamentos`). Linhas sem `number` (string vazia)
- * NAO entram aqui — filtre antes de chamar. Empate: mantem a primeira vista
- * (ordem estavel).
+ * Dedupe por `number` — a de maior `total_value` vence PARA OS DEMAIS CAMPOS
+ * (BUSINESS_RULES.md §11.1), mas requisição/pagamento são MESCLADOS entre as
+ * duas linhas, não descartados junto com a perdedora (D-126, port EXATO de
+ * `consolidateOrcamentos` do app de referência).
+ *
+ * BUG corrigido (achado comparando número a número com o app de referência,
+ * mesma planilha real, mesmo período — "Recebido" batia 167 pagos aqui contra
+ * 169 lá): a versão anterior substituía a linha INTEIRA pela de maior
+ * `total_value`, mesmo quando a linha perdedora era a que tinha o pagamento/
+ * requisição — a mesma REQUISIÇÃO pode gerar mais de uma linha na planilha
+ * (um exame por linha) com o mesmo número de ORÇAMENTO mas dados de
+ * requisição/pagamento só preenchidos numa delas. Descartar a linha inteira
+ * jogava fora um pagamento de verdade.
+ *
+ * Regra (idêntica à referência):
+ *   - `rep` = linha de maior `total_value` (dona dos demais campos: convênio,
+ *     paciente, atendente — nunca a requisição/pagamento sozinha)
+ *   - `requisitionNumber` = `rep.requisitionNumber ?? outra.requisitionNumber`
+ *   - `paidValue`/`paidOn` = da linha com MAIOR `paidValue` entre as duas
+ *     (pode ser a perdedora do total_value)
+ *   - `requisitionValue` = `MAX` das duas
+ *
+ * Linhas sem `number` (string vazia) NAO entram aqui — filtre antes de
+ * chamar. Empate de `total_value`: mantém a primeira vista (ordem estável).
  */
 export function consolidateLisRows(rows: LisSpreadsheetRow[]): LisSpreadsheetRow[] {
   const byNumber = new Map<string, LisSpreadsheetRow>();
@@ -299,9 +343,24 @@ export function consolidateLisRows(rows: LisSpreadsheetRow[]): LisSpreadsheetRow
     const key = row.number.trim();
     if (key === '') continue;
     const existing = byNumber.get(key);
-    if (!existing || totalValue(row) > totalValue(existing)) {
+    if (!existing) {
       byNumber.set(key, row);
+      continue;
     }
+
+    const rep = totalValue(row) > totalValue(existing) ? row : existing;
+    const other = rep === row ? existing : row;
+    const repPaid = rep.paidValue ?? 0;
+    const otherPaid = other.paidValue ?? 0;
+    const maiorPago = otherPaid > repPaid ? other : rep;
+
+    byNumber.set(key, {
+      ...rep,
+      requisitionNumber: rep.requisitionNumber ?? other.requisitionNumber,
+      paidValue: maiorPago.paidValue ?? 0,
+      paidOn: maiorPago.paidOn,
+      requisitionValue: Math.max(rep.requisitionValue ?? 0, other.requisitionValue ?? 0),
+    });
   }
   return [...byNumber.values()];
 }

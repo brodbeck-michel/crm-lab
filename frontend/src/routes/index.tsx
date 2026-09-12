@@ -11,11 +11,17 @@ import Analytics from '@/pages/Analytics';
 import ChannelsSettings from '@/pages/Settings/Channels';
 import OperationSettings from '@/pages/Settings/Operation';
 import Insurances from '@/pages/Settings/Insurances';
+import AttendantsSettings from '@/pages/Settings/Attendants';
+import CommissionsSettings from '@/pages/Settings/Commissions';
 import ThemeSettings from '@/pages/Settings/Theme';
 import UsersSettings from '@/pages/Settings/Users';
 import InternalChat from '@/pages/InternalChat';
 import QuickReplies from '@/pages/QuickReplies';
 import Decisions from '@/pages/Decisions';
+import Results from '@/pages/Results';
+import Reconciliation from '@/pages/Reconciliation';
+import ActiveSearch from '@/pages/ActiveSearch';
+import Sales from '@/pages/Sales';
 import PlatformTenants from '@/pages/Platform/Tenants';
 import PlatformTenantDetail from '@/pages/Platform/TenantDetail';
 import PlatformBilling from '@/pages/Platform/Billing';
@@ -61,6 +67,7 @@ export const appRoutes: RouteObject[] = [
               { path: 'analytics', element: <Analytics /> },
               { path: 'internal-chat', element: <InternalChat /> },
               { path: 'quick-replies', element: <QuickReplies /> },
+              { path: 'sales', element: <Sales /> },
             ],
           },
         ],
@@ -74,9 +81,14 @@ export const appRoutes: RouteObject[] = [
             element: <AppShell />,
             children: [
               { path: 'decisions', element: <Decisions /> },
+              { path: 'results', element: <Results /> },
+              { path: 'reconciliation', element: <Reconciliation /> },
+              { path: 'active-search', element: <ActiveSearch /> },
               { path: 'settings/channels', element: <ChannelsSettings /> },
               { path: 'settings/operation', element: <OperationSettings /> },
               { path: 'settings/insurances', element: <Insurances /> },
+              { path: 'settings/attendants', element: <AttendantsSettings /> },
+              { path: 'settings/commissions', element: <CommissionsSettings /> },
             ],
           },
         ],

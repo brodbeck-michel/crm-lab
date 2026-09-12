@@ -1070,6 +1070,283 @@ estática seria vazamento de dado de saúde sem passar por autenticação nem po
 
 ---
 
+### 24. `attendants` (migração 012 — Onda 9, D-112)
+Atendente do LIS. O `USUÁRIO` da planilha de orçamentos vira `attendant_id`; ligar a um
+`users.id` (login no CRM) é **opcional e manual** — atendente do LIS não precisa ser usuário do
+sistema. Fecha a modelagem do spec da fusão CRM Lab + FluxoLab §2.1.
+
+```sql
+CREATE TABLE attendants (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  folded_name VARCHAR(255) GENERATED ALWAYS AS (
+    lower(regexp_replace(trim(name), '\s+', ' ', 'g'))
+  ) STORED,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  user_id UUID NULL,                     -- opcional: liga o atendente a um login do CRM
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+  UNIQUE (tenant_id, user_id),
+  UNIQUE (tenant_id, folded_name)
+);
+
+CREATE INDEX idx_attendants_tenant_id ON attendants(tenant_id);
+CREATE INDEX idx_attendants_user_id ON attendants(user_id);
+
+CREATE TRIGGER trg_attendants_updated_at
+  BEFORE UPDATE ON attendants
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+```
+
+`folded_name` (**D-111**, mesma família de `GENERATED … STORED` de `lis_budgets` abaixo) é o que
+faz `UNIQUE (tenant_id, folded_name)` deduplicar "Maria Souza", "maria souza" e "Maria  Souza"
+(espaço duplo) como o mesmo atendente — nome de atendente na planilha do LIS não tem disciplina
+de digitação (BUSINESS_RULES.md §11). Acento **não** é removido (ao contrário de
+`exam.repository.folded()`, que usa `translate`): avaliar essa remoção é risco explícito do spec,
+registrado para decisão futura, não implementado nesta onda.
+
+`UNIQUE (tenant_id, user_id)` permite `NULL` múltiplos (comportamento padrão de `UNIQUE` do
+Postgres com `NULL`): vários atendentes sem login não colidem entre si; um `user_id` já ligado a
+outro atendente é rejeitado.
+
+### 25. `lis_imports` (migração 012 — Onda 9, D-109)
+Histórico **imutável** de importação de planilha do LIS (e de "Limpar base"). Sem `DELETE` na
+API — é o log de auditoria da própria importação, não um dado de trabalho.
+
+```sql
+CREATE TABLE lis_imports (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL,
+  kind VARCHAR(20) NOT NULL,             -- CHECK: import | purge
+  file_name VARCHAR(255),                -- NULL em kind='purge'
+  rows_in_file INT,
+  rows_accepted INT,
+  rows_rejected INT,
+  proposals_won INT,                     -- preenchido só a partir da Onda 13 (D-118)
+  status VARCHAR(20) NOT NULL DEFAULT 'processing', -- CHECK: processing | completed | failed
+  error_message TEXT,
+  created_by UUID,
+  created_at TIMESTAMP DEFAULT NOW(),
+  finished_at TIMESTAMP NULL,
+
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+  CHECK (kind IN ('import', 'purge')),
+  CHECK (status IN ('processing', 'completed', 'failed'))
+);
+
+CREATE INDEX idx_lis_imports_tenant_id ON lis_imports(tenant_id);
+CREATE INDEX idx_lis_imports_tenant_created ON lis_imports(tenant_id, created_at DESC);
+```
+
+`GET /lis-imports/latest` (API_CONTRACTS.md §10) lê a linha mais recente por
+`(tenant_id, created_at DESC)`; o índice composto existe para essa consulta, além da listagem
+paginada. `proposals_won` fica em `0`/`NULL` até a Onda 13 ligar a conciliação (D-118) — a
+coluna **nasce aqui** porque é o import quem sabe quantas propostas fechou naquela rodada, e
+criar a coluna numa migração futura obrigaria a alterar uma tabela de histórico já escrita.
+
+### 26. `lis_budgets` (migração 012 — Onda 9, D-110/D-111/D-114)
+Uma linha por `UNIQUE (tenant_id, number)` — o orçamento do LIS, já deduplicado e consolidado
+pelo `LisImportService` (BUSINESS_RULES.md §11: maior `total_value` vence). É a tabela que
+`GET /lis-budgets*`, Resultados, Conferência e Busca Ativa leem.
+
+```sql
+CREATE TABLE lis_budgets (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL,
+  number VARCHAR(50) NOT NULL,           -- coluna ORCAMENTO da planilha (obrigatória)
+  issued_on DATE,                        -- DATA_ORÇAMENTO (D-110: DATE, não TIMESTAMP)
+  patient_name VARCHAR(255),             -- NM_PACIENTE — dado pessoal sem patient_id (§6 do spec)
+
+  insurance_1 VARCHAR(255),              -- CONVENIO1
+  value_1 NUMERIC(12,2),                 -- VL_TOTAL1
+  insurance_2 VARCHAR(255),              -- CONVENIO2
+  value_2 NUMERIC(12,2),                 -- VL_TOTAL2
+  insurance_3 VARCHAR(255),              -- CONVENIO3
+  value_3 NUMERIC(12,2),                 -- VL_TOTAL3
+
+  principal_insurance_name VARCHAR(255) GENERATED ALWAYS AS (
+    CASE
+      WHEN insurance_1 IS NOT NULL AND COALESCE(value_1, 0) > 0 THEN insurance_1
+      WHEN insurance_2 IS NOT NULL AND COALESCE(value_2, 0) > 0 THEN insurance_2
+      WHEN insurance_3 IS NOT NULL AND COALESCE(value_3, 0) > 0 THEN insurance_3
+      WHEN insurance_1 IS NOT NULL THEN insurance_1
+      WHEN insurance_2 IS NOT NULL THEN insurance_2
+      WHEN insurance_3 IS NOT NULL THEN insurance_3
+      ELSE NULL
+    END
+  ) STORED,
+  total_value NUMERIC(12,2) GENERATED ALWAYS AS (
+    COALESCE(value_1, 0) + COALESCE(value_2, 0) + COALESCE(value_3, 0)
+  ) STORED,
+
+  insurance_id UUID NULL,                -- convênio resolvido; NULL = particular (D-082/D-114)
+  attendant_name VARCHAR(255),           -- USUÁRIO/USUARIO cru da planilha
+  attendant_id UUID NULL,                -- atendente resolvido (§24)
+  insurance_average NUMERIC(12,2),       -- MEDIA_CONVENIO
+
+  requisition_number VARCHAR(50),        -- REQUISICAO (5 aliases na planilha)
+  requisition_value NUMERIC(12,2),       -- VALOR_REQUISICAO
+  paid_value NUMERIC(12,2),              -- Valor_Pago (3 aliases)
+  paid_on DATE,                          -- DATA_PAGAMENTO (5 aliases; D-110: DATE)
+
+  import_id UUID NOT NULL,               -- importação que gravou/atualizou esta linha por último
+  proposal_id UUID NULL,                 -- conciliação (Onda 13, D-119) — nasce NULL nesta onda
+
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (insurance_id) REFERENCES insurances(id),
+  FOREIGN KEY (attendant_id) REFERENCES attendants(id),
+  FOREIGN KEY (import_id) REFERENCES lis_imports(id),
+  FOREIGN KEY (proposal_id) REFERENCES proposals(id) ON DELETE SET NULL,
+  UNIQUE (tenant_id, number)
+);
+
+CREATE INDEX idx_lis_budgets_tenant_issued ON lis_budgets(tenant_id, issued_on);
+CREATE INDEX idx_lis_budgets_tenant_paid ON lis_budgets(tenant_id, paid_on) WHERE paid_value > 0;
+CREATE INDEX idx_lis_budgets_tenant_requisition ON lis_budgets(tenant_id, requisition_number);
+CREATE INDEX idx_lis_budgets_tenant_attendant ON lis_budgets(tenant_id, attendant_id);
+
+CREATE TRIGGER trg_lis_budgets_updated_at
+  BEFORE UPDATE ON lis_budgets
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+```
+
+- **Datas são `DATE`, não `TIMESTAMP` (D-110):** o serial do Excel não carrega fuso, e todo
+  agrupamento de KPI é por dia/mês — `TIMESTAMP` introduziria a mesma classe de bug de UTC-3 já
+  corrigida em D-021/D-078 para dado que nunca teve hora.
+- **`principal_insurance_name` e `total_value` são `GENERATED … STORED` (D-111):** convênio
+  principal e valor total do orçamento são regra de negócio pura sobre `insurance_1..3`/
+  `value_1..3` (BUSINESS_RULES.md §11) — calculá-los no INSERT/UPDATE do backend arriscaria uma
+  segunda implementação divergente no dia em que outro caminho de escrita aparecer (seed,
+  script de correção). **Risco registrado no spec (§6):** validar `GENERATED … STORED` no
+  PGlite **na primeira hora** da Onda 9; se não for suportado, o fallback é calcular as duas
+  colunas como colunas normais no `LisImportRepository`, num único ponto de escrita.
+- **`insurance_id` resolvido por nome dobrado (D-114):** o nome de `principal_insurance_name` é
+  casado contra `insurances.name` (mesma dobra de caixa/acento de `attendants.folded_name` e do
+  catálogo); convênio inexistente é **criado** com `type='outro'`, `source='lis'`. `PARTICULAR`
+  e variantes (`PARTICULAR`, `Particular`, `PARTICULAR ID...` — ver BUSINESS_RULES.md §11 para a
+  lista) resolvem para `insurance_id NULL` — nunca criam um convênio "Particular" (D-082, que já
+  valia para o domínio de propostas e se estende ao domínio do LIS). O nome bruto da planilha
+  permanece em `insurance_1..3` mesmo depois de resolvido.
+- **`attendant_name` vs `attendant_id`:** o mesmo padrão de `insurance_1..3` — a coluna crua
+  nunca é apagada depois da resolução; é o que permite auditar uma resolução errada sem reabrir
+  o arquivo original.
+- **`patient_name` é dado pessoal sem `patient_id`** (risco registrado no spec §6, fora do fluxo
+  LGPD de `patients`/D-063 desta onda): a política de retenção fica em aberto — ver
+  `docs/DECISIONS.md` D-115 e a lista de riscos do spec da fusão.
+- **`import_id NOT NULL`:** toda linha nasce de uma importação; não existe `lis_budgets` digitado
+  à mão pela API (a Onda 9 não expõe `POST /lis-budgets`, só leitura — API_CONTRACTS.md §10).
+- **`proposal_id`** nasce sempre `NULL` nesta onda — a coluna existe desde já porque `lis_budgets`
+  é o lado "B" da conciliação, mas quem grava é o hook da Onda 13 (D-119); `ON DELETE SET NULL`
+  para não travar a exclusão de uma proposta antiga.
+
+### 27. `sales` (migração 012 — Onda 9)
+Vendas avulsas (exames e check-ups) do laboratório, para o cálculo de comissão — herdado do
+FluxoLab, sem tabela equivalente no CRM Lab hoje.
+
+```sql
+CREATE TABLE sales (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL,
+  attendant_id UUID NOT NULL,
+  sold_on DATE NOT NULL,
+  code VARCHAR(50),
+  value NUMERIC(12,2) NOT NULL,
+  exams TEXT,                            -- texto livre (nomes dos exames vendidos)
+  kind VARCHAR(20) NOT NULL,             -- CHECK: exams | checkup
+  created_by UUID,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (attendant_id) REFERENCES attendants(id),
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+  CHECK (value > 0),
+  CHECK (kind IN ('exams', 'checkup'))
+);
+
+CREATE INDEX idx_sales_tenant_id ON sales(tenant_id);
+CREATE INDEX idx_sales_tenant_sold_on ON sales(tenant_id, sold_on);
+CREATE INDEX idx_sales_attendant_id ON sales(attendant_id);
+
+CREATE TRIGGER trg_sales_updated_at
+  BEFORE UPDATE ON sales
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+```
+
+Comissão é `value × tenant_settings.commission_exams_pct` ou `commission_checkup_pct`, conforme
+`kind` (BUSINESS_RULES.md §11) — **nunca** armazenada na linha da venda (D-002/BUSINESS_RULES
+§5, um número não vive em dois lugares). `DELETE /sales/:id` apaga de verdade (mesma disciplina
+de `quick_replies`, §22: venda lançada errada é corrigida apagando e relançando, não há
+histórico dependente da linha). Escopo de leitura por papel: atendente só as próprias vendas
+(`attendants.user_id = ctx.userId`); manager/admin veem todas — API_CONTRACTS.md §11.
+
+### Colunas novas em `tenant_settings`, `insurances` e `proposals` (migração 012 — Onda 9)
+
+**`tenant_settings` ganha os percentuais de comissão (D-113):**
+
+```sql
+ALTER TABLE tenant_settings
+  ADD COLUMN commission_budget_pct NUMERIC(5,2) NOT NULL DEFAULT 2.00,
+  ADD COLUMN commission_exams_pct NUMERIC(5,2) NOT NULL DEFAULT 1.50,
+  ADD COLUMN commission_checkup_pct NUMERIC(5,2) NOT NULL DEFAULT 1.50;
+```
+
+Os defaults são os percentuais validados em produção pelo FluxoLab (2% / 1,5% / 1,5% — antes
+por-navegador em `localStorage`, agora por-tenant e por-linha). `commission_budget_pct` existe
+desde já mas só ganha consumidor na Onda 13 (comissão sobre orçamento conciliado); as duas
+outras já são usadas por `GET /sales/summary` nesta onda.
+
+**`insurances` ganha `type = 'outro'` e `source` (D-114):**
+
+```sql
+ALTER TABLE insurances
+  DROP CONSTRAINT insurances_type_check,
+  ADD CONSTRAINT insurances_type_check
+    CHECK (type IN ('cooperativa', 'medicina_grupo', 'seguradora', 'autogestao', 'especial', 'outro')),
+  ADD COLUMN source VARCHAR(20) NOT NULL DEFAULT 'manual',
+  ADD CONSTRAINT insurances_source_check CHECK (source IN ('manual', 'lis'));
+```
+
+`type = 'outro'` é o valor gravado quando o convênio nasce da resolução automática de
+`lis_budgets` (D-114); `source = 'lis'` marca a origem, espelhando `exam_catalog.source` (§7,
+D-081). Convênio criado manualmente pela tela `/settings/insurances` continua `source = 'manual'`
+— o `DEFAULT` cobre as linhas existentes sem backfill.
+
+**`proposals` ganha as colunas de conciliação, criadas agora e usadas só na Onda 13 (D-118):**
+
+```sql
+ALTER TABLE proposals
+  ADD COLUMN lis_budget_number VARCHAR(50),
+  ADD COLUMN lis_requisition_number VARCHAR(50),
+  ADD COLUMN lis_paid_value NUMERIC(12,2),
+  ADD COLUMN lis_paid_on DATE,
+  ADD COLUMN lis_reconciled_at TIMESTAMP;
+
+CREATE UNIQUE INDEX idx_proposals_tenant_lis_budget_number
+  ON proposals(tenant_id, lis_budget_number)
+  WHERE lis_budget_number IS NOT NULL;
+```
+
+**As cinco colunas nascem NULL em toda proposta e nenhuma rota desta onda as escreve** — nem
+`POST /proposals`, nem `PATCH /proposals/:id/*` ganham campo novo (API_CONTRACTS.md §3 só muda
+na Onda 13, com `PATCH /proposals/:id/lis-reference`). Elas entram na `012` e não numa migração
+futura porque, sem divisão de planos (D-108), não há razão para duas migrações e dois passes
+pelo `ProposalService` — a coluna nasce junto com o resto do domínio LIS, e o comportamento
+(gravar `lis_budget_number` a partir da tela, casar por número no import, avançar para `ganho`)
+é construído inteiro na Onda 13 (D-119). O índice único parcial já impede duas propostas
+disputarem o mesmo número de orçamento do LIS desde já, mesmo sem nenhum caminho de escrita
+ainda ligado.
+
+---
+
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
 
 O isolamento multitenant não é convenção: é imposto pelo banco. O backend conecta com o papel
@@ -1174,22 +1451,28 @@ Nenhum outro caminho de código deve usar `withoutTenant()`.
 | `insurances` | ✅ | migração `006_rls_onda7.sql` |
 | `exam_prices` | ✅ | idem |
 | `exam_synonyms` | ✅ | idem |
+| `attendants` | ✅ | migração `013_rls_lis_domain.sql` |
+| `lis_imports` | ✅ | idem |
+| `lis_budgets` | ✅ | idem |
+| `sales` | ✅ | idem |
 
-As **4 tabelas da migração 003** entram sob RLS na `004_rls_onda6.sql`, e as **3 tabelas da
-migração 005** entram na `006_rls_onda7.sql` — sempre a policy padrão (mesma forma, mesmo
-`NULLIF(current_setting('app.tenant_id', true), '')::uuid`), na mesma leva de migrações que cria
-a tabela (lição da Onda 6: tabela sem policy não trava, vaza). A prova é a mesma das outras: com
-contexto do tenant A, nenhuma linha de B em `SELECT`/`UPDATE`/`DELETE`, e `INSERT` com
-`tenant_id` de B rejeitado pelo `WITH CHECK`. Tabela nova sem policy é **fail-open** — o `GRANT`
-de `ALTER DEFAULT PRIVILEGES` já dá `SELECT` a `crm_app` no momento do `CREATE TABLE`, então
-esquecer a policy é vazar entre laboratórios, não travar.
+As **4 tabelas da migração 003** entram sob RLS na `004_rls_onda6.sql`, as **3 tabelas da
+migração 005** entram na `006_rls_onda7.sql`, e as **4 tabelas novas da migração 012**
+(`attendants`, `lis_imports`, `lis_budgets`, `sales`) entram na `013_rls_lis_domain.sql` — sempre
+a policy padrão (mesma forma, mesmo `NULLIF(current_setting('app.tenant_id', true), '')::uuid`),
+num par de migrações separado (lição da Onda 6: tabela sem policy não trava, vaza). A prova é a
+mesma das outras: com contexto do tenant A, nenhuma linha de B em `SELECT`/`UPDATE`/`DELETE`, e
+`INSERT` com `tenant_id` de B rejeitado pelo `WITH CHECK`. Tabela nova sem policy é **fail-open**
+— o `GRANT` de `ALTER DEFAULT PRIVILEGES` já dá `SELECT` a `crm_app` no momento do `CREATE
+TABLE`, então esquecer a policy é vazar entre laboratórios, não travar.
 
 Verificado em PGlite (D-008) com 2 tenants, nas **13** tabelas da migração 001 (e,
 em `onda6-schema.spec.ts`, nas 4 da migração 003; em `onda7-schema.spec.ts`, nas 3 da migração
-005): com `app.tenant_id` = tenant A, nenhuma linha do tenant B aparece em
-`SELECT`/`UPDATE`/`DELETE`; `SELECT * FROM tenants` devolve exatamente 1 linha (a de A);
-`INSERT` com `tenant_id` (ou `id`) de B é rejeitado pelo `WITH CHECK`; sem `app.tenant_id`
-setado, todas as tabelas devolvem 0 linhas. O mesmo SQL roda em Postgres 16 no docker.
+005; em `rls-onda9.spec.ts`, nas 4 da migração 012): com `app.tenant_id` = tenant A, nenhuma
+linha do tenant B aparece em `SELECT`/`UPDATE`/`DELETE`; `SELECT * FROM tenants` devolve
+exatamente 1 linha (a de A); `INSERT` com `tenant_id` (ou `id`) de B é rejeitado pelo `WITH
+CHECK`; sem `app.tenant_id` setado, todas as tabelas devolvem 0 linhas. O mesmo SQL roda em
+Postgres 16 no docker.
 
 ---
 
@@ -1236,7 +1519,11 @@ migrations/
 ├── 007_conversation_pins.sql     # conversation_pins + policy (Onda 8 §2.3)
 ├── 008_quick_replies.sql         # quick_replies + policy (Onda 8 §3.2)
 ├── 009_message_media.sql         # message_media + policy (Onda 8 §4)
-└── ...
+├── 010_internal_chat_dm.sql      # internal_channels.dm_user_a_id/dm_user_b_id (D-101)
+├── 011_proposal_number.sql       # proposals.proposal_number + índice único (tenant, number)
+├── 012_lis_domain.sql            # attendants, lis_imports, lis_budgets, sales + colunas novas em
+│                                  # tenant_settings, insurances, proposals (Onda 9, §24-27)
+└── 013_rls_lis_domain.sql        # policies das 4 tabelas da 012 (Onda 9)
 ```
 
 A 007 e a 008 são arquivos ÚNICOS (tabela + policy), diferente dos pares 003/004 e 005/006: a

@@ -913,6 +913,237 @@ macro que ela não sabe chamar. Aí é `VALIDATION_ERROR`, e ela escolhe.
 
 ---
 
+## 18. CommissionSettingsService (Onda 9 — D-113)
+
+**Responsabilidade:** os 3 percentuais de comissão do laboratório. Dono das colunas
+`commission_budget_pct`/`commission_exams_pct`/`commission_checkup_pct` em `tenant_settings`
+(SCHEMA.md §16, ALTER da migração 012) — tabela cujo dono geral continua sendo
+`ChannelSettingsService` (§13), mas as colunas de comissão são um assunto próprio (percentual de
+remuneração, não configuração de canal), por isso um service pequeno e separado em vez de
+inflar `ChannelSettingsService.update` com um terceiro assunto.
+
+```typescript
+export interface CommissionSettingsService {
+  /** manager/admin. Defaults (2,00 / 1,50 / 1,50) quando não há linha em tenant_settings. */
+  get(ctx: TenantContext): Promise<CommissionSettings>;
+
+  /** admin. Patch parcial; upsert por tenant_id. */
+  update(ctx: TenantContext, dto: UpdateCommissionSettingsRequest): Promise<CommissionSettings>;
+}
+```
+
+**Regras:**
+- Mesma disciplina de `tenant_settings` sem linha = defaults, sem gravar (D-065, reaproveitada):
+  `get` nunca faz `INSERT`.
+- `update` faz `INSERT ... ON CONFLICT (tenant_id) DO UPDATE`, exatamente como
+  `ChannelSettingsService.update` já faz para `distribution_mode`/mensagens automáticas —
+  mesma tabela, mesmo padrão de upsert, dois services.
+- Audita `update_commission_settings` só quando algum valor muda de fato (diff-then-audit).
+
+---
+
+## 19. LisImportService (Onda 9 — D-109)
+
+**Responsabilidade:** importar planilha do LIS, consolidar por número/requisição e manter o
+histórico em `lis_imports`. Dono de `lis_imports` e `lis_budgets` (SCHEMA.md §25/§26).
+
+```typescript
+export interface LisImportService {
+  /** manager/admin. Parseia, consolida, resolve atendente/convênio, upsert em chunks. */
+  import(ctx: TenantContext, dto: ImportLisSpreadsheetRequest): Promise<LisImport>;
+
+  /** admin. Apaga todas as linhas de lis_budgets do tenant; registra o purge no histórico. */
+  purge(ctx: TenantContext, dto: PurgeLisBudgetsRequest): Promise<LisImport>;
+
+  list(ctx: TenantContext, query: ListLisImportsQuery): Promise<ListLisImportsResponse>;
+
+  /** Último import OU purge do tenant. null quando nunca houve um. */
+  getLatest(ctx: TenantContext): Promise<LisImport | null>;
+}
+```
+
+**Reaproveita de `backend/src/lib/lis-spreadsheet.ts`** (parser puro, sem I/O, sem tenant): lê o
+`.xlsx` com `exceljs`, valida o guard `%PDF` e a presença da coluna `ORCAMENTO`, resolve os
+aliases de coluna e converte o serial de data do Excel por componentes (sem fuso) —
+BUSINESS_RULES.md §11 lista os aliases e o guard completos. O parser não fala com o banco; quem
+chama (`import`) é este service.
+
+**Regras:**
+- **`consolidateByNumber`** (port do `consolidateOrcamentos` do FluxoLab): duas linhas com o
+  mesmo `ORCAMENTO` na planilha viram uma só — a de maior `total_value` vence
+  (BUSINESS_RULES.md §11). O mesmo vale entre planilhas diferentes: o `upsert ON CONFLICT
+  (tenant_id, number) DO UPDATE` só sobrescreve quando o novo total é maior ou igual.
+- **Resolução de atendente:** `attendant_name` cru da planilha (`USUÁRIO`/`USUARIO`) é casado
+  contra `attendants.folded_name`; sem casar, a linha grava `attendant_name` mas
+  `attendant_id NULL` — **não cria atendente automaticamente** (diferente de convênio, abaixo).
+  Isso é deliberado: atendente sem cadastro prévio é sinal de erro de digitação na planilha, e
+  criar um automaticamente esconderia o erro.
+- **Resolução de convênio (D-114):** `principal_insurance_name` (coluna gerada, SCHEMA.md §26)
+  é casado contra `insurances.name` dobrado; inexistente é **criado** com `type: 'outro'`,
+  `source: 'lis'` (dentro da mesma transação do chunk). `PARTICULAR` e variantes
+  (BUSINESS_RULES.md §11 lista as grafias) resolvem para `insurance_id: null`, sem criar linha.
+- **Erro de arquivo é recusado ANTES de qualquer escrita** — nenhuma linha de `lis_imports` nasce
+  para um arquivo que não é `.xlsx` válido, é PDF disfarçado ou não tem a coluna `ORCAMENTO`.
+  `VALIDATION_ERROR` com `details.reason`.
+- **Chunks:** upsert em lotes (não uma transação só para o arquivo inteiro) — planilha grande não
+  deve travar tanto tempo a ponto de estourar o timeout do request; falha no meio de um chunk
+  marca `lis_imports.status: "failed"` com `errorMessage`, sem reverter os chunks já commitados
+  (import parcial é rastreável, `rowsAccepted` reflete o que de fato entrou).
+- **Idempotência:** reimportar a mesma planilha não duplica `lis_budgets` (a chave é `(tenant_id,
+  number)`) nem altera o resultado quando os totais são iguais — testável reimportando o mesmo
+  arquivo duas vezes.
+- **`purge`** apaga todas as linhas de `lis_budgets` do tenant e grava um `lis_imports(kind:
+  'purge')` — histórico imutável do apagamento, exigido por `dto.confirm === 'LIMPAR'`
+  (API_CONTRACTS.md §10.1). Nesta onda é incondicional; o bloqueio por conciliação
+  (`lis_budgets.proposal_id`) é regra da Onda 13, fora deste escopo.
+- Invalida `cache.delByPrefix('lis:<tenantId>:')` ao final de `import`/`purge` — a chave que
+  `LisAnalyticsService` (§20) e `ExecutiveReportService` (§22) leem.
+
+---
+
+## 20. LisAnalyticsService (Onda 9)
+
+**Responsabilidade:** KPIs derivados de `lis_budgets` — Resultados, Busca Ativa, filtros. **Só
+leitura**, como `AnalyticsService` (§9) e `OperationService` (§14). Repositório
+`lis-analytics.repository.ts` concentra o SQL (convenção do projeto: KPI é query, não
+acumulado em memória — BUSINESS_RULES.md §5).
+
+```typescript
+export interface LisAnalyticsService {
+  list(ctx: TenantContext, query: ListLisBudgetsQuery): Promise<ListLisBudgetsResponse>;
+  getSummary(ctx: TenantContext, query: LisBudgetsSummaryQuery): Promise<LisBudgetsSummary>;
+  listPending(ctx: TenantContext, query: ListPendingLisBudgetsQuery): Promise<ListPendingLisBudgetsResponse>;
+  getPendingSummary(ctx: TenantContext, query: PendingLisBudgetsSummaryQuery): Promise<PendingLisBudgetsSummary>;
+  getFilters(ctx: TenantContext): Promise<LisBudgetsFilters>;
+}
+```
+
+**SQL em CTEs, três blocos (mesmo formato para `getSummary`, `listPending`, `getPendingSummary`
+e `ExecutiveReportService`, §22 — um único texto de query reaproveitado, não reescrito por
+consumidor):**
+- **`issued`** — janela de **emissão**: `issued_on` dentro do período pedido.
+- **`req`** — `DISTINCT ON (requisition_number) ... ORDER BY requisition_number, paid_value
+  DESC`: dedupe por requisição, maior `paid_value` vence (BUSINESS_RULES.md §11) — a mesma
+  requisição pode aparecer em duas linhas de `lis_budgets` (reimportação com pagamento
+  atualizado), e só a de maior valor pago conta.
+- **`paid`** — sobre `req`, janela de **pagamento**: `paid_on` dentro do período pedido e
+  `paid_value > 0`.
+
+**Regras:**
+- **Reaproveita `toMoney`, `percent`, `average`, `resolvePeriod` de
+  `backend/src/services/analytics.service.ts`** (mesmas assinaturas: `toMoney(value): number`,
+  `percent(part, total): number` — `0` quando `total <= 0`, nunca `NaN`/`Infinity` —,
+  `average(total, count): number`, `resolvePeriod(range, now): ResolvedPeriod`) — nenhuma
+  segunda implementação de arredondamento monetário ou validação de período no domínio do LIS.
+- `conversionQty = percent(paid.count, issued.count)`, **capado em 100** — dois orçamentos do
+  mesmo período podem gerar uma única requisição paga, e sem o cap o percentual passaria de 100%
+  (BUSINESS_RULES.md §11).
+- `listPending`: `req` filtrado por `MAX(paid_value) = 0` (requisição emitida, nunca paga) e
+  `days_open = CURRENT_DATE - issued_on`, recortado nas faixas `0-7`/`8-15`/`16-30`/`30+`. Sem
+  fuso a considerar — `issued_on`/`paid_on` já são `DATE` (D-110).
+- `byAttendant`/`byInsurance` (em `getSummary`): top 6 por valor, com **`MIN_ORC_RANKING = 20`**
+  (BUSINESS_RULES.md §11) — abaixo desse número de orçamentos no período, o ranking não é
+  devolvido (`[]`), porque um top-6 sobre 3 orçamentos não é informação, é ruído.
+- **`getFilters`** lista só atendentes/convênios que aparecem em algum `lis_budgets` do tenant
+  (`DISTINCT` sobre a FK, não o cadastro inteiro de `/attendants`/`/insurances`) — evita a tela
+  oferecer um filtro que sempre devolve lista vazia.
+- Cache 5 min por `(tenantId, relatório, período, filtros)`, prefixo `lis:<tenantId>:` —
+  invalidado por `LisImportService.import`/`purge` (§19).
+
+---
+
+## 21. SalesService (Onda 9 — D-112)
+
+**Responsabilidade:** vendas avulsas e o resumo de comissão sobre elas. Dono de `sales`
+(SCHEMA.md §27).
+
+```typescript
+export interface SalesService {
+  list(ctx: TenantContext, query: ListSalesQuery): Promise<ListSalesResponse>;
+  create(ctx: TenantContext, dto: CreateSaleRequest): Promise<Sale>;
+  remove(ctx: TenantContext, id: string): Promise<void>;
+  getSummary(ctx: TenantContext, query: SalesSummaryQuery): Promise<SalesSummary>;
+}
+```
+
+**Regras:**
+- **Escopo por atendente, não por papel (D-112):** para `ctx.role === 'attendant'`, todo método
+  resolve `attendants.id` a partir de `attendants.user_id = ctx.userId` **antes** de tocar
+  `sales` — se não existir linha, `list`/`getSummary` devolvem vazio/zerado e `create` lança
+  `SALE_ATTENDANT_NOT_LINKED` (403). Para `manager`/`admin`, `attendantId` vem do request/query
+  e é validado contra o tenant (`NOT_FOUND` se de outro tenant ou inexistente).
+- `create`: `attendantId` enviado por um `attendant` diferente do próprio é `VALIDATION_ERROR`
+  — não é possível lançar venda em nome de outra pessoa por esta rota, nem o manager/admin
+  "esquecendo" o campo (`attendantId` é obrigatório para eles).
+- `remove`: `DELETE` real (mesma disciplina de `QuickReplyService`, §17) — venda não é
+  referenciada por nenhuma outra tabela; corrigir um lançamento errado é apagar e relançar.
+  Fora do recorte do atendente (venda de outro) → `NOT_FOUND`.
+- **`getSummary`** agrupa por `kind` e aplica `commissionValue = toMoney(value ×
+  commissionPct / 100)`, lendo os percentuais de `CommissionSettingsService.get` (§18) —
+  `commission_budget_pct` nunca entra aqui (é comissão sobre orçamento conciliado, Onda 13).
+  `commissionTotal` é a soma dos dois `commissionValue`, nunca um terceiro cálculo
+  (BUSINESS_RULES §5/§11).
+
+---
+
+## 22. AttendantService (Onda 9 — D-112)
+
+**Responsabilidade:** cadastro do atendente do LIS. Dono de `attendants` (SCHEMA.md §24).
+
+```typescript
+export interface AttendantService {
+  list(ctx: TenantContext, query: ListAttendantsQuery): Promise<ListAttendantsResponse>;
+  create(ctx: TenantContext, dto: CreateAttendantRequest): Promise<Attendant>;   // manager/admin
+  update(ctx: TenantContext, id: string, dto: UpdateAttendantRequest): Promise<Attendant>; // manager/admin
+}
+```
+
+**Regras:**
+- Dedupe por `folded_name` (SCHEMA.md §24: `lower` + espaços colapsados) — `name` duplicado
+  depois de dobrado é `CONFLICT` (409), mesma disciplina de `code` em `/exams` e `name` em
+  `/insurances` (verificado antes do INSERT + `isUniqueViolation` na corrida).
+  Acento **não** é removido — risco registrado no spec, não implementado nesta onda.
+- `userId`: quando presente, precisa apontar para um `users.id` ativo do mesmo tenant com papel
+  de laboratório (`attendant | manager | admin`) — `VALIDATION_ERROR` se o usuário não existir/
+  estiver inativo/for `platform_operator`; `CONFLICT` se esse `userId` já estiver ligado a outro
+  atendente (`UNIQUE (tenant_id, user_id)`).
+- `update` com `userId: null` **desliga** o vínculo sem apagar o atendente — corrige uma ligação
+  feita errado na migração do Santé (D-120) sem perder o histórico de `lis_budgets`/`sales`
+  daquele atendente.
+- **Sem `remove`/`DELETE`** (D-004): `lis_budgets.attendant_id` e `sales.attendant_id`
+  referenciam a linha; desativação é `update(ctx, id, { isActive: false })`.
+- `create`/`update` auditados (`create_attendant`/`update_attendant`).
+
+---
+
+## 23. ExecutiveReportService (Onda 9 — D-116)
+
+**Responsabilidade:** o JSON único que alimenta `GET /reports/executive` e, no cliente, os dois
+PDFs (Executivo e Busca Ativa) gerados com `jspdf`/`jspdf-autotable`. **Só leitura.**
+
+```typescript
+export interface ExecutiveReportService {
+  getExecutiveReport(ctx: TenantContext, period: DateRange): Promise<ExecutiveReport>;
+}
+```
+
+**Regras:**
+- Reaproveita as MESMAS CTEs/consultas de `LisAnalyticsService.getSummary` (§20) — não uma
+  segunda implementação do dedupe por requisição ou do convênio principal. A diferença para
+  `/lis-budgets/summary` é a forma da resposta (`monthlySeries` de 12 meses, `brandName`/
+  `logoUrl`), não a aritmética.
+- `monthlySeries`: 12 meses terminando no mês de `period.endDate`, sempre 12 pontos — mês sem
+  movimento entra com os dois valores em `0` (mesmo princípio de `byAgeBand`/`lossReasons`:
+  série para gráfico não tem buraco).
+- `brandName`/`logoUrl` vêm de `ThemeService.getCurrent` (§8) — o mesmo tema do
+  `GET /themes/current` — nunca uma marca fixa (D-116, fecha o requisito de o produto servir
+  qualquer tenant, não só o Laboratório Santé).
+- **Não gera PDF.** `jspdf`/`jspdf-autotable` rodam no navegador (Onda 10); este service só
+  devolve o JSON que os dois relatórios do cliente consomem.
+- Papel: `manager`/`admin`. `denyPlatformOperator()` no router.
+
+---
+
 ## Convenções Transversais
 
 - Todo método recebe `tenantId` ou `TenantContext` como primeiro parâmetro — NUNCA lê de variável global

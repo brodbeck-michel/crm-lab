@@ -2485,6 +2485,81 @@ do sistema.
 
 ---
 
+## 5c. Reports (Relatório Executivo do LIS — Onda 9)
+
+Fonte de dados de `/results` (Executivo) e do PDF gerado **no cliente** com `jspdf` +
+`jspdf-autotable` (D-116) — o backend nunca gera PDF, só o JSON abaixo. Tabela `lis_budgets`
+(SCHEMA.md §26). Shapes em `shared/types/lis.types.ts`.
+
+**Papéis:** `manager`/`admin`. `attendant` → `403 FORBIDDEN` com
+`details.requiredRoles: ["manager","admin"]`. `platform_operator` → `403`
+(`denyPlatformOperator()`).
+
+### GET /reports/executive
+Um JSON único com tudo que as duas janelas de tempo do domínio do LIS respondem
+(BUSINESS_RULES.md §11) — o mesmo princípio de `/operations/overview` (§7): um retrato,
+não um endpoint por bloco, para o PDF não montar com dois instantes diferentes.
+
+**Query Params:**
+```
+?startDate=2026-08-01&endDate=2026-08-31   # ISO YYYY-MM-DD, endDate INCLUSIVO
+```
+Sem datas: últimos 30 dias terminando hoje. Formato inválido, data inexistente ou
+`startDate > endDate` → `400 VALIDATION_ERROR` com `details.fields` (mesma validação de
+`resolvePeriod`, §5).
+
+**Response (200):**
+```json
+{
+  "period": { "startDate": "2026-08-01", "endDate": "2026-08-31" },
+  "issued": {
+    "count": 210,
+    "totalValue": 158000,
+    "averageTicket": 752.38
+  },
+  "paid": {
+    "count": 165,
+    "totalValue": 121000,
+    "averageTicket": 733.33,
+    "conversionQty": 78.57
+  },
+  "monthlySeries": [
+    { "month": "2026-08", "issuedValue": 158000, "paidValue": 121000 }
+  ],
+  "byAttendant": [
+    { "attendantId": "uuid", "attendantName": "Maria Souza", "issuedCount": 40, "paidValue": 30000 }
+  ],
+  "byInsurance": [
+    { "insuranceName": "Unimed Tubarão", "count": 60, "totalValue": 45000 }
+  ],
+  "brandName": "Laboratório Vida",
+  "logoUrl": "https://.../logo.png"
+}
+```
+
+- `issued` é a janela de **emissão** (`issued_on` dentro do período); `paid` é a janela de
+  **pagamento** (`paid_on` dentro do período, dedupe por `requisition_number` com maior
+  `paid_value` — BUSINESS_RULES.md §11). As duas janelas coexistem na mesma resposta pela mesma
+  razão de `/analytics/*` (D-020): são perguntas diferentes, sobre datas diferentes.
+- `conversionQty = min(100, paid.count / issued.count × 100)` — **capado em 100%**
+  (BUSINESS_RULES.md §11); `0` quando `issued.count` é `0`, nunca `NaN`/`Infinity`
+  (`percent()` de `analytics.service.ts`, reaproveitada).
+- `averageTicket` usa `average()` de `analytics.service.ts`: `0` quando `count` é `0`.
+- `monthlySeries` cobre os últimos 12 meses terminando no mês de `endDate`, **não** só o
+  período pedido — é o gráfico de série do PDF, que sempre mostra 12 pontos. Mês sem dado
+  aparece com os dois valores em `0`, nunca ausente.
+- `byAttendant`/`byInsurance` são recortados aos **top 6** por `paidValue`/`totalValue` desc
+  (o mesmo corte que o FluxoLab usava para "top-5 atendentes"/"top-6 convênios" — ver
+  BUSINESS_RULES.md §11 para o `MIN_ORC_RANKING` que zera esses rankings quando a amostra é
+  pequena demais para ser qualitativa).
+- `brandName`/`logoUrl` vêm de `themes` (o mesmo tema de `GET /themes/current`) — **nunca**
+  "Santé" hardcoded (D-116): o PDF de qualquer tenant leva a marca do próprio tenant.
+
+**Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403, `details.requiredRoles:
+["manager","admin"]`)
+
+---
+
 ## 6. Channel Settings (Canais & Equipe)
 
 Tela `/settings/channels` (PAGES.md §10). Shapes em `shared/types/settings.types.ts`; tabelas
@@ -2727,6 +2802,57 @@ emite `loggedOut` pelo webhook → o CRM marca desconectado do mesmo jeito. A UI
 desconexão voluntária de banimento — o termo de aceite avisa disso antecipadamente.
 
 **Erros:** `FORBIDDEN` (403), `CHANNEL_QR_UNAVAILABLE` (503)
+
+---
+
+## 6b. Commission Settings (Comissão — Onda 9)
+
+Percentuais de comissão sobre orçamento/exames/check-up, herdados do FluxoLab (onde viviam em
+`localStorage`, por navegador — D-113 os torna por-tenant). Colunas em `tenant_settings`
+(SCHEMA.md §16, ALTER da migração 012). Shapes em `shared/types/lis.types.ts`.
+
+**Papéis:** `GET` é **manager/admin** (é configuração operacional, mesmo corte de §6/§7);
+`PATCH` é **admin**. `attendant` → `403 FORBIDDEN` com `details.requiredRoles:
+["manager","admin"]` no `GET` e `["admin"]` no `PATCH`. `platform_operator` → `403`.
+
+### GET /settings/commissions
+
+**Response (200):**
+```json
+{
+  "commissionBudgetPct": 2.00,
+  "commissionExamsPct": 1.50,
+  "commissionCheckupPct": 1.50
+}
+```
+
+**Laboratório sem linha em `tenant_settings` recebe os defaults** (2,00 / 1,50 / 1,50 — os
+mesmos valores validados em produção pelo FluxoLab), sem gravar nada — mesma disciplina de
+D-065 (§6). Recurso único, cru (D-070).
+
+**Erros:** `FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
+
+### PATCH /settings/commissions (admin apenas)
+PATCH parcial: campo ausente preserva. Corpo vazio (`{}`) ou campo desconhecido →
+`VALIDATION_ERROR` (schema `strict`).
+
+**Request:**
+```json
+{ "commissionExamsPct": 1.75 }
+```
+
+- `commissionBudgetPct`, `commissionExamsPct`, `commissionCheckupPct`: numérico, `0` a `100`,
+  até 2 casas decimais — mesma faixa de `discountPercent` (§3).
+- `INSERT ... ON CONFLICT (tenant_id) DO UPDATE`, mesmo padrão de upsert de `tenant_settings`
+  usado por `PATCH /settings/channels` (§6).
+
+**Response (200):** o objeto completo depois da escrita (mesmo shape do `GET`), cru.
+
+Gera audit log `update_commission_settings` (`entityType: "tenant_settings"`, `entityId` =
+`tenantId`).
+
+**Erros:** `VALIDATION_ERROR` (400, `details.fields`), `FORBIDDEN` (403,
+`details.requiredRoles: ["admin"]`)
 
 ---
 
@@ -3103,6 +3229,528 @@ a exclusão reversível por uma pessoa, já que a linha não fica.
 
 **Erros:** `NOT_FOUND` (404), `VALIDATION_ERROR` (400, `:id` não-uuid), `FORBIDDEN` (403,
 `platform_operator`), `UNAUTHORIZED` (401)
+
+---
+
+## 10. LIS Budgets & Imports (Onda 9)
+
+Domínio "Orçamentos do LIS" (spec da fusão CRM Lab + FluxoLab §2.1) — importação de planilha do
+LIS, consolidação e leitura dos orçamentos resultantes. Tabelas `lis_imports`/`lis_budgets`
+(SCHEMA.md §25/§26). Regras de dedupe, convênio principal e janelas de tempo em
+BUSINESS_RULES.md §11. Shapes em `shared/types/lis.types.ts`.
+
+**Papéis:** os `GET`s e `POST /lis-imports` são **manager/admin**; `POST /lis-imports/purge` é
+**admin apenas**. `attendant` → `403 FORBIDDEN` com `details.requiredRoles: ["manager","admin"]`
+(ou `["admin"]` no purge). `platform_operator` → `403` (`denyPlatformOperator()`); toda rota
+desta seção entra no inventário de isolamento (`route-tenant-isolation.spec.ts`).
+
+**Não existe escrita direta em `lis_budgets`** — a única forma de uma linha nascer ou mudar é
+por importação (ou por purge, que apaga todas). `PATCH /proposals/:id/lis-reference` (Onda 13)
+grava `lis_budgets.proposal_id`, mas essa rota não faz parte desta onda.
+
+### 10.1 Imports
+
+#### POST /lis-imports
+Importa uma planilha `.xlsx` do LIS. Base64 em JSON, mesma disciplina de `POST
+/conversations/:id/attachments` (§2d) — Express 4 não faz multipart sozinho.
+
+**Request:**
+```json
+{
+  "fileName": "orcamentos-agosto.xlsx",
+  "contentBase64": "UEsDBBQACAAIAA=="
+}
+```
+- `fileName`: 1..255 caracteres (só exibição).
+- `contentBase64`: obrigatório, decodificado e checado contra um teto explícito de **10 MiB**
+  (`LIS_IMPORT_MAX_BYTES` — planilha real do Santé ≈500KB/≈667KB em base64, bem abaixo do teto;
+  o teto é defesa em profundidade, não uma restrição real esperada — ver risco no spec §6).
+
+**Comportamento** (`LisImportService`, SERVICES.md): parser (`lis-spreadsheet.ts`) lê as
+colunas com todos os aliases de BUSINESS_RULES.md §11, recusa arquivo sem a coluna `ORCAMENTO`
+e arquivo que é PDF disfarçado de xlsx → `VALIDATION_ERROR` com `details.reason` (ver abaixo)
+**antes** de gravar qualquer linha em `lis_imports`. Passando a validação: consolida por número
+(maior `total_value` vence — BUSINESS_RULES §11), resolve atendente e convênio por linha, e faz
+`upsert ON CONFLICT (tenant_id, number)` em `lis_budgets`, em chunks, dentro de uma transação por
+chunk. Ao final, grava `lis_imports` com `status: "completed"` e os contadores.
+
+**Response (201):** o `LisImport` criado, cru.
+```json
+{
+  "id": "8c2e1f77-0b13-4a3d-9d54-1f0e6b7a2c19",
+  "kind": "import",
+  "fileName": "orcamentos-agosto.xlsx",
+  "rowsInFile": 512,
+  "rowsAccepted": 505,
+  "rowsRejected": 7,
+  "proposalsWon": 0,
+  "status": "completed",
+  "errorMessage": null,
+  "createdBy": "9f8e7d6c-5b4a-4392-8180-7f6e5d4c3b2a",
+  "createdAt": "2026-09-12T14:00:00.000Z",
+  "finishedAt": "2026-09-12T14:00:03.000Z"
+}
+```
+`proposalsWon` é **sempre `0`** nesta onda — a coluna existe (SCHEMA.md §25) mas o hook que a
+preenche é da Onda 13 (D-119), fora deste escopo. `status: "failed"` é possível quando a
+importação passa da validação de arquivo mas falha durante o processamento (ex.: erro de banco
+no meio de um chunk); nesse caso `errorMessage` traz o motivo e `finishedAt` fica preenchido do
+mesmo jeito — a linha de `lis_imports` registra a falha, nunca é apagada.
+
+Gera audit log `import_lis_spreadsheet` (`entityType: "lis_import"`) e invalida o cache
+`lis:<tenantId>:` (usado por `/lis-budgets/*` e `/reports/executive`).
+
+**Erros:** `VALIDATION_ERROR` (400) com `details.reason` ∈ `pdf_disguised | missing_column |
+empty` (arquivo é PDF renomeado; falta a coluna `ORCAMENTO`; planilha sem nenhuma linha de
+dado), `MEDIA_TOO_LARGE` (413, acima de 10 MiB), `FORBIDDEN` (403,
+`details.requiredRoles: ["manager","admin"]`)
+
+#### GET /lis-imports
+Histórico de importações e purges do tenant.
+
+**Query Params:**
+```
+?page=1&limit=20      // limit máx. 100
+```
+Ordenação fixa por `createdAt DESC`.
+
+**Response (200):**
+```json
+{
+  "imports": [
+    {
+      "id": "8c2e1f77-0b13-4a3d-9d54-1f0e6b7a2c19",
+      "kind": "import",
+      "fileName": "orcamentos-agosto.xlsx",
+      "rowsInFile": 512,
+      "rowsAccepted": 505,
+      "rowsRejected": 7,
+      "proposalsWon": 0,
+      "status": "completed",
+      "errorMessage": null,
+      "createdBy": "9f8e7d6c-5b4a-4392-8180-7f6e5d4c3b2a",
+      "createdAt": "2026-09-12T14:00:00.000Z",
+      "finishedAt": "2026-09-12T14:00:03.000Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 20, "total": 6, "totalPages": 1 }
+}
+```
+
+**Erros:** `FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
+
+#### GET /lis-imports/latest
+Última importação OU purge do tenant (o que a tela usa para "Última atualização em ..."). Recurso
+único, cru.
+
+**Response (200):** o mesmo shape de um item de `GET /lis-imports`, **ou `null`** quando o tenant
+nunca importou nada — corpo `null`, sem envelope: a tela trata a ausência mostrando "Nenhuma
+importação ainda", não um erro.
+
+**Erros:** `FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
+
+#### POST /lis-imports/purge (admin apenas)
+"Limpar base" — apaga **todas** as linhas de `lis_budgets` do tenant. Irreversível; por isso
+exige confirmação explícita no corpo, além do papel.
+
+**Request:**
+```json
+{ "confirm": "LIMPAR" }
+```
+`confirm` precisa ser exatamente a string `"LIMPAR"` (mesmo texto que a tela do Onda 10 pede para
+digitar) → qualquer outro valor ou campo ausente é `VALIDATION_ERROR`. A confirmação é reforçada
+no backend de propósito: uma tela nova ou um cliente automatizado não deve conseguir apagar a
+base sem repetir a mesma barreira.
+
+**Response (201):** um novo `LisImport` com `kind: "purge"` — o registro histórico do apagamento.
+```json
+{
+  "id": "b1e2a1c4-6d39-4f70-9a12-5c8e3b7d1f07",
+  "kind": "purge",
+  "fileName": null,
+  "rowsInFile": null,
+  "rowsAccepted": null,
+  "rowsRejected": null,
+  "proposalsWon": null,
+  "status": "completed",
+  "errorMessage": null,
+  "createdBy": "9f8e7d6c-5b4a-4392-8180-7f6e5d4c3b2a",
+  "createdAt": "2026-09-12T15:00:00.000Z",
+  "finishedAt": "2026-09-12T15:00:00.000Z"
+}
+```
+
+Gera audit log `purge_lis_budgets`. Nesta onda o purge é incondicional (apaga tudo do tenant);
+o bloqueio por conciliação existente (`lis_budgets.proposal_id` vinculada) é regra da Onda 13
+(D-119) e não se aplica aqui — a coluna é sempre `NULL` até lá.
+
+**Erros:** `VALIDATION_ERROR` (400, `confirm` ausente/errado), `FORBIDDEN` (403,
+`details.requiredRoles: ["admin"]`)
+
+### 10.2 Budgets
+
+#### GET /lis-budgets
+Listagem paginada de orçamentos do LIS — tela de Conferência.
+
+**Query Params:**
+```
+?page=1&limit=20                          // limit máx. 100
+?startDate=2026-08-01&endDate=2026-08-31  // janela de EMISSÃO (issued_on), endDate inclusivo
+?attendantId=<uuid>
+?insuranceId=<uuid>
+?search=joão                              // patient_name, ILIKE
+?sortBy=issuedOn|number|totalValue&order=desc
+```
+Sem datas: últimos 30 dias terminando hoje (mesma regra de `resolvePeriod`, §5).
+
+**Response (200):**
+```json
+{
+  "budgets": [
+    {
+      "id": "c2f3b5d6-7e40-4a81-8b13-6d9f4c8e2a17",
+      "number": "48213",
+      "issuedOn": "2026-08-20",
+      "patientName": "João Santos",
+      "principalInsuranceName": "Unimed Tubarão",
+      "totalValue": 452.30,
+      "insuranceId": "8f2a1c4b-6d39-4f70-9a12-5c8e3b7d1f06",
+      "attendantName": "Maria Souza",
+      "attendantId": "4a1b8e6c-5d72-4931-b0f8-2e7a9c1d4b55",
+      "requisitionNumber": "REQ-9911",
+      "requisitionValue": 452.30,
+      "paidValue": 452.30,
+      "paidOn": "2026-08-25",
+      "proposalId": null,
+      "createdAt": "2026-08-21T09:00:00.000Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 20, "total": 210, "totalPages": 11 }
+}
+```
+`proposalId` é sempre `null` nesta onda (conciliação é Onda 13). Ordenado por `issuedOn DESC`
+quando `sortBy` não é enviado.
+
+**Erros:** `VALIDATION_ERROR` (400, datas/`sortBy`/`order` fora do formato), `FORBIDDEN` (403,
+`details.requiredRoles: ["manager","admin"]`)
+
+#### GET /lis-budgets/summary
+KPIs de Resultados para o período — a mesma conta de `GET /reports/executive` (§5c), mas
+recortável por atendente/convênio para o filtro da tela.
+
+**Query Params:**
+```
+?startDate=2026-08-01&endDate=2026-08-31
+?attendantId=<uuid>
+?insuranceId=<uuid>
+```
+
+**Response (200):**
+```json
+{
+  "period": { "startDate": "2026-08-01", "endDate": "2026-08-31" },
+  "issued": { "count": 210, "totalValue": 158000, "averageTicket": 752.38 },
+  "paid": { "count": 165, "totalValue": 121000, "averageTicket": 733.33, "conversionQty": 78.57 },
+  "byAttendant": [
+    { "attendantId": "uuid", "attendantName": "Maria Souza", "issuedCount": 40, "paidValue": 30000 }
+  ],
+  "byInsurance": [
+    { "insuranceName": "Unimed Tubarão", "count": 60, "totalValue": 45000 }
+  ]
+}
+```
+Mesmas definições de `issued`/`paid`/`conversionQty` de `GET /reports/executive` (§5c) —
+`conversionQty` capado em 100%, `averageTicket` via `average()`. `byAttendant`/`byInsurance`
+recortados ao top 6, mesma regra e mesmo `MIN_ORC_RANKING` de BUSINESS_RULES.md §11.
+
+**Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403, `details.requiredRoles:
+["manager","admin"]`)
+
+#### GET /lis-budgets/pending
+Busca Ativa — orçamentos com **requisição** mas **sem pagamento recebido** ainda
+(`MAX(paid_value) = 0` por requisição, dedupe de BUSINESS_RULES.md §11).
+
+**Query Params:**
+```
+?page=1&limit=20
+?attendantId=<uuid>
+?ageBand=0-7|8-15|16-30|30+
+```
+
+**Response (200):**
+```json
+{
+  "budgets": [
+    {
+      "id": "c2f3b5d6-7e40-4a81-8b13-6d9f4c8e2a17",
+      "number": "48213",
+      "patientName": "João Santos",
+      "principalInsuranceName": "Unimed Tubarão",
+      "totalValue": 452.30,
+      "attendantName": "Maria Souza",
+      "attendantId": "4a1b8e6c-5d72-4931-b0f8-2e7a9c1d4b55",
+      "requisitionNumber": "REQ-9911",
+      "requisitionValue": 452.30,
+      "issuedOn": "2026-08-20",
+      "daysOpen": 12,
+      "ageBand": "8-15"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 20, "total": 34, "totalPages": 2 }
+}
+```
+`daysOpen = CURRENT_DATE - issued_on`, calculado no SQL (mesma disciplina de tempo em UTC de
+D-021/D-078 — datas do LIS já são `DATE`, então não há fuso a considerar aqui). `ageBand` é
+`daysOpen` recortado nas 4 faixas de BUSINESS_RULES.md §11: `0-7`, `8-15`, `16-30`, `30+`.
+Ordenado por `daysOpen DESC` (o mais antigo primeiro — é uma fila de cobrança).
+
+**Erros:** `VALIDATION_ERROR` (400, `ageBand` fora do enum), `FORBIDDEN` (403,
+`details.requiredRoles: ["manager","admin"]`)
+
+#### GET /lis-budgets/pending/summary
+Agregado da Busca Ativa por faixa de idade — os cartões do topo da tela.
+
+**Query Params:** `?attendantId=<uuid>` (opcional)
+
+**Response (200):**
+```json
+{
+  "total": { "count": 34, "value": 18500 },
+  "byAgeBand": {
+    "0-7": { "count": 10, "value": 5200 },
+    "8-15": { "count": 12, "value": 6800 },
+    "16-30": { "count": 8, "value": 4500 },
+    "30+": { "count": 4, "value": 2000 }
+  }
+}
+```
+`byAgeBand` traz **sempre as 4 chaves**, com `0`/`0` onde não houver linha — mesmo princípio de
+`lossReasons` em `/analytics/conversion` (§5): o gráfico não pode ficar com buraco.
+
+**Erros:** `FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
+
+#### GET /lis-budgets/filters
+Opções para os seletores de filtro das telas de Resultados/Conferência/Busca Ativa — evita cada
+tela duplicar a query de "quais atendentes/convênios aparecem nos orçamentos do LIS".
+
+**Response (200):**
+```json
+{
+  "attendants": [
+    { "id": "4a1b8e6c-5d72-4931-b0f8-2e7a9c1d4b55", "name": "Maria Souza" }
+  ],
+  "insurances": [
+    { "id": "8f2a1c4b-6d39-4f70-9a12-5c8e3b7d1f06", "name": "Unimed Tubarão" }
+  ],
+  "issuedOnRange": { "min": "2025-01-05", "max": "2026-08-30" }
+}
+```
+`attendants` e `insurances` listam só quem **aparece em algum `lis_budgets`** do tenant (não o
+cadastro inteiro de `/attendants`/`/insurances`) — ordenados por nome. `issuedOnRange` é `null`
+nos dois campos quando `lis_budgets` está vazio (tenant que nunca importou).
+
+**Erros:** `FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
+
+---
+
+## 11. Sales (Vendas + Comissão — Onda 9)
+
+Vendas avulsas de exame/check-up, herdadas do FluxoLab — base do cálculo de comissão (percentuais
+de §6b). Tabela `sales` (SCHEMA.md §27). Shapes em `shared/types/lis.types.ts`.
+
+**Papéis e escopo (D-112):** atendente vê e lança **só as próprias vendas** — o recorte é
+`attendants.user_id = ctx.userId`, não `role`. Um atendente cujo login **não** está ligado a
+nenhuma linha de `attendants` (D-112: o vínculo é manual, feito por manager/admin em `PATCH
+/attendants/:id`) recebe `SALE_ATTENDANT_NOT_LINKED` (403) em `POST /sales` e lista vazia em
+`GET /sales` — nunca um erro genérico. Manager/admin veem e lançam venda para **qualquer**
+atendente do tenant. `platform_operator` → `403` (`denyPlatformOperator()`).
+
+### GET /sales
+
+**Query Params:**
+```
+?page=1&limit=20                 // limit máx. 100
+?startDate=2026-08-01&endDate=2026-08-31   // soldOn, endDate inclusivo
+?attendantId=<uuid>              // ignorado para role=attendant (sempre a própria)
+?kind=exams|checkup
+```
+
+**Response (200):**
+```json
+{
+  "sales": [
+    {
+      "id": "d3f4c6e7-8f51-4b92-9c24-7e0a5d9c3b28",
+      "attendantId": "4a1b8e6c-5d72-4931-b0f8-2e7a9c1d4b55",
+      "attendantName": "Maria Souza",
+      "soldOn": "2026-08-20",
+      "code": "V-1029",
+      "value": 340.00,
+      "exams": "Hemograma, Glicose",
+      "kind": "exams",
+      "createdBy": "4a1b8e6c-5d72-4931-b0f8-2e7a9c1d4b55",
+      "createdAt": "2026-08-20T11:00:00.000Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 20, "total": 58, "totalPages": 3 }
+}
+```
+Ordenado por `soldOn DESC, createdAt DESC`.
+
+**Erros:** `FORBIDDEN` (403, `platform_operator`)
+
+### POST /sales
+
+**Request:**
+```json
+{
+  "attendantId": "4a1b8e6c-5d72-4931-b0f8-2e7a9c1d4b55",
+  "soldOn": "2026-08-20",
+  "code": "V-1029",
+  "value": 340.00,
+  "exams": "Hemograma, Glicose",
+  "kind": "exams"
+}
+```
+- `attendantId`: **obrigatório para manager/admin**; para `attendant`, **ignorado se enviado** —
+  o backend resolve pelo próprio vínculo (`attendants.user_id = ctx.userId`). Enviar um
+  `attendantId` diferente do próprio, sendo `attendant`, é `VALIDATION_ERROR` (não é permitido
+  lançar venda em nome de outra pessoa por essa rota).
+- `soldOn`: `YYYY-MM-DD`, não futura.
+- `code`: opcional, máx. 50.
+- `value`: numérico, `> 0`.
+- `exams`: opcional, texto livre, máx. 2000.
+- `kind` ∈ `exams | checkup`.
+
+**Response (201):** o `Sale` criado, cru (mesmo shape dos itens de `GET /sales`).
+
+**Erros:** `VALIDATION_ERROR` (400, `details.fields`), `SALE_ATTENDANT_NOT_LINKED` (403 — login
+de `attendant` sem vínculo em `attendants`), `NOT_FOUND` (404, `attendantId` de outro tenant ou
+inexistente), `FORBIDDEN` (403, `platform_operator`)
+
+### DELETE /sales/:id
+Apaga de verdade — mesma disciplina de `quick_replies` (§9): venda lançada errada é corrigida
+apagando e relançando, não há histórico dependente da linha.
+
+**Escopo:** atendente só apaga a própria venda (mesmo recorte de `GET`); manager/admin apagam
+qualquer uma do tenant.
+
+**Response:** `204 No Content`
+
+Gera audit log `delete_sale` com o conteúdo apagado em `oldValues`.
+
+**Erros:** `NOT_FOUND` (404 — inexistente, de outro tenant ou fora do recorte do atendente),
+`FORBIDDEN` (403, `platform_operator`)
+
+### GET /sales/summary
+Total de vendas e comissão calculada para o período — cartão da tela `/sales`.
+
+**Query Params:**
+```
+?startDate=2026-08-01&endDate=2026-08-31
+?attendantId=<uuid>              // manager/admin apenas; ignorado para attendant (sempre a própria)
+```
+
+**Response (200):**
+```json
+{
+  "period": { "startDate": "2026-08-01", "endDate": "2026-08-31" },
+  "byKind": {
+    "exams": { "count": 40, "value": 12000, "commissionValue": 180.00 },
+    "checkup": { "count": 8, "value": 4000, "commissionValue": 60.00 }
+  },
+  "totalValue": 16000,
+  "commissionTotal": 240.00
+}
+```
+`commissionValue` de cada `kind` = `toMoney(value × commissionPct / 100)` — os percentuais de
+§6b (`commissionExamsPct`/`commissionCheckupPct`; **`commissionBudgetPct` não entra aqui**, é
+comissão sobre orçamento conciliado, Onda 13). `commissionTotal` é a soma dos dois
+`commissionValue`, nunca recalculada por outro caminho (BUSINESS_RULES §5/§11).
+
+**Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403, `platform_operator`)
+
+---
+
+## 12. Attendants (Onda 9)
+
+Cadastro do atendente do LIS (D-112) — no FluxoLab era só um nome de planilha; aqui ganha linha
+própria, ligável opcionalmente a um login do CRM. Tabela `attendants` (SCHEMA.md §24). Shapes em
+`shared/types/lis.types.ts`.
+
+**Papéis:** `GET`, `POST` e `PATCH` são **manager/admin**. `attendant` → `403 FORBIDDEN` com
+`details.requiredRoles: ["manager","admin"]`. `platform_operator` → `403`. **Sem `DELETE`**
+(D-004): `lis_budgets` e `sales` referenciam o atendente; desativação é `PATCH { isActive:
+false }`.
+
+### GET /attendants
+
+**Query Params:**
+```
+?page=1&limit=20          // limit máx. 100
+?active=true              // omitido = ativos e inativos
+?search=maria             // nome, sem caixa/acento (mesma dobra do catálogo)
+```
+
+**Response (200):**
+```json
+{
+  "attendants": [
+    {
+      "id": "4a1b8e6c-5d72-4931-b0f8-2e7a9c1d4b55",
+      "name": "Maria Souza",
+      "isActive": true,
+      "userId": "7c3d5f92-1a48-4c60-8e21-9b5d7a3f2c11",
+      "userName": "Maria Souza",
+      "createdAt": "2026-09-01T10:00:00.000Z",
+      "updatedAt": "2026-09-01T10:00:00.000Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 20, "total": 12, "totalPages": 1 }
+}
+```
+`userName` é `null` quando `userId` é `null` (atendente sem login ligado — o caso comum logo
+após a migração do Santé, D-120, antes de alguém religar cada linha). Ordenado por `name ASC`.
+
+**Erros:** `FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
+
+### POST /attendants
+
+**Request:**
+```json
+{ "name": "Ana Lima", "userId": null }
+```
+- `name`: 1..255. Deduplicado por `foldedName` (`lower` + espaços colapsados, SCHEMA.md §24) —
+  criar "ana lima" quando "Ana Lima" já existe é `CONFLICT`, não uma segunda linha.
+- `userId`: opcional/anulável. Quando enviado, precisa ser um `users.id` **ativo** do mesmo
+  tenant, com papel de laboratório (`attendant | manager | admin`) → senão `VALIDATION_ERROR`.
+  Já ligado a outro atendente → `CONFLICT` (`UNIQUE (tenant_id, user_id)`).
+
+**Response (201):** o `Attendant` criado, cru (mesmo shape dos itens de `GET`).
+
+Gera audit log `create_attendant`.
+
+**Erros:** `VALIDATION_ERROR` (400, `details.fields`), `CONFLICT` (409 — nome duplicado por
+`foldedName`, ou `userId` já vinculado a outro atendente), `FORBIDDEN` (403,
+`details.requiredRoles: ["manager","admin"]`)
+
+### PATCH /attendants/:id
+Atualização parcial, inclusive o vínculo com o login e a desativação.
+
+**Request:** (todos opcionais, ao menos um)
+```json
+{ "isActive": false, "userId": "7c3d5f92-1a48-4c60-8e21-9b5d7a3f2c11" }
+```
+Mesmas validações do `POST` para `name`/`userId`. Enviar `userId: null` **desliga** o vínculo
+(o atendente continua existindo, só sem login associado) — é assim que se desfaz uma ligação
+feita por engano na migração do Santé.
+
+**Response (200):** o `Attendant` atualizado, cru.
+
+Gera audit log `update_attendant`.
+
+**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404 — inexistente ou de outro tenant),
+`CONFLICT` (409), `FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
 
 ---
 

@@ -1297,6 +1297,157 @@ forma de achar-ou-criar conversa por telefone divergindo da primeira.
 **Impacto:** ui (`Patients/Profile.tsx`: botão + mutation; nenhuma mudança de api/schema/backend
 — consome contrato já existente), docs (`PAGES.md` §3).
 
+### D-108: Produto único, sem planos na v1 — entitlement por plano fica aditivo, para depois
+**Decisão:** a fusão CRM Lab + FluxoLab (Onda 9) não cria `requirePlan`, `PLAN_FEATURES`,
+`PLAN_REQUIRED` nem `JwtPayload.plan`. `tenants.subscription_plan` (VARCHAR sem CHECK, default
+`starter`) permanece exatamente como está, lido só por `PlatformService` para listar/faturar.
+Todo tenant enxerga todas as funcionalidades — o acesso continua governado só por `role`
+(`admin`/`manager`/`attendant`), como já era.
+**Motivo:** a revisão 2 do spec da fusão (2026-09-12) reverte a divisão `basic`/`plus` desenhada
+na revisão 1: entitlement por plano é aditivo por natureza (entra depois como um middleware ao
+lado de `requireRoles` + um campo opcional em `route-config`, sem tocar tabela/serviço/tela já
+construídos), então adiar não cria dívida técnica — e adiar apaga uma onda inteira (~2-3
+agent-days) que não tinha comprador implementado ainda. O texto de §5b de `API_CONTRACTS.md`
+sobre entitlement `basic`/`plus` (migração `010_plans_basic_plus.sql`) descreve um desenho que
+não foi implementado e não será nesta v1 — a migração `010` real é `010_internal_chat_dm.sql`
+(D-101); quando entitlement por plano voltar a ser priorizado, aquele texto precisa ser revisto
+por quem o retomar.
+**Impacto:** api (nenhuma rota desta onda checa plano), db (nenhuma coluna de plano nova), docs
+(esta decisão é a autorização para o restante da Onda 9 não mencionar plano em nenhum contrato).
+
+### D-109: Import de planilha do LIS é síncrono, em chunks, com histórico imutável
+**Decisão:** `POST /lis-imports` recebe a planilha em base64 (mesma disciplina de anexos de
+mídia, Onda 8), parseia com `lis-spreadsheet.ts` (exceljs), consolida por número
+(`consolidateByNumber`, maior `total_value` vence — BUSINESS_RULES.md §11.1), resolve
+atendente/convênio por linha e grava em `lis_budgets` via `upsert ON CONFLICT (tenant_id,
+number)` **em chunks**, cada chunk numa transação própria. Todo import (e todo purge) grava uma
+linha em `lis_imports`, nunca apagada pela API.
+**Motivo:** planilha real do Santé é ~500KB (~667KB em base64) — folgada dentro de qualquer teto
+razoável, mas o import processa centenas de linhas com resolução de atendente/convênio por
+linha, e uma transação única para o arquivo inteiro arrisca estourar o timeout do request numa
+planilha maior no futuro. Chunks tornam a falha parcial rastreável (`rowsAccepted` reflete o que
+de fato commitou) em vez de um 500 sem diagnóstico. Histórico imutável (sem `DELETE` na API) é o
+que torna "quando e o que mudou na base" auditável sem depender de log de aplicação.
+**Impacto:** db (`lis_imports`, `lis_budgets`, SCHEMA.md §25/§26), api (`POST /lis-imports`,
+`GET /lis-imports[/latest]`, `POST /lis-imports/purge`), backend (`lis-spreadsheet.ts` como lib
+pura, sem tenant nem I/O de banco — `LisImportService` é quem fala com o banco).
+
+### D-110: Datas do domínio LIS são `DATE`, nunca `TIMESTAMP`
+**Decisão:** `lis_budgets.issued_on`/`paid_on` são `DATE`. O serial de data do Excel é convertido
+por componentes (ano/mês/dia, com a correção do bug do ano bissexto de 1900 do próprio Excel),
+nunca por aritmética de milissegundos.
+**Motivo:** o serial do Excel não carrega fuso horário — não existe "hora" nesse dado, só dia.
+Guardar como `TIMESTAMP` reintroduziria exatamente a classe de bug de UTC-3 que D-021 e D-078 já
+corrigiram para dado que sempre teve hora de verdade; aqui, nem isso: seria inventar uma hora
+que a fonte nunca teve, só para descartá-la de novo em todo agrupamento por dia/mês. A divergência
+de fronteira de mês entre a data local do Santé e a data gravada é listada explicitamente no
+checklist de paridade da Onda 11, não escondida por uma falsa precisão de timestamp.
+**Impacto:** db (`lis_budgets.issued_on`/`paid_on`, `proposals.lis_paid_on` — todas `DATE`),
+backend (parser converte serial → `DATE` por componentes, nunca via `new Date(serial)`).
+
+### D-111: `principal_insurance_name` e `total_value` são colunas `GENERATED … STORED`
+**Decisão:** `lis_budgets.principal_insurance_name` (regra do convênio principal,
+BUSINESS_RULES.md §11.3) e `lis_budgets.total_value` (soma de `value_1..3`) são colunas
+`GENERATED ALWAYS AS (...) STORED` (SCHEMA.md §26), não calculadas em código a cada leitura nem
+gravadas por um `INSERT` que replica a regra em TypeScript.
+**Motivo:** as duas são regra de negócio pura sobre outras colunas da mesma linha — o tipo de
+cálculo que diverge silenciosamente no dia em que um segundo caminho de escrita aparece (seed,
+script de correção, importação futura por outra rota). Uma coluna gerada é a única forma de a
+regra valer para **todo** `INSERT`/`UPDATE`, inclusive um que ninguém previu. **Risco aceito e
+registrado no spec:** `GENERATED ... STORED` precisa ser validado no PGlite (D-008, testes)
+**na primeira hora** da Onda 9 — se o suporte for incompleto, o fallback é calcular as duas
+colunas como colunas normais, escritas num único ponto do `LisImportRepository`, preservando a
+mesma regra de prioridade.
+**Impacto:** db (SCHEMA.md §26, migração 012), backend (`LisImportService`/repositório não
+recalculam essas duas colunas — leem o que o banco gerou), qa (teste dedicado a provar que a
+coluna gerada bate com a regra de BUSINESS_RULES.md §11.3, incluindo o empate "nenhum convênio
+com valor > 0").
+
+### D-112: Atendente do LIS é entidade própria, não obrigatoriamente ligada a um `user`
+**Decisão:** `attendants` (SCHEMA.md §24) é uma tabela nova, independente de `users`. O `USUÁRIO`
+da planilha do LIS vira `attendant_id`; ligar um `attendants.user_id` a um login do CRM é
+**opcional e manual** (feito por manager/admin em `PATCH /attendants/:id`). O escopo de `/sales`
+para quem tem papel `attendant` é resolvido por esse vínculo (`attendants.user_id = ctx.userId`),
+não pelo papel em si.
+**Motivo:** no FluxoLab, atendente nunca teve login — era só um nome de planilha
+(`atendentes.nome`). Exigir que todo atendente do LIS seja um `users` ativo do CRM quebraria a
+migração do Santé (nem toda pessoa que aparece como `USUÁRIO` numa planilha antiga ainda
+trabalha lá, ou tem e-mail cadastrado) e acoplaria dois conceitos que nascem em momentos
+diferentes: o atendente existe desde a primeira planilha importada; o login, só quando (e se)
+essa pessoa passar a usar o CRM.
+**Impacto:** db (`attendants`, SCHEMA.md §24), api (`/attendants`, `/sales` com recorte por
+vínculo — API_CONTRACTS.md §11/§12), backend (`AttendantService`, `SalesService`,
+SERVICES.md §21/§22).
+
+### D-113: Percentuais de comissão migram de `localStorage` por navegador para `tenant_settings` por tenant
+**Decisão:** `tenant_settings` ganha `commission_budget_pct` (default 2,00),
+`commission_exams_pct` (1,50) e `commission_checkup_pct` (1,50) — os mesmos valores validados em
+produção pelo FluxoLab, onde viviam em `localStorage` do navegador de quem configurava.
+`GET/PATCH /settings/commissions` (manager lê, admin edita) substitui a tela que só existia no
+FluxoLab.
+**Motivo:** comissão por navegador significa que o valor não é o mesmo em duas máquinas do
+mesmo laboratório, e desaparece ao limpar o cache — um defeito de arquitetura que o FluxoLab
+carregava desde sempre e que a fusão corrige de graça, movendo a configuração para onde toda
+outra configuração operacional do tenant já mora (`tenant_settings`, D-065). Confirmar 2/1,5/1,5
+com o Santé continua uma pendência de produto (registrada no spec §6), não bloqueante para a
+Onda 9 — os defaults são os valores conhecidos e corrigíveis por `PATCH` a qualquer momento.
+**Impacto:** db (ALTER em `tenant_settings`, SCHEMA.md), api (`/settings/commissions`), backend
+(`CommissionSettingsService`, SERVICES.md §18, consumido por `SalesService.getSummary`).
+
+### D-114: Convênio da planilha do LIS é resolvido por nome dobrado; inexistente é criado como `outro`
+**Decisão:** `lis_budgets.principal_insurance_name` é casado contra `insurances.name` dobrado
+(`lower`+trim, sem remoção de acento). Convênio que não existe no cadastro do tenant é **criado
+automaticamente** com `type: 'outro'` (valor novo no CHECK de `insurances.type`) e
+`source: 'lis'` (coluna nova, espelhando `exam_catalog.source`, D-081). `PARTICULAR` e variantes
+de grafia resolvem para `insurance_id: NULL` — nunca criam uma linha "Particular"
+(reafirma D-082 para o domínio do LIS).
+**Motivo:** o cadastro de convênios de um laboratório que nunca usou o módulo de Orçamentos do
+CRM está vazio; exigir cadastro manual de cada convênio antes da primeira importação inverteria
+a ordem natural (o laboratório já usa esses convênios há anos, só nunca precisou cadastrá-los no
+CRM). Diferente da resolução de atendente (D-112/BUSINESS_RULES §11.6), aqui a criação automática
+é segura: o nome do convênio na planilha do LIS é confiável (não é um campo de digitação livre
+por atendente), e a alternativa — bloquear o import até alguém cadastrar manualmente — quebraria
+justamente o fluxo de "importar e ver os KPIs" que é o valor central da Onda 9.
+**Impacto:** db (`insurances.type` CHECK ganha `'outro'`, `insurances.source` nova coluna,
+SCHEMA.md §18/§26), backend (`LisImportService`, SERVICES.md §19), domain (BUSINESS_RULES.md
+§11.4, decisão 3 em aberto do spec — "convênios `outro` aparecem direto ou exigem
+classificação" — fica para decisão de produto futura, não bloqueia esta onda).
+
+### D-115: Exames importados do LIS entram no catálogo com preço `0`
+**Decisão:** exames que só existiam no FluxoLab (nunca precificados no CRM) entram em
+`exam_catalog` com `price_private = 0`, `price_insurance = 0`, `source: 'lis'` (mesma coluna
+`source` de D-081); sinônimos alimentam `exam_synonyms`. A UI do Catálogo marca esses exames
+como "sem preço" (Onda 10).
+**Motivo:** o domínio do LIS não tem preço de exame — o FluxoLab nunca precificou, só registrou
+o resultado do orçamento já fechado. Recusar a entrada do exame por falta de preço quebraria a
+migração do Santé (o catálogo do LIS precisa existir para o import de `lis_budgets` fazer
+sentido); inventar um preço seria pior — um número sem origem, exatamente o que
+BUSINESS_RULES.md §5 proíbe. **Risco registrado no spec:** um tenant que passa a montar
+orçamentos pelo CRM (`Budget/New`) precisa que a tela **bloqueie** item sem preço
+(`EXAM_WITHOUT_PRICE`) — comportamento de tela, pendência para quem tocar `Budget/New` a seguir,
+não resolvido nesta onda de backend.
+**Impacto:** db (nenhuma coluna nova — reaproveita `exam_catalog.source` de D-081), backend
+(seed/import do catálogo do LIS grava preço `0` explicitamente, nunca `NULL` — `price_private`/
+`price_insurance` continuam `NOT NULL`), ui (pendência registrada, fora do escopo desta onda).
+
+### D-118: Colunas `lis_*` em `proposals` nascem na migração 012, comportamento só na Onda 13
+**Decisão:** `proposals` ganha `lis_budget_number`, `lis_requisition_number`, `lis_paid_value`,
+`lis_paid_on` e `lis_reconciled_at` já na migração `012_lis_domain.sql` (Onda 9). Nenhuma rota
+desta onda lê ou escreve essas colunas — `POST /proposals` e `PATCH /proposals/:id/*` continuam
+exatamente como estavam. O comportamento (gravar o número do orçamento do LIS a partir da tela,
+casar por número no import, avançar `ganho` automaticamente) é construído inteiro na Onda 13
+(D-119, fora do escopo deste documento).
+**Motivo:** a revisão 2 do spec elimina a divisão de planos (D-108) que antes justificava
+separar "criar a coluna" (Onda 9) de "usar a coluna" (Onda 14) em dois momentos de produto
+diferentes. Sem planos, não há razão para duas migrações e dois passes pelo `ProposalService`
+sobre a mesma tabela — a coluna nasce junto com o resto do domínio LIS que a Onda 9 já está
+migrando, e o índice único parcial (`idx_proposals_tenant_lis_budget_number`, `WHERE
+lis_budget_number IS NOT NULL`) já impede a colisão de dois orçamentos do LIS na mesma proposta
+desde já, mesmo sem nenhum caminho de escrita ligado ainda.
+**Impacto:** db (ALTER em `proposals`, SCHEMA.md §5 — nasce na 012), api (nenhuma mudança de
+contrato nesta onda; `API_CONTRACTS.md` §3 só muda na Onda 13), backend (`ProposalService`
+inalterado nesta onda — `markWonFromLis`/`transitionInTx` são construídos na Onda 13).
+
 ## Template para novas decisões
 
 ```

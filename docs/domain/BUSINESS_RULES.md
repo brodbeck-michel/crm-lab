@@ -435,6 +435,120 @@ const approved = proposal.approvalStatus === 'approved';  // Claro
 
 ---
 
+## 11. Regras de deduplicação e KPIs do LIS (Onda 9)
+
+**Regra:** o domínio "Orçamentos do LIS" (`lis_budgets`, `lis_imports`, `sales` — SCHEMA.md
+§24-27) importa uma planilha de terceiro sem disciplina de digitação. As regras abaixo foram
+validadas em produção pelo FluxoLab (`git show HEAD:src/lib/orcamento.ts` e
+`HEAD:src/lib/executiveReport.ts` no repo antigo) e **devem ser preservadas exatamente**, não
+reinventadas — são o comportamento que os usuários do Santé já conhecem.
+
+### 11.1 Dedupe por número (orçamento)
+Duas linhas da planilha (ou de duas planilhas diferentes) com o mesmo `ORCAMENTO` representam o
+mesmo orçamento reimportado — **a de maior `total_value` vence**. `total_value` é a soma de
+`value_1 + value_2 + value_3` (coluna gerada, SCHEMA.md §26). Implementado no
+`upsert ON CONFLICT (tenant_id, number) DO UPDATE ... WHERE EXCLUDED.total_value >=
+lis_budgets.total_value` — um total menor na reimportação **não regride** o dado já gravado
+(planilha desatualizada não apaga um valor mais completo já importado).
+
+### 11.2 Dedupe por requisição (KPI de pagamento)
+A mesma `REQUISICAO` pode aparecer em mais de uma linha de `lis_budgets` (o LIS atualiza o valor
+pago em cima de um orçamento já existente, gerando uma nova linha ou uma linha atualizada) — para
+qualquer KPI de pagamento, **a linha de maior `paid_value` vence**, via
+`DISTINCT ON (requisition_number) ... ORDER BY requisition_number, paid_value DESC`
+(`lis-analytics.repository.ts`, SERVICES.md §20). Isso é dedupe de **leitura** (o KPI), diferente
+do dedupe de **escrita** de 11.1 (a linha de `lis_budgets` em si) — as duas regras coexistem
+porque perguntam coisas diferentes: "qual é o orçamento" vs. "quanto foi pago por aquela
+requisição".
+
+### 11.3 Convênio principal
+De `insurance_1`/`insurance_2`/`insurance_3` (com `value_1..3` correspondentes), o convênio
+principal é: **o primeiro de c1..c3 que tem nome E valor > 0**; se nenhum tiver valor > 0, **o
+primeiro que tem nome**, valor ou não. Coluna gerada `principal_insurance_name` (SCHEMA.md §26,
+`GENERATED … STORED`, D-111) implementa exatamente essa ordem de prioridade — nunca "o de maior
+valor" nem "sempre o primeiro campo preenchido": um convênio com nome e valor zerado (erro comum
+de digitação na planilha) não deve ser escolhido como principal quando um segundo campo tem nome
+e valor de verdade.
+
+### 11.4 Resolução de convênio por nome dobrado
+`principal_insurance_name` é casado contra `insurances.name`, dobrado (`lower` + trim — mesma
+dobra de caixa/acento do catálogo, sem remoção de acento). Convênio **inexistente** é **criado**
+automaticamente com `type: 'outro'`, `source: 'lis'` (D-114) — diferente da resolução de
+atendente (11.6), que nunca cria linha sozinha; convênio da planilha do LIS é informação
+confiável o bastante para virar cadastro, atendente não é (nome de usuário mal digitado não deve
+virar um atendente fantasma). `PARTICULAR` e variantes de grafia —
+`PARTICULAR`, `Particular`, `PARTICULAR ID`, `PARTICULAR/OUTROS`, string vazia ou só espaços —
+resolvem para `insurance_id: NULL` (ausência de convênio, D-082, mesma regra que já valia para
+`proposals.insurance_id`) e **nunca** criam uma linha "Particular" em `insurances`.
+
+### 11.5 Conversão capada em 100% e `MIN_ORC_RANKING`
+`conversionQty = min(100, paid.count / issued.count × 100)` — **sempre capado em 100%**: duas
+requisições geradas a partir de orçamentos de períodos diferentes podem ser pagas no mesmo mês,
+produzindo mais pagamentos do que orçamentos emitidos naquele recorte; sem o cap, o percentual
+passaria de 100% e a tela mostraria um número sem sentido de negócio. `0` (não `NaN`) quando
+`issued.count` é `0` (`percent()` de `analytics.service.ts`, reaproveitada — §20/§23 de
+SERVICES.md).
+
+**`MIN_ORC_RANKING = 20`:** rankings qualitativos (`byAttendant`, `byInsurance`, top performers
+do LIS) só são calculados/exibidos quando o período tem **ao menos 20 orçamentos emitidos**.
+Abaixo disso, a lista vem vazia (`[]`) em vez de um "top 6" sobre uma amostra de 3 ou 4 linhas —
+um ranking estatisticamente irrelevante é pior que a ausência do gráfico, porque parece
+informação e não é.
+
+### 11.6 Resolução de atendente
+`attendant_name` (coluna `USUÁRIO`/`USUARIO` da planilha) é casado contra
+`attendants.folded_name` (`lower` + espaços colapsados — SCHEMA.md §24). Sem casar, a linha
+grava o nome cru em `attendant_name` e `attendant_id` fica `NULL` — **diferente do convênio
+(11.4), aqui NÃO há criação automática**: nome de atendente sem cadastro prévio é tratado como
+possível erro de digitação, não como atendente novo. Cabe a manager/admin cadastrar o atendente
+em `/attendants` (API_CONTRACTS.md §12) e reimportar, ou corrigir manualmente.
+
+### 11.7 Janelas de tempo: emissão vs. pagamento
+Todo KPI do domínio do LIS responde a **duas perguntas diferentes**, sobre datas diferentes —
+mesmo princípio de D-020 (`/analytics/*`), estendido ao LIS:
+
+| Métrica | Janela | Coluna |
+|---|---|---|
+| Orçado, orçamentos emitidos, funil de emissão | **Emissão** | `issued_on` |
+| Recebido, ticket pago, conversão, Busca Ativa | **Pagamento** | `paid_on` (Busca Ativa: ausência de pagamento) |
+
+Um orçamento emitido em julho pode ser pago em agosto: ele entra na emissão de julho e no
+pagamento de agosto — a mesma divergência de fronteira de mês que D-020 já registra para
+propostas, e que o relatório de paridade da Onda 11 lista explicitamente ao migrar o Santé.
+
+### 11.8 Datas do LIS são `DATE`, sem fuso (D-110)
+`issued_on`/`paid_on` vêm do serial de data do Excel, que **não carrega fuso** — são convertidos
+por componentes (ano/mês/dia), nunca por `new Date(serial)` interpretado como instante UTC.
+Guardados como `DATE` (não `TIMESTAMP`), eliminam a classe de bug de UTC-3 que já exigiu D-021/
+D-078 para dado que sempre teve hora.
+
+### 11.9 Aliases de coluna da planilha
+O parser (`backend/src/lib/lis-spreadsheet.ts`) aceita as seguintes variações de cabeçalho —
+casamento sem caixa/acento, mesma dobra do catálogo:
+
+| Campo interno | Aliases aceitos |
+|---|---|
+| `number` | `ORCAMENTO` (**obrigatória** — ausente é `VALIDATION_ERROR` com `details.reason: "missing_column"`) |
+| `issued_on` | `DATA_ORÇAMENTO` |
+| `patient_name` | `NM_PACIENTE` |
+| `insurance_1/2/3` | `CONVENIO1`, `CONVENIO2`, `CONVENIO3` |
+| `value_1/2/3` | `VL_TOTAL1`, `VL_TOTAL2`, `VL_TOTAL3` |
+| `attendant_name` | `USUÁRIO`, `USUARIO` |
+| `insurance_average` | `MEDIA_CONVENIO` |
+| `requisition_number` | `REQUISICAO`, e mais 4 variantes de grafia (o mesmo campo, historicamente digitado de formas diferentes pelo LIS) |
+| `requisition_value` | `VALOR_REQUISICAO` |
+| `paid_value` | `Valor_Pago`, e mais 2 variantes |
+| `paid_on` | `DATA_PAGAMENTO`, e mais 4 variantes |
+
+Guard `%PDF`: os primeiros bytes do arquivo são checados contra a assinatura de PDF — um PDF
+renomeado para `.xlsx` é recusado com `details.reason: "pdf_disguised"` antes de o parser tentar
+abri-lo como planilha. Planilha sem nenhuma linha de dado (só cabeçalho, ou vazia) é recusada
+com `details.reason: "empty"`. Serial de data do Excel é convertido por componentes (dia 1 =
+1900-01-01, com a correção do bug de ano bissexto de 1900 que o próprio Excel carrega) —
+**nunca** por aritmética de milissegundos que arraste fuso da máquina que roda o import.
+
+---
+
 ## Resumo: Checklist de Implementação
 
 Antes de commitar, verifique:

@@ -460,6 +460,17 @@ preenchida. Corrigido pela migração `014_fix_lis_budgets_total_value.sql`: `to
 ser o valor **do mesmo par (nome, valor) que `principal_insurance_name` escolhe** (§11.3) — nunca
 a soma.
 
+**Correção D-126 — a linha PERDEDORA do dedupe não pode perder requisição/pagamento:** a versão
+original de `consolidateLisRows` substituía a linha inteira pela de maior `total_value` — se a
+mesma REQUISIÇÃO gera mais de uma linha de planilha com o mesmo número de ORÇAMENTO (ex.: um
+exame por linha) e só uma delas tem requisição/pagamento preenchidos, a linha vencedora podia
+não ser essa, e o pagamento era perdido por completo. Achado comparando "Recebido" com o app de
+referência na MESMA planilha real (167 pagos aqui contra 169 lá, mesmo período). Corrigido para
+mesclar como a referência (`consolidateOrcamentos`): `total_value` decide quem é a base (convênio,
+paciente, atendente), mas `requisition_number` cai para a outra linha se a vencedora não tiver, e
+`paid_value`/`paid_on`/`requisition_value` vêm de **qual das duas linhas tiver o maior
+`paid_value`** — nunca descartados junto com a perdedora do total.
+
 ### 11.2 Dedupe por requisição (KPI de pagamento)
 A mesma `REQUISICAO` pode aparecer em mais de uma linha de `lis_budgets` (o LIS atualiza o valor
 pago em cima de um orçamento já existente, gerando uma nova linha ou uma linha atualizada) — para

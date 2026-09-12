@@ -1564,6 +1564,28 @@ de VOLUME convertido — não "quanto ainda falta receber", que é uma pergunta 
 (`API_CONTRACTS.md` §5c/§10.2); frontend (`/results`, PAGES.md §14, troca a fonte do card "Em
 Requisição" de `/lis-budgets/pending/summary` para `summary.requisition`).
 
+### D-126: Dedupe de linhas duplicadas do mesmo orçamento MESCLA requisição/pagamento, nunca descarta
+**Decisão:** `consolidateLisRows` (`backend/src/lib/lis-spreadsheet.ts`) passa a mesclar campos
+entre as duas linhas quando há duplicata do mesmo `ORCAMENTO` dentro de uma importação, em vez de
+substituir a linha inteira pela de maior `total_value`. `total_value`/convênio/paciente/atendente
+continuam vindo da linha de maior total (regra original, §11.1) — mas `requisition_number` cai
+para a outra linha quando a vencedora não tem, e `paid_value`/`paid_on`/`requisition_value` vêm da
+linha com **maior `paid_value` entre as duas**, seja ela a vencedora do total ou não. Port exato
+de `consolidateOrcamentos` (app de referência do FluxoLab).
+**Motivo:** achado comparando "Recebido" com o app de referência usando a MESMA planilha real, no
+mesmo período: nosso sistema contava 167 pagos, a referência 169 — uma diferença real de
+R$ 3.516,76. A causa: a mesma REQUISIÇÃO pode gerar mais de uma linha na planilha (um exame por
+linha) sob o mesmo número de ORÇAMENTO; quando só uma das linhas tem requisição/pagamento
+preenchidos e ela não é a de maior `total_value`, a versão anterior jogava esse pagamento fora ao
+descartar a linha inteira. Um pagamento de verdade desaparecendo silenciosamente é o pior tipo de
+bug num sistema que alimenta comissão/folha de pagamento.
+**Impacto:** backend (`lis-spreadsheet.ts#consolidateLisRows`, único ponto de mudança — o
+`upsertBudget`/SQL de conflito entre IMPORTAÇÕES diferentes, ao longo do tempo, não muda: mesmo
+comportamento da referência, que também substitui por completo num reimport); nenhuma mudança de
+schema ou de contrato de API. **Dado já importado antes desta correção continua com o pagamento
+perdido** — precisa reimportar a mesma planilha para recuperar (o reimport é idempotente e
+upserta por número, então corrige as linhas afetadas sem duplicar as demais).
+
 ## Template para novas decisões
 
 ```

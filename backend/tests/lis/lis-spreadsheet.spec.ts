@@ -201,4 +201,60 @@ describe('consolidateLisRows (BUSINESS_RULES.md §11.1)', () => {
     const rows = [make('1', 100), make('2', 50)];
     expect(consolidateLisRows(rows)).toHaveLength(2);
   });
+
+  it('D-126: requisição/pagamento da linha PERDEDORA não pode ser descartado — mescla, não substitui', () => {
+    // Mesmo ORÇAMENTO, duas linhas da planilha (ex.: um exame por linha):
+    // a de maior total_value NÃO tem requisição/pagamento ainda; a outra,
+    // de valor menor, já foi paga. A referência (consolidateOrcamentos)
+    // resgata o pagamento da linha perdedora — a versão antiga (substituir
+    // a linha inteira) jogava esse pagamento fora.
+    const semPagamento: LisSpreadsheetRow = {
+      ...make('1', 300),
+      requisitionNumber: null,
+      requisitionValue: null,
+      paidValue: null,
+      paidOn: null,
+    };
+    const paga: LisSpreadsheetRow = {
+      ...make('1', 100),
+      requisitionNumber: 'REQ-1',
+      requisitionValue: 100,
+      paidValue: 100,
+      paidOn: '2026-08-20',
+    };
+
+    const consolidated = consolidateLisRows([semPagamento, paga]);
+    expect(consolidated).toHaveLength(1);
+    const row = consolidated[0]!;
+    expect(totalValue(row)).toBe(300); // rep continua sendo a de maior total_value
+    expect(row.requisitionNumber).toBe('REQ-1'); // resgatado da linha perdedora
+    expect(row.paidValue).toBe(100);
+    expect(row.paidOn).toBe('2026-08-20');
+    expect(row.requisitionValue).toBe(100);
+  });
+
+  it('D-126: quando as duas linhas têm pagamento, o MAIOR valor pago vence (não necessariamente a linha de maior total_value)', () => {
+    const repMenosPago: LisSpreadsheetRow = {
+      ...make('2', 300),
+      requisitionNumber: 'REQ-A',
+      requisitionValue: 300,
+      paidValue: 50,
+      paidOn: '2026-08-10',
+    };
+    const outraMaisPaga: LisSpreadsheetRow = {
+      ...make('2', 100),
+      requisitionNumber: 'REQ-B',
+      requisitionValue: 100,
+      paidValue: 400,
+      paidOn: '2026-08-15',
+    };
+
+    const consolidated = consolidateLisRows([repMenosPago, outraMaisPaga]);
+    const row = consolidated[0]!;
+    expect(totalValue(row)).toBe(300);
+    expect(row.paidValue).toBe(400);
+    expect(row.paidOn).toBe('2026-08-15');
+    expect(row.requisitionNumber).toBe('REQ-A'); // rep já tinha requisição própria — não sobrescreve
+    expect(row.requisitionValue).toBe(300); // MAX(300, 100)
+  });
 });

@@ -79,6 +79,28 @@ export function PeriodFilter({ value, onChange }: PeriodFilterProps) {
   );
 }
 
+/**
+ * Período imediatamente anterior, de MESMA duração — base do `deltaPct` do
+ * cartão "Total Orçado" de `/results` (PAGES.md §14). Calculado no CLIENTE,
+ * sem endpoint novo: um segundo fetch de `/lis-budgets/summary` com este
+ * período resolve o "vs. período anterior".
+ */
+export function previousPeriod(period: Period): Period {
+  const start = new Date(`${period.startDate}T00:00:00Z`);
+  const end = new Date(`${period.endDate}T00:00:00Z`);
+  const durationDays = Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1;
+
+  const previousEnd = new Date(start);
+  previousEnd.setUTCDate(previousEnd.getUTCDate() - 1);
+  const previousStart = new Date(previousEnd);
+  previousStart.setUTCDate(previousStart.getUTCDate() - (durationDays - 1));
+
+  return {
+    startDate: previousStart.toISOString().slice(0, 10),
+    endDate: previousEnd.toISOString().slice(0, 10),
+  };
+}
+
 /** Período padrão: últimos 30 dias terminando hoje (mesmo default do servidor). */
 export function defaultPeriod(): Period {
   return { startDate: isoDaysAgo(29), endDate: todayIso() };

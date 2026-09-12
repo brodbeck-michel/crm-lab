@@ -58,6 +58,7 @@ interface BudgetSeed {
   attendantId?: string | null;
   attendantName?: string | null;
   requisitionNumber?: string | null;
+  requisitionValue?: number | null;
   paidValue?: number | null;
   paidOn?: string | null;
 }
@@ -67,8 +68,8 @@ async function insertBudget(tenantId: string, seed: BudgetSeed): Promise<void> {
     tx.query(
       `INSERT INTO lis_budgets (
          tenant_id, number, issued_on, patient_name, insurance_1, value_1,
-         attendant_id, attendant_name, requisition_number, paid_value, paid_on, import_id
-       ) VALUES ($1, $2, $3, 'Paciente Teste', $4, $5, $6, $7, $8, $9, $10, $11)`,
+         attendant_id, attendant_name, requisition_number, requisition_value, paid_value, paid_on, import_id
+       ) VALUES ($1, $2, $3, 'Paciente Teste', $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [
         tenantId,
         seed.number,
@@ -78,6 +79,7 @@ async function insertBudget(tenantId: string, seed: BudgetSeed): Promise<void> {
         seed.attendantId ?? null,
         seed.attendantName ?? null,
         seed.requisitionNumber ?? null,
+        seed.requisitionValue ?? null,
         seed.paidValue ?? null,
         seed.paidOn ?? null,
         importId,
@@ -117,6 +119,11 @@ describe('GET /lis-budgets/summary — MIN_ORC_RANKING (§11.5)', () => {
     expect(body.issued.count).toBe(5);
     expect(body.byAttendant).toEqual([]);
     expect(body.byInsurance).toEqual([]);
+    // D-122: byAttendantDetail é relatório de comissão, NUNCA gated por
+    // MIN_ORC_RANKING — o atendente aparece mesmo com volume baixo.
+    expect(body.byAttendantDetail).toEqual([
+      { attendantId, attendantName: 'Maria', issuedCount: 5, paidCount: 0, paidValue: 0 },
+    ]);
   });
 
   it('com 20+ orcamentos emitidos, rankings aparecem', async () => {
@@ -136,7 +143,7 @@ describe('GET /lis-budgets/summary — MIN_ORC_RANKING (§11.5)', () => {
     const body = res.body as LisBudgetsSummary;
     expect(body.issued.count).toBe(20);
     expect(body.byAttendant).toEqual([
-      { attendantId, attendantName: 'Maria', issuedCount: 20, paidValue: 0 },
+      { attendantId, attendantName: 'Maria', issuedCount: 20, paidCount: 0, paidValue: 0 },
     ]);
     expect(body.byInsurance).toEqual([{ insuranceName: 'Unimed', count: 20, totalValue: 2000 }]);
   });
@@ -194,6 +201,63 @@ describe('GET /lis-budgets/summary — dedupe por requisicao (§11.2)', () => {
     const body = res.body as LisBudgetsSummary;
     expect(body.paid.count).toBe(1);
     expect(body.paid.totalValue).toBe(400);
+  });
+});
+
+describe('GET /lis-budgets/summary — "Em Requisição" (D-125)', () => {
+  it('soma requisition_value de TODA requisição emitida no período, paga ou não', async () => {
+    await insertBudget(tenantA.id, {
+      number: 'R1',
+      issuedOn: '2026-08-10',
+      requisitionNumber: 'REQ-1',
+      requisitionValue: 300,
+      paidValue: 300,
+      paidOn: '2026-08-12',
+    });
+    await insertBudget(tenantA.id, {
+      number: 'R2',
+      issuedOn: '2026-08-15',
+      requisitionNumber: 'REQ-2',
+      requisitionValue: 150,
+      // sem pagamento — ainda assim entra em "Em Requisição" (não é Busca Ativa)
+    });
+    await insertBudget(tenantA.id, {
+      number: 'R3',
+      issuedOn: '2026-08-20',
+      // sem requisição — nunca "convertido em venda", não entra na soma
+      requisitionValue: 999,
+    });
+
+    const res = await app.agent
+      .get(`${BASE}/summary?startDate=2026-08-01&endDate=2026-08-31`)
+      .set(app.auth(managerA));
+    const body = res.body as LisBudgetsSummary;
+    expect(body.requisition).toEqual({ count: 2, totalValue: 450 });
+  });
+
+  it('dedupe por requisição: duas linhas da mesma requisição contam uma vez (maior paid_value vence)', async () => {
+    await insertBudget(tenantA.id, {
+      number: 'R4',
+      issuedOn: '2026-08-10',
+      requisitionNumber: 'REQ-DUP',
+      requisitionValue: 100,
+      paidValue: 50,
+      paidOn: '2026-08-11',
+    });
+    await insertBudget(tenantA.id, {
+      number: 'R5',
+      issuedOn: '2026-08-10',
+      requisitionNumber: 'REQ-DUP',
+      requisitionValue: 100,
+      paidValue: 400,
+      paidOn: '2026-08-11',
+    });
+
+    const res = await app.agent
+      .get(`${BASE}/summary?startDate=2026-08-01&endDate=2026-08-31`)
+      .set(app.auth(managerA));
+    const body = res.body as LisBudgetsSummary;
+    expect(body.requisition).toEqual({ count: 1, totalValue: 100 });
   });
 });
 

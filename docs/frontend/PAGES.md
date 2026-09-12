@@ -620,33 +620,86 @@ operacional ("como estão os orçamentos deste período").
 
 ### 14. Resultados (`/results`) — gestor+
 
-Home do domínio LIS — o "Dashboard" do FluxoLab. Fonte: `GET /reports/executive` (§5c) —
-único endpoint da tela, um retrato do período inteiro (sem recorte por atendente/convênio).
+Home do domínio LIS — o "Dashboard" do FluxoLab, redesenhado a partir da referência visual real
+da tela equivalente (validação da Onda 10 trouxe screenshots do produto em produção). Duas fontes
+de dados coexistem, cada uma com um papel:
 
-- **Cabeçalho:** `PeriodFilter` (padrão: últimos 30 dias, D-117) + botão **[Importar]** (abre o
-  modal de import, ver "Modal Importar" abaixo) + botão **[Exportar PDF]**.
-  **Sem seletor de atendente/convênio nesta tela:** `GET /reports/executive` só aceita período
-  (§5c) — não recorta por atendente/convênio, porque é o retrato executivo do PERÍODO INTEIRO
-  (o mesmo JSON vira o PDF, D-116, e o PDF não pode secretamente refletir um filtro que a
-  próxima pessoa a abrir a tela não vê marcado). Recorte por atendente/convênio existe em
-  Conferência (§15) e Busca Ativa (§16), que consomem `/lis-budgets*` (com esses parâmetros).
-- **Grade de `KpiCard`** (emitidos: contagem/valor/ticket médio; pagos: contagem/valor/ticket
-  médio/`conversionQty`) — mesmos números de `issued`/`paid` de `GET /reports/executive`.
-  `conversionQty` já vem **capado em 100%** do servidor; a tela nunca reaplica o cap nem
-  recalcula localmente (BUSINESS_RULES.md §11).
-- **Série mensal (12 meses):** gráfico de linhas/barras com `monthlySeries` — sempre 12 pontos,
-  mês sem dado aparece com `0`, nunca com buraco no eixo (mesmo princípio de `lossReasons` em
-  `/analytics`, §5).
-- **Top atendentes / Top convênios:** duas tabelas lado a lado com `byAttendant`/`byInsurance`
-  (top 6, já recortado pelo servidor — a tela não pagina nem ordena de novo).
-- **"Última atualização em ...":** `GET /lis-imports/latest` — `null` vira "Nenhuma importação
-  ainda"; a tela nunca mostra "Invalid Date".
-- **Exportar PDF:** `jspdf` + `jspdf-autotable` (lazy import — D-116), montado no CLIENTE a
-  partir do MESMO JSON de `GET /reports/executive` que já preencheu a tela (não um segundo
-  fetch — o PDF não pode divergir do que a pessoa está olhando). Marca d'água: `theme.brandName`
-  + `theme.logoUrl` do próprio tenant, nunca "Santé" fixo.
-- **Sem dado no período:** cartões zerados + mensagem "Nenhum orçamento importado neste
-  período", não um erro — período sem movimento é estado normal, não falha.
+- **`GET /lis-budgets/summary`** (período + convênio, §10.2) — KPIs, gráfico de atendentes,
+  distribuição por convênio e a base do "Detalhe por atendente". **Suporta filtro de convênio**
+  (ao contrário do que a Fase 0 original previa — a referência real tem esse filtro).
+- **`GET /reports/executive`** (só período, §5c) — usado **apenas** para "Exportar Relatório
+  Executivo": o PDF é o retrato do período inteiro, sem o filtro de convênio da tela (D-116 —
+  o PDF nunca pode secretamente refletir um filtro que a próxima pessoa a abrir a tela não vê
+  marcado). É por isso que os dois endpoints coexistem em vez de um só fazer as duas coisas.
+- **`GET /sales/summary`** (sem `attendantId`, §11) — `byAttendant` entra na tabela de comissão.
+- **`GET /settings/commissions`** — percentuais para os cálculos de comissão da tabela.
+
+#### Cabeçalho
+
+- `PeriodFilter` (padrão: últimos 30 dias, D-117) + botão **"Limpar período"** (volta ao
+  default) + `Select` de **Convênio** (`GET /lis-budgets/filters`, opção fixa "Todos os
+  convênios" no topo) — os três compartilhados com Conferência/Busca Ativa via
+  `useUIStore.lisFilters` (D-117).
+- **"Última atualização em ...":** `GET /lis-imports/latest` — nome do arquivo + data/hora;
+  `null` vira "Nenhuma importação ainda".
+- Botão **"Exportar Relatório Executivo"** — PDF via `GET /reports/executive` (ver acima).
+
+#### Grade de KPIs (4 `KpiCard`)
+
+1. **Total Orçado** — `issued.totalValue` + `issued.count` ("N orçamentos"). Cartão com destaque
+   visual (fundo escuro/accent) — é o número âncora da tela. `deltaPct`: variação vs. o período
+   **imediatamente anterior de mesma duração** — calculada no CLIENTE com um segundo fetch de
+   `/lis-budgets/summary` para esse período anterior (mesmo convênio, sem `attendantId`); sem
+   endpoint novo. `previous.issued.totalValue === 0` → sem `deltaPct` (evita `Infinity`/`NaN`,
+   mesma disciplina de `percent()`).
+2. **Em Requisição** — `requisition.totalValue`/`.count` (D-125: orçamentos **convertidos em
+   requisição** no período, pagos OU pendentes — **não é** a mesma pergunta de Busca Ativa, §16,
+   que é só a fatia sem pagamento) + "X% do total" = `requisition.totalValue / issued.totalValue`
+   (0 quando `issued.totalValue` é 0).
+3. **Recebido** — `paid.totalValue`/`.count` + "X% do total" (mesma fórmula) + barra de
+   `paid.conversionQty` (já capada em 100% pelo servidor — a tela nunca reaplica o cap).
+4. **Atendentes** — `byAttendantDetail.length` (quantos atendentes tiveram orçamento no
+   período) + rótulo "N ativo(s) no período".
+
+#### Gráficos
+
+- **Faturamento por atendente:** barras horizontais, `byAttendantDetail` (D-122 — TODOS os
+  atendentes, não só o top 6 de `byAttendant`) ordenado por `paidValue` desc. Eixo em `MoneyDisplay`
+  (variante `thousands` para caber).
+- **Distribuição por convênio:** donut (`byInsurance`, top 6) + legenda com nome, valor e "%
+  do total exibido" (`totalValue / soma dos 6`); quando `issued.totalValue` for maior que a soma
+  dos 6 mostrados, uma linha extra "Outros" fecha a diferença (`issued.totalValue - soma`) — nunca
+  inventa um valor negativo (`Math.max(0, …)`).
+
+#### Detalhe por atendente (tabela de comissão)
+
+Combinação, feita no CLIENTE, de `byAttendantDetail` (orçado/pago/conversão) + `salesSummary
+.byAttendant` (vendas de exames/check-up) + `commissionSettings` (percentuais) — por
+`attendantId`. **Nenhum endpoint novo faz esse join** (D-122): `lis_budgets` e `sales` são
+domínios de leitura separados por design (D-108/D-112), e a tela é o único lugar que precisa da
+visão combinada.
+
+Colunas: Atendente · Orçado (`issuedCount`) · Recebido (`paidValue`, `MoneyDisplay`) ·
+Conversão % (`paidCount / issuedCount`, capado em 100%, mesma fórmula do agregado) · Comissão
+sobre orçamento (`paidValue × commissionBudgetPct / 100`) · Vendas de exames · Comissão sobre
+exames (já vem calculada em `byKind.exams.commissionValue`) · Vendas de check-up · Comissão sobre
+check-up · **Comissão total** (soma das três comissões da linha). Linha **TOTAL** ao final,
+somando cada coluna — nunca recalculada de outro jeito que não seja a soma das linhas exibidas.
+Atendente sem venda no período aparece com as colunas de venda zeradas (`0`), não ausente da
+tabela — a base é `byAttendantDetail` (todo atendente com orçamento), `LEFT JOIN` com vendas.
+
+Badge **"% Comissão: X%"** ao lado do botão de exportar mostra `commissionBudgetPct` (o percentual
+usado na coluna "Comissão sobre orçamento" desta mesma tabela — os outros dois percentuais
+aparecem no cabeçalho de suas próprias colunas).
+
+**Exportar** (dois botões lado a lado, "Comissão em PDF" e "Comissão em Excel" — D-123, sem
+componente de menu novo): geram no CLIENTE a partir da MESMA tabela já montada (nunca um segundo
+fetch). PDF via `jspdf`/`jspdf-autotable` (mesmo padrão dos outros dois relatórios, paisagem por
+ter mais colunas); Excel via `xlsx` — uma aba, mesmas colunas da tabela, linha TOTAL ao final,
+nome de arquivo `comissoes-<startDate>-<endDate>.xlsx`.
+
+- **Sem dado no período:** cartões zerados + "Nenhum orçamento importado neste período" no lugar
+  dos gráficos/tabela — período sem movimento é estado normal, não falha.
 
 #### Modal Importar (usado em `/results` e `/reconciliation`)
 

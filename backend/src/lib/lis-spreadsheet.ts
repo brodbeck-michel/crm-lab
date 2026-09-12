@@ -282,9 +282,33 @@ export function principalInsuranceName(row: LisSpreadsheetRow): string | null {
   return null;
 }
 
-/** Soma de value_1..3 (NULL tratado como 0) — espelha `lis_budgets.total_value` gerada. */
+/**
+ * Valor do CONVÊNIO PRINCIPAL (mesma seleção de `principalInsuranceName`) —
+ * espelha `lis_budgets.total_value` gerada (SCHEMA.md §26, D-124).
+ * `insurance_2`/`insurance_3` são cotações ALTERNATIVAS do mesmo orçamento
+ * (o mesmo exame precificado por outro convênio), não valores adicionais —
+ * `value1 + value2 + value3` está ERRADO (era o bug de D-124, corrigido pela
+ * migração 014 depois de comparar com o app de referência do FluxoLab).
+ */
 export function totalValue(row: LisSpreadsheetRow): number {
-  return (row.value1 ?? 0) + (row.value2 ?? 0) + (row.value3 ?? 0);
+  const pairs: Array<[string | null, number | null]> = [
+    [row.insurance1, row.value1],
+    [row.insurance2, row.value2],
+    [row.insurance3, row.value3],
+  ];
+  for (const [name, value] of pairs) {
+    if (name !== null && (value ?? 0) > 0) return value ?? 0;
+  }
+  for (const [name, value] of pairs) {
+    if (name !== null) return value ?? 0;
+  }
+  // Nenhum dos três tem nome de convênio (planilha sem essa coluna
+  // preenchida) — usa o primeiro valor > 0 mesmo sem nome, igual ao app de
+  // referência (`opts.find(o => o.v > 0)`, terceiro fallback).
+  for (const [, value] of pairs) {
+    if ((value ?? 0) > 0) return value ?? 0;
+  }
+  return 0;
 }
 
 /**

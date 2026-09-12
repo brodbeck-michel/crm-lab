@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { defaultPeriod, PeriodFilter } from './PeriodFilter';
+import { defaultPeriod, PeriodFilter, previousPeriod } from './PeriodFilter';
 
 describe('PeriodFilter', () => {
   it('defaultPeriod() cobre os últimos 30 dias terminando hoje', () => {
@@ -23,6 +23,20 @@ describe('PeriodFilter', () => {
 
     const today = new Date().toISOString().slice(0, 10);
     expect(onChange).toHaveBeenCalledWith({ startDate: today, endDate: today });
+  });
+
+  it('previousPeriod() devolve o período imediatamente anterior, de mesma duração', () => {
+    expect(previousPeriod({ startDate: '2026-09-01', endDate: '2026-09-30' })).toEqual({
+      startDate: '2026-08-02',
+      endDate: '2026-08-31',
+    });
+  });
+
+  it('previousPeriod() de um único dia continua um único dia', () => {
+    expect(previousPeriod({ startDate: '2026-09-15', endDate: '2026-09-15' })).toEqual({
+      startDate: '2026-09-14',
+      endDate: '2026-09-14',
+    });
   });
 
   it('endDate < startDate mostra mensagem inline, sem round-trip ao servidor', () => {

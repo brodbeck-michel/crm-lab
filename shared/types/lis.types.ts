@@ -127,10 +127,23 @@ export interface LisPaidTotals {
   conversionQty: number;
 }
 
+/**
+ * "Em Requisição" (D-125) — orçamentos convertidos em requisição no período
+ * (janela de EMISSÃO, dedupe por requisição), pagos ou não. Card "Em
+ * Requisição" de `/results` — NÃO é o mesmo que Busca Ativa (§16, que é só a
+ * fatia sem pagamento).
+ */
+export interface LisRequisitionTotals {
+  count: number;
+  totalValue: number;
+}
+
 export interface LisAttendantAgg {
   attendantId: string;
   attendantName: string;
   issuedCount: number;
+  /** Requisições pagas do atendente no período (D-122) — base de `conversionQty` por linha. */
+  paidCount: number;
   paidValue: number;
 }
 
@@ -165,8 +178,18 @@ export interface LisBudgetsSummaryQuery {
 export interface LisBudgetsSummary {
   period: LisBudgetsPeriod;
   issued: LisIssuedTotals;
+  requisition: LisRequisitionTotals;
   paid: LisPaidTotals;
+  /** Top 6 por `paidValue`, `[]` abaixo de `MIN_ORC_RANKING` (ranking qualitativo). */
   byAttendant: LisAttendantAgg[];
+  /**
+   * TODOS os atendentes do período, sem corte de `MIN_ORC_RANKING` (D-122) —
+   * fonte do gráfico "Faturamento por atendente" e da tabela "Detalhe por
+   * atendente" de `/results` (PAGES.md §14), que é relatório de comissão
+   * (contábil), não ranking qualitativo: não pode sumir atendente por baixo
+   * volume.
+   */
+  byAttendantDetail: LisAttendantAgg[];
   byInsurance: LisInsuranceAgg[];
 }
 
@@ -228,6 +251,7 @@ export interface ExecutiveReportMonthlyPoint {
 export interface ExecutiveReport {
   period: LisBudgetsPeriod;
   issued: LisIssuedTotals;
+  requisition: LisRequisitionTotals;
   paid: LisPaidTotals;
   monthlySeries: ExecutiveReportMonthlyPoint[];
   byAttendant: LisAttendantAgg[];
@@ -305,9 +329,25 @@ export interface SaleKindSummary {
   commissionValue: number;
 }
 
+export interface SalesAttendantSummary {
+  attendantId: string;
+  attendantName: string;
+  byKind: Record<SaleKind, SaleKindSummary>;
+  totalValue: number;
+  commissionTotal: number;
+}
+
 export interface SalesSummary {
   period: LisBudgetsPeriod;
   byKind: Record<SaleKind, SaleKindSummary>;
   totalValue: number;
   commissionTotal: number;
+  /**
+   * Detalhe por atendente (D-122) — só para manager/admin SEM `attendantId`
+   * na query (visão do tenant inteiro); `attendant` e chamadas já filtradas
+   * por um `attendantId` recebem `undefined`. Fonte da tabela "Detalhe por
+   * atendente" de `/results` (PAGES.md §14), combinada no CLIENTE com
+   * `LisBudgetsSummary.byAttendantDetail` e `commissionBudgetPct`.
+   */
+  byAttendant?: SalesAttendantSummary[];
 }

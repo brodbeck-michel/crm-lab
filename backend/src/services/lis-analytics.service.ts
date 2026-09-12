@@ -137,17 +137,20 @@ export function createLisAnalyticsService(deps: LisAnalyticsServiceDeps): LisAna
 
       const key = `${cachePrefix(ctx.tenantId)}summary:${period.startDate}:${period.endDate}:${filters.attendantId ?? '-'}:${filters.insuranceId ?? '-'}`;
       return cached(key, async () => {
-        const { issued, paid, byAttendant, byInsurance } = await db.withTenant(
+        const { issued, requisition, paid, byAttendant, byInsurance } = await db.withTenant(
           ctx.tenantId,
           async (tx) => {
-            const [issuedTotals, paidTotals, attendantAgg, insuranceAgg] = await Promise.all([
-              lisAnalyticsRepo.getIssuedTotals(tx, ctx.tenantId, filters),
-              lisAnalyticsRepo.getPaidTotals(tx, ctx.tenantId, filters),
-              lisAnalyticsRepo.getAttendantAgg(tx, ctx.tenantId, filters),
-              lisAnalyticsRepo.getInsuranceAgg(tx, ctx.tenantId, filters),
-            ]);
+            const [issuedTotals, requisitionTotals, paidTotals, attendantAgg, insuranceAgg] =
+              await Promise.all([
+                lisAnalyticsRepo.getIssuedTotals(tx, ctx.tenantId, filters),
+                lisAnalyticsRepo.getRequisitionTotals(tx, ctx.tenantId, filters),
+                lisAnalyticsRepo.getPaidTotals(tx, ctx.tenantId, filters),
+                lisAnalyticsRepo.getAttendantAgg(tx, ctx.tenantId, filters),
+                lisAnalyticsRepo.getInsuranceAgg(tx, ctx.tenantId, filters),
+              ]);
             return {
               issued: issuedTotals,
+              requisition: requisitionTotals,
               paid: paidTotals,
               byAttendant: attendantAgg,
               byInsurance: insuranceAgg,
@@ -163,6 +166,10 @@ export function createLisAnalyticsService(deps: LisAnalyticsServiceDeps): LisAna
             totalValue: toMoney(issued.totalValue),
             averageTicket: average(issued.totalValue, issued.count),
           },
+          requisition: {
+            count: requisition.count,
+            totalValue: toMoney(requisition.totalValue),
+          },
           paid: {
             count: paid.count,
             totalValue: toMoney(paid.totalValue),
@@ -174,6 +181,10 @@ export function createLisAnalyticsService(deps: LisAnalyticsServiceDeps): LisAna
           byAttendant: qualifies
             ? [...byAttendant].sort((a, b) => b.paidValue - a.paidValue).slice(0, 6)
             : [],
+          // D-122: SEM corte de MIN_ORC_RANKING e SEM top-6 — é relatório de
+          // comissão (contábil), não ranking qualitativo. Todo atendente com
+          // orçamento no período aparece, mesmo com volume baixo.
+          byAttendantDetail: [...byAttendant].sort((a, b) => b.paidValue - a.paidValue),
           byInsurance: qualifies ? byInsurance : [],
         };
       });

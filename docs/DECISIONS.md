@@ -1347,7 +1347,8 @@ backend (parser converte serial → `DATE` por componentes, nunca via `new Date(
 
 ### D-111: `principal_insurance_name` e `total_value` são colunas `GENERATED … STORED`
 **Decisão:** `lis_budgets.principal_insurance_name` (regra do convênio principal,
-BUSINESS_RULES.md §11.3) e `lis_budgets.total_value` (soma de `value_1..3`) são colunas
+BUSINESS_RULES.md §11.3) e `lis_budgets.total_value` (valor do convênio principal — mesma
+seleção; **não** a soma de `value_1..3`, correção de D-124) são colunas
 `GENERATED ALWAYS AS (...) STORED` (SCHEMA.md §26), não calculadas em código a cada leitura nem
 gravadas por um `INSERT` que replica a regra em TypeScript.
 **Motivo:** as duas são regra de negócio pura sobre outras colunas da mesma linha — o tipo de
@@ -1479,6 +1480,89 @@ pessoa no mesmo computador não deve herdar o recorte de quem usou antes.
 **Impacto:** frontend (`useUIStore` ganha `lisFilters`, PAGES.md `## Estado Global`; `PeriodFilter`
 component, COMPONENTS.md); nenhuma mudança de contrato de API — os três endpoints já aceitam
 `startDate`/`endDate`/`attendantId`/`insuranceId` como query params independentes desde a Onda 9.
+
+### D-122: Detalhe por atendente em `/results` é relatório de comissão, não ranking — sem corte de `MIN_ORC_RANKING`, com vendas por atendente
+**Decisão:** validação da Onda 10 trouxe a tela real equivalente do FluxoLab/Santé como referência
+(screenshots) — ela tem uma tabela "Detalhe por atendente" (orçado, recebido, conversão, comissão
+sobre orçamento + vendas de exames + vendas de check-up, comissão total) que a Fase 0 original não
+previa. Dois campos aditivos entram no contrato:
+- `LisAttendantAgg` ganha `paidCount` (requisições pagas do atendente no período) — base de
+  `conversionQty` por linha.
+- `LisBudgetsSummary` ganha `byAttendantDetail: LisAttendantAgg[]` — TODOS os atendentes do
+  período, **sem** o corte de `MIN_ORC_RANKING` e **sem** o top-6 que `byAttendant` já tinha
+  (BUSINESS_RULES.md §11.5). `byAttendant` continua existindo, inalterado, para quem já consome o
+  ranking qualitativo (gráfico "Faturamento por atendente" e `/reports/executive`).
+- `SalesSummary` ganha `byAttendant?: SalesAttendantSummary[]` — só presente quando manager/admin
+  consulta sem `attendantId` (visão do tenant inteiro); `attendant` nunca recebe o campo (D-112,
+  ele só vê a própria comissão).
+**Motivo:** um relatório de comissão é documento contábil — esconder um atendente porque o
+laboratório importou poucos orçamentos no mês (`MIN_ORC_RANKING = 20`) pagaria menos comissão do
+que o devido sem ninguém perceber. `MIN_ORC_RANKING` existe para **rankings qualitativos**
+("top atendente do mês" não é significativo com amostra pequena) — não se aplica a "quanto essa
+pessoa tem a receber". As duas perguntas são diferentes; um único campo gated não serve às duas.
+**Impacto:** shared (`LisAttendantAgg.paidCount`, `LisBudgetsSummary.byAttendantDetail`,
+`SalesAttendantSummary` novo, `SalesSummary.byAttendant?`); backend (`lis-analytics.repository.ts`
+soma `paid_count` na mesma query já existente — sem nova tabela/coluna; `sales.repository.ts` ganha
+`summarizeByAttendantAndKind`; nenhuma migração de banco — tudo é agregação sobre colunas já
+existentes); api (`API_CONTRACTS.md` §10.2/§11 atualizados); frontend (`/results`, PAGES.md §14,
+combina os dois no CLIENTE por `attendantId` — nenhum endpoint novo, nenhum join no servidor entre
+`lis_budgets` e `sales`, que vivem em domínios de leitura separados por design D-108/D-112).
+
+### D-123: Exportação de comissão (PDF e Excel) — mesmo princípio de D-116, cliente escolhe o formato
+**Decisão:** o botão "Relatório de comissão" de `/results` gera o arquivo no CLIENTE, a partir da
+MESMA tabela "Detalhe por atendente" já montada na tela (mesmo princípio de D-116: nunca um
+segundo fetch que possa divergir do que a pessoa está vendo). Dois formatos, escolhidos num menu
+do próprio botão: PDF (`jspdf`/`jspdf-autotable`, já usado pelos outros dois relatórios) e Excel
+(`xlsx`/SheetJS, dependência nova — só para este relatório, os outros dois continuam PDF apenas).
+**Motivo:** a referência real (FluxoLab/Santé) oferece os dois formatos porque comissão costuma
+alimentar a folha de pagamento — algumas pessoas colam a planilha direto numa ferramenta externa,
+outras quatro só precisam do PDF pra arquivar. Gerar no servidor exigiria uma segunda dependência
+de lib de planilha no backend e um segundo caminho de dado (mesmo risco de divergência que D-116
+já rejeitou para os PDFs).
+**Impacto:** frontend (`xlsx` como dependência nova; `lib/excel/commission-report.ts` +
+`lib/pdf/commission-report.ts`, PAGES.md §14); backend/api (nenhuma mudança — usa os mesmos dados
+de D-122, já expostos por `/lis-budgets/summary` e `/sales/summary`).
+
+### D-124: `lis_budgets.total_value` corrigido — valor do convênio principal, não a soma de value_1..3
+**Decisão:** a migração `012_lis_domain.sql` (Onda 9) implementou `total_value` como
+`value_1 + value_2 + value_3`. Está errado. A migração `014_fix_lis_budgets_total_value.sql`
+corrige: `total_value` passa a ser o valor do **mesmo par (nome, valor) que
+`principal_insurance_name` já escolhe** (BUSINESS_RULES.md §11.3) — nunca a soma dos três.
+`backend/src/lib/lis-spreadsheet.ts#totalValue()` (usado na consolidação por número dentro do
+mesmo lote de import, §11.1) corrigido do mesmo jeito, com um terceiro fallback (valor > 0 sem
+nenhum nome de convênio) que replica o app de referência à risca.
+**Motivo:** achado comparando com o app de referência do FluxoLab
+(`orcamentos-sante-main/src/lib/orcamento.ts`) depois do usuário reportar que os números de
+`/results` não batiam com a produção real. `insurance_2`/`insurance_3` + `value_2`/`value_3` são
+**cotações alternativas** do mesmo orçamento — o mesmo exame precificado por um convênio
+diferente — nunca valores adicionais. Somar os três infla "Total Orçado" (e tudo que deriva
+dele: `byInsurance`, `monthlySeries.issuedValue`, o próprio `total_value` gravado) em qualquer
+orçamento com mais de uma cotação preenchida — o que é comum na planilha real do Santé.
+**Impacto:** db (migração 014 — `DROP`+`ADD` da coluna gerada, recalcula os valores já gravados
+automaticamente); backend (`lis-spreadsheet.ts#totalValue()`); docs (`SCHEMA.md` §26,
+`BUSINESS_RULES.md` §11.1, ambos com o SQL/pseudocódigo atualizado); nenhuma mudança de
+contrato de API (o *shape* de `total_value` não muda, só o valor fica correto).
+
+### D-125: "Em Requisição" é orçamentos convertidos em requisição, não Busca Ativa
+**Decisão:** o card "Em Requisição" de `/results` (e o KPI homônimo do PDF Executivo) soma
+`requisition_value` de TODA requisição emitida no período (dedupe por requisição, mesmo critério
+de `paid`) — **paga ou pendente**. Não é a mesma pergunta de Busca Ativa (§16, que é só a fatia
+sem pagamento). Campo novo `requisition: { count, totalValue }` em `LisBudgetsSummary`
+(`GET /lis-budgets/summary`, §10.2) e `ExecutiveReport` (`GET /reports/executive`, §5c) —
+`lis-analytics.repository.ts#getRequisitionTotals`, janela de EMISSÃO (`issued_on`, igual a
+`getIssuedTotals`).
+**Motivo:** a Onda 10 original implementou "Em Requisição" reaproveitando o resumo de Busca
+Ativa (`/lis-budgets/pending/summary`) — errado, achado comparando com o app de referência do
+FluxoLab (`orcamentos-sante-main/src/hooks` `useOrcamentos`/`Dashboard.tsx`, `kpis.reqValue`):
+lá, "Em requisição" é "quanto já virou requisição no sistema" (convertido em venda), um retrato
+de VOLUME convertido — não "quanto ainda falta receber", que é uma pergunta de cobrança
+(Busca Ativa). As duas coexistem na tela por perguntarem coisas diferentes, igual a
+`issued`/`paid` (D-020).
+**Impacto:** shared (`LisRequisitionTotals` novo; `LisBudgetsSummary.requisition`,
+`ExecutiveReport.requisition`); backend (`getRequisitionTotals` nova, chamada por
+`LisAnalyticsService.getSummary` e `ExecutiveReportService.getExecutiveReport`); api
+(`API_CONTRACTS.md` §5c/§10.2); frontend (`/results`, PAGES.md §14, troca a fonte do card "Em
+Requisição" de `/lis-budgets/pending/summary` para `summary.requisition`).
 
 ## Template para novas decisões
 

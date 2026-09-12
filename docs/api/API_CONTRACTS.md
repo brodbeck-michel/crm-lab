@@ -2517,6 +2517,10 @@ Sem datas: últimos 30 dias terminando hoje. Formato inválido, data inexistente
     "totalValue": 158000,
     "averageTicket": 752.38
   },
+  "requisition": {
+    "count": 178,
+    "totalValue": 132000
+  },
   "paid": {
     "count": 165,
     "totalValue": 121000,
@@ -2527,7 +2531,7 @@ Sem datas: últimos 30 dias terminando hoje. Formato inválido, data inexistente
     { "month": "2026-08", "issuedValue": 158000, "paidValue": 121000 }
   ],
   "byAttendant": [
-    { "attendantId": "uuid", "attendantName": "Maria Souza", "issuedCount": 40, "paidValue": 30000 }
+    { "attendantId": "uuid", "attendantName": "Maria Souza", "issuedCount": 40, "paidCount": 32, "paidValue": 30000 }
   ],
   "byInsurance": [
     { "insuranceName": "Unimed Tubarão", "count": 60, "totalValue": 45000 }
@@ -2541,6 +2545,10 @@ Sem datas: últimos 30 dias terminando hoje. Formato inválido, data inexistente
   **pagamento** (`paid_on` dentro do período, dedupe por `requisition_number` com maior
   `paid_value` — BUSINESS_RULES.md §11). As duas janelas coexistem na mesma resposta pela mesma
   razão de `/analytics/*` (D-020): são perguntas diferentes, sobre datas diferentes.
+- `requisition` (D-125): orçamentos **convertidos em requisição** no período de EMISSÃO — soma
+  de `requisition_value`, dedupe por requisição (mesmo critério de `paid`). Inclui requisição
+  paga OU pendente; **não é** a mesma pergunta de Busca Ativa (§10.2, que é só a fatia sem
+  pagamento). Card "Em Requisição" de `/results`.
 - `conversionQty = min(100, paid.count / issued.count × 100)` — **capado em 100%**
   (BUSINESS_RULES.md §11); `0` quando `issued.count` é `0`, nunca `NaN`/`Infinity`
   (`percent()` de `analytics.service.ts`, reaproveitada).
@@ -3450,9 +3458,14 @@ recortável por atendente/convênio para o filtro da tela.
 {
   "period": { "startDate": "2026-08-01", "endDate": "2026-08-31" },
   "issued": { "count": 210, "totalValue": 158000, "averageTicket": 752.38 },
+  "requisition": { "count": 178, "totalValue": 132000 },
   "paid": { "count": 165, "totalValue": 121000, "averageTicket": 733.33, "conversionQty": 78.57 },
   "byAttendant": [
-    { "attendantId": "uuid", "attendantName": "Maria Souza", "issuedCount": 40, "paidValue": 30000 }
+    { "attendantId": "uuid", "attendantName": "Maria Souza", "issuedCount": 40, "paidCount": 32, "paidValue": 30000 }
+  ],
+  "byAttendantDetail": [
+    { "attendantId": "uuid", "attendantName": "Maria Souza", "issuedCount": 40, "paidCount": 32, "paidValue": 30000 },
+    { "attendantId": "uuid2", "attendantName": "João Lima", "issuedCount": 2, "paidCount": 1, "paidValue": 500 }
   ],
   "byInsurance": [
     { "insuranceName": "Unimed Tubarão", "count": 60, "totalValue": 45000 }
@@ -3462,6 +3475,15 @@ recortável por atendente/convênio para o filtro da tela.
 Mesmas definições de `issued`/`paid`/`conversionQty` de `GET /reports/executive` (§5c) —
 `conversionQty` capado em 100%, `averageTicket` via `average()`. `byAttendant`/`byInsurance`
 recortados ao top 6, mesma regra e mesmo `MIN_ORC_RANKING` de BUSINESS_RULES.md §11.
+
+- `paidCount` (D-122): requisições pagas do atendente no período — base do `conversionQty` **por
+  linha** (`paidCount / issuedCount`, capado em 100%, mesma fórmula do agregado). Novo em ambos
+  `byAttendant` e `byAttendantDetail`.
+- `byAttendantDetail` (D-122): TODOS os atendentes com orçamento emitido no período — **sem**
+  corte de `MIN_ORC_RANKING` e **sem** top-6. Fonte da tabela "Detalhe por atendente" de
+  `/results` (PAGES.md §14), que é relatório de comissão (contábil): esconder um atendente por
+  baixo volume pagaria comissão errada sem ninguém perceber. `byAttendant` continua existindo,
+  inalterado, para o gráfico "Faturamento por atendente" (ranking qualitativo).
 
 **Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403, `details.requiredRoles:
 ["manager","admin"]`)
@@ -3660,13 +3682,31 @@ Total de vendas e comissão calculada para o período — cartão da tela `/sale
     "checkup": { "count": 8, "value": 4000, "commissionValue": 60.00 }
   },
   "totalValue": 16000,
-  "commissionTotal": 240.00
+  "commissionTotal": 240.00,
+  "byAttendant": [
+    {
+      "attendantId": "uuid",
+      "attendantName": "Maria Souza",
+      "byKind": {
+        "exams": { "count": 10, "value": 3000, "commissionValue": 45.00 },
+        "checkup": { "count": 2, "value": 1000, "commissionValue": 15.00 }
+      },
+      "totalValue": 4000,
+      "commissionTotal": 60.00
+    }
+  ]
 }
 ```
 `commissionValue` de cada `kind` = `toMoney(value × commissionPct / 100)` — os percentuais de
 §6b (`commissionExamsPct`/`commissionCheckupPct`; **`commissionBudgetPct` não entra aqui**, é
 comissão sobre orçamento conciliado, Onda 13). `commissionTotal` é a soma dos dois
 `commissionValue`, nunca recalculada por outro caminho (BUSINESS_RULES §5/§11).
+
+- `byAttendant` (D-122): presente SÓ quando manager/admin consulta sem `attendantId` (visão do
+  tenant inteiro) — fonte da tabela "Detalhe por atendente" de `/results` (PAGES.md §14),
+  combinada no cliente com `LisBudgetsSummary.byAttendantDetail`. Ausente (`undefined`, não
+  `[]`) para `attendant` e para chamadas já filtradas por `attendantId` — não haveria "detalhe
+  por atendente" de uma lista de um só.
 
 **Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403, `platform_operator`)
 

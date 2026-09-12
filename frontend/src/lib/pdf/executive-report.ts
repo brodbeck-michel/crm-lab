@@ -25,16 +25,13 @@ export async function generateExecutiveReportPdf(report: ExecutiveReport): Promi
 
   autoTable(doc, {
     startY: 32,
-    head: [['Indicador', 'Emitido', 'Pago']],
+    head: [['Indicador', 'Valor']],
     body: [
-      ['Contagem', String(report.issued.count), String(report.paid.count)],
-      ['Valor total', formatBRL(report.issued.totalValue), formatBRL(report.paid.totalValue)],
-      [
-        'Ticket médio',
-        formatBRL(report.issued.averageTicket),
-        formatBRL(report.paid.averageTicket),
-      ],
-      ['Conversão', '—', `${report.paid.conversionQty.toFixed(1)}%`],
+      ['Total Orçado', formatBRL(report.issued.totalValue)],
+      ['Total em Requisição', formatBRL(report.requisition.totalValue)],
+      ['Total Recebido', formatBRL(report.paid.totalValue)],
+      ['Taxa de Conversão', `${report.paid.conversionQty.toFixed(1)}%`],
+      ['Ticket Médio', formatBRL(report.paid.averageTicket)],
     ],
   });
 

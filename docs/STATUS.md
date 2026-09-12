@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-12 (Onda 9 — Domínio LIS no backend: concluída — rotas de API, testes e isolamento multitenant)
+**Última atualização:** 2026-09-12 (Onda 10 — Telas do LIS: contratos da Fase 0 escritos, implementação em andamento — CRMLAB-3)
 
 ---
 
@@ -227,6 +227,23 @@ conciliação) não fazem parte deste escopo.
 
 **DoD (spec):** planilha real anonimizada do Santé importa e `GET /lis-budgets/summary` bate com
 o Dashboard antigo do FluxoLab no mesmo período; tenant B não vê nada.
+
+---
+
+## Onda 10 — Telas do LIS 🔄 (em andamento)
+
+Telas sobre o backend do domínio LIS (Onda 9, já commitado). Spec:
+`docs/superpowers/specs/2026-09-08-fusao-crm-fluxolab-design.md`. Card Jira: CRMLAB-3. Branch:
+`feature/CRMLAB-3-onda-10-telas-lis`.
+
+| Tarefa | Domínio | Status | Agente | Notas |
+|--------|---------|--------|--------|-------|
+| Contratos da onda (Fase 0, bloqueante) | docs | ✅ 2026-09-12 | coordenador | `PAGES.md` "Telas do LIS" (§14-19: `/results`, `/reconciliation`, `/active-search`, `/sales`, `/settings/attendants`, `/settings/commissions` + modal Importar + "Limpar base"), Mapa de Rotas e tabela de papéis atualizados; `COMPONENTS.md` seção `lis/` (`KpiCard`, `UploadDropzone`, `PeriodFilter`, `AgeBadge`); `DECISIONS.md` D-116 (PDF gerado no cliente, nunca no servidor) e D-117 (filtros de período/atendente/convênio como estado global em `useUIStore.lisFilters` + sessionStorage, compartilhado entre as 3 telas de leitura). Nenhuma linha de implementação antes disto (Regra Zero) |
+| Frontend: `api/lis.ts`, `sales.ts`, `attendants.ts`, `reports.ts` + páginas | ui | ⬜ | — | Conforme PAGES.md "Telas do LIS". Sugestão da spec: 3 agentes paralelos (Results ∥ Sales ∥ LisReports) |
+| Testes: component tests + `route-config.spec` + E2E `flow-17`/`flow-18` | qa | ⬜ | — | `flow-17-lis-import-results` (fixture xlsx), `flow-18-sales` |
+
+**DoD (spec):** um gestor reproduz a rotina completa do Santé de ponta a ponta na UI local,
+incluindo geração dos dois PDFs.
 
 ---
 

@@ -1448,6 +1448,38 @@ desde já, mesmo sem nenhum caminho de escrita ligado ainda.
 contrato nesta onda; `API_CONTRACTS.md` §3 só muda na Onda 13), backend (`ProposalService`
 inalterado nesta onda — `markWonFromLis`/`transitionInTx` são construídos na Onda 13).
 
+### D-116: PDFs do LIS (Executivo e Busca Ativa) são gerados no cliente, nunca no servidor
+**Decisão:** os dois PDFs da Onda 10 (Relatório Executivo e Busca Ativa) são montados no
+navegador com `jspdf` + `jspdf-autotable` (lazy import), a partir do MESMO JSON que já preencheu
+a tela (`GET /reports/executive`, `GET /lis-budgets/pending*` — API_CONTRACTS.md §5c/§10.2). O
+backend nunca gera, assina nem armazena PDF. A marca do documento (nome, logo) vem de
+`theme.brandName`/`theme.logoUrl` do próprio tenant — nada de "Santé" fixo em nenhum template.
+**Motivo:** gerar PDF no servidor exigiria uma dependência de renderização (headless browser ou
+lib de layout) só para dois relatórios, além de um segundo caminho de dado que precisaria ficar
+sincronizado com o que a tela mostra — dois fetches do mesmo período podem retornar números
+diferentes se algo mudar entre eles (nova importação, por exemplo). Gerar a partir do JSON já
+carregado elimina essa divergência por construção: o PDF é sempre um retrato exato do que a
+pessoa está vendo na tela no momento do clique.
+**Impacto:** frontend (`jspdf`/`jspdf-autotable` como dependência nova, só carregada sob demanda
+— `document.title` e branding por tema, PAGES.md §14); backend/api (nenhuma mudança — os
+endpoints já existentes de §5c/§10.2 bastam, nenhuma rota de PDF é criada).
+
+### D-117: Filtros de período/atendente/convênio das telas de leitura do LIS são estado global
+**Decisão:** `/results`, `/reconciliation` e `/active-search` (PAGES.md, Telas do LIS) compartilham
+o mesmo filtro de período + atendente + convênio através de `useUIStore.lisFilters`, persistido
+em `sessionStorage` — não na URL de cada rota e não em três estados locais independentes.
+**Motivo:** as três telas respondem à mesma pergunta operacional ("como estão os orçamentos
+deste período, deste atendente, deste convênio") sob ângulos diferentes (visão executiva,
+listagem crua, fila de cobrança). Sem estado compartilhado, trocar o período em `/results` e
+abrir `/reconciliation` reapresentaria os últimos 30 dias por padrão, obrigando a pessoa a
+reconfigurar o mesmo filtro três vezes na mesma sessão de trabalho — o padrão de UX que o
+FluxoLab já resolvia (filtro persistente entre as abas do Dashboard). `sessionStorage` (não
+`localStorage`) porque o filtro é conveniência de sessão, não preferência duradoura: outra
+pessoa no mesmo computador não deve herdar o recorte de quem usou antes.
+**Impacto:** frontend (`useUIStore` ganha `lisFilters`, PAGES.md `## Estado Global`; `PeriodFilter`
+component, COMPONENTS.md); nenhuma mudança de contrato de API — os três endpoints já aceitam
+`startDate`/`endDate`/`attendantId`/`insuranceId` como query params independentes desde a Onda 9.
+
 ## Template para novas decisões
 
 ```

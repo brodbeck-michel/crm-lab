@@ -620,12 +620,16 @@ operacional ("como estão os orçamentos deste período").
 
 ### 14. Resultados (`/results`) — gestor+
 
-Home do domínio LIS — o "Dashboard" do FluxoLab. Fonte: `GET /reports/executive` (§5c) para o
-PDF e os agregados de topo; `GET /lis-budgets/filters` para popular os seletores.
+Home do domínio LIS — o "Dashboard" do FluxoLab. Fonte: `GET /reports/executive` (§5c) —
+único endpoint da tela, um retrato do período inteiro (sem recorte por atendente/convênio).
 
-- **Cabeçalho:** `PeriodFilter` (padrão: últimos 30 dias, D-117) + seletor de atendente/convênio
-  (`GET /lis-budgets/filters`, opções vazias = tenant nunca importou) + botão **[Importar]**
-  (abre o modal de import, ver "Modal Importar" abaixo) + botão **[Exportar PDF]**.
+- **Cabeçalho:** `PeriodFilter` (padrão: últimos 30 dias, D-117) + botão **[Importar]** (abre o
+  modal de import, ver "Modal Importar" abaixo) + botão **[Exportar PDF]**.
+  **Sem seletor de atendente/convênio nesta tela:** `GET /reports/executive` só aceita período
+  (§5c) — não recorta por atendente/convênio, porque é o retrato executivo do PERÍODO INTEIRO
+  (o mesmo JSON vira o PDF, D-116, e o PDF não pode secretamente refletir um filtro que a
+  próxima pessoa a abrir a tela não vê marcado). Recorte por atendente/convênio existe em
+  Conferência (§15) e Busca Ativa (§16), que consomem `/lis-budgets*` (com esses parâmetros).
 - **Grade de `KpiCard`** (emitidos: contagem/valor/ticket médio; pagos: contagem/valor/ticket
   médio/`conversionQty`) — mesmos números de `issued`/`paid` de `GET /reports/executive`.
   `conversionQty` já vem **capado em 100%** do servidor; a tela nunca reaplica o cap nem
@@ -747,8 +751,11 @@ Cadastro do atendente do LIS, com vínculo opcional a um login do CRM (D-112). F
 
 - **Tabela:** nome, status (ativo/inativo), usuário vinculado (`userName` ou "— sem login —"
   quando `userId` é `null`). Busca por nome (`?search=`, sem caixa/acento).
-- **Criar/editar (modal):** nome + seletor opcional de usuário (`Select` sobre logins do
-  tenant com papel `attendant | manager | admin`, ativos). Nome duplicado por `foldedName`
+- **Criar/editar (modal):** nome + seletor opcional de usuário. A lista de logins vem de
+  `GET /settings/channels` (`team`, §6/D-066) — **não** de `GET /users`, que é admin apenas e
+  bloquearia o gestor de montar o seletor (a rota desta tela é gestor+). `team` já traz id/nome/
+  papel/status de todo o tenant; a tela filtra localmente por papel de laboratório
+  (`attendant | manager | admin`) e ativo. Nome duplicado por `foldedName`
   (espaço/caixa não contam) → `CONFLICT`: mensagem "já existe um atendente com esse nome",
   campo marcado — nunca cria uma segunda linha silenciosamente.
 - **Desvincular login:** no modal de edição, limpar o seletor de usuário e salvar envia

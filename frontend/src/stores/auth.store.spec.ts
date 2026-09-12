@@ -109,7 +109,9 @@ describe('fronteira Zustand × TanStack Query', () => {
       .filter(([, value]) => typeof value !== 'function')
       .map(([key]) => key);
 
-    expect(keys.sort()).toEqual(['activeModal', 'contextPanelOpen', 'sidebarCollapsed']);
+    // `lisFilters` é estado de FILTRO da sessão (D-117), não dado de servidor —
+    // persiste em sessionStorage, mesma fronteira das outras chaves daqui.
+    expect(keys.sort()).toEqual(['activeModal', 'contextPanelOpen', 'lisFilters', 'sidebarCollapsed']);
     for (const forbidden of SERVER_DATA_KEYS) {
       expect(keys).not.toContain(forbidden);
     }

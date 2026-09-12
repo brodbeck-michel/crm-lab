@@ -20,9 +20,15 @@ export type NavIcon =
   | 'chat'
   | 'quick-replies'
   | 'decisions'
+  | 'results'
+  | 'reconciliation'
+  | 'active-search'
+  | 'sales'
   | 'channels'
   | 'operation'
   | 'insurances'
+  | 'attendants'
+  | 'commissions'
   | 'users'
   | 'theme'
   | 'tenants'
@@ -97,11 +103,41 @@ export const APP_ROUTES: readonly AppRoute[] = [
     icon: 'quick-replies',
   },
   {
+    path: '/sales',
+    label: 'Vendas',
+    requiredRoles: TENANT_ROLES,
+    inSidebar: true,
+    icon: 'sales',
+  },
+  {
     path: '/decisions',
     label: 'Decisões',
     requiredRoles: MANAGER_PLUS,
     inSidebar: true,
     icon: 'decisions',
+  },
+
+  // ── Domínio LIS (Onda 10) ────────────────────────────────────────────────
+  {
+    path: '/results',
+    label: 'Resultados',
+    requiredRoles: MANAGER_PLUS,
+    inSidebar: true,
+    icon: 'results',
+  },
+  {
+    path: '/reconciliation',
+    label: 'Conferência',
+    requiredRoles: MANAGER_PLUS,
+    inSidebar: true,
+    icon: 'reconciliation',
+  },
+  {
+    path: '/active-search',
+    label: 'Busca Ativa',
+    requiredRoles: MANAGER_PLUS,
+    inSidebar: true,
+    icon: 'active-search',
   },
 
   // ── Configuração ────────────────────────────────────────────────────────
@@ -125,6 +161,20 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requiredRoles: MANAGER_PLUS,
     inSidebar: true,
     icon: 'insurances',
+  },
+  {
+    path: '/settings/attendants',
+    label: 'Atendentes',
+    requiredRoles: MANAGER_PLUS,
+    inSidebar: true,
+    icon: 'attendants',
+  },
+  {
+    path: '/settings/commissions',
+    label: 'Comissão',
+    requiredRoles: MANAGER_PLUS,
+    inSidebar: true,
+    icon: 'commissions',
   },
   {
     path: '/settings/users',

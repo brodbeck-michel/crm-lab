@@ -235,7 +235,9 @@ Anatomia (padrão WhatsApp):
 <PeriodFilter value={{ startDate, endDate }} onChange={(period) => ...} />
 ```
 - Atalhos comuns (Hoje, 7 dias, 30 dias, Mês atual) + dois `Input type="date"` para intervalo
-  livre; `endDate < startDate` desabilita o botão de aplicar, sem round-trip ao servidor para
+  livre; aplica a cada mudança (sem botão "Aplicar" — mesmo padrão de `/analytics`). `endDate <
+  startDate` mostra mensagem inline e a TELA que consome o componente segura o fetch
+  (`enabled: false` na query) até o intervalo ficar válido — sem round-trip ao servidor para
   validar isso
 - Sem valor: aplica o padrão de 30 dias terminando hoje **visualmente** (mesmo default que o
   servidor aplicaria na ausência de query params) — a tela nunca mostra os campos vazios com um

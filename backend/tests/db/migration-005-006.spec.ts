@@ -45,6 +45,7 @@ describe('migração 005/006 — insurances, exam_prices, exam_synonyms', () => 
         'is_active',
         'created_at',
         'updated_at',
+        'source', // migração 012 (Onda 9, D-114) — coluna nasce depois, banco de teste roda tudo
       ]),
     );
   });

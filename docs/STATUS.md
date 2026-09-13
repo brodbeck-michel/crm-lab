@@ -712,8 +712,9 @@ orçamento novo, expandindo em uma linha por exame.
   completa 1011 testes verdes (29 novos: `PackageModal.spec.tsx` 9, `PackagePricesTab.spec.tsx`
   4, `Catalog.spec.tsx` +3, `CatalogSegments.spec.tsx` ajustado, `New.spec.tsx` +1).
 - **Observação de merge:** desenvolvido em paralelo com CRMLAB-9 (worktrees/branches
-  independentes) — as duas usaram o índice de migração `015_*`; CRMLAB-9 já foi instruído a
-  renumerar sua migração para `017_*` no merge (esta ocupa `015`/`016`).
+  independentes) — as duas nasceram usando o índice `015_*`; esta ocupa `015`/`016`, CRMLAB-9
+  foi renumerado para `017_proposal_requesting_doctor.sql`, já validado junto na branch de
+  integração de teste antes da abertura dos PRs.
 
 ## Bloqueios Atuais
 

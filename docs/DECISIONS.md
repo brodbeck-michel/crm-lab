@@ -1586,6 +1586,75 @@ schema ou de contrato de API. **Dado já importado antes desta correção contin
 perdido** — precisa reimportar a mesma planilha para recuperar (o reimport é idempotente e
 upserta por número, então corrige as linhas afetadas sem duplicar as demais).
 
+## 2026-09-12 — Agrupamento do menu em categorias (CRMLAB-4)
+
+### D-127: Sidebar em accordion — itens soltos + 4 grupos, ordem fixa, abertos por padrão
+**Decisão:** `route-config.ts` ganha `group?: NavGroupId` por rota e `NAV_GROUPS` (ordem fixa:
+Comunicação → Comercial → LIS / Operação Laboratorial → Configurações). `sidebarSectionsFor(role)`
+organiza os itens já filtrados por papel (`sidebarRoutesFor`) em soltos (sem `group`, sempre no
+topo) + grupos (na ordem de `NAV_GROUPS`, omitindo grupo sem nenhum item visível para o papel).
+Accordion aberto por padrão; estado por grupo persiste em localStorage por usuário
+(`sidebar-groups.store.ts`, chave `crm-lab.sidebar-groups`), decisão distinta do recolher/expandir
+do trilho inteiro (`ui.store`, não persistido). Console da plataforma (`platform_operator`)
+continua sem grupo, inalterado.
+**Motivo:** menu tinha 21 itens soltos, difícil de navegar. Decisões de UX (ordem dos grupos,
+estado inicial, grupo vazio) fechadas com o usuário no card CRMLAB-4 antes da implementação.
+**Impacto:** só frontend (`route-config.ts`, `Sidebar.tsx`, nova store `sidebar-groups.store.ts`).
+Nenhuma mudança de rota, papel ou contrato de API — `sidebarRoutesFor` (usado pelo guard de rota)
+não muda.
+
+**Superseded parcialmente por D-128** — o agrupamento (grupos/ordem/persistência) descrito acima
+continua valendo; só o tratamento visual do cabeçalho de grupo mudou (era `font-heading
+text-section`, maior que o item — usuário não aprovou na validação).
+
+### D-128: Sidebar variante "Trilho de grupo" — cabeçalho de grupo do mesmo tamanho do item, trilho de filhos, destaque único
+**Decisão:** revisão visual do trilho após o usuário rejeitar o resultado de D-127 na validação.
+Mudanças (`Sidebar.tsx`, tokens existentes de `DESIGN_TOKENS.md` — nenhum hex/valor literal novo):
+- Largura: **272px expandido / 64px recolhido** (era 244/72).
+- Cabeçalho de grupo passa a `font-body text-label font-bold` — MESMO tamanho do item, só o peso
+  diferencia (bold × medium/semibold). Fundo `accent-100` quando aberto; `hover:bg-neutral-100`
+  quando fechado (nunca a cor do item ativo — só um destaque preenchido por vez no trilho).
+  Chevron `▶` único, com `rotate(90deg)` animado ao abrir (substitui o swap `⌄`/`›`).
+- Um único divisor (`<hr>` neutral-300) entre o bloco de itens soltos e o bloco de grupos — cada
+  grupo não tem mais `border-t` próprio.
+- Filhos de grupo indentados atrás de um trilho vertical (`border-l-2 border-neutral-300`,
+  `margin-left`/`padding-left`), raio menor (`rounded-md`) que o item de nível 1 (`rounded-lg`).
+- Item ativo (solto ou filho): fundo `accent-500` sólido + texto `text-bg` + `font-semibold` —
+  substitui `accent-200` + `shadow-sm`. Grupo fechado com filho ativo dentro: ponto 6px
+  `bg-accent-500` ao lado do chevron, avisando sem abrir o grupo.
+- Foco de teclado: `outline-2 outline-accent-500 outline-offset-2` (`focus-visible`) em item e
+  cabeçalho de grupo.
+- Lista (`<nav>`) com scrollbar fina via `scrollbar-width`/`scrollbar-color` (tokens CSS,
+  `--color-neutral-400`), header e footer continuam fixos fora do scroll.
+**Motivo:** usuário validou visualmente D-127 e não aprovou — cabeçalho maior competia com o item
+ativo e a largura/raio pareciam desproporcionais. Especificação ("Trilho de grupo") fornecida pelo
+usuário via Claude Design; paleta e fonte (DM Sans) do documento original eram hex fixos — **não
+adotados literalmente** para não quebrar o tema por tenant (D-005, 5 temas via CSS vars) nem a
+regra "zero hex/zero nome de fonte em componente"; a estrutura/comportamento foi traduzida para os
+tokens já existentes (`accent-*`, `neutral-*`, `text`, `bg`, `font-body`).
+**Escopo não implementado (registrado, não esquecido):** flyout dos grupos ao passar o mouse no
+trilho recolhido (64px) e o marcador quadrado/circular alternado por seção do documento original —
+o recolhido continua mostrando só ícone, sem flyout; os itens continuam usando `NavGlyph` em vez de
+um marcador de ponto, já que o ícone já cumpre esse papel.
+**Impacto:** só `Sidebar.tsx` (visual) + `Sidebar.spec.tsx` (larguras/classes atualizadas). Nenhuma
+mudança de rota, papel, store ou contrato de API.
+
+### D-129: Grupos "Comercial" e "LIS / Operação Laboratorial" fundidos em "Gestão"; Catálogo vira "Cadastro de Exames" e muda para Configurações
+**Decisão:** `route-config.ts` perde os `NavGroupId` `'comercial'` e `'lis'`, ganha `'gestao'`.
+`NAV_GROUPS` passa a `Comunicação → Gestão → Configurações`. O grupo "Gestão" reúne, nessa ordem:
+Conversão, Decisões, Resultados, Conferência, Busca Ativa, Gestão da Operação (união dos itens dos
+dois grupos antigos, mesma ordem relativa que já tinham). A rota `/catalog` sai do grupo (antes
+"LIS / Operação Laboratorial") e passa para "Configurações"; seu rótulo no trilho muda de
+"Catálogo" para **"Cadastro de Exames"** (o `<h1>` da própria página já usava esse nome —
+`Catalog.tsx`, "Catálogo de Exames" — o rótulo do menu só ficou consistente com a página).
+**Motivo:** pedido do usuário após validar D-128 — os dois grupos "Comercial" e "LIS / Operação
+Laboratorial" pareciam redundantes/pequenos demais para justificar dois cabeçalhos separados;
+"Catálogo" fazia mais sentido como um cadastro em Configurações do que como item de operação do
+LIS.
+**Impacto:** só frontend — `route-config.ts` (grupos + `group` de 7 rotas + rótulo de `/catalog`),
+`Sidebar.spec.tsx` e `route-config.spec.ts` (asserts de grupo/rótulo atualizados). Nenhuma mudança
+de rota, papel, contrato de API ou do componente `Sidebar.tsx` em si (D-128 continua valendo).
+
 ## Template para novas decisões
 
 ```

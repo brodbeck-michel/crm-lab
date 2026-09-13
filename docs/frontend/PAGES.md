@@ -217,7 +217,24 @@ nunca "sem permissão" (não vazar existência).
 **Layout:** 2 colunas (catálogo flex min 520px | resumo 372px fixo)
 
 ### Coluna esquerda — Catálogo
-- Segmentado de 4 modos: [Catálogo | Pedido médico | IA | Pacotes]
+- Segmentado de 4 modos: [Catálogo | Pedido médico | IA | Pacotes]. **Pedido médico** e **IA**
+  continuam sem conteúdo implementado (placeholder "ainda não disponível nesta tela") — bug
+  CRMLAB-13, backlog separado; o segmento **Pacotes** foi implementado nesta onda (CRMLAB-10,
+  D-130) e deixou de cair no conteúdo do Catálogo por engano (defeito que também fazia parte de
+  CRMLAB-13, corrigido de passagem: os 3 segmentos sem conteúdo próprio mostravam a lista de
+  exames por trás, porque a renderização não olhava para `segment` antes desta correção).
+- **Segmento Pacotes:** lista de pacotes ativos (`GET /exam-packages?active=true[&insuranceId=]`,
+  sem paginação — até 100, mesmo espírito de seletor do resto da coluna, D-080), cada um com
+  nome, contagem de exames e o preço agregado (`effectivePrice ?? pricePrivate` do PACOTE —
+  prévia, considerando o convênio selecionado e a tabela própria do pacote,
+  `exam_package_prices`). Clicar expande em **N linhas no resumo**, uma por exame incluído, com
+  o `pricePrivate` de cada `ExamPackageItem` — **não** o `effectivePrice` do pacote, que só serve
+  de prévia agregada aqui no seletor (motivo em SCHEMA.md §30/DECISIONS.md D-130: a listagem de
+  pacotes não expõe preço por-convênio POR ITEM, só do pacote inteiro). Mesmo merge por `examId`
+  de adicionar exame avulso — exame já no carrinho soma quantidade em vez de duplicar linha.
+  Depois de expandido, o desconto geral do orçamento continua sendo o `DiscountSection` já
+  existente (o desconto% do pacote não se propaga automaticamente — ele só entra no preço
+  MOSTRADO do pacote no seletor).
 - **Seletor de convênio (`InsuranceSelector`, Onda 7, D-082):** `Select` sobre
   `useInsuranceList({ active: true })`, com "Particular" fixo no topo — nunca
   vem da API, é o mapeamento local para `insuranceId: null` (a ausência de
@@ -339,9 +356,14 @@ nunca "sem permissão" (não vazar existência).
 
 ## 7. Catálogo de Exames (`/catalog`)
 
+- **Duas abas** (`SegmentedControl`, D-130): [Exames | Pacotes]. Trocar de aba reinicia busca e
+  página (mesmo `?page=` da URL, compartilhado — os conjuntos são diferentes, então trocar de
+  aba se comporta como trocar de filtro).
+
+### Aba Exames
 - Tabela: nome, código, preparo, **TUSS, material**, prazo, preço particular, preço convênio, status
 - Regras de tabela: container com min-width + overflow-x, cabeçalho 11px caixa alta, valores à direita
-- Atendente: somente leitura. Gestor/Admin: criar/editar (modal)
+- Atendente: somente leitura. Gestor/Admin: criar/editar (modal, botão "+ Novo Exame")
 - **Paginação** (`Pagination`, 20 por página) com a página na URL (`?page=2`),
   mesma regra de `/proposals`. Buscar volta para a página 1.
 - Dados: `GET /exams`, `POST/PATCH /exams` (gestor+)
@@ -355,6 +377,28 @@ nunca "sem permissão" (não vazar existência).
 - Dados da aba de preços: `GET /exams/:id/prices` (todos os papéis) ·
   `PUT /exams/:id/prices` (gestor+) — semântica de PUT: convênio ausente do corpo tem o preço
   **removido**, não preservado.
+
+### Aba Pacotes (`PackageTable`, CRMLAB-10, D-130)
+- Tabela: nome, exames incluídos (nomes separados por vírgula), desconto %, preço particular
+  (`pricePrivate`, sempre calculado — soma dos exames menos o desconto), status
+- Mesma paginação/busca/alçada da aba Exames — atendente só leitura, gestor/admin
+  cria/edita (botão "+ Novo Pacote")
+- Dados: `GET /exam-packages`, `POST/PATCH /exam-packages` (gestor+)
+- **Modal do pacote (`PackageModal`):** nome, desconto % e um seletor de exames (busca +
+  checkbox, até 100 exames ativos por vez — teto do contrato). Mostra uma prévia do preço
+  particular (`calculatePackagePrivatePrice`, `@crm-lab/shared`) enquanto o usuário monta o
+  pacote, a partir dos exames já carregados na busca atual.
+  **Limitação conhecida:** se o pacote (em edição) inclui um exame que não está entre os
+  carregados pela busca corrente (por ex. um exame cujo nome não bate com o termo digitado, ou
+  além do 100º da lista), o checkbox dele não aparece na tela — ele continua marcado no estado
+  (`examIds`) e é preservado se o usuário salvar sem tocar na lista, mas fica invisível até uma
+  busca que o traga de volta. Não é um bug ativo (nenhum exame se perde), é uma
+  ergonomia a melhorar numa v2 (ex.: sempre incluir os já selecionados na consulta,
+  independente do termo de busca).
+  Em **modo edição**, segunda aba "Preços por convênio" (`PackagePricesTab`) — mesmo mecanismo
+  de `ExamPricesTab`, aplicado a `exam_package_prices`.
+- Dados da aba de preços: `GET /exam-packages/:id/prices` (todos os papéis) ·
+  `PUT /exam-packages/:id/prices` (gestor+) — mesma semântica de PUT do §4.
 
 ---
 

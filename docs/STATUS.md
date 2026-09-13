@@ -677,6 +677,44 @@ sentido em Configurações.
   (`route-config.spec.ts` e `Sidebar.spec.tsx` atualizados para os novos grupos/rótulo — 1 teste
   novo cobrindo o grupo Configurações completo).
 
+## 2026-09-13 — Cadastro de pacotes de exames (combos) — nova aba em Cadastro de Exames (CRMLAB-10) ✅
+
+Pedido do usuário: hoje só existe cadastro de exames individuais; pacotes/combos de exames
+(ex.: check-ups) precisam de cadastro próprio dentro da mesma tela de Cadastro de Exames.
+Escopo fechado com o usuário: preço sempre derivado (soma dos exames menos desconto%), nunca
+digitado; mesma alçada/convenção ativo-inativo do catálogo; e o pacote pode ser adicionado a um
+orçamento novo, expandindo em uma linha por exame.
+
+- **D-130.** Backend: `exam_packages`/`exam_package_items`/`exam_package_prices` (migrações
+  `015_exam_packages.sql` + `016_rls_exam_packages.sql`, SCHEMA.md §28-30), `ExamPackageService`
+  (`calculatePackagePrivatePrice` em `@crm-lab/shared`, mesma função no back e no front),
+  `GET/POST/PATCH /exam-packages` + `GET/PUT /exam-packages/:id/prices` (API_CONTRACTS.md §4b).
+- Frontend: nova aba "Pacotes" em `/catalog` (`PackageTable` + `PackageModal` +
+  `PackagePricesTab`, ao lado da aba "Exames"). Segmento "Pacotes" de `/budget/new`
+  (`CatalogSegments`) passa a listar pacotes de verdade e expandir em N linhas no resumo ao
+  clicar (`BudgetNew.handleAddPackage`).
+- **Corrigido de passagem (fazia parte do bug CRMLAB-13):** os segmentos "Pedido Médico"/"IA"/
+  "Pacotes" de `CatalogSegments` caíam por engano no conteúdo do Catálogo (a renderização não
+  olhava para `segment`) — agora "Pedido Médico"/"IA" mostram um placeholder honesto ("ainda não
+  disponível"), CRMLAB-13 continua aberto só para esses dois.
+- **Bug de `setState` não-funcional corrigido em `Budget/New.tsx`:** `handleAddItem` usava
+  `items.find`/`setItems(items.map(...))` fechado sobre o `items` da última renderização — expandir
+  um pacote chama `handleAddItem` N vezes no mesmo evento, e todas as chamadas viam o MESMO
+  `items` desatualizado (só o ÚLTIMO exame sobrevivia). Corrigido para `setItems(current => ...)`
+  (updater funcional). Coberto por teste de regressão em `New.spec.tsx`.
+- **Limitação conhecida, registrada (não é bug):** o seletor de exames do `PackageModal` não
+  garante que um exame já incluído no pacote apareça no checkbox se ele não bater com a busca
+  atual (ou estiver além do 100º exame) — o exame não se perde (`examIds` preserva o id), só
+  fica invisível até uma busca que o traga de volta. Ver PAGES.md §7.
+- Docs: `DECISIONS.md` D-130, `API_CONTRACTS.md` §4b, `SCHEMA.md` §28-30, `PAGES.md` §4/§7.
+- `npm run typecheck` verde nos 4 workspaces. Backend: `exam-package-routes.spec.ts` (14) +
+  `exam-package-service.spec.ts` (10) verdes, suíte completa a confirmar. Frontend: suíte
+  completa 1011 testes verdes (29 novos: `PackageModal.spec.tsx` 9, `PackagePricesTab.spec.tsx`
+  4, `Catalog.spec.tsx` +3, `CatalogSegments.spec.tsx` ajustado, `New.spec.tsx` +1).
+- **Observação de merge:** desenvolvido em paralelo com CRMLAB-9 (worktrees/branches
+  independentes) — as duas usaram o índice de migração `015_*`; CRMLAB-9 já foi instruído a
+  renumerar sua migração para `017_*` no merge (esta ocupa `015`/`016`).
+
 ## Bloqueios Atuais
 
 Nenhum.

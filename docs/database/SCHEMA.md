@@ -1303,6 +1303,106 @@ de `quick_replies`, §22: venda lançada errada é corrigida apagando e relança
 histórico dependente da linha). Escopo de leitura por papel: atendente só as próprias vendas
 (`attendants.user_id = ctx.userId`); manager/admin veem todas — API_CONTRACTS.md §11.
 
+### 28. `exam_packages` (migração 015 — CRMLAB-10, D-130)
+Cadastro de pacotes de exames (combos), aba "Pacotes" dentro de Cadastro de Exames (`/catalog`).
+Mesmo padrão de `exam_catalog` (§7): ativo/inativo em vez de `DELETE` (D-004).
+
+```sql
+CREATE TABLE exam_packages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  discount_percent NUMERIC(5,2) NOT NULL DEFAULT 0,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, name),
+  CHECK (discount_percent >= 0 AND discount_percent <= 100)
+);
+
+CREATE INDEX idx_exam_packages_tenant_id ON exam_packages(tenant_id);
+CREATE INDEX idx_exam_packages_active ON exam_packages(is_active);
+
+CREATE TRIGGER trg_exam_packages_updated_at
+  BEFORE UPDATE ON exam_packages
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+```
+
+`discount_percent` é o desconto aplicado sobre a soma dos preços particulares CORRENTES dos
+exames incluídos — nunca um preço próprio gravado (SERVICES.md/`calculatePackagePrivatePrice`,
+`@crm-lab/shared`). `name` único por tenant, mesma regra de `exam_catalog.name`.
+
+### 29. `exam_package_items` (migração 015 — CRMLAB-10)
+Exames incluídos em cada pacote (M:N com `exam_catalog`).
+
+```sql
+CREATE TABLE exam_package_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL,
+  package_id UUID NOT NULL,
+  exam_id UUID NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (package_id) REFERENCES exam_packages(id) ON DELETE CASCADE,
+  FOREIGN KEY (exam_id) REFERENCES exam_catalog(id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, package_id, exam_id)
+);
+
+CREATE INDEX idx_exam_package_items_tenant_id ON exam_package_items(tenant_id);
+CREATE INDEX idx_exam_package_items_package_id ON exam_package_items(package_id);
+CREATE INDEX idx_exam_package_items_exam_id ON exam_package_items(exam_id);
+```
+
+Sem coluna própria de preço: o preço de cada item é sempre o `price_private` CORRENTE de
+`exam_catalog` no momento do cálculo (nunca copiado para esta tabela) — igual à razão de
+`proposal_items` não guardar cópia do exame, exceto que aqui nem o preço no momento da criação é
+congelado, porque o pacote é um CADASTRO (recalcula toda vez que é exibido), não uma proposta
+fechada.
+
+### 30. `exam_package_prices` (migração 015 — CRMLAB-10)
+Preço do pacote por convênio — mesmo padrão de `exam_prices` (§19): fallback nunca bloqueia
+(D-004); sem linha para o convênio, `effectivePrice` cai no `pricePrivate` calculado do pacote.
+
+```sql
+CREATE TABLE exam_package_prices (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL,
+  package_id UUID NOT NULL,
+  insurance_id UUID NOT NULL,
+  price NUMERIC(12,2) NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (package_id) REFERENCES exam_packages(id) ON DELETE CASCADE,
+  FOREIGN KEY (insurance_id) REFERENCES insurances(id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, package_id, insurance_id),
+  CHECK (price >= 0)
+);
+
+CREATE INDEX idx_exam_package_prices_tenant_id ON exam_package_prices(tenant_id);
+CREATE INDEX idx_exam_package_prices_package_id ON exam_package_prices(package_id);
+CREATE INDEX idx_exam_package_prices_insurance_id ON exam_package_prices(insurance_id);
+
+CREATE TRIGGER trg_exam_package_prices_updated_at
+  BEFORE UPDATE ON exam_package_prices
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+```
+
+RLS das três tabelas em `016_rls_exam_packages.sql`, mesmo padrão de 005/006 e 012/013: arquivo
+separado por consistência com o repositório, não por haver backfill (nenhuma linha é escrita por
+esta migração).
+
+**Sobre a tela de Novo Orçamento (`/budget/new`):** adicionar um pacote expande em N linhas no
+resumo, uma por exame, usando o `pricePrivate` de cada `ExamPackageItem` (não o `effectivePrice`
+do pacote, que é só o preço agregado mostrado no seletor) — ver PAGES.md §4. Isso é
+propositalmente diferente de "somar o `effectivePrice` de cada exame para aquele convênio":
+`GET /exam-packages` não expõe preço por-convênio por item (só do pacote como um todo), então a
+expansão usa o preço particular corrente de cada exame incluído; o `effectivePrice` do pacote
+(com sua própria tabela de convênio, `exam_package_prices`) serve para o atendente comparar o
+valor esperado antes de adicionar. Não é o modo "Pacotes" da tela de Novo Orçamento resolvido em
+CRMLAB-13 (bug de abas que não abrem nada) — é o consumo, pelo `CatalogSegments`, deste cadastro.
+
 ### Colunas novas em `tenant_settings`, `insurances` e `proposals` (migração 012 — Onda 9)
 
 **`tenant_settings` ganha os percentuais de comissão (D-113):**
@@ -1470,6 +1570,9 @@ Nenhum outro caminho de código deve usar `withoutTenant()`.
 | `lis_imports` | ✅ | idem |
 | `lis_budgets` | ✅ | idem |
 | `sales` | ✅ | idem |
+| `exam_packages` | ✅ | migração `016_rls_exam_packages.sql` |
+| `exam_package_items` | ✅ | idem |
+| `exam_package_prices` | ✅ | idem |
 
 As **4 tabelas da migração 003** entram sob RLS na `004_rls_onda6.sql`, as **3 tabelas da
 migração 005** entram na `006_rls_onda7.sql`, e as **4 tabelas novas da migração 012**
@@ -1538,7 +1641,9 @@ migrations/
 ├── 011_proposal_number.sql       # proposals.proposal_number + índice único (tenant, number)
 ├── 012_lis_domain.sql            # attendants, lis_imports, lis_budgets, sales + colunas novas em
 │                                  # tenant_settings, insurances, proposals (Onda 9, §24-27)
-└── 013_rls_lis_domain.sql        # policies das 4 tabelas da 012 (Onda 9)
+├── 013_rls_lis_domain.sql        # policies das 4 tabelas da 012 (Onda 9)
+├── 015_exam_packages.sql         # exam_packages/_items/_prices (CRMLAB-10, §28-30)
+└── 016_rls_exam_packages.sql     # policies das 3 tabelas da 015 (CRMLAB-10)
 ```
 
 A 007 e a 008 são arquivos ÚNICOS (tabela + policy), diferente dos pares 003/004 e 005/006: a

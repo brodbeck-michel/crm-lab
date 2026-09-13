@@ -1,23 +1,32 @@
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useExamList } from '@/api/exams';
+import { useExamPackageList } from '@/api/exam-packages';
 import { useAuthStore } from '@/stores/auth.store';
 import ExamTable from '@/components/catalog/ExamTable';
 import ExamModal from '@/components/catalog/ExamModal';
-import { Button, SearchInput } from '@/components/ui';
+import PackageTable from '@/components/catalog/PackageTable';
+import PackageModal from '@/components/catalog/PackageModal';
+import { Button, SearchInput, SegmentedControl } from '@/components/ui';
 import { Pagination } from '@/components/shared';
-import type { Exam, ListExamsQuery } from '@crm-lab/shared';
+import type { Exam, ExamPackage, ListExamsQuery } from '@crm-lab/shared';
 
-/** Mesmo default do backend (`docs/api/API_CONTRACTS.md` §4). */
+/** Mesmo default do backend (`docs/api/API_CONTRACTS.md` §4/§4b). */
 const PAGE_SIZE = 20;
+
+type CatalogTab = 'exams' | 'packages';
 
 export default function Catalog() {
   const user = useAuthStore((s) => s.user);
+  const [tab, setTab] = useState<CatalogTab>('exams');
   const [search, setSearch] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editExam, setEditExam] = useState<Exam | undefined>();
+  const [editPackage, setEditPackage] = useState<ExamPackage | undefined>();
 
-  /** Página na URL (`?page=2`), pelo mesmo motivo de `/proposals`. */
+  /** Página na URL (`?page=2`), pelo mesmo motivo de `/proposals`. Compartilhada
+   * pelas duas abas — trocar de aba também reinicia a página (mesma regra de
+   * "buscar reinicia a página"), já que os conjuntos são diferentes. */
   const [searchParams, setSearchParams] = useSearchParams();
   const parsedPage = Number.parseInt(searchParams.get('page') ?? '1', 10);
   const page = Number.isFinite(parsedPage) && parsedPage > 0 ? parsedPage : 1;
@@ -40,6 +49,12 @@ export default function Catalog() {
     goToPage(1);
   };
 
+  const handleTabChange = (next: CatalogTab) => {
+    setTab(next);
+    setSearch('');
+    goToPage(1);
+  };
+
   const filters: ListExamsQuery = {
     page,
     limit: PAGE_SIZE,
@@ -49,6 +64,13 @@ export default function Catalog() {
   const { data, isLoading } = useExamList(filters);
   const exams = data?.exams ?? [];
 
+  const { data: packagesData, isLoading: packagesLoading } = useExamPackageList({
+    page,
+    limit: PAGE_SIZE,
+    search: search || undefined,
+  });
+  const packages = packagesData?.packages ?? [];
+
   const canEdit = user?.role !== 'attendant';
 
   const handleEditClick = (exam: Exam) => {
@@ -56,9 +78,15 @@ export default function Catalog() {
     setShowModal(true);
   };
 
+  const handleEditPackageClick = (pkg: ExamPackage) => {
+    setEditPackage(pkg);
+    setShowModal(true);
+  };
+
   const handleCloseModal = () => {
     setShowModal(false);
     setEditExam(undefined);
+    setEditPackage(undefined);
   };
 
   return (
@@ -67,39 +95,76 @@ export default function Catalog() {
         <h1 className="font-heading text-display">Catálogo de Exames</h1>
         {canEdit && (
           <Button variant="primary" onClick={() => setShowModal(true)}>
-            + Novo Exame
+            {tab === 'exams' ? '+ Novo Exame' : '+ Novo Pacote'}
           </Button>
         )}
       </div>
 
-      <SearchInput
-        defaultValue={search}
-        onSearch={handleSearch}
-        placeholder="Buscar exame..."
+      <SegmentedControl
+        aria-label="Aba do catálogo"
+        value={tab}
+        onChange={handleTabChange}
+        options={[
+          { value: 'exams', label: 'Exames' },
+          { value: 'packages', label: 'Pacotes' },
+        ]}
       />
 
-      {isLoading ? (
+      <SearchInput
+        key={tab}
+        defaultValue={search}
+        onSearch={handleSearch}
+        placeholder={tab === 'exams' ? 'Buscar exame...' : 'Buscar pacote...'}
+      />
+
+      {tab === 'exams' ? (
+        isLoading ? (
+          <div>Carregando...</div>
+        ) : (
+          <>
+            <ExamTable
+              exams={exams}
+              canEdit={canEdit}
+              onEdit={handleEditClick}
+            />
+            {data && (
+              <Pagination
+                pagination={data.pagination}
+                onPageChange={goToPage}
+                itemLabel="exames"
+              />
+            )}
+          </>
+        )
+      ) : packagesLoading ? (
         <div>Carregando...</div>
       ) : (
         <>
-          <ExamTable
-            exams={exams}
+          <PackageTable
+            packages={packages}
             canEdit={canEdit}
-            onEdit={handleEditClick}
+            onEdit={handleEditPackageClick}
           />
-          {data && (
+          {packagesData && (
             <Pagination
-              pagination={data.pagination}
+              pagination={packagesData.pagination}
               onPageChange={goToPage}
-              itemLabel="exames"
+              itemLabel="pacotes"
             />
           )}
         </>
       )}
 
-      {showModal && (
+      {showModal && tab === 'exams' && (
         <ExamModal
           exam={editExam}
+          onClose={handleCloseModal}
+        />
+      )}
+
+      {showModal && tab === 'packages' && (
+        <PackageModal
+          pkg={editPackage}
           onClose={handleCloseModal}
         />
       )}

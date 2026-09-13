@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { useExamListInfinite } from '@/api/exams';
+import { useExamPackageList } from '@/api/exam-packages';
 import { Button, SearchInput, SegmentedControl } from '@/components/ui';
 import { MoneyDisplay } from '@/components/shared/MoneyDisplay';
+import type { ExamPackage } from '@crm-lab/shared';
 import InsuranceSelector from './InsuranceSelector';
 
 /** Mesmo default do backend (`docs/api/API_CONTRACTS.md` §4). */
@@ -17,6 +19,8 @@ interface CatalogSegmentsProps {
     price: number,
     priceSource: 'insurance' | 'private'
   ) => void;
+  /** CRMLAB-10 — expande o pacote em N linhas no resumo (`BudgetNew.handleAddPackage`). */
+  onAddPackage: (pkg: ExamPackage) => void;
 }
 
 /**
@@ -39,6 +43,7 @@ export default function CatalogSegments({
   insuranceId,
   onInsuranceChange,
   onAddItem,
+  onAddPackage,
 }: CatalogSegmentsProps) {
   const [search, setSearch] = useState('');
   const [segment, setSegment] = useState<'catalog' | 'medical' | 'ai' | 'packages'>('catalog');
@@ -49,6 +54,21 @@ export default function CatalogSegments({
     limit: PAGE_SIZE,
     insuranceId: insuranceId ?? undefined,
   });
+
+  /**
+   * CRMLAB-10 — segmento "Pacotes". Sem paginação (mesmo espírito do catálogo
+   * aqui: é um seletor, D-080) — carrega até 100 pacotes ativos, teto do
+   * contrato (§4b). `insuranceId` traz `effectivePrice`/`priceSource` do
+   * PACOTE (prévia no seletor); a expansão em linhas usa o preço particular de
+   * cada exame incluído (SCHEMA.md §30) — `onAddPackage` decide isso.
+   */
+  const { data: packagesData, isLoading: packagesLoading } = useExamPackageList({
+    active: true,
+    search: segment === 'packages' ? search || undefined : undefined,
+    limit: 100,
+    insuranceId: insuranceId ?? undefined,
+  });
+  const packages = packagesData?.packages ?? [];
 
   /** Todas as páginas já trazidas, na ordem em que vieram (`name ASC`). */
   const exams = data?.pages.flatMap((page) => page.exams) ?? [];
@@ -92,12 +112,48 @@ export default function CatalogSegments({
 
       <InsuranceSelector value={insuranceId} onChange={onInsuranceChange} />
 
-      <SearchInput
-        placeholder="Buscar exame..."
-        onSearch={setSearch}
-      />
+      {(segment === 'catalog' || segment === 'packages') && (
+        <SearchInput
+          key={segment}
+          placeholder={segment === 'catalog' ? 'Buscar exame...' : 'Buscar pacote...'}
+          onSearch={setSearch}
+        />
+      )}
 
-      {isLoading ? (
+      {segment === 'medical' || segment === 'ai' ? (
+        <div className="flex items-center justify-center py-xl text-neutral-600 text-center">
+          {segment === 'medical' ? 'Pedido Médico' : 'IA'} ainda não disponível nesta tela
+          (CRMLAB-13).
+        </div>
+      ) : segment === 'packages' ? (
+        packagesLoading ? (
+          <div className="flex items-center justify-center py-xl text-neutral-600">
+            Carregando...
+          </div>
+        ) : packages.length === 0 ? (
+          <div className="flex items-center justify-center py-xl text-neutral-600">
+            Nenhum pacote encontrado
+          </div>
+        ) : (
+          <div className="space-y-sm overflow-y-auto flex-1">
+            {packages.map((pkg) => (
+              <button
+                key={pkg.id}
+                onClick={() => onAddPackage(pkg)}
+                className="w-full flex justify-between items-center p-md hover:bg-neutral-100 rounded-md transition-colors text-left"
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="text-label font-semibold truncate">{pkg.name}</p>
+                  <p className="text-caption text-neutral-600">
+                    {pkg.items.length} exame(s)
+                  </p>
+                </div>
+                <MoneyDisplay value={pkg.effectivePrice ?? pkg.pricePrivate} />
+              </button>
+            ))}
+          </div>
+        )
+      ) : isLoading ? (
         <div className="flex items-center justify-center py-xl text-neutral-600">
           Carregando...
         </div>

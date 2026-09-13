@@ -130,9 +130,23 @@ Anatomia (padrão WhatsApp):
 ## Layout (`layout/`)
 
 ### Sidebar
-- 244px expandido / 72px recolhido; recolhe sozinho em atendente + inbox
-- Itens: ícone (flex 0 0 38px quando recolhido) + label; hover accent-100; ativo accent-200 + shadow-sm
+- Variante "Trilho de grupo" (D-128): **272px expandido / 64px recolhido**; recolhe sozinho em
+  atendente + inbox
+- Itens: ícone (flex 0 0 38px quando recolhido) + label; hover `accent-100`; **ativo `accent-500`
+  sólido + texto `text-bg` + `font-semibold`** (único destaque preenchido do trilho — a faixa de
+  grupo nunca usa essa cor). Raio: `rounded-lg` nível 1 (solto), `rounded-md` filho de grupo
 - Conteúdo do trilho muda por perfil — a ESTRUTURA não
+- Itens agrupados em accordion (CRMLAB-4): itens soltos primeiro, um único divisor
+  (`<hr>` neutral-300), depois os grupos, na ordem Comunicação → Gestão →
+  Configurações (D-129: "Comercial" + "LIS / Operação Laboratorial" fundidos em "Gestão")
+  (`sidebarSectionsFor(role)`, route-config.ts). Grupo
+  sem nenhum item visível para o perfil não aparece. Abertos por padrão; estado por grupo
+  persistido em localStorage por usuário (`sidebar-groups.store.ts`)
+- Cabeçalho de grupo: `font-body text-label font-bold` — **mesmo tamanho do item**, só o peso
+  diferencia (D-128; v1/D-127 usava `font-heading text-section`, maior, rejeitado pelo usuário na
+  validação). Fundo `accent-100` quando aberto, `hover:bg-neutral-100` quando fechado. Chevron `▶`
+  gira 90° ao abrir. Filhos indentados atrás de um trilho (`border-l-2 border-neutral-300`). Grupo
+  fechado com item ativo dentro: ponto 6px `bg-accent-500` ao lado do chevron
 - Item "Decisões" (gestor+): `Badge` com `pendingDecisions.total` de `GET /operations/overview`
   (PAGES.md §12) — some quando o total é zero
 - Rodapé: avatar + nome do usuário é um botão; clique abre menu com [Sair] (`useLogout`,
@@ -418,7 +432,7 @@ Regras de Largura aplicadas e **testadas** (`InboxLayout.spec.tsx`,
 - coluna flexível sempre com `min-width` explícito no `style`;
 - em tela estreita quem rola é a LINHA (`overflow-x-auto`) — coluna não colapsa;
 - ícone do item de menu e avatar com `flex: 0 0 <tamanho>`;
-- Sidebar 244px/72px, recolhendo sozinha para atendente em `/attendance`.
+- Sidebar 272px/64px, recolhendo sozinha para atendente em `/attendance`.
 
 ---
 

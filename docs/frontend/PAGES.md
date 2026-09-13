@@ -14,7 +14,7 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 /patients/:id                 → Ficha do Paciente
 /budget/new?conversationId=   → Novo Orçamento
 /proposals                    → Pipeline de Propostas
-/catalog                      → Catálogo de Exames
+/catalog                      → Catálogo de Exames        (rótulo no trilho: "Cadastro de Exames")
 /analytics                    → Conversão
 /internal-chat                → Chat Interno
 /quick-replies                → Respostas rápidas
@@ -38,33 +38,40 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 
 ### Papéis por rota (implementado em `src/routes/route-config.ts`)
 
-| Rota | `requiredRoles` | No trilho da Sidebar |
-|------|-----------------|----------------------|
-| `/login` | — (público) | não |
-| `/` | qualquer sessão → redirect por perfil | não |
-| `/attendance` | attendant · manager · admin | sim |
-| `/patients` | attendant · manager · admin | sim |
-| `/patients/:id` | attendant · manager · admin | não |
-| `/budget/new` | attendant · manager · admin | não |
-| `/proposals` | attendant · manager · admin | sim |
-| `/catalog` | attendant · manager · admin | sim |
-| `/analytics` | attendant · manager · admin | sim |
-| `/internal-chat` | attendant · manager · admin | sim |
-| `/quick-replies` | attendant · manager · admin | sim |
-| `/decisions` | manager · admin | sim |
-| `/results` | manager · admin | sim |
-| `/reconciliation` | manager · admin | sim |
-| `/active-search` | manager · admin | sim |
-| `/sales` | attendant · manager · admin | sim |
-| `/settings/channels` | manager · admin | sim |
-| `/settings/operation` | manager · admin | sim |
-| `/settings/insurances` | manager · admin | sim |
-| `/settings/attendants` | manager · admin | sim |
-| `/settings/commissions` | manager · admin | sim |
-| `/settings/users` | admin | sim |
-| `/settings/theme` | admin | sim |
-| `/platform/tenants` | platform_operator | sim |
-| `/platform/billing` | platform_operator | sim |
+**Grupos do trilho (accordion, CRMLAB-4; revisado em D-129):** itens sem grupo ficam soltos no
+topo; os grupos aparecem depois, na ordem Comunicação → Gestão → Configurações. "Gestão" funde os
+antigos grupos "Comercial" e "LIS / Operação Laboratorial" (D-129: usuário achou os dois grupos
+redundantes na validação de D-128). "Cadastro de Exames" (rota `/catalog`) saiu de lá e passou a
+`/catalog` → Configurações. Grupo sem nenhum item visível para o perfil não aparece. Abertos por
+padrão; estado por grupo persiste em localStorage por usuário.
+
+| Rota | `requiredRoles` | No trilho da Sidebar | Grupo |
+|------|-----------------|----------------------|-------|
+| `/login` | — (público) | não | — |
+| `/` | qualquer sessão → redirect por perfil | não | — |
+| `/attendance` | attendant · manager · admin | sim | solto |
+| `/patients` | attendant · manager · admin | sim | solto |
+| `/patients/:id` | attendant · manager · admin | não | — |
+| `/budget/new` | attendant · manager · admin | não | — |
+| `/proposals` | attendant · manager · admin | sim | solto |
+| `/catalog` (rótulo "Cadastro de Exames") | attendant · manager · admin | sim | Configurações |
+| `/analytics` | attendant · manager · admin | sim | Gestão |
+| `/internal-chat` | attendant · manager · admin | sim | Comunicação |
+| `/quick-replies` | attendant · manager · admin | sim | Comunicação |
+| `/decisions` | manager · admin | sim | Gestão |
+| `/results` | manager · admin | sim | Gestão |
+| `/reconciliation` | manager · admin | sim | Gestão |
+| `/active-search` | manager · admin | sim | Gestão |
+| `/sales` | attendant · manager · admin | sim | solto |
+| `/settings/channels` | manager · admin | sim | Configurações |
+| `/settings/operation` | manager · admin | sim | Gestão |
+| `/settings/insurances` | manager · admin | sim | Configurações |
+| `/settings/attendants` | manager · admin | sim | Configurações |
+| `/settings/commissions` | manager · admin | sim | Configurações |
+| `/settings/users` | admin | sim | Configurações |
+| `/settings/theme` | admin | sim | Configurações |
+| `/platform/tenants` | platform_operator | sim | solto (console) |
+| `/platform/billing` | platform_operator | sim | solto (console) |
 
 Duas leituras registradas aqui porque o doc original não as fixava:
 

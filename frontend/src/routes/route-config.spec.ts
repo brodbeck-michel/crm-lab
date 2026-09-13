@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { APP_ROUTES, canAccess, sidebarRoutesFor } from './route-config';
+import { APP_ROUTES, NAV_GROUPS, canAccess, sidebarRoutesFor, sidebarSectionsFor } from './route-config';
 
 /**
  * `route-config.ts` — Onda 10 (PAGES.md "Telas do LIS").
@@ -60,5 +60,66 @@ describe('route-config — domínio LIS (Onda 10)', () => {
 
     expect(canAccess('manager', byPath['/settings/commissions']!.requiredRoles)).toBe(true);
     expect(canAccess('admin', byPath['/settings/commissions']!.requiredRoles)).toBe(true);
+  });
+});
+
+describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, revisado em D-129)', () => {
+  it('admin vê todos os grupos, na ordem Comunicação → Gestão → Configurações', () => {
+    const { groups } = sidebarSectionsFor('admin');
+
+    expect(groups.map((g) => g.id)).toEqual(['comunicacao', 'gestao', 'configuracoes']);
+    expect(groups.map((g) => g.label)).toEqual(NAV_GROUPS.map((g) => g.label));
+  });
+
+  it('grupo Gestão reúne Conversão, Decisões, Resultados, Conferência, Busca Ativa e Gestão da Operação, nessa ordem (D-129: fusão de Comercial + LIS)', () => {
+    const { groups } = sidebarSectionsFor('admin');
+    const gestao = groups.find((g) => g.id === 'gestao');
+
+    expect(gestao?.items.map((r) => r.label)).toEqual([
+      'Conversão',
+      'Decisões',
+      'Resultados',
+      'Conferência',
+      'Busca Ativa',
+      'Gestão da Operação',
+    ]);
+  });
+
+  it('grupo Configurações inclui "Cadastro de Exames" (ex-Catálogo, movido em D-129), antes de Canais & Equipe', () => {
+    const { groups } = sidebarSectionsFor('admin');
+    const configuracoes = groups.find((g) => g.id === 'configuracoes');
+
+    expect(configuracoes?.items.map((r) => r.label)).toEqual([
+      'Cadastro de Exames',
+      'Canais & Equipe',
+      'Convênios',
+      'Atendentes',
+      'Comissão',
+      'Usuários & Permissões',
+      'Personalização',
+    ]);
+  });
+
+  it('itens soltos (fora de qualquer grupo) ficam em `ungrouped`', () => {
+    const { ungrouped } = sidebarSectionsFor('admin');
+
+    expect(ungrouped.map((r) => r.label)).toEqual(['Atendimento', 'Pacientes', 'Propostas', 'Vendas']);
+  });
+
+  it('atendente vê Gestão só com Conversão e Configurações só com Cadastro de Exames (únicos itens TENANT_ROLES dos grupos)', () => {
+    const { groups } = sidebarSectionsFor('attendant');
+
+    expect(groups.map((g) => g.id)).toEqual(['comunicacao', 'gestao', 'configuracoes']);
+    expect(groups.find((g) => g.id === 'gestao')?.items.map((r) => r.label)).toEqual(['Conversão']);
+    expect(groups.find((g) => g.id === 'configuracoes')?.items.map((r) => r.label)).toEqual([
+      'Cadastro de Exames',
+    ]);
+  });
+
+  it('operador da plataforma não vê nenhum grupo — só os itens soltos do console', () => {
+    const { groups, ungrouped } = sidebarSectionsFor('platform_operator');
+
+    expect(groups).toEqual([]);
+    expect(ungrouped.map((r) => r.path)).toEqual(['/platform/tenants', '/platform/billing']);
   });
 });

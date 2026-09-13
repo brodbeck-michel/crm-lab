@@ -592,8 +592,8 @@ button:active {
 ### Sidebar
 ```css
 aside.sidebar {
-  width: 244px;           /* Expandido */
-  /* width: 72px; */      /* Recolhido */
+  width: 272px;           /* Expandido */
+  /* width: 64px; */      /* Recolhido (D-128) */
   background: var(--color-surface);
   padding: 26px 16px;
   display: flex;

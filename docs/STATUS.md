@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-12 (Onda 10 — E2E reais flow-17/flow-18 contra a stack Docker completa, fechando a última pendência da onda — CRMLAB-5)
+**Última atualização:** 2026-09-12 (CRMLAB-4 — grupos "Comercial" + "LIS" fundidos em "Gestão"; Catálogo renomeado e movido para Configurações — D-129)
 
 ---
 
@@ -613,6 +613,69 @@ direto da ficha, com o contato já carregado.
   novos de `patients.routes.spec.ts` (edição + conflito de telefone). Frontend: `Profile.spec.tsx`
   (20, com os 2 novos de telefone) verdes; suíte completa 864 testes, mesma 1 falha pré-existente
   e não relacionada de `tailwind-theme-classes.spec.ts` (`Platform/TenantDetail.tsx:185`).
+
+## 2026-09-12 — Agrupamento do menu em categorias (CRMLAB-4) ✅
+
+Pedido do usuário: menu com 21 itens soltos dificultava a navegação; agrupar em categorias.
+Escopo e decisões de UX (ordem dos grupos, estado inicial do accordion, comportamento de grupo
+vazio) fechados com o usuário no card CRMLAB-4 antes de codar.
+
+- **D-127.** `route-config.ts`: campo `group?: NavGroupId` por rota + `NAV_GROUPS` (ordem fixa) +
+  `sidebarSectionsFor(role)` (soltos + grupos, omitindo grupo vazio para o papel). `sidebarRoutesFor`
+  (usado pelo guard de rota) não muda.
+- **Sidebar.tsx** renderiza itens soltos primeiro, depois cada grupo como accordion (aberto por
+  padrão); item extraído para `SidebarNavItem` para reuso entre soltos e agrupados.
+- **Nova store `sidebar-groups.store.ts`**: estado aberto/fechado por grupo, persistido em
+  localStorage por usuário (`crm-lab.sidebar-groups`) — preferência duradoura, ao contrário do
+  recolher/expandir do trilho inteiro (`ui.store`, não persistido).
+- Docs: `DECISIONS.md` D-127, `PAGES.md` (tabela de papéis por rota + coluna "Grupo"),
+  `COMPONENTS.md` (`Sidebar`).
+- Verificado visualmente com Playwright (login real, seed de dev): grupos aparecem na ordem
+  combinada, accordion abre/fecha ao clicar no cabeçalho, grupo vazio some para o perfil,
+  badge de "Decisões" continua funcionando dentro do grupo Comercial.
+- `npm run typecheck` verde nos 4 workspaces. Frontend: suíte completa 981 testes verdes
+  (13 novos: `route-config.spec.ts` +5, `Sidebar.spec.tsx` +4, `sidebar-groups.store.spec.ts` +4).
+
+## 2026-09-12 — Sidebar "Trilho de grupo": revisão visual pós-rejeição (CRMLAB-4) ✅
+
+Usuário validou visualmente o resultado de D-127 (cabeçalho de grupo maior, `font-heading
+text-section`) e não aprovou. Trouxe uma especificação nova ("Trilho de grupo", Claude Design) com
+paleta/fonte próprias (hex + DM Sans) — **não adotadas literalmente** (quebrariam D-005, tema por
+tenant, e a regra "zero hex/zero nome de fonte em componente"); estrutura e comportamento do spec
+foram traduzidos para os tokens já existentes.
+
+- **D-128** (supersede parcial de D-127 — agrupamento/ordem continuam iguais, só o visual muda):
+  272px/64px (era 244/72); cabeçalho de grupo agora do mesmo tamanho do item (`font-body
+  text-label font-bold`); um único divisor entre soltos e grupos; filhos indentados atrás de um
+  trilho (`border-l-2`); item ativo com `accent-500` sólido + `text-bg` (era `accent-200` +
+  `shadow-sm`); chevron `▶` rotativo; ponto de destaque no cabeçalho quando o grupo tem filho ativo
+  e está fechado; foco de teclado com `outline` visível; scrollbar fina na lista.
+- Escopo do spec original deixado de fora (registrado em D-128): flyout dos grupos no recolhido e
+  marcador de ponto/quadrado nos itens (já cobertos pelo `NavGlyph` existente).
+- Docs: `DECISIONS.md` (D-128), `COMPONENTS.md` (`Sidebar`), `DESIGN_TOKENS.md` (largura).
+- Verificado visualmente com Playwright (login real, seed de dev): grupo aberto com item ativo,
+  grupo fechado mostrando o ponto de destaque, e trilho recolhido (64px).
+- `npm run typecheck` verde nos 4 workspaces. Frontend: suíte completa 981 testes verdes
+  (`Sidebar.spec.tsx` atualizado para as novas larguras/classes, nenhum teste novo — mesmo
+  comportamento coberto, visual diferente).
+
+## 2026-09-12 — Reagrupamento do menu: "Gestão" funde Comercial + LIS; Catálogo vira Cadastro de Exames (CRMLAB-4) ✅
+
+Usuário aprovou D-128 (visual "Trilho de grupo") e pediu mais um ajuste antes de fechar o card: os
+grupos "Comercial" e "LIS / Operação Laboratorial" pareciam redundantes; e "Catálogo" fazia mais
+sentido em Configurações.
+
+- **D-129.** `route-config.ts`: `NavGroupId` perde `'comercial'`/`'lis'`, ganha `'gestao'`.
+  `NAV_GROUPS` = Comunicação → Gestão → Configurações. Grupo "Gestão": Conversão, Decisões,
+  Resultados, Conferência, Busca Ativa, Gestão da Operação. `/catalog` sai do grupo e vai para
+  Configurações, rótulo "Catálogo" → "Cadastro de Exames" (já era o `<h1>` da própria página).
+- Nenhuma mudança em `Sidebar.tsx` (D-128 continua valendo) nem em rota/papel/contrato de API — só
+  a organização dos grupos em `route-config.ts`.
+- Docs: `DECISIONS.md` (D-129), `PAGES.md` (tabela de rotas/grupo), `COMPONENTS.md` (ordem dos
+  grupos).
+- `npm run typecheck` verde nos 4 workspaces. Frontend: suíte completa 982 testes verdes
+  (`route-config.spec.ts` e `Sidebar.spec.tsx` atualizados para os novos grupos/rótulo — 1 teste
+  novo cobrindo o grupo Configurações completo).
 
 ## Bloqueios Atuais
 

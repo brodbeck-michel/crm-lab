@@ -40,6 +40,25 @@ export const MANAGER_PLUS: readonly UserRole[] = ['manager', 'admin'] as const;
 export const ADMIN_ONLY: readonly UserRole[] = ['admin'] as const;
 export const PLATFORM_ONLY: readonly UserRole[] = ['platform_operator'] as const;
 
+/** Grupos (accordion) do trilho da Sidebar — CRMLAB-4/D-129. */
+export type NavGroupId = 'comunicacao' | 'gestao' | 'configuracoes';
+
+export interface NavGroup {
+  id: NavGroupId;
+  label: string;
+}
+
+/**
+ * Ordem de exibição dos grupos na Sidebar (decidida no CRMLAB-4, revisada em
+ * D-129: "Comercial" + "LIS / Operação Laboratorial" viraram um único grupo
+ * "Gestão"). Itens sem `group` aparecem soltos, antes de todos os grupos.
+ */
+export const NAV_GROUPS: readonly NavGroup[] = [
+  { id: 'comunicacao', label: 'Comunicação' },
+  { id: 'gestao', label: 'Gestão' },
+  { id: 'configuracoes', label: 'Configurações' },
+] as const;
+
 export interface AppRoute {
   path: string;
   label: string;
@@ -47,6 +66,8 @@ export interface AppRoute {
   /** Aparece no trilho da Sidebar (o conteúdo muda por perfil; a estrutura não). */
   inSidebar: boolean;
   icon?: NavIcon;
+  /** Grupo (accordion) do trilho. Ausente = item solto, fora de qualquer grupo. */
+  group?: NavGroupId;
 }
 
 export const APP_ROUTES: readonly AppRoute[] = [
@@ -76,10 +97,11 @@ export const APP_ROUTES: readonly AppRoute[] = [
   },
   {
     path: '/catalog',
-    label: 'Catálogo',
+    label: 'Cadastro de Exames',
     requiredRoles: TENANT_ROLES,
     inSidebar: true,
     icon: 'catalog',
+    group: 'configuracoes',
   },
   {
     path: '/analytics',
@@ -87,6 +109,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requiredRoles: TENANT_ROLES,
     inSidebar: true,
     icon: 'analytics',
+    group: 'gestao',
   },
   {
     path: '/internal-chat',
@@ -94,6 +117,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requiredRoles: TENANT_ROLES,
     inSidebar: true,
     icon: 'chat',
+    group: 'comunicacao',
   },
   {
     path: '/quick-replies',
@@ -101,6 +125,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requiredRoles: TENANT_ROLES,
     inSidebar: true,
     icon: 'quick-replies',
+    group: 'comunicacao',
   },
   {
     path: '/sales',
@@ -115,6 +140,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requiredRoles: MANAGER_PLUS,
     inSidebar: true,
     icon: 'decisions',
+    group: 'gestao',
   },
 
   // ── Domínio LIS (Onda 10) ────────────────────────────────────────────────
@@ -124,6 +150,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requiredRoles: MANAGER_PLUS,
     inSidebar: true,
     icon: 'results',
+    group: 'gestao',
   },
   {
     path: '/reconciliation',
@@ -131,6 +158,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requiredRoles: MANAGER_PLUS,
     inSidebar: true,
     icon: 'reconciliation',
+    group: 'gestao',
   },
   {
     path: '/active-search',
@@ -138,6 +166,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requiredRoles: MANAGER_PLUS,
     inSidebar: true,
     icon: 'active-search',
+    group: 'gestao',
   },
 
   // ── Configuração ────────────────────────────────────────────────────────
@@ -147,6 +176,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requiredRoles: MANAGER_PLUS,
     inSidebar: true,
     icon: 'channels',
+    group: 'configuracoes',
   },
   {
     path: '/settings/operation',
@@ -154,6 +184,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requiredRoles: MANAGER_PLUS,
     inSidebar: true,
     icon: 'operation',
+    group: 'gestao',
   },
   {
     path: '/settings/insurances',
@@ -161,6 +192,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requiredRoles: MANAGER_PLUS,
     inSidebar: true,
     icon: 'insurances',
+    group: 'configuracoes',
   },
   {
     path: '/settings/attendants',
@@ -168,6 +200,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requiredRoles: MANAGER_PLUS,
     inSidebar: true,
     icon: 'attendants',
+    group: 'configuracoes',
   },
   {
     path: '/settings/commissions',
@@ -175,6 +208,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requiredRoles: MANAGER_PLUS,
     inSidebar: true,
     icon: 'commissions',
+    group: 'configuracoes',
   },
   {
     path: '/settings/users',
@@ -182,6 +216,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requiredRoles: ADMIN_ONLY,
     inSidebar: true,
     icon: 'users',
+    group: 'configuracoes',
   },
   {
     path: '/settings/theme',
@@ -189,6 +224,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requiredRoles: ADMIN_ONLY,
     inSidebar: true,
     icon: 'theme',
+    group: 'configuracoes',
   },
 
   // ── Console da plataforma (isolado) ─────────────────────────────────────
@@ -231,4 +267,34 @@ export function canAccess(role: UserRole | null | undefined, required: readonly 
 /** Itens do trilho visíveis para o perfil. A ESTRUTURA é a mesma; o conteúdo muda. */
 export function sidebarRoutesFor(role: UserRole | null | undefined): AppRoute[] {
   return APP_ROUTES.filter((route) => route.inSidebar && canAccess(role, route.requiredRoles));
+}
+
+export interface SidebarGroupSection {
+  id: NavGroupId;
+  label: string;
+  items: AppRoute[];
+}
+
+export interface SidebarSections {
+  /** Itens sem `group`, sempre visíveis, sem accordion. */
+  ungrouped: AppRoute[];
+  /** Grupos com ao menos um item visível para o perfil, na ordem de NAV_GROUPS. */
+  groups: SidebarGroupSection[];
+}
+
+/**
+ * Mesmos itens de `sidebarRoutesFor`, organizados em soltos + grupos
+ * (accordion) para a Sidebar (CRMLAB-4). Grupo sem nenhum item visível para
+ * o perfil não aparece.
+ */
+export function sidebarSectionsFor(role: UserRole | null | undefined): SidebarSections {
+  const visible = sidebarRoutesFor(role);
+  const ungrouped = visible.filter((route) => !route.group);
+  const groups = NAV_GROUPS.map((group) => ({
+    id: group.id,
+    label: group.label,
+    items: visible.filter((route) => route.group === group.id),
+  })).filter((group) => group.items.length > 0);
+
+  return { ungrouped, groups };
 }

@@ -5,6 +5,7 @@ import type {
   ListAuditQuery,
   ListConversationsQuery,
   ListExamsQuery,
+  ListExamPackagesQuery,
   ListInsurancesQuery,
   ListLisBudgetsQuery,
   ListLisImportsQuery,
@@ -69,6 +70,11 @@ export const queryKeys = {
 
   /** ['exam-prices', examId] — `GET /exams/:id/prices` (§4/§8, D-081/D-082). */
   examPrices: (examId: string) => ['exam-prices', examId] as const,
+
+  /** ['exam-packages', filters] — aba "Pacotes" do Cadastro de Exames (CRMLAB-10). */
+  examPackages: (filters?: ListExamPackagesQuery) => ['exam-packages', filters ?? {}] as const,
+  /** ['exam-package-prices', packageId] — `GET /exam-packages/:id/prices`. */
+  examPackagePrices: (packageId: string) => ['exam-package-prices', packageId] as const,
 
   /** ['insurances', filters] — `/settings/insurances` e o seletor de `/budget/new` (§8). */
   insurances: (filters?: ListInsurancesQuery) => ['insurances', filters ?? {}] as const,

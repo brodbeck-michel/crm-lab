@@ -4,12 +4,20 @@ import userEvent from '@testing-library/user-event';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Exam, ListExamsQuery, ListExamsResponse, UserRole } from '@crm-lab/shared';
+import type {
+  Exam,
+  ExamPackage,
+  ListExamPackagesResponse,
+  ListExamsQuery,
+  ListExamsResponse,
+  UserRole,
+} from '@crm-lab/shared';
 import { queryClient } from '@/api/query-client';
 import { querySuccess, mutationIdle } from '@/test/query-mocks';
 import { useAuthStore } from '@/stores/auth.store';
 import { DEFAULT_THEME } from '@/lib/theme';
 import * as examsApi from '@/api/exams';
+import * as examPackagesApi from '@/api/exam-packages';
 import Catalog from './Catalog';
 
 const mockExams: Exam[] = [
@@ -49,12 +57,42 @@ vi.mock('@/api/exams', () => ({
   useUpdateExam: vi.fn(),
 }));
 
+vi.mock('@/api/exam-packages', () => ({
+  useExamPackageList: vi.fn(),
+  useCreateExamPackage: vi.fn(),
+  useUpdateExamPackage: vi.fn(),
+}));
+
 const useExamList = vi.mocked(examsApi.useExamList);
+const useExamPackageList = vi.mocked(examPackagesApi.useExamPackageList);
 
 function listResult(overrides: Partial<ListExamsResponse> = {}) {
   return querySuccess<ListExamsResponse>({
     exams: mockExams,
     pagination: { page: 1, limit: 20, total: 45, totalPages: 3 },
+    ...overrides,
+  });
+}
+
+const mockPackages: ExamPackage[] = [
+  {
+    id: 'pkg1',
+    name: 'Check-up Cardiológico',
+    discountPercent: 10,
+    items: [
+      { examId: 'exam1', examName: 'Hemograma', examCode: 'HEM001', pricePrivate: 50.0 },
+    ],
+    pricePrivate: 45.0,
+    isActive: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+];
+
+function packageListResult(overrides: Partial<ListExamPackagesResponse> = {}) {
+  return querySuccess<ListExamPackagesResponse>({
+    packages: mockPackages,
+    pagination: { page: 1, limit: 20, total: 1, totalPages: 1 },
     ...overrides,
   });
 }
@@ -101,6 +139,9 @@ describe('Catalog', () => {
     );
     vi.mocked(examsApi.useCreateExam).mockReturnValue(mutationIdle());
     vi.mocked(examsApi.useUpdateExam).mockReturnValue(mutationIdle());
+    useExamPackageList.mockReturnValue(packageListResult());
+    vi.mocked(examPackagesApi.useCreateExamPackage).mockReturnValue(mutationIdle());
+    vi.mocked(examPackagesApi.useUpdateExamPackage).mockReturnValue(mutationIdle());
     signIn('attendant');
   });
 
@@ -232,5 +273,43 @@ describe('Catalog', () => {
     renderPage();
 
     expect(screen.queryByRole('button', { name: 'Próxima' })).not.toBeInTheDocument();
+  });
+
+  describe('aba Pacotes (CRMLAB-10)', () => {
+    it('troca para a tabela de pacotes ao clicar na aba', async () => {
+      const user = userEvent.setup({ delay: null });
+      renderPage();
+
+      expect(screen.getByRole('cell', { name: 'Hemograma' })).toBeInTheDocument();
+      // Coluna exclusiva da tabela de exames — some ao trocar de aba.
+      expect(screen.getByRole('columnheader', { name: 'Código' })).toBeInTheDocument();
+
+      await user.click(screen.getByRole('tab', { name: 'Pacotes' }));
+
+      expect(screen.getByText('Check-up Cardiológico')).toBeInTheDocument();
+      expect(screen.queryByRole('columnheader', { name: 'Código' })).not.toBeInTheDocument();
+    });
+
+    it('botão de criação vira "+ Novo Pacote" na aba Pacotes, só para gestor+', async () => {
+      const user = userEvent.setup({ delay: null });
+      signIn('manager');
+      renderPage();
+
+      expect(screen.getByRole('button', { name: /novo exame/i })).toBeInTheDocument();
+
+      await user.click(screen.getByRole('tab', { name: 'Pacotes' }));
+
+      expect(screen.queryByRole('button', { name: /novo exame/i })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /novo pacote/i })).toBeInTheDocument();
+    });
+
+    it('atendente não vê botão de criar pacote', async () => {
+      const user = userEvent.setup({ delay: null });
+      renderPage();
+
+      await user.click(screen.getByRole('tab', { name: 'Pacotes' }));
+
+      expect(screen.queryByRole('button', { name: /novo pacote/i })).not.toBeInTheDocument();
+    });
   });
 });

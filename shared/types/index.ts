@@ -6,6 +6,7 @@ export * from './media.types.js';
 export * from './quick-reply.types.js';
 export * from './patient.types.js';
 export * from './exam.types.js';
+export * from './exam-package.types.js';
 export * from './insurance.types.js';
 export * from './proposal.types.js';
 export * from './analytics.types.js';

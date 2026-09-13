@@ -80,13 +80,18 @@ function serve(query: ListExamsQuery): ListExamsResponse {
   };
 }
 
-function renderCatalog(onAddItem = vi.fn()) {
+function renderCatalog(onAddItem = vi.fn(), onAddPackage = vi.fn()) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   render(
     <QueryClientProvider client={queryClient}>
-      <CatalogSegments insuranceId={null} onInsuranceChange={() => {}} onAddItem={onAddItem} />
+      <CatalogSegments
+        insuranceId={null}
+        onInsuranceChange={() => {}}
+        onAddItem={onAddItem}
+        onAddPackage={onAddPackage}
+      />
     </QueryClientProvider>,
   );
   return onAddItem;

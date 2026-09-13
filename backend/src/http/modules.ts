@@ -21,6 +21,7 @@
  */
 import type { ApiModuleFactory } from './api-module.js';
 import { examModule } from '../controllers/exam.routes.js';
+import { examPackageModule } from '../controllers/exam-package.routes.js';
 import { auditModule } from '../controllers/audit.routes.js';
 import { authModule } from '../controllers/auth.routes.js';
 import { themeModule } from '../controllers/theme.routes.js';
@@ -46,6 +47,7 @@ import { executiveReportModule } from '../controllers/executive-report.routes.js
 
 export const apiModuleFactories: ApiModuleFactory[] = [
   examModule, // GET/POST/PATCH /exams — API_CONTRACTS.md §4
+  examPackageModule, // GET/POST/PATCH /exam-packages[/:id/prices] — API_CONTRACTS.md §4b (CRMLAB-10)
   authModule, // POST /auth/login|refresh|logout — API_CONTRACTS.md §1
   userModule, // GET /users/me, GET|POST /users, PATCH /users/:id — §1
   themeModule, // GET|PATCH /themes/current, GET /themes/presets — SERVICES.md §8

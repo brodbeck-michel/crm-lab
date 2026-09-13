@@ -1655,6 +1655,33 @@ LIS.
 `Sidebar.spec.tsx` e `route-config.spec.ts` (asserts de grupo/rótulo atualizados). Nenhuma mudança
 de rota, papel, contrato de API ou do componente `Sidebar.tsx` em si (D-128 continua valendo).
 
+### D-130: Cadastro de pacotes de exames (combos) — nova aba em Cadastro de Exames
+**Decisão:** nova aba "Pacotes" em `/catalog`, ao lado da lista de exames (`SegmentedControl`,
+mesmo padrão da aba "Dados"/"Preços por convênio" do `ExamModal`). Cadastro: `exam_packages` +
+`exam_package_items` (M:N com `exam_catalog`) + `exam_package_prices` (preço por convênio,
+SCHEMA.md §28-30). `pricePrivate` do pacote **nunca** é gravado — é sempre
+`calculatePackagePrivatePrice(items, discountPercent)`: soma dos `pricePrivate` CORRENTES dos
+exames incluídos, menos `discountPercent`%, calculada em `@crm-lab/shared` (mesma função no
+backend e no frontend). Preço por convênio do pacote segue o mesmo mecanismo de fallback de
+`exam_prices` (§19/D-081): sem override, `effectivePrice` cai no `pricePrivate` calculado.
+Permissões: mesma alçada do catálogo — atendente só leitura, gestor/admin cria/edita/desativa
+(sem `DELETE`, D-004).
+**Ao adicionar um pacote em `/budget/new`:** expande em N linhas no resumo, uma por exame
+incluído, usando o `pricePrivate` de cada `ExamPackageItem` — não o `effectivePrice` do pacote
+(que é só o preço agregado mostrado no seletor, ver SCHEMA.md §30 para o motivo dessa escolha).
+O atendente vê a soma resultante e pode ajustar o desconto geral do orçamento normalmente
+(`DiscountSection` já existente em `SummaryColumn`) — não há um "desconto do pacote" que se
+propague automaticamente para o orçamento; ele só influencia o `pricePrivate` MOSTRADO do
+pacote no seletor.
+**Motivo:** pedido do usuário — hoje só existe cadastro de exames individuais; pacotes/combos
+(ex.: check-ups) precisam de cadastro próprio. Escopo fechado com o usuário: sem preço próprio
+digitado (sempre derivado), mesma alçada e convenção ativo/inativo do catálogo de exames.
+**Impacto:** backend (`exam-package.{routes,service,repository}.ts`, migrações `015`/`016`),
+`shared/types/exam-package.types.ts`, frontend (`PackageTable.tsx`, `PackageModal.tsx`,
+`PackagePricesTab.tsx`, aba nova em `Catalog.tsx`; segmento "Pacotes" de `CatalogSegments.tsx`
+em `/budget/new` passa a listar pacotes de verdade — consome, não resolve por completo, o bug
+CRMLAB-13 das abas "Pedido Médico"/"IA" que continuam vazias).
+
 ### D-131: Campo "Médico solicitante" na proposta — texto livre, opcional, imutável após criação
 **Decisão:** `POST /proposals` ganha `requestingDoctor` (opcional, texto livre até 255
 caracteres, aparado pelo backend — vazio/só espaço vira `NULL`, nunca `""`). Sem

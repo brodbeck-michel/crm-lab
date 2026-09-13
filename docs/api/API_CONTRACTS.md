@@ -2136,6 +2136,111 @@ Auditado (`update_exam_prices`).
 
 ---
 
+## 4b. Exam Packages (Pacotes de Exames — CRMLAB-10, D-130)
+
+Shapes em `shared/types/exam-package.types.ts`, SCHEMA.md §28-30. Cadastro de pacotes (combos)
+dentro da mesma tela de Cadastro de Exames (`/catalog`), aba "Pacotes" — **não** é o modo
+"Pacotes" da tela de Novo Orçamento (bug CRMLAB-13, backlog separado; ver nota em SCHEMA.md §30
+sobre como as duas telas se relacionam). Mesmo padrão de ativo/inativo do §4 (D-004): não existe
+`DELETE`.
+
+### GET /exam-packages
+Listar pacotes do laboratório. Qualquer papel autenticado do tenant.
+
+**Query Params:**
+```
+?active=true                 // omitido = ativos e inativos
+?search=checkup               // casa nome do pacote, sem caixa nem acento
+?page=1&limit=50             // default page=1, limit=20, máximo 100
+?sortBy=name&order=asc       // sortBy: name|discountPercent|createdAt|updatedAt
+?insuranceId=uuid            // acrescenta effectivePrice/priceSource a cada item (aditivo)
+```
+
+**Response (200):**
+```json
+{
+  "packages": [
+    {
+      "id": "uuid",
+      "name": "Check-up Cardiológico",
+      "discountPercent": 10,
+      "items": [
+        { "examId": "uuid", "examName": "Hemograma completo", "examCode": "HC", "pricePrivate": 89.90 },
+        { "examId": "uuid", "examName": "Colesterol total", "examCode": "COL", "pricePrivate": 45.00 }
+      ],
+      "pricePrivate": 121.41,
+      "isActive": true,
+      "createdAt": "2026-09-13T15:00:00.000Z",
+      "updatedAt": "2026-09-13T15:00:00.000Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 20, "total": 3, "totalPages": 1 }
+}
+```
+
+`pricePrivate` é **sempre calculado** — soma de `items[].pricePrivate` menos `discountPercent`%
+(`calculatePackagePrivatePrice`, `@crm-lab/shared`, mesma função no backend e no frontend),
+**nunca** um valor digitado ou gravado. Com `?insuranceId=`, cada pacote ganha `effectivePrice` e
+`priceSource` (`"insurance"` quando há linha em `exam_package_prices` para o convênio,
+`"private"` no fallback) — mesmo mecanismo do §4, mas a tabela de override é do PACOTE
+(`exam_package_prices`), não a soma dos overrides de cada exame.
+
+### POST /exam-packages (manager/admin apenas)
+Criar novo pacote.
+
+**Request:**
+```json
+{
+  "name": "Check-up Cardiológico",
+  "examIds": ["uuid-1", "uuid-2"],
+  "discountPercent": 10
+}
+```
+
+`examIds`: mínimo 1, precisam existir e estar **ativos** no tenant — senão `VALIDATION_ERROR`
+(`details.fields.examIds`). `name` único por tenant (mesma regra de `exam_catalog.name`) →
+`CONFLICT` em duplicata.
+
+**Response (201):** mesmo shape de um item de `GET /exam-packages` (sem `?insuranceId=`).
+
+### PATCH /exam-packages/:id (manager/admin apenas)
+Atualizar pacote. Todos os campos opcionais (PATCH parcial); `examIds`, quando presente,
+**substitui o conjunto inteiro** de exames incluídos (semântica de PUT sobre a coleção filha,
+igual a `synonyms` no §4).
+
+**Request:**
+```json
+{ "discountPercent": 15, "isActive": false }
+```
+
+**Response (200):** mesmo shape do `GET`. Não existe `DELETE`: desativar é
+`{ "isActive": false }` — histórico (propostas que já expandiram o pacote em itens) não
+referencia o pacote diretamente, mas o cadastro segue a mesma convenção do catálogo (D-004).
+
+**Erros:** `NOT_FOUND` (pacote de outro tenant), `VALIDATION_ERROR` (400, `details.fields`),
+`CONFLICT` (`name` duplicado), `FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
+
+### GET /exam-packages/:id/prices
+Preço do pacote por convênio (todos os cadastrados para ele). Qualquer papel autenticado.
+
+**Response (200):**
+```json
+{ "prices": [{ "insuranceId": "8f2a1c4b-6d39-4f70-9a12-5c8e3b7d1f06", "price": 99.90 }] }
+```
+
+### PUT /exam-packages/:id/prices (manager/admin apenas)
+Upsert em lote — **semântica de PUT**: linha ausente do corpo é removida. Mesmo contrato do
+`PUT /exams/:id/prices` (§4), aplicado a `exam_package_prices`.
+
+**Request/Response:** mesmo shape do `GET`.
+
+**Validações:** `price >= 0`; `insuranceId` precisa existir e estar ativo no tenant, senão
+`VALIDATION_ERROR` (`details.fields["prices.<insuranceId>"]`).
+
+**Erros:** `NOT_FOUND` (pacote de outro tenant), `VALIDATION_ERROR`, `FORBIDDEN`
+
+---
+
 ## 5. Analytics & Reports
 
 **Dinheiro é NÚMERO nestes endpoints** (`15000`, `2666.67`), nunca string formatada.

@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { BudgetLayout } from '@/components/layout/BudgetLayout';
 import CatalogSegments from '@/components/budget/CatalogSegments';
 import SummaryColumn from '@/components/budget/SummaryColumn';
+import type { ExamPackage } from '@crm-lab/shared';
 
 interface BudgetItem {
   examId: string;
@@ -20,26 +21,46 @@ export default function BudgetNew() {
   /** Convênio da proposta em montagem (D-082). `null` = particular. */
   const [insuranceId, setInsuranceId] = useState<string | null>(null);
 
+  /**
+   * Updater funcional (`setItems(current => ...)`): `handleAddPackage` chama
+   * isto N vezes em sequência para expandir o pacote em N linhas, tudo dentro
+   * do mesmo evento — com `items` fechado sobre o estado da última renderização
+   * (como era antes), cada chamada veria o MESMO array desatualizado e só a
+   * última exame sobreviveria (as demais `setItems` seriam sobrescritas pela
+   * seguinte antes do React re-renderizar).
+   */
   const handleAddItem = (
     examId: string,
     examName: string,
     price: number,
     priceSource: 'insurance' | 'private'
   ) => {
-    const existingItem = items.find((item) => item.examId === examId);
-    if (existingItem) {
-      setItems(
-        items.map((item) =>
+    setItems((current) => {
+      const existingItem = current.find((item) => item.examId === examId);
+      if (existingItem) {
+        return current.map((item) =>
           item.examId === examId ? { ...item, quantity: item.quantity + 1 } : item
-        )
-      );
-    } else {
-      setItems([...items, { examId, examName, unitPrice: price, quantity: 1, priceSource }]);
-    }
+        );
+      }
+      return [...current, { examId, examName, unitPrice: price, quantity: 1, priceSource }];
+    });
   };
 
   const handleRemoveItem = (examId: string) => {
-    setItems(items.filter((item) => item.examId !== examId));
+    setItems((current) => current.filter((item) => item.examId !== examId));
+  };
+
+  /**
+   * CRMLAB-10 — expande o pacote em N linhas, uma por exame incluído, com o
+   * `pricePrivate` de cada `ExamPackageItem` (não o `effectivePrice` do
+   * pacote — esse é só a prévia agregada no seletor). Mesmo caminho de merge
+   * de `handleAddItem`: exame já presente no carrinho soma quantidade em vez
+   * de duplicar linha. Ver DECISIONS.md D-130/SCHEMA.md §30 para o motivo.
+   */
+  const handleAddPackage = (pkg: ExamPackage) => {
+    for (const item of pkg.items) {
+      handleAddItem(item.examId, item.examName, item.pricePrivate, 'private');
+    }
   };
 
   return (
@@ -49,6 +70,7 @@ export default function BudgetNew() {
           insuranceId={insuranceId}
           onInsuranceChange={setInsuranceId}
           onAddItem={handleAddItem}
+          onAddPackage={handleAddPackage}
         />
       }
       summary={

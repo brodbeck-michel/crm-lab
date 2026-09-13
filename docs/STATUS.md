@@ -685,7 +685,7 @@ médicos, aparece no PDF só se preenchido (hoje não existe PDF de proposta —
 sem migração de dados retroativa.
 
 - **D-131.** `requestingDoctor` novo em `proposals` (migração
-  `015_proposal_requesting_doctor.sql`, nullable). `POST /proposals` aceita o campo (opcional,
+  `017_proposal_requesting_doctor.sql`, nullable). `POST /proposals` aceita o campo (opcional,
   máx 255, `trim` — vazio vira `NULL`); imutável depois de criado, sem rota de `PATCH`.
   Exposto em `Proposal`/`ProposalDetail`.
 - Frontend: `Input` "Médico solicitante (opcional)" em `SummaryColumn.tsx` (`/budget/new`);
@@ -700,11 +700,10 @@ sem migração de dados retroativa.
   (`proposal-routes.spec.ts` com os novos casos de `requestingDoctor`). Frontend: suíte
   completa 986 testes verdes (`ProposalModal.spec.tsx` + `Budget/New.spec.tsx` com os casos
   novos).
-- Desenvolvido em paralelo com CRMLAB-10 (worktrees/branches independentes) — mesmo índice de
-  migração `015_*` usado nas duas branches; ao integrar as duas em `main`, uma das duas precisa
-  renumerar para `016_*` (a outra, CRMLAB-10, já usa `015_exam_packages.sql` +
-  `016_rls_exam_packages.sql` — renumerar esta para `017_proposal_requesting_doctor.sql` no
-  merge é o caminho mais simples).
+- Desenvolvido em paralelo com CRMLAB-10 (worktrees/branches independentes) — as duas nasceram
+  usando o índice `015_*`; renumerada para `017_proposal_requesting_doctor.sql` nesta branch
+  (CRMLAB-10 ocupa `015_exam_packages.sql`/`016_rls_exam_packages.sql`), já validado junto na
+  branch de integração de teste antes da abertura dos PRs.
 
 ## Bloqueios Atuais
 

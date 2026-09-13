@@ -1666,7 +1666,7 @@ migração de dados retroativa.
 diretamente na proposta/orçamento (CRMLAB-9). Escopo fechado com o usuário: campo simples,
 sem bloquear a criação, sem novo cadastro.
 **Impacto:** `shared/types/proposal.types.ts` (campo novo), `proposal.repository.ts` (coluna
-nova, `015_proposal_requesting_doctor.sql`), `proposal.service.ts` (normaliza vazio → `null`),
+nova, `017_proposal_requesting_doctor.sql`), `proposal.service.ts` (normaliza vazio → `null`),
 `proposal.routes.ts` (aceita no `POST`). Frontend: `SummaryColumn.tsx` (`Input` em
 `/budget/new`), `ProposalModal.tsx` (exibe só quando preenchido). Sobre "aparecer no PDF": não
 existe hoje geração de PDF de proposta individual (só Relatório Executivo/Comissão/Busca Ativa,

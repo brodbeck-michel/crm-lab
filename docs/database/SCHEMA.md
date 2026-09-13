@@ -356,7 +356,7 @@ ALTER TABLE proposals ADD COLUMN proposal_number INTEGER NOT NULL;
 CREATE UNIQUE INDEX idx_proposals_tenant_number ON proposals(tenant_id, proposal_number);
 ```
 
-**Coluna nova (migração `015_proposal_requesting_doctor.sql`, CRMLAB-9):**
+**Coluna nova (migração `017_proposal_requesting_doctor.sql`, CRMLAB-9):**
 
 ```sql
 ALTER TABLE proposals ADD COLUMN requesting_doctor VARCHAR(255) NULL;
@@ -1556,7 +1556,7 @@ migrations/
 ├── 012_lis_domain.sql            # attendants, lis_imports, lis_budgets, sales + colunas novas em
 │                                  # tenant_settings, insurances, proposals (Onda 9, §24-27)
 ├── 013_rls_lis_domain.sql        # policies das 4 tabelas da 012 (Onda 9)
-└── 015_proposal_requesting_doctor.sql  # proposals.requesting_doctor (CRMLAB-9)
+└── 017_proposal_requesting_doctor.sql  # proposals.requesting_doctor (CRMLAB-9)
 ```
 
 A 007 e a 008 são arquivos ÚNICOS (tabela + policy), diferente dos pares 003/004 e 005/006: a

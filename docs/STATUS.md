@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-12 (CRMLAB-4 — grupos "Comercial" + "LIS" fundidos em "Gestão"; Catálogo renomeado e movido para Configurações — D-129)
+**Última atualização:** 2026-09-13 (v1.5.0 — CRMLAB-9 Médico solicitante + CRMLAB-10 Pacotes de exames, mergeados e taggeados para homologação)
 
 ---
 
@@ -741,6 +741,16 @@ sem migração de dados retroativa.
 - Desenvolvido em paralelo com CRMLAB-10 (worktrees/branches independentes) — mesmo índice de
   migração `015_*` usado nas duas branches; renumerada para `017_proposal_requesting_doctor.sql`
   na integração (CRMLAB-10 ocupa `015`/`016`).
+
+## 2026-09-13 — v1.5.0: CRMLAB-9 + CRMLAB-10 mergeados, tag para homologação
+
+Bump minor (1.4.0 → 1.5.0, `package.json` raiz — fonte única de versão, lida em build-time pelo
+frontend via `__APP_VERSION__` e mostrada no rodapé do trilho, COMPONENTS.md): duas features
+aditivas mergeadas em `main` (PR #4 CRMLAB-9, PR #5 CRMLAB-10), nenhuma mudança que quebre
+contrato existente.
+
+- Tag `v1.5.0` criada e enviada para o `main` pós-merge.
+- `npm run typecheck` verde nos 4 workspaces no `main` pós-merge.
 
 ## Bloqueios Atuais
 

@@ -708,13 +708,39 @@ orçamento novo, expandindo em uma linha por exame.
   fica invisível até uma busca que o traga de volta. Ver PAGES.md §7.
 - Docs: `DECISIONS.md` D-130, `API_CONTRACTS.md` §4b, `SCHEMA.md` §28-30, `PAGES.md` §4/§7.
 - `npm run typecheck` verde nos 4 workspaces. Backend: `exam-package-routes.spec.ts` (14) +
-  `exam-package-service.spec.ts` (10) verdes, suíte completa a confirmar. Frontend: suíte
+  `exam-package-service.spec.ts` (10) verdes, suíte completa verde (1052 testes). Frontend: suíte
   completa 1011 testes verdes (29 novos: `PackageModal.spec.tsx` 9, `PackagePricesTab.spec.tsx`
   4, `Catalog.spec.tsx` +3, `CatalogSegments.spec.tsx` ajustado, `New.spec.tsx` +1).
 - **Observação de merge:** desenvolvido em paralelo com CRMLAB-9 (worktrees/branches
-  independentes) — as duas nasceram usando o índice `015_*`; esta ocupa `015`/`016`, CRMLAB-9
-  foi renumerado para `017_proposal_requesting_doctor.sql`, já validado junto na branch de
-  integração de teste antes da abertura dos PRs.
+  independentes) — as duas usaram o índice de migração `015_*`; esta ocupa `015`/`016`, CRMLAB-9
+  foi renumerado para `017_*` na integração.
+
+## 2026-09-13 — Campo "Médico solicitante" nas propostas/orçamentos (CRMLAB-9) ✅
+
+Pedido do usuário: rastrear qual médico solicitou o exame/procedimento diretamente na
+proposta/orçamento. Escopo fechado com o usuário: texto livre, opcional, sem cadastro de
+médicos, aparece no PDF só se preenchido (hoje não existe PDF de proposta — ver nota abaixo),
+sem migração de dados retroativa.
+
+- **D-131.** `requestingDoctor` novo em `proposals` (migração
+  `017_proposal_requesting_doctor.sql`, nullable). `POST /proposals` aceita o campo (opcional,
+  máx 255, `trim` — vazio vira `NULL`); imutável depois de criado, sem rota de `PATCH`.
+  Exposto em `Proposal`/`ProposalDetail`.
+- Frontend: `Input` "Médico solicitante (opcional)" em `SummaryColumn.tsx` (`/budget/new`);
+  `ProposalModal.tsx` mostra a linha só quando `requestingDoctor` não é `null`.
+- Nota registrada no doc (não é pendência aberta): não existe geração de PDF de proposta
+  individual hoje (só Relatório Executivo/Comissão/Busca Ativa, client-side) — quando existir,
+  lê o campo do detalhe como qualquer outro.
+- Docs: `DECISIONS.md` (D-131), `API_CONTRACTS.md` §3, `SCHEMA.md` (coluna nova),
+  `BUSINESS_RULES.md` (tabela de campos opcionais), `PAGES.md` (`/budget/new` e modal de
+  proposta).
+- `npm run typecheck` verde nos 4 workspaces. Backend: suíte completa 1030 testes verdes
+  (`proposal-routes.spec.ts` com os novos casos de `requestingDoctor`). Frontend: suíte
+  completa 986 testes verdes (`ProposalModal.spec.tsx` + `Budget/New.spec.tsx` com os casos
+  novos).
+- Desenvolvido em paralelo com CRMLAB-10 (worktrees/branches independentes) — mesmo índice de
+  migração `015_*` usado nas duas branches; renumerada para `017_proposal_requesting_doctor.sql`
+  na integração (CRMLAB-10 ocupa `015`/`016`).
 
 ## Bloqueios Atuais
 

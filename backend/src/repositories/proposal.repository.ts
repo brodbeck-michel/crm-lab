@@ -52,6 +52,8 @@ export interface ProposalRow {
   updated_at: unknown;
   /** Convenio da proposta. `null` = particular (Onda 7). Imutavel apos a criacao. */
   insurance_id: string | null;
+  /** Medico solicitante, texto livre (CRMLAB-9). `null` = nao informado. Imutavel apos a criacao. */
+  requesting_doctor: string | null;
 }
 
 interface ProposalItemRow {
@@ -82,7 +84,7 @@ const SELECT_PROPOSAL = `
          p.status, p.discount_percent, p.total_price, p.reason_lost,
          p.approval_status, p.approved_by, a.name AS approved_by_name,
          p.approved_at, p.sent_at, p.closed_at, p.created_at, p.updated_at,
-         p.insurance_id
+         p.insurance_id, p.requesting_doctor
     FROM proposals p
     JOIN conversations c ON c.id = p.conversation_id
     LEFT JOIN users u ON u.id = p.created_by
@@ -147,6 +149,7 @@ export function mapDetail(
     rejectionReason: extra.rejectionReason,
     sentAt: toIsoOrNull(row.sent_at),
     history,
+    requestingDoctor: row.requesting_doctor,
   };
 }
 
@@ -232,6 +235,8 @@ export interface ProposalInsert {
   approvedAt: string | null;
   /** Convenio da proposta. `null` = particular (Onda 7). Imutavel apos a criacao. */
   insuranceId: string | null;
+  /** Medico solicitante, texto livre (CRMLAB-9). `null` = nao informado. Imutavel apos a criacao. */
+  requestingDoctor: string | null;
 }
 
 export interface ProposalItemInsert {
@@ -265,8 +270,9 @@ export async function insertProposal(tx: DbTx, input: ProposalInsert): Promise<s
   const result = await tx.query<{ id: string }>(
     `INSERT INTO proposals (tenant_id, conversation_id, created_by, status,
                             discount_percent, total_price, approval_status,
-                            approved_by, approved_at, insurance_id, proposal_number)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                            approved_by, approved_at, insurance_id, proposal_number,
+                            requesting_doctor)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
      RETURNING id`,
     [
       input.tenantId,
@@ -280,6 +286,7 @@ export async function insertProposal(tx: DbTx, input: ProposalInsert): Promise<s
       input.approvedAt,
       input.insuranceId,
       proposalNumber,
+      input.requestingDoctor,
     ],
   );
   const row = result.rows[0];

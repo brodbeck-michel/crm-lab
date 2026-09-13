@@ -188,6 +188,16 @@ function isLossReason(value: string): value is LossReason {
   return (LOSS_REASONS as readonly string[]).includes(value);
 }
 
+/**
+ * `undefined`/`null`/branco -> `null` (BUSINESS_RULES §10 — null tem um so
+ * significado: "nenhum medico informado"). String vazia nunca e gravada.
+ */
+function normalizeRequestingDoctor(value: string | null | undefined): string | null {
+  if (value === undefined || value === null) return null;
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed;
+}
+
 function clamp(value: number | undefined, fallback: number, min: number, max: number): number {
   if (value === undefined || !Number.isFinite(value)) return fallback;
   return Math.min(Math.max(Math.trunc(value), min), max);
@@ -319,6 +329,8 @@ export class ProposalService {
     });
 
     const totalPrice = calculateTotal(items, discountPercent);
+    // CRMLAB-9: texto livre, opcional, sem cadastro de medicos.
+    const requestingDoctor = normalizeRequestingDoctor(dto.requestingDoctor);
 
     const created = await db.withTenant(ctx.tenantId, async (tx) => {
       // Conversa de outro tenant fica invisivel pelo RLS -> NOT_FOUND.
@@ -344,6 +356,7 @@ export class ProposalService {
         approvedBy: withinLimit ? ctx.userId : null,
         approvedAt: withinLimit ? now : null,
         insuranceId,
+        requestingDoctor,
       });
 
       await repo.insertItems(tx, ctx.tenantId, id, items);
@@ -368,6 +381,7 @@ export class ProposalService {
         discountPercent,
         totalPrice: created.detail.totalPrice,
         approvalStatus: created.detail.approvalStatus,
+        requestingDoctor: created.detail.requestingDoctor,
         items: items.map((item) => ({
           examId: item.examId,
           examName: item.examName,

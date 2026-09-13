@@ -356,6 +356,23 @@ ALTER TABLE proposals ADD COLUMN proposal_number INTEGER NOT NULL;
 CREATE UNIQUE INDEX idx_proposals_tenant_number ON proposals(tenant_id, proposal_number);
 ```
 
+**Coluna nova (migração `017_proposal_requesting_doctor.sql`, CRMLAB-9):**
+
+```sql
+ALTER TABLE proposals ADD COLUMN requesting_doctor VARCHAR(255) NULL;
+```
+
+Texto livre com o nome do médico solicitante (indicação clínica) do exame/atendimento —
+**opcional, sem cadastro/autocomplete de médicos** (decisão fechada com o usuário no card
+CRMLAB-9). `NULL` = nenhum médico informado (proposta antiga ou campo deixado em branco); string
+vazia é normalizada para `NULL` pelo `ProposalService.create` antes de gravar — mesma convenção
+de "um número, uma origem" para ausência de valor (BUSINESS_RULES §10). **Imutável após a
+criação**, igual a `insurance_id`: não há `PATCH` que altere este campo nesta onda — se um fluxo
+de edição de proposta já criada precisar mudar o médico solicitante, isso é decisão nova,
+registrada como limitação declarada. Exposto em `ProposalDetail.requestingDoctor`
+(API_CONTRACTS.md §3); **não** entra em `Proposal` (listagem/pipeline) — não há campo para ele no
+`ProposalCard` (PAGES.md §5), só no detalhe/modal.
+
 Numeração sequencial **POR TENANT**, gerada no `ProposalRepository.insertProposal` (
 `pg_advisory_xact_lock(hashtext(tenant_id))` + `MAX(proposal_number) + 1`, na MESMA transação
 do `INSERT` — sem tabela de contador dedicada). Existe para rastreamento citável por
@@ -1643,7 +1660,8 @@ migrations/
 │                                  # tenant_settings, insurances, proposals (Onda 9, §24-27)
 ├── 013_rls_lis_domain.sql        # policies das 4 tabelas da 012 (Onda 9)
 ├── 015_exam_packages.sql         # exam_packages/_items/_prices (CRMLAB-10, §28-30)
-└── 016_rls_exam_packages.sql     # policies das 3 tabelas da 015 (CRMLAB-10)
+├── 016_rls_exam_packages.sql     # policies das 3 tabelas da 015 (CRMLAB-10)
+└── 017_proposal_requesting_doctor.sql  # proposals.requesting_doctor (CRMLAB-9)
 ```
 
 A 007 e a 008 são arquivos ÚNICOS (tabela + policy), diferente dos pares 003/004 e 005/006: a

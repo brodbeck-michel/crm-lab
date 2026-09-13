@@ -44,6 +44,7 @@ const DETAIL_KEYS = [
   'updatedAt',
   'closedAt',
   'insuranceId',
+  'requestingDoctor',
 ].sort();
 
 describe('/api/v1/proposals', () => {
@@ -139,6 +140,49 @@ describe('/api/v1/proposals', () => {
       expect(body.history).toHaveLength(1);
       // Dinheiro no fio e numero decimal, nunca string formatada (regra 9).
       expect(typeof body.totalPrice).toBe('number');
+      // CRMLAB-9: sem o campo no request, o medico solicitante fica null.
+      expect(body.requestingDoctor).toBeNull();
+    });
+
+    // CRMLAB-9: texto livre, opcional, sem cadastro/autocomplete de medicos.
+    it('grava e devolve o medico solicitante quando informado', async () => {
+      const c = await cenario();
+
+      const response = await app.agent
+        .post('/api/v1/proposals')
+        .set(app.auth(c.attendant))
+        .send({
+          conversationId: c.conversationId,
+          items: [{ examId: c.examId, quantity: 1 }],
+          requestingDoctor: '  Dra. Ana Souza  ',
+        })
+        .expect(201);
+
+      const body = response.body as ProposalDetail;
+      // Aparado pelo backend (zod `.trim()`), nunca gravado com espacos nas pontas.
+      expect(body.requestingDoctor).toBe('Dra. Ana Souza');
+
+      const reloaded = await app.agent
+        .get(`/api/v1/proposals/${body.id}`)
+        .set(app.auth(c.attendant))
+        .expect(200);
+      expect((reloaded.body as ProposalDetail).requestingDoctor).toBe('Dra. Ana Souza');
+    });
+
+    it('medico solicitante em branco vira null (nao grava string vazia)', async () => {
+      const c = await cenario();
+
+      const response = await app.agent
+        .post('/api/v1/proposals')
+        .set(app.auth(c.attendant))
+        .send({
+          conversationId: c.conversationId,
+          items: [{ examId: c.examId, quantity: 1 }],
+          requestingDoctor: '   ',
+        })
+        .expect(201);
+
+      expect((response.body as ProposalDetail).requestingDoctor).toBeNull();
     });
 
     it('recusa preco/total vindos do cliente (o DTO nem aceita o campo)', async () => {

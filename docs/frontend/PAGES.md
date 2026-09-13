@@ -284,9 +284,13 @@ nunca "sem permissão" (não vazar existência).
   badge seria redundante e não aparece
 - Desconto: input % com validação visual contra `user.discountLimit`
   - Acima da alçada: aviso "Exigirá aprovação do gestor" (chip terracota)
+- **Médico solicitante (`Input` de texto, CRMLAB-9):** campo livre, opcional, sem
+  autocomplete/cadastro de médicos — só registra o nome digitado. Vazio não bloqueia
+  [Criar orçamento]; string em branco é normalizada para `null` pelo backend
+  (API_CONTRACTS.md §3)
 - **Total: rodapé fixo da coluna**, sempre derivado (nunca digitado)
-- Botão [Criar orçamento] → `POST /proposals` (com o `insuranceId` escolhido)
-  → redirect para conversa
+- Botão [Criar orçamento] → `POST /proposals` (com o `insuranceId` escolhido e o
+  `requestingDoctor` digitado) → redirect para conversa
 
 ---
 
@@ -344,7 +348,9 @@ nunca "sem permissão" (não vazar existência).
 - Máx 720px, radius-lg, shadow-lg, backdrop escuro, rolagem interna, fecha por × e clique-fora (stopPropagation no cartão)
 - Conteúdo: **convênio da proposta** (chip — nome resolvido via
   `useInsuranceList`, já que `Proposal`/`ProposalDetail` só trazem
-  `insuranceId`; "Particular" quando `null`), itens + preços (badge
+  `insuranceId`; "Particular" quando `null`), **médico solicitante** (texto,
+  CRMLAB-9 — só aparece quando `requestingDoctor` não é `null`; sem linha/label
+  quando a proposta não tem médico informado), itens + preços (badge
   "Particular" por item nas mesmas condições da coluna de resumo de
   `/budget/new`), desconto, total derivado, alerta de aprovação (se pending),
   histórico de estágios, ações

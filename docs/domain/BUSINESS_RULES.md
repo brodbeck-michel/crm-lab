@@ -423,6 +423,7 @@ async updateProposalStatus(proposalId: string, newStatus: string) {
 | `approvedBy` | Não foi aprovado ainda | proposal.id, proposal.totalPrice |
 | `assignedTo` | Conversa não atribuída | conversation.tenantId |
 | `reasonLost` | Proposta não foi perdida | proposal.tenantId |
+| `requestingDoctor` | Nenhum médico solicitante informado (CRMLAB-9) | |
 | `customFields` | Sem dados customizados | |
 
 ```typescript

@@ -75,6 +75,8 @@ function buildProposal(overrides: Partial<ProposalDetail> = {}): ProposalDetail 
     // esta linha depois do spread, o `undefined` vaza pro retorno (mesma
     // correção de `InternalChat.spec.tsx`).
     insuranceId: overrides.insuranceId ?? null,
+    // Mesma correção para `requestingDoctor` (CRMLAB-9).
+    requestingDoctor: overrides.requestingDoctor ?? null,
   };
 }
 
@@ -148,6 +150,7 @@ describe('ProposalModal', () => {
       createdAt: '2026-08-24T10:00:00Z',
       updatedAt: '2026-08-24T10:00:00Z',
       insuranceId: null,
+      requestingDoctor: null,
       history: [
         {
           status: 'novo_contato' as const,
@@ -209,6 +212,7 @@ describe('ProposalModal', () => {
       createdAt: '2026-08-24T10:00:00Z',
       updatedAt: '2026-08-24T10:00:00Z',
       insuranceId: null,
+      requestingDoctor: null,
       history: [],
     };
 
@@ -297,5 +301,25 @@ describe('ProposalModal', () => {
     expect(within(row!).queryByText('Particular')).not.toBeInTheDocument();
     // "Particular" aparece 1x só — o chip do cabeçalho, não o badge do item.
     expect(screen.getAllByText('Particular')).toHaveLength(1);
+  });
+
+  // CRMLAB-9: médico solicitante, texto livre e opcional.
+  it('mostra o médico solicitante quando presente', () => {
+    mockInsurances([]);
+    mockProposalDetail(buildProposal({ requestingDoctor: 'Dra. Ana Souza' }));
+
+    renderModal();
+
+    expect(screen.getByText('Médico solicitante')).toBeInTheDocument();
+    expect(screen.getByText('Dra. Ana Souza')).toBeInTheDocument();
+  });
+
+  it('não mostra a linha de médico solicitante quando o campo é null', () => {
+    mockInsurances([]);
+    mockProposalDetail(buildProposal({ requestingDoctor: null }));
+
+    renderModal();
+
+    expect(screen.queryByText('Médico solicitante')).not.toBeInTheDocument();
   });
 });

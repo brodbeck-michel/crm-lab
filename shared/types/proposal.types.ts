@@ -141,6 +141,13 @@ export interface ProposalDetail extends Proposal {
   rejectionReason: string | null;
   sentAt: IsoDateTime | null;
   history: ProposalStageHistoryEntry[];
+  /**
+   * Medico solicitante (indicacao clinica), texto livre (CRMLAB-9). `null` =
+   * nenhum medico informado — inclusive em toda proposta criada antes desta
+   * mudanca. Sem cadastro/autocomplete de medicos. Imutavel apos a criacao,
+   * mesma convencao de `insuranceId`.
+   */
+  requestingDoctor: string | null;
 }
 
 export interface CreateProposalItemInput {
@@ -156,6 +163,12 @@ export interface CreateProposalRequest {
   /** Convênio da proposta. `null`/ausente = particular (Onda 7). Imutável após a criação —
    * `PATCH` não permite trocar (re-precificaria itens com snapshot, D-004). */
   insuranceId?: string | null;
+  /**
+   * Médico solicitante, texto livre (CRMLAB-9). Opcional — `null`/ausente/string
+   * vazia = nenhum médico informado. Sem cadastro/autocomplete de médicos.
+   * Imutável após a criação, mesma convenção de `insuranceId`.
+   */
+  requestingDoctor?: string | null;
 }
 
 /**

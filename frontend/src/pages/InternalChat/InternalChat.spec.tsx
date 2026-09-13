@@ -170,6 +170,8 @@ function proposal(overrides: Partial<ProposalDetail> = {}): ProposalDetail {
     // (`string | null | undefined`), mas o tipo exige `string | null`. Sem
     // esta linha depois do spread, o `undefined` vaza pro retorno.
     insuranceId: overrides.insuranceId ?? null,
+    // Mesma correção para `requestingDoctor` (CRMLAB-9).
+    requestingDoctor: overrides.requestingDoctor ?? null,
   };
 }
 

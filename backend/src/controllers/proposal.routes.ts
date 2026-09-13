@@ -77,6 +77,11 @@ export const createProposalSchema = z
     // Onda 7: convenio da proposta. Ausente/`null` = particular. Imutavel apos
     // a criacao — nao existe campo equivalente em `updateDiscountSchema`.
     insuranceId: z.string().uuid().nullable().optional(),
+    // CRMLAB-9: medico solicitante, texto livre. Ausente/`null`/vazio = nao
+    // informado — o `.trim()` normaliza espacos antes do `.max()`, e o
+    // service ainda converte string vazia para `null` (ver
+    // `normalizeRequestingDoctor`). Sem cadastro/autocomplete de medicos.
+    requestingDoctor: z.string().trim().max(255).nullable().optional(),
   })
   .strict();
 
@@ -169,6 +174,7 @@ export function createProposal(service: ProposalService): RequestHandler {
       items: dto.items,
       ...(dto.discountPercent !== undefined ? { discountPercent: dto.discountPercent } : {}),
       ...(dto.insuranceId !== undefined ? { insuranceId: dto.insuranceId } : {}),
+      ...(dto.requestingDoctor !== undefined ? { requestingDoctor: dto.requestingDoctor } : {}),
     });
     res.status(201).json(created);
   });

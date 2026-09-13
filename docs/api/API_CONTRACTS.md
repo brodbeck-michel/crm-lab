@@ -1418,6 +1418,7 @@ Detalhes completos de uma proposta.
   "discountPercent": 10,
   "totalPrice": 179.80,
   "insuranceId": "8f2a1c4b-6d39-4f70-9a12-5c8e3b7d1f06",
+  "requestingDoctor": "Dra. Ana Souza",
   "items": [
     {
       "id": "uuid",
@@ -1461,6 +1462,20 @@ onde `unitPrice` veio no momento da criação: `"insurance"` quando havia preço
 exemplo — a proposta tem convênio, mas o exame não tinha preço cadastrado para ele). A UI marca
 o item com badge "particular" quando `priceSource === "private"` numa proposta **com** convênio.
 
+`requestingDoctor` (CRMLAB-9, D-131) é texto livre com o nome do médico solicitante (indicação
+clínica) — **opcional**, `null` quando não informado (inclusive em toda proposta criada antes
+desta mudança, sem migração de dados). Sem cadastro/autocomplete de médicos: é só um campo de
+texto na proposta. **Imutável após a criação**, mesma convenção de `insuranceId` — não há
+`PATCH` que o altere nesta onda.
+
+**Sobre "aparecer no PDF/exportação" (escopo do card CRMLAB-9):** nesta onda **não existe**
+nenhuma geração de PDF/exportação da proposta em si (os únicos PDFs do sistema hoje são
+Relatório Executivo, Comissão e Busca Ativa, todos gerados no cliente com `jspdf` a partir de
+dados agregados — nenhum deles imprime uma proposta individual, ver PAGES.md §8/§16/§19). O
+requisito fica satisfeito por construção: quando um export/PDF de proposta for criado em onda
+futura, ele lê `ProposalDetail.requestingDoctor` como qualquer outro campo do detalhe — não há
+nada a "esquecer". Registrado aqui para não ser confundido com pendência aberta.
+
 ### POST /proposals
 Criar nova proposta.
 
@@ -1473,9 +1488,15 @@ Criar nova proposta.
     { "examId": "uuid", "quantity": 1 },
     { "examId": "uuid", "quantity": 1 }
   ],
-  "discountPercent": 10
+  "discountPercent": 10,
+  "requestingDoctor": "Dra. Ana Souza"
 }
 ```
+
+`requestingDoctor` (CRMLAB-9) é opcional: `null`/ausente/string vazia = nenhum médico
+informado. Texto livre, máximo 255 caracteres, aparado (`trim`) pelo backend — string vazia
+após o `trim` vira `NULL`, não é gravada como `""`. Sem validação de existência (não há
+cadastro de médicos).
 
 `insuranceId` (Onda 7) é opcional: `null`/ausente = particular (D-082). Quando presente, o
 preço de cada item é resolvido por convênio (`ExamCatalogService.resolveActiveByIds(...,
@@ -1501,6 +1522,7 @@ tem preço cadastrado para aquele convênio — o fallback **nunca bloqueia** a 
   "discountPercent": 10,
   "totalPrice": 173.25,
   "insuranceId": "8f2a1c4b-6d39-4f70-9a12-5c8e3b7d1f06",
+  "requestingDoctor": "Dra. Ana Souza",
   "items": [
     {
       "id": "uuid",

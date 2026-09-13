@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-12 (CRMLAB-4 — grupos "Comercial" + "LIS" fundidos em "Gestão"; Catálogo renomeado e movido para Configurações — D-129)
+**Última atualização:** 2026-09-13 (CRMLAB-8 — badge de não lidas do Chat Interno propagado para o grupo "Comunicação" — D-130)
 
 ---
 
@@ -676,6 +676,24 @@ sentido em Configurações.
 - `npm run typecheck` verde nos 4 workspaces. Frontend: suíte completa 982 testes verdes
   (`route-config.spec.ts` e `Sidebar.spec.tsx` atualizados para os novos grupos/rótulo — 1 teste
   novo cobrindo o grupo Configurações completo).
+
+## 2026-09-13 — Badge de não lidas do Chat Interno no menu lateral (CRMLAB-8) ✅
+
+Usuário reportou que mensagem em conversa/grupo recolhido passava despercebida. Investigação
+mostrou que o chat interno não tem hierarquia de grupos de conversa própria — o único "grupo
+recolhível" do produto é o grupo de menu "Comunicação" (D-127/D-128); ambiguidade resolvida com o
+usuário durante o dev (fluxo `duvida` do CRMLAB) antes de codar.
+
+- **D-130.** `Sidebar.tsx` soma `Channel.unreadCount` de `GET /internal-chat/channels` (mesma
+  query/cache de `InternalChat/index.tsx`, sem endpoint novo) e mostra um `Badge` no item "Chat
+  Interno" (mesmo padrão do badge de "Decisões"). Grupo "Comunicação" fechado com total > 0: o
+  mesmo `Badge` aparece no cabeçalho do grupo, no lugar do ponto de "item ativo dentro" (D-128).
+  Sem som, sem notificação push do navegador.
+- Docs: `DECISIONS.md` (D-130), `PAGES.md` (§9 — novo bloco "Badge de não lidas no menu lateral"),
+  `COMPONENTS.md` (`Sidebar`).
+- `npm run typecheck` verde nos 4 workspaces. Frontend: suíte completa 985 testes verdes
+  (`Sidebar.spec.tsx` — 3 testes novos: soma do badge no item, badge substituindo o ponto no grupo
+  fechado, badge ausente com zero não lidas).
 
 ## Bloqueios Atuais
 

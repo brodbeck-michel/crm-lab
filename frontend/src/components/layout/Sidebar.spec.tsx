@@ -1,9 +1,9 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AuthTenant, AuthUser, UserRole } from '@crm-lab/shared';
+import type { AuthTenant, AuthUser, Channel, UserRole } from '@crm-lab/shared';
 import { useAuthStore, useUIStore, useSidebarGroupsStore } from '@/stores';
 import { Sidebar } from './Sidebar';
 
@@ -11,6 +11,26 @@ import { Sidebar } from './Sidebar';
 // Promise que nunca resolve: os testes daqui não afirmam nada sobre o contador.
 vi.mock('@/api/operation', () => ({
   operationApi: { overview: vi.fn(() => new Promise(() => {})) },
+}));
+
+// Badge de "Chat Interno" (D-130). Default: nenhum canal, badge não aparece —
+// os testes que afirmam sobre o contador chamam `mockResolvedValueOnce` antes de renderizar.
+const mockChannels = vi.fn(() => Promise.resolve<{ channels: Channel[] }>({ channels: [] }));
+
+function fakeChannel(overrides: Partial<Channel> & Pick<Channel, 'id' | 'unreadCount'>): Channel {
+  return {
+    key: overrides.id,
+    name: overrides.id,
+    kind: 'channel',
+    lastReadAt: null,
+    lastMessageAt: null,
+    otherUserId: null,
+    otherUserName: null,
+    ...overrides,
+  };
+}
+vi.mock('@/api/internal-chat', () => ({
+  internalChatApi: { channels: () => mockChannels() },
 }));
 
 /**
@@ -67,6 +87,7 @@ beforeEach(() => {
   localStorage.clear();
   useUIStore.setState({ sidebarCollapsed: false, contextPanelOpen: true, activeModal: null });
   useSidebarGroupsStore.setState({ openByUser: {} });
+  mockChannels.mockReset().mockResolvedValue({ channels: [] });
 });
 
 describe('Sidebar — larguras', () => {
@@ -208,6 +229,45 @@ describe('Sidebar — grupos (accordion, CRMLAB-4, revisado em D-129)', () => {
 
     expect(screen.queryByRole('button', { name: 'Gestão' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Comunicação' })).not.toBeInTheDocument();
+  });
+});
+
+describe('Sidebar — badge de não lidas do Chat Interno (D-130, CRMLAB-8)', () => {
+  it('soma unreadCount de todos os canais no item "Chat Interno"', async () => {
+    mockChannels.mockResolvedValue({
+      channels: [
+        fakeChannel({ id: 'c-1', name: '#aprovacoes', unreadCount: 2 }),
+        fakeChannel({ id: 'c-2', kind: 'dm', otherUserName: 'Ana', unreadCount: 3 }),
+      ],
+    });
+    login('admin');
+    renderSidebar();
+
+    const item = await screen.findByRole('link', { name: /Chat Interno/ });
+    await waitFor(() => expect(item).toHaveTextContent('5'));
+  });
+
+  it('grupo "Comunicação" fechado com não lidas mostra o badge no lugar do ponto', async () => {
+    mockChannels.mockResolvedValue({
+      channels: [fakeChannel({ id: 'c-1', name: '#aprovacoes', unreadCount: 4 })],
+    });
+    login('admin');
+    renderSidebar('/internal-chat');
+
+    const header = screen.getByRole('button', { name: 'Comunicação' });
+    await userEvent.click(header);
+    expect(header).toHaveAttribute('aria-expanded', 'false');
+
+    await waitFor(() => expect(header).toHaveTextContent('4'));
+  });
+
+  it('sem mensagens não lidas, o badge não aparece', async () => {
+    login('admin');
+    renderSidebar();
+
+    const item = await screen.findByRole('link', { name: /Chat Interno/ });
+    await waitFor(() => expect(mockChannels).toHaveBeenCalled());
+    expect(item).not.toHaveTextContent(/[0-9]/);
   });
 });
 

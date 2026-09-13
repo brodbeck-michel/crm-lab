@@ -98,6 +98,14 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
             <Chip tone="inactive">{insuranceName}</Chip>
           </div>
 
+          {/* CRMLAB-9: só aparece quando há médico informado — sem linha vazia. */}
+          {proposal.requestingDoctor && (
+            <div className="flex items-center gap-sm">
+              <span className="text-caption text-neutral-600">Médico solicitante</span>
+              <span className="text-body">{proposal.requestingDoctor}</span>
+            </div>
+          )}
+
           <ItemsList items={proposal.items} insuranceId={proposal.insuranceId} />
 
           <DiscountSection

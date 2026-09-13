@@ -287,4 +287,62 @@ describe('BudgetNew', () => {
       );
     });
   });
+
+  // CRMLAB-9: campo de texto livre, opcional, sem cadastro/autocomplete de médicos.
+  it('sem médico solicitante preenchido, envia requestingDoctor: null', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <MemoryRouter initialEntries={['/budget/new?conversationId=conv-77']}>
+            <BudgetNew />
+          </MemoryRouter>
+        </ToastProvider>
+      </QueryClientProvider>
+    );
+
+    const examButton = await screen.findByRole('button', { name: /hemograma/i });
+    await user.click(examButton);
+
+    const submitButton = await screen.findByRole('button', { name: /criar orçamento/i });
+    await user.click(submitButton);
+
+    await waitFor(() => {
+      expect(vi.mocked(http.post)).toHaveBeenCalledWith(
+        '/proposals',
+        expect.objectContaining({ requestingDoctor: null })
+      );
+    });
+  });
+
+  it('com médico solicitante preenchido, envia o texto digitado', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <MemoryRouter initialEntries={['/budget/new?conversationId=conv-77']}>
+            <BudgetNew />
+          </MemoryRouter>
+        </ToastProvider>
+      </QueryClientProvider>
+    );
+
+    const examButton = await screen.findByRole('button', { name: /hemograma/i });
+    await user.click(examButton);
+
+    const doctorInput = screen.getByLabelText(/médico solicitante/i);
+    await user.type(doctorInput, 'Dra. Ana Souza');
+
+    const submitButton = await screen.findByRole('button', { name: /criar orçamento/i });
+    await user.click(submitButton);
+
+    await waitFor(() => {
+      expect(vi.mocked(http.post)).toHaveBeenCalledWith(
+        '/proposals',
+        expect.objectContaining({ requestingDoctor: 'Dra. Ana Souza' })
+      );
+    });
+  });
 });

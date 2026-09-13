@@ -1655,6 +1655,24 @@ LIS.
 `Sidebar.spec.tsx` e `route-config.spec.ts` (asserts de grupo/rótulo atualizados). Nenhuma mudança
 de rota, papel, contrato de API ou do componente `Sidebar.tsx` em si (D-128 continua valendo).
 
+### D-131: Campo "Médico solicitante" na proposta — texto livre, opcional, imutável após criação
+**Decisão:** `POST /proposals` ganha `requestingDoctor` (opcional, texto livre até 255
+caracteres, aparado pelo backend — vazio/só espaço vira `NULL`, nunca `""`). Sem
+cadastro/autocomplete de médicos — é só um campo de texto na proposta. Aparece em
+`ProposalDetail`/`GET /proposals/:id` e é imutável depois de criado (mesma convenção de
+`insuranceId`: sem `PATCH` que o altere nesta onda). Propostas existentes ficam `NULL`, sem
+migração de dados retroativa.
+**Motivo:** pedido do usuário para rastrear qual médico solicitou o exame/procedimento
+diretamente na proposta/orçamento (CRMLAB-9). Escopo fechado com o usuário: campo simples,
+sem bloquear a criação, sem novo cadastro.
+**Impacto:** `shared/types/proposal.types.ts` (campo novo), `proposal.repository.ts` (coluna
+nova, `015_proposal_requesting_doctor.sql`), `proposal.service.ts` (normaliza vazio → `null`),
+`proposal.routes.ts` (aceita no `POST`). Frontend: `SummaryColumn.tsx` (`Input` em
+`/budget/new`), `ProposalModal.tsx` (exibe só quando preenchido). Sobre "aparecer no PDF": não
+existe hoje geração de PDF de proposta individual (só Relatório Executivo/Comissão/Busca Ativa,
+client-side); quando existir, lê `requestingDoctor` do detalhe como qualquer outro campo —
+não é pendência aberta, ver API_CONTRACTS.md §3.
+
 ## Template para novas decisões
 
 ```

@@ -677,6 +677,35 @@ sentido em Configurações.
   (`route-config.spec.ts` e `Sidebar.spec.tsx` atualizados para os novos grupos/rótulo — 1 teste
   novo cobrindo o grupo Configurações completo).
 
+## 2026-09-13 — Campo "Médico solicitante" nas propostas/orçamentos (CRMLAB-9) ✅
+
+Pedido do usuário: rastrear qual médico solicitou o exame/procedimento diretamente na
+proposta/orçamento. Escopo fechado com o usuário: texto livre, opcional, sem cadastro de
+médicos, aparece no PDF só se preenchido (hoje não existe PDF de proposta — ver nota abaixo),
+sem migração de dados retroativa.
+
+- **D-131.** `requestingDoctor` novo em `proposals` (migração
+  `015_proposal_requesting_doctor.sql`, nullable). `POST /proposals` aceita o campo (opcional,
+  máx 255, `trim` — vazio vira `NULL`); imutável depois de criado, sem rota de `PATCH`.
+  Exposto em `Proposal`/`ProposalDetail`.
+- Frontend: `Input` "Médico solicitante (opcional)" em `SummaryColumn.tsx` (`/budget/new`);
+  `ProposalModal.tsx` mostra a linha só quando `requestingDoctor` não é `null`.
+- Nota registrada no doc (não é pendência aberta): não existe geração de PDF de proposta
+  individual hoje (só Relatório Executivo/Comissão/Busca Ativa, client-side) — quando existir,
+  lê o campo do detalhe como qualquer outro.
+- Docs: `DECISIONS.md` (D-131), `API_CONTRACTS.md` §3, `SCHEMA.md` (coluna nova),
+  `BUSINESS_RULES.md` (tabela de campos opcionais), `PAGES.md` (`/budget/new` e modal de
+  proposta).
+- `npm run typecheck` verde nos 4 workspaces. Backend: suíte completa 1030 testes verdes
+  (`proposal-routes.spec.ts` com os novos casos de `requestingDoctor`). Frontend: suíte
+  completa 986 testes verdes (`ProposalModal.spec.tsx` + `Budget/New.spec.tsx` com os casos
+  novos).
+- Desenvolvido em paralelo com CRMLAB-10 (worktrees/branches independentes) — mesmo índice de
+  migração `015_*` usado nas duas branches; ao integrar as duas em `main`, uma das duas precisa
+  renumerar para `016_*` (a outra, CRMLAB-10, já usa `015_exam_packages.sql` +
+  `016_rls_exam_packages.sql` — renumerar esta para `017_proposal_requesting_doctor.sql` no
+  merge é o caminho mais simples).
+
 ## Bloqueios Atuais
 
 Nenhum.

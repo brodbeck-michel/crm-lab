@@ -1700,6 +1700,32 @@ existe hoje geração de PDF de proposta individual (só Relatório Executivo/Co
 client-side); quando existir, lê `requestingDoctor` do detalhe como qualquer outro campo —
 não é pendência aberta, ver API_CONTRACTS.md §3.
 
+### D-132: Inativar/reativar paciente — qualquer papel, motivo obrigatório nas duas pontas
+**Decisão:** `patients` ganha `inactivated_at`/`inactivation_reason` (migração 018, mesmo
+desenho de `anonymized_at`/D-063 — sem tabela de histórico, sem `DELETE`).
+`POST /patients/:id/inactivate` e `.../reactivate` (`InactivatePatientRequest`/
+`ReactivatePatientRequest` em `shared/types/patient.types.ts`) exigem `reason` (1..500
+caracteres) nas DUAS direções; o motivo vai só para o audit log
+(`inactivate_patient`/`reactivate_patient`) — reativar zera os dois campos na linha, não
+preserva o motivo da inativação anterior. Ao contrário do bloco LGPD (D-062/D-063), a ação é de
+**qualquer papel de laboratório** que enxergue o paciente (mesma alçada do `PATCH /:id`, sem
+`requireRoles`) — não é admin-only. `GET /patients` esconde paciente inativo por padrão;
+`?includeInactive=true` (checkbox "Mostrar inativos" na tela) traz os dois. Nenhum outro dado é
+tocado: conversas, mensagens e propostas do paciente continuam intactos, só passam a se referir
+a um cadastro marcado como inativo. Paciente anonimizado não pode ser inativado/reativado (409
+`patient_anonymized`, mesmo princípio do `PATCH`).
+**Motivo:** pedido do usuário (CRMLAB-11) — hoje não existe como marcar paciente como inativo no
+CRM. Escopo fechado em discussão: sem alçada especial, motivo obrigatório nas duas pontas, dado
+histórico preservado (referenciado, não apagado), some da listagem com filtro para voltar a
+aparecer.
+**Impacto:** `shared/types/patient.types.ts` (campos novos em `Patient`, dois request types),
+`backend/migrations/018_patient_inactivation.sql`, `patient.repository.ts` (`inactivate`/
+`reactivate`, filtro `includeInactive` no `list`), `patient.service.ts`, `patient.routes.ts`
+(duas rotas novas, sem `requireRoles`). Frontend: `patients.ts` (dois métodos),
+`PatientInactivationSection.tsx` (novo, visível a qualquer papel — ao contrário de
+`PatientLgpdSection`), `Profile.tsx` (chip "Inativo" no header), `List.tsx` (checkbox "Mostrar
+inativos" + coluna de status).
+
 ## Template para novas decisões
 
 ```

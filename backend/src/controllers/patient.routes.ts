@@ -7,6 +7,8 @@
  *   GET   /api/v1/patients/:id/timeline    historico de interacoes
  *   GET   /api/v1/patients/:id/export      LGPD — dump do titular (admin)
  *   POST  /api/v1/patients/:id/anonymize   LGPD — apagamento (admin)
+ *   POST  /api/v1/patients/:id/inactivate  inativa o cadastro (qualquer papel, D-132)
+ *   POST  /api/v1/patients/:id/reactivate  reativa o cadastro (qualquer papel, D-132)
  *
  * NAO existe `POST /patients` (o paciente nasce do canal, D-061) nem
  * `DELETE /patients/:id` (o caminho LGPD e `anonymize`, D-063).
@@ -23,12 +25,14 @@ import { z } from 'zod';
 import type {
   AnonymizePatientRequest,
   AnonymizePatientResponse,
+  InactivatePatientRequest,
   ListPatientTimelineQuery,
   ListPatientTimelineResponse,
   ListPatientsQuery,
   ListPatientsResponse,
   PatientDetail,
   PatientExport,
+  ReactivatePatientRequest,
   UpdatePatientRequest,
 } from '@crm-lab/shared';
 import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
@@ -102,6 +106,7 @@ export const listPatientsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(MAX_LIMIT).optional(),
   sortBy: z.enum(['name', 'lastInteractionAt', 'createdAt', 'updatedAt']).optional(),
   order: z.enum(['asc', 'desc']).optional(),
+  includeInactive: z.coerce.boolean().optional(),
 });
 
 export const patientIdParamSchema = z.object({ id: z.string().uuid() });
@@ -155,6 +160,14 @@ export const timelineQuerySchema = z.object({
 });
 
 export const anonymizePatientSchema = z
+  .object({ reason: z.string().trim().min(1).max(500) })
+  .strict();
+
+export const inactivatePatientSchema = z
+  .object({ reason: z.string().trim().min(1).max(500) })
+  .strict();
+
+export const reactivatePatientSchema = z
   .object({ reason: z.string().trim().min(1).max(500) })
   .strict();
 
@@ -238,6 +251,24 @@ export function anonymizePatient(service: PatientService): RequestHandler {
   });
 }
 
+export function inactivatePatient(service: PatientService): RequestHandler {
+  return handle(async (req, res) => {
+    const { id } = validated<{ id: string }>(req, 'params');
+    const dto = validated<InactivatePatientRequest>(req, 'body');
+    const body: PatientDetail = await service.inactivate(getContext(req), id, dto);
+    res.status(200).json(body);
+  });
+}
+
+export function reactivatePatient(service: PatientService): RequestHandler {
+  return handle(async (req, res) => {
+    const { id } = validated<{ id: string }>(req, 'params');
+    const dto = validated<ReactivatePatientRequest>(req, 'body');
+    const body: PatientDetail = await service.reactivate(getContext(req), id, dto);
+    res.status(200).json(body);
+  });
+}
+
 /* --------------------------------------------------------------------------
  * Modulo
  * ------------------------------------------------------------------------ */
@@ -290,6 +321,24 @@ export function patientModule(deps: ApiModuleDeps): ApiModule {
     validate(patientIdParamSchema, 'params'),
     validate(anonymizePatientSchema, 'body'),
     anonymizePatient(service),
+  );
+
+  // Inativar/reativar (D-132): qualquer papel de laboratorio que enxergue o
+  // paciente pode acionar — mesma alcada de `PATCH /:id`, sem `requireRoles`.
+  router.post(
+    '/:id/inactivate',
+    ...guards,
+    validate(patientIdParamSchema, 'params'),
+    validate(inactivatePatientSchema, 'body'),
+    inactivatePatient(service),
+  );
+
+  router.post(
+    '/:id/reactivate',
+    ...guards,
+    validate(patientIdParamSchema, 'params'),
+    validate(reactivatePatientSchema, 'body'),
+    reactivatePatient(service),
   );
 
   return { basePath: '/patients', router, requiresAuth: true };

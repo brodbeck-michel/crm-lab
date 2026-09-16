@@ -752,6 +752,31 @@ contrato existente.
 - Tag `v1.5.0` criada e enviada para o `main` pós-merge.
 - `npm run typecheck` verde nos 4 workspaces no `main` pós-merge.
 
+## 2026-09-15 — Inativar/reativar paciente (CRMLAB-11) ✅
+
+Pedido do usuário: hoje não há como marcar um paciente como inativo no CRM. Escopo fechado em
+discussão: qualquer usuário pode inativar/reativar (sem alçada especial), motivo obrigatório nas
+duas pontas, dados vinculados (orçamentos, conversas) permanecem intactos — só passam a
+referenciar o paciente como inativo —, paciente inativo some das listagens por padrão com
+checkbox de filtro para voltar a aparecer.
+
+- **D-132.** `patients` ganha `inactivated_at`/`inactivation_reason` (migração
+  `018_patient_inactivation.sql`, mesmo desenho de `anonymized_at`/D-063 — sem tabela de
+  histórico, sem `DELETE`). `POST /patients/:id/inactivate` e `.../reactivate` novos,
+  **qualquer papel de laboratório** (ao contrário do bloco LGPD, que é admin-only). Motivo vai
+  só para o audit log (`inactivate_patient`/`reactivate_patient`); reativar zera os dois campos
+  na linha. `GET /patients` ganha `?includeInactive=true` (default esconde inativo). Paciente
+  anonimizado não pode ser inativado/reativado (409, mesmo princípio do `PATCH`).
+- Frontend: `PatientInactivationSection.tsx` (novo componente, visível a qualquer papel —
+  diferente de `PatientLgpdSection`) integrado em `Profile.tsx` (chip "Inativo" no cabeçalho);
+  `List.tsx` ganha checkbox "Mostrar inativos" e coluna de status.
+- Docs: `DECISIONS.md` (D-132), `API_CONTRACTS.md` §2c (dois endpoints novos, campos em
+  `Patient`), `SCHEMA.md` §14 (colunas novas), `SERVICES.md` §12 (`inactivate`/`reactivate`),
+  `PAGES.md` §2a/§3.
+- `npm run typecheck` verde nos 4 workspaces. Backend: suíte completa verde (52 testes em
+  `tests/patients/*`, incluindo o spec novo `patients-inactivation.spec.ts`). Frontend: suíte
+  completa verde (1026 testes, incluindo os casos novos em `Profile.spec.tsx`/`List.spec.tsx`).
+
 ## Bloqueios Atuais
 
 Nenhum.

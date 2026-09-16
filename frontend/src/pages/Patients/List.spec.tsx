@@ -29,6 +29,8 @@ const listResponse: ListPatientsResponse = {
       tags: [],
       customFields: {},
       anonymizedAt: null,
+      inactivatedAt: null,
+      inactivationReason: null,
       lastInteractionAt: '2026-08-23T14:30:00.000Z',
       createdAt: '2026-06-02T10:00:00.000Z',
       updatedAt: '2026-08-20T09:15:00.000Z',
@@ -104,5 +106,44 @@ describe('PatientsList', () => {
     renderPage();
 
     expect(await screen.findByText('Não foi possível carregar os pacientes')).toBeInTheDocument();
+  });
+
+  /* ── Filtro de inativos (D-132, CRMLAB-11) ─────────────────────────── */
+
+  it('esconde paciente inativo por padrão e mostra o status "Ativo" na coluna', async () => {
+    renderPage();
+
+    await screen.findByText('João Santos');
+    expect(listMock).toHaveBeenLastCalledWith({ page: 1, limit: 20 });
+    expect(within(screen.getByRole('table')).getByText('Ativo')).toBeInTheDocument();
+  });
+
+  it('marca o checkbox "Mostrar inativos" e pede includeInactive=true ao servidor', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('João Santos');
+
+    await user.click(screen.getByLabelText('Mostrar inativos'));
+
+    await waitFor(() =>
+      expect(listMock).toHaveBeenLastCalledWith({ page: 1, limit: 20, includeInactive: true }),
+    );
+  });
+
+  it('mostra o status "Inativo" quando o paciente tem inactivatedAt', async () => {
+    listMock.mockResolvedValue({
+      patients: [
+        {
+          ...listResponse.patients[0]!,
+          inactivatedAt: '2026-09-15T12:00:00.000Z',
+          inactivationReason: 'Mudou de laboratorio',
+        },
+      ],
+      pagination: { page: 1, limit: 20, total: 1, totalPages: 1 },
+    });
+
+    renderPage();
+
+    expect(within(await screen.findByRole('table')).getByText('Inativo')).toBeInTheDocument();
   });
 });

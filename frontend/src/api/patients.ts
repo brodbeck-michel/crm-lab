@@ -1,12 +1,14 @@
 import type {
   AnonymizePatientRequest,
   AnonymizePatientResponse,
+  InactivatePatientRequest,
   ListPatientTimelineQuery,
   ListPatientTimelineResponse,
   ListPatientsQuery,
   ListPatientsResponse,
   PatientDetail,
   PatientExport,
+  ReactivatePatientRequest,
   UpdatePatientRequest,
 } from '@crm-lab/shared';
 import { http } from './client';
@@ -46,4 +48,12 @@ export const patientsApi = {
   /** LGPD, admin apenas (D-063). Irreversível e idempotente; `reason` obrigatório. */
   anonymize: (id: string, body: AnonymizePatientRequest) =>
     http.post<AnonymizePatientResponse>(`/patients/${id}/anonymize`, body),
+
+  /** Qualquer papel de laboratório (D-132). `reason` obrigatório. Idempotente. */
+  inactivate: (id: string, body: InactivatePatientRequest) =>
+    http.post<PatientDetail>(`/patients/${id}/inactivate`, body),
+
+  /** Qualquer papel de laboratório (D-132). `reason` obrigatório. Idempotente. */
+  reactivate: (id: string, body: ReactivatePatientRequest) =>
+    http.post<PatientDetail>(`/patients/${id}/reactivate`, body),
 };

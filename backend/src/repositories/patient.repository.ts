@@ -91,6 +91,8 @@ const PATIENT_COLUMNS = `p.id, p.phone, p.name, p.email,
        to_char(p.birth_date, 'YYYY-MM-DD') AS birth_date,
        p.document, p.notes, p.tags, p.custom_fields,
        ${isoUtc('p.anonymized_at')} AS anonymized_at,
+       ${isoUtc('p.inactivated_at')} AS inactivated_at,
+       p.inactivation_reason,
        ${isoUtc('p.created_at')} AS created_at,
        ${isoUtc('p.updated_at')} AS updated_at`;
 
@@ -105,6 +107,8 @@ interface PatientRow {
   tags: unknown;
   custom_fields: unknown;
   anonymized_at: string | null;
+  inactivated_at: string | null;
+  inactivation_reason: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -155,6 +159,8 @@ export function toPatient(row: PatientRow): Patient {
     tags: toStringArray(row.tags),
     customFields: toStringRecord(row.custom_fields),
     anonymizedAt: row.anonymized_at,
+    inactivatedAt: row.inactivated_at,
+    inactivationReason: row.inactivation_reason,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -217,6 +223,8 @@ export interface PatientListCriteria extends PatientVisibility {
   limit: number;
   sortBy: PatientSortBy;
   order: SortOrder;
+  /** `false` (default): esconde paciente inativo da listagem (D-132). */
+  includeInactive: boolean;
 }
 
 export interface PatientPage {
@@ -370,6 +378,10 @@ export class PatientRepository {
 
     // Atendente so enxerga paciente com ao menos uma conversa visivel a ele.
     if (criteria.visibleTo !== null) where.push('ci.conversation_count > 0');
+
+    // Paciente inativo some da listagem por padrao (D-132) — o checkbox do
+    // filtro pede `includeInactive: true` para volta-lo a aparecer.
+    if (!criteria.includeInactive) where.push('p.inactivated_at IS NULL');
 
     if (criteria.search !== undefined && criteria.search.length > 0) {
       const digits = phoneDigits(criteria.search);
@@ -725,6 +737,57 @@ export class PatientRepository {
       const row = found.rows[0];
       if (!row) return null;
       return { patient: toPatient(row), conversationsAffected, changed };
+    });
+  }
+
+  /**
+   * Inativacao (D-132). Idempotente pelo proprio `WHERE inactivated_at IS
+   * NULL`: chamar de novo sobre paciente ja inativo nao muda nada e devolve
+   * `changed: false` — mesmo padrao de `anonymize`.
+   */
+  async inactivate(
+    tenantId: string,
+    id: string,
+    reason: string,
+    visibility: PatientVisibility,
+  ): Promise<{ patient: PatientDetail; changed: boolean } | null> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const updated = await tx.query<{ id: string }>(
+        `UPDATE patients
+            SET inactivated_at = NOW(), inactivation_reason = $2
+          WHERE id = $1 AND inactivated_at IS NULL
+          RETURNING id`,
+        [id, reason],
+      );
+      const changed = updated.rows.length > 0;
+      const detail = await selectDetail(tx, id, visibility);
+      if (!detail) return null;
+      return { patient: detail, changed };
+    });
+  }
+
+  /**
+   * Reativacao (D-132). O motivo NAO fica na linha (mesma escolha de
+   * `anonymize`/D-063: reativar apaga `inactivation_reason`, so o audit log
+   * guarda a justificativa).
+   */
+  async reactivate(
+    tenantId: string,
+    id: string,
+    visibility: PatientVisibility,
+  ): Promise<{ patient: PatientDetail; changed: boolean } | null> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const updated = await tx.query<{ id: string }>(
+        `UPDATE patients
+            SET inactivated_at = NULL, inactivation_reason = NULL
+          WHERE id = $1 AND inactivated_at IS NOT NULL
+          RETURNING id`,
+        [id],
+      );
+      const changed = updated.rows.length > 0;
+      const detail = await selectDetail(tx, id, visibility);
+      if (!detail) return null;
+      return { patient: detail, changed };
     });
   }
 }

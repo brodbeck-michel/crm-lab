@@ -689,6 +689,8 @@ CREATE TABLE patients (
   tags JSONB NOT NULL DEFAULT '[]',
   custom_fields JSONB NOT NULL DEFAULT '{}',
   anonymized_at TIMESTAMP,                -- LGPD (D-063). NOT NULL = cadastro apagado
+  inactivated_at TIMESTAMP,               -- D-132. NOT NULL = paciente inativo
+  inactivation_reason TEXT,               -- so existe enquanto inactivated_at NOT NULL
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW(),
 
@@ -716,6 +718,12 @@ CREATE TRIGGER trg_patients_updated_at
 - `document` é gravado só com dígitos (o CPF formatado é assunto do frontend). O índice
   `(tenant_id, document)` serve a busca por documento; não é `UNIQUE` — cadastro sem CPF é o
   caso normal, e dois cadastros do mesmo CPF em telefones diferentes acontecem na prática.
+- **`inactivated_at`/`inactivation_reason` (migração 018 — D-132, CRMLAB-11).** Mesmo desenho de
+  `anonymized_at`: sem tabela de histórico, sem `DELETE`. `inactivated_at NOT NULL` esconde o
+  paciente de `GET /patients` por padrão (checkbox "Mostrar inativos" pede
+  `?includeInactive=true`); os dados (conversas, propostas) continuam intactos. Reativar zera os
+  dois campos — a justificativa da reativação vai só para `audit_logs`
+  (`inactivate_patient`/`reactivate_patient`), nunca para a linha.
 - O índice GIN usa **exatamente** a mesma expressão da busca por nome
   (`to_tsvector('portuguese', COALESCE(name, ''))`); expressão diferente = índice não usado.
 

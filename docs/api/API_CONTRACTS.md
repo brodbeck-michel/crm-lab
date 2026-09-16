@@ -974,6 +974,11 @@ tentar salvar um duplicado é recusado com `409 CONFLICT`, não fundido.
 **Não existe `DELETE /patients/:id`.** O caminho LGPD de apagamento é
 `POST /patients/:id/anonymize` (D-063).
 
+**Inativação (D-132, CRMLAB-11) não é o mesmo que LGPD.** `POST /patients/:id/inactivate` e
+`.../reactivate` são ação de **qualquer papel de laboratório** (mesma alçada do `PATCH /:id`,
+sem `requireRoles`) — bem diferente do bloco LGPD acima, que é `admin`. Inativar não apaga nem
+esvazia nada: só marca o cadastro e some ele da listagem por padrão.
+
 ### GET /patients
 Busca da ficha (a tela chega aqui pela busca do inbox ou por link direto).
 
@@ -986,6 +991,7 @@ consulta este endpoint com `limit=5` e mostra o bloco "Pacientes" abaixo da fila
 ?page=1&limit=20                      (limit máx. 100 — PaginationMeta de D-009)
 ?search=joão                          (máx. 120 caracteres)
 ?sortBy=name|lastInteractionAt|createdAt|updatedAt&order=asc|desc
+?includeInactive=true                 (default false — esconde paciente inativo, D-132)
 ```
 
 `search` casa **três** coisas, em OR: nome (full-text `portuguese`, mesma expressão do índice
@@ -1009,6 +1015,8 @@ dígitos ou mais**, igual a `/conversations`) e documento (dígitos, casamento p
       "tags": ["convênio", "recorrente"],
       "customFields": { "convenio": "Unimed" },
       "anonymizedAt": null,
+      "inactivatedAt": null,
+      "inactivationReason": null,
       "lastInteractionAt": "2026-08-23T14:30:00.000Z",
       "createdAt": "2026-06-02T10:00:00.000Z",
       "updatedAt": "2026-08-20T09:15:00.000Z"
@@ -1020,6 +1028,11 @@ dígitos ou mais**, igual a `/conversations`) e documento (dígitos, casamento p
 
 `lastInteractionAt` é derivado (`MAX(conversations.last_message_at)` das conversas **visíveis**),
 nunca coluna materializada — BUSINESS_RULES §5. É `null` para paciente sem interação visível.
+
+`includeInactive` ausente/`false` (default): a listagem **esconde** paciente com
+`inactivatedAt` não-nulo (D-132). `?includeInactive=true` traz os dois — não existe um filtro
+"só inativo" separado; o checkbox "Mostrar inativos" da tela pede tudo e o cliente já vê o
+`Chip` de status por linha.
 
 **Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403, `platform_operator`)
 
@@ -1050,6 +1063,8 @@ A tela faz três chamadas, cada uma com sua chave de cache:
   "tags": ["convênio", "recorrente"],
   "customFields": { "convenio": "Unimed" },
   "anonymizedAt": null,
+  "inactivatedAt": null,
+  "inactivationReason": null,
   "conversationCount": 4,
   "proposalCount": 2,
   "lastInteractionAt": "2026-08-23T14:30:00.000Z",
@@ -1313,6 +1328,52 @@ cadastro vazio — é a prova de que o apagamento aconteceu.
 
 **Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403, `details.requiredRoles: ["admin"]`),
 `NOT_FOUND` (404)
+
+### POST /patients/:id/inactivate
+Inativação (D-132, CRMLAB-11). **Qualquer papel de laboratório** que enxergue o paciente —
+mesma alçada do `PATCH /:id`, sem `requireRoles`. Não é ação LGPD e não apaga nada.
+
+**Request:**
+```json
+{ "reason": "Paciente mudou de laboratório de referência" }
+```
+`reason` obrigatório, 1..500 caracteres → senão `VALIDATION_ERROR`. Vai para o audit log
+`inactivate_patient` (`newValues: { reason }`) — a linha em si **não** guarda o motivo de uma
+inativação anterior; só o estado atual.
+
+**Efeito:** `patients.inactivated_at = NOW()`, `inactivation_reason = reason`. Nenhuma outra
+tabela é tocada — conversas, propostas e mensagens continuam exatamente como estavam, só
+passam a se referir a um paciente marcado como inativo.
+
+**Idempotente:** paciente já inativo devolve `200` com o mesmo estado (a segunda chamada não
+sobrescreve `inactivation_reason` nem grava um segundo audit log) — mesmo princípio de
+`anonymize`.
+
+**Response (200):** o `PatientDetail` atualizado, cru (mesmo shape do `GET`).
+
+**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404),
+`CONFLICT` (409 — `patient_anonymized`: paciente anonimizado não pode ser inativado, mesmo
+princípio do `PATCH`), `FORBIDDEN` (403, `platform_operator`)
+
+### POST /patients/:id/reactivate
+Reativação (D-132, CRMLAB-11). Mesma alçada de `.../inactivate` — qualquer papel de
+laboratório, **exige justificativa** também.
+
+**Request:**
+```json
+{ "reason": "Paciente retornou ao laboratório" }
+```
+`reason` obrigatório, 1..500 caracteres. Vai **só** para o audit log `reactivate_patient`
+(`newValues: { reason }`) — reativar zera `inactivated_at` e `inactivation_reason` na linha, a
+justificativa não fica gravada no cadastro.
+
+**Idempotente:** paciente já ativo devolve `200` sem gravar audit log.
+
+**Response (200):** o `PatientDetail` atualizado (`inactivatedAt`/`inactivationReason` voltam a
+`null`), cru.
+
+**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404),
+`CONFLICT` (409 — `patient_anonymized`), `FORBIDDEN` (403, `platform_operator`)
 
 ---
 

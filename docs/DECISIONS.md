@@ -1700,6 +1700,30 @@ existe hoje geração de PDF de proposta individual (só Relatório Executivo/Co
 client-side); quando existir, lê `requestingDoctor` do detalhe como qualquer outro campo —
 não é pendência aberta, ver API_CONTRACTS.md §3.
 
+### D-132: Editar itens/desconto/médico solicitante de uma proposta já criada (CRMLAB-12)
+**Decisão:** novo `PATCH /proposals/:id/items` substitui a lista de itens inteira e,
+opcionalmente, `discountPercent` e `requestingDoctor` na mesma chamada — reaproveita a resolução
+de preço pelo catálogo (mesmo convênio já gravado) e o recálculo de total de `create`/
+`updateDiscount` (D-003). Só aceito com a proposta em `novo_contato`/`orcamento_enviado`
+(`EDITABLE_STATUSES` em `shared/types/proposal.types.ts`) — fora disso,
+`PROPOSAL_EDIT_NOT_ALLOWED` (409). `insuranceId` **continua fora do escopo**: permanece
+imutável após a criação (D-082) — mudar de convênio re-precificaria itens com snapshot já
+gravado e abriria discussão própria. A alçada de `discountPercent` segue exatamente a regra de
+`PATCH /discount` (D-045): dentro do limite do autor aprova por si mesma; acima, a proposta
+volta para `approvalStatus: pending` e reabre o fluxo de aprovação existente (WORKFLOWS §3) em
+vez de bloquear a edição.
+**Motivo:** pedido do usuário (CRMLAB-12) — atendente precisava corrigir itens/desconto/médico
+solicitante depois de criar a proposta, e a única edição que já existia no backend (desconto)
+nem estava ligada a nenhuma UI. `requestingDoctor` deixa de ser imutável (supera parcialmente
+D-131 — só ele passou a ser editável; `insuranceId` segue imutável).
+**Impacto:** `shared/types/proposal.types.ts` (`UpdateProposalItemsRequest/Response`,
+`EDITABLE_STATUSES`/`isProposalEditable`), `shared/types/api.types.ts`
+(`PROPOSAL_EDIT_NOT_ALLOWED`), `shared/types/websocket.types.ts` (evento `proposal.updated`),
+`proposal.repository.ts` (`deleteItems`, `requestingDoctor` em `ProposalPatch`),
+`proposal.service.ts` (`updateItems`), `proposal.routes.ts` (`PATCH /proposals/:id/items`).
+Frontend: `ProposalModal.tsx` ganha modo de edição (itens + desconto + médico solicitante),
+`DiscountSection.tsx` deixa de ficar `readOnly` hardcoded.
+
 ## Template para novas decisões
 
 ```

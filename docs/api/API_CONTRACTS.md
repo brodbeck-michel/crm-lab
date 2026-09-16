@@ -1465,8 +1465,9 @@ o item com badge "particular" quando `priceSource === "private"` numa proposta *
 `requestingDoctor` (CRMLAB-9, D-131) é texto livre com o nome do médico solicitante (indicação
 clínica) — **opcional**, `null` quando não informado (inclusive em toda proposta criada antes
 desta mudança, sem migração de dados). Sem cadastro/autocomplete de médicos: é só um campo de
-texto na proposta. **Imutável após a criação**, mesma convenção de `insuranceId` — não há
-`PATCH` que o altere nesta onda.
+texto na proposta. **Editável via `PATCH /proposals/:id/items`** (CRMLAB-12, D-132) enquanto a
+proposta estiver em `novo_contato`/`orcamento_enviado` — `insuranceId` continua imutável (D-082,
+sem `PATCH` que o altere).
 
 **Sobre "aparecer no PDF/exportação" (escopo do card CRMLAB-9):** nesta onda **não existe**
 nenhuma geração de PDF/exportação da proposta em si (os únicos PDFs do sistema hoje são
@@ -1543,10 +1544,12 @@ tem preço cadastrado para aquele convênio — o fallback **nunca bloqueia** a 
 }
 ```
 
-**`PATCH /proposals/:id` não permite trocar `insuranceId` após a criação, nesta onda** — não há
-campo `insuranceId` em nenhum `PATCH` de proposta (nem no schema Zod que os valida). Trocar de
-convênio re-precificaria itens com snapshot já gravado (D-004) — comportamento novo que
-exigiria decisão própria, registrado aqui como **limitação declarada** da Onda 7 (spec §3.3).
+**`PATCH /proposals/:id` não permite trocar `insuranceId` após a criação** — não há campo
+`insuranceId` em nenhum `PATCH` de proposta (nem no schema Zod que os valida), inclusive no
+`PATCH /proposals/:id/items` (CRMLAB-12, D-132) que passou a permitir editar itens/desconto/médico
+solicitante. Trocar de convênio re-precificaria itens com snapshot já gravado (D-004) —
+comportamento novo que exigiria decisão própria, registrado aqui como **limitação declarada**
+da Onda 7 (spec §3.3).
 
 **Desconto acima da alçada NÃO é erro nesta rota** (D-045): a proposta é criada com
 `approvalStatus: "pending"`, que já diz que ela está aguardando aprovação do gestor — é o fluxo
@@ -1640,6 +1643,47 @@ Atualizar desconto (se aprovação pendente).
   "totalPrice": 175.78
 }
 ```
+
+### PATCH /proposals/:id/items
+Substitui a lista de itens e, opcionalmente, desconto e médico solicitante (CRMLAB-12, D-132).
+
+**Request:**
+```json
+{
+  "items": [
+    { "examId": "uuid", "quantity": 2 }
+  ],
+  "discountPercent": 12,
+  "requestingDoctor": "Dra. Ana Souza"
+}
+```
+
+- `items`: substitui a lista INTEIRA (não é PATCH incremental) — mesmo shape de `POST
+  /proposals`, 1 a 100 itens, quantidade inteira positiva. Preços SEMPRE resolvidos pelo
+  catálogo no momento da chamada (mesmo convênio já gravado na proposta), nunca recebidos do
+  cliente — novo snapshot (D-004), o anterior é descartado.
+- `discountPercent` e `requestingDoctor` são opcionais: omitidos, mantêm o valor atual.
+- **`insuranceId` não entra neste corpo** — continua imutável após a criação (D-082).
+- **Só aceito com a proposta em `novo_contato` ou `orcamento_enviado`** (`EDITABLE_STATUSES` de
+  `@crm-lab/shared`) — fora disso, `PROPOSAL_EDIT_NOT_ALLOWED` (409). Proposta terminal
+  (`ganho`/`perdido`) responde `PROPOSAL_ALREADY_CLOSED` (409) antes mesmo dessa checagem.
+- Alçada de `discountPercent`: mesma regra de `PATCH /discount` — dentro do limite do autor,
+  aprova por si mesma; acima, `approvalStatus` volta para `pending` e reabre o fluxo de
+  aprovação (WORKFLOWS.md §3). Terceiro tentando subir o desconto de proposta que não criou
+  acima da própria alçada recebe `DISCOUNT_EXCEEDS_LIMIT` (403), igual a `/discount` (D-045).
+
+**Response (200):** `ProposalDetail` **inteiro**, sem envelope — diferente de `/status`,
+`/discount`, `/approve` e `/reject` (que devolvem projeção parcial): aqui itens, total,
+desconto, aprovação e médico solicitante podem mudar juntos na mesma chamada, então a resposta
+parcial não economizaria nada.
+
+**Erros:** `EXAM_NOT_FOUND_OR_INACTIVE` (400), `VALIDATION_ERROR` (400 — 0 ou mais de 100 itens,
+quantidade inválida, desconto fora de 0..100), `PROPOSAL_EDIT_NOT_ALLOWED` (409),
+`PROPOSAL_ALREADY_CLOSED` (409), `DISCOUNT_EXCEEDS_LIMIT` (403), `NOT_FOUND` (404 — inexistente
+**ou de outro tenant**).
+
+**Real-time:** emite `proposal.updated` (`{ proposalId }`) — front invalida `['proposal', id]` e
+`['proposals']`, mesma convenção de `proposal.status_changed` (FRONTEND_BACKEND.md "Real-time").
 
 ### PATCH /proposals/:id/approve (admin/manager apenas)
 Aprovar proposta que está em `approvalStatus: "pending"`.

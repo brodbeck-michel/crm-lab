@@ -6,6 +6,8 @@ import type {
   ProposalDetail,
   RejectProposalRequest,
   UpdateProposalDiscountRequest,
+  UpdateProposalItemsRequest,
+  UpdateProposalItemsResponse,
   UpdateProposalStatusRequest,
 } from '@crm-lab/shared';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -51,6 +53,10 @@ export const proposalsApi = {
 
   updateDiscount: (id: string, body: UpdateProposalDiscountRequest) =>
     http.patch<UpdateProposalDiscountResponse>(`/proposals/${id}/discount`, body),
+
+  /** CRMLAB-12/D-132 — substitui itens inteiros; desconto/médico opcionais. */
+  updateItems: (id: string, body: UpdateProposalItemsRequest) =>
+    http.patch<UpdateProposalItemsResponse>(`/proposals/${id}/items`, body),
 
   /** gestor/admin — alçada validada no servidor. */
   approve: (id: string) => http.patch<ApproveProposalResponse>(`/proposals/${id}/approve`),
@@ -121,6 +127,21 @@ export function useUpdateProposalDiscount() {
     mutationFn: async (data: { proposalId: string } & UpdateProposalDiscountRequest) => {
       const { proposalId, ...body } = data;
       return await proposalsApi.updateDiscount(proposalId, body);
+    },
+    onSuccess: (_, { proposalId }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.proposal(proposalId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.proposals() });
+    },
+  });
+}
+
+export function useUpdateProposalItems() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: { proposalId: string } & UpdateProposalItemsRequest) => {
+      const { proposalId, ...body } = data;
+      return await proposalsApi.updateItems(proposalId, body);
     },
     onSuccess: (_, { proposalId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.proposal(proposalId) });

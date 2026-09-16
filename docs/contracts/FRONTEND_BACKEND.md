@@ -54,6 +54,7 @@ Servidor coloca socket na room do tenantId (do token — nunca do cliente)
 |--------|---------|--------------------|
 | `conversation.new_message` | `{ conversationId, messageId }` | invalidate `['conversations']` + `['conversation', id]` |
 | `proposal.status_changed` | `{ proposalId, status }` | invalidate `['proposals']` + `['proposal', id]` |
+| `proposal.updated` | `{ proposalId }` | itens/desconto/médico solicitante mudaram (CRMLAB-12, D-132) — invalidate `['proposals']` + `['proposal', id]` |
 | `approval.requested` | `{ proposalId }` | badge em #aprovacoes + invalidate pendentes |
 | `approval.decided` | `{ proposalId, decision }` | toast + invalidate `['proposal', id]` |
 

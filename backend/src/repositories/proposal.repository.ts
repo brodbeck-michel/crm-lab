@@ -331,6 +331,16 @@ export async function insertItems(
 }
 
 /**
+ * Apaga todos os itens da proposta — usado por `updateItems` (CRMLAB-12,
+ * D-132) para substituir a lista inteira dentro da MESMA transacao do
+ * `insertItems` que segue. Sem regra de negocio aqui (so SQL); a checagem de
+ * estagio editavel e do service.
+ */
+export async function deleteItems(tx: DbTx, proposalId: string): Promise<void> {
+  await tx.query('DELETE FROM proposal_items WHERE proposal_id = $1', [proposalId]);
+}
+
+/**
  * Uma linha por transicao ACEITA, inclusive a criacao (`novo_contato`).
  * Invariante combinado com o seed (STATUS.md, pedido do Agent-DB-Seeds).
  */
@@ -360,6 +370,8 @@ export interface ProposalPatch {
   approvedAt?: string | null;
   sentAt?: string | null;
   closedAt?: string | null;
+  /** So gravado por `updateItems` (CRMLAB-12, D-132). */
+  requestingDoctor?: string | null;
 }
 
 const PATCH_COLUMNS: Record<keyof ProposalPatch, string> = {
@@ -372,6 +384,7 @@ const PATCH_COLUMNS: Record<keyof ProposalPatch, string> = {
   approvedAt: 'approved_at',
   sentAt: 'sent_at',
   closedAt: 'closed_at',
+  requestingDoctor: 'requesting_doctor',
 };
 
 /**

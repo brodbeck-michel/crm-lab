@@ -91,6 +91,14 @@ export function applyWsEvent(
       return;
     }
 
+    // CRMLAB-12/D-132: itens, desconto ou médico solicitante mudaram.
+    case 'proposal.updated': {
+      const data = event.data as { proposalId: string };
+      void queryClient.invalidateQueries({ queryKey: queryScopes.proposals });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.proposal(data.proposalId) });
+      return;
+    }
+
     case 'approval.requested': {
       const data = event.data as { proposalId: string };
       // Badge em #aprovacoes + a lista de pendentes + o sino de Decisões (PAGES.md §12).

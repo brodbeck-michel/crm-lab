@@ -47,6 +47,10 @@ export const ERROR_CATALOG = {
     message: 'Proposta aguardando aprovacao de desconto',
   },
   PROPOSAL_ALREADY_CLOSED: { statusCode: 409, message: 'Proposta ja encerrada' },
+  PROPOSAL_EDIT_NOT_ALLOWED: {
+    statusCode: 409,
+    message: 'Proposta so pode ser editada em novo contato ou orcamento enviado',
+  },
   APPROVAL_NOT_ALLOWED: { statusCode: 403, message: 'Sua alcada nao cobre este desconto' },
   EXAM_NOT_FOUND_OR_INACTIVE: { statusCode: 400, message: 'Exame inexistente ou inativo' },
 

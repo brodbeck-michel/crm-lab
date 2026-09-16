@@ -32,8 +32,10 @@ import {
   TERMINAL_STATUSES,
   calculateSubtotal,
   calculateTotal,
+  isProposalEditable,
   isTransitionAllowed,
   type ApprovalStatus,
+  type CreateProposalItemInput,
   type CreateProposalRequest,
   type CreateProposalResponse,
   type ListProposalsResponse,
@@ -660,6 +662,185 @@ export class ProposalService {
     }
 
     return outcome.proposal;
+  }
+
+  /**
+   * Substitui itens e, opcionalmente, desconto e medico solicitante
+   * (CRMLAB-12, D-132). `insuranceId` fica de fora — continua imutavel
+   * (D-082). So permitido em `novo_contato`/`orcamento_enviado`
+   * (`isProposalEditable`); fora disso, `PROPOSAL_EDIT_NOT_ALLOWED` (409).
+   *
+   * Precos SEMPRE resolvidos pelo catalogo (mesma regra de `create`, D-003) —
+   * o cliente nunca envia preco. A alcada e reavaliada exatamente como em
+   * `updateDiscount`: se o desconto (informado ou mantido) estourar o limite
+   * do autor, a proposta volta para `pending` e dispara nova aprovacao,
+   * reaproveitando o fluxo existente em vez de bloquear a edicao.
+   */
+  async updateItems(
+    ctx: TenantContext,
+    id: string,
+    dto: {
+      items: CreateProposalItemInput[];
+      discountPercent?: number;
+      requestingDoctor?: string | null;
+    },
+  ): Promise<ProposalDetail> {
+    const { db, audit, approvals, examCatalog } = this.deps;
+
+    if (dto.items.length === 0 || dto.items.length > MAX_ITEMS) {
+      throw new BusinessError('VALIDATION_ERROR', {
+        fields: { items: 'Informe de 1 a 100 itens' },
+      });
+    }
+    for (const item of dto.items) {
+      if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+        throw new BusinessError('VALIDATION_ERROR', {
+          fields: { 'items.quantity': 'Quantidade deve ser inteiro positivo' },
+        });
+      }
+    }
+    if (
+      dto.discountPercent !== undefined &&
+      (!Number.isFinite(dto.discountPercent) || dto.discountPercent < 0 || dto.discountPercent > 100)
+    ) {
+      throw new BusinessError('VALIDATION_ERROR', {
+        fields: { discountPercent: 'Percentual deve estar entre 0 e 100' },
+      });
+    }
+
+    // `db.withTenant` NAO aninha (nota no topo do arquivo) — a leitura do
+    // convenio gravado e a resolucao de preco no catalogo (outro service)
+    // precisam ficar FORA da transacao de escrita que segue, mesma
+    // arquitetura de `create`. O estagio e reconferido de novo dentro da
+    // transacao de escrita (linha abaixo) para o caso raro de mudanca
+    // concorrente entre as duas leituras.
+    const preCheck = await db.withTenant(ctx.tenantId, (tx) => loadVisibleProposal(tx, ctx, id));
+    if (isTerminal(preCheck.status as ProposalStatus)) {
+      throw new BusinessError('PROPOSAL_ALREADY_CLOSED', { status: preCheck.status });
+    }
+    if (!isProposalEditable(preCheck.status as ProposalStatus)) {
+      throw new BusinessError('PROPOSAL_EDIT_NOT_ALLOWED', { status: preCheck.status });
+    }
+
+    // Precos do CATALOGO (sem cache), com o convenio JA GRAVADO da proposta —
+    // insuranceId permanece imutavel (D-082).
+    const resolution = await examCatalog.resolveActiveByIds(
+      ctx.tenantId,
+      dto.items.map((item) => item.examId),
+      preCheck.insurance_id ?? undefined,
+    );
+    if (resolution.invalidIds.length > 0) {
+      throw new BusinessError('EXAM_NOT_FOUND_OR_INACTIVE', { examIds: resolution.invalidIds });
+    }
+    const items = dto.items.map((item) => {
+      const exam = resolution.byId.get(item.examId);
+      if (!exam) {
+        throw new BusinessError('EXAM_NOT_FOUND_OR_INACTIVE', { examIds: [item.examId] });
+      }
+      return {
+        examId: exam.id,
+        examName: exam.name,
+        quantity: item.quantity,
+        unitPrice: exam.effectivePrice ?? exam.pricePrivate,
+        priceSource: exam.priceSource ?? 'private',
+      };
+    });
+
+    const outcome = await db.withTenant(ctx.tenantId, async (tx) => {
+      const row = await loadVisibleProposal(tx, ctx, id);
+      const status = row.status as ProposalStatus;
+      if (isTerminal(status)) {
+        throw new BusinessError('PROPOSAL_ALREADY_CLOSED', { status });
+      }
+      if (!isProposalEditable(status)) {
+        throw new BusinessError('PROPOSAL_EDIT_NOT_ALLOWED', { status });
+      }
+
+      const discountPercent = dto.discountPercent ?? Number(row.discount_percent);
+      const userLimit = await readDiscountLimit(tx, ctx.userId, ctx.discountLimit);
+      const withinLimit = discountPercent <= userLimit;
+
+      // Mesma recusa de `updateDiscount`: subir o desconto de proposta de
+      // TERCEIRO acima da propria alcada nao vira pedido de aprovacao (D-045).
+      if (
+        dto.discountPercent !== undefined &&
+        !withinLimit &&
+        row.created_by !== ctx.userId
+      ) {
+        throw new BusinessError('DISCOUNT_EXCEEDS_LIMIT', {
+          requestedDiscount: discountPercent,
+          userLimit,
+          approvalRequired: true,
+        });
+      }
+
+      const totalPrice = calculateTotal(items, discountPercent);
+      const requestingDoctor =
+        dto.requestingDoctor !== undefined
+          ? normalizeRequestingDoctor(dto.requestingDoctor)
+          : row.requesting_doctor;
+      const now = new Date().toISOString();
+
+      await repo.deleteItems(tx, id);
+      await repo.insertItems(tx, ctx.tenantId, id, items);
+
+      const updated = await repo.updateProposal(tx, id, {
+        discountPercent,
+        totalPrice,
+        requestingDoctor,
+        approvalStatus: withinLimit ? 'approved' : 'pending',
+        approvedBy: withinLimit ? ctx.userId : null,
+        approvedAt: withinLimit ? now : null,
+      });
+      if (!updated) throw notFound({ resource: 'proposal', id });
+
+      const detail = await loadDetail(tx, id);
+      return {
+        detail,
+        previous: {
+          discountPercent: Number(row.discount_percent),
+          totalPrice: Number(row.total_price),
+          approvalStatus: row.approval_status,
+          requestingDoctor: row.requesting_doctor,
+        },
+        withinLimit,
+      };
+    });
+
+    await audit.record(ctx, {
+      action: 'update_proposal_items',
+      entityType: 'proposal',
+      entityId: id,
+      oldValues: {
+        discountPercent: outcome.previous.discountPercent,
+        totalPrice: outcome.previous.totalPrice,
+        approvalStatus: outcome.previous.approvalStatus,
+        requestingDoctor: outcome.previous.requestingDoctor,
+      },
+      newValues: {
+        items: outcome.detail.items.map((item) => ({
+          examId: item.examId,
+          examName: item.examName,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          priceSource: item.priceSource,
+        })),
+        discountPercent: outcome.detail.discountPercent,
+        totalPrice: outcome.detail.totalPrice,
+        approvalStatus: outcome.detail.approvalStatus,
+        requestingDoctor: outcome.detail.requestingDoctor,
+      },
+    });
+
+    await this.invalidateAnalytics(ctx.tenantId);
+
+    if (!outcome.withinLimit) {
+      await approvals.requestApproval(ctx, id);
+    }
+
+    this.deps.wsHub.emitToTenant(ctx.tenantId, 'proposal.updated', { proposalId: id });
+
+    return outcome.detail;
   }
 }
 

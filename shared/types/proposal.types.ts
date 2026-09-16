@@ -34,6 +34,21 @@ export const LOSS_REASONS: readonly LossReason[] = [
 export const TERMINAL_STATUSES: readonly ProposalStatus[] = ['ganho', 'perdido'] as const;
 
 /**
+ * Estagios em que itens/desconto/medico solicitante podem ser editados via
+ * `PATCH /proposals/:id/items` (CRMLAB-12, D-132). Fora daqui:
+ * `PROPOSAL_EDIT_NOT_ALLOWED` (409). Front e back leem esta MESMA constante,
+ * mesmo espirito de `ALLOWED_TRANSITIONS`.
+ */
+export const EDITABLE_STATUSES: readonly ProposalStatus[] = [
+  'novo_contato',
+  'orcamento_enviado',
+] as const;
+
+export function isProposalEditable(status: ProposalStatus): boolean {
+  return EDITABLE_STATUSES.includes(status);
+}
+
+/**
  * Matriz de transicoes validas. WORKFLOWS.md §4.
  * Front e back leem DESTA constante — divergencia e impossivel por construcao.
  *
@@ -144,8 +159,10 @@ export interface ProposalDetail extends Proposal {
   /**
    * Medico solicitante (indicacao clinica), texto livre (CRMLAB-9). `null` =
    * nenhum medico informado — inclusive em toda proposta criada antes desta
-   * mudanca. Sem cadastro/autocomplete de medicos. Imutavel apos a criacao,
-   * mesma convencao de `insuranceId`.
+   * mudanca. Sem cadastro/autocomplete de medicos. Editavel via
+   * `PATCH /proposals/:id/items` enquanto a proposta estiver em
+   * `novo_contato`/`orcamento_enviado` (CRMLAB-12, D-132) — `insuranceId`
+   * continua imutavel.
    */
   requestingDoctor: string | null;
 }
@@ -187,6 +204,28 @@ export interface UpdateProposalStatusRequest {
 export interface UpdateProposalDiscountRequest {
   discountPercent: number;
 }
+
+/**
+ * `PATCH /proposals/:id/items` (CRMLAB-12, D-132). Substitui a lista de itens
+ * inteira (mesmo shape de `POST /proposals` — precos sempre resolvidos pelo
+ * catalogo, nunca recebidos do cliente) e, opcionalmente, desconto e medico
+ * solicitante na mesma chamada. `insuranceId` NAO entra aqui: continua
+ * imutavel apos a criacao (D-082).
+ *
+ * So aceito com a proposta em `novo_contato`/`orcamento_enviado` —
+ * `PROPOSAL_EDIT_NOT_ALLOWED` (409) fora disso.
+ */
+export interface UpdateProposalItemsRequest {
+  items: CreateProposalItemInput[];
+  discountPercent?: number;
+  requestingDoctor?: string | null;
+}
+
+/**
+ * Devolve o `ProposalDetail` inteiro (nao projecao parcial): itens, total,
+ * desconto, alcada e medico solicitante podem mudar juntos nesta chamada.
+ */
+export type UpdateProposalItemsResponse = ProposalDetail;
 
 export interface RejectProposalRequest {
   reason: string;

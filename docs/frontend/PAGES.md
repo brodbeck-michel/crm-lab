@@ -356,7 +356,14 @@ nunca "sem permissão" (não vazar existência).
   histórico de estágios, ações
 - Ações (uma linha): [Mudar estágio ▾] à esquerda, [Marcar como ganho] (accent-2) à direita, [Marcar como perdido] fantasma ao fim
 - "Perdido" abre sub-form com motivo OBRIGATÓRIO (select: preço, silêncio, exame indisponível, prazo, outro)
-- Dados: `GET /proposals/:id`, `PATCH /proposals/:id/status`
+- **Editar (CRMLAB-12, D-132):** botão "Editar" some quando `status` não está em
+  `EDITABLE_STATUSES` (`novo_contato`/`orcamento_enviado`, `@crm-lab/shared`). Em modo de edição:
+  itens ganham stepper de quantidade + remover, catálogo de exame para adicionar (busca simples,
+  preço prévio pelo convênio já gravado na proposta — `insuranceId` não muda aqui), desconto
+  vira `Input` editável (`DiscountSection` sem `readOnly`) e médico solicitante vira `Input` de
+  texto. "Salvar" chama `PATCH /proposals/:id/items` com o carrinho inteiro; erro
+  `DISCOUNT_EXCEEDS_LIMIT` vira toast pelo handler genérico, mantendo o modal aberto em edição
+- Dados: `GET /proposals/:id`, `PATCH /proposals/:id/status`, `PATCH /proposals/:id/items`
 
 ---
 

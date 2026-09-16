@@ -6,6 +6,8 @@
  *   POST  /api/v1/proposals               cria (precos vem do catalogo)
  *   PATCH /api/v1/proposals/:id/status    transicao de estagio
  *   PATCH /api/v1/proposals/:id/discount  novo desconto (total recalculado)
+ *   PATCH /api/v1/proposals/:id/items     substitui itens/desconto/medico solicitante
+ *                                         (CRMLAB-12, D-132) — so em novo_contato/orcamento_enviado
  *   PATCH /api/v1/proposals/:id/approve   manager/admin
  *   PATCH /api/v1/proposals/:id/reject    manager/admin (motivo obrigatorio)
  *
@@ -24,6 +26,7 @@ import {
   type CreateProposalResponse,
   type ListProposalsResponse,
   type ProposalDetail,
+  type UpdateProposalItemsResponse,
 } from '@crm-lab/shared';
 import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
 import { getContext } from '../http/context.js';
@@ -96,6 +99,25 @@ export const updateDiscountSchema = z
   .object({ discountPercent: z.number().min(0).max(100) })
   .strict();
 
+/** CRMLAB-12 / D-132 — `insuranceId` fica de fora: continua imutavel (D-082). */
+export const updateItemsSchema = z
+  .object({
+    items: z
+      .array(
+        z
+          .object({
+            examId: z.string().uuid(),
+            quantity: z.number().int().positive().max(1000),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(100),
+    discountPercent: z.number().min(0).max(100).optional(),
+    requestingDoctor: z.string().trim().max(255).nullable().optional(),
+  })
+  .strict();
+
 export const rejectSchema = z.object({ reason: z.string().min(1).max(500) }).strict();
 
 export const proposalIdParamSchema = z.object({ id: z.string().uuid() });
@@ -103,6 +125,7 @@ export const proposalIdParamSchema = z.object({ id: z.string().uuid() });
 type CreateProposalBody = z.infer<typeof createProposalSchema>;
 type UpdateStatusBody = z.infer<typeof updateStatusSchema>;
 type UpdateDiscountBody = z.infer<typeof updateDiscountSchema>;
+type UpdateItemsBody = z.infer<typeof updateItemsSchema>;
 type RejectBody = z.infer<typeof rejectSchema>;
 
 /** `Promise` rejeitada em handler async precisa chegar ao error-handler. */
@@ -215,6 +238,20 @@ export function updateProposalDiscount(service: ProposalService): RequestHandler
   });
 }
 
+export function updateProposalItems(service: ProposalService): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const { id } = validated<{ id: string }>(req, 'params');
+    const dto = validated<UpdateItemsBody>(req, 'body');
+    const detail: UpdateProposalItemsResponse = await service.updateItems(ctx, id, {
+      items: dto.items,
+      ...(dto.discountPercent !== undefined ? { discountPercent: dto.discountPercent } : {}),
+      ...(dto.requestingDoctor !== undefined ? { requestingDoctor: dto.requestingDoctor } : {}),
+    });
+    res.status(200).json(detail);
+  });
+}
+
 export function approveProposal(services: ProposalModuleServices): RequestHandler {
   return handle(async (req, res) => {
     const ctx = getContext(req);
@@ -291,6 +328,15 @@ export function proposalModule(deps: ApiModuleDeps): ApiModule {
     validate(proposalIdParamSchema, 'params'),
     validate(updateDiscountSchema, 'body'),
     updateProposalDiscount(services.proposals),
+  );
+
+  router.patch(
+    '/:id/items',
+    requireAuth(),
+    denyPlatformOperator(),
+    validate(proposalIdParamSchema, 'params'),
+    validate(updateItemsSchema, 'body'),
+    updateProposalItems(services.proposals),
   );
 
   // `denyPlatformOperator()` ANTES de `requireRoles`: o operador da plataforma

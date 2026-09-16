@@ -1,14 +1,15 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { ProposalStatus, LossReason } from '@crm-lab/shared';
-import { formatProposalNumber } from '@crm-lab/shared';
-import { useProposalDetail, useUpdateProposalStatus } from '@/api/proposals';
+import { formatProposalNumber, isProposalEditable } from '@crm-lab/shared';
+import { useProposalDetail, useUpdateProposalStatus, useUpdateProposalItems } from '@/api/proposals';
 import { useInsuranceList } from '@/api/insurances';
 import { useApiErrorHandler } from '@/hooks';
 import { formatMoney } from '@/lib/format';
 import { Modal, MoneyDisplay } from '@/components/shared';
-import { Chip } from '@/components/ui';
+import { Button, Chip, Input } from '@/components/ui';
 import ItemsList from './ItemsList';
+import EditableItemsList, { type EditableProposalItem } from './EditableItemsList';
 import DiscountSection from './DiscountSection';
 import ApprovalAlert from './ApprovalAlert';
 import StageHistory from './StageHistory';
@@ -37,10 +38,50 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
   // ~20 convênios (docs/STATUS.md); risco aceito, não corrigido nesta task.
   const { data: insurancesData } = useInsuranceList({ limit: 100 });
   const [showLostForm, setShowLostForm] = useState(false);
+  const updateItems = useUpdateProposalItems();
+
+  // CRMLAB-12/D-132: itens/desconto/médico só editáveis nestes estágios —
+  // mesma constante que o backend usa em `PATCH /proposals/:id/items`.
+  const [isEditing, setIsEditing] = useState(false);
+  const [editItems, setEditItems] = useState<EditableProposalItem[]>([]);
+  const [editDiscount, setEditDiscount] = useState(0);
+  const [editDoctor, setEditDoctor] = useState('');
 
   if (isLoading || !proposal) {
     return null;
   }
+
+  const canEdit = isProposalEditable(proposal.status);
+
+  const handleStartEdit = () => {
+    setEditItems(
+      proposal.items.map((item) => ({
+        examId: item.examId,
+        examName: item.examName,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        priceSource: item.priceSource,
+      })),
+    );
+    setEditDiscount(proposal.discountPercent);
+    setEditDoctor(proposal.requestingDoctor ?? '');
+    setIsEditing(true);
+  };
+
+  const handleSaveEdit = () => {
+    updateItems.mutate(
+      {
+        proposalId,
+        items: editItems.map((item) => ({ examId: item.examId, quantity: item.quantity })),
+        discountPercent: editDiscount,
+        requestingDoctor: editDoctor || null,
+      },
+      {
+        onSuccess: () => setIsEditing(false),
+        onError: handleApiError,
+      },
+    );
+  };
 
   // `Proposal`/`ProposalDetail` não embutem o nome do convênio (só o id) —
   // resolvido aqui via `useInsuranceList`. Enquanto a lista carrega, mostra
@@ -93,34 +134,94 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
             {formatProposalNumber(proposal.proposalNumber)}
           </p>
 
-          <div className="flex items-center gap-sm">
-            <span className="text-caption text-neutral-600">Convênio</span>
-            <Chip tone="inactive">{insuranceName}</Chip>
-          </div>
-
-          {/* CRMLAB-9: só aparece quando há médico informado — sem linha vazia. */}
-          {proposal.requestingDoctor && (
+          <div className="flex items-center justify-between gap-sm">
             <div className="flex items-center gap-sm">
-              <span className="text-caption text-neutral-600">Médico solicitante</span>
-              <span className="text-body">{proposal.requestingDoctor}</span>
+              <span className="text-caption text-neutral-600">Convênio</span>
+              <Chip tone="inactive">{insuranceName}</Chip>
             </div>
-          )}
-
-          <ItemsList items={proposal.items} insuranceId={proposal.insuranceId} />
-
-          <DiscountSection
-            discountPercent={proposal.discountPercent}
-            discountLimit={100}
-            onChange={() => {}}
-            readOnly
-          />
-
-          <div className="border-t pt-md">
-            <div className="flex justify-between">
-              <span className="font-semibold">Total</span>
-              <MoneyDisplay value={proposal.totalPrice} />
-            </div>
+            {/* CRMLAB-12/D-132: some fora de novo_contato/orcamento_enviado. */}
+            {canEdit && !isEditing && !showLostForm && (
+              <Button variant="secondary" size="sm" onClick={handleStartEdit}>
+                Editar
+              </Button>
+            )}
           </div>
+
+          {isEditing ? (
+            <>
+              <Input
+                label="Médico solicitante (opcional)"
+                value={editDoctor}
+                onChange={(e) => setEditDoctor(e.target.value)}
+                placeholder="Nome do médico"
+                maxLength={255}
+              />
+
+              <EditableItemsList
+                items={editItems}
+                insuranceId={proposal.insuranceId}
+                onChange={setEditItems}
+              />
+
+              <DiscountSection
+                discountPercent={editDiscount}
+                discountLimit={100}
+                onChange={setEditDiscount}
+              />
+
+              <div className="border-t pt-md">
+                <div className="flex justify-between">
+                  <span className="font-semibold">Total</span>
+                  <MoneyDisplay
+                    value={
+                      editItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0) *
+                      (1 - editDiscount / 100)
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-sm">
+                <Button variant="secondary" onClick={() => setIsEditing(false)}>
+                  Cancelar
+                </Button>
+                <Button
+                  variant="primary"
+                  loading={updateItems.isPending}
+                  disabled={editItems.length === 0}
+                  onClick={handleSaveEdit}
+                >
+                  Salvar
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* CRMLAB-9: só aparece quando há médico informado — sem linha vazia. */}
+              {proposal.requestingDoctor && (
+                <div className="flex items-center gap-sm">
+                  <span className="text-caption text-neutral-600">Médico solicitante</span>
+                  <span className="text-body">{proposal.requestingDoctor}</span>
+                </div>
+              )}
+
+              <ItemsList items={proposal.items} insuranceId={proposal.insuranceId} />
+
+              <DiscountSection
+                discountPercent={proposal.discountPercent}
+                discountLimit={100}
+                onChange={() => {}}
+                readOnly
+              />
+
+              <div className="border-t pt-md">
+                <div className="flex justify-between">
+                  <span className="font-semibold">Total</span>
+                  <MoneyDisplay value={proposal.totalPrice} />
+                </div>
+              </div>
+            </>
+          )}
 
           {proposal.approvalStatus === 'pending' && (
             <ApprovalAlert />
@@ -129,7 +230,7 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
           <StageHistory history={proposal.history} />
         </div>
 
-        {showLostForm ? (
+        {isEditing ? null : showLostForm ? (
           <LostReasonForm
             onSubmit={handleMarkLost}
             isPending={updateStatus.isPending}

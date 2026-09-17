@@ -423,6 +423,26 @@ const LAB_ROUTES: readonly LabRoute[] = [
     addressable: true,
     ownStatus: 200,
   },
+  {
+    // Inativar/reativar (CRMLAB-11/D-132) e qualquer papel de laboratorio,
+    // ao contrario do bloco LGPD acima que e admin-only.
+    name: 'POST /patients/:id/inactivate',
+    method: 'post',
+    path: (l) => `/api/v1/patients/${l.patient.id}/inactivate`,
+    body: () => ({ reason: 'sonda de isolamento' }),
+    actor: 'admin',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    name: 'POST /patients/:id/reactivate',
+    method: 'post',
+    path: (l) => `/api/v1/patients/${l.patient.id}/reactivate`,
+    body: () => ({ reason: 'sonda de isolamento' }),
+    actor: 'admin',
+    addressable: true,
+    ownStatus: 200,
+  },
 
   // --- canais & equipe (Onda 6 — D-064..D-066) ---
   { name: 'GET /settings/channels', method: 'get', path: () => '/api/v1/settings/channels', actor: 'manager', addressable: false },
@@ -780,7 +800,7 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 61 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 63 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
@@ -791,8 +811,9 @@ describe('inventario de rotas de laboratorio', () => {
     // `POST /conversations/:id/attachments` e `GET /media/:id`. D-101 soma 2:
     // `GET /internal-chat/users` e `POST /internal-chat/dms` (faltavam neste
     // inventario desde a implementacao da feature — corrigido junto com D-102).
-    // CRMLAB-12/D-132 soma 1: `PATCH /proposals/:id/items`.
-    expect(LAB_ROUTES).toHaveLength(61);
+    // CRMLAB-11/D-133 soma 2: `POST /patients/:id/inactivate|reactivate`.
+    // CRMLAB-12/D-134 soma 1: `PATCH /proposals/:id/items`.
+    expect(LAB_ROUTES).toHaveLength(63);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

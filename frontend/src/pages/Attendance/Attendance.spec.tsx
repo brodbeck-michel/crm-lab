@@ -126,6 +126,8 @@ function patient(overrides: Partial<PatientListItem> = {}): PatientListItem {
     tags: [],
     customFields: {},
     anonymizedAt: null,
+    inactivatedAt: null,
+    inactivationReason: null,
     lastInteractionAt: '2026-08-23T09:12:00Z',
     createdAt: '2026-08-01T09:12:00Z',
     updatedAt: '2026-08-01T09:12:00Z',
@@ -382,11 +384,16 @@ describe('Atendimento — porta de entrada da Ficha do Paciente (D-079)', () => 
 
   it('a busca do inbox consulta GET /patients e cada resultado abre a ficha', async () => {
     listMock.mockResolvedValue(listResponse([conversation()]));
-    listPatientsMock.mockResolvedValue(patientsResponse([patient({ id: 'p-9', name: 'Carla Dias' })]));
+    listPatientsMock.mockResolvedValue(
+      patientsResponse([patient({ id: 'p-9', name: 'Carla Dias' })]),
+    );
     renderWithPatientRoute();
 
     await screen.findByTestId('conversation-item');
-    await userEvent.type(screen.getByLabelText('Buscar paciente, telefone ou exame'), 'Carla{Enter}');
+    await userEvent.type(
+      screen.getByLabelText('Buscar paciente, telefone ou exame'),
+      'Carla{Enter}',
+    );
 
     await waitFor(() => {
       expect(listPatientsMock).toHaveBeenCalledWith(

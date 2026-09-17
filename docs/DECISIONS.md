@@ -1655,6 +1655,24 @@ LIS.
 `Sidebar.spec.tsx` e `route-config.spec.ts` (asserts de grupo/rótulo atualizados). Nenhuma mudança
 de rota, papel, contrato de API ou do componente `Sidebar.tsx` em si (D-128 continua valendo).
 
+### D-132: Badge de não lidas do Chat Interno propaga para o grupo "Comunicação" quando recolhido
+
+**Decisão:** `Sidebar.tsx` passa a somar `Channel.unreadCount` de `GET /internal-chat/channels`
+(mesma query, cache compartilhado via `queryKeys.internalChannels()` com a tela de chat — sem
+endpoint novo) e exibe um `Badge` no item "Chat Interno", igual ao já existente para "Decisões"
+(`pendingDecisions.total`). Quando o grupo "Comunicação" está fechado e esse total é maior que
+zero, o mesmo `Badge` aparece no cabeçalho do grupo, substituindo o ponto 6px de "item ativo
+dentro" (D-128) enquanto houver não lida — o ponto volta a valer sozinho se o total zerar mas
+ainda houver item ativo dentro do grupo. Sem som, sem notificação push do navegador: só o
+indicador visual dentro do CRM.
+**Motivo:** CRMLAB-8 — usuário reportou que mensagem em conversa/grupo recolhido passava
+despercebida. Investigação mostrou que o chat interno não tem hierarquia de grupos de conversa
+(só listas fixas "Canais"/"Mensagens diretas"); o único "grupo recolhível" do produto é o grupo
+de menu "Comunicação" (D-127/D-128). Ambiguidade resolvida com o usuário durante o dev: "grupo"
+é o grupo de menu, não um agrupamento novo dentro do chat.
+**Impacto:** só frontend (`Sidebar.tsx`). Nenhum endpoint novo, nenhuma mudança de schema —
+`Channel.unreadCount` já existe (D-068).
+
 ### D-130: Cadastro de pacotes de exames (combos) — nova aba em Cadastro de Exames
 **Decisão:** nova aba "Pacotes" em `/catalog`, ao lado da lista de exames (`SegmentedControl`,
 mesmo padrão da aba "Dados"/"Preços por convênio" do `ExamModal`). Cadastro: `exam_packages` +
@@ -1700,7 +1718,33 @@ existe hoje geração de PDF de proposta individual (só Relatório Executivo/Co
 client-side); quando existir, lê `requestingDoctor` do detalhe como qualquer outro campo —
 não é pendência aberta, ver API_CONTRACTS.md §3.
 
-### D-132: Editar itens/desconto/médico solicitante de uma proposta já criada (CRMLAB-12)
+### D-133: Inativar/reativar paciente — qualquer papel, motivo obrigatório nas duas pontas
+**Decisão:** `patients` ganha `inactivated_at`/`inactivation_reason` (migração 018, mesmo
+desenho de `anonymized_at`/D-063 — sem tabela de histórico, sem `DELETE`).
+`POST /patients/:id/inactivate` e `.../reactivate` (`InactivatePatientRequest`/
+`ReactivatePatientRequest` em `shared/types/patient.types.ts`) exigem `reason` (1..500
+caracteres) nas DUAS direções; o motivo vai só para o audit log
+(`inactivate_patient`/`reactivate_patient`) — reativar zera os dois campos na linha, não
+preserva o motivo da inativação anterior. Ao contrário do bloco LGPD (D-062/D-063), a ação é de
+**qualquer papel de laboratório** que enxergue o paciente (mesma alçada do `PATCH /:id`, sem
+`requireRoles`) — não é admin-only. `GET /patients` esconde paciente inativo por padrão;
+`?includeInactive=true` (checkbox "Mostrar inativos" na tela) traz os dois. Nenhum outro dado é
+tocado: conversas, mensagens e propostas do paciente continuam intactos, só passam a se referir
+a um cadastro marcado como inativo. Paciente anonimizado não pode ser inativado/reativado (409
+`patient_anonymized`, mesmo princípio do `PATCH`).
+**Motivo:** pedido do usuário (CRMLAB-11) — hoje não existe como marcar paciente como inativo no
+CRM. Escopo fechado em discussão: sem alçada especial, motivo obrigatório nas duas pontas, dado
+histórico preservado (referenciado, não apagado), some da listagem com filtro para voltar a
+aparecer.
+**Impacto:** `shared/types/patient.types.ts` (campos novos em `Patient`, dois request types),
+`backend/migrations/018_patient_inactivation.sql`, `patient.repository.ts` (`inactivate`/
+`reactivate`, filtro `includeInactive` no `list`), `patient.service.ts`, `patient.routes.ts`
+(duas rotas novas, sem `requireRoles`). Frontend: `patients.ts` (dois métodos),
+`PatientInactivationSection.tsx` (novo, visível a qualquer papel — ao contrário de
+`PatientLgpdSection`), `Profile.tsx` (chip "Inativo" no header), `List.tsx` (checkbox "Mostrar
+inativos" + coluna de status).
+
+### D-134: Editar itens/desconto/médico solicitante de uma proposta já criada (CRMLAB-12)
 **Decisão:** novo `PATCH /proposals/:id/items` substitui a lista de itens inteira e,
 opcionalmente, `discountPercent` e `requestingDoctor` na mesma chamada — reaproveita a resolução
 de preço pelo catálogo (mesmo convênio já gravado) e o recálculo de total de `create`/

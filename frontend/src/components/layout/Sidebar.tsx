@@ -6,7 +6,7 @@ import { Avatar } from '@/components/shared';
 import { useAuthStore, useUIStore, useSidebarGroupsStore, selectRole, selectUser } from '@/stores';
 import { useLogout } from '@/hooks';
 import { sidebarSectionsFor, type AppRoute } from '@/routes/route-config';
-import { operationApi, queryKeys, staleTimes } from '@/api';
+import { internalChatApi, operationApi, queryKeys, staleTimes } from '@/api';
 import { NavGlyph } from './NavGlyph';
 
 /**
@@ -73,6 +73,20 @@ export function Sidebar() {
   });
   const pendingDecisionsCount = overviewQuery.data?.pendingDecisions.total ?? 0;
 
+  // Badge de "Chat Interno" (D-130): mesma query/cache da tela de chat
+  // (`queryKeys.internalChannels()`) — sem endpoint novo, já invalidada por
+  // `internal_chat.new_message` e por `markRead` em `api/ws.ts`.
+  const hasInternalChatRoute =
+    ungrouped.some((route) => route.path === '/internal-chat') ||
+    groups.some((group) => group.items.some((route) => route.path === '/internal-chat'));
+  const channelsQuery = useQuery({
+    queryKey: queryKeys.internalChannels(),
+    queryFn: () => internalChatApi.channels(),
+    enabled: hasInternalChatRoute,
+  });
+  const internalChatUnreadCount =
+    channelsQuery.data?.channels.reduce((total, channel) => total + channel.unreadCount, 0) ?? 0;
+
   const navigate = useNavigate();
   const logout = useLogout();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -138,6 +152,7 @@ export function Sidebar() {
             route={route}
             collapsed={collapsed}
             pendingDecisionsCount={pendingDecisionsCount}
+            internalChatUnreadCount={internalChatUnreadCount}
           />
         ))}
 
@@ -146,6 +161,10 @@ export function Sidebar() {
         {groups.map((group) => {
           const open = openGroupsByUser[userId]?.[group.id] ?? true;
           const hasActiveChild = group.items.some((route) => route.path === pathname);
+          // D-130: só o grupo que contém "Chat Interno" herda o total de não lidas.
+          const groupUnreadCount = group.items.some((route) => route.path === '/internal-chat')
+            ? internalChatUnreadCount
+            : 0;
           return (
             <div key={group.id}>
               <button
@@ -177,7 +196,13 @@ export function Sidebar() {
                     {group.label}
                   </span>
                 )}
-                {!collapsed && !open && hasActiveChild && (
+                {!collapsed && !open && groupUnreadCount > 0 && (
+                  <Badge
+                    count={groupUnreadCount}
+                    label={`${groupUnreadCount} mensagens não lidas em ${group.label}`}
+                  />
+                )}
+                {!collapsed && !open && groupUnreadCount <= 0 && hasActiveChild && (
                   <span
                     aria-hidden="true"
                     className="mt-[6px] h-[6px] w-[6px] flex-none rounded-pill bg-accent-500"
@@ -192,6 +217,7 @@ export function Sidebar() {
                       route={route}
                       collapsed={collapsed}
                       pendingDecisionsCount={pendingDecisionsCount}
+                      internalChatUnreadCount={internalChatUnreadCount}
                       child
                     />
                   ))}
@@ -254,6 +280,8 @@ interface SidebarNavItemProps {
   route: AppRoute;
   collapsed: boolean;
   pendingDecisionsCount: number;
+  /** Soma de `Channel.unreadCount` do Chat Interno (D-130). */
+  internalChatUnreadCount: number;
   /** Item filho de um grupo (raio menor: `rounded-md` × `rounded-lg`). */
   child?: boolean;
 }
@@ -263,7 +291,13 @@ interface SidebarNavItemProps {
  * `accent-500` sólido + texto `text-bg` (único destaque preenchido do trilho —
  * a faixa de grupo nunca compete com essa cor).
  */
-function SidebarNavItem({ route, collapsed, pendingDecisionsCount, child = false }: SidebarNavItemProps) {
+function SidebarNavItem({
+  route,
+  collapsed,
+  pendingDecisionsCount,
+  internalChatUnreadCount,
+  child = false,
+}: SidebarNavItemProps) {
   return (
     <NavLink
       to={route.path}
@@ -287,6 +321,12 @@ function SidebarNavItem({ route, collapsed, pendingDecisionsCount, child = false
       {!collapsed && <span className="min-w-0 truncate">{route.label}</span>}
       {route.path === '/decisions' && (
         <Badge count={pendingDecisionsCount} label={`${pendingDecisionsCount} decisão(ões) pendente(s)`} />
+      )}
+      {route.path === '/internal-chat' && (
+        <Badge
+          count={internalChatUnreadCount}
+          label={`${internalChatUnreadCount} mensagens não lidas`}
+        />
       )}
     </NavLink>
   );

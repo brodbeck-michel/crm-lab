@@ -102,7 +102,7 @@ renderiza. "Não sei onde mostrar" nunca pode virar silêncio.
 | `INVALID_LOSS_REASON` | 400 | reasonLost fora do enum | `{ allowed[] }` |
 | `PROPOSAL_PENDING_APPROVAL` | 409 | Tentativa de enviar proposta pending | — |
 | `PROPOSAL_ALREADY_CLOSED` | 409 | Mutação em proposta ganha/perdida | `{ status }` |
-| `PROPOSAL_EDIT_NOT_ALLOWED` | 409 | `PATCH /proposals/:id/items` fora de `novo_contato`/`orcamento_enviado` (CRMLAB-12, D-132) | `{ status }` |
+| `PROPOSAL_EDIT_NOT_ALLOWED` | 409 | `PATCH /proposals/:id/items` fora de `novo_contato`/`orcamento_enviado` (CRMLAB-12, D-134) | `{ status }` |
 | `APPROVAL_NOT_ALLOWED` | 403 | Aprovador sem alçada suficiente | `{ discount, approverLimit }` |
 | `EXAM_NOT_FOUND_OR_INACTIVE` | 400 | Item referencia exame inexistente/inativo | `{ examIds[] }` |
 

@@ -39,6 +39,7 @@ import { Router, type Request, type RequestHandler, type Response } from 'expres
 import { env } from '../config/env.js';
 import type { DbClient } from '../db/types.js';
 import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
+import { rateLimit } from '../http/middleware/rate-limit.js';
 import type { CacheService } from '../lib/cache.js';
 import type { WsHub } from '../lib/ws-hub.js';
 import {
@@ -837,6 +838,12 @@ function buildWebhookModule(
 ): ApiModule {
   const services = createWebhookServices(deps, overrides);
   const router = Router();
+
+  // Balde PROPRIO do webhook. O limitador global pula estas rotas
+  // (`isChannelWebhook`), mas rota publica sem teto nenhum seria amplificador:
+  // o que muda e que o teto passa a ser o de uma maquina que reentrega, nao o
+  // de uma pessoa navegando.
+  router.use(rateLimit({ cache: deps.cache, limit: env.RATE_LIMIT_WEBHOOK_PER_MINUTE }));
 
   router.post('/whatsapp', whatsappInbound(services));
   router.post('/whatsapp/status', whatsappStatus(services));

@@ -957,3 +957,70 @@ describe('tipos que antes sumiam em silencio (auditoria 2026-09-17)', () => {
     expect(await countMessages(tenant.id)).toBe(1);
   });
 });
+
+/**
+ * Auditoria de 2026-09-17, duas garantias que faltavam na entrada:
+ *
+ * 1. O gateway reentrega o MESMO evento ate 10 vezes quando nao recebe 200 a
+ *    tempo — foram 462 reentregas esgotadas so na janela auditada. O dedupe
+ *    existia, mas so no service (ler-depois-inserir), sem nada segurando entre
+ *    o SELECT e o INSERT. A migracao 019 poe a garantia no banco.
+ * 2. O webhook nao pode dividir o balde de rate limit com usuario humano: era
+ *    o que produzia 429 para o gateway (3754 na janela auditada).
+ */
+describe('reentrega do gateway nao duplica mensagem (migracao 019)', () => {
+  it('o MESMO externalId entregue varias vezes grava UMA linha', async () => {
+    const tenant = await createTenant({ slug: 'lab-reentrega' });
+    slugToId.set('lab-reentrega', tenant.id);
+
+    const payload = {
+      ...messagesUpsertPayload({
+        instance: evolutionInstanceName(tenant.id),
+        phone: '5548999995555',
+        text: 'mesma mensagem reentregue',
+        externalId: 'EVO-REENTREGA-1',
+      }),
+      event: 'messages.upsert',
+    };
+
+    for (let i = 0; i < 4; i += 1) {
+      await app.agent
+        .post(`${WEBHOOK}/lab-reentrega`)
+        .set('x-evolution-webhook-token', TOKEN)
+        .send(payload)
+        .expect(200);
+    }
+
+    expect(await countMessages(tenant.id)).toBe(1);
+    expect(await countConversations(tenant.id)).toBe(1);
+  });
+
+  it('reentregas SIMULTANEAS tambem gravam UMA linha (a corrida que o service sozinho perdia)', async () => {
+    const tenant = await createTenant({ slug: 'lab-corrida' });
+    slugToId.set('lab-corrida', tenant.id);
+
+    const payload = {
+      ...messagesUpsertPayload({
+        instance: evolutionInstanceName(tenant.id),
+        phone: '5548999994444',
+        text: 'corrida',
+        externalId: 'EVO-CORRIDA-1',
+      }),
+      event: 'messages.upsert',
+    };
+
+    // Sem o indice unico, as duas passam pelo `findByExternalId` sem achar
+    // nada e inserem as duas — o atendente ve a mensagem do paciente repetida.
+    await Promise.all(
+      Array.from({ length: 4 }, () =>
+        app.agent
+          .post(`${WEBHOOK}/lab-corrida`)
+          .set('x-evolution-webhook-token', TOKEN)
+          .send(payload)
+          .expect(200),
+      ),
+    );
+
+    expect(await countMessages(tenant.id)).toBe(1);
+  });
+});

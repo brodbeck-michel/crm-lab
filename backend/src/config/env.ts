@@ -127,6 +127,21 @@ const envSchema = z
     RATE_LIMIT_PER_MINUTE: numberFrom(100),
 
     /**
+     * Balde SEPARADO para os webhooks de canal (auditoria 2026-09-17).
+     *
+     * O gateway fala com o backend por IP fixo e sem Bearer, entao caia no
+     * mesmo balde por IP de `RATE_LIMIT_PER_MINUTE` (100/min) — desenhado para
+     * um usuario humano, nao para um gateway que reentrega ate 10 vezes e
+     * dispara rajada a cada reconexao. Resultado medido: 3754 respostas 429 e
+     * 462 entregas ABANDONADAS numa janela de 12 minutos.
+     *
+     * Continua existindo limite: webhook e rota publica e sem teto seria um
+     * amplificador. Mas o teto passa a ser o de uma maquina, nao o de uma
+     * pessoa.
+     */
+    RATE_LIMIT_WEBHOOK_PER_MINUTE: numberFrom(600),
+
+    /**
      * Quantos proxies reversos NOSSOS ficam na frente do app (D-057).
      * `0` (default) = nao confia em `X-Forwarded-For` nenhum.
      */

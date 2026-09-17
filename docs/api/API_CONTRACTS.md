@@ -954,7 +954,17 @@ responder):
   assinatura do webhook** (`evolution-client.ts`): sem ele o polling não tem fonte de QR.
 
 **Idempotente:** mesma disciplina do webhook Meta — reentrega da mesma mensagem
-(`externalId`/`key.id`) não duplica linha nem evento.
+(`externalId`/`key.id`) não duplica linha nem evento. Desde a migração **019** a garantia é
+do **banco** (índice único parcial em `(tenant_id, external_message_id)`), não só do service:
+o dedupe anterior era ler-depois-inserir, sem nada segurando entre o `SELECT` e o `INSERT`, e
+o gateway reentrega o mesmo evento até 10 vezes. Duas reentregas concorrentes passavam as duas
+pela leitura. O service trata a violação como sucesso idempotente e devolve a linha existente.
+
+**Rate limit próprio.** As rotas de `/webhooks/*` não entram no balde de
+`RATE_LIMIT_PER_MINUTE` (100/min, dimensionado para um usuário humano): elas têm
+`RATE_LIMIT_WEBHOOK_PER_MINUTE` (600/min). O gateway fala por IP fixo e sem Bearer, então caía
+na cota de uma pessoa — a auditoria de 2026-09-17 mediu **3754 respostas 429 e 462 entregas
+abandonadas** em 12 minutos, e entrega abandonada é mensagem de paciente que não chega.
 
 **Todo descarte é contável (auditoria 2026-09-17).** A resposta `200 {received:true}` é
 igual em todo caminho — inclusive nos de descarte — para não virar oráculo de enumeração.

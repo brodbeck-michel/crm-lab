@@ -1655,6 +1655,24 @@ LIS.
 `Sidebar.spec.tsx` e `route-config.spec.ts` (asserts de grupo/rótulo atualizados). Nenhuma mudança
 de rota, papel, contrato de API ou do componente `Sidebar.tsx` em si (D-128 continua valendo).
 
+### D-132: Badge de não lidas do Chat Interno propaga para o grupo "Comunicação" quando recolhido
+
+**Decisão:** `Sidebar.tsx` passa a somar `Channel.unreadCount` de `GET /internal-chat/channels`
+(mesma query, cache compartilhado via `queryKeys.internalChannels()` com a tela de chat — sem
+endpoint novo) e exibe um `Badge` no item "Chat Interno", igual ao já existente para "Decisões"
+(`pendingDecisions.total`). Quando o grupo "Comunicação" está fechado e esse total é maior que
+zero, o mesmo `Badge` aparece no cabeçalho do grupo, substituindo o ponto 6px de "item ativo
+dentro" (D-128) enquanto houver não lida — o ponto volta a valer sozinho se o total zerar mas
+ainda houver item ativo dentro do grupo. Sem som, sem notificação push do navegador: só o
+indicador visual dentro do CRM.
+**Motivo:** CRMLAB-8 — usuário reportou que mensagem em conversa/grupo recolhido passava
+despercebida. Investigação mostrou que o chat interno não tem hierarquia de grupos de conversa
+(só listas fixas "Canais"/"Mensagens diretas"); o único "grupo recolhível" do produto é o grupo
+de menu "Comunicação" (D-127/D-128). Ambiguidade resolvida com o usuário durante o dev: "grupo"
+é o grupo de menu, não um agrupamento novo dentro do chat.
+**Impacto:** só frontend (`Sidebar.tsx`). Nenhum endpoint novo, nenhuma mudança de schema —
+`Channel.unreadCount` já existe (D-068).
+
 ### D-130: Cadastro de pacotes de exames (combos) — nova aba em Cadastro de Exames
 **Decisão:** nova aba "Pacotes" em `/catalog`, ao lado da lista de exames (`SegmentedControl`,
 mesmo padrão da aba "Dados"/"Preços por convênio" do `ExamModal`). Cadastro: `exam_packages` +

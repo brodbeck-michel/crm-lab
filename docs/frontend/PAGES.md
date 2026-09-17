@@ -462,6 +462,16 @@ quando a primeira mensagem chega (mesmo evento `internal_chat.new_message` de se
 - Mensagem de sistema conta como não lida — o pedido de aprovação em `#aprovacoes` é o caso
   que mais precisa piscar. Mensagem do próprio usuário nunca conta.
 
+### Badge de não lidas no menu lateral (D-132 — CRMLAB-8)
+
+O item "Chat Interno" da Sidebar (`COMPONENTS.md` — Sidebar) mostra um `Badge` com a soma de
+`Channel.unreadCount` de todos os canais (mesma lista de `GET /internal-chat/channels` que a
+tela usa, cache compartilhado via `queryKeys.internalChannels()` — sem endpoint novo). Se o grupo
+"Comunicação" estiver **recolhido** e esse total for maior que zero, o mesmo `Badge` (com o
+mesmo total) aparece no cabeçalho do grupo, no lugar do ponto de "item ativo dentro" (D-128);
+some ao abrir o grupo, ao entrar num canal (unread zera) ou ao chegar a zero. Sem som e sem
+notificação push do navegador — só esse indicador visual dentro do próprio CRM.
+
 ### Paginação do histórico (D-069)
 
 `page=1` é a página das mensagens **mais recentes**, com os itens em ordem cronológica

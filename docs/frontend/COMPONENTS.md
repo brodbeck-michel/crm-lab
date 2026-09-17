@@ -149,6 +149,11 @@ Anatomia (padrão WhatsApp):
   fechado com item ativo dentro: ponto 6px `bg-accent-500` ao lado do chevron
 - Item "Decisões" (gestor+): `Badge` com `pendingDecisions.total` de `GET /operations/overview`
   (PAGES.md §12) — some quando o total é zero
+- Item "Chat Interno": `Badge` com a soma de `Channel.unreadCount` de todos os canais
+  (`GET /internal-chat/channels`) — mesma fonte que o badge por canal do próprio chat (D-132).
+  Grupo "Comunicação" fechado com esse total > 0: o mesmo `Badge` aparece no cabeçalho do grupo,
+  substituindo o ponto 6px de "item ativo dentro" enquanto houver não lida (o ponto volta a
+  aparecer sozinho se o total zerar mas ainda houver item ativo dentro)
 - Rodapé: avatar + nome do usuário é um botão; clique abre menu com [Sair] (`useLogout`,
   `POST /auth/logout` — API_CONTRACTS.md §1). Fecha ao clicar fora, `Esc` ou depois de sair
 - Rodapé: versão do build (`v1.1.0`, só o número quando recolhido) — `__APP_VERSION__`

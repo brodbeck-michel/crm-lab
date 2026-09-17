@@ -917,6 +917,56 @@ Dois problemas de diagnóstico corrigidos no código (o usuário ficou cego para
 - `npm run typecheck` verde nos 4 workspaces. Backend: 75 arquivos, 1084 testes (+1 novo, com o
   corpo 500 real do v2.3.7 copiado de produção). Frontend: 74 arquivos, 1040 testes. Lint limpo.
 
+## 2026-09-17 — auditoria de confiabilidade do canal WhatsApp ✅
+
+Disparada pela investigação da desconexão (acima). Comparação mensagem a mensagem entre o
+banco do Evolution e o do CRM revelou que **30 de 174 mensagens de pacientes do dia (17%)
+nunca chegaram ao CRM** — e ninguém percebeu.
+
+**Causa raiz das 30 não foi determinada** e o registro fica honesto sobre isso: os logs do
+backend do período se foram no deploy das 17:53 e o Evolution retinha só 2h. Foram
+descartadas por evidência: rate limit (os 3754 × 429 estão todos entre 13:15–13:27, e 28 das
+30 perdas caem fora), parsing (as perdidas têm o campo `conversation`), sincronização de
+histórico (gravadas 1s após o envio, ao vivo), race na criação de conversa (perda igual na 1ª
+mensagem e nas demais), truncamento de ID e indisponibilidade do backend.
+
+O que **foi** fechado é o problema estrutural, que é pior que a causa: o webhook responde
+`200 {received:true}` em todo caminho de descarte, então o gateway marca "entregue", nunca
+reentrega, e a perda não deixa rastro. Seis correções, um commit cada:
+
+1. **Descarte contável** — `DiscardReason` (lista fechada) + `evolution.inbound_discarded`.
+   Nem todo motivo é defeito (`from_me`, `grupo` são corretos), mas todos precisam ser
+   contáveis.
+2. **Tipos que sumiam** — `videoMessage`/`stickerMessage` como mídia;
+   `location`/`contact`/`contactsArray` como texto descritivo. Já havia 3 `albumMessage` de
+   pacientes perdidos. Sem tipo novo em `MessageType`: vídeo entra como anexo `doc`.
+3. **Polling do QR parou de matar a sessão** — `GET /instance/connect` não é leitura: cria
+   uma conexão Baileys por chamada. Com polling de 2s, **169 sockets em 3 minutos**, e o
+   WhatsApp respondeu com 401. Agora o QR vem por `QRCODE_UPDATED` e cache; `connect` é
+   chamado uma vez. Teste prova que 10 pollings mantêm o gateway em 1 chamada.
+4. **Queda avisa** — evento WS `channel.connection_changed` + `logger.error` + healthcheck do
+   Evolution + rotação de log 50m×5 (a padrão reteve 2h e foi o que impediu achar a causa).
+5. **Backup diário** — não existia nenhum; o único dump era anterior a todos os dados de
+   produção. Instalado e **verificado** na VPS (`pg_restore -l`: 31 tabelas).
+6. **Dedupe no banco** (migração 019, índice único parcial com `tenant_id`) + balde de rate
+   limit próprio para o webhook (`RATE_LIMIT_WEBHOOK_PER_MINUTE`, default 600).
+
+Verificação: `npm run typecheck` verde nos 4 workspaces; backend 75 arquivos / **1096
+testes**; frontend 74 arquivos / **1042 testes**; lint limpo.
+
+**Não recuperamos as 30 mensagens perdidas** — decisão do usuário.
+
+### Pendências que a auditoria deixou registradas
+
+- **Fila de envio é in-memory** (`lib/queue.ts`, D-011): todo deploy descarta o que estava em
+  voo. Bull/Redis já está previsto atrás da mesma interface.
+- **Mídia acima do teto** continua sem criar mensagem (spec Onda 8 §4.2): agora deixa rastro
+  no log, mas o atendente ainda não vê que o paciente tentou mandar algo.
+- **Vídeo aparece como anexo genérico** (`doc`), não como player. Evolução, não pré-requisito.
+- **100% do tráfego real chega como `@lid`**, e o telefone depende de `remoteJidAlt` vir no
+  payload (hoje vem em 182/182). Se o WhatsApp parar de mandar, a entrada fica cega —
+  `lid_sem_remote_jid_alt` no log é o sinal a vigiar.
+
 ## Bloqueios Atuais
 
 Nenhum.

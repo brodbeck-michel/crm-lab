@@ -9,7 +9,8 @@ export type WsEventName =
   | 'proposal.updated'
   | 'approval.requested'
   | 'approval.decided'
-  | 'internal_chat.new_message';
+  | 'internal_chat.new_message'
+  | 'channel.connection_changed';
 
 export interface WsEventPayloads {
   'conversation.new_message': { conversationId: string; messageId: string };
@@ -19,6 +20,11 @@ export interface WsEventPayloads {
   'approval.requested': { proposalId: string };
   'approval.decided': { proposalId: string; decision: 'approved' | 'rejected' };
   'internal_chat.new_message': { channelId: string; messageId: string };
+  /**
+   * Conexao do canal externo mudou (hoje: WhatsApp por QR). `connected: false`
+   * e o caso que motivou o evento — ver a nota em `docs/ARCHITECTURE.md`.
+   */
+  'channel.connection_changed': { channel: string; connected: boolean };
 }
 
 export interface WsEvent<E extends WsEventName = WsEventName> {

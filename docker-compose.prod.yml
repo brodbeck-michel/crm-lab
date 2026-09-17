@@ -175,6 +175,30 @@ services:
       CACHE_REDIS_URI: redis://redis:6379/1
     security_opt:
       - no-new-privileges:true
+    # Auditoria de 2026-09-17: o container ficou "vivo mas quebrado" — a sessao
+    # Baileys tinha morrido (401) e ele seguia respondendo `state: "open"` para
+    # uma sessao inexistente, sem nunca reiniciar. `restart: unless-stopped`
+    # sozinho nao cobre isso, porque o processo nao caiu. O healthcheck ao
+    # menos deixa o estado VISIVEL no `docker ps` em vez de silencioso.
+    #
+    # Deliberadamente so a porta HTTP: um healthcheck que consultasse
+    # `connectionState` marcaria o container como doente toda vez que o numero
+    # estivesse legitimamente desconectado (ninguem pareou ainda), e um
+    # healthcheck que mente e pior que nenhum.
+    healthcheck:
+      test: ['CMD', 'sh', '-c', 'wget -qO- http://localhost:8080/ >/dev/null 2>&1 || exit 1']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        # A rotacao padrao reteve so ~2h de log e foi o que impediu, na
+        # auditoria, achar a causa raiz da sessao derrubada: o momento da
+        # queda ja tinha rotacionado quando fomos olhar.
+        max-size: '50m'
+        max-file: '5'
     # Sem `ports:` — so acessivel na rede interna do compose (o `backend`
     # fala com ele por `http://evolution:8080`).
 

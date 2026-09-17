@@ -2,7 +2,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MockInstance } from 'vitest';
 import type { WsEvent } from '@crm-lab/shared';
-import { createWsClient } from './ws';
+import { applyWsEvent, createWsClient } from './ws';
 import type { WebSocketLike } from './ws';
 import { queryKeys, queryScopes } from './query-keys';
 
@@ -229,5 +229,42 @@ describe('ws — reconexão', () => {
     vi.advanceTimersByTime(60_000);
     expect(FakeSocket.instances).toHaveLength(1);
     expect(client.isConnected()).toBe(false);
+  });
+});
+
+/**
+ * Auditoria de 2026-09-17: a sessao do WhatsApp caiu as 16:17 e quem estava
+ * atendendo continuou achando que o canal respondia. O canal mudo e pior que o
+ * canal caido — o laboratorio segue achando que atende enquanto as mensagens
+ * nao chegam.
+ */
+describe('channel.connection_changed', () => {
+  it('queda avisa com tom de atencao e invalida o status do canal', () => {
+    const toast = vi.fn();
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+
+    applyWsEvent(
+      queryClient,
+      { event: 'channel.connection_changed', data: { channel: 'whatsapp', connected: false } } as WsEvent,
+      toast,
+    );
+
+    expect(toast).toHaveBeenCalledTimes(1);
+    // O tom importa: `positive` (o default dos outros eventos) daria ao
+    // atendente a impressao contraria da que o evento carrega.
+    expect(toast.mock.calls[0]?.[1]).toBe('attention');
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.whatsappStatus() });
+  });
+
+  it('reconexao NAO avisa — o card muda sozinho', () => {
+    const toast = vi.fn();
+
+    applyWsEvent(
+      queryClient,
+      { event: 'channel.connection_changed', data: { channel: 'whatsapp', connected: true } } as WsEvent,
+      toast,
+    );
+
+    expect(toast).not.toHaveBeenCalled();
   });
 });

@@ -40,6 +40,7 @@ import { env } from '../config/env.js';
 import type { DbClient } from '../db/types.js';
 import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
 import type { CacheService } from '../lib/cache.js';
+import type { WsHub } from '../lib/ws-hub.js';
 import {
   EVOLUTION_QR_TTL_SECONDS,
   evolutionInstanceName,
@@ -607,6 +608,7 @@ async function applyEvolutionConnectionUpdate(
   db: DbClient,
   tenantId: string,
   data: unknown,
+  wsHub: WsHub,
 ): Promise<void> {
   const state = evolutionConnectionStateOf(data);
   if (!state) return;
@@ -615,6 +617,22 @@ async function applyEvolutionConnectionUpdate(
       ? channelSettingsRepo.markWhatsAppConnected(tx, tenantId, state.phoneNumber)
       : channelSettingsRepo.markWhatsAppDisconnected(tx, tenantId),
   );
+
+  // A queda PRECISA sair do banco e chegar em alguem. Na auditoria de
+  // 2026-09-17 a sessao caiu as 16:17 e o estado so foi gravado: quem estava
+  // atendendo continuou achando que o canal respondia, e a descoberta so
+  // aconteceu horas depois, por acaso. `error` (nao `info`) porque canal de
+  // atendimento caido e incidente, nao rotina — e e o nivel que um alerta de
+  // infra consegue filtrar.
+  if (state.connected) {
+    logger.info('channel.whatsapp_connected', { tenantId });
+  } else {
+    logger.error('channel.whatsapp_disconnected', { tenantId });
+  }
+  wsHub.emitToTenant(tenantId, 'channel.connection_changed', {
+    channel: 'whatsapp',
+    connected: state.connected,
+  });
 }
 
 /**
@@ -650,6 +668,7 @@ export function evolutionInbound(
   services: WebhookServices,
   db: DbClient,
   cache: CacheService,
+  wsHub: WsHub,
 ): RequestHandler {
   return safeHandle(async (req, res) => {
     const authenticated = await authenticateEvolution(req, services);
@@ -736,7 +755,7 @@ export function evolutionInbound(
         }
       }
     } else if (event === 'CONNECTION_UPDATE') {
-      await applyEvolutionConnectionUpdate(db, tenantId, body?.data);
+      await applyEvolutionConnectionUpdate(db, tenantId, body?.data, wsHub);
     } else if (event === 'QRCODE_UPDATED') {
       // O QR passa a chegar POR AQUI em vez de ser buscado a cada polling.
       // `GET /settings/channels/whatsapp/qr` le desta chave; sem isso, cada
@@ -760,7 +779,11 @@ export function evolutionInbound(
  * (`{ state, owner }`), porque o gateway pode ser configurado com uma URL de
  * webhook dedicada por evento (`webhookByEvents`).
  */
-export function evolutionStatus(services: WebhookServices, db: DbClient): RequestHandler {
+export function evolutionStatus(
+  services: WebhookServices,
+  db: DbClient,
+  wsHub: WsHub,
+): RequestHandler {
   return safeHandle(async (req, res) => {
     const authenticated = await authenticateEvolution(req, services);
     if (!authenticated) {
@@ -786,7 +809,7 @@ export function evolutionStatus(services: WebhookServices, db: DbClient): Reques
     }
 
     const data = body && asNonEmptyString(body.event) === 'CONNECTION_UPDATE' ? body.data : body;
-    await applyEvolutionConnectionUpdate(db, tenantId, data);
+    await applyEvolutionConnectionUpdate(db, tenantId, data, wsHub);
 
     logger.info('evolution.status_processed', { tenantId });
     acknowledge(res);
@@ -820,8 +843,8 @@ function buildWebhookModule(
   router.post('/whatsapp/:tenant', whatsappInbound(services));
   router.post('/whatsapp/:tenant/status', whatsappStatus(services));
 
-  router.post('/evolution/:tenant', evolutionInbound(services, deps.db, deps.cache));
-  router.post('/evolution/:tenant/status', evolutionStatus(services, deps.db));
+  router.post('/evolution/:tenant', evolutionInbound(services, deps.db, deps.cache, deps.wsHub));
+  router.post('/evolution/:tenant/status', evolutionStatus(services, deps.db, deps.wsHub));
 
   return { basePath: '/webhooks', router, requiresAuth: false };
 }

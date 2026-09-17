@@ -79,6 +79,10 @@ Anatomia (padrão WhatsApp):
 - Anexo `messageType: 'image'` (CRMLAB-15): thumbnail (`rounded-md`, máx. 300px de altura) no lugar
   do link "Anexo (tipo)". Clique abre `ImageLightbox` em tela cheia — padrão WhatsApp Web. Outros
   `messageType` continuam com o link genérico
+- `GET /media/:id` exige `Authorization` (requireAuth) — um `<img src>` cru nunca manda esse header.
+  O thumbnail busca a imagem via `useAuthenticatedImage` (`hooks/`), que chama
+  `fetchAuthenticatedBlob` (`api/client.ts`) e usa `URL.createObjectURL` como `src`. Enquanto
+  carrega ou se a busca falhar, mostra texto no lugar da imagem — nunca `<img>` quebrado
 
 ### Composer
 - Input pílula + botão anexo + botão emoji + botão enviar (primary)

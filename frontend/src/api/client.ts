@@ -99,6 +99,46 @@ export function apiBaseUrl(): string {
   return typeof url === 'string' && url.length > 0 ? url : 'http://localhost:3000/api/v1';
 }
 
+/**
+ * Resolve uma URL de mídia (ex. `Message.attachmentUrl`) vinda da API.
+ *
+ * O backend devolve caminho RELATIVO (`/api/v1/media/:id`) — em produção
+ * funciona porque o nginx do frontend faz proxy do mesmo origin. Em dev,
+ * frontend (Vite) e backend rodam em origins diferentes (`VITE_API_URL`
+ * aponta pra outra porta), então um `<img src="/api/v1/media/...">` cru
+ * busca no origin ERRADO. `new URL(caminho, apiBaseUrl())` com caminho
+ * absoluto troca só o origin da base, preservando o `/api/v1/...` do path.
+ * URL já absoluta (ex. mídia hospedada fora) passa direto.
+ */
+export function resolveMediaUrl(url: string): string {
+  if (/^https?:\/\//.test(url)) return url;
+  return new URL(url, apiBaseUrl()).toString();
+}
+
+/**
+ * Busca um recurso de mídia AUTENTICADO (`GET /media/:id` exige
+ * `requireAuth()` — docs/api §media) e devolve os bytes como `Blob`.
+ *
+ * `<img src>`/`<a href>` crus nunca mandam `Authorization`: só servem para URL
+ * pública. Quem precisa exibir mídia protegida busca aqui e usa
+ * `URL.createObjectURL(blob)` como `src` (ver `useAuthenticatedImage`).
+ */
+export async function fetchAuthenticatedBlob(url: string): Promise<Blob> {
+  const token = bridge.getAccessToken();
+  const authHeader = (t: string | null): Record<string, string> =>
+    t ? { Authorization: `Bearer ${t}` } : {};
+
+  let response = await fetch(url, { headers: authHeader(token) });
+  if (response.status === 401 && token) {
+    const refreshed = await refreshAccessToken();
+    response = await fetch(url, { headers: authHeader(refreshed) });
+  }
+  if (!response.ok) {
+    throw new ApiError('INTERNAL_ERROR', 'Não foi possível carregar a mídia', response.status);
+  }
+  return response.blob();
+}
+
 export function buildQueryString(query?: QueryParams): string {
   if (!query) return '';
   const params = new URLSearchParams();

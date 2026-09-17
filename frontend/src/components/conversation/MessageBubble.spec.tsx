@@ -1,13 +1,26 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Message, SenderType } from '@crm-lab/shared';
-import {
+import * as ApiModule from '@/api';
+
+/**
+ * `GET /media/:id` exige Authorization — o componente busca via
+ * `fetchAuthenticatedBlob` e usa `URL.createObjectURL`, nunca a URL crua
+ * direto num `<img src>` (ver `useAuthenticatedImage`).
+ */
+const fetchAuthenticatedBlobMock = vi.fn();
+vi.mock('@/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof ApiModule>();
+  return { ...actual, fetchAuthenticatedBlob: fetchAuthenticatedBlobMock };
+});
+
+const {
   INBOX_BUBBLE_MAX_WIDTH,
   MESSAGE_BUBBLE_TYPES,
   MessageBubble,
   bubbleTypeFor,
-} from './MessageBubble';
+} = await import('./MessageBubble');
 
 /**
  * MessageBubble — COMPONENTS.md: TRÊS tipos, nunca mais.
@@ -106,8 +119,12 @@ describe('MessageBubble', () => {
     );
   });
 
-  it('anexo de imagem mostra thumbnail e abre o lightbox ao clicar (CRMLAB-15)', async () => {
+  it('anexo de imagem busca o blob autenticado e mostra thumbnail; clique abre o lightbox (CRMLAB-15)', async () => {
     const user = userEvent.setup();
+    URL.createObjectURL = vi.fn(() => 'blob:mock-image');
+    URL.revokeObjectURL = vi.fn();
+    fetchAuthenticatedBlobMock.mockResolvedValue(new Blob(['fake'], { type: 'image/jpeg' }));
+
     render(
       <MessageBubble
         type="received"
@@ -116,13 +133,31 @@ describe('MessageBubble', () => {
     );
 
     expect(screen.queryByRole('link', { name: /Anexo/ })).not.toBeInTheDocument();
-    const thumbnail = screen.getByRole('img', { name: 'Anexo enviado na conversa' });
-    expect(thumbnail).toHaveAttribute('src', 'https://arquivo/foto.jpg');
+    expect(fetchAuthenticatedBlobMock).toHaveBeenCalledWith('https://arquivo/foto.jpg');
+
+    const thumbnail = await screen.findByRole('img', { name: 'Anexo enviado na conversa' });
+    expect(thumbnail).toHaveAttribute('src', 'blob:mock-image');
 
     await user.click(thumbnail);
     expect(screen.getByTestId('image-lightbox-backdrop')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Fechar' }));
     expect(screen.queryByTestId('image-lightbox-backdrop')).not.toBeInTheDocument();
+  });
+
+  it('erro ao buscar a imagem mostra mensagem em vez de thumbnail quebrada', async () => {
+    fetchAuthenticatedBlobMock.mockRejectedValue(new Error('network'));
+
+    render(
+      <MessageBubble
+        type="received"
+        message={message({ messageType: 'image', attachmentUrl: 'https://arquivo/foto.jpg' })}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText('Não foi possível carregar a imagem')).toBeInTheDocument(),
+    );
+    expect(screen.queryByRole('img', { name: 'Anexo enviado na conversa' })).not.toBeInTheDocument();
   });
 });

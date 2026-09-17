@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import type { Message, SenderType } from '@crm-lab/shared';
 import { cn } from '@/components/ui';
+import { resolveMediaUrl } from '@/api';
+import { useAuthenticatedImage } from '@/hooks';
 import { DateDisplay, ImageLightbox } from '@/components/shared';
 
 /**
@@ -64,6 +66,13 @@ export function MessageBubble({
   const isImage = message.messageType === 'image' && Boolean(message.attachmentUrl);
   const [lightboxOpen, setLightboxOpen] = useState(false);
 
+  // `GET /media/:id` exige Authorization (requireAuth()) — um <img src> cru
+  // nunca manda esse header, por isso a imagem sempre vinha em branco/401.
+  // O hook busca autenticado e devolve um object URL utilizável em <img>.
+  const { objectUrl: imageUrl, isLoading: imageLoading } = useAuthenticatedImage(
+    isImage ? message.attachmentUrl : null,
+  );
+
   return (
     <div
       data-testid="message-bubble"
@@ -73,29 +82,34 @@ export function MessageBubble({
     >
       <p className="m-0 whitespace-pre-wrap break-words">{message.content}</p>
 
-      {message.attachmentUrl && isImage && (
-        <>
-          <button
-            type="button"
-            onClick={() => setLightboxOpen(true)}
-            className="cursor-pointer self-start rounded-md border-none bg-transparent p-0"
-          >
-            <img
-              src={message.attachmentUrl}
-              alt="Anexo enviado na conversa"
-              className="max-h-[300px] max-w-full rounded-md object-cover"
+      {isImage &&
+        (imageUrl ? (
+          <>
+            <button
+              type="button"
+              onClick={() => setLightboxOpen(true)}
+              className="cursor-pointer self-start rounded-md border-none bg-transparent p-0"
+            >
+              <img
+                src={imageUrl}
+                alt="Anexo enviado na conversa"
+                className="max-h-[300px] max-w-full rounded-md object-cover"
+              />
+            </button>
+            <ImageLightbox
+              src={lightboxOpen ? imageUrl : null}
+              onClose={() => setLightboxOpen(false)}
             />
-          </button>
-          <ImageLightbox
-            src={lightboxOpen ? message.attachmentUrl : null}
-            onClose={() => setLightboxOpen(false)}
-          />
-        </>
-      )}
+          </>
+        ) : (
+          <span className="text-caption text-neutral-600">
+            {imageLoading ? 'Carregando imagem…' : 'Não foi possível carregar a imagem'}
+          </span>
+        ))}
 
       {message.attachmentUrl && !isImage && (
         <a
-          href={message.attachmentUrl}
+          href={resolveMediaUrl(message.attachmentUrl)}
           target="_blank"
           rel="noreferrer"
           className="text-caption font-semibold text-accent-700 underline"

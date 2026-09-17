@@ -4,7 +4,7 @@
  */
 export { ApiError, isApiError, http, request, refreshAccessToken } from './client';
 export { setSessionBridge, setUnauthenticatedHandler, resetApiClient } from './client';
-export { apiBaseUrl, buildQueryString } from './client';
+export { apiBaseUrl, buildQueryString, resolveMediaUrl, fetchAuthenticatedBlob } from './client';
 export type {
   HttpMethod,
   QueryParams,

@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-16 (CRMLAB-12 — editar itens/desconto/médico solicitante da proposta — D-134, mergeado sobre CRMLAB-11)
+**Última atualização:** 2026-09-16 (v1.6.0 — CRMLAB-8 + CRMLAB-11 + CRMLAB-12, mergeados e taggeados)
 
 ---
 
@@ -830,6 +830,15 @@ reabre a aprovação (`pending`) em vez de bloquear.
   primeira versão deste método chamou o catálogo DENTRO do `withTenant` e deadlockou a suíte de
   testes (conexão única do driver PGlite) — corrigido antes do merge.
 - Validado e aprovado pelo usuário no ambiente local em 2026-09-16.
+
+## 2026-09-16 — v1.6.0: CRMLAB-8 + CRMLAB-11 + CRMLAB-12 mergeados, tag criada
+
+Bump minor (1.5.0 → 1.6.0, `package.json` raiz): três features aditivas mergeadas em `main`
+(PR #8 CRMLAB-8, PR #6 CRMLAB-11, PR #7 CRMLAB-12), nenhuma mudança que quebre contrato
+existente.
+
+- Tag `v1.6.0` criada e enviada para o `main` pós-merge.
+- `npm run typecheck` verde nos 4 workspaces no `main` pós-merge.
 
 ## Bloqueios Atuais
 

@@ -26,6 +26,10 @@ export interface Patient {
   customFields: Record<string, string>;
   /** Preenchido pelo apagamento LGPD (D-063). Nao-nulo = cadastro anonimizado. */
   anonymizedAt: IsoDateTime | null;
+  /** Preenchido por `POST .../inactivate` (D-132). Nao-nulo = paciente inativo. */
+  inactivatedAt: IsoDateTime | null;
+  /** Motivo da inativacao. So existe enquanto `inactivatedAt` nao-nulo (D-132). */
+  inactivationReason: string | null;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
 }
@@ -45,6 +49,8 @@ export interface ListPatientsQuery extends PaginationQuery {
   /** Casa nome (full-text 'portuguese'), telefone (so digitos, min. 3) ou documento. */
   search?: string;
   sortBy?: 'name' | 'lastInteractionAt' | 'createdAt' | 'updatedAt';
+  /** Default `false`: a listagem esconde paciente inativo (D-132). */
+  includeInactive?: boolean;
 }
 
 /** Item da listagem: cadastro + a data da ultima interacao (a lista ordena por ela). */
@@ -187,4 +193,18 @@ export interface AnonymizePatientResponse {
   patient: Patient;
   /** Conversas cujas colunas denormalizadas foram limpas na mesma transacao. */
   conversationsAffected: number;
+}
+
+/* ------------------------------------------------------------------ *
+ * Inativacao — POST /patients/:id/inactivate e /reactivate (D-132)
+ * ------------------------------------------------------------------ */
+
+export interface InactivatePatientRequest {
+  /** Motivo da inativacao. 1..500 caracteres. Vai para o audit log. */
+  reason: string;
+}
+
+export interface ReactivatePatientRequest {
+  /** Justificativa da reativacao. 1..500 caracteres. Vai para o audit log. */
+  reason: string;
 }

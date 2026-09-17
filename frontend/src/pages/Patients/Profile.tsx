@@ -10,6 +10,7 @@ import { PageContainer, PageHeader } from '@/components/layout';
 import { DateDisplay, EmptyState } from '@/components/shared';
 import { Button, Chip, useToast } from '@/components/ui';
 import {
+  PatientInactivationSection,
   PatientLgpdSection,
   PatientProfileForm,
   PatientProposals,
@@ -123,6 +124,7 @@ export function PatientProfile() {
         actions={
           <div className="flex items-center gap-sm">
             {patient.anonymizedAt !== null && <Chip tone="attention">Anonimizado</Chip>}
+            {patient.inactivatedAt !== null && <Chip tone="attention">Inativo</Chip>}
             <SendMessageButton patient={patient} />
           </div>
         }
@@ -148,6 +150,8 @@ export function PatientProfile() {
       </p>
 
       <PatientProfileForm patient={patient} />
+
+      <PatientInactivationSection patient={patient} />
 
       <PatientTimeline patientId={patient.id} />
 

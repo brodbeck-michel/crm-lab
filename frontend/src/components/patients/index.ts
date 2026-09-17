@@ -6,3 +6,5 @@ export { PatientProposals } from './PatientProposals';
 export type { PatientProposalsProps } from './PatientProposals';
 export { PatientLgpdSection } from './PatientLgpdSection';
 export type { PatientLgpdSectionProps } from './PatientLgpdSection';
+export { PatientInactivationSection } from './PatientInactivationSection';
+export type { PatientInactivationSectionProps } from './PatientInactivationSection';

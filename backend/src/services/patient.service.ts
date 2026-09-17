@@ -39,6 +39,7 @@
 import type {
   AnonymizePatientRequest,
   AnonymizePatientResponse,
+  InactivatePatientRequest,
   ListPatientTimelineQuery,
   ListPatientTimelineResponse,
   ListPatientsQuery,
@@ -46,6 +47,7 @@ import type {
   PaginationMeta,
   PatientDetail,
   PatientExport,
+  ReactivatePatientRequest,
   UpdatePatientRequest,
 } from '@crm-lab/shared';
 import type { TenantContext } from '../http/context.js';
@@ -288,6 +290,65 @@ export class PatientService {
     };
   }
 
+  /**
+   * Inativacao (D-132/CRMLAB-11). Qualquer papel que enxergue o paciente pode
+   * inativar — nao e acao restrita a admin, ao contrario do bloco LGPD.
+   *
+   * Idempotente: paciente ja inativo devolve o mesmo estado sem novo audit
+   * log (mesmo principio de `anonymize`).
+   */
+  async inactivate(
+    ctx: TenantContext,
+    id: string,
+    dto: InactivatePatientRequest,
+  ): Promise<PatientDetail> {
+    const current = await this.getById(ctx, id);
+    if (current.anonymizedAt !== null) {
+      throw new BusinessError('CONFLICT', { reason: 'patient_anonymized' });
+    }
+
+    const result = await this.repository.inactivate(ctx.tenantId, id, dto.reason, visibilityOf(ctx));
+    if (!result) throw notFound({ resource: 'patient', id });
+
+    if (result.changed) {
+      await this.audit.record(ctx, {
+        action: 'inactivate_patient',
+        entityType: 'patient',
+        entityId: id,
+        newValues: { reason: dto.reason },
+      });
+    }
+    return result.patient;
+  }
+
+  /**
+   * Reativacao (D-132/CRMLAB-11). Exige justificativa igual a inativacao —
+   * ela vai so para o audit log, a linha nao guarda o motivo (D-132).
+   */
+  async reactivate(
+    ctx: TenantContext,
+    id: string,
+    dto: ReactivatePatientRequest,
+  ): Promise<PatientDetail> {
+    const current = await this.getById(ctx, id);
+    if (current.anonymizedAt !== null) {
+      throw new BusinessError('CONFLICT', { reason: 'patient_anonymized' });
+    }
+
+    const result = await this.repository.reactivate(ctx.tenantId, id, visibilityOf(ctx));
+    if (!result) throw notFound({ resource: 'patient', id });
+
+    if (result.changed) {
+      await this.audit.record(ctx, {
+        action: 'reactivate_patient',
+        entityType: 'patient',
+        entityId: id,
+        newValues: { reason: dto.reason },
+      });
+    }
+    return result.patient;
+  }
+
   // -------------------------------------------------------------------------
   // internos
   // -------------------------------------------------------------------------
@@ -311,6 +372,7 @@ export class PatientService {
       limit: clampInt(filters.limit, DEFAULT_LIMIT, 1, MAX_LIMIT),
       sortBy,
       order: filters.order === 'asc' ? 'asc' : DEFAULT_ORDER,
+      includeInactive: filters.includeInactive === true,
     };
   }
 }

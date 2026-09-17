@@ -34,6 +34,8 @@ vi.mock('@/api/patients', () => ({
     timeline: vi.fn(),
     export: vi.fn(),
     anonymize: vi.fn(),
+    inactivate: vi.fn(),
+    reactivate: vi.fn(),
   },
 }));
 
@@ -47,6 +49,8 @@ const updateMock = vi.mocked(patientsApi.update);
 const timelineMock = vi.mocked(patientsApi.timeline);
 const exportMock = vi.mocked(patientsApi.export);
 const anonymizeMock = vi.mocked(patientsApi.anonymize);
+const inactivateMock = vi.mocked(patientsApi.inactivate);
+const reactivateMock = vi.mocked(patientsApi.reactivate);
 const listProposalsMock = vi.mocked(proposalsApi.list);
 
 const PATIENT_ID = '3f1c9b0e-2d54-4a7b-9c11-8e2a6d5f4b30';
@@ -62,6 +66,8 @@ const patient: PatientDetail = {
   tags: ['convênio'],
   customFields: { convenio: 'Unimed' },
   anonymizedAt: null,
+  inactivatedAt: null,
+  inactivationReason: null,
   conversationCount: 4,
   proposalCount: 2,
   lastInteractionAt: '2026-08-23T14:30:00.000Z',
@@ -164,6 +170,8 @@ const exportResponse: PatientExport = {
     tags: patient.tags,
     customFields: patient.customFields,
     anonymizedAt: null,
+    inactivatedAt: null,
+    inactivationReason: null,
     createdAt: patient.createdAt,
     updatedAt: patient.updatedAt,
   },
@@ -203,6 +211,8 @@ describe('Ficha do Paciente', () => {
     listProposalsMock.mockResolvedValue(proposalsResponse);
     updateMock.mockResolvedValue(patient);
     exportMock.mockResolvedValue(exportResponse);
+    inactivateMock.mockResolvedValue({ ...patient, inactivatedAt: '2026-09-15T12:00:00.000Z', inactivationReason: 'Mudou de laboratorio' });
+    reactivateMock.mockResolvedValue(patient);
     useUIStore.setState({ activeModal: null });
   });
 
@@ -518,7 +528,9 @@ describe('Ficha do Paciente', () => {
     signIn('admin');
     renderPage();
 
-    expect(await screen.findByText(/Depois disso o cadastro não pode mais ser editado/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Depois disso o cadastro não pode mais ser editado/),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Anonimizar cadastro' }));
     const dialog = within(screen.getByRole('dialog'));
@@ -535,5 +547,71 @@ describe('Ficha do Paciente', () => {
     await user.click(dialog.getByRole('button', { name: 'Cancelar' }));
 
     expect(anonymizeMock).not.toHaveBeenCalled();
+  });
+
+  /* ── Bloco 5: inativação (D-132, CRMLAB-11) ────────────────────────── */
+
+  it('mostra a seção de status para QUALQUER papel — não é restrita a admin', async () => {
+    signIn('attendant');
+    renderPage();
+
+    expect(await screen.findByText('Status do cadastro')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Inativar paciente' })).toBeInTheDocument();
+  });
+
+  it('exige motivo antes de inativar', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Inativar paciente' }));
+    const dialog = within(screen.getByRole('dialog'));
+    const confirm = dialog.getByRole('button', { name: 'Confirmar inativação' });
+
+    expect(confirm).toBeDisabled();
+    await user.type(dialog.getByLabelText('Motivo da inativação'), 'Mudou de laboratorio');
+    expect(confirm).toBeEnabled();
+
+    await user.click(confirm);
+
+    await waitFor(() =>
+      expect(inactivateMock).toHaveBeenCalledWith(PATIENT_ID, { reason: 'Mudou de laboratorio' }),
+    );
+  });
+
+  it('paciente inativo mostra o motivo e o botão de reativar', async () => {
+    const user = userEvent.setup();
+    getMock.mockResolvedValue({
+      ...patient,
+      inactivatedAt: '2026-09-15T12:00:00.000Z',
+      inactivationReason: 'Mudou de laboratorio',
+    });
+
+    renderPage();
+
+    expect(await screen.findByText(/Paciente inativo desde/)).toBeInTheDocument();
+    expect(screen.getByText(/Mudou de laboratorio/)).toBeInTheDocument();
+    expect(screen.getByText('Inativo')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Reativar paciente' }));
+    const dialog = within(screen.getByRole('dialog'));
+    await user.type(dialog.getByLabelText('Justificativa da reativação'), 'Retornou ao laboratorio');
+    await user.click(dialog.getByRole('button', { name: 'Confirmar reativação' }));
+
+    await waitFor(() =>
+      expect(reactivateMock).toHaveBeenCalledWith(PATIENT_ID, {
+        reason: 'Retornou ao laboratorio',
+      }),
+    );
+  });
+
+  it('cancelar o modal de inativação não dispara a mutação', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Inativar paciente' }));
+    const dialog = within(screen.getByRole('dialog'));
+    await user.click(dialog.getByRole('button', { name: 'Cancelar' }));
+
+    expect(inactivateMock).not.toHaveBeenCalled();
   });
 });

@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-16 (CRMLAB-8 — badge de não lidas do Chat Interno propagado para o grupo "Comunicação" — D-132, mergeado sobre v1.5.0)
+**Última atualização:** 2026-09-16 (CRMLAB-11 — inativar/reativar paciente — D-133, mergeado sobre CRMLAB-8)
 
 ---
 
@@ -769,6 +769,33 @@ usuário durante o dev (fluxo `duvida` do CRMLAB) antes de codar.
 - `npm run typecheck` verde nos 4 workspaces. Frontend: `Sidebar.spec.tsx` verde (19 testes,
   incluindo os 3 casos novos: soma do badge no item, badge substituindo o ponto no grupo
   fechado, badge ausente com zero não lidas).
+- Validado e aprovado pelo usuário em 2026-09-16.
+
+## 2026-09-16 — Inativar/reativar paciente (CRMLAB-11) ✅
+
+Pedido do usuário: hoje não há como marcar um paciente como inativo no CRM. Escopo fechado em
+discussão: qualquer usuário pode inativar/reativar (sem alçada especial), motivo obrigatório nas
+duas pontas, dados vinculados (orçamentos, conversas) permanecem intactos — só passam a
+referenciar o paciente como inativo —, paciente inativo some das listagens por padrão com
+checkbox de filtro para voltar a aparecer.
+
+- **D-133.** `patients` ganha `inactivated_at`/`inactivation_reason` (migração
+  `018_patient_inactivation.sql`, mesmo desenho de `anonymized_at`/D-063 — sem tabela de
+  histórico, sem `DELETE`). `POST /patients/:id/inactivate` e `.../reactivate` novos,
+  **qualquer papel de laboratório** (ao contrário do bloco LGPD, que é admin-only). Motivo vai
+  só para o audit log (`inactivate_patient`/`reactivate_patient`); reativar zera os dois campos
+  na linha. `GET /patients` ganha `?includeInactive=true` (default esconde inativo). Paciente
+  anonimizado não pode ser inativado/reativado (409, mesmo princípio do `PATCH`).
+- Frontend: `PatientInactivationSection.tsx` (novo componente, visível a qualquer papel —
+  diferente de `PatientLgpdSection`) integrado em `Profile.tsx` (chip "Inativo" no cabeçalho);
+  `List.tsx` ganha checkbox "Mostrar inativos" e coluna de status.
+- Docs: `DECISIONS.md` (D-133), `API_CONTRACTS.md` §2c (dois endpoints novos, campos em
+  `Patient`), `SCHEMA.md` §14 (colunas novas), `SERVICES.md` §12 (`inactivate`/`reactivate`),
+  `PAGES.md` §2a/§3.
+- `npm run typecheck` verde nos 4 workspaces. Backend: suíte completa verde (1072 testes,
+  incluindo o inventário de rotas corrigido com `POST /patients/:id/inactivate|reactivate` e o
+  spec novo `patients-inactivation.spec.ts`). Frontend: suíte completa verde (1026 testes,
+  incluindo os casos novos em `Profile.spec.tsx`/`List.spec.tsx`).
 - Validado e aprovado pelo usuário em 2026-09-16.
 
 ## Bloqueios Atuais

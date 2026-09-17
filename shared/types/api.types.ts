@@ -60,6 +60,7 @@ export type ApiErrorCode =
   | 'MESSAGE_SEND_FAILED'
   // Canais (Onda 7 — WhatsApp QR)
   | 'CHANNEL_QR_UNAVAILABLE'
+  | 'CHANNEL_SESSION_STALE'
   // Mídia (Onda 8 §4 — anexo e áudio)
   | 'MEDIA_TOO_LARGE'
   // Vendas — domínio LIS (Onda 9)

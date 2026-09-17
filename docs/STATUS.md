@@ -883,6 +883,40 @@ lightbox). Causa raiz, dois problemas empilhados:
   testes (o teste de thumbnail passou a mockar `fetchAuthenticatedBlob`/`createObjectURL`; +1
   teste novo cobrindo o estado de erro).
 
+## 2026-09-17 — correção: "Desconectar WhatsApp" não surtia efeito em produção ✅
+
+Reportado pelo usuário em produção (vitrocrm.cloud): confirmar a desconexão não fazia nada e o
+número seguia "Conectado". Não era a tela — o backend recusava com 503 (6 tentativas nos logs).
+
+Causa raiz, em camadas:
+
+1. A sessão Baileys do número morreu sozinha às 16:17 (`disconnectionReasonCode: 401`), mas o
+   Evolution v2.3.7 continuou persistindo `connectionStatus: "open"`. Como `GET /status` lê o
+   estado AO VIVO do gateway, a tela mostrava "Conectado" para uma sessão morta.
+2. `DELETE /instance/logout` respondia **500 `Error: Connection Closed`** — não há socket para
+   deslogar. O service traduzia isso em `CHANNEL_QR_UNAVAILABLE` e, corretamente, NÃO marcava o
+   canal como desconectado (não mentir sobre o estado real).
+3. `DELETE /instance/delete` também não era saída: recusa com 400 enquanto o registro disser
+   `open`. Ciclo fechado — e `/instance/restart` **não** quebra o ciclo (mexe no socket sem
+   reavaliar o registro persistido).
+
+Destravado em produção reiniciando o **container** do Evolution (`docker compose restart
+evolution`): no boot ele reavalia as sessões, bate no 401 e marca `state: "close"`. A instância
+foi preservada — apagá-la custaria as 406 mensagens/76 contatos/99 chats do gateway sem
+necessidade.
+
+Dois problemas de diagnóstico corrigidos no código (o usuário ficou cego para a falha):
+
+- A mensagem de `CHANNEL_QR_UNAVAILABLE` é "gateway nao configurado" — enganosa neste caso, já
+  que o gateway estava no ar e configurado. Novo código **`CHANNEL_SESSION_STALE`** (503) com
+  mensagem acionável, detectado por `isSessionClosed` em `evolution-client.ts`.
+  Documentado em `API_ERRORS.md` e em `shared/types/api.types.ts` (`ApiErrorCode`).
+- A falha só aparecia em `text-caption` dentro do modal, sem toast — daí "nada acontece".
+  `Settings/Channels.tsx` agora também dispara toast (`tone: 'attention'`) no `onError`.
+
+- `npm run typecheck` verde nos 4 workspaces. Backend: 75 arquivos, 1084 testes (+1 novo, com o
+  corpo 500 real do v2.3.7 copiado de produção). Frontend: 74 arquivos, 1040 testes. Lint limpo.
+
 ## Bloqueios Atuais
 
 Nenhum.

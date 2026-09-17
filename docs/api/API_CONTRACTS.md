@@ -929,9 +929,17 @@ responder):
   `findOrCreateByPhone` → `MessageService.createFromPatient` (dedupe por `externalId`,
   `unreadCount`, `lastMessageAt`, WS `conversation.new_message`). A tela de Atendimento não
   muda — é o mesmo dado entrando por um canal diferente.
-  **Mídia (Onda 8 §4.2):** `message.imageMessage`/`audioMessage`/`documentMessage` são
-  reconhecidos ao lado de `conversation`/`extendedTextMessage` (o webhook é registrado com
-  `base64: true`). Arquivo acima do teto (15 MiB) é recusado com log — a mensagem não é
+  **Mídia (Onda 8 §4.2):** `message.imageMessage`/`audioMessage`/`documentMessage`/
+  `videoMessage`/`stickerMessage` são reconhecidos ao lado de
+  `conversation`/`extendedTextMessage` (o webhook é registrado com
+  `base64: true`). Vídeo e figurinha entraram na auditoria de 2026-09-17 — antes eram
+  descartados em silêncio. Ambos chegam pelo `messageType` derivado do mime
+  (`video/*` → `doc`): anexo genérico é pior que um player dedicado, mas incomparavelmente
+  melhor que perda silenciosa, e não espalha mudança de contrato pelo frontend.
+  **Sem arquivo:** `locationMessage`/`liveLocationMessage`/`contactMessage`/
+  `contactsArrayMessage` viram uma linha de texto descritiva (`[Localizacao] …`,
+  `[Contato] …`) em vez de sumir.
+  Arquivo acima do teto (15 MiB) é recusado com log — a mensagem não é
   criada, mas o evento continua respondendo `200 {received:true}` do mesmo jeito. **Risco
   aceito:** o campo exato onde o gateway v2.3.7 grava o base64 não foi confirmado contra um
   payload real; o parser aceita tanto `message.<tipo>Message.base64` quanto o nível do
@@ -945,6 +953,27 @@ responder):
 
 **Idempotente:** mesma disciplina do webhook Meta — reentrega da mesma mensagem
 (`externalId`/`key.id`) não duplica linha nem evento.
+
+**Todo descarte é contável (auditoria 2026-09-17).** A resposta `200 {received:true}` é
+igual em todo caminho — inclusive nos de descarte — para não virar oráculo de enumeração.
+O efeito colateral é que o gateway marca "entregue" e **nunca reentrega**: sem rastro, a
+mensagem some para sempre. Por isso todo descarte emite
+`evolution.inbound_discarded` com um `reason` da lista fechada abaixo
+(`DiscardReason`, `webhook.routes.ts`). Nem todo motivo é defeito — `from_me` e `grupo` são
+descarte correto —, mas todos precisam ser contáveis, senão não há como distinguir
+"não chegou nada" de "chegou e foi jogado fora".
+
+| `reason` | Significado | É defeito? |
+|---|---|---|
+| `from_me` | o próprio laboratório respondendo pelo celular | não |
+| `grupo` | `remoteJid` de grupo | não |
+| `payload_sem_key` / `sem_remote_jid` | payload malformado | não (lixo) |
+| `jid_sem_telefone` | `remoteJid` sem telefone extraível | investigar |
+| `lid_sem_remote_jid_alt` | `@lid` sem o telefone real | **sim** — hoje 100% do tráfego chega como `@lid`; se este motivo aparecer, a entrada está cega |
+| `tipo_nao_suportado` | submensagem que o parser não conhece | **sim** — lacuna nossa, dá para fechar |
+| `sem_texto_nem_midia` | `message` vazio | não |
+| `midia_recusada` | arquivo acima do teto | esperado, mas o paciente não é avisado |
+| `erro_no_processamento` | exceção ao gravar | **sim** |
 
 ---
 

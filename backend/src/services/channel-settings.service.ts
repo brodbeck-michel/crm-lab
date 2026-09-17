@@ -61,6 +61,7 @@ import {
   createDefaultEvolutionClient,
   evolutionInstanceName,
   isInstanceNotFound,
+  isSessionClosed,
   type EvolutionClient,
   type EvolutionWebhookConfig,
 } from '../lib/evolution-client.js';
@@ -910,6 +911,13 @@ export function createChannelSettingsService(
     // Instancia ausente = ja esta deslogada: segue para marcar desconectado no
     // banco em vez de recusar, senao o canal fica preso em "conectado".
     await client.logout(evolutionInstanceName(ctx.tenantId)).catch(async (error: unknown) => {
+      // Sessao morta com registro preso em `open`: continua sendo recusa (o
+      // canal NAO fica marcado desconectado, porque o numero ainda aparece
+      // pareado no gateway), mas com um codigo que diz o que fazer. O
+      // `CHANNEL_QR_UNAVAILABLE` generico mandava o admin conferir uma
+      // configuracao que estava certa — em producao isso custou 6 tentativas
+      // cegas antes de alguem olhar o log.
+      if (isSessionClosed(error)) throw new BusinessError('CHANNEL_SESSION_STALE');
       if (!isInstanceNotFound(error)) throw gatewayFailure(error);
     });
     await db.withTenant(ctx.tenantId, (tx) =>

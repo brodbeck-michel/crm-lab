@@ -67,6 +67,12 @@ export const ERROR_CATALOG = {
     statusCode: 503,
     message: 'Conexao por QR indisponivel: gateway nao configurado',
   },
+  CHANNEL_SESSION_STALE: {
+    statusCode: 503,
+    message:
+      'A sessao do WhatsApp caiu no gateway e nao responde ao logout. ' +
+      'Reinicie o servico Evolution para liberar a desconexao',
+  },
 
   // --- Mídia (Onda 8 §4) ---
   MEDIA_TOO_LARGE: { statusCode: 413, message: 'Arquivo excede o tamanho maximo permitido' },

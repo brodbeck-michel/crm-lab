@@ -140,6 +140,21 @@ export function isInstanceNotFound(error: unknown): boolean {
   return error instanceof Error && /does not exist/i.test(error.message);
 }
 
+/**
+ * 500 `Connection Closed` no `/instance/logout` — a sessao Baileys morreu (o
+ * celular deslogou: `disconnectionReasonCode: 401`) mas o Evolution continua
+ * persistindo `connectionStatus: "open"`. Nao ha socket para deslogar, e o
+ * `/instance/delete` recusa com 400 enquanto o registro disser `open` — o ciclo
+ * so quebra reiniciando o CONTAINER do gateway (`/instance/restart` nao basta:
+ * ele mexe no socket sem reavaliar o registro persistido).
+ *
+ * Distinto de "gateway fora do ar": aqui ele responde normalmente. Verificado
+ * em producao contra o v2.3.7 em 2026-09-17.
+ */
+export function isSessionClosed(error: unknown): boolean {
+  return error instanceof Error && /connection closed/i.test(error.message);
+}
+
 /** 403 `This name "x" is already in use.` — instancia ja existe, nao e falha. */
 function isAlreadyInUse(error: unknown): boolean {
   return error instanceof Error && /already in use/i.test(error.message);

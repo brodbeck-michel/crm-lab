@@ -856,3 +856,104 @@ describe('POST /webhooks/evolution/:tenant/status', () => {
     expect(row.rows[0]?.is_active).toBe(true);
   });
 });
+
+/**
+ * Auditoria de 2026-09-17: 30 de 174 mensagens de pacientes (17% do movimento
+ * do dia) existiam no gateway e NUNCA chegaram ao CRM. O webhook responde 200
+ * em todo caminho de descarte — o gateway marca "entregue" e nao reentrega —
+ * entao a perda era estruturalmente invisivel.
+ *
+ * Estes testes fixam as duas metades da correcao: os tipos que o parser jogava
+ * fora agora viram mensagem, e o que continua sendo descartado deixa rastro.
+ */
+describe('tipos que antes sumiam em silencio (auditoria 2026-09-17)', () => {
+  function postUpsert(slug: string, tenantId: string, message: Record<string, unknown>) {
+    return app.agent
+      .post(`${WEBHOOK}/${slug}`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send({
+        event: 'messages.upsert',
+        instance: evolutionInstanceName(tenantId),
+        data: {
+          key: { remoteJid: '5548999997777@s.whatsapp.net', id: `EVO-${slug}` },
+          message,
+          pushName: 'Maria',
+        },
+      });
+  }
+
+  it.each([
+    ['localizacao', { locationMessage: { degreesLatitude: -28.47, degreesLongitude: -49.01 } }],
+    ['contato', { contactMessage: { displayName: 'Dr. Silva' } }],
+  ])('%s vira mensagem de texto legivel em vez de sumir', async (nome, message) => {
+    const slug = `lab-tipo-${nome}`;
+    const tenant = await createTenant({ slug });
+    slugToId.set(slug, tenant.id);
+
+    await postUpsert(slug, tenant.id, message).expect(200);
+
+    expect(await countMessages(tenant.id)).toBe(1);
+  });
+
+  it('mensagem de tipo REALMENTE desconhecido nao grava, mas nao some calada', async () => {
+    const slug = 'lab-tipo-desconhecido';
+    const tenant = await createTenant({ slug });
+    slugToId.set(slug, tenant.id);
+
+    // `pollCreationMessage` nao e tratado por ninguem — o certo e descartar.
+    // O que nao pode e descartar SEM deixar rastro: o `reason` do log
+    // `evolution.inbound_discarded` e a unica prova de que a mensagem existiu.
+    await postUpsert(slug, tenant.id, { pollCreationMessage: { name: 'Enquete' } }).expect(200);
+
+    expect(await countMessages(tenant.id)).toBe(0);
+  });
+
+  it('mensagem do proprio laboratorio (fromMe) continua descartada', async () => {
+    const slug = 'lab-from-me';
+    const tenant = await createTenant({ slug });
+    slugToId.set(slug, tenant.id);
+
+    await app.agent
+      .post(`${WEBHOOK}/${slug}`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send({
+        event: 'messages.upsert',
+        instance: evolutionInstanceName(tenant.id),
+        data: {
+          key: { remoteJid: '5548999997777@s.whatsapp.net', id: 'EVO-fromme', fromMe: true },
+          message: { conversation: 'resposta pelo celular' },
+        },
+      })
+      .expect(200);
+
+    expect(await countMessages(tenant.id)).toBe(0);
+  });
+
+  it('endereçamento @lid usa remoteJidAlt — hoje 100% do trafego real chega assim', async () => {
+    const slug = 'lab-lid';
+    const tenant = await createTenant({ slug });
+    slugToId.set(slug, tenant.id);
+
+    await app.agent
+      .post(`${WEBHOOK}/${slug}`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send({
+        event: 'messages.upsert',
+        instance: evolutionInstanceName(tenant.id),
+        data: {
+          key: {
+            remoteJid: '86101410766855@lid',
+            remoteJidAlt: '554899665750@s.whatsapp.net',
+            id: 'EVO-lid',
+            fromMe: false,
+          },
+          message: { conversation: 'oi, queria marcar um exame' },
+          pushName: 'Joana',
+        },
+      })
+      .expect(200);
+
+    expect(await countConversations(tenant.id)).toBe(1);
+    expect(await countMessages(tenant.id)).toBe(1);
+  });
+});

@@ -377,13 +377,65 @@ interface EvolutionInboundMessage {
   externalId: string | null;
 }
 
-const MEDIA_MESSAGE_KEYS = ['imageMessage', 'audioMessage', 'documentMessage'] as const;
+/**
+ * Submensagens que carregam arquivo. `video` e `sticker` entraram na auditoria
+ * de 2026-09-17: o parser so conhecia imagem/audio/documento, entao um video
+ * de paciente era DESCARTADO em silencio — o pior desfecho possivel, porque o
+ * atendente nunca fica sabendo que recebeu algo.
+ *
+ * Nenhum tipo novo em `MessageType` (`shared/types/conversation.types.ts`):
+ * `messageTypeFromMime` ja mapeia `video/*` para `doc`, entao o video chega
+ * como anexo em vez de sumir. Anexo generico e pior que um player dedicado,
+ * mas e MUITO melhor que perda silenciosa, e nao espalha mudanca de contrato
+ * pelo frontend inteiro. Trocar por um `video` de verdade e evolucao proxima,
+ * nao pre-requisito para parar a perda.
+ */
+const MEDIA_MESSAGE_KEYS = [
+  'imageMessage',
+  'audioMessage',
+  'documentMessage',
+  'videoMessage',
+  'stickerMessage',
+] as const;
 
 const DEFAULT_MEDIA_NAME: Record<(typeof MEDIA_MESSAGE_KEYS)[number], string> = {
   imageMessage: 'imagem',
   audioMessage: 'audio',
   documentMessage: 'documento',
+  videoMessage: 'video',
+  stickerMessage: 'figurinha',
 };
+
+/**
+ * Tipos SEM arquivo que viravam descarte silencioso: localizacao e contato
+ * compartilhado. Nao tem midia nem texto proprio, entao caiam no
+ * `!text && !media` e sumiam. Agora viram uma linha de texto legivel — o
+ * atendente ve que o paciente mandou o endereco, mesmo sem mapa na tela.
+ */
+function describeNonMedia(message: Record<string, unknown>): string | null {
+  const location = asRecord(message.locationMessage) ?? asRecord(message.liveLocationMessage);
+  if (location) {
+    const lat = location.degreesLatitude;
+    const lng = location.degreesLongitude;
+    const name = asNonEmptyString(location.name);
+    const coords =
+      typeof lat === 'number' && typeof lng === 'number' ? `${lat}, ${lng}` : 'sem coordenadas';
+    return name ? `[Localizacao] ${name} (${coords})` : `[Localizacao] ${coords}`;
+  }
+
+  const contact = asRecord(message.contactMessage);
+  if (contact) {
+    return `[Contato] ${asNonEmptyString(contact.displayName) ?? 'sem nome'}`;
+  }
+
+  const contacts = message.contactsArrayMessage;
+  if (asRecord(contacts)) {
+    const list = asRecord(contacts)?.contacts;
+    const count = Array.isArray(list) ? list.length : 0;
+    return `[Contatos] ${count} contato(s) compartilhado(s)`;
+  }
+  return null;
+}
 
 /**
  * `message.imageMessage`/`audioMessage`/`documentMessage`, com o base64
@@ -434,35 +486,78 @@ function mediaCaption(message: Record<string, unknown> | null): string | null {
  *   Sem `remoteJidAlt` a mensagem e DESCARTADA de proposito (com log): uma
  *   conversa presa a um LID seria pior que nenhuma — sem resposta e sem dedupe.
  */
-function inboundPhoneOf(key: Record<string, unknown> | null): string | null {
-  if (!key || key.fromMe === true) return null;
+function inboundPhoneOf(key: Record<string, unknown> | null): PhoneResult {
+  if (!key) return { ok: false, reason: 'payload_sem_key' };
+  if (key.fromMe === true) return { ok: false, reason: 'from_me' };
   const jid = asNonEmptyString(key.remoteJid);
-  if (!jid || jid.endsWith('@g.us')) return null;
-  return jid.endsWith('@lid') ? phoneFromJid(key.remoteJidAlt) : phoneFromJid(jid);
+  if (!jid) return { ok: false, reason: 'sem_remote_jid' };
+  if (jid.endsWith('@g.us')) return { ok: false, reason: 'grupo' };
+  const phone = jid.endsWith('@lid') ? phoneFromJid(key.remoteJidAlt) : phoneFromJid(jid);
+  if (!phone) {
+    return { ok: false, reason: jid.endsWith('@lid') ? 'lid_sem_remote_jid_alt' : 'jid_sem_telefone' };
+  }
+  return { ok: true, phone };
 }
 
-function evolutionInboundOf(data: unknown): EvolutionInboundMessage | null {
+type PhoneResult = { ok: true; phone: string } | { ok: false; reason: DiscardReason };
+
+/**
+ * Por que uma mensagem recebida NAO virou mensagem no CRM.
+ *
+ * Nem todo motivo e defeito: `from_me` e `grupo` sao descarte correto e
+ * esperado (o laboratorio respondendo pelo celular, conversa de grupo). O que
+ * a auditoria de 2026-09-17 mostrou e que ate o descarte CORRETO precisa ser
+ * contavel — sem isso nao da para distinguir "nao chegou nada" de "chegou e o
+ * parser jogou fora", e 17% do movimento de um dia sumiu sem ninguem notar.
+ */
+export type DiscardReason =
+  | 'payload_sem_key'
+  | 'from_me'
+  | 'grupo'
+  | 'sem_remote_jid'
+  | 'jid_sem_telefone'
+  | 'lid_sem_remote_jid_alt'
+  | 'tipo_nao_suportado'
+  | 'sem_texto_nem_midia'
+  | 'midia_recusada'
+  | 'erro_no_processamento';
+
+export type EvolutionInboundResult =
+  | { ok: true; message: EvolutionInboundMessage }
+  | { ok: false; reason: DiscardReason; messageType: string | null };
+
+function evolutionInboundOf(data: unknown): EvolutionInboundResult {
   const record = asRecord(data);
-  if (!record) return null;
+  const messageType = record ? asNonEmptyString(record.messageType) : null;
+  if (!record) return { ok: false, reason: 'payload_sem_key', messageType };
   const key = asRecord(record.key);
   const phone = inboundPhoneOf(key);
-  if (!phone) return null;
+  if (!phone.ok) return { ok: false, reason: phone.reason, messageType };
 
   const message = asRecord(record.message);
   const media = evolutionInboundMediaOf(message);
   const text =
     (message && asNonEmptyString(message.conversation)) ??
     (message && asNonEmptyString(asRecord(message.extendedTextMessage)?.text)) ??
+    (message && describeNonMedia(message)) ??
     mediaCaption(message);
-  if (!text && !media) return null;
+  if (!text && !media) {
+    // Distingue "tipo que este parser nao entende" de "payload vazio": o
+    // primeiro e uma lacuna NOSSA que da para fechar, o segundo e lixo.
+    const known = message !== null && Object.keys(message).length > 0;
+    return { ok: false, reason: known ? 'tipo_nao_suportado' : 'sem_texto_nem_midia', messageType };
+  }
 
   return {
-    phone,
-    // Sem legenda: o nome do arquivo vira o preview da conversa em vez de "".
-    text: text ?? media?.fileName ?? '',
-    media,
-    name: asNonEmptyString(record.pushName),
-    externalId: key ? asNonEmptyString(key.id) : null,
+    ok: true,
+    message: {
+      phone: phone.phone,
+      // Sem legenda: o nome do arquivo vira o preview da conversa em vez de "".
+      text: text ?? media?.fileName ?? '',
+      media,
+      name: asNonEmptyString(record.pushName),
+      externalId: key ? asNonEmptyString(key.id) : null,
+    },
   };
 }
 
@@ -555,7 +650,19 @@ export function evolutionInbound(services: WebhookServices, db: DbClient): Reque
     }
 
     if (event === 'MESSAGES_UPSERT') {
-      const inbound = evolutionInboundOf(body?.data);
+      const parsed = evolutionInboundOf(body?.data);
+      if (!parsed.ok) {
+        // Este log e a UNICA prova de que a mensagem existiu. Sem ele (o
+        // comportamento ate 2026-09-17) o webhook respondia 200 e a mensagem
+        // sumia sem deixar rastro — e o gateway nao reentrega, porque 200
+        // significa "entregue". Ver `DiscardReason`.
+        logger.warn('evolution.inbound_discarded', {
+          tenantId,
+          reason: parsed.reason,
+          messageType: parsed.messageType,
+        });
+      }
+      const inbound = parsed.ok ? parsed.message : null;
       if (inbound) {
         try {
           // WORKFLOWS §1, mesmo caminho do webhook da Meta.
@@ -578,6 +685,16 @@ export function evolutionInbound(services: WebhookServices, db: DbClient): Reque
                 externalId: inbound.externalId,
               });
               await services.media.attachToMessage(tenantId, stored.id, message.id);
+            } else {
+              // Continua sem criar mensagem (spec Onda 8 §4.2), mas agora
+              // DEIXA RASTRO: antes o arquivo recusado sumia junto com a
+              // mensagem e ninguem conseguia saber que o paciente tentou
+              // mandar algo.
+              logger.warn('evolution.inbound_discarded', {
+                tenantId,
+                reason: 'midia_recusada' satisfies DiscardReason,
+                messageType: inbound.media.mimeType,
+              });
             }
           } else {
             await services.messages.createFromPatient(tenantId, conversation.id, {
@@ -591,6 +708,7 @@ export function evolutionInbound(services: WebhookServices, db: DbClient): Reque
           logger.error('evolution.inbound_message_rejected', {
             tenantId,
             externalId: inbound.externalId,
+            discardReason: 'erro_no_processamento' satisfies DiscardReason,
             reason: err instanceof Error ? err.message : String(err),
           });
         }

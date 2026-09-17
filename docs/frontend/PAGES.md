@@ -153,8 +153,8 @@ enxerga quem já veria por uma conversa). `platform_operator` não acessa (§11)
   "achar paciente por nome, CPF ou telefone" sem inventar parâmetro novo (Regra Zero).
 - **Tabela:** colunas Nome, Telefone, CPF (formatado `000.000.000-00` quando 11 dígitos,
   senão o valor cru), Última interação (`DateDisplay`, `—` quando `null`), Status (`Chip`
-  "Ativo"/"Inativo", D-132). Linha clicável → `/patients/:id`.
-- **Checkbox "Mostrar inativos" (D-132, CRMLAB-11):** desmarcado por padrão — a listagem esconde
+  "Ativo"/"Inativo", D-133). Linha clicável → `/patients/:id`.
+- **Checkbox "Mostrar inativos" (D-133, CRMLAB-11):** desmarcado por padrão — a listagem esconde
   paciente inativo (`GET /patients` sem `includeInactive` já esconde no servidor). Marcar pede
   `?includeInactive=true` e traz ativos e inativos juntos, cada um com seu `Chip` de status.
 - **Paginação:** `Pagination` (`components/shared`), 20 por página (default do contrato).
@@ -192,7 +192,7 @@ ciclo de atualização e sua paginação:
 | Contadores (conversas, propostas, última interação) | vêm no mesmo `GET /patients/:id` | derivados, e no **recorte do usuário** — dois usuários podem ver números diferentes |
 | Histórico de interações (timeline) | `GET /patients/:id/timeline?page&limit&kind&order` | união de mensagens, aberturas de conversa, criação de proposta e mudança de estágio; `desc` por padrão |
 | Propostas do paciente | `GET /proposals?patientId=<id>` | não há endpoint próprio: reusa a listagem, a visibilidade (D-042) e o `ProposalCard`/modal de §6 |
-| Status do cadastro (inativar/reativar) | `POST /patients/:id/inactivate` e `.../reactivate` | **qualquer papel** que enxergue o paciente (D-132, CRMLAB-11) — ao contrário da seção LGPD abaixo |
+| Status do cadastro (inativar/reativar) | `POST /patients/:id/inactivate` e `.../reactivate` | **qualquer papel** que enxergue o paciente (D-133, CRMLAB-11) — ao contrário da seção LGPD abaixo |
 | Seção LGPD | `GET /patients/:id/export` e `POST /patients/:id/anonymize` | **admin apenas** — esconder para os demais é UX; o servidor recusa (403) de qualquer forma |
 
 **Timeline:** cada entrada é uma união discriminada por `kind`
@@ -210,7 +210,7 @@ faz switch em `kind`, nunca em heurística de campo presente. `entry.id` é
 - Paciente com `anonymizedAt != null` renderiza o cadastro em estado vazio e **desabilita a
   edição** (o `PATCH` responde `409 CONFLICT` com `details.reason: "patient_anonymized"`).
 
-**Status do cadastro (D-132, CRMLAB-11):** seção `PatientInactivationSection`, visível a
+**Status do cadastro (D-133, CRMLAB-11):** seção `PatientInactivationSection`, visível a
 **qualquer papel** (diferente da seção LGPD, que é admin-only). Botão "Inativar paciente"/
 "Reativar paciente" abre modal exigindo motivo (1..500, obrigatório nas duas direções). Paciente
 inativo ganha `Chip` "Inativo" no cabeçalho da ficha e na coluna de status de `/patients`
@@ -472,6 +472,16 @@ quando a primeira mensagem chega (mesmo evento `internal_chat.new_message` de se
   divisor "novas mensagens". `null` = nunca abriu.
 - Mensagem de sistema conta como não lida — o pedido de aprovação em `#aprovacoes` é o caso
   que mais precisa piscar. Mensagem do próprio usuário nunca conta.
+
+### Badge de não lidas no menu lateral (D-132 — CRMLAB-8)
+
+O item "Chat Interno" da Sidebar (`COMPONENTS.md` — Sidebar) mostra um `Badge` com a soma de
+`Channel.unreadCount` de todos os canais (mesma lista de `GET /internal-chat/channels` que a
+tela usa, cache compartilhado via `queryKeys.internalChannels()` — sem endpoint novo). Se o grupo
+"Comunicação" estiver **recolhido** e esse total for maior que zero, o mesmo `Badge` (com o
+mesmo total) aparece no cabeçalho do grupo, no lugar do ponto de "item ativo dentro" (D-128);
+some ao abrir o grupo, ao entrar num canal (unread zera) ou ao chegar a zero. Sem som e sem
+notificação push do navegador — só esse indicador visual dentro do próprio CRM.
 
 ### Paginação do histórico (D-069)
 

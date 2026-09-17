@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-13 (v1.5.0 — CRMLAB-9 Médico solicitante + CRMLAB-10 Pacotes de exames, mergeados e taggeados para homologação)
+**Última atualização:** 2026-09-16 (CRMLAB-11 — inativar/reativar paciente — D-133, mergeado sobre CRMLAB-8)
 
 ---
 
@@ -752,7 +752,26 @@ contrato existente.
 - Tag `v1.5.0` criada e enviada para o `main` pós-merge.
 - `npm run typecheck` verde nos 4 workspaces no `main` pós-merge.
 
-## 2026-09-15 — Inativar/reativar paciente (CRMLAB-11) ✅
+## 2026-09-16 — Badge de não lidas do Chat Interno no menu lateral (CRMLAB-8) ✅
+
+Usuário reportou que mensagem em conversa/grupo recolhido passava despercebida. Investigação
+mostrou que o chat interno não tem hierarquia de grupos de conversa própria — o único "grupo
+recolhível" do produto é o grupo de menu "Comunicação" (D-127/D-128); ambiguidade resolvida com o
+usuário durante o dev (fluxo `duvida` do CRMLAB) antes de codar.
+
+- **D-132.** `Sidebar.tsx` soma `Channel.unreadCount` de `GET /internal-chat/channels` (mesma
+  query/cache de `InternalChat/index.tsx`, sem endpoint novo) e mostra um `Badge` no item "Chat
+  Interno" (mesmo padrão do badge de "Decisões"). Grupo "Comunicação" fechado com total > 0: o
+  mesmo `Badge` aparece no cabeçalho do grupo, no lugar do ponto de "item ativo dentro" (D-128).
+  Sem som, sem notificação push do navegador.
+- Docs: `DECISIONS.md` (D-132), `PAGES.md` (§9 — novo bloco "Badge de não lidas no menu lateral"),
+  `COMPONENTS.md` (`Sidebar`).
+- `npm run typecheck` verde nos 4 workspaces. Frontend: `Sidebar.spec.tsx` verde (19 testes,
+  incluindo os 3 casos novos: soma do badge no item, badge substituindo o ponto no grupo
+  fechado, badge ausente com zero não lidas).
+- Validado e aprovado pelo usuário em 2026-09-16.
+
+## 2026-09-16 — Inativar/reativar paciente (CRMLAB-11) ✅
 
 Pedido do usuário: hoje não há como marcar um paciente como inativo no CRM. Escopo fechado em
 discussão: qualquer usuário pode inativar/reativar (sem alçada especial), motivo obrigatório nas
@@ -760,7 +779,7 @@ duas pontas, dados vinculados (orçamentos, conversas) permanecem intactos — s
 referenciar o paciente como inativo —, paciente inativo some das listagens por padrão com
 checkbox de filtro para voltar a aparecer.
 
-- **D-132.** `patients` ganha `inactivated_at`/`inactivation_reason` (migração
+- **D-133.** `patients` ganha `inactivated_at`/`inactivation_reason` (migração
   `018_patient_inactivation.sql`, mesmo desenho de `anonymized_at`/D-063 — sem tabela de
   histórico, sem `DELETE`). `POST /patients/:id/inactivate` e `.../reactivate` novos,
   **qualquer papel de laboratório** (ao contrário do bloco LGPD, que é admin-only). Motivo vai
@@ -770,12 +789,14 @@ checkbox de filtro para voltar a aparecer.
 - Frontend: `PatientInactivationSection.tsx` (novo componente, visível a qualquer papel —
   diferente de `PatientLgpdSection`) integrado em `Profile.tsx` (chip "Inativo" no cabeçalho);
   `List.tsx` ganha checkbox "Mostrar inativos" e coluna de status.
-- Docs: `DECISIONS.md` (D-132), `API_CONTRACTS.md` §2c (dois endpoints novos, campos em
+- Docs: `DECISIONS.md` (D-133), `API_CONTRACTS.md` §2c (dois endpoints novos, campos em
   `Patient`), `SCHEMA.md` §14 (colunas novas), `SERVICES.md` §12 (`inactivate`/`reactivate`),
   `PAGES.md` §2a/§3.
-- `npm run typecheck` verde nos 4 workspaces. Backend: suíte completa verde (52 testes em
-  `tests/patients/*`, incluindo o spec novo `patients-inactivation.spec.ts`). Frontend: suíte
-  completa verde (1026 testes, incluindo os casos novos em `Profile.spec.tsx`/`List.spec.tsx`).
+- `npm run typecheck` verde nos 4 workspaces. Backend: suíte completa verde (1072 testes,
+  incluindo o inventário de rotas corrigido com `POST /patients/:id/inactivate|reactivate` e o
+  spec novo `patients-inactivation.spec.ts`). Frontend: suíte completa verde (1026 testes,
+  incluindo os casos novos em `Profile.spec.tsx`/`List.spec.tsx`).
+- Validado e aprovado pelo usuário em 2026-09-16.
 
 ## Bloqueios Atuais
 

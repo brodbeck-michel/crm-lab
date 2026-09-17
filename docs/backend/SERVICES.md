@@ -479,14 +479,14 @@ interface PatientService {
     dto: AnonymizePatientRequest,
   ): Promise<AnonymizePatientResponse>;
 
-  /** Qualquer papel de laboratório (D-132, CRMLAB-11). Idempotente. */
+  /** Qualquer papel de laboratório (D-133, CRMLAB-11). Idempotente. */
   inactivate(
     ctx: TenantContext,
     id: string,
     dto: InactivatePatientRequest,
   ): Promise<PatientDetail>;
 
-  /** Qualquer papel de laboratório (D-132). Idempotente. */
+  /** Qualquer papel de laboratório (D-133). Idempotente. */
   reactivate(
     ctx: TenantContext,
     id: string,
@@ -545,7 +545,7 @@ da transação da conversa — ver a regra de nascimento abaixo.
   valores antigos.
 - Depois de anonimizado, `update` lança `BusinessError('CONFLICT', { reason:
   'patient_anonymized' })`; `getById` e `exportData` continuam funcionando.
-- **`inactivate`/`reactivate` (D-132, CRMLAB-11):** ao contrário de `exportData`/`anonymize`,
+- **`inactivate`/`reactivate` (D-133, CRMLAB-11):** ao contrário de `exportData`/`anonymize`,
   **não** são `admin` — qualquer papel que enxergue o paciente aciona (mesma alçada do
   `update`). `inactivate` grava `inactivated_at`/`inactivation_reason`; `reactivate` zera os
   dois. As duas são idempotentes (`WHERE inactivated_at IS [NOT] NULL` no repositório) e só

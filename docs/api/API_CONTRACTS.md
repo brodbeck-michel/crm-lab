@@ -974,7 +974,7 @@ tentar salvar um duplicado é recusado com `409 CONFLICT`, não fundido.
 **Não existe `DELETE /patients/:id`.** O caminho LGPD de apagamento é
 `POST /patients/:id/anonymize` (D-063).
 
-**Inativação (D-132, CRMLAB-11) não é o mesmo que LGPD.** `POST /patients/:id/inactivate` e
+**Inativação (D-133, CRMLAB-11) não é o mesmo que LGPD.** `POST /patients/:id/inactivate` e
 `.../reactivate` são ação de **qualquer papel de laboratório** (mesma alçada do `PATCH /:id`,
 sem `requireRoles`) — bem diferente do bloco LGPD acima, que é `admin`. Inativar não apaga nem
 esvazia nada: só marca o cadastro e some ele da listagem por padrão.
@@ -991,7 +991,7 @@ consulta este endpoint com `limit=5` e mostra o bloco "Pacientes" abaixo da fila
 ?page=1&limit=20                      (limit máx. 100 — PaginationMeta de D-009)
 ?search=joão                          (máx. 120 caracteres)
 ?sortBy=name|lastInteractionAt|createdAt|updatedAt&order=asc|desc
-?includeInactive=true                 (default false — esconde paciente inativo, D-132)
+?includeInactive=true                 (default false — esconde paciente inativo, D-133)
 ```
 
 `search` casa **três** coisas, em OR: nome (full-text `portuguese`, mesma expressão do índice
@@ -1030,7 +1030,7 @@ dígitos ou mais**, igual a `/conversations`) e documento (dígitos, casamento p
 nunca coluna materializada — BUSINESS_RULES §5. É `null` para paciente sem interação visível.
 
 `includeInactive` ausente/`false` (default): a listagem **esconde** paciente com
-`inactivatedAt` não-nulo (D-132). `?includeInactive=true` traz os dois — não existe um filtro
+`inactivatedAt` não-nulo (D-133). `?includeInactive=true` traz os dois — não existe um filtro
 "só inativo" separado; o checkbox "Mostrar inativos" da tela pede tudo e o cliente já vê o
 `Chip` de status por linha.
 
@@ -1330,7 +1330,7 @@ cadastro vazio — é a prova de que o apagamento aconteceu.
 `NOT_FOUND` (404)
 
 ### POST /patients/:id/inactivate
-Inativação (D-132, CRMLAB-11). **Qualquer papel de laboratório** que enxergue o paciente —
+Inativação (D-133, CRMLAB-11). **Qualquer papel de laboratório** que enxergue o paciente —
 mesma alçada do `PATCH /:id`, sem `requireRoles`. Não é ação LGPD e não apaga nada.
 
 **Request:**
@@ -1356,7 +1356,7 @@ sobrescreve `inactivation_reason` nem grava um segundo audit log) — mesmo prin
 princípio do `PATCH`), `FORBIDDEN` (403, `platform_operator`)
 
 ### POST /patients/:id/reactivate
-Reativação (D-132, CRMLAB-11). Mesma alçada de `.../inactivate` — qualquer papel de
+Reativação (D-133, CRMLAB-11). Mesma alçada de `.../inactivate` — qualquer papel de
 laboratório, **exige justificativa** também.
 
 **Request:**

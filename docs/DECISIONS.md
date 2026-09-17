@@ -1655,7 +1655,7 @@ LIS.
 `Sidebar.spec.tsx` e `route-config.spec.ts` (asserts de grupo/rótulo atualizados). Nenhuma mudança
 de rota, papel, contrato de API ou do componente `Sidebar.tsx` em si (D-128 continua valendo).
 
-### D-130: Badge de não lidas do Chat Interno propaga para o grupo "Comunicação" quando recolhido
+### D-132: Badge de não lidas do Chat Interno propaga para o grupo "Comunicação" quando recolhido
 
 **Decisão:** `Sidebar.tsx` passa a somar `Channel.unreadCount` de `GET /internal-chat/channels`
 (mesma query, cache compartilhado via `queryKeys.internalChannels()` com a tela de chat — sem
@@ -1672,6 +1672,51 @@ de menu "Comunicação" (D-127/D-128). Ambiguidade resolvida com o usuário dura
 é o grupo de menu, não um agrupamento novo dentro do chat.
 **Impacto:** só frontend (`Sidebar.tsx`). Nenhum endpoint novo, nenhuma mudança de schema —
 `Channel.unreadCount` já existe (D-068).
+
+### D-130: Cadastro de pacotes de exames (combos) — nova aba em Cadastro de Exames
+**Decisão:** nova aba "Pacotes" em `/catalog`, ao lado da lista de exames (`SegmentedControl`,
+mesmo padrão da aba "Dados"/"Preços por convênio" do `ExamModal`). Cadastro: `exam_packages` +
+`exam_package_items` (M:N com `exam_catalog`) + `exam_package_prices` (preço por convênio,
+SCHEMA.md §28-30). `pricePrivate` do pacote **nunca** é gravado — é sempre
+`calculatePackagePrivatePrice(items, discountPercent)`: soma dos `pricePrivate` CORRENTES dos
+exames incluídos, menos `discountPercent`%, calculada em `@crm-lab/shared` (mesma função no
+backend e no frontend). Preço por convênio do pacote segue o mesmo mecanismo de fallback de
+`exam_prices` (§19/D-081): sem override, `effectivePrice` cai no `pricePrivate` calculado.
+Permissões: mesma alçada do catálogo — atendente só leitura, gestor/admin cria/edita/desativa
+(sem `DELETE`, D-004).
+**Ao adicionar um pacote em `/budget/new`:** expande em N linhas no resumo, uma por exame
+incluído, usando o `pricePrivate` de cada `ExamPackageItem` — não o `effectivePrice` do pacote
+(que é só o preço agregado mostrado no seletor, ver SCHEMA.md §30 para o motivo dessa escolha).
+O atendente vê a soma resultante e pode ajustar o desconto geral do orçamento normalmente
+(`DiscountSection` já existente em `SummaryColumn`) — não há um "desconto do pacote" que se
+propague automaticamente para o orçamento; ele só influencia o `pricePrivate` MOSTRADO do
+pacote no seletor.
+**Motivo:** pedido do usuário — hoje só existe cadastro de exames individuais; pacotes/combos
+(ex.: check-ups) precisam de cadastro próprio. Escopo fechado com o usuário: sem preço próprio
+digitado (sempre derivado), mesma alçada e convenção ativo/inativo do catálogo de exames.
+**Impacto:** backend (`exam-package.{routes,service,repository}.ts`, migrações `015`/`016`),
+`shared/types/exam-package.types.ts`, frontend (`PackageTable.tsx`, `PackageModal.tsx`,
+`PackagePricesTab.tsx`, aba nova em `Catalog.tsx`; segmento "Pacotes" de `CatalogSegments.tsx`
+em `/budget/new` passa a listar pacotes de verdade — consome, não resolve por completo, o bug
+CRMLAB-13 das abas "Pedido Médico"/"IA" que continuam vazias).
+
+### D-131: Campo "Médico solicitante" na proposta — texto livre, opcional, imutável após criação
+**Decisão:** `POST /proposals` ganha `requestingDoctor` (opcional, texto livre até 255
+caracteres, aparado pelo backend — vazio/só espaço vira `NULL`, nunca `""`). Sem
+cadastro/autocomplete de médicos — é só um campo de texto na proposta. Aparece em
+`ProposalDetail`/`GET /proposals/:id` e é imutável depois de criado (mesma convenção de
+`insuranceId`: sem `PATCH` que o altere nesta onda). Propostas existentes ficam `NULL`, sem
+migração de dados retroativa.
+**Motivo:** pedido do usuário para rastrear qual médico solicitou o exame/procedimento
+diretamente na proposta/orçamento (CRMLAB-9). Escopo fechado com o usuário: campo simples,
+sem bloquear a criação, sem novo cadastro.
+**Impacto:** `shared/types/proposal.types.ts` (campo novo), `proposal.repository.ts` (coluna
+nova, `017_proposal_requesting_doctor.sql`), `proposal.service.ts` (normaliza vazio → `null`),
+`proposal.routes.ts` (aceita no `POST`). Frontend: `SummaryColumn.tsx` (`Input` em
+`/budget/new`), `ProposalModal.tsx` (exibe só quando preenchido). Sobre "aparecer no PDF": não
+existe hoje geração de PDF de proposta individual (só Relatório Executivo/Comissão/Busca Ativa,
+client-side); quando existir, lê `requestingDoctor` do detalhe como qualquer outro campo —
+não é pendência aberta, ver API_CONTRACTS.md §3.
 
 ## Template para novas decisões
 

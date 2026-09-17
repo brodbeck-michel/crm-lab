@@ -1418,6 +1418,7 @@ Detalhes completos de uma proposta.
   "discountPercent": 10,
   "totalPrice": 179.80,
   "insuranceId": "8f2a1c4b-6d39-4f70-9a12-5c8e3b7d1f06",
+  "requestingDoctor": "Dra. Ana Souza",
   "items": [
     {
       "id": "uuid",
@@ -1461,6 +1462,20 @@ onde `unitPrice` veio no momento da criação: `"insurance"` quando havia preço
 exemplo — a proposta tem convênio, mas o exame não tinha preço cadastrado para ele). A UI marca
 o item com badge "particular" quando `priceSource === "private"` numa proposta **com** convênio.
 
+`requestingDoctor` (CRMLAB-9, D-131) é texto livre com o nome do médico solicitante (indicação
+clínica) — **opcional**, `null` quando não informado (inclusive em toda proposta criada antes
+desta mudança, sem migração de dados). Sem cadastro/autocomplete de médicos: é só um campo de
+texto na proposta. **Imutável após a criação**, mesma convenção de `insuranceId` — não há
+`PATCH` que o altere nesta onda.
+
+**Sobre "aparecer no PDF/exportação" (escopo do card CRMLAB-9):** nesta onda **não existe**
+nenhuma geração de PDF/exportação da proposta em si (os únicos PDFs do sistema hoje são
+Relatório Executivo, Comissão e Busca Ativa, todos gerados no cliente com `jspdf` a partir de
+dados agregados — nenhum deles imprime uma proposta individual, ver PAGES.md §8/§16/§19). O
+requisito fica satisfeito por construção: quando um export/PDF de proposta for criado em onda
+futura, ele lê `ProposalDetail.requestingDoctor` como qualquer outro campo do detalhe — não há
+nada a "esquecer". Registrado aqui para não ser confundido com pendência aberta.
+
 ### POST /proposals
 Criar nova proposta.
 
@@ -1473,9 +1488,15 @@ Criar nova proposta.
     { "examId": "uuid", "quantity": 1 },
     { "examId": "uuid", "quantity": 1 }
   ],
-  "discountPercent": 10
+  "discountPercent": 10,
+  "requestingDoctor": "Dra. Ana Souza"
 }
 ```
+
+`requestingDoctor` (CRMLAB-9) é opcional: `null`/ausente/string vazia = nenhum médico
+informado. Texto livre, máximo 255 caracteres, aparado (`trim`) pelo backend — string vazia
+após o `trim` vira `NULL`, não é gravada como `""`. Sem validação de existência (não há
+cadastro de médicos).
 
 `insuranceId` (Onda 7) é opcional: `null`/ausente = particular (D-082). Quando presente, o
 preço de cada item é resolvido por convênio (`ExamCatalogService.resolveActiveByIds(...,
@@ -1501,6 +1522,7 @@ tem preço cadastrado para aquele convênio — o fallback **nunca bloqueia** a 
   "discountPercent": 10,
   "totalPrice": 173.25,
   "insuranceId": "8f2a1c4b-6d39-4f70-9a12-5c8e3b7d1f06",
+  "requestingDoctor": "Dra. Ana Souza",
   "items": [
     {
       "id": "uuid",
@@ -2111,6 +2133,111 @@ Auditado (`update_exam_prices`).
 
 **Erros:** `NOT_FOUND` (exame de outro tenant), `VALIDATION_ERROR` (400, `details.fields`),
 `FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
+
+---
+
+## 4b. Exam Packages (Pacotes de Exames — CRMLAB-10, D-130)
+
+Shapes em `shared/types/exam-package.types.ts`, SCHEMA.md §28-30. Cadastro de pacotes (combos)
+dentro da mesma tela de Cadastro de Exames (`/catalog`), aba "Pacotes" — **não** é o modo
+"Pacotes" da tela de Novo Orçamento (bug CRMLAB-13, backlog separado; ver nota em SCHEMA.md §30
+sobre como as duas telas se relacionam). Mesmo padrão de ativo/inativo do §4 (D-004): não existe
+`DELETE`.
+
+### GET /exam-packages
+Listar pacotes do laboratório. Qualquer papel autenticado do tenant.
+
+**Query Params:**
+```
+?active=true                 // omitido = ativos e inativos
+?search=checkup               // casa nome do pacote, sem caixa nem acento
+?page=1&limit=50             // default page=1, limit=20, máximo 100
+?sortBy=name&order=asc       // sortBy: name|discountPercent|createdAt|updatedAt
+?insuranceId=uuid            // acrescenta effectivePrice/priceSource a cada item (aditivo)
+```
+
+**Response (200):**
+```json
+{
+  "packages": [
+    {
+      "id": "uuid",
+      "name": "Check-up Cardiológico",
+      "discountPercent": 10,
+      "items": [
+        { "examId": "uuid", "examName": "Hemograma completo", "examCode": "HC", "pricePrivate": 89.90 },
+        { "examId": "uuid", "examName": "Colesterol total", "examCode": "COL", "pricePrivate": 45.00 }
+      ],
+      "pricePrivate": 121.41,
+      "isActive": true,
+      "createdAt": "2026-09-13T15:00:00.000Z",
+      "updatedAt": "2026-09-13T15:00:00.000Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 20, "total": 3, "totalPages": 1 }
+}
+```
+
+`pricePrivate` é **sempre calculado** — soma de `items[].pricePrivate` menos `discountPercent`%
+(`calculatePackagePrivatePrice`, `@crm-lab/shared`, mesma função no backend e no frontend),
+**nunca** um valor digitado ou gravado. Com `?insuranceId=`, cada pacote ganha `effectivePrice` e
+`priceSource` (`"insurance"` quando há linha em `exam_package_prices` para o convênio,
+`"private"` no fallback) — mesmo mecanismo do §4, mas a tabela de override é do PACOTE
+(`exam_package_prices`), não a soma dos overrides de cada exame.
+
+### POST /exam-packages (manager/admin apenas)
+Criar novo pacote.
+
+**Request:**
+```json
+{
+  "name": "Check-up Cardiológico",
+  "examIds": ["uuid-1", "uuid-2"],
+  "discountPercent": 10
+}
+```
+
+`examIds`: mínimo 1, precisam existir e estar **ativos** no tenant — senão `VALIDATION_ERROR`
+(`details.fields.examIds`). `name` único por tenant (mesma regra de `exam_catalog.name`) →
+`CONFLICT` em duplicata.
+
+**Response (201):** mesmo shape de um item de `GET /exam-packages` (sem `?insuranceId=`).
+
+### PATCH /exam-packages/:id (manager/admin apenas)
+Atualizar pacote. Todos os campos opcionais (PATCH parcial); `examIds`, quando presente,
+**substitui o conjunto inteiro** de exames incluídos (semântica de PUT sobre a coleção filha,
+igual a `synonyms` no §4).
+
+**Request:**
+```json
+{ "discountPercent": 15, "isActive": false }
+```
+
+**Response (200):** mesmo shape do `GET`. Não existe `DELETE`: desativar é
+`{ "isActive": false }` — histórico (propostas que já expandiram o pacote em itens) não
+referencia o pacote diretamente, mas o cadastro segue a mesma convenção do catálogo (D-004).
+
+**Erros:** `NOT_FOUND` (pacote de outro tenant), `VALIDATION_ERROR` (400, `details.fields`),
+`CONFLICT` (`name` duplicado), `FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
+
+### GET /exam-packages/:id/prices
+Preço do pacote por convênio (todos os cadastrados para ele). Qualquer papel autenticado.
+
+**Response (200):**
+```json
+{ "prices": [{ "insuranceId": "8f2a1c4b-6d39-4f70-9a12-5c8e3b7d1f06", "price": 99.90 }] }
+```
+
+### PUT /exam-packages/:id/prices (manager/admin apenas)
+Upsert em lote — **semântica de PUT**: linha ausente do corpo é removida. Mesmo contrato do
+`PUT /exams/:id/prices` (§4), aplicado a `exam_package_prices`.
+
+**Request/Response:** mesmo shape do `GET`.
+
+**Validações:** `price >= 0`; `insuranceId` precisa existir e estar ativo no tenant, senão
+`VALIDATION_ERROR` (`details.fields["prices.<insuranceId>"]`).
+
+**Erros:** `NOT_FOUND` (pacote de outro tenant), `VALIDATION_ERROR`, `FORBIDDEN`
 
 ---
 

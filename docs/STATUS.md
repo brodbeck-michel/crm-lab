@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-13 (CRMLAB-8 — badge de não lidas do Chat Interno propagado para o grupo "Comunicação" — D-130)
+**Última atualização:** 2026-09-16 (CRMLAB-8 — badge de não lidas do Chat Interno propagado para o grupo "Comunicação" — D-132, mergeado sobre v1.5.0)
 
 ---
 
@@ -677,23 +677,99 @@ sentido em Configurações.
   (`route-config.spec.ts` e `Sidebar.spec.tsx` atualizados para os novos grupos/rótulo — 1 teste
   novo cobrindo o grupo Configurações completo).
 
-## 2026-09-13 — Badge de não lidas do Chat Interno no menu lateral (CRMLAB-8) ✅
+## 2026-09-13 — Cadastro de pacotes de exames (combos) — nova aba em Cadastro de Exames (CRMLAB-10) ✅
+
+Pedido do usuário: hoje só existe cadastro de exames individuais; pacotes/combos de exames
+(ex.: check-ups) precisam de cadastro próprio dentro da mesma tela de Cadastro de Exames.
+Escopo fechado com o usuário: preço sempre derivado (soma dos exames menos desconto%), nunca
+digitado; mesma alçada/convenção ativo-inativo do catálogo; e o pacote pode ser adicionado a um
+orçamento novo, expandindo em uma linha por exame.
+
+- **D-130.** Backend: `exam_packages`/`exam_package_items`/`exam_package_prices` (migrações
+  `015_exam_packages.sql` + `016_rls_exam_packages.sql`, SCHEMA.md §28-30), `ExamPackageService`
+  (`calculatePackagePrivatePrice` em `@crm-lab/shared`, mesma função no back e no front),
+  `GET/POST/PATCH /exam-packages` + `GET/PUT /exam-packages/:id/prices` (API_CONTRACTS.md §4b).
+- Frontend: nova aba "Pacotes" em `/catalog` (`PackageTable` + `PackageModal` +
+  `PackagePricesTab`, ao lado da aba "Exames"). Segmento "Pacotes" de `/budget/new`
+  (`CatalogSegments`) passa a listar pacotes de verdade e expandir em N linhas no resumo ao
+  clicar (`BudgetNew.handleAddPackage`).
+- **Corrigido de passagem (fazia parte do bug CRMLAB-13):** os segmentos "Pedido Médico"/"IA"/
+  "Pacotes" de `CatalogSegments` caíam por engano no conteúdo do Catálogo (a renderização não
+  olhava para `segment`) — agora "Pedido Médico"/"IA" mostram um placeholder honesto ("ainda não
+  disponível"), CRMLAB-13 continua aberto só para esses dois.
+- **Bug de `setState` não-funcional corrigido em `Budget/New.tsx`:** `handleAddItem` usava
+  `items.find`/`setItems(items.map(...))` fechado sobre o `items` da última renderização — expandir
+  um pacote chama `handleAddItem` N vezes no mesmo evento, e todas as chamadas viam o MESMO
+  `items` desatualizado (só o ÚLTIMO exame sobrevivia). Corrigido para `setItems(current => ...)`
+  (updater funcional). Coberto por teste de regressão em `New.spec.tsx`.
+- **Limitação conhecida, registrada (não é bug):** o seletor de exames do `PackageModal` não
+  garante que um exame já incluído no pacote apareça no checkbox se ele não bater com a busca
+  atual (ou estiver além do 100º exame) — o exame não se perde (`examIds` preserva o id), só
+  fica invisível até uma busca que o traga de volta. Ver PAGES.md §7.
+- Docs: `DECISIONS.md` D-130, `API_CONTRACTS.md` §4b, `SCHEMA.md` §28-30, `PAGES.md` §4/§7.
+- `npm run typecheck` verde nos 4 workspaces. Backend: `exam-package-routes.spec.ts` (14) +
+  `exam-package-service.spec.ts` (10) verdes, suíte completa verde (1052 testes). Frontend: suíte
+  completa 1011 testes verdes (29 novos: `PackageModal.spec.tsx` 9, `PackagePricesTab.spec.tsx`
+  4, `Catalog.spec.tsx` +3, `CatalogSegments.spec.tsx` ajustado, `New.spec.tsx` +1).
+- **Observação de merge:** desenvolvido em paralelo com CRMLAB-9 (worktrees/branches
+  independentes) — as duas usaram o índice de migração `015_*`; esta ocupa `015`/`016`, CRMLAB-9
+  foi renumerado para `017_*` na integração.
+
+## 2026-09-13 — Campo "Médico solicitante" nas propostas/orçamentos (CRMLAB-9) ✅
+
+Pedido do usuário: rastrear qual médico solicitou o exame/procedimento diretamente na
+proposta/orçamento. Escopo fechado com o usuário: texto livre, opcional, sem cadastro de
+médicos, aparece no PDF só se preenchido (hoje não existe PDF de proposta — ver nota abaixo),
+sem migração de dados retroativa.
+
+- **D-131.** `requestingDoctor` novo em `proposals` (migração
+  `017_proposal_requesting_doctor.sql`, nullable). `POST /proposals` aceita o campo (opcional,
+  máx 255, `trim` — vazio vira `NULL`); imutável depois de criado, sem rota de `PATCH`.
+  Exposto em `Proposal`/`ProposalDetail`.
+- Frontend: `Input` "Médico solicitante (opcional)" em `SummaryColumn.tsx` (`/budget/new`);
+  `ProposalModal.tsx` mostra a linha só quando `requestingDoctor` não é `null`.
+- Nota registrada no doc (não é pendência aberta): não existe geração de PDF de proposta
+  individual hoje (só Relatório Executivo/Comissão/Busca Ativa, client-side) — quando existir,
+  lê o campo do detalhe como qualquer outro.
+- Docs: `DECISIONS.md` (D-131), `API_CONTRACTS.md` §3, `SCHEMA.md` (coluna nova),
+  `BUSINESS_RULES.md` (tabela de campos opcionais), `PAGES.md` (`/budget/new` e modal de
+  proposta).
+- `npm run typecheck` verde nos 4 workspaces. Backend: suíte completa 1030 testes verdes
+  (`proposal-routes.spec.ts` com os novos casos de `requestingDoctor`). Frontend: suíte
+  completa 986 testes verdes (`ProposalModal.spec.tsx` + `Budget/New.spec.tsx` com os casos
+  novos).
+- Desenvolvido em paralelo com CRMLAB-10 (worktrees/branches independentes) — mesmo índice de
+  migração `015_*` usado nas duas branches; renumerada para `017_proposal_requesting_doctor.sql`
+  na integração (CRMLAB-10 ocupa `015`/`016`).
+
+## 2026-09-13 — v1.5.0: CRMLAB-9 + CRMLAB-10 mergeados, tag para homologação
+
+Bump minor (1.4.0 → 1.5.0, `package.json` raiz — fonte única de versão, lida em build-time pelo
+frontend via `__APP_VERSION__` e mostrada no rodapé do trilho, COMPONENTS.md): duas features
+aditivas mergeadas em `main` (PR #4 CRMLAB-9, PR #5 CRMLAB-10), nenhuma mudança que quebre
+contrato existente.
+
+- Tag `v1.5.0` criada e enviada para o `main` pós-merge.
+- `npm run typecheck` verde nos 4 workspaces no `main` pós-merge.
+
+## 2026-09-16 — Badge de não lidas do Chat Interno no menu lateral (CRMLAB-8) ✅
 
 Usuário reportou que mensagem em conversa/grupo recolhido passava despercebida. Investigação
 mostrou que o chat interno não tem hierarquia de grupos de conversa própria — o único "grupo
 recolhível" do produto é o grupo de menu "Comunicação" (D-127/D-128); ambiguidade resolvida com o
 usuário durante o dev (fluxo `duvida` do CRMLAB) antes de codar.
 
-- **D-130.** `Sidebar.tsx` soma `Channel.unreadCount` de `GET /internal-chat/channels` (mesma
+- **D-132.** `Sidebar.tsx` soma `Channel.unreadCount` de `GET /internal-chat/channels` (mesma
   query/cache de `InternalChat/index.tsx`, sem endpoint novo) e mostra um `Badge` no item "Chat
   Interno" (mesmo padrão do badge de "Decisões"). Grupo "Comunicação" fechado com total > 0: o
   mesmo `Badge` aparece no cabeçalho do grupo, no lugar do ponto de "item ativo dentro" (D-128).
   Sem som, sem notificação push do navegador.
-- Docs: `DECISIONS.md` (D-130), `PAGES.md` (§9 — novo bloco "Badge de não lidas no menu lateral"),
+- Docs: `DECISIONS.md` (D-132), `PAGES.md` (§9 — novo bloco "Badge de não lidas no menu lateral"),
   `COMPONENTS.md` (`Sidebar`).
-- `npm run typecheck` verde nos 4 workspaces. Frontend: suíte completa 985 testes verdes
-  (`Sidebar.spec.tsx` — 3 testes novos: soma do badge no item, badge substituindo o ponto no grupo
+- `npm run typecheck` verde nos 4 workspaces. Frontend: `Sidebar.spec.tsx` verde (19 testes,
+  incluindo os 3 casos novos: soma do badge no item, badge substituindo o ponto no grupo
   fechado, badge ausente com zero não lidas).
+- Validado e aprovado pelo usuário em 2026-09-16.
 
 ## Bloqueios Atuais
 

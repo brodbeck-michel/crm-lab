@@ -4,7 +4,7 @@ import { useCreateProposal } from '@/api/proposals';
 import { useApiErrorHandler } from '@/hooks';
 import { useAuthStore } from '@/stores/auth.store';
 import { useUIStore } from '@/stores/ui.store';
-import { Button, Chip } from '@/components/ui';
+import { Button, Chip, Input } from '@/components/ui';
 import DiscountSection from '@/components/proposal/DiscountSection';
 import { MoneyDisplay } from '@/components/shared/MoneyDisplay';
 import { calculateTotal } from '@crm-lab/shared';
@@ -33,6 +33,8 @@ export default function SummaryColumn({
 }: SummaryColumnProps) {
   const user = useAuthStore((s) => s.user);
   const [discountPercent, setDiscountPercent] = useState(0);
+  /** Médico solicitante (indicação clínica), texto livre e opcional (CRMLAB-9). */
+  const [requestingDoctor, setRequestingDoctor] = useState('');
 
   const navigate = useNavigate();
   const openModal = useUIStore((s) => s.openModal);
@@ -68,6 +70,8 @@ export default function SummaryColumn({
         })),
         discountPercent,
         insuranceId,
+        // CRMLAB-9: opcional — o backend normaliza vazio/espaços para null.
+        requestingDoctor: requestingDoctor || null,
       },
       {
         onSuccess: (proposal) => {
@@ -135,6 +139,14 @@ export default function SummaryColumn({
             <MoneyDisplay value={subtotal} />
           </div>
         </div>
+
+        <Input
+          label="Médico solicitante (opcional)"
+          value={requestingDoctor}
+          onChange={(e) => setRequestingDoctor(e.target.value)}
+          placeholder="Nome do médico"
+          maxLength={255}
+        />
 
         <DiscountSection
           discountPercent={discountPercent}

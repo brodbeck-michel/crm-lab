@@ -150,7 +150,7 @@ Anatomia (padrão WhatsApp):
 - Item "Decisões" (gestor+): `Badge` com `pendingDecisions.total` de `GET /operations/overview`
   (PAGES.md §12) — some quando o total é zero
 - Item "Chat Interno": `Badge` com a soma de `Channel.unreadCount` de todos os canais
-  (`GET /internal-chat/channels`) — mesma fonte que o badge por canal do próprio chat (D-130).
+  (`GET /internal-chat/channels`) — mesma fonte que o badge por canal do próprio chat (D-132).
   Grupo "Comunicação" fechado com esse total > 0: o mesmo `Badge` aparece no cabeçalho do grupo,
   substituindo o ponto 6px de "item ativo dentro" enquanto houver não lida (o ponto volta a
   aparecer sozinho se o total zerar mas ainda houver item ativo dentro)

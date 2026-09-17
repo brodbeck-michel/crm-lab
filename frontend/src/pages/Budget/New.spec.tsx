@@ -78,6 +78,27 @@ vi.mock('@/api/client', async () => {
           });
         }
 
+        if (path === '/exam-packages') {
+          return Promise.resolve({
+            packages: [
+              {
+                id: 'pkg-1',
+                name: 'Check-up Cardiológico',
+                discountPercent: 10,
+                items: [
+                  { examId: 'exam-1', examName: 'Hemograma', examCode: 'HEM', pricePrivate: 50 },
+                  { examId: 'exam-2', examName: 'Colesterol', examCode: 'COL', pricePrivate: 30 },
+                ],
+                pricePrivate: 72,
+                isActive: true,
+                createdAt: '2026-01-01T00:00:00.000Z',
+                updatedAt: '2026-01-01T00:00:00.000Z',
+              },
+            ],
+            pagination: { page: 1, limit: 100, total: 1, totalPages: 1 },
+          });
+        }
+
         // Shape de `ListExamsResponse` — `pagination` é `PaginationMeta`
         // (`page/limit/total/totalPages`), não `offset`.
         return Promise.resolve({
@@ -286,5 +307,94 @@ describe('BudgetNew', () => {
         expect.objectContaining({ insuranceId: UNIMED_ID })
       );
     });
+  });
+
+  // CRMLAB-9: campo de texto livre, opcional, sem cadastro/autocomplete de médicos.
+  it('sem médico solicitante preenchido, envia requestingDoctor: null', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <MemoryRouter initialEntries={['/budget/new?conversationId=conv-77']}>
+            <BudgetNew />
+          </MemoryRouter>
+        </ToastProvider>
+      </QueryClientProvider>
+    );
+
+    const examButton = await screen.findByRole('button', { name: /hemograma/i });
+    await user.click(examButton);
+
+    const submitButton = await screen.findByRole('button', { name: /criar orçamento/i });
+    await user.click(submitButton);
+
+    await waitFor(() => {
+      expect(vi.mocked(http.post)).toHaveBeenCalledWith(
+        '/proposals',
+        expect.objectContaining({ requestingDoctor: null })
+      );
+    });
+  });
+
+  it('com médico solicitante preenchido, envia o texto digitado', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <MemoryRouter initialEntries={['/budget/new?conversationId=conv-77']}>
+            <BudgetNew />
+          </MemoryRouter>
+        </ToastProvider>
+      </QueryClientProvider>
+    );
+
+    const examButton = await screen.findByRole('button', { name: /hemograma/i });
+    await user.click(examButton);
+
+    const doctorInput = screen.getByLabelText(/médico solicitante/i);
+    await user.type(doctorInput, 'Dra. Ana Souza');
+
+    const submitButton = await screen.findByRole('button', { name: /criar orçamento/i });
+    await user.click(submitButton);
+
+    await waitFor(() => {
+      expect(vi.mocked(http.post)).toHaveBeenCalledWith(
+        '/proposals',
+        expect.objectContaining({ requestingDoctor: 'Dra. Ana Souza' })
+      );
+    });
+  });
+
+  /**
+   * CRMLAB-10 — adicionar um pacote expande em N linhas no resumo, uma por
+   * exame incluído (não uma linha "pacote" só). Também é o teste de
+   * regressão do bug de `setItems` não-funcional: chamar `handleAddItem` N
+   * vezes no mesmo evento sem updater funcional fazia só o ÚLTIMO exame
+   * sobreviver (cada chamada via `items` desatualizado sobrescrevia a
+   * anterior antes do React re-renderizar).
+   */
+  it('adicionar um pacote expande em N linhas no resumo — uma por exame incluído', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <BrowserRouter>
+            <BudgetNew />
+          </BrowserRouter>
+        </ToastProvider>
+      </QueryClientProvider>
+    );
+
+    await user.click(await screen.findByRole('tab', { name: 'Pacotes' }));
+
+    const packageButton = await screen.findByRole('button', { name: /check-up cardiológico/i });
+    await user.click(packageButton);
+
+    const summary = await screen.findByTestId('summary-items');
+    expect(summary).toHaveTextContent('Hemograma');
+    expect(summary).toHaveTextContent('Colesterol');
   });
 });

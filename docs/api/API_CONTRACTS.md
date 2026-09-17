@@ -949,7 +949,9 @@ responder):
 - `CONNECTION_UPDATE` com `state: "close"` (inclusive `loggedOut`, que é como o gateway informa
   desconexão/banimento) → marca desconectado; a UI mostra "Reconectar". O contrato não distingue
   desconexão voluntária de banimento — ver a nota de risco em `docs/architecture/SECURITY.md`.
-- `QRCODE_UPDATED` → atualiza o QR vigente lido por `GET /settings/channels/whatsapp/qr`.
+- `QRCODE_UPDATED` → grava o QR vigente no cache (`evolution:qr:<tenantId>`, TTL 70s), que é
+  de onde `GET /settings/channels/whatsapp/qr` passa a ler. **Este evento é obrigatório na
+  assinatura do webhook** (`evolution-client.ts`): sem ele o polling não tem fonte de QR.
 
 **Idempotente:** mesma disciplina do webhook Meta — reentrega da mesma mensagem
 (`externalId`/`key.id`) não duplica linha nem evento.
@@ -3026,6 +3028,15 @@ fora do ar)
 #### GET /settings/channels/whatsapp/qr
 QR vigente + status. É o endpoint que o modal faz **polling de ~2s** (até `connected` ou
 timeout ~90s) enquanto o gateway renova o QR por trás (`QRCODE_UPDATED`, webhook).
+
+**Esta rota NÃO chama `GET /instance/connect` (auditoria 2026-09-17).** Aquela rota do
+Evolution parece leitura e não é: cada chamada instancia uma conexão Baileys nova. Com o
+polling de 2s, foram medidos **169 sockets em 3 minutos** em produção, e o WhatsApp respondeu
+invalidando a sessão (`401`) — a tela de parear derrubava o número que acabara de parear.
+O caminho atual é: estado ao vivo por `connectionState` (leitura de verdade) + QR lido do
+cache que o webhook `QRCODE_UPDATED` alimenta. Quem abre a conexão é
+`POST /connect`, **uma vez**, e ele já semeia o cache. Sem QR em cache por mais de 70s
+(TTL) o gateway parou de emitir: a resposta vira `disconnected` e o polling para sozinho.
 
 **Response (200):**
 ```json

@@ -142,7 +142,9 @@ describe('EvolutionClient', () => {
     const webhook = lastBody.webhook as Record<string, unknown>;
     expect(webhook.url).toBe('https://crm.local/api/v1/webhooks/evolution/t1');
     expect(webhook.headers).toEqual({ 'x-evolution-webhook-token': 'segredo' });
-    expect(webhook.events).toEqual(['MESSAGES_UPSERT', 'CONNECTION_UPDATE']);
+    // `QRCODE_UPDATED` e o que permite servir o QR pelo cache em vez de chamar
+    // `/instance/connect` a cada polling — ver `getWhatsAppQr`.
+    expect(webhook.events).toEqual(['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED']);
   });
 
   it('createInstance numa instancia que JA existe (403) adota a existente e reaplica o webhook', async () => {

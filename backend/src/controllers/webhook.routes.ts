@@ -39,7 +39,12 @@ import { Router, type Request, type RequestHandler, type Response } from 'expres
 import { env } from '../config/env.js';
 import type { DbClient } from '../db/types.js';
 import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
-import { evolutionInstanceName } from '../lib/evolution-client.js';
+import type { CacheService } from '../lib/cache.js';
+import {
+  EVOLUTION_QR_TTL_SECONDS,
+  evolutionInstanceName,
+  evolutionQrCacheKey,
+} from '../lib/evolution-client.js';
 import { logger } from '../lib/logger.js';
 import * as channelSettingsRepo from '../repositories/channel-settings.repository.js';
 import { ConversationRepository } from '../repositories/conversation.repository.js';
@@ -561,6 +566,19 @@ function evolutionInboundOf(data: unknown): EvolutionInboundResult {
   };
 }
 
+/**
+ * QR de um evento `QRCODE_UPDATED`. O gateway v2.3.7 manda
+ * `{ qrcode: { base64, code, pairingCode } }`; toleramos tambem o `base64` no
+ * nivel do `data`, pela mesma razao do parser de midia — nao ficar preso a uma
+ * unica suposicao sobre a forma do payload.
+ */
+function evolutionQrOf(data: unknown): string | null {
+  const record = asRecord(data);
+  if (!record) return null;
+  const qrcode = asRecord(record.qrcode);
+  return asNonEmptyString(qrcode?.base64) ?? asNonEmptyString(record.base64);
+}
+
 interface EvolutionConnectionState {
   connected: boolean;
   phoneNumber: string | null;
@@ -628,7 +646,11 @@ function instanceClaimMatches(body: Record<string, unknown> | null, tenantId: st
   return instanceClaim === evolutionInstanceName(tenantId);
 }
 
-export function evolutionInbound(services: WebhookServices, db: DbClient): RequestHandler {
+export function evolutionInbound(
+  services: WebhookServices,
+  db: DbClient,
+  cache: CacheService,
+): RequestHandler {
   return safeHandle(async (req, res) => {
     const authenticated = await authenticateEvolution(req, services);
     if (!authenticated) {
@@ -715,8 +737,17 @@ export function evolutionInbound(services: WebhookServices, db: DbClient): Reque
       }
     } else if (event === 'CONNECTION_UPDATE') {
       await applyEvolutionConnectionUpdate(db, tenantId, body?.data);
+    } else if (event === 'QRCODE_UPDATED') {
+      // O QR passa a chegar POR AQUI em vez de ser buscado a cada polling.
+      // `GET /settings/channels/whatsapp/qr` le desta chave; sem isso, cada
+      // polling do modal chamava `/instance/connect`, que recria a conexao
+      // Baileys — 169 sockets em 3 minutos na auditoria de 2026-09-17.
+      const qrcode = evolutionQrOf(body?.data);
+      if (qrcode) {
+        await cache.set(evolutionQrCacheKey(tenantId), qrcode, EVOLUTION_QR_TTL_SECONDS);
+      }
     }
-    // QRCODE_UPDATED e eventos desconhecidos: sem efeito no banco de proposito.
+    // Eventos desconhecidos: sem efeito no banco de proposito.
 
     logger.info('evolution.webhook_processed', { tenantId, event: event ?? 'desconhecido' });
     acknowledge(res);
@@ -789,7 +820,7 @@ function buildWebhookModule(
   router.post('/whatsapp/:tenant', whatsappInbound(services));
   router.post('/whatsapp/:tenant/status', whatsappStatus(services));
 
-  router.post('/evolution/:tenant', evolutionInbound(services, deps.db));
+  router.post('/evolution/:tenant', evolutionInbound(services, deps.db, deps.cache));
   router.post('/evolution/:tenant/status', evolutionStatus(services, deps.db));
 
   return { basePath: '/webhooks', router, requiresAuth: false };

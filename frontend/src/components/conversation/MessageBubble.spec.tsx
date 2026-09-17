@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import type { Message, SenderType } from '@crm-lab/shared';
 import {
@@ -103,5 +104,25 @@ describe('MessageBubble', () => {
       'href',
       'https://arquivo/pedido.pdf',
     );
+  });
+
+  it('anexo de imagem mostra thumbnail e abre o lightbox ao clicar (CRMLAB-15)', async () => {
+    const user = userEvent.setup();
+    render(
+      <MessageBubble
+        type="received"
+        message={message({ messageType: 'image', attachmentUrl: 'https://arquivo/foto.jpg' })}
+      />,
+    );
+
+    expect(screen.queryByRole('link', { name: /Anexo/ })).not.toBeInTheDocument();
+    const thumbnail = screen.getByRole('img', { name: 'Anexo enviado na conversa' });
+    expect(thumbnail).toHaveAttribute('src', 'https://arquivo/foto.jpg');
+
+    await user.click(thumbnail);
+    expect(screen.getByTestId('image-lightbox-backdrop')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Fechar' }));
+    expect(screen.queryByTestId('image-lightbox-backdrop')).not.toBeInTheDocument();
   });
 });

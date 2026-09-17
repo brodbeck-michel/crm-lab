@@ -76,6 +76,9 @@ Anatomia (padrão WhatsApp):
 ```
 - 3 tipos, NUNCA mais. Canto "apontado" (radius-sm) marca a origem
 - Largura máx. 62% no inbox
+- Anexo `messageType: 'image'` (CRMLAB-15): thumbnail (`rounded-md`, máx. 300px de altura) no lugar
+  do link "Anexo (tipo)". Clique abre `ImageLightbox` em tela cheia — padrão WhatsApp Web. Outros
+  `messageType` continuam com o link genérico
 
 ### Composer
 - Input pílula + botão anexo + botão emoji + botão enviar (primary)
@@ -207,6 +210,17 @@ Anatomia (padrão WhatsApp):
 ### Modal
 - Backdrop translúcido escuro, cartão radius-lg + shadow-lg, máx 720px
 - Rolagem interna; fecha por × e clique-fora (stopPropagation no cartão)
+
+### ImageLightbox (CRMLAB-15)
+```tsx
+<ImageLightbox src={url | null} fileName="foto.jpg" onClose={() => {}} />
+```
+- Visualização de imagem em tela cheia — referência WhatsApp Web. Mais leve que `Modal`: mesmo
+  backdrop (`bg-backdrop`), mas sem cartão/título/foco preso — só a imagem (`rounded-lg`,
+  `shadow-lg`, `max-h-[86vh]`) sobre o fundo
+- Botões × (fechar) e ↓ (baixar) circulares no canto superior direito, mesmo padrão do × do Modal
+- Fecha por ×, Esc e clique fora da imagem (clique NA imagem não fecha — `stopPropagation`)
+- `src={null}` não renderiza nada — o chamador controla a abertura guardando a própria URL
 
 ### MoneyDisplay
 ```tsx

@@ -840,6 +840,25 @@ existente.
 - Tag `v1.6.0` criada e enviada para o `main` pós-merge.
 - `npm run typecheck` verde nos 4 workspaces no `main` pós-merge.
 
+## 2026-09-17 — CRMLAB-15 + CRMLAB-16: imagem inline e fechar conversa (padrão WhatsApp Web)
+
+Escopo discutido e fechado com o usuário antes de codar: anexo de imagem passa a abrir na própria
+tela de atendimento; conversa aberta ganha um botão de fechar que limpa a seleção, mantendo lista
++ conversa lado a lado no desktop (sem colapso/responsividade — fora de escopo).
+
+- Frontend: novo `components/shared/ImageLightbox.tsx` (visualização full-screen, mais leve que
+  `Modal`, reaproveita os tokens `bg-backdrop`/`rounded-lg`/`shadow-lg`/`rounded-pill`).
+  `MessageBubble.tsx` renderiza thumbnail para `messageType: 'image'` e abre o lightbox ao clicar
+  (estado local do componente). `ConversationPanel.tsx` ganha botão [× Fechar] no header
+  (`onClose`), ligado a `setSelectedId(null)` em `pages/Attendance/index.tsx`. O estado vazio
+  "Selecione uma conversa" já existia (`EmptyState` dentro do próprio `ConversationPanel`) — nada
+  novo precisou ser criado aí.
+- Docs: `COMPONENTS.md` (`MessageBubble`, novo `ImageLightbox` em `shared/`), `PAGES.md` §2
+  (coluna 2: botão fechar, thumbnail de imagem).
+- `npm run typecheck` verde nos 4 workspaces. Frontend: suíte completa verde — 74 arquivos, 1039
+  testes (inclui os 2 casos novos: thumbnail/lightbox em `MessageBubble.spec.tsx` e botão fechar
+  em `ConversationPanel.spec.tsx`).
+
 ## Bloqueios Atuais
 
 Nenhum.

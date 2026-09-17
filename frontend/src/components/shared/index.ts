@@ -4,6 +4,8 @@ export { EmptyState } from './EmptyState';
 export type { EmptyStateProps } from './EmptyState';
 export { Modal } from './Modal';
 export type { ModalProps } from './Modal';
+export { ImageLightbox } from './ImageLightbox';
+export type { ImageLightboxProps } from './ImageLightbox';
 export { DataTable } from './DataTable';
 export type { DataTableProps, DataTableColumn } from './DataTable';
 export { Pagination } from './Pagination';

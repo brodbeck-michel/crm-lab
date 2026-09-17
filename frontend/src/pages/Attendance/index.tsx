@@ -271,6 +271,7 @@ export function Attendance() {
             onNewBudget={() => navigate(`/budget/new?conversationId=${selectedId ?? ''}`)}
             onArchive={() => archive.mutate()}
             onToggleContext={toggleContextPanel}
+            onClose={() => setSelectedId(null)}
             onAttach={() => fileInputRef.current?.click()}
             quickReplies={quickRepliesQuery.data?.quickReplies ?? []}
             contextOpen={contextOpen}

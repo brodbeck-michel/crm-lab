@@ -1,6 +1,7 @@
+import { useState } from 'react';
 import type { Message, SenderType } from '@crm-lab/shared';
 import { cn } from '@/components/ui';
-import { DateDisplay } from '@/components/shared';
+import { DateDisplay, ImageLightbox } from '@/components/shared';
 
 /**
  * MessageBubble — COMPONENTS.md (`conversation/`) + DESIGN_TOKENS.md
@@ -60,6 +61,8 @@ export function MessageBubble({
   showMeta = true,
 }: MessageBubbleProps) {
   const isSystem = type === 'system';
+  const isImage = message.messageType === 'image' && Boolean(message.attachmentUrl);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   return (
     <div
@@ -70,7 +73,27 @@ export function MessageBubble({
     >
       <p className="m-0 whitespace-pre-wrap break-words">{message.content}</p>
 
-      {message.attachmentUrl && (
+      {message.attachmentUrl && isImage && (
+        <>
+          <button
+            type="button"
+            onClick={() => setLightboxOpen(true)}
+            className="cursor-pointer self-start rounded-md border-none bg-transparent p-0"
+          >
+            <img
+              src={message.attachmentUrl}
+              alt="Anexo enviado na conversa"
+              className="max-h-[300px] max-w-full rounded-md object-cover"
+            />
+          </button>
+          <ImageLightbox
+            src={lightboxOpen ? message.attachmentUrl : null}
+            onClose={() => setLightboxOpen(false)}
+          />
+        </>
+      )}
+
+      {message.attachmentUrl && !isImage && (
         <a
           href={message.attachmentUrl}
           target="_blank"

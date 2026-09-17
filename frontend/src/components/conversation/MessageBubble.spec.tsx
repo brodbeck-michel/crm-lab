@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { Message, SenderType } from '@crm-lab/shared';
-import * as ApiModule from '@/api';
+import type * as ApiModule from '@/api';
 
 /**
  * `GET /media/:id` exige Authorization — o componente busca via

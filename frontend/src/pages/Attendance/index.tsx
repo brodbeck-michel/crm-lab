@@ -124,7 +124,8 @@ export function Attendance() {
   const initialDraft = searchParams.get('draft') ?? undefined;
   useEffect(() => {
     if (initialConversationId) handleSelect(initialConversationId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Só no mount — o projeto não tem eslint-plugin-react-hooks configurado
+    // (ver eslint.config.js), então não há regra de deps para desligar aqui.
   }, []);
 
   const invalidateConversation = useCallback(async () => {

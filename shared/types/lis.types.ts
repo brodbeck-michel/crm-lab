@@ -40,7 +40,7 @@ export interface PurgeLisBudgetsRequest {
   confirm: string;
 }
 
-export interface ListLisImportsQuery extends PaginationQuery {}
+export type ListLisImportsQuery = PaginationQuery;
 
 export interface ListLisImportsResponse {
   imports: LisImport[];

@@ -12,7 +12,7 @@
  *  - fixar: a conversa sobe para o topo da MINHA lista e continua fixada
  *    depois do reload — e o pin **não** aparece para outra pessoa.
  */
-import { test, expect, type APIRequestContext } from '@playwright/test';
+import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import type { ConversationDetail, ListConversationsResponse } from '@crm-lab/shared';
 import {
   API_URL,
@@ -28,7 +28,7 @@ import {
  * A tela de Atendimento nao tem `<h1>` (e um inbox de 3 colunas), entao
  * `gotoScreen` nao serve: a ancora de "carregou" e a propria fila.
  */
-async function abrirAtendimento(page: import('@playwright/test').Page): Promise<void> {
+async function abrirAtendimento(page: Page): Promise<void> {
   await page.goto('/attendance');
   await expect(page.getByTestId('conversation-item').first()).toBeVisible();
 }

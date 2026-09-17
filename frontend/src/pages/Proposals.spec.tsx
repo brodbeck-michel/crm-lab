@@ -18,7 +18,7 @@ import Proposals from './Proposals';
  * indefinido e o modulo nem carrega.
  */
 vi.mock('@/api/proposals', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/api/proposals')>()),
+  ...(await importOriginal<typeof proposalsApi>()),
   useProposalList: vi.fn(),
   useUpdateProposalStatus: vi.fn(),
 }));

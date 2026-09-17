@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-16 (CRMLAB-11 — inativar/reativar paciente — D-133, mergeado sobre CRMLAB-8)
+**Última atualização:** 2026-09-16 (CRMLAB-12 — editar itens/desconto/médico solicitante da proposta — D-134, mergeado sobre CRMLAB-11)
 
 ---
 
@@ -797,6 +797,39 @@ checkbox de filtro para voltar a aparecer.
   spec novo `patients-inactivation.spec.ts`). Frontend: suíte completa verde (1026 testes,
   incluindo os casos novos em `Profile.spec.tsx`/`List.spec.tsx`).
 - Validado e aprovado pelo usuário em 2026-09-16.
+
+## 2026-09-16 — Editar itens/desconto/médico solicitante de uma proposta (CRMLAB-12) ✅
+
+Pedido do usuário: poder ver e editar um orçamento já criado. Escopo fechado com o usuário no
+Jira antes da implementação: convênio fica de fora (continua imutável); itens, desconto e
+médico solicitante passam a ser editáveis; edição de itens que estoura a alçada do desconto
+reabre a aprovação (`pending`) em vez de bloquear.
+
+- **D-134.** Novo `PATCH /proposals/:id/items` substitui a lista de itens inteira e,
+  opcionalmente, `discountPercent`/`requestingDoctor` — só aceito em
+  `novo_contato`/`orcamento_enviado` (`EDITABLE_STATUSES`/`isProposalEditable` em
+  `shared/types/proposal.types.ts`), `PROPOSAL_EDIT_NOT_ALLOWED` (409) fora disso. Preços sempre
+  resolvidos pelo catálogo (D-003); alçada de desconto reaproveita a regra de
+  `PATCH /discount` (D-045). Evento WS novo: `proposal.updated`.
+- Backend: `proposal.service.ts` (`updateItems`), `proposal.routes.ts`, `proposal.repository.ts`
+  (`deleteItems`, `requestingDoctor` em `ProposalPatch`), `errors.ts`
+  (`PROPOSAL_EDIT_NOT_ALLOWED`).
+- Frontend: `ProposalModal.tsx` ganha modo de edição (botão "Editar" some fora dos estágios
+  editáveis); `DiscountSection.tsx` deixa de ficar com `readOnly`/`onChange` hardcoded fora do
+  modo de edição; novo `EditableItemsList.tsx` (adicionar/remover exame, mudar quantidade).
+- Docs: `DECISIONS.md` (D-134), `API_CONTRACTS.md` §3 (novo endpoint + notas de
+  imutabilidade atualizadas), `API_ERRORS.md`, `FRONTEND_BACKEND.md` (evento WS), `PAGES.md`
+  §6 (modal).
+- `npm run typecheck` verde nos 4 workspaces. Backend: suíte completa verde
+  (`proposal-routes.spec.ts` com os novos casos de `/items`; `route-tenant-isolation.spec.ts`
+  atualizado para 63 rotas, somando CRMLAB-11 + CRMLAB-12). Frontend: suíte completa 1019 testes
+  verdes (1 falha de timing em `CatalogSegments.spec.tsx` não relacionada — passa isolado).
+- **Nota de arquitetura para quem tocar `ProposalService` depois:** `db.withTenant` não
+  aninha — a resolução de preço no catálogo (`examCatalog.resolveActiveByIds`, outro service)
+  precisa ficar FORA do bloco de transação de escrita, exatamente como em `create`. Uma
+  primeira versão deste método chamou o catálogo DENTRO do `withTenant` e deadlockou a suíte de
+  testes (conexão única do driver PGlite) — corrigido antes do merge.
+- Validado e aprovado pelo usuário no ambiente local em 2026-09-16.
 
 ## Bloqueios Atuais
 

@@ -544,6 +544,157 @@ describe('/api/v1/proposals', () => {
     });
   });
 
+  describe('PATCH /proposals/:id/items', () => {
+    it('substitui itens, recalcula total e devolve o ProposalDetail inteiro', async () => {
+      const c = await cenario();
+      const created = await app.agent
+        .post('/api/v1/proposals')
+        .set(app.auth(c.attendant))
+        .send({ conversationId: c.conversationId, items: [{ examId: c.examId, quantity: 1 }] })
+        .expect(201);
+      const id = (created.body as ProposalDetail).id;
+
+      const exam2 = await createExam({ tenantId: c.tenantId, pricePrivate: 50 });
+      const response = await app.agent
+        .patch(`/api/v1/proposals/${id}/items`)
+        .set(app.auth(c.attendant))
+        .send({ items: [{ examId: exam2.id, quantity: 2 }] })
+        .expect(200);
+
+      const body = response.body as ProposalDetail;
+      expect(Object.keys(body).sort()).toEqual(DETAIL_KEYS);
+      expect(body.items).toHaveLength(1);
+      expect(body.items[0]?.examId).toBe(exam2.id);
+      expect(body.totalPrice).toBe(100);
+    });
+
+    it('atualiza medico solicitante junto com os itens', async () => {
+      const c = await cenario();
+      const created = await app.agent
+        .post('/api/v1/proposals')
+        .set(app.auth(c.attendant))
+        .send({ conversationId: c.conversationId, items: [{ examId: c.examId, quantity: 1 }] })
+        .expect(201);
+      const id = (created.body as ProposalDetail).id;
+
+      const response = await app.agent
+        .patch(`/api/v1/proposals/${id}/items`)
+        .set(app.auth(c.attendant))
+        .send({ items: [{ examId: c.examId, quantity: 1 }], requestingDoctor: 'Dr. João' })
+        .expect(200);
+
+      expect((response.body as ProposalDetail).requestingDoctor).toBe('Dr. João');
+    });
+
+    it('desconto acima da alcada do proprio autor volta a proposta para pending', async () => {
+      const c = await cenario();
+      const created = await app.agent
+        .post('/api/v1/proposals')
+        .set(app.auth(c.attendant))
+        .send({ conversationId: c.conversationId, items: [{ examId: c.examId, quantity: 1 }] })
+        .expect(201);
+      const id = (created.body as ProposalDetail).id;
+
+      const response = await app.agent
+        .patch(`/api/v1/proposals/${id}/items`)
+        .set(app.auth(c.attendant))
+        .send({ items: [{ examId: c.examId, quantity: 1 }], discountPercent: 25 })
+        .expect(200);
+
+      expect((response.body as ProposalDetail).approvalStatus).toBe('pending');
+    });
+
+    it('gestor mexendo no desconto de proposta de terceiro acima da propria alcada -> DISCOUNT_EXCEEDS_LIMIT', async () => {
+      const c = await cenario();
+      // Gestor ve TODAS as propostas (D-042), inclusive as do atendente — o
+      // bloqueio de terceiro so faz sentido nesse sentido (manager > 404
+      // nunca acontece aqui; o inverso, atendente vendo proposta do gestor,
+      // e que daria 404 por visibilidade, nao 403).
+      const proposal = await createProposal({
+        tenantId: c.tenantId,
+        createdBy: c.attendant.id,
+        items: [{ examId: c.examId, examName: 'Exame', unitPrice: 89.9, quantity: 1 }],
+      });
+
+      const response = await app.agent
+        .patch(`/api/v1/proposals/${proposal.id}/items`)
+        .set(app.auth(c.manager))
+        .send({ items: [{ examId: c.examId, quantity: 1 }], discountPercent: 50 })
+        .expect(403);
+
+      const body = response.body as ApiErrorBody;
+      expect(body.error.code).toBe('DISCOUNT_EXCEEDS_LIMIT');
+    });
+
+    it('proposta em negociacao -> PROPOSAL_EDIT_NOT_ALLOWED', async () => {
+      const c = await cenario();
+      const proposal = await createProposal({
+        tenantId: c.tenantId,
+        createdBy: c.attendant.id,
+        status: 'negociacao',
+        items: [{ examId: c.examId, examName: 'Exame', unitPrice: 89.9, quantity: 1 }],
+      });
+
+      const response = await app.agent
+        .patch(`/api/v1/proposals/${proposal.id}/items`)
+        .set(app.auth(c.attendant))
+        .send({ items: [{ examId: c.examId, quantity: 2 }] })
+        .expect(409);
+
+      const body = response.body as ApiErrorBody;
+      expect(body.error.code).toBe('PROPOSAL_EDIT_NOT_ALLOWED');
+    });
+
+    it('proposta ganha (terminal) -> PROPOSAL_ALREADY_CLOSED', async () => {
+      const c = await cenario();
+      const proposal = await createProposal({
+        tenantId: c.tenantId,
+        createdBy: c.attendant.id,
+        status: 'ganho',
+        items: [{ examId: c.examId, examName: 'Exame', unitPrice: 89.9, quantity: 1 }],
+      });
+
+      await app.agent
+        .patch(`/api/v1/proposals/${proposal.id}/items`)
+        .set(app.auth(c.attendant))
+        .send({ items: [{ examId: c.examId, quantity: 2 }] })
+        .expect(409);
+    });
+
+    it('sem itens -> VALIDATION_ERROR', async () => {
+      const c = await cenario();
+      const proposal = await createProposal({
+        tenantId: c.tenantId,
+        createdBy: c.attendant.id,
+        items: [{ examId: c.examId, examName: 'Exame', unitPrice: 89.9, quantity: 1 }],
+      });
+
+      await app.agent
+        .patch(`/api/v1/proposals/${proposal.id}/items`)
+        .set(app.auth(c.attendant))
+        .send({ items: [] })
+        .expect(400);
+    });
+
+    it('exame inexistente -> EXAM_NOT_FOUND_OR_INACTIVE', async () => {
+      const c = await cenario();
+      const proposal = await createProposal({
+        tenantId: c.tenantId,
+        createdBy: c.attendant.id,
+        items: [{ examId: c.examId, examName: 'Exame', unitPrice: 89.9, quantity: 1 }],
+      });
+
+      const response = await app.agent
+        .patch(`/api/v1/proposals/${proposal.id}/items`)
+        .set(app.auth(c.attendant))
+        .send({ items: [{ examId: randomUUID(), quantity: 1 }] })
+        .expect(400);
+
+      const body = response.body as ApiErrorBody;
+      expect(body.error.code).toBe('EXAM_NOT_FOUND_OR_INACTIVE');
+    });
+  });
+
   describe('PATCH /proposals/:id/approve | /reject', () => {
     it('atendente nao aprova -> FORBIDDEN com requiredRoles', async () => {
       const c = await cenario();

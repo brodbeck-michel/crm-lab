@@ -105,7 +105,7 @@ function missingInstanceClient(): EvolutionClient {
   const notFound = () =>
     Promise.reject(
       new Error(
-        'Evolution API respondeu 404 em /instance/connect/tenant-x: {"status":404,"response":{"message":["The \"tenant-x\" instance does not exist"]}}',
+        'Evolution API respondeu 404 em /instance/connect/tenant-x: {"status":404,"response":{"message":["The "tenant-x" instance does not exist"]}}',
       ),
     );
   return {

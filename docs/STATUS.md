@@ -840,6 +840,49 @@ existente.
 - Tag `v1.6.0` criada e enviada para o `main` pós-merge.
 - `npm run typecheck` verde nos 4 workspaces no `main` pós-merge.
 
+## 2026-09-17 — CRMLAB-15 + CRMLAB-16: imagem inline e fechar conversa (padrão WhatsApp Web)
+
+Escopo discutido e fechado com o usuário antes de codar: anexo de imagem passa a abrir na própria
+tela de atendimento; conversa aberta ganha um botão de fechar que limpa a seleção, mantendo lista
++ conversa lado a lado no desktop (sem colapso/responsividade — fora de escopo).
+
+- Frontend: novo `components/shared/ImageLightbox.tsx` (visualização full-screen, mais leve que
+  `Modal`, reaproveita os tokens `bg-backdrop`/`rounded-lg`/`shadow-lg`/`rounded-pill`).
+  `MessageBubble.tsx` renderiza thumbnail para `messageType: 'image'` e abre o lightbox ao clicar
+  (estado local do componente). `ConversationPanel.tsx` ganha botão [× Fechar] no header
+  (`onClose`), ligado a `setSelectedId(null)` em `pages/Attendance/index.tsx`. O estado vazio
+  "Selecione uma conversa" já existia (`EmptyState` dentro do próprio `ConversationPanel`) — nada
+  novo precisou ser criado aí.
+- Docs: `COMPONENTS.md` (`MessageBubble`, novo `ImageLightbox` em `shared/`), `PAGES.md` §2
+  (coluna 2: botão fechar, thumbnail de imagem).
+- `npm run typecheck` verde nos 4 workspaces. Frontend: suíte completa verde — 74 arquivos, 1039
+  testes (inclui os 2 casos novos: thumbnail/lightbox em `MessageBubble.spec.tsx` e botão fechar
+  em `ConversationPanel.spec.tsx`).
+
+## 2026-09-17 — CRMLAB-15: correção — thumbnail de imagem não carregava (401 silencioso)
+
+Achado durante validação manual do usuário: o thumbnail nunca aparecia (nem no clique pra abrir o
+lightbox). Causa raiz, dois problemas empilhados:
+
+1. `attachmentUrl` devolvido pela API é caminho RELATIVO (`/api/v1/media/:id`) — em produção
+   funciona porque o nginx do frontend faz proxy do mesmo origin; em dev, frontend (Vite) e
+   backend rodam em origins/portas diferentes, então um `<img src="/api/v1/...">` cru buscava no
+   origin ERRADO (o do próprio Vite).
+2. Mesmo corrigindo a origem, `GET /media/:id` exige `Authorization` (`requireAuth()`) — um
+   `<img src>`/`<a href>` cru NUNCA manda esse header, então a resposta real é 401 (a imagem só
+   "não aparece", sem erro visível pro usuário).
+
+- Frontend: `api/client.ts` ganha `resolveMediaUrl` (resolve caminho relativo contra o origin de
+  `apiBaseUrl()`) e `fetchAuthenticatedBlob` (busca com `Authorization`, com o mesmo retry de
+  refresh do `request()`). Novo hook `hooks/useAuthenticatedImage.ts` busca o blob e devolve um
+  `object URL` (`URL.createObjectURL`), revogado a cada troca de mensagem/desmontagem.
+  `MessageBubble.tsx` usa o hook em vez da URL crua; enquanto carrega ou se falhar, mostra texto
+  no lugar de um `<img>` quebrado.
+- Docs: `COMPONENTS.md` (nota no `MessageBubble` sobre a exigência de auth em `/media/:id`).
+- `npm run typecheck` verde nos 4 workspaces. Frontend: suíte completa verde — 74 arquivos, 1040
+  testes (o teste de thumbnail passou a mockar `fetchAuthenticatedBlob`/`createObjectURL`; +1
+  teste novo cobrindo o estado de erro).
+
 ## Bloqueios Atuais
 
 Nenhum.

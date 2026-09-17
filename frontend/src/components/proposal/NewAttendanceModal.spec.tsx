@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClientProvider } from '@tanstack/react-query';
 import type { ConversationDetail } from '@crm-lab/shared';
+import type * as ReactRouterDom from 'react-router-dom';
 import { queryClient } from '@/api/query-client';
 import { ToastProvider } from '@/components/ui';
 import { conversationsApi } from '@/api/conversations';
@@ -12,7 +13,7 @@ vi.mock('@/api/conversations');
 
 const navigate = vi.fn();
 vi.mock('react-router-dom', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('react-router-dom')>()),
+  ...(await importOriginal<typeof ReactRouterDom>()),
   useNavigate: () => navigate,
 }));
 

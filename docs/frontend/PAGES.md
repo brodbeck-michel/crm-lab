@@ -112,12 +112,18 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 - Dados: `GET /conversations` + WS `conversation.new_message` (refetch)
 
 ### Coluna 2 — Conversa
-- Header: nome, telefone, botões [Transferir ▾] [Novo Orçamento] [Arquivar]
+- Header: nome, telefone, botões [Transferir ▾] [Novo Orçamento] [Arquivar] [Contexto] [× Fechar]
 - **[Transferir ▾] abre menu** (Onda 8 §2.1) com as colegas que podem receber
   (`GET /conversations/assignees`) e "Devolver para a fila". O rótulo é "Atribuir" enquanto a
   conversa está livre. Quem já é dona não aparece na lista. Os dois caminhos são o mesmo
   `PATCH /conversations/:id` — alçada e mensagem de sistema são do backend
-- Bolhas: recebida / enviada / evento de sistema (3 tipos, máx. 62% largura)
+- **[× Fechar]** (CRMLAB-16, padrão WhatsApp Web): limpa a conversa selecionada
+  (`selectedId = null`). A lista (coluna 1) permanece visível — não há colapso/responsividade
+  aqui, só desktop. Sem conversa selecionada, a coluna 2 mostra o estado vazio "Selecione uma
+  conversa" (`EmptyState`, já existente) em vez de ficar em branco
+- Bolhas: recebida / enviada / evento de sistema (3 tipos, máx. 62% largura). Anexo de imagem
+  (CRMLAB-15) renderiza como thumbnail; clique abre `ImageLightbox` em tela cheia — ver
+  COMPONENTS.md `conversation/` e `shared/`
 - Composer: input pílula + anexos + **emoji** + enviar. O emoji entra na posição do cursor
   (Onda 8 §2.2), grade fixa de 48, sem dependência nova
 - Dados: `GET /conversations/:id`, `POST /conversations/:id/messages`

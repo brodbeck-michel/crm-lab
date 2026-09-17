@@ -66,6 +66,7 @@ function props(messages: Message[]): ConversationPanelProps {
     onNewBudget: vi.fn(),
     onArchive: vi.fn(),
     onToggleContext: vi.fn(),
+    onClose: vi.fn(),
     onAttach: vi.fn(),
     contextOpen: true,
     hasOlderMessages: false,
@@ -117,6 +118,15 @@ describe('ConversationPanel — rolagem', () => {
     expect(
       screen.getByRole('button', { name: 'Carregar mensagens anteriores' }),
     ).toBeInTheDocument();
+  });
+
+  it('botão fechar chama onClose (CRMLAB-16)', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(<ConversationPanel {...props([message('m-1')])} onClose={onClose} />);
+
+    await user.click(screen.getByRole('button', { name: 'Fechar conversa' }));
+    expect(onClose).toHaveBeenCalledOnce();
   });
 });
 

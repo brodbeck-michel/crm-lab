@@ -9,7 +9,7 @@ import type { MessageType } from '@crm-lab/shared';
 import { BusinessError, notFound } from '../http/errors.js';
 import { readMediaFile, writeMediaFile } from '../lib/media-storage.js';
 import { logger } from '../lib/logger.js';
-import { MediaRepository } from '../repositories/media.repository.js';
+import type { MediaRepository } from '../repositories/media.repository.js';
 
 /** 15 MiB — recado de voz e foto de pedido medico cabem folgados; base64 ja infla ~33%. */
 export const MAX_MEDIA_BYTES = 15 * 1024 * 1024;

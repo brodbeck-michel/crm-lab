@@ -33,6 +33,8 @@ export interface ConversationPanelProps {
   onNewBudget: () => void;
   onArchive: () => void;
   onToggleContext: () => void;
+  /** Fecha a conversa aberta, voltando ao estado "nenhuma selecionada" (padrão WhatsApp Web). */
+  onClose: () => void;
   /** Anexo no composer. */
   onAttach: () => void;
   /** Macros do laboratório — a `/` do composer (Onda 8 §3.4). */
@@ -192,6 +194,7 @@ export function ConversationPanel({
   onNewBudget,
   onArchive,
   onToggleContext,
+  onClose,
   onAttach,
   quickReplies,
   contextOpen,
@@ -274,6 +277,17 @@ export function ConversationPanel({
           >
             Contexto
           </Button>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Fechar conversa"
+            className={cn(
+              'flex h-[28px] w-[28px] flex-[0_0_28px] cursor-pointer items-center justify-center',
+              'rounded-pill border-none bg-transparent font-body text-neutral-700 hover:bg-neutral-200',
+            )}
+          >
+            ×
+          </button>
         </div>
       </header>
 

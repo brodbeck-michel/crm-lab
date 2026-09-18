@@ -36,6 +36,16 @@ import { NavGlyph } from './NavGlyph';
 const EXPANDED_WIDTH = 272;
 const COLLAPSED_WIDTH = 64;
 
+/**
+ * Ambiente do BUILD (`VITE_APP_ENV`, build-time como as outras `VITE_*`).
+ * `production` (default) nao mostra nada; qualquer outro valor pinta um selo
+ * no rodape do trilho. Existe para uma coisa so: ninguem confundir a aba de
+ * homologacao com a de producao e mexer no dado real achando que era teste.
+ * Ver docs/guides/ENVIRONMENTS.md.
+ */
+const APP_ENV = import.meta.env.VITE_APP_ENV ?? 'production';
+const IS_PRODUCTION = APP_ENV === 'production';
+
 export function Sidebar() {
   const role = useAuthStore(selectRole);
   const user = useAuthStore(selectUser);
@@ -266,6 +276,19 @@ export function Sidebar() {
             </div>
           )}
         </div>
+      )}
+
+      {/* Selo de ambiente — ausente em produção, de propósito (ver APP_ENV). */}
+      {!IS_PRODUCTION && (
+        <span
+          aria-label={`Ambiente de ${APP_ENV}`}
+          className={cn(
+            'inline-flex items-center justify-center self-start rounded-pill',
+            'bg-accent2 px-sm font-body text-micro font-bold uppercase text-bg',
+          )}
+        >
+          {collapsed ? 'HML' : APP_ENV}
+        </span>
       )}
 
       {/* Versão do build — só o número, sem rótulo, quando o trilho recolhe. */}

@@ -31,8 +31,12 @@ COPY frontend/ frontend/
 
 ARG VITE_API_URL=/api/v1
 ARG VITE_WS_URL=/ws
+# Ambiente do build. Default `production` = sem selo na tela; homologacao
+# passa `homologacao` e a Sidebar pinta o selo (docs/guides/ENVIRONMENTS.md).
+ARG VITE_APP_ENV=production
 ENV VITE_API_URL=${VITE_API_URL} \
-    VITE_WS_URL=${VITE_WS_URL}
+    VITE_WS_URL=${VITE_WS_URL} \
+    VITE_APP_ENV=${VITE_APP_ENV}
 
 # `frontend/.env` e ignorado pelo .dockerignore — o bundle so ve os ARGs acima.
 RUN npm run build --workspace frontend \

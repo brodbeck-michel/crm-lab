@@ -139,6 +139,9 @@ services:
         # Mesmo origin: o nginx da propria imagem faz proxy de /api e /ws.
         VITE_API_URL: ${VITE_API_URL:-/api/v1}
         VITE_WS_URL: ${VITE_WS_URL:-/ws}
+        # `APP_ENV` do .env do ambiente. Producao nao define nada e cai no
+        # default; homologacao define `homologacao` e ganha o selo na tela.
+        VITE_APP_ENV: ${APP_ENV:-production}
     restart: unless-stopped
     depends_on:
       - backend

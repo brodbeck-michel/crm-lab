@@ -151,6 +151,13 @@ build da imagem.
 
 ## 4. Deploy
 
+> **O caminho normal é `./scripts/deploy.sh`**, de dentro do diretório do
+> ambiente (`/opt/crm-lab` = produção, `/opt/crm-lab-homolog` = homologação).
+> Ele faz a sequência abaixo com as travas de identidade, versão e confirmação
+> descritas em **`ENVIRONMENTS.md`** — que é também onde estão as diferenças
+> entre os dois ambientes. Os comandos crus ficam aqui como referência e para
+> quando algo der errado no meio.
+
 ```bash
 # 1. Ambiente (a partir de backend/.env.example + as chaves do compose de prod)
 export DATABASE_URL=... POSTGRES_USER=... POSTGRES_PASSWORD=...

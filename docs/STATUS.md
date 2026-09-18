@@ -1076,6 +1076,9 @@ de `components/layout` verdes; hml respondendo `/healthz` 200 e
 em `/tmp`, todos abortando com saída 1. Custo com as duas stacks: 1.17 GB de 7.9 GB
 de RAM, 10 GB de 96 GB de disco.
 
-**Pendente:** registro DNS `homolog.vitrocrm.cloud` (o Caddyfile do site já está
-escrito e validado no host, ainda não importado). Até lá, hml abre por túnel SSH
-na 8081.
+**Borda concluída no mesmo dia:** `https://homolog.vitrocrm.cloud` com certificado
+Let's Encrypt, `401` sem basic auth e `200` com, `noindex`. Duas armadilhas ficaram
+documentadas em `ENVIRONMENTS.md`: `caddy validate` rodado como root deixa o log
+como `root:root` e faz o reload seguinte ser rejeitado (produção não cai, mas um
+restart passaria a derrubar), e o UFW limita a porta 22 a ~6 conexões/30s por IP —
+rajada de `ssh` curtos derruba o próprio acesso.

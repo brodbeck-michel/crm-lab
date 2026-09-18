@@ -30,23 +30,39 @@ aplicada de verdade) — coisas que `localhost` não reproduz.
 - **Custo medido com as duas de pé**: 1.17 GB de RAM usados dos 7.9 GB (hml inteira
   = ~208 MB; o maior consumidor é o Evolution, 125 MB) e 10 GB de 96 GB em disco.
   Folga grande; o gargalo continua sendo os 2 vCPU durante o build.
-- **Pendente: DNS.** `homolog.vitrocrm.cloud` ainda não existe. A configuração do
-  Caddy já está escrita e validada em `/etc/caddy/homolog.caddyfile`, **não
-  importada**. Para ligar, depois de criar o registro `A homolog -> 2.25.227.155`
-  no painel da Hostinger:
-
-  ```bash
-  ssh crm-vps
-  sudo sed -i '1i import homolog.caddyfile' /etc/caddy/Caddyfile
-  sudo caddy validate --config /etc/caddy/Caddyfile   # antes de recarregar
-  sudo systemctl reload caddy                          # o cert sai sozinho
-  ```
-
-  Enquanto isso, hml abre por túnel: `ssh -L 8081:127.0.0.1:8081 crm-vps` e
-  `http://localhost:8081` (já está em `CORS_ORIGIN`).
+- **Borda no ar**: `https://homolog.vitrocrm.cloud` responde `401` sem credencial e
+  `200` com, cabeçalho `X-Robots-Tag: noindex, nofollow`, `308` de HTTP para HTTPS e
+  certificado Let's Encrypt válido até 2026-12-17. DNS: `A homolog -> 2.25.227.155`
+  (TTL 300) na zona da Hostinger; o `AAAA` existe só na raiz, e o A basta.
 - **Basic auth**: usuário `homolog`; a senha foi entregue ao Michel na montagem e
   **não é versionada**. Perdeu? Gere outra: `caddy hash-password`, troque o hash em
   `/etc/caddy/homolog.caddyfile` e recarregue.
+- Alternativa sem passar pela borda, útil se o DNS ou o certificado der problema:
+  `ssh -L 8081:127.0.0.1:8081 crm-vps` e `http://localhost:8081` — já está no
+  `CORS_ORIGIN`.
+
+### Duas armadilhas que custaram caro na montagem
+
+**`caddy validate` como root deixa o log com dono errado, e o reload seguinte
+falha.** O `validate` **abre** o arquivo de log declarado no site; rodado com
+`sudo`, cria `/var/log/caddy/homolog.log` como `root:root`. O serviço roda como
+`caddy`, não consegue escrever, e o `systemctl reload caddy` é **rejeitado**.
+Valide sempre como o usuário do serviço:
+
+```bash
+sudo -u caddy caddy validate --config /etc/caddy/Caddyfile
+```
+
+O lado bom: o reload do Caddy é atômico — a config velha continua servindo e
+produção não cai. O lado ruim é o que fica armado: o `import` já está no arquivo
+do disco, então um `restart` do Caddy (ou um reboot do host) **aí sim** derruba
+produção. Config rejeitada no reload é urgência, não pendência.
+
+**O UFW limita a porta 22 (`22/tcp LIMIT`)**: cerca de 6 conexões por 30 s por IP,
+e o excedente é REJEITADO — "Connection refused", igualzinho a serviço derrubado.
+Uma sequência de `ssh` curtos em rajada (um por comando) trava o próprio acesso
+por alguns minutos. Não era fail2ban (zero banimentos). Agrupe o trabalho remoto
+em **uma** sessão com heredoc em vez de várias conexões seguidas.
 
 ---
 

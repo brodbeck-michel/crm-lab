@@ -173,7 +173,9 @@ enxerga quem já veria por uma conversa). `platform_operator` não acessa (§11)
 
 ## 3. Ficha do Paciente (`/patients/:id`)
 
-- Página de leitura: max-width 1180px, padding 30px 36px 48px
+- Página de leitura: max-width 1180px, padding 30px 36px 48px (`PageContainer`). Tela de PAINEL,
+  cujo conteúdo é uma grade de dados e não texto corrido, usa `PageContainer wide` — 1440px,
+  padding 24px 32px 48px (hoje só `/results`, §14)
 - `:id` é o **id do paciente** (`patients.id`, D-059), não o da conversa. O inbox chega aqui
   pelo `patientId` da conversa; conversa anterior ao backfill tem `patientId: null` e o link
   não aparece
@@ -725,24 +727,40 @@ de dados coexistem, cada uma com um papel:
 - **`GET /sales/summary`** (sem `attendantId`, §11) — `byAttendant` entra na tabela de comissão.
 - **`GET /settings/commissions`** — percentuais para os cálculos de comissão da tabela.
 
-#### Cabeçalho
+#### Cabeçalho e barra de filtro
 
-- `PeriodFilter` (padrão: últimos 30 dias, D-117) + botão **"Limpar período"** (volta ao
-  default) + `Select` de **Convênio** (`GET /lis-budgets/filters`, opção fixa "Todos os
-  convênios" no topo) — os três compartilhados com Conferência/Busca Ativa via
-  `useUIStore.lisFilters` (D-117).
-- **"Última atualização em ...":** `GET /lis-imports/latest` — nome do arquivo + data/hora;
-  `null` vira "Nenhuma importação ainda".
-- Botão **"Exportar Relatório Executivo"** — PDF via `GET /reports/executive` (ver acima).
+A tela usa `PageContainer wide` (1440px): são 4 KPIs, 2 gráficos e uma tabela de 10 colunas —
+na largura de leitura de 1180px a tabela caía em rolagem horizontal em qualquer monitor.
 
-#### Grade de KPIs (4 `KpiCard`)
+- **Cabeçalho** (`PageHeader size="compact"`, 21px): título + a frase "Orçamentos do LIS no
+  período selecionado" + os dois botões da tela, **"Importar"** e **"Exportar relatório
+  executivo"** (PDF via `GET /reports/executive`, ver acima). Título de painel não compete com o
+  número: o maior tipo da tela é o KPI, em 30px.
+- **Barra de filtro** — uma faixa `neutral-100` em UMA linha, logo abaixo do cabeçalho:
+  `PeriodFilter` (padrão: últimos 30 dias, D-117; o atalho em vigor fica destacado) + `Select` de
+  **Convênio** (`GET /lis-budgets/filters`, opção fixa "Todos os convênios" no topo, rótulo ao
+  lado e não em cima) — os dois compartilhados com Conferência/Busca Ativa via
+  `useUIStore.lisFilters` (D-117). **Sem botão "Limpar período"**: com o atalho destacado, voltar
+  ao padrão é clicar em "30 dias" (COMPONENTS.md → `PeriodFilter`).
+- **Carimbo da importação**, na ponta direita da MESMA barra: `GET /lis-imports/latest` — nome do
+  arquivo + "Importada em <data/hora>"; `null` vira "Nenhuma importação ainda". Fica junto do
+  período porque as duas informações respondem à mesma pergunta: de onde vem e de quando é o que
+  estou vendo.
+
+#### Grade de KPIs (4 `ResultsKpiCard`)
+
+Valor em `text-metric` (30px, `MoneyDisplay size="metric"`), rótulo em caixa normal — caixa alta
+espaçada não acrescenta hierarquia quando o valor já é três vezes maior. Grade 1 / 2 / 4 colunas
+(`sm` / `xl`). Enquanto o resumo carrega, a tela mostra o ESQUELETO dos 4 cartões, com a altura
+final: um "Carregando..." de uma linha fazia a página saltar quando os dados chegavam.
 
 1. **Total Orçado** — `issued.totalValue` + `issued.count` ("N orçamentos"). Cartão com destaque
    visual (fundo escuro/accent) — é o número âncora da tela. `deltaPct`: variação vs. o período
    **imediatamente anterior de mesma duração** — calculada no CLIENTE com um segundo fetch de
    `/lis-budgets/summary` para esse período anterior (mesmo convênio, sem `attendantId`); sem
    endpoint novo. `previous.issued.totalValue === 0` → sem `deltaPct` (evita `Infinity`/`NaN`,
-   mesma disciplina de `percent()`).
+   mesma disciplina de `percent()`). O `deltaPct` aparece como pílula (↑ verde / ↓ accent) com a
+   legenda "vs. período anterior" — um número de variação sem a base da comparação não se lê.
 2. **Em Requisição** — `requisition.totalValue`/`.count` (D-125: orçamentos **convertidos em
    requisição** no período, pagos OU pendentes — **não é** a mesma pergunta de Busca Ativa, §16,
    que é só a fatia sem pagamento) + "X% do total" = `requisition.totalValue / issued.totalValue`
@@ -754,9 +772,14 @@ de dados coexistem, cada uma com um papel:
 
 #### Gráficos
 
+Grade de 12 colunas: **7** para o ranking de atendentes (é o que cresce com o tamanho do time) e
+**5** para o donut (que não muda de tamanho com o dado). Os dois cartões têm a mesma moldura dos
+KPIs — `rounded-lg`, borda `neutral-200`, `shadow-sm`.
+
 - **Faturamento por atendente:** barras horizontais, `byAttendantDetail` (D-122 — TODOS os
   atendentes, não só o top 6 de `byAttendant`) ordenado por `paidValue` desc. Eixo em `MoneyDisplay`
-  (variante `thousands` para caber).
+  (variante `thousands` para caber). Altura = 34px por atendente (mín. 200px): o gráfico cresce
+  com o time em vez de espremer doze pessoas em 160px.
 - **Distribuição por convênio:** donut (`byInsurance`, top 6) + legenda com nome, valor e "%
   do total exibido" (`totalValue / soma dos 6`); quando `issued.totalValue` for maior que a soma
   dos 6 mostrados, uma linha extra "Outros" fecha a diferença (`issued.totalValue - soma`) — nunca
@@ -789,8 +812,10 @@ fetch). PDF via `jspdf`/`jspdf-autotable` (mesmo padrão dos outros dois relató
 ter mais colunas); Excel via `xlsx` — uma aba, mesmas colunas da tabela, linha TOTAL ao final,
 nome de arquivo `comissoes-<startDate>-<endDate>.xlsx`.
 
-- **Sem dado no período:** cartões zerados + "Nenhum orçamento importado neste período" no lugar
-  dos gráficos/tabela — período sem movimento é estado normal, não falha.
+- **Sem dado no período:** `EmptyState` no lugar dos cartões/gráficos/tabela — "Nenhum orçamento
+  importado neste período.", a dica "Troque o período acima ou importe a planilha do LIS para ver
+  os números." e o botão **"Importar planilha"**, que abre o mesmo modal do cabeçalho. Período sem
+  movimento é estado normal, não falha — e tela vazia é convite para agir, não aviso.
 
 #### Modal Importar (usado em `/results` e `/reconciliation`)
 

@@ -32,44 +32,65 @@ const SHORTCUTS: Array<{ label: string; period: () => Period }> = [
   { label: 'Mês atual', period: () => ({ startDate: firstDayOfMonthIso(), endDate: todayIso() }) },
 ];
 
+function samePeriod(a: Period, b: Period): boolean {
+  return a.startDate === b.startDate && a.endDate === b.endDate;
+}
+
 /**
  * `PeriodFilter` (`docs/frontend/COMPONENTS.md`) — atalhos comuns + intervalo
- * livre. `endDate < startDate` desabilita [Aplicar] sem round-trip ao
- * servidor. Usado em `/results`, `/reconciliation`, `/active-search` (valor
- * compartilhado via `useUIStore.lisFilters`, D-117) e `/sales` (período
- * próprio da tela).
+ * livre, em UMA linha. O atalho que corresponde ao período em vigor fica
+ * `primary`: antes, quem chegava na tela não tinha como saber se estava vendo
+ * 7 ou 30 dias sem ler as duas datas. Os campos de data são pílulas curtas com
+ * o rótulo DENTRO (`prefix`) — rótulo em cima somava uma linha inteira de
+ * altura à barra de filtro de todas as telas do LIS.
+ *
+ * `endDate < startDate` avisa inline, sem round-trip ao servidor. Usado em
+ * `/results`, `/reconciliation`, `/active-search` (valor compartilhado via
+ * `useUIStore.lisFilters`, D-117) e `/sales` (período próprio da tela).
  */
 export function PeriodFilter({ value, onChange }: PeriodFilterProps) {
   const invalid = value.endDate < value.startDate;
 
   return (
-    <div className="flex flex-wrap items-end gap-md">
-      <div className="flex flex-wrap gap-sm">
-        {SHORTCUTS.map((shortcut) => (
-          <Button
-            key={shortcut.label}
-            variant="secondary"
-            size="sm"
-            onClick={() => onChange(shortcut.period())}
-          >
-            {shortcut.label}
-          </Button>
-        ))}
+    <div className="flex flex-wrap items-center gap-md">
+      <div className="flex flex-wrap items-center gap-xs">
+        {SHORTCUTS.map((shortcut) => {
+          const active = samePeriod(value, shortcut.period());
+          return (
+            <Button
+              key={shortcut.label}
+              variant={active ? 'primary' : 'secondary'}
+              size="sm"
+              aria-pressed={active}
+              onClick={() => onChange(shortcut.period())}
+            >
+              {shortcut.label}
+            </Button>
+          );
+        })}
       </div>
-      <Input
-        type="date"
-        label="De"
-        value={value.startDate}
-        onChange={(e) => onChange({ ...value, startDate: e.target.value })}
-        aria-label="Data inicial"
-      />
-      <Input
-        type="date"
-        label="Até"
-        value={value.endDate}
-        onChange={(e) => onChange({ ...value, endDate: e.target.value })}
-        aria-label="Data final"
-      />
+
+      <div className="flex flex-wrap items-center gap-sm">
+        <div className="w-[164px]">
+          <Input
+            type="date"
+            value={value.startDate}
+            onChange={(e) => onChange({ ...value, startDate: e.target.value })}
+            aria-label="Data inicial"
+            prefix={<span className="font-body text-caption text-neutral-700">De</span>}
+          />
+        </div>
+        <div className="w-[164px]">
+          <Input
+            type="date"
+            value={value.endDate}
+            onChange={(e) => onChange({ ...value, endDate: e.target.value })}
+            aria-label="Data final"
+            prefix={<span className="font-body text-caption text-neutral-700">até</span>}
+          />
+        </div>
+      </div>
+
       {invalid && (
         <p role="alert" className="font-body text-caption text-accent-700">
           Data final anterior à inicial.

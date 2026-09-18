@@ -176,6 +176,9 @@ Anatomia (padrão WhatsApp):
 
 ### PageHeader
 - Título (heading 32px), ações à direita, breadcrumb opcional
+- `size="compact"` — título 21px (`text-section`) e `description` em `text-caption`, para tela de
+  PAINEL (`/results`): ali o maior tipo da página é o número do KPI (30px), não a palavra que
+  nomeia a tela. Telas de leitura continuam no padrão de 32px
 
 ---
 
@@ -228,10 +231,13 @@ Anatomia (padrão WhatsApp):
 
 ### MoneyDisplay
 ```tsx
-<MoneyDisplay value={1350} variant="full | compact | thousands" />
+<MoneyDisplay value={1350} variant="full | compact | thousands" emphasis? size="section | metric" />
 // full: R$ 1.350,00 · compact: R$ 24.400 · thousands: R$ 96,4 mil
 ```
 - SEMPRE white-space: nowrap; formatação pt-BR centralizada AQUI (único lugar)
+- `emphasis` usa a fonte de título; `size` escolhe o corpo dela — `section` (21px, padrão: tabela
+  e total do modal) ou `metric` (30px, número âncora de cartão de painel). Sem `emphasis`, `size`
+  não tem efeito
 
 ### DateDisplay
 - Relativo ("há 4 min") em listas; absoluto (DD/MM/YYYY HH:MM) em detalhes
@@ -276,6 +282,14 @@ Anatomia (padrão WhatsApp):
   startDate` mostra mensagem inline e a TELA que consome o componente segura o fetch
   (`enabled: false` na query) até o intervalo ficar válido — sem round-trip ao servidor para
   validar isso
+- **Tudo em UMA linha, altura de barra de filtro:** o atalho cujo período bate com o valor em
+  vigor fica `primary` + `aria-pressed="true"` (quem chega na tela sabe se está vendo 7 ou 30 dias
+  sem ler as duas datas); período livre não marca nenhum. Os campos de data são pílulas de 164px
+  com o rótulo DENTRO (`prefix` "De"/"até") — rótulo empilhado somava uma linha inteira de altura
+  à barra em todas as telas do LIS. O rótulo acessível (`aria-label`) continua "Data inicial" /
+  "Data final"
+- Com o atalho em evidência, a tela NÃO precisa de um botão "Limpar período": voltar ao padrão é
+  clicar em "30 dias"
 - Sem valor: aplica o padrão de 30 dias terminando hoje **visualmente** (mesmo default que o
   servidor aplicaria na ausência de query params) — a tela nunca mostra os campos vazios com um
   resultado já carregado, o que pareceria inconsistente
@@ -438,10 +452,10 @@ Barril: `@/components/layout`. Nenhum destes componentes busca dado — são cas
 | `AppShell` | `<AppShell />` (rota-mãe) | Sidebar + `<main class="min-w-0 flex-1">` com `<Outlet />` |
 | `PlatformShell` | `<PlatformShell />` | Igual, mas aplica `PLATFORM_THEME` ao montar e devolve o tema do tenant ao desmontar (PAGES.md §11) |
 | `Sidebar` | `<Sidebar />` | Lê papel + rota; itens de `sidebarRoutesFor(role)` |
-| `PageHeader` | `<PageHeader title breadcrumb? actions? description? />` | Título `text-display` (32px) na fonte de título; ações `flex: 0 0 auto` |
+| `PageHeader` | `<PageHeader title breadcrumb? actions? description? size? />` | Título `text-display` (32px) na fonte de título; `size="compact"` cai para 21px (painel); ações `flex: 0 0 auto` |
 | `InboxLayout` | `<InboxLayout list conversation context? contextOpen? />` | `336px \| flex 1 min 440px \| 316px` |
 | `BudgetLayout` | `<BudgetLayout catalog summary total />` | `flex 1 min 520px \| 372px`; `total` em rodapé `sticky bottom-0` |
-| `PageContainer` | `<PageContainer>…</PageContainer>` | Página de leitura: `max-width 1180px`, `padding 30px 36px 48px` (PAGES.md §3) |
+| `PageContainer` | `<PageContainer wide?>…</PageContainer>` | Página de leitura: `max-width 1180px`, `padding 30px 36px 48px` (PAGES.md §3). `wide`: 1440px e `24px 32px 48px`, só para tela de GRADE de dados (`/results`) |
 | `NavGlyph` | `<NavGlyph name size? />` | SVG inline em `currentColor` — sem biblioteca de ícones |
 
 Constantes exportadas para quem precisar do número exato:

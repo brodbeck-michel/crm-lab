@@ -225,6 +225,31 @@ describe('Results (/results)', () => {
     expect(await screen.findByRole('button', { name: /limpar base/i })).toBeInTheDocument();
   });
 
+  it('período sem orçamento oferece importar a planilha, não uma tela em branco', async () => {
+    useLisBudgetsSummary.mockImplementation(() =>
+      querySuccess({
+        ...summary,
+        issued: { count: 0, totalValue: 0, averageTicket: 0 },
+      }),
+    );
+    signIn('manager');
+    renderPage();
+
+    expect(
+      await screen.findByText('Nenhum orçamento importado neste período.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Importar planilha' })).toBeInTheDocument();
+  });
+
+  it('o carimbo da importação mostra o arquivo que está na tela', async () => {
+    signIn('manager');
+    renderPage();
+
+    expect(
+      await screen.findByText('Sante - Relatorio_20260911.xlsx'),
+    ).toBeInTheDocument();
+  });
+
   it('sem importação ainda mostra "Nenhuma importação ainda"', async () => {
     useLisImportsLatest.mockReturnValue(querySuccess<LisImport | null>(null));
     signIn('manager');

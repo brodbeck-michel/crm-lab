@@ -14,13 +14,13 @@ function Icon({ name, tone }: { name: ResultsKpiIcon; tone: 'onDark' | 'onLight'
   return (
     <span
       className={cn(
-        'inline-flex h-9 w-9 items-center justify-center rounded-md',
+        'inline-flex h-8 w-8 flex-none items-center justify-center rounded-md',
         tone === 'onDark' ? 'bg-accent2-700 text-bg' : 'bg-accent2-200 text-accent2-800',
       )}
     >
       <svg
-        width="18"
-        height="18"
+        width="17"
+        height="17"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
@@ -43,6 +43,8 @@ export interface ResultsKpiCardProps {
   caption?: ReactNode;
   /** Variação vs. período anterior, em pontos percentuais. Só o 1º cartão usa. */
   deltaPct?: number;
+  /** O que o `deltaPct` compara — ex.: "vs. período anterior". */
+  deltaLabel?: string;
   /** Destaque visual (fundo escuro) — reservado ao cartão âncora "Total Orçado". */
   highlight?: boolean;
   /** Barra de progresso 0-100 (cartão "Recebido" — taxa de conversão). */
@@ -51,10 +53,15 @@ export interface ResultsKpiCardProps {
 }
 
 /**
- * Cartão de KPI da tela `/results` (PAGES.md §14) — layout rico com ícone,
- * variação e legenda, fiel à referência visual real do produto. Distinto do
- * `KpiCard` genérico (usado em Busca Ativa): aqui cada cartão tem forma
- * própria (destaque, barra de progresso), não uma grade uniforme.
+ * Cartão de KPI da tela `/results` (PAGES.md §14).
+ *
+ * O número é o herói da tela: fica em `text-metric` (30px), maior que o próprio
+ * título da página (21px em `size="compact"`). O rótulo vem em caixa normal —
+ * caixa alta espaçada custa legibilidade e não acrescenta hierarquia nenhuma
+ * quando o valor já é três vezes maior.
+ *
+ * Distinto do `KpiCard` genérico (usado em Busca Ativa): aqui cada cartão tem
+ * forma própria (destaque, variação, barra de progresso), não uma grade uniforme.
  */
 export function ResultsKpiCard({
   icon,
@@ -62,6 +69,7 @@ export function ResultsKpiCard({
   value,
   caption,
   deltaPct,
+  deltaLabel,
   highlight = false,
   progress,
   progressLabel,
@@ -69,37 +77,63 @@ export function ResultsKpiCard({
   return (
     <div
       className={cn(
-        'flex flex-col gap-md rounded-md p-lg shadow-sm',
-        highlight ? 'bg-accent2-800 text-bg' : 'bg-neutral-100 border border-neutral-200',
+        'flex h-full flex-col gap-md rounded-lg p-lg',
+        highlight
+          ? 'bg-accent2-800 text-bg shadow-md'
+          : 'bg-neutral-100 border border-neutral-200 shadow-sm',
       )}
     >
-      <div className="flex items-center justify-between">
-        <Icon name={icon} tone={highlight ? 'onDark' : 'onLight'} />
-        {deltaPct !== undefined && (
-          <span
+      <div className="flex items-start justify-between gap-sm">
+        <div className="flex min-w-0 items-center gap-sm">
+          <Icon name={icon} tone={highlight ? 'onDark' : 'onLight'} />
+          <p
             className={cn(
               'font-body text-caption font-semibold',
-              highlight ? 'text-bg' : deltaPct < 0 ? 'text-accent-700' : 'text-accent2-700',
+              highlight ? 'text-bg' : 'text-neutral-700',
             )}
           >
-            {deltaPct >= 0 ? '↗' : '↘'} {Math.abs(deltaPct).toFixed(1)}%
+            {label}
+          </p>
+        </div>
+
+        {deltaPct !== undefined && (
+          <span
+            title={deltaLabel}
+            className={cn(
+              'inline-flex flex-none items-center gap-xs rounded-pill px-sm py-xs font-body text-caption font-semibold',
+              highlight
+                ? 'bg-accent2-700 text-bg'
+                : deltaPct < 0
+                  ? 'bg-accent-200 text-accent-800'
+                  : 'bg-accent2-200 text-accent2-800',
+            )}
+          >
+            <span aria-hidden="true">{deltaPct >= 0 ? '↑' : '↓'}</span>
+            {Math.abs(deltaPct).toFixed(1)}%
           </span>
         )}
       </div>
 
-      <div>
-        <p
-          className={cn(
-            'font-body text-micro font-semibold uppercase',
-            highlight ? 'text-bg' : 'text-neutral-600',
-          )}
-        >
-          {label}
-        </p>
-        <p className="font-heading text-section mt-xs">{value}</p>
+      <div className="mt-auto">
+        <p className="font-heading text-metric">{value}</p>
         {caption && (
-          <p className={cn('font-body text-caption mt-xs', highlight ? 'text-bg' : 'text-neutral-600')}>
+          <p
+            className={cn(
+              'mt-xs font-body text-caption',
+              highlight ? 'text-bg' : 'text-neutral-600',
+            )}
+          >
             {caption}
+          </p>
+        )}
+        {deltaPct !== undefined && deltaLabel && (
+          <p
+            className={cn(
+              'mt-xs font-body text-caption',
+              highlight ? 'text-bg' : 'text-neutral-600',
+            )}
+          >
+            {deltaLabel}
           </p>
         )}
       </div>
@@ -107,12 +141,17 @@ export function ResultsKpiCard({
       {progress !== undefined && (
         <div>
           {progressLabel && (
-            <div className="flex justify-between font-body text-micro font-semibold uppercase text-neutral-600 mb-xs">
+            <div
+              className={cn(
+                'mb-xs flex justify-between font-body text-caption',
+                highlight ? 'text-bg' : 'text-neutral-600',
+              )}
+            >
               <span>{progressLabel}</span>
-              <span>{progress.toFixed(1)}%</span>
+              <span className="font-semibold tabular-nums">{progress.toFixed(1)}%</span>
             </div>
           )}
-          <div className="h-[6px] w-full rounded-pill bg-neutral-200 overflow-hidden">
+          <div className="h-[6px] w-full overflow-hidden rounded-pill bg-neutral-200">
             <div
               className="h-full rounded-pill bg-accent2"
               style={{ width: `${Math.min(100, Math.max(0, progress))}%` }}

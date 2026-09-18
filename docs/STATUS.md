@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-18 (ambiente de homologação na VPS — ver seção no fim)
+**Última atualização:** 2026-09-18 (redesenho da leitura de `/results` — ver seção no fim)
 
 ---
 
@@ -1082,3 +1082,46 @@ documentadas em `ENVIRONMENTS.md`: `caddy validate` rodado como root deixa o log
 como `root:root` e faz o reload seguinte ser rejeitado (produção não cai, mas um
 restart passaria a derrubar), e o UFW limita a porta 22 a ~6 conexões/30s por IP —
 rajada de `ssh` curtos derruba o próprio acesso.
+
+---
+
+## 2026-09-18 — `/results`: redesenho da leitura (UX) ✅
+
+Só forma: nenhum endpoint, cálculo, coluna ou cartão mudou. O que mudou foi
+quanto espaço cada coisa ocupa e em que ordem ela se lê.
+
+**O diagnóstico:** a tela cabia em 1180px (largura de LEITURA) com um cabeçalho de
+32px, uma barra de filtro de duas alturas — atalhos + dois `Input type="date"` de
+largura total, cada um com rótulo empilhado em cima — e um "Carregando..." de uma
+linha. Quem importava a planilha gastava meia tela antes de ver um número, e a
+tabela de comissão (10 colunas, `minWidth 1100`) rolava na horizontal em qualquer
+monitor.
+
+**O que foi feito:**
+
+| Onde | Antes | Agora |
+|------|-------|-------|
+| `PageContainer` | 1180px fixo | prop `wide` → 1440px, `24px 32px 48px`. Só `/results` usa |
+| `PageHeader` | título 32px + descrição 13px | prop `size="compact"` → 21px. O maior tipo da tela passa a ser o KPI (30px) |
+| `PeriodFilter` | 4 botões iguais + 2 campos de largura total com rótulo em cima | uma linha: o atalho em vigor fica `primary`/`aria-pressed`, datas viram pílulas de 164px com rótulo DENTRO (`prefix`) |
+| Barra de filtro | 3 blocos soltos + "Limpar período" | uma faixa `neutral-100`, com o carimbo da importação na ponta direita. "Limpar período" saiu: clicar em "30 dias" faz o mesmo |
+| `ResultsKpiCard` | valor 21px, rótulo caixa alta, delta solto | valor 30px (`MoneyDisplay size="metric"`), rótulo em caixa normal ao lado do ícone, delta em pílula com "vs. período anterior" |
+| Gráficos | 50/50 | grade de 12: ranking 7, donut 5. Barra de 34px por atendente (mín. 200px) |
+| Carregando | texto "Carregando..." | esqueleto dos 4 cartões, com a altura final — a página não salta |
+| Sem dado | frase solta | `EmptyState` com a dica e o botão "Importar planilha" |
+| Zona de admin | botão "Limpar base" solto | mesma linha, com a frase do que o botão faz |
+
+**Decisões de leitura:** rótulo de KPI saiu da caixa alta espaçada (não acrescenta
+hierarquia quando o valor é 3× maior) e a variação nunca aparece sem a base da
+comparação. O carimbo da importação subiu para dentro da barra de filtro porque
+"de onde vem" e "de quando é" são a mesma pergunta.
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces; `npm run test:frontend`
+1042 → 1046 testes verdes (4 novos: atalho marcado, período livre sem marca, vazio
+com ação de importar, carimbo do arquivo). Docs atualizados no mesmo commit —
+`PAGES.md` §3 e §14, `COMPONENTS.md` (`PageContainer wide`, `PageHeader size`,
+`MoneyDisplay size`, `PeriodFilter`).
+
+**Pendente:** validação visual em `https://homolog.vitrocrm.cloud`. Nada foi
+visto em navegador nesta máquina — jsdom não desenha, e subir a stack local
+esbarra na inspeção de TLS.

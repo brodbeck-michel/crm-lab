@@ -207,38 +207,79 @@ Os usuários vêm no dump: as **mesmas credenciais de produção** valem em hml
 
 ## 5. Borda (Caddy no host)
 
-Um Caddy só, dois sites. `hml` com `basic_auth` e `noindex`:
+Um Caddy só, dois sites. `hml` fica atrás de um **porteiro por cookie** — não de
+`basic_auth` em todos os caminhos (o porquê está logo abaixo, e custou uma tarde):
 
 ```caddyfile
 homolog.vitrocrm.cloud {
 	encode zstd gzip
 	header X-Robots-Tag "noindex, nofollow"
 
-	# O /ws fica FORA do basic auth — ver abaixo.
-	@protegido not path /ws /ws/*
-	basic_auth @protegido {
-		homolog <hash bcrypt via `caddy hash-password`>
+	@gate path /entrar
+	@sem_cookie not header_regexp Cookie "hml_ok=<segredo>"
+	@api_sem_cookie {
+		path /api/* /ws /ws/*
+		not header_regexp Cookie "hml_ok=<segredo>"
 	}
 
-	reverse_proxy 127.0.0.1:8081
+	route {
+		handle @gate {
+			basic_auth {
+				homolog <hash bcrypt via `caddy hash-password`>
+			}
+			header +Set-Cookie "hml_ok=<segredo>; Path=/; Max-Age=2592000; HttpOnly; Secure; SameSite=Lax"
+			redir * / 302
+		}
+
+		respond @api_sem_cookie "homologacao: porteiro expirou — recarregue a pagina" 403
+		redir @sem_cookie /entrar 302
+
+		reverse_proxy 127.0.0.1:8081
+	}
+
 	log { output file /var/log/caddy/homolog.log { roll_size 10MiB roll_keep 5 } }
 }
 ```
 
-### Por que o `/ws` não pode ficar atrás do basic auth
+Fluxo: sem cookie → `/entrar` → basic auth (a **única** caixa de senha) →
+`Set-Cookie` → volta para `/`. Uma senha por navegador, 30 dias. O ambiente
+inteiro fica protegido, **inclusive a API** — que é onde mora a cópia do dado
+real de paciente.
 
-O navegador **não envia credencial de basic auth no handshake de WebSocket**. Com
-`basic_auth` em todos os caminhos, o `/ws` respondia `401` com desafio
-`WWW-Authenticate` na borda, o app reconectava em loop e cada tentativa abria a
-caixa de usuário/senha — homologação ficava inutilizável, e o tempo real (inbox,
-chat interno) nunca conectava.
+### Por que `basic_auth` em tudo não funciona com este app
 
-Liberar o `/ws` na borda **não expõe nada**: ele tem autenticação própria e mais
-forte. `lib/ws-hub.ts` exige `?token=<access token>`, verifica a assinatura com o
-`JWT_SECRET` **deste** ambiente e tira `tenantId`/`userId` só do token verificado
-— sem token válido o socket é destruído com `401`. A diferença observável é que o
-`401` do `/ws` agora vem do backend, **sem** cabeçalho de desafio, e por isso não
-abre caixa nenhuma.
+Duas incompatibilidades, as duas de protocolo, nenhuma contornável por ajuste:
+
+1. **A API.** O app manda o **seu próprio** `Authorization: Bearer <jwt>` em toda
+   chamada, e esse cabeçalho substitui a credencial de basic auth do navegador.
+   O Caddy não reconhece o Bearer como Basic, responde `401` com
+   `WWW-Authenticate`, e o navegador reabre a caixa de senha **a cada chamada de
+   API**. No log da borda: 188 dos 400 últimos acessos eram esse 401.
+2. **O WebSocket.** O navegador nunca envia basic auth no handshake de upgrade.
+   O `/ws` levava `401` na borda, o app reconectava em loop, e o tempo real
+   (inbox, chat interno) nunca conectava.
+
+Cookie resolve os dois porque `Cookie` e `Authorization` são cabeçalhos
+**diferentes**, e o navegador manda o cookie em `fetch` e no handshake de WS
+(mesma origem). O `/api` e o `/ws` continuam exigindo o JWT do próprio app —
+`lib/ws-hub.ts` verifica `?token=` com o `JWT_SECRET` deste ambiente e tira
+`tenantId`/`userId` só do token verificado.
+
+Diferença observável que importa: os `401` de dentro da aplicação (JWT expirado,
+senha errada) **não** têm cabeçalho de desafio, então não abrem caixa nenhuma. Se
+a caixa de senha voltar a aparecer fora do `/entrar`, é a borda respondendo —
+comece olhando o log.
+
+### Pegadinha do `redir`
+
+`redir / 302` **não** redireciona para `/`: o token `/` é lido como *matcher de
+caminho*, e o destino vira `302`. O sintoma é um `Location` errado e, no
+navegador, um laço no porteiro. Com destino relativo, o matcher tem que ser
+explícito:
+
+```caddyfile
+redir * / 302
+```
 
 Nenhuma das duas stacks publica porta pública: ambas escutam em `127.0.0.1`, e
 quem atende 80/443 é o Caddy. `TRUST_PROXY_HOPS=2` (Caddy + nginx da imagem).

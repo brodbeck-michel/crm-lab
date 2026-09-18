@@ -44,6 +44,8 @@ docs/
 ├── guides/
 │   ├── DEVELOPMENT.md           # Setup e ciclo de trabalho diário
 │   ├── CONVENTIONS.md           # Convenções de código e git
+│   ├── ENVIRONMENTS.md          # ⭐ prod × hml: o que é cada um, como subir
+│   ├── DEPLOYMENT.md            # Pipeline de CI, imagens, rollback
 │   └── TESTING.md               # Estratégia de testes + isolamento multitenant
 │
 ├── domain/

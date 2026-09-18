@@ -40,6 +40,13 @@ Tudo é ESM (`"type": "module"`). **Imports relativos no backend levam extensão
 9. **Dinheiro no fio:** número decimal (`179.80`), nunca string formatada. Datas: ISO 8601 UTC.
 10. **Sem `console.log`** no backend — use o logger. Sem segredos hardcoded — env vars.
 
+## Ambientes
+`prod` e `hml` rodam na MESMA VPS, isolados por projeto Compose (`crm-lab-prod` /
+`crm-lab-homolog`) em `/opt/crm-lab` e `/opt/crm-lab-homolog`. Deploy SEMPRE por
+`./scripts/deploy.sh` de dentro do diretório do ambiente — nunca `docker compose`
+cru, nunca `down -v`. Leia `docs/guides/ENVIRONMENTS.md` antes de tocar em
+qualquer um dos dois. Produção: só `origin/main`, com bump de versão + tag.
+
 ## Comandos
 ```
 npm run typecheck            # todos os workspaces

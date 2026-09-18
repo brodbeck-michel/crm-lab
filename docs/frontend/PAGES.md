@@ -763,12 +763,16 @@ final: um "Carregando..." de uma linha fazia a página saltar quando os dados ch
    legenda "vs. período anterior" — um número de variação sem a base da comparação não se lê.
 2. **Em Requisição** — `requisition.totalValue`/`.count` (D-125: orçamentos **convertidos em
    requisição** no período, pagos OU pendentes — **não é** a mesma pergunta de Busca Ativa, §16,
-   que é só a fatia sem pagamento) + "X% do total" = `requisition.totalValue / issued.totalValue`
-   (0 quando `issued.totalValue` é 0).
-3. **Recebido** — `paid.totalValue`/`.count` + "X% do total" (mesma fórmula) + barra de
+   que é só a fatia sem pagamento) + "N requisições, X% do orçado" =
+   `requisition.totalValue / issued.totalValue` (0 quando `issued.totalValue` é 0).
+3. **Recebido** — `paid.totalValue`/`.count` + "N pagos, X% do orçado" (mesma fórmula) + barra de
    `paid.conversionQty` (já capada em 100% pelo servidor — a tela nunca reaplica o cap).
 4. **Atendentes** — `byAttendantDetail.length` (quantos atendentes tiveram orçamento no
-   período) + rótulo "N ativo(s) no período".
+   período) + rótulo "N com orçamento no período".
+
+Cada cartão carrega `data-kpi="<rótulo>"` no elemento raiz — é o gancho do E2E. Ler o rótulo e
+subir um nível no DOM (como o fluxo 17 fazia) amarra o teste à profundidade da marcação: mover o
+rótulo para junto do ícone derrubou os quatro cartões sem que nenhum número tivesse mudado.
 
 #### Gráficos
 

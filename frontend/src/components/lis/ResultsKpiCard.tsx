@@ -76,6 +76,11 @@ export function ResultsKpiCard({
 }: ResultsKpiCardProps) {
   return (
     <div
+      // Gancho de teste do cartão INTEIRO. O E2E lia o rótulo e subia um nível
+      // no DOM, o que amarrava o teste à profundidade da marcação: mover o
+      // rótulo para junto do ícone quebrou a leitura de todos os cartões sem
+      // que nenhum número tivesse mudado.
+      data-kpi={label}
       className={cn(
         'flex h-full flex-col gap-md rounded-lg p-lg',
         highlight

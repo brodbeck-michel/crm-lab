@@ -213,13 +213,32 @@ Um Caddy só, dois sites. `hml` com `basic_auth` e `noindex`:
 homolog.vitrocrm.cloud {
 	encode zstd gzip
 	header X-Robots-Tag "noindex, nofollow"
-	basic_auth {
+
+	# O /ws fica FORA do basic auth — ver abaixo.
+	@protegido not path /ws /ws/*
+	basic_auth @protegido {
 		homolog <hash bcrypt via `caddy hash-password`>
 	}
+
 	reverse_proxy 127.0.0.1:8081
 	log { output file /var/log/caddy/homolog.log { roll_size 10MiB roll_keep 5 } }
 }
 ```
+
+### Por que o `/ws` não pode ficar atrás do basic auth
+
+O navegador **não envia credencial de basic auth no handshake de WebSocket**. Com
+`basic_auth` em todos os caminhos, o `/ws` respondia `401` com desafio
+`WWW-Authenticate` na borda, o app reconectava em loop e cada tentativa abria a
+caixa de usuário/senha — homologação ficava inutilizável, e o tempo real (inbox,
+chat interno) nunca conectava.
+
+Liberar o `/ws` na borda **não expõe nada**: ele tem autenticação própria e mais
+forte. `lib/ws-hub.ts` exige `?token=<access token>`, verifica a assinatura com o
+`JWT_SECRET` **deste** ambiente e tira `tenantId`/`userId` só do token verificado
+— sem token válido o socket é destruído com `401`. A diferença observável é que o
+`401` do `/ws` agora vem do backend, **sem** cabeçalho de desafio, e por isso não
+abre caixa nenhuma.
 
 Nenhuma das duas stacks publica porta pública: ambas escutam em `127.0.0.1`, e
 quem atende 80/443 é o Caddy. `TRUST_PROXY_HOPS=2` (Caddy + nginx da imagem).

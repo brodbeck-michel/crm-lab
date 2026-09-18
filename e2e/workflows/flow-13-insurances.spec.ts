@@ -211,7 +211,7 @@ test.describe('Fluxo 13: Convenios e preco por convenio', () => {
 
     // (3) persistencia na tela: reabrir a proposta mostra o convenio.
     await gotoScreen(page, '/proposals', 'Pipeline de Propostas');
-    await proposalCard(page, proposalId).click();
+    await proposalCard(page, salva).click();
     const modal = page.getByRole('dialog');
     await expect(modal).toBeVisible();
     await expect(modal.getByText(UNIMED.name)).toBeVisible();

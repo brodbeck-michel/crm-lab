@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WhatsAppQrResponse } from '@crm-lab/shared';
 import { mutationIdle, queryLoading, querySuccess } from '@/test/query-mocks';
 import { ToastProvider } from '@/components/ui';
+import type { useWhatsAppConnect } from '@/api/channels';
 import { WhatsAppConnectModal } from './WhatsAppConnectModal';
 import type { WhatsAppConnectModalProps } from './WhatsAppConnectModal';
 
@@ -40,6 +41,22 @@ function rerenderModal(
   );
 }
 
+type ConnectMutate = ReturnType<typeof useWhatsAppConnect>['mutate'];
+
+/**
+ * `mutate` que responde com sucesso, como o `POST /connect` real.
+ *
+ * O modal só liga o polling do QR no `onSuccess` do connect (senão o primeiro
+ * `GET /qr` corre com o `POST /connect`, não acha cache, responde
+ * `disconnected` e o polling morre na primeira tentativa). Um `vi.fn()` cru
+ * nunca chama o callback, então todo teste que espera ver o QR precisa deste.
+ */
+function mutateOk(): ConnectMutate {
+  return vi.fn((_body: unknown, opts?: { onSuccess?: (data: unknown) => void }) => {
+    opts?.onSuccess?.(undefined);
+  }) as unknown as ConnectMutate;
+}
+
 describe('WhatsAppConnectModal', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -71,7 +88,7 @@ describe('WhatsAppConnectModal', () => {
   it('após conectar, mostra o QR e faz polling até status connected', async () => {
     const user = userEvent.setup();
     const { useWhatsAppConnect, useWhatsAppQr } = await import('@/api/channels');
-    vi.mocked(useWhatsAppConnect).mockReturnValue(mutationIdle(vi.fn()));
+    vi.mocked(useWhatsAppConnect).mockReturnValue(mutationIdle(mutateOk()));
 
     /**
      * Sequência CONTROLADA, não fake timers: `qrData` muda quando o teste
@@ -108,7 +125,7 @@ describe('WhatsAppConnectModal', () => {
   it('mostra botão "Gerar novamente" quando o QR expira (disconnected após pairing)', async () => {
     const user = userEvent.setup();
     const { useWhatsAppConnect, useWhatsAppQr } = await import('@/api/channels');
-    const mutate = vi.fn();
+    const mutate = mutateOk();
     vi.mocked(useWhatsAppConnect).mockReturnValue(mutationIdle(mutate));
 
     let qrData: WhatsAppQrResponse = {

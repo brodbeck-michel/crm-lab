@@ -196,6 +196,16 @@ jobs:
       VITE_API_URL: http://localhost:3000/api/v1
       VITE_WS_URL: ws://localhost:3000/ws
 
+      # Gateway Evolution do fluxo 14 (conexao por QR, D-083). O gateway aqui e
+      # o FALSO (`e2e/workflows/fake-evolution-gateway.ts`), que sobe na 8080 no
+      # `beforeAll` do proprio spec — mas quem precisa apontar para ele e o
+      # BACKEND, que roda em outro processo e so le env. Sem os tres, as rotas
+      # de QR respondem `503 CHANNEL_QR_UNAVAILABLE` por contrato e o fluxo 14
+      # inteiro cai. Nao ha segredo: o gateway e de mentira e morre com o job.
+      EVOLUTION_API_URL: http://127.0.0.1:8080
+      EVOLUTION_API_KEY: e2e-fake-admin-key
+      EVOLUTION_WEBHOOK_TOKEN: e2e-fake-webhook-token
+
     steps:
       - uses: actions/checkout@v4
 

@@ -407,9 +407,8 @@ test.describe('Fluxo 12: paginação do pipeline (D7)', () => {
     /*
      * Cria uma pagina cheia + folga. A listagem ordena por `createdAt DESC`
      * (proposal.service.ts), entao as recem-criadas ocupam a pagina 1 e o
-     * TRANSBORDO cai no comeco da pagina 2 — que e onde o teste precisa de um
-     * id aleatorio, porque o cartao so imprime 8 digitos e os ids semeados
-     * dividem o prefixo `a0000000`.
+     * TRANSBORDO cai no comeco da pagina 2, que e o que o teste precisa
+     * observar trocando de pagina.
      *
      * Aqui o `total` global NAO e usado como ancora: o teste so escolhe ids
      * DENTRO do conjunto que ele mesmo criou (`criadasSet`), entao quantas
@@ -449,10 +448,10 @@ test.describe('Fluxo 12: paginação do pipeline (D7)', () => {
     expect(soNaPrimeira).toBeDefined();
 
     await loginAs(page, E2E_USERS.alfaAdmin);
-    await gotoScreen(page, '/proposals', 'Pipeline de Propostas');
+    await gotoScreen(page, '/proposals?view=lista', 'Pipeline de Propostas');
 
-    await expect(proposalCard(page, soNaPrimeira.id)).toBeVisible();
-    await expect(proposalCard(page, soNaSegunda.id)).toHaveCount(0);
+    await expect(proposalCard(page, soNaPrimeira)).toBeVisible();
+    await expect(proposalCard(page, soNaSegunda)).toHaveCount(0);
 
     /*
      * `página 1 de N` sem o total: `pagination.total` de propostas e do tenant
@@ -467,8 +466,8 @@ test.describe('Fluxo 12: paginação do pipeline (D7)', () => {
 
     await expect(page).toHaveURL(/[?&]page=2/);
     await expect(nav).toContainText('página 2 de');
-    await expect(proposalCard(page, soNaSegunda.id)).toBeVisible();
-    await expect(proposalCard(page, soNaPrimeira.id)).toHaveCount(0);
+    await expect(proposalCard(page, soNaSegunda)).toBeVisible();
+    await expect(proposalCard(page, soNaPrimeira)).toHaveCount(0);
   });
 
   /**
@@ -484,12 +483,12 @@ test.describe('Fluxo 12: paginação do pipeline (D7)', () => {
     const alvo = segunda.proposals[0] as Proposal;
 
     await loginAs(page, E2E_USERS.alfaAdmin);
-    await gotoScreen(page, '/proposals?page=2', 'Pipeline de Propostas');
+    await gotoScreen(page, '/proposals?view=lista&page=2', 'Pipeline de Propostas');
 
     await expect(
       page.getByRole('navigation', { name: 'Paginação de propostas' }),
     ).toContainText('página 2 de');
-    await expect(proposalCard(page, alvo.id)).toBeVisible();
+    await expect(proposalCard(page, alvo)).toBeVisible();
   });
 
   test('trocar de filtro volta para a pagina 1', async ({ page, request }) => {
@@ -498,7 +497,7 @@ test.describe('Fluxo 12: paginação do pipeline (D7)', () => {
     expect(segunda.proposals.length).toBeGreaterThan(0);
 
     await loginAs(page, E2E_USERS.alfaAdmin);
-    await gotoScreen(page, '/proposals?page=2', 'Pipeline de Propostas');
+    await gotoScreen(page, '/proposals?view=lista&page=2', 'Pipeline de Propostas');
 
     const nav = page.getByRole('navigation', { name: 'Paginação de propostas' });
     await expect(nav).toContainText('página 2 de');

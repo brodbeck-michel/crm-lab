@@ -967,6 +967,71 @@ testes**; frontend 74 arquivos / **1042 testes**; lint limpo.
   payload (hoje vem em 182/182). Se o WhatsApp parar de mandar, a entrada fica cega —
   `lid_sem_remote_jid_alt` no log é o sinal a vigiar.
 
+## 2026-09-18 — suite E2E volta a ficar verde (20 falhas → 0) ✅
+
+O job `E2E (Playwright)` estava vermelho **na `main`** havia pelo menos 5 execucoes, e por isso
+tambem no PR #10. Nao era uma causa: eram tres, mais uma corrida que so aparecia na suite
+inteira. 20 falhas / 103 passes → **123 passes, 0 falhas**.
+
+### 1. O cartao do pipeline mudou de identidade (10 falhas)
+
+D-103 trocou o rotulo do `ProposalCard` do prefixo do UUID (`#13d4df37`) para o numero
+sequencial por tenant (`formatProposalNumber` → `#000042`). O helper `proposalCard()` continuou
+procurando os 8 primeiros digitos do id — que nao existem mais em lugar nenhum da tela.
+
+- `proposalCard(page, proposta)` passa a receber a PROPOSTA, nao o id: o numero so existe na
+  resposta da API e nao ha como deriva-lo do id. Efeito colateral bom: cartao semeado voltou a
+  ser enderecavel (antes todos dividiam o prefixo `a0000000`).
+- `criarNoEstagio` (fluxo 3) devolvia a resposta do `PATCH /:id/status`, que e **projecao
+  parcial por contrato** (`{ id, status, reasonLost, updatedAt }`) e nao traz `proposalNumber`.
+  O `as ProposalDetail` ali sempre foi mentira; agora devolve a proposta criada com o status
+  final costurado por cima.
+- Onda 7 dividiu `/proposals` em Kanban e Lista, e **so a Lista pagina**. Os tres testes de
+  paginacao (D7) navegavam para o Kanban, onde nao existe `navigation "Paginação de propostas"`.
+  Passam a abrir `?view=lista`.
+
+### 2. A ficha do paciente mudou e o fluxo 8 nao soube (6 falhas)
+
+D-106 reverteu D-061: `phone` e editavel. O spec ainda afirmava o contrario — e o teste que
+mandava `PATCH { phone }` esperando `400` recebia `200`, **gravava** o telefone novo em Carla e
+derrubava em cascata dois testes de LGPD que conferem `patient.phone`.
+
+- O teste virou o que D-106 de fato promete: `PATCH` aceito (200) + numero de outro paciente do
+  tenant recusado com `409 phone_already_in_use`, com `finally` devolvendo o telefone do seed
+  mesmo se uma expectativa falhar no meio.
+- `getByLabel('Telefone (não editável)')` → `getByLabel('Telefone', { exact: true })`.
+- A secao "Status do cadastro" (CRMLAB-11) fez `getByRole('heading', { name: 'Cadastro' })` casar
+  dois nos — `exact: true`.
+
+### 3. Fluxo 14 nunca teve como passar no CI — e escondia um bug de verdade (2 falhas)
+
+O job de E2E **nunca definiu `EVOLUTION_API_URL`/`API_KEY`/`WEBHOOK_TOKEN`**. Sem os tres, as
+rotas de QR respondem `503 CHANNEL_QR_UNAVAILABLE` por contrato e o fluxo 14 cai inteiro. Estao
+no job agora, apontando para o gateway falso.
+
+Com o ambiente certo, sobrou uma falha real, introduzida pela propria auditoria de 17/09:
+
+- **Bug de producao (`WhatsAppConnectModal`)**: o modal ligava o polling do QR no CLIQUE, em
+  paralelo com o `POST /connect`. Como `GET /qr` deixou de chamar `/instance/connect` e passou a
+  ler cache, o primeiro polling chegava antes de existir instancia ou cache, respondia
+  `disconnected`, e `qrRefetchInterval` **encerrava o polling na primeira tentativa** — modal
+  preso em "Gerando QR code..." para sempre. O polling agora liga no `onSuccess` do connect, que
+  e o que torna verdadeira a premissa de `getWhatsAppQr` ("o cache nasce populado"). Sem isso a
+  conexao por QR estaria quebrada em producao, nao so no teste.
+- **Gateway falso**: so virava `open` na SEGUNDA chamada de `/instance/connect` — ou seja, exigia
+  exatamente o comportamento que a auditoria removeu. Com o backend correto chamando `connect`
+  uma vez, ficava preso em `connecting` para sempre. O avanco pendurou no `connectionState`, que
+  e como o pareamento de verdade e observado.
+
+### 4. Uma corrida que so a suite inteira revelava (1 falha)
+
+`flow-3` "perdido exige motivo" lia a API logo depois de clicar em Confirmar, sem esperar o
+PATCH. Passava isolado e falhava na suite cheia. Agora espera a resposta.
+
+**Verificacao:** `npm run typecheck` verde nos 4 workspaces; backend 75 arquivos / 1096 testes;
+frontend 74 arquivos / 1042 testes; lint limpo; **E2E 123/123** contra Postgres 16 e as duas
+telas de pe, com o mesmo roteiro do CI.
+
 ## Bloqueios Atuais
 
 Nenhum.

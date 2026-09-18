@@ -170,6 +170,6 @@ test.describe('Fluxo 1: Novo Orçamento', () => {
 
     await loginAs(page, E2E_USERS.alfaAttendant);
     await gotoScreen(page, '/proposals', 'Pipeline de Propostas');
-    await expect(proposalCard(page, criada.id)).toBeVisible();
+    await expect(proposalCard(page, criada)).toBeVisible();
   });
 });

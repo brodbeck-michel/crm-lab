@@ -15,6 +15,7 @@
  */
 import { test, expect, type APIRequestContext } from '@playwright/test';
 import type { ProposalDetail } from '@crm-lab/shared';
+import { formatProposalNumber } from '@crm-lab/shared';
 import {
   API_URL,
   E2E_CONVERSATIONS,
@@ -51,16 +52,23 @@ async function criarNoEstagio(
     })
   ).json()) as ProposalDetail;
 
-  let atual = criada;
-  for (const status of estagios) {
+  /*
+   * `PATCH /:id/status` devolve PROJECAO PARCIAL por contrato
+   * (`{ id, status, reasonLost, updatedAt }` — API_CONTRACTS.md §"Envelopes").
+   * Ela nao traz `proposalNumber`, que e como o cartao do pipeline se
+   * identifica desde D-103. Por isso o retorno e a proposta CRIADA com o
+   * status final costurado por cima, em vez da resposta da ultima transicao.
+   */
+  let status = criada.status;
+  for (const proximo of estagios) {
     const response = await request.patch(`${API_URL}/proposals/${criada.id}/status`, {
       headers: authHeaders(token),
-      data: { status },
+      data: { status: proximo },
     });
-    expect(response.status(), `transicao para ${status}`).toBe(200);
-    atual = (await response.json()) as ProposalDetail;
+    expect(response.status(), `transicao para ${proximo}`).toBe(200);
+    status = ((await response.json()) as Pick<ProposalDetail, 'status'>).status;
   }
-  return atual;
+  return { ...criada, status };
 }
 
 test.describe('Fluxo 3: marcar como ganho', () => {
@@ -74,7 +82,7 @@ test.describe('Fluxo 3: marcar como ganho', () => {
     await loginAs(page, E2E_USERS.alfaAttendant);
     await gotoScreen(page, PIPELINE, HEADING);
 
-    await proposalCard(page, proposta.id).click();
+    await proposalCard(page, proposta).click();
     const modal = page.getByTestId('modal-card');
     await expect(modal).toBeVisible();
 
@@ -100,7 +108,7 @@ test.describe('Fluxo 3: marcar como perdido', () => {
     await loginAs(page, E2E_USERS.alfaAttendant);
     await gotoScreen(page, PIPELINE, HEADING);
 
-    await proposalCard(page, proposta.id).click();
+    await proposalCard(page, proposta).click();
     const modal = page.getByTestId('modal-card');
     await modal.getByRole('button', { name: 'Marcar como Perdido' }).click();
 
@@ -109,7 +117,20 @@ test.describe('Fluxo 3: marcar como perdido', () => {
 
     await modal.getByLabel('Motivo da Perda').selectOption(E2E_PROPOSALS.perdida.reasonLost ?? '');
     await expect(confirmar).toBeEnabled();
+
+    /*
+     * Espera o PATCH em si, nao o clique. Ler a API logo depois de clicar e uma
+     * corrida: numa maquina folgada o PATCH ja voltou e o teste passa, na suite
+     * inteira ele perde e le a proposta ainda em `follow_up`. Foi assim que este
+     * teste falhou so na execucao completa.
+     */
+    const gravado = page.waitForResponse(
+      (res) =>
+        res.url().includes(`/proposals/${proposta.id}/status`) &&
+        res.request().method() === 'PATCH',
+    );
     await confirmar.click();
+    expect((await gravado).status()).toBe(200);
 
     const token = await apiLogin(request, E2E_USERS.alfaAttendant);
     const salva = (await (
@@ -131,7 +152,7 @@ test.describe('Fluxo 3: marcar como perdido', () => {
     await loginAs(page, E2E_USERS.alfaAttendant);
     await gotoScreen(page, PIPELINE, HEADING);
 
-    await proposalCard(page, proposta.id).click();
+    await proposalCard(page, proposta).click();
     const modal = page.getByTestId('modal-card');
     await expect(modal).toBeVisible();
     // Terminal: nao ha como sair de `perdido` pela tela.
@@ -229,7 +250,9 @@ test.describe('Fluxo 3: matriz de transicoes', () => {
     // Cada cartao dentro da coluna do seu estagio — nao apenas "na tela".
     const colunaGanho = page.getByRole('heading', { name: 'Ganho', level: 3 }).locator('../..');
     const colunaPerdido = page.getByRole('heading', { name: 'Perdido', level: 3 }).locator('../..');
-    await expect(colunaGanho.getByText(`#${ganha.id.slice(0, 8)}`)).toBeVisible();
-    await expect(colunaPerdido.getByText(`#${perdida.id.slice(0, 8)}`)).toBeVisible();
+    await expect(colunaGanho.getByText(formatProposalNumber(ganha.proposalNumber))).toBeVisible();
+    await expect(
+      colunaPerdido.getByText(formatProposalNumber(perdida.proposalNumber)),
+    ).toBeVisible();
   });
 });

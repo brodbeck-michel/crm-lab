@@ -335,38 +335,89 @@ export interface InsuranceAggRow {
   insuranceName: string;
   count: number;
   totalValue: number;
+  paidValue: number;
 }
 
-/** `byInsurance` — só a janela de EMISSÃO (mesmo shape de API_CONTRACTS.md §5c/§10.2). */
+/**
+ * `byInsurance` — as DUAS janelas por convênio (API_CONTRACTS.md §5c/§10.2):
+ * `count`/`totalValue` da janela de EMISSÃO e `paidValue` da de PAGAMENTO
+ * (dedupe por requisição, mesma regra de `getPaidTotals`).
+ *
+ * Ordena e corta o top 6 por `paidValue`: a tela desenha a participação de cada
+ * convênio no dinheiro que ENTROU. Ordenar por orçado deixava de fora o
+ * convênio que paga bem mas orça pouco — e era o top 6 do orçado que o donut
+ * exibia como se fosse receita. `FULL JOIN` porque um convênio pode ter
+ * pagamento no período sem ter emissão nele (requisição emitida antes).
+ */
 export async function getInsuranceAgg(
   tx: DbTx,
   tenantId: string,
   filters: SummaryFilters,
 ): Promise<InsuranceAggRow[]> {
-  const params: unknown[] = [tenantId, filters.startDate, filters.endDate];
-  const extra = summaryFilterClauses(filters, params);
-  const where = [
+  const params: unknown[] = [tenantId];
+
+  params.push(filters.startDate, filters.endDate);
+  const issuedStart = params.length - 1;
+  const issuedEnd = params.length;
+  const issuedExtra = summaryFilterClauses(filters, params);
+  const issuedWhere = [
     'tenant_id = $1',
-    'issued_on BETWEEN $2 AND $3',
+    `issued_on BETWEEN $${issuedStart} AND $${issuedEnd}`,
     'principal_insurance_name IS NOT NULL',
-    ...extra,
+    ...issuedExtra,
   ].join(' AND ');
+
+  const dedupeExtra = summaryFilterClauses(filters, params);
+  const dedupeWhere = [
+    'tenant_id = $1',
+    'requisition_number IS NOT NULL',
+    'principal_insurance_name IS NOT NULL',
+    ...dedupeExtra,
+  ].join(' AND ');
+  params.push(filters.startDate, filters.endDate);
+  const paidStart = params.length - 1;
+  const paidEnd = params.length;
+
   const result = await tx.query<{
-    principal_insurance_name: string;
+    insurance_name: string;
     count: number | string;
     total_value: string | number | null;
+    paid_value: string | number | null;
   }>(
-    `SELECT principal_insurance_name, COUNT(*)::int AS count, COALESCE(SUM(total_value), 0) AS total_value
-       FROM lis_budgets WHERE ${where}
-      GROUP BY principal_insurance_name
-      ORDER BY total_value DESC
+    `WITH issued AS (
+       SELECT principal_insurance_name AS insurance_name,
+              COUNT(*)::int AS count,
+              COALESCE(SUM(total_value), 0) AS total_value
+         FROM lis_budgets WHERE ${issuedWhere}
+        GROUP BY 1
+     ),
+     req AS (
+       SELECT DISTINCT ON (requisition_number) principal_insurance_name, paid_value, paid_on
+         FROM lis_budgets WHERE ${dedupeWhere}
+         ORDER BY requisition_number, paid_value DESC
+     ),
+     paid AS (
+       SELECT principal_insurance_name AS insurance_name,
+              COALESCE(SUM(paid_value), 0) AS paid_value
+         FROM req
+        WHERE paid_on BETWEEN $${paidStart} AND $${paidEnd} AND COALESCE(paid_value, 0) > 0
+        GROUP BY 1
+     )
+     SELECT COALESCE(issued.insurance_name, paid.insurance_name) AS insurance_name,
+            COALESCE(issued.count, 0)::int AS count,
+            COALESCE(issued.total_value, 0) AS total_value,
+            COALESCE(paid.paid_value, 0) AS paid_value
+       FROM issued
+       FULL JOIN paid ON paid.insurance_name = issued.insurance_name
+      ORDER BY paid_value DESC, total_value DESC
       LIMIT 6`,
     params,
   );
   return result.rows.map((row) => ({
-    insuranceName: row.principal_insurance_name,
+    insuranceName: row.insurance_name,
     count: Number(row.count),
     totalValue: toNumber(row.total_value),
+    paidValue: toNumber(row.paid_value),
   }));
 }
 
@@ -374,6 +425,7 @@ export async function getInsuranceAgg(
 export interface MonthlyPointRow {
   month: string;
   issuedValue: number;
+  requisitionValue: number;
   paidValue: number;
 }
 
@@ -385,6 +437,7 @@ export async function getMonthlySeries(
   const result = await tx.query<{
     month: string;
     issued_value: string | number | null;
+    requisition_value: string | number | null;
     paid_value: string | number | null;
   }>(
     `WITH months AS (
@@ -398,7 +451,7 @@ export async function getMonthlySeries(
         GROUP BY 1
      ),
      req AS (
-       SELECT DISTINCT ON (requisition_number) paid_on, paid_value
+       SELECT DISTINCT ON (requisition_number) paid_on, paid_value, requisition_value, issued_on
          FROM lis_budgets
         WHERE tenant_id = $1 AND requisition_number IS NOT NULL
         ORDER BY requisition_number, paid_value DESC
@@ -408,12 +461,20 @@ export async function getMonthlySeries(
          FROM req
         WHERE paid_on IS NOT NULL AND COALESCE(paid_value, 0) > 0
         GROUP BY 1
+     ),
+     requisition AS (
+       SELECT to_char(issued_on, 'YYYY-MM') AS month, SUM(requisition_value) AS value
+         FROM req
+        WHERE issued_on IS NOT NULL
+        GROUP BY 1
      )
      SELECT months.month,
             COALESCE(issued.value, 0) AS issued_value,
+            COALESCE(requisition.value, 0) AS requisition_value,
             COALESCE(paid.value, 0) AS paid_value
        FROM months
        LEFT JOIN issued ON issued.month = months.month
+       LEFT JOIN requisition ON requisition.month = months.month
        LEFT JOIN paid ON paid.month = months.month
       ORDER BY months.month ASC`,
     [tenantId, endDate],
@@ -421,6 +482,7 @@ export async function getMonthlySeries(
   return result.rows.map((row) => ({
     month: row.month,
     issuedValue: toNumber(row.issued_value),
+    requisitionValue: toNumber(row.requisition_value),
     paidValue: toNumber(row.paid_value),
   }));
 }

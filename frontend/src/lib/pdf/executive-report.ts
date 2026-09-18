@@ -40,10 +40,11 @@ export async function generateExecutiveReportPdf(report: ExecutiveReport): Promi
 
   autoTable(doc, {
     startY: afterFirstTable + 10,
-    head: [['Mês', 'Emitido', 'Pago']],
+    head: [['Mês', 'Orçado', 'Em requisição', 'Recebido']],
     body: report.monthlySeries.map((point) => [
       point.month,
       formatBRL(point.issuedValue),
+      formatBRL(point.requisitionValue),
       formatBRL(point.paidValue),
     ]),
   });
@@ -66,8 +67,13 @@ export async function generateExecutiveReportPdf(report: ExecutiveReport): Promi
 
   autoTable(doc, {
     startY: afterAttendantTable + 10,
-    head: [['Convênio', 'Contagem', 'Valor (R$)']],
-    body: report.byInsurance.map((row) => [row.insuranceName, String(row.count), formatBRL(row.totalValue)]),
+    head: [['Convênio', 'Orçamentos', 'Orçado (R$)', 'Recebido (R$)']],
+    body: report.byInsurance.map((row) => [
+      row.insuranceName,
+      String(row.count),
+      formatBRL(row.totalValue),
+      formatBRL(row.paidValue),
+    ]),
   });
 
   doc.save(`relatorio-executivo-${report.period.startDate}-a-${report.period.endDate}.pdf`);

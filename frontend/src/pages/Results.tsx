@@ -3,16 +3,17 @@ import { useLisBudgetsFilters, useLisBudgetsSummary, useLisImportsLatest } from 
 import { useExecutiveReport } from '@/api/reports';
 import { useSalesSummary } from '@/api/sales';
 import { useCommissionSettings } from '@/api/commission-settings';
-import { useUIStore, defaultLisFilters } from '@/stores/ui.store';
+import { useUIStore } from '@/stores/ui.store';
 import { useAuthStore } from '@/stores/auth.store';
 import { PageContainer, PageHeader } from '@/components/layout';
 import { Button, Select, useToast } from '@/components/ui';
-import { DataTable, DateDisplay, MoneyDisplay } from '@/components/shared';
+import { DataTable, DateDisplay, EmptyState, MoneyDisplay } from '@/components/shared';
 import type { DataTableColumn } from '@/components/shared';
 import { ResultsKpiCard } from '@/components/lis/ResultsKpiCard';
 import { PeriodFilter, previousPeriod } from '@/components/lis/PeriodFilter';
 import { AttendantRevenueChart } from '@/components/lis/AttendantRevenueChart';
 import { InsuranceDonutChart } from '@/components/lis/InsuranceDonutChart';
+import { MonthlySeriesChart } from '@/components/lis/MonthlySeriesChart';
 import { ImportModal } from '@/components/lis/ImportModal';
 import { PurgeDialog } from '@/components/lis/PurgeDialog';
 import { buildCommissionDetail, totalsOf } from '@/lib/lis/commission-detail';
@@ -21,9 +22,59 @@ import { generateExecutiveReportPdf } from '@/lib/pdf/executive-report';
 import { generateCommissionReportPdf } from '@/lib/pdf/commission-report';
 import { generateCommissionReportExcel } from '@/lib/excel/commission-report';
 
+/** Percentual de `part` sobre `whole`, com uma casa. `whole` zerado vira "0.0". */
+function share(part: number, whole: number): string {
+  return whole > 0 ? ((part / whole) * 100).toFixed(1) : '0.0';
+}
+
 /**
- * Resultados (`/results`) — home do domínio LIS (PAGES.md §14), redesenhada
- * a partir da referência visual real do produto equivalente (FluxoLab/Santé).
+ * Esqueleto dos 4 cartões enquanto o resumo carrega. Um "Carregando..." solto
+ * fazia a página saltar de uma linha de texto para uma grade inteira; o
+ * esqueleto reserva a altura final e a leitura não pula.
+ */
+function KpiSkeleton() {
+  return (
+    <div className="grid grid-cols-1 gap-lg sm:grid-cols-2 xl:grid-cols-4" aria-hidden="true">
+      {[0, 1, 2, 3].map((slot) => (
+        <div
+          key={slot}
+          className="h-[148px] rounded-lg border border-neutral-200 bg-neutral-100 motion-safe:animate-pulse"
+        />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Que base está na tela: nome do arquivo e quando entrou. Fica dentro da barra
+ * de filtro, colado ao período — as duas informações respondem juntas à mesma
+ * pergunta ("de onde vem e de quando é o que estou vendo").
+ */
+function ImportStamp({ fileName, createdAt }: { fileName: string | null; createdAt?: string }) {
+  if (!createdAt) {
+    return <p className="font-body text-caption text-neutral-600">Nenhuma importação ainda</p>;
+  }
+
+  return (
+    <div className="min-w-0 text-right">
+      <p className="truncate font-body text-caption font-semibold text-neutral-800" title={fileName ?? undefined}>
+        {fileName ?? 'Importação'}
+      </p>
+      <p className="font-body text-caption text-neutral-600">
+        Importada em <DateDisplay value={createdAt} variant="absolute" />
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Resultados (`/results`) — home do domínio LIS (PAGES.md §14).
+ *
+ * Leitura em três tempos, de cima para baixo: o que estou vendo (barra de
+ * filtro + carimbo da importação), quanto deu (4 KPIs, com o Total Orçado em
+ * destaque), e de onde veio (gráficos e o detalhe por atendente). A largura é
+ * de painel (`PageContainer wide`): a tabela de comissão tem 10 colunas e a
+ * largura de leitura de 1180px a empurrava para rolagem horizontal.
  */
 export default function Results() {
   const role = useAuthStore((s) => s.user?.role);
@@ -71,11 +122,19 @@ export default function Results() {
     return ((summary.issued.totalValue - previousTotal) / previousTotal) * 100;
   }, [summary, previousSummary]);
 
+  /**
+   * Fatias do donut em RECEBIDO (`paidValue`), não em orçado: o gráfico responde
+   * de onde vem o dinheiro que entrou. O fecho "Outros" é a diferença entre o
+   * KPI "Recebido" e a soma dos 6 convênios mostrados — a mesma base, senão a
+   * tela somaria dois números de janelas diferentes.
+   */
   const insuranceSlices = useMemo(() => {
     if (!summary) return [];
-    const shown = summary.byInsurance.map((row) => ({ name: row.insuranceName, value: row.totalValue }));
+    const shown = summary.byInsurance
+      .filter((row) => row.paidValue > 0)
+      .map((row) => ({ name: row.insuranceName, value: row.paidValue }));
     const shownTotal = shown.reduce((sum, s) => sum + s.value, 0);
-    const remainder = Math.max(0, summary.issued.totalValue - shownTotal);
+    const remainder = Math.max(0, summary.paid.totalValue - shownTotal);
     return remainder > 0 ? [...shown, { name: 'Outros', value: remainder }] : shown;
   }, [summary]);
 
@@ -140,165 +199,180 @@ export default function Results() {
   ];
 
   return (
-    <PageContainer>
+    <PageContainer wide>
       <PageHeader
         title="Resultados"
-        description="Visão executiva dos orçamentos do LIS."
+        size="compact"
+        description="Orçamentos do LIS no período selecionado."
         actions={
-          <div className="flex gap-md">
+          <>
             <Button variant="secondary" onClick={() => setShowImport(true)}>
               Importar
             </Button>
             <Button variant="primary" onClick={handleExportExecutivePdf} disabled={!executiveReport}>
-              Exportar Relatório Executivo
+              Exportar relatório executivo
             </Button>
-          </div>
+          </>
         }
       />
 
-      <div className="space-y-lg">
-        <div className="flex flex-wrap items-end justify-between gap-lg">
-          <div className="flex flex-wrap items-end gap-md">
-            <PeriodFilter value={period} onChange={(p) => setLisFilters({ ...lisFilters, ...p })} />
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() =>
-                setLisFilters({ ...lisFilters, ...{ startDate: defaultLisFilters().startDate, endDate: defaultLisFilters().endDate } })
-              }
-            >
-              Limpar período
-            </Button>
-            <Select
-              label="Convênio"
-              value={lisFilters.insuranceId}
-              onChange={(e) => setLisFilters({ ...lisFilters, insuranceId: e.target.value })}
-              options={[
-                { value: '', label: 'Todos os convênios' },
-                ...(filters?.insurances.map((i) => ({ value: i.id, label: i.name })) ?? []),
-              ]}
-            />
-          </div>
-          <p className="font-body text-caption text-neutral-600 text-right">
-            {latestImport ? (
-              <>
-                {latestImport.fileName ?? 'Importação'}
-                <br />
-                Importado em <DateDisplay value={latestImport.createdAt} variant="absolute" />
-              </>
-            ) : (
-              'Nenhuma importação ainda'
-            )}
-          </p>
-        </div>
+      <div className="flex flex-wrap items-center justify-between gap-lg rounded-lg border border-neutral-200 bg-neutral-100 px-lg py-md shadow-sm">
+        <div className="flex flex-wrap items-center gap-lg">
+          <PeriodFilter value={period} onChange={(p) => setLisFilters({ ...lisFilters, ...p })} />
 
-        {isLoading ? (
-          <div className="font-body text-body text-neutral-600">Carregando...</div>
-        ) : !summary || summary.issued.count === 0 ? (
-          <div className="font-body text-body text-neutral-600">
-            Nenhum orçamento importado neste período.
-          </div>
-        ) : (
-          <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-lg">
-              <ResultsKpiCard
-                icon="wallet"
-                highlight
-                label="Total Orçado"
-                value={<MoneyDisplay value={summary.issued.totalValue} emphasis />}
-                caption={`${summary.issued.count} orçamentos`}
-                deltaPct={deltaPct}
-              />
-              <ResultsKpiCard
-                icon="money"
-                label="Em Requisição"
-                value={<MoneyDisplay value={summary.requisition.totalValue} emphasis />}
-                caption={`${summary.requisition.count} req. · ${
-                  summary.issued.totalValue > 0
-                    ? ((summary.requisition.totalValue / summary.issued.totalValue) * 100).toFixed(1)
-                    : '0.0'
-                }% do total`}
-              />
-              <ResultsKpiCard
-                icon="trend"
-                label="Recebido"
-                value={<MoneyDisplay value={summary.paid.totalValue} emphasis />}
-                caption={`${summary.paid.count} pagos · ${
-                  summary.issued.totalValue > 0
-                    ? ((summary.paid.totalValue / summary.issued.totalValue) * 100).toFixed(1)
-                    : '0.0'
-                }% do orçamento`}
-                progress={summary.paid.conversionQty}
-                progressLabel="Taxa de conversão"
-              />
-              <ResultsKpiCard
-                icon="people"
-                label="Atendentes"
-                value={summary.byAttendantDetail.length}
-                caption={`${summary.byAttendantDetail.length} ativo(s) no período`}
+          <div className="flex items-center gap-sm">
+            <span aria-hidden="true" className="font-body text-caption text-neutral-700">
+              Convênio
+            </span>
+            <div className="w-[208px]">
+              <Select
+                aria-label="Convênio"
+                value={lisFilters.insuranceId}
+                onChange={(e) => setLisFilters({ ...lisFilters, insuranceId: e.target.value })}
+                options={[
+                  { value: '', label: 'Todos os convênios' },
+                  ...(filters?.insurances.map((i) => ({ value: i.id, label: i.name })) ?? []),
+                ]}
               />
             </div>
+          </div>
+        </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-lg">
+        <ImportStamp
+          fileName={latestImport?.fileName ?? null}
+          createdAt={latestImport?.createdAt}
+        />
+      </div>
+
+      {isLoading ? (
+        <KpiSkeleton />
+      ) : !summary || summary.issued.count === 0 ? (
+        <div className="rounded-lg border border-neutral-200 bg-neutral-100 shadow-sm">
+          <EmptyState
+            message="Nenhum orçamento importado neste período."
+            hint="Troque o período acima ou importe a planilha do LIS para ver os números."
+            action={
+              <Button variant="secondary" onClick={() => setShowImport(true)}>
+                Importar planilha
+              </Button>
+            }
+          />
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 gap-lg sm:grid-cols-2 xl:grid-cols-4">
+            <ResultsKpiCard
+              icon="wallet"
+              highlight
+              label="Total Orçado"
+              value={<MoneyDisplay value={summary.issued.totalValue} emphasis size="metric" />}
+              caption={`${summary.issued.count} orçamentos`}
+              deltaPct={deltaPct}
+              deltaLabel="vs. período anterior"
+            />
+            <ResultsKpiCard
+              icon="money"
+              label="Em Requisição"
+              value={<MoneyDisplay value={summary.requisition.totalValue} emphasis size="metric" />}
+              caption={`${summary.requisition.count} requisições, ${share(
+                summary.requisition.totalValue,
+                summary.issued.totalValue,
+              )}% do orçado`}
+            />
+            <ResultsKpiCard
+              icon="trend"
+              label="Recebido"
+              value={<MoneyDisplay value={summary.paid.totalValue} emphasis size="metric" />}
+              caption={`${summary.paid.count} pagos, ${share(
+                summary.paid.totalValue,
+                summary.issued.totalValue,
+              )}% do orçado`}
+              progress={summary.paid.conversionQty}
+              progressLabel="Taxa de conversão"
+            />
+            <ResultsKpiCard
+              icon="people"
+              label="Atendentes"
+              value={summary.byAttendantDetail.length}
+              caption={`${summary.byAttendantDetail.length} com orçamento no período`}
+            />
+          </div>
+
+          <MonthlySeriesChart
+            data={executiveReport?.monthlySeries ?? []}
+            note={
+              insuranceId
+                ? 'A série de 12 meses considera todos os convênios — o filtro acima vale para os cartões, os gráficos abaixo e a tabela.'
+                : undefined
+            }
+          />
+
+          <div className="grid grid-cols-1 gap-lg lg:grid-cols-12">
+            <div className="lg:col-span-7">
               <AttendantRevenueChart
                 data={summary.byAttendantDetail.map((a) => ({
                   attendantName: a.attendantName,
                   paidValue: a.paidValue,
                 }))}
               />
+            </div>
+            <div className="lg:col-span-5">
               <InsuranceDonutChart slices={insuranceSlices} />
             </div>
-
-            <div className="bg-neutral-100 p-lg rounded-md shadow-sm space-y-md">
-              <div className="flex flex-wrap items-center justify-between gap-md">
-                <div>
-                  <h3 className="font-heading text-section">Detalhe por atendente</h3>
-                  <p className="font-body text-caption text-neutral-600">
-                    {commissionRows.length} pessoas · orçamentos, vendas e comissões
-                  </p>
-                </div>
-                <div className="flex items-center gap-sm">
-                  <span className="font-body text-caption font-semibold bg-accent2-200 text-accent2-800 rounded-pill px-md py-xs">
-                    % Comissão: {commissionSettings?.commissionBudgetPct ?? 0}%
-                  </span>
-                  <Button variant="secondary" size="sm" onClick={handleExportCommissionPdf}>
-                    Comissão em PDF
-                  </Button>
-                  <Button variant="secondary" size="sm" onClick={handleExportCommissionExcel}>
-                    Comissão em Excel
-                  </Button>
-                </div>
-              </div>
-
-              <DataTable
-                columns={commissionColumns}
-                rows={commissionRows}
-                rowKey={(r) => r.attendantId}
-                emptyMessage="Nenhum atendente com orçamento neste período"
-                minWidth={1100}
-              />
-              {commissionRows.length > 0 && (
-                <div className="flex justify-between font-body text-caption font-semibold text-neutral-800 border-t border-neutral-300 pt-md">
-                  <span>TOTAL</span>
-                  <span>
-                    {commissionTotals.issuedCount} orç. ·{' '}
-                    <MoneyDisplay value={commissionTotals.paidValue} /> recebido ·{' '}
-                    <MoneyDisplay value={commissionTotals.totalCommission} emphasis /> em comissão
-                  </span>
-                </div>
-              )}
-            </div>
-          </>
-        )}
-
-        {isAdmin && (
-          <div className="pt-xl border-t border-neutral-200">
-            <Button variant="destructive" onClick={() => setShowPurge(true)}>
-              Limpar base
-            </Button>
           </div>
-        )}
-      </div>
+
+          <section className="space-y-md rounded-lg border border-neutral-200 bg-neutral-100 p-lg shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-md">
+              <div>
+                <h3 className="font-heading text-section">Detalhe por atendente</h3>
+                <p className="mt-xs font-body text-caption text-neutral-600">
+                  {commissionRows.length} pessoas, com orçamentos, vendas e comissões
+                </p>
+              </div>
+              <div className="flex items-center gap-sm">
+                <span className="rounded-pill bg-accent2-200 px-md py-xs font-body text-caption font-semibold text-accent2-800">
+                  % Comissão: {commissionSettings?.commissionBudgetPct ?? 0}%
+                </span>
+                <Button variant="secondary" size="sm" onClick={handleExportCommissionPdf}>
+                  Comissão em PDF
+                </Button>
+                <Button variant="secondary" size="sm" onClick={handleExportCommissionExcel}>
+                  Comissão em Excel
+                </Button>
+              </div>
+            </div>
+
+            <DataTable
+              columns={commissionColumns}
+              rows={commissionRows}
+              rowKey={(r) => r.attendantId}
+              emptyMessage="Nenhum atendente com orçamento neste período"
+              minWidth={1100}
+            />
+            {commissionRows.length > 0 && (
+              <div className="flex flex-wrap justify-between gap-sm border-t border-neutral-300 pt-md font-body text-caption font-semibold text-neutral-800">
+                <span>TOTAL</span>
+                <span>
+                  {commissionTotals.issuedCount} orç. ·{' '}
+                  <MoneyDisplay value={commissionTotals.paidValue} /> recebido ·{' '}
+                  <MoneyDisplay value={commissionTotals.totalCommission} emphasis /> em comissão
+                </span>
+              </div>
+            )}
+          </section>
+        </>
+      )}
+
+      {isAdmin && (
+        <div className="flex items-center justify-between gap-md border-t border-neutral-200 pt-lg">
+          <p className="font-body text-caption text-neutral-600">
+            Apagar todos os orçamentos importados deste laboratório. Não tem volta.
+          </p>
+          <Button variant="destructive" size="sm" onClick={() => setShowPurge(true)}>
+            Limpar base
+          </Button>
+        </div>
+      )}
 
       {showImport && <ImportModal onClose={() => setShowImport(false)} />}
       {showPurge && <PurgeDialog onClose={() => setShowPurge(false)} />}

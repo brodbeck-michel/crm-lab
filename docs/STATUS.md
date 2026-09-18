@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-18 (ambiente de homologação na VPS — ver seção no fim)
+**Última atualização:** 2026-09-18 (`/results`: evolução do faturamento + donut no recebido — ver seção no fim)
 
 ---
 
@@ -1082,3 +1082,89 @@ documentadas em `ENVIRONMENTS.md`: `caddy validate` rodado como root deixa o log
 como `root:root` e faz o reload seguinte ser rejeitado (produção não cai, mas um
 restart passaria a derrubar), e o UFW limita a porta 22 a ~6 conexões/30s por IP —
 rajada de `ssh` curtos derruba o próprio acesso.
+
+---
+
+## 2026-09-18 — `/results`: redesenho da leitura (UX) ✅
+
+Só forma: nenhum endpoint, cálculo, coluna ou cartão mudou. O que mudou foi
+quanto espaço cada coisa ocupa e em que ordem ela se lê.
+
+**O diagnóstico:** a tela cabia em 1180px (largura de LEITURA) com um cabeçalho de
+32px, uma barra de filtro de duas alturas — atalhos + dois `Input type="date"` de
+largura total, cada um com rótulo empilhado em cima — e um "Carregando..." de uma
+linha. Quem importava a planilha gastava meia tela antes de ver um número, e a
+tabela de comissão (10 colunas, `minWidth 1100`) rolava na horizontal em qualquer
+monitor.
+
+**O que foi feito:**
+
+| Onde | Antes | Agora |
+|------|-------|-------|
+| `PageContainer` | 1180px fixo | prop `wide` → 1440px, `24px 32px 48px`. Só `/results` usa |
+| `PageHeader` | título 32px + descrição 13px | prop `size="compact"` → 21px. O maior tipo da tela passa a ser o KPI (30px) |
+| `PeriodFilter` | 4 botões iguais + 2 campos de largura total com rótulo em cima | uma linha: o atalho em vigor fica `primary`/`aria-pressed`, datas viram pílulas de 164px com rótulo DENTRO (`prefix`) |
+| Barra de filtro | 3 blocos soltos + "Limpar período" | uma faixa `neutral-100`, com o carimbo da importação na ponta direita. "Limpar período" saiu: clicar em "30 dias" faz o mesmo |
+| `ResultsKpiCard` | valor 21px, rótulo caixa alta, delta solto | valor 30px (`MoneyDisplay size="metric"`), rótulo em caixa normal ao lado do ícone, delta em pílula com "vs. período anterior" |
+| Gráficos | 50/50 | grade de 12: ranking 7, donut 5. Barra de 34px por atendente (mín. 200px) |
+| Carregando | texto "Carregando..." | esqueleto dos 4 cartões, com a altura final — a página não salta |
+| Sem dado | frase solta | `EmptyState` com a dica e o botão "Importar planilha" |
+| Zona de admin | botão "Limpar base" solto | mesma linha, com a frase do que o botão faz |
+
+**Decisões de leitura:** rótulo de KPI saiu da caixa alta espaçada (não acrescenta
+hierarquia quando o valor é 3× maior) e a variação nunca aparece sem a base da
+comparação. O carimbo da importação subiu para dentro da barra de filtro porque
+"de onde vem" e "de quando é" são a mesma pergunta.
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces; `npm run test:frontend`
+1042 → 1046 testes verdes (4 novos: atalho marcado, período livre sem marca, vazio
+com ação de importar, carimbo do arquivo). Docs atualizados no mesmo commit —
+`PAGES.md` §3 e §14, `COMPONENTS.md` (`PageContainer wide`, `PageHeader size`,
+`MoneyDisplay size`, `PeriodFilter`).
+
+**Pendente:** validação visual em `https://homolog.vitrocrm.cloud`. Nada foi
+visto em navegador nesta máquina — jsdom não desenha, e subir a stack local
+esbarra na inspeção de TLS.
+
+---
+
+## 2026-09-18 — `/results`: evolução do faturamento + donut lendo o RECEBIDO ✅
+
+Duas mudanças pedidas na validação do redesenho, as duas com backend.
+
+**1. "Evolução do faturamento" entrou na tela.** O `MonthlySeriesChart` existia
+no código desde a Onda 10 e **não era usado por ninguém** — a série de 12 meses
+só aparecia no PDF. Foi redesenhado como área sobreposta com TRÊS séries (orçado,
+em requisição, recebido) e colocado em largura inteira logo abaixo dos KPIs.
+`requisitionValue` é novo em `ExecutiveReportMonthlyPoint`: vem da janela de
+EMISSÃO com dedupe por requisição, a mesma definição do KPI "Em Requisição"
+(D-125). Sobreposta e nunca empilhada — os três números já se contêm.
+Como `/reports/executive` não aceita filtro de convênio (D-116), com o filtro
+ligado o cartão diz isso em nota, em vez de responder outra pergunta calado.
+
+**2. O donut passou a ler o RECEBIDO.** Ele desenhava `byInsurance.totalValue`,
+que é `SUM(total_value)` da janela de emissão — ou seja, mostrava **orçado** com
+o título de distribuição de faturamento. `LisInsuranceAgg` ganhou `paidValue`
+(janela de pagamento, dedupe por requisição) e o corte do top 6 passou a ser por
+ele: ordenar por orçado deixava de fora o convênio que paga bem e orça pouco. A
+query virou `FULL JOIN` entre as duas janelas, então convênio com pagamento no
+período e emissão fora dele aparece com `count: 0` — antes sumia. O fecho
+"Outros" agora fecha contra o KPI "Recebido", que é a mesma janela das fatias.
+
+**Conferência dos cartões** (pedida junto): Total Orçado, Em Requisição,
+Atendentes, o delta e a barra de conversão batem com as definições de
+BUSINESS_RULES.md §11 e D-125. **Uma ressalva fica registrada:** a legenda do
+cartão "Recebido" diz "X% do orçado" dividindo a janela de PAGAMENTO pela de
+EMISSÃO — pagamento de orçamento emitido antes do período entra no numerador sem
+estar no denominador, e o número pode passar de 100% (é exatamente por isso que
+`conversionQty` é capado). Mantido como estava, por ser o comportamento
+documentado desde a Onda 10; trocar a base é decisão de produto.
+
+**Também atualizado:** o PDF executivo passou a levar as três colunas na série
+mensal e "Orçado (R$) / Recebido (R$)" na tabela de convênios.
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces; backend 1099 testes
+verdes (3 novos: `paidValue` por convênio, ordenação pelo recebido, convênio pago
+sem emissão no período, série mensal separando as três janelas); frontend 1047
+verdes (1 novo: evolução na tela + legenda do donut em cima do recebido). Docs no
+mesmo commit: `API_CONTRACTS.md` §5c/§10.2, `PAGES.md` §14, `shared/types`.

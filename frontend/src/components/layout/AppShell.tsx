@@ -78,16 +78,27 @@ export function PlatformShell() {
 export interface PageContainerProps {
   children: ReactNode;
   className?: string;
+  /**
+   * Largura de PAINEL (1440px) em vez da largura de leitura (1180px). Reservado
+   * a telas cujo conteúdo é uma GRADE de dados — `/results` (4 KPIs + 2 gráficos
+   * + tabela de 10 colunas). Texto corrido continua no padrão: 1440px de linha
+   * seria ilegível.
+   */
+  wide?: boolean;
 }
 
 /**
  * Contêiner de página de leitura: `max-width 1180px`, `padding 30px 36px 48px`
- * (PAGES.md §3). Telas full-bleed (inbox, orçamento) NÃO usam este contêiner.
+ * (PAGES.md §3). Com `wide`, 1440px e topo mais curto — ver PAGES.md §3.
+ * Telas full-bleed (inbox, orçamento) NÃO usam este contêiner.
  */
-export function PageContainer({ children, className }: PageContainerProps) {
+export function PageContainer({ children, className, wide = false }: PageContainerProps) {
   return (
     <div
-      style={{ maxWidth: 1180, padding: '30px 36px 48px' }}
+      style={{
+        maxWidth: wide ? 1440 : 1180,
+        padding: wide ? '24px 32px 48px' : '30px 36px 48px',
+      }}
       className={cn('mx-auto flex w-full min-w-0 flex-col gap-lg', className)}
     >
       {children}

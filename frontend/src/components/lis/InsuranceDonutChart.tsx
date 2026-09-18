@@ -22,28 +22,43 @@ export interface InsuranceDonutChartProps {
   slices: InsuranceSlice[];
 }
 
+/** Título + linha de apoio, iguais nos dois estados (com e sem dado). */
+function ChartHeading() {
+  return (
+    <header className="mb-lg">
+      <h3 className="font-heading text-section">Distribuição por convênio</h3>
+      <p className="mt-xs font-body text-caption text-neutral-600">
+        Participação de cada convênio no valor recebido
+      </p>
+    </header>
+  );
+}
+
 /**
  * Distribuição por convênio — donut + legenda (PAGES.md §14). `slices` já vem
  * pronto do chamador (top 6 + "Outros" quando aplicável) — o componente só
  * desenha e calcula o percentual de cada fatia sobre a SOMA do que recebeu.
+ *
+ * O valor de cada fatia é o RECEBIDO do convênio (`LisInsuranceAgg.paidValue`),
+ * não o orçado: o gráfico responde de onde vem o dinheiro que entrou.
  */
 export function InsuranceDonutChart({ slices }: InsuranceDonutChartProps) {
   const total = slices.reduce((sum, s) => sum + s.value, 0);
 
   if (slices.length === 0 || total <= 0) {
     return (
-      <div className="bg-neutral-100 p-lg rounded-md shadow-sm">
-        <h3 className="font-heading text-section mb-lg">Distribuição por convênio</h3>
+      <div className="flex h-full flex-col rounded-lg border border-neutral-200 bg-neutral-100 p-lg shadow-sm">
+        <ChartHeading />
         <p className="font-body text-body text-neutral-600">Sem dado no período.</p>
       </div>
     );
   }
 
   return (
-    <div className="bg-neutral-100 p-lg rounded-md shadow-sm">
-      <h3 className="font-heading text-section mb-lg">Distribuição por convênio</h3>
-      <div className="flex flex-col md:flex-row items-center gap-lg">
-        <ResponsiveContainer width="100%" height={220} className="max-w-[220px]">
+    <div className="flex h-full flex-col rounded-lg border border-neutral-200 bg-neutral-100 p-lg shadow-sm">
+      <ChartHeading />
+      <div className="flex flex-1 flex-col items-center gap-lg">
+        <ResponsiveContainer width="100%" height={200} className="max-w-[200px]">
           <PieChart>
             <Pie data={slices} dataKey="value" nameKey="name" innerRadius={55} outerRadius={90}>
               {slices.map((slice, index) => (
@@ -57,7 +72,7 @@ export function InsuranceDonutChart({ slices }: InsuranceDonutChartProps) {
             />
           </PieChart>
         </ResponsiveContainer>
-        <ul className="flex-1 w-full space-y-sm">
+        <ul className="w-full space-y-sm">
           {slices.map((slice, index) => (
             <li key={slice.name} className="flex items-center justify-between gap-md">
               <span className="flex items-center gap-sm min-w-0">

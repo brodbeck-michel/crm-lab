@@ -25,6 +25,24 @@ describe('PeriodFilter', () => {
     expect(onChange).toHaveBeenCalledWith({ startDate: today, endDate: today });
   });
 
+  it('o atalho correspondente ao período em vigor fica marcado', () => {
+    render(<PeriodFilter value={defaultPeriod()} onChange={vi.fn()} />);
+
+    // defaultPeriod() são os últimos 30 dias — é esse atalho que aparece ligado.
+    expect(screen.getByRole('button', { name: '30 dias' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Hoje' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('período livre não marca nenhum atalho', () => {
+    render(
+      <PeriodFilter value={{ startDate: '2026-01-03', endDate: '2026-02-11' }} onChange={vi.fn()} />,
+    );
+
+    for (const label of ['Hoje', '7 dias', '30 dias', 'Mês atual']) {
+      expect(screen.getByRole('button', { name: label })).toHaveAttribute('aria-pressed', 'false');
+    }
+  });
+
   it('previousPeriod() devolve o período imediatamente anterior, de mesma duração', () => {
     expect(previousPeriod({ startDate: '2026-09-01', endDate: '2026-09-30' })).toEqual({
       startDate: '2026-08-02',

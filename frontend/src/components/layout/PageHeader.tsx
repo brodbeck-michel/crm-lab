@@ -5,7 +5,9 @@ import { cn } from '@/components/ui';
 /**
  * PageHeader — docs/frontend/COMPONENTS.md (`layout/`).
  * Título 32px (`text-display`, fonte de título), ações à direita,
- * breadcrumb opcional acima.
+ * breadcrumb opcional acima. Em `size="compact"` o título cai para 21px
+ * (`text-section`): em tela de painel o maior tipo da página é o NÚMERO,
+ * não a palavra que nomeia a tela.
  */
 
 export interface BreadcrumbItem {
@@ -14,6 +16,8 @@ export interface BreadcrumbItem {
   to?: string;
 }
 
+export type PageHeaderSize = 'default' | 'compact';
+
 export interface PageHeaderProps {
   title: string;
   breadcrumb?: BreadcrumbItem[];
@@ -21,6 +25,11 @@ export interface PageHeaderProps {
   actions?: ReactNode;
   /** Uma frase de apoio sob o título. */
   description?: string;
+  /**
+   * `default` (32px, telas de leitura) ou `compact` (21px, telas de painel —
+   * o topo não pode competir com os números que a tela existe para mostrar).
+   */
+  size?: PageHeaderSize;
   className?: string;
 }
 
@@ -29,10 +38,19 @@ export function PageHeader({
   breadcrumb,
   actions,
   description,
+  size = 'default',
   className,
 }: PageHeaderProps) {
+  const compact = size === 'compact';
+
   return (
-    <header className={cn('flex flex-wrap items-start justify-between gap-lg', className)}>
+    <header
+      className={cn(
+        'flex flex-wrap justify-between gap-lg',
+        compact ? 'items-center gap-md' : 'items-start',
+        className,
+      )}
+    >
       <div className="min-w-0 flex-1">
         {breadcrumb && breadcrumb.length > 0 && (
           <nav aria-label="Trilha de navegação" className="mb-xs">
@@ -53,10 +71,19 @@ export function PageHeader({
           </nav>
         )}
 
-        <h1 className="font-heading text-display text-text">{title}</h1>
+        <h1 className={cn('font-heading text-text', compact ? 'text-section' : 'text-display')}>
+          {title}
+        </h1>
 
         {description && (
-          <p className="mt-xs font-body text-body text-neutral-700">{description}</p>
+          <p
+            className={cn(
+              'font-body text-neutral-700',
+              compact ? 'text-caption' : 'mt-xs text-body',
+            )}
+          >
+            {description}
+          </p>
         )}
       </div>
 

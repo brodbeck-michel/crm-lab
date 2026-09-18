@@ -66,7 +66,10 @@ const summary: LisBudgetsSummary = {
     { attendantId: 'a-1', attendantName: 'Tainá', issuedCount: 54, paidCount: 28, paidValue: 8296 },
     { attendantId: 'a-2', attendantName: 'Carol', issuedCount: 62, paidCount: 25, paidValue: 5510 },
   ],
-  byInsurance: [{ insuranceName: 'Particular', count: 90, totalValue: 6805 }],
+  byInsurance: [
+    { insuranceName: 'Particular', count: 90, totalValue: 6805, paidValue: 4200 },
+    { insuranceName: 'Unimed', count: 40, totalValue: 3100, paidValue: 1800 },
+  ],
 };
 
 const previousSummary: LisBudgetsSummary = {
@@ -85,7 +88,10 @@ const executiveReport: ExecutiveReport = {
   issued: summary.issued,
   requisition: summary.requisition,
   paid: summary.paid,
-  monthlySeries: [{ month: '2026-08', issuedValue: 90996, paidValue: 26163 }],
+  monthlySeries: [
+    { month: '2026-07', issuedValue: 81000, requisitionValue: 19000, paidValue: 24000 },
+    { month: '2026-08', issuedValue: 90996, requisitionValue: 20117, paidValue: 26163 },
+  ],
   byAttendant: summary.byAttendant,
   byInsurance: summary.byInsurance,
   brandName: 'Laboratório Vida',
@@ -223,6 +229,46 @@ describe('Results (/results)', () => {
     signIn('admin');
     renderPage();
     expect(await screen.findByRole('button', { name: /limpar base/i })).toBeInTheDocument();
+  });
+
+  it('mostra a evolução do faturamento e a distribuição pelo RECEBIDO', async () => {
+    signIn('manager');
+    renderPage();
+
+    expect(await screen.findByText('Evolução do faturamento')).toBeInTheDocument();
+    expect(screen.getByText('Distribuição por convênio')).toBeInTheDocument();
+    expect(
+      screen.getByText('Participação de cada convênio no valor recebido'),
+    ).toBeInTheDocument();
+    // Legenda do donut: Particular recebeu 4200 de 26163.45 pagos (16.1%),
+    // e NÃO os 6805 orçados. "Outros" fecha a diferença com o KPI Recebido.
+    expect(screen.getByText(/4\.200,00.*16\.1%/)).toBeInTheDocument();
+    expect(screen.getByText('Outros')).toBeInTheDocument();
+  });
+
+  it('período sem orçamento oferece importar a planilha, não uma tela em branco', async () => {
+    useLisBudgetsSummary.mockImplementation(() =>
+      querySuccess({
+        ...summary,
+        issued: { count: 0, totalValue: 0, averageTicket: 0 },
+      }),
+    );
+    signIn('manager');
+    renderPage();
+
+    expect(
+      await screen.findByText('Nenhum orçamento importado neste período.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Importar planilha' })).toBeInTheDocument();
+  });
+
+  it('o carimbo da importação mostra o arquivo que está na tela', async () => {
+    signIn('manager');
+    renderPage();
+
+    expect(
+      await screen.findByText('Sante - Relatorio_20260911.xlsx'),
+    ).toBeInTheDocument();
   });
 
   it('sem importação ainda mostra "Nenhuma importação ainda"', async () => {

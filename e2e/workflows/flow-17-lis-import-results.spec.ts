@@ -152,40 +152,37 @@ test.describe('Fluxo 17: importação do LIS + Resultados', () => {
     await expect(dialog).toBeHidden();
 
     // O filtro de período dispara 4 fetches em paralelo (summary, período
-    // anterior, relatório executivo, vendas) — dá tempo de sobra antes de ler
-    // os cartões, em vez de deixar cada `toContainText` correr contra o
-    // timeout padrão de 10s enquanto a tela ainda está "Carregando...".
-    await expect(page.getByText('Carregando...')).toHaveCount(0, { timeout: 20_000 });
+    // anterior, relatório executivo, vendas) — espera o primeiro cartão existir
+    // antes de ler os quatro, em vez de deixar cada `toContainText` correr
+    // contra o timeout padrão de 10s com a tela ainda no esqueleto.
+    // (Era uma espera por "Carregando...", texto que o esqueleto substituiu:
+    // `toHaveCount(0)` de um texto que nunca mais aparece passa na hora e não
+    // protege nada.)
+    await expect(page.locator('[data-kpi="Total Orçado"]')).toBeVisible({ timeout: 20_000 });
 
-    // `<p>` não tem nome acessível computado — o padrão do projeto (ver
-    // flow-4-analytics.spec.ts) é `getByRole('paragraph')` + `.filter({hasText})`,
-    // nunca a opção `name` do `getByRole` aqui.
+    // `data-kpi` marca o cartão INTEIRO (`ResultsKpiCard`). Antes o teste lia o
+    // rótulo e subia um nível no DOM, o que o amarrava à profundidade da
+    // marcação: o redesenho moveu o rótulo para junto do ícone e derrubou os
+    // quatro cartões sem que nenhum número tivesse mudado.
+    const kpi = (label: string) => page.locator(`[data-kpi="${label}"]`);
 
     // Cartão "Total Orçado": 1000+500+300 = 1800, 3 orçamentos.
-    const totalOrcadoLabel = page.getByRole('paragraph').filter({ hasText: /^Total Orçado$/ });
-    const totalOrcadoCard = totalOrcadoLabel.locator('xpath=..');
-    await expect(totalOrcadoCard).toContainText('R$ 1.800,00');
-    await expect(totalOrcadoCard).toContainText('3 orçamentos');
+    await expect(kpi('Total Orçado')).toContainText('R$ 1.800,00');
+    await expect(kpi('Total Orçado')).toContainText('3 orçamentos');
 
     // Cartão "Em Requisição": só #1 e #2 tem REQUISICAO -> 1000+500 = 1500,
-    // 1500/1800 = 83.3% do total.
-    const emRequisicaoLabel = page.getByRole('paragraph').filter({ hasText: /^Em Requisição$/ });
-    const emRequisicaoCard = emRequisicaoLabel.locator('xpath=..');
-    await expect(emRequisicaoCard).toContainText('R$ 1.500,00');
-    await expect(emRequisicaoCard).toContainText('2 req.');
-    await expect(emRequisicaoCard).toContainText('83.3% do total');
+    // 1500/1800 = 83.3% do orçado.
+    await expect(kpi('Em Requisição')).toContainText('R$ 1.500,00');
+    await expect(kpi('Em Requisição')).toContainText('2 requisições');
+    await expect(kpi('Em Requisição')).toContainText('83.3% do orçado');
 
-    // Cartão "Recebido": só #1 foi pago -> 1000, 1000/1800 = 55.6% do orçamento.
-    const recebidoLabel = page.getByRole('paragraph').filter({ hasText: /^Recebido$/ });
-    const recebidoCard = recebidoLabel.locator('xpath=..');
-    await expect(recebidoCard).toContainText('R$ 1.000,00');
-    await expect(recebidoCard).toContainText('1 pagos');
-    await expect(recebidoCard).toContainText('55.6% do orçamento');
+    // Cartão "Recebido": só #1 foi pago -> 1000, 1000/1800 = 55.6% do orçado.
+    await expect(kpi('Recebido')).toContainText('R$ 1.000,00');
+    await expect(kpi('Recebido')).toContainText('1 pagos');
+    await expect(kpi('Recebido')).toContainText('55.6% do orçado');
 
     // Cartão "Atendentes": só a Carla teve orçamento no período.
-    const atendentesLabel = page.getByRole('paragraph').filter({ hasText: /^Atendentes$/ });
-    const atendentesCard = atendentesLabel.locator('xpath=..');
-    await expect(atendentesCard).toContainText('1 ativo(s) no período');
+    await expect(kpi('Atendentes')).toContainText('1 com orçamento no período');
 
     // "Detalhe por atendente": 3 orç., R$ 1.000,00 recebido, conversão
     // 1/3 = 33.3%, comissão sobre orçamento 2% de 1000 = R$ 20,00 (default
@@ -207,7 +204,7 @@ test.describe('Fluxo 17: importação do LIS + Resultados', () => {
     await expect(
       page.getByRole('status').filter({ hasText: 'Importação concluída: 3 linha(s) aceitas, 0 rejeitada(s).' }),
     ).toBeVisible();
-    await expect(totalOrcadoCard).toContainText('R$ 1.800,00');
-    await expect(totalOrcadoCard).toContainText('3 orçamentos');
+    await expect(kpi('Total Orçado')).toContainText('R$ 1.800,00');
+    await expect(kpi('Total Orçado')).toContainText('3 orçamentos');
   });
 });

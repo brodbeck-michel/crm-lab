@@ -18,6 +18,12 @@ test-results/
 # Documentos de apoio da integracao (binarios, nao versionados por decisao)
 docs/integracoes/
 
+# Dumps do Postgres nos clones da VPS (`scripts/backup-postgres.sh` e
+# `scripts/homolog-sincroniza-dados.sh` escrevem aqui). Fora do git por dois
+# motivos: e dado real de paciente, e o `deploy.sh` recusa clone com arvore
+# suja — sem este ignore, o primeiro deploy depois de um backup aborta.
+backups/
+
 # Mídia de mensagem em dev/teste (Onda 8 §4) — MEDIA_DIR default local.
 backend/media/
 

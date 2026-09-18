@@ -20,6 +20,36 @@ aplicada de verdade) — coisas que `localhost` não reproduz.
 
 ---
 
+## 1.1. Estado em 2026-09-18 (montagem do ambiente)
+
+- **prod**: `v1.7.0`, imagem `1e7fc41`, no ar em `https://vitrocrm.cloud`. Não foi
+  reconstruída nem reiniciada para montar homologação.
+- **hml**: no ar, imagem `hml-24ae78e` (branch `chore/ambiente-homologacao`), com o
+  dado de produção de 2026-09-18 13:23 — 1 tenant, 3 usuários, 33 pacientes, 33
+  conversas, **0 canais ativos**.
+- **Custo medido com as duas de pé**: 1.17 GB de RAM usados dos 7.9 GB (hml inteira
+  = ~208 MB; o maior consumidor é o Evolution, 125 MB) e 10 GB de 96 GB em disco.
+  Folga grande; o gargalo continua sendo os 2 vCPU durante o build.
+- **Pendente: DNS.** `homolog.vitrocrm.cloud` ainda não existe. A configuração do
+  Caddy já está escrita e validada em `/etc/caddy/homolog.caddyfile`, **não
+  importada**. Para ligar, depois de criar o registro `A homolog -> 2.25.227.155`
+  no painel da Hostinger:
+
+  ```bash
+  ssh crm-vps
+  sudo sed -i '1i import homolog.caddyfile' /etc/caddy/Caddyfile
+  sudo caddy validate --config /etc/caddy/Caddyfile   # antes de recarregar
+  sudo systemctl reload caddy                          # o cert sai sozinho
+  ```
+
+  Enquanto isso, hml abre por túnel: `ssh -L 8081:127.0.0.1:8081 crm-vps` e
+  `http://localhost:8081` (já está em `CORS_ORIGIN`).
+- **Basic auth**: usuário `homolog`; a senha foi entregue ao Michel na montagem e
+  **não é versionada**. Perdeu? Gere outra: `caddy hash-password`, troque o hash em
+  `/etc/caddy/homolog.caddyfile` e recarregue.
+
+---
+
 ## 2. As duas stacks, lado a lado
 
 Mesmo `docker-compose.prod.yml`, mesma VPS, **nada compartilhado**:
@@ -92,6 +122,23 @@ O `deploy.sh` faz, em ordem: identidade → árvore limpa → `fetch` → `check
    da tela é **build-time** e um deploy sem bump faz a tela mentir.
 7. **Nenhum `down`, nenhum `-v`, nenhum `prune`.** Não estão no script; derrubar
    stack e apagar volume são atos manuais e conscientes.
+
+### As travas foram testadas (2026-09-18)
+
+Em `/tmp`, com `.env` sintéticos, sem tocar em nenhuma das duas stacks. Todos os
+seis casos abortaram com saída 1 e mensagem dizendo o que estava errado:
+
+| Cenário | Trava que pegou |
+|---|---|
+| `.env` de produção num clone que não é `/opt/crm-lab` | diretório |
+| `APP_ENV=homologacao` com `COMPOSE_PROJECT_NAME=crm-lab-prod` | par inconsistente |
+| `APP_ENV=staging` | ambiente desconhecido |
+| `--ref` com `APP_ENV=production` | `--ref` proibido em prod |
+| sincronia de dados com `.env` de produção | `APP_ENV` != homologacao |
+| sincronia de dados fora de `/opt/crm-lab-homolog` | diretório |
+
+O que **não** dá para testar sem um deploy real de produção: a confirmação digitada
+`PRODUCAO` e a conferência tag × versão. Elas aparecem no próximo deploy de prod.
 
 ### Rollback
 

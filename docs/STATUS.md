@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-16 (v1.6.0 — CRMLAB-8 + CRMLAB-11 + CRMLAB-12, mergeados e taggeados)
+**Última atualização:** 2026-09-18 (ambiente de homologação na VPS — ver seção no fim)
 
 ---
 
@@ -1035,3 +1035,47 @@ telas de pe, com o mesmo roteiro do CI.
 ## Bloqueios Atuais
 
 Nenhum.
+
+---
+
+## 2026-09-18 — Ambiente de homologação na VPS ✅
+
+`hml` passa a rodar **na mesma VPS** de produção, isolada pelo nome do projeto
+Compose (`crm-lab-homolog` × `crm-lab-prod`) — o nome prefixa containers, rede e
+**volumes**, então são dois Postgres que não se conhecem. Documento de referência:
+**`docs/guides/ENVIRONMENTS.md`** (é o que responde "o que é prod e o que é hml").
+
+| | |
+|---|---|
+| hml | `/opt/crm-lab-homolog`, porta `127.0.0.1:8081`, imagens `hml-<sha>` |
+| prod | `/opt/crm-lab`, porta `127.0.0.1:8080`, imagens `<sha>` — **não foi tocada** |
+
+O risco desse arranjo não é técnico, é humano: um comando no diretório errado
+reconstrói produção. Daí o desenho de `scripts/deploy.sh` — **sem flag de
+ambiente**, ele descobre onde está e exige que três fontes concordem (diretório,
+`APP_ENV`, `COMPOSE_PROJECT_NAME`). A do diretório existe para o caso pior: `.env`
+de produção copiado inteiro para o diretório de hml, que sem ela faria um "deploy
+de homologação" subir produção em cima do volume de produção. Produção também
+exige digitar `PRODUCAO`, recusa `--ref` e confere tag × `version`. Nenhum `down`,
+`-v` ou `prune` existe no script.
+
+`scripts/homolog-sincroniza-dados.sh` traz o dado de prod em direção única (prod só
+é lida, por `pg_dump`), confere o destino 4× — inclusive o label
+`com.docker.compose.project` do container que recebe o `pg_restore --clean` —
+guarda o estado anterior de hml antes de sobrescrever, e **desativa os canais de
+mensagem** no fim: hml com credencial de canal ativa manda WhatsApp real para
+paciente real.
+
+Na tela, `VITE_APP_ENV` (build-time) pinta a pílula **HOMOLOGACAO** no pé da
+sidebar. Produção segue sem selo e sem rebuild.
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces, lint limpo, 33 testes
+de `components/layout` verdes; hml respondendo `/healthz` 200 e
+`401 INVALID_CREDENTIALS` no login (backend falando com o banco restaurado); prod
+`/healthz` 200 e os 5 containers de pé, sem restart; 6 cenários de trava testados
+em `/tmp`, todos abortando com saída 1. Custo com as duas stacks: 1.17 GB de 7.9 GB
+de RAM, 10 GB de 96 GB de disco.
+
+**Pendente:** registro DNS `homolog.vitrocrm.cloud` (o Caddyfile do site já está
+escrito e validado no host, ainda não importado). Até lá, hml abre por túnel SSH
+na 8081.

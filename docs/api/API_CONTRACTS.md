@@ -929,9 +929,17 @@ responder):
   `findOrCreateByPhone` → `MessageService.createFromPatient` (dedupe por `externalId`,
   `unreadCount`, `lastMessageAt`, WS `conversation.new_message`). A tela de Atendimento não
   muda — é o mesmo dado entrando por um canal diferente.
-  **Mídia (Onda 8 §4.2):** `message.imageMessage`/`audioMessage`/`documentMessage` são
-  reconhecidos ao lado de `conversation`/`extendedTextMessage` (o webhook é registrado com
-  `base64: true`). Arquivo acima do teto (15 MiB) é recusado com log — a mensagem não é
+  **Mídia (Onda 8 §4.2):** `message.imageMessage`/`audioMessage`/`documentMessage`/
+  `videoMessage`/`stickerMessage` são reconhecidos ao lado de
+  `conversation`/`extendedTextMessage` (o webhook é registrado com
+  `base64: true`). Vídeo e figurinha entraram na auditoria de 2026-09-17 — antes eram
+  descartados em silêncio. Ambos chegam pelo `messageType` derivado do mime
+  (`video/*` → `doc`): anexo genérico é pior que um player dedicado, mas incomparavelmente
+  melhor que perda silenciosa, e não espalha mudança de contrato pelo frontend.
+  **Sem arquivo:** `locationMessage`/`liveLocationMessage`/`contactMessage`/
+  `contactsArrayMessage` viram uma linha de texto descritiva (`[Localizacao] …`,
+  `[Contato] …`) em vez de sumir.
+  Arquivo acima do teto (15 MiB) é recusado com log — a mensagem não é
   criada, mas o evento continua respondendo `200 {received:true}` do mesmo jeito. **Risco
   aceito:** o campo exato onde o gateway v2.3.7 grava o base64 não foi confirmado contra um
   payload real; o parser aceita tanto `message.<tipo>Message.base64` quanto o nível do
@@ -941,10 +949,43 @@ responder):
 - `CONNECTION_UPDATE` com `state: "close"` (inclusive `loggedOut`, que é como o gateway informa
   desconexão/banimento) → marca desconectado; a UI mostra "Reconectar". O contrato não distingue
   desconexão voluntária de banimento — ver a nota de risco em `docs/architecture/SECURITY.md`.
-- `QRCODE_UPDATED` → atualiza o QR vigente lido por `GET /settings/channels/whatsapp/qr`.
+- `QRCODE_UPDATED` → grava o QR vigente no cache (`evolution:qr:<tenantId>`, TTL 70s), que é
+  de onde `GET /settings/channels/whatsapp/qr` passa a ler. **Este evento é obrigatório na
+  assinatura do webhook** (`evolution-client.ts`): sem ele o polling não tem fonte de QR.
 
 **Idempotente:** mesma disciplina do webhook Meta — reentrega da mesma mensagem
-(`externalId`/`key.id`) não duplica linha nem evento.
+(`externalId`/`key.id`) não duplica linha nem evento. Desde a migração **019** a garantia é
+do **banco** (índice único parcial em `(tenant_id, external_message_id)`), não só do service:
+o dedupe anterior era ler-depois-inserir, sem nada segurando entre o `SELECT` e o `INSERT`, e
+o gateway reentrega o mesmo evento até 10 vezes. Duas reentregas concorrentes passavam as duas
+pela leitura. O service trata a violação como sucesso idempotente e devolve a linha existente.
+
+**Rate limit próprio.** As rotas de `/webhooks/*` não entram no balde de
+`RATE_LIMIT_PER_MINUTE` (100/min, dimensionado para um usuário humano): elas têm
+`RATE_LIMIT_WEBHOOK_PER_MINUTE` (600/min). O gateway fala por IP fixo e sem Bearer, então caía
+na cota de uma pessoa — a auditoria de 2026-09-17 mediu **3754 respostas 429 e 462 entregas
+abandonadas** em 12 minutos, e entrega abandonada é mensagem de paciente que não chega.
+
+**Todo descarte é contável (auditoria 2026-09-17).** A resposta `200 {received:true}` é
+igual em todo caminho — inclusive nos de descarte — para não virar oráculo de enumeração.
+O efeito colateral é que o gateway marca "entregue" e **nunca reentrega**: sem rastro, a
+mensagem some para sempre. Por isso todo descarte emite
+`evolution.inbound_discarded` com um `reason` da lista fechada abaixo
+(`DiscardReason`, `webhook.routes.ts`). Nem todo motivo é defeito — `from_me` e `grupo` são
+descarte correto —, mas todos precisam ser contáveis, senão não há como distinguir
+"não chegou nada" de "chegou e foi jogado fora".
+
+| `reason` | Significado | É defeito? |
+|---|---|---|
+| `from_me` | o próprio laboratório respondendo pelo celular | não |
+| `grupo` | `remoteJid` de grupo | não |
+| `payload_sem_key` / `sem_remote_jid` | payload malformado | não (lixo) |
+| `jid_sem_telefone` | `remoteJid` sem telefone extraível | investigar |
+| `lid_sem_remote_jid_alt` | `@lid` sem o telefone real | **sim** — hoje 100% do tráfego chega como `@lid`; se este motivo aparecer, a entrada está cega |
+| `tipo_nao_suportado` | submensagem que o parser não conhece | **sim** — lacuna nossa, dá para fechar |
+| `sem_texto_nem_midia` | `message` vazio | não |
+| `midia_recusada` | arquivo acima do teto | esperado, mas o paciente não é avisado |
+| `erro_no_processamento` | exceção ao gravar | **sim** |
 
 ---
 
@@ -2997,6 +3038,15 @@ fora do ar)
 #### GET /settings/channels/whatsapp/qr
 QR vigente + status. É o endpoint que o modal faz **polling de ~2s** (até `connected` ou
 timeout ~90s) enquanto o gateway renova o QR por trás (`QRCODE_UPDATED`, webhook).
+
+**Esta rota NÃO chama `GET /instance/connect` (auditoria 2026-09-17).** Aquela rota do
+Evolution parece leitura e não é: cada chamada instancia uma conexão Baileys nova. Com o
+polling de 2s, foram medidos **169 sockets em 3 minutos** em produção, e o WhatsApp respondeu
+invalidando a sessão (`401`) — a tela de parear derrubava o número que acabara de parear.
+O caminho atual é: estado ao vivo por `connectionState` (leitura de verdade) + QR lido do
+cache que o webhook `QRCODE_UPDATED` alimenta. Quem abre a conexão é
+`POST /connect`, **uma vez**, e ele já semeia o cache. Sem QR em cache por mais de 70s
+(TTL) o gateway parou de emitir: a resposta vira `disconnected` e o polling para sozinho.
 
 **Response (200):**
 ```json

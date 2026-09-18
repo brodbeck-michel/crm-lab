@@ -54,13 +54,17 @@ import type {
   WhatsAppStatusResponse,
 } from '@crm-lab/shared';
 import { env } from '../config/env.js';
+import type { CacheService } from '../lib/cache.js';
 import type { DbClient, DbTx } from '../db/types.js';
 import type { TenantContext } from '../http/context.js';
 import { BusinessError } from '../http/errors.js';
 import {
   createDefaultEvolutionClient,
   evolutionInstanceName,
+  EVOLUTION_QR_TTL_SECONDS,
+  evolutionQrCacheKey,
   isInstanceNotFound,
+  isSessionClosed,
   type EvolutionClient,
   type EvolutionWebhookConfig,
 } from '../lib/evolution-client.js';
@@ -135,6 +139,12 @@ export interface ChannelSettingsServiceDeps {
    * D-058). O teste injeta um cliente de mentira.
    */
   evolutionClient?: EvolutionClient;
+  /**
+   * Cache do QR vigente (`QRCODE_UPDATED` escreve, `getWhatsAppQr` le).
+   * Opcional: sem ele o QR simplesmente nao e servido pelo polling — nunca
+   * volta a chamar `/instance/connect`, que era a causa da sessao morrer.
+   */
+  cache?: CacheService;
 }
 
 /** Quanto tempo o QR devolvido continua valido, para `expiresInSeconds` (spec §4.2: ~20s). */
@@ -606,7 +616,7 @@ async function readAll(tx: DbTx, tenantId: string): Promise<ChannelSettingsRespo
 export function createChannelSettingsService(
   deps: ChannelSettingsServiceDeps,
 ): ChannelSettingsService {
-  const { db, audit } = deps;
+  const { db, audit, cache } = deps;
 
   const get = async (ctx: TenantContext): Promise<ChannelSettingsResponse> => {
     assertReadRole(ctx);
@@ -864,15 +874,45 @@ export function createChannelSettingsService(
       newValues: { channel: 'whatsapp', connectionMode: 'qr', instanceName },
     });
 
+    // A UNICA chamada a `/instance/connect` do fluxo — e ela abre a conexao de
+    // verdade. O polling seguinte le do cache (ver `getWhatsAppQr`).
     const qr = await callGateway(() => client.getQr(instanceName));
+    // Semeia o cache: sem isto o primeiro polling nao acharia QR e concluiria
+    // "pareamento morto" antes do gateway emitir o primeiro `QRCODE_UPDATED`.
+    if (cache && qr.qrcode) {
+      await cache.set(evolutionQrCacheKey(ctx.tenantId), qr.qrcode, EVOLUTION_QR_TTL_SECONDS);
+    }
     return toQrResponse(qr);
   };
 
+  /**
+   * QR vigente para o polling do modal.
+   *
+   * NAO chama `/instance/connect`. Essa rota do Evolution parece uma leitura e
+   * nao e: cada chamada instancia uma conexao Baileys nova. Com o modal dando
+   * polling de 2 em 2 segundos, a auditoria de 2026-09-17 mediu 169 sockets em
+   * 3 minutos, e o WhatsApp respondeu invalidando a sessao (401) — ou seja, a
+   * propria tela de parear derrubava o numero que acabara de parear.
+   *
+   * O caminho agora e: estado ao vivo por `connectionState` (leitura de
+   * verdade) + QR entregue pelo webhook `QRCODE_UPDATED` e lido do cache. Quem
+   * de fato abre a conexao e `connectWhatsAppQr`, UMA vez, ao abrir o modal.
+   */
   const getWhatsAppQr = async (ctx: TenantContext): Promise<WhatsAppQrResponse> => {
     assertWriteRole(ctx);
     const client = requireEvolutionClient();
     try {
-      return toQrResponse(await client.getQr(evolutionInstanceName(ctx.tenantId)));
+      const live = await client.getStatus(evolutionInstanceName(ctx.tenantId));
+      if (live.status === 'connected') {
+        return toQrResponse({ qrcode: null, status: 'connected' });
+      }
+      const qrcode = cache ? await cache.get<string>(evolutionQrCacheKey(ctx.tenantId)) : null;
+      // O cache nasce populado pelo proprio `connectWhatsAppQr` e e renovado a
+      // cada `QRCODE_UPDATED`. Entao "sem QR em cache" nao e uma lacuna entre
+      // dois QRs: e o gateway tendo PARADO de emitir por mais de
+      // EVOLUTION_QR_TTL_SECONDS — pareamento morto, e `disconnected` faz o
+      // polling parar corretamente em vez de girar para sempre.
+      return toQrResponse({ qrcode, status: qrcode ? 'pairing' : 'disconnected' });
     } catch (error) {
       // Instancia sumiu do gateway: e um canal DESCONECTADO, nao um erro —
       // a tela precisa poder oferecer "Conectar" de novo.
@@ -910,6 +950,13 @@ export function createChannelSettingsService(
     // Instancia ausente = ja esta deslogada: segue para marcar desconectado no
     // banco em vez de recusar, senao o canal fica preso em "conectado".
     await client.logout(evolutionInstanceName(ctx.tenantId)).catch(async (error: unknown) => {
+      // Sessao morta com registro preso em `open`: continua sendo recusa (o
+      // canal NAO fica marcado desconectado, porque o numero ainda aparece
+      // pareado no gateway), mas com um codigo que diz o que fazer. O
+      // `CHANNEL_QR_UNAVAILABLE` generico mandava o admin conferir uma
+      // configuracao que estava certa — em producao isso custou 6 tentativas
+      // cegas antes de alguem olhar o log.
+      if (isSessionClosed(error)) throw new BusinessError('CHANNEL_SESSION_STALE');
       if (!isInstanceNotFound(error)) throw gatewayFailure(error);
     });
     await db.withTenant(ctx.tenantId, (tx) =>

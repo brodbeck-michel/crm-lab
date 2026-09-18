@@ -39,7 +39,14 @@ import { Router, type Request, type RequestHandler, type Response } from 'expres
 import { env } from '../config/env.js';
 import type { DbClient } from '../db/types.js';
 import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
-import { evolutionInstanceName } from '../lib/evolution-client.js';
+import { rateLimit } from '../http/middleware/rate-limit.js';
+import type { CacheService } from '../lib/cache.js';
+import type { WsHub } from '../lib/ws-hub.js';
+import {
+  EVOLUTION_QR_TTL_SECONDS,
+  evolutionInstanceName,
+  evolutionQrCacheKey,
+} from '../lib/evolution-client.js';
 import { logger } from '../lib/logger.js';
 import * as channelSettingsRepo from '../repositories/channel-settings.repository.js';
 import { ConversationRepository } from '../repositories/conversation.repository.js';
@@ -377,13 +384,65 @@ interface EvolutionInboundMessage {
   externalId: string | null;
 }
 
-const MEDIA_MESSAGE_KEYS = ['imageMessage', 'audioMessage', 'documentMessage'] as const;
+/**
+ * Submensagens que carregam arquivo. `video` e `sticker` entraram na auditoria
+ * de 2026-09-17: o parser so conhecia imagem/audio/documento, entao um video
+ * de paciente era DESCARTADO em silencio — o pior desfecho possivel, porque o
+ * atendente nunca fica sabendo que recebeu algo.
+ *
+ * Nenhum tipo novo em `MessageType` (`shared/types/conversation.types.ts`):
+ * `messageTypeFromMime` ja mapeia `video/*` para `doc`, entao o video chega
+ * como anexo em vez de sumir. Anexo generico e pior que um player dedicado,
+ * mas e MUITO melhor que perda silenciosa, e nao espalha mudanca de contrato
+ * pelo frontend inteiro. Trocar por um `video` de verdade e evolucao proxima,
+ * nao pre-requisito para parar a perda.
+ */
+const MEDIA_MESSAGE_KEYS = [
+  'imageMessage',
+  'audioMessage',
+  'documentMessage',
+  'videoMessage',
+  'stickerMessage',
+] as const;
 
 const DEFAULT_MEDIA_NAME: Record<(typeof MEDIA_MESSAGE_KEYS)[number], string> = {
   imageMessage: 'imagem',
   audioMessage: 'audio',
   documentMessage: 'documento',
+  videoMessage: 'video',
+  stickerMessage: 'figurinha',
 };
+
+/**
+ * Tipos SEM arquivo que viravam descarte silencioso: localizacao e contato
+ * compartilhado. Nao tem midia nem texto proprio, entao caiam no
+ * `!text && !media` e sumiam. Agora viram uma linha de texto legivel — o
+ * atendente ve que o paciente mandou o endereco, mesmo sem mapa na tela.
+ */
+function describeNonMedia(message: Record<string, unknown>): string | null {
+  const location = asRecord(message.locationMessage) ?? asRecord(message.liveLocationMessage);
+  if (location) {
+    const lat = location.degreesLatitude;
+    const lng = location.degreesLongitude;
+    const name = asNonEmptyString(location.name);
+    const coords =
+      typeof lat === 'number' && typeof lng === 'number' ? `${lat}, ${lng}` : 'sem coordenadas';
+    return name ? `[Localizacao] ${name} (${coords})` : `[Localizacao] ${coords}`;
+  }
+
+  const contact = asRecord(message.contactMessage);
+  if (contact) {
+    return `[Contato] ${asNonEmptyString(contact.displayName) ?? 'sem nome'}`;
+  }
+
+  const contacts = message.contactsArrayMessage;
+  if (asRecord(contacts)) {
+    const list = asRecord(contacts)?.contacts;
+    const count = Array.isArray(list) ? list.length : 0;
+    return `[Contatos] ${count} contato(s) compartilhado(s)`;
+  }
+  return null;
+}
 
 /**
  * `message.imageMessage`/`audioMessage`/`documentMessage`, com o base64
@@ -434,36 +493,92 @@ function mediaCaption(message: Record<string, unknown> | null): string | null {
  *   Sem `remoteJidAlt` a mensagem e DESCARTADA de proposito (com log): uma
  *   conversa presa a um LID seria pior que nenhuma — sem resposta e sem dedupe.
  */
-function inboundPhoneOf(key: Record<string, unknown> | null): string | null {
-  if (!key || key.fromMe === true) return null;
+function inboundPhoneOf(key: Record<string, unknown> | null): PhoneResult {
+  if (!key) return { ok: false, reason: 'payload_sem_key' };
+  if (key.fromMe === true) return { ok: false, reason: 'from_me' };
   const jid = asNonEmptyString(key.remoteJid);
-  if (!jid || jid.endsWith('@g.us')) return null;
-  return jid.endsWith('@lid') ? phoneFromJid(key.remoteJidAlt) : phoneFromJid(jid);
+  if (!jid) return { ok: false, reason: 'sem_remote_jid' };
+  if (jid.endsWith('@g.us')) return { ok: false, reason: 'grupo' };
+  const phone = jid.endsWith('@lid') ? phoneFromJid(key.remoteJidAlt) : phoneFromJid(jid);
+  if (!phone) {
+    return { ok: false, reason: jid.endsWith('@lid') ? 'lid_sem_remote_jid_alt' : 'jid_sem_telefone' };
+  }
+  return { ok: true, phone };
 }
 
-function evolutionInboundOf(data: unknown): EvolutionInboundMessage | null {
+type PhoneResult = { ok: true; phone: string } | { ok: false; reason: DiscardReason };
+
+/**
+ * Por que uma mensagem recebida NAO virou mensagem no CRM.
+ *
+ * Nem todo motivo e defeito: `from_me` e `grupo` sao descarte correto e
+ * esperado (o laboratorio respondendo pelo celular, conversa de grupo). O que
+ * a auditoria de 2026-09-17 mostrou e que ate o descarte CORRETO precisa ser
+ * contavel — sem isso nao da para distinguir "nao chegou nada" de "chegou e o
+ * parser jogou fora", e 17% do movimento de um dia sumiu sem ninguem notar.
+ */
+export type DiscardReason =
+  | 'payload_sem_key'
+  | 'from_me'
+  | 'grupo'
+  | 'sem_remote_jid'
+  | 'jid_sem_telefone'
+  | 'lid_sem_remote_jid_alt'
+  | 'tipo_nao_suportado'
+  | 'sem_texto_nem_midia'
+  | 'midia_recusada'
+  | 'erro_no_processamento';
+
+export type EvolutionInboundResult =
+  | { ok: true; message: EvolutionInboundMessage }
+  | { ok: false; reason: DiscardReason; messageType: string | null };
+
+function evolutionInboundOf(data: unknown): EvolutionInboundResult {
   const record = asRecord(data);
-  if (!record) return null;
+  const messageType = record ? asNonEmptyString(record.messageType) : null;
+  if (!record) return { ok: false, reason: 'payload_sem_key', messageType };
   const key = asRecord(record.key);
   const phone = inboundPhoneOf(key);
-  if (!phone) return null;
+  if (!phone.ok) return { ok: false, reason: phone.reason, messageType };
 
   const message = asRecord(record.message);
   const media = evolutionInboundMediaOf(message);
   const text =
     (message && asNonEmptyString(message.conversation)) ??
     (message && asNonEmptyString(asRecord(message.extendedTextMessage)?.text)) ??
+    (message && describeNonMedia(message)) ??
     mediaCaption(message);
-  if (!text && !media) return null;
+  if (!text && !media) {
+    // Distingue "tipo que este parser nao entende" de "payload vazio": o
+    // primeiro e uma lacuna NOSSA que da para fechar, o segundo e lixo.
+    const known = message !== null && Object.keys(message).length > 0;
+    return { ok: false, reason: known ? 'tipo_nao_suportado' : 'sem_texto_nem_midia', messageType };
+  }
 
   return {
-    phone,
-    // Sem legenda: o nome do arquivo vira o preview da conversa em vez de "".
-    text: text ?? media?.fileName ?? '',
-    media,
-    name: asNonEmptyString(record.pushName),
-    externalId: key ? asNonEmptyString(key.id) : null,
+    ok: true,
+    message: {
+      phone: phone.phone,
+      // Sem legenda: o nome do arquivo vira o preview da conversa em vez de "".
+      text: text ?? media?.fileName ?? '',
+      media,
+      name: asNonEmptyString(record.pushName),
+      externalId: key ? asNonEmptyString(key.id) : null,
+    },
   };
+}
+
+/**
+ * QR de um evento `QRCODE_UPDATED`. O gateway v2.3.7 manda
+ * `{ qrcode: { base64, code, pairingCode } }`; toleramos tambem o `base64` no
+ * nivel do `data`, pela mesma razao do parser de midia — nao ficar preso a uma
+ * unica suposicao sobre a forma do payload.
+ */
+function evolutionQrOf(data: unknown): string | null {
+  const record = asRecord(data);
+  if (!record) return null;
+  const qrcode = asRecord(record.qrcode);
+  return asNonEmptyString(qrcode?.base64) ?? asNonEmptyString(record.base64);
 }
 
 interface EvolutionConnectionState {
@@ -494,6 +609,7 @@ async function applyEvolutionConnectionUpdate(
   db: DbClient,
   tenantId: string,
   data: unknown,
+  wsHub: WsHub,
 ): Promise<void> {
   const state = evolutionConnectionStateOf(data);
   if (!state) return;
@@ -502,6 +618,22 @@ async function applyEvolutionConnectionUpdate(
       ? channelSettingsRepo.markWhatsAppConnected(tx, tenantId, state.phoneNumber)
       : channelSettingsRepo.markWhatsAppDisconnected(tx, tenantId),
   );
+
+  // A queda PRECISA sair do banco e chegar em alguem. Na auditoria de
+  // 2026-09-17 a sessao caiu as 16:17 e o estado so foi gravado: quem estava
+  // atendendo continuou achando que o canal respondia, e a descoberta so
+  // aconteceu horas depois, por acaso. `error` (nao `info`) porque canal de
+  // atendimento caido e incidente, nao rotina — e e o nivel que um alerta de
+  // infra consegue filtrar.
+  if (state.connected) {
+    logger.info('channel.whatsapp_connected', { tenantId });
+  } else {
+    logger.error('channel.whatsapp_disconnected', { tenantId });
+  }
+  wsHub.emitToTenant(tenantId, 'channel.connection_changed', {
+    channel: 'whatsapp',
+    connected: state.connected,
+  });
 }
 
 /**
@@ -533,7 +665,12 @@ function instanceClaimMatches(body: Record<string, unknown> | null, tenantId: st
   return instanceClaim === evolutionInstanceName(tenantId);
 }
 
-export function evolutionInbound(services: WebhookServices, db: DbClient): RequestHandler {
+export function evolutionInbound(
+  services: WebhookServices,
+  db: DbClient,
+  cache: CacheService,
+  wsHub: WsHub,
+): RequestHandler {
   return safeHandle(async (req, res) => {
     const authenticated = await authenticateEvolution(req, services);
     if (!authenticated) {
@@ -555,7 +692,19 @@ export function evolutionInbound(services: WebhookServices, db: DbClient): Reque
     }
 
     if (event === 'MESSAGES_UPSERT') {
-      const inbound = evolutionInboundOf(body?.data);
+      const parsed = evolutionInboundOf(body?.data);
+      if (!parsed.ok) {
+        // Este log e a UNICA prova de que a mensagem existiu. Sem ele (o
+        // comportamento ate 2026-09-17) o webhook respondia 200 e a mensagem
+        // sumia sem deixar rastro — e o gateway nao reentrega, porque 200
+        // significa "entregue". Ver `DiscardReason`.
+        logger.warn('evolution.inbound_discarded', {
+          tenantId,
+          reason: parsed.reason,
+          messageType: parsed.messageType,
+        });
+      }
+      const inbound = parsed.ok ? parsed.message : null;
       if (inbound) {
         try {
           // WORKFLOWS §1, mesmo caminho do webhook da Meta.
@@ -578,6 +727,16 @@ export function evolutionInbound(services: WebhookServices, db: DbClient): Reque
                 externalId: inbound.externalId,
               });
               await services.media.attachToMessage(tenantId, stored.id, message.id);
+            } else {
+              // Continua sem criar mensagem (spec Onda 8 §4.2), mas agora
+              // DEIXA RASTRO: antes o arquivo recusado sumia junto com a
+              // mensagem e ninguem conseguia saber que o paciente tentou
+              // mandar algo.
+              logger.warn('evolution.inbound_discarded', {
+                tenantId,
+                reason: 'midia_recusada' satisfies DiscardReason,
+                messageType: inbound.media.mimeType,
+              });
             }
           } else {
             await services.messages.createFromPatient(tenantId, conversation.id, {
@@ -591,14 +750,24 @@ export function evolutionInbound(services: WebhookServices, db: DbClient): Reque
           logger.error('evolution.inbound_message_rejected', {
             tenantId,
             externalId: inbound.externalId,
+            discardReason: 'erro_no_processamento' satisfies DiscardReason,
             reason: err instanceof Error ? err.message : String(err),
           });
         }
       }
     } else if (event === 'CONNECTION_UPDATE') {
-      await applyEvolutionConnectionUpdate(db, tenantId, body?.data);
+      await applyEvolutionConnectionUpdate(db, tenantId, body?.data, wsHub);
+    } else if (event === 'QRCODE_UPDATED') {
+      // O QR passa a chegar POR AQUI em vez de ser buscado a cada polling.
+      // `GET /settings/channels/whatsapp/qr` le desta chave; sem isso, cada
+      // polling do modal chamava `/instance/connect`, que recria a conexao
+      // Baileys — 169 sockets em 3 minutos na auditoria de 2026-09-17.
+      const qrcode = evolutionQrOf(body?.data);
+      if (qrcode) {
+        await cache.set(evolutionQrCacheKey(tenantId), qrcode, EVOLUTION_QR_TTL_SECONDS);
+      }
     }
-    // QRCODE_UPDATED e eventos desconhecidos: sem efeito no banco de proposito.
+    // Eventos desconhecidos: sem efeito no banco de proposito.
 
     logger.info('evolution.webhook_processed', { tenantId, event: event ?? 'desconhecido' });
     acknowledge(res);
@@ -611,7 +780,11 @@ export function evolutionInbound(services: WebhookServices, db: DbClient): Reque
  * (`{ state, owner }`), porque o gateway pode ser configurado com uma URL de
  * webhook dedicada por evento (`webhookByEvents`).
  */
-export function evolutionStatus(services: WebhookServices, db: DbClient): RequestHandler {
+export function evolutionStatus(
+  services: WebhookServices,
+  db: DbClient,
+  wsHub: WsHub,
+): RequestHandler {
   return safeHandle(async (req, res) => {
     const authenticated = await authenticateEvolution(req, services);
     if (!authenticated) {
@@ -637,7 +810,7 @@ export function evolutionStatus(services: WebhookServices, db: DbClient): Reques
     }
 
     const data = body && asNonEmptyString(body.event) === 'CONNECTION_UPDATE' ? body.data : body;
-    await applyEvolutionConnectionUpdate(db, tenantId, data);
+    await applyEvolutionConnectionUpdate(db, tenantId, data, wsHub);
 
     logger.info('evolution.status_processed', { tenantId });
     acknowledge(res);
@@ -666,13 +839,19 @@ function buildWebhookModule(
   const services = createWebhookServices(deps, overrides);
   const router = Router();
 
+  // Balde PROPRIO do webhook. O limitador global pula estas rotas
+  // (`isChannelWebhook`), mas rota publica sem teto nenhum seria amplificador:
+  // o que muda e que o teto passa a ser o de uma maquina que reentrega, nao o
+  // de uma pessoa navegando.
+  router.use(rateLimit({ cache: deps.cache, limit: env.RATE_LIMIT_WEBHOOK_PER_MINUTE }));
+
   router.post('/whatsapp', whatsappInbound(services));
   router.post('/whatsapp/status', whatsappStatus(services));
   router.post('/whatsapp/:tenant', whatsappInbound(services));
   router.post('/whatsapp/:tenant/status', whatsappStatus(services));
 
-  router.post('/evolution/:tenant', evolutionInbound(services, deps.db));
-  router.post('/evolution/:tenant/status', evolutionStatus(services, deps.db));
+  router.post('/evolution/:tenant', evolutionInbound(services, deps.db, deps.cache, deps.wsHub));
+  router.post('/evolution/:tenant/status', evolutionStatus(services, deps.db, deps.wsHub));
 
   return { basePath: '/webhooks', router, requiresAuth: false };
 }

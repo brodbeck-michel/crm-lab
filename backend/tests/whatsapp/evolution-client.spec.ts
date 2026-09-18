@@ -5,7 +5,11 @@
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createEvolutionClient } from '../../src/lib/evolution-client.js';
+import {
+  createEvolutionClient,
+  isInstanceNotFound,
+  isSessionClosed,
+} from '../../src/lib/evolution-client.js';
 
 describe('EvolutionClient', () => {
   let fakeGateway: ReturnType<typeof createServer>;
@@ -87,6 +91,19 @@ describe('EvolutionClient', () => {
         res.end(JSON.stringify({ status: 'SUCCESS' }));
         return;
       }
+      // Sessao morta com registro preso em `open` — corpo COPIADO da resposta
+      // real do v2.3.7 em producao (2026-09-17).
+      if (req.method === 'DELETE' && req.url === '/instance/logout/tenant-sessao-morta') {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            status: 500,
+            error: 'Internal Server Error',
+            response: { message: ['Error: Connection Closed'] },
+          }),
+        );
+        return;
+      }
       if (req.method === 'POST' && req.url === '/message/sendText/tenant-abc') {
         res.writeHead(201, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ key: { id: 'EVO123' } }));
@@ -125,7 +142,9 @@ describe('EvolutionClient', () => {
     const webhook = lastBody.webhook as Record<string, unknown>;
     expect(webhook.url).toBe('https://crm.local/api/v1/webhooks/evolution/t1');
     expect(webhook.headers).toEqual({ 'x-evolution-webhook-token': 'segredo' });
-    expect(webhook.events).toEqual(['MESSAGES_UPSERT', 'CONNECTION_UPDATE']);
+    // `QRCODE_UPDATED` e o que permite servir o QR pelo cache em vez de chamar
+    // `/instance/connect` a cada polling — ver `getWhatsAppQr`.
+    expect(webhook.events).toEqual(['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED']);
   });
 
   it('createInstance numa instancia que JA existe (403) adota a existente e reaplica o webhook', async () => {
@@ -177,6 +196,16 @@ describe('EvolutionClient', () => {
   it('logout chama DELETE /instance/logout/:instance', async () => {
     const client = createEvolutionClient(baseUrl, 'admin-key');
     await expect(client.logout('tenant-abc')).resolves.toBeUndefined();
+  });
+
+  it('logout numa sessao morta (500 Connection Closed) e reconhecido por isSessionClosed', async () => {
+    // O gateway esta NO AR e responde — quem morreu foi a sessao Baileys. O
+    // service precisa distinguir isso de "gateway fora do ar" para nao mandar
+    // o admin conferir uma configuracao que esta correta.
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    const error = await client.logout('tenant-sessao-morta').catch((e: unknown) => e);
+    expect(isSessionClosed(error)).toBe(true);
+    expect(isInstanceNotFound(error)).toBe(false);
   });
 
   it('sendText devolve o externalId da mensagem, autenticado pela apikey DA INSTANCIA', async () => {

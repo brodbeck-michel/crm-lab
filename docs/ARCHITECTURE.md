@@ -412,6 +412,12 @@ Contrato em `shared/types/websocket.types.ts`; hub em `src/lib/ws-hub.ts`, com
 | `approval.requested` | ApprovalService | tenant |
 | `approval.decided` | ApprovalService | usuário que criou a proposta |
 | `internal_chat.new_message` | InternalChatService | tenant |
+| `channel.connection_changed` | webhook Evolution (`CONNECTION_UPDATE`) | tenant |
+
+`channel.connection_changed` nasceu da auditoria de 2026-09-17: a sessão do WhatsApp caiu às
+16:17 e **ninguém ficou sabendo** — o estado só era gravado no banco, e o admin descobriria
+abrindo a tela de Canais. O canal mudo é pior que o canal caído: o laboratório segue achando
+que atende enquanto as mensagens não chegam.
 
 ---
 

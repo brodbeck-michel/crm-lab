@@ -246,6 +246,51 @@ docker compose -f docker-compose.prod.yml exec -T postgres \
 Escreva migrações aditivas sempre que possível — é o que torna o rollback (1)
 possível e evita a rota (2).
 
+### Backup automático (desde 2026-09-17)
+
+O dump manual acima continua sendo pré-requisito do deploy, mas **não é mais a
+única rede de proteção**. Até a auditoria de 2026-09-17 não havia backup nenhum
+em produção: o único dump existente era anterior a todas as mensagens e
+conversas que já estavam no ar — perder o volume era perder tudo.
+
+`scripts/backup-postgres.sh` roda diariamente às 03:10 (UTC) pelo systemd timer
+`crm-lab-backup.timer`, com 14 dias de retenção, em `/opt/crm-lab/backups`.
+
+Ele dumpa **os dois** bancos. `evolution` entra junto porque, embora perdê-lo
+não perca nenhum dado do CRM, ele guarda as credenciais da sessão Baileys:
+sem ele, voltar ao ar exige parear o número de novo lendo o QR no celular do
+laboratório — uma parada de atendimento, não um inconveniente.
+
+```bash
+# Instalação (uma vez, na VPS)
+sudo cp scripts/systemd/crm-lab-backup.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now crm-lab-backup.timer
+
+# Conferir
+systemctl list-timers crm-lab-backup.timer
+journalctl -u crm-lab-backup.service -n 30
+
+# Rodar agora, fora do horário
+/opt/crm-lab/scripts/backup-postgres.sh
+```
+
+**Verifique o dump, não confie nele.** Um arquivo com tamanho plausível pode
+estar truncado; o script escreve em `.partial` e só renomeia no fim justamente
+para que um dump interrompido nunca se pareça com um bom, mas a conferência
+real é listar o conteúdo:
+
+```bash
+docker compose -f docker-compose.prod.yml cp backups/crm_lab-<stamp>.dump postgres:/tmp/t.dump
+docker compose -f docker-compose.prod.yml exec -T postgres pg_restore -l /tmp/t.dump | grep 'TABLE DATA'
+```
+
+`pg_restore -l` **não** funciona lendo de stdin (o formato custom precisa de
+seek no arquivo) — copie para dentro do container, como acima.
+
+A retenção só roda quando **todos** os bancos foram dumpados com sucesso:
+apagar o backup antigo logo depois de falhar em gerar o novo é a melhor forma
+de ficar sem nenhum.
+
 ---
 
 ## 6. Pegadinhas conhecidas

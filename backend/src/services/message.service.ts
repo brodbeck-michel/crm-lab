@@ -62,6 +62,7 @@ import { logger } from '../lib/logger.js';
 import type { WsHub } from '../lib/ws-hub.js';
 import { ConversationRepository } from '../repositories/conversation.repository.js';
 import { MessageRepository } from '../repositories/message.repository.js';
+import { isUniqueViolation } from '../repositories/quick-reply.repository.js';
 import { createWhatsAppService, type WhatsAppService } from './whatsapp.service.js';
 
 /** `image/jpeg` -> `'image'`; `audio/*` -> `'audio'`; `application/pdf` -> `'pdf'`; resto -> `'doc'`. */
@@ -281,17 +282,34 @@ export class MessageService {
       if (known) return known;
     }
 
-    const message = await this.messages.insert(tenantId, {
-      conversationId,
-      senderType: 'patient',
-      senderId: null,
-      content: dto.content,
-      messageType: dto.messageType ?? 'text',
-      attachmentUrl: dto.attachmentUrl ?? null,
-      // Entrou no sistema: para o paciente, ja foi entregue.
-      status: 'delivered',
-      externalMessageId: dto.externalId ?? null,
-    });
+    const insert = (): Promise<Message> =>
+      this.messages.insert(tenantId, {
+        conversationId,
+        senderType: 'patient',
+        senderId: null,
+        content: dto.content,
+        messageType: dto.messageType ?? 'text',
+        attachmentUrl: dto.attachmentUrl ?? null,
+        // Entrou no sistema: para o paciente, ja foi entregue.
+        status: 'delivered',
+        externalMessageId: dto.externalId ?? null,
+      });
+
+    let message: Message;
+    try {
+      message = await insert();
+    } catch (err) {
+      // A leitura acima nao segura nada entre o SELECT e o INSERT, e o gateway
+      // reentrega o MESMO evento ate 10 vezes (migracao 019). Duas reentregas
+      // concorrentes passam as duas pela leitura; quem perder a corrida cai
+      // aqui. Isso e sucesso idempotente, nao falha: a mensagem do paciente
+      // esta gravada, e propagar o erro faria o webhook logar
+      // `erro_no_processamento` para algo que deu certo.
+      if (!isUniqueViolation(err) || !dto.externalId) throw err;
+      const known = await this.messages.findByExternalId(tenantId, dto.externalId);
+      if (!known) throw err;
+      return known;
+    }
     this.emitNewMessage(tenantId, conversationId, message.id);
     return message;
   }

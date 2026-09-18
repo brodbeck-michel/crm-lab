@@ -1,0 +1,15 @@
+[Unit]
+Description=Backup diario dos bancos do CRM Lab
+
+[Timer]
+# 03:10 no fuso do host (UTC na VPS) = madrugada no Brasil, fora do horario de
+# atendimento do laboratorio.
+OnCalendar=*-*-* 03:10:00
+# Host desligado/reiniciando na hora marcada nao pula o backup do dia.
+Persistent=true
+# O `apt-daily` da Hostinger tambem acorda de madrugada; a dispersao evita que
+# os dois briguem pelos mesmos 2 vCPU no mesmo segundo.
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target

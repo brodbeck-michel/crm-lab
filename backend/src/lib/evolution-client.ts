@@ -27,6 +27,23 @@ export function evolutionInstanceName(tenantId: string): string {
   return `tenant-${tenantId}`;
 }
 
+/**
+ * Chave do QR vigente no cache. O webhook `QRCODE_UPDATED` escreve, o
+ * `GET /settings/channels/whatsapp/qr` le — assim o polling do modal nao
+ * precisa chamar `/instance/connect`, que recria a conexao a cada chamada.
+ * Unico ponto de decisao, como `evolutionInstanceName`.
+ */
+export function evolutionQrCacheKey(tenantId: string): string {
+  return `evolution:qr:${tenantId}`;
+}
+
+/**
+ * TTL do QR em cache. O WhatsApp expira o QR em ~60s e o gateway emite um
+ * `QRCODE_UPDATED` novo antes disso; o TTL so garante que um QR morto nao
+ * fique sendo servido se o gateway parar de emitir.
+ */
+export const EVOLUTION_QR_TTL_SECONDS = 70;
+
 export interface EvolutionInstanceHandle {
   instanceName: string;
   apikey: string;
@@ -117,7 +134,13 @@ function webhookBody(webhook: EvolutionWebhookConfig): Record<string, unknown> {
     byEvents: false,
     base64: true,
     headers: { 'x-evolution-webhook-token': webhook.token },
-    events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE'],
+    // `QRCODE_UPDATED` entrou na auditoria de 2026-09-17. Sem ele, a unica
+    // forma de obter o QR era `GET /instance/connect`, que NAO e uma leitura:
+    // cada chamada instancia uma conexao Baileys nova. Com o modal dando
+    // polling de 2 em 2 segundos, isso rendeu 169 sockets em 3 minutos e
+    // terminou com o WhatsApp invalidando a sessao (401). Recebendo o QR por
+    // webhook, o polling le do cache e nao toca no gateway.
+    events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
   };
 }
 
@@ -138,6 +161,21 @@ function apikeyOf(hash: unknown): string | null {
  */
 export function isInstanceNotFound(error: unknown): boolean {
   return error instanceof Error && /does not exist/i.test(error.message);
+}
+
+/**
+ * 500 `Connection Closed` no `/instance/logout` — a sessao Baileys morreu (o
+ * celular deslogou: `disconnectionReasonCode: 401`) mas o Evolution continua
+ * persistindo `connectionStatus: "open"`. Nao ha socket para deslogar, e o
+ * `/instance/delete` recusa com 400 enquanto o registro disser `open` — o ciclo
+ * so quebra reiniciando o CONTAINER do gateway (`/instance/restart` nao basta:
+ * ele mexe no socket sem reavaliar o registro persistido).
+ *
+ * Distinto de "gateway fora do ar": aqui ele responde normalmente. Verificado
+ * em producao contra o v2.3.7 em 2026-09-17.
+ */
+export function isSessionClosed(error: unknown): boolean {
+  return error instanceof Error && /connection closed/i.test(error.message);
 }
 
 /** 403 `This name "x" is already in use.` — instancia ja existe, nao e falha. */

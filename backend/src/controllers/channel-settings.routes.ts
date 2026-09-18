@@ -45,6 +45,7 @@ function buildChannelSettingsModule(
   const settings = createChannelSettingsService({
     db: deps.db,
     audit: createAuditService(deps.db),
+    cache: deps.cache,
     ...(overrides.evolutionClient !== undefined
       ? { evolutionClient: overrides.evolutionClient }
       : {}),

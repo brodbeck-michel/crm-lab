@@ -18,7 +18,7 @@ import { noopWsHub, type WsHub } from './lib/ws-hub.js';
 import { type ApiModule, type ApiModuleDeps, type ApiModuleFactory } from './http/api-module.js';
 import { apiModuleFactories } from './http/modules.js';
 import { errorHandler, notFoundHandler } from './http/middleware/error-handler.js';
-import { rateLimit } from './http/middleware/rate-limit.js';
+import { isChannelWebhook, rateLimit } from './http/middleware/rate-limit.js';
 import { requestContext } from './http/middleware/request-context.js';
 
 export const API_PREFIX = '/api/v1';
@@ -133,7 +133,12 @@ export function createApp(deps: AppDeps): BuiltApp {
   // montar. Quem resolve a identidade e a propria chave — `rateLimitKey`
   // verifica o Bearer token e limita por usuario; rota publica (login,
   // refresh, webhook) fica por IP. Ver o cabecalho de `rate-limit.ts`.
-  app.use(rateLimit({ cache }));
+  // Os webhooks de canal NAO entram neste balde — eles tem o seu, montado no
+  // proprio modulo (`RATE_LIMIT_WEBHOOK_PER_MINUTE`). O gateway fala por IP
+  // fixo e sem Bearer, entao caia na mesma cota de 100/min de um usuario
+  // humano: a auditoria de 2026-09-17 mediu 3754 respostas 429 e 462 entregas
+  // abandonadas por causa disso.
+  app.use(rateLimit({ cache, skip: isChannelWebhook }));
 
   const api = Router();
   const modules = mountApiModules(api, deps.moduleFactories ?? apiModuleFactories, {

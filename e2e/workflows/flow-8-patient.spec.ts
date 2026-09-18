@@ -46,6 +46,8 @@ import {
 } from './helpers.js';
 
 const CARLA = E2E_PATIENTS.carla;
+/** Outro paciente do MESMO tenant — o numero que o 409 de D-106 protege. */
+const MARCOS = E2E_PATIENTS.marcos;
 const FICHA = `/patients/${CARLA.id}`;
 
 /** Mesmo `PAGE_SIZE` de `PatientTimeline.tsx` — a tela pede 20 por pagina. */
@@ -136,10 +138,11 @@ test.describe('Fluxo 8: Ficha do Paciente (cadastro)', () => {
     await expect(page.getByLabel('Data de nascimento')).toHaveValue(CARLA.birthDate ?? '');
     await expect(page.getByLabel('Anotações internas')).toHaveValue(CARLA.notes ?? '');
 
-    // Telefone e campo somente-leitura, com o motivo escrito na tela (D-061).
-    const telefone = page.getByLabel('Telefone (não editável)');
+    // Telefone e editavel desde D-106 (reverte D-061) — mas continua sendo a
+    // chave que reconhece o paciente no WhatsApp, e a tela diz isso.
+    const telefone = page.getByLabel('Telefone', { exact: true });
     await expect(telefone).toHaveValue(CARLA.phone);
-    await expect(telefone).toBeDisabled();
+    await expect(telefone).toBeEnabled();
   });
 
   test('editar o cadastro persiste — a nota volta depois do F5', async ({ page, request }) => {
@@ -171,19 +174,49 @@ test.describe('Fluxo 8: Ficha do Paciente (cadastro)', () => {
     expect(detalhe.notes).toBe(nota);
   });
 
-  test('o telefone nao e editavel nem pelo contrato (D-061)', async ({ request }) => {
+  /**
+   * D-106 (reverte D-061): corrigir um numero digitado errado nao exige mais
+   * recriar o cadastro. O que NAO mudou e a unicidade `(tenant_id, phone)`:
+   * assumir o numero de outro paciente e recusado com `409`, nunca funde os
+   * dois cadastros.
+   *
+   * O telefone de CARLA e lido por outros testes deste arquivo (o export LGPD
+   * confere `dump.patient.phone`), entao o `finally` devolve o valor do seed
+   * mesmo se uma expectativa falhar no meio.
+   */
+  test('o telefone e editavel pelo contrato, mas nao pode ser o de outro paciente (D-106)', async ({
+    request,
+  }) => {
     const token = await apiLogin(request, E2E_USERS.alfaAttendant);
+    const novo = '+5548999118877';
 
-    const tentativa = await request.patch(`${API_URL}/patients/${CARLA.id}`, {
-      headers: authHeaders(token),
-      data: { phone: '+5548999999999' },
-    });
-    expect(tentativa.status()).toBe(400);
-    expect(((await tentativa.json()) as ApiErrorEnvelope).error.code).toBe('VALIDATION_ERROR');
+    try {
+      const aceita = await request.patch(`${API_URL}/patients/${CARLA.id}`, {
+        headers: authHeaders(token),
+        data: { phone: novo },
+      });
+      expect(aceita.status(), await aceita.text()).toBe(200);
+      expect((await fetchPatient(request, token, CARLA.id)).phone).toBe(novo);
 
-    // Controle positivo: o telefone continua o do seed.
-    const depois = await fetchPatient(request, token, CARLA.id);
-    expect(depois.phone).toBe(CARLA.phone);
+      // Numero que ja pertence a outro paciente do tenant: recusado.
+      const conflito = await request.patch(`${API_URL}/patients/${CARLA.id}`, {
+        headers: authHeaders(token),
+        data: { phone: MARCOS.phone },
+      });
+      expect(conflito.status(), await conflito.text()).toBe(409);
+      const corpo = (await conflito.json()) as ApiErrorEnvelope;
+      expect(corpo.error.code).toBe('CONFLICT');
+      expect(corpo.error.details?.reason).toBe('phone_already_in_use');
+
+      // A recusa nao gravou pela metade: o numero segue o que o PATCH aceitou.
+      expect((await fetchPatient(request, token, CARLA.id)).phone).toBe(novo);
+    } finally {
+      const restaurado = await request.patch(`${API_URL}/patients/${CARLA.id}`, {
+        headers: authHeaders(token),
+        data: { phone: CARLA.phone },
+      });
+      expect(restaurado.status(), await restaurado.text()).toBe(200);
+    }
   });
 });
 
@@ -255,9 +288,8 @@ test.describe('Fluxo 8: Ficha do Paciente (orçamentos)', () => {
   test('o cartao de orçamento da ficha abre o Modal da Proposta', async ({ page, request }) => {
     const token = await apiLogin(request, E2E_USERS.alfaAttendant);
 
-    // Proposta propria do teste: id aleatorio, portanto enderecavel pelo
-    // prefixo de 8 digitos que o cartao imprime (os ids semeados dividem
-    // `a0000000` e nao servem de ancora — ver `proposalCard`).
+    // Proposta propria do teste: o cartao e endereçado pelo numero sequencial
+    // que a API devolve na criacao (ver `proposalCard`).
     const criada = await request.post(`${API_URL}/proposals`, {
       headers: authHeaders(token),
       data: {
@@ -272,7 +304,7 @@ test.describe('Fluxo 8: Ficha do Paciente (orçamentos)', () => {
     await gotoScreen(page, FICHA, CARLA.name);
     await expect(page.getByRole('heading', { name: 'Orçamentos do paciente' })).toBeVisible();
 
-    const cartao = proposalCard(page, proposta.id);
+    const cartao = proposalCard(page, proposta);
     await expect(cartao).toBeVisible();
     await cartao.click();
 
@@ -334,7 +366,7 @@ test.describe('Fluxo 8: Ficha do Paciente (LGPD)', () => {
     await gotoScreen(page, FICHA, CARLA.name);
 
     // Controle positivo: a ficha carregou inteira para o gestor.
-    await expect(page.getByRole('heading', { name: 'Cadastro' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Cadastro', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Histórico de interações' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Orçamentos do paciente' })).toBeVisible();
 
@@ -396,7 +428,7 @@ test.describe('Fluxo 8: a ficha tem porta de entrada (D-079)', () => {
 
     await expect(page).toHaveURL(new RegExp(`${escapeRe(FICHA)}$`));
     await expect(pageHeading(page, CARLA.name)).toBeVisible();
-    await expect(page.getByLabel('Telefone (não editável)')).toHaveValue(CARLA.phone);
+    await expect(page.getByLabel('Telefone', { exact: true })).toHaveValue(CARLA.phone);
   });
 
   test('busca do inbox: o resultado de paciente abre a ficha', async ({ page }) => {

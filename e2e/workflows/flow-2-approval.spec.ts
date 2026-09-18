@@ -185,7 +185,7 @@ test.describe('Fluxo 2: o que a tela mostra hoje', () => {
     await loginAs(page, E2E_USERS.alfaManager);
     await gotoScreen(page, '/proposals', PIPELINE_HEADING);
 
-    const cartao = proposalCard(page, criada.id);
+    const cartao = proposalCard(page, criada);
     await expect(cartao).toBeVisible();
     await expect(cartao).toContainText('Aguardando aprovação');
   });
@@ -196,7 +196,7 @@ test.describe('Fluxo 2: o que a tela mostra hoje', () => {
     await loginAs(page, E2E_USERS.alfaManager);
     await gotoScreen(page, '/proposals', PIPELINE_HEADING);
 
-    await proposalCard(page, criada.id).click();
+    await proposalCard(page, criada).click();
     const modal = page.getByTestId('modal-card');
     await expect(modal).toBeVisible();
     await expect(modal.getByText('Aguardando aprovação do gestor')).toBeVisible();

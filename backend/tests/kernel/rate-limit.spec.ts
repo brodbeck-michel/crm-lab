@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { applyTrustProxy } from '../../src/app.js';
 import { MemoryCache } from '../../src/lib/cache.js';
 import { errorHandler } from '../../src/http/middleware/error-handler.js';
-import { rateLimit, rateLimitKey } from '../../src/http/middleware/rate-limit.js';
+import { isChannelWebhook, rateLimit, rateLimitKey } from '../../src/http/middleware/rate-limit.js';
 import { signAccessToken } from '../../src/lib/tokens.js';
 import { requestContext } from '../../src/http/middleware/request-context.js';
 
@@ -233,5 +233,59 @@ describe('rate-limit — X-Forwarded-For forjado nao cria balde novo', () => {
     await agent.get('/ping').set('X-Forwarded-For', '203.0.113.1').expect(200);
     const segunda = await agent.get('/ping').set('X-Forwarded-For', '198.51.100.9').expect(429);
     expect(segunda.body.error.code).toBe('RATE_LIMIT_EXCEEDED');
+  });
+});
+
+/**
+ * Auditoria de 2026-09-17: o gateway Evolution fala com o backend por IP fixo e
+ * sem Bearer, entao caia no mesmo balde por IP de um usuario humano (100/min).
+ * Mas ele reentrega ate 10 vezes e dispara rajada a cada reconexao: foram 3754
+ * respostas 429 e 462 entregas ABANDONADAS numa janela de 12 minutos. Entrega
+ * abandonada e mensagem de paciente que nao chega.
+ */
+describe('rate-limit — webhook de canal tem balde proprio', () => {
+  it('isChannelWebhook reconhece as rotas de webhook e mais nenhuma', () => {
+    const asReq = (originalUrl: string) => ({ originalUrl }) as Request;
+
+    expect(isChannelWebhook(asReq('/api/v1/webhooks/evolution/lab-x'))).toBe(true);
+    expect(isChannelWebhook(asReq('/api/v1/webhooks/whatsapp'))).toBe(true);
+    // Query string nao pode escapar do casamento.
+    expect(isChannelWebhook(asReq('/api/v1/webhooks/evolution/lab-x?retry=3'))).toBe(true);
+
+    expect(isChannelWebhook(asReq('/api/v1/conversations'))).toBe(false);
+    expect(isChannelWebhook(asReq('/api/v1/auth/login'))).toBe(false);
+    // Nao pode bastar CONTER a palavra para escapar do limitador global.
+    expect(isChannelWebhook(asReq('/api/v1/settings/webhooks-que-nao-sao'))).toBe(false);
+  });
+
+  it('o limitador global PULA o webhook — quem limita e o balde dedicado', async () => {
+    const cache = new MemoryCache();
+    const app = express();
+    app.use(requestContext());
+    app.use(
+      rateLimit({
+        cache,
+        limit: 1,
+        skip: isChannelWebhook,
+        keyResolver: () => 'chave-fixa-do-teste',
+      }),
+    );
+    app.post('/api/v1/webhooks/evolution/lab-x', (_req, res) => {
+      res.json({ received: true });
+    });
+    app.get('/api/v1/conversations', (_req, res) => {
+      res.json({ ok: true });
+    });
+    app.use(errorHandler());
+    const agent = supertest(app);
+
+    // Limite global de 1: a rota normal e barrada na segunda.
+    await agent.get('/api/v1/conversations').expect(200);
+    await agent.get('/api/v1/conversations').expect(429);
+
+    // O webhook passa muito depois disso — nao divide o balde.
+    for (let i = 0; i < 20; i += 1) {
+      await agent.post('/api/v1/webhooks/evolution/lab-x').expect(200);
+    }
   });
 });

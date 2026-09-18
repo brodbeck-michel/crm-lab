@@ -32,8 +32,15 @@ export interface WsClientOptions {
   url?: string;
   /** Padrão: `new WebSocket(url)`. */
   socketFactory?: (url: string) => WebSocketLike;
-  /** Toast de `approval.decided` (o único evento com feedback visível). */
-  toast?: (message: string) => unknown;
+  /**
+   * Toast dos eventos com feedback visível (`approval.decided`,
+   * `channel.connection_changed`).
+   *
+   * `tone` existe porque nem todo evento e boa noticia: a queda do canal
+   * (`channel.connection_changed`) precisa de `attention`, nao do `positive`
+   * que servia a todos quando o unico toast era "proposta aprovada".
+   */
+  toast?: (message: string, tone?: WsToastTone) => unknown;
   /** Backoff: 1s, 2s, 4s… até o teto. */
   baseDelayMs?: number;
   maxDelayMs?: number;
@@ -65,6 +72,8 @@ export function parseWsEvent(raw: unknown): WsEvent | null {
   }
 }
 
+export type WsToastTone = 'positive' | 'attention';
+
 /**
  * Mapa evento → invalidação. É a tabela de FRONTEND_BACKEND.md, literal.
  * Sempre `invalidateQueries`, nunca `setQueryData`.
@@ -72,7 +81,7 @@ export function parseWsEvent(raw: unknown): WsEvent | null {
 export function applyWsEvent(
   queryClient: QueryClient,
   event: WsEvent,
-  toast?: (message: string) => unknown,
+  toast?: (message: string, tone?: WsToastTone) => unknown,
 ): void {
   const name: WsEventName = event.event;
 
@@ -126,6 +135,19 @@ export function applyWsEvent(
       const data = event.data as { channelId: string };
       void queryClient.invalidateQueries({ queryKey: queryKeys.internalChannels() });
       void queryClient.invalidateQueries({ queryKey: queryKeys.internalMessages(data.channelId) });
+      return;
+    }
+
+    // Auditoria de 2026-09-17: a sessao do WhatsApp caiu e quem estava
+    // atendendo continuou achando que o canal respondia. A queda avisa na
+    // hora; a reconexao nao precisa de toast (o card ja muda sozinho).
+    case 'channel.connection_changed': {
+      const data = event.data as { channel: string; connected: boolean };
+      if (!data.connected) {
+        toast?.('WhatsApp desconectado — mensagens novas não estão chegando.', 'attention');
+      }
+      void queryClient.invalidateQueries({ queryKey: queryKeys.whatsappStatus() });
+      void queryClient.invalidateQueries({ queryKey: queryScopes.settings });
       return;
     }
   }

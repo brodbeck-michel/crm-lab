@@ -46,16 +46,26 @@ function fakeEvolutionClient(): EvolutionClient & {
   createdInstances: string[];
   loggedOutInstances: string[];
   lastSendApikey: string | undefined;
+  /**
+   * Quantas vezes `/instance/connect` foi chamado. E o contador que importa na
+   * auditoria de 2026-09-17: essa rota NAO e leitura, cada chamada instancia
+   * uma conexao Baileys nova, e o polling do modal chamava de 2 em 2 segundos.
+   */
+  qrCalls: number;
 } {
   const instances = new Map<string, { apikey: string }>();
   const statuses = new Map<string, { status: EvolutionConnectionStatus; phoneNumber: string | null }>();
   const createdInstances: string[] = [];
   const loggedOutInstances: string[] = [];
   let lastSendApikey: string | undefined;
+  let qrCalls = 0;
 
   return {
     createdInstances,
     loggedOutInstances,
+    get qrCalls() {
+      return qrCalls;
+    },
     get lastSendApikey() {
       return lastSendApikey;
     },
@@ -70,6 +80,7 @@ function fakeEvolutionClient(): EvolutionClient & {
       return { instanceName, apikey };
     },
     async getQr(instanceName: string) {
+      qrCalls += 1;
       const current = statuses.get(instanceName) ?? { status: 'pairing' as const, phoneNumber: null };
       return {
         qrcode: current.status === 'pairing' ? 'data:image/png;base64,QR' : null,
@@ -545,5 +556,61 @@ describe('instancia ausente no gateway (404) vs gateway fora do ar', () => {
 
     const qr = await app.agent.get(`${URL}/qr`).set(app.auth(admin)).expect(503);
     expect(qr.body.error.code).toBe('CHANNEL_QR_UNAVAILABLE');
+  });
+});
+
+/**
+ * Auditoria de 2026-09-17 — a tela de parear derrubava o numero que acabara de
+ * parear. `GET /instance/connect` parece leitura e nao e: cada chamada
+ * instancia uma conexao Baileys nova. Com o modal dando polling de 2 em 2
+ * segundos, foram 169 sockets em 3 minutos, e o WhatsApp respondeu invalidando
+ * a sessao (401).
+ *
+ * A garantia abaixo e o coracao da correcao: por mais que o modal repita o
+ * polling, `/instance/connect` e chamado UMA vez — no `connect`. O QR do
+ * polling vem do cache, alimentado pelo webhook `QRCODE_UPDATED`.
+ */
+describe('polling do QR nao recria a conexao (auditoria 2026-09-17)', () => {
+  it('N chamadas a GET /qr nao aumentam as chamadas a /instance/connect', async () => {
+    await app.agent
+      .post(`${URL}/connect`)
+      .set(app.auth(admin))
+      .send({ acceptTerms: true })
+      .expect(200);
+
+    const aposConnect = evolution.qrCalls;
+    expect(aposConnect).toBe(1);
+
+    for (let i = 0; i < 10; i += 1) {
+      await app.agent.get(`${URL}/qr`).set(app.auth(admin)).expect(200);
+    }
+
+    // O numero que importa: antes desta correcao seria 11.
+    expect(evolution.qrCalls).toBe(aposConnect);
+  });
+
+  it('o QR semeado pelo connect e servido ao polling sem tocar no gateway', async () => {
+    await app.agent
+      .post(`${URL}/connect`)
+      .set(app.auth(admin))
+      .send({ acceptTerms: true })
+      .expect(200);
+
+    const response = await app.agent.get(`${URL}/qr`).set(app.auth(admin)).expect(200);
+    expect(response.body.qrcode).toBe('data:image/png;base64,QR');
+    expect(response.body.status).toBe('pairing');
+  });
+
+  it('instancia ja conectada responde connected sem QR', async () => {
+    await app.agent
+      .post(`${URL}/connect`)
+      .set(app.auth(admin))
+      .send({ acceptTerms: true })
+      .expect(200);
+    evolution.setStatus(`tenant-${tenantId}`, 'connected', '5548999990000');
+
+    const response = await app.agent.get(`${URL}/qr`).set(app.auth(admin)).expect(200);
+    expect(response.body.status).toBe('connected');
+    expect(response.body.qrcode).toBeNull();
   });
 });

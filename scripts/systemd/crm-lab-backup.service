@@ -1,0 +1,16 @@
+[Unit]
+Description=Backup dos bancos do CRM Lab (crm_lab + evolution)
+Documentation=file:///opt/crm-lab/docs/guides/DEPLOYMENT.md
+# Sem Postgres de pe nao ha o que dumpar; o timer tenta de novo no proximo ciclo.
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/opt/crm-lab
+ExecStart=/opt/crm-lab/scripts/backup-postgres.sh
+# O dump compete com o atendimento pelo mesmo Postgres de 2 vCPU: nice/ionice
+# mantem o backup como cidadao de segunda classe.
+Nice=10
+IOSchedulingClass=idle

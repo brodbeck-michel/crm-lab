@@ -174,11 +174,15 @@ function WhatsAppQrConnection({ channel }: WhatsAppQrConnectionProps) {
                     toast('WhatsApp desconectado.', { tone: 'neutral' });
                   },
                   onError: (error: unknown) => {
-                    setDisconnectError(
-                      isApiError(error)
-                        ? error.message
-                        : 'Não foi possível desconectar. Tente novamente.',
-                    );
+                    // A falha precisa de toast, nao so do texto no modal: o
+                    // aviso em `text-caption` passou batido em producao e o
+                    // admin concluiu que "nada acontece" depois de 6 tentativas
+                    // que o backend recusou com 503 (gateway fora do ar).
+                    const message = isApiError(error)
+                      ? error.message
+                      : 'Não foi possível desconectar. Tente novamente.';
+                    setDisconnectError(message);
+                    toast(message, { tone: 'attention' });
                   },
                 });
               }}

@@ -883,6 +883,155 @@ lightbox). Causa raiz, dois problemas empilhados:
   testes (o teste de thumbnail passou a mockar `fetchAuthenticatedBlob`/`createObjectURL`; +1
   teste novo cobrindo o estado de erro).
 
+## 2026-09-17 — correção: "Desconectar WhatsApp" não surtia efeito em produção ✅
+
+Reportado pelo usuário em produção (vitrocrm.cloud): confirmar a desconexão não fazia nada e o
+número seguia "Conectado". Não era a tela — o backend recusava com 503 (6 tentativas nos logs).
+
+Causa raiz, em camadas:
+
+1. A sessão Baileys do número morreu sozinha às 16:17 (`disconnectionReasonCode: 401`), mas o
+   Evolution v2.3.7 continuou persistindo `connectionStatus: "open"`. Como `GET /status` lê o
+   estado AO VIVO do gateway, a tela mostrava "Conectado" para uma sessão morta.
+2. `DELETE /instance/logout` respondia **500 `Error: Connection Closed`** — não há socket para
+   deslogar. O service traduzia isso em `CHANNEL_QR_UNAVAILABLE` e, corretamente, NÃO marcava o
+   canal como desconectado (não mentir sobre o estado real).
+3. `DELETE /instance/delete` também não era saída: recusa com 400 enquanto o registro disser
+   `open`. Ciclo fechado — e `/instance/restart` **não** quebra o ciclo (mexe no socket sem
+   reavaliar o registro persistido).
+
+Destravado em produção reiniciando o **container** do Evolution (`docker compose restart
+evolution`): no boot ele reavalia as sessões, bate no 401 e marca `state: "close"`. A instância
+foi preservada — apagá-la custaria as 406 mensagens/76 contatos/99 chats do gateway sem
+necessidade.
+
+Dois problemas de diagnóstico corrigidos no código (o usuário ficou cego para a falha):
+
+- A mensagem de `CHANNEL_QR_UNAVAILABLE` é "gateway nao configurado" — enganosa neste caso, já
+  que o gateway estava no ar e configurado. Novo código **`CHANNEL_SESSION_STALE`** (503) com
+  mensagem acionável, detectado por `isSessionClosed` em `evolution-client.ts`.
+  Documentado em `API_ERRORS.md` e em `shared/types/api.types.ts` (`ApiErrorCode`).
+- A falha só aparecia em `text-caption` dentro do modal, sem toast — daí "nada acontece".
+  `Settings/Channels.tsx` agora também dispara toast (`tone: 'attention'`) no `onError`.
+
+- `npm run typecheck` verde nos 4 workspaces. Backend: 75 arquivos, 1084 testes (+1 novo, com o
+  corpo 500 real do v2.3.7 copiado de produção). Frontend: 74 arquivos, 1040 testes. Lint limpo.
+
+## 2026-09-17 — auditoria de confiabilidade do canal WhatsApp ✅
+
+Disparada pela investigação da desconexão (acima). Comparação mensagem a mensagem entre o
+banco do Evolution e o do CRM revelou que **30 de 174 mensagens de pacientes do dia (17%)
+nunca chegaram ao CRM** — e ninguém percebeu.
+
+**Causa raiz das 30 não foi determinada** e o registro fica honesto sobre isso: os logs do
+backend do período se foram no deploy das 17:53 e o Evolution retinha só 2h. Foram
+descartadas por evidência: rate limit (os 3754 × 429 estão todos entre 13:15–13:27, e 28 das
+30 perdas caem fora), parsing (as perdidas têm o campo `conversation`), sincronização de
+histórico (gravadas 1s após o envio, ao vivo), race na criação de conversa (perda igual na 1ª
+mensagem e nas demais), truncamento de ID e indisponibilidade do backend.
+
+O que **foi** fechado é o problema estrutural, que é pior que a causa: o webhook responde
+`200 {received:true}` em todo caminho de descarte, então o gateway marca "entregue", nunca
+reentrega, e a perda não deixa rastro. Seis correções, um commit cada:
+
+1. **Descarte contável** — `DiscardReason` (lista fechada) + `evolution.inbound_discarded`.
+   Nem todo motivo é defeito (`from_me`, `grupo` são corretos), mas todos precisam ser
+   contáveis.
+2. **Tipos que sumiam** — `videoMessage`/`stickerMessage` como mídia;
+   `location`/`contact`/`contactsArray` como texto descritivo. Já havia 3 `albumMessage` de
+   pacientes perdidos. Sem tipo novo em `MessageType`: vídeo entra como anexo `doc`.
+3. **Polling do QR parou de matar a sessão** — `GET /instance/connect` não é leitura: cria
+   uma conexão Baileys por chamada. Com polling de 2s, **169 sockets em 3 minutos**, e o
+   WhatsApp respondeu com 401. Agora o QR vem por `QRCODE_UPDATED` e cache; `connect` é
+   chamado uma vez. Teste prova que 10 pollings mantêm o gateway em 1 chamada.
+4. **Queda avisa** — evento WS `channel.connection_changed` + `logger.error` + healthcheck do
+   Evolution + rotação de log 50m×5 (a padrão reteve 2h e foi o que impediu achar a causa).
+5. **Backup diário** — não existia nenhum; o único dump era anterior a todos os dados de
+   produção. Instalado e **verificado** na VPS (`pg_restore -l`: 31 tabelas).
+6. **Dedupe no banco** (migração 019, índice único parcial com `tenant_id`) + balde de rate
+   limit próprio para o webhook (`RATE_LIMIT_WEBHOOK_PER_MINUTE`, default 600).
+
+Verificação: `npm run typecheck` verde nos 4 workspaces; backend 75 arquivos / **1096
+testes**; frontend 74 arquivos / **1042 testes**; lint limpo.
+
+**Não recuperamos as 30 mensagens perdidas** — decisão do usuário.
+
+### Pendências que a auditoria deixou registradas
+
+- **Fila de envio é in-memory** (`lib/queue.ts`, D-011): todo deploy descarta o que estava em
+  voo. Bull/Redis já está previsto atrás da mesma interface.
+- **Mídia acima do teto** continua sem criar mensagem (spec Onda 8 §4.2): agora deixa rastro
+  no log, mas o atendente ainda não vê que o paciente tentou mandar algo.
+- **Vídeo aparece como anexo genérico** (`doc`), não como player. Evolução, não pré-requisito.
+- **100% do tráfego real chega como `@lid`**, e o telefone depende de `remoteJidAlt` vir no
+  payload (hoje vem em 182/182). Se o WhatsApp parar de mandar, a entrada fica cega —
+  `lid_sem_remote_jid_alt` no log é o sinal a vigiar.
+
+## 2026-09-18 — suite E2E volta a ficar verde (20 falhas → 0) ✅
+
+O job `E2E (Playwright)` estava vermelho **na `main`** havia pelo menos 5 execucoes, e por isso
+tambem no PR #10. Nao era uma causa: eram tres, mais uma corrida que so aparecia na suite
+inteira. 20 falhas / 103 passes → **123 passes, 0 falhas**.
+
+### 1. O cartao do pipeline mudou de identidade (10 falhas)
+
+D-103 trocou o rotulo do `ProposalCard` do prefixo do UUID (`#13d4df37`) para o numero
+sequencial por tenant (`formatProposalNumber` → `#000042`). O helper `proposalCard()` continuou
+procurando os 8 primeiros digitos do id — que nao existem mais em lugar nenhum da tela.
+
+- `proposalCard(page, proposta)` passa a receber a PROPOSTA, nao o id: o numero so existe na
+  resposta da API e nao ha como deriva-lo do id. Efeito colateral bom: cartao semeado voltou a
+  ser enderecavel (antes todos dividiam o prefixo `a0000000`).
+- `criarNoEstagio` (fluxo 3) devolvia a resposta do `PATCH /:id/status`, que e **projecao
+  parcial por contrato** (`{ id, status, reasonLost, updatedAt }`) e nao traz `proposalNumber`.
+  O `as ProposalDetail` ali sempre foi mentira; agora devolve a proposta criada com o status
+  final costurado por cima.
+- Onda 7 dividiu `/proposals` em Kanban e Lista, e **so a Lista pagina**. Os tres testes de
+  paginacao (D7) navegavam para o Kanban, onde nao existe `navigation "Paginação de propostas"`.
+  Passam a abrir `?view=lista`.
+
+### 2. A ficha do paciente mudou e o fluxo 8 nao soube (6 falhas)
+
+D-106 reverteu D-061: `phone` e editavel. O spec ainda afirmava o contrario — e o teste que
+mandava `PATCH { phone }` esperando `400` recebia `200`, **gravava** o telefone novo em Carla e
+derrubava em cascata dois testes de LGPD que conferem `patient.phone`.
+
+- O teste virou o que D-106 de fato promete: `PATCH` aceito (200) + numero de outro paciente do
+  tenant recusado com `409 phone_already_in_use`, com `finally` devolvendo o telefone do seed
+  mesmo se uma expectativa falhar no meio.
+- `getByLabel('Telefone (não editável)')` → `getByLabel('Telefone', { exact: true })`.
+- A secao "Status do cadastro" (CRMLAB-11) fez `getByRole('heading', { name: 'Cadastro' })` casar
+  dois nos — `exact: true`.
+
+### 3. Fluxo 14 nunca teve como passar no CI — e escondia um bug de verdade (2 falhas)
+
+O job de E2E **nunca definiu `EVOLUTION_API_URL`/`API_KEY`/`WEBHOOK_TOKEN`**. Sem os tres, as
+rotas de QR respondem `503 CHANNEL_QR_UNAVAILABLE` por contrato e o fluxo 14 cai inteiro. Estao
+no job agora, apontando para o gateway falso.
+
+Com o ambiente certo, sobrou uma falha real, introduzida pela propria auditoria de 17/09:
+
+- **Bug de producao (`WhatsAppConnectModal`)**: o modal ligava o polling do QR no CLIQUE, em
+  paralelo com o `POST /connect`. Como `GET /qr` deixou de chamar `/instance/connect` e passou a
+  ler cache, o primeiro polling chegava antes de existir instancia ou cache, respondia
+  `disconnected`, e `qrRefetchInterval` **encerrava o polling na primeira tentativa** — modal
+  preso em "Gerando QR code..." para sempre. O polling agora liga no `onSuccess` do connect, que
+  e o que torna verdadeira a premissa de `getWhatsAppQr` ("o cache nasce populado"). Sem isso a
+  conexao por QR estaria quebrada em producao, nao so no teste.
+- **Gateway falso**: so virava `open` na SEGUNDA chamada de `/instance/connect` — ou seja, exigia
+  exatamente o comportamento que a auditoria removeu. Com o backend correto chamando `connect`
+  uma vez, ficava preso em `connecting` para sempre. O avanco pendurou no `connectionState`, que
+  e como o pareamento de verdade e observado.
+
+### 4. Uma corrida que so a suite inteira revelava (1 falha)
+
+`flow-3` "perdido exige motivo" lia a API logo depois de clicar em Confirmar, sem esperar o
+PATCH. Passava isolado e falhava na suite cheia. Agora espera a resposta.
+
+**Verificacao:** `npm run typecheck` verde nos 4 workspaces; backend 75 arquivos / 1096 testes;
+frontend 74 arquivos / 1042 testes; lint limpo; **E2E 123/123** contra Postgres 16 e as duas
+telas de pe, com o mesmo roteiro do CI.
+
 ## Bloqueios Atuais
 
 Nenhum.

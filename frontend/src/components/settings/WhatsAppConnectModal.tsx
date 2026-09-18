@@ -88,13 +88,33 @@ export function WhatsAppConnectModal({ open, onClose, acceptedTermsAt }: WhatsAp
   const qrUnavailable = isApiError(qr.error) && qr.error.code === 'CHANNEL_QR_UNAVAILABLE';
   const expired = started && reachedPairing && qrData?.status === 'disconnected';
 
+  /**
+   * O polling só liga DEPOIS que `POST /connect` respondeu — nunca junto com o
+   * clique.
+   *
+   * `GET /qr` deixou de chamar `/instance/connect` (auditoria de 2026-09-17:
+   * aquela rota não é leitura, cada chamada abre uma conexão Baileys nova e o
+   * polling de 2s derrubava a sessão). Hoje ela lê `connectionState` + o QR que
+   * `POST /connect` semeia no cache, e responde `disconnected` quando não acha
+   * QR — o sinal legítimo de "pareamento morto", que faz o polling parar.
+   *
+   * Ligar o polling no clique corria com o `POST /connect`: o primeiro `GET
+   * /qr` chegava antes de existir instância ou cache, respondia `disconnected`,
+   * e `qrRefetchInterval` encerrava o polling na primeira tentativa — modal
+   * preso em "Gerando QR code..." para sempre. Esperar o `onSuccess` é o que
+   * torna verdadeira a premissa de `getWhatsAppQr`: quando ele roda, o cache já
+   * nasceu populado.
+   */
   const handleConnect = () => {
     setConnectError(null);
     setReachedPairing(false);
-    setStarted(true);
+    setStarted(false);
     connect.mutate(
       { acceptTerms: true },
-      { onError: (error) => setConnectError(connectErrorMessage(error)) },
+      {
+        onSuccess: () => setStarted(true),
+        onError: (error) => setConnectError(connectErrorMessage(error)),
+      },
     );
   };
 
@@ -173,8 +193,9 @@ export function WhatsAppConnectModal({ open, onClose, acceptedTermsAt }: WhatsAp
           </div>
         )}
 
-        {started &&
+        {(connect.isPending || started) &&
           !qrUnavailable &&
+          !connectError &&
           !expired &&
           (!qrData || (qrData.status !== 'pairing' && qrData.status !== 'connected')) && (
             <p role="status" className="m-0 font-body text-caption text-neutral-600">

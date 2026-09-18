@@ -44,9 +44,18 @@ export interface FakeEvolutionGateway {
 export interface FakeEvolutionOptions {
   port?: number;
   /**
-   * Em quantas chamadas de `/instance/connect` o gateway ainda devolve QR
-   * antes de dizer "conectado". `1` = a primeira mostra o QR, a segunda ja
-   * pareou.
+   * Quantas leituras de `/instance/connectionState` ainda respondem
+   * `connecting` depois do `connect`, antes do gateway dizer "pareou". `1` = a
+   * primeira leitura ainda mostra o QR, a segunda ja veio conectada.
+   *
+   * O avanco pendura no connectionState, nao no `/instance/connect`: quem
+   * pareia de verdade e o CELULAR lendo o QR, e o backend so observa isso por
+   * leitura. A versao anterior so virava `open` na SEGUNDA chamada de
+   * `/instance/connect` — o que exigia que o polling do QR batesse naquela
+   * rota, exatamente o comportamento que a auditoria de 2026-09-17 removeu
+   * (cada chamada la abre uma conexao Baileys nova e derrubava a sessao). Com
+   * o backend correto chamando `connect` UMA vez, este gateway ficava preso em
+   * `connecting` para sempre.
    */
   qrResponsesBeforeConnected?: number;
 }
@@ -58,6 +67,8 @@ export async function startFakeEvolutionGateway(
   const qrRounds = options.qrResponsesBeforeConnected ?? 1;
 
   let connectCalls = 0;
+  /** Leituras de `connectionState` desde o `connect` — o que faz o par avancar. */
+  let stateReads = 0;
 
   const server: Server = createServer((req, res) => {
     const url = req.url ?? '';
@@ -76,16 +87,19 @@ export async function startFakeEvolutionGateway(
 
     if (req.method === 'GET' && url.startsWith('/instance/connect/')) {
       connectCalls += 1;
-      if (connectCalls <= qrRounds) {
-        respond({ base64: FAKE_QR_DATA_URI, code: 'fake-pairing-code' });
-      } else {
-        respond({ instance: { instanceName: 'fake', state: 'open' } });
-      }
+      stateReads = 0;
+      respond({ base64: FAKE_QR_DATA_URI, code: 'fake-pairing-code' });
       return;
     }
 
     if (req.method === 'GET' && url.startsWith('/instance/connectionState/')) {
-      const state = connectCalls > qrRounds ? 'open' : 'connecting';
+      // Instancia que nunca recebeu `connect` nao existe para o gateway.
+      if (connectCalls === 0) {
+        respond({ instance: { instanceName: 'fake', state: 'close' } });
+        return;
+      }
+      stateReads += 1;
+      const state = stateReads > qrRounds ? 'open' : 'connecting';
       respond({
         instance: {
           instanceName: 'fake',
@@ -98,6 +112,7 @@ export async function startFakeEvolutionGateway(
 
     if (req.method === 'DELETE' && url.startsWith('/instance/logout/')) {
       connectCalls = 0;
+      stateReads = 0;
       respond({});
       return;
     }

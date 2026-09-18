@@ -42,10 +42,29 @@ export interface RateLimitOptions {
   windowMs?: number;
   /** Sobrescreve a chave (ex.: login usa email+ip, mais restrito). */
   keyResolver?: (req: Request) => string;
+  /**
+   * Requisicoes que este limitador ignora — quem cuida delas e outro
+   * limitador, montado mais perto da rota. Usado pelo limitador GLOBAL para
+   * nao contar os webhooks de canal no mesmo balde dos usuarios.
+   */
+  skip?: (req: Request) => boolean;
   now?: () => number;
 }
 
 export const RATE_LIMIT_PREFIX = 'ratelimit:';
+
+/**
+ * Webhook de canal externo (Meta ou Evolution).
+ *
+ * Casado pelo caminho de proposito: o limitador global roda ANTES dos routers,
+ * entao `req.route` ainda nao existe e nao ha como perguntar ao Express que
+ * rota vai atender. `originalUrl` inclui o prefixo `/api/v1` e pode trazer
+ * query string, dai o `startsWith` sobre o caminho puro.
+ */
+export function isChannelWebhook(req: Request): boolean {
+  const [path] = req.originalUrl.split('?');
+  return path?.startsWith('/api/v1/webhooks/') ?? false;
+}
 
 /**
  * Identidade do chamador para efeito de limite.
@@ -75,6 +94,10 @@ export function rateLimit(options: RateLimitOptions): RequestHandler {
   const now = options.now ?? (() => Date.now());
 
   return (req: Request, res: Response, next: NextFunction): void => {
+    if (options.skip?.(req) === true) {
+      next();
+      return;
+    }
     const cacheKey = `${RATE_LIMIT_PREFIX}${resolveKey(req)}`;
     const at = now();
 

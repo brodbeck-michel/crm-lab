@@ -20,7 +20,15 @@
  * `locator.or(outroLocator)`, do proprio Playwright.
  */
 import { expect, type APIRequestContext, type Locator, type Page } from '@playwright/test';
-import type { Channel, ListChannelsResponse, LoginResponse, Theme, UserRole } from '@crm-lab/shared';
+import type {
+  Channel,
+  ListChannelsResponse,
+  LoginResponse,
+  Proposal,
+  Theme,
+  UserRole,
+} from '@crm-lab/shared';
+import { formatProposalNumber } from '@crm-lab/shared';
 import {
   E2E_APPROVAL_POST,
   E2E_CHANNEL_READS,
@@ -298,15 +306,20 @@ export async function createProposal(page: Page): Promise<string> {
 // ---------------------------------------------------------------------------
 
 /**
- * Cartao da proposta no pipeline. O `ProposalCard` so imprime os 8 primeiros
- * digitos do id, entao e por eles que se localiza.
+ * Cartao da proposta no pipeline.
  *
- * ATENCAO: use com propostas criadas PELO TESTE (UUID aleatorio, prefixo
- * unico). Os ids semeados sao sequenciais e compartilham o prefixo
- * `a0000000` — um cartao semeado nao e enderecavel por aqui.
+ * O `ProposalCard` imprime `formatProposalNumber(proposalNumber)` — o numero
+ * sequencial por tenant de D-103 (`#000042`), nao mais o prefixo do UUID. Por
+ * isso o parametro e a PROPOSTA, nao o id: o numero so existe na resposta da
+ * API, e nao ha como deriva-lo do id.
+ *
+ * O numero e unico dentro do tenant, entao qualquer proposta e enderecavel por
+ * aqui — inclusive as semeadas, que antes dividiam o prefixo `a0000000`.
  */
-export function proposalCard(page: Page, proposalId: string): Locator {
-  return page.getByRole('button').filter({ hasText: `#${proposalId.slice(0, 8)}` });
+export function proposalCard(page: Page, proposal: Pick<Proposal, 'proposalNumber'>): Locator {
+  return page
+    .getByRole('button')
+    .filter({ hasText: formatProposalNumber(proposal.proposalNumber) });
 }
 
 /** Escapa um texto para uso dentro de `RegExp`. */

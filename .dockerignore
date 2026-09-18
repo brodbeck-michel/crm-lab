@@ -16,6 +16,11 @@ test-results
 **/*.log
 **/*.tsbuildinfo
 
+# Dumps do Postgres da VPS: dado real de paciente, e nada disso tem o que
+# fazer dentro de uma imagem (nem no contexto de build, que sao ~600 KB por
+# dump enviados ao daemon a cada build).
+backups/
+
 # Segredos e artefatos locais — NUNCA dentro de uma imagem.
 **/.env
 **/.env.*

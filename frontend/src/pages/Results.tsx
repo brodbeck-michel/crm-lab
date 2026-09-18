@@ -13,6 +13,7 @@ import { ResultsKpiCard } from '@/components/lis/ResultsKpiCard';
 import { PeriodFilter, previousPeriod } from '@/components/lis/PeriodFilter';
 import { AttendantRevenueChart } from '@/components/lis/AttendantRevenueChart';
 import { InsuranceDonutChart } from '@/components/lis/InsuranceDonutChart';
+import { MonthlySeriesChart } from '@/components/lis/MonthlySeriesChart';
 import { ImportModal } from '@/components/lis/ImportModal';
 import { PurgeDialog } from '@/components/lis/PurgeDialog';
 import { buildCommissionDetail, totalsOf } from '@/lib/lis/commission-detail';
@@ -121,11 +122,19 @@ export default function Results() {
     return ((summary.issued.totalValue - previousTotal) / previousTotal) * 100;
   }, [summary, previousSummary]);
 
+  /**
+   * Fatias do donut em RECEBIDO (`paidValue`), não em orçado: o gráfico responde
+   * de onde vem o dinheiro que entrou. O fecho "Outros" é a diferença entre o
+   * KPI "Recebido" e a soma dos 6 convênios mostrados — a mesma base, senão a
+   * tela somaria dois números de janelas diferentes.
+   */
   const insuranceSlices = useMemo(() => {
     if (!summary) return [];
-    const shown = summary.byInsurance.map((row) => ({ name: row.insuranceName, value: row.totalValue }));
+    const shown = summary.byInsurance
+      .filter((row) => row.paidValue > 0)
+      .map((row) => ({ name: row.insuranceName, value: row.paidValue }));
     const shownTotal = shown.reduce((sum, s) => sum + s.value, 0);
-    const remainder = Math.max(0, summary.issued.totalValue - shownTotal);
+    const remainder = Math.max(0, summary.paid.totalValue - shownTotal);
     return remainder > 0 ? [...shown, { name: 'Outros', value: remainder }] : shown;
   }, [summary]);
 
@@ -288,6 +297,15 @@ export default function Results() {
               caption={`${summary.byAttendantDetail.length} com orçamento no período`}
             />
           </div>
+
+          <MonthlySeriesChart
+            data={executiveReport?.monthlySeries ?? []}
+            note={
+              insuranceId
+                ? 'A série de 12 meses considera todos os convênios — o filtro acima vale para os cartões, os gráficos abaixo e a tabela.'
+                : undefined
+            }
+          />
 
           <div className="grid grid-cols-1 gap-lg lg:grid-cols-12">
             <div className="lg:col-span-7">

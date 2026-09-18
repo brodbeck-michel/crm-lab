@@ -149,8 +149,17 @@ export interface LisAttendantAgg {
 
 export interface LisInsuranceAgg {
   insuranceName: string;
+  /** Orçamentos EMITIDOS no período com este convênio principal. */
   count: number;
+  /** Valor ORÇADO (janela de emissão, `SUM(total_value)`). */
   totalValue: number;
+  /**
+   * Valor RECEBIDO (janela de pagamento, dedupe por requisição — mesma regra do
+   * KPI "Recebido", BUSINESS_RULES.md §11.2). É por este valor que a lista vem
+   * ordenada e cortada no top 6: a tela lê o dinheiro que ENTROU, não o que foi
+   * orçado (o orçado de um convênio que nunca paga não diz nada sobre receita).
+   */
+  paidValue: number;
 }
 
 export interface ListLisBudgetsQuery extends PaginationQuery {
@@ -244,7 +253,14 @@ export interface LisBudgetsFilters {
 export interface ExecutiveReportMonthlyPoint {
   /** `YYYY-MM`. */
   month: string;
+  /** Orçado no mês — janela de EMISSÃO (`SUM(total_value)`). */
   issuedValue: number;
+  /**
+   * Convertido em requisição no mês — janela de EMISSÃO, dedupe por requisição,
+   * `SUM(requisition_value)`. Mesma definição do KPI "Em Requisição" (D-125).
+   */
+  requisitionValue: number;
+  /** Recebido no mês — janela de PAGAMENTO, dedupe por requisição. */
   paidValue: number;
 }
 

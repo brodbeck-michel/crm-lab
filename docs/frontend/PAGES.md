@@ -772,18 +772,33 @@ final: um "Carregando..." de uma linha fazia a página saltar quando os dados ch
 
 #### Gráficos
 
-Grade de 12 colunas: **7** para o ranking de atendentes (é o que cresce com o tamanho do time) e
-**5** para o donut (que não muda de tamanho com o dado). Os dois cartões têm a mesma moldura dos
-KPIs — `rounded-lg`, borda `neutral-200`, `shadow-sm`.
+Três cartões, na mesma moldura dos KPIs (`rounded-lg`, borda `neutral-200`, `shadow-sm`): a
+evolução ocupa a largura inteira logo abaixo dos KPIs, e embaixo uma grade de 12 colunas com **7**
+para o ranking de atendentes (é o que cresce com o tamanho do time) e **5** para o donut (que não
+muda de tamanho com o dado).
+
+- **Evolução do faturamento:** área sobreposta com as TRÊS séries de `monthlySeries`
+  (`GET /reports/executive` §5c) — total orçado, em requisição e recebido — nos últimos 12 meses
+  terminando no mês do período. Sobreposta, **nunca empilhada**: os três números já se contêm, e
+  a soma deles não significa nada; o que se lê é a distância vertical entre as curvas, que é a
+  perda de uma etapa do funil para a seguinte. Cores: `accent-2-800` / `accent-2` / `accent` —
+  três degraus separáveis do próprio tema, sem inventar matiz fora dele. Eixo X em `mes/AA`.
+  Como `/reports/executive` não aceita filtro de convênio (D-116), com o filtro ligado o cartão
+  diz em nota que a série considera todos os convênios — a tela nunca deixa um gráfico responder
+  a uma pergunta diferente da que o filtro faz sem avisar.
 
 - **Faturamento por atendente:** barras horizontais, `byAttendantDetail` (D-122 — TODOS os
   atendentes, não só o top 6 de `byAttendant`) ordenado por `paidValue` desc. Eixo em `MoneyDisplay`
   (variante `thousands` para caber). Altura = 34px por atendente (mín. 200px): o gráfico cresce
   com o time em vez de espremer doze pessoas em 160px.
-- **Distribuição por convênio:** donut (`byInsurance`, top 6) + legenda com nome, valor e "%
-  do total exibido" (`totalValue / soma dos 6`); quando `issued.totalValue` for maior que a soma
-  dos 6 mostrados, uma linha extra "Outros" fecha a diferença (`issued.totalValue - soma`) — nunca
-  inventa um valor negativo (`Math.max(0, …)`).
+- **Distribuição por convênio:** donut (`byInsurance`, top 6 por `paidValue`) + legenda com nome,
+  valor e "% do total exibido". A base é o **RECEBIDO** (`paidValue`), não o orçado: o gráfico
+  responde de onde vem o dinheiro que ENTROU, e o orçado de um convênio que nunca paga não diz
+  nada sobre receita. Convênio com `paidValue: 0` não vira fatia. Quando `paid.totalValue` for
+  maior que a soma das fatias, uma linha extra "Outros" fecha a diferença
+  (`paid.totalValue - soma`) — nunca inventa um valor negativo (`Math.max(0, …)`). O fecho usa o
+  KPI "Recebido" porque é a MESMA janela das fatias; fechar contra o orçado somaria duas janelas
+  diferentes.
 
 #### Detalhe por atendente (tabela de comissão)
 

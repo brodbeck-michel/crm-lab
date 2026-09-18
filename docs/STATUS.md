@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-18 (redesenho da leitura de `/results` — ver seção no fim)
+**Última atualização:** 2026-09-18 (`/results`: evolução do faturamento + donut no recebido — ver seção no fim)
 
 ---
 
@@ -1125,3 +1125,46 @@ com ação de importar, carimbo do arquivo). Docs atualizados no mesmo commit �
 **Pendente:** validação visual em `https://homolog.vitrocrm.cloud`. Nada foi
 visto em navegador nesta máquina — jsdom não desenha, e subir a stack local
 esbarra na inspeção de TLS.
+
+---
+
+## 2026-09-18 — `/results`: evolução do faturamento + donut lendo o RECEBIDO ✅
+
+Duas mudanças pedidas na validação do redesenho, as duas com backend.
+
+**1. "Evolução do faturamento" entrou na tela.** O `MonthlySeriesChart` existia
+no código desde a Onda 10 e **não era usado por ninguém** — a série de 12 meses
+só aparecia no PDF. Foi redesenhado como área sobreposta com TRÊS séries (orçado,
+em requisição, recebido) e colocado em largura inteira logo abaixo dos KPIs.
+`requisitionValue` é novo em `ExecutiveReportMonthlyPoint`: vem da janela de
+EMISSÃO com dedupe por requisição, a mesma definição do KPI "Em Requisição"
+(D-125). Sobreposta e nunca empilhada — os três números já se contêm.
+Como `/reports/executive` não aceita filtro de convênio (D-116), com o filtro
+ligado o cartão diz isso em nota, em vez de responder outra pergunta calado.
+
+**2. O donut passou a ler o RECEBIDO.** Ele desenhava `byInsurance.totalValue`,
+que é `SUM(total_value)` da janela de emissão — ou seja, mostrava **orçado** com
+o título de distribuição de faturamento. `LisInsuranceAgg` ganhou `paidValue`
+(janela de pagamento, dedupe por requisição) e o corte do top 6 passou a ser por
+ele: ordenar por orçado deixava de fora o convênio que paga bem e orça pouco. A
+query virou `FULL JOIN` entre as duas janelas, então convênio com pagamento no
+período e emissão fora dele aparece com `count: 0` — antes sumia. O fecho
+"Outros" agora fecha contra o KPI "Recebido", que é a mesma janela das fatias.
+
+**Conferência dos cartões** (pedida junto): Total Orçado, Em Requisição,
+Atendentes, o delta e a barra de conversão batem com as definições de
+BUSINESS_RULES.md §11 e D-125. **Uma ressalva fica registrada:** a legenda do
+cartão "Recebido" diz "X% do orçado" dividindo a janela de PAGAMENTO pela de
+EMISSÃO — pagamento de orçamento emitido antes do período entra no numerador sem
+estar no denominador, e o número pode passar de 100% (é exatamente por isso que
+`conversionQty` é capado). Mantido como estava, por ser o comportamento
+documentado desde a Onda 10; trocar a base é decisão de produto.
+
+**Também atualizado:** o PDF executivo passou a levar as três colunas na série
+mensal e "Orçado (R$) / Recebido (R$)" na tabela de convênios.
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces; backend 1099 testes
+verdes (3 novos: `paidValue` por convênio, ordenação pelo recebido, convênio pago
+sem emissão no período, série mensal separando as três janelas); frontend 1047
+verdes (1 novo: evolução na tela + legenda do donut em cima do recebido). Docs no
+mesmo commit: `API_CONTRACTS.md` §5c/§10.2, `PAGES.md` §14, `shared/types`.

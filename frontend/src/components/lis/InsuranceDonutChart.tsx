@@ -28,7 +28,7 @@ function ChartHeading() {
     <header className="mb-lg">
       <h3 className="font-heading text-section">Distribuição por convênio</h3>
       <p className="mt-xs font-body text-caption text-neutral-600">
-        Participação de cada convênio no valor orçado
+        Participação de cada convênio no valor recebido
       </p>
     </header>
   );
@@ -38,6 +38,9 @@ function ChartHeading() {
  * Distribuição por convênio — donut + legenda (PAGES.md §14). `slices` já vem
  * pronto do chamador (top 6 + "Outros" quando aplicável) — o componente só
  * desenha e calcula o percentual de cada fatia sobre a SOMA do que recebeu.
+ *
+ * O valor de cada fatia é o RECEBIDO do convênio (`LisInsuranceAgg.paidValue`),
+ * não o orçado: o gráfico responde de onde vem o dinheiro que entrou.
  */
 export function InsuranceDonutChart({ slices }: InsuranceDonutChartProps) {
   const total = slices.reduce((sum, s) => sum + s.value, 0);

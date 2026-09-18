@@ -2801,13 +2801,13 @@ Sem datas: últimos 30 dias terminando hoje. Formato inválido, data inexistente
     "conversionQty": 78.57
   },
   "monthlySeries": [
-    { "month": "2026-08", "issuedValue": 158000, "paidValue": 121000 }
+    { "month": "2026-08", "issuedValue": 158000, "requisitionValue": 132000, "paidValue": 121000 }
   ],
   "byAttendant": [
     { "attendantId": "uuid", "attendantName": "Maria Souza", "issuedCount": 40, "paidCount": 32, "paidValue": 30000 }
   ],
   "byInsurance": [
-    { "insuranceName": "Unimed Tubarão", "count": 60, "totalValue": 45000 }
+    { "insuranceName": "Unimed Tubarão", "count": 60, "totalValue": 45000, "paidValue": 38000 }
   ],
   "brandName": "Laboratório Vida",
   "logoUrl": "https://.../logo.png"
@@ -2827,12 +2827,20 @@ Sem datas: últimos 30 dias terminando hoje. Formato inválido, data inexistente
   (`percent()` de `analytics.service.ts`, reaproveitada).
 - `averageTicket` usa `average()` de `analytics.service.ts`: `0` quando `count` é `0`.
 - `monthlySeries` cobre os últimos 12 meses terminando no mês de `endDate`, **não** só o
-  período pedido — é o gráfico de série do PDF, que sempre mostra 12 pontos. Mês sem dado
-  aparece com os dois valores em `0`, nunca ausente.
-- `byAttendant`/`byInsurance` são recortados aos **top 6** por `paidValue`/`totalValue` desc
+  período pedido — é o gráfico "Evolução do faturamento" de `/results` (§14) e a série do PDF,
+  que sempre mostram 12 pontos. Mês sem dado aparece com os três valores em `0`, nunca ausente.
+  As três séries são as MESMAS definições dos KPIs, cada uma na sua janela: `issuedValue` e
+  `requisitionValue` pela EMISSÃO do mês, `paidValue` pelo PAGAMENTO. Um orçamento emitido em
+  julho e pago em agosto soma em julho nas duas primeiras e em agosto na terceira.
+- `byAttendant`/`byInsurance` são recortados aos **top 6** por `paidValue` desc
   (o mesmo corte que o FluxoLab usava para "top-5 atendentes"/"top-6 convênios" — ver
   BUSINESS_RULES.md §11 para o `MIN_ORC_RANKING` que zera esses rankings quando a amostra é
   pequena demais para ser qualitativa).
+- `byInsurance` traz as DUAS janelas por convênio: `count`/`totalValue` da emissão e `paidValue`
+  do pagamento (dedupe por requisição, mesma regra de `paid`). O corte do top 6 é por `paidValue`
+  — o donut de `/results` desenha participação no dinheiro que ENTROU, e ordenar por orçado
+  deixava de fora o convênio que paga bem mas orça pouco. Um convênio pode aparecer com
+  `count: 0` e `paidValue > 0`: requisição emitida antes do período e paga dentro dele.
 - `brandName`/`logoUrl` vêm de `themes` (o mesmo tema de `GET /themes/current`) — **nunca**
   "Santé" hardcoded (D-116): o PDF de qualquer tenant leva a marca do próprio tenant.
 
@@ -3750,13 +3758,14 @@ recortável por atendente/convênio para o filtro da tela.
     { "attendantId": "uuid2", "attendantName": "João Lima", "issuedCount": 2, "paidCount": 1, "paidValue": 500 }
   ],
   "byInsurance": [
-    { "insuranceName": "Unimed Tubarão", "count": 60, "totalValue": 45000 }
+    { "insuranceName": "Unimed Tubarão", "count": 60, "totalValue": 45000, "paidValue": 38000 }
   ]
 }
 ```
 Mesmas definições de `issued`/`paid`/`conversionQty` de `GET /reports/executive` (§5c) —
 `conversionQty` capado em 100%, `averageTicket` via `average()`. `byAttendant`/`byInsurance`
-recortados ao top 6, mesma regra e mesmo `MIN_ORC_RANKING` de BUSINESS_RULES.md §11.
+recortados ao top 6 por `paidValue`, mesma regra e mesmo `MIN_ORC_RANKING` de
+BUSINESS_RULES.md §11 — inclusive o `paidValue` por convênio descrito em §5c.
 
 - `paidCount` (D-122): requisições pagas do atendente no período — base do `conversionQty` **por
   linha** (`paidCount / issuedCount`, capado em 100%, mesma fórmula do agregado). Novo em ambos

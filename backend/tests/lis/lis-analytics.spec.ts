@@ -145,7 +145,81 @@ describe('GET /lis-budgets/summary — MIN_ORC_RANKING (§11.5)', () => {
     expect(body.byAttendant).toEqual([
       { attendantId, attendantName: 'Maria', issuedCount: 20, paidCount: 0, paidValue: 0 },
     ]);
-    expect(body.byInsurance).toEqual([{ insuranceName: 'Unimed', count: 20, totalValue: 2000 }]);
+    expect(body.byInsurance).toEqual([
+      { insuranceName: 'Unimed', count: 20, totalValue: 2000, paidValue: 0 },
+    ]);
+  });
+});
+
+describe('GET /lis-budgets/summary — byInsurance lê o RECEBIDO', () => {
+  it('traz paidValue por convenio e ordena por ele, nao pelo orcado', async () => {
+    // Unimed orça muito e não paga nada; Particular orça pouco e paga.
+    for (let i = 0; i < 18; i += 1) {
+      await insertBudget(tenantA.id, {
+        number: `U${i}`,
+        issuedOn: '2026-08-10',
+        insurance1: 'Unimed',
+        value1: 100,
+      });
+    }
+    for (let i = 0; i < 4; i += 1) {
+      await insertBudget(tenantA.id, {
+        number: `P${i}`,
+        issuedOn: '2026-08-10',
+        insurance1: 'Particular',
+        value1: 100,
+        requisitionNumber: `R${i}`,
+        requisitionValue: 500,
+        paidValue: 500,
+        paidOn: '2026-08-20',
+      });
+    }
+
+    const res = await app.agent
+      .get(`${BASE}/summary?startDate=2026-08-01&endDate=2026-08-31`)
+      .set(app.auth(managerA));
+    const body = res.body as LisBudgetsSummary;
+
+    // Orçado: Unimed 1800 > Particular 400. Recebido: só Particular, 2000.
+    // A ordem segue o RECEBIDO — é ele que a tela desenha.
+    expect(body.byInsurance).toEqual([
+      { insuranceName: 'Particular', count: 4, totalValue: 400, paidValue: 2000 },
+      { insuranceName: 'Unimed', count: 18, totalValue: 1800, paidValue: 0 },
+    ]);
+    // A soma do recebido por convenio bate com o KPI "Recebido".
+    expect(body.paid.totalValue).toBe(2000);
+  });
+
+  it('convenio pago no periodo sem emissao nele aparece com count 0 (FULL JOIN)', async () => {
+    for (let i = 0; i < 20; i += 1) {
+      await insertBudget(tenantA.id, {
+        number: `U${i}`,
+        issuedOn: '2026-08-10',
+        insurance1: 'Unimed',
+        value1: 100,
+      });
+    }
+    // Emitido em julho, pago em agosto: entra no recebido de agosto, nao no orcado.
+    await insertBudget(tenantA.id, {
+      number: 'ANTIGO',
+      issuedOn: '2026-07-02',
+      insurance1: 'Bradesco',
+      value1: 900,
+      requisitionNumber: 'R-ANTIGO',
+      requisitionValue: 900,
+      paidValue: 900,
+      paidOn: '2026-08-05',
+    });
+
+    const res = await app.agent
+      .get(`${BASE}/summary?startDate=2026-08-01&endDate=2026-08-31`)
+      .set(app.auth(managerA));
+    const body = res.body as LisBudgetsSummary;
+
+    expect(body.byInsurance).toEqual([
+      { insuranceName: 'Bradesco', count: 0, totalValue: 0, paidValue: 900 },
+      { insuranceName: 'Unimed', count: 20, totalValue: 2000, paidValue: 0 },
+    ]);
   });
 });
 

@@ -23,6 +23,14 @@ export const CHART_ACCENT_COLOR = 'var(--color-accent)';
 export const CHART_POSITIVE_COLOR = 'var(--color-accent-2)';
 
 /**
+ * Degrau mais escuro do positivo — série de MAIOR volume quando três séries
+ * dividem o mesmo gráfico (orçado > requisição > recebido). Três séries do
+ * mesmo gráfico precisam de três cores separáveis, e inventar uma quarta matiz
+ * fora do tema quebraria a identidade do tenant.
+ */
+export const CHART_POSITIVE_DEEP_COLOR = 'var(--color-accent-2-800)';
+
+/**
  * Degrau `caption` da escala tipográfica (12px). Numérico porque o Recharts
  * mede o texto em JS; a fonte de verdade continua sendo o mesmo 12px de
  * `fontSize.caption` no tailwind.config.js.

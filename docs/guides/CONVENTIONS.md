@@ -177,6 +177,32 @@ VITE_WS_URL=ws://localhost:3000/ws
 
 ---
 
+## Política de Atualização de Dependências
+
+Ownership de `package.json` dos workspaces, `package-lock.json` e `.github/`: um agente por
+vez (ver `docs/AGENTS.md`/plano da onda), nunca dois em paralelo — os dois mexem no mesmo
+lockfile.
+
+| Tipo de update | Como chega | Merge |
+|---|---|---|
+| **Patch** (`x.y.Z`) | Dependabot, PR agrupado semanal (grupo `patches` em `.github/dependabot.yml`) | Auto-merge se o CI (`quality` + `security` + `build`) estiver verde. Sem revisão humana — patch não muda API pública por definição do semver |
+| **Minor** (`x.Y.0`) | Dependabot, PR semanal individual | Revisão humana antes do merge — checar changelog por mudança de comportamento não coberta pelo semver |
+| **Major** (`X.0.0`) | Dependabot abre o PR, mas **não mergear direto** | Vira card no Jira (projeto CRMLAB) antes de qualquer código: breaking change exige avaliar uso real no repo (ex.: CRMLAB-37 documentou por que `jspdf` foi para a 4.x em vez do `^3.0.2` pedido — advisory novo tornou a 3.x insuficiente) |
+
+Regras que valem para as três colunas:
+
+- **`npm audit --omit=dev --audit-level=high` verde é obrigatório** para qualquer merge de
+  dependência (job `security` no CI) — moderate/low não bloqueiam, mas ficam registrados no
+  log do job.
+- Dependência instalada por URL/tarball fora do registry do npm (ex.: `xlsx` do frontend, via
+  CDN da SheetJS) fica de fora do Dependabot (`ignore` em `dependabot.yml`) — checagem de nova
+  versão é manual, e a troca de dependência crítica sem advisory automatizado é uma
+  vulnerabilidade de processo em si; ver `docs/DECISIONS.md` D-135/D-136.
+- Remover uma dependência (não só trocar de versão) sempre exige nota em `docs/DECISIONS.md`,
+  como já dizia `docs/AGENTS.md`.
+- Dependência nova (não é update) segue a regra geral de `docs/AGENTS.md`: documentar antes de
+  usar, se ela expõe algo em contrato de API/schema/design.
+
 ## Logs
 
 ```typescript

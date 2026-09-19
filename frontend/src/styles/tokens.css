@@ -68,6 +68,21 @@
     /* Backdrop do modal — escuro translúcido, independente do tema. */
     --color-backdrop: rgba(0, 0, 0, 0.45);
 
+    /* ---------------------------------------------------------------
+     * Conversa do atendimento (CRMLAB-25). A tela de mensagens é a
+     * única superfície BRANCA do app: sobre o bege do tema, bolha
+     * recebida e bolha enviada ficavam quase iguais. O branco é
+     * literal de propósito — não acompanha o tema do tenant, é o papel
+     * onde as duas bolhas precisam se destacar.
+     * As bolhas continuam tingidas pelo tema, mas misturadas com
+     * branco (e não com --color-bg), senão desapareceriam no papel.
+     * --------------------------------------------------------------- */
+    --color-chat-bg: #ffffff;
+    --color-chat-received: color-mix(in oklab, var(--color-surface) 62%, white);
+    --color-chat-received-border: color-mix(in oklab, var(--color-surface) 92%, var(--color-text));
+    --color-chat-sent: color-mix(in oklab, var(--color-accent) 18%, white);
+    --color-chat-sent-border: color-mix(in oklab, var(--color-accent) 42%, white);
+
     /* --------------------------------------------------------------- */
     /* Tipografia                                                       */
     /* --------------------------------------------------------------- */

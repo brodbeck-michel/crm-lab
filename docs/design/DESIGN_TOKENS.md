@@ -96,6 +96,9 @@ Cada cor base gera automaticamente 9 tons (100-900):
 | `--color-accent-2` | Estado positivo/âmbito interno | Não lidas, ganho, chat interno |
 | `--color-neutral-300` | Bordas e divisores | Linhas de tabela |
 | `--color-neutral-600` | Texto secundário | Legendas, placeholder |
+| `--color-chat-bg` | Papel da conversa — BRANCO literal | Área de mensagens do atendimento |
+| `--color-chat-received` / `-border` | Bolha do paciente sobre o papel | `MessageBubble type="received"` |
+| `--color-chat-sent` / `-border` | Bolha da atendente sobre o papel | `MessageBubble type="sent"` |
 
 ### Uso de Rampas
 
@@ -488,10 +491,22 @@ textarea {
 
 ### Bolhas de Mensagem
 
+A área de mensagens é a ÚNICA superfície branca do app (CRMLAB-25). Sobre o bege
+do tema, recebida (`--color-surface`) e enviada (`--color-accent-200`, que mistura
+com `--color-bg`) ficavam quase iguais ao fundo e entre si. O papel branco não
+acompanha o tema do tenant — é fixo; as bolhas continuam tingidas pelas cores
+base, mas misturadas com BRANCO, senão sumiriam no papel.
+
 ```css
-/* Recebida */
+/* Papel da conversa */
+.message-scroll {
+  background: var(--color-chat-bg); /* #fff literal — não acompanha o tema */
+}
+
+/* Recebida (paciente) */
 .message-bubble.received {
-  background: var(--color-surface);
+  background: var(--color-chat-received);
+  border: 1px solid var(--color-chat-received-border);
   border-radius: var(--radius-md) var(--radius-md) var(--radius-md) var(--radius-sm);
   padding: 11px 15px;
   font-size: 13.5px;
@@ -499,9 +514,10 @@ textarea {
   max-width: 78%;
 }
 
-/* Enviada */
+/* Enviada (atendente) */
 .message-bubble.sent {
-  background: var(--color-accent-200);
+  background: var(--color-chat-sent);
+  border: 1px solid var(--color-chat-sent-border);
   border-radius: var(--radius-md) var(--radius-md) var(--radius-sm) var(--radius-md);
   padding: 11px 15px;
   font-size: 13.5px;

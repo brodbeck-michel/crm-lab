@@ -127,15 +127,41 @@ export function resolveMediaUrl(url: string): string {
   return new URL(url, origem).toString();
 }
 
+export interface AuthenticatedMedia {
+  blob: Blob;
+  /** Nome original do arquivo, do `Content-Disposition`. `null` se não veio. */
+  fileName: string | null;
+}
+
+/**
+ * `Content-Disposition: inline; filename="pedido%20medico.jpg"` → o nome.
+ *
+ * O backend percentual-codifica o nome ao montar o header
+ * (`media.routes.ts`), por isso o `decodeURIComponent` na volta.
+ */
+function fileNameFrom(header: string | null): string | null {
+  const encoded = /filename="([^"]*)"/.exec(header ?? '')?.[1];
+  if (!encoded) return null;
+  try {
+    return decodeURIComponent(encoded) || null;
+  } catch {
+    return encoded;
+  }
+}
+
 /**
  * Busca um recurso de mídia AUTENTICADO (`GET /media/:id` exige
- * `requireAuth()` — docs/api §media) e devolve os bytes como `Blob`.
+ * `requireAuth()` — docs/api §media) e devolve os bytes como `Blob`, junto do
+ * nome original do arquivo.
  *
  * `<img src>`/`<a href>` crus nunca mandam `Authorization`: só servem para URL
  * pública. Quem precisa exibir mídia protegida busca aqui e usa
  * `URL.createObjectURL(blob)` como `src` (ver `useAuthenticatedMedia`).
+ *
+ * O nome vem junto porque `object URL` não tem nome nenhum: sem ele, baixar a
+ * imagem (CRMLAB-26) salvaria o uuid do blob, sem extensão.
  */
-export async function fetchAuthenticatedBlob(url: string): Promise<Blob> {
+export async function fetchAuthenticatedBlob(url: string): Promise<AuthenticatedMedia> {
   const token = bridge.getAccessToken();
   const authHeader = (t: string | null): Record<string, string> =>
     t ? { Authorization: `Bearer ${t}` } : {};
@@ -148,7 +174,10 @@ export async function fetchAuthenticatedBlob(url: string): Promise<Blob> {
   if (!response.ok) {
     throw new ApiError('INTERNAL_ERROR', 'Não foi possível carregar a mídia', response.status);
   }
-  return response.blob();
+  return {
+    blob: await response.blob(),
+    fileName: fileNameFrom(response.headers.get('Content-Disposition')),
+  };
 }
 
 export function buildQueryString(query?: QueryParams): string {

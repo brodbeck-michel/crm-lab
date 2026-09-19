@@ -119,7 +119,10 @@ describe('MessageBubble', () => {
     const user = userEvent.setup();
     URL.createObjectURL = vi.fn(() => 'blob:mock-image');
     URL.revokeObjectURL = vi.fn();
-    fetchAuthenticatedBlobMock.mockResolvedValue(new Blob(['fake'], { type: 'image/jpeg' }));
+    fetchAuthenticatedBlobMock.mockResolvedValue({
+      blob: new Blob(['fake'], { type: 'image/jpeg' }),
+      fileName: 'pedido medico.jpg',
+    });
 
     render(
       <MessageBubble
@@ -136,6 +139,13 @@ describe('MessageBubble', () => {
 
     await user.click(thumbnail);
     expect(screen.getByTestId('image-lightbox-backdrop')).toBeInTheDocument();
+
+    // O ↓ salva com o nome que veio no Content-Disposition (CRMLAB-26) — sem
+    // isso o arquivo cairia em Downloads como o uuid do blob, sem extensão.
+    expect(screen.getByRole('link', { name: 'Baixar imagem' })).toHaveAttribute(
+      'download',
+      'pedido medico.jpg',
+    );
 
     await user.click(screen.getByRole('button', { name: 'Fechar' }));
     expect(screen.queryByTestId('image-lightbox-backdrop')).not.toBeInTheDocument();
@@ -162,7 +172,10 @@ describe('MessageBubble', () => {
   it('áudio toca na própria bolha, sem link genérico de anexo (CRMLAB-2)', async () => {
     URL.createObjectURL = vi.fn(() => 'blob:mock-audio');
     URL.revokeObjectURL = vi.fn();
-    fetchAuthenticatedBlobMock.mockResolvedValue(new Blob(['fake'], { type: 'audio/ogg' }));
+    fetchAuthenticatedBlobMock.mockResolvedValue({
+      blob: new Blob(['fake'], { type: 'audio/ogg' }),
+      fileName: 'recado.ogg',
+    });
 
     render(
       <MessageBubble

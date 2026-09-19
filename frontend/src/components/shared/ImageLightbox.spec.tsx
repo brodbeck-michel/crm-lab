@@ -55,6 +55,26 @@ describe('ImageLightbox', () => {
     expect(onClose).toHaveBeenCalledTimes(3);
   });
 
+  it('↓ baixa a imagem com o nome original e não fecha o lightbox (CRMLAB-26)', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(<ImageLightbox src="blob:foto" fileName="pedido médico.jpg" onClose={onClose} />);
+
+    const link = screen.getByRole('link', { name: 'Baixar imagem' });
+    expect(link).toHaveAttribute('href', 'blob:foto');
+    expect(link).toHaveAttribute('download', 'pedido médico.jpg');
+
+    await user.click(link);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('sem nome de arquivo o download ainda acontece — atributo nunca some', () => {
+    render(<ImageLightbox src="blob:foto" onClose={vi.fn()} />);
+
+    // `download` ausente transformaria o ↓ em navegação para o blob.
+    expect(screen.getByRole('link', { name: 'Baixar imagem' })).toHaveAttribute('download');
+  });
+
   it('botões + e − aproximam e afastam; reset volta ao tamanho original (CRMLAB-21)', async () => {
     const user = userEvent.setup();
     render(<ImageLightbox src="blob:foto" onClose={vi.fn()} />);

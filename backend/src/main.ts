@@ -73,7 +73,7 @@ async function bootstrap(): Promise<void> {
   process.on('SIGINT', () => shutdown('SIGINT'));
 
   // =========================================================================
-  // Rede de seguranca do processo (CRMLAB-30, D-136)
+  // Rede de seguranca do processo (CRMLAB-30, D-138)
   // =========================================================================
   // Sem estes dois handlers, qualquer excecao ou promise rejeitada fora de um
   // handler do Express derrubava o processo SEM UMA LINHA DE LOG — e derrubar

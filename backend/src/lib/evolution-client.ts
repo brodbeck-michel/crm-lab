@@ -24,7 +24,7 @@ import { env } from '../config/env.js';
 import { withGatewayTimeout } from './fetch-timeout.js';
 
 /**
- * Orcamento de UMA chamada ao gateway (CRMLAB-30, D-135).
+ * Orcamento de UMA chamada ao gateway (CRMLAB-30, D-137).
  *
  * De onde saem os numeros: o envio roda dentro da fila com 3 tentativas
  * (SERVICES.md §11) e backoff de 200 ms + 400 ms, e o teto duro e o
@@ -256,7 +256,7 @@ export function createEvolutionClient(
    *
    * O `fetch` E a leitura do corpo rodam dentro de `withGatewayTimeout`: o
    * `fetch` resolve nos headers, entao um corpo que nunca termina travaria
-   * aqui do mesmo jeito se o signal cobrisse so a primeira metade (D-135).
+   * aqui do mesmo jeito se o signal cobrisse so a primeira metade (D-137).
    * Estourado o prazo, sobe `GatewayTimeoutError`, que a fila retenta.
    */
   async function request(
@@ -428,7 +428,7 @@ export function createEvolutionClient(
           }),
         },
         apikey,
-        // Unica chamada com corpo grande — orcamento proprio (D-135).
+        // Unica chamada com corpo grande — orcamento proprio (D-137).
         mediaTimeoutMs,
       );
       const record = isRecord(body) ? body : {};

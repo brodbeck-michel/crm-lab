@@ -131,7 +131,7 @@ export class PgDriver implements DbClient {
    *   e um servidor em `America/Sao_Paulo` devolveria os tempos de espera
    *   10.800 s errados (mesmo defeito de D-021).
    * - `statement_timeout` e `idle_in_transaction_session_timeout` (CRMLAB-30,
-   *   D-135): ver as constantes acima.
+   *   D-137): ver as constantes acima.
    *
    * O `pool.on('error')` e o ponto do card: o `pg` emite `error` NO POOL quando
    * uma conexao OCIOSA cai (restart do Postgres, corte de rede, o

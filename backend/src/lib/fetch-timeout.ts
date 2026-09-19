@@ -1,5 +1,5 @@
 /**
- * Timeout de chamada a gateway externo (CRMLAB-30, D-135).
+ * Timeout de chamada a gateway externo (CRMLAB-30, D-137).
  *
  * ============================================================================
  * Por que isto existe

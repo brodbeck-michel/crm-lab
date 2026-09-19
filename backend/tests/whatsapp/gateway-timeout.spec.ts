@@ -1,5 +1,5 @@
 /**
- * Timeout do `fetch` para gateway externo (CRMLAB-30, D-135).
+ * Timeout do `fetch` para gateway externo (CRMLAB-30, D-137).
  *
  * O cenario e o do incidente de 17/09: o gateway esta VIVO (aceita a conexao,
  * as vezes ate manda os headers) mas nunca termina a resposta. O fake abaixo

@@ -1,5 +1,5 @@
 /**
- * Resiliencia do pool do `pg` (CRMLAB-30, D-135).
+ * Resiliencia do pool do `pg` (CRMLAB-30, D-137).
  *
  * O que estes testes provam, e por que sem banco de verdade: o defeito do card
  * NAO esta no SQL, esta no `EventEmitter`. Um `Pool` que emite `error` sem

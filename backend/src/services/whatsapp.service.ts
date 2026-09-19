@@ -346,7 +346,7 @@ export class MockWhatsAppDriver implements WhatsAppDriver {
 }
 
 /**
- * Timeout de UMA chamada a API oficial da Meta (CRMLAB-30, D-135).
+ * Timeout de UMA chamada a API oficial da Meta (CRMLAB-30, D-137).
  *
  * Mesmo orcamento do `EVOLUTION_TIMEOUT_MS`, pela mesma conta (3 tentativas da
  * fila + backoff tem de caber nos 60 s do `proxy_read_timeout` do nginx), e
@@ -366,7 +366,7 @@ export class HttpWhatsAppDriver implements WhatsAppDriver {
     content: string,
   ): Promise<SendResult> {
     // `fetch` + leitura do corpo dentro do MESMO signal: o `fetch` resolve nos
-    // headers, entao um corpo que nunca termina travaria igual (D-135).
+    // headers, entao um corpo que nunca termina travaria igual (D-137).
     const { ok, status, payload } = await withGatewayTimeout(
       { gateway: 'meta', path: '/messages', timeoutMs: META_TIMEOUT_MS },
       async (signal) => {

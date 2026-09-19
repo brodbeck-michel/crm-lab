@@ -1,5 +1,5 @@
 /**
- * Valvula de escape do `statement_timeout` global (CRMLAB-30, D-135).
+ * Valvula de escape do `statement_timeout` global (CRMLAB-30, D-137).
  *
  * `PgDriver` fixa `statement_timeout=30s` no pacote de startup, para que uma
  * query lenta nao segure uma das 10 conexoes do pool para sempre. Isso e certo

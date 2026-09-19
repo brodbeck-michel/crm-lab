@@ -874,7 +874,7 @@ lightbox). Causa raiz, dois problemas empilhados:
 
 - Frontend: `api/client.ts` ganha `resolveMediaUrl` (resolve caminho relativo contra o origin de
   `apiBaseUrl()`) e `fetchAuthenticatedBlob` (busca com `Authorization`, com o mesmo retry de
-  refresh do `request()`). Novo hook `hooks/useAuthenticatedImage.ts` busca o blob e devolve um
+  refresh do `request()`). Novo hook `hooks/useAuthenticatedMedia.ts` busca o blob e devolve um
   `object URL` (`URL.createObjectURL`), revogado a cada troca de mensagem/desmontagem.
   `MessageBubble.tsx` usa o hook em vez da URL crua; enquanto carrega ou se falhar, mostra texto
   no lugar de um `<img>` quebrado.
@@ -1211,3 +1211,51 @@ no `/api/` devolve 413. O backend aceita 25 MB (`app.ts:118`) e o `MediaService`
 (`Attendance/index.tsx:168`) e a importação de planilha do LIS
 (`lis-import.routes.ts:62`) acima de ~750 KB, porque base64 infla ~33%. O
 RECEBIMENTO não sofre: o gateway posta direto no backend.
+
+---
+
+## 2026-09-19 — CRMLAB-2 (ouvir áudio na bolha) + CRMLAB-21 (zoom na imagem) ✅
+
+Os dois cards são a mesma dor vista de dois ângulos: a mídia chega no
+atendimento, mas o atendente precisa **sair do sistema** para consumir. Áudio
+virava link "Anexo (audio)" em outra aba — e, por ser mídia autenticada, muitas
+vezes nem tocava. Foto de pedido médico abria em tela cheia sem zoom: letra
+pequena só se lia baixando o arquivo.
+
+**CRMLAB-22 encerrado como duplicado de CRMLAB-2** (descrevia só a parte de
+ouvir); o conteúdo dele foi incorporado ao CRMLAB-2 antes do fechamento.
+
+**Áudio (CRMLAB-2 — escopo desta entrega: ouvir/receber).**
+`conversation/AudioMessage.tsx` toca o áudio na própria bolha. Controles
+**nativos** (`<audio controls>`): play/pause, barra com tempo decorrido/total,
+seek e teclado sem uma linha de código — o critério de aceite do card é
+funcional, não visual. Player desenhado à mão entra se o visual virar exigência
+real (mesma decisão do `EmojiPicker` sem biblioteca). O blob vem autenticado;
+`src` é object URL, nunca a URL crua (que volta 401). O link "Baixar áudio"
+continua ali de propósito: o Evolution entrega **ogg/opus, que o Safari não
+toca** — no `error` do `<audio>` o player dá lugar a um aviso e o download é o
+plano B.
+
+**Gravar e enviar áudio ficou FORA** (decisão do Michel, 19/09): mexe em
+permissão de microfone, upload e envio pelo Evolution. Vira card próprio; o
+CRMLAB-2 registra o escopo como fase seguinte.
+
+**Zoom (CRMLAB-21).** `shared/ImageLightbox.tsx` ganhou zoom de 1× a 6× por roda
+do mouse, pinça, botões − / + e duplo clique (duplo clique de novo volta ao
+original). Roda e pinça **ancoram no ponto sob o cursor/dedos**: aproximar num
+canto não joga o trecho de interesse para fora da tela. Com a imagem ampliada,
+arrastar move o enquadramento — e o `click` que encerra o arraste não fecha o
+lightbox, senão soltar o mouse fora da foto fechava tudo. Sem dependência nova.
+
+Dois detalhes que custaram tempo e ficam registrados: `wheel` precisa de
+listener **não-passivo** (o do React é passivo e ignora `preventDefault`, aí a
+página atrás rola durante o zoom); e o jsdom não tem `PointerEvent` nem pointer
+capture — o spec do lightbox provê os dois, senão `clientX` chega `undefined` e
+o arraste vira `NaN`.
+
+**Renomeado:** `hooks/useAuthenticatedImage` → `useAuthenticatedMedia`. Não é só
+imagem desde que o áudio passou a usar o mesmo caminho. Comportamento idêntico.
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces; frontend **1061
+testes verdes**, 7 deles novos — 5 no `ImageLightbox.spec.tsx` (arquivo novo) e
+2 de áudio no `MessageBubble.spec.tsx`. Validação funcional: homologação.

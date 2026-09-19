@@ -1,0 +1,55 @@
+version: 2
+
+updates:
+  # -----------------------------------------------------------------------
+  # npm — raiz do monorepo. Um único ecossistema cobre os 4 workspaces
+  # (shared/backend/frontend/e2e) porque é um lockfile só (`package-lock.json`).
+  # Patches agrupados num PR só; minor/major seguem separados para revisão
+  # humana (ver docs/guides/CONVENTIONS.md "Política de atualização de
+  # dependências").
+  # -----------------------------------------------------------------------
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      patches:
+        update-types:
+          - patch
+    ignore:
+      # `xlsx` do frontend é instalado por URL/tarball da SheetJS
+      # (`https://cdn.sheetjs.com/...`), fora do registry do npm — o
+      # Dependabot não sabe checar novas versões desse pacote. Atualização
+      # manual: trocar a URL em frontend/package.json quando a SheetJS
+      # publicar uma nova release (ver docs/DECISIONS.md).
+      - dependency-name: "xlsx"
+
+  # -----------------------------------------------------------------------
+  # GitHub Actions — versões das actions usadas em .github/workflows/.
+  # -----------------------------------------------------------------------
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+
+  # -----------------------------------------------------------------------
+  # Docker — Dockerfiles do backend/frontend e o compose da raiz.
+  # As imagens base HOJE não são pinadas por digest (isso é do CRMLAB-36,
+  # Onda B); até lá o Dependabot não tem o que propor aqui e esses três
+  # entries ficam sem PR nenhum — é esperado, não é bug deste card.
+  # -----------------------------------------------------------------------
+  - package-ecosystem: docker
+    directory: "/backend"
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: "/frontend"
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly

@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-18 (`/results`: evolução do faturamento + donut no recebido — ver seção no fim)
+**Última atualização:** 2026-09-19 (CRMLAB-25 + CRMLAB-26: conversa em papel branco e download da imagem — ver seção no fim)
 
 ---
 
@@ -1317,3 +1317,44 @@ nem de schema, então não houve migração para acompanhar.
 **Pós-deploy:** os 5 serviços `healthy`, `https://vitrocrm.cloud` em 200,
 nenhum log nível 50 no backend nos primeiros minutos. A versão no rodapé da
 sidebar só muda com o rebuild do frontend, que este deploy fez.
+
+---
+
+## 2026-09-19 — CRMLAB-25 + CRMLAB-26: conversa legível e imagem que se salva ✅
+
+**CRMLAB-25 — fundo branco e quem falou.** A área rolável das mensagens virou a
+única superfície branca do app (`--color-chat-bg`, hex literal: é papel, não
+acompanha o tema do tenant). Header e composer continuam no bege do tema, o que
+de quebra marca onde a conversa começa e termina.
+
+O sintoma relatado ("está tudo a mesma coisa") não era falta de distinção no
+código — `received` já usava `--color-surface` e `sent`, `--color-accent-200`.
+É que as DUAS nascem de `color-mix(..., var(--color-bg))`: sobre o bege do tema
+padrão as três superfícies (fundo, bolha do paciente, bolha da atendente) caíam
+na mesma faixa de luminosidade. Os novos `--color-chat-received` e
+`--color-chat-sent` misturam as mesmas cores base com BRANCO, e cada bolha
+ganhou 1px de borda do par `-border`. Lado + cor + borda: bate o olho e se sabe
+quem falou, em qualquer um dos temas.
+
+**CRMLAB-26 — o ↓ agora salva de verdade.** O botão já existia no
+`ImageLightbox` desde o CRMLAB-15, mas o `fileName` nunca era passado: o
+`object URL` não carrega nome, então o arquivo caía em Downloads como o uuid do
+blob, sem extensão — inútil para reenviar ou anexar. `fetchAuthenticatedBlob`
+passou a devolver `{ blob, fileName }`, lendo o `Content-Disposition` que
+`GET /media/:id` já mandava; `useAuthenticatedMedia` repassa o nome e o
+`MessageBubble` entrega ao lightbox.
+
+Detalhe que teria virado bug: sem nome, `download={undefined}` REMOVE o atributo
+e o ↓ deixa de baixar — vira navegação para o blob. Agora o fallback é `"imagem"`
+sem extensão, que o browser completa pelo tipo do arquivo. Teste dedicado para
+isso.
+
+**Arquivos.** `styles/tokens.css` (+5 tokens), `tailwind.config.js` (rampa
+`chat`), `conversation/MessageBubble.tsx`, `pages/Attendance/ConversationPanel.tsx`,
+`shared/ImageLightbox.tsx`, `api/client.ts`, `hooks/useAuthenticatedMedia.ts`.
+Docs: `DESIGN_TOKENS.md` (papéis de cor + bolhas), `COMPONENTS.md`
+(`MessageBubble`, `ImageLightbox`), `PAGES.md` §2.
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces; frontend **1065
+testes verdes** (4 novos: nome do arquivo no `Content-Disposition`, ausência
+dele, download com nome sem fechar o lightbox, e o `download` que nunca some).

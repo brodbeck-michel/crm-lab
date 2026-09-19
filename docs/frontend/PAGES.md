@@ -122,8 +122,12 @@ Duas leituras registradas aqui porque o doc original não as fixava:
   aqui, só desktop. Sem conversa selecionada, a coluna 2 mostra o estado vazio "Selecione uma
   conversa" (`EmptyState`, já existente) em vez de ficar em branco
 - Bolhas: recebida / enviada / evento de sistema (3 tipos, máx. 62% largura). Anexo de imagem
-  (CRMLAB-15) renderiza como thumbnail; clique abre `ImageLightbox` em tela cheia — ver
-  COMPONENTS.md `conversation/` e `shared/`
+  (CRMLAB-15) renderiza como thumbnail; clique abre `ImageLightbox` em tela cheia (com ↓ que
+  salva a imagem em Downloads, CRMLAB-26) — ver COMPONENTS.md `conversation/` e `shared/`
+- **Fundo branco (CRMLAB-25):** só a área rolável das mensagens é branca (`--color-chat-bg`);
+  header e composer seguem no fundo do tema, o que também marca onde a conversa começa e
+  termina. Sobre o papel branco, bolha do paciente e bolha da atendente se separam por lado E
+  por cor (`--color-chat-received` / `--color-chat-sent`)
 - Composer: input pílula + anexos + **emoji** + enviar. O emoji entra na posição do cursor
   (Onda 8 §2.2), grade fixa de 48, sem dependência nova
 - Dados: `GET /conversations/:id`, `POST /conversations/:id/messages`

@@ -76,6 +76,10 @@ Anatomia (padrão WhatsApp):
 ```
 - 3 tipos, NUNCA mais. Canto "apontado" (radius-sm) marca a origem
 - Largura máx. 62% no inbox
+- Cor (CRMLAB-25): recebida `--color-chat-received`, enviada `--color-chat-sent`, as duas com
+  borda de 1px do par `-border` e sobre o papel BRANCO da conversa. Lado + cor: bate o olho e
+  se sabe quem falou. As antigas `surface` / `accent-200` misturavam com `--color-bg` e, sobre o
+  bege do tema, fundo e as duas bolhas viravam a mesma coisa
 - Anexo `messageType: 'image'` (CRMLAB-15): thumbnail (`rounded-md`, máx. 300px de altura) no lugar
   do link "Anexo (tipo)". Clique abre `ImageLightbox` em tela cheia — padrão WhatsApp Web
 - Anexo `messageType: 'audio'` (CRMLAB-2): `AudioMessage` na própria bolha no lugar do link.
@@ -84,6 +88,8 @@ Anatomia (padrão WhatsApp):
   manda esse header. A mídia vem por `useAuthenticatedMedia` (`hooks/`), que chama
   `fetchAuthenticatedBlob` (`api/client.ts`) e usa `URL.createObjectURL` como `src`. Enquanto
   carrega ou se a busca falhar, mostra texto no lugar da mídia — nunca `<img>`/player quebrado
+- `useAuthenticatedMedia` devolve também o `fileName` (do `Content-Disposition` de
+  `GET /media/:id`), repassado ao `ImageLightbox` — é o nome com que a imagem é salva (CRMLAB-26)
 
 ### AudioMessage (CRMLAB-2)
 ```tsx
@@ -239,6 +245,10 @@ Anatomia (padrão WhatsApp):
   `shadow-lg`, `max-h-[86vh]`) sobre o fundo
 - Botões − / + (zoom), ⤢ (tamanho original, só com zoom aplicado), ↓ (baixar) e × (fechar)
   circulares no canto superior direito, mesmo padrão do × do Modal
+- ↓ (CRMLAB-26): `<a download>` para a pasta de Downloads, com `fileName` como nome do arquivo.
+  Sem `fileName` cai em `"imagem"` SEM extensão (o browser completa pelo tipo do blob) — o
+  atributo `download` nunca pode sumir, ou o ↓ vira navegação para o blob em vez de salvar.
+  O download não fecha o lightbox
 - Zoom (CRMLAB-21): roda do mouse, pinça, botões − / + e duplo clique (duplo clique de novo
   volta ao original). Roda e pinça ancoram no ponto sob o cursor/dedos — aproximar num canto não
   joga o trecho de interesse para fora da tela. Escala entre 1× e 6×

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ApiErrorBody } from '@crm-lab/shared';
 import {
+  fetchAuthenticatedBlob,
   http,
   isApiError,
   request,
@@ -301,5 +302,36 @@ describe('resolveMediaUrl', () => {
     expect(resolveMediaUrl('https://cdn.exemplo.com/foto.png')).toBe(
       'https://cdn.exemplo.com/foto.png',
     );
+  });
+});
+
+/**
+ * `fetchAuthenticatedBlob` — o nome do arquivo vem junto dos bytes (CRMLAB-26).
+ * `object URL` não carrega nome nenhum; sem ler o `Content-Disposition`, baixar
+ * a imagem salvaria o uuid do blob, sem extensão.
+ */
+describe('fetchAuthenticatedBlob', () => {
+  function blobResponse(disposition: string | null): Response {
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: (name: string) => (name === 'Content-Disposition' ? disposition : null) },
+      blob: () => Promise.resolve(new Blob(['bytes'], { type: 'image/jpeg' })),
+    } as unknown as Response;
+  }
+
+  it('devolve o nome do arquivo decodificado do Content-Disposition', async () => {
+    mockFetch(() => blobResponse('inline; filename="pedido%20m%C3%A9dico.jpg"'));
+
+    const media = await fetchAuthenticatedBlob('/api/v1/media/abc');
+
+    expect(media.fileName).toBe('pedido médico.jpg');
+    expect(media.blob.type).toBe('image/jpeg');
+  });
+
+  it('sem Content-Disposition o nome é null — quem baixa decide o fallback', async () => {
+    mockFetch(() => blobResponse(null));
+
+    expect((await fetchAuthenticatedBlob('/api/v1/media/abc')).fileName).toBeNull();
   });
 });

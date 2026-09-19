@@ -4,7 +4,7 @@ import { cn } from '@/components/ui/cn';
 export interface ImageLightboxProps {
   /** URL da imagem a exibir em tela cheia. `null`/vazio não renderiza nada. */
   src: string | null;
-  /** Nome de arquivo sugerido para o download. */
+  /** Nome sugerido no download. Sem ele, o browser nomeia pelo tipo do arquivo. */
   fileName?: string;
   onClose: () => void;
 }
@@ -18,6 +18,13 @@ const BUTTON_STEP = 1.4;
 const DOUBLE_CLICK_SCALE = 2.5;
 /** Arraste menor que isto é clique, não pan — senão soltar o mouse fecharia o lightbox. */
 const DRAG_SLOP_PX = 4;
+/**
+ * Nome do download quando a mídia não trouxe um (CRMLAB-26). Sem NENHUM nome o
+ * React omite o atributo `download`, e aí o ↓ vira navegação para o blob em vez
+ * de salvar o arquivo. Sem extensão de propósito: o browser completa pelo
+ * `type` do blob.
+ */
+const DOWNLOAD_FALLBACK_NAME = 'imagem';
 
 interface Transform {
   scale: number;
@@ -60,6 +67,10 @@ function zoomAt(current: Transform, factor: number, anchorX: number, anchorY: nu
  *
  * Mais leve que `Modal`: sem cartão, sem título, sem foco preso — é só a
  * imagem sobre um backdrop escuro. Fecha por ×, Esc e clique fora da imagem.
+ *
+ * O ↓ salva a imagem na pasta de Downloads (CRMLAB-26) com o nome original do
+ * arquivo — o `object URL` não carrega nome, ele vem do `Content-Disposition`
+ * por `useAuthenticatedMedia`. O download não fecha o lightbox.
  *
  * Zoom pela roda do mouse, pela pinça, pelos botões + / − e por duplo clique;
  * volta ao tamanho original no botão de reset ou em outro duplo clique. Com a
@@ -257,7 +268,8 @@ export function ImageLightbox({ src, fileName, onClose }: ImageLightboxProps) {
         )}
         <a
           href={src}
-          download={fileName}
+          download={fileName ?? DOWNLOAD_FALLBACK_NAME}
+          title="Baixar"
           aria-label="Baixar imagem"
           className={cn(
             'flex h-[36px] w-[36px] items-center justify-center rounded-pill border-none',

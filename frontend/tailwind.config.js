@@ -15,6 +15,14 @@ export default {
         text: 'var(--color-text)',
         ink: 'var(--color-text)',
         backdrop: 'var(--color-backdrop)',
+        // Conversa do atendimento (CRMLAB-25) — papel branco + bolhas tingidas.
+        chat: {
+          bg: 'var(--color-chat-bg)',
+          received: 'var(--color-chat-received)',
+          'received-border': 'var(--color-chat-received-border)',
+          sent: 'var(--color-chat-sent)',
+          'sent-border': 'var(--color-chat-sent-border)',
+        },
         accent: {
           DEFAULT: 'var(--color-accent)',
           100: 'var(--color-accent-100)',

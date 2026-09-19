@@ -14,6 +14,12 @@ import { AudioMessage } from './AudioMessage';
  * origem: bolha recebida aponta para baixo-esquerda, enviada para
  * baixo-direita, evento de sistema é pílula centrada.
  *
+ * Cor (CRMLAB-25): recebida usa `--color-chat-received` (o tom do tema
+ * clareado), enviada `--color-chat-sent` (o acento clareado) — as duas sobre o
+ * papel BRANCO da conversa. Antes eram `surface` e `accent-200`, ambas
+ * misturadas com `--color-bg`: sobre o bege do tema as duas bolhas e o fundo
+ * viravam a mesma coisa e não dava para saber quem falou.
+ *
  * Largura máxima: 62% no inbox. DESIGN_TOKENS.md publica 78% na regra geral e
  * PAGES.md §2 fixa 62% no inbox — vale o 62% aqui (fonte mais específica,
  * AGENTS.md "Resolução de Conflitos"). Quem precisar da regra geral passa
@@ -50,8 +56,12 @@ export interface MessageBubbleProps {
 }
 
 const SHELL: Record<MessageBubbleType, string> = {
-  received: 'self-start bg-surface rounded-md rounded-bl-sm px-[15px] py-[11px] text-label',
-  sent: 'self-end bg-accent-200 rounded-md rounded-br-sm px-[15px] py-[11px] text-label',
+  received:
+    'self-start bg-chat-received border border-chat-received-border rounded-md rounded-bl-sm ' +
+    'px-[15px] py-[11px] text-label',
+  sent:
+    'self-end bg-chat-sent border border-chat-sent-border rounded-md rounded-br-sm ' +
+    'px-[15px] py-[11px] text-label',
   system:
     'self-center bg-accent2-100 border border-accent2-300 rounded-pill px-[14px] py-[5px] ' +
     'text-caption text-accent2-800',
@@ -71,9 +81,11 @@ export function MessageBubble({
   // `GET /media/:id` exige Authorization (requireAuth()) — um <img src> cru
   // nunca manda esse header, por isso a imagem sempre vinha em branco/401.
   // O hook busca autenticado e devolve um object URL utilizável em <img>.
-  const { objectUrl: imageUrl, isLoading: imageLoading } = useAuthenticatedMedia(
-    isImage ? message.attachmentUrl : null,
-  );
+  const {
+    objectUrl: imageUrl,
+    fileName: imageFileName,
+    isLoading: imageLoading,
+  } = useAuthenticatedMedia(isImage ? message.attachmentUrl : null);
 
   return (
     <div
@@ -100,6 +112,7 @@ export function MessageBubble({
             </button>
             <ImageLightbox
               src={lightboxOpen ? imageUrl : null}
+              fileName={imageFileName ?? undefined}
               onClose={() => setLightboxOpen(false)}
             />
           </>

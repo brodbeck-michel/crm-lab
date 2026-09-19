@@ -45,7 +45,7 @@ RUN npm run build --workspace frontend \
 # ---------------------------------------------------------------------------
 # Stage 2 — runtime
 # ---------------------------------------------------------------------------
-FROM nginx:1.27-alpine AS runtime
+FROM nginx:1.29-alpine AS runtime
 
 # Upstream da API, resolvido por envsubst no boot do container.
 ENV API_UPSTREAM=http://backend:3000

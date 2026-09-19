@@ -1419,6 +1419,27 @@ era silenciosa.
 
 `backup-postgres.sh` não foi tocado.
 
+**Correção pós-revisão de código (2026-09-19):**
+
+- `scripts/backup-offsite.sh` (~linha 167) — o `gh release create || log "ja
+  existia"` tratava QUALQUER falha do `create` (token expirado, rede, rate
+  limit) como "release já existia", e o script seguia para o upload que
+  falhava pela mesma causa raiz, mas o log mandava o plantão atrás do
+  diagnóstico errado. Agora a existência da release é checada explicitamente
+  com `gh release view` antes de tentar criar; se já existe, segue direto pro
+  upload com log claro; se não existe e a criação falha, isso é propagado como
+  falha real com o stderr do `gh` no log (sem `||` engolindo).
+- `scripts/backup-alerta.sh` (~linha 68) — o escape manual de JSON só tratava
+  `\`, `"` e newline; `\r`, tabs e sequências ANSI (comuns em saída de
+  `journalctl` de serviço com progress bar/cor) quebravam o JSON e o webhook
+  rejeitava o POST — falhando exatamente no cenário que o alerta existe pra
+  cobrir. `jq` não é dependência do projeto (confirmado com grep em `scripts/`
+  e nos `docker-compose*.yml` — as únicas ocorrências são o `--jq` embutido no
+  próprio `gh`) e não está instalado neste ambiente, então a correção foi
+  trocar o escape manual por uma versão completa que converte todo byte de
+  controle ASCII < 0x20 para `\uXXXX`, em vez de adicionar `jq` como novo
+  pré-requisito.
+
 **Pendente, e só o Michel pode fazer:** criar o repositório privado de destino,
 gerar a chave `age` (e guardar a privada fora da VPS), pôr as variáveis no
 `.env` de produção, instalar as unidades e **fazer o primeiro restore de

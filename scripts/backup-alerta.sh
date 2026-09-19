@@ -62,12 +62,42 @@ if [[ -n "${BACKUP_ALERT_CMD:-}" ]]; then
     logger -t crm-lab-backup -p user.err "BACKUP_ALERT_CMD tambem falhou" || true
 elif [[ -n "${BACKUP_ALERT_WEBHOOK:-}" ]]; then
   # Escape de JSON em bash puro, de proposito: `jq` pode nao estar instalado no
-  # host, e um alerta que nao dispara porque falta uma ferramenta e o mesmo
-  # silencio que este script veio resolver. A mensagem e texto nosso (journal +
-  # hostname), entao bastam as tres classes que aparecem: `\`, `"` e newline.
-  escapado="${mensagem//\\/\\\\}"
-  escapado="${escapado//\"/\\\"}"
-  escapado="${escapado//$'\n'/\\n}"
+  # host (nao e dependencia do projeto — grep confirma que nao ha uso real do
+  # binario em scripts/ nem no compose), e um alerta que nao dispara porque
+  # falta uma ferramenta e o mesmo silencio que este script veio resolver.
+  #
+  # As tres classes originais (`\`, `"`, newline) nao bastam: o `contexto` vem
+  # de `journalctl -u "$UNIDADE" -n 20`, e se o servico que falhou tiver saida
+  # com progress bar/cores (sequencias ANSI) ou `\r`, sobra byte de controle
+  # invalido em JSON. Isso quebra exatamente o alerta cujo trabalho e cobrir
+  # incidente — silencio disfarcado de erro no webhook. Por isso escapamos
+  # TODOS os bytes de controle ASCII < 0x20 (nao so os 3 mais comuns).
+  escapar_json() {
+    local str="$1" out="" c ord esc i len
+    # backslash e aspas primeiro, antes de introduzirmos os nossos proprios
+    str="${str//\\/\\\\}"
+    str="${str//\"/\\\"}"
+    len=${#str}
+    for (( i=0; i<len; i++ )); do
+      c="${str:i:1}"
+      case "$c" in
+        $'\n') out+='\n' ;;
+        $'\r') out+='\r' ;;
+        $'\t') out+='\t' ;;
+        *)
+          printf -v ord '%d' "'$c"
+          if (( ord < 32 )); then
+            printf -v esc '\\u%04x' "$ord"
+            out+="$esc"
+          else
+            out+="$c"
+          fi
+          ;;
+      esac
+    done
+    printf '%s' "$out"
+  }
+  escapado="$(escapar_json "$mensagem")"
   curl -fsS --max-time 20 -X POST -H 'Content-Type: application/json' \
     -d "{\"text\":\"${escapado}\"}" "$BACKUP_ALERT_WEBHOOK" >/dev/null || \
     logger -t crm-lab-backup -p user.err "webhook de alerta tambem falhou" || true

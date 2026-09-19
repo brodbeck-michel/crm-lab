@@ -161,16 +161,39 @@ log "${#assets[@]} arquivo(s) cifrado(s) com $METODO"
 # 4. Publicar a release do dia
 #
 # `create` falha se a tag ja existe (rodou duas vezes no mesmo dia, ou
-# reexecucao manual apos falha parcial). Nesse caso so re-sobe os assets com
-# `--clobber`, que e o comportamento idempotente que queremos.
+# reexecucao manual apos falha parcial) — mas TAMBEM falha por token expirado,
+# rede fora ou rate limit, com a mesma saida "nao-zero" que a tag duplicada.
+# Tratar qualquer falha do `create` como "ja existia" (via `||`) mandava quem
+# le o alerta as 3 da manha atras da causa errada: o log dizia "release ja
+# existia" enquanto o problema real era o token, e o upload seguinte falhava
+# de novo pela MESMA causa, so que sem diagnostico nenhum.
+#
+# Por isso a checagem de existencia e EXPLICITA e vem antes: `gh release view`
+# so pode retornar "existe" ou "nao existe" (nao tem ambiguidade de causa).
+# Se nao existe e a criacao falha, isso e uma falha real: logamos o stderr do
+# `gh` de verdade e propagamos (sem `||` engolindo) para o alerta refletir a
+# causa raiz, nao o sintoma.
 # ---------------------------------------------------------------------------
 gh_() { if (( DRYRUN )); then log "[dry-run] gh $*"; else gh "$@"; fi; }
 
-if (( DRYRUN )) || ! gh release view "$tag" --repo "$BACKUP_OFFSITE_REPO" >/dev/null 2>&1; then
-  gh_ release create "$tag" --repo "$BACKUP_OFFSITE_REPO" \
+release_existe=0
+if ! (( DRYRUN )) && gh release view "$tag" --repo "$BACKUP_OFFSITE_REPO" >/dev/null 2>&1; then
+  release_existe=1
+fi
+
+if (( DRYRUN )); then
+  log "[dry-run] gh release create $tag (ou upload direto se ja existir)"
+elif (( release_existe )); then
+  log "release $tag ja existe; seguindo direto para o upload"
+else
+  if erro_create="$(gh release create "$tag" --repo "$BACKUP_OFFSITE_REPO" \
     --title "Backup $hoje" \
-    --notes "Backup automatico do CRM Lab em $hoje. Conteudo CIFRADO ($METODO). Restore: docs/guides/DEPLOYMENT.md" \
-    || log "release $tag ja existia; seguindo para o upload"
+    --notes "Backup automatico do CRM Lab em $hoje. Conteudo CIFRADO ($METODO). Restore: docs/guides/DEPLOYMENT.md" 2>&1)"; then
+    log "release $tag criada"
+  else
+    log "FALHOU criar release $tag (causa real, nao 'ja existia'): $erro_create"
+    exit 1
+  fi
 fi
 gh_ release upload "$tag" "${assets[@]}" --repo "$BACKUP_OFFSITE_REPO" --clobber
 log "release $tag publicada em $BACKUP_OFFSITE_REPO"

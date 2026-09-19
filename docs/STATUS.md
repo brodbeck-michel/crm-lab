@@ -1259,3 +1259,38 @@ imagem desde que o áudio passou a usar o mesmo caminho. Comportamento idêntico
 **Verificação:** `npm run typecheck` verde nos 4 workspaces; frontend **1061
 testes verdes**, 7 deles novos — 5 no `ImageLightbox.spec.tsx` (arquivo novo) e
 2 de áudio no `MessageBubble.spec.tsx`. Validação funcional: homologação.
+
+---
+
+## 2026-09-19 — mídia de produção não aparecia em homologação: 500 virou 404, e o dump passou a levar os arquivos ✅
+
+Na validação do CRMLAB-21 a imagem abriu numa conversa e em todas as outras
+deu "Não foi possível carregar a imagem". Parecia bug da tela nova; não era.
+
+**Causa.** `message_media` viaja no dump de produção, mas o **arquivo** mora em
+`<projeto>_media-data`, volume próprio de cada ambiente. O
+`homolog-sincroniza-dados.sh` copiava só o banco. Resultado em hml: 34 linhas de
+mídia apontando para arquivos que nunca chegaram — e uma única imagem
+funcionando, a que o simulador de webhook criou ali mesmo.
+
+**Bug de verdade que isso revelou.** `readMediaFile` deixava o `ENOENT` subir:
+`GET /media/:id` de arquivo ausente respondia **500** com
+`http.unhandled_error` e stack no log, em vez de 404. Arquivo que sumiu é dado
+que não existe, não servidor quebrado — e em produção o mesmo caminho
+transformaria um arquivo perdido em erro de servidor. Agora `readMediaFile`
+devolve `null` no ENOENT, `MediaService.read` loga `media.file_missing` e a rota
+responde 404. Teste de regressão em `evolution-webhook-media.spec.ts`,
+verificado contra o código antigo: falha com `expected 404, got 500`.
+
+**Ambiente.** Os 34 arquivos de produção (4.7 MB) foram copiados para o volume
+de hml — produção montada `:ro`. O script de sincronia passou a fazer isso
+sozinho, e `ENVIRONMENTS.md` registra que "copiar dado de prod" são duas coisas,
+banco **e** mídia. Detalhe que custou uma rodada: `cp -an` do busybox não copia
+nada e ainda sai com `rc=0`; o script usa `cp -a /p/*`.
+
+**LGPD:** a cópia aumenta o que hml guarda — agora foto de pedido médico e áudio
+de paciente real, não só texto. Decisão do Michel em 19/09, com hml atrás de
+basic auth e canais desativados.
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces; backend **1100
+testes verdes** (1 novo).

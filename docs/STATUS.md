@@ -1389,8 +1389,29 @@ sidebar muda com o rebuild do frontend, que este deploy fez.
 
 ---
 
-## 2026-09-19 — CRMLAB-20 (Onda A): teto de corpo do nginx 🔄
+## 2026-09-19 — CRMLAB-20 (Onda A): teto de corpo do nginx ✅
 
 `Agent-Infra-20`, branch `feature/CRMLAB-20-nginx-body-size`, worktree próprio.
 Recorte: só `nginx/frontend.conf`, no `location /api/`. O bloco
 `location = /healthz` é do CRMLAB-29 e não foi tocado.
+
+`client_max_body_size 25m;` no `location /api/`. O vhost não definia a
+diretiva, então valia o default de 1 MiB do nginx e o anexo acima de ~750 KB
+(base64 infla ~33%) morria num 413 cru da borda, antes de o backend poder
+responder o `MEDIA_TOO_LARGE` do catálogo. 25m espelha o
+`express.json({ limit: '25mb' })` de `backend/src/app.ts`, que já cobre os
+15 MiB por arquivo do `MediaService` — a borda passa a ser transporte, e o
+teto de negócio volta a ser o do app.
+
+Fica só no `/api/`: o resto do vhost serve estático e não recebe corpo. O
+`location /ws` não precisa — handshake de WebSocket não tem corpo e os frames
+não passam por `client_max_body_size`. O Caddy da borda também não precisa de
+nada: o padrão dele é não limitar corpo de requisição (limite só existe com
+`request_body max_size` explícito, que não está configurado). O Caddy mora na
+VPS, fora do repo, e não foi tocado.
+
+**Verificação:** `nginx -t` em container descartável
+(`nginx:1.27-alpine`, template renderizado pelo `envsubst` do entrypoint
+oficial, `API_UPSTREAM=http://127.0.0.1:3000`) — sintaxe ok. Não há teste
+automatizado de nginx no projeto; o teste de comportamento (upload grande de
+verdade) é em homologação, junto com os outros cards da Onda A.

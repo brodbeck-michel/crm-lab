@@ -169,7 +169,14 @@ IMAGE_TAG=<sha-anterior> docker compose -p crm-lab-prod -f docker-compose.prod.y
 
 ## 4. Dado de homologação
 
-`hml` nasce com uma cópia de `prod`. Recarregar:
+`hml` nasce com uma cópia de `prod` — **banco e arquivos de mídia**. Os dois
+precisam vir: `message_media` viaja no dump, mas o arquivo mora em
+`<projeto>_media-data`, um volume por ambiente. Sem a cópia dos arquivos, toda
+foto e áudio de produção aparecem como "não foi possível carregar" em hml, o
+que em 19/09 pareceu bug de tela e não era. O script faz as duas coisas desde
+então; produção entra como `:ro`.
+
+Recarregar:
 
 ```bash
 cd /opt/crm-lab-homolog

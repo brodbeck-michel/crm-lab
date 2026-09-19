@@ -7,7 +7,7 @@ import type * as ApiModule from '@/api';
 /**
  * `GET /media/:id` exige Authorization — o componente busca via
  * `fetchAuthenticatedBlob` e usa `URL.createObjectURL`, nunca a URL crua
- * direto num `<img src>` (ver `useAuthenticatedImage`).
+ * direto num `<img src>` (ver `useAuthenticatedMedia`).
  */
 const fetchAuthenticatedBlobMock = vi.fn();
 vi.mock('@/api', async (importOriginal) => {
@@ -15,12 +15,8 @@ vi.mock('@/api', async (importOriginal) => {
   return { ...actual, fetchAuthenticatedBlob: fetchAuthenticatedBlobMock };
 });
 
-const {
-  INBOX_BUBBLE_MAX_WIDTH,
-  MESSAGE_BUBBLE_TYPES,
-  MessageBubble,
-  bubbleTypeFor,
-} = await import('./MessageBubble');
+const { INBOX_BUBBLE_MAX_WIDTH, MESSAGE_BUBBLE_TYPES, MessageBubble, bubbleTypeFor } =
+  await import('./MessageBubble');
 
 /**
  * MessageBubble — COMPONENTS.md: TRÊS tipos, nunca mais.
@@ -158,6 +154,49 @@ describe('MessageBubble', () => {
     await waitFor(() =>
       expect(screen.getByText('Não foi possível carregar a imagem')).toBeInTheDocument(),
     );
-    expect(screen.queryByRole('img', { name: 'Anexo enviado na conversa' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('img', { name: 'Anexo enviado na conversa' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('áudio toca na própria bolha, sem link genérico de anexo (CRMLAB-2)', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:mock-audio');
+    URL.revokeObjectURL = vi.fn();
+    fetchAuthenticatedBlobMock.mockResolvedValue(new Blob(['fake'], { type: 'audio/ogg' }));
+
+    render(
+      <MessageBubble
+        type="received"
+        message={message({ messageType: 'audio', attachmentUrl: 'https://arquivo/recado.ogg' })}
+      />,
+    );
+
+    expect(screen.queryByRole('link', { name: /Anexo/ })).not.toBeInTheDocument();
+    expect(fetchAuthenticatedBlobMock).toHaveBeenCalledWith('https://arquivo/recado.ogg');
+
+    // O blob autenticado vira o `src` do player — nunca a URL crua, que voltaria 401.
+    const player = await screen.findByTestId('audio-message-player');
+    expect(player).toHaveAttribute('src', 'blob:mock-audio');
+    expect(player).toHaveAttribute('controls');
+    expect(screen.getByRole('link', { name: 'Baixar áudio' })).toHaveAttribute(
+      'href',
+      'blob:mock-audio',
+    );
+  });
+
+  it('erro ao buscar o áudio mostra mensagem em vez de player mudo', async () => {
+    fetchAuthenticatedBlobMock.mockRejectedValue(new Error('network'));
+
+    render(
+      <MessageBubble
+        type="received"
+        message={message({ messageType: 'audio', attachmentUrl: 'https://arquivo/recado.ogg' })}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText('Não foi possível carregar o áudio')).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId('audio-message-player')).not.toBeInTheDocument();
   });
 });

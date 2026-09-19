@@ -21,6 +21,27 @@ export async function writeMediaFile(id: string, buffer: Buffer): Promise<void> 
   await writeFile(mediaFilePath(id), buffer);
 }
 
-export async function readMediaFile(id: string): Promise<Buffer> {
-  return readFile(mediaFilePath(id));
+/**
+ * `null` = o arquivo NAO esta no disco, embora a linha exista no banco. Isso
+ * acontece de verdade: homologacao nasce de um dump de producao, que traz as
+ * linhas de `message_media` sem os arquivos (volume proprio, nao copiado).
+ * Quem chama trata como midia inexistente — deixar o ENOENT subir virava 500
+ * e `http.unhandled_error`, quando a resposta honesta e 404.
+ */
+export async function readMediaFile(id: string): Promise<Buffer | null> {
+  try {
+    return await readFile(mediaFilePath(id));
+  } catch (error) {
+    if (isNotFound(error)) return null;
+    throw error;
+  }
+}
+
+function isNotFound(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: unknown }).code === 'ENOENT'
+  );
 }

@@ -874,7 +874,7 @@ lightbox). Causa raiz, dois problemas empilhados:
 
 - Frontend: `api/client.ts` ganha `resolveMediaUrl` (resolve caminho relativo contra o origin de
   `apiBaseUrl()`) e `fetchAuthenticatedBlob` (busca com `Authorization`, com o mesmo retry de
-  refresh do `request()`). Novo hook `hooks/useAuthenticatedImage.ts` busca o blob e devolve um
+  refresh do `request()`). Novo hook `hooks/useAuthenticatedMedia.ts` busca o blob e devolve um
   `object URL` (`URL.createObjectURL`), revogado a cada troca de mensagem/desmontagem.
   `MessageBubble.tsx` usa o hook em vez da URL crua; enquanto carrega ou se falhar, mostra texto
   no lugar de um `<img>` quebrado.
@@ -1211,3 +1211,86 @@ no `/api/` devolve 413. O backend aceita 25 MB (`app.ts:118`) e o `MediaService`
 (`Attendance/index.tsx:168`) e a importação de planilha do LIS
 (`lis-import.routes.ts:62`) acima de ~750 KB, porque base64 infla ~33%. O
 RECEBIMENTO não sofre: o gateway posta direto no backend.
+
+---
+
+## 2026-09-19 — CRMLAB-2 (ouvir áudio na bolha) + CRMLAB-21 (zoom na imagem) ✅
+
+Os dois cards são a mesma dor vista de dois ângulos: a mídia chega no
+atendimento, mas o atendente precisa **sair do sistema** para consumir. Áudio
+virava link "Anexo (audio)" em outra aba — e, por ser mídia autenticada, muitas
+vezes nem tocava. Foto de pedido médico abria em tela cheia sem zoom: letra
+pequena só se lia baixando o arquivo.
+
+**CRMLAB-22 encerrado como duplicado de CRMLAB-2** (descrevia só a parte de
+ouvir); o conteúdo dele foi incorporado ao CRMLAB-2 antes do fechamento.
+
+**Áudio (CRMLAB-2 — escopo desta entrega: ouvir/receber).**
+`conversation/AudioMessage.tsx` toca o áudio na própria bolha. Controles
+**nativos** (`<audio controls>`): play/pause, barra com tempo decorrido/total,
+seek e teclado sem uma linha de código — o critério de aceite do card é
+funcional, não visual. Player desenhado à mão entra se o visual virar exigência
+real (mesma decisão do `EmojiPicker` sem biblioteca). O blob vem autenticado;
+`src` é object URL, nunca a URL crua (que volta 401). O link "Baixar áudio"
+continua ali de propósito: o Evolution entrega **ogg/opus, que o Safari não
+toca** — no `error` do `<audio>` o player dá lugar a um aviso e o download é o
+plano B.
+
+**Gravar e enviar áudio ficou FORA** (decisão do Michel, 19/09): mexe em
+permissão de microfone, upload e envio pelo Evolution. Vira card próprio; o
+CRMLAB-2 registra o escopo como fase seguinte.
+
+**Zoom (CRMLAB-21).** `shared/ImageLightbox.tsx` ganhou zoom de 1× a 6× por roda
+do mouse, pinça, botões − / + e duplo clique (duplo clique de novo volta ao
+original). Roda e pinça **ancoram no ponto sob o cursor/dedos**: aproximar num
+canto não joga o trecho de interesse para fora da tela. Com a imagem ampliada,
+arrastar move o enquadramento — e o `click` que encerra o arraste não fecha o
+lightbox, senão soltar o mouse fora da foto fechava tudo. Sem dependência nova.
+
+Dois detalhes que custaram tempo e ficam registrados: `wheel` precisa de
+listener **não-passivo** (o do React é passivo e ignora `preventDefault`, aí a
+página atrás rola durante o zoom); e o jsdom não tem `PointerEvent` nem pointer
+capture — o spec do lightbox provê os dois, senão `clientX` chega `undefined` e
+o arraste vira `NaN`.
+
+**Renomeado:** `hooks/useAuthenticatedImage` → `useAuthenticatedMedia`. Não é só
+imagem desde que o áudio passou a usar o mesmo caminho. Comportamento idêntico.
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces; frontend **1061
+testes verdes**, 7 deles novos — 5 no `ImageLightbox.spec.tsx` (arquivo novo) e
+2 de áudio no `MessageBubble.spec.tsx`. Validação funcional: homologação.
+
+---
+
+## 2026-09-19 — mídia de produção não aparecia em homologação: 500 virou 404, e o dump passou a levar os arquivos ✅
+
+Na validação do CRMLAB-21 a imagem abriu numa conversa e em todas as outras
+deu "Não foi possível carregar a imagem". Parecia bug da tela nova; não era.
+
+**Causa.** `message_media` viaja no dump de produção, mas o **arquivo** mora em
+`<projeto>_media-data`, volume próprio de cada ambiente. O
+`homolog-sincroniza-dados.sh` copiava só o banco. Resultado em hml: 34 linhas de
+mídia apontando para arquivos que nunca chegaram — e uma única imagem
+funcionando, a que o simulador de webhook criou ali mesmo.
+
+**Bug de verdade que isso revelou.** `readMediaFile` deixava o `ENOENT` subir:
+`GET /media/:id` de arquivo ausente respondia **500** com
+`http.unhandled_error` e stack no log, em vez de 404. Arquivo que sumiu é dado
+que não existe, não servidor quebrado — e em produção o mesmo caminho
+transformaria um arquivo perdido em erro de servidor. Agora `readMediaFile`
+devolve `null` no ENOENT, `MediaService.read` loga `media.file_missing` e a rota
+responde 404. Teste de regressão em `evolution-webhook-media.spec.ts`,
+verificado contra o código antigo: falha com `expected 404, got 500`.
+
+**Ambiente.** Os 34 arquivos de produção (4.7 MB) foram copiados para o volume
+de hml — produção montada `:ro`. O script de sincronia passou a fazer isso
+sozinho, e `ENVIRONMENTS.md` registra que "copiar dado de prod" são duas coisas,
+banco **e** mídia. Detalhe que custou uma rodada: `cp -an` do busybox não copia
+nada e ainda sai com `rc=0`; o script usa `cp -a /p/*`.
+
+**LGPD:** a cópia aumenta o que hml guarda — agora foto de pedido médico e áudio
+de paciente real, não só texto. Decisão do Michel em 19/09, com hml atrás de
+basic auth e canais desativados.
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces; backend **1100
+testes verdes** (1 novo).

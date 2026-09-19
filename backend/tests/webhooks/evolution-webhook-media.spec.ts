@@ -9,10 +9,12 @@
  * (`message.imageMessage.base64`) como contrato, para pegar regressao no
  * parser mesmo antes dessa verificacao.
  */
+import { rm } from 'node:fs/promises';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { makeWebhookModule } from '../../src/controllers/webhook.routes.js';
 import { mediaModule } from '../../src/controllers/media.routes.js';
 import { evolutionInstanceName } from '../../src/lib/evolution-client.js';
+import { mediaFilePath } from '../../src/lib/media-storage.js';
 import { createInMemoryQueue } from '../../src/lib/queue.js';
 import { MAX_MEDIA_BYTES } from '../../src/services/media.service.js';
 import {
@@ -139,5 +141,55 @@ describe('POST /webhooks/evolution/:tenant — mídia de entrada (§4.2)', () =>
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ received: true });
     expect(await countMessages(tenant.id)).toBe(0);
+  });
+
+  it('linha no banco com arquivo fora do disco responde 404, nao 500', async () => {
+    // Caso real de homologacao: o dump de producao traz `message_media`, mas
+    // o volume de midia e proprio do ambiente e nao vem junto. Antes disso o
+    // ENOENT subia como `http.unhandled_error` e virava 500 na cara do
+    // atendente, com stack no log — quando o honesto e "esse arquivo sumiu".
+    const tenant = await createTenant({ slug: 'lab-evo-midia-sumida' });
+    slugToId.set('lab-evo-midia-sumida', tenant.id);
+
+    await app.agent
+      .post(`${WEBHOOK}/lab-evo-midia-sumida`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send({
+        event: 'MESSAGES_UPSERT',
+        instance: evolutionInstanceName(tenant.id),
+        data: {
+          key: { remoteJid: '5548999997777@s.whatsapp.net', id: 'EVO-MEDIA-3' },
+          message: {
+            imageMessage: {
+              mimetype: 'image/jpeg',
+              base64: Buffer.from('some para o teste').toString('base64'),
+            },
+          },
+        },
+      })
+      .expect(200);
+
+    const db = await getTestDb();
+    const row = await db.withoutTenant((tx) =>
+      tx.query<{ attachment_url: string }>(
+        `SELECT attachment_url FROM messages WHERE tenant_id = $1`,
+        [tenant.id],
+      ),
+    );
+    const mediaId = row.rows[0]!.attachment_url.split('/').pop()!;
+    await rm(mediaFilePath(mediaId));
+
+    const admin = await createUser({ tenantId: tenant.id, role: 'admin', name: 'Admin' });
+    const token = signAccessToken({
+      userId: admin.id,
+      tenantId: admin.tenantId,
+      role: admin.role,
+      discountLimit: admin.discountLimit,
+    });
+
+    await app.agent
+      .get(`/api/v1/media/${mediaId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(404);
   });
 });

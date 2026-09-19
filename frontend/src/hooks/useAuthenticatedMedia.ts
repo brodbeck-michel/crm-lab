@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { fetchAuthenticatedBlob, resolveMediaUrl } from '@/api';
 
-export interface UseAuthenticatedImageResult {
+export interface UseAuthenticatedMediaResult {
   /** `object URL` do blob já carregado, ou `null` enquanto carrega/em erro. */
   objectUrl: string | null;
   isLoading: boolean;
@@ -9,15 +9,15 @@ export interface UseAuthenticatedImageResult {
 }
 
 /**
- * Carrega uma imagem servida por endpoint AUTENTICADO (`GET /media/:id`) como
- * `object URL`, para usar em `<img src>`/`<a href>` — que nunca mandam
- * `Authorization` sozinhos (CRMLAB-15).
+ * Carrega uma mídia servida por endpoint AUTENTICADO (`GET /media/:id`) como
+ * `object URL`, para usar em `<img src>`/`<audio src>`/`<a href>` — que nunca
+ * mandam `Authorization` sozinhos (CRMLAB-15, CRMLAB-2).
  *
  * `url: null` (ex. lightbox fechado) não busca nada. Cada troca de URL revoga
  * o object URL anterior — sem isso o blob fica preso na memória do browser
  * pelo resto da sessão.
  */
-export function useAuthenticatedImage(url: string | null): UseAuthenticatedImageResult {
+export function useAuthenticatedMedia(url: string | null): UseAuthenticatedMediaResult {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [isLoading, setLoading] = useState(url !== null);
   const [isError, setError] = useState(false);

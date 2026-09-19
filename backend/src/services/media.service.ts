@@ -83,11 +83,20 @@ export class MediaService {
     await this.repository.attachToMessage(tenantId, id, messageId);
   }
 
-  /** `GET /media/:id`. `null` = mídia inexistente OU de outro tenant (RLS). */
+  /**
+   * `GET /media/:id`. `null` = mídia inexistente, de outro tenant (RLS) OU com
+   * a linha no banco e o arquivo fora do disco — caso real em homologação, que
+   * nasce de um dump de produção sem o volume de mídia junto. Arquivo ausente
+   * é 404 com log, nunca 500: o dado sumiu, o servidor não quebrou.
+   */
   async read(tenantId: string, id: string): Promise<ReadMedia | null> {
     const row = await this.repository.findById(tenantId, id);
     if (!row) return null;
     const buffer = await readMediaFile(id);
+    if (!buffer) {
+      logger.warn('media.file_missing', { tenantId, id, fileName: row.fileName });
+      return null;
+    }
     return { buffer, mimeType: row.mimeType, fileName: row.fileName };
   }
 

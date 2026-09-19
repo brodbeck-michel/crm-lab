@@ -133,7 +133,7 @@ export function resolveMediaUrl(url: string): string {
  *
  * `<img src>`/`<a href>` crus nunca mandam `Authorization`: só servem para URL
  * pública. Quem precisa exibir mídia protegida busca aqui e usa
- * `URL.createObjectURL(blob)` como `src` (ver `useAuthenticatedImage`).
+ * `URL.createObjectURL(blob)` como `src` (ver `useAuthenticatedMedia`).
  */
 export async function fetchAuthenticatedBlob(url: string): Promise<Blob> {
   const token = bridge.getAccessToken();

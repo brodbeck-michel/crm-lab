@@ -2,8 +2,9 @@ import { useState } from 'react';
 import type { Message, SenderType } from '@crm-lab/shared';
 import { cn } from '@/components/ui';
 import { resolveMediaUrl } from '@/api';
-import { useAuthenticatedImage } from '@/hooks';
+import { useAuthenticatedMedia } from '@/hooks';
 import { DateDisplay, ImageLightbox } from '@/components/shared';
+import { AudioMessage } from './AudioMessage';
 
 /**
  * MessageBubble — COMPONENTS.md (`conversation/`) + DESIGN_TOKENS.md
@@ -64,12 +65,13 @@ export function MessageBubble({
 }: MessageBubbleProps) {
   const isSystem = type === 'system';
   const isImage = message.messageType === 'image' && Boolean(message.attachmentUrl);
+  const isAudio = message.messageType === 'audio' && Boolean(message.attachmentUrl);
   const [lightboxOpen, setLightboxOpen] = useState(false);
 
   // `GET /media/:id` exige Authorization (requireAuth()) — um <img src> cru
   // nunca manda esse header, por isso a imagem sempre vinha em branco/401.
   // O hook busca autenticado e devolve um object URL utilizável em <img>.
-  const { objectUrl: imageUrl, isLoading: imageLoading } = useAuthenticatedImage(
+  const { objectUrl: imageUrl, isLoading: imageLoading } = useAuthenticatedMedia(
     isImage ? message.attachmentUrl : null,
   );
 
@@ -107,7 +109,9 @@ export function MessageBubble({
           </span>
         ))}
 
-      {message.attachmentUrl && !isImage && (
+      {isAudio && message.attachmentUrl && <AudioMessage url={message.attachmentUrl} />}
+
+      {message.attachmentUrl && !isImage && !isAudio && (
         <a
           href={resolveMediaUrl(message.attachmentUrl)}
           target="_blank"

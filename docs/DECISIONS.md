@@ -1768,6 +1768,55 @@ D-131 — só ele passou a ser editável; `insuranceId` segue imutável).
 Frontend: `ProposalModal.tsx` ganha modo de edição (itens + desconto + médico solicitante),
 `DiscountSection.tsx` deixa de ficar `readOnly` hardcoded.
 
+### D-135: `exceljs` mantido — troca por `xlsx` (SheetJS) fica como recomendação, não executada (CRMLAB-37)
+**Decisão:** `exceljs` (`^4.4.0`, backend) continua em uso. Não foi trocado por `xlsx` (já
+instalado no frontend via tarball da SheetJS, `frontend/package.json`) nem por parsing manual
+do `.xlsx`, apesar de `exceljs` trazer `unzipper@0.10.14` (antigo) como transitiva.
+**Motivo:** o único uso de `exceljs` no repo é `backend/src/lib/lis-spreadsheet.ts`
+(`parseLisSpreadsheet`) — leitura de planilha do LIS para importar orçamentos, ~25 linhas de
+API do ExcelJS (`new Workbook()`, `workbook.xlsx.load(buffer)`, `sheet.getRow`,
+`row.getCell(...).value`, `eachCell`). Migrar para `xlsx` é tecnicamente possível
+(`XLSX.read(buffer)` + `sheet_to_json`/acesso célula a célula cobrem o mesmo uso), mas o valor
+de célula que cada biblioteca devolve para datas/número não é garantidamente idêntico
+(`cellToDate`/`cellToNumber` em `lis-spreadsheet.ts` já tiveram dois bugs de fuso/soma
+documentados em D-110/D-078/D-124) — e a soma de dinheiro do LIS é dado real de laboratório, não
+tolera regressão silenciosa. `npm audit --omit=dev` de hoje mostra o `uuid`/`exceljs` como
+**moderate**, não high/critical (ver D-136): não há urgência de segurança que justifique o
+risco de reescrever um parser financeiro sem um card próprio e sem re-passar as ~20 planilhas
+de referência do FluxoLab pelo novo caminho.
+**Recomendação para card futuro (não deste):** abrir um card dedicado (fora da Onda A) para
+migrar `parseLisSpreadsheet` para `xlsx`. Estimativa: 0,5–1 dia — reescrever a função (pequena),
+mas rodar TODA a suíte de `backend/tests/lis/*.spec.ts` (260+122 linhas, cobre aliases de
+cabeçalho, datas por componente, PDF disfarçado, planilha vazia) mais o E2E
+`flow-17-lis-import-results.spec.ts` contra o novo parser, e idealmente confirmar contra uma
+planilha real do LIS antes de trocar em produção. Alternativa mais barata: manter `exceljs` e
+apenas monitorar advisories futuros do `unzipper` via o job `security` do CI — hoje ele não
+aparece porque a vulnerabilidade transitiva reportada é do `uuid`, não do `unzipper`.
+**Impacto:** nenhum arquivo de código mudou por esta decisão. Registrado aqui para não ser
+reaberto como "esquecido" — é escolha deliberada, não pendência técnica.
+
+### D-136: `npm audit` funciona neste repo — a suposição de erro 400 não se confirmou (CRMLAB-37)
+**Decisão:** o job `security` do CI (`.github/workflows/ci.yml`) usa `npm audit --omit=dev
+--audit-level=high` direto, em vez de `google/osv-scanner-action` como o escopo original do
+card previa.
+**Motivo:** o card partia da premissa de que `npm audit` quebra com `400 Invalid package tree`
+porque o `xlsx` do frontend é instalado por URL/tarball da SheetJS (fora do registry do npm), e
+por isso pedia `osv-scanner` (lê o `package-lock.json` direto, sem depender do registry).
+Testado antes de escrever o job (19/09/2026, `npm --version` 10.9.8, Node 22): `npm audit`,
+`npm audit --omit=dev` e `npm audit --omit=dev --audit-level=high` rodaram normalmente, sem
+erro 400, contra o `package-lock.json` atual (que já tem o `xlsx@0.20.3` resolvido por URL desde
+antes deste card). Resultado real: 7 moderate em produção (`qs`, `react-router`, `uuid` via
+`exceljs`), 0 high/critical — `--audit-level=high` sai com `exit=0`, como o job precisa.
+Não dá para descartar que o erro apareça em outro ambiente (proxy corporativo, mudança futura
+do registry, ou uma versão de npm diferente da testada aqui) — é exatamente o tipo de falha que
+`osv-scanner` evitaria por não depender do registry do npm para resolver a árvore. Optou-se por
+`npm audit` agora por ser mais simples (nenhuma Action de terceiro nova, sintaxe já
+comprovadamente correta neste ambiente) e por já resolver o critério de aceite do card (falhar
+o PR em high/critical). Se o `security` job passar a falhar com `400`/erro de registry em
+produção do CI (não reproduzido aqui), trocar para `osv-scanner` é a correção recomendada — não
+precisa de novo card, é o mesmo job.
+**Impacto:** `.github/workflows/ci.yml` (job `security`, novo). Nenhuma dependência nova.
+
 ## Template para novas decisões
 
 ```

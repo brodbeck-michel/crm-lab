@@ -20,7 +20,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1 — dependencias completas (dev incluidas) para compilar
 # ---------------------------------------------------------------------------
-FROM node:22-alpine AS deps
+FROM node:25-alpine AS deps
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -50,7 +50,7 @@ RUN npm run build --workspace shared \
 # ---------------------------------------------------------------------------
 # Stage 3 — dependencias apenas de producao
 # ---------------------------------------------------------------------------
-FROM node:22-alpine AS prod-deps
+FROM node:25-alpine AS prod-deps
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -66,7 +66,7 @@ RUN --mount=type=cache,target=/root/.npm \
 # ---------------------------------------------------------------------------
 # Stage 4 — runtime
 # ---------------------------------------------------------------------------
-FROM node:22-alpine AS runtime
+FROM node:25-alpine AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production \

@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@crm-lab/shared": "*",
-    "@tanstack/react-query": "^5.62.7",
+    "@tanstack/react-query": "^5.103.1",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
     "react": "^18.3.1",

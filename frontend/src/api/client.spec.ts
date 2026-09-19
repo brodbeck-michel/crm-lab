@@ -5,6 +5,7 @@ import {
   isApiError,
   request,
   resetApiClient,
+  resolveMediaUrl,
   setSessionBridge,
   setUnauthenticatedHandler,
 } from './client';
@@ -264,5 +265,41 @@ describe('client — interceptor de refresh', () => {
 
     expect(error.code).toBe('INVALID_CREDENTIALS');
     expect(calls.filter((c) => c.url.includes('/auth/refresh'))).toHaveLength(0);
+  });
+});
+
+/**
+ * `resolveMediaUrl` — regressão do crash "Invalid base URL".
+ *
+ * O build de produção usa `VITE_API_URL=/api/v1` (relativa), e `new URL` só
+ * aceita base ABSOLUTA: abrir uma conversa com anexo derrubava a tela inteira.
+ * Em dev a variável é absoluta, então nenhum teste até aqui tocava o caso que
+ * quebra — por isso este bloco cobre os DOIS formatos de base.
+ */
+describe('resolveMediaUrl', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('base RELATIVA (build de produção) resolve no origin da janela', () => {
+    vi.stubEnv('VITE_API_URL', '/api/v1');
+
+    expect(resolveMediaUrl('/api/v1/media/abc')).toBe(
+      `${window.location.origin}/api/v1/media/abc`,
+    );
+  });
+
+  it('base ABSOLUTA (dev, backend em outra porta) troca só o origin', () => {
+    vi.stubEnv('VITE_API_URL', 'http://localhost:3300/api/v1');
+
+    expect(resolveMediaUrl('/api/v1/media/abc')).toBe('http://localhost:3300/api/v1/media/abc');
+  });
+
+  it('URL já absoluta passa intacta', () => {
+    vi.stubEnv('VITE_API_URL', '/api/v1');
+
+    expect(resolveMediaUrl('https://cdn.exemplo.com/foto.png')).toBe(
+      'https://cdn.exemplo.com/foto.png',
+    );
   });
 });

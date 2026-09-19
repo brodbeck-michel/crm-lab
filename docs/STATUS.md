@@ -1168,3 +1168,46 @@ verdes (3 novos: `paidValue` por convênio, ordenação pelo recebido, convênio
 sem emissão no período, série mensal separando as três janelas); frontend 1047
 verdes (1 novo: evolução na tela + legenda do donut em cima do recebido). Docs no
 mesmo commit: `API_CONTRACTS.md` §5c/§10.2, `PAGES.md` §14, `shared/types`.
+
+## 2026-09-19 — CRMLAB-19: anexo derrubava a tela em todo build de produção ✅
+
+Abrir qualquer conversa com anexo quebrava a rota inteira com
+`TypeError: Invalid base URL`. Não era a bolha da mensagem falhando: o erro subia
+durante a renderização e o React derrubava a tela.
+
+**Causa.** `resolveMediaUrl` (`frontend/src/api/client.ts`) monta a URL do anexo
+com `new URL(caminho, base)`, que **exige base absoluta**. No build de produção a
+base é **relativa** — `VITE_API_URL=/api/v1` (`frontend/Dockerfile:32`,
+`docker-compose.prod.yml:140`) — e `new URL('/api/v1/media/<id>', '/api/v1')`
+lança. A base é relativa de propósito: ali o nginx serve SPA e API no mesmo
+origin, e um origin fixo no bundle quebraria em qualquer outro domínio. O defeito
+estava em quem consome a base.
+
+**Por que passou.** Em dev `VITE_API_URL` é absoluta (`frontend/.env`), então só
+o build real falhava — e a função não tinha **nenhum** teste. Atingia produção
+igual: a próxima foto de paciente quebraria a tela do atendente.
+
+**Correção.** Base relativa significa "mesmo origin", que é o que o nginx faz —
+então `window.location.origin` é a base CORRETA, não um fallback. Três testes de
+regressão em `client.spec.ts` (base relativa, base absoluta, URL já absoluta),
+verificados contra o código antigo: falham com `Invalid base URL: /api/v1`.
+
+**Como apareceu.** Montando `scripts/simula-webhook-evolution.sh`, que simula o
+webhook do Evolution em homologação — imagem, PDF, áudio, vídeo e os descartes —
+**sem parear número de WhatsApp**. Funciona porque a mídia do gateway vem em
+base64 no próprio corpo do webhook; o backend não baixa nada. O script posta de
+dentro do container do backend (mesma posição de rede do gateway, que não passa
+pelo nginx) e confere no BANCO, por `external_message_id` — o webhook responde
+200 sempre, por desenho anti-oráculo, então a resposta HTTP não prova nada.
+A primeira conversa com anexo que ele gerou derrubou a tela.
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces; frontend 1050 testes
+verdes (3 novos). Simulação: 10/10 casos passando em hml.
+
+**Fica registrado, fora do escopo deste card:** o nginx do frontend não define
+`client_max_body_size`, então vale o default de **1 MiB** — medido em hml, 2 MB
+no `/api/` devolve 413. O backend aceita 25 MB (`app.ts:118`) e o `MediaService`
+15 MiB, mas a borda corta antes. Atinge o ENVIO de anexo
+(`Attendance/index.tsx:168`) e a importação de planilha do LIS
+(`lis-import.routes.ts:62`) acima de ~750 KB, porque base64 infla ~33%. O
+RECEBIMENTO não sofre: o gateway posta direto no backend.

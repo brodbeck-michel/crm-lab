@@ -112,7 +112,19 @@ export function apiBaseUrl(): string {
  */
 export function resolveMediaUrl(url: string): string {
   if (/^https?:\/\//.test(url)) return url;
-  return new URL(url, apiBaseUrl()).toString();
+  // `new URL(caminho, base)` EXIGE base ABSOLUTA. Em produção `VITE_API_URL` é
+  // RELATIVA (`/api/v1` — `frontend/Dockerfile:32`), porque ali o nginx serve
+  // SPA e API no mesmo origin e um origin fixo no bundle quebraria em qualquer
+  // outro domínio. O resultado é que esta função lançava `Invalid base URL` em
+  // TODO build de produção, e o erro subia como crash da tela inteira: abrir
+  // uma conversa com anexo derrubava a rota. Passou despercebido porque em dev
+  // `VITE_API_URL` é absoluta (`frontend/.env`), então só o build real falha.
+  //
+  // Base relativa significa "mesmo origin", que é exatamente o que o nginx faz
+  // — então o origin da janela é a base correta, não um fallback.
+  const base = apiBaseUrl();
+  const origem = /^https?:\/\//.test(base) ? base : window.location.origin;
+  return new URL(url, origem).toString();
 }
 
 /**

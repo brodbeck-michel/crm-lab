@@ -1634,6 +1634,8 @@ Vai junto nesta versão:
 Minor, não patch: múltiplas funcionalidades novas de infraestrutura/observabilidade. Sem
 mudança de contrato de API nem de schema — nenhuma migração acompanha.
 
-**Pendente:** deploy em produção exige confirmação explícita separada, a cada vez, mesmo com
-o merge já aprovado (regra do plano da onda). `docs/superpowers/plans/2026-09-19-hardening-pos-auditoria.md`
-tem o passo a passo de deploy/rollback.
+**Pós-deploy (2026-09-19, ./scripts/deploy.sh a partir de `/opt/crm-lab`):** os 5 serviços
+`healthy`, `https://vitrocrm.cloud` em 200, `https://vitrocrm.cloud/api/v1/health` (CRMLAB-29,
+primeira vez com sonda honesta na borda) também em 200, nenhum log nível 50+ no backend no
+primeiro minuto. `docs/superpowers/plans/2026-09-19-hardening-pos-auditoria.md` tem o passo a
+passo de rollback (`IMAGE_TAG=<sha-anterior>`) se algo aparecer depois.

@@ -1,0 +1,13 @@
+[Unit]
+Description=Alerta de falha do backup do CRM Lab (%i)
+Documentation=file:///opt/crm-lab/docs/guides/DEPLOYMENT.md
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/opt/crm-lab
+# %i chega como o nome da unidade que falhou (`OnFailure=...@%n.service`), para
+# que o alerta diga O QUE falhou e o script leia o journal certo.
+ExecStart=/opt/crm-lab/scripts/backup-alerta.sh %i
+# Sem restart: se o proprio alerta falhar, insistir so enche o journal. O
+# script ja sai 0 sempre e registra em syslog o que nao conseguiu enviar.

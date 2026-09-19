@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'hardening/**']
   pull_request:
-    branches: [main]
+    branches: [main, 'hardening/**']
   workflow_dispatch:
 
 # Um run por ref: push novo cancela o anterior que ainda estiver rodando.
@@ -51,7 +51,33 @@ jobs:
         run: npm run test:frontend
 
   # ---------------------------------------------------------------------------
-  # 2. Build — prova que os tres workspaces COMPILAM de verdade, nao so que
+  # 2. Vulnerabilidades — `npm audit` contra as dependencias de PRODUCAO
+  #    (`--omit=dev`: um dev-dep vulneravel nao vai para a imagem publicada).
+  #    `--audit-level=high` so quebra o CI em high/critical; moderate/low
+  #    aparecem no log mas nao bloqueiam o PR (ver docs/DECISIONS.md D-135:
+  #    a suposicao original de que `npm audit` quebra com 400 por causa do
+  #    `xlsx` instalado por URL nao se confirmou — testado antes de escrever
+  #    este job).
+  # ---------------------------------------------------------------------------
+  security:
+    name: Vulnerabilidades (npm audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: npm audit (producao, falha em high/critical)
+        run: npm audit --omit=dev --audit-level=high
+
+  # ---------------------------------------------------------------------------
+  # 3. Build — prova que os tres workspaces COMPILAM de verdade, nao so que
   #    passam no typecheck. `npm run build` = shared -> backend (tsc emit)
   #    -> frontend (vite build). O passo de verificacao existe porque um build
   #    que "passa" sem emitir arquivo nenhum e um falso verde.
@@ -94,7 +120,7 @@ jobs:
           retention-days: 3
 
   # ---------------------------------------------------------------------------
-  # 3. Imagens de producao — valida que os Dockerfiles constroem. Nao publica
+  # 4. Imagens de producao — valida que os Dockerfiles constroem. Nao publica
   #    em registry (nenhuma credencial no CI); so garante que o build nao quebra.
   # ---------------------------------------------------------------------------
   docker:
@@ -143,7 +169,7 @@ jobs:
           echo "Imagens rodam como usuario nao-root."
 
   # ---------------------------------------------------------------------------
-  # 4. E2E — Postgres 16 de verdade (o unico lugar do CI que usa banco externo),
+  # 5. E2E — Postgres 16 de verdade (o unico lugar do CI que usa banco externo),
   #    migracoes + seed fixo, API e UI subindo como em DEVELOPMENT.md, e a suite
   #    Playwright rodando contra elas.
   #

@@ -1,15 +1,24 @@
 [Unit]
-Description=Backup dos bancos do CRM Lab (crm_lab + evolution)
+Description=Backup dos bancos do CRM Lab (crm_lab + evolution) + copia externa cifrada
 Documentation=file:///opt/crm-lab/docs/guides/DEPLOYMENT.md
 # Sem Postgres de pe nao ha o que dumpar; o timer tenta de novo no proximo ciclo.
 After=docker.service
 Requires=docker.service
+# Ate 2026-09-19 uma falha aqui era silenciosa: o timer marcava `failed` e so
+# quem rodasse `journalctl` descobria. `%n` passa o nome desta unidade para o
+# alerta, que le o journal dela e manda o contexto junto.
+OnFailure=crm-lab-backup-alerta@%n.service
 
 [Service]
 Type=oneshot
 User=deploy
 WorkingDirectory=/opt/crm-lab
 ExecStart=/opt/crm-lab/scripts/backup-postgres.sh
+# Segundo ExecStart, nao um service separado: o systemd roda em ordem e PARA
+# no primeiro que falhar. Assim o dump local (ultima linha de defesa) sempre
+# vem antes, e uma queda de rede no envio externo nunca impede o backup local.
+# Os dois na mesma unidade tambem dao um unico OnFailure para os dois casos.
+ExecStart=/opt/crm-lab/scripts/backup-offsite.sh
 # O dump compete com o atendimento pelo mesmo Postgres de 2 vCPU: nice/ionice
 # mantem o backup como cidadao de segunda classe.
 Nice=10

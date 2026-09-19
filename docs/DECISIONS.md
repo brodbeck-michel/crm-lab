@@ -1768,6 +1768,106 @@ D-131 — só ele passou a ser editável; `insuranceId` segue imutável).
 Frontend: `ProposalModal.tsx` ganha modo de edição (itens + desconto + médico solicitante),
 `DiscountSection.tsx` deixa de ficar `readOnly` hardcoded.
 
+### D-135: `exceljs` mantido — troca por `xlsx` (SheetJS) fica como recomendação, não executada (CRMLAB-37)
+**Decisão:** `exceljs` (`^4.4.0`, backend) continua em uso. Não foi trocado por `xlsx` (já
+instalado no frontend via tarball da SheetJS, `frontend/package.json`) nem por parsing manual
+do `.xlsx`, apesar de `exceljs` trazer `unzipper@0.10.14` (antigo) como transitiva.
+**Motivo:** o único uso de `exceljs` no repo é `backend/src/lib/lis-spreadsheet.ts`
+(`parseLisSpreadsheet`) — leitura de planilha do LIS para importar orçamentos, ~25 linhas de
+API do ExcelJS (`new Workbook()`, `workbook.xlsx.load(buffer)`, `sheet.getRow`,
+`row.getCell(...).value`, `eachCell`). Migrar para `xlsx` é tecnicamente possível
+(`XLSX.read(buffer)` + `sheet_to_json`/acesso célula a célula cobrem o mesmo uso), mas o valor
+de célula que cada biblioteca devolve para datas/número não é garantidamente idêntico
+(`cellToDate`/`cellToNumber` em `lis-spreadsheet.ts` já tiveram dois bugs de fuso/soma
+documentados em D-110/D-078/D-124) — e a soma de dinheiro do LIS é dado real de laboratório, não
+tolera regressão silenciosa. `npm audit --omit=dev` de hoje mostra o `uuid`/`exceljs` como
+**moderate**, não high/critical (ver D-136): não há urgência de segurança que justifique o
+risco de reescrever um parser financeiro sem um card próprio e sem re-passar as ~20 planilhas
+de referência do FluxoLab pelo novo caminho.
+**Recomendação para card futuro (não deste):** abrir um card dedicado (fora da Onda A) para
+migrar `parseLisSpreadsheet` para `xlsx`. Estimativa: 0,5–1 dia — reescrever a função (pequena),
+mas rodar TODA a suíte de `backend/tests/lis/*.spec.ts` (260+122 linhas, cobre aliases de
+cabeçalho, datas por componente, PDF disfarçado, planilha vazia) mais o E2E
+`flow-17-lis-import-results.spec.ts` contra o novo parser, e idealmente confirmar contra uma
+planilha real do LIS antes de trocar em produção. Alternativa mais barata: manter `exceljs` e
+apenas monitorar advisories futuros do `unzipper` via o job `security` do CI — hoje ele não
+aparece porque a vulnerabilidade transitiva reportada é do `uuid`, não do `unzipper`.
+**Impacto:** nenhum arquivo de código mudou por esta decisão. Registrado aqui para não ser
+reaberto como "esquecido" — é escolha deliberada, não pendência técnica.
+
+### D-136: `npm audit` funciona neste repo — a suposição de erro 400 não se confirmou (CRMLAB-37)
+**Decisão:** o job `security` do CI (`.github/workflows/ci.yml`) usa `npm audit --omit=dev
+--audit-level=high` direto, em vez de `google/osv-scanner-action` como o escopo original do
+card previa.
+**Motivo:** o card partia da premissa de que `npm audit` quebra com `400 Invalid package tree`
+porque o `xlsx` do frontend é instalado por URL/tarball da SheetJS (fora do registry do npm), e
+por isso pedia `osv-scanner` (lê o `package-lock.json` direto, sem depender do registry).
+Testado antes de escrever o job (19/09/2026, `npm --version` 10.9.8, Node 22): `npm audit`,
+`npm audit --omit=dev` e `npm audit --omit=dev --audit-level=high` rodaram normalmente, sem
+erro 400, contra o `package-lock.json` atual (que já tem o `xlsx@0.20.3` resolvido por URL desde
+antes deste card). Resultado real: 7 moderate em produção (`qs`, `react-router`, `uuid` via
+`exceljs`), 0 high/critical — `--audit-level=high` sai com `exit=0`, como o job precisa.
+Não dá para descartar que o erro apareça em outro ambiente (proxy corporativo, mudança futura
+do registry, ou uma versão de npm diferente da testada aqui) — é exatamente o tipo de falha que
+`osv-scanner` evitaria por não depender do registry do npm para resolver a árvore. Optou-se por
+`npm audit` agora por ser mais simples (nenhuma Action de terceiro nova, sintaxe já
+comprovadamente correta neste ambiente) e por já resolver o critério de aceite do card (falhar
+o PR em high/critical). Se o `security` job passar a falhar com `400`/erro de registry em
+produção do CI (não reproduzido aqui), trocar para `osv-scanner` é a correção recomendada — não
+precisa de novo card, é o mesmo job.
+**Impacto:** `.github/workflows/ci.yml` (job `security`, novo). Nenhuma dependência nova.
+
+### D-137: Pool do `pg` com listener de `error`, timeouts de sessão e timeout de `fetch` para os gateways (CRMLAB-30)
+**Decisão:** `PgDriver` ganha `pool.on('error', ...)` (loga e não derruba o processo — o `pg`
+já descarta a conexão quebrada sozinho) e um listener equivalente por conexão dentro de
+`transaction()`, porque o `pg-pool` remove o listener do pool exatamente durante o checkout
+(o intervalo em que uma transação fica aberta). O pool passa a fixar
+`idleTimeoutMillis=30s`, `connectionTimeoutMillis=5s` e, no pacote de startup,
+`statement_timeout=30s` + `idle_in_transaction_session_timeout=60s` (ambos em 0/sem limite
+antes, confirmado na VPS em 19/09). As migrações usam `SET LOCAL statement_timeout=0`
+(`db/statement-timeout.ts`) para se isentar do limite de 30 s: um `CREATE INDEX`/`ALTER TABLE`
+longo é legítimo e cortá-lo no meio de um deploy é pior que esperar. Import LIS e export
+Excel/PDF foram revisados e **não** precisam de isenção: o import faz um upsert por statement
+dentro de um loop de chunks (nenhum statement individual passa de 30 s, mesmo que o total
+passe) e não existe export que leia/escreva no banco (o `exceljs` só lê planilha de entrada,
+fora do banco). `evolution-client.ts` e `whatsapp.service.ts` passam a chamar `fetch` com
+`signal: AbortSignal.timeout(...)` via o wrapper `lib/fetch-timeout.ts`, que cobre tanto a
+resposta não chegar quanto o corpo nunca fechar (`fetch` resolve só nos headers). Timeout vira
+`GatewayTimeoutError` (`retryable = true`), tratado pela fila (`lib/queue.ts`) como qualquer
+outra falha — 10 s para Evolution (controle/texto) e Meta, 15 s para mídia do Evolution
+(corpo maior, ~20 MB em base64); orçamento de `3 tentativas × timeout + backoff` fica sempre
+abaixo dos 60 s do `proxy_read_timeout` do nginx.
+**Motivo:** incidente de 17/09 — o Postgres piscou (ou o gateway Evolution ficou "vivo mas
+mudo") e o processo caiu inteiro: sem listener de `error` no pool, um `EventEmitter` que emite
+`error` sem ouvinte vira exceção não capturada; sem timeout no `fetch`, o handler ficava preso
+segurando uma transação e, com ela, uma das 10 conexões do pool, até esgotar o pool inteiro.
+Os dois defeitos derrubam TODOS os tenants de uma vez — não é isolado por request.
+**Impacto:** `backend/src/db/pg-driver.ts`, `backend/src/db/statement-timeout.ts` (novo),
+`backend/src/db/migrator.ts`, `backend/src/db/index.ts`, `backend/src/lib/fetch-timeout.ts`
+(novo), `backend/src/lib/evolution-client.ts`, `backend/src/services/whatsapp.service.ts`.
+Testes novos: `backend/tests/db/pg-pool-resilience.spec.ts`,
+`backend/tests/whatsapp/gateway-timeout.spec.ts`. Os testes de caos reais (`docker restart`
+do Postgres, `docker pause` do Evolution) ficam para a validação em homologação — não rodam
+neste ambiente. **Circuit breaker no cliente Evolution foi avaliado e descartado nesta rodada**:
+o `AbortSignal.timeout` + retry exponencial da fila já limitam o dano de uma falha isolada a
+uma tentativa de ~10-15 s, e o volume de envio por tenant é baixo o bastante para que um estado
+compartilhado de "pausa de 30 s" ganhe pouco sobre o que os timeouts já resolvem, ao custo de
+mais um componente com estado para depurar. Reavaliar se o padrão de falha em homologação/
+produção mostrar rajadas de timeout que o retry sozinho não absorve bem.
+
+### D-138: `unhandledRejection`/`uncaughtException` derrubam o processo pelo MESMO shutdown do SIGTERM (CRMLAB-30)
+**Decisão:** `main.ts` ganha `process.on('unhandledRejection', ...)` e
+`process.on('uncaughtException', ...)`, ambos logando `event: 'process.fatal'` (com a origem
+em `source`) e chamando a mesma função `shutdown()` já usada por SIGTERM/SIGINT — que fecha
+WebSocket, cache e pool antes de sair — com `exitCode = 1` para diferenciar, no
+`docker inspect`, queda de parada pedida.
+**Motivo:** hoje as duas situações derrubam o processo sem log nenhum (Node 22) ou de forma
+descoordenada; um processo que abandonou uma promise/exceção no meio não está mais confiável
+(pode ter deixado transação aberta, lock preso), e servir novas requisições nesse estado é
+pior que sair de forma controlada. Pedido explícito do card: mesmo tratamento para as duas,
+sem meio-termo de "loga e continua" para `unhandledRejection`.
+**Impacto:** `backend/src/main.ts` (função `onFatal`, reaproveitando `shutdown`).
+
 ## Template para novas decisões
 
 ```

@@ -1,0 +1,17 @@
+[Unit]
+Description=Varredura de saude do CRM Lab a cada 5 minutos
+
+[Timer]
+# 2 min depois do boot: pega a VPS que reiniciou de madrugada e voltou com um
+# container fora.
+OnBootSec=2min
+OnUnitActiveSec=5min
+# O monitor so LE; 30s de dispersao evitam que ele bata no health exatamente
+# junto com o backup ou com o apt-daily.
+RandomizedDelaySec=30s
+# Varredura perdida com o host desligado nao interessa: a proxima ja mede o
+# estado atual.
+Persistent=false
+
+[Install]
+WantedBy=timers.target

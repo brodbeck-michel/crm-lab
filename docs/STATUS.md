@@ -251,6 +251,17 @@ completa, `flow-17-lis-import-results` + `flow-18-sales`, CRMLAB-5). **Onda 10 f
 
 ---
 
+## Onda A — Hardening pós-auditoria (epic CRMLAB-27) 🔄 (em andamento)
+
+Plano: `docs/superpowers/plans/2026-09-19-hardening-pos-auditoria.md`. Branch de integração:
+`hardening/onda-a`. Cards: CRMLAB-20, 28, 29, 30, 37.
+
+| Card | Domínio | Status | Agente | Notas |
+|------|---------|--------|--------|-------|
+| CRMLAB-30 — Backend cai inteiro se o Postgres piscar | kernel | ✅ 2026-09-19 | Agent-Kernel-30 | `PgDriver` (`db/pg-driver.ts`) ganha `pool.on('error', ...)` + listener por conexão dentro de `transaction()` (o `pg-pool` remove o do pool durante o checkout — janela real, é onde o incidente de 17/09 acontecia), `idleTimeoutMillis=30s`, `connectionTimeoutMillis=5s` e, no pacote de startup, `statement_timeout=30s` + `idle_in_transaction_session_timeout=60s` (os dois estavam em 0 na VPS). Migrações usam `SET LOCAL statement_timeout=0` (`db/statement-timeout.ts`, novo) — import LIS e export Excel/PDF foram revisados e **não** precisam de isenção (upsert de 1 statement por chunk; export não toca o banco). `main.ts` ganha `process.on('unhandledRejection'/'uncaughtException')`, ambos logando `event: 'process.fatal'` e reusando o MESMO `shutdown()` do SIGTERM (`exitCode=1`). `evolution-client.ts` e `whatsapp.service.ts` chamam `fetch` com `AbortSignal.timeout` via `lib/fetch-timeout.ts` (novo) — cobre também o corpo nunca fechar, não só a resposta não chegar; timeout vira `GatewayTimeoutError` (`retryable=true`), retentado pela fila existente sem caminho especial. Decisões em D-137/D-138. **Circuit breaker no cliente Evolution avaliado e descartado** nesta rodada: timeout + retry exponencial já limitam o dano por falha isolada, e o volume de envio por tenant não justifica mais um componente com estado (reavaliar se homologação/produção mostrar rajadas que o retry não absorva). Testes novos: `tests/db/pg-pool-resilience.spec.ts` (7), `tests/whatsapp/gateway-timeout.spec.ts` (7) — os testes de caos reais (`docker restart`/`docker pause`) ficam para a validação em homologação. `npm run typecheck` verde nos 4 workspaces; `npm run test:backend` verde: 77 arquivos / 1114 testes |
+
+---
+
 ## Mocks Ativos
 
 | Mock | Localização | Substituir quando | Registrado por |
@@ -1455,3 +1466,146 @@ Nada disto foi executado na VPS: o agente não tem acesso.
   `systemctl show -p Result,ExecMainExitTimestamp crm-lab-backup.service` já
   responde "o backup completo (local + externo) deu certo hoje?". Não criei
   arquivo de heartbeat para não colidir com o seu.
+
+---
+
+## 2026-09-19 — CRMLAB-29: monitoramento e health honesto (Onda A) ✅
+
+**Agente:** `Agent-Kernel-29` · branch `feature/CRMLAB-29-monitoramento-health` → `hardening/onda-a`
+
+| Tarefa | Status |
+|---|---|
+| Health real do backend (`SELECT 1` + `PING`, 503 quando cai) | ✅ 2026-09-19 |
+| Liveness separada para o healthcheck do container | ✅ 2026-09-19 |
+| `deploy.sh` apontado para o health real | ✅ 2026-09-19 |
+| Script de saúde dos containers / disco / reboot | ✅ 2026-09-19 |
+| Notificador plugável por webhook | ✅ 2026-09-19 |
+| Heartbeat do backup (mecanismo + doc do lado do kernel) | ✅ 2026-09-19 — falta a linha no `backup-postgres.sh` (pedido abaixo) |
+| Uptime externo (conta em serviço) | ⛔ do Michel — decisão e cadastro humanos |
+
+**O que estava errado.** Três sondas, três mentiras diferentes:
+`https://vitrocrm.cloud/healthz` é `return 200` do próprio nginx e nunca tocou
+o backend; `/health` pela internet devolvia o HTML da SPA com 200; e o
+`/health` interno respondia `ok` sem olhar Postgres nem Redis. Consequência
+medida: o `deploy.sh` declarava "no ar" com o backend morto.
+
+**O que existe agora.** `GET /api/v1/health` (readiness, passa pelo proxy
+`/api/`) faz `SELECT 1` no pool e `PING` no cache e responde **503 dizendo
+qual dependência caiu**; `GET /health` e `/health/live` continuam triviais
+(liveness), porque health que checa banco faz o orquestrador reiniciar o
+backend em loop por uma queda que não é dele. Resultado memoizado por 5 s,
+single-flight, timeout de 2 s por dependência, sem abrir transação, fora do
+rate limit.
+
+**Arquivos.** `backend/src/lib/health.ts` (novo), `backend/src/app.ts`,
+`backend/tests/kernel/health.spec.ts` (novo, 9 testes),
+`scripts/monitora-saude.sh` (novo), `scripts/lib/alerta.sh` (novo),
+`scripts/systemd/crm-lab-monitor.{service,timer}` (novos), `scripts/deploy.sh`,
+`nginx/frontend.conf` (**só** o bloco `location = /healthz`),
+`docs/guides/MONITORING.md` (novo), `docs/guides/CONVENTIONS.md`.
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces; `npm run
+test:backend` verde; `bash -n` + `shellcheck -x` nos scripts novos. Caos real
+(`docker stop` do Postgres) é de homologação, não daqui.
+
+### Pedidos do Agent-Kernel-29
+
+| De | Para | Pedido | Status |
+|----|------|--------|--------|
+| Agent-Kernel-29 | Agent-Infra-28 (CRMLAB-28) | **Heartbeat do backup** — `scripts/backup-postgres.sh` é seu. Duas linhas fecham o dead man's switch: `. "$(dirname "${BASH_SOURCE[0]}")/lib/alerta.sh"` no topo e `alerta_heartbeat backup-postgres` na última linha, **só no caminho de sucesso** (depois de `log "concluido"`). A função grava a marca datada em `/var/lib/crm-lab-monitor/` e, se `BACKUP_POSTGRES_HEARTBEAT_URL` estiver definida, faz o ping HTTP. Quem cobra a marca é o `monitora-saude.sh` (26 h). Enquanto a linha não existir, a verificação fica em silêncio de propósito. | ⬜ aberto |
+| Agent-Kernel-29 | Agent-Infra-28 (CRMLAB-28) | **Seção no `DEPLOYMENT.md`** (arquivo seu nesta onda): um parágrafo em "operação" remetendo a `docs/guides/MONITORING.md`, e a correção das duas linhas que hoje mandam checar `/healthz` (§ de verificação pós-deploy, ~linhas 183-185) — a sonda honesta é `GET /api/v1/health`. | ⬜ aberto |
+| Agent-Kernel-29 | Agent-Infra (compose) | **`healthcheck:` no serviço `backend`** do `docker-compose.prod.yml`, que hoje não tem nenhum: aponte para a **liveness** (`/health/live`), nunca para `/api/v1/health` — readiness no healthcheck do container faz uma queda do Postgres reiniciar o backend em loop. O compose não é do CRMLAB-29. | ⬜ aberto |
+| Agent-Kernel-29 | Agent-Docs | `docs/ARCHITECTURE.md` (~linha 100) descreve a ordem de middlewares como `GET /health (público) → /api/v1/<módulos>`. Hoje são três sondas: `/health`, `/health/live` e `/api/v1/health`, todas antes do rate limit. Não editei por estar fora do ownership desta onda. | ⬜ aberto |
+| Agent-Kernel-29 | Michel | **Número de WhatsApp / destino do alerta.** O notificador está pronto e plugável: o envio vai para `ALERT_WEBHOOK_URL` (+ `ALERT_WEBHOOK_TOKEN`), configurada em `/etc/crm-lab/monitor.env` na VPS. Sem a variável o monitor roda e registra tudo no journal, sem enviar nada — o card não ficou bloqueado por isso. Também falta a conta no serviço de uptime externo, que é o único capaz de cobrir "a VPS inteira sumiu". Opções comparadas em `MONITORING.md` §4. | ⬜ aberto |
+
+### 2026-09-19 — Correções pós-revisão de código (PR #21)
+
+| Achado | Correção |
+|---|---|
+| **Crítico.** `docker ps --filter health=unhealthy` / `status=exited` escaneavam o HOST INTEIRO, não só o projeto Compose do CRM Lab — homolog e prod rodam na mesma VPS como dois projetos separados (`crm-lab-prod`/`crm-lab-homolog`, ver `deploy.sh`), então um container quebrado em homolog disparava alerta genérico de "CRM Lab" e confundia quem está de plantão. | `scripts/monitora-saude.sh` agora exige `COMPOSE_PROJECT_NAME` (mesma variável que `deploy.sh` já usa com `docker compose -p`; normalmente vem do `.env` do ambiente) e filtra as duas chamadas de `docker ps` por `--filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME"`. O título do alerta agora leva `[nome-do-projeto]`. Documentado em `docs/guides/MONITORING.md` §3. |
+| **Alto.** `registra()` engolia silenciosamente falha de `mkdir`/escrita no `STATE_DIR` (`\|\| true`), e a instalação do diretório dependia de um `sudo install -d` manual — se o diretório sumisse (rebuild de VPS, limpeza, passo pulado), toda execução de 5 em 5 min virava alerta `critical` novo (288/dia), em silêncio total. | (1) `scripts/systemd/crm-lab-monitor.service` ganhou `StateDirectory=crm-lab-monitor`: o systemd cria/gerencia `/var/lib/crm-lab-monitor` sozinho, sem passo manual. (2) `registra()` e o `mkdir -p` inicial agora logam com `logger -p daemon.err -t crm-lab-monitor` (+ `alerta_log`) quando não conseguem gravar/apagar a marca de estado — sem abortar a varredura, só tornando o problema visível no journal. Documentado em `docs/guides/MONITORING.md` §3. |
+| Menor. `tr '\n' '; '` trunca o separador de 2 chars para 1 (`tr` ajusta SET2 ao tamanho de SET1) — nomes de containers saídos ficavam colados por `;` sem espaço. | Trocado por `paste -sd';' - \| sed 's/;/; /g'`. |
+| Menor. `HEARTBEAT_DIR` (`lib/alerta.sh`) e `STATE_DIR` (`monitora-saude.sh`) eram variáveis independentes que só por acaso apontavam para o mesmo default. | Extraída variável compartilhada `CRM_LAB_MONITOR_STATE_DIR` (default em `lib/alerta.sh`); `HEARTBEAT_DIR` e `STATE_DIR` agora caem para ela por padrão — mudar o caminho de estado é uma variável só. |
+
+**Pendências conhecidas, deixadas de propósito (fora de escopo desta correção):**
+- Chamada dupla de `curl` no health check do `deploy.sh` (uma com `-f` para status, outra sem para o corpo do 503) — funciona, mas é redundante; não mexido por baixa severidade.
+- Mensagem de erro do `deploy.sh` ainda diz "60s" no timeout do healthcheck pós-deploy, mas o loop é `30 × sleep 2` = na prática até 60s + tempo de cada request — texto desatualizado, sem risco funcional; não mexido para não tocar em código fora do escopo desta correção sem necessidade.
+
+**Verificação:** `bash -n` verde nos 3 scripts alterados (`monitora-saude.sh`, `lib/alerta.sh`, `deploy.sh`, este último não modificado mas revalidado); `shellcheck` não disponível no ambiente local. Nenhum arquivo de `backend/` tocado, então `npm run typecheck`/`test:backend` não se aplicam a esta correção.
+
+---
+
+## 2026-09-19 — CRMLAB-20 (Onda A): teto de corpo do nginx ✅
+
+`Agent-Infra-20`, branch `feature/CRMLAB-20-nginx-body-size`, worktree próprio.
+Recorte: só `nginx/frontend.conf`, no `location /api/`. O bloco
+`location = /healthz` é do CRMLAB-29 e não foi tocado.
+
+`client_max_body_size 25m;` no `location /api/`. O vhost não definia a
+diretiva, então valia o default de 1 MiB do nginx e o anexo acima de ~750 KB
+(base64 infla ~33%) morria num 413 cru da borda, antes de o backend poder
+responder o `MEDIA_TOO_LARGE` do catálogo. 25m espelha o
+`express.json({ limit: '25mb' })` de `backend/src/app.ts`, que já cobre os
+15 MiB por arquivo do `MediaService` — a borda passa a ser transporte, e o
+teto de negócio volta a ser o do app.
+
+Fica só no `/api/`: o resto do vhost serve estático e não recebe corpo. O
+`location /ws` não precisa — handshake de WebSocket não tem corpo e os frames
+não passam por `client_max_body_size`. O Caddy da borda também não precisa de
+nada: o padrão dele é não limitar corpo de requisição (limite só existe com
+`request_body max_size` explícito, que não está configurado). O Caddy mora na
+VPS, fora do repo, e não foi tocado.
+
+**Verificação:** `nginx -t` em container descartável
+(`nginx:1.27-alpine`, template renderizado pelo `envsubst` do entrypoint
+oficial, `API_UPSTREAM=http://127.0.0.1:3000`) — sintaxe ok. Não há teste
+automatizado de nginx no projeto; o teste de comportamento (upload grande de
+verdade) é em homologação, junto com os outros cards da Onda A.
+
+---
+
+## 2026-09-19 — CRMLAB-37: dependências vulneráveis + guarda de vulnerabilidade no CI ✅
+
+`Agent-Deps-37`, Onda A (`hardening/onda-a`, epic CRMLAB-27). Ownership: `package.json` dos
+workspaces, `package-lock.json`, `.github/`, `docs/guides/CONVENTIONS.md`.
+
+**4 commits `[deps]`/`[infra]`:**
+
+1. `bcryptjs` 2.4.3 → 3.0.3, `@types/bcryptjs` removido (tipos vêm no próprio pacote na 3.x).
+   Formato de hash (`$2a$`/`$2b$`) inalterado, sem migração de dados. Backend 1100/1100 verde.
+2. `jspdf` 2.5.2 → **4.2.1** (não `^3.0.2` como o card pedia) e `jspdf-autotable` 3.8.4 → 5.0.8.
+   O advisory DB atual marca tudo `<=4.2.0` como critical (path traversal + injeção via
+   AcroForm) — parar na 3.0.2 deixaria o job `security` (item 3 abaixo) vermelho na própria PR.
+   Nenhuma mudança de código necessária; `npm audit --omit=dev` foi de 1 critical + 1 high para
+   0/0. Detalhes completos no commit `4cf9cdb`.
+3. `[infra]` `.github/dependabot.yml` novo: `npm` (raiz, semanal, patches agrupados, `xlsx`
+   ignorado por ser instalado por URL fora do registry), `github-actions` (semanal), `docker`
+   (`/backend`, `/frontend`, `/` — os três ficam sem PR até o CRMLAB-36/Onda B pinar as imagens
+   base por digest; esperado, não é bug deste card).
+4. `[infra]` `.github/workflows/ci.yml`: job novo `security` (`npm audit --omit=dev
+   --audit-level=high`, falha só em high/critical) + trigger de `push`/`pull_request` ampliado
+   para `hardening/**` (o CI **não rodava** em PR contra `hardening/onda-a` antes desta mudança
+   — só contra `main` — o que teria deixado toda a Onda A sem CI nos PRs para a branch da onda;
+   corrigido junto por ser `.github/` do meu ownership e bloquear a validação da própria PR
+   deste card).
+
+**Decisão que mudou de rumo em relação ao escopo original do card (D-136 em DECISIONS.md):** o
+card pedia `google/osv-scanner-action` porque supunha que `npm audit` quebra com `400 Invalid
+package tree` (o `xlsx` do frontend vem de URL/tarball da SheetJS, fora do registry). Testado
+antes de implementar: **não reproduziu** — `npm audit --omit=dev --audit-level=high` roda limpo
+neste ambiente (7 moderate, 0 high/critical hoje). Optei por usar `npm audit` direto (mais
+simples, já comprovado funcionando, sem Action de terceiro nova) e documentei a suposição
+falsificada + o plano B (trocar para `osv-scanner` se o job começar a falhar por erro de
+registry num ambiente de CI real, o que não pude testar aqui).
+
+**Recomendação não executada (D-135 em DECISIONS.md):** troca de `exceljs` (traz `unzipper`
+0.10.14 antigo) por `xlsx` avaliada e **não feita** — uso único e pequeno
+(`backend/src/lib/lis-spreadsheet.ts`), mas é parser financeiro do LIS com histórico de bugs de
+data/soma (D-110/D-078/D-124); sem urgência de segurança (vulnerabilidade atual é moderate, não
+high/critical) para justificar reescrever sem card e suíte de regressão dedicados. Estimativa
+registrada em DECISIONS.md: 0,5–1 dia, card futuro fora da Onda A.
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces; `npm run lint` limpo; backend
+**1100/1100**; frontend **1065/1065** (nenhum código de produto tocado nesta parte do card —
+só `.github/`, `docs/DECISIONS.md`, `docs/guides/CONVENTIONS.md`, `docs/STATUS.md`). Sintaxe do
+`ci.yml`/`dependabot.yml` validada com `yaml.safe_load`.

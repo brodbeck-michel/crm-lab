@@ -160,10 +160,23 @@ dc up -d
 # 5. Verificacao
 # ---------------------------------------------------------------------------
 porta="${HTTP_PORT##*:}"
-msg "Healthcheck em 127.0.0.1:$porta"
+
+# O health que vale e o do BACKEND (`/api/v1/health`, CRMLAB-29), nao o
+# `/healthz` do nginx.
+#
+# `/healthz` e um `return 200 "ok"` do proprio nginx: responde mesmo com o
+# backend morto, com o Postgres fora e com o Redis fora. Ate 19/09/2026 era
+# ele que este passo consultava — ou seja, o deploy declarava "no ar" sem ter
+# tocado em uma linha de codigo da aplicacao. Duas rajadas de 5xx no log do
+# Caddy passaram por deploys "bem-sucedidos".
+#
+# `/api/v1/health` atravessa o proxy ate o backend, faz `SELECT 1` e `PING`, e
+# devolve 503 (que o `-f` do curl reprova) quando uma dependencia esta fora.
+SAUDE="http://127.0.0.1:${porta}/api/v1/health"
+msg "Healthcheck real em $SAUDE"
 for tentativa in $(seq 1 30); do
-  if curl -fsS "http://127.0.0.1:${porta}/healthz" >/dev/null 2>&1; then
-    info "OK na tentativa $tentativa"
+  if curl -fsS --max-time 10 "$SAUDE" >/dev/null 2>&1; then
+    info "OK na tentativa $tentativa (backend, Postgres e Redis responderam)"
     dc ps --format 'table {{.Service}}\t{{.Status}}'
     msg "$APP_ENV no ar — $IMAGE_TAG (v$VERSAO)"
     exit 0
@@ -172,4 +185,9 @@ for tentativa in $(seq 1 30); do
 done
 
 dc ps
-erro "nao respondeu /healthz em 60s. A stack ANTERIOR pode ter sido substituida — investigue com 'docker compose -p $PROJETO_ESPERADO logs'."
+# O corpo do 503 diz QUAL dependencia caiu — imprimir aqui poupa a primeira
+# rodada de investigacao as 23h.
+printf '\nUltima resposta de %s:\n' "$SAUDE"
+curl -sS --max-time 10 "$SAUDE" || true
+printf '\n'
+erro "nao respondeu 200 em $SAUDE em 60s. Se o /healthz do nginx responde e este nao, o nginx subiu e o BACKEND nao. A stack ANTERIOR pode ter sido substituida — investigue com 'docker compose -p $PROJETO_ESPERADO logs backend'."

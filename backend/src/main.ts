@@ -32,7 +32,13 @@ async function bootstrap(): Promise<void> {
   logger.debug('server.config', safeEnv());
 
   let shuttingDown = false;
-  const shutdown = (signal: string): void => {
+  /**
+   * `exitCode` distingue a saida PEDIDA (SIGTERM/SIGINT, codigo 0) da saida por
+   * defeito (`uncaughtException`, codigo 1). O codigo importa: o
+   * `restart: unless-stopped` do Compose reinicia nos dois casos, mas o codigo
+   * e o que diz, no `docker inspect`, se o processo saiu ou se caiu.
+   */
+  const shutdown = (signal: string, exitCode = 0): void => {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info('server.shutdown_started', { signal });
@@ -51,7 +57,7 @@ async function bootstrap(): Promise<void> {
           await closeDb();
           logger.info('server.shutdown_complete', { signal });
           clearTimeout(forceExit);
-          process.exit(0);
+          process.exit(exitCode);
         } catch (err) {
           logger.error('server.shutdown_failed', {
             signal,
@@ -65,6 +71,34 @@ async function bootstrap(): Promise<void> {
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
+
+  // =========================================================================
+  // Rede de seguranca do processo (CRMLAB-30, D-138)
+  // =========================================================================
+  // Sem estes dois handlers, qualquer excecao ou promise rejeitada fora de um
+  // handler do Express derrubava o processo SEM UMA LINHA DE LOG — e derrubar
+  // o processo aqui nao e um detalhe: e uma instancia unica, entao vai junto o
+  // WebSocket de todas as atendentes de todos os tenants e toda requisicao em
+  // voo. O incidente de 17/09 (Postgres piscou, `withTenant` ficou preso
+  // esperando o gateway Evolution) e exatamente esse caminho: uma rejeicao ou
+  // excecao sem handler explicito matando o Node inteiro sem diagnostico.
+  //
+  // As duas cardas usam o MESMO tratamento por pedido explicito do card: logar
+  // com `event: 'process.fatal'` e sair pelo MESMO shutdown controlado do
+  // SIGTERM (fecha WS, cache e pool antes de sair), em vez de deixar o
+  // processo em estado indeterminado. O `exitCode = 1` sinaliza no
+  // `docker inspect` que foi queda, nao parada pedida.
+  const onFatal = (source: 'unhandledRejection' | 'uncaughtException') => (err: unknown): void => {
+    logger.fatal('process.fatal', {
+      source,
+      message: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    shutdown(source, 1);
+  };
+
+  process.on('unhandledRejection', onFatal('unhandledRejection'));
+  process.on('uncaughtException', onFatal('uncaughtException'));
 }
 
 bootstrap().catch((err: unknown) => {

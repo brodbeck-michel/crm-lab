@@ -21,6 +21,35 @@
  * (mesma divisao de `HttpWhatsAppDriver` em `whatsapp.service.ts`).
  */
 import { env } from '../config/env.js';
+import { withGatewayTimeout } from './fetch-timeout.js';
+
+/**
+ * Orcamento de UMA chamada ao gateway (CRMLAB-30, D-137).
+ *
+ * De onde saem os numeros: o envio roda dentro da fila com 3 tentativas
+ * (SERVICES.md §11) e backoff de 200 ms + 400 ms, e o teto duro e o
+ * `proxy_read_timeout 60s` do nginx — passar disso troca o `MESSAGE_SEND_FAILED`
+ * (502, que a tela explica) por um 504 generico. O orcamento total e
+ * `3 * timeout + 0,6 s < 60 s`, ou seja timeout < 19,8 s.
+ *
+ * - 10 s para o resto: sao chamadas de CONTROLE (criar instancia, ler QR, ler
+ *   estado, deslogar) e envio de texto, todas com corpo minusculo contra um
+ *   gateway na mesma rede do Compose. Se demorar 10 s, nao e lentidao: e o
+ *   gateway doente do incidente de 17/09. Pior caso total ~30,6 s.
+ * - 15 s para midia: `sendMedia` sobe ate 15 MB (`MAX_MEDIA_BYTES`) em base64,
+ *   ~20 MB de corpo, e o gateway so responde depois de repassar o arquivo ao
+ *   WhatsApp. Reusar os 10 s daria timeout em anexo legitimo. Pior caso total
+ *   ~45,6 s — ainda abaixo dos 60 s do nginx, com margem.
+ */
+export const EVOLUTION_TIMEOUT_MS = 10_000;
+export const EVOLUTION_MEDIA_TIMEOUT_MS = 15_000;
+
+export interface EvolutionClientOptions {
+  /** Timeout das chamadas de controle e de `sendText`. Default: 10 s. */
+  timeoutMs?: number;
+  /** Timeout de `sendMedia`. Default: 15 s. */
+  mediaTimeoutMs?: number;
+}
 
 /** Nome da instancia no gateway. Unico ponto de decisao — nao duplique a formula. */
 export function evolutionInstanceName(tenantId: string): string {
@@ -213,33 +242,53 @@ function statusOf(state: unknown): EvolutionConnectionStatus {
  * apikey por instancia so importa para o proprio Evolution rotear webhooks; o
  * cliente HTTP deste arquivo sempre fala com privilegio de administrador.
  */
-export function createEvolutionClient(baseUrl: string, adminApiKey: string): EvolutionClient {
+export function createEvolutionClient(
+  baseUrl: string,
+  adminApiKey: string,
+  options: EvolutionClientOptions = {},
+): EvolutionClient {
   const base = baseUrl.replace(/\/+$/, '');
+  const defaultTimeoutMs = options.timeoutMs ?? EVOLUTION_TIMEOUT_MS;
+  const mediaTimeoutMs = options.mediaTimeoutMs ?? EVOLUTION_MEDIA_TIMEOUT_MS;
 
-  /** `apikeyOverride` sobrescreve `adminApiKey` — usado so por `sendText` (I6). */
+  /**
+   * `apikeyOverride` sobrescreve `adminApiKey` — usado so por `sendText` (I6).
+   *
+   * O `fetch` E a leitura do corpo rodam dentro de `withGatewayTimeout`: o
+   * `fetch` resolve nos headers, entao um corpo que nunca termina travaria
+   * aqui do mesmo jeito se o signal cobrisse so a primeira metade (D-137).
+   * Estourado o prazo, sobe `GatewayTimeoutError`, que a fila retenta.
+   */
   async function request(
     path: string,
     init: RequestInit = {},
     apikeyOverride?: string,
+    timeoutMs: number = defaultTimeoutMs,
   ): Promise<unknown> {
-    const response = await fetch(`${base}${path}`, {
-      ...init,
-      headers: {
-        'Content-Type': 'application/json',
-        apikey: apikeyOverride ?? adminApiKey,
-        ...(init.headers ?? {}),
+    // A query string pode carregar nome de instancia — o log fica so com a rota.
+    const [route = path] = path.split('?');
+    const { ok, status, text } = await withGatewayTimeout(
+      { gateway: 'evolution', path: route, timeoutMs },
+      async (signal) => {
+        const response = await fetch(`${base}${path}`, {
+          ...init,
+          signal,
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: apikeyOverride ?? adminApiKey,
+            ...(init.headers ?? {}),
+          },
+        });
+        return { ok: response.ok, status: response.status, text: await response.text() };
       },
-    });
+    );
 
-    const text = await response.text();
-    const body: unknown = text.length > 0 ? safeJsonParse(text) : null;
-
-    if (!response.ok) {
+    if (!ok) {
       throw new Error(
-        `Evolution API respondeu ${response.status} em ${path}: ${text.slice(0, 500)}`,
+        `Evolution API respondeu ${status} em ${path}: ${text.slice(0, 500)}`,
       );
     }
-    return body;
+    return text.length > 0 ? safeJsonParse(text) : null;
   }
 
   /** apikey da instancia ja existente — `token` no `/instance/fetchInstances`. */
@@ -379,6 +428,8 @@ export function createEvolutionClient(baseUrl: string, adminApiKey: string): Evo
           }),
         },
         apikey,
+        // Unica chamada com corpo grande — orcamento proprio (D-137).
+        mediaTimeoutMs,
       );
       const record = isRecord(body) ? body : {};
       const key = isRecord(record.key) ? record.key : {};

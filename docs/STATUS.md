@@ -1386,3 +1386,51 @@ Vai junto nesta versão:
 **Pós-deploy:** os 5 serviços `healthy`, `https://vitrocrm.cloud` em 200,
 nenhum log nível 50 no backend nos primeiros minutos. A versão no rodapé da
 sidebar muda com o rebuild do frontend, que este deploy fez.
+
+---
+
+## 2026-09-19 — CRMLAB-37: dependências vulneráveis + guarda de vulnerabilidade no CI ✅
+
+`Agent-Deps-37`, Onda A (`hardening/onda-a`, epic CRMLAB-27). Ownership: `package.json` dos
+workspaces, `package-lock.json`, `.github/`, `docs/guides/CONVENTIONS.md`.
+
+**4 commits `[deps]`/`[infra]`:**
+
+1. `bcryptjs` 2.4.3 → 3.0.3, `@types/bcryptjs` removido (tipos vêm no próprio pacote na 3.x).
+   Formato de hash (`$2a$`/`$2b$`) inalterado, sem migração de dados. Backend 1100/1100 verde.
+2. `jspdf` 2.5.2 → **4.2.1** (não `^3.0.2` como o card pedia) e `jspdf-autotable` 3.8.4 → 5.0.8.
+   O advisory DB atual marca tudo `<=4.2.0` como critical (path traversal + injeção via
+   AcroForm) — parar na 3.0.2 deixaria o job `security` (item 3 abaixo) vermelho na própria PR.
+   Nenhuma mudança de código necessária; `npm audit --omit=dev` foi de 1 critical + 1 high para
+   0/0. Detalhes completos no commit `4cf9cdb`.
+3. `[infra]` `.github/dependabot.yml` novo: `npm` (raiz, semanal, patches agrupados, `xlsx`
+   ignorado por ser instalado por URL fora do registry), `github-actions` (semanal), `docker`
+   (`/backend`, `/frontend`, `/` — os três ficam sem PR até o CRMLAB-36/Onda B pinar as imagens
+   base por digest; esperado, não é bug deste card).
+4. `[infra]` `.github/workflows/ci.yml`: job novo `security` (`npm audit --omit=dev
+   --audit-level=high`, falha só em high/critical) + trigger de `push`/`pull_request` ampliado
+   para `hardening/**` (o CI **não rodava** em PR contra `hardening/onda-a` antes desta mudança
+   — só contra `main` — o que teria deixado toda a Onda A sem CI nos PRs para a branch da onda;
+   corrigido junto por ser `.github/` do meu ownership e bloquear a validação da própria PR
+   deste card).
+
+**Decisão que mudou de rumo em relação ao escopo original do card (D-136 em DECISIONS.md):** o
+card pedia `google/osv-scanner-action` porque supunha que `npm audit` quebra com `400 Invalid
+package tree` (o `xlsx` do frontend vem de URL/tarball da SheetJS, fora do registry). Testado
+antes de implementar: **não reproduziu** — `npm audit --omit=dev --audit-level=high` roda limpo
+neste ambiente (7 moderate, 0 high/critical hoje). Optei por usar `npm audit` direto (mais
+simples, já comprovado funcionando, sem Action de terceiro nova) e documentei a suposição
+falsificada + o plano B (trocar para `osv-scanner` se o job começar a falhar por erro de
+registry num ambiente de CI real, o que não pude testar aqui).
+
+**Recomendação não executada (D-135 em DECISIONS.md):** troca de `exceljs` (traz `unzipper`
+0.10.14 antigo) por `xlsx` avaliada e **não feita** — uso único e pequeno
+(`backend/src/lib/lis-spreadsheet.ts`), mas é parser financeiro do LIS com histórico de bugs de
+data/soma (D-110/D-078/D-124); sem urgência de segurança (vulnerabilidade atual é moderate, não
+high/critical) para justificar reescrever sem card e suíte de regressão dedicados. Estimativa
+registrada em DECISIONS.md: 0,5–1 dia, card futuro fora da Onda A.
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces; `npm run lint` limpo; backend
+**1100/1100**; frontend **1065/1065** (nenhum código de produto tocado nesta parte do card —
+só `.github/`, `docs/DECISIONS.md`, `docs/guides/CONVENTIONS.md`, `docs/STATUS.md`). Sintaxe do
+`ci.yml`/`dependabot.yml` validada com `yaml.safe_load`.

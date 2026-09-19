@@ -115,7 +115,14 @@ test.describe('Onda 8 §2 — transferência, emoji e fixar', () => {
     await expect(campo).toHaveValue('bom dia👍 tudo bem');
 
     await page.getByRole('button', { name: 'Enviar' }).click();
-    await expect(page.getByText('bom dia👍 tudo bem')).toBeVisible();
+    // Olha só para a bolha, e para a ÚLTIMA. A prévia da conversa na coluna 1
+    // mostra o MESMO texto assim que a lista refetcha, e uma retentativa do
+    // Playwright reaproveita o banco, deixando a mensagem da tentativa anterior
+    // na conversa — os dois viram `strict mode violation` num `getByText` solto.
+    // Sem isso o teste só passava quando a lista demorava a atualizar.
+    await expect(
+      page.getByTestId('message-scroll').getByText('bom dia👍 tudo bem').last(),
+    ).toBeVisible();
   });
 
   test('fixar sobe a conversa na MINHA lista, sobrevive ao reload e não vaza para a colega', async ({

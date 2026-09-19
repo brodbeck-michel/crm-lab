@@ -251,6 +251,17 @@ completa, `flow-17-lis-import-results` + `flow-18-sales`, CRMLAB-5). **Onda 10 f
 
 ---
 
+## Onda A — Hardening pós-auditoria (epic CRMLAB-27) 🔄 (em andamento)
+
+Plano: `docs/superpowers/plans/2026-09-19-hardening-pos-auditoria.md`. Branch de integração:
+`hardening/onda-a`. Cards: CRMLAB-20, 28, 29, 30, 37.
+
+| Card | Domínio | Status | Agente | Notas |
+|------|---------|--------|--------|-------|
+| CRMLAB-30 — Backend cai inteiro se o Postgres piscar | kernel | ✅ 2026-09-19 | Agent-Kernel-30 | `PgDriver` (`db/pg-driver.ts`) ganha `pool.on('error', ...)` + listener por conexão dentro de `transaction()` (o `pg-pool` remove o do pool durante o checkout — janela real, é onde o incidente de 17/09 acontecia), `idleTimeoutMillis=30s`, `connectionTimeoutMillis=5s` e, no pacote de startup, `statement_timeout=30s` + `idle_in_transaction_session_timeout=60s` (os dois estavam em 0 na VPS). Migrações usam `SET LOCAL statement_timeout=0` (`db/statement-timeout.ts`, novo) — import LIS e export Excel/PDF foram revisados e **não** precisam de isenção (upsert de 1 statement por chunk; export não toca o banco). `main.ts` ganha `process.on('unhandledRejection'/'uncaughtException')`, ambos logando `event: 'process.fatal'` e reusando o MESMO `shutdown()` do SIGTERM (`exitCode=1`). `evolution-client.ts` e `whatsapp.service.ts` chamam `fetch` com `AbortSignal.timeout` via `lib/fetch-timeout.ts` (novo) — cobre também o corpo nunca fechar, não só a resposta não chegar; timeout vira `GatewayTimeoutError` (`retryable=true`), retentado pela fila existente sem caminho especial. Decisões em D-137/D-138. **Circuit breaker no cliente Evolution avaliado e descartado** nesta rodada: timeout + retry exponencial já limitam o dano por falha isolada, e o volume de envio por tenant não justifica mais um componente com estado (reavaliar se homologação/produção mostrar rajadas que o retry não absorva). Testes novos: `tests/db/pg-pool-resilience.spec.ts` (7), `tests/whatsapp/gateway-timeout.spec.ts` (7) — os testes de caos reais (`docker restart`/`docker pause`) ficam para a validação em homologação. `npm run typecheck` verde nos 4 workspaces; `npm run test:backend` verde: 77 arquivos / 1114 testes |
+
+---
+
 ## Mocks Ativos
 
 | Mock | Localização | Substituir quando | Registrado por |

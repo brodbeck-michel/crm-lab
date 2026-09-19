@@ -1817,6 +1817,57 @@ produção do CI (não reproduzido aqui), trocar para `osv-scanner` é a correç
 precisa de novo card, é o mesmo job.
 **Impacto:** `.github/workflows/ci.yml` (job `security`, novo). Nenhuma dependência nova.
 
+### D-137: Pool do `pg` com listener de `error`, timeouts de sessão e timeout de `fetch` para os gateways (CRMLAB-30)
+**Decisão:** `PgDriver` ganha `pool.on('error', ...)` (loga e não derruba o processo — o `pg`
+já descarta a conexão quebrada sozinho) e um listener equivalente por conexão dentro de
+`transaction()`, porque o `pg-pool` remove o listener do pool exatamente durante o checkout
+(o intervalo em que uma transação fica aberta). O pool passa a fixar
+`idleTimeoutMillis=30s`, `connectionTimeoutMillis=5s` e, no pacote de startup,
+`statement_timeout=30s` + `idle_in_transaction_session_timeout=60s` (ambos em 0/sem limite
+antes, confirmado na VPS em 19/09). As migrações usam `SET LOCAL statement_timeout=0`
+(`db/statement-timeout.ts`) para se isentar do limite de 30 s: um `CREATE INDEX`/`ALTER TABLE`
+longo é legítimo e cortá-lo no meio de um deploy é pior que esperar. Import LIS e export
+Excel/PDF foram revisados e **não** precisam de isenção: o import faz um upsert por statement
+dentro de um loop de chunks (nenhum statement individual passa de 30 s, mesmo que o total
+passe) e não existe export que leia/escreva no banco (o `exceljs` só lê planilha de entrada,
+fora do banco). `evolution-client.ts` e `whatsapp.service.ts` passam a chamar `fetch` com
+`signal: AbortSignal.timeout(...)` via o wrapper `lib/fetch-timeout.ts`, que cobre tanto a
+resposta não chegar quanto o corpo nunca fechar (`fetch` resolve só nos headers). Timeout vira
+`GatewayTimeoutError` (`retryable = true`), tratado pela fila (`lib/queue.ts`) como qualquer
+outra falha — 10 s para Evolution (controle/texto) e Meta, 15 s para mídia do Evolution
+(corpo maior, ~20 MB em base64); orçamento de `3 tentativas × timeout + backoff` fica sempre
+abaixo dos 60 s do `proxy_read_timeout` do nginx.
+**Motivo:** incidente de 17/09 — o Postgres piscou (ou o gateway Evolution ficou "vivo mas
+mudo") e o processo caiu inteiro: sem listener de `error` no pool, um `EventEmitter` que emite
+`error` sem ouvinte vira exceção não capturada; sem timeout no `fetch`, o handler ficava preso
+segurando uma transação e, com ela, uma das 10 conexões do pool, até esgotar o pool inteiro.
+Os dois defeitos derrubam TODOS os tenants de uma vez — não é isolado por request.
+**Impacto:** `backend/src/db/pg-driver.ts`, `backend/src/db/statement-timeout.ts` (novo),
+`backend/src/db/migrator.ts`, `backend/src/db/index.ts`, `backend/src/lib/fetch-timeout.ts`
+(novo), `backend/src/lib/evolution-client.ts`, `backend/src/services/whatsapp.service.ts`.
+Testes novos: `backend/tests/db/pg-pool-resilience.spec.ts`,
+`backend/tests/whatsapp/gateway-timeout.spec.ts`. Os testes de caos reais (`docker restart`
+do Postgres, `docker pause` do Evolution) ficam para a validação em homologação — não rodam
+neste ambiente. **Circuit breaker no cliente Evolution foi avaliado e descartado nesta rodada**:
+o `AbortSignal.timeout` + retry exponencial da fila já limitam o dano de uma falha isolada a
+uma tentativa de ~10-15 s, e o volume de envio por tenant é baixo o bastante para que um estado
+compartilhado de "pausa de 30 s" ganhe pouco sobre o que os timeouts já resolvem, ao custo de
+mais um componente com estado para depurar. Reavaliar se o padrão de falha em homologação/
+produção mostrar rajadas de timeout que o retry sozinho não absorve bem.
+
+### D-138: `unhandledRejection`/`uncaughtException` derrubam o processo pelo MESMO shutdown do SIGTERM (CRMLAB-30)
+**Decisão:** `main.ts` ganha `process.on('unhandledRejection', ...)` e
+`process.on('uncaughtException', ...)`, ambos logando `event: 'process.fatal'` (com a origem
+em `source`) e chamando a mesma função `shutdown()` já usada por SIGTERM/SIGINT — que fecha
+WebSocket, cache e pool antes de sair — com `exitCode = 1` para diferenciar, no
+`docker inspect`, queda de parada pedida.
+**Motivo:** hoje as duas situações derrubam o processo sem log nenhum (Node 22) ou de forma
+descoordenada; um processo que abandonou uma promise/exceção no meio não está mais confiável
+(pode ter deixado transação aberta, lock preso), e servir novas requisições nesse estado é
+pior que sair de forma controlada. Pedido explícito do card: mesmo tratamento para as duas,
+sem meio-termo de "loga e continua" para `unhandledRejection`.
+**Impacto:** `backend/src/main.ts` (função `onFatal`, reaproveitando `shutdown`).
+
 ## Template para novas decisões
 
 ```

@@ -13,6 +13,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { logger } from '../lib/logger.js';
+import { NO_STATEMENT_TIMEOUT, setStatementTimeout } from './statement-timeout.js';
 import type { DbClient } from './types.js';
 
 export const MIGRATIONS_TABLE = 'schema_migrations';
@@ -100,6 +101,12 @@ export async function runMigrations(
       continue;
     }
     await db.transaction(async (tx) => {
+      // CRMLAB-30: o `PgDriver` fixa `statement_timeout=30s` na sessao, o que e
+      // certo para request de usuario e perigoso aqui — um `CREATE INDEX` ou um
+      // `ALTER TABLE` que reescreve tabela pode passar de 30 s legitimamente, e
+      // migracao cortada no meio de um deploy e o pior desfecho possivel.
+      // `SET LOCAL` isenta SO esta transacao e e desfeito no COMMIT/ROLLBACK.
+      await setStatementTimeout(tx, NO_STATEMENT_TIMEOUT);
       await tx.exec(sql);
       await tx.query(`INSERT INTO ${MIGRATIONS_TABLE} (name) VALUES ($1)`, [name]);
     });

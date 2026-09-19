@@ -44,6 +44,7 @@ import {
   evolutionInstanceName,
   type EvolutionClient,
 } from '../lib/evolution-client.js';
+import { withGatewayTimeout } from '../lib/fetch-timeout.js';
 import { logger } from '../lib/logger.js';
 import { createQueue, type QueueService } from '../lib/queue.js';
 import type { ChannelCredentials } from '../repositories/channel-settings.repository.js';
@@ -344,6 +345,17 @@ export class MockWhatsAppDriver implements WhatsAppDriver {
   }
 }
 
+/**
+ * Timeout de UMA chamada a API oficial da Meta (CRMLAB-30, D-135).
+ *
+ * Mesmo orcamento do `EVOLUTION_TIMEOUT_MS`, pela mesma conta (3 tentativas da
+ * fila + backoff tem de caber nos 60 s do `proxy_read_timeout` do nginx), e
+ * aqui com folga de sobra: a Meta responde em centenas de milissegundos ou
+ * esta indisponivel. Note que a Meta e um host EXTERNO — sem timeout, uma
+ * instabilidade de rede prendia o handler ate o socket TCP morrer.
+ */
+export const META_TIMEOUT_MS = 10_000;
+
 /** Driver real. Falha => a fila tenta de novo (retry exponencial). */
 export class HttpWhatsAppDriver implements WhatsAppDriver {
   readonly name = 'http';
@@ -353,24 +365,38 @@ export class HttpWhatsAppDriver implements WhatsAppDriver {
     phone: string,
     content: string,
   ): Promise<SendResult> {
-    const response = await fetch(`${credentials.apiUrl}/${credentials.phoneNumberId}/messages`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${credentials.apiToken}`,
+    // `fetch` + leitura do corpo dentro do MESMO signal: o `fetch` resolve nos
+    // headers, entao um corpo que nunca termina travaria igual (D-135).
+    const { ok, status, payload } = await withGatewayTimeout(
+      { gateway: 'meta', path: '/messages', timeoutMs: META_TIMEOUT_MS },
+      async (signal) => {
+        const response = await fetch(
+          `${credentials.apiUrl}/${credentials.phoneNumberId}/messages`,
+          {
+            method: 'POST',
+            signal,
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${credentials.apiToken}`,
+            },
+            body: JSON.stringify({
+              messaging_product: 'whatsapp',
+              to: phone,
+              type: 'text',
+              text: { body: content },
+            }),
+          },
+        );
+        // O corpo so e lido quando ha o que ler: um erro da Meta com corpo
+        // vazio quebraria `.json()` e mascararia o status de verdade.
+        const payload: unknown = response.ok ? await response.json() : null;
+        return { ok: response.ok, status: response.status, payload };
       },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        to: phone,
-        type: 'text',
-        text: { body: content },
-      }),
-    });
+    );
 
-    if (!response.ok) {
-      throw new Error(`WhatsApp API respondeu ${response.status}`);
+    if (!ok) {
+      throw new Error(`WhatsApp API respondeu ${status}`);
     }
-    const payload: unknown = await response.json();
     const externalId = firstMessageId(payload);
     if (!externalId) throw new Error('WhatsApp API nao devolveu id da mensagem');
     return { externalId };

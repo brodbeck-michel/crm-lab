@@ -1386,3 +1386,11 @@ Vai junto nesta versão:
 **Pós-deploy:** os 5 serviços `healthy`, `https://vitrocrm.cloud` em 200,
 nenhum log nível 50 no backend nos primeiros minutos. A versão no rodapé da
 sidebar muda com o rebuild do frontend, que este deploy fez.
+
+---
+
+## 2026-09-19 — CRMLAB-20 (Onda A): teto de corpo do nginx 🔄
+
+`Agent-Infra-20`, branch `feature/CRMLAB-20-nginx-body-size`, worktree próprio.
+Recorte: só `nginx/frontend.conf`, no `location /api/`. O bloco
+`location = /healthz` é do CRMLAB-29 e não foi tocado.

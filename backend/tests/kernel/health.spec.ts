@@ -8,7 +8,7 @@
  * dependencia e simulada.
  */
 import { describe, expect, it } from 'vitest';
-import type { DbClient, DbTx, QueryResult, Row } from '../../src/db/types.js';
+import type { DbClient, QueryResult, Row } from '../../src/db/types.js';
 import { MemoryCache, type CacheService } from '../../src/lib/cache.js';
 import { createHealthChecker } from '../../src/lib/health.js';
 import { createTestApp } from '../helpers/test-app.js';

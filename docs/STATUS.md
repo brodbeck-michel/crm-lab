@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-19 (v1.10.0 em produção: CRMLAB-25 + CRMLAB-26 — ver seção no fim)
+**Última atualização:** 2026-09-19 (v1.11.0 mergeada em `main`: Onda A do hardening CRMLAB-27 — ver seção no fim)
 
 ---
 
@@ -1609,3 +1609,31 @@ registrada em DECISIONS.md: 0,5–1 dia, card futuro fora da Onda A.
 **1100/1100**; frontend **1065/1065** (nenhum código de produto tocado nesta parte do card —
 só `.github/`, `docs/DECISIONS.md`, `docs/guides/CONVENTIONS.md`, `docs/STATUS.md`). Sintaxe do
 `ci.yml`/`dependabot.yml` validada com `yaml.safe_load`.
+
+---
+
+## 2026-09-19 — v1.11.0 mergeada em `main`: Onda A do hardening (CRMLAB-27) ✅
+
+PR #24 (`hardening/onda-a` → `main`) mergeada com os 5 checks do CI verdes. Onda inteira
+passou por revisão de código (`/code-review`) card a card antes do merge na branch da onda,
+com achados reais corrigidos (diagnóstico mascarado de falha no `gh release create` e JSON
+inválido no alerta do CRMLAB-28; escopo de `docker ps` batendo prod/homolog e falha de estado
+silenciosa no CRMLAB-29) e uma colisão de numeração de decisão entre CRMLAB-30 e CRMLAB-37
+(D-135/D-136 escolhidos independentemente pelos dois — CRMLAB-30 renumerado para D-137/D-138).
+
+Vai junto nesta versão:
+
+- **CRMLAB-20** — `client_max_body_size 25m` no `/api/` do nginx.
+- **CRMLAB-28** — backup cifrado fora da VPS (GitHub Releases), alerta de falha, doc de restore.
+- **CRMLAB-29** — health real (`/api/v1/health` checa Postgres+Redis), liveness separada,
+  monitor de containers/disco com notificador plugável.
+- **CRMLAB-30** — `pool.on('error')` + timeouts de sessão, `unhandledRejection`/`uncaughtException`
+  reusando o shutdown do SIGTERM, timeout de `fetch` para Evolution/Meta.
+- **CRMLAB-37** — `jspdf`/`bcryptjs` atualizados, Dependabot, job `security` no CI.
+
+Minor, não patch: múltiplas funcionalidades novas de infraestrutura/observabilidade. Sem
+mudança de contrato de API nem de schema — nenhuma migração acompanha.
+
+**Pendente:** deploy em produção exige confirmação explícita separada, a cada vez, mesmo com
+o merge já aprovado (regra do plano da onda). `docs/superpowers/plans/2026-09-19-hardening-pos-auditoria.md`
+tem o passo a passo de deploy/rollback.

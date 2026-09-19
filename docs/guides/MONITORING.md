@@ -88,18 +88,35 @@ container, não apaga arquivo, não sobe nada.
 | # | Verificação | Limiar |
 |---|---|---|
 | 1 | Docker responde (`docker info`) | — |
-| 2 | Container `unhealthy` | — |
-| 3 | Container `exited`, **ignorando o `migrate`** (sai com 0 a cada deploy por desenho) | `CRM_IGNORAR_EXITED` |
+| 2 | Container `unhealthy` **do projeto Compose monitorado** | — |
+| 3 | Container `exited` **do projeto Compose monitorado**, **ignorando o `migrate`** (sai com 0 a cada deploy por desenho) | `CRM_IGNORAR_EXITED` |
 | 4 | Readiness da API | `CRM_HEALTH_URL` |
 | 5 | Disco da raiz | `CRM_DISCO_LIMITE`, default **80%** |
 | 6 | Reboot pendente (`/var/run/reboot-required`) | — |
 | 7 | Heartbeat do backup velho demais | `CRM_BACKUP_MAX_HORAS`, default **26 h** |
 
+**Verificações 2 e 3 filtram por `COMPOSE_PROJECT_NAME`.** Prod e homolog
+rodam na MESMA VPS como dois projetos Compose separados (`crm-lab-prod` /
+`crm-lab-homolog`, ver `deploy.sh`). Sem esse filtro, `docker ps` enxerga o
+HOST INTEIRO, e um container quebrado em homolog dispara um alerta genérico
+"Container unhealthy no CRM Lab" que faz quem está de plantão achar que é
+PRODUÇÃO que caiu (ou vice-versa). O script exige `COMPOSE_PROJECT_NAME`
+definida — normalmente já vem do `.env` do próprio ambiente (a mesma
+variável que `deploy.sh` usa em `docker compose -p`) — e aborta com erro
+claro se não achar nenhuma, em vez de cair num default silencioso que
+escanearia o host inteiro. O título do alerta também leva o nome do projeto
+entre colchetes (ex. `[crm-lab-homolog]`), para o destinatário identificar o
+ambiente sem precisar investigar.
+
 Cada verificação tem **estado em disco** (`STATE_DIR`, default
 `/var/lib/crm-lab-monitor`): o alerta sai na borda (ok → ruim) e um
 "RECUPERADO" sai na volta. Sem isso, uma varredura de 5 em 5 minutos manda 288
 mensagens por dia da mesma coisa, e alerta que sempre toca é alerta que
-ninguém lê.
+ninguém lê. Se `STATE_DIR` ficar inacessível (diretório ausente, permissão
+errada), o script **não aborta** — continua checando saúde — mas registra um
+aviso de alta prioridade no journal (`logger -p daemon.err`, tag
+`crm-lab-monitor`) em vez de engolir o erro em silêncio, já que sem a marca
+em disco toda rodada vira alerta novo.
 
 O script sai com **0 mesmo tendo alertado**: é monitor, não teste — o systemd
 não deve marcar a unidade como falha porque o disco encheu. Quem avisa é o
@@ -110,10 +127,14 @@ alerta; o journal (`journalctl -u crm-lab-monitor`) guarda tudo.
 > O Michel não acessa o servidor: este bloco é para repassar ao analista de
 > infra, junto com o deploy da onda.
 
+O unit file declara `StateDirectory=crm-lab-monitor`: o systemd cria e
+gerencia `/var/lib/crm-lab-monitor` automaticamente (dono, grupo e permissões
+certos) na primeira ativação da unidade — **não é mais preciso** o passo
+manual de `sudo install -d`.
+
 ```bash
 sudo install -m 0644 /opt/crm-lab/scripts/systemd/crm-lab-monitor.service /etc/systemd/system/
 sudo install -m 0644 /opt/crm-lab/scripts/systemd/crm-lab-monitor.timer   /etc/systemd/system/
-sudo install -d -o deploy -g deploy /var/lib/crm-lab-monitor
 sudo systemctl daemon-reload
 sudo systemctl enable --now crm-lab-monitor.timer
 systemctl list-timers crm-lab-monitor.timer

@@ -1386,3 +1386,51 @@ Vai junto nesta versão:
 **Pós-deploy:** os 5 serviços `healthy`, `https://vitrocrm.cloud` em 200,
 nenhum log nível 50 no backend nos primeiros minutos. A versão no rodapé da
 sidebar muda com o rebuild do frontend, que este deploy fez.
+
+---
+
+## CRMLAB-28 — Backup fora da VPS, cifrado, com alerta de falha ✅ 2026-09-19
+
+`Agent-Infra-28`, branch `feature/CRMLAB-28-backup-offsite` → `hardening/onda-a`
+(Onda A do epic CRMLAB-27). Ownership: `scripts/`, `docs/guides/DEPLOYMENT.md`.
+
+O backup diário já funcionava, mas os dumps ficavam só no disco da própria VPS:
+perder o servidor era perder o backup junto com o dado. A mídia
+(`crm-lab-prod_media-data`) não entrava em backup nenhum, e uma falha do timer
+era silenciosa.
+
+**Entregue:**
+
+- `scripts/backup-offsite.sh` (novo) — cifra os dumps do dia **e** um tar do
+  volume de mídia e publica como assets de uma GitHub Release
+  `backup-AAAA-MM-DD` em repositório privado. Retenção remota de 30 dias
+  (contra 14 local), só depois de conferir que os assets chegaram não-vazios.
+  Recusa rodar sem chave de cifragem configurada — dado de paciente não sai em
+  claro. `BACKUP_OFFSITE_DRYRUN=1` ensaia sem tocar em GitHub nem Docker.
+- `scripts/backup-alerta.sh` + `scripts/systemd/crm-lab-backup-alerta@.service`
+  (novos) — `OnFailure=` do backup, com as últimas 20 linhas do journal. Canal
+  plugável por `BACKUP_ALERT_CMD` / `BACKUP_ALERT_WEBHOOK`, porque o destino
+  final (WhatsApp) ainda está pendente de decisão do Michel.
+- `scripts/systemd/crm-lab-backup.service` — segundo `ExecStart=` (o local roda
+  sempre primeiro) e o `OnFailure=`.
+- `docs/guides/DEPLOYMENT.md` — "Backup e restore" reescrita, mais "Restore
+  completo, do zero" em 6 passos. Numeração das seções §4/§6/§7 preservada, que
+  `ARCHITECTURE.md` e `docker-compose.prod.yml` referenciam.
+
+`backup-postgres.sh` não foi tocado.
+
+**Pendente, e só o Michel pode fazer:** criar o repositório privado de destino,
+gerar a chave `age` (e guardar a privada fora da VPS), pôr as variáveis no
+`.env` de produção, instalar as unidades e **fazer o primeiro restore de
+verdade em homologação**. O RTO está `[PENDENTE]` na doc até essa medição.
+Nada disto foi executado na VPS: o agente não tem acesso.
+
+## Pedidos entre Agentes — de CRMLAB-28
+
+- **Para CRMLAB-29 (`Agent-Kernel-29`):** o heartbeat do backup pode observar o
+  resultado do envio externo sem reimplementá-lo. `backup-offsite.sh` sai 0 só
+  depois de conferir que os assets chegaram não-vazios à release do dia, e o
+  `crm-lab-backup.service` cobre os dois passos numa unidade só — então
+  `systemctl show -p Result,ExecMainExitTimestamp crm-lab-backup.service` já
+  responde "o backup completo (local + externo) deu certo hoje?". Não criei
+  arquivo de heartbeat para não colidir com o seu.

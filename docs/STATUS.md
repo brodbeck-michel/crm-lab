@@ -1294,3 +1294,26 @@ basic auth e canais desativados.
 
 **Verificação:** `npm run typecheck` verde nos 4 workspaces; backend **1100
 testes verdes** (1 novo).
+
+---
+
+## 2026-09-19 — v1.9.0 em produção: CRMLAB-2 + CRMLAB-21 + fix de mídia ausente ✅
+
+PR #17 mergeado em `main` com os 4 checks verdes (build de produção, build das
+imagens, typecheck/lint/testes e E2E do Playwright), tag **v1.9.0** no merge
+commit `7452467`, e `./scripts/deploy.sh` rodado em `/opt/crm-lab`.
+
+Vai junto nesta versão:
+
+- **CRMLAB-2** — ouvir e receber áudio na própria bolha (`AudioMessage`).
+  Gravar e enviar saiu para o **CRMLAB-24**, que está bloqueado pelo CRMLAB-20.
+- **CRMLAB-21** — zoom e arraste na imagem aberta no atendimento.
+- **fix** — mídia com linha no banco e arquivo fora do disco responde 404 com
+  `media.file_missing`, não mais 500 com `http.unhandled_error`.
+
+Minor, não patch: duas funcionalidades novas. Sem mudança de contrato de API
+nem de schema, então não houve migração para acompanhar.
+
+**Pós-deploy:** os 5 serviços `healthy`, `https://vitrocrm.cloud` em 200,
+nenhum log nível 50 no backend nos primeiros minutos. A versão no rodapé da
+sidebar só muda com o rebuild do frontend, que este deploy fez.

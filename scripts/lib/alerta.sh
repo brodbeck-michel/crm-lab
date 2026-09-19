@@ -88,8 +88,17 @@ alerta_envia() {
 # Uso, no fim do processo que deu certo:
 #   source "$(dirname "$0")/lib/alerta.sh"
 #   alerta_heartbeat backup-postgres
+#
+# `CRM_LAB_MONITOR_STATE_DIR` e o default COMPARTILHADO com `STATE_DIR` de
+# monitora-saude.sh: os dois scripts leem o mesmo diretorio de estado, entao
+# tem uma unica variavel de ambiente para mudar o caminho dos dois de uma vez
+# (em vez de duas variaveis independentes que so por acaso apontam para o
+# mesmo default). `HEARTBEAT_DIR` continua existindo para quem quiser um
+# caminho SO para o heartbeat, diferente do STATE_DIR do monitor — caso raro,
+# por isso o default dela cai para `CRM_LAB_MONITOR_STATE_DIR`.
 # ---------------------------------------------------------------------------
-HEARTBEAT_DIR="${HEARTBEAT_DIR:-/var/lib/crm-lab-monitor}"
+CRM_LAB_MONITOR_STATE_DIR="${CRM_LAB_MONITOR_STATE_DIR:-/var/lib/crm-lab-monitor}"
+HEARTBEAT_DIR="${HEARTBEAT_DIR:-$CRM_LAB_MONITOR_STATE_DIR}"
 
 alerta_heartbeat_arquivo() {
   printf '%s/%s.heartbeat' "$HEARTBEAT_DIR" "$1"

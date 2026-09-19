@@ -14,6 +14,11 @@ WorkingDirectory=/opt/crm-lab
 # repositorio: `ALERT_WEBHOOK_URL` pode carregar token na propria URL.
 # Ausente = o monitor roda e registra tudo no journal, sem enviar nada.
 EnvironmentFile=-/etc/crm-lab/monitor.env
+# systemd cria e gerencia /var/lib/crm-lab-monitor (dono, grupo e permissoes
+# certos) na primeira ativacao da unidade — elimina o `sudo install -d`
+# manual do passo de instalacao. Se STATE_DIR for sobrescrito no
+# monitor.env para outro caminho, ajuste aqui tambem.
+StateDirectory=crm-lab-monitor
 ExecStart=/opt/crm-lab/scripts/monitora-saude.sh
 Nice=10
 IOSchedulingClass=idle

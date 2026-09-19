@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-19 (CRMLAB-25 + CRMLAB-26: conversa em papel branco e download da imagem — ver seção no fim)
+**Última atualização:** 2026-09-19 (v1.10.0 em produção: CRMLAB-25 + CRMLAB-26 — ver seção no fim)
 
 ---
 
@@ -1358,3 +1358,31 @@ Docs: `DESIGN_TOKENS.md` (papéis de cor + bolhas), `COMPONENTS.md`
 **Verificação:** `npm run typecheck` verde nos 4 workspaces; frontend **1065
 testes verdes** (4 novos: nome do arquivo no `Content-Disposition`, ausência
 dele, download com nome sem fechar o lightbox, e o `download` que nunca some).
+
+---
+
+## 2026-09-19 — v1.10.0 em produção: CRMLAB-25 + CRMLAB-26 ✅
+
+PR #18 mergeada em `main` com os 4 checks verdes, tag **v1.10.0** no merge
+commit `f161721`, e `./scripts/deploy.sh` rodado em `/opt/crm-lab`. Antes disso
+a mesma branch ficou em homologação (`hml-38412dd`) para validação do Michel.
+
+Minor, não patch: duas funcionalidades novas (conversa em papel branco com
+bolhas distintas; ↓ que salva a imagem com o nome original). Sem mudança de
+contrato de API nem de schema — nenhuma migração acompanhou.
+
+Vai junto nesta versão:
+
+- **`fix(e2e)`** — o teste do emoji (`flow-15-onda8-atendimento.spec.ts`) fazia
+  `getByText('bom dia👍 tudo bem')` solto, que casa com a bolha **e** com a
+  prévia da conversa na coluna 1 — e, numa retentativa, com a mensagem que a
+  tentativa anterior deixou no banco. Só passava quando a lista demorava a
+  refetchar: flake desde a Onda 8, que escolheu esta PR para aparecer. Agora a
+  asserção olha a última bolha dentro de `message-scroll`.
+- **`chore`** — as skills de design (`.agents/skills/frontend-design` e
+  `ui-ux-pro-max`) entraram no repositório; `.claude/skills/` guarda só os
+  symlinks para elas.
+
+**Pós-deploy:** os 5 serviços `healthy`, `https://vitrocrm.cloud` em 200,
+nenhum log nível 50 no backend nos primeiros minutos. A versão no rodapé da
+sidebar muda com o rebuild do frontend, que este deploy fez.

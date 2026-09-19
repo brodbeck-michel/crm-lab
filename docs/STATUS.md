@@ -1386,3 +1386,54 @@ Vai junto nesta versão:
 **Pós-deploy:** os 5 serviços `healthy`, `https://vitrocrm.cloud` em 200,
 nenhum log nível 50 no backend nos primeiros minutos. A versão no rodapé da
 sidebar muda com o rebuild do frontend, que este deploy fez.
+
+---
+
+## 2026-09-19 — CRMLAB-29: monitoramento e health honesto (Onda A) ✅
+
+**Agente:** `Agent-Kernel-29` · branch `feature/CRMLAB-29-monitoramento-health` → `hardening/onda-a`
+
+| Tarefa | Status |
+|---|---|
+| Health real do backend (`SELECT 1` + `PING`, 503 quando cai) | ✅ 2026-09-19 |
+| Liveness separada para o healthcheck do container | ✅ 2026-09-19 |
+| `deploy.sh` apontado para o health real | ✅ 2026-09-19 |
+| Script de saúde dos containers / disco / reboot | ✅ 2026-09-19 |
+| Notificador plugável por webhook | ✅ 2026-09-19 |
+| Heartbeat do backup (mecanismo + doc do lado do kernel) | ✅ 2026-09-19 — falta a linha no `backup-postgres.sh` (pedido abaixo) |
+| Uptime externo (conta em serviço) | ⛔ do Michel — decisão e cadastro humanos |
+
+**O que estava errado.** Três sondas, três mentiras diferentes:
+`https://vitrocrm.cloud/healthz` é `return 200` do próprio nginx e nunca tocou
+o backend; `/health` pela internet devolvia o HTML da SPA com 200; e o
+`/health` interno respondia `ok` sem olhar Postgres nem Redis. Consequência
+medida: o `deploy.sh` declarava "no ar" com o backend morto.
+
+**O que existe agora.** `GET /api/v1/health` (readiness, passa pelo proxy
+`/api/`) faz `SELECT 1` no pool e `PING` no cache e responde **503 dizendo
+qual dependência caiu**; `GET /health` e `/health/live` continuam triviais
+(liveness), porque health que checa banco faz o orquestrador reiniciar o
+backend em loop por uma queda que não é dele. Resultado memoizado por 5 s,
+single-flight, timeout de 2 s por dependência, sem abrir transação, fora do
+rate limit.
+
+**Arquivos.** `backend/src/lib/health.ts` (novo), `backend/src/app.ts`,
+`backend/tests/kernel/health.spec.ts` (novo, 9 testes),
+`scripts/monitora-saude.sh` (novo), `scripts/lib/alerta.sh` (novo),
+`scripts/systemd/crm-lab-monitor.{service,timer}` (novos), `scripts/deploy.sh`,
+`nginx/frontend.conf` (**só** o bloco `location = /healthz`),
+`docs/guides/MONITORING.md` (novo), `docs/guides/CONVENTIONS.md`.
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces; `npm run
+test:backend` verde; `bash -n` + `shellcheck -x` nos scripts novos. Caos real
+(`docker stop` do Postgres) é de homologação, não daqui.
+
+### Pedidos do Agent-Kernel-29
+
+| De | Para | Pedido | Status |
+|----|------|--------|--------|
+| Agent-Kernel-29 | Agent-Infra-28 (CRMLAB-28) | **Heartbeat do backup** — `scripts/backup-postgres.sh` é seu. Duas linhas fecham o dead man's switch: `. "$(dirname "${BASH_SOURCE[0]}")/lib/alerta.sh"` no topo e `alerta_heartbeat backup-postgres` na última linha, **só no caminho de sucesso** (depois de `log "concluido"`). A função grava a marca datada em `/var/lib/crm-lab-monitor/` e, se `BACKUP_POSTGRES_HEARTBEAT_URL` estiver definida, faz o ping HTTP. Quem cobra a marca é o `monitora-saude.sh` (26 h). Enquanto a linha não existir, a verificação fica em silêncio de propósito. | ⬜ aberto |
+| Agent-Kernel-29 | Agent-Infra-28 (CRMLAB-28) | **Seção no `DEPLOYMENT.md`** (arquivo seu nesta onda): um parágrafo em "operação" remetendo a `docs/guides/MONITORING.md`, e a correção das duas linhas que hoje mandam checar `/healthz` (§ de verificação pós-deploy, ~linhas 183-185) — a sonda honesta é `GET /api/v1/health`. | ⬜ aberto |
+| Agent-Kernel-29 | Agent-Infra (compose) | **`healthcheck:` no serviço `backend`** do `docker-compose.prod.yml`, que hoje não tem nenhum: aponte para a **liveness** (`/health/live`), nunca para `/api/v1/health` — readiness no healthcheck do container faz uma queda do Postgres reiniciar o backend em loop. O compose não é do CRMLAB-29. | ⬜ aberto |
+| Agent-Kernel-29 | Agent-Docs | `docs/ARCHITECTURE.md` (~linha 100) descreve a ordem de middlewares como `GET /health (público) → /api/v1/<módulos>`. Hoje são três sondas: `/health`, `/health/live` e `/api/v1/health`, todas antes do rate limit. Não editei por estar fora do ownership desta onda. | ⬜ aberto |
+| Agent-Kernel-29 | Michel | **Número de WhatsApp / destino do alerta.** O notificador está pronto e plugável: o envio vai para `ALERT_WEBHOOK_URL` (+ `ALERT_WEBHOOK_TOKEN`), configurada em `/etc/crm-lab/monitor.env` na VPS. Sem a variável o monitor roda e registra tudo no journal, sem enviar nada — o card não ficou bloqueado por isso. Também falta a conta no serviço de uptime externo, que é o único capaz de cobrir "a VPS inteira sumiu". Opções comparadas em `MONITORING.md` §4. | ⬜ aberto |

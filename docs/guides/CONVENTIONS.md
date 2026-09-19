@@ -105,6 +105,26 @@ throw new BusinessError('DISCOUNT_EXCEEDS_LIMIT', { requestedDiscount, userLimit
 - `console.log` (usar logger estruturado)
 - Segredos hardcoded (sempre env vars)
 
+### Sondas de saúde (CRMLAB-29)
+
+Duas, com papéis que não se misturam:
+
+| Sonda | Caminho | Responde por |
+|---|---|---|
+| Liveness | `GET /health`, `GET /health/live` | O processo. Trivial, sem tocar em dependência. É o que `HEALTHCHECK`/compose consultam. |
+| Readiness | `GET /api/v1/health` | O sistema. `SELECT 1` + `PING`; **503** quando uma dependência cai, dizendo qual. É o que deploy e monitor consultam. |
+
+- Liveness **nunca** consulta dependência: senão uma queda do Postgres
+  reinicia o container do backend em loop, por um problema que não é dele.
+- Readiness mora sob `/api/v1/` porque é o único prefixo que o nginx faz
+  proxy — `/health` pela internet devolve o HTML da SPA com 200.
+- As duas ficam **fora do rate limit** (health que responde 429 não serve de
+  health) e o resultado da readiness é memoizado por 5 s, com timeout de 2 s
+  por dependência e sem abrir transação.
+
+Implementação em `backend/src/lib/health.ts`; operação, alerta e heartbeat em
+[`MONITORING.md`](./MONITORING.md).
+
 ---
 
 ## Frontend

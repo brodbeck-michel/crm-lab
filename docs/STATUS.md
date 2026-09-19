@@ -1389,6 +1389,72 @@ sidebar muda com o rebuild do frontend, que este deploy fez.
 
 ---
 
+## 2026-09-19 — CRMLAB-29: monitoramento e health honesto (Onda A) ✅
+
+**Agente:** `Agent-Kernel-29` · branch `feature/CRMLAB-29-monitoramento-health` → `hardening/onda-a`
+
+| Tarefa | Status |
+|---|---|
+| Health real do backend (`SELECT 1` + `PING`, 503 quando cai) | ✅ 2026-09-19 |
+| Liveness separada para o healthcheck do container | ✅ 2026-09-19 |
+| `deploy.sh` apontado para o health real | ✅ 2026-09-19 |
+| Script de saúde dos containers / disco / reboot | ✅ 2026-09-19 |
+| Notificador plugável por webhook | ✅ 2026-09-19 |
+| Heartbeat do backup (mecanismo + doc do lado do kernel) | ✅ 2026-09-19 — falta a linha no `backup-postgres.sh` (pedido abaixo) |
+| Uptime externo (conta em serviço) | ⛔ do Michel — decisão e cadastro humanos |
+
+**O que estava errado.** Três sondas, três mentiras diferentes:
+`https://vitrocrm.cloud/healthz` é `return 200` do próprio nginx e nunca tocou
+o backend; `/health` pela internet devolvia o HTML da SPA com 200; e o
+`/health` interno respondia `ok` sem olhar Postgres nem Redis. Consequência
+medida: o `deploy.sh` declarava "no ar" com o backend morto.
+
+**O que existe agora.** `GET /api/v1/health` (readiness, passa pelo proxy
+`/api/`) faz `SELECT 1` no pool e `PING` no cache e responde **503 dizendo
+qual dependência caiu**; `GET /health` e `/health/live` continuam triviais
+(liveness), porque health que checa banco faz o orquestrador reiniciar o
+backend em loop por uma queda que não é dele. Resultado memoizado por 5 s,
+single-flight, timeout de 2 s por dependência, sem abrir transação, fora do
+rate limit.
+
+**Arquivos.** `backend/src/lib/health.ts` (novo), `backend/src/app.ts`,
+`backend/tests/kernel/health.spec.ts` (novo, 9 testes),
+`scripts/monitora-saude.sh` (novo), `scripts/lib/alerta.sh` (novo),
+`scripts/systemd/crm-lab-monitor.{service,timer}` (novos), `scripts/deploy.sh`,
+`nginx/frontend.conf` (**só** o bloco `location = /healthz`),
+`docs/guides/MONITORING.md` (novo), `docs/guides/CONVENTIONS.md`.
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces; `npm run
+test:backend` verde; `bash -n` + `shellcheck -x` nos scripts novos. Caos real
+(`docker stop` do Postgres) é de homologação, não daqui.
+
+### Pedidos do Agent-Kernel-29
+
+| De | Para | Pedido | Status |
+|----|------|--------|--------|
+| Agent-Kernel-29 | Agent-Infra-28 (CRMLAB-28) | **Heartbeat do backup** — `scripts/backup-postgres.sh` é seu. Duas linhas fecham o dead man's switch: `. "$(dirname "${BASH_SOURCE[0]}")/lib/alerta.sh"` no topo e `alerta_heartbeat backup-postgres` na última linha, **só no caminho de sucesso** (depois de `log "concluido"`). A função grava a marca datada em `/var/lib/crm-lab-monitor/` e, se `BACKUP_POSTGRES_HEARTBEAT_URL` estiver definida, faz o ping HTTP. Quem cobra a marca é o `monitora-saude.sh` (26 h). Enquanto a linha não existir, a verificação fica em silêncio de propósito. | ⬜ aberto |
+| Agent-Kernel-29 | Agent-Infra-28 (CRMLAB-28) | **Seção no `DEPLOYMENT.md`** (arquivo seu nesta onda): um parágrafo em "operação" remetendo a `docs/guides/MONITORING.md`, e a correção das duas linhas que hoje mandam checar `/healthz` (§ de verificação pós-deploy, ~linhas 183-185) — a sonda honesta é `GET /api/v1/health`. | ⬜ aberto |
+| Agent-Kernel-29 | Agent-Infra (compose) | **`healthcheck:` no serviço `backend`** do `docker-compose.prod.yml`, que hoje não tem nenhum: aponte para a **liveness** (`/health/live`), nunca para `/api/v1/health` — readiness no healthcheck do container faz uma queda do Postgres reiniciar o backend em loop. O compose não é do CRMLAB-29. | ⬜ aberto |
+| Agent-Kernel-29 | Agent-Docs | `docs/ARCHITECTURE.md` (~linha 100) descreve a ordem de middlewares como `GET /health (público) → /api/v1/<módulos>`. Hoje são três sondas: `/health`, `/health/live` e `/api/v1/health`, todas antes do rate limit. Não editei por estar fora do ownership desta onda. | ⬜ aberto |
+| Agent-Kernel-29 | Michel | **Número de WhatsApp / destino do alerta.** O notificador está pronto e plugável: o envio vai para `ALERT_WEBHOOK_URL` (+ `ALERT_WEBHOOK_TOKEN`), configurada em `/etc/crm-lab/monitor.env` na VPS. Sem a variável o monitor roda e registra tudo no journal, sem enviar nada — o card não ficou bloqueado por isso. Também falta a conta no serviço de uptime externo, que é o único capaz de cobrir "a VPS inteira sumiu". Opções comparadas em `MONITORING.md` §4. | ⬜ aberto |
+
+### 2026-09-19 — Correções pós-revisão de código (PR #21)
+
+| Achado | Correção |
+|---|---|
+| **Crítico.** `docker ps --filter health=unhealthy` / `status=exited` escaneavam o HOST INTEIRO, não só o projeto Compose do CRM Lab — homolog e prod rodam na mesma VPS como dois projetos separados (`crm-lab-prod`/`crm-lab-homolog`, ver `deploy.sh`), então um container quebrado em homolog disparava alerta genérico de "CRM Lab" e confundia quem está de plantão. | `scripts/monitora-saude.sh` agora exige `COMPOSE_PROJECT_NAME` (mesma variável que `deploy.sh` já usa com `docker compose -p`; normalmente vem do `.env` do ambiente) e filtra as duas chamadas de `docker ps` por `--filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME"`. O título do alerta agora leva `[nome-do-projeto]`. Documentado em `docs/guides/MONITORING.md` §3. |
+| **Alto.** `registra()` engolia silenciosamente falha de `mkdir`/escrita no `STATE_DIR` (`\|\| true`), e a instalação do diretório dependia de um `sudo install -d` manual — se o diretório sumisse (rebuild de VPS, limpeza, passo pulado), toda execução de 5 em 5 min virava alerta `critical` novo (288/dia), em silêncio total. | (1) `scripts/systemd/crm-lab-monitor.service` ganhou `StateDirectory=crm-lab-monitor`: o systemd cria/gerencia `/var/lib/crm-lab-monitor` sozinho, sem passo manual. (2) `registra()` e o `mkdir -p` inicial agora logam com `logger -p daemon.err -t crm-lab-monitor` (+ `alerta_log`) quando não conseguem gravar/apagar a marca de estado — sem abortar a varredura, só tornando o problema visível no journal. Documentado em `docs/guides/MONITORING.md` §3. |
+| Menor. `tr '\n' '; '` trunca o separador de 2 chars para 1 (`tr` ajusta SET2 ao tamanho de SET1) — nomes de containers saídos ficavam colados por `;` sem espaço. | Trocado por `paste -sd';' - \| sed 's/;/; /g'`. |
+| Menor. `HEARTBEAT_DIR` (`lib/alerta.sh`) e `STATE_DIR` (`monitora-saude.sh`) eram variáveis independentes que só por acaso apontavam para o mesmo default. | Extraída variável compartilhada `CRM_LAB_MONITOR_STATE_DIR` (default em `lib/alerta.sh`); `HEARTBEAT_DIR` e `STATE_DIR` agora caem para ela por padrão — mudar o caminho de estado é uma variável só. |
+
+**Pendências conhecidas, deixadas de propósito (fora de escopo desta correção):**
+- Chamada dupla de `curl` no health check do `deploy.sh` (uma com `-f` para status, outra sem para o corpo do 503) — funciona, mas é redundante; não mexido por baixa severidade.
+- Mensagem de erro do `deploy.sh` ainda diz "60s" no timeout do healthcheck pós-deploy, mas o loop é `30 × sleep 2` = na prática até 60s + tempo de cada request — texto desatualizado, sem risco funcional; não mexido para não tocar em código fora do escopo desta correção sem necessidade.
+
+**Verificação:** `bash -n` verde nos 3 scripts alterados (`monitora-saude.sh`, `lib/alerta.sh`, `deploy.sh`, este último não modificado mas revalidado); `shellcheck` não disponível no ambiente local. Nenhum arquivo de `backend/` tocado, então `npm run typecheck`/`test:backend` não se aplicam a esta correção.
+
+---
+
 ## 2026-09-19 — CRMLAB-20 (Onda A): teto de corpo do nginx ✅
 
 `Agent-Infra-20`, branch `feature/CRMLAB-20-nginx-body-size`, worktree próprio.

@@ -7,6 +7,8 @@ export {
   bubbleTypeFor,
 } from './MessageBubble';
 export type { MessageBubbleProps, MessageBubbleType } from './MessageBubble';
+export { AudioMessage } from './AudioMessage';
+export type { AudioMessageProps } from './AudioMessage';
 export { Composer } from './Composer';
 export type { ComposerProps } from './Composer';
 export { EmojiPicker, EMOJIS } from './EmojiPicker';

@@ -12,7 +12,7 @@
  * A conexao nunca e aberta: o `pg` so disca no primeiro `connect()`/`query()`,
  * e nenhum destes testes faz isso.
  */
-import pg from 'pg';
+import type pg from 'pg';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_CONNECTION_TIMEOUT_MS,

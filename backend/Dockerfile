@@ -16,11 +16,17 @@
 #  - `backend/migrations/*.sql` sao lidas do disco em runtime pelo migrator
 #    (ele sobe a partir do proprio modulo procurando `migrations/`), por isso
 #    sao copiadas para a imagem.
+#
+# Imagem base pinada por digest (CRMLAB-36): a tag `node:22-alpine` sozinha
+# muda de conteudo sob o pe sem aviso (rebuild de patch da distro). O digest
+# faz o mesmo build reproduzir byte a byte; o Dependabot (job `docker` do
+# workflow, CRMLAB-37) atualiza este ARG quando a Alpine soltar patch novo.
+ARG NODE_BASE=node:22-alpine@sha256:b6f26b36c8ff49624cfdac716b8ea1138d606df02586a77d364bb5536a634f85
 
 # ---------------------------------------------------------------------------
 # Stage 1 — dependencias completas (dev incluidas) para compilar
 # ---------------------------------------------------------------------------
-FROM node:22-alpine AS deps
+FROM ${NODE_BASE} AS deps
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -50,7 +56,7 @@ RUN npm run build --workspace shared \
 # ---------------------------------------------------------------------------
 # Stage 3 — dependencias apenas de producao
 # ---------------------------------------------------------------------------
-FROM node:22-alpine AS prod-deps
+FROM ${NODE_BASE} AS prod-deps
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -66,7 +72,7 @@ RUN --mount=type=cache,target=/root/.npm \
 # ---------------------------------------------------------------------------
 # Stage 4 — runtime
 # ---------------------------------------------------------------------------
-FROM node:22-alpine AS runtime
+FROM ${NODE_BASE} AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production \

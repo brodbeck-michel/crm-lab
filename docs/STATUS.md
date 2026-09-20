@@ -1639,3 +1639,64 @@ mudança de contrato de API nem de schema — nenhuma migração acompanha.
 primeira vez com sonda honesta na borda) também em 200, nenhum log nível 50+ no backend no
 primeiro minuto. `docs/superpowers/plans/2026-09-19-hardening-pos-auditoria.md` tem o passo a
 passo de rollback (`IMAGE_TAG=<sha-anterior>`) se algo aparecer depois.
+
+---
+
+## 2026-09-20 — CRMLAB-36: imagens publicadas no GHCR, `mem_limit`/`ulimit`/tuning, digest pinning ✅ (parcial — pendências manuais na VPS)
+
+Worktree próprio (`crm-lab-wt-36`), branch `feature/CRMLAB-36-infra-vps`.
+
+- **CI publica no GHCR** (`.github/workflows/ci.yml`, job `docker`): só em `push` para `main`
+  (nunca em PR). `crm-lab-backend` ganha 3 tags no mesmo digest (`:<sha>`, `:hml-<sha>`,
+  `:latest` — imagem única serve os dois ambientes, D-141). `crm-lab-frontend` é buildado e
+  publicado DUAS vezes (`:<sha>` produção, `:hml-<sha>` homologação com
+  `VITE_APP_ENV=homologacao`) porque a variável é build-time e fica inlinada no bundle.
+- **`scripts/deploy.sh`**: troca `dc build` por `dc pull` quando `IMAGE_REGISTRY` está definido
+  no `.env` do ambiente; sem a variável, cai no fallback documentado (build local, mesmo
+  comportamento de antes). Depois do `up -d`, roda `docker image prune -af --filter
+  'until=336h'` e `docker builder prune -f --filter 'until=168h'` (best-effort — falha aqui não
+  aborta o deploy; nunca atinge volume nem a tag em uso).
+- **`docker-compose.prod.yml`**: `mem_limit` em todos os serviços (postgres 1536m · redis 256m
+  · backend 512m · frontend 64m · evolution 768m · migrate 256m — soma < 6 GB pros dois
+  ambientes). Redis com `--maxmemory 200mb --maxmemory-policy allkeys-lru` (sem teto antes,
+  `noeviction` era o que derrubava o rate limit em 500 global — CRMLAB-34). Backend com
+  `ulimits.nofile` 65536. Postgres com `shared_buffers=512MB`,
+  `effective_cache_size=2GB`, `log_min_duration_statement=1000`. Imagens de `postgres`/`redis`
+  pinadas por digest. `image:` de `migrate`/`backend`/`frontend` ganham prefixo
+  `${IMAGE_REGISTRY:-}` (vazio = comportamento local de sempre); `build:` continua no arquivo
+  como fallback documentado, não é mais o caminho normal.
+- **Digest pinning** (`backend/Dockerfile`, `frontend/Dockerfile`): `node:22-alpine` e
+  `nginx:1.27-alpine` via `ARG` com `@sha256:...` resolvido em 20/09/2026 (`docker inspect
+  RepoDigests`). Dependabot (`docker`, já configurado no CRMLAB-37) atualiza o digest quando a
+  Alpine soltar patch novo.
+- **`evolution: user: "1000:1000"`** avaliado e **não aplicado** — D-140 em
+  `docs/DECISIONS.md`: imagem de terceiro, sem como validar da CI se o volume de sessão aceita
+  rodar sem root. Só ganhou `mem_limit`.
+- **Docs atualizados no mesmo commit** (Regra Zero): `docs/guides/DEPLOYMENT.md` §1 (tabela do
+  job `docker`), §2, §4 (comandos com `pull`) e §7 (reescrito — "publicação em registry" saiu
+  da lista de pendências, entrou o que realmente falta); `docs/guides/ENVIRONMENTS.md` §6
+  (molde de `.env` com `IMAGE_REGISTRY`) e §7 (custo, reescrito).
+
+**Pendências que exigem ação manual na VPS (fora do alcance de um PR) — ver
+`docs/guides/DEPLOYMENT.md` §7 para o mesmo texto:**
+
+1. Definir `IMAGE_REGISTRY=ghcr.io/<owner>/` no `.env` de `/opt/crm-lab` e
+   `/opt/crm-lab-homolog` — sem isso `deploy.sh` continua no fallback de build local (não quebra
+   nada, só não ganha o benefício do card até alguém editar o `.env`).
+2. Conferir que o pacote GHCR (`crm-lab-backend`/`crm-lab-frontend`) fica acessível para o
+   usuário `deploy` puxar da VPS (visibilidade do pacote no GitHub — por padrão pacote de repo
+   privado herda a visibilidade do repo, mas vale conferir depois do primeiro push em `main`).
+3. Reboot pendente (`/var/run/reboot-required`, kernel 7.0.0-31) — agendar fora do horário do
+   laboratório, depois do backup das 03:10 UTC. **Não fiz isso nem vou fazer por script** — é
+   SSH real na VPS, fora do escopo desta sessão.
+4. Validar `evolution: user: "1000:1000"` em homologação antes de cogitar produção (D-140).
+5. `sudo NOPASSWD: ALL` do usuário `deploy` (item 7 do card, "menor") — não mexido; é mudança
+   de política de acesso da VPS, não teve linha de código associada neste PR.
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces. YAML de `.github/workflows/ci.yml`
+validado com `yaml.safe_load`; `docker-compose.prod.yml` validado com `docker compose config`
+(env obrigatórias stubadas). `bash -n scripts/deploy.sh` limpo. `backend/Dockerfile` buildado
+localmente até o stage `deps` para confirmar que o `ARG` de digest antes do primeiro `FROM`
+funciona nas três ocorrências do arquivo. Sem teste automatizado novo: mudança é
+infra/YAML/shell, sem código TS testável por unidade — os testes existentes (backend/frontend)
+não foram tocados e continuam cobertos pelo CI da própria PR.

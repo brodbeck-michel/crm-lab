@@ -72,6 +72,23 @@ Fora dessas linhas, qualquer envelope de recurso único é bug de contrato, não
 
 ## 1. Authentication & Users
 
+**CRMLAB-32 (2026-09-20).** O refresh token deixou de viajar pelo corpo JSON:
+sai só em `Set-Cookie`, httpOnly, ilegível por JavaScript. Resumo:
+
+- `crm_refresh` — cookie do refresh, gravado por `/login` e `/refresh`, limpo por `/logout`.
+  Atributos: `HttpOnly`; `Secure` (só em produção/homologação — TLS real; ausente em `development`/`test`,
+  onde não há HTTPS local); `SameSite=Strict`; `Path=/api/v1/auth` (nunca viaja em outra rota);
+  `Max-Age` = `JWT_REFRESH_TTL` (7d).
+- `POST /refresh` exige o header `X-Requested-With: crm-lab` — proteção CSRF extra além de
+  `SameSite=Strict`/`Path` (um form HTML cross-site não consegue setar header customizado).
+- `RefreshRequest.refreshToken` no corpo é fallback **DEPRECIADO** de transição (clientes que
+  ainda não migraram para o cookie); cookie tem prioridade quando os dois vêm juntos.
+  **Remoção prevista: 2026-10-04.**
+- `LoginResponse`/`RefreshResponse` (`shared/types/auth.types.ts`) não carregam mais
+  `refreshToken` — só o access token.
+- Backend NÃO liga `credentials: true` no CORS geral (`app.ts`): nginx serve SPA e API no mesmo
+  origin em produção/homologação, então o cookie viaja sozinho sem CORS com credenciais.
+
 ### POST /auth/login
 Fazer login.
 
@@ -87,7 +104,6 @@ Fazer login.
 ```json
 {
   "accessToken": "eyJhbGc...",
-  "refreshToken": "eyJhbGc...",
   "expiresIn": 900,
   "user": {
     "id": "uuid",
@@ -104,47 +120,47 @@ Fazer login.
   }
 }
 ```
+`Set-Cookie: crm_refresh=<token>; HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth` (ver nota acima).
 
 ### POST /auth/refresh
-Renovar access token usando refresh token.
+Renovar access token usando o refresh do cookie `crm_refresh` (corpo vazio `{}` no caso normal).
 
 **Request:**
 ```json
-{
-  "refreshToken": "eyJhbGc..."
-}
+{}
+```
+Header: `X-Requested-With: crm-lab` (obrigatório — sem ele, `REFRESH_TOKEN_INVALID`).
+
+Fallback depreciado (ver nota acima), sem cookie:
+```json
+{ "refreshToken": "eyJhbGc..." }
 ```
 
 **Response (200):**
 ```json
 {
   "accessToken": "eyJhbGc...",
-  "expiresIn": 900,
-  "refreshToken": "eyJhbGc..."
+  "expiresIn": 900
 }
 ```
+`Set-Cookie: crm_refresh=<token-novo>; ...` (mesmos atributos do login).
 
 O refresh token é **rotacionado a cada uso** (SECURITY.md): a chamada revoga o token
-enviado e emite um novo, devolvido em `refreshToken` (D-014). O cliente DEVE substituir
-o token guardado. Reusar um refresh já rotacionado é tratado como roubo: devolve
-`REFRESH_TOKEN_INVALID` e revoga toda a família de tokens do usuário (D-015).
+enviado e emite um novo, devolvido só no `Set-Cookie` (D-014). Reusar um refresh já
+rotacionado é tratado como roubo: devolve `REFRESH_TOKEN_INVALID` e revoga toda a família
+de tokens do usuário (D-015).
 
-`RefreshResponse` em `shared/types/auth.types.ts` declara os três campos, `refreshToken`
-**obrigatório** — a rotação é incondicional, então um campo opcional descreveria uma
-resposta que não existe (D-053). A divergência aberta na Onda 5 está fechada: não há mais
-tipo local no `auth.service`.
-
-**Erros:** `REFRESH_TOKEN_INVALID` (401), `USER_INACTIVE` (403), `TENANT_INACTIVE` (403)
+**Erros:** `REFRESH_TOKEN_INVALID` (401 — inclui cookie/body ausentes e header
+`X-Requested-With` ausente/errado), `USER_INACTIVE` (403), `TENANT_INACTIVE` (403)
 
 ### POST /auth/logout
-Fazer logout (invalidar refresh token).
+Fazer logout (invalidar refresh token e limpar o cookie).
 
 **Request:**
 ```json
-{
-  "refreshToken": "eyJhbGc..."
-}
+{}
 ```
+Lê o refresh do cookie `crm_refresh` (fallback depreciado: `{ "refreshToken": "..." }` no corpo).
 
 **Response (200):**
 ```json
@@ -152,6 +168,7 @@ Fazer logout (invalidar refresh token).
   "message": "Logged out successfully"
 }
 ```
+`Set-Cookie: crm_refresh=; Max-Age=0; Path=/api/v1/auth` (limpa o cookie).
 
 Idempotente: token desconhecido ou já revogado devolve a mesma resposta (não é oráculo).
 

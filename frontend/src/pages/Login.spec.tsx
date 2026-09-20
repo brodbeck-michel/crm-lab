@@ -46,7 +46,6 @@ const THEME = {
 
 const RESPONSE: LoginResponse = {
   accessToken: 'access-1',
-  refreshToken: 'refresh-1',
   expiresIn: 900,
   user: {
     id: 'u-1',

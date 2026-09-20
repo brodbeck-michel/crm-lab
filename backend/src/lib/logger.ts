@@ -28,6 +28,9 @@ const REDACT_PATHS = [
   '*.authorization',
   'req.headers.authorization',
   'headers.authorization',
+  // CRMLAB-32: o cookie carrega o refresh token em claro no header HTTP.
+  'req.headers.cookie',
+  'headers.cookie',
   'details.password',
   'details.token',
 ];

@@ -96,7 +96,12 @@ export function createApp(deps: AppDeps): BuiltApp {
     cors({
       origin: env.corsOrigins,
       credentials: false,
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-Correlation-Id'],
+      // `X-Requested-With` (D-142): header exigido por `POST /auth/refresh`.
+      // Sem CORS credenciado o cookie não atravessa mesmo assim (D-143 é o
+      // que resolve isso via mesmo origin), mas sem o header na allow-list o
+      // preflight de um cliente cross-origin genuíno rejeitaria antes de
+      // chegar na rota.
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Correlation-Id', 'X-Requested-With'],
       exposedHeaders: [
         'X-Correlation-Id',
         'X-RateLimit-Limit',

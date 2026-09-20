@@ -211,7 +211,7 @@ beforeEach(() => {
     },
     tenant: null,
     theme: null,
-    tokens: { accessToken: 'a', refreshToken: 'r', expiresAt: Date.now() + 60_000 },
+    tokens: { accessToken: 'a', expiresAt: Date.now() + 60_000 },
   });
 
   channelsMock.mockResolvedValue(CHANNELS);

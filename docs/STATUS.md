@@ -1679,6 +1679,57 @@ ajustado ao novo método `incr` do `CacheService`).
 
 ---
 
+## 2026-09-20 — CRMLAB-32: refresh em cookie httpOnly, access token só em memória, CSP Report-Only ✅
+
+Worktree próprio (`crm-lab-wt-32`), branch `feature/CRMLAB-32-cookie-httponly-csp`. Achado de
+severidade Alta da auditoria de segurança (D-142 em `docs/DECISIONS.md` tem o detalhe completo).
+
+- **Backend** (`backend/src/controllers/auth.routes.ts`, `backend/src/services/auth.service.ts`,
+  `backend/package.json` +`cookie-parser`): `/auth/login` e `/auth/refresh` gravam
+  `Set-Cookie: crm_refresh=...; HttpOnly; Secure (só produção); SameSite=Strict;
+  Path=/api/v1/auth`. Corpo JSON só com o access token. `/auth/refresh` lê o cookie primeiro
+  (fallback depreciado no corpo, remoção 2026-10-04) e exige
+  `X-Requested-With: crm-lab`. `/auth/logout` limpa o cookie (`Max-Age=0`) além de revogar a
+  família. `cookie-parser` montado só no router de auth.
+- **Frontend** (`frontend/src/stores/auth.store.ts`, `frontend/src/api/client.ts`,
+  `frontend/src/hooks/useSession.ts`, `frontend/src/App.tsx`): `tokens` sai do `persist`
+  (localStorage só guarda `user`/`tenant`/`theme`); access token vive em memória. Nova
+  `useSessionBootstrap()` chama `POST /auth/refresh` (cookie vai sozinho) antes do router
+  renderizar — o `App` fica em branco no instante do bootstrap, sem piscar `/login`.
+- **nginx** (`nginx/frontend.conf`): `Content-Security-Policy-Report-Only` (default-src 'self'
+  etc — ver arquivo) e `Permissions-Policy`. Report-Only de propósito: promover para enforce
+  depois de ~1 semana observando homologação sem violação inesperada.
+- **Docs atualizados no mesmo commit** (Regra Zero): `docs/api/API_CONTRACTS.md` §1 (contrato
+  novo de login/refresh/logout), `docs/contracts/FRONTEND_BACKEND.md` ("Autenticação"),
+  `shared/types/auth.types.ts` (`LoginResponse`/`RefreshResponse` sem `refreshToken`,
+  `RefreshRequest.refreshToken` opcional e depreciado).
+
+**NÃO tocado:** `frontend/src/api/ws.ts` (WebSocket) — é o CRMLAB-33, que depende deste card.
+CORS geral (`app.ts`) continua `credentials: false`.
+
+**Testes:** `backend/tests/auth/login.spec.ts` e `refresh.spec.ts` reescritos para o fluxo de
+cookie (Set-Cookie com as flags certas, refresh sem cookie → 401, refresh com cookie → access +
+cookie novos, logout limpa o cookie, fallback depreciado no corpo, header
+`X-Requested-With` obrigatório). `frontend/src/api/client.spec.ts`,
+`frontend/src/stores/auth.store.spec.ts` e specs que injetavam `tokens.refreshToken` direto no
+store (`Login.spec.tsx`, `guards.spec.tsx`, `Sidebar.spec.tsx`, `Attendance.spec.tsx`,
+`InternalChat.spec.tsx`) ajustados para o novo shape sem refresh no frontend.
+`npm run typecheck` e `npm run test:backend`/`test:frontend` verdes (ver relatório do card no
+Jira para o resultado exato desta rodada).
+
+**Correção pós-CI (mesmo dia): E2E quebrava 76/123 specs.** O PR abriu com `test:backend`/
+`test:frontend` verdes mas nenhuma rodada de E2E local — o job `e2e` do CI pegou uma regressão
+real: todo `page.goto` para rota autenticada caía em `/login`. Causa: `VITE_API_URL` absoluto em
+dev/E2E (`http://localhost:3000/...`) fazia o browser chamar a API numa origin diferente da SPA
+(porta 5173 vs 3000) — cookie `HttpOnly` do refresh não atravessa origin diferente, então
+`useSessionBootstrap` tomava 401 sempre. D-143 em `docs/DECISIONS.md` tem o detalhe; correção:
+proxy do Vite (`frontend/vite.config.ts`) + `VITE_API_URL`/`VITE_WS_URL` relativos em
+`frontend/.env.example` e no job `e2e` do CI, igualando dev/E2E a produção (D-051). CORS também
+ganhou `X-Requested-With` em `allowedHeaders` (defensivo — não era o que quebrava o E2E, mas
+faltava para qualquer cliente cross-origin genuíno chegar em `/auth/refresh`).
+
+---
+
 ## 2026-09-20 — CRMLAB-31: allow-list de MIME, sniff de magic bytes, `attachment` para não-imagem, teto de 1 MB nos webhooks públicos ✅
 
 Worktree próprio (`crm-lab-wt-31`), branch `feature/CRMLAB-31-hardening-midia`.

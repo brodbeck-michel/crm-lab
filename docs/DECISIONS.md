@@ -1868,6 +1868,60 @@ pior que sair de forma controlada. Pedido explícito do card: mesmo tratamento p
 sem meio-termo de "loga e continua" para `unhandledRejection`.
 **Impacto:** `backend/src/main.ts` (função `onFatal`, reaproveitando `shutdown`).
 
+### D-142: Refresh token em cookie httpOnly, access token só em memória, CSP em Report-Only (CRMLAB-32)
+**Decisão:** `POST /auth/login` e `POST /auth/refresh` gravam o refresh token em
+`Set-Cookie: crm_refresh=<token>; HttpOnly; Secure (só produção/homologação); SameSite=Strict;
+Path=/api/v1/auth`, e o corpo JSON deixa de trazer `refreshToken` (`LoginResponse`/
+`RefreshResponse` em `shared/types/auth.types.ts`). `POST /auth/refresh` lê o cookie primeiro,
+com fallback depreciado para `refreshToken` no corpo (remoção prevista 2026-10-04) e exige o
+header `X-Requested-With: crm-lab` como camada extra de CSRF. `POST /auth/logout` limpa o
+cookie (`Max-Age=0`) além de revogar a família. No frontend, `auth.store.ts` para de persistir
+`tokens` no `localStorage` — só `user`/`tenant`/`theme` — e o access token vive só em memória;
+toda carga de página chama `POST /auth/refresh` (cookie vai sozinho, mesmo origin) antes de
+renderizar o router (`useSessionBootstrap`, `App.tsx`), trocando o cookie por um access token
+novo. `nginx/frontend.conf` ganha `Content-Security-Policy-Report-Only` (não enforce ainda) e
+`Permissions-Policy`.
+**Motivo:** achado de severidade Alta da auditoria de segurança — a sessão inteira (access de
+15min E refresh de 7 dias, rotativo) ficava legível por qualquer JavaScript no origin via
+`localStorage`, e a SPA não tinha CSP nenhuma. Não há `dangerouslySetInnerHTML`/`innerHTML`
+hoje, mas o vetor é dependência de terceiros (jspdf, recharts, xlsx) ou descuido futuro — com
+dado de saúde de paciente em jogo, um XSS que rouba `localStorage` rouba a sessão inteira por
+7 dias. `HttpOnly` fecha esse vetor para o refresh; o access token curto em memória reduz a
+janela do que sobra. CSP entra em `Report-Only` (não `Content-Security-Policy` enforce) porque
+a SPA nunca foi auditada contra uma política — enforce direto arriscaria quebrar produção sem
+aviso; a promoção para enforce é decisão separada, após ~1 semana observando os relatórios de
+violação em homologação.
+**Impacto:** `backend/src/controllers/auth.routes.ts` (cookie-parser só neste router),
+`backend/src/services/auth.service.ts` (`LoginResult`/`RefreshResult` internos, com
+`refreshToken`, distintos do contrato público), `backend/package.json` (+`cookie-parser`),
+`shared/types/auth.types.ts`, `frontend/src/stores/auth.store.ts`, `frontend/src/api/client.ts`,
+`frontend/src/hooks/useSession.ts` (`useSessionBootstrap`), `frontend/src/App.tsx`,
+`nginx/frontend.conf`. NÃO mexeu em `frontend/src/api/ws.ts` (WebSocket) — isso é CRMLAB-33,
+que depende deste card. CORS geral (`app.ts`) continua com `credentials: false` — nginx já
+serve SPA e API no mesmo origin, então o cookie não precisa de CORS com credenciais.
+
+### D-143: Mesmo origin também em dev/E2E — proxy do Vite para `/api` e `/ws` (CRMLAB-32)
+**Decisão:** `frontend/vite.config.ts` ganha `server.proxy` encaminhando `/api` e `/ws` para
+`http://localhost:3000` (`ws: true` no segundo). `frontend/.env.example` e o job `e2e` de
+`.github/workflows/ci.yml` passam a usar `VITE_API_URL=/api/v1` e `VITE_WS_URL=/ws`
+(relativos) também em dev — antes só produção usava caminho relativo (D-051); dev apontava
+direto para `http://localhost:3000`, uma origin diferente por porta.
+**Motivo:** o refresh do D-142 vive num cookie `HttpOnly`, e cookie só volta em requisição
+**same-origin** (porta inclusa). Com `VITE_API_URL` absoluto, todo `POST /auth/refresh` feito
+pelo browser saía de `localhost:5173` para `localhost:3000` — origin diferente, cookie nunca
+volta — e o `useSessionBootstrap` (D-142) via 401 a cada carga de página, jogando qualquer
+sessão de volta para `/login`. Confirmado ao vivo: a suíte E2E inteira (76 de 123 specs)
+falhava exatamente assim depois do merge do CRMLAB-32 — todo teste que fazia `page.goto` para
+uma rota autenticada caía em `/login` porque o bootstrap nunca conseguia trocar o cookie por um
+access token. O proxy do Vite resolve isso do MESMO jeito que o nginx resolve em produção
+(D-051): dev, E2E e produção passam a compartilhar a mesma regra — "o browser nunca faz
+requisição cross-origin para a API".
+**Impacto:** `frontend/vite.config.ts`, `frontend/.env.example`, `.github/workflows/ci.yml`
+(env do job `e2e`), `docs/guides/CONVENTIONS.md`, `docs/guides/DEVELOPMENT.md`,
+`frontend/src/api/client.ts` (comentário de `resolveMediaUrl` atualizado — a distinção
+dev-absoluto/prod-relativo que ele descrevia deixou de existir). Nenhuma mudança de código de
+produção: `VITE_API_URL`/`VITE_WS_URL` do `frontend/Dockerfile` já eram relativos desde D-051.
+
 ## Template para novas decisões
 
 ```

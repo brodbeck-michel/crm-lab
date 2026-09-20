@@ -1,12 +1,15 @@
 /**
  * POST /auth/login — SERVICES.md §1, WORKFLOWS.md §8, SECURITY.md "Autenticacao".
+ *
+ * CRMLAB-32: o refresh token deixou de vir no corpo — sai SO em
+ * `Set-Cookie: crm_refresh=...; HttpOnly; SameSite=Strict; Path=/api/v1/auth`.
  */
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { LoginResponse } from '@crm-lab/shared';
 import type { DbClient } from '../../src/db/types.js';
 import { hashRefreshToken } from '../../src/repositories/refresh-token.repository.js';
 import { DEFAULT_THEME } from '../../src/services/theme.service.js';
-import { authModule } from '../../src/controllers/auth.routes.js';
+import { authModule, REFRESH_COOKIE_NAME } from '../../src/controllers/auth.routes.js';
 import { createTestApp, type TestApp } from '../helpers/test-app.js';
 import { getTestDb, resetDatabase } from '../helpers/test-db.js';
 import {
@@ -16,6 +19,12 @@ import {
   type TenantRecord,
   type UserRecord,
 } from '../helpers/factories.js';
+
+/** Extrai o valor do cookie `crm_refresh` de um `Set-Cookie` de supertest. */
+function refreshCookieValue(setCookie: string[] | undefined): string | undefined {
+  const raw = setCookie?.find((c) => c.startsWith(`${REFRESH_COOKIE_NAME}=`));
+  return raw?.split(';')[0]?.split('=')[1];
+}
 
 describe('POST /auth/login', () => {
   let db: DbClient;
@@ -47,12 +56,18 @@ describe('POST /auth/login', () => {
 
     const body = response.body as LoginResponse;
 
-    expect(Object.keys(body).sort()).toEqual(
-      ['accessToken', 'expiresIn', 'refreshToken', 'tenant', 'user'].sort(),
-    );
+    expect(Object.keys(body).sort()).toEqual(['accessToken', 'expiresIn', 'tenant', 'user'].sort());
     expect(typeof body.accessToken).toBe('string');
-    expect(typeof body.refreshToken).toBe('string');
     expect(body.expiresIn).toBe(900);
+
+    // O refresh NUNCA aparece no corpo — só no Set-Cookie httpOnly.
+    expect(JSON.stringify(body)).not.toContain('refreshToken');
+    const cookie = response.headers['set-cookie'] as unknown as string[] | undefined;
+    const setCookie = cookie?.find((c) => c.startsWith(`${REFRESH_COOKIE_NAME}=`));
+    expect(setCookie).toBeDefined();
+    expect(setCookie).toContain('HttpOnly');
+    expect(setCookie).toContain('SameSite=Strict');
+    expect(setCookie).toContain('Path=/api/v1/auth');
 
     expect(body.user).toEqual({
       id: user.id,
@@ -130,7 +145,8 @@ describe('POST /auth/login', () => {
       .send({ email: user.email, password: DEFAULT_TEST_PASSWORD })
       .expect(200);
 
-    const plain = (response.body as LoginResponse).refreshToken;
+    const plain = refreshCookieValue(response.headers['set-cookie'] as unknown as string[]);
+    if (!plain) throw new Error('Set-Cookie crm_refresh ausente na resposta de login');
 
     const stored = await db.withoutTenant((tx) =>
       tx.query<{ token_hash: string; user_id: string; revoked_at: unknown }>(

@@ -42,7 +42,7 @@ function login(role: UserRole): void {
     user: userWith(role),
     tenant: TENANT,
     theme: TENANT.theme,
-    tokens: { accessToken: 'access-1', refreshToken: 'refresh-1', expiresAt: Date.now() + 60_000 },
+    tokens: { accessToken: 'access-1', expiresAt: Date.now() + 60_000 },
   });
 }
 

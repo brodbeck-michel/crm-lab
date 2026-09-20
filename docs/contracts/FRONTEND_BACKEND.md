@@ -16,14 +16,35 @@ Resumo executivo da integração. Detalhes de shapes em `docs/api/API_CONTRACTS.
 
 ## Autenticação
 
+**CRMLAB-32** — o refresh (7d) deixou de viajar pelo corpo/JS: vive só no cookie
+httpOnly `crm_refresh` (`Set-Cookie`, `Secure` em produção, `SameSite=Strict`,
+`Path=/api/v1/auth`). O access token (15min) continua no corpo, mas o
+frontend guarda ele SÓ EM MEMÓRIA (Zustand sem `persist` para `tokens`) —
+`localStorage` não guarda token nenhum.
+
 ```
-1. POST /auth/login → { accessToken (15min), refreshToken (7d), user, tenant (com theme) }
+1. POST /auth/login → { accessToken (15min), user, tenant (com theme) } + Set-Cookie crm_refresh
 2. Toda request: Authorization: Bearer <accessToken>
-3. 401 TOKEN_EXPIRED → POST /auth/refresh → retry transparente (interceptor)
-4. 401 REFRESH_TOKEN_INVALID → limpar sessão → /login
+3. Carga de página: POST /auth/refresh (cookie vai sozinho) → access token novo
+   (bootstrap — o access token não sobrevive a um reload)
+4. 401 TOKEN_EXPIRED → POST /auth/refresh → retry transparente (interceptor)
+5. 401 REFRESH_TOKEN_INVALID → limpar sessão → /login
+6. POST /auth/refresh exige header X-Requested-With: crm-lab (proteção CSRF
+   extra — SameSite=Strict + Path já reduzem o risco, mas um form cross-site
+   não consegue setar header custom)
+7. POST /auth/logout limpa o cookie (Max-Age=0) além de revogar a família
 ```
 
+`RefreshRequest.refreshToken` no corpo é fallback DEPRECIADO de transição
+(clientes que ainda não migraram para o cookie) — remoção prevista para
+2026-10-04. O caminho normal e o único suportado pelo frontend atual é o
+cookie.
+
 O tema vem no login — o frontend NÃO faz request extra de tema no bootstrap.
+
+NÃO ligar `credentials: true` no CORS geral do backend: nginx serve SPA e API
+no mesmo origin em produção/homologação, então o cookie viaja sozinho sem
+precisar de CORS com credenciais.
 
 ---
 

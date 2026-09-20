@@ -68,7 +68,7 @@ function login(role: UserRole): void {
     user,
     tenant: TENANT,
     theme: TENANT.theme,
-    tokens: { accessToken: 'a', refreshToken: 'r', expiresAt: Date.now() + 60_000 },
+    tokens: { accessToken: 'a', expiresAt: Date.now() + 60_000 },
   });
 }
 

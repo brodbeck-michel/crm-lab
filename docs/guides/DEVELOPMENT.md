@@ -91,6 +91,7 @@ npm run e2e                # Playwright
 |---|---|
 | Porta 5432 ocupada | `docker-compose down` + verificar Postgres local |
 | Migração falha | Verificar ordem em `migrations/`; nunca editar migração aplicada — criar nova |
+| Sessão cai em `/login` em loop (dev) | Proxy do Vite (`vite.config.ts`) rodando? `VITE_API_URL`/`VITE_WS_URL` relativos (D-142)? Sem proxy o refresh via cookie httpOnly nunca volta (origins diferentes por porta) |
 | CORS em dev | Conferir `VITE_API_URL` e config de CORS do backend |
 | WS não conecta | Token válido? `VITE_WS_URL` correto? |
 | Tema não aplica | Login response tem `tenant.theme`? `applyTheme` chamado no bootstrap? |

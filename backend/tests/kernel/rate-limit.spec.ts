@@ -1,11 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import express, { type Request } from 'express';
 import supertest from 'supertest';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { applyTrustProxy } from '../../src/app.js';
-import { MemoryCache } from '../../src/lib/cache.js';
+import { MemoryCache, resetCacheUnavailableThrottleForTest, type CacheService } from '../../src/lib/cache.js';
 import { errorHandler } from '../../src/http/middleware/error-handler.js';
-import { isChannelWebhook, rateLimit, rateLimitKey } from '../../src/http/middleware/rate-limit.js';
+import {
+  isChannelWebhook,
+  isPublicRoute,
+  rateLimit,
+  rateLimitKey,
+} from '../../src/http/middleware/rate-limit.js';
 import { signAccessToken } from '../../src/lib/tokens.js';
 import { requestContext } from '../../src/http/middleware/request-context.js';
 
@@ -287,5 +292,101 @@ describe('rate-limit — webhook de canal tem balde proprio', () => {
     for (let i = 0; i < 20; i += 1) {
       await agent.post('/api/v1/webhooks/evolution/lab-x').expect(200);
     }
+  });
+});
+
+/**
+ * D-139: o limitador trocou `get`+`set` por `incr` atomico exatamente porque o
+ * padrao antigo furava sob concorrencia real. `Promise.all` (nao um loop
+ * sequencial de `await`) e o que prova isso — dispara as 50 requisicoes de
+ * verdade em paralelo, sem esperar uma terminar pra comecar a proxima.
+ */
+describe('rate-limit — concorrencia real (Promise.all)', () => {
+  it('50 requisicoes paralelas contra limite 10 -> exatamente 10 passam', async () => {
+    const cache = new MemoryCache();
+    const app = express();
+    app.use(requestContext());
+    app.use(rateLimit({ cache, limit: 10, keyResolver: () => 'chave-fixa-do-teste' }));
+    app.get('/ping', (_req, res) => {
+      res.json({ ok: true });
+    });
+    app.use(errorHandler());
+    const agent = supertest(app);
+
+    const responses = await Promise.all(
+      Array.from({ length: 50 }, () => agent.get('/ping')),
+    );
+
+    const statuses = responses.map((r) => r.status);
+    expect(statuses.filter((s) => s === 200)).toHaveLength(10);
+    expect(statuses.filter((s) => s === 429)).toHaveLength(40);
+  });
+});
+
+/**
+ * D-139: Redis fora do ar EM RUNTIME (distinto do fail-closed de BOOT do
+ * D-058, que nao passa por aqui) nao pode mais virar `next(err)` generico
+ * (500 pra tudo). Rota autenticada degrada fail-OPEN (loga e deixa passar,
+ * o JWT ja protege); rota publica (login/refresh/webhook) degrada
+ * fail-CLOSED com 503 SERVICE_UNAVAILABLE.
+ */
+describe('rate-limit — Redis indisponivel em runtime (fail-open / fail-closed)', () => {
+  class FailingCache implements CacheService {
+    async get<T>(): Promise<T | null> {
+      return null;
+    }
+    async set(): Promise<void> {}
+    async del(): Promise<void> {}
+    async delByPrefix(): Promise<void> {}
+    async incr(): Promise<number> {
+      throw new Error('ECONNREFUSED 127.0.0.1:6379');
+    }
+    async ping(): Promise<void> {}
+    async close(): Promise<void> {}
+  }
+
+  beforeEach(() => {
+    resetCacheUnavailableThrottleForTest();
+  });
+
+  function buildApp(path: string) {
+    const cache = new FailingCache();
+    const app = express();
+    app.use(requestContext());
+    app.use(rateLimit({ cache }));
+    app.all(path, (_req, res) => {
+      res.json({ ok: true });
+    });
+    app.use(errorHandler());
+    return supertest(app);
+  }
+
+  it('rota autenticada (generica): fail-open — 200 mesmo com o cache lançando erro', async () => {
+    const agent = buildApp('/api/v1/conversations');
+    const res = await agent.get('/api/v1/conversations');
+    expect(res.status).toBe(200);
+  });
+
+  it('/api/v1/auth/login: fail-closed — 503 SERVICE_UNAVAILABLE', async () => {
+    const agent = buildApp('/api/v1/auth/login');
+    const res = await agent.post('/api/v1/auth/login').send({});
+    expect(res.status).toBe(503);
+    expect(res.body.error.code).toBe('SERVICE_UNAVAILABLE');
+  });
+
+  it('/api/v1/auth/refresh: fail-closed — 503 SERVICE_UNAVAILABLE', async () => {
+    const agent = buildApp('/api/v1/auth/refresh');
+    const res = await agent.post('/api/v1/auth/refresh').send({});
+    expect(res.status).toBe(503);
+    expect(res.body.error.code).toBe('SERVICE_UNAVAILABLE');
+  });
+
+  it('isPublicRoute: login, refresh e webhook sao publicas; o resto nao', () => {
+    const asReq = (originalUrl: string) => ({ originalUrl }) as Request;
+    expect(isPublicRoute(asReq('/api/v1/auth/login'))).toBe(true);
+    expect(isPublicRoute(asReq('/api/v1/auth/refresh'))).toBe(true);
+    expect(isPublicRoute(asReq('/api/v1/webhooks/evolution/lab-x'))).toBe(true);
+    expect(isPublicRoute(asReq('/api/v1/auth/logout'))).toBe(false);
+    expect(isPublicRoute(asReq('/api/v1/conversations'))).toBe(false);
   });
 });

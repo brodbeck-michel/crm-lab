@@ -295,8 +295,11 @@ jobs:
       # descontrolado ainda e barrado); desliga-lo aqui seria mascarar.
       RATE_LIMIT_PER_MINUTE: '2000'
       CORS_ORIGIN: http://localhost:5173
-      VITE_API_URL: http://localhost:3000/api/v1
-      VITE_WS_URL: ws://localhost:3000/ws
+      # Relativo (D-142): o proxy do Vite (`vite.config.ts`) encaminha para
+      # `localhost:3000` mantendo o origin do dev server — o cookie httpOnly
+      # do refresh (CRMLAB-32) só volta em requisição same-origin.
+      VITE_API_URL: /api/v1
+      VITE_WS_URL: /ws
 
       # Gateway Evolution do fluxo 14 (conexao por QR, D-083). O gateway aqui e
       # o FALSO (`e2e/workflows/fake-evolution-gateway.ts`), que sobe na 8080 no

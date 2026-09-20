@@ -1868,6 +1868,66 @@ pior que sair de forma controlada. Pedido explícito do card: mesmo tratamento p
 sem meio-termo de "loga e continua" para `unhandledRejection`.
 **Impacto:** `backend/src/main.ts` (função `onFatal`, reaproveitando `shutdown`).
 
+### D-139: Rate limit e lockout de login por `INCR` atômico; fail-open/fail-closed quando o Redis cai em runtime (CRMLAB-34)
+**Decisão:** `CacheService` ganha `incr(key, ttlSeconds)` — incremento atômico com TTL aplicado
+só na primeira chamada (janela fixa: `INCR` + `EXPIRE` condicional). Em `RedisCache` isso roda
+como um script Lua (`INCR_EX_SCRIPT`) num único round-trip ao servidor — de verdade atômico,
+sem janela entre leitura e escrita para outra requisição furar. Em `MemoryCache` o corpo do
+método não tem nenhum `await`, então não há ponto de interleaving possível nem sob
+`Promise.all` concorrente.
+
+`rate-limit.ts` passa a usar janela FIXA: a chave carrega o índice da janela
+(`Math.floor(at / windowMs)`), então todas as requisições da mesma janela caem no mesmo `INCR`
+e o limite é decidido por um único comando atômico, em vez do `get` → filtra array de
+timestamps → `set` anterior (TOCTOU: duas requisições concorrentes liam o mesmo estado e as
+duas passavam). `auth.service.ts` troca o contador de falha de login pelo mesmo `incr` (mantendo
+a chave existente `login-failures:{email}:{ip}`, não a sugerida no card — evita quebrar o
+contrato já coberto por `cache.spec.ts`) e passa a dar `DEL` no sucesso (não existia antes).
+
+**Comportamento com Redis indisponível em RUNTIME** (distinto do fail-closed do BOOT em D-058,
+que continua intocado — `verifyCacheReady`/`main.ts` seguem parando o processo se o Redis não
+responder ao subir):
+- **Rotas autenticadas:** fail-OPEN. Loga `event: 'cache.unavailable'` (throttle de 30s por
+  processo, `logCacheUnavailable` em `lib/cache.ts`) e deixa a requisição passar sem contar
+  cota. Motivo: o JWT já é a defesa primária dessas rotas; recusar TODO o tráfego autenticado
+  por causa do cache trocaria uma degradação de cota por uma indisponibilidade total — pior
+  para o negócio que uma janela sem rate limit.
+- **Rotas públicas** (`/auth/login`, `/auth/refresh`, `/webhooks/*`): fail-CLOSED — 503
+  `SERVICE_UNAVAILABLE` (novo `ApiErrorCode`, `shared/types/api.types.ts` +
+  `docs/api/API_ERRORS.md`). Motivo: rate limit e lockout de login SÃO a defesa dessas rotas
+  (não há JWT prévio); deixar passar sem eles é convite a força bruta. `/auth/logout` fica de
+  fora de propósito — não há o que proteger e travar logout com o cache fora do ar pioraria um
+  incidente sem necessidade.
+- A decisão é tomada duas vezes de forma independente e redundante: no middleware
+  `rate-limit.ts` (que já barra `/auth/login`/`/auth/refresh` ANTES do controller, pela ordem em
+  `app.ts`) e dentro do próprio `AuthService` (`assertNotThrottled`/`registerFailure`), para que
+  o serviço não dependa de estar sempre atrás do middleware para se comportar corretamente —
+  é o que os testes de `auth.service` cobrem isoladamente.
+
+Headers de cota passam a sair em dois formatos simultâneos: os `X-RateLimit-*` existentes
+(mantidos — contrato já consumido) e os do draft IETF `draft-ietf-httpapi-ratelimit-headers`
+(`RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset`, sem prefixo `X-`). Divergência
+proposital: `X-RateLimit-Reset` continua epoch absoluto (segundos desde 1970, como já era);
+`RateLimit-Reset` é DELTA (segundos até o reset a partir de agora), porque é assim que o draft
+define o campo — não dá para reaproveitar o mesmo valor para os dois.
+
+**Motivo:** auditoria de 2026-09 apontou o padrão `get`+`set` como TOCTOU clássico tanto no
+rate limit quanto no lockout de login (20 senhas erradas em paralelo perdiam 19 incrementos,
+nunca disparando o bloqueio de 5), e o `next(err)` genérico do cache indisponível em runtime
+derrubando TODAS as rotas com `INTERNAL_ERROR` — inclusive as autenticadas, que não precisavam
+cair.
+
+**Impacto:** `backend/src/lib/cache.ts` (`incr`, `RedisClientLike.incrEx`, `INCR_EX_SCRIPT`,
+`logCacheUnavailable`/`resetCacheUnavailableThrottleForTest`), `backend/src/http/middleware/
+rate-limit.ts` (janela fixa, `isPublicRoute`, headers duplos), `backend/src/services/
+auth.service.ts` (lockout atômico + `DEL` no sucesso), `backend/src/app.ts` (`exposedHeaders`
+do CORS), `shared/types/api.types.ts` (+`SERVICE_UNAVAILABLE`), `backend/src/http/errors.ts`
+(catálogo), `docs/api/API_ERRORS.md`. Testes novos: `backend/tests/kernel/rate-limit.spec.ts`
+(concorrência 50×`Promise.all` contra limite 10, fail-open/fail-closed com cache falhando),
+`backend/tests/kernel/cache.spec.ts` (`incr`/`incrEx`), `backend/tests/auth/login.spec.ts`
+(20 falhas em paralelo não furam o lockout de 5, 503 com Redis fora do ar). Não mexe em infra
+(`REDIS_URL`/`maxmemory` — isso é CRMLAB-36).
+
 ### D-142: Refresh token em cookie httpOnly, access token só em memória, CSP em Report-Only (CRMLAB-32)
 **Decisão:** `POST /auth/login` e `POST /auth/refresh` gravam o refresh token em
 `Set-Cookie: crm_refresh=<token>; HttpOnly; Secure (só produção/homologação); SameSite=Strict;

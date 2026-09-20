@@ -107,6 +107,11 @@ export function createApp(deps: AppDeps): BuiltApp {
         'X-RateLimit-Limit',
         'X-RateLimit-Remaining',
         'X-RateLimit-Reset',
+        // Draft IETF (draft-ietf-httpapi-ratelimit-headers), D-139 — convive
+        // com os `X-RateLimit-*` acima, nao os substitui.
+        'RateLimit-Limit',
+        'RateLimit-Remaining',
+        'RateLimit-Reset',
         'Retry-After',
       ],
     }),

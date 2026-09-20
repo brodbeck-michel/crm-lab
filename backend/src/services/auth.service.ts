@@ -31,6 +31,7 @@ import { env } from '../config/env.js';
 import type { DbClient } from '../db/types.js';
 import { BusinessError } from '../http/errors.js';
 import type { CacheService } from '../lib/cache.js';
+import { logCacheUnavailable } from '../lib/cache.js';
 import { hashPassword, verifyPassword } from '../lib/password.js';
 import {
   signAccessToken,
@@ -105,8 +106,25 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
   const failureKey = (email: string, ip: string): string =>
     `login-failures:${email.trim().toLowerCase()}:${ip}`;
 
+  /**
+   * Redis fora do ar aqui (D-139): `/auth/login` e rota PUBLICA, entao
+   * fail-CLOSED — 503 `SERVICE_UNAVAILABLE`, nunca deixar passar sem lockout
+   * (e nunca 500 generico: quem chama sabe exatamente o que aconteceu).
+   * Normalmente nem chega aqui — o rate-limit GLOBAL (`app.ts`) ja barra
+   * `/auth/login` com o mesmo 503 antes do controller ser alcancado — mas o
+   * `AuthService` nao pode depender disso pra se comportar direito sozinho
+   * (e o que os testes deste arquivo verificam).
+   */
+  const onCacheFailure = (scope: string, err: unknown): never => {
+    logCacheUnavailable({ scope, message: err instanceof Error ? err.message : String(err) });
+    throw new BusinessError('SERVICE_UNAVAILABLE');
+  };
+
   const assertNotThrottled = async (email: string, ip: string): Promise<void> => {
-    const hits = (await cache.get<number>(failureKey(email, ip))) ?? 0;
+    const hits =
+      (await cache
+        .get<number>(failureKey(email, ip))
+        .catch((err: unknown) => onCacheFailure('auth.login_throttle_check', err))) ?? 0;
     if (hits >= LOGIN_FAILURE_LIMIT) {
       throw new BusinessError('RATE_LIMIT_EXCEEDED', {
         retryAfter: LOGIN_FAILURE_WINDOW_SECONDS,
@@ -114,10 +132,35 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     }
   };
 
+  /**
+   * `INCR` + `EXPIRE` (so na 1a falha) num unico comando atomico (D-139),
+   * substituindo o `get` -> soma -> `set` antigo: 20 senhas erradas em
+   * paralelo faziam as 20 lerem o MESMO contador e escreverem o MESMO
+   * `hits + 1`, perdendo 19 incrementos — o lockout de 5 nunca disparava.
+   */
   const registerFailure = async (email: string, ip: string): Promise<void> => {
-    const key = failureKey(email, ip);
-    const hits = (await cache.get<number>(key)) ?? 0;
-    await cache.set(key, hits + 1, LOGIN_FAILURE_WINDOW_SECONDS);
+    try {
+      await cache.incr(failureKey(email, ip), LOGIN_FAILURE_WINDOW_SECONDS);
+    } catch (err) {
+      onCacheFailure('auth.login_register_failure', err);
+    }
+  };
+
+  /**
+   * Zera o contador quando a senha bate. Melhor esforco: uma falha do Redis
+   * aqui NAO pode derrubar um login que ja provou a credencial certa — so
+   * loga (fail-open desta limpeza, throttle de `logCacheUnavailable`) e
+   * segue. Pior caso: o contador antigo sobrevive ate o TTL de 15 min.
+   */
+  const clearFailures = async (email: string, ip: string): Promise<void> => {
+    try {
+      await cache.del(failureKey(email, ip));
+    } catch (err) {
+      logCacheUnavailable({
+        scope: 'auth.login_clear_failures',
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
   };
 
   /**
@@ -175,6 +218,8 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       throw new BusinessError('INVALID_CREDENTIALS');
     }
     const user = matched;
+    // Senha certa: zera o contador de falhas (D-139 — "DEL no sucesso").
+    await clearFailures(email, meta.ip);
 
     // Senha correta: os motivos de bloqueio ja podem ser especificos (o cliente
     // provou conhecer a credencial, entao nao ha o que vazar).

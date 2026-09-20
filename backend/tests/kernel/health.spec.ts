@@ -45,6 +45,7 @@ function cacheFora(): CacheService {
     set: (key, value, ttl) => real.set(key, value, ttl),
     del: (key) => real.del(key),
     delByPrefix: (prefix) => real.delByPrefix(prefix),
+    incr: (key, ttlSeconds) => real.incr(key, ttlSeconds),
     close: () => real.close(),
     ping: async () => {
       throw new Error('Redis nao respondeu ao PING');

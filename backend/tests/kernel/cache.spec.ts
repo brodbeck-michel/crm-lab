@@ -48,6 +48,19 @@ class FakeRedis implements RedisClientLike {
     return { cursor: next, keys: page };
   }
 
+  /** Reproduz `INCR_EX_SCRIPT`: INCR + EXPIRE condicional, sem `await` no meio. */
+  async incrEx(key: string, ttlSeconds: number): Promise<number> {
+    const entry = this.store.get(key);
+    const alive = entry !== undefined && entry.expiresAt > this.now();
+    if (!alive) {
+      this.store.set(key, { value: '1', expiresAt: this.now() + ttlSeconds * 1000 });
+      return 1;
+    }
+    const next = Number(entry.value) + 1;
+    entry.value = String(next);
+    return next;
+  }
+
   async ping(): Promise<void> {
     if (this.pingFails) throw new Error('ECONNREFUSED 127.0.0.1:6379');
   }
@@ -141,6 +154,33 @@ describe('CacheService (in-memory)', () => {
     await cache.set('efemera', 1, 0);
     expect(await cache.get('efemera')).toBeNull();
   });
+
+  /**
+   * D-139: `incr` substitui o `get`+`set` do rate limit/lockout de login
+   * justamente por nao ter TOCTOU. Sob `Promise.all` (100 chamadas
+   * concorrentes de verdade, nao sequenciais) o resultado tem que ser
+   * exatamente 1..100, sem incremento perdido.
+   */
+  it('incr e atomico sob concorrencia — 100 chamadas paralelas rendem 1..100 sem perda', async () => {
+    const cache = new MemoryCache();
+    const results = await Promise.all(
+      Array.from({ length: 100 }, () => cache.incr('contador', 60)),
+    );
+    expect([...results].sort((a, b) => a - b)).toEqual(
+      Array.from({ length: 100 }, (_, i) => i + 1),
+    );
+  });
+
+  it('incr aplica o TTL so na primeira chamada (janela fixa)', async () => {
+    let clock = 0;
+    const cache = new MemoryCache(() => clock);
+
+    expect(await cache.incr('janela', 60)).toBe(1);
+    clock += 30_000;
+    expect(await cache.incr('janela', 60)).toBe(2); // TTL nao foi resetado pro 2o incr
+    clock += 31_000; // passou dos 60s da 1a chamada
+    expect(await cache.incr('janela', 60)).toBe(1); // chave expirou, comecou de novo
+  });
 });
 
 /**
@@ -232,6 +272,15 @@ describe('RedisCache (cliente injetado)', () => {
     await cache.get('qualquer');
     await cache.close();
     expect(client.quitCalls).toBe(1);
+  });
+
+  it('incr delega pro incrEx do cliente (INCR + EXPIRE atomico no servidor)', async () => {
+    const client = new FakeRedis();
+    const cache = new RedisCache('redis://fake:6379', () => client);
+
+    expect(await cache.incr('ratelimit:ip:1.2.3.4:100', 60)).toBe(1);
+    expect(await cache.incr('ratelimit:ip:1.2.3.4:100', 60)).toBe(2);
+    expect(client.store.get('ratelimit:ip:1.2.3.4:100')?.value).toBe('2');
   });
 });
 

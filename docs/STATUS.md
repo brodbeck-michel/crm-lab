@@ -1642,6 +1642,43 @@ passo de rollback (`IMAGE_TAG=<sha-anterior>`) se algo aparecer depois.
 
 ---
 
+## 2026-09-20 — CRMLAB-34: rate limit e lockout de login atômicos (`INCR`) ✅
+
+`CacheService` ganha `incr(key, ttlSeconds)` — incremento atômico com `EXPIRE` só na 1ª chamada
+(janela fixa), implementado como script Lua num único round-trip no `RedisCache` e sem `await`
+no meio no `MemoryCache` (atômico mesmo sob `Promise.all` real). Substitui o `get`→calcula→`set`
+antigo do rate-limit (`rate-limit.ts`) e do contador de falha de login (`auth.service.ts`), que
+era um TOCTOU clássico: rajada concorrente lia o mesmo estado e furava o limite/lockout.
+
+- `rate-limit.ts`: janela FIXA por índice de tempo (`Math.floor(at/windowMs)` na própria chave),
+  um único `INCR` decide se cabe. Headers dobrados: mantém `X-RateLimit-*` (contrato existente)
+  e acrescenta `RateLimit-Limit/Remaining/Reset` (draft IETF, `Reset` em delta-segundos — os
+  dois convivem, ver D-139).
+- `auth.service.ts`: lockout de login (`login-failures:{email}:{ip}`, mantida a chave existente)
+  agora via `incr`; ganhou `DEL` no sucesso (não existia antes).
+- **Redis fora do ar em runtime** (D-139, distinto do fail-closed de boot do D-058, intocado):
+  rota autenticada fail-**open** (loga `cache.unavailable` com throttle de 30s e deixa passar —
+  o JWT já protege); rota pública (`/auth/login`, `/auth/refresh`, `/webhooks/*`) fail-**closed**
+  com **503 `SERVICE_UNAVAILABLE`** (código novo em `shared/types/api.types.ts` +
+  `docs/api/API_ERRORS.md`), nunca mais `INTERNAL_ERROR` genérico.
+- Testes novos: concorrência real via `Promise.all` (50 requisições contra limite 10 → exatamente
+  10 passam; 100 `incr` paralelos → 1..100 sem perda; 20 senhas erradas em paralelo não furam o
+  lockout de 5), fail-open/fail-closed com cache mockado lançando erro (rota genérica 200 vs.
+  `/auth/login`/`/auth/refresh` 503).
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces; `npm run test:backend` **1134/1134**
+(1100 da baseline + 34 novos/ajustados: `tests/kernel/cache.spec.ts`,
+`tests/kernel/rate-limit.spec.ts`, `tests/auth/login.spec.ts`, `tests/kernel/health.spec.ts`
+ajustado ao novo método `incr` do `CacheService`).
+
+**Não fez:** ajuste de infra do Redis (`maxmemory`) — é CRMLAB-36, fora de escopo aqui.
+
+**Arquivos:** `backend/src/lib/cache.ts`, `backend/src/http/middleware/rate-limit.ts`,
+`backend/src/services/auth.service.ts`, `backend/src/app.ts`, `shared/types/api.types.ts`,
+`backend/src/http/errors.ts`, `docs/api/API_ERRORS.md`, `docs/DECISIONS.md` (D-139).
+
+---
+
 ## 2026-09-20 — CRMLAB-32: refresh em cookie httpOnly, access token só em memória, CSP Report-Only ✅
 
 Worktree próprio (`crm-lab-wt-32`), branch `feature/CRMLAB-32-cookie-httponly-csp`. Achado de

@@ -1822,3 +1822,46 @@ Worktree próprio (`crm-lab-wt-31`), branch `feature/CRMLAB-31-hardening-midia`.
 gravado e servido como `application/octet-stream` + `attachment`),
 `frontend/src/components/conversation/MessageBubble.spec.tsx` (PDF abre, doc baixa). Suíte
 completa: `npm run typecheck` verde nos 4 workspaces; backend **1131/1131**.
+
+---
+
+## 2026-09-20 — v1.12.0 mergeada em `main`: Onda B do hardening (CRMLAB-27) ✅
+
+Quatro cards da Onda B (`label = onda-b`) mergeados em `main` via PR, todos com CI verde
+(typecheck/lint/testes, build de imagens, npm audit e E2E) antes do merge:
+
+- **CRMLAB-31** (#43) — allow-list de MIME + sniff de magic bytes, `Content-Disposition:
+  attachment` para não-imagem, teto de 1 MB nos webhooks públicos.
+- **CRMLAB-32** (#44) — refresh token em cookie httpOnly, access token só em memória, CSP
+  Report-Only na SPA (D-142/D-143 em `docs/DECISIONS.md`).
+- **CRMLAB-34** (#45) — rate limit e lockout de login atômicos via `INCR`, fail-open/fail-closed
+  quando o Redis cai em runtime (D-139).
+- **CRMLAB-36** (#46) — CI publica imagens no GHCR, `mem_limit`/`ulimit`/tuning no compose de
+  produção, imagens base pinadas por digest (D-140/D-141).
+
+**Achado real durante o fechamento, não no card:** o PR do CRMLAB-32 abriu com testes de
+unidade verdes mas nenhuma rodada de E2E local; o CI pegou que 76/123 specs quebravam porque
+`VITE_API_URL` absoluto em dev/E2E tirava o cookie httpOnly do refresh do same-origin — todo
+`page.goto` para rota autenticada caía em `/login`. Corrigido no mesmo PR (D-143): proxy do
+Vite para `/api`/`/ws`, igualando dev/E2E à produção (que já usa nginx para isso, D-051).
+Cada um dos quatro PRs também precisou de um segundo (às vezes terceiro) merge de `main` para
+resolver conflito textual em `docs/STATUS.md`/`docs/DECISIONS.md` — os cards foram
+desenvolvidos em paralelo em worktrees isolados e cada um só via o `main` de quando começou;
+sem decisão de numeração colidindo de verdade (D-139 ficou com CRMLAB-34, D-142/D-143 com
+CRMLAB-32, D-140/D-141 com CRMLAB-36 — nenhum número repetido no `main` final).
+
+**CRMLAB-33** (WebSocket: token fora da URL) **não** é desta onda — label `onda-c`, segue em
+"Discussão", sem escopo fechado.
+
+Minor, não patch: segurança/infra novas, sem quebra de contrato — `RefreshRequest.refreshToken`
+no corpo continua aceito como fallback depreciado (remoção 2026-10-04).
+
+**Pendências manuais na VPS que a Onda B NÃO resolve** (fora do alcance de qualquer PR, `docs/
+guides/DEPLOYMENT.md` §7 tem o mesmo texto):
+1. Definir `IMAGE_REGISTRY=ghcr.io/<owner>/` no `.env` de `/opt/crm-lab` e
+   `/opt/crm-lab-homolog` (sem isso `deploy.sh` usa o fallback de build local).
+2. Conferir que o pacote GHCR fica acessível para o usuário `deploy` puxar da VPS.
+3. Reboot pendente da VPS (`/var/run/reboot-required`, kernel 7.0.0-31) — agendar fora do
+   horário do laboratório.
+4. Validar `evolution: user: "1000:1000"` em homologação antes de produção (D-140) — não
+   aplicado nesta onda.

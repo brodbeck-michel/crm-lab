@@ -8,4 +8,5 @@ export {
   useIsAuthenticated,
   useLogin,
   useLogout,
+  useSessionBootstrap,
 } from './useSession';

@@ -23,9 +23,13 @@ import { applyTheme, DEFAULT_THEME } from '@/lib/theme';
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
+/**
+ * CRMLAB-32 — SÓ o access token. O refresh token não passa mais pelo
+ * frontend: vive exclusivamente no cookie httpOnly `crm_refresh`, gravado
+ * pelo backend e ilegível por JavaScript.
+ */
 export interface SessionTokens {
   accessToken: string;
-  refreshToken: string;
   /** Epoch ms de expiração do access token (derivado de `expiresIn`). */
   expiresAt: number;
 }
@@ -82,19 +86,22 @@ export const useAuthStore = create<AuthState>()(
           theme: response.tenant.theme,
           tokens: {
             accessToken: response.accessToken,
-            refreshToken: response.refreshToken,
             expiresAt: Date.now() + response.expiresIn * 1000,
           },
         });
         applyTheme(response.tenant.theme);
       },
 
+      /**
+       * Troca (ou cria) só o access token. Também é o caminho do BOOTSTRAP de
+       * página (`useSessionBootstrap`): como `tokens` não é persistido, toda
+       * carga de página chega aqui com `tokens: null` até o
+       * `POST /auth/refresh` (cookie) responder — por isso NÃO há guarda de
+       * "sem sessão prévia" como antes (o refresh token guardado não existe
+       * mais para condicionar nada).
+       */
       setAccessToken: (accessToken, expiresIn) => {
-        const current = get().tokens;
-        if (!current) return;
-        set({
-          tokens: { ...current, accessToken, expiresAt: Date.now() + expiresIn * 1000 },
-        });
+        set({ tokens: { accessToken, expiresAt: Date.now() + expiresIn * 1000 } });
       },
 
       setTheme: (theme) => {
@@ -114,12 +121,14 @@ export const useAuthStore = create<AuthState>()(
     {
       name: 'crm-lab.session',
       storage: createJSONStorage(() => localStorage),
-      // Persistimos SOMENTE sessão. Nenhum dado de servidor entra aqui.
+      // Persistimos identidade/preferência (user/tenant/theme). `tokens` FICA
+      // DE FORA de propósito (CRMLAB-32): access token só em memória, nunca
+      // em localStorage — `useSessionBootstrap` (App.tsx) troca o cookie
+      // httpOnly por um access token novo a cada carga de página.
       partialize: (state) => ({
         user: state.user,
         tenant: state.tenant,
         theme: state.theme,
-        tokens: state.tokens,
       }),
       onRehydrateStorage: () => (state) => {
         // Restaurar sessão reaplica o tema — sem request extra (D-005).
@@ -144,7 +153,6 @@ export const selectIsAuthenticated = (state: AuthState): boolean =>
  */
 setSessionBridge({
   getAccessToken: () => useAuthStore.getState().tokens?.accessToken ?? null,
-  getRefreshToken: () => useAuthStore.getState().tokens?.refreshToken ?? null,
   setAccessToken: (accessToken, expiresIn) =>
     useAuthStore.getState().setAccessToken(accessToken, expiresIn),
   clearSession: () => useAuthStore.getState().clearSession(),

@@ -50,9 +50,25 @@ export interface RequestMeta {
   userAgent: string;
 }
 
+/**
+ * Shape INTERNO devolvido pelo service — inclui `refreshToken` em claro para o
+ * controller gravar no cookie httpOnly (CRMLAB-32). NUNCA e o shape que sai
+ * pela API: `LoginResponse`/`RefreshResponse` de `@crm-lab/shared` (o contrato
+ * publico) nao tem esse campo. `auth.routes.ts` e o UNICO lugar que le
+ * `refreshToken` daqui — para montar o `Set-Cookie` — e o descarta antes de
+ * `res.json()`.
+ */
+export interface LoginResult extends LoginResponse {
+  refreshToken: string;
+}
+
+export interface RefreshResult extends RefreshResponse {
+  refreshToken: string;
+}
+
 export interface AuthService {
-  login(email: string, password: string, meta: RequestMeta): Promise<LoginResponse>;
-  refresh(refreshToken: string, meta: RequestMeta): Promise<RefreshResponse>;
+  login(email: string, password: string, meta: RequestMeta): Promise<LoginResult>;
+  refresh(refreshToken: string, meta: RequestMeta): Promise<RefreshResult>;
   logout(refreshToken: string, meta: RequestMeta): Promise<LogoutResponse>;
   validateToken(token: string): Promise<JwtPayload>;
 }
@@ -133,7 +149,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     email: string,
     password: string,
     meta: RequestMeta,
-  ): Promise<LoginResponse> => {
+  ): Promise<LoginResult> => {
     await assertNotThrottled(email, meta.ip);
 
     // EXCECAO AUDITADA de RLS — unica no sistema (ver doc do metodo em db/types.ts).
@@ -215,7 +231,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     };
   };
 
-  const refresh = async (token: string, meta: RequestMeta): Promise<RefreshResponse> => {
+  const refresh = async (token: string, meta: RequestMeta): Promise<RefreshResult> => {
     const verified = verifyRefreshToken(token);
     if (!verified.ok) throw new BusinessError('REFRESH_TOKEN_INVALID');
 

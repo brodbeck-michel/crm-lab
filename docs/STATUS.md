@@ -1639,3 +1639,43 @@ mudança de contrato de API nem de schema — nenhuma migração acompanha.
 primeira vez com sonda honesta na borda) também em 200, nenhum log nível 50+ no backend no
 primeiro minuto. `docs/superpowers/plans/2026-09-19-hardening-pos-auditoria.md` tem o passo a
 passo de rollback (`IMAGE_TAG=<sha-anterior>`) se algo aparecer depois.
+
+---
+
+## 2026-09-20 — CRMLAB-32: refresh em cookie httpOnly, access token só em memória, CSP Report-Only ✅
+
+Worktree próprio (`crm-lab-wt-32`), branch `feature/CRMLAB-32-cookie-httponly-csp`. Achado de
+severidade Alta da auditoria de segurança (D-139 em `docs/DECISIONS.md` tem o detalhe completo).
+
+- **Backend** (`backend/src/controllers/auth.routes.ts`, `backend/src/services/auth.service.ts`,
+  `backend/package.json` +`cookie-parser`): `/auth/login` e `/auth/refresh` gravam
+  `Set-Cookie: crm_refresh=...; HttpOnly; Secure (só produção); SameSite=Strict;
+  Path=/api/v1/auth`. Corpo JSON só com o access token. `/auth/refresh` lê o cookie primeiro
+  (fallback depreciado no corpo, remoção 2026-10-04) e exige
+  `X-Requested-With: crm-lab`. `/auth/logout` limpa o cookie (`Max-Age=0`) além de revogar a
+  família. `cookie-parser` montado só no router de auth.
+- **Frontend** (`frontend/src/stores/auth.store.ts`, `frontend/src/api/client.ts`,
+  `frontend/src/hooks/useSession.ts`, `frontend/src/App.tsx`): `tokens` sai do `persist`
+  (localStorage só guarda `user`/`tenant`/`theme`); access token vive em memória. Nova
+  `useSessionBootstrap()` chama `POST /auth/refresh` (cookie vai sozinho) antes do router
+  renderizar — o `App` fica em branco no instante do bootstrap, sem piscar `/login`.
+- **nginx** (`nginx/frontend.conf`): `Content-Security-Policy-Report-Only` (default-src 'self'
+  etc — ver arquivo) e `Permissions-Policy`. Report-Only de propósito: promover para enforce
+  depois de ~1 semana observando homologação sem violação inesperada.
+- **Docs atualizados no mesmo commit** (Regra Zero): `docs/api/API_CONTRACTS.md` §1 (contrato
+  novo de login/refresh/logout), `docs/contracts/FRONTEND_BACKEND.md` ("Autenticação"),
+  `shared/types/auth.types.ts` (`LoginResponse`/`RefreshResponse` sem `refreshToken`,
+  `RefreshRequest.refreshToken` opcional e depreciado).
+
+**NÃO tocado:** `frontend/src/api/ws.ts` (WebSocket) — é o CRMLAB-33, que depende deste card.
+CORS geral (`app.ts`) continua `credentials: false`.
+
+**Testes:** `backend/tests/auth/login.spec.ts` e `refresh.spec.ts` reescritos para o fluxo de
+cookie (Set-Cookie com as flags certas, refresh sem cookie → 401, refresh com cookie → access +
+cookie novos, logout limpa o cookie, fallback depreciado no corpo, header
+`X-Requested-With` obrigatório). `frontend/src/api/client.spec.ts`,
+`frontend/src/stores/auth.store.spec.ts` e specs que injetavam `tokens.refreshToken` direto no
+store (`Login.spec.tsx`, `guards.spec.tsx`, `Sidebar.spec.tsx`, `Attendance.spec.tsx`,
+`InternalChat.spec.tsx`) ajustados para o novo shape sem refresh no frontend.
+`npm run typecheck` e `npm run test:backend`/`test:frontend` verdes (ver relatório do card no
+Jira para o resultado exato desta rodada).

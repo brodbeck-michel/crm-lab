@@ -50,20 +50,22 @@ function call(index: number): FakeCall {
 }
 
 let calls: FakeCall[];
-let session: { accessToken: string | null; refreshToken: string | null; cleared: boolean };
+let session: { accessToken: string | null; cleared: boolean };
 
-function installSession(accessToken: string | null, refreshToken: string | null): void {
-  session = { accessToken, refreshToken, cleared: false };
+/**
+ * CRMLAB-32: a sessão não guarda mais refresh token nenhum (vive só no
+ * cookie httpOnly) — o "bridge" só expõe o access token.
+ */
+function installSession(accessToken: string | null): void {
+  session = { accessToken, cleared: false };
   setSessionBridge({
     getAccessToken: () => session.accessToken,
-    getRefreshToken: () => session.refreshToken,
     setAccessToken: (token) => {
       session.accessToken = token;
     },
     clearSession: () => {
       session.cleared = true;
       session.accessToken = null;
-      session.refreshToken = null;
     },
   });
 }
@@ -79,7 +81,7 @@ function mockFetch(handler: (url: string, init: RequestInit) => Response | Promi
 beforeEach(() => {
   calls = [];
   resetApiClient();
-  installSession('access-1', 'refresh-1');
+  installSession('access-1');
 });
 
 afterEach(() => {
@@ -180,6 +182,32 @@ describe('client — interceptor de refresh', () => {
     expect(session.accessToken).toBe('access-2');
   });
 
+  /**
+   * CRMLAB-32: o refresh não manda mais `refreshToken` no corpo — o cookie
+   * httpOnly viaja sozinho. O header abaixo é a proteção extra de CSRF que o
+   * backend exige em `/auth/refresh`.
+   */
+  it('refresh não envia refreshToken no corpo e manda X-Requested-With: crm-lab', async () => {
+    let expired = true;
+    mockFetch((url) => {
+      if (url.includes('/auth/refresh')) {
+        return jsonResponse({ accessToken: 'access-2', expiresIn: 900 });
+      }
+      if (expired) {
+        expired = false;
+        return errorResponse(tokenExpired);
+      }
+      return jsonResponse({ conversations: [] });
+    });
+
+    await http.get('/conversations');
+
+    const refreshCall = calls.find((c) => c.url.includes('/auth/refresh'));
+    expect(refreshCall).toBeDefined();
+    expect(refreshCall?.init.body).toBeUndefined();
+    expect(headerOf(refreshCall!.init, 'X-Requested-With')).toBe('crm-lab');
+  });
+
   it('N requisições concorrentes em 401 disparam UM ÚNICO refresh', async () => {
     const expiredOnce = new Set<string>();
     mockFetch((url) => {
@@ -232,17 +260,6 @@ describe('client — interceptor de refresh', () => {
     expect(session.cleared).toBe(true);
     expect(session.accessToken).toBeNull();
     expect(onUnauthenticated).toHaveBeenCalledTimes(1);
-  });
-
-  it('sem refresh token guardado, nem tenta renovar', async () => {
-    installSession('access-1', null);
-    mockFetch(() => errorResponse(tokenExpired));
-
-    const error = (await http.get('/conversations').catch((e: unknown) => e)) as ApiError;
-
-    expect(error.code).toBe('REFRESH_TOKEN_INVALID');
-    expect(calls.filter((c) => c.url.includes('/auth/refresh'))).toHaveLength(0);
-    expect(session.cleared).toBe(true);
   });
 
   it('falha de rede no refresh NÃO derruba a sessão', async () => {

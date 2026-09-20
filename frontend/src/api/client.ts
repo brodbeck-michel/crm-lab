@@ -14,6 +14,13 @@ import type { ApiErrorBody, ApiErrorCode, RefreshResponse } from '@crm-lab/share
  *
  * N requisições que batem em 401 ao mesmo tempo compartilham UM único refresh
  * em voo (`refreshInFlight`), nunca N.
+ *
+ * CRMLAB-32 — o refresh token NUNCA passa por aqui: ele vive só no cookie
+ * httpOnly `crm_refresh` (`Set-Cookie` do backend), que o browser anexa
+ * sozinho em `POST /auth/refresh` porque SPA e API são o MESMO origin (nginx).
+ * O access token é o único token que este client vê, e só em memória — sem
+ * `credentials: 'include'` (não precisa: same-origin já manda cookie) e sem
+ * `credentials: true` no CORS do backend (regra do card: nginx já resolve).
  */
 
 export type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
@@ -62,14 +69,12 @@ export interface RequestOptions {
  */
 export interface SessionBridge {
   getAccessToken: () => string | null;
-  getRefreshToken: () => string | null;
   setAccessToken: (accessToken: string, expiresIn: number) => void;
   clearSession: () => void;
 }
 
 const NULL_BRIDGE: SessionBridge = {
   getAccessToken: () => null,
-  getRefreshToken: () => null,
   setAccessToken: () => undefined,
   clearSession: () => undefined,
 };
@@ -223,8 +228,13 @@ async function parseResponse<T>(response: Response): Promise<T> {
   return payload as T;
 }
 
-function send(path: string, options: RequestOptions, token: string | null): Promise<Response> {
-  const headers: Record<string, string> = { Accept: 'application/json' };
+function send(
+  path: string,
+  options: RequestOptions,
+  token: string | null,
+  extraHeaders?: Record<string, string>,
+): Promise<Response> {
+  const headers: Record<string, string> = { Accept: 'application/json', ...extraHeaders };
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
   if (token) headers.Authorization = `Bearer ${token}`;
 
@@ -239,6 +249,10 @@ function send(path: string, options: RequestOptions, token: string | null): Prom
 /**
  * Renova o access token. Chamadas concorrentes compartilham a MESMA promise —
  * 5 requisições que expiram juntas disparam 1 `POST /auth/refresh`, não 5.
+ *
+ * Usada também no BOOTSTRAP da página (`useSessionBootstrap`, App.tsx):
+ * como o access token não é persistido (CRMLAB-32), toda carga de página
+ * chama isto para trocar o cookie `crm_refresh` por um access token novo.
  */
 export function refreshAccessToken(): Promise<string> {
   if (refreshInFlight) return refreshInFlight;
@@ -248,18 +262,22 @@ export function refreshAccessToken(): Promise<string> {
   return refreshInFlight;
 }
 
+/**
+ * `X-Requested-With: crm-lab` é exigido pelo backend em `/auth/refresh` como
+ * camada extra de proteção CSRF (o cookie sozinho já é `SameSite=Strict` +
+ * `Path=/api/v1/auth`, mas um form cross-site não consegue setar este header).
+ * Sem `refreshToken` no corpo: o cookie viaja sozinho (same-origin).
+ */
 async function performRefresh(): Promise<string> {
-  const refreshToken = bridge.getRefreshToken();
-  if (!refreshToken) {
-    return failSession(
-      new ApiError('REFRESH_TOKEN_INVALID', 'Sessão expirada. Faça login novamente.', 401),
-    );
-  }
-
   let result: RefreshResponse;
   try {
     result = await parseResponse<RefreshResponse>(
-      await send('/auth/refresh', { method: 'POST', body: { refreshToken }, auth: false }, null),
+      await send(
+        '/auth/refresh',
+        { method: 'POST', auth: false },
+        null,
+        { 'X-Requested-With': 'crm-lab' },
+      ),
     );
   } catch (error) {
     // Só derruba a sessão em 401 do refresh. Queda de rede não desloga.

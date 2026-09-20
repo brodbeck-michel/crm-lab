@@ -1868,6 +1868,38 @@ pior que sair de forma controlada. Pedido explícito do card: mesmo tratamento p
 sem meio-termo de "loga e continua" para `unhandledRejection`.
 **Impacto:** `backend/src/main.ts` (função `onFatal`, reaproveitando `shutdown`).
 
+### D-139: Refresh token em cookie httpOnly, access token só em memória, CSP em Report-Only (CRMLAB-32)
+**Decisão:** `POST /auth/login` e `POST /auth/refresh` gravam o refresh token em
+`Set-Cookie: crm_refresh=<token>; HttpOnly; Secure (só produção/homologação); SameSite=Strict;
+Path=/api/v1/auth`, e o corpo JSON deixa de trazer `refreshToken` (`LoginResponse`/
+`RefreshResponse` em `shared/types/auth.types.ts`). `POST /auth/refresh` lê o cookie primeiro,
+com fallback depreciado para `refreshToken` no corpo (remoção prevista 2026-10-04) e exige o
+header `X-Requested-With: crm-lab` como camada extra de CSRF. `POST /auth/logout` limpa o
+cookie (`Max-Age=0`) além de revogar a família. No frontend, `auth.store.ts` para de persistir
+`tokens` no `localStorage` — só `user`/`tenant`/`theme` — e o access token vive só em memória;
+toda carga de página chama `POST /auth/refresh` (cookie vai sozinho, mesmo origin) antes de
+renderizar o router (`useSessionBootstrap`, `App.tsx`), trocando o cookie por um access token
+novo. `nginx/frontend.conf` ganha `Content-Security-Policy-Report-Only` (não enforce ainda) e
+`Permissions-Policy`.
+**Motivo:** achado de severidade Alta da auditoria de segurança — a sessão inteira (access de
+15min E refresh de 7 dias, rotativo) ficava legível por qualquer JavaScript no origin via
+`localStorage`, e a SPA não tinha CSP nenhuma. Não há `dangerouslySetInnerHTML`/`innerHTML`
+hoje, mas o vetor é dependência de terceiros (jspdf, recharts, xlsx) ou descuido futuro — com
+dado de saúde de paciente em jogo, um XSS que rouba `localStorage` rouba a sessão inteira por
+7 dias. `HttpOnly` fecha esse vetor para o refresh; o access token curto em memória reduz a
+janela do que sobra. CSP entra em `Report-Only` (não `Content-Security-Policy` enforce) porque
+a SPA nunca foi auditada contra uma política — enforce direto arriscaria quebrar produção sem
+aviso; a promoção para enforce é decisão separada, após ~1 semana observando os relatórios de
+violação em homologação.
+**Impacto:** `backend/src/controllers/auth.routes.ts` (cookie-parser só neste router),
+`backend/src/services/auth.service.ts` (`LoginResult`/`RefreshResult` internos, com
+`refreshToken`, distintos do contrato público), `backend/package.json` (+`cookie-parser`),
+`shared/types/auth.types.ts`, `frontend/src/stores/auth.store.ts`, `frontend/src/api/client.ts`,
+`frontend/src/hooks/useSession.ts` (`useSessionBootstrap`), `frontend/src/App.tsx`,
+`nginx/frontend.conf`. NÃO mexeu em `frontend/src/api/ws.ts` (WebSocket) — isso é CRMLAB-33,
+que depende deste card. CORS geral (`app.ts`) continua com `credentials: false` — nginx já
+serve SPA e API no mesmo origin, então o cookie não precisa de CORS com credenciais.
+
 ## Template para novas decisões
 
 ```

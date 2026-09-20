@@ -720,9 +720,14 @@ export function evolutionInbound(
             // o webhook responde 200 do mesmo jeito (`acknowledge` no fim).
             const stored = await services.media.storeInbound(tenantId, inbound.media);
             if (stored) {
+              // `stored.mimeType` (nao `inbound.media.mimeType`): allow-list e
+              // sniff de magic bytes (CRMLAB-31) podem rebaixar o MIME
+              // declarado para `application/octet-stream` — o `messageType`
+              // precisa refletir o que foi REALMENTE gravado e servido, senao
+              // a bolha tenta abrir como imagem/pdf um anexo generico.
               const message = await services.messages.createFromPatient(tenantId, conversation.id, {
                 content: inbound.text,
-                messageType: messageTypeFromMime(inbound.media.mimeType),
+                messageType: messageTypeFromMime(stored.mimeType),
                 attachmentUrl: `/api/v1/media/${stored.id}`,
                 externalId: inbound.externalId,
               });

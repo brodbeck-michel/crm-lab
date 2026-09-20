@@ -117,7 +117,8 @@ cd /opt/crm-lab
 ```
 
 O `deploy.sh` faz, em ordem: identidade → árvore limpa → `fetch` → `checkout
---detach` → `build` → `run --rm migrate` → `up -d` → `/healthz`.
+--detach` → `pull` (ou `build`, fallback sem `IMAGE_REGISTRY` — CRMLAB-36) →
+`run --rm migrate` → `up -d` → `/healthz` → limpeza de imagem/cache antigos.
 
 ### As travas do `deploy.sh`
 
@@ -136,8 +137,10 @@ O `deploy.sh` faz, em ordem: identidade → árvore limpa → `fetch` → `check
 6. **Versão × tag.** Se o `HEAD` tem tag, ela precisa bater com o `version` do
    `package.json` da raiz. Se não tem tag, avisa e força a confirmação — a versão
    da tela é **build-time** e um deploy sem bump faz a tela mentir.
-7. **Nenhum `down`, nenhum `-v`, nenhum `prune`.** Não estão no script; derrubar
-   stack e apagar volume são atos manuais e conscientes.
+7. **Nenhum `down`, nenhum `-v`.** Não estão no script; derrubar stack e apagar
+   volume são atos manuais e conscientes. Desde o CRMLAB-36 o script roda
+   `docker image prune -a`/`docker builder prune` no fim — não toca em volume
+   nem em container rodando, só imagem/cache não usados.
 
 ### As travas foram testadas (2026-09-18)
 
@@ -310,6 +313,9 @@ prod.
 APP_ENV=homologacao
 COMPOSE_PROJECT_NAME=crm-lab-homolog
 IMAGE_TAG=hml-latest
+# CRMLAB-36 — barra final obrigatória. Vazio (ou ausente) = deploy.sh cai no
+# fallback de build local (documentado em docs/guides/DEPLOYMENT.md §2/§4).
+IMAGE_REGISTRY=ghcr.io/<owner>/
 
 POSTGRES_USER=crm
 POSTGRES_PASSWORD=<openssl rand -hex 24>
@@ -335,15 +341,33 @@ EVOLUTION_API_KEY=
 ## 7. Custo na VPS
 
 Com as duas stacks de pé: ~2 GB de RAM dos 7.9 GB, e as imagens de hml somam
-alguns GB no disco de 96 GB. O aperto é **CPU**: o build ocupa os 2 vCPU por
-~10 min, e um build de homologação deixa produção lenta nesse intervalo. Não
-buildar hml em horário de atendimento do laboratório.
+alguns GB no disco de 96 GB.
 
-Limpeza, quando o disco pedir (`docker system df`):
+**Build deixou de rodar na VPS (CRMLAB-36).** Antes, o `build` ocupava os 2
+vCPU por ~10 min e um build de homologação deixava produção lenta nesse
+intervalo — era a própria razão de existir deste aviso. O CI agora publica
+`crm-lab-{backend,frontend}` no GHCR a cada push em `main`
+(`.github/workflows/ci.yml`, job `docker`) e `deploy.sh` faz `pull` em vez de
+`build` quando `IMAGE_REGISTRY` está definido no `.env` do ambiente — deploy
+em segundos, sem competir por CPU com o outro ambiente. Sem `IMAGE_REGISTRY`
+no `.env`, o script cai no fallback antigo (build local, mesmo custo de
+sempre) — ver `docs/guides/DEPLOYMENT.md` §2/§4.
+
+Cada container agora tem `mem_limit` (postgres 1536m · redis 256m · backend
+512m · frontend 64m · evolution 768m · migrate 256m — somando os dois
+ambientes fica abaixo de 6 GB dos 7.9 GB da VPS): um vazamento em um serviço
+não compete mais pela RAM do Postgres nem convida o OOM killer a escolher a
+vítima errada. Redis ganhou `maxmemory 200mb` + `allkeys-lru` — sem teto,
+`noeviction` virava erro de escrita quando a RAM apertava (era o que derrubava
+o rate limit em 500 global, CRMLAB-34).
+
+`deploy.sh` já roda a limpeza abaixo sozinho depois de cada `up -d`
+(best-effort — falha aqui não aborta o deploy). Rodar manual quando o disco
+pedir fora de um deploy (`docker system df`):
 
 ```bash
-docker image prune -a --filter 'until=336h' --filter 'label!=keep'   # nunca em cima da tag no ar
-docker builder prune --filter 'until=168h'
+docker image prune -af --filter 'until=336h'   # nunca em cima da tag no ar
+docker builder prune -f --filter 'until=168h'
 ```
 
 ---

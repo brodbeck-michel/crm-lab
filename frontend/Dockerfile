@@ -9,11 +9,15 @@
 # segredo — sao URLs publicas — mas mudar de ambiente exige rebuild da imagem.
 # Default `/api/v1` e `/ws`: mesmo origin, com o proprio nginx fazendo proxy
 # para a API. Assim nao ha CORS e nenhuma URL de backend fica exposta.
+#
+# Imagens base pinadas por digest (CRMLAB-36) — mesmo motivo do backend/Dockerfile.
+ARG NODE_BASE=node:22-alpine@sha256:b6f26b36c8ff49624cfdac716b8ea1138d606df02586a77d364bb5536a634f85
+ARG NGINX_BASE=nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
 
 # ---------------------------------------------------------------------------
 # Stage 1 — build do bundle
 # ---------------------------------------------------------------------------
-FROM node:22-alpine AS build
+FROM ${NODE_BASE} AS build
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -45,7 +49,7 @@ RUN npm run build --workspace frontend \
 # ---------------------------------------------------------------------------
 # Stage 2 — runtime
 # ---------------------------------------------------------------------------
-FROM nginx:1.27-alpine AS runtime
+FROM ${NGINX_BASE} AS runtime
 
 # Upstream da API, resolvido por envsubst no boot do container.
 ENV API_UPSTREAM=http://backend:3000

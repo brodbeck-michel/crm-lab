@@ -116,7 +116,7 @@ export IMAGE_TAG="${PREFIXO_TAG}${SHA}"
 VERSAO="$(python3 -c 'import json;print(json.load(open("package.json"))["version"])')"
 info "commit  $SHA"
 info "versao  v$VERSAO (package.json da raiz — e o numero que aparece na tela)"
-info "imagens crm-lab-{backend,frontend}:$IMAGE_TAG"
+info "imagens ${IMAGE_REGISTRY:-}crm-lab-{backend,frontend}:$IMAGE_TAG"
 
 # ---------------------------------------------------------------------------
 # 3. Producao: checagem de versao/tag + confirmacao digitada
@@ -145,16 +145,39 @@ if [[ "$APP_ENV" == 'production' ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Build -> migrate -> up
+# 4. Imagem -> migrate -> up -> limpeza
+#
+# CRMLAB-36: o CI publica `backend`/`frontend` no GHCR a cada push em `main`
+# (job `docker`, `.github/workflows/ci.yml`) — o normal agora e' `pull`, nao
+# `build` na propria VPS (que ocupava os 2 vCPU por ~10 min e deixava o outro
+# ambiente lento). `IMAGE_REGISTRY` vem do `.env` do ambiente; sem ele, cai no
+# fallback documentado (build local — ver docs/guides/DEPLOYMENT.md §2).
 # ---------------------------------------------------------------------------
-msg "Build ($APP_ENV, ~10 min nos 2 vCPU)"
-dc build
+if [[ -n "${IMAGE_REGISTRY:-}" ]]; then
+  msg "Pull das imagens ($APP_ENV, GHCR)"
+  info "registry $IMAGE_REGISTRY"
+  dc pull
+else
+  printf '\n\033[1;33mAVISO: IMAGE_REGISTRY nao definido no .env — build LOCAL (~10 min nos 2 vCPU).\033[0m\n'
+  info "Defina IMAGE_REGISTRY=ghcr.io/<owner>/ no .env para usar as imagens ja publicadas pelo CI."
+  msg "Build ($APP_ENV, ~10 min nos 2 vCPU)"
+  dc build
+fi
 
 msg "Migrations"
 dc run --rm migrate
 
 msg "Subindo"
 dc up -d
+
+# Limpeza (CRMLAB-36): sem isso, imagem antiga + cache de build acumulam
+# indefinidamente no disco (33 imagens / 3,4 GB de cache medidos na auditoria
+# de 19/09). `until=336h` (14 dias) nunca alcanca a imagem que acabou de subir
+# — so descarta o que ja envelheceu. Falha aqui NAO aborta o deploy: a stack
+# ja esta de pe nesse ponto, faxina e' best-effort.
+msg "Limpeza de imagens e cache antigos"
+docker image prune -af --filter 'until=336h' || info "prune de imagens falhou (nao critico)"
+docker builder prune -f --filter 'until=168h' || info "prune de build cache falhou (nao critico)"
 
 # ---------------------------------------------------------------------------
 # 5. Verificacao

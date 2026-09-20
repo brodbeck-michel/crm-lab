@@ -1928,6 +1928,38 @@ do CORS), `shared/types/api.types.ts` (+`SERVICE_UNAVAILABLE`), `backend/src/htt
 (20 falhas em paralelo não furam o lockout de 5, 503 com Redis fora do ar). Não mexe em infra
 (`REDIS_URL`/`maxmemory` — isso é CRMLAB-36).
 
+### D-140: `evolution: user: "1000:1000"` avaliado e NÃO aplicado nesta rodada (CRMLAB-36)
+**Decisão:** Não adicionar `user: "1000:1000"` ao serviço `evolution` em `docker-compose.prod.yml`
+por enquanto. `mem_limit: 768m` e os demais itens do card foram aplicados normalmente.
+**Motivo:** `evoapicloud/evolution-api:v2.3.7` é imagem de terceiro; não há como validar, a
+partir deste repositório/CI, se o processo aceita rodar como uid 1000 com o volume de sessão
+Baileys que já está em produção (permissões do volume, escrita de arquivo de sessão, etc.).
+Aplicar às cegas e descobrir em produção que o container não sobe mais é pior do que manter o
+risco documentado (o card já registra: hoje roda como root, é o único serviço nessa condição).
+**Impacto:** Nenhum no código. Pendência de validação manual: testar `user: "1000:1000"` em
+homologação primeiro (subir a stack, parear um número de teste, confirmar que a sessão
+persiste depois de um restart do container) antes de replicar em produção. Ver
+`docs/STATUS.md` (entrada CRMLAB-36) para o registro da pendência.
+
+### D-141: Backend com UMA imagem para os dois ambientes; frontend com DUAS (CRMLAB-36)
+**Decisão:** O job `docker` do CI publica `crm-lab-backend` no GHCR com três tags apontando pro
+MESMO digest (`:<sha>`, `:hml-<sha>`, `:latest`) mas builda e publica o `crm-lab-frontend`
+**duas vezes** — uma com os build-args default (produção, tag `:<sha>`) e outra com
+`VITE_APP_ENV=homologacao` (tag `:hml-<sha>`). `IMAGE_TAG` em `deploy.sh` continua com o
+mesmo prefixo `hml-` de sempre (`ENVIRONMENTS.md`), então `docker-compose.prod.yml` não muda a
+lógica de tag por ambiente — só ganha o prefixo `${IMAGE_REGISTRY:-}`.
+**Motivo:** o backend não tem NENHUMA diferença de build-time entre os dois ambientes — tudo
+que muda (URL, segredo, `APP_ENV`) é variável de runtime injetada pelo compose. Publicar uma
+imagem só e apontar duas tags pra ela evita build duplicado e mantém as duas stacks rodando o
+mesmo binário verificado pelo CI. O frontend é diferente: `VITE_APP_ENV` (e as demais `VITE_*`)
+são build-time — o Vite inlina no bundle (`frontend/Dockerfile`, `DEPLOYMENT.md` §2) — então
+produção e homologação são, de fato, dois artefatos distintos; publicar só um dos dois faria a
+outra stack rodar com o selo de ambiente errado na tela.
+**Impacto:** `.github/workflows/ci.yml` (job `docker`, três steps novos de publicação),
+`docker-compose.prod.yml` (`image:` com `${IMAGE_REGISTRY:-}` nos três serviços que usam
+imagem própria — `migrate`, `backend`, `frontend`), `scripts/deploy.sh` (`pull` no lugar de
+`build`, com fallback). Nada muda no cálculo de `IMAGE_TAG`/`PREFIXO_TAG` existente.
+
 ### D-142: Refresh token em cookie httpOnly, access token só em memória, CSP em Report-Only (CRMLAB-32)
 **Decisão:** `POST /auth/login` e `POST /auth/refresh` gravam o refresh token em
 `Set-Cookie: crm_refresh=<token>; HttpOnly; Secure (só produção/homologação); SameSite=Strict;

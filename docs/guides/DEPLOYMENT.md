@@ -19,7 +19,7 @@ push novo mata o anterior que ainda estivesse rodando.
 |-----|-----------|---------------|
 | **`quality`** | — | `npm run typecheck` (shared + backend + frontend), `npm run lint`, `npm run test:backend`, `npm run test:frontend`. Sem serviço externo: as suítes de backend, inclusive as de isolamento multitenant, rodam em **PGlite** (D-008). |
 | **`build`** | — | `npm run build` compila de verdade os três workspaces e **verifica os artefatos emitidos** (`backend/dist/backend/src/main.js`, `backend/dist/shared/types/index.js`, `frontend/dist/index.html`). Um build que "passa" sem emitir arquivo é falso verde. Publica `build-dist` como artifact (3 dias). |
-| **`docker`** | `build` | Constrói as duas imagens de produção (buildx + cache GHA) e afirma que **nenhuma das duas roda como root**. Não publica em registry — não há credencial no CI. |
+| **`docker`** | `build` | Constrói as imagens de produção (buildx + cache GHA) e afirma que **nenhuma roda como root**. Em `push` para `main` (nunca em PR, CRMLAB-36) também publica no **GHCR**: `crm-lab-backend` (`:<sha>`, `:hml-<sha>`, `:latest` — mesma imagem serve os dois ambientes) e `crm-lab-frontend`, que em vez disso ganha DUAS imagens (`:<sha>` produção, `:hml-<sha>` homologação) porque `VITE_APP_ENV` é build-time e fica inlinado no bundle. |
 | **`e2e`** | `quality`, `build` | Postgres 16 como *service*, `npm run migrate` + `npm run seed:e2e` com `DATABASE_URL`, navegador via `npm run e2e:install --workspace e2e`, API + UI no ar, e a suíte Playwright (`npm run e2e`). |
 
 ### Detalhes do job `e2e`
@@ -165,9 +165,13 @@ export JWT_SECRET=$(openssl rand -hex 32)
 export JWT_REFRESH_SECRET=$(openssl rand -hex 32)
 export CORS_ORIGIN=https://<dominio-da-ui>
 export IMAGE_TAG=$(git rev-parse --short HEAD)
+export IMAGE_REGISTRY=ghcr.io/<owner>/   # CRMLAB-36 — barra final; vazio = build local (fallback)
 
-# 2. Build das imagens
-docker compose -f docker-compose.prod.yml build
+# 2. Imagens — pull do GHCR (o CI publica a cada push em `main`, ver §2 e §7).
+#    Sem IMAGE_REGISTRY definido, cai no fallback documentado (build local,
+#    ~10 min nos 2 vCPU — era o unico caminho antes do CRMLAB-36):
+docker compose -f docker-compose.prod.yml pull
+# docker compose -f docker-compose.prod.yml build   # fallback, so se IMAGE_REGISTRY vazio
 
 # 3. Migração — SEMPRE antes de subir a aplicação nova
 docker compose -f docker-compose.prod.yml run --rm migrate
@@ -183,7 +187,14 @@ docker compose -f docker-compose.prod.yml up -d
 curl -fsS http://localhost:${HTTP_PORT:-8080}/healthz          # nginx
 docker compose -f docker-compose.prod.yml exec backend \
   wget -qO- http://127.0.0.1:3000/health                       # API
+
+# 6. Limpeza (CRMLAB-36) — imagem/cache velhos, nunca a tag no ar:
+docker image prune -af --filter 'until=336h'
+docker builder prune -f --filter 'until=168h'
 ```
+
+`./scripts/deploy.sh` faz os passos 1-6 automaticamente (2 e 6 com o fallback
+e o "best-effort" descritos acima).
 
 ### Passo de migração
 
@@ -573,10 +584,23 @@ de recuperação como **desconhecido**, não como "rápido".
 
 Registrado aqui para não virar promessa implícita:
 
-- **Publicação de imagem em registry e deploy automático.** O job `docker`
-  constrói e valida, mas não faz `push` — não há registry nem credencial
-  definidos para este projeto. Quando houver, é acrescentar `login-action` +
-  `push: true` com secrets.
+- **Deploy automático (CD).** O CI publica a imagem no GHCR (CRMLAB-36) mas
+  ninguém dispara `deploy.sh` sozinho — subir em produção continua sendo
+  humano, digitado, com a confirmação de `ENVIRONMENTS.md` §3.
 - **Ambiente de staging.** Não existe host definido.
 - **Certificado TLS.** O nginx da imagem serve HTTP em 8080; TLS/HSTS ficam no
   proxy de borda do host.
+- **Zero-downtime no `up -d`.** `docker compose up -d` recria o container e
+  há uma janela de indisponibilidade real (log do Caddy mostrou rajadas de
+  502/503 em deploys de 17/09) — aceito como limitação conhecida por ora
+  (CRMLAB-36).
+- **Ações que exigem acesso à VPS**, fora do alcance de um PR (ver
+  `docs/STATUS.md`, entrada CRMLAB-36, para o passo a passo):
+  - Definir `IMAGE_REGISTRY` no `.env` dos dois ambientes (`/opt/crm-lab` e
+    `/opt/crm-lab-homolog`) — sem isso o `deploy.sh` continua caindo no
+    fallback de build local.
+  - Reiniciar a VPS para aplicar o kernel pendente (`/var/run/reboot-required`
+    em 19/09) — fora de horário de atendimento, depois do backup das 03:10 UTC.
+  - `evolution: user: "1000:1000"` (D-140 em `docs/DECISIONS.md`) — validar em
+    homologação antes de aplicar em produção; imagem de terceiro, sem como
+    testar da CI.

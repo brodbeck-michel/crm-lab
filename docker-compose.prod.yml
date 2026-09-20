@@ -2,19 +2,42 @@
 #
 #   cp .env.prod.example .env    # NAO existe no repo: monte a partir de
 #                                # backend/.env.example + as chaves daqui
-#   docker compose -f docker-compose.prod.yml build
+#   docker compose -f docker-compose.prod.yml pull   # imagens do GHCR (CI as publica)
 #   docker compose -f docker-compose.prod.yml run --rm migrate
 #   docker compose -f docker-compose.prod.yml up -d
 #
 # NENHUM valor aqui e segredo. Toda chave sensivel vem do ambiente
 # (`${VAR:?mensagem}` = falha explicita se nao estiver definida).
+#
+# `IMAGE_REGISTRY` (CRMLAB-36): prefixo das imagens `backend`/`frontend`/
+# `migrate`. Vazio (default, uso local/dev) = nome de imagem sem registry,
+# construida por `build:` abaixo. Em produção/homologação o `.env` define
+# `IMAGE_REGISTRY=ghcr.io/<owner>/` (barra final) e `deploy.sh` faz `pull` em
+# vez de `build` — ver docs/guides/DEPLOYMENT.md §2 e ENVIRONMENTS.md §7. O
+# bloco `build:` continua aqui só como FALLBACK documentado (build local
+# manual: `docker compose -f docker-compose.prod.yml build`), não é mais o
+# caminho normal de deploy.
 
 name: crm-lab-prod
 
 services:
   postgres:
-    image: postgres:16-alpine
+    # Pinada por digest (CRMLAB-36) — a tag sozinha muda de conteúdo sob o pé.
+    image: postgres:16-alpine@sha256:3c5c8892d184f738f4fe282d14ddaa613a38f00f4189d2d94725ebe6f2909ddb
     restart: unless-stopped
+    mem_limit: 1536m
+    # `shared_buffers`/`effective_cache_size` no default (128MB/4GB) deixam
+    # sobrando a maior parte dos 7,7 GB da VPS sem uso (CRMLAB-36 — auditoria
+    # de 19/09 mediu 13 MB usados). `log_min_duration_statement` expõe query
+    # lenta sem logar toda query (isso já e' `LOG_LEVEL`, não Postgres).
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - effective_cache_size=2GB
+      - -c
+      - log_min_duration_statement=1000
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?defina POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD}
@@ -32,9 +55,25 @@ services:
     # Sem `ports:` — o banco so existe na rede interna do compose.
 
   redis:
-    image: redis:7-alpine
+    # Pinada por digest (CRMLAB-36).
+    image: redis:7-alpine@sha256:520775a41a63e77e06c73e35d2fd9cc15921a609516818796b4ecbb813078bc7
     restart: unless-stopped
-    command: ['redis-server', '--appendonly', 'yes']
+    mem_limit: 256m
+    # `maxmemory` (CRMLAB-36): sem teto, `maxmemory-policy` default
+    # `noeviction` vira erro de ESCRITA quando a RAM aperta — e foi isso que
+    # derrubava o rate limit em 500 global (ver CRMLAB-34). Rate limit e cache
+    # do Evolution (db1) toleram evicção por LRU; nada aqui e fonte da verdade
+    # (sessão/refresh token vivem no Postgres, não no Redis).
+    command:
+      [
+        'redis-server',
+        '--appendonly',
+        'yes',
+        '--maxmemory',
+        '200mb',
+        '--maxmemory-policy',
+        'allkeys-lru',
+      ]
     volumes:
       - redis-data:/data
     healthcheck:
@@ -46,11 +85,13 @@ services:
   # Job de migracao: roda ate o fim e sai. `run --rm migrate` antes de todo
   # `up` que inclua migracao nova (DEPLOYMENT.md "Passo de migracao").
   migrate:
-    image: crm-lab-backend:${IMAGE_TAG:-latest}
+    image: ${IMAGE_REGISTRY:-}crm-lab-backend:${IMAGE_TAG:-latest}
+    # Fallback local (ver nota no topo do arquivo) — `deploy.sh` usa `pull`.
     build:
       context: .
       dockerfile: backend/Dockerfile
     restart: 'no'
+    mem_limit: 256m
     depends_on:
       postgres:
         condition: service_healthy
@@ -73,11 +114,20 @@ services:
     command: ['node', 'dist/backend/src/db/cli/migrate.js']
 
   backend:
-    image: crm-lab-backend:${IMAGE_TAG:-latest}
+    image: ${IMAGE_REGISTRY:-}crm-lab-backend:${IMAGE_TAG:-latest}
+    # Fallback local (ver nota no topo do arquivo) — `deploy.sh` usa `pull`.
     build:
       context: .
       dockerfile: backend/Dockerfile
     restart: unless-stopped
+    mem_limit: 512m
+    # Teto de ~1000 descritores (default 1024) somando WebSocket + conexoes
+    # pg/Redis + arquivos de midia vira gargalo antes de qualquer outro limite
+    # com algumas centenas de atendentes online (CRMLAB-36).
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     depends_on:
       postgres:
         condition: service_healthy
@@ -131,7 +181,11 @@ services:
     # Sem `ports:` — quem expoe a API e o nginx do frontend, no mesmo origin.
 
   frontend:
-    image: crm-lab-frontend:${IMAGE_TAG:-latest}
+    # `IMAGE_TAG` ja distingue producao (`<sha>`) de homologacao (`hml-<sha>`,
+    # `deploy.sh` §PREFIXO_TAG) — sao builds DIFERENTES (VITE_APP_ENV inlinado
+    # no bundle), entao o CI publica as duas variantes com essas mesmas tags.
+    image: ${IMAGE_REGISTRY:-}crm-lab-frontend:${IMAGE_TAG:-latest}
+    # Fallback local (ver nota no topo do arquivo) — `deploy.sh` usa `pull`.
     build:
       context: .
       dockerfile: frontend/Dockerfile
@@ -143,6 +197,7 @@ services:
         # default; homologacao define `homologacao` e ganha o selo na tela.
         VITE_APP_ENV: ${APP_ENV:-production}
     restart: unless-stopped
+    mem_limit: 64m
     depends_on:
       - backend
     environment:
@@ -161,6 +216,12 @@ services:
   evolution:
     image: evoapicloud/evolution-api:v2.3.7
     restart: unless-stopped
+    mem_limit: 768m
+    # `user: "1000:1000"` NAO aplicado aqui — ver D-140 em docs/DECISIONS.md:
+    # imagem de terceiro, sem como validar da CI/de fora da VPS se o volume
+    # de sessao (Baileys) aceita rodar sem root. Ficou registrado como
+    # pendencia de validacao manual em homologacao antes de aplicar em
+    # producao.
     depends_on:
       postgres:
         condition: service_healthy

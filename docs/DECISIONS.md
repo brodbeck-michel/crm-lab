@@ -2014,6 +2014,27 @@ requisição cross-origin para a API".
 dev-absoluto/prod-relativo que ele descrevia deixou de existir). Nenhuma mudança de código de
 produção: `VITE_API_URL`/`VITE_WS_URL` do `frontend/Dockerfile` já eram relativos desde D-051.
 
+### D-144: `add_header` repetido nas locations do nginx que também declaram `add_header` (CRMLAB-32, pós-deploy)
+**Decisão:** `nginx/frontend.conf` passa a repetir os 5 headers de segurança do nível `server`
+(`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`,
+`Content-Security-Policy-Report-Only`, `Permissions-Policy`) dentro de `location = /index.html`
+(todos os 5) e `location /assets/` (os 3 que não são específicos de documento — sem CSP/
+Permissions-Policy, que só fazem sentido na resposta do documento).
+**Motivo:** achado ao vivo no primeiro deploy do CRMLAB-32 em homologação — `curl -I` na raiz
+não trazia NENHUM dos 5 headers, apesar de estarem corretos no `server {}`. Causa: pegadinha
+documentada do próprio nginx — quando uma `location` declara seu PRÓPRIO `add_header`, ela para
+de herdar QUALQUER `add_header` do nível acima, silenciosamente. `location = /index.html` e
+`location /assets/` já tinham `add_header Cache-Control` antes do CRMLAB-32 existir (Onda 5), e
+`/` sempre cai em `/index.html` via `try_files` — ou seja, a resposta que o navegador realmente
+recebe como "o documento" nunca teve CSP nem X-Frame-Options desde que esses headers foram
+escritos, e nada no CI pegou isso (testes de unidade não sobem o nginx de verdade; o E2E roda
+contra o Vite dev server, que não usa este arquivo).
+**Impacto:** só `nginx/frontend.conf`. Validado com `nginx -t` + um container real servindo
+`index.html` e `curl -I` confirmando os 5 headers na resposta. Lição para o próximo header novo
+neste arquivo: qualquer `add_header` adicionado ao `server {}` PRECISA ser copiado para as duas
+locations que têm `add_header` próprio, ou vira letra morta — comentário no arquivo aponta para
+esta decisão.
+
 ## Template para novas decisões
 
 ```

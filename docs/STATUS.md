@@ -1865,3 +1865,17 @@ guides/DEPLOYMENT.md` §7 tem o mesmo texto):
    horário do laboratório.
 4. Validar `evolution: user: "1000:1000"` em homologação antes de produção (D-140) — não
    aplicado nesta onda.
+
+**Achado no deploy de homologação (mesmo dia): CSP/X-Frame-Options nunca chegavam no browser.**
+`./scripts/deploy.sh` em `/opt/crm-lab-homolog` subiu os 5 serviços saudáveis, mas `curl -I` na
+raiz não trazia NENHUM dos 5 headers de segurança do `nginx/frontend.conf` — nem os que já
+existiam desde a Onda 5 (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`), nem os
+novos do CRMLAB-32 (CSP, `Permissions-Policy`). Causa: pegadinha do nginx (D-144) —
+`location = /index.html` e `location /assets/` já tinham `add_header` próprio (Cache-Control)
+desde a Onda 5, e isso zera a herança de QUALQUER `add_header` do `server{}` pai. `/` sempre cai
+em `/index.html` via `try_files`, então a resposta real nunca teve proteção nenhuma — bug
+antigo, só ficou visível porque o CRMLAB-32 foi o primeiro a colocar algo crítico
+(CSP/clickjacking) nesse `add_header` do nível de cima. Corrigido em `nginx/frontend.conf`
+(D-144): os 5 headers repetidos nas duas locations que precisam. Validado com `nginx -t` +
+container real + `curl -I` mostrando os 5 headers na resposta de `/`. **Redeploy de
+homologação necessário** para levar a correção (feito na sequência desta mesma sessão).

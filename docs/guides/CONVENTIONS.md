@@ -168,8 +168,10 @@ WHATSAPP_API_URL=        # vazio em dev = driver mock
 PORT=3000
 
 # frontend/.env.example
-VITE_API_URL=http://localhost:3000/api/v1
-VITE_WS_URL=ws://localhost:3000/ws
+# Relativo (D-142) — o dev server do Vite faz proxy de /api e /ws para o
+# backend (vite.config.ts), mesmo origin que a produção (D-051).
+VITE_API_URL=/api/v1
+VITE_WS_URL=/ws
 ```
 
 - Nova env var → adicionar ao `.env.example` no mesmo commit

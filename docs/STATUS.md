@@ -1645,7 +1645,7 @@ passo de rollback (`IMAGE_TAG=<sha-anterior>`) se algo aparecer depois.
 ## 2026-09-20 — CRMLAB-32: refresh em cookie httpOnly, access token só em memória, CSP Report-Only ✅
 
 Worktree próprio (`crm-lab-wt-32`), branch `feature/CRMLAB-32-cookie-httponly-csp`. Achado de
-severidade Alta da auditoria de segurança (D-139 em `docs/DECISIONS.md` tem o detalhe completo).
+severidade Alta da auditoria de segurança (D-142 em `docs/DECISIONS.md` tem o detalhe completo).
 
 - **Backend** (`backend/src/controllers/auth.routes.ts`, `backend/src/services/auth.service.ts`,
   `backend/package.json` +`cookie-parser`): `/auth/login` e `/auth/refresh` gravam
@@ -1679,3 +1679,14 @@ store (`Login.spec.tsx`, `guards.spec.tsx`, `Sidebar.spec.tsx`, `Attendance.spec
 `InternalChat.spec.tsx`) ajustados para o novo shape sem refresh no frontend.
 `npm run typecheck` e `npm run test:backend`/`test:frontend` verdes (ver relatório do card no
 Jira para o resultado exato desta rodada).
+
+**Correção pós-CI (mesmo dia): E2E quebrava 76/123 specs.** O PR abriu com `test:backend`/
+`test:frontend` verdes mas nenhuma rodada de E2E local — o job `e2e` do CI pegou uma regressão
+real: todo `page.goto` para rota autenticada caía em `/login`. Causa: `VITE_API_URL` absoluto em
+dev/E2E (`http://localhost:3000/...`) fazia o browser chamar a API numa origin diferente da SPA
+(porta 5173 vs 3000) — cookie `HttpOnly` do refresh não atravessa origin diferente, então
+`useSessionBootstrap` tomava 401 sempre. D-143 em `docs/DECISIONS.md` tem o detalhe; correção:
+proxy do Vite (`frontend/vite.config.ts`) + `VITE_API_URL`/`VITE_WS_URL` relativos em
+`frontend/.env.example` e no job `e2e` do CI, igualando dev/E2E a produção (D-051). CORS também
+ganhou `X-Requested-With` em `allowedHeaders` (defensivo — não era o que quebrava o E2E, mas
+faltava para qualquer cliente cross-origin genuíno chegar em `/auth/refresh`).

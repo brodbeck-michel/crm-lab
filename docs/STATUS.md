@@ -1879,3 +1879,12 @@ antigo, só ficou visível porque o CRMLAB-32 foi o primeiro a colocar algo crí
 (D-144): os 5 headers repetidos nas duas locations que precisam. Validado com `nginx -t` +
 container real + `curl -I` mostrando os 5 headers na resposta de `/`. **Redeploy de
 homologação necessário** para levar a correção (feito na sequência desta mesma sessão).
+
+**Pós-deploy (2026-09-20, `./scripts/deploy.sh` a partir de `/opt/crm-lab`):** correção do
+nginx virou patch **v1.12.1** (a tag `v1.12.0` ficou parada no commit de antes da correção — o
+script de deploy exige tag exata igual à versão do `package.json`, então retag não fazia
+sentido; patch novo é o caminho normal). Homologação e produção seguem o mesmo binário desde
+`d80e544`. Os 5 serviços `healthy` em produção; `https://vitrocrm.cloud` em 200;
+`https://vitrocrm.cloud/api/v1/health` em 200; os 5 headers de segurança (D-144) confirmados
+com `curl -I` tanto em `127.0.0.1:8080` quanto no domínio público. Nenhuma migração nova nesta
+onda — schema intocado.

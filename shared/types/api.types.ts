@@ -67,6 +67,7 @@ export type ApiErrorCode =
   | 'SALE_ATTENDANT_NOT_LINKED'
   // Sistema
   | 'RATE_LIMIT_EXCEEDED'
+  | 'SERVICE_UNAVAILABLE'
   | 'INTERNAL_ERROR';
 
 /** Formato padrao de TODA resposta 4xx/5xx (API_ERRORS.md). */

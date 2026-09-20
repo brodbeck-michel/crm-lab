@@ -145,6 +145,7 @@ Sem código novo além do acima: `/insurances` e `/exams/:id/prices` reusam o ca
 | Código | HTTP | Quando |
 |--------|------|--------|
 | `RATE_LIMIT_EXCEEDED` | 429 | Limite de requisições — `details: { retryAfter }` |
+| `SERVICE_UNAVAILABLE` | 503 | Redis indisponível em runtime, numa rota **pública** que depende dele (`/auth/login`, `/auth/refresh`, `/webhooks/*` — D-139). Rota autenticada NUNCA devolve este código: degrada fail-open (o JWT já protege) em vez de travar toda a API |
 | `INTERNAL_ERROR` | 500 | Erro não tratado (logar com correlationId; NUNCA vazar stack) |
 
 ---

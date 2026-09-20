@@ -4,6 +4,11 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { LoginResponse } from '@crm-lab/shared';
 import type { DbClient } from '../../src/db/types.js';
+import {
+  MemoryCache,
+  resetCacheUnavailableThrottleForTest,
+  type CacheService,
+} from '../../src/lib/cache.js';
 import { hashRefreshToken } from '../../src/repositories/refresh-token.repository.js';
 import { DEFAULT_THEME } from '../../src/services/theme.service.js';
 import { authModule } from '../../src/controllers/auth.routes.js';
@@ -251,5 +256,94 @@ describe('POST /auth/login', () => {
 
     expect(rows.rows).toHaveLength(1);
     expect(String(rows.rows[0]?.ip_address)).not.toContain('203.0.113.66');
+  });
+
+  /**
+   * D-139: o contador de falhas trocou `get`+`set` por `incr` atomico
+   * justamente porque 20 senhas erradas em paralelo, com o padrao antigo,
+   * liam o MESMO valor e escreviam o MESMO `hits + 1` — perdendo 19
+   * incrementos e nunca disparando o lockout de 5. `Promise.all` dispara as
+   * 20 tentativas de verdade em paralelo (nao um loop sequencial).
+   */
+  it('20 senhas erradas em paralelo NAO furam o lockout de 5 (D-139)', async () => {
+    const attempts = await Promise.all(
+      Array.from({ length: 20 }, () =>
+        app.agent
+          .post('/api/v1/auth/login')
+          .send({ email: user.email, password: 'errada-tambem' }),
+      ),
+    );
+    // Nenhuma das 20 pode "vazar" um status inesperado — todas 401 (o lockout
+    // atua so DEPOIS que o contador acumulou, e o pre-check de todas roda
+    // antes de qualquer incremento terminar, entao a rajada inteira ainda
+    // compara senha).
+    expect(attempts.every((r) => r.status === 401)).toBe(true);
+
+    // O que importa: o contador ficou correto DEPOIS da rajada — a proxima
+    // tentativa, mesmo com a senha certa, e barrada.
+    const blocked = await app.agent
+      .post('/api/v1/auth/login')
+      .send({ email: user.email, password: DEFAULT_TEST_PASSWORD })
+      .expect(429);
+    expect(blocked.body.error.code).toBe('RATE_LIMIT_EXCEEDED');
+  });
+});
+
+/**
+ * D-139: Redis fora do ar EM RUNTIME e rota PUBLICA (login) -> fail-CLOSED,
+ * 503 SERVICE_UNAVAILABLE, nunca 500 generico.
+ */
+describe('POST /auth/login — Redis indisponivel em runtime (D-139)', () => {
+  let db: DbClient;
+  let tenant: TenantRecord;
+  let user: UserRecord;
+
+  class FailingCache implements CacheService {
+    async get<T>(): Promise<T | null> {
+      throw new Error('ECONNREFUSED 127.0.0.1:6379');
+    }
+    async set(): Promise<void> {
+      throw new Error('ECONNREFUSED 127.0.0.1:6379');
+    }
+    async del(): Promise<void> {
+      throw new Error('ECONNREFUSED 127.0.0.1:6379');
+    }
+    async delByPrefix(): Promise<void> {}
+    async incr(): Promise<number> {
+      throw new Error('ECONNREFUSED 127.0.0.1:6379');
+    }
+    async ping(): Promise<void> {}
+    async close(): Promise<void> {}
+  }
+
+  beforeAll(async () => {
+    db = await getTestDb();
+  });
+
+  beforeEach(async () => {
+    resetCacheUnavailableThrottleForTest();
+    await resetDatabase(db);
+    tenant = await createTenant({ name: 'Lab Sao Jose', slug: 'lab-sao-jose' });
+    user = await createUser({ tenantId: tenant.id, email: 'joao@lab.com', role: 'attendant' });
+  });
+
+  it('responde 503 SERVICE_UNAVAILABLE em vez de 500 quando o cache falha', async () => {
+    const app = await createTestApp({ db, cache: new FailingCache(), modules: [authModule] });
+
+    const response = await app.agent
+      .post('/api/v1/auth/login')
+      .send({ email: user.email, password: DEFAULT_TEST_PASSWORD })
+      .expect(503);
+
+    expect(response.body.error.code).toBe('SERVICE_UNAVAILABLE');
+  });
+
+  it('cache saudavel (MemoryCache) continua respondendo normalmente', async () => {
+    const app = await createTestApp({ db, cache: new MemoryCache(), modules: [authModule] });
+
+    await app.agent
+      .post('/api/v1/auth/login')
+      .send({ email: user.email, password: DEFAULT_TEST_PASSWORD })
+      .expect(200);
   });
 });

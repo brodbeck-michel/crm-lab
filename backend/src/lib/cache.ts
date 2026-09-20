@@ -18,6 +18,19 @@ export interface CacheService {
   /** Invalida todas as chaves com o prefixo dado (ex.: `exams:${tenantId}:`). */
   delByPrefix(prefix: string): Promise<void>;
   /**
+   * Incrementa `key` atomicamente e devolve o novo valor (D-139). O TTL e
+   * aplicado SO na primeira increment (quando o valor recem-criado volta 1) —
+   * janela fixa: a chave nasce no primeiro hit e expira sozinha depois de
+   * `ttlSeconds`, sem round-trip extra de leitura+escrita.
+   *
+   * Existe para substituir o padrao `get` -> calcula -> `set`, que e um TOCTOU
+   * classico: duas requisicoes concorrentes leem o MESMO estado, as duas
+   * calculam "ainda cabe" e as duas escrevem, perdendo um incremento. Com
+   * `RedisCache` isto roda como um UNICO comando atomico no servidor (script
+   * Lua) — nao ha janela entre leitura e escrita para outra requisicao entrar.
+   */
+  incr(key: string, ttlSeconds: number): Promise<number>;
+  /**
    * Verifica que o backing store responde. `MemoryCache`: no-op.
    * Usado no boot para falhar rapido em vez de degradar em silencio (D-058).
    */
@@ -67,6 +80,23 @@ export class MemoryCache implements CacheService {
     }
   }
 
+  /**
+   * Sem `await` no corpo: roda ate o fim de uma so vez, dentro do MESMO tick.
+   * E isso que torna atomico mesmo sob `Promise.all` — nao ha ponto onde o
+   * event loop possa intercalar outra chamada no meio da leitura+escrita.
+   */
+  async incr(key: string, ttlSeconds: number): Promise<number> {
+    const entry = this.live(key);
+    if (!entry) {
+      const next = 1;
+      this.store.set(key, { value: next, expiresAt: this.now() + ttlSeconds * 1000 });
+      return next;
+    }
+    const next = (entry.value as number) + 1;
+    entry.value = next;
+    return next;
+  }
+
   async ping(): Promise<void> {
     // Sempre disponivel: o store E o processo.
   }
@@ -96,6 +126,12 @@ export interface RedisClientLike {
   del(keys: string[]): Promise<void>;
   /** `SCAN cursor MATCH pattern COUNT count`. */
   scan(cursor: string, pattern: string, count: number): Promise<{ cursor: string; keys: string[] }>;
+  /**
+   * `INCR key` + `EXPIRE key ttl` (SO na primeira increment) num UNICO
+   * round-trip ao Redis — e o que torna `CacheService.incr` atomico de
+   * verdade. Ver `INCR_EX_SCRIPT`.
+   */
+  incrEx(key: string, ttlSeconds: number): Promise<number>;
   ping(): Promise<void>;
   quit(): Promise<void>;
 }
@@ -104,6 +140,20 @@ export type RedisClientFactory = (url: string) => RedisClientLike;
 
 /** Quantas chaves o `SCAN` pede por volta em `delByPrefix`. */
 const SCAN_COUNT = 100;
+
+/**
+ * Script Lua de `incrEx`: `INCR` + `EXPIRE` condicional num UNICO comando
+ * atomico no servidor Redis (D-139). O `EXPIRE` so roda quando `current == 1`
+ * (chave recem-criada nesta chamada) — reaplicar TTL a cada hit faria uma
+ * janela sob trafego continuo nunca expirar.
+ */
+const INCR_EX_SCRIPT = `
+local current = redis.call('INCR', KEYS[1])
+if current == 1 then
+  redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return current
+`;
 
 /** Caracteres especiais do glob do Redis, neutralizados no prefixo. */
 function escapeGlob(text: string): string {
@@ -133,6 +183,10 @@ function defaultRedisClient(url: string): RedisClientLike {
     scan: async (cursor, pattern, count) => {
       const [next, keys] = await client.scan(cursor, 'MATCH', pattern, 'COUNT', count);
       return { cursor: next, keys };
+    },
+    incrEx: async (key, ttlSeconds) => {
+      const result = await client.eval(INCR_EX_SCRIPT, 1, key, ttlSeconds);
+      return Number(result);
     },
     ping: async () => {
       await client.connect().catch((err: unknown) => {
@@ -192,6 +246,10 @@ export class RedisCache implements CacheService {
     await this.client.del([key]);
   }
 
+  async incr(key: string, ttlSeconds: number): Promise<number> {
+    return this.client.incrEx(key, ttlSeconds);
+  }
+
   async delByPrefix(prefix: string): Promise<void> {
     const pattern = `${escapeGlob(prefix)}*`;
     let cursor = '0';
@@ -240,4 +298,35 @@ export async function verifyCacheReady(cache: CacheService): Promise<void> {
   } catch (err) {
     throw new CacheUnavailableError(err);
   }
+}
+
+/**
+ * FAIL-OPEN/FAIL-CLOSED em runtime (D-139) — distinto do fail-closed do BOOT
+ * acima. Uma queda do Redis DEPOIS de subido nao pode virar 500 global
+ * (`rate-limit.ts` e `auth.service.ts` sao os dois chamadores): rota
+ * autenticada degrada fail-open (o JWT ja protege) e so loga; rota publica
+ * (`/auth/login`, `/auth/refresh`, `/webhooks/*`) degrada fail-closed com 503
+ * `SERVICE_UNAVAILABLE`, porque sem rate limit/lockout nessas rotas o Redis
+ * fora do ar vira convite a forca bruta.
+ *
+ * Throttle de `CACHE_UNAVAILABLE_LOG_THROTTLE_MS`: sob uma queda real o mesmo
+ * evento dispararia a cada request (centenas/min) e afogaria o log logo no
+ * incidente que mais precisa ser visto.
+ */
+const CACHE_UNAVAILABLE_LOG_THROTTLE_MS = 30_000;
+let lastCacheUnavailableLogAt = 0;
+
+export function logCacheUnavailable(
+  context: Record<string, unknown>,
+  now: () => number = () => Date.now(),
+): void {
+  const at = now();
+  if (at - lastCacheUnavailableLogAt < CACHE_UNAVAILABLE_LOG_THROTTLE_MS) return;
+  lastCacheUnavailableLogAt = at;
+  logger.error('cache.unavailable', context);
+}
+
+/** Uso exclusivo de teste: reseta a janela de throttle entre casos. */
+export function resetCacheUnavailableThrottleForTest(): void {
+  lastCacheUnavailableLogAt = 0;
 }

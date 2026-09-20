@@ -27,6 +27,17 @@ function handle(fn: (req: Request, res: Response) => Promise<void>): RequestHand
   };
 }
 
+/**
+ * `inline` só para o que o navegador sabe exibir com segurança dentro da
+ * conversa (foto, áudio) — qualquer outra coisa (PDF, doc, e sobretudo o
+ * `application/octet-stream` que o allow-list/sniff de CRMLAB-31 aplica a
+ * MIME não reconhecido) força `attachment`: o navegador baixa, nunca tenta
+ * renderizar no mesmo origin da SPA.
+ */
+function dispositionFor(mimeType: string): 'inline' | 'attachment' {
+  return mimeType.startsWith('image/') || mimeType.startsWith('audio/') ? 'inline' : 'attachment';
+}
+
 export function getMedia(service: MediaService): RequestHandler {
   return handle(async (req, res) => {
     const ctx = getContext(req);
@@ -34,9 +45,10 @@ export function getMedia(service: MediaService): RequestHandler {
     const media = await service.readOrThrow(ctx.tenantId, id);
 
     res.setHeader('Content-Type', media.mimeType);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader(
       'Content-Disposition',
-      `inline; filename="${encodeURIComponent(media.fileName)}"`,
+      `${dispositionFor(media.mimeType)}; filename="${encodeURIComponent(media.fileName)}"`,
     );
     res.status(200).send(media.buffer);
   });

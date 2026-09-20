@@ -79,6 +79,11 @@ CREATE POLICY tenant_isolation ON conversations
 - **Revogar revoga:** `{"webhookSecret": null}` não devolve o laboratório ao segredo global da
   instalação. Coluna `NULL` = nunca configurou (cai na env var); `''` = revogado (recusa tudo).
   Ver a emenda de D-073.
+- **Teto de corpo por rota (CRMLAB-31).** O HMAC só é conferido DEPOIS do `express.json()`
+  terminar o parse — corpo gigante custaria CPU/memória ANTES de qualquer rejeição, mesmo sem o
+  segredo. `/webhooks/whatsapp*` (Meta, não carrega mídia em base64) leva `express.json({ limit:
+  '1mb' })`, registrado por caminho ANTES do parser geral (`app.ts`); `/webhooks/evolution/*`
+  (gateway em rede interna, mídia base64) e as demais rotas seguem no limite de `25mb`.
 
 ## Conexão WhatsApp por QR (Evolution API, Onda 7 — Bloco B)
 

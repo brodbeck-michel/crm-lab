@@ -1437,6 +1437,29 @@ justificativa não fica gravada no cadastro.
 
 ## 2d. Media (Onda 8 §4)
 
+### Hardening de mídia (CRMLAB-31)
+
+Quem grava mídia (`POST /conversations/:id/attachments`, os dois webhooks de canal) NUNCA aceita
+o MIME informado de olhos fechados — `MediaService.resolveStoredMimeType` roda nos dois sentidos
+(entrada do paciente e saída do atendente):
+
+1. **Allow-list** (`shared/types/media.types.ts`, `ALLOWED_MEDIA_MIME_TYPES` — fonte única):
+   `image/jpeg`, `image/png`, `image/webp`, `image/gif`, `audio/ogg`, `audio/mpeg`, `audio/mp4`,
+   `audio/aac`, `audio/amr`, `video/mp4`, `application/pdf`, `application/msword`,
+   `application/vnd.openxmlformats-officedocument.wordprocessingml.document`,
+   `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`,
+   `application/vnd.openxmlformats-officedocument.presentationml.presentation`, `text/plain`.
+   MIME fora da lista (ex. `text/html`, `image/svg+xml` — o vetor de XSS que motivou o card) é
+   gravado como `application/octet-stream`.
+2. **Sniff de magic bytes** (pacote `file-type`), só para `image/*`, `audio/*` e
+   `application/pdf`: quando o `file-type` reconhece POSITIVAMENTE um formato DIFERENTE do
+   declarado, o gravado também vira `application/octet-stream`. Formato sem assinatura binária
+   reconhecível (`audio/amr`, por exemplo — `file-type` não cobre) não é tratado como divergência
+   provada; o MIME declarado (já filtrado pela allow-list) é mantido.
+3. O MIME **efetivamente gravado** (não o declarado no request) é o que vira `messageType` da
+   mensagem e o `Content-Type`/`Content-Disposition` de `GET /media/:id` — um anexo rebaixado
+   nunca aparece como imagem/PDF na conversa.
+
 ### GET /media/:id
 Baixa o arquivo de mídia de uma mensagem (foto, PDF ou áudio).
 
@@ -1444,8 +1467,11 @@ Baixa o arquivo de mídia de uma mensagem (foto, PDF ou áudio).
 áudio de paciente. Rota autenticada, filtrada por tenant (RLS) — mídia de
 outro tenant é `NOT_FOUND` (CLAUDE.md regra 8), nunca `FORBIDDEN`.
 
-**Response (200):** o corpo bruto do arquivo, com `Content-Type` do
-`mimeType` gravado e `Content-Disposition: inline; filename="..."`.
+**Response (200):** o corpo bruto do arquivo, com `Content-Type` do `mimeType` gravado (já
+passado pelo hardening acima), `X-Content-Type-Options: nosniff`, e `Content-Disposition`:
+- `inline; filename="..."` para `image/*` e `audio/*`;
+- `attachment; filename="..."` para tudo o mais (PDF, doc, `application/octet-stream`) — o
+  navegador baixa, nunca tenta renderizar no mesmo origin da SPA.
 
 **Erros:** `NOT_FOUND` (404 — inexistente ou de outro tenant), `VALIDATION_ERROR`
 (400, `:id` não-uuid), `FORBIDDEN` (403, `platform_operator`)

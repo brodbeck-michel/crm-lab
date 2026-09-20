@@ -1690,3 +1690,37 @@ proxy do Vite (`frontend/vite.config.ts`) + `VITE_API_URL`/`VITE_WS_URL` relativ
 `frontend/.env.example` e no job `e2e` do CI, igualando dev/E2E a produção (D-051). CORS também
 ganhou `X-Requested-With` em `allowedHeaders` (defensivo — não era o que quebrava o E2E, mas
 faltava para qualquer cliente cross-origin genuíno chegar em `/auth/refresh`).
+
+---
+
+## 2026-09-20 — CRMLAB-31: allow-list de MIME, sniff de magic bytes, `attachment` para não-imagem, teto de 1 MB nos webhooks públicos ✅
+
+Worktree próprio (`crm-lab-wt-31`), branch `feature/CRMLAB-31-hardening-midia`.
+
+- **Allow-list + sniff** (`shared/types/media.types.ts` `ALLOWED_MEDIA_MIME_TYPES` — fonte
+  única; `backend/src/services/media.service.ts` `resolveStoredMimeType`): MIME fora da lista
+  vira `application/octet-stream` na gravação (`storeOutbound`/`storeInbound`). Para
+  `image/*`/`audio/*`/`application/pdf`, `file-type` confere magic bytes contra o declarado —
+  divergência POSITIVA também rebaixa para `application/octet-stream`; formato sem assinatura
+  reconhecível (`audio/amr`) ou buffer curto demais mantém o declarado (inconclusivo ≠
+  divergência provada). `text/html`/`image/svg+xml` (vetor de XSS do card) ficam fora da
+  allow-list de propósito.
+- **`GET /media/:id`** (`backend/src/controllers/media.routes.ts`): `Content-Disposition:
+  attachment` para tudo que não é `image/*`/`audio/*` (era sempre `inline`) +
+  `X-Content-Type-Options: nosniff`.
+- **Webhook público** (`backend/src/app.ts`): `/webhooks/whatsapp*` (Meta, sem HMAC verificado
+  antes do parse) ganhou `express.json({ limit: '1mb' })` próprio, registrado antes do parser
+  geral de 25mb; `/webhooks/evolution/*` (mídia base64, rede interna) e demais rotas seguem em
+  25mb.
+- **Frontend** (`frontend/src/components/conversation/MessageBubble.tsx`): anexo não-imagem/
+  não-áudio para de usar `<a href="/api/v1/media/:id">` cru (dava 401 JSON — a rota exige
+  Bearer) e passa por `useAuthenticatedMedia` (blob URL); PDF abre em nova aba, o resto força
+  download.
+- **Docs atualizados no mesmo commit** (Regra Zero): `docs/api/API_CONTRACTS.md` §2d
+  ("Hardening de mídia"), `docs/architecture/SECURITY.md` ("Teto de corpo por rota").
+
+**Testes:** `backend/src/services/media.service.spec.ts` (novo, `resolveStoredMimeType`),
+`backend/tests/webhooks/evolution-webhook-media.spec.ts` (documento `text/html` disfarçado →
+gravado e servido como `application/octet-stream` + `attachment`),
+`frontend/src/components/conversation/MessageBubble.spec.tsx` (PDF abre, doc baixa). Suíte
+completa: `npm run typecheck` verde nos 4 workspaces; backend **1131/1131**.

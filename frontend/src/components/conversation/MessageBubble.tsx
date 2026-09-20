@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import type { Message, SenderType } from '@crm-lab/shared';
 import { cn } from '@/components/ui';
-import { resolveMediaUrl } from '@/api';
 import { useAuthenticatedMedia } from '@/hooks';
 import { DateDisplay, ImageLightbox } from '@/components/shared';
 import { AudioMessage } from './AudioMessage';
@@ -76,6 +75,7 @@ export function MessageBubble({
   const isSystem = type === 'system';
   const isImage = message.messageType === 'image' && Boolean(message.attachmentUrl);
   const isAudio = message.messageType === 'audio' && Boolean(message.attachmentUrl);
+  const isDoc = !isImage && !isAudio && Boolean(message.attachmentUrl);
   const [lightboxOpen, setLightboxOpen] = useState(false);
 
   // `GET /media/:id` exige Authorization (requireAuth()) — um <img src> cru
@@ -86,6 +86,18 @@ export function MessageBubble({
     fileName: imageFileName,
     isLoading: imageLoading,
   } = useAuthenticatedMedia(isImage ? message.attachmentUrl : null);
+
+  // Mesmo motivo do `<img>`: um `<a href="/api/v1/media/:id">` cru manda a
+  // requisição sem Authorization e o navegador cai num 401 JSON em vez de
+  // abrir o PDF/doc (CRMLAB-31). PDF abre em nova aba (o blob carrega o
+  // `Content-Type` certo, o navegador sabe exibir); qualquer outro anexo
+  // força download — é a mesma mídia que `GET /media/:id` já serve com
+  // `Content-Disposition: attachment` para tudo que não é imagem/áudio.
+  const {
+    objectUrl: docUrl,
+    fileName: docFileName,
+    isLoading: docLoading,
+  } = useAuthenticatedMedia(isDoc ? message.attachmentUrl : null);
 
   return (
     <div
@@ -124,16 +136,31 @@ export function MessageBubble({
 
       {isAudio && message.attachmentUrl && <AudioMessage url={message.attachmentUrl} />}
 
-      {message.attachmentUrl && !isImage && !isAudio && (
-        <a
-          href={resolveMediaUrl(message.attachmentUrl)}
-          target="_blank"
-          rel="noreferrer"
-          className="text-caption font-semibold text-accent-700 underline"
-        >
-          Anexo ({message.messageType})
-        </a>
-      )}
+      {isDoc &&
+        (docUrl ? (
+          message.messageType === 'pdf' ? (
+            <a
+              href={docUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-caption font-semibold text-accent-700 underline"
+            >
+              Abrir anexo ({message.messageType})
+            </a>
+          ) : (
+            <a
+              href={docUrl}
+              download={docFileName ?? undefined}
+              className="text-caption font-semibold text-accent-700 underline"
+            >
+              Baixar anexo ({message.messageType})
+            </a>
+          )
+        ) : (
+          <span className="text-caption text-neutral-600">
+            {docLoading ? 'Carregando anexo…' : 'Não foi possível carregar o anexo'}
+          </span>
+        ))}
 
       {showMeta && !isSystem && (
         <span

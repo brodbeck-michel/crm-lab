@@ -101,7 +101,19 @@ describe('MessageBubble', () => {
     expect(screen.getByTestId('message-bubble').style.maxWidth).toBe('62%');
   });
 
-  it('mostra anexo quando a mensagem tem arquivo', () => {
+  /**
+   * CRMLAB-31: `<a href="/api/v1/media/:id">` cru nunca manda Authorization —
+   * clicar dava 401 JSON em vez de abrir o PDF. O componente busca o blob
+   * autenticado (mesmo caminho de imagem/áudio) e abre ele numa nova aba.
+   */
+  it('anexo PDF busca o blob autenticado e abre em nova aba, sem download forçado', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:mock-pdf');
+    URL.revokeObjectURL = vi.fn();
+    fetchAuthenticatedBlobMock.mockResolvedValue({
+      blob: new Blob(['%PDF-1.4'], { type: 'application/pdf' }),
+      fileName: 'pedido.pdf',
+    });
+
     render(
       <MessageBubble
         type="received"
@@ -109,10 +121,37 @@ describe('MessageBubble', () => {
       />,
     );
 
-    expect(screen.getByRole('link', { name: /Anexo/ })).toHaveAttribute(
-      'href',
-      'https://arquivo/pedido.pdf',
+    expect(fetchAuthenticatedBlobMock).toHaveBeenCalledWith('https://arquivo/pedido.pdf');
+
+    const link = await screen.findByRole('link', { name: /Abrir anexo/ });
+    expect(link).toHaveAttribute('href', 'blob:mock-pdf');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).not.toHaveAttribute('download');
+  });
+
+  /**
+   * Anexo genérico (`doc` — inclui o que o backend rebaixou para
+   * `application/octet-stream` por MIME fora da allow-list, CRMLAB-31): força
+   * download em vez de tentar renderizar no mesmo origin da SPA.
+   */
+  it('anexo genérico (doc) busca o blob autenticado e força download', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:mock-doc');
+    URL.revokeObjectURL = vi.fn();
+    fetchAuthenticatedBlobMock.mockResolvedValue({
+      blob: new Blob(['conteudo'], { type: 'application/octet-stream' }),
+      fileName: 'documento.html',
+    });
+
+    render(
+      <MessageBubble
+        type="received"
+        message={message({ messageType: 'doc', attachmentUrl: '/api/v1/media/doc-1' })}
+      />,
     );
+
+    const link = await screen.findByRole('link', { name: /Baixar anexo/ });
+    expect(link).toHaveAttribute('href', 'blob:mock-doc');
+    expect(link).toHaveAttribute('download', 'documento.html');
   });
 
   it('anexo de imagem busca o blob autenticado e mostra thumbnail; clique abre o lightbox (CRMLAB-15)', async () => {

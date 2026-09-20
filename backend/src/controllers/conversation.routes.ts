@@ -258,9 +258,12 @@ export function createAttachment(services: ConversationServices): RequestHandler
     await services.conversations.getById(ctx, id);
 
     const stored = await services.media.storeOutbound(ctx.tenantId, dto);
+    // `stored.mimeType` (nao `dto.mimeType`): allow-list/sniff (CRMLAB-31)
+    // podem rebaixar o MIME declarado — mensagem e envio pro canal externo
+    // usam o que foi REALMENTE gravado.
     const message = await services.messages.createAttachmentFromAgent(ctx.tenantId, id, ctx.userId, {
       fileName: dto.fileName,
-      mimeType: dto.mimeType,
+      mimeType: stored.mimeType,
       attachmentUrl: `/api/v1/media/${stored.id}`,
       buffer: stored.buffer,
     });

@@ -143,6 +143,59 @@ describe('POST /webhooks/evolution/:tenant — mídia de entrada (§4.2)', () =>
     expect(await countMessages(tenant.id)).toBe(0);
   });
 
+  it('documentMessage com mimetype text/html e gravado e servido como application/octet-stream + attachment (CRMLAB-31)', async () => {
+    // Ataque descrito no card: paciente manda um "documento" cujo mimetype
+    // real e HTML/script. `text/html` nao esta na allow-list (só
+    // `text/plain`) — o MIME gravado cai para `application/octet-stream` e a
+    // rota nunca serve `inline`, entao o navegador nunca tenta renderizar.
+    const tenant = await createTenant({ slug: 'lab-evo-html-disfarcado' });
+    slugToId.set('lab-evo-html-disfarcado', tenant.id);
+    const html = Buffer.from('<script>alert(document.cookie)</script>').toString('base64');
+
+    const response = await app.agent
+      .post(`${WEBHOOK}/lab-evo-html-disfarcado`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send({
+        event: 'MESSAGES_UPSERT',
+        instance: evolutionInstanceName(tenant.id),
+        data: {
+          key: { remoteJid: '5548999997777@s.whatsapp.net', id: 'EVO-MEDIA-HTML' },
+          message: {
+            documentMessage: { mimetype: 'text/html', fileName: 'laudo.html', base64: html },
+          },
+        },
+      });
+
+    expect(response.status).toBe(200);
+
+    const db = await getTestDb();
+    const row = await db.withoutTenant((tx) =>
+      tx.query<{ message_type: string; attachment_url: string }>(
+        `SELECT message_type, attachment_url FROM messages WHERE tenant_id = $1`,
+        [tenant.id],
+      ),
+    );
+    // MIME rebaixado -> nunca vira 'doc' generico pra frontend confundir com
+    // pdf/imagem; messageType tambem reflete o rebaixamento (nao 'text/html').
+    expect(row.rows[0]?.message_type).toBe('doc');
+
+    const admin = await createUser({ tenantId: tenant.id, role: 'admin', name: 'Admin' });
+    const mediaId = row.rows[0]!.attachment_url.split('/').pop();
+    const token = signAccessToken({
+      userId: admin.id,
+      tenantId: admin.tenantId,
+      role: admin.role,
+      discountLimit: admin.discountLimit,
+    });
+    const media = await app.agent
+      .get(`/api/v1/media/${mediaId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(media.headers['content-type']).toBe('application/octet-stream');
+    expect(media.headers['content-disposition']).toMatch(/^attachment; filename="laudo\.html"/);
+    expect(media.headers['x-content-type-options']).toBe('nosniff');
+  });
+
   it('linha no banco com arquivo fora do disco responde 404, nao 500', async () => {
     // Caso real de homologacao: o dump de producao traz `message_media`, mas
     // o volume de midia e proprio do ambiente e nao vem junto. Antes disso o

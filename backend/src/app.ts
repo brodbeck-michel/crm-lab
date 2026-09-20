@@ -111,16 +111,34 @@ export function createApp(deps: AppDeps): BuiltApp {
   // do webhook: comparar contra uma reserializacao de `req.body` ja parseado
   // (JSON.stringify) perde formatacao do corpo original (espacos, por
   // exemplo) e faz a assinatura nunca bater, mesmo com o segredo certo.
+  const captureRawBody = (req: express.Request, _res: express.Response, buf: Buffer): void => {
+    (req as express.Request & { rawBody?: Buffer }).rawBody = buf;
+  };
+
+  // Webhook PUBLICO da Meta (`/webhooks/whatsapp*`, CRMLAB-31): o HMAC só é
+  // conferido DEPOIS do `express.json()` rodar (`whatsapp.service.ts`), entao
+  // um corpo gigante custa CPU/memoria de parse ANTES de qualquer rejeicao —
+  // amplificacao barata para quem nem tem o segredo. 1mb cobre folgado o
+  // maior payload documentado da Meta (nao carrega midia em base64, só texto
+  // e metadados). Registrado ANTES do parser geral: por caminho, o Express so
+  // roda o PRIMEIRO `express.json()` que casa (body-parser marca `req._body`
+  // e o segundo se auto-pula), entao esta rota nunca ve o limite de 25mb.
+  app.use(
+    `${API_PREFIX}/webhooks/whatsapp`,
+    express.json({ limit: '1mb', verify: captureRawBody }),
+  );
+
+  // Demais rotas — inclui `/webhooks/evolution/*` (gateway em rede interna,
+  // manda midia em base64: Onda 8 §4.3, MediaService teto de 15 MiB por
+  // arquivo, base64 infla ~33% + margem do envelope) e os endpoints
+  // autenticados que tambem recebem anexo em base64 (`POST
+  // /conversations/:id/attachments`). O teto de negocio (`MEDIA_TOO_LARGE`,
+  // 413 explicito) continua sendo o de `MediaService`; este e so o limite de
+  // transporte.
   app.use(
     express.json({
-      // 25mb: mídia viaja em base64 dentro do JSON (Onda 8 §4.3, MediaService
-      // teto de 15 MiB por arquivo) — base64 infla ~33%, mais a margem do
-      // envelope JSON. O teto de negocio (`MEDIA_TOO_LARGE`, 413 explicito)
-      // continua sendo o de `MediaService`; este e so o limite de transporte.
       limit: '25mb',
-      verify: (req, _res, buf) => {
-        (req as express.Request & { rawBody?: Buffer }).rawBody = buf;
-      },
+      verify: captureRawBody,
     }),
   );
   app.use(requestContext());

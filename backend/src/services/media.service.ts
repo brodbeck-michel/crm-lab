@@ -5,7 +5,8 @@
  * esconder o limite dentro de um middleware de multipart (`multer`), que este
  * projeto nem usa — Express 4 recebe o arquivo em base64 dentro do JSON.
  */
-import type { MessageType } from '@crm-lab/shared';
+import { fileTypeFromBuffer } from 'file-type';
+import { FALLBACK_MEDIA_MIME_TYPE, isAllowedMediaMimeType, type MessageType } from '@crm-lab/shared';
 import { BusinessError, notFound } from '../http/errors.js';
 import { readMediaFile, writeMediaFile } from '../lib/media-storage.js';
 import { logger } from '../lib/logger.js';
@@ -24,6 +25,57 @@ export function messageTypeFromMime(mimeType: string): MessageType {
 export interface StoredMedia {
   id: string;
   buffer: Buffer;
+  /** MIME efetivamente gravado (CRMLAB-31) — pode divergir do declarado no DTO. */
+  mimeType: string;
+}
+
+/**
+ * Categorias com magic bytes verificáveis (CRMLAB-31 §"Sniff de magic
+ * bytes"). Documento (Word/Excel/PowerPoint) e `text/plain` ficam de fora de
+ * propósito: o card pede sniff só para imagem/áudio/PDF, e texto puro não tem
+ * assinatura binária para conferir.
+ */
+function needsMagicByteSniff(mimeType: string): boolean {
+  return mimeType.startsWith('image/') || mimeType.startsWith('audio/') || mimeType === 'application/pdf';
+}
+
+/**
+ * Allow-list primeiro, sniff depois. `file-type` só reconhece formatos com
+ * assinatura binária (não cobre `audio/amr`, por exemplo) — quando ele não
+ * identifica NADA, o dado é inconclusivo, não uma divergência provada, então
+ * o MIME declarado (já dentro da allow-list) é mantido. Só uma detecção
+ * POSITIVA e DIFERENTE da declarada derruba para `FALLBACK_MEDIA_MIME_TYPE`
+ * (ex.: HTML/SVG disfarçado de PDF ou imagem — o vetor de XSS do card).
+ */
+export async function resolveStoredMimeType(declaredMimeType: string, buffer: Buffer): Promise<string> {
+  const normalized = declaredMimeType.trim().toLowerCase();
+  if (!isAllowedMediaMimeType(normalized)) {
+    logger.warn('media.mime_not_allowed', { declared: normalized });
+    return FALLBACK_MEDIA_MIME_TYPE;
+  }
+  if (!needsMagicByteSniff(normalized)) return normalized;
+
+  // `fileTypeFromBuffer` lança quando o buffer é curto demais para a
+  // assinatura que está tentando ler (`EndOfStreamError`, arquivo minúsculo
+  // ou truncado) — isso NÃO é uma divergência provada, é o mesmo "inconclusivo"
+  // do comentário acima, então cai no mesmo caminho de manter o declarado.
+  // `storeInbound` promete NUNCA lançar (§4.2): deixar isso escapar quebraria
+  // essa promessa pro webhook inteiro.
+  let detected: Awaited<ReturnType<typeof fileTypeFromBuffer>>;
+  try {
+    detected = await fileTypeFromBuffer(buffer);
+  } catch (err) {
+    logger.warn('media.mime_sniff_failed', {
+      declared: normalized,
+      reason: err instanceof Error ? err.message : String(err),
+    });
+    return normalized;
+  }
+  if (detected && detected.mime !== normalized) {
+    logger.warn('media.mime_mismatch', { declared: normalized, detected: detected.mime });
+    return FALLBACK_MEDIA_MIME_TYPE;
+  }
+  return normalized;
 }
 
 export interface ReadMedia {
@@ -45,14 +97,15 @@ export class MediaService {
   ): Promise<StoredMedia> {
     const buffer = decodeBase64(dto.contentBase64);
     assertWithinLimit(buffer);
+    const mimeType = await resolveStoredMimeType(dto.mimeType, buffer);
     const id = await this.repository.insert(tenantId, {
       messageId: null,
-      mimeType: dto.mimeType,
+      mimeType,
       fileName: dto.fileName,
       byteSize: buffer.byteLength,
     });
     await writeMediaFile(id, buffer);
-    return { id, buffer };
+    return { id, buffer, mimeType };
   }
 
   /**
@@ -69,14 +122,15 @@ export class MediaService {
       logger.warn('media.inbound_rejected', { tenantId, byteSize: buffer.byteLength });
       return null;
     }
+    const mimeType = await resolveStoredMimeType(dto.mimeType, buffer);
     const id = await this.repository.insert(tenantId, {
       messageId: null,
-      mimeType: dto.mimeType,
+      mimeType,
       fileName: dto.fileName,
       byteSize: buffer.byteLength,
     });
     await writeMediaFile(id, buffer);
-    return { id, buffer };
+    return { id, buffer, mimeType };
   }
 
   async attachToMessage(tenantId: string, id: string, messageId: string): Promise<void> {

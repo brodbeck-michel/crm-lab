@@ -1768,6 +1768,746 @@ D-131 — só ele passou a ser editável; `insuranceId` segue imutável).
 Frontend: `ProposalModal.tsx` ganha modo de edição (itens + desconto + médico solicitante),
 `DiscountSection.tsx` deixa de ficar `readOnly` hardcoded.
 
+### D-135: `exceljs` mantido — troca por `xlsx` (SheetJS) fica como recomendação, não executada (CRMLAB-37)
+**Decisão:** `exceljs` (`^4.4.0`, backend) continua em uso. Não foi trocado por `xlsx` (já
+instalado no frontend via tarball da SheetJS, `frontend/package.json`) nem por parsing manual
+do `.xlsx`, apesar de `exceljs` trazer `unzipper@0.10.14` (antigo) como transitiva.
+**Motivo:** o único uso de `exceljs` no repo é `backend/src/lib/lis-spreadsheet.ts`
+(`parseLisSpreadsheet`) — leitura de planilha do LIS para importar orçamentos, ~25 linhas de
+API do ExcelJS (`new Workbook()`, `workbook.xlsx.load(buffer)`, `sheet.getRow`,
+`row.getCell(...).value`, `eachCell`). Migrar para `xlsx` é tecnicamente possível
+(`XLSX.read(buffer)` + `sheet_to_json`/acesso célula a célula cobrem o mesmo uso), mas o valor
+de célula que cada biblioteca devolve para datas/número não é garantidamente idêntico
+(`cellToDate`/`cellToNumber` em `lis-spreadsheet.ts` já tiveram dois bugs de fuso/soma
+documentados em D-110/D-078/D-124) — e a soma de dinheiro do LIS é dado real de laboratório, não
+tolera regressão silenciosa. `npm audit --omit=dev` de hoje mostra o `uuid`/`exceljs` como
+**moderate**, não high/critical (ver D-136): não há urgência de segurança que justifique o
+risco de reescrever um parser financeiro sem um card próprio e sem re-passar as ~20 planilhas
+de referência do FluxoLab pelo novo caminho.
+**Recomendação para card futuro (não deste):** abrir um card dedicado (fora da Onda A) para
+migrar `parseLisSpreadsheet` para `xlsx`. Estimativa: 0,5–1 dia — reescrever a função (pequena),
+mas rodar TODA a suíte de `backend/tests/lis/*.spec.ts` (260+122 linhas, cobre aliases de
+cabeçalho, datas por componente, PDF disfarçado, planilha vazia) mais o E2E
+`flow-17-lis-import-results.spec.ts` contra o novo parser, e idealmente confirmar contra uma
+planilha real do LIS antes de trocar em produção. Alternativa mais barata: manter `exceljs` e
+apenas monitorar advisories futuros do `unzipper` via o job `security` do CI — hoje ele não
+aparece porque a vulnerabilidade transitiva reportada é do `uuid`, não do `unzipper`.
+**Impacto:** nenhum arquivo de código mudou por esta decisão. Registrado aqui para não ser
+reaberto como "esquecido" — é escolha deliberada, não pendência técnica.
+
+### D-136: `npm audit` funciona neste repo — a suposição de erro 400 não se confirmou (CRMLAB-37)
+**Decisão:** o job `security` do CI (`.github/workflows/ci.yml`) usa `npm audit --omit=dev
+--audit-level=high` direto, em vez de `google/osv-scanner-action` como o escopo original do
+card previa.
+**Motivo:** o card partia da premissa de que `npm audit` quebra com `400 Invalid package tree`
+porque o `xlsx` do frontend é instalado por URL/tarball da SheetJS (fora do registry do npm), e
+por isso pedia `osv-scanner` (lê o `package-lock.json` direto, sem depender do registry).
+Testado antes de escrever o job (19/09/2026, `npm --version` 10.9.8, Node 22): `npm audit`,
+`npm audit --omit=dev` e `npm audit --omit=dev --audit-level=high` rodaram normalmente, sem
+erro 400, contra o `package-lock.json` atual (que já tem o `xlsx@0.20.3` resolvido por URL desde
+antes deste card). Resultado real: 7 moderate em produção (`qs`, `react-router`, `uuid` via
+`exceljs`), 0 high/critical — `--audit-level=high` sai com `exit=0`, como o job precisa.
+Não dá para descartar que o erro apareça em outro ambiente (proxy corporativo, mudança futura
+do registry, ou uma versão de npm diferente da testada aqui) — é exatamente o tipo de falha que
+`osv-scanner` evitaria por não depender do registry do npm para resolver a árvore. Optou-se por
+`npm audit` agora por ser mais simples (nenhuma Action de terceiro nova, sintaxe já
+comprovadamente correta neste ambiente) e por já resolver o critério de aceite do card (falhar
+o PR em high/critical). Se o `security` job passar a falhar com `400`/erro de registry em
+produção do CI (não reproduzido aqui), trocar para `osv-scanner` é a correção recomendada — não
+precisa de novo card, é o mesmo job.
+**Impacto:** `.github/workflows/ci.yml` (job `security`, novo). Nenhuma dependência nova.
+
+### D-137: Pool do `pg` com listener de `error`, timeouts de sessão e timeout de `fetch` para os gateways (CRMLAB-30)
+**Decisão:** `PgDriver` ganha `pool.on('error', ...)` (loga e não derruba o processo — o `pg`
+já descarta a conexão quebrada sozinho) e um listener equivalente por conexão dentro de
+`transaction()`, porque o `pg-pool` remove o listener do pool exatamente durante o checkout
+(o intervalo em que uma transação fica aberta). O pool passa a fixar
+`idleTimeoutMillis=30s`, `connectionTimeoutMillis=5s` e, no pacote de startup,
+`statement_timeout=30s` + `idle_in_transaction_session_timeout=60s` (ambos em 0/sem limite
+antes, confirmado na VPS em 19/09). As migrações usam `SET LOCAL statement_timeout=0`
+(`db/statement-timeout.ts`) para se isentar do limite de 30 s: um `CREATE INDEX`/`ALTER TABLE`
+longo é legítimo e cortá-lo no meio de um deploy é pior que esperar. Import LIS e export
+Excel/PDF foram revisados e **não** precisam de isenção: o import faz um upsert por statement
+dentro de um loop de chunks (nenhum statement individual passa de 30 s, mesmo que o total
+passe) e não existe export que leia/escreva no banco (o `exceljs` só lê planilha de entrada,
+fora do banco). `evolution-client.ts` e `whatsapp.service.ts` passam a chamar `fetch` com
+`signal: AbortSignal.timeout(...)` via o wrapper `lib/fetch-timeout.ts`, que cobre tanto a
+resposta não chegar quanto o corpo nunca fechar (`fetch` resolve só nos headers). Timeout vira
+`GatewayTimeoutError` (`retryable = true`), tratado pela fila (`lib/queue.ts`) como qualquer
+outra falha — 10 s para Evolution (controle/texto) e Meta, 15 s para mídia do Evolution
+(corpo maior, ~20 MB em base64); orçamento de `3 tentativas × timeout + backoff` fica sempre
+abaixo dos 60 s do `proxy_read_timeout` do nginx.
+**Motivo:** incidente de 17/09 — o Postgres piscou (ou o gateway Evolution ficou "vivo mas
+mudo") e o processo caiu inteiro: sem listener de `error` no pool, um `EventEmitter` que emite
+`error` sem ouvinte vira exceção não capturada; sem timeout no `fetch`, o handler ficava preso
+segurando uma transação e, com ela, uma das 10 conexões do pool, até esgotar o pool inteiro.
+Os dois defeitos derrubam TODOS os tenants de uma vez — não é isolado por request.
+**Impacto:** `backend/src/db/pg-driver.ts`, `backend/src/db/statement-timeout.ts` (novo),
+`backend/src/db/migrator.ts`, `backend/src/db/index.ts`, `backend/src/lib/fetch-timeout.ts`
+(novo), `backend/src/lib/evolution-client.ts`, `backend/src/services/whatsapp.service.ts`.
+Testes novos: `backend/tests/db/pg-pool-resilience.spec.ts`,
+`backend/tests/whatsapp/gateway-timeout.spec.ts`. Os testes de caos reais (`docker restart`
+do Postgres, `docker pause` do Evolution) ficam para a validação em homologação — não rodam
+neste ambiente. **Circuit breaker no cliente Evolution foi avaliado e descartado nesta rodada**:
+o `AbortSignal.timeout` + retry exponencial da fila já limitam o dano de uma falha isolada a
+uma tentativa de ~10-15 s, e o volume de envio por tenant é baixo o bastante para que um estado
+compartilhado de "pausa de 30 s" ganhe pouco sobre o que os timeouts já resolvem, ao custo de
+mais um componente com estado para depurar. Reavaliar se o padrão de falha em homologação/
+produção mostrar rajadas de timeout que o retry sozinho não absorve bem.
+
+### D-138: `unhandledRejection`/`uncaughtException` derrubam o processo pelo MESMO shutdown do SIGTERM (CRMLAB-30)
+**Decisão:** `main.ts` ganha `process.on('unhandledRejection', ...)` e
+`process.on('uncaughtException', ...)`, ambos logando `event: 'process.fatal'` (com a origem
+em `source`) e chamando a mesma função `shutdown()` já usada por SIGTERM/SIGINT — que fecha
+WebSocket, cache e pool antes de sair — com `exitCode = 1` para diferenciar, no
+`docker inspect`, queda de parada pedida.
+**Motivo:** hoje as duas situações derrubam o processo sem log nenhum (Node 22) ou de forma
+descoordenada; um processo que abandonou uma promise/exceção no meio não está mais confiável
+(pode ter deixado transação aberta, lock preso), e servir novas requisições nesse estado é
+pior que sair de forma controlada. Pedido explícito do card: mesmo tratamento para as duas,
+sem meio-termo de "loga e continua" para `unhandledRejection`.
+**Impacto:** `backend/src/main.ts` (função `onFatal`, reaproveitando `shutdown`).
+
+### D-139: Rate limit e lockout de login por `INCR` atômico; fail-open/fail-closed quando o Redis cai em runtime (CRMLAB-34)
+**Decisão:** `CacheService` ganha `incr(key, ttlSeconds)` — incremento atômico com TTL aplicado
+só na primeira chamada (janela fixa: `INCR` + `EXPIRE` condicional). Em `RedisCache` isso roda
+como um script Lua (`INCR_EX_SCRIPT`) num único round-trip ao servidor — de verdade atômico,
+sem janela entre leitura e escrita para outra requisição furar. Em `MemoryCache` o corpo do
+método não tem nenhum `await`, então não há ponto de interleaving possível nem sob
+`Promise.all` concorrente.
+
+`rate-limit.ts` passa a usar janela FIXA: a chave carrega o índice da janela
+(`Math.floor(at / windowMs)`), então todas as requisições da mesma janela caem no mesmo `INCR`
+e o limite é decidido por um único comando atômico, em vez do `get` → filtra array de
+timestamps → `set` anterior (TOCTOU: duas requisições concorrentes liam o mesmo estado e as
+duas passavam). `auth.service.ts` troca o contador de falha de login pelo mesmo `incr` (mantendo
+a chave existente `login-failures:{email}:{ip}`, não a sugerida no card — evita quebrar o
+contrato já coberto por `cache.spec.ts`) e passa a dar `DEL` no sucesso (não existia antes).
+
+**Comportamento com Redis indisponível em RUNTIME** (distinto do fail-closed do BOOT em D-058,
+que continua intocado — `verifyCacheReady`/`main.ts` seguem parando o processo se o Redis não
+responder ao subir):
+- **Rotas autenticadas:** fail-OPEN. Loga `event: 'cache.unavailable'` (throttle de 30s por
+  processo, `logCacheUnavailable` em `lib/cache.ts`) e deixa a requisição passar sem contar
+  cota. Motivo: o JWT já é a defesa primária dessas rotas; recusar TODO o tráfego autenticado
+  por causa do cache trocaria uma degradação de cota por uma indisponibilidade total — pior
+  para o negócio que uma janela sem rate limit.
+- **Rotas públicas** (`/auth/login`, `/auth/refresh`, `/webhooks/*`): fail-CLOSED — 503
+  `SERVICE_UNAVAILABLE` (novo `ApiErrorCode`, `shared/types/api.types.ts` +
+  `docs/api/API_ERRORS.md`). Motivo: rate limit e lockout de login SÃO a defesa dessas rotas
+  (não há JWT prévio); deixar passar sem eles é convite a força bruta. `/auth/logout` fica de
+  fora de propósito — não há o que proteger e travar logout com o cache fora do ar pioraria um
+  incidente sem necessidade.
+- A decisão é tomada duas vezes de forma independente e redundante: no middleware
+  `rate-limit.ts` (que já barra `/auth/login`/`/auth/refresh` ANTES do controller, pela ordem em
+  `app.ts`) e dentro do próprio `AuthService` (`assertNotThrottled`/`registerFailure`), para que
+  o serviço não dependa de estar sempre atrás do middleware para se comportar corretamente —
+  é o que os testes de `auth.service` cobrem isoladamente.
+
+Headers de cota passam a sair em dois formatos simultâneos: os `X-RateLimit-*` existentes
+(mantidos — contrato já consumido) e os do draft IETF `draft-ietf-httpapi-ratelimit-headers`
+(`RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset`, sem prefixo `X-`). Divergência
+proposital: `X-RateLimit-Reset` continua epoch absoluto (segundos desde 1970, como já era);
+`RateLimit-Reset` é DELTA (segundos até o reset a partir de agora), porque é assim que o draft
+define o campo — não dá para reaproveitar o mesmo valor para os dois.
+
+**Motivo:** auditoria de 2026-09 apontou o padrão `get`+`set` como TOCTOU clássico tanto no
+rate limit quanto no lockout de login (20 senhas erradas em paralelo perdiam 19 incrementos,
+nunca disparando o bloqueio de 5), e o `next(err)` genérico do cache indisponível em runtime
+derrubando TODAS as rotas com `INTERNAL_ERROR` — inclusive as autenticadas, que não precisavam
+cair.
+
+**Impacto:** `backend/src/lib/cache.ts` (`incr`, `RedisClientLike.incrEx`, `INCR_EX_SCRIPT`,
+`logCacheUnavailable`/`resetCacheUnavailableThrottleForTest`), `backend/src/http/middleware/
+rate-limit.ts` (janela fixa, `isPublicRoute`, headers duplos), `backend/src/services/
+auth.service.ts` (lockout atômico + `DEL` no sucesso), `backend/src/app.ts` (`exposedHeaders`
+do CORS), `shared/types/api.types.ts` (+`SERVICE_UNAVAILABLE`), `backend/src/http/errors.ts`
+(catálogo), `docs/api/API_ERRORS.md`. Testes novos: `backend/tests/kernel/rate-limit.spec.ts`
+(concorrência 50×`Promise.all` contra limite 10, fail-open/fail-closed com cache falhando),
+`backend/tests/kernel/cache.spec.ts` (`incr`/`incrEx`), `backend/tests/auth/login.spec.ts`
+(20 falhas em paralelo não furam o lockout de 5, 503 com Redis fora do ar). Não mexe em infra
+(`REDIS_URL`/`maxmemory` — isso é CRMLAB-36).
+
+### D-140: `evolution: user: "1000:1000"` avaliado e NÃO aplicado nesta rodada (CRMLAB-36)
+**Decisão:** Não adicionar `user: "1000:1000"` ao serviço `evolution` em `docker-compose.prod.yml`
+por enquanto. `mem_limit: 768m` e os demais itens do card foram aplicados normalmente.
+**Motivo:** `evoapicloud/evolution-api:v2.3.7` é imagem de terceiro; não há como validar, a
+partir deste repositório/CI, se o processo aceita rodar como uid 1000 com o volume de sessão
+Baileys que já está em produção (permissões do volume, escrita de arquivo de sessão, etc.).
+Aplicar às cegas e descobrir em produção que o container não sobe mais é pior do que manter o
+risco documentado (o card já registra: hoje roda como root, é o único serviço nessa condição).
+**Impacto:** Nenhum no código. Pendência de validação manual: testar `user: "1000:1000"` em
+homologação primeiro (subir a stack, parear um número de teste, confirmar que a sessão
+persiste depois de um restart do container) antes de replicar em produção. Ver
+`docs/STATUS.md` (entrada CRMLAB-36) para o registro da pendência.
+
+### D-141: Backend com UMA imagem para os dois ambientes; frontend com DUAS (CRMLAB-36)
+**Decisão:** O job `docker` do CI publica `crm-lab-backend` no GHCR com três tags apontando pro
+MESMO digest (`:<sha>`, `:hml-<sha>`, `:latest`) mas builda e publica o `crm-lab-frontend`
+**duas vezes** — uma com os build-args default (produção, tag `:<sha>`) e outra com
+`VITE_APP_ENV=homologacao` (tag `:hml-<sha>`). `IMAGE_TAG` em `deploy.sh` continua com o
+mesmo prefixo `hml-` de sempre (`ENVIRONMENTS.md`), então `docker-compose.prod.yml` não muda a
+lógica de tag por ambiente — só ganha o prefixo `${IMAGE_REGISTRY:-}`.
+**Motivo:** o backend não tem NENHUMA diferença de build-time entre os dois ambientes — tudo
+que muda (URL, segredo, `APP_ENV`) é variável de runtime injetada pelo compose. Publicar uma
+imagem só e apontar duas tags pra ela evita build duplicado e mantém as duas stacks rodando o
+mesmo binário verificado pelo CI. O frontend é diferente: `VITE_APP_ENV` (e as demais `VITE_*`)
+são build-time — o Vite inlina no bundle (`frontend/Dockerfile`, `DEPLOYMENT.md` §2) — então
+produção e homologação são, de fato, dois artefatos distintos; publicar só um dos dois faria a
+outra stack rodar com o selo de ambiente errado na tela.
+**Impacto:** `.github/workflows/ci.yml` (job `docker`, três steps novos de publicação),
+`docker-compose.prod.yml` (`image:` com `${IMAGE_REGISTRY:-}` nos três serviços que usam
+imagem própria — `migrate`, `backend`, `frontend`), `scripts/deploy.sh` (`pull` no lugar de
+`build`, com fallback). Nada muda no cálculo de `IMAGE_TAG`/`PREFIXO_TAG` existente.
+
+### D-142: Refresh token em cookie httpOnly, access token só em memória, CSP em Report-Only (CRMLAB-32)
+**Decisão:** `POST /auth/login` e `POST /auth/refresh` gravam o refresh token em
+`Set-Cookie: crm_refresh=<token>; HttpOnly; Secure (só produção/homologação); SameSite=Strict;
+Path=/api/v1/auth`, e o corpo JSON deixa de trazer `refreshToken` (`LoginResponse`/
+`RefreshResponse` em `shared/types/auth.types.ts`). `POST /auth/refresh` lê o cookie primeiro,
+com fallback depreciado para `refreshToken` no corpo (remoção prevista 2026-10-04) e exige o
+header `X-Requested-With: crm-lab` como camada extra de CSRF. `POST /auth/logout` limpa o
+cookie (`Max-Age=0`) além de revogar a família. No frontend, `auth.store.ts` para de persistir
+`tokens` no `localStorage` — só `user`/`tenant`/`theme` — e o access token vive só em memória;
+toda carga de página chama `POST /auth/refresh` (cookie vai sozinho, mesmo origin) antes de
+renderizar o router (`useSessionBootstrap`, `App.tsx`), trocando o cookie por um access token
+novo. `nginx/frontend.conf` ganha `Content-Security-Policy-Report-Only` (não enforce ainda) e
+`Permissions-Policy`.
+**Motivo:** achado de severidade Alta da auditoria de segurança — a sessão inteira (access de
+15min E refresh de 7 dias, rotativo) ficava legível por qualquer JavaScript no origin via
+`localStorage`, e a SPA não tinha CSP nenhuma. Não há `dangerouslySetInnerHTML`/`innerHTML`
+hoje, mas o vetor é dependência de terceiros (jspdf, recharts, xlsx) ou descuido futuro — com
+dado de saúde de paciente em jogo, um XSS que rouba `localStorage` rouba a sessão inteira por
+7 dias. `HttpOnly` fecha esse vetor para o refresh; o access token curto em memória reduz a
+janela do que sobra. CSP entra em `Report-Only` (não `Content-Security-Policy` enforce) porque
+a SPA nunca foi auditada contra uma política — enforce direto arriscaria quebrar produção sem
+aviso; a promoção para enforce é decisão separada, após ~1 semana observando os relatórios de
+violação em homologação.
+**Impacto:** `backend/src/controllers/auth.routes.ts` (cookie-parser só neste router),
+`backend/src/services/auth.service.ts` (`LoginResult`/`RefreshResult` internos, com
+`refreshToken`, distintos do contrato público), `backend/package.json` (+`cookie-parser`),
+`shared/types/auth.types.ts`, `frontend/src/stores/auth.store.ts`, `frontend/src/api/client.ts`,
+`frontend/src/hooks/useSession.ts` (`useSessionBootstrap`), `frontend/src/App.tsx`,
+`nginx/frontend.conf`. NÃO mexeu em `frontend/src/api/ws.ts` (WebSocket) — isso é CRMLAB-33,
+que depende deste card. CORS geral (`app.ts`) continua com `credentials: false` — nginx já
+serve SPA e API no mesmo origin, então o cookie não precisa de CORS com credenciais.
+
+### D-143: Mesmo origin também em dev/E2E — proxy do Vite para `/api` e `/ws` (CRMLAB-32)
+**Decisão:** `frontend/vite.config.ts` ganha `server.proxy` encaminhando `/api` e `/ws` para
+`http://localhost:3000` (`ws: true` no segundo). `frontend/.env.example` e o job `e2e` de
+`.github/workflows/ci.yml` passam a usar `VITE_API_URL=/api/v1` e `VITE_WS_URL=/ws`
+(relativos) também em dev — antes só produção usava caminho relativo (D-051); dev apontava
+direto para `http://localhost:3000`, uma origin diferente por porta.
+**Motivo:** o refresh do D-142 vive num cookie `HttpOnly`, e cookie só volta em requisição
+**same-origin** (porta inclusa). Com `VITE_API_URL` absoluto, todo `POST /auth/refresh` feito
+pelo browser saía de `localhost:5173` para `localhost:3000` — origin diferente, cookie nunca
+volta — e o `useSessionBootstrap` (D-142) via 401 a cada carga de página, jogando qualquer
+sessão de volta para `/login`. Confirmado ao vivo: a suíte E2E inteira (76 de 123 specs)
+falhava exatamente assim depois do merge do CRMLAB-32 — todo teste que fazia `page.goto` para
+uma rota autenticada caía em `/login` porque o bootstrap nunca conseguia trocar o cookie por um
+access token. O proxy do Vite resolve isso do MESMO jeito que o nginx resolve em produção
+(D-051): dev, E2E e produção passam a compartilhar a mesma regra — "o browser nunca faz
+requisição cross-origin para a API".
+**Impacto:** `frontend/vite.config.ts`, `frontend/.env.example`, `.github/workflows/ci.yml`
+(env do job `e2e`), `docs/guides/CONVENTIONS.md`, `docs/guides/DEVELOPMENT.md`,
+`frontend/src/api/client.ts` (comentário de `resolveMediaUrl` atualizado — a distinção
+dev-absoluto/prod-relativo que ele descrevia deixou de existir). Nenhuma mudança de código de
+produção: `VITE_API_URL`/`VITE_WS_URL` do `frontend/Dockerfile` já eram relativos desde D-051.
+
+### D-144: `add_header` repetido nas locations do nginx que também declaram `add_header` (CRMLAB-32, pós-deploy)
+**Decisão:** `nginx/frontend.conf` passa a repetir os 5 headers de segurança do nível `server`
+(`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`,
+`Content-Security-Policy-Report-Only`, `Permissions-Policy`) dentro de `location = /index.html`
+(todos os 5) e `location /assets/` (os 3 que não são específicos de documento — sem CSP/
+Permissions-Policy, que só fazem sentido na resposta do documento).
+**Motivo:** achado ao vivo no primeiro deploy do CRMLAB-32 em homologação — `curl -I` na raiz
+não trazia NENHUM dos 5 headers, apesar de estarem corretos no `server {}`. Causa: pegadinha
+documentada do próprio nginx — quando uma `location` declara seu PRÓPRIO `add_header`, ela para
+de herdar QUALQUER `add_header` do nível acima, silenciosamente. `location = /index.html` e
+`location /assets/` já tinham `add_header Cache-Control` antes do CRMLAB-32 existir (Onda 5), e
+`/` sempre cai em `/index.html` via `try_files` — ou seja, a resposta que o navegador realmente
+recebe como "o documento" nunca teve CSP nem X-Frame-Options desde que esses headers foram
+escritos, e nada no CI pegou isso (testes de unidade não sobem o nginx de verdade; o E2E roda
+contra o Vite dev server, que não usa este arquivo).
+**Impacto:** só `nginx/frontend.conf`. Validado com `nginx -t` + um container real servindo
+`index.html` e `curl -I` confirmando os 5 headers na resposta. Lição para o próximo header novo
+neste arquivo: qualquer `add_header` adicionado ao `server {}` PRECISA ser copiado para as duas
+locations que têm `add_header` próprio, ou vira letra morta — comentário no arquivo aponta para
+esta decisão.
+
+### D-145: Pool conecta com `crm_login` (sem superuser) em vez do dono do banco (CRMLAB-38)
+> **Corrigida pela D-165:** o `NOBYPASSRLS` abaixo estava errado e quebrava login e webhook.
+> Leia a D-165 antes de usar esta decisão.
+
+**Decisão:** migração `020_crm_login_role.sql` cria a role `crm_login` (`LOGIN NOSUPERUSER
+NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION`), membro de `crm_app` — herda por `INHERIT`
+os mesmos `GRANT`s de SELECT/INSERT/UPDATE/DELETE de D-002, sem ser dona de nada. A role NÃO
+recebe senha na migração; apontar `DATABASE_URL` para ela e rodar `ALTER ROLE crm_login WITH
+PASSWORD '...'` é **pendência manual na VPS** (`docs/guides/DEPLOYMENT.md`). O job `migrate` do
+compose continua conectando como a role dona, que é quem precisa de DDL.
+**Motivo:** a pool conecta hoje como o `POSTGRES_USER` do container, que a imagem oficial cria
+como superuser. Dentro de transação com tenant a app troca para `crm_app` via `SET LOCAL ROLE`
+(D-002), mas todo caminho `withoutTenant()` — login, `/platform/*`, lookup de tenant do webhook,
+seeds — nunca troca: roda com DDL, `BYPASSRLS` e `DROP TABLE` na mão. Nenhuma SQLi foi
+encontrada na auditoria (todo valor por bind, `ORDER BY` por allow-list); isto é defesa em
+profundidade, não correção de falha explorada. Senha em migração versionada é senha vazada no
+git — daí a role nascer sem senha e o resto ser passo manual.
+**Impacto:** `backend/migrations/020_crm_login_role.sql`, `docs/guides/DEPLOYMENT.md`,
+`docs/database/SCHEMA.md`.
+### D-146: Índice nas 15 FKs sem índice, sem `CONCURRENTLY` (CRMLAB-38)
+**Decisão:** `021_fk_indexes.sql` cria `idx_*` (`IF NOT EXISTS`) nas 15 foreign keys que não
+tinham índice, com `CREATE INDEX` comum — não `CONCURRENTLY`.
+**Motivo:** FK sem índice vira SEQ SCAN em `DELETE` na tabela pai e em qualquer JOIN pelo lado
+filho. O banco tem 13 MB hoje, então o ganho é zero agora e o custo de esperar só cresce.
+`CONCURRENTLY` foi descartado porque o migrator roda cada arquivo dentro de uma transação
+própria e `CREATE INDEX CONCURRENTLY` não pode rodar em transação — suportá-lo exigiria um
+modo "migração fora de transação" no runner, desproporcional para um índice que neste volume
+sai instantâneo. Reavaliar se o volume crescer a ponto do lock incomodar em produção.
+**Impacto:** `backend/migrations/021_fk_indexes.sql`, `docs/database/SCHEMA.md`.
+### D-147: Lock de migração é `pg_advisory_xact_lock` pedido DENTRO da transação de cada migração (CRMLAB-38)
+**Decisão:** cada migração pendente roda em sua própria transação, que começa pedindo
+`pg_advisory_xact_lock(hashtext('crm_lab_migrate'))` e, **já com o lock na mão**, relê
+`schema_migrations` para aquele arquivo antes de aplicá-lo. Não existe transação externa
+envolvendo o loop.
+**Motivo:** dois deploys disparados juntos aplicariam a mesma migração em paralelo. `deploy.sh`
+já roda o job `migrate` sozinho — isto é segunda linha de defesa, não substituta da primeira.
+Dois detalhes que a primeira versão desta decisão errou e o teste pegou:
+1. **O lock NÃO pode ficar numa transação externa que envolva o loop.** O driver de PGlite
+   (`pglite-driver.ts`, usado em todo teste e em dev sem `DATABASE_URL`) serializa cada
+   `query`/`transaction` numa fila de uma conexão só: a transação externa esperaria o loop
+   terminar e o loop esperaria a fila que a externa segura — deadlock, e a suíte inteira caiu
+   em timeout de 60 s. O lock por migração não tem esse problema: nenhuma chamada aninha.
+2. **Serializar não basta; é preciso reler.** O `SELECT` de `schema_migrations` feito antes do
+   loop está obsoleto para o segundo runner, que fica bloqueado no lock justamente enquanto o
+   primeiro aplica e commita. Sem o `SELECT ... WHERE name = $1` de dentro da transação, ele
+   acordaria com a lista velha e aplicaria o arquivo de novo — o lock teria serializado a dupla
+   aplicação em vez de impedi-la. Arquivo já aplicado por outro runner entra em `skipped`.
+`pg_advisory_xact_lock` (transação) e não lock de sessão porque `db.query` fora de transação
+usa o pool e cada chamada pode sair por uma conexão diferente; um lock de sessão pedido numa
+conexão e liberado por engano noutra ficaria preso até a conexão fechar, e o pool reaproveita
+conexões ociosas (D-030). O lock de transação nasce e morre preso à conexão da transação e
+libera sozinho no COMMIT/ROLLBACK. Falha de uma migração continua não desfazendo as anteriores.
+**Impacto:** `backend/src/db/migrator.ts`, `backend/tests/kernel/migrator.spec.ts`.
+### D-148: Redact do logger ampliado preventivamente; corpo de erro do Evolution cortado em 200 chars (CRMLAB-38)
+**Decisão:** `REDACT_PATHS` ganha `apikey`/`apiKey`/`secret`/`webhookSecret`/`contentBase64`/
+`email`/`phone`, cada um também na forma `*.<campo>` (um nível de aninhamento), e passa a ser
+`export` só para o teste conseguir afirmar a lista. O corpo de erro que o `evolution-client`
+embute na mensagem do `Error` cai de 500 para 200 caracteres.
+**Motivo:** nenhum dos campos novos tinha vazamento real no momento do card (grep vazio) — mas
+o próximo `logger.info({ payload })` que incluir um deles vaza sem isto; o custo de listar é
+nulo. `REDACT_PATHS` é exportado apenas para teste porque o pino fica `enabled: false` em
+`NODE_ENV=test`, então não há saída renderizada para capturar: o teste verifica que o campo
+está na lista, não o log final. Os 500 chars do corpo de erro do gateway vão para o log via
+`queue.job_attempt_failed` e podem ecoar dado de sessão/número do terceiro; 200 ainda
+identificam a causa para debug.
+**Impacto:** `backend/src/lib/logger.ts`, `backend/src/lib/evolution-client.ts`,
+`backend/tests/kernel/logger-redact.spec.ts`.
+### D-149: Anti-replay nos webhooks por hash do corpo no Redis (10 min); janela de timestamp avaliada e DESCARTADA (CRMLAB-38)
+**Decisão:** antes de aceitar um webhook autenticado, `authenticate()` calcula `sha256(rawBody)`
+e guarda `webhook:replay:<tenantId>:<digest>` no Redis por 600 s; corpo já visto é recusado.
+Essa é a **única** camada nova. Uma segunda camada — recusar payload da Meta cujo timestamp de
+mensagem fosse mais velho que 5 min — foi implementada, testada e **removida antes do merge**.
+**Motivo:** HMAC e token provam que o remetente é legítimo, não que a requisição é nova — um
+corpo capturado é reenviável indefinidamente com assinatura válida.
+`messages.external_id` (migração 019) já impede duplicar a *mensagem*; o que sobra são callbacks
+de status/conexão repetidos, que não têm `external_id` para colidir. O TTL é curto porque o alvo
+é o replay logo em seguida (janela realista de MITM ou proxy reentregando), não guardar hash
+para sempre.
+
+A janela de timestamp saiu porque **a Meta retenta webhook falho por até 7 dias**. Recusar por
+idade significa descartar em silêncio toda reentrega legítima depois de qualquer indisponibilidade
+maior que a janela — exatamente a situação em que essas mensagens mais importam. O ganho de
+segurança adicional era quase nulo: dentro da janela quem barra é o hash acima, e fora dela a
+UNIQUE de `external_id` impede a duplicata da mensagem. Trocar perda real de mensagem por defesa
+em profundidade redundante é o negócio errado. O custo disso apareceu como 12 testes de webhook
+quebrando: os fixtures usam um epoch fixo de 2024, e o teste estava certo — quem estava errado
+era a regra. `tests/webhooks/replay-guard.spec.ts` guarda a regressão com um payload de 2024 que
+**precisa** passar na primeira entrega e só ser barrado na segunda.
+**Impacto:** `backend/src/controllers/webhook.routes.ts`,
+`backend/tests/webhooks/replay-guard.spec.ts`.
+### D-150: `deploy.sh` exige CI verde no commit, com `gh` autenticado na VPS (CRMLAB-38)
+**Decisão:** antes de buildar, `scripts/deploy.sh` consulta `gh run list --commit <SHA> --branch
+main --workflow CI` e aborta se a conclusão não for `success` — inclusive quando não há run
+nenhum para o SHA, ou quando a consulta falha. `gh` ausente ou não autenticado também aborta,
+com mensagem dizendo para rodar `gh auth login` (passo manual, uma vez, fora do script).
+**Motivo:** o script já conferia árvore limpa e (em produção) tag igual à versão, mas nunca
+perguntou ao GitHub se aquele commit passou no CI — buildava e subia com o workflow vermelho se
+alguém rodasse o deploy sem olhar o PR. Abortar quando a checagem não pode ser feita, em vez de
+pular em silêncio, é deliberado: uma verificação que se desliga sozinha é pior que não existir,
+porque dá a impressão de cobertura.
+**Impacto:** `scripts/deploy.sh`, `docs/guides/DEPLOYMENT.md`.
+
+**Correção da revisão (2026-09-21):** o filtro `--branch main` saiu. O fluxo documentado de
+homologação é `deploy.sh --ref <branch da onda>`, e o run de CI daquele commit fica atribuído à
+branch dele, nunca a `main` — com o filtro fixo, TODO deploy de hml por `--ref` abortava com
+`sem_run`. O filtro por commit já é exato; a branch só restringia sem ganho.
+### D-151: WebSocket autentica pelo cookie httpOnly do refresh; Path do cookie alarga para `/`; Origin verificado no upgrade (CRMLAB-33)
+**Decisão:** `/ws` deixa de aceitar `?token=<accessToken>` na URL. O handshake de upgrade passa a
+ser autenticado pelo cookie httpOnly `crm_refresh` (o mesmo do CRMLAB-32/D-142), lido e
+verificado manualmente em `ws-hub.ts` (o upgrade de WebSocket não passa pelos middlewares do
+Express, `cookie-parser` incluído — daí `backend/src/lib/cookies.ts`, parser mínimo só para isso).
+Duas mudanças que essa escolha exigiu e não estavam no escopo original do card:
+1. **`Path` do cookie alarga de `/api/v1/auth` para `/`.** Um cookie só aceita um `Path`; o
+   handshake em `/ws` também precisa recebê-lo. `HttpOnly` + `SameSite=Strict` continuam sendo a
+   defesa real contra roubo/CSRF do refresh — `Path` estreito só reduzia quais rotas o recebiam
+   automaticamente, e o item 2 cobre o risco de CSRF específico do WS melhor do que `Path` cobria.
+2. **Header `Origin` do upgrade é verificado contra `env.corsOrigins` e a conexão é recusada (sem
+   completar o handshake) se não bater.** WebSocket NÃO respeita a Same-Origin Policy do jeito que
+   `fetch`/XHR respeitam: o browser manda o cookie no handshake mesmo que a página que abriu a
+   conexão esteja em outro domínio (classe conhecida: WebSocket CSRF). Autenticar só pelo cookie
+   sem checar `Origin` abriria a porta pra qualquer site abrir `wss://.../ws` a partir do browser
+   de uma vítima logada e ler o realtime dela — isso NÃO existia como risco antes porque o design
+   anterior exigia o access token na URL, que um site de terceiro não tem como obter.
+3. **Cookie ausente/inválido/expirado fecha com o código `WS_CLOSE_UNAUTHORIZED` (4401,
+   `@crm-lab/shared`) DEPOIS de completar o handshake (101), não antes.** Um `4xx` cru na resposta
+   HTTP do upgrade não é observável pelo `WebSocket` do browser (limitação da própria API —
+   `onclose` chegaria com o código genérico `1006`), e o cliente PRECISA distinguir "sessão
+   vencida, tento refresh antes de reconectar" de "rede caiu, só espero o backoff". Só o Origin
+   errado (item 2) é recusado cru — não há cliente legítimo cujo UX dependa de ler esse motivo.
+**Motivo:** o card pedia só tirar o token da URL (vazava no log de acesso do Caddy); a Opção C
+citada no card ("se o cookie httpOnly vier antes, ele resolve sozinho") só resolve de fato depois
+de tratar os dois pontos acima, que não estavam escritos no card original.
+**Impacto:** `backend/src/lib/ws-hub.ts` (Origin + cookie + heartbeat + limite de 5 sockets/
+usuário — ver STATUS.md para o resto do escopo do card), `backend/src/lib/cookies.ts` (novo,
+fonte única do nome/path/parse do cookie — `auth.routes.ts` passa a importar de lá em vez de
+declarar localmente), `backend/src/main.ts` (`createWsHub({ allowedOrigins })`),
+`shared/types/websocket.types.ts` (+`WS_CLOSE_UNAUTHORIZED`), `frontend/src/api/ws.ts` (sem
+`?token=`; `onclose` com esse código dispara `refreshAccessToken()` antes de reconectar),
+`docs/api/API_CONTRACTS.md`, `docs/contracts/FRONTEND_BACKEND.md`, `docs/architecture/
+SECURITY.md`, `docs/guides/ENVIRONMENTS.md`.
+### D-152: `refresh-cookie.ts` (como o cookie é GRAVADO) separado de `lib/cookies.ts` (nome e Path) (CRMLAB-35)
+**Decisão:** `cookieOptions`, `setRefreshCookie` e `clearRefreshCookie` saem de dentro de
+`auth.routes.ts` (onde eram funções privadas do módulo) para `backend/src/http/refresh-cookie.ts`,
+que importa `REFRESH_COOKIE_NAME`/`REFRESH_COOKIE_PATH` de `backend/src/lib/cookies.ts`
+(CRMLAB-33/D-151) e os re-exporta. `auth.routes.ts` e `user.routes.ts` importam daí.
+**Motivo:** `PATCH /users/me/password` precisa LER o mesmo cookie que `auth.routes.ts` escreve,
+para identificar a sessão atual e poupá-la da revogação em massa — duplicar nome/path/flags em
+dois controllers é como duas fontes de verdade divergem sem ninguém perceber (uma rota muda
+`SameSite` e a outra não). A divisão em DOIS arquivos não é cerimônia: `lib/cookies.ts` precisa
+ser importável pelo handshake de WebSocket, que não tem `Response` do Express nenhum; tudo que
+depende do `Response` fica em `http/refresh-cookie.ts`, fora do alcance dele.
+
+**Este card NÃO decide o `Path` do cookie.** A versão original desta decisão ampliava o `Path` de
+`/api/v1/auth` para `/api/v1` por conta própria; o CRMLAB-33, desenvolvido em paralelo, já amplia
+para `/` (D-151) porque o handshake de `/ws` também precisa do cookie. `/` contém `/api/v1`, logo
+a necessidade deste card está atendida e uma segunda decisão sobre o mesmo atributo só criaria
+duas fontes de verdade para um cookie que só aceita um `Path`.
+**Impacto:** `backend/src/http/refresh-cookie.ts` (novo), `backend/src/lib/cookies.ts` (do
+CRMLAB-33, reusado), `backend/src/controllers/auth.routes.ts` (imports trocados, comportamento
+idêntico), `backend/src/controllers/user.routes.ts` (import novo).
+### D-153: Política de senha nova — mínimo 10 chars + lista curta de senhas triviais, sem `zxcvbn` (CRMLAB-35)
+**Decisão:** `PATCH /users/me/password` exige `newPassword` com pelo menos 10 caracteres E fora
+de uma lista embutida de ~20 senhas triviais comuns (`senha123`, `12345678910`, etc. —
+`backend/src/lib/password-policy.ts`). Não usa `zxcvbn` nem serviço externo de força de senha.
+**Motivo:** o card sugeria `zxcvbn` (score ≥ 3) OU uma lista de senhas comuns. `zxcvbn` é uma
+dependência de ~800 KB (dicionários embutidos) só para uma tela de troca de senha — peso
+desproporcional ao ganho, quando `MIN_PASSWORD_LENGTH` já subiu de 8 (criação de usuário,
+`user.service.ts`) para 10 aqui, e uma lista curta pega o caso mais comum (reusar a mesma senha
+óbvia). YAGNI: se um dia a auditoria pedir scoring de verdade, troca-se a função interna por
+`zxcvbn` sem mexer no contrato da API.
+**Impacto:** `backend/src/lib/password-policy.ts` (novo), `backend/src/services/auth.service.ts`
+(`changePassword`). `MIN_PASSWORD_LENGTH` (8, `user.service.ts`, criação de usuário por admin)
+NÃO mudou — é uma tela diferente (admin criando conta de outra pessoa), fora do escopo deste
+card.
+### D-154: Expiração absoluta de 30 dias por família de refresh (`TIMESTAMPTZ` + `revoked_reason`); desativação aceita a janela de 15 min do access token (CRMLAB-35)
+**Decisão:** `refresh_tokens` ganha `absolute_expires_at` (migração 022): gravado no LOGIN como
+`now + JWT_REFRESH_ABSOLUTE_TTL` (env var, default 30 dias) e CARREGADO para a frente em cada
+rotação — a família não ganha teto novo a cada refresh, senão "absoluto" não seria absoluto.
+Passado o teto, o próximo refresh cai em `REFRESH_TOKEN_INVALID` mesmo com o token ainda dentro
+dos 7 dias rotativos. Ao desativar usuário (`PATCH /users/:id`, `isActive: false`), todas as
+famílias de refresh são revogadas na mesma transação; o access token de até 15 min já emitido
+NÃO é invalidado por denylist — a janela é aceita (o card dava as duas opções).
+
+Dois detalhes que só apareceram quando os testes do card foram escritos, ambos corrigidos aqui:
+
+1. **A coluna é `TIMESTAMPTZ`, não `TIMESTAMP` como as vizinhas.** `absolute_expires_at` é a
+   primeira coluna de data desta tabela que faz *round-trip*: é lida do banco e gravada de volta
+   a cada rotação. Em `TIMESTAMP` naive o driver devolve um `Date` interpretando o valor como
+   hora **local**, enquanto a escrita manda `toISOString()` em **UTC** — o teto andava para
+   frente o equivalente ao fuso a cada rotação (3 h em UTC-3). Uma sessão ativa empurraria o
+   próprio teto indefinidamente, que é exatamente o que este card existe para impedir.
+   `expires_at` e `revoked_at` continuam `TIMESTAMP` porque nunca são regravados a partir do que
+   foi lido; a comparação delas tem o mesmo desvio de fuso, com efeito de 3 h numa janela de
+   7 dias — anotado como dívida, fora do escopo deste card.
+2. **`revoked_reason` separa "rotacionado" de "derrubado por segurança".** A detecção de roubo
+   (D-015) trata qualquer token revogado que reapareça como reuso e derruba a família inteira.
+   Com a troca de senha revogando as outras sessões em massa, o próximo refresh de outro
+   navegador — comportamento normal, não ataque — derrubava também a sessão que acabara de
+   trocar a senha, tornando o "revoga todas MENOS a atual" inútil na prática. `revokeByHash`
+   (rotação) marca `'rotated'` e continua disparando a detecção; as revogações em massa marcam
+   `'security'` e apenas recusam aquele token. `NULL` (linhas anteriores à migração) é lido como
+   `'rotated'`, preservando o comportamento anterior.
+**Motivo:** sem teto absoluto, um refresh rotativo mantém a MESMA sessão viva para sempre —
+dispositivo perdido continua logado enquanto alguém abrir o app nele, mesmo trocando de token a
+cada 15 min. Denylist no Redis para o access token do usuário desativado foi descartada por
+YAGNI: adiciona um `jti` + TTL por token gerado (custo em toda requisição autenticada) para
+fechar uma janela de no máximo 15 minutos — desproporcional ao risco hoje.
+**Impacto:** `backend/migrations/022_refresh_tokens_absolute_expiry.sql`,
+`backend/src/repositories/refresh-token.repository.ts` (`absoluteExpiresAt` e `revokedReason` em
+toda leitura/escrita, `revokeAllForUserExcept`), `backend/src/services/auth.service.ts`
+(`issueRefreshToken` carrega o teto adiante, `refresh()` checa o teto e o motivo da revogação),
+`backend/src/services/user.service.ts` (`update()` revoga ao desativar),
+`backend/src/config/env.ts` (`JWT_REFRESH_ABSOLUTE_TTL`), `docs/database/SCHEMA.md`.
+### D-155: Limpeza de `refresh_tokens` expirados via `setInterval` no boot, sem scheduler novo (CRMLAB-35)
+**Decisão:** `main.ts` roda `deleteExpiredOrRevoked` uma vez no boot e depois a cada 24h via
+`setInterval` (`.unref()` — não impede o processo de sair). Sem `pg_cron`, sem lib de jobs nova.
+Best-effort: falha loga e não derruba o processo nem o boot.
+**Motivo:** o projeto não tem scheduler (CLAUDE.md/AGENTS.md não listam um; introduzir um só
+para isto seria dependência nova desproporcional). Volume é baixo (34 linhas hoje, crescimento
+linear com uso) — não é uma tarefa que precise de garantia de execução distribuída, só não
+deixar a tabela crescer para sempre. `withoutTenant` é usado aqui porque a limpeza é
+manutenção cross-tenant por natureza (não serve requisição de tenant nenhum) — terceiro uso
+legítimo, além dos dois já documentados em `db/types.ts` (login, console de plataforma); o
+comentário de `withoutTenant` foi atualizado para listar os três.
+**Impacto:** `backend/src/main.ts`, `backend/src/repositories/refresh-token.repository.ts`
+(`deleteExpiredOrRevoked`), `backend/src/db/types.ts` (comentário de `withoutTenant`).
+### D-156: Guard de anti-replay atômico (`incr`) e isento para `CONNECTION_UPDATE` (CRMLAB-38)
+**Decisão:** `isReplay` passa a usar `cache.incr(key, ttl) > 1` em vez de `get` seguido de
+`set`, e `CONNECTION_UPDATE` fica fora da guarda (`replayExempt`).
+**Motivo:** dois problemas achados na revisão do card. (1) `get`-então-`set` não é atômico:
+dois replays idênticos chegando juntos liam `null` os dois e passavam os dois — `incr` é atômico
+nas duas implementações de `CacheService` (`INCR` no Redis, contador único no `MemoryCache`) e
+já renova o TTL. (2) O corpo de um `CONNECTION_UPDATE` não tem id nem timestamp: um `state:
+'open'` é byte a byte igual ao `open` anterior. Num flap open → close → open dentro dos 10 min
+de TTL, o segundo `open` era descartado como replay e o canal ficava marcado como desconectado
+no banco, na tela e no WS até o próximo flap — dano maior que o replay que a guarda evita, ainda
+mais porque reaplicar estado de conexão é idempotente.
+**Impacto:** `backend/src/controllers/webhook.routes.ts`,
+`backend/tests/webhooks/replay-guard.spec.ts`. D-149 continua valendo para todo o resto.
+### D-157: `SET LOCAL statement_timeout` vem ANTES do advisory lock da migração (CRMLAB-38)
+**Decisão:** em `migrator.ts`, `setStatementTimeout(tx, NO_STATEMENT_TIMEOUT)` é a primeira
+instrução da transação, antes de `pg_advisory_xact_lock`.
+**Motivo:** a ESPERA pelo lock também é uma instrução e herdava o `statement_timeout=30s` que o
+`PgDriver` fixa na sessão (D-030/CRMLAB-30). O segundo runner abortava com 57014 exatamente
+quando a primeira migração demora mais de 30 s — que é o único caso em que o lock (D-147) tem
+alguma função. A ordem invertida desarmava a proteção justamente no cenário para o qual foi
+escrita.
+**Impacto:** `backend/src/db/migrator.ts`. D-147 continua valendo.
+### D-158: WebSocket confere a sessao no BANCO no handshake e revalida a cada 5 min (CRMLAB-33)
+**Decisão:** `WsHubOptions.validateSession` (ligado em `main.ts` a
+`refreshSessionIsLive`) repete no handshake as checagens que `/auth/refresh` faz — linha em
+`refresh_tokens`, `revoked_at`, expiração, `user.is_active`, `tenant.is_active` — sem rotacionar
+nada e sem derrubar família em caso de reuso. Sockets já abertos são reconferidos a cada 10
+ciclos de heartbeat (~5 min). Handshake é fail-closed (erro na checagem recusa); socket já
+aberto é fail-open (soluço do Postgres não derruba o realtime inteiro).
+**Motivo:** achado HIGH da revisão do PR #47. `verifyRefreshToken` prova assinatura e validade,
+nada mais — um refresh revogado no logout, já rotacionado, ou de usuário/tenant desativado
+abria um WebSocket com realtime completo do tenant por até `JWT_REFRESH_TTL` (7 dias), enquanto
+o MESMO token era recusado em `/auth/refresh`. O esquema antigo (`?token=` com access token)
+expunha no máximo os 15 min do access: sem esta checagem, o card teria PIORADO a janela que veio
+consertar. Não rotacionar aqui é deliberado — rotacionar brigaria com o refresh do próprio
+cliente, e derrubar a família daria a quem capture um token velho um jeito barato de deslogar o
+dono.
+**Impacto:** `backend/src/lib/ws-hub.ts`, `backend/src/services/auth.service.ts`,
+`backend/src/main.ts`. D-151 continua valendo.
+### D-159: `Set-Cookie` de expiração no path antigo do refresh, por uma release (CRMLAB-33)
+**Decisão:** toda resposta que grava ou limpa `crm_refresh` manda também um `Set-Cookie` de
+expiração em `Path=/api/v1/auth` (`LEGACY_REFRESH_COOKIE_PATH`), depois do cookie válido. Sai
+quando não houver mais sessão aberta de antes da v1.13.0 — `JWT_REFRESH_TTL` (7 dias) após o
+deploy desta onda.
+**Motivo:** achado HIGH da revisão dos PRs #47 e #49. Cookie é identificado por (nome, domínio,
+PATH): gravar em `/` não substitui o que já está em `/api/v1/auth` (D-142, em produção desde a
+v1.12.0) — o usuário fica com os dois, os dois são enviados em `/auth/refresh`, o de path mais
+específico vem primeiro (RFC 6265 §5.4) e o `cookie-parser` fica com a primeira ocorrência. A
+rota leria eternamente o token VELHO: a primeira renovação o consome e rotaciona, a segunda o
+reapresenta já revogado, dispara a detecção de reuso (D-015) e derruba a família — logout
+forçado, em loop, de todo mundo que estivesse logado no momento do deploy, por 7 dias. Ordem
+(válido primeiro, expiração depois) importa para cliente ingênuo que só olha o nome do cookie.
+**Impacto:** `backend/src/lib/cookies.ts`, `backend/src/controllers/auth.routes.ts`. Mesma
+correção nos dois cards da onda, arquivo idêntico nos dois.
+### D-160: eviction por teto de sockets usa código de close próprio (4409) (CRMLAB-33)
+**Decisão:** o socket mais antigo derrubado pelo teto de 5 por usuário é fechado com
+`WS_CLOSE_TOO_MANY_SOCKETS` (4409), não `terminate()`; o cliente não reconecta nesse código.
+**Motivo:** achado MEDIUM da revisão do PR #47. `terminate()` chega no browser como 1006, que o
+cliente lê como queda de rede e reconecta na hora — com 6 abas abertas, cada reconexão
+estourava o teto de novo e evictava a próxima mais velha, para sempre, e cada reconexão dispara
+`invalidateQueries()` naquela aba. O teto virava um gerador de carga.
+**Impacto:** `shared/types/websocket.types.ts`, `backend/src/lib/ws-hub.ts`,
+`frontend/src/api/ws.ts`.
+### D-161: `Set-Cookie` de expiração no path antigo do refresh, por uma release (CRMLAB-35)
+**Decisão:** toda resposta que grava ou limpa `crm_refresh` (login, refresh, logout, troca de
+senha) manda também um `Set-Cookie` de expiração em `Path=/api/v1/auth`
+(`LEGACY_REFRESH_COOKIE_PATH`), depois do cookie válido. Sai 7 dias
+(`JWT_REFRESH_TTL`) após o deploy desta onda.
+**Motivo:** achado HIGH da revisão — mesmo achado do PR #47, mesma correção (ver D-159; o
+arquivo `lib/cookies.ts` é idêntico nos dois cards). Cookie é identificado por (nome, domínio,
+PATH): gravar em `/` não substitui o de `/api/v1/auth` (D-142, em produção desde a v1.12.0). Os
+dois chegam em `/auth/refresh`, o mais específico primeiro (RFC 6265 §5.4), o `cookie-parser`
+fica com o primeiro, a rota lê o token velho, a segunda renovação o reapresenta revogado e a
+detecção de reuso derruba a família — logout forçado de todo mundo, em loop, por 7 dias.
+**Impacto:** `backend/src/lib/cookies.ts`, `backend/src/http/refresh-cookie.ts`.
+### D-162: bcrypt da troca de senha roda FORA da transação, com compare-and-set (CRMLAB-35)
+**Decisão:** `changePassword` lê o usuário, verifica a senha atual e calcula o hash novo fora de
+qualquer transação; a transação seguinte só grava, e o `UPDATE` leva o hash antigo no `WHERE`
+(compare-and-set). Nenhuma linha afetada = "senha atual incorreta".
+**Motivo:** achado MEDIUM da revisão. `verifyPassword` + `hashPassword` (bcryptjs cost 12,
+~300 ms cada) dentro da transação seguravam uma conexão do pool `idle in transaction` por
+~600 ms; com `DEFAULT_POOL_MAX = 10`, dez trocas simultâneas travavam todas as outras queries do
+sistema. `login` já fazia o bcrypt fora de transação por este mesmo motivo. O compare-and-set
+fecha a janela entre verificar e gravar que essa mudança abre.
+**Impacto:** `backend/src/services/auth.service.ts`,
+`backend/src/repositories/user.repository.ts`.
+### D-163: replay de token revogado por segurança é auditado, sem derrubar a família (CRMLAB-35)
+**Decisão:** quando um refresh com `revoked_reason = 'security'` reaparece, a resposta continua
+sendo um 401 comum e a família NÃO é derrubada (D-154), mas é gravada uma entrada de auditoria
+`refresh_token_replay_after_security`. A API também recusa `newPassword === currentPassword`,
+que antes só a tela barrava.
+**Motivo:** achados MEDIUM e LOW da revisão. Não derrubar a família está certo — é o outro
+navegador do próprio usuário, não um ataque. Mas ficar em silêncio apaga o sinal exatamente no
+caso pós-comprometimento: o usuário troca a senha PORQUE perdeu o dispositivo, e o replay do
+ladrão era a única evidência de que o token vazou. Sobre a senha repetida: a API respondia 200,
+revogava as outras sessões e escrevia auditoria sem nada ter rotacionado.
+**Impacto:** `backend/src/services/auth.service.ts`,
+`backend/tests/auth/change-password.spec.ts`.
+### D-164: `absolute_expires_at` ganha `DEFAULT` antes do `NOT NULL` (CRMLAB-35)
+**Decisão:** a migração 022 define `DEFAULT NOW() + INTERVAL '30 days'` na coluna antes do
+`SET NOT NULL`, e o índice `idx_refresh_tokens_absolute_expires_at` não é criado.
+**Motivo:** achados MEDIUM e LOW da revisão. Sem `DEFAULT`, o processo ANTIGO ainda atendendo
+durante a janela de deploy faz `INSERT` sem a coluna e viola o `NOT NULL` — todo login vira 500
+até o container novo assumir. O índice, por outro lado, nunca seria lido: a checagem do teto é
+leitura de uma linha por hash e a limpeza filtra `expires_at`/`revoked_at`; índice que ninguém
+lê só custa escrita.
+**Impacto:** `backend/migrations/022_refresh_tokens_absolute_expiry.sql`.
+
+### D-165: `crm_login` com `BYPASSRLS` — a alternativa não existia (CRMLAB-38)
+**Decisão:** `crm_login` é criada (020) e corrigida (023) com `LOGIN NOSUPERUSER BYPASSRLS
+NOCREATEDB NOCREATEROLE NOREPLICATION`. A `DATABASE_URL` da pool passa a usá-la; o job `migrate`
+segue como a role dona.
+**Motivo:** a D-145 criou a role `NOBYPASSRLS`, o que parecia mais seguro e tornava o card
+inútil na prática. Medido no banco de homologação, com dados reais: `SET ROLE crm_login` sem
+`app.tenant_id` devolve **0 de 5 usuários e 0 de 3 tenants**. Todo caminho `withoutTenant()` —
+login, `/platform/*`, `resolveWebhookTenant`, seeds — retornaria vazio, ou seja, login e webhook
+mortos. O cabeçalho de `002_row_level_security.sql` já dizia em texto que esses caminhos só
+funcionam porque rodam como a role dona, que burla RLS; o 020 foi escrito sem reler o 002. Com
+`BYPASSRLS`, no mesmo banco: caminho sem tenant volta a 5 usuários e 3 tenants, e o caminho com
+tenant continua sob RLS (3 de 5 usuários, 1 de 3 tenants), porque `withTenant()` faz
+`SET LOCAL ROLE crm_app` (D-002) e `crm_app` não tem `BYPASSRLS`.
+**Por que isso ainda vale a pena:** `BYPASSRLS` não muda nada nos caminhos sem tenant — eles já
+burlam RLS hoje, por serem a role dona. O que sai é o `SUPERUSER`: DDL, `DROP TABLE`, `COPY`
+lendo arquivo do host, leitura de qualquer tabela do cluster, alteração de outras roles. A
+alternativa (policies explícitas para os caminhos sem tenant) foi descartada: mais superfície de
+erro, e a falha seria silenciosa — uma policy errada devolve zero linha em vez de erro.
+**Impacto:** `backend/migrations/020_crm_login_role.sql`,
+`backend/migrations/023_crm_login_bypassrls.sql`, `docs/guides/DEPLOYMENT.md`,
+`docs/database/SCHEMA.md`. Substitui a parte de `NOBYPASSRLS` da D-145; o resto da D-145 vale.
+
+### D-166: janela de tolerância de 10 s no reuso de refresh token + lock entre abas (CRMLAB-40)
+**Decisão:** no backend, um refresh token já rotacionado (`revoked_reason = 'rotated'`)
+reapresentado até 10 s depois da rotação devolve `401 REFRESH_TOKEN_INVALID` comum — **sem**
+derrubar a família e sem auditoria de roubo (`REFRESH_REUSE_GRACE_MS`). No frontend,
+`refreshAccessToken()` roda dentro de `navigator.locks.request('crm-lab:auth-refresh')` quando
+o Web Locks API existe, serializando o refresh entre abas do mesmo origin.
+**Motivo:** achado das revisões dos PRs #44 e #47 (CRMLAB-40). Desde o CRMLAB-32 o refresh
+roda em **toda** carga de página, e o cookie `crm_refresh` é um só para o navegador inteiro:
+restaurar uma sessão com duas abas mandava o mesmo cookie duas vezes; a primeira rotacionava, a
+segunda apresentava o token recém-revogado, a detecção de reuso (D-015) tratava como roubo,
+derrubava a família e deslogava o usuário das duas abas — com um `refresh_token_reuse_detected`
+falso na auditoria. `refreshInFlight` deduplicava só dentro de uma aba. O lock resolve a causa
+(a segunda aba espera e, quando entra, o cookie já é o novo); a janela no servidor é a rede de
+segurança para navegador sem Web Locks e para o 4401 do WebSocket. Um ladrão que reapresenta o
+token dentro dos 10 s ganha nada — ele já está revogado.
+**Impacto:** `backend/src/services/auth.service.ts`, `frontend/src/api/client.ts`,
+`backend/tests/auth/refresh.spec.ts`. D-015 continua valendo fora da janela.
+
+### D-167: `allkeys-lru` no Redis com duas chaves de segurança dentro — risco aceito e datado (CRMLAB-36)
+**Decisão:** o Redis segue com `maxmemory-policy allkeys-lru`, agora com `maxmemory 128mb`
+(era 200mb) dentro de `mem_limit 256m`. Reavaliar quando houver mais de ~10 tenants.
+**Motivo:** a revisão do PR #46 apontou que o contador de lockout do login e o nonce de
+anti-replay dos webhooks moram no mesmo Redis que o cache de analytics/catálogo, e a LRU pode
+evictá-los sob pressão de memória — o comentário do compose ("nada aqui é fonte da verdade")
+era falso para essas duas chaves. As alternativas são piores hoje: `noeviction` transforma
+cache cheio em `503` em todo login (o incidente do CRMLAB-34 ao contrário); instância separada
+é mais um container numa VPS de 2 vCPU para um cenário teórico com o volume atual. O que dá
+para fazer barato é dar folga real: `maxmemory` limita só o dataset — fragmentação, buffers de
+cliente e o fork do `BGREWRITEAOF` ficam por cima, e com 200mb num cgroup de 256m o Redis era
+morto por OOM **antes** da evicção sequer entrar.
+**Impacto:** `docker-compose.prod.yml`. Registrado como dívida técnica com gatilho explícito.
+
+### D-168: rota pública é reconhecida pelo caminho normalizado; lockout de login conta a TENTATIVA antes da senha (CRMLAB-34)
+**Decisão:** `isPublicRoute`/`isChannelWebhook` comparam o caminho **normalizado** como o
+roteador do Express o vê (`pathOf`: minúsculo, sem barra final, sem barras duplicadas,
+percent-decoding resolvido). O lockout de `/auth/login` passa a `INCR` primeiro e comparar
+depois — a 6ª tentativa em 15 min é recusada **sem olhar a senha**; acertar zera o contador. A
+janela é fixa a partir da 1ª tentativa.
+**Motivo:** dois achados da revisão do PR #45. (1) O roteador do Express é case-insensitive e
+não-estrito: `/API/V1/AUTH/REFRESH` e `/api/v1/auth/refresh/` caem no handler certo, mas a
+comparação crua de `originalUrl` não os reconhecia como rota pública — com o Redis fora do ar
+caíam no ramo fail-**open**, sem limite, em vez do fail-closed da D-139. (2) O lockout lia o
+contador antes do bcrypt e incrementava depois, só na falha: check-then-act. Uma rajada de 100
+tentativas paralelas passava toda pela leitura antes de qualquer incremento — o próprio teste
+do PR exigia que 20 senhas erradas paralelas voltassem 401, ou seja, exigia o buraco. Contar a
+tentativa não muda nada para quem acerta (o sucesso zera); para quem erra, é o mesmo limite de
+5. Janela fixa em vez de renovar o TTL a cada erro é deliberado: renovar deixava um atacante
+paciente segurar o lockout da vítima indefinidamente, um palpite a cada 14 min.
+**Impacto:** `backend/src/http/middleware/rate-limit.ts`, `backend/src/services/auth.service.ts`,
+`backend/src/lib/cache.ts` (throttle de log por escopo; `MemoryCache.incr` lança em chave
+não-numérica como o Redis), `docs/api/API_CONTRACTS.md` §Rate Limiting (headers `RateLimit-*`
+e janela fixa documentados — estavam fora do contrato, Regra Zero).
+
+### D-169: MIME de mídia comparado normalizado e por categoria; saída rejeita, entrada rebaixa; allow-list vale na leitura (CRMLAB-31)
+**Decisão:** `normalizeMediaMimeType` (minúsculo, sem parâmetros, sinônimos resolvidos) antes
+de qualquer comparação com a allow-list; o sniff de magic bytes compara **categoria**
+(imagem/áudio/PDF/outro), não string. `POST /conversations/:id/attachments` recusa MIME fora da
+lista com `400 VALIDATION_ERROR`; webhooks continuam rebaixando para `octet-stream`.
+`GET /media/:id` aplica a allow-list ao MIME **gravado**. Entram na lista `image/heic`,
+`application/vnd.ms-excel`, `text/csv`. Uma única função `mediaCategoryOf` substitui os cinco
+mapeamentos MIME→categoria que existiam.
+**Motivo:** revisão do PR #43, dois achados HIGH. `audio/ogg; codecs=opus` é o mimetype
+**padrão** do recado de voz do WhatsApp e falhava na comparação exata contra `audio/ogg` — todo
+áudio recebido virava `application/octet-stream`, o player sumia e a bolha mostrava "Baixar
+anexo (doc)". O `file-type` rotula Opus-em-Ogg com parâmetro e M4A como `audio/x-m4a`, então a
+comparação de string do sniff derrubava anexo legítimo também. Na saída, rebaixar em silêncio
+fazia o atendente ver 201 e o paciente receber um "documento" no lugar da foto. E a rota de
+leitura nunca consultou a allow-list que `media.types.ts` dizia ser "fonte única" para ela —
+uma linha gravada antes do CRMLAB-31 com `image/svg+xml` seguia servida `inline` com esse
+Content-Type: o vetor de XSS do card, aberto para o dado legado.
+**Impacto:** `shared/types/media.types.ts`, `backend/src/services/media.service.ts`,
+`backend/src/controllers/media.routes.ts`, `frontend/src/components/conversation/MessageBubble.tsx`
+(anexo externo vira link cru — passar `attachmentUrl` absoluto de outro host pelo fetch
+autenticado mandava o Bearer para terceiro; PDF/doc baixado só no clique, não na montagem),
+`docs/api/API_CONTRACTS.md` §Hardening de mídia.
+
+### D-170: headers de segurança do nginx num `include` compartilhado; `connect-src 'self'` sem `wss:` (CRMLAB-42)
+**Decisão:** os 5 headers ficam em `nginx/security-headers.conf`, incluído no `server {}` e em
+**toda** location que declara `add_header` próprio (`= /healthz`, `/assets/`, `= /index.html`).
+A CSP perde o `wss:` de `connect-src`.
+**Motivo:** a D-144 optou por repetir os headers em duas locations e afirmou um invariante de
+"3 cópias" que já estava errado no dia em que foi escrito — `location = /healthz` tinha
+`add_header` e ficou sem nenhum (CRMLAB-42). Com o `include`, a próxima location que ganhar um
+`add_header` precisa de uma linha, e não há invariante para esquecer. Sobre a CSP: `'self'` já
+cobre o WebSocket do próprio origin (CSP3); `wss:` sozinho abria a política para **qualquer**
+host wss:// — exatamente o canal que um script injetado usaria para exfiltrar, sem gerar
+relatório (revisão do PR #44).
+**Impacto:** `nginx/security-headers.conf` (novo), `nginx/frontend.conf`, `frontend/Dockerfile`.
+Substitui a estratégia de repetição da D-144.
+
+### D-171: nginx re-resolve o backend pelo DNS do Docker (`resolver` + variável no `proxy_pass`) (CRMLAB-43)
+**Decisão:** `nginx/frontend.conf` ganha `resolver 127.0.0.11 valid=10s ipv6=off;` no `server`, e
+as locations `/api/` e `/ws` passam a usar `set $upstream_x ${API_UPSTREAM}; proxy_pass
+$upstream_x$request_uri;`. O `deploy.sh` reinicia o `frontend` quando o compose recriou o
+`backend` e não o frontend, e, se o healthcheck falhar, compara o IP do backend com o que
+aparece no log do nginx antes de abortar.
+**Motivo:** incidente real em produção, 21/09/2026 — ~6 min de `502` em `/api/*`. A troca da
+`DATABASE_URL` para `crm_login` (D-165) alterou o env só do `backend`; o compose recriou só ele,
+o container novo nasceu em `172.18.0.7` e o nginx do `frontend`, intocado, seguiu batendo em
+`172.18.0.5`. `proxy_pass` com **hostname literal** resolve o nome uma única vez, ao carregar a
+configuração, e guarda o IP para sempre. Todo deploy anterior mascarou isso porque backend e
+frontend sempre subiam juntos (imagem nova nos dois) — qualquer mudança de `.env` que afete só o
+backend reproduz.
+**Por que `$request_uri` explícito:** é o par obrigatório da variável. Com variável no
+`proxy_pass`, o nginx **não** repassa a URI original sozinho — sem ele todo request chegaria no
+backend como `/`. Verificado antes de subir, com upstream de teste que ecoa `$request_uri`:
+`/api/v1/health`, `/api/v1/conversations?page=2&q=ab%20c` e `/ws` chegam íntegros, com query
+string e percent-encoding preservados.
+**Prova de que resolve:** upstream trocado de IP com o nginx NO AR, sem restart —
+conf antiga: `502` com o IP velho no log (`upstream: "http://172.18.0.4:3000"`), reproduzindo o
+incidente; conf nova: `200` em todas as sondagens de 5 em 5 s.
+**Por que os dois (resolver E restart):** o `resolver` corrige sozinho, mas deixa uma janela de
+até `valid=10s`; o restart do frontend mata a janela e custa ~2 s, só no caso específico. E a
+"pista" no erro do healthcheck existe porque o `deploy.sh` **detectou** o problema (CRMLAB-29) e
+mesmo assim mandou investigar o backend, que estava vivo — a mensagem escondia a causa.
+**Impacto:** `nginx/frontend.conf`, `scripts/deploy.sh`.
+
 ## Template para novas decisões
 
 ```

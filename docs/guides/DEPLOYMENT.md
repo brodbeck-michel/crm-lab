@@ -19,7 +19,7 @@ push novo mata o anterior que ainda estivesse rodando.
 |-----|-----------|---------------|
 | **`quality`** | — | `npm run typecheck` (shared + backend + frontend), `npm run lint`, `npm run test:backend`, `npm run test:frontend`. Sem serviço externo: as suítes de backend, inclusive as de isolamento multitenant, rodam em **PGlite** (D-008). |
 | **`build`** | — | `npm run build` compila de verdade os três workspaces e **verifica os artefatos emitidos** (`backend/dist/backend/src/main.js`, `backend/dist/shared/types/index.js`, `frontend/dist/index.html`). Um build que "passa" sem emitir arquivo é falso verde. Publica `build-dist` como artifact (3 dias). |
-| **`docker`** | `build` | Constrói as duas imagens de produção (buildx + cache GHA) e afirma que **nenhuma das duas roda como root**. Não publica em registry — não há credencial no CI. |
+| **`docker`** | `build` | Constrói as imagens de produção (buildx + cache GHA) e afirma que **nenhuma roda como root**. Em `push` para `main` (nunca em PR, CRMLAB-36) também publica no **GHCR**: `crm-lab-backend` (`:<sha>`, `:hml-<sha>`, `:latest` — mesma imagem serve os dois ambientes) e `crm-lab-frontend`, que em vez disso ganha DUAS imagens (`:<sha>` produção, `:hml-<sha>` homologação) porque `VITE_APP_ENV` é build-time e fica inlinado no bundle. |
 | **`e2e`** | `quality`, `build` | Postgres 16 como *service*, `npm run migrate` + `npm run seed:e2e` com `DATABASE_URL`, navegador via `npm run e2e:install --workspace e2e`, API + UI no ar, e a suíte Playwright (`npm run e2e`). |
 
 ### Detalhes do job `e2e`
@@ -165,9 +165,13 @@ export JWT_SECRET=$(openssl rand -hex 32)
 export JWT_REFRESH_SECRET=$(openssl rand -hex 32)
 export CORS_ORIGIN=https://<dominio-da-ui>
 export IMAGE_TAG=$(git rev-parse --short HEAD)
+export IMAGE_REGISTRY=ghcr.io/<owner>/<repo>/   # CRMLAB-36/41 — COM o repo e barra final; vazio = build local (fallback)
 
-# 2. Build das imagens
-docker compose -f docker-compose.prod.yml build
+# 2. Imagens — pull do GHCR (o CI publica a cada push em `main`, ver §2 e §7).
+#    Sem IMAGE_REGISTRY definido, cai no fallback documentado (build local,
+#    ~10 min nos 2 vCPU — era o unico caminho antes do CRMLAB-36):
+docker compose -f docker-compose.prod.yml pull
+# docker compose -f docker-compose.prod.yml build   # fallback, so se IMAGE_REGISTRY vazio
 
 # 3. Migração — SEMPRE antes de subir a aplicação nova
 docker compose -f docker-compose.prod.yml run --rm migrate
@@ -183,7 +187,14 @@ docker compose -f docker-compose.prod.yml up -d
 curl -fsS http://localhost:${HTTP_PORT:-8080}/healthz          # nginx
 docker compose -f docker-compose.prod.yml exec backend \
   wget -qO- http://127.0.0.1:3000/health                       # API
+
+# 6. Limpeza (CRMLAB-36) — imagem/cache velhos, nunca a tag no ar:
+docker image prune -af --filter 'until=336h'
+docker builder prune -f --filter 'until=168h'
 ```
+
+`./scripts/deploy.sh` faz os passos 1-6 automaticamente (2 e 6 com o fallback
+e o "best-effort" descritos acima).
 
 ### Passo de migração
 
@@ -253,25 +264,54 @@ docker compose -f docker-compose.prod.yml exec -T postgres \
 Escreva migrações aditivas sempre que possível — é o que torna o rollback (1)
 possível e evita a rota (2).
 
-### Backup automático (desde 2026-09-17)
+### Backup e restore
 
 O dump manual acima continua sendo pré-requisito do deploy, mas **não é mais a
 única rede de proteção**. Até a auditoria de 2026-09-17 não havia backup nenhum
 em produção: o único dump existente era anterior a todas as mensagens e
 conversas que já estavam no ar — perder o volume era perder tudo.
 
-`scripts/backup-postgres.sh` roda diariamente às 03:10 (UTC) pelo systemd timer
-`crm-lab-backup.timer`, com 14 dias de retenção, em `/opt/crm-lab/backups`.
+São **três camadas**, e cada uma cobre uma falha que a anterior não cobre:
 
-Ele dumpa **os dois** bancos. `evolution` entra junto porque, embora perdê-lo
-não perca nenhum dado do CRM, ele guarda as credenciais da sessão Baileys:
-sem ele, voltar ao ar exige parear o número de novo lendo o QR no celular do
+| Camada | O quê | Onde | Retenção | Cobre |
+|---|---|---|---|---|
+| Local | `crm_lab.dump`, `evolution.dump` | `/opt/crm-lab/backups` (disco da VPS) | 14 dias | `DROP TABLE` errado, migração ruim |
+| Externa | os dois dumps **+ tar da mídia**, cifrados | GitHub Releases, repo privado | 30 dias | perder a VPS inteira |
+| Manual | dump pré-deploy | onde você rodou | você | rollback com migração incompatível |
+
+#### O que roda, e quando
+
+`crm-lab-backup.timer` dispara `crm-lab-backup.service` às 03:10 (UTC) todo dia.
+O service tem **dois** `ExecStart`, nesta ordem:
+
+1. `scripts/backup-postgres.sh` — dump dos dois bancos, local.
+2. `scripts/backup-offsite.sh` — cifra e sobe para fora da VPS.
+
+A ordem não é decorativa: o systemd para no primeiro `ExecStart` que falha.
+Assim o dump local, que é a última linha de defesa, sempre acontece antes; e
+uma queda de rede no envio externo nunca impede o backup local do dia.
+
+`evolution` entra no backup junto com `crm_lab` porque, embora perdê-lo não
+perca nenhum dado do CRM, ele guarda as credenciais da sessão Baileys: sem ele,
+voltar ao ar exige parear o número de novo lendo o QR no celular do
 laboratório — uma parada de atendimento, não um inconveniente.
+
+A mídia (`crm-lab-prod_media-data`) **não viaja no dump**. `message_media`
+referencia o arquivo, mas o arquivo mora no volume. Restaurar só o banco deixa
+toda foto de pedido médico e todo áudio como "não foi possível carregar" — foi
+exatamente o que pareceu bug de tela em homologação em 19/09. Por isso o tar do
+volume sobe junto na cópia externa.
 
 ```bash
 # Instalação (uma vez, na VPS)
-sudo cp scripts/systemd/crm-lab-backup.{service,timer} /etc/systemd/system/
+sudo cp scripts/systemd/crm-lab-backup.service \
+        scripts/systemd/crm-lab-backup.timer \
+        scripts/systemd/crm-lab-backup-alerta@.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now crm-lab-backup.timer
+# A unidade de alerta tem `SupplementaryGroups=systemd-journal` (revisão do PR
+# #24): sem isso o `journalctl -u` que ela roda para anexar o contexto voltava
+# vazio para o usuário `deploy`, e o alerta chegava sem uma linha de log. Depois
+# de copiar uma versão nova da unit: `daemon-reload` de novo.
 
 # Conferir
 systemctl list-timers crm-lab-backup.timer
@@ -279,12 +319,94 @@ journalctl -u crm-lab-backup.service -n 30
 
 # Rodar agora, fora do horário
 /opt/crm-lab/scripts/backup-postgres.sh
+/opt/crm-lab/scripts/backup-offsite.sh
+
+# Ensaiar o envio externo sem tocar no GitHub nem no Docker
+BACKUP_OFFSITE_DRYRUN=1 /opt/crm-lab/scripts/backup-offsite.sh
 ```
 
-**Verifique o dump, não confie nele.** Um arquivo com tamanho plausível pode
-estar truncado; o script escreve em `.partial` e só renomeia no fim justamente
-para que um dump interrompido nunca se pareça com um bom, mas a conferência
-real é listar o conteúdo:
+#### ⚠️ A CHAVE DE CIFRAGEM
+
+> **CHAVE PERDIDA = BACKUP INÚTIL. NÃO EXISTE RECUPERAÇÃO.**
+>
+> Tudo que sobe para o GitHub é cifrado antes de sair da VPS. Sem a chave
+> privada, os arquivos da release são ruído — nem o Michel, nem o GitHub, nem
+> ninguém decifra. Não há "esqueci minha senha".
+>
+> A chave privada mora **fora da VPS e fora do repositório**, com o Michel.
+> Guarde uma segunda cópia em lugar diferente do primeiro (gerenciador de
+> senhas **e** papel no cofre, não os dois na mesma máquina). Uma cópia só, na
+> mesma máquina que faz o backup, é o mesmo problema que o offsite veio
+> resolver.
+
+Cifrar não é zelo extra: os dumps têm nome de paciente, telefone, conversa e
+mídia. Mandar isso em claro para um terceiro não passa em LGPD, nem em
+repositório privado. O `backup-offsite.sh` **recusa rodar** sem chave
+configurada, de propósito.
+
+Dois métodos, nesta preferência:
+
+- **`age` com destinatário** (`BACKUP_AGE_RECIPIENT=age1...`). A VPS guarda só
+  a chave **pública**. Quem comprometer o host consegue cifrar backups novos,
+  mas **não decifra os antigos** — o que é exatamente a propriedade que se quer
+  de um backup contra comprometimento.
+- **`gpg` simétrico** (`BACKUP_GPG_PASSPHRASE=...`). Plano B: a mesma senha
+  cifra e decifra, e ela precisa morar no `.env` do host. Funciona, protege
+  contra o GitHub e contra vazamento da release, mas não contra quem já entrou
+  na VPS.
+
+#### Configuração (em `/opt/crm-lab/.env`, nunca no repo)
+
+`.env` já é `chmod 600`. Nada disto entra em git.
+
+| Variável | Obrigatória | O que é |
+|---|---|---|
+| `BACKUP_OFFSITE_REPO` | sim | `owner/repo` privado de destino |
+| `GH_TOKEN` | sim | PAT com escopo `repo`, para o `gh` |
+| `BACKUP_AGE_RECIPIENT` | uma das duas | chave **pública** age (`age1...`) |
+| `BACKUP_GPG_PASSPHRASE` | uma das duas | senha simétrica |
+| `BACKUP_REMOTE_RETENTION_DAYS` | não | default 30 (local é 14) |
+| `ALERT_WEBHOOK_URL` / `ALERT_WEBHOOK_TOKEN` | não | **o mesmo canal do monitor** (`scripts/lib/alerta.sh`) — desde a revisão do PR #24 o alerta de backup usa ele, não um webhook próprio |
+| `BACKUP_ALERT_CMD` | não | escotilha: comando que recebe o alerta no stdin (tem precedência) |
+| `BACKUP_ALERT_WEBHOOK` | não | **legado** — usado como `ALERT_WEBHOOK_URL` se esta não existir; remova do `.env` ao migrar |
+
+#### Alerta quando o backup falha
+
+Até 19/09 uma falha era **silenciosa**: o timer marcava `failed` e só descobria
+quem resolvesse rodar `journalctl`. Backup que falha calado é pior que backup
+nenhum, porque dá a sensação de estar protegido.
+
+`crm-lab-backup.service` agora tem `OnFailure=crm-lab-backup-alerta@%n.service`,
+que roda `scripts/backup-alerta.sh` com as últimas 20 linhas do journal da
+unidade que falhou.
+
+**O canal é plugável de propósito.** O destino final ainda não está decidido (a
+preferência é WhatsApp, o que esbarra em depender do gateway que este mesmo
+backup protege). Trocar de canal é editar o `.env`:
+
+```bash
+# qualquer webhook JSON (Discord, Slack, n8n, gateway próprio)
+ALERT_WEBHOOK_URL='https://.../hook'      # o mesmo do monitor; BACKUP_ALERT_WEBHOOK ainda funciona como legado
+
+# ou um comando qualquer, que recebe a mensagem no stdin
+BACKUP_ALERT_CMD='mail -s "backup CRM Lab falhou" michel@...'
+```
+
+Sem nenhum dos dois, o alerta vai para o syslog com prioridade `err` e o script
+sai 0 — ele nunca falha, porque não existe `OnFailure` do `OnFailure`.
+
+Testar o caminho de alerta sem quebrar o backup de verdade:
+
+```bash
+sudo systemctl start crm-lab-backup-alerta@crm-lab-backup.service
+journalctl -t crm-lab-backup -n 20
+```
+
+#### Verifique o dump, não confie nele
+
+Um arquivo com tamanho plausível pode estar truncado; os dois scripts escrevem
+em `.partial` e só renomeiam no fim justamente para que um dump interrompido
+nunca se pareça com um bom. Mas a conferência real é listar o conteúdo:
 
 ```bash
 docker compose -f docker-compose.prod.yml cp backups/crm_lab-<stamp>.dump postgres:/tmp/t.dump
@@ -294,9 +416,155 @@ docker compose -f docker-compose.prod.yml exec -T postgres pg_restore -l /tmp/t.
 `pg_restore -l` **não** funciona lendo de stdin (o formato custom precisa de
 seek no arquivo) — copie para dentro do container, como acima.
 
-A retenção só roda quando **todos** os bancos foram dumpados com sucesso:
-apagar o backup antigo logo depois de falhar em gerar o novo é a melhor forma
-de ficar sem nenhum.
+A retenção — local e remota — só roda quando **tudo** deu certo: apagar o
+backup antigo logo depois de falhar em gerar o novo é a melhor forma de ficar
+sem nenhum.
+
+---
+
+### Restore completo, do zero
+
+**Leia isto inteiro antes de digitar o primeiro comando.** Esta seção é escrita
+para ser seguida às 3 da manhã, por alguém com pressa e sem contexto.
+
+Antes de tudo: **respire e não apague nada.** Nenhum passo aqui exige
+`docker compose down -v`, `volume rm` ou `system prune`. Se algum comando que
+você pensou em rodar apaga volume, ele não é deste roteiro.
+
+O que você precisa ter em mãos:
+
+- acesso à VPS (ou a uma VPS nova, se a antiga se perdeu);
+- acesso ao repositório privado de backup no GitHub (`gh auth login`);
+- **a chave de cifragem** (a privada `age`, ou a senha `gpg`). Sem ela pare
+  aqui: não há restore. Ver o aviso acima.
+
+#### Passo 0 — descobrir o que existe
+
+```bash
+gh release list --repo "$BACKUP_OFFSITE_REPO" --limit 40
+```
+
+As releases se chamam `backup-AAAA-MM-DD`. Pegue a mais recente **anterior ao
+incidente** — a mais recente de todas pode já conter o estrago (uma exclusão
+acidental de ontem à noite entrou no backup desta madrugada).
+
+#### Passo 1 — baixar
+
+```bash
+cd /tmp && mkdir -p restore && cd restore
+gh release download backup-2026-09-19 --repo "$BACKUP_OFFSITE_REPO"
+ls -la      # espera: crm_lab-*.dump.age, evolution-*.dump.age, media-*.tar.gz.age
+```
+
+(`.gpg` em vez de `.age` se o backup foi feito com o método simétrico.)
+
+#### Passo 2 — decifrar
+
+```bash
+# age (chave privada num arquivo, ex. ~/chave-backup.txt)
+for f in *.age; do age -d -i ~/chave-backup.txt -o "${f%.age}" "$f"; done
+
+# gpg simétrico (vai pedir a senha)
+for f in *.gpg; do gpg --output "${f%.gpg}" --decrypt "$f"; done
+```
+
+**Confira antes de seguir.** Um dump decifrado com a chave errada não existe —
+o comando falha. Mas confirme que os arquivos têm tamanho plausível e que o
+dump abre:
+
+```bash
+ls -la *.dump *.tar.gz
+pg_restore -l crm_lab-*.dump | grep -c 'TABLE DATA'    # > 0
+```
+
+Se você não tem `pg_restore` na máquina, copie para dentro do container
+Postgres como mostrado na seção anterior.
+
+#### Passo 3 — restaurar os dois bancos
+
+Com a stack de pé (`docker compose -f docker-compose.prod.yml up -d postgres`),
+a partir de `/opt/crm-lab`:
+
+```bash
+cd /opt/crm-lab
+set -a; . ./.env; set +a          # traz POSTGRES_USER
+
+# copia os dumps para dentro do container (pg_restore precisa de seek)
+docker compose -f docker-compose.prod.yml cp /tmp/restore/crm_lab-<stamp>.dump   postgres:/tmp/crm_lab.dump
+docker compose -f docker-compose.prod.yml cp /tmp/restore/evolution-<stamp>.dump postgres:/tmp/evolution.dump
+
+# banco do CRM
+docker compose -f docker-compose.prod.yml exec -T postgres \
+  pg_restore -U "$POSTGRES_USER" -d crm_lab \
+  --clean --if-exists --no-owner --no-privileges /tmp/crm_lab.dump
+
+# banco do gateway de WhatsApp
+docker compose -f docker-compose.prod.yml exec -T postgres \
+  pg_restore -U "$POSTGRES_USER" -d evolution \
+  --clean --if-exists --no-owner --no-privileges /tmp/evolution.dump
+```
+
+**Avisos `does not exist, skipping` são normais** com `--clean` num banco vazio.
+Não interrompa por causa deles. O que importa é o `pg_restore` terminar.
+
+Se o banco `evolution` **não existir** (VPS nova, volume `postgres-data` vazio
+ou provisionado antes da Onda 7 — ver §6):
+
+```bash
+docker compose -f docker-compose.prod.yml exec -T postgres \
+  createdb -U "$POSTGRES_USER" evolution
+```
+
+#### Passo 4 — restaurar a mídia
+
+O tar foi feito a partir da **raiz** do volume, então ele se desempacota em
+`/m` direto. Produção entra como `rw` aqui (é o destino), e só aqui:
+
+```bash
+docker run --rm -i -v crm-lab-prod_media-data:/m alpine tar xzf - -C /m \
+  < /tmp/restore/media-<data>.tar.gz
+
+# conferir
+docker run --rm -v crm-lab-prod_media-data:/m:ro alpine sh -c 'ls /m | wc -l'
+```
+
+#### Passo 5 — subir e conferir de verdade
+
+```bash
+cd /opt/crm-lab
+docker compose -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.prod.yml ps
+```
+
+Checklist de "voltou mesmo", nesta ordem — os três, não só o primeiro:
+
+1. **Login funciona** e o painel abre com os números esperados (conversas,
+   pacientes). Banco `crm_lab` ok.
+2. **Uma conversa com imagem abre a imagem.** Se aparecer "não foi possível
+   carregar", o banco voltou mas a mídia não — repita o passo 4.
+3. **O WhatsApp está conectado** (`tenant_channels` ativo, sem QR pedindo
+   pareamento). Banco `evolution` ok. Se estiver pedindo QR, o dump do
+   `evolution` não entrou: alguém vai precisar ler o QR no celular do
+   laboratório, e o atendimento fica parado até lá.
+
+#### Passo 6 — voltar o backup a funcionar
+
+Fácil de esquecer no alívio de ter voltado. Numa VPS nova, nada disto existe:
+
+```bash
+sudo cp scripts/systemd/crm-lab-backup.service \
+        scripts/systemd/crm-lab-backup.timer \
+        scripts/systemd/crm-lab-backup-alerta@.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now crm-lab-backup.timer
+# e conferir que BACKUP_OFFSITE_REPO, GH_TOKEN e a chave estão no .env novo
+/opt/crm-lab/scripts/backup-offsite.sh
+```
+
+#### RTO — quanto tempo isso leva
+
+`[PENDENTE: medir no primeiro restore de verdade em homologação.]` O número vai
+aqui depois do ensaio, com a data. Enquanto estiver `[PENDENTE]`, trate o tempo
+de recuperação como **desconhecido**, não como "rápido".
 
 ---
 
@@ -321,10 +589,39 @@ de ficar sem nenhum.
 
 Registrado aqui para não virar promessa implícita:
 
-- **Publicação de imagem em registry e deploy automático.** O job `docker`
-  constrói e valida, mas não faz `push` — não há registry nem credencial
-  definidos para este projeto. Quando houver, é acrescentar `login-action` +
-  `push: true` com secrets.
+- **Deploy automático (CD).** O CI publica a imagem no GHCR (CRMLAB-36) mas
+  ninguém dispara `deploy.sh` sozinho — subir em produção continua sendo
+  humano, digitado, com a confirmação de `ENVIRONMENTS.md` §3.
 - **Ambiente de staging.** Não existe host definido.
 - **Certificado TLS.** O nginx da imagem serve HTTP em 8080; TLS/HSTS ficam no
   proxy de borda do host.
+- **Zero-downtime no `up -d`.** `docker compose up -d` recria o container e
+  há uma janela de indisponibilidade real (log do Caddy mostrou rajadas de
+  502/503 em deploys de 17/09) — aceito como limitação conhecida por ora
+  (CRMLAB-36).
+- **Ações que exigem acesso à VPS**, fora do alcance de um PR (ver
+  `docs/STATUS.md`, entradas CRMLAB-36 e CRMLAB-38, para o passo a passo):
+  - **`gh auth login` na VPS** (CRMLAB-38/D-150). Desde a Onda C o `deploy.sh`
+    consulta o GitHub antes de buildar e **aborta** se o workflow `CI` daquele
+    commit não estiver verde — ou se o `gh` não estiver instalado/autenticado.
+    É login manual, uma vez por máquina; sem ele nenhum deploy passa.
+  - **Apontar `DATABASE_URL` para `crm_login`** (CRMLAB-38/D-145, corrigida pela D-165 —
+    a role só ficou utilizável a partir da v1.13.1, migração 023). **Obrigatório junto:**
+    definir `MIGRATE_DATABASE_URL` com a URL da role dona (a `DATABASE_URL` antiga) no mesmo
+    `.env` — o job `migrate` precisa de DDL e `crm_login` não tem. Ordem: (1) `ALTER ROLE
+    crm_login WITH PASSWORD '...'` no Postgres; (2) `.env`: `MIGRATE_DATABASE_URL=<url atual>`
+    e `DATABASE_URL=postgresql://crm_login:<senha>@postgres:5432/<db>`; (3) `./scripts/deploy.sh`
+    (recria `backend` e `migrate` com o ambiente novo); (4) conferir login real e um webhook. A migração
+    020 cria a role sem senha de propósito. Na VPS, por ambiente:
+    `ALTER ROLE crm_login WITH PASSWORD '<senha nova>';` e então trocar o
+    usuário na `DATABASE_URL` do `.env`. Enquanto isso não for feito, a pool
+    continua conectando como superuser e o ganho da 020 é zero. O serviço
+    `migrate` do compose **não** muda — ele precisa da role dona para DDL.
+  - Definir `IMAGE_REGISTRY` no `.env` dos dois ambientes (`/opt/crm-lab` e
+    `/opt/crm-lab-homolog`) — sem isso o `deploy.sh` continua caindo no
+    fallback de build local.
+  - Reiniciar a VPS para aplicar o kernel pendente (`/var/run/reboot-required`
+    em 19/09) — fora de horário de atendimento, depois do backup das 03:10 UTC.
+  - `evolution: user: "1000:1000"` (D-140 em `docs/DECISIONS.md`) — validar em
+    homologação antes de aplicar em produção; imagem de terceiro, sem como
+    testar da CI.

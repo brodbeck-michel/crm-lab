@@ -656,6 +656,8 @@ CREATE TABLE refresh_tokens (
   token_hash VARCHAR(255) NOT NULL UNIQUE,
   expires_at TIMESTAMP NOT NULL,
   revoked_at TIMESTAMP,                 -- logout / rotação
+  absolute_expires_at TIMESTAMPTZ NOT NULL, -- teto da FAMÍLIA (CRMLAB-35, D-154)
+  revoked_reason TEXT,                  -- 'rotated' | 'security' | NULL (CRMLAB-35, D-154)
   created_at TIMESTAMP DEFAULT NOW(),
 
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
@@ -665,9 +667,31 @@ CREATE TABLE refresh_tokens (
 CREATE INDEX idx_refresh_tokens_user_id ON refresh_tokens(user_id);
 CREATE INDEX idx_refresh_tokens_tenant_id ON refresh_tokens(tenant_id);
 CREATE INDEX idx_refresh_tokens_expires_at ON refresh_tokens(expires_at);
+CREATE INDEX idx_refresh_tokens_absolute_expires_at ON refresh_tokens(absolute_expires_at);
 ```
 
-Token válido = `revoked_at IS NULL AND expires_at > NOW()`.
+Token válido = `revoked_at IS NULL AND expires_at > NOW() AND absolute_expires_at > NOW()`.
+
+`absolute_expires_at` (CRMLAB-35, D-154): teto de 30 dias da FAMÍLIA (não do token
+individual) — gravado no login e CARREGADO adiante em cada rotação, nunca reiniciado. Vencido
+esse teto, o próximo refresh recusa mesmo com o token em si ainda dentro dos 7 dias rotativos.
+
+É a única coluna de data desta tabela em `TIMESTAMPTZ`, e de propósito: é a única que faz
+*round-trip* (lida do banco e regravada a cada rotação). Em `TIMESTAMP` naive o driver devolve
+`Date` interpretando o valor como hora **local** enquanto a escrita manda UTC — o teto andava
+para frente o equivalente ao fuso a cada rotação, e uma sessão ativa empurraria o próprio teto
+para sempre. **Dívida conhecida:** `expires_at` e `revoked_at` têm o mesmo desvio na comparação
+(3 h em UTC-3), sem efeito prático numa janela de 7 dias porque nunca são regravadas a partir
+do que foi lido.
+
+`revoked_reason` (CRMLAB-35, D-154): `'rotated'` = token consumido numa rotação normal —
+reaparecer depois disso é sinal de roubo e derruba a família (D-015). `'security'` = derrubado
+em massa por troca de senha ou desativação de usuário — reaparecer é o outro dispositivo
+descobrindo que caiu, não ataque, e recusa só aquele token. `NULL` em linhas anteriores à
+migração 022, lido como `'rotated'`.
+
+Limpeza periódica (D-155, `main.ts`) apaga linhas com `expires_at`/`revoked_at` há mais de 7
+dias — best-effort, não crítico.
 
 ---
 
@@ -1515,6 +1539,42 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO crm_app;
 ```
 
+#### `crm_login` — a role de CONEXÃO da pool (migração 020, CRMLAB-38/D-145)
+
+`crm_app` é `NOLOGIN`: serve para o `SET LOCAL ROLE` dentro da transação de tenant, não para
+conectar. Quem conecta é a role do `DATABASE_URL`, e até a migração 020 essa role era o
+`POSTGRES_USER` do container — **superuser**, porque é assim que a imagem oficial do Postgres o
+cria. Todo caminho que roda em `withoutTenant()` (login, `/platform/*`, lookup de tenant do
+webhook, seeds) nunca troca de role: ficava com DDL, `BYPASSRLS` e `DROP TABLE` na mão.
+
+```sql
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'crm_login') THEN
+    CREATE ROLE crm_login LOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION;
+  END IF;
+END $$;
+
+GRANT crm_app TO crm_login;
+```
+
+**`BYPASSRLS`, e por quê** (D-165, migração `023_crm_login_bypassrls.sql` para bancos que já
+aplicaram o 020 na versão errada): a primeira versão criava a role `NOBYPASSRLS`, o que parecia
+mais seguro e tornava a troca da `DATABASE_URL` impossível. Medido em homologação com dados
+reais, `SET ROLE crm_login` sem `app.tenant_id` devolve **0 de 5 usuários e 0 de 3 tenants** —
+todo caminho `withoutTenant()` retornaria vazio, ou seja, login e webhook mortos. É o que o
+cabeçalho desta mesma seção já dizia: esses caminhos só funcionam porque a role atual burla RLS.
+
+O isolamento multitenant não é afetado: `withTenant()` faz `SET LOCAL ROLE crm_app` e `crm_app`
+**não** tem `BYPASSRLS`. No mesmo banco, com contexto de um tenant: 3 de 5 usuários e 1 de 3
+tenants visíveis. O que o card remove de fato é o `SUPERUSER` — DDL, `DROP TABLE`, `COPY` lendo
+arquivo do host, leitura de qualquer tabela do cluster.
+
+Por `INHERIT` (default), `crm_login` já tem os mesmos `GRANT`s de `crm_app` — sem ser dona de
+nada. A migração **não define senha** (senha em arquivo versionado é
+senha vazada): apontar `DATABASE_URL` para `crm_login` e rodar `ALTER ROLE crm_login WITH
+PASSWORD '...'` é passo manual na VPS, descrito em `docs/guides/DEPLOYMENT.md` §7. O job
+`migrate` do compose continua conectando como a role dona, que é quem precisa de DDL.
+
 ### Policy padrão (uma por tabela com `tenant_id`)
 
 ```sql
@@ -1643,6 +1703,23 @@ CREATE INDEX idx_conversations_patient_name
 `patient_name` é nullable; o `COALESCE` mantém a expressão indexável para toda linha (e a query de
 busca deve usar exatamente a mesma expressão para o índice ser aproveitado).
 
+### Índices de foreign key (migração 021 — CRMLAB-38, D-146)
+
+Postgres cria índice automático para PRIMARY KEY e UNIQUE, **não** para FOREIGN KEY. Sem
+índice do lado filho, todo `DELETE` na tabela pai vira SEQ SCAN na filha (o banco precisa
+provar que não sobrou referência), e todo JOIN pelo lado filho também. As 15 FKs que estavam
+sem índice ganharam um `idx_<tabela>_<coluna>` (`CREATE INDEX IF NOT EXISTS`):
+
+`messages.sender_id` · `proposals.created_by` · `proposals.approved_by` ·
+`proposals.insurance_id` · `proposal_items.exam_id` · `proposal_status_history.changed_by` ·
+`audit_logs.user_id` · `internal_messages.sender_id` ·
+`internal_messages.attached_proposal_id` · `tenant_channels.accepted_terms_by` ·
+`quick_replies.created_by` · `message_media.message_id` · `lis_imports.created_by` ·
+`lis_budgets.insurance_id` · `lis_budgets.import_id`
+
+Sem `CONCURRENTLY`: o migrator roda cada arquivo dentro de uma transação e `CREATE INDEX
+CONCURRENTLY` não pode rodar em transação (D-146).
+
 ---
 
 ## Migrações
@@ -1669,7 +1746,11 @@ migrations/
 ├── 013_rls_lis_domain.sql        # policies das 4 tabelas da 012 (Onda 9)
 ├── 015_exam_packages.sql         # exam_packages/_items/_prices (CRMLAB-10, §28-30)
 ├── 016_rls_exam_packages.sql     # policies das 3 tabelas da 015 (CRMLAB-10)
-└── 017_proposal_requesting_doctor.sql  # proposals.requesting_doctor (CRMLAB-9)
+├── 017_proposal_requesting_doctor.sql  # proposals.requesting_doctor (CRMLAB-9)
+├── 018_patient_inactivation.sql  # inativação de paciente
+├── 019_messages_external_id_unique.sql # unicidade de messages.external_id (anti-duplicata)
+├── 020_crm_login_role.sql        # role `crm_login` sem superuser para a pool (CRMLAB-38, D-145)
+└── 021_fk_indexes.sql            # índice nas 15 FKs que não tinham (CRMLAB-38, D-146)
 ```
 
 A 007 e a 008 são arquivos ÚNICOS (tabela + policy), diferente dos pares 003/004 e 005/006: a

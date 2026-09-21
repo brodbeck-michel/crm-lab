@@ -2,8 +2,9 @@
  * Montagem do app Express.
  *
  * Ordem dos middlewares (nao reordene sem motivo):
- *   helmet -> cors -> json -> request-context -> rate-limit
- *   -> GET /health (publico) -> /api/v1/<modulos> -> 404 -> error-handler
+ *   helmet -> cors -> json -> request-context
+ *   -> sondas de saude (GET /health, /health/live, /api/v1/health — publicas)
+ *   -> rate-limit -> /api/v1/<modulos> -> 404 -> error-handler
  *
  * O error-handler e SEMPRE o ultimo.
  */
@@ -14,6 +15,7 @@ import { env } from './config/env.js';
 import type { DbClient } from './db/types.js';
 import type { CacheService } from './lib/cache.js';
 import { createCache } from './lib/cache.js';
+import { createHealthChecker, publicHealthReport } from './lib/health.js';
 import { noopWsHub, type WsHub } from './lib/ws-hub.js';
 import { type ApiModule, type ApiModuleDeps, type ApiModuleFactory } from './http/api-module.js';
 import { apiModuleFactories } from './http/modules.js';
@@ -94,12 +96,22 @@ export function createApp(deps: AppDeps): BuiltApp {
     cors({
       origin: env.corsOrigins,
       credentials: false,
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-Correlation-Id'],
+      // `X-Requested-With` (D-142): header exigido por `POST /auth/refresh`.
+      // Sem CORS credenciado o cookie não atravessa mesmo assim (D-143 é o
+      // que resolve isso via mesmo origin), mas sem o header na allow-list o
+      // preflight de um cliente cross-origin genuíno rejeitaria antes de
+      // chegar na rota.
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Correlation-Id', 'X-Requested-With'],
       exposedHeaders: [
         'X-Correlation-Id',
         'X-RateLimit-Limit',
         'X-RateLimit-Remaining',
         'X-RateLimit-Reset',
+        // Draft IETF (draft-ietf-httpapi-ratelimit-headers), D-139 — convive
+        // com os `X-RateLimit-*` acima, nao os substitui.
+        'RateLimit-Limit',
+        'RateLimit-Remaining',
+        'RateLimit-Reset',
         'Retry-After',
       ],
     }),
@@ -109,23 +121,67 @@ export function createApp(deps: AppDeps): BuiltApp {
   // do webhook: comparar contra uma reserializacao de `req.body` ja parseado
   // (JSON.stringify) perde formatacao do corpo original (espacos, por
   // exemplo) e faz a assinatura nunca bater, mesmo com o segredo certo.
+  const captureRawBody = (req: express.Request, _res: express.Response, buf: Buffer): void => {
+    (req as express.Request & { rawBody?: Buffer }).rawBody = buf;
+  };
+
+  // Webhook PUBLICO da Meta (`/webhooks/whatsapp*`, CRMLAB-31): o HMAC só é
+  // conferido DEPOIS do `express.json()` rodar (`whatsapp.service.ts`), entao
+  // um corpo gigante custa CPU/memoria de parse ANTES de qualquer rejeicao —
+  // amplificacao barata para quem nem tem o segredo. 1mb cobre folgado o
+  // maior payload documentado da Meta (nao carrega midia em base64, só texto
+  // e metadados). Registrado ANTES do parser geral: por caminho, o Express so
+  // roda o PRIMEIRO `express.json()` que casa (body-parser marca `req._body`
+  // e o segundo se auto-pula), entao esta rota nunca ve o limite de 25mb.
+  app.use(
+    `${API_PREFIX}/webhooks/whatsapp`,
+    express.json({ limit: '1mb', verify: captureRawBody }),
+  );
+
+  // Demais rotas — inclui `/webhooks/evolution/*` (gateway em rede interna,
+  // manda midia em base64: Onda 8 §4.3, MediaService teto de 15 MiB por
+  // arquivo, base64 infla ~33% + margem do envelope) e os endpoints
+  // autenticados que tambem recebem anexo em base64 (`POST
+  // /conversations/:id/attachments`). O teto de negocio (`MEDIA_TOO_LARGE`,
+  // 413 explicito) continua sendo o de `MediaService`; este e so o limite de
+  // transporte.
   app.use(
     express.json({
-      // 25mb: mídia viaja em base64 dentro do JSON (Onda 8 §4.3, MediaService
-      // teto de 15 MiB por arquivo) — base64 infla ~33%, mais a margem do
-      // envelope JSON. O teto de negocio (`MEDIA_TOO_LARGE`, 413 explicito)
-      // continua sendo o de `MediaService`; este e so o limite de transporte.
       limit: '25mb',
-      verify: (req, _res, buf) => {
-        (req as express.Request & { rawBody?: Buffer }).rawBody = buf;
-      },
+      verify: captureRawBody,
     }),
   );
   app.use(requestContext());
 
-  // Publico e fora do rate limit: usado por health check de container/LB.
-  app.get('/health', (_req, res) => {
+  // --- Sondas de saude (CRMLAB-29) --------------------------------------
+  // Publicas e fora do rate limit: um monitor batendo a cada minuto nao pode
+  // consumir a cota de ninguem, e um health que responde 429 nao serve de
+  // health. Ver o cabecalho de `lib/health.ts` para o porque de serem DUAS.
+  //
+  // LIVENESS: trivial. `HEALTHCHECK` do Dockerfile e compose apontam para ca.
+  // Nao consulta dependencia de proposito — queda do Postgres nao pode
+  // reiniciar o container do backend em loop.
+  const liveness: express.RequestHandler = (_req, res) => {
+    res.set('Cache-Control', 'no-store');
     res.json({ status: 'ok', driver: deps.db.driver, uptime: process.uptime() });
+  };
+  app.get('/health', liveness);
+  app.get('/health/live', liveness);
+
+  // READINESS: `SELECT 1` + `PING`, 503 quando alguma dependencia cai.
+  // Montado em `/api/v1/health` porque e o prefixo que o nginx faz proxy —
+  // `/health` pela internet cai no `try_files` da SPA e devolve HTML com 200.
+  // Registrado ANTES do `rateLimit` e do router de modulos.
+  const checkHealth = createHealthChecker({ db: deps.db, cache });
+  app.get(`${API_PREFIX}/health`, (_req, res, next) => {
+    checkHealth()
+      .then((report) => {
+        res.set('Cache-Control', 'no-store');
+        // Nunca o relatorio cru para fora: `error` carrega host/porta/role
+        // internos (ver `publicHealthReport`).
+        res.status(report.status === 'ok' ? 200 : 503).json(publicHealthReport(report));
+      })
+      .catch(next);
   });
 
   // O limitador fica aqui de proposito, ANTES dos routers: `requireAuth()` e

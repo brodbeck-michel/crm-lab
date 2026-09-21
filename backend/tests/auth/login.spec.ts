@@ -1,12 +1,21 @@
 /**
  * POST /auth/login — SERVICES.md §1, WORKFLOWS.md §8, SECURITY.md "Autenticacao".
+ *
+ * CRMLAB-32: o refresh token deixou de vir no corpo — sai SO em
+ * `Set-Cookie: crm_refresh=...; HttpOnly; SameSite=Strict; Path=/`
+ * (Path ampliado de `/api/v1/auth` para `/` no CRMLAB-33/D-151).
  */
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { LoginResponse } from '@crm-lab/shared';
 import type { DbClient } from '../../src/db/types.js';
+import {
+  MemoryCache,
+  resetCacheUnavailableThrottleForTest,
+  type CacheService,
+} from '../../src/lib/cache.js';
 import { hashRefreshToken } from '../../src/repositories/refresh-token.repository.js';
 import { DEFAULT_THEME } from '../../src/services/theme.service.js';
-import { authModule } from '../../src/controllers/auth.routes.js';
+import { authModule, REFRESH_COOKIE_NAME } from '../../src/controllers/auth.routes.js';
 import { createTestApp, type TestApp } from '../helpers/test-app.js';
 import { getTestDb, resetDatabase } from '../helpers/test-db.js';
 import {
@@ -16,6 +25,12 @@ import {
   type TenantRecord,
   type UserRecord,
 } from '../helpers/factories.js';
+
+/** Extrai o valor do cookie `crm_refresh` de um `Set-Cookie` de supertest. */
+function refreshCookieValue(setCookie: string[] | undefined): string | undefined {
+  const raw = setCookie?.find((c) => c.startsWith(`${REFRESH_COOKIE_NAME}=`));
+  return raw?.split(';')[0]?.split('=')[1];
+}
 
 describe('POST /auth/login', () => {
   let db: DbClient;
@@ -47,12 +62,18 @@ describe('POST /auth/login', () => {
 
     const body = response.body as LoginResponse;
 
-    expect(Object.keys(body).sort()).toEqual(
-      ['accessToken', 'expiresIn', 'refreshToken', 'tenant', 'user'].sort(),
-    );
+    expect(Object.keys(body).sort()).toEqual(['accessToken', 'expiresIn', 'tenant', 'user'].sort());
     expect(typeof body.accessToken).toBe('string');
-    expect(typeof body.refreshToken).toBe('string');
     expect(body.expiresIn).toBe(900);
+
+    // O refresh NUNCA aparece no corpo — só no Set-Cookie httpOnly.
+    expect(JSON.stringify(body)).not.toContain('refreshToken');
+    const cookie = response.headers['set-cookie'] as unknown as string[] | undefined;
+    const setCookie = cookie?.find((c) => c.startsWith(`${REFRESH_COOKIE_NAME}=`));
+    expect(setCookie).toBeDefined();
+    expect(setCookie).toContain('HttpOnly');
+    expect(setCookie).toContain('SameSite=Strict');
+    expect(setCookie).toContain('Path=/');
 
     expect(body.user).toEqual({
       id: user.id,
@@ -130,7 +151,8 @@ describe('POST /auth/login', () => {
       .send({ email: user.email, password: DEFAULT_TEST_PASSWORD })
       .expect(200);
 
-    const plain = (response.body as LoginResponse).refreshToken;
+    const plain = refreshCookieValue(response.headers['set-cookie'] as unknown as string[]);
+    if (!plain) throw new Error('Set-Cookie crm_refresh ausente na resposta de login');
 
     const stored = await db.withoutTenant((tx) =>
       tx.query<{ token_hash: string; user_id: string; revoked_at: unknown }>(
@@ -251,5 +273,98 @@ describe('POST /auth/login', () => {
 
     expect(rows.rows).toHaveLength(1);
     expect(String(rows.rows[0]?.ip_address)).not.toContain('203.0.113.66');
+  });
+
+  /**
+   * D-139: o contador de falhas trocou `get`+`set` por `incr` atomico
+   * justamente porque 20 senhas erradas em paralelo, com o padrao antigo,
+   * liam o MESMO valor e escreviam o MESMO `hits + 1` — perdendo 19
+   * incrementos e nunca disparando o lockout de 5. `Promise.all` dispara as
+   * 20 tentativas de verdade em paralelo (nao um loop sequencial).
+   */
+  it('20 senhas erradas em paralelo NAO furam o lockout de 5 (D-139)', async () => {
+    const attempts = await Promise.all(
+      Array.from({ length: 20 }, () =>
+        app.agent
+          .post('/api/v1/auth/login')
+          .send({ email: user.email, password: 'errada-tambem' }),
+      ),
+    );
+    // Nenhuma das 20 pode "vazar" um status inesperado: 401 (errou a senha) ou
+    // 429 (a rajada ja passou do limite). A versao anterior deste teste
+    // EXIGIA 20 x 401 — ou seja, exigia que a rajada inteira comparasse senha,
+    // que e exatamente o buraco de check-then-act que a revisao do PR #45
+    // apontou. Com INCR-primeiro, no maximo 5 das 20 chegam ao bcrypt.
+    const statuses = attempts.map((r) => r.status);
+    expect(statuses.every((s) => s === 401 || s === 429)).toBe(true);
+    expect(statuses.filter((s) => s === 401).length).toBeLessThanOrEqual(5);
+    expect(statuses.filter((s) => s === 429).length).toBeGreaterThanOrEqual(15);
+
+    // O que importa: o contador ficou correto DEPOIS da rajada — a proxima
+    // tentativa, mesmo com a senha certa, e barrada.
+    const blocked = await app.agent
+      .post('/api/v1/auth/login')
+      .send({ email: user.email, password: DEFAULT_TEST_PASSWORD })
+      .expect(429);
+    expect(blocked.body.error.code).toBe('RATE_LIMIT_EXCEEDED');
+  });
+});
+
+/**
+ * D-139: Redis fora do ar EM RUNTIME e rota PUBLICA (login) -> fail-CLOSED,
+ * 503 SERVICE_UNAVAILABLE, nunca 500 generico.
+ */
+describe('POST /auth/login — Redis indisponivel em runtime (D-139)', () => {
+  let db: DbClient;
+  let tenant: TenantRecord;
+  let user: UserRecord;
+
+  class FailingCache implements CacheService {
+    async get<T>(): Promise<T | null> {
+      throw new Error('ECONNREFUSED 127.0.0.1:6379');
+    }
+    async set(): Promise<void> {
+      throw new Error('ECONNREFUSED 127.0.0.1:6379');
+    }
+    async del(): Promise<void> {
+      throw new Error('ECONNREFUSED 127.0.0.1:6379');
+    }
+    async delByPrefix(): Promise<void> {}
+    async incr(): Promise<number> {
+      throw new Error('ECONNREFUSED 127.0.0.1:6379');
+    }
+    async ping(): Promise<void> {}
+    async close(): Promise<void> {}
+  }
+
+  beforeAll(async () => {
+    db = await getTestDb();
+  });
+
+  beforeEach(async () => {
+    resetCacheUnavailableThrottleForTest();
+    await resetDatabase(db);
+    tenant = await createTenant({ name: 'Lab Sao Jose', slug: 'lab-sao-jose' });
+    user = await createUser({ tenantId: tenant.id, email: 'joao@lab.com', role: 'attendant' });
+  });
+
+  it('responde 503 SERVICE_UNAVAILABLE em vez de 500 quando o cache falha', async () => {
+    const app = await createTestApp({ db, cache: new FailingCache(), modules: [authModule] });
+
+    const response = await app.agent
+      .post('/api/v1/auth/login')
+      .send({ email: user.email, password: DEFAULT_TEST_PASSWORD })
+      .expect(503);
+
+    expect(response.body.error.code).toBe('SERVICE_UNAVAILABLE');
+  });
+
+  it('cache saudavel (MemoryCache) continua respondendo normalmente', async () => {
+    const app = await createTestApp({ db, cache: new MemoryCache(), modules: [authModule] });
+
+    await app.agent
+      .post('/api/v1/auth/login')
+      .send({ email: user.email, password: DEFAULT_TEST_PASSWORD })
+      .expect(200);
   });
 });

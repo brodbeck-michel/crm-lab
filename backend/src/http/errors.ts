@@ -85,6 +85,10 @@ export const ERROR_CATALOG = {
 
   // --- Sistema ---
   RATE_LIMIT_EXCEEDED: { statusCode: 429, message: 'Limite de requisicoes excedido' },
+  SERVICE_UNAVAILABLE: {
+    statusCode: 503,
+    message: 'Servico temporariamente indisponivel, tente novamente em instantes',
+  },
   INTERNAL_ERROR: { statusCode: 500, message: 'Erro interno do servidor' },
 } satisfies Record<ApiErrorCode, ErrorDefinition>;
 

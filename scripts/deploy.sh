@@ -111,12 +111,15 @@ fi
 msg "Buscando codigo ($REF)"
 git fetch --prune --tags origin
 git checkout --detach --quiet "$REF"          # detached: este clone nunca "tem branch" para divergir
-SHA="$(git rev-parse --short HEAD)"
+# `--short=7` FIXO (revisao do PR #46): sem o numero, `--short` alonga sozinho
+# quando ha prefixo ambiguo no clone — 8 chars aqui contra os 7 que o CI
+# publica (`${GITHUB_SHA::7}`) = `pull` com "manifest unknown".
+SHA="$(git rev-parse --short=7 HEAD)"
 export IMAGE_TAG="${PREFIXO_TAG}${SHA}"
 VERSAO="$(python3 -c 'import json;print(json.load(open("package.json"))["version"])')"
 info "commit  $SHA"
 info "versao  v$VERSAO (package.json da raiz — e o numero que aparece na tela)"
-info "imagens crm-lab-{backend,frontend}:$IMAGE_TAG"
+info "imagens ${IMAGE_REGISTRY:-}crm-lab-{backend,frontend}:$IMAGE_TAG"
 
 # ---------------------------------------------------------------------------
 # 3. Producao: checagem de versao/tag + confirmacao digitada
@@ -145,25 +148,142 @@ if [[ "$APP_ENV" == 'production' ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Build -> migrate -> up
+# 3b. CI verde no SHA (CRMLAB-38 item 6, D-150)
+#
+# Ate aqui o script confere que a arvore esta limpa e (em producao) que a tag
+# bate com a versao — mas nunca perguntou ao GitHub se o CI daquele commit
+# passou. Builda e sobe local mesmo com o `Typecheck, lint e testes` vermelho
+# no GitHub Actions, se alguem rodar o deploy sem olhar o PR.
+#
+# EXIGE `gh` autenticado NA MAQUINA QUE RODA ESTE SCRIPT (a VPS) — `gh auth
+# login` e passo manual, feito uma vez, fora deste script (ver
+# docs/guides/DEPLOYMENT.md). Sem `gh` instalado/autenticado, aborta com
+# mensagem clara em vez de seguir cego — silenciosamente pular a checagem
+# seria pior que nao te-la escrito.
 # ---------------------------------------------------------------------------
-msg "Build ($APP_ENV, ~10 min nos 2 vCPU)"
-dc build
+msg "Conferindo CI do commit $SHA"
+if ! command -v gh >/dev/null 2>&1; then
+  erro "gh (GitHub CLI) nao encontrado nesta maquina. Instale e rode 'gh auth login' antes de reusar este script — ver docs/guides/DEPLOYMENT.md."
+fi
+if ! gh auth status >/dev/null 2>&1; then
+  erro "gh instalado mas nao autenticado. Rode 'gh auth login' (uma vez, nesta maquina) antes de reusar este script."
+fi
+# SEM `--branch` (correcao da revisao deste card): o fluxo documentado de
+# homologacao e `deploy.sh --ref <branch da onda>`, e o run de CI daquele commit
+# fica atribuido a branch dele — nunca a `main`. Com `--branch main` fixo, TODO
+# deploy de hml por `--ref` abortava com `sem_run`. O filtro que importa e o
+# commit, que e exato; a branch so restringia sem ganho.
+CI_CONCLUSAO="$(gh run list --commit "$(git rev-parse HEAD)" --workflow CI \
+  --json conclusion --jq '.[0].conclusion // "sem_run"' 2>/dev/null || echo 'erro_consulta')"
+case "$CI_CONCLUSAO" in
+  success)
+    info "CI verde para $SHA"
+    ;;
+  sem_run)
+    erro "nenhum run do workflow CI encontrado para $SHA. Push feito? CI ainda rodando?"
+    ;;
+  erro_consulta)
+    erro "nao consegui consultar o CI via 'gh run list' (rede/token?). Rode 'gh auth status' manualmente pra diagnosticar."
+    ;;
+  *)
+    erro "CI do commit $SHA nao passou (conclusion=$CI_CONCLUSAO). Corrija antes de fazer deploy."
+    ;;
+esac
+
+# ---------------------------------------------------------------------------
+# 4. Imagem -> migrate -> up -> limpeza
+#
+# CRMLAB-36: o CI publica `backend`/`frontend` no GHCR a cada push em `main`
+# (job `docker`, `.github/workflows/ci.yml`) — o normal agora e' `pull`, nao
+# `build` na propria VPS (que ocupava os 2 vCPU por ~10 min e deixava o outro
+# ambiente lento). `IMAGE_REGISTRY` vem do `.env` do ambiente; sem ele, cai no
+# fallback documentado (build local — ver docs/guides/DEPLOYMENT.md §2).
+# ---------------------------------------------------------------------------
+if [[ -n "${IMAGE_REGISTRY:-}" ]]; then
+  # Barra final garantida (revisao do PR #46): `ghcr.io/owner/repo` sem a barra
+  # virava a imagem `ghcr.io/owner/repocrm-lab-backend` e um erro de pull
+  # confuso ("denied"/"name unknown") em vez de uma mensagem util. O valor
+  # certo e `ghcr.io/<owner>/<repo>/` — o CI publica sob owner/REPO (CRMLAB-41).
+  export IMAGE_REGISTRY="${IMAGE_REGISTRY%/}/"
+  msg "Pull das imagens ($APP_ENV, GHCR)"
+  info "registry $IMAGE_REGISTRY"
+  # Fallback para build quando a imagem nao existe no registry (revisao do PR
+  # #46): o CI so publica em push para `main`, entao um `--ref <branch>` em
+  # homologacao — o fluxo documentado — nao tem imagem para puxar e abortava
+  # sem explicar. Build local nesse caso e o comportamento certo; o aviso diz
+  # o porque e quanto custa.
+  if ! dc pull; then
+    printf '\n\033[1;33mAVISO: pull de %scrm-lab-{backend,frontend}:%s falhou — imagem nao publicada para este commit (CI so publica push em main). Caindo no build LOCAL (~10 min).\033[0m\n' "$IMAGE_REGISTRY" "$IMAGE_TAG"
+    msg "Build ($APP_ENV, ~10 min nos 2 vCPU)"
+    dc build
+  fi
+else
+  printf '\n\033[1;33mAVISO: IMAGE_REGISTRY nao definido no .env — build LOCAL (~10 min nos 2 vCPU).\033[0m\n'
+  info "Defina IMAGE_REGISTRY=ghcr.io/<owner>/<repo>/ no .env para usar as imagens ja publicadas pelo CI (CRMLAB-41)."
+  msg "Build ($APP_ENV, ~10 min nos 2 vCPU)"
+  dc build
+fi
 
 msg "Migrations"
 dc run --rm migrate
 
 msg "Subindo"
+# IDs de ANTES, para saber quem o compose realmente recriou (CRMLAB-43).
+BACKEND_ANTES="$(dc ps -q backend 2>/dev/null || true)"
+FRONTEND_ANTES="$(dc ps -q frontend 2>/dev/null || true)"
 dc up -d
+
+# ---------------------------------------------------------------------------
+# 4b. Frontend precisa reaprender o IP do backend (CRMLAB-43)
+#
+# O compose so recria quem mudou. Uma alteracao que afete SO o `backend`
+# (troca de segredo, LOG_LEVEL, a propria DATABASE_URL da D-165) recria o
+# backend com um IP novo e deixa o `frontend` de pe — e o nginx dele guarda o
+# IP resolvido na carga da conf. Foi o que tirou a API de producao do ar por
+# ~6 min em 21/09/2026.
+#
+# O `resolver` do `nginx/frontend.conf` ja corrige isso sozinho a cada 10 s.
+# Este restart e defesa em profundidade e mata a janela de 10 s: custa ~2 s e
+# so roda no caso especifico (backend trocou, frontend nao).
+# ---------------------------------------------------------------------------
+BACKEND_DEPOIS="$(dc ps -q backend 2>/dev/null || true)"
+FRONTEND_DEPOIS="$(dc ps -q frontend 2>/dev/null || true)"
+if [[ -n "$BACKEND_ANTES" && "$BACKEND_ANTES" != "$BACKEND_DEPOIS" \
+      && -n "$FRONTEND_ANTES" && "$FRONTEND_ANTES" == "$FRONTEND_DEPOIS" ]]; then
+  msg "Backend recriado e frontend nao — reiniciando o frontend (CRMLAB-43)"
+  dc restart frontend || info "restart do frontend falhou (o resolver do nginx cobre em ~10s)"
+fi
+
+# Limpeza (CRMLAB-36): sem isso, imagem antiga + cache de build acumulam
+# indefinidamente no disco (33 imagens / 3,4 GB de cache medidos na auditoria
+# de 19/09). `until=336h` (14 dias) nunca alcanca a imagem que acabou de subir
+# — so descarta o que ja envelheceu. Falha aqui NAO aborta o deploy: a stack
+# ja esta de pe nesse ponto, faxina e' best-effort.
+msg "Limpeza de imagens e cache antigos"
+docker image prune -af --filter 'until=336h' || info "prune de imagens falhou (nao critico)"
+docker builder prune -f --filter 'until=168h' || info "prune de build cache falhou (nao critico)"
 
 # ---------------------------------------------------------------------------
 # 5. Verificacao
 # ---------------------------------------------------------------------------
 porta="${HTTP_PORT##*:}"
-msg "Healthcheck em 127.0.0.1:$porta"
+
+# O health que vale e o do BACKEND (`/api/v1/health`, CRMLAB-29), nao o
+# `/healthz` do nginx.
+#
+# `/healthz` e um `return 200 "ok"` do proprio nginx: responde mesmo com o
+# backend morto, com o Postgres fora e com o Redis fora. Ate 19/09/2026 era
+# ele que este passo consultava — ou seja, o deploy declarava "no ar" sem ter
+# tocado em uma linha de codigo da aplicacao. Duas rajadas de 5xx no log do
+# Caddy passaram por deploys "bem-sucedidos".
+#
+# `/api/v1/health` atravessa o proxy ate o backend, faz `SELECT 1` e `PING`, e
+# devolve 503 (que o `-f` do curl reprova) quando uma dependencia esta fora.
+SAUDE="http://127.0.0.1:${porta}/api/v1/health"
+msg "Healthcheck real em $SAUDE"
 for tentativa in $(seq 1 30); do
-  if curl -fsS "http://127.0.0.1:${porta}/healthz" >/dev/null 2>&1; then
-    info "OK na tentativa $tentativa"
+  if curl -fsS --max-time 10 "$SAUDE" >/dev/null 2>&1; then
+    info "OK na tentativa $tentativa (backend, Postgres e Redis responderam)"
     dc ps --format 'table {{.Service}}\t{{.Status}}'
     msg "$APP_ENV no ar — $IMAGE_TAG (v$VERSAO)"
     exit 0
@@ -171,5 +291,25 @@ for tentativa in $(seq 1 30); do
   sleep 2
 done
 
+# Chegou aqui: o health nunca respondeu 200. Antes de abortar, diz o que o
+# operador iria descobrir na mao (CRMLAB-43) — se o nginx esta batendo num IP
+# que nao e mais o do backend, a mensagem generica manda investigar o backend,
+# que esta vivo, e esconde a causa real.
+IP_BACKEND="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
+  "$(dc ps -q backend 2>/dev/null)" 2>/dev/null || true)"
+IP_NO_NGINX="$(dc logs --tail 200 frontend 2>/dev/null \
+  | grep -oE 'upstream: "http://[0-9.]+' | tail -1 | grep -oE '[0-9.]+$' || true)"
+if [[ -n "$IP_BACKEND" && -n "$IP_NO_NGINX" && "$IP_BACKEND" != "$IP_NO_NGINX" ]]; then
+  printf '\n\033[1;33mPISTA: o nginx esta tentando %s e o backend esta em %s (CRMLAB-43).\n' \
+    "$IP_NO_NGINX" "$IP_BACKEND"
+  printf 'Resolve agora com: docker compose -p %s -f %s restart frontend\033[0m\n' \
+    "$PROJETO_ESPERADO" "$COMPOSE_FILE"
+fi
+
 dc ps
-erro "nao respondeu /healthz em 60s. A stack ANTERIOR pode ter sido substituida — investigue com 'docker compose -p $PROJETO_ESPERADO logs'."
+# O corpo do 503 diz QUAL dependencia caiu — imprimir aqui poupa a primeira
+# rodada de investigacao as 23h.
+printf '\nUltima resposta de %s:\n' "$SAUDE"
+curl -sS --max-time 10 "$SAUDE" || true
+printf '\n'
+erro "nao respondeu 200 em $SAUDE apos 30 tentativas (ate ~6 min: --max-time 10 + 2s de pausa cada). Se o /healthz do nginx responde e este nao, o nginx subiu e o BACKEND nao. A stack ANTERIOR pode ter sido substituida — investigue com 'docker compose -p $PROJETO_ESPERADO logs backend'."

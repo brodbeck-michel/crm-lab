@@ -77,6 +77,8 @@ const envSchema = z
     JWT_REFRESH_SECRET: optionalString,
     JWT_ACCESS_TTL: numberFrom(900),
     JWT_REFRESH_TTL: numberFrom(604800),
+    /** Teto da FAMÍLIA de refresh (CRMLAB-35, D-154) — 30 dias, não reiniciado a cada rotação. */
+    JWT_REFRESH_ABSOLUTE_TTL: numberFrom(30 * 24 * 60 * 60),
 
     WHATSAPP_API_URL: optionalString,
     WHATSAPP_API_TOKEN: optionalString,

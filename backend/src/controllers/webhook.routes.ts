@@ -35,6 +35,7 @@
  * acontece dentro de `db.withTenant(tenantId, ...)`, com o RLS ligado. Nenhum
  * caminho deste arquivo grava com `withoutTenant()`.
  */
+import { createHash } from 'node:crypto';
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { env } from '../config/env.js';
 import type { DbClient } from '../db/types.js';
@@ -105,6 +106,57 @@ export function tenantIdentityOf(req: Request): string {
   return '';
 }
 
+/**
+ * Anti-replay (CRMLAB-38 item 5, D-149). HMAC/token provam que o REMETENTE e
+ * legitimo, nao que a requisicao e NOVA — um corpo capturado (proxy, log,
+ * MITM antes do TLS) e reenviavel indefinidamente com assinatura valida.
+ * `messages.external_id` (019_messages_external_id_unique.sql) ja impede
+ * duplicar a MENSAGEM; isto cobre o que sobra: callbacks de status/conexao
+ * repetidos, que nao tem `external_id` nenhum pra colidir contra.
+ *
+ * TTL curto (10 min): o objetivo e recusar um replay LOGO em seguida
+ * (a janela realista de um MITM ou de um proxy reentregando), nao guardar
+ * hash pra sempre — isso so cresceria o Redis sem beneficio adicional.
+ */
+const REPLAY_TTL_SECONDS = 600;
+
+export function replayKey(tenantId: string, rawBody: string): string {
+  const digest = createHash('sha256').update(rawBody).digest('hex');
+  return `webhook:replay:${tenantId}:${digest}`;
+}
+
+/**
+ * `true` = corpo ja visto para este tenant nos ultimos 10 min. Marca como visto
+ * de qualquer forma.
+ *
+ * `incr` e nao get-entao-set (correcao da revisao deste card): `get` seguido de
+ * `set` nao e atomico e dois replays identicos chegando juntos passavam os DOIS
+ * pelo `get` antes de qualquer `set`. `incr` e atomico nas duas implementacoes
+ * de `CacheService` (`INCR` no Redis, um contador so no `MemoryCache`) e ja
+ * renova o TTL: quem recebe `1` e o primeiro, o resto e replay.
+ */
+export async function isReplay(cache: CacheService, tenantId: string, rawBody: string): Promise<boolean> {
+  const key = replayKey(tenantId, rawBody);
+  return (await cache.incr(key, REPLAY_TTL_SECONDS)) > 1;
+}
+
+/**
+ * Eventos cujo corpo se REPETE de forma legitima e cuja aplicacao e idempotente
+ * (correcao da revisao deste card).
+ *
+ * `CONNECTION_UPDATE` nao tem id nem timestamp: o corpo de um `state: 'open'` e
+ * byte a byte igual ao do `open` anterior. Num flap open -> close -> open dentro
+ * de 10 min, o segundo `open` cairia como replay e o canal ficaria marcado como
+ * desconectado no banco, na tela e no WS ate o proximo flap — pior do que o
+ * replay que a guarda evita, porque aqui reaplicar o estado nao causa dano
+ * nenhum (`markWhatsAppConnected/Disconnected` e idempotente).
+ */
+export function replayExempt(req: Request): boolean {
+  const body = asRecord(req.body);
+  const event = normalizeEvolutionEvent(body ? asNonEmptyString(body.event) : null);
+  return event === 'CONNECTION_UPDATE';
+}
+
 /** Resposta unica de todos os caminhos — nao e oraculo de nada. */
 function acknowledge(res: Response): void {
   res.status(200).json({ received: true });
@@ -146,6 +198,7 @@ export function createWebhookServices(
 async function authenticate(
   req: Request,
   services: WebhookServices,
+  cache: CacheService,
 ): Promise<{ tenantId: string } | null> {
   const identity = tenantIdentityOf(req);
   const credentials = await services.whatsapp.resolveWebhookTenant(identity);
@@ -174,6 +227,12 @@ async function authenticate(
     logger.warn('whatsapp.webhook_invalid_signature', { tenantId: credentials.tenantId });
     return null;
   }
+
+  // Anti-replay (CRMLAB-38 item 5, D-149) — ver comentario de `isReplay` acima.
+  if (await isReplay(cache, credentials.tenantId, rawBodyOf(req))) {
+    logger.warn('whatsapp.webhook_replay', { tenantId: credentials.tenantId });
+    return null;
+  }
   return { tenantId: credentials.tenantId };
 }
 
@@ -192,9 +251,9 @@ function safeHandle(fn: (req: Request, res: Response) => Promise<void>): Request
   };
 }
 
-export function whatsappInbound(services: WebhookServices): RequestHandler {
+export function whatsappInbound(services: WebhookServices, cache: CacheService): RequestHandler {
   return safeHandle(async (req, res) => {
-    const authenticated = await authenticate(req, services);
+    const authenticated = await authenticate(req, services, cache);
     if (!authenticated) {
       acknowledge(res);
       return;
@@ -244,9 +303,9 @@ export function whatsappInbound(services: WebhookServices): RequestHandler {
   });
 }
 
-export function whatsappStatus(services: WebhookServices): RequestHandler {
+export function whatsappStatus(services: WebhookServices, cache: CacheService): RequestHandler {
   return safeHandle(async (req, res) => {
-    const authenticated = await authenticate(req, services);
+    const authenticated = await authenticate(req, services, cache);
     if (!authenticated) {
       acknowledge(res);
       return;
@@ -351,6 +410,7 @@ function evolutionTokenValid(req: Request): boolean {
 async function authenticateEvolution(
   req: Request,
   services: WebhookServices,
+  cache: CacheService,
 ): Promise<{ tenantId: string } | null> {
   const identity = tenantIdentityOf(req);
   const credentials = await services.whatsapp.resolveWebhookTenant(identity);
@@ -364,6 +424,13 @@ async function authenticateEvolution(
   }
   if (!evolutionTokenValid(req)) {
     logger.warn('evolution.webhook_invalid_token', { tenantId: credentials.tenantId });
+    return null;
+  }
+  // Anti-replay (CRMLAB-38 item 5, D-149) — mesma logica de `authenticate()`
+  // acima; sem checagem de timestamp (payload do Evolution nao tem campo
+  // equivalente ao da Meta). `CONNECTION_UPDATE` fica de fora (`replayExempt`).
+  if (!replayExempt(req) && (await isReplay(cache, credentials.tenantId, rawBodyOf(req)))) {
+    logger.warn('evolution.webhook_replay', { tenantId: credentials.tenantId });
     return null;
   }
   return { tenantId: credentials.tenantId };
@@ -672,7 +739,7 @@ export function evolutionInbound(
   wsHub: WsHub,
 ): RequestHandler {
   return safeHandle(async (req, res) => {
-    const authenticated = await authenticateEvolution(req, services);
+    const authenticated = await authenticateEvolution(req, services, cache);
     if (!authenticated) {
       acknowledge(res);
       return;
@@ -720,9 +787,14 @@ export function evolutionInbound(
             // o webhook responde 200 do mesmo jeito (`acknowledge` no fim).
             const stored = await services.media.storeInbound(tenantId, inbound.media);
             if (stored) {
+              // `stored.mimeType` (nao `inbound.media.mimeType`): allow-list e
+              // sniff de magic bytes (CRMLAB-31) podem rebaixar o MIME
+              // declarado para `application/octet-stream` — o `messageType`
+              // precisa refletir o que foi REALMENTE gravado e servido, senao
+              // a bolha tenta abrir como imagem/pdf um anexo generico.
               const message = await services.messages.createFromPatient(tenantId, conversation.id, {
                 content: inbound.text,
-                messageType: messageTypeFromMime(inbound.media.mimeType),
+                messageType: messageTypeFromMime(stored.mimeType),
                 attachmentUrl: `/api/v1/media/${stored.id}`,
                 externalId: inbound.externalId,
               });
@@ -783,10 +855,11 @@ export function evolutionInbound(
 export function evolutionStatus(
   services: WebhookServices,
   db: DbClient,
+  cache: CacheService,
   wsHub: WsHub,
 ): RequestHandler {
   return safeHandle(async (req, res) => {
-    const authenticated = await authenticateEvolution(req, services);
+    const authenticated = await authenticateEvolution(req, services, cache);
     if (!authenticated) {
       acknowledge(res);
       return;
@@ -845,13 +918,16 @@ function buildWebhookModule(
   // de uma pessoa navegando.
   router.use(rateLimit({ cache: deps.cache, limit: env.RATE_LIMIT_WEBHOOK_PER_MINUTE }));
 
-  router.post('/whatsapp', whatsappInbound(services));
-  router.post('/whatsapp/status', whatsappStatus(services));
-  router.post('/whatsapp/:tenant', whatsappInbound(services));
-  router.post('/whatsapp/:tenant/status', whatsappStatus(services));
+  router.post('/whatsapp', whatsappInbound(services, deps.cache));
+  router.post('/whatsapp/status', whatsappStatus(services, deps.cache));
+  router.post('/whatsapp/:tenant', whatsappInbound(services, deps.cache));
+  router.post('/whatsapp/:tenant/status', whatsappStatus(services, deps.cache));
 
   router.post('/evolution/:tenant', evolutionInbound(services, deps.db, deps.cache, deps.wsHub));
-  router.post('/evolution/:tenant/status', evolutionStatus(services, deps.db, deps.wsHub));
+  router.post(
+    '/evolution/:tenant/status',
+    evolutionStatus(services, deps.db, deps.cache, deps.wsHub),
+  );
 
   return { basePath: '/webhooks', router, requiresAuth: false };
 }

@@ -6,7 +6,6 @@ import { useUIStore } from './ui.store';
 
 const LOGIN: LoginResponse = {
   accessToken: 'access-1',
-  refreshToken: 'refresh-1',
   expiresIn: 900,
   user: {
     id: 'u-1',
@@ -53,7 +52,6 @@ describe('useAuthStore — sessão', () => {
     expect(state.user?.id).toBe('u-1');
     expect(state.tenant?.slug).toBe('vida');
     expect(state.tokens?.accessToken).toBe('access-1');
-    expect(state.tokens?.refreshToken).toBe('refresh-1');
     expect(state.tokens?.expiresAt).toBeGreaterThan(Date.now());
   });
 
@@ -68,18 +66,29 @@ describe('useAuthStore — sessão', () => {
     expect(root.style.getPropertyValue('--color-accent-200')).toBe('');
   });
 
-  it('setAccessToken troca só o access token, preservando o refresh', () => {
+  it('setAccessToken troca o access token', () => {
     useAuthStore.getState().setSession(LOGIN);
     useAuthStore.getState().setAccessToken('access-2', 900);
 
-    expect(useAuthStore.getState().tokens).toMatchObject({
-      accessToken: 'access-2',
-      refreshToken: 'refresh-1',
-    });
+    expect(useAuthStore.getState().tokens).toMatchObject({ accessToken: 'access-2' });
   });
 
-  it('setAccessToken sem sessão é no-op (não ressuscita sessão morta)', () => {
+  /**
+   * CRMLAB-32 + revisão do PR #44: no bootstrap de página `tokens` é nulo mas
+   * `user` (persistido) existe — o access token entra. Sem `user` NENHUM
+   * (deslogado, ou refresh que resolveu depois do logout), o token é
+   * descartado: não se ressuscita sessão morta.
+   */
+  it('setAccessToken com identidade persistida e tokens nulos cria os tokens (bootstrap de página)', () => {
+    useAuthStore.getState().setSession(LOGIN);
+    useAuthStore.setState({ tokens: null });
     useAuthStore.getState().setAccessToken('access-2', 900);
+    expect(useAuthStore.getState().tokens?.accessToken).toBe('access-2');
+  });
+
+  it('setAccessToken sem sessão é no-op (não ressuscita sessão morta depois do logout)', () => {
+    useAuthStore.getState().clearSession();
+    useAuthStore.getState().setAccessToken('access-fantasma', 900);
     expect(useAuthStore.getState().tokens).toBeNull();
   });
 
@@ -117,14 +126,20 @@ describe('fronteira Zustand × TanStack Query', () => {
     }
   });
 
-  it('o que vai para o localStorage é só sessão', () => {
+  /**
+   * CRMLAB-32: `tokens` (access token) FICA FORA do localStorage — só
+   * identidade/preferência (`user`/`tenant`/`theme`) persiste. O access token
+   * vive em memória; o refresh vive no cookie httpOnly, que o JS nem lê.
+   */
+  it('o que vai para o localStorage é identidade e preferência — SEM tokens', () => {
     useAuthStore.getState().setSession(LOGIN);
 
     const raw = localStorage.getItem('crm-lab.session');
     expect(raw).toBeTruthy();
     const persisted = JSON.parse(raw as string) as { state: Record<string, unknown> };
 
-    expect(Object.keys(persisted.state).sort()).toEqual(['tenant', 'theme', 'tokens', 'user']);
+    expect(Object.keys(persisted.state).sort()).toEqual(['tenant', 'theme', 'user']);
+    expect(persisted.state).not.toHaveProperty('tokens');
   });
 
   it('dado de servidor empurrado por escapatória de runtime NÃO é persistido', () => {
@@ -138,7 +153,7 @@ describe('fronteira Zustand × TanStack Query', () => {
     const persisted = JSON.parse(localStorage.getItem('crm-lab.session') as string) as {
       state: Record<string, unknown>;
     };
-    expect(Object.keys(persisted.state).sort()).toEqual(['tenant', 'theme', 'tokens', 'user']);
+    expect(Object.keys(persisted.state).sort()).toEqual(['tenant', 'theme', 'user']);
     expect(persisted.state).not.toHaveProperty('proposals');
   });
 });

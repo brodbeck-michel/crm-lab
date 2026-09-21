@@ -72,6 +72,28 @@ Fora dessas linhas, qualquer envelope de recurso único é bug de contrato, não
 
 ## 1. Authentication & Users
 
+**CRMLAB-32 (2026-09-20).** O refresh token deixou de viajar pelo corpo JSON:
+sai só em `Set-Cookie`, httpOnly, ilegível por JavaScript. Resumo:
+
+- `crm_refresh` — cookie do refresh, gravado por `/login` e `/refresh`, limpo por `/logout`.
+  Atributos: `HttpOnly`; `Secure` (só em produção/homologação — TLS real; ausente em `development`/`test`,
+  onde não há HTTPS local); `SameSite=Strict`; `Path=/` (CRMLAB-33, era `/api/v1/auth` —
+  ver nota abaixo); `Max-Age` = `JWT_REFRESH_TTL` (7d).
+- **`Path=/` desde CRMLAB-33 (D-151).** Era `/api/v1/auth`; ampliado porque
+  o handshake de `/ws` também precisa do cookie e um cookie só aceita um `Path`. `/` também
+  atende `PATCH /users/me/password` (abaixo), que lê o cookie da sessão atual para excluí-la da
+  revogação em massa das outras sessões. O risco extra é nenhum: mesmo `HttpOnly`, mesmo
+  `SameSite=Strict`, mesmo origin; só passa a viajar em mais endpoints do MESMO backend.
+- `POST /refresh` exige o header `X-Requested-With: crm-lab` — proteção CSRF extra além de
+  `SameSite=Strict`/`Path` (um form HTML cross-site não consegue setar header customizado).
+- `RefreshRequest.refreshToken` no corpo é fallback **DEPRECIADO** de transição (clientes que
+  ainda não migraram para o cookie); cookie tem prioridade quando os dois vêm juntos.
+  **Remoção prevista: 2026-10-04.**
+- `LoginResponse`/`RefreshResponse` (`shared/types/auth.types.ts`) não carregam mais
+  `refreshToken` — só o access token.
+- Backend NÃO liga `credentials: true` no CORS geral (`app.ts`): nginx serve SPA e API no mesmo
+  origin em produção/homologação, então o cookie viaja sozinho sem CORS com credenciais.
+
 ### POST /auth/login
 Fazer login.
 
@@ -87,7 +109,6 @@ Fazer login.
 ```json
 {
   "accessToken": "eyJhbGc...",
-  "refreshToken": "eyJhbGc...",
   "expiresIn": 900,
   "user": {
     "id": "uuid",
@@ -104,47 +125,47 @@ Fazer login.
   }
 }
 ```
+`Set-Cookie: crm_refresh=<token>; HttpOnly; Secure; SameSite=Strict; Path=/` (ver nota acima).
 
 ### POST /auth/refresh
-Renovar access token usando refresh token.
+Renovar access token usando o refresh do cookie `crm_refresh` (corpo vazio `{}` no caso normal).
 
 **Request:**
 ```json
-{
-  "refreshToken": "eyJhbGc..."
-}
+{}
+```
+Header: `X-Requested-With: crm-lab` (obrigatório — sem ele, `REFRESH_TOKEN_INVALID`).
+
+Fallback depreciado (ver nota acima), sem cookie:
+```json
+{ "refreshToken": "eyJhbGc..." }
 ```
 
 **Response (200):**
 ```json
 {
   "accessToken": "eyJhbGc...",
-  "expiresIn": 900,
-  "refreshToken": "eyJhbGc..."
+  "expiresIn": 900
 }
 ```
+`Set-Cookie: crm_refresh=<token-novo>; ...` (mesmos atributos do login).
 
 O refresh token é **rotacionado a cada uso** (SECURITY.md): a chamada revoga o token
-enviado e emite um novo, devolvido em `refreshToken` (D-014). O cliente DEVE substituir
-o token guardado. Reusar um refresh já rotacionado é tratado como roubo: devolve
-`REFRESH_TOKEN_INVALID` e revoga toda a família de tokens do usuário (D-015).
+enviado e emite um novo, devolvido só no `Set-Cookie` (D-014). Reusar um refresh já
+rotacionado é tratado como roubo: devolve `REFRESH_TOKEN_INVALID` e revoga toda a família
+de tokens do usuário (D-015).
 
-`RefreshResponse` em `shared/types/auth.types.ts` declara os três campos, `refreshToken`
-**obrigatório** — a rotação é incondicional, então um campo opcional descreveria uma
-resposta que não existe (D-053). A divergência aberta na Onda 5 está fechada: não há mais
-tipo local no `auth.service`.
-
-**Erros:** `REFRESH_TOKEN_INVALID` (401), `USER_INACTIVE` (403), `TENANT_INACTIVE` (403)
+**Erros:** `REFRESH_TOKEN_INVALID` (401 — inclui cookie/body ausentes e header
+`X-Requested-With` ausente/errado), `USER_INACTIVE` (403), `TENANT_INACTIVE` (403)
 
 ### POST /auth/logout
-Fazer logout (invalidar refresh token).
+Fazer logout (invalidar refresh token e limpar o cookie).
 
 **Request:**
 ```json
-{
-  "refreshToken": "eyJhbGc..."
-}
+{}
 ```
+Lê o refresh do cookie `crm_refresh` (fallback depreciado: `{ "refreshToken": "..." }` no corpo).
 
 **Response (200):**
 ```json
@@ -152,6 +173,7 @@ Fazer logout (invalidar refresh token).
   "message": "Logged out successfully"
 }
 ```
+`Set-Cookie: crm_refresh=; Max-Age=0; Path=/` (limpa o cookie).
 
 Idempotente: token desconhecido ou já revogado devolve a mesma resposta (não é oráculo).
 
@@ -265,6 +287,37 @@ gera audit log: só papel, alçada e status geram — e só quando o valor de fa
 
 **Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403), `NOT_FOUND` (404 — inexistente
 **ou de outro tenant**; nunca 403, para não vazar existência)
+
+### PATCH /users/me/password (CRMLAB-35)
+Troca a própria senha. Qualquer papel de tenant (não é rota de admin — cada um troca a
+sua). `platform_operator` cai em `denyPlatformOperator()` como o resto do módulo.
+
+**Request:**
+```json
+{
+  "currentPassword": "senha-atual",
+  "newPassword": "senha-nova-com-10-chars"
+}
+```
+
+`newPassword` mínimo 10 caracteres e fora de uma lista curta de senhas triviais embutida
+(D-153 — decisão contra `zxcvbn` para não trazer dependência nova só para isso).
+
+**Response (200):**
+```json
+{ "message": "Senha alterada com sucesso" }
+```
+
+**Efeito colateral, não é side-channel:** revoga TODAS as famílias de refresh do usuário
+**exceto a da sessão que fez a troca** (identificada pelo cookie `crm_refresh` da própria
+requisição, que o `Path=/` do CRMLAB-33 já entrega a esta rota — nota acima). Sem
+cookie na requisição (cliente que ainda usa o fallback de corpo depreciado), revoga TODAS,
+sem exceção — a sessão atual desloga junto nesse caso. Gera `audit_log`
+(`change_own_password`).
+
+**Erros:** `VALIDATION_ERROR` (400 — `details.fields.currentPassword` quando a senha atual
+não bate, `details.fields.newPassword` quando a nova não passa na política), `NOT_FOUND`
+(404 — usuário sumiu no meio da requisição, caso raríssimo)
 
 ---
 
@@ -1420,6 +1473,43 @@ justificativa não fica gravada no cadastro.
 
 ## 2d. Media (Onda 8 §4)
 
+### Hardening de mídia (CRMLAB-31)
+
+Quem grava mídia (`POST /conversations/:id/attachments`, os dois webhooks de canal) NUNCA aceita
+o MIME informado de olhos fechados — `MediaService.resolveStoredMimeType` roda nos dois sentidos
+(entrada do paciente e saída do atendente):
+
+1. **Allow-list** (`shared/types/media.types.ts`, `ALLOWED_MEDIA_MIME_TYPES` — fonte única):
+   `image/jpeg`, `image/png`, `image/webp`, `image/gif`, `image/heic`, `audio/ogg`, `audio/mpeg`,
+   `audio/mp4`, `audio/aac`, `audio/amr`, `video/mp4`, `application/pdf`, `application/msword`,
+   `application/vnd.ms-excel`,
+   `application/vnd.openxmlformats-officedocument.wordprocessingml.document`,
+   `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`,
+   `application/vnd.openxmlformats-officedocument.presentationml.presentation`, `text/plain`,
+   `text/csv`.
+   A comparação é sobre o MIME **normalizado** (`normalizeMediaMimeType`): minúsculo, **sem
+   parâmetros** (`audio/ogg; codecs=opus` — o mimetype padrão do recado de voz do WhatsApp — é
+   `audio/ogg`) e com sinônimos resolvidos (`audio/x-m4a` → `audio/mp4`, `image/apng` →
+   `image/png`, `image/jpg` → `image/jpeg`). Sem isso todo áudio recebido era rebaixado (D-169).
+   - **Entrada** (webhooks): MIME fora da lista (ex. `text/html`, `image/svg+xml` — o vetor de
+     XSS que motivou o card) é gravado como `application/octet-stream`.
+   - **Saída** (`POST /conversations/:id/attachments`): MIME fora da lista é
+     `400 VALIDATION_ERROR` em `fields.mimeType` — o atendente precisa saber que a foto HEIC ou o
+     `.xls` não foi, em vez de o paciente receber um "documento" genérico (D-169).
+2. **Sniff de magic bytes** (pacote `file-type`), só para `image/*`, `audio/*` e
+   `application/pdf`: quando o `file-type` reconhece POSITIVAMENTE um formato de **outra
+   categoria** (imagem × áudio × PDF × outro) que o declarado, o gravado vira
+   `application/octet-stream`. A comparação é por categoria, não por string: `file-type` rotula
+   Opus-em-Ogg como `audio/ogg; codecs=opus` e M4A como `audio/x-m4a` — mesma coisa, string
+   diferente. Formato sem assinatura binária reconhecível (`audio/amr`, por exemplo) não é
+   tratado como divergência provada; o MIME declarado (já filtrado pela allow-list) é mantido.
+3. O MIME **efetivamente gravado** (não o declarado no request) é o que vira `messageType` da
+   mensagem e o `Content-Type`/`Content-Disposition` de `GET /media/:id` — um anexo rebaixado
+   nunca aparece como imagem/PDF na conversa.
+4. **A allow-list vale também na leitura**: `GET /media/:id` confere o MIME gravado contra a
+   lista e serve `application/octet-stream` + `attachment` para o que estiver fora — cobre linhas
+   de `message_media` gravadas antes do CRMLAB-31 (D-169).
+
 ### GET /media/:id
 Baixa o arquivo de mídia de uma mensagem (foto, PDF ou áudio).
 
@@ -1427,8 +1517,11 @@ Baixa o arquivo de mídia de uma mensagem (foto, PDF ou áudio).
 áudio de paciente. Rota autenticada, filtrada por tenant (RLS) — mídia de
 outro tenant é `NOT_FOUND` (CLAUDE.md regra 8), nunca `FORBIDDEN`.
 
-**Response (200):** o corpo bruto do arquivo, com `Content-Type` do
-`mimeType` gravado e `Content-Disposition: inline; filename="..."`.
+**Response (200):** o corpo bruto do arquivo, com `Content-Type` do `mimeType` gravado (já
+passado pelo hardening acima), `X-Content-Type-Options: nosniff`, e `Content-Disposition`:
+- `inline; filename="..."` para `image/*` e `audio/*`;
+- `attachment; filename="..."` para tudo o mais (PDF, doc, `application/octet-stream`) — o
+  navegador baixa, nunca tenta renderizar no mesmo origin da SPA.
 
 **Erros:** `NOT_FOUND` (404 — inexistente ou de outro tenant), `VALIDATION_ERROR`
 (400, `:id` não-uuid), `FORBIDDEN` (403, `platform_operator`)
@@ -4120,9 +4213,32 @@ Todos os erros seguem este formato:
 ## Rate Limiting
 
 ```
-Limite: 100 requisições por minuto por usuário
-Headers: X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset
+Limite: 100 requisições por minuto por usuário (por IP quando não há Bearer)
+Janela: FIXA de 60 s, alinhada ao relógio (chave = identidade + índice da janela)
+Headers legados:  X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset  (Reset = epoch em segundos)
+Headers do draft: RateLimit-Limit,   RateLimit-Remaining,   RateLimit-Reset    (Reset = segundos ATÉ o reset)
+Ao exceder:       Retry-After (segundos)
 ```
+
+Os dois conjuntos de headers convivem (D-139/CRMLAB-34); o `Reset` tem semântica diferente em
+cada um de propósito — é assim que `draft-ietf-httpapi-ratelimit-headers` define o campo.
+
+**Janela fixa, não deslizante** (tolerância de rajada conhecida): um cliente pode enviar até
+2× o limite num intervalo de 60 s que atravesse a fronteira de duas janelas (100 no segundo 59,
+100 no segundo 0). Aceito: o objetivo do limitador é conter abuso sustentado e proteger o
+gateway, não medir precisão por segundo; a janela fixa custa um `INCR` por requisição, sem
+listas de timestamps (revisão do PR #45, D-168).
+
+**Rota pública com o Redis fora do ar** (D-139): `/auth/login`, `/auth/refresh` e os webhooks
+respondem `503 SERVICE_UNAVAILABLE` (fail-closed); rota autenticada passa sem limite
+(fail-open). O casamento dessas rotas é feito sobre o caminho **normalizado** como o roteador do
+Express o vê — minúsculo, sem barra final, sem barras duplicadas, percent-decoding resolvido
+(D-168).
+
+**Lockout de login** (`/auth/login`, separado do limitador global): a **tentativa** é contada
+antes da senha ser conferida (`INCR` primeiro); a 6ª tentativa em 15 min para o mesmo
+e-mail+IP recebe `429 RATE_LIMIT_EXCEEDED` sem que a senha seja olhada. Acertar a senha zera o
+contador. A janela de 15 min é fixa a partir da 1ª tentativa (D-168).
 
 **Response (429):**
 ```json
@@ -4139,7 +4255,10 @@ Headers: X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset
 
 ## WebSocket Events (Real-time)
 
-Conexão: `ws://localhost:3000/ws?token=JWT`
+Conexão: `wss://host/ws` — autenticada pelo cookie httpOnly `crm_refresh` (CRMLAB-32), enviado
+sozinho pelo browser no handshake (mesmo origin). Sem token na URL desde o CRMLAB-33/D-151 (ver
+`docs/contracts/FRONTEND_BACKEND.md` "Real-time" para o contrato completo, incluindo o código de
+close `WS_CLOSE_UNAUTHORIZED` e a checagem de `Origin`).
 
 **Eventos Subscribe:**
 ```javascript

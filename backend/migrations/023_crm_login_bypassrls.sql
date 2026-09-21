@@ -1,0 +1,41 @@
+-- =============================================================================
+-- 023_crm_login_bypassrls.sql
+-- CRMLAB-38 / D-165 — corrige a role `crm_login` criada NOBYPASSRLS no 020.
+--
+-- O 020 subiu em homologacao e producao em 21/09/2026 (v1.13.0) criando
+-- `crm_login` com NOBYPASSRLS. A intencao era a certa — tirar o SUPERUSER da
+-- conexao da pool — mas o efeito colateral tornava a troca da `DATABASE_URL`
+-- IMPOSSIVEL, e a troca e o unico ponto do card que entrega valor: enquanto a
+-- pool continuar conectando como a role dona, nada mudou de fato.
+--
+-- Medido no banco de homologacao, com dados reais:
+--
+--     SET ROLE crm_login;  -- NOBYPASSRLS, sem app.tenant_id
+--     SELECT count(*) FROM users;    -- 0   (real: 5)
+--     SELECT count(*) FROM tenants;  -- 0   (real: 3)
+--
+-- Zero linha em TODO caminho `withoutTenant()`: login (busca o usuario por
+-- e-mail antes de saber o tenant), `/platform/*`, `resolveWebhookTenant`,
+-- seeds. O cabecalho de `002_row_level_security.sql` ja dizia isso em texto —
+-- esses caminhos "rodam como dono da tabela, que burla RLS" — mas o 020 foi
+-- escrito sem reler o 002.
+--
+-- Depois do ALTER abaixo, no mesmo banco:
+--
+--     SET ROLE crm_login;                       -- BYPASSRLS
+--     SELECT count(*) FROM users;               -- 5   (caminho sem tenant, OK)
+--     BEGIN; SET LOCAL ROLE crm_app;
+--            SET LOCAL app.tenant_id = '<um tenant>';
+--     SELECT count(*) FROM users;               -- 3 de 5   (RLS ativo)
+--     SELECT count(*) FROM tenants;             -- 1 de 3   (RLS ativo)
+--
+-- O isolamento multitenant (regra critica 1 do CLAUDE.md) continua intacto:
+-- `withTenant()` faz `SET LOCAL ROLE crm_app` (D-002) e `crm_app` NAO tem
+-- BYPASSRLS. BYPASSRLS em `crm_login` so vale onde hoje ja se burla o RLS de
+-- qualquer forma, por ser a role dona.
+--
+-- O que este card remove de verdade, e continua removendo: SUPERUSER — DDL,
+-- DROP TABLE, COPY lendo arquivo do host, leitura de qualquer tabela do
+-- cluster, alteracao de outras roles.
+-- =============================================================================
+ALTER ROLE crm_login WITH LOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION;

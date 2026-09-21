@@ -9,7 +9,7 @@ Inventário COMPLETO de componentes reutilizáveis. Regra do design system: **n�
 ```
 frontend/src/components/
 ├── ui/            # Primitivos (Button, Chip, Input, ...)
-├── conversation/  # ConversationItem, MessageBubble, Composer
+├── conversation/  # ConversationItem, MessageBubble, AudioMessage, Composer
 ├── proposal/      # ProposalCard, ProposalModal, StageColumn
 ├── layout/        # Sidebar, InboxLayout, PageHeader
 └── shared/        # Avatar, EmptyState, DataTable, Modal
@@ -76,13 +76,31 @@ Anatomia (padrão WhatsApp):
 ```
 - 3 tipos, NUNCA mais. Canto "apontado" (radius-sm) marca a origem
 - Largura máx. 62% no inbox
+- Cor (CRMLAB-25): recebida `--color-chat-received`, enviada `--color-chat-sent`, as duas com
+  borda de 1px do par `-border` e sobre o papel BRANCO da conversa. Lado + cor: bate o olho e
+  se sabe quem falou. As antigas `surface` / `accent-200` misturavam com `--color-bg` e, sobre o
+  bege do tema, fundo e as duas bolhas viravam a mesma coisa
 - Anexo `messageType: 'image'` (CRMLAB-15): thumbnail (`rounded-md`, máx. 300px de altura) no lugar
-  do link "Anexo (tipo)". Clique abre `ImageLightbox` em tela cheia — padrão WhatsApp Web. Outros
-  `messageType` continuam com o link genérico
-- `GET /media/:id` exige `Authorization` (requireAuth) — um `<img src>` cru nunca manda esse header.
-  O thumbnail busca a imagem via `useAuthenticatedImage` (`hooks/`), que chama
+  do link "Anexo (tipo)". Clique abre `ImageLightbox` em tela cheia — padrão WhatsApp Web
+- Anexo `messageType: 'audio'` (CRMLAB-2): `AudioMessage` na própria bolha no lugar do link.
+  Os demais `messageType` continuam com o link genérico
+- `GET /media/:id` exige `Authorization` (requireAuth) — um `<img src>`/`<audio src>` cru nunca
+  manda esse header. A mídia vem por `useAuthenticatedMedia` (`hooks/`), que chama
   `fetchAuthenticatedBlob` (`api/client.ts`) e usa `URL.createObjectURL` como `src`. Enquanto
-  carrega ou se a busca falhar, mostra texto no lugar da imagem — nunca `<img>` quebrado
+  carrega ou se a busca falhar, mostra texto no lugar da mídia — nunca `<img>`/player quebrado
+- `useAuthenticatedMedia` devolve também o `fileName` (do `Content-Disposition` de
+  `GET /media/:id`), repassado ao `ImageLightbox` — é o nome com que a imagem é salva (CRMLAB-26)
+
+### AudioMessage (CRMLAB-2)
+```tsx
+<AudioMessage url={message.attachmentUrl} />
+```
+- Player de áudio dentro da bolha: `<audio controls>` NATIVO — play/pause, barra com tempo
+  decorrido/total, seek e teclado de graça. Player desenhado à mão só entra se o visual virar
+  exigência real (mesma lógica do `EmojiPicker` sem biblioteca)
+- Busca o blob autenticado por `useAuthenticatedMedia`; `src` é o object URL, nunca a URL crua
+- Link "Baixar áudio" sempre visível: o Evolution entrega ogg/opus, que o Safari não toca. Se o
+  `<audio>` dispara `error`, o player dá lugar a um aviso e o download fica como plano B
 
 ### Composer
 - Input pílula + botão anexo + botão emoji + botão enviar (primary)
@@ -218,14 +236,24 @@ Anatomia (padrão WhatsApp):
 - Backdrop translúcido escuro, cartão radius-lg + shadow-lg, máx 720px
 - Rolagem interna; fecha por × e clique-fora (stopPropagation no cartão)
 
-### ImageLightbox (CRMLAB-15)
+### ImageLightbox (CRMLAB-15, zoom em CRMLAB-21)
 ```tsx
 <ImageLightbox src={url | null} fileName="foto.jpg" onClose={() => {}} />
 ```
 - Visualização de imagem em tela cheia — referência WhatsApp Web. Mais leve que `Modal`: mesmo
   backdrop (`bg-backdrop`), mas sem cartão/título/foco preso — só a imagem (`rounded-lg`,
   `shadow-lg`, `max-h-[86vh]`) sobre o fundo
-- Botões × (fechar) e ↓ (baixar) circulares no canto superior direito, mesmo padrão do × do Modal
+- Botões − / + (zoom), ⤢ (tamanho original, só com zoom aplicado), ↓ (baixar) e × (fechar)
+  circulares no canto superior direito, mesmo padrão do × do Modal
+- ↓ (CRMLAB-26): `<a download>` para a pasta de Downloads, com `fileName` como nome do arquivo.
+  Sem `fileName` cai em `"imagem"` SEM extensão (o browser completa pelo tipo do blob) — o
+  atributo `download` nunca pode sumir, ou o ↓ vira navegação para o blob em vez de salvar.
+  O download não fecha o lightbox
+- Zoom (CRMLAB-21): roda do mouse, pinça, botões − / + e duplo clique (duplo clique de novo
+  volta ao original). Roda e pinça ancoram no ponto sob o cursor/dedos — aproximar num canto não
+  joga o trecho de interesse para fora da tela. Escala entre 1× e 6×
+- Com a imagem ampliada, arrastar move o enquadramento (`cursor-grab`). O `click` que encerra o
+  arraste NÃO fecha o lightbox — só um clique fora de verdade fecha
 - Fecha por ×, Esc e clique fora da imagem (clique NA imagem não fecha — `stopPropagation`)
 - `src={null}` não renderiza nada — o chamador controla a abertura guardando a própria URL
 
@@ -482,6 +510,7 @@ tela passa tudo por props (o dado vem do TanStack Query).
 |------------|-----------|-------|
 | `ConversationItem` | `<ConversationItem conversation selected? onClick?(id) now? />` | `now` é injetável só para tornar "aguardando N min" determinístico em teste |
 | `MessageBubble` | `<MessageBubble type message maxWidth? showMeta? />` | `type` ∈ `received \| sent \| system` — os únicos 3 |
+| `AudioMessage` | `<AudioMessage url />` | `<audio controls>` nativo com blob autenticado · download sempre disponível |
 | `Composer` | `<Composer onSend(content) onAttach? disabled? sending? placeholder? quickReplies? />` | Enter envia · Shift+Enter quebra linha · emoji insere no cursor · `/` no campo vazio abre as macros |
 | `EmojiPicker` | `<EmojiPicker onPick(emoji) disabled? />` | Grade fixa de 48, sem biblioteca · `Esc` fecha e devolve o foco |
 | `QuickReplyMenu` | `<QuickReplyMenu items filter onPick(reply) onClose() />` | Aberto pela `/` no campo vazio · ↑↓ navega, Enter escolhe, Esc fecha |

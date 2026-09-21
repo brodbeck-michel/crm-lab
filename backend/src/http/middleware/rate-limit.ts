@@ -2,9 +2,14 @@
  * Rate limiting — 100 req/min por usuario (`RATE_LIMIT_PER_MINUTE`).
  * SECURITY.md "OWASP" exige o limite ativo.
  *
- * Implementado sobre `CacheService` (D-011): janela deslizante simples,
- * guardando os timestamps das requisicoes da janela. Com Redis, o mesmo codigo
- * passa a valer para todas as instancias.
+ * Implementado sobre `CacheService.incr` (D-139): janela FIXA — a chave
+ * carrega o indice da janela (`Math.floor(at / windowMs)`) e um UNICO `INCR`
+ * atomico decide se a requisicao cabe. Antes era `get` -> filtra array de
+ * timestamps -> `set`: duas requisicoes concorrentes liam o MESMO estado,
+ * as duas calculavam "ainda cabe" e as duas escreviam, perdendo um
+ * incremento (rajada paralela furava o limite) — e o array serializado em
+ * JSON a cada hit custava O(limite) por requisicao. `INCR` e O(1) e atomico
+ * no servidor, sem essa janela entre leitura e escrita.
  *
  * ==========================================================================
  * A CHAVE: usuario autenticado quando ha token; IP nas rotas publicas.
@@ -29,6 +34,7 @@
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { env } from '../../config/env.js';
 import type { CacheService } from '../../lib/cache.js';
+import { logCacheUnavailable } from '../../lib/cache.js';
 import { verifyAccessToken } from '../../lib/tokens.js';
 import { clientIp } from '../context.js';
 import { BusinessError } from '../errors.js';
@@ -62,8 +68,50 @@ export const RATE_LIMIT_PREFIX = 'ratelimit:';
  * query string, dai o `startsWith` sobre o caminho puro.
  */
 export function isChannelWebhook(req: Request): boolean {
-  const [path] = req.originalUrl.split('?');
-  return path?.startsWith('/api/v1/webhooks/') ?? false;
+  const path = pathOf(req);
+  return path === '/api/v1/webhooks' || path.startsWith('/api/v1/webhooks/');
+}
+
+/**
+ * Caminho da requisicao NORMALIZADO do jeito que o roteador do Express o
+ * enxerga (revisao do PR #45): minusculo, sem barras duplicadas, sem barra
+ * final, sem query string e com percent-encoding resolvido.
+ *
+ * O roteador do Express e case-insensitive e nao-estrito por padrao, entao
+ * `/API/V1/AUTH/REFRESH`, `/api/v1/auth/refresh/` e `/api/v1/auth//refresh`
+ * caem TODOS no handler de `/auth/refresh`. Comparar a string crua de
+ * `originalUrl` com uma lista de caminhos deixava essas variantes fora de
+ * `isPublicRoute` — e, com o Redis fora do ar, a rota publica caia no ramo
+ * fail-OPEN em vez do fail-CLOSED que a D-139 promete: `/auth/refresh`
+ * sem limite nenhum, so por trocar uma letra de caixa.
+ */
+export function pathOf(req: Request): string {
+  const [raw = ''] = req.originalUrl.split('?');
+  let path = raw;
+  try {
+    path = decodeURIComponent(raw);
+  } catch {
+    // Percent-encoding invalido: fica a string crua — o roteador tambem nao
+    // vai casar nada com ela.
+  }
+  path = path.toLowerCase().replace(/\/{2,}/g, '/');
+  if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
+  return path;
+}
+
+/**
+ * Rotas publicas para efeito de D-139 (comportamento com Redis fora do ar em
+ * runtime): sem sessao/JWT para se apoiar, entao um cache indisponivel aqui
+ * fica fail-CLOSED (503 `SERVICE_UNAVAILABLE`) em vez de deixar passar sem
+ * lockout/limite. `/auth/logout` fica de fora de proposito — nao ha o que
+ * proteger (so revoga um token) e travar logout com o cache fora do ar
+ * pioraria um incidente, nao ajudaria.
+ */
+const PUBLIC_ROUTE_PATHS = ['/api/v1/auth/login', '/api/v1/auth/refresh'];
+
+export function isPublicRoute(req: Request): boolean {
+  if (isChannelWebhook(req)) return true;
+  return PUBLIC_ROUTE_PATHS.includes(pathOf(req));
 }
 
 /**
@@ -87,9 +135,38 @@ function verifiedUserId(req: Request): string | null {
   return result.ok ? result.payload.userId : null;
 }
 
+/**
+ * Escreve os headers de cota nos dois formatos: `X-RateLimit-*` (o que o
+ * frontend/CORS ja consomem, D-050) e os do draft IETF
+ * (`draft-ietf-httpapi-ratelimit-headers`, sem prefixo `X-`). Os dois
+ * convivem — trocar um pelo outro quebraria contrato (`API_CONTRACTS.md`,
+ * `exposedHeaders` do CORS em `app.ts`) sem necessidade.
+ *
+ * Diferenca proposital de semantica em "Reset": o legado e epoch absoluto
+ * (segundos desde 1970); o do draft e DELTA — segundos ATE o reset, a partir
+ * de agora — porque e assim que o draft define o campo.
+ */
+function setRateLimitHeaders(
+  res: Response,
+  limit: number,
+  remaining: number,
+  resetAt: number,
+  at: number,
+): void {
+  const resetEpochSeconds = Math.ceil(resetAt / 1000);
+  const resetDeltaSeconds = Math.max(0, Math.ceil((resetAt - at) / 1000));
+  res.setHeader('X-RateLimit-Limit', String(limit));
+  res.setHeader('X-RateLimit-Remaining', String(remaining));
+  res.setHeader('X-RateLimit-Reset', String(resetEpochSeconds));
+  res.setHeader('RateLimit-Limit', String(limit));
+  res.setHeader('RateLimit-Remaining', String(remaining));
+  res.setHeader('RateLimit-Reset', String(resetDeltaSeconds));
+}
+
 export function rateLimit(options: RateLimitOptions): RequestHandler {
   const limit = options.limit ?? env.RATE_LIMIT_PER_MINUTE;
   const windowMs = options.windowMs ?? 60_000;
+  const windowSeconds = Math.max(1, Math.ceil(windowMs / 1000));
   const resolveKey = options.keyResolver ?? rateLimitKey;
   const now = options.now ?? (() => Date.now());
 
@@ -98,36 +175,48 @@ export function rateLimit(options: RateLimitOptions): RequestHandler {
       next();
       return;
     }
-    const cacheKey = `${RATE_LIMIT_PREFIX}${resolveKey(req)}`;
     const at = now();
+    // Janela FIXA: o indice da janela entra na propria chave, entao todas as
+    // requisicoes da mesma janela caem no MESMO INCR e o TTL cobre a janela
+    // inteira — sem precisar filtrar timestamp nenhum na leitura.
+    const windowIndex = Math.floor(at / windowMs);
+    const cacheKey = `${RATE_LIMIT_PREFIX}${resolveKey(req)}:${windowIndex}`;
+    const resetAt = (windowIndex + 1) * windowMs;
 
     void (async () => {
       try {
-        const stored = (await options.cache.get<number[]>(cacheKey)) ?? [];
-        const hits = stored.filter((ts) => ts > at - windowMs);
+        const hits = await options.cache.incr(cacheKey, windowSeconds);
 
-        res.setHeader('X-RateLimit-Limit', String(limit));
-
-        if (hits.length >= limit) {
-          const oldest = hits[0] ?? at;
-          const resetAt = oldest + windowMs;
+        if (hits > limit) {
           const retryAfter = Math.max(1, Math.ceil((resetAt - at) / 1000));
-          res.setHeader('X-RateLimit-Remaining', '0');
-          res.setHeader('X-RateLimit-Reset', String(Math.ceil(resetAt / 1000)));
+          setRateLimitHeaders(res, limit, 0, resetAt, at);
           res.setHeader('Retry-After', String(retryAfter));
           next(new BusinessError('RATE_LIMIT_EXCEEDED', { retryAfter }));
           return;
         }
 
-        hits.push(at);
-        // TTL = janela: entradas antigas somem sozinhas mesmo sem trafego.
-        await options.cache.set(cacheKey, hits, Math.ceil(windowMs / 1000));
-
-        res.setHeader('X-RateLimit-Remaining', String(limit - hits.length));
-        res.setHeader('X-RateLimit-Reset', String(Math.ceil((at + windowMs) / 1000)));
+        setRateLimitHeaders(res, limit, limit - hits, resetAt, at);
         next();
       } catch (err) {
-        next(err);
+        // D-139: Redis caiu EM RUNTIME (nao no boot — isso ja e barrado por
+        // `verifyCacheReady`/D-058). Nao pode virar 500 pra tudo: rota
+        // publica (login/refresh/webhook) fica fail-CLOSED, porque e
+        // exatamente o que rate limit/lockout protegem; rota autenticada
+        // fica fail-OPEN, porque o JWT ja e a defesa primaria dela e recusar
+        // TODO o trafego autenticado por causa do cache seria trocar uma
+        // degradacao de cota por uma indisponibilidade total.
+        // `pathOf`, nao `originalUrl`: a query string de webhook/verificacao
+        // carrega token — nao pode ir para uma linha de log de erro.
+        logCacheUnavailable({
+          scope: 'rate-limit',
+          path: pathOf(req),
+          message: err instanceof Error ? err.message : String(err),
+        });
+        if (isPublicRoute(req)) {
+          next(new BusinessError('SERVICE_UNAVAILABLE'));
+          return;
+        }
+        next();
       }
     })();
   };

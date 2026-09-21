@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-18 (`/results`: evolução do faturamento + donut no recebido — ver seção no fim)
+**Última atualização:** 2026-09-20 (Onda C do hardening CRMLAB-27 em andamento — ver seções no fim)
 
 ---
 
@@ -248,6 +248,17 @@ Telas sobre o backend do domínio LIS (Onda 9, já commitado). Spec:
 incluindo geração dos dois PDFs. **Atingido** — typecheck 4/4 workspaces verde, backend/frontend
 com suíte de componente verde, e agora também confirmado via E2E real (Playwright + stack Docker
 completa, `flow-17-lis-import-results` + `flow-18-sales`, CRMLAB-5). **Onda 10 fechada.**
+
+---
+
+## Onda A — Hardening pós-auditoria (epic CRMLAB-27) 🔄 (em andamento)
+
+Plano: `docs/superpowers/plans/2026-09-19-hardening-pos-auditoria.md`. Branch de integração:
+`hardening/onda-a`. Cards: CRMLAB-20, 28, 29, 30, 37.
+
+| Card | Domínio | Status | Agente | Notas |
+|------|---------|--------|--------|-------|
+| CRMLAB-30 — Backend cai inteiro se o Postgres piscar | kernel | ✅ 2026-09-19 | Agent-Kernel-30 | `PgDriver` (`db/pg-driver.ts`) ganha `pool.on('error', ...)` + listener por conexão dentro de `transaction()` (o `pg-pool` remove o do pool durante o checkout — janela real, é onde o incidente de 17/09 acontecia), `idleTimeoutMillis=30s`, `connectionTimeoutMillis=5s` e, no pacote de startup, `statement_timeout=30s` + `idle_in_transaction_session_timeout=60s` (os dois estavam em 0 na VPS). Migrações usam `SET LOCAL statement_timeout=0` (`db/statement-timeout.ts`, novo) — import LIS e export Excel/PDF foram revisados e **não** precisam de isenção (upsert de 1 statement por chunk; export não toca o banco). `main.ts` ganha `process.on('unhandledRejection'/'uncaughtException')`, ambos logando `event: 'process.fatal'` e reusando o MESMO `shutdown()` do SIGTERM (`exitCode=1`). `evolution-client.ts` e `whatsapp.service.ts` chamam `fetch` com `AbortSignal.timeout` via `lib/fetch-timeout.ts` (novo) — cobre também o corpo nunca fechar, não só a resposta não chegar; timeout vira `GatewayTimeoutError` (`retryable=true`), retentado pela fila existente sem caminho especial. Decisões em D-137/D-138. **Circuit breaker no cliente Evolution avaliado e descartado** nesta rodada: timeout + retry exponencial já limitam o dano por falha isolada, e o volume de envio por tenant não justifica mais um componente com estado (reavaliar se homologação/produção mostrar rajadas que o retry não absorva). Testes novos: `tests/db/pg-pool-resilience.spec.ts` (7), `tests/whatsapp/gateway-timeout.spec.ts` (7) — os testes de caos reais (`docker restart`/`docker pause`) ficam para a validação em homologação. `npm run typecheck` verde nos 4 workspaces; `npm run test:backend` verde: 77 arquivos / 1114 testes |
 
 ---
 
@@ -874,7 +885,7 @@ lightbox). Causa raiz, dois problemas empilhados:
 
 - Frontend: `api/client.ts` ganha `resolveMediaUrl` (resolve caminho relativo contra o origin de
   `apiBaseUrl()`) e `fetchAuthenticatedBlob` (busca com `Authorization`, com o mesmo retry de
-  refresh do `request()`). Novo hook `hooks/useAuthenticatedImage.ts` busca o blob e devolve um
+  refresh do `request()`). Novo hook `hooks/useAuthenticatedMedia.ts` busca o blob e devolve um
   `object URL` (`URL.createObjectURL`), revogado a cada troca de mensagem/desmontagem.
   `MessageBubble.tsx` usa o hook em vez da URL crua; enquanto carrega ou se falhar, mostra texto
   no lugar de um `<img>` quebrado.
@@ -1211,3 +1222,1123 @@ no `/api/` devolve 413. O backend aceita 25 MB (`app.ts:118`) e o `MediaService`
 (`Attendance/index.tsx:168`) e a importação de planilha do LIS
 (`lis-import.routes.ts:62`) acima de ~750 KB, porque base64 infla ~33%. O
 RECEBIMENTO não sofre: o gateway posta direto no backend.
+
+---
+
+## 2026-09-19 — CRMLAB-2 (ouvir áudio na bolha) + CRMLAB-21 (zoom na imagem) ✅
+
+Os dois cards são a mesma dor vista de dois ângulos: a mídia chega no
+atendimento, mas o atendente precisa **sair do sistema** para consumir. Áudio
+virava link "Anexo (audio)" em outra aba — e, por ser mídia autenticada, muitas
+vezes nem tocava. Foto de pedido médico abria em tela cheia sem zoom: letra
+pequena só se lia baixando o arquivo.
+
+**CRMLAB-22 encerrado como duplicado de CRMLAB-2** (descrevia só a parte de
+ouvir); o conteúdo dele foi incorporado ao CRMLAB-2 antes do fechamento.
+
+**Áudio (CRMLAB-2 — escopo desta entrega: ouvir/receber).**
+`conversation/AudioMessage.tsx` toca o áudio na própria bolha. Controles
+**nativos** (`<audio controls>`): play/pause, barra com tempo decorrido/total,
+seek e teclado sem uma linha de código — o critério de aceite do card é
+funcional, não visual. Player desenhado à mão entra se o visual virar exigência
+real (mesma decisão do `EmojiPicker` sem biblioteca). O blob vem autenticado;
+`src` é object URL, nunca a URL crua (que volta 401). O link "Baixar áudio"
+continua ali de propósito: o Evolution entrega **ogg/opus, que o Safari não
+toca** — no `error` do `<audio>` o player dá lugar a um aviso e o download é o
+plano B.
+
+**Gravar e enviar áudio ficou FORA** (decisão do Michel, 19/09): mexe em
+permissão de microfone, upload e envio pelo Evolution. Vira card próprio; o
+CRMLAB-2 registra o escopo como fase seguinte.
+
+**Zoom (CRMLAB-21).** `shared/ImageLightbox.tsx` ganhou zoom de 1× a 6× por roda
+do mouse, pinça, botões − / + e duplo clique (duplo clique de novo volta ao
+original). Roda e pinça **ancoram no ponto sob o cursor/dedos**: aproximar num
+canto não joga o trecho de interesse para fora da tela. Com a imagem ampliada,
+arrastar move o enquadramento — e o `click` que encerra o arraste não fecha o
+lightbox, senão soltar o mouse fora da foto fechava tudo. Sem dependência nova.
+
+Dois detalhes que custaram tempo e ficam registrados: `wheel` precisa de
+listener **não-passivo** (o do React é passivo e ignora `preventDefault`, aí a
+página atrás rola durante o zoom); e o jsdom não tem `PointerEvent` nem pointer
+capture — o spec do lightbox provê os dois, senão `clientX` chega `undefined` e
+o arraste vira `NaN`.
+
+**Renomeado:** `hooks/useAuthenticatedImage` → `useAuthenticatedMedia`. Não é só
+imagem desde que o áudio passou a usar o mesmo caminho. Comportamento idêntico.
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces; frontend **1061
+testes verdes**, 7 deles novos — 5 no `ImageLightbox.spec.tsx` (arquivo novo) e
+2 de áudio no `MessageBubble.spec.tsx`. Validação funcional: homologação.
+
+---
+
+## 2026-09-19 — mídia de produção não aparecia em homologação: 500 virou 404, e o dump passou a levar os arquivos ✅
+
+Na validação do CRMLAB-21 a imagem abriu numa conversa e em todas as outras
+deu "Não foi possível carregar a imagem". Parecia bug da tela nova; não era.
+
+**Causa.** `message_media` viaja no dump de produção, mas o **arquivo** mora em
+`<projeto>_media-data`, volume próprio de cada ambiente. O
+`homolog-sincroniza-dados.sh` copiava só o banco. Resultado em hml: 34 linhas de
+mídia apontando para arquivos que nunca chegaram — e uma única imagem
+funcionando, a que o simulador de webhook criou ali mesmo.
+
+**Bug de verdade que isso revelou.** `readMediaFile` deixava o `ENOENT` subir:
+`GET /media/:id` de arquivo ausente respondia **500** com
+`http.unhandled_error` e stack no log, em vez de 404. Arquivo que sumiu é dado
+que não existe, não servidor quebrado — e em produção o mesmo caminho
+transformaria um arquivo perdido em erro de servidor. Agora `readMediaFile`
+devolve `null` no ENOENT, `MediaService.read` loga `media.file_missing` e a rota
+responde 404. Teste de regressão em `evolution-webhook-media.spec.ts`,
+verificado contra o código antigo: falha com `expected 404, got 500`.
+
+**Ambiente.** Os 34 arquivos de produção (4.7 MB) foram copiados para o volume
+de hml — produção montada `:ro`. O script de sincronia passou a fazer isso
+sozinho, e `ENVIRONMENTS.md` registra que "copiar dado de prod" são duas coisas,
+banco **e** mídia. Detalhe que custou uma rodada: `cp -an` do busybox não copia
+nada e ainda sai com `rc=0`; o script usa `cp -a /p/*`.
+
+**LGPD:** a cópia aumenta o que hml guarda — agora foto de pedido médico e áudio
+de paciente real, não só texto. Decisão do Michel em 19/09, com hml atrás de
+basic auth e canais desativados.
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces; backend **1100
+testes verdes** (1 novo).
+
+---
+
+## 2026-09-19 — v1.9.0 em produção: CRMLAB-2 + CRMLAB-21 + fix de mídia ausente ✅
+
+PR #17 mergeado em `main` com os 4 checks verdes (build de produção, build das
+imagens, typecheck/lint/testes e E2E do Playwright), tag **v1.9.0** no merge
+commit `7452467`, e `./scripts/deploy.sh` rodado em `/opt/crm-lab`.
+
+Vai junto nesta versão:
+
+- **CRMLAB-2** — ouvir e receber áudio na própria bolha (`AudioMessage`).
+  Gravar e enviar saiu para o **CRMLAB-24**, que está bloqueado pelo CRMLAB-20.
+- **CRMLAB-21** — zoom e arraste na imagem aberta no atendimento.
+- **fix** — mídia com linha no banco e arquivo fora do disco responde 404 com
+  `media.file_missing`, não mais 500 com `http.unhandled_error`.
+
+Minor, não patch: duas funcionalidades novas. Sem mudança de contrato de API
+nem de schema, então não houve migração para acompanhar.
+
+**Pós-deploy:** os 5 serviços `healthy`, `https://vitrocrm.cloud` em 200,
+nenhum log nível 50 no backend nos primeiros minutos. A versão no rodapé da
+sidebar só muda com o rebuild do frontend, que este deploy fez.
+
+---
+
+## 2026-09-19 — CRMLAB-25 + CRMLAB-26: conversa legível e imagem que se salva ✅
+
+**CRMLAB-25 — fundo branco e quem falou.** A área rolável das mensagens virou a
+única superfície branca do app (`--color-chat-bg`, hex literal: é papel, não
+acompanha o tema do tenant). Header e composer continuam no bege do tema, o que
+de quebra marca onde a conversa começa e termina.
+
+O sintoma relatado ("está tudo a mesma coisa") não era falta de distinção no
+código — `received` já usava `--color-surface` e `sent`, `--color-accent-200`.
+É que as DUAS nascem de `color-mix(..., var(--color-bg))`: sobre o bege do tema
+padrão as três superfícies (fundo, bolha do paciente, bolha da atendente) caíam
+na mesma faixa de luminosidade. Os novos `--color-chat-received` e
+`--color-chat-sent` misturam as mesmas cores base com BRANCO, e cada bolha
+ganhou 1px de borda do par `-border`. Lado + cor + borda: bate o olho e se sabe
+quem falou, em qualquer um dos temas.
+
+**CRMLAB-26 — o ↓ agora salva de verdade.** O botão já existia no
+`ImageLightbox` desde o CRMLAB-15, mas o `fileName` nunca era passado: o
+`object URL` não carrega nome, então o arquivo caía em Downloads como o uuid do
+blob, sem extensão — inútil para reenviar ou anexar. `fetchAuthenticatedBlob`
+passou a devolver `{ blob, fileName }`, lendo o `Content-Disposition` que
+`GET /media/:id` já mandava; `useAuthenticatedMedia` repassa o nome e o
+`MessageBubble` entrega ao lightbox.
+
+Detalhe que teria virado bug: sem nome, `download={undefined}` REMOVE o atributo
+e o ↓ deixa de baixar — vira navegação para o blob. Agora o fallback é `"imagem"`
+sem extensão, que o browser completa pelo tipo do arquivo. Teste dedicado para
+isso.
+
+**Arquivos.** `styles/tokens.css` (+5 tokens), `tailwind.config.js` (rampa
+`chat`), `conversation/MessageBubble.tsx`, `pages/Attendance/ConversationPanel.tsx`,
+`shared/ImageLightbox.tsx`, `api/client.ts`, `hooks/useAuthenticatedMedia.ts`.
+Docs: `DESIGN_TOKENS.md` (papéis de cor + bolhas), `COMPONENTS.md`
+(`MessageBubble`, `ImageLightbox`), `PAGES.md` §2.
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces; frontend **1065
+testes verdes** (4 novos: nome do arquivo no `Content-Disposition`, ausência
+dele, download com nome sem fechar o lightbox, e o `download` que nunca some).
+
+---
+
+## 2026-09-19 — v1.10.0 em produção: CRMLAB-25 + CRMLAB-26 ✅
+
+PR #18 mergeada em `main` com os 4 checks verdes, tag **v1.10.0** no merge
+commit `f161721`, e `./scripts/deploy.sh` rodado em `/opt/crm-lab`. Antes disso
+a mesma branch ficou em homologação (`hml-38412dd`) para validação do Michel.
+
+Minor, não patch: duas funcionalidades novas (conversa em papel branco com
+bolhas distintas; ↓ que salva a imagem com o nome original). Sem mudança de
+contrato de API nem de schema — nenhuma migração acompanhou.
+
+Vai junto nesta versão:
+
+- **`fix(e2e)`** — o teste do emoji (`flow-15-onda8-atendimento.spec.ts`) fazia
+  `getByText('bom dia👍 tudo bem')` solto, que casa com a bolha **e** com a
+  prévia da conversa na coluna 1 — e, numa retentativa, com a mensagem que a
+  tentativa anterior deixou no banco. Só passava quando a lista demorava a
+  refetchar: flake desde a Onda 8, que escolheu esta PR para aparecer. Agora a
+  asserção olha a última bolha dentro de `message-scroll`.
+- **`chore`** — as skills de design (`.agents/skills/frontend-design` e
+  `ui-ux-pro-max`) entraram no repositório; `.claude/skills/` guarda só os
+  symlinks para elas.
+
+**Pós-deploy:** os 5 serviços `healthy`, `https://vitrocrm.cloud` em 200,
+nenhum log nível 50 no backend nos primeiros minutos. A versão no rodapé da
+sidebar muda com o rebuild do frontend, que este deploy fez.
+
+---
+
+## CRMLAB-28 — Backup fora da VPS, cifrado, com alerta de falha ✅ 2026-09-19
+
+`Agent-Infra-28`, branch `feature/CRMLAB-28-backup-offsite` → `hardening/onda-a`
+(Onda A do epic CRMLAB-27). Ownership: `scripts/`, `docs/guides/DEPLOYMENT.md`.
+
+O backup diário já funcionava, mas os dumps ficavam só no disco da própria VPS:
+perder o servidor era perder o backup junto com o dado. A mídia
+(`crm-lab-prod_media-data`) não entrava em backup nenhum, e uma falha do timer
+era silenciosa.
+
+**Entregue:**
+
+- `scripts/backup-offsite.sh` (novo) — cifra os dumps do dia **e** um tar do
+  volume de mídia e publica como assets de uma GitHub Release
+  `backup-AAAA-MM-DD` em repositório privado. Retenção remota de 30 dias
+  (contra 14 local), só depois de conferir que os assets chegaram não-vazios.
+  Recusa rodar sem chave de cifragem configurada — dado de paciente não sai em
+  claro. `BACKUP_OFFSITE_DRYRUN=1` ensaia sem tocar em GitHub nem Docker.
+- `scripts/backup-alerta.sh` + `scripts/systemd/crm-lab-backup-alerta@.service`
+  (novos) — `OnFailure=` do backup, com as últimas 20 linhas do journal. Canal
+  plugável por `BACKUP_ALERT_CMD` / `BACKUP_ALERT_WEBHOOK`, porque o destino
+  final (WhatsApp) ainda está pendente de decisão do Michel.
+- `scripts/systemd/crm-lab-backup.service` — segundo `ExecStart=` (o local roda
+  sempre primeiro) e o `OnFailure=`.
+- `docs/guides/DEPLOYMENT.md` — "Backup e restore" reescrita, mais "Restore
+  completo, do zero" em 6 passos. Numeração das seções §4/§6/§7 preservada, que
+  `ARCHITECTURE.md` e `docker-compose.prod.yml` referenciam.
+
+`backup-postgres.sh` não foi tocado.
+
+**Correção pós-revisão de código (2026-09-19):**
+
+- `scripts/backup-offsite.sh` (~linha 167) — o `gh release create || log "ja
+  existia"` tratava QUALQUER falha do `create` (token expirado, rede, rate
+  limit) como "release já existia", e o script seguia para o upload que
+  falhava pela mesma causa raiz, mas o log mandava o plantão atrás do
+  diagnóstico errado. Agora a existência da release é checada explicitamente
+  com `gh release view` antes de tentar criar; se já existe, segue direto pro
+  upload com log claro; se não existe e a criação falha, isso é propagado como
+  falha real com o stderr do `gh` no log (sem `||` engolindo).
+- `scripts/backup-alerta.sh` (~linha 68) — o escape manual de JSON só tratava
+  `\`, `"` e newline; `\r`, tabs e sequências ANSI (comuns em saída de
+  `journalctl` de serviço com progress bar/cor) quebravam o JSON e o webhook
+  rejeitava o POST — falhando exatamente no cenário que o alerta existe pra
+  cobrir. `jq` não é dependência do projeto (confirmado com grep em `scripts/`
+  e nos `docker-compose*.yml` — as únicas ocorrências são o `--jq` embutido no
+  próprio `gh`) e não está instalado neste ambiente, então a correção foi
+  trocar o escape manual por uma versão completa que converte todo byte de
+  controle ASCII < 0x20 para `\uXXXX`, em vez de adicionar `jq` como novo
+  pré-requisito.
+
+**Pendente, e só o Michel pode fazer:** criar o repositório privado de destino,
+gerar a chave `age` (e guardar a privada fora da VPS), pôr as variáveis no
+`.env` de produção, instalar as unidades e **fazer o primeiro restore de
+verdade em homologação**. O RTO está `[PENDENTE]` na doc até essa medição.
+Nada disto foi executado na VPS: o agente não tem acesso.
+
+## Pedidos entre Agentes — de CRMLAB-28
+
+- **Para CRMLAB-29 (`Agent-Kernel-29`):** o heartbeat do backup pode observar o
+  resultado do envio externo sem reimplementá-lo. `backup-offsite.sh` sai 0 só
+  depois de conferir que os assets chegaram não-vazios à release do dia, e o
+  `crm-lab-backup.service` cobre os dois passos numa unidade só — então
+  `systemctl show -p Result,ExecMainExitTimestamp crm-lab-backup.service` já
+  responde "o backup completo (local + externo) deu certo hoje?". Não criei
+  arquivo de heartbeat para não colidir com o seu.
+
+---
+
+## 2026-09-19 — CRMLAB-29: monitoramento e health honesto (Onda A) ✅
+
+**Agente:** `Agent-Kernel-29` · branch `feature/CRMLAB-29-monitoramento-health` → `hardening/onda-a`
+
+| Tarefa | Status |
+|---|---|
+| Health real do backend (`SELECT 1` + `PING`, 503 quando cai) | ✅ 2026-09-19 |
+| Liveness separada para o healthcheck do container | ✅ 2026-09-19 |
+| `deploy.sh` apontado para o health real | ✅ 2026-09-19 |
+| Script de saúde dos containers / disco / reboot | ✅ 2026-09-19 |
+| Notificador plugável por webhook | ✅ 2026-09-19 |
+| Heartbeat do backup (mecanismo + doc do lado do kernel) | ✅ 2026-09-19 — falta a linha no `backup-postgres.sh` (pedido abaixo) |
+| Uptime externo (conta em serviço) | ⛔ do Michel — decisão e cadastro humanos |
+
+**O que estava errado.** Três sondas, três mentiras diferentes:
+`https://vitrocrm.cloud/healthz` é `return 200` do próprio nginx e nunca tocou
+o backend; `/health` pela internet devolvia o HTML da SPA com 200; e o
+`/health` interno respondia `ok` sem olhar Postgres nem Redis. Consequência
+medida: o `deploy.sh` declarava "no ar" com o backend morto.
+
+**O que existe agora.** `GET /api/v1/health` (readiness, passa pelo proxy
+`/api/`) faz `SELECT 1` no pool e `PING` no cache e responde **503 dizendo
+qual dependência caiu**; `GET /health` e `/health/live` continuam triviais
+(liveness), porque health que checa banco faz o orquestrador reiniciar o
+backend em loop por uma queda que não é dele. Resultado memoizado por 5 s,
+single-flight, timeout de 2 s por dependência, sem abrir transação, fora do
+rate limit.
+
+**Arquivos.** `backend/src/lib/health.ts` (novo), `backend/src/app.ts`,
+`backend/tests/kernel/health.spec.ts` (novo, 9 testes),
+`scripts/monitora-saude.sh` (novo), `scripts/lib/alerta.sh` (novo),
+`scripts/systemd/crm-lab-monitor.{service,timer}` (novos), `scripts/deploy.sh`,
+`nginx/frontend.conf` (**só** o bloco `location = /healthz`),
+`docs/guides/MONITORING.md` (novo), `docs/guides/CONVENTIONS.md`.
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces; `npm run
+test:backend` verde; `bash -n` + `shellcheck -x` nos scripts novos. Caos real
+(`docker stop` do Postgres) é de homologação, não daqui.
+
+### Pedidos do Agent-Kernel-29
+
+| De | Para | Pedido | Status |
+|----|------|--------|--------|
+| Agent-Kernel-29 | Agent-Infra-28 (CRMLAB-28) | **Heartbeat do backup** — `scripts/backup-postgres.sh` é seu. Duas linhas fecham o dead man's switch: `. "$(dirname "${BASH_SOURCE[0]}")/lib/alerta.sh"` no topo e `alerta_heartbeat backup-postgres` na última linha, **só no caminho de sucesso** (depois de `log "concluido"`). A função grava a marca datada em `/var/lib/crm-lab-monitor/` e, se `BACKUP_POSTGRES_HEARTBEAT_URL` estiver definida, faz o ping HTTP. Quem cobra a marca é o `monitora-saude.sh` (26 h). Enquanto a linha não existir, a verificação fica em silêncio de propósito. | ⬜ aberto |
+| Agent-Kernel-29 | Agent-Infra-28 (CRMLAB-28) | **Seção no `DEPLOYMENT.md`** (arquivo seu nesta onda): um parágrafo em "operação" remetendo a `docs/guides/MONITORING.md`, e a correção das duas linhas que hoje mandam checar `/healthz` (§ de verificação pós-deploy, ~linhas 183-185) — a sonda honesta é `GET /api/v1/health`. | ⬜ aberto |
+| Agent-Kernel-29 | Agent-Infra (compose) | **`healthcheck:` no serviço `backend`** do `docker-compose.prod.yml`, que hoje não tem nenhum: aponte para a **liveness** (`/health/live`), nunca para `/api/v1/health` — readiness no healthcheck do container faz uma queda do Postgres reiniciar o backend em loop. O compose não é do CRMLAB-29. | ⬜ aberto |
+| Agent-Kernel-29 | Agent-Docs | `docs/ARCHITECTURE.md` (~linha 100) descreve a ordem de middlewares como `GET /health (público) → /api/v1/<módulos>`. Hoje são três sondas: `/health`, `/health/live` e `/api/v1/health`, todas antes do rate limit. Não editei por estar fora do ownership desta onda. | ⬜ aberto |
+| Agent-Kernel-29 | Michel | **Número de WhatsApp / destino do alerta.** O notificador está pronto e plugável: o envio vai para `ALERT_WEBHOOK_URL` (+ `ALERT_WEBHOOK_TOKEN`), configurada em `/etc/crm-lab/monitor.env` na VPS. Sem a variável o monitor roda e registra tudo no journal, sem enviar nada — o card não ficou bloqueado por isso. Também falta a conta no serviço de uptime externo, que é o único capaz de cobrir "a VPS inteira sumiu". Opções comparadas em `MONITORING.md` §4. | ⬜ aberto |
+
+### 2026-09-19 — Correções pós-revisão de código (PR #21)
+
+| Achado | Correção |
+|---|---|
+| **Crítico.** `docker ps --filter health=unhealthy` / `status=exited` escaneavam o HOST INTEIRO, não só o projeto Compose do CRM Lab — homolog e prod rodam na mesma VPS como dois projetos separados (`crm-lab-prod`/`crm-lab-homolog`, ver `deploy.sh`), então um container quebrado em homolog disparava alerta genérico de "CRM Lab" e confundia quem está de plantão. | `scripts/monitora-saude.sh` agora exige `COMPOSE_PROJECT_NAME` (mesma variável que `deploy.sh` já usa com `docker compose -p`; normalmente vem do `.env` do ambiente) e filtra as duas chamadas de `docker ps` por `--filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME"`. O título do alerta agora leva `[nome-do-projeto]`. Documentado em `docs/guides/MONITORING.md` §3. |
+| **Alto.** `registra()` engolia silenciosamente falha de `mkdir`/escrita no `STATE_DIR` (`\|\| true`), e a instalação do diretório dependia de um `sudo install -d` manual — se o diretório sumisse (rebuild de VPS, limpeza, passo pulado), toda execução de 5 em 5 min virava alerta `critical` novo (288/dia), em silêncio total. | (1) `scripts/systemd/crm-lab-monitor.service` ganhou `StateDirectory=crm-lab-monitor`: o systemd cria/gerencia `/var/lib/crm-lab-monitor` sozinho, sem passo manual. (2) `registra()` e o `mkdir -p` inicial agora logam com `logger -p daemon.err -t crm-lab-monitor` (+ `alerta_log`) quando não conseguem gravar/apagar a marca de estado — sem abortar a varredura, só tornando o problema visível no journal. Documentado em `docs/guides/MONITORING.md` §3. |
+| Menor. `tr '\n' '; '` trunca o separador de 2 chars para 1 (`tr` ajusta SET2 ao tamanho de SET1) — nomes de containers saídos ficavam colados por `;` sem espaço. | Trocado por `paste -sd';' - \| sed 's/;/; /g'`. |
+| Menor. `HEARTBEAT_DIR` (`lib/alerta.sh`) e `STATE_DIR` (`monitora-saude.sh`) eram variáveis independentes que só por acaso apontavam para o mesmo default. | Extraída variável compartilhada `CRM_LAB_MONITOR_STATE_DIR` (default em `lib/alerta.sh`); `HEARTBEAT_DIR` e `STATE_DIR` agora caem para ela por padrão — mudar o caminho de estado é uma variável só. |
+
+**Pendências conhecidas, deixadas de propósito (fora de escopo desta correção):**
+- Chamada dupla de `curl` no health check do `deploy.sh` (uma com `-f` para status, outra sem para o corpo do 503) — funciona, mas é redundante; não mexido por baixa severidade.
+- Mensagem de erro do `deploy.sh` ainda diz "60s" no timeout do healthcheck pós-deploy, mas o loop é `30 × sleep 2` = na prática até 60s + tempo de cada request — texto desatualizado, sem risco funcional; não mexido para não tocar em código fora do escopo desta correção sem necessidade.
+
+**Verificação:** `bash -n` verde nos 3 scripts alterados (`monitora-saude.sh`, `lib/alerta.sh`, `deploy.sh`, este último não modificado mas revalidado); `shellcheck` não disponível no ambiente local. Nenhum arquivo de `backend/` tocado, então `npm run typecheck`/`test:backend` não se aplicam a esta correção.
+
+---
+
+## 2026-09-19 — CRMLAB-20 (Onda A): teto de corpo do nginx ✅
+
+`Agent-Infra-20`, branch `feature/CRMLAB-20-nginx-body-size`, worktree próprio.
+Recorte: só `nginx/frontend.conf`, no `location /api/`. O bloco
+`location = /healthz` é do CRMLAB-29 e não foi tocado.
+
+`client_max_body_size 25m;` no `location /api/`. O vhost não definia a
+diretiva, então valia o default de 1 MiB do nginx e o anexo acima de ~750 KB
+(base64 infla ~33%) morria num 413 cru da borda, antes de o backend poder
+responder o `MEDIA_TOO_LARGE` do catálogo. 25m espelha o
+`express.json({ limit: '25mb' })` de `backend/src/app.ts`, que já cobre os
+15 MiB por arquivo do `MediaService` — a borda passa a ser transporte, e o
+teto de negócio volta a ser o do app.
+
+Fica só no `/api/`: o resto do vhost serve estático e não recebe corpo. O
+`location /ws` não precisa — handshake de WebSocket não tem corpo e os frames
+não passam por `client_max_body_size`. O Caddy da borda também não precisa de
+nada: o padrão dele é não limitar corpo de requisição (limite só existe com
+`request_body max_size` explícito, que não está configurado). O Caddy mora na
+VPS, fora do repo, e não foi tocado.
+
+**Verificação:** `nginx -t` em container descartável
+(`nginx:1.27-alpine`, template renderizado pelo `envsubst` do entrypoint
+oficial, `API_UPSTREAM=http://127.0.0.1:3000`) — sintaxe ok. Não há teste
+automatizado de nginx no projeto; o teste de comportamento (upload grande de
+verdade) é em homologação, junto com os outros cards da Onda A.
+
+---
+
+## 2026-09-19 — CRMLAB-37: dependências vulneráveis + guarda de vulnerabilidade no CI ✅
+
+`Agent-Deps-37`, Onda A (`hardening/onda-a`, epic CRMLAB-27). Ownership: `package.json` dos
+workspaces, `package-lock.json`, `.github/`, `docs/guides/CONVENTIONS.md`.
+
+**4 commits `[deps]`/`[infra]`:**
+
+1. `bcryptjs` 2.4.3 → 3.0.3, `@types/bcryptjs` removido (tipos vêm no próprio pacote na 3.x).
+   Formato de hash (`$2a$`/`$2b$`) inalterado, sem migração de dados. Backend 1100/1100 verde.
+2. `jspdf` 2.5.2 → **4.2.1** (não `^3.0.2` como o card pedia) e `jspdf-autotable` 3.8.4 → 5.0.8.
+   O advisory DB atual marca tudo `<=4.2.0` como critical (path traversal + injeção via
+   AcroForm) — parar na 3.0.2 deixaria o job `security` (item 3 abaixo) vermelho na própria PR.
+   Nenhuma mudança de código necessária; `npm audit --omit=dev` foi de 1 critical + 1 high para
+   0/0. Detalhes completos no commit `4cf9cdb`.
+3. `[infra]` `.github/dependabot.yml` novo: `npm` (raiz, semanal, patches agrupados, `xlsx`
+   ignorado por ser instalado por URL fora do registry), `github-actions` (semanal), `docker`
+   (`/backend`, `/frontend`, `/` — os três ficam sem PR até o CRMLAB-36/Onda B pinar as imagens
+   base por digest; esperado, não é bug deste card).
+4. `[infra]` `.github/workflows/ci.yml`: job novo `security` (`npm audit --omit=dev
+   --audit-level=high`, falha só em high/critical) + trigger de `push`/`pull_request` ampliado
+   para `hardening/**` (o CI **não rodava** em PR contra `hardening/onda-a` antes desta mudança
+   — só contra `main` — o que teria deixado toda a Onda A sem CI nos PRs para a branch da onda;
+   corrigido junto por ser `.github/` do meu ownership e bloquear a validação da própria PR
+   deste card).
+
+**Decisão que mudou de rumo em relação ao escopo original do card (D-136 em DECISIONS.md):** o
+card pedia `google/osv-scanner-action` porque supunha que `npm audit` quebra com `400 Invalid
+package tree` (o `xlsx` do frontend vem de URL/tarball da SheetJS, fora do registry). Testado
+antes de implementar: **não reproduziu** — `npm audit --omit=dev --audit-level=high` roda limpo
+neste ambiente (7 moderate, 0 high/critical hoje). Optei por usar `npm audit` direto (mais
+simples, já comprovado funcionando, sem Action de terceiro nova) e documentei a suposição
+falsificada + o plano B (trocar para `osv-scanner` se o job começar a falhar por erro de
+registry num ambiente de CI real, o que não pude testar aqui).
+
+**Recomendação não executada (D-135 em DECISIONS.md):** troca de `exceljs` (traz `unzipper`
+0.10.14 antigo) por `xlsx` avaliada e **não feita** — uso único e pequeno
+(`backend/src/lib/lis-spreadsheet.ts`), mas é parser financeiro do LIS com histórico de bugs de
+data/soma (D-110/D-078/D-124); sem urgência de segurança (vulnerabilidade atual é moderate, não
+high/critical) para justificar reescrever sem card e suíte de regressão dedicados. Estimativa
+registrada em DECISIONS.md: 0,5–1 dia, card futuro fora da Onda A.
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces; `npm run lint` limpo; backend
+**1100/1100**; frontend **1065/1065** (nenhum código de produto tocado nesta parte do card —
+só `.github/`, `docs/DECISIONS.md`, `docs/guides/CONVENTIONS.md`, `docs/STATUS.md`). Sintaxe do
+`ci.yml`/`dependabot.yml` validada com `yaml.safe_load`.
+
+---
+
+## 2026-09-19 — v1.11.0 mergeada em `main`: Onda A do hardening (CRMLAB-27) ✅
+
+PR #24 (`hardening/onda-a` → `main`) mergeada com os 5 checks do CI verdes. Onda inteira
+passou por revisão de código (`/code-review`) card a card antes do merge na branch da onda,
+com achados reais corrigidos (diagnóstico mascarado de falha no `gh release create` e JSON
+inválido no alerta do CRMLAB-28; escopo de `docker ps` batendo prod/homolog e falha de estado
+silenciosa no CRMLAB-29) e uma colisão de numeração de decisão entre CRMLAB-30 e CRMLAB-37
+(D-135/D-136 escolhidos independentemente pelos dois — CRMLAB-30 renumerado para D-137/D-138).
+
+Vai junto nesta versão:
+
+- **CRMLAB-20** — `client_max_body_size 25m` no `/api/` do nginx.
+- **CRMLAB-28** — backup cifrado fora da VPS (GitHub Releases), alerta de falha, doc de restore.
+- **CRMLAB-29** — health real (`/api/v1/health` checa Postgres+Redis), liveness separada,
+  monitor de containers/disco com notificador plugável.
+- **CRMLAB-30** — `pool.on('error')` + timeouts de sessão, `unhandledRejection`/`uncaughtException`
+  reusando o shutdown do SIGTERM, timeout de `fetch` para Evolution/Meta.
+- **CRMLAB-37** — `jspdf`/`bcryptjs` atualizados, Dependabot, job `security` no CI.
+
+Minor, não patch: múltiplas funcionalidades novas de infraestrutura/observabilidade. Sem
+mudança de contrato de API nem de schema — nenhuma migração acompanha.
+
+**Pós-deploy (2026-09-19, ./scripts/deploy.sh a partir de `/opt/crm-lab`):** os 5 serviços
+`healthy`, `https://vitrocrm.cloud` em 200, `https://vitrocrm.cloud/api/v1/health` (CRMLAB-29,
+primeira vez com sonda honesta na borda) também em 200, nenhum log nível 50+ no backend no
+primeiro minuto. `docs/superpowers/plans/2026-09-19-hardening-pos-auditoria.md` tem o passo a
+passo de rollback (`IMAGE_TAG=<sha-anterior>`) se algo aparecer depois.
+
+---
+
+## 2026-09-20 — CRMLAB-36: imagens publicadas no GHCR, `mem_limit`/`ulimit`/tuning, digest pinning ✅ (parcial — pendências manuais na VPS)
+
+Worktree próprio (`crm-lab-wt-36`), branch `feature/CRMLAB-36-infra-vps`.
+
+- **CI publica no GHCR** (`.github/workflows/ci.yml`, job `docker`): só em `push` para `main`
+  (nunca em PR). `crm-lab-backend` ganha 3 tags no mesmo digest (`:<sha>`, `:hml-<sha>`,
+  `:latest` — imagem única serve os dois ambientes, D-141). `crm-lab-frontend` é buildado e
+  publicado DUAS vezes (`:<sha>` produção, `:hml-<sha>` homologação com
+  `VITE_APP_ENV=homologacao`) porque a variável é build-time e fica inlinada no bundle.
+- **`scripts/deploy.sh`**: troca `dc build` por `dc pull` quando `IMAGE_REGISTRY` está definido
+  no `.env` do ambiente; sem a variável, cai no fallback documentado (build local, mesmo
+  comportamento de antes). Depois do `up -d`, roda `docker image prune -af --filter
+  'until=336h'` e `docker builder prune -f --filter 'until=168h'` (best-effort — falha aqui não
+  aborta o deploy; nunca atinge volume nem a tag em uso).
+- **`docker-compose.prod.yml`**: `mem_limit` em todos os serviços (postgres 1536m · redis 256m
+  · backend 512m · frontend 64m · evolution 768m · migrate 256m — soma < 6 GB pros dois
+  ambientes). Redis com `--maxmemory 200mb --maxmemory-policy allkeys-lru` (sem teto antes,
+  `noeviction` era o que derrubava o rate limit em 500 global — CRMLAB-34). Backend com
+  `ulimits.nofile` 65536. Postgres com `shared_buffers=512MB`,
+  `effective_cache_size=2GB`, `log_min_duration_statement=1000`. Imagens de `postgres`/`redis`
+  pinadas por digest. `image:` de `migrate`/`backend`/`frontend` ganham prefixo
+  `${IMAGE_REGISTRY:-}` (vazio = comportamento local de sempre); `build:` continua no arquivo
+  como fallback documentado, não é mais o caminho normal.
+- **Digest pinning** (`backend/Dockerfile`, `frontend/Dockerfile`): `node:22-alpine` e
+  `nginx:1.27-alpine` via `ARG` com `@sha256:...` resolvido em 20/09/2026 (`docker inspect
+  RepoDigests`). Dependabot (`docker`, já configurado no CRMLAB-37) atualiza o digest quando a
+  Alpine soltar patch novo.
+- **`evolution: user: "1000:1000"`** avaliado e **não aplicado** — D-140 em
+  `docs/DECISIONS.md`: imagem de terceiro, sem como validar da CI se o volume de sessão aceita
+  rodar sem root. Só ganhou `mem_limit`.
+- **Docs atualizados no mesmo commit** (Regra Zero): `docs/guides/DEPLOYMENT.md` §1 (tabela do
+  job `docker`), §2, §4 (comandos com `pull`) e §7 (reescrito — "publicação em registry" saiu
+  da lista de pendências, entrou o que realmente falta); `docs/guides/ENVIRONMENTS.md` §6
+  (molde de `.env` com `IMAGE_REGISTRY`) e §7 (custo, reescrito).
+
+**Pendências que exigem ação manual na VPS (fora do alcance de um PR) — ver
+`docs/guides/DEPLOYMENT.md` §7 para o mesmo texto:**
+
+1. Definir `IMAGE_REGISTRY=ghcr.io/<owner>/` no `.env` de `/opt/crm-lab` e
+   `/opt/crm-lab-homolog` — sem isso `deploy.sh` continua no fallback de build local (não quebra
+   nada, só não ganha o benefício do card até alguém editar o `.env`).
+2. Conferir que o pacote GHCR (`crm-lab-backend`/`crm-lab-frontend`) fica acessível para o
+   usuário `deploy` puxar da VPS (visibilidade do pacote no GitHub — por padrão pacote de repo
+   privado herda a visibilidade do repo, mas vale conferir depois do primeiro push em `main`).
+3. Reboot pendente (`/var/run/reboot-required`, kernel 7.0.0-31) — agendar fora do horário do
+   laboratório, depois do backup das 03:10 UTC. **Não fiz isso nem vou fazer por script** — é
+   SSH real na VPS, fora do escopo desta sessão.
+4. Validar `evolution: user: "1000:1000"` em homologação antes de cogitar produção (D-140).
+5. `sudo NOPASSWD: ALL` do usuário `deploy` (item 7 do card, "menor") — não mexido; é mudança
+   de política de acesso da VPS, não teve linha de código associada neste PR.
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces. YAML de `.github/workflows/ci.yml`
+validado com `yaml.safe_load`; `docker-compose.prod.yml` validado com `docker compose config`
+(env obrigatórias stubadas). `bash -n scripts/deploy.sh` limpo. `backend/Dockerfile` buildado
+localmente até o stage `deps` para confirmar que o `ARG` de digest antes do primeiro `FROM`
+funciona nas três ocorrências do arquivo. Sem teste automatizado novo: mudança é
+infra/YAML/shell, sem código TS testável por unidade — os testes existentes (backend/frontend)
+não foram tocados e continuam cobertos pelo CI da própria PR.
+
+---
+
+## 2026-09-20 — CRMLAB-34: rate limit e lockout de login atômicos (`INCR`) ✅
+
+`CacheService` ganha `incr(key, ttlSeconds)` — incremento atômico com `EXPIRE` só na 1ª chamada
+(janela fixa), implementado como script Lua num único round-trip no `RedisCache` e sem `await`
+no meio no `MemoryCache` (atômico mesmo sob `Promise.all` real). Substitui o `get`→calcula→`set`
+antigo do rate-limit (`rate-limit.ts`) e do contador de falha de login (`auth.service.ts`), que
+era um TOCTOU clássico: rajada concorrente lia o mesmo estado e furava o limite/lockout.
+
+- `rate-limit.ts`: janela FIXA por índice de tempo (`Math.floor(at/windowMs)` na própria chave),
+  um único `INCR` decide se cabe. Headers dobrados: mantém `X-RateLimit-*` (contrato existente)
+  e acrescenta `RateLimit-Limit/Remaining/Reset` (draft IETF, `Reset` em delta-segundos — os
+  dois convivem, ver D-139).
+- `auth.service.ts`: lockout de login (`login-failures:{email}:{ip}`, mantida a chave existente)
+  agora via `incr`; ganhou `DEL` no sucesso (não existia antes).
+- **Redis fora do ar em runtime** (D-139, distinto do fail-closed de boot do D-058, intocado):
+  rota autenticada fail-**open** (loga `cache.unavailable` com throttle de 30s e deixa passar —
+  o JWT já protege); rota pública (`/auth/login`, `/auth/refresh`, `/webhooks/*`) fail-**closed**
+  com **503 `SERVICE_UNAVAILABLE`** (código novo em `shared/types/api.types.ts` +
+  `docs/api/API_ERRORS.md`), nunca mais `INTERNAL_ERROR` genérico.
+- Testes novos: concorrência real via `Promise.all` (50 requisições contra limite 10 → exatamente
+  10 passam; 100 `incr` paralelos → 1..100 sem perda; 20 senhas erradas em paralelo não furam o
+  lockout de 5), fail-open/fail-closed com cache mockado lançando erro (rota genérica 200 vs.
+  `/auth/login`/`/auth/refresh` 503).
+
+**Verificação:** `npm run typecheck` verde nos 4 workspaces; `npm run test:backend` **1134/1134**
+(1100 da baseline + 34 novos/ajustados: `tests/kernel/cache.spec.ts`,
+`tests/kernel/rate-limit.spec.ts`, `tests/auth/login.spec.ts`, `tests/kernel/health.spec.ts`
+ajustado ao novo método `incr` do `CacheService`).
+
+**Não fez:** ajuste de infra do Redis (`maxmemory`) — é CRMLAB-36, fora de escopo aqui.
+
+**Arquivos:** `backend/src/lib/cache.ts`, `backend/src/http/middleware/rate-limit.ts`,
+`backend/src/services/auth.service.ts`, `backend/src/app.ts`, `shared/types/api.types.ts`,
+`backend/src/http/errors.ts`, `docs/api/API_ERRORS.md`, `docs/DECISIONS.md` (D-139).
+
+---
+
+## 2026-09-20 — CRMLAB-32: refresh em cookie httpOnly, access token só em memória, CSP Report-Only ✅
+
+Worktree próprio (`crm-lab-wt-32`), branch `feature/CRMLAB-32-cookie-httponly-csp`. Achado de
+severidade Alta da auditoria de segurança (D-142 em `docs/DECISIONS.md` tem o detalhe completo).
+
+- **Backend** (`backend/src/controllers/auth.routes.ts`, `backend/src/services/auth.service.ts`,
+  `backend/package.json` +`cookie-parser`): `/auth/login` e `/auth/refresh` gravam
+  `Set-Cookie: crm_refresh=...; HttpOnly; Secure (só produção); SameSite=Strict;
+  Path=/api/v1/auth`. Corpo JSON só com o access token. `/auth/refresh` lê o cookie primeiro
+  (fallback depreciado no corpo, remoção 2026-10-04) e exige
+  `X-Requested-With: crm-lab`. `/auth/logout` limpa o cookie (`Max-Age=0`) além de revogar a
+  família. `cookie-parser` montado só no router de auth.
+- **Frontend** (`frontend/src/stores/auth.store.ts`, `frontend/src/api/client.ts`,
+  `frontend/src/hooks/useSession.ts`, `frontend/src/App.tsx`): `tokens` sai do `persist`
+  (localStorage só guarda `user`/`tenant`/`theme`); access token vive em memória. Nova
+  `useSessionBootstrap()` chama `POST /auth/refresh` (cookie vai sozinho) antes do router
+  renderizar — o `App` fica em branco no instante do bootstrap, sem piscar `/login`.
+- **nginx** (`nginx/frontend.conf`): `Content-Security-Policy-Report-Only` (default-src 'self'
+  etc — ver arquivo) e `Permissions-Policy`. Report-Only de propósito: promover para enforce
+  depois de ~1 semana observando homologação sem violação inesperada.
+- **Docs atualizados no mesmo commit** (Regra Zero): `docs/api/API_CONTRACTS.md` §1 (contrato
+  novo de login/refresh/logout), `docs/contracts/FRONTEND_BACKEND.md` ("Autenticação"),
+  `shared/types/auth.types.ts` (`LoginResponse`/`RefreshResponse` sem `refreshToken`,
+  `RefreshRequest.refreshToken` opcional e depreciado).
+
+**NÃO tocado:** `frontend/src/api/ws.ts` (WebSocket) — é o CRMLAB-33, que depende deste card.
+CORS geral (`app.ts`) continua `credentials: false`.
+
+**Testes:** `backend/tests/auth/login.spec.ts` e `refresh.spec.ts` reescritos para o fluxo de
+cookie (Set-Cookie com as flags certas, refresh sem cookie → 401, refresh com cookie → access +
+cookie novos, logout limpa o cookie, fallback depreciado no corpo, header
+`X-Requested-With` obrigatório). `frontend/src/api/client.spec.ts`,
+`frontend/src/stores/auth.store.spec.ts` e specs que injetavam `tokens.refreshToken` direto no
+store (`Login.spec.tsx`, `guards.spec.tsx`, `Sidebar.spec.tsx`, `Attendance.spec.tsx`,
+`InternalChat.spec.tsx`) ajustados para o novo shape sem refresh no frontend.
+`npm run typecheck` e `npm run test:backend`/`test:frontend` verdes (ver relatório do card no
+Jira para o resultado exato desta rodada).
+
+**Correção pós-CI (mesmo dia): E2E quebrava 76/123 specs.** O PR abriu com `test:backend`/
+`test:frontend` verdes mas nenhuma rodada de E2E local — o job `e2e` do CI pegou uma regressão
+real: todo `page.goto` para rota autenticada caía em `/login`. Causa: `VITE_API_URL` absoluto em
+dev/E2E (`http://localhost:3000/...`) fazia o browser chamar a API numa origin diferente da SPA
+(porta 5173 vs 3000) — cookie `HttpOnly` do refresh não atravessa origin diferente, então
+`useSessionBootstrap` tomava 401 sempre. D-143 em `docs/DECISIONS.md` tem o detalhe; correção:
+proxy do Vite (`frontend/vite.config.ts`) + `VITE_API_URL`/`VITE_WS_URL` relativos em
+`frontend/.env.example` e no job `e2e` do CI, igualando dev/E2E a produção (D-051). CORS também
+ganhou `X-Requested-With` em `allowedHeaders` (defensivo — não era o que quebrava o E2E, mas
+faltava para qualquer cliente cross-origin genuíno chegar em `/auth/refresh`).
+
+---
+
+## 2026-09-20 — CRMLAB-31: allow-list de MIME, sniff de magic bytes, `attachment` para não-imagem, teto de 1 MB nos webhooks públicos ✅
+
+Worktree próprio (`crm-lab-wt-31`), branch `feature/CRMLAB-31-hardening-midia`.
+
+- **Allow-list + sniff** (`shared/types/media.types.ts` `ALLOWED_MEDIA_MIME_TYPES` — fonte
+  única; `backend/src/services/media.service.ts` `resolveStoredMimeType`): MIME fora da lista
+  vira `application/octet-stream` na gravação (`storeOutbound`/`storeInbound`). Para
+  `image/*`/`audio/*`/`application/pdf`, `file-type` confere magic bytes contra o declarado —
+  divergência POSITIVA também rebaixa para `application/octet-stream`; formato sem assinatura
+  reconhecível (`audio/amr`) ou buffer curto demais mantém o declarado (inconclusivo ≠
+  divergência provada). `text/html`/`image/svg+xml` (vetor de XSS do card) ficam fora da
+  allow-list de propósito.
+- **`GET /media/:id`** (`backend/src/controllers/media.routes.ts`): `Content-Disposition:
+  attachment` para tudo que não é `image/*`/`audio/*` (era sempre `inline`) +
+  `X-Content-Type-Options: nosniff`.
+- **Webhook público** (`backend/src/app.ts`): `/webhooks/whatsapp*` (Meta, sem HMAC verificado
+  antes do parse) ganhou `express.json({ limit: '1mb' })` próprio, registrado antes do parser
+  geral de 25mb; `/webhooks/evolution/*` (mídia base64, rede interna) e demais rotas seguem em
+  25mb.
+- **Frontend** (`frontend/src/components/conversation/MessageBubble.tsx`): anexo não-imagem/
+  não-áudio para de usar `<a href="/api/v1/media/:id">` cru (dava 401 JSON — a rota exige
+  Bearer) e passa por `useAuthenticatedMedia` (blob URL); PDF abre em nova aba, o resto força
+  download.
+- **Docs atualizados no mesmo commit** (Regra Zero): `docs/api/API_CONTRACTS.md` §2d
+  ("Hardening de mídia"), `docs/architecture/SECURITY.md` ("Teto de corpo por rota").
+
+**Testes:** `backend/src/services/media.service.spec.ts` (novo, `resolveStoredMimeType`),
+`backend/tests/webhooks/evolution-webhook-media.spec.ts` (documento `text/html` disfarçado →
+gravado e servido como `application/octet-stream` + `attachment`),
+`frontend/src/components/conversation/MessageBubble.spec.tsx` (PDF abre, doc baixa). Suíte
+completa: `npm run typecheck` verde nos 4 workspaces; backend **1131/1131**.
+
+---
+
+## 2026-09-20 — v1.12.0 mergeada em `main`: Onda B do hardening (CRMLAB-27) ✅
+
+Quatro cards da Onda B (`label = onda-b`) mergeados em `main` via PR, todos com CI verde
+(typecheck/lint/testes, build de imagens, npm audit e E2E) antes do merge:
+
+- **CRMLAB-31** (#43) — allow-list de MIME + sniff de magic bytes, `Content-Disposition:
+  attachment` para não-imagem, teto de 1 MB nos webhooks públicos.
+- **CRMLAB-32** (#44) — refresh token em cookie httpOnly, access token só em memória, CSP
+  Report-Only na SPA (D-142/D-143 em `docs/DECISIONS.md`).
+- **CRMLAB-34** (#45) — rate limit e lockout de login atômicos via `INCR`, fail-open/fail-closed
+  quando o Redis cai em runtime (D-139).
+- **CRMLAB-36** (#46) — CI publica imagens no GHCR, `mem_limit`/`ulimit`/tuning no compose de
+  produção, imagens base pinadas por digest (D-140/D-141).
+
+**Achado real durante o fechamento, não no card:** o PR do CRMLAB-32 abriu com testes de
+unidade verdes mas nenhuma rodada de E2E local; o CI pegou que 76/123 specs quebravam porque
+`VITE_API_URL` absoluto em dev/E2E tirava o cookie httpOnly do refresh do same-origin — todo
+`page.goto` para rota autenticada caía em `/login`. Corrigido no mesmo PR (D-143): proxy do
+Vite para `/api`/`/ws`, igualando dev/E2E à produção (que já usa nginx para isso, D-051).
+Cada um dos quatro PRs também precisou de um segundo (às vezes terceiro) merge de `main` para
+resolver conflito textual em `docs/STATUS.md`/`docs/DECISIONS.md` — os cards foram
+desenvolvidos em paralelo em worktrees isolados e cada um só via o `main` de quando começou;
+sem decisão de numeração colidindo de verdade (D-139 ficou com CRMLAB-34, D-142/D-143 com
+CRMLAB-32, D-140/D-141 com CRMLAB-36 — nenhum número repetido no `main` final).
+
+**CRMLAB-33** (WebSocket: token fora da URL) **não** é desta onda — label `onda-c`, segue em
+"Discussão", sem escopo fechado.
+
+Minor, não patch: segurança/infra novas, sem quebra de contrato — `RefreshRequest.refreshToken`
+no corpo continua aceito como fallback depreciado (remoção 2026-10-04).
+
+**Pendências manuais na VPS que a Onda B NÃO resolve** (fora do alcance de qualquer PR, `docs/
+guides/DEPLOYMENT.md` §7 tem o mesmo texto):
+1. Definir `IMAGE_REGISTRY=ghcr.io/<owner>/` no `.env` de `/opt/crm-lab` e
+   `/opt/crm-lab-homolog` (sem isso `deploy.sh` usa o fallback de build local).
+2. Conferir que o pacote GHCR fica acessível para o usuário `deploy` puxar da VPS.
+3. Reboot pendente da VPS (`/var/run/reboot-required`, kernel 7.0.0-31) — agendar fora do
+   horário do laboratório.
+4. Validar `evolution: user: "1000:1000"` em homologação antes de produção (D-140) — não
+   aplicado nesta onda.
+
+**Achado no deploy de homologação (mesmo dia): CSP/X-Frame-Options nunca chegavam no browser.**
+`./scripts/deploy.sh` em `/opt/crm-lab-homolog` subiu os 5 serviços saudáveis, mas `curl -I` na
+raiz não trazia NENHUM dos 5 headers de segurança do `nginx/frontend.conf` — nem os que já
+existiam desde a Onda 5 (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`), nem os
+novos do CRMLAB-32 (CSP, `Permissions-Policy`). Causa: pegadinha do nginx (D-144) —
+`location = /index.html` e `location /assets/` já tinham `add_header` próprio (Cache-Control)
+desde a Onda 5, e isso zera a herança de QUALQUER `add_header` do `server{}` pai. `/` sempre cai
+em `/index.html` via `try_files`, então a resposta real nunca teve proteção nenhuma — bug
+antigo, só ficou visível porque o CRMLAB-32 foi o primeiro a colocar algo crítico
+(CSP/clickjacking) nesse `add_header` do nível de cima. Corrigido em `nginx/frontend.conf`
+(D-144): os 5 headers repetidos nas duas locations que precisam. Validado com `nginx -t` +
+container real + `curl -I` mostrando os 5 headers na resposta de `/`. **Redeploy de
+homologação necessário** para levar a correção (feito na sequência desta mesma sessão).
+
+**Pós-deploy (2026-09-20, `./scripts/deploy.sh` a partir de `/opt/crm-lab`):** correção do
+nginx virou patch **v1.12.1** (a tag `v1.12.0` ficou parada no commit de antes da correção — o
+script de deploy exige tag exata igual à versão do `package.json`, então retag não fazia
+sentido; patch novo é o caminho normal). Homologação e produção seguem o mesmo binário desde
+`d80e544`. Os 5 serviços `healthy` em produção; `https://vitrocrm.cloud` em 200;
+`https://vitrocrm.cloud/api/v1/health` em 200; os 5 headers de segurança (D-144) confirmados
+com `curl -I` tanto em `127.0.0.1:8080` quanto no domínio público. Nenhuma migração nova nesta
+onda — schema intocado.
+
+---
+
+## 2026-09-20 — CRMLAB-38: higiene de banco e observabilidade ✅
+
+Worktree próprio (`crm-lab-wt-38`), branch `feature/CRMLAB-38-db-higiene-observabilidade`.
+Onda C do épico de hardening (CRMLAB-27). Seis itens, todos de defesa em profundidade — nenhum
+corrige falha explorada.
+
+- **Role de login sem superuser** (migração `020_crm_login_role.sql`, D-145): `crm_login`
+  (`NOSUPERUSER NOBYPASSRLS`, membro de `crm_app`) para a pool conectar. Nasce SEM senha de
+  propósito — senha em migração versionada é senha vazada no git. **Pendência manual na VPS**
+  (`ALTER ROLE ... PASSWORD` + trocar o usuário da `DATABASE_URL`), ver DEPLOYMENT.md §7.
+- **Índice nas 15 FKs sem índice** (`021_fk_indexes.sql`, D-146). Sem `CONCURRENTLY`: o migrator
+  roda cada arquivo em transação, e `CREATE INDEX CONCURRENTLY` não pode.
+- **Lock de migração** (`migrator.ts`, D-147): `pg_advisory_xact_lock` dentro da transação de
+  CADA migração, que relê `schema_migrations` já com o lock na mão.
+- **Redact do logger ampliado** (D-148): `apikey`/`secret`/`webhookSecret`/`contentBase64`/
+  `email`/`phone`, cada um também em `*.<campo>`. Corpo de erro do Evolution de 500 → 200 chars.
+- **Anti-replay nos webhooks** (D-149): `sha256(rawBody)` no Redis por 10 min, por tenant.
+- **`deploy.sh` exige CI verde no commit** (D-150), via `gh run list`; aborta se `gh` faltar ou
+  não estiver autenticado, em vez de pular a checagem em silêncio.
+
+**Dois achados durante o fechamento, não no card:**
+
+1. **O lock de migração original travava a suíte inteira.** A primeira versão pedia o lock numa
+   transação EXTERNA que envolvia o loop de migrações. O driver de PGlite serializa cada
+   `query`/`transaction` numa fila de uma conexão só: a externa esperava o loop e o loop esperava
+   a fila que a externa segurava — deadlock, `route-tenant-isolation.spec.ts` em timeout de 60 s
+   com 148 testes pulados. Corrigido movendo o lock para dentro da transação de cada migração e
+   relendo `schema_migrations` já com ele na mão — que, de quebra, é o que de fato IMPEDE a dupla
+   aplicação (serializar sozinho não impedia: o segundo runner acordaria com a lista velha).
+2. **A janela de timestamp da Meta descartaria mensagem legítima.** O card ganhou, além do
+   anti-replay por hash, uma checagem que recusava payload da Meta com timestamp de mais de 5 min.
+   Ela quebrou 12 testes de webhook (os fixtures usam epoch fixo de 2024) — e o teste estava
+   certo: **a Meta retenta webhook falho por até 7 dias**, então recusar por idade descarta em
+   silêncio toda reentrega depois de qualquer indisponibilidade maior que a janela. Removida antes
+   do merge, com decisão do usuário; o anti-replay por hash + a UNIQUE de `messages.external_id`
+   cobrem o caso. Guarda de regressão em `tests/webhooks/replay-guard.spec.ts`.
+
+**Docs atualizados no mesmo commit** (Regra Zero, nenhum vinha do card): `docs/DECISIONS.md`
+(D-145 a D-150, que o código já referenciava sem existirem), `docs/database/SCHEMA.md` (role
+`crm_login`, índices de FK, lista de migrações até a 021) e `docs/guides/DEPLOYMENT.md` §7
+(`gh auth login` e a troca da `DATABASE_URL` como ações que exigem acesso à VPS).
+
+**Verificação (2026-09-20):** `npm run typecheck` verde nos 4 workspaces, `npm run lint` verde,
+`npm run test:backend` verde (81 arquivos / 1169 testes) e `npm run test:frontend` verde
+(75 arquivos / 1066 testes).
+
+### Revisão independente do PR #48 (2026-09-21)
+
+Quatro achados corrigidos no commit de revisão — guard de replay atômico (`incr`) e isento para
+`CONNECTION_UPDATE` (D-156), `SET LOCAL statement_timeout` antes do advisory lock (D-157), e o
+gate de CI do `deploy.sh` sem `--branch main` (correção anexada à D-150).
+
+**PENDENTE — decisão do Michel, BLOQUEIA a pendência manual deste card:** a role `crm_login` foi
+criada `NOBYPASSRLS`, e o cabeçalho de `002_row_level_security.sql` é explícito em dizer que
+todo caminho `withoutTenant()` (login, `/platform/*`, `resolveWebhookTenant`, seeds) só funciona
+porque roda como a role DONA das tabelas, que burla RLS. Trocar a `DATABASE_URL` para
+`crm_login` como está derruba login e webhook inteiros: as policies comparam contra
+`app.tenant_id`, que nesses caminhos nunca é setado, então a role veria ZERO linha. **Não trocar
+a `DATABASE_URL` na VPS até isto ser resolvido.** Opções levantadas: (a) `crm_login` com
+`BYPASSRLS` — mantém a exposição de hoje só nos caminhos sem tenant e ainda assim tira SUPERUSER
+(DDL, DROP TABLE), que é o que o card veio fazer; (b) policies explícitas para os caminhos sem
+tenant, mais trabalho e mais superfície; (c) manter a role só documentada e não trocar a
+`DATABASE_URL` nesta onda.
+
+**Não corrigido, de propósito:** `isReplay` marca o corpo como visto ANTES do processamento, e
+um erro no meio faz a reentrega do canal ser descartada. Comportamento pré-existente e
+deliberado — `safeHandle` já responde 200 em qualquer erro desde a Onda 5 ("o canal reentregaria
+em loop"), então a guarda não introduziu perda nenhuma. Se um dia isso incomodar, é card
+próprio, não conserto de revisão.
+
+---
+
+## 2026-09-20 — CRMLAB-33: WebSocket autentica por cookie httpOnly, heartbeat e limite por usuário ✅
+
+Worktree próprio (`crm-lab-wt-33`), branch `feature/CRMLAB-33-websocket-cookie-auth`. Onda C do
+épico de hardening (CRMLAB-27) — decisão de abordagem (Opção C do card: cookie httpOnly em vez
+de token na URL) fechada com o usuário antes de codar, já que o CRMLAB-32 tornou essa opção a
+mais simples.
+
+- **Autenticação do handshake** (`backend/src/lib/ws-hub.ts`, `backend/src/lib/cookies.ts`
+  novo): `/ws` não aceita mais `?token=<accessToken>` — autentica pelo cookie httpOnly
+  `crm_refresh` (mesmo do CRMLAB-32), lido manualmente do header `Cookie` (upgrade de WS não
+  passa por `cookie-parser`). Cookie ausente/inválido/expirado → handshake completa (101) e
+  fecha IMEDIATAMENTE com `WS_CLOSE_UNAUTHORIZED` (4401) — um 4xx cru não seria observável pelo
+  `WebSocket` do browser.
+- **Origin verificado** (achado de segurança que não estava no card original, D-151): WebSocket
+  não respeita Same-Origin Policy do jeito que `fetch` respeita — o servidor recusa (sem
+  completar o handshake) qualquer upgrade cujo `Origin` não esteja em `env.corsOrigins`.
+- **Cookie `Path` alarga de `/api/v1/auth` para `/`** (D-151): o handshake em `/ws` também
+  precisa do cookie, e um cookie só aceita um `Path`.
+- **Heartbeat**: servidor pinga a cada 30s (configurável, testável via `heartbeatIntervalMs`) e
+  termina (`terminate()`) quem não respondeu `pong` até o ciclo seguinte.
+- **Limite de 5 sockets por usuário**: o 6º fecha o mais antigo (mesmo usuário, `Set` preserva
+  ordem de inserção).
+- **Cliente** (`frontend/src/api/ws.ts`): sem `?token=` na URL; `onclose` com
+  `WS_CLOSE_UNAUTHORIZED` chama `refreshAccessToken()` antes de reconectar; desiste depois de
+  `maxAttempts` (default 8) e avisa por toast; pausa a reconexão (não conta tentativa) quando a
+  aba fica oculta por mais de `visibilityHiddenPauseMs` (default 5 min), reconectando na hora
+  quando ela volta a ficar visível.
+- **Docs atualizados no mesmo commit** (Regra Zero): `docs/api/API_CONTRACTS.md`,
+  `docs/contracts/FRONTEND_BACKEND.md` ("Real-time"), `docs/architecture/SECURITY.md`
+  ("Autenticação"), `docs/guides/ENVIRONMENTS.md`. `shared/types/websocket.types.ts`
+  (+`WS_CLOSE_UNAUTHORIZED`).
+
+**Testes:** `backend/tests/kernel/ws-hub.spec.ts` reescrito para cookie+Origin (recusa sem
+cookie, cookie inválido, Origin errado, aceita cookie válido, isolamento por tenant, limite de 5
+sockets, heartbeat derrubando socket que não responde `pong` — via `autoPong: false` no cliente
+`ws` de teste, que por padrão responde ping sozinho). `frontend/src/api/ws.spec.ts` com testes
+novos de refresh em 4401, desistência após `maxAttempts`, e pausa por aba oculta.
+
+**Verificação (2026-09-20):** `npm run typecheck` verde nos 4 workspaces, `npm run lint` verde,
+`npm run test:backend` verde (79 arquivos / 1152 testes) e `npm run test:frontend` verde
+(75 arquivos / 1070 testes).
+
+### Revisão independente do PR #47 (2026-09-21)
+
+Achados HIGH/MEDIUM corrigidos no commit de revisão:
+
+- **Crash remoto sem autenticação** — o caminho de recusa 4401 completava o handshake e chamava
+  `ws.close()` sem nenhum listener de `'error'`. `ws` reemite erro de protocolo do
+  receiver/sender como `emit('error')`, e `EventEmitter` sem listener de `'error'` LANÇA: caía
+  no `process.on('uncaughtException')` do `main.ts` e derrubava o backend. Qualquer cliente que
+  alcance `/ws` chegava lá (Origin é header, forjável fora do browser).
+- **WS pulava toda a revogação** que `/auth/refresh` faz — D-158.
+- **Path do cookie alargado sem matar o antigo** — D-159. Vale para os dois cards.
+- **Eviction virava tempestade de reconexão** — D-160.
+- `attach()`/`close()`: o listener de `upgrade` agora é removido no `close()` e o timer de
+  heartbeat é `unref()`ado.
+- Frontend: `hiddenSince` já nasce marcado quando a aba abre escondida (ctrl+clique, restauração
+  de sessão) — antes, essa aba queimava as 8 tentativas e mostrava "recarregue a página".
+
+**Não corrigido, de propósito — vira card próprio:** com várias abas, o 4401 simultâneo faz cada
+aba chamar `/auth/refresh` com o MESMO cookie; a primeira rotaciona, as outras apresentam token
+já revogado e a detecção de reuso desloga todo mundo. `refreshInFlight` deduplica só dentro de
+uma aba. É **pré-existente** — a mesma corrida já existe no caminho normal da API quando o
+access token expira com várias abas abertas — e a correção (lock entre abas por
+`BroadcastChannel`) não pertence a este card.
+
+**Testes:** `backend/tests/kernel/ws-hub.spec.ts` 17/17 (3 novos: sessão morta fecha com 4401,
+falha da checagem é fail-closed, socket já aberto cai na revalidação periódica);
+`backend/tests/auth` 25/25; `frontend/src/api/ws.spec.ts` 19/19 (2 novos: aba que nasce oculta,
+4409 não reconecta). Typecheck e lint verdes nos 4 workspaces.
+
+---
+
+## 2026-09-20 — CRMLAB-35: ciclo de vida de senha e sessão ✅
+
+Worktree próprio (`crm-lab-wt-35`), branch `feature/CRMLAB-35-senha-e-sessao`. Onda C do épico
+de hardening (CRMLAB-27).
+
+- **`PATCH /users/me/password`** (`user.routes.ts` → `auth.service.changePassword`): valida a
+  senha atual, aplica a política, revoga **todas** as famílias de refresh do usuário **menos a
+  da sessão que fez a troca** (identificada pelo cookie `crm_refresh` que a requisição carrega)
+  e grava `audit_log`.
+- **Tela "Minha Conta"** (`/settings/account`, `pages/Settings/Account.tsx`): nome e e-mail em
+  leitura + formulário de troca de senha. Aberta a TODOS os papéis de tenant — trocar a própria
+  senha não é privilégio de admin.
+- **Política de senha** (`lib/password-policy.ts`, D-153): mínimo 10 caracteres + lista curta de
+  senhas triviais. Sem `zxcvbn` (≈800 KB de dicionários para uma tela só).
+- **Teto absoluto de 30 dias por família** (`absolute_expires_at`, migração 022, D-154):
+  gravado no login, carregado adiante em cada rotação, nunca reiniciado.
+- **Desativar usuário derruba a sessão na hora** (D-154): `PATCH /users/:id` com
+  `isActive: false` revoga todas as famílias na mesma transação. O access token de até 15 min já
+  emitido continua valendo — janela aceita, sem denylist no Redis (YAGNI).
+- **Limpeza de `refresh_tokens`** (D-155): `setInterval` de 24 h no boot, com `.unref()`,
+  apagando expirado/revogado há mais de 7 dias. Best-effort: nunca derruba o processo.
+- **`algorithms: ['HS256']` explícito** em `jwt.verify` (`lib/tokens.ts`).
+
+**Dois bugs reais que só apareceram quando os testes do card foram escritos:**
+
+1. **O teto absoluto andava para frente a cada rotação.** `absolute_expires_at` nasceu
+   `TIMESTAMP` (naive), como as colunas vizinhas — mas é a primeira desta tabela que faz
+   *round-trip*: é lida e regravada a cada refresh. O driver devolve `Date` interpretando o valor
+   como hora **local** enquanto a escrita manda `toISOString()` em **UTC**, então o teto ganhava
+   o equivalente ao fuso (3 h em UTC-3) por rotação. Uma sessão ativa empurraria o próprio teto
+   indefinidamente — exatamente o que o card existe para impedir. Coluna passou a `TIMESTAMPTZ`.
+2. **A troca de senha derrubava a própria sessão que a fez.** A detecção de roubo (D-015) trata
+   qualquer refresh revogado que reapareça como reuso e derruba a família inteira. Com a
+   revogação em massa da troca de senha, bastava o outro navegador tentar renovar — comportamento
+   normal, não ataque — para a sessão preservada cair junto, tornando o "revoga todas MENOS a
+   atual" inútil na prática. Resolvido com `revoked_reason` (`'rotated'` × `'security'`, D-154):
+   só o reuso de token **rotacionado** dispara a detecção.
+
+**Dívida anotada, fora do escopo:** `expires_at` e `revoked_at` têm o mesmo desvio de fuso na
+comparação (3 h), sem efeito prático porque nunca são regravadas a partir do que foi lido.
+
+**Fora do escopo por decisão do card:** recuperação de senha por e-mail (`forgot`/`reset`)
+depende de provedor de envio, que o projeto não tem. Desmembrada em **CRMLAB-39**, no backlog,
+como o próprio card autoriza.
+
+**Testes novos:** `backend/tests/auth/change-password.spec.ts` (9), `backend/tests/auth/
+session-lifecycle.spec.ts` (7), `frontend/src/pages/Settings/Account.spec.tsx` (9). Os três
+critérios de aceite do card estão nomeados como tal nos specs.
+
+**Verificação (2026-09-20):** `npm run typecheck` verde nos 4 workspaces, `npm run lint` verde,
+`npm run test:backend` verde (81 arquivos / 1164 testes) e `npm run test:frontend` verde
+(76 arquivos / 1079 testes).
+
+### Revisão independente do PR #49 (2026-09-21)
+
+Achados corrigidos no commit de revisão: cookie do path antigo (D-161, HIGH — mesmo achado do
+PR #47), bcrypt fora da transação com compare-and-set (D-162, MEDIUM), auditoria no replay
+pós-segurança e recusa de senha nova igual à atual (D-163), `DEFAULT` antes do `NOT NULL` na
+022 e remoção do índice inútil (D-164).
+
+**Não corrigido, de propósito:** (a) o refresh token da sessão que trocou a senha não é
+rotacionado, então há uma corrida estreita com o interceptor de refresh do próprio cliente
+(refresh conclui enquanto o PATCH está em voo → a sessão que trocou a senha cai em silêncio);
+(b) `revokedReason` nunca devolve `null` apesar do tipo permitir, porque o `map()` colapsa
+qualquer valor inesperado em `'rotated'` — hoje é inofensivo, já que todo chamador checa
+`revokedAt` antes. Os dois são LOW e melhor resolvidos junto com CRMLAB-39.
+
+**Testes:** `backend/tests` completo 1160/1160 (3 novos: senha igual à atual recusada pela API,
+auditoria do replay pós-segurança, lápide do cookie no path antigo). Frontend 1079/1079.
+Typecheck e lint verdes nos 4 workspaces.
+
+### Merge da Onda C: `refreshSessionIsLive` passou a checar o teto absoluto
+
+Achado no merge das duas branches da onda, não em nenhuma das revisões isoladas: o
+`refreshSessionIsLive` do CRMLAB-33 (usado no handshake do WebSocket e na revalidação periódica)
+repetia as checagens do `/auth/refresh` **de antes** do CRMLAB-35 — faltava o teto absoluto da
+família (D-154). Uma família passada dos 30 dias teria o refresh recusado mas ainda abriria
+WebSocket: o teto vazaria pelo `/ws`. Cada card estava certo sozinho; o buraco só existe na
+soma. Corrigido no commit de merge.
+
+---
+
+## 2026-09-21 — v1.13.0 em produção: Onda C do hardening (CRMLAB-27) ✅
+
+Três cards da Onda C (`label = onda-c`) mergeados em `main` via PR, todos com CI verde e, antes
+disso, **revisão independente (`/code-review`) que achou defeito sério nos três**. A revisão foi
+o passo que faltava no ritual: CI verde não pega nada do que segue abaixo.
+
+- **CRMLAB-33** (#47) — WebSocket autenticado por cookie httpOnly, Origin verificado, heartbeat
+  e teto de sockets por usuário (D-151, D-158, D-159, D-160).
+- **CRMLAB-35** (#49) — troca da própria senha, teto absoluto de sessão, limpeza de
+  `refresh_tokens` (D-152 a D-155, D-161 a D-164).
+- **CRMLAB-38** (#48) — role sem superuser, índices de FK, lock de migração, redact ampliado,
+  anti-replay e gate de CI no deploy (D-145 a D-150, D-156, D-157).
+
+**O que a revisão pegou, e que teria ido para produção sem ela:**
+
+1. **Crash remoto sem autenticação** (CRMLAB-33). O caminho de recusa 4401 completava o
+   handshake e fechava o socket sem listener de `'error'`. `ws` reemite erro de protocolo como
+   `emit('error')`, e `EventEmitter` sem esse listener LANÇA — caía no `uncaughtException` do
+   `main.ts` e derrubava o backend inteiro. Qualquer cliente que alcance `/ws` chegava lá, já
+   que `Origin` é header e é forjável fora do browser.
+2. **Logout forçado de toda a base no deploy** (CRMLAB-33 e CRMLAB-35, o mesmo bug nos dois).
+   O `Path` do cookie de refresh foi alargado de `/api/v1/auth` para `/` sem matar o cookie
+   antigo. Quem já estivesse logado ficaria com dois `crm_refresh`; a rota leria eternamente o
+   velho; a segunda renovação o reapresentaria revogado; a detecção de reuso derrubaria a
+   família. Em loop, por 7 dias.
+3. **WebSocket sem checagem de revogação** (CRMLAB-33). O handshake só conferia a assinatura do
+   JWT. Um refresh revogado no logout abria realtime completo do tenant por até 7 dias — pior
+   que os 15 min do esquema `?token=` que o card veio substituir.
+
+**Achado que só existia na SOMA dos cards, invisível em qualquer revisão isolada:** o
+`refreshSessionIsLive` (CRMLAB-33) repetia as checagens do `/auth/refresh` de ANTES do
+CRMLAB-35, então faltava o teto absoluto da família (D-154). Uma família passada dos 30 dias
+tinha o refresh recusado mas ainda abriria WebSocket — o teto vazaria pelo `/ws`. Cada card
+estava certo sozinho. Corrigido no commit de merge do #49.
+
+**Deploy (2026-09-21):** homologação e produção a partir de `origin/main`, tag `v1.13.0`,
+`31419cd`. As 3 migrações (020, 021, 022) aplicadas nos dois ambientes. Build LOCAL nos dois
+(~10 min cada) porque `IMAGE_REGISTRY` não está definido — e definir não adiantaria hoje, ver
+CRMLAB-41. Produção validada: 5 serviços `healthy`, `https://vitrocrm.cloud` em 200,
+`/api/v1/health` em 200 com `database` e `cache` up, os 5 headers de segurança presentes,
+nenhum `uncaughtException` no log do backend.
+
+**`gh` instalado na VPS nesta sessão.** O gate de CI do `deploy.sh` (D-150) estreou nesta onda e
+exige `gh` autenticado na máquina que roda o script — que NÃO existia lá. O primeiro deploy
+depois do merge abortaria para qualquer um que não lesse o `DEPLOYMENT.md` antes. Instalado
+(`gh` 2.101.0) e autenticado como `brodbeck-michel` no usuário `deploy` (device flow, credencial
+em texto plano em `~/.config/gh/hosts.yml` — o aviso do próprio `gh`).
+
+**Ainda pendente, NÃO feito neste deploy:**
+1. **Decisão da role `crm_login`** — criada `NOBYPASSRLS` nos dois ambientes. A `DATABASE_URL`
+   **não** foi trocada, de propósito: como está, trocar derruba login e webhook (ver a seção da
+   revisão do PR #48). Aguarda decisão do Michel.
+2. `IMAGE_REGISTRY` nos dois `.env` — bloqueado pelo CRMLAB-41.
+3. Reboot pendente da VPS (`/var/run/reboot-required`), agora também pelos pacotes que a
+   instalação do `gh` atualizou.
+4. `evolution: user: "1000:1000"` (D-140) — segue não aplicado.
+
+**Validação funcional que falta e que só o Michel pode fazer** (a automatizada está toda verde):
+entrar no sistema em dois navegadores e confirmar que ninguém foi deslogado pelo deploy — é o
+risco nº 2 acima, o único que nenhuma checagem de fora consegue provar.
+
+---
+
+## 2026-09-21 — D-165: a role `crm_login` da Onda C estava inutilizável (CRMLAB-38)
+
+Decisão que ficou pendente no fechamento da Onda C, resolvida por **medição** em vez de debate,
+depois que o Michel confirmou que produção ainda não tem usuário (está prospectando o Lab Santé).
+
+**O que foi medido**, no banco de homologação, com dados reais:
+
+| role | contexto | `users` | `tenants` |
+|---|---|---|---|
+| dona (`crm`) | sem `app.tenant_id` | 5 | 3 |
+| `crm_login` **NOBYPASSRLS** (como o 020 criou) | sem `app.tenant_id` | **0** | **0** |
+| `crm_login` **BYPASSRLS** | sem `app.tenant_id` | 5 | 3 |
+| `crm_app` via `SET LOCAL ROLE` + 1 tenant | com contexto | 3 de 5 | 1 de 3 |
+
+A role criada pelo 020 enxergava zero linha em todo caminho `withoutTenant()`. Trocar a
+`DATABASE_URL` para ela — que é o único ponto do card que entrega valor — derrubaria login e
+webhook por completo. Com `BYPASSRLS`, os caminhos sem tenant voltam a funcionar e o isolamento
+multitenant continua intacto, porque quem atende request com tenant é `crm_app`, que não tem
+`BYPASSRLS`.
+
+**O que sai mesmo assim, que era o objetivo do card:** o `SUPERUSER` — DDL, `DROP TABLE`, `COPY`
+lendo arquivo do host, leitura de qualquer tabela do cluster, alteração de outras roles.
+
+**O teste existia e afirmava o comportamento errado.** `migrator.spec.ts` tinha
+`expect(rolbypassrls).toBe(false)` e passava verde. Não estava frouxo: estava certo sobre o
+atributo e errado sobre o objetivo. Trocado, e acrescentado o teste que importa — `crm_login`
+precisa ENXERGAR LINHA sem contexto de tenant. Verifiquei que ele falha com a role antiga
+(`expected 0 to be greater than 0`), senão não protegeria nada. Mais um teste garantindo que
+`crm_app` segue sem `BYPASSRLS`.
+
+**Lição para o próximo card de permissão:** asserção sobre atributo de role não prova nada sobre
+o comportamento que o atributo deveria produzir. O 020 foi escrito sem reler o cabeçalho do
+`002_row_level_security.sql`, que já dizia em texto que os caminhos sem tenant só funcionam por
+rodarem como a role dona.
+
+---
+
+## 2026-09-21 — Revisão retroativa das Ondas A e B (+ o que a soma das três ondas mostrou)
+
+Pedido do Michel depois da Onda C: revisar tudo que foi feito nas ondas A, B e C, e corrigir. As
+três ondas tinham passado só por CI; a revisão independente (`/code-review`, high) na Onda C
+achou defeito sério nos três cards, então a retroativa era esperada — e confirmou. Cinco
+revisões: PR #24 (Onda A inteira), #43, #44, #45, #46 (Onda B, um por card). Onda C já tinha
+sido revisada branch a branch; o que faltava dela era o achado do merge (D-165).
+
+**Corrigido nesta rodada, por severidade:**
+
+| Achado | Onda | O que acontecia | Decisão |
+|---|---|---|---|
+| Recado de voz virava "Baixar anexo (doc)" | B (#43) | `audio/ogg; codecs=opus` — mimetype padrão do WhatsApp — falhava na allow-list por comparação de string. Todo áudio recebido rebaixado. | D-169 |
+| Allow-list de mídia não valia na leitura | B (#43) | Linha legada com `image/svg+xml` seguia servida `inline` — o vetor de XSS do card, aberto para dado antigo. | D-169 |
+| Bearer vazando para host externo | B (#43) | `attachmentUrl` absoluto de outro host passava pelo fetch autenticado. | D-169 |
+| Rota pública fail-OPEN por troca de caixa | B (#45) | `/API/V1/AUTH/REFRESH` não era reconhecida como pública; com Redis fora, passava sem limite. | D-168 |
+| Lockout de login era check-then-act | B (#45) | 100 tentativas paralelas passavam pela leitura antes de qualquer incremento. O teste do PR exigia o buraco. | D-168 |
+| Duas abas = logout de todas | B (#44) | Bootstrap refresh em toda carga + detecção de reuso sem tolerância. | D-166 (CRMLAB-40) |
+| `/api/v1/health` vazava host/porta/role | A (#24) | `error` cru do driver numa rota pública sem rate limit. | (código) |
+| Backup de prod sobrescrito pelo de hml | A (#24) | Tag `backup-<dia>` sem namespace por ambiente; `--clobber` + retenção cruzada. | (código) |
+| Alerta de backup sem contexto e em canal próprio | A (#24) | `journalctl` como `deploy` voltava vazio; webhook com variável e payload diferentes do monitor. | (código) |
+| CSP com `connect-src wss:` | B (#44) | Abria para qualquer host wss:// — o canal de exfiltração que a CSP deveria pegar. | D-170 |
+| `/healthz` zerando headers | B (#44) / CRMLAB-42 | Terceira location com `add_header` que a D-144 não cobriu. Agora é `include`. | D-170 |
+| GHCR: nome da imagem + publicar com CI vermelho + cancelar run de main | B (#46) / CRMLAB-41 | Ver o card. | (código + docs) |
+| Node sem `--max-old-space-size` sob `mem_limit` | B (#46) | OOM-kill (137) em vez de GC. | (código) |
+| Redis `maxmemory` sem folga; Postgres `effective_cache_size` > cgroup, sem `shm_size` | B (#46) | Ver D-167 e compose. | D-167 |
+| `deploy.sh`: `--short` variável, `IMAGE_REGISTRY` sem barra, `pull` sem fallback, mensagem "60s" | B (#46) / A (#24) | Ver script. | (código) |
+| `refreshSessionIsLive` sem o teto absoluto | soma de C | Achado no merge, não em revisão isolada. | (v1.13.0) |
+| `crm_login` NOBYPASSRLS inutilizável | C (#48) | 0 de 5 usuários visíveis. | D-165 (v1.13.1) |
+
+**Ajuste de compose que a D-165 exige e ninguém tinha visto:** `migrate` recebia a MESMA
+`DATABASE_URL` do `backend`. Trocar para `crm_login` quebraria a próxima migração (sem DDL).
+Agora `migrate` lê `MIGRATE_DATABASE_URL` com fallback para `DATABASE_URL`. A troca da
+`DATABASE_URL` nos dois ambientes só faz sentido **depois** deste PR subir — está descrita em
+`DEPLOYMENT.md` §7.
+
+**Registrado e NÃO corrigido, de propósito:** cookie com precedência sobre o corpo no
+`/auth/refresh` durante a janela de depreciação (fecha em 2026-10-04 sozinho); `eval` em vez
+de `defineCommand` no `incrEx` (custo desprezível no volume atual); stubs de cache duplicados em
+três specs; `alive` morto em `useSessionBootstrap`. Todos LOW.
+
+**Testes que afirmavam o comportamento errado — padrão que se repetiu:** `migrator.spec`
+exigia `rolbypassrls: false` (D-165); `login.spec` exigia 20 × 401 na rajada paralela
+(D-168); `MessageBubble.spec` exigia fetch autenticado para URL de outro host (D-169). Nos três,
+o teste passava verde enquanto o comportamento estava quebrado. Lição para as próximas ondas:
+asserção sobre atributo/chamada não substitui asserção sobre o EFEITO que se quer.
+
+---
+
+## 2026-09-21 — v1.14.0 em produção + pool rodando como `crm_login` nos dois ambientes ✅
+
+**Deploy:** PR #51 (revisão retroativa das Ondas A e B) mergeado com CI verde, bump `v1.14.0`
+(`3dca102`), homologação e produção a partir de `origin/main`. Build local nos dois (o
+`IMAGE_REGISTRY` continua vazio — agora **pode** ser definido, ver CRMLAB-41). `postgres` e
+`redis` foram recriados pelo compose novo (`shm_size`, `maxmemory 128mb`, `NODE_OPTIONS`).
+
+**Troca da `DATABASE_URL` para `crm_login` — feita em hml e prod**, a pendência manual do
+CRMLAB-38 que a D-145 tinha deixado inutilizável e a D-165 destravou. Passo a passo aplicado nos
+dois ambientes: `ALTER ROLE crm_login WITH PASSWORD` (senha aleatória de 48 hex, só no `.env`);
+`MIGRATE_DATABASE_URL` = URL antiga (role dona, para DDL); `DATABASE_URL` = `crm_login`;
+`deploy.sh` para recriar `backend`/`migrate`. Backup do `.env` anterior em
+`~deploy/env-backups/` (fora do repo — dentro dele o `deploy.sh` aborta por árvore suja, e foi o
+que aconteceu na primeira tentativa em hml).
+
+**Prova, medida nos dois bancos com a conexão real da pool** (`psql` com a `DATABASE_URL` nova):
+
+| checagem | hml | prod |
+|---|---|---|
+| `current_user` | `crm_login` | `crm_login` |
+| sem tenant: `users` / `tenants` visíveis (login, webhook) | 5 / 3 | 4 / 2 |
+| `CREATE TABLE` | `permission denied for schema public` | idem |
+| com tenant (`SET LOCAL ROLE crm_app`): `users` / `tenants` | 3 de 5 / 1 de 3 | 3 de 4 / 1 de 2 |
+| `pg_stat_activity` da aplicação | `crm_login` | `crm_login` |
+
+Ou seja: o que o CRMLAB-38 veio tirar (SUPERUSER/DDL) saiu; o que não podia mudar (RLS por
+tenant) não mudou.
+
+**Incidente durante a troca em produção — ~6 min de 502 na API (CRMLAB-43).** O `deploy.sh`
+recriou só `backend`/`migrate` (únicos com env alterado); o backend nasceu com IP novo
+(`172.18.0.5` → `.7`) e o nginx do `frontend`, que não foi recriado, seguiu com o IP antigo em
+cache — 33 erros `upstream` no log, `502` em `/api/*` até o healthcheck do script desistir.
+Corrigido com `docker compose restart frontend`; prod em 200 desde então. Causa:
+`proxy_pass` com hostname literal resolve uma vez na carga e nunca mais; todos os deploys
+anteriores mascararam isso porque backend e frontend eram recriados juntos. O `deploy.sh`
+**detectou** (healthcheck real, CRMLAB-29) mas não corrigiu. Card aberto com as duas correções
+(resolver dinâmico no nginx + restart do frontend no script). Sem usuário em produção, custo
+zero; com o Santé no ar seriam 6 min de sistema fora.
+
+**Estado em produção agora:** `https://vitrocrm.cloud` 200, `/api/v1/health` 200, `/healthz`
+com os 5 headers, 5 serviços `healthy`, login respondendo `401 INVALID_CREDENTIALS` pelo caminho
+`withoutTenant()` sob `crm_login`, nenhum `permission denied`/`uncaughtException` no backend.
+
+**Cards fechados hoje:** CRMLAB-33, 35, 38 (Onda C), 40, 41, 42. **Abertos:** CRMLAB-39
+(recuperação de senha, bloqueado por e-mail), CRMLAB-43 (nginx/upstream, novo).
+
+**Pendências manuais que continuam:** reboot da VPS (`/var/run/reboot-required`); definir
+`IMAGE_REGISTRY=ghcr.io/brodbeck-michel/crm-lab/` nos dois `.env` — agora funciona (CRMLAB-41),
+mas vale esperar o primeiro CI em `main` publicar com o `needs` novo antes de ligar; validar
+`evolution: user: "1000:1000"` (D-140).
+
+---
+
+## 2026-09-21 — CRMLAB-43: nginx com IP do backend em cache + reboot da VPS ✅
+
+**Reboot da VPS feito** (pendência aberta desde a Onda A): kernel `7.0.0-31-generic` ativo,
+`/var/run/reboot-required` sumiu, os 10 containers voltaram sozinhos (`restart: unless-stopped`)
+e `healthy` em ~50 s, prod e hml em 200. Downtime de ~1 min, sem usuário em produção.
+
+**CRMLAB-43** — o incidente de ~6 min de `502` durante a troca para `crm_login`. Correção em
+duas camadas (D-171): `resolver 127.0.0.11 valid=10s` + variável no `proxy_pass` faz o nginx
+re-resolver o nome; o `deploy.sh` reinicia o frontend quando só o backend foi recriado, e o
+erro do healthcheck agora compara o IP do backend com o que o nginx está usando.
+
+**Como foi verificado, antes de subir** — com upstream de teste num container, não no papel:
+
+1. *URI íntegra:* `set $upstream_api ...; proxy_pass $upstream_api$request_uri;` entrega
+   `/api/v1/health`, `/api/v1/conversations?page=2&q=ab%20c` e `/ws` exatamente como chegaram
+   (query string e `%20` preservados). Sem o `$request_uri` explícito o backend receberia `/` —
+   é a pegadinha de usar variável no `proxy_pass`, e era o risco real desta mudança.
+2. *Re-resolução:* upstream trocado de `172.18.0.2` para `172.18.0.4` com o nginx **no ar**,
+   sem restart → 200 em todas as sondagens de 5 em 5 s.
+3. *Contraprova com a conf ANTIGA:* mesmo teste → `502`, com
+   `upstream: "http://172.18.0.4:3000"` no log. Reprodução exata do incidente de produção.
+4. SPA, `/healthz`, `/assets/*` e rota do react-router seguem 200 com os 5 headers.

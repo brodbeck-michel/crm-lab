@@ -13,9 +13,16 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { logger } from '../lib/logger.js';
+import { NO_STATEMENT_TIMEOUT, setStatementTimeout } from './statement-timeout.js';
 import type { DbClient } from './types.js';
 
 export const MIGRATIONS_TABLE = 'schema_migrations';
+
+/**
+ * Chave do lock de concorrencia (CRMLAB-38 item 3, D-147). `hashtext` reduz a
+ * string a um int32 estavel — mesmo valor em toda execucao, qualquer maquina.
+ */
+const MIGRATION_LOCK_KEY = "hashtext('crm_lab_migrate')";
 
 const CREATE_TABLE_SQL = `
 CREATE TABLE IF NOT EXISTS ${MIGRATIONS_TABLE} (
@@ -99,10 +106,47 @@ export async function runMigrations(
       skipped.push(name);
       continue;
     }
-    await db.transaction(async (tx) => {
+    const wasApplied = await db.transaction(async (tx) => {
+      // CRMLAB-38 item 3 (D-147): o lock e pedido DENTRO da transacao da
+      // propria migracao, nao numa transacao externa que envolva o loop.
+      // Duas execucoes concorrentes do runner serializam aqui; a segunda so
+      // entra depois do COMMIT da primeira e, ja com o lock na mao, RELE
+      // `schema_migrations` na mesma transacao (`done`, calculado antes do
+      // loop, esta obsoleto para ela) e pula o arquivo. Sem esse SELECT de
+      // dentro, o lock serializaria sem impedir a dupla aplicacao.
+      //
+      // `pg_advisory_xact_lock` (transacao, nao sessao) de proposito: `db.query`
+      // fora de transacao usa o POOL (`pool.query`, `pg-driver.ts`) — cada
+      // chamada pode sair por uma conexao DIFERENTE, e um lock de SESSAO pedido
+      // numa conexao e liberado por engano noutra ficaria preso ate a conexao
+      // fechar (o pool reaproveita conexoes ociosas, D-030). O lock de
+      // TRANSACAO nasce e morre preso a esta conexao e libera sozinho no
+      // COMMIT/ROLLBACK — sem `unlock` manual para esquecer.
+      // CRMLAB-30: o `PgDriver` fixa `statement_timeout=30s` na sessao, o que e
+      // certo para request de usuario e perigoso aqui — um `CREATE INDEX` ou um
+      // `ALTER TABLE` que reescreve tabela pode passar de 30 s legitimamente, e
+      // migracao cortada no meio de um deploy e o pior desfecho possivel.
+      // `SET LOCAL` isenta SO esta transacao e e desfeito no COMMIT/ROLLBACK.
+      await setStatementTimeout(tx, NO_STATEMENT_TIMEOUT);
+      // A isencao vem ANTES do lock de proposito: a ESPERA pelo advisory lock
+      // tambem e uma instrucao e herdaria o `statement_timeout=30s` da sessao —
+      // o segundo runner abortaria com 57014 exatamente quando a primeira
+      // migracao demora, que e o caso que o lock existe para cobrir.
+      await tx.query(`SELECT pg_advisory_xact_lock(${MIGRATION_LOCK_KEY})`);
+      const fresh = await tx.query<{ name: string }>(
+        `SELECT name FROM ${MIGRATIONS_TABLE} WHERE name = $1`,
+        [name],
+      );
+      if (fresh.rows.length > 0) return false;
+
       await tx.exec(sql);
       await tx.query(`INSERT INTO ${MIGRATIONS_TABLE} (name) VALUES ($1)`, [name]);
+      return true;
     });
+    if (!wasApplied) {
+      skipped.push(name);
+      continue;
+    }
     applied.push(name);
     logger.info('db.migration_applied', { name });
   }

@@ -14,6 +14,8 @@ import { Composer, MessageBubble, bubbleTypeFor } from '@/components/conversatio
  * Coluna 2 do inbox — PAGES.md §2.
  *
  * Header (nome, telefone, ações) · bolhas · composer.
+ * A área das bolhas é BRANCA (CRMLAB-25) — só ela; header e composer seguem no
+ * fundo do tema, o que também marca onde a conversa começa e termina.
  * Rolagem: mensagem nova rola para o fim; carregar histórico antigo mantém a
  * posição de leitura (ver `useMessageScroll`).
  */
@@ -294,7 +296,7 @@ export function ConversationPanel({
       <div
         ref={scrollRef}
         data-testid="message-scroll"
-        className="flex min-h-0 flex-1 flex-col gap-sm overflow-y-auto px-lg py-lg"
+        className="flex min-h-0 flex-1 flex-col gap-sm overflow-y-auto bg-chat-bg px-lg py-lg"
       >
         {hasOlderMessages && (
           <div className="flex flex-[0_0_auto] justify-center pb-sm">

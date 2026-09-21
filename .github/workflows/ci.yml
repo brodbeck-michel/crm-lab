@@ -2,15 +2,18 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'hardening/**']
   pull_request:
-    branches: [main]
+    branches: [main, 'hardening/**']
   workflow_dispatch:
 
-# Um run por ref: push novo cancela o anterior que ainda estiver rodando.
+# Um run por ref: push novo cancela o anterior que ainda estiver rodando —
+# EXCETO em main (revisao do PR #46): cancelar um run de main no meio do job
+# `docker` deixava o GHCR com metade das tags publicadas (backend:<sha> sem o
+# frontend:<sha>, `:latest` apontando para commits diferentes).
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -51,7 +54,33 @@ jobs:
         run: npm run test:frontend
 
   # ---------------------------------------------------------------------------
-  # 2. Build — prova que os tres workspaces COMPILAM de verdade, nao so que
+  # 2. Vulnerabilidades — `npm audit` contra as dependencias de PRODUCAO
+  #    (`--omit=dev`: um dev-dep vulneravel nao vai para a imagem publicada).
+  #    `--audit-level=high` so quebra o CI em high/critical; moderate/low
+  #    aparecem no log mas nao bloqueiam o PR (ver docs/DECISIONS.md D-135:
+  #    a suposicao original de que `npm audit` quebra com 400 por causa do
+  #    `xlsx` instalado por URL nao se confirmou — testado antes de escrever
+  #    este job).
+  # ---------------------------------------------------------------------------
+  security:
+    name: Vulnerabilidades (npm audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: npm audit (producao, falha em high/critical)
+        run: npm audit --omit=dev --audit-level=high
+
+  # ---------------------------------------------------------------------------
+  # 3. Build — prova que os tres workspaces COMPILAM de verdade, nao so que
   #    passam no typecheck. `npm run build` = shared -> backend (tsc emit)
   #    -> frontend (vite build). O passo de verificacao existe porque um build
   #    que "passa" sem emitir arquivo nenhum e um falso verde.
@@ -94,13 +123,21 @@ jobs:
           retention-days: 3
 
   # ---------------------------------------------------------------------------
-  # 3. Imagens de producao — valida que os Dockerfiles constroem. Nao publica
-  #    em registry (nenhuma credencial no CI); so garante que o build nao quebra.
+  # 4. Imagens de producao — valida que os Dockerfiles constroem e, em push
+  #    para `main` (nunca em PR), publica no GHCR (CRMLAB-36). `deploy.sh` faz
+  #    `docker compose pull` a partir daqui em vez de buildar na VPS.
   # ---------------------------------------------------------------------------
   docker:
     name: Build das imagens
     runs-on: ubuntu-latest
-    needs: build
+    # `quality` e `e2e` tambem (CRMLAB-41): so `build` deixava publicar
+    # `:latest` e `:<sha>` no GHCR com typecheck/teste/E2E vermelhos.
+    needs: [quality, build, e2e]
+    # `packages: write` so e necessaria neste job (publicacao no GHCR); os
+    # demais ficam com o `contents: read` do topo do workflow.
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
@@ -114,10 +151,10 @@ jobs:
           push: false
           load: true
           tags: crm-lab-backend:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
 
-      - name: Build da imagem do frontend
+      - name: Build da imagem do frontend (producao)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -128,8 +165,8 @@ jobs:
           build-args: |
             VITE_API_URL=/api/v1
             VITE_WS_URL=/ws
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
 
       - name: Smoke test das imagens
         run: |
@@ -142,8 +179,86 @@ jobs:
             || { echo "::error::imagem do frontend roda como root"; exit 1; }
           echo "Imagens rodam como usuario nao-root."
 
+      # -------------------------------------------------------------------
+      # Publicacao no GHCR (CRMLAB-36) — so em push para `main`. `hardening/**`
+      # tambem dispara este workflow (topo do arquivo) mas NAO publica: so
+      # `main` e codigo revisado e mergeado.
+      #
+      # Backend: MESMA imagem serve producao e homologacao (nada de build-arg
+      # muda o runtime — so env var, injetada pelo compose). `deploy.sh`
+      # computa `IMAGE_TAG` com prefixo `hml-` para homologacao
+      # (ENVIRONMENTS.md), entao o backend responde pelas duas tags.
+      # Frontend: build-time `VITE_APP_ENV` fica INLINADO no bundle (Vite) —
+      # producao e homologacao sao imagens DIFERENTES, cada uma com sua tag.
+      # -------------------------------------------------------------------
+      - name: Login no GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Nome do repositorio (minusculo) e SHA curto
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: repo
+        # SHA CURTO de EXATAMENTE 7 chars (`${GITHUB_SHA::7}`), nao
+        # `git rev-parse --short`: este ultimo alonga sozinho quando ha
+        # ambiguidade e roda aqui num clone raso — podia dar 7 no CI e 8 na
+        # VPS, e o `pull` falhava com "manifest unknown" (revisao do PR #46).
+        # `deploy.sh` usa `--short=7` pelo mesmo motivo.
+        #
+        # Nome: `ghcr.io/<owner>/<repo>/crm-lab-*` — `GITHUB_REPOSITORY` ja
+        # inclui o repositorio. E o valor que `IMAGE_REGISTRY` precisa ter nos
+        # `.env` da VPS: `ghcr.io/<owner>/<repo>/` (CRMLAB-41).
+        run: |
+          echo "name=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Publicar imagem do backend (producao + homologacao)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          REPO="ghcr.io/${{ steps.repo.outputs.name }}/crm-lab-backend"
+          SHA="${{ steps.repo.outputs.sha }}"
+          docker tag crm-lab-backend:ci "$REPO:$SHA"
+          docker tag crm-lab-backend:ci "$REPO:hml-$SHA"
+          docker tag crm-lab-backend:ci "$REPO:latest"
+          docker push "$REPO:$SHA"
+          docker push "$REPO:hml-$SHA"
+          docker push "$REPO:latest"
+
+      - name: Publicar imagem do frontend (producao)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          REPO="ghcr.io/${{ steps.repo.outputs.name }}/crm-lab-frontend"
+          SHA="${{ steps.repo.outputs.sha }}"
+          docker tag crm-lab-frontend:ci "$REPO:$SHA"
+          docker tag crm-lab-frontend:ci "$REPO:latest"
+          docker push "$REPO:$SHA"
+          docker push "$REPO:latest"
+
+      - name: Build e publicar imagem do frontend (homologacao)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./frontend/Dockerfile
+          push: true
+          tags: ghcr.io/${{ steps.repo.outputs.name }}/crm-lab-frontend:hml-${{ steps.repo.outputs.sha }}
+          build-args: |
+            VITE_API_URL=/api/v1
+            VITE_WS_URL=/ws
+            VITE_APP_ENV=homologacao
+          # Escopo proprio: os tres builds deste job exportavam para o MESMO
+          # escopo default e cada um sobrescrevia o cache do anterior — todo run
+          # rebuildava as tres imagens do zero (revisao do PR #46).
+          cache-from: type=gha,scope=frontend-hml
+          cache-to: type=gha,mode=max,scope=frontend-hml
+
   # ---------------------------------------------------------------------------
-  # 4. E2E — Postgres 16 de verdade (o unico lugar do CI que usa banco externo),
+  # 5. E2E — Postgres 16 de verdade (o unico lugar do CI que usa banco externo),
   #    migracoes + seed fixo, API e UI subindo como em DEVELOPMENT.md, e a suite
   #    Playwright rodando contra elas.
   #
@@ -193,8 +308,11 @@ jobs:
       # descontrolado ainda e barrado); desliga-lo aqui seria mascarar.
       RATE_LIMIT_PER_MINUTE: '2000'
       CORS_ORIGIN: http://localhost:5173
-      VITE_API_URL: http://localhost:3000/api/v1
-      VITE_WS_URL: ws://localhost:3000/ws
+      # Relativo (D-142): o proxy do Vite (`vite.config.ts`) encaminha para
+      # `localhost:3000` mantendo o origin do dev server — o cookie httpOnly
+      # do refresh (CRMLAB-32) só volta em requisição same-origin.
+      VITE_API_URL: /api/v1
+      VITE_WS_URL: /ws
 
       # Gateway Evolution do fluxo 14 (conexao por QR, D-083). O gateway aqui e
       # o FALSO (`e2e/workflows/fake-evolution-gateway.ts`), que sobe na 8080 no

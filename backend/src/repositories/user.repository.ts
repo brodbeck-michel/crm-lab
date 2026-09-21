@@ -225,3 +225,35 @@ export async function update(
 export async function touchLastLogin(tx: DbTx, id: string): Promise<void> {
   await tx.query('UPDATE users SET last_login_at = NOW() WHERE id = $1', [id]);
 }
+
+/**
+ * Grava o novo hash de senha (CRMLAB-35, troca própria). Função dedicada, e
+ * não um campo a mais em `UpdateUserPatch`: `PATCH /users/:id` é rota de
+ * admin editando OUTRO usuário — misturar senha ali abriria um caminho de
+ * reset de senha por admin que não existe hoje (o único reset de terceiro é
+ * `platform.routes.ts`, fora do escopo deste card).
+ */
+export async function updatePasswordHash(
+  tx: DbTx,
+  id: string,
+  passwordHash: string,
+  expectedCurrentHash?: string,
+): Promise<boolean> {
+  // `expectedCurrentHash` e compare-and-set (CRMLAB-35, revisao do PR #49): a
+  // troca de senha confere a senha atual FORA da transacao (bcrypt custa ~300ms
+  // e nao pode segurar conexao do pool), entao a janela entre conferir e gravar
+  // existe. Com o hash antigo no WHERE, duas trocas concorrentes nao se
+  // sobrescrevem: a segunda nao acha linha e volta como "senha atual incorreta".
+  if (expectedCurrentHash !== undefined) {
+    const result = await tx.query(
+      'UPDATE users SET password_hash = $1 WHERE id = $2 AND password_hash = $3',
+      [passwordHash, id, expectedCurrentHash],
+    );
+    return result.rowCount > 0;
+  }
+  const result = await tx.query('UPDATE users SET password_hash = $1 WHERE id = $2', [
+    passwordHash,
+    id,
+  ]);
+  return result.rowCount > 0;
+}

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ApiErrorBody } from '@crm-lab/shared';
 import {
+  fetchAuthenticatedBlob,
   http,
   isApiError,
   request,
@@ -8,6 +9,8 @@ import {
   resolveMediaUrl,
   setSessionBridge,
   setUnauthenticatedHandler,
+  refreshAccessToken,
+  REFRESH_LOCK_NAME,
 } from './client';
 import type { ApiError } from './client';
 
@@ -49,20 +52,22 @@ function call(index: number): FakeCall {
 }
 
 let calls: FakeCall[];
-let session: { accessToken: string | null; refreshToken: string | null; cleared: boolean };
+let session: { accessToken: string | null; cleared: boolean };
 
-function installSession(accessToken: string | null, refreshToken: string | null): void {
-  session = { accessToken, refreshToken, cleared: false };
+/**
+ * CRMLAB-32: a sessão não guarda mais refresh token nenhum (vive só no
+ * cookie httpOnly) — o "bridge" só expõe o access token.
+ */
+function installSession(accessToken: string | null): void {
+  session = { accessToken, cleared: false };
   setSessionBridge({
     getAccessToken: () => session.accessToken,
-    getRefreshToken: () => session.refreshToken,
     setAccessToken: (token) => {
       session.accessToken = token;
     },
     clearSession: () => {
       session.cleared = true;
       session.accessToken = null;
-      session.refreshToken = null;
     },
   });
 }
@@ -78,7 +83,7 @@ function mockFetch(handler: (url: string, init: RequestInit) => Response | Promi
 beforeEach(() => {
   calls = [];
   resetApiClient();
-  installSession('access-1', 'refresh-1');
+  installSession('access-1');
 });
 
 afterEach(() => {
@@ -179,6 +184,52 @@ describe('client — interceptor de refresh', () => {
     expect(session.accessToken).toBe('access-2');
   });
 
+  /**
+   * CRMLAB-32: o refresh não manda mais `refreshToken` no corpo — o cookie
+   * httpOnly viaja sozinho. O header abaixo é a proteção extra de CSRF que o
+   * backend exige em `/auth/refresh`.
+   */
+  it('refresh não envia refreshToken no corpo e manda X-Requested-With: crm-lab', async () => {
+    let expired = true;
+    mockFetch((url) => {
+      if (url.includes('/auth/refresh')) {
+        return jsonResponse({ accessToken: 'access-2', expiresIn: 900 });
+      }
+      if (expired) {
+        expired = false;
+        return errorResponse(tokenExpired);
+      }
+      return jsonResponse({ conversations: [] });
+    });
+
+    await http.get('/conversations');
+
+    const refreshCall = calls.find((c) => c.url.includes('/auth/refresh'));
+    expect(refreshCall).toBeDefined();
+    expect(refreshCall?.init.body).toBeUndefined();
+    expect(headerOf(refreshCall!.init, 'X-Requested-With')).toBe('crm-lab');
+  });
+
+  /**
+   * CRMLAB-40 / D-166: o refresh roda dentro de um Web Lock compartilhado entre
+   * abas do mesmo origin. Sem `navigator.locks` (jsdom, browser antigo) roda
+   * direto — os outros testes deste arquivo cobrem esse caminho.
+   */
+  it('refresh roda dentro do Web Lock entre abas quando navigator.locks existe', async () => {
+    const request = vi.fn((_name: string, cb: () => Promise<unknown>) => cb());
+    Object.defineProperty(navigator, 'locks', { value: { request }, configurable: true });
+    try {
+      mockFetch(() => jsonResponse({ accessToken: 'access-lock', expiresIn: 900 }));
+
+      await expect(refreshAccessToken()).resolves.toBe('access-lock');
+
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(request.mock.calls[0]?.[0]).toBe(REFRESH_LOCK_NAME);
+    } finally {
+      Reflect.deleteProperty(navigator, 'locks');
+    }
+  });
+
   it('N requisições concorrentes em 401 disparam UM ÚNICO refresh', async () => {
     const expiredOnce = new Set<string>();
     mockFetch((url) => {
@@ -231,17 +282,6 @@ describe('client — interceptor de refresh', () => {
     expect(session.cleared).toBe(true);
     expect(session.accessToken).toBeNull();
     expect(onUnauthenticated).toHaveBeenCalledTimes(1);
-  });
-
-  it('sem refresh token guardado, nem tenta renovar', async () => {
-    installSession('access-1', null);
-    mockFetch(() => errorResponse(tokenExpired));
-
-    const error = (await http.get('/conversations').catch((e: unknown) => e)) as ApiError;
-
-    expect(error.code).toBe('REFRESH_TOKEN_INVALID');
-    expect(calls.filter((c) => c.url.includes('/auth/refresh'))).toHaveLength(0);
-    expect(session.cleared).toBe(true);
   });
 
   it('falha de rede no refresh NÃO derruba a sessão', async () => {
@@ -301,5 +341,36 @@ describe('resolveMediaUrl', () => {
     expect(resolveMediaUrl('https://cdn.exemplo.com/foto.png')).toBe(
       'https://cdn.exemplo.com/foto.png',
     );
+  });
+});
+
+/**
+ * `fetchAuthenticatedBlob` — o nome do arquivo vem junto dos bytes (CRMLAB-26).
+ * `object URL` não carrega nome nenhum; sem ler o `Content-Disposition`, baixar
+ * a imagem salvaria o uuid do blob, sem extensão.
+ */
+describe('fetchAuthenticatedBlob', () => {
+  function blobResponse(disposition: string | null): Response {
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: (name: string) => (name === 'Content-Disposition' ? disposition : null) },
+      blob: () => Promise.resolve(new Blob(['bytes'], { type: 'image/jpeg' })),
+    } as unknown as Response;
+  }
+
+  it('devolve o nome do arquivo decodificado do Content-Disposition', async () => {
+    mockFetch(() => blobResponse('inline; filename="pedido%20m%C3%A9dico.jpg"'));
+
+    const media = await fetchAuthenticatedBlob('/api/v1/media/abc');
+
+    expect(media.fileName).toBe('pedido médico.jpg');
+    expect(media.blob.type).toBe('image/jpeg');
+  });
+
+  it('sem Content-Disposition o nome é null — quem baixa decide o fallback', async () => {
+    mockFetch(() => blobResponse(null));
+
+    expect((await fetchAuthenticatedBlob('/api/v1/media/abc')).fileName).toBeNull();
   });
 });

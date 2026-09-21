@@ -32,7 +32,8 @@ export type NavIcon =
   | 'users'
   | 'theme'
   | 'tenants'
-  | 'billing';
+  | 'billing'
+  | 'account';
 
 /** Papéis de tenant. `platform_operator` NÃO entra — o console é isolado (PAGES.md §11). */
 export const TENANT_ROLES: readonly UserRole[] = ['attendant', 'manager', 'admin'] as const;
@@ -216,6 +217,14 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requiredRoles: ADMIN_ONLY,
     inSidebar: true,
     icon: 'users',
+    group: 'configuracoes',
+  },
+  {
+    path: '/settings/account',
+    label: 'Minha Conta',
+    requiredRoles: TENANT_ROLES,
+    inSidebar: true,
+    icon: 'account',
     group: 'configuracoes',
   },
   {

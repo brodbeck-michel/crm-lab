@@ -28,6 +28,7 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 /settings/insurances          → Convênios                 (gestor+)
 /settings/attendants          → Atendentes (LIS)           (gestor+)
 /settings/commissions         → Comissão (LIS)            (gestor lê; admin edita)
+/settings/account             → Minha Conta               (todos os papéis de tenant)
 /settings/users               → Usuários & Permissões     (admin)
 /settings/theme               → Personalização            (admin)
 /platform/tenants             → Laboratórios Clientes     (operador plataforma)
@@ -68,6 +69,7 @@ padrão; estado por grupo persiste em localStorage por usuário.
 | `/settings/insurances` | manager · admin | sim | Configurações |
 | `/settings/attendants` | manager · admin | sim | Configurações |
 | `/settings/commissions` | manager · admin | sim | Configurações |
+| `/settings/account` | attendant · manager · admin | sim | Configurações |
 | `/settings/users` | admin | sim | Configurações |
 | `/settings/theme` | admin | sim | Configurações |
 | `/platform/tenants` | platform_operator | sim | solto (console) |
@@ -122,8 +124,12 @@ Duas leituras registradas aqui porque o doc original não as fixava:
   aqui, só desktop. Sem conversa selecionada, a coluna 2 mostra o estado vazio "Selecione uma
   conversa" (`EmptyState`, já existente) em vez de ficar em branco
 - Bolhas: recebida / enviada / evento de sistema (3 tipos, máx. 62% largura). Anexo de imagem
-  (CRMLAB-15) renderiza como thumbnail; clique abre `ImageLightbox` em tela cheia — ver
-  COMPONENTS.md `conversation/` e `shared/`
+  (CRMLAB-15) renderiza como thumbnail; clique abre `ImageLightbox` em tela cheia (com ↓ que
+  salva a imagem em Downloads, CRMLAB-26) — ver COMPONENTS.md `conversation/` e `shared/`
+- **Fundo branco (CRMLAB-25):** só a área rolável das mensagens é branca (`--color-chat-bg`);
+  header e composer seguem no fundo do tema, o que também marca onde a conversa começa e
+  termina. Sobre o papel branco, bolha do paciente e bolha da atendente se separam por lado E
+  por cor (`--color-chat-received` / `--color-chat-sent`)
 - Composer: input pílula + anexos + **emoji** + enviar. O emoji entra na posição do cursor
   (Onda 8 §2.2), grade fixa de 48, sem dependência nova
 - Dados: `GET /conversations/:id`, `POST /conversations/:id/messages`
@@ -596,6 +602,19 @@ gestor).
 - Tabela de usuários: nome, email, papel, limite de desconto, status
 - Criar/editar (modal): papel + limite desconto
 - Log de auditoria (aba)
+
+### Minha Conta (`/settings/account`) — todos os papéis de tenant
+
+- Nome e e-mail da sessão, só leitura (editar perfil não é deste card)
+- **Alterar senha:** senha atual + nova + confirmação → `PATCH /users/me/password`
+- Mínimo de 10 caracteres na tela é UX; a política de verdade é `checkPasswordPolicy` no
+  backend (D-153), e a mensagem de erro dele é a que aparece no campo
+- Confirmação divergente, senha curta e senha igual à atual são barradas antes de sair da tela
+- Sucesso avisa por toast que **as outras sessões foram encerradas** — só a que fez a troca
+  sobrevive (D-154)
+- Deliberadamente para TODOS os papéis: trocar a própria senha não é privilégio de admin
+- Recuperação por e-mail ("esqueci minha senha") **não** está aqui — depende de provedor de
+  envio, desmembrada em CRMLAB-39
 
 ### Personalização (`/settings/theme`) — admin
 - 5 temas prontos (cartões com amostras) + tema livre (5 color pickers)

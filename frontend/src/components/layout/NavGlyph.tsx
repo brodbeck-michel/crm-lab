@@ -25,6 +25,7 @@ const PATHS: Record<NavIcon, string> = {
   commissions: 'M12 3v18M8 7.5h5.5a2.5 2.5 0 010 5H9a2.5 2.5 0 000 5h6',
   users: 'M8 11a3 3 0 100-6 3 3 0 000 6zM2 20c0-3 3-5 6-5s6 2 6 5M17 11a3 3 0 100-6M16 15c3 0 6 2 6 5',
   theme: 'M12 3a9 9 0 100 18h2a3 3 0 003-3 3 3 0 013-3 3 3 0 003-3 9 9 0 00-11-9z',
+  account: 'M12 12a4 4 0 100-8 4 4 0 000 8zM4 21c0-4 3.5-6 8-6s8 2 8 6',
   tenants: 'M4 20V8l7-4 7 4v12M9 20v-5h6v5M4 20h16',
   billing: 'M3 7h18v11H3zM3 11h18M7 15h4',
 };

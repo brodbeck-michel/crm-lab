@@ -12,7 +12,13 @@
 import { pino, type Logger as PinoLogger } from 'pino';
 import { env } from '../config/env.js';
 
-const REDACT_PATHS = [
+/**
+ * Exportado só para teste (`tests/kernel/logger-redact.spec.ts`): pino fica
+ * `enabled: false` em `NODE_ENV=test` (ver `base` abaixo), então não dá para
+ * capturar a SAÍDA redigida de verdade em teste — o teste verifica que o
+ * campo está na lista, não o log renderizado.
+ */
+export const REDACT_PATHS = [
   'password',
   'passwordHash',
   'password_hash',
@@ -28,8 +34,28 @@ const REDACT_PATHS = [
   '*.authorization',
   'req.headers.authorization',
   'headers.authorization',
+  // CRMLAB-32: o cookie carrega o refresh token em claro no header HTTP.
+  'req.headers.cookie',
+  'headers.cookie',
   'details.password',
   'details.token',
+  // CRMLAB-38 (D-148): redact ampliado — nenhum destes tinha achado real de
+  // vazamento (grep vazio no momento do card), mas o proximo
+  // `logger.info({ payload })` que incluir um deles vaza sem isto.
+  'apikey',
+  'apiKey',
+  'secret',
+  'webhookSecret',
+  'contentBase64',
+  'email',
+  'phone',
+  '*.apikey',
+  '*.apiKey',
+  '*.secret',
+  '*.webhookSecret',
+  '*.contentBase64',
+  '*.email',
+  '*.phone',
 ];
 
 const base = pino({

@@ -117,7 +117,8 @@ cd /opt/crm-lab
 ```
 
 O `deploy.sh` faz, em ordem: identidade → árvore limpa → `fetch` → `checkout
---detach` → `build` → `run --rm migrate` → `up -d` → `/healthz`.
+--detach` → `pull` (ou `build`, fallback sem `IMAGE_REGISTRY` — CRMLAB-36) →
+`run --rm migrate` → `up -d` → `/healthz` → limpeza de imagem/cache antigos.
 
 ### As travas do `deploy.sh`
 
@@ -136,8 +137,10 @@ O `deploy.sh` faz, em ordem: identidade → árvore limpa → `fetch` → `check
 6. **Versão × tag.** Se o `HEAD` tem tag, ela precisa bater com o `version` do
    `package.json` da raiz. Se não tem tag, avisa e força a confirmação — a versão
    da tela é **build-time** e um deploy sem bump faz a tela mentir.
-7. **Nenhum `down`, nenhum `-v`, nenhum `prune`.** Não estão no script; derrubar
-   stack e apagar volume são atos manuais e conscientes.
+7. **Nenhum `down`, nenhum `-v`.** Não estão no script; derrubar stack e apagar
+   volume são atos manuais e conscientes. Desde o CRMLAB-36 o script roda
+   `docker image prune -a`/`docker builder prune` no fim — não toca em volume
+   nem em container rodando, só imagem/cache não usados.
 
 ### As travas foram testadas (2026-09-18)
 
@@ -169,7 +172,14 @@ IMAGE_TAG=<sha-anterior> docker compose -p crm-lab-prod -f docker-compose.prod.y
 
 ## 4. Dado de homologação
 
-`hml` nasce com uma cópia de `prod`. Recarregar:
+`hml` nasce com uma cópia de `prod` — **banco e arquivos de mídia**. Os dois
+precisam vir: `message_media` viaja no dump, mas o arquivo mora em
+`<projeto>_media-data`, um volume por ambiente. Sem a cópia dos arquivos, toda
+foto e áudio de produção aparecem como "não foi possível carregar" em hml, o
+que em 19/09 pareceu bug de tela e não era. O script faz as duas coisas desde
+então; produção entra como `:ro`.
+
+Recarregar:
 
 ```bash
 cd /opt/crm-lab-homolog
@@ -261,9 +271,11 @@ Duas incompatibilidades, as duas de protocolo, nenhuma contornável por ajuste:
 
 Cookie resolve os dois porque `Cookie` e `Authorization` são cabeçalhos
 **diferentes**, e o navegador manda o cookie em `fetch` e no handshake de WS
-(mesma origem). O `/api` e o `/ws` continuam exigindo o JWT do próprio app —
-`lib/ws-hub.ts` verifica `?token=` com o `JWT_SECRET` deste ambiente e tira
-`tenantId`/`userId` só do token verificado.
+(mesma origem). O `/api` continua exigindo o Bearer do próprio app; o `/ws`
+(desde o CRMLAB-33/D-151) autentica pelo cookie httpOnly `crm_refresh` —
+`lib/ws-hub.ts` verifica esse cookie com o `JWT_REFRESH_SECRET` deste
+ambiente e tira `tenantId`/`userId` só do token verificado, além de checar o
+header `Origin` contra `CORS_ORIGIN`.
 
 Diferença observável que importa: os `401` de dentro da aplicação (JWT expirado,
 senha errada) **não** têm cabeçalho de desafio, então não abrem caixa nenhuma. Se
@@ -302,7 +314,14 @@ prod.
 ```dotenv
 APP_ENV=homologacao
 COMPOSE_PROJECT_NAME=crm-lab-homolog
-IMAGE_TAG=hml-latest
+# IMAGE_TAG NÃO vai no .env: `deploy.sh` exporta `hml-<sha7>` a cada deploy. (A
+# versão anterior deste exemplo trazia `hml-latest`, uma tag que o CI nunca
+# publica — um `docker compose pull` manual com ela falhava com "manifest
+# unknown".) Para rollback manual, use `IMAGE_TAG=hml-<sha7>` na linha de comando.
+# CRMLAB-36/CRMLAB-41 — `ghcr.io/<owner>/<repo>/`, COM o repositório e COM a
+# barra final: o CI publica sob `ghcr.io/<owner>/<repo>/crm-lab-*`. Vazio (ou
+# ausente) = deploy.sh cai no fallback de build local (DEPLOYMENT.md §2/§4).
+IMAGE_REGISTRY=ghcr.io/brodbeck-michel/crm-lab/
 
 POSTGRES_USER=crm
 POSTGRES_PASSWORD=<openssl rand -hex 24>
@@ -328,15 +347,33 @@ EVOLUTION_API_KEY=
 ## 7. Custo na VPS
 
 Com as duas stacks de pé: ~2 GB de RAM dos 7.9 GB, e as imagens de hml somam
-alguns GB no disco de 96 GB. O aperto é **CPU**: o build ocupa os 2 vCPU por
-~10 min, e um build de homologação deixa produção lenta nesse intervalo. Não
-buildar hml em horário de atendimento do laboratório.
+alguns GB no disco de 96 GB.
 
-Limpeza, quando o disco pedir (`docker system df`):
+**Build deixou de rodar na VPS (CRMLAB-36).** Antes, o `build` ocupava os 2
+vCPU por ~10 min e um build de homologação deixava produção lenta nesse
+intervalo — era a própria razão de existir deste aviso. O CI agora publica
+`crm-lab-{backend,frontend}` no GHCR a cada push em `main`
+(`.github/workflows/ci.yml`, job `docker`) e `deploy.sh` faz `pull` em vez de
+`build` quando `IMAGE_REGISTRY` está definido no `.env` do ambiente — deploy
+em segundos, sem competir por CPU com o outro ambiente. Sem `IMAGE_REGISTRY`
+no `.env`, o script cai no fallback antigo (build local, mesmo custo de
+sempre) — ver `docs/guides/DEPLOYMENT.md` §2/§4.
+
+Cada container agora tem `mem_limit` (postgres 1536m · redis 256m · backend
+512m · frontend 64m · evolution 768m · migrate 256m — somando os dois
+ambientes fica abaixo de 6 GB dos 7.9 GB da VPS): um vazamento em um serviço
+não compete mais pela RAM do Postgres nem convida o OOM killer a escolher a
+vítima errada. Redis ganhou `maxmemory 200mb` + `allkeys-lru` — sem teto,
+`noeviction` virava erro de escrita quando a RAM apertava (era o que derrubava
+o rate limit em 500 global, CRMLAB-34).
+
+`deploy.sh` já roda a limpeza abaixo sozinho depois de cada `up -d`
+(best-effort — falha aqui não aborta o deploy). Rodar manual quando o disco
+pedir fora de um deploy (`docker system df`):
 
 ```bash
-docker image prune -a --filter 'until=336h' --filter 'label!=keep'   # nunca em cima da tag no ar
-docker builder prune --filter 'until=168h'
+docker image prune -af --filter 'until=336h'   # nunca em cima da tag no ar
+docker builder prune -f --filter 'until=168h'
 ```
 
 ---

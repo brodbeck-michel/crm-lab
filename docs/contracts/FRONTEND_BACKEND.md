@@ -16,14 +16,37 @@ Resumo executivo da integração. Detalhes de shapes em `docs/api/API_CONTRACTS.
 
 ## Autenticação
 
+**CRMLAB-32** — o refresh (7d) deixou de viajar pelo corpo/JS: vive só no cookie
+httpOnly `crm_refresh` (`Set-Cookie`, `Secure` em produção, `SameSite=Strict`,
+`Path=/` — ampliado de `/api/v1/auth` pelo CRMLAB-33, D-151, porque o
+handshake de `/ws` também precisa dele; `PATCH /users/me/password` se
+beneficia do mesmo alargamento). O access token
+(15min) continua no corpo, mas o frontend guarda ele SÓ EM MEMÓRIA (Zustand
+sem `persist` para `tokens`) — `localStorage` não guarda token nenhum.
+
 ```
-1. POST /auth/login → { accessToken (15min), refreshToken (7d), user, tenant (com theme) }
+1. POST /auth/login → { accessToken (15min), user, tenant (com theme) } + Set-Cookie crm_refresh
 2. Toda request: Authorization: Bearer <accessToken>
-3. 401 TOKEN_EXPIRED → POST /auth/refresh → retry transparente (interceptor)
-4. 401 REFRESH_TOKEN_INVALID → limpar sessão → /login
+3. Carga de página: POST /auth/refresh (cookie vai sozinho) → access token novo
+   (bootstrap — o access token não sobrevive a um reload)
+4. 401 TOKEN_EXPIRED → POST /auth/refresh → retry transparente (interceptor)
+5. 401 REFRESH_TOKEN_INVALID → limpar sessão → /login
+6. POST /auth/refresh exige header X-Requested-With: crm-lab (proteção CSRF
+   extra — SameSite=Strict + Path já reduzem o risco, mas um form cross-site
+   não consegue setar header custom)
+7. POST /auth/logout limpa o cookie (Max-Age=0) além de revogar a família
 ```
 
+`RefreshRequest.refreshToken` no corpo é fallback DEPRECIADO de transição
+(clientes que ainda não migraram para o cookie) — remoção prevista para
+2026-10-04. O caminho normal e o único suportado pelo frontend atual é o
+cookie.
+
 O tema vem no login — o frontend NÃO faz request extra de tema no bootstrap.
+
+NÃO ligar `credentials: true` no CORS geral do backend: nginx serve SPA e API
+no mesmo origin em produção/homologação, então o cookie viaja sozinho sem
+precisar de CORS com credenciais.
 
 ---
 
@@ -46,9 +69,29 @@ Response: { data: [...], pagination: { page, limit, total, totalPages } }
 ## Real-time (WebSocket)
 
 ```
-Conexão: ws://host/ws?token=<accessToken>
-Servidor coloca socket na room do tenantId (do token — nunca do cliente)
+Conexão: wss://host/ws — SEM token na URL (CRMLAB-33/D-151)
+Autenticação: cookie httpOnly crm_refresh (CRMLAB-32) — mesmo origin, vai sozinho no handshake
+Servidor coloca socket na room do tenantId (do cookie verificado — nunca do cliente)
 ```
+
+**Origin obrigatório e verificado.** WebSocket não segue a Same-Origin Policy do jeito que
+`fetch`/XHR seguem — o browser manda o cookie no handshake mesmo que a página que abriu a conexão
+esteja em outro domínio (WebSocket CSRF). O servidor recusa (destroi o socket, sem completar o
+handshake) qualquer upgrade cujo header `Origin` não esteja em `env.corsOrigins`.
+
+**Cookie ausente/inválido/expirado no handshake:** o servidor completa o handshake (101) e fecha
+IMEDIATAMENTE com o código `WS_CLOSE_UNAUTHORIZED` (4401, `@crm-lab/shared`) — um 4xx cru não
+seria observável pelo `WebSocket` do browser (`onclose` viria com código genérico 1006). O
+cliente, ao ver esse código em `onclose`, chama `refreshAccessToken()` (renova o cookie) antes de
+tentar reconectar.
+
+**Heartbeat:** o servidor faz ping a cada 30s e termina (`terminate()`) quem não respondeu pong
+até o próximo ciclo — limpa sockets mortos (aba fechada sem `close` limpo, rede caiu). Limite de
+5 sockets simultâneos por usuário: o 6º fecha o mais antigo.
+
+**Reconexão do cliente:** backoff exponencial com teto (1s → 30s); desiste após um número máximo
+de tentativas seguidas e avisa por toast; pausa (não conta tentativa) quando a aba fica oculta por
+mais de alguns minutos, reconectando na hora quando ela volta a ficar visível.
 
 | Evento | Payload | Reação do frontend |
 |--------|---------|--------------------|
@@ -58,9 +101,7 @@ Servidor coloca socket na room do tenantId (do token — nunca do cliente)
 | `approval.requested` | `{ proposalId }` | badge em #aprovacoes + invalidate pendentes |
 | `approval.decided` | `{ proposalId, decision }` | toast + invalidate `['proposal', id]` |
 
-**Regra:** eventos WS são NOTIFICAÇÃO, não transporte de dados — o cliente refaz fetch (invalidateQueries). Payloads carregam só IDs.
-
-Reconexão: exponential backoff; ao reconectar, invalidar queries ativas (pode ter perdido eventos).
+**Regra:** eventos WS são NOTIFICAÇÃO, não transporte de dados — o cliente refaz fetch (invalidateQueries). Payloads carregam só IDs. Ao reconectar, invalidar queries ativas (pode ter perdido eventos).
 
 ---
 

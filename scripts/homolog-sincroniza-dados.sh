@@ -10,7 +10,8 @@
 #   ./scripts/homolog-sincroniza-dados.sh              # dump novo de producao
 #   ./scripts/homolog-sincroniza-dados.sh --do-backup  # usa o ultimo dump noturno
 #
-# ATENCAO/LGPD: isto traz dado real de paciente (nome, telefone, conversas)
+# ATENCAO/LGPD: isto traz dado real de paciente (nome, telefone, conversas e
+# os ARQUIVOS de midia — foto de pedido medico, audio de recado)
 # para um ambiente de teste. Por isso homologacao fica atras de senha na borda
 # (basic auth do Caddy) e os canais de WhatsApp sao DESATIVADOS ao final —
 # homologacao com credencial de canal ativa manda mensagem real para paciente
@@ -129,6 +130,25 @@ docker exec -i "$PG_HML" pg_restore \
   --clean --if-exists --no-owner --no-privileges \
   < "$DUMP" 2> >(grep -v 'does not exist, skipping' >&2 || true) \
   || info "(pg_restore terminou com avisos — normal com --clean; conferindo abaixo)"
+
+# ---------------------------------------------------------------------------
+# 4.5. Arquivos de midia (o dump NAO os carrega)
+#
+# `message_media` viaja no dump, mas o ARQUIVO mora num volume proprio de cada
+# ambiente (`<projeto>_media-data`). Sem esta copia, toda foto e audio vindos
+# de producao aparecem como "nao foi possivel carregar" em homologacao — que
+# foi exatamente o que pareceu bug de tela em 19/09.
+#
+# Producao entra como :ro; a copia nunca sobrescreve o que hml gerou (ids sao
+# UUID, nao colidem). `cp -a /p/*` de proposito: o `-n` do busybox nao copia
+# nada e ainda sai com rc=0.
+# ---------------------------------------------------------------------------
+msg "Copiando arquivos de midia de producao (leitura)"
+docker run --rm \
+  -v "${PROJETO_PROD}_media-data:/p:ro" \
+  -v "${PROJETO_HML}_media-data:/h" \
+  alpine sh -c 'cp -a /p/* /h/ 2>/dev/null; ls /h | wc -l' \
+  | xargs -I{} info "{} arquivos de midia em homologacao"
 
 # ---------------------------------------------------------------------------
 # 5. Neutralizar o que pode VAZAR PARA FORA de homologacao

@@ -16,6 +16,7 @@ export * from './types.js';
 export { PgDriver } from './pg-driver.js';
 export { PgliteDriver } from './pglite-driver.js';
 export { applyTenantContext } from './tenant-context.js';
+export { NO_STATEMENT_TIMEOUT, setStatementTimeout } from './statement-timeout.js';
 
 export function shouldUsePglite(): boolean {
   return env.isTest || !env.DATABASE_URL;

@@ -14,6 +14,13 @@ import type { ApiErrorBody, ApiErrorCode, RefreshResponse } from '@crm-lab/share
  *
  * N requisições que batem em 401 ao mesmo tempo compartilham UM único refresh
  * em voo (`refreshInFlight`), nunca N.
+ *
+ * CRMLAB-32 — o refresh token NUNCA passa por aqui: ele vive só no cookie
+ * httpOnly `crm_refresh` (`Set-Cookie` do backend), que o browser anexa
+ * sozinho em `POST /auth/refresh` porque SPA e API são o MESMO origin (nginx).
+ * O access token é o único token que este client vê, e só em memória — sem
+ * `credentials: 'include'` (não precisa: same-origin já manda cookie) e sem
+ * `credentials: true` no CORS do backend (regra do card: nginx já resolve).
  */
 
 export type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
@@ -62,14 +69,12 @@ export interface RequestOptions {
  */
 export interface SessionBridge {
   getAccessToken: () => string | null;
-  getRefreshToken: () => string | null;
   setAccessToken: (accessToken: string, expiresIn: number) => void;
   clearSession: () => void;
 }
 
 const NULL_BRIDGE: SessionBridge = {
   getAccessToken: () => null,
-  getRefreshToken: () => null,
   setAccessToken: () => undefined,
   clearSession: () => undefined,
 };
@@ -102,40 +107,59 @@ export function apiBaseUrl(): string {
 /**
  * Resolve uma URL de mídia (ex. `Message.attachmentUrl`) vinda da API.
  *
- * O backend devolve caminho RELATIVO (`/api/v1/media/:id`) — em produção
- * funciona porque o nginx do frontend faz proxy do mesmo origin. Em dev,
- * frontend (Vite) e backend rodam em origins diferentes (`VITE_API_URL`
- * aponta pra outra porta), então um `<img src="/api/v1/media/...">` cru
- * busca no origin ERRADO. `new URL(caminho, apiBaseUrl())` com caminho
- * absoluto troca só o origin da base, preservando o `/api/v1/...` do path.
- * URL já absoluta (ex. mídia hospedada fora) passa direto.
+ * O backend devolve caminho RELATIVO (`/api/v1/media/:id`). `VITE_API_URL` é
+ * relativo em todo ambiente desde D-142 (produção via nginx — D-051; dev/E2E
+ * via proxy do Vite) — `apiBaseUrl()` normalmente já é `/api/v1`, então
+ * `origem` cai em `window.location.origin`, que é sempre o origin certo.
+ * O ramo absoluto abaixo é defensivo (ex. mídia hospedada fora, ou uma base
+ * absoluta configurada manualmente): `new URL(caminho, base)` EXIGE base
+ * absoluta, e sem ele esta função lançava `Invalid base URL` sempre que
+ * `apiBaseUrl()` viesse relativo (histórico: era o caso de todo build de
+ * produção antes desta função existir, e derrubava a tela inteira ao abrir
+ * uma conversa com anexo).
  */
 export function resolveMediaUrl(url: string): string {
   if (/^https?:\/\//.test(url)) return url;
-  // `new URL(caminho, base)` EXIGE base ABSOLUTA. Em produção `VITE_API_URL` é
-  // RELATIVA (`/api/v1` — `frontend/Dockerfile:32`), porque ali o nginx serve
-  // SPA e API no mesmo origin e um origin fixo no bundle quebraria em qualquer
-  // outro domínio. O resultado é que esta função lançava `Invalid base URL` em
-  // TODO build de produção, e o erro subia como crash da tela inteira: abrir
-  // uma conversa com anexo derrubava a rota. Passou despercebido porque em dev
-  // `VITE_API_URL` é absoluta (`frontend/.env`), então só o build real falha.
-  //
-  // Base relativa significa "mesmo origin", que é exatamente o que o nginx faz
-  // — então o origin da janela é a base correta, não um fallback.
   const base = apiBaseUrl();
   const origem = /^https?:\/\//.test(base) ? base : window.location.origin;
   return new URL(url, origem).toString();
 }
 
+export interface AuthenticatedMedia {
+  blob: Blob;
+  /** Nome original do arquivo, do `Content-Disposition`. `null` se não veio. */
+  fileName: string | null;
+}
+
+/**
+ * `Content-Disposition: inline; filename="pedido%20medico.jpg"` → o nome.
+ *
+ * O backend percentual-codifica o nome ao montar o header
+ * (`media.routes.ts`), por isso o `decodeURIComponent` na volta.
+ */
+function fileNameFrom(header: string | null): string | null {
+  const encoded = /filename="([^"]*)"/.exec(header ?? '')?.[1];
+  if (!encoded) return null;
+  try {
+    return decodeURIComponent(encoded) || null;
+  } catch {
+    return encoded;
+  }
+}
+
 /**
  * Busca um recurso de mídia AUTENTICADO (`GET /media/:id` exige
- * `requireAuth()` — docs/api §media) e devolve os bytes como `Blob`.
+ * `requireAuth()` — docs/api §media) e devolve os bytes como `Blob`, junto do
+ * nome original do arquivo.
  *
  * `<img src>`/`<a href>` crus nunca mandam `Authorization`: só servem para URL
  * pública. Quem precisa exibir mídia protegida busca aqui e usa
- * `URL.createObjectURL(blob)` como `src` (ver `useAuthenticatedImage`).
+ * `URL.createObjectURL(blob)` como `src` (ver `useAuthenticatedMedia`).
+ *
+ * O nome vem junto porque `object URL` não tem nome nenhum: sem ele, baixar a
+ * imagem (CRMLAB-26) salvaria o uuid do blob, sem extensão.
  */
-export async function fetchAuthenticatedBlob(url: string): Promise<Blob> {
+export async function fetchAuthenticatedBlob(url: string): Promise<AuthenticatedMedia> {
   const token = bridge.getAccessToken();
   const authHeader = (t: string | null): Record<string, string> =>
     t ? { Authorization: `Bearer ${t}` } : {};
@@ -148,7 +172,10 @@ export async function fetchAuthenticatedBlob(url: string): Promise<Blob> {
   if (!response.ok) {
     throw new ApiError('INTERNAL_ERROR', 'Não foi possível carregar a mídia', response.status);
   }
-  return response.blob();
+  return {
+    blob: await response.blob(),
+    fileName: fileNameFrom(response.headers.get('Content-Disposition')),
+  };
 }
 
 export function buildQueryString(query?: QueryParams): string {
@@ -194,8 +221,13 @@ async function parseResponse<T>(response: Response): Promise<T> {
   return payload as T;
 }
 
-function send(path: string, options: RequestOptions, token: string | null): Promise<Response> {
-  const headers: Record<string, string> = { Accept: 'application/json' };
+function send(
+  path: string,
+  options: RequestOptions,
+  token: string | null,
+  extraHeaders?: Record<string, string>,
+): Promise<Response> {
+  const headers: Record<string, string> = { Accept: 'application/json', ...extraHeaders };
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
   if (token) headers.Authorization = `Bearer ${token}`;
 
@@ -210,27 +242,61 @@ function send(path: string, options: RequestOptions, token: string | null): Prom
 /**
  * Renova o access token. Chamadas concorrentes compartilham a MESMA promise —
  * 5 requisições que expiram juntas disparam 1 `POST /auth/refresh`, não 5.
+ *
+ * Usada também no BOOTSTRAP da página (`useSessionBootstrap`, App.tsx):
+ * como o access token não é persistido (CRMLAB-32), toda carga de página
+ * chama isto para trocar o cookie `crm_refresh` por um access token novo.
  */
 export function refreshAccessToken(): Promise<string> {
   if (refreshInFlight) return refreshInFlight;
-  refreshInFlight = performRefresh().finally(() => {
+  refreshInFlight = withCrossTabLock(performRefresh).finally(() => {
     refreshInFlight = null;
   });
   return refreshInFlight;
 }
 
-async function performRefresh(): Promise<string> {
-  const refreshToken = bridge.getRefreshToken();
-  if (!refreshToken) {
-    return failSession(
-      new ApiError('REFRESH_TOKEN_INVALID', 'Sessão expirada. Faça login novamente.', 401),
-    );
-  }
+/** Nome do lock compartilhado entre abas do mesmo origin para o refresh. */
+export const REFRESH_LOCK_NAME = 'crm-lab:auth-refresh';
 
+/**
+ * Serializa o refresh ENTRE ABAS (revisão dos PRs #44/#47, CRMLAB-40).
+ *
+ * `refreshInFlight` deduplica só dentro de uma aba. O cookie `crm_refresh` é
+ * um só para o navegador inteiro, e o backend ROTACIONA o token a cada uso:
+ * duas abas que chamam `/auth/refresh` ao mesmo tempo (restaurar sessão com
+ * várias abas, ou o 4401 do WebSocket chegando em todas no mesmo instante)
+ * mandam o MESMO cookie; a primeira rotaciona, a segunda apresenta um token já
+ * revogado, e o backend trata como roubo — derruba a família e desloga o
+ * usuário de TODAS as abas.
+ *
+ * Com o Web Locks API, a segunda aba espera a primeira terminar; quando entra,
+ * o cookie já é o novo (cookie é compartilhado na hora) e o refresh dela
+ * simplesmente funciona. Sem `navigator.locks` (browser antigo, jsdom nos
+ * testes) roda direto — o backend ainda tem a janela de tolerância de 10 s
+ * (D-166) como rede de segurança.
+ */
+async function withCrossTabLock<T>(fn: () => Promise<T>): Promise<T> {
+  const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
+  if (!locks) return fn();
+  return locks.request(REFRESH_LOCK_NAME, fn);
+}
+
+/**
+ * `X-Requested-With: crm-lab` é exigido pelo backend em `/auth/refresh` como
+ * camada extra de proteção CSRF (o cookie sozinho já é `SameSite=Strict` +
+ * `Path=/api/v1/auth`, mas um form cross-site não consegue setar este header).
+ * Sem `refreshToken` no corpo: o cookie viaja sozinho (same-origin).
+ */
+async function performRefresh(): Promise<string> {
   let result: RefreshResponse;
   try {
     result = await parseResponse<RefreshResponse>(
-      await send('/auth/refresh', { method: 'POST', body: { refreshToken }, auth: false }, null),
+      await send(
+        '/auth/refresh',
+        { method: 'POST', auth: false },
+        null,
+        { 'X-Requested-With': 'crm-lab' },
+      ),
     );
   } catch (error) {
     // Só derruba a sessão em 401 do refresh. Queda de rede não desloga.

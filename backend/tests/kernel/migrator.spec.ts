@@ -69,7 +69,14 @@ describe('migrator', () => {
   // para provar aqui — e o que importa de verdade sobre a MIGRAÇÃO em si,
   // não sobre a infra em volta — é que o `GRANT`/`CREATE ROLE` produziu os
   // atributos certos.
-  it('cria a role crm_login (LOGIN, sem superuser/bypassrls/createdb), membro de crm_app', async () => {
+  // D-165: a versao anterior deste teste exigia `rolbypassrls: false` e passava
+  // verde enquanto a role, na pratica, deixava login e webhook sem NENHUMA
+  // linha visivel (medido: 0 de 5 usuarios em homologacao). O teste nao estava
+  // frouxo — estava CERTO sobre o atributo e ERRADO sobre o objetivo, que e a
+  // pool conseguir rodar os caminhos `withoutTenant()` sem ser superuser. Por
+  // isso o teste seguinte, `crm_login enxerga linhas sem contexto de tenant`,
+  // e o que realmente protege: ele falha se alguem "endurecer" a role de novo.
+  it('cria a role crm_login (LOGIN, sem superuser/createdb/createrole, COM bypassrls), membro de crm_app', async () => {
     const role = await db.query<{
       rolcanlogin: boolean;
       rolsuper: boolean;
@@ -84,7 +91,8 @@ describe('migrator', () => {
     expect(role.rows[0]).toEqual({
       rolcanlogin: true,
       rolsuper: false,
-      rolbypassrls: false,
+      // BYPASSRLS de proposito (D-165) — ver o comentario acima do teste.
+      rolbypassrls: true,
       rolcreatedb: false,
       rolcreaterole: false,
     });
@@ -97,6 +105,47 @@ describe('migrator', () => {
        WHERE member.rolname = 'crm_login' AND grp.rolname = 'crm_app'`,
     );
     expect(membership.rows[0]?.count).toBe(1);
+  });
+
+  /**
+   * D-165 — o teste que faltava, e que teria barrado o 020 original.
+   *
+   * O ponto do CRMLAB-38 nao e "crm_login tem tal atributo", e sim "a pool
+   * consegue rodar os caminhos `withoutTenant()` (login, /platform, webhook,
+   * seeds) SEM ser superuser". Conferir atributo nao prova isso; conferir que
+   * a role ENXERGA LINHA sem contexto de tenant, prova.
+   *
+   * Com a role NOBYPASSRLS do 020 original, as duas contagens abaixo davam 0 —
+   * exatamente o que aconteceria com login e webhook em producao.
+   */
+  it('crm_login enxerga linhas sem contexto de tenant (senao login e webhook morrem)', async () => {
+    const tenantId = '11111111-1111-1111-1111-111111111111';
+    await db.query(
+      `INSERT INTO tenants (id, name, slug) VALUES ($1, 'Lab Teste', 'lab-teste')
+       ON CONFLICT (id) DO NOTHING`,
+      [tenantId],
+    );
+
+    const visiveis = await db.transaction(async (tx) => {
+      await tx.query(`SET LOCAL ROLE crm_login`);
+      const r = await tx.query<{ count: number }>(
+        `SELECT COUNT(*)::int AS count FROM tenants`,
+      );
+      return r.rows[0]?.count ?? 0;
+    });
+    expect(visiveis).toBeGreaterThan(0);
+  });
+
+  /**
+   * O outro lado da D-165: BYPASSRLS em `crm_login` nao pode afrouxar o
+   * isolamento multitenant (regra critica 1). Quem atende request COM tenant e
+   * `crm_app` via `SET LOCAL ROLE` (D-002), e `crm_app` nao tem BYPASSRLS.
+   */
+  it('crm_app continua sem bypassrls — o isolamento multitenant nao muda', async () => {
+    const role = await db.query<{ rolbypassrls: boolean }>(
+      `SELECT rolbypassrls FROM pg_roles WHERE rolname = 'crm_app'`,
+    );
+    expect(role.rows[0]?.rolbypassrls).toBe(false);
   });
 
   // CRMLAB-38 item 2 (D-146): as 15 FKs sem indice apontadas na auditoria.

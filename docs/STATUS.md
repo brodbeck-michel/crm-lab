@@ -2178,3 +2178,40 @@ em texto plano em `~/.config/gh/hosts.yml` — o aviso do próprio `gh`).
 **Validação funcional que falta e que só o Michel pode fazer** (a automatizada está toda verde):
 entrar no sistema em dois navegadores e confirmar que ninguém foi deslogado pelo deploy — é o
 risco nº 2 acima, o único que nenhuma checagem de fora consegue provar.
+
+---
+
+## 2026-09-21 — D-165: a role `crm_login` da Onda C estava inutilizável (CRMLAB-38)
+
+Decisão que ficou pendente no fechamento da Onda C, resolvida por **medição** em vez de debate,
+depois que o Michel confirmou que produção ainda não tem usuário (está prospectando o Lab Santé).
+
+**O que foi medido**, no banco de homologação, com dados reais:
+
+| role | contexto | `users` | `tenants` |
+|---|---|---|---|
+| dona (`crm`) | sem `app.tenant_id` | 5 | 3 |
+| `crm_login` **NOBYPASSRLS** (como o 020 criou) | sem `app.tenant_id` | **0** | **0** |
+| `crm_login` **BYPASSRLS** | sem `app.tenant_id` | 5 | 3 |
+| `crm_app` via `SET LOCAL ROLE` + 1 tenant | com contexto | 3 de 5 | 1 de 3 |
+
+A role criada pelo 020 enxergava zero linha em todo caminho `withoutTenant()`. Trocar a
+`DATABASE_URL` para ela — que é o único ponto do card que entrega valor — derrubaria login e
+webhook por completo. Com `BYPASSRLS`, os caminhos sem tenant voltam a funcionar e o isolamento
+multitenant continua intacto, porque quem atende request com tenant é `crm_app`, que não tem
+`BYPASSRLS`.
+
+**O que sai mesmo assim, que era o objetivo do card:** o `SUPERUSER` — DDL, `DROP TABLE`, `COPY`
+lendo arquivo do host, leitura de qualquer tabela do cluster, alteração de outras roles.
+
+**O teste existia e afirmava o comportamento errado.** `migrator.spec.ts` tinha
+`expect(rolbypassrls).toBe(false)` e passava verde. Não estava frouxo: estava certo sobre o
+atributo e errado sobre o objetivo. Trocado, e acrescentado o teste que importa — `crm_login`
+precisa ENXERGAR LINHA sem contexto de tenant. Verifiquei que ele falha com a role antiga
+(`expected 0 to be greater than 0`), senão não protegeria nada. Mais um teste garantindo que
+`crm_app` segue sem `BYPASSRLS`.
+
+**Lição para o próximo card de permissão:** asserção sobre atributo de role não prova nada sobre
+o comportamento que o atributo deveria produzir. O 020 foi escrito sem reler o cabeçalho do
+`002_row_level_security.sql`, que já dizia em texto que os caminhos sem tenant só funcionam por
+rodarem como a role dona.

@@ -595,7 +595,17 @@ Registrado aqui para não virar promessa implícita:
   502/503 em deploys de 17/09) — aceito como limitação conhecida por ora
   (CRMLAB-36).
 - **Ações que exigem acesso à VPS**, fora do alcance de um PR (ver
-  `docs/STATUS.md`, entrada CRMLAB-36, para o passo a passo):
+  `docs/STATUS.md`, entradas CRMLAB-36 e CRMLAB-38, para o passo a passo):
+  - **`gh auth login` na VPS** (CRMLAB-38/D-150). Desde a Onda C o `deploy.sh`
+    consulta o GitHub antes de buildar e **aborta** se o workflow `CI` daquele
+    commit não estiver verde — ou se o `gh` não estiver instalado/autenticado.
+    É login manual, uma vez por máquina; sem ele nenhum deploy passa.
+  - **Apontar `DATABASE_URL` para `crm_login`** (CRMLAB-38/D-145). A migração
+    020 cria a role sem senha de propósito. Na VPS, por ambiente:
+    `ALTER ROLE crm_login WITH PASSWORD '<senha nova>';` e então trocar o
+    usuário na `DATABASE_URL` do `.env`. Enquanto isso não for feito, a pool
+    continua conectando como superuser e o ganho da 020 é zero. O serviço
+    `migrate` do compose **não** muda — ele precisa da role dona para DDL.
   - Definir `IMAGE_REGISTRY` no `.env` dos dois ambientes (`/opt/crm-lab` e
     `/opt/crm-lab-homolog`) — sem isso o `deploy.sh` continua caindo no
     fallback de build local.

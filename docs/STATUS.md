@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-19 (v1.11.0 mergeada em `main`: Onda A do hardening CRMLAB-27 — ver seção no fim)
+**Última atualização:** 2026-09-20 (Onda C do hardening CRMLAB-27 em andamento — ver seções no fim)
 
 ---
 
@@ -1888,3 +1888,51 @@ sentido; patch novo é o caminho normal). Homologação e produção seguem o me
 `https://vitrocrm.cloud/api/v1/health` em 200; os 5 headers de segurança (D-144) confirmados
 com `curl -I` tanto em `127.0.0.1:8080` quanto no domínio público. Nenhuma migração nova nesta
 onda — schema intocado.
+
+---
+
+## 2026-09-20 — CRMLAB-38: higiene de banco e observabilidade ✅
+
+Worktree próprio (`crm-lab-wt-38`), branch `feature/CRMLAB-38-db-higiene-observabilidade`.
+Onda C do épico de hardening (CRMLAB-27). Seis itens, todos de defesa em profundidade — nenhum
+corrige falha explorada.
+
+- **Role de login sem superuser** (migração `020_crm_login_role.sql`, D-145): `crm_login`
+  (`NOSUPERUSER NOBYPASSRLS`, membro de `crm_app`) para a pool conectar. Nasce SEM senha de
+  propósito — senha em migração versionada é senha vazada no git. **Pendência manual na VPS**
+  (`ALTER ROLE ... PASSWORD` + trocar o usuário da `DATABASE_URL`), ver DEPLOYMENT.md §7.
+- **Índice nas 15 FKs sem índice** (`021_fk_indexes.sql`, D-146). Sem `CONCURRENTLY`: o migrator
+  roda cada arquivo em transação, e `CREATE INDEX CONCURRENTLY` não pode.
+- **Lock de migração** (`migrator.ts`, D-147): `pg_advisory_xact_lock` dentro da transação de
+  CADA migração, que relê `schema_migrations` já com o lock na mão.
+- **Redact do logger ampliado** (D-148): `apikey`/`secret`/`webhookSecret`/`contentBase64`/
+  `email`/`phone`, cada um também em `*.<campo>`. Corpo de erro do Evolution de 500 → 200 chars.
+- **Anti-replay nos webhooks** (D-149): `sha256(rawBody)` no Redis por 10 min, por tenant.
+- **`deploy.sh` exige CI verde no commit** (D-150), via `gh run list`; aborta se `gh` faltar ou
+  não estiver autenticado, em vez de pular a checagem em silêncio.
+
+**Dois achados durante o fechamento, não no card:**
+
+1. **O lock de migração original travava a suíte inteira.** A primeira versão pedia o lock numa
+   transação EXTERNA que envolvia o loop de migrações. O driver de PGlite serializa cada
+   `query`/`transaction` numa fila de uma conexão só: a externa esperava o loop e o loop esperava
+   a fila que a externa segurava — deadlock, `route-tenant-isolation.spec.ts` em timeout de 60 s
+   com 148 testes pulados. Corrigido movendo o lock para dentro da transação de cada migração e
+   relendo `schema_migrations` já com ele na mão — que, de quebra, é o que de fato IMPEDE a dupla
+   aplicação (serializar sozinho não impedia: o segundo runner acordaria com a lista velha).
+2. **A janela de timestamp da Meta descartaria mensagem legítima.** O card ganhou, além do
+   anti-replay por hash, uma checagem que recusava payload da Meta com timestamp de mais de 5 min.
+   Ela quebrou 12 testes de webhook (os fixtures usam epoch fixo de 2024) — e o teste estava
+   certo: **a Meta retenta webhook falho por até 7 dias**, então recusar por idade descarta em
+   silêncio toda reentrega depois de qualquer indisponibilidade maior que a janela. Removida antes
+   do merge, com decisão do usuário; o anti-replay por hash + a UNIQUE de `messages.external_id`
+   cobrem o caso. Guarda de regressão em `tests/webhooks/replay-guard.spec.ts`.
+
+**Docs atualizados no mesmo commit** (Regra Zero, nenhum vinha do card): `docs/DECISIONS.md`
+(D-145 a D-150, que o código já referenciava sem existirem), `docs/database/SCHEMA.md` (role
+`crm_login`, índices de FK, lista de migrações até a 021) e `docs/guides/DEPLOYMENT.md` §7
+(`gh auth login` e a troca da `DATABASE_URL` como ações que exigem acesso à VPS).
+
+**Verificação (2026-09-20):** `npm run typecheck` verde nos 4 workspaces, `npm run lint` verde,
+`npm run test:backend` verde (81 arquivos / 1169 testes) e `npm run test:frontend` verde
+(75 arquivos / 1066 testes).

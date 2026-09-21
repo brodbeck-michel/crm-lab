@@ -284,8 +284,12 @@ export function createEvolutionClient(
     );
 
     if (!ok) {
+      // CRMLAB-38 item 4 (D-148): 200, nao 500 — este Error vai para o log via
+      // `queue.job_attempt_failed`, e 500 chars do corpo de erro de terceiro e
+      // superficie desnecessaria (o gateway pode ecoar dado de sessao/numero
+      // no corpo do erro). 200 chars ainda identifica a causa pra debug.
       throw new Error(
-        `Evolution API respondeu ${status} em ${path}: ${text.slice(0, 500)}`,
+        `Evolution API respondeu ${status} em ${path}: ${text.slice(0, 200)}`,
       );
     }
     return text.length > 0 ? safeJsonParse(text) : null;

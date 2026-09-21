@@ -2035,6 +2035,110 @@ neste arquivo: qualquer `add_header` adicionado ao `server {}` PRECISA ser copia
 locations que têm `add_header` próprio, ou vira letra morta — comentário no arquivo aponta para
 esta decisão.
 
+### D-145: Pool conecta com `crm_login` (sem superuser) em vez do dono do banco (CRMLAB-38)
+**Decisão:** migração `020_crm_login_role.sql` cria a role `crm_login` (`LOGIN NOSUPERUSER
+NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION`), membro de `crm_app` — herda por `INHERIT`
+os mesmos `GRANT`s de SELECT/INSERT/UPDATE/DELETE de D-002, sem ser dona de nada. A role NÃO
+recebe senha na migração; apontar `DATABASE_URL` para ela e rodar `ALTER ROLE crm_login WITH
+PASSWORD '...'` é **pendência manual na VPS** (`docs/guides/DEPLOYMENT.md`). O job `migrate` do
+compose continua conectando como a role dona, que é quem precisa de DDL.
+**Motivo:** a pool conecta hoje como o `POSTGRES_USER` do container, que a imagem oficial cria
+como superuser. Dentro de transação com tenant a app troca para `crm_app` via `SET LOCAL ROLE`
+(D-002), mas todo caminho `withoutTenant()` — login, `/platform/*`, lookup de tenant do webhook,
+seeds — nunca troca: roda com DDL, `BYPASSRLS` e `DROP TABLE` na mão. Nenhuma SQLi foi
+encontrada na auditoria (todo valor por bind, `ORDER BY` por allow-list); isto é defesa em
+profundidade, não correção de falha explorada. Senha em migração versionada é senha vazada no
+git — daí a role nascer sem senha e o resto ser passo manual.
+**Impacto:** `backend/migrations/020_crm_login_role.sql`, `docs/guides/DEPLOYMENT.md`,
+`docs/database/SCHEMA.md`.
+
+### D-146: Índice nas 15 FKs sem índice, sem `CONCURRENTLY` (CRMLAB-38)
+**Decisão:** `021_fk_indexes.sql` cria `idx_*` (`IF NOT EXISTS`) nas 15 foreign keys que não
+tinham índice, com `CREATE INDEX` comum — não `CONCURRENTLY`.
+**Motivo:** FK sem índice vira SEQ SCAN em `DELETE` na tabela pai e em qualquer JOIN pelo lado
+filho. O banco tem 13 MB hoje, então o ganho é zero agora e o custo de esperar só cresce.
+`CONCURRENTLY` foi descartado porque o migrator roda cada arquivo dentro de uma transação
+própria e `CREATE INDEX CONCURRENTLY` não pode rodar em transação — suportá-lo exigiria um
+modo "migração fora de transação" no runner, desproporcional para um índice que neste volume
+sai instantâneo. Reavaliar se o volume crescer a ponto do lock incomodar em produção.
+**Impacto:** `backend/migrations/021_fk_indexes.sql`, `docs/database/SCHEMA.md`.
+
+### D-147: Lock de migração é `pg_advisory_xact_lock` pedido DENTRO da transação de cada migração (CRMLAB-38)
+**Decisão:** cada migração pendente roda em sua própria transação, que começa pedindo
+`pg_advisory_xact_lock(hashtext('crm_lab_migrate'))` e, **já com o lock na mão**, relê
+`schema_migrations` para aquele arquivo antes de aplicá-lo. Não existe transação externa
+envolvendo o loop.
+**Motivo:** dois deploys disparados juntos aplicariam a mesma migração em paralelo. `deploy.sh`
+já roda o job `migrate` sozinho — isto é segunda linha de defesa, não substituta da primeira.
+Dois detalhes que a primeira versão desta decisão errou e o teste pegou:
+1. **O lock NÃO pode ficar numa transação externa que envolva o loop.** O driver de PGlite
+   (`pglite-driver.ts`, usado em todo teste e em dev sem `DATABASE_URL`) serializa cada
+   `query`/`transaction` numa fila de uma conexão só: a transação externa esperaria o loop
+   terminar e o loop esperaria a fila que a externa segura — deadlock, e a suíte inteira caiu
+   em timeout de 60 s. O lock por migração não tem esse problema: nenhuma chamada aninha.
+2. **Serializar não basta; é preciso reler.** O `SELECT` de `schema_migrations` feito antes do
+   loop está obsoleto para o segundo runner, que fica bloqueado no lock justamente enquanto o
+   primeiro aplica e commita. Sem o `SELECT ... WHERE name = $1` de dentro da transação, ele
+   acordaria com a lista velha e aplicaria o arquivo de novo — o lock teria serializado a dupla
+   aplicação em vez de impedi-la. Arquivo já aplicado por outro runner entra em `skipped`.
+`pg_advisory_xact_lock` (transação) e não lock de sessão porque `db.query` fora de transação
+usa o pool e cada chamada pode sair por uma conexão diferente; um lock de sessão pedido numa
+conexão e liberado por engano noutra ficaria preso até a conexão fechar, e o pool reaproveita
+conexões ociosas (D-030). O lock de transação nasce e morre preso à conexão da transação e
+libera sozinho no COMMIT/ROLLBACK. Falha de uma migração continua não desfazendo as anteriores.
+**Impacto:** `backend/src/db/migrator.ts`, `backend/tests/kernel/migrator.spec.ts`.
+
+### D-148: Redact do logger ampliado preventivamente; corpo de erro do Evolution cortado em 200 chars (CRMLAB-38)
+**Decisão:** `REDACT_PATHS` ganha `apikey`/`apiKey`/`secret`/`webhookSecret`/`contentBase64`/
+`email`/`phone`, cada um também na forma `*.<campo>` (um nível de aninhamento), e passa a ser
+`export` só para o teste conseguir afirmar a lista. O corpo de erro que o `evolution-client`
+embute na mensagem do `Error` cai de 500 para 200 caracteres.
+**Motivo:** nenhum dos campos novos tinha vazamento real no momento do card (grep vazio) — mas
+o próximo `logger.info({ payload })` que incluir um deles vaza sem isto; o custo de listar é
+nulo. `REDACT_PATHS` é exportado apenas para teste porque o pino fica `enabled: false` em
+`NODE_ENV=test`, então não há saída renderizada para capturar: o teste verifica que o campo
+está na lista, não o log final. Os 500 chars do corpo de erro do gateway vão para o log via
+`queue.job_attempt_failed` e podem ecoar dado de sessão/número do terceiro; 200 ainda
+identificam a causa para debug.
+**Impacto:** `backend/src/lib/logger.ts`, `backend/src/lib/evolution-client.ts`,
+`backend/tests/kernel/logger-redact.spec.ts`.
+
+### D-149: Anti-replay nos webhooks por hash do corpo no Redis (10 min); janela de timestamp avaliada e DESCARTADA (CRMLAB-38)
+**Decisão:** antes de aceitar um webhook autenticado, `authenticate()` calcula `sha256(rawBody)`
+e guarda `webhook:replay:<tenantId>:<digest>` no Redis por 600 s; corpo já visto é recusado.
+Essa é a **única** camada nova. Uma segunda camada — recusar payload da Meta cujo timestamp de
+mensagem fosse mais velho que 5 min — foi implementada, testada e **removida antes do merge**.
+**Motivo:** HMAC e token provam que o remetente é legítimo, não que a requisição é nova — um
+corpo capturado é reenviável indefinidamente com assinatura válida.
+`messages.external_id` (migração 019) já impede duplicar a *mensagem*; o que sobra são callbacks
+de status/conexão repetidos, que não têm `external_id` para colidir. O TTL é curto porque o alvo
+é o replay logo em seguida (janela realista de MITM ou proxy reentregando), não guardar hash
+para sempre.
+
+A janela de timestamp saiu porque **a Meta retenta webhook falho por até 7 dias**. Recusar por
+idade significa descartar em silêncio toda reentrega legítima depois de qualquer indisponibilidade
+maior que a janela — exatamente a situação em que essas mensagens mais importam. O ganho de
+segurança adicional era quase nulo: dentro da janela quem barra é o hash acima, e fora dela a
+UNIQUE de `external_id` impede a duplicata da mensagem. Trocar perda real de mensagem por defesa
+em profundidade redundante é o negócio errado. O custo disso apareceu como 12 testes de webhook
+quebrando: os fixtures usam um epoch fixo de 2024, e o teste estava certo — quem estava errado
+era a regra. `tests/webhooks/replay-guard.spec.ts` guarda a regressão com um payload de 2024 que
+**precisa** passar na primeira entrega e só ser barrado na segunda.
+**Impacto:** `backend/src/controllers/webhook.routes.ts`,
+`backend/tests/webhooks/replay-guard.spec.ts`.
+
+### D-150: `deploy.sh` exige CI verde no commit, com `gh` autenticado na VPS (CRMLAB-38)
+**Decisão:** antes de buildar, `scripts/deploy.sh` consulta `gh run list --commit <SHA> --branch
+main --workflow CI` e aborta se a conclusão não for `success` — inclusive quando não há run
+nenhum para o SHA, ou quando a consulta falha. `gh` ausente ou não autenticado também aborta,
+com mensagem dizendo para rodar `gh auth login` (passo manual, uma vez, fora do script).
+**Motivo:** o script já conferia árvore limpa e (em produção) tag igual à versão, mas nunca
+perguntou ao GitHub se aquele commit passou no CI — buildava e subia com o workflow vermelho se
+alguém rodasse o deploy sem olhar o PR. Abortar quando a checagem não pode ser feita, em vez de
+pular em silêncio, é deliberado: uma verificação que se desliga sozinha é pior que não existir,
+porque dá a impressão de cobertura.
+**Impacto:** `scripts/deploy.sh`, `docs/guides/DEPLOYMENT.md`.
+
 ## Template para novas decisões
 
 ```

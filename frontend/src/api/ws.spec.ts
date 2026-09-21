@@ -2,8 +2,9 @@ import { QueryClient } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MockInstance } from 'vitest';
 import type { WsEvent } from '@crm-lab/shared';
+import { WS_CLOSE_UNAUTHORIZED } from '@crm-lab/shared';
 import { applyWsEvent, createWsClient } from './ws';
-import type { WebSocketLike } from './ws';
+import type { WebSocketLike, WsClientOptions } from './ws';
 import { queryKeys, queryScopes } from './query-keys';
 
 /**
@@ -11,6 +12,9 @@ import { queryKeys, queryScopes } from './query-keys';
  *  - evento é NOTIFICAÇÃO: invalida a query certa, nunca faz patch no cache
  *  - reconexão com backoff exponencial
  *  - ao reconectar, invalida as queries ativas (pode ter perdido evento)
+ *  - CRMLAB-33: autenticação por cookie (mesmo origin) — a URL não carrega
+ *    mais token; `onclose` com `WS_CLOSE_UNAUTHORIZED` tenta refresh antes
+ *    de reconectar.
  */
 
 class FakeSocket implements WebSocketLike {
@@ -18,7 +22,7 @@ class FakeSocket implements WebSocketLike {
 
   readyState = 1;
   onopen: ((event: unknown) => void) | null = null;
-  onclose: ((event: unknown) => void) | null = null;
+  onclose: ((event: { code?: number }) => void) | null = null;
   onerror: ((event: unknown) => void) | null = null;
   onmessage: ((event: { data: unknown }) => void) | null = null;
   closed = false;
@@ -39,21 +43,21 @@ class FakeSocket implements WebSocketLike {
   emitMessage(event: WsEvent): void {
     this.onmessage?.({ data: JSON.stringify(event) });
   }
-  emitClose(): void {
+  emitClose(code?: number): void {
     this.readyState = 3;
-    this.onclose?.({});
+    this.onclose?.({ code });
   }
 }
 
 let queryClient: QueryClient;
 let invalidate: MockInstance;
 
-function build(token: string | null = 'access-1') {
+function build(overrides: Partial<WsClientOptions> = {}) {
   return createWsClient({
     queryClient,
-    getToken: () => token,
     url: 'ws://test/ws',
     socketFactory: (url) => new FakeSocket(url),
+    ...overrides,
   });
 }
 
@@ -83,16 +87,11 @@ afterEach(() => {
 });
 
 describe('ws — conexão', () => {
-  it('conecta em VITE_WS_URL com ?token=', () => {
+  it('conecta em VITE_WS_URL sem token na query string', () => {
     build().connect();
 
     expect(FakeSocket.instances).toHaveLength(1);
-    expect(socket(0).url).toBe('ws://test/ws?token=access-1');
-  });
-
-  it('sem token não conecta', () => {
-    build(null).connect();
-    expect(FakeSocket.instances).toHaveLength(0);
+    expect(socket(0).url).toBe('ws://test/ws');
   });
 });
 
@@ -137,13 +136,7 @@ describe('ws — evento invalida a query certa', () => {
 
   it('approval.decided → toast + invalida a proposta', () => {
     const toast = vi.fn();
-    const client = createWsClient({
-      queryClient,
-      getToken: () => 'access-1',
-      url: 'ws://test/ws',
-      socketFactory: (url) => new FakeSocket(url),
-      toast,
-    });
+    const client = build({ toast });
     client.connect();
     socket(0).emitMessage({
       event: 'approval.decided',
@@ -229,6 +222,90 @@ describe('ws — reconexão', () => {
     vi.advanceTimersByTime(60_000);
     expect(FakeSocket.instances).toHaveLength(1);
     expect(client.isConnected()).toBe(false);
+  });
+
+  it('depois de maxAttempts, desiste e avisa por toast', () => {
+    const toast = vi.fn();
+    const client = build({ toast, maxAttempts: 2 });
+    client.connect();
+
+    socket(0).emitClose(); // tentativa 1 agendada
+    vi.advanceTimersByTime(1_000);
+    socket(1).emitClose(); // tentativa 2 agendada
+    vi.advanceTimersByTime(2_000);
+    socket(2).emitClose(); // esgotou maxAttempts — não agenda mais
+
+    expect(FakeSocket.instances).toHaveLength(3);
+    expect(client.hasGivenUp()).toBe(true);
+    expect(toast).toHaveBeenCalledWith(expect.stringMatching(/reconectar|conexão/i), 'attention');
+
+    vi.advanceTimersByTime(60_000);
+    expect(FakeSocket.instances).toHaveLength(3); // continua sem tentar
+  });
+});
+
+describe('ws — 401/4401: renova sessão antes de reconectar', () => {
+  it('em WS_CLOSE_UNAUTHORIZED, chama refreshAccessToken antes da próxima tentativa', async () => {
+    const refreshAccessToken = vi.fn().mockResolvedValue('novo-access-token');
+    const client = build({ refreshAccessToken });
+    client.connect();
+
+    socket(0).emitClose(WS_CLOSE_UNAUTHORIZED);
+    expect(refreshAccessToken).toHaveBeenCalledTimes(1);
+    // `.then().finally(scheduleReconnect)` só agenda depois que a promise
+    // resolve — flush do microtask queue antes de avançar o timer macro.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    vi.advanceTimersByTime(1_000);
+    expect(FakeSocket.instances).toHaveLength(2);
+  });
+
+  it('refresh falhando (sessão morta) ainda assim tenta reconectar (maxAttempts limita)', async () => {
+    const refreshAccessToken = vi.fn().mockRejectedValue(new Error('sem sessão'));
+    const client = build({ refreshAccessToken });
+    client.connect();
+
+    socket(0).emitClose(WS_CLOSE_UNAUTHORIZED);
+    expect(refreshAccessToken).toHaveBeenCalledTimes(1);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    vi.advanceTimersByTime(1_000);
+    expect(FakeSocket.instances).toHaveLength(2);
+  });
+
+  it('close SEM WS_CLOSE_UNAUTHORIZED não chama refresh', () => {
+    const refreshAccessToken = vi.fn();
+    const client = build({ refreshAccessToken });
+    client.connect();
+
+    socket(0).emitClose(); // código genérico (queda de rede, deploy, etc)
+    vi.advanceTimersByTime(1_000);
+
+    expect(refreshAccessToken).not.toHaveBeenCalled();
+    expect(FakeSocket.instances).toHaveLength(2);
+  });
+});
+
+describe('ws — aba oculta pausa a reconexão', () => {
+  it('aba oculta por mais que visibilityHiddenPauseMs: não agenda nova tentativa', () => {
+    const client = build({ visibilityHiddenPauseMs: 5_000 });
+    client.connect();
+
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+
+    vi.advanceTimersByTime(10_000); // já passou dos 5s de tolerância
+    socket(0).emitClose();
+    vi.advanceTimersByTime(60_000);
+
+    expect(FakeSocket.instances).toHaveLength(1); // não reagendou
+
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+
+    expect(FakeSocket.instances).toHaveLength(2); // reconecta na hora ao voltar
   });
 });
 

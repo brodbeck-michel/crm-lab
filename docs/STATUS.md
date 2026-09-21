@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-19 (v1.11.0 mergeada em `main`: Onda A do hardening CRMLAB-27 — ver seção no fim)
+**Última atualização:** 2026-09-20 (Onda C do hardening CRMLAB-27 em andamento — ver seções no fim)
 
 ---
 
@@ -1888,3 +1888,47 @@ sentido; patch novo é o caminho normal). Homologação e produção seguem o me
 `https://vitrocrm.cloud/api/v1/health` em 200; os 5 headers de segurança (D-144) confirmados
 com `curl -I` tanto em `127.0.0.1:8080` quanto no domínio público. Nenhuma migração nova nesta
 onda — schema intocado.
+
+---
+
+## 2026-09-20 — CRMLAB-33: WebSocket autentica por cookie httpOnly, heartbeat e limite por usuário ✅
+
+Worktree próprio (`crm-lab-wt-33`), branch `feature/CRMLAB-33-websocket-cookie-auth`. Onda C do
+épico de hardening (CRMLAB-27) — decisão de abordagem (Opção C do card: cookie httpOnly em vez
+de token na URL) fechada com o usuário antes de codar, já que o CRMLAB-32 tornou essa opção a
+mais simples.
+
+- **Autenticação do handshake** (`backend/src/lib/ws-hub.ts`, `backend/src/lib/cookies.ts`
+  novo): `/ws` não aceita mais `?token=<accessToken>` — autentica pelo cookie httpOnly
+  `crm_refresh` (mesmo do CRMLAB-32), lido manualmente do header `Cookie` (upgrade de WS não
+  passa por `cookie-parser`). Cookie ausente/inválido/expirado → handshake completa (101) e
+  fecha IMEDIATAMENTE com `WS_CLOSE_UNAUTHORIZED` (4401) — um 4xx cru não seria observável pelo
+  `WebSocket` do browser.
+- **Origin verificado** (achado de segurança que não estava no card original, D-151): WebSocket
+  não respeita Same-Origin Policy do jeito que `fetch` respeita — o servidor recusa (sem
+  completar o handshake) qualquer upgrade cujo `Origin` não esteja em `env.corsOrigins`.
+- **Cookie `Path` alarga de `/api/v1/auth` para `/`** (D-151): o handshake em `/ws` também
+  precisa do cookie, e um cookie só aceita um `Path`.
+- **Heartbeat**: servidor pinga a cada 30s (configurável, testável via `heartbeatIntervalMs`) e
+  termina (`terminate()`) quem não respondeu `pong` até o ciclo seguinte.
+- **Limite de 5 sockets por usuário**: o 6º fecha o mais antigo (mesmo usuário, `Set` preserva
+  ordem de inserção).
+- **Cliente** (`frontend/src/api/ws.ts`): sem `?token=` na URL; `onclose` com
+  `WS_CLOSE_UNAUTHORIZED` chama `refreshAccessToken()` antes de reconectar; desiste depois de
+  `maxAttempts` (default 8) e avisa por toast; pausa a reconexão (não conta tentativa) quando a
+  aba fica oculta por mais de `visibilityHiddenPauseMs` (default 5 min), reconectando na hora
+  quando ela volta a ficar visível.
+- **Docs atualizados no mesmo commit** (Regra Zero): `docs/api/API_CONTRACTS.md`,
+  `docs/contracts/FRONTEND_BACKEND.md` ("Real-time"), `docs/architecture/SECURITY.md`
+  ("Autenticação"), `docs/guides/ENVIRONMENTS.md`. `shared/types/websocket.types.ts`
+  (+`WS_CLOSE_UNAUTHORIZED`).
+
+**Testes:** `backend/tests/kernel/ws-hub.spec.ts` reescrito para cookie+Origin (recusa sem
+cookie, cookie inválido, Origin errado, aceita cookie válido, isolamento por tenant, limite de 5
+sockets, heartbeat derrubando socket que não responde `pong` — via `autoPong: false` no cliente
+`ws` de teste, que por padrão responde ping sozinho). `frontend/src/api/ws.spec.ts` com testes
+novos de refresh em 4401, desistência após `maxAttempts`, e pausa por aba oculta.
+
+**Verificação (2026-09-20):** `npm run typecheck` verde nos 4 workspaces, `npm run lint` verde,
+`npm run test:backend` verde (79 arquivos / 1152 testes) e `npm run test:frontend` verde
+(75 arquivos / 1070 testes).

@@ -16,7 +16,7 @@ async function bootstrap(): Promise<void> {
   // aqui. Degradar para memoria em silencio quebraria rate limit, lockout de
   // login e invalidacao de analytics em qualquer deploy com mais de 1 instancia.
   await verifyCacheReady(cache);
-  const wsHub = createWsHub();
+  const wsHub = createWsHub({ allowedOrigins: env.corsOrigins });
 
   const { app, modules } = createApp({ db, cache, wsHub });
   const server = http.createServer(app);

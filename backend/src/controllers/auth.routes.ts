@@ -9,9 +9,11 @@
  *
  *   - `POST /login` e `POST /refresh` gravam o refresh token em
  *     `Set-Cookie: crm_refresh=<token>; HttpOnly; Secure; SameSite=Strict;
- *     Path=/api/v1/auth`. O corpo JSON responde SO com o access token — o
- *     refresh nunca aparece em `response.body` nem em `document.cookie`
- *     (HttpOnly bloqueia leitura por JS).
+ *     Path=/` (Path alargado de `/api/v1/auth` para `/` no CRMLAB-33/D-151 —
+ *     o handshake do WebSocket em `/ws` tambem precisa do cookie). O corpo
+ *     JSON responde SO com o access token — o refresh nunca aparece em
+ *     `response.body` nem em `document.cookie` (HttpOnly bloqueia leitura
+ *     por JS).
  *   - `POST /refresh` le o cookie primeiro; o campo `refreshToken` no corpo e
  *     fallback DEPRECIADO de transicao (`RefreshRequest.refreshToken` em
  *     `@crm-lab/shared`), com remocao prevista para 2026-10-04.
@@ -37,10 +39,9 @@ import { validate, validated } from '../http/middleware/validate.js';
 import { createAuditService } from '../services/audit.service.js';
 import { createAuthService, type RequestMeta } from '../services/auth.service.js';
 import { createThemeService } from '../services/theme.service.js';
+import { REFRESH_COOKIE_NAME, REFRESH_COOKIE_PATH } from '../lib/cookies.js';
 
-/** Nome e path do cookie de refresh. Path casa com o `basePath` deste modulo sob `API_PREFIX`. */
-export const REFRESH_COOKIE_NAME = 'crm_refresh';
-export const REFRESH_COOKIE_PATH = '/api/v1/auth';
+export { REFRESH_COOKIE_NAME, REFRESH_COOKIE_PATH };
 
 /**
  * `secure` so em producao/homologacao (HTTPS de verdade atras do Caddy):

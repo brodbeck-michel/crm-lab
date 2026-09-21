@@ -4,7 +4,8 @@ import { WebSocket } from 'ws';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { WsEvent } from '@crm-lab/shared';
 import { WebSocketHub, WS_PATH } from '../../src/lib/ws-hub.js';
-import { signAccessToken } from '../../src/lib/tokens.js';
+import { signRefreshToken } from '../../src/lib/tokens.js';
+import { REFRESH_COOKIE_NAME } from '../../src/lib/cookies.js';
 import { FakeWsHub } from '../helpers/fake-ws.js';
 
 const TENANT_A = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
@@ -13,8 +14,10 @@ const USER_A1 = 'a1111111-1111-1111-1111-111111111111';
 const USER_A2 = 'a2222222-2222-2222-2222-222222222222';
 const USER_B1 = 'b1111111-1111-1111-1111-111111111111';
 
+const ALLOWED_ORIGIN = 'http://localhost:5173';
+
 function tokenFor(tenantId: string, userId: string): string {
-  return signAccessToken({ userId, tenantId, role: 'attendant', discountLimit: 15 });
+  return signRefreshToken({ userId, tenantId, role: 'attendant' });
 }
 
 /** Coletor de mensagens do socket, com espera ativa limitada. */
@@ -52,12 +55,33 @@ async function closeAndWait(...sockets: WebSocket[]): Promise<void> {
   await new Promise((r) => setTimeout(r, 50));
 }
 
-function open(url: string): Promise<WebSocket> {
+interface OpenOptions {
+  cookie?: string;
+  origin?: string;
+  autoPong?: boolean;
+}
+
+/** Abre uma conexao real contra o hub — Origin permitido e cookie de refresh por padrao. */
+function open(url: string, options: OpenOptions = {}): Promise<WebSocket> {
+  const { cookie, origin = ALLOWED_ORIGIN, autoPong = true } = options;
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(url, {
+      origin,
+      autoPong,
+      headers: cookie ? { Cookie: cookie } : undefined,
+    });
     ws.once('open', () => resolve(ws));
     ws.once('error', reject);
   });
+}
+
+function cookieFor(tenantId: string, userId: string): string {
+  return `${REFRESH_COOKIE_NAME}=${tokenFor(tenantId, userId)}`;
+}
+
+/** Espera o `close` do socket e devolve o codigo — usado nos testes de recusa. */
+function waitClose(ws: WebSocket): Promise<number> {
+  return new Promise((resolve) => ws.once('close', (code) => resolve(code)));
 }
 
 describe('WebSocketHub', () => {
@@ -66,7 +90,7 @@ describe('WebSocketHub', () => {
   let baseUrl: string;
 
   beforeAll(async () => {
-    hub = new WebSocketHub();
+    hub = new WebSocketHub({ allowedOrigins: [ALLOWED_ORIGIN] });
     server = http.createServer((_req, res) => res.end('ok'));
     hub.attach(server);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -79,26 +103,41 @@ describe('WebSocketHub', () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
-  it('recusa conexao sem token', async () => {
-    await expect(open(baseUrl)).rejects.toThrow();
+  it('recusa e fecha com 4401 quando falta o cookie de refresh', async () => {
+    const ws = await open(baseUrl);
+    const code = await waitClose(ws);
+    expect(code).toBe(4401);
   });
 
-  it('recusa token invalido', async () => {
-    await expect(open(`${baseUrl}?token=nao-e-um-jwt`)).rejects.toThrow();
+  it('recusa e fecha com 4401 quando o cookie nao e um JWT valido', async () => {
+    const ws = await open(baseUrl, { cookie: `${REFRESH_COOKIE_NAME}=nao-e-um-jwt` });
+    const code = await waitClose(ws);
+    expect(code).toBe(4401);
+  });
+
+  it('recusa a nivel de socket (sem completar handshake) quando o Origin nao e permitido', async () => {
+    await expect(
+      open(baseUrl, { cookie: cookieFor(TENANT_A, USER_A1), origin: 'https://site-malicioso.example' }),
+    ).rejects.toThrow();
   });
 
   it('recusa caminho fora de /ws', async () => {
     const address = server.address() as AddressInfo;
-    const token = tokenFor(TENANT_A, USER_A1);
     await expect(
-      open(`ws://127.0.0.1:${address.port}/outro?token=${token}`),
+      open(`ws://127.0.0.1:${address.port}/outro`, { cookie: cookieFor(TENANT_A, USER_A1) }),
     ).rejects.toThrow();
   });
 
-  it('emitToTenant chega so na room do tenant do TOKEN', async () => {
-    const a1 = new Collector(await open(`${baseUrl}?token=${tokenFor(TENANT_A, USER_A1)}`));
-    const a2 = new Collector(await open(`${baseUrl}?token=${tokenFor(TENANT_A, USER_A2)}`));
-    const b1 = new Collector(await open(`${baseUrl}?token=${tokenFor(TENANT_B, USER_B1)}`));
+  it('aceita cookie valido e coloca na room do tenant DO COOKIE', async () => {
+    const ws = await open(baseUrl, { cookie: cookieFor(TENANT_A, USER_A1) });
+    expect(hub.countTenant(TENANT_A)).toBeGreaterThan(0);
+    await closeAndWait(ws);
+  });
+
+  it('emitToTenant chega so na room do tenant do COOKIE', async () => {
+    const a1 = new Collector(await open(baseUrl, { cookie: cookieFor(TENANT_A, USER_A1) }));
+    const a2 = new Collector(await open(baseUrl, { cookie: cookieFor(TENANT_A, USER_A2) }));
+    const b1 = new Collector(await open(baseUrl, { cookie: cookieFor(TENANT_B, USER_B1) }));
 
     expect(hub.countTenant(TENANT_A)).toBe(2);
     expect(hub.countTenant(TENANT_B)).toBe(1);
@@ -122,9 +161,9 @@ describe('WebSocketHub', () => {
   });
 
   it('emitToUser chega so ao usuario alvo, dentro do tenant', async () => {
-    const a1 = new Collector(await open(`${baseUrl}?token=${tokenFor(TENANT_A, USER_A1)}`));
-    const a2 = new Collector(await open(`${baseUrl}?token=${tokenFor(TENANT_A, USER_A2)}`));
-    const b1 = new Collector(await open(`${baseUrl}?token=${tokenFor(TENANT_B, USER_B1)}`));
+    const a1 = new Collector(await open(baseUrl, { cookie: cookieFor(TENANT_A, USER_A1) }));
+    const a2 = new Collector(await open(baseUrl, { cookie: cookieFor(TENANT_A, USER_A2) }));
+    const b1 = new Collector(await open(baseUrl, { cookie: cookieFor(TENANT_B, USER_B1) }));
 
     hub.emitToUser(TENANT_A, USER_A2, 'approval.requested', { proposalId: 'prop-9' });
 
@@ -139,7 +178,7 @@ describe('WebSocketHub', () => {
   });
 
   it('mesmo userId em outro tenant nao recebe', async () => {
-    const sameIdInB = new Collector(await open(`${baseUrl}?token=${tokenFor(TENANT_B, USER_A1)}`));
+    const sameIdInB = new Collector(await open(baseUrl, { cookie: cookieFor(TENANT_B, USER_A1) }));
 
     hub.emitToUser(TENANT_A, USER_A1, 'approval.decided', {
       proposalId: 'prop-1',
@@ -161,10 +200,64 @@ describe('WebSocketHub', () => {
 
   it('desconexao libera a room', async () => {
     const before = hub.countTenant(TENANT_B);
-    const ws = await open(`${baseUrl}?token=${tokenFor(TENANT_B, USER_B1)}`);
+    const ws = await open(baseUrl, { cookie: cookieFor(TENANT_B, USER_B1) });
     expect(hub.countTenant(TENANT_B)).toBe(before + 1);
     await closeAndWait(ws);
     expect(hub.countTenant(TENANT_B)).toBe(before);
+  });
+
+  it('limite de 5 sockets por usuario: o 6º fecha o mais antigo', async () => {
+    const sockets: WebSocket[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      sockets.push(await open(baseUrl, { cookie: cookieFor(TENANT_A, USER_A1) }));
+    }
+    const before = hub.countTenant(TENANT_A);
+    const oldestClosed = waitClose(sockets[0]!);
+
+    const sixth = await open(baseUrl, { cookie: cookieFor(TENANT_A, USER_A1) });
+    await oldestClosed;
+    await new Promise((r) => setTimeout(r, 50));
+
+    // 5 antigos + 1 novo - 1 fechado = mesma contagem de antes do 6º.
+    expect(hub.countTenant(TENANT_A)).toBe(before);
+
+    await closeAndWait(...sockets.slice(1), sixth);
+  });
+});
+
+describe('WebSocketHub — heartbeat', () => {
+  let server: http.Server;
+  let hub: WebSocketHub;
+  let baseUrl: string;
+
+  beforeAll(async () => {
+    hub = new WebSocketHub({ allowedOrigins: [ALLOWED_ORIGIN], heartbeatIntervalMs: 50 });
+    server = http.createServer((_req, res) => res.end('ok'));
+    hub.attach(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address() as AddressInfo;
+    baseUrl = `ws://127.0.0.1:${address.port}${WS_PATH}`;
+  });
+
+  afterAll(async () => {
+    await hub.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it('termina socket que nao responde pong ate o proximo ciclo', async () => {
+    // `autoPong: false` simula um cliente travado (aba minimizada, rede
+    // instavel) — o `ws` real responde ping com pong sozinho por padrao.
+    const dead = await open(baseUrl, { cookie: cookieFor(TENANT_A, USER_A1), autoPong: false });
+    const closed = waitClose(dead);
+    // 2 ciclos: 1º manda o ping (marca isAlive=false), 2º termina quem nao respondeu.
+    await Promise.race([closed, new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))]);
+  });
+
+  it('socket que responde pong normalmente permanece conectado', async () => {
+    const alive = await open(baseUrl, { cookie: cookieFor(TENANT_A, USER_A2) });
+    await new Promise((r) => setTimeout(r, 250)); // ~5 ciclos de 50ms
+    expect(alive.readyState).toBe(WebSocket.OPEN);
+    await closeAndWait(alive);
   });
 });
 

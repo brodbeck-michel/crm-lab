@@ -2035,6 +2035,41 @@ neste arquivo: qualquer `add_header` adicionado ao `server {}` PRECISA ser copia
 locations que têm `add_header` próprio, ou vira letra morta — comentário no arquivo aponta para
 esta decisão.
 
+### D-151: WebSocket autentica pelo cookie httpOnly do refresh; Path do cookie alarga para `/`; Origin verificado no upgrade (CRMLAB-33)
+**Decisão:** `/ws` deixa de aceitar `?token=<accessToken>` na URL. O handshake de upgrade passa a
+ser autenticado pelo cookie httpOnly `crm_refresh` (o mesmo do CRMLAB-32/D-142), lido e
+verificado manualmente em `ws-hub.ts` (o upgrade de WebSocket não passa pelos middlewares do
+Express, `cookie-parser` incluído — daí `backend/src/lib/cookies.ts`, parser mínimo só para isso).
+Duas mudanças que essa escolha exigiu e não estavam no escopo original do card:
+1. **`Path` do cookie alarga de `/api/v1/auth` para `/`.** Um cookie só aceita um `Path`; o
+   handshake em `/ws` também precisa recebê-lo. `HttpOnly` + `SameSite=Strict` continuam sendo a
+   defesa real contra roubo/CSRF do refresh — `Path` estreito só reduzia quais rotas o recebiam
+   automaticamente, e o item 2 cobre o risco de CSRF específico do WS melhor do que `Path` cobria.
+2. **Header `Origin` do upgrade é verificado contra `env.corsOrigins` e a conexão é recusada (sem
+   completar o handshake) se não bater.** WebSocket NÃO respeita a Same-Origin Policy do jeito que
+   `fetch`/XHR respeitam: o browser manda o cookie no handshake mesmo que a página que abriu a
+   conexão esteja em outro domínio (classe conhecida: WebSocket CSRF). Autenticar só pelo cookie
+   sem checar `Origin` abriria a porta pra qualquer site abrir `wss://.../ws` a partir do browser
+   de uma vítima logada e ler o realtime dela — isso NÃO existia como risco antes porque o design
+   anterior exigia o access token na URL, que um site de terceiro não tem como obter.
+3. **Cookie ausente/inválido/expirado fecha com o código `WS_CLOSE_UNAUTHORIZED` (4401,
+   `@crm-lab/shared`) DEPOIS de completar o handshake (101), não antes.** Um `4xx` cru na resposta
+   HTTP do upgrade não é observável pelo `WebSocket` do browser (limitação da própria API —
+   `onclose` chegaria com o código genérico `1006`), e o cliente PRECISA distinguir "sessão
+   vencida, tento refresh antes de reconectar" de "rede caiu, só espero o backoff". Só o Origin
+   errado (item 2) é recusado cru — não há cliente legítimo cujo UX dependa de ler esse motivo.
+**Motivo:** o card pedia só tirar o token da URL (vazava no log de acesso do Caddy); a Opção C
+citada no card ("se o cookie httpOnly vier antes, ele resolve sozinho") só resolve de fato depois
+de tratar os dois pontos acima, que não estavam escritos no card original.
+**Impacto:** `backend/src/lib/ws-hub.ts` (Origin + cookie + heartbeat + limite de 5 sockets/
+usuário — ver STATUS.md para o resto do escopo do card), `backend/src/lib/cookies.ts` (novo,
+fonte única do nome/path/parse do cookie — `auth.routes.ts` passa a importar de lá em vez de
+declarar localmente), `backend/src/main.ts` (`createWsHub({ allowedOrigins })`),
+`shared/types/websocket.types.ts` (+`WS_CLOSE_UNAUTHORIZED`), `frontend/src/api/ws.ts` (sem
+`?token=`; `onclose` com esse código dispara `refreshAccessToken()` antes de reconectar),
+`docs/api/API_CONTRACTS.md`, `docs/contracts/FRONTEND_BACKEND.md`, `docs/architecture/
+SECURITY.md`, `docs/guides/ENVIRONMENTS.md`.
+
 ## Template para novas decisões
 
 ```

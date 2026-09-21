@@ -45,6 +45,13 @@ CREATE POLICY tenant_isolation ON conversations
 - Access token 15 min; refresh 7 dias, armazenado HASHEADO no Redis, rotacionado a cada uso
 - Logout revoga refresh; troca de senha revoga TODOS os refresh do usuário
 - Login falho: mensagem genérica + rate limit (5 tentativas / 15 min por email+IP)
+- Refresh vive em cookie httpOnly `crm_refresh`, `Path=/` (D-142/D-151) — nunca em `localStorage`
+- **WebSocket (`/ws`, CRMLAB-33/D-151):** autentica pelo mesmo cookie httpOnly (mesmo origin, vai
+  sozinho no handshake). WebSocket NÃO respeita a Same-Origin Policy do jeito que `fetch`
+  respeita — o browser manda o cookie mesmo que a página esteja em outro domínio (WebSocket
+  CSRF) — por isso o servidor valida o header `Origin` do upgrade contra `env.corsOrigins` e
+  recusa (destroi o socket, sem completar o handshake) qualquer origin fora da lista, ANTES de
+  olhar o cookie.
 
 ## Autorização
 

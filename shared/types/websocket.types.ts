@@ -31,3 +31,15 @@ export interface WsEvent<E extends WsEventName = WsEventName> {
   event: E;
   data: WsEventPayloads[E];
 }
+
+/**
+ * Codigo de close do WebSocket quando o cookie de sessao (CRMLAB-33, D-151)
+ * falta, e invalido ou expirou no momento do handshake. Faixa 4000-4999 e de
+ * uso livre da aplicacao (RFC 6455 §7.4.2) — o servidor SEMPRE completa o
+ * handshake (101) antes de fechar com este codigo, porque um upgrade
+ * recusado a nivel HTTP (4xx cru) nao expoe o status para o JavaScript do
+ * browser (limitacao da API `WebSocket`, nao um detalhe deste projeto) e o
+ * cliente perderia o unico sinal que usa para decidir "tento refresh antes
+ * de reconectar" em vez de so cair no backoff generico.
+ */
+export const WS_CLOSE_UNAUTHORIZED = 4401;

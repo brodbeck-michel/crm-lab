@@ -4182,7 +4182,10 @@ Headers: X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset
 
 ## WebSocket Events (Real-time)
 
-Conexão: `ws://localhost:3000/ws?token=JWT`
+Conexão: `wss://host/ws` — autenticada pelo cookie httpOnly `crm_refresh` (CRMLAB-32), enviado
+sozinho pelo browser no handshake (mesmo origin). Sem token na URL desde o CRMLAB-33/D-151 (ver
+`docs/contracts/FRONTEND_BACKEND.md` "Real-time" para o contrato completo, incluindo o código de
+close `WS_CLOSE_UNAUTHORIZED` e a checagem de `Origin`).
 
 **Eventos Subscribe:**
 ```javascript

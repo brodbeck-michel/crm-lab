@@ -2317,3 +2317,28 @@ com os 5 headers, 5 serviços `healthy`, login respondendo `401 INVALID_CREDENTI
 `IMAGE_REGISTRY=ghcr.io/brodbeck-michel/crm-lab/` nos dois `.env` — agora funciona (CRMLAB-41),
 mas vale esperar o primeiro CI em `main` publicar com o `needs` novo antes de ligar; validar
 `evolution: user: "1000:1000"` (D-140).
+
+---
+
+## 2026-09-21 — CRMLAB-43: nginx com IP do backend em cache + reboot da VPS ✅
+
+**Reboot da VPS feito** (pendência aberta desde a Onda A): kernel `7.0.0-31-generic` ativo,
+`/var/run/reboot-required` sumiu, os 10 containers voltaram sozinhos (`restart: unless-stopped`)
+e `healthy` em ~50 s, prod e hml em 200. Downtime de ~1 min, sem usuário em produção.
+
+**CRMLAB-43** — o incidente de ~6 min de `502` durante a troca para `crm_login`. Correção em
+duas camadas (D-171): `resolver 127.0.0.11 valid=10s` + variável no `proxy_pass` faz o nginx
+re-resolver o nome; o `deploy.sh` reinicia o frontend quando só o backend foi recriado, e o
+erro do healthcheck agora compara o IP do backend com o que o nginx está usando.
+
+**Como foi verificado, antes de subir** — com upstream de teste num container, não no papel:
+
+1. *URI íntegra:* `set $upstream_api ...; proxy_pass $upstream_api$request_uri;` entrega
+   `/api/v1/health`, `/api/v1/conversations?page=2&q=ab%20c` e `/ws` exatamente como chegaram
+   (query string e `%20` preservados). Sem o `$request_uri` explícito o backend receberia `/` —
+   é a pegadinha de usar variável no `proxy_pass`, e era o risco real desta mudança.
+2. *Re-resolução:* upstream trocado de `172.18.0.2` para `172.18.0.4` com o nginx **no ar**,
+   sem restart → 200 em todas as sondagens de 5 em 5 s.
+3. *Contraprova com a conf ANTIGA:* mesmo teste → `502`, com
+   `upstream: "http://172.18.0.4:3000"` no log. Reprodução exata do incidente de produção.
+4. SPA, `/healthz`, `/assets/*` e rota do react-router seguem 200 com os 5 headers.

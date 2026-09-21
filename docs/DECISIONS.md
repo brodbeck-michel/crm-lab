@@ -2481,6 +2481,33 @@ relatório (revisão do PR #44).
 **Impacto:** `nginx/security-headers.conf` (novo), `nginx/frontend.conf`, `frontend/Dockerfile`.
 Substitui a estratégia de repetição da D-144.
 
+### D-171: nginx re-resolve o backend pelo DNS do Docker (`resolver` + variável no `proxy_pass`) (CRMLAB-43)
+**Decisão:** `nginx/frontend.conf` ganha `resolver 127.0.0.11 valid=10s ipv6=off;` no `server`, e
+as locations `/api/` e `/ws` passam a usar `set $upstream_x ${API_UPSTREAM}; proxy_pass
+$upstream_x$request_uri;`. O `deploy.sh` reinicia o `frontend` quando o compose recriou o
+`backend` e não o frontend, e, se o healthcheck falhar, compara o IP do backend com o que
+aparece no log do nginx antes de abortar.
+**Motivo:** incidente real em produção, 21/09/2026 — ~6 min de `502` em `/api/*`. A troca da
+`DATABASE_URL` para `crm_login` (D-165) alterou o env só do `backend`; o compose recriou só ele,
+o container novo nasceu em `172.18.0.7` e o nginx do `frontend`, intocado, seguiu batendo em
+`172.18.0.5`. `proxy_pass` com **hostname literal** resolve o nome uma única vez, ao carregar a
+configuração, e guarda o IP para sempre. Todo deploy anterior mascarou isso porque backend e
+frontend sempre subiam juntos (imagem nova nos dois) — qualquer mudança de `.env` que afete só o
+backend reproduz.
+**Por que `$request_uri` explícito:** é o par obrigatório da variável. Com variável no
+`proxy_pass`, o nginx **não** repassa a URI original sozinho — sem ele todo request chegaria no
+backend como `/`. Verificado antes de subir, com upstream de teste que ecoa `$request_uri`:
+`/api/v1/health`, `/api/v1/conversations?page=2&q=ab%20c` e `/ws` chegam íntegros, com query
+string e percent-encoding preservados.
+**Prova de que resolve:** upstream trocado de IP com o nginx NO AR, sem restart —
+conf antiga: `502` com o IP velho no log (`upstream: "http://172.18.0.4:3000"`), reproduzindo o
+incidente; conf nova: `200` em todas as sondagens de 5 em 5 s.
+**Por que os dois (resolver E restart):** o `resolver` corrige sozinho, mas deixa uma janela de
+até `valid=10s`; o restart do frontend mata a janela e custa ~2 s, só no caso específico. E a
+"pista" no erro do healthcheck existe porque o `deploy.sh` **detectou** o problema (CRMLAB-29) e
+mesmo assim mandou investigar o backend, que estava vivo — a mensagem escondia a causa.
+**Impacto:** `nginx/frontend.conf`, `scripts/deploy.sh`.
+
 ## Template para novas decisões
 
 ```

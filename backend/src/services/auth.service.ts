@@ -367,8 +367,8 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         // familia. Um ladrao de verdade que reapresenta o token dentro de 10 s
         // ganha exatamente nada com isso — o token ja esta revogado.
         if (
-          stored.revokedAt !== null &&
-          Date.now() - new Date(stored.revokedAt).getTime() < REFRESH_REUSE_GRACE_MS
+          stored.revokedSecondsAgo !== null &&
+          stored.revokedSecondsAgo * 1000 < REFRESH_REUSE_GRACE_MS
         ) {
           return { kind: 'reuse_within_grace' as const, userId: stored.userId };
         }

@@ -1936,3 +1936,27 @@ corrige falha explorada.
 **Verificação (2026-09-20):** `npm run typecheck` verde nos 4 workspaces, `npm run lint` verde,
 `npm run test:backend` verde (81 arquivos / 1169 testes) e `npm run test:frontend` verde
 (75 arquivos / 1066 testes).
+
+### Revisão independente do PR #48 (2026-09-21)
+
+Quatro achados corrigidos no commit de revisão — guard de replay atômico (`incr`) e isento para
+`CONNECTION_UPDATE` (D-156), `SET LOCAL statement_timeout` antes do advisory lock (D-157), e o
+gate de CI do `deploy.sh` sem `--branch main` (correção anexada à D-150).
+
+**PENDENTE — decisão do Michel, BLOQUEIA a pendência manual deste card:** a role `crm_login` foi
+criada `NOBYPASSRLS`, e o cabeçalho de `002_row_level_security.sql` é explícito em dizer que
+todo caminho `withoutTenant()` (login, `/platform/*`, `resolveWebhookTenant`, seeds) só funciona
+porque roda como a role DONA das tabelas, que burla RLS. Trocar a `DATABASE_URL` para
+`crm_login` como está derruba login e webhook inteiros: as policies comparam contra
+`app.tenant_id`, que nesses caminhos nunca é setado, então a role veria ZERO linha. **Não trocar
+a `DATABASE_URL` na VPS até isto ser resolvido.** Opções levantadas: (a) `crm_login` com
+`BYPASSRLS` — mantém a exposição de hoje só nos caminhos sem tenant e ainda assim tira SUPERUSER
+(DDL, DROP TABLE), que é o que o card veio fazer; (b) policies explícitas para os caminhos sem
+tenant, mais trabalho e mais superfície; (c) manter a role só documentada e não trocar a
+`DATABASE_URL` nesta onda.
+
+**Não corrigido, de propósito:** `isReplay` marca o corpo como visto ANTES do processamento, e
+um erro no meio faz a reentrega do canal ser descartada. Comportamento pré-existente e
+deliberado — `safeHandle` já responde 200 em qualquer erro desde a Onda 5 ("o canal reentregaria
+em loop"), então a guarda não introduziu perda nenhuma. Se um dia isso incomodar, é card
+próprio, não conserto de revisão.

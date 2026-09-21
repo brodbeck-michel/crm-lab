@@ -122,6 +122,16 @@ export async function runMigrations(
       // fechar (o pool reaproveita conexoes ociosas, D-030). O lock de
       // TRANSACAO nasce e morre preso a esta conexao e libera sozinho no
       // COMMIT/ROLLBACK — sem `unlock` manual para esquecer.
+      // CRMLAB-30: o `PgDriver` fixa `statement_timeout=30s` na sessao, o que e
+      // certo para request de usuario e perigoso aqui — um `CREATE INDEX` ou um
+      // `ALTER TABLE` que reescreve tabela pode passar de 30 s legitimamente, e
+      // migracao cortada no meio de um deploy e o pior desfecho possivel.
+      // `SET LOCAL` isenta SO esta transacao e e desfeito no COMMIT/ROLLBACK.
+      await setStatementTimeout(tx, NO_STATEMENT_TIMEOUT);
+      // A isencao vem ANTES do lock de proposito: a ESPERA pelo advisory lock
+      // tambem e uma instrucao e herdaria o `statement_timeout=30s` da sessao —
+      // o segundo runner abortaria com 57014 exatamente quando a primeira
+      // migracao demora, que e o caso que o lock existe para cobrir.
       await tx.query(`SELECT pg_advisory_xact_lock(${MIGRATION_LOCK_KEY})`);
       const fresh = await tx.query<{ name: string }>(
         `SELECT name FROM ${MIGRATIONS_TABLE} WHERE name = $1`,
@@ -129,12 +139,6 @@ export async function runMigrations(
       );
       if (fresh.rows.length > 0) return false;
 
-      // CRMLAB-30: o `PgDriver` fixa `statement_timeout=30s` na sessao, o que e
-      // certo para request de usuario e perigoso aqui — um `CREATE INDEX` ou um
-      // `ALTER TABLE` que reescreve tabela pode passar de 30 s legitimamente, e
-      // migracao cortada no meio de um deploy e o pior desfecho possivel.
-      // `SET LOCAL` isenta SO esta transacao e e desfeito no COMMIT/ROLLBACK.
-      await setStatementTimeout(tx, NO_STATEMENT_TIMEOUT);
       await tx.exec(sql);
       await tx.query(`INSERT INTO ${MIGRATIONS_TABLE} (name) VALUES ($1)`, [name]);
       return true;

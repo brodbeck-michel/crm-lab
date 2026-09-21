@@ -9,7 +9,8 @@
  * mecanismo novo especificamente.
  */
 import { describe, expect, it } from 'vitest';
-import { isReplay, replayKey } from '../../src/controllers/webhook.routes.js';
+import type { Request } from 'express';
+import { isReplay, replayExempt, replayKey } from '../../src/controllers/webhook.routes.js';
 import { MemoryCache } from '../../src/lib/cache.js';
 
 describe('anti-replay de webhook (CRMLAB-38)', () => {
@@ -56,5 +57,27 @@ describe('anti-replay de webhook (CRMLAB-38)', () => {
     expect(await isReplay(cache, 'tenant-1', payloadDe2024)).toBe(false);
     // ...e so a SEGUNDA entrega do mesmo corpo e barrada.
     expect(await isReplay(cache, 'tenant-1', payloadDe2024)).toBe(true);
+  });
+
+  it('duas chamadas CONCORRENTES com o mesmo corpo: exatamente uma passa (guard atomico)', async () => {
+    const cache = new MemoryCache();
+    // get-entao-set deixava as duas passarem: ambas liam `null` antes de
+    // qualquer `set`. Com `incr`, a segunda enxerga o contador em 2.
+    const [a, b] = await Promise.all([
+      isReplay(cache, 'tenant-1', 'corpo-simultaneo'),
+      isReplay(cache, 'tenant-1', 'corpo-simultaneo'),
+    ]);
+    expect([a, b].filter((r) => r === false)).toHaveLength(1);
+    expect([a, b].filter((r) => r === true)).toHaveLength(1);
+  });
+
+  it('CONNECTION_UPDATE e isento do guard — flap open/close/open nao pode virar replay', () => {
+    const req = (body: unknown) => ({ body }) as Request;
+    expect(replayExempt(req({ event: 'CONNECTION_UPDATE', data: { state: 'open' } }))).toBe(true);
+    // O gateway v2.3.7 manda minusculo com ponto; `normalizeEvolutionEvent` cobre as duas grafias.
+    expect(replayExempt(req({ event: 'connection.update', data: { state: 'open' } }))).toBe(true);
+    expect(replayExempt(req({ event: 'MESSAGES_UPSERT', data: {} }))).toBe(false);
+    expect(replayExempt(req({ data: {} }))).toBe(false);
+    expect(replayExempt(req(undefined))).toBe(false);
   });
 });

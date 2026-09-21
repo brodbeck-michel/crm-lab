@@ -165,14 +165,19 @@ fi
 if ! gh auth status >/dev/null 2>&1; then
   erro "gh instalado mas nao autenticado. Rode 'gh auth login' (uma vez, nesta maquina) antes de reusar este script."
 fi
-CI_CONCLUSAO="$(gh run list --commit "$(git rev-parse HEAD)" --branch main --workflow CI \
+# SEM `--branch` (correcao da revisao deste card): o fluxo documentado de
+# homologacao e `deploy.sh --ref <branch da onda>`, e o run de CI daquele commit
+# fica atribuido a branch dele — nunca a `main`. Com `--branch main` fixo, TODO
+# deploy de hml por `--ref` abortava com `sem_run`. O filtro que importa e o
+# commit, que e exato; a branch so restringia sem ganho.
+CI_CONCLUSAO="$(gh run list --commit "$(git rev-parse HEAD)" --workflow CI \
   --json conclusion --jq '.[0].conclusion // "sem_run"' 2>/dev/null || echo 'erro_consulta')"
 case "$CI_CONCLUSAO" in
   success)
     info "CI verde para $SHA"
     ;;
   sem_run)
-    erro "nenhum run do workflow CI encontrado para $SHA em main. Push feito? CI ainda rodando?"
+    erro "nenhum run do workflow CI encontrado para $SHA. Push feito? CI ainda rodando?"
     ;;
   erro_consulta)
     erro "nao consegui consultar o CI via 'gh run list' (rede/token?). Rode 'gh auth status' manualmente pra diagnosticar."

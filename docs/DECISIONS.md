@@ -2139,6 +2139,35 @@ pular em silêncio, é deliberado: uma verificação que se desliga sozinha é p
 porque dá a impressão de cobertura.
 **Impacto:** `scripts/deploy.sh`, `docs/guides/DEPLOYMENT.md`.
 
+**Correção da revisão (2026-09-21):** o filtro `--branch main` saiu. O fluxo documentado de
+homologação é `deploy.sh --ref <branch da onda>`, e o run de CI daquele commit fica atribuído à
+branch dele, nunca a `main` — com o filtro fixo, TODO deploy de hml por `--ref` abortava com
+`sem_run`. O filtro por commit já é exato; a branch só restringia sem ganho.
+
+### D-156: Guard de anti-replay atômico (`incr`) e isento para `CONNECTION_UPDATE` (CRMLAB-38)
+**Decisão:** `isReplay` passa a usar `cache.incr(key, ttl) > 1` em vez de `get` seguido de
+`set`, e `CONNECTION_UPDATE` fica fora da guarda (`replayExempt`).
+**Motivo:** dois problemas achados na revisão do card. (1) `get`-então-`set` não é atômico:
+dois replays idênticos chegando juntos liam `null` os dois e passavam os dois — `incr` é atômico
+nas duas implementações de `CacheService` (`INCR` no Redis, contador único no `MemoryCache`) e
+já renova o TTL. (2) O corpo de um `CONNECTION_UPDATE` não tem id nem timestamp: um `state:
+'open'` é byte a byte igual ao `open` anterior. Num flap open → close → open dentro dos 10 min
+de TTL, o segundo `open` era descartado como replay e o canal ficava marcado como desconectado
+no banco, na tela e no WS até o próximo flap — dano maior que o replay que a guarda evita, ainda
+mais porque reaplicar estado de conexão é idempotente.
+**Impacto:** `backend/src/controllers/webhook.routes.ts`,
+`backend/tests/webhooks/replay-guard.spec.ts`. D-149 continua valendo para todo o resto.
+
+### D-157: `SET LOCAL statement_timeout` vem ANTES do advisory lock da migração (CRMLAB-38)
+**Decisão:** em `migrator.ts`, `setStatementTimeout(tx, NO_STATEMENT_TIMEOUT)` é a primeira
+instrução da transação, antes de `pg_advisory_xact_lock`.
+**Motivo:** a ESPERA pelo lock também é uma instrução e herdava o `statement_timeout=30s` que o
+`PgDriver` fixa na sessão (D-030/CRMLAB-30). O segundo runner abortava com 57014 exatamente
+quando a primeira migração demora mais de 30 s — que é o único caso em que o lock (D-147) tem
+alguma função. A ordem invertida desarmava a proteção justamente no cenário para o qual foi
+escrita.
+**Impacto:** `backend/src/db/migrator.ts`. D-147 continua valendo.
+
 ## Template para novas decisões
 
 ```

@@ -125,13 +125,36 @@ export function replayKey(tenantId: string, rawBody: string): string {
   return `webhook:replay:${tenantId}:${digest}`;
 }
 
-/** `true` = corpo ja visto para este tenant nos ultimos 10 min. Marca como visto de qualquer forma. */
+/**
+ * `true` = corpo ja visto para este tenant nos ultimos 10 min. Marca como visto
+ * de qualquer forma.
+ *
+ * `incr` e nao get-entao-set (correcao da revisao deste card): `get` seguido de
+ * `set` nao e atomico e dois replays identicos chegando juntos passavam os DOIS
+ * pelo `get` antes de qualquer `set`. `incr` e atomico nas duas implementacoes
+ * de `CacheService` (`INCR` no Redis, um contador so no `MemoryCache`) e ja
+ * renova o TTL: quem recebe `1` e o primeiro, o resto e replay.
+ */
 export async function isReplay(cache: CacheService, tenantId: string, rawBody: string): Promise<boolean> {
   const key = replayKey(tenantId, rawBody);
-  const seen = await cache.get<true>(key);
-  if (seen) return true;
-  await cache.set(key, true, REPLAY_TTL_SECONDS);
-  return false;
+  return (await cache.incr(key, REPLAY_TTL_SECONDS)) > 1;
+}
+
+/**
+ * Eventos cujo corpo se REPETE de forma legitima e cuja aplicacao e idempotente
+ * (correcao da revisao deste card).
+ *
+ * `CONNECTION_UPDATE` nao tem id nem timestamp: o corpo de um `state: 'open'` e
+ * byte a byte igual ao do `open` anterior. Num flap open -> close -> open dentro
+ * de 10 min, o segundo `open` cairia como replay e o canal ficaria marcado como
+ * desconectado no banco, na tela e no WS ate o proximo flap — pior do que o
+ * replay que a guarda evita, porque aqui reaplicar o estado nao causa dano
+ * nenhum (`markWhatsAppConnected/Disconnected` e idempotente).
+ */
+export function replayExempt(req: Request): boolean {
+  const body = asRecord(req.body);
+  const event = normalizeEvolutionEvent(body ? asNonEmptyString(body.event) : null);
+  return event === 'CONNECTION_UPDATE';
 }
 
 /** Resposta unica de todos os caminhos — nao e oraculo de nada. */
@@ -405,8 +428,8 @@ async function authenticateEvolution(
   }
   // Anti-replay (CRMLAB-38 item 5, D-149) — mesma logica de `authenticate()`
   // acima; sem checagem de timestamp (payload do Evolution nao tem campo
-  // equivalente ao da Meta).
-  if (await isReplay(cache, credentials.tenantId, rawBodyOf(req))) {
+  // equivalente ao da Meta). `CONNECTION_UPDATE` fica de fora (`replayExempt`).
+  if (!replayExempt(req) && (await isReplay(cache, credentials.tenantId, rawBodyOf(req)))) {
     logger.warn('evolution.webhook_replay', { tenantId: credentials.tenantId });
     return null;
   }

@@ -74,14 +74,22 @@ describe('useAuthStore — sessão', () => {
   });
 
   /**
-   * CRMLAB-32: sem sessão prévia (bootstrap de página), `setAccessToken` PASSA
-   * a criar a sessão de tokens — é exatamente o caminho de
-   * `useSessionBootstrap` trocando o cookie httpOnly por um access token novo
-   * a cada carga de página, quando `tokens` começa `null` (não é persistido).
+   * CRMLAB-32 + revisão do PR #44: no bootstrap de página `tokens` é nulo mas
+   * `user` (persistido) existe — o access token entra. Sem `user` NENHUM
+   * (deslogado, ou refresh que resolveu depois do logout), o token é
+   * descartado: não se ressuscita sessão morta.
    */
-  it('setAccessToken sem sessão prévia cria os tokens (bootstrap de página)', () => {
+  it('setAccessToken com identidade persistida e tokens nulos cria os tokens (bootstrap de página)', () => {
+    useAuthStore.getState().setSession(LOGIN);
+    useAuthStore.setState({ tokens: null });
     useAuthStore.getState().setAccessToken('access-2', 900);
-    expect(useAuthStore.getState().tokens).toMatchObject({ accessToken: 'access-2' });
+    expect(useAuthStore.getState().tokens?.accessToken).toBe('access-2');
+  });
+
+  it('setAccessToken sem sessão é no-op (não ressuscita sessão morta depois do logout)', () => {
+    useAuthStore.getState().clearSession();
+    useAuthStore.getState().setAccessToken('access-fantasma', 900);
+    expect(useAuthStore.getState().tokens).toBeNull();
   });
 
   it('clearSession zera tudo e volta ao tema padrão', () => {

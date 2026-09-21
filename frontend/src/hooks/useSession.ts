@@ -55,6 +55,15 @@ export function useSessionBootstrap(): boolean {
       if (alive) setReady(true);
     };
     const bootstrap = (): void => {
+      // Sem identidade persistida não há sessão para restaurar (revisão do PR
+      // #44): visitante anônimo em `/login` disparava um `/auth/refresh`
+      // fadado ao 401 em TODA carga — round-trip inútil, um `clearSession()`
+      // que resetava o tema, um log de erro e uma ficha do rate limit por IP
+      // gasta no mesmo balde que o `/auth/login` usa.
+      if (useAuthStore.getState().user === null) {
+        finish();
+        return;
+      }
       refreshAccessToken()
         .catch(() => undefined)
         .finally(finish);

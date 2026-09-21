@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-20 (Onda C do hardening CRMLAB-27 em andamento — ver seções no fim)
+**Última atualização:** 2026-09-21 (v1.14.1 em produção — Ondas A, B e C fechadas; ver seções no fim)
 
 ---
 
@@ -2342,3 +2342,42 @@ erro do healthcheck agora compara o IP do backend com o que o nginx está usando
 3. *Contraprova com a conf ANTIGA:* mesmo teste → `502`, com
    `upstream: "http://172.18.0.4:3000"` no log. Reprodução exata do incidente de produção.
 4. SPA, `/healthz`, `/assets/*` e rota do react-router seguem 200 com os 5 headers.
+
+---
+
+## 2026-09-21 — v1.14.1 em produção: a correção do CRMLAB-43 no ar ✅
+
+A `v1.14.1` estava mergeada, taggeada e com CI verde desde as 19:14 UTC, mas **não tinha sido
+deployada** — produção seguia na `v1.14.0`. Ou seja: a correção do 502 estava no repositório e
+não no servidor, e o próximo deploy que recriasse só o backend reproduziria o incidente que ela
+existe para impedir. Deploy feito às 22:36 UTC com `./scripts/deploy.sh --sim` em `/opt/crm-lab`.
+
+Migrações: nada a aplicar (23 já aplicadas). `backend` e `frontend` recriados, os outros três
+containers intactos. 5 serviços `healthy`.
+
+**Verificação em produção, depois do deploy:**
+
+| checagem | resultado |
+|---|---|
+| bundle servido em `https://vitrocrm.cloud` | `v1.14.1` |
+| `/api/v1/health` | 200, db 1 ms, cache 1 ms |
+| `/api/v1/health?a=1&b=ab%20c` | 200 — query string e `%20` preservados |
+| `/proposals` (rota do react-router) | 200 |
+| `/healthz` | 200 com os 5 headers |
+| login com credencial errada | 401 `INVALID_CREDENTIALS` |
+| `resolver` + `proxy_pass $upstream_api$request_uri` na conf ativa | presentes em `/api/` e `/ws` |
+| ocorrências de `upstream` no log do frontend | 0 |
+
+**O critério de aceite do CRMLAB-43 ainda não foi exercitado.** Neste deploy a própria
+`nginx/frontend.conf` mudou, então o `frontend` foi recriado junto com o `backend` — exatamente
+o cenário que sempre mascarou o bug. A prova real é o próximo deploy que toque só uma variável
+do backend: health 200 na primeira tentativa, sem restart manual. Card em "Pronto p/ Validação"
+com essa ressalva registrada.
+
+**Limpeza junto:** os 8 worktrees das ondas (todos limpos, branches já mergeadas) removidos, com
+a pasta `crm-lab-worktrees/`; 25 branches locais apagadas. Sobram `main`,
+`chore/crm-jira-mapa-status` (PR #15) e `chore/skills-ui-ux` — esta última com 1 commit que
+nunca virou PR (`skills-lock.json` + `.gitignore` do `.agents/`), decidir se entra ou some.
+
+**Pendências manuais que continuam:** `IMAGE_REGISTRY=ghcr.io/brodbeck-michel/crm-lab/` nos dois
+`.env`; validar `evolution: user: "1000:1000"` (D-140).

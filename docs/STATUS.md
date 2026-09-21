@@ -2264,3 +2264,56 @@ exigia `rolbypassrls: false` (D-165); `login.spec` exigia 20 × 401 na rajada pa
 (D-168); `MessageBubble.spec` exigia fetch autenticado para URL de outro host (D-169). Nos três,
 o teste passava verde enquanto o comportamento estava quebrado. Lição para as próximas ondas:
 asserção sobre atributo/chamada não substitui asserção sobre o EFEITO que se quer.
+
+---
+
+## 2026-09-21 — v1.14.0 em produção + pool rodando como `crm_login` nos dois ambientes ✅
+
+**Deploy:** PR #51 (revisão retroativa das Ondas A e B) mergeado com CI verde, bump `v1.14.0`
+(`3dca102`), homologação e produção a partir de `origin/main`. Build local nos dois (o
+`IMAGE_REGISTRY` continua vazio — agora **pode** ser definido, ver CRMLAB-41). `postgres` e
+`redis` foram recriados pelo compose novo (`shm_size`, `maxmemory 128mb`, `NODE_OPTIONS`).
+
+**Troca da `DATABASE_URL` para `crm_login` — feita em hml e prod**, a pendência manual do
+CRMLAB-38 que a D-145 tinha deixado inutilizável e a D-165 destravou. Passo a passo aplicado nos
+dois ambientes: `ALTER ROLE crm_login WITH PASSWORD` (senha aleatória de 48 hex, só no `.env`);
+`MIGRATE_DATABASE_URL` = URL antiga (role dona, para DDL); `DATABASE_URL` = `crm_login`;
+`deploy.sh` para recriar `backend`/`migrate`. Backup do `.env` anterior em
+`~deploy/env-backups/` (fora do repo — dentro dele o `deploy.sh` aborta por árvore suja, e foi o
+que aconteceu na primeira tentativa em hml).
+
+**Prova, medida nos dois bancos com a conexão real da pool** (`psql` com a `DATABASE_URL` nova):
+
+| checagem | hml | prod |
+|---|---|---|
+| `current_user` | `crm_login` | `crm_login` |
+| sem tenant: `users` / `tenants` visíveis (login, webhook) | 5 / 3 | 4 / 2 |
+| `CREATE TABLE` | `permission denied for schema public` | idem |
+| com tenant (`SET LOCAL ROLE crm_app`): `users` / `tenants` | 3 de 5 / 1 de 3 | 3 de 4 / 1 de 2 |
+| `pg_stat_activity` da aplicação | `crm_login` | `crm_login` |
+
+Ou seja: o que o CRMLAB-38 veio tirar (SUPERUSER/DDL) saiu; o que não podia mudar (RLS por
+tenant) não mudou.
+
+**Incidente durante a troca em produção — ~6 min de 502 na API (CRMLAB-43).** O `deploy.sh`
+recriou só `backend`/`migrate` (únicos com env alterado); o backend nasceu com IP novo
+(`172.18.0.5` → `.7`) e o nginx do `frontend`, que não foi recriado, seguiu com o IP antigo em
+cache — 33 erros `upstream` no log, `502` em `/api/*` até o healthcheck do script desistir.
+Corrigido com `docker compose restart frontend`; prod em 200 desde então. Causa:
+`proxy_pass` com hostname literal resolve uma vez na carga e nunca mais; todos os deploys
+anteriores mascararam isso porque backend e frontend eram recriados juntos. O `deploy.sh`
+**detectou** (healthcheck real, CRMLAB-29) mas não corrigiu. Card aberto com as duas correções
+(resolver dinâmico no nginx + restart do frontend no script). Sem usuário em produção, custo
+zero; com o Santé no ar seriam 6 min de sistema fora.
+
+**Estado em produção agora:** `https://vitrocrm.cloud` 200, `/api/v1/health` 200, `/healthz`
+com os 5 headers, 5 serviços `healthy`, login respondendo `401 INVALID_CREDENTIALS` pelo caminho
+`withoutTenant()` sob `crm_login`, nenhum `permission denied`/`uncaughtException` no backend.
+
+**Cards fechados hoje:** CRMLAB-33, 35, 38 (Onda C), 40, 41, 42. **Abertos:** CRMLAB-39
+(recuperação de senha, bloqueado por e-mail), CRMLAB-43 (nginx/upstream, novo).
+
+**Pendências manuais que continuam:** reboot da VPS (`/var/run/reboot-required`); definir
+`IMAGE_REGISTRY=ghcr.io/brodbeck-michel/crm-lab/` nos dois `.env` — agora funciona (CRMLAB-41),
+mas vale esperar o primeiro CI em `main` publicar com o `needs` novo antes de ligar; validar
+`evolution: user: "1000:1000"` (D-140).

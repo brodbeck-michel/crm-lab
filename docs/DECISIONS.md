@@ -2172,6 +2172,92 @@ declarar localmente), `backend/src/main.ts` (`createWsHub({ allowedOrigins })`),
 `?token=`; `onclose` com esse código dispara `refreshAccessToken()` antes de reconectar),
 `docs/api/API_CONTRACTS.md`, `docs/contracts/FRONTEND_BACKEND.md`, `docs/architecture/
 SECURITY.md`, `docs/guides/ENVIRONMENTS.md`.
+### D-152: `refresh-cookie.ts` (como o cookie é GRAVADO) separado de `lib/cookies.ts` (nome e Path) (CRMLAB-35)
+**Decisão:** `cookieOptions`, `setRefreshCookie` e `clearRefreshCookie` saem de dentro de
+`auth.routes.ts` (onde eram funções privadas do módulo) para `backend/src/http/refresh-cookie.ts`,
+que importa `REFRESH_COOKIE_NAME`/`REFRESH_COOKIE_PATH` de `backend/src/lib/cookies.ts`
+(CRMLAB-33/D-151) e os re-exporta. `auth.routes.ts` e `user.routes.ts` importam daí.
+**Motivo:** `PATCH /users/me/password` precisa LER o mesmo cookie que `auth.routes.ts` escreve,
+para identificar a sessão atual e poupá-la da revogação em massa — duplicar nome/path/flags em
+dois controllers é como duas fontes de verdade divergem sem ninguém perceber (uma rota muda
+`SameSite` e a outra não). A divisão em DOIS arquivos não é cerimônia: `lib/cookies.ts` precisa
+ser importável pelo handshake de WebSocket, que não tem `Response` do Express nenhum; tudo que
+depende do `Response` fica em `http/refresh-cookie.ts`, fora do alcance dele.
+
+**Este card NÃO decide o `Path` do cookie.** A versão original desta decisão ampliava o `Path` de
+`/api/v1/auth` para `/api/v1` por conta própria; o CRMLAB-33, desenvolvido em paralelo, já amplia
+para `/` (D-151) porque o handshake de `/ws` também precisa do cookie. `/` contém `/api/v1`, logo
+a necessidade deste card está atendida e uma segunda decisão sobre o mesmo atributo só criaria
+duas fontes de verdade para um cookie que só aceita um `Path`.
+**Impacto:** `backend/src/http/refresh-cookie.ts` (novo), `backend/src/lib/cookies.ts` (do
+CRMLAB-33, reusado), `backend/src/controllers/auth.routes.ts` (imports trocados, comportamento
+idêntico), `backend/src/controllers/user.routes.ts` (import novo).
+### D-153: Política de senha nova — mínimo 10 chars + lista curta de senhas triviais, sem `zxcvbn` (CRMLAB-35)
+**Decisão:** `PATCH /users/me/password` exige `newPassword` com pelo menos 10 caracteres E fora
+de uma lista embutida de ~20 senhas triviais comuns (`senha123`, `12345678910`, etc. —
+`backend/src/lib/password-policy.ts`). Não usa `zxcvbn` nem serviço externo de força de senha.
+**Motivo:** o card sugeria `zxcvbn` (score ≥ 3) OU uma lista de senhas comuns. `zxcvbn` é uma
+dependência de ~800 KB (dicionários embutidos) só para uma tela de troca de senha — peso
+desproporcional ao ganho, quando `MIN_PASSWORD_LENGTH` já subiu de 8 (criação de usuário,
+`user.service.ts`) para 10 aqui, e uma lista curta pega o caso mais comum (reusar a mesma senha
+óbvia). YAGNI: se um dia a auditoria pedir scoring de verdade, troca-se a função interna por
+`zxcvbn` sem mexer no contrato da API.
+**Impacto:** `backend/src/lib/password-policy.ts` (novo), `backend/src/services/auth.service.ts`
+(`changePassword`). `MIN_PASSWORD_LENGTH` (8, `user.service.ts`, criação de usuário por admin)
+NÃO mudou — é uma tela diferente (admin criando conta de outra pessoa), fora do escopo deste
+card.
+### D-154: Expiração absoluta de 30 dias por família de refresh (`TIMESTAMPTZ` + `revoked_reason`); desativação aceita a janela de 15 min do access token (CRMLAB-35)
+**Decisão:** `refresh_tokens` ganha `absolute_expires_at` (migração 022): gravado no LOGIN como
+`now + JWT_REFRESH_ABSOLUTE_TTL` (env var, default 30 dias) e CARREGADO para a frente em cada
+rotação — a família não ganha teto novo a cada refresh, senão "absoluto" não seria absoluto.
+Passado o teto, o próximo refresh cai em `REFRESH_TOKEN_INVALID` mesmo com o token ainda dentro
+dos 7 dias rotativos. Ao desativar usuário (`PATCH /users/:id`, `isActive: false`), todas as
+famílias de refresh são revogadas na mesma transação; o access token de até 15 min já emitido
+NÃO é invalidado por denylist — a janela é aceita (o card dava as duas opções).
+
+Dois detalhes que só apareceram quando os testes do card foram escritos, ambos corrigidos aqui:
+
+1. **A coluna é `TIMESTAMPTZ`, não `TIMESTAMP` como as vizinhas.** `absolute_expires_at` é a
+   primeira coluna de data desta tabela que faz *round-trip*: é lida do banco e gravada de volta
+   a cada rotação. Em `TIMESTAMP` naive o driver devolve um `Date` interpretando o valor como
+   hora **local**, enquanto a escrita manda `toISOString()` em **UTC** — o teto andava para
+   frente o equivalente ao fuso a cada rotação (3 h em UTC-3). Uma sessão ativa empurraria o
+   próprio teto indefinidamente, que é exatamente o que este card existe para impedir.
+   `expires_at` e `revoked_at` continuam `TIMESTAMP` porque nunca são regravados a partir do que
+   foi lido; a comparação delas tem o mesmo desvio de fuso, com efeito de 3 h numa janela de
+   7 dias — anotado como dívida, fora do escopo deste card.
+2. **`revoked_reason` separa "rotacionado" de "derrubado por segurança".** A detecção de roubo
+   (D-015) trata qualquer token revogado que reapareça como reuso e derruba a família inteira.
+   Com a troca de senha revogando as outras sessões em massa, o próximo refresh de outro
+   navegador — comportamento normal, não ataque — derrubava também a sessão que acabara de
+   trocar a senha, tornando o "revoga todas MENOS a atual" inútil na prática. `revokeByHash`
+   (rotação) marca `'rotated'` e continua disparando a detecção; as revogações em massa marcam
+   `'security'` e apenas recusam aquele token. `NULL` (linhas anteriores à migração) é lido como
+   `'rotated'`, preservando o comportamento anterior.
+**Motivo:** sem teto absoluto, um refresh rotativo mantém a MESMA sessão viva para sempre —
+dispositivo perdido continua logado enquanto alguém abrir o app nele, mesmo trocando de token a
+cada 15 min. Denylist no Redis para o access token do usuário desativado foi descartada por
+YAGNI: adiciona um `jti` + TTL por token gerado (custo em toda requisição autenticada) para
+fechar uma janela de no máximo 15 minutos — desproporcional ao risco hoje.
+**Impacto:** `backend/migrations/022_refresh_tokens_absolute_expiry.sql`,
+`backend/src/repositories/refresh-token.repository.ts` (`absoluteExpiresAt` e `revokedReason` em
+toda leitura/escrita, `revokeAllForUserExcept`), `backend/src/services/auth.service.ts`
+(`issueRefreshToken` carrega o teto adiante, `refresh()` checa o teto e o motivo da revogação),
+`backend/src/services/user.service.ts` (`update()` revoga ao desativar),
+`backend/src/config/env.ts` (`JWT_REFRESH_ABSOLUTE_TTL`), `docs/database/SCHEMA.md`.
+### D-155: Limpeza de `refresh_tokens` expirados via `setInterval` no boot, sem scheduler novo (CRMLAB-35)
+**Decisão:** `main.ts` roda `deleteExpiredOrRevoked` uma vez no boot e depois a cada 24h via
+`setInterval` (`.unref()` — não impede o processo de sair). Sem `pg_cron`, sem lib de jobs nova.
+Best-effort: falha loga e não derruba o processo nem o boot.
+**Motivo:** o projeto não tem scheduler (CLAUDE.md/AGENTS.md não listam um; introduzir um só
+para isto seria dependência nova desproporcional). Volume é baixo (34 linhas hoje, crescimento
+linear com uso) — não é uma tarefa que precise de garantia de execução distribuída, só não
+deixar a tabela crescer para sempre. `withoutTenant` é usado aqui porque a limpeza é
+manutenção cross-tenant por natureza (não serve requisição de tenant nenhum) — terceiro uso
+legítimo, além dos dois já documentados em `db/types.ts` (login, console de plataforma); o
+comentário de `withoutTenant` foi atualizado para listar os três.
+**Impacto:** `backend/src/main.ts`, `backend/src/repositories/refresh-token.repository.ts`
+(`deleteExpiredOrRevoked`), `backend/src/db/types.ts` (comentário de `withoutTenant`).
 ### D-156: Guard de anti-replay atômico (`incr`) e isento para `CONNECTION_UPDATE` (CRMLAB-38)
 **Decisão:** `isReplay` passa a usar `cache.incr(key, ttl) > 1` em vez de `get` seguido de
 `set`, e `CONNECTION_UPDATE` fica fora da guarda (`replayExempt`).
@@ -2235,6 +2321,50 @@ estourava o teto de novo e evictava a próxima mais velha, para sempre, e cada r
 `invalidateQueries()` naquela aba. O teto virava um gerador de carga.
 **Impacto:** `shared/types/websocket.types.ts`, `backend/src/lib/ws-hub.ts`,
 `frontend/src/api/ws.ts`.
+### D-161: `Set-Cookie` de expiração no path antigo do refresh, por uma release (CRMLAB-35)
+**Decisão:** toda resposta que grava ou limpa `crm_refresh` (login, refresh, logout, troca de
+senha) manda também um `Set-Cookie` de expiração em `Path=/api/v1/auth`
+(`LEGACY_REFRESH_COOKIE_PATH`), depois do cookie válido. Sai 7 dias
+(`JWT_REFRESH_TTL`) após o deploy desta onda.
+**Motivo:** achado HIGH da revisão — mesmo achado do PR #47, mesma correção (ver D-159; o
+arquivo `lib/cookies.ts` é idêntico nos dois cards). Cookie é identificado por (nome, domínio,
+PATH): gravar em `/` não substitui o de `/api/v1/auth` (D-142, em produção desde a v1.12.0). Os
+dois chegam em `/auth/refresh`, o mais específico primeiro (RFC 6265 §5.4), o `cookie-parser`
+fica com o primeiro, a rota lê o token velho, a segunda renovação o reapresenta revogado e a
+detecção de reuso derruba a família — logout forçado de todo mundo, em loop, por 7 dias.
+**Impacto:** `backend/src/lib/cookies.ts`, `backend/src/http/refresh-cookie.ts`.
+### D-162: bcrypt da troca de senha roda FORA da transação, com compare-and-set (CRMLAB-35)
+**Decisão:** `changePassword` lê o usuário, verifica a senha atual e calcula o hash novo fora de
+qualquer transação; a transação seguinte só grava, e o `UPDATE` leva o hash antigo no `WHERE`
+(compare-and-set). Nenhuma linha afetada = "senha atual incorreta".
+**Motivo:** achado MEDIUM da revisão. `verifyPassword` + `hashPassword` (bcryptjs cost 12,
+~300 ms cada) dentro da transação seguravam uma conexão do pool `idle in transaction` por
+~600 ms; com `DEFAULT_POOL_MAX = 10`, dez trocas simultâneas travavam todas as outras queries do
+sistema. `login` já fazia o bcrypt fora de transação por este mesmo motivo. O compare-and-set
+fecha a janela entre verificar e gravar que essa mudança abre.
+**Impacto:** `backend/src/services/auth.service.ts`,
+`backend/src/repositories/user.repository.ts`.
+### D-163: replay de token revogado por segurança é auditado, sem derrubar a família (CRMLAB-35)
+**Decisão:** quando um refresh com `revoked_reason = 'security'` reaparece, a resposta continua
+sendo um 401 comum e a família NÃO é derrubada (D-154), mas é gravada uma entrada de auditoria
+`refresh_token_replay_after_security`. A API também recusa `newPassword === currentPassword`,
+que antes só a tela barrava.
+**Motivo:** achados MEDIUM e LOW da revisão. Não derrubar a família está certo — é o outro
+navegador do próprio usuário, não um ataque. Mas ficar em silêncio apaga o sinal exatamente no
+caso pós-comprometimento: o usuário troca a senha PORQUE perdeu o dispositivo, e o replay do
+ladrão era a única evidência de que o token vazou. Sobre a senha repetida: a API respondia 200,
+revogava as outras sessões e escrevia auditoria sem nada ter rotacionado.
+**Impacto:** `backend/src/services/auth.service.ts`,
+`backend/tests/auth/change-password.spec.ts`.
+### D-164: `absolute_expires_at` ganha `DEFAULT` antes do `NOT NULL` (CRMLAB-35)
+**Decisão:** a migração 022 define `DEFAULT NOW() + INTERVAL '30 days'` na coluna antes do
+`SET NOT NULL`, e o índice `idx_refresh_tokens_absolute_expires_at` não é criado.
+**Motivo:** achados MEDIUM e LOW da revisão. Sem `DEFAULT`, o processo ANTIGO ainda atendendo
+durante a janela de deploy faz `INSERT` sem a coluna e viola o `NOT NULL` — todo login vira 500
+até o container novo assumir. O índice, por outro lado, nunca seria lido: a checagem do teto é
+leitura de uma linha por hash e a limpeza filtra `expires_at`/`revoked_at`; índice que ninguém
+lê só custa escrita.
+**Impacto:** `backend/migrations/022_refresh_tokens_absolute_expiry.sql`.
 
 ## Template para novas decisões
 

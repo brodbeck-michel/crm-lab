@@ -2033,3 +2033,85 @@ access token expira com várias abas abertas — e a correção (lock entre abas
 falha da checagem é fail-closed, socket já aberto cai na revalidação periódica);
 `backend/tests/auth` 25/25; `frontend/src/api/ws.spec.ts` 19/19 (2 novos: aba que nasce oculta,
 4409 não reconecta). Typecheck e lint verdes nos 4 workspaces.
+
+---
+
+## 2026-09-20 — CRMLAB-35: ciclo de vida de senha e sessão ✅
+
+Worktree próprio (`crm-lab-wt-35`), branch `feature/CRMLAB-35-senha-e-sessao`. Onda C do épico
+de hardening (CRMLAB-27).
+
+- **`PATCH /users/me/password`** (`user.routes.ts` → `auth.service.changePassword`): valida a
+  senha atual, aplica a política, revoga **todas** as famílias de refresh do usuário **menos a
+  da sessão que fez a troca** (identificada pelo cookie `crm_refresh` que a requisição carrega)
+  e grava `audit_log`.
+- **Tela "Minha Conta"** (`/settings/account`, `pages/Settings/Account.tsx`): nome e e-mail em
+  leitura + formulário de troca de senha. Aberta a TODOS os papéis de tenant — trocar a própria
+  senha não é privilégio de admin.
+- **Política de senha** (`lib/password-policy.ts`, D-153): mínimo 10 caracteres + lista curta de
+  senhas triviais. Sem `zxcvbn` (≈800 KB de dicionários para uma tela só).
+- **Teto absoluto de 30 dias por família** (`absolute_expires_at`, migração 022, D-154):
+  gravado no login, carregado adiante em cada rotação, nunca reiniciado.
+- **Desativar usuário derruba a sessão na hora** (D-154): `PATCH /users/:id` com
+  `isActive: false` revoga todas as famílias na mesma transação. O access token de até 15 min já
+  emitido continua valendo — janela aceita, sem denylist no Redis (YAGNI).
+- **Limpeza de `refresh_tokens`** (D-155): `setInterval` de 24 h no boot, com `.unref()`,
+  apagando expirado/revogado há mais de 7 dias. Best-effort: nunca derruba o processo.
+- **`algorithms: ['HS256']` explícito** em `jwt.verify` (`lib/tokens.ts`).
+
+**Dois bugs reais que só apareceram quando os testes do card foram escritos:**
+
+1. **O teto absoluto andava para frente a cada rotação.** `absolute_expires_at` nasceu
+   `TIMESTAMP` (naive), como as colunas vizinhas — mas é a primeira desta tabela que faz
+   *round-trip*: é lida e regravada a cada refresh. O driver devolve `Date` interpretando o valor
+   como hora **local** enquanto a escrita manda `toISOString()` em **UTC**, então o teto ganhava
+   o equivalente ao fuso (3 h em UTC-3) por rotação. Uma sessão ativa empurraria o próprio teto
+   indefinidamente — exatamente o que o card existe para impedir. Coluna passou a `TIMESTAMPTZ`.
+2. **A troca de senha derrubava a própria sessão que a fez.** A detecção de roubo (D-015) trata
+   qualquer refresh revogado que reapareça como reuso e derruba a família inteira. Com a
+   revogação em massa da troca de senha, bastava o outro navegador tentar renovar — comportamento
+   normal, não ataque — para a sessão preservada cair junto, tornando o "revoga todas MENOS a
+   atual" inútil na prática. Resolvido com `revoked_reason` (`'rotated'` × `'security'`, D-154):
+   só o reuso de token **rotacionado** dispara a detecção.
+
+**Dívida anotada, fora do escopo:** `expires_at` e `revoked_at` têm o mesmo desvio de fuso na
+comparação (3 h), sem efeito prático porque nunca são regravadas a partir do que foi lido.
+
+**Fora do escopo por decisão do card:** recuperação de senha por e-mail (`forgot`/`reset`)
+depende de provedor de envio, que o projeto não tem. Desmembrada em **CRMLAB-39**, no backlog,
+como o próprio card autoriza.
+
+**Testes novos:** `backend/tests/auth/change-password.spec.ts` (9), `backend/tests/auth/
+session-lifecycle.spec.ts` (7), `frontend/src/pages/Settings/Account.spec.tsx` (9). Os três
+critérios de aceite do card estão nomeados como tal nos specs.
+
+**Verificação (2026-09-20):** `npm run typecheck` verde nos 4 workspaces, `npm run lint` verde,
+`npm run test:backend` verde (81 arquivos / 1164 testes) e `npm run test:frontend` verde
+(76 arquivos / 1079 testes).
+
+### Revisão independente do PR #49 (2026-09-21)
+
+Achados corrigidos no commit de revisão: cookie do path antigo (D-161, HIGH — mesmo achado do
+PR #47), bcrypt fora da transação com compare-and-set (D-162, MEDIUM), auditoria no replay
+pós-segurança e recusa de senha nova igual à atual (D-163), `DEFAULT` antes do `NOT NULL` na
+022 e remoção do índice inútil (D-164).
+
+**Não corrigido, de propósito:** (a) o refresh token da sessão que trocou a senha não é
+rotacionado, então há uma corrida estreita com o interceptor de refresh do próprio cliente
+(refresh conclui enquanto o PATCH está em voo → a sessão que trocou a senha cai em silêncio);
+(b) `revokedReason` nunca devolve `null` apesar do tipo permitir, porque o `map()` colapsa
+qualquer valor inesperado em `'rotated'` — hoje é inofensivo, já que todo chamador checa
+`revokedAt` antes. Os dois são LOW e melhor resolvidos junto com CRMLAB-39.
+
+**Testes:** `backend/tests` completo 1160/1160 (3 novos: senha igual à atual recusada pela API,
+auditoria do replay pós-segurança, lápide do cookie no path antigo). Frontend 1079/1079.
+Typecheck e lint verdes nos 4 workspaces.
+
+### Merge da Onda C: `refreshSessionIsLive` passou a checar o teto absoluto
+
+Achado no merge das duas branches da onda, não em nenhuma das revisões isoladas: o
+`refreshSessionIsLive` do CRMLAB-33 (usado no handshake do WebSocket e na revalidação periódica)
+repetia as checagens do `/auth/refresh` **de antes** do CRMLAB-35 — faltava o teto absoluto da
+família (D-154). Uma família passada dos 30 dias teria o refresh recusado mas ainda abriria
+WebSocket: o teto vazaria pelo `/ws`. Cada card estava certo sozinho; o buraco só existe na
+soma. Corrigido no commit de merge.

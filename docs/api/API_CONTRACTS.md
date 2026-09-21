@@ -77,8 +77,13 @@ sai só em `Set-Cookie`, httpOnly, ilegível por JavaScript. Resumo:
 
 - `crm_refresh` — cookie do refresh, gravado por `/login` e `/refresh`, limpo por `/logout`.
   Atributos: `HttpOnly`; `Secure` (só em produção/homologação — TLS real; ausente em `development`/`test`,
-  onde não há HTTPS local); `SameSite=Strict`; `Path=/api/v1/auth` (nunca viaja em outra rota);
-  `Max-Age` = `JWT_REFRESH_TTL` (7d).
+  onde não há HTTPS local); `SameSite=Strict`; `Path=/` (CRMLAB-33, era `/api/v1/auth` —
+  ver nota abaixo); `Max-Age` = `JWT_REFRESH_TTL` (7d).
+- **`Path=/` desde CRMLAB-33 (D-151).** Era `/api/v1/auth`; ampliado porque
+  o handshake de `/ws` também precisa do cookie e um cookie só aceita um `Path`. `/` também
+  atende `PATCH /users/me/password` (abaixo), que lê o cookie da sessão atual para excluí-la da
+  revogação em massa das outras sessões. O risco extra é nenhum: mesmo `HttpOnly`, mesmo
+  `SameSite=Strict`, mesmo origin; só passa a viajar em mais endpoints do MESMO backend.
 - `POST /refresh` exige o header `X-Requested-With: crm-lab` — proteção CSRF extra além de
   `SameSite=Strict`/`Path` (um form HTML cross-site não consegue setar header customizado).
 - `RefreshRequest.refreshToken` no corpo é fallback **DEPRECIADO** de transição (clientes que
@@ -120,7 +125,7 @@ Fazer login.
   }
 }
 ```
-`Set-Cookie: crm_refresh=<token>; HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth` (ver nota acima).
+`Set-Cookie: crm_refresh=<token>; HttpOnly; Secure; SameSite=Strict; Path=/` (ver nota acima).
 
 ### POST /auth/refresh
 Renovar access token usando o refresh do cookie `crm_refresh` (corpo vazio `{}` no caso normal).
@@ -168,7 +173,7 @@ Lê o refresh do cookie `crm_refresh` (fallback depreciado: `{ "refreshToken": "
   "message": "Logged out successfully"
 }
 ```
-`Set-Cookie: crm_refresh=; Max-Age=0; Path=/api/v1/auth` (limpa o cookie).
+`Set-Cookie: crm_refresh=; Max-Age=0; Path=/` (limpa o cookie).
 
 Idempotente: token desconhecido ou já revogado devolve a mesma resposta (não é oráculo).
 
@@ -282,6 +287,37 @@ gera audit log: só papel, alçada e status geram — e só quando o valor de fa
 
 **Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403), `NOT_FOUND` (404 — inexistente
 **ou de outro tenant**; nunca 403, para não vazar existência)
+
+### PATCH /users/me/password (CRMLAB-35)
+Troca a própria senha. Qualquer papel de tenant (não é rota de admin — cada um troca a
+sua). `platform_operator` cai em `denyPlatformOperator()` como o resto do módulo.
+
+**Request:**
+```json
+{
+  "currentPassword": "senha-atual",
+  "newPassword": "senha-nova-com-10-chars"
+}
+```
+
+`newPassword` mínimo 10 caracteres e fora de uma lista curta de senhas triviais embutida
+(D-153 — decisão contra `zxcvbn` para não trazer dependência nova só para isso).
+
+**Response (200):**
+```json
+{ "message": "Senha alterada com sucesso" }
+```
+
+**Efeito colateral, não é side-channel:** revoga TODAS as famílias de refresh do usuário
+**exceto a da sessão que fez a troca** (identificada pelo cookie `crm_refresh` da própria
+requisição, que o `Path=/` do CRMLAB-33 já entrega a esta rota — nota acima). Sem
+cookie na requisição (cliente que ainda usa o fallback de corpo depreciado), revoga TODAS,
+sem exceção — a sessão atual desloga junto nesse caso. Gera `audit_log`
+(`change_own_password`).
+
+**Erros:** `VALIDATION_ERROR` (400 — `details.fields.currentPassword` quando a senha atual
+não bate, `details.fields.newPassword` quando a nova não passa na política), `NOT_FOUND`
+(404 — usuário sumiu no meio da requisição, caso raríssimo)
 
 ---
 

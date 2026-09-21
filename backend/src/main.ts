@@ -9,6 +9,9 @@ import { createCache, verifyCacheReady } from './lib/cache.js';
 import { logger } from './lib/logger.js';
 import { refreshSessionIsLive } from './services/auth.service.js';
 import { createWsHub } from './lib/ws-hub.js';
+import { deleteExpiredOrRevoked } from './repositories/refresh-token.repository.js';
+
+const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 async function bootstrap(): Promise<void> {
   const db = await getDb();
@@ -78,6 +81,27 @@ async function bootstrap(): Promise<void> {
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
+
+  // =========================================================================
+  // Limpeza de refresh_tokens expirados/revogados (CRMLAB-35, D-155)
+  // =========================================================================
+  // Best-effort: nunca deve derrubar o boot nem o processo. Sem scheduler novo
+  // (nao existe um no projeto) — `setInterval` simples, `.unref()` para nao
+  // impedir o processo de sair no shutdown.
+  const runRefreshTokenCleanup = (): void => {
+    deleteExpiredOrRevoked(db)
+      .then((deleted) => {
+        if (deleted > 0) logger.info('refresh_tokens.cleanup', { deleted });
+      })
+      .catch((err: unknown) => {
+        logger.warn('refresh_tokens.cleanup_failed', {
+          message: err instanceof Error ? err.message : String(err),
+        });
+      });
+  };
+  runRefreshTokenCleanup();
+  const cleanupInterval = setInterval(runRefreshTokenCleanup, CLEANUP_INTERVAL_MS);
+  cleanupInterval.unref();
 
   // =========================================================================
   // Rede de seguranca do processo (CRMLAB-30, D-138)

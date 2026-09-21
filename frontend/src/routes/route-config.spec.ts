@@ -96,6 +96,9 @@ describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, revisado em D-129)'
       'Atendentes',
       'Comissão',
       'Usuários & Permissões',
+      // CRMLAB-35: trocar a propria senha nao e privilegio de admin — e o
+      // unico item TENANT_ROLES deste grupo alem de "Cadastro de Exames".
+      'Minha Conta',
       'Personalização',
     ]);
   });
@@ -106,13 +109,15 @@ describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, revisado em D-129)'
     expect(ungrouped.map((r) => r.label)).toEqual(['Atendimento', 'Pacientes', 'Propostas', 'Vendas']);
   });
 
-  it('atendente vê Gestão só com Conversão e Configurações só com Cadastro de Exames (únicos itens TENANT_ROLES dos grupos)', () => {
+  it('atendente vê Gestão só com Conversão e Configurações com Cadastro de Exames + Minha Conta (únicos itens TENANT_ROLES dos grupos)', () => {
     const { groups } = sidebarSectionsFor('attendant');
 
     expect(groups.map((g) => g.id)).toEqual(['comunicacao', 'gestao', 'configuracoes']);
     expect(groups.find((g) => g.id === 'gestao')?.items.map((r) => r.label)).toEqual(['Conversão']);
     expect(groups.find((g) => g.id === 'configuracoes')?.items.map((r) => r.label)).toEqual([
       'Cadastro de Exames',
+      // CRMLAB-35: trocar a propria senha nao e privilegio de admin.
+      'Minha Conta',
     ]);
   });
 

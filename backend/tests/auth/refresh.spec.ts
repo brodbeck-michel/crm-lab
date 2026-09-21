@@ -2,8 +2,8 @@
  * POST /auth/refresh e POST /auth/logout — rotacao, deteccao de reuso (D-015)
  * e revogacao. SECURITY.md "Autenticacao".
  *
- * CRMLAB-32: o refresh vive no cookie httpOnly `crm_refresh` (`Path=/` desde
- * o CRMLAB-33/D-151, era `/api/v1/auth`). `refreshToken` no corpo é fallback DEPRECIADO de
+ * CRMLAB-32: o refresh vive no cookie httpOnly `crm_refresh`
+ * (`Path=/`, ampliado de `/api/v1/auth` no CRMLAB-33/D-151). `refreshToken` no corpo é fallback DEPRECIADO de
  * transição — testado à parte, mas o caminho normal é sempre o cookie.
  * `/auth/refresh` também exige `X-Requested-With: crm-lab` (proteção CSRF
  * extra além de `SameSite=Strict`).
@@ -290,5 +290,26 @@ describe('rotacao de refresh token', () => {
   it('logout idempotente: sem cookie e sem body devolve a mesma resposta de sucesso', async () => {
     const response = await app.agent.post('/api/v1/auth/logout').send({}).expect(200);
     expect(response.body).toEqual({ message: 'Logged out successfully' });
+  });
+
+  it('login manda TAMBEM um Set-Cookie de expiracao no path antigo (D-159)', async () => {
+    const response = await app.agent
+      .post('/api/v1/auth/login')
+      .send({ email: user.email, password: DEFAULT_TEST_PASSWORD })
+      .expect(200);
+
+    const cookies = (response.headers['set-cookie'] as string[] | undefined) ?? [];
+    const doRefresh = cookies.filter((c) => c.startsWith(`${REFRESH_COOKIE_NAME}=`));
+
+    // Dois Set-Cookie do mesmo nome: o valido em Path=/ e a lapide do path
+    // antigo. Sem a lapide, quem ja estava logado fica com os DOIS cookies, a
+    // rota le eternamente o velho e a deteccao de reuso desloga todo mundo.
+    expect(doRefresh).toHaveLength(2);
+    // O VALIDO vem primeiro — cliente ingenuo que so olha o nome pega o certo.
+    expect(doRefresh[0]).toMatch(/Path=\//);
+    expect(doRefresh[0]).not.toMatch(new RegExp(`^${REFRESH_COOKIE_NAME}=;`));
+    const lapide = doRefresh[1] ?? '';
+    expect(lapide).toContain('Path=/api/v1/auth');
+    expect(lapide).toMatch(new RegExp(`^${REFRESH_COOKIE_NAME}=;`));
   });
 });

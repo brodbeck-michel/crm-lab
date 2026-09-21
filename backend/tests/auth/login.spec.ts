@@ -2,9 +2,8 @@
  * POST /auth/login — SERVICES.md §1, WORKFLOWS.md §8, SECURITY.md "Autenticacao".
  *
  * CRMLAB-32: o refresh token deixou de vir no corpo — sai SO em
- * `Set-Cookie: crm_refresh=...; HttpOnly; SameSite=Strict; Path=/` (Path
- * alargado de `/api/v1/auth` para `/` no CRMLAB-33/D-151 — o handshake do
- * WebSocket em `/ws` tambem precisa do cookie).
+ * `Set-Cookie: crm_refresh=...; HttpOnly; SameSite=Strict; Path=/`
+ * (Path ampliado de `/api/v1/auth` para `/` no CRMLAB-33/D-151).
  */
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { LoginResponse } from '@crm-lab/shared';

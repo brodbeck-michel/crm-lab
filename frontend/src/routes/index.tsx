@@ -13,6 +13,7 @@ import OperationSettings from '@/pages/Settings/Operation';
 import Insurances from '@/pages/Settings/Insurances';
 import AttendantsSettings from '@/pages/Settings/Attendants';
 import CommissionsSettings from '@/pages/Settings/Commissions';
+import AccountSettings from '@/pages/Settings/Account';
 import ThemeSettings from '@/pages/Settings/Theme';
 import UsersSettings from '@/pages/Settings/Users';
 import InternalChat from '@/pages/InternalChat';
@@ -68,6 +69,7 @@ export const appRoutes: RouteObject[] = [
               { path: 'internal-chat', element: <InternalChat /> },
               { path: 'quick-replies', element: <QuickReplies /> },
               { path: 'sales', element: <Sales /> },
+              { path: 'settings/account', element: <AccountSettings /> },
             ],
           },
         ],

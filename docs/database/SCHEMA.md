@@ -656,6 +656,8 @@ CREATE TABLE refresh_tokens (
   token_hash VARCHAR(255) NOT NULL UNIQUE,
   expires_at TIMESTAMP NOT NULL,
   revoked_at TIMESTAMP,                 -- logout / rotação
+  absolute_expires_at TIMESTAMPTZ NOT NULL, -- teto da FAMÍLIA (CRMLAB-35, D-154)
+  revoked_reason TEXT,                  -- 'rotated' | 'security' | NULL (CRMLAB-35, D-154)
   created_at TIMESTAMP DEFAULT NOW(),
 
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
@@ -665,9 +667,31 @@ CREATE TABLE refresh_tokens (
 CREATE INDEX idx_refresh_tokens_user_id ON refresh_tokens(user_id);
 CREATE INDEX idx_refresh_tokens_tenant_id ON refresh_tokens(tenant_id);
 CREATE INDEX idx_refresh_tokens_expires_at ON refresh_tokens(expires_at);
+CREATE INDEX idx_refresh_tokens_absolute_expires_at ON refresh_tokens(absolute_expires_at);
 ```
 
-Token válido = `revoked_at IS NULL AND expires_at > NOW()`.
+Token válido = `revoked_at IS NULL AND expires_at > NOW() AND absolute_expires_at > NOW()`.
+
+`absolute_expires_at` (CRMLAB-35, D-154): teto de 30 dias da FAMÍLIA (não do token
+individual) — gravado no login e CARREGADO adiante em cada rotação, nunca reiniciado. Vencido
+esse teto, o próximo refresh recusa mesmo com o token em si ainda dentro dos 7 dias rotativos.
+
+É a única coluna de data desta tabela em `TIMESTAMPTZ`, e de propósito: é a única que faz
+*round-trip* (lida do banco e regravada a cada rotação). Em `TIMESTAMP` naive o driver devolve
+`Date` interpretando o valor como hora **local** enquanto a escrita manda UTC — o teto andava
+para frente o equivalente ao fuso a cada rotação, e uma sessão ativa empurraria o próprio teto
+para sempre. **Dívida conhecida:** `expires_at` e `revoked_at` têm o mesmo desvio na comparação
+(3 h em UTC-3), sem efeito prático numa janela de 7 dias porque nunca são regravadas a partir
+do que foi lido.
+
+`revoked_reason` (CRMLAB-35, D-154): `'rotated'` = token consumido numa rotação normal —
+reaparecer depois disso é sinal de roubo e derruba a família (D-015). `'security'` = derrubado
+em massa por troca de senha ou desativação de usuário — reaparecer é o outro dispositivo
+descobrindo que caiu, não ataque, e recusa só aquele token. `NULL` em linhas anteriores à
+migração 022, lido como `'rotated'`.
+
+Limpeza periódica (D-155, `main.ts`) apaga linhas com `expires_at`/`revoked_at` há mais de 7
+dias — best-effort, não crítico.
 
 ---
 

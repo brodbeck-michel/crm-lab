@@ -1,4 +1,6 @@
 import type {
+  ChangePasswordRequest,
+  ChangePasswordResponse,
   CreateUserRequest,
   ListUsersResponse,
   ManagedUser,
@@ -58,6 +60,19 @@ export function useUpdateUser() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryScopes.users });
+    },
+  });
+}
+
+/**
+ * Troca da própria senha (`PATCH /users/me/password`, CRMLAB-35).
+ * O refresh da sessão atual vai sozinho no cookie httpOnly — o servidor usa
+ * ele para preservar ESTA sessão e derrubar as outras do mesmo usuário.
+ */
+export function useChangePassword() {
+  return useMutation({
+    mutationFn: async (data: ChangePasswordRequest) => {
+      return http.patch<ChangePasswordResponse>('/users/me/password', data);
     },
   });
 }

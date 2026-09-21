@@ -9,18 +9,18 @@
  *
  *   - `POST /login` e `POST /refresh` gravam o refresh token em
  *     `Set-Cookie: crm_refresh=<token>; HttpOnly; Secure; SameSite=Strict;
- *     Path=/` (Path alargado de `/api/v1/auth` para `/` no CRMLAB-33/D-151 —
- *     o handshake do WebSocket em `/ws` tambem precisa do cookie). O corpo
- *     JSON responde SO com o access token — o refresh nunca aparece em
- *     `response.body` nem em `document.cookie` (HttpOnly bloqueia leitura
- *     por JS).
+ *     Path=/` (D-151 — era `/api/v1/auth`, ampliado pelo CRMLAB-33 para o
+ *     handshake de `/ws`; `PATCH /users/me/password` reusa o mesmo). O corpo JSON
+ *     responde SO com o access token — o refresh nunca aparece em
+ *     `response.body` nem em `document.cookie` (HttpOnly bloqueia leitura por JS).
  *   - `POST /refresh` le o cookie primeiro; o campo `refreshToken` no corpo e
  *     fallback DEPRECIADO de transicao (`RefreshRequest.refreshToken` em
  *     `@crm-lab/shared`), com remocao prevista para 2026-10-04.
- *   - `cookie-parser` so entra NESTE router — nenhum outro modulo depende de
- *     `req.cookies`.
- *   - CSRF do refresh: com `SameSite=Strict` + `Path=/api/v1/auth` o risco ja
- *     e baixo (um POST cross-site nao carrega o cookie), mas exigimos tambem
+ *   - `cookie-parser` tambem entra em `user.routes.ts` desde o CRMLAB-35, so
+ *     para LER (nunca seta cookie de auth por la fora do fluxo de troca de senha).
+ *   - CSRF do refresh: com `SameSite=Strict` o risco ja e baixo (um POST
+ *     cross-site nao carrega o cookie — e `Path` deixou de ajudar nisso desde
+ *     que virou `/`, D-151), mas exigimos tambem
  *     o header `X-Requested-With: crm-lab` — um form HTML cross-site nao
  *     consegue setar header customizado, so fetch/XHR same-origin conseguem.
  *   - NAO ligamos `credentials: true` no CORS geral (`app.ts`): nginx serve
@@ -28,67 +28,24 @@
  *     sozinho sem preflight cross-origin.
  */
 import cookieParser from 'cookie-parser';
-import { Router, type CookieOptions, type Request, type Response } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import type { LoginRequest, RefreshRequest } from '@crm-lab/shared';
-import { env } from '../config/env.js';
 import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
 import { clientIp, userAgentOf } from '../http/context.js';
 import { BusinessError } from '../http/errors.js';
 import { validate, validated } from '../http/middleware/validate.js';
+import {
+  REFRESH_COOKIE_NAME,
+  REFRESH_COOKIE_PATH,
+  setRefreshCookie,
+  clearRefreshCookie,
+} from '../http/refresh-cookie.js';
 import { createAuditService } from '../services/audit.service.js';
 import { createAuthService, type RequestMeta } from '../services/auth.service.js';
 import { createThemeService } from '../services/theme.service.js';
-import {
-  LEGACY_REFRESH_COOKIE_PATH,
-  REFRESH_COOKIE_NAME,
-  REFRESH_COOKIE_PATH,
-} from '../lib/cookies.js';
-
+/** Re-exportados por compatibilidade — `refresh-cookie.ts` (D-152) e a fonte agora. */
 export { REFRESH_COOKIE_NAME, REFRESH_COOKIE_PATH };
-
-/**
- * `secure` so em producao/homologacao (HTTPS de verdade atras do Caddy):
- * em `development`/`test`, sem TLS local, um cookie `Secure` jamais voltaria
- * ao backend e o refresh por cookie nunca funcionaria no ambiente dev.
- * `HttpOnly` e `SameSite=Strict` valem em qualquer ambiente — sao o que
- * protege a sessao, nao dependem de HTTPS local.
- */
-function cookieOptions(maxAgeMs?: number): CookieOptions {
-  return {
-    httpOnly: true,
-    secure: env.isProduction,
-    sameSite: 'strict',
-    path: REFRESH_COOKIE_PATH,
-    ...(maxAgeMs !== undefined ? { maxAge: maxAgeMs } : {}),
-  };
-}
-
-/**
- * Mata o cookie que ficou no path antigo (`LEGACY_REFRESH_COOKIE_PATH`).
- *
- * Sem isto, quem ja estava logado quando esta versao subir fica com dois
- * `crm_refresh` e `/auth/refresh` le eternamente o velho — ver o comentario em
- * `lib/cookies.ts`. Roda em TODA resposta que mexe no cookie (login, refresh,
- * logout), que sao exatamente os pontos por onde qualquer sessao viva passa.
- */
-function clearLegacyRefreshCookie(res: Response): void {
-  res.clearCookie(REFRESH_COOKIE_NAME, { ...cookieOptions(), path: LEGACY_REFRESH_COOKIE_PATH });
-}
-
-function setRefreshCookie(res: Response, token: string): void {
-  res.cookie(REFRESH_COOKIE_NAME, token, cookieOptions(env.JWT_REFRESH_TTL * 1000));
-  // Depois do cookie de verdade, nao antes: os dois `Set-Cookie` tem o mesmo
-  // NOME e so diferem no `Path`. Browser trata como cookies distintos em
-  // qualquer ordem, mas cliente/parser ingenuo que so olha o nome fica com o
-  // PRIMEIRO — e o primeiro tem que ser o valido.
-  clearLegacyRefreshCookie(res);
-}
-
-function clearRefreshCookie(res: Response): void {
-  clearLegacyRefreshCookie(res);
-  res.clearCookie(REFRESH_COOKIE_NAME, cookieOptions());
-}
 
 /** Header exigido em `/refresh` como camada extra de protecao CSRF (ver cabecalho do arquivo). */
 const REQUIRED_REFRESH_HEADER = 'crm-lab';

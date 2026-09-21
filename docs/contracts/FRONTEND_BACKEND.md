@@ -18,9 +18,11 @@ Resumo executivo da integração. Detalhes de shapes em `docs/api/API_CONTRACTS.
 
 **CRMLAB-32** — o refresh (7d) deixou de viajar pelo corpo/JS: vive só no cookie
 httpOnly `crm_refresh` (`Set-Cookie`, `Secure` em produção, `SameSite=Strict`,
-`Path=/api/v1/auth`). O access token (15min) continua no corpo, mas o
-frontend guarda ele SÓ EM MEMÓRIA (Zustand sem `persist` para `tokens`) —
-`localStorage` não guarda token nenhum.
+`Path=/` — ampliado de `/api/v1/auth` pelo CRMLAB-33, D-151, porque o
+handshake de `/ws` também precisa dele; `PATCH /users/me/password` se
+beneficia do mesmo alargamento). O access token
+(15min) continua no corpo, mas o frontend guarda ele SÓ EM MEMÓRIA (Zustand
+sem `persist` para `tokens`) — `localStorage` não guarda token nenhum.
 
 ```
 1. POST /auth/login → { accessToken (15min), user, tenant (com theme) } + Set-Cookie crm_refresh

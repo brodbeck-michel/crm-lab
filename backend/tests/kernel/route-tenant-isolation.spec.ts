@@ -506,6 +506,19 @@ const LAB_ROUTES: readonly LabRoute[] = [
     addressable: false,
   },
   {
+    // CRMLAB-35: `/me/password` age no usuario do TOKEN, nao num id da URL —
+    // nao ha recurso de outro tenant para enderecar, logo `addressable: false`.
+    name: 'PATCH /users/me/password',
+    method: 'patch',
+    path: () => '/api/v1/users/me/password',
+    body: () => ({
+      currentPassword: 'senha-de-teste-123',
+      newPassword: `sonda-${Date.now()}-troca`,
+    }),
+    actor: 'attendant',
+    addressable: false,
+  },
+  {
     name: 'PATCH /users/:id',
     method: 'patch',
     path: (l) => `/api/v1/users/${l.attendant.id}`,
@@ -800,7 +813,7 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 63 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 64 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
@@ -813,7 +826,7 @@ describe('inventario de rotas de laboratorio', () => {
     // inventario desde a implementacao da feature — corrigido junto com D-102).
     // CRMLAB-11/D-133 soma 2: `POST /patients/:id/inactivate|reactivate`.
     // CRMLAB-12/D-134 soma 1: `PATCH /proposals/:id/items`.
-    expect(LAB_ROUTES).toHaveLength(63);
+    expect(LAB_ROUTES).toHaveLength(64);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

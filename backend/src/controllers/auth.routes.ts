@@ -9,9 +9,11 @@
  *
  *   - `POST /login` e `POST /refresh` gravam o refresh token em
  *     `Set-Cookie: crm_refresh=<token>; HttpOnly; Secure; SameSite=Strict;
- *     Path=/api/v1/auth`. O corpo JSON responde SO com o access token — o
- *     refresh nunca aparece em `response.body` nem em `document.cookie`
- *     (HttpOnly bloqueia leitura por JS).
+ *     Path=/` (Path alargado de `/api/v1/auth` para `/` no CRMLAB-33/D-151 —
+ *     o handshake do WebSocket em `/ws` tambem precisa do cookie). O corpo
+ *     JSON responde SO com o access token — o refresh nunca aparece em
+ *     `response.body` nem em `document.cookie` (HttpOnly bloqueia leitura
+ *     por JS).
  *   - `POST /refresh` le o cookie primeiro; o campo `refreshToken` no corpo e
  *     fallback DEPRECIADO de transicao (`RefreshRequest.refreshToken` em
  *     `@crm-lab/shared`), com remocao prevista para 2026-10-04.
@@ -37,10 +39,13 @@ import { validate, validated } from '../http/middleware/validate.js';
 import { createAuditService } from '../services/audit.service.js';
 import { createAuthService, type RequestMeta } from '../services/auth.service.js';
 import { createThemeService } from '../services/theme.service.js';
+import {
+  LEGACY_REFRESH_COOKIE_PATH,
+  REFRESH_COOKIE_NAME,
+  REFRESH_COOKIE_PATH,
+} from '../lib/cookies.js';
 
-/** Nome e path do cookie de refresh. Path casa com o `basePath` deste modulo sob `API_PREFIX`. */
-export const REFRESH_COOKIE_NAME = 'crm_refresh';
-export const REFRESH_COOKIE_PATH = '/api/v1/auth';
+export { REFRESH_COOKIE_NAME, REFRESH_COOKIE_PATH };
 
 /**
  * `secure` so em producao/homologacao (HTTPS de verdade atras do Caddy):
@@ -59,11 +64,29 @@ function cookieOptions(maxAgeMs?: number): CookieOptions {
   };
 }
 
+/**
+ * Mata o cookie que ficou no path antigo (`LEGACY_REFRESH_COOKIE_PATH`).
+ *
+ * Sem isto, quem ja estava logado quando esta versao subir fica com dois
+ * `crm_refresh` e `/auth/refresh` le eternamente o velho — ver o comentario em
+ * `lib/cookies.ts`. Roda em TODA resposta que mexe no cookie (login, refresh,
+ * logout), que sao exatamente os pontos por onde qualquer sessao viva passa.
+ */
+function clearLegacyRefreshCookie(res: Response): void {
+  res.clearCookie(REFRESH_COOKIE_NAME, { ...cookieOptions(), path: LEGACY_REFRESH_COOKIE_PATH });
+}
+
 function setRefreshCookie(res: Response, token: string): void {
   res.cookie(REFRESH_COOKIE_NAME, token, cookieOptions(env.JWT_REFRESH_TTL * 1000));
+  // Depois do cookie de verdade, nao antes: os dois `Set-Cookie` tem o mesmo
+  // NOME e so diferem no `Path`. Browser trata como cookies distintos em
+  // qualquer ordem, mas cliente/parser ingenuo que so olha o nome fica com o
+  // PRIMEIRO — e o primeiro tem que ser o valido.
+  clearLegacyRefreshCookie(res);
 }
 
 function clearRefreshCookie(res: Response): void {
+  clearLegacyRefreshCookie(res);
   res.clearCookie(REFRESH_COOKIE_NAME, cookieOptions());
 }
 

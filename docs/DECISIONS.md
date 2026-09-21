@@ -2051,7 +2051,6 @@ profundidade, não correção de falha explorada. Senha em migração versionada
 git — daí a role nascer sem senha e o resto ser passo manual.
 **Impacto:** `backend/migrations/020_crm_login_role.sql`, `docs/guides/DEPLOYMENT.md`,
 `docs/database/SCHEMA.md`.
-
 ### D-146: Índice nas 15 FKs sem índice, sem `CONCURRENTLY` (CRMLAB-38)
 **Decisão:** `021_fk_indexes.sql` cria `idx_*` (`IF NOT EXISTS`) nas 15 foreign keys que não
 tinham índice, com `CREATE INDEX` comum — não `CONCURRENTLY`.
@@ -2062,7 +2061,6 @@ própria e `CREATE INDEX CONCURRENTLY` não pode rodar em transação — suport
 modo "migração fora de transação" no runner, desproporcional para um índice que neste volume
 sai instantâneo. Reavaliar se o volume crescer a ponto do lock incomodar em produção.
 **Impacto:** `backend/migrations/021_fk_indexes.sql`, `docs/database/SCHEMA.md`.
-
 ### D-147: Lock de migração é `pg_advisory_xact_lock` pedido DENTRO da transação de cada migração (CRMLAB-38)
 **Decisão:** cada migração pendente roda em sua própria transação, que começa pedindo
 `pg_advisory_xact_lock(hashtext('crm_lab_migrate'))` e, **já com o lock na mão**, relê
@@ -2087,7 +2085,6 @@ conexão e liberado por engano noutra ficaria preso até a conexão fechar, e o 
 conexões ociosas (D-030). O lock de transação nasce e morre preso à conexão da transação e
 libera sozinho no COMMIT/ROLLBACK. Falha de uma migração continua não desfazendo as anteriores.
 **Impacto:** `backend/src/db/migrator.ts`, `backend/tests/kernel/migrator.spec.ts`.
-
 ### D-148: Redact do logger ampliado preventivamente; corpo de erro do Evolution cortado em 200 chars (CRMLAB-38)
 **Decisão:** `REDACT_PATHS` ganha `apikey`/`apiKey`/`secret`/`webhookSecret`/`contentBase64`/
 `email`/`phone`, cada um também na forma `*.<campo>` (um nível de aninhamento), e passa a ser
@@ -2102,7 +2099,6 @@ está na lista, não o log final. Os 500 chars do corpo de erro do gateway vão 
 identificam a causa para debug.
 **Impacto:** `backend/src/lib/logger.ts`, `backend/src/lib/evolution-client.ts`,
 `backend/tests/kernel/logger-redact.spec.ts`.
-
 ### D-149: Anti-replay nos webhooks por hash do corpo no Redis (10 min); janela de timestamp avaliada e DESCARTADA (CRMLAB-38)
 **Decisão:** antes de aceitar um webhook autenticado, `authenticate()` calcula `sha256(rawBody)`
 e guarda `webhook:replay:<tenantId>:<digest>` no Redis por 600 s; corpo já visto é recusado.
@@ -2126,7 +2122,6 @@ era a regra. `tests/webhooks/replay-guard.spec.ts` guarda a regressão com um pa
 **precisa** passar na primeira entrega e só ser barrado na segunda.
 **Impacto:** `backend/src/controllers/webhook.routes.ts`,
 `backend/tests/webhooks/replay-guard.spec.ts`.
-
 ### D-150: `deploy.sh` exige CI verde no commit, com `gh` autenticado na VPS (CRMLAB-38)
 **Decisão:** antes de buildar, `scripts/deploy.sh` consulta `gh run list --commit <SHA> --branch
 main --workflow CI` e aborta se a conclusão não for `success` — inclusive quando não há run
@@ -2143,7 +2138,40 @@ porque dá a impressão de cobertura.
 homologação é `deploy.sh --ref <branch da onda>`, e o run de CI daquele commit fica atribuído à
 branch dele, nunca a `main` — com o filtro fixo, TODO deploy de hml por `--ref` abortava com
 `sem_run`. O filtro por commit já é exato; a branch só restringia sem ganho.
-
+### D-151: WebSocket autentica pelo cookie httpOnly do refresh; Path do cookie alarga para `/`; Origin verificado no upgrade (CRMLAB-33)
+**Decisão:** `/ws` deixa de aceitar `?token=<accessToken>` na URL. O handshake de upgrade passa a
+ser autenticado pelo cookie httpOnly `crm_refresh` (o mesmo do CRMLAB-32/D-142), lido e
+verificado manualmente em `ws-hub.ts` (o upgrade de WebSocket não passa pelos middlewares do
+Express, `cookie-parser` incluído — daí `backend/src/lib/cookies.ts`, parser mínimo só para isso).
+Duas mudanças que essa escolha exigiu e não estavam no escopo original do card:
+1. **`Path` do cookie alarga de `/api/v1/auth` para `/`.** Um cookie só aceita um `Path`; o
+   handshake em `/ws` também precisa recebê-lo. `HttpOnly` + `SameSite=Strict` continuam sendo a
+   defesa real contra roubo/CSRF do refresh — `Path` estreito só reduzia quais rotas o recebiam
+   automaticamente, e o item 2 cobre o risco de CSRF específico do WS melhor do que `Path` cobria.
+2. **Header `Origin` do upgrade é verificado contra `env.corsOrigins` e a conexão é recusada (sem
+   completar o handshake) se não bater.** WebSocket NÃO respeita a Same-Origin Policy do jeito que
+   `fetch`/XHR respeitam: o browser manda o cookie no handshake mesmo que a página que abriu a
+   conexão esteja em outro domínio (classe conhecida: WebSocket CSRF). Autenticar só pelo cookie
+   sem checar `Origin` abriria a porta pra qualquer site abrir `wss://.../ws` a partir do browser
+   de uma vítima logada e ler o realtime dela — isso NÃO existia como risco antes porque o design
+   anterior exigia o access token na URL, que um site de terceiro não tem como obter.
+3. **Cookie ausente/inválido/expirado fecha com o código `WS_CLOSE_UNAUTHORIZED` (4401,
+   `@crm-lab/shared`) DEPOIS de completar o handshake (101), não antes.** Um `4xx` cru na resposta
+   HTTP do upgrade não é observável pelo `WebSocket` do browser (limitação da própria API —
+   `onclose` chegaria com o código genérico `1006`), e o cliente PRECISA distinguir "sessão
+   vencida, tento refresh antes de reconectar" de "rede caiu, só espero o backoff". Só o Origin
+   errado (item 2) é recusado cru — não há cliente legítimo cujo UX dependa de ler esse motivo.
+**Motivo:** o card pedia só tirar o token da URL (vazava no log de acesso do Caddy); a Opção C
+citada no card ("se o cookie httpOnly vier antes, ele resolve sozinho") só resolve de fato depois
+de tratar os dois pontos acima, que não estavam escritos no card original.
+**Impacto:** `backend/src/lib/ws-hub.ts` (Origin + cookie + heartbeat + limite de 5 sockets/
+usuário — ver STATUS.md para o resto do escopo do card), `backend/src/lib/cookies.ts` (novo,
+fonte única do nome/path/parse do cookie — `auth.routes.ts` passa a importar de lá em vez de
+declarar localmente), `backend/src/main.ts` (`createWsHub({ allowedOrigins })`),
+`shared/types/websocket.types.ts` (+`WS_CLOSE_UNAUTHORIZED`), `frontend/src/api/ws.ts` (sem
+`?token=`; `onclose` com esse código dispara `refreshAccessToken()` antes de reconectar),
+`docs/api/API_CONTRACTS.md`, `docs/contracts/FRONTEND_BACKEND.md`, `docs/architecture/
+SECURITY.md`, `docs/guides/ENVIRONMENTS.md`.
 ### D-156: Guard de anti-replay atômico (`incr`) e isento para `CONNECTION_UPDATE` (CRMLAB-38)
 **Decisão:** `isReplay` passa a usar `cache.incr(key, ttl) > 1` em vez de `get` seguido de
 `set`, e `CONNECTION_UPDATE` fica fora da guarda (`replayExempt`).
@@ -2157,7 +2185,6 @@ no banco, na tela e no WS até o próximo flap — dano maior que o replay que a
 mais porque reaplicar estado de conexão é idempotente.
 **Impacto:** `backend/src/controllers/webhook.routes.ts`,
 `backend/tests/webhooks/replay-guard.spec.ts`. D-149 continua valendo para todo o resto.
-
 ### D-157: `SET LOCAL statement_timeout` vem ANTES do advisory lock da migração (CRMLAB-38)
 **Decisão:** em `migrator.ts`, `setStatementTimeout(tx, NO_STATEMENT_TIMEOUT)` é a primeira
 instrução da transação, antes de `pg_advisory_xact_lock`.
@@ -2167,6 +2194,47 @@ quando a primeira migração demora mais de 30 s — que é o único caso em que
 alguma função. A ordem invertida desarmava a proteção justamente no cenário para o qual foi
 escrita.
 **Impacto:** `backend/src/db/migrator.ts`. D-147 continua valendo.
+### D-158: WebSocket confere a sessao no BANCO no handshake e revalida a cada 5 min (CRMLAB-33)
+**Decisão:** `WsHubOptions.validateSession` (ligado em `main.ts` a
+`refreshSessionIsLive`) repete no handshake as checagens que `/auth/refresh` faz — linha em
+`refresh_tokens`, `revoked_at`, expiração, `user.is_active`, `tenant.is_active` — sem rotacionar
+nada e sem derrubar família em caso de reuso. Sockets já abertos são reconferidos a cada 10
+ciclos de heartbeat (~5 min). Handshake é fail-closed (erro na checagem recusa); socket já
+aberto é fail-open (soluço do Postgres não derruba o realtime inteiro).
+**Motivo:** achado HIGH da revisão do PR #47. `verifyRefreshToken` prova assinatura e validade,
+nada mais — um refresh revogado no logout, já rotacionado, ou de usuário/tenant desativado
+abria um WebSocket com realtime completo do tenant por até `JWT_REFRESH_TTL` (7 dias), enquanto
+o MESMO token era recusado em `/auth/refresh`. O esquema antigo (`?token=` com access token)
+expunha no máximo os 15 min do access: sem esta checagem, o card teria PIORADO a janela que veio
+consertar. Não rotacionar aqui é deliberado — rotacionar brigaria com o refresh do próprio
+cliente, e derrubar a família daria a quem capture um token velho um jeito barato de deslogar o
+dono.
+**Impacto:** `backend/src/lib/ws-hub.ts`, `backend/src/services/auth.service.ts`,
+`backend/src/main.ts`. D-151 continua valendo.
+### D-159: `Set-Cookie` de expiração no path antigo do refresh, por uma release (CRMLAB-33)
+**Decisão:** toda resposta que grava ou limpa `crm_refresh` manda também um `Set-Cookie` de
+expiração em `Path=/api/v1/auth` (`LEGACY_REFRESH_COOKIE_PATH`), depois do cookie válido. Sai
+quando não houver mais sessão aberta de antes da v1.13.0 — `JWT_REFRESH_TTL` (7 dias) após o
+deploy desta onda.
+**Motivo:** achado HIGH da revisão dos PRs #47 e #49. Cookie é identificado por (nome, domínio,
+PATH): gravar em `/` não substitui o que já está em `/api/v1/auth` (D-142, em produção desde a
+v1.12.0) — o usuário fica com os dois, os dois são enviados em `/auth/refresh`, o de path mais
+específico vem primeiro (RFC 6265 §5.4) e o `cookie-parser` fica com a primeira ocorrência. A
+rota leria eternamente o token VELHO: a primeira renovação o consome e rotaciona, a segunda o
+reapresenta já revogado, dispara a detecção de reuso (D-015) e derruba a família — logout
+forçado, em loop, de todo mundo que estivesse logado no momento do deploy, por 7 dias. Ordem
+(válido primeiro, expiração depois) importa para cliente ingênuo que só olha o nome do cookie.
+**Impacto:** `backend/src/lib/cookies.ts`, `backend/src/controllers/auth.routes.ts`. Mesma
+correção nos dois cards da onda, arquivo idêntico nos dois.
+### D-160: eviction por teto de sockets usa código de close próprio (4409) (CRMLAB-33)
+**Decisão:** o socket mais antigo derrubado pelo teto de 5 por usuário é fechado com
+`WS_CLOSE_TOO_MANY_SOCKETS` (4409), não `terminate()`; o cliente não reconecta nesse código.
+**Motivo:** achado MEDIUM da revisão do PR #47. `terminate()` chega no browser como 1006, que o
+cliente lê como queda de rede e reconecta na hora — com 6 abas abertas, cada reconexão
+estourava o teto de novo e evictava a próxima mais velha, para sempre, e cada reconexão dispara
+`invalidateQueries()` naquela aba. O teto virava um gerador de carga.
+**Impacto:** `shared/types/websocket.types.ts`, `backend/src/lib/ws-hub.ts`,
+`frontend/src/api/ws.ts`.
 
 ## Template para novas decisões
 

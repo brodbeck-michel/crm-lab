@@ -271,9 +271,11 @@ Duas incompatibilidades, as duas de protocolo, nenhuma contornável por ajuste:
 
 Cookie resolve os dois porque `Cookie` e `Authorization` são cabeçalhos
 **diferentes**, e o navegador manda o cookie em `fetch` e no handshake de WS
-(mesma origem). O `/api` e o `/ws` continuam exigindo o JWT do próprio app —
-`lib/ws-hub.ts` verifica `?token=` com o `JWT_SECRET` deste ambiente e tira
-`tenantId`/`userId` só do token verificado.
+(mesma origem). O `/api` continua exigindo o Bearer do próprio app; o `/ws`
+(desde o CRMLAB-33/D-151) autentica pelo cookie httpOnly `crm_refresh` —
+`lib/ws-hub.ts` verifica esse cookie com o `JWT_REFRESH_SECRET` deste
+ambiente e tira `tenantId`/`userId` só do token verificado, além de checar o
+header `Origin` contra `CORS_ORIGIN`.
 
 Diferença observável que importa: os `401` de dentro da aplicação (JWT expirado,
 senha errada) **não** têm cabeçalho de desafio, então não abrem caixa nenhuma. Se

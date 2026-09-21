@@ -7,6 +7,7 @@ import { env, safeEnv } from './config/env.js';
 import { closeDb, getDb } from './db/index.js';
 import { createCache, verifyCacheReady } from './lib/cache.js';
 import { logger } from './lib/logger.js';
+import { refreshSessionIsLive } from './services/auth.service.js';
 import { createWsHub } from './lib/ws-hub.js';
 
 async function bootstrap(): Promise<void> {
@@ -16,7 +17,13 @@ async function bootstrap(): Promise<void> {
   // aqui. Degradar para memoria em silencio quebraria rate limit, lockout de
   // login e invalidacao de analytics em qualquer deploy com mais de 1 instancia.
   await verifyCacheReady(cache);
-  const wsHub = createWsHub();
+  const wsHub = createWsHub({
+    allowedOrigins: env.corsOrigins,
+    // O handshake do WS confere a sessao no banco, nao so a assinatura do JWT
+    // (correcao da revisao do CRMLAB-33) — senao um refresh revogado no logout
+    // abria realtime por ate JWT_REFRESH_TTL.
+    validateSession: (token) => refreshSessionIsLive(db, token),
+  });
 
   const { app, modules } = createApp({ db, cache, wsHub });
   const server = http.createServer(app);

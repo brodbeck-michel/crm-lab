@@ -1,5 +1,11 @@
 import type { QueryClient } from '@tanstack/react-query';
-import type { WsEvent, WsEventName } from '@crm-lab/shared';
+import {
+  WS_CLOSE_TOO_MANY_SOCKETS,
+  WS_CLOSE_UNAUTHORIZED,
+  type WsEvent,
+  type WsEventName,
+} from '@crm-lab/shared';
+import { refreshAccessToken as refreshAccessTokenDefault } from './client';
 import { queryKeys, queryScopes } from './query-keys';
 
 /**
@@ -12,6 +18,13 @@ import { queryKeys, queryScopes } from './query-keys';
  * Reconexão com backoff exponencial. Ao (re)conectar depois de uma queda,
  * invalida TODAS as queries ativas — pode ter havido evento perdido durante
  * a desconexão.
+ *
+ * CRMLAB-33 — autenticação por cookie, não mais `?token=` na URL: o cookie
+ * httpOnly `crm_refresh` (CRMLAB-32) vai sozinho no handshake (mesmo origin).
+ * Se o servidor recusa (cookie ausente/expirado), fecha com o código
+ * `WS_CLOSE_UNAUTHORIZED` — o único sinal que este cliente tem para decidir
+ * "tento renovar a sessão antes de reconectar" em vez de só cair no backoff
+ * genérico (rede instável, deploy em andamento, etc).
  */
 
 /** Superfície mínima do WebSocket — permite injetar um fake nos testes. */
@@ -19,15 +32,13 @@ export interface WebSocketLike {
   readyState: number;
   close: (code?: number, reason?: string) => void;
   onopen: ((event: unknown) => void) | null;
-  onclose: ((event: unknown) => void) | null;
+  onclose: ((event: { code?: number }) => void) | null;
   onerror: ((event: unknown) => void) | null;
   onmessage: ((event: { data: unknown }) => void) | null;
 }
 
 export interface WsClientOptions {
   queryClient: QueryClient;
-  /** Token do usuário logado. `null` = não conecta. */
-  getToken: () => string | null;
   /** Padrão: `VITE_WS_URL`. */
   url?: string;
   /** Padrão: `new WebSocket(url)`. */
@@ -44,6 +55,16 @@ export interface WsClientOptions {
   /** Backoff: 1s, 2s, 4s… até o teto. */
   baseDelayMs?: number;
   maxDelayMs?: number;
+  /** Depois de N tentativas seguidas falhando, desiste e avisa por toast. */
+  maxAttempts?: number;
+  /** Injetável nos testes. Padrão: `refreshAccessToken` de `./client`. */
+  refreshAccessToken?: () => Promise<string>;
+  /**
+   * Aba oculta por mais que isto: reconexão pausa (não conta tentativa) até a
+   * aba voltar a ficar visível, quando reconecta na hora. Evita gastar as
+   * `maxAttempts` enquanto o usuário só trocou de aba.
+   */
+  visibilityHiddenPauseMs?: number;
 }
 
 export interface WsClient {
@@ -54,6 +75,8 @@ export interface WsClient {
   reconnectAttempts: () => number;
   /** Exposto para teste: o atraso que a próxima tentativa usaria. */
   nextDelayMs: () => number;
+  /** `true` depois de esgotar `maxAttempts` — parou de tentar reconectar sozinho. */
+  hasGivenUp: () => boolean;
 }
 
 export function wsBaseUrl(): string {
@@ -154,14 +177,18 @@ export function applyWsEvent(
 }
 
 const OPEN = 1;
+const DEFAULT_MAX_ATTEMPTS = 8;
+const DEFAULT_VISIBILITY_HIDDEN_PAUSE_MS = 5 * 60 * 1000;
 
 export function createWsClient(options: WsClientOptions): WsClient {
   const {
     queryClient,
-    getToken,
     toast,
     baseDelayMs = 1_000,
     maxDelayMs = 30_000,
+    maxAttempts = DEFAULT_MAX_ATTEMPTS,
+    visibilityHiddenPauseMs = DEFAULT_VISIBILITY_HIDDEN_PAUSE_MS,
+    refreshAccessToken = refreshAccessTokenDefault,
     socketFactory = (url: string) => new WebSocket(url) as unknown as WebSocketLike,
   } = options;
 
@@ -170,6 +197,14 @@ export function createWsClient(options: WsClientOptions): WsClient {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let intentionallyClosed = false;
   let hasConnectedBefore = false;
+  let gaveUp = false;
+  // Ja nasce marcado quando a pagina abre em aba de segundo plano (ctrl+clique,
+  // restauracao de sessao): so `visibilitychange` setava isto, entao uma aba que
+  // JA nasceu escondida nunca pausava — queimava as 8 tentativas e mostrava o
+  // toast de "recarregue a pagina" que a pausa existe para evitar.
+  let hiddenSince: number | null =
+    typeof document !== 'undefined' && document.visibilityState === 'hidden' ? Date.now() : null;
+  let pausedForVisibility = false;
 
   const delayFor = (attempt: number) => Math.min(baseDelayMs * 2 ** attempt, maxDelayMs);
 
@@ -180,9 +215,35 @@ export function createWsClient(options: WsClientOptions): WsClient {
     }
   }
 
+  function tabHiddenTooLong(): boolean {
+    return (
+      typeof document !== 'undefined' &&
+      document.visibilityState === 'hidden' &&
+      hiddenSince !== null &&
+      Date.now() - hiddenSince > visibilityHiddenPauseMs
+    );
+  }
+
   function scheduleReconnect(): void {
     if (intentionallyClosed) return;
     clearTimer();
+
+    if (tabHiddenTooLong()) {
+      // Não conta como tentativa: a aba só está em segundo plano, não é uma
+      // falha de conexão. `onVisibilityChange` reconecta na hora quando
+      // voltar a ficar visível.
+      pausedForVisibility = true;
+      return;
+    }
+
+    if (attempts >= maxAttempts) {
+      if (!gaveUp) {
+        gaveUp = true;
+        toast?.('Conexão em tempo real perdida — recarregue a página.', 'attention');
+      }
+      return;
+    }
+
     const delay = delayFor(attempts);
     attempts += 1;
     timer = setTimeout(() => {
@@ -192,15 +253,13 @@ export function createWsClient(options: WsClientOptions): WsClient {
   }
 
   function open(): void {
-    const token = getToken();
-    if (!token) return;
-
     const base = options.url ?? wsBaseUrl();
-    const next = socketFactory(`${base}?token=${encodeURIComponent(token)}`);
+    const next = socketFactory(base);
     socket = next;
 
     next.onopen = () => {
       attempts = 0;
+      gaveUp = false;
       if (hasConnectedBefore) {
         // Pode ter perdido evento durante a queda: refaz tudo que está ativo.
         void queryClient.invalidateQueries();
@@ -213,8 +272,25 @@ export function createWsClient(options: WsClientOptions): WsClient {
       if (event) applyWsEvent(queryClient, event, toast);
     };
 
-    next.onclose = () => {
+    next.onclose = (event) => {
       socket = null;
+      if (event?.code === WS_CLOSE_TOO_MANY_SOCKETS) {
+        // Decisao do servidor (teto de sockets por usuario), nao falha: esta
+        // aba e a mais antiga do usuario e foi cedida para a nova. Reconectar
+        // so evictaria a proxima, em ciclo. Fica quieta; recarregar a pagina
+        // reconecta.
+        intentionallyClosed = true;
+        return;
+      }
+      if (event?.code === WS_CLOSE_UNAUTHORIZED) {
+        // Cookie de sessão ausente/expirado no handshake: tenta renovar ANTES
+        // de reconectar. Se a sessão estiver mesmo morta, a próxima tentativa
+        // recebe o mesmo código de novo — `maxAttempts` limita o total.
+        refreshAccessToken()
+          .catch(() => undefined)
+          .finally(scheduleReconnect);
+        return;
+      }
       scheduleReconnect();
     };
 
@@ -223,9 +299,26 @@ export function createWsClient(options: WsClientOptions): WsClient {
     };
   }
 
+  function onVisibilityChange(): void {
+    if (typeof document === 'undefined') return;
+    if (document.visibilityState === 'hidden') {
+      hiddenSince = Date.now();
+      return;
+    }
+    hiddenSince = null;
+    if (pausedForVisibility) {
+      pausedForVisibility = false;
+      clearTimer();
+      open();
+    }
+  }
+
   return {
     connect() {
       intentionallyClosed = false;
+      if (typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', onVisibilityChange);
+      }
       if (socket) return;
       clearTimer();
       open();
@@ -233,8 +326,14 @@ export function createWsClient(options: WsClientOptions): WsClient {
 
     disconnect() {
       intentionallyClosed = true;
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibilityChange);
+      }
       clearTimer();
       attempts = 0;
+      gaveUp = false;
+      pausedForVisibility = false;
+      hiddenSince = null;
       hasConnectedBefore = false;
       const current = socket;
       socket = null;
@@ -244,5 +343,6 @@ export function createWsClient(options: WsClientOptions): WsClient {
     isConnected: () => socket !== null && socket.readyState === OPEN,
     reconnectAttempts: () => attempts,
     nextDelayMs: () => delayFor(attempts),
+    hasGivenUp: () => gaveUp,
   };
 }

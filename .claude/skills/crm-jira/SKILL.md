@@ -1,6 +1,6 @@
 ---
 name: crm-jira
-description: Automação do fluxo de dev do CRM Lab integrado ao Jira (projeto CRMLAB) — cria, discute, move e acompanha cards do backlog até o merge em produção. Use quando o usuário pedir para criar card de melhoria/manutenção, mover item de fase, tirar dúvida de regra de negócio, validar ou abrir PR/merge ligado a uma issue CRMLAB.
+description: Automação do fluxo de dev do CRM Lab integrado ao Jira (projeto CRMLAB) — cria, discute, move e acompanha cards do backlog até o merge e o encerramento em produção. Use quando o usuário pedir para criar card de melhoria/manutenção, mover item de fase, tirar dúvida de regra de negócio, validar ou abrir PR/merge ligado a uma issue CRMLAB.
 ---
 
 # CRM Jira — fluxo automatizado
@@ -23,14 +23,29 @@ eu crio os cards e movo os status conforme o combinado abaixo.
 | 2. Discutindo escopo/regras | Discussão | 21 |
 | 3. Escopo fechado, pode implementar | Aprovado p/ Dev | 31 |
 | 4. Codando | Em Desenvolvimento | 2 |
-| 5. Dúvida de regra de negócio durante o dev | Dúvida/Revisão de Regras | 3 |
-| 6. Código pronto, aguardando o usuário testar | Pronto p/ Validação | 4 |
-| 7. Usuário validou | Aprovado | 5 |
-| 8. PR aberto / mergeado | PR aberto / Merge | 6 |
+| 5. Código pronto, aguardando o usuário testar | Pronto p/ Validação | 4 |
+| 6. Usuário validou | Aprovado | 5 |
+| 7. PR aberto / mergeado | PR aberto / Merge | 6 |
+| 8. No ar, ciclo encerrado | **Finalizado / em produção** | **3** |
 
 Use `transitionJiraIssue` com `cloudId`, `issueIdOrKey` e `transition: {"id": "<id>"}`.
 Antes de mover, adicione um comentário curto (`addCommentToJiraIssue`) explicando a mudança — isso vira o
 histórico de decisão do card, já que não há board físico sendo olhado em tempo real.
+
+### Cuidado: o NOME da transição 3 mente
+
+No Jira, a transição **3 ainda se chama "Dúvida/Revisão de Regras"**, mas o status de destino foi
+renomeado para **"Finalizado / em produção"** (status id `10009`). Quem confiar no nome marca o card
+como concluído achando que o está travando para tirar uma dúvida — e faz isso em silêncio, porque a
+API aceita numa boa. Corrigido aqui em 2026-09-19, depois de conferir com `getTransitionsForJiraIssue`.
+
+**Não existe mais status de "dúvida"** neste workflow: nenhuma das 8 transições leva a um. Dúvida de
+regra de negócio agora volta o card para **Discussão (21)**, que é o status que de fato significa
+"escopo em aberto".
+
+Os nomes das transições 11/21/31 também são genéricos de template (`A fazer`/`Fazendo`/`Feito`) e não
+descrevem o destino. **Confie no id e no status de destino, nunca no nome da transição.** Em dúvida,
+rode `getTransitionsForJiraIssue` antes de mover — ele mostra o `to.name` real.
 
 ## Comandos (subcomandos do skill)
 
@@ -60,7 +75,8 @@ Args esperados após `/crm-jira`: `<subcomando> [CHAVE] [texto livre]`.
 
 ### `duvida <CHAVE> "<pergunta>"`
 1. Comenta a pergunta específica na issue.
-2. Transição 3 (Dúvida/Revisão de Regras).
+2. Transição **21 (Discussão)** — NÃO a 3, que apesar do nome leva a "Finalizado / em produção" e
+   encerraria o card em vez de travá-lo (ver o aviso no mapa acima).
 3. Avise o usuário na conversa que o card está travado aguardando resposta.
 4. Quando o usuário responder, comente a resposta na issue e volte para transição 2 (Em Desenvolvimento)
    automaticamente para continuar o trabalho.
@@ -83,6 +99,15 @@ Só executar quando o usuário disser explicitamente que validou/aprovou.
 4. **NUNCA faça merge para a branch de produção automaticamente.** Depois do PR aberto, pergunte
    explicitamente ao usuário "posso fazer o merge agora?" e só rode `gh pr merge` após confirmação
    explícita nesta conversa — mesmo que o card já esteja "Aprovado". Merge em prod é sempre manual/confirmado.
+
+### `finalizar <CHAVE>`
+Encerra o ciclo do card: o código está mergeado, deployado e **confirmado no ar**.
+1. Confirme que o deploy de produção realmente aconteceu — versão/tag no ar, não só o merge.
+2. Comente o que foi para produção: commit, tag e a verificação feita depois do deploy.
+3. Transição **3** (Finalizado / em produção). Sim, o id 3 — o nome dela no Jira é enganoso, ver o
+   aviso no mapa de status.
+4. Só execute quando o usuário pedir explicitamente para finalizar, ou depois de ele confirmar que
+   validou em produção.
 
 ## Regras gerais
 

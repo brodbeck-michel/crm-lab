@@ -1550,15 +1550,27 @@ webhook, seeds) nunca troca de role: ficava com DDL, `BYPASSRLS` e `DROP TABLE` 
 ```sql
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'crm_login') THEN
-    CREATE ROLE crm_login LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION;
+    CREATE ROLE crm_login LOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION;
   END IF;
 END $$;
 
 GRANT crm_app TO crm_login;
 ```
 
+**`BYPASSRLS`, e por quê** (D-165, migração `023_crm_login_bypassrls.sql` para bancos que já
+aplicaram o 020 na versão errada): a primeira versão criava a role `NOBYPASSRLS`, o que parecia
+mais seguro e tornava a troca da `DATABASE_URL` impossível. Medido em homologação com dados
+reais, `SET ROLE crm_login` sem `app.tenant_id` devolve **0 de 5 usuários e 0 de 3 tenants** —
+todo caminho `withoutTenant()` retornaria vazio, ou seja, login e webhook mortos. É o que o
+cabeçalho desta mesma seção já dizia: esses caminhos só funcionam porque a role atual burla RLS.
+
+O isolamento multitenant não é afetado: `withTenant()` faz `SET LOCAL ROLE crm_app` e `crm_app`
+**não** tem `BYPASSRLS`. No mesmo banco, com contexto de um tenant: 3 de 5 usuários e 1 de 3
+tenants visíveis. O que o card remove de fato é o `SUPERUSER` — DDL, `DROP TABLE`, `COPY` lendo
+arquivo do host, leitura de qualquer tabela do cluster.
+
 Por `INHERIT` (default), `crm_login` já tem os mesmos `GRANT`s de `crm_app` — sem ser dona de
-nada e sem poder burlar RLS. A migração **não define senha** (senha em arquivo versionado é
+nada. A migração **não define senha** (senha em arquivo versionado é
 senha vazada): apontar `DATABASE_URL` para `crm_login` e rodar `ALTER ROLE crm_login WITH
 PASSWORD '...'` é passo manual na VPS, descrito em `docs/guides/DEPLOYMENT.md` §7. O job
 `migrate` do compose continua conectando como a role dona, que é quem precisa de DDL.

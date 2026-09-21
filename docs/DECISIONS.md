@@ -2036,6 +2036,9 @@ locations que têm `add_header` próprio, ou vira letra morta — comentário no
 esta decisão.
 
 ### D-145: Pool conecta com `crm_login` (sem superuser) em vez do dono do banco (CRMLAB-38)
+> **Corrigida pela D-165:** o `NOBYPASSRLS` abaixo estava errado e quebrava login e webhook.
+> Leia a D-165 antes de usar esta decisão.
+
 **Decisão:** migração `020_crm_login_role.sql` cria a role `crm_login` (`LOGIN NOSUPERUSER
 NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION`), membro de `crm_app` — herda por `INHERIT`
 os mesmos `GRANT`s de SELECT/INSERT/UPDATE/DELETE de D-002, sem ser dona de nada. A role NÃO
@@ -2365,6 +2368,28 @@ até o container novo assumir. O índice, por outro lado, nunca seria lido: a ch
 leitura de uma linha por hash e a limpeza filtra `expires_at`/`revoked_at`; índice que ninguém
 lê só custa escrita.
 **Impacto:** `backend/migrations/022_refresh_tokens_absolute_expiry.sql`.
+
+### D-165: `crm_login` com `BYPASSRLS` — a alternativa não existia (CRMLAB-38)
+**Decisão:** `crm_login` é criada (020) e corrigida (023) com `LOGIN NOSUPERUSER BYPASSRLS
+NOCREATEDB NOCREATEROLE NOREPLICATION`. A `DATABASE_URL` da pool passa a usá-la; o job `migrate`
+segue como a role dona.
+**Motivo:** a D-145 criou a role `NOBYPASSRLS`, o que parecia mais seguro e tornava o card
+inútil na prática. Medido no banco de homologação, com dados reais: `SET ROLE crm_login` sem
+`app.tenant_id` devolve **0 de 5 usuários e 0 de 3 tenants**. Todo caminho `withoutTenant()` —
+login, `/platform/*`, `resolveWebhookTenant`, seeds — retornaria vazio, ou seja, login e webhook
+mortos. O cabeçalho de `002_row_level_security.sql` já dizia em texto que esses caminhos só
+funcionam porque rodam como a role dona, que burla RLS; o 020 foi escrito sem reler o 002. Com
+`BYPASSRLS`, no mesmo banco: caminho sem tenant volta a 5 usuários e 3 tenants, e o caminho com
+tenant continua sob RLS (3 de 5 usuários, 1 de 3 tenants), porque `withTenant()` faz
+`SET LOCAL ROLE crm_app` (D-002) e `crm_app` não tem `BYPASSRLS`.
+**Por que isso ainda vale a pena:** `BYPASSRLS` não muda nada nos caminhos sem tenant — eles já
+burlam RLS hoje, por serem a role dona. O que sai é o `SUPERUSER`: DDL, `DROP TABLE`, `COPY`
+lendo arquivo do host, leitura de qualquer tabela do cluster, alteração de outras roles. A
+alternativa (policies explícitas para os caminhos sem tenant) foi descartada: mais superfície de
+erro, e a falha seria silenciosa — uma policy errada devolve zero linha em vez de erro.
+**Impacto:** `backend/migrations/020_crm_login_role.sql`,
+`backend/migrations/023_crm_login_bypassrls.sql`, `docs/guides/DEPLOYMENT.md`,
+`docs/database/SCHEMA.md`. Substitui a parte de `NOBYPASSRLS` da D-145; o resto da D-145 vale.
 
 ## Template para novas decisões
 

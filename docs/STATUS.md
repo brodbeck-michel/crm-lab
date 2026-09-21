@@ -1891,6 +1891,151 @@ onda — schema intocado.
 
 ---
 
+## 2026-09-20 — CRMLAB-38: higiene de banco e observabilidade ✅
+
+Worktree próprio (`crm-lab-wt-38`), branch `feature/CRMLAB-38-db-higiene-observabilidade`.
+Onda C do épico de hardening (CRMLAB-27). Seis itens, todos de defesa em profundidade — nenhum
+corrige falha explorada.
+
+- **Role de login sem superuser** (migração `020_crm_login_role.sql`, D-145): `crm_login`
+  (`NOSUPERUSER NOBYPASSRLS`, membro de `crm_app`) para a pool conectar. Nasce SEM senha de
+  propósito — senha em migração versionada é senha vazada no git. **Pendência manual na VPS**
+  (`ALTER ROLE ... PASSWORD` + trocar o usuário da `DATABASE_URL`), ver DEPLOYMENT.md §7.
+- **Índice nas 15 FKs sem índice** (`021_fk_indexes.sql`, D-146). Sem `CONCURRENTLY`: o migrator
+  roda cada arquivo em transação, e `CREATE INDEX CONCURRENTLY` não pode.
+- **Lock de migração** (`migrator.ts`, D-147): `pg_advisory_xact_lock` dentro da transação de
+  CADA migração, que relê `schema_migrations` já com o lock na mão.
+- **Redact do logger ampliado** (D-148): `apikey`/`secret`/`webhookSecret`/`contentBase64`/
+  `email`/`phone`, cada um também em `*.<campo>`. Corpo de erro do Evolution de 500 → 200 chars.
+- **Anti-replay nos webhooks** (D-149): `sha256(rawBody)` no Redis por 10 min, por tenant.
+- **`deploy.sh` exige CI verde no commit** (D-150), via `gh run list`; aborta se `gh` faltar ou
+  não estiver autenticado, em vez de pular a checagem em silêncio.
+
+**Dois achados durante o fechamento, não no card:**
+
+1. **O lock de migração original travava a suíte inteira.** A primeira versão pedia o lock numa
+   transação EXTERNA que envolvia o loop de migrações. O driver de PGlite serializa cada
+   `query`/`transaction` numa fila de uma conexão só: a externa esperava o loop e o loop esperava
+   a fila que a externa segurava — deadlock, `route-tenant-isolation.spec.ts` em timeout de 60 s
+   com 148 testes pulados. Corrigido movendo o lock para dentro da transação de cada migração e
+   relendo `schema_migrations` já com ele na mão — que, de quebra, é o que de fato IMPEDE a dupla
+   aplicação (serializar sozinho não impedia: o segundo runner acordaria com a lista velha).
+2. **A janela de timestamp da Meta descartaria mensagem legítima.** O card ganhou, além do
+   anti-replay por hash, uma checagem que recusava payload da Meta com timestamp de mais de 5 min.
+   Ela quebrou 12 testes de webhook (os fixtures usam epoch fixo de 2024) — e o teste estava
+   certo: **a Meta retenta webhook falho por até 7 dias**, então recusar por idade descarta em
+   silêncio toda reentrega depois de qualquer indisponibilidade maior que a janela. Removida antes
+   do merge, com decisão do usuário; o anti-replay por hash + a UNIQUE de `messages.external_id`
+   cobrem o caso. Guarda de regressão em `tests/webhooks/replay-guard.spec.ts`.
+
+**Docs atualizados no mesmo commit** (Regra Zero, nenhum vinha do card): `docs/DECISIONS.md`
+(D-145 a D-150, que o código já referenciava sem existirem), `docs/database/SCHEMA.md` (role
+`crm_login`, índices de FK, lista de migrações até a 021) e `docs/guides/DEPLOYMENT.md` §7
+(`gh auth login` e a troca da `DATABASE_URL` como ações que exigem acesso à VPS).
+
+**Verificação (2026-09-20):** `npm run typecheck` verde nos 4 workspaces, `npm run lint` verde,
+`npm run test:backend` verde (81 arquivos / 1169 testes) e `npm run test:frontend` verde
+(75 arquivos / 1066 testes).
+
+### Revisão independente do PR #48 (2026-09-21)
+
+Quatro achados corrigidos no commit de revisão — guard de replay atômico (`incr`) e isento para
+`CONNECTION_UPDATE` (D-156), `SET LOCAL statement_timeout` antes do advisory lock (D-157), e o
+gate de CI do `deploy.sh` sem `--branch main` (correção anexada à D-150).
+
+**PENDENTE — decisão do Michel, BLOQUEIA a pendência manual deste card:** a role `crm_login` foi
+criada `NOBYPASSRLS`, e o cabeçalho de `002_row_level_security.sql` é explícito em dizer que
+todo caminho `withoutTenant()` (login, `/platform/*`, `resolveWebhookTenant`, seeds) só funciona
+porque roda como a role DONA das tabelas, que burla RLS. Trocar a `DATABASE_URL` para
+`crm_login` como está derruba login e webhook inteiros: as policies comparam contra
+`app.tenant_id`, que nesses caminhos nunca é setado, então a role veria ZERO linha. **Não trocar
+a `DATABASE_URL` na VPS até isto ser resolvido.** Opções levantadas: (a) `crm_login` com
+`BYPASSRLS` — mantém a exposição de hoje só nos caminhos sem tenant e ainda assim tira SUPERUSER
+(DDL, DROP TABLE), que é o que o card veio fazer; (b) policies explícitas para os caminhos sem
+tenant, mais trabalho e mais superfície; (c) manter a role só documentada e não trocar a
+`DATABASE_URL` nesta onda.
+
+**Não corrigido, de propósito:** `isReplay` marca o corpo como visto ANTES do processamento, e
+um erro no meio faz a reentrega do canal ser descartada. Comportamento pré-existente e
+deliberado — `safeHandle` já responde 200 em qualquer erro desde a Onda 5 ("o canal reentregaria
+em loop"), então a guarda não introduziu perda nenhuma. Se um dia isso incomodar, é card
+próprio, não conserto de revisão.
+
+---
+
+## 2026-09-20 — CRMLAB-33: WebSocket autentica por cookie httpOnly, heartbeat e limite por usuário ✅
+
+Worktree próprio (`crm-lab-wt-33`), branch `feature/CRMLAB-33-websocket-cookie-auth`. Onda C do
+épico de hardening (CRMLAB-27) — decisão de abordagem (Opção C do card: cookie httpOnly em vez
+de token na URL) fechada com o usuário antes de codar, já que o CRMLAB-32 tornou essa opção a
+mais simples.
+
+- **Autenticação do handshake** (`backend/src/lib/ws-hub.ts`, `backend/src/lib/cookies.ts`
+  novo): `/ws` não aceita mais `?token=<accessToken>` — autentica pelo cookie httpOnly
+  `crm_refresh` (mesmo do CRMLAB-32), lido manualmente do header `Cookie` (upgrade de WS não
+  passa por `cookie-parser`). Cookie ausente/inválido/expirado → handshake completa (101) e
+  fecha IMEDIATAMENTE com `WS_CLOSE_UNAUTHORIZED` (4401) — um 4xx cru não seria observável pelo
+  `WebSocket` do browser.
+- **Origin verificado** (achado de segurança que não estava no card original, D-151): WebSocket
+  não respeita Same-Origin Policy do jeito que `fetch` respeita — o servidor recusa (sem
+  completar o handshake) qualquer upgrade cujo `Origin` não esteja em `env.corsOrigins`.
+- **Cookie `Path` alarga de `/api/v1/auth` para `/`** (D-151): o handshake em `/ws` também
+  precisa do cookie, e um cookie só aceita um `Path`.
+- **Heartbeat**: servidor pinga a cada 30s (configurável, testável via `heartbeatIntervalMs`) e
+  termina (`terminate()`) quem não respondeu `pong` até o ciclo seguinte.
+- **Limite de 5 sockets por usuário**: o 6º fecha o mais antigo (mesmo usuário, `Set` preserva
+  ordem de inserção).
+- **Cliente** (`frontend/src/api/ws.ts`): sem `?token=` na URL; `onclose` com
+  `WS_CLOSE_UNAUTHORIZED` chama `refreshAccessToken()` antes de reconectar; desiste depois de
+  `maxAttempts` (default 8) e avisa por toast; pausa a reconexão (não conta tentativa) quando a
+  aba fica oculta por mais de `visibilityHiddenPauseMs` (default 5 min), reconectando na hora
+  quando ela volta a ficar visível.
+- **Docs atualizados no mesmo commit** (Regra Zero): `docs/api/API_CONTRACTS.md`,
+  `docs/contracts/FRONTEND_BACKEND.md` ("Real-time"), `docs/architecture/SECURITY.md`
+  ("Autenticação"), `docs/guides/ENVIRONMENTS.md`. `shared/types/websocket.types.ts`
+  (+`WS_CLOSE_UNAUTHORIZED`).
+
+**Testes:** `backend/tests/kernel/ws-hub.spec.ts` reescrito para cookie+Origin (recusa sem
+cookie, cookie inválido, Origin errado, aceita cookie válido, isolamento por tenant, limite de 5
+sockets, heartbeat derrubando socket que não responde `pong` — via `autoPong: false` no cliente
+`ws` de teste, que por padrão responde ping sozinho). `frontend/src/api/ws.spec.ts` com testes
+novos de refresh em 4401, desistência após `maxAttempts`, e pausa por aba oculta.
+
+**Verificação (2026-09-20):** `npm run typecheck` verde nos 4 workspaces, `npm run lint` verde,
+`npm run test:backend` verde (79 arquivos / 1152 testes) e `npm run test:frontend` verde
+(75 arquivos / 1070 testes).
+
+### Revisão independente do PR #47 (2026-09-21)
+
+Achados HIGH/MEDIUM corrigidos no commit de revisão:
+
+- **Crash remoto sem autenticação** — o caminho de recusa 4401 completava o handshake e chamava
+  `ws.close()` sem nenhum listener de `'error'`. `ws` reemite erro de protocolo do
+  receiver/sender como `emit('error')`, e `EventEmitter` sem listener de `'error'` LANÇA: caía
+  no `process.on('uncaughtException')` do `main.ts` e derrubava o backend. Qualquer cliente que
+  alcance `/ws` chegava lá (Origin é header, forjável fora do browser).
+- **WS pulava toda a revogação** que `/auth/refresh` faz — D-158.
+- **Path do cookie alargado sem matar o antigo** — D-159. Vale para os dois cards.
+- **Eviction virava tempestade de reconexão** — D-160.
+- `attach()`/`close()`: o listener de `upgrade` agora é removido no `close()` e o timer de
+  heartbeat é `unref()`ado.
+- Frontend: `hiddenSince` já nasce marcado quando a aba abre escondida (ctrl+clique, restauração
+  de sessão) — antes, essa aba queimava as 8 tentativas e mostrava "recarregue a página".
+
+**Não corrigido, de propósito — vira card próprio:** com várias abas, o 4401 simultâneo faz cada
+aba chamar `/auth/refresh` com o MESMO cookie; a primeira rotaciona, as outras apresentam token
+já revogado e a detecção de reuso desloga todo mundo. `refreshInFlight` deduplica só dentro de
+uma aba. É **pré-existente** — a mesma corrida já existe no caminho normal da API quando o
+access token expira com várias abas abertas — e a correção (lock entre abas por
+`BroadcastChannel`) não pertence a este card.
+
+**Testes:** `backend/tests/kernel/ws-hub.spec.ts` 17/17 (3 novos: sessão morta fecha com 4401,
+falha da checagem é fail-closed, socket já aberto cai na revalidação periódica);
+`backend/tests/auth` 25/25; `frontend/src/api/ws.spec.ts` 19/19 (2 novos: aba que nasce oculta,
+4409 não reconecta). Typecheck e lint verdes nos 4 workspaces.
+
+---
+
 ## 2026-09-20 — CRMLAB-35: ciclo de vida de senha e sessão ✅
 
 Worktree próprio (`crm-lab-wt-35`), branch `feature/CRMLAB-35-senha-e-sessao`. Onda C do épico
@@ -1961,3 +2106,12 @@ qualquer valor inesperado em `'rotated'` — hoje é inofensivo, já que todo ch
 **Testes:** `backend/tests` completo 1160/1160 (3 novos: senha igual à atual recusada pela API,
 auditoria do replay pós-segurança, lápide do cookie no path antigo). Frontend 1079/1079.
 Typecheck e lint verdes nos 4 workspaces.
+
+### Merge da Onda C: `refreshSessionIsLive` passou a checar o teto absoluto
+
+Achado no merge das duas branches da onda, não em nenhuma das revisões isoladas: o
+`refreshSessionIsLive` do CRMLAB-33 (usado no handshake do WebSocket e na revalidação periódica)
+repetia as checagens do `/auth/refresh` **de antes** do CRMLAB-35 — faltava o teto absoluto da
+família (D-154). Uma família passada dos 30 dias teria o refresh recusado mas ainda abriria
+WebSocket: o teto vazaria pelo `/ws`. Cada card estava certo sozinho; o buraco só existe na
+soma. Corrigido no commit de merge.

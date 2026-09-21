@@ -69,9 +69,29 @@ Response: { data: [...], pagination: { page, limit, total, totalPages } }
 ## Real-time (WebSocket)
 
 ```
-Conexão: ws://host/ws?token=<accessToken>
-Servidor coloca socket na room do tenantId (do token — nunca do cliente)
+Conexão: wss://host/ws — SEM token na URL (CRMLAB-33/D-151)
+Autenticação: cookie httpOnly crm_refresh (CRMLAB-32) — mesmo origin, vai sozinho no handshake
+Servidor coloca socket na room do tenantId (do cookie verificado — nunca do cliente)
 ```
+
+**Origin obrigatório e verificado.** WebSocket não segue a Same-Origin Policy do jeito que
+`fetch`/XHR seguem — o browser manda o cookie no handshake mesmo que a página que abriu a conexão
+esteja em outro domínio (WebSocket CSRF). O servidor recusa (destroi o socket, sem completar o
+handshake) qualquer upgrade cujo header `Origin` não esteja em `env.corsOrigins`.
+
+**Cookie ausente/inválido/expirado no handshake:** o servidor completa o handshake (101) e fecha
+IMEDIATAMENTE com o código `WS_CLOSE_UNAUTHORIZED` (4401, `@crm-lab/shared`) — um 4xx cru não
+seria observável pelo `WebSocket` do browser (`onclose` viria com código genérico 1006). O
+cliente, ao ver esse código em `onclose`, chama `refreshAccessToken()` (renova o cookie) antes de
+tentar reconectar.
+
+**Heartbeat:** o servidor faz ping a cada 30s e termina (`terminate()`) quem não respondeu pong
+até o próximo ciclo — limpa sockets mortos (aba fechada sem `close` limpo, rede caiu). Limite de
+5 sockets simultâneos por usuário: o 6º fecha o mais antigo.
+
+**Reconexão do cliente:** backoff exponencial com teto (1s → 30s); desiste após um número máximo
+de tentativas seguidas e avisa por toast; pausa (não conta tentativa) quando a aba fica oculta por
+mais de alguns minutos, reconectando na hora quando ela volta a ficar visível.
 
 | Evento | Payload | Reação do frontend |
 |--------|---------|--------------------|
@@ -81,9 +101,7 @@ Servidor coloca socket na room do tenantId (do token — nunca do cliente)
 | `approval.requested` | `{ proposalId }` | badge em #aprovacoes + invalidate pendentes |
 | `approval.decided` | `{ proposalId, decision }` | toast + invalidate `['proposal', id]` |
 
-**Regra:** eventos WS são NOTIFICAÇÃO, não transporte de dados — o cliente refaz fetch (invalidateQueries). Payloads carregam só IDs.
-
-Reconexão: exponential backoff; ao reconectar, invalidar queries ativas (pode ter perdido eventos).
+**Regra:** eventos WS são NOTIFICAÇÃO, não transporte de dados — o cliente refaz fetch (invalidateQueries). Payloads carregam só IDs. Ao reconectar, invalidar queries ativas (pode ter perdido eventos).
 
 ---
 

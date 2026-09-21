@@ -1539,6 +1539,30 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO crm_app;
 ```
 
+#### `crm_login` — a role de CONEXÃO da pool (migração 020, CRMLAB-38/D-145)
+
+`crm_app` é `NOLOGIN`: serve para o `SET LOCAL ROLE` dentro da transação de tenant, não para
+conectar. Quem conecta é a role do `DATABASE_URL`, e até a migração 020 essa role era o
+`POSTGRES_USER` do container — **superuser**, porque é assim que a imagem oficial do Postgres o
+cria. Todo caminho que roda em `withoutTenant()` (login, `/platform/*`, lookup de tenant do
+webhook, seeds) nunca troca de role: ficava com DDL, `BYPASSRLS` e `DROP TABLE` na mão.
+
+```sql
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'crm_login') THEN
+    CREATE ROLE crm_login LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION;
+  END IF;
+END $$;
+
+GRANT crm_app TO crm_login;
+```
+
+Por `INHERIT` (default), `crm_login` já tem os mesmos `GRANT`s de `crm_app` — sem ser dona de
+nada e sem poder burlar RLS. A migração **não define senha** (senha em arquivo versionado é
+senha vazada): apontar `DATABASE_URL` para `crm_login` e rodar `ALTER ROLE crm_login WITH
+PASSWORD '...'` é passo manual na VPS, descrito em `docs/guides/DEPLOYMENT.md` §7. O job
+`migrate` do compose continua conectando como a role dona, que é quem precisa de DDL.
+
 ### Policy padrão (uma por tabela com `tenant_id`)
 
 ```sql
@@ -1667,6 +1691,23 @@ CREATE INDEX idx_conversations_patient_name
 `patient_name` é nullable; o `COALESCE` mantém a expressão indexável para toda linha (e a query de
 busca deve usar exatamente a mesma expressão para o índice ser aproveitado).
 
+### Índices de foreign key (migração 021 — CRMLAB-38, D-146)
+
+Postgres cria índice automático para PRIMARY KEY e UNIQUE, **não** para FOREIGN KEY. Sem
+índice do lado filho, todo `DELETE` na tabela pai vira SEQ SCAN na filha (o banco precisa
+provar que não sobrou referência), e todo JOIN pelo lado filho também. As 15 FKs que estavam
+sem índice ganharam um `idx_<tabela>_<coluna>` (`CREATE INDEX IF NOT EXISTS`):
+
+`messages.sender_id` · `proposals.created_by` · `proposals.approved_by` ·
+`proposals.insurance_id` · `proposal_items.exam_id` · `proposal_status_history.changed_by` ·
+`audit_logs.user_id` · `internal_messages.sender_id` ·
+`internal_messages.attached_proposal_id` · `tenant_channels.accepted_terms_by` ·
+`quick_replies.created_by` · `message_media.message_id` · `lis_imports.created_by` ·
+`lis_budgets.insurance_id` · `lis_budgets.import_id`
+
+Sem `CONCURRENTLY`: o migrator roda cada arquivo dentro de uma transação e `CREATE INDEX
+CONCURRENTLY` não pode rodar em transação (D-146).
+
 ---
 
 ## Migrações
@@ -1693,7 +1734,11 @@ migrations/
 ├── 013_rls_lis_domain.sql        # policies das 4 tabelas da 012 (Onda 9)
 ├── 015_exam_packages.sql         # exam_packages/_items/_prices (CRMLAB-10, §28-30)
 ├── 016_rls_exam_packages.sql     # policies das 3 tabelas da 015 (CRMLAB-10)
-└── 017_proposal_requesting_doctor.sql  # proposals.requesting_doctor (CRMLAB-9)
+├── 017_proposal_requesting_doctor.sql  # proposals.requesting_doctor (CRMLAB-9)
+├── 018_patient_inactivation.sql  # inativação de paciente
+├── 019_messages_external_id_unique.sql # unicidade de messages.external_id (anti-duplicata)
+├── 020_crm_login_role.sql        # role `crm_login` sem superuser para a pool (CRMLAB-38, D-145)
+└── 021_fk_indexes.sql            # índice nas 15 FKs que não tinham (CRMLAB-38, D-146)
 ```
 
 A 007 e a 008 são arquivos ÚNICOS (tabela + policy), diferente dos pares 003/004 e 005/006: a

@@ -18,7 +18,6 @@ export function useAppWebSocket(): void {
 
     const client = createWsClient({
       queryClient,
-      getToken: () => useAuthStore.getState().tokens?.accessToken ?? null,
       toast: (message, tone) => toast(message, { tone: tone ?? 'positive' }),
     });
 

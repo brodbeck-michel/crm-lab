@@ -44,7 +44,6 @@ import {
 import { createAuditService } from '../services/audit.service.js';
 import { createAuthService, type RequestMeta } from '../services/auth.service.js';
 import { createThemeService } from '../services/theme.service.js';
-
 /** Re-exportados por compatibilidade — `refresh-cookie.ts` (D-152) e a fonte agora. */
 export { REFRESH_COOKIE_NAME, REFRESH_COOKIE_PATH };
 

@@ -111,7 +111,10 @@ fi
 msg "Buscando codigo ($REF)"
 git fetch --prune --tags origin
 git checkout --detach --quiet "$REF"          # detached: este clone nunca "tem branch" para divergir
-SHA="$(git rev-parse --short HEAD)"
+# `--short=7` FIXO (revisao do PR #46): sem o numero, `--short` alonga sozinho
+# quando ha prefixo ambiguo no clone — 8 chars aqui contra os 7 que o CI
+# publica (`${GITHUB_SHA::7}`) = `pull` com "manifest unknown".
+SHA="$(git rev-parse --short=7 HEAD)"
 export IMAGE_TAG="${PREFIXO_TAG}${SHA}"
 VERSAO="$(python3 -c 'import json;print(json.load(open("package.json"))["version"])')"
 info "commit  $SHA"
@@ -197,12 +200,26 @@ esac
 # fallback documentado (build local — ver docs/guides/DEPLOYMENT.md §2).
 # ---------------------------------------------------------------------------
 if [[ -n "${IMAGE_REGISTRY:-}" ]]; then
+  # Barra final garantida (revisao do PR #46): `ghcr.io/owner/repo` sem a barra
+  # virava a imagem `ghcr.io/owner/repocrm-lab-backend` e um erro de pull
+  # confuso ("denied"/"name unknown") em vez de uma mensagem util. O valor
+  # certo e `ghcr.io/<owner>/<repo>/` — o CI publica sob owner/REPO (CRMLAB-41).
+  export IMAGE_REGISTRY="${IMAGE_REGISTRY%/}/"
   msg "Pull das imagens ($APP_ENV, GHCR)"
   info "registry $IMAGE_REGISTRY"
-  dc pull
+  # Fallback para build quando a imagem nao existe no registry (revisao do PR
+  # #46): o CI so publica em push para `main`, entao um `--ref <branch>` em
+  # homologacao — o fluxo documentado — nao tem imagem para puxar e abortava
+  # sem explicar. Build local nesse caso e o comportamento certo; o aviso diz
+  # o porque e quanto custa.
+  if ! dc pull; then
+    printf '\n\033[1;33mAVISO: pull de %scrm-lab-{backend,frontend}:%s falhou — imagem nao publicada para este commit (CI so publica push em main). Caindo no build LOCAL (~10 min).\033[0m\n' "$IMAGE_REGISTRY" "$IMAGE_TAG"
+    msg "Build ($APP_ENV, ~10 min nos 2 vCPU)"
+    dc build
+  fi
 else
   printf '\n\033[1;33mAVISO: IMAGE_REGISTRY nao definido no .env — build LOCAL (~10 min nos 2 vCPU).\033[0m\n'
-  info "Defina IMAGE_REGISTRY=ghcr.io/<owner>/ no .env para usar as imagens ja publicadas pelo CI."
+  info "Defina IMAGE_REGISTRY=ghcr.io/<owner>/<repo>/ no .env para usar as imagens ja publicadas pelo CI (CRMLAB-41)."
   msg "Build ($APP_ENV, ~10 min nos 2 vCPU)"
   dc build
 fi
@@ -256,4 +273,4 @@ dc ps
 printf '\nUltima resposta de %s:\n' "$SAUDE"
 curl -sS --max-time 10 "$SAUDE" || true
 printf '\n'
-erro "nao respondeu 200 em $SAUDE em 60s. Se o /healthz do nginx responde e este nao, o nginx subiu e o BACKEND nao. A stack ANTERIOR pode ter sido substituida — investigue com 'docker compose -p $PROJETO_ESPERADO logs backend'."
+erro "nao respondeu 200 em $SAUDE apos 30 tentativas (ate ~6 min: --max-time 10 + 2s de pausa cada). Se o /healthz do nginx responde e este nao, o nginx subiu e o BACKEND nao. A stack ANTERIOR pode ter sido substituida — investigue com 'docker compose -p $PROJETO_ESPERADO logs backend'."

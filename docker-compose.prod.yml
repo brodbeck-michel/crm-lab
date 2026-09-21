@@ -30,12 +30,20 @@ services:
     # sobrando a maior parte dos 7,7 GB da VPS sem uso (CRMLAB-36 — auditoria
     # de 19/09 mediu 13 MB usados). `log_min_duration_statement` expõe query
     # lenta sem logar toda query (isso já e' `LOG_LEVEL`, não Postgres).
+    # `effective_cache_size` = ~o que sobra do cgroup depois de
+    # `shared_buffers` (1536m - 512MB ≈ 1GB), nao 2GB: o planejador acreditava
+    # em 2 GB de cache de pagina que o cgroup nunca vai ter e preferia planos
+    # que na pratica iam para disco (revisao do PR #46). `shm_size`: com
+    # `shared_buffers` em 512MB, os 64 MB default de /dev/shm estouram em
+    # "could not resize shared memory segment" assim que dois parallel hash
+    # joins rodam juntos.
+    shm_size: 256m
     command:
       - postgres
       - -c
       - shared_buffers=512MB
       - -c
-      - effective_cache_size=2GB
+      - effective_cache_size=1GB
       - -c
       - log_min_duration_statement=1000
     environment:
@@ -61,16 +69,28 @@ services:
     mem_limit: 256m
     # `maxmemory` (CRMLAB-36): sem teto, `maxmemory-policy` default
     # `noeviction` vira erro de ESCRITA quando a RAM aperta — e foi isso que
-    # derrubava o rate limit em 500 global (ver CRMLAB-34). Rate limit e cache
-    # do Evolution (db1) toleram evicção por LRU; nada aqui e fonte da verdade
-    # (sessão/refresh token vivem no Postgres, não no Redis).
+    # derrubava o rate limit em 500 global (ver CRMLAB-34).
+    #
+    # 128mb, nao 200mb (revisao do PR #46): `maxmemory` limita so o DATASET.
+    # Fragmentacao do alocador, buffers de cliente e as paginas copy-on-write
+    # do fork do BGREWRITEAOF ficam POR CIMA — com 200mb de dataset num cgroup
+    # de 256m o Redis era morto por OOM antes de a evicção LRU sequer entrar.
+    # ~2x de folga e a regra pratica com `appendonly yes`.
+    #
+    # `allkeys-lru` com uma ressalva registrada (D-167): duas chaves de
+    # SEGURANCA moram neste mesmo Redis — o contador de lockout do login e o
+    # nonce de anti-replay dos webhooks — e sob pressao de memoria a LRU pode
+    # evictar as duas. Risco aceito por enquanto: com 128mb para um cache de
+    # analytics/catalogo de um punhado de tenants, pressao de memoria e um
+    # cenario teorico; `noeviction` trocaria esse risco por 503 em todo login
+    # quando o cache enchesse. Reavaliar quando houver mais de ~10 tenants.
     command:
       [
         'redis-server',
         '--appendonly',
         'yes',
         '--maxmemory',
-        '200mb',
+        '128mb',
         '--maxmemory-policy',
         'allkeys-lru',
       ]
@@ -97,7 +117,13 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: production
-      DATABASE_URL: ${DATABASE_URL:?defina DATABASE_URL}
+      # `MIGRATE_DATABASE_URL` (D-165): a migracao precisa de DDL, entao roda
+      # como a role DONA do banco. Quando a `DATABASE_URL` do `backend` passar
+      # a usar `crm_login` (sem superuser, sem DDL), este job precisa da URL
+      # antiga — senao o primeiro `CREATE TABLE` da proxima migracao falha com
+      # "permission denied". Sem `MIGRATE_DATABASE_URL` no .env, cai na
+      # `DATABASE_URL` (comportamento de sempre).
+      DATABASE_URL: ${MIGRATE_DATABASE_URL:-${DATABASE_URL:?defina DATABASE_URL}}
       JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?defina JWT_REFRESH_SECRET}
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -121,6 +147,12 @@ services:
       dockerfile: backend/Dockerfile
     restart: unless-stopped
     mem_limit: 512m
+    # `mem_limit` sem `--max-old-space-size` e armadilha (revisao do PR #46):
+    # o V8 dimensiona o heap default pela RAM do HOST (7,7 GB), nao pelo
+    # cgroup — ele nunca sente pressao, nunca coleta agressivamente, e o
+    # cgroup mata o processo com exit 137 no lugar de um GC. Com o teto
+    # explicito em ~75% do limite, o Node coleta antes de o kernel matar.
+    # (`NODE_OPTIONS` esta no bloco `environment` abaixo.)
     # Teto de ~1000 descritores (default 1024) somando WebSocket + conexoes
     # pg/Redis + arquivos de midia vira gargalo antes de qualquer outro limite
     # com algumas centenas de atendentes online (CRMLAB-36).
@@ -135,6 +167,7 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: production
+      NODE_OPTIONS: --max-old-space-size=384
       PORT: '3000'
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DATABASE_URL: ${DATABASE_URL:?defina DATABASE_URL}

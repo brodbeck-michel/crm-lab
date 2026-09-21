@@ -7,10 +7,13 @@ on:
     branches: [main, 'hardening/**']
   workflow_dispatch:
 
-# Um run por ref: push novo cancela o anterior que ainda estiver rodando.
+# Um run por ref: push novo cancela o anterior que ainda estiver rodando —
+# EXCETO em main (revisao do PR #46): cancelar um run de main no meio do job
+# `docker` deixava o GHCR com metade das tags publicadas (backend:<sha> sem o
+# frontend:<sha>, `:latest` apontando para commits diferentes).
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -127,7 +130,9 @@ jobs:
   docker:
     name: Build das imagens
     runs-on: ubuntu-latest
-    needs: build
+    # `quality` e `e2e` tambem (CRMLAB-41): so `build` deixava publicar
+    # `:latest` e `:<sha>` no GHCR com typecheck/teste/E2E vermelhos.
+    needs: [quality, build, e2e]
     # `packages: write` so e necessaria neste job (publicacao no GHCR); os
     # demais ficam com o `contents: read` do topo do workflow.
     permissions:
@@ -146,8 +151,8 @@ jobs:
           push: false
           load: true
           tags: crm-lab-backend:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
 
       - name: Build da imagem do frontend (producao)
         uses: docker/build-push-action@v6
@@ -160,8 +165,8 @@ jobs:
           build-args: |
             VITE_API_URL=/api/v1
             VITE_WS_URL=/ws
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
 
       - name: Smoke test das imagens
         run: |
@@ -197,13 +202,18 @@ jobs:
       - name: Nome do repositorio (minusculo) e SHA curto
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         id: repo
-        # SHA CURTO (7 chars, `git rev-parse --short`), nao o `github.sha`
-        # completo: `deploy.sh` e DEPLOYMENT.md (rollback) ja usam o curto
-        # como `IMAGE_TAG` — a tag publicada aqui precisa bater com o que o
-        # script vai pedir no `pull`.
+        # SHA CURTO de EXATAMENTE 7 chars (`${GITHUB_SHA::7}`), nao
+        # `git rev-parse --short`: este ultimo alonga sozinho quando ha
+        # ambiguidade e roda aqui num clone raso — podia dar 7 no CI e 8 na
+        # VPS, e o `pull` falhava com "manifest unknown" (revisao do PR #46).
+        # `deploy.sh` usa `--short=7` pelo mesmo motivo.
+        #
+        # Nome: `ghcr.io/<owner>/<repo>/crm-lab-*` — `GITHUB_REPOSITORY` ja
+        # inclui o repositorio. E o valor que `IMAGE_REGISTRY` precisa ter nos
+        # `.env` da VPS: `ghcr.io/<owner>/<repo>/` (CRMLAB-41).
         run: |
           echo "name=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-          echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Publicar imagem do backend (producao + homologacao)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -241,8 +251,11 @@ jobs:
             VITE_API_URL=/api/v1
             VITE_WS_URL=/ws
             VITE_APP_ENV=homologacao
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Escopo proprio: os tres builds deste job exportavam para o MESMO
+          # escopo default e cada um sobrescrevia o cache do anterior — todo run
+          # rebuildava as tres imagens do zero (revisao do PR #46).
+          cache-from: type=gha,scope=frontend-hml
+          cache-to: type=gha,mode=max,scope=frontend-hml
 
   # ---------------------------------------------------------------------------
   # 5. E2E — Postgres 16 de verdade (o unico lugar do CI que usa banco externo),

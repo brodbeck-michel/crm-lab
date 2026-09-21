@@ -57,6 +57,7 @@ ENV API_UPSTREAM=http://backend:3000
 # A imagem oficial roda envsubst sobre /etc/nginx/templates/*.template e
 # escreve o resultado em /etc/nginx/conf.d/.
 COPY nginx/frontend.conf /etc/nginx/templates/default.conf.template
+COPY nginx/security-headers.conf /etc/nginx/security-headers.conf
 COPY --from=build /app/frontend/dist /usr/share/nginx/html
 
 # Permite ao usuario `nginx` (uid 101) escrever o conf gerado, o pid e os temps.

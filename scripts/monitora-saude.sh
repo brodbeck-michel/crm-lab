@@ -75,8 +75,12 @@ HEALTH_URL="${CRM_HEALTH_URL:-http://127.0.0.1:${porta##*:}/api/v1/health}"
 if ! mkdir -p "$STATE_DIR" 2>/dev/null; then
   msg_state_dir="STATE_DIR quebrado: nao consegui criar '$STATE_DIR' (diretorio ausente ou sem permissao) — alertas vao repetir a cada execucao ate isso ser corrigido"
   alerta_log "AVISO: $msg_state_dir"
-  command -v logger >/dev/null 2>&1 && logger -p daemon.err -t crm-lab-monitor "$msg_state_dir"
-  true
+  # `|| true` obrigatorio: sob `set -e`, o ULTIMO comando de uma lista `&&` no
+  # nivel de cima nao e isento — um `logger` que falhe (sem /dev/log num
+  # chroot/container minimo) abortava o monitor inteiro antes de qualquer
+  # checagem rodar, e a unidade virava `failed` sem alerta: o proprio silencio
+  # que este script veio eliminar (revisao do PR #24).
+  { command -v logger >/dev/null 2>&1 && logger -p daemon.err -t crm-lab-monitor "$msg_state_dir"; } || true
 fi
 
 # ---------------------------------------------------------------------------

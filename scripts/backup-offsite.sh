@@ -90,7 +90,19 @@ fi
 command -v gh >/dev/null || { log "'gh' nao esta instalado/no PATH"; exit 1; }
 
 hoje="$(date +%F)"
-tag="backup-${hoje}"
+# Prefixo por AMBIENTE (revisao do PR #24): prod e homolog compartilham a VPS
+# e, se apontarem para o mesmo repositorio de backup, uma tag `backup-<dia>`
+# unica fazia a segunda execucao do dia SOBRESCREVER os assets da primeira
+# (`--clobber`, mesmo nome de arquivo) e a retencao de um ambiente apagar as
+# releases do outro — a copia de producao substituida em silencio pela de
+# homologacao. Producao mantem `backup-<dia>` (compativel com o historico);
+# homologacao usa `backup-hml-<dia>`.
+case "${APP_ENV:-production}" in
+  production)  PREFIXO_RELEASE='backup' ;;
+  homologacao) PREFIXO_RELEASE='backup-hml' ;;
+  *) log "APP_ENV='${APP_ENV}' desconhecido — abortando para nao misturar releases"; exit 1 ;;
+esac
+tag="${PREFIXO_RELEASE}-${hoje}"
 
 # Diretorio de trabalho proprio: os artefatos cifrados sao intermediarios e nao
 # devem se misturar aos `.dump` que a retencao local enxerga.
@@ -227,17 +239,19 @@ fi
 # ---------------------------------------------------------------------------
 limite="$(date -d "-${RETENCAO_REMOTA} days" +%F)"
 if (( DRYRUN )); then
-  log "[dry-run] apagaria releases 'backup-*' anteriores a $limite"
+  log "[dry-run] apagaria releases '${PREFIXO_RELEASE}-*' anteriores a $limite"
 else
-  # Ordena lexicograficamente: com `backup-YYYY-MM-DD`, a comparacao de string
-  # e a comparacao de data. `--limit 200` cobre com folga 30 dias de retencao.
+  # Ordena lexicograficamente: com `<prefixo>-YYYY-MM-DD`, a comparacao de
+  # string e a comparacao de data. O `test()` com a data no regex e o que
+  # impede o prefixo `backup-` de producao de casar `backup-hml-...` de
+  # homologacao. `--limit 200` cobre com folga 30 dias de retencao.
   while read -r velha; do
     [[ -n "$velha" ]] || continue
     gh release delete "$velha" --repo "$BACKUP_OFFSITE_REPO" --yes --cleanup-tag \
       && log "expirada $velha" \
       || log "AVISO: nao consegui apagar $velha (o backup de hoje esta salvo)"
   done < <(gh release list --repo "$BACKUP_OFFSITE_REPO" --limit 200 \
-             --json tagName --jq ".[].tagName | select(startswith(\"backup-\")) | select(. < \"backup-${limite}\")")
+             --json tagName --jq ".[].tagName | select(test(\"^${PREFIXO_RELEASE}-[0-9]{4}-[0-9]{2}-[0-9]{2}\$\")) | select(. < \"${PREFIXO_RELEASE}-${limite}\")")
 fi
 
 log "concluido"

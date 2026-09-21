@@ -1480,21 +1480,35 @@ o MIME informado de olhos fechados — `MediaService.resolveStoredMimeType` roda
 (entrada do paciente e saída do atendente):
 
 1. **Allow-list** (`shared/types/media.types.ts`, `ALLOWED_MEDIA_MIME_TYPES` — fonte única):
-   `image/jpeg`, `image/png`, `image/webp`, `image/gif`, `audio/ogg`, `audio/mpeg`, `audio/mp4`,
-   `audio/aac`, `audio/amr`, `video/mp4`, `application/pdf`, `application/msword`,
+   `image/jpeg`, `image/png`, `image/webp`, `image/gif`, `image/heic`, `audio/ogg`, `audio/mpeg`,
+   `audio/mp4`, `audio/aac`, `audio/amr`, `video/mp4`, `application/pdf`, `application/msword`,
+   `application/vnd.ms-excel`,
    `application/vnd.openxmlformats-officedocument.wordprocessingml.document`,
    `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`,
-   `application/vnd.openxmlformats-officedocument.presentationml.presentation`, `text/plain`.
-   MIME fora da lista (ex. `text/html`, `image/svg+xml` — o vetor de XSS que motivou o card) é
-   gravado como `application/octet-stream`.
+   `application/vnd.openxmlformats-officedocument.presentationml.presentation`, `text/plain`,
+   `text/csv`.
+   A comparação é sobre o MIME **normalizado** (`normalizeMediaMimeType`): minúsculo, **sem
+   parâmetros** (`audio/ogg; codecs=opus` — o mimetype padrão do recado de voz do WhatsApp — é
+   `audio/ogg`) e com sinônimos resolvidos (`audio/x-m4a` → `audio/mp4`, `image/apng` →
+   `image/png`, `image/jpg` → `image/jpeg`). Sem isso todo áudio recebido era rebaixado (D-169).
+   - **Entrada** (webhooks): MIME fora da lista (ex. `text/html`, `image/svg+xml` — o vetor de
+     XSS que motivou o card) é gravado como `application/octet-stream`.
+   - **Saída** (`POST /conversations/:id/attachments`): MIME fora da lista é
+     `400 VALIDATION_ERROR` em `fields.mimeType` — o atendente precisa saber que a foto HEIC ou o
+     `.xls` não foi, em vez de o paciente receber um "documento" genérico (D-169).
 2. **Sniff de magic bytes** (pacote `file-type`), só para `image/*`, `audio/*` e
-   `application/pdf`: quando o `file-type` reconhece POSITIVAMENTE um formato DIFERENTE do
-   declarado, o gravado também vira `application/octet-stream`. Formato sem assinatura binária
-   reconhecível (`audio/amr`, por exemplo — `file-type` não cobre) não é tratado como divergência
-   provada; o MIME declarado (já filtrado pela allow-list) é mantido.
+   `application/pdf`: quando o `file-type` reconhece POSITIVAMENTE um formato de **outra
+   categoria** (imagem × áudio × PDF × outro) que o declarado, o gravado vira
+   `application/octet-stream`. A comparação é por categoria, não por string: `file-type` rotula
+   Opus-em-Ogg como `audio/ogg; codecs=opus` e M4A como `audio/x-m4a` — mesma coisa, string
+   diferente. Formato sem assinatura binária reconhecível (`audio/amr`, por exemplo) não é
+   tratado como divergência provada; o MIME declarado (já filtrado pela allow-list) é mantido.
 3. O MIME **efetivamente gravado** (não o declarado no request) é o que vira `messageType` da
    mensagem e o `Content-Type`/`Content-Disposition` de `GET /media/:id` — um anexo rebaixado
    nunca aparece como imagem/PDF na conversa.
+4. **A allow-list vale também na leitura**: `GET /media/:id` confere o MIME gravado contra a
+   lista e serve `application/octet-stream` + `attachment` para o que estiver fora — cobre linhas
+   de `message_media` gravadas antes do CRMLAB-31 (D-169).
 
 ### GET /media/:id
 Baixa o arquivo de mídia de uma mensagem (foto, PDF ou áudio).
@@ -4199,9 +4213,32 @@ Todos os erros seguem este formato:
 ## Rate Limiting
 
 ```
-Limite: 100 requisições por minuto por usuário
-Headers: X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset
+Limite: 100 requisições por minuto por usuário (por IP quando não há Bearer)
+Janela: FIXA de 60 s, alinhada ao relógio (chave = identidade + índice da janela)
+Headers legados:  X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset  (Reset = epoch em segundos)
+Headers do draft: RateLimit-Limit,   RateLimit-Remaining,   RateLimit-Reset    (Reset = segundos ATÉ o reset)
+Ao exceder:       Retry-After (segundos)
 ```
+
+Os dois conjuntos de headers convivem (D-139/CRMLAB-34); o `Reset` tem semântica diferente em
+cada um de propósito — é assim que `draft-ietf-httpapi-ratelimit-headers` define o campo.
+
+**Janela fixa, não deslizante** (tolerância de rajada conhecida): um cliente pode enviar até
+2× o limite num intervalo de 60 s que atravesse a fronteira de duas janelas (100 no segundo 59,
+100 no segundo 0). Aceito: o objetivo do limitador é conter abuso sustentado e proteger o
+gateway, não medir precisão por segundo; a janela fixa custa um `INCR` por requisição, sem
+listas de timestamps (revisão do PR #45, D-168).
+
+**Rota pública com o Redis fora do ar** (D-139): `/auth/login`, `/auth/refresh` e os webhooks
+respondem `503 SERVICE_UNAVAILABLE` (fail-closed); rota autenticada passa sem limite
+(fail-open). O casamento dessas rotas é feito sobre o caminho **normalizado** como o roteador do
+Express o vê — minúsculo, sem barra final, sem barras duplicadas, percent-decoding resolvido
+(D-168).
+
+**Lockout de login** (`/auth/login`, separado do limitador global): a **tentativa** é contada
+antes da senha ser conferida (`INCR` primeiro); a 6ª tentativa em 15 min para o mesmo
+e-mail+IP recebe `429 RATE_LIMIT_EXCEEDED` sem que a senha seja olhada. Acertar a senha zera o
+contador. A janela de 15 min é fixa a partir da 1ª tentativa (D-168).
 
 **Response (429):**
 ```json

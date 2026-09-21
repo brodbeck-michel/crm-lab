@@ -2215,3 +2215,52 @@ precisa ENXERGAR LINHA sem contexto de tenant. Verifiquei que ele falha com a ro
 o comportamento que o atributo deveria produzir. O 020 foi escrito sem reler o cabeçalho do
 `002_row_level_security.sql`, que já dizia em texto que os caminhos sem tenant só funcionam por
 rodarem como a role dona.
+
+---
+
+## 2026-09-21 — Revisão retroativa das Ondas A e B (+ o que a soma das três ondas mostrou)
+
+Pedido do Michel depois da Onda C: revisar tudo que foi feito nas ondas A, B e C, e corrigir. As
+três ondas tinham passado só por CI; a revisão independente (`/code-review`, high) na Onda C
+achou defeito sério nos três cards, então a retroativa era esperada — e confirmou. Cinco
+revisões: PR #24 (Onda A inteira), #43, #44, #45, #46 (Onda B, um por card). Onda C já tinha
+sido revisada branch a branch; o que faltava dela era o achado do merge (D-165).
+
+**Corrigido nesta rodada, por severidade:**
+
+| Achado | Onda | O que acontecia | Decisão |
+|---|---|---|---|
+| Recado de voz virava "Baixar anexo (doc)" | B (#43) | `audio/ogg; codecs=opus` — mimetype padrão do WhatsApp — falhava na allow-list por comparação de string. Todo áudio recebido rebaixado. | D-169 |
+| Allow-list de mídia não valia na leitura | B (#43) | Linha legada com `image/svg+xml` seguia servida `inline` — o vetor de XSS do card, aberto para dado antigo. | D-169 |
+| Bearer vazando para host externo | B (#43) | `attachmentUrl` absoluto de outro host passava pelo fetch autenticado. | D-169 |
+| Rota pública fail-OPEN por troca de caixa | B (#45) | `/API/V1/AUTH/REFRESH` não era reconhecida como pública; com Redis fora, passava sem limite. | D-168 |
+| Lockout de login era check-then-act | B (#45) | 100 tentativas paralelas passavam pela leitura antes de qualquer incremento. O teste do PR exigia o buraco. | D-168 |
+| Duas abas = logout de todas | B (#44) | Bootstrap refresh em toda carga + detecção de reuso sem tolerância. | D-166 (CRMLAB-40) |
+| `/api/v1/health` vazava host/porta/role | A (#24) | `error` cru do driver numa rota pública sem rate limit. | (código) |
+| Backup de prod sobrescrito pelo de hml | A (#24) | Tag `backup-<dia>` sem namespace por ambiente; `--clobber` + retenção cruzada. | (código) |
+| Alerta de backup sem contexto e em canal próprio | A (#24) | `journalctl` como `deploy` voltava vazio; webhook com variável e payload diferentes do monitor. | (código) |
+| CSP com `connect-src wss:` | B (#44) | Abria para qualquer host wss:// — o canal de exfiltração que a CSP deveria pegar. | D-170 |
+| `/healthz` zerando headers | B (#44) / CRMLAB-42 | Terceira location com `add_header` que a D-144 não cobriu. Agora é `include`. | D-170 |
+| GHCR: nome da imagem + publicar com CI vermelho + cancelar run de main | B (#46) / CRMLAB-41 | Ver o card. | (código + docs) |
+| Node sem `--max-old-space-size` sob `mem_limit` | B (#46) | OOM-kill (137) em vez de GC. | (código) |
+| Redis `maxmemory` sem folga; Postgres `effective_cache_size` > cgroup, sem `shm_size` | B (#46) | Ver D-167 e compose. | D-167 |
+| `deploy.sh`: `--short` variável, `IMAGE_REGISTRY` sem barra, `pull` sem fallback, mensagem "60s" | B (#46) / A (#24) | Ver script. | (código) |
+| `refreshSessionIsLive` sem o teto absoluto | soma de C | Achado no merge, não em revisão isolada. | (v1.13.0) |
+| `crm_login` NOBYPASSRLS inutilizável | C (#48) | 0 de 5 usuários visíveis. | D-165 (v1.13.1) |
+
+**Ajuste de compose que a D-165 exige e ninguém tinha visto:** `migrate` recebia a MESMA
+`DATABASE_URL` do `backend`. Trocar para `crm_login` quebraria a próxima migração (sem DDL).
+Agora `migrate` lê `MIGRATE_DATABASE_URL` com fallback para `DATABASE_URL`. A troca da
+`DATABASE_URL` nos dois ambientes só faz sentido **depois** deste PR subir — está descrita em
+`DEPLOYMENT.md` §7.
+
+**Registrado e NÃO corrigido, de propósito:** cookie com precedência sobre o corpo no
+`/auth/refresh` durante a janela de depreciação (fecha em 2026-10-04 sozinho); `eval` em vez
+de `defineCommand` no `incrEx` (custo desprezível no volume atual); stubs de cache duplicados em
+três specs; `alive` morto em `useSessionBootstrap`. Todos LOW.
+
+**Testes que afirmavam o comportamento errado — padrão que se repetiu:** `migrator.spec`
+exigia `rolbypassrls: false` (D-165); `login.spec` exigia 20 × 401 na rajada paralela
+(D-168); `MessageBubble.spec` exigia fetch autenticado para URL de outro host (D-169). Nos três,
+o teste passava verde enquanto o comportamento estava quebrado. Lição para as próximas ondas:
+asserção sobre atributo/chamada não substitui asserção sobre o EFEITO que se quer.

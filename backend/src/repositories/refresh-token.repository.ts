@@ -35,6 +35,14 @@ export interface RefreshTokenEntity {
    * como `'rotated'`, que era o comportamento até então.
    */
   revokedReason: RevokedReason | null;
+  /**
+   * Segundos desde a revogacao, calculados pelo RELOGIO DO BANCO (D-166).
+   * `null` quando nao revogado. Vem do SQL, e nao de `Date.now() -
+   * revokedAt`, porque `revoked_at` e TIMESTAMP sem fuso: o driver o devolve
+   * como hora LOCAL, e num host em UTC-3 o valor cai 3 h no FUTURO — toda
+   * diferenca ficava negativa e a janela de tolerancia nunca fechava.
+   */
+  revokedSecondsAgo: number | null;
 }
 
 export type RevokedReason = 'rotated' | 'security';
@@ -47,6 +55,7 @@ interface RefreshTokenRow {
   revoked_at: unknown;
   absolute_expires_at: unknown;
   revoked_reason: unknown;
+  revoked_seconds_ago?: unknown;
 }
 
 function map(row: RefreshTokenRow): RefreshTokenEntity {
@@ -58,6 +67,10 @@ function map(row: RefreshTokenRow): RefreshTokenEntity {
     revokedAt: row.revoked_at === null || row.revoked_at === undefined ? null : toIso(row.revoked_at),
     absoluteExpiresAt: toIso(row.absolute_expires_at),
     revokedReason: row.revoked_reason === 'security' ? 'security' : 'rotated',
+    revokedSecondsAgo:
+      row.revoked_seconds_ago === null || row.revoked_seconds_ago === undefined
+        ? null
+        : Number(row.revoked_seconds_ago),
   };
 }
 
@@ -89,7 +102,8 @@ export async function findByHash(
   tokenHash: string,
 ): Promise<RefreshTokenEntity | null> {
   const result = await tx.query<RefreshTokenRow>(
-    `SELECT id, tenant_id, user_id, expires_at, revoked_at, absolute_expires_at, revoked_reason
+    `SELECT id, tenant_id, user_id, expires_at, revoked_at, absolute_expires_at, revoked_reason,
+            EXTRACT(EPOCH FROM (NOW() - revoked_at)) AS revoked_seconds_ago
        FROM refresh_tokens WHERE token_hash = $1`,
     [tokenHash],
   );

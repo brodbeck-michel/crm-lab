@@ -4,7 +4,8 @@
  * Unidade pura (sem PGlite): a função não toca repositório nem disco.
  */
 import { describe, expect, it } from 'vitest';
-import { resolveStoredMimeType } from './media.service.js';
+import { BusinessError } from '../http/errors.js';
+import { assertOutboundMimeAllowed, resolveStoredMimeType } from './media.service.js';
 
 // `file-type` lê além da assinatura (cabeçalho do primeiro chunk/segmento) —
 // buffer curto demais lança `EndOfStreamError` em vez de "não reconheci".
@@ -70,5 +71,54 @@ describe('resolveStoredMimeType', () => {
     // `storeInbound` (§4.2) promete NUNCA lançar — um arquivo minúsculo/
     // truncado não pode virar unhandled rejection no meio do webhook.
     await expect(resolveStoredMimeType('image/png', TINY_TRUNCATED)).resolves.toBe('image/png');
+  });
+
+  /**
+   * Revisao do PR #43 — os dois achados HIGH. `audio/ogg; codecs=opus` e o
+   * mimetype PADRAO do recado de voz do WhatsApp (o Evolution repassa
+   * literalmente). A comparacao de string inteira contra `audio/ogg` rebaixava
+   * TODO audio recebido para `application/octet-stream`: o player sumia e a
+   * bolha mostrava "Baixar anexo (doc)".
+   */
+  it('MIME com parâmetro (`audio/ogg; codecs=opus`, recado de voz) passa pela allow-list', async () => {
+    await expect(resolveStoredMimeType('audio/ogg; codecs=opus', PLAIN_TEXT)).resolves.toBe('audio/ogg');
+  });
+
+  it('sinônimo do file-type na MESMA categoria não é divergência (M4A, APNG)', async () => {
+    // `file-type` rotula M4A como `audio/x-m4a`; o declarado e `audio/mp4`.
+    // Mesma categoria (audio) => nao e HTML disfarcado, e o declarado fica.
+    const m4a = Buffer.concat([
+      Buffer.from([0x00, 0x00, 0x00, 0x1c]),
+      Buffer.from('ftypM4A '),
+      Buffer.from([0x00, 0x00, 0x00, 0x00]),
+      Buffer.from('M4A mp42isom'),
+    ]);
+    await expect(resolveStoredMimeType('audio/mp4', m4a)).resolves.toBe('audio/mp4');
+  });
+
+  it('divergência de CATEGORIA continua derrubando (PDF disfarçado de áudio)', async () => {
+    await expect(resolveStoredMimeType('audio/ogg', PDF_MAGIC)).resolves.toBe(
+      'application/octet-stream',
+    );
+  });
+});
+
+describe('assertOutboundMimeAllowed', () => {
+  it('anexo do atendente fora da allow-list é VALIDATION_ERROR, não rebaixamento mudo', () => {
+    const erro = (() => {
+      try {
+        assertOutboundMimeAllowed('text/html');
+        return null;
+      } catch (e) {
+        return e as BusinessError;
+      }
+    })();
+    expect(erro).toBeInstanceOf(BusinessError);
+    expect(erro?.code).toBe('VALIDATION_ERROR');
+    expect(JSON.stringify(erro?.details)).toMatch(/mimeType/);
+    expect(() => assertOutboundMimeAllowed('image/svg+xml')).toThrowError(BusinessError);
+    expect(() => assertOutboundMimeAllowed('audio/ogg; codecs=opus')).not.toThrow();
+    expect(() => assertOutboundMimeAllowed('image/heic')).not.toThrow();
+    expect(() => assertOutboundMimeAllowed('text/csv')).not.toThrow();
   });
 });

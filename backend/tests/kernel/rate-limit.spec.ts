@@ -8,6 +8,7 @@ import { errorHandler } from '../../src/http/middleware/error-handler.js';
 import {
   isChannelWebhook,
   isPublicRoute,
+  pathOf,
   rateLimit,
   rateLimitKey,
 } from '../../src/http/middleware/rate-limit.js';
@@ -261,6 +262,37 @@ describe('rate-limit — webhook de canal tem balde proprio', () => {
     expect(isChannelWebhook(asReq('/api/v1/auth/login'))).toBe(false);
     // Nao pode bastar CONTER a palavra para escapar do limitador global.
     expect(isChannelWebhook(asReq('/api/v1/settings/webhooks-que-nao-sao'))).toBe(false);
+  });
+
+  /**
+   * Revisao do PR #45: o roteador do Express e case-insensitive e nao-estrito,
+   * entao estas variantes TODAS caem no handler de `/auth/refresh` — mas a
+   * comparacao crua de `originalUrl` nao as reconhecia como rota publica, e
+   * com o Redis fora do ar elas caiam no ramo fail-OPEN (sem limite nenhum)
+   * em vez do fail-CLOSED da D-139.
+   */
+  it('isPublicRoute/isChannelWebhook enxergam o caminho como o roteador do Express (D-139)', () => {
+    const asReq = (originalUrl: string) => ({ originalUrl }) as Request;
+
+    expect(pathOf(asReq('/API/V1/AUTH/REFRESH'))).toBe('/api/v1/auth/refresh');
+    expect(pathOf(asReq('/api/v1/auth/refresh/'))).toBe('/api/v1/auth/refresh');
+    expect(pathOf(asReq('/api/v1/auth//refresh?x=1'))).toBe('/api/v1/auth/refresh');
+    expect(pathOf(asReq('/api/v1/auth/%6Cogin'))).toBe('/api/v1/auth/login');
+    expect(pathOf(asReq('/'))).toBe('/');
+
+    for (const variant of [
+      '/API/V1/AUTH/REFRESH',
+      '/api/v1/auth/refresh/',
+      '/api/v1/auth//refresh',
+      '/api/v1/auth/login?next=/x',
+    ]) {
+      expect(isPublicRoute(asReq(variant))).toBe(true);
+    }
+    expect(isChannelWebhook(asReq('/API/v1/webhooks/evolution/x'))).toBe(true);
+    expect(isChannelWebhook(asReq('/api/v1/webhooks'))).toBe(true);
+
+    expect(isPublicRoute(asReq('/api/v1/auth/logout'))).toBe(false);
+    expect(isPublicRoute(asReq('/api/v1/conversations'))).toBe(false);
   });
 
   it('o limitador global PULA o webhook — quem limita e o balde dedicado', async () => {

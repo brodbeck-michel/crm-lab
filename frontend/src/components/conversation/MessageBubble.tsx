@@ -1,9 +1,28 @@
 import { useState } from 'react';
 import type { Message, SenderType } from '@crm-lab/shared';
 import { cn } from '@/components/ui';
+import { fetchAuthenticatedBlob, resolveMediaUrl } from '@/api';
 import { useAuthenticatedMedia } from '@/hooks';
 import { DateDisplay, ImageLightbox } from '@/components/shared';
 import { AudioMessage } from './AudioMessage';
+
+/**
+ * So a mídia servida pelo NOSSO backend (`/api/v1/media/:id`) exige o fetch
+ * autenticado. Um `attachmentUrl` ABSOLUTO de outro host (a URL da Meta que o
+ * webhook grava, ou o que vier num `POST /messages`) tem que ir como link/img
+ * cru: passar pelo `fetchAuthenticatedBlob` mandava o Bearer do usuário para
+ * um terceiro e o CORS ainda bloqueava a resposta — o anexo que antes abria
+ * virou "Não foi possível carregar" (revisão do PR #43).
+ */
+export function isProtectedMediaUrl(url: string): boolean {
+  if (!/^https?:\/\//i.test(url)) return url.startsWith('/api/');
+  try {
+    const target = new URL(url);
+    return target.origin === window.location.origin && target.pathname.startsWith('/api/');
+  } catch {
+    return false;
+  }
+}
 
 /**
  * MessageBubble — COMPONENTS.md (`conversation/`) + DESIGN_TOKENS.md
@@ -73,31 +92,55 @@ export function MessageBubble({
   showMeta = true,
 }: MessageBubbleProps) {
   const isSystem = type === 'system';
-  const isImage = message.messageType === 'image' && Boolean(message.attachmentUrl);
-  const isAudio = message.messageType === 'audio' && Boolean(message.attachmentUrl);
-  const isDoc = !isImage && !isAudio && Boolean(message.attachmentUrl);
+  const attachmentUrl = message.attachmentUrl;
+  const hasAttachment = Boolean(attachmentUrl);
+  const isImage = message.messageType === 'image' && hasAttachment;
+  const isAudio = message.messageType === 'audio' && hasAttachment;
+  const isDoc = !isImage && !isAudio && hasAttachment;
+  const isProtected = attachmentUrl ? isProtectedMediaUrl(attachmentUrl) : false;
   const [lightboxOpen, setLightboxOpen] = useState(false);
 
   // `GET /media/:id` exige Authorization (requireAuth()) — um <img src> cru
   // nunca manda esse header, por isso a imagem sempre vinha em branco/401.
   // O hook busca autenticado e devolve um object URL utilizável em <img>.
+  // URL externa (`isProtected` falso) vai direto no <img>, sem token.
   const {
-    objectUrl: imageUrl,
+    objectUrl: fetchedImageUrl,
     fileName: imageFileName,
     isLoading: imageLoading,
-  } = useAuthenticatedMedia(isImage ? message.attachmentUrl : null);
+  } = useAuthenticatedMedia(isImage && isProtected ? attachmentUrl : null);
+  const imageUrl = isImage && !isProtected ? attachmentUrl : fetchedImageUrl;
 
-  // Mesmo motivo do `<img>`: um `<a href="/api/v1/media/:id">` cru manda a
-  // requisição sem Authorization e o navegador cai num 401 JSON em vez de
-  // abrir o PDF/doc (CRMLAB-31). PDF abre em nova aba (o blob carrega o
-  // `Content-Type` certo, o navegador sabe exibir); qualquer outro anexo
-  // força download — é a mesma mídia que `GET /media/:id` já serve com
-  // `Content-Disposition: attachment` para tudo que não é imagem/áudio.
-  const {
-    objectUrl: docUrl,
-    fileName: docFileName,
-    isLoading: docLoading,
-  } = useAuthenticatedMedia(isDoc ? message.attachmentUrl : null);
+  // PDF/doc: o blob só é buscado NO CLIQUE (revisão do PR #43). Buscar na
+  // montagem baixava até 15 MiB por mensagem só para desenhar um link — uma
+  // conversa com 30 anexos disparava 30 GETs autenticados ao abrir, e de novo
+  // a cada troca de conversa. PDF abre em nova aba (o blob carrega o
+  // `Content-Type` certo); qualquer outro anexo força download.
+  const [docState, setDocState] = useState<'idle' | 'loading' | 'error'>('idle');
+  const openDoc = async (): Promise<void> => {
+    if (!attachmentUrl || docState === 'loading') return;
+    setDocState('loading');
+    try {
+      const { blob, fileName } = await fetchAuthenticatedBlob(resolveMediaUrl(attachmentUrl));
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      if (message.messageType === 'pdf') {
+        anchor.target = '_blank';
+        anchor.rel = 'noreferrer';
+      } else {
+        anchor.download = fileName ?? 'anexo';
+      }
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      // Revoga depois que o navegador já abriu/baixou; imediato quebra o download.
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+      setDocState('idle');
+    } catch {
+      setDocState('error');
+    }
+  };
 
   return (
     <div
@@ -137,29 +180,33 @@ export function MessageBubble({
       {isAudio && message.attachmentUrl && <AudioMessage url={message.attachmentUrl} />}
 
       {isDoc &&
-        (docUrl ? (
-          message.messageType === 'pdf' ? (
-            <a
-              href={docUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="text-caption font-semibold text-accent-700 underline"
-            >
-              Abrir anexo ({message.messageType})
-            </a>
-          ) : (
-            <a
-              href={docUrl}
-              download={docFileName ?? undefined}
-              className="text-caption font-semibold text-accent-700 underline"
-            >
-              Baixar anexo ({message.messageType})
-            </a>
-          )
+        attachmentUrl &&
+        (!isProtected ? (
+          // Anexo hospedado fora do nosso backend: link cru, sem token.
+          <a
+            href={attachmentUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-caption font-semibold text-accent-700 underline"
+          >
+            {message.messageType === 'pdf' ? 'Abrir' : 'Baixar'} anexo ({message.messageType})
+          </a>
         ) : (
-          <span className="text-caption text-neutral-600">
-            {docLoading ? 'Carregando anexo…' : 'Não foi possível carregar o anexo'}
-          </span>
+          <>
+            <button
+              type="button"
+              onClick={() => void openDoc()}
+              disabled={docState === 'loading'}
+              className="cursor-pointer self-start border-none bg-transparent p-0 text-left text-caption font-semibold text-accent-700 underline disabled:cursor-progress"
+            >
+              {docState === 'loading'
+                ? 'Carregando anexo…'
+                : `${message.messageType === 'pdf' ? 'Abrir' : 'Baixar'} anexo (${message.messageType})`}
+            </button>
+            {docState === 'error' && (
+              <span className="text-caption text-neutral-600">Não foi possível carregar o anexo</span>
+            )}
+          </>
         ))}
 
       {showMeta && !isSystem && (

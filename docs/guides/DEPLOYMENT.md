@@ -165,7 +165,7 @@ export JWT_SECRET=$(openssl rand -hex 32)
 export JWT_REFRESH_SECRET=$(openssl rand -hex 32)
 export CORS_ORIGIN=https://<dominio-da-ui>
 export IMAGE_TAG=$(git rev-parse --short HEAD)
-export IMAGE_REGISTRY=ghcr.io/<owner>/   # CRMLAB-36 — barra final; vazio = build local (fallback)
+export IMAGE_REGISTRY=ghcr.io/<owner>/<repo>/   # CRMLAB-36/41 — COM o repo e barra final; vazio = build local (fallback)
 
 # 2. Imagens — pull do GHCR (o CI publica a cada push em `main`, ver §2 e §7).
 #    Sem IMAGE_REGISTRY definido, cai no fallback documentado (build local,
@@ -308,6 +308,10 @@ sudo cp scripts/systemd/crm-lab-backup.service \
         scripts/systemd/crm-lab-backup.timer \
         scripts/systemd/crm-lab-backup-alerta@.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now crm-lab-backup.timer
+# A unidade de alerta tem `SupplementaryGroups=systemd-journal` (revisão do PR
+# #24): sem isso o `journalctl -u` que ela roda para anexar o contexto voltava
+# vazio para o usuário `deploy`, e o alerta chegava sem uma linha de log. Depois
+# de copiar uma versão nova da unit: `daemon-reload` de novo.
 
 # Conferir
 systemctl list-timers crm-lab-backup.timer
@@ -362,8 +366,9 @@ Dois métodos, nesta preferência:
 | `BACKUP_AGE_RECIPIENT` | uma das duas | chave **pública** age (`age1...`) |
 | `BACKUP_GPG_PASSPHRASE` | uma das duas | senha simétrica |
 | `BACKUP_REMOTE_RETENTION_DAYS` | não | default 30 (local é 14) |
-| `BACKUP_ALERT_CMD` | não | comando que recebe o alerta no stdin |
-| `BACKUP_ALERT_WEBHOOK` | não | URL que recebe `POST {"text": "..."}` |
+| `ALERT_WEBHOOK_URL` / `ALERT_WEBHOOK_TOKEN` | não | **o mesmo canal do monitor** (`scripts/lib/alerta.sh`) — desde a revisão do PR #24 o alerta de backup usa ele, não um webhook próprio |
+| `BACKUP_ALERT_CMD` | não | escotilha: comando que recebe o alerta no stdin (tem precedência) |
+| `BACKUP_ALERT_WEBHOOK` | não | **legado** — usado como `ALERT_WEBHOOK_URL` se esta não existir; remova do `.env` ao migrar |
 
 #### Alerta quando o backup falha
 
@@ -381,7 +386,7 @@ backup protege). Trocar de canal é editar o `.env`:
 
 ```bash
 # qualquer webhook JSON (Discord, Slack, n8n, gateway próprio)
-BACKUP_ALERT_WEBHOOK='https://.../hook'
+ALERT_WEBHOOK_URL='https://.../hook'      # o mesmo do monitor; BACKUP_ALERT_WEBHOOK ainda funciona como legado
 
 # ou um comando qualquer, que recebe a mensagem no stdin
 BACKUP_ALERT_CMD='mail -s "backup CRM Lab falhou" michel@...'
@@ -600,7 +605,13 @@ Registrado aqui para não virar promessa implícita:
     consulta o GitHub antes de buildar e **aborta** se o workflow `CI` daquele
     commit não estiver verde — ou se o `gh` não estiver instalado/autenticado.
     É login manual, uma vez por máquina; sem ele nenhum deploy passa.
-  - **Apontar `DATABASE_URL` para `crm_login`** (CRMLAB-38/D-145). A migração
+  - **Apontar `DATABASE_URL` para `crm_login`** (CRMLAB-38/D-145, corrigida pela D-165 —
+    a role só ficou utilizável a partir da v1.13.1, migração 023). **Obrigatório junto:**
+    definir `MIGRATE_DATABASE_URL` com a URL da role dona (a `DATABASE_URL` antiga) no mesmo
+    `.env` — o job `migrate` precisa de DDL e `crm_login` não tem. Ordem: (1) `ALTER ROLE
+    crm_login WITH PASSWORD '...'` no Postgres; (2) `.env`: `MIGRATE_DATABASE_URL=<url atual>`
+    e `DATABASE_URL=postgresql://crm_login:<senha>@postgres:5432/<db>`; (3) `./scripts/deploy.sh`
+    (recria `backend` e `migrate` com o ambiente novo); (4) conferir login real e um webhook. A migração
     020 cria a role sem senha de propósito. Na VPS, por ambiente:
     `ALTER ROLE crm_login WITH PASSWORD '<senha nova>';` e então trocar o
     usuário na `DATABASE_URL` do `.env`. Enquanto isso não for feito, a pool

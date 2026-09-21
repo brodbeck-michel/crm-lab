@@ -29,9 +29,11 @@
  * ============================================================================
  * `GatewayTimeoutError` e um `Error` comum e, como qualquer erro lancado dentro
  * de um job, e RETENTADO por `lib/queue.ts` (retry exponencial, 3 tentativas,
- * SERVICES.md §11). O marcador `retryable` esta aqui para documentar essa
- * intencao e para distinguir de recusas deliberadas (credencial ausente, canal
- * desativado), que a fila tambem retenta mas sem nenhum proveito.
+ * SERVICES.md §11). A fila NAO distingue erro transitorio de recusa
+ * deliberada (credencial ausente, canal desativado): retenta tudo. Uma versao
+ * anterior desta classe carregava um campo `retryable = true` que nada lia —
+ * documentava uma intencao que o codigo nao implementava (revisao do PR #24),
+ * e um leitor futuro marcaria `retryable = false` esperando parar o retry.
  *
  * O orcamento de tempo, entao, nao e o timeout de UMA tentativa e sim
  * `attempts * timeoutMs + backoff`. O teto real e o `proxy_read_timeout 60s`
@@ -56,8 +58,6 @@ export interface GatewayTarget {
  * distinguir "o gateway esta doente" de "o gateway respondeu e recusou".
  */
 export class GatewayTimeoutError extends Error {
-  /** Falha transitoria: a fila deve tentar de novo. */
-  readonly retryable = true;
   readonly gateway: string;
   readonly path: string;
   readonly timeoutMs: number;

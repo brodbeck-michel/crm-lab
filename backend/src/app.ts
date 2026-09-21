@@ -15,7 +15,7 @@ import { env } from './config/env.js';
 import type { DbClient } from './db/types.js';
 import type { CacheService } from './lib/cache.js';
 import { createCache } from './lib/cache.js';
-import { createHealthChecker } from './lib/health.js';
+import { createHealthChecker, publicHealthReport } from './lib/health.js';
 import { noopWsHub, type WsHub } from './lib/ws-hub.js';
 import { type ApiModule, type ApiModuleDeps, type ApiModuleFactory } from './http/api-module.js';
 import { apiModuleFactories } from './http/modules.js';
@@ -177,7 +177,9 @@ export function createApp(deps: AppDeps): BuiltApp {
     checkHealth()
       .then((report) => {
         res.set('Cache-Control', 'no-store');
-        res.status(report.status === 'ok' ? 200 : 503).json(report);
+        // Nunca o relatorio cru para fora: `error` carrega host/porta/role
+        // internos (ver `publicHealthReport`).
+        res.status(report.status === 'ok' ? 200 : 503).json(publicHealthReport(report));
       })
       .catch(next);
   });

@@ -96,11 +96,18 @@ export const useAuthStore = create<AuthState>()(
        * Troca (ou cria) só o access token. Também é o caminho do BOOTSTRAP de
        * página (`useSessionBootstrap`): como `tokens` não é persistido, toda
        * carga de página chega aqui com `tokens: null` até o
-       * `POST /auth/refresh` (cookie) responder — por isso NÃO há guarda de
-       * "sem sessão prévia" como antes (o refresh token guardado não existe
-       * mais para condicionar nada).
+       * `POST /auth/refresh` (cookie) responder.
+       *
+       * A guarda é por `user`, não por `tokens` (revisão do PR #44): `user`
+       * É persistido, então o bootstrap legítimo (identidade restaurada do
+       * localStorage, tokens ainda nulos) passa; um refresh que resolve
+       * DEPOIS do `clearSession()` do logout encontra `user: null` e não
+       * ressuscita a sessão — antes ele repopulava `tokens` num cliente já
+       * deslogado, e o cookie rotacionado por esse mesmo refresh continuava
+       * válido no navegador.
        */
       setAccessToken: (accessToken, expiresIn) => {
+        if (get().user === null) return;
         set({ tokens: { accessToken, expiresAt: Date.now() + expiresIn * 1000 } });
       },
 

@@ -111,8 +111,8 @@ describe('timeout de gateway externo', () => {
     expect(timeout.gateway).toBe('evolution');
     expect(timeout.path).toBe('/instance/connectionState/mudo');
     expect(timeout.timeoutMs).toBe(TIMEOUT_MS);
-    // Marcado como transitorio: e o que justifica a fila tentar de novo.
-    expect(timeout.retryable).toBe(true);
+    // (O antigo `retryable = true` saiu: nada o lia — a fila retenta qualquer
+    // erro. Ver o cabecalho de fetch-timeout.ts.)
   });
 
   it('a rota no erro nao carrega query string (pode levar nome de instancia)', async () => {

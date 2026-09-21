@@ -249,10 +249,36 @@ function send(
  */
 export function refreshAccessToken(): Promise<string> {
   if (refreshInFlight) return refreshInFlight;
-  refreshInFlight = performRefresh().finally(() => {
+  refreshInFlight = withCrossTabLock(performRefresh).finally(() => {
     refreshInFlight = null;
   });
   return refreshInFlight;
+}
+
+/** Nome do lock compartilhado entre abas do mesmo origin para o refresh. */
+export const REFRESH_LOCK_NAME = 'crm-lab:auth-refresh';
+
+/**
+ * Serializa o refresh ENTRE ABAS (revisão dos PRs #44/#47, CRMLAB-40).
+ *
+ * `refreshInFlight` deduplica só dentro de uma aba. O cookie `crm_refresh` é
+ * um só para o navegador inteiro, e o backend ROTACIONA o token a cada uso:
+ * duas abas que chamam `/auth/refresh` ao mesmo tempo (restaurar sessão com
+ * várias abas, ou o 4401 do WebSocket chegando em todas no mesmo instante)
+ * mandam o MESMO cookie; a primeira rotaciona, a segunda apresenta um token já
+ * revogado, e o backend trata como roubo — derruba a família e desloga o
+ * usuário de TODAS as abas.
+ *
+ * Com o Web Locks API, a segunda aba espera a primeira terminar; quando entra,
+ * o cookie já é o novo (cookie é compartilhado na hora) e o refresh dela
+ * simplesmente funciona. Sem `navigator.locks` (browser antigo, jsdom nos
+ * testes) roda direto — o backend ainda tem a janela de tolerância de 10 s
+ * (D-166) como rede de segurança.
+ */
+async function withCrossTabLock<T>(fn: () => Promise<T>): Promise<T> {
+  const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
+  if (!locks) return fn();
+  return locks.request(REFRESH_LOCK_NAME, fn);
 }
 
 /**

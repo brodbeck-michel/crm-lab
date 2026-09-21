@@ -9,6 +9,8 @@ import {
   resolveMediaUrl,
   setSessionBridge,
   setUnauthenticatedHandler,
+  refreshAccessToken,
+  REFRESH_LOCK_NAME,
 } from './client';
 import type { ApiError } from './client';
 
@@ -206,6 +208,26 @@ describe('client — interceptor de refresh', () => {
     expect(refreshCall).toBeDefined();
     expect(refreshCall?.init.body).toBeUndefined();
     expect(headerOf(refreshCall!.init, 'X-Requested-With')).toBe('crm-lab');
+  });
+
+  /**
+   * CRMLAB-40 / D-166: o refresh roda dentro de um Web Lock compartilhado entre
+   * abas do mesmo origin. Sem `navigator.locks` (jsdom, browser antigo) roda
+   * direto — os outros testes deste arquivo cobrem esse caminho.
+   */
+  it('refresh roda dentro do Web Lock entre abas quando navigator.locks existe', async () => {
+    const request = vi.fn((_name: string, cb: () => Promise<unknown>) => cb());
+    Object.defineProperty(navigator, 'locks', { value: { request }, configurable: true });
+    try {
+      mockFetch(() => jsonResponse({ accessToken: 'access-lock', expiresIn: 900 }));
+
+      await expect(refreshAccessToken()).resolves.toBe('access-lock');
+
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(request.mock.calls[0]?.[0]).toBe(REFRESH_LOCK_NAME);
+    } finally {
+      Reflect.deleteProperty(navigator, 'locks');
+    }
   });
 
   it('N requisições concorrentes em 401 disparam UM ÚNICO refresh', async () => {

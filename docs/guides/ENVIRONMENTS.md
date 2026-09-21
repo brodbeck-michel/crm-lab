@@ -314,10 +314,14 @@ prod.
 ```dotenv
 APP_ENV=homologacao
 COMPOSE_PROJECT_NAME=crm-lab-homolog
-IMAGE_TAG=hml-latest
-# CRMLAB-36 — barra final obrigatória. Vazio (ou ausente) = deploy.sh cai no
-# fallback de build local (documentado em docs/guides/DEPLOYMENT.md §2/§4).
-IMAGE_REGISTRY=ghcr.io/<owner>/
+# IMAGE_TAG NÃO vai no .env: `deploy.sh` exporta `hml-<sha7>` a cada deploy. (A
+# versão anterior deste exemplo trazia `hml-latest`, uma tag que o CI nunca
+# publica — um `docker compose pull` manual com ela falhava com "manifest
+# unknown".) Para rollback manual, use `IMAGE_TAG=hml-<sha7>` na linha de comando.
+# CRMLAB-36/CRMLAB-41 — `ghcr.io/<owner>/<repo>/`, COM o repositório e COM a
+# barra final: o CI publica sob `ghcr.io/<owner>/<repo>/crm-lab-*`. Vazio (ou
+# ausente) = deploy.sh cai no fallback de build local (DEPLOYMENT.md §2/§4).
+IMAGE_REGISTRY=ghcr.io/brodbeck-michel/crm-lab/
 
 POSTGRES_USER=crm
 POSTGRES_PASSWORD=<openssl rand -hex 24>

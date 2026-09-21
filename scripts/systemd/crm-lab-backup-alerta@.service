@@ -5,6 +5,12 @@ Documentation=file:///opt/crm-lab/docs/guides/DEPLOYMENT.md
 [Service]
 Type=oneshot
 User=deploy
+# Sem isto o `journalctl -u <unidade>` que o script roda para anexar o contexto
+# devolve so `-- No entries --` (o usuario `deploy` nao le o journal de outras
+# unidades), e o alerta chega dizendo "FALHOU" sem uma linha de log — o que
+# obriga a abrir a VPS as 3 da manha, exatamente o que ele veio evitar
+# (revisao do PR #24). `systemd-journal` e o grupo padrao com leitura.
+SupplementaryGroups=systemd-journal
 WorkingDirectory=/opt/crm-lab
 # %i chega como o nome da unidade que falhou (`OnFailure=...@%n.service`), para
 # que o alerta diga O QUE falhou e o script leia o journal certo.

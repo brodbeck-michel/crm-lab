@@ -193,6 +193,47 @@ describe('rotacao de refresh token', () => {
       .expect(200);
   });
 
+  /**
+   * D-166 (revisao do PR #44): dentro de 10 s da rotacao, reapresentar o token
+   * antigo NAO e roubo — e a outra aba do mesmo navegador no bootstrap. 401
+   * comum, familia intacta, sem auditoria falsa de roubo.
+   */
+  it('reuso DENTRO da janela de tolerancia (outra aba) -> 401 sem derrubar a familia', async () => {
+    const session = await login();
+
+    const rotated = await app.agent
+      .post('/api/v1/auth/refresh')
+      .set('Cookie', session.cookie)
+      .set(REQUESTED_WITH)
+      .send({})
+      .expect(200);
+
+    // "Segunda aba": o mesmo cookie antigo, logo em seguida.
+    const secondTab = await app.agent
+      .post('/api/v1/auth/refresh')
+      .set('Cookie', session.cookie)
+      .set(REQUESTED_WITH)
+      .send({})
+      .expect(401);
+    expect(secondTab.body.error.code).toBe('REFRESH_TOKEN_INVALID');
+
+    const logs = await db.withoutTenant((tx) =>
+      tx.query<{ action: string }>(
+        `SELECT action FROM audit_logs WHERE action = 'refresh_token_reuse_detected'`,
+      ),
+    );
+    expect(logs.rows).toHaveLength(0);
+
+    // A familia sobrevive: o token rotacionado continua valendo.
+    const rotatedCookie = refreshCookieHeader(rotated.headers['set-cookie'] as unknown as string[]);
+    await app.agent
+      .post('/api/v1/auth/refresh')
+      .set('Cookie', rotatedCookie)
+      .set(REQUESTED_WITH)
+      .send({})
+      .expect(200);
+  });
+
   it('reuso de cookie ja rotacionado -> REFRESH_TOKEN_INVALID e derruba a familia inteira', async () => {
     const session = await login();
 
@@ -202,6 +243,12 @@ describe('rotacao de refresh token', () => {
       .set(REQUESTED_WITH)
       .send({})
       .expect(200);
+
+    // Empurra a rotacao para ALEM da janela de tolerancia (D-166): so entao
+    // reapresentar o token antigo e roubo.
+    await db.withoutTenant((tx) =>
+      tx.query(`UPDATE refresh_tokens SET revoked_at = revoked_at - INTERVAL '1 minute' WHERE revoked_at IS NOT NULL`),
+    );
 
     // Atacante tenta usar o cookie antigo (ja rotacionado).
     const reuse = await app.agent

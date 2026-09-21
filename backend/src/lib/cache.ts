@@ -92,7 +92,15 @@ export class MemoryCache implements CacheService {
       this.store.set(key, { value: next, expiresAt: this.now() + ttlSeconds * 1000 });
       return next;
     }
-    const next = (entry.value as number) + 1;
+    // Mesmo contrato do Redis, que responde `ERR value is not an integer` a um
+    // INCR sobre chave com outro tipo (revisao do PR #45): sem esta checagem,
+    // um `set(key, [1, 2])` seguido de `incr(key)` virava a string '1,21' e
+    // `hits > limit` ficava silenciosamente falso — o teste em MemoryCache
+    // passava enquanto o Redis de producao lancava e caia no fail-closed.
+    if (typeof entry.value !== 'number') {
+      throw new TypeError(`cache.incr: chave '${key}' nao guarda um numero`);
+    }
+    const next = entry.value + 1;
     entry.value = next;
     return next;
   }
@@ -314,19 +322,25 @@ export async function verifyCacheReady(cache: CacheService): Promise<void> {
  * incidente que mais precisa ser visto.
  */
 const CACHE_UNAVAILABLE_LOG_THROTTLE_MS = 30_000;
-let lastCacheUnavailableLogAt = 0;
+const lastCacheUnavailableLogAt = new Map<string, number>();
 
 export function logCacheUnavailable(
   context: Record<string, unknown>,
   now: () => number = () => Date.now(),
 ): void {
+  // Throttle POR ESCOPO (revisao do PR #45): com um unico carimbo global, o
+  // primeiro fail-open do rate limit silenciava por 30 s os fail-CLOSED do
+  // login/refresh — o log do incidente mostrava "cota degradada" enquanto
+  // logins estavam sendo recusados com 503.
+  const scope = typeof context.scope === 'string' ? context.scope : '*';
   const at = now();
-  if (at - lastCacheUnavailableLogAt < CACHE_UNAVAILABLE_LOG_THROTTLE_MS) return;
-  lastCacheUnavailableLogAt = at;
+  const last = lastCacheUnavailableLogAt.get(scope) ?? 0;
+  if (at - last < CACHE_UNAVAILABLE_LOG_THROTTLE_MS) return;
+  lastCacheUnavailableLogAt.set(scope, at);
   logger.error('cache.unavailable', context);
 }
 
 /** Uso exclusivo de teste: reseta a janela de throttle entre casos. */
 export function resetCacheUnavailableThrottleForTest(): void {
-  lastCacheUnavailableLogAt = 0;
+  lastCacheUnavailableLogAt.clear();
 }

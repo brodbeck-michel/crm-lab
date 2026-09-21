@@ -2391,6 +2391,96 @@ erro, e a falha seria silenciosa — uma policy errada devolve zero linha em vez
 `backend/migrations/023_crm_login_bypassrls.sql`, `docs/guides/DEPLOYMENT.md`,
 `docs/database/SCHEMA.md`. Substitui a parte de `NOBYPASSRLS` da D-145; o resto da D-145 vale.
 
+### D-166: janela de tolerância de 10 s no reuso de refresh token + lock entre abas (CRMLAB-40)
+**Decisão:** no backend, um refresh token já rotacionado (`revoked_reason = 'rotated'`)
+reapresentado até 10 s depois da rotação devolve `401 REFRESH_TOKEN_INVALID` comum — **sem**
+derrubar a família e sem auditoria de roubo (`REFRESH_REUSE_GRACE_MS`). No frontend,
+`refreshAccessToken()` roda dentro de `navigator.locks.request('crm-lab:auth-refresh')` quando
+o Web Locks API existe, serializando o refresh entre abas do mesmo origin.
+**Motivo:** achado das revisões dos PRs #44 e #47 (CRMLAB-40). Desde o CRMLAB-32 o refresh
+roda em **toda** carga de página, e o cookie `crm_refresh` é um só para o navegador inteiro:
+restaurar uma sessão com duas abas mandava o mesmo cookie duas vezes; a primeira rotacionava, a
+segunda apresentava o token recém-revogado, a detecção de reuso (D-015) tratava como roubo,
+derrubava a família e deslogava o usuário das duas abas — com um `refresh_token_reuse_detected`
+falso na auditoria. `refreshInFlight` deduplicava só dentro de uma aba. O lock resolve a causa
+(a segunda aba espera e, quando entra, o cookie já é o novo); a janela no servidor é a rede de
+segurança para navegador sem Web Locks e para o 4401 do WebSocket. Um ladrão que reapresenta o
+token dentro dos 10 s ganha nada — ele já está revogado.
+**Impacto:** `backend/src/services/auth.service.ts`, `frontend/src/api/client.ts`,
+`backend/tests/auth/refresh.spec.ts`. D-015 continua valendo fora da janela.
+
+### D-167: `allkeys-lru` no Redis com duas chaves de segurança dentro — risco aceito e datado (CRMLAB-36)
+**Decisão:** o Redis segue com `maxmemory-policy allkeys-lru`, agora com `maxmemory 128mb`
+(era 200mb) dentro de `mem_limit 256m`. Reavaliar quando houver mais de ~10 tenants.
+**Motivo:** a revisão do PR #46 apontou que o contador de lockout do login e o nonce de
+anti-replay dos webhooks moram no mesmo Redis que o cache de analytics/catálogo, e a LRU pode
+evictá-los sob pressão de memória — o comentário do compose ("nada aqui é fonte da verdade")
+era falso para essas duas chaves. As alternativas são piores hoje: `noeviction` transforma
+cache cheio em `503` em todo login (o incidente do CRMLAB-34 ao contrário); instância separada
+é mais um container numa VPS de 2 vCPU para um cenário teórico com o volume atual. O que dá
+para fazer barato é dar folga real: `maxmemory` limita só o dataset — fragmentação, buffers de
+cliente e o fork do `BGREWRITEAOF` ficam por cima, e com 200mb num cgroup de 256m o Redis era
+morto por OOM **antes** da evicção sequer entrar.
+**Impacto:** `docker-compose.prod.yml`. Registrado como dívida técnica com gatilho explícito.
+
+### D-168: rota pública é reconhecida pelo caminho normalizado; lockout de login conta a TENTATIVA antes da senha (CRMLAB-34)
+**Decisão:** `isPublicRoute`/`isChannelWebhook` comparam o caminho **normalizado** como o
+roteador do Express o vê (`pathOf`: minúsculo, sem barra final, sem barras duplicadas,
+percent-decoding resolvido). O lockout de `/auth/login` passa a `INCR` primeiro e comparar
+depois — a 6ª tentativa em 15 min é recusada **sem olhar a senha**; acertar zera o contador. A
+janela é fixa a partir da 1ª tentativa.
+**Motivo:** dois achados da revisão do PR #45. (1) O roteador do Express é case-insensitive e
+não-estrito: `/API/V1/AUTH/REFRESH` e `/api/v1/auth/refresh/` caem no handler certo, mas a
+comparação crua de `originalUrl` não os reconhecia como rota pública — com o Redis fora do ar
+caíam no ramo fail-**open**, sem limite, em vez do fail-closed da D-139. (2) O lockout lia o
+contador antes do bcrypt e incrementava depois, só na falha: check-then-act. Uma rajada de 100
+tentativas paralelas passava toda pela leitura antes de qualquer incremento — o próprio teste
+do PR exigia que 20 senhas erradas paralelas voltassem 401, ou seja, exigia o buraco. Contar a
+tentativa não muda nada para quem acerta (o sucesso zera); para quem erra, é o mesmo limite de
+5. Janela fixa em vez de renovar o TTL a cada erro é deliberado: renovar deixava um atacante
+paciente segurar o lockout da vítima indefinidamente, um palpite a cada 14 min.
+**Impacto:** `backend/src/http/middleware/rate-limit.ts`, `backend/src/services/auth.service.ts`,
+`backend/src/lib/cache.ts` (throttle de log por escopo; `MemoryCache.incr` lança em chave
+não-numérica como o Redis), `docs/api/API_CONTRACTS.md` §Rate Limiting (headers `RateLimit-*`
+e janela fixa documentados — estavam fora do contrato, Regra Zero).
+
+### D-169: MIME de mídia comparado normalizado e por categoria; saída rejeita, entrada rebaixa; allow-list vale na leitura (CRMLAB-31)
+**Decisão:** `normalizeMediaMimeType` (minúsculo, sem parâmetros, sinônimos resolvidos) antes
+de qualquer comparação com a allow-list; o sniff de magic bytes compara **categoria**
+(imagem/áudio/PDF/outro), não string. `POST /conversations/:id/attachments` recusa MIME fora da
+lista com `400 VALIDATION_ERROR`; webhooks continuam rebaixando para `octet-stream`.
+`GET /media/:id` aplica a allow-list ao MIME **gravado**. Entram na lista `image/heic`,
+`application/vnd.ms-excel`, `text/csv`. Uma única função `mediaCategoryOf` substitui os cinco
+mapeamentos MIME→categoria que existiam.
+**Motivo:** revisão do PR #43, dois achados HIGH. `audio/ogg; codecs=opus` é o mimetype
+**padrão** do recado de voz do WhatsApp e falhava na comparação exata contra `audio/ogg` — todo
+áudio recebido virava `application/octet-stream`, o player sumia e a bolha mostrava "Baixar
+anexo (doc)". O `file-type` rotula Opus-em-Ogg com parâmetro e M4A como `audio/x-m4a`, então a
+comparação de string do sniff derrubava anexo legítimo também. Na saída, rebaixar em silêncio
+fazia o atendente ver 201 e o paciente receber um "documento" no lugar da foto. E a rota de
+leitura nunca consultou a allow-list que `media.types.ts` dizia ser "fonte única" para ela —
+uma linha gravada antes do CRMLAB-31 com `image/svg+xml` seguia servida `inline` com esse
+Content-Type: o vetor de XSS do card, aberto para o dado legado.
+**Impacto:** `shared/types/media.types.ts`, `backend/src/services/media.service.ts`,
+`backend/src/controllers/media.routes.ts`, `frontend/src/components/conversation/MessageBubble.tsx`
+(anexo externo vira link cru — passar `attachmentUrl` absoluto de outro host pelo fetch
+autenticado mandava o Bearer para terceiro; PDF/doc baixado só no clique, não na montagem),
+`docs/api/API_CONTRACTS.md` §Hardening de mídia.
+
+### D-170: headers de segurança do nginx num `include` compartilhado; `connect-src 'self'` sem `wss:` (CRMLAB-42)
+**Decisão:** os 5 headers ficam em `nginx/security-headers.conf`, incluído no `server {}` e em
+**toda** location que declara `add_header` próprio (`= /healthz`, `/assets/`, `= /index.html`).
+A CSP perde o `wss:` de `connect-src`.
+**Motivo:** a D-144 optou por repetir os headers em duas locations e afirmou um invariante de
+"3 cópias" que já estava errado no dia em que foi escrito — `location = /healthz` tinha
+`add_header` e ficou sem nenhum (CRMLAB-42). Com o `include`, a próxima location que ganhar um
+`add_header` precisa de uma linha, e não há invariante para esquecer. Sobre a CSP: `'self'` já
+cobre o WebSocket do próprio origin (CSP3); `wss:` sozinho abria a política para **qualquer**
+host wss:// — exatamente o canal que um script injetado usaria para exfiltrar, sem gerar
+relatório (revisão do PR #44).
+**Impacto:** `nginx/security-headers.conf` (novo), `nginx/frontend.conf`, `frontend/Dockerfile`.
+Substitui a estratégia de repetição da D-144.
+
 ## Template para novas decisões
 
 ```

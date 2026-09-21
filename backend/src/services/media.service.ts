@@ -6,7 +6,13 @@
  * projeto nem usa — Express 4 recebe o arquivo em base64 dentro do JSON.
  */
 import { fileTypeFromBuffer } from 'file-type';
-import { FALLBACK_MEDIA_MIME_TYPE, isAllowedMediaMimeType, type MessageType } from '@crm-lab/shared';
+import {
+  FALLBACK_MEDIA_MIME_TYPE,
+  isAllowedMediaMimeType,
+  mediaCategoryOf,
+  normalizeMediaMimeType,
+  type MessageType,
+} from '@crm-lab/shared';
 import { BusinessError, notFound } from '../http/errors.js';
 import { readMediaFile, writeMediaFile } from '../lib/media-storage.js';
 import { logger } from '../lib/logger.js';
@@ -16,10 +22,9 @@ import type { MediaRepository } from '../repositories/media.repository.js';
 export const MAX_MEDIA_BYTES = 15 * 1024 * 1024;
 
 export function messageTypeFromMime(mimeType: string): MessageType {
-  if (mimeType.startsWith('image/')) return 'image';
-  if (mimeType.startsWith('audio/')) return 'audio';
-  if (mimeType === 'application/pdf') return 'pdf';
-  return 'doc';
+  const category = mediaCategoryOf(mimeType);
+  if (category === 'other') return 'doc';
+  return category;
 }
 
 export interface StoredMedia {
@@ -36,7 +41,7 @@ export interface StoredMedia {
  * assinatura binária para conferir.
  */
 function needsMagicByteSniff(mimeType: string): boolean {
-  return mimeType.startsWith('image/') || mimeType.startsWith('audio/') || mimeType === 'application/pdf';
+  return mediaCategoryOf(mimeType) !== 'other';
 }
 
 /**
@@ -48,7 +53,9 @@ function needsMagicByteSniff(mimeType: string): boolean {
  * (ex.: HTML/SVG disfarçado de PDF ou imagem — o vetor de XSS do card).
  */
 export async function resolveStoredMimeType(declaredMimeType: string, buffer: Buffer): Promise<string> {
-  const normalized = declaredMimeType.trim().toLowerCase();
+  // `normalizeMediaMimeType` tira parametros (`; codecs=opus`) e resolve
+  // sinonimos — sem isso o recado de voz do WhatsApp caia fora da allow-list.
+  const normalized = normalizeMediaMimeType(declaredMimeType);
   if (!isAllowedMediaMimeType(normalized)) {
     logger.warn('media.mime_not_allowed', { declared: normalized });
     return FALLBACK_MEDIA_MIME_TYPE;
@@ -71,11 +78,30 @@ export async function resolveStoredMimeType(declaredMimeType: string, buffer: Bu
     });
     return normalized;
   }
-  if (detected && detected.mime !== normalized) {
+  // Compara por CATEGORIA, nao por string (revisao do PR #43). O objetivo do
+  // sniff e pegar HTML/SVG/PDF disfarcado de imagem (troca de categoria), nao
+  // punir o `file-type` por rotular Opus-em-Ogg como `audio/ogg; codecs=opus`
+  // ou M4A como `audio/x-m4a` — string diferente, mesma coisa, e o anexo
+  // legitimo virava `application/octet-stream`.
+  if (detected && mediaCategoryOf(detected.mime) !== mediaCategoryOf(normalized)) {
     logger.warn('media.mime_mismatch', { declared: normalized, detected: detected.mime });
     return FALLBACK_MEDIA_MIME_TYPE;
   }
   return normalized;
+}
+
+/**
+ * Anexo do ATENDENTE (saida): MIME fora da allow-list e erro de validacao, nao
+ * rebaixamento silencioso (revisao do PR #43). Na entrada (webhook) rebaixar e
+ * o certo — nao ha quem avisar. Na saida ha: o atendente anexava uma foto
+ * HEIC ou um `.xls`, via 201, e o paciente recebia um "documento" generico sem
+ * ninguem perceber que a foto nao foi.
+ */
+export function assertOutboundMimeAllowed(declaredMimeType: string): void {
+  if (isAllowedMediaMimeType(declaredMimeType)) return;
+  throw new BusinessError('VALIDATION_ERROR', {
+    fields: { mimeType: `Tipo de arquivo nao aceito (${normalizeMediaMimeType(declaredMimeType)})` },
+  });
 }
 
 export interface ReadMedia {
@@ -95,6 +121,7 @@ export class MediaService {
     tenantId: string,
     dto: { fileName: string; mimeType: string; contentBase64: string },
   ): Promise<StoredMedia> {
+    assertOutboundMimeAllowed(dto.mimeType);
     const buffer = decodeBase64(dto.contentBase64);
     assertWithinLimit(buffer);
     const mimeType = await resolveStoredMimeType(dto.mimeType, buffer);

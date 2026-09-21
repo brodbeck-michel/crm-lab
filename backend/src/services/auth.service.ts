@@ -32,6 +32,7 @@ import type { DbClient } from '../db/types.js';
 import { BusinessError, notFound } from '../http/errors.js';
 import type { CacheService } from '../lib/cache.js';
 import { logCacheUnavailable } from '../lib/cache.js';
+import { logger } from '../lib/logger.js';
 import { hashPassword, verifyPassword } from '../lib/password.js';
 import { checkPasswordPolicy } from '../lib/password-policy.js';
 import {
@@ -106,6 +107,13 @@ export const LOGIN_FAILURE_LIMIT = 5;
 export const LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60;
 
 /**
+ * Por quanto tempo um refresh token JA ROTACIONADO pode ser reapresentado sem
+ * ser tratado como roubo (D-166). Cobre a corrida entre abas do mesmo
+ * navegador no bootstrap da pagina — ver o comentario em `refresh`.
+ */
+export const REFRESH_REUSE_GRACE_MS = 10_000;
+
+/**
  * Hash bcrypt descartavel usado quando o e-mail NAO existe. Comparar contra ele
  * gasta o mesmo tempo de um bcrypt real, eliminando o canal lateral de tempo
  * que revelaria a existencia da conta. Calculado uma vez por processo.
@@ -145,29 +153,36 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     throw new BusinessError('SERVICE_UNAVAILABLE');
   };
 
-  const assertNotThrottled = async (email: string, ip: string): Promise<void> => {
-    const hits =
-      (await cache
-        .get<number>(failureKey(email, ip))
-        .catch((err: unknown) => onCacheFailure('auth.login_throttle_check', err))) ?? 0;
-    if (hits >= LOGIN_FAILURE_LIMIT) {
+  /**
+   * Conta a TENTATIVA antes de olhar a senha, e recusa quando o contador passa
+   * do limite — `INCR` primeiro, compara depois, o mesmo padrao do
+   * `rate-limit.ts` (revisao do PR #45).
+   *
+   * A versao anterior lia o contador ANTES do bcrypt e incrementava DEPOIS,
+   * so na falha. Atomico, mas check-then-act: 100 tentativas em paralelo
+   * passavam TODAS pela leitura (contador ainda em zero) antes de qualquer
+   * incremento terminar — o proprio teste do PR #45 provava isso ao exigir
+   * que 20 senhas erradas paralelas voltassem 401 e nao 429. O lockout de 5
+   * so valia para tentativas em serie; uma rajada tinha ~100 palpites.
+   *
+   * Contar tentativas (e nao falhas) muda pouco na pratica: quem acerta a
+   * senha zera o contador (`clearFailures`), entao 5 logins certos seguidos
+   * nunca travam ninguem. Quem erra 5 vezes e barrado na 6a, como antes.
+   * A janela agora e FIXA a partir da 1a tentativa (o `EXPIRE` so entra na
+   * criacao da chave) em vez de deslizar a cada falha — deliberado: renovar o
+   * TTL a cada erro e o que deixava um atacante paciente segurar o lockout
+   * de uma vitima para sempre, um palpite a cada 14 min.
+   *
+   * Redis fora do ar: fail-CLOSED (ver `onCacheFailure`).
+   */
+  const countAttempt = async (email: string, ip: string): Promise<void> => {
+    const hits = await cache
+      .incr(failureKey(email, ip), LOGIN_FAILURE_WINDOW_SECONDS)
+      .catch((err: unknown) => onCacheFailure('auth.login_throttle_check', err));
+    if (hits > LOGIN_FAILURE_LIMIT) {
       throw new BusinessError('RATE_LIMIT_EXCEEDED', {
         retryAfter: LOGIN_FAILURE_WINDOW_SECONDS,
       });
-    }
-  };
-
-  /**
-   * `INCR` + `EXPIRE` (so na 1a falha) num unico comando atomico (D-139),
-   * substituindo o `get` -> soma -> `set` antigo: 20 senhas erradas em
-   * paralelo faziam as 20 lerem o MESMO contador e escreverem o MESMO
-   * `hits + 1`, perdendo 19 incrementos — o lockout de 5 nunca disparava.
-   */
-  const registerFailure = async (email: string, ip: string): Promise<void> => {
-    try {
-      await cache.incr(failureKey(email, ip), LOGIN_FAILURE_WINDOW_SECONDS);
-    } catch (err) {
-      onCacheFailure('auth.login_register_failure', err);
     }
   };
 
@@ -229,7 +244,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     password: string,
     meta: RequestMeta,
   ): Promise<LoginResult> => {
-    await assertNotThrottled(email, meta.ip);
+    await countAttempt(email, meta.ip);
 
     // EXCECAO AUDITADA de RLS — unica no sistema (ver doc do metodo em db/types.ts).
     const candidates = await db.withoutTenant((tx) =>
@@ -250,7 +265,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     }
 
     if (!matched) {
-      await registerFailure(email, meta.ip);
+      // A tentativa ja foi contada em `countAttempt`, antes do bcrypt.
       throw new BusinessError('INVALID_CREDENTIALS');
     }
     const user = matched;
@@ -341,6 +356,22 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
           // sinal justamente quando ele importa.
           return { kind: 'replay_after_security' as const, userId: stored.userId };
         }
+        // Janela de tolerancia (revisao do PR #44, D-166): um token rotacionado
+        // ha POUCOS segundos reapresentado nao e roubo — e a outra aba do
+        // mesmo navegador, cujo POST /auth/refresh saiu antes do Set-Cookie da
+        // primeira chegar. Desde o CRMLAB-32 o refresh roda em TODA carga de
+        // pagina, entao restaurar uma sessao com duas abas produzia isso de
+        // forma deterministica: a segunda aba caia aqui, derrubava a familia e
+        // deslogava o usuario das duas, com um `refresh_token_reuse_detected`
+        // falso na auditoria. Dentro da janela: 401 comum, sem tocar na
+        // familia. Um ladrao de verdade que reapresenta o token dentro de 10 s
+        // ganha exatamente nada com isso — o token ja esta revogado.
+        if (
+          stored.revokedSecondsAgo !== null &&
+          stored.revokedSecondsAgo * 1000 < REFRESH_REUSE_GRACE_MS
+        ) {
+          return { kind: 'reuse_within_grace' as const, userId: stored.userId };
+        }
         const revoked = await refreshRepo.revokeAllForUser(tx, stored.userId, 'rotated');
         return { kind: 'reuse' as const, userId: stored.userId, revoked };
       }
@@ -389,6 +420,9 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
           ipAddress: meta.ip,
           userAgent: meta.userAgent,
         });
+        throw new BusinessError('REFRESH_TOKEN_INVALID');
+      case 'reuse_within_grace':
+        logger.warn('auth.refresh_reuse_within_grace', { tenantId, userId: outcome.userId });
         throw new BusinessError('REFRESH_TOKEN_INVALID');
       case 'replay_after_security':
         // Mesma resposta de qualquer token invalido — a auditoria e o unico

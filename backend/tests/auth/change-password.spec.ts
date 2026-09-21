@@ -195,6 +195,12 @@ describe('PATCH /users/me/password', () => {
       .expect(200);
     const novo = refreshCookieValue(rotacionado.headers['set-cookie'] as string[] | undefined);
 
+    // Fora da janela de tolerancia (D-166): dentro dela, reapresentar o token
+    // e a outra aba do mesmo navegador, nao roubo.
+    await db.withoutTenant((tx) =>
+      tx.query(`UPDATE refresh_tokens SET revoked_at = revoked_at - INTERVAL '1 minute' WHERE revoked_at IS NOT NULL`),
+    );
+
     // Reusar o token ja rotacionado é sinal de roubo: derruba a familia toda.
     await app.agent
       .post('/api/v1/auth/refresh')

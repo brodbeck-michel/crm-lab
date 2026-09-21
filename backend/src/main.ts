@@ -42,6 +42,11 @@ async function bootstrap(): Promise<void> {
   logger.debug('server.config', safeEnv());
 
   let shuttingDown = false;
+  // Codigo com que o processo VAI sair. Um erro fatal que chega no meio de um
+  // shutdown por SIGTERM (ja em andamento, `shuttingDown = true`) precisa
+  // forcar 1 mesmo assim — senao `docker inspect` mostra saida limpa para uma
+  // queda (revisao do PR #24).
+  let finalExitCode = 0;
   /**
    * `exitCode` distingue a saida PEDIDA (SIGTERM/SIGINT, codigo 0) da saida por
    * defeito (`uncaughtException`, codigo 1). O codigo importa: o
@@ -49,6 +54,7 @@ async function bootstrap(): Promise<void> {
    * e o que diz, no `docker inspect`, se o processo saiu ou se caiu.
    */
   const shutdown = (signal: string, exitCode = 0): void => {
+    finalExitCode = Math.max(finalExitCode, exitCode);
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info('server.shutdown_started', { signal });
@@ -65,9 +71,9 @@ async function bootstrap(): Promise<void> {
           await wsHub.close();
           await cache.close();
           await closeDb();
-          logger.info('server.shutdown_complete', { signal });
+          logger.info('server.shutdown_complete', { signal, exitCode: finalExitCode });
           clearTimeout(forceExit);
-          process.exit(exitCode);
+          process.exit(finalExitCode);
         } catch (err) {
           logger.error('server.shutdown_failed', {
             signal,

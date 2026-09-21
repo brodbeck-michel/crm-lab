@@ -16,6 +16,12 @@ import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
 import { getContext } from '../http/context.js';
 import { denyPlatformOperator, requireAuth } from '../http/middleware/auth.js';
 import { validate, validated } from '../http/middleware/validate.js';
+import {
+  FALLBACK_MEDIA_MIME_TYPE,
+  isAllowedMediaMimeType,
+  mediaCategoryOf,
+  normalizeMediaMimeType,
+} from '@crm-lab/shared';
 import { MediaRepository } from '../repositories/media.repository.js';
 import { MediaService } from '../services/media.service.js';
 
@@ -35,7 +41,22 @@ function handle(fn: (req: Request, res: Response) => Promise<void>): RequestHand
  * renderizar no mesmo origin da SPA.
  */
 function dispositionFor(mimeType: string): 'inline' | 'attachment' {
-  return mimeType.startsWith('image/') || mimeType.startsWith('audio/') ? 'inline' : 'attachment';
+  const category = mediaCategoryOf(mimeType);
+  return category === 'image' || category === 'audio' ? 'inline' : 'attachment';
+}
+
+/**
+ * A allow-list vale tambem na LEITURA (revisao do PR #43). `media.types.ts`
+ * prometia ser "fonte unica para `MediaService` (grava) e `media.routes.ts`
+ * (serve)", mas esta rota nunca a consultava: uma linha de `message_media`
+ * gravada ANTES do CRMLAB-31 com `image/svg+xml` continuava saindo com esse
+ * Content-Type e `inline` — o proprio vetor de XSS do card, aberto para todo
+ * o dado legado. Fora da lista: `application/octet-stream` + `attachment`.
+ */
+export function servedMimeType(storedMimeType: string): string {
+  return isAllowedMediaMimeType(storedMimeType)
+    ? normalizeMediaMimeType(storedMimeType)
+    : FALLBACK_MEDIA_MIME_TYPE;
 }
 
 export function getMedia(service: MediaService): RequestHandler {
@@ -43,12 +64,16 @@ export function getMedia(service: MediaService): RequestHandler {
     const ctx = getContext(req);
     const { id } = validated<{ id: string }>(req, 'params');
     const media = await service.readOrThrow(ctx.tenantId, id);
+    const mimeType = servedMimeType(media.mimeType);
 
-    res.setHeader('Content-Type', media.mimeType);
+    res.setHeader('Content-Type', mimeType);
+    // Redundante com o `helmet()` global de `app.ts`, e proposital: esta e a
+    // unica rota que serve bytes que o USUARIO mandou. Se um dia o helmet sair
+    // ou for reconfigurado, ela continua protegida sozinha.
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader(
       'Content-Disposition',
-      `${dispositionFor(media.mimeType)}; filename="${encodeURIComponent(media.fileName)}"`,
+      `${dispositionFor(mimeType)}; filename="${encodeURIComponent(media.fileName)}"`,
     );
     res.status(200).send(media.buffer);
   });

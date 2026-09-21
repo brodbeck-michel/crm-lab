@@ -290,11 +290,15 @@ describe('POST /auth/login', () => {
           .send({ email: user.email, password: 'errada-tambem' }),
       ),
     );
-    // Nenhuma das 20 pode "vazar" um status inesperado — todas 401 (o lockout
-    // atua so DEPOIS que o contador acumulou, e o pre-check de todas roda
-    // antes de qualquer incremento terminar, entao a rajada inteira ainda
-    // compara senha).
-    expect(attempts.every((r) => r.status === 401)).toBe(true);
+    // Nenhuma das 20 pode "vazar" um status inesperado: 401 (errou a senha) ou
+    // 429 (a rajada ja passou do limite). A versao anterior deste teste
+    // EXIGIA 20 x 401 — ou seja, exigia que a rajada inteira comparasse senha,
+    // que e exatamente o buraco de check-then-act que a revisao do PR #45
+    // apontou. Com INCR-primeiro, no maximo 5 das 20 chegam ao bcrypt.
+    const statuses = attempts.map((r) => r.status);
+    expect(statuses.every((s) => s === 401 || s === 429)).toBe(true);
+    expect(statuses.filter((s) => s === 401).length).toBeLessThanOrEqual(5);
+    expect(statuses.filter((s) => s === 429).length).toBeGreaterThanOrEqual(15);
 
     // O que importa: o contador ficou correto DEPOIS da rajada — a proxima
     // tentativa, mesmo com a senha certa, e barrada.

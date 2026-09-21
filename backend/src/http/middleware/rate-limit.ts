@@ -68,8 +68,35 @@ export const RATE_LIMIT_PREFIX = 'ratelimit:';
  * query string, dai o `startsWith` sobre o caminho puro.
  */
 export function isChannelWebhook(req: Request): boolean {
-  const [path] = req.originalUrl.split('?');
-  return path?.startsWith('/api/v1/webhooks/') ?? false;
+  const path = pathOf(req);
+  return path === '/api/v1/webhooks' || path.startsWith('/api/v1/webhooks/');
+}
+
+/**
+ * Caminho da requisicao NORMALIZADO do jeito que o roteador do Express o
+ * enxerga (revisao do PR #45): minusculo, sem barras duplicadas, sem barra
+ * final, sem query string e com percent-encoding resolvido.
+ *
+ * O roteador do Express e case-insensitive e nao-estrito por padrao, entao
+ * `/API/V1/AUTH/REFRESH`, `/api/v1/auth/refresh/` e `/api/v1/auth//refresh`
+ * caem TODOS no handler de `/auth/refresh`. Comparar a string crua de
+ * `originalUrl` com uma lista de caminhos deixava essas variantes fora de
+ * `isPublicRoute` — e, com o Redis fora do ar, a rota publica caia no ramo
+ * fail-OPEN em vez do fail-CLOSED que a D-139 promete: `/auth/refresh`
+ * sem limite nenhum, so por trocar uma letra de caixa.
+ */
+export function pathOf(req: Request): string {
+  const [raw = ''] = req.originalUrl.split('?');
+  let path = raw;
+  try {
+    path = decodeURIComponent(raw);
+  } catch {
+    // Percent-encoding invalido: fica a string crua — o roteador tambem nao
+    // vai casar nada com ela.
+  }
+  path = path.toLowerCase().replace(/\/{2,}/g, '/');
+  if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
+  return path;
 }
 
 /**
@@ -84,8 +111,7 @@ const PUBLIC_ROUTE_PATHS = ['/api/v1/auth/login', '/api/v1/auth/refresh'];
 
 export function isPublicRoute(req: Request): boolean {
   if (isChannelWebhook(req)) return true;
-  const [path] = req.originalUrl.split('?');
-  return PUBLIC_ROUTE_PATHS.includes(path ?? '');
+  return PUBLIC_ROUTE_PATHS.includes(pathOf(req));
 }
 
 /**
@@ -179,9 +205,11 @@ export function rateLimit(options: RateLimitOptions): RequestHandler {
         // fica fail-OPEN, porque o JWT ja e a defesa primaria dela e recusar
         // TODO o trafego autenticado por causa do cache seria trocar uma
         // degradacao de cota por uma indisponibilidade total.
+        // `pathOf`, nao `originalUrl`: a query string de webhook/verificacao
+        // carrega token — nao pode ir para uma linha de log de erro.
         logCacheUnavailable({
           scope: 'rate-limit',
-          path: req.originalUrl,
+          path: pathOf(req),
           message: err instanceof Error ? err.message : String(err),
         });
         if (isPublicRoute(req)) {

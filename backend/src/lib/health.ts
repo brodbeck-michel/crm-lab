@@ -68,6 +68,27 @@ export interface HealthCheckerOptions {
 
 export type HealthChecker = () => Promise<HealthReport>;
 
+/**
+ * Versao do relatorio que pode sair por uma rota PUBLICA (revisao do PR #24).
+ *
+ * `/api/v1/health` e aberta, sem rate limit e atravessa o nginx ate a
+ * internet. O `error` de cada checagem e a mensagem CRUA do driver —
+ * `password authentication failed for user "crm"`, `connect ECONNREFUSED
+ * redis:6379` — ou seja, nome de role, host e porta internos entregues a
+ * quem passar. A mensagem completa continua no log (`health.degraded`), que e
+ * onde quem opera vai olhar; para fora sai so que a dependencia caiu.
+ */
+export function publicHealthReport(report: HealthReport): HealthReport {
+  const scrub = (check: DependencyCheck): DependencyCheck =>
+    check.status === 'down'
+      ? { status: 'down', latencyMs: check.latencyMs, error: 'indisponivel' }
+      : check;
+  return {
+    ...report,
+    checks: { database: scrub(report.checks.database), cache: scrub(report.checks.cache) },
+  };
+}
+
 async function probe(
   run: () => Promise<unknown>,
   timeoutMs: number,

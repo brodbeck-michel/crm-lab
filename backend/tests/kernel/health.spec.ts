@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import type { DbClient, QueryResult, Row } from '../../src/db/types.js';
 import { MemoryCache, type CacheService } from '../../src/lib/cache.js';
-import { createHealthChecker } from '../../src/lib/health.js';
+import { createHealthChecker, publicHealthReport } from '../../src/lib/health.js';
 import { createTestApp } from '../helpers/test-app.js';
 
 /** DbClient minimo: so `query` importa para o health. */
@@ -71,6 +71,25 @@ describe('createHealthChecker', () => {
     expect(report.checks.database.error).toContain('ECONNREFUSED');
     // O cache continua de pe: o relatorio nao pode culpar quem esta vivo.
     expect(report.checks.cache.status).toBe('up');
+  });
+
+  /**
+   * Revisao do PR #24: `/api/v1/health` e publica, sem rate limit e atravessa
+   * o nginx. O `error` cru do driver entrega role, host e porta internos a
+   * quem passar — fica no log (`health.degraded`), nunca na resposta.
+   */
+  it('publicHealthReport esconde a mensagem crua do driver, mantendo status e latencia', async () => {
+    const report = await createHealthChecker({ db: dbFora(), cache: new MemoryCache() })();
+    const publico = publicHealthReport(report);
+
+    expect(publico.status).toBe('degraded');
+    expect(publico.checks.database.status).toBe('down');
+    expect(publico.checks.database.error).toBe('indisponivel');
+    expect(JSON.stringify(publico)).not.toContain('ECONNREFUSED');
+    // O que esta de pe sai igual — sem `error`.
+    expect(publico.checks.cache).toEqual(report.checks.cache);
+    // E o relatorio ORIGINAL continua com o detalhe, para o log.
+    expect(report.checks.database.error).toContain('ECONNREFUSED');
   });
 
   it('marca `down` por TIMEOUT em vez de ficar pendurado', async () => {

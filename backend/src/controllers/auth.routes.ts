@@ -97,8 +97,18 @@ export function authModule(deps: ApiModuleDeps): ApiModule {
     validate(loginSchema, 'body'),
     (req: Request, res: Response, next): void => {
       const dto = validated<LoginRequest>(req, 'body');
-      auth
-        .login(dto.email, dto.password, metaOf(req))
+      // Login por cima de uma sessao viva (mesmo navegador, outro usuario ou o
+      // mesmo): o cookie que vai ser SOBRESCRITO carrega um refresh token que
+      // continuaria valido no banco por ate 7 dias sem cliente nenhum
+      // apontando para ele (revisao do PR #44). Este e o unico momento em que
+      // o servidor tem esse token na mao — revoga, best-effort, antes de
+      // emitir o novo. `logout` ja e idempotente e nunca lanca por token ruim.
+      const previous = (req.cookies as Record<string, string> | undefined)?.[REFRESH_COOKIE_NAME];
+      const revokePrevious = previous
+        ? auth.logout(previous, metaOf(req)).then(() => undefined, () => undefined)
+        : Promise.resolve();
+      revokePrevious
+        .then(() => auth.login(dto.email, dto.password, metaOf(req)))
         .then(({ refreshToken, ...body }) => {
           setRefreshCookie(res, refreshToken);
           res.status(200).json(body);

@@ -228,7 +228,31 @@ msg "Migrations"
 dc run --rm migrate
 
 msg "Subindo"
+# IDs de ANTES, para saber quem o compose realmente recriou (CRMLAB-43).
+BACKEND_ANTES="$(dc ps -q backend 2>/dev/null || true)"
+FRONTEND_ANTES="$(dc ps -q frontend 2>/dev/null || true)"
 dc up -d
+
+# ---------------------------------------------------------------------------
+# 4b. Frontend precisa reaprender o IP do backend (CRMLAB-43)
+#
+# O compose so recria quem mudou. Uma alteracao que afete SO o `backend`
+# (troca de segredo, LOG_LEVEL, a propria DATABASE_URL da D-165) recria o
+# backend com um IP novo e deixa o `frontend` de pe — e o nginx dele guarda o
+# IP resolvido na carga da conf. Foi o que tirou a API de producao do ar por
+# ~6 min em 21/09/2026.
+#
+# O `resolver` do `nginx/frontend.conf` ja corrige isso sozinho a cada 10 s.
+# Este restart e defesa em profundidade e mata a janela de 10 s: custa ~2 s e
+# so roda no caso especifico (backend trocou, frontend nao).
+# ---------------------------------------------------------------------------
+BACKEND_DEPOIS="$(dc ps -q backend 2>/dev/null || true)"
+FRONTEND_DEPOIS="$(dc ps -q frontend 2>/dev/null || true)"
+if [[ -n "$BACKEND_ANTES" && "$BACKEND_ANTES" != "$BACKEND_DEPOIS" \
+      && -n "$FRONTEND_ANTES" && "$FRONTEND_ANTES" == "$FRONTEND_DEPOIS" ]]; then
+  msg "Backend recriado e frontend nao — reiniciando o frontend (CRMLAB-43)"
+  dc restart frontend || info "restart do frontend falhou (o resolver do nginx cobre em ~10s)"
+fi
 
 # Limpeza (CRMLAB-36): sem isso, imagem antiga + cache de build acumulam
 # indefinidamente no disco (33 imagens / 3,4 GB de cache medidos na auditoria
@@ -266,6 +290,21 @@ for tentativa in $(seq 1 30); do
   fi
   sleep 2
 done
+
+# Chegou aqui: o health nunca respondeu 200. Antes de abortar, diz o que o
+# operador iria descobrir na mao (CRMLAB-43) — se o nginx esta batendo num IP
+# que nao e mais o do backend, a mensagem generica manda investigar o backend,
+# que esta vivo, e esconde a causa real.
+IP_BACKEND="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
+  "$(dc ps -q backend 2>/dev/null)" 2>/dev/null || true)"
+IP_NO_NGINX="$(dc logs --tail 200 frontend 2>/dev/null \
+  | grep -oE 'upstream: "http://[0-9.]+' | tail -1 | grep -oE '[0-9.]+$' || true)"
+if [[ -n "$IP_BACKEND" && -n "$IP_NO_NGINX" && "$IP_BACKEND" != "$IP_NO_NGINX" ]]; then
+  printf '\n\033[1;33mPISTA: o nginx esta tentando %s e o backend esta em %s (CRMLAB-43).\n' \
+    "$IP_NO_NGINX" "$IP_BACKEND"
+  printf 'Resolve agora com: docker compose -p %s -f %s restart frontend\033[0m\n' \
+    "$PROJETO_ESPERADO" "$COMPOSE_FILE"
+fi
 
 dc ps
 # O corpo do 503 diz QUAL dependencia caiu — imprimir aqui poupa a primeira

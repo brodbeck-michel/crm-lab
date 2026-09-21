@@ -145,6 +145,49 @@ if [[ "$APP_ENV" == 'production' ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 3b. CI verde no SHA (CRMLAB-38 item 6, D-150)
+#
+# Ate aqui o script confere que a arvore esta limpa e (em producao) que a tag
+# bate com a versao — mas nunca perguntou ao GitHub se o CI daquele commit
+# passou. Builda e sobe local mesmo com o `Typecheck, lint e testes` vermelho
+# no GitHub Actions, se alguem rodar o deploy sem olhar o PR.
+#
+# EXIGE `gh` autenticado NA MAQUINA QUE RODA ESTE SCRIPT (a VPS) — `gh auth
+# login` e passo manual, feito uma vez, fora deste script (ver
+# docs/guides/DEPLOYMENT.md). Sem `gh` instalado/autenticado, aborta com
+# mensagem clara em vez de seguir cego — silenciosamente pular a checagem
+# seria pior que nao te-la escrito.
+# ---------------------------------------------------------------------------
+msg "Conferindo CI do commit $SHA"
+if ! command -v gh >/dev/null 2>&1; then
+  erro "gh (GitHub CLI) nao encontrado nesta maquina. Instale e rode 'gh auth login' antes de reusar este script — ver docs/guides/DEPLOYMENT.md."
+fi
+if ! gh auth status >/dev/null 2>&1; then
+  erro "gh instalado mas nao autenticado. Rode 'gh auth login' (uma vez, nesta maquina) antes de reusar este script."
+fi
+# SEM `--branch` (correcao da revisao deste card): o fluxo documentado de
+# homologacao e `deploy.sh --ref <branch da onda>`, e o run de CI daquele commit
+# fica atribuido a branch dele — nunca a `main`. Com `--branch main` fixo, TODO
+# deploy de hml por `--ref` abortava com `sem_run`. O filtro que importa e o
+# commit, que e exato; a branch so restringia sem ganho.
+CI_CONCLUSAO="$(gh run list --commit "$(git rev-parse HEAD)" --workflow CI \
+  --json conclusion --jq '.[0].conclusion // "sem_run"' 2>/dev/null || echo 'erro_consulta')"
+case "$CI_CONCLUSAO" in
+  success)
+    info "CI verde para $SHA"
+    ;;
+  sem_run)
+    erro "nenhum run do workflow CI encontrado para $SHA. Push feito? CI ainda rodando?"
+    ;;
+  erro_consulta)
+    erro "nao consegui consultar o CI via 'gh run list' (rede/token?). Rode 'gh auth status' manualmente pra diagnosticar."
+    ;;
+  *)
+    erro "CI do commit $SHA nao passou (conclusion=$CI_CONCLUSAO). Corrija antes de fazer deploy."
+    ;;
+esac
+
+# ---------------------------------------------------------------------------
 # 4. Imagem -> migrate -> up -> limpeza
 #
 # CRMLAB-36: o CI publica `backend`/`frontend` no GHCR a cada push em `main`

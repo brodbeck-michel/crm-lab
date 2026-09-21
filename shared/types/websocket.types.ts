@@ -43,3 +43,16 @@ export interface WsEvent<E extends WsEventName = WsEventName> {
  * de reconectar" em vez de so cair no backoff generico.
  */
 export const WS_CLOSE_UNAUTHORIZED = 4401;
+
+/**
+ * Codigo de close usado quando o servidor derruba o socket MAIS ANTIGO do
+ * mesmo usuario por causa do teto de sockets por usuario (CRMLAB-33).
+ *
+ * Existe porque `terminate()` chega no browser como 1006 (queda anormal), que
+ * o cliente trata como perda de rede e reconecta na hora: com 6 abas abertas,
+ * cada reconexao estourava o teto de novo e evictava a proxima mais velha,
+ * para sempre — e cada reconexao dispara `invalidateQueries()` naquela aba.
+ * Com um codigo proprio, o cliente sabe que a decisao foi do servidor e NAO
+ * tenta de novo.
+ */
+export const WS_CLOSE_TOO_MANY_SOCKETS = 4409;

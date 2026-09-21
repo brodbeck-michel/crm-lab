@@ -2,7 +2,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { WebSocket } from 'ws';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { WsEvent } from '@crm-lab/shared';
+import { WS_CLOSE_TOO_MANY_SOCKETS, WS_CLOSE_UNAUTHORIZED, type WsEvent } from '@crm-lab/shared';
 import { WebSocketHub, WS_PATH } from '../../src/lib/ws-hub.js';
 import { signRefreshToken } from '../../src/lib/tokens.js';
 import { REFRESH_COOKIE_NAME } from '../../src/lib/cookies.js';
@@ -220,8 +220,83 @@ describe('WebSocketHub', () => {
 
     // 5 antigos + 1 novo - 1 fechado = mesma contagem de antes do 6º.
     expect(hub.countTenant(TENANT_A)).toBe(before);
+    // Codigo proprio, nao 1006: `terminate()` chegava como queda anormal e o
+    // cliente reconectava na hora, evictando a proxima aba em ciclo infinito.
+    expect(await oldestClosed).toBe(WS_CLOSE_TOO_MANY_SOCKETS);
 
     await closeAndWait(...sockets.slice(1), sixth);
+  });
+});
+
+describe('WebSocketHub — sessao viva no banco (validateSession)', () => {
+  let server: http.Server;
+  let hub: WebSocketHub;
+  let baseUrl: string;
+  let live = true;
+  let asked: string[] = [];
+
+  beforeAll(async () => {
+    hub = new WebSocketHub({
+      allowedOrigins: [ALLOWED_ORIGIN],
+      heartbeatIntervalMs: 50,
+      validateSession: (token) => {
+        asked.push(token);
+        return Promise.resolve(live);
+      },
+    });
+    server = http.createServer((_req, res) => res.end('ok'));
+    hub.attach(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address() as AddressInfo;
+    baseUrl = `ws://127.0.0.1:${address.port}${WS_PATH}`;
+  });
+
+  afterAll(async () => {
+    await hub.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it('JWT valido mas sessao morta no banco (logout, revogacao, usuario inativo) fecha com 4401', async () => {
+    live = false;
+    asked = [];
+    const ws = await open(baseUrl, { cookie: cookieFor(TENANT_A, USER_A1) });
+    expect(await waitClose(ws)).toBe(WS_CLOSE_UNAUTHORIZED);
+    expect(asked).toHaveLength(1);
+    expect(hub.countTenant(TENANT_A)).toBe(0);
+    live = true;
+  });
+
+  it('falha da checagem (banco fora do ar) recusa o handshake — fail-closed', async () => {
+    const failing = new WebSocketHub({
+      allowedOrigins: [ALLOWED_ORIGIN],
+      validateSession: () => Promise.reject(new Error('db down')),
+    });
+    const srv = http.createServer((_req, res) => res.end('ok'));
+    failing.attach(srv);
+    await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', resolve));
+    const { port } = srv.address() as AddressInfo;
+
+    const ws = await open(`ws://127.0.0.1:${port}${WS_PATH}`, { cookie: cookieFor(TENANT_A, USER_A1) });
+    expect(await waitClose(ws)).toBe(WS_CLOSE_UNAUTHORIZED);
+
+    await failing.close();
+    await new Promise<void>((resolve) => srv.close(() => resolve()));
+  });
+
+  it('socket ja aberto e derrubado quando a sessao morre depois (revalidacao periodica)', async () => {
+    live = true;
+    const ws = await open(baseUrl, { cookie: cookieFor(TENANT_A, USER_A2) });
+    expect(hub.countTenant(TENANT_A)).toBe(1);
+
+    // A revalidacao roda a cada REVALIDATE_EVERY_SWEEPS (10) ciclos; com
+    // heartbeat de 50ms, ~500ms. Antes disto, um socket aberto antes do logout
+    // seguia recebendo o realtime do tenant ate o processo reiniciar.
+    live = false;
+    expect(await Promise.race([
+      waitClose(ws),
+      new Promise<number>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
+    ])).toBe(WS_CLOSE_UNAUTHORIZED);
+    live = true;
   });
 });
 

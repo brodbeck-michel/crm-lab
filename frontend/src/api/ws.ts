@@ -1,5 +1,10 @@
 import type { QueryClient } from '@tanstack/react-query';
-import { WS_CLOSE_UNAUTHORIZED, type WsEvent, type WsEventName } from '@crm-lab/shared';
+import {
+  WS_CLOSE_TOO_MANY_SOCKETS,
+  WS_CLOSE_UNAUTHORIZED,
+  type WsEvent,
+  type WsEventName,
+} from '@crm-lab/shared';
 import { refreshAccessToken as refreshAccessTokenDefault } from './client';
 import { queryKeys, queryScopes } from './query-keys';
 
@@ -193,7 +198,12 @@ export function createWsClient(options: WsClientOptions): WsClient {
   let intentionallyClosed = false;
   let hasConnectedBefore = false;
   let gaveUp = false;
-  let hiddenSince: number | null = null;
+  // Ja nasce marcado quando a pagina abre em aba de segundo plano (ctrl+clique,
+  // restauracao de sessao): so `visibilitychange` setava isto, entao uma aba que
+  // JA nasceu escondida nunca pausava — queimava as 8 tentativas e mostrava o
+  // toast de "recarregue a pagina" que a pausa existe para evitar.
+  let hiddenSince: number | null =
+    typeof document !== 'undefined' && document.visibilityState === 'hidden' ? Date.now() : null;
   let pausedForVisibility = false;
 
   const delayFor = (attempt: number) => Math.min(baseDelayMs * 2 ** attempt, maxDelayMs);
@@ -264,6 +274,14 @@ export function createWsClient(options: WsClientOptions): WsClient {
 
     next.onclose = (event) => {
       socket = null;
+      if (event?.code === WS_CLOSE_TOO_MANY_SOCKETS) {
+        // Decisao do servidor (teto de sockets por usuario), nao falha: esta
+        // aba e a mais antiga do usuario e foi cedida para a nova. Reconectar
+        // so evictaria a proxima, em ciclo. Fica quieta; recarregar a pagina
+        // reconecta.
+        intentionallyClosed = true;
+        return;
+      }
       if (event?.code === WS_CLOSE_UNAUTHORIZED) {
         // Cookie de sessão ausente/expirado no handshake: tenta renovar ANTES
         // de reconectar. Se a sessão estiver mesmo morta, a próxima tentativa

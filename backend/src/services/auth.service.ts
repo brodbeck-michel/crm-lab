@@ -384,3 +384,37 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
 
   return { login, refresh, logout, validateToken };
 }
+
+/**
+ * Sessao do refresh token ainda VIVA? (CRMLAB-33, correcao da revisao do PR #47)
+ *
+ * Mesmas checagens de `refresh` — linha em `refresh_tokens`, `revoked_at`,
+ * expiracao, `user.is_active`, `tenant.is_active` — SEM rotacionar nada e SEM
+ * derrubar familia em caso de reuso. O WebSocket so precisa da resposta
+ * "continua valendo?"; rotacionar aqui brigaria com o `/auth/refresh` do
+ * proprio cliente, e derrubar a familia daria a qualquer um que capture um
+ * token velho um jeito barato de deslogar o dono.
+ *
+ * Funcao de modulo, nao metodo do service: quem chama e o `WebSocketHub`, que
+ * nasce em `main.ts` antes do `createApp` e nao tem (nem deveria ter) o
+ * container de services.
+ */
+export async function refreshSessionIsLive(db: DbClient, token: string): Promise<boolean> {
+  const verified = verifyRefreshToken(token);
+  if (!verified.ok) return false;
+
+  const { tenantId } = verified.payload;
+  const tokenHash = refreshRepo.hashRefreshToken(token);
+
+  return db.withTenant(tenantId, async (tx) => {
+    const stored = await refreshRepo.findByHash(tx, tokenHash);
+    if (!stored || stored.revokedAt !== null) return false;
+    if (new Date(stored.expiresAt).getTime() <= Date.now()) return false;
+
+    const user = await userRepo.findById(tx, stored.userId);
+    if (!user || !user.isActive) return false;
+
+    const tenant = await tenantRepo.findById(tx, tenantId);
+    return tenant !== null && tenant.isActive;
+  });
+}

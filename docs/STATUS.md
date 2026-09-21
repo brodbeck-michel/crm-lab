@@ -1932,3 +1932,32 @@ novos de refresh em 4401, desistência após `maxAttempts`, e pausa por aba ocul
 **Verificação (2026-09-20):** `npm run typecheck` verde nos 4 workspaces, `npm run lint` verde,
 `npm run test:backend` verde (79 arquivos / 1152 testes) e `npm run test:frontend` verde
 (75 arquivos / 1070 testes).
+
+### Revisão independente do PR #47 (2026-09-21)
+
+Achados HIGH/MEDIUM corrigidos no commit de revisão:
+
+- **Crash remoto sem autenticação** — o caminho de recusa 4401 completava o handshake e chamava
+  `ws.close()` sem nenhum listener de `'error'`. `ws` reemite erro de protocolo do
+  receiver/sender como `emit('error')`, e `EventEmitter` sem listener de `'error'` LANÇA: caía
+  no `process.on('uncaughtException')` do `main.ts` e derrubava o backend. Qualquer cliente que
+  alcance `/ws` chegava lá (Origin é header, forjável fora do browser).
+- **WS pulava toda a revogação** que `/auth/refresh` faz — D-158.
+- **Path do cookie alargado sem matar o antigo** — D-159. Vale para os dois cards.
+- **Eviction virava tempestade de reconexão** — D-160.
+- `attach()`/`close()`: o listener de `upgrade` agora é removido no `close()` e o timer de
+  heartbeat é `unref()`ado.
+- Frontend: `hiddenSince` já nasce marcado quando a aba abre escondida (ctrl+clique, restauração
+  de sessão) — antes, essa aba queimava as 8 tentativas e mostrava "recarregue a página".
+
+**Não corrigido, de propósito — vira card próprio:** com várias abas, o 4401 simultâneo faz cada
+aba chamar `/auth/refresh` com o MESMO cookie; a primeira rotaciona, as outras apresentam token
+já revogado e a detecção de reuso desloga todo mundo. `refreshInFlight` deduplica só dentro de
+uma aba. É **pré-existente** — a mesma corrida já existe no caminho normal da API quando o
+access token expira com várias abas abertas — e a correção (lock entre abas por
+`BroadcastChannel`) não pertence a este card.
+
+**Testes:** `backend/tests/kernel/ws-hub.spec.ts` 17/17 (3 novos: sessão morta fecha com 4401,
+falha da checagem é fail-closed, socket já aberto cai na revalidação periódica);
+`backend/tests/auth` 25/25; `frontend/src/api/ws.spec.ts` 19/19 (2 novos: aba que nasce oculta,
+4409 não reconecta). Typecheck e lint verdes nos 4 workspaces.

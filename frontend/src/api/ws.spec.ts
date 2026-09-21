@@ -2,7 +2,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MockInstance } from 'vitest';
 import type { WsEvent } from '@crm-lab/shared';
-import { WS_CLOSE_UNAUTHORIZED } from '@crm-lab/shared';
+import { WS_CLOSE_TOO_MANY_SOCKETS, WS_CLOSE_UNAUTHORIZED } from '@crm-lab/shared';
 import { applyWsEvent, createWsClient } from './ws';
 import type { WebSocketLike, WsClientOptions } from './ws';
 import { queryKeys, queryScopes } from './query-keys';
@@ -306,6 +306,35 @@ describe('ws — aba oculta pausa a reconexão', () => {
     document.dispatchEvent(new Event('visibilitychange'));
 
     expect(FakeSocket.instances).toHaveLength(2); // reconecta na hora ao voltar
+  });
+
+  it('aba que JA nasce oculta tambem pausa — nao queima as tentativas em silencio', () => {
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    // Sem nenhum `visibilitychange`: e o caso de ctrl+clique / restauracao de
+    // sessao, em que a aba nasce escondida e o evento nunca chega.
+    const client = build({ visibilityHiddenPauseMs: 5_000 });
+    client.connect();
+
+    vi.advanceTimersByTime(10_000);
+    socket(0).emitClose();
+    vi.advanceTimersByTime(60_000);
+
+    expect(FakeSocket.instances).toHaveLength(1);
+
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(FakeSocket.instances).toHaveLength(2);
+  });
+});
+
+describe('ws — teto de sockets por usuario (4409)', () => {
+  it('close 4409 NAO reconecta: a decisao foi do servidor, reconectar evictaria a proxima aba', () => {
+    build().connect();
+
+    socket(0).emitClose(WS_CLOSE_TOO_MANY_SOCKETS);
+    vi.advanceTimersByTime(60_000);
+
+    expect(FakeSocket.instances).toHaveLength(1);
   });
 });
 

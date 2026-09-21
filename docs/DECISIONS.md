@@ -2070,6 +2070,50 @@ declarar localmente), `backend/src/main.ts` (`createWsHub({ allowedOrigins })`),
 `docs/api/API_CONTRACTS.md`, `docs/contracts/FRONTEND_BACKEND.md`, `docs/architecture/
 SECURITY.md`, `docs/guides/ENVIRONMENTS.md`.
 
+### D-158: WebSocket confere a sessao no BANCO no handshake e revalida a cada 5 min (CRMLAB-33)
+**Decisão:** `WsHubOptions.validateSession` (ligado em `main.ts` a
+`refreshSessionIsLive`) repete no handshake as checagens que `/auth/refresh` faz — linha em
+`refresh_tokens`, `revoked_at`, expiração, `user.is_active`, `tenant.is_active` — sem rotacionar
+nada e sem derrubar família em caso de reuso. Sockets já abertos são reconferidos a cada 10
+ciclos de heartbeat (~5 min). Handshake é fail-closed (erro na checagem recusa); socket já
+aberto é fail-open (soluço do Postgres não derruba o realtime inteiro).
+**Motivo:** achado HIGH da revisão do PR #47. `verifyRefreshToken` prova assinatura e validade,
+nada mais — um refresh revogado no logout, já rotacionado, ou de usuário/tenant desativado
+abria um WebSocket com realtime completo do tenant por até `JWT_REFRESH_TTL` (7 dias), enquanto
+o MESMO token era recusado em `/auth/refresh`. O esquema antigo (`?token=` com access token)
+expunha no máximo os 15 min do access: sem esta checagem, o card teria PIORADO a janela que veio
+consertar. Não rotacionar aqui é deliberado — rotacionar brigaria com o refresh do próprio
+cliente, e derrubar a família daria a quem capture um token velho um jeito barato de deslogar o
+dono.
+**Impacto:** `backend/src/lib/ws-hub.ts`, `backend/src/services/auth.service.ts`,
+`backend/src/main.ts`. D-151 continua valendo.
+
+### D-159: `Set-Cookie` de expiração no path antigo do refresh, por uma release (CRMLAB-33)
+**Decisão:** toda resposta que grava ou limpa `crm_refresh` manda também um `Set-Cookie` de
+expiração em `Path=/api/v1/auth` (`LEGACY_REFRESH_COOKIE_PATH`), depois do cookie válido. Sai
+quando não houver mais sessão aberta de antes da v1.13.0 — `JWT_REFRESH_TTL` (7 dias) após o
+deploy desta onda.
+**Motivo:** achado HIGH da revisão dos PRs #47 e #49. Cookie é identificado por (nome, domínio,
+PATH): gravar em `/` não substitui o que já está em `/api/v1/auth` (D-142, em produção desde a
+v1.12.0) — o usuário fica com os dois, os dois são enviados em `/auth/refresh`, o de path mais
+específico vem primeiro (RFC 6265 §5.4) e o `cookie-parser` fica com a primeira ocorrência. A
+rota leria eternamente o token VELHO: a primeira renovação o consome e rotaciona, a segunda o
+reapresenta já revogado, dispara a detecção de reuso (D-015) e derruba a família — logout
+forçado, em loop, de todo mundo que estivesse logado no momento do deploy, por 7 dias. Ordem
+(válido primeiro, expiração depois) importa para cliente ingênuo que só olha o nome do cookie.
+**Impacto:** `backend/src/lib/cookies.ts`, `backend/src/controllers/auth.routes.ts`. Mesma
+correção nos dois cards da onda, arquivo idêntico nos dois.
+
+### D-160: eviction por teto de sockets usa código de close próprio (4409) (CRMLAB-33)
+**Decisão:** o socket mais antigo derrubado pelo teto de 5 por usuário é fechado com
+`WS_CLOSE_TOO_MANY_SOCKETS` (4409), não `terminate()`; o cliente não reconecta nesse código.
+**Motivo:** achado MEDIUM da revisão do PR #47. `terminate()` chega no browser como 1006, que o
+cliente lê como queda de rede e reconecta na hora — com 6 abas abertas, cada reconexão
+estourava o teto de novo e evictava a próxima mais velha, para sempre, e cada reconexão dispara
+`invalidateQueries()` naquela aba. O teto virava um gerador de carga.
+**Impacto:** `shared/types/websocket.types.ts`, `backend/src/lib/ws-hub.ts`,
+`frontend/src/api/ws.ts`.
+
 ## Template para novas decisões
 
 ```

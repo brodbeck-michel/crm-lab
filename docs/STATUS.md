@@ -2115,3 +2115,66 @@ repetia as checagens do `/auth/refresh` **de antes** do CRMLAB-35 — faltava o 
 família (D-154). Uma família passada dos 30 dias teria o refresh recusado mas ainda abriria
 WebSocket: o teto vazaria pelo `/ws`. Cada card estava certo sozinho; o buraco só existe na
 soma. Corrigido no commit de merge.
+
+---
+
+## 2026-09-21 — v1.13.0 em produção: Onda C do hardening (CRMLAB-27) ✅
+
+Três cards da Onda C (`label = onda-c`) mergeados em `main` via PR, todos com CI verde e, antes
+disso, **revisão independente (`/code-review`) que achou defeito sério nos três**. A revisão foi
+o passo que faltava no ritual: CI verde não pega nada do que segue abaixo.
+
+- **CRMLAB-33** (#47) — WebSocket autenticado por cookie httpOnly, Origin verificado, heartbeat
+  e teto de sockets por usuário (D-151, D-158, D-159, D-160).
+- **CRMLAB-35** (#49) — troca da própria senha, teto absoluto de sessão, limpeza de
+  `refresh_tokens` (D-152 a D-155, D-161 a D-164).
+- **CRMLAB-38** (#48) — role sem superuser, índices de FK, lock de migração, redact ampliado,
+  anti-replay e gate de CI no deploy (D-145 a D-150, D-156, D-157).
+
+**O que a revisão pegou, e que teria ido para produção sem ela:**
+
+1. **Crash remoto sem autenticação** (CRMLAB-33). O caminho de recusa 4401 completava o
+   handshake e fechava o socket sem listener de `'error'`. `ws` reemite erro de protocolo como
+   `emit('error')`, e `EventEmitter` sem esse listener LANÇA — caía no `uncaughtException` do
+   `main.ts` e derrubava o backend inteiro. Qualquer cliente que alcance `/ws` chegava lá, já
+   que `Origin` é header e é forjável fora do browser.
+2. **Logout forçado de toda a base no deploy** (CRMLAB-33 e CRMLAB-35, o mesmo bug nos dois).
+   O `Path` do cookie de refresh foi alargado de `/api/v1/auth` para `/` sem matar o cookie
+   antigo. Quem já estivesse logado ficaria com dois `crm_refresh`; a rota leria eternamente o
+   velho; a segunda renovação o reapresentaria revogado; a detecção de reuso derrubaria a
+   família. Em loop, por 7 dias.
+3. **WebSocket sem checagem de revogação** (CRMLAB-33). O handshake só conferia a assinatura do
+   JWT. Um refresh revogado no logout abria realtime completo do tenant por até 7 dias — pior
+   que os 15 min do esquema `?token=` que o card veio substituir.
+
+**Achado que só existia na SOMA dos cards, invisível em qualquer revisão isolada:** o
+`refreshSessionIsLive` (CRMLAB-33) repetia as checagens do `/auth/refresh` de ANTES do
+CRMLAB-35, então faltava o teto absoluto da família (D-154). Uma família passada dos 30 dias
+tinha o refresh recusado mas ainda abriria WebSocket — o teto vazaria pelo `/ws`. Cada card
+estava certo sozinho. Corrigido no commit de merge do #49.
+
+**Deploy (2026-09-21):** homologação e produção a partir de `origin/main`, tag `v1.13.0`,
+`31419cd`. As 3 migrações (020, 021, 022) aplicadas nos dois ambientes. Build LOCAL nos dois
+(~10 min cada) porque `IMAGE_REGISTRY` não está definido — e definir não adiantaria hoje, ver
+CRMLAB-41. Produção validada: 5 serviços `healthy`, `https://vitrocrm.cloud` em 200,
+`/api/v1/health` em 200 com `database` e `cache` up, os 5 headers de segurança presentes,
+nenhum `uncaughtException` no log do backend.
+
+**`gh` instalado na VPS nesta sessão.** O gate de CI do `deploy.sh` (D-150) estreou nesta onda e
+exige `gh` autenticado na máquina que roda o script — que NÃO existia lá. O primeiro deploy
+depois do merge abortaria para qualquer um que não lesse o `DEPLOYMENT.md` antes. Instalado
+(`gh` 2.101.0) e autenticado como `brodbeck-michel` no usuário `deploy` (device flow, credencial
+em texto plano em `~/.config/gh/hosts.yml` — o aviso do próprio `gh`).
+
+**Ainda pendente, NÃO feito neste deploy:**
+1. **Decisão da role `crm_login`** — criada `NOBYPASSRLS` nos dois ambientes. A `DATABASE_URL`
+   **não** foi trocada, de propósito: como está, trocar derruba login e webhook (ver a seção da
+   revisão do PR #48). Aguarda decisão do Michel.
+2. `IMAGE_REGISTRY` nos dois `.env` — bloqueado pelo CRMLAB-41.
+3. Reboot pendente da VPS (`/var/run/reboot-required`), agora também pelos pacotes que a
+   instalação do `gh` atualizou.
+4. `evolution: user: "1000:1000"` (D-140) — segue não aplicado.
+
+**Validação funcional que falta e que só o Michel pode fazer** (a automatizada está toda verde):
+entrar no sistema em dois navegadores e confirmar que ninguém foi deslogado pelo deploy — é o
+risco nº 2 acima, o único que nenhuma checagem de fora consegue provar.

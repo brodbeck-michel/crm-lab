@@ -18,6 +18,27 @@ export const REFRESH_COOKIE_NAME = 'crm_refresh';
 export const REFRESH_COOKIE_PATH = '/';
 
 /**
+ * Path que o cookie tinha na D-142 (Onda B, ja em producao desde a v1.12.0).
+ *
+ * Um cookie e identificado por (nome, dominio, PATH): gravar `crm_refresh` em
+ * `/` NAO substitui o `crm_refresh` que o browser ja guarda em `/api/v1/auth`
+ * — o usuario fica com OS DOIS. Em `POST /api/v1/auth/refresh` os dois sao
+ * enviados, o de path mais especifico vem primeiro (RFC 6265 §5.4) e o
+ * `cookie-parser` fica com a PRIMEIRA ocorrencia: ou seja, a rota leria
+ * eternamente o token VELHO. Na primeira renovacao depois do deploy esse
+ * token velho e consumido e rotacionado; na segunda ele e reapresentado ja
+ * revogado, o que dispara a deteccao de reuso (D-015) e derruba a familia
+ * inteira — logout forcado de todas as sessoes de todo mundo que estava
+ * logado no momento do deploy, em loop, ate o cookie velho expirar (7 dias).
+ *
+ * Por isso toda resposta que grava ou limpa o cookie manda TAMBEM um
+ * `Set-Cookie` de expiracao neste path. Pode sair depois que ninguem mais
+ * tiver sessao aberta de antes da v1.13.0 — ou seja, `JWT_REFRESH_TTL` (7
+ * dias) depois do deploy desta onda.
+ */
+export const LEGACY_REFRESH_COOKIE_PATH = '/api/v1/auth';
+
+/**
  * Extrai um cookie do header `Cookie` cru.
  *
  * O upgrade de WebSocket (`server.on('upgrade', ...)`) e um evento HTTP que

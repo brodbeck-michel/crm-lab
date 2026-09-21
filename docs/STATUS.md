@@ -1943,3 +1943,21 @@ critérios de aceite do card estão nomeados como tal nos specs.
 **Verificação (2026-09-20):** `npm run typecheck` verde nos 4 workspaces, `npm run lint` verde,
 `npm run test:backend` verde (81 arquivos / 1164 testes) e `npm run test:frontend` verde
 (76 arquivos / 1079 testes).
+
+### Revisão independente do PR #49 (2026-09-21)
+
+Achados corrigidos no commit de revisão: cookie do path antigo (D-161, HIGH — mesmo achado do
+PR #47), bcrypt fora da transação com compare-and-set (D-162, MEDIUM), auditoria no replay
+pós-segurança e recusa de senha nova igual à atual (D-163), `DEFAULT` antes do `NOT NULL` na
+022 e remoção do índice inútil (D-164).
+
+**Não corrigido, de propósito:** (a) o refresh token da sessão que trocou a senha não é
+rotacionado, então há uma corrida estreita com o interceptor de refresh do próprio cliente
+(refresh conclui enquanto o PATCH está em voo → a sessão que trocou a senha cai em silêncio);
+(b) `revokedReason` nunca devolve `null` apesar do tipo permitir, porque o `map()` colapsa
+qualquer valor inesperado em `'rotated'` — hoje é inofensivo, já que todo chamador checa
+`revokedAt` antes. Os dois são LOW e melhor resolvidos junto com CRMLAB-39.
+
+**Testes:** `backend/tests` completo 1160/1160 (3 novos: senha igual à atual recusada pela API,
+auditoria do replay pós-segurança, lápide do cookie no path antigo). Frontend 1079/1079.
+Typecheck e lint verdes nos 4 workspaces.

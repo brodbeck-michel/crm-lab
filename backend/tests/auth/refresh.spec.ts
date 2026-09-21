@@ -291,4 +291,25 @@ describe('rotacao de refresh token', () => {
     const response = await app.agent.post('/api/v1/auth/logout').send({}).expect(200);
     expect(response.body).toEqual({ message: 'Logged out successfully' });
   });
+
+  it('login manda TAMBEM um Set-Cookie de expiracao no path antigo (D-159)', async () => {
+    const response = await app.agent
+      .post('/api/v1/auth/login')
+      .send({ email: user.email, password: DEFAULT_TEST_PASSWORD })
+      .expect(200);
+
+    const cookies = (response.headers['set-cookie'] as string[] | undefined) ?? [];
+    const doRefresh = cookies.filter((c) => c.startsWith(`${REFRESH_COOKIE_NAME}=`));
+
+    // Dois Set-Cookie do mesmo nome: o valido em Path=/ e a lapide do path
+    // antigo. Sem a lapide, quem ja estava logado fica com os DOIS cookies, a
+    // rota le eternamente o velho e a deteccao de reuso desloga todo mundo.
+    expect(doRefresh).toHaveLength(2);
+    // O VALIDO vem primeiro — cliente ingenuo que so olha o nome pega o certo.
+    expect(doRefresh[0]).toMatch(/Path=\//);
+    expect(doRefresh[0]).not.toMatch(new RegExp(`^${REFRESH_COOKIE_NAME}=;`));
+    const lapide = doRefresh[1] ?? '';
+    expect(lapide).toContain('Path=/api/v1/auth');
+    expect(lapide).toMatch(new RegExp(`^${REFRESH_COOKIE_NAME}=;`));
+  });
 });

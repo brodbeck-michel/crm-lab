@@ -22,9 +22,20 @@ UPDATE refresh_tokens
    SET absolute_expires_at = created_at + INTERVAL '30 days'
  WHERE absolute_expires_at IS NULL;
 
+-- DEFAULT antes do NOT NULL (revisao do PR #49): sem ele, a migracao e o codigo
+-- ficam co-dependentes nos DOIS sentidos. Processo ANTIGO ainda atendendo depois
+-- da migracao faz `INSERT` sem a coluna e viola o NOT NULL — todo login 500. Com
+-- o DEFAULT, o processo antigo continua logando gente normalmente durante a
+-- janela do deploy. (O outro lado — codigo novo antes da migracao — nao tem como
+-- ser coberto aqui: o `migrate` roda antes do `up`, ver DEPLOYMENT.md.)
+ALTER TABLE refresh_tokens
+  ALTER COLUMN absolute_expires_at SET DEFAULT NOW() + INTERVAL '30 days';
 ALTER TABLE refresh_tokens ALTER COLUMN absolute_expires_at SET NOT NULL;
 
-CREATE INDEX idx_refresh_tokens_absolute_expires_at ON refresh_tokens(absolute_expires_at);
+-- Indice de `absolute_expires_at` NAO criado de proposito (revisao do PR #49): a
+-- checagem do teto e leitura de UMA linha por hash, e a limpeza filtra
+-- `expires_at`/`revoked_at`. Um indice que ninguem le so custa escrita.
+
 
 -- ---------------------------------------------------------------------------
 -- Motivo da revogação (D-154): separa "rotacionado" de "derrubado por ação de

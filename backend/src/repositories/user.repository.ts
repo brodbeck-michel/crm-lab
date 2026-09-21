@@ -237,7 +237,20 @@ export async function updatePasswordHash(
   tx: DbTx,
   id: string,
   passwordHash: string,
+  expectedCurrentHash?: string,
 ): Promise<boolean> {
+  // `expectedCurrentHash` e compare-and-set (CRMLAB-35, revisao do PR #49): a
+  // troca de senha confere a senha atual FORA da transacao (bcrypt custa ~300ms
+  // e nao pode segurar conexao do pool), entao a janela entre conferir e gravar
+  // existe. Com o hash antigo no WHERE, duas trocas concorrentes nao se
+  // sobrescrevem: a segunda nao acha linha e volta como "senha atual incorreta".
+  if (expectedCurrentHash !== undefined) {
+    const result = await tx.query(
+      'UPDATE users SET password_hash = $1 WHERE id = $2 AND password_hash = $3',
+      [passwordHash, id, expectedCurrentHash],
+    );
+    return result.rowCount > 0;
+  }
   const result = await tx.query('UPDATE users SET password_hash = $1 WHERE id = $2', [
     passwordHash,
     id,

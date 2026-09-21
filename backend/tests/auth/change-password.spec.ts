@@ -151,6 +151,39 @@ describe('PATCH /users/me/password', () => {
       .expect(200);
   });
 
+  it('replay de token derrubado por seguranca nao derruba familia, mas DEIXA RASTRO na auditoria', async () => {
+    const outraSessao = await loginSession();
+    const sessaoAtual = await loginSession();
+
+    await app.agent
+      .patch('/api/v1/users/me/password')
+      .set(app.auth(user))
+      .set('Cookie', `${REFRESH_COOKIE_NAME}=${sessaoAtual}`)
+      .send({ currentPassword: DEFAULT_TEST_PASSWORD, newPassword: NEW_PASSWORD })
+      .expect(200);
+
+    await app.agent
+      .post('/api/v1/auth/refresh')
+      .set('X-Requested-With', 'crm-lab')
+      .set('Cookie', `${REFRESH_COOKIE_NAME}=${outraSessao}`)
+      .expect(401);
+
+    // Este e o caso pos-comprometimento: o usuario troca a senha PORQUE perdeu
+    // o dispositivo, e o replay do ladrao e o unico sinal de que o token vazou.
+    // Sem este registro, o 401 era mudo.
+    const registros = await db.withoutTenant(async (tx) => {
+      const result = await tx.query<{ action: string }>(
+        `SELECT action FROM audit_logs WHERE user_id = $1 AND action = $2`,
+        [user.id, 'refresh_token_replay_after_security'],
+      );
+      return result.rows;
+    });
+    expect(registros).toHaveLength(1);
+
+    // E a familia da sessao que trocou a senha continua viva.
+    expect(await liveTokenHashes()).toEqual([hashRefreshToken(sessaoAtual)]);
+  });
+
   it('a deteccao de roubo (D-015) continua valendo para token ROTACIONADO', async () => {
     const original = await loginSession();
 
@@ -240,6 +273,23 @@ describe('PATCH /users/me/password', () => {
       .post('/api/v1/auth/login')
       .send({ email: user.email, password: DEFAULT_TEST_PASSWORD })
       .expect(200);
+  });
+
+  it('senha nova igual a atual e recusada pelo BACKEND (nao so pela tela)', async () => {
+    const sessao = await loginSession();
+    const antes = await liveTokenHashes();
+
+    const response = await app.agent
+      .patch('/api/v1/users/me/password')
+      .set(app.auth(user))
+      .set('Cookie', `${REFRESH_COOKIE_NAME}=${sessao}`)
+      .send({ currentPassword: DEFAULT_TEST_PASSWORD, newPassword: DEFAULT_TEST_PASSWORD })
+      .expect(400);
+
+    expect(response.body.error.code).toBe('VALIDATION_ERROR');
+    expect(response.body.error.details.fields.newPassword).toBeTruthy();
+    // Nada de revogar sessoes nem escrever auditoria por uma troca que nao trocou nada.
+    expect(await liveTokenHashes()).toEqual(antes);
   });
 
   it('exige autenticacao', async () => {

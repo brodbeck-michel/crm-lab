@@ -334,7 +334,12 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         // aqui e derrubava tambem a sessao que acabou de trocar a senha,
         // tornando o "revoga todas MENOS a atual" inutil na pratica.
         if (stored.revokedReason === 'security') {
-          return { kind: 'unknown' as const };
+          // Nao derruba a familia, mas REGISTRA (revisao do PR #49): este e
+          // exatamente o caso pos-comprometimento — o usuario trocou a senha
+          // PORQUE um dispositivo foi roubado, e o replay do ladrao era o
+          // unico sinal de que o token vazou mesmo. Voltar 401 mudo apagava o
+          // sinal justamente quando ele importa.
+          return { kind: 'replay_after_security' as const, userId: stored.userId };
         }
         const revoked = await refreshRepo.revokeAllForUser(tx, stored.userId, 'rotated');
         return { kind: 'reuse' as const, userId: stored.userId, revoked };
@@ -381,6 +386,19 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
           entityType: 'user',
           entityId: outcome.userId,
           newValues: { revokedTokens: outcome.revoked },
+          ipAddress: meta.ip,
+          userAgent: meta.userAgent,
+        });
+        throw new BusinessError('REFRESH_TOKEN_INVALID');
+      case 'replay_after_security':
+        // Mesma resposta de qualquer token invalido — a auditoria e o unico
+        // efeito. Nao derruba familia: ver o comentario na deteccao.
+        await audit.log({
+          tenantId,
+          userId: outcome.userId,
+          action: 'refresh_token_replay_after_security',
+          entityType: 'user',
+          entityId: outcome.userId,
           ipAddress: meta.ip,
           userAgent: meta.userAgent,
         });
@@ -454,15 +472,39 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       throw new BusinessError('VALIDATION_ERROR', { fields: { newPassword: policy.reason } });
     }
 
+    // Senha nova igual a atual: a API respondia 200, revogava as outras sessoes
+    // e escrevia auditoria sem NADA ter rotacionado. So o frontend barrava.
+    if (input.newPassword === input.currentPassword) {
+      throw new BusinessError('VALIDATION_ERROR', {
+        fields: { newPassword: 'A nova senha precisa ser diferente da atual' },
+      });
+    }
+
+    const current = await db.withTenant(ctx.tenantId, (tx) => userRepo.findById(tx, ctx.userId));
+    if (!current) throw notFound({ resource: 'user' });
+
+    // bcrypt (cost 12, ~300 ms cada) FORA da transacao — revisao do PR #49.
+    // Dentro dela, cada troca de senha segurava uma conexao do pool
+    // `idle in transaction` por ~600 ms; com DEFAULT_POOL_MAX = 10, dez trocas
+    // simultaneas travavam todo o resto do sistema. `login` ja faz assim.
+    const currentOk = await verifyPassword(input.currentPassword, current.passwordHash);
+    if (!currentOk) {
+      throw new BusinessError('VALIDATION_ERROR', {
+        fields: { currentPassword: 'Senha atual incorreta' },
+      });
+    }
+    const passwordHash = await hashPassword(input.newPassword);
+
     const outcome = await db.withTenant(ctx.tenantId, async (tx) => {
-      const user = await userRepo.findById(tx, ctx.userId);
-      if (!user) return { kind: 'not_found' as const };
-
-      const currentOk = await verifyPassword(input.currentPassword, user.passwordHash);
-      if (!currentOk) return { kind: 'invalid_current' as const };
-
-      const passwordHash = await hashPassword(input.newPassword);
-      await userRepo.updatePasswordHash(tx, ctx.userId, passwordHash);
+      // Compare-and-set contra o hash lido acima: fecha a janela entre conferir
+      // e gravar, aberta de proposito ao tirar o bcrypt da transacao.
+      const changed = await userRepo.updatePasswordHash(
+        tx,
+        ctx.userId,
+        passwordHash,
+        current.passwordHash,
+      );
+      if (!changed) return { kind: 'invalid_current' as const };
 
       const exceptHash = input.currentRefreshToken
         ? refreshRepo.hashRefreshToken(input.currentRefreshToken)
@@ -472,7 +514,6 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       return { kind: 'ok' as const };
     });
 
-    if (outcome.kind === 'not_found') throw notFound({ resource: 'user' });
     if (outcome.kind === 'invalid_current') {
       throw new BusinessError('VALIDATION_ERROR', {
         fields: { currentPassword: 'Senha atual incorreta' },

@@ -8,7 +8,11 @@
  * WebSocket em `ws-hub.ts` nunca passa por `cookie-parser`). Aqui fica so o que
  * depende do `Response` do Express, que o handshake de WS nao tem.
  */
-import { REFRESH_COOKIE_NAME, REFRESH_COOKIE_PATH } from '../lib/cookies.js';
+import {
+  LEGACY_REFRESH_COOKIE_PATH,
+  REFRESH_COOKIE_NAME,
+  REFRESH_COOKIE_PATH,
+} from '../lib/cookies.js';
 import { env } from '../config/env.js';
 import type { CookieOptions, Response } from 'express';
 
@@ -31,10 +35,29 @@ export function cookieOptions(maxAgeMs?: number): CookieOptions {
   };
 }
 
+/**
+ * Mata o cookie que ficou no path antigo (`LEGACY_REFRESH_COOKIE_PATH`).
+ *
+ * Sem isto, quem ja estava logado quando esta versao subir fica com dois
+ * `crm_refresh` e `/auth/refresh` le eternamente o velho — ver o comentario em
+ * `lib/cookies.ts`. Roda em TODA resposta que mexe no cookie (login, refresh,
+ * logout, troca de senha), que sao exatamente os pontos por onde qualquer
+ * sessao viva passa.
+ */
+function clearLegacyRefreshCookie(res: Response): void {
+  res.clearCookie(REFRESH_COOKIE_NAME, { ...cookieOptions(), path: LEGACY_REFRESH_COOKIE_PATH });
+}
+
 export function setRefreshCookie(res: Response, token: string): void {
   res.cookie(REFRESH_COOKIE_NAME, token, cookieOptions(env.JWT_REFRESH_TTL * 1000));
+  // Depois do cookie de verdade, nao antes: os dois `Set-Cookie` tem o mesmo
+  // NOME e so diferem no `Path`. Browser trata como cookies distintos em
+  // qualquer ordem, mas cliente/parser ingenuo que so olha o nome fica com o
+  // PRIMEIRO — e o primeiro tem que ser o valido.
+  clearLegacyRefreshCookie(res);
 }
 
 export function clearRefreshCookie(res: Response): void {
+  clearLegacyRefreshCookie(res);
   res.clearCookie(REFRESH_COOKIE_NAME, cookieOptions());
 }

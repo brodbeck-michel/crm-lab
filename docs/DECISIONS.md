@@ -2125,6 +2125,54 @@ comentário de `withoutTenant` foi atualizado para listar os três.
 **Impacto:** `backend/src/main.ts`, `backend/src/repositories/refresh-token.repository.ts`
 (`deleteExpiredOrRevoked`), `backend/src/db/types.ts` (comentário de `withoutTenant`).
 
+### D-161: `Set-Cookie` de expiração no path antigo do refresh, por uma release (CRMLAB-35)
+**Decisão:** toda resposta que grava ou limpa `crm_refresh` (login, refresh, logout, troca de
+senha) manda também um `Set-Cookie` de expiração em `Path=/api/v1/auth`
+(`LEGACY_REFRESH_COOKIE_PATH`), depois do cookie válido. Sai 7 dias
+(`JWT_REFRESH_TTL`) após o deploy desta onda.
+**Motivo:** achado HIGH da revisão — mesmo achado do PR #47, mesma correção (ver D-159; o
+arquivo `lib/cookies.ts` é idêntico nos dois cards). Cookie é identificado por (nome, domínio,
+PATH): gravar em `/` não substitui o de `/api/v1/auth` (D-142, em produção desde a v1.12.0). Os
+dois chegam em `/auth/refresh`, o mais específico primeiro (RFC 6265 §5.4), o `cookie-parser`
+fica com o primeiro, a rota lê o token velho, a segunda renovação o reapresenta revogado e a
+detecção de reuso derruba a família — logout forçado de todo mundo, em loop, por 7 dias.
+**Impacto:** `backend/src/lib/cookies.ts`, `backend/src/http/refresh-cookie.ts`.
+
+### D-162: bcrypt da troca de senha roda FORA da transação, com compare-and-set (CRMLAB-35)
+**Decisão:** `changePassword` lê o usuário, verifica a senha atual e calcula o hash novo fora de
+qualquer transação; a transação seguinte só grava, e o `UPDATE` leva o hash antigo no `WHERE`
+(compare-and-set). Nenhuma linha afetada = "senha atual incorreta".
+**Motivo:** achado MEDIUM da revisão. `verifyPassword` + `hashPassword` (bcryptjs cost 12,
+~300 ms cada) dentro da transação seguravam uma conexão do pool `idle in transaction` por
+~600 ms; com `DEFAULT_POOL_MAX = 10`, dez trocas simultâneas travavam todas as outras queries do
+sistema. `login` já fazia o bcrypt fora de transação por este mesmo motivo. O compare-and-set
+fecha a janela entre verificar e gravar que essa mudança abre.
+**Impacto:** `backend/src/services/auth.service.ts`,
+`backend/src/repositories/user.repository.ts`.
+
+### D-163: replay de token revogado por segurança é auditado, sem derrubar a família (CRMLAB-35)
+**Decisão:** quando um refresh com `revoked_reason = 'security'` reaparece, a resposta continua
+sendo um 401 comum e a família NÃO é derrubada (D-154), mas é gravada uma entrada de auditoria
+`refresh_token_replay_after_security`. A API também recusa `newPassword === currentPassword`,
+que antes só a tela barrava.
+**Motivo:** achados MEDIUM e LOW da revisão. Não derrubar a família está certo — é o outro
+navegador do próprio usuário, não um ataque. Mas ficar em silêncio apaga o sinal exatamente no
+caso pós-comprometimento: o usuário troca a senha PORQUE perdeu o dispositivo, e o replay do
+ladrão era a única evidência de que o token vazou. Sobre a senha repetida: a API respondia 200,
+revogava as outras sessões e escrevia auditoria sem nada ter rotacionado.
+**Impacto:** `backend/src/services/auth.service.ts`,
+`backend/tests/auth/change-password.spec.ts`.
+
+### D-164: `absolute_expires_at` ganha `DEFAULT` antes do `NOT NULL` (CRMLAB-35)
+**Decisão:** a migração 022 define `DEFAULT NOW() + INTERVAL '30 days'` na coluna antes do
+`SET NOT NULL`, e o índice `idx_refresh_tokens_absolute_expires_at` não é criado.
+**Motivo:** achados MEDIUM e LOW da revisão. Sem `DEFAULT`, o processo ANTIGO ainda atendendo
+durante a janela de deploy faz `INSERT` sem a coluna e viola o `NOT NULL` — todo login vira 500
+até o container novo assumir. O índice, por outro lado, nunca seria lido: a checagem do teto é
+leitura de uma linha por hash e a limpeza filtra `expires_at`/`revoked_at`; índice que ninguém
+lê só custa escrita.
+**Impacto:** `backend/migrations/022_refresh_tokens_absolute_expiry.sql`.
+
 ## Template para novas decisões
 
 ```

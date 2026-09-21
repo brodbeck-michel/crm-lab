@@ -18,15 +18,20 @@
  * exatamente o acoplamento que §11 proibe. Ha teste do 403 em
  * `tests/kernel/route-tenant-isolation.spec.ts`.
  */
+import cookieParser from 'cookie-parser';
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
-import type { CreateUserRequest, UpdateUserRequest } from '@crm-lab/shared';
+import type { ChangePasswordRequest, CreateUserRequest, UpdateUserRequest } from '@crm-lab/shared';
 import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
 import { getContext } from '../http/context.js';
 import { denyPlatformOperator, requireAuth, requireRoles } from '../http/middleware/auth.js';
 import { validate, validated } from '../http/middleware/validate.js';
+import { REFRESH_COOKIE_NAME } from '../http/refresh-cookie.js';
 import { createAuditService } from '../services/audit.service.js';
+import { createAuthService } from '../services/auth.service.js';
+import { createThemeService } from '../services/theme.service.js';
 import { createUserService, MIN_PASSWORD_LENGTH } from '../services/user.service.js';
+import { MIN_NEW_PASSWORD_LENGTH } from '../lib/password-policy.js';
 
 const assignableRole = z.enum(['attendant', 'manager', 'admin']);
 
@@ -64,12 +69,30 @@ const updateUserSchema = z
 
 const idParamSchema = z.object({ id: z.string().uuid('Identificador inválido') });
 
+/** `newPassword` mínimo aqui é só UX — a política de verdade é `checkPasswordPolicy` no service. */
+const changePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1, 'Senha atual obrigatória'),
+    newPassword: z
+      .string()
+      .min(MIN_NEW_PASSWORD_LENGTH, `Nova senha deve ter ao menos ${MIN_NEW_PASSWORD_LENGTH} caracteres`),
+  })
+  .strict();
+
 export function userModule(deps: ApiModuleDeps): ApiModule {
   const audit = createAuditService(deps.db);
   const users = createUserService({ db: deps.db, audit });
+  // Reaproveita o AuthService (login/refresh) para a lógica de sessão da
+  // troca de senha (revogar famílias, ver CRMLAB-35/D-152) — não duplica
+  // `issueRefreshToken`/hash de refresh aqui.
+  const theme = createThemeService({ db: deps.db, audit });
+  const auth = createAuthService({ db: deps.db, cache: deps.cache, audit, theme });
 
   const router = Router();
   router.use(requireAuth(), denyPlatformOperator());
+  // Só para LER o cookie de sessão em /me/password (D-152) — nunca seta
+  // cookie de auth por aqui.
+  router.use(cookieParser());
 
   router.get('/me', (req: Request, res: Response, next): void => {
     users
@@ -77,6 +100,25 @@ export function userModule(deps: ApiModuleDeps): ApiModule {
       .then((result) => res.status(200).json(result))
       .catch(next);
   });
+
+  router.patch(
+    '/me/password',
+    validate(changePasswordSchema, 'body'),
+    (req: Request, res: Response, next): void => {
+      const ctx = getContext(req);
+      const dto = validated<ChangePasswordRequest>(req, 'body');
+      const currentRefreshToken =
+        (req.cookies as Record<string, string> | undefined)?.[REFRESH_COOKIE_NAME] ?? null;
+      auth
+        .changePassword(
+          { tenantId: ctx.tenantId, userId: ctx.userId, role: ctx.role },
+          { ...dto, currentRefreshToken },
+          { ip: ctx.ip, userAgent: ctx.userAgent },
+        )
+        .then(() => res.status(200).json({ message: 'Senha alterada com sucesso' }))
+        .catch(next);
+    },
+  );
 
   router.get(
     '/',

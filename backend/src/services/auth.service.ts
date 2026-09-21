@@ -29,10 +29,11 @@ import type {
 } from '@crm-lab/shared';
 import { env } from '../config/env.js';
 import type { DbClient } from '../db/types.js';
-import { BusinessError } from '../http/errors.js';
+import { BusinessError, notFound } from '../http/errors.js';
 import type { CacheService } from '../lib/cache.js';
 import { logCacheUnavailable } from '../lib/cache.js';
 import { hashPassword, verifyPassword } from '../lib/password.js';
+import { checkPasswordPolicy } from '../lib/password-policy.js';
 import {
   signAccessToken,
   signRefreshToken,
@@ -67,11 +68,30 @@ export interface RefreshResult extends RefreshResponse {
   refreshToken: string;
 }
 
+/** Contexto minimo de quem esta trocando a propria senha (CRMLAB-35). */
+export interface ChangePasswordContext {
+  tenantId: string;
+  userId: string;
+  role: UserRole;
+}
+
+export interface ChangePasswordInput {
+  currentPassword: string;
+  newPassword: string;
+  /** Refresh token da sessao ATUAL (do cookie), se veio na requisicao. */
+  currentRefreshToken: string | null;
+}
+
 export interface AuthService {
   login(email: string, password: string, meta: RequestMeta): Promise<LoginResult>;
   refresh(refreshToken: string, meta: RequestMeta): Promise<RefreshResult>;
   logout(refreshToken: string, meta: RequestMeta): Promise<LogoutResponse>;
   validateToken(token: string): Promise<JwtPayload>;
+  changePassword(
+    ctx: ChangePasswordContext,
+    input: ChangePasswordInput,
+    meta: RequestMeta,
+  ): Promise<void>;
 }
 
 export interface AuthServiceDeps {
@@ -98,6 +118,11 @@ function dummyHash(): Promise<string> {
 
 function refreshExpiryDate(): Date {
   return new Date(Date.now() + env.JWT_REFRESH_TTL * 1000);
+}
+
+/** Teto novo de FAMÍLIA (CRMLAB-35, D-154) — só usado quando uma família NASCE (login). */
+function refreshAbsoluteExpiryDate(): Date {
+  return new Date(Date.now() + env.JWT_REFRESH_ABSOLUTE_TTL * 1000);
 }
 
 export function createAuthService(deps: AuthServiceDeps): AuthService {
@@ -178,14 +203,25 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
    *   apos o login geraria um token identico ao anterior e colidiria com
    *   `refresh_tokens.token_hash UNIQUE`.
    */
+  /**
+   * `absoluteExpiresAt` ausente = família NOVA (login): teto novo de 30 dias.
+   * Presente = rotação de família existente: o teto é CARREGADO adiante, nunca
+   * reiniciado — senão "absoluto" não seria absoluto (D-154).
+   */
   const issueRefreshToken = (
     tenantId: string,
     userId: string,
     role: UserRole,
-  ): { token: string; hash: string; expiresAt: Date } => {
+    absoluteExpiresAt?: Date,
+  ): { token: string; hash: string; expiresAt: Date; absoluteExpiresAt: Date } => {
     // `jti` e `role` sao responsabilidade de signRefreshToken (ver doc la).
     const token = signRefreshToken({ userId, tenantId, role });
-    return { token, hash: refreshRepo.hashRefreshToken(token), expiresAt: refreshExpiryDate() };
+    return {
+      token,
+      hash: refreshRepo.hashRefreshToken(token),
+      expiresAt: refreshExpiryDate(),
+      absoluteExpiresAt: absoluteExpiresAt ?? refreshAbsoluteExpiryDate(),
+    };
   };
 
   const login = async (
@@ -235,6 +271,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         userId: user.id,
         tokenHash: refresh.hash,
         expiresAt: refresh.expiresAt,
+        absoluteExpiresAt: refresh.absoluteExpiresAt,
       });
       return theme.getCurrentIn(tx, user.tenantId);
     });
@@ -288,14 +325,31 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       if (!stored) return { kind: 'unknown' as const };
 
       if (stored.revokedAt !== null) {
-        // Reuso de token ja rotacionado => roubo. Derruba a familia (D-015).
-        const revoked = await refreshRepo.revokeAllForUser(tx, stored.userId);
+        // Reuso de token ja ROTACIONADO => roubo. Derruba a familia (D-015).
+        //
+        // `revokedReason` separa isso de um token derrubado em massa por acao
+        // de seguranca (troca de senha, desativacao — CRMLAB-35/D-154). Sem a
+        // distincao, o outro navegador do proprio usuario tentando refresh
+        // depois da troca de senha — comportamento normal, nao ataque — caía
+        // aqui e derrubava tambem a sessao que acabou de trocar a senha,
+        // tornando o "revoga todas MENOS a atual" inutil na pratica.
+        if (stored.revokedReason === 'security') {
+          return { kind: 'unknown' as const };
+        }
+        const revoked = await refreshRepo.revokeAllForUser(tx, stored.userId, 'rotated');
         return { kind: 'reuse' as const, userId: stored.userId, revoked };
       }
 
       if (new Date(stored.expiresAt).getTime() <= Date.now()) {
         await refreshRepo.revokeByHash(tx, tokenHash);
         return { kind: 'expired' as const };
+      }
+
+      // Teto da FAMÍLIA (D-154): vencido, força login de novo mesmo com o
+      // token individual ainda dentro dos 7 dias rotativos.
+      if (new Date(stored.absoluteExpiresAt).getTime() <= Date.now()) {
+        await refreshRepo.revokeByHash(tx, tokenHash);
+        return { kind: 'absolute_expired' as const };
       }
 
       const user = await userRepo.findById(tx, stored.userId);
@@ -305,13 +359,14 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       const tenant = await tenantRepo.findById(tx, tenantId);
       if (!tenant || !tenant.isActive) return { kind: 'tenant_inactive' as const };
 
-      const next = issueRefreshToken(tenantId, user.id, user.role);
+      const next = issueRefreshToken(tenantId, user.id, user.role, new Date(stored.absoluteExpiresAt));
       await refreshRepo.revokeByHash(tx, tokenHash);
       await refreshRepo.insert(tx, {
         tenantId,
         userId: user.id,
         tokenHash: next.hash,
         expiresAt: next.expiresAt,
+        absoluteExpiresAt: next.absoluteExpiresAt,
       });
 
       return { kind: 'rotated' as const, user, refreshToken: next.token };
@@ -332,6 +387,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         throw new BusinessError('REFRESH_TOKEN_INVALID');
       case 'unknown':
       case 'expired':
+      case 'absolute_expired':
         throw new BusinessError('REFRESH_TOKEN_INVALID');
       case 'user_inactive':
         throw new BusinessError('USER_INACTIVE');
@@ -382,5 +438,57 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     return result.payload;
   };
 
-  return { login, refresh, logout, validateToken };
+  /**
+   * Troca a própria senha (CRMLAB-35). Revoga todas as OUTRAS famílias de
+   * refresh do usuário — a da requisição atual (`currentRefreshToken`, do
+   * cookie) fica de fora, então quem trocou a senha continua logado. Sem
+   * cookie (fallback depreciado sem sessão identificável), revoga TUDO.
+   */
+  const changePassword = async (
+    ctx: ChangePasswordContext,
+    input: ChangePasswordInput,
+    meta: RequestMeta,
+  ): Promise<void> => {
+    const policy = checkPasswordPolicy(input.newPassword);
+    if (!policy.ok) {
+      throw new BusinessError('VALIDATION_ERROR', { fields: { newPassword: policy.reason } });
+    }
+
+    const outcome = await db.withTenant(ctx.tenantId, async (tx) => {
+      const user = await userRepo.findById(tx, ctx.userId);
+      if (!user) return { kind: 'not_found' as const };
+
+      const currentOk = await verifyPassword(input.currentPassword, user.passwordHash);
+      if (!currentOk) return { kind: 'invalid_current' as const };
+
+      const passwordHash = await hashPassword(input.newPassword);
+      await userRepo.updatePasswordHash(tx, ctx.userId, passwordHash);
+
+      const exceptHash = input.currentRefreshToken
+        ? refreshRepo.hashRefreshToken(input.currentRefreshToken)
+        : null;
+      await refreshRepo.revokeAllForUserExcept(tx, ctx.userId, exceptHash);
+
+      return { kind: 'ok' as const };
+    });
+
+    if (outcome.kind === 'not_found') throw notFound({ resource: 'user' });
+    if (outcome.kind === 'invalid_current') {
+      throw new BusinessError('VALIDATION_ERROR', {
+        fields: { currentPassword: 'Senha atual incorreta' },
+      });
+    }
+
+    await audit.log({
+      tenantId: ctx.tenantId,
+      userId: ctx.userId,
+      action: 'change_own_password',
+      entityType: 'user',
+      entityId: ctx.userId,
+      ipAddress: meta.ip,
+      userAgent: meta.userAgent,
+    });
+  };
+
+  return { login, refresh, logout, validateToken, changePassword };
 }

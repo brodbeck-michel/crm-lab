@@ -74,6 +74,19 @@ export interface LogoutResponse {
   message: string;
 }
 
+/**
+ * `PATCH /users/me/password` (CRMLAB-35). `newPassword` mínimo 10 caracteres
+ * — validado nos dois lados (frontend so para UX, backend sempre).
+ */
+export interface ChangePasswordRequest {
+  currentPassword: string;
+  newPassword: string;
+}
+
+export interface ChangePasswordResponse {
+  message: string;
+}
+
 /** Conteudo do JWT. tenantId e obrigatorio — base do isolamento (BUSINESS_RULES.md §4). */
 export interface JwtPayload {
   userId: string;

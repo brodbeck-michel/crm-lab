@@ -3,7 +3,7 @@
  * e revogacao. SECURITY.md "Autenticacao".
  *
  * CRMLAB-32: o refresh vive no cookie httpOnly `crm_refresh`
- * (`Path=/api/v1/auth`). `refreshToken` no corpo é fallback DEPRECIADO de
+ * (`Path=/`, ampliado de `/api/v1/auth` no CRMLAB-33/D-151). `refreshToken` no corpo é fallback DEPRECIADO de
  * transição — testado à parte, mas o caminho normal é sempre o cookie.
  * `/auth/refresh` também exige `X-Requested-With: crm-lab` (proteção CSRF
  * extra além de `SameSite=Strict`).

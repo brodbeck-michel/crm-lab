@@ -225,3 +225,22 @@ export async function update(
 export async function touchLastLogin(tx: DbTx, id: string): Promise<void> {
   await tx.query('UPDATE users SET last_login_at = NOW() WHERE id = $1', [id]);
 }
+
+/**
+ * Grava o novo hash de senha (CRMLAB-35, troca própria). Função dedicada, e
+ * não um campo a mais em `UpdateUserPatch`: `PATCH /users/:id` é rota de
+ * admin editando OUTRO usuário — misturar senha ali abriria um caminho de
+ * reset de senha por admin que não existe hoje (o único reset de terceiro é
+ * `platform.routes.ts`, fora do escopo deste card).
+ */
+export async function updatePasswordHash(
+  tx: DbTx,
+  id: string,
+  passwordHash: string,
+): Promise<boolean> {
+  const result = await tx.query('UPDATE users SET password_hash = $1 WHERE id = $2', [
+    passwordHash,
+    id,
+  ]);
+  return result.rowCount > 0;
+}

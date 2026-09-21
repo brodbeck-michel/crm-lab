@@ -28,6 +28,7 @@ import type { DbClient } from '../db/types.js';
 import type { TenantContext } from '../http/context.js';
 import { BusinessError, notFound } from '../http/errors.js';
 import { hashPassword } from '../lib/password.js';
+import * as refreshRepo from '../repositories/refresh-token.repository.js';
 import * as userRepo from '../repositories/user.repository.js';
 import type { UserEntity } from '../repositories/user.repository.js';
 import type { AuditService } from './audit.service.js';
@@ -241,6 +242,14 @@ export function createUserService(deps: UserServiceDeps): UserService {
         isActive: dto.isActive,
       });
       if (!updated) return { kind: 'not_found' as const };
+
+      // CRMLAB-35 (D-154): desativar derruba a sessão na hora, não só no
+      // próximo refresh. Access token de até 15min já emitido aceita a
+      // janela (sem denylist no Redis — YAGNI, ver D-154).
+      if (current.isActive && !updated.isActive) {
+        await refreshRepo.revokeAllForUser(tx, id);
+      }
+
       return { kind: 'updated' as const, previous: current, updated };
     });
 

@@ -55,7 +55,10 @@ export function signRefreshToken(
 
 function verifyWith(token: string, secret: string): VerifyResult {
   try {
-    const decoded = jwt.verify(token, secret);
+    // `algorithms` explicito (CRMLAB-35): `jsonwebtoken` 9 ja restringe por
+    // padrao a HMAC quando o secret e string, mas explicito e defesa em
+    // profundidade contra downgrade de algoritmo se a lib mudar de comportamento.
+    const decoded = jwt.verify(token, secret, { algorithms: ['HS256'] });
     if (typeof decoded === 'string' || decoded === null) return { ok: false, reason: 'invalid' };
     const payload = decoded as Partial<JwtPayload>;
     if (

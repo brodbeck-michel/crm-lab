@@ -9,16 +9,18 @@
  *
  *   - `POST /login` e `POST /refresh` gravam o refresh token em
  *     `Set-Cookie: crm_refresh=<token>; HttpOnly; Secure; SameSite=Strict;
- *     Path=/api/v1/auth`. O corpo JSON responde SO com o access token — o
- *     refresh nunca aparece em `response.body` nem em `document.cookie`
- *     (HttpOnly bloqueia leitura por JS).
+ *     Path=/` (D-151 — era `/api/v1/auth`, ampliado pelo CRMLAB-33 para o
+ *     handshake de `/ws`; `PATCH /users/me/password` reusa o mesmo). O corpo JSON
+ *     responde SO com o access token — o refresh nunca aparece em
+ *     `response.body` nem em `document.cookie` (HttpOnly bloqueia leitura por JS).
  *   - `POST /refresh` le o cookie primeiro; o campo `refreshToken` no corpo e
  *     fallback DEPRECIADO de transicao (`RefreshRequest.refreshToken` em
  *     `@crm-lab/shared`), com remocao prevista para 2026-10-04.
- *   - `cookie-parser` so entra NESTE router — nenhum outro modulo depende de
- *     `req.cookies`.
- *   - CSRF do refresh: com `SameSite=Strict` + `Path=/api/v1/auth` o risco ja
- *     e baixo (um POST cross-site nao carrega o cookie), mas exigimos tambem
+ *   - `cookie-parser` tambem entra em `user.routes.ts` desde o CRMLAB-35, so
+ *     para LER (nunca seta cookie de auth por la fora do fluxo de troca de senha).
+ *   - CSRF do refresh: com `SameSite=Strict` o risco ja e baixo (um POST
+ *     cross-site nao carrega o cookie — e `Path` deixou de ajudar nisso desde
+ *     que virou `/`, D-151), mas exigimos tambem
  *     o header `X-Requested-With: crm-lab` — um form HTML cross-site nao
  *     consegue setar header customizado, so fetch/XHR same-origin conseguem.
  *   - NAO ligamos `credentials: true` no CORS geral (`app.ts`): nginx serve
@@ -26,46 +28,25 @@
  *     sozinho sem preflight cross-origin.
  */
 import cookieParser from 'cookie-parser';
-import { Router, type CookieOptions, type Request, type Response } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import type { LoginRequest, RefreshRequest } from '@crm-lab/shared';
-import { env } from '../config/env.js';
 import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
 import { clientIp, userAgentOf } from '../http/context.js';
 import { BusinessError } from '../http/errors.js';
 import { validate, validated } from '../http/middleware/validate.js';
+import {
+  REFRESH_COOKIE_NAME,
+  REFRESH_COOKIE_PATH,
+  setRefreshCookie,
+  clearRefreshCookie,
+} from '../http/refresh-cookie.js';
 import { createAuditService } from '../services/audit.service.js';
 import { createAuthService, type RequestMeta } from '../services/auth.service.js';
 import { createThemeService } from '../services/theme.service.js';
 
-/** Nome e path do cookie de refresh. Path casa com o `basePath` deste modulo sob `API_PREFIX`. */
-export const REFRESH_COOKIE_NAME = 'crm_refresh';
-export const REFRESH_COOKIE_PATH = '/api/v1/auth';
-
-/**
- * `secure` so em producao/homologacao (HTTPS de verdade atras do Caddy):
- * em `development`/`test`, sem TLS local, um cookie `Secure` jamais voltaria
- * ao backend e o refresh por cookie nunca funcionaria no ambiente dev.
- * `HttpOnly` e `SameSite=Strict` valem em qualquer ambiente — sao o que
- * protege a sessao, nao dependem de HTTPS local.
- */
-function cookieOptions(maxAgeMs?: number): CookieOptions {
-  return {
-    httpOnly: true,
-    secure: env.isProduction,
-    sameSite: 'strict',
-    path: REFRESH_COOKIE_PATH,
-    ...(maxAgeMs !== undefined ? { maxAge: maxAgeMs } : {}),
-  };
-}
-
-function setRefreshCookie(res: Response, token: string): void {
-  res.cookie(REFRESH_COOKIE_NAME, token, cookieOptions(env.JWT_REFRESH_TTL * 1000));
-}
-
-function clearRefreshCookie(res: Response): void {
-  res.clearCookie(REFRESH_COOKIE_NAME, cookieOptions());
-}
+/** Re-exportados por compatibilidade — `refresh-cookie.ts` (D-152) e a fonte agora. */
+export { REFRESH_COOKIE_NAME, REFRESH_COOKIE_PATH };
 
 /** Header exigido em `/refresh` como camada extra de protecao CSRF (ver cabecalho do arquivo). */
 const REQUIRED_REFRESH_HEADER = 'crm-lab';

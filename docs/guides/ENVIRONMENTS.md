@@ -141,6 +141,11 @@ precisa saber que aquele build subiu sem validação.
 A flag existe porque a alternativa real era pior. Sem ela, a saída na pressa é comentar
 a checagem no script — e ninguém nunca descomenta.
 
+> ⏳ **Esta flag tem data de validade: 01/10/2026.** Ela é dívida consciente, aberta pela cota
+> do Actions estourada. Na data, `docs/STATUS.md` → "Dívida: `--sem-ci`" manda decidir
+> explicitamente entre removê-la ou mantê-la com teste. Se você chegou aqui depois do prazo e
+> nada foi decidido, ela passou da validade — leve para revisão em vez de usar.
+
 ### As travas do `deploy.sh`
 
 1. **Três fontes de identidade têm que concordar**: diretório, `APP_ENV` e

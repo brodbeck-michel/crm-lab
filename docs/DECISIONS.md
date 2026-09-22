@@ -2141,6 +2141,18 @@ porque dá a impressão de cobertura.
 homologação é `deploy.sh --ref <branch da onda>`, e o run de CI daquele commit fica atribuído à
 branch dele, nunca a `main` — com o filtro fixo, TODO deploy de hml por `--ref` abortava com
 `sem_run`. O filtro por commit já é exato; a branch só restringia sem ganho.
+
+**Emenda (2026-09-22) — `--sem-ci`, com data de validade.** A trava abortava também quando o CI
+**não podia** rodar: com a cota do GitHub Actions estourada desde 21/09/2026, os cinco jobs param
+em 2 s e todo deploy trava — homologação inclusive, que é justamente onde se valida uma mudança
+que o CI não validou. `--sem-ci` abre essa porta, e **só** essa: aborta em produção, exige
+`SEM CI` digitado mais um motivo não vazio, e repete o motivo na última linha do deploy.
+
+Isto é **dívida consciente, não um novo padrão.** A pergunta que a flag responde é "o CI não pode
+rodar"; ela não deve responder "o CI ficou vermelho e eu tenho pressa" — para isso o lugar é o
+código. Condição de saída e o que fazer está em `docs/STATUS.md` → "Dívida: `--sem-ci`". Se você
+está lendo isto depois de 01/10/2026 e a flag ainda existe sem ninguém ter decidido mantê-la,
+ela passou do prazo: leve para revisão em vez de usar.
 ### D-151: WebSocket autentica pelo cookie httpOnly do refresh; Path do cookie alarga para `/`; Origin verificado no upgrade (CRMLAB-33)
 **Decisão:** `/ws` deixa de aceitar `?token=<accessToken>` na URL. O handshake de upgrade passa a
 ser autenticado pelo cookie httpOnly `crm_refresh` (o mesmo do CRMLAB-32/D-142), lido e

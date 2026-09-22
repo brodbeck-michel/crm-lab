@@ -171,12 +171,15 @@ export default function Results() {
 
   async function handleExportCommissionPdf() {
     try {
-      await generateCommissionReportPdf(
-        commissionRows,
-        commissionTotals,
-        executiveReport?.brandName ?? 'Laboratório',
+      if (!commissionSettings) return;
+      await generateCommissionReportPdf({
+        rows: commissionRows,
+        totals: commissionTotals,
         period,
-      );
+        brandName: executiveReport?.brandName ?? theme?.brandName ?? 'Laboratório',
+        settings: commissionSettings,
+        theme,
+      });
     } catch {
       toast('Não foi possível gerar o PDF.', { tone: 'attention' });
     }

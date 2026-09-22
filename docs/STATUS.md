@@ -2444,6 +2444,8 @@ nunca virou PR (`skills-lock.json` + `.gitignore` do `.agents/`). Abrir PR ou ap
 |--------|---------|--------|--------|-------|
 | PDF Executivo em 4 páginas com identidade do tenant | ui | ✅ 2026-09-22 | Claude | `lib/pdf/brand.ts` (novo: cabeçalho/rodapé/seção/cartões/alertas/tabela, cor de `theme.accent`) + `lib/pdf/executive-report.ts` (reescrito) + `pages/Results.tsx`. Antes eram 4 `autoTable` crus sem marca. Typecheck e 1090 testes verdes. |
 
+| PDFs de Comissões e Busca Ativa na mesma identidade | ui | ✅ 2026-09-22 | Claude | `lib/pdf/commission-report.ts` e `lib/pdf/active-search.ts` reescritos sobre `brand.ts`; `brand.ts` ganhou `tableContinuation` (a página 2 de tabela longa nascia SEM cabeçalho nos três PDFs); `lib/excel/commission-report.ts` ganhou largura de coluna. Referência: os relatórios do `orcamentos-sante-main`. Typecheck e 1090 testes verdes. |
+
 ### ⛔ Pendente de deploy em produção
 
 Está **só na árvore local** (branch `main`, não commitado, não tagueado) em 2026-09-22.
@@ -2504,5 +2506,5 @@ próprio para a `main` — o PR #53 é só o PDF.
 - **Com filtro de convênio ligado**, o PDF sai sem comparativo e sem a tabela de comissões
   (bases diferentes, ver PAGES.md §14). Resolver exigiria filtro de convênio em
   `/reports/executive` ou um segundo fetch não filtrado de `/lis-budgets/summary`.
-- **`lib/pdf/commission-report.ts` e `lib/pdf/active-search.ts`** ainda não usam `brand.ts` —
-  saem sem logo e sem a cor do tenant.
+- ~~`lib/pdf/commission-report.ts` e `lib/pdf/active-search.ts` ainda não usam `brand.ts`~~ —
+  resolvido em 2026-09-22, os três PDFs saem com logo e a cor do tenant.

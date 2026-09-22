@@ -52,6 +52,10 @@ export async function generateCommissionReportExcel(
   ];
 
   const sheet = XLSX.utils.aoa_to_sheet([header, ...body, totalRow]);
+  // Sem largura, "Vendas Check-up" vira "Vendas Ch..." e os valores viram
+  // `#####` — a planilha abre exigindo que a pessoa arraste 10 colunas antes
+  // de conseguir ler. Mesmas medidas da planilha que a equipe ja usa.
+  sheet['!cols'] = [{ wch: 26 }, ...header.slice(1).map(() => ({ wch: 17 }))];
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, sheet, 'Comissões');
   XLSX.writeFile(workbook, `comissoes-${period.startDate}-${period.endDate}.xlsx`);

@@ -428,6 +428,26 @@ export function tableTheme(palette: BrandPalette, fontSize = 8) {
   };
 }
 
+/**
+ * Opções de `autoTable` para uma tabela que pode transbordar de página.
+ *
+ * `autoTable` quebra a página sozinho e desenha SÓ a tabela: a página 2 nascia
+ * sem cabeçalho nenhum, e uma folha solta de uma lista impressa não diz de que
+ * laboratório nem de que recorte ela é. `margin.top` reserva a faixa do
+ * cabeçalho para o corpo não subir por baixo dele.
+ *
+ * Espalhar DEPOIS de `tableTheme`, que também define `margin`.
+ */
+export function tableContinuation(doc: jsPDF, palette: BrandPalette, opts: HeaderOptions) {
+  return {
+    margin: { left: PAGE_MARGIN, right: PAGE_MARGIN, top: 90 },
+    didDrawPage: (data: { pageNumber: number }) => {
+      // A primeira página já teve o cabeçalho desenhado pelo chamador.
+      if (data.pageNumber > 1) drawHeader(doc, palette, opts);
+    },
+  };
+}
+
 /** `y` logo abaixo da última tabela desenhada por `autoTable`. */
 export function afterTable(doc: jsPDF, fallback: number): number {
   const last = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable;

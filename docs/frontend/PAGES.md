@@ -763,8 +763,21 @@ Cada seção que depende de um opcional some quando ele falta — nunca imprime 
 | 4 — Fecho | Evolução mensal (últimos 12), busca ativa, alertas por severidade, conclusão gerencial | `report.monthlySeries` + `pending` |
 
 A cor de TODO o PDF sai de `theme.accent` do tenant (lido do `auth.store`, que já o recebeu no
-login — sem request extra). Os primitivos de desenho ficam em `lib/pdf/brand.ts`, para que os
-PDFs de Comissão e Busca Ativa possam adotar a mesma identidade sem duplicar código.
+login — sem request extra). Os primitivos de desenho ficam em `lib/pdf/brand.ts`, usados pelos
+**três** PDFs do produto — Executivo, Comissões e Busca Ativa. Quem recebe os três por e-mail
+reconhece o laboratório nos três.
+
+##### PDF de Comissões
+
+`generateCommissionReportPdf` (`lib/pdf/commission-report.ts`), retrato, mesma identidade.
+Cabeçalho com logo, subtítulo com **os percentuais vigentes** (mudam o resultado, então estão
+impressos), a tabela de 10 colunas com linha `TOTAL` e um bloco de fecho com comissão total,
+receita recebida e o percentual que a comissão representa dela.
+
+Retrato, não paisagem: a página 2 do Executivo já provou que 10 colunas cabem em A4 retrato a
+7 pt, e misturar orientação entre dois relatórios que saem da mesma tela é desconforto sem
+contrapartida. O Excel (`lib/excel/commission-report.ts`) mantém as mesmas 10 colunas, agora
+com largura definida — sem ela a planilha abre com `#####` e exige arrastar 10 colunas.
 
 **Coerência de base:** `/reports/executive` ignora o filtro de convênio e `/lis-budgets/summary`
 o respeita. Com o filtro LIGADO, a tela passa `previous: null` e `commission: null` — misturar
@@ -949,6 +962,23 @@ Fila de cobrança: orçamentos com requisição emitida mas **sem pagamento rece
   nesta tela: é uma fila de cobrança, não um relatório para reordenar à vontade.
 - Vazio: "Nenhum orçamento em aberto" — estado bom (fila zerada), tela mostra com tom positivo,
   não como ausência de dado.
+
+##### PDF de Busca Ativa
+
+`generateActiveSearchPdf` (`lib/pdf/active-search.ts`), **paisagem** — ao contrário dos outros
+dois PDFs. São 6 colunas de texto livre (paciente, convênio e atendente disputando a mesma
+linha) e é a lista que a equipe imprime para trabalhar em cima; em retrato os nomes truncavam.
+A identidade é a mesma: os primitivos de `brand.ts` se viram na largura que receberem.
+
+Traz o potencial de recuperação em cartões grandes (valor, contagem, ticket médio), a
+distribuição por faixa etária com o percentual de cada uma, e a fila de trabalho.
+
+Dois cuidados que valem mais que o layout:
+
+- **O PDF cobre a fila inteira, não a página atual.** A tela pagina de 20 em 20; exportar sem
+  refazer o fetch mandaria 20 de 148 linhas para quem for cobrar.
+- **Os filtros ligados vão impressos** no topo. Uma lista filtrada por atendente que não diz
+  isso vira, na mão de quem recebe, "a carteira inteira".
 
 ### 17. Vendas (`/sales`) — TENANT_ROLES, recorte por atendente (D-112)
 

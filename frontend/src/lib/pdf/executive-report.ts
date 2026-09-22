@@ -23,6 +23,7 @@ import {
   paragraph,
   pctText,
   sectionTitle,
+  tableContinuation,
   tableTheme,
 } from './brand';
 
@@ -89,13 +90,13 @@ export async function generateExecutiveReportPdf(input: ExecutiveReportPdfInput)
   const brand = report.brandName || 'Laboratório';
   const periodLabel = `${formatIsoDay(report.period.startDate)} a ${formatIsoDay(report.period.endDate)}`;
 
-  const header = (pageLabel: string) =>
-    drawHeader(doc, palette, {
-      logo,
-      title: 'Relatório Executivo Comercial',
-      subtitle: `${brand} · Período: ${periodLabel}`,
-      pageLabel,
-    });
+  const headerOpts = (pageLabel: string) => ({
+    logo,
+    title: 'Relatório Executivo Comercial',
+    subtitle: `${brand} · Período: ${periodLabel}`,
+    pageLabel,
+  });
+  const header = (pageLabel: string) => drawHeader(doc, palette, headerOpts(pageLabel));
 
   /** Abre página nova quando `needed` pontos não cabem antes do rodapé. */
   const space = (y: number, needed: number, pageLabel: string): number => {
@@ -179,6 +180,7 @@ export async function generateExecutiveReportPdf(input: ExecutiveReportPdfInput)
         ],
       ],
       ...tableTheme(palette, 7),
+      ...tableContinuation(doc, palette, headerOpts(CONTINUATION)),
       footStyles: { fillColor: palette.softBg, textColor: palette.deep, fontStyle: 'bold' },
       columnStyles: { 0: { cellWidth: 'auto' }, 1: { halign: 'center' }, 3: { halign: 'center' } },
     });

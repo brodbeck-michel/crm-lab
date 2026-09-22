@@ -1,5 +1,10 @@
 import { useMemo, useState } from 'react';
-import { useLisBudgetsFilters, useLisBudgetsSummary, useLisImportsLatest } from '@/api/lis';
+import {
+  useLisBudgetsFilters,
+  useLisBudgetsPendingSummary,
+  useLisBudgetsSummary,
+  useLisImportsLatest,
+} from '@/api/lis';
 import { useExecutiveReport } from '@/api/reports';
 import { useSalesSummary } from '@/api/sales';
 import { useCommissionSettings } from '@/api/commission-settings';
@@ -105,6 +110,9 @@ export default function Results() {
   );
   const { data: executiveReport } = useExecutiveReport(period, { enabled: !periodInvalid });
   const { data: salesSummary } = useSalesSummary(period);
+  // O tema vem no login e mora no store — nada de request extra (FRONTEND_BACKEND.md).
+  const theme = useAuthStore((s) => s.theme);
+  const { data: pendingSummary } = useLisBudgetsPendingSummary();
 
   const commissionRows = useMemo<CommissionDetailRow[]>(() => {
     if (!summary || !commissionSettings) return [];
@@ -141,7 +149,21 @@ export default function Results() {
   async function handleExportExecutivePdf() {
     if (!executiveReport) return;
     try {
-      await generateExecutiveReportPdf(executiveReport);
+      await generateExecutiveReportPdf({
+        report: executiveReport,
+        theme,
+        // `/reports/executive` ignora o filtro de convênio (D-116: o PDF é o
+        // retrato do período inteiro). Comissões e comparativo saem de
+        // `/lis-budgets/summary`, que o RESPEITA — juntar os dois com o filtro
+        // ligado misturaria duas bases. Nesse caso o PDF sai só com o que o
+        // relatório do servidor cobre, em vez de somar números incompatíveis.
+        previous: insuranceId ? null : (previousSummary ?? null),
+        commission:
+          insuranceId || !commissionSettings || commissionRows.length === 0
+            ? null
+            : { rows: commissionRows, totals: commissionTotals, settings: commissionSettings },
+        pending: pendingSummary ?? null,
+      });
     } catch {
       toast('Não foi possível gerar o PDF.', { tone: 'attention' });
     }

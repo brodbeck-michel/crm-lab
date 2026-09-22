@@ -14,6 +14,7 @@
 #   ./scripts/deploy.sh                 # deploy de origin/main
 #   ./scripts/deploy.sh --ref <ref>     # branch/tag/sha (so homologacao)
 #   ./scripts/deploy.sh --sim           # sem a confirmacao digitada (producao)
+#   ./scripts/deploy.sh --sem-ci        # pula a checagem de CI (SO homologacao)
 #
 # O que este script NUNCA faz, por desenho: `docker compose down`, qualquer
 # `-v`, `volume rm`, `system prune`. Derrubar e apagar volume sao operacoes
@@ -29,10 +30,12 @@ erro() { printf '\n\033[1;31mABORTADO: %s\033[0m\n\n' "$*" >&2; exit 1; }
 
 REF=''
 CONFIRMADO=0
+SEM_CI=0
 while (( $# )); do
   case "$1" in
     --ref) REF="${2:?--ref precisa de um valor}"; shift 2 ;;
     --sim|--yes) CONFIRMADO=1; shift ;;
+    --sem-ci) SEM_CI=1; shift ;;
     *) erro "argumento desconhecido: $1" ;;
   esac
 done
@@ -161,6 +164,33 @@ fi
 # mensagem clara em vez de seguir cego — silenciosamente pular a checagem
 # seria pior que nao te-la escrito.
 # ---------------------------------------------------------------------------
+# `--sem-ci`: valvula para quando o CI nao PODE ficar verde por motivo alheio ao
+# codigo — cota do GitHub Actions estourada, incidente do proprio GitHub. Existe
+# porque a alternativa real era pior: sem ela, a saida e comentar a checagem na
+# pressa e nunca mais descomentar.
+#
+# Tres travas para nao virar o caminho normal:
+#   1. NUNCA em producao. La o CI verde e inegociavel.
+#   2. Confirmacao digitada + motivo obrigatorio, os dois pelo stdin.
+#   3. O motivo vai para a tela e para o resumo final do deploy.
+if (( SEM_CI )); then
+  [[ "$APP_ENV" == 'homologacao' ]] \
+    || erro "--sem-ci so vale em homologacao. Em producao o CI verde e inegociavel (D-150)."
+
+  printf '\n\033[1;33mVoce esta pulando a checagem de CI de %s.\033[0m\n' "$SHA"
+  printf 'Isso so se justifica quando o CI nao PODE rodar (cota, incidente do GitHub).\n'
+  printf 'Se o CI rodou e ficou vermelho, o lugar de resolver e no codigo.\n\n'
+  printf 'Digite SEM CI para continuar: '
+  read -r resposta
+  [[ "$resposta" == 'SEM CI' ]] || erro "confirmacao nao digitada"
+  printf 'Motivo (fica no log deste deploy): '
+  read -r MOTIVO_SEM_CI
+  [[ -n "${MOTIVO_SEM_CI// /}" ]] || erro "motivo obrigatorio"
+
+  msg "CI NAO CHECADO — $MOTIVO_SEM_CI"
+  info "commit $SHA sobe sem validacao do GitHub Actions."
+else
+
 msg "Conferindo CI do commit $SHA"
 if ! command -v gh >/dev/null 2>&1; then
   erro "gh (GitHub CLI) nao encontrado nesta maquina. Instale e rode 'gh auth login' antes de reusar este script — ver docs/guides/DEPLOYMENT.md."
@@ -189,6 +219,7 @@ case "$CI_CONCLUSAO" in
     erro "CI do commit $SHA nao passou (conclusion=$CI_CONCLUSAO). Corrija antes de fazer deploy."
     ;;
 esac
+fi
 
 # ---------------------------------------------------------------------------
 # 4. Imagem -> migrate -> up -> limpeza
@@ -286,6 +317,9 @@ for tentativa in $(seq 1 30); do
     info "OK na tentativa $tentativa (backend, Postgres e Redis responderam)"
     dc ps --format 'table {{.Service}}\t{{.Status}}'
     msg "$APP_ENV no ar — $IMAGE_TAG (v$VERSAO)"
+    # Repetido aqui de proposito: quem le so a ultima linha do deploy precisa
+    # saber que este build subiu sem validacao do CI.
+    (( SEM_CI )) && printf '\033[1;33m    ATENCAO: subiu SEM checagem de CI — %s\033[0m\n' "$MOTIVO_SEM_CI"
     exit 0
   fi
   sleep 2

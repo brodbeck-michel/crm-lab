@@ -117,8 +117,34 @@ cd /opt/crm-lab
 ```
 
 O `deploy.sh` faz, em ordem: identidade → árvore limpa → `fetch` → `checkout
---detach` → `pull` (ou `build`, fallback sem `IMAGE_REGISTRY` — CRMLAB-36) →
-`run --rm migrate` → `up -d` → `/healthz` → limpeza de imagem/cache antigos.
+--detach` → **CI verde no SHA** (D-150) → `pull` (ou `build`, fallback sem
+`IMAGE_REGISTRY` — CRMLAB-36) → `run --rm migrate` → `up -d` → `/healthz` →
+limpeza de imagem/cache antigos.
+
+### `--sem-ci`, e quando ele se justifica
+
+A checagem de CI aborta o deploy quando o run do commit não está verde — inclusive
+quando ele **não pôde rodar**, que é o caso da cota do GitHub Actions estourada. Como
+a trava é anterior ao build, isso trava homologação também, e homologação é justamente
+onde se valida uma mudança que o CI não validou.
+
+```bash
+# só homologação; pede "SEM CI" digitado e um motivo obrigatório
+printf 'SEM CI\ncota do Actions estourada até 01/10\n' \
+  | ./scripts/deploy.sh --ref origin/feature/minha-branch --sem-ci
+```
+
+**Em produção a flag aborta**, sem exceção: lá o CI verde é inegociável. O motivo
+digitado aparece no começo e na última linha do deploy — quem lê só o fim do log
+precisa saber que aquele build subiu sem validação.
+
+A flag existe porque a alternativa real era pior. Sem ela, a saída na pressa é comentar
+a checagem no script — e ninguém nunca descomenta.
+
+> ⏳ **Esta flag tem data de validade: 01/10/2026.** Ela é dívida consciente, aberta pela cota
+> do Actions estourada. Na data, `docs/STATUS.md` → "Dívida: `--sem-ci`" manda decidir
+> explicitamente entre removê-la ou mantê-la com teste. Se você chegou aqui depois do prazo e
+> nada foi decidido, ela passou da validade — leve para revisão em vez de usar.
 
 ### As travas do `deploy.sh`
 

@@ -2468,6 +2468,35 @@ Produção segue na **v1.14.1**, sem o redesenho. Checklist para quando for apli
 5. **Sem migração, sem env var nova.** Nada de banco muda; `brand.ts` e o relatório são
    só frontend. Rollback é o do `deploy.sh` (ENVIRONMENTS.md §3).
 
+### 🔴 Dívida: `--sem-ci` no `deploy.sh` (aberta em 2026-09-22)
+
+`scripts/deploy.sh` ganhou a flag `--sem-ci`, que pula a checagem de CI verde do **D-150**.
+Foi aberta para destravar homologação enquanto a cota do GitHub Actions está estourada —
+sem ela, não havia como validar o PDF Executivo em lugar nenhum.
+
+**É dívida consciente, e o risco dela é virar o caminho normal em silêncio.** Um atalho que
+funciona não pede para ser removido: ninguém sente falta da trava que ele desligou. Por isso
+o gatilho está escrito aqui, com data.
+
+**Gatilho: 2026-10-01**, quando a cota do Actions virar. Nesse dia:
+
+1. Rodar o CI da `main` e confirmar que volta verde.
+2. **Decidir explicitamente** entre remover a flag ou mantê-la — e registrar a decisão aqui,
+   qualquer que seja. "Ficou porque ninguém mexeu" não conta como decisão.
+3. Se mantida: ela precisa de um teste que prove que **aborta em produção**. Hoje essa garantia
+   é só leitura de código, e é a única coisa que separa a flag de um desastre.
+4. Se removida: tirar de `scripts/deploy.sh`, de `docs/guides/ENVIRONMENTS.md` §3 e fechar
+   esta seção com a data.
+
+**Como saber se está sendo abusada:** todo deploy que usou a flag imprime `ATENCAO: subiu SEM
+checagem de CI — <motivo>` na última linha. Motivo que não seja "o CI não pôde rodar" é sinal
+de que a flag virou desvio de CI vermelho — que é exatamente o que o D-150 existe para impedir.
+
+**Ainda não tem PR.** A flag está na branch `chore/deploy-sem-ci` (commit `31043e3`), empilhada
+sobre `feature/pdf-executivo-marca` por necessidade técnica: o script precisa existir no ref que
+está sendo deployado, senão ele rejeita a flag antes do checkout. Ao organizar, ela merece PR
+próprio para a `main` — o PR #53 é só o PDF.
+
 ### Pendências conhecidas
 
 - **Busca ativa não é do período.** `GET /lis-budgets/pending/summary` devolve o backlog inteiro

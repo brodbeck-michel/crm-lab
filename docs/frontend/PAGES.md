@@ -745,6 +745,30 @@ de dados coexistem, cada uma com um papel:
   marcado). É por isso que os dois endpoints coexistem em vez de um só fazer as duas coisas.
 - **`GET /sales/summary`** (sem `attendantId`, §11) — `byAttendant` entra na tabela de comissão.
 - **`GET /settings/commissions`** — percentuais para os cálculos de comissão da tabela.
+- **`GET /lis-budgets/pending/summary`** (§16) — carteira em aberto, só para a seção "Busca
+  Ativa" do PDF Executivo. **Não é recortada pelo período** (o endpoint só filtra atendente):
+  o PDF a rotula como "carteira em aberto" e nunca a compara com a receita do período.
+
+##### PDF Executivo — 4 páginas, marca do tenant
+
+`generateExecutiveReportPdf` (`lib/pdf/executive-report.ts`) recebe um objeto, não só o
+relatório: `report` (obrigatório) + `theme`, `previous`, `commission` e `pending` (opcionais).
+Cada seção que depende de um opcional some quando ele falta — nunca imprime zero no lugar.
+
+| Página | Conteúdo | Fonte |
+|--------|----------|-------|
+| 1 — Resumo Executivo | Resultado comercial (3 cartões grandes com variação vs. período anterior), indicadores gerais, comissões, destaques, parecer executivo | `report` + `previous` + `commission` |
+| 2 — Equipe | Tabela completa por atendente com comissões (com linha TOTAL), indicadores da equipe, resumo | `commission`; sem ele, cai no top-6 de `report.byAttendant` |
+| 3 — Convênios | Tabela por convênio, análise de concentração com semáforo (alta >70%, moderada ≥50%), insight | `report.byInsurance` |
+| 4 — Fecho | Evolução mensal (últimos 12), busca ativa, alertas por severidade, conclusão gerencial | `report.monthlySeries` + `pending` |
+
+A cor de TODO o PDF sai de `theme.accent` do tenant (lido do `auth.store`, que já o recebeu no
+login — sem request extra). Os primitivos de desenho ficam em `lib/pdf/brand.ts`, para que os
+PDFs de Comissão e Busca Ativa possam adotar a mesma identidade sem duplicar código.
+
+**Coerência de base:** `/reports/executive` ignora o filtro de convênio e `/lis-budgets/summary`
+o respeita. Com o filtro LIGADO, a tela passa `previous: null` e `commission: null` — misturar
+as duas bases num mesmo PDF produziria números que não fecham entre si.
 
 #### Cabeçalho e barra de filtro
 

@@ -27,6 +27,7 @@ vi.mock('@/api/lis', async () => {
     useLisBudgetsFilters: vi.fn(),
     useLisBudgetsSummary: vi.fn(),
     useLisImportsLatest: vi.fn(),
+    useLisBudgetsPendingSummary: vi.fn(() => ({ data: undefined })),
     useImportLisSpreadsheet: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
     usePurgeLisBudgets: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   };

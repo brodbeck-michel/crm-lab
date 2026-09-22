@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-21 (v1.14.1 em produção — Ondas A, B e C fechadas; ver seções no fim)
+**Última atualização:** 2026-09-22 (PDF Executivo redesenhado com a marca do tenant — ver fim do arquivo)
 
 ---
 
@@ -2435,3 +2435,45 @@ aumentar o limite.
 
 **Outra pendência, sem relação com o acima:** a branch `chore/skills-ui-ux` tem 1 commit que
 nunca virou PR (`skills-lock.json` + `.gitignore` do `.agents/`). Abrir PR ou apagar.
+
+---
+
+## PDF Executivo — redesenho (2026-09-22)
+
+| Tarefa | Domínio | Status | Agente | Notas |
+|--------|---------|--------|--------|-------|
+| PDF Executivo em 4 páginas com identidade do tenant | ui | ✅ 2026-09-22 | Claude | `lib/pdf/brand.ts` (novo: cabeçalho/rodapé/seção/cartões/alertas/tabela, cor de `theme.accent`) + `lib/pdf/executive-report.ts` (reescrito) + `pages/Results.tsx`. Antes eram 4 `autoTable` crus sem marca. Typecheck e 1090 testes verdes. |
+
+### ⛔ Pendente de deploy em produção
+
+Está **só na árvore local** (branch `main`, não commitado, não tagueado) em 2026-09-22.
+Produção segue na **v1.14.1**, sem o redesenho. Checklist para quando for aplicar:
+
+1. **Branch + commit.** `main` é a branch protegida do deploy: abrir
+   `feature/pdf-executivo-marca`, commitar os 5 arquivos (`lib/pdf/brand.ts` novo,
+   `lib/pdf/executive-report.ts`, `pages/Results.tsx`, `pages/Results.spec.tsx`,
+   `docs/frontend/PAGES.md`) e mergear em `main`.
+2. **Validar em homologação primeiro.** É mudança 100% visual num PDF: só olhando o
+   arquivo gerado se sabe se ficou bom. `./scripts/deploy.sh --ref origin/feature/...`
+   de dentro de `/opt/crm-lab-homolog`, depois abrir `/results` e exportar.
+   Conferir com um período REAL: nome de convênio longo, atendente sem venda, e o
+   caso do período sem dado nenhum.
+3. **Bump de versão + tag ANTES do deploy.** A versão que aparece na tela é *build
+   time* — subir sem bumpar deixa a tela mentindo. `1.14.1` → `1.15.0` (é recurso
+   novo, não correção): `npm version minor` + `git tag v1.15.0` + push da tag.
+4. **Deploy.** `ssh crm-vps` → `cd /opt/crm-lab` → `./scripts/deploy.sh` (digitar
+   `PRODUCAO`). **Perguntar ao Michel antes** — deploy em prod nunca sai sem o ok dele.
+5. **Sem migração, sem env var nova.** Nada de banco muda; `brand.ts` e o relatório são
+   só frontend. Rollback é o do `deploy.sh` (ENVIRONMENTS.md §3).
+
+### Pendências conhecidas
+
+- **Busca ativa não é do período.** `GET /lis-budgets/pending/summary` devolve o backlog inteiro
+  em aberto; o PDF rotula a seção como "carteira em aberto" para não induzir a leitura errada.
+  Quando o endpoint aceitar `startDate`/`endDate`, basta passar o recorte em `pending` — o PDF
+  não muda.
+- **Com filtro de convênio ligado**, o PDF sai sem comparativo e sem a tabela de comissões
+  (bases diferentes, ver PAGES.md §14). Resolver exigiria filtro de convênio em
+  `/reports/executive` ou um segundo fetch não filtrado de `/lis-budgets/summary`.
+- **`lib/pdf/commission-report.ts` e `lib/pdf/active-search.ts`** ainda não usam `brand.ts` —
+  saem sem logo e sem a cor do tenant.

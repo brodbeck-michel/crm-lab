@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-22 (PDF Executivo redesenhado com a marca do tenant — ver fim do arquivo)
+**Última atualização:** 2026-09-22 (v1.15.0 tagueada e na `main`; deploy em prod TRAVADO até 01/10 — ver fim do arquivo)
 
 ---
 
@@ -2446,27 +2446,34 @@ nunca virou PR (`skills-lock.json` + `.gitignore` do `.agents/`). Abrir PR ou ap
 
 | PDFs de Comissões e Busca Ativa na mesma identidade | ui | ✅ 2026-09-22 | Claude | `lib/pdf/commission-report.ts` e `lib/pdf/active-search.ts` reescritos sobre `brand.ts`; `brand.ts` ganhou `tableContinuation` (a página 2 de tabela longa nascia SEM cabeçalho nos três PDFs); `lib/excel/commission-report.ts` ganhou largura de coluna. Referência: os relatórios do `orcamentos-sante-main`. Typecheck e 1090 testes verdes. |
 
-### ⛔ Pendente de deploy em produção
+### ⛔ v1.15.0 pronta, deploy em produção TRAVADO até 01/10/2026
 
-Está **só na árvore local** (branch `main`, não commitado, não tagueado) em 2026-09-22.
-Produção segue na **v1.14.1**, sem o redesenho. Checklist para quando for aplicar:
+**Tudo pronto menos o último passo.** Em 2026-09-22:
 
-1. **Branch + commit.** `main` é a branch protegida do deploy: abrir
-   `feature/pdf-executivo-marca`, commitar os 5 arquivos (`lib/pdf/brand.ts` novo,
-   `lib/pdf/executive-report.ts`, `pages/Results.tsx`, `pages/Results.spec.tsx`,
-   `docs/frontend/PAGES.md`) e mergear em `main`.
-2. **Validar em homologação primeiro.** É mudança 100% visual num PDF: só olhando o
-   arquivo gerado se sabe se ficou bom. `./scripts/deploy.sh --ref origin/feature/...`
-   de dentro de `/opt/crm-lab-homolog`, depois abrir `/results` e exportar.
-   Conferir com um período REAL: nome de convênio longo, atendente sem venda, e o
-   caso do período sem dado nenhum.
-3. **Bump de versão + tag ANTES do deploy.** A versão que aparece na tela é *build
-   time* — subir sem bumpar deixa a tela mentindo. `1.14.1` → `1.15.0` (é recurso
-   novo, não correção): `npm version minor` + `git tag v1.15.0` + push da tag.
-4. **Deploy.** `ssh crm-vps` → `cd /opt/crm-lab` → `./scripts/deploy.sh` (digitar
-   `PRODUCAO`). **Perguntar ao Michel antes** — deploy em prod nunca sai sem o ok dele.
-5. **Sem migração, sem env var nova.** Nada de banco muda; `brand.ts` e o relatório são
-   só frontend. Rollback é o do `deploy.sh` (ENVIRONMENTS.md §3).
+- PRs **#53**, **#54** e **#55** mergeados na `main` (merge commits `1c0243b`, `e9296ce`, `540c905`).
+- Versão bumpada para **v1.15.0** e tag `v1.15.0` empurrada (`2c3de2d`).
+- Validado localmente na árvore já mergeada: typecheck dos 4 workspaces, lint,
+  **1090 testes de frontend** e **1208 de backend**, todos verdes.
+- Aprovado em homologação pelo Michel (Executivo, Comissões e Busca Ativa).
+
+**Produção segue na v1.14.1** e vai continuar: `deploy.sh` aborta na checagem de CI
+(**D-150**), e o CI não fica verde enquanto a cota do GitHub Actions estiver estourada.
+`--sem-ci` **não resolve e não deve resolver** — ele aborta em produção de propósito.
+
+**O que fazer em 2026-10-01**, quando a cota virar:
+
+1. Confirmar que o CI da `main` rodou e ficou **verde** no commit `2c3de2d`.
+2. `ssh crm-vps` → `cd /opt/crm-lab` → `./scripts/deploy.sh` (digitar `PRODUCAO`).
+   **Sem `--sem-ci`** — se ele for necessário, alguma coisa está errada, pare e investigue.
+3. **Perguntar ao Michel antes.** Deploy em prod nunca sai sem o ok dele.
+4. Conferir a versão na tela: tem que virar **v1.15.0** (é build time).
+
+**Sem migração e sem env var nova** — os três PDFs são só frontend. Rollback é o do
+`deploy.sh` (ENVIRONMENTS.md §3). A primeira imagem virá de `pull` do GHCR se o CI
+tiver publicado; senão, build local na VPS (~10 min), com aviso amarelo.
+
+**Limpeza pendente:** a branch `hml/pdf-tudo` é descartável (juntava os PDFs com o
+`--sem-ci` para o deploy de hml) e pode ser apagada assim que produção subir.
 
 ### 🔴 Dívida: `--sem-ci` no `deploy.sh` (aberta em 2026-09-22)
 

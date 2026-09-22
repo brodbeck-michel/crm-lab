@@ -50,7 +50,16 @@ export default function ActiveSearch() {
       const full = await import('@/api/lis').then((m) =>
         m.lisBudgetsApi.pending({ limit: 1000, attendantId: attendantId || undefined, ageBand: ageBand || undefined }),
       );
-      await generateActiveSearchPdf(summary, full.budgets, theme?.brandName || tenant?.name || 'Laboratório');
+      await generateActiveSearchPdf({
+        summary,
+        budgets: full.budgets,
+        brandName: theme?.brandName || tenant?.name || 'Laboratório',
+        theme,
+        filters: {
+          attendantName: filters?.attendants.find((a) => a.id === attendantId)?.name ?? null,
+          ageBand: ageBand || null,
+        },
+      });
     } catch {
       toast('Não foi possível gerar o PDF.', { tone: 'attention' });
     }

@@ -2381,3 +2381,57 @@ nunca virou PR (`skills-lock.json` + `.gitignore` do `.agents/`), decidir se ent
 
 **Pendências manuais que continuam:** `IMAGE_REGISTRY=ghcr.io/brodbeck-michel/crm-lab/` nos dois
 `.env`; validar `evolution: user: "1000:1000"` (D-140).
+
+---
+
+## 2026-09-21 — Dependências em dia e o E2E parado por limite de gastos do GitHub ⛔
+
+**Nove dos dez PRs seguros do Dependabot mergeados em `main`** (`03391b9`..`4b5b4b3`), depois de
+triagem um a um. Nenhum deles vai para o servidor sem deploy — são dependências de CI e de
+desenvolvimento. Produção segue na `v1.14.1`, intocada.
+
+| PR | O que subiu |
+|---|---|
+| #25, #27, #28, #29, #32 | `actions/checkout` 4→7, `upload-artifact` 4→7, `setup-buildx` 3→4, `setup-node` 4→7, `build-push-action` 6→7 |
+| #33 | grupo de 5 patches (dev) |
+| #34 | `@tanstack/react-query` 5.102→5.103 |
+| #35, #36 | `@types/supertest` 6→7, `@types/node` 22→26 |
+
+Os cinco de Actions tocam o mesmo `ci.yml` e os de npm o mesmo `package-lock.json`, então o
+merge foi **sequencial**, checando `mergeable` entre um e outro. O décimo (#38,
+`@testing-library/jest-dom` 6→7) conflitou no lock depois dos quatro anteriores; pedimos
+`@dependabot rebase` em vez de forçar, e o rebase saiu limpo.
+
+**Não mergeados, com falha real de CI** (não é flake, é trabalho a fazer):
+
+* **#42** `typescript` 5.9→7 — quebra typecheck, build e audit.
+* **#37** `@vitejs/plugin-react` 4→6 — quebra typecheck e build.
+* **#39** `express` 4→5 — typecheck e build passam, **E2E quebra**. O mais arriscado dos três:
+  o Express 5 mudou tratamento de rota e de erro.
+
+**Mergeáveis, guardados de propósito:** #40 (`react-router-dom` 6→7) e #41 (`dotenv` 16→18).
+Os dois com CI inteiro verde, E2E incluído, mas são majors que mexem em runtime — passar por
+homologação antes, não direto para `main`.
+
+### ⛔ O E2E parou de rodar por limite de gastos (desde 2026-09-21 ~23:01 UTC)
+
+O job `E2E (Playwright)` não **falha** — ele **não inicia**. Dura 2 s e o GitHub anota:
+`The job was not started because recent account payments have failed or your spending limit
+needs to be increased.` Vale para `main` e para todos os PRs.
+
+Decisão do Michel em 21/09: **esperar virar o mês** (cota nova em 01/10/2026) em vez de
+aumentar o limite.
+
+**O que isso deixa em aberto, e que precisa ser refeito depois de 01/10:**
+
+1. O CI da `main` em `4b5b4b3` passou em typecheck/lint/testes, build de produção e npm audit,
+   mas **ficou sem o E2E**. As nove atualizações não foram validadas em conjunto de ponta a
+   ponta. Evidência parcial, não negativa — mas não afirmar que está validado.
+2. **#38 continua aberto**, rebasado e com os outros três jobs verdes. Só falta o E2E para
+   mergear.
+3. Enquanto durar, qualquer mudança de **código** (não só de dependência) entra sem a rede do
+   E2E. Para mexer em regra de negócio, rodar a suíte localmente antes
+   (`npm run test:e2e` com a stack Docker de pé).
+
+**Outra pendência, sem relação com o acima:** a branch `chore/skills-ui-ux` tem 1 commit que
+nunca virou PR (`skills-lock.json` + `.gitignore` do `.agents/`). Abrir PR ou apagar.

@@ -151,7 +151,7 @@ export function Sidebar() {
         padding: '18px 12px 14px',
         transition: 'width 220ms ease',
       }}
-      className="sticky top-[12px] flex flex-col gap-md overflow-hidden rounded-lg bg-surface shadow-lg"
+      className="sticky top-[12px] flex flex-col gap-md rounded-lg bg-surface shadow-lg"
     >
       <div className="flex items-center gap-sm px-xs">
         <span
@@ -232,10 +232,13 @@ export function Sidebar() {
               >
                 <span
                   style={{ flex: '0 0 38px' }}
-                  className="flex h-[38px] items-center justify-center"
+                  className="relative flex h-[38px] items-center justify-center"
                   aria-hidden="true"
                 >
                   <NavGlyph name={group.icon} />
+                  {collapsed && groupUnreadCount > 0 && (
+                    <span className="absolute right-0 top-0 h-[8px] w-[8px] rounded-pill border-2 border-surface bg-accent2" />
+                  )}
                 </span>
                 {!collapsed && <span className="min-w-0 flex-1 truncate">{group.label}</span>}
                 {!collapsed && (
@@ -260,7 +263,7 @@ export function Sidebar() {
                   />
                 )}
               </button>
-              {open && (
+              {open && !collapsed && (
                 <div
                   id={groupId}
                   className="ml-lg mt-xs flex flex-col gap-xs border-l-2 border-neutral-300 pl-sm"

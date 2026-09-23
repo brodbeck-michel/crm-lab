@@ -271,7 +271,7 @@ describe('Sidebar — badge de não lidas do Chat Interno (D-130, CRMLAB-8)', ()
     expect(item).not.toHaveTextContent(/[0-9]/);
   });
 
-  it('recolhida, o badge vira um dot sem número (CRMLAB-44)', async () => {
+  it('recolhida, o badge do grupo "Comunicação" vira um dot no ícone do cabeçalho (CRMLAB-44)', async () => {
     mockChannels.mockResolvedValue({
       channels: [fakeChannel({ id: 'c-1', name: '#aprovacoes', unreadCount: 4 })],
     });
@@ -279,10 +279,10 @@ describe('Sidebar — badge de não lidas do Chat Interno (D-130, CRMLAB-8)', ()
     useUIStore.setState({ sidebarCollapsed: true });
     renderSidebar();
 
-    const item = await screen.findByRole('link', { name: 'Chat Interno' });
+    const header = await screen.findByRole('button', { name: 'Comunicação' });
     await waitFor(() => expect(mockChannels).toHaveBeenCalled());
-    expect(item).not.toHaveTextContent('4');
-    expect(item.querySelector('.bg-accent2')).not.toBeNull();
+    await waitFor(() => expect(header.querySelector('.bg-accent2')).not.toBeNull());
+    expect(header).not.toHaveTextContent('4');
   });
 });
 
@@ -293,6 +293,15 @@ describe('Sidebar — ícone do grupo (CRMLAB-44)', () => {
 
     const header = screen.getByRole('button', { name: 'Comunicação' });
     expect(header.querySelector('svg')).not.toBeNull();
+  });
+
+  it('recolhida, os subitens do grupo não vazam como ícones soltos', () => {
+    login('admin');
+    useUIStore.setState({ sidebarCollapsed: true });
+    renderSidebar();
+
+    expect(screen.queryByRole('link', { name: /Cadastro de Exames/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Personalização/ })).not.toBeInTheDocument();
   });
 });
 

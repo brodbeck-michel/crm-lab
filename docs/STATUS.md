@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-22 (v1.15.0 tagueada e na `main`; deploy em prod TRAVADO até 01/10 — ver fim do arquivo)
+**Última atualização:** 2026-09-23 (v1.15.0 em PRODUÇÃO — repo tornado público para destravar o CI, ver fim do arquivo)
 
 ---
 
@@ -2446,48 +2446,57 @@ nunca virou PR (`skills-lock.json` + `.gitignore` do `.agents/`). Abrir PR ou ap
 
 | PDFs de Comissões e Busca Ativa na mesma identidade | ui | ✅ 2026-09-22 | Claude | `lib/pdf/commission-report.ts` e `lib/pdf/active-search.ts` reescritos sobre `brand.ts`; `brand.ts` ganhou `tableContinuation` (a página 2 de tabela longa nascia SEM cabeçalho nos três PDFs); `lib/excel/commission-report.ts` ganhou largura de coluna. Referência: os relatórios do `orcamentos-sante-main`. Typecheck e 1090 testes verdes. |
 
-### ⛔ v1.15.0 pronta, deploy em produção TRAVADO até 01/10/2026
+### ✅ v1.15.0 em produção (2026-09-23)
 
-**Tudo pronto menos o último passo.** Em 2026-09-22:
+**Deploy concluído**, antecipado do gatilho de 01/10 — o bloqueio real não era cota mensal
+resetando, era **billing**: `crm-lab` é repositório privado, e o GitHub Free só dá 2.000
+min/mês grátis de Actions para privados (público é ilimitado). A conta já estava em uso
+medido (**$12.64** em setembro) sem cartão/spending limit cobrindo o excedente, e por isso
+todo job vinha com `job was not started because recent account payments have failed`.
 
-- PRs **#53**, **#54** e **#55** mergeados na `main` (merge commits `1c0243b`, `e9296ce`, `540c905`).
-- Versão bumpada para **v1.15.0** e tag `v1.15.0` empurrada (`2c3de2d`).
-- Validado localmente na árvore já mergeada: typecheck dos 4 workspaces, lint,
-  **1090 testes de frontend** e **1208 de backend**, todos verdes.
-- Aprovado em homologação pelo Michel (Executivo, Comissões e Busca Ativa).
+**Decisão tomada com o Michel:** tornar o repositório **público** para destravar o CI de
+graça, em vez de esperar 01/10 ou cadastrar pagamento. Antes, conferido: nenhum `.env` real
+(só `.env.example`) e nenhum segredo no histórico completo (`git log --all`). Consequência
+que fica registrada: **o repo agora é público** — código, histórico e PRs visíveis. Se isso
+deixar de ser aceitável, reverter para privado é uma linha (`gh repo edit --visibility
+private`) e volta a valer a discussão de cota/self-hosted runner.
 
-**Produção segue na v1.14.1** e vai continuar: `deploy.sh` aborta na checagem de CI
-(**D-150**), e o CI não fica verde enquanto a cota do GitHub Actions estiver estourada.
-`--sem-ci` **não resolve e não deve resolver** — ele aborta em produção de propósito.
+**Sequência do deploy:**
 
-**O que fazer em 2026-10-01**, quando a cota virar:
+1. Repo tornado público → CI da `main` rodado manualmente (`workflow_dispatch`) no commit
+   `e4a07ea` (mesmo commit da tag `v1.15.0`) → **verde**: typecheck/lint, npm audit, 123 E2E
+   Playwright, build+push das imagens.
+2. `ssh crm-vps` → `cd /opt/crm-lab` → `./scripts/deploy.sh` (digitado `PRODUCAO`) — Michel
+   autorizou explicitamente antes de rodar.
+3. Build das imagens rodou **local na VPS** (~10 min): `IMAGE_REGISTRY` não está definido no
+   `.env` da VPS, então não puxou do GHCR mesmo o CI tendo publicado. Sem migração nova (23
+   já aplicadas antes, nenhuma pendente — os 3 PDFs são só frontend).
+4. Healthcheck real (`/api/v1/health`) **OK** na 2ª tentativa: backend, Postgres e Redis
+   respondendo. `https://vitrocrm.cloud` retornando `200`.
 
-1. Confirmar que o CI da `main` rodou e ficou **verde** no commit `2c3de2d`.
-2. `ssh crm-vps` → `cd /opt/crm-lab` → `./scripts/deploy.sh` (digitar `PRODUCAO`).
-   **Sem `--sem-ci`** — se ele for necessário, alguma coisa está errada, pare e investigue.
-3. **Perguntar ao Michel antes.** Deploy em prod nunca sai sem o ok dele.
-4. Conferir a versão na tela: tem que virar **v1.15.0** (é build time).
+**Pendências que sobraram deste ciclo:**
 
-**Sem migração e sem env var nova** — os três PDFs são só frontend. Rollback é o do
-`deploy.sh` (ENVIRONMENTS.md §3). A primeira imagem virá de `pull` do GHCR se o CI
-tiver publicado; senão, build local na VPS (~10 min), com aviso amarelo.
+- **`IMAGE_REGISTRY` não configurado na VPS** (CRMLAB-41) — todo deploy de produção está
+  fazendo build local (~10 min) em vez de puxar a imagem já publicada pelo CI. Definir
+  `IMAGE_REGISTRY=ghcr.io/<owner>/<repo>/` no `.env` de `/opt/crm-lab`.
+- **Limpeza:** branch `hml/pdf-tudo` é descartável (só juntava os PDFs com `--sem-ci` para
+  hml) — apagar.
+- Ver dívida do `--sem-ci` logo abaixo — o gatilho dela (CI verde) já se cumpriu.
 
-**Limpeza pendente:** a branch `hml/pdf-tudo` é descartável (juntava os PDFs com o
-`--sem-ci` para o deploy de hml) e pode ser apagada assim que produção subir.
-
-### 🔴 Dívida: `--sem-ci` no `deploy.sh` (aberta em 2026-09-22)
+### 🔴 Dívida: `--sem-ci` no `deploy.sh` — decisão pendente (gatilho já cumprido em 2026-09-23)
 
 `scripts/deploy.sh` ganhou a flag `--sem-ci`, que pula a checagem de CI verde do **D-150**.
-Foi aberta para destravar homologação enquanto a cota do GitHub Actions está estourada —
+Foi aberta para destravar homologação enquanto a cota do GitHub Actions estava estourada —
 sem ela, não havia como validar o PDF Executivo em lugar nenhum.
 
 **É dívida consciente, e o risco dela é virar o caminho normal em silêncio.** Um atalho que
 funciona não pede para ser removido: ninguém sente falta da trava que ele desligou. Por isso
 o gatilho está escrito aqui, com data.
 
-**Gatilho: 2026-10-01**, quando a cota do Actions virar. Nesse dia:
+**O gatilho (CI verde) se cumpriu em 2026-09-23** — mas por um caminho diferente do previsto:
+não foi a cota resetar em 01/10, foi o repo virar público. Falta a decisão explícita:
 
-1. Rodar o CI da `main` e confirmar que volta verde.
+1. ~~Rodar o CI da `main` e confirmar que volta verde.~~ ✅ feito (`e4a07ea`, verde).
 2. **Decidir explicitamente** entre remover a flag ou mantê-la — e registrar a decisão aqui,
    qualquer que seja. "Ficou porque ninguém mexeu" não conta como decisão.
 3. Se mantida: ela precisa de um teste que prove que **aborta em produção**. Hoje essa garantia

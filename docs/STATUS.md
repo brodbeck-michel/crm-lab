@@ -2530,7 +2530,7 @@ deploy de ontem cair em build local eram **três lacunas fora do escopo do ticke
 
 **Resolvido hoje:**
 - `IMAGE_REGISTRY=ghcr.io/brodbeck-michel/crm-lab/` adicionado no `.env` de `/opt/crm-lab` e
-  `/opt/crm-lab-homolog` (backup `.env.bak-20260924` em cada).
+  `/opt/crm-lab-homolog` (backup `.env.bak-20260923` em cada).
 - `docker login ghcr.io` configurado no usuário da VPS com um PAT `read:packages` do Michel.
 - Confirmado por `docker pull` real: a imagem do commit `c9d405a` (push de verdade na `main`,
   logo após o repo virar público) veio do GHCR sem erro. `e4a07ea` nunca vai existir lá — não

@@ -12,6 +12,10 @@ const PROD_BASE = {
   // Onda 8 §4.1: mídia em disco. Obrigatoria em producao, mesma razao de
   // CHANNEL_SECRET_KEY.
   MEDIA_DIR: '/data/media',
+  // CRMLAB-39: recuperacao de senha por e-mail (Resend). Obrigatorias em
+  // producao — sem elas o boot falha, mesmo padrao das duas acima.
+  RESEND_API_KEY: 're_test_key',
+  RESEND_FROM_EMAIL: 'no-reply@crmlab.example.com',
 };
 
 describe('config/env', () => {
@@ -73,6 +77,15 @@ describe('config/env', () => {
     expect(loadEnv({ NODE_ENV: 'development' }).MEDIA_DIR.length).toBeGreaterThan(0);
   });
 
+  it('exige RESEND_API_KEY e RESEND_FROM_EMAIL em producao (CRMLAB-39)', () => {
+    expect(() => loadEnv({ ...PROD_BASE, RESEND_API_KEY: undefined })).toThrow(/RESEND_API_KEY/);
+    expect(() => loadEnv({ ...PROD_BASE, RESEND_FROM_EMAIL: undefined })).toThrow(
+      /RESEND_FROM_EMAIL/,
+    );
+    // Fora de producao continuam opcionais: forgotPassword usa o driver mock (lib/email.ts).
+    expect(loadEnv({ NODE_ENV: 'development' }).RESEND_API_KEY).toBeUndefined();
+  });
+
   it('exige DATABASE_URL em producao', () => {
     expect(() => loadEnv({ ...PROD_BASE, DATABASE_URL: undefined })).toThrow(/DATABASE_URL/);
   });
@@ -104,6 +117,7 @@ describe('config/env', () => {
     expect(safe.JWT_REFRESH_SECRET).toBe('***');
     expect(safe.DATABASE_URL).toBe('***');
     expect(safe.CHANNEL_SECRET_KEY).toBe('***');
+    expect(safe.RESEND_API_KEY).toBe('***');
     expect(JSON.stringify(safe)).not.toContain(PROD_BASE.JWT_SECRET);
   });
 });

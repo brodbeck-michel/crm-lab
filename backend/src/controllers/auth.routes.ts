@@ -30,7 +30,12 @@
 import cookieParser from 'cookie-parser';
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
-import type { LoginRequest, RefreshRequest } from '@crm-lab/shared';
+import type {
+  ForgotPasswordRequest,
+  LoginRequest,
+  RefreshRequest,
+  ResetPasswordRequest,
+} from '@crm-lab/shared';
 import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
 import { clientIp, userAgentOf } from '../http/context.js';
 import { BusinessError } from '../http/errors.js';
@@ -41,6 +46,7 @@ import {
   setRefreshCookie,
   clearRefreshCookie,
 } from '../http/refresh-cookie.js';
+import { createEmailService } from '../lib/email.js';
 import { createAuditService } from '../services/audit.service.js';
 import { createAuthService, type RequestMeta } from '../services/auth.service.js';
 import { createThemeService } from '../services/theme.service.js';
@@ -80,6 +86,20 @@ const refreshBodySchema = z
   .object({ refreshToken: z.string().min(1, 'refreshToken obrigatório').optional() })
   .strict();
 
+const forgotPasswordSchema = z
+  .object({
+    email: z.string().trim().min(1, 'E-mail obrigatório').email('E-mail inválido'),
+  })
+  .strict();
+
+/** `newPassword` só o mínimo de formato aqui — `checkPasswordPolicy` (D-153) decide o resto. */
+const resetPasswordSchema = z
+  .object({
+    token: z.string().min(1, 'token obrigatório'),
+    newPassword: z.string().min(1, 'Nova senha obrigatória'),
+  })
+  .strict();
+
 function metaOf(req: Request): RequestMeta {
   return { ip: clientIp(req), userAgent: userAgentOf(req) };
 }
@@ -87,7 +107,8 @@ function metaOf(req: Request): RequestMeta {
 export function authModule(deps: ApiModuleDeps): ApiModule {
   const audit = createAuditService(deps.db);
   const theme = createThemeService({ db: deps.db, audit });
-  const auth = createAuthService({ db: deps.db, cache: deps.cache, audit, theme });
+  const email = createEmailService();
+  const auth = createAuthService({ db: deps.db, cache: deps.cache, audit, theme, email });
 
   const router = Router();
   router.use(cookieParser());
@@ -149,6 +170,30 @@ export function authModule(deps: ApiModuleDeps): ApiModule {
       clearRefreshCookie(res);
       auth
         .logout(token, metaOf(req))
+        .then((result) => res.status(200).json(result))
+        .catch(next);
+    },
+  );
+
+  router.post(
+    '/forgot-password',
+    validate(forgotPasswordSchema, 'body'),
+    (req: Request, res: Response, next): void => {
+      const dto = validated<ForgotPasswordRequest>(req, 'body');
+      auth
+        .forgotPassword(dto.email, metaOf(req))
+        .then((result) => res.status(200).json(result))
+        .catch(next);
+    },
+  );
+
+  router.post(
+    '/reset-password',
+    validate(resetPasswordSchema, 'body'),
+    (req: Request, res: Response, next): void => {
+      const dto = validated<ResetPasswordRequest>(req, 'body');
+      auth
+        .resetPassword(dto.token, dto.newPassword, metaOf(req))
         .then((result) => res.status(200).json(result))
         .catch(next);
     },

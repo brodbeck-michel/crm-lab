@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { isApiError } from '@/api';
 import { Button, Input } from '@/components/ui';
 import { useLogin } from '@/hooks';
@@ -126,6 +126,10 @@ export function Login() {
         <Button type="submit" loading={submitting}>
           {submitting ? 'Entrando…' : 'Entrar'}
         </Button>
+
+        <Link to="/forgot-password" className="text-center text-caption text-neutral-600 underline">
+          Esqueci minha senha
+        </Link>
       </form>
     </main>
   );

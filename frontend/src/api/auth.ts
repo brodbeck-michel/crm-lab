@@ -1,4 +1,14 @@
-import type { CurrentUserResponse, LoginRequest, LoginResponse, LogoutResponse } from '@crm-lab/shared';
+import type {
+  CurrentUserResponse,
+  ForgotPasswordRequest,
+  ForgotPasswordResponse,
+  LoginRequest,
+  LoginResponse,
+  LogoutResponse,
+  ResetPasswordRequest,
+  ResetPasswordResponse,
+} from '@crm-lab/shared';
+import { useMutation } from '@tanstack/react-query';
 import { http, refreshAccessToken } from './client';
 
 /**
@@ -26,4 +36,26 @@ export const authApi = {
   logout: () => http.post<LogoutResponse>('/auth/logout'),
 
   me: () => http.get<CurrentUserResponse>('/users/me'),
+
+  /** Público. Sempre 200 — não confirma se o e-mail existe (CRMLAB-39). */
+  forgotPassword: (body: ForgotPasswordRequest) =>
+    http.post<ForgotPasswordResponse>('/auth/forgot-password', body, { auth: false }),
+
+  /** Público: o token do link já autoriza a troca (CRMLAB-39). */
+  resetPassword: (body: ResetPasswordRequest) =>
+    http.post<ResetPasswordResponse>('/auth/reset-password', body, { auth: false }),
 };
+
+/* ── React Query Hooks ──────────────────────────────────────────────────── */
+
+export function useForgotPassword() {
+  return useMutation({
+    mutationFn: async (data: ForgotPasswordRequest) => authApi.forgotPassword(data),
+  });
+}
+
+export function useResetPassword() {
+  return useMutation({
+    mutationFn: async (data: ResetPasswordRequest) => authApi.resetPassword(data),
+  });
+}

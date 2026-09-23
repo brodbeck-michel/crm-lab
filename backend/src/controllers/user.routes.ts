@@ -27,6 +27,7 @@ import { getContext } from '../http/context.js';
 import { denyPlatformOperator, requireAuth, requireRoles } from '../http/middleware/auth.js';
 import { validate, validated } from '../http/middleware/validate.js';
 import { REFRESH_COOKIE_NAME } from '../http/refresh-cookie.js';
+import { createEmailService } from '../lib/email.js';
 import { createAuditService } from '../services/audit.service.js';
 import { createAuthService } from '../services/auth.service.js';
 import { createThemeService } from '../services/theme.service.js';
@@ -86,7 +87,8 @@ export function userModule(deps: ApiModuleDeps): ApiModule {
   // troca de senha (revogar famílias, ver CRMLAB-35/D-152) — não duplica
   // `issueRefreshToken`/hash de refresh aqui.
   const theme = createThemeService({ db: deps.db, audit });
-  const auth = createAuthService({ db: deps.db, cache: deps.cache, audit, theme });
+  const email = createEmailService();
+  const auth = createAuthService({ db: deps.db, cache: deps.cache, audit, theme, email });
 
   const router = Router();
   router.use(requireAuth(), denyPlatformOperator());

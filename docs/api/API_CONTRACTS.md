@@ -177,6 +177,63 @@ Lê o refresh do cookie `crm_refresh` (fallback depreciado: `{ "refreshToken": "
 
 Idempotente: token desconhecido ou já revogado devolve a mesma resposta (não é oráculo).
 
+### POST /auth/forgot-password (CRMLAB-39, D-172)
+Solicita um link de redefinição de senha por e-mail (provedor Resend).
+
+**Request:**
+```json
+{
+  "email": "user@lab.com"
+}
+```
+
+**Response (200):**
+```json
+{
+  "message": "Se o e-mail existir, enviaremos um link de redefinição de senha"
+}
+```
+
+**Sempre 200, sempre a mesma mensagem** — e-mail existente ou não, ativo ou não, tenant ativo
+ou não: não é oráculo de conta (mesmo desenho anti-oráculo do `POST /auth/login`). Rate limit de
+5 pedidos / 15 min por e-mail+IP, mesma janela do lockout de login; com Redis fora do ar a rota
+falha FECHADA (`SERVICE_UNAVAILABLE`, D-139 — está na allow-list de rotas públicas).
+
+Se o e-mail existir e a conta/tenant estiverem ativos: gera um token de uso único (30 min de
+validade), invalida qualquer link anterior ainda não usado, envia o e-mail (fire-and-forget —
+o envio nunca é aguardado pela resposta, para não vazar por timing se o e-mail existe) e grava
+`audit_log` (`forgot_password_requested`).
+
+**Erros:** `VALIDATION_ERROR` (400 — e-mail malformado), `RATE_LIMIT_EXCEEDED` (429),
+`SERVICE_UNAVAILABLE` (503 — Redis fora do ar)
+
+### POST /auth/reset-password (CRMLAB-39, D-172)
+Conclui a redefinição de senha a partir do link recebido por e-mail.
+
+**Request:**
+```json
+{
+  "token": "token-do-link",
+  "newPassword": "senha-nova-com-10-chars"
+}
+```
+
+`newPassword` segue a mesma política de `PATCH /users/me/password` (D-153): mínimo 10
+caracteres, fora da lista de senhas triviais.
+
+**Response (200):**
+```json
+{ "message": "Senha redefinida com sucesso" }
+```
+
+**Efeito colateral:** revoga **TODAS** as famílias de refresh do usuário (ao contrário da troca
+de senha autenticada, aqui não há sessão atual para excetuar — quem usa este endpoint não está
+logado). Gera `audit_log` (`reset_password`).
+
+**Erros:** `VALIDATION_ERROR` (400 — `details.fields.newPassword` quando a nova senha não passa
+na política), `RESET_TOKEN_INVALID` (400 — token inexistente, já usado ou vencido; os três casos
+respondem igual, de propósito)
+
 ### GET /users/me
 Informações do usuário logado.
 

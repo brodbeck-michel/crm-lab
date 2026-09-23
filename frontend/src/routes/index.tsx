@@ -4,6 +4,8 @@ import { NotFoundPlaceholder } from '@/pages/_placeholders';
 import { Attendance } from '@/pages/Attendance';
 import PatientProfile, { PatientsList } from '@/pages/Patients';
 import { Login } from '@/pages/Login';
+import { ForgotPassword } from '@/pages/ForgotPassword';
+import { ResetPassword } from '@/pages/ResetPassword';
 import BudgetNew from '@/pages/Budget/New';
 import Proposals from '@/pages/Proposals';
 import Catalog from '@/pages/Catalog';
@@ -45,6 +47,8 @@ import { ADMIN_ONLY, MANAGER_PLUS, PLATFORM_ONLY, TENANT_ROLES } from './route-c
  */
 export const appRoutes: RouteObject[] = [
   { path: '/login', element: <Login /> },
+  { path: '/forgot-password', element: <ForgotPassword /> },
+  { path: '/reset-password', element: <ResetPassword /> },
 
   {
     element: <RequireAuth />,

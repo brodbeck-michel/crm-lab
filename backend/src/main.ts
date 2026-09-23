@@ -10,6 +10,7 @@ import { logger } from './lib/logger.js';
 import { refreshSessionIsLive } from './services/auth.service.js';
 import { createWsHub } from './lib/ws-hub.js';
 import { deleteExpiredOrRevoked } from './repositories/refresh-token.repository.js';
+import { deleteExpiredOrUsed as deleteExpiredResetTokens } from './repositories/password-reset-token.repository.js';
 
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
@@ -101,6 +102,16 @@ async function bootstrap(): Promise<void> {
       })
       .catch((err: unknown) => {
         logger.warn('refresh_tokens.cleanup_failed', {
+          message: err instanceof Error ? err.message : String(err),
+        });
+      });
+    // CRMLAB-39: mesmo padrao acima, para `password_reset_tokens`.
+    deleteExpiredResetTokens(db)
+      .then((deleted) => {
+        if (deleted > 0) logger.info('password_reset_tokens.cleanup', { deleted });
+      })
+      .catch((err: unknown) => {
+        logger.warn('password_reset_tokens.cleanup_failed', {
           message: err instanceof Error ? err.message : String(err),
         });
       });

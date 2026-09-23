@@ -87,6 +87,32 @@ export interface ChangePasswordResponse {
   message: string;
 }
 
+/**
+ * `POST /auth/forgot-password` (CRMLAB-39). Resposta é SEMPRE 200 com a mesma
+ * mensagem, exista ou não o e-mail — não é oráculo de conta (D-172).
+ */
+export interface ForgotPasswordRequest {
+  email: string;
+}
+
+export interface ForgotPasswordResponse {
+  message: string;
+}
+
+/**
+ * `POST /auth/reset-password` (CRMLAB-39). `token` vem do link recebido por
+ * e-mail; `newPassword` segue a mesma política de `checkPasswordPolicy`
+ * (D-153) usada em `PATCH /users/me/password`.
+ */
+export interface ResetPasswordRequest {
+  token: string;
+  newPassword: string;
+}
+
+export interface ResetPasswordResponse {
+  message: string;
+}
+
 /** Conteudo do JWT. tenantId e obrigatorio — base do isolamento (BUSINESS_RULES.md §4). */
 export interface JwtPayload {
   userId: string;

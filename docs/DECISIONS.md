@@ -2520,6 +2520,40 @@ até `valid=10s`; o restart do frontend mata a janela e custa ~2 s, só no caso 
 mesmo assim mandou investigar o backend, que estava vivo — a mensagem escondia a causa.
 **Impacto:** `nginx/frontend.conf`, `scripts/deploy.sh`.
 
+### D-172: Recuperação de senha por e-mail — Resend, token SHA-256 de 30 min, sempre 200, revoga tudo (CRMLAB-39)
+**Decisão:** `POST /auth/forgot-password` e `POST /auth/reset-password` (novos). Provedor de
+e-mail: **Resend** (`RESEND_API_KEY`/`RESEND_FROM_EMAIL`, obrigatórias em produção — mesmo
+padrão de `CHANNEL_SECRET_KEY`/`MEDIA_DIR`, D-076/Onda 8). Token de reset: 32 bytes aleatórios,
+guardado só como hash SHA-256 (`password_reset_tokens`, migração 024, mesmo desenho de
+`refresh_tokens`), validade de 30 min, uso único, um pedido novo invalida qualquer link anterior
+ainda não usado. `forgot-password` responde SEMPRE `200` com a mesma mensagem — e-mail
+existente ou não — e o envio do e-mail roda fire-and-forget (nunca `await`ado no caminho de
+resposta). `reset-password` revoga **todas** as famílias de refresh do usuário (sem "exceto",
+ao contrário do CRMLAB-35 — não há sessão atual a preservar). Rate limit de 5/15min por
+e-mail+IP em `forgot-password`, mesma janela do lockout de login, fail-closed com Redis fora do
+ar (D-139).
+**Motivo:** Resend por não haver provedor nenhum configurado ainda e o card exigir uma escolha
+para desbloquear — API simples, sem infraestrutura própria de SMTP. SHA-256 (não bcrypt) pelo
+mesmo motivo do refresh token (D-refresh-tokens): o token nasce com 256 bits de entropia
+gerados pelo servidor, não é senha escolhida por humano — o lookup precisa ser indexado, não
+uma varredura. 30 min é o valor que o próprio card (CRMLAB-39, desmembrado do CRMLAB-35) já
+pedia como critério de aceite. O "sempre 200" replica o anti-oráculo do `login` (mesmo arquivo,
+mesmo comentário de topo) — sem ele, a resposta denunciaria quais e-mails têm conta. Fire-and-
+forget no envio existe pelo mesmo motivo: se o `await` do Resend bloqueasse a resposta, o
+TEMPO de resposta viraria o oráculo que o corpo da resposta evita (rede real vs. nenhuma
+chamada de rede). Revogar tudo em vez de "exceto a atual": quem usa o link de reset por
+definição não está autenticado, não há sessão a preservar — ao contrário da troca de senha
+logada (D-154).
+**Impacto:** `backend/migrations/024_password_reset_tokens.sql` (nova tabela + RLS),
+`backend/src/repositories/password-reset-token.repository.ts` (novo),
+`backend/src/lib/email.ts` (novo — driver mock quando `RESEND_API_KEY` ausente, mesmo padrão do
+`WHATSAPP_API_URL` vazio), `backend/src/services/auth.service.ts` (`forgotPassword`,
+`resetPassword`), `backend/src/controllers/auth.routes.ts`, `backend/src/config/env.ts`,
+`backend/src/http/middleware/rate-limit.ts` (`/auth/forgot-password` entra na allow-list de
+rotas públicas do D-139), `shared/types/{auth,api}.types.ts` (`RESET_TOKEN_INVALID`),
+`docs/api/{API_CONTRACTS,API_ERRORS}.md`, `frontend/src/pages/{ForgotPassword,ResetPassword}.tsx`
+(novos), `frontend/src/routes/index.tsx`.
+
 ## Template para novas decisões
 
 ```

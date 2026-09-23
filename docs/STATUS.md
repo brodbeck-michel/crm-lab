@@ -2476,9 +2476,8 @@ private`) e volta a valer a discussão de cota/self-hosted runner.
 
 **Pendências que sobraram deste ciclo:**
 
-- **`IMAGE_REGISTRY` não configurado na VPS** (CRMLAB-41) — todo deploy de produção está
-  fazendo build local (~10 min) em vez de puxar a imagem já publicada pelo CI. Definir
-  `IMAGE_REGISTRY=ghcr.io/<owner>/<repo>/` no `.env` de `/opt/crm-lab`.
+- ~~`IMAGE_REGISTRY` não configurado na VPS~~ — **resolvido no mesmo dia**, junto com login do
+  GHCR na VPS. Ver seção "✅ CRMLAB-41 verificado de novo" logo abaixo para a causa completa.
 - **Limpeza:** branch `hml/pdf-tudo` é descartável (só juntava os PDFs com `--sem-ci` para
   hml) — apagar.
 - Ver dívida do `--sem-ci` logo abaixo — o gatilho dela (CI verde) já se cumpriu.
@@ -2512,6 +2511,35 @@ de que a flag virou desvio de CI vermelho — que é exatamente o que o D-150 ex
 sobre `feature/pdf-executivo-marca` por necessidade técnica: o script precisa existir no ref que
 está sendo deployado, senão ele rejeita a flag antes do checkout. Ao organizar, ela merece PR
 próprio para a `main` — o PR #53 é só o PDF.
+
+### ✅ CRMLAB-41 verificado de novo (2026-09-23) — pull do GHCR na VPS agora funciona
+
+Revisão pedida pelo Michel após o deploy: o CRMLAB-41 (renomeação da imagem + `docker` não
+depender de `quality`/`e2e`) está corretamente fechado no código — não regrediu. O que fazia o
+deploy de ontem cair em build local eram **três lacunas fora do escopo do ticket**, empilhadas:
+
+1. `IMAGE_REGISTRY` nunca tinha sido definido em nenhum `.env` da VPS (a "pendência manual #1"
+   que o próprio CRMLAB-41 deixou registrada, e ninguém tinha aplicado ainda).
+2. A VPS **nunca tinha feito `docker login ghcr.io`** — pull de imagem privada sempre voltava
+   `unauthorized`, mesmo com `IMAGE_REGISTRY` certo.
+3. A execução do CI que gerou o `e4a07ea` rodou como `workflow_dispatch` manual (pra destravar
+   o deploy depois do repo virar público) — e o job de publicação no GHCR só roda em
+   `if: github.event_name == 'push' && github.ref == 'refs/heads/main'` (`ci.yml:195`), de
+   propósito. Um dispatch manual nunca publica imagem. Por isso a imagem de `e4a07ea`
+   simplesmente não existe no GHCR — não é bug, é o gate funcionando como desenhado.
+
+**Resolvido hoje:**
+- `IMAGE_REGISTRY=ghcr.io/brodbeck-michel/crm-lab/` adicionado no `.env` de `/opt/crm-lab` e
+  `/opt/crm-lab-homolog` (backup `.env.bak-20260924` em cada).
+- `docker login ghcr.io` configurado no usuário da VPS com um PAT `read:packages` do Michel.
+- Confirmado por `docker pull` real: a imagem do commit `c9d405a` (push de verdade na `main`,
+  logo após o repo virar público) veio do GHCR sem erro. `e4a07ea` nunca vai existir lá — não
+  precisa: o próximo push normal em `main` publica e o deploy seguinte já puxa em vez de
+  buildar local.
+
+**Consequência para o próximo deploy:** vai ser rápido (pull, não build de ~10 min) **desde
+que** o commit deployado tenha vindo de um push normal na `main` — se for testar um
+`workflow_dispatch` de novo, vai cair em build local de novo, e isso é esperado.
 
 ### Pendências conhecidas
 

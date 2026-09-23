@@ -155,11 +155,19 @@ Anatomia (padrão WhatsApp):
 ## Layout (`layout/`)
 
 ### Sidebar
-- Variante "Trilho de grupo" (D-128): **272px expandido / 64px recolhido**; recolhe sozinho em
-  atendente + inbox
-- Itens: ícone (flex 0 0 38px quando recolhido) + label; hover `accent-100`; **ativo `accent-500`
-  sólido + texto `text-bg` + `font-semibold`** (único destaque preenchido do trilho — a faixa de
-  grupo nunca usa essa cor). Raio: `rounded-lg` nível 1 (solto), `rounded-md` filho de grupo
+- Variante "Trilho flutuante" (CRMLAB-44, a partir de `Sidebar CRM - Design System.md`, mapeada
+  para os tokens de tema do tenant — a paleta fixa verde do documento NÃO foi adotada, decisão
+  registrada no card): **264px expandido / 76px recolhido**, `transition: width 220ms ease`;
+  recolhe sozinho em atendente + inbox
+- Flutuante: margem de 12px (topo/base/esquerda), `rounded-lg` + `shadow-lg`, fundo `bg-surface`
+  sobre o `bg-bg` do app. Altura `calc(100vh - 24px)`, `position: sticky`
+- Header: logo (34×34, `rounded-md`, `bg-accent-300`/`text-accent-900`, iniciais do nome do
+  tenant) + nome do tenant (`font-heading text-section`) + botão recolher/expandir
+  (`panel-left-close`/`panel-left-open`, lucide-react, 30×30)
+- Itens: ícone (flex 0 0 38px quando recolhido) + label; hover `neutral-100`; **ativo fundo
+  `accent-100` translúcido + barra de 3px à esquerda (`accent-500`, `rounded-r-sm`)** — único
+  destaque do trilho (a faixa de grupo nunca usa essa cor). Raio: `rounded-lg` nível 1 (solto),
+  `rounded-md` filho de grupo
 - Conteúdo do trilho muda por perfil — a ESTRUTURA não
 - Itens agrupados em accordion (CRMLAB-4): itens soltos primeiro, um único divisor
   (`<hr>` neutral-300), depois os grupos, na ordem Comunicação → Gestão →
@@ -167,11 +175,13 @@ Anatomia (padrão WhatsApp):
   (`sidebarSectionsFor(role)`, route-config.ts). Grupo
   sem nenhum item visível para o perfil não aparece. Abertos por padrão; estado por grupo
   persistido em localStorage por usuário (`sidebar-groups.store.ts`)
-- Cabeçalho de grupo: `font-body text-label font-bold` — **mesmo tamanho do item**, só o peso
-  diferencia (D-128; v1/D-127 usava `font-heading text-section`, maior, rejeitado pelo usuário na
-  validação). Fundo `accent-100` quando aberto, `hover:bg-neutral-100` quando fechado. Chevron `▶`
-  gira 90° ao abrir. Filhos indentados atrás de um trilho (`border-l-2 border-neutral-300`). Grupo
-  fechado com item ativo dentro: ponto 6px `bg-accent-500` ao lado do chevron
+- Cabeçalho de grupo (CRMLAB-44): ícone (`NAV_GROUPS[].icon`, route-config.ts) + label
+  (`font-body text-label font-bold` — mesmo tamanho do item, só o peso diferencia, D-128) +
+  chevron (`chevron-right`, lucide-react, 15px) que gira 90° ao abrir. Fundo `accent-100` quando
+  aberto (ou, recolhido, quando o item ativo é um filho seu), `hover:bg-neutral-100` quando
+  fechado. Filhos indentados atrás de um trilho (`border-l-2 border-neutral-300`). Grupo fechado
+  com item ativo dentro: ponto 6px `bg-accent-500` ao lado do chevron. **Recolhido**: clicar no
+  ícone do grupo expande o trilho e abre o grupo
 - Item "Decisões" (gestor+): `Badge` com `pendingDecisions.total` de `GET /operations/overview`
   (PAGES.md §12) — some quando o total é zero
 - Item "Chat Interno": `Badge` com a soma de `Channel.unreadCount` de todos os canais
@@ -179,11 +189,17 @@ Anatomia (padrão WhatsApp):
   Grupo "Comunicação" fechado com esse total > 0: o mesmo `Badge` aparece no cabeçalho do grupo,
   substituindo o ponto 6px de "item ativo dentro" enquanto houver não lida (o ponto volta a
   aparecer sozinho se o total zerar mas ainda houver item ativo dentro)
+- **Recolhido** (CRMLAB-44): qualquer `Badge` de contagem vira um dot de 8px (`bg-accent2`,
+  borda 2px `border-surface`) sobre o ícone, no lugar do número
+- Ícones: `lucide-react`, 19px, `strokeWidth={1.7}` (`NavGlyph.tsx`, mapa `NavIcon → LucideIcon`)
 - Rodapé: avatar + nome do usuário é um botão; clique abre menu com [Sair] (`useLogout`,
   `POST /auth/logout` — API_CONTRACTS.md §1). Fecha ao clicar fora, `Esc` ou depois de sair
-- Rodapé: versão do build (`v1.1.0`, só o número quando recolhido) — `__APP_VERSION__`
-  injetada em build-time pelo Vite a partir do `package.json` da raiz do monorepo
-  (`frontend/vite.config.ts`), sem chamada de rede
+- Rodapé: nome, "Cargo · vX.Y.Z" (cargo = `role` traduzido em pt-BR, CRMLAB-44) — só a versão
+  quando recolhido. `__APP_VERSION__` injetada em build-time pelo Vite a partir do `package.json`
+  da raiz do monorepo (`frontend/vite.config.ts`), sem chamada de rede
+- Estado recolhido/expandido persiste em `localStorage` (`crm-lab.sidebar-collapsed`,
+  `ui.store.ts`) — preferência duradoura, ao contrário do resto do `ui.store` (sessionStorage,
+  D-117)
 
 ### InboxLayout
 - 3 colunas: 336px fixo | flex 1 min 440px | 316px recolhível
@@ -484,7 +500,7 @@ Barril: `@/components/layout`. Nenhum destes componentes busca dado — são cas
 | `InboxLayout` | `<InboxLayout list conversation context? contextOpen? />` | `336px \| flex 1 min 440px \| 316px` |
 | `BudgetLayout` | `<BudgetLayout catalog summary total />` | `flex 1 min 520px \| 372px`; `total` em rodapé `sticky bottom-0` |
 | `PageContainer` | `<PageContainer wide?>…</PageContainer>` | Página de leitura: `max-width 1180px`, `padding 30px 36px 48px` (PAGES.md §3). `wide`: 1440px e `24px 32px 48px`, só para tela de GRADE de dados (`/results`) |
-| `NavGlyph` | `<NavGlyph name size? />` | SVG inline em `currentColor` — sem biblioteca de ícones |
+| `NavGlyph` | `<NavGlyph name size? />` | `lucide-react`, 19px/`strokeWidth 1.7`, herda `currentColor` (CRMLAB-44) |
 
 Constantes exportadas para quem precisar do número exato:
 `INBOX_LIST_WIDTH` (336) · `INBOX_CONVERSATION_MIN_WIDTH` (440) ·
@@ -497,7 +513,7 @@ Regras de Largura aplicadas e **testadas** (`InboxLayout.spec.tsx`,
 - coluna flexível sempre com `min-width` explícito no `style`;
 - em tela estreita quem rola é a LINHA (`overflow-x-auto`) — coluna não colapsa;
 - ícone do item de menu e avatar com `flex: 0 0 <tamanho>`;
-- Sidebar 272px/64px, recolhendo sozinha para atendente em `/attendance`.
+- Sidebar 264px/76px, recolhendo sozinha para atendente em `/attendance`.
 
 ---
 

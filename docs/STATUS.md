@@ -2541,6 +2541,41 @@ deploy de ontem cair em build local eram **três lacunas fora do escopo do ticke
 que** o commit deployado tenha vindo de um push normal na `main` — se for testar um
 `workflow_dispatch` de novo, vai cair em build local de novo, e isso é esperado.
 
+### ✅ CRMLAB-44 (2026-09-23) — Sidebar redesenhada ("Trilho flutuante")
+
+Reescrita da barra lateral conforme `Sidebar CRM - Design System.md` (padrão Avimus), com escopo
+fechado em Discussão antes de codar:
+
+- **264px expandido / 76px recolhido** (era 272/64), `transition: width 220ms ease`, flutuante
+  (margem 12px, `rounded-lg` + `shadow-lg`), sticky, `calc(100vh - 24px)` de altura.
+- Item ativo: fundo `accent-100` translúcido + barra de 3px à esquerda (era fundo `accent-500`
+  sólido + texto branco).
+- Cabeçalho de grupo ganhou ícone (`NAV_GROUPS[].icon`, novo campo no contrato de
+  `route-config.ts`) + chevron à direita (era `▶` à esquerda). Recolhido: clicar no grupo expande
+  o trilho e abre o grupo; se o item ativo é filho, o cabeçalho herda o fundo ativo.
+- Badges de contagem (Decisões, Chat Interno) viram um dot de 8px no modo recolhido.
+- **`lucide-react` instalado** — `NavGlyph.tsx` trocou os SVGs inline por ícones da lib.
+- Rodapé: "cargo · vX.Y.Z" (cargo = `role` traduzido em pt-BR, mapa novo em `Sidebar.tsx`) — antes
+  só mostrava nome + versão.
+- `sidebarCollapsed` (`ui.store.ts`) passou a persistir em `localStorage`
+  (`crm-lab.sidebar-collapsed`), separado do `sessionStorage` do resto do store (D-117 continua
+  valendo só para `lisFilters`).
+- **Decisões de escopo que DESVIAM do documento original** (registradas no card antes de
+  implementar): (1) grupos/subitens usam as rotas REAIS já existentes — "Campanhas", "Modelos de
+  mensagem", "Tags", "Relatórios", "Equipe", "Metas" e "Integrações" do documento não têm rota
+  hoje e não foram criadas por este card; (2) a sidebar segue os tokens de tema do tenant
+  (`--color-accent`/`--color-bg`/`--color-surface`) em vez da paleta fixa verde `--sb-*` do
+  documento — só a anatomia/layout flutuante foi adotada; (3) a seção "Contexto da unidade"
+  (rótulo "LABORATÓRIO" + nome) do documento foi omitida — o app não tem um conceito de "unidade"
+  separado do tenant, já mostrado no header, e duplicar o mesmo nome seria redundante; (4) o
+  cartão de conteúdo principal (raio 18px + borda) do "modo flutuante" do documento não foi
+  aplicado — só a sidebar ficou flutuante, para não alterar o layout de scroll/altura de outras
+  telas (risco fora do escopo deste card; pode virar um card à parte se o usuário quiser).
+- `Sidebar.spec.tsx` atualizado (larguras, item ativo, ícone de grupo, dot recolhido,
+  persistência) — 1102 testes verdes em `npm run test:frontend`. `npm run typecheck --workspace
+  frontend` limpo (erro do backend no typecheck geral é do CRMLAB-39, fora deste card).
+- Docs: `docs/frontend/COMPONENTS.md` (§ Sidebar) atualizado junto.
+
 ### Pendências conhecidas
 
 - **Busca ativa não é do período.** `GET /lis-budgets/pending/summary` devolve o backlog inteiro

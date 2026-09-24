@@ -137,6 +137,11 @@ services:
       # migração nunca gravando mídia. O valor não precisa bater com o volume
       # do `backend`: este processo só valida e sai.
       MEDIA_DIR: /data/media
+      # Mesma razão: em NODE_ENV=production o env.ts exige as duas (CRMLAB-39)
+      # antes de rodar qualquer linha, mesmo o job de migração nunca enviando
+      # e-mail.
+      RESEND_API_KEY: ${RESEND_API_KEY:?defina RESEND_API_KEY}
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:?defina RESEND_FROM_EMAIL}
     command: ['node', 'dist/backend/src/db/cli/migrate.js']
 
   backend:
@@ -204,6 +209,11 @@ services:
       # backend nao sobe. O caminho e o mount point do volume `media-data`
       # logo abaixo — unica escrita permitida com `read_only: true` na raiz.
       MEDIA_DIR: /data/media
+      # E-mail de recuperação de senha (CRMLAB-39, provedor Resend). Obrigatória
+      # em NODE_ENV=production pela mesma razão de CHANNEL_SECRET_KEY: sem ela
+      # o backend não sobe.
+      RESEND_API_KEY: ${RESEND_API_KEY:?defina RESEND_API_KEY}
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:?defina RESEND_FROM_EMAIL}
     read_only: true
     tmpfs:
       - /tmp

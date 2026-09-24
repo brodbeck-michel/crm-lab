@@ -2595,6 +2595,45 @@ direção; `from_me` sai de `DiscardReason`), `backend/src/services/message.serv
 (`hasPendingOutbound`, `setStatus` com conflito de `externalId`, `sender_name` do celular),
 `docs/api/API_CONTRACTS.md` §6.1, `docs/backend/SERVICES.md` §3/§16. Sem migração.
 
+### D-174: Encerrar atendimento substitui Arquivar; paciente que volta a escrever reabre na fila livre (CRMLAB-48)
+**Decisão:** a conversa passa a ter **dois** status, `active | closed`. `archived` deixa de
+existir: a migração 025 converte as arquivadas em `closed` e troca a coluna por um `CHECK`.
+Decisões do PO (24/09/2026):
+1. **Quem encerra:** a **dona** da conversa, **gestor** e **admin**. Atendente que não é dona
+   (inclusive em conversa da fila livre) → `FORBIDDEN` (403). O 403 não vaza nada: a conversa
+   de outra atendente continua respondendo `NOT_FOUND` antes (recorte por papel), então o 403
+   só aparece em conversa que o usuário JÁ enxerga. A mesma alçada vale para reativar pelo
+   `PATCH { status: 'active' }`.
+2. **Encerrar** mantém `assigned_to` (o filtro "Encerradas" mostra quem atendeu), grava a
+   mensagem de sistema "Atendimento encerrado por <nome>" e o audit log
+   `update_conversation_status`.
+3. **Paciente escreve numa conversa `closed`** (`MessageService.createFromPatient`) → a
+   conversa volta para `active` **sem dona** (`assigned_to = NULL`, fila "Não atribuídas"),
+   com a mensagem de sistema "Atendimento reaberto pelo paciente" ANTES da mensagem dele. A
+   reabertura é um `UPDATE ... WHERE status = 'closed'`: duas mensagens simultâneas reabrem uma
+   vez só, e a reentrega (mesmo `externalId`) sai pelo dedupe antes de chegar aqui. Audit log
+   `reopen_conversation` com `userId = null` (quem reabriu foi o canal).
+4. **Atendimento manual** (`POST /conversations`) num telefone cuja conversa está `closed` →
+   reabre a conversa **atribuída a quem cadastrou**, qualquer que fosse a dona anterior, com a
+   mensagem de sistema "Atendimento reaberto por <nome>". Conversa encerrada não pertence mais
+   a ninguém para efeito de bloqueio: o 409 `CONVERSATION_ALREADY_ASSIGNED` continua só para
+   conversa `active` de outra atendente.
+5. **Mensagem enviada pelo celular do laboratório** (`fromMe`, D-173) **não reabre**: só o
+   paciente reabre.
+6. O código `CONVERSATION_ARCHIVED` (409 ao enviar mensagem em conversa não ativa) é
+   **mantido** — renomear quebraria cliente sem ganho; a mensagem passa a "Atendimento
+   encerrado".
+**Motivo:** Arquivar e Encerrar eram a mesma coisa para quem atende, e nenhum dos dois voltava
+sozinho: o paciente que respondia uma conversa arquivada ficava invisível na fila. Reabrir na
+fila livre (e não com a antiga dona) é escolha do PO: quem volta a escrever pode estar num
+horário em que a antiga dona não está.
+**Impacto:** `shared/types/conversation.types.ts` (enum), `backend/migrations/025_*`,
+`conversation.service.ts` (alçada de status, reabertura manual), `message.service.ts`
+(`createFromPatient` reabre), `conversation.repository.ts` (`reopenIfClosed`),
+`conversation.routes.ts` (zod), `frontend/src/pages/Attendance` ([Encerrar], chip
+"Encerradas"), `docs/api/API_CONTRACTS.md` §2, `API_ERRORS.md`, `WORKFLOWS.md` §5,
+`SCHEMA.md`, `PAGES.md` §2, `SERVICES.md` §2/§3.
+
 ## Template para novas decisões
 
 ```

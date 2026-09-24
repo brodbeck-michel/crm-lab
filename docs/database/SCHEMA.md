@@ -60,7 +60,7 @@ Estrutura completa das tabelas e relacionamentos do PostgreSQL.
 │ name         │               │ patient_name     │
 │ role         │ (atendente... │ assigned_to      │ (FK) User
 │ discount_lim │               │ last_message_at  │
-│ is_active    │               │ status           │ (ativo/arquivado)
+│ is_active    │               │ status           │ (ativo/encerrado)
 │ created_at   │               │ created_at       │
 └──────────────┘               └────────┬────────┘
                                         │
@@ -237,7 +237,7 @@ CREATE TABLE conversations (
   patient_id UUID,               -- D-059 (migração 003): FK para patients(id)
   assigned_to UUID, -- User ID
   channel VARCHAR(50), -- 'whatsapp', 'sms', 'web', 'direct'
-  status VARCHAR(50) DEFAULT 'active', -- active, archived, closed
+  status VARCHAR(50) DEFAULT 'active', -- active | closed (CHECK, migracao 025 / D-174)
   last_message_at TIMESTAMP,
   unread_count INT DEFAULT 0,
   tags JSONB DEFAULT '[]',

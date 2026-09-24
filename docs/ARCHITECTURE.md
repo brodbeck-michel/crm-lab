@@ -313,7 +313,7 @@ seção Segurança.
 ```
 
 **Correção de fato:** o passo "a conversa passa para o estágio `orcamento_enviado`" não existe.
-`conversations.status` só assume `active | archived | closed`; os estágios do funil
+`conversations.status` só assume `active | closed` (D-174); os estágios do funil
 (`novo_contato → orcamento_enviado → follow_up → negociacao → ganho | perdido`) são de
 **proposals**, não de conversas.
 

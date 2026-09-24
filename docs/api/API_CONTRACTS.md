@@ -542,7 +542,7 @@ laboratório. `platform_operator` recebe `FORBIDDEN` (PAGES.md §11).
 
 **Query Params:**
 ```
-?status=active|archived|closed
+?status=active|closed          # D-174: `archived` não existe mais
 ?scope=mine|unassigned|all        # default: all — os chips da coluna 1
 ?page=1&limit=20                  # limit máx. 100
 ?search=joão                      # máx. 120 caracteres
@@ -640,7 +640,9 @@ Criar um atendimento que **não veio do WhatsApp** — ligação, balcão, formu
 reaproveitada na MESMA transação (D-059). Duas diferenças: o canal vem do formulário e a conversa
 nasce **atribuída a quem cadastrou** (`assigned_to = usuário logado`), não na fila livre. Conversa
 **preexistente** naquele telefone é devolvida como está, **sem trocar de dono** — criar não
-reatribui; para isso existe `PATCH /conversations/:id`.
+reatribui; para isso existe `PATCH /conversations/:id`. **Exceção (D-174):** conversa
+preexistente **encerrada** (`closed`) é **reaberta** (`active`) e atribuída a quem cadastrou,
+qualquer que fosse a dona anterior, com a mensagem de sistema "Atendimento reaberto por <nome>".
 
 **Response (201):** `ConversationDetail` cru — o mesmo shape do campo `conversation` de
 `GET /conversations/:id`. `201` também quando a conversa foi reaproveitada: o cliente não
@@ -648,7 +650,7 @@ distingue os dois casos, e não precisa — o destino é o mesmo.
 
 **Erros:** `VALIDATION_ERROR` (400 — telefone/nome/e-mail inválidos, `channel` fora do enum),
 `CONVERSATION_ALREADY_ASSIGNED` (409, `details: { assignedTo, assignedToName }`) quando o telefone
-já tem conversa **de outro atendente**. Aqui o 409 é deliberado, e é a exceção à regra do 404:
+já tem conversa **ativa** de outro atendente (encerrada reabre, D-174). Aqui o 409 é deliberado, e é a exceção à regra do 404:
 devolver `NOT_FOUND` mandaria o atendente montar orçamento numa conversa que ele não consegue
 abrir. `FORBIDDEN` (403, `platform_operator`).
 
@@ -896,10 +898,21 @@ Atualizar conversa (status, tags, assigned_to).
   transferida de A para B" (WORKFLOWS §5) e **preserva o histórico**
 - `assignedTo` que não seja usuário ativo do laboratório → `VALIDATION_ERROR`
 
+`status` ∈ `active | closed` (D-174):
+
+- **encerrar** (`closed`) e **reativar** (`active`): só a **dona**, gestor ou admin. Atendente
+  que não é dona — inclusive em conversa da fila livre — recebe `FORBIDDEN` (403). Conversa de
+  outra atendente continua `NOT_FOUND` (recorte por papel vem antes)
+- encerrar **mantém** `assignedTo`, gera a mensagem de sistema "Atendimento encerrado por
+  <nome>" e o audit log `update_conversation_status`. A conversa sai da fila (`?status=active`)
+  e dos counts dos chips
+- conversa encerrada **reabre sozinha** quando o paciente escreve (§2b, webhook): volta
+  `active` com `assignedTo = null`
+
 **Request:**
 ```json
 {
-  "status": "archived",
+  "status": "closed",
   "assignedTo": "uuid",
   "tags": ["orçamento", "realizado"]
 }
@@ -909,7 +922,7 @@ Atualizar conversa (status, tags, assigned_to).
 ```json
 {
   "id": "uuid",
-  "status": "archived",
+  "status": "closed",
   "assignedTo": "uuid",
   "assignedToName": "Maria Souza",
   "tags": ["orçamento", "realizado"]
@@ -918,13 +931,14 @@ Atualizar conversa (status, tags, assigned_to).
 
 Os três campos são opcionais no corpo, mas ao menos um é obrigatório →
 `VALIDATION_ERROR`. `tags`: no máximo 20, cada uma de 1 a 50 caracteres. A ordem de
-aplicação é **status → tags → atribuição** (deliberada: quem transfere e arquiva na
+aplicação é **status → tags → atribuição** (deliberada: quem transfere e encerra na
 mesma chamada perderia a visibilidade no meio do caminho se a atribuição viesse antes).
 Mudança de status gera audit log `update_conversation_status`; atribuição gera
 `assign_conversation`.
 
-**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404),
-`CONVERSATION_ALREADY_ASSIGNED` (409), `FORBIDDEN` (403, `platform_operator`)
+**Erros:** `VALIDATION_ERROR` (400, inclusive `status: "archived"`), `NOT_FOUND` (404),
+`CONVERSATION_ALREADY_ASSIGNED` (409), `FORBIDDEN` (403 — `platform_operator`, ou mudança de
+`status` por quem não é dona/gestor/admin)
 
 ---
 
@@ -966,7 +980,9 @@ Efeitos do caminho autenticado:
 1. `ConversationService.findOrCreateByPhone` — acha a conversa do telefone ou cria uma
    nova, já na fila não atribuída
 2. `MessageService.createFromPatient` — grava a mensagem, incrementa `unreadCount`,
-   sobe `lastMessageAt`
+   sobe `lastMessageAt`. Conversa **encerrada** reabre antes (D-174): `status = 'active'`,
+   `assignedTo = null` (fila "Não atribuídas") e mensagem de sistema "Atendimento reaberto
+   pelo paciente". Vale também para o webhook do Evolution; mensagem `fromMe` **não** reabre
 3. emite `conversation.new_message` no WebSocket, na room do tenant
 
 **Idempotente:** reentrega com o mesmo `id` de mensagem (`external_message_id`) não

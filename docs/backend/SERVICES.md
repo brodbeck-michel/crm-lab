@@ -59,7 +59,8 @@ interface ConversationService {
   getById(tenantId: string, id: string): Promise<ConversationDetail>;
   findOrCreateByPhone(tenantId: string, phone: string): Promise<Conversation>;
   assign(tenantId: string, id: string, userId: string | null): Promise<Conversation>;
-  updateStatus(tenantId: string, id: string, status: 'active' | 'archived'): Promise<Conversation>;
+  // D-174: so dona/gestor/admin; 'closed' grava evento de sistema. Reabertura manual: createManual.
+  updateStatus(tenantId: string, id: string, status: 'active' | 'closed'): Promise<Conversation>;
   markAsRead(tenantId: string, id: string, userId: string): Promise<void>;
 }
 ```
@@ -136,8 +137,10 @@ interface que ProposalService/ApprovalService consomem. Instanciação:
   `status: 'failed'` e devolve `MESSAGE_SEND_FAILED` (502) — a bolha não some da tela
 - Toda criação emite `conversation.new_message` no WebSocket (room = tenantId)
 - `createSystemEvent` usado por: orçamento enviado, transferência, proposta ganha.
-  Funciona em conversa arquivada (o fato aconteceu) e NÃO incrementa `unread_count`
-- Enviar mensagem de agente em conversa arquivada → `CONVERSATION_ARCHIVED` (409)
+  Funciona em conversa encerrada (o fato aconteceu) e NÃO incrementa `unread_count`
+- Enviar mensagem de agente em conversa encerrada → `CONVERSATION_ARCHIVED` (409, nome mantido — D-174)
+- `createFromPatient` em conversa `closed` REABRE antes de gravar (D-174): `active`, sem dona,
+  evento "Atendimento reaberto pelo paciente". `createFromPhone` (`fromMe`) não reabre
 - `createFromPatient` incrementa `unread_count`, sobe `last_message_at` (mesma
   transação do INSERT) e é idempotente por `external_message_id` — a reentrega do
   canal não duplica mensagem nem evento

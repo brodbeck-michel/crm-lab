@@ -36,6 +36,7 @@
  * caminho deste arquivo grava com `withoutTenant()`.
  */
 import { createHash } from 'node:crypto';
+import type { MessageType } from '@crm-lab/shared';
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { env } from '../config/env.js';
 import type { DbClient } from '../db/types.js';
@@ -135,7 +136,11 @@ export function replayKey(tenantId: string, rawBody: string): string {
  * de `CacheService` (`INCR` no Redis, um contador so no `MemoryCache`) e ja
  * renova o TTL: quem recebe `1` e o primeiro, o resto e replay.
  */
-export async function isReplay(cache: CacheService, tenantId: string, rawBody: string): Promise<boolean> {
+export async function isReplay(
+  cache: CacheService,
+  tenantId: string,
+  rawBody: string,
+): Promise<boolean> {
   const key = replayKey(tenantId, rawBody);
   return (await cache.incr(key, REPLAY_TTL_SECONDS)) > 1;
 }
@@ -218,11 +223,7 @@ async function authenticate(
   }
 
   // HMAC ANTES de olhar o conteudo. Nada foi escrito ate aqui.
-  const valid = verifyWebhookSignature(
-    rawBodyOf(req),
-    signatureOf(req),
-    credentials.webhookSecret,
-  );
+  const valid = verifyWebhookSignature(rawBodyOf(req), signatureOf(req), credentials.webhookSecret);
   if (!valid) {
     logger.warn('whatsapp.webhook_invalid_signature', { tenantId: credentials.tenantId });
     return null;
@@ -337,7 +338,8 @@ export function whatsappStatus(services: WebhookServices, cache: CacheService): 
 //
 // Eventos traduzidos para os MESMOS caminhos internos do webhook da Meta
 // (`findOrCreateByPhone` -> `createFromPatient`, dedupe por `externalId`):
-//   MESSAGES_UPSERT    -> mensagem do paciente
+//   MESSAGES_UPSERT    -> mensagem do paciente; `fromMe` -> resposta enviada
+//                         pelo celular do laboratorio, ou eco do CRM (D-173)
 //   CONNECTION_UPDATE  -> estado do canal (conectado/desconectado), SEM mensagem
 //   QRCODE_UPDATED     -> sem efeito (o QR e servido por polling em
 //                         GET /settings/channels/whatsapp/qr, nao pelo webhook)
@@ -449,6 +451,8 @@ interface EvolutionInboundMessage {
   media: EvolutionInboundMedia | null;
   name: string | null;
   externalId: string | null;
+  /** Enviada pelo proprio numero do laboratorio (celular ou eco do CRM, D-173). */
+  fromMe: boolean;
 }
 
 /**
@@ -520,7 +524,9 @@ function describeNonMedia(message: Record<string, unknown>): string | null {
  * proprio submessage, ou no nivel do `message`) para nao ficar preso a uma
  * suposicao unica.
  */
-function evolutionInboundMediaOf(message: Record<string, unknown> | null): EvolutionInboundMedia | null {
+function evolutionInboundMediaOf(
+  message: Record<string, unknown> | null,
+): EvolutionInboundMedia | null {
   if (!message) return null;
   const topLevelBase64 = asNonEmptyString(message.base64);
 
@@ -545,14 +551,15 @@ function mediaCaption(message: Record<string, unknown> | null): string | null {
   return null;
 }
 
-/** `data` de um evento `MESSAGES_UPSERT`. `null` quando faltar telefone ou texto. */
 /**
  * Telefone do PACIENTE a partir do `key` da mensagem. Um unico ponto de decisao
  * — `remoteJid` nem sempre e um telefone, e tratar como se fosse cria paciente
  * fantasma que ninguem consegue responder:
  *
- * - `fromMe: true` -> `null`. E mensagem que o proprio numero do laboratorio
- *   enviou (o atendente respondendo pelo celular). Nao e atendimento novo.
+ * - `fromMe: true` -> mesmo telefone, com `fromMe` marcado. `remoteJid` e o
+ *   DESTINATARIO, ou seja o paciente; quem decide se e eco do CRM ou resposta
+ *   digitada no celular e `MessageService.isOutboundEcho` (D-173). Ate o
+ *   CRMLAB-46 isto era descartado, e o atendimento pelo celular sumia do CRM.
  * - `@g.us` -> `null`. Id de GRUPO nao e paciente.
  * - `@lid` -> o telefone vem em `remoteJidAlt`. O WhatsApp passou a enderecar
  *   por LID (identificador privado, ex. `128999376343081@lid`); o LID nao e
@@ -562,31 +569,34 @@ function mediaCaption(message: Record<string, unknown> | null): string | null {
  */
 function inboundPhoneOf(key: Record<string, unknown> | null): PhoneResult {
   if (!key) return { ok: false, reason: 'payload_sem_key' };
-  if (key.fromMe === true) return { ok: false, reason: 'from_me' };
   const jid = asNonEmptyString(key.remoteJid);
   if (!jid) return { ok: false, reason: 'sem_remote_jid' };
   if (jid.endsWith('@g.us')) return { ok: false, reason: 'grupo' };
   const phone = jid.endsWith('@lid') ? phoneFromJid(key.remoteJidAlt) : phoneFromJid(jid);
   if (!phone) {
-    return { ok: false, reason: jid.endsWith('@lid') ? 'lid_sem_remote_jid_alt' : 'jid_sem_telefone' };
+    return {
+      ok: false,
+      reason: jid.endsWith('@lid') ? 'lid_sem_remote_jid_alt' : 'jid_sem_telefone',
+    };
   }
-  return { ok: true, phone };
+  return { ok: true, phone, fromMe: key.fromMe === true };
 }
 
-type PhoneResult = { ok: true; phone: string } | { ok: false; reason: DiscardReason };
+type PhoneResult =
+  { ok: true; phone: string; fromMe: boolean } | { ok: false; reason: DiscardReason };
 
 /**
  * Por que uma mensagem recebida NAO virou mensagem no CRM.
  *
- * Nem todo motivo e defeito: `from_me` e `grupo` sao descarte correto e
- * esperado (o laboratorio respondendo pelo celular, conversa de grupo). O que
+ * Nem todo motivo e defeito: `eco_do_crm` e `grupo` sao descarte correto e
+ * esperado (a volta do que o proprio CRM enviou, conversa de grupo). O que
  * a auditoria de 2026-09-17 mostrou e que ate o descarte CORRETO precisa ser
  * contavel — sem isso nao da para distinguir "nao chegou nada" de "chegou e o
  * parser jogou fora", e 17% do movimento de um dia sumiu sem ninguem notar.
  */
 export type DiscardReason =
   | 'payload_sem_key'
-  | 'from_me'
+  | 'eco_do_crm'
   | 'grupo'
   | 'sem_remote_jid'
   | 'jid_sem_telefone'
@@ -629,8 +639,11 @@ function evolutionInboundOf(data: unknown): EvolutionInboundResult {
       // Sem legenda: o nome do arquivo vira o preview da conversa em vez de "".
       text: text ?? media?.fileName ?? '',
       media,
-      name: asNonEmptyString(record.pushName),
+      // `pushName` de `fromMe` e o nome do LABORATORIO: usado como nome do
+      // paciente, batizaria a conversa nova com o nome da empresa.
+      name: phone.fromMe ? null : asNonEmptyString(record.pushName),
       externalId: key ? asNonEmptyString(key.id) : null,
+      fromMe: phone.fromMe,
     },
   };
 }
@@ -732,6 +745,92 @@ function instanceClaimMatches(body: Record<string, unknown> | null, tenantId: st
   return instanceClaim === evolutionInstanceName(tenantId);
 }
 
+/**
+ * Grava uma mensagem do `MESSAGES_UPSERT`. WORKFLOWS §1, mesmo caminho do
+ * webhook da Meta: acha/cria a conversa, grava a midia, cria a mensagem.
+ *
+ * `fromMe` (D-173) passa pelo MESMO caminho com duas diferencas: o eco do CRM
+ * e descartado ANTES de gravar a midia (senao o eco de um anexo enviado pelo
+ * CRM deixaria arquivo orfao), e a mensagem entra como resposta do atendimento
+ * (`createFromPhone`), nao como mensagem do paciente. Numero sem conversa
+ * ganha conversa nova (decisao do usuario no card) — `name` ja vem `null`.
+ */
+async function ingestEvolutionMessage(
+  services: WebhookServices,
+  tenantId: string,
+  inbound: EvolutionInboundMessage,
+): Promise<void> {
+  const conversation = await services.conversations.findOrCreateByPhone(
+    tenantId,
+    inbound.phone,
+    inbound.name,
+  );
+
+  if (
+    inbound.fromMe &&
+    inbound.externalId &&
+    (await services.messages.isOutboundEcho(tenantId, conversation.id, inbound.externalId))
+  ) {
+    logger.info('evolution.inbound_discarded', {
+      tenantId,
+      reason: 'eco_do_crm' satisfies DiscardReason,
+      messageType: null,
+    });
+    return;
+  }
+
+  const create = (dto: {
+    content: string;
+    messageType: MessageType;
+    attachmentUrl: string | null;
+  }) =>
+    inbound.fromMe
+      ? services.messages.createFromPhone(
+          tenantId,
+          conversation.id,
+          { ...dto, externalId: inbound.externalId },
+          { echoChecked: true },
+        )
+      : services.messages.createFromPatient(tenantId, conversation.id, {
+          ...dto,
+          externalId: inbound.externalId,
+        });
+
+  if (!inbound.media) {
+    await create({ content: inbound.text, messageType: 'text', attachmentUrl: null });
+    return;
+  }
+
+  // Mídia recusada (tamanho, §4.2 "recusa com log explicito"): a mensagem NAO
+  // e criada — nao ha o que mostrar sem o arquivo, mas o webhook responde 200
+  // do mesmo jeito (`acknowledge` no fim).
+  const stored = await services.media.storeInbound(tenantId, inbound.media);
+  if (!stored) {
+    // Continua sem criar mensagem (spec Onda 8 §4.2), mas DEIXA RASTRO: antes o
+    // arquivo recusado sumia junto com a mensagem e ninguem conseguia saber que
+    // o paciente tentou mandar algo.
+    logger.warn('evolution.inbound_discarded', {
+      tenantId,
+      reason: 'midia_recusada' satisfies DiscardReason,
+      messageType: inbound.media.mimeType,
+    });
+    return;
+  }
+  // `stored.mimeType` (nao `inbound.media.mimeType`): allow-list e sniff de
+  // magic bytes (CRMLAB-31) podem rebaixar o MIME declarado para
+  // `application/octet-stream` — o `messageType` precisa refletir o que foi
+  // REALMENTE gravado e servido, senao a bolha tenta abrir como imagem/pdf um
+  // anexo generico.
+  const message = await create({
+    content: inbound.text,
+    messageType: messageTypeFromMime(stored.mimeType),
+    attachmentUrl: `/api/v1/media/${stored.id}`,
+  });
+  // `null` = reentrega concorrente de `fromMe` que perdeu a corrida: a midia
+  // desta tentativa fica sem mensagem, como qualquer upload nao vinculado.
+  if (message) await services.media.attachToMessage(tenantId, stored.id, message.id);
+}
+
 export function evolutionInbound(
   services: WebhookServices,
   db: DbClient,
@@ -774,50 +873,7 @@ export function evolutionInbound(
       const inbound = parsed.ok ? parsed.message : null;
       if (inbound) {
         try {
-          // WORKFLOWS §1, mesmo caminho do webhook da Meta.
-          const conversation = await services.conversations.findOrCreateByPhone(
-            tenantId,
-            inbound.phone,
-            inbound.name,
-          );
-
-          if (inbound.media) {
-            // Mídia recusada (tamanho, §4.2 "recusa com log explicito"): a
-            // mensagem NAO e criada — nao ha o que mostrar sem o arquivo, mas
-            // o webhook responde 200 do mesmo jeito (`acknowledge` no fim).
-            const stored = await services.media.storeInbound(tenantId, inbound.media);
-            if (stored) {
-              // `stored.mimeType` (nao `inbound.media.mimeType`): allow-list e
-              // sniff de magic bytes (CRMLAB-31) podem rebaixar o MIME
-              // declarado para `application/octet-stream` — o `messageType`
-              // precisa refletir o que foi REALMENTE gravado e servido, senao
-              // a bolha tenta abrir como imagem/pdf um anexo generico.
-              const message = await services.messages.createFromPatient(tenantId, conversation.id, {
-                content: inbound.text,
-                messageType: messageTypeFromMime(stored.mimeType),
-                attachmentUrl: `/api/v1/media/${stored.id}`,
-                externalId: inbound.externalId,
-              });
-              await services.media.attachToMessage(tenantId, stored.id, message.id);
-            } else {
-              // Continua sem criar mensagem (spec Onda 8 §4.2), mas agora
-              // DEIXA RASTRO: antes o arquivo recusado sumia junto com a
-              // mensagem e ninguem conseguia saber que o paciente tentou
-              // mandar algo.
-              logger.warn('evolution.inbound_discarded', {
-                tenantId,
-                reason: 'midia_recusada' satisfies DiscardReason,
-                messageType: inbound.media.mimeType,
-              });
-            }
-          } else {
-            await services.messages.createFromPatient(tenantId, conversation.id, {
-              content: inbound.text,
-              messageType: 'text',
-              attachmentUrl: null,
-              externalId: inbound.externalId,
-            });
-          }
+          await ingestEvolutionMessage(services, tenantId, inbound);
         } catch (err) {
           logger.error('evolution.inbound_message_rejected', {
             tenantId,

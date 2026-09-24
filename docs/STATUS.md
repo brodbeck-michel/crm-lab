@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-24 (v1.16.1 em PRODUÇÃO — CRMLAB-39 e CRMLAB-44, ver fim do arquivo)
+**Última atualização:** 2026-09-24 (CRMLAB-46 aguardando validação; v1.16.1 em PRODUÇÃO — ver fim do arquivo)
 
 ---
 
@@ -2631,3 +2631,26 @@ Sobe CRMLAB-39 (recuperação de senha por e-mail) e CRMLAB-44 (sidebar "trilho 
   backups `.env.bak-*` soltos em `/opt/crm-lab`. Movidos para `/home/deploy/crm-lab-env-backups`
   (o usuário `deploy` não cria nada em `/opt`). Backup de `.env` vai para lá, nunca para o
   diretório do ambiente. Prod não chegou a ser tocada nos abortos.
+
+### ✅ CRMLAB-46 — mensagem enviada pelo celular aparece na conversa, sem duplicar (2026-09-24)
+
+Aguardando validação do usuário (branch `feature/CRMLAB-46-fromme-celular`).
+
+- `MESSAGES_UPSERT` com `fromMe: true` deixou de ser descartado (D-173). O `key.id` decide: se já
+  está gravado, é eco do CRM ou reentrega e nada muda. Se não está, a mensagem entra como resposta
+  do atendimento (`senderType: agent`, `senderId: null`, `senderName: "Enviada pelo celular"`),
+  sem subir `unreadCount`.
+- **Corrida do eco:** o eco pode chegar antes de `createFromAgent` gravar o `externalId`.
+  `MessageService.isOutboundEcho` espera (250 ms, teto de 8 s) enquanto houver envio em voo na
+  conversa. A rede de segurança é `MessageRepository.confirmSent`: se o envio passar da espera, a
+  cópia do celular é apagada na mesma transação e o WS é reemitido.
+- Número sem conversa cria a conversa, sem usar o `pushName` (nome do laboratório). Grupos
+  continuam ignorados. Mídia/legenda seguem o parser das recebidas. O eco de anexo do CRM é
+  detectado antes de gravar o arquivo, então não deixa arquivo órfão.
+- `DiscardReason`: `from_me` saiu e entrou `eco_do_crm`.
+- **Testes:** `tests/webhooks/evolution-from-me.spec.ts` (9) e `tests/messages/from-phone.spec.ts`
+  (6). Os dois testes antigos que afirmavam o descarte foram removidos. Backend completo 1235/1235,
+  `npm run typecheck` limpo. Mutação conferida: desligar a espera ou a rede de segurança derruba
+  um teste cada.
+- **Não validado contra gateway real:** a forma do payload `fromMe` foi tirada do contrato
+  existente (é o mesmo `key`). Validar em hml respondendo pelo celular pareado.

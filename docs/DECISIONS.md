@@ -2554,6 +2554,47 @@ rotas públicas do D-139), `shared/types/{auth,api}.types.ts` (`RESET_TOKEN_INVA
 `docs/api/{API_CONTRACTS,API_ERRORS}.md`, `frontend/src/pages/{ForgotPassword,ResetPassword}.tsx`
 (novos), `frontend/src/routes/index.tsx`.
 
+### D-173: Mensagem enviada pelo celular entra na conversa; eco do CRM é descartado por `externalId` com espera do envio em voo (CRMLAB-46)
+**Decisão:** `MESSAGES_UPSERT` do Evolution com `key.fromMe: true` deixa de ser descartado.
+O `key.id` decide o que é:
+1. **`key.id` já gravado** (`messages.external_message_id`) → eco do próprio CRM ou reentrega:
+   nada é gravado, nada é emitido.
+2. **`key.id` desconhecido e a conversa tem envio do CRM EM VOO** — mensagem de atendente,
+   com autor (`sender_id` não nulo), `status = 'sent'`, `external_message_id IS NULL`, criada há
+   menos de 60 s — → o webhook **espera** (sondagem a cada 250 ms, teto de 8 s) o envio gravar
+   o `externalId` e confere de novo. Apareceu → eco, descarta.
+3. **Senão** → mensagem digitada no celular: `MessageService.createFromPhone` grava
+   `sender_type = 'agent'`, `sender_id = NULL`, `status = 'sent'`, `external_message_id =
+   key.id`. Não incrementa `unread_count`, sobe `last_message_at`, emite
+   `conversation.new_message`. `senderName` volta **`"Enviada pelo celular"`** (derivado no SQL
+   de `agent` + `sender_id NULL` — não há exclusão física de usuário no app).
+**Rede de segurança:** se o envio do CRM passar do teto de espera (retry do gateway: até
+~31 s em texto, ~46 s em mídia), a cópia do passo 3 chega a ser gravada. Quando o envio então
+tenta gravar o mesmo `externalId`, o índice único da 019 recusa; `setStatus` trata isso
+**apagando a cópia do celular** (agente sem autor, mesmo `externalId`) e gravando o id na
+mensagem do CRM, na mesma transação — e reemite `conversation.new_message` para a tela
+refazer a lista. Pior caso: a duplicata pisca; nunca fica.
+**Número sem conversa:** cria a conversa (decisão do usuário, opção a) pelo mesmo
+`findOrCreateByPhone`, mas **sem nome**: o `pushName` de uma mensagem `fromMe` é o nome do
+LABORATÓRIO, não do paciente. Conversa arquivada/fechada recebe a mensagem como qualquer
+outra (`findOrCreateByPhone` não reabre nem cria atendimento novo). Grupo (`@g.us`) e `@lid`
+sem `remoteJidAlt` continuam descartados. Mídia e legenda: mesmo parser e mesmo
+`storeInbound` das recebidas.
+**Motivo:** o atendente que responde pelo celular deixava metade da conversa invisível no CRM
+— quem olhava achava que o paciente ficou sem resposta. O difícil é o eco: a Evolution devolve
+com `fromMe: true` também o que o CRM mandou, e o webhook do eco pode chegar ANTES de
+`setStatus(..., 'sent', externalId)` — o id só é conhecido quando o `sendText` responde. O
+estado "em voo" já existe no banco (a mensagem é gravada ANTES do envio), então a espera não
+precisa de cache nem de tabela nova. Casar por conteúdo foi descartado: falha com mídia
+(o eco de uma imagem sem legenda não tem o nome do arquivo que o CRM gravou) e com duas
+respostas iguais seguidas. A espera cobre o caso normal sem piscar; a rede de segurança fecha a
+janela que sobra, sem depender de timing.
+**Impacto:** `backend/src/controllers/webhook.routes.ts` (`inboundPhoneOf` devolve a
+direção; `from_me` sai de `DiscardReason`), `backend/src/services/message.service.ts`
+(`createFromPhone`, espera injetável), `backend/src/repositories/message.repository.ts`
+(`hasPendingOutbound`, `setStatus` com conflito de `externalId`, `sender_name` do celular),
+`docs/api/API_CONTRACTS.md` §6.1, `docs/backend/SERVICES.md` §3/§16. Sem migração.
+
 ## Template para novas decisões
 
 ```

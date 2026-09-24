@@ -1104,7 +1104,7 @@ descarte correto —, mas todos precisam ser contáveis, senão não há como di
 
 | `reason` | Significado | É defeito? |
 |---|---|---|
-| `eco_do_crm` | `fromMe: true` cujo `key.id` já é de uma mensagem enviada pelo CRM (D-173) | não |
+| `eco_do_crm` | `fromMe: true` cujo `key.id` já está gravado — eco de envio do CRM ou reentrega da mesma mensagem do celular (D-173) | não |
 | `grupo` | `remoteJid` de grupo | não |
 | `payload_sem_key` / `sem_remote_jid` | payload malformado | não (lixo) |
 | `jid_sem_telefone` | `remoteJid` sem telefone extraível | investigar |

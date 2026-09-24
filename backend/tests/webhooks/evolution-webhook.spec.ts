@@ -23,7 +23,7 @@ import {
   type WhatsAppCredentialsResolver,
 } from '../../src/services/whatsapp.service.js';
 import { countConversations, countMessages } from '../conversations/helpers.js';
-import { createTenant } from '../helpers/factories.js';
+import { createConversation, createTenant, createUser } from '../helpers/factories.js';
 import { createTestApp, type TestApp } from '../helpers/test-app.js';
 import { getTestDb, resetDatabase } from '../helpers/test-db.js';
 
@@ -306,6 +306,41 @@ describe('POST /webhooks/evolution/:tenant — MESSAGES_UPSERT', () => {
     );
     expect(row.rows[0]?.patient_name).toBe('Maria');
     expect(row.rows[0]?.unread_count).toBe(1);
+  });
+
+  it('D-174: paciente responde conversa ENCERRADA -> reabre na fila livre', async () => {
+    const tenant = await createTenant({ slug: 'lab-evo-reabre' });
+    slugToId.set('lab-evo-reabre', tenant.id);
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });
+    const closed = await createConversation({
+      tenantId: tenant.id,
+      assignedTo: ana.id,
+      patientPhone: '+5548999998888',
+      status: 'closed',
+    });
+
+    await app.agent
+      .post(`${WEBHOOK}/lab-evo-reabre`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send(
+        messagesUpsertPayload({
+          instance: evolutionInstanceName(tenant.id),
+          phone: '5548999998888',
+          text: 'Voltei',
+        }),
+      )
+      .expect(200);
+
+    expect(await countConversations(tenant.id)).toBe(1);
+    const row = await db.withoutTenant((tx) =>
+      tx.query<{ status: string; assigned_to: string | null }>(
+        'SELECT status, assigned_to FROM conversations WHERE id = $1',
+        [closed.id],
+      ),
+    );
+    expect(row.rows[0]).toEqual({ status: 'active', assigned_to: null });
+    // Evento "reaberto" + a mensagem do paciente.
+    expect(await countMessages(tenant.id)).toBe(2);
   });
 
   it('header apikey (tolerado) tambem funciona', async () => {

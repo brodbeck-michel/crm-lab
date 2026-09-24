@@ -112,7 +112,7 @@ renderiza. "Não sei onde mostrar" nunca pode virar silêncio.
 | Código | HTTP | Quando |
 |--------|------|--------|
 | `CONVERSATION_ALREADY_ASSIGNED` | 409 | Atribuição simultânea — segunda tentativa perde. `details: { assignedTo, assignedToName }` |
-| `CONVERSATION_ARCHIVED` | 409 | Enviar mensagem em conversa arquivada |
+| `CONVERSATION_ARCHIVED` | 409 | Enviar mensagem/anexo em conversa **encerrada** (`closed`). Nome mantido por compatibilidade (D-174); a mensagem é "Atendimento encerrado" |
 | `MESSAGE_SEND_FAILED` | 502 | Canal externo (WhatsApp) falhou após retries |
 
 ## Canais — conexão WhatsApp por QR (Onda 7)

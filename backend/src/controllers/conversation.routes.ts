@@ -47,7 +47,7 @@ import { MAX_MESSAGE_LIMIT, MessageService } from '../services/message.service.j
 import { createWhatsAppService, type WhatsAppService } from '../services/whatsapp.service.js';
 
 export const listConversationsQuerySchema = z.object({
-  status: z.enum(['active', 'archived', 'closed']).optional(),
+  status: z.enum(['active', 'closed']).optional(),
   scope: z.enum(['mine', 'unassigned', 'all']).optional(),
   search: z
     .string()
@@ -100,7 +100,7 @@ export const createMessageSchema = z.object({
 
 export const updateConversationSchema = z
   .object({
-    status: z.enum(['active', 'archived', 'closed']),
+    status: z.enum(['active', 'closed']),
     assignedTo: z.string().uuid().nullable(),
     tags: z.array(z.string().trim().min(1).max(50)).max(20),
   })
@@ -149,6 +149,7 @@ export function createConversationServices(
     conversations: conversationRepository,
     wsHub: deps.wsHub,
     whatsapp: overrides.whatsapp ?? createWhatsAppService(deps.db),
+    audit,
   });
   const conversations = new ConversationService({
     db: deps.db,

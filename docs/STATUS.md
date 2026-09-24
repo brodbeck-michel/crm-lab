@@ -2684,3 +2684,22 @@ CRM não duplica (PR #59, D-173).
   confirma `1.17.0`, e o backend não registrou erro depois da subida.
 - **Pendente:** prova com o celular real pareado (responder um paciente pelo celular e enviar
   pelo CRM) antes de fechar o card.
+
+### ✅ CRMLAB-48 — encerrar atendimento (substitui Arquivar) (2026-09-24)
+
+- **Decisão D-174** (PO): conversa passa a ser `active | closed`; [Arquivar] sai, fica [Encerrar].
+  Encerram a dona, gestor e admin (atendente em conversa da fila livre → `FORBIDDEN`).
+- **Reabertura automática:** paciente escreve em conversa encerrada → volta `active` **sem dona**
+  ("Não atribuídas"), com o evento "Atendimento reaberto pelo paciente" antes da mensagem
+  (`MessageService.createFromPatient` → `ConversationRepository.reopenIfClosed`, trava por
+  `WHERE status = 'closed'`). `fromMe` (D-173) não reabre. Atendimento manual (`POST
+  /conversations`) no mesmo telefone reabre atribuída a quem cadastrou.
+- Migração `025_conversation_status_closed.sql`: `archived` → `closed`, `status NOT NULL` + `CHECK`.
+- Frontend: botão [Encerrar] (desabilitado para quem não pode), chip "Encerradas" na coluna 1
+  (os números da fila continuam os das ativas).
+- Código de erro `CONVERSATION_ARCHIVED` mantido (mensagem "Atendimento encerrado").
+- **Testes:** backend completo verde (86 arquivos, 1245 testes) — novos casos em
+  `conversations/assign.spec.ts`, `conversations/create.spec.ts`, `messages/messages.spec.ts`,
+  `webhooks/evolution-webhook.spec.ts`. Frontend verde (76 arquivos, 1109 testes).
+  `npm run typecheck` e `npm run lint` limpos. E2E novo `flow-19-encerrar-atendimento.spec.ts`
+  **não rodado localmente** (exige a stack de pé) — fica para o CI do PR.

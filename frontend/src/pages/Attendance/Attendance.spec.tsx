@@ -201,6 +201,27 @@ describe('Atendimento — lista de conversas', () => {
     expect(screen.getAllByTestId('conversation-item')).toHaveLength(1);
   });
 
+  it('D-174: chip Encerradas lista status closed e os chips da fila mantêm os números das ativas', async () => {
+    listMock.mockImplementation((filters: { status?: string }) =>
+      Promise.resolve(
+        filters.status === 'closed'
+          ? listResponse([conversation({ id: 'c-9', status: 'closed' })], { mine: 0, unassigned: 0 })
+          : listResponse([conversation()], { mine: 7, unassigned: 2 }),
+      ),
+    );
+    renderScreen();
+
+    await screen.findByTestId('conversation-item');
+    await userEvent.click(screen.getByRole('button', { name: 'Encerradas' }));
+
+    await waitFor(() => {
+      expect(listMock).toHaveBeenCalledWith(expect.objectContaining({ status: 'closed' }));
+    });
+    expect(await screen.findByText('Encerrada')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Minhas 7' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Não atribuídas 2' })).toBeInTheDocument();
+  });
+
   it('chip filtra pelo scope e o filtro desligado volta a mostrar tudo', async () => {
     listMock.mockResolvedValue(listResponse([conversation()]));
     renderScreen();
@@ -264,7 +285,7 @@ describe('Atendimento — abrir conversa', () => {
     await userEvent.click(await screen.findByTestId('conversation-item'));
 
     expect(await screen.findByRole('button', { name: 'Novo Orçamento' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Arquivar' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Encerrar' })).toBeInTheDocument();
     expect(screen.getByTestId('message-bubble')).toHaveAttribute('data-type', 'received');
     expect(screen.getByTestId('composer')).toBeInTheDocument();
   });

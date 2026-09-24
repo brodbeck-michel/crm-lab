@@ -17,8 +17,12 @@ import { PatientResults } from './PatientResults';
  * inbox"). Sem termo digitado o bloco de pacientes não existe.
  */
 
-/** `scope` de `ListConversationsQuery`. `all` = nenhum chip ligado. */
-export type ConversationScope = 'mine' | 'unassigned' | 'all';
+/**
+ * Chip ligado na coluna. `mine`/`unassigned`/`all` são o `scope` de
+ * `ListConversationsQuery` sobre as ATIVAS (`all` = nenhum chip ligado);
+ * `closed` é a lista das encerradas (D-174), `?status=closed`.
+ */
+export type ConversationScope = 'mine' | 'unassigned' | 'all' | 'closed';
 
 export interface ConversationListProps {
   conversations: Conversation[];
@@ -87,6 +91,15 @@ export function ConversationList({
             title="Fila livre — ninguém assumiu ainda"
           >
             {`Não atribuídas ${counts?.unassigned ?? 0}`}
+          </Chip>
+          {/* Sem número: o chip existe para ACHAR uma encerrada, não para medir fila. */}
+          <Chip
+            tone={scope === 'closed' ? 'attention' : 'inactive'}
+            selected={scope === 'closed'}
+            onClick={() => toggle('closed')}
+            title="Atendimentos encerrados — voltam para a fila quando o paciente escreve"
+          >
+            Encerradas
           </Chip>
         </div>
 

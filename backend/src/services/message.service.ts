@@ -31,9 +31,9 @@
  * `last_message_at` da conversa. Ele NAO incrementa `unread_count` (o contador
  * conta mensagem de paciente) e NAO passa pelo canal externo — o paciente nao
  * recebe eventos internos (BUSINESS_RULES §7: interno nunca vaza para o
- * paciente). Conversa arquivada ACEITA evento de sistema: o fato aconteceu e o
- * historico precisa registra-lo; o que a conversa arquivada recusa e mensagem
- * NOVA do atendente (`CONVERSATION_ARCHIVED`).
+ * paciente). Conversa encerrada ACEITA evento de sistema: o fato aconteceu e o
+ * historico precisa registra-lo; o que a conversa encerrada recusa e mensagem
+ * NOVA do atendente (`CONVERSATION_ARCHIVED`, nome mantido — D-174).
  *
  * ============================================================================
  * Regras
@@ -47,7 +47,8 @@
  *   (502) — a mensagem FICA gravada como falha, para o atendente ver e
  *   reenviar, em vez de sumir.
  * - `createFromPatient` incrementa `unread_count` e sobe `last_message_at` na
- *   MESMA transacao do INSERT (ver `MessageRepository.insert`).
+ *   MESMA transacao do INSERT (ver `MessageRepository.insert`). Conversa
+ *   encerrada REABRE antes, na fila livre (D-174).
  */
 import type {
   CreateMessageRequest,
@@ -63,6 +64,7 @@ import type { WsHub } from '../lib/ws-hub.js';
 import { ConversationRepository } from '../repositories/conversation.repository.js';
 import { MessageRepository } from '../repositories/message.repository.js';
 import { isUniqueViolation } from '../repositories/quick-reply.repository.js';
+import { createAuditService, type AuditService } from './audit.service.js';
 import { createWhatsAppService, type WhatsAppService } from './whatsapp.service.js';
 
 /** `image/jpeg` -> `'image'`; `audio/*` -> `'audio'`; `application/pdf` -> `'pdf'`; resto -> `'doc'`. */
@@ -142,6 +144,8 @@ export interface MessageServiceDeps {
   /** Ausente => nenhum envio externo (usado por testes de unidade). */
   whatsapp?: WhatsAppService;
   echoWait?: Partial<EchoWaitOptions>;
+  /** Registra a reabertura pelo paciente (D-174). Ausente => sem audit (testes de unidade). */
+  audit?: AuditService;
 }
 
 export class MessageService {
@@ -150,6 +154,7 @@ export class MessageService {
   private readonly wsHub: WsHub;
   private readonly whatsapp: WhatsAppService | undefined;
   private readonly echoWait: EchoWaitOptions;
+  private readonly audit: AuditService | undefined;
 
   constructor(deps: MessageServiceDeps) {
     this.messages = deps.messages;
@@ -157,6 +162,7 @@ export class MessageService {
     this.wsHub = deps.wsHub;
     this.whatsapp = deps.whatsapp;
     this.echoWait = { ...DEFAULT_ECHO_WAIT, ...deps.echoWait };
+    this.audit = deps.audit;
   }
 
   async listByConversation(
@@ -301,6 +307,8 @@ export class MessageService {
       const known = await this.messages.findByExternalId(tenantId, dto.externalId);
       if (known) return known;
     }
+
+    await this.reopenForPatient(tenantId, conversationId);
 
     const insert = (): Promise<Message> =>
       this.messages.insert(tenantId, {
@@ -460,6 +468,29 @@ export class MessageService {
     return message;
   }
 
+  /**
+   * Paciente escreveu numa conversa ENCERRADA (D-174): volta para a fila livre,
+   * sem dona, com o evento de sistema ANTES da mensagem dele — quem abrir a
+   * conversa le "reaberto" e logo abaixo o que o paciente mandou.
+   *
+   * Depois do dedupe de `createFromPatient`: reentrega nao reabre. Conversa
+   * ativa e no-op (o `UPDATE ... WHERE status = 'closed'` afeta 0 linhas).
+   */
+  private async reopenForPatient(tenantId: string, conversationId: string): Promise<void> {
+    const reopened = await this.conversations.reopenIfClosed(tenantId, conversationId, null);
+    if (!reopened) return;
+    await this.createSystemEvent(tenantId, conversationId, 'Atendimento reaberto pelo paciente');
+    await this.audit?.log({
+      tenantId,
+      userId: null,
+      action: 'update_conversation_status',
+      entityType: 'conversation',
+      entityId: conversationId,
+      oldValues: { status: 'closed' },
+      newValues: { status: 'active', assignedTo: null },
+    });
+  }
+
   /** Status vindo do callback do canal. `null` = id externo de outro tenant. */
   async applyExternalStatus(
     tenantId: string,
@@ -497,5 +528,6 @@ export function createMessageService(
     conversations: new ConversationRepository(deps.db),
     wsHub: deps.wsHub,
     whatsapp: overrides.whatsapp ?? createWhatsAppService(deps.db),
+    audit: createAuditService(deps.db),
   });
 }

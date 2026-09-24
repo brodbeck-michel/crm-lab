@@ -101,6 +101,9 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 
 ### Coluna 1 — Lista de conversas
 - Filtros em chips: "Minhas N" (accent sólido), "Não atribuídas N" (cinza)
+- Chip **"Encerradas"** (CRMLAB-48, D-174), sem número: lista `?status=closed` (o atendente vê só
+  as dele, pelo recorte do servidor). Ligado, os números de "Minhas"/"Não atribuídas" continuam os
+  das **ativas** — vêm da mesma query da fila, que segue rodando. Clicar de novo volta à fila
 - Busca (pílula): paciente, telefone ou exame
 - **A mesma busca também procura PACIENTE** (D-079): com 2+ caracteres a coluna consulta
   `GET /patients?search=&limit=5` e mostra um bloco "Pacientes" abaixo da fila; cada linha leva
@@ -114,7 +117,13 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 - Dados: `GET /conversations` + WS `conversation.new_message` (refetch)
 
 ### Coluna 2 — Conversa
-- Header: nome, telefone, botões [Transferir ▾] [Novo Orçamento] [Arquivar] [Contexto] [× Fechar]
+- Header: nome, telefone, botões [Transferir ▾] [Novo Orçamento] [Encerrar] [Contexto] [× Fechar]
+- **[Encerrar]** (CRMLAB-48, D-174): `PATCH /conversations/:id { status: 'closed' }`. Substitui o
+  antigo [Arquivar]. Habilitado só para a **dona**, gestor e admin (o backend valida de novo) e
+  só em conversa `active`. Sucesso: toast "Atendimento encerrado.", limpa a seleção e invalida a
+  lista — a conversa some de "Minhas"/"Não atribuídas" e os counts acompanham. Conversa
+  encerrada aberta pelo chip "Encerradas" mostra o composer travado; ela volta para a fila
+  sozinha quando o paciente escreve (na "Não atribuídas", sem dona)
 - **[Transferir ▾] abre menu** (Onda 8 §2.1) com as colegas que podem receber
   (`GET /conversations/assignees`) e "Devolver para a fila". O rótulo é "Atribuir" enquanto a
   conversa está livre. Quem já é dona não aparece na lista. Os dois caminhos são o mesmo

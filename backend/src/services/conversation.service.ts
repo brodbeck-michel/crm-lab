@@ -45,6 +45,16 @@
  * Reatribuir uma conversa JA atribuida gera a mensagem de sistema "Conversa
  * transferida de A para B" e nao apaga nada: o historico inteiro continua
  * visivel para quem recebe.
+ *
+ * ============================================================================
+ * ENCERRAR / REABRIR (D-174)
+ * ============================================================================
+ * `active | closed`. Encerrar e reativar pelo PATCH: so a dona, gestor ou
+ * admin — `FORBIDDEN` para quem enxerga a conversa mas nao e dona (fila livre
+ * inclusive). Encerrar mantem a dona e grava "Atendimento encerrado por X".
+ * Reabre sozinha: paciente escreveu (`MessageService.createFromPatient`, fila
+ * livre) ou atendimento manual no mesmo telefone (`createManual`, para quem
+ * cadastrou).
  */
 import type {
   Conversation,
@@ -240,13 +250,22 @@ export class ConversationService {
     ctx: TenantContext,
     dto: CreateConversationRequest,
   ): Promise<ConversationDetail> {
-    const { conversation, created } = await this.repository.findOrCreateByPhone(ctx.tenantId, {
+    const found = await this.repository.findOrCreateByPhone(ctx.tenantId, {
       patientPhone: toE164(dto.patientPhone),
       patientName: dto.patientName,
       patientEmail: dto.patientEmail ?? null,
       channel: dto.channel,
       assignedTo: ctx.userId,
     });
+    const { created } = found;
+    let conversation = found.conversation;
+
+    // Conversa ENCERRADA naquele telefone (D-174): o atendimento novo reabre e
+    // e de quem cadastrou, qualquer que fosse a dona antiga. Perdeu a corrida
+    // (o paciente reabriu no mesmo instante)? Segue com o estado relido.
+    if (!created && conversation.status === 'closed') {
+      conversation = await this.reopenManually(ctx, conversation);
+    }
 
     // Telefone que ja e de OUTRO atendente. Nao rouba a conversa, e tambem nao
     // devolve 404 como `getById`: aqui o 404 mandaria o atendente montar um
@@ -360,6 +379,11 @@ export class ConversationService {
       }));
   }
 
+  /**
+   * Encerrar / reativar (D-174). A alcada vem DEPOIS do recorte por papel:
+   * conversa de outra atendente continua 404; o 403 so aparece em conversa que
+   * o usuario ja enxerga (a da fila livre, para atendente).
+   */
   async updateStatus(
     ctx: TenantContext,
     id: string,
@@ -368,6 +392,9 @@ export class ConversationService {
     const current = await this.repository.findById(ctx.tenantId, id);
     if (!current || !this.canSee(ctx, current)) {
       throw notFound({ resource: 'conversation', id });
+    }
+    if (!isSupervisor(ctx) && current.assignedTo !== ctx.userId) {
+      throw new BusinessError('FORBIDDEN', { requiredRoles: [...SUPERVISOR_ROLES] });
     }
     if (current.status === status) return current;
 
@@ -381,6 +408,14 @@ export class ConversationService {
       oldValues: { status: current.status },
       newValues: { status: updated.status },
     });
+    if (status === 'closed') {
+      const name = await this.userName(ctx);
+      await this.messages.createSystemEvent(
+        ctx.tenantId,
+        id,
+        `Atendimento encerrado por ${name}`,
+      );
+    }
     return updated;
   }
 
@@ -404,7 +439,7 @@ export class ConversationService {
     patch: UpdateConversationRequest,
   ): Promise<ConversationDetail> {
     // Ordem proposital: status e tags ANTES da atribuicao. Um atendente que
-    // transfere e arquiva na mesma chamada deixaria de enxergar a conversa no
+    // transfere e encerra na mesma chamada deixaria de enxergar a conversa no
     // meio do caminho se a atribuicao viesse primeiro.
     let current: ConversationDetail | null = null;
     if (patch.status !== undefined) current = await this.updateStatus(ctx, id, patch.status);
@@ -438,6 +473,36 @@ export class ConversationService {
   // -------------------------------------------------------------------------
   // internos
   // -------------------------------------------------------------------------
+
+  /** Reabre para quem cadastrou o atendimento manual (D-174). */
+  private async reopenManually(
+    ctx: TenantContext,
+    closed: ConversationDetail,
+  ): Promise<ConversationDetail> {
+    const reopened = await this.repository.reopenIfClosed(ctx.tenantId, closed.id, ctx.userId);
+    if (!reopened) {
+      return (await this.repository.findById(ctx.tenantId, closed.id)) ?? closed;
+    }
+    await this.audit.record(ctx, {
+      action: 'update_conversation_status',
+      entityType: 'conversation',
+      entityId: closed.id,
+      oldValues: { status: closed.status, assignedTo: closed.assignedTo },
+      newValues: { status: reopened.status, assignedTo: reopened.assignedTo },
+    });
+    await this.messages.createSystemEvent(
+      ctx.tenantId,
+      closed.id,
+      `Atendimento reaberto por ${reopened.assignedToName ?? 'um atendente'}`,
+    );
+    return reopened;
+  }
+
+  /** Nome de quem esta logado, para o evento de sistema. */
+  private async userName(ctx: TenantContext): Promise<string> {
+    const user = await this.db.withTenant(ctx.tenantId, (tx) => userRepo.findById(tx, ctx.userId));
+    return user?.name ?? 'um atendente';
+  }
 
   /** Atendente ve as proprias + as livres; gestor/admin veem todas. */
   private canSee(ctx: TenantContext, conversation: Conversation): boolean {

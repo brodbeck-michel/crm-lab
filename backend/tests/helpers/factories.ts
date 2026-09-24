@@ -141,7 +141,7 @@ export interface CreateConversationInput {
   patientEmail?: string;
   assignedTo?: string | null;
   channel?: string;
-  status?: 'active' | 'archived' | 'closed';
+  status?: 'active' | 'closed';
   db?: DbClient;
 }
 

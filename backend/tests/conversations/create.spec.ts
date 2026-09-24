@@ -141,4 +141,32 @@ describe('POST /conversations', () => {
 
     expect(response.body.assignedTo).toBe(attendant.id);
   });
+
+  it('D-174: telefone com conversa ENCERRADA de outra atendente reabre para quem cadastrou', async () => {
+    const tenant = await createTenant();
+    const owner = await createUser({ tenantId: tenant.id, role: 'attendant' });
+    const attendant = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Bia' });
+    const closed = await createConversation({
+      tenantId: tenant.id,
+      assignedTo: owner.id,
+      patientPhone: '+5548999991234',
+      status: 'closed',
+    });
+
+    const response = await app.agent
+      .post('/api/v1/conversations')
+      .set(app.auth(attendant))
+      .send(body)
+      .expect(201);
+
+    expect(response.body.id).toBe(closed.id);
+    expect(response.body.status).toBe('active');
+    expect(response.body.assignedTo).toBe(attendant.id);
+
+    const detalhe = await app.agent
+      .get(`/api/v1/conversations/${closed.id}`)
+      .set(app.auth(attendant))
+      .expect(200);
+    expect(detalhe.body.messages.at(-1).content).toBe('Atendimento reaberto por Bia');
+  });
 });

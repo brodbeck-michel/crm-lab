@@ -50,6 +50,7 @@ export const conversationsApi = {
       ? http.post<void>(`/conversations/${id}/pin`, {})
       : http.delete<void>(`/conversations/${id}/pin`),
 
-  archive: (id: string) =>
-    http.patch<UpdateConversationResponse>(`/conversations/${id}`, { status: 'archived' }),
+  /** Encerrar atendimento (D-174) — só dona, gestor ou admin; o backend valida. */
+  close: (id: string) =>
+    http.patch<UpdateConversationResponse>(`/conversations/${id}`, { status: 'closed' }),
 };

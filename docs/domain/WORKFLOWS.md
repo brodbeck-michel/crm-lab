@@ -236,6 +236,16 @@ Nova conversa → sistema busca atendente online com menos conversas ativas → 
 6. Histórico completo permanece visível para B
 ```
 
+### Encerrar e reabrir (CRMLAB-48, D-174):
+```
+1. Dona (ou gestor/admin) clica "Encerrar" → PATCH /conversations/:id { "status": "closed" }
+2. Mensagem de sistema: "Atendimento encerrado por A" — a conversa sai das filas, dona mantida
+3. Paciente escreve de novo → status volta a "active", assignedTo = null
+   → aparece em "Não atribuídas" com "Atendimento reaberto pelo paciente"
+4. Atendimento manual (POST /conversations) no mesmo telefone → reabre atribuída a quem cadastrou
+5. Mensagem enviada pelo celular do laboratório (fromMe) NÃO reabre
+```
+
 **Conflito de atribuição simultânea:**
 - Usar optimistic locking (version field) ou
 - Primeira atribuição ganha; segunda recebe erro `CONVERSATION_ALREADY_ASSIGNED`

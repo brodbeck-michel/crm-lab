@@ -1,7 +1,11 @@
 import type { IsoDateTime, PaginationMeta, PaginationQuery } from './api.types.js';
 import type { UserRole } from './auth.types.js';
 
-export type ConversationStatus = 'active' | 'archived' | 'closed';
+/**
+ * `closed` = atendimento encerrado (D-174): fora da fila, composer travado,
+ * reabre sozinho quando o paciente escreve. `archived` deixou de existir.
+ */
+export type ConversationStatus = 'active' | 'closed';
 export type ConversationChannel = 'whatsapp' | 'sms' | 'web' | 'direct';
 export type SenderType = 'patient' | 'agent' | 'system';
 export type MessageType = 'text' | 'image' | 'audio' | 'pdf' | 'doc';

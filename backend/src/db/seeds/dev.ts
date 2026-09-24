@@ -691,7 +691,7 @@ async function seedTenant(
       patientId,
       assignedTo: assignedTo?.id ?? null,
       channel: rnd.pick(CHANNELS),
-      status: ageDays > 70 ? 'archived' : 'active',
+      status: ageDays > 70 ? 'closed' : 'active',
       unreadCount,
       tags: rnd.sample(TAG_POOL, rnd.int(0, 2)),
       lastMessageAt,

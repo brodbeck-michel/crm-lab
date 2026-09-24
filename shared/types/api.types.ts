@@ -40,6 +40,7 @@ export type ApiErrorCode =
   | 'UNAUTHORIZED'
   | 'USER_INACTIVE'
   | 'TENANT_INACTIVE'
+  | 'RESET_TOKEN_INVALID'
   // Recursos
   | 'NOT_FOUND'
   | 'VALIDATION_ERROR'

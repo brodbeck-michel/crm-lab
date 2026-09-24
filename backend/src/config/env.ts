@@ -150,6 +150,16 @@ const envSchema = z
     TRUST_PROXY_HOPS: nonNegativeNumberFrom(0),
     /** Lista de IPs/CIDRs de proxy confiavel. Tem precedencia sobre a contagem. */
     TRUSTED_PROXIES: optionalString,
+
+    /**
+     * Envio de e-mail (CRMLAB-39) — provedor Resend. Ausente em dev/teste =
+     * `forgotPassword` loga o link em vez de enviar (mesmo padrao do driver
+     * mock do WHATSAPP_API_URL). Obrigatoria em producao: sem ela a
+     * recuperacao de senha fica sem efeito nenhum, silenciosamente.
+     */
+    RESEND_API_KEY: optionalString,
+    /** Remetente verificado no Resend (dominio/subdominio autenticado por DNS). */
+    RESEND_FROM_EMAIL: optionalString,
   })
   .superRefine((value, ctx) => {
     if (value.NODE_ENV !== 'production') return;
@@ -213,6 +223,20 @@ const envSchema = z
         code: z.ZodIssueCode.custom,
         path: ['MEDIA_DIR'],
         message: 'MEDIA_DIR e obrigatoria em NODE_ENV=production (Onda 8 §4.1)',
+      });
+    }
+    if (!value.RESEND_API_KEY) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['RESEND_API_KEY'],
+        message: 'RESEND_API_KEY e obrigatoria em NODE_ENV=production (CRMLAB-39)',
+      });
+    }
+    if (!value.RESEND_FROM_EMAIL) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['RESEND_FROM_EMAIL'],
+        message: 'RESEND_FROM_EMAIL e obrigatoria em NODE_ENV=production (CRMLAB-39)',
       });
     }
   });
@@ -299,6 +323,7 @@ export function safeEnv(source: Env = env): Record<string, unknown> {
     'CHANNEL_SECRET_KEY',
     'EVOLUTION_API_KEY',
     'EVOLUTION_WEBHOOK_TOKEN',
+    'RESEND_API_KEY',
   ];
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(source)) {

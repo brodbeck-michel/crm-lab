@@ -5,9 +5,9 @@ import { PageContainer, PageHeader } from '@/components/layout';
 import { Button, Input, useToast } from '@/components/ui';
 
 /**
- * Minha Conta (`/settings/account`) — CRMLAB-35. Por ora só a troca da própria
- * senha; recuperação por e-mail depende de provedor de envio e ficou como
- * subtarefa bloqueada do card.
+ * Minha Conta (`/settings/account`) — CRMLAB-35. Troca da própria senha,
+ * autenticada. A recuperação SEM sessão (esqueci minha senha) é uma tela
+ * pública separada (`/forgot-password`, CRMLAB-39) — não fica aqui dentro.
  *
  * Disponível para TODOS os papéis de tenant: trocar a própria senha não é
  * privilégio de admin. O mínimo de 10 caracteres aqui é UX — quem decide é

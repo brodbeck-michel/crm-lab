@@ -2585,5 +2585,34 @@ fechado em Discussão antes de codar:
 - **Com filtro de convênio ligado**, o PDF sai sem comparativo e sem a tabela de comissões
   (bases diferentes, ver PAGES.md §14). Resolver exigiria filtro de convênio em
   `/reports/executive` ou um segundo fetch não filtrado de `/lis-budgets/summary`.
+
+### ✅ CRMLAB-39 — recuperação de senha por e-mail (Resend) (2026-09-23)
+
+Desmembrado do CRMLAB-35, desbloqueado hoje com o cadastro da chave do Resend.
+
+- `POST /auth/forgot-password` e `POST /auth/reset-password` (novos, `docs/api/API_CONTRACTS.md`).
+  Sempre 200 (anti-oráculo), rate limit 5/15min por e-mail+IP (fail-closed com Redis fora do ar,
+  D-139), envio de e-mail fire-and-forget (nunca no caminho de resposta).
+- Migração `024_password_reset_tokens.sql` — tabela nova + RLS (mesmo padrão de `refresh_tokens`):
+  token de 32 bytes, hash SHA-256, validade 30 min, uso único, pedido novo invalida o anterior.
+- `backend/src/lib/email.ts` (novo) — driver Resend com fallback mock (log) quando
+  `RESEND_API_KEY`/`RESEND_FROM_EMAIL` ausentes, mesmo padrão do `WHATSAPP_API_URL` vazio.
+  `RESEND_API_KEY`/`RESEND_FROM_EMAIL` obrigatórias em produção (`env.ts`).
+- Reset revoga **todas** as sessões do usuário (sem "exceto a atual" — diferente do CRMLAB-35,
+  aqui não há sessão logada). Novo código de erro `RESET_TOKEN_INVALID` cobre token inexistente/
+  usado/vencido, sem distinguir os três.
+- Limpeza periódica de tokens vencidos/usados entra no mesmo `setInterval` de 24h do
+  `refresh_tokens` em `main.ts`.
+- Frontend: `/forgot-password` e `/reset-password` (públicas, novo par de telas), link "Esqueci
+  minha senha" no `Login.tsx`. `Settings/Account.tsx` (CRMLAB-35) só ajustou o comentário — a
+  recuperação sem sessão não vive lá dentro.
+- Decisão registrada: `docs/DECISIONS.md` D-172.
+- **Testes:** `backend/tests/auth/forgot-reset-password.spec.ts` (novo, 13 casos) — suíte
+  `tests/auth` inteira (58 testes) e suíte de backend completa verdes. `npm run test:frontend`
+  (1102 testes) verde. `npm run typecheck` limpo nos dois workspaces.
+- **Pendência:** `RESEND_FROM_EMAIL` (remetente verificado no Resend) ainda não preenchido no
+  `.env` de produção — só a chave da API foi passada até agora. Sem ele, `NODE_ENV=production`
+  falha o boot (`env.ts` exige as duas). Deploy deste card espera esse valor.
+
 - ~~`lib/pdf/commission-report.ts` e `lib/pdf/active-search.ts` ainda não usam `brand.ts`~~ —
   resolvido em 2026-09-22, os três PDFs saem com logo e a cor do tenant.

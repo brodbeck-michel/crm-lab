@@ -21,10 +21,12 @@
  */
 import { randomUUID } from 'node:crypto';
 import type {
+  ForgotPasswordResponse,
   JwtPayload,
   LoginResponse,
   LogoutResponse,
   RefreshResponse,
+  ResetPasswordResponse,
   UserRole,
 } from '@crm-lab/shared';
 import { env } from '../config/env.js';
@@ -32,6 +34,7 @@ import type { DbClient } from '../db/types.js';
 import { BusinessError, notFound } from '../http/errors.js';
 import type { CacheService } from '../lib/cache.js';
 import { logCacheUnavailable } from '../lib/cache.js';
+import type { EmailService } from '../lib/email.js';
 import { logger } from '../lib/logger.js';
 import { hashPassword, verifyPassword } from '../lib/password.js';
 import { checkPasswordPolicy } from '../lib/password-policy.js';
@@ -41,6 +44,7 @@ import {
   verifyAccessToken,
   verifyRefreshToken,
 } from '../lib/tokens.js';
+import * as passwordResetRepo from '../repositories/password-reset-token.repository.js';
 import * as refreshRepo from '../repositories/refresh-token.repository.js';
 import * as tenantRepo from '../repositories/tenant.repository.js';
 import * as userRepo from '../repositories/user.repository.js';
@@ -93,6 +97,12 @@ export interface AuthService {
     input: ChangePasswordInput,
     meta: RequestMeta,
   ): Promise<void>;
+  forgotPassword(email: string, meta: RequestMeta): Promise<ForgotPasswordResponse>;
+  resetPassword(
+    token: string,
+    newPassword: string,
+    meta: RequestMeta,
+  ): Promise<ResetPasswordResponse>;
 }
 
 export interface AuthServiceDeps {
@@ -100,11 +110,23 @@ export interface AuthServiceDeps {
   cache: CacheService;
   audit: AuditService;
   theme: ThemeService;
+  email: EmailService;
 }
 
 /** SECURITY.md "Autenticacao": 5 tentativas falhas / 15 min por email+IP. */
 export const LOGIN_FAILURE_LIMIT = 5;
 export const LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60;
+
+/**
+ * `/auth/forgot-password` (CRMLAB-39, D-172): mesmo limite/janela do login —
+ * e a mesma superficie de abuso (enumerar e-mails, ou inundar a caixa de
+ * entrada de alguem com pedidos de reset).
+ */
+export const FORGOT_PASSWORD_LIMIT = 5;
+export const FORGOT_PASSWORD_WINDOW_SECONDS = 15 * 60;
+
+/** Validade do link de redefinicao — CRMLAB-39 pede exatamente 30 min. */
+export const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
 
 /**
  * Por quanto tempo um refresh token JA ROTACIONADO pode ser reapresentado sem
@@ -134,10 +156,13 @@ function refreshAbsoluteExpiryDate(): Date {
 }
 
 export function createAuthService(deps: AuthServiceDeps): AuthService {
-  const { db, cache, audit, theme } = deps;
+  const { db, cache, audit, theme, email: emailService } = deps;
 
   const failureKey = (email: string, ip: string): string =>
     `login-failures:${email.trim().toLowerCase()}:${ip}`;
+
+  const forgotPasswordKey = (email: string, ip: string): string =>
+    `forgot-password:${email.trim().toLowerCase()}:${ip}`;
 
   /**
    * Redis fora do ar aqui (D-139): `/auth/login` e rota PUBLICA, entao
@@ -565,7 +590,154 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     });
   };
 
-  return { login, refresh, logout, validateToken, changePassword };
+  /**
+   * "Esqueci minha senha" (CRMLAB-39, D-172). Responde SEMPRE a mesma
+   * mensagem em 200 — e-mail existente ou nao, ativo ou nao, tenant ativo ou
+   * nao — mesmo anti-oraculo do `login` (comentario no topo do arquivo).
+   *
+   * O envio de e-mail roda FIRE-AND-FORGET (nao e `await`ado): se o tempo de
+   * resposta variasse conforme uma chamada de rede ao Resend acontecer ou
+   * nao, a duracao da requisicao viraria o mesmo oraculo que o corpo da
+   * resposta ja evita.
+   */
+  const forgotPassword = async (
+    emailInput: string,
+    meta: RequestMeta,
+  ): Promise<ForgotPasswordResponse> => {
+    const hits = await cache
+      .incr(forgotPasswordKey(emailInput, meta.ip), FORGOT_PASSWORD_WINDOW_SECONDS)
+      .catch((err: unknown) => onCacheFailure('auth.forgot_password_throttle', err));
+    if (hits > FORGOT_PASSWORD_LIMIT) {
+      throw new BusinessError('RATE_LIMIT_EXCEEDED', {
+        retryAfter: FORGOT_PASSWORD_WINDOW_SECONDS,
+      });
+    }
+
+    // EXCECAO AUDITADA de RLS, mesmo motivo do login: o tenant ainda nao e
+    // conhecido antes de achar o usuario pelo e-mail.
+    const candidates = await db.withoutTenant((tx) =>
+      userRepo.findLoginCandidatesByEmail(tx, emailInput),
+    );
+    const targets = candidates.filter((c) => c.isActive && c.tenantIsActive);
+
+    for (const user of targets) {
+      const token = passwordResetRepo.generateResetToken();
+      const tokenHash = passwordResetRepo.hashResetToken(token);
+      const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS);
+
+      await db.withTenant(user.tenantId, async (tx) => {
+        // Pedido novo invalida qualquer link anterior ainda nao usado — so um
+        // token vivo por vez.
+        await passwordResetRepo.invalidateAllForUser(tx, user.id);
+        await passwordResetRepo.insert(tx, {
+          tenantId: user.tenantId,
+          userId: user.id,
+          tokenHash,
+          expiresAt,
+        });
+      });
+
+      const frontendOrigin = env.corsOrigins[0] ?? 'http://localhost:5173';
+      const resetLink = `${frontendOrigin}/reset-password?token=${token}`;
+
+      // Fire-and-forget de proposito (ver doc do metodo). `EmailService.send`
+      // ja nao lanca (lib/email.ts) — o `.catch` aqui e so uma segunda rede
+      // de seguranca.
+      void emailService
+        .send({
+          to: user.email,
+          subject: 'Redefinição de senha — CRM Lab',
+          html:
+            `<p>Recebemos um pedido para redefinir sua senha no CRM Lab.</p>` +
+            `<p><a href="${resetLink}">Clique aqui para criar uma nova senha</a>. ` +
+            `O link expira em 30 minutos.</p>` +
+            `<p>Se você não pediu isso, ignore este e-mail — sua senha continua a mesma.</p>`,
+        })
+        .catch((err: unknown) => {
+          logger.error('auth.forgot_password_email_failed', {
+            message: err instanceof Error ? err.message : String(err),
+          });
+        });
+
+      await audit.log({
+        tenantId: user.tenantId,
+        userId: user.id,
+        action: 'forgot_password_requested',
+        entityType: 'user',
+        entityId: user.id,
+        ipAddress: meta.ip,
+        userAgent: meta.userAgent,
+      });
+    }
+
+    return { message: 'Se o e-mail existir, enviaremos um link de redefinição de senha' };
+  };
+
+  /**
+   * Conclui a redefinicao de senha (CRMLAB-39, D-172). Token invalido,
+   * vencido ou ja usado: mesma resposta, `RESET_TOKEN_INVALID` — nao
+   * distingue os tres casos (sinalizaria a um atacante qual deles esta
+   * testando).
+   *
+   * Revoga TODAS as familias de refresh do usuario — ao contrario de
+   * `changePassword` (CRMLAB-35), aqui nao ha sessao atual para excetuar: por
+   * definicao, quem redefine a senha pelo link nao esta logado.
+   */
+  const resetPassword = async (
+    token: string,
+    newPassword: string,
+    meta: RequestMeta,
+  ): Promise<ResetPasswordResponse> => {
+    const policy = checkPasswordPolicy(newPassword);
+    if (!policy.ok) {
+      throw new BusinessError('VALIDATION_ERROR', { fields: { newPassword: policy.reason } });
+    }
+
+    const tokenHash = passwordResetRepo.hashResetToken(token);
+
+    // EXCECAO DE RLS: o tenant do token so e conhecido depois de acha-lo, e a
+    // tabela e indexada por hash (unico), nao por tenant.
+    const stored = await db.withoutTenant((tx) => passwordResetRepo.findByHash(tx, tokenHash));
+    if (
+      !stored ||
+      stored.usedAt !== null ||
+      new Date(stored.expiresAt).getTime() <= Date.now()
+    ) {
+      throw new BusinessError('RESET_TOKEN_INVALID');
+    }
+
+    const passwordHash = await hashPassword(newPassword);
+
+    await db.withTenant(stored.tenantId, async (tx) => {
+      // Sem CAS aqui (ao contrario de `changePassword`): nao ha "hash atual
+      // conhecido pela sessao" — o cliente do link nao esta autenticado.
+      await userRepo.updatePasswordHash(tx, stored.userId, passwordHash);
+      await passwordResetRepo.markUsed(tx, stored.id);
+      await refreshRepo.revokeAllForUser(tx, stored.userId, 'security');
+    });
+
+    await audit.log({
+      tenantId: stored.tenantId,
+      userId: stored.userId,
+      action: 'reset_password',
+      entityType: 'user',
+      entityId: stored.userId,
+      ipAddress: meta.ip,
+      userAgent: meta.userAgent,
+    });
+
+    return { message: 'Senha redefinida com sucesso' };
+  };
+
+  return {
+    login,
+    refresh,
+    logout,
+    validateToken,
+    changePassword,
+    forgotPassword,
+    resetPassword,
+  };
 }
 
 /**

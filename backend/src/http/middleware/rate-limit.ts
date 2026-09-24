@@ -107,7 +107,13 @@ export function pathOf(req: Request): string {
  * proteger (so revoga um token) e travar logout com o cache fora do ar
  * pioraria um incidente, nao ajudaria.
  */
-const PUBLIC_ROUTE_PATHS = ['/api/v1/auth/login', '/api/v1/auth/refresh'];
+const PUBLIC_ROUTE_PATHS = [
+  '/api/v1/auth/login',
+  '/api/v1/auth/refresh',
+  // CRMLAB-39: publica e sem sessao para se apoiar, mesma razao do login —
+  // sem lockout com o Redis fora do ar seria convite a enumerar e-mails.
+  '/api/v1/auth/forgot-password',
+];
 
 export function isPublicRoute(req: Request): boolean {
   if (isChannelWebhook(req)) return true;

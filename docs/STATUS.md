@@ -2716,3 +2716,18 @@ atribuídas" quando o paciente escreve (PR #60, D-174).
 - **Não conferido:** contagem de `archived` = 0 no banco de prod (leitura do banco não liberada
   nesta sessão). A migração só termina se o CHECK aceitar todas as linhas, então o `applied`
   já implica zero `archived`.
+
+### ✅ CRMLAB-49 — campo de mensagem cresce com o texto (2026-09-24)
+
+Branch `feature/CRMLAB-49-composer-autogrow`. Aguarda validação do PO.
+
+- `Composer.tsx`: a altura do `<textarea>` acompanha o conteúdo (`useLayoutEffect` sobre o
+  `value`, então digitação, emoji, resposta rápida, envio e `initialValue` passam pelo mesmo
+  caminho). Teto de 150px (~6 linhas), com rolagem interna daí para cima. Passou de uma linha, a
+  pílula vira `rounded-md` (raio de campo multilinha do DESIGN_TOKENS.md). A borda é somada ao
+  `scrollHeight` porque o preflight usa `border-box`, senão aparece rolagem já na 1ª linha.
+- `ConversationPanel.tsx`: `useBottomAnchor` (ResizeObserver) mantém a borda de baixo da lista
+  parada quando o composer muda de altura. Sem isso, as últimas mensagens sumiam atrás do campo.
+- `docs/frontend/COMPONENTS.md` §Composer atualizado.
+- **Testes:** 6 novos em `Composer.spec.tsx` e 1 em `ConversationPanel.spec.tsx`. Frontend
+  completo verde (76 arquivos, 1116 testes). `npm run typecheck` e `npm run lint` limpos.

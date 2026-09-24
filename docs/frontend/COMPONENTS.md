@@ -105,6 +105,17 @@ Anatomia (padrão WhatsApp):
 ### Composer
 - Input pílula + botão anexo + botão emoji + botão enviar (primary)
 - Enter envia, Shift+Enter quebra linha
+- **Cresce com o texto** (CRMLAB-49, padrão WhatsApp Web): começa com uma linha e
+  ganha altura a cada quebra (por tamanho ou Shift+Enter) até **150px** (~6 linhas);
+  dali em diante trava e rola por dentro. Apagar ou enviar faz o campo voltar a
+  diminuir. A altura é recalculada a cada mudança do texto, então emoji e resposta
+  rápida entram pelo mesmo caminho. JS e não `field-sizing: content`, que o Firefox
+  não suporta.
+- Uma linha é pílula (999px); passou disso, vira `radius-md` — o raio de campo
+  multilinha do DESIGN_TOKENS.md.
+- O campo cresce **para cima**: a lista de mensagens encolhe e mantém a borda de
+  baixo parada (a última mensagem visível continua visível), e os botões ficam
+  alinhados embaixo (`items-end`).
 
 #### Emoji (Onda 8 §2.2)
 - Popover com grade de ~48 emojis de uso comum em atendimento; **sem

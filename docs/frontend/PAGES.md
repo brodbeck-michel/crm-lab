@@ -703,6 +703,10 @@ dentro de uma tela, que é a solução que ninguém consegue auditar depois.
   real (§9), a linha não volta
 - Erro de atalho repetido chega como `VALIDATION_ERROR` com `details.fields.shortcut` e
   marca **o campo**, não um toast genérico
+- O formulário **só fecha quando o servidor confirma**. Fechar logo após enviar fazia o
+  erro sumir junto com o modal, e a pessoa via só "não salvou" (CRMLAB-47). Título e
+  resposta vazios são barrados na tela: o botão fica no rodapé do Modal, fora do `<form>`,
+  e o `required` do navegador não roda
 - Vazio: "Nenhuma resposta rápida ainda" + o que a funcionalidade faz, porque uma lista
   vazia sem explicação não ensina que existe `/` no Composer
 

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -7,6 +7,8 @@ import { querySuccess, mutationIdle } from '@/test/query-mocks';
 import { useAuthStore } from '@/stores/auth.store';
 import QuickReplies from './QuickReplies';
 import * as quickRepliesApi from '@/api/quick-replies';
+import { ApiError } from '@/api/client';
+import { ToastProvider } from '@/components/ui';
 
 /**
  * Mesmo padrão de `Insurances.spec.tsx`: mocka os HOOKS, não o objeto de API —
@@ -51,9 +53,11 @@ function signIn(role: UserRole) {
 
 function renderPage() {
   return render(
-    <MemoryRouter>
-      <QuickReplies />
-    </MemoryRouter>,
+    <ToastProvider>
+      <MemoryRouter>
+        <QuickReplies />
+      </MemoryRouter>
+    </ToastProvider>,
   );
 }
 
@@ -123,6 +127,62 @@ describe('QuickReplies', () => {
 
     expect(mockCreate).not.toHaveBeenCalled();
     expect(screen.getByLabelText('Atalho')).toHaveAttribute('aria-invalid', 'true');
+  });
+
+  it('título e resposta vazios são barrados na tela — o botão fica fora do <form>', async () => {
+    const user = userEvent.setup();
+    signIn('attendant');
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /nova resposta/i }));
+    await user.type(screen.getByLabelText('Atalho'), 'jejum');
+    await user.click(screen.getByRole('button', { name: /^criar$/i }));
+
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Título')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByLabelText('Resposta')).toHaveAttribute('aria-invalid', 'true');
+  });
+
+  it('VALIDATION_ERROR do servidor mantém o modal aberto e marca o campo (CRMLAB-47)', async () => {
+    const user = userEvent.setup();
+    signIn('attendant');
+    mockCreate.mockImplementation((_body, opts) => {
+      opts?.onError?.(
+        new ApiError('VALIDATION_ERROR', 'Invalid', 400, {
+          fields: { shortcut: 'Já existe uma resposta rápida com este atalho' },
+        }),
+      );
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /nova resposta/i }));
+    await user.type(screen.getByLabelText('Atalho'), 'coleta');
+    await user.type(screen.getByLabelText('Título'), 'Coleta');
+    await user.type(screen.getByLabelText('Resposta'), 'Texto');
+    await user.click(screen.getByRole('button', { name: /^criar$/i }));
+
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText('Atalho')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText('Já existe uma resposta rápida com este atalho')).toBeInTheDocument();
+  });
+
+  it('o modal só fecha quando o servidor confirma', async () => {
+    const user = userEvent.setup();
+    signIn('attendant');
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /nova resposta/i }));
+    await user.type(screen.getByLabelText('Atalho'), 'jejum');
+    await user.type(screen.getByLabelText('Título'), 'Jejum');
+    await user.type(screen.getByLabelText('Resposta'), 'Jejum de 8 horas.');
+    await user.click(screen.getByRole('button', { name: /^criar$/i }));
+
+    // mutate mockado não chama onSuccess: o formulário continua na tela.
+    expect(screen.getByLabelText('Atalho')).toBeInTheDocument();
+
+    const opts = mockCreate.mock.calls[0]?.[1] as { onSuccess?: () => void } | undefined;
+    act(() => opts?.onSuccess?.());
+    expect(screen.queryByLabelText('Atalho')).not.toBeInTheDocument();
   });
 
   it('editar abre o formulário preenchido e manda só o PATCH', async () => {

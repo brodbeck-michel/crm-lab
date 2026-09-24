@@ -8,9 +8,10 @@ import {
   useQuickReplyList,
   useUpdateQuickReply,
 } from '@/api/quick-replies';
+import { isApiError } from '@/api/client';
 import { PageContainer, PageHeader } from '@/components/layout';
 import { Modal } from '@/components/shared';
-import { Button, Input, TextArea } from '@/components/ui';
+import { Button, Input, TextArea, useToast } from '@/components/ui';
 
 /**
  * Respostas rápidas — `/quick-replies` (PAGES.md §13 · API_CONTRACTS.md §9 ·
@@ -155,25 +156,53 @@ function QuickReplyModal({ quickReply, onClose }: QuickReplyModalProps) {
     title: quickReply?.title ?? '',
     content: quickReply?.content ?? '',
   });
-  const [shortcutError, setShortcutError] = useState<string | undefined>();
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const { toast } = useToast();
 
   const createQuickReply = useCreateQuickReply();
   const updateQuickReply = useUpdateQuickReply();
 
   /**
-   * O formato é validado aqui ANTES da chamada porque o erro é do campo, e
-   * marcar o input é a única correção possível. Não é a validação de verdade —
-   * essa é do backend (§9), e é ela que decide sobre atalho repetido, que a
-   * tela não tem como saber sem corrida.
+   * O formato do atalho e os campos vazios são checados aqui ANTES da chamada
+   * porque o erro é do campo, e marcar o input é a única correção possível.
+   * O botão fica no `footer` do Modal, FORA do `<form>`: o `required` dos
+   * inputs nunca é checado pelo navegador, então a checagem tem de ser nossa.
+   * Não é a validação de verdade — essa é do backend (§9), e é ela que decide
+   * sobre atalho repetido, que a tela não tem como saber sem corrida.
+   *
+   * O modal só fecha no `onSuccess`: fechar logo após o `mutate` fazia o
+   * `VALIDATION_ERROR` do servidor sumir junto com ele (CRMLAB-47).
    */
   function handleSubmit(event: FormEvent): void {
     event.preventDefault();
 
     const shortcut = normalizeShortcut(form.shortcut);
-    if (!isValidShortcut(shortcut)) {
-      setShortcutError(SHORTCUT_HINT);
-      return;
-    }
+    const errors: Record<string, string> = {};
+    if (!isValidShortcut(shortcut)) errors.shortcut = SHORTCUT_HINT;
+    if (!form.title.trim()) errors.title = 'Informe um título.';
+    if (!form.content.trim()) errors.content = 'Escreva a resposta.';
+    setFieldErrors(errors);
+    if (Object.keys(errors).length > 0) return;
+
+    const callbacks = {
+      onSuccess: () => {
+        toast(isEditMode ? 'Resposta rápida atualizada.' : 'Resposta rápida criada.', {
+          tone: 'positive',
+        });
+        onClose();
+      },
+      onError: (err: unknown) => {
+        const fields =
+          isApiError(err) && err.code === 'VALIDATION_ERROR'
+            ? (err.details?.fields as Record<string, string> | undefined)
+            : undefined;
+        if (fields && Object.keys(fields).length > 0) {
+          setFieldErrors(fields);
+          return;
+        }
+        toast('Não foi possível salvar a resposta rápida.', { tone: 'attention' });
+      },
+    };
 
     if (quickReply) {
       // PATCH parcial: só o que a pessoa realmente mudou vai no corpo.
@@ -182,12 +211,16 @@ function QuickReplyModal({ quickReply, onClose }: QuickReplyModalProps) {
         ...(form.title !== quickReply.title ? { title: form.title } : {}),
         ...(form.content !== quickReply.content ? { content: form.content } : {}),
       };
-      updateQuickReply.mutate({ id: quickReply.id, dto });
+      updateQuickReply.mutate({ id: quickReply.id, dto }, callbacks);
     } else {
-      createQuickReply.mutate({ shortcut, title: form.title, content: form.content });
+      createQuickReply.mutate({ shortcut, title: form.title, content: form.content }, callbacks);
     }
+  }
 
-    onClose();
+  function clearFieldError(field: string): void {
+    if (!fieldErrors[field]) return;
+    const { [field]: _removed, ...rest } = fieldErrors;
+    setFieldErrors(rest);
   }
 
   const isPending = createQuickReply.isPending || updateQuickReply.isPending;
@@ -214,10 +247,10 @@ function QuickReplyModal({ quickReply, onClose }: QuickReplyModalProps) {
           // A barra é como se usa, não o que se grava (SCHEMA.md §22).
           prefix={<span className="font-body text-label text-neutral-600">/</span>}
           hint={SHORTCUT_HINT}
-          error={shortcutError}
+          error={fieldErrors.shortcut}
           value={form.shortcut}
           onChange={(e) => {
-            setShortcutError(undefined);
+            clearFieldError('shortcut');
             setForm({ ...form, shortcut: e.target.value });
           }}
           required
@@ -226,16 +259,24 @@ function QuickReplyModal({ quickReply, onClose }: QuickReplyModalProps) {
         <Input
           label="Título"
           hint="Como você reconhece a resposta na lista."
+          error={fieldErrors.title}
           value={form.title}
-          onChange={(e) => setForm({ ...form, title: e.target.value })}
+          onChange={(e) => {
+            clearFieldError('title');
+            setForm({ ...form, title: e.target.value });
+          }}
           required
         />
 
         <TextArea
           label="Resposta"
           rows={5}
+          error={fieldErrors.content}
           value={form.content}
-          onChange={(e) => setForm({ ...form, content: e.target.value })}
+          onChange={(e) => {
+            clearFieldError('content');
+            setForm({ ...form, content: e.target.value });
+          }}
           required
         />
       </form>

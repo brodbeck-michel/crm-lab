@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-24 (CRMLAB-46 aguardando validação; v1.16.1 em PRODUÇÃO — ver fim do arquivo)
+**Última atualização:** 2026-09-24 (CRMLAB-46 validado em hml, PR aberto; v1.16.2 em PRODUÇÃO — ver fim do arquivo)
 
 ---
 
@@ -2632,9 +2632,25 @@ Sobe CRMLAB-39 (recuperação de senha por e-mail) e CRMLAB-44 (sidebar "trilho 
   (o usuário `deploy` não cria nada em `/opt`). Backup de `.env` vai para lá, nunca para o
   diretório do ambiente. Prod não chegou a ser tocada nos abortos.
 
+### 🚀 v1.16.2 em produção (2026-09-24)
+
+Sobe CRMLAB-47: respostas rápidas não salvavam. O modal fechava logo após o `mutate` e engolia o
+`400 VALIDATION_ERROR`. O botão fica no `footer`, fora do `<form>`, então o `required` não rodava
+e título ou resposta vazios chegavam ao backend (PR #58).
+
+- **hml:** `hml-07e2130`, validado pelo usuário.
+- **prod:** `9f38706` (tag **v1.16.2**), com CI verde nos 5 jobs. Healthcheck OK na 2ª tentativa,
+  e o bundle servido em https://vitrocrm.cloud confirma `1.16.2`.
+- **Armadilha (não repetir):** o primeiro bump (`0c3a2f1`) saiu com `git commit -a` num checkout
+  **compartilhado** com outra sessão, que escrevia os docs do CRMLAB-46 (D-173). Os docs entraram
+  na `main` e na tag sem o código existir. `9f38706` os retirou, e a tag foi movida para ele antes
+  do deploy. Duas sessões no mesmo repositório → cada uma no seu **worktree**, e commit de release
+  com `git add <arquivo>`, nunca `-a`. O CRMLAB-46 agora vive em `../CRM Lab-46`.
+
 ### ✅ CRMLAB-46 — mensagem enviada pelo celular aparece na conversa, sem duplicar (2026-09-24)
 
-Aguardando validação do usuário (branch `feature/CRMLAB-46-fromme-celular`).
+Validado pelo usuário em hml (`hml-37367b6`) em 2026-09-24. Aguarda merge (branch
+`feature/CRMLAB-46-fromme-celular`).
 
 - `MESSAGES_UPSERT` com `fromMe: true` deixou de ser descartado (D-173). O `key.id` decide: se já
   está gravado, é eco do CRM ou reentrega e nada muda. Se não está, a mensagem entra como resposta
@@ -2652,5 +2668,8 @@ Aguardando validação do usuário (branch `feature/CRMLAB-46-fromme-celular`).
   (6). Os dois testes antigos que afirmavam o descarte foram removidos. Backend completo 1235/1235,
   `npm run typecheck` limpo. Mutação conferida: desligar a espera ou a rede de segurança derruba
   um teste cada.
-- **Não validado contra gateway real:** a forma do payload `fromMe` foi tirada do contrato
-  existente (é o mesmo `key`). Validar em hml respondendo pelo celular pareado.
+- **hml (simulação do webhook, WhatsApp de hml não envia):** mensagem do celular, número sem
+  conversa, reentrega, eco confirmado, **corrida** (eco com envio em voo, id gravado 2 s depois:
+  o webhook esperou ~2,1 s e descartou) e grupo, todos conferidos no banco.
+- **Pendente:** prova com o celular real pareado, combinada para depois do deploy em prod
+  (o hml não tem gateway conectado).

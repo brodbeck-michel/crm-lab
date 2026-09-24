@@ -33,7 +33,8 @@ export type NavIcon =
   | 'theme'
   | 'tenants'
   | 'billing'
-  | 'account';
+  | 'account'
+  | 'megaphone';
 
 /** Papéis de tenant. `platform_operator` NÃO entra — o console é isolado (PAGES.md §11). */
 export const TENANT_ROLES: readonly UserRole[] = ['attendant', 'manager', 'admin'] as const;
@@ -47,6 +48,8 @@ export type NavGroupId = 'comunicacao' | 'gestao' | 'configuracoes';
 export interface NavGroup {
   id: NavGroupId;
   label: string;
+  /** Ícone do cabeçalho do grupo (CRMLAB-44, anatomia "trilho flutuante"). */
+  icon: NavIcon;
 }
 
 /**
@@ -55,9 +58,9 @@ export interface NavGroup {
  * "Gestão"). Itens sem `group` aparecem soltos, antes de todos os grupos.
  */
 export const NAV_GROUPS: readonly NavGroup[] = [
-  { id: 'comunicacao', label: 'Comunicação' },
-  { id: 'gestao', label: 'Gestão' },
-  { id: 'configuracoes', label: 'Configurações' },
+  { id: 'comunicacao', label: 'Comunicação', icon: 'megaphone' },
+  { id: 'gestao', label: 'Gestão', icon: 'analytics' },
+  { id: 'configuracoes', label: 'Configurações', icon: 'operation' },
 ] as const;
 
 export interface AppRoute {
@@ -281,6 +284,7 @@ export function sidebarRoutesFor(role: UserRole | null | undefined): AppRoute[] 
 export interface SidebarGroupSection {
   id: NavGroupId;
   label: string;
+  icon: NavIcon;
   items: AppRoute[];
 }
 
@@ -302,6 +306,7 @@ export function sidebarSectionsFor(role: UserRole | null | undefined): SidebarSe
   const groups = NAV_GROUPS.map((group) => ({
     id: group.id,
     label: group.label,
+    icon: group.icon,
     items: visible.filter((route) => route.group === group.id),
   })).filter((group) => group.items.length > 0);
 

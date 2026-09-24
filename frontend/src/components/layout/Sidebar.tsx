@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { PanelLeftClose, PanelLeftOpen, ChevronRight, LogOut } from 'lucide-react';
+import type { UserRole } from '@crm-lab/shared';
 import { cn, Badge } from '@/components/ui';
 import { Avatar } from '@/components/shared';
+import { initials } from '@/lib/format';
 import { useAuthStore, useUIStore, useSidebarGroupsStore, selectRole, selectUser } from '@/stores';
 import { useLogout } from '@/hooks';
 import { sidebarSectionsFor, type AppRoute } from '@/routes/route-config';
@@ -11,30 +14,41 @@ import { NavGlyph } from './NavGlyph';
 
 /**
  * Sidebar — docs/frontend/COMPONENTS.md (`layout/`) + DESIGN_TOKENS.md (Layouts).
- * Variante "Trilho de grupo" (CRMLAB-4, 2ª rodada — v1 rejeitada pelo usuário).
+ * Variante "Trilho flutuante" (CRMLAB-44, 3ª rodada — anatomia de
+ * `Sidebar CRM - Design System.md`, mapeada para os tokens de tema do
+ * tenant já existentes; a paleta fixa do documento NÃO foi adotada, ver
+ * decisão registrada em CRMLAB-44).
  *
- * 272px expandido / 64px recolhido, `position: sticky`, altura de viewport.
- * Item: ícone (`flex: 0 0 38px`) + label; hover `accent-100`; ativo com fundo
- * `accent-500` sólido e texto `text-bg` (único destaque preenchido por vez —
- * a faixa de grupo nunca usa a cor do ativo, só `accent-100`).
+ * 264px expandido / 76px recolhido, `position: sticky`, flutuante (margem
+ * 12px + `shadow-lg` + `rounded-lg`), altura de viewport menos a margem.
  *
- * **O CONTEÚDO do trilho muda por perfil; a ESTRUTURA não** — os itens saem de
- * `sidebarSectionsFor(role)`, que filtra as mesmas rotas de `sidebarRoutesFor`
- * (fonte que o guard de rota usa), só que organizadas em soltos + grupos.
+ * **O CONTEÚDO do trilho muda por perfil; a ESTRUTURA não** — os itens saem
+ * de `sidebarSectionsFor(role)`, que filtra as mesmas rotas de
+ * `sidebarRoutesFor` (fonte que o guard de rota usa), só que organizadas em
+ * soltos + grupos.
  *
- * Grupos (accordion, CRMLAB-4): abertos por padrão, estado por grupo
- * persistido em localStorage por usuário (`sidebar-groups.store`). Grupo sem
- * nenhum item visível para o perfil não aparece. Cabeçalho de grupo MESMO
- * TAMANHO do item (`text-label`), diferença só no peso (bold × medium) — v1
- * usava `font-heading text-section` maior, o usuário não aprovou (D-127
- * superseded). Um único divisor entre os itens soltos e o bloco de grupos;
- * filhos indentados atrás de um trilho vertical (`border-l`).
+ * Item ativo: fundo `accent-100` translúcido + barra de 3px à esquerda
+ * (`accent-500`) — único destaque do trilho. Grupos (accordion, CRMLAB-4):
+ * abertos por padrão, estado por grupo persistido em localStorage por
+ * usuário (`sidebar-groups.store`); grupo sem nenhum item visível para o
+ * perfil não aparece. Cabeçalho de grupo com ícone + label + chevron que
+ * gira 90° ao abrir; filhos indentados atrás de um trilho vertical
+ * (`border-l`).
  *
- * Recolhe sozinho para atendente na tela de inbox (PAGES.md §2).
+ * Recolhe sozinho para atendente na tela de inbox (PAGES.md §2). No modo
+ * recolhido, clicar num grupo expande o trilho e abre o grupo.
  */
 
-const EXPANDED_WIDTH = 272;
-const COLLAPSED_WIDTH = 64;
+const EXPANDED_WIDTH = 264;
+const COLLAPSED_WIDTH = 76;
+const SIDEBAR_MARGIN = 12;
+
+const ROLE_LABELS: Record<UserRole, string> = {
+  attendant: 'Atendente',
+  manager: 'Gerente',
+  admin: 'Administrador',
+  platform_operator: 'Operador da Plataforma',
+};
 
 /**
  * Ambiente do BUILD (`VITE_APP_ENV`, build-time como as outras `VITE_*`).
@@ -128,32 +142,56 @@ export function Sidebar() {
     <aside
       data-testid="sidebar"
       data-collapsed={collapsed ? 'true' : 'false'}
-      aria-label="Navegação principal"
+      aria-label="Menu principal"
       style={{
         width: collapsed ? COLLAPSED_WIDTH : EXPANDED_WIDTH,
         flex: `0 0 ${collapsed ? COLLAPSED_WIDTH : EXPANDED_WIDTH}px`,
-        padding: '26px 16px',
+        height: `calc(100vh - ${SIDEBAR_MARGIN * 2}px)`,
+        margin: `${SIDEBAR_MARGIN}px 0 ${SIDEBAR_MARGIN}px ${SIDEBAR_MARGIN}px`,
+        padding: '18px 12px 14px',
+        transition: 'width 220ms ease',
       }}
-      className="sticky top-0 flex h-screen flex-col gap-xl overflow-hidden bg-surface"
+      className="sticky top-[12px] flex flex-col gap-md rounded-lg bg-surface shadow-lg"
     >
-      <div className="flex items-center gap-sm">
+      <div
+        className={cn(
+          'flex gap-sm px-xs',
+          // Recolhido (76px): logo + botão não cabem lado a lado — o botão desce
+          // para abaixo do logo, como no documento de especificação (CRMLAB-44).
+          collapsed ? 'flex-col items-center' : 'items-center',
+        )}
+      >
+        <span
+          aria-hidden="true"
+          style={{ width: 34, height: 34, flex: '0 0 34px' }}
+          className="flex items-center justify-center rounded-md bg-accent-300 font-heading text-label font-bold text-accent-900"
+        >
+          {initials(brand)}
+        </span>
+        {!collapsed && (
+          <span className="min-w-0 flex-1 truncate font-heading text-section text-text">{brand}</span>
+        )}
         <button
           type="button"
           onClick={toggleSidebar}
           aria-label={collapsed ? 'Expandir menu' : 'Recolher menu'}
           aria-expanded={!collapsed}
-          style={{ flex: '0 0 38px' }}
-          className="flex h-[38px] cursor-pointer items-center justify-center rounded-pill border-none bg-transparent font-body text-label text-text hover:bg-accent-100"
+          style={{ flex: '0 0 30px' }}
+          className="flex h-[30px] w-[30px] cursor-pointer items-center justify-center rounded-md border-none bg-transparent text-neutral-600 hover:bg-neutral-100"
         >
-          <span aria-hidden="true">{collapsed ? '»' : '«'}</span>
+          {collapsed ? (
+            <PanelLeftOpen size={18} strokeWidth={1.7} aria-hidden="true" />
+          ) : (
+            <PanelLeftClose size={18} strokeWidth={1.7} aria-hidden="true" />
+          )}
         </button>
-        {!collapsed && (
-          <span className="min-w-0 truncate font-heading text-section text-text">{brand}</span>
-        )}
       </div>
 
+      <hr className="border-t border-neutral-300" />
+
       <nav
-        className="flex min-h-0 flex-1 flex-col gap-xs overflow-y-auto"
+        aria-label="Navegação principal"
+        className="flex min-h-0 flex-1 flex-col gap-xs overflow-y-auto px-xs"
         style={{ scrollbarWidth: 'thin', scrollbarColor: 'var(--color-neutral-400) transparent' }}
       >
         {ungrouped.map((route) => (
@@ -175,35 +213,48 @@ export function Sidebar() {
           const groupUnreadCount = group.items.some((route) => route.path === '/internal-chat')
             ? internalChatUnreadCount
             : 0;
+          const showActiveBg = open || (collapsed && hasActiveChild);
+          const groupId = `sidebar-group-${group.id}`;
           return (
             <div key={group.id}>
               <button
                 type="button"
-                onClick={() => toggleGroup(userId, group.id)}
+                onClick={() => {
+                  if (collapsed) {
+                    setSidebarCollapsed(false);
+                    if (!open) toggleGroup(userId, group.id);
+                  } else {
+                    toggleGroup(userId, group.id);
+                  }
+                }}
                 title={collapsed ? group.label : undefined}
                 aria-expanded={open}
+                aria-controls={groupId}
                 className={cn(
-                  'flex w-full items-start gap-sm rounded-md px-xs py-xs text-left',
+                  'flex w-full items-center gap-sm rounded-lg px-xs py-xs text-left',
                   'font-body text-label font-bold text-text',
-                  open ? 'bg-accent-100' : 'hover:bg-neutral-100',
+                  showActiveBg ? 'bg-accent-100' : 'hover:bg-neutral-100',
                   'focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-500 focus-visible:outline-offset-2',
                 )}
               >
                 <span
-                  style={{ flex: '0 0 38px', paddingTop: '4px' }}
-                  className="flex h-[16px] items-center justify-center text-neutral-500 transition-transform"
+                  style={{ flex: '0 0 38px' }}
+                  className="relative flex h-[38px] items-center justify-center"
                   aria-hidden="true"
                 >
-                  <span
-                    className="inline-block transition-transform duration-150"
-                    style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}
-                  >
-                    ▶
-                  </span>
+                  <NavGlyph name={group.icon} />
+                  {collapsed && groupUnreadCount > 0 && (
+                    <span className="absolute right-0 top-0 h-[8px] w-[8px] rounded-pill border-2 border-surface bg-accent2" />
+                  )}
                 </span>
+                {!collapsed && <span className="min-w-0 flex-1 truncate">{group.label}</span>}
                 {!collapsed && (
-                  <span className="min-w-0 flex-1 text-left" style={{ lineHeight: 1.3 }}>
-                    {group.label}
+                  <span
+                    aria-hidden="true"
+                    className="flex-none text-neutral-500 transition-transform duration-150"
+                    style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)', opacity: 0.7 }}
+                  >
+                    <ChevronRight size={15} strokeWidth={1.7} />
                   </span>
                 )}
                 {!collapsed && !open && groupUnreadCount > 0 && (
@@ -215,12 +266,15 @@ export function Sidebar() {
                 {!collapsed && !open && groupUnreadCount <= 0 && hasActiveChild && (
                   <span
                     aria-hidden="true"
-                    className="mt-[6px] h-[6px] w-[6px] flex-none rounded-pill bg-accent-500"
+                    className="h-[6px] w-[6px] flex-none rounded-pill bg-accent-500"
                   />
                 )}
               </button>
-              {open && (
-                <div className="ml-lg mt-xs flex flex-col gap-xs border-l-2 border-neutral-300 pl-sm">
+              {open && !collapsed && (
+                <div
+                  id={groupId}
+                  className="ml-lg mt-xs flex flex-col gap-xs border-l-2 border-neutral-300 pl-sm"
+                >
                   {group.items.map((route) => (
                     <SidebarNavItem
                       key={route.path}
@@ -238,8 +292,10 @@ export function Sidebar() {
         })}
       </nav>
 
+      <hr className="border-t border-neutral-300" />
+
       {user && (
-        <div ref={userMenuRef} className="relative">
+        <div ref={userMenuRef} className="relative px-xs">
           <button
             type="button"
             onClick={() => setUserMenuOpen((open) => !open)}
@@ -250,8 +306,13 @@ export function Sidebar() {
           >
             <Avatar name={user.name} size={36} />
             {!collapsed && (
-              <span className="min-w-0 truncate font-body text-caption text-neutral-700">
-                {user.name}
+              <span className="min-w-0 flex-1 truncate">
+                <span className="block truncate font-body text-label font-semibold text-text">
+                  {user.name}
+                </span>
+                <span className="block truncate font-body text-caption text-neutral-600">
+                  {ROLE_LABELS[user.role]} · v{__APP_VERSION__}
+                </span>
               </span>
             )}
           </button>
@@ -262,15 +323,16 @@ export function Sidebar() {
               className={cn(
                 'absolute bottom-full z-50 mb-xs w-[180px] rounded-md border border-neutral-200',
                 'bg-surface py-xs shadow-md',
-                collapsed ? 'left-0' : 'left-0 right-0 w-auto',
+                collapsed ? 'left-0' : 'left-xs right-xs w-auto',
               )}
             >
               <button
                 type="button"
                 role="menuitem"
                 onClick={() => void handleLogout()}
-                className="w-full cursor-pointer border-none bg-transparent px-md py-xs text-left font-body text-label text-text hover:bg-accent-100"
+                className="flex w-full cursor-pointer items-center gap-sm border-none bg-transparent px-md py-xs text-left font-body text-label text-text hover:bg-accent-100"
               >
+                <LogOut size={16} strokeWidth={1.7} aria-hidden="true" />
                 Sair
               </button>
             </div>
@@ -283,7 +345,7 @@ export function Sidebar() {
         <span
           aria-label={`Ambiente de ${APP_ENV}`}
           className={cn(
-            'inline-flex items-center justify-center self-start rounded-pill',
+            'mx-xs inline-flex items-center justify-center self-start rounded-pill',
             'bg-accent2 px-sm font-body text-micro font-bold uppercase text-bg',
           )}
         >
@@ -291,10 +353,12 @@ export function Sidebar() {
         </span>
       )}
 
-      {/* Versão do build — só o número, sem rótulo, quando o trilho recolhe. */}
-      <span className="truncate font-body text-caption text-neutral-600">
-        {collapsed ? __APP_VERSION__ : `v${__APP_VERSION__}`}
-      </span>
+      {/* Rodapé recolhido: só a versão, sem cargo (não cabe no ícone). */}
+      {collapsed && (
+        <span className="truncate px-xs font-body text-caption text-neutral-600">
+          {__APP_VERSION__}
+        </span>
+      )}
     </aside>
   );
 }
@@ -311,8 +375,9 @@ interface SidebarNavItemProps {
 
 /**
  * Um item de navegação (link), solto ou dentro de um grupo. Ativo: fundo
- * `accent-500` sólido + texto `text-bg` (único destaque preenchido do trilho —
- * a faixa de grupo nunca compete com essa cor).
+ * `accent-100` translúcido + barra de 3px à esquerda (`accent-500`) — único
+ * destaque preenchido do trilho (a faixa de grupo nunca compete com essa
+ * cor). Recolhido: contador vira um dot de 8px sobre o ícone (CRMLAB-44).
  */
 function SidebarNavItem({
   route,
@@ -321,36 +386,53 @@ function SidebarNavItem({
   internalChatUnreadCount,
   child = false,
 }: SidebarNavItemProps) {
+  const count =
+    route.path === '/decisions'
+      ? pendingDecisionsCount
+      : route.path === '/internal-chat'
+        ? internalChatUnreadCount
+        : 0;
+  const badgeLabel =
+    route.path === '/decisions'
+      ? `${count} decisão(ões) pendente(s)`
+      : route.path === '/internal-chat'
+        ? `${count} mensagens não lidas`
+        : undefined;
+
   return (
     <NavLink
       to={route.path}
       title={collapsed ? route.label : undefined}
       className={({ isActive }) =>
         cn(
-          'flex items-center gap-sm px-xs py-xs font-body text-label no-underline transition-colors',
+          'relative flex items-center gap-sm px-xs py-xs font-body text-label no-underline transition-colors',
           child ? 'rounded-md' : 'rounded-lg',
           'focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-500 focus-visible:outline-offset-2',
-          isActive ? 'bg-accent-500 font-semibold text-bg' : 'text-text hover:bg-accent-100',
+          isActive
+            ? cn(
+                'bg-accent-100 font-semibold text-text',
+                "before:absolute before:inset-y-[9px] before:left-0 before:w-[3px] before:content-['']",
+                'before:rounded-r-sm before:bg-accent-500',
+              )
+            : 'text-text hover:bg-neutral-100',
         )
       }
     >
       <span
         style={{ flex: '0 0 38px' }}
-        className="flex h-[38px] items-center justify-center"
+        className="relative flex h-[38px] items-center justify-center"
         aria-hidden="true"
       >
         {route.icon && <NavGlyph name={route.icon} />}
+        {collapsed && count > 0 && (
+          <span
+            aria-hidden="true"
+            className="absolute right-0 top-0 h-[8px] w-[8px] rounded-pill border-2 border-surface bg-accent2"
+          />
+        )}
       </span>
-      {!collapsed && <span className="min-w-0 truncate">{route.label}</span>}
-      {route.path === '/decisions' && (
-        <Badge count={pendingDecisionsCount} label={`${pendingDecisionsCount} decisão(ões) pendente(s)`} />
-      )}
-      {route.path === '/internal-chat' && (
-        <Badge
-          count={internalChatUnreadCount}
-          label={`${internalChatUnreadCount} mensagens não lidas`}
-        />
-      )}
+      {!collapsed && <span className="min-w-0 flex-1 truncate">{route.label}</span>}
+      {!collapsed && count > 0 && <Badge count={count} label={badgeLabel} />}
     </NavLink>
   );
 }

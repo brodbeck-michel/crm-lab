@@ -38,8 +38,32 @@ export function defaultLisFilters(): LisFilters {
   };
 }
 
+/**
+ * Preferência de recolher/expandir o trilho (CRMLAB-44, checklist "persiste
+ * após reload"). Fica FORA do `persist` do resto do store (que é
+ * sessionStorage, D-117) porque é uma preferência duradoura, não de sessão —
+ * por isso um par ler/gravar dedicado em localStorage, só para esta chave.
+ */
+const SIDEBAR_COLLAPSED_KEY = 'crm-lab.sidebar-collapsed';
+
+function readSidebarCollapsed(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function writeSidebarCollapsed(value: boolean): void {
+  try {
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(value));
+  } catch {
+    // localStorage indisponível (ex.: modo privado) — a preferência só não persiste.
+  }
+}
+
 export interface UIState {
-  /** Sidebar 244px (false) ou 72px (true). */
+  /** Sidebar 264px (false) ou 76px (true). Persiste em localStorage à parte. */
   sidebarCollapsed: boolean;
   /** Terceira coluna do inbox (316px) visível. */
   contextPanelOpen: boolean;
@@ -58,13 +82,21 @@ export interface UIState {
 export const useUIStore = create<UIState>()(
   persist(
     (set) => ({
-      sidebarCollapsed: false,
+      sidebarCollapsed: readSidebarCollapsed(),
       contextPanelOpen: true,
       activeModal: null,
       lisFilters: defaultLisFilters(),
 
-      setSidebarCollapsed: (sidebarCollapsed) => set({ sidebarCollapsed }),
-      toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
+      setSidebarCollapsed: (sidebarCollapsed) => {
+        writeSidebarCollapsed(sidebarCollapsed);
+        set({ sidebarCollapsed });
+      },
+      toggleSidebar: () =>
+        set((state) => {
+          const sidebarCollapsed = !state.sidebarCollapsed;
+          writeSidebarCollapsed(sidebarCollapsed);
+          return { sidebarCollapsed };
+        }),
       setContextPanelOpen: (contextPanelOpen) => set({ contextPanelOpen }),
       toggleContextPanel: () => set((state) => ({ contextPanelOpen: !state.contextPanelOpen })),
       openModal: (activeModal) => set({ activeModal }),

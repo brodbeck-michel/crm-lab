@@ -34,8 +34,8 @@ vi.mock('@/api/internal-chat', () => ({
 }));
 
 /**
- * Sidebar — COMPONENTS.md (`layout/`), variante "Trilho de grupo":
- * 272/64px · ícone `flex: 0 0 38px` · hover accent-100 · ativo accent-500 + text-bg.
+ * Sidebar — COMPONENTS.md (`layout/`), variante "Trilho flutuante" (CRMLAB-44):
+ * 264/76px · ícone `flex: 0 0 38px` · hover neutral-100 · ativo accent-100 + barra de 3px.
  * Conteúdo do trilho muda por perfil; a ESTRUTURA não.
  */
 
@@ -91,10 +91,10 @@ beforeEach(() => {
 });
 
 describe('Sidebar — larguras', () => {
-  it('expandida mede 272px', () => {
+  it('expandida mede 264px', () => {
     login('admin');
     renderSidebar();
-    expect(screen.getByTestId('sidebar')).toHaveStyle({ width: '272px' });
+    expect(screen.getByTestId('sidebar')).toHaveStyle({ width: '264px' });
   });
 
   it('recolhida mede 64px e esconde os rótulos', async () => {
@@ -104,7 +104,7 @@ describe('Sidebar — larguras', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Recolher menu' }));
 
     const sidebar = screen.getByTestId('sidebar');
-    expect(sidebar).toHaveStyle({ width: '64px' });
+    expect(sidebar).toHaveStyle({ width: '76px' });
     expect(sidebar.dataset.collapsed).toBe('true');
     expect(screen.queryByText('Personalização')).not.toBeInTheDocument();
   });
@@ -116,7 +116,7 @@ describe('Sidebar — larguras', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Expandir menu' }));
 
-    expect(screen.getByTestId('sidebar')).toHaveStyle({ width: '272px' });
+    expect(screen.getByTestId('sidebar')).toHaveStyle({ width: '264px' });
     expect(screen.getByText('Personalização')).toBeInTheDocument();
   });
 
@@ -169,18 +169,19 @@ describe('Sidebar — conteúdo por perfil (a estrutura é a mesma)', () => {
 });
 
 describe('Sidebar — item ativo', () => {
-  it('marca o item da rota atual com accent-500 sólido + texto text-bg', () => {
+  it('marca o item da rota atual com fundo translúcido + barra de 3px à esquerda', () => {
     login('admin');
     renderSidebar('/catalog');
 
     const active = screen.getByRole('link', { name: /Cadastro de Exames/ });
     expect(active).toHaveAttribute('aria-current', 'page');
-    expect(active.className).toContain('bg-accent-500');
-    expect(active.className).toContain('text-bg');
+    expect(active.className).toContain('bg-accent-100');
+    expect(active.className).toContain("before:content-['']");
+    expect(active.className).toContain('before:bg-accent-500');
 
     const inactive = screen.getByRole('link', { name: /Propostas/ });
     expect(inactive).not.toHaveAttribute('aria-current');
-    expect(inactive.className).toContain('hover:bg-accent-100');
+    expect(inactive.className).toContain('hover:bg-neutral-100');
   });
 });
 
@@ -269,6 +270,61 @@ describe('Sidebar — badge de não lidas do Chat Interno (D-130, CRMLAB-8)', ()
     await waitFor(() => expect(mockChannels).toHaveBeenCalled());
     expect(item).not.toHaveTextContent(/[0-9]/);
   });
+
+  it('recolhida, o badge do grupo "Comunicação" vira um dot no ícone do cabeçalho (CRMLAB-44)', async () => {
+    mockChannels.mockResolvedValue({
+      channels: [fakeChannel({ id: 'c-1', name: '#aprovacoes', unreadCount: 4 })],
+    });
+    login('admin');
+    useUIStore.setState({ sidebarCollapsed: true });
+    renderSidebar();
+
+    const header = await screen.findByRole('button', { name: 'Comunicação' });
+    await waitFor(() => expect(mockChannels).toHaveBeenCalled());
+    await waitFor(() => expect(header.querySelector('.bg-accent2')).not.toBeNull());
+    expect(header).not.toHaveTextContent('4');
+  });
+});
+
+describe('Sidebar — ícone do grupo (CRMLAB-44)', () => {
+  it('cada cabeçalho de grupo mostra um ícone antes do label', () => {
+    login('admin');
+    renderSidebar();
+
+    const header = screen.getByRole('button', { name: 'Comunicação' });
+    expect(header.querySelector('svg')).not.toBeNull();
+  });
+
+  it('recolhida, os subitens do grupo não vazam como ícones soltos', () => {
+    login('admin');
+    useUIStore.setState({ sidebarCollapsed: true });
+    renderSidebar();
+
+    expect(screen.queryByRole('link', { name: /Cadastro de Exames/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Personalização/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('Sidebar — persistência do recolher/expandir (CRMLAB-44)', () => {
+  it('grava a preferência em localStorage ao alternar', async () => {
+    login('admin');
+    renderSidebar();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Recolher menu' }));
+
+    expect(localStorage.getItem('crm-lab.sidebar-collapsed')).toBe('true');
+  });
+
+  it('lê a preferência salva ao montar', () => {
+    localStorage.setItem('crm-lab.sidebar-collapsed', 'true');
+    useUIStore.setState({ sidebarCollapsed: useUIStore.getState().sidebarCollapsed });
+    // Recria o estado inicial do store a partir do localStorage, como no boot real da página.
+    useUIStore.setState({ sidebarCollapsed: localStorage.getItem('crm-lab.sidebar-collapsed') === 'true' });
+    login('admin');
+    renderSidebar();
+
+    expect(screen.getByTestId('sidebar')).toHaveStyle({ width: '76px' });
+  });
 });
 
 describe('Sidebar — recolhe sozinha no inbox do atendente', () => {
@@ -276,7 +332,7 @@ describe('Sidebar — recolhe sozinha no inbox do atendente', () => {
     login('attendant');
     renderSidebar('/attendance');
 
-    expect(screen.getByTestId('sidebar')).toHaveStyle({ width: '64px' });
+    expect(screen.getByTestId('sidebar')).toHaveStyle({ width: '76px' });
     expect(useUIStore.getState().sidebarCollapsed).toBe(true);
   });
 
@@ -284,13 +340,13 @@ describe('Sidebar — recolhe sozinha no inbox do atendente', () => {
     login('manager');
     renderSidebar('/attendance');
 
-    expect(screen.getByTestId('sidebar')).toHaveStyle({ width: '272px' });
+    expect(screen.getByTestId('sidebar')).toHaveStyle({ width: '264px' });
   });
 
   it('atendente fora do inbox mantém o trilho expandido', () => {
     login('attendant');
     renderSidebar('/proposals');
 
-    expect(screen.getByTestId('sidebar')).toHaveStyle({ width: '272px' });
+    expect(screen.getByTestId('sidebar')).toHaveStyle({ width: '264px' });
   });
 });

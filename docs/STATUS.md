@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-24 (CRMLAB-46 validado em hml, PR aberto; v1.16.2 em PRODUÇÃO — ver fim do arquivo)
+**Última atualização:** 2026-09-24 (v1.17.0 em PRODUÇÃO — CRMLAB-46, ver fim do arquivo)
 
 ---
 
@@ -2649,8 +2649,7 @@ e título ou resposta vazios chegavam ao backend (PR #58).
 
 ### ✅ CRMLAB-46 — mensagem enviada pelo celular aparece na conversa, sem duplicar (2026-09-24)
 
-Validado pelo usuário em hml (`hml-37367b6`) em 2026-09-24. Aguarda merge (branch
-`feature/CRMLAB-46-fromme-celular`).
+Validado pelo usuário em hml (`hml-37367b6`) em 2026-09-24. Mergeado no PR #59 (`2420959`).
 
 - `MESSAGES_UPSERT` com `fromMe: true` deixou de ser descartado (D-173). O `key.id` decide: se já
   está gravado, é eco do CRM ou reentrega e nada muda. Se não está, a mensagem entra como resposta
@@ -2673,3 +2672,15 @@ Validado pelo usuário em hml (`hml-37367b6`) em 2026-09-24. Aguarda merge (bran
   o webhook esperou ~2,1 s e descartou) e grupo, todos conferidos no banco.
 - **Pendente:** prova com o celular real pareado, combinada para depois do deploy em prod
   (o hml não tem gateway conectado).
+
+### 🚀 v1.17.0 em produção (2026-09-24)
+
+Sobe CRMLAB-46: a mensagem enviada pelo celular do laboratório aparece na conversa, e o eco do
+CRM não duplica (PR #59, D-173).
+
+- **hml:** `hml-37367b6`, com webhook simulado e validado pelo usuário na tela.
+- **prod:** `0b2db21` (tag **v1.17.0**), CI verde nos 5 jobs, imagens puxadas do GHCR, sem
+  migração nova. Healthcheck OK na 2ª tentativa. O bundle servido em https://vitrocrm.cloud
+  confirma `1.17.0`, e o backend não registrou erro depois da subida.
+- **Pendente:** prova com o celular real pareado (responder um paciente pelo celular e enviar
+  pelo CRM) antes de fechar o card.

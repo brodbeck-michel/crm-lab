@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-23 (v1.15.0 em PRODUÇÃO — repo tornado público para destravar o CI, ver fim do arquivo)
+**Última atualização:** 2026-09-24 (v1.16.1 em PRODUÇÃO — CRMLAB-39 e CRMLAB-44, ver fim do arquivo)
 
 ---
 
@@ -2610,9 +2610,24 @@ Desmembrado do CRMLAB-35, desbloqueado hoje com o cadastro da chave do Resend.
 - **Testes:** `backend/tests/auth/forgot-reset-password.spec.ts` (novo, 13 casos) — suíte
   `tests/auth` inteira (58 testes) e suíte de backend completa verdes. `npm run test:frontend`
   (1102 testes) verde. `npm run typecheck` limpo nos dois workspaces.
-- **Pendência:** `RESEND_FROM_EMAIL` (remetente verificado no Resend) ainda não preenchido no
-  `.env` de produção — só a chave da API foi passada até agora. Sem ele, `NODE_ENV=production`
-  falha o boot (`env.ts` exige as duas). Deploy deste card espera esse valor.
+- ~~**Pendência:** `RESEND_FROM_EMAIL` ainda não preenchido no `.env` de produção~~ — resolvido
+  em 2026-09-24: `contato@vitrocrm.cloud` nos `.env` de hml e prod.
 
 - ~~`lib/pdf/commission-report.ts` e `lib/pdf/active-search.ts` ainda não usam `brand.ts`~~ —
   resolvido em 2026-09-22, os três PDFs saem com logo e a cor do tenant.
+
+### 🚀 v1.16.1 em produção (2026-09-24)
+
+Sobe CRMLAB-39 (recuperação de senha por e-mail) e CRMLAB-44 (sidebar "trilho flutuante").
+
+- **23/09 — v1.16.0 não subiu nem em hml:** o `migrate` morria com `EnvValidationError` porque o
+  `docker-compose.prod.yml` não repassava `RESEND_API_KEY`/`RESEND_FROM_EMAIL` aos containers.
+  Corrigido em `f69f41f` → tag **v1.16.1**.
+- **24/09 — hml:** `hml-c9c89e8`, migração `024_password_reset_tokens.sql` aplicada, healthcheck
+  OK. Validado pelo usuário (e-mail de recuperação chegando, sidebar, versão no rodapé).
+- **24/09 — prod:** `c9c89e8` (imagens GHCR), mesma migração, healthcheck OK na 1ª tentativa;
+  bundle servido em https://vitrocrm.cloud confirma `1.16.1`. Validado pelo usuário.
+- **Armadilha:** as duas primeiras execuções do `deploy.sh` em prod abortaram por "árvore suja" —
+  backups `.env.bak-*` soltos em `/opt/crm-lab`. Movidos para `/home/deploy/crm-lab-env-backups`
+  (o usuário `deploy` não cria nada em `/opt`). Backup de `.env` vai para lá, nunca para o
+  diretório do ambiente. Prod não chegou a ser tocada nos abortos.

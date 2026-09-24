@@ -131,7 +131,7 @@ function toStringRecord(value: unknown): Record<string, string> {
 }
 
 const CHANNELS: ConversationChannel[] = ['whatsapp', 'sms', 'web', 'direct'];
-const STATUSES: ConversationStatus[] = ['active', 'archived', 'closed'];
+const STATUSES: ConversationStatus[] = ['active', 'closed'];
 
 function toChannel(value: string | null): ConversationChannel {
   return CHANNELS.includes(value as ConversationChannel)
@@ -461,6 +461,31 @@ export class ConversationRepository {
       );
       const changedId = updated.rows[0]?.id;
       return changedId ? selectDetail(tx, changedId) : null;
+    });
+  }
+
+  /**
+   * Reabre conversa ENCERRADA (D-174) ja entregando para `assignedTo` — `null`
+   * quando quem reabre e o paciente (fila livre), o usuario logado no
+   * atendimento manual.
+   *
+   * `WHERE status = 'closed'` e a trava: duas mensagens simultaneas do paciente
+   * reabrem uma vez so; a segunda recebe `null` e nao gera evento duplicado.
+   */
+  async reopenIfClosed(
+    tenantId: string,
+    id: string,
+    assignedTo: string | null,
+  ): Promise<ConversationDetail | null> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const updated = await tx.query<{ id: string }>(
+        `UPDATE conversations SET status = 'active', assigned_to = $1, updated_at = NOW()
+         WHERE id = $2 AND status = 'closed'
+         RETURNING id`,
+        [assignedTo, id],
+      );
+      const reopenedId = updated.rows[0]?.id;
+      return reopenedId ? selectDetail(tx, reopenedId) : null;
     });
   }
 

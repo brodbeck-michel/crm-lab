@@ -82,13 +82,13 @@ describe('POST /conversations/:id/messages', () => {
     expect(app.wsHub.eventsFor(beta.id)).toHaveLength(0);
   });
 
-  it('conversa arquivada -> CONVERSATION_ARCHIVED (409) e nada e gravado', async () => {
+  it('conversa encerrada -> CONVERSATION_ARCHIVED (409) e nada e gravado', async () => {
     const tenant = await createTenant();
     const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });
     const conversation = await createConversation({
       tenantId: tenant.id,
       assignedTo: ana.id,
-      status: 'archived',
+      status: 'closed',
     });
 
     const response = await app.agent
@@ -216,9 +216,9 @@ describe('MessageService — interface para outros dominios', () => {
     expect(row?.unread_count).toBe(0);
   });
 
-  it('createSystemEvent funciona em conversa arquivada (o fato aconteceu)', async () => {
+  it('createSystemEvent funciona em conversa encerrada (o fato aconteceu)', async () => {
     const tenant = await createTenant();
-    const conversation = await createConversation({ tenantId: tenant.id, status: 'archived' });
+    const conversation = await createConversation({ tenantId: tenant.id, status: 'closed' });
 
     const message = await service.createSystemEvent(tenant.id, conversation.id, 'Proposta ganha');
     expect(message.id).toBeTruthy();
@@ -270,5 +270,67 @@ describe('MessageService — interface para outros dominios', () => {
     expect(wsHub.eventsFor(tenant.id, 'conversation.new_message')).toHaveLength(1);
     const row = await readConversationRow(conversation.id);
     expect(row?.unread_count).toBe(1);
+  });
+
+  it('D-174: paciente escreve em conversa encerrada -> reabre na fila livre, evento antes da mensagem', async () => {
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });
+    const conversation = await createConversation({
+      tenantId: tenant.id,
+      assignedTo: ana.id,
+      status: 'closed',
+    });
+
+    await service.createFromPatient(tenant.id, conversation.id, {
+      content: 'Oi, voltei',
+      externalId: 'wamid.VOLTEI',
+    });
+
+    const row = await readConversationRow(conversation.id);
+    expect(row?.status).toBe('active');
+    expect(row?.assigned_to).toBeNull();
+    expect(row?.unread_count).toBe(1);
+
+    const { messages } = await service.listByConversation(tenant.id, conversation.id);
+    expect(messages.map((m) => [m.senderType, m.content])).toEqual([
+      ['system', 'Atendimento reaberto pelo paciente'],
+      ['patient', 'Oi, voltei'],
+    ]);
+  });
+
+  it('D-174: reentrega da mensagem que reabriu nao gera segundo evento', async () => {
+    const tenant = await createTenant();
+    const conversation = await createConversation({ tenantId: tenant.id, status: 'closed' });
+
+    const dto = { content: 'Oi', externalId: 'wamid.DUP' };
+    await service.createFromPatient(tenant.id, conversation.id, dto);
+    await service.createFromPatient(tenant.id, conversation.id, dto);
+
+    expect(await countMessages(tenant.id)).toBe(2);
+  });
+
+  it('D-174: conversa ativa nao ganha evento de reabertura nem troca de dona', async () => {
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });
+    const conversation = await createConversation({ tenantId: tenant.id, assignedTo: ana.id });
+
+    await service.createFromPatient(tenant.id, conversation.id, { content: 'Oi' });
+
+    expect(await countMessages(tenant.id)).toBe(1);
+    expect((await readConversationRow(conversation.id))?.assigned_to).toBe(ana.id);
+  });
+
+  it('D-174: mensagem enviada pelo celular (fromMe) NAO reabre', async () => {
+    const tenant = await createTenant();
+    const conversation = await createConversation({ tenantId: tenant.id, status: 'closed' });
+
+    await service.createFromPhone(
+      tenant.id,
+      conversation.id,
+      { content: 'Obrigado!', externalId: 'wamid.CEL' },
+      { echoChecked: true },
+    );
+
+    expect((await readConversationRow(conversation.id))?.status).toBe('closed');
   });
 });

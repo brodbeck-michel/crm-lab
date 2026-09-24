@@ -1,5 +1,5 @@
 /**
- * PATCH /conversations/:id — atribuicao, transferencia, arquivamento, tags
+ * PATCH /conversations/:id — atribuicao, transferencia, encerramento, tags
  * e POST /conversations/:id/read.
  *
  * O teste central e a CORRIDA: duas chamadas concorrentes de "Assumir" na mesma
@@ -251,7 +251,84 @@ describe('PATCH /conversations/:id — status e tags', () => {
     await resetDatabase();
   });
 
-  it('arquiva a conversa', async () => {
+  it('D-174: a dona encerra -> sai da fila, dona mantida, evento de sistema', async () => {
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Ana' });
+    const conversation = await createConversation({ tenantId: tenant.id, assignedTo: ana.id });
+
+    const response = await app.agent
+      .patch(`/api/v1/conversations/${conversation.id}`)
+      .set(app.auth(ana))
+      .send({ status: 'closed' })
+      .expect(200);
+    expect(response.body.status).toBe('closed');
+    expect(response.body.assignedTo).toBe(ana.id);
+
+    const row = await readConversationRow(conversation.id);
+    expect(row?.status).toBe('closed');
+
+    const fila = await app.agent
+      .get('/api/v1/conversations?status=active')
+      .set(app.auth(ana))
+      .expect(200);
+    expect(fila.body.conversations).toHaveLength(0);
+    expect(fila.body.counts).toEqual({ mine: 0, unassigned: 0 });
+
+    const detalhe = await app.agent
+      .get(`/api/v1/conversations/${conversation.id}`)
+      .set(app.auth(ana))
+      .expect(200);
+    expect(detalhe.body.messages.at(-1).content).toBe('Atendimento encerrado por Ana');
+  });
+
+  it('D-174: gestor e admin encerram conversa de outra atendente', async () => {
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });
+    const gestora = await createUser({ tenantId: tenant.id, role: 'manager' });
+    const admin = await createUser({ tenantId: tenant.id, role: 'admin' });
+    const daAna = await createConversation({ tenantId: tenant.id, assignedTo: ana.id });
+    const outra = await createConversation({ tenantId: tenant.id, assignedTo: ana.id });
+
+    await app.agent
+      .patch(`/api/v1/conversations/${daAna.id}`)
+      .set(app.auth(gestora))
+      .send({ status: 'closed' })
+      .expect(200);
+    await app.agent
+      .patch(`/api/v1/conversations/${outra.id}`)
+      .set(app.auth(admin))
+      .send({ status: 'closed' })
+      .expect(200);
+  });
+
+  it('D-174: atendente nao encerra conversa da fila livre -> FORBIDDEN', async () => {
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });
+    const livre = await createConversation({ tenantId: tenant.id, assignedTo: null });
+
+    const response = await app.agent
+      .patch(`/api/v1/conversations/${livre.id}`)
+      .set(app.auth(ana))
+      .send({ status: 'closed' })
+      .expect(403);
+    expect(response.body.error.code).toBe('FORBIDDEN');
+    expect((await readConversationRow(livre.id))?.status).toBe('active');
+  });
+
+  it('D-174: conversa de outra atendente continua 404 (nao vaza existencia)', async () => {
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });
+    const bruno = await createUser({ tenantId: tenant.id, role: 'attendant' });
+    const doBruno = await createConversation({ tenantId: tenant.id, assignedTo: bruno.id });
+
+    await app.agent
+      .patch(`/api/v1/conversations/${doBruno.id}`)
+      .set(app.auth(ana))
+      .send({ status: 'closed' })
+      .expect(404);
+  });
+
+  it('D-174: status "archived" nao existe mais -> VALIDATION_ERROR', async () => {
     const tenant = await createTenant();
     const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });
     const conversation = await createConversation({ tenantId: tenant.id, assignedTo: ana.id });
@@ -260,11 +337,8 @@ describe('PATCH /conversations/:id — status e tags', () => {
       .patch(`/api/v1/conversations/${conversation.id}`)
       .set(app.auth(ana))
       .send({ status: 'archived' })
-      .expect(200);
-    expect(response.body.status).toBe('archived');
-
-    const row = await readConversationRow(conversation.id);
-    expect(row?.status).toBe('archived');
+      .expect(400);
+    expect(response.body.error.code).toBe('VALIDATION_ERROR');
   });
 
   it('atualiza tags e status na mesma chamada', async () => {
@@ -275,10 +349,10 @@ describe('PATCH /conversations/:id — status e tags', () => {
     const response = await app.agent
       .patch(`/api/v1/conversations/${conversation.id}`)
       .set(app.auth(ana))
-      .send({ status: 'archived', tags: ['orcamento', 'realizado'] })
+      .send({ status: 'closed', tags: ['orcamento', 'realizado'] })
       .expect(200);
 
-    expect(response.body.status).toBe('archived');
+    expect(response.body.status).toBe('closed');
     expect(response.body.tags).toEqual(['orcamento', 'realizado']);
   });
 
@@ -291,7 +365,7 @@ describe('PATCH /conversations/:id — status e tags', () => {
     const response = await app.agent
       .patch(`/api/v1/conversations/${daBeta.id}`)
       .set(app.auth(adminAlfa))
-      .send({ status: 'archived' })
+      .send({ status: 'closed' })
       .expect(404);
     expect(response.body.error.code).toBe('NOT_FOUND');
 

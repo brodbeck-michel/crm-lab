@@ -180,17 +180,19 @@ export function createWebhookServices(
 ): WebhookServices {
   const whatsapp = overrides.whatsapp ?? createWhatsAppService(deps.db);
   const conversationRepository = new ConversationRepository(deps.db);
+  const audit = createAuditService(deps.db);
   const messages = new MessageService({
     messages: new MessageRepository(deps.db),
     conversations: conversationRepository,
     wsHub: deps.wsHub,
     whatsapp,
+    audit,
   });
   const conversations = new ConversationService({
     db: deps.db,
     conversations: conversationRepository,
     messages,
-    audit: createAuditService(deps.db),
+    audit,
   });
   const media = new MediaService(new MediaRepository(deps.db));
   return { whatsapp, conversations, messages, media };

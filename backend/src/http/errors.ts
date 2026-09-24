@@ -63,7 +63,7 @@ export const ERROR_CATALOG = {
     statusCode: 409,
     message: 'Conversa ja atribuida a outro atendente',
   },
-  CONVERSATION_ARCHIVED: { statusCode: 409, message: 'Conversa arquivada' },
+  CONVERSATION_ARCHIVED: { statusCode: 409, message: 'Atendimento encerrado' },
   MESSAGE_SEND_FAILED: { statusCode: 502, message: 'Falha ao enviar a mensagem pelo canal' },
 
   // --- Canais (Onda 7 — WhatsApp QR) ---

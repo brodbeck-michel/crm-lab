@@ -48,7 +48,7 @@ interface ConversationSpec {
   tenantId: string;
   assignedTo?: string | null;
   unreadCount?: number;
-  status?: 'active' | 'archived' | 'closed';
+  status?: 'active' | 'closed';
   /** Ha quantos segundos foi a ultima mensagem. */
   ageSeconds: number;
   patientName?: string;
@@ -138,7 +138,7 @@ async function seedScenario(): Promise<{
   await seedConversation({ tenantId, ageSeconds: 30 * 60, patientName: 'Sem dono recente' });
   await seedConversation({ tenantId, ageSeconds: 90 * 60, patientName: 'Sem dono antiga' });
   // Nao-ativas nunca entram: seriam a fila de ontem.
-  await seedConversation({ tenantId, status: 'archived', ageSeconds: 50 * 3600 });
+  await seedConversation({ tenantId, status: 'closed', ageSeconds: 50 * 3600 });
   await seedConversation({
     tenantId,
     status: 'closed',

@@ -213,7 +213,7 @@ const LAB_ROUTES: readonly LabRoute[] = [
     name: 'PATCH /conversations/:id',
     method: 'patch',
     path: (l) => `/api/v1/conversations/${l.conversation.id}`,
-    body: () => ({ status: 'archived' }),
+    body: () => ({ status: 'closed' }),
     actor: 'admin',
     addressable: true,
     ownStatus: 200,

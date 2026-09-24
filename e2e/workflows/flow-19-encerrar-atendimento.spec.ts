@@ -72,7 +72,10 @@ test.describe('CRMLAB-48 — encerrar atendimento', () => {
     await page.getByRole('button', { name: 'Encerradas' }).click();
     await expect(item).toBeVisible();
     await item.click();
-    await expect(page.getByText(`Atendimento encerrado por ${ana.name}`)).toBeVisible();
+    // Na bolha, nao na previa da lista — a frase aparece nas duas.
+    await expect(
+      page.getByTestId('message-bubble').filter({ hasText: `Atendimento encerrado por ${ana.name}` }),
+    ).toBeVisible();
     await expect(page.getByLabel('Mensagem')).toBeDisabled();
     await expect(page.getByRole('button', { name: 'Encerrar' })).toBeDisabled();
 

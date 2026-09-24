@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-24 (v1.16.1 em PRODUÇÃO — CRMLAB-39 e CRMLAB-44, ver fim do arquivo)
+**Última atualização:** 2026-09-24 (v1.16.2 em PRODUÇÃO — CRMLAB-47, ver fim do arquivo)
 
 ---
 
@@ -2631,3 +2631,19 @@ Sobe CRMLAB-39 (recuperação de senha por e-mail) e CRMLAB-44 (sidebar "trilho 
   backups `.env.bak-*` soltos em `/opt/crm-lab`. Movidos para `/home/deploy/crm-lab-env-backups`
   (o usuário `deploy` não cria nada em `/opt`). Backup de `.env` vai para lá, nunca para o
   diretório do ambiente. Prod não chegou a ser tocada nos abortos.
+
+### 🚀 v1.16.2 em produção (2026-09-24)
+
+Sobe CRMLAB-47: respostas rápidas não salvavam. O modal fechava logo após o `mutate` e engolia o
+`400 VALIDATION_ERROR`. O botão fica no `footer`, fora do `<form>`, então o `required` não rodava
+e título ou resposta vazios chegavam ao backend (PR #58).
+
+- **hml:** `hml-07e2130`, validado pelo usuário.
+- **prod:** `9f38706` (tag **v1.16.2**), com CI verde nos 5 jobs. Healthcheck OK na 2ª tentativa,
+  e o bundle servido em https://vitrocrm.cloud confirma `1.16.2`.
+- **Armadilha (não repetir):** o primeiro bump (`0c3a2f1`) saiu com `git commit -a` num checkout
+  **compartilhado** com outra sessão, que escrevia os docs do CRMLAB-46 (D-173). Os docs entraram
+  na `main` e na tag sem o código existir. `9f38706` os retirou, e a tag foi movida para ele antes
+  do deploy. Duas sessões no mesmo repositório → cada uma no seu **worktree**, e commit de release
+  com `git add <arquivo>`, nunca `-a`. O CRMLAB-46 agora vive em `../CRM Lab-46`.
+

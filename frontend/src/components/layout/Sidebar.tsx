@@ -153,7 +153,14 @@ export function Sidebar() {
       }}
       className="sticky top-[12px] flex flex-col gap-md rounded-lg bg-surface shadow-lg"
     >
-      <div className="flex items-center gap-sm px-xs">
+      <div
+        className={cn(
+          'flex gap-sm px-xs',
+          // Recolhido (76px): logo + botão não cabem lado a lado — o botão desce
+          // para abaixo do logo, como no documento de especificação (CRMLAB-44).
+          collapsed ? 'flex-col items-center' : 'items-center',
+        )}
+      >
         <span
           aria-hidden="true"
           style={{ width: 34, height: 34, flex: '0 0 34px' }}

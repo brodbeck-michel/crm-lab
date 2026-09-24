@@ -150,7 +150,7 @@ export function ConversationItem({
           {(visibleTags.length > 0 || waiting !== null || status !== 'active') && (
             <span className="flex items-center gap-sm overflow-x-auto">
               {status !== 'active' && (
-                <Chip tone="inactive">{status === 'archived' ? 'Arquivada' : 'Encerrada'}</Chip>
+                <Chip tone="inactive">Encerrada</Chip>
               )}
               {visibleTags.map((tag) => (
                 <Chip key={tag} tone="positive">

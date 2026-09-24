@@ -33,7 +33,10 @@ export interface ConversationPanelProps {
   /** Atendente escolhida no menu, ou `null` para devolver à fila. */
   onAssign: (userId: string | null) => void;
   onNewBudget: () => void;
-  onArchive: () => void;
+  /** Encerrar atendimento (D-174). */
+  onCloseAttendance: () => void;
+  /** Dona, gestor ou admin — o backend valida de novo; aqui é só UX. */
+  canCloseAttendance: boolean;
   onToggleContext: () => void;
   /** Fecha a conversa aberta, voltando ao estado "nenhuma selecionada" (padrão WhatsApp Web). */
   onClose: () => void;
@@ -194,7 +197,8 @@ export function ConversationPanel({
   assignees,
   onAssign,
   onNewBudget,
-  onArchive,
+  onCloseAttendance,
+  canCloseAttendance,
   onToggleContext,
   onClose,
   onAttach,
@@ -244,7 +248,7 @@ export function ConversationPanel({
     );
   }
 
-  const archived = conversation.status !== 'active';
+  const closed = conversation.status !== 'active';
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-bg">
@@ -267,8 +271,20 @@ export function ConversationPanel({
           <Button size="sm" onClick={onNewBudget}>
             Novo Orçamento
           </Button>
-          <Button variant="destructive" size="sm" onClick={onArchive} disabled={archived}>
-            Arquivar
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={onCloseAttendance}
+            disabled={closed || !canCloseAttendance}
+            title={
+              closed
+                ? 'Atendimento já encerrado'
+                : canCloseAttendance
+                  ? 'Encerrar o atendimento — sai da fila até o paciente escrever de novo'
+                  : 'Só a responsável pela conversa, gestor ou admin encerram'
+            }
+          >
+            Encerrar
           </Button>
           <Button
             variant="secondary"
@@ -326,7 +342,7 @@ export function ConversationPanel({
         onSend={onSend}
         onAttach={onAttach}
         sending={sending}
-        disabled={archived}
+        disabled={closed}
         quickReplies={quickReplies}
         initialValue={draftMessage}
       />

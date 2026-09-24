@@ -66,12 +66,12 @@ test.describe('Isolamento: pelo contrato (id de outro tenant -> 404)', () => {
     const alfa = await apiLogin(request, E2E_USERS.alfaAdmin);
     const headers = authHeaders(alfa);
 
-    const arquivar = await request.patch(
+    const encerrar = await request.patch(
       `${API_URL}/conversations/${E2E_CONVERSATIONS.betaSecreta.id}`,
-      { headers, data: { status: 'archived' } },
+      { headers, data: { status: 'closed' } },
     );
-    expect(arquivar.status()).toBe(404);
-    expect(((await arquivar.json()) as ApiErrorEnvelope).error.code).toBe('NOT_FOUND');
+    expect(encerrar.status()).toBe(404);
+    expect(((await encerrar.json()) as ApiErrorEnvelope).error.code).toBe('NOT_FOUND');
 
     const mensagem = await request.post(
       `${API_URL}/conversations/${E2E_CONVERSATIONS.betaSecreta.id}/messages`,

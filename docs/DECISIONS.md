@@ -2612,7 +2612,7 @@ Decisões do PO (24/09/2026):
    com a mensagem de sistema "Atendimento reaberto pelo paciente" ANTES da mensagem dele. A
    reabertura é um `UPDATE ... WHERE status = 'closed'`: duas mensagens simultâneas reabrem uma
    vez só, e a reentrega (mesmo `externalId`) sai pelo dedupe antes de chegar aqui. Audit log
-   `reopen_conversation` com `userId = null` (quem reabriu foi o canal).
+   `update_conversation_status` com `userId = null` (quem reabriu foi o canal).
 4. **Atendimento manual** (`POST /conversations`) num telefone cuja conversa está `closed` →
    reabre a conversa **atribuída a quem cadastrou**, qualquer que fosse a dona anterior, com a
    mensagem de sistema "Atendimento reaberto por <nome>". Conversa encerrada não pertence mais

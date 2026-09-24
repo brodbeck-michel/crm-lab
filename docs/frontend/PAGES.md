@@ -101,6 +101,9 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 
 ### Coluna 1 — Lista de conversas
 - Filtros em chips: "Minhas N" (accent sólido), "Não atribuídas N" (cinza)
+- Chip **"Encerradas"** (CRMLAB-48, D-174), sem número: lista `?status=closed` (o atendente vê só
+  as dele, pelo recorte do servidor). Ligado, os números de "Minhas"/"Não atribuídas" continuam os
+  das **ativas** — vêm da mesma query da fila, que segue rodando. Clicar de novo volta à fila
 - Busca (pílula): paciente, telefone ou exame
 - **A mesma busca também procura PACIENTE** (D-079): com 2+ caracteres a coluna consulta
   `GET /patients?search=&limit=5` e mostra um bloco "Pacientes" abaixo da fila; cada linha leva

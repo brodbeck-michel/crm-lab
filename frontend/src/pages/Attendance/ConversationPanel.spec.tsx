@@ -64,7 +64,8 @@ function props(messages: Message[]): ConversationPanelProps {
     ],
     onAssign: vi.fn(),
     onNewBudget: vi.fn(),
-    onArchive: vi.fn(),
+    onCloseAttendance: vi.fn(),
+    canCloseAttendance: true,
     onToggleContext: vi.fn(),
     onClose: vi.fn(),
     onAttach: vi.fn(),
@@ -101,16 +102,32 @@ describe('ConversationPanel — rolagem', () => {
     expect(scroller.scrollTop).toBe(1000);
   });
 
-  it('conversa arquivada bloqueia composer e o botão Arquivar', () => {
+  it('conversa encerrada bloqueia composer e o botão Encerrar', () => {
     render(
       <ConversationPanel
         {...props([message('m-1')])}
-        conversation={{ ...CONVERSATION, status: 'archived' }}
+        conversation={{ ...CONVERSATION, status: 'closed' }}
       />,
     );
 
     expect(screen.getByLabelText('Mensagem')).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Arquivar' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Encerrar' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Arquivar' })).not.toBeInTheDocument();
+  });
+
+  it('D-174: quem não é dona/gestor/admin vê Encerrar desabilitado', () => {
+    render(<ConversationPanel {...props([message('m-1')])} canCloseAttendance={false} />);
+    expect(screen.getByRole('button', { name: 'Encerrar' })).toBeDisabled();
+    expect(screen.getByLabelText('Mensagem')).toBeEnabled();
+  });
+
+  it('D-174: Encerrar chama onCloseAttendance', async () => {
+    const onCloseAttendance = vi.fn();
+    render(
+      <ConversationPanel {...props([message('m-1')])} onCloseAttendance={onCloseAttendance} />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Encerrar' }));
+    expect(onCloseAttendance).toHaveBeenCalledTimes(1);
   });
 
   it('oferece carregar mensagens anteriores quando há histórico', () => {

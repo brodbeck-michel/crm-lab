@@ -49,13 +49,21 @@ export function Attendance() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messageLimit, setMessageLimit] = useState(MESSAGE_PAGE_SIZE);
 
+  const showClosed = scope === 'closed';
+  const searchFilter = useMemo(
+    () => (search.trim().length > 0 ? { search: search.trim() } : {}),
+    [search],
+  );
+
+  /**
+   * A fila (ATIVAS) roda sempre: é dela que saem os números de "Minhas" e "Não
+   * atribuídas", inclusive com o chip "Encerradas" ligado — os counts do
+   * servidor seguem o `status` pedido, e mostrar contagem de encerradas nos
+   * chips da fila seria mentir sobre quem está esperando.
+   */
   const filters = useMemo<ListConversationsQuery>(
-    () => ({
-      status: 'active',
-      scope,
-      ...(search.trim().length > 0 ? { search: search.trim() } : {}),
-    }),
-    [scope, search],
+    () => ({ status: 'active', scope: showClosed ? 'all' : scope, ...searchFilter }),
+    [scope, showClosed, searchFilter],
   );
 
   const listQuery = useQuery({
@@ -63,6 +71,20 @@ export function Attendance() {
     queryFn: () => api.conversations.list(filters),
     staleTime: staleTimes.conversations,
   });
+
+  const closedFilters = useMemo<ListConversationsQuery>(
+    () => ({ status: 'closed', ...searchFilter }),
+    [searchFilter],
+  );
+
+  const closedQuery = useQuery({
+    queryKey: queryKeys.conversations(closedFilters),
+    queryFn: () => api.conversations.list(closedFilters),
+    staleTime: staleTimes.conversations,
+    enabled: showClosed,
+  });
+
+  const shownList = showClosed ? closedQuery : listQuery;
 
   /**
    * A mesma busca também procura PACIENTE (D-079) — é o consumidor de
@@ -184,10 +206,10 @@ export function Attendance() {
     onError: handleApiError,
   });
 
-  const archive = useMutation({
-    mutationFn: () => api.conversations.archive(selectedId as string),
+  const closeAttendance = useMutation({
+    mutationFn: () => api.conversations.close(selectedId as string),
     onSuccess: async () => {
-      toast('Conversa arquivada.', { tone: 'positive' });
+      toast('Atendimento encerrado.', { tone: 'positive' });
       setSelectedId(null);
       await queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
     },
@@ -241,16 +263,16 @@ export function Attendance() {
       <InboxLayout
         list={
           <ConversationList
-            conversations={listQuery.data?.conversations ?? []}
+            conversations={shownList.data?.conversations ?? []}
             counts={listQuery.data?.counts}
             scope={scope}
             onScopeChange={setScope}
             onSearch={setSearch}
             selectedId={selectedId}
             onSelect={handleSelect}
-            isLoading={listQuery.isPending}
-            isError={listQuery.isError}
-            onRetry={() => void listQuery.refetch()}
+            isLoading={shownList.isPending}
+            isError={shownList.isError}
+            onRetry={() => void shownList.refetch()}
             onTogglePin={(id, pinned) => togglePin.mutate({ id, pinned })}
             searchTerm={patientTerm.length >= PATIENT_SEARCH_MIN ? patientTerm : ''}
             patients={patientsQuery.data?.patients ?? []}
@@ -270,7 +292,12 @@ export function Attendance() {
             assignees={assigneesQuery.data?.assignees ?? []}
             onAssign={(userId) => assign.mutate(userId)}
             onNewBudget={() => navigate(`/budget/new?conversationId=${selectedId ?? ''}`)}
-            onArchive={() => archive.mutate()}
+            onCloseAttendance={() => closeAttendance.mutate()}
+            canCloseAttendance={
+              currentUser?.role === 'manager' ||
+              currentUser?.role === 'admin' ||
+              (conversation !== null && conversation.assignedTo === currentUser?.id)
+            }
             onToggleContext={toggleContextPanel}
             onClose={() => setSelectedId(null)}
             onAttach={() => fileInputRef.current?.click()}

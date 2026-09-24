@@ -49,10 +49,17 @@ function toSenderType(value: string): SenderType {
  * `sender_name` nao existe na tabela: vem do JOIN com `users` para o agente e
  * de `conversations.patient_name` para o paciente. Mensagem de sistema nao tem
  * autor — o frontend renderiza a bolha de evento.
+ *
+ * Agente SEM autor e a mensagem digitada no celular do laboratorio (D-173):
+ * so o webhook `fromMe` grava `agent` com `sender_id NULL` — o app nao apaga
+ * usuario fisicamente, entao o `ON DELETE SET NULL` nao produz esse par.
  */
+export const PHONE_SENDER_NAME = 'Enviada pelo celular';
+
 const COLUMNS = `m.id, m.conversation_id, m.sender_type, m.sender_id, m.content,
        m.message_type, m.attachment_url, m.status, m.read_at, m.created_at,
        CASE
+         WHEN m.sender_type = 'agent' AND m.sender_id IS NULL THEN '${PHONE_SENDER_NAME}'
          WHEN m.sender_type = 'agent' THEN u.name
          WHEN m.sender_type = 'patient' THEN c.patient_name
          ELSE NULL
@@ -201,6 +208,75 @@ export class MessageRepository {
       );
       const changedId = updated.rows[0]?.id;
       return changedId ? selectOne(tx, changedId) : null;
+    });
+  }
+
+  /**
+   * Envio do CRM confirmado pelo canal: grava `status = 'sent'` e o id externo.
+   *
+   * Rede de seguranca do D-173: se o eco deste envio chegou pelo webhook, a
+   * espera por envio em voo (`hasPendingOutbound`) esgotou e ele virou uma
+   * copia "enviada pelo celular" com ESTE `externalId`, o UPDATE bateria no
+   * indice unico da 019. A copia e apagada antes, na mesma transacao — so
+   * linha de agente SEM autor, que e o que o webhook `fromMe` grava; mensagem
+   * de paciente ou de outro atendente com o mesmo id nunca e tocada.
+   * `removedPhoneCopy` avisa o service para reemitir o WS e a tela refazer a
+   * lista sem a duplicata.
+   */
+  async confirmSent(
+    tenantId: string,
+    id: string,
+    externalMessageId: string,
+  ): Promise<{ message: Message | null; removedPhoneCopy: boolean }> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const removed = await tx.query<{ id: string }>(
+        `DELETE FROM messages
+         WHERE external_message_id = $1
+           AND sender_type = 'agent'
+           AND sender_id IS NULL
+           AND id <> $2
+         RETURNING id`,
+        [externalMessageId, id],
+      );
+      const updated = await tx.query<{ id: string }>(
+        `UPDATE messages
+         SET status = 'sent', external_message_id = $1
+         WHERE id = $2
+         RETURNING id`,
+        [externalMessageId, id],
+      );
+      const changedId = updated.rows[0]?.id;
+      return {
+        message: changedId ? await selectOne(tx, changedId) : null,
+        removedPhoneCopy: removed.rows.length > 0,
+      };
+    });
+  }
+
+  /**
+   * Envio do CRM EM VOO nesta conversa (D-173): mensagem de atendente, com
+   * autor, ainda `sent` e sem id externo — gravada antes do envio e esperando
+   * o gateway responder. E o que diz ao webhook `fromMe` que um `key.id`
+   * desconhecido pode ser o eco de um envio que ainda nao gravou o id.
+   *
+   * 60 s cobre o pior caso do retry (3 x 15 s + backoff, ver
+   * `evolution-client.ts`); passado disso a linha e resto de envio antigo
+   * (driver sem canal, processo derrubado no meio), nao envio em voo.
+   */
+  async hasPendingOutbound(tenantId: string, conversationId: string): Promise<boolean> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const found = await tx.query<{ id: string }>(
+        `SELECT id FROM messages
+         WHERE conversation_id = $1
+           AND sender_type = 'agent'
+           AND sender_id IS NOT NULL
+           AND status = 'sent'
+           AND external_message_id IS NULL
+           AND created_at > NOW() - INTERVAL '60 seconds'
+         LIMIT 1`,
+        [conversationId],
+      );
+      return found.rows.length > 0;
     });
   }
 

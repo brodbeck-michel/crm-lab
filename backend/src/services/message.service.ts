@@ -116,12 +116,32 @@ function clampLimit(value: number | undefined): number {
   return Math.min(Math.floor(n), MAX_MESSAGE_LIMIT);
 }
 
+/**
+ * Espera pelo envio em voo antes de decidir que um `fromMe` desconhecido veio
+ * do celular (D-173). 8 s cobre o envio normal com folga (o eco costuma chegar
+ * centenas de ms antes do `sendText` responder); o que passar disso cai na rede
+ * de seguranca de `MessageRepository.confirmSent`. Injetavel para o teste da
+ * corrida rodar em milissegundos.
+ */
+export interface EchoWaitOptions {
+  timeoutMs: number;
+  pollMs: number;
+  sleep: (ms: number) => Promise<void>;
+}
+
+export const DEFAULT_ECHO_WAIT: EchoWaitOptions = {
+  timeoutMs: 8_000,
+  pollMs: 250,
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+};
+
 export interface MessageServiceDeps {
   messages: MessageRepository;
   conversations: ConversationRepository;
   wsHub: WsHub;
   /** Ausente => nenhum envio externo (usado por testes de unidade). */
   whatsapp?: WhatsAppService;
+  echoWait?: Partial<EchoWaitOptions>;
 }
 
 export class MessageService {
@@ -129,12 +149,14 @@ export class MessageService {
   private readonly conversations: ConversationRepository;
   private readonly wsHub: WsHub;
   private readonly whatsapp: WhatsAppService | undefined;
+  private readonly echoWait: EchoWaitOptions;
 
   constructor(deps: MessageServiceDeps) {
     this.messages = deps.messages;
     this.conversations = deps.conversations;
     this.wsHub = deps.wsHub;
     this.whatsapp = deps.whatsapp;
+    this.echoWait = { ...DEFAULT_ECHO_WAIT, ...deps.echoWait };
   }
 
   async listByConversation(
@@ -197,8 +219,7 @@ export class MessageService {
         conversation.patientPhone,
         dto.content,
       );
-      const updated = await this.messages.setStatus(tenantId, message.id, 'sent', externalId);
-      return updated ?? message;
+      return await this.confirmSent(tenantId, conversationId, message, externalId);
     } catch (err) {
       // Retry ja esgotado dentro do adapter (3 tentativas, backoff exponencial).
       await this.messages.setStatus(tenantId, message.id, 'failed');
@@ -247,8 +268,7 @@ export class MessageService {
         mimeType: dto.mimeType,
         fileName: dto.fileName,
       });
-      const updated = await this.messages.setStatus(tenantId, message.id, 'sent', externalId);
-      return updated ?? message;
+      return await this.confirmSent(tenantId, conversationId, message, externalId);
     } catch (err) {
       await this.messages.setStatus(tenantId, message.id, 'failed');
       logger.error('whatsapp.send_media_failed', {
@@ -312,6 +332,108 @@ export class MessageService {
     }
     this.emitNewMessage(tenantId, conversationId, message.id);
     return message;
+  }
+
+  /**
+   * Mensagem que o laboratorio mandou pelo PROPRIO celular (webhook `fromMe`,
+   * D-173). Aparece do lado do atendimento, sem autor, e nao conta como nao
+   * lida (`insert` so incrementa `unread_count` para paciente).
+   *
+   * `null` = era o ECO de um envio do CRM (ou reentrega): o `externalId` ja
+   * esta gravado, ou foi gravado enquanto esperavamos o envio em voo nesta
+   * conversa terminar. Nada e inserido nem emitido.
+   *
+   * `echoChecked: true` = o chamador ja rodou `isOutboundEcho` — o webhook faz
+   * isso ANTES de gravar a midia, senao o eco de um anexo do CRM deixaria
+   * arquivo orfao. Evita esperar o envio em voo duas vezes.
+   */
+  async createFromPhone(
+    tenantId: string,
+    conversationId: string,
+    dto: InboundMessageInput,
+    options: { echoChecked?: boolean } = {},
+  ): Promise<Message | null> {
+    const exists = await this.conversations.exists(tenantId, conversationId);
+    if (!exists) throw notFound({ resource: 'conversation', id: conversationId });
+
+    const externalId = dto.externalId ?? null;
+    if (
+      externalId &&
+      !options.echoChecked &&
+      (await this.isOutboundEcho(tenantId, conversationId, externalId))
+    ) {
+      return null;
+    }
+
+    try {
+      const message = await this.messages.insert(tenantId, {
+        conversationId,
+        senderType: 'agent',
+        senderId: null,
+        content: dto.content,
+        messageType: dto.messageType ?? 'text',
+        attachmentUrl: dto.attachmentUrl ?? null,
+        status: 'sent',
+        externalMessageId: externalId,
+      });
+      this.emitNewMessage(tenantId, conversationId, message.id);
+      return message;
+    } catch (err) {
+      // Reentrega concorrente, ou o envio do CRM gravou o id entre a ultima
+      // checagem e o INSERT: nos dois casos a linha certa ja existe.
+      if (!isUniqueViolation(err) || !externalId) throw err;
+      return null;
+    }
+  }
+
+  /**
+   * `true` quando `externalId` ja e de uma mensagem gravada — agora, ou depois
+   * de esperar o envio em voo desta conversa gravar o id que o gateway
+   * devolveu. O eco do `sendText` pode chegar ANTES da resposta do proprio
+   * `sendText`; sem a espera, ele viraria mensagem do celular duplicada.
+   */
+  async isOutboundEcho(
+    tenantId: string,
+    conversationId: string,
+    externalId: string,
+  ): Promise<boolean> {
+    const deadline = Date.now() + this.echoWait.timeoutMs;
+    for (;;) {
+      if (await this.messages.findByExternalId(tenantId, externalId)) return true;
+      if (!(await this.messages.hasPendingOutbound(tenantId, conversationId))) return false;
+      if (Date.now() >= deadline) {
+        logger.warn('whatsapp.echo_wait_timeout', { tenantId, conversationId, externalId });
+        return false;
+      }
+      await this.echoWait.sleep(this.echoWait.pollMs);
+    }
+  }
+
+  /**
+   * Grava o id externo do envio. Se o eco ja tinha virado copia "do celular"
+   * (envio mais lento que a espera de `isOutboundEcho`), o repositorio apaga a copia e
+   * o WS e reemitido para a tela refazer a lista sem ela.
+   */
+  private async confirmSent(
+    tenantId: string,
+    conversationId: string,
+    message: Message,
+    externalId: string,
+  ): Promise<Message> {
+    const { message: updated, removedPhoneCopy } = await this.messages.confirmSent(
+      tenantId,
+      message.id,
+      externalId,
+    );
+    if (removedPhoneCopy) {
+      logger.warn('whatsapp.echo_copy_removed', {
+        tenantId,
+        conversationId,
+        messageId: message.id,
+      });
+      this.emitNewMessage(tenantId, conversationId, message.id);
+    }
+    return updated ?? message;
   }
 
   /**

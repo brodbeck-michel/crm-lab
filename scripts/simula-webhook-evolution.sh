@@ -148,7 +148,7 @@ CASOS=(
   'video|video/mp4|video-do-paciente.mp4|Video curto|submessage|falso|mensagem:doc'
   'grande|image/png|foto-enorme.png|Acima do teto de 15 MiB|submessage|grande|descarte:midia_recusada'
   'grupo|||Mensagem de grupo|-|grupo|descarte:grupo'
-  'from-me|||Resposta pelo celular do laboratorio|-|from_me|descarte:from_me'
+  'from-me|||Resposta pelo celular do laboratorio|-|from_me|mensagem:text'
 )
 
 listar() {
@@ -163,7 +163,7 @@ listar() {
   printf '%-24s %s\n' 'video'                 'video/mp4 -> vira "doc" (nao ha tipo video)'
   printf '%-24s %s\n' 'grande'                '16 MiB: recusa com log, mensagem NAO criada'
   printf '%-24s %s\n' 'grupo'                 '@g.us -> descarte correto, com rastro no log'
-  printf '%-24s %s\n' 'from-me'               'fromMe:true -> descarte correto, com rastro no log'
+  printf '%-24s %s\n' 'from-me'               'fromMe:true -> resposta do atendimento pelo celular (D-173)'
   printf '\n'
 }
 
@@ -335,7 +335,7 @@ roda_caso() {
     IFS='|' read -r tipo url bytes nome_arq <<<"$encontrada"
     [[ "$tipo" == "$tipo_esperado" ]] \
       || { falha "message_type '$tipo', esperado '$tipo_esperado'"; return; }
-    if [[ "$gerador" == 'texto' ]]; then
+    if [[ "$gerador" == 'texto' || "$gerador" == 'from_me' ]]; then
       ok "mensagem de texto gravada"
     else
       [[ "$url" != '-' ]] || { falha "mensagem sem attachment_url"; return; }

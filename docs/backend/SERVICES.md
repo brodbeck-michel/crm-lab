@@ -119,6 +119,7 @@ interface MessageService {
   listByConversation(tenantId: string, conversationId: string, page: Pagination): Promise<Paginated<Message>>;
   createFromAgent(tenantId: string, conversationId: string, senderId: string, dto: CreateMessageDTO): Promise<Message>;
   createFromPatient(tenantId: string, conversationId: string, dto: InboundMessageDTO): Promise<Message>; // via webhook
+  createFromPhone(tenantId: string, conversationId: string, dto: InboundMessageDTO): Promise<Message | null>; // fromMe via webhook (D-173); null = eco do CRM
   createSystemEvent(tenantId: string, conversationId: string, content: string): Promise<Message>;
 }
 ```
@@ -140,6 +141,16 @@ interface que ProposalService/ApprovalService consomem. Instanciação:
 - `createFromPatient` incrementa `unread_count`, sobe `last_message_at` (mesma
   transação do INSERT) e é idempotente por `external_message_id` — a reentrega do
   canal não duplica mensagem nem evento
+- `createFromPhone` (D-173, CRMLAB-46) é o `fromMe: true` do Evolution. Devolve `null` quando é
+  **eco** do CRM: `externalId` já gravado, ou gravado durante a espera pelo envio em voo
+  (`MessageRepository.hasPendingOutbound` — atendente com autor, `status: sent`, sem
+  `externalId`, < 60 s; sondagem de 250 ms até 8 s, relógio injetável). Senão grava
+  `sender_type: agent`, `sender_id: NULL`, `status: sent` — sem incrementar `unread_count`,
+  subindo `last_message_at`, emitindo `conversation.new_message` — e é idempotente por
+  `external_message_id` como `createFromPatient`
+- `setStatus` com `externalId` que já é de uma cópia do celular (envio mais lento que a espera)
+  apaga a cópia e grava o id na mensagem do CRM, na mesma transação; o service reemite
+  `conversation.new_message`
 
 ---
 
@@ -774,7 +785,8 @@ interface ChannelSettingsServiceQrExtension {
   D-074.
 - `handleWebhook` reusa o caminho inteiro de `MessageService.createFromPatient` /
   `ConversationRepository.findOrCreateByPhone` para `MESSAGES_UPSERT` — nenhum caminho de
-  ingestão paralelo.
+  ingestão paralelo. `fromMe: true` vai para `MessageService.createFromPhone` (D-173) pela
+  mesma `findOrCreateByPhone`, sem `pushName` (é o nome do laboratório).
 - **Grafia do evento:** o gateway v2.3.7 manda `messages.upsert`/`connection.update`
   (minúsculo, com PONTO), não o `MESSAGES_UPSERT` que este doc assumia. `normalizeEvolutionEvent`
   (`toUpperCase()` + `.` → `_`) aceita as duas em um único ponto. Sem isso a comparação exata
@@ -782,7 +794,7 @@ interface ChannelSettingsServiceQrExtension {
   recebida descartada, estado da conexão nunca gravado (o telefone exibido ficava no valor
   anterior) e a guarda de `instance` contra troca de slug virava código morto.
 - **`inboundPhoneOf` decide o que vira atendimento** (`webhook.routes.ts`, ponto único):
-  `fromMe: true` é ignorada (o próprio laboratório respondendo pelo celular), `@g.us` é ignorada
+  `fromMe: true` vira resposta do atendimento (D-173 — antes era ignorada), `@g.us` é ignorada
   (grupo não é paciente), `@lid` tira o telefone de `remoteJidAlt` (endereçamento por LID do
   WhatsApp — o LID não é discável nem casa com o cadastro) e, sem `remoteJidAlt`, a mensagem é
   descartada de propósito: uma conversa presa a um LID não tem resposta nem dedupe.

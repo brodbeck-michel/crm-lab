@@ -272,26 +272,6 @@ describe('POST /webhooks/evolution/:tenant — remoteJid @lid (privacidade do Wh
     expect(response.status).toBe(200);
     expect(await countConversations(tenant.id)).toBe(0);
   });
-
-  it('mensagem ENVIADA pelo proprio numero (fromMe) nao vira atendimento', async () => {
-    const tenant = await createTenant({ slug: 'lab-fromme' });
-    slugToId.set('lab-fromme', tenant.id);
-
-    const response = await app.agent
-      .post(`${WEBHOOK}/lab-fromme`)
-      .set('x-evolution-webhook-token', TOKEN)
-      .send({
-        event: 'messages.upsert',
-        instance: evolutionInstanceName(tenant.id),
-        data: {
-          key: { id: 'EVO-ME-1', fromMe: true, remoteJid: '554888281057@s.whatsapp.net' },
-          message: { conversation: 'resposta do atendente pelo celular' },
-        },
-      });
-
-    expect(response.status).toBe(200);
-    expect(await countConversations(tenant.id)).toBe(0);
-  });
 });
 
 describe('POST /webhooks/evolution/:tenant — MESSAGES_UPSERT', () => {
@@ -904,27 +884,6 @@ describe('tipos que antes sumiam em silencio (auditoria 2026-09-17)', () => {
     // O que nao pode e descartar SEM deixar rastro: o `reason` do log
     // `evolution.inbound_discarded` e a unica prova de que a mensagem existiu.
     await postUpsert(slug, tenant.id, { pollCreationMessage: { name: 'Enquete' } }).expect(200);
-
-    expect(await countMessages(tenant.id)).toBe(0);
-  });
-
-  it('mensagem do proprio laboratorio (fromMe) continua descartada', async () => {
-    const slug = 'lab-from-me';
-    const tenant = await createTenant({ slug });
-    slugToId.set(slug, tenant.id);
-
-    await app.agent
-      .post(`${WEBHOOK}/${slug}`)
-      .set('x-evolution-webhook-token', TOKEN)
-      .send({
-        event: 'messages.upsert',
-        instance: evolutionInstanceName(tenant.id),
-        data: {
-          key: { remoteJid: '5548999997777@s.whatsapp.net', id: 'EVO-fromme', fromMe: true },
-          message: { conversation: 'resposta pelo celular' },
-        },
-      })
-      .expect(200);
 
     expect(await countMessages(tenant.id)).toBe(0);
   });

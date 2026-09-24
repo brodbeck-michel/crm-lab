@@ -1029,7 +1029,7 @@ responder):
 
 | `key` | Efeito |
 |---|---|
-| `fromMe: true` | **ignorada** — é o próprio número do laboratório respondendo pelo celular |
+| `fromMe: true` | **resposta do atendimento** (D-173) — o telefone sai das mesmas regras abaixo (`remoteJid`/`remoteJidAlt` é o paciente, destinatário da mensagem); ver "Mensagem do próprio número" |
 | `remoteJid` termina em `@g.us` | **ignorada** — id de grupo não é paciente |
 | `remoteJid` termina em `@lid` | telefone lido de **`remoteJidAlt`** |
 | `@lid` sem `remoteJidAlt` | **descartada** — LID não é discável, não casa com o cadastro e não serve para responder; conversa presa a um LID seria pior que nenhuma |
@@ -1054,6 +1054,23 @@ responder):
   aceito:** o campo exato onde o gateway v2.3.7 grava o base64 não foi confirmado contra um
   payload real; o parser aceita tanto `message.<tipo>Message.base64` quanto o nível do
   `message` — verificar contra o gateway de verdade antes de depender disto em produção.
+- **Mensagem do próprio número (`fromMe: true`, D-173, CRMLAB-46).** Dois casos com a mesma
+  cara: o **eco** do que o CRM enviou e o que o laboratório **digitou no celular**. Decide o
+  `key.id`:
+  | Situação | Efeito |
+  |---|---|
+  | `key.id` já existe em `messages` | eco do CRM ou reentrega — nada gravado, nada emitido |
+  | `key.id` desconhecido, com envio do CRM **em voo** na conversa (atendente, `status: sent`, sem `externalId`, < 60 s) | espera até 8 s o envio gravar o `externalId`; apareceu → eco, descarta |
+  | `key.id` desconhecido, sem envio em voo | mensagem do celular: `MessageService.createFromPhone` |
+
+  A mensagem do celular volta em `GET /conversations/:id/messages` como
+  `senderType: "agent"`, `senderId: null`, `senderName: "Enviada pelo celular"`,
+  `status: "sent"` — mesmo lado das enviadas pelo CRM. **Não** incrementa `unreadCount`; sobe
+  `lastMessageAt` e emite `conversation.new_message`. Número sem conversa **cria a conversa**
+  (sem nome: o `pushName` de `fromMe` é o nome do laboratório). Mídia e legenda seguem o mesmo
+  parser das recebidas. **Rede de segurança:** se o envio do CRM demorar mais que a espera, a
+  cópia do celular é apagada quando o envio grava o mesmo `externalId` (conflito no índice da
+  019), e `conversation.new_message` é reemitido — a duplicata nunca fica.
 - `CONNECTION_UPDATE` com `state: "open"` → grava `connected_at`, `phone_number` (informado
   pelo gateway), `connection_mode: "qr"`, `is_active: true` em `tenant_channels`.
 - `CONNECTION_UPDATE` com `state: "close"` (inclusive `loggedOut`, que é como o gateway informa
@@ -1081,13 +1098,13 @@ igual em todo caminho — inclusive nos de descarte — para não virar oráculo
 O efeito colateral é que o gateway marca "entregue" e **nunca reentrega**: sem rastro, a
 mensagem some para sempre. Por isso todo descarte emite
 `evolution.inbound_discarded` com um `reason` da lista fechada abaixo
-(`DiscardReason`, `webhook.routes.ts`). Nem todo motivo é defeito — `from_me` e `grupo` são
+(`DiscardReason`, `webhook.routes.ts`). Nem todo motivo é defeito — `grupo` é
 descarte correto —, mas todos precisam ser contáveis, senão não há como distinguir
 "não chegou nada" de "chegou e foi jogado fora".
 
 | `reason` | Significado | É defeito? |
 |---|---|---|
-| `from_me` | o próprio laboratório respondendo pelo celular | não |
+| `eco_do_crm` | `fromMe: true` cujo `key.id` já está gravado — eco de envio do CRM ou reentrega da mesma mensagem do celular (D-173) | não |
 | `grupo` | `remoteJid` de grupo | não |
 | `payload_sem_key` / `sem_remote_jid` | payload malformado | não (lixo) |
 | `jid_sem_telefone` | `remoteJid` sem telefone extraível | investigar |

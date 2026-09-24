@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-24 (v1.16.2 em PRODUÇÃO — CRMLAB-47, ver fim do arquivo)
+**Última atualização:** 2026-09-24 (CRMLAB-46 validado em hml, PR aberto; v1.16.2 em PRODUÇÃO — ver fim do arquivo)
 
 ---
 
@@ -2647,3 +2647,29 @@ e título ou resposta vazios chegavam ao backend (PR #58).
   do deploy. Duas sessões no mesmo repositório → cada uma no seu **worktree**, e commit de release
   com `git add <arquivo>`, nunca `-a`. O CRMLAB-46 agora vive em `../CRM Lab-46`.
 
+### ✅ CRMLAB-46 — mensagem enviada pelo celular aparece na conversa, sem duplicar (2026-09-24)
+
+Validado pelo usuário em hml (`hml-37367b6`) em 2026-09-24. Aguarda merge (branch
+`feature/CRMLAB-46-fromme-celular`).
+
+- `MESSAGES_UPSERT` com `fromMe: true` deixou de ser descartado (D-173). O `key.id` decide: se já
+  está gravado, é eco do CRM ou reentrega e nada muda. Se não está, a mensagem entra como resposta
+  do atendimento (`senderType: agent`, `senderId: null`, `senderName: "Enviada pelo celular"`),
+  sem subir `unreadCount`.
+- **Corrida do eco:** o eco pode chegar antes de `createFromAgent` gravar o `externalId`.
+  `MessageService.isOutboundEcho` espera (250 ms, teto de 8 s) enquanto houver envio em voo na
+  conversa. A rede de segurança é `MessageRepository.confirmSent`: se o envio passar da espera, a
+  cópia do celular é apagada na mesma transação e o WS é reemitido.
+- Número sem conversa cria a conversa, sem usar o `pushName` (nome do laboratório). Grupos
+  continuam ignorados. Mídia/legenda seguem o parser das recebidas. O eco de anexo do CRM é
+  detectado antes de gravar o arquivo, então não deixa arquivo órfão.
+- `DiscardReason`: `from_me` saiu e entrou `eco_do_crm`.
+- **Testes:** `tests/webhooks/evolution-from-me.spec.ts` (9) e `tests/messages/from-phone.spec.ts`
+  (6). Os dois testes antigos que afirmavam o descarte foram removidos. Backend completo 1235/1235,
+  `npm run typecheck` limpo. Mutação conferida: desligar a espera ou a rede de segurança derruba
+  um teste cada.
+- **hml (simulação do webhook, WhatsApp de hml não envia):** mensagem do celular, número sem
+  conversa, reentrega, eco confirmado, **corrida** (eco com envio em voo, id gravado 2 s depois:
+  o webhook esperou ~2,1 s e descartou) e grupo, todos conferidos no banco.
+- **Pendente:** prova com o celular real pareado, combinada para depois do deploy em prod
+  (o hml não tem gateway conectado).

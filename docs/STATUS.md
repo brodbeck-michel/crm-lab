@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-24 (v1.17.0 em PRODUÇÃO — CRMLAB-46, ver fim do arquivo)
+**Última atualização:** 2026-09-24 (v1.18.0 em PRODUÇÃO — CRMLAB-48, ver fim do arquivo)
 
 ---
 
@@ -2703,3 +2703,16 @@ CRM não duplica (PR #59, D-173).
   `webhooks/evolution-webhook.spec.ts`. Frontend verde (76 arquivos, 1109 testes).
   `npm run typecheck` e `npm run lint` limpos. E2E novo `flow-19-encerrar-atendimento.spec.ts`
   **não rodado localmente** (exige a stack de pé) — fica para o CI do PR.
+
+### 🚀 v1.18.0 em produção (2026-09-24)
+
+Sobe CRMLAB-48: [Encerrar] substitui [Arquivar], e a conversa encerrada reabre sozinha em "Não
+atribuídas" quando o paciente escreve (PR #60, D-174).
+
+- **hml:** `hml-48ae41d`, validado e aprovado pelo PO.
+- **prod:** `04c9d71` (tag **v1.18.0**), CI verde, imagens puxadas do GHCR. Migração **025**
+  aplicada (`archived` → `closed` + CHECK). Healthcheck OK na 2ª tentativa. O bundle servido em
+  https://vitrocrm.cloud confirma `1.18.0`.
+- **Não conferido:** contagem de `archived` = 0 no banco de prod (leitura do banco não liberada
+  nesta sessão). A migração só termina se o CHECK aceitar todas as linhas, então o `applied`
+  já implica zero `archived`.

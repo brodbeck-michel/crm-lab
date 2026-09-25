@@ -2517,6 +2517,117 @@ Auditado (`update_exam_prices`).
 **Erros:** `NOT_FOUND` (exame de outro tenant), `VALIDATION_ERROR` (400, `details.fields`),
 `FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
 
+### Importação do catálogo por CSV (admin apenas — CRMLAB-23, D-177/D-178)
+
+Dois endpoints, **o mesmo corpo**: o cliente lê o arquivo, manda para a pré-visualização,
+mostra o resultado e, se o usuário confirmar, manda **o mesmo arquivo de novo** para gravar. O
+servidor não guarda estado entre as duas chamadas — a confirmação revalida tudo do zero (o
+catálogo pode ter mudado entre um passo e outro). Shapes em `shared/types/exam.types.ts`.
+
+**Só `admin`** (403 `FORBIDDEN`, `details.requiredRoles: ["admin"]` para gestor e atendente —
+a rota recusa e o service confere de novo). O botão só aparece para admin, mas a regra é do
+servidor. Tudo dentro de `db.withTenant` (RLS): código igual em outro laboratório é outro
+exame e nunca é tocado.
+
+**Request (os dois endpoints):**
+```json
+{
+  "fileName": "catalogo.csv",
+  "contentBase64": "bm9tZTtjb2RpZ287cHJlY29fY29udmVuaW87cHJlY29fcGFydGljdWxhcgo..."
+}
+```
+
+**Formato do arquivo:**
+- Texto **UTF-8**, com ou sem BOM. Arquivo que não é UTF-8 válido (ex.: "CSV (separado por
+  vírgulas)" do Excel no Windows, que sai em Windows-1252) → `invalid_encoding` — a tela
+  orienta a salvar como "CSV UTF-8". Arquivo com byte NUL (UTF-16 sem BOM, binário) também é
+  `invalid_encoding`.
+- Separador **`;` ou `,`**, detectado pelo cabeçalho (o que aparecer mais fora de aspas; empate
+  → `;`, o padrão do Excel em pt-BR). Campo com o separador, aspas ou quebra de linha vai entre
+  aspas duplas (`"a;b"`, `"diz ""oi"""`), padrão RFC 4180.
+- **Cabeçalho** na primeira linha, casado sem caixa e sem acento (`Código` = `codigo`; espaços e
+  pontuação viram `_`, então `Prazo (horas)` = `prazo_horas`). Colunas:
+
+| Coluna | Campo | Obrigatória | Regra |
+|--------|-------|-------------|-------|
+| `nome` | `name` | sim | 1..255 caracteres |
+| `codigo` | `code` | sim | 1..50 caracteres; chave de "já existe" (exato, depois de `trim`) |
+| `categoria` | `category` | não | até 100 |
+| `descricao` | `description` | não | até 4000 |
+| `preparo` | `preparation` | não | até 4000 |
+| `prazo_horas` (ou `prazo`) | `turnaroundHours` | não | inteiro 1..100000 |
+| `preco_convenio` | `priceInsurance` | sim | ≥ 0, até 2 casas |
+| `preco_particular` | `pricePrivate` | sim | ≥ 0, até 2 casas |
+
+  Coluna desconhecida é ignorada. Coluna obrigatória ausente → `missing_column`; coluna
+  repetida → `duplicate_column`.
+- **Preço** aceita `1.234,56`, `1234,56`, `1234.56`, `1234` e prefixo `R$`. Com ponto **e**
+  vírgula, o último é o decimal. Mais de 2 casas decimais é erro da linha — é assim que
+  `1.234` (ambíguo: mil duzentos e trinta e quatro ou um vírgula dois três quatro?) é recusado
+  em vez de adivinhado.
+- Linha totalmente em branco é pulada. Código repetido **dentro do arquivo** é erro nas duas
+  linhas (ou mais) que o repetem.
+- **Limites:** 2 MiB decodificado (`EXAM_IMPORT_MAX_BYTES`, 413 `MEDIA_TOO_LARGE` com
+  `details: { byteSize, max }`) e 5000 linhas de dado (`EXAM_IMPORT_MAX_ROWS`, `too_many_rows`).
+  `errors` lista no máximo 1000 itens (`EXAM_IMPORT_MAX_ERRORS`, `errorsTruncated: true`);
+  `errorCount` é sempre exato.
+
+**Inserir ou atualizar** (D-177): código que já existe no laboratório **atualiza** o exame;
+código novo **cria** (ativo, `source: "manual"`). Na atualização, `nome` e os dois preços são
+sempre regravados; célula **vazia** de coluna opcional **preserva** o valor atual (planilha
+parcial não apaga descrição/preparo de ninguém — para limpar um campo, use o modal). A
+importação **não** muda `isActive`, `tussCode`, `ambCode`, `material`, sinônimos, preço por
+convênio (`exam_prices`) nem pacotes: tudo isso fica fora do escopo do CSV.
+
+#### POST /exams/import/preview
+Lê e valida o arquivo e classifica cada linha. **Não grava nada** (nem audit log).
+
+**Response (200):** `ExamImportPreview`
+```json
+{
+  "fileName": "catalogo.csv",
+  "totalRows": 3,
+  "createCount": 1,
+  "updateCount": 1,
+  "errorCount": 1,
+  "errors": [
+    { "line": 4, "column": "preco_particular", "message": "Preço inválido: \"abc\"" }
+  ],
+  "errorsTruncated": false,
+  "rows": [
+    { "line": 2, "action": "update", "code": "HC", "name": "Hemograma completo",
+      "category": "Hematologia", "turnaroundHours": 24, "pricePrivate": 89.90, "priceInsurance": 75.00 },
+    { "line": 3, "action": "create", "code": "VITD", "name": "Vitamina D",
+      "category": null, "turnaroundHours": null, "pricePrivate": 1234.56, "priceInsurance": 95.00 }
+  ]
+}
+```
+`line` é o número da linha na planilha (cabeçalho = 1). `column: null` = erro da linha inteira
+(ex.: código repetido no arquivo). `rows` traz só as linhas válidas. Dinheiro é número decimal
+(regra 9).
+
+**Erros:** `VALIDATION_ERROR` (400) com `details.reason` ∈ `invalid_encoding | malformed |
+empty | missing_column | duplicate_column | too_many_rows` (`missing_column`/`duplicate_column`
+trazem `details.columns: string[]`; `too_many_rows` traz `details: { rows, max }`) ou com
+`details.fields` (corpo fora do shape); `MEDIA_TOO_LARGE` (413); `FORBIDDEN` (403).
+`malformed` = aspas abertas e nunca fechadas.
+
+#### POST /exams/import
+Confirma: revalida o arquivo e grava **tudo ou nada**, numa única transação do tenant. Se
+qualquer linha tiver erro, nada é gravado.
+
+**Response (200):** `ExamImportResult`
+```json
+{ "fileName": "catalogo.csv", "totalRows": 2, "created": 1, "updated": 1 }
+```
+
+Gera audit log `import_exam_catalog` (`entityType: "exam_catalog"`, `entityId` = tenant,
+`newValues: { fileName, totalRows, created, updated }`) e invalida o cache `exams:<tenantId>:`.
+
+**Erros:** os mesmos do preview, mais `VALIDATION_ERROR` com `details.reason: "invalid_rows"`,
+`details.errorCount` e `details.errors` (mesmo shape de `ExamImportPreview.errors`) quando
+alguma linha é inválida — nada foi gravado.
+
 ---
 
 ## 4b. Exam Packages (Pacotes de Exames — CRMLAB-10, D-130)

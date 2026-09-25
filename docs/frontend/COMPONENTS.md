@@ -336,7 +336,21 @@ Anatomia (padrão WhatsApp):
   mostra mensagem inline (nunca alert/toast) e não chama o callback
 - Estado de "enviando" é responsabilidade de quem usa (o componente só entrega o `File`); mostra
   spinner próprio só enquanto lê o arquivo para base64
-- Usado no modal Importar (`/results` e `/reconciliation`, §14-15)
+- Usado no modal Importar (`/results` e `/reconciliation`, §14-15) e no `ExamImportModal` de
+  `/catalog` (`accept=".csv"`, 2 MiB — CRMLAB-23)
+
+### ExamImportModal (CRMLAB-23, D-177/D-178)
+```tsx
+<ExamImportModal onClose={() => ...} />
+```
+- Modal "Importar catálogo (CSV)" de `/catalog` (PAGES.md §7), só renderizado para admin
+- [Baixar modelo] (gerado no navegador por `lib/catalog/exam-import-template.ts`) +
+  `UploadDropzone` → `POST /exams/import/preview`; mostra contadores (novos · atualizam · com
+  erro), `DataTable` de erros (linha, coluna, motivo) e `DataTable` das linhas válidas
+- Guarda o arquivo lido no estado e o reenvia em [Confirmar importação] (`POST /exams/import`)
+  — o servidor não guarda o preview; o botão só habilita com zero erros
+- `details.reason` do servidor vira mensagem pt-BR inline (`role="alert"`), nunca toast; sucesso
+  vira toast `positive` e fecha o modal
 
 ### PeriodFilter
 ```tsx

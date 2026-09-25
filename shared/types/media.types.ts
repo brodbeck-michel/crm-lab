@@ -34,6 +34,8 @@ export const ALLOWED_MEDIA_MIME_TYPES = [
   'audio/mp4',
   'audio/aac',
   'audio/amr',
+  // Recado de voz gravado no Chrome/Edge (`MediaRecorder`, CRMLAB-24, D-182).
+  'audio/webm',
   'video/mp4',
   'application/pdf',
   'application/msword',

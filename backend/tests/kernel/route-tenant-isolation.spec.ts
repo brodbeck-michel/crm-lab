@@ -205,6 +205,14 @@ const LAB_ROUTES: readonly LabRoute[] = [
     actor: 'attendant',
     addressable: false,
   },
+  {
+    name: 'POST /conversations/whatsapp',
+    method: 'post',
+    path: () => '/api/v1/conversations/whatsapp',
+    body: () => ({ phone: '(48) 98888-6666', content: 'sonda de isolamento' }),
+    actor: 'attendant',
+    addressable: false,
+  },
   { name: 'GET /conversations/assignees', method: 'get', path: () => '/api/v1/conversations/assignees', actor: 'attendant', addressable: false },
   { name: 'GET /conversations/:id', method: 'get', path: (l) => `/api/v1/conversations/${l.conversation.id}`, actor: 'attendant', addressable: true, ownStatus: 200 },
   { name: 'POST /conversations/:id/pin', method: 'post', path: (l) => `/api/v1/conversations/${l.conversation.id}/pin`, actor: 'attendant', addressable: true, ownStatus: 204 },
@@ -349,6 +357,32 @@ const LAB_ROUTES: readonly LabRoute[] = [
     actor: 'manager',
     addressable: true,
     ownStatus: 200,
+  },
+
+  // CRMLAB-23 — importacao por CSV (admin). Sem `:id`: o isolamento e o do
+  // `db.withTenant` (codigo igual em outro tenant e outro exame), provado em
+  // tests/catalog/exam-import.spec.ts.
+  {
+    name: 'POST /exams/import/preview',
+    method: 'post',
+    path: () => '/api/v1/exams/import/preview',
+    body: () => ({
+      fileName: 'sonda.csv',
+      contentBase64: Buffer.from('nome;codigo;preco_convenio;preco_particular\nSonda;SONDA2;1;2\n').toString('base64'),
+    }),
+    actor: 'admin',
+    addressable: false,
+  },
+  {
+    name: 'POST /exams/import',
+    method: 'post',
+    path: () => '/api/v1/exams/import',
+    body: () => ({
+      fileName: 'sonda.csv',
+      contentBase64: Buffer.from('nome;codigo;preco_convenio;preco_particular\nSonda;SONDA3;1;2\n').toString('base64'),
+    }),
+    actor: 'admin',
+    addressable: false,
   },
 
   // --- convenios (Onda 7 — D-081/D-082) ---
@@ -824,7 +858,7 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 65 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 68 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
@@ -837,8 +871,10 @@ describe('inventario de rotas de laboratorio', () => {
     // inventario desde a implementacao da feature — corrigido junto com D-102).
     // CRMLAB-11/D-133 soma 2: `POST /patients/:id/inactivate|reactivate`.
     // CRMLAB-12/D-134 soma 1: `PATCH /proposals/:id/items`.
+    // CRMLAB-50/D-175 soma 1: `POST /conversations/whatsapp` (Nova conversa).
+    // CRMLAB-23/D-177 soma 2: `POST /exams/import/preview` e `POST /exams/import`.
     // CRMLAB-52/D-119 soma 1: `PATCH /proposals/:id/lis-reference`.
-    expect(LAB_ROUTES).toHaveLength(65);
+    expect(LAB_ROUTES).toHaveLength(68);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

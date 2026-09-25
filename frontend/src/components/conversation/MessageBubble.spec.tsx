@@ -327,3 +327,36 @@ describe('MessageBubble', () => {
     expect(screen.queryByTestId('audio-message-player')).not.toBeInTheDocument();
   });
 });
+
+describe('MessageBubble — negrito com asterisco (CRMLAB-51, D-183)', () => {
+  it.each(['received', 'sent'] as const)('bolha %s: *texto* vira <strong>', (type) => {
+    render(
+      <MessageBubble
+        type={type}
+        message={message({ content: 'Seu *resultado* saiu.\nAté *amanhã*' })}
+      />,
+    );
+    const bolds = screen.getByTestId('message-bubble').querySelectorAll('strong');
+    expect([...bolds].map((el) => el.textContent)).toEqual(['resultado', 'amanhã']);
+    // o texto continua inteiro, sem os asteriscos, com a quebra de linha
+    expect(screen.getByText(/Seu/).textContent).toBe('Seu resultado saiu.\nAté amanhã');
+  });
+
+  it('"2 * 3 * 4" e ** vazio ficam como estão', () => {
+    render(<MessageBubble type="received" message={message({ content: '2 * 3 * 4 e **' })} />);
+    expect(screen.getByTestId('message-bubble').querySelector('strong')).toBeNull();
+    expect(screen.getByText('2 * 3 * 4 e **')).toBeInTheDocument();
+  });
+
+  it('HTML no texto sai escapado — sem XSS', () => {
+    render(
+      <MessageBubble
+        type="received"
+        message={message({ content: '*<img src=x onerror=alert(1)>*' })}
+      />,
+    );
+    const bubble = screen.getByTestId('message-bubble');
+    expect(bubble.querySelector('img')).toBeNull();
+    expect(bubble.querySelector('strong')?.textContent).toBe('<img src=x onerror=alert(1)>');
+  });
+});

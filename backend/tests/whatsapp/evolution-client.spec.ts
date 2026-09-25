@@ -17,12 +17,15 @@ describe('EvolutionClient', () => {
   let lastApikeyHeader: string | undefined;
   /** Ultimo corpo recebido em /instance/create ou /webhook/set. */
   let lastBody: Record<string, unknown> = {};
+  /** Ultima rota chamada (`POST /message/...`). */
+  let lastUrl: string | undefined;
 
   beforeAll(async () => {
     // O corpo e lido ANTES de rotear: `/instance/create` decide pelo
     // `instanceName` do corpo (a URL e a mesma para todas as instancias).
     fakeGateway = createServer((req, res) => {
       lastApikeyHeader = req.headers.apikey as string | undefined;
+      lastUrl = req.url;
       const chunks: Buffer[] = [];
       req.on('data', (chunk: Buffer) => chunks.push(chunk));
       req.on('end', () => {
@@ -102,6 +105,15 @@ describe('EvolutionClient', () => {
             response: { message: ['Error: Connection Closed'] },
           }),
         );
+        return;
+      }
+      if (
+        req.method === 'POST' &&
+        (req.url === '/message/sendMedia/tenant-abc' ||
+          req.url === '/message/sendWhatsAppAudio/tenant-abc')
+      ) {
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ key: { id: 'EVOMEDIA' } }));
         return;
       }
       if (req.method === 'POST' && req.url === '/message/sendText/tenant-abc') {
@@ -223,6 +235,36 @@ describe('EvolutionClient', () => {
     expect(result.externalId).toBe('EVO123');
     expect(lastApikeyHeader).toBe('apikey-da-instancia-tenant-abc');
     expect(lastApikeyHeader).not.toBe('admin-key');
+  });
+
+  it('sendMedia de imagem/documento vai por /message/sendMedia com o mediatype', async () => {
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    const result = await client.sendMedia(
+      'tenant-abc',
+      '5511987654321',
+      { base64: 'aW1n', mimeType: 'image/jpeg', fileName: 'pedido.jpg' },
+      'apikey-da-instancia',
+    );
+    expect(result.externalId).toBe('EVOMEDIA');
+    expect(lastUrl).toBe('/message/sendMedia/tenant-abc');
+    expect(lastBody).toMatchObject({ mediatype: 'image', mimetype: 'image/jpeg', media: 'aW1n' });
+    expect(lastApikeyHeader).toBe('apikey-da-instancia');
+  });
+
+  it('sendMedia de ÁUDIO vai por /message/sendWhatsAppAudio — recado de voz (CRMLAB-24, D-182)', async () => {
+    // O gateway converte para ogg/opus e entrega como PTT; `sendMedia` repassaria
+    // o webm do Chrome como está, e o paciente no iPhone nao ouviria.
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    const result = await client.sendMedia(
+      'tenant-abc',
+      '5511987654321',
+      { base64: 'YXVkaW8=', mimeType: 'audio/webm', fileName: 'recado-de-voz.webm' },
+      'apikey-da-instancia',
+    );
+    expect(result.externalId).toBe('EVOMEDIA');
+    expect(lastUrl).toBe('/message/sendWhatsAppAudio/tenant-abc');
+    expect(lastBody).toEqual({ number: '5511987654321', audio: 'YXVkaW8=' });
+    expect(lastApikeyHeader).toBe('apikey-da-instancia');
   });
 
   it('resposta HTTP nao-2xx lanca Error com o corpo anexado (nao BusinessError)', async () => {

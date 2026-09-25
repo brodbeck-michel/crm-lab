@@ -4,6 +4,7 @@ import {
   WS_CLOSE_UNAUTHORIZED,
   type WsEvent,
   type WsEventName,
+  type WsEventPayloads,
 } from '@crm-lab/shared';
 import { refreshAccessToken as refreshAccessTokenDefault } from './client';
 import { queryKeys, queryScopes } from './query-keys';
@@ -165,9 +166,18 @@ export function applyWsEvent(
     // atendendo continuou achando que o canal respondia. A queda avisa na
     // hora; a reconexao nao precisa de toast (o card ja muda sozinho).
     case 'channel.connection_changed': {
-      const data = event.data as { channel: string; connected: boolean };
+      const data = event.data as WsEventPayloads['channel.connection_changed'];
+      // D-184: com `requiresNewQr` a sessão foi apagada no gateway e não volta
+      // sozinha — o aviso diz o que fazer em vez de deixar esperar. O texto NAO
+      // afirma quem desconectou: o mesmo 401 vem do celular, do WhatsApp
+      // (`device_removed`) ou do logout pedido pela propria tela de Canais.
       if (!data.connected) {
-        toast?.('WhatsApp desconectado — mensagens novas não estão chegando.', 'attention');
+        toast?.(
+          data.requiresNewQr
+            ? 'WhatsApp desconectado e a sessão foi encerrada — escaneie o QR de novo em Configurações › Canais.'
+            : 'WhatsApp desconectado — mensagens novas não estão chegando.',
+          'attention',
+        );
       }
       void queryClient.invalidateQueries({ queryKey: queryKeys.whatsappStatus() });
       void queryClient.invalidateQueries({ queryKey: queryScopes.settings });

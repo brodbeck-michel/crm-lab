@@ -88,6 +88,13 @@ Anatomia (padrão WhatsApp):
   manda esse header. A mídia vem por `useAuthenticatedMedia` (`hooks/`), que chama
   `fetchAuthenticatedBlob` (`api/client.ts`) e usa `URL.createObjectURL` como `src`. Enquanto
   carrega ou se a busca falhar, mostra texto no lugar da mídia — nunca `<img>`/player quebrado
+- **Negrito padrão WhatsApp** (CRMLAB-51, D-183): `*texto*` aparece em **negrito** na bolha,
+  enviada ou recebida. O texto guardado e enviado ao WhatsApp continua com os asteriscos (o
+  WhatsApp do paciente formata sozinho). Regra em `splitBold` (`lib/whatsapp-format.ts`):
+  abertura não seguida de espaço, fechamento não precedido de espaço, não atravessa quebra de
+  linha, `**` vazio e `2 * 3 * 4` não formatam, e o asterisco precisa estar na borda da palavra
+  (`2*3*4` fica como está). Renderiza como nós React (`<strong>`), nunca
+  `dangerouslySetInnerHTML`. A prévia da lista (`ConversationItem`) mostra o texto cru
 - `useAuthenticatedMedia` devolve também o `fileName` (do `Content-Disposition` de
   `GET /media/:id`), repassado ao `ImageLightbox` — é o nome com que a imagem é salva (CRMLAB-26)
 
@@ -103,8 +110,11 @@ Anatomia (padrão WhatsApp):
   `<audio>` dispara `error`, o player dá lugar a um aviso e o download fica como plano B
 
 ### Composer
-- Input pílula + botão anexo + botão emoji + botão enviar (primary)
+- Input pílula + botão anexo + botão emoji + botão microfone + botão enviar (primary)
 - Enter envia, Shift+Enter quebra linha
+- **Ctrl+B / Cmd+B** (CRMLAB-51, D-183): envolve a seleção em asteriscos (`*seleção*`, que a
+  bolha e o WhatsApp mostram em negrito) e mantém o texto selecionado; sem seleção, insere `**`
+  com o cursor no meio
 - **Cresce com o texto** (CRMLAB-49, padrão WhatsApp Web): começa com uma linha e
   ganha altura a cada quebra (por tamanho ou Shift+Enter) até **150px** (~6 linhas);
   dali em diante trava e rola por dentro. Apagar ou enviar faz o campo voltar a
@@ -116,6 +126,32 @@ Anatomia (padrão WhatsApp):
 - O campo cresce **para cima**: a lista de mensagens encolhe e mantém a borda de
   baixo parada (a última mensagem visível continua visível), e os botões ficam
   alinhados embaixo (`items-end`).
+
+#### Recado de voz (CRMLAB-24, D-181)
+- Botão de **microfone** (`aria-label="Gravar áudio"`) ao lado do anexo e do emoji. Só aparece
+  quando a tela passa `onSendAudio` (nada de botão morto), e trava junto com o resto do
+  compositor (conversa encerrada / envio em voo).
+- **Clique inicia, clique para** — não é "segurar para gravar". Enquanto pede permissão:
+  "Aguardando o microfone…" + **Cancelar**. Gravando: ponto pulsante, "Gravando", tempo
+  `m:ss / 5:00`, **Cancelar** e **Parar**. Parado: prévia com `<audio controls>` nativo e a
+  duração, **Cancelar** e **Enviar** (primary, com `loading` durante o envio — sem duplo envio).
+  Durante gravação e prévia a barra ocupa o lugar do emoji, do campo e do Enviar; o texto
+  digitado fica guardado e volta depois.
+- **5 min no máximo**: a gravação para sozinha e a prévia avisa "Limite de 5 min atingido".
+  Menos de **1 s** é descartado com "Áudio curto demais" — nunca vai um recado de 0 s.
+- Formato: o primeiro suportado entre `audio/ogg;codecs=opus`, `audio/webm;codecs=opus` e
+  `audio/mp4`, a 32 kbps. O Composer não conhece a API: entrega
+  `onSendAudio({ blob, mimeType, fileName })` e espera a `Promise` — resolveu, volta ao normal;
+  rejeitou, a prévia fica para tentar de novo (quem trata o erro é a tela).
+- Erro de microfone vira mensagem (`role="alert"`) na linha acima do compositor, nunca silêncio:
+  conexão sem https, navegador sem `MediaRecorder`/`getUserMedia`, permissão negada
+  (`NotAllowedError` — explica o cadeado da barra de endereço), sem microfone (`NotFoundError`),
+  microfone ocupado (`NotReadableError`).
+- Microfone liberado (`track.stop()`) ao parar, cancelar, dar erro e desmontar; o object URL da
+  prévia é revogado. O `ConversationPanel` monta um Composer **por conversa**
+  (`key={conversation.id}`): trocar de conversa cancela a gravação em andamento.
+- Implementação: hook `useVoiceRecorder` (máquina de estados + `MediaRecorder`) e a barra
+  `VoiceRecorder`, ambos em `components/conversation/`, usados só pelo Composer.
 
 #### Emoji (Onda 8 §2.2)
 - Popover com grade de ~48 emojis de uso comum em atendimento; **sem
@@ -326,7 +362,21 @@ Anatomia (padrão WhatsApp):
   mostra mensagem inline (nunca alert/toast) e não chama o callback
 - Estado de "enviando" é responsabilidade de quem usa (o componente só entrega o `File`); mostra
   spinner próprio só enquanto lê o arquivo para base64
-- Usado no modal Importar (`/results` e `/reconciliation`, §14-15)
+- Usado no modal Importar (`/results` e `/reconciliation`, §14-15) e no `ExamImportModal` de
+  `/catalog` (`accept=".csv"`, 2 MiB — CRMLAB-23)
+
+### ExamImportModal (CRMLAB-23, D-177/D-178)
+```tsx
+<ExamImportModal onClose={() => ...} />
+```
+- Modal "Importar catálogo (CSV)" de `/catalog` (PAGES.md §7), só renderizado para admin
+- [Baixar modelo] (gerado no navegador por `lib/catalog/exam-import-template.ts`) +
+  `UploadDropzone` → `POST /exams/import/preview`; mostra contadores (novos · atualizam · com
+  erro), `DataTable` de erros (linha, coluna, motivo) e `DataTable` das linhas válidas
+- Guarda o arquivo lido no estado e o reenvia em [Confirmar importação] (`POST /exams/import`)
+  — o servidor não guarda o preview; o botão só habilita com zero erros
+- `details.reason` do servidor vira mensagem pt-BR inline (`role="alert"`), nunca toast; sucesso
+  vira toast `positive` e fecha o modal
 
 ### PeriodFilter
 ```tsx
@@ -536,9 +586,9 @@ tela passa tudo por props (o dado vem do TanStack Query).
 | Componente | Assinatura | Notas |
 |------------|-----------|-------|
 | `ConversationItem` | `<ConversationItem conversation selected? onClick?(id) now? />` | `now` é injetável só para tornar "aguardando N min" determinístico em teste |
-| `MessageBubble` | `<MessageBubble type message maxWidth? showMeta? />` | `type` ∈ `received \| sent \| system` — os únicos 3 |
+| `MessageBubble` | `<MessageBubble type message maxWidth? showMeta? />` | `type` ∈ `received \| sent \| system` — os únicos 3 · `*texto*` em negrito (D-183) |
 | `AudioMessage` | `<AudioMessage url />` | `<audio controls>` nativo com blob autenticado · download sempre disponível |
-| `Composer` | `<Composer onSend(content) onAttach? disabled? sending? placeholder? quickReplies? />` | Enter envia · Shift+Enter quebra linha · emoji insere no cursor · `/` no campo vazio abre as macros |
+| `Composer` | `<Composer onSend(content) onAttach? onSendAudio?(audio) disabled? sending? placeholder? quickReplies? />` | Enter envia · Shift+Enter quebra linha · Ctrl/Cmd+B envolve a seleção em `*` · emoji insere no cursor · `/` no campo vazio abre as macros · microfone grava recado de voz (clique/clique, 5 min, D-181) |
 | `EmojiPicker` | `<EmojiPicker onPick(emoji) disabled? />` | Grade fixa de 48, sem biblioteca · `Esc` fecha e devolve o foco |
 | `QuickReplyMenu` | `<QuickReplyMenu items filter onPick(reply) onClose() />` | Aberto pela `/` no campo vazio · ↑↓ navega, Enter escolhe, Esc fecha |
 

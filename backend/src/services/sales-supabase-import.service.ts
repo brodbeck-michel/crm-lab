@@ -173,6 +173,7 @@ const REQUIRED_COLUMNS = [
 type Column = (typeof REQUIRED_COLUMNS)[number] | 'codigo' | 'exames' | 'created_by';
 
 export const MAX_CODE_LENGTH = 50;
+export const MAX_ATTENDANT_NAME_LENGTH = 255;
 
 /**
  * Le o CSV exportado de `public.vendas`. Cabecalho sem coluna obrigatoria e
@@ -217,6 +218,11 @@ export function parseVendasCsv(text: string, source: SourceName): ParsedSource {
     const attendantName = get('atendente').trim().replace(/\s+/g, ' ');
     if (!attendantName) {
       reject('atendente vazio');
+      continue;
+    }
+    if (attendantName.length > MAX_ATTENDANT_NAME_LENGTH) {
+      // `attendants.name` e VARCHAR(255): sem isso o INSERT abortaria a carga inteira.
+      reject(`atendente com mais de ${MAX_ATTENDANT_NAME_LENGTH} caracteres`);
       continue;
     }
     const soldOn = parseDate(get('data_venda'));
@@ -477,6 +483,9 @@ async function runImport(
   const { tenantId } = options;
 
   // Atendentes: casar por nome dobrado sem acento; criar o que faltar (D-180 item 2).
+  // So resolve (e cria) para venda que vai ser GRAVADA: venda inalterada fica
+  // com o atendente ja gravado — senao renomear o atendente no CRM faria a
+  // reexecucao criar um atendente novo, quebrando a idempotencia (D-179 item 3).
   const attendantByFold = new Map<string, string>();
   const attendantNameById = new Map<string, string>();
   for (const a of await repo.listAttendants(tx, tenantId)) {
@@ -485,18 +494,22 @@ async function runImport(
     if (!attendantByFold.has(key)) attendantByFold.set(key, a.id);
   }
   const attendantsCreated: string[] = [];
-  const attendantIdOf = new Map<string, string>(); // SourceSale.id -> attendant_id
-  for (const row of merged.rows) {
+  const resolveAttendant = async (row: SourceSale): Promise<{ id: string; created: boolean }> => {
     const key = foldAttendantName(row.attendantName);
-    let id = attendantByFold.get(key);
-    if (!id) {
-      id = await repo.insertAttendant(tx, tenantId, row.attendantName);
-      attendantByFold.set(key, id);
-      attendantNameById.set(id, row.attendantName);
-      attendantsCreated.push(row.attendantName);
-    }
-    attendantIdOf.set(row.id, id);
-  }
+    const existing = attendantByFold.get(key);
+    if (existing) return { id: existing, created: false };
+    const id = await repo.insertAttendant(tx, tenantId, row.attendantName);
+    attendantByFold.set(key, id);
+    attendantNameById.set(id, row.attendantName);
+    attendantsCreated.push(row.attendantName);
+    return { id, created: true };
+  };
+  const forgetCreatedAttendant = async (row: SourceSale, id: string): Promise<void> => {
+    await repo.deleteAttendant(tx, tenantId, id);
+    attendantByFold.delete(foldAttendantName(row.attendantName));
+    attendantNameById.delete(id);
+    attendantsCreated.pop();
+  };
 
   const userIds = await repo.listUserIds(tx, tenantId);
   const stamps = await repo.listSaleStamps(tx, tenantId);
@@ -506,27 +519,33 @@ async function runImport(
   let unchanged = 0;
   const rejected: RejectedRow[] = [];
   const accepted: SourceSale[] = [];
+  const attendantIdOf = new Map<string, string>(); // SourceSale.id -> attendant_id
+
+  const toInsert = (row: SourceSale, attendantId: string): repo.SaleInsert => ({
+    id: row.id,
+    tenantId,
+    attendantId,
+    soldOn: row.soldOn,
+    code: row.code,
+    value: centsToDecimal(row.cents),
+    exams: row.exams,
+    kind: row.kind,
+    createdBy: row.createdBy && userIds.has(row.createdBy) ? row.createdBy : null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  });
 
   for (const row of merged.rows) {
-    const sale: repo.SaleInsert = {
-      id: row.id,
-      tenantId,
-      attendantId: attendantIdOf.get(row.id) as string,
-      soldOn: row.soldOn,
-      code: row.code,
-      value: centsToDecimal(row.cents),
-      exams: row.exams,
-      kind: row.kind,
-      createdBy: row.createdBy && userIds.has(row.createdBy) ? row.createdBy : null,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-    };
-    const storedAt = stamps.get(row.id);
-    if (storedAt === undefined) {
-      if (await repo.insertSale(tx, sale)) {
+    const stored = stamps.get(row.id);
+    if (stored === undefined) {
+      const attendant = await resolveAttendant(row);
+      if (await repo.insertSale(tx, toInsert(row, attendant.id))) {
         inserted += 1;
         accepted.push(row);
+        attendantIdOf.set(row.id, attendant.id);
       } else {
+        // Nao deixa atendente orfao criado so para esta venda recusada.
+        if (attendant.created) await forgetCreatedAttendant(row, attendant.id);
         rejected.push({
           source: row.source,
           line: row.line,
@@ -534,15 +553,18 @@ async function runImport(
           reason: 'id ja usado por outro tenant — venda nao gravada',
         });
       }
-    } else if (row.updatedAt > storedAt) {
+    } else if (row.updatedAt > stored.updatedAt) {
       // DELETE + INSERT preserva os timestamps da origem (D-180 item 1).
+      const attendant = await resolveAttendant(row);
       await repo.deleteSale(tx, tenantId, row.id);
-      await repo.insertSale(tx, sale);
+      await repo.insertSale(tx, toInsert(row, attendant.id));
       updated += 1;
       accepted.push(row);
+      attendantIdOf.set(row.id, attendant.id);
     } else {
       unchanged += 1;
       accepted.push(row);
+      attendantIdOf.set(row.id, stored.attendantId);
     }
   }
 

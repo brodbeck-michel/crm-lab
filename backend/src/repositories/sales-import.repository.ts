@@ -76,14 +76,33 @@ export async function listUserIds(tx: DbTx, tenantId: string): Promise<Set<strin
   return new Set(result.rows.map((r) => r.id));
 }
 
-/** `id -> updated_at` (texto em `TIMESTAMP_TEXT`) das vendas do tenant. */
-export async function listSaleStamps(tx: DbTx, tenantId: string): Promise<Map<string, string>> {
-  const result = await tx.query<{ id: string; updated_at: string }>(
-    `SELECT id, to_char(updated_at, '${TIMESTAMP_TEXT}') AS updated_at
+export interface StoredSaleStamp {
+  /** `updated_at` em texto (`TIMESTAMP_TEXT`) — comparavel como string. */
+  updatedAt: string;
+  attendantId: string;
+}
+
+/** `id -> { updated_at, attendant_id }` das vendas do tenant. */
+export async function listSaleStamps(
+  tx: DbTx,
+  tenantId: string,
+): Promise<Map<string, StoredSaleStamp>> {
+  const result = await tx.query<{ id: string; updated_at: string; attendant_id: string }>(
+    `SELECT id, attendant_id, to_char(updated_at, '${TIMESTAMP_TEXT}') AS updated_at
        FROM sales WHERE tenant_id = $1`,
     [tenantId],
   );
-  return new Map(result.rows.map((r) => [r.id, r.updated_at]));
+  return new Map(
+    result.rows.map((r) => [r.id, { updatedAt: r.updated_at, attendantId: r.attendant_id }]),
+  );
+}
+
+/**
+ * Desfaz um atendente que a carga acabou de criar e nao chegou a usar (a venda
+ * foi rejeitada por `id` de outro tenant). Nada referencia a linha ainda.
+ */
+export async function deleteAttendant(tx: DbTx, tenantId: string, id: string): Promise<void> {
+  await tx.query('DELETE FROM attendants WHERE tenant_id = $1 AND id = $2', [tenantId, id]);
 }
 
 export interface SaleInsert {

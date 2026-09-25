@@ -215,6 +215,25 @@ describe('parseVendasCsv', () => {
     expect(parsed.rows[0]).toMatchObject({ code: null, exams: null });
   });
 
+  it('codigo > 50, atendente > 255, created_by nao-UUID e colunas a mais: rejeitadas', () => {
+    const parsed = fx([
+      venda({ codigo: 'x'.repeat(51) }),
+      venda({ atendente: 'a'.repeat(256) }),
+      venda({ created_by: 'usuario-1' }),
+    ]);
+    const extra = parseVendasCsv(
+      `${HEADER}\n${randomUUID()},Ana,2026-09-01,,10,,exames,,2026-09-01,2026-09-01,sobra\n`,
+      'lovable',
+    );
+    expect(parsed.rows).toEqual([]);
+    expect(parsed.rejected.map((r) => r.reason)).toEqual([
+      expect.stringMatching(/codigo com mais de 50/),
+      expect.stringMatching(/atendente com mais de 255/),
+      expect.stringMatching(/created_by invalido/),
+    ]);
+    expect(extra.rejected[0]?.reason).toMatch(/numero de colunas/);
+  });
+
   it('cabecalho sem coluna obrigatoria: erro do arquivo', () => {
     expect(() => parseVendasCsv('id,atendente\n', 'lovable')).toThrow(/data_venda/);
   });
@@ -336,6 +355,23 @@ describe('importSales — idempotencia e atualizacao', () => {
     const second = await run(fx(rows), lv(lovable));
     expect(second).toMatchObject({ inserted: 0, updated: 0, unchanged: 3, attendantsCreated: [] });
     expect(await storedSales(tenant.id)).toEqual(before);
+  });
+
+  it('atendente renomeado no CRM: reexecucao nao cria atendente nem mexe na venda', async () => {
+    const rows = [venda({ atendente: 'Maria Souza' })];
+    await run(fx(rows), lv([]));
+    await db.withTenant(tenant.id, (tx) =>
+      tx.query("UPDATE attendants SET name = 'Maria S. Souza'"),
+    );
+    const before = await storedSales(tenant.id);
+
+    const second = await run(fx(rows), lv([]));
+    expect(second).toMatchObject({ inserted: 0, updated: 0, unchanged: 1, attendantsCreated: [] });
+    expect(await attendantNames(tenant.id)).toEqual(['Maria S. Souza']);
+    expect(await storedSales(tenant.id)).toEqual(before);
+    expect(second.byAttendant).toEqual([
+      expect.objectContaining({ attendant: 'Maria S. Souza', matches: true }),
+    ]);
   });
 
   it('origem com updated_at mais novo atualiza preservando os timestamps da origem', async () => {
@@ -470,5 +506,8 @@ describe('tenant e isolamento', () => {
     ]);
     expect(await storedSales(tenant.id)).toEqual([]);
     expect((await storedSales(other.id))[0]?.value).toBe('50.00');
+    // O atendente criado so para a venda recusada nao fica orfao no tenant.
+    expect(report.attendantsCreated).toEqual([]);
+    expect(await attendantNames(tenant.id)).toEqual([]);
   });
 });

@@ -46,7 +46,7 @@ O CSV precisa ter cabeçalho com estas colunas (ordem livre; BOM aceito):
 | Coluna | Obrigatória | Vira |
 |---|---|---|
 | `id` | sim (UUID) | `sales.id` |
-| `atendente` | sim | `sales.attendant_id` (por nome) |
+| `atendente` | sim (até 255 caracteres) | `sales.attendant_id` (por nome) |
 | `data_venda` | sim (`AAAA-MM-DD`) | `sales.sold_on` |
 | `valor` | sim (> 0, até 2 casas, ponto decimal) | `sales.value` |
 | `tipo` | sim (`exames` \| `checkup`) | `sales.kind` (`exams` \| `checkup`) |

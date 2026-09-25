@@ -2670,7 +2670,10 @@ relatório de conflitos deixa a escolha auditável em vez de escondida.
    "jose silva"). Sem par, o atendente é **criado** (nome com espaços colapsados). É mais
    frouxo que o `folded_name` do banco (que mantém acento, D-111), de propósito: na carga, dois
    cadastros para a mesma pessoa custam mais que o risco de juntar homônimos que só diferem por
-   acento.
+   acento. O atendente só é resolvido (e criado) para venda que vai ser **gravada**
+   (inserida ou atualizada): venda inalterada mantém o atendente já gravado — assim renomear o
+   atendente no CRM não faz a reexecução criar outro — e um atendente criado só para uma venda
+   recusada ("id já usado por outro tenant") é desfeito na mesma transação.
 3. **`created_by`** fica com o mesmo UUID só se existir um usuário **daquele tenant** com esse
    `id`; senão `NULL` (o login do Supabase não é migrado por este script).
 4. **Tudo dentro de `db.withTenant(tenantId)`**, numa transação única. A exceção é resolver

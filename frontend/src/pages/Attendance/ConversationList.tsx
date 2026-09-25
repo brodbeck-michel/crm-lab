@@ -1,7 +1,10 @@
+import { useEffect, useState } from 'react';
+import { MessageSquarePlus } from 'lucide-react';
 import type { Conversation, PatientListItem } from '@crm-lab/shared';
-import { Button, Chip, SearchInput } from '@/components/ui';
+import { Button, Chip, SearchInput, Tooltip, cn } from '@/components/ui';
 import { EmptyState } from '@/components/shared';
 import { ConversationItem } from '@/components/conversation';
+import { NewConversationModal } from './NewConversationModal';
 import { PatientResults } from './PatientResults';
 
 /**
@@ -15,6 +18,11 @@ import { PatientResults } from './PatientResults';
  * A MESMA busca alimenta duas listas (D-079): as conversas (`GET /conversations`)
  * e os pacientes (`GET /patients`, §2c — "a tela chega aqui pela busca do
  * inbox"). Sem termo digitado o bloco de pacientes não existe.
+ *
+ * No topo, o "+" de **Nova conversa** (CRMLAB-50, D-175), padrão WhatsApp Web,
+ * também no atalho Ctrl+Alt+N. O modal cuida do envio; aqui só se abre e, no
+ * fim, a conversa criada/reaproveitada é selecionada pelo mesmo `onSelect` do
+ * clique na fila.
  */
 
 /**
@@ -65,9 +73,42 @@ export function ConversationList({
   const toggle = (next: Exclude<ConversationScope, 'all'>) =>
     onScopeChange(scope === next ? 'all' : next);
 
+  const [newConversationOpen, setNewConversationOpen] = useState(false);
+
+  /** Ctrl+Alt+N abre a Nova conversa de qualquer ponto da tela. */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || !event.altKey) return;
+      if (event.code !== 'KeyN' && event.key.toLowerCase() !== 'n') return;
+      event.preventDefault();
+      setNewConversationOpen(true);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex flex-col gap-md border-b border-neutral-300 px-lg py-lg">
+        <div className="flex items-center justify-between gap-sm">
+          <h2 className="font-heading text-body font-semibold text-text">Conversas</h2>
+          <Tooltip content="Nova conversa (Ctrl+Alt+N)" placement="bottom">
+            <button
+              type="button"
+              aria-label="Nova conversa"
+              aria-keyshortcuts="Control+Alt+N"
+              onClick={() => setNewConversationOpen(true)}
+              className={cn(
+                'flex h-[32px] w-[32px] cursor-pointer items-center justify-center',
+                'rounded-pill border-none bg-transparent text-neutral-700',
+                'hover:bg-neutral-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-500',
+              )}
+            >
+              <MessageSquarePlus size={20} aria-hidden="true" />
+            </button>
+          </Tooltip>
+        </div>
+
         <div className="flex items-center gap-sm overflow-x-auto">
           {/*
             O tom SEGUE a seleção: filtro ligado fica colorido, desligado fica
@@ -155,6 +196,10 @@ export function ConversationList({
         isLoading={patientsLoading}
         isError={patientsError}
       />
+
+      {newConversationOpen && (
+        <NewConversationModal onClose={() => setNewConversationOpen(false)} onStarted={onSelect} />
+      )}
     </div>
   );
 }

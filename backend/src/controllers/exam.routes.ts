@@ -6,6 +6,8 @@
  *   PATCH /api/v1/exams/:id          manager/admin
  *   GET   /api/v1/exams/:id/prices   qualquer papel autenticado (Onda 7)
  *   PUT   /api/v1/exams/:id/prices   manager/admin (Onda 7)
+ *   POST  /api/v1/exams/import/preview  admin (CRMLAB-23 — nao grava)
+ *   POST  /api/v1/exams/import          admin (CRMLAB-23 — tudo ou nada)
  *
  * NAO existe DELETE: o catalogo se desativa com `PATCH { isActive: false }`,
  * porque propostas historicas referenciam o exame (D-004, SERVICES.md §5).
@@ -17,7 +19,10 @@ import { Router, type Request, type RequestHandler, type Response } from 'expres
 import { z } from 'zod';
 import type {
   Exam,
+  ExamImportPreview,
+  ExamImportResult,
   ExamPrice,
+  ImportExamCatalogRequest,
   ListExamPricesResponse,
   ListExamsResponse,
   UpdateExamPricesRequest,
@@ -133,6 +138,16 @@ export const examPricesBodySchema = z.object({
   ),
 });
 
+/**
+ * Corpo dos dois endpoints de importacao (CRMLAB-23). `contentBase64` SEM
+ * `max` aqui de proposito: o teto e checado sobre os bytes decodificados no
+ * service e responde `MEDIA_TOO_LARGE` (413), nao um VALIDATION_ERROR generico.
+ */
+export const importExamCatalogSchema = z.object({
+  fileName: z.string().trim().min(1).max(255),
+  contentBase64: z.string().min(1),
+});
+
 type CreateExamBody = z.infer<typeof createExamSchema>;
 type UpdateExamBody = z.infer<typeof updateExamSchema>;
 
@@ -218,6 +233,26 @@ export function upsertExamPrices(service: ExamCatalogService): RequestHandler {
   });
 }
 
+/** CRMLAB-23. admin. Nao grava nada. */
+export function previewExamImport(service: ExamCatalogService): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const dto = validated<ImportExamCatalogRequest>(req, 'body');
+    const body: ExamImportPreview = await service.previewImport(ctx, dto);
+    res.status(200).json(body);
+  });
+}
+
+/** CRMLAB-23. admin. Tudo ou nada, numa transacao do tenant. */
+export function confirmExamImport(service: ExamCatalogService): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const dto = validated<ImportExamCatalogRequest>(req, 'body');
+    const body: ExamImportResult = await service.confirmImport(ctx, dto);
+    res.status(200).json(body);
+  });
+}
+
 export function examModule(deps: ApiModuleDeps): ApiModule {
   const service = createExamCatalogService(deps);
   const router = Router();
@@ -252,6 +287,26 @@ export function examModule(deps: ApiModuleDeps): ApiModule {
     validate(examIdParamSchema, 'params'),
     validate(updateExamSchema, 'body'),
     updateExam(service),
+  );
+
+  // CRMLAB-23 — importacao por CSV, SO admin (D-177). `requireRoles` antes do
+  // `validate`, pelo mesmo motivo do POST acima.
+  router.post(
+    '/import/preview',
+    requireAuth(),
+    denyPlatformOperator(),
+    requireRoles('admin'),
+    validate(importExamCatalogSchema, 'body'),
+    previewExamImport(service),
+  );
+
+  router.post(
+    '/import',
+    requireAuth(),
+    denyPlatformOperator(),
+    requireRoles('admin'),
+    validate(importExamCatalogSchema, 'body'),
+    confirmExamImport(service),
   );
 
   // Onda 7 — preco por convenio (`exam_prices`, SCHEMA.md §19).

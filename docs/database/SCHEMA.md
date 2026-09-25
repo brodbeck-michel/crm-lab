@@ -1352,6 +1352,11 @@ de `quick_replies`, §22: venda lançada errada é corrigida apagando e relança
 histórico dependente da linha). Escopo de leitura por papel: atendente só as próprias vendas
 (`attendants.user_id = ctx.userId`); manager/admin veem todas — API_CONTRACTS.md §11.
 
+Carga das vendas históricas dos dois Supabases do Santé (`npm run import:sales-supabase`,
+CRMLAB-45): `id` preservado, `created_at`/`updated_at` da origem preservados (atualização é
+`DELETE` + `INSERT`, porque o trigger sobrescreve `updated_at` em `UPDATE`) — D-179/D-180,
+passo a passo em `docs/guides/MIGRACAO_SANTE.md` §1.
+
 ### 28. `exam_packages` (migração 015 — CRMLAB-10, D-130)
 Cadastro de pacotes de exames (combos), aba "Pacotes" dentro de Cadastro de Exames (`/catalog`).
 Mesmo padrão de `exam_catalog` (§7): ativo/inativo em vez de `DELETE` (D-004).

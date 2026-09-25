@@ -633,7 +633,8 @@ Criar um atendimento que **não veio do WhatsApp** — ligação, balcão, formu
 - `patientName`: obrigatório, 1..255
 - `patientEmail`: opcional/anulável, e-mail válido, máx. 255
 - `channel` ∈ `direct | web | sms`. **`whatsapp` é recusado** com `VALIDATION_ERROR`: conversa
-  desse canal nasce apenas pelo webhook, que deduplica por `externalId`. "Ligação" e "presencial"
+  desse canal nasce pelo webhook, que deduplica por `externalId`, ou por
+  `POST /conversations/whatsapp` (D-175), que já envia a primeira mensagem. "Ligação" e "presencial"
   caem as duas em `direct` — separá-las exigiria coluna nova (fora do escopo do v1)
 
 **Comportamento:** mesmo `findOrCreateByPhone` do webhook — a linha de `patients` é criada ou
@@ -653,6 +654,59 @@ distingue os dois casos, e não precisa — o destino é o mesmo.
 já tem conversa **ativa** de outro atendente (encerrada reabre, D-174). Aqui o 409 é deliberado, e é a exceção à regra do 404:
 devolver `NOT_FOUND` mandaria o atendente montar orçamento numa conversa que ele não consegue
 abrir. `FORBIDDEN` (403, `platform_operator`).
+
+### POST /conversations/whatsapp (CRMLAB-50, D-175)
+Botão **"Nova conversa"** da lista de conversas (PAGES.md §2): o atendente manda a **primeira
+mensagem de WhatsApp** para um número. Cria a conversa (se o número ainda não tem uma) e envia a
+mensagem pelo canal WhatsApp do laboratório, pelo **mesmo** `MessageService.createFromAgent` de
+`POST /conversations/:id/messages` — não existe caminho paralelo de envio.
+
+**Request** (`StartWhatsAppConversationRequest`):
+```json
+{
+  "phone": "(48) 99999-1234",
+  "content": "Olá! Aqui é do laboratório, tudo bem?"
+}
+```
+
+- `phone`: obrigatório, máx. 20 caracteres, **telefone brasileiro** validado por
+  `normalizeBrazilianPhone` (`@crm-lab/shared`): com ou sem máscara, com ou sem o `55`; DDD
+  (dois dígitos de 1 a 9) + 9 dígitos começando por 9 (celular) ou 8 dígitos começando de 2 a 9.
+  É normalizado para E.164 (`+5548999991234`) antes de procurar duplicata
+- `content`: obrigatório, 1..4000 caracteres (trim aplicado) — o mesmo limite de
+  `POST /conversations/:id/messages`
+
+**Comportamento (D-175):**
+- **Número que já tem conversa no laboratório → reaproveita**, nunca duplica. O dedupe é o de
+  `findOrCreateByPhone` (dígitos do telefone, D-059/D-072) — e reconhece o celular com e sem o
+  nono dígito (`5548999991234` ≡ `554899991234`, D-176). O paciente também é o da conversa.
+- **Número novo → cria** a conversa no canal `whatsapp`, **atribuída a quem enviou**, e o cadastro
+  de `patients` na mesma transação, **sem nome** — igual ao número desconhecido que escreve pela
+  primeira vez sem nome de perfil (o nome entra depois, pelo perfil do WhatsApp ou pela Ficha).
+- Conversa existente **ativa de outro atendente** → `CONVERSATION_ALREADY_ASSIGNED` (409), a
+  mesma regra de `POST /conversations`. Conversa da **fila livre** é usada como está (enviar
+  não assume — assumir é `PATCH /conversations/:id`).
+- Conversa existente **encerrada** → reabre atribuída a quem enviou, com "Atendimento reaberto
+  por <nome>" (D-174), e então envia.
+- Conversa existente de outro canal (`direct`/`web`/`sms`, atendimento manual) → passa a
+  `whatsapp` (audit `update_conversation_channel`): a mensagem sai pelo WhatsApp e as próximas
+  do atendente também.
+- Audit `create_conversation` quando cria (como os outros dois caminhos de criação).
+
+**Response (201)** (`StartWhatsAppConversationResponse`):
+```json
+{
+  "conversation": { "...": "ConversationDetail — o mesmo shape de GET /conversations/:id" },
+  "message": { "...": "Message — o mesmo shape de POST /conversations/:id/messages" }
+}
+```
+
+**Erros:** `VALIDATION_ERROR` (400 — `details.fields.phone` / `details.fields.content`),
+`CONVERSATION_ALREADY_ASSIGNED` (409, `details: { assignedTo, assignedToName }`),
+`MESSAGE_SEND_FAILED` (502, `details: { messageId, conversationId }` — canal indisponível, sem
+credencial ou desligado: a conversa **fica criada** e a mensagem gravada como `failed`, como em
+`POST /conversations/:id/messages`; `conversationId` existe para a tela abrir a conversa mesmo
+assim), `FORBIDDEN` (403, `platform_operator`).
 
 ### GET /conversations/:id
 Detalhes de uma conversa + histórico de mensagens.
@@ -2468,6 +2522,117 @@ Auditado (`update_exam_prices`).
 
 **Erros:** `NOT_FOUND` (exame de outro tenant), `VALIDATION_ERROR` (400, `details.fields`),
 `FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
+
+### Importação do catálogo por CSV (admin apenas — CRMLAB-23, D-177/D-178)
+
+Dois endpoints, **o mesmo corpo**: o cliente lê o arquivo, manda para a pré-visualização,
+mostra o resultado e, se o usuário confirmar, manda **o mesmo arquivo de novo** para gravar. O
+servidor não guarda estado entre as duas chamadas — a confirmação revalida tudo do zero (o
+catálogo pode ter mudado entre um passo e outro). Shapes em `shared/types/exam.types.ts`.
+
+**Só `admin`** (403 `FORBIDDEN`, `details.requiredRoles: ["admin"]` para gestor e atendente —
+a rota recusa e o service confere de novo). O botão só aparece para admin, mas a regra é do
+servidor. Tudo dentro de `db.withTenant` (RLS): código igual em outro laboratório é outro
+exame e nunca é tocado.
+
+**Request (os dois endpoints):**
+```json
+{
+  "fileName": "catalogo.csv",
+  "contentBase64": "bm9tZTtjb2RpZ287cHJlY29fY29udmVuaW87cHJlY29fcGFydGljdWxhcgo..."
+}
+```
+
+**Formato do arquivo:**
+- Texto **UTF-8**, com ou sem BOM. Arquivo que não é UTF-8 válido (ex.: "CSV (separado por
+  vírgulas)" do Excel no Windows, que sai em Windows-1252) → `invalid_encoding` — a tela
+  orienta a salvar como "CSV UTF-8". Arquivo com byte NUL (UTF-16 sem BOM, binário) também é
+  `invalid_encoding`.
+- Separador **`;` ou `,`**, detectado pelo cabeçalho (o que aparecer mais fora de aspas; empate
+  → `;`, o padrão do Excel em pt-BR). Campo com o separador, aspas ou quebra de linha vai entre
+  aspas duplas (`"a;b"`, `"diz ""oi"""`), padrão RFC 4180.
+- **Cabeçalho** na primeira linha, casado sem caixa e sem acento (`Código` = `codigo`; espaços e
+  pontuação viram `_`, então `Prazo (horas)` = `prazo_horas`). Colunas:
+
+| Coluna | Campo | Obrigatória | Regra |
+|--------|-------|-------------|-------|
+| `nome` | `name` | sim | 1..255 caracteres |
+| `codigo` | `code` | sim | 1..50 caracteres; chave de "já existe" (exato, depois de `trim`) |
+| `categoria` | `category` | não | até 100 |
+| `descricao` | `description` | não | até 4000 |
+| `preparo` | `preparation` | não | até 4000 |
+| `prazo_horas` (ou `prazo`) | `turnaroundHours` | não | inteiro 1..100000 |
+| `preco_convenio` | `priceInsurance` | sim | ≥ 0, até 2 casas |
+| `preco_particular` | `pricePrivate` | sim | ≥ 0, até 2 casas |
+
+  Coluna desconhecida é ignorada. Coluna obrigatória ausente → `missing_column`; coluna
+  repetida → `duplicate_column`.
+- **Preço** aceita `1.234,56`, `1234,56`, `1234.56`, `1234` e prefixo `R$`. Com ponto **e**
+  vírgula, o último é o decimal. Mais de 2 casas decimais é erro da linha — é assim que
+  `1.234` (ambíguo: mil duzentos e trinta e quatro ou um vírgula dois três quatro?) é recusado
+  em vez de adivinhado.
+- Linha totalmente em branco é pulada. Código repetido **dentro do arquivo** é erro nas duas
+  linhas (ou mais) que o repetem.
+- **Limites:** 2 MiB decodificado (`EXAM_IMPORT_MAX_BYTES`, 413 `MEDIA_TOO_LARGE` com
+  `details: { byteSize, max }`) e 5000 linhas de dado (`EXAM_IMPORT_MAX_ROWS`, `too_many_rows`).
+  `errors` lista no máximo 1000 itens (`EXAM_IMPORT_MAX_ERRORS`, `errorsTruncated: true`);
+  `errorCount` é sempre exato.
+
+**Inserir ou atualizar** (D-177): código que já existe no laboratório **atualiza** o exame;
+código novo **cria** (ativo, `source: "manual"`). Na atualização, `nome` e os dois preços são
+sempre regravados; célula **vazia** de coluna opcional **preserva** o valor atual (planilha
+parcial não apaga descrição/preparo de ninguém — para limpar um campo, use o modal). A
+importação **não** muda `isActive`, `tussCode`, `ambCode`, `material`, sinônimos, preço por
+convênio (`exam_prices`) nem pacotes: tudo isso fica fora do escopo do CSV.
+
+#### POST /exams/import/preview
+Lê e valida o arquivo e classifica cada linha. **Não grava nada** (nem audit log).
+
+**Response (200):** `ExamImportPreview`
+```json
+{
+  "fileName": "catalogo.csv",
+  "totalRows": 3,
+  "createCount": 1,
+  "updateCount": 1,
+  "errorCount": 1,
+  "errors": [
+    { "line": 4, "column": "preco_particular", "message": "Preço inválido: \"abc\"" }
+  ],
+  "errorsTruncated": false,
+  "rows": [
+    { "line": 2, "action": "update", "code": "HC", "name": "Hemograma completo",
+      "category": "Hematologia", "turnaroundHours": 24, "pricePrivate": 89.90, "priceInsurance": 75.00 },
+    { "line": 3, "action": "create", "code": "VITD", "name": "Vitamina D",
+      "category": null, "turnaroundHours": null, "pricePrivate": 1234.56, "priceInsurance": 95.00 }
+  ]
+}
+```
+`line` é o número da linha na planilha (cabeçalho = 1). `column: null` = erro da linha inteira
+(ex.: código repetido no arquivo). `rows` traz só as linhas válidas. Dinheiro é número decimal
+(regra 9).
+
+**Erros:** `VALIDATION_ERROR` (400) com `details.reason` ∈ `invalid_encoding | malformed |
+empty | missing_column | duplicate_column | too_many_rows` (`missing_column`/`duplicate_column`
+trazem `details.columns: string[]`; `too_many_rows` traz `details: { rows, max }`) ou com
+`details.fields` (corpo fora do shape); `MEDIA_TOO_LARGE` (413); `FORBIDDEN` (403).
+`malformed` = aspas abertas e nunca fechadas.
+
+#### POST /exams/import
+Confirma: revalida o arquivo e grava **tudo ou nada**, numa única transação do tenant. Se
+qualquer linha tiver erro, nada é gravado.
+
+**Response (200):** `ExamImportResult`
+```json
+{ "fileName": "catalogo.csv", "totalRows": 2, "created": 1, "updated": 1 }
+```
+
+Gera audit log `import_exam_catalog` (`entityType: "exam_catalog"`, `entityId` = tenant,
+`newValues: { fileName, totalRows, created, updated }`) e invalida o cache `exams:<tenantId>:`.
+
+**Erros:** os mesmos do preview, mais `VALIDATION_ERROR` com `details.reason: "invalid_rows"`,
+`details.errorCount` e `details.errors` (mesmo shape de `ExamImportPreview.errors`) quando
+alguma linha é inválida — nada foi gravado.
 
 ---
 

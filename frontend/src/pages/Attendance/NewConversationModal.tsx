@@ -95,6 +95,9 @@ export function NewConversationModal({ onClose, onStarted }: NewConversationModa
 
   function handleSubmit(event?: FormEvent) {
     event?.preventDefault();
+    // Enter no telefone submete o form mesmo com o "Enviar" desabilitado: sem
+    // este guard, dois Enter rápidos mandariam a mensagem duas vezes.
+    if (start.isPending) return;
     setSubmitted(true);
     setServerErrors({});
     setFormError(null);

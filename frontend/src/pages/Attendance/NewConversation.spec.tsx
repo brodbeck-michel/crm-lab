@@ -256,6 +256,31 @@ describe('Atendimento — Nova conversa (CRMLAB-50)', () => {
     expect(getMock).not.toHaveBeenCalled();
   });
 
+  it('Enter repetido no telefone enquanto envia não manda a mensagem duas vezes', async () => {
+    let resolveStart: (value: StartWhatsAppConversationResponse) => void = () => undefined;
+    startWhatsAppMock.mockImplementation(
+      () =>
+        new Promise<StartWhatsAppConversationResponse>((resolve) => {
+          resolveStart = resolve;
+        }),
+    );
+    renderScreen();
+    const dialog = await openModal();
+
+    await userEvent.type(within(dialog).getByLabelText('Mensagem'), 'Olá!');
+    const phoneInput = within(dialog).getByLabelText('Telefone (WhatsApp)');
+    await userEvent.type(phoneInput, '(48) 99999-1234{Enter}');
+    await waitFor(() => expect(startWhatsAppMock).toHaveBeenCalledTimes(1));
+    await userEvent.type(phoneInput, '{Enter}{Enter}');
+
+    expect(startWhatsAppMock).toHaveBeenCalledTimes(1);
+    resolveStart({
+      conversation: { ...conversation(), patientEmail: null, customFields: {} },
+      message: message(),
+    });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
   it('Ctrl+Alt+N abre o modal', async () => {
     renderScreen();
     await screen.findByRole('button', { name: 'Nova conversa' });

@@ -7,6 +7,7 @@ import { api, queryKeys, queryScopes, staleTimes } from '@/api';
 import { useQuickReplyList } from '@/api/quick-replies';
 import { useToast } from '@/components/ui';
 import { InboxLayout } from '@/components/layout';
+import type { RecordedAudio } from '@/components/conversation';
 import { useApiErrorHandler } from '@/hooks';
 import { useAuthStore, useUIStore, selectUser } from '@/stores';
 import { ConversationList } from './ConversationList';
@@ -174,7 +175,7 @@ export function Attendance() {
     onError: handleApiError,
   });
 
-  function readFileAsBase64(file: File): Promise<string> {
+  function readFileAsBase64(file: Blob): Promise<string> {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onerror = () => reject(reader.error);
@@ -191,6 +192,20 @@ export function Attendance() {
     sendAttachment.mutate({
       fileName: file.name,
       mimeType: file.type || 'application/octet-stream',
+      contentBase64,
+    });
+  }
+
+  /**
+   * Recado de voz do compositor (CRMLAB-24, D-181): o MESMO endpoint do clipe.
+   * `mutateAsync` para o Composer saber se foi — falhou, a prévia fica e o
+   * erro já saiu pelo `handleApiError` do `onError`.
+   */
+  async function handleSendAudio(audio: RecordedAudio): Promise<void> {
+    const contentBase64 = await readFileAsBase64(audio.blob);
+    await sendAttachment.mutateAsync({
+      fileName: audio.fileName,
+      mimeType: audio.mimeType,
       contentBase64,
     });
   }
@@ -301,6 +316,7 @@ export function Attendance() {
             onToggleContext={toggleContextPanel}
             onClose={() => setSelectedId(null)}
             onAttach={() => fileInputRef.current?.click()}
+            onSendAudio={handleSendAudio}
             quickReplies={quickRepliesQuery.data?.quickReplies ?? []}
             contextOpen={contextOpen}
             hasOlderMessages={!loadedAll}

@@ -17,6 +17,7 @@ import type * as ApiModule from '@/api';
 const listMock = vi.fn();
 const getMock = vi.fn();
 const sendMessageMock = vi.fn();
+const sendAttachmentMock = vi.fn();
 const listProposalsMock = vi.fn();
 const listPatientsMock = vi.fn();
 
@@ -31,6 +32,7 @@ vi.mock('@/api', async (importOriginal) => {
         list: listMock,
         get: getMock,
         sendMessage: sendMessageMock,
+        sendAttachment: sendAttachmentMock,
       },
       proposals: { ...actual.api.proposals, list: listProposalsMock },
       patients: { ...actual.api.patients, list: listPatientsMock },
@@ -317,6 +319,65 @@ describe('Atendimento — abrir conversa', () => {
         messageType: 'text',
       });
     });
+  });
+
+  it('recado de voz gravado sai pelo MESMO POST /attachments do clipe (CRMLAB-24)', async () => {
+    listMock.mockResolvedValue(listResponse([conversation()]));
+    getMock.mockResolvedValue(detailResponse());
+    sendAttachmentMock.mockResolvedValue(
+      message({ id: 'm-3', senderType: 'agent', messageType: 'audio' }),
+    );
+    const track = { stop: vi.fn() };
+    const stream = { getTracks: () => [track] };
+    class FakeRecorder {
+      static isTypeSupported = (type: string) => type === 'audio/webm;codecs=opus';
+      state = 'inactive';
+      mimeType = 'audio/webm;codecs=opus';
+      ondataavailable: ((event: { data: Blob }) => void) | null = null;
+      onstop: (() => void) | null = null;
+      start() {
+        this.state = 'recording';
+      }
+      stop() {
+        this.state = 'inactive';
+        this.ondataavailable?.({ data: new Blob(['voz'], { type: this.mimeType }) });
+        this.onstop?.();
+      }
+    }
+    vi.stubGlobal('MediaRecorder', FakeRecorder);
+    Object.defineProperty(navigator, 'mediaDevices', {
+      value: { getUserMedia: vi.fn().mockResolvedValue(stream) },
+      configurable: true,
+    });
+    URL.createObjectURL = vi.fn(() => 'blob:voz');
+    URL.revokeObjectURL = vi.fn();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-25T12:00:00Z'));
+    try {
+      renderScreen();
+      await userEvent.click(await screen.findByTestId('conversation-item'));
+      const composer = await screen.findByTestId('composer');
+      await userEvent.click(within(composer).getByRole('button', { name: 'Gravar áudio' }));
+      await within(composer).findByText('Gravando');
+      vi.setSystemTime(new Date('2026-09-25T12:00:30Z'));
+      await userEvent.click(within(composer).getByRole('button', { name: 'Parar' }));
+      await userEvent.click(within(composer).getByRole('button', { name: 'Enviar' }));
+
+      await waitFor(() => {
+        expect(sendAttachmentMock).toHaveBeenCalledWith('c-1', {
+          fileName: 'recado-de-voz.webm',
+          mimeType: 'audio/webm;codecs=opus',
+          contentBase64: btoa('voz'),
+        });
+      });
+      await waitFor(() =>
+        expect(within(composer).queryByTestId('voice-recorder')).not.toBeInTheDocument(),
+      );
+      expect(track.stop).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
   });
 
   it('sem conversa selecionada, a coluna do meio orienta em vez de ficar em branco', async () => {

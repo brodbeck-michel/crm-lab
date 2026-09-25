@@ -137,6 +137,22 @@ describe('ConversationPanel — rolagem', () => {
     vi.unstubAllGlobals();
   });
 
+  it('trocar de conversa monta outro Composer — gravação e rascunho não vão para o próximo paciente (D-181)', async () => {
+    // Com o mesmo Composer montado, um recado gravado para a Marina seguiria
+    // gravando (e seria enviado) depois de abrir a conversa do Bruno.
+    const { rerender } = render(<ConversationPanel {...props([message('m1')])} />);
+    await userEvent.type(screen.getByLabelText('Mensagem'), 'resposta para a Marina');
+
+    rerender(
+      <ConversationPanel
+        {...props([message('m1')])}
+        conversation={{ ...CONVERSATION, id: 'c-2', patientName: 'Bruno Lima' }}
+      />,
+    );
+
+    expect(screen.getByLabelText('Mensagem')).toHaveValue('');
+  });
+
   it('conversa encerrada bloqueia composer e o botão Encerrar', () => {
     render(
       <ConversationPanel

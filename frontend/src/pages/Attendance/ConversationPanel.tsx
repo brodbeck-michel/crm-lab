@@ -9,6 +9,7 @@ import type {
 import { Button, cn } from '@/components/ui';
 import { EmptyState } from '@/components/shared';
 import { Composer, MessageBubble, bubbleTypeFor } from '@/components/conversation';
+import type { RecordedAudio } from '@/components/conversation';
 
 /**
  * Coluna 2 do inbox — PAGES.md §2.
@@ -42,6 +43,8 @@ export interface ConversationPanelProps {
   onClose: () => void;
   /** Anexo no composer. */
   onAttach: () => void;
+  /** Recado de voz gravado no composer (CRMLAB-24) — ver `Composer.onSendAudio`. */
+  onSendAudio?: (audio: RecordedAudio) => Promise<unknown>;
   /** Macros do laboratório — a `/` do composer (Onda 8 §3.4). */
   quickReplies: QuickReply[];
   contextOpen: boolean;
@@ -228,6 +231,7 @@ export function ConversationPanel({
   onToggleContext,
   onClose,
   onAttach,
+  onSendAudio,
   quickReplies,
   contextOpen,
   hasOlderMessages,
@@ -365,9 +369,13 @@ export function ConversationPanel({
         )}
       </div>
 
+      {/* Um Composer POR conversa (D-181): trocar de conversa cancela a gravação
+          e solta o microfone — o recado feito para um paciente não vai para outro. */}
       <Composer
+        key={conversation.id}
         onSend={onSend}
         onAttach={onAttach}
+        onSendAudio={onSendAudio}
         sending={sending}
         disabled={closed}
         quickReplies={quickReplies}

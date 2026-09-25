@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-24 (v1.19.0 em PRODUÇÃO — CRMLAB-49, ver fim do arquivo)
+**Última atualização:** 2026-09-25 (v1.20.0 em PRODUÇÃO — Onda 1: CRMLAB-51, 50, 23, 45, 17, ver fim do arquivo)
 
 ---
 
@@ -2741,3 +2741,26 @@ por dentro. A lista de mensagens mantém a borda de baixo parada (PR #61).
 - **prod:** `262c808` (tag **v1.19.0**), CI verde nos 5 jobs, imagens puxadas do GHCR, sem
   migração. Healthcheck OK na 2ª tentativa. O bundle servido em https://vitrocrm.cloud confirma
   `1.19.0`.
+
+### 🚀 v1.20.0 em produção (2026-09-25) — Onda 1
+
+Cinco cards desenvolvidos em paralelo, cada um no seu worktree, com revisor independente, e
+validados juntos na branch `integ/onda-1`:
+
+- **CRMLAB-51** (PR #62, D-183): `*texto*` em negrito na bolha, padrão WhatsApp; Ctrl+B no Composer.
+- **CRMLAB-50** (PR #63, D-175/D-176): botão "+" Nova conversa e `POST /conversations/whatsapp`;
+  dedupe do celular com e sem o nono dígito.
+- **CRMLAB-23** (PR #64, D-177/D-178): importação do catálogo de exames por CSV com pré-visualização
+  e gravação tudo-ou-nada (só admin).
+- **CRMLAB-45** (PR #65, D-179/D-180): `npm run import:sales-supabase`. **Só o script subiu**: a
+  carga das vendas em prod ainda não foi rodada (primeiro o `--dry-run` em hml com os CSVs reais,
+  ver `docs/guides/MIGRACAO_SANTE.md`).
+- **CRMLAB-17** (PR #66, D-184): a queda do WhatsApp é o `401 device_removed`; o motivo passa a ser
+  registrado e a tela avisa quando precisa de QR novo.
+
+- **Validação:** `integ/onda-1` (`a8df891`) com typecheck e lint limpos, backend 1362/1362,
+  frontend 1169/1169, CI verde com E2E (run 36142996500). Aprovado pelo PO em hml (`hml-a8df891`).
+  A árvore da main depois dos 5 merges é idêntica à de `integ/onda-1`.
+- **prod:** `b4fcf46` (tag **v1.20.0**), CI verde nos 5 jobs (run 36146573089), imagens puxadas do
+  GHCR, sem migração. Healthcheck OK na 2ª tentativa. O bundle servido em https://vitrocrm.cloud
+  confirma `1.20.0`.

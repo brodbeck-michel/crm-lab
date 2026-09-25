@@ -2889,6 +2889,72 @@ que conversa com `device_removed`, e a D-083 registra que as seguintes exigem li
 `frontend/src/api/ws.ts`, `docs/api/API_CONTRACTS.md` (webhook Evolution),
 `docs/ARCHITECTURE.md` (eventos WS). Sem migração, sem mudança de compose.
 
+### D-181: Recado de voz gravado no navegador — clique para gravar, clique para parar, 5 min no máximo (CRMLAB-24)
+**Decisão:**
+1. Botão de microfone no `Composer`, ao lado do anexo e do emoji. **Clique inicia, clique para**
+   (decisão do usuário: nada de segurar o botão). Enquanto grava, o compositor mostra
+   "Gravando", o tempo decorrido (`m:ss / 5:00`) e os botões **Cancelar** e **Parar**. Parado,
+   vira prévia: `<audio controls>` nativo para ouvir, com **Cancelar** e **Enviar**. O texto que
+   estava sendo digitado fica guardado e volta quando a gravação termina.
+2. Formato: o primeiro que `MediaRecorder.isTypeSupported` aceitar entre
+   `audio/ogg;codecs=opus` (Firefox), `audio/webm;codecs=opus` (Chrome/Edge) e `audio/mp4`
+   (Safari), a 32 kbps (voz; é a faixa do próprio recado do WhatsApp). Nenhum dos três → aviso de
+   navegador sem suporte, sem gravar num formato que o backend recusaria.
+3. **Tempo máximo 5 min**, com parada automática e aviso na prévia. Conta de tamanho: 5 min a
+   32 kbps ≈ 1,2 MB; mesmo que o navegador ignore o bitrate (Safari/AAC a 256 kbps) são ~9,6 MB,
+   abaixo do teto efetivo do anexo — 15 MiB do `MediaService` (`MAX_MEDIA_BYTES`); o nginx
+   (`client_max_body_size 25m`, CRMLAB-20) e o `express.json` (25 MB) comportam os ~20 MB do
+   base64 desse teto. **Mínimo 1 s**: parar antes disso descarta com o aviso "Áudio curto
+   demais", em vez de mandar um recado vazio de 0 s.
+4. Sem microfone utilizável a gravação **nunca é um botão que não faz nada**: o clique mostra uma
+   mensagem na linha acima do compositor — contexto inseguro (http) → "só funciona em conexão
+   segura"; sem `getUserMedia`/`MediaRecorder` → navegador sem suporte; `NotAllowedError` →
+   como liberar no cadeado da barra de endereço; `NotFoundError` → nenhum microfone;
+   `NotReadableError` → microfone em uso por outro programa.
+5. O microfone é **liberado** (`track.stop()` em todas as trilhas) ao parar, cancelar, dar erro
+   e desmontar — inclusive quando a permissão chega depois de a pessoa ter cancelado ou trocado de
+   conversa. O object URL da prévia é revogado ao enviar, cancelar e desmontar.
+6. O `Composer` passa a ser **montado por conversa** (`key={conversation.id}` no
+   `ConversationPanel`): trocar de conversa no meio da gravação cancela e solta o microfone, em vez
+   de a gravação feita para um paciente ser enviada para o próximo. O rascunho de texto também
+   deixa de "vazar" de uma conversa para a outra.
+7. Envio pelo **mesmo** caminho do clipe: `POST /conversations/:id/attachments` com o base64 do
+   `Blob`, nome `recado-de-voz.<ogg|webm|m4a>`. O botão Enviar trava enquanto a requisição voa
+   (sem duplo envio); falhou, a prévia fica para tentar de novo.
+**Motivo:** o CRMLAB-2 entregou ouvir o recado do paciente, mas responder em áudio obrigava a
+sair para o WhatsApp Web. Clique/clique (e não segurar) é mais confortável para recado longo e
+funciona igual com mouse e teclado.
+**Impacto:** `frontend/src/components/conversation/` (`useVoiceRecorder.ts` e `VoiceRecorder.tsx`
+novos, `Composer.tsx`), `pages/Attendance/` (`index.tsx`, `ConversationPanel.tsx`),
+`docs/frontend/COMPONENTS.md` (Composer).
+
+### D-182: Áudio de saída vai como recado de voz (`sendWhatsAppAudio`); `audio/webm` entra na allow-list (CRMLAB-24)
+**Decisão:**
+1. `EvolutionClient.sendMedia` manda **todo** anexo `audio/*` por
+   `POST /message/sendWhatsAppAudio/:instance` (`{ number, audio: <base64> }`) em vez de
+   `/message/sendMedia`. Esse endpoint do Evolution converte no próprio gateway (ffmpeg da
+   imagem dele) para `ogg/opus` e entrega como recado de voz (PTT) — resolve o `webm` do Chrome
+   e o `mp4` do Safari sem conversão e sem dependência nova no nosso backend (o §4.4 da spec da
+   Onda 8 pedia exatamente isso: nenhuma linha de conversão aqui). Imagem, PDF e documento
+   continuam em `sendMedia`. Vale também para áudio anexado pelo clipe (um `.mp3` chega ao
+   paciente como recado de voz): uma regra só, e a bolha do CRM é a mesma nos dois casos.
+2. `audio/webm` entra em `ALLOWED_MEDIA_MIME_TYPES`. Sem isso o recado gravado no Chrome era
+   `400 VALIDATION_ERROR` (D-169: saída rejeita).
+3. Sniff de magic bytes: o `file-type` rotula **qualquer** WebM como `video/webm` e MP4 que não
+   seja `M4A ` como `video/mp4` — é o caso do `MediaRecorder` (Chrome e Safari). Declarado
+   `audio/webm` com detectado `video/webm`, ou `audio/mp4`/`audio/aac` com detectado
+   `video/mp4`, é o **mesmo contêiner**, não troca de categoria, e o declarado é mantido. Sem essa
+   regra o recado virava `application/octet-stream`, ia como "documento" e perdia o player. A
+   regra não abre nada para HTML/SVG: só vale para esses dois contêineres de mídia.
+**Motivo:** o `sendMedia` com `mediatype: audio` repassa o arquivo como está; `webm` não é
+formato de áudio do WhatsApp e o paciente no iPhone não conseguiria ouvir. O `sendWhatsAppAudio`
+é o caminho documentado do Evolution para recado de voz.
+**Pendência:** só um teste com WhatsApp real confirma que o gateway v2.3.7 converte o `webm` do
+Chrome e o `mp4` do Safari e que o paciente ouve no Android e no iPhone.
+**Impacto:** `backend/src/lib/evolution-client.ts`, `backend/src/services/media.service.ts`
+(sniff), `shared/types/media.types.ts` (allow-list), `docs/api/API_CONTRACTS.md` §2d
+(attachments e Hardening de mídia).
+
 
 ## Template para novas decisões
 

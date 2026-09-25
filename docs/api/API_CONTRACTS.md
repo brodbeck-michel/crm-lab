@@ -860,6 +860,12 @@ enxerga devolve `NOT_FOUND`. `messageType` é derivado do `mimeType`
 (`image/* → image`, `audio/* → audio`, `application/pdf → pdf`, resto →
 `doc`) — o cliente não escolhe.
 
+**Áudio (CRMLAB-24, D-182):** o recado gravado no compositor usa este mesmo endpoint
+(`fileName` `recado-de-voz.<ogg|webm|m4a>`, `mimeType` o do `MediaRecorder`, ex.
+`audio/webm;codecs=opus`). No canal WhatsApp/Evolution, **todo** anexo `audio/*` sai por
+`POST /message/sendWhatsAppAudio/:instance` — o gateway converte para `ogg/opus` e entrega como
+recado de voz — e não por `/message/sendMedia`. O request e a resposta deste endpoint não mudam.
+
 **Response (201):** o mesmo shape de `POST /conversations/:id/messages`, com
 `attachmentUrl` apontando para `GET /media/:id` (nunca uma URL pública):
 
@@ -1631,7 +1637,8 @@ o MIME informado de olhos fechados — `MediaService.resolveStoredMimeType` roda
 
 1. **Allow-list** (`shared/types/media.types.ts`, `ALLOWED_MEDIA_MIME_TYPES` — fonte única):
    `image/jpeg`, `image/png`, `image/webp`, `image/gif`, `image/heic`, `audio/ogg`, `audio/mpeg`,
-   `audio/mp4`, `audio/aac`, `audio/amr`, `video/mp4`, `application/pdf`, `application/msword`,
+   `audio/mp4`, `audio/aac`, `audio/amr`, `audio/webm` (recado gravado no Chrome, D-182),
+   `video/mp4`, `application/pdf`, `application/msword`,
    `application/vnd.ms-excel`,
    `application/vnd.openxmlformats-officedocument.wordprocessingml.document`,
    `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`,
@@ -1653,6 +1660,9 @@ o MIME informado de olhos fechados — `MediaService.resolveStoredMimeType` roda
    Opus-em-Ogg como `audio/ogg; codecs=opus` e M4A como `audio/x-m4a` — mesma coisa, string
    diferente. Formato sem assinatura binária reconhecível (`audio/amr`, por exemplo) não é
    tratado como divergência provada; o MIME declarado (já filtrado pela allow-list) é mantido.
+   **Mesmo contêiner não é divergência (D-182):** o `file-type` rotula todo WebM como
+   `video/webm` e o MP4 do `MediaRecorder` como `video/mp4`; declarado `audio/webm` com detectado
+   `video/webm`, ou `audio/mp4`/`audio/aac` com detectado `video/mp4`, mantém o declarado.
 3. O MIME **efetivamente gravado** (não o declarado no request) é o que vira `messageType` da
    mensagem e o `Content-Type`/`Content-Disposition` de `GET /media/:id` — um anexo rebaixado
    nunca aparece como imagem/PDF na conversa.

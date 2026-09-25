@@ -362,6 +362,38 @@ describe('channel.connection_changed', () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.whatsappStatus() });
   });
 
+  it('queda com requiresNewQr (401, D-184) manda escanear o QR de novo', () => {
+    const toast = vi.fn();
+
+    applyWsEvent(
+      queryClient,
+      {
+        event: 'channel.connection_changed',
+        data: { channel: 'whatsapp', connected: false, requiresNewQr: true },
+      } as WsEvent,
+      toast,
+    );
+
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast.mock.calls[0]?.[0]).toMatch(/escaneie o QR de novo/);
+    expect(toast.mock.calls[0]?.[1]).toBe('attention');
+  });
+
+  it('queda sem requiresNewQr mantem o aviso generico (sem prometer QR)', () => {
+    const toast = vi.fn();
+
+    applyWsEvent(
+      queryClient,
+      {
+        event: 'channel.connection_changed',
+        data: { channel: 'whatsapp', connected: false, requiresNewQr: false },
+      } as WsEvent,
+      toast,
+    );
+
+    expect(toast.mock.calls[0]?.[0]).not.toMatch(/QR/);
+  });
+
   it('reconexao NAO avisa — o card muda sozinho', () => {
     const toast = vi.fn();
 

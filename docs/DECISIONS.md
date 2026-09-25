@@ -2634,6 +2634,48 @@ horário em que a antiga dona não está.
 "Encerradas"), `docs/api/API_CONTRACTS.md` §2, `API_ERRORS.md`, `WORKFLOWS.md` §5,
 `SCHEMA.md`, `PAGES.md` §2, `SERVICES.md` §2/§3.
 
+### D-184: Queda do WhatsApp é o WhatsApp removendo o aparelho (401 `device_removed`), não timeout nem OOM; o motivo passa a ser registrado e mostrado (CRMLAB-17)
+**Decisão:** não mexer em timeout, keepalive, `mem_limit` nem reconexão automática. A
+investigação (somente leitura na VPS em 25/09/2026, logs do Evolution de 20/09 a 25/09)
+mostrou:
+1. **Não é recurso nem restart.** `crm-lab-prod-evolution-1`: `RestartCount=0`,
+   `OOMKilled=false`, ~200 MiB de 768 MiB, nenhum OOM no kernel; o único reinício foi o
+   reboot do host em 21/09 18:58 UTC, com o canal já desconectado desde antes. Nenhum
+   `timedOut` (408) nem `connectionLost` (428) do Baileys derrubou sessão aberta. O Redis
+   que guarda as chaves Signal da sessão (`useMultiFileAuthStatePrisma` com
+   `CACHE_REDIS_ENABLED`) tem `evicted_keys: 0`.
+2. **As quedas "sozinhas" são o servidor do WhatsApp desvinculando o aparelho:**
+   `stream:error code 401` + `conflict type="device_removed"` em 24/09 às 13:23:44 UTC (~5 min
+   depois de parear) e às 14:06:14 UTC (~39 min depois de parear, no meio do atendimento).
+   Com 401 o Evolution trata como `LOGOUT` e **apaga a sessão** — não existe reconexão
+   automática possível, só um QR novo. Reconexão automática no backend não resolveria nada.
+3. **Outras duas quedas (22/09 12:14 e 12:15, 24/09 13:16 e 13:18 UTC)** chegaram como
+   `close` com `statusReason: 401` **sem** nenhum `stream:error` do WhatsApp antes, ~80 s depois
+   de parear e com um QR novo pedido 2–3 s depois — assinatura de logout pedido pela API
+   (`POST /settings/channels/whatsapp/disconnect` → `/instance/logout`), não de queda. Conferir
+   no `audit_logs` (`disconnect_whatsapp`) antes de concluir; o log do backend daquela hora
+   já tinha ido embora com a recriação do container no deploy.
+4. **O que muda no código:** o webhook `CONNECTION_UPDATE state: "close"` passa a levar o
+   `statusReason` do gateway para o log estruturado (`channel.whatsapp_disconnected` com
+   `statusReason` e `requiresNewQr`) e para o evento WS `channel.connection_changed`
+   (`requiresNewQr: true` quando o motivo é 401). O toast diz "escaneie o QR de novo" em vez de
+   só "desconectado" — a sessão não volta sozinha e quem atende precisa saber disso na hora.
+**Motivo:** o card pedia "investigar timeout e estabilizar a sessão"; a evidência aponta para
+a política do WhatsApp contra cliente não oficial (o risco que o termo de aceite já descreve,
+SECURITY.md), sobre a qual o repositório não tem alavanca. Inventar ajuste de timeout ou
+memória mudaria prod sem atacar a causa. O que o repositório pode fazer é não deixar a
+próxima queda sem motivo registrado e sem instrução clara na tela.
+**Riscos anotados, sem mudança nesta rodada:** (a) as chaves Signal da sessão moram no
+Redis com `allkeys-lru` (D-167) — hoje sem pressão, mas uma evicção corromperia a sessão;
+`volatile-lru` protegeria as chaves sem TTL; (b) o Evolution loga em nível verboso, com o
+conteúdo das mensagens dos pacientes e a apikey da instância no payload de webhook, retido
+em até 250 MB de `docker logs`; (c) a imagem `evoapicloud/evolution-api:v2.3.7` é de
+12/2025 e está fixada só por tag; versão nova do Baileys é o único ajuste do nosso lado
+que conversa com `device_removed`, e a D-083 registra que as seguintes exigem licença.
+**Impacto:** `backend/src/controllers/webhook.routes.ts`, `shared/types/websocket.types.ts`,
+`frontend/src/api/ws.ts`, `docs/api/API_CONTRACTS.md` (webhook Evolution),
+`docs/ARCHITECTURE.md` (eventos WS). Sem migração, sem mudança de compose.
+
 ## Template para novas decisões
 
 ```

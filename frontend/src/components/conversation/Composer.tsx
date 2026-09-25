@@ -173,7 +173,24 @@ export function Composer({
     });
   }
 
+  /**
+   * Ctrl+B / Cmd+B (CRMLAB-51, D-183): envolve a seleção em `*` — o negrito do
+   * WhatsApp — e mantém o texto selecionado; sem seleção, `**` com o cursor no meio.
+   */
+  function wrapBold(): void {
+    const field = fieldRef.current;
+    const start = field?.selectionStart ?? value.length;
+    const end = field?.selectionEnd ?? value.length;
+    setValue(`${value.slice(0, start)}*${value.slice(start, end)}*${value.slice(end)}`);
+    requestAnimationFrame(() => fieldRef.current?.setSelectionRange(start + 1, end + 1));
+  }
+
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'b') {
+      event.preventDefault();
+      wrapBold();
+      return;
+    }
     if (macroOpen) {
       // Com o menu aberto, estas teclas pertencem a ELE. Enter escolhendo a
       // macro é o ponto: enviar `/jej` como mensagem seria enviar o comando.

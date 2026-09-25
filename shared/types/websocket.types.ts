@@ -23,8 +23,10 @@ export interface WsEventPayloads {
   /**
    * Conexao do canal externo mudou (hoje: WhatsApp por QR). `connected: false`
    * e o caso que motivou o evento — ver a nota em `docs/ARCHITECTURE.md`.
+   * `requiresNewQr` (D-184): `true` quando o gateway informou `statusReason: 401`
+   * — a sessao foi apagada e so um QR novo reconecta. Ausente = `false`.
    */
-  'channel.connection_changed': { channel: string; connected: boolean };
+  'channel.connection_changed': { channel: string; connected: boolean; requiresNewQr?: boolean };
 }
 
 export interface WsEvent<E extends WsEventName = WsEventName> {

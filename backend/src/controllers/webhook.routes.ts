@@ -666,6 +666,21 @@ function evolutionQrOf(data: unknown): string | null {
 interface EvolutionConnectionState {
   connected: boolean;
   phoneNumber: string | null;
+  /** Codigo do Baileys que o gateway manda em `data.statusReason` no `close` (D-184). */
+  statusReason: number | null;
+}
+
+/**
+ * `DisconnectReason.loggedOut` do Baileys. Com ele o Evolution trata a queda
+ * como LOGOUT e APAGA a sessao — o celular desvinculou, o WhatsApp removeu o
+ * aparelho (`conflict device_removed`) ou alguem pediu logout pela API. Nao ha
+ * reconexao automatica possivel: so um QR novo (D-184).
+ */
+const EVOLUTION_LOGGED_OUT = 401;
+
+function statusReasonOf(value: unknown): number | null {
+  const parsed = typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
+  return typeof parsed === 'number' && Number.isInteger(parsed) ? parsed : null;
 }
 
 /**
@@ -679,10 +694,14 @@ function evolutionConnectionStateOf(data: unknown): EvolutionConnectionState | n
   const record = asRecord(data);
   if (!record) return null;
   if (record.state === 'open') {
-    return { connected: true, phoneNumber: phoneFromJid(record.owner ?? record.wuid) };
+    return {
+      connected: true,
+      phoneNumber: phoneFromJid(record.owner ?? record.wuid),
+      statusReason: null,
+    };
   }
   if (record.state === 'close') {
-    return { connected: false, phoneNumber: null };
+    return { connected: false, phoneNumber: null, statusReason: statusReasonOf(record.statusReason) };
   }
   return null;
 }
@@ -707,14 +726,29 @@ async function applyEvolutionConnectionUpdate(
   // aconteceu horas depois, por acaso. `error` (nao `info`) porque canal de
   // atendimento caido e incidente, nao rotina — e e o nivel que um alerta de
   // infra consegue filtrar.
+  //
+  // CRMLAB-17 (D-184): o MOTIVO vai junto. Sem ele, "caiu sozinho" nao se
+  // distingue de logout pedido pela tela nem de o WhatsApp ter removido o
+  // aparelho — e o log do backend some a cada deploy (container recriado),
+  // entao a linha precisa se explicar sozinha enquanto existe.
   if (state.connected) {
     logger.info('channel.whatsapp_connected', { tenantId });
-  } else {
-    logger.error('channel.whatsapp_disconnected', { tenantId });
+    wsHub.emitToTenant(tenantId, 'channel.connection_changed', {
+      channel: 'whatsapp',
+      connected: true,
+    });
+    return;
   }
+  const requiresNewQr = state.statusReason === EVOLUTION_LOGGED_OUT;
+  logger.error('channel.whatsapp_disconnected', {
+    tenantId,
+    statusReason: state.statusReason,
+    requiresNewQr,
+  });
   wsHub.emitToTenant(tenantId, 'channel.connection_changed', {
     channel: 'whatsapp',
-    connected: state.connected,
+    connected: false,
+    requiresNewQr,
   });
 }
 

@@ -10,9 +10,10 @@
  * "Webhooks"): token invalido/ausente NUNCA toca o banco, e a resposta e
  * IDENTICA ao caminho feliz — nao vira oraculo.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeWebhookModule } from '../../src/controllers/webhook.routes.js';
 import { evolutionInstanceName } from '../../src/lib/evolution-client.js';
+import { logger } from '../../src/lib/logger.js';
 import { createInMemoryQueue } from '../../src/lib/queue.js';
 import type { DbClient } from '../../src/db/types.js';
 import {
@@ -647,6 +648,97 @@ describe('POST /webhooks/evolution/:tenant — CONNECTION_UPDATE', () => {
       .expect(200);
 
     expect(await countMessages(tenant.id)).toBe(1);
+  });
+});
+
+/**
+ * CRMLAB-17 (D-184): em producao as quedas "sozinhas" eram `close` com
+ * `statusReason: 401` (`device_removed`) — sessao apagada no gateway, sem volta
+ * automatica. O motivo precisa chegar ao log e ao aviso da tela.
+ */
+describe('POST /webhooks/evolution/:tenant — CONNECTION_UPDATE close com statusReason', () => {
+  async function setupConnectedTenant(slug: string) {
+    const tenant = await createTenant({ slug });
+    slugToId.set(slug, tenant.id);
+    await db.withoutTenant((tx) =>
+      tx.query(
+        `INSERT INTO tenant_channels (tenant_id, channel, connection_mode, is_active, connected_at)
+         VALUES ($1, 'whatsapp', 'qr', TRUE, NOW())`,
+        [tenant.id],
+      ),
+    );
+    return tenant;
+  }
+
+  function closePayload(instance: string, statusReason: unknown) {
+    return {
+      event: 'connection.update',
+      instance,
+      data: { instance, state: 'close', statusReason },
+    };
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('401 loga o motivo e avisa que precisa de QR novo', async () => {
+    const tenant = await setupConnectedTenant('lab-evo-401');
+    const errorLog = vi.spyOn(logger, 'error');
+
+    await app.agent
+      .post(`${WEBHOOK}/lab-evo-401`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send(closePayload(evolutionInstanceName(tenant.id), 401))
+      .expect(200);
+
+    expect(errorLog).toHaveBeenCalledWith('channel.whatsapp_disconnected', {
+      tenantId: tenant.id,
+      statusReason: 401,
+      requiresNewQr: true,
+    });
+    expect(app.wsHub.eventsFor(tenant.id, 'channel.connection_changed').map((e) => e.data)).toEqual([
+      { channel: 'whatsapp', connected: false, requiresNewQr: true },
+    ]);
+  });
+
+  it('outro codigo (408) registra o motivo mas NAO promete QR novo', async () => {
+    const tenant = await setupConnectedTenant('lab-evo-408');
+    const errorLog = vi.spyOn(logger, 'error');
+
+    await app.agent
+      .post(`${WEBHOOK}/lab-evo-408`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send(closePayload(evolutionInstanceName(tenant.id), '408'))
+      .expect(200);
+
+    expect(errorLog).toHaveBeenCalledWith('channel.whatsapp_disconnected', {
+      tenantId: tenant.id,
+      statusReason: 408,
+      requiresNewQr: false,
+    });
+    expect(app.wsHub.eventsFor(tenant.id, 'channel.connection_changed')[0]?.data).toEqual({
+      channel: 'whatsapp',
+      connected: false,
+      requiresNewQr: false,
+    });
+  });
+
+  it('statusReason ausente ou lixo vira null (sem quebrar o webhook)', async () => {
+    const tenant = await setupConnectedTenant('lab-evo-sem-motivo');
+    const errorLog = vi.spyOn(logger, 'error');
+
+    await app.agent
+      .post(`${WEBHOOK}/lab-evo-sem-motivo`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send(closePayload(evolutionInstanceName(tenant.id), 'abc'))
+      .expect(200);
+
+    expect(errorLog).toHaveBeenCalledWith('channel.whatsapp_disconnected', {
+      tenantId: tenant.id,
+      statusReason: null,
+      requiresNewQr: false,
+    });
   });
 });
 

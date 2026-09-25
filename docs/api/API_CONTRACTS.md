@@ -1146,6 +1146,12 @@ responder):
 - `CONNECTION_UPDATE` com `state: "close"` (inclusive `loggedOut`, que é como o gateway informa
   desconexão/banimento) → marca desconectado; a UI mostra "Reconectar". O contrato não distingue
   desconexão voluntária de banimento — ver a nota de risco em `docs/architecture/SECURITY.md`.
+  O `data.statusReason` do gateway (código do Baileys: `401` = sessão encerrada, seja pelo
+  celular, pelo WhatsApp com `device_removed` ou por logout pedido pela API) vai para o log
+  `channel.whatsapp_disconnected` (`statusReason`, `requiresNewQr`) e para o evento WS
+  `channel.connection_changed` como `requiresNewQr: true` quando for `401` — com 401 o gateway
+  apaga a sessão e só um QR novo reconecta (D-184). Ausente ou não numérico → `statusReason:
+  null`, `requiresNewQr: false`.
 - `QRCODE_UPDATED` → grava o QR vigente no cache (`evolution:qr:<tenantId>`, TTL 70s), que é
   de onde `GET /settings/channels/whatsapp/qr` passa a ler. **Este evento é obrigatório na
   assinatura do webhook** (`evolution-client.ts`): sem ele o polling não tem fonte de QR.

@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   bitlabDateToIsoDate,
+  parseBitlabDateTime,
   createBitlabClient,
   saoPauloDateTime,
   watermarkToBitlabDateTime,
@@ -18,7 +19,7 @@ const QUERY = { dataInicio: '2026-09-01 00:00:00', dataFim: '2026-09-30 23:59:59
 
 const BUDGET = {
   ORCAMENTO: 1234,
-  DATA_ORÇAMENTO: '2026-09-15T10:22:00.000Z',
+  DATA_ORÇAMENTO: '15/09/2026 10:22:00',
   NM_PACIENTE: 'FULANO DE TAL',
   DT_NASCIMENTO: '1980-05-10T00:00:00.000Z',
   ID_CPF: '12345678900',
@@ -35,7 +36,7 @@ const BUDGET = {
   CONVENIO_REQUISICAO: 'PARTICULAR',
   VALOR_REQUISICAO: 250.0,
   Valor_Pago: 100.0,
-  Data_Pagamento: '2026-09-28T14:05:00.000Z',
+  Data_Pagamento: '28/09/2026 14:05:00',
   CONTA_NULO: 1,
 };
 
@@ -47,7 +48,7 @@ function listResponse(overrides: Record<string, unknown> = {}): Record<string, u
     avisos: [],
     filtro: { dataInicio: '2026-09-01 00:00:00', dataFim: '2026-09-30 23:59:59', tipoData: 'alteracao' },
     paginacao: { pagina: 1, tamanhoPagina: 100, totalRegistros: 1, totalPaginas: 1, temProxima: false },
-    marcaDagua: '2026-09-30T18:22:00.000Z',
+    marcaDagua: '30/09/2026 18:22:00',
     total: 1,
     orcamentos: [BUDGET],
     ...overrides,
@@ -101,7 +102,7 @@ describe('BitlabClient.fetchBudgetsPage', () => {
     const page = await client(fakeFetch(200, listResponse())).fetchBudgetsPage('k', QUERY);
 
     expect(page.hasNext).toBe(false);
-    expect(page.watermark).toBe('2026-09-30T18:22:00.000Z');
+    expect(page.watermark).toBe('2026-09-30 18:22:00');
     expect(page.rows).toEqual([
       {
         number: '1234',
@@ -241,15 +242,39 @@ describe('BitlabClient.fetchBudgetsPage', () => {
 });
 
 describe('datas do Bitlab (D-187)', () => {
-  it('data pelos componentes da string, sem fuso', () => {
-    expect(bitlabDateToIsoDate('2026-09-28T23:30:00.000Z')).toBe('2026-09-28');
-    expect(bitlabDateToIsoDate(null)).toBeNull();
-    expect(bitlabDateToIsoDate('lixo')).toBeNull();
+  it('dd/mm/yyyy hh:mm:ss (formato desde 25/09/2026) vira a forma canonica pelos componentes', () => {
+    expect(parseBitlabDateTime('28/09/2026 23:30:00')).toBe('2026-09-28 23:30:00');
+    expect(parseBitlabDateTime('28/09/2026')).toBe('2026-09-28 00:00:00');
+    expect(bitlabDateToIsoDate('28/09/2026 23:30:00')).toBe('2026-09-28');
   });
 
-  it('marca d agua vira dataInicio YYYY-MM-DD HH:mm:ss pelos componentes', () => {
+  it('o ISO antigo com Z continua aceito, sem conversao de fuso (era hora de Brasilia)', () => {
+    expect(parseBitlabDateTime('2026-09-28T23:30:00.000Z')).toBe('2026-09-28 23:30:00');
+    expect(bitlabDateToIsoDate('2026-09-28T23:30:00.000Z')).toBe('2026-09-28');
+  });
+
+  it('recusa o que nao e data', () => {
+    expect(bitlabDateToIsoDate(null)).toBeNull();
+    expect(bitlabDateToIsoDate('lixo')).toBeNull();
+    expect(parseBitlabDateTime('31/13/2026 10:00:00')).toBeNull();
+    expect(parseBitlabDateTime('2026-09-28 25:00:00')).toBeNull();
+  });
+
+  it('a forma canonica ordena como texto na ordem do tempo (a marca d agua depende disso)', () => {
+    const fim = parseBitlabDateTime('30/09/2026 23:59:59') ?? '';
+    const inicio = parseBitlabDateTime('01/10/2026 00:00:00') ?? '';
+    expect(inicio > fim).toBe(true);
+  });
+
+  it('marca d agua gravada vira dataInicio YYYY-MM-DD HH:mm:ss', () => {
+    expect(watermarkToBitlabDateTime('2026-09-30 18:22:00')).toBe('2026-09-30 18:22:00');
     expect(watermarkToBitlabDateTime('2026-09-30T18:22:00.000Z')).toBe('2026-09-30 18:22:00');
     expect(watermarkToBitlabDateTime('invalida')).toBeNull();
+  });
+
+  it('marcaDagua que nao e data e resposta fora do contrato', async () => {
+    const body = listResponse({ marcaDagua: 'ontem' });
+    expect((await failure(client(fakeFetch(200, body)).fetchBudgetsPage('k', QUERY))).kind).toBe('contract');
   });
 
   it('relogio de Brasilia no formato do Bitlab', () => {

@@ -208,8 +208,8 @@ describe('POST /settings/lis-integration/sync', () => {
   it('percorre as paginas, grava pelo caminho da planilha e avanca a marca', async () => {
     await configure(adminA, { apiKey: KEY, enabled: true });
     bitlab.script = [
-      page([row('1'), row('2')], '2026-09-25T10:00:00.000Z', true),
-      page([row('3', { requisitionNumber: '001-9', paidValue: 80, paidOn: '2026-09-24' })], '2026-09-25T11:00:00.000Z'),
+      page([row('1'), row('2')], '2026-09-25 10:00:00', true),
+      page([row('3', { requisitionNumber: '001-9', paidValue: 80, paidOn: '2026-09-24' })], '2026-09-25 11:00:00'),
     ];
 
     const result = await sync(managerA);
@@ -218,7 +218,7 @@ describe('POST /settings/lis-integration/sync', () => {
       status: 'completed',
       received: 3,
       rowsAccepted: 3,
-      watermark: '2026-09-25T11:00:00.000Z',
+      watermark: '2026-09-25 11:00:00',
       error: null,
     });
     expect(result.importId).not.toBeNull();
@@ -239,7 +239,7 @@ describe('POST /settings/lis-integration/sync', () => {
 
   it('a proxima rodada parte da marca d agua gravada', async () => {
     await configure(adminA, { apiKey: KEY, enabled: true });
-    bitlab.script = [page([row('1')], '2026-09-25T10:00:00.000Z')];
+    bitlab.script = [page([row('1')], '2026-09-25 10:00:00')];
     await sync(adminA);
 
     bitlab.script = [page([], null)];
@@ -262,15 +262,15 @@ describe('POST /settings/lis-integration/sync', () => {
 
   it('pagina com falha nao grava nada e nao anda a marca', async () => {
     await configure(adminA, { apiKey: KEY, enabled: true });
-    bitlab.script = [page([row('1')], '2026-09-25T10:00:00.000Z')];
+    bitlab.script = [page([row('1')], '2026-09-25 10:00:00')];
     await sync(adminA);
 
-    bitlab.script = [page([row('2')], '2026-09-25T12:00:00.000Z', true), new BitlabError('unavailable', 'timeout')];
+    bitlab.script = [page([row('2')], '2026-09-25 12:00:00', true), new BitlabError('unavailable', 'timeout')];
     const result = await sync(adminA);
 
     expect(result.status).toBe('failed');
     expect(result.error?.kind).toBe('unavailable');
-    expect(result.settings).toMatchObject({ enabled: true, watermark: '2026-09-25T10:00:00.000Z' });
+    expect(result.settings).toMatchObject({ enabled: true, watermark: '2026-09-25 10:00:00' });
     expect(result.settings.lastError).toContain('não respondeu');
     expect((await budgetsOf(tenantA.id)).map((b) => b.number)).toEqual(['1']);
   });
@@ -306,7 +306,7 @@ describe('POST /settings/lis-integration/sync', () => {
   it('isolamento: a rodada de A nao grava nem le nada de B', async () => {
     await configure(adminA, { apiKey: KEY, enabled: true });
     await configure(adminB, { apiKey: 'chave-do-lab-b-0000', enabled: true });
-    bitlab.script = [page([row('1')], '2026-09-25T10:00:00.000Z')];
+    bitlab.script = [page([row('1')], '2026-09-25 10:00:00')];
 
     await sync(adminA);
 
@@ -321,7 +321,7 @@ describe('agendador (runScheduledTick, D-186)', () => {
   it('roda so os tenants ligados e com chave, cada um com a propria chave', async () => {
     await configure(adminA, { apiKey: KEY, enabled: true });
     await configure(adminB, { apiKey: 'chave-do-lab-b-0000', enabled: false });
-    bitlab.script = [page([row('9')], '2026-09-25T10:00:00.000Z')];
+    bitlab.script = [page([row('9')], '2026-09-25 10:00:00')];
 
     const service = createLisSyncServiceFromDeps({ db, cache: createCache(), wsHub: noopWsHub }, { bitlab });
     await service.runScheduledTick();
@@ -338,7 +338,7 @@ describe('agendador (runScheduledTick, D-186)', () => {
     await configure(adminA, { apiKey: KEY, enabled: true });
     await configure(adminB, { apiKey: 'chave-do-lab-b-0000', enabled: true });
     const ordered = [tenantA.id, tenantB.id].sort();
-    bitlab.script = [new BitlabError('unavailable', 'HTTP 502'), page([row('7')], '2026-09-25T10:00:00.000Z')];
+    bitlab.script = [new BitlabError('unavailable', 'HTTP 502'), page([row('7')], '2026-09-25 10:00:00')];
 
     const service = createLisSyncServiceFromDeps({ db, cache: createCache(), wsHub: noopWsHub }, { bitlab });
     await service.runScheduledTick();

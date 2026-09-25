@@ -3078,21 +3078,27 @@ com a projeção mais estreita possível, é melhor que deixá-la implícita. Le
 contexto do tenant daria a um bug no agendador acesso às chaves de todos os laboratórios.
 **Impacto:** `lis-sync-settings.repository.ts`, `main.ts`, SCHEMA.md (tabela de exceções).
 
-### D-187: Data e hora do Bitlab viram `DATE` pelos componentes da string — confirmação pendente
-**Decisão:** `DATA_ORÇAMENTO` e `Data_Pagamento` chegam como `"2026-09-28T14:05:00.000Z"`. O
-`issued_on`/`paid_on` gravado é o `YYYY-MM-DD` **dos primeiros 10 caracteres da string**, sem
-`new Date()`, o mesmo princípio de D-110 para o serial do Excel. A conversão mora numa função
-só (`bitlabDateToIsoDate`, `bitlab-client.ts`).
-**Motivo:** o `Z` pode ser UTC de verdade ou hora de Brasília rotulada como UTC (é comum em
-workflow n8n sobre banco sem fuso). A dúvida foi mandada ao Bitlab em 25/09/2026 e ainda não
-tem resposta. Pelos componentes, a data só sai errada se for UTC real e o evento tiver sido
-entre 21h e 23h59 de Brasília. Converter para `America/Sao_Paulo` erraria na mesma janela se a
-hipótese oposta for a certa. Enquanto não há confirmação, ficamos com a opção igual à planilha
-(o relatório de paridade compara as duas).
-**Pendente:** quando o Bitlab responder, se for UTC real, trocar o corpo de
-`bitlabDateToIsoDate` por conversão para `America/Sao_Paulo` e emendar esta decisão. A mesma
-regra vale para a `marcaDagua` reenviada como `dataInicio` (SERVICES.md §24.1).
-**Impacto:** `bitlab-client.ts`, BUSINESS_RULES.md §11.10.
+### D-187: Data e hora do Bitlab viram a forma canônica `YYYY-MM-DD HH:mm:ss` (Brasília) pelos componentes da string
+**Decisão:** toda data/hora que chega do Bitlab (`DATA_ORÇAMENTO`, `Data_Pagamento`,
+`marcaDagua`) passa por uma função só, `parseBitlabDateTime` (`bitlab-client.ts`), que devolve
+`YYYY-MM-DD HH:mm:ss` no relógio de Brasília **pelos componentes da string**, sem `new Date()`
+(mesmo princípio de D-110). `issued_on`/`paid_on` são os 10 primeiros caracteres dessa forma.
+A `marcaDagua` é gravada já canônica, e é por isso que a comparação "maior marca das páginas"
+pode ser feita como texto: nessa forma a ordem léxica é a cronológica. A marca volta ao Bitlab
+como `dataInicio` na mesma forma, que é a do pedido documentado no manual.
+Formas aceitas: `dd/mm/yyyy hh:mm:ss` (e só `dd/mm/yyyy`, que vira 00:00:00) e o ISO antigo
+`YYYY-MM-DDTHH:mm:ss.sssZ`, lido sem conversão de fuso. `marcaDagua` que não é data reconhecível
+é resposta fora do contrato (`contract`): gravá-la faria a rodada seguinte partir de lugar nenhum.
+**Motivo:** na resposta ao e-mail de integração (25/09/2026), o Bitlab confirmou que o `Z` estava
+errado (a hora já era de Brasília) e trocou o formato para `dd/mm/yyyy hh:mm:ss`, sem `Z`. Com o
+formato brasileiro, comparar a marca como texto seria errado ("30/09" > "01/10"), e cortar os 10
+primeiros caracteres daria `dd/mm/yyyy` em vez de data. Normalizar na borda mantém o resto do
+código com uma forma só. O ISO continua aceito porque custa uma alternativa na regex e protege
+de uma volta atrás do Bitlab.
+**Pendente:** confirmar no primeiro teste real (chave válida, a partir da VPS) o formato da
+`marcaDagua` e se o `dataInicio` continua aceito em `YYYY-MM-DD HH:mm:ss`.
+**Impacto:** `bitlab-client.ts` (`parseBitlabDateTime`, `bitlabDateToIsoDate`,
+`watermarkToBitlabDateTime`), SERVICES.md §24.1, BUSINESS_RULES.md §11.10.
 
 ## Template para novas decisões
 

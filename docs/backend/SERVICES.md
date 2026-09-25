@@ -1285,8 +1285,10 @@ ao agendador):
 ### 24.1 Contrato assumido da API de Orçamentos do Bitlab (`backend/src/lib/bitlab-client.ts`)
 
 Fonte: manual "API de Orçamentos v1 — Manual de Integração" enviado pelo Bitlab em 25/09/2026. A
-chave de produção **ainda não foi exercitada**: em 25/09 ela voltou `403`. Os formatos abaixo são
-os do manual. Os primeiros testes com a chave válida devem conferir cada linha desta tabela e
+chave de produção **ainda não foi exercitada**: em 25/09 ela voltou `403`, e o Bitlab corrigiu a
+chave no mesmo dia. Desde então as chaves só são aceitas **a partir do IP da VPS** (2.25.227.155)
+e **só por HTTPS**: teste da máquina de desenvolvimento não alcança a API. Os formatos abaixo são
+os do manual, com a correção de datas de 25/09 (D-187). Os primeiros testes com a chave válida devem conferir cada linha desta tabela e
 emendar aqui o que divergir, como foi feito com a sandbox em 18/09.
 
 | Item | Valor |
@@ -1297,11 +1299,12 @@ emendar aqui o que divergir, como foi feito com a sandbox em 18/09.
 | Sucesso | `200` `{ sucesso: true, apiVersao: "v1", status: "LISTA" \| "SEM_RESULTADOS", avisos: string[], filtro, paginacao: { pagina, tamanhoPagina, totalRegistros, totalPaginas, temProxima }, marcaDagua: string \| null, total, orcamentos: [] }` |
 | Erro de parâmetro | `400` `{ sucesso: false, status: "PARAMETROS_INVALIDOS" \| "PERIODO_INVALIDO", erro: { codigo, mensagem } }` |
 | Headers | `X-API-Version: 1.0.0`, `X-API-Deprecation: false` |
+| Datas na resposta | `dd/mm/yyyy hh:mm:ss`, hora de Brasília, sem `Z` (correção do Bitlab em 25/09/2026). O ISO com `Z` de antes também é aceito (D-187) |
 
-**Orçamento:** `ORCAMENTO` (number), `DATA_ORÇAMENTO` (ISO), `NM_PACIENTE`, `DT_NASCIMENTO`,
+**Orçamento:** `ORCAMENTO` (number), `DATA_ORÇAMENTO` (data/hora, ver "Datas na resposta"), `NM_PACIENTE`, `DT_NASCIMENTO`,
 `ID_CPF`, `CONVENIO1..3` (string \| null), `VL_TOTAL1..3` (number \| null), `MEDIA_CONVENIO`,
 `QTD_EXAMES`, `USUÁRIO`, `REQUISICAO` (string \| null, `posto-requisição`), `CONVENIO_REQUISICAO`,
-`VALOR_REQUISICAO`, `Valor_Pago`, `Data_Pagamento` (ISO \| null), `CONTA_NULO` (0 \| 1).
+`VALOR_REQUISICAO`, `Valor_Pago`, `Data_Pagamento` (data/hora \| null), `CONTA_NULO` (0 \| 1).
 
 **Tolerância na borda** (lições da sandbox de 18/09, `Avaliacao_APIs_Bitlab_2026-09-18.md`):
 - Envelope validado com zod. Os campos que usamos são obrigatórios no schema, os desconhecidos
@@ -1314,9 +1317,10 @@ emendar aqui o que divergir, como foi feito com a sandbox em 18/09.
 - `avisos[]` não vazio ou `X-API-Deprecation: true` → log `warn` `lis_sync.bitlab_deprecation`
   (uma vez por rodada).
 - Timeout de 15 s por chamada (`fetch-timeout.ts`, CRMLAB-30).
-- `marcaDagua` reenviada como `dataInicio`: o manual manda usar a marca "como `dataInicio` da
-  próxima carga", mas a marca vem em ISO e o `dataInicio` documentado não é ISO. Por isso ela é
-  convertida pelos componentes (D-187). **Conferir no primeiro teste real** se o Bitlab compara
+- Datas e `marcaDagua` passam por `parseBitlabDateTime` (D-187) e saem na forma canônica
+  `YYYY-MM-DD HH:mm:ss`, pelos componentes. A marca é gravada assim, comparada como texto entre as
+  páginas e reenviada assim como `dataInicio` da próxima carga (o formato do pedido no manual).
+  `marcaDagua` que não é data → `contract`. **Conferir no primeiro teste real** se o Bitlab compara
   `>=` ou `>` (com `>=`, o último orçamento é relido a cada rodada, o que é inofensivo porque o
   upsert é idempotente).
 

@@ -424,6 +424,18 @@ nunca "sem permissão" (não vazar existência).
 - Dados da aba de preços: `GET /exams/:id/prices` (todos os papéis) ·
   `PUT /exams/:id/prices` (gestor+) — semântica de PUT: convênio ausente do corpo tem o preço
   **removido**, não preservado.
+- **Importar CSV (CRMLAB-23, D-177/D-178 — só admin):** botão "Importar CSV" ao lado de
+  "+ Novo Exame", visível só para admin na aba Exames. Abre `ExamImportModal`:
+  1. [Baixar modelo] gera no navegador `modelo-catalogo-exames.csv` (UTF-8 com BOM, separador
+     `;`, cabeçalho de `EXAM_IMPORT_COLUMNS` + a linha de `EXAM_IMPORT_TEMPLATE_EXAMPLE`);
+  2. `UploadDropzone` (`.csv`, até 2 MiB) → `POST /exams/import/preview`;
+  3. pré-visualização: três contadores (novos · atualizam · com erro), tabela de erros
+     (linha, coluna, motivo — com aviso quando a lista foi cortada) e tabela das linhas
+     válidas (linha, ação, código, nome, preço particular, preço convênio);
+  4. [Confirmar importação] só habilitado com zero erros e ao menos uma linha →
+     `POST /exams/import` com o mesmo arquivo; sucesso = toast "N criado(s), M atualizado(s)",
+     fecha o modal e recarrega a listagem. [Escolher outro arquivo] volta ao passo 2.
+  Arquivo recusado inteiro (`details.reason`) vira mensagem em pt-BR no modal.
 
 ### Aba Pacotes (`PackageTable`, CRMLAB-10, D-130)
 - Tabela: nome, exames incluídos (nomes separados por vírgula), desconto %, preço particular

@@ -126,7 +126,7 @@ renderiza. "Não sei onde mostrar" nunca pode virar silêncio.
 
 | Código | HTTP | Quando |
 |--------|------|--------|
-| `MEDIA_TOO_LARGE` | 413 | `POST /conversations/:id/attachments` com arquivo acima de 15 MiB (`details: { byteSize, max }`). Nunca grava mensagem |
+| `MEDIA_TOO_LARGE` | 413 | `POST /conversations/:id/attachments` com arquivo acima de 15 MiB (`details: { byteSize, max }`). Nunca grava mensagem. Também `POST /exams/import[/preview]` com CSV acima de 2 MiB (CRMLAB-23) |
 
 ## Vendas — domínio LIS (Onda 9)
 

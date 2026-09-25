@@ -2634,6 +2634,75 @@ horário em que a antiga dona não está.
 "Encerradas"), `docs/api/API_CONTRACTS.md` §2, `API_ERRORS.md`, `WORKFLOWS.md` §5,
 `SCHEMA.md`, `PAGES.md` §2, `SERVICES.md` §2/§3.
 
+### D-177: Importação do catálogo por CSV — admin apenas, pré-visualização sem estado e confirmação tudo-ou-nada; código existente atualiza, célula vazia preserva (CRMLAB-23)
+**Decisão:**
+1. Dois endpoints com o mesmo corpo (`{ fileName, contentBase64 }`): `POST /exams/import/preview`
+   (lê, valida, classifica — não grava nada) e `POST /exams/import` (revalida do zero e grava).
+   O servidor **não guarda** o arquivo entre as duas chamadas: o cliente reenvia o mesmo
+   arquivo ao confirmar.
+2. **Só `admin`** — diferente de `POST/PATCH /exams`, que aceitam gestor. A rota recusa com
+   `FORBIDDEN` (`requiredRoles: ["admin"]`) e o service confere de novo.
+3. **Tudo ou nada:** qualquer linha com erro → `VALIDATION_ERROR` (`details.reason:
+   "invalid_rows"`) e nada é gravado; sem erro, todas as linhas vão num único
+   `db.withTenant` (`INSERT ... ON CONFLICT (tenant_id, code) DO UPDATE`, em lotes de 500
+   linhas por statement). Falha no meio desfaz tudo.
+4. **Código que já existe no laboratório atualiza** o exame (decisão do usuário). `nome` e os
+   dois preços são sempre regravados; **célula vazia de coluna opcional preserva** o valor
+   atual (`COALESCE`). Import não mexe em `isActive`, TUSS/AMB/material, sinônimos,
+   `exam_prices` nem pacotes. Exame novo nasce ativo com `source: "manual"` (o CHECK de
+   `source` só aceita `manual | lis`, e `lis` fica para a sincronização com o Bitlab).
+5. Audit `import_exam_catalog` (`entityType: "exam_catalog"`, `entityId` = tenant, contadores
+   em `newValues`) — um registro por importação, não um por exame.
+**Motivo:** O preview sem estado evita tabela/arquivo temporário (e a limpeza deles) e
+fecha a corrida "o catálogo mudou entre ver e confirmar": a confirmação reclassifica dentro
+da transação. Tudo-ou-nada é o que o admin espera de uma planilha ("subiu ou não subiu"),
+sem precisar descobrir quais linhas entraram. Preservar célula vazia protege contra planilha
+parcial (só código + preços) apagar descrições e preparos cadastrados — limpar um campo
+continua possível pelo modal. Admin apenas porque a operação reescreve o catálogo inteiro de
+uma vez e o card pediu assim.
+**Impacto:** `shared/types/exam.types.ts` (tipos + constantes), `backend/src/lib/exam-csv.ts`
+(novo, parser puro), `exam-catalog.service.ts` (`previewImport`/`confirmImport`),
+`exam.repository.ts` (`findExistingCodes`/`upsertImported`), `exam.routes.ts` (2 rotas),
+`frontend/src/components/catalog/ExamImportModal.tsx` (novo), `pages/Catalog.tsx`,
+`api/exams.ts`; docs `API_CONTRACTS.md` §4, `API_ERRORS.md`, `WORKFLOWS.md` §7.1,
+`PAGES.md` §7, `SERVICES.md` §5. Sem migração (a `UNIQUE (tenant_id, code)` já existe).
+
+### D-178: Formato aceito no CSV do catálogo — UTF-8 estrito, `;` ou `,`, preço brasileiro sem adivinhação, limites 2 MiB / 5000 linhas (CRMLAB-23)
+**Decisão:**
+1. **Encoding:** UTF-8 com ou sem BOM, decodificado com `TextDecoder('utf-8', { fatal: true })`.
+   Bytes inválidos → `invalid_encoding` (não há fallback silencioso para Windows-1252: a tela
+   orienta a salvar como "CSV UTF-8"). O modelo baixável sai com BOM, para o Excel abrir os
+   acentos certos.
+2. **Separador:** detectado no cabeçalho — conta `;` e `,` fora de aspas; o maior vence e
+   empate fica com `;` (padrão do Excel pt-BR). Parser RFC 4180 próprio (~60 linhas em
+   `lib/exam-csv.ts`): aspas duplas, `""` escapado, quebra de linha dentro de aspas. Aspas
+   nunca fechadas → `malformed`. Nenhuma dependência nova: o leitor de CSV do `exceljs` exige o
+   separador de antemão (não detecta) e trabalha com stream/arquivo; o parser próprio é
+   pequeno, síncrono sobre a string já decodificada e testável sem I/O.
+3. **Cabeçalho:** casado sem caixa/acento, pontuação vira `_`; `prazo` é apelido de
+   `prazo_horas`. Coluna desconhecida é ignorada; obrigatória ausente (`nome`, `codigo`,
+   `preco_convenio`, `preco_particular`) → `missing_column`; repetida → `duplicate_column`.
+4. **Preço:** aceita `1.234,56`, `1234,56`, `1234.56`, `1234`, com ou sem `R$`. Com os dois
+   separadores, o último é o decimal. Mais de 2 casas decimais é erro — é isso que recusa
+   `1.234` (ambíguo) em vez de adivinhar entre 1234 e 1,234. Negativo é erro. Teto
+   `9.999.999.999,99` (NUMERIC(12,2)).
+5. **Código repetido no arquivo** (comparação exata após `trim`, a mesma da `UNIQUE` do banco)
+   → erro em todas as linhas que o repetem, com `column: null`.
+6. **Linha:** número da planilha (cabeçalho = 1); registro com quebra de linha entre aspas
+   conta como uma linha. Linha totalmente em branco é pulada e não conta.
+7. **Limites:** 2 MiB decodificado (`MEDIA_TOO_LARGE`, 413) e 5000 linhas de dado
+   (`too_many_rows`); a lista `errors` corta em 1000 (`errorsTruncated`), `errorCount` exato.
+   5000 linhas cabe folgado no `statement_timeout` de 30 s porque a gravação vai em
+   statements de 500 linhas.
+**Motivo:** Planilha brasileira sai do Excel com `;` e vírgula decimal; o sistema tem que
+aceitar isso sem o admin mexer em configuração regional. Adivinhar encoding ou preço
+ambíguo gravaria dado errado em silêncio no catálogo que precifica orçamento — recusar com
+motivo por linha é mais barato que descobrir o preço errado numa proposta. Os limites cobrem
+com folga catálogo real de laboratório (centenas a poucos milhares de exames) e mantêm o
+preview num payload razoável.
+**Impacto:** `backend/src/lib/exam-csv.ts` + `backend/tests/catalog/exam-csv.spec.ts`;
+constantes em `shared/types/exam.types.ts`; `API_CONTRACTS.md` §4 (formato do arquivo).
+
 ## Template para novas decisões
 
 ```

@@ -218,6 +218,17 @@ interface ExamCatalogService {
    * tenant, senão `NOT_FOUND`/`VALIDATION_ERROR`. Invalida `cache.delByPrefix('exams:<tenantId>:')`.
    */
   upsertPrices(ctx: TenantContext, examId: string, dto: UpdateExamPricesRequest): Promise<ExamPrice[]>;
+
+  /**
+   * CRMLAB-23 (D-177/D-178). Admin apenas. Parser puro em `lib/exam-csv.ts` (sem I/O).
+   * `previewImport` lê, valida e classifica (create/update pelo `code` no tenant) — não grava.
+   * `confirmImport` revalida do zero e, sem nenhum erro, grava tudo num único
+   * `db.withTenant` (INSERT ... ON CONFLICT (tenant_id, code) DO UPDATE em lotes);
+   * qualquer erro → `VALIDATION_ERROR` e nada gravado. Audit `import_exam_catalog`,
+   * invalida `exams:<tenantId>:`.
+   */
+  previewImport(ctx: TenantContext, dto: ImportExamCatalogRequest): Promise<ExamImportPreview>;
+  confirmImport(ctx: TenantContext, dto: ImportExamCatalogRequest): Promise<ExamImportResult>;
 }
 // Nota de camada: `listPrices`/`upsertPrices` devolvem ARRAY cru (`ExamPrice[]`), não
 // `ListExamPricesResponse`. Cada forma está certa na sua camada — o service devolve o dado, e

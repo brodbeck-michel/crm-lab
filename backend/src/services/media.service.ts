@@ -45,6 +45,22 @@ function needsMagicByteSniff(mimeType: string): boolean {
 }
 
 /**
+ * Contêineres que o `file-type` rotula SEMPRE como vídeo, mas que o
+ * `MediaRecorder` usa para áudio (CRMLAB-24, D-182): todo WebM é `video/webm`
+ * e o MP4 do Safari (brand `mp42`/`isom`, não `M4A `) é `video/mp4`. Declarado
+ * de áudio no MESMO contêiner não é troca de categoria — é o mesmo arquivo.
+ */
+const AUDIO_IN_VIDEO_CONTAINER: Readonly<Record<string, readonly string[]>> = {
+  'video/webm': ['audio/webm'],
+  'video/mp4': ['audio/mp4', 'audio/aac'],
+};
+
+function sameCategoryOrContainer(detectedMime: string, declared: string): boolean {
+  if (mediaCategoryOf(detectedMime) === mediaCategoryOf(declared)) return true;
+  return AUDIO_IN_VIDEO_CONTAINER[normalizeMediaMimeType(detectedMime)]?.includes(declared) ?? false;
+}
+
+/**
  * Allow-list primeiro, sniff depois. `file-type` só reconhece formatos com
  * assinatura binária (não cobre `audio/amr`, por exemplo) — quando ele não
  * identifica NADA, o dado é inconclusivo, não uma divergência provada, então
@@ -83,7 +99,7 @@ export async function resolveStoredMimeType(declaredMimeType: string, buffer: Bu
   // punir o `file-type` por rotular Opus-em-Ogg como `audio/ogg; codecs=opus`
   // ou M4A como `audio/x-m4a` — string diferente, mesma coisa, e o anexo
   // legitimo virava `application/octet-stream`.
-  if (detected && mediaCategoryOf(detected.mime) !== mediaCategoryOf(normalized)) {
+  if (detected && !sameCategoryOrContainer(detected.mime, normalized)) {
     logger.warn('media.mime_mismatch', { declared: normalized, detected: detected.mime });
     return FALLBACK_MEDIA_MIME_TYPE;
   }

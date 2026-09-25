@@ -60,6 +60,36 @@ describe('POST /conversations/:id/attachments', () => {
     expect(rows.rows[0]?.message_id).toBe(created.body.id);
   });
 
+  it('recado de voz gravado no Chrome (audio/webm;codecs=opus) vira mensagem de áudio (CRMLAB-24)', async () => {
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Ana' });
+    const conversation = await createConversation({ tenantId: tenant.id, assignedTo: ana.id });
+
+    // Cabeçalho EBML real de WebM — o `file-type` o rotula como `video/webm`.
+    const webm = Buffer.concat([
+      Buffer.from(
+        '1a45dfa39f4286810142f7810142f2810442f381084282847765626d42878104428581021853806701ffffffffffffff',
+        'hex',
+      ),
+      Buffer.alloc(64),
+    ]);
+    const created = await app.agent
+      .post(`/api/v1/conversations/${conversation.id}/attachments`)
+      .set(app.auth(ana))
+      .send({
+        fileName: 'recado-de-voz.webm',
+        mimeType: 'audio/webm;codecs=opus',
+        contentBase64: webm.toString('base64'),
+      })
+      .expect(201);
+
+    expect(created.body.messageType).toBe('audio');
+    const mediaId = created.body.attachmentUrl.split('/').pop();
+    const media = await app.agent.get(`/api/v1/media/${mediaId}`).set(app.auth(ana)).expect(200);
+    expect(media.headers['content-type']).toBe('audio/webm');
+    expect(media.headers['content-disposition']).toMatch(/^inline/);
+  });
+
   it('arquivo acima do teto é MEDIA_TOO_LARGE e não grava mensagem', async () => {
     const tenant = await createTenant();
     const ana = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Ana' });

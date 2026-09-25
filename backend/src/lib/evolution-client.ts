@@ -136,7 +136,11 @@ export interface EvolutionClient {
     text: string,
     apikey: string,
   ): Promise<EvolutionSendResult>;
-  /** Mesma disciplina de privilegio minimo do `sendText` — `apikey` da instancia. */
+  /**
+   * Mesma disciplina de privilegio minimo do `sendText` — `apikey` da instancia.
+   * `audio/*` sai por `/message/sendWhatsAppAudio` (recado de voz, D-182); o resto
+   * por `/message/sendMedia`.
+   */
   sendMedia(
     instanceName: string,
     phone: string,
@@ -419,27 +423,37 @@ export function createEvolutionClient(
       media: EvolutionMediaPayload,
       apikey: string,
     ): Promise<EvolutionSendResult> {
+      const mediatype = evolutionMediaType(media.mimeType);
+      // Audio vai como RECADO DE VOZ (CRMLAB-24, D-182): `sendWhatsAppAudio`
+      // converte no proprio gateway (ffmpeg da imagem do Evolution) para
+      // ogg/opus e entrega como PTT. `sendMedia` repassaria o webm do Chrome /
+      // mp4 do Safari como esta — formato que o WhatsApp do paciente nao toca.
+      // Sem `encoding`: o default do gateway ja e converter.
+      const [route, payload] =
+        mediatype === 'audio'
+          ? (['sendWhatsAppAudio', { number: phone, audio: media.base64 }] as const)
+          : ([
+              'sendMedia',
+              {
+                number: phone,
+                mediatype,
+                mimetype: media.mimeType,
+                fileName: media.fileName,
+                media: media.base64,
+              },
+            ] as const);
       const body = await request(
-        `/message/sendMedia/${encodeURIComponent(instanceName)}`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            number: phone,
-            mediatype: evolutionMediaType(media.mimeType),
-            mimetype: media.mimeType,
-            fileName: media.fileName,
-            media: media.base64,
-          }),
-        },
+        `/message/${route}/${encodeURIComponent(instanceName)}`,
+        { method: 'POST', body: JSON.stringify(payload) },
         apikey,
-        // Unica chamada com corpo grande — orcamento proprio (D-137).
+        // Chamadas com corpo grande — orcamento proprio (D-137).
         mediaTimeoutMs,
       );
       const record = isRecord(body) ? body : {};
       const key = isRecord(record.key) ? record.key : {};
       const externalId = asString(key.id);
       if (!externalId) {
-        throw new Error('Evolution API nao devolveu id da mensagem em /message/sendMedia');
+        throw new Error(`Evolution API nao devolveu id da mensagem em /message/${route}`);
       }
       return { externalId };
     },

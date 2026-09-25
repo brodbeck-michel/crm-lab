@@ -52,12 +52,14 @@ export interface DbClient extends DbTx {
    * EXCECAO AUDITADA — nao e o caminho normal.
    *
    * Abre transacao SEM `app.tenant_id` e SEM `SET LOCAL ROLE`, portanto sem
-   * filtro de RLS. Existe para os tres casos em que o tenant ainda nao e
+   * filtro de RLS. Existe para os quatro casos em que o tenant ainda nao e
    * conhecido ou nao se aplica:
    *   1. login (precisa achar o usuario pelo e-mail ANTES de saber o tenant);
    *   2. console de plataforma (`/platform/*`), que opera sobre tenants;
    *   3. manutencao cross-tenant que nao serve requisicao nenhuma (CRMLAB-35,
-   *      D-155 — limpeza periodica de `refresh_tokens` expirados/revogados).
+   *      D-155 — limpeza periodica de `refresh_tokens` expirados/revogados);
+   *   4. CLI de carga pontual resolvendo `--tenant <slug>` para o `id` (CRMLAB-45,
+   *      D-180 — so leitura de `tenants.id`; a carga em si roda em `withTenant`).
    *
    * Qualquer outro uso e bug de isolamento. Toda chamada deve estar coberta por
    * teste e, quando for acao de operador, gerar audit log.

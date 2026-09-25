@@ -146,6 +146,35 @@ function patientsResponse(patients: PatientListItem[]): ListPatientsResponse {
 
 const NO_PATIENTS: ListPatientsResponse = patientsResponse([]);
 
+/** `MediaRecorder`/`getUserMedia` falsos para o recado de voz (CRMLAB-24). */
+function installVoiceFakes(): { stop: ReturnType<typeof vi.fn> } {
+  const track = { stop: vi.fn() };
+  const stream = { getTracks: () => [track] };
+  class FakeRecorder {
+    static isTypeSupported = (type: string) => type === 'audio/webm;codecs=opus';
+    state = 'inactive';
+    mimeType = 'audio/webm;codecs=opus';
+    ondataavailable: ((event: { data: Blob }) => void) | null = null;
+    onstop: (() => void) | null = null;
+    start() {
+      this.state = 'recording';
+    }
+    stop() {
+      this.state = 'inactive';
+      this.ondataavailable?.({ data: new Blob(['voz'], { type: this.mimeType }) });
+      this.onstop?.();
+    }
+  }
+  vi.stubGlobal('MediaRecorder', FakeRecorder);
+  Object.defineProperty(navigator, 'mediaDevices', {
+    value: { getUserMedia: vi.fn().mockResolvedValue(stream) },
+    configurable: true,
+  });
+  URL.createObjectURL = vi.fn(() => 'blob:voz');
+  URL.revokeObjectURL = vi.fn();
+  return track;
+}
+
 function renderScreen() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -327,30 +356,7 @@ describe('Atendimento — abrir conversa', () => {
     sendAttachmentMock.mockResolvedValue(
       message({ id: 'm-3', senderType: 'agent', messageType: 'audio' }),
     );
-    const track = { stop: vi.fn() };
-    const stream = { getTracks: () => [track] };
-    class FakeRecorder {
-      static isTypeSupported = (type: string) => type === 'audio/webm;codecs=opus';
-      state = 'inactive';
-      mimeType = 'audio/webm;codecs=opus';
-      ondataavailable: ((event: { data: Blob }) => void) | null = null;
-      onstop: (() => void) | null = null;
-      start() {
-        this.state = 'recording';
-      }
-      stop() {
-        this.state = 'inactive';
-        this.ondataavailable?.({ data: new Blob(['voz'], { type: this.mimeType }) });
-        this.onstop?.();
-      }
-    }
-    vi.stubGlobal('MediaRecorder', FakeRecorder);
-    Object.defineProperty(navigator, 'mediaDevices', {
-      value: { getUserMedia: vi.fn().mockResolvedValue(stream) },
-      configurable: true,
-    });
-    URL.createObjectURL = vi.fn(() => 'blob:voz');
-    URL.revokeObjectURL = vi.fn();
+    const track = installVoiceFakes();
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-09-25T12:00:00Z'));
     try {
@@ -374,6 +380,57 @@ describe('Atendimento — abrir conversa', () => {
         expect(within(composer).queryByTestId('voice-recorder')).not.toBeInTheDocument(),
       );
       expect(track.stop).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('recado de voz vai para a conversa em que foi gravado, mesmo trocando de conversa no envio', async () => {
+    listMock.mockResolvedValue(
+      listResponse([
+        conversation(),
+        conversation({ id: 'c-2', patientName: 'Bruno Lima', patientId: 'p-2' }),
+      ]),
+    );
+    getMock.mockResolvedValue(detailResponse());
+    sendAttachmentMock.mockReset();
+    sendAttachmentMock.mockResolvedValue(message({ id: 'm-4', senderType: 'agent' }));
+    installVoiceFakes();
+    // FileReader que só termina quando o teste manda: abre a janela entre
+    // "clicou Enviar" e "o POST sai", que é onde a troca de conversa acontece.
+    let finishRead: () => void = () => undefined;
+    class SlowReader {
+      result: string | null = null;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      error: unknown = null;
+      readAsDataURL(): void {
+        finishRead = () => {
+          this.result = 'data:audio/webm;base64,dm96';
+          this.onload?.();
+        };
+      }
+    }
+    vi.stubGlobal('FileReader', SlowReader);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-25T12:00:00Z'));
+    try {
+      renderScreen();
+      const [first, second] = await screen.findAllByTestId('conversation-item');
+      await userEvent.click(first as HTMLElement);
+      const composer = await screen.findByTestId('composer');
+      await userEvent.click(within(composer).getByRole('button', { name: 'Gravar áudio' }));
+      await within(composer).findByText('Gravando');
+      vi.setSystemTime(new Date('2026-09-25T12:00:10Z'));
+      await userEvent.click(within(composer).getByRole('button', { name: 'Parar' }));
+      await userEvent.click(within(composer).getByRole('button', { name: 'Enviar' }));
+
+      await userEvent.click(second as HTMLElement);
+      finishRead();
+
+      await waitFor(() => expect(sendAttachmentMock).toHaveBeenCalledTimes(1));
+      expect(sendAttachmentMock.mock.calls[0]?.[0]).toBe('c-1');
     } finally {
       vi.useRealTimers();
       vi.unstubAllGlobals();

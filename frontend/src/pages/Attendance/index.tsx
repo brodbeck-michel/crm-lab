@@ -2,7 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ListConversationsQuery, ListPatientsQuery } from '@crm-lab/shared';
+import type {
+  CreateAttachmentRequest,
+  ListConversationsQuery,
+  ListPatientsQuery,
+} from '@crm-lab/shared';
 import { api, queryKeys, queryScopes, staleTimes } from '@/api';
 import { useQuickReplyList } from '@/api/quick-replies';
 import { useToast } from '@/components/ui';
@@ -168,10 +172,19 @@ export function Attendance() {
 
   /** Anexo (Onda 8 §4.3) — o clipe abre o seletor de arquivo do SO. */
   const fileInputRef = useRef<HTMLInputElement>(null);
+  /**
+   * `conversationId` vem de quem chama, lido ANTES de ler o arquivo: entre o
+   * clique e o POST há o `FileReader`, e trocar de conversa nessa janela
+   * mandava o anexo/recado para o paciente errado (revisão do CRMLAB-24).
+   */
   const sendAttachment = useMutation({
-    mutationFn: (file: { fileName: string; mimeType: string; contentBase64: string }) =>
-      api.conversations.sendAttachment(selectedId as string, file),
-    onSuccess: invalidateConversation,
+    mutationFn: ({ conversationId, ...file }: CreateAttachmentRequest & { conversationId: string }) =>
+      api.conversations.sendAttachment(conversationId, file),
+    onSuccess: (_message, { conversationId }) =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.conversation(conversationId) }),
+        queryClient.invalidateQueries({ queryKey: queryScopes.conversations }),
+      ]),
     onError: handleApiError,
   });
 
@@ -187,9 +200,11 @@ export function Attendance() {
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = event.target.files?.[0];
     event.target.value = '';
-    if (!file) return;
+    const conversationId = selectedId;
+    if (!file || !conversationId) return;
     const contentBase64 = await readFileAsBase64(file);
     sendAttachment.mutate({
+      conversationId,
       fileName: file.name,
       mimeType: file.type || 'application/octet-stream',
       contentBase64,
@@ -202,8 +217,11 @@ export function Attendance() {
    * erro já saiu pelo `handleApiError` do `onError`.
    */
   async function handleSendAudio(audio: RecordedAudio): Promise<void> {
+    const conversationId = selectedId;
+    if (!conversationId) return;
     const contentBase64 = await readFileAsBase64(audio.blob);
     await sendAttachment.mutateAsync({
+      conversationId,
       fileName: audio.fileName,
       mimeType: audio.mimeType,
       contentBase64,

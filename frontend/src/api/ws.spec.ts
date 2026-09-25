@@ -376,6 +376,8 @@ describe('channel.connection_changed', () => {
 
     expect(toast).toHaveBeenCalledTimes(1);
     expect(toast.mock.calls[0]?.[0]).toMatch(/escaneie o QR de novo/);
+    // 401 tambem e o logout pedido pela tela: o aviso nao pode culpar o celular.
+    expect(toast.mock.calls[0]?.[0]).not.toMatch(/celular/);
     expect(toast.mock.calls[0]?.[1]).toBe('attention');
   });
 

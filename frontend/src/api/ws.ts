@@ -168,11 +168,13 @@ export function applyWsEvent(
     case 'channel.connection_changed': {
       const data = event.data as WsEventPayloads['channel.connection_changed'];
       // D-184: com `requiresNewQr` a sessão foi apagada no gateway e não volta
-      // sozinha — o aviso diz o que fazer em vez de deixar esperar.
+      // sozinha — o aviso diz o que fazer em vez de deixar esperar. O texto NAO
+      // afirma quem desconectou: o mesmo 401 vem do celular, do WhatsApp
+      // (`device_removed`) ou do logout pedido pela propria tela de Canais.
       if (!data.connected) {
         toast?.(
           data.requiresNewQr
-            ? 'WhatsApp desconectado pelo celular/WhatsApp — escaneie o QR de novo em Configurações › Canais.'
+            ? 'WhatsApp desconectado e a sessão foi encerrada — escaneie o QR de novo em Configurações › Canais.'
             : 'WhatsApp desconectado — mensagens novas não estão chegando.',
           'attention',
         );

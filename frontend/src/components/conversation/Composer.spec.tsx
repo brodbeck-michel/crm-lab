@@ -351,6 +351,17 @@ describe('Composer — Ctrl+B negrito (CRMLAB-51, D-183)', () => {
     expect(field).toHaveValue('seu *resultado* saiu');
   });
 
+  it('AltGr+B (Ctrl+Alt no Windows) não vira negrito', async () => {
+    const user = userEvent.setup();
+    render(<Composer onSend={vi.fn()} />);
+
+    const field = screen.getByLabelText('Mensagem') as HTMLTextAreaElement;
+    await user.type(field, 'oi');
+    await user.keyboard('{Control>}{Alt>}b{/Alt}{/Control}');
+
+    expect(field.value).not.toContain('*');
+  });
+
   it('o texto vai para onSend com os asteriscos (o WhatsApp formata)', async () => {
     const onSend = vi.fn();
     const user = userEvent.setup();

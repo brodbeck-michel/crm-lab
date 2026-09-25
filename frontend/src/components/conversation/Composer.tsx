@@ -189,7 +189,8 @@ export function Composer({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'b') {
+    // `!altKey`: AltGr no Windows chega como Ctrl+Alt e digita caractere em alguns teclados.
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'b') {
       event.preventDefault();
       wrapBold();
       return;

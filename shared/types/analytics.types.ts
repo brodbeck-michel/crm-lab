@@ -25,6 +25,11 @@ export interface FunnelReport {
   }>;
   /** true quando o usuario e atendente e ve apenas as proprias metricas. */
   partial: boolean;
+  /**
+   * O que o LIS confirma, separado do que a atendente marcou (CRMLAB-52, D-119 item 9).
+   * `wonFromLis` por `closedAt` no periodo; `paidCount`/`paidValue` por `lis_paid_on`.
+   */
+  realized: { wonFromLis: number; paidCount: number; paidValue: number };
 }
 
 export interface PipelineSnapshot {

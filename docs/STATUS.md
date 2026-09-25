@@ -2741,3 +2741,20 @@ por dentro. A lista de mensagens mantém a borda de baixo parada (PR #61).
 - **prod:** `262c808` (tag **v1.19.0**), CI verde nos 5 jobs, imagens puxadas do GHCR, sem
   migração. Healthcheck OK na 2ª tentativa. O bundle servido em https://vitrocrm.cloud confirma
   `1.19.0`.
+
+### 🔄 CRMLAB-52 — conciliação com o LIS pela API do Bitlab (Onda 13, 2026-09-25)
+
+Branch `feature/CRMLAB-52-conciliacao-bitlab` (PR 1, #67) e `feature/CRMLAB-52-conciliacao-propostas`
+(PR 2, empilhado no PR 1). Decisões D-119, D-185..D-187.
+
+- **PR 1 — sincronização:** migração 026 (`lis_sync_settings`), `bitlab-client.ts`,
+  `LisSyncService` (marca d'água, agendador de 30 min), `LisImportService.ingestRows` como
+  entrada comum de planilha e API, tela `/settings/lis-integration`.
+- **PR 2 — conciliação:** `PATCH /proposals/:id/lis-reference` concilia na hora;
+  `lis-reconcile.service.ts` roda por chunk dentro de `ingestRows`; `markWonFromLis` leva a
+  `ganho` de qualquer estágio aberto (`changedBy`/`userId` nulos, audit `source: "lis"`),
+  `perdido` não reabre (`lis_reconcile_conflict`); purge bloqueado com vínculo;
+  `FunnelReport.realized`. Frontend: campo e selo "Conciliado" no `ProposalModal`, selo no
+  `ProposalCard`, cartão "Receita realizada (LIS)" no Analytics.
+- **Pendente do Bitlab:** chave de orçamentos (403 em 25/09), fuso das datas (D-187) e restrição
+  ao IP da VPS antes de ligar em produção.

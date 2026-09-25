@@ -160,6 +160,44 @@ export async function aggregateWonIn(
   return { count: toNumber(row?.count), revenue: toNumber(row?.revenue) };
 }
 
+export interface RealizedAggregate {
+  wonFromLis: number;
+  paidCount: number;
+  paidValue: number;
+}
+
+/**
+ * O que o LIS confirma (CRMLAB-52, D-119 item 9). Duas janelas diferentes, de
+ * proposito: ganhos pelo LIS por fechamento (`WON_AT`), pagamentos por
+ * `lis_paid_on` (janela de pagamento, BUSINESS_RULES §11.7). `lis_paid_on` e
+ * `DATE`; comparar com os limites `::timestamp` do periodo da o mesmo recorte.
+ */
+export async function aggregateRealizedIn(
+  tx: DbTx,
+  scope: AnalyticsScope,
+  period: PeriodBounds,
+): Promise<RealizedAggregate> {
+  const won = scopeClause(scope, { column: WON_AT, period });
+  const wonResult = await tx.query<{ count: unknown }>(
+    `SELECT COUNT(*)::int AS count
+       FROM proposals p
+       ${won.where} AND p.status = 'ganho' AND p.lis_reconciled_at IS NOT NULL`,
+    won.params,
+  );
+  const paid = scopeClause(scope, { column: 'p.lis_paid_on', period });
+  const paidResult = await tx.query<{ count: unknown; total: unknown }>(
+    `SELECT COUNT(*)::int AS count, COALESCE(SUM(p.lis_paid_value), 0) AS total
+       FROM proposals p
+       ${paid.where} AND p.lis_paid_value > 0`,
+    paid.params,
+  );
+  return {
+    wonFromLis: toNumber(wonResult.rows[0]?.count),
+    paidCount: toNumber(paidResult.rows[0]?.count),
+    paidValue: toNumber(paidResult.rows[0]?.total),
+  };
+}
+
 export interface PerformerRow {
   userId: string;
   name: string;

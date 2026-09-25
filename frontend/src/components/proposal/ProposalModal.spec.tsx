@@ -77,6 +77,11 @@ function buildProposal(overrides: Partial<ProposalDetail> = {}): ProposalDetail 
     insuranceId: overrides.insuranceId ?? null,
     // Mesma correção para `requestingDoctor` (CRMLAB-9).
     requestingDoctor: overrides.requestingDoctor ?? null,
+    lisBudgetNumber: overrides.lisBudgetNumber ?? null,
+    lisReconciledAt: overrides.lisReconciledAt ?? null,
+    lisRequisitionNumber: overrides.lisRequisitionNumber ?? null,
+    lisPaidValue: overrides.lisPaidValue ?? null,
+    lisPaidOn: overrides.lisPaidOn ?? null,
   };
 }
 
@@ -151,6 +156,11 @@ describe('ProposalModal', () => {
       updatedAt: '2026-08-24T10:00:00Z',
       insuranceId: null,
       requestingDoctor: null,
+      lisBudgetNumber: null,
+      lisReconciledAt: null,
+      lisRequisitionNumber: null,
+      lisPaidValue: null,
+      lisPaidOn: null,
       history: [
         {
           status: 'novo_contato' as const,
@@ -213,6 +223,11 @@ describe('ProposalModal', () => {
       updatedAt: '2026-08-24T10:00:00Z',
       insuranceId: null,
       requestingDoctor: null,
+      lisBudgetNumber: null,
+      lisReconciledAt: null,
+      lisRequisitionNumber: null,
+      lisPaidValue: null,
+      lisPaidOn: null,
       history: [],
     };
 

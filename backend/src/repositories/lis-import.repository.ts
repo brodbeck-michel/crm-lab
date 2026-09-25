@@ -109,16 +109,18 @@ export class LisImportRepository {
       rowsAccepted: number | null;
       rowsRejected: number | null;
       errorMessage: string | null;
+      /** Propostas que esta rodada levou a `ganho` pela conciliacao (D-119 item 9). */
+      proposalsWon: number;
     },
   ): Promise<LisImport> {
     return this.db.withTenant(tenantId, async (tx) => {
       const result = await tx.query<LisImportRow>(
         `UPDATE lis_imports
             SET status = $2, rows_accepted = $3, rows_rejected = $4,
-                error_message = $5, finished_at = NOW()
+                error_message = $5, proposals_won = $6, finished_at = NOW()
           WHERE id = $1
           RETURNING ${IMPORT_COLUMNS}`,
-        [id, data.status, data.rowsAccepted, data.rowsRejected, data.errorMessage],
+        [id, data.status, data.rowsAccepted, data.rowsRejected, data.errorMessage, data.proposalsWon],
       );
       const row = result.rows[0];
       if (!row) throw new Error('lis_imports nao encontrado ao finalizar');
@@ -282,6 +284,15 @@ export async function upsertBudget(
       importId,
     ],
   );
+}
+
+/** Quantos `lis_budgets` do tenant estao vinculados a proposta (purge bloqueado, D-119 item 8). */
+export async function countReconciledBudgets(tx: DbTx, tenantId: string): Promise<number> {
+  const result = await tx.query<{ total: number | string }>(
+    'SELECT COUNT(*)::int AS total FROM lis_budgets WHERE tenant_id = $1 AND proposal_id IS NOT NULL',
+    [tenantId],
+  );
+  return Number(result.rows[0]?.total ?? 0);
 }
 
 /** `POST /lis-imports/purge` — apaga TODAS as linhas de `lis_budgets` do tenant. */

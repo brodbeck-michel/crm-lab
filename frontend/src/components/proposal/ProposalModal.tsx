@@ -15,6 +15,7 @@ import ApprovalAlert from './ApprovalAlert';
 import StageHistory from './StageHistory';
 import ActionsRow from './ActionsRow';
 import LostReasonForm from './LostReasonForm';
+import LisReferenceSection from './LisReferenceSection';
 
 interface ProposalModalProps {
   proposalId: string;
@@ -146,6 +147,9 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
               </Button>
             )}
           </div>
+
+          {/* CRMLAB-52/D-119: vínculo com o orçamento do LIS, abaixo do convênio. */}
+          {!isEditing && <LisReferenceSection proposal={proposal} />}
 
           {isEditing ? (
             <>

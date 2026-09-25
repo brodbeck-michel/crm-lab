@@ -8,6 +8,8 @@
  *   PATCH /api/v1/proposals/:id/discount  novo desconto (total recalculado)
  *   PATCH /api/v1/proposals/:id/items     substitui itens/desconto/medico solicitante
  *                                         (CRMLAB-12, D-132) — so em novo_contato/orcamento_enviado
+ *   PATCH /api/v1/proposals/:id/lis-reference  nº do orcamento no LIS (CRMLAB-52, D-119):
+ *                                         dona ou manager+, concilia na mesma transacao
  *   PATCH /api/v1/proposals/:id/approve   manager/admin
  *   PATCH /api/v1/proposals/:id/reject    manager/admin (motivo obrigatorio)
  *
@@ -118,6 +120,12 @@ export const updateItemsSchema = z
   })
   .strict();
 
+// A forma (so digitos, 1..20) e checada no service, que normaliza e devolve
+// VALIDATION_ERROR com `details.fields.lisBudgetNumber` (API_CONTRACTS.md §3).
+export const updateLisReferenceSchema = z
+  .object({ lisBudgetNumber: z.string().max(40).nullable() })
+  .strict();
+
 export const rejectSchema = z.object({ reason: z.string().min(1).max(500) }).strict();
 
 export const proposalIdParamSchema = z.object({ id: z.string().uuid() });
@@ -126,6 +134,7 @@ type CreateProposalBody = z.infer<typeof createProposalSchema>;
 type UpdateStatusBody = z.infer<typeof updateStatusSchema>;
 type UpdateDiscountBody = z.infer<typeof updateDiscountSchema>;
 type UpdateItemsBody = z.infer<typeof updateItemsSchema>;
+type UpdateLisReferenceBody = z.infer<typeof updateLisReferenceSchema>;
 type RejectBody = z.infer<typeof rejectSchema>;
 
 /** `Promise` rejeitada em handler async precisa chegar ao error-handler. */
@@ -252,6 +261,16 @@ export function updateProposalItems(service: ProposalService): RequestHandler {
   });
 }
 
+export function updateProposalLisReference(service: ProposalService): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const { id } = validated<{ id: string }>(req, 'params');
+    const dto = validated<UpdateLisReferenceBody>(req, 'body');
+    const detail: ProposalDetail = await service.setLisReference(ctx, id, dto.lisBudgetNumber);
+    res.status(200).json(detail);
+  });
+}
+
 export function approveProposal(services: ProposalModuleServices): RequestHandler {
   return handle(async (req, res) => {
     const ctx = getContext(req);
@@ -337,6 +356,15 @@ export function proposalModule(deps: ApiModuleDeps): ApiModule {
     validate(proposalIdParamSchema, 'params'),
     validate(updateItemsSchema, 'body'),
     updateProposalItems(services.proposals),
+  );
+
+  router.patch(
+    '/:id/lis-reference',
+    requireAuth(),
+    denyPlatformOperator(),
+    validate(proposalIdParamSchema, 'params'),
+    validate(updateLisReferenceSchema, 'body'),
+    updateProposalLisReference(services.proposals),
   );
 
   // `denyPlatformOperator()` ANTES de `requireRoles`: o operador da plataforma

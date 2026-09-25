@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import type { QuickReply } from '@crm-lab/shared';
 import { Button, cn } from '@/components/ui';
@@ -14,6 +14,11 @@ import { QuickReplyMenu, filterQuickReplies, quickReplyOptionId } from './QuickR
  * continua sendo a pílula do design system (999px, DESIGN_TOKENS.md).
  *
  * Componente burro: não conhece a API. Quem monta a tela passa `onSend`.
+ *
+ * **O campo cresce com o texto** (CRMLAB-49, padrão WhatsApp Web): começa com
+ * uma linha, ganha altura a cada quebra até `FIELD_MAX_HEIGHT_PX` e dali em
+ * diante rola por dentro. Passou de uma linha, a pílula vira `radius-md` — o
+ * raio de campo multilinha do DESIGN_TOKENS.md (999px deforma com 3 linhas).
  *
  * O emoji entra NA POSIÇÃO DO CURSOR (Onda 8 §2.2): quem escreve "bom dia,
  * tudo bem?" e volta o cursor para o meio não quer o emoji no fim da frase.
@@ -47,6 +52,12 @@ export interface ComposerProps {
    */
   quickReplies?: readonly QuickReply[];
 }
+
+/**
+ * Teto do crescimento: ~6 linhas de `text-label`. Passou disso, rolagem interna.
+ * Não é CSS puro (`field-sizing: content`) porque o Firefox não suporta.
+ */
+const FIELD_MAX_HEIGHT_PX = 150;
 
 /** Clipe de papel em SVG inline — sem biblioteca de ícones (padrão do shell). */
 function AttachIcon() {
@@ -82,8 +93,29 @@ export function Composer({
   // `Esc` deixar a `/` no campo sem o menu voltar a abrir sozinho.
   const [macroMenuOpen, setMacroMenuOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [multiline, setMultiline] = useState(false);
   const fieldRef = useRef<HTMLTextAreaElement>(null);
   const blocked = disabled || sending;
+
+  /**
+   * Altura acompanha o conteúdo. Depende de `value`, não do `onChange`: assim
+   * emoji, resposta rápida, envio (volta a '') e `initialValue` recalculam
+   * pelo mesmo caminho. `auto` antes de medir é o que deixa o campo DIMINUIR.
+   * Layout effect para não pintar um quadro com a altura velha.
+   */
+  useLayoutEffect(() => {
+    const field = fieldRef.current;
+    if (!field) return;
+    field.style.height = 'auto';
+    const singleLine = field.clientHeight;
+    // `scrollHeight` não conta a borda e o preflight usa `border-box`: sem
+    // somá-la, o campo fica 2px curto e aparece rolagem já na 1ª linha.
+    const border = field.offsetHeight - field.clientHeight;
+    const content = field.scrollHeight + border;
+    field.style.height = `${Math.min(content, FIELD_MAX_HEIGHT_PX)}px`;
+    field.style.overflowY = content > FIELD_MAX_HEIGHT_PX ? 'auto' : 'hidden';
+    setMultiline(field.scrollHeight > singleLine);
+  }, [value]);
 
   /** O texto é um comando de macro enquanto for `/` + o que se digita depois. */
   const macroFilter = value.startsWith('/') ? value.slice(1) : null;
@@ -224,7 +256,8 @@ export function Composer({
             macroOpen && activeMacro ? quickReplyOptionId(activeMacro.id) : undefined
           }
           className={cn(
-            'min-h-[36px] w-full min-w-0 flex-1 resize-none rounded-pill border border-neutral-300 bg-bg',
+            'min-h-[36px] w-full min-w-0 flex-1 resize-none border border-neutral-300 bg-bg',
+            multiline ? 'rounded-md' : 'rounded-pill',
             'px-lg py-[9px] font-body text-label text-text outline-none',
             'placeholder:text-neutral-600 focus:border-accent disabled:cursor-not-allowed disabled:opacity-60',
           )}

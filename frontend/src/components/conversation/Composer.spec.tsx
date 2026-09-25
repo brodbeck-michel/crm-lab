@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Composer } from './Composer';
 
 /** Composer — COMPONENTS.md: Enter envia, Shift+Enter quebra linha. */
@@ -199,5 +199,102 @@ describe('Composer — respostas rápidas (Onda 8 §3.4)', () => {
     await user.type(screen.getByLabelText('Mensagem'), '/');
 
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * CRMLAB-49 — o campo cresce com o texto. O jsdom não faz layout, então as
+ * medidas do textarea são simuladas pelo número de linhas: 20px por linha +
+ * 14px de padding, 2px de borda (o `border-box` do preflight).
+ */
+describe('Composer — campo cresce com o texto (CRMLAB-49)', () => {
+  const measure = (prop: 'scrollHeight' | 'clientHeight' | 'offsetHeight') =>
+    vi.spyOn(HTMLTextAreaElement.prototype, prop, 'get');
+
+  beforeEach(() => {
+    measure('clientHeight').mockReturnValue(34);
+    measure('offsetHeight').mockReturnValue(36);
+    measure('scrollHeight').mockImplementation(function (this: HTMLTextAreaElement) {
+      return 14 + 20 * this.value.split('\n').length;
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const lines = (n: number) => Array.from({ length: n }, (_, i) => `linha ${i + 1}`).join('\n');
+
+  it('texto curto: uma linha, pílula e sem rolagem', () => {
+    render(<Composer onSend={vi.fn()} />);
+    const field = screen.getByLabelText('Mensagem');
+
+    expect(field.style.height).toBe('36px');
+    expect(field.style.overflowY).toBe('hidden');
+    expect(field).toHaveClass('rounded-pill');
+  });
+
+  it('quebrou linha: cresce, troca a pílula por radius-md e ainda não rola', () => {
+    render(<Composer onSend={vi.fn()} initialValue={lines(3)} />);
+    const field = screen.getByLabelText('Mensagem');
+
+    expect(field.style.height).toBe('76px');
+    expect(field.style.overflowY).toBe('hidden');
+    expect(field).toHaveClass('rounded-md');
+    expect(field).not.toHaveClass('rounded-pill');
+  });
+
+  it('passou do teto: trava em 150px e rola por dentro', () => {
+    render(<Composer onSend={vi.fn()} initialValue={lines(10)} />);
+    const field = screen.getByLabelText('Mensagem');
+
+    expect(field.style.height).toBe('150px');
+    expect(field.style.overflowY).toBe('auto');
+  });
+
+  it('enviar volta o campo para uma linha', async () => {
+    const user = userEvent.setup();
+    render(<Composer onSend={vi.fn()} initialValue={lines(4)} />);
+    const field = screen.getByLabelText('Mensagem');
+    expect(field.style.height).toBe('96px');
+
+    await user.click(screen.getByRole('button', { name: 'Enviar' }));
+
+    expect(field.style.height).toBe('36px');
+    expect(field).toHaveClass('rounded-pill');
+  });
+
+  it('Shift+Enter cresce e apagar a quebra diminui de novo', async () => {
+    const user = userEvent.setup();
+    render(<Composer onSend={vi.fn()} />);
+    const field = screen.getByLabelText('Mensagem');
+
+    await user.type(field, 'oi');
+    await user.keyboard('{Shift>}{Enter}{/Shift}');
+    expect(field.style.height).toBe('56px');
+
+    await user.keyboard('{Backspace}');
+    expect(field.style.height).toBe('36px');
+  });
+
+  it('resposta rápida longa recalcula a altura', async () => {
+    const user = userEvent.setup();
+    const macro = {
+      id: 'm',
+      shortcut: 'preparo',
+      title: 'Preparo',
+      content: lines(3),
+      createdBy: null,
+      createdAt: '2026-09-06T12:00:00.000Z',
+      updatedAt: '2026-09-06T12:00:00.000Z',
+    };
+    render(<Composer onSend={vi.fn()} quickReplies={[macro]} />);
+    const field = screen.getByLabelText('Mensagem');
+
+    await user.type(field, '/');
+    await user.keyboard('{Enter}');
+
+    expect(field).toHaveValue(lines(3));
+    expect(field.style.height).toBe('76px');
   });
 });

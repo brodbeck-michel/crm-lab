@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { ConversationDetail, Message } from '@crm-lab/shared';
@@ -100,6 +100,41 @@ describe('ConversationPanel — rolagem', () => {
 
     // some a altura acrescentada acima (600), em vez de pular para o fim (1600).
     expect(scroller.scrollTop).toBe(1000);
+  });
+
+  it('composer cresceu e a lista encolheu: a borda de baixo fica parada (CRMLAB-49)', () => {
+    let notify = (): void => undefined;
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: () => void) {
+          notify = callback;
+        }
+        observe(): void {}
+        disconnect(): void {}
+      },
+    );
+    let clientHeight = 500;
+    const spy = vi
+      .spyOn(HTMLElement.prototype, 'clientHeight', 'get')
+      .mockImplementation(() => clientHeight);
+
+    render(<ConversationPanel {...props([message('m-1'), message('m-2')])} />);
+    const scroller = screen.getByTestId('message-scroll');
+    scroller.scrollTop = 700;
+
+    // O campo ganhou 40px: a lista perde 40px e sobe o scroll na mesma medida.
+    clientHeight = 460;
+    act(() => notify());
+    expect(scroller.scrollTop).toBe(740);
+
+    // Enviou e o campo voltou a uma linha: devolve os 40px.
+    clientHeight = 500;
+    act(() => notify());
+    expect(scroller.scrollTop).toBe(700);
+
+    spy.mockRestore();
+    vi.unstubAllGlobals();
   });
 
   it('conversa encerrada bloqueia composer e o botão Encerrar', () => {

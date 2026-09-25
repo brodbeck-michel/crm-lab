@@ -86,6 +86,32 @@ function useMessageScroll(
 }
 
 /**
+ * A lista encolheu ou cresceu porque o Composer mudou de altura (CRMLAB-49) →
+ * a BORDA DE BAIXO fica parada, como no WhatsApp Web: a mensagem que estava
+ * logo acima do campo continua lá. Sem isso o `scrollTop` fica igual e as
+ * últimas mensagens somem atrás do campo que cresceu.
+ *
+ * `mounted` porque a lista só existe fora dos estados de carregando/erro/vazio;
+ * sem ele o efeito rodaria uma vez com o ref nulo e nunca mais.
+ */
+function useBottomAnchor(ref: RefObject<HTMLDivElement>, mounted: boolean): void {
+  useEffect(() => {
+    const element = ref.current;
+    // jsdom não tem ResizeObserver; no navegador ele sempre existe.
+    if (!mounted || !element || typeof ResizeObserver === 'undefined') return;
+
+    let previous = element.clientHeight;
+    const observer = new ResizeObserver(() => {
+      const current = element.clientHeight;
+      element.scrollTop += previous - current;
+      previous = current;
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [ref, mounted]);
+}
+
+/**
  * Menu "Transferir" — a lista de colegas + "Devolver para a fila"
  * (spec Onda 8 §2.1). Quem já é dona da conversa não aparece na lista: a opção
  * seria um no-op com cara de ação.
@@ -210,6 +236,7 @@ export function ConversationPanel({
 }: ConversationPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   useMessageScroll(scrollRef, messages, conversation?.id ?? null);
+  useBottomAnchor(scrollRef, !isError && !isLoading && conversation !== null);
 
   if (isError) {
     return (

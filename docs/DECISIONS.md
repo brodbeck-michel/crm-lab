@@ -2634,6 +2634,33 @@ horário em que a antiga dona não está.
 "Encerradas"), `docs/api/API_CONTRACTS.md` §2, `API_ERRORS.md`, `WORKFLOWS.md` §5,
 `SCHEMA.md`, `PAGES.md` §2, `SERVICES.md` §2/§3.
 
+### D-183: Negrito com asterisco no padrão WhatsApp, só na exibição; prévia da lista fica crua (CRMLAB-51)
+**Decisão:**
+1. `*texto*` é exibido em negrito na bolha (`MessageBubble`), enviada ou recebida. É só
+   exibição: o `content` guardado e enviado ao WhatsApp continua com os asteriscos — o próprio
+   WhatsApp formata do lado do paciente. Sem mudança de API, banco ou `shared/`.
+2. Regra (`splitBold`, `frontend/src/lib/whatsapp-format.ts`), a do WhatsApp: o `*` de abertura
+   não é seguido de espaço, o de fechamento não é precedido de espaço, o trecho não atravessa
+   quebra de linha e não contém outro `*`; `**` vazio, asterisco solto e `2 * 3 * 4` não formatam.
+   Além disso o `*` precisa estar na **borda da palavra** (não colado a letra/dígito por fora),
+   como no WhatsApp: `2*3*4` e `a*b*c` ficam como estão. `_`/`~` por fora não bloqueiam
+   (`_*texto*_`, negrito + itálico no WhatsApp, mostra o negrito).
+3. Renderiza como nós React (`<strong>` + texto), **nunca** `dangerouslySetInnerHTML` — o React
+   escapa o texto do paciente e não há XSS. A bolha continua com `whitespace-pre-wrap` (quebras
+   de linha preservadas); hoje ela não gera links, então nada mais muda.
+4. Compositor: **Ctrl+B / Cmd+B** envolve a seleção em `*` e mantém o texto selecionado; sem
+   seleção insere `**` com o cursor no meio. Espaço nas pontas da seleção (duplo clique no
+   Windows pega `palavra `) fica fora dos asteriscos, senão não formataria. Mudança mínima no
+   `Composer` (um ramo no `onKeyDown`).
+5. **Prévia da última mensagem** na lista (`ConversationItem`) fica **como está**, com os
+   asteriscos: é o mais simples (zero mudança) e a prévia é truncada e em `text-caption`, onde
+   negrito não ajuda a ler.
+6. Itálico (`_`), tachado (`~`) e monoespaçado ficam fora — o card pede só negrito.
+**Motivo:** A recepção já escrevia `*Resultado disponível*` pensando no WhatsApp do paciente e via
+os asteriscos crus na tela. A regra de borda evita negrito acidental em conta (`2*3*4`).
+**Impacto:** `frontend/src/lib/whatsapp-format.ts` (novo), `MessageBubble.tsx`, `Composer.tsx`
+(atalho), `docs/frontend/COMPONENTS.md` (MessageBubble e Composer).
+
 ## Template para novas decisões
 
 ```

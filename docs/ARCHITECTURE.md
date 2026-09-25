@@ -417,7 +417,9 @@ Contrato em `shared/types/websocket.types.ts`; hub em `src/lib/ws-hub.ts`, com
 `channel.connection_changed` nasceu da auditoria de 2026-09-17: a sessão do WhatsApp caiu às
 16:17 e **ninguém ficou sabendo** — o estado só era gravado no banco, e o admin descobriria
 abrindo a tela de Canais. O canal mudo é pior que o canal caído: o laboratório segue achando
-que atende enquanto as mensagens não chegam.
+que atende enquanto as mensagens não chegam. Desde a D-184 o payload leva `requiresNewQr`
+(`true` quando o gateway informou `statusReason: 401`): a sessão foi apagada e o aviso manda
+escanear o QR de novo, em vez de deixar supor que o canal volta sozinho.
 
 ---
 

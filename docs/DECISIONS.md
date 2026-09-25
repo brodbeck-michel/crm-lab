@@ -2783,6 +2783,70 @@ preview num payload razoável.
 **Impacto:** `backend/src/lib/exam-csv.ts` + `backend/tests/catalog/exam-csv.spec.ts`;
 constantes em `shared/types/exam.types.ts`; `API_CONTRACTS.md` §4 (formato do arquivo).
 
+### D-179: Carga das vendas dos dois Supabases — união por `id`, vence o `updated_at` mais recente (CRMLAB-45)
+**Decisão:** o script `npm run import:sales-supabase` lê um CSV de `public.vendas` de cada
+Supabase (FluxoLab/Vercel e app original/Lovable) e junta as duas bases **por `id`** (o UUID da
+venda é preservado no CRM Lab):
+1. Cada linha é validada **antes** da junção (UUID, data, valor com até 2 casas, tipo,
+   timestamps). Linha inválida — inclusive `valor <= 0`, que o `CHECK (value > 0)` de `sales`
+   recusaria — vai para **rejeitadas com motivo** e não participa da junção; nunca é
+   descartada em silêncio.
+2. Mesmo `id` nas duas bases (ou repetido no mesmo arquivo): vence a versão com o
+   **`updated_at` mais recente**. Se o conteúdo de negócio diferir (atendente dobrado, data,
+   código, valor, exames, tipo, `created_by`, `created_at`), o `id` entra no relatório de
+   **conflitos** com as duas versões. `updated_at` empatado com conteúdo diferente → vence o
+   **FluxoLab** (a base mais nova, sucessora do app original) e o conflito é reportado do mesmo
+   jeito.
+3. **Idempotência contra o destino:** venda que já existe no tenant só é regravada se o
+   `updated_at` de origem for **estritamente mais novo** que o gravado. Reexecutar com os
+   mesmos CSVs não insere nem altera nada; uma venda editada no CRM depois da carga (o trigger
+   põe `updated_at = NOW()`) também não é sobrescrita.
+**Motivo:** as duas bases conviveram por um tempo e parte das vendas existe nas duas, às vezes
+editada em uma só. `updated_at` é o único sinal de "qual versão é a última" que as duas têm; o
+relatório de conflitos deixa a escolha auditável em vez de escondida.
+**Impacto:** `backend/src/services/sales-supabase-import.service.ts`,
+`backend/src/db/cli/import-sales-supabase.ts`, `docs/guides/MIGRACAO_SANTE.md`. Sem migração.
+
+### D-180: Como a carga de vendas grava — timestamps preservados, atendente sem acento, isolamento (CRMLAB-45)
+**Decisão:** detalhes de implementação da carga de D-179:
+1. **Atualização = `DELETE` + `INSERT` na mesma transação.** O trigger `trg_sales_updated_at`
+   sobrescreve `updated_at` em todo `UPDATE`, e a role `crm_app` (a do `withTenant`) não pode
+   desligá-lo. Como nenhuma tabela referencia `sales` (SCHEMA.md §27), apagar e reinserir com o
+   mesmo `id` é seguro e preserva `created_at`/`updated_at` da origem. Timestamps de origem
+   (`timestamptz`) são gravados convertidos para **UTC** (as colunas são `TIMESTAMP`).
+2. **Atendente casado por nome sem acento:** `atendente` (texto) é comparado com
+   `attendants.name` do tenant depois de tirar acento, caixa e espaços extras ("José  Silva" =
+   "jose silva"). Sem par, o atendente é **criado** (nome com espaços colapsados). É mais
+   frouxo que o `folded_name` do banco (que mantém acento, D-111), de propósito: na carga, dois
+   cadastros para a mesma pessoa custam mais que o risco de juntar homônimos que só diferem por
+   acento. O atendente só é resolvido (e criado) para venda que vai ser **gravada**
+   (inserida ou atualizada): venda inalterada mantém o atendente já gravado — assim renomear o
+   atendente no CRM não faz a reexecução criar outro — e um atendente criado só para uma venda
+   recusada ("id já usado por outro tenant") é desfeito na mesma transação.
+3. **`created_by`** fica com o mesmo UUID só se existir um usuário **daquele tenant** com esse
+   `id`; senão `NULL` (o login do Supabase não é migrado por este script).
+4. **Tudo dentro de `db.withTenant(tenantId)`**, numa transação única. A exceção é resolver
+   `--tenant <slug>` para o `id`: uma leitura de `tenants` via `withoutTenant` (quarto caso
+   auditado de `DbClient.withoutTenant`, só leitura, CLI de operador); `--tenant <uuid>` nem
+   isso usa. Um `id` de venda que já exista **em outro tenant** não é tocado: o `INSERT ... ON
+   CONFLICT (id) DO NOTHING` não enxerga nem altera a linha alheia, e a venda vai para
+   rejeitadas ("id já usado por outro tenant").
+5. **`--dry-run` executa a carga inteira e desfaz no fim** (`ROLLBACK`): o relatório — inclusive
+   atendentes que seriam criados e a paridade — é exatamente o da gravação real, sem nada
+   persistir.
+6. **Paridade sem float:** somas em centavos inteiros (`numeric` → texto → centavos), em 3
+   janelas (mês anterior, mês corrente, tudo) e por atendente, comparando a união das origens
+   (linhas aceitas) com o que está gravado no tenant.
+7. É script de carga pontual (como os seeds), não um service de domínio: ele lê/escreve
+   `sales`, `attendants` e lê `users` diretamente, sem passar pelos services donos — a exceção à
+   convenção de SERVICES.md vale só para este CLI.
+**Motivo:** preservar o histórico da origem (datas de criação/edição entram em relatórios) sem
+abrir brecha no isolamento; o ensaio precisa ser idêntico à execução real para a paridade servir
+de conferência antes de gravar em produção.
+**Impacto:** `backend/src/repositories/sales-import.repository.ts`,
+`backend/src/services/sales-supabase-import.service.ts`, `backend/src/db/types.ts` (comentário
+do `withoutTenant`), `docs/guides/MIGRACAO_SANTE.md`. Sem migração.
+
 
 ## Template para novas decisões
 

@@ -3095,8 +3095,10 @@ formato brasileiro, comparar a marca como texto seria errado ("30/09" > "01/10")
 primeiros caracteres daria `dd/mm/yyyy` em vez de data. Normalizar na borda mantém o resto do
 código com uma forma só. O ISO continua aceito porque custa uma alternativa na regex e protege
 de uma volta atrás do Bitlab.
-**Pendente:** confirmar no primeiro teste real (chave válida, a partir da VPS) o formato da
-`marcaDagua` e se o `dataInicio` continua aceito em `YYYY-MM-DD HH:mm:ss`.
+**Conferido no primeiro teste real (25/09/2026, a partir da VPS, chave válida):** as datas dos
+orçamentos vêm `dd/mm/yyyy hh:mm:ss`; a `marcaDagua` vem **já** em `YYYY-MM-DD HH:mm:ss` (a forma
+canônica) e é aceita de volta como `dataInicio`. O filtro compara com `>=`: o último orçamento da
+rodada anterior volta na seguinte, o que é inofensivo porque o upsert é idempotente.
 **Impacto:** `bitlab-client.ts` (`parseBitlabDateTime`, `bitlabDateToIsoDate`,
 `watermarkToBitlabDateTime`), SERVICES.md §24.1, BUSINESS_RULES.md §11.10.
 

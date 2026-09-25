@@ -1285,8 +1285,9 @@ ao agendador):
 ### 24.1 Contrato assumido da API de Orçamentos do Bitlab (`backend/src/lib/bitlab-client.ts`)
 
 Fonte: manual "API de Orçamentos v1 — Manual de Integração" enviado pelo Bitlab em 25/09/2026. A
-chave de produção **ainda não foi exercitada**: em 25/09 ela voltou `403`, e o Bitlab corrigiu a
-chave no mesmo dia. Desde então as chaves só são aceitas **a partir do IP da VPS** (2.25.227.155)
+chave de produção foi exercitada pela primeira vez em 25/09/2026, depois de o Bitlab corrigir o
+`403` da manhã: consulta só de leitura, 3 orçamentos, a partir da VPS. Tudo abaixo bateu, com as
+emendas marcadas "(conferido 25/09)". Desde então as chaves só são aceitas **a partir do IP da VPS** (2.25.227.155)
 e **só por HTTPS**: teste da máquina de desenvolvimento não alcança a API. Os formatos abaixo são
 os do manual, com a correção de datas de 25/09 (D-187). Os primeiros testes com a chave válida devem conferir cada linha desta tabela e
 emendar aqui o que divergir, como foi feito com a sandbox em 18/09.
@@ -1299,7 +1300,9 @@ emendar aqui o que divergir, como foi feito com a sandbox em 18/09.
 | Sucesso | `200` `{ sucesso: true, apiVersao: "v1", status: "LISTA" \| "SEM_RESULTADOS", avisos: string[], filtro, paginacao: { pagina, tamanhoPagina, totalRegistros, totalPaginas, temProxima }, marcaDagua: string \| null, total, orcamentos: [] }` |
 | Erro de parâmetro | `400` `{ sucesso: false, status: "PARAMETROS_INVALIDOS" \| "PERIODO_INVALIDO", erro: { codigo, mensagem } }` |
 | Headers | `X-API-Version: 1.0.0`, `X-API-Deprecation: false` |
-| Datas na resposta | `dd/mm/yyyy hh:mm:ss`, hora de Brasília, sem `Z` (correção do Bitlab em 25/09/2026). O ISO com `Z` de antes também é aceito (D-187) |
+| Datas na resposta | `DATA_ORÇAMENTO`/`Data_Pagamento` em `dd/mm/yyyy hh:mm:ss`, hora de Brasília, sem `Z` (correção do Bitlab em 25/09/2026). `marcaDagua` em `YYYY-MM-DD HH:mm:ss` (conferido 25/09). O ISO com `Z` de antes também é aceito (D-187) |
+| Envelope | objeto, não array; `X-API-Version: 1.0.0` e `X-API-Deprecation: false` presentes (conferido 25/09) |
+| Campos | `NM_PACIENTE`, `ID_CPF` e `DT_NASCIMENTO` podem vir `null`. `REQUISICAO` no formato `posto-número` (`01-209164`), igual ao da planilha, então a dedupe por requisição (§11.2) vale entre as fontes. `CONTA_NULO` veio `1` junto com `REQUISICAO` preenchido (conferido 25/09) |
 
 **Orçamento:** `ORCAMENTO` (number), `DATA_ORÇAMENTO` (data/hora, ver "Datas na resposta"), `NM_PACIENTE`, `DT_NASCIMENTO`,
 `ID_CPF`, `CONVENIO1..3` (string \| null), `VL_TOTAL1..3` (number \| null), `MEDIA_CONVENIO`,
@@ -1320,9 +1323,8 @@ emendar aqui o que divergir, como foi feito com a sandbox em 18/09.
 - Datas e `marcaDagua` passam por `parseBitlabDateTime` (D-187) e saem na forma canônica
   `YYYY-MM-DD HH:mm:ss`, pelos componentes. A marca é gravada assim, comparada como texto entre as
   páginas e reenviada assim como `dataInicio` da próxima carga (o formato do pedido no manual).
-  `marcaDagua` que não é data → `contract`. **Conferir no primeiro teste real** se o Bitlab compara
-  `>=` ou `>` (com `>=`, o último orçamento é relido a cada rodada, o que é inofensivo porque o
-  upsert é idempotente).
+  `marcaDagua` que não é data → `contract`. O Bitlab compara `>=` (conferido 25/09): o último
+  orçamento é relido a cada rodada, o que é inofensivo porque o upsert é idempotente.
 
 ---
 

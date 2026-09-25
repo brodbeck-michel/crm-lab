@@ -82,6 +82,14 @@ preexistente **não** troca de dono; se ela for de outro atendente, lança
 `CONVERSATION_ALREADY_ASSIGNED` — o 404 do recorte por papel mandaria o atendente montar
 orçamento numa conversa que ele não abre.
 
+`startWhatsApp(ctx, { phone, content })` é o `POST /conversations/whatsapp` (botão "Nova
+conversa", CRMLAB-50, D-175). Mesmo `findOrCreateByPhone` (canal `whatsapp`, `assignedTo =
+ctx.userId`, sem nome), mesmas regras de `createManual` para conversa preexistente (reabre a
+encerrada, 409 para a ativa de outro atendente), promove para `whatsapp` a conversa de outro
+canal e então envia por `MessageService.createFromAgent` — o envio de sempre, com o mesmo
+retry e o mesmo `failed` + `MESSAGE_SEND_FAILED`, agora com `conversationId` em `details`.
+Devolve `{ conversation, message }`, com a conversa relida depois do envio.
+
 **Regras:**
 - `assign` com conflito simultâneo: primeira atribuição ganha. Implementado com
   `UPDATE ... WHERE assigned_to IS NULL` em vez do lock otimista por `updated_at`

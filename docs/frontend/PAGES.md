@@ -100,6 +100,14 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 **Layout:** Inbox 3 colunas (336px | flex min 440px | 316px recolhível). Sidebar recolhe automaticamente (72px) nesta tela para atendentes.
 
 ### Coluna 1 — Lista de conversas
+- **Nova conversa (CRMLAB-50, D-175):** botão "+" no topo da coluna, com tooltip "Nova
+  conversa" (padrão WhatsApp Web). Atalho **Ctrl+Alt+N**. Abre o modal `NewConversationModal`
+  (local da tela): telefone (validado na hora por `normalizeBrazilianPhone` — DDD + número) e a
+  primeira mensagem. [Enviar] chama `POST /conversations/whatsapp`; no sucesso o modal fecha e a
+  conversa (nova ou reaproveitada) fica **aberta e selecionada**. Telefone já em atendimento com
+  outra pessoa (`CONVERSATION_ALREADY_ASSIGNED`) → erro dentro do modal com o nome dela. Canal
+  fora do ar (`MESSAGE_SEND_FAILED`) → o modal fecha, a conversa abre mesmo assim (a mensagem
+  aparece como falha) e um toast explica que o WhatsApp não enviou
 - Filtros em chips: "Minhas N" (accent sólido), "Não atribuídas N" (cinza)
 - Chip **"Encerradas"** (CRMLAB-48, D-174), sem número: lista `?status=closed` (o atendente vê só
   as dele, pelo recorte do servidor). Ligado, os números de "Minhas"/"Não atribuídas" continuam os

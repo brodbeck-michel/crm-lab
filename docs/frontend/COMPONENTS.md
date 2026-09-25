@@ -88,6 +88,13 @@ Anatomia (padrão WhatsApp):
   manda esse header. A mídia vem por `useAuthenticatedMedia` (`hooks/`), que chama
   `fetchAuthenticatedBlob` (`api/client.ts`) e usa `URL.createObjectURL` como `src`. Enquanto
   carrega ou se a busca falhar, mostra texto no lugar da mídia — nunca `<img>`/player quebrado
+- **Negrito padrão WhatsApp** (CRMLAB-51, D-183): `*texto*` aparece em **negrito** na bolha,
+  enviada ou recebida. O texto guardado e enviado ao WhatsApp continua com os asteriscos (o
+  WhatsApp do paciente formata sozinho). Regra em `splitBold` (`lib/whatsapp-format.ts`):
+  abertura não seguida de espaço, fechamento não precedido de espaço, não atravessa quebra de
+  linha, `**` vazio e `2 * 3 * 4` não formatam, e o asterisco precisa estar na borda da palavra
+  (`2*3*4` fica como está). Renderiza como nós React (`<strong>`), nunca
+  `dangerouslySetInnerHTML`. A prévia da lista (`ConversationItem`) mostra o texto cru
 - `useAuthenticatedMedia` devolve também o `fileName` (do `Content-Disposition` de
   `GET /media/:id`), repassado ao `ImageLightbox` — é o nome com que a imagem é salva (CRMLAB-26)
 
@@ -105,6 +112,9 @@ Anatomia (padrão WhatsApp):
 ### Composer
 - Input pílula + botão anexo + botão emoji + botão enviar (primary)
 - Enter envia, Shift+Enter quebra linha
+- **Ctrl+B / Cmd+B** (CRMLAB-51, D-183): envolve a seleção em asteriscos (`*seleção*`, que a
+  bolha e o WhatsApp mostram em negrito) e mantém o texto selecionado; sem seleção, insere `**`
+  com o cursor no meio
 - **Cresce com o texto** (CRMLAB-49, padrão WhatsApp Web): começa com uma linha e
   ganha altura a cada quebra (por tamanho ou Shift+Enter) até **150px** (~6 linhas);
   dali em diante trava e rola por dentro. Apagar ou enviar faz o campo voltar a
@@ -550,9 +560,9 @@ tela passa tudo por props (o dado vem do TanStack Query).
 | Componente | Assinatura | Notas |
 |------------|-----------|-------|
 | `ConversationItem` | `<ConversationItem conversation selected? onClick?(id) now? />` | `now` é injetável só para tornar "aguardando N min" determinístico em teste |
-| `MessageBubble` | `<MessageBubble type message maxWidth? showMeta? />` | `type` ∈ `received \| sent \| system` — os únicos 3 |
+| `MessageBubble` | `<MessageBubble type message maxWidth? showMeta? />` | `type` ∈ `received \| sent \| system` — os únicos 3 · `*texto*` em negrito (D-183) |
 | `AudioMessage` | `<AudioMessage url />` | `<audio controls>` nativo com blob autenticado · download sempre disponível |
-| `Composer` | `<Composer onSend(content) onAttach? disabled? sending? placeholder? quickReplies? />` | Enter envia · Shift+Enter quebra linha · emoji insere no cursor · `/` no campo vazio abre as macros |
+| `Composer` | `<Composer onSend(content) onAttach? disabled? sending? placeholder? quickReplies? />` | Enter envia · Shift+Enter quebra linha · Ctrl/Cmd+B envolve a seleção em `*` · emoji insere no cursor · `/` no campo vazio abre as macros |
 | `EmojiPicker` | `<EmojiPicker onPick(emoji) disabled? />` | Grade fixa de 48, sem biblioteca · `Esc` fecha e devolve o foco |
 | `QuickReplyMenu` | `<QuickReplyMenu items filter onPick(reply) onClose() />` | Aberto pela `/` no campo vazio · ↑↓ navega, Enter escolhe, Esc fecha |
 

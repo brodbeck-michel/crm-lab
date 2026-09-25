@@ -41,7 +41,9 @@ class FakeMediaRecorder {
     this.mimeType = options?.mimeType ?? '';
     recorders.push(this);
   }
-  start(): void {
+  startArgs: unknown[] = [];
+  start(...args: unknown[]): void {
+    this.startArgs = args;
     this.state = 'recording';
   }
   stop(): void {
@@ -292,6 +294,19 @@ describe('Composer — recado de voz', () => {
     supportedTypes = ['audio/ogg;codecs=opus', 'audio/webm;codecs=opus'];
     await recordFor(2_000);
     expect(recorders[0]?.options?.mimeType).toBe('audio/ogg;codecs=opus');
+  });
+
+  it('grava sem timeslice — um Blob só no fim (MP4 fatiado do Safari não toca inteiro)', async () => {
+    await recordFor(1_500);
+    expect(recorders[0]?.startArgs).toEqual([]);
+  });
+
+  it('conversa encerrada no meio da prévia: Enviar trava, Cancelar continua', async () => {
+    const { rerender, onSendAudio } = await recordFor(3_000);
+    fireEvent.click(screen.getByRole('button', { name: 'Parar' }));
+    rerender(<Composer onSend={vi.fn()} onSendAudio={onSendAudio} disabled />);
+    expect(screen.getByRole('button', { name: 'Enviar' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Cancelar' })).toBeEnabled();
   });
 
   it('Safari (só mp4): grava em audio/mp4 e manda como .m4a', async () => {

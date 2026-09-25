@@ -114,7 +114,6 @@ export interface VoiceRecorder {
   stop: () => void;
   cancel: () => void;
   send: (onSend: (audio: RecordedAudio) => Promise<unknown>) => Promise<void>;
-  dismissError: () => void;
 }
 
 export function useVoiceRecorder(): VoiceRecorder {
@@ -256,7 +255,9 @@ export function useVoiceRecorder(): VoiceRecorder {
     };
 
     try {
-      recorder.start(1000);
+      // Sem timeslice: um Blob só, entregue no `stop`. MP4 fatiado do Safari
+      // (fMP4 em pedaços) é o caso em que a concatenação costuma não tocar inteira.
+      recorder.start();
     } catch (err) {
       recorderRef.current = null;
       releaseAll();
@@ -339,7 +340,5 @@ export function useVoiceRecorder(): VoiceRecorder {
     };
   }, []);
 
-  const dismissError = useCallback(() => setError(null), []);
-
-  return { state, error, start, stop, cancel, send, dismissError };
+  return { state, error, start, stop, cancel, send };
 }

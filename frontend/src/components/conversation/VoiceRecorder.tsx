@@ -11,6 +11,8 @@ import type { RecordedAudio, VoiceRecorder as VoiceRecorderHandle } from './useV
 export interface VoiceRecorderProps {
   recorder: VoiceRecorderHandle;
   onSend: (audio: RecordedAudio) => Promise<unknown>;
+  /** Conversa encerrada no meio da prévia: Enviar trava, Cancelar continua. */
+  disabled?: boolean;
 }
 
 /** Microfone em SVG inline — sem biblioteca de ícones (padrão do shell). */
@@ -34,7 +36,7 @@ export function MicIcon() {
   );
 }
 
-export function VoiceRecorder({ recorder, onSend }: VoiceRecorderProps) {
+export function VoiceRecorder({ recorder, onSend, disabled = false }: VoiceRecorderProps) {
   const { state } = recorder;
   if (state.status === 'idle') return null;
 
@@ -93,7 +95,11 @@ export function VoiceRecorder({ recorder, onSend }: VoiceRecorderProps) {
         <Button variant="secondary" onClick={recorder.cancel} disabled={sending}>
           Cancelar
         </Button>
-        <Button onClick={() => void recorder.send(onSend)} loading={sending}>
+        <Button
+          onClick={() => void recorder.send(onSend)}
+          loading={sending}
+          disabled={disabled}
+        >
           Enviar
         </Button>
       </div>

@@ -270,7 +270,7 @@ export function Composer({
         )}
 
         {recording && onSendAudio ? (
-          <VoiceRecorder recorder={recorder} onSend={onSendAudio} />
+          <VoiceRecorder recorder={recorder} onSend={onSendAudio} disabled={disabled} />
         ) : (
           <>
             <EmojiPicker

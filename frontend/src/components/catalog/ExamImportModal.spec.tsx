@@ -185,6 +185,43 @@ describe('ExamImportModal', () => {
     expect(screen.queryByRole('button', { name: 'Confirmar importação' })).not.toBeInTheDocument();
   });
 
+  it('confirmação recusada (invalid_rows) mostra o motivo e NÃO fecha o modal', async () => {
+    const user = userEvent.setup();
+    const err = new ApiError('VALIDATION_ERROR', 'Dados invalidos', 400, {
+      reason: 'invalid_rows',
+      errorCount: 1,
+      errors: [],
+    });
+    vi.mocked(examsApi.usePreviewExamImport).mockReturnValue(
+      mutationIdle(resolvesWith(PREVIEW_OK) as unknown as PreviewMutate),
+    );
+    vi.mocked(examsApi.useConfirmExamImport).mockReturnValue(
+      mutationIdle(rejectsWith(err) as unknown as ConfirmMutate),
+    );
+    const { onClose } = renderModal();
+
+    await upload(user);
+    await user.click(await screen.findByRole('button', { name: 'Confirmar importação' }));
+
+    expect(await screen.findByText(/nada foi gravado/)).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('não-admin recebendo 403 vê a mensagem de permissão', async () => {
+    const user = userEvent.setup();
+    const err = new ApiError('FORBIDDEN', 'Proibido', 403, { requiredRoles: ['admin'] });
+    vi.mocked(examsApi.usePreviewExamImport).mockReturnValue(
+      mutationIdle(rejectsWith(err) as unknown as PreviewMutate),
+    );
+    renderModal();
+
+    await upload(user);
+
+    expect(
+      await screen.findByText('Só o administrador do laboratório pode importar o catálogo.'),
+    ).toBeInTheDocument();
+  });
+
   it('"Escolher outro arquivo" volta para o upload', async () => {
     const user = userEvent.setup();
     vi.mocked(examsApi.usePreviewExamImport).mockReturnValue(

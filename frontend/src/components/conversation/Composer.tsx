@@ -173,7 +173,28 @@ export function Composer({
     });
   }
 
+  /**
+   * Ctrl+B / Cmd+B (CRMLAB-51, D-183): envolve a seleção em `*` — o negrito do
+   * WhatsApp — e mantém o texto selecionado; sem seleção, `**` com o cursor no meio.
+   */
+  function wrapBold(): void {
+    const field = fieldRef.current;
+    let start = field?.selectionStart ?? value.length;
+    let end = field?.selectionEnd ?? value.length;
+    // Duplo clique no Windows seleciona "palavra " — `*palavra *` não formataria.
+    while (start < end && /\s/.test(value.charAt(start))) start++;
+    while (end > start && /\s/.test(value.charAt(end - 1))) end--;
+    setValue(`${value.slice(0, start)}*${value.slice(start, end)}*${value.slice(end)}`);
+    requestAnimationFrame(() => fieldRef.current?.setSelectionRange(start + 1, end + 1));
+  }
+
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+    // `!altKey`: AltGr no Windows chega como Ctrl+Alt e digita caractere em alguns teclados.
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'b') {
+      event.preventDefault();
+      wrapBold();
+      return;
+    }
     if (macroOpen) {
       // Com o menu aberto, estas teclas pertencem a ELE. Enter escolhendo a
       // macro é o ponto: enviar `/jej` como mensagem seria enviar o comando.

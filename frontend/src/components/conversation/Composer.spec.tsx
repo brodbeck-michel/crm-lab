@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Composer } from './Composer';
@@ -221,6 +221,12 @@ describe('Composer — campo cresce com o texto (CRMLAB-49)', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    // Os getters são HERDADOS (Element/HTMLElement); o restore deixa uma cópia
+    // própria embrulhada no protótipo do textarea e o próximo describe que mede
+    // o campo estoura a pilha (CRMLAB-51). Apagar a cópia devolve a herança.
+    for (const prop of ['scrollHeight', 'clientHeight', 'offsetHeight']) {
+      Reflect.deleteProperty(HTMLTextAreaElement.prototype, prop);
+    }
   });
 
   const lines = (n: number) => Array.from({ length: n }, (_, i) => `linha ${i + 1}`).join('\n');
@@ -296,5 +302,76 @@ describe('Composer — campo cresce com o texto (CRMLAB-49)', () => {
 
     expect(field).toHaveValue(lines(3));
     expect(field.style.height).toBe('76px');
+  });
+});
+
+describe('Composer — Ctrl+B negrito (CRMLAB-51, D-183)', () => {
+  it('Ctrl+B envolve a seleção em asteriscos e mantém o texto selecionado', async () => {
+    const user = userEvent.setup();
+    render(<Composer onSend={vi.fn()} />);
+
+    const field = screen.getByLabelText('Mensagem') as HTMLTextAreaElement;
+    await user.type(field, 'seu resultado saiu');
+    field.setSelectionRange(4, 13); // "resultado"
+    await user.keyboard('{Control>}b{/Control}');
+
+    expect(field).toHaveValue('seu *resultado* saiu');
+    await waitFor(() => {
+      expect(field.selectionStart).toBe(5);
+      expect(field.selectionEnd).toBe(14);
+    });
+  });
+
+  it('Cmd+B (Mac) sem seleção insere ** com o cursor no meio', async () => {
+    const user = userEvent.setup();
+    render(<Composer onSend={vi.fn()} />);
+
+    const field = screen.getByLabelText('Mensagem') as HTMLTextAreaElement;
+    await user.type(field, 'olá ');
+    await user.keyboard('{Meta>}b{/Meta}');
+
+    expect(field).toHaveValue('olá **');
+    await waitFor(() => {
+      expect(field.selectionStart).toBe(5);
+      expect(field.selectionEnd).toBe(5);
+    });
+    await user.keyboard('x');
+    expect(field).toHaveValue('olá *x*');
+  });
+
+  it('espaço nas pontas da seleção fica fora dos asteriscos (senão não formataria)', async () => {
+    const user = userEvent.setup();
+    render(<Composer onSend={vi.fn()} />);
+
+    const field = screen.getByLabelText('Mensagem') as HTMLTextAreaElement;
+    await user.type(field, 'seu resultado saiu');
+    field.setSelectionRange(3, 14); // " resultado "
+    await user.keyboard('{Control>}b{/Control}');
+
+    expect(field).toHaveValue('seu *resultado* saiu');
+  });
+
+  it('AltGr+B (Ctrl+Alt no Windows) não vira negrito', async () => {
+    const user = userEvent.setup();
+    render(<Composer onSend={vi.fn()} />);
+
+    const field = screen.getByLabelText('Mensagem') as HTMLTextAreaElement;
+    await user.type(field, 'oi');
+    await user.keyboard('{Control>}{Alt>}b{/Alt}{/Control}');
+
+    expect(field.value).not.toContain('*');
+  });
+
+  it('o texto vai para onSend com os asteriscos (o WhatsApp formata)', async () => {
+    const onSend = vi.fn();
+    const user = userEvent.setup();
+    render(<Composer onSend={onSend} />);
+
+    const field = screen.getByLabelText('Mensagem') as HTMLTextAreaElement;
+    await user.type(field, 'urgente');
+    field.setSelectionRange(0, 7);
+    await user.keyboard('{Control>}b{/Control}{Enter}');
+
+    expect(onSend).toHaveBeenCalledWith('*urgente*');
   });
 });

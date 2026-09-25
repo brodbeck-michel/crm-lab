@@ -67,6 +67,7 @@ function conversionReport(overrides: Partial<FunnelReport> = {}): FunnelReport {
     averageTicket: 1000,
     topPerformers: [{ userId: 'user1', name: 'João', conversions: 10, revenue: 10000 }],
     partial: false,
+    realized: { wonFromLis: 0, paidCount: 0, paidValue: 0 },
     ...overrides,
   };
 }
@@ -224,6 +225,28 @@ describe('Analytics', () => {
       expect(screen.getByTestId('conversion-chart')).toBeInTheDocument();
     });
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  // CRMLAB-52/D-119: pago no LIS, separado da receita do CRM.
+  it('mostra a receita realizada pelo LIS com a legenda de pagamentos e ganhos', async () => {
+    responses.set(
+      '/analytics/conversion',
+      conversionReport({ realized: { wonFromLis: 3, paidCount: 5, paidValue: 750 } }),
+    );
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('Receita realizada (LIS)')).toBeInTheDocument();
+    });
+    expect(screen.getByText('5 pagamentos · 3 ganhos confirmados pelo LIS')).toBeInTheDocument();
+  });
+
+  it('sem nada conciliado, o cartão do LIS mostra a dica em vez de zero', async () => {
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('Informe o nº do orçamento do LIS nas propostas')).toBeInTheDocument();
+    });
   });
 
   it('renders loss reasons chart', async () => {

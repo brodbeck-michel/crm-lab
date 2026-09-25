@@ -291,6 +291,17 @@ const LAB_ROUTES: readonly LabRoute[] = [
     ownStatus: 200,
   },
   {
+    // CRMLAB-52/D-119 — numero de orcamento que nao existe no LIS: grava o
+    // vinculo e nao concilia nada, entao o 200 nao muda o estagio da sonda.
+    name: 'PATCH /proposals/:id/lis-reference',
+    method: 'patch',
+    path: (l) => `/api/v1/proposals/${l.openProposal.id}/lis-reference`,
+    body: () => ({ lisBudgetNumber: '999999' }),
+    actor: 'admin',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
     // Aprovar/rejeitar exige `approvalStatus: 'pending'` e um decisor que nao
     // seja o autor (D-046) — dai o alvo ser a proposta pendente e o ator, o gestor.
     name: 'PATCH /proposals/:id/approve',
@@ -847,7 +858,7 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 67 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 68 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
@@ -862,7 +873,8 @@ describe('inventario de rotas de laboratorio', () => {
     // CRMLAB-12/D-134 soma 1: `PATCH /proposals/:id/items`.
     // CRMLAB-50/D-175 soma 1: `POST /conversations/whatsapp` (Nova conversa).
     // CRMLAB-23/D-177 soma 2: `POST /exams/import/preview` e `POST /exams/import`.
-    expect(LAB_ROUTES).toHaveLength(67);
+    // CRMLAB-52/D-119 soma 1: `PATCH /proposals/:id/lis-reference`.
+    expect(LAB_ROUTES).toHaveLength(68);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

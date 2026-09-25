@@ -45,6 +45,12 @@ const DETAIL_KEYS = [
   'closedAt',
   'insuranceId',
   'requestingDoctor',
+  // CRMLAB-52 (D-119)
+  'lisBudgetNumber',
+  'lisReconciledAt',
+  'lisRequisitionNumber',
+  'lisPaidValue',
+  'lisPaidOn',
 ].sort();
 
 describe('/api/v1/proposals', () => {

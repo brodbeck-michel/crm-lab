@@ -312,6 +312,7 @@ export function createAnalyticsService(deps: AnalyticsServiceDeps): AnalyticsSer
         byStatus: await analyticsRepo.countByStatusCreatedIn(tx, scope, period.bounds),
         lossReasons: await analyticsRepo.countLossReasonsCreatedIn(tx, scope, period.bounds),
         won: await analyticsRepo.aggregateWonIn(tx, scope, period.bounds),
+        realized: await analyticsRepo.aggregateRealizedIn(tx, scope, period.bounds),
         performers: await analyticsRepo.topPerformersIn(
           tx,
           scope,
@@ -360,6 +361,11 @@ export function createAnalyticsService(deps: AnalyticsServiceDeps): AnalyticsSer
         })),
         // Atendente ve versao PARCIAL (PAGES.md §8).
         partial: scope.userId !== undefined,
+        realized: {
+          wonFromLis: data.realized.wonFromLis,
+          paidCount: data.realized.paidCount,
+          paidValue: toMoney(data.realized.paidValue),
+        },
       } satisfies FunnelReport;
     });
   };

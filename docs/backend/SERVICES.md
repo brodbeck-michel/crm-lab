@@ -178,8 +178,9 @@ interface ProposalService {
   updateDiscount(ctx: TenantContext, id: string, discountPercent: number): Promise<Proposal>;
   /** CRMLAB-52 (D-119). Dona ou manager+. Grava o vínculo e concilia na mesma transação. */
   setLisReference(ctx: TenantContext, id: string, lisBudgetNumber: string | null): Promise<ProposalDetail>;
-  /** CRMLAB-52 (D-119). Só para LisReconcileService (§25), dentro da transação dele. */
-  markWonFromLis(tx: DbTx, tenantId: string, proposalId: string): Promise<boolean>;
+  // markWonFromLis(tx, tenantId, proposalId): Promise<boolean> — função exportada de
+  // proposal.service.ts, não método: roda na transação de quem chama (LisReconcileService, §25)
+  // e não precisa das deps do service.
 }
 ```
 
@@ -1335,12 +1336,13 @@ hook por chunk de `LisImportService.ingestRows` (§19), sempre **dentro da trans
 chama**.
 
 ```typescript
-export interface LisReconcileService {
-  /** Os orçamentos de `numbers` que têm proposta vinculada. Devolve quantas foram a `ganho`. */
-  reconcileBudgets(tx: DbTx, tenantId: string, numbers: readonly string[]): Promise<number>;
-  /** Uma proposta, contra o orçamento do número dela (se já existir). true = foi a `ganho`. */
-  reconcileProposal(tx: DbTx, tenantId: string, proposalId: string): Promise<boolean>;
-}
+// backend/src/services/lis-reconcile.service.ts — funções, sem estado
+/** Os orçamentos de `numbers` que têm proposta vinculada. Devolve os ids que foram a `ganho`. */
+reconcileBudgets(tx: DbTx, tenantId: string, numbers: readonly string[]): Promise<string[]>;
+/** Uma proposta, contra o orçamento do número dela (se já existir). true = foi a `ganho`. */
+reconcileProposal(tx: DbTx, tenantId: string, proposalId: string): Promise<boolean>;
+/** Depois do commit: WS `proposal.status_changed` por id + invalidação do cache de analytics. */
+announceLisWins(deps: { wsHub; cache }, tenantId: string, proposalIds: readonly string[]): Promise<void>;
 ```
 
 **Regras** (D-119):
@@ -1353,8 +1355,10 @@ export interface LisReconcileService {
   (`entityType: "proposal"`, `newValues: { lisBudgetNumber, lisRequisitionNumber }`), uma vez
   só: não repete se `lis_requisition_number` já era o mesmo.
 - Sem requisição: só espelha pagamento/valor, se houver. Status não muda.
-- As emissões de WS de `markWonFromLis` são acumuladas e disparadas por quem chama **depois do
-  commit**, para não anunciar um `ganho` que um rollback desfaria.
+- As emissões de WS de `markWonFromLis` são acumuladas (os ids devolvidos) e disparadas por quem
+  chama com `announceLisWins` **depois do commit**, para não anunciar um `ganho` que um rollback
+  desfaria. O audit `update_proposal_status`/`lis_reconcile_conflict` entra **na** transação
+  (`auditRepo.insert`), porque `db.withTenant` não aninha e ele tem que sumir junto num rollback.
 
 ---
 

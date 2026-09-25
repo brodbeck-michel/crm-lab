@@ -61,6 +61,9 @@ export default function Analytics() {
     conversion.funnel.ganho +
     conversion.funnel.perdido;
 
+  const hasRealized =
+    conversion.realized.paidCount > 0 || conversion.realized.wonFromLis > 0;
+
   return (
     <div className="p-lg space-y-xl">
       <h1 className="font-heading text-display">Conversão</h1>
@@ -99,8 +102,19 @@ export default function Analytics() {
       </div>
 
       {/* Metric Tiles Grid */}
-      <div className="grid grid-cols-4 gap-lg">
+      <div className="grid grid-cols-5 gap-lg">
         <MetricTile label="Receita" value={conversion.revenue} variant="money" />
+        {/* CRMLAB-52/D-119: pago no LIS, janela de pagamento. Não soma com a receita do CRM. */}
+        <MetricTile
+          label="Receita realizada (LIS)"
+          value={hasRealized ? conversion.realized.paidValue : undefined}
+          variant="money"
+          caption={
+            hasRealized
+              ? `${conversion.realized.paidCount} pagamentos · ${conversion.realized.wonFromLis} ganhos confirmados pelo LIS`
+              : 'Informe o nº do orçamento do LIS nas propostas'
+          }
+        />
         <MetricTile label="Ticket Médio" value={conversion.averageTicket} variant="money" />
         <MetricTile label="Taxa de Conversão" value={conversion.funnel.conversionRate} variant="percent" />
         <MetricTile label="Propostas Criadas" value={proposalsCreated} variant="number" />

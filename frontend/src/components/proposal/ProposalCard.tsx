@@ -59,7 +59,11 @@ export default function ProposalCard({ proposal, draggable = false }: ProposalCa
       </div>
 
       <div className="flex justify-between items-center">
-        <Chip tone={statusTone}>{PROPOSAL_STATUS_LABELS[proposal.status]}</Chip>
+        <div className="flex items-center gap-xs">
+          <Chip tone={statusTone}>{PROPOSAL_STATUS_LABELS[proposal.status]}</Chip>
+          {/* CRMLAB-52/D-119: o LIS confirmou a requisição (PAGES.md §5). */}
+          {proposal.lisReconciledAt && <Chip tone="positive">Conciliado</Chip>}
+        </div>
         {proposal.approvalStatus === 'pending' && (
           <span className="text-caption text-accent-700 font-semibold">Aguardando aprovação</span>
         )}

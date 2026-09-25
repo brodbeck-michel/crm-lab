@@ -16,9 +16,11 @@ interface MetricTileProps {
   label: string;
   value?: number;
   variant?: 'money' | 'percent' | 'number';
+  /** Linha de apoio abaixo do valor (legenda da métrica). */
+  caption?: string;
 }
 
-export default function MetricTile({ label, value, variant = 'number' }: MetricTileProps) {
+export default function MetricTile({ label, value, variant = 'number', caption }: MetricTileProps) {
   const renderValue = () => {
     if (value === undefined || value === null) {
       return '-';
@@ -41,6 +43,7 @@ export default function MetricTile({ label, value, variant = 'number' }: MetricT
           600 caixa alta) — o `tracking` já vem do token, não se soma aqui. */}
       <p className="text-micro text-neutral-600 font-semibold uppercase">{label}</p>
       <p className="mt-md">{renderValue()}</p>
+      {caption && <p className="mt-xs text-caption text-neutral-600">{caption}</p>}
     </div>
   );
 }

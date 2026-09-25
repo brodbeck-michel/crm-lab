@@ -8,11 +8,12 @@ import type {
   UpdateProposalDiscountRequest,
   UpdateProposalItemsRequest,
   UpdateProposalItemsResponse,
+  UpdateProposalLisReferenceRequest,
   UpdateProposalStatusRequest,
 } from '@crm-lab/shared';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { http } from './client';
-import { queryKeys } from './query-keys';
+import { queryKeys, queryScopes } from './query-keys';
 import type { QueryParams } from './client';
 
 /**
@@ -57,6 +58,10 @@ export const proposalsApi = {
   /** CRMLAB-12/D-132 — substitui itens inteiros; desconto/médico opcionais. */
   updateItems: (id: string, body: UpdateProposalItemsRequest) =>
     http.patch<UpdateProposalItemsResponse>(`/proposals/${id}/items`, body),
+
+  /** CRMLAB-52/D-119 — dona ou gestor+. Concilia na hora; devolve o detalhe inteiro. */
+  updateLisReference: (id: string, body: UpdateProposalLisReferenceRequest) =>
+    http.patch<ProposalDetail>(`/proposals/${id}/lis-reference`, body),
 
   /** gestor/admin — alçada validada no servidor. */
   approve: (id: string) => http.patch<ApproveProposalResponse>(`/proposals/${id}/approve`),
@@ -175,6 +180,23 @@ export function useRejectProposal() {
     onSuccess: (_, { proposalId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.proposal(proposalId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.proposals() });
+    },
+  });
+}
+
+export function useUpdateProposalLisReference() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: { proposalId: string } & UpdateProposalLisReferenceRequest) => {
+      const { proposalId, ...body } = data;
+      return await proposalsApi.updateLisReference(proposalId, body);
+    },
+    onSuccess: (detail, { proposalId }) => {
+      queryClient.setQueryData(queryKeys.proposal(proposalId), detail);
+      queryClient.invalidateQueries({ queryKey: queryKeys.proposals() });
+      // A conciliação pode ter levado a proposta a `ganho`: funil e receita mudam.
+      queryClient.invalidateQueries({ queryKey: queryScopes.analytics });
     },
   });
 }

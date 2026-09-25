@@ -19,6 +19,7 @@ import {
   type BitlabClient,
 } from '../../src/lib/bitlab-client.js';
 import { createCache } from '../../src/lib/cache.js';
+import { noopWsHub } from '../../src/lib/ws-hub.js';
 import type { LisSpreadsheetRow } from '../../src/lib/lis-spreadsheet.js';
 import { resetLisSyncLocksForTest } from '../../src/services/lis-sync.service.js';
 import { createTenant, createUser, type TenantRecord, type UserRecord } from '../helpers/factories.js';
@@ -322,7 +323,7 @@ describe('agendador (runScheduledTick, D-186)', () => {
     await configure(adminB, { apiKey: 'chave-do-lab-b-0000', enabled: false });
     bitlab.script = [page([row('9')], '2026-09-25 10:00:00')];
 
-    const service = createLisSyncServiceFromDeps({ db, cache: createCache() }, { bitlab });
+    const service = createLisSyncServiceFromDeps({ db, cache: createCache(), wsHub: noopWsHub }, { bitlab });
     await service.runScheduledTick();
 
     expect(bitlab.calls.map((c) => c.apiKey)).toEqual([KEY]);
@@ -339,7 +340,7 @@ describe('agendador (runScheduledTick, D-186)', () => {
     const ordered = [tenantA.id, tenantB.id].sort();
     bitlab.script = [new BitlabError('unavailable', 'HTTP 502'), page([row('7')], '2026-09-25 10:00:00')];
 
-    const service = createLisSyncServiceFromDeps({ db, cache: createCache() }, { bitlab });
+    const service = createLisSyncServiceFromDeps({ db, cache: createCache(), wsHub: noopWsHub }, { bitlab });
     await service.runScheduledTick();
 
     expect(bitlab.calls).toHaveLength(2);

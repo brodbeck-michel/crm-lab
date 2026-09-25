@@ -1,4 +1,4 @@
-import type { IsoDateTime, PaginationMeta, PaginationQuery } from './api.types.js';
+import type { IsoDate, IsoDateTime, PaginationMeta, PaginationQuery } from './api.types.js';
 
 /** Os 6 estagios. BUSINESS_RULES.md §3. */
 export type ProposalStatus =
@@ -136,6 +136,13 @@ export interface Proposal {
   closedAt: IsoDateTime | null;
   /** Convênio da proposta. `null` = particular (Onda 7). Imutável após a criação. */
   insuranceId: string | null;
+  /**
+   * Nº do orçamento no LIS, sem zeros à esquerda (CRMLAB-52, D-119). `null` = sem vínculo.
+   * Escrito só por `PATCH /proposals/:id/lis-reference`.
+   */
+  lisBudgetNumber: string | null;
+  /** Quando o LIS confirmou a requisição e isso fechou a proposta (selo "Conciliado"). */
+  lisReconciledAt: IsoDateTime | null;
 }
 
 export interface ProposalStageHistoryEntry {
@@ -165,6 +172,11 @@ export interface ProposalDetail extends Proposal {
    * continua imutavel.
    */
   requestingDoctor: string | null;
+  /** Espelho do orçamento do LIS vinculado (CRMLAB-52, D-119 item 6). `null` até existir. */
+  lisRequisitionNumber: string | null;
+  lisPaidValue: number | null;
+  /** `YYYY-MM-DD` (D-110). */
+  lisPaidOn: IsoDate | null;
 }
 
 export interface CreateProposalItemInput {
@@ -199,6 +211,11 @@ export type CreateProposalResponse = ProposalDetail;
 export interface UpdateProposalStatusRequest {
   status: ProposalStatus;
   reasonLost?: LossReason;
+}
+
+/** `PATCH /proposals/:id/lis-reference` (CRMLAB-52, D-119). `null` desfaz o vínculo. */
+export interface UpdateProposalLisReferenceRequest {
+  lisBudgetNumber: string | null;
 }
 
 export interface UpdateProposalDiscountRequest {

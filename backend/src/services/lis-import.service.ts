@@ -11,6 +11,7 @@ import type {
 } from '@crm-lab/shared';
 import type { DbClient } from '../db/types.js';
 import type { CacheService } from '../lib/cache.js';
+import type { WsHub } from '../lib/ws-hub.js';
 import type { TenantContext } from '../http/context.js';
 import { BusinessError } from '../http/errors.js';
 import {
@@ -20,6 +21,7 @@ import {
   type LisSpreadsheetRow,
 } from '../lib/lis-spreadsheet.js';
 import {
+  countReconciledBudgets,
   LisImportRepository,
   purgeBudgets,
   resolveAttendantId,
@@ -27,6 +29,7 @@ import {
   upsertBudget,
 } from '../repositories/lis-import.repository.js';
 import type { AuditService } from './audit.service.js';
+import { announceLisWins, reconcileBudgets } from './lis-reconcile.service.js';
 
 export const DEFAULT_PAGE = 1;
 export const DEFAULT_LIMIT = 20;
@@ -71,6 +74,8 @@ export interface LisImportServiceDeps {
   db: DbClient;
   cache: CacheService;
   audit: AuditService;
+  /** WS `proposal.status_changed` das propostas que a conciliacao levou a `ganho` (D-119). */
+  wsHub: WsHub;
 }
 
 function clampInt(value: number | undefined, fallback: number, min: number, max: number): number {
@@ -102,7 +107,7 @@ function chunk<T>(items: T[], size: number): T[][] {
 
 export function createLisImportService(deps: LisImportServiceDeps): LisImportService {
   const repository = new LisImportRepository(deps.db);
-  const { db, cache, audit } = deps;
+  const { db, cache, audit, wsHub } = deps;
 
   async function ingestRows(
     input: LisIngestInput,
@@ -123,18 +128,26 @@ export function createLisImportService(deps: LisImportServiceDeps): LisImportSer
 
     let actualAccepted = 0;
     let errorMessage: string | null = null;
+    const won: string[] = [];
 
     const chunks = chunk(consolidated, CHUNK_SIZE);
     for (const batch of chunks) {
       try {
-        await db.withTenant(tenantId, async (tx) => {
+        const wonInChunk = await db.withTenant(tenantId, async (tx) => {
           for (const row of batch) {
             const insuranceId = await resolveInsuranceId(tx, tenantId, row);
             const attendantId = await resolveAttendantId(tx, tenantId, row);
             await upsertBudget(tx, tenantId, created.id, row, insuranceId, attendantId);
           }
+          // Conciliacao por chunk, na mesma transacao (D-119 item 3b).
+          return reconcileBudgets(
+            tx,
+            tenantId,
+            batch.map((row) => row.number.trim()),
+          );
         });
         actualAccepted += batch.length;
+        won.push(...wonInChunk);
       } catch (err) {
         errorMessage = err instanceof Error ? err.message : String(err);
         break;
@@ -147,9 +160,11 @@ export function createLisImportService(deps: LisImportServiceDeps): LisImportSer
       rowsAccepted: actualAccepted,
       rowsRejected: rowsInFile - actualAccepted,
       errorMessage,
+      proposalsWon: won.length,
     });
 
     await cache.delByPrefix(CACHE_PREFIX(tenantId));
+    await announceLisWins({ wsHub, cache }, tenantId, won);
     return finished;
   }
 
@@ -208,7 +223,14 @@ export function createLisImportService(deps: LisImportServiceDeps): LisImportSer
         });
       }
 
-      await db.withTenant(ctx.tenantId, (tx) => purgeBudgets(tx, ctx.tenantId));
+      // Limpar apagaria o lado B de propostas ja conciliadas (D-119 item 8).
+      await db.withTenant(ctx.tenantId, async (tx) => {
+        const linkedCount = await countReconciledBudgets(tx, ctx.tenantId);
+        if (linkedCount > 0) {
+          throw new BusinessError('CONFLICT', { reason: 'lis_budgets_reconciled', linkedCount });
+        }
+        await purgeBudgets(tx, ctx.tenantId);
+      });
       const created = await repository.insertPurge(ctx.tenantId, ctx.userId);
 
       await cache.delByPrefix(CACHE_PREFIX(ctx.tenantId));

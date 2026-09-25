@@ -54,6 +54,13 @@ export interface ProposalRow {
   insurance_id: string | null;
   /** Medico solicitante, texto livre (CRMLAB-9). `null` = nao informado. Imutavel apos a criacao. */
   requesting_doctor: string | null;
+  /** Conciliacao com o LIS (CRMLAB-52, D-118/D-119). Escritas so por `setLisBudgetNumber` e pelo LisReconcileService. */
+  lis_budget_number: string | null;
+  lis_requisition_number: string | null;
+  lis_paid_value: unknown;
+  /** `DATE` pura (D-110) — `to_char` no SELECT evita o driver devolver `Date`. */
+  lis_paid_on: string | null;
+  lis_reconciled_at: unknown;
 }
 
 interface ProposalItemRow {
@@ -84,7 +91,9 @@ const SELECT_PROPOSAL = `
          p.status, p.discount_percent, p.total_price, p.reason_lost,
          p.approval_status, p.approved_by, a.name AS approved_by_name,
          p.approved_at, p.sent_at, p.closed_at, p.created_at, p.updated_at,
-         p.insurance_id, p.requesting_doctor
+         p.insurance_id, p.requesting_doctor,
+         p.lis_budget_number, p.lis_requisition_number, p.lis_paid_value,
+         to_char(p.lis_paid_on, 'YYYY-MM-DD') AS lis_paid_on, p.lis_reconciled_at
     FROM proposals p
     JOIN conversations c ON c.id = p.conversation_id
     LEFT JOIN users u ON u.id = p.created_by
@@ -108,6 +117,8 @@ export function mapProposal(row: ProposalRow): Proposal {
     updatedAt: toIso(row.updated_at),
     closedAt: toIsoOrNull(row.closed_at),
     insuranceId: row.insurance_id,
+    lisBudgetNumber: row.lis_budget_number,
+    lisReconciledAt: toIsoOrNull(row.lis_reconciled_at),
   };
 }
 
@@ -150,6 +161,9 @@ export function mapDetail(
     sentAt: toIsoOrNull(row.sent_at),
     history,
     requestingDoctor: row.requesting_doctor,
+    lisRequisitionNumber: row.lis_requisition_number,
+    lisPaidValue: row.lis_paid_value === null ? null : toNumber(row.lis_paid_value),
+    lisPaidOn: row.lis_paid_on,
   };
 }
 
@@ -417,6 +431,47 @@ export async function updateProposal(
   }
 
   return findRowById(tx, id);
+}
+
+/**
+ * Grava (ou limpa, com `null`) o nº do orcamento do LIS (CRMLAB-52, D-119).
+ * Trocar ou limpar o numero solta o vinculo antigo: zera o espelho do
+ * orcamento em `proposals` e o `lis_budgets.proposal_id` que apontava para
+ * ca. `lis_reconciled_at` fica, porque proposta `ganho` nem chega aqui (o
+ * service recusa antes). Mesmo numero = nenhuma escrita. A violacao do indice
+ * unico parcial (`idx_proposals_tenant_lis_budget_number`) sobe crua para o
+ * service traduzir.
+ */
+export async function setLisBudgetNumber(
+  tx: DbTx,
+  id: string,
+  lisBudgetNumber: string | null,
+): Promise<void> {
+  await tx.query(
+    `UPDATE lis_budgets SET proposal_id = NULL
+      WHERE proposal_id = $1 AND number IS DISTINCT FROM $2::text`,
+    [id, lisBudgetNumber],
+  );
+  await tx.query(
+    `UPDATE proposals
+        SET lis_budget_number = $2::text, lis_requisition_number = NULL,
+            lis_paid_value = NULL, lis_paid_on = NULL, updated_at = NOW()
+      WHERE id = $1 AND lis_budget_number IS DISTINCT FROM $2::text`,
+    [id, lisBudgetNumber],
+  );
+}
+
+/** Numero da proposta que ja usa esse orcamento do LIS (para `details.proposalNumber`). */
+export async function findProposalNumberByLisBudget(
+  tx: DbTx,
+  lisBudgetNumber: string,
+): Promise<number | null> {
+  const result = await tx.query<{ proposal_number: unknown }>(
+    'SELECT proposal_number FROM proposals WHERE lis_budget_number = $1',
+    [lisBudgetNumber],
+  );
+  const row = result.rows[0];
+  return row ? toNumber(row.proposal_number) : null;
 }
 
 // ---------------------------------------------------------------------------

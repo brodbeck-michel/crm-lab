@@ -43,14 +43,14 @@ export interface LisSyncModuleOverrides {
 
 /** Monta o service com as mesmas deps do agendador do `main.ts`. */
 export function createLisSyncServiceFromDeps(
-  deps: Pick<ApiModuleDeps, 'db' | 'cache'>,
+  deps: Pick<ApiModuleDeps, 'db' | 'cache' | 'wsHub'>,
   overrides: LisSyncModuleOverrides = {},
 ): LisSyncService {
   const audit = createAuditService(deps.db);
   return createLisSyncService({
     db: deps.db,
     audit,
-    lisImport: createLisImportService({ db: deps.db, cache: deps.cache, audit }),
+    lisImport: createLisImportService({ db: deps.db, cache: deps.cache, audit, wsHub: deps.wsHub }),
     bitlab: overrides.bitlab ?? createBitlabClient({ baseUrl: env.BITLAB_API_BASE_URL }),
     intervalMs: env.LIS_SYNC_INTERVAL_MS,
     initialDays: env.LIS_SYNC_INITIAL_DAYS,

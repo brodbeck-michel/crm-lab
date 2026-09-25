@@ -172,6 +172,11 @@ function proposal(overrides: Partial<ProposalDetail> = {}): ProposalDetail {
     insuranceId: overrides.insuranceId ?? null,
     // Mesma correção para `requestingDoctor` (CRMLAB-9).
     requestingDoctor: overrides.requestingDoctor ?? null,
+    lisBudgetNumber: overrides.lisBudgetNumber ?? null,
+    lisReconciledAt: overrides.lisReconciledAt ?? null,
+    lisRequisitionNumber: overrides.lisRequisitionNumber ?? null,
+    lisPaidValue: overrides.lisPaidValue ?? null,
+    lisPaidOn: overrides.lisPaidOn ?? null,
   };
 }
 

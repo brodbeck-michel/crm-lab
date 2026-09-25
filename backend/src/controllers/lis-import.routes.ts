@@ -46,7 +46,12 @@ type ImportBody = z.infer<typeof importLisSpreadsheetSchema>;
 type PurgeBody = z.infer<typeof purgeLisBudgetsSchema>;
 
 export function createLisImportServiceFromDeps(deps: ApiModuleDeps): LisImportService {
-  return createLisImportService({ db: deps.db, cache: deps.cache, audit: createAuditService(deps.db) });
+  return createLisImportService({
+    db: deps.db,
+    cache: deps.cache,
+    audit: createAuditService(deps.db),
+    wsHub: deps.wsHub,
+  });
 }
 
 function handle(fn: (req: Request, res: Response) => Promise<void>): RequestHandler {

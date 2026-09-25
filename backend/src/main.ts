@@ -128,7 +128,7 @@ async function bootstrap(): Promise<void> {
   // boot. `runScheduledTick` nao lanca (cada tenant tem o proprio try/catch).
   // `LIS_SYNC_INTERVAL_MS=0` desliga (homologacao) — "Sincronizar agora" segue.
   if (env.LIS_SYNC_INTERVAL_MS > 0) {
-    const lisSync = createLisSyncServiceFromDeps({ db, cache });
+    const lisSync = createLisSyncServiceFromDeps({ db, cache, wsHub });
     const lisSyncInterval = setInterval(() => {
       void lisSync.runScheduledTick();
     }, env.LIS_SYNC_INTERVAL_MS);

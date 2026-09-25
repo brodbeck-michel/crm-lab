@@ -58,7 +58,10 @@ import type { AuditService } from './audit.service.js';
 import type { ExamCatalogService } from './exam-catalog.service.js';
 import type { ApprovalRequester } from './approval.service.js';
 import type { InsuranceRepository } from '../repositories/insurance.repository.js';
+import * as auditRepo from '../repositories/audit.repository.js';
+import { isUniqueViolation } from '../repositories/exam-package.repository.js';
 import * as repo from '../repositories/proposal.repository.js';
+import { announceLisWins, reconcileProposal } from './lis-reconcile.service.js';
 import type { ProposalRow } from '../repositories/proposal.repository.js';
 
 export const DEFAULT_PAGE = 1;
@@ -219,6 +222,97 @@ function parseStatuses(raw: string | undefined): ProposalStatus[] | undefined {
     });
   }
   return values as ProposalStatus[];
+}
+
+/**
+ * O que toda transicao aceita grava na mesma transacao, venha de uma pessoa
+ * (`updateStatus`) ou do LIS (`markWonFromLis`): a linha do historico e a
+ * mensagem de sistema na conversa (WORKFLOWS §2 passo 6 e §4).
+ */
+async function recordTransitionInTx(
+  tx: DbTx,
+  input: {
+    tenantId: string;
+    proposalId: string;
+    conversationId: string;
+    status: ProposalStatus;
+    changedBy: string | null;
+    systemMessage: string | null;
+  },
+): Promise<void> {
+  await repo.insertHistory(tx, {
+    tenantId: input.tenantId,
+    proposalId: input.proposalId,
+    status: input.status,
+    changedBy: input.changedBy,
+  });
+  if (input.systemMessage !== null) {
+    await repo.insertSystemMessage(tx, {
+      tenantId: input.tenantId,
+      conversationId: input.conversationId,
+      content: input.systemMessage,
+    });
+  }
+}
+
+/**
+ * `ganho` pela conciliacao com o LIS (CRMLAB-52, D-119 item 4). A UNICA
+ * transicao que ignora `ALLOWED_TRANSITIONS`: vai de qualquer estagio nao
+ * terminal para `ganho`, inclusive `novo_contato` e com aprovacao `pending`,
+ * porque quem fechou foi o LIS (BUSINESS_RULES §3). `changedBy`/`userId` ficam
+ * `null`. O audit entra na transacao de quem chama (`auditRepo.insert`), porque
+ * ela e a do chunk de importacao ou do `PATCH` e nao aninha.
+ *
+ * O `WHERE status NOT IN ('ganho','perdido')` decide: 0 linhas -> `false` e
+ * nada e gravado (idempotencia, item 7). WS e invalidacao de analytics ficam
+ * com quem chama, depois do commit (`announceLisWins`).
+ */
+export async function markWonFromLis(
+  tx: DbTx,
+  tenantId: string,
+  proposalId: string,
+): Promise<boolean> {
+  const current = await tx.query<{ status: string; conversation_id: string }>(
+    'SELECT status, conversation_id FROM proposals WHERE id = $1 AND tenant_id = $2 FOR UPDATE',
+    [proposalId, tenantId],
+  );
+  const before = current.rows[0];
+  if (!before) return false;
+
+  const updated = await tx.query<{ id: string }>(
+    `UPDATE proposals
+        SET status = 'ganho', closed_at = NOW(), lis_reconciled_at = NOW(), updated_at = NOW()
+      WHERE id = $1 AND tenant_id = $2 AND status NOT IN ('ganho', 'perdido')
+      RETURNING id`,
+    [proposalId, tenantId],
+  );
+  if (updated.rows.length === 0) return false;
+
+  await recordTransitionInTx(tx, {
+    tenantId,
+    proposalId,
+    conversationId: before.conversation_id,
+    status: 'ganho',
+    changedBy: null,
+    systemMessage: `Proposta #${proposalRef(proposalId)} ganha — orçamento convertido em requisição no LIS 🎉`,
+  });
+  await auditRepo.insert(tx, {
+    tenantId,
+    userId: null,
+    action: 'update_proposal_status',
+    entityType: 'proposal',
+    entityId: proposalId,
+    oldValues: { status: before.status },
+    newValues: { status: 'ganho', source: 'lis' },
+  });
+  return true;
+}
+
+/** Nº do orcamento do LIS: so digitos, 1..20, sem zeros a esquerda (D-119 item 1). */
+export function normalizeLisBudgetNumber(value: string): string | null {
+  const trimmed = value.trim();
+  if (!/^\d{1,20}$/.test(trimmed)) return null;
+  return trimmed.replace(/^0+(?=\d)/, '');
 }
 
 // ---------------------------------------------------------------------------
@@ -529,28 +623,21 @@ export class ProposalService {
       });
       if (!updated) throw notFound({ resource: 'proposal', id });
 
-      await repo.insertHistory(tx, {
-        tenantId: ctx.tenantId,
-        proposalId: id,
-        status,
-        changedBy: ctx.userId,
-      });
-
       // Mensagem de sistema na conversa (WORKFLOWS §2 passo 6 e §4).
       const ref = proposalRef(id);
-      if (status === 'orcamento_enviado') {
-        await repo.insertSystemMessage(tx, {
-          tenantId: ctx.tenantId,
-          conversationId: row.conversation_id,
-          content: `Orçamento #${ref} enviado — ${formatMoney(Number(updated.total_price))}`,
-        });
-      } else if (status === 'ganho') {
-        await repo.insertSystemMessage(tx, {
-          tenantId: ctx.tenantId,
-          conversationId: row.conversation_id,
-          content: `Proposta #${ref} ganha! 🎉`,
-        });
-      }
+      await recordTransitionInTx(tx, {
+        tenantId: ctx.tenantId,
+        proposalId: id,
+        conversationId: row.conversation_id,
+        status,
+        changedBy: ctx.userId,
+        systemMessage:
+          status === 'orcamento_enviado'
+            ? `Orçamento #${ref} enviado — ${formatMoney(Number(updated.total_price))}`
+            : status === 'ganho'
+              ? `Proposta #${ref} ganha! 🎉`
+              : null,
+      });
 
       return { from, proposal: repo.mapProposal(updated) };
     });
@@ -577,6 +664,82 @@ export class ProposalService {
     await this.invalidateAnalytics(ctx.tenantId);
 
     return outcome.proposal;
+  }
+
+  /**
+   * `PATCH /proposals/:id/lis-reference` (CRMLAB-52, D-119). Dona ou manager+.
+   * Grava o vinculo e concilia NA MESMA transacao (item 3a): com a carga
+   * incremental (D-185), orcamento que nao muda mais nunca volta pela API, entao
+   * esperar a proxima sincronizacao deixaria a proposta sem conciliar.
+   */
+  async setLisReference(
+    ctx: TenantContext,
+    id: string,
+    rawNumber: string | null,
+  ): Promise<ProposalDetail> {
+    const { db, audit } = this.deps;
+
+    let lisBudgetNumber: string | null = null;
+    if (rawNumber !== null) {
+      lisBudgetNumber = normalizeLisBudgetNumber(rawNumber);
+      if (lisBudgetNumber === null) {
+        throw new BusinessError('VALIDATION_ERROR', {
+          fields: { lisBudgetNumber: 'Informe só os dígitos do orçamento (até 20)' },
+        });
+      }
+    }
+    const number = lisBudgetNumber;
+
+    let outcome: { previous: string | null; won: boolean; detail: ProposalDetail };
+    try {
+      outcome = await db.withTenant(ctx.tenantId, async (tx) => {
+        const row = await loadVisibleProposal(tx, ctx, id);
+        if (row.created_by !== ctx.userId && ctx.role !== 'manager' && ctx.role !== 'admin') {
+          throw new BusinessError('FORBIDDEN', { requiredRoles: ['manager', 'admin'] });
+        }
+        // O vinculo que fechou a proposta nao pode sumir depois (item 2).
+        if (row.status === 'ganho') {
+          throw new BusinessError('PROPOSAL_ALREADY_CLOSED', { status: row.status });
+        }
+        if (number !== null && number !== row.lis_budget_number) {
+          const taken = await repo.findProposalNumberByLisBudget(tx, number);
+          if (taken !== null) {
+            throw new BusinessError('CONFLICT', {
+              reason: 'lis_budget_number_taken',
+              proposalNumber: taken,
+            });
+          }
+        }
+
+        await repo.setLisBudgetNumber(tx, id, number);
+        const won = number !== null && (await reconcileProposal(tx, ctx.tenantId, id));
+        const detail = await loadDetail(tx, id);
+        return { previous: row.lis_budget_number, won, detail };
+      });
+    } catch (err) {
+      // Corrida entre dois PATCH com o mesmo numero: o indice unico decide.
+      if (isUniqueViolation(err)) {
+        throw new BusinessError('CONFLICT', { reason: 'lis_budget_number_taken' });
+      }
+      throw err;
+    }
+
+    if (outcome.previous !== number) {
+      await audit.record(ctx, {
+        action: 'update_proposal_lis_reference',
+        entityType: 'proposal',
+        entityId: id,
+        oldValues: { lisBudgetNumber: outcome.previous },
+        newValues: { lisBudgetNumber: number },
+      });
+    }
+
+    if (outcome.won) {
+      await announceLisWins(this.deps, ctx.tenantId, [id]);
+    } else {
+      this.deps.wsHub.emitToTenant(ctx.tenantId, 'proposal.updated', { proposalId: id });
+    }
+    return outcome.detail;
   }
 
   /**

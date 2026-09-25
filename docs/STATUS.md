@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-24 (v1.18.0 em PRODUÇÃO — CRMLAB-48, ver fim do arquivo)
+**Última atualização:** 2026-09-24 (v1.19.0 em PRODUÇÃO — CRMLAB-49, ver fim do arquivo)
 
 ---
 
@@ -2731,3 +2731,13 @@ Validado e aprovado pelo PO em hml (`hml-1b004c1`) em 2026-09-24. Branch `featur
 - `docs/frontend/COMPONENTS.md` §Composer atualizado.
 - **Testes:** 6 novos em `Composer.spec.tsx` e 1 em `ConversationPanel.spec.tsx`. Frontend
   completo verde (76 arquivos, 1116 testes). `npm run typecheck` e `npm run lint` limpos.
+
+### 🚀 v1.19.0 em produção (2026-09-24)
+
+Sobe CRMLAB-49: o campo de mensagem do atendimento cresce com o texto até ~6 linhas e depois rola
+por dentro. A lista de mensagens mantém a borda de baixo parada (PR #61).
+
+- **hml:** `hml-1b004c1`, validado e aprovado pelo PO.
+- **prod:** `262c808` (tag **v1.19.0**), CI verde nos 5 jobs, imagens puxadas do GHCR, sem
+  migração. Healthcheck OK na 2ª tentativa. O bundle servido em https://vitrocrm.cloud confirma
+  `1.19.0`.

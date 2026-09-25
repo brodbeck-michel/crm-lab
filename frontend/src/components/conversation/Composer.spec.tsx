@@ -339,6 +339,18 @@ describe('Composer — Ctrl+B negrito (CRMLAB-51, D-183)', () => {
     expect(field).toHaveValue('olá *x*');
   });
 
+  it('espaço nas pontas da seleção fica fora dos asteriscos (senão não formataria)', async () => {
+    const user = userEvent.setup();
+    render(<Composer onSend={vi.fn()} />);
+
+    const field = screen.getByLabelText('Mensagem') as HTMLTextAreaElement;
+    await user.type(field, 'seu resultado saiu');
+    field.setSelectionRange(3, 14); // " resultado "
+    await user.keyboard('{Control>}b{/Control}');
+
+    expect(field).toHaveValue('seu *resultado* saiu');
+  });
+
   it('o texto vai para onSend com os asteriscos (o WhatsApp formata)', async () => {
     const onSend = vi.fn();
     const user = userEvent.setup();

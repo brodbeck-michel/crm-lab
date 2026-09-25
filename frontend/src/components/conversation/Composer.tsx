@@ -179,8 +179,11 @@ export function Composer({
    */
   function wrapBold(): void {
     const field = fieldRef.current;
-    const start = field?.selectionStart ?? value.length;
-    const end = field?.selectionEnd ?? value.length;
+    let start = field?.selectionStart ?? value.length;
+    let end = field?.selectionEnd ?? value.length;
+    // Duplo clique no Windows seleciona "palavra " — `*palavra *` não formataria.
+    while (start < end && /\s/.test(value.charAt(start))) start++;
+    while (end > start && /\s/.test(value.charAt(end - 1))) end--;
     setValue(`${value.slice(0, start)}*${value.slice(start, end)}*${value.slice(end)}`);
     requestAnimationFrame(() => fieldRef.current?.setSelectionRange(start + 1, end + 1));
   }

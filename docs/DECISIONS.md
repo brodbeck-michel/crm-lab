@@ -2634,6 +2634,57 @@ horário em que a antiga dona não está.
 "Encerradas"), `docs/api/API_CONTRACTS.md` §2, `API_ERRORS.md`, `WORKFLOWS.md` §5,
 `SCHEMA.md`, `PAGES.md` §2, `SERVICES.md` §2/§3.
 
+### D-175: "Nova conversa" — `POST /conversations/whatsapp` reaproveita a conversa do número e envia pelo caminho de sempre (CRMLAB-50)
+**Decisão:** O botão "+" do topo da lista de conversas (tooltip "Nova conversa", atalho
+Ctrl+Alt+N) abre um modal com telefone e primeira mensagem, e chama um endpoint **novo**,
+`POST /conversations/whatsapp { phone, content }` → `201 { conversation, message }`.
+1. **Endpoint separado de `POST /conversations`.** Aquele é o atendimento manual (`direct`/`web`/
+   `sms`, exige nome, não envia nada) e recusa `whatsapp` de propósito; este cria/reaproveita e
+   **envia**. Juntar os dois poria um "se canal = whatsapp, envie" dentro de um contrato que hoje
+   é só cadastro.
+2. **Telefone brasileiro, validado por uma função só** (`normalizeBrazilianPhone` em
+   `@crm-lab/shared`, usada pelo zod e pelo formulário): DDD de dois dígitos 1–9 + 9 dígitos
+   começando por 9 ou 8 dígitos começando de 2 a 9, com ou sem `55`. Vira E.164 (`+55…`), o
+   mesmo formato de `createManual`.
+3. **Não duplica:** mesmo `findOrCreateByPhone` do webhook e do atendimento manual — conversa e
+   paciente reaproveitados pelos dígitos do telefone. Número novo cria conversa **e paciente sem
+   nome**, espelhando o número desconhecido que escreve pela primeira vez sem nome de perfil
+   (toda conversa nasce ligada a um paciente desde D-072; "contato sem paciente" não existe).
+4. **Dono:** conversa nova nasce **atribuída a quem enviou** (como `createManual`: quem inicia o
+   contato é quem atende). Conversa existente segue as regras de `createManual`: fila livre fica
+   como está (enviar não assume), encerrada reabre para quem enviou (D-174), ativa de outro
+   atendente devolve 409 `CONVERSATION_ALREADY_ASSIGNED` com o nome.
+5. **Conversa existente de outro canal** (`direct`/`web`/`sms`) é **promovida a `whatsapp`**
+   (audit `update_conversation_channel`). `createFromAgent` só manda para o gateway quando
+   `channel = 'whatsapp'`; sem a promoção, a "primeira mensagem de WhatsApp" ficaria só na tela.
+6. **Envio pelo `MessageService.createFromAgent`** — nenhum caminho paralelo. Canal fora do ar,
+   sem credencial ou desligado: a conversa fica criada, a mensagem fica `failed` (a regra de
+   sempre: falha não some da tela) e o 502 `MESSAGE_SEND_FAILED` ganha `conversationId` em
+   `details` para a tela abrir a conversa mesmo assim.
+**Motivo:** o card pede iniciar conversa com número sem conversa prévia sem criar segundo
+cadastro para quem já existe. Reusar `findOrCreateByPhone` + `createFromAgent` mantém uma única
+regra de dedupe e uma única regra de envio (retry, eco D-173, `failed`).
+**Impacto:** `shared/types/conversation.types.ts` (request/response + `normalizeBrazilianPhone`),
+`conversation.routes.ts`, `conversation.service.ts` (`startWhatsApp`),
+`conversation.repository.ts` (`setChannel`), `frontend/src/pages/Attendance`
+(`ConversationList` + `NewConversationModal`), `frontend/src/api/conversations.ts`,
+`API_CONTRACTS.md` §2, `API_ERRORS.md`, `PAGES.md` §2, `SERVICES.md` §2.
+
+### D-176: Dedupe por telefone reconhece o celular brasileiro com e sem o nono dígito (CRMLAB-50)
+**Decisão:** `selectByPhone` (o dedupe de `findOrCreateByPhone`, usado pelo webhook, pelo
+atendimento manual e pela "Nova conversa") procura a conversa pelos dígitos do telefone **e**
+pela variante do celular brasileiro com/sem o nono dígito: `55 DD 9XXXXXXXX` ≡ `55 DD XXXXXXXX`
+quando o número local (sem o 9) começa de 6 a 9. O casamento exato vem primeiro; a variante só é
+usada quando não há exato.
+**Motivo:** o WhatsApp ainda identifica muitos celulares brasileiros pelo JID antigo, de 12
+dígitos (`554899991234@s.whatsapp.net`). Com a "Nova conversa", o atendente digita o número
+atual de 11 dígitos; quando o paciente respondesse, o webhook não acharia a conversa e criaria
+uma **segunda** conversa e um segundo paciente. Fixo começa de 2 a 5, então a regra não junta
+fixo com celular.
+**Impacto:** `conversation.repository.ts` (`phoneMatchKeys` + `selectByPhone`). Nenhuma
+mudança de schema; conversas já duplicadas pelos dois formatos continuam separadas (o exato
+tem prioridade).
+
 ### D-183: Negrito com asterisco no padrão WhatsApp, só na exibição; prévia da lista fica crua (CRMLAB-51)
 **Decisão:**
 1. `*texto*` é exibido em negrito na bolha (`MessageBubble`), enviada ou recebida. É só
@@ -2660,6 +2711,7 @@ horário em que a antiga dona não está.
 os asteriscos crus na tela. A regra de borda evita negrito acidental em conta (`2*3*4`).
 **Impacto:** `frontend/src/lib/whatsapp-format.ts` (novo), `MessageBubble.tsx`, `Composer.tsx`
 (atalho), `docs/frontend/COMPONENTS.md` (MessageBubble e Composer).
+
 
 ## Template para novas decisões
 

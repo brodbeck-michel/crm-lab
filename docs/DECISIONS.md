@@ -2920,7 +2920,9 @@ que conversa com `device_removed`, e a D-083 registra que as seguintes exigem li
    deixa de "vazar" de uma conversa para a outra.
 7. Envio pelo **mesmo** caminho do clipe: `POST /conversations/:id/attachments` com o base64 do
    `Blob`, nome `recado-de-voz.<ogg|webm|m4a>`. O botão Enviar trava enquanto a requisição voa
-   (sem duplo envio); falhou, a prévia fica para tentar de novo.
+   (sem duplo envio); falhou, a prévia fica para tentar de novo. A conversa de destino é lida
+   **no clique**, antes do `FileReader`: trocar de conversa nessa janela mandava o anexo (clipe
+   ou recado) para o paciente que estava aberto quando o POST saiu.
 **Motivo:** o CRMLAB-2 entregou ouvir o recado do paciente, mas responder em áudio obrigava a
 sair para o WhatsApp Web. Clique/clique (e não segurar) é mais confortável para recado longo e
 funciona igual com mouse e teclado.

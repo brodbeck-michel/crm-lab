@@ -9,6 +9,8 @@ import type {
   ListConversationsResponse,
   Message,
   PaginationQuery,
+  StartWhatsAppConversationRequest,
+  StartWhatsAppConversationResponse,
   UpdateConversationRequest,
   UpdateConversationResponse,
 } from '@crm-lab/shared';
@@ -26,6 +28,10 @@ export const conversationsApi = {
   /** Atendimento manual — ligacao, balcao, site (nao vem do WhatsApp). */
   create: (body: CreateConversationRequest) =>
     http.post<CreateConversationResponse>('/conversations', body),
+
+  /** "Nova conversa" (CRMLAB-50, D-175): cria/reaproveita a conversa do número e envia. */
+  startWhatsApp: (body: StartWhatsAppConversationRequest) =>
+    http.post<StartWhatsAppConversationResponse>('/conversations/whatsapp', body),
 
   sendMessage: (id: string, body: CreateMessageRequest) =>
     http.post<Message>(`/conversations/${id}/messages`, body),

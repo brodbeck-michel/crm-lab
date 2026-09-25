@@ -5,6 +5,7 @@ import { useExamPackageList } from '@/api/exam-packages';
 import { useAuthStore } from '@/stores/auth.store';
 import ExamTable from '@/components/catalog/ExamTable';
 import ExamModal from '@/components/catalog/ExamModal';
+import ExamImportModal from '@/components/catalog/ExamImportModal';
 import PackageTable from '@/components/catalog/PackageTable';
 import PackageModal from '@/components/catalog/PackageModal';
 import { Button, SearchInput, SegmentedControl } from '@/components/ui';
@@ -21,6 +22,7 @@ export default function Catalog() {
   const [tab, setTab] = useState<CatalogTab>('exams');
   const [search, setSearch] = useState('');
   const [showModal, setShowModal] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [editExam, setEditExam] = useState<Exam | undefined>();
   const [editPackage, setEditPackage] = useState<ExamPackage | undefined>();
 
@@ -72,6 +74,8 @@ export default function Catalog() {
   const packages = packagesData?.packages ?? [];
 
   const canEdit = user?.role !== 'attendant';
+  /** Importar CSV é só admin (D-177) — o servidor recusa os demais; aqui só esconde. */
+  const canImport = user?.role === 'admin';
 
   const handleEditClick = (exam: Exam) => {
     setEditExam(exam);
@@ -93,11 +97,18 @@ export default function Catalog() {
     <div className="flex flex-col gap-lg p-lg h-full">
       <div className="flex justify-between items-center">
         <h1 className="font-heading text-display">Catálogo de Exames</h1>
-        {canEdit && (
-          <Button variant="primary" onClick={() => setShowModal(true)}>
-            {tab === 'exams' ? '+ Novo Exame' : '+ Novo Pacote'}
-          </Button>
-        )}
+        <div className="flex gap-sm">
+          {canImport && tab === 'exams' && (
+            <Button variant="secondary" onClick={() => setShowImport(true)}>
+              Importar CSV
+            </Button>
+          )}
+          {canEdit && (
+            <Button variant="primary" onClick={() => setShowModal(true)}>
+              {tab === 'exams' ? '+ Novo Exame' : '+ Novo Pacote'}
+            </Button>
+          )}
+        </div>
       </div>
 
       <SegmentedControl
@@ -161,6 +172,8 @@ export default function Catalog() {
           onClose={handleCloseModal}
         />
       )}
+
+      {showImport && <ExamImportModal onClose={() => setShowImport(false)} />}
 
       {showModal && tab === 'packages' && (
         <PackageModal

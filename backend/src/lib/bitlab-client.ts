@@ -53,30 +53,53 @@ export function isBitlabError(error: unknown): error is BitlabError {
 // Datas (D-187)
 // ---------------------------------------------------------------------------
 
-const ISO_DATE_PREFIX = /^(\d{4}-\d{2}-\d{2})/;
-const ISO_DATE_TIME = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})/;
+const ISO_DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?Z?)?$/;
+const BR_DATE_TIME = /^(\d{2})\/(\d{2})\/(\d{4})(?: (\d{2}):(\d{2})(?::(\d{2}))?)?$/;
 
 /**
- * `"2026-09-28T14:05:00.000Z"` -> `"2026-09-28"`, pelos COMPONENTES da string,
- * sem `new Date()` (D-187 — mesmo principio de D-110 para o serial do Excel).
+ * Qualquer data/hora do Bitlab -> `YYYY-MM-DD HH:mm:ss` no relogio de Brasilia,
+ * pelos COMPONENTES da string, sem `new Date()` (D-187). E a forma canonica do
+ * CRM: a `marcaDagua` e gravada assim, comparada como texto (a ordem lexica
+ * dessa forma e a cronologica) e reenviada assim como `dataInicio`.
  *
- * PENDENTE: se o Bitlab confirmar que o `Z` e UTC de verdade, trocar o corpo
- * por conversao para `America/Sao_Paulo` e emendar D-187.
+ * Aceita as duas formas que o Bitlab ja mandou: `dd/mm/yyyy hh:mm:ss` (desde a
+ * correcao de 25/09/2026, hora de Brasilia) e o ISO antigo com `Z`, que o
+ * Bitlab confirmou ser hora de Brasilia rotulada como UTC por engano. So data,
+ * sem hora, vira 00:00:00. Fora dessas formas -> `null`.
  */
-export function bitlabDateToIsoDate(value: string | null): string | null {
+export function parseBitlabDateTime(value: string | null): string | null {
   if (value === null) return null;
-  const match = ISO_DATE_PREFIX.exec(value.trim());
-  return match?.[1] ?? null;
+  const raw = value.trim();
+  let parts: [string, string, string, string, string, string] | null = null;
+  const iso = ISO_DATE_TIME.exec(raw);
+  if (iso) {
+    parts = [iso[1]!, iso[2]!, iso[3]!, iso[4] ?? '00', iso[5] ?? '00', iso[6] ?? '00'];
+  } else {
+    const br = BR_DATE_TIME.exec(raw);
+    if (br) parts = [br[3]!, br[2]!, br[1]!, br[4] ?? '00', br[5] ?? '00', br[6] ?? '00'];
+  }
+  if (!parts) return null;
+  const [year, month, day, hour, minute, second] = parts;
+  const m = Number(month);
+  const d = Number(day);
+  if (m < 1 || m > 12 || d < 1 || d > 31 || Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59) {
+    return null;
+  }
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+}
+
+/** `DATA_ORÇAMENTO`/`Data_Pagamento` -> `YYYY-MM-DD` (D-187). */
+export function bitlabDateToIsoDate(value: string | null): string | null {
+  return parseBitlabDateTime(value)?.slice(0, 10) ?? null;
 }
 
 /**
- * Marca d'agua (ISO) -> `dataInicio` no formato documentado pelo Bitlab
- * (`YYYY-MM-DD HH:mm:ss`), pelos componentes — mesma hipotese de D-187.
+ * Marca d'agua gravada -> `dataInicio` (`YYYY-MM-DD HH:mm:ss`, formato do
+ * pedido documentado pelo Bitlab). A gravada ja e canonica; o parse cobre uma
+ * marca antiga em ISO.
  */
 export function watermarkToBitlabDateTime(watermark: string): string | null {
-  const match = ISO_DATE_TIME.exec(watermark.trim());
-  if (!match) return null;
-  return `${match[1]} ${match[2]}`;
+  return parseBitlabDateTime(watermark);
 }
 
 /** Relogio de Brasilia no formato do Bitlab. Usado em `dataFim` e na primeira carga. */
@@ -278,12 +301,19 @@ export function createBitlabClient(options: BitlabClientOptions): BitlabClient {
         throw new BitlabError('contract', `schema: ${where}`);
       }
 
+      // A marca volta ao Bitlab como `dataInicio`: se nao for data reconhecivel,
+      // gravar faria a proxima rodada partir de lugar nenhum.
+      const watermark = parseBitlabDateTime(parsed.data.marcaDagua);
+      if (parsed.data.marcaDagua !== null && watermark === null) {
+        throw new BitlabError('contract', 'schema: marcaDagua');
+      }
+
       const notices = [...parsed.data.avisos];
       if (deprecatedHeader) notices.push('X-API-Deprecation: true');
       return {
         rows: parsed.data.orcamentos.map(toLisRow),
         hasNext: parsed.data.paginacao.temProxima,
-        watermark: parsed.data.marcaDagua,
+        watermark,
         deprecationNotices: notices,
       };
     },

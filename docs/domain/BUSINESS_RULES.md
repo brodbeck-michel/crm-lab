@@ -583,7 +583,7 @@ planilha produz (`LisSpreadsheetRow`) e segue §11.1–§11.6 sem diferença:
 | Campo da API | Campo interno | Conversão |
 |---|---|---|
 | `ORCAMENTO` | `number` | `String(n)`. Inteiro, sem zeros à esquerda (D-119 item 1) |
-| `DATA_ORÇAMENTO` | `issued_on` | 10 primeiros caracteres da string ISO (D-187) |
+| `DATA_ORÇAMENTO` | `issued_on` | `dd/mm/yyyy hh:mm:ss` (Brasília) → `YYYY-MM-DD` pelos componentes (D-187) |
 | `NM_PACIENTE` | `patient_name` | cru |
 | `CONVENIO1..3` / `VL_TOTAL1..3` | `insurance_1..3` / `value_1..3` | crus. `null` continua `null` |
 | `MEDIA_CONVENIO` | `insurance_average` | cru |
@@ -591,7 +591,7 @@ planilha produz (`LisSpreadsheetRow`) e segue §11.1–§11.6 sem diferença:
 | `REQUISICAO` | `requisition_number` | cru (`"001-0009876"`). `""` vira `null` |
 | `VALOR_REQUISICAO` | `requisition_value` | cru |
 | `Valor_Pago` | `paid_value` | cru |
-| `Data_Pagamento` | `paid_on` | 10 primeiros caracteres (D-187). `null` continua `null` |
+| `Data_Pagamento` | `paid_on` | mesma conversão de `DATA_ORÇAMENTO` (D-187). `null` continua `null` |
 | `ID_CPF`, `DT_NASCIMENTO` | — | **descartados na borda**, nunca gravados nem logados (D-185 item 7) |
 | `QTD_EXAMES`, `CONVENIO_REQUISICAO`, `CONTA_NULO` | — | ignorados (sem uso no CRM) |
 

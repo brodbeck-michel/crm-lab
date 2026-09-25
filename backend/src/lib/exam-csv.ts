@@ -91,7 +91,7 @@ function resolveHeader(raw: string): ExamImportColumn | null {
 export function decodeUtf8(buffer: Buffer): string {
   try {
     const text = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
-    return text.startsWith('﻿') ? text.slice(1) : text;
+    return text.startsWith('\uFEFF') ? text.slice(1) : text;
   } catch {
     throw new ExamCsvError('invalid_encoding');
   }

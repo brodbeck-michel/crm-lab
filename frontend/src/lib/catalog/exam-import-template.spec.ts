@@ -5,7 +5,7 @@ import { buildExamImportTemplate } from './exam-import-template';
 describe('buildExamImportTemplate (CRMLAB-23)', () => {
   it('sai com BOM, separador ; , cabeçalho canônico e uma linha de exemplo', () => {
     const text = buildExamImportTemplate();
-    expect(text.startsWith('﻿')).toBe(true);
+    expect(text.startsWith('\uFEFF')).toBe(true);
 
     const lines = text.slice(1).split('\r\n').filter((line) => line !== '');
     expect(lines).toHaveLength(2);

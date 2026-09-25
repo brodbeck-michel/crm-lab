@@ -20,7 +20,7 @@ export function buildExamImportTemplate(): string {
   const example = EXAM_IMPORT_COLUMNS.map((column) =>
     csvCell(EXAM_IMPORT_TEMPLATE_EXAMPLE[column]),
   ).join(';');
-  return `﻿${header}\r\n${example}\r\n`;
+  return `\uFEFF${header}\r\n${example}\r\n`;
 }
 
 export function downloadExamImportTemplate(): void {

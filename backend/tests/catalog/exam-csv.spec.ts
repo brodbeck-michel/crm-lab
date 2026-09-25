@@ -3,7 +3,11 @@
  * "Importação do catálogo por CSV").
  */
 import { describe, expect, it } from 'vitest';
-import { EXAM_IMPORT_MAX_ROWS } from '@crm-lab/shared';
+import {
+  EXAM_IMPORT_COLUMNS,
+  EXAM_IMPORT_MAX_ROWS,
+  EXAM_IMPORT_TEMPLATE_EXAMPLE,
+} from '@crm-lab/shared';
 import {
   ExamCsvError,
   detectSeparator,
@@ -163,6 +167,22 @@ describe('parseExamCsv — arquivo', () => {
     // "Código" em Windows-1252: o "ó" e 0xF3, byte invalido isolado em UTF-8.
     const latin1 = Buffer.from('nome;C\xf3digo;preco_convenio;preco_particular\nA;A;1;2\n', 'latin1');
     expectCsvError(() => parseExamCsv(latin1), 'invalid_encoding');
+  });
+
+  it('byte NUL (UTF-16 sem BOM, binario) -> invalid_encoding, antes de chegar ao banco', () => {
+    const withNul = csv('nome;codigo;preco_convenio;preco_particular\nHemo\u0000grama;HC;1;2\n');
+    expectCsvError(() => parseExamCsv(withNul), 'invalid_encoding');
+    const utf16NoBom = Buffer.from('nome;codigo;preco_convenio;preco_particular\nA;A;1;2\n', 'utf16le');
+    expectCsvError(() => parseExamCsv(utf16NoBom), 'invalid_encoding');
+  });
+
+  it('o modelo baixavel (colunas + exemplo de @crm-lab/shared, com BOM e ;) passa sem erro', () => {
+    const header = EXAM_IMPORT_COLUMNS.join(';');
+    const example = EXAM_IMPORT_COLUMNS.map((c) => EXAM_IMPORT_TEMPLATE_EXAMPLE[c]).join(';');
+    const result = parseExamCsv(csv(`\uFEFF${header}\r\n${example}\r\n`));
+    expect(result.errors).toEqual([]);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]).toMatchObject({ code: 'HC', priceInsurance: 75, pricePrivate: 89.9, turnaroundHours: 24 });
   });
 
   it(`mais de ${EXAM_IMPORT_MAX_ROWS} linhas -> too_many_rows`, () => {

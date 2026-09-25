@@ -2486,7 +2486,8 @@ exame e nunca é tocado.
 **Formato do arquivo:**
 - Texto **UTF-8**, com ou sem BOM. Arquivo que não é UTF-8 válido (ex.: "CSV (separado por
   vírgulas)" do Excel no Windows, que sai em Windows-1252) → `invalid_encoding` — a tela
-  orienta a salvar como "CSV UTF-8".
+  orienta a salvar como "CSV UTF-8". Arquivo com byte NUL (UTF-16 sem BOM, binário) também é
+  `invalid_encoding`.
 - Separador **`;` ou `,`**, detectado pelo cabeçalho (o que aparecer mais fora de aspas; empate
   → `;`, o padrão do Excel em pt-BR). Campo com o separador, aspas ou quebra de linha vai entre
   aspas duplas (`"a;b"`, `"diz ""oi"""`), padrão RFC 4180.

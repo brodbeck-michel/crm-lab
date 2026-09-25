@@ -2671,7 +2671,9 @@ uma vez e o card pediu assim.
 **Decisão:**
 1. **Encoding:** UTF-8 com ou sem BOM, decodificado com `TextDecoder('utf-8', { fatal: true })`.
    Bytes inválidos → `invalid_encoding` (não há fallback silencioso para Windows-1252: a tela
-   orienta a salvar como "CSV UTF-8"). O modelo baixável sai com BOM, para o Excel abrir os
+   orienta a salvar como "CSV UTF-8"). Byte NUL também é `invalid_encoding`: é UTF-8 válido,
+   mas denuncia UTF-16 sem BOM/binário e o Postgres recusa `\0` em texto (o preview aprovaria
+   e a confirmação daria 500). O modelo baixável sai com BOM, para o Excel abrir os
    acentos certos.
 2. **Separador:** detectado no cabeçalho — conta `;` e `,` fora de aspas; o maior vence e
    empate fica com `;` (padrão do Excel pt-BR). Parser RFC 4180 próprio (~60 linhas em

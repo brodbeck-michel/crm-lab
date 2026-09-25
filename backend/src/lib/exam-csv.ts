@@ -87,14 +87,21 @@ function resolveHeader(raw: string): ExamImportColumn | null {
   return HEADER_ALIASES[folded] ?? null;
 }
 
-/** UTF-8 estrito. O `TextDecoder` ja descarta o BOM (`ignoreBOM: false`). */
+/**
+ * UTF-8 estrito. O `TextDecoder` ja descarta o BOM (`ignoreBOM: false`).
+ * Byte NUL e UTF-8 valido mas nunca aparece em CSV de texto (e sinal de
+ * UTF-16 sem BOM ou arquivo binario renomeado) — e o Postgres recusa `\0` em
+ * TEXT/VARCHAR, o que faria o preview aprovar e a confirmacao estourar 500.
+ */
 export function decodeUtf8(buffer: Buffer): string {
+  let text: string;
   try {
-    const text = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
-    return text.startsWith('\uFEFF') ? text.slice(1) : text;
+    text = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
   } catch {
     throw new ExamCsvError('invalid_encoding');
   }
+  if (text.includes('\u0000')) throw new ExamCsvError('invalid_encoding');
+  return text.startsWith('\uFEFF') ? text.slice(1) : text;
 }
 
 /** Conta `;` e `,` fora de aspas ate o fim da primeira linha. Empate -> `;`. */

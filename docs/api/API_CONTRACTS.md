@@ -1670,7 +1670,9 @@ Paciente inexistente ou fora da visibilidade devolve **lista vazia**, não `404`
       "insuranceId": "8f2a1c4b-6d39-4f70-9a12-5c8e3b7d1f06",
       "createdBy": "uuid",
       "approvalStatus": "none",
-      "createdAt": "2024-08-23T14:40:00Z"
+      "createdAt": "2024-08-23T14:40:00Z",
+      "lisBudgetNumber": "1234",
+      "lisReconciledAt": null
     }
   ],
   "pagination": {
@@ -1704,6 +1706,11 @@ Detalhes completos de uma proposta.
   "totalPrice": 179.80,
   "insuranceId": "8f2a1c4b-6d39-4f70-9a12-5c8e3b7d1f06",
   "requestingDoctor": "Dra. Ana Souza",
+  "lisBudgetNumber": "1234",
+  "lisReconciledAt": "2026-09-25T14:02:11.000Z",
+  "lisRequisitionNumber": "001-0009876",
+  "lisPaidValue": 100.00,
+  "lisPaidOn": "2026-09-28",
   "items": [
     {
       "id": "uuid",
@@ -1753,6 +1760,13 @@ desta mudança, sem migração de dados). Sem cadastro/autocomplete de médicos:
 texto na proposta. **Editável via `PATCH /proposals/:id/items`** (CRMLAB-12, D-134) enquanto a
 proposta estiver em `novo_contato`/`orcamento_enviado` — `insuranceId` continua imutável (D-082,
 sem `PATCH` que o altere).
+
+**Campos do LIS (CRMLAB-52, D-118/D-119):** `lisBudgetNumber` e `lisReconciledAt` saem na
+listagem e no detalhe (o selo "Conciliado" aparece nos dois). `lisRequisitionNumber`,
+`lisPaidValue` e `lisPaidOn` (`YYYY-MM-DD`, D-110) saem só no detalhe. Todos são `null` até
+existir vínculo. Só o `lisBudgetNumber` é escrito pela API (`PATCH .../lis-reference`), os
+demais vêm da conciliação. `lisReconciledAt` preenchido significa "o LIS confirmou a requisição
+e foi isso que fechou a proposta".
 
 **Sobre "aparecer no PDF/exportação" (escopo do card CRMLAB-9):** nesta onda **não existe**
 nenhuma geração de PDF/exportação da proposta em si (os únicos PDFs do sistema hoje são
@@ -1909,6 +1923,44 @@ Encerrar proposta como perdida.
   "updatedAt": "2024-08-23T15:00:00Z"
 }
 ```
+
+### PATCH /proposals/:id/lis-reference (CRMLAB-52, D-119)
+Vincula a proposta a um orçamento do LIS (Bitlab) pelo número, ou desfaz o vínculo. É o que
+permite a conciliação automática: quando esse orçamento aparece com requisição, a proposta vai
+para `ganho` sozinha.
+
+**Papéis:** a **dona** da proposta (`createdBy`) ou **manager/admin**. Atendente que não é dona
+→ `NOT_FOUND` quando não enxerga a proposta (mesmo recorte do `GET`), ou `FORBIDDEN` quando
+enxerga. `platform_operator` → `403`.
+
+**Request:**
+```json
+{ "lisBudgetNumber": "001234" }
+```
+- `lisBudgetNumber`: `string` só de dígitos, 1..20 depois do `trim`, ou `null` para desfazer o
+  vínculo. É gravado **sem zeros à esquerda** (`"001234"` → `"1234"`), a mesma forma de
+  `lis_budgets.number` (D-119 item 1). Qualquer outro caractere → `VALIDATION_ERROR` com
+  `details.fields.lisBudgetNumber`.
+
+**Comportamento:** grava `lis_budget_number` e, **na mesma transação**, concilia contra o
+`lis_budgets` que já existe com esse número (D-119 item 3a). Se o orçamento já tem requisição e
+a proposta não é terminal, ela vai para `ganho` nesta mesma chamada. Se o orçamento ainda não
+chegou ao CRM, o vínculo fica gravado e a próxima importação ou sincronização concilia. `null`
+limpa `lis_budget_number`, `lis_requisition_number`, `lis_paid_value`, `lis_paid_on` e o
+`lis_budgets.proposal_id` correspondente.
+
+**Response (200):** o `ProposalDetail` atualizado (mesmo shape do `GET /proposals/:id`), já com o
+status resultante da conciliação.
+
+Gera audit log `update_proposal_lis_reference` (`oldValues`/`newValues`: `lisBudgetNumber`). Se
+a conciliação levou a proposta a `ganho`, gera **também** o `update_proposal_status` com
+`newValues.source: "lis"`, o histórico, a mensagem de sistema e o WS `proposal.status_changed`,
+iguais aos da importação (D-119 item 4).
+
+**Erros:** `VALIDATION_ERROR` (400), `CONFLICT` (409, `details.reason:
+"lis_budget_number_taken"` e `details.proposalNumber` da outra proposta), `PROPOSAL_ALREADY_CLOSED`
+(409, só quando a proposta está `ganho`. Em `perdido` o vínculo é aceito, D-119 item 2),
+`FORBIDDEN` (403), `NOT_FOUND` (404).
 
 ### PATCH /proposals/:id/discount
 Atualizar desconto (se aprovação pendente).
@@ -2631,9 +2683,16 @@ Sem datas: últimos 30 dias terminando hoje (UTC). Formato inválido, data inexi
   "topPerformers": [
     { "userId": "uuid", "name": "Maria Silva", "conversions": 15, "revenue": 15000 }
   ],
-  "partial": false
+  "partial": false,
+  "realized": { "wonFromLis": 12, "paidCount": 30, "paidValue": 5400.00 }
 }
 ```
+**`realized` (CRMLAB-52, D-119 item 9):** o que o LIS confirma, separado do que a atendente
+marcou. `wonFromLis` conta as propostas levadas a `ganho` pela conciliação com `closedAt` no
+período. `paidCount`/`paidValue` contam as propostas com `lis_paid_on` no período (janela de
+**pagamento**, BUSINESS_RULES.md §11.7). Sempre presente, com zeros quando não houve nada. Segue
+o mesmo recorte de `partial`: a atendente vê só as próprias propostas.
+
 `lossReasons` traz **sempre as 5 chaves** de `LOSS_REASONS`, com `0` onde não houve perda —
 o gráfico do frontend não pode ficar com buracos. `conversionRate` = ganhos / total criadas
 no período, em pontos percentuais. `averageTicket` = `revenue / count(ganhas)`, e é `0` (não
@@ -3726,8 +3785,9 @@ BUSINESS_RULES.md §11. Shapes em `shared/types/lis.types.ts`.
 desta seção entra no inventário de isolamento (`route-tenant-isolation.spec.ts`).
 
 **Não existe escrita direta em `lis_budgets`** — a única forma de uma linha nascer ou mudar é
-por importação (ou por purge, que apaga todas). `PATCH /proposals/:id/lis-reference` (Onda 13)
-grava `lis_budgets.proposal_id`, mas essa rota não faz parte desta onda.
+por importação de planilha, por sincronização pela API do Bitlab (§10.3, CRMLAB-52) ou por
+purge, que apaga todas. `PATCH /proposals/:id/lis-reference` (§3, D-119) grava
+`lis_budgets.proposal_id` e é a única outra escrita.
 
 ### 10.1 Imports
 
@@ -3772,8 +3832,8 @@ chunk. Ao final, grava `lis_imports` com `status: "completed"` e os contadores.
   "finishedAt": "2026-09-12T14:00:03.000Z"
 }
 ```
-`proposalsWon` é **sempre `0`** nesta onda — a coluna existe (SCHEMA.md §25) mas o hook que a
-preenche é da Onda 13 (D-119), fora deste escopo. `status: "failed"` é possível quando a
+`proposalsWon` conta as propostas que esta importação levou a `ganho` pela conciliação (D-119,
+CRMLAB-52). Era sempre `0` até a Onda 13. `status: "failed"` é possível quando a
 importação passa da validação de arquivo mas falha durante o processamento (ex.: erro de banco
 no meio de um chunk); nesse caso `errorMessage` traz o motivo e `finishedAt` fica preenchido do
 mesmo jeito — a linha de `lis_imports` registra a falha, nunca é apagada.
@@ -3861,12 +3921,12 @@ base sem repetir a mesma barreira.
 }
 ```
 
-Gera audit log `purge_lis_budgets`. Nesta onda o purge é incondicional (apaga tudo do tenant);
-o bloqueio por conciliação existente (`lis_budgets.proposal_id` vinculada) é regra da Onda 13
-(D-119) e não se aplica aqui — a coluna é sempre `NULL` até lá.
+Gera audit log `purge_lis_budgets`. **Bloqueado quando há conciliação** (D-119 item 8): se
+qualquer `lis_budgets.proposal_id` do tenant estiver preenchido → `CONFLICT` com
+`details.reason: "lis_budgets_reconciled"` e `details.linkedCount`, sem apagar nada.
 
-**Erros:** `VALIDATION_ERROR` (400, `confirm` ausente/errado), `FORBIDDEN` (403,
-`details.requiredRoles: ["admin"]`)
+**Erros:** `VALIDATION_ERROR` (400, `confirm` ausente/errado), `CONFLICT` (409,
+`lis_budgets_reconciled`), `FORBIDDEN` (403, `details.requiredRoles: ["admin"]`)
 
 ### 10.2 Budgets
 
@@ -4048,6 +4108,99 @@ nos dois campos quando `lis_budgets` está vazio (tenant que nunca importou).
 **Erros:** `FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
 
 ---
+
+### 10.3 Integração LIS pela API do Bitlab (CRMLAB-52, D-185)
+
+Configuração e disparo da sincronização dos orçamentos pela API de Orçamentos do Bitlab. Tabela
+`lis_sync_settings` (SCHEMA.md §31). Serviço `LisSyncService` (SERVICES.md §24). Shapes em
+`shared/types/lis.types.ts`. O dado que entra aparece em `/lis-budgets` e no histórico de
+`GET /lis-imports` com `kind: "sync"` (§10.1).
+
+**Papéis:** `GET` e `POST .../sync` são **manager/admin** (mesmo corte de `POST /lis-imports`).
+`PATCH` é **admin**, porque mexe em credencial. `attendant` → `403 FORBIDDEN`.
+`platform_operator` → `403`. Todas entram no inventário de isolamento.
+
+**A chave nunca volta** (mesma regra de §6, D-064): a resposta traz `apiKeyMasked` e
+`apiKeySet`, nunca o valor.
+
+#### GET /settings/lis-integration
+
+**Response (200):**
+```json
+{
+  "enabled": true,
+  "apiKeySet": true,
+  "apiKeyMasked": "••••••••6y6M",
+  "watermark": "2026-09-25T13:30:00.000Z",
+  "lastRunAt": "2026-09-25T14:00:00.000Z",
+  "lastSuccessAt": "2026-09-25T14:00:00.000Z",
+  "lastError": null,
+  "running": false,
+  "intervalMinutes": 30
+}
+```
+- Sem linha em `lis_sync_settings`: `enabled: false`, `apiKeySet: false`, `apiKeyMasked: null` e
+  datas `null`. O `GET` não grava nada (D-065).
+- `lastError` é a mensagem em português da última falha, pronta para a tela (`"O Bitlab recusou a
+  chave de acesso. A sincronização foi desligada."`). Nunca traz a chave nem o corpo cru da
+  resposta. Volta a `null` na primeira rodada bem-sucedida.
+- `running`: há uma rodada em andamento agora (trava em memória, D-185 item 5).
+- `intervalMinutes`: de `LIS_SYNC_INTERVAL_MS`, só para a tela dizer "a cada N minutos".
+
+#### PATCH /settings/lis-integration (admin)
+
+**Request** (parcial; campo ausente preserva):
+```json
+{ "enabled": true, "apiKey": "sante_orcamento_..." }
+```
+- `apiKey`: `string` (1..512, sem espaço nas pontas) grava, `null` apaga, ausente preserva, `""` →
+  `VALIDATION_ERROR` (mesma semântica de segredo de §6).
+- Apagar a chave (`apiKey: null`) **desliga** a sincronização na mesma escrita.
+- `enabled: true` sem chave gravada nem enviada → `VALIDATION_ERROR` com
+  `details.fields.enabled: "requires_api_key"`.
+- Trocar a chave **não** zera a `watermark`: a mesma base do mesmo laboratório continua de onde
+  parou.
+
+**Response (200):** o mesmo shape do `GET`.
+
+Gera audit log `update_lis_integration`, com `"[REDACTED]"` no lugar da chave em
+`oldValues`/`newValues`.
+
+**Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403, `details.requiredRoles: ["admin"]`)
+
+#### POST /settings/lis-integration/sync
+"Sincronizar agora". Roda uma rodada completa e responde quando ela termina. A rodada tem teto
+de páginas (D-185 item 2), e cada chamada ao Bitlab tem timeout de 15 s.
+
+**Request:** corpo vazio.
+
+**Response (200):** o resultado da rodada. **Falha do Bitlab não é erro HTTP**: é resultado, e a
+tela mostra (`status: "failed"`).
+```json
+{
+  "status": "completed",
+  "received": 42,
+  "importId": "8c2e1f77-0b13-4a3d-9d54-1f0e6b7a2c19",
+  "rowsAccepted": 42,
+  "proposalsWon": 3,
+  "watermark": "2026-09-25T14:02:11.000Z",
+  "error": null,
+  "settings": { "enabled": true, "apiKeySet": true, "...": "mesmo shape do GET" }
+}
+```
+- `status`: `completed` | `failed`. Em `failed`, `error` traz `{ kind, message }`, com
+  `kind` ∈ `auth` (403 do Bitlab, que também desliga a sincronização) | `unavailable` (timeout,
+  rede, 5xx) | `contract` (resposta fora do contrato de SERVICES.md §24.1) | `rejected` (400 do
+  Bitlab: `PARAMETROS_INVALIDOS`/`PERIODO_INVALIDO`, o que indica bug nosso).
+- `received: 0` → `importId: null` (rodada vazia não grava `lis_imports`, D-185 item 4).
+- `settings` evita um segundo `GET` para atualizar a tela.
+
+Gera audit log `run_lis_sync` (quem disparou, `status`, `received`). As rodadas do agendador não
+geram audit: são do sistema, e o histórico delas é `lis_imports`/`lastRunAt`.
+
+**Erros:** `CONFLICT` (409, `details.reason: "lis_sync_running"` quando já há rodada em andamento
+para o tenant; `"lis_sync_not_configured"` quando a sincronização está desligada ou sem chave),
+`FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
 
 ## 11. Sales (Vendas + Comissão — Onda 9)
 

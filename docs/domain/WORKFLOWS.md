@@ -190,6 +190,7 @@ novo_contato ──→ orcamento_enviado ──→ follow_up ──→ negociaca
 | negociacao | ganho | Acordo fechado |
 | negociacao | perdido | Sem acordo |
 | qualquer aberto | perdido | Com motivo |
+| qualquer aberto | ganho | **Só pelo sistema:** o orçamento do LIS vinculado aparece com requisição (CRMLAB-52, D-119). Pula a matriz, inclusive a partir de `novo_contato`. Nunca a partir de `perdido` |
 
 ### Ao mudar para `ganho`:
 ```typescript

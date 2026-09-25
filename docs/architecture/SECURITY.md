@@ -156,6 +156,7 @@ de acesso entre tenants dentro do gateway.
 | `users.password_hash` | banco | hash (bcrypt) |
 | `refresh_tokens.token_hash` | banco | hash (SCHEMA.md §14) |
 | `tenant_channels.api_token`, `tenant_channels.webhook_secret` | banco | **cifrado** AES-256-GCM com `CHANNEL_SECRET_KEY` (D-076) |
+| `lis_sync_settings.api_key` (chave da API de Orçamentos do Bitlab, CRMLAB-52) | banco | **cifrado** com a mesma infra de D-076. Write-only na API (`apiKeyMasked`), nunca em log, audit com `"[REDACTED]"`, nunca no frontend (D-185) |
 
 Os dois últimos precisam voltar em claro (o token vai no `Authorization` da API do canal, o
 segredo assina o HMAC), então hash não serve — e é por isso que "segredos só em env vars" não

@@ -134,6 +134,21 @@ renderiza. "Não sei onde mostrar" nunca pode virar silêncio.
 |--------|------|--------|
 | `SALE_ATTENDANT_NOT_LINKED` | 403 | `POST /sales` por um login de `attendant` sem vínculo em `attendants` (`attendants.user_id = ctx.userId`) — o vínculo é manual, feito por manager/admin em `PATCH /attendants/:id` (API_CONTRACTS.md §11/§12) |
 
+## Conciliação e sincronização com o LIS (CRMLAB-52, D-119/D-185)
+
+Sem código novo: tudo é `CONFLICT` (409), e o motivo vem em `details.reason`.
+
+| `details.reason` | Rota | Quando |
+|------------------|------|--------|
+| `lis_budget_number_taken` | `PATCH /proposals/:id/lis-reference` | Outra proposta do tenant já usa esse nº de orçamento do LIS (`details.proposalNumber`) |
+| `lis_budgets_reconciled` | `POST /lis-imports/purge` | Há `lis_budgets` vinculados a propostas. Limpar apagaria a conciliação (`details.linkedCount`) |
+| `lis_sync_running` | `POST /settings/lis-integration/sync` | Já há uma rodada em andamento para o tenant (agendador ou outro clique) |
+| `lis_sync_not_configured` | `POST /settings/lis-integration/sync` | Sincronização desligada ou sem chave |
+
+Falha **do Bitlab** (chave recusada, timeout, resposta fora do contrato) **não** é erro HTTP do
+CRM: o `POST .../sync` responde `200` com `status: "failed"` e `error.kind` (API_CONTRACTS.md
+§10.3), porque é resultado a mostrar, não requisição malformada.
+
 ## Convênios e preço por convênio (Onda 7)
 
 Sem código novo além do acima: `/insurances` e `/exams/:id/prices` reusam o catálogo geral —

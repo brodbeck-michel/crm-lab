@@ -51,6 +51,57 @@ export interface ListLisImportsResponse {
 export type LisImportInvalidReason = 'pdf_disguised' | 'missing_column' | 'empty';
 
 // ---------------------------------------------------------------------------
+// Integração LIS pela API do Bitlab (API_CONTRACTS.md §10.3 — CRMLAB-52, D-185)
+// ---------------------------------------------------------------------------
+
+/** `GET`/`PATCH /settings/lis-integration`. A chave NUNCA vem — só mascarada. */
+export interface LisIntegrationSettings {
+  enabled: boolean;
+  apiKeySet: boolean;
+  /** `'••••••••' + últimos 4`, ou `null` sem chave. */
+  apiKeyMasked: string | null;
+  /** Maior `marcaDagua` já gravada, crua como o Bitlab devolve (D-187). */
+  watermark: string | null;
+  lastRunAt: IsoDateTime | null;
+  lastSuccessAt: IsoDateTime | null;
+  /** Mensagem em português pronta para a tela. `null` depois de uma rodada ok. */
+  lastError: string | null;
+  running: boolean;
+  intervalMinutes: number;
+}
+
+/**
+ * `PATCH /settings/lis-integration` (admin). Parcial. `apiKey`: string grava,
+ * `null` apaga (e desliga), ausente preserva, `""` → VALIDATION_ERROR.
+ */
+export interface UpdateLisIntegrationRequest {
+  enabled?: boolean;
+  apiKey?: string | null;
+}
+
+export type LisSyncErrorKind = 'auth' | 'unavailable' | 'contract' | 'rejected';
+
+/** `POST /settings/lis-integration/sync`. Falha do Bitlab é resultado, não erro HTTP. */
+export interface LisSyncRunResult {
+  status: 'completed' | 'failed';
+  received: number;
+  /** `null` quando `received === 0` — rodada vazia não grava `lis_imports`. */
+  importId: string | null;
+  rowsAccepted: number;
+  proposalsWon: number;
+  watermark: string | null;
+  error: { kind: LisSyncErrorKind; message: string } | null;
+  settings: LisIntegrationSettings;
+}
+
+/** `details.reason` de `CONFLICT` no domínio LIS (API_ERRORS.md). */
+export type LisConflictReason =
+  | 'lis_budget_number_taken'
+  | 'lis_budgets_reconciled'
+  | 'lis_sync_running'
+  | 'lis_sync_not_configured';
+
+// ---------------------------------------------------------------------------
 // Attendants (API_CONTRACTS.md §12)
 // ---------------------------------------------------------------------------
 

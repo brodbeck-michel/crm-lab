@@ -398,6 +398,17 @@ nunca "sem permissão" (não vazar existência).
   texto. "Salvar" chama `PATCH /proposals/:id/items` com o carrinho inteiro; erro
   `DISCOUNT_EXCEEDS_LIMIT` vira toast pelo handler genérico, mantendo o modal aberto em edição
 - Dados: `GET /proposals/:id`, `PATCH /proposals/:id/status`, `PATCH /proposals/:id/items`
+- **Nº do orçamento no LIS (CRMLAB-52, D-119):** campo sempre visível abaixo do convênio, com o
+  rótulo "Nº do orçamento no LIS". Vazio mostra "Informar" (link). Clicar vira `Input`
+  numérico + [Salvar]/[Cancelar] e chama `PATCH /proposals/:id/lis-reference`. Em `ganho` o
+  campo é só leitura. Salvar com o campo vazio envia `null` (desvincular), com confirmação
+  "Desvincular do orçamento do LIS?". `CONFLICT lis_budget_number_taken` → mensagem no campo:
+  "Este orçamento já está vinculado à proposta #N". Se a resposta voltar com `status: "ganho"`,
+  toast "Orçamento já convertido no LIS — proposta marcada como ganha".
+- **Selo "Conciliado"** (`Chip tone="positive"`) ao lado do status quando `lisReconciledAt` não é
+  `null`, com tooltip "Requisição Nº {lisRequisitionNumber} no LIS". Quando há `lisPaidValue`,
+  uma linha "Pago no LIS: R$ X em DD/MM/AAAA" (`MoneyDisplay`/`DateDisplay`). O mesmo selo, sem
+  tooltip, aparece no cartão do pipeline (§5), que lê `lisReconciledAt` da listagem.
 
 ---
 
@@ -456,6 +467,12 @@ nunca "sem permissão" (não vazar existência).
 - Atendente vê versão PARCIAL (apenas métricas próprias)
 - Dados: `GET /analytics/conversion`, `GET /analytics/pipeline`
 - **Todos os números derivam de proposals** — exibir períodos consistentes
+- **Cartão "Receita realizada (LIS)" (CRMLAB-52, D-119):** `realized.paidValue` como valor
+  principal e, embaixo, "{paidCount} pagamentos · {wonFromLis} ganhos confirmados pelo LIS".
+  Fica ao lado de "receita do período" e tem legenda própria ("pago no LIS no período"). Não
+  soma com a receita do CRM, porque as duas respondem perguntas diferentes (janela de pagamento
+  × fechamento). Com tudo zerado mostra "—" e a dica "Informe o nº do orçamento do LIS nas
+  propostas".
 
 ---
 
@@ -1061,6 +1078,37 @@ Percentuais de comissão sobre venda de exame e de check-up (D-113 — antes viv
 - Gestor vê os três campos **desabilitados**, sem botão salvar (mesmo padrão de leitura de
   `/settings/insurances` para quem não edita) — o servidor recusaria o `PATCH` de qualquer
   forma (403, `details.requiredRoles: ["admin"]`).
+
+### 20. Integração LIS (`/settings/lis-integration`) — gestor vê, admin edita (CRMLAB-52, D-185)
+
+Configura a sincronização dos orçamentos pela API do Bitlab. Grupo "Configurações" da sidebar,
+rótulo "Integração LIS", `requiredRoles: MANAGER_PLUS`. Fonte: `GET/PATCH
+/settings/lis-integration` e `POST /settings/lis-integration/sync` (API_CONTRACTS.md §10.3).
+
+- **Cartão "Situação"**, no topo: um `Chip` + texto.
+  - `positive` "Sincronizando a cada {intervalMinutes} min · última às HH:MM", quando `enabled` e
+    `lastError` nulo;
+  - `attention` com o `lastError` em destaque, quando há erro;
+  - `inactive` "Desligada", quando `!enabled`.
+  Abaixo, "Última sincronização com sucesso: DD/MM HH:MM" e "Dados atualizados até: DD/MM
+  HH:MM" (`watermark`), ou "Nunca" nos dois.
+- **Chave de acesso:** campo senha com o `apiKeyMasked` como placeholder, mais [Salvar chave] e
+  [Remover chave] (confirmação "A sincronização será desligada"). O campo nunca é
+  pré-preenchido com o valor, que não existe no cliente. Colar e salvar envia só `apiKey`.
+- **`Toggle` "Sincronizar automaticamente"** (`enabled`), desabilitado com a dica "Salve uma
+  chave primeiro" quando `!apiKeySet`.
+- **[Sincronizar agora]** (primário): desabilitado com spinner enquanto `running` ou durante a
+  chamada. O resultado vira toast:
+  - `completed`: "{received} orçamentos recebidos · {proposalsWon} propostas ganhas", ou
+    "Nenhuma alteração desde a última sincronização";
+  - `failed`: `error.message`.
+  O cartão "Situação" se atualiza pelo `settings` da resposta. `CONFLICT lis_sync_running` →
+  toast "Já existe uma sincronização em andamento".
+- **Gestor** vê tudo **desabilitado**, menos [Sincronizar agora], que é manager+ (mesmo padrão
+  de leitura de §19).
+- Rodapé: "Os orçamentos sincronizados aparecem em Conferência e no histórico de importações
+  (origem: API)". O histórico de `/results` (§14) mostra `kind: "sync"` como "API" em vez do
+  nome do arquivo.
 
 ---
 

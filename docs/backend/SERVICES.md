@@ -168,6 +168,10 @@ interface ProposalService {
   list(ctx: TenantContext, filters: ProposalFilters): Promise<Paginated<Proposal>>;
   updateStatus(ctx: TenantContext, id: string, status: ProposalStatus, reasonLost?: string): Promise<Proposal>;
   updateDiscount(ctx: TenantContext, id: string, discountPercent: number): Promise<Proposal>;
+  /** CRMLAB-52 (D-119). Dona ou manager+. Grava o vínculo e concilia na mesma transação. */
+  setLisReference(ctx: TenantContext, id: string, lisBudgetNumber: string | null): Promise<ProposalDetail>;
+  /** CRMLAB-52 (D-119). Só para LisReconcileService (§25), dentro da transação dele. */
+  markWonFromLis(tx: DbTx, tenantId: string, proposalId: string): Promise<boolean>;
 }
 ```
 
@@ -179,6 +183,18 @@ interface ProposalService {
 - Proposta `pending` não pode ir para `orcamento_enviado`
 - `ganho`/`perdido` são terminais: seta `closedAt`, nenhuma transição posterior
 - Toda mutação → AuditService
+- **`markWonFromLis` (D-119 item 4)** é a única transição que ignora `ALLOWED_TRANSITIONS`: vai
+  de **qualquer** estágio não terminal para `ganho`, porque quem fechou foi o LIS. Ela e o
+  `updateStatus` compartilham um `transitionInTx(tx, …)` extraído do `updateStatus`: histórico,
+  `closedAt`, mensagem de sistema ("Orçamento convertido em requisição no LIS"), invalidação de
+  analytics, audit `update_proposal_status` com `newValues.source: "lis"` e `userId: null`, e WS
+  `proposal.status_changed` **depois do commit**. O `UPDATE ... WHERE status NOT IN
+  ('ganho','perdido') RETURNING` decide: 0 linhas → devolve `false` e não emite nada
+  (idempotência, D-119 item 7). Proposta `pending` de aprovação também fecha: o LIS confirmou que
+  o paciente pagou/requisitou, e a alçada era sobre o desconto oferecido, não sobre o fato.
+- **`setLisReference`:** normaliza o número (D-119 item 1), recusa em `ganho`
+  (`PROPOSAL_ALREADY_CLOSED`), traduz a violação do índice único para `CONFLICT
+  lis_budget_number_taken` e chama `LisReconcileService.reconcileProposal` na mesma transação.
 
 ---
 
@@ -1034,6 +1050,17 @@ chama (`import`) é este service.
   (`lis_budgets.proposal_id`) é regra da Onda 13, fora deste escopo.
 - Invalida `cache.delByPrefix('lis:<tenantId>:')` ao final de `import`/`purge` — a chave que
   `LisAnalyticsService` (§20) e `ExecutiveReportService` (§22) leem.
+- **Entrada comum para planilha e API (CRMLAB-52, D-185 item 3):** o trecho depois do parser
+  (consolidar → resolver atendente/convênio → upsert em chunks → conciliar) sai de `import` para
+  `ingestRows(ctx, rows, source)`, onde `source` é `{ kind: 'import', fileName }` ou
+  `{ kind: 'sync' }`. `import` = parser + `ingestRows`. `LisSyncService` (§24) chama `ingestRows`
+  com as linhas já mapeadas da API. Não existe um segundo upsert.
+- **Hook de conciliação por chunk (D-119 item 3b):** depois de cada chunk commitado, na mesma
+  transação do chunk, `LisReconcileService.reconcileBudgets(tx, tenantId, numbers)` com os
+  números daquele chunk. O total vai para `lis_imports.proposals_won`.
+- **`purge` bloqueado com vínculo (D-119 item 8):** `CONFLICT lis_budgets_reconciled` se algum
+  `lis_budgets.proposal_id` do tenant estiver preenchido. Checado antes de gravar o
+  `lis_imports(kind: 'purge')`.
 
 ---
 
@@ -1177,6 +1204,132 @@ export interface ExecutiveReportService {
 - **Não gera PDF.** `jspdf`/`jspdf-autotable` rodam no navegador (Onda 10); este service só
   devolve o JSON que os dois relatórios do cliente consomem.
 - Papel: `manager`/`admin`. `denyPlatformOperator()` no router.
+
+---
+
+## 24. LisSyncService (CRMLAB-52 — D-185/D-186/D-187)
+
+**Responsabilidade:** configuração e execução da sincronização dos orçamentos pela API do Bitlab.
+Dono de `lis_sync_settings` (SCHEMA.md §31). Grava em `lis_budgets` **só** através de
+`LisImportService.ingestRows` (§19).
+
+```typescript
+export interface LisSyncService {
+  /** manager/admin. Defaults sem gravar quando não há linha. NUNCA devolve a chave. */
+  getSettings(ctx: TenantContext): Promise<LisIntegrationSettings>;
+
+  /** admin. Semântica de segredo de §13 (ausente preserva · null apaga · string grava). */
+  updateSettings(ctx: TenantContext, dto: UpdateLisIntegrationRequest): Promise<LisIntegrationSettings>;
+
+  /** manager/admin. "Sincronizar agora". CONFLICT lis_sync_running / lis_sync_not_configured. */
+  runNow(ctx: TenantContext): Promise<LisSyncRunResult>;
+
+  /** Agendador (main.ts). Lista os tenants devidos (withoutTenant, D-186) e roda um por vez. */
+  runScheduledTick(): Promise<void>;
+}
+```
+
+**Uma rodada** (`runForTenant(tenantId, triggeredBy: string | null)`, privado, comum a `runNow` e
+ao agendador):
+1. Trava em memória por tenant (`Set<string>`). Se o tenant já está rodando: `runNow` →
+   `CONFLICT lis_sync_running`, e o agendador pula o tenant.
+2. `withTenant`: lê `enabled`/`watermark` e `resolveApiKey` (único ponto que decifra). Grava
+   `last_run_at = NOW()`.
+3. Janela: `dataInicio` = `watermark` convertida para `YYYY-MM-DD HH:mm:ss` pelos componentes
+   (D-187) ou, sem marca, `hoje − LIS_SYNC_INITIAL_DAYS` às 00:00:00. `dataFim` = agora, no mesmo
+   formato. `tipoData: "alteracao"`.
+4. Páginas: `BitlabClient.fetchBudgetsPage` com `tamanhoPagina: 500`, enquanto `temProxima` e até
+   **200 páginas**. Passar do teto é falha `contract` ("mais de 100 mil orçamentos numa rodada"),
+   o que protege de um `temProxima` que nunca vira `false`.
+5. Todas as páginas são lidas **antes** de gravar. Se alguma falhar, nada é gravado, a marca não
+   anda e a próxima rodada relê a mesma janela. O volume esperado (centenas por dia) cabe em
+   memória, e o teto do item 4 limita o pior caso.
+6. `received > 0`: mapeia (BUSINESS_RULES.md §11.10) e chama `LisImportService.ingestRows(ctx,
+   rows, { kind: 'sync' })`, com `ctx.userId = triggeredBy`. Depois grava `watermark` = maior
+   `marcaDagua` não nula das páginas, `last_success_at = NOW()` e `last_error = NULL`.
+   `received = 0` só grava `last_success_at`/`last_error = NULL`.
+7. Falha: `last_error` = mensagem pronta para a tela. `auth` também grava `enabled = false`
+   (D-185 item 6). Log `lis_sync.failed` com `{ tenantId, kind }` e **sem** o corpo cru, porque o
+   corpo pode trazer dado de paciente.
+8. Libera a trava num `finally`.
+
+**Regras:**
+- `runScheduledTick` roda os tenants **em série**, não em paralelo: é um por laboratório, e
+  série não compete com as requisições da tela pelo pool.
+- O tique nunca lança: cada tenant tem o próprio `try/catch`. Um laboratório com erro não impede
+  o próximo.
+- A chave nunca é logada, nunca vai para `last_error` e nunca aparece numa mensagem de erro
+  (inclusive `error.cause`).
+- Auditoria: `update_lis_integration` (com `"[REDACTED]"`) e `run_lis_sync` (só no `runNow`).
+
+### 24.1 Contrato assumido da API de Orçamentos do Bitlab (`backend/src/lib/bitlab-client.ts`)
+
+Fonte: manual "API de Orçamentos v1 — Manual de Integração" enviado pelo Bitlab em 25/09/2026. A
+chave de produção **ainda não foi exercitada**: em 25/09 ela voltou `403`. Os formatos abaixo são
+os do manual. Os primeiros testes com a chave válida devem conferir cada linha desta tabela e
+emendar aqui o que divergir, como foi feito com a sandbox em 18/09.
+
+| Item | Valor |
+|---|---|
+| Endpoint | `POST {BITLAB_API_BASE_URL}/v1/bitlab/orcamentos` (base padrão `https://integracoes.bitlab.net.br/webhook`) |
+| Auth | header `x-api-key`. Chave errada ou ausente → `403` com corpo texto `Authorization data is wrong!` (n8n, observado em 25/09) |
+| Corpo | `{ dataInicio, dataFim, tipoData: "alteracao", pagina, tamanhoPagina }`. Datas `YYYY-MM-DD` ou `YYYY-MM-DD HH:mm:ss` |
+| Sucesso | `200` `{ sucesso: true, apiVersao: "v1", status: "LISTA" \| "SEM_RESULTADOS", avisos: string[], filtro, paginacao: { pagina, tamanhoPagina, totalRegistros, totalPaginas, temProxima }, marcaDagua: string \| null, total, orcamentos: [] }` |
+| Erro de parâmetro | `400` `{ sucesso: false, status: "PARAMETROS_INVALIDOS" \| "PERIODO_INVALIDO", erro: { codigo, mensagem } }` |
+| Headers | `X-API-Version: 1.0.0`, `X-API-Deprecation: false` |
+
+**Orçamento:** `ORCAMENTO` (number), `DATA_ORÇAMENTO` (ISO), `NM_PACIENTE`, `DT_NASCIMENTO`,
+`ID_CPF`, `CONVENIO1..3` (string \| null), `VL_TOTAL1..3` (number \| null), `MEDIA_CONVENIO`,
+`QTD_EXAMES`, `USUÁRIO`, `REQUISICAO` (string \| null, `posto-requisição`), `CONVENIO_REQUISICAO`,
+`VALOR_REQUISICAO`, `Valor_Pago`, `Data_Pagamento` (ISO \| null), `CONTA_NULO` (0 \| 1).
+
+**Tolerância na borda** (lições da sandbox de 18/09, `Avaliacao_APIs_Bitlab_2026-09-18.md`):
+- Envelope validado com zod. Os campos que usamos são obrigatórios no schema, os desconhecidos
+  são ignorados (`passthrough`). Falhou o schema → `contract`.
+- Número que chegar como string numérica (`"250.00"`) é aceito. Na sandbox, `cdRequisicao` e
+  `CD_SMS` vieram como string, ao contrário do PDF.
+- Envelope dentro de array (`[{...}]`) é desembrulhado. O Bitlab disse ter corrigido isso em
+  25/09, mas custa uma linha.
+- `sucesso: false` com `200` é tratado como erro, pelo `status`. O código HTTP sozinho não basta.
+- `avisos[]` não vazio ou `X-API-Deprecation: true` → log `warn` `lis_sync.bitlab_deprecation`
+  (uma vez por rodada).
+- Timeout de 15 s por chamada (`fetch-timeout.ts`, CRMLAB-30).
+- `marcaDagua` reenviada como `dataInicio`: o manual manda usar a marca "como `dataInicio` da
+  próxima carga", mas a marca vem em ISO e o `dataInicio` documentado não é ISO. Por isso ela é
+  convertida pelos componentes (D-187). **Conferir no primeiro teste real** se o Bitlab compara
+  `>=` ou `>` (com `>=`, o último orçamento é relido a cada rodada, o que é inofensivo porque o
+  upsert é idempotente).
+
+---
+
+## 25. LisReconcileService (CRMLAB-52 — D-119)
+
+**Responsabilidade:** casar `lis_budgets` com `proposals` pelo número do orçamento e aplicar as
+regras de D-119. Sem rota própria: é chamado por `ProposalService.setLisReference` (§4) e pelo
+hook por chunk de `LisImportService.ingestRows` (§19), sempre **dentro da transação de quem
+chama**.
+
+```typescript
+export interface LisReconcileService {
+  /** Os orçamentos de `numbers` que têm proposta vinculada. Devolve quantas foram a `ganho`. */
+  reconcileBudgets(tx: DbTx, tenantId: string, numbers: readonly string[]): Promise<number>;
+  /** Uma proposta, contra o orçamento do número dela (se já existir). true = foi a `ganho`. */
+  reconcileProposal(tx: DbTx, tenantId: string, proposalId: string): Promise<boolean>;
+}
+```
+
+**Regras** (D-119):
+- Junção: `proposals.lis_budget_number = lis_budgets.number`, mesmo `tenant_id`. Grava
+  `lis_budgets.proposal_id` e espelha em `proposals` os campos `lis_requisition_number`,
+  `lis_paid_value` e `lis_paid_on`, **só quando algum mudou** (`IS DISTINCT FROM`).
+- `requisition_number` preenchido + proposta não terminal → `ProposalService.markWonFromLis`, e
+  grava `lis_reconciled_at`.
+- `requisition_number` preenchido + proposta `perdido` → audit `lis_reconcile_conflict`
+  (`entityType: "proposal"`, `newValues: { lisBudgetNumber, lisRequisitionNumber }`), uma vez
+  só: não repete se `lis_requisition_number` já era o mesmo.
+- Sem requisição: só espelha pagamento/valor, se houver. Status não muda.
+- As emissões de WS de `markWonFromLis` são acumuladas e disparadas por quem chama **depois do
+  commit**, para não anunciar um `ganho` que um rollback desfaria.
 
 ---
 

@@ -1170,8 +1170,8 @@ API — é o log de auditoria da própria importação, não um dado de trabalho
 CREATE TABLE lis_imports (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id UUID NOT NULL,
-  kind VARCHAR(20) NOT NULL,             -- CHECK: import | purge
-  file_name VARCHAR(255),                -- NULL em kind='purge'
+  kind VARCHAR(20) NOT NULL,             -- CHECK: import | purge | sync (sync: migração 026, D-185)
+  file_name VARCHAR(255),                -- NULL em kind='purge' e kind='sync'
   rows_in_file INT,
   rows_accepted INT,
   rows_rejected INT,
@@ -1184,7 +1184,7 @@ CREATE TABLE lis_imports (
 
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
   FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
-  CHECK (kind IN ('import', 'purge')),
+  CHECK (kind IN ('import', 'purge')), -- ampliado para 'sync' na 026 (abaixo)
   CHECK (status IN ('processing', 'completed', 'failed'))
 );
 
@@ -1197,6 +1197,17 @@ CREATE INDEX idx_lis_imports_tenant_created ON lis_imports(tenant_id, created_at
 paginada. `proposals_won` fica em `0`/`NULL` até a Onda 13 ligar a conciliação (D-118) — a
 coluna **nasce aqui** porque é o import quem sabe quantas propostas fechou naquela rodada, e
 criar a coluna numa migração futura obrigaria a alterar uma tabela de histórico já escrita.
+
+**`kind: 'sync'` (migração 026 — CRMLAB-52, D-185):** uma rodada da sincronização pela API do
+Bitlab que recebeu pelo menos um orçamento. `file_name` fica `NULL`, e `created_by` fica `NULL`
+quando foi o agendador (ou o id do admin, quando foi "Sincronizar agora"). `rows_in_file` conta
+os orçamentos recebidos da API. Rodada sem nenhum orçamento **não** grava linha (§31).
+
+```sql
+ALTER TABLE lis_imports DROP CONSTRAINT lis_imports_kind_check;
+ALTER TABLE lis_imports
+  ADD CONSTRAINT lis_imports_kind_check CHECK (kind IN ('import', 'purge', 'sync'));
+```
 
 ### 26. `lis_budgets` (migração 012 — Onda 9, D-110/D-111/D-114)
 Uma linha por `UNIQUE (tenant_id, number)` — o orçamento do LIS, já deduplicado e consolidado
@@ -1514,6 +1525,58 @@ pelo `ProposalService` — a coluna nasce junto com o resto do domínio LIS, e o
 disputarem o mesmo número de orçamento do LIS desde já, mesmo sem nenhum caminho de escrita
 ainda ligado.
 
+### 31. `lis_sync_settings` (migração 026 — CRMLAB-52, D-185/D-186)
+Configuração da sincronização dos orçamentos pela API do Bitlab, uma linha por tenant. Dono:
+`LisSyncService` (SERVICES.md §24). O estado de cada rodada mora aqui. O histórico do dado que
+entrou mora em `lis_imports(kind: 'sync')` (§25).
+
+```sql
+CREATE TABLE lis_sync_settings (
+  tenant_id UUID PRIMARY KEY,
+  enabled BOOLEAN NOT NULL DEFAULT false,
+  api_key TEXT NULL,                     -- x-api-key do Bitlab, CIFRADA (secret-box, D-076/D-185)
+  watermark VARCHAR(30) NULL,            -- maior `marcaDagua` já gravada, crua como o Bitlab devolve
+  last_run_at TIMESTAMP NULL,            -- início da última rodada (com ou sem sucesso)
+  last_success_at TIMESTAMP NULL,
+  last_error TEXT NULL,                  -- NULL depois de uma rodada bem-sucedida
+  updated_by UUID NULL,                  -- último admin que mudou `enabled`/`api_key`
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT lis_sync_settings_enabled_needs_key CHECK (NOT enabled OR api_key IS NOT NULL)
+);
+
+CREATE INDEX idx_lis_sync_settings_updated_by ON lis_sync_settings(updated_by);
+
+CREATE TRIGGER trg_lis_sync_settings_updated_at
+  BEFORE UPDATE ON lis_sync_settings
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+ALTER TABLE lis_sync_settings ENABLE ROW LEVEL SECURITY;
+CREATE POLICY lis_sync_settings_tenant_isolation ON lis_sync_settings
+  FOR ALL
+  USING      (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+```
+
+- **Segredo write-only, como `tenant_channels` (D-064):** o repositório de leitura da tela
+  projeta colunas explicitamente e devolve `apiKeyMasked` (`'••••••••' + últimos 4`). `SELECT *`
+  devolvendo a linha ao controller é bug de segurança. Só `resolveApiKey` lê a chave em claro, e o
+  retorno dele vai direto para o `BitlabClient`, sem passar por controller. Sem `''` como
+  sentinela: aqui `null` basta ("sem chave"), porque não há um canal legado caindo em env var.
+- **`enabled` exige chave** (CHECK): desligar a chave com a sincronização ligada é recusado pelo
+  banco, e o service desliga as duas juntas (API_CONTRACTS.md §10.3).
+- **`watermark` é texto cru**, não `TIMESTAMP`: ela volta ao Bitlab como `dataInicio` da próxima
+  carga, e reinterpretar fuso no caminho de ida e volta é exatamente o risco de D-187.
+- **Sem linha = nunca configurado.** `GET` responde os defaults (`enabled: false`, sem chave)
+  sem gravar, como `tenant_settings` (D-065).
+- Migração **única** (tabela + policy no mesmo arquivo), como 007/008: não há backfill, a
+  tabela nasce vazia. O `ALTER` de `lis_imports.kind` (§25) vai no mesmo arquivo.
+- `listEnabledTenantIds()` é a única leitura fora do contexto de tenant (D-186) e só projeta
+  `tenant_id`.
+
 ---
 
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
@@ -1619,9 +1682,9 @@ Dentro de uma transação **com** contexto, tudo que o sistema legitimamente faz
 funcionando: carregar o próprio tenant no payload de login, joins `users → tenants`, a tela de
 Personalização. O que passa a ser impossível é enxergar tenant alheio.
 
-### As duas exceções que rodam fora do contexto de tenant
+### As exceções que rodam fora do contexto de tenant
 
-Dois caminhos precisam, por definição, ver mais de um tenant. Ambos passam pelo `withoutTenant()`
+Estes caminhos precisam, por definição, ver mais de um tenant. Todos passam pelo `withoutTenant()`
 do Kernel, que executa como **dono das tabelas** (donos burlam RLS) — nomeado assim de propósito
 para ser a exceção visível e auditável, nunca o caminho normal:
 
@@ -1629,6 +1692,7 @@ para ser a exceção visível e auditável, nunca o caminho normal:
 |---------|---------|
 | **Login** | busca o usuário por email **antes** de saber a qual tenant ele pertence |
 | **Console da plataforma** | opera sobre todos os tenants por definição (`platform_operator`) |
+| **Agendador da sincronização LIS** | lista **só os `tenant_id`** com sincronização ligada, antes de ter contexto (D-186). A rodada de cada tenant roda com `withTenant()` |
 
 Nenhum outro caminho de código deve usar `withoutTenant()`.
 
@@ -1663,6 +1727,7 @@ Nenhum outro caminho de código deve usar `withoutTenant()`.
 | `exam_packages` | ✅ | migração `016_rls_exam_packages.sql` |
 | `exam_package_items` | ✅ | idem |
 | `exam_package_prices` | ✅ | idem |
+| `lis_sync_settings` | ✅ | migração `026_lis_sync.sql` (tabela + policy no mesmo arquivo) — e a chave nunca sai do repositório (projeção explícita) |
 
 As **4 tabelas da migração 003** entram sob RLS na `004_rls_onda6.sql`, as **3 tabelas da
 migração 005** entram na `006_rls_onda7.sql`, e as **4 tabelas novas da migração 012**
@@ -1755,7 +1820,9 @@ migrations/
 ├── 018_patient_inactivation.sql  # inativação de paciente
 ├── 019_messages_external_id_unique.sql # unicidade de messages.external_id (anti-duplicata)
 ├── 020_crm_login_role.sql        # role `crm_login` sem superuser para a pool (CRMLAB-38, D-145)
-└── 021_fk_indexes.sql            # índice nas 15 FKs que não tinham (CRMLAB-38, D-146)
+├── 021_fk_indexes.sql            # índice nas 15 FKs que não tinham (CRMLAB-38, D-146)
+├── …                             # 022–025: ver o cabeçalho de cada arquivo
+└── 026_lis_sync.sql              # lis_sync_settings + policy; lis_imports.kind ganha 'sync' (CRMLAB-52, D-185)
 ```
 
 A 007 e a 008 são arquivos ÚNICOS (tabela + policy), diferente dos pares 003/004 e 005/006: a

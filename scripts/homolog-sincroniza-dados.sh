@@ -162,6 +162,15 @@ msg "Desativando canais de mensagem (nada sai de homologacao)"
 docker exec -i "$PG_HML" psql -v ON_ERROR_STOP=1 -q -U "$POSTGRES_USER" -d "$POSTGRES_DB" <<'SQL'
 UPDATE tenant_channels
    SET is_active = FALSE, api_token = NULL, webhook_secret = NULL, connected_at = NULL;
+-- CRMLAB-52 (D-185): a chave do Bitlab puxaria a base de orcamentos de
+-- producao para homologacao. `to_regclass` porque o dump pode vir de uma
+-- producao ainda sem a migracao 026.
+DO $$
+BEGIN
+  IF to_regclass('public.lis_sync_settings') IS NOT NULL THEN
+    UPDATE lis_sync_settings SET enabled = FALSE, api_key = NULL;
+  END IF;
+END $$;
 SQL
 
 msg "Conferindo"

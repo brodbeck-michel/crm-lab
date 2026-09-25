@@ -44,8 +44,24 @@ const ADMIN_ROLE = ['admin'] as const;
 
 const CACHE_PREFIX = (tenantId: string): string => `lis:${tenantId}:`;
 
+/** De onde vem o lote: planilha (com nome do arquivo) ou API do Bitlab (D-185 item 3). */
+export type LisIngestSource = { kind: 'import'; fileName: string } | { kind: 'sync' };
+
+export interface LisIngestInput {
+  tenantId: string;
+  /** Quem disparou. `null` = agendador da sincronizacao. */
+  createdBy: string | null;
+}
+
 export interface LisImportService {
   import(ctx: TenantContext, dto: ImportLisSpreadsheetRequest): Promise<LisImport>;
+  /**
+   * Trecho comum a planilha e API (SERVICES.md §19): consolida, resolve
+   * atendente/convenio, upsert em chunks e fecha o `lis_imports`. Sem alcada —
+   * quem chama ja validou. Sem audit — `import` audita a planilha, e a
+   * sincronizacao audita so o "Sincronizar agora".
+   */
+  ingestRows(input: LisIngestInput, rows: LisSpreadsheetRow[], source: LisIngestSource): Promise<LisImport>;
   purge(ctx: TenantContext, dto: PurgeLisBudgetsRequest): Promise<LisImport>;
   list(ctx: TenantContext, query: ListLisImportsQuery): Promise<ListLisImportsResponse>;
   getLatest(ctx: TenantContext): Promise<LisImport | null>;
@@ -88,7 +104,58 @@ export function createLisImportService(deps: LisImportServiceDeps): LisImportSer
   const repository = new LisImportRepository(deps.db);
   const { db, cache, audit } = deps;
 
+  async function ingestRows(
+    input: LisIngestInput,
+    rows: LisSpreadsheetRow[],
+    source: LisIngestSource,
+  ): Promise<LisImport> {
+    const { tenantId } = input;
+    const rowsInFile = rows.length;
+    const validRows = rows.filter((row) => row.number.trim() !== '');
+    const consolidated = consolidateLisRows(validRows);
+
+    const created = await repository.insertProcessing(tenantId, {
+      kind: source.kind,
+      fileName: source.kind === 'import' ? source.fileName : null,
+      rowsInFile,
+      createdBy: input.createdBy,
+    });
+
+    let actualAccepted = 0;
+    let errorMessage: string | null = null;
+
+    const chunks = chunk(consolidated, CHUNK_SIZE);
+    for (const batch of chunks) {
+      try {
+        await db.withTenant(tenantId, async (tx) => {
+          for (const row of batch) {
+            const insuranceId = await resolveInsuranceId(tx, tenantId, row);
+            const attendantId = await resolveAttendantId(tx, tenantId, row);
+            await upsertBudget(tx, tenantId, created.id, row, insuranceId, attendantId);
+          }
+        });
+        actualAccepted += batch.length;
+      } catch (err) {
+        errorMessage = err instanceof Error ? err.message : String(err);
+        break;
+      }
+    }
+
+    const failed = errorMessage !== null;
+    const finished = await repository.finish(tenantId, created.id, {
+      status: failed ? 'failed' : 'completed',
+      rowsAccepted: actualAccepted,
+      rowsRejected: rowsInFile - actualAccepted,
+      errorMessage,
+    });
+
+    await cache.delByPrefix(CACHE_PREFIX(tenantId));
+    return finished;
+  }
+
   return {
+    ingestRows,
+
     async import(ctx: TenantContext, dto: ImportLisSpreadsheetRequest): Promise<LisImport> {
       assertManagerOrAdmin(ctx);
 
@@ -111,46 +178,11 @@ export function createLisImportService(deps: LisImportServiceDeps): LisImportSer
         throw err;
       }
 
-      const rowsInFile = rawRows.length;
-      const validRows = rawRows.filter((row) => row.number.trim() !== '');
-      const consolidated = consolidateLisRows(validRows);
-
-      const created = await repository.insertProcessing(ctx.tenantId, {
-        kind: 'import',
-        fileName: dto.fileName,
-        rowsInFile,
-        createdBy: ctx.userId,
-      });
-
-      let actualAccepted = 0;
-      let errorMessage: string | null = null;
-
-      const chunks = chunk(consolidated, CHUNK_SIZE);
-      for (const batch of chunks) {
-        try {
-          await db.withTenant(ctx.tenantId, async (tx) => {
-            for (const row of batch) {
-              const insuranceId = await resolveInsuranceId(tx, ctx.tenantId, row);
-              const attendantId = await resolveAttendantId(tx, ctx.tenantId, row);
-              await upsertBudget(tx, ctx.tenantId, created.id, row, insuranceId, attendantId);
-            }
-          });
-          actualAccepted += batch.length;
-        } catch (err) {
-          errorMessage = err instanceof Error ? err.message : String(err);
-          break;
-        }
-      }
-
-      const failed = errorMessage !== null;
-      const finished = await repository.finish(ctx.tenantId, created.id, {
-        status: failed ? 'failed' : 'completed',
-        rowsAccepted: actualAccepted,
-        rowsRejected: rowsInFile - actualAccepted,
-        errorMessage,
-      });
-
-      await cache.delByPrefix(CACHE_PREFIX(ctx.tenantId));
+      const finished = await ingestRows(
+        { tenantId: ctx.tenantId, createdBy: ctx.userId },
+        rawRows,
+        { kind: 'import', fileName: dto.fileName },
+      );
 
       await audit.record(ctx, {
         action: 'import_lis_spreadsheet',

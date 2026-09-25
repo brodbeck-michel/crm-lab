@@ -173,6 +173,14 @@ if (allowedTransitions[currentStatus].includes(newStatus)) {
 }
 ```
 
+### Exceção única: `ganho` pela conciliação com o LIS (CRMLAB-52, D-119)
+A matriz acima vale para **pessoas**. Quando o orçamento do LIS vinculado à proposta
+(`lis_budget_number`) aparece **com requisição**, a proposta vai para `ganho` a partir de
+**qualquer** estágio não terminal, inclusive `novo_contato`. Quem fecha é o sistema
+(`changedBy: null`, audit `source: "lis"`). É o único caminho que não passa por
+`isTransitionAllowed`, e ele mora só em `ProposalService.markWonFromLis`. `perdido` **nunca**
+reabre por esse caminho: o conflito é auditado (`lis_reconcile_conflict`) e o gestor decide.
+
 ### Motivo de Perda (Obrigatório)
 
 **Regra:** Ao passar para "perdido", motivo é obrigatório.
@@ -567,6 +575,30 @@ abri-lo como planilha. Planilha sem nenhuma linha de dado (só cabeçalho, ou va
 com `details.reason: "empty"`. Serial de data do Excel é convertido por componentes (dia 1 =
 1900-01-01, com a correção do bug de ano bissexto de 1900 que o próprio Excel carrega) —
 **nunca** por aritmética de milissegundos que arraste fuso da máquina que roda o import.
+
+### 11.10 Orçamentos pela API do Bitlab (CRMLAB-52, D-185/D-187)
+Cada item de `orcamentos[]` da API de Orçamentos v1 vira a **mesma** linha interna que a
+planilha produz (`LisSpreadsheetRow`) e segue §11.1–§11.6 sem diferença:
+
+| Campo da API | Campo interno | Conversão |
+|---|---|---|
+| `ORCAMENTO` | `number` | `String(n)`. Inteiro, sem zeros à esquerda (D-119 item 1) |
+| `DATA_ORÇAMENTO` | `issued_on` | `dd/mm/yyyy hh:mm:ss` (Brasília) → `YYYY-MM-DD` pelos componentes (D-187) |
+| `NM_PACIENTE` | `patient_name` | cru |
+| `CONVENIO1..3` / `VL_TOTAL1..3` | `insurance_1..3` / `value_1..3` | crus. `null` continua `null` |
+| `MEDIA_CONVENIO` | `insurance_average` | cru |
+| `USUÁRIO` | `attendant_name` | cru (resolução §11.6) |
+| `REQUISICAO` | `requisition_number` | cru (`"001-0009876"`). `""` vira `null` |
+| `VALOR_REQUISICAO` | `requisition_value` | cru |
+| `Valor_Pago` | `paid_value` | cru |
+| `Data_Pagamento` | `paid_on` | mesma conversão de `DATA_ORÇAMENTO` (D-187). `null` continua `null` |
+| `ID_CPF`, `DT_NASCIMENTO` | — | **descartados na borda**, nunca gravados nem logados (D-185 item 7) |
+| `QTD_EXAMES`, `CONVENIO_REQUISICAO`, `CONTA_NULO` | — | ignorados (sem uso no CRM) |
+
+A regra do maior total (§11.1) continua valendo entre as fontes: um orçamento que veio primeiro
+pela planilha e depois pela API (ou o contrário) é a mesma linha `(tenant_id, number)`. A API
+traz o pagamento no mesmo orçamento, com o mesmo total, então o `>=` do upsert deixa o pagamento
+entrar.
 
 ---
 

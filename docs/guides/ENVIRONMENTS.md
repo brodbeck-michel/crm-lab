@@ -82,6 +82,7 @@ Mesmo `docker-compose.prod.yml`, mesma VPS, **nada compartilhado**:
 | Código | só `origin/main` | qualquer branch/tag/sha (`--ref`) |
 | Selo na tela | nenhum | pílula **HOMOLOGACAO** no pé da sidebar |
 | WhatsApp (Evolution) | ligado, número real | `EVOLUTION_API_KEY` vazia + canais desativados no banco |
+| Sincronização LIS (Bitlab, CRMLAB-52) | chave de produção colada pelo admin | `LIS_SYNC_INTERVAL_MS=0` + `lis_sync_settings` desligada e sem chave no banco. O Bitlab não tem sandbox da API de Orçamentos |
 | Backup automático | sim, `crm-lab-backup.timer` 03:12 UTC | não — é descartável por definição |
 | Segredos (JWT, senha do banco, `CHANNEL_SECRET_KEY`) | próprios | **próprios e diferentes** |
 
@@ -225,8 +226,16 @@ No fim ele roda:
 UPDATE tenant_channels SET is_active = FALSE, api_token = NULL, webhook_secret = NULL;
 ```
 
+e, desde o CRMLAB-52 (D-185):
+
+```sql
+UPDATE lis_sync_settings SET enabled = FALSE, api_key = NULL;
+```
+
 **Isso não é higiene, é contenção.** Homologação com canal ativo e credencial
-válida manda WhatsApp de verdade para paciente de verdade. Os tokens vêm cifrados
+válida manda WhatsApp de verdade para paciente de verdade. Com a chave do Bitlab,
+homologação puxaria a base de orçamentos de produção (com nome de paciente) para um
+banco que não tem backup nem o mesmo controle de acesso. Os tokens vêm cifrados
 com a `CHANNEL_SECRET_KEY` de produção e não decifrariam aqui — mas "não
 decifraria" é sorte, não garantia.
 
@@ -366,6 +375,9 @@ TRUST_PROXY_HOPS=2
 
 # Vazio de propósito: gateway desligado devolve CHANNEL_QR_UNAVAILABLE, sem crash.
 EVOLUTION_API_KEY=
+
+# CRMLAB-52: agendador da sincronização com o Bitlab desligado em homologação.
+LIS_SYNC_INTERVAL_MS=0
 ```
 
 ---

@@ -2957,6 +2957,150 @@ Chrome e o `mp4` do Safari e que o paciente ouve no Android e no iPhone.
 (sniff), `shared/types/media.types.ts` (allow-list), `docs/api/API_CONTRACTS.md` §2d
 (attachments e Hardening de mídia).
 
+## 2026-09-25 — Conciliação com o LIS pela API do Bitlab (CRMLAB-52)
+
+### D-119: Conciliação LIS ↔ propostas — nº do orçamento na proposta, requisição fecha como `ganho`
+**Decisão:** o vínculo entre uma proposta do CRM e um orçamento do LIS é o **número do orçamento
+do LIS** (`lis_budget_number`), digitado pela atendente na proposta. A API do Bitlab não tem campo
+livre de referência (confirmado no manual de 25/09/2026), então o vínculo nasce do lado do CRM.
+Escrita pelo `PATCH /proposals/:id/lis-reference` (API_CONTRACTS.md §3). Quem pode: a dona da
+proposta ou manager+.
+1. **Formato do número:** só dígitos, 1 a 20, sem os zeros à esquerda (`"001234"` grava
+   `"1234"`). `lis_budgets.number` já chega assim da planilha (célula numérica) e da API
+   (`String(ORCAMENTO)`, que é inteiro). A comparação é exata sobre o valor normalizado.
+2. **Um orçamento, uma proposta:** o índice único parcial de D-118 recusa um número que outra
+   proposta do tenant já usa → `CONFLICT` com `details.reason: "lis_budget_number_taken"`.
+   `null` desfaz o vínculo. Em proposta `ganho` → `PROPOSAL_ALREADY_CLOSED` (o vínculo que fechou
+   a proposta não pode sumir depois). Em proposta `perdido` é aceito: o número serve para auditar
+   o conflito do item 5.
+3. **Concilia em dois momentos:** (a) no `PATCH`, contra o `lis_budgets` que já existe. Com a
+   sincronização incremental (D-185), um orçamento que não muda mais nunca volta pela API, então
+   esperar a próxima carga deixaria sem conciliar a proposta cujo número foi digitado depois;
+   (b) no fim de cada chunk de importação ou sincronização, só para os números daquele chunk.
+4. **Requisição encontrada** (`lis_budgets.requisition_number` preenchido) numa proposta **não
+   terminal** → a proposta vai para `ganho` **em qualquer estágio não terminal**, inclusive
+   `novo_contato`, que a matriz manual não deixa ir direto para `ganho`. É a única exceção a
+   `ALLOWED_TRANSITIONS`, e só vale pela origem LIS (BUSINESS_RULES.md §3, WORKFLOWS.md §4).
+   `ProposalService.markWonFromLis` reaproveita o que `updateStatus` já faz: histórico de
+   estágio, mensagem de sistema, invalidação de analytics, audit log `update_proposal_status`
+   com `newValues.source: "lis"` e WS `proposal.status_changed`. `changedBy` fica `null`: quem
+   fechou foi o LIS, não uma pessoa. Grava `lis_reconciled_at = NOW()`.
+   Proposta com aprovação de desconto `pending` também fecha: a alçada era sobre o desconto
+   oferecido, e o LIS confirma que o paciente seguiu com o pedido.
+5. **`perdido` não reabre.** Requisição num orçamento de proposta `perdido` grava os campos
+   `lis_*` e um audit log `lis_reconcile_conflict`, e o status não muda. Reabrir desfaria a
+   decisão de uma pessoa com base num dado externo. O gestor decide.
+6. **Pagamento só grava valor e data.** `lis_requisition_number`, `lis_paid_value` e
+   `lis_paid_on` espelham o orçamento a cada conciliação, qualquer que seja o status. Pagamento
+   **sem** requisição não muda status.
+7. **Idempotente:** reconciliar o mesmo orçamento duas vezes não gera segundo histórico, segunda
+   mensagem nem segundo audit. O `UPDATE ... WHERE status NOT IN ('ganho','perdido')` decide
+   quem transiciona, e o `WHERE` dos campos `lis_*` só escreve se algo mudou.
+8. `lis_budgets.proposal_id` é gravado junto com o vínculo e zerado quando ele é desfeito.
+   **Purge bloqueado** se houver qualquer `lis_budgets.proposal_id` no tenant → `CONFLICT` com
+   `details.reason: "lis_budgets_reconciled"`. Limpar a base apagaria o lado B de propostas já
+   fechadas.
+9. `ImportLisResponse.proposalsWon` e `lis_imports.proposals_won` contam as propostas que aquela
+   rodada levou para `ganho`. `FunnelReport` ganha `realized: { wonFromLis, paidCount, paidValue }`
+   (API_CONTRACTS.md §5): propostas ganhas pelo LIS por `closedAt` no período, e pagamentos por
+   `lis_paid_on` no período (janela de pagamento, BUSINESS_RULES.md §11.7).
+**Motivo:** era a decisão 3 do lead no spec da fusão (08/09), nunca escrita aqui. O item 3(a) é
+novo: a sincronização por alteração (D-185) tornou obrigatório conciliar também na hora do
+`PATCH`.
+**Impacto:** `shared/types/proposal.types.ts`, `analytics.types.ts`, `lis.types.ts`;
+`proposal.service.ts` (`setLisReference`, `markWonFromLis`), `lis-reconcile.service.ts` (novo),
+`lis-import.service.ts` (hook por chunk, purge bloqueado), `analytics.repository.ts`
+(`realized`); frontend `ProposalModal.tsx` (campo + selo "Conciliado"), `Analytics.tsx`
+(cartão "Receita realizada (LIS)"); API_CONTRACTS §3/§5/§10, SERVICES §4/§19/§25,
+BUSINESS_RULES §3, WORKFLOWS §4, PAGES.
+
+### D-185: Orçamentos do LIS entram também pela API do Bitlab, por sincronização incremental agendada
+**Decisão:** além da planilha (que continua como plano B), o CRM **puxa** os orçamentos do
+Bitlab pela **API de Orçamentos v1** (`POST {BITLAB_API_BASE_URL}/v1/bitlab/orcamentos`, manual
+de 25/09/2026, contrato assumido em SERVICES.md §24.1).
+1. **Chave por laboratório, cifrada:** `lis_sync_settings.api_key` (SCHEMA.md §31), cifrada em
+   repouso pelo mesmo `secret-box` de `tenant_channels` (D-076, chave `CHANNEL_SECRET_KEY`). O
+   admin cola a chave em **Configurações → Integração LIS**. A chave nunca volta pela API (sai
+   `apiKeyMasked`, D-064), nunca vai para log nem para audit (`"[REDACTED]"`) e nunca chega ao
+   frontend. A URL base é da instalação (`BITLAB_API_BASE_URL`, env), não do tenant: o Bitlab é
+   um só.
+2. **Carga incremental** com `tipoData: "alteracao"`, de `lis_sync_settings.watermark` até
+   agora, percorrendo as páginas enquanto `temProxima` (`tamanhoPagina` 500, no máximo 200
+   páginas por rodada). A **maior** `marcaDagua` da rodada só é gravada **depois** de todas as
+   páginas gravadas com sucesso. Se a rodada falhar no meio, a próxima recomeça da marca antiga,
+   e a idempotência do upsert (BUSINESS_RULES.md §11.1) absorve o que for relido. **Primeira
+   carga:** sem marca, parte de 90 dias atrás (`LIS_SYNC_INITIAL_DAYS`).
+3. **Mesmo caminho da planilha:** cada orçamento da API vira um `LisSpreadsheetRow` (mapeamento
+   em BUSINESS_RULES.md §11.10) e passa pelo `consolidateLisRows` e pela resolução de
+   convênio/atendente do `LisImportService`, com o mesmo upsert em chunks. Não existe segunda
+   implementação da regra. `lis_imports` ganha `kind: 'sync'` (`file_name NULL`).
+4. **Uma linha de histórico só quando entra dado:** a rodada que recebe ≥ 1 orçamento grava um
+   `lis_imports(kind: 'sync')`, e é dele o `import_id` das linhas. Rodada vazia não polui o
+   histórico de importações: só atualiza `last_run_at`/`last_success_at` em `lis_sync_settings`.
+   Falha grava `last_error`, e a tela mostra.
+5. **Agendamento:** `setInterval` no processo, a cada 30 min (`LIS_SYNC_INTERVAL_MS`), o mesmo
+   padrão da limpeza de `refresh_tokens` (D-155), com `.unref()`, best effort e sem derrubar o
+   boot. O backend roda numa instância só (VPS única): uma trava em memória por tenant impede
+   duas rodadas simultâneas (timer + "Sincronizar agora" → `CONFLICT` com
+   `reason: "lis_sync_running"`).
+6. **Chave recusada desliga a sincronização:** um `403` do Bitlab grava `last_error` e põe
+   `enabled = false`. Isso evita bater 48 vezes por dia com uma chave errada. O admin religa
+   depois de corrigir. Timeout, `5xx` e resposta fora do contrato só gravam `last_error`, e a
+   próxima rodada tenta de novo.
+7. **Campos que NÃO são gravados:** `ID_CPF` e `DT_NASCIMENTO`. É dado pessoal sem uso na
+   conciliação, e a retenção de `patient_name` do LIS ainda está em aberto (spec da fusão,
+   pendência 4). Também ficam de fora `QTD_EXAMES`, `CONVENIO_REQUISICAO` e `CONTA_NULO`: nada
+   no CRM os usa. `CONTA_NULO` é redundante com `REQUISICAO` preenchido.
+8. **Fonte instável, validação na borda:** o cliente valida o envelope com zod e lê `sucesso` e
+   `status` além do código HTTP. Registra em log `warn` qualquer `avisos[]` não vazio e o header
+   `X-API-Deprecation: true`, que é o aviso de mudança prometido pelo Bitlab.
+**Motivo:** a planilha exigia que alguém exportasse e subisse o arquivo. Sem isso, o "ganho
+automático" de D-119 só acontecia quando alguém lembrava. A API entrega o mesmo dado com
+paginação e filtro por alteração, o que resolve o pagamento que chega semanas depois da emissão.
+A chave fica por tenant, e não no `.env`, porque o CRM é multi-laboratório e trocar a chave não
+pode exigir deploy.
+**Impacto:** `backend/migrations/026_lis_sync.sql`, `shared/types/lis.types.ts`,
+`backend/src/lib/bitlab-client.ts` (novo), `lis-sync.service.ts` e `lis-sync-settings.repository.ts`
+(novos), `lis-import.service.ts` (entrada comum para planilha e API), `main.ts` (agendamento),
+`config/env.ts`, frontend `/settings/lis-integration` (novo); API_CONTRACTS §10.3, SERVICES
+§24, SCHEMA §25/§31, BUSINESS_RULES §11.10, PAGES §20, SECURITY, ENVIRONMENTS.
+
+### D-186: O agendador da sincronização lista os tenants devidos com `withoutTenant()`, e só isso
+**Decisão:** a cada tique, o agendador precisa saber **quais** tenants sincronizar antes de ter
+um contexto de tenant, o mesmo problema do login e do webhook. Ele chama
+`lisSyncSettingsRepo.listEnabledTenantIds()` dentro de `db.withoutTenant()`, e a consulta devolve
+**só `tenant_id`** (`WHERE enabled AND api_key IS NOT NULL`). Toda a rodada de cada tenant (ler
+a chave, chamar o Bitlab, gravar) roda dentro de `db.withTenant(tenantId)`, sob RLS, como uma
+requisição comum.
+**Motivo:** a lista de exceções de SCHEMA.md (RLS) diz que nenhum outro caminho deve usar
+`withoutTenant()`. Na prática, o webhook e a limpeza de tokens já usam. Registrar a exceção,
+com a projeção mais estreita possível, é melhor que deixá-la implícita. Ler a chave fora do
+contexto do tenant daria a um bug no agendador acesso às chaves de todos os laboratórios.
+**Impacto:** `lis-sync-settings.repository.ts`, `main.ts`, SCHEMA.md (tabela de exceções).
+
+### D-187: Data e hora do Bitlab viram a forma canônica `YYYY-MM-DD HH:mm:ss` (Brasília) pelos componentes da string
+**Decisão:** toda data/hora que chega do Bitlab (`DATA_ORÇAMENTO`, `Data_Pagamento`,
+`marcaDagua`) passa por uma função só, `parseBitlabDateTime` (`bitlab-client.ts`), que devolve
+`YYYY-MM-DD HH:mm:ss` no relógio de Brasília **pelos componentes da string**, sem `new Date()`
+(mesmo princípio de D-110). `issued_on`/`paid_on` são os 10 primeiros caracteres dessa forma.
+A `marcaDagua` é gravada já canônica, e é por isso que a comparação "maior marca das páginas"
+pode ser feita como texto: nessa forma a ordem léxica é a cronológica. A marca volta ao Bitlab
+como `dataInicio` na mesma forma, que é a do pedido documentado no manual.
+Formas aceitas: `dd/mm/yyyy hh:mm:ss` (e só `dd/mm/yyyy`, que vira 00:00:00) e o ISO antigo
+`YYYY-MM-DDTHH:mm:ss.sssZ`, lido sem conversão de fuso. `marcaDagua` que não é data reconhecível
+é resposta fora do contrato (`contract`): gravá-la faria a rodada seguinte partir de lugar nenhum.
+**Motivo:** na resposta ao e-mail de integração (25/09/2026), o Bitlab confirmou que o `Z` estava
+errado (a hora já era de Brasília) e trocou o formato para `dd/mm/yyyy hh:mm:ss`, sem `Z`. Com o
+formato brasileiro, comparar a marca como texto seria errado ("30/09" > "01/10"), e cortar os 10
+primeiros caracteres daria `dd/mm/yyyy` em vez de data. Normalizar na borda mantém o resto do
+código com uma forma só. O ISO continua aceito porque custa uma alternativa na regex e protege
+de uma volta atrás do Bitlab.
+**Conferido no primeiro teste real (25/09/2026, a partir da VPS, chave válida):** as datas dos
+orçamentos vêm `dd/mm/yyyy hh:mm:ss`; a `marcaDagua` vem **já** em `YYYY-MM-DD HH:mm:ss` (a forma
+canônica) e é aceita de volta como `dataInicio`. O filtro compara com `>=`: o último orçamento da
+rodada anterior volta na seguinte, o que é inofensivo porque o upsert é idempotente.
+**Impacto:** `bitlab-client.ts` (`parseBitlabDateTime`, `bitlabDateToIsoDate`,
+`watermarkToBitlabDateTime`), SERVICES.md §24.1, BUSINESS_RULES.md §11.10.
 
 ## Template para novas decisões
 

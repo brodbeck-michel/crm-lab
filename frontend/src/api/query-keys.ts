@@ -161,6 +161,9 @@ export const queryKeys = {
 
   /** ['settings', 'commissions'] — `/settings/commissions` (§19) */
   commissionSettings: () => ['settings', 'commissions'] as const,
+
+  /** ['settings', 'lis-integration'] — `/settings/lis-integration` (§20, CRMLAB-52) */
+  lisIntegration: () => ['settings', 'lis-integration'] as const,
 } as const;
 
 /** Prefixos usados para invalidar um escopo inteiro (todas as variações de filtro). */

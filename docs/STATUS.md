@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-25 (v1.20.0 em PRODUÇÃO — Onda 1: CRMLAB-51, 50, 23, 45, 17, ver fim do arquivo)
+**Última atualização:** 2026-09-25 (v1.21.0 em PRODUÇÃO — CRMLAB-24, ver fim do arquivo)
 
 ---
 
@@ -2764,3 +2764,15 @@ validados juntos na branch `integ/onda-1`:
 - **prod:** `b4fcf46` (tag **v1.20.0**), CI verde nos 5 jobs (run 36146573089), imagens puxadas do
   GHCR, sem migração. Healthcheck OK na 2ª tentativa. O bundle servido em https://vitrocrm.cloud
   confirma `1.20.0`.
+
+### 🚀 v1.21.0 em produção (2026-09-25) — Onda 2
+
+Sobe CRMLAB-24 (PR #68, D-181/D-182): o microfone do Composer grava um recado de voz (clique para
+gravar e clique para parar, prévia com Enviar/Cancelar, máximo de 5 min). O recado sai pelo POST de
+anexo e chega ao paciente como áudio de voz, via `sendWhatsAppAudio` do Evolution. Também corrige o
+anexo que ia para a conversa aberta no momento do POST, e não para a do clique.
+
+- **hml:** `hml-9c59f59`, CI verde com E2E (run 36148884533), validado e aprovado pelo PO.
+- **prod:** `21dff38` (tag **v1.21.0**), CI verde nos 5 jobs (run 36162184442), imagens puxadas do
+  GHCR, sem migração. Healthcheck OK na 2ª tentativa. O bundle servido em https://vitrocrm.cloud
+  confirma `1.21.0`.

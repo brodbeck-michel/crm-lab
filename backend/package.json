@@ -15,7 +15,8 @@
     "test:cov": "vitest run --coverage",
     "migrate": "tsx src/db/cli/migrate.ts",
     "seed": "tsx src/db/cli/seed.ts",
-    "seed:e2e": "tsx src/db/cli/seed.ts --e2e"
+    "seed:e2e": "tsx src/db/cli/seed.ts --e2e",
+    "import:sales-supabase": "tsx src/db/cli/import-sales-supabase.ts"
   },
   "dependencies": {
     "@crm-lab/shared": "*",

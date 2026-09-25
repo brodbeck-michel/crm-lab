@@ -2634,6 +2634,155 @@ horário em que a antiga dona não está.
 "Encerradas"), `docs/api/API_CONTRACTS.md` §2, `API_ERRORS.md`, `WORKFLOWS.md` §5,
 `SCHEMA.md`, `PAGES.md` §2, `SERVICES.md` §2/§3.
 
+### D-175: "Nova conversa" — `POST /conversations/whatsapp` reaproveita a conversa do número e envia pelo caminho de sempre (CRMLAB-50)
+**Decisão:** O botão "+" do topo da lista de conversas (tooltip "Nova conversa", atalho
+Ctrl+Alt+N) abre um modal com telefone e primeira mensagem, e chama um endpoint **novo**,
+`POST /conversations/whatsapp { phone, content }` → `201 { conversation, message }`.
+1. **Endpoint separado de `POST /conversations`.** Aquele é o atendimento manual (`direct`/`web`/
+   `sms`, exige nome, não envia nada) e recusa `whatsapp` de propósito; este cria/reaproveita e
+   **envia**. Juntar os dois poria um "se canal = whatsapp, envie" dentro de um contrato que hoje
+   é só cadastro.
+2. **Telefone brasileiro, validado por uma função só** (`normalizeBrazilianPhone` em
+   `@crm-lab/shared`, usada pelo zod e pelo formulário): DDD de dois dígitos 1–9 + 9 dígitos
+   começando por 9 ou 8 dígitos começando de 2 a 9, com ou sem `55`. Vira E.164 (`+55…`), o
+   mesmo formato de `createManual`.
+3. **Não duplica:** mesmo `findOrCreateByPhone` do webhook e do atendimento manual — conversa e
+   paciente reaproveitados pelos dígitos do telefone. Número novo cria conversa **e paciente sem
+   nome**, espelhando o número desconhecido que escreve pela primeira vez sem nome de perfil
+   (toda conversa nasce ligada a um paciente desde D-072; "contato sem paciente" não existe).
+4. **Dono:** conversa nova nasce **atribuída a quem enviou** (como `createManual`: quem inicia o
+   contato é quem atende). Conversa existente segue as regras de `createManual`: fila livre fica
+   como está (enviar não assume), encerrada reabre para quem enviou (D-174), ativa de outro
+   atendente devolve 409 `CONVERSATION_ALREADY_ASSIGNED` com o nome.
+5. **Conversa existente de outro canal** (`direct`/`web`/`sms`) é **promovida a `whatsapp`**
+   (audit `update_conversation_channel`). `createFromAgent` só manda para o gateway quando
+   `channel = 'whatsapp'`; sem a promoção, a "primeira mensagem de WhatsApp" ficaria só na tela.
+6. **Envio pelo `MessageService.createFromAgent`** — nenhum caminho paralelo. Canal fora do ar,
+   sem credencial ou desligado: a conversa fica criada, a mensagem fica `failed` (a regra de
+   sempre: falha não some da tela) e o 502 `MESSAGE_SEND_FAILED` ganha `conversationId` em
+   `details` para a tela abrir a conversa mesmo assim.
+**Motivo:** o card pede iniciar conversa com número sem conversa prévia sem criar segundo
+cadastro para quem já existe. Reusar `findOrCreateByPhone` + `createFromAgent` mantém uma única
+regra de dedupe e uma única regra de envio (retry, eco D-173, `failed`).
+**Impacto:** `shared/types/conversation.types.ts` (request/response + `normalizeBrazilianPhone`),
+`conversation.routes.ts`, `conversation.service.ts` (`startWhatsApp`),
+`conversation.repository.ts` (`setChannel`), `frontend/src/pages/Attendance`
+(`ConversationList` + `NewConversationModal`), `frontend/src/api/conversations.ts`,
+`API_CONTRACTS.md` §2, `API_ERRORS.md`, `PAGES.md` §2, `SERVICES.md` §2.
+
+### D-176: Dedupe por telefone reconhece o celular brasileiro com e sem o nono dígito (CRMLAB-50)
+**Decisão:** `selectByPhone` (o dedupe de `findOrCreateByPhone`, usado pelo webhook, pelo
+atendimento manual e pela "Nova conversa") procura a conversa pelos dígitos do telefone **e**
+pela variante do celular brasileiro com/sem o nono dígito: `55 DD 9XXXXXXXX` ≡ `55 DD XXXXXXXX`
+quando o número local (sem o 9) começa de 6 a 9. O casamento exato vem primeiro; a variante só é
+usada quando não há exato.
+**Motivo:** o WhatsApp ainda identifica muitos celulares brasileiros pelo JID antigo, de 12
+dígitos (`554899991234@s.whatsapp.net`). Com a "Nova conversa", o atendente digita o número
+atual de 11 dígitos; quando o paciente respondesse, o webhook não acharia a conversa e criaria
+uma **segunda** conversa e um segundo paciente. Fixo começa de 2 a 5, então a regra não junta
+fixo com celular.
+**Impacto:** `conversation.repository.ts` (`phoneMatchKeys` + `selectByPhone`). Nenhuma
+mudança de schema; conversas já duplicadas pelos dois formatos continuam separadas (o exato
+tem prioridade).
+
+### D-183: Negrito com asterisco no padrão WhatsApp, só na exibição; prévia da lista fica crua (CRMLAB-51)
+**Decisão:**
+1. `*texto*` é exibido em negrito na bolha (`MessageBubble`), enviada ou recebida. É só
+   exibição: o `content` guardado e enviado ao WhatsApp continua com os asteriscos — o próprio
+   WhatsApp formata do lado do paciente. Sem mudança de API, banco ou `shared/`.
+2. Regra (`splitBold`, `frontend/src/lib/whatsapp-format.ts`), a do WhatsApp: o `*` de abertura
+   não é seguido de espaço, o de fechamento não é precedido de espaço, o trecho não atravessa
+   quebra de linha e não contém outro `*`; `**` vazio, asterisco solto e `2 * 3 * 4` não formatam.
+   Além disso o `*` precisa estar na **borda da palavra** (não colado a letra/dígito por fora),
+   como no WhatsApp: `2*3*4` e `a*b*c` ficam como estão. `_`/`~` por fora não bloqueiam
+   (`_*texto*_`, negrito + itálico no WhatsApp, mostra o negrito).
+3. Renderiza como nós React (`<strong>` + texto), **nunca** `dangerouslySetInnerHTML` — o React
+   escapa o texto do paciente e não há XSS. A bolha continua com `whitespace-pre-wrap` (quebras
+   de linha preservadas); hoje ela não gera links, então nada mais muda.
+4. Compositor: **Ctrl+B / Cmd+B** envolve a seleção em `*` e mantém o texto selecionado; sem
+   seleção insere `**` com o cursor no meio. Espaço nas pontas da seleção (duplo clique no
+   Windows pega `palavra `) fica fora dos asteriscos, senão não formataria. Mudança mínima no
+   `Composer` (um ramo no `onKeyDown`).
+5. **Prévia da última mensagem** na lista (`ConversationItem`) fica **como está**, com os
+   asteriscos: é o mais simples (zero mudança) e a prévia é truncada e em `text-caption`, onde
+   negrito não ajuda a ler.
+6. Itálico (`_`), tachado (`~`) e monoespaçado ficam fora — o card pede só negrito.
+**Motivo:** A recepção já escrevia `*Resultado disponível*` pensando no WhatsApp do paciente e via
+os asteriscos crus na tela. A regra de borda evita negrito acidental em conta (`2*3*4`).
+**Impacto:** `frontend/src/lib/whatsapp-format.ts` (novo), `MessageBubble.tsx`, `Composer.tsx`
+(atalho), `docs/frontend/COMPONENTS.md` (MessageBubble e Composer).
+
+### D-177: Importação do catálogo por CSV — admin apenas, pré-visualização sem estado e confirmação tudo-ou-nada; código existente atualiza, célula vazia preserva (CRMLAB-23)
+**Decisão:**
+1. Dois endpoints com o mesmo corpo (`{ fileName, contentBase64 }`): `POST /exams/import/preview`
+   (lê, valida, classifica — não grava nada) e `POST /exams/import` (revalida do zero e grava).
+   O servidor **não guarda** o arquivo entre as duas chamadas: o cliente reenvia o mesmo
+   arquivo ao confirmar.
+2. **Só `admin`** — diferente de `POST/PATCH /exams`, que aceitam gestor. A rota recusa com
+   `FORBIDDEN` (`requiredRoles: ["admin"]`) e o service confere de novo.
+3. **Tudo ou nada:** qualquer linha com erro → `VALIDATION_ERROR` (`details.reason:
+   "invalid_rows"`) e nada é gravado; sem erro, todas as linhas vão num único
+   `db.withTenant` (`INSERT ... ON CONFLICT (tenant_id, code) DO UPDATE`, em lotes de 500
+   linhas por statement). Falha no meio desfaz tudo.
+4. **Código que já existe no laboratório atualiza** o exame (decisão do usuário). `nome` e os
+   dois preços são sempre regravados; **célula vazia de coluna opcional preserva** o valor
+   atual (`COALESCE`). Import não mexe em `isActive`, TUSS/AMB/material, sinônimos,
+   `exam_prices` nem pacotes. Exame novo nasce ativo com `source: "manual"` (o CHECK de
+   `source` só aceita `manual | lis`, e `lis` fica para a sincronização com o Bitlab).
+5. Audit `import_exam_catalog` (`entityType: "exam_catalog"`, `entityId` = tenant, contadores
+   em `newValues`) — um registro por importação, não um por exame.
+**Motivo:** O preview sem estado evita tabela/arquivo temporário (e a limpeza deles) e
+fecha a corrida "o catálogo mudou entre ver e confirmar": a confirmação reclassifica dentro
+da transação. Tudo-ou-nada é o que o admin espera de uma planilha ("subiu ou não subiu"),
+sem precisar descobrir quais linhas entraram. Preservar célula vazia protege contra planilha
+parcial (só código + preços) apagar descrições e preparos cadastrados — limpar um campo
+continua possível pelo modal. Admin apenas porque a operação reescreve o catálogo inteiro de
+uma vez e o card pediu assim.
+**Impacto:** `shared/types/exam.types.ts` (tipos + constantes), `backend/src/lib/exam-csv.ts`
+(novo, parser puro), `exam-catalog.service.ts` (`previewImport`/`confirmImport`),
+`exam.repository.ts` (`findExistingCodes`/`upsertImported`), `exam.routes.ts` (2 rotas),
+`frontend/src/components/catalog/ExamImportModal.tsx` (novo), `pages/Catalog.tsx`,
+`api/exams.ts`; docs `API_CONTRACTS.md` §4, `API_ERRORS.md`, `WORKFLOWS.md` §7.1,
+`PAGES.md` §7, `SERVICES.md` §5. Sem migração (a `UNIQUE (tenant_id, code)` já existe).
+
+### D-178: Formato aceito no CSV do catálogo — UTF-8 estrito, `;` ou `,`, preço brasileiro sem adivinhação, limites 2 MiB / 5000 linhas (CRMLAB-23)
+**Decisão:**
+1. **Encoding:** UTF-8 com ou sem BOM, decodificado com `TextDecoder('utf-8', { fatal: true })`.
+   Bytes inválidos → `invalid_encoding` (não há fallback silencioso para Windows-1252: a tela
+   orienta a salvar como "CSV UTF-8"). Byte NUL também é `invalid_encoding`: é UTF-8 válido,
+   mas denuncia UTF-16 sem BOM/binário e o Postgres recusa `\0` em texto (o preview aprovaria
+   e a confirmação daria 500). O modelo baixável sai com BOM, para o Excel abrir os
+   acentos certos.
+2. **Separador:** detectado no cabeçalho — conta `;` e `,` fora de aspas; o maior vence e
+   empate fica com `;` (padrão do Excel pt-BR). Parser RFC 4180 próprio (~60 linhas em
+   `lib/exam-csv.ts`): aspas duplas, `""` escapado, quebra de linha dentro de aspas. Aspas
+   nunca fechadas → `malformed`. Nenhuma dependência nova: o leitor de CSV do `exceljs` exige o
+   separador de antemão (não detecta) e trabalha com stream/arquivo; o parser próprio é
+   pequeno, síncrono sobre a string já decodificada e testável sem I/O.
+3. **Cabeçalho:** casado sem caixa/acento, pontuação vira `_`; `prazo` é apelido de
+   `prazo_horas`. Coluna desconhecida é ignorada; obrigatória ausente (`nome`, `codigo`,
+   `preco_convenio`, `preco_particular`) → `missing_column`; repetida → `duplicate_column`.
+4. **Preço:** aceita `1.234,56`, `1234,56`, `1234.56`, `1234`, com ou sem `R$`. Com os dois
+   separadores, o último é o decimal. Mais de 2 casas decimais é erro — é isso que recusa
+   `1.234` (ambíguo) em vez de adivinhar entre 1234 e 1,234. Negativo é erro. Teto
+   `9.999.999.999,99` (NUMERIC(12,2)).
+5. **Código repetido no arquivo** (comparação exata após `trim`, a mesma da `UNIQUE` do banco)
+   → erro em todas as linhas que o repetem, com `column: null`.
+6. **Linha:** número da planilha (cabeçalho = 1); registro com quebra de linha entre aspas
+   conta como uma linha. Linha totalmente em branco é pulada e não conta.
+7. **Limites:** 2 MiB decodificado (`MEDIA_TOO_LARGE`, 413) e 5000 linhas de dado
+   (`too_many_rows`); a lista `errors` corta em 1000 (`errorsTruncated`), `errorCount` exato.
+   5000 linhas cabe folgado no `statement_timeout` de 30 s porque a gravação vai em
+   statements de 500 linhas.
+**Motivo:** Planilha brasileira sai do Excel com `;` e vírgula decimal; o sistema tem que
+aceitar isso sem o admin mexer em configuração regional. Adivinhar encoding ou preço
+ambíguo gravaria dado errado em silêncio no catálogo que precifica orçamento — recusar com
+motivo por linha é mais barato que descobrir o preço errado numa proposta. Os limites cobrem
+com folga catálogo real de laboratório (centenas a poucos milhares de exames) e mantêm o
+preview num payload razoável.
+**Impacto:** `backend/src/lib/exam-csv.ts` + `backend/tests/catalog/exam-csv.spec.ts`;
+constantes em `shared/types/exam.types.ts`; `API_CONTRACTS.md` §4 (formato do arquivo).
+
 ### D-179: Carga das vendas dos dois Supabases — união por `id`, vence o `updated_at` mais recente (CRMLAB-45)
 **Decisão:** o script `npm run import:sales-supabase` lê um CSV de `public.vendas` de cada
 Supabase (FluxoLab/Vercel e app original/Lovable) e junta as duas bases **por `id`** (o UUID da
@@ -2697,6 +2846,7 @@ de conferência antes de gravar em produção.
 **Impacto:** `backend/src/repositories/sales-import.repository.ts`,
 `backend/src/services/sales-supabase-import.service.ts`, `backend/src/db/types.ts` (comentário
 do `withoutTenant`), `docs/guides/MIGRACAO_SANTE.md`. Sem migração.
+
 
 ## Template para novas decisões
 

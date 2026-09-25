@@ -207,6 +207,21 @@ const PATCH_COLUMNS: Record<Exclude<keyof ExamPatch, 'synonyms'>, string> = {
   material: 'material',
 };
 
+/** Linha da importacao por CSV (CRMLAB-23). `null` em opcional = preservar na atualizacao. */
+export interface ExamImportUpsert {
+  name: string;
+  code: string;
+  description: string | null;
+  preparation: string | null;
+  turnaroundHours: number | null;
+  pricePrivate: number;
+  priceInsurance: number;
+  category: string | null;
+}
+
+/** Linhas por statement do upsert da importacao (9 parametros cada). */
+export const IMPORT_BATCH_SIZE = 500;
+
 /** SQLSTATE de violacao de unicidade — o service converte para CONFLICT. */
 export const UNIQUE_VIOLATION = '23505';
 
@@ -345,6 +360,85 @@ export class ExamRepository {
         [code],
       );
       return result.rows.length > 0;
+    });
+  }
+
+  /**
+   * CRMLAB-23: dos `codes` pedidos, quais ja existem NESTE tenant. Comparacao
+   * exata — a mesma da `UNIQUE (tenant_id, code)`. O RLS esconde os codigos
+   * de outro laboratorio: la eles sao outro exame.
+   */
+  async findExistingCodes(tenantId: string, codes: string[]): Promise<Set<string>> {
+    if (codes.length === 0) return new Set();
+    return this.db.withTenant(tenantId, async (tx) => {
+      const result = await tx.query<{ code: string }>(
+        'SELECT code FROM exam_catalog WHERE code = ANY($1::text[])',
+        [codes],
+      );
+      return new Set(result.rows.map((row) => row.code));
+    });
+  }
+
+  /**
+   * CRMLAB-23 (D-177): grava a importacao inteira numa UNICA transacao do
+   * tenant — qualquer falha desfaz tudo. `INSERT ... ON CONFLICT (tenant_id,
+   * code) DO UPDATE` em lotes (`IMPORT_BATCH_SIZE` linhas por statement, bem
+   * abaixo do teto de 65535 parametros e do `statement_timeout`).
+   *
+   * Na atualizacao: nome e precos sempre regravados; coluna opcional vazia
+   * (`null`) PRESERVA o valor atual (`COALESCE`). `is_active`, TUSS/AMB,
+   * material, `source` e sinonimos nao sao tocados. `xmax = 0` distingue a
+   * linha recem-inserida da atualizada (a atualizada carrega o xid do UPDATE).
+   */
+  async upsertImported(
+    tenantId: string,
+    rows: ExamImportUpsert[],
+  ): Promise<{ created: number; updated: number }> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      let created = 0;
+      let updated = 0;
+      for (let start = 0; start < rows.length; start += IMPORT_BATCH_SIZE) {
+        const batch = rows.slice(start, start + IMPORT_BATCH_SIZE);
+        const params: unknown[] = [];
+        const values = batch.map((row) => {
+          params.push(
+            tenantId,
+            row.name,
+            row.code,
+            row.description,
+            row.preparation,
+            row.turnaroundHours,
+            row.pricePrivate,
+            row.priceInsurance,
+            row.category,
+          );
+          const base = params.length - 9;
+          const slots = Array.from({ length: 9 }, (_, i) => `$${base + i + 1}`);
+          return `(${slots.join(', ')}, TRUE)`;
+        });
+        const result = await tx.query<{ inserted: boolean }>(
+          `INSERT INTO exam_catalog AS e
+             (tenant_id, name, code, description, preparation, turnaround_hours,
+              price_private, price_insurance, category, is_active)
+           VALUES ${values.join(', ')}
+           ON CONFLICT (tenant_id, code) DO UPDATE SET
+             name = EXCLUDED.name,
+             description = COALESCE(EXCLUDED.description, e.description),
+             preparation = COALESCE(EXCLUDED.preparation, e.preparation),
+             turnaround_hours = COALESCE(EXCLUDED.turnaround_hours, e.turnaround_hours),
+             price_private = EXCLUDED.price_private,
+             price_insurance = EXCLUDED.price_insurance,
+             category = COALESCE(EXCLUDED.category, e.category),
+             updated_at = NOW()
+           RETURNING (xmax = 0) AS inserted`,
+          params,
+        );
+        for (const row of result.rows) {
+          if (row.inserted) created += 1;
+          else updated += 1;
+        }
+      }
+      return { created, updated };
     });
   }
 

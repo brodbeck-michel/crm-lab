@@ -64,12 +64,16 @@ import type {
   ConversationStatus,
   ListConversationsQuery,
   ListConversationsResponse,
+  Message,
   PaginationMeta,
+  StartWhatsAppConversationRequest,
+  StartWhatsAppConversationResponse,
   UpdateConversationRequest,
 } from '@crm-lab/shared';
+import { normalizeBrazilianPhone } from '@crm-lab/shared';
 import type { DbClient } from '../db/types.js';
 import type { TenantContext } from '../http/context.js';
-import { BusinessError, notFound } from '../http/errors.js';
+import { BusinessError, isBusinessError, notFound } from '../http/errors.js';
 import type { AuditService } from './audit.service.js';
 import type { MessageService } from './message.service.js';
 import {
@@ -287,6 +291,94 @@ export class ConversationService {
       });
     }
     return conversation;
+  }
+
+  /**
+   * Botao "Nova conversa" (`POST /conversations/whatsapp`, CRMLAB-50, D-175):
+   * a PRIMEIRA mensagem de WhatsApp para um numero.
+   *
+   * Nao duplica: o mesmo `findOrCreateByPhone` do webhook e de `createManual`
+   * reaproveita conversa e paciente do numero (com a variante do nono digito,
+   * D-176). Numero novo nasce no canal `whatsapp`, atribuido a quem enviou e
+   * sem nome — como o numero desconhecido que escreve sem nome de perfil.
+   * Conversa existente segue as regras de `createManual` (reabre a encerrada,
+   * 409 para a ativa de outro atendente) e, se for de outro canal, passa a
+   * `whatsapp` — senao `createFromAgent` nao manda para o gateway.
+   *
+   * O envio e o de sempre (`MessageService.createFromAgent`): falha do canal
+   * deixa a mensagem `failed` e a conversa criada; o 502 ganha
+   * `conversationId` para a tela abrir a conversa mesmo assim.
+   */
+  async startWhatsApp(
+    ctx: TenantContext,
+    dto: StartWhatsAppConversationRequest,
+  ): Promise<StartWhatsAppConversationResponse> {
+    const phone = normalizeBrazilianPhone(dto.phone);
+    if (phone === null) {
+      throw new BusinessError('VALIDATION_ERROR', {
+        fields: { phone: 'Telefone invalido: informe DDD + numero' },
+      });
+    }
+
+    const found = await this.repository.findOrCreateByPhone(ctx.tenantId, {
+      patientPhone: phone,
+      patientName: null,
+      channel: 'whatsapp',
+      assignedTo: ctx.userId,
+    });
+    const { created } = found;
+    let conversation = found.conversation;
+
+    if (!created && conversation.status === 'closed') {
+      conversation = await this.reopenManually(ctx, conversation);
+    }
+    if (!created && !this.canSee(ctx, conversation)) {
+      throw new BusinessError('CONVERSATION_ALREADY_ASSIGNED', {
+        assignedTo: conversation.assignedTo,
+        assignedToName: conversation.assignedToName,
+      });
+    }
+
+    if (created) {
+      await this.audit.record(ctx, {
+        action: 'create_conversation',
+        entityType: 'conversation',
+        entityId: conversation.id,
+        newValues: { patientPhone: conversation.patientPhone, channel: conversation.channel },
+      });
+    } else if (conversation.channel !== 'whatsapp') {
+      const previous = conversation.channel;
+      conversation =
+        (await this.repository.setChannel(ctx.tenantId, conversation.id, 'whatsapp')) ??
+        conversation;
+      await this.audit.record(ctx, {
+        action: 'update_conversation_channel',
+        entityType: 'conversation',
+        entityId: conversation.id,
+        oldValues: { channel: previous },
+        newValues: { channel: 'whatsapp' },
+      });
+    }
+
+    let message: Message;
+    try {
+      message = await this.messages.createFromAgent(ctx.tenantId, conversation.id, ctx.userId, {
+        content: dto.content,
+        messageType: 'text',
+      });
+    } catch (err) {
+      if (isBusinessError(err) && err.code === 'MESSAGE_SEND_FAILED') {
+        throw new BusinessError('MESSAGE_SEND_FAILED', {
+          ...err.details,
+          conversationId: conversation.id,
+        });
+      }
+      throw err;
+    }
+
+    // Relida depois do envio: a previa e o `lastMessageAt` ja trazem a mensagem.
+    const fresh = await this.repository.findById(ctx.tenantId, conversation.id);
+    return { conversation: fresh ?? conversation, message };
   }
 
   /**

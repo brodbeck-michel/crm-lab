@@ -1,6 +1,9 @@
 import type {
   CreateExamRequest,
   Exam,
+  ExamImportPreview,
+  ExamImportResult,
+  ImportExamCatalogRequest,
   ListExamPricesResponse,
   ListExamsQuery,
   ListExamsResponse,
@@ -26,6 +29,14 @@ export const examsApi = {
   /** `PUT /exams/:id/prices` (§4/§8, manager/admin) — semântica de PUT: estado completo. */
   updatePrices: (id: string, body: UpdateExamPricesRequest) =>
     http.put<ListExamPricesResponse>(`/exams/${id}/prices`, body),
+
+  /** `POST /exams/import/preview` (§4, admin, CRMLAB-23) — não grava nada. */
+  previewImport: (body: ImportExamCatalogRequest) =>
+    http.post<ExamImportPreview>('/exams/import/preview', body),
+
+  /** `POST /exams/import` (§4, admin, CRMLAB-23) — mesmo arquivo; tudo ou nada. */
+  confirmImport: (body: ImportExamCatalogRequest) =>
+    http.post<ExamImportResult>('/exams/import', body),
 };
 
 /* ── React Query Hooks ──────────────────────────────────────────────────── */
@@ -123,6 +134,29 @@ export function useUpdateExamPrices() {
       queryClient.setQueryData(queryKeys.examPrices(id), result);
       // `updatePrices` também muda `effectivePrice` do catálogo (§4) — mesmo
       // prefixo que `useUpdateExam` invalida.
+      queryClient.invalidateQueries({ queryKey: queryKeys.exams() });
+    },
+  });
+}
+
+/** Pré-visualização do CSV do catálogo — nada é gravado, nada a invalidar. */
+export function usePreviewExamImport() {
+  return useMutation({
+    mutationFn: async (body: ImportExamCatalogRequest) => {
+      return await examsApi.previewImport(body);
+    },
+  });
+}
+
+/** Confirma a importação; a listagem do catálogo recarrega (mesmo prefixo de `useUpdateExam`). */
+export function useConfirmExamImport() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (body: ImportExamCatalogRequest) => {
+      return await examsApi.confirmImport(body);
+    },
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.exams() });
     },
   });

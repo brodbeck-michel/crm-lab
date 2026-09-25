@@ -113,7 +113,7 @@ renderiza. "Não sei onde mostrar" nunca pode virar silêncio.
 |--------|------|--------|
 | `CONVERSATION_ALREADY_ASSIGNED` | 409 | Atribuição simultânea — segunda tentativa perde. `details: { assignedTo, assignedToName }` |
 | `CONVERSATION_ARCHIVED` | 409 | Enviar mensagem/anexo em conversa **encerrada** (`closed`). Nome mantido por compatibilidade (D-174); a mensagem é "Atendimento encerrado" |
-| `MESSAGE_SEND_FAILED` | 502 | Canal externo (WhatsApp) falhou após retries |
+| `MESSAGE_SEND_FAILED` | 502 | Canal externo (WhatsApp) falhou após retries. `details: { messageId }`; em `POST /conversations/whatsapp` (CRMLAB-50) também `conversationId` — a conversa fica criada e a tela a abre |
 
 ## Canais — conexão WhatsApp por QR (Onda 7)
 
@@ -126,7 +126,7 @@ renderiza. "Não sei onde mostrar" nunca pode virar silêncio.
 
 | Código | HTTP | Quando |
 |--------|------|--------|
-| `MEDIA_TOO_LARGE` | 413 | `POST /conversations/:id/attachments` com arquivo acima de 15 MiB (`details: { byteSize, max }`). Nunca grava mensagem |
+| `MEDIA_TOO_LARGE` | 413 | `POST /conversations/:id/attachments` com arquivo acima de 15 MiB (`details: { byteSize, max }`). Nunca grava mensagem. Também `POST /exams/import[/preview]` com CSV acima de 2 MiB (CRMLAB-23) |
 
 ## Vendas — domínio LIS (Onda 9)
 

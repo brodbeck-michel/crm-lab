@@ -4,6 +4,7 @@
  *   GET   /api/v1/conversations             lista + counts dos chips
  *   GET   /api/v1/conversations/assignees   quem pode receber conversa (menu Transferir)
  *   POST  /api/v1/conversations             atendimento manual (201)
+ *   POST  /api/v1/conversations/whatsapp    "Nova conversa": cria/reaproveita e envia (201)
  *   GET   /api/v1/conversations/:id         conversa + mensagens (marca como lida)
  *   POST  /api/v1/conversations/:id/messages  envia mensagem (201)
  *   PATCH /api/v1/conversations/:id         status / assignedTo / tags
@@ -30,9 +31,12 @@ import type {
   ListConversationsQuery,
   ListConversationsResponse,
   Message,
+  StartWhatsAppConversationRequest,
+  StartWhatsAppConversationResponse,
   UpdateConversationRequest,
   UpdateConversationResponse,
 } from '@crm-lab/shared';
+import { normalizeBrazilianPhone } from '@crm-lab/shared';
 import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
 import { getContext } from '../http/context.js';
 import { denyPlatformOperator, requireAuth } from '../http/middleware/auth.js';
@@ -90,6 +94,23 @@ export const createConversationSchema = z.object({
   patientName: z.string().trim().min(1).max(255),
   patientEmail: z.string().trim().email().max(255).nullish(),
   channel: z.enum(['sms', 'web', 'direct']),
+});
+
+/**
+ * `POST /conversations/whatsapp` (CRMLAB-50, D-175). A validacao do telefone e
+ * a MESMA funcao do formulario (`normalizeBrazilianPhone`) — o que a tela
+ * aceita, a API aceita. `content` tem o limite de `createMessageSchema`.
+ */
+export const startWhatsAppConversationSchema = z.object({
+  phone: z
+    .string()
+    .trim()
+    .max(20)
+    .refine(
+      (value) => normalizeBrazilianPhone(value) !== null,
+      'Telefone invalido: informe DDD + numero',
+    ),
+  content: z.string().trim().min(1).max(4000),
 });
 
 export const createMessageSchema = z.object({
@@ -225,6 +246,15 @@ export function createConversation(service: ConversationService): RequestHandler
   });
 }
 
+export function startWhatsAppConversation(service: ConversationService): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const dto = validated<StartWhatsAppConversationRequest>(req, 'body');
+    const body: StartWhatsAppConversationResponse = await service.startWhatsApp(ctx, dto);
+    res.status(201).json(body);
+  });
+}
+
 export function createMessage(services: ConversationServices): RequestHandler {
   return handle(async (req, res) => {
     const ctx = getContext(req);
@@ -348,6 +378,13 @@ function buildConversationModule(
     ...guards,
     validate(createConversationSchema, 'body'),
     createConversation(services.conversations),
+  );
+
+  router.post(
+    '/whatsapp',
+    ...guards,
+    validate(startWhatsAppConversationSchema, 'body'),
+    startWhatsAppConversation(services.conversations),
   );
 
   // ANTES de `/:id`: registrada depois, o validador de uuid rejeitaria

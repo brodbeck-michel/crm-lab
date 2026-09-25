@@ -67,6 +67,24 @@ export function phoneDigits(value: string): string {
 /** Normalizacao de telefone em SQL — precisa casar com `phoneDigits`. */
 const phoneDigitsSql = (column: string): string => `regexp_replace(${column}, '[^0-9]', '', 'g')`;
 
+/**
+ * Chaves de dedupe de um telefone (D-176): os digitos e, para celular
+ * brasileiro, a variante com/sem o nono digito. O WhatsApp ainda identifica
+ * muitos celulares pelo JID antigo de 12 digitos (`554899991234`), enquanto o
+ * atendente digita o numero atual (`5548999991234`) — sem a variante, a
+ * resposta do paciente abriria uma SEGUNDA conversa. So vale quando o numero
+ * local sem o 9 comeca de 6 a 9: fixo (2 a 5) nunca casa com celular.
+ * A primeira chave e sempre o casamento exato.
+ */
+export function phoneMatchKeys(phone: string): string[] {
+  const digits = phoneDigits(phone);
+  const withNine = /^55(\d{2})9([6-9]\d{7})$/.exec(digits);
+  if (withNine) return [digits, `55${withNine[1]}${withNine[2]}`];
+  const withoutNine = /^55(\d{2})([6-9]\d{7})$/.exec(digits);
+  if (withoutNine) return [digits, `55${withoutNine[1]}9${withoutNine[2]}`];
+  return [digits];
+}
+
 interface ConversationRow {
   id: string;
   patient_id: string | null;
@@ -449,6 +467,25 @@ export class ConversationRepository {
     });
   }
 
+  /**
+   * Troca o canal da conversa (D-175): atendimento manual que recebe a
+   * "Nova conversa" passa a `whatsapp`, senao `createFromAgent` nao envia.
+   */
+  async setChannel(
+    tenantId: string,
+    id: string,
+    channel: ConversationChannel,
+  ): Promise<ConversationDetail | null> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const updated = await tx.query<{ id: string }>(
+        `UPDATE conversations SET channel = $1, updated_at = NOW() WHERE id = $2 RETURNING id`,
+        [channel, id],
+      );
+      const changedId = updated.rows[0]?.id;
+      return changedId ? selectDetail(tx, changedId) : null;
+    });
+  }
+
   async setStatus(
     tenantId: string,
     id: string,
@@ -560,12 +597,15 @@ async function selectByPhone(
   tx: DbTx,
   phone: string,
 ): Promise<{ id: string; patientPhone: string } | null> {
+  // Exato primeiro; a variante do nono digito (D-176) so quando nao ha exato.
+  const keys = phoneMatchKeys(phone);
+  const placeholders = keys.map((_, index) => `$${index + 1}`).join(', ');
   const found = await tx.query<{ id: string; patient_phone: string }>(
     `SELECT id, patient_phone FROM conversations
-     WHERE ${phoneDigitsSql('patient_phone')} = $1
-     ORDER BY created_at DESC, id ASC
+     WHERE ${phoneDigitsSql('patient_phone')} IN (${placeholders})
+     ORDER BY (${phoneDigitsSql('patient_phone')} = $1) DESC, created_at DESC, id ASC
      LIMIT 1`,
-    [phoneDigits(phone)],
+    keys,
   );
   const row = found.rows[0];
   return row ? { id: row.id, patientPhone: row.patient_phone } : null;

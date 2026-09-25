@@ -11,6 +11,7 @@ export { AudioMessage } from './AudioMessage';
 export type { AudioMessageProps } from './AudioMessage';
 export { Composer } from './Composer';
 export type { ComposerProps } from './Composer';
+export type { RecordedAudio } from './useVoiceRecorder';
 export { EmojiPicker, EMOJIS } from './EmojiPicker';
 export type { EmojiPickerProps } from './EmojiPicker';
 export { QuickReplyMenu, filterQuickReplies, quickReplyOptionId } from './QuickReplyMenu';

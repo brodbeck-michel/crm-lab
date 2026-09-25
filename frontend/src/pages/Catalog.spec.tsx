@@ -16,6 +16,7 @@ import { queryClient } from '@/api/query-client';
 import { querySuccess, mutationIdle } from '@/test/query-mocks';
 import { useAuthStore } from '@/stores/auth.store';
 import { DEFAULT_THEME } from '@/lib/theme';
+import { ToastProvider } from '@/components/ui';
 import * as examsApi from '@/api/exams';
 import * as examPackagesApi from '@/api/exam-packages';
 import Catalog from './Catalog';
@@ -55,6 +56,8 @@ vi.mock('@/api/exams', () => ({
   useExamList: vi.fn(),
   useCreateExam: vi.fn(),
   useUpdateExam: vi.fn(),
+  usePreviewExamImport: vi.fn(),
+  useConfirmExamImport: vi.fn(),
 }));
 
 vi.mock('@/api/exam-packages', () => ({
@@ -139,6 +142,8 @@ describe('Catalog', () => {
     );
     vi.mocked(examsApi.useCreateExam).mockReturnValue(mutationIdle());
     vi.mocked(examsApi.useUpdateExam).mockReturnValue(mutationIdle());
+    vi.mocked(examsApi.usePreviewExamImport).mockReturnValue(mutationIdle());
+    vi.mocked(examsApi.useConfirmExamImport).mockReturnValue(mutationIdle());
     useExamPackageList.mockReturnValue(packageListResult());
     vi.mocked(examPackagesApi.useCreateExamPackage).mockReturnValue(mutationIdle());
     vi.mocked(examPackagesApi.useUpdateExamPackage).mockReturnValue(mutationIdle());
@@ -164,6 +169,35 @@ describe('Catalog', () => {
     renderPage();
 
     expect(screen.queryByRole('button', { name: /novo exame/i })).not.toBeInTheDocument();
+  });
+
+  /** CRMLAB-23 (D-177): importar CSV é só admin — a tela só esconde, o servidor recusa. */
+  it('mostra "Importar CSV" só para admin, só na aba Exames, e abre o modal', async () => {
+    const user = userEvent.setup({ delay: null });
+    signIn('admin');
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <MemoryRouter initialEntries={['/catalog']}>
+            <Catalog />
+          </MemoryRouter>
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Importar CSV' }));
+    expect(screen.getByRole('dialog', { name: /importar catálogo/i })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Fechar' }));
+
+    await user.click(screen.getByRole('tab', { name: 'Pacotes' }));
+    expect(screen.queryByRole('button', { name: 'Importar CSV' })).not.toBeInTheDocument();
+  });
+
+  it.each(['manager', 'attendant'] as const)('não mostra "Importar CSV" para %s', (role) => {
+    signIn(role);
+    renderPage();
+
+    expect(screen.queryByRole('button', { name: 'Importar CSV' })).not.toBeInTheDocument();
   });
 
   /**

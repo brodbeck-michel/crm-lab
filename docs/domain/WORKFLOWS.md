@@ -302,11 +302,33 @@ Uma DM só é visível para os dois participantes — outro usuário do mesmo te
 4. Admin define senha e faz primeiro login
 5. Admin configura:
    - Personalização (tema, logo, nome)
-   - Catálogo de exames (import CSV ou manual)
+   - Catálogo de exames (import CSV ou manual — ver 7.1)
    - Usuários da equipe (convites)
    - Canal WhatsApp (conecta API)
 6. Tenant operacional
 ```
+
+### 7.1 Importar o catálogo por CSV (CRMLAB-23, D-177/D-178)
+
+```
+1. Admin abre /catalog → [Importar CSV] (botão só para admin; o servidor recusa os demais)
+2. [Baixar modelo] → CSV com o cabeçalho canônico + 1 linha de exemplo (gerado no navegador,
+   a partir de EXAM_IMPORT_COLUMNS de @crm-lab/shared — nenhum endpoint)
+3. Admin escolhe o arquivo (.csv, até 2 MiB, até 5000 linhas)
+4. POST /exams/import/preview { fileName, contentBase64 } → NADA é gravado
+   - arquivo recusado inteiro (encoding, cabeçalho, tamanho) → mensagem e fim
+   - senão: quantas linhas criam, quantas atualizam, quantas têm erro e, por linha,
+     número da linha + coluna + motivo
+5. Com erro em qualquer linha → [Confirmar] fica desabilitado; admin corrige a planilha e
+   volta ao passo 3
+6. Sem erro → [Confirmar importação] → POST /exams/import com O MESMO arquivo
+   - servidor revalida do zero e grava tudo numa transação do tenant (tudo ou nada)
+   - código que já existe no laboratório ATUALIZA; código novo CRIA
+   - audit log import_exam_catalog; cache exams:<tenantId>: invalidado
+7. Tela mostra "N criados, M atualizados" e a tabela do catálogo recarrega
+```
+Fora do escopo do CSV: preço por convênio (`exam_prices`), pacotes, TUSS/AMB/material,
+sinônimos e ativar/desativar — continuam no modal do exame.
 
 ---
 

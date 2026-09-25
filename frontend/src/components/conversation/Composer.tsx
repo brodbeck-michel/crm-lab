@@ -4,6 +4,9 @@ import type { QuickReply } from '@crm-lab/shared';
 import { Button, cn } from '@/components/ui';
 import { EmojiPicker } from './EmojiPicker';
 import { QuickReplyMenu, filterQuickReplies, quickReplyOptionId } from './QuickReplyMenu';
+import { MicIcon, VoiceRecorder } from './VoiceRecorder';
+import { useVoiceRecorder } from './useVoiceRecorder';
+import type { RecordedAudio } from './useVoiceRecorder';
 
 /**
  * Composer — COMPONENTS.md (`conversation/`):
@@ -27,6 +30,10 @@ import { QuickReplyMenu, filterQuickReplies, quickReplyOptionId } from './QuickR
  * qualquer `/` o menu atrapalharia quem escreve "km/h", "24/48h" ou uma URL —
  * e essa restrição é o que torna a funcionalidade invisível para quem não a
  * está usando.
+ *
+ * O microfone (CRMLAB-24, D-181) grava recado de voz: clique inicia, clique
+ * para, prévia com Enviar/Cancelar. Durante a gravação a barra do gravador
+ * ocupa o lugar do campo — o texto digitado fica no estado e volta depois.
  */
 
 export interface ComposerProps {
@@ -34,6 +41,12 @@ export interface ComposerProps {
   onSend: (content: string) => void;
   /** Anexo — sem handler, o botão não aparece (nada de botão morto). */
   onAttach?: () => void;
+  /**
+   * Recado de voz gravado (D-181) — sem handler, o microfone não aparece.
+   * Resolveu: o gravador volta ao normal. Rejeitou: a prévia fica para tentar
+   * de novo (quem avisa do erro é quem chama).
+   */
+  onSendAudio?: (audio: RecordedAudio) => Promise<unknown>;
   /**
    * Texto inicial do campo (ex.: "Enviar orçamento" chegando com a mensagem
    * pronta). Só semeia o estado no MOUNT — o Composer continua dono do que
@@ -82,6 +95,7 @@ function AttachIcon() {
 export function Composer({
   onSend,
   onAttach,
+  onSendAudio,
   disabled = false,
   sending = false,
   placeholder = 'Escreva uma mensagem',
@@ -96,6 +110,8 @@ export function Composer({
   const [multiline, setMultiline] = useState(false);
   const fieldRef = useRef<HTMLTextAreaElement>(null);
   const blocked = disabled || sending;
+  const recorder = useVoiceRecorder();
+  const recording = recorder.state.status !== 'idle';
 
   /**
    * Altura acompanha o conteúdo. Depende de `value`, não do `onChange`: assim
@@ -115,7 +131,8 @@ export function Composer({
     field.style.height = `${Math.min(content, FIELD_MAX_HEIGHT_PX)}px`;
     field.style.overflowY = content > FIELD_MAX_HEIGHT_PX ? 'auto' : 'hidden';
     setMultiline(field.scrollHeight > singleLine);
-  }, [value]);
+    // `recording`: o campo sai da tela durante a gravação e volta sem altura.
+  }, [value, recording]);
 
   /** O texto é um comando de macro enquanto for `/` + o que se digita depois. */
   const macroFilter = value.startsWith('/') ? value.slice(1) : null;
@@ -173,7 +190,28 @@ export function Composer({
     });
   }
 
+  /**
+   * Ctrl+B / Cmd+B (CRMLAB-51, D-183): envolve a seleção em `*` — o negrito do
+   * WhatsApp — e mantém o texto selecionado; sem seleção, `**` com o cursor no meio.
+   */
+  function wrapBold(): void {
+    const field = fieldRef.current;
+    let start = field?.selectionStart ?? value.length;
+    let end = field?.selectionEnd ?? value.length;
+    // Duplo clique no Windows seleciona "palavra " — `*palavra *` não formataria.
+    while (start < end && /\s/.test(value.charAt(start))) start++;
+    while (end > start && /\s/.test(value.charAt(end - 1))) end--;
+    setValue(`${value.slice(0, start)}*${value.slice(start, end)}*${value.slice(end)}`);
+    requestAnimationFrame(() => fieldRef.current?.setSelectionRange(start + 1, end + 1));
+  }
+
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+    // `!altKey`: AltGr no Windows chega como Ctrl+Alt e digita caractere em alguns teclados.
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'b') {
+      event.preventDefault();
+      wrapBold();
+      return;
+    }
     if (macroOpen) {
       // Com o menu aberto, estas teclas pertencem a ELE. Enter escolhendo a
       // macro é o ponto: enviar `/jej` como mensagem seria enviar o comando.
@@ -211,62 +249,91 @@ export function Composer({
   return (
     <div
       data-testid="composer"
-      className="flex items-end gap-sm border-t border-neutral-300 bg-bg px-lg py-md"
+      className="flex flex-col gap-xs border-t border-neutral-300 bg-bg px-lg py-md"
     >
-      {onAttach && (
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={onAttach}
-          disabled={blocked}
-          aria-label="Anexar arquivo"
-        >
-          <AttachIcon />
-        </Button>
+      {recorder.error && (
+        <p role="alert" className="m-0 font-body text-caption text-accent-700">
+          {recorder.error}
+        </p>
       )}
-
-      <EmojiPicker
-        onPick={insertEmoji}
-        onClose={() => fieldRef.current?.focus()}
-        disabled={blocked}
-      />
-
-      <div className="relative flex min-w-0 flex-1">
-        {macroOpen && macroFilter !== null && (
-          <QuickReplyMenu
-            items={quickReplies ?? []}
-            filter={macroFilter}
-            activeIndex={Math.min(activeIndex, macroMatches.length - 1)}
-            onPick={pickMacro}
-          />
+      <div className="flex items-end gap-sm">
+        {onAttach && !recording && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onAttach}
+            disabled={blocked}
+            aria-label="Anexar arquivo"
+          >
+            <AttachIcon />
+          </Button>
         )}
-        <textarea
-          ref={fieldRef}
-          rows={1}
-          value={value}
-          disabled={blocked}
-          onChange={(event) => handleChange(event.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={placeholder}
-          aria-label="Mensagem"
-          role={macroOpen ? 'combobox' : undefined}
-          aria-expanded={macroOpen || undefined}
-          aria-controls={macroOpen ? 'quick-reply-listbox' : undefined}
-          aria-activedescendant={
-            macroOpen && activeMacro ? quickReplyOptionId(activeMacro.id) : undefined
-          }
-          className={cn(
-            'min-h-[36px] w-full min-w-0 flex-1 resize-none border border-neutral-300 bg-bg',
-            multiline ? 'rounded-md' : 'rounded-pill',
-            'px-lg py-[9px] font-body text-label text-text outline-none',
-            'placeholder:text-neutral-600 focus:border-accent disabled:cursor-not-allowed disabled:opacity-60',
-          )}
-        />
-      </div>
 
-      <Button onClick={submit} loading={sending} disabled={disabled || value.trim().length === 0}>
-        Enviar
-      </Button>
+        {recording && onSendAudio ? (
+          <VoiceRecorder recorder={recorder} onSend={onSendAudio} disabled={disabled} />
+        ) : (
+          <>
+            <EmojiPicker
+              onPick={insertEmoji}
+              onClose={() => fieldRef.current?.focus()}
+              disabled={blocked}
+            />
+
+            {onSendAudio && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void recorder.start()}
+                disabled={blocked}
+                aria-label="Gravar áudio"
+              >
+                <MicIcon />
+              </Button>
+            )}
+
+            <div className="relative flex min-w-0 flex-1">
+              {macroOpen && macroFilter !== null && (
+                <QuickReplyMenu
+                  items={quickReplies ?? []}
+                  filter={macroFilter}
+                  activeIndex={Math.min(activeIndex, macroMatches.length - 1)}
+                  onPick={pickMacro}
+                />
+              )}
+              <textarea
+                ref={fieldRef}
+                rows={1}
+                value={value}
+                disabled={blocked}
+                onChange={(event) => handleChange(event.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={placeholder}
+                aria-label="Mensagem"
+                role={macroOpen ? 'combobox' : undefined}
+                aria-expanded={macroOpen || undefined}
+                aria-controls={macroOpen ? 'quick-reply-listbox' : undefined}
+                aria-activedescendant={
+                  macroOpen && activeMacro ? quickReplyOptionId(activeMacro.id) : undefined
+                }
+                className={cn(
+                  'min-h-[36px] w-full min-w-0 flex-1 resize-none border border-neutral-300 bg-bg',
+                  multiline ? 'rounded-md' : 'rounded-pill',
+                  'px-lg py-[9px] font-body text-label text-text outline-none',
+                  'placeholder:text-neutral-600 focus:border-accent disabled:cursor-not-allowed disabled:opacity-60',
+                )}
+              />
+            </div>
+
+            <Button
+              onClick={submit}
+              loading={sending}
+              disabled={disabled || value.trim().length === 0}
+            >
+              Enviar
+            </Button>
+          </>
+        )}
+      </div>
     </div>
   );
 }

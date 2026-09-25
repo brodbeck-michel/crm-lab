@@ -633,7 +633,8 @@ Criar um atendimento que **não veio do WhatsApp** — ligação, balcão, formu
 - `patientName`: obrigatório, 1..255
 - `patientEmail`: opcional/anulável, e-mail válido, máx. 255
 - `channel` ∈ `direct | web | sms`. **`whatsapp` é recusado** com `VALIDATION_ERROR`: conversa
-  desse canal nasce apenas pelo webhook, que deduplica por `externalId`. "Ligação" e "presencial"
+  desse canal nasce pelo webhook, que deduplica por `externalId`, ou por
+  `POST /conversations/whatsapp` (D-175), que já envia a primeira mensagem. "Ligação" e "presencial"
   caem as duas em `direct` — separá-las exigiria coluna nova (fora do escopo do v1)
 
 **Comportamento:** mesmo `findOrCreateByPhone` do webhook — a linha de `patients` é criada ou
@@ -653,6 +654,59 @@ distingue os dois casos, e não precisa — o destino é o mesmo.
 já tem conversa **ativa** de outro atendente (encerrada reabre, D-174). Aqui o 409 é deliberado, e é a exceção à regra do 404:
 devolver `NOT_FOUND` mandaria o atendente montar orçamento numa conversa que ele não consegue
 abrir. `FORBIDDEN` (403, `platform_operator`).
+
+### POST /conversations/whatsapp (CRMLAB-50, D-175)
+Botão **"Nova conversa"** da lista de conversas (PAGES.md §2): o atendente manda a **primeira
+mensagem de WhatsApp** para um número. Cria a conversa (se o número ainda não tem uma) e envia a
+mensagem pelo canal WhatsApp do laboratório, pelo **mesmo** `MessageService.createFromAgent` de
+`POST /conversations/:id/messages` — não existe caminho paralelo de envio.
+
+**Request** (`StartWhatsAppConversationRequest`):
+```json
+{
+  "phone": "(48) 99999-1234",
+  "content": "Olá! Aqui é do laboratório, tudo bem?"
+}
+```
+
+- `phone`: obrigatório, máx. 20 caracteres, **telefone brasileiro** validado por
+  `normalizeBrazilianPhone` (`@crm-lab/shared`): com ou sem máscara, com ou sem o `55`; DDD
+  (dois dígitos de 1 a 9) + 9 dígitos começando por 9 (celular) ou 8 dígitos começando de 2 a 9.
+  É normalizado para E.164 (`+5548999991234`) antes de procurar duplicata
+- `content`: obrigatório, 1..4000 caracteres (trim aplicado) — o mesmo limite de
+  `POST /conversations/:id/messages`
+
+**Comportamento (D-175):**
+- **Número que já tem conversa no laboratório → reaproveita**, nunca duplica. O dedupe é o de
+  `findOrCreateByPhone` (dígitos do telefone, D-059/D-072) — e reconhece o celular com e sem o
+  nono dígito (`5548999991234` ≡ `554899991234`, D-176). O paciente também é o da conversa.
+- **Número novo → cria** a conversa no canal `whatsapp`, **atribuída a quem enviou**, e o cadastro
+  de `patients` na mesma transação, **sem nome** — igual ao número desconhecido que escreve pela
+  primeira vez sem nome de perfil (o nome entra depois, pelo perfil do WhatsApp ou pela Ficha).
+- Conversa existente **ativa de outro atendente** → `CONVERSATION_ALREADY_ASSIGNED` (409), a
+  mesma regra de `POST /conversations`. Conversa da **fila livre** é usada como está (enviar
+  não assume — assumir é `PATCH /conversations/:id`).
+- Conversa existente **encerrada** → reabre atribuída a quem enviou, com "Atendimento reaberto
+  por <nome>" (D-174), e então envia.
+- Conversa existente de outro canal (`direct`/`web`/`sms`, atendimento manual) → passa a
+  `whatsapp` (audit `update_conversation_channel`): a mensagem sai pelo WhatsApp e as próximas
+  do atendente também.
+- Audit `create_conversation` quando cria (como os outros dois caminhos de criação).
+
+**Response (201)** (`StartWhatsAppConversationResponse`):
+```json
+{
+  "conversation": { "...": "ConversationDetail — o mesmo shape de GET /conversations/:id" },
+  "message": { "...": "Message — o mesmo shape de POST /conversations/:id/messages" }
+}
+```
+
+**Erros:** `VALIDATION_ERROR` (400 — `details.fields.phone` / `details.fields.content`),
+`CONVERSATION_ALREADY_ASSIGNED` (409, `details: { assignedTo, assignedToName }`),
+`MESSAGE_SEND_FAILED` (502, `details: { messageId, conversationId }` — canal indisponível, sem
+credencial ou desligado: a conversa **fica criada** e a mensagem gravada como `failed`, como em
+`POST /conversations/:id/messages`; `conversationId` existe para a tela abrir a conversa mesmo
+assim), `FORBIDDEN` (403, `platform_operator`).
 
 ### GET /conversations/:id
 Detalhes de uma conversa + histórico de mensagens.

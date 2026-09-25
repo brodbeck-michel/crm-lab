@@ -2719,7 +2719,7 @@ atribuídas" quando o paciente escreve (PR #60, D-174).
 
 ### ✅ CRMLAB-49 — campo de mensagem cresce com o texto (2026-09-24)
 
-Branch `feature/CRMLAB-49-composer-autogrow`. Aguarda validação do PO.
+Validado e aprovado pelo PO em hml (`hml-1b004c1`) em 2026-09-24. Branch `feature/CRMLAB-49-composer-autogrow`.
 
 - `Composer.tsx`: a altura do `<textarea>` acompanha o conteúdo (`useLayoutEffect` sobre o
   `value`, então digitação, emoji, resposta rápida, envio e `initialValue` passam pelo mesmo

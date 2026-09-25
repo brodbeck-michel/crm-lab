@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-25 (v1.21.0 em PRODUÇÃO — CRMLAB-24, ver fim do arquivo)
+**Última atualização:** 2026-09-25 (v1.22.0 em PRODUÇÃO — CRMLAB-52, ver fim do arquivo)
 
 ---
 
@@ -2777,19 +2777,36 @@ anexo que ia para a conversa aberta no momento do POST, e não para a do clique.
   GHCR, sem migração. Healthcheck OK na 2ª tentativa. O bundle servido em https://vitrocrm.cloud
   confirma `1.21.0`.
 
-### 🔄 CRMLAB-52 — conciliação com o LIS pela API do Bitlab (Onda 13, 2026-09-25)
+### ✅ CRMLAB-52 — conciliação com o LIS pela API do Bitlab (Onda 13, 2026-09-25)
 
-Branch `feature/CRMLAB-52-conciliacao-bitlab` (PR 1, #67) e `feature/CRMLAB-52-conciliacao-propostas`
-(PR 2, empilhado no PR 1). Decisões D-119, D-185..D-187.
+PR #67 (sincronização) e PR #69 (conciliação), em squash. Decisões D-119, D-185..D-187.
 
-- **PR 1 — sincronização:** migração 026 (`lis_sync_settings`), `bitlab-client.ts`,
-  `LisSyncService` (marca d'água, agendador de 30 min), `LisImportService.ingestRows` como
-  entrada comum de planilha e API, tela `/settings/lis-integration`.
-- **PR 2 — conciliação:** `PATCH /proposals/:id/lis-reference` concilia na hora;
+- **Sincronização:** migração 026 (`lis_sync_settings`), `bitlab-client.ts`, `LisSyncService`
+  (marca d'água, agendador de 30 min), `LisImportService.ingestRows` como entrada comum de planilha
+  e API, tela `/settings/lis-integration`. Datas do Bitlab em `dd/mm/yyyy hh:mm:ss` (hora de
+  Brasília, correção do Bitlab de 25/09) normalizadas por `parseBitlabDateTime` (D-187).
+- **Conciliação:** `PATCH /proposals/:id/lis-reference` concilia na hora;
   `lis-reconcile.service.ts` roda por chunk dentro de `ingestRows`; `markWonFromLis` leva a
   `ganho` de qualquer estágio aberto (`changedBy`/`userId` nulos, audit `source: "lis"`),
   `perdido` não reabre (`lis_reconcile_conflict`); purge bloqueado com vínculo;
   `FunnelReport.realized`. Frontend: campo e selo "Conciliado" no `ProposalModal`, selo no
   `ProposalCard`, cartão "Receita realizada (LIS)" no Analytics.
-- **Pendente do Bitlab:** chave de orçamentos (403 em 25/09), fuso das datas (D-187) e restrição
-  ao IP da VPS antes de ligar em produção.
+- **Validação em hml** (`hml-b75c5b2`, aprovada pelo PO): vínculo com o orçamento 70034 → ganho;
+  primeira sincronização real pela API (a partir da VPS, única origem aceita pelo Bitlab) trouxe
+  1842 orçamentos em 3 s, sem erro.
+- **Achado que virou card:** pagamento em parcelas vem uma linha por parcela, e a regra da Onda 9
+  fica só com a maior (R$ 14,8 mil a menos em 90 dias) → **CRMLAB-53**.
+- **Em aberto:** sinalizar divergência entre valor orçado no CRM e valor da requisição (pedido no
+  card, fora de D-119).
+
+### 🚀 v1.22.0 em produção (2026-09-25)
+
+Sobe CRMLAB-52 (PR #67 e #69): orçamentos do LIS pela API do Bitlab e conciliação das propostas.
+
+- **hml:** `hml-b75c5b2`, validado e aprovado pelo PO.
+- **prod:** `90ad655` (tag **v1.22.0**), CI verde nos 5 jobs (run 36179387432), imagens puxadas do
+  GHCR, **migração 026 aplicada**. Backup manual do banco antes do deploy
+  (`/opt/crm-lab/backups/crm_lab-2026-09-25-1934.dump`). Healthcheck OK. O bundle servido em
+  https://vitrocrm.cloud confirma `1.22.0` e traz a tela nova.
+- **Falta para ligar:** salvar a chave de orçamentos do Bitlab em Configurações → Integração LIS do
+  laboratório e ligar a sincronização (agendador de 30 min em prod, primeira rodada = 90 dias).

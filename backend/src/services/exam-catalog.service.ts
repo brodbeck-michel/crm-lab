@@ -28,15 +28,21 @@
  * Vale tambem para o preco por convenio (Onda 7): `resolveActiveByIds(...,
  * insuranceId)` nao le `exams:<tenantId>:` pelo mesmo motivo.
  */
-import type {
-  CreateExamRequest,
-  Exam,
-  ExamPrice,
-  ListExamsQuery,
-  Paginated,
-  UpdateExamPricesRequest,
-  UpdateExamRequest,
+import {
+  EXAM_IMPORT_MAX_BYTES,
+  EXAM_IMPORT_MAX_ERRORS,
+  type CreateExamRequest,
+  type Exam,
+  type ExamImportPreview,
+  type ExamImportResult,
+  type ExamPrice,
+  type ImportExamCatalogRequest,
+  type ListExamsQuery,
+  type Paginated,
+  type UpdateExamPricesRequest,
+  type UpdateExamRequest,
 } from '@crm-lab/shared';
+import { ExamCsvError, parseExamCsv, type ExamCsvParseResult } from '../lib/exam-csv.js';
 import type { CacheService } from '../lib/cache.js';
 import type { TenantContext } from '../http/context.js';
 import { BusinessError, notFound } from '../http/errors.js';
@@ -155,6 +161,39 @@ const MANAGER_ROLES = ['manager', 'admin'] as const;
 function assertCanWrite(ctx: TenantContext): void {
   if (ctx.role !== 'manager' && ctx.role !== 'admin') {
     throw new BusinessError('FORBIDDEN', { requiredRoles: [...MANAGER_ROLES] });
+  }
+}
+
+/**
+ * Importacao por CSV e SO admin (D-177) — diferente de create/update, que
+ * aceitam gestor. A rota ja barra; o service confere de novo.
+ */
+function assertAdmin(ctx: TenantContext): void {
+  if (ctx.role !== 'admin') {
+    throw new BusinessError('FORBIDDEN', { requiredRoles: ['admin'] });
+  }
+}
+
+/**
+ * Base64 -> bytes -> parser. Arquivo acima do teto -> `MEDIA_TOO_LARGE` (413),
+ * mesmo codigo de `POST /lis-imports`; recusa do arquivo inteiro ->
+ * `VALIDATION_ERROR` com `details.reason` (API_CONTRACTS.md §4).
+ */
+function parseImportFile(dto: ImportExamCatalogRequest): ExamCsvParseResult {
+  const buffer = Buffer.from(dto.contentBase64, 'base64');
+  if (buffer.byteLength > EXAM_IMPORT_MAX_BYTES) {
+    throw new BusinessError('MEDIA_TOO_LARGE', {
+      byteSize: buffer.byteLength,
+      max: EXAM_IMPORT_MAX_BYTES,
+    });
+  }
+  try {
+    return parseExamCsv(buffer);
+  } catch (err) {
+    if (err instanceof ExamCsvError) {
+      throw new BusinessError('VALIDATION_ERROR', { reason: err.reason, ...err.details });
+    }
+    throw err;
   }
 }
 
@@ -331,6 +370,102 @@ export class ExamCatalogService {
 
     await this.invalidate(ctx.tenantId);
     return updated;
+  }
+
+  /**
+   * CRMLAB-23 (D-177). Le, valida e classifica cada linha do CSV
+   * (create/update pelo `code` NESTE tenant). NAO grava nada — nem audit.
+   */
+  async previewImport(
+    ctx: TenantContext,
+    dto: ImportExamCatalogRequest,
+  ): Promise<ExamImportPreview> {
+    assertAdmin(ctx);
+    const parsed = parseImportFile(dto);
+    const existing = await this.repository.findExistingCodes(
+      ctx.tenantId,
+      parsed.rows.map((row) => row.code),
+    );
+
+    const rows = parsed.rows.map((row) => ({
+      line: row.line,
+      action: existing.has(row.code) ? ('update' as const) : ('create' as const),
+      code: row.code,
+      name: row.name,
+      category: row.category,
+      turnaroundHours: row.turnaroundHours,
+      pricePrivate: row.pricePrivate,
+      priceInsurance: row.priceInsurance,
+    }));
+    const updateCount = rows.filter((row) => row.action === 'update').length;
+
+    return {
+      fileName: dto.fileName,
+      totalRows: parsed.totalRows,
+      createCount: rows.length - updateCount,
+      updateCount,
+      errorCount: parsed.errorCount,
+      errors: parsed.errors.slice(0, EXAM_IMPORT_MAX_ERRORS),
+      errorsTruncated: parsed.errors.length > EXAM_IMPORT_MAX_ERRORS,
+      rows,
+    };
+  }
+
+  /**
+   * CRMLAB-23 (D-177). Revalida o arquivo do zero (o servidor nao guarda o
+   * preview) e grava TUDO OU NADA: qualquer linha com erro -> VALIDATION_ERROR
+   * `invalid_rows` sem tocar no banco; sem erro, uma unica transacao do tenant.
+   * A classificacao create/update e refeita DENTRO da transacao (ON CONFLICT),
+   * entao um exame criado entre o preview e a confirmacao vira update, nunca
+   * erro de unicidade.
+   */
+  async confirmImport(
+    ctx: TenantContext,
+    dto: ImportExamCatalogRequest,
+  ): Promise<ExamImportResult> {
+    assertAdmin(ctx);
+    const parsed = parseImportFile(dto);
+    if (parsed.errorCount > 0) {
+      throw new BusinessError('VALIDATION_ERROR', {
+        reason: 'invalid_rows',
+        errorCount: parsed.errorCount,
+        errors: parsed.errors.slice(0, EXAM_IMPORT_MAX_ERRORS),
+      });
+    }
+    // CLAUDE.md regra 7: escrita em lote do catalogo e auditada — sem audit
+    // configurado e bug de wiring, e a escrita recusa (mesmo padrao de upsertPrices).
+    if (!this.audit) {
+      throw new Error('ExamCatalogService sem AuditService nao pode importar catalogo');
+    }
+
+    const { created, updated } = await this.repository.upsertImported(
+      ctx.tenantId,
+      parsed.rows.map((row) => ({
+        name: row.name,
+        code: row.code,
+        description: row.description,
+        preparation: row.preparation,
+        turnaroundHours: row.turnaroundHours,
+        pricePrivate: row.pricePrivate,
+        priceInsurance: row.priceInsurance,
+        category: row.category,
+      })),
+    );
+    await this.invalidate(ctx.tenantId);
+
+    const result: ExamImportResult = {
+      fileName: dto.fileName,
+      totalRows: parsed.totalRows,
+      created,
+      updated,
+    };
+    await this.audit.record(ctx, {
+      action: 'import_exam_catalog',
+      entityType: 'exam_catalog',
+      entityId: ctx.tenantId,
+      newValues: { ...result },
+    });
+    return result;
   }
 
   /** Onda 7. Uma linha por convenio COM preco cadastrado. Qualquer papel do tenant. */

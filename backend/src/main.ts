@@ -11,6 +11,7 @@ import { refreshSessionIsLive } from './services/auth.service.js';
 import { createWsHub } from './lib/ws-hub.js';
 import { deleteExpiredOrRevoked } from './repositories/refresh-token.repository.js';
 import { deleteExpiredOrUsed as deleteExpiredResetTokens } from './repositories/password-reset-token.repository.js';
+import { createLisSyncServiceFromDeps } from './controllers/lis-sync.routes.js';
 
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
@@ -119,6 +120,20 @@ async function bootstrap(): Promise<void> {
   runRefreshTokenCleanup();
   const cleanupInterval = setInterval(runRefreshTokenCleanup, CLEANUP_INTERVAL_MS);
   cleanupInterval.unref();
+
+  // =========================================================================
+  // Sincronizacao dos orcamentos do LIS pela API do Bitlab (CRMLAB-52, D-185)
+  // =========================================================================
+  // Mesmo padrao da limpeza acima: best-effort, `.unref()`, nunca derruba o
+  // boot. `runScheduledTick` nao lanca (cada tenant tem o proprio try/catch).
+  // `LIS_SYNC_INTERVAL_MS=0` desliga (homologacao) — "Sincronizar agora" segue.
+  if (env.LIS_SYNC_INTERVAL_MS > 0) {
+    const lisSync = createLisSyncServiceFromDeps({ db, cache });
+    const lisSyncInterval = setInterval(() => {
+      void lisSync.runScheduledTick();
+    }, env.LIS_SYNC_INTERVAL_MS);
+    lisSyncInterval.unref();
+  }
 
   // =========================================================================
   // Rede de seguranca do processo (CRMLAB-30, D-138)

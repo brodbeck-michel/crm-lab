@@ -17,6 +17,7 @@ describe('route-config — domínio LIS (Onda 10)', () => {
     expect(paths).not.toContain('/active-search');
     expect(paths).not.toContain('/settings/attendants');
     expect(paths).not.toContain('/settings/commissions');
+    expect(paths).not.toContain('/settings/lis-integration');
   });
 
   it('gestor (manager) vê as 3 telas de leitura do LIS + Atendentes + Comissão', () => {
@@ -29,6 +30,7 @@ describe('route-config — domínio LIS (Onda 10)', () => {
         '/active-search',
         '/settings/attendants',
         '/settings/commissions',
+        '/settings/lis-integration',
         '/sales',
       ]),
     );
@@ -44,6 +46,7 @@ describe('route-config — domínio LIS (Onda 10)', () => {
       '/sales',
       '/settings/attendants',
       '/settings/commissions',
+      '/settings/lis-integration',
     ]) {
       expect(paths).not.toContain(path);
     }
@@ -95,6 +98,7 @@ describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, revisado em D-129)'
       'Convênios',
       'Atendentes',
       'Comissão',
+      'Integração LIS',
       'Usuários & Permissões',
       // CRMLAB-35: trocar a propria senha nao e privilegio de admin — e o
       // unico item TENANT_ROLES deste grupo alem de "Cadastro de Exames".

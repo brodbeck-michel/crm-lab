@@ -375,6 +375,9 @@ TRUST_PROXY_HOPS=2
 
 # Vazio de propósito: gateway desligado devolve CHANNEL_QR_UNAVAILABLE, sem crash.
 EVOLUTION_API_KEY=
+
+# CRMLAB-52: agendador da sincronização com o Bitlab desligado em homologação.
+LIS_SYNC_INTERVAL_MS=0
 ```
 
 ---

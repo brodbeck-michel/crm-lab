@@ -15,6 +15,7 @@ import OperationSettings from '@/pages/Settings/Operation';
 import Insurances from '@/pages/Settings/Insurances';
 import AttendantsSettings from '@/pages/Settings/Attendants';
 import CommissionsSettings from '@/pages/Settings/Commissions';
+import LisIntegrationSettings from '@/pages/Settings/LisIntegration';
 import AccountSettings from '@/pages/Settings/Account';
 import ThemeSettings from '@/pages/Settings/Theme';
 import UsersSettings from '@/pages/Settings/Users';
@@ -95,6 +96,7 @@ export const appRoutes: RouteObject[] = [
               { path: 'settings/insurances', element: <Insurances /> },
               { path: 'settings/attendants', element: <AttendantsSettings /> },
               { path: 'settings/commissions', element: <CommissionsSettings /> },
+              { path: 'settings/lis-integration', element: <LisIntegrationSettings /> },
             ],
           },
         ],

@@ -29,6 +29,7 @@ export type NavIcon =
   | 'insurances'
   | 'attendants'
   | 'commissions'
+  | 'integration'
   | 'users'
   | 'theme'
   | 'tenants'
@@ -212,6 +213,14 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requiredRoles: MANAGER_PLUS,
     inSidebar: true,
     icon: 'commissions',
+    group: 'configuracoes',
+  },
+  {
+    path: '/settings/lis-integration',
+    label: 'Integração LIS',
+    requiredRoles: MANAGER_PLUS,
+    inSidebar: true,
+    icon: 'integration',
     group: 'configuracoes',
   },
   {

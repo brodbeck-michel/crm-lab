@@ -214,6 +214,11 @@ services:
       # o backend não sobe.
       RESEND_API_KEY: ${RESEND_API_KEY:?defina RESEND_API_KEY}
       RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:?defina RESEND_FROM_EMAIL}
+      # Sincronizacao com o Bitlab (CRMLAB-52, D-185). A chave e por laboratorio,
+      # no banco — aqui so a URL e o intervalo. Homologacao usa `0` (desligado).
+      BITLAB_API_BASE_URL: ${BITLAB_API_BASE_URL:-https://integracoes.bitlab.net.br/webhook}
+      LIS_SYNC_INTERVAL_MS: ${LIS_SYNC_INTERVAL_MS:-1800000}
+      LIS_SYNC_INITIAL_DAYS: ${LIS_SYNC_INITIAL_DAYS:-90}
     read_only: true
     tmpfs:
       - /tmp

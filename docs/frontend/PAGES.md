@@ -28,6 +28,7 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 /settings/insurances          → Convênios                 (gestor+)
 /settings/attendants          → Atendentes (LIS)           (gestor+)
 /settings/commissions         → Comissão (LIS)            (gestor lê; admin edita)
+/settings/lis-integration     → Integração LIS            (gestor lê e sincroniza; admin edita — CRMLAB-52)
 /settings/account             → Minha Conta               (todos os papéis de tenant)
 /settings/users               → Usuários & Permissões     (admin)
 /settings/theme               → Personalização            (admin)
@@ -69,6 +70,7 @@ padrão; estado por grupo persiste em localStorage por usuário.
 | `/settings/insurances` | manager · admin | sim | Configurações |
 | `/settings/attendants` | manager · admin | sim | Configurações |
 | `/settings/commissions` | manager · admin | sim | Configurações |
+| `/settings/lis-integration` (CRMLAB-52) | manager · admin | sim | Configurações |
 | `/settings/account` | attendant · manager · admin | sim | Configurações |
 | `/settings/users` | admin | sim | Configurações |
 | `/settings/theme` | admin | sim | Configurações |

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import type { LisImportKind } from '@crm-lab/shared';
 import {
   useLisBudgetsFilters,
   useLisBudgetsPendingSummary,
@@ -55,7 +56,15 @@ function KpiSkeleton() {
  * de filtro, colado ao período — as duas informações respondem juntas à mesma
  * pergunta ("de onde vem e de quando é o que estou vendo").
  */
-function ImportStamp({ fileName, createdAt }: { fileName: string | null; createdAt?: string }) {
+function ImportStamp({
+  fileName,
+  kind,
+  createdAt,
+}: {
+  fileName: string | null;
+  kind?: LisImportKind;
+  createdAt?: string;
+}) {
   if (!createdAt) {
     return <p className="font-body text-caption text-neutral-600">Nenhuma importação ainda</p>;
   }
@@ -63,7 +72,7 @@ function ImportStamp({ fileName, createdAt }: { fileName: string | null; created
   return (
     <div className="min-w-0 text-right">
       <p className="truncate font-body text-caption font-semibold text-neutral-800" title={fileName ?? undefined}>
-        {fileName ?? 'Importação'}
+        {fileName ?? (kind === 'sync' ? 'Sincronização com o Bitlab (API)' : 'Importação')}
       </p>
       <p className="font-body text-caption text-neutral-600">
         Importada em <DateDisplay value={createdAt} variant="absolute" />
@@ -265,6 +274,7 @@ export default function Results() {
 
         <ImportStamp
           fileName={latestImport?.fileName ?? null}
+          kind={latestImport?.kind}
           createdAt={latestImport?.createdAt}
         />
       </div>

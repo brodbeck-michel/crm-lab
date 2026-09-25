@@ -160,6 +160,21 @@ const envSchema = z
     RESEND_API_KEY: optionalString,
     /** Remetente verificado no Resend (dominio/subdominio autenticado por DNS). */
     RESEND_FROM_EMAIL: optionalString,
+
+    /**
+     * Sincronizacao dos orcamentos pela API do Bitlab (CRMLAB-52, D-185). A
+     * CHAVE nao mora aqui: e por laboratorio, cifrada em `lis_sync_settings`.
+     * A URL base e da instalacao — o Bitlab e um so.
+     */
+    BITLAB_API_BASE_URL: z.string().url().default('https://integracoes.bitlab.net.br/webhook'),
+    /** Intervalo do agendador. `0` desliga o agendador (hml, testes); "Sincronizar agora" continua. */
+    LIS_SYNC_INTERVAL_MS: z.preprocess((v) => {
+      if (v === undefined || v === null || v === '') return 30 * 60 * 1000;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : v;
+    }, z.number().int().min(0)),
+    /** Primeira carga, sem marca d'agua: quantos dias para tras. */
+    LIS_SYNC_INITIAL_DAYS: numberFrom(90),
   })
   .superRefine((value, ctx) => {
     if (value.NODE_ENV !== 'production') return;

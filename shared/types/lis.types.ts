@@ -13,7 +13,7 @@ import type { IsoDate, IsoDateTime, PaginationMeta, PaginationQuery } from './ap
 // LIS Imports (API_CONTRACTS.md §10.1)
 // ---------------------------------------------------------------------------
 
-export type LisImportKind = 'import' | 'purge';
+export type LisImportKind = 'import' | 'purge' | 'sync';
 export type LisImportStatus = 'processing' | 'completed' | 'failed';
 
 export interface LisImport {

@@ -26,6 +26,8 @@ describe('splitBold — formata', () => {
   it('espaço no meio pode; pontuação em volta pode', () => {
     expect(bolds('Atenção: *jejum de 8 horas*.')).toEqual(['jejum de 8 horas']);
     expect(bolds('(*urgente*)')).toEqual(['urgente']);
+    // negrito + itálico/tachado do WhatsApp: o negrito aparece
+    expect(bolds('_*importante*_ e ~*antigo*~')).toEqual(['importante', 'antigo']);
   });
 
   it('cada linha formata sozinha', () => {

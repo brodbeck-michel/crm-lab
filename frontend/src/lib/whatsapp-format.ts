@@ -4,7 +4,8 @@
  * - abertura não seguida de espaço, fechamento não precedido de espaço;
  * - não atravessa quebra de linha nem contém outro `*` (`**` vazio não casa);
  * - o `*` fica na borda da palavra: colado por fora a letra/dígito não formata
- *   (`2*3*4`, `a*b*c`), igual ao WhatsApp.
+ *   (`2*3*4`, `a*b*c`), igual ao WhatsApp. `_` e `~` por fora não bloqueiam:
+ *   `_*texto*_` (negrito + itálico no WhatsApp) mostra o negrito.
  *
  * Devolve segmentos para quem renderiza montar nós React — nunca HTML.
  */
@@ -13,7 +14,7 @@ export interface TextSegment {
   bold: boolean;
 }
 
-const BOLD = /(?<![\p{L}\p{N}_*])\*([^\s*](?:[^*\n]*[^\s*])?)\*(?![\p{L}\p{N}_*])/gu;
+const BOLD = /(?<![\p{L}\p{N}*])\*([^\s*](?:[^*\n]*[^\s*])?)\*(?![\p{L}\p{N}*])/gu;
 
 export function splitBold(text: string): TextSegment[] {
   const segments: TextSegment[] = [];

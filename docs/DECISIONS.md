@@ -2643,13 +2643,15 @@ horário em que a antiga dona não está.
    não é seguido de espaço, o de fechamento não é precedido de espaço, o trecho não atravessa
    quebra de linha e não contém outro `*`; `**` vazio, asterisco solto e `2 * 3 * 4` não formatam.
    Além disso o `*` precisa estar na **borda da palavra** (não colado a letra/dígito por fora),
-   como no WhatsApp: `2*3*4` e `a*b*c` ficam como estão.
+   como no WhatsApp: `2*3*4` e `a*b*c` ficam como estão. `_`/`~` por fora não bloqueiam
+   (`_*texto*_`, negrito + itálico no WhatsApp, mostra o negrito).
 3. Renderiza como nós React (`<strong>` + texto), **nunca** `dangerouslySetInnerHTML` — o React
    escapa o texto do paciente e não há XSS. A bolha continua com `whitespace-pre-wrap` (quebras
    de linha preservadas); hoje ela não gera links, então nada mais muda.
 4. Compositor: **Ctrl+B / Cmd+B** envolve a seleção em `*` e mantém o texto selecionado; sem
-   seleção insere `**` com o cursor no meio. Mudança mínima no `Composer` (um ramo no
-   `onKeyDown`).
+   seleção insere `**` com o cursor no meio. Espaço nas pontas da seleção (duplo clique no
+   Windows pega `palavra `) fica fora dos asteriscos, senão não formataria. Mudança mínima no
+   `Composer` (um ramo no `onKeyDown`).
 5. **Prévia da última mensagem** na lista (`ConversationItem`) fica **como está**, com os
    asteriscos: é o mais simples (zero mudança) e a prévia é truncada e em `text-caption`, onde
    negrito não ajuda a ler.

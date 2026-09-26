@@ -178,7 +178,16 @@ interface ProposalService {
   updateDiscount(ctx: TenantContext, id: string, discountPercent: number): Promise<Proposal>;
   /** CRMLAB-52 (D-119). Dona ou manager+. Grava o vínculo e concilia na mesma transação. */
   setLisReference(ctx: TenantContext, id: string, lisBudgetNumber: string | null): Promise<ProposalDetail>;
-  // markWonFromLis(tx, tenantId, proposalId): Promise<boolean> — função exportada de
+  /** CRMLAB-58 (D-200/D-201). Reserva -> envio pelo MessageService -> vínculo. */
+  sendFromCard(ctx: TenantContext, id: string, dto: { conversationId: string; message: string }): Promise<ProposalDetail>;
+  /** CRMLAB-58 (D-202). */
+  resendFromCard(ctx: TenantContext, id: string, message: string): Promise<Message>;
+  relinkConversation(ctx: TenantContext, id: string, conversationId: string): Promise<ProposalDetail>;
+  setResponsible(ctx: TenantContext, id: string, userId: string): Promise<ProposalDetail>;
+  // applySystemTransition(tx, tenantId, proposalId, { to, source, systemMessage, lisReconciled? })
+  //   : Promise<SystemTransition | null> — transição de SISTEMA (D-204 item 5), e
+  // announceSystemTransitions(deps, tenantId, transitions) depois do commit.
+  // markWonFromLis(tx, tenantId, proposalId): Promise<SystemTransition | null> — função exportada de
   // proposal.service.ts, não método: roda na transação de quem chama (LisReconcileService, §25)
   // e não precisa das deps do service.
 }
@@ -215,6 +224,17 @@ interface ProposalService {
   recusam com `PROPOSAL_EDIT_NOT_ALLOWED` (`reason: "bitlab_origin"`). Sem conversa, a transição
   não grava mensagem de sistema. `canSeeProposal`: proposta `bitlab` sem responsável é visível a
   todo o tenant; `list` do atendente traz as dele **e** essas.
+- **Envio pelo cartão (CRMLAB-58, D-200/D-201):** `sendFromCard` recebe um `MessageSender`
+  (o `createFromAgent` do `MessageService`, injetado por `createProposalServices`; o teste troca o
+  `WhatsAppService` por `makeProposalModule({ whatsapp })`). Três passos: (1) transação curta com
+  `lockForSend` (`FOR UPDATE`), todas as checagens e a reserva `send_claim_id`; (2) envio **fora**
+  da transação pelo caminho do Composer — falhou, `releaseSend` e o erro sobe; (3) transação curta
+  com `finalizeSend` (confere a reserva), histórico, mensagem de sistema, audit
+  `update_proposal_status` (`source: "send"`) na mesma transação; WS e analytics depois do
+  commit. Falha no passo 3 é logada como `proposal.send_finalize_failed` (risco declarado, D-201).
+- **Depois do envio (D-202):** `resendFromCard` (sem mudar estágio), `relinkConversation` e
+  `setResponsible`, cada um com audit próprio (`resend_proposal_message`,
+  `update_proposal_conversation`, `update_proposal_responsible`) e WS `proposal.updated`.
 
 ---
 
@@ -1357,12 +1377,12 @@ chama**.
 
 ```typescript
 // backend/src/services/lis-reconcile.service.ts — funções, sem estado
-/** Os orçamentos de `numbers` que têm proposta vinculada. Devolve os ids que foram a `ganho`. */
-reconcileBudgets(tx: DbTx, tenantId: string, numbers: readonly string[]): Promise<string[]>;
-/** Uma proposta, contra o orçamento do número dela (se já existir). true = foi a `ganho`. */
-reconcileProposal(tx: DbTx, tenantId: string, proposalId: string): Promise<boolean>;
-/** Depois do commit: WS `proposal.status_changed` por id + invalidação do cache de analytics. */
-announceLisWins(deps: { wsHub; cache }, tenantId: string, proposalIds: readonly string[]): Promise<void>;
+/** Os orçamentos de `numbers` que têm proposta vinculada. Devolve as transições de sistema feitas. */
+reconcileBudgets(tx: DbTx, tenantId: string, numbers: readonly string[]): Promise<SystemTransition[]>;
+/** Uma proposta, contra o orçamento do número dela (se já existir). */
+reconcileProposal(tx: DbTx, tenantId: string, proposalId: string): Promise<SystemTransition[]>;
+/** Depois do commit: = `announceSystemTransitions` (§4) — WS por transição + cache de analytics. */
+announceLisWins(deps: { wsHub; cache }, tenantId: string, transitions: readonly SystemTransition[]): Promise<void>;
 ```
 
 **Regras** (D-119):
@@ -1379,9 +1399,14 @@ announceLisWins(deps: { wsHub; cache }, tenantId: string, proposalIds: readonly 
   chama com `announceLisWins` **depois do commit**, para não anunciar um `ganho` que um rollback
   desfaria. O audit `update_proposal_status`/`lis_reconcile_conflict` entra **na** transação
   (`auditRepo.insert`), porque `db.withTenant` não aninha e ele tem que sumir junto num rollback.
-- **Exceção da origem `bitlab` (CRMLAB-57, D-197):** proposta `bitlab` em `novo_contato` com
-  requisição **não** chama `markWonFromLis`: só espelha a requisição (selo "Pré-cadastro
-  feito"). Nos outros estágios, D-119 como acima.
+- **Origem `bitlab` — régua da D-204 (CRMLAB-60 parcial, emenda D-119/D-197):** a proposta
+  `bitlab` **não** chama `markWonFromLis`. Lê as Regras (uma vez por chamada) e usa
+  `applySystemTransition`: `paid_on` preenchido (qualquer valor) em qualquer estágio aberto →
+  `ganho` (`source: "lis_payment"`, grava `lis_reconciled_at`), se `paymentToWon` ligada; senão,
+  requisição em `orcamento_enviado`/`follow_up` → `negociacao` (`source: "lis_requisition"`), se
+  `requisitionToNegotiation` ligada. Em `novo_contato` a requisição continua só espelhada (selo
+  "Pré-cadastro feito", D-197). `proposalsWon` conta só as que foram a `ganho`. Provisória até o
+  CRMLAB-53.
 - **Valor do Bitlab (D-195 item 2):** proposta `bitlab` não terminal tem `total_price` e
   `insurance_id` regravados a partir de `lis_budgets.total_value`/`insurance_id` quando mudaram.
 

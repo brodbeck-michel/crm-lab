@@ -7,19 +7,27 @@
  * `LisImportService.ingestRows`, SEMPRE dentro da transacao de quem chama
  * (`db.withTenant` nao aninha).
  *
- * Devolve os ids das propostas que foram a `ganho`. Quem chama anuncia com
- * `announceLisWins` DEPOIS do commit: um WS emitido dentro da transacao
- * anunciaria um `ganho` que um rollback desfaria.
+ * Origem `crm`: D-119 (requisicao -> `ganho`). Origem `bitlab`: D-204
+ * (pagamento -> `ganho`, requisicao -> `negociacao`, pelas Regras).
+ *
+ * Devolve as transicoes de sistema feitas (`SystemTransition`). Quem chama
+ * anuncia com `announceLisWins` DEPOIS do commit: um WS emitido dentro da
+ * transacao anunciaria um estagio que um rollback desfaria.
  */
-import { TERMINAL_STATUSES, type ProposalStatus } from '@crm-lab/shared';
+import { TERMINAL_STATUSES, type FunnelRules, type ProposalStatus } from '@crm-lab/shared';
 import type { DbTx } from '../db/types.js';
 import type { CacheService } from '../lib/cache.js';
-import { logger } from '../lib/logger.js';
 import type { WsHub } from '../lib/ws-hub.js';
 import * as auditRepo from '../repositories/audit.repository.js';
 import { toNumber } from '../repositories/row-mappers.js';
-import { cachePrefix as analyticsCachePrefix } from './analytics.service.js';
-import { markWonFromLis } from './proposal.service.js';
+import { readFunnelRules } from './funnel-rules.service.js';
+import {
+  announceSystemTransitions,
+  applySystemTransition,
+  markWonFromLis,
+  proposalRef,
+  type SystemTransition,
+} from './proposal.service.js';
 
 interface ReconcileRow {
   proposal_id: string;
@@ -44,8 +52,49 @@ function moneyOrNull(value: unknown): number | null {
   return value === null || value === undefined ? null : toNumber(value);
 }
 
-async function reconcileRows(tx: DbTx, tenantId: string, rows: ReconcileRow[]): Promise<string[]> {
-  const won: string[] = [];
+/**
+ * Regua do cartao `bitlab` (D-204, CRMLAB-60 parcial — provisoria ate o
+ * CRMLAB-53): pagamento -> `ganho` de qualquer estagio aberto; requisicao em
+ * `orcamento_enviado`/`follow_up` -> `negociacao`. Cada uma so com a regra das
+ * Regras ligada. Requisicao sozinha nunca leva a `ganho`.
+ */
+async function applyBitlabRule(
+  tx: DbTx,
+  tenantId: string,
+  row: ReconcileRow,
+  rules: FunnelRules,
+): Promise<SystemTransition | null> {
+  const ref = proposalRef(row.proposal_id);
+  if (row.paid_on !== null && rules.automation.paymentToWon.enabled) {
+    return applySystemTransition(tx, tenantId, row.proposal_id, {
+      to: 'ganho',
+      source: 'lis_payment',
+      systemMessage: `Proposta #${ref} ganha — pagamento registrado no LIS 🎉`,
+      lisReconciled: true,
+    });
+  }
+  if (
+    row.requisition_number !== null &&
+    (row.status === 'orcamento_enviado' || row.status === 'follow_up') &&
+    rules.automation.requisitionToNegotiation.enabled
+  ) {
+    return applySystemTransition(tx, tenantId, row.proposal_id, {
+      to: 'negociacao',
+      source: 'lis_requisition',
+      systemMessage: `Proposta #${ref} em negociação — requisição aberta no LIS`,
+    });
+  }
+  return null;
+}
+
+async function reconcileRows(
+  tx: DbTx,
+  tenantId: string,
+  rows: ReconcileRow[],
+): Promise<SystemTransition[]> {
+  const transitions: SystemTransition[] = [];
+  // Lidas uma vez por chamada, e so se houver cartao `bitlab` (D-190 item 2).
+  let rules: FunnelRules | null = null;
   for (const row of rows) {
     const requisition = row.requisition_number;
     const paidValue = moneyOrNull(row.paid_value);
@@ -105,14 +154,19 @@ async function reconcileRows(tx: DbTx, tenantId: string, rows: ReconcileRow[]): 
       }
     }
 
-    // D-197: cartao `bitlab` ainda em "Novo orcamento" com requisicao e
-    // pre-cadastro — so espelha (selo), nao fecha como ganho.
-    const preRegistration = bitlab && row.status === 'novo_contato';
-    if (requisition !== null && open && !preRegistration) {
-      if (await markWonFromLis(tx, tenantId, row.proposal_id)) won.push(row.proposal_id);
+    if (!open) continue;
+    let transition: SystemTransition | null = null;
+    if (bitlab) {
+      // D-204 (emenda D-119/D-197): pagamento e requisicao, pelas Regras.
+      rules ??= await readFunnelRules(tx, tenantId);
+      transition = await applyBitlabRule(tx, tenantId, row, rules);
+    } else if (requisition !== null) {
+      // Origem `crm`: D-119 intacta — requisicao fecha como ganho.
+      transition = await markWonFromLis(tx, tenantId, row.proposal_id);
     }
+    if (transition) transitions.push(transition);
   }
-  return won;
+  return transitions;
 }
 
 const SELECT_JOIN = `
@@ -127,12 +181,12 @@ const SELECT_JOIN = `
     JOIN lis_budgets b ON b.tenant_id = p.tenant_id AND b.number = p.lis_budget_number
    WHERE p.tenant_id = $1`;
 
-/** Os orcamentos de `numbers` que tem proposta vinculada. Devolve as que foram a `ganho`. */
+/** Os orcamentos de `numbers` que tem proposta vinculada. Devolve as transicoes de sistema feitas. */
 export async function reconcileBudgets(
   tx: DbTx,
   tenantId: string,
   numbers: readonly string[],
-): Promise<string[]> {
+): Promise<SystemTransition[]> {
   if (numbers.length === 0) return [];
   const result = await tx.query<ReconcileRow>(
     `${SELECT_JOIN} AND p.lis_budget_number = ANY($2::text[])
@@ -142,40 +196,28 @@ export async function reconcileBudgets(
   return reconcileRows(tx, tenantId, result.rows);
 }
 
-/** Uma proposta, contra o orcamento do numero dela (se ja existir). `true` = foi a `ganho`. */
+/** Uma proposta, contra o orcamento do numero dela (se ja existir). Devolve as transicoes feitas. */
 export async function reconcileProposal(
   tx: DbTx,
   tenantId: string,
   proposalId: string,
-): Promise<boolean> {
+): Promise<SystemTransition[]> {
   const result = await tx.query<ReconcileRow>(`${SELECT_JOIN} AND p.id = $2 FOR UPDATE OF p`, [
     tenantId,
     proposalId,
   ]);
-  const won = await reconcileRows(tx, tenantId, result.rows);
-  return won.length > 0;
+  return reconcileRows(tx, tenantId, result.rows);
 }
 
 /**
- * Depois do commit: WS `proposal.status_changed` por proposta ganha e
- * invalidacao do cache de analytics (o funil e o `realized` mudaram). Falha de
- * cache nao derruba nada — mesma regra de `ProposalService.invalidateAnalytics`.
+ * Depois do commit: anuncia as transicoes da conciliacao (WS por transicao +
+ * cache de analytics). Mantido com este nome para quem ja chamava; o corpo e
+ * `announceSystemTransitions` (D-204 item 5).
  */
 export async function announceLisWins(
   deps: { wsHub: WsHub; cache: CacheService },
   tenantId: string,
-  proposalIds: readonly string[],
+  transitions: readonly SystemTransition[],
 ): Promise<void> {
-  if (proposalIds.length === 0) return;
-  for (const proposalId of proposalIds) {
-    deps.wsHub.emitToTenant(tenantId, 'proposal.status_changed', { proposalId, status: 'ganho' });
-  }
-  try {
-    await deps.cache.delByPrefix(analyticsCachePrefix(tenantId));
-  } catch (err) {
-    logger.warn('analytics.cache_invalidation_failed', {
-      tenantId,
-      detail: err instanceof Error ? err.message : 'erro desconhecido',
-    });
-  }
+  await announceSystemTransitions(deps, tenantId, transitions);
 }

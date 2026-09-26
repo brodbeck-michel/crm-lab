@@ -224,10 +224,19 @@ export function canReopen(rules: ManualMoveRules, role: UserRole): boolean {
   return (rules.reopenClosed.roles as readonly string[]).includes(role);
 }
 
-function canMoveCard(rules: ManualMoveRules, actor: TransitionActor): boolean {
+/**
+ * A trava "Mover card de outra atendente" sozinha: dona (ou cartao sem
+ * responsavel), admin sempre, gestor se `moveOthersCards`. E o que
+ * `checkTransition` usa, e o que o envio pelo cartao (CRMLAB-58, D-200 item 2)
+ * confere — o destino do envio e de sistema, mas quem envia continua sendo uma
+ * pessoa.
+ */
+export function canActOnCard(rules: ManualMoveRules, actor: TransitionActor): boolean {
   if (actor.isOwner || actor.role === 'admin') return true;
   return actor.role === 'manager' && rules.moveOthersCards;
 }
+
+const canMoveCard = canActOnCard;
 
 /**
  * A decisão de uma transição manual. `null` = permitida. O backend traduz a
@@ -297,4 +306,23 @@ export function renderSendMessageTemplate(
       ? values[name as SendMessageVariable]
       : whole,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Envio pelo cartao (CRMLAB-58)
+// ---------------------------------------------------------------------------
+
+/**
+ * Estagio para onde o cartao `bitlab` vai quando e enviado (D-200 item 5).
+ * Com requisicao (pre-cadastro, D-197) e "Requisicao -> Negociacao" ligada:
+ * `negociacao` — transicao de sistema, fora da matriz manual. Senao,
+ * `orcamento_enviado`.
+ */
+export function bitlabSendTarget(
+  lisRequisitionNumber: string | null,
+  automation: Pick<FunnelAutomationRules, 'requisitionToNegotiation'>,
+): 'orcamento_enviado' | 'negociacao' {
+  return lisRequisitionNumber !== null && automation.requisitionToNegotiation.enabled
+    ? 'negociacao'
+    : 'orcamento_enviado';
 }

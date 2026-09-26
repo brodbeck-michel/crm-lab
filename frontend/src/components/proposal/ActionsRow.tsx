@@ -4,6 +4,7 @@ import {
   PROPOSAL_STATUSES,
   PROPOSAL_STATUS_LABELS,
   NEXT_STAGE,
+  RESEND_PROPOSAL_STATUSES,
   TERMINAL_STATUSES,
   allowedTargets,
 } from '@crm-lab/shared';
@@ -21,6 +22,15 @@ interface ActionsRowProps {
    * botão não aparece — quem monta a tela decide se o fluxo existe ali.
    */
   onSendProposal?: () => void;
+  /**
+   * Força a disponibilidade do "Enviar orçamento". O envio do cartão do Bitlab
+   * (CRMLAB-58, D-200) é transição de sistema no destino — pode ir direto a
+   * `negociacao` — e só respeita a trava de dono (`canActOnCard`). Omitido =
+   * a regra de sempre (`orcamento_enviado` entre os destinos permitidos).
+   */
+  canSend?: boolean;
+  /** "Reenviar mensagem" (D-202 item 1) — só em `orcamento_enviado`/`follow_up`/`negociacao`. */
+  onResend?: () => void;
   /**
    * Travas das Regras do laboratório (CRMLAB-56, D-192). Omitidas = padrões,
    * que são a matriz `ALLOWED_TRANSITIONS` com `ganho`/`perdido` terminais.
@@ -41,6 +51,8 @@ export default function ActionsRow({
   onMarkLost,
   isPending,
   onSendProposal,
+  canSend: canSendOverride,
+  onResend,
   rules = DEFAULT_FUNNEL_RULES.manualMoves,
   actor = OWNER,
   lisReconciled = false,
@@ -52,7 +64,9 @@ export default function ActionsRow({
   const canLose = targets.includes('perdido');
   const nextStage = NEXT_STAGE[status];
   const canAdvance = nextStage !== undefined && targets.includes(nextStage);
-  const canSend = status === 'novo_contato' && targets.includes('orcamento_enviado');
+  const canSend =
+    status === 'novo_contato' && (canSendOverride ?? targets.includes('orcamento_enviado'));
+  const canResend = onResend !== undefined && RESEND_PROPOSAL_STATUSES.includes(status);
 
   const handleStatusChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value;
@@ -100,6 +114,11 @@ export default function ActionsRow({
             loading={isPending}
           >
             Enviar orçamento
+          </Button>
+        )}
+        {canResend && (
+          <Button variant="secondary" onClick={onResend} disabled={isPending}>
+            Reenviar mensagem
           </Button>
         )}
         {canAdvance && nextStage && (

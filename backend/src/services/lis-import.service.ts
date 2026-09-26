@@ -31,6 +31,7 @@ import {
 import type { AuditService } from './audit.service.js';
 import { announceBitlabProposals, createBitlabProposals } from './bitlab-proposal.service.js';
 import { announceLisWins, reconcileBudgets } from './lis-reconcile.service.js';
+import type { SystemTransition } from './proposal.service.js';
 
 export const DEFAULT_PAGE = 1;
 export const DEFAULT_LIMIT = 20;
@@ -129,7 +130,7 @@ export function createLisImportService(deps: LisImportServiceDeps): LisImportSer
 
     let actualAccepted = 0;
     let errorMessage: string | null = null;
-    const won: string[] = [];
+    const won: SystemTransition[] = [];
     const createdProposals: string[] = [];
 
     const chunks = chunk(consolidated, CHUNK_SIZE);
@@ -164,7 +165,8 @@ export function createLisImportService(deps: LisImportServiceDeps): LisImportSer
       rowsAccepted: actualAccepted,
       rowsRejected: rowsInFile - actualAccepted,
       errorMessage,
-      proposalsWon: won.length,
+      // So as que foram a `ganho` (D-119 item 9; a negociacao da D-204 nao conta).
+      proposalsWon: won.filter((t) => t.to === 'ganho').length,
       proposalsCreated: createdProposals.length,
     });
 

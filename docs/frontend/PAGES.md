@@ -418,7 +418,8 @@ nunca "sem permissão" (não vazar existência).
   vira `Input` editável (`DiscountSection` sem `readOnly`) e médico solicitante vira `Input` de
   texto. "Salvar" chama `PATCH /proposals/:id/items` com o carrinho inteiro; erro
   `DISCOUNT_EXCEEDS_LIMIT` vira toast pelo handler genérico, mantendo o modal aberto em edição
-- Dados: `GET /proposals/:id`, `PATCH /proposals/:id/status`, `PATCH /proposals/:id/items`
+- Dados: `GET /proposals/:id`, `PATCH /proposals/:id/status`, `PATCH /proposals/:id/items`,
+  `POST /proposals/:id/send|resend`, `PATCH /proposals/:id/conversation|responsible` (CRMLAB-58)
 - **Nº do orçamento no LIS (CRMLAB-52, D-119):** campo sempre visível abaixo do convênio, com o
   rótulo "Nº do orçamento no LIS". Vazio mostra "Informar" (link). Clicar vira `Input`
   numérico + [Salvar]/[Cancelar] e chama `PATCH /proposals/:id/lis-reference`. Em `ganho` o
@@ -434,9 +435,25 @@ nunca "sem permissão" (não vazar existência).
   abaixo do número, o bloco "Orçamento do Bitlab" com nº, data, atendente e convênio. No lugar
   dos itens, a linha "Valor do orçamento no Bitlab" com o total (não há itens nem desconto). Sem
   botão "Editar", e o nº do orçamento no LIS é só leitura. Sem conversa: aviso "Sem conversa
-  vinculada" e o botão "Enviar orçamento" não aparece (enviar pela conversa é o CRMLAB-58).
+  vinculada" (o envio pelo cartão é o item abaixo).
   "Mudar estágio", "Marcar como ganho" e "Marcar como perdido" seguem a matriz de sempre — de
   "Novo orçamento" dá para ir a "Orçamento enviado" ou "Perdido".
+  - **Enviar pelo cartão (CRMLAB-58, D-200/D-203):** em "Novo orçamento" sem conversa, o botão
+    "Enviar orçamento" aparece para quem pode mexer no cartão (`canActOnCard`) e abre, no lugar
+    das ações, o painel `SendProposalPanel`: dados do Bitlab para conferir (paciente, nº, valor,
+    convênio, "Vai para" = `bitlabSendTarget`), lista das conversas ativas que a pessoa vê
+    (`GET /conversations?status=active&limit=100`, busca livre por nome/telefone com
+    `SearchInput`), com as **sugeridas** em cima (chip "Sugerida", `nameSimilarity` > 0) e a
+    mensagem do modelo das Regras num `TextArea` editável. "Enviar" só liga depois de clicar
+    numa conversa. Erro do envio aparece no painel (`role="alert"`) e ele fica aberto.
+  - **Depois do envio (D-202):** linha "Conversa: {nome} · {telefone}"; para a dona, gestor ou
+    admin, com o cartão aberto, [Trocar conversa] (o mesmo painel, só a lista) e, em
+    `orcamento_enviado`/`follow_up`/`negociacao`, [Reenviar mensagem] nas ações (o painel, só a
+    mensagem).
+- **Responsável (CRMLAB-58, D-202 item 3):** `ResponsibleField` abaixo do bloco do Bitlab, em
+  toda proposta. Gestor/admin: `Select` com toda a equipe (`GET /conversations/assignees`), em
+  qualquer estágio. Atendente dona com o cartão aberto: `Select` só com as atendentes. Os
+  demais veem só o nome ("Sem responsável (fila comum)" quando não há).
 
 ---
 

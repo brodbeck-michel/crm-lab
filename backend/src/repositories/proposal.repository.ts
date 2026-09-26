@@ -203,6 +203,8 @@ export interface ConversationRef {
   patientName: string | null;
   patientPhone: string;
   status: string;
+  /** Dona da conversa; `null` = fila livre. Decide a visibilidade no envio pelo cartao (D-200 item 3). */
+  assignedTo: string | null;
 }
 
 /**
@@ -224,8 +226,9 @@ export async function findConversation(
     patient_name: string | null;
     patient_phone: string;
     status: string;
+    assigned_to: string | null;
   }>(
-    `SELECT id, patient_name, patient_phone, status
+    `SELECT id, patient_name, patient_phone, status, assigned_to
        FROM conversations WHERE id = $1`,
     [conversationId],
   );
@@ -236,6 +239,7 @@ export async function findConversation(
     patientName: row.patient_name,
     patientPhone: row.patient_phone,
     status: row.status,
+    assignedTo: row.assigned_to,
   };
 }
 
@@ -751,4 +755,117 @@ export async function list(tx: DbTx, criteria: ProposalListCriteria): Promise<Pr
   );
 
   return { rows: paged.rows.map(mapProposal), total };
+}
+
+// ---------------------------------------------------------------------------
+// Envio pelo cartao (CRMLAB-58, D-201)
+// ---------------------------------------------------------------------------
+
+/** Reserva com mais do que isto e considerada abandonada (D-201 item 1). */
+export const SEND_CLAIM_TTL_SQL = "INTERVAL '2 minutes'";
+
+/**
+ * Trava a linha (`FOR UPDATE`) e diz se ha reserva de envio viva. `null` =
+ * proposta inexistente NESTE tenant (o RLS escondeu). A trava vale ate o fim
+ * da transacao de quem chama: e ela que serializa duas atendentes enviando o
+ * mesmo cartao.
+ */
+export async function lockForSend(
+  tx: DbTx,
+  id: string,
+): Promise<{ claimAlive: boolean } | null> {
+  const result = await tx.query<{ claim_alive: boolean | null }>(
+    `SELECT send_claim_id IS NOT NULL
+              AND send_claimed_at > NOW() - ${SEND_CLAIM_TTL_SQL} AS claim_alive
+       FROM proposals WHERE id = $1 FOR UPDATE`,
+    [id],
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return { claimAlive: row.claim_alive === true };
+}
+
+/** Grava a reserva. So chamar com a linha travada por `lockForSend`. */
+export async function claimSend(tx: DbTx, id: string, claimId: string): Promise<void> {
+  await tx.query(
+    `UPDATE proposals SET send_claim_id = $2, send_claimed_at = NOW() WHERE id = $1`,
+    [id, claimId],
+  );
+}
+
+/** Desfaz a reserva — so a desta tentativa (`send_claim_id` confere). */
+export async function releaseSend(tx: DbTx, id: string, claimId: string): Promise<void> {
+  await tx.query(
+    `UPDATE proposals SET send_claim_id = NULL, send_claimed_at = NULL
+      WHERE id = $1 AND send_claim_id = $2`,
+    [id, claimId],
+  );
+}
+
+/**
+ * Passo final do envio (D-201 item 3): vinculo, responsavel, `sent_at` e — se
+ * o cartao ainda esta em `novo_contato` — o estagio. So escreve se a reserva
+ * ainda e desta tentativa. Devolve o estagio anterior e o resultante, ou
+ * `null` quando a reserva nao e mais dela.
+ */
+export async function finalizeSend(
+  tx: DbTx,
+  input: {
+    id: string;
+    claimId: string;
+    conversationId: string;
+    createdBy: string;
+    status: ProposalStatus;
+  },
+): Promise<{ from: ProposalStatus; to: ProposalStatus } | null> {
+  const current = await tx.query<{ status: string }>(
+    'SELECT status FROM proposals WHERE id = $1 AND send_claim_id = $2 FOR UPDATE',
+    [input.id, input.claimId],
+  );
+  const before = current.rows[0];
+  if (!before) return null;
+  const from = before.status as ProposalStatus;
+  const to = from === 'novo_contato' ? input.status : from;
+  await tx.query(
+    `UPDATE proposals
+        SET conversation_id = $2, created_by = $3, sent_at = NOW(), status = $4,
+            send_claim_id = NULL, send_claimed_at = NULL, updated_at = NOW()
+      WHERE id = $1`,
+    [input.id, input.conversationId, input.createdBy, to],
+  );
+  return { from, to };
+}
+
+/** Troca a conversa vinculada (D-202 item 2). */
+export async function setConversation(
+  tx: DbTx,
+  id: string,
+  conversationId: string,
+): Promise<void> {
+  await tx.query(
+    'UPDATE proposals SET conversation_id = $2, updated_at = NOW() WHERE id = $1',
+    [id, conversationId],
+  );
+}
+
+/** Troca o responsavel (D-202 item 3). */
+export async function setResponsible(tx: DbTx, id: string, userId: string): Promise<void> {
+  await tx.query('UPDATE proposals SET created_by = $2, updated_at = NOW() WHERE id = $1', [
+    id,
+    userId,
+  ]);
+}
+
+/** Usuario do laboratorio para ser responsavel. `null` = inexistente neste tenant. */
+export async function findTenantUser(
+  tx: DbTx,
+  tenantId: string,
+  userId: string,
+): Promise<{ id: string; role: string; isActive: boolean } | null> {
+  const result = await tx.query<{ id: string; role: string; is_active: boolean }>(
+    'SELECT id, role, is_active FROM users WHERE id = $1 AND tenant_id = $2',
+    [userId, tenantId],
+  );
+  const row = result.rows[0];
+  return row ? { id: row.id, role: row.role, isActive: row.is_active } : null;
 }

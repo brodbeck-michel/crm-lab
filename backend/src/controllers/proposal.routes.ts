@@ -10,6 +10,10 @@
  *                                         (CRMLAB-12, D-132) — so em novo_contato/orcamento_enviado
  *   PATCH /api/v1/proposals/:id/lis-reference  nº do orcamento no LIS (CRMLAB-52, D-119):
  *                                         dona ou manager+, concilia na mesma transacao
+ *   POST  /api/v1/proposals/:id/send      "Enviar orcamento" do cartao do Bitlab (CRMLAB-58, D-200/D-201)
+ *   POST  /api/v1/proposals/:id/resend    "Reenviar mensagem" pela conversa vinculada (D-202)
+ *   PATCH /api/v1/proposals/:id/conversation  troca a conversa vinculada (D-202)
+ *   PATCH /api/v1/proposals/:id/responsible   edita o responsavel (D-202)
  *   PATCH /api/v1/proposals/:id/approve   manager/admin
  *   PATCH /api/v1/proposals/:id/reject    manager/admin (motivo obrigatorio)
  *
@@ -25,7 +29,9 @@ import { z } from 'zod';
 import {
   LOSS_REASONS,
   PROPOSAL_STATUSES,
+  SEND_PROPOSAL_MESSAGE_MAX,
   type CreateProposalResponse,
+  type Message,
   type ListProposalsResponse,
   type ProposalDetail,
   type UpdateProposalItemsResponse,
@@ -40,7 +46,9 @@ import { ExamCatalogService } from '../services/exam-catalog.service.js';
 import { createAuditService } from '../services/audit.service.js';
 import { createInternalChatService } from '../services/internal-chat.service.js';
 import { ApprovalService } from '../services/approval.service.js';
+import { createMessageService } from '../services/message.service.js';
 import { MAX_LIMIT, ProposalService, type ProposalFilters } from '../services/proposal.service.js';
+import type { WhatsAppService } from '../services/whatsapp.service.js';
 
 const statusEnum = z.enum(
   PROPOSAL_STATUSES as unknown as [string, ...string[]],
@@ -126,6 +134,19 @@ export const updateLisReferenceSchema = z
   .object({ lisBudgetNumber: z.string().max(40).nullable() })
   .strict();
 
+/** CRMLAB-58 (D-200..D-202) — mesma faixa de `POST /conversations/:id/messages`. */
+const sendMessageText = z.string().trim().min(1).max(SEND_PROPOSAL_MESSAGE_MAX);
+
+export const sendProposalSchema = z
+  .object({ conversationId: z.string().uuid(), message: sendMessageText })
+  .strict();
+
+export const resendProposalSchema = z.object({ message: sendMessageText }).strict();
+
+export const updateConversationSchema = z.object({ conversationId: z.string().uuid() }).strict();
+
+export const updateResponsibleSchema = z.object({ userId: z.string().uuid() }).strict();
+
 export const rejectSchema = z.object({ reason: z.string().min(1).max(500) }).strict();
 
 export const proposalIdParamSchema = z.object({ id: z.string().uuid() });
@@ -136,6 +157,10 @@ type UpdateDiscountBody = z.infer<typeof updateDiscountSchema>;
 type UpdateItemsBody = z.infer<typeof updateItemsSchema>;
 type UpdateLisReferenceBody = z.infer<typeof updateLisReferenceSchema>;
 type RejectBody = z.infer<typeof rejectSchema>;
+type SendProposalBody = z.infer<typeof sendProposalSchema>;
+type ResendProposalBody = z.infer<typeof resendProposalSchema>;
+type UpdateConversationBody = z.infer<typeof updateConversationSchema>;
+type UpdateResponsibleBody = z.infer<typeof updateResponsibleSchema>;
 
 /** `Promise` rejeitada em handler async precisa chegar ao error-handler. */
 function handle(fn: (req: Request, res: Response) => Promise<void>): RequestHandler {
@@ -155,7 +180,15 @@ export interface ProposalModuleServices {
  * O ciclo Proposal <-> Approval e resolvido aqui: o ApprovalService e criado
  * primeiro e injetado no ProposalService pela interface `ApprovalRequester`.
  */
-export function createProposalServices(deps: ApiModuleDeps): ProposalModuleServices {
+export interface ProposalModuleOverrides {
+  /** O teste injeta o driver do canal (sucesso, falha) — mesmo padrao do modulo de conversas. */
+  whatsapp?: WhatsAppService;
+}
+
+export function createProposalServices(
+  deps: ApiModuleDeps,
+  overrides: ProposalModuleOverrides = {},
+): ProposalModuleServices {
   const audit = createAuditService(deps.db);
   const chat = createInternalChatService(deps.db, deps.wsHub);
   const examCatalog = new ExamCatalogService(new ExamRepository(deps.db), deps.cache);
@@ -175,6 +208,8 @@ export function createProposalServices(deps: ApiModuleDeps): ProposalModuleServi
     cache: deps.cache,
     // Onda 7: valida `insuranceId` em `create` (existe e ativo no tenant).
     insurances: new InsuranceRepository(deps.db),
+    // Envio pelo cartao (CRMLAB-58): o MESMO caminho do Composer do atendimento.
+    messages: createMessageService(deps, overrides.whatsapp ? { whatsapp: overrides.whatsapp } : {}),
   });
   return { proposals, approvals };
 }
@@ -271,6 +306,46 @@ export function updateProposalLisReference(service: ProposalService): RequestHan
   });
 }
 
+export function sendProposal(service: ProposalService): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const { id } = validated<{ id: string }>(req, 'params');
+    const dto = validated<SendProposalBody>(req, 'body');
+    const detail: ProposalDetail = await service.sendFromCard(ctx, id, dto);
+    res.status(200).json(detail);
+  });
+}
+
+export function resendProposal(service: ProposalService): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const { id } = validated<{ id: string }>(req, 'params');
+    const dto = validated<ResendProposalBody>(req, 'body');
+    const message: Message = await service.resendFromCard(ctx, id, dto.message);
+    res.status(201).json(message);
+  });
+}
+
+export function updateProposalConversation(service: ProposalService): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const { id } = validated<{ id: string }>(req, 'params');
+    const dto = validated<UpdateConversationBody>(req, 'body');
+    const detail: ProposalDetail = await service.relinkConversation(ctx, id, dto.conversationId);
+    res.status(200).json(detail);
+  });
+}
+
+export function updateProposalResponsible(service: ProposalService): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const { id } = validated<{ id: string }>(req, 'params');
+    const dto = validated<UpdateResponsibleBody>(req, 'body');
+    const detail: ProposalDetail = await service.setResponsible(ctx, id, dto.userId);
+    res.status(200).json(detail);
+  });
+}
+
 export function approveProposal(services: ProposalModuleServices): RequestHandler {
   return handle(async (req, res) => {
     const ctx = getContext(req);
@@ -303,8 +378,18 @@ export function rejectProposal(services: ProposalModuleServices): RequestHandler
   });
 }
 
+export function makeProposalModule(
+  overrides: ProposalModuleOverrides = {},
+): (deps: ApiModuleDeps) => ApiModule {
+  return (deps) => buildProposalModule(deps, overrides);
+}
+
 export function proposalModule(deps: ApiModuleDeps): ApiModule {
-  const services = createProposalServices(deps);
+  return buildProposalModule(deps, {});
+}
+
+function buildProposalModule(deps: ApiModuleDeps, overrides: ProposalModuleOverrides): ApiModule {
+  const services = createProposalServices(deps, overrides);
   const router = Router();
 
   router.get(
@@ -365,6 +450,42 @@ export function proposalModule(deps: ApiModuleDeps): ApiModule {
     validate(proposalIdParamSchema, 'params'),
     validate(updateLisReferenceSchema, 'body'),
     updateProposalLisReference(services.proposals),
+  );
+
+  router.post(
+    '/:id/send',
+    requireAuth(),
+    denyPlatformOperator(),
+    validate(proposalIdParamSchema, 'params'),
+    validate(sendProposalSchema, 'body'),
+    sendProposal(services.proposals),
+  );
+
+  router.post(
+    '/:id/resend',
+    requireAuth(),
+    denyPlatformOperator(),
+    validate(proposalIdParamSchema, 'params'),
+    validate(resendProposalSchema, 'body'),
+    resendProposal(services.proposals),
+  );
+
+  router.patch(
+    '/:id/conversation',
+    requireAuth(),
+    denyPlatformOperator(),
+    validate(proposalIdParamSchema, 'params'),
+    validate(updateConversationSchema, 'body'),
+    updateProposalConversation(services.proposals),
+  );
+
+  router.patch(
+    '/:id/responsible',
+    requireAuth(),
+    denyPlatformOperator(),
+    validate(proposalIdParamSchema, 'params'),
+    validate(updateResponsibleSchema, 'body'),
+    updateProposalResponsible(services.proposals),
   );
 
   // `denyPlatformOperator()` ANTES de `requireRoles`: o operador da plataforma

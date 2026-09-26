@@ -3360,6 +3360,151 @@ paciente no WhatsApp. 30 min é tarde demais para isso.
 **Impacto:** `config/env.ts`, `backend/.env.example`, `docker-compose.prod.yml`,
 `lis-sync.service.ts`; DEPLOYMENT.md, ENVIRONMENTS.md, SERVICES §24.
 
+## 2026-09-26 — Motor de tempo do funil (CRMLAB-59)
+
+### D-205: O motor de tempo é um job periódico que conta o prazo desde a entrada no estágio atual
+**Decisão:** `FunnelTimerService` (`backend/src/services/funnel-timer.service.ts`, SERVICES.md
+§27) executa as três regras de prazo das Regras (D-190) e o alerta de "Novo orçamento" parado
+(D-207). Cada regra só roda se estiver ligada.
+
+| Regra (`automation.*`) | De → para | Quando |
+|---|---|---|
+| `sentToFollowUp` | `orcamento_enviado` → `follow_up` | há X dias no estágio |
+| `negotiationToFollowUp` | `negociacao` → `follow_up` | há Y dias no estágio e `lis_paid_on` nulo |
+| `followUpToLost` | `follow_up` → `perdido` (`reasonLost: "silencio"`) | há Z dias no estágio |
+
+1. **Relógio:** conta a partir da **última linha de `proposal_status_history` com o estágio
+   atual** da proposta. Toda mudança de estágio (manual, reabertura, LIS, régua de fatos, o
+   próprio motor) grava uma linha nova, então o relógio zera sozinho, sem estado extra. Proposta
+   sem linha para o estágio atual (não deveria existir, SCHEMA §10) é ignorada.
+2. **Dias corridos** (`dayCounting: "calendar"`): o prazo vence quando `agora − entrada ≥ X × 24 h`.
+   "X = 3" move no terceiro dia depois da entrada, na mesma hora, e não antes.
+3. **Dias úteis** (`"business"`): segunda a sexta no relógio de Brasília. Entrada no fim de
+   semana começa a contar na segunda 00:00. Cada dia útil soma 24 h e pula sábado e domingo
+   (entrada quinta 10:00 com X = 3 vence terça 10:00). **Feriados ficam fora** (nem nacionais nem
+   municipais): não há calendário de feriados no produto. Fuso fixo UTC−3 (`America/Sao_Paulo`,
+   sem horário de verão desde 2019), mesma referência do Bitlab (D-187).
+4. As funções são puras e ficam em `shared/types/funnel-timer.types.ts` (`timerDeadline`,
+   `isDelayElapsed`, `isStaleNewBudget`): o front usa as mesmas para o selo (D-207).
+5. **Agendamento:** `setInterval` no `main.ts`, mesmo padrão da sincronização LIS (D-185 item 5,
+   D-199): `FUNNEL_TIMER_INTERVAL_MS` (padrão **300000 = 5 min**; **`0` desliga**), `.unref()`,
+   best effort. Um tique por vez (`tickInProgress` no módulo): tique lento não empilha o seguinte.
+6. **Percorre os laboratórios** com `withoutTenant()` projetando só `tenant_id` (tenants ativos
+   com proposta aberta), a mesma exceção de D-186; todo o resto roda em `withTenant()`, sob RLS.
+   Um laboratório com erro não para os outros (`warn` `funnel_timer.tenant_failed`).
+7. **Lotes:** no máximo 200 cartões por regra, por laboratório, por tique (`FUNNEL_TIMER_BATCH`,
+   constante), do mais antigo para o mais novo. O excedente anda nos tiques seguintes.
+8. **Idempotente:** cada transição roda na própria transação, com `FOR UPDATE` e a conferência de
+   que o estágio e a linha de entrada ainda são os que foram lidos. Dois tiques seguidos fazem uma
+   transição só; um cartão que alguém moveu entre a leitura e a escrita não é tocado.
+9. **Log:** tique com transição ou alerta → `info` `funnel_timer.completed` (por laboratório,
+   com as contagens); tique vazio → `debug` `funnel_timer.tick_empty`.
+**Motivo:** o card pede que os cartões parados andem sozinhos pelos prazos que o laboratório
+definiu. Contar pelo histórico reaproveita o que toda transição já grava; guardar um "relógio"
+separado exigiria zerá-lo em cada caminho de transição (e o próximo caminho novo esqueceria).
+**Impacto:** `shared/types/funnel-timer.types.ts` (novo), `funnel-timer.service.ts` (novo),
+`main.ts`, `config/env.ts`, `.env.example`, `docker-compose.prod.yml`; SERVICES §27, DEPLOYMENT,
+ENVIRONMENTS, SCHEMA (exceções de RLS), BUSINESS_RULES §3, WORKFLOWS §4.
+
+### D-206: Fato vence tempo; o motor respeita a matriz vigente e nunca toca terminal
+**Decisão:**
+1. **Fato vence tempo.** O motor não move cartão com pagamento (`lis_paid_on` preenchido), em
+   nenhuma regra: ele é da régua de fatos (pagamento → ganho, CRMLAB-60/58). Também não move para
+   `follow_up`/`perdido` o cartão de `orcamento_enviado` ou `follow_up` que já tem requisição
+   (`lis_requisition_number`): o paciente foi ao laboratório, e perseguir ou perder esse cartão
+   seria errado. Em `negociacao` a regra é literalmente "sem pagamento", então requisição sem
+   pagamento **anda** para `follow_up` no prazo Y. Isso vale com a régua de fatos ligada ou
+   desligada: o fato impede o tempo mesmo quando ninguém o transforma em transição.
+2. **Ordem com a régua de fatos:** as duas nunca brigam pelo mesmo cartão, porque (a) a régua de
+   fatos roda na ingestão/conciliação e o motor no seu tique, cada um na própria transação com
+   `FOR UPDATE`; (b) o motor confere de novo, sob a trava, o estágio, a linha de entrada e os
+   campos `lis_*`. Se a régua de fatos mudou o cartão antes, o motor não encontra mais a condição
+   e não faz nada; se o motor moveu antes, a régua de fatos age sobre o estágio novo (que é aberto)
+   normalmente. Ordem declarada: **fatos primeiro, tempo depois**.
+3. **Matriz vigente:** o passo do motor tem que estar em
+   `buildAllowedTransitions(rules.manualMoves)[de]`. Se a matriz configurada não tiver o passo, a
+   regra não roda naquele tique (`debug` `funnel_timer.step_not_allowed`). Com as duas matrizes de
+   hoje (`ALLOWED_TRANSITIONS` e `SEQUENTIAL_TRANSITIONS`) os três passos existem; a conferência
+   protege uma matriz futura. As demais travas manuais (dono do card, motivo obrigatório) não se
+   aplicam: quem move é o sistema (D-192 item 6), e o motivo do `perdido` é sempre `silencio`.
+4. **Terminais nunca se movem** (`ganho`, `perdido`), com ou sem "Reabrir" ligado.
+5. **Aprovação pendente** não é obstáculo: nenhum dos três passos leva a `orcamento_enviado`.
+**Motivo:** o card pede "fato vence tempo" e que o motor não brigue com a régua de requisição e
+pagamento feita em paralelo. A condição re-conferida sob trava é o que torna a ordem irrelevante
+para a consistência.
+**Impacto:** `funnel-timer.service.ts`; BUSINESS_RULES §3, WORKFLOWS §4.
+
+### D-207: Alerta de "Novo orçamento" parado — uma vez por entrada, por WS, e selo calculado no front
+**Decisão:** com `staleNewBudgetAlert` ligado, cartão em `novo_contato` há N horas ou mais (horas
+**corridas**, qualquer `dayCounting`) e sem pagamento gera **um** alerta, **sem mover** o cartão.
+1. **Uma vez por entrada na coluna:** a linha de entrada do histórico ganha `stale_alerted_at`
+   (migração 030). O motor só alerta linha com `stale_alerted_at` nulo e grava a marca na mesma
+   transação. Sair e voltar para "Novo orçamento" cria outra linha, e o alerta pode sair de novo.
+   Mudar N depois de alertado não repete o alerta daquela entrada.
+2. **Para quem:** o responsável (`created_by`, se ativo); sem responsável (cartão do Bitlab na fila
+   comum, D-195) ou com responsável inativo, todos os **gestores e admins ativos** do laboratório.
+3. **Como chega:** WS `proposal.stale_alert` (`{ proposalId, hours }`) por `emitToUser`, depois do
+   commit. O front mostra um toast de atenção e invalida `['proposals']`. Não existe central de
+   notificações persistente no produto (o chat interno é por canal, não por pessoa), então quem
+   estava desconectado não recebe o toast.
+4. **Selo persistente:** por isso o cartão em "Novo orçamento" mostra **"Parado há N h"** calculado
+   no front com `isStaleNewBudget(status, stageEnteredAt, regra, agora)`, a mesma função do motor.
+   `Proposal.stageEnteredAt` (novo, opcional) é a entrada no estágio atual, lida do histórico.
+   O selo aparece para quem abrir o pipeline, conectado ou não na hora do alerta.
+**Motivo:** o card pede o alerta sem repetir a cada tique e sem mexer no cartão. Marcar na linha
+de entrada dá o "uma vez por entrada" sem tabela nova e sem precisar zerar nada nos outros caminhos
+de transição. Horas corridas porque o alerta é sobre o paciente esperando agora (ver pergunta ao
+Michel no relatório do card).
+**Impacto:** migração `030_funnel_timer.sql`, `shared/types/websocket.types.ts`,
+`proposal.types.ts` (`stageEnteredAt`), `proposal.repository.ts`, `funnel-timer.service.ts`;
+frontend `api/ws.ts`, `ProposalCard`, `StageColumn`, `Proposals.tsx`; FRONTEND_BACKEND "Real-time",
+API_CONTRACTS §3, PAGES §5.
+
+### D-208: Transição do motor — `changedBy: null`, `automation` no histórico, audit `source: "rule"`
+**Decisão:** `applyTimerTransition(tx, input)` (exportada de `funnel-timer.service.ts`) é a
+transição de sistema do motor, no molde de `markWonFromLis` (D-119 item 4):
+1. `UPDATE proposals` condicionado ao estágio de origem e aos fatos (D-206); `perdido` grava
+   `reason_lost = 'silencio'` e `closed_at`.
+2. Histórico com `changed_by = NULL` e `automation` preenchido (`{ rule, days, dayCounting }`,
+   coluna `JSONB` nova da migração 030). É assim que "movido pela regra" se distingue de uma
+   pessoa (`changed_by` preenchido) e do LIS/criação automática (`changed_by` nulo, `automation`
+   nulo). A API expõe `history[].automation` (API_CONTRACTS §3).
+3. Mensagem de sistema na conversa **só se houver conversa** (cartão do Bitlab sem conversa não
+   grava, D-195): `"Proposta #ref movida para Follow-up pela regra: enviado há 3 dias."`.
+4. Audit `update_proposal_status`, `userId: null`, `newValues: { status, source: "rule", rule,
+   days, dayCounting }` (+ `reasonLost` no `perdido`), na mesma transação.
+5. Depois do commit: WS `proposal.status_changed` e invalidação do cache de analytics do tenant.
+6. O modal da proposta mostra no histórico **"movido pela regra: Enviado há 3 dias"**
+   (`describeStageAutomation` em `shared/`).
+**Motivo:** o CRMLAB-58/60 vai generalizar `markWonFromLis` numa transição de sistema. Deixar a do
+motor separada, exportada e com o mesmo contrato (transação de quem chama; WS e cache depois do
+commit) facilita a unificação na integração.
+**Impacto:** migração 030, `proposal.repository.ts` (`insertHistory` aceita `automation` e
+`changedAt`; `mapHistory`), `shared/types/proposal.types.ts`; SCHEMA §10, API_CONTRACTS §3,
+SERVICES §27; frontend `StageHistory.tsx`.
+
+### D-209: Prazo mudado vale no próximo tique, inclusive para trás; sem marco de ativação
+**Decisão:** o motor recalcula o prazo de cada cartão **a cada tique**, com a regra vigente, a
+partir da entrada no estágio. Consequências, todas declaradas:
+1. **Encurtar o prazo** (ex.: 7 → 3 dias): cartão que já está há 3 dias ou mais anda **no próximo
+   tique**. Não há reprocessamento além disso: nada que já foi movido volta, nenhum alerta antigo
+   é repetido.
+2. **Alongar o prazo:** cartão ainda não movido espera o prazo novo.
+3. **Desligar** a regra: para de mover a partir do próximo tique. **Ligar** (inclusive a primeira
+   vez, no deploy do card): todo cartão já vencido anda no próximo tique, respeitando o lote de 200
+   por regra e laboratório (D-205 item 7).
+4. **Trocar corridos ↔ úteis:** idem, recalculado no próximo tique.
+5. Não existe "marco de ativação" (como `bitlab_proposals_since`, D-196): o prazo é sobre a
+   **idade no estágio**, e é o que o laboratório pediu. Com os padrões (D-191), o primeiro tique
+   em produção leva para `follow_up` os cartões em "Orçamento enviado" há 3 dias ou mais e os em
+   "Negociação" sem pagamento há 7 dias ou mais; "Follow-up → Perdido" nasce desligada, então
+   ninguém é perdido sem o gestor ligar.
+**Motivo:** é a regra mais simples de explicar ("o cartão anda quando passa do prazo que está na
+tela") e é a que o card descreve. Um marco de ativação esconderia do laboratório cartões que ele
+considera parados.
+**Impacto:** `funnel-timer.service.ts`; SERVICES §27; relatório do card (pergunta ao Michel sobre o
+primeiro tique em produção).
+
 ## Template para novas decisões
 
 ```

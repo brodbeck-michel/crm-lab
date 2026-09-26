@@ -219,6 +219,8 @@ services:
       BITLAB_API_BASE_URL: ${BITLAB_API_BASE_URL:-https://integracoes.bitlab.net.br/webhook}
       LIS_SYNC_INTERVAL_MS: ${LIS_SYNC_INTERVAL_MS:-120000}
       LIS_SYNC_INITIAL_DAYS: ${LIS_SYNC_INITIAL_DAYS:-90}
+      # Motor de tempo do funil (CRMLAB-59, D-205). 0 desliga.
+      FUNNEL_TIMER_INTERVAL_MS: ${FUNNEL_TIMER_INTERVAL_MS:-300000}
     read_only: true
     tmpfs:
       - /tmp

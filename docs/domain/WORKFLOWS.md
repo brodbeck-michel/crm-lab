@@ -187,14 +187,14 @@ essas travas: são do sistema.
 |----|------|---------|
 | novo_contato | orcamento_enviado | Atendente envia orçamento |
 | orcamento_enviado | novo_contato | Voltar (D-105) — "Enviar orçamento" clicado por engano |
-| orcamento_enviado | follow_up | Sem resposta (manual ou automação) |
+| orcamento_enviado | follow_up | Sem resposta (manual, ou o motor de tempo: há X dias no estágio, sem pagamento nem requisição — CRMLAB-59, D-205/D-206) |
 | orcamento_enviado | negociacao | Paciente pede desconto |
 | orcamento_enviado | ganho | Paciente aceita direto |
 | follow_up | orcamento_enviado | Voltar (D-105) — reavaliar antes do follow-up |
 | follow_up | negociacao | Paciente responde negociando |
 | follow_up | ganho | Paciente aceita |
-| follow_up | perdido | Sem resposta definitiva |
-| negociacao | follow_up | Voltar (D-105) — negociação esfriou |
+| follow_up | perdido | Sem resposta definitiva (manual, ou o motor de tempo com a regra ligada: há Z dias no estágio → motivo `silencio`, CRMLAB-59) |
+| negociacao | follow_up | Voltar (D-105) — negociação esfriou (ou o motor de tempo: há Y dias no estágio sem pagamento, CRMLAB-59) |
 | negociacao | ganho | Acordo fechado |
 | negociacao | perdido | Sem acordo |
 | qualquer aberto | perdido | Com motivo |

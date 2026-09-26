@@ -1452,6 +1452,68 @@ export interface FunnelRulesService {
 
 ---
 
+## 27. FunnelTimerService — motor de tempo do funil (CRMLAB-59 — D-205..D-209)
+
+**Responsabilidade:** mover sozinhos os cartões parados pelos prazos das Regras
+(`automation.sentToFollowUp`, `negotiationToFollowUp`, `followUpToLost`) e alertar o "Novo
+orçamento" parado (`staleNewBudgetAlert`). Sem rota: é o agendador do `main.ts`.
+
+```typescript
+// backend/src/services/funnel-timer.service.ts
+export const FUNNEL_TIMER_BATCH = 200; // por regra, por laboratório, por tique
+
+export interface FunnelTimerService {
+  /** Um tique: percorre os laboratórios. Nunca lança; ignora se o anterior ainda roda. */
+  runTick(): Promise<FunnelTimerTickResult>;
+  /** Um laboratório (o tique chama; os testes também). */
+  runForTenant(tenantId: string): Promise<FunnelTimerTenantResult>;
+}
+export function createFunnelTimerService(deps: {
+  db: DbClient; wsHub: WsHub; cache: CacheService; now?: () => Date;
+}): FunnelTimerService;
+
+/** A transição de sistema do motor, na transação de quem chama (D-208). `false` = nada mudou. */
+export function applyTimerTransition(tx: DbTx, input: {
+  tenantId: string; proposalId: string; step: TimerStep; automation: StageAutomation;
+  enteredHistoryId: string; now: Date;
+}): Promise<boolean>;
+
+/** Só para teste. */
+export function resetFunnelTimerLocksForTest(): void;
+```
+
+`TimerStep`, `StageAutomation`, `TIMER_STEPS`, `timerDeadline`, `isDelayElapsed`,
+`isStaleNewBudget` e `describeStageAutomation` estão em `shared/types/funnel-timer.types.ts`.
+
+**Tique** (D-205):
+1. `tickInProgress` no módulo: tique sobreposto é ignorado.
+2. `withoutTenant()` → só os `tenant_id` de tenants ativos com proposta aberta (exceção de RLS
+   declarada em SCHEMA.md).
+3. Por laboratório, em série: `readFunnelRules` (`withTenant`); para cada regra de prazo
+   **ligada** e cujo passo está na matriz vigente (`buildAllowedTransitions`, D-206 item 3),
+   seleciona até `FUNNEL_TIMER_BATCH` cartões do estágio de origem cuja entrada no estágio (última
+   linha do histórico com o estágio atual) é anterior a `agora − dias × 24 h`, sem os fatos que a
+   regra exclui (D-206 item 1), do mais antigo para o mais novo; confere o prazo exato
+   (`isDelayElapsed`, corridos ou úteis) e aplica `applyTimerTransition` em **uma transação por
+   cartão**. Depois de cada commit: WS `proposal.status_changed` + invalidação do cache de
+   analytics.
+4. Alerta (D-207): cartões em `novo_contato` sem pagamento, com a linha de entrada sem
+   `stale_alerted_at` e entrada há N horas ou mais. Numa transação por cartão, grava
+   `stale_alerted_at` (condicionado a ainda estar nulo e o cartão ainda em `novo_contato`) e resolve
+   os destinatários (responsável ativo; senão gestores e admins ativos). Depois do commit:
+   `emitToUser` `proposal.stale_alert` para cada um.
+5. Erro num laboratório → `warn` `funnel_timer.tenant_failed`, segue para o próximo. Log `info`
+   `funnel_timer.completed` com `{ tenantId, moved, alerted }` quando houve algo; `debug`
+   `funnel_timer.tick_empty` quando nada aconteceu.
+
+**`applyTimerTransition`** (D-208): `SELECT ... FOR UPDATE`; recusa (`false`) se o estágio não é
+mais o de origem, se a última linha do histórico para o estágio não é mais `enteredHistoryId` ou se
+um fato apareceu. `UPDATE` do estágio (`perdido`: `reason_lost = 'silencio'`, `closed_at`),
+histórico com `changed_by NULL` e `automation`, mensagem de sistema se houver conversa, audit
+`update_proposal_status` com `userId: null` e `newValues.source: "rule"`.
+
+---
+
 ## Convenções Transversais
 
 - Todo método recebe `tenantId` ou `TenantContext` como primeiro parâmetro — NUNCA lê de variável global

@@ -362,6 +362,12 @@ nunca "sem permissão" (não vazar existência).
   `lisRequisitionNumber` não é `null` e o estágio é `novo_contato` (D-197). Sem conversa
   (`conversationId === null`): aviso "Sem conversa vinculada" em `text-caption`. O selo
   "Conciliado" continua o mesmo.
+- **Selo "Parado há N h" (CRMLAB-59, D-207):** cartão em `novo_contato` com a regra
+  "Novo orçamento parado" ligada e `stageEnteredAt` há N horas ou mais leva o
+  `Chip tone="attention"` "Parado há {N} h" (N = horas inteiras desde a entrada na coluna).
+  Calculado no front com `isStaleNewBudget` (`@crm-lab/shared`), a mesma função do motor; o
+  pipeline passa `automation.staleNewBudgetAlert` das Regras (`useEffectiveFunnelRules`) para
+  `StageColumn` → `ProposalCard`. O alerta em si chega pelo WS `proposal.stale_alert` como toast.
 - Todo cartão clicável → Modal da Proposta
 - **Arrastar o cartão** entre colunas move o estágio (HTML5 drag-and-drop nativo, sem
   biblioteca). A proposta viaja no `dataTransfer` como JSON **e o estágio de origem viaja
@@ -408,7 +414,9 @@ nunca "sem permissão" (não vazar existência).
   quando a proposta não tem médico informado), itens + preços (badge
   "Particular" por item nas mesmas condições da coluna de resumo de
   `/budget/new`), desconto, total derivado, alerta de aprovação (se pending),
-  histórico de estágios, ações
+  histórico de estágios (linha movida pelo motor de tempo — `history[].automation` preenchido —
+  mostra "movido pela regra: {describeStageAutomation}", ex.: "movido pela regra: Enviado há 3
+  dias", no lugar de "por {pessoa}"; CRMLAB-59, D-208), ações
 - Ações (uma linha): [Mudar estágio ▾] à esquerda, [Marcar como ganho] (accent-2) à direita, [Marcar como perdido] fantasma ao fim
 - "Perdido" abre sub-form com motivo OBRIGATÓRIO (select: preço, silêncio, exame indisponível, prazo, outro)
 - **Editar (CRMLAB-12, D-134):** botão "Editar" some quando `status` não está em

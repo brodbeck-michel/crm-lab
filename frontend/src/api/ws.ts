@@ -117,6 +117,12 @@ export function applyWsEvent(
       return;
     }
 
+    // CRMLAB-57/D-196: proposta nasceu do orçamento do Bitlab — o cartão aparece no Kanban.
+    case 'proposal.created': {
+      void queryClient.invalidateQueries({ queryKey: queryScopes.proposals });
+      return;
+    }
+
     case 'proposal.status_changed': {
       const data = event.data as { proposalId: string };
       void queryClient.invalidateQueries({ queryKey: queryScopes.proposals });

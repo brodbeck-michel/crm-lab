@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-26 (CRMLAB-56 — página de Regras, em branch; v1.22.0 em PRODUÇÃO)
+**Última atualização:** 2026-09-26 (CRMLAB-58 — enviar orçamento pelo cartão + CRMLAB-60 parcial, em branch; v1.22.0 em PRODUÇÃO)
 
 ---
 
@@ -2855,3 +2855,45 @@ Branch `feature/CRMLAB-57-proposta-nasce-bitlab`. Decisões D-195..D-199, migra�
   continua barrado pela matriz — cartão de balcão passa por "Orçamento enviado" (travas: CRMLAB-56);
   cartão com pré-cadastro enviado depois só vai a ganho quando o orçamento mudar de novo no Bitlab
   (CRMLAB-60); mudança de valor no re-sync não emite WS próprio.
+
+### ✅ CRMLAB-58 [C] — enviar orçamento pelo cartão (Epic CRMLAB-55, 2026-09-26)
+
+Branch `feature/CRMLAB-58-enviar-pelo-card` (de `integ/onda-funil`). Decisões D-200..D-203,
+migração `029_proposal_send_claim.sql`.
+
+- **Envio (D-200):** `POST /proposals/:id/send` no cartão `bitlab` em "Novo orçamento": a
+  mensagem sai pela conversa escolhida pelo `MessageService.createFromAgent` (o mesmo do
+  Composer), e só então a proposta ganha conversa (e paciente, pela conversa), responsável = quem
+  enviou, `sent_at`, histórico, audit (`source: "send"`) e WS. Sem requisição →
+  `orcamento_enviado`; com requisição e "Requisição → Negociação" ligada → `negociacao`
+  (`bitlabSendTarget`, transição de sistema fora da matriz manual). Código novo
+  `PROPOSAL_ALREADY_SENT` (409, `sent` | `in_progress`).
+- **Tudo ou nada (D-201):** reserva com trava de linha (`send_claim_id`/`send_claimed_at`, 2 min),
+  envio fora da transação, vínculo numa transação curta que confere a reserva. WhatsApp falhou →
+  reserva desfeita, cartão intacto, mensagem `failed` na conversa como no atendimento. Duas
+  atendentes ao mesmo tempo → uma vence, a outra recebe `PROPOSAL_ALREADY_SENT` sem segunda
+  mensagem ao paciente. Risco declarado: vínculo falhar depois de o WhatsApp aceitar (log
+  `proposal.send_finalize_failed`).
+- **Depois do envio (D-202):** `POST /:id/resend` (sem mudar estágio), `PATCH /:id/conversation`
+  (dona/gestor/admin, não fechada) e `PATCH /:id/responsible` (gestor/admin qualquer pessoa ativa
+  em qualquer estágio; atendente só o dela, aberto, para outra atendente), todos com audit.
+- **Sugestão (D-203):** `nameSimilarity` em `shared/` (palavras em comum sem acento/caixa/
+  partículas), aplicada no front sobre as 100 conversas ativas mais recentes ou a busca livre.
+- **Front:** `SendProposalPanel` (envio / reenvio / troca de conversa) e `ResponsibleField` no
+  modal; proposta `crm` mantém o "Enviar orçamento" de sempre. Inventário de rotas 70 → 74.
+- **Pendente / fora do escopo:** cartão `bitlab` movido à mão para fora de "Novo orçamento" sem
+  conversa não tem mais como ser enviado pelo cartão (só volta para "Novo orçamento"); a sugestão
+  só enxerga 100 conversas ativas recentes; sem E2E do fluxo.
+
+### ✅ CRMLAB-60 (parcial) — régua de fatos do LIS no cartão do Bitlab (2026-09-26)
+
+Mesma branch. Decisão D-204 (emenda D-119/D-197, **provisória até o CRMLAB-53**).
+
+- Origem `bitlab`: pagamento (`paid_on`, qualquer valor) → `ganho` de qualquer estágio aberto,
+  inclusive `novo_contato`; requisição em `orcamento_enviado`/`follow_up` → `negociacao`; cada uma
+  só com a regra ligada. Requisição sozinha não fecha mais. `perdido` não reabre. Origem `crm`
+  intacta (D-119).
+- `applySystemTransition` / `announceSystemTransitions` (`proposal.service.ts`) generalizam
+  `markWonFromLis` — ponto de unificação com o motor de tempo do CRMLAB-59.
+- **Fica para o CRMLAB-60 completo:** tudo o que depende do valor pago (sobrescrito pela sync até
+  o CRMLAB-53) e a conciliação que só roda quando o orçamento volta numa ingestão.

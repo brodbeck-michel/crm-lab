@@ -205,6 +205,11 @@ reabre por esse caminho: o conflito é auditado (`lis_reconcile_conflict`) e o g
 com requisição **não** vai a `ganho`: a requisição só é espelhada e vira o selo "Pré-cadastro
 feito". Requisição no balcão é pré-cadastro, não aceite de uma proposta que o CRM enviou.
 
+**Enviar pelo cartão (CRMLAB-58, D-200):** o cartão `bitlab` em `novo_contato` enviado com
+requisição (pré-cadastro) vai direto a `negociacao` se a regra "Requisição → Negociação" estiver
+ligada — transição de sistema que a matriz manual não tem. Sem requisição, `orcamento_enviado`.
+Quem envia vira a responsável (`created_by`).
+
 **Nascer do orçamento (CRMLAB-57, D-196):** com a regra ligada, todo orçamento do LIS emitido a
 partir da data de ativação (`tenant_settings.bitlab_proposals_since`) e sem proposta vira uma
 proposta de origem `bitlab` em `novo_contato` ("Novo orçamento"), sem conversa. Histórico

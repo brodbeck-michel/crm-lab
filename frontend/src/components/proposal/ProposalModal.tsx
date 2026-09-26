@@ -1,7 +1,14 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { ProposalStatus, LossReason } from '@crm-lab/shared';
-import { formatProposalNumber, isCardOwner, isProposalEditable } from '@crm-lab/shared';
+import {
+  TERMINAL_STATUSES,
+  bitlabSendTarget,
+  canActOnCard,
+  formatProposalNumber,
+  isCardOwner,
+  isProposalEditable,
+} from '@crm-lab/shared';
 import { useProposalDetail, useUpdateProposalStatus, useUpdateProposalItems } from '@/api/proposals';
 import { useEffectiveFunnelRules } from '@/api/funnel-rules';
 import { useAuthStore } from '@/stores/auth.store';
@@ -18,6 +25,8 @@ import StageHistory from './StageHistory';
 import ActionsRow from './ActionsRow';
 import LostReasonForm from './LostReasonForm';
 import LisReferenceSection from './LisReferenceSection';
+import ResponsibleField from './ResponsibleField';
+import SendProposalPanel, { type SendPanelMode } from './SendProposalPanel';
 
 interface ProposalModalProps {
   proposalId: string;
@@ -52,6 +61,8 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
   const [editItems, setEditItems] = useState<EditableProposalItem[]>([]);
   const [editDiscount, setEditDiscount] = useState(0);
   const [editDoctor, setEditDoctor] = useState('');
+  // CRMLAB-58: painel de envio/reenvio/troca de conversa do cartão do Bitlab.
+  const [panel, setPanel] = useState<SendPanelMode | null>(null);
 
   if (isLoading || !proposal) {
     return null;
@@ -60,8 +71,18 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
   // CRMLAB-57/D-195: proposta que nasceu do orçamento do Bitlab — sem itens,
   // sem desconto e, até o CRMLAB-58, sem conversa.
   const fromBitlab = proposal.origin === 'bitlab';
-  // Sem conversa não há para onde enviar — o envio pelo cartão é do CRMLAB-58.
   const hasConversation = proposal.conversationId !== null;
+  const actor = {
+    role: currentUser?.role ?? ('attendant' as const),
+    isOwner: isCardOwner(proposal.createdBy, currentUser?.id),
+  };
+  const supervisor = actor.role === 'manager' || actor.role === 'admin';
+  const ownerOrSupervisor = supervisor || proposal.createdBy === currentUser?.id;
+  const closed = TERMINAL_STATUSES.includes(proposal.status);
+  // CRMLAB-58 (D-200/D-202): o cartão do Bitlab envia pelo painel, e depois
+  // de enviado reenvia e troca de conversa.
+  const bitlabUnsent = fromBitlab && !hasConversation;
+  const bitlabLinked = fromBitlab && hasConversation && !closed && ownerOrSupervisor;
   const canEdit = isProposalEditable(proposal.status) && !fromBitlab;
   // D-193: com "Criar pelo CRM" desligado o desconto some, menos onde já existe.
   const showDiscount = funnelRules.origin.manualInCrm || proposal.discountPercent > 0;
@@ -175,8 +196,25 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
                   <span className="text-caption text-neutral-600">Sem conversa vinculada</span>
                 )}
               </div>
+              {hasConversation && (
+                <div className="flex items-center justify-between gap-sm">
+                  <p className="text-body">
+                    Conversa: {proposal.patientName ?? 'Sem nome'} · {proposal.patientPhone}
+                  </p>
+                  {bitlabLinked && panel === null && (
+                    <Button variant="secondary" size="sm" onClick={() => setPanel('relink')}>
+                      Trocar conversa
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
           )}
+
+          <ResponsibleField
+            proposal={proposal}
+            user={currentUser ? { id: currentUser.id, role: currentUser.role } : null}
+          />
 
           <div className="flex items-center justify-between gap-sm">
             <div className="flex items-center gap-sm">
@@ -287,7 +325,17 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
           <StageHistory history={proposal.history} />
         </div>
 
-        {isEditing ? null : showLostForm ? (
+        {isEditing ? null : panel !== null ? (
+          <SendProposalPanel
+            proposal={proposal}
+            mode={panel}
+            insuranceName={insuranceName}
+            template={funnelRules.sendMessage.template}
+            target={bitlabSendTarget(proposal.lisRequisitionNumber, funnelRules.automation)}
+            onDone={() => setPanel(null)}
+            onCancel={() => setPanel(null)}
+          />
+        ) : showLostForm ? (
           <LostReasonForm
             onSubmit={handleMarkLost}
             isPending={updateStatus.isPending}
@@ -299,13 +347,18 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
             onChangeStatus={handleChangeStatus}
             onMarkWon={handleMarkWon}
             onMarkLost={() => setShowLostForm(true)}
-            onSendProposal={hasConversation ? handleSendProposal : undefined}
+            onSendProposal={
+              bitlabUnsent
+                ? () => setPanel('send')
+                : hasConversation && !fromBitlab
+                  ? handleSendProposal
+                  : undefined
+            }
+            {...(bitlabUnsent ? { canSend: canActOnCard(funnelRules.manualMoves, actor) } : {})}
+            {...(bitlabLinked ? { onResend: () => setPanel('resend') } : {})}
             isPending={updateStatus.isPending}
             rules={funnelRules.manualMoves}
-            actor={{
-              role: currentUser?.role ?? 'attendant',
-              isOwner: isCardOwner(proposal.createdBy, currentUser?.id),
-            }}
+            actor={actor}
             lisReconciled={proposal.lisReconciledAt !== null}
           />
         )}

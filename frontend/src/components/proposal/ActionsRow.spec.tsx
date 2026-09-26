@@ -19,7 +19,7 @@ function rules(patch: Partial<ManualMoveRules> = {}): ManualMoveRules {
 
 function renderRow(
   status: ProposalStatus,
-  opts: { rules?: ManualMoveRules; actor?: TransitionActor; lisReconciled?: boolean } = {},
+  opts: { rules?: ManualMoveRules; actor?: TransitionActor; lisReconciled?: boolean; canSend?: boolean } = {},
 ) {
   const onChangeStatus = vi.fn();
   render(
@@ -125,5 +125,46 @@ describe('ActionsRow — travas das Regras', () => {
     expect(stageOptions('Mudar estágio')).toEqual([]);
     expect(screen.getByRole('button', { name: 'Marcar como Ganho' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Marcar como Perdido' })).toBeDisabled();
+  });
+
+  describe('cartão do Bitlab (CRMLAB-58)', () => {
+    it('canSend força o Enviar mesmo com a matriz sem orcamento_enviado; false esconde', () => {
+      renderRow('novo_contato', { rules: rules({ skipStages: false }), canSend: true });
+      expect(screen.getByRole('button', { name: 'Enviar orçamento' })).toBeInTheDocument();
+    });
+
+    it('canSend false esconde o Enviar', () => {
+      renderRow('novo_contato', { canSend: false });
+      expect(screen.queryByRole('button', { name: 'Enviar orçamento' })).not.toBeInTheDocument();
+    });
+
+    it('Reenviar mensagem só nos três estágios abertos depois do envio', () => {
+      const onResend = vi.fn();
+      const { unmount } = render(
+        <ActionsRow
+          status="follow_up"
+          onChangeStatus={vi.fn()}
+          onMarkWon={vi.fn()}
+          onMarkLost={vi.fn()}
+          onResend={onResend}
+          isPending={false}
+        />,
+      );
+      screen.getByRole('button', { name: 'Reenviar mensagem' }).click();
+      expect(onResend).toHaveBeenCalled();
+      unmount();
+
+      render(
+        <ActionsRow
+          status="novo_contato"
+          onChangeStatus={vi.fn()}
+          onMarkWon={vi.fn()}
+          onMarkLost={vi.fn()}
+          onResend={onResend}
+          isPending={false}
+        />,
+      );
+      expect(screen.queryByRole('button', { name: 'Reenviar mensagem' })).not.toBeInTheDocument();
+    });
   });
 });

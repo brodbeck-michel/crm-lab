@@ -61,6 +61,10 @@ export const ERROR_CATALOG = {
     statusCode: 409,
     message: 'Criacao manual de proposta desligada nas Regras do laboratorio',
   },
+  PROPOSAL_ALREADY_SENT: {
+    statusCode: 409,
+    message: 'Este orcamento ja foi enviado ou esta sendo enviado por outra pessoa agora',
+  },
 
   // --- Conversas ---
   CONVERSATION_ALREADY_ASSIGNED: {

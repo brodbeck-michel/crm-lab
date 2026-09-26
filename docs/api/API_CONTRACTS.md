@@ -2077,6 +2077,85 @@ número é a identidade dela.
 (409, só quando a proposta está `ganho`. Em `perdido` o vínculo é aceito, D-119 item 2),
 `FORBIDDEN` (403), `NOT_FOUND` (404), `PROPOSAL_EDIT_NOT_ALLOWED` (409, origem `bitlab`).
 
+### POST /proposals/:id/send (CRMLAB-58, D-200/D-201)
+"Enviar orçamento" do cartão de origem `bitlab`: manda a mensagem pela conversa escolhida e, só
+se o envio der certo, vincula a conversa, define o responsável e move o estágio.
+
+**Papéis:** quem enxerga o cartão (fila comum ou dona; gestor/admin veem todos) **e** pode mexer
+nele pela trava "Mover card de outra atendente" (`canActOnCard`, §6c): dona ou cartão sem
+responsável, admin sempre, gestor se `moveOthersCards`. `platform_operator` → `403`.
+
+**Request:**
+```json
+{ "conversationId": "uuid", "message": "Olá, Maria! Segue o orçamento nº 5001 (Particular), no valor de R$ 150,50." }
+```
+- `conversationId`: conversa **ativa** que quem envia enxerga (atendente: as dela e a fila livre).
+- `message`: `string` 1..4000 depois do `trim`. É o texto que a tela montou pelo modelo das Regras
+  (`sendMessage.template`, §6c) e a atendente revisou; o servidor não remonta.
+
+**Comportamento (D-201):** reserva o cartão (trava de linha + `send_claim_id`), envia pelo mesmo
+caminho de `POST /conversations/:id/messages` e, com o envio aceito, grava numa transação:
+`conversationId` = a escolhida, `createdBy` = quem enviou, `sentAt`, e o estágio
+`bitlabSendTarget(lisRequisitionNumber, automation)`: sem requisição → `orcamento_enviado`; com
+requisição e "Requisição → Negociação" ligada → `negociacao` (transição de sistema, fora da matriz
+manual). Histórico, mensagem de sistema na conversa, audit `update_proposal_status`
+(`newValues.source: "send"`) e WS `proposal.status_changed`. **Falha do envio não muda nada no
+cartão** (a mensagem fica na conversa como `failed`, como no atendimento).
+
+**Response (200):** o `ProposalDetail` atualizado.
+
+**Erros:** `VALIDATION_ERROR` (400); `NOT_FOUND` (404, proposta ou conversa de outro tenant ou
+fora da visibilidade); `FORBIDDEN` (403, `details.reason: "move_others_not_allowed"`);
+`PROPOSAL_EDIT_NOT_ALLOWED` (409, `details.reason: "crm_origin"`); `INVALID_STATUS_TRANSITION`
+(400, cartão fora de `novo_contato`); `PROPOSAL_ALREADY_CLOSED` (409);
+`PROPOSAL_ALREADY_SENT` (409, `details.reason: "sent"` ou `"in_progress"` — outra pessoa está
+enviando agora); `CONVERSATION_ARCHIVED` (409); `MESSAGE_SEND_FAILED` (502, com
+`details.messageId`).
+
+### POST /proposals/:id/resend (CRMLAB-58, D-202)
+"Reenviar mensagem": manda de novo pela conversa vinculada, **sem mudar estágio nem `sentAt`**.
+Só cartão `bitlab` já vinculado em `orcamento_enviado`, `follow_up` ou `negociacao`. Papéis: dona,
+gestor ou admin.
+
+**Request:** `{ "message": "texto 1..4000" }`
+
+**Response (201):** a `Message` criada (mesmo shape de `POST /conversations/:id/messages`).
+
+Audit `resend_proposal_message` (`newValues: { conversationId, messageId }`).
+
+**Erros:** `VALIDATION_ERROR`, `NOT_FOUND`, `FORBIDDEN` (`details.reason: "not_owner"`),
+`PROPOSAL_EDIT_NOT_ALLOWED` (`details.reason: "crm_origin"` ou `"not_sent"`),
+`INVALID_STATUS_TRANSITION` (fora dos três estágios), `PROPOSAL_ALREADY_CLOSED`,
+`CONVERSATION_ARCHIVED`, `MESSAGE_SEND_FAILED`.
+
+### PATCH /proposals/:id/conversation (CRMLAB-58, D-202)
+Troca a conversa vinculada de um cartão `bitlab` já enviado e não fechado. Não envia mensagem.
+Papéis: dona, gestor ou admin.
+
+**Request:** `{ "conversationId": "uuid" }` — conversa que quem troca enxerga (encerrada é aceita).
+
+**Response (200):** o `ProposalDetail` atualizado. Audit `update_proposal_conversation`
+(`oldValues/newValues: { conversationId }`), WS `proposal.updated`. Mesma conversa → 200 sem gravar.
+
+**Erros:** `VALIDATION_ERROR`, `NOT_FOUND`, `FORBIDDEN` (`details.reason: "not_owner"`),
+`PROPOSAL_EDIT_NOT_ALLOWED` (`details.reason: "crm_origin"` ou `"not_sent"`),
+`PROPOSAL_ALREADY_CLOSED`.
+
+### PATCH /proposals/:id/responsible (CRMLAB-58, D-202)
+Edita o responsável (`createdBy`), que decide visibilidade e comissão. Qualquer origem.
+
+**Request:** `{ "userId": "uuid" }`
+
+**Regras:** gestor/admin → qualquer usuário **ativo** do laboratório com papel `attendant`,
+`manager` ou `admin`, em qualquer estágio. Atendente → só no cartão **de que é dona**, não
+fechado, e só para **outra atendente ativa**.
+
+**Response (200):** o `ProposalDetail` atualizado. Audit `update_proposal_responsible`
+(`oldValues/newValues: { createdBy }`), WS `proposal.updated`. Mesmo usuário → 200 sem gravar.
+
+**Erros:** `VALIDATION_ERROR` (`details.fields.userId`), `NOT_FOUND`, `FORBIDDEN`
+(`details.reason: "not_owner"` ou `"closed"`).
+
 ### PATCH /proposals/:id/discount
 Atualizar desconto (se aprovação pendente).
 

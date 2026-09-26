@@ -57,6 +57,8 @@ export type ApiErrorCode =
   | 'EXAM_NOT_FOUND_OR_INACTIVE'
   /** `POST /proposals` com "Criar proposta manualmente no CRM" desligado (CRMLAB-56, D-193). */
   | 'MANUAL_PROPOSAL_DISABLED'
+  /** `POST /proposals/:id/send` em cartão já enviado ou sendo enviado agora (CRMLAB-58, D-200). */
+  | 'PROPOSAL_ALREADY_SENT'
   // Conversas
   | 'CONVERSATION_ALREADY_ASSIGNED'
   | 'CONVERSATION_ARCHIVED'

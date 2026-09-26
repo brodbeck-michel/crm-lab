@@ -1614,6 +1614,24 @@ ALTER TABLE lis_imports ADD COLUMN proposals_created INT NULL;
 
 ---
 
+### Colunas novas em `proposals` (migração 029 — CRMLAB-58, D-201)
+
+```sql
+ALTER TABLE proposals
+  ADD COLUMN send_claim_id UUID NULL,
+  ADD COLUMN send_claimed_at TIMESTAMPTZ NULL;
+```
+
+- **Reserva do envio pelo cartão** (`POST /proposals/:id/send`, D-201): gravadas na transação
+  curta que confere o cartão, antes de a mensagem sair; zeradas quando o envio falha ou quando o
+  vínculo é gravado. Reserva com mais de 2 minutos (`send_claimed_at < NOW() - INTERVAL '2
+  minutes'`) é considerada abandonada. `send_claim_id` é o que o passo final confere (um UUID, e
+  não o timestamp, para não depender da precisão com que o driver devolve o horário).
+  `TIMESTAMPTZ` porque só é comparado dentro do banco.
+- Nunca aparecem na API. Nenhuma tabela nova, nenhuma policy nova.
+
+---
+
 ### 32. `funnel_rules` (migração 027 — CRMLAB-56, D-190)
 Regras do funil que o laboratório define em **Configurações → Regras**, uma linha por tenant.
 Dono: `FunnelRulesService` (SERVICES.md §26). O shape de `rules` é `FunnelRules`

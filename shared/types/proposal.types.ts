@@ -278,6 +278,42 @@ export interface UpdateProposalItemsRequest {
  */
 export type UpdateProposalItemsResponse = ProposalDetail;
 
+/**
+ * `POST /proposals/:id/send` (CRMLAB-58, D-200/D-201) — "Enviar orçamento" do
+ * cartão de origem `bitlab`. `message` e o texto que a atendente revisou (a
+ * tela monta pelo modelo das Regras). Resposta: `ProposalDetail`.
+ */
+export interface SendProposalRequest {
+  conversationId: string;
+  /** 1..4000 depois do `trim`. */
+  message: string;
+}
+
+/** `POST /proposals/:id/resend` (D-202 item 1). Resposta `201`: a `Message` criada. */
+export interface ResendProposalMessageRequest {
+  message: string;
+}
+
+/** `PATCH /proposals/:id/conversation` (D-202 item 2). Resposta: `ProposalDetail`. */
+export interface UpdateProposalConversationRequest {
+  conversationId: string;
+}
+
+/** `PATCH /proposals/:id/responsible` (D-202 item 3). Resposta: `ProposalDetail`. */
+export interface UpdateProposalResponsibleRequest {
+  userId: string;
+}
+
+/** Tamanho maximo da mensagem de envio — o mesmo de `POST /conversations/:id/messages`. */
+export const SEND_PROPOSAL_MESSAGE_MAX = 4000;
+
+/** Estagios em que "Reenviar mensagem" existe (D-202 item 1). */
+export const RESEND_PROPOSAL_STATUSES: readonly ProposalStatus[] = [
+  'orcamento_enviado',
+  'follow_up',
+  'negociacao',
+] as const;
+
 export interface RejectProposalRequest {
   reason: string;
 }

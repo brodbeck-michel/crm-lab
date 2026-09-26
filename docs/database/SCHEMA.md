@@ -336,6 +336,10 @@ CREATE INDEX idx_proposals_status ON proposals(status);
 CREATE INDEX idx_proposals_created_at ON proposals(created_at);
 ```
 
+> **Migração 028 (CRMLAB-57, D-195):** `conversation_id` e `created_by` passaram a aceitar `NULL`,
+> **só** na origem `bitlab` (coluna `origin`, CHECK `proposals_crm_origin_complete`). Ver a seção
+> "Colunas novas … (migração 028)" abaixo, antes do RLS.
+
 **Coluna nova (migração `005_insurances_and_catalog.sql`, Onda 7):**
 
 ```sql
@@ -1577,6 +1581,37 @@ CREATE POLICY lis_sync_settings_tenant_isolation ON lis_sync_settings
 - `listEnabledTenantIds()` é a única leitura fora do contexto de tenant (D-186) e só projeta
   `tenant_id`.
 
+### Colunas novas em `proposals`, `tenant_settings` e `lis_imports` (migração 028 — CRMLAB-57, D-195/D-196)
+
+```sql
+ALTER TABLE proposals
+  ADD COLUMN origin VARCHAR(20) NOT NULL DEFAULT 'crm',
+  ADD CONSTRAINT proposals_origin_check CHECK (origin IN ('crm', 'bitlab'));
+ALTER TABLE proposals ALTER COLUMN conversation_id DROP NOT NULL;
+ALTER TABLE proposals ALTER COLUMN created_by DROP NOT NULL;
+ALTER TABLE proposals
+  ADD CONSTRAINT proposals_crm_origin_complete
+    CHECK (origin <> 'crm' OR (conversation_id IS NOT NULL AND created_by IS NOT NULL));
+
+ALTER TABLE tenant_settings ADD COLUMN bitlab_proposals_since DATE NULL;
+ALTER TABLE lis_imports ADD COLUMN proposals_created INT NULL;
+```
+
+- **`proposals.origin`**: `crm` (toda proposta anterior, pelo `DEFAULT`) ou `bitlab` (nasceu
+  sozinha do orçamento do LIS, D-196). **Só** a origem `bitlab` pode ter `conversation_id` e
+  `created_by` nulos; o CHECK mantém o invariante antigo para `crm`. Na origem `bitlab`:
+  `lis_budget_number` sempre preenchido (é a identidade dela), sem `proposal_items`,
+  `discount_percent = 0`, `approval_status = 'none'`, e **`total_price` = `lis_budgets.total_value`**
+  (D-195 item 2, regravado pela conciliação enquanto não terminal). Nome do paciente, data de
+  emissão e atendente **não** são copiados: vêm por JOIN com `lis_budgets` no SELECT canônico do
+  repositório.
+- **`tenant_settings.bitlab_proposals_since`**: dia de Brasília a partir do qual orçamento emitido
+  (`lis_budgets.issued_on`) vira proposta. `NULL` = nunca ativado. Gravado uma vez, na primeira
+  ingestão com a regra ligada (`COALESCE`, nunca anda). A migração não preenche (D-196 item 2).
+  Se a linha de `tenant_settings` não existe, a ingestão faz `INSERT ... ON CONFLICT`.
+- **`lis_imports.proposals_created`**: quantas propostas `bitlab` a rodada criou.
+- Nenhuma tabela nova: as três já têm policy.
+
 ---
 
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
@@ -1822,7 +1857,8 @@ migrations/
 ├── 020_crm_login_role.sql        # role `crm_login` sem superuser para a pool (CRMLAB-38, D-145)
 ├── 021_fk_indexes.sql            # índice nas 15 FKs que não tinham (CRMLAB-38, D-146)
 ├── …                             # 022–025: ver o cabeçalho de cada arquivo
-└── 026_lis_sync.sql              # lis_sync_settings + policy; lis_imports.kind ganha 'sync' (CRMLAB-52, D-185)
+├── 026_lis_sync.sql              # lis_sync_settings + policy; lis_imports.kind ganha 'sync' (CRMLAB-52, D-185)
+└── 028_bitlab_origin.sql         # proposals.origin, conversa/autor nulláveis só na origem bitlab (CRMLAB-57, D-195/D-196)
 ```
 
 A 007 e a 008 são arquivos ÚNICOS (tabela + policy), diferente dos pares 003/004 e 005/006: a

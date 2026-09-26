@@ -348,9 +348,18 @@ nunca "sem permissão" (não vazar existência).
     Acima de 100 a tela avisa o total e manda usar busca/filtros.
   - **Lista** — grade de `ProposalCard` (1/2/3 colunas conforme a largura) com a `Pagination`
     padrão e `limit=20`. Trocar de visão reinicia a página, porque os limites diferem.
-- Colunas por estágio: novo contato → orçamento enviado → follow-up → negociação | ganho | perdido
+- Colunas por estágio: novo orçamento → orçamento enviado → follow-up → negociação | ganho | perdido
+  (o rótulo de `novo_contato` é "Novo orçamento" desde o CRMLAB-57; o código interno não muda)
 - Header de coluna: nome + contagem + soma (derivada)
 - `ProposalCard`: nome, #id, nota, valor (heading nowrap), dias, chip status
+- **Cartão de origem Bitlab (CRMLAB-57, D-195):** quando `origin === "bitlab"`, o cartão leva o
+  `Chip` "Bitlab" (tom `inactive`) ao lado do número, e mostra, além do nome do paciente (do
+  orçamento) e do valor: "Orç. LIS {lisBudgetNumber}", o convênio não aparece no cartão (fica no
+  modal), a atendente do Bitlab (`lisAttendantName`) e a data do orçamento (`lisIssuedOn`,
+  `DD/MM/AAAA`). Selo **"Pré-cadastro feito"** (`Chip tone="positive"`) quando
+  `lisRequisitionNumber` não é `null` e o estágio é `novo_contato` (D-197). Sem conversa
+  (`conversationId === null`): aviso "Sem conversa vinculada" em `text-caption`. O selo
+  "Conciliado" continua o mesmo.
 - Todo cartão clicável → Modal da Proposta
 - **Arrastar o cartão** entre colunas move o estágio (HTML5 drag-and-drop nativo, sem
   biblioteca). A proposta viaja no `dataTransfer` como JSON **e o estágio de origem viaja
@@ -419,6 +428,13 @@ nunca "sem permissão" (não vazar existência).
   `null`, com tooltip "Requisição Nº {lisRequisitionNumber} no LIS". Quando há `lisPaidValue`,
   uma linha "Pago no LIS: R$ X em DD/MM/AAAA" (`MoneyDisplay`/`DateDisplay`). O mesmo selo, sem
   tooltip, aparece no cartão do pipeline (§5), que lê `lisReconciledAt` da listagem.
+- **Proposta de origem Bitlab (CRMLAB-57, D-195):** o título é o nome do paciente do orçamento;
+  abaixo do número, o bloco "Orçamento do Bitlab" com nº, data, atendente e convênio. No lugar
+  dos itens, a linha "Valor do orçamento no Bitlab" com o total (não há itens nem desconto). Sem
+  botão "Editar", e o nº do orçamento no LIS é só leitura. Sem conversa: aviso "Sem conversa
+  vinculada" e o botão "Enviar orçamento" não aparece (enviar pela conversa é o CRMLAB-58).
+  "Mudar estágio", "Marcar como ganho" e "Marcar como perdido" seguem a matriz de sempre — de
+  "Novo orçamento" dá para ir a "Orçamento enviado" ou "Perdido".
 
 ---
 

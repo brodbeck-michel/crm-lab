@@ -1742,7 +1742,11 @@ Paciente inexistente ou fora da visibilidade devolve **lista vazia**, não `404`
       "approvalStatus": "none",
       "createdAt": "2024-08-23T14:40:00Z",
       "lisBudgetNumber": "1234",
-      "lisReconciledAt": null
+      "lisReconciledAt": null,
+      "origin": "crm",
+      "lisRequisitionNumber": null,
+      "lisIssuedOn": "2026-09-20",
+      "lisAttendantName": "MARIA SOUZA"
     }
   ],
   "pagination": {
@@ -1754,6 +1758,21 @@ Paciente inexistente ou fora da visibilidade devolve **lista vazia**, não `404`
 
 `insuranceId` (Onda 7) é `null` numa proposta particular — mesmo campo de `GET /proposals/:id`
 abaixo.
+
+**Origem `bitlab` (CRMLAB-57, D-195/D-196).** `origin` é `"crm"` (montada pela tela, a partir de
+uma conversa) ou `"bitlab"` (nasceu sozinha do orçamento do LIS, em `novo_contato`). Na origem
+`bitlab`:
+- `conversationId` é `null` enquanto não houver conversa vinculada (CRMLAB-58), e `createdBy`
+  é `null` quando o atendente do Bitlab não está ligado a um login (`createdByName: ""`).
+- `patientName` vem do `NM_PACIENTE` do orçamento; `totalPrice` é o total do orçamento no Bitlab
+  (não há itens, `discountPercent: 0`, `approvalStatus: "none"`).
+- `lisIssuedOn` (data de emissão, `YYYY-MM-DD`) e `lisAttendantName` (`USUÁRIO` cru) vêm do
+  orçamento vinculado — preenchidos em **qualquer** proposta com orçamento vinculado que já
+  exista em `lis_budgets`, não só na `bitlab`. `lisRequisitionNumber` (antes só no detalhe) é o
+  selo "Pré-cadastro feito" (D-197).
+- **Visibilidade:** proposta `bitlab` com `createdBy: null` aparece para **qualquer** papel do
+  tenant (fila comum). Com responsável, vale D-042.
+- `?search=` casa também o nome do paciente do orçamento do LIS.
 
 `proposalNumber` é sequencial **POR TENANT** (não global), gerado no servidor em `POST
 /proposals` — o cliente nunca envia. Serve para rastreamento citável por telefone/WhatsApp
@@ -2027,10 +2046,18 @@ a conciliação levou a proposta a `ganho`, gera **também** o `update_proposal_
 `newValues.source: "lis"`, o histórico, a mensagem de sistema e o WS `proposal.status_changed`,
 iguais aos da importação (D-119 item 4).
 
+**Absorção do cartão automático (CRMLAB-57, D-198):** se o número já pertence a uma proposta
+de origem `bitlab` em `novo_contato`, nunca enviada (`sentAt: null`) e sem conversa, essa
+proposta é **apagada** e o vínculo passa para esta, na mesma transação (audit
+`absorb_bitlab_proposal` no id apagado; WS `proposal.updated` com o id apagado depois do
+commit). Nos outros casos, `CONFLICT` como abaixo. Em proposta de origem `bitlab` a rota recusa
+qualquer mudança: `PROPOSAL_EDIT_NOT_ALLOWED` (409, `details.reason: "bitlab_origin"`) — o
+número é a identidade dela.
+
 **Erros:** `VALIDATION_ERROR` (400), `CONFLICT` (409, `details.reason:
 "lis_budget_number_taken"` e `details.proposalNumber` da outra proposta), `PROPOSAL_ALREADY_CLOSED`
 (409, só quando a proposta está `ganho`. Em `perdido` o vínculo é aceito, D-119 item 2),
-`FORBIDDEN` (403), `NOT_FOUND` (404).
+`FORBIDDEN` (403), `NOT_FOUND` (404), `PROPOSAL_EDIT_NOT_ALLOWED` (409, origem `bitlab`).
 
 ### PATCH /proposals/:id/discount
 Atualizar desconto (se aprovação pendente).
@@ -2050,6 +2077,9 @@ Atualizar desconto (se aprovação pendente).
   "totalPrice": 175.78
 }
 ```
+
+Proposta de origem `bitlab` (CRMLAB-57, D-195 item 7): `PROPOSAL_EDIT_NOT_ALLOWED` (409,
+`details: { status, reason: "bitlab_origin" }`) — o valor é o do orçamento do Bitlab.
 
 ### PATCH /proposals/:id/items
 Substitui a lista de itens e, opcionalmente, desconto e médico solicitante (CRMLAB-12, D-134).
@@ -2074,6 +2104,8 @@ Substitui a lista de itens e, opcionalmente, desconto e médico solicitante (CRM
 - **Só aceito com a proposta em `novo_contato` ou `orcamento_enviado`** (`EDITABLE_STATUSES` de
   `@crm-lab/shared`) — fora disso, `PROPOSAL_EDIT_NOT_ALLOWED` (409). Proposta terminal
   (`ganho`/`perdido`) responde `PROPOSAL_ALREADY_CLOSED` (409) antes mesmo dessa checagem.
+- **Origem `bitlab`** (CRMLAB-57, D-195 item 7): `PROPOSAL_EDIT_NOT_ALLOWED` (409,
+  `details.reason: "bitlab_origin"`) em qualquer estágio — ela não tem itens do catálogo.
 - Alçada de `discountPercent`: mesma regra de `PATCH /discount` — dentro do limite do autor,
   aprova por si mesma; acima, `approvalStatus` volta para `pending` e reabre o fluxo de
   aprovação (WORKFLOWS.md §3). Terceiro tentando subir o desconto de proposta que não criou
@@ -4006,6 +4038,7 @@ chunk. Ao final, grava `lis_imports` com `status: "completed"` e os contadores.
   "rowsAccepted": 505,
   "rowsRejected": 7,
   "proposalsWon": 0,
+  "proposalsCreated": 0,
   "status": "completed",
   "errorMessage": null,
   "createdBy": "9f8e7d6c-5b4a-4392-8180-7f6e5d4c3b2a",
@@ -4014,7 +4047,8 @@ chunk. Ao final, grava `lis_imports` com `status: "completed"` e os contadores.
 }
 ```
 `proposalsWon` conta as propostas que esta importação levou a `ganho` pela conciliação (D-119,
-CRMLAB-52). Era sempre `0` até a Onda 13. `status: "failed"` é possível quando a
+CRMLAB-52). Era sempre `0` até a Onda 13. `proposalsCreated` conta as propostas de origem
+`bitlab` que a rodada criou (CRMLAB-57, D-196); `null` nas linhas anteriores a ele. `status: "failed"` é possível quando a
 importação passa da validação de arquivo mas falha durante o processamento (ex.: erro de banco
 no meio de um chunk); nesse caso `errorMessage` traz o motivo e `finishedAt` fica preenchido do
 mesmo jeito — a linha de `lis_imports` registra a falha, nunca é apagada.
@@ -4317,7 +4351,7 @@ Configuração e disparo da sincronização dos orçamentos pela API de Orçamen
   "lastSuccessAt": "2026-09-25T14:00:00.000Z",
   "lastError": null,
   "running": false,
-  "intervalMinutes": 30
+  "intervalMinutes": 2
 }
 ```
 - Sem linha em `lis_sync_settings`: `enabled: false`, `apiKeySet: false`, `apiKeyMasked: null` e
@@ -4364,6 +4398,7 @@ tela mostra (`status: "failed"`).
   "importId": "8c2e1f77-0b13-4a3d-9d54-1f0e6b7a2c19",
   "rowsAccepted": 42,
   "proposalsWon": 3,
+  "proposalsCreated": 5,
   "watermark": "2026-09-25T14:02:11.000Z",
   "error": null,
   "settings": { "enabled": true, "apiKeySet": true, "...": "mesmo shape do GET" }

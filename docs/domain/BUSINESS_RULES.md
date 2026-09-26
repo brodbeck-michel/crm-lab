@@ -21,6 +21,12 @@ total = (89.90 + 89.90) * (1 - 0.10) = 161.82
 
 O total é **sempre calculado** a partir dos itens + desconto.
 
+> **Exceção declarada — proposta de origem `bitlab` (CRMLAB-57, D-195).** A proposta que nasce
+> sozinha do orçamento do LIS não tem itens do catálogo: o total é o `total_value` do orçamento
+> no Bitlab, que é a fonte da verdade desse valor, e é regravado a cada ingestão enquanto a
+> proposta não fecha. Ela não tem desconto, não passa por alçada, e nome do paciente, data e
+> atendente vêm por JOIN com `lis_budgets` (nunca copiados).
+
 ### ❌ Errado:
 ```
 proposal.items = [...]
@@ -180,6 +186,15 @@ A matriz acima vale para **pessoas**. Quando o orçamento do LIS vinculado à pr
 (`changedBy: null`, audit `source: "lis"`). É o único caminho que não passa por
 `isTransitionAllowed`, e ele mora só em `ProposalService.markWonFromLis`. `perdido` **nunca**
 reabre por esse caminho: o conflito é auditado (`lis_reconcile_conflict`) e o gestor decide.
+
+**Exceção da exceção (CRMLAB-57, D-197):** proposta de origem `bitlab` **em `novo_contato`**
+com requisição **não** vai a `ganho`: a requisição só é espelhada e vira o selo "Pré-cadastro
+feito". Requisição no balcão é pré-cadastro, não aceite de uma proposta que o CRM enviou.
+
+**Nascer do orçamento (CRMLAB-57, D-196):** com a regra ligada, todo orçamento do LIS emitido a
+partir da data de ativação (`tenant_settings.bitlab_proposals_since`) e sem proposta vira uma
+proposta de origem `bitlab` em `novo_contato` ("Novo orçamento"), sem conversa. Histórico
+anterior à ativação nunca vira cartão.
 
 ### Motivo de Perda (Obrigatório)
 

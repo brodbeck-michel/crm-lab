@@ -24,6 +24,8 @@ export interface LisImport {
   rowsAccepted: number | null;
   rowsRejected: number | null;
   proposalsWon: number | null;
+  /** Propostas de origem `bitlab` que a rodada criou (CRMLAB-57, D-196 item 4). `null` nas antigas. */
+  proposalsCreated: number | null;
   status: LisImportStatus;
   errorMessage: string | null;
   createdBy: string | null;
@@ -89,6 +91,8 @@ export interface LisSyncRunResult {
   importId: string | null;
   rowsAccepted: number;
   proposalsWon: number;
+  /** Propostas de origem `bitlab` criadas pela rodada (CRMLAB-57, D-196). */
+  proposalsCreated: number;
   watermark: string | null;
   error: { kind: LisSyncErrorKind; message: string } | null;
   settings: LisIntegrationSettings;

@@ -260,7 +260,7 @@ export default function Rules() {
         <Section
           id="automacao"
           title="Automação do funil"
-          description="O que o sistema faz sozinho. As automações passam a rodar quando o motor do funil entrar no ar."
+          description="O que o sistema faz sozinho. Os prazos contam desde que o cartão entrou no estágio e são conferidos a cada poucos minutos. Dias úteis: segunda a sexta, sem descontar feriados."
         >
           <div className="flex flex-col gap-md">
             <Toggle

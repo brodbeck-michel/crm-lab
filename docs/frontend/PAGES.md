@@ -1180,7 +1180,8 @@ seu próprio [Salvar] (endpoint e permissão diferentes).
    Orçamento enviado há **X dias** → Follow-up; Negociação sem pagamento há **Y dias** →
    Follow-up; Follow-up há **Z dias** → Perdido (motivo "Silêncio"); Alerta de "Novo orçamento"
    parado há **N horas**. Mais o `SegmentedControl` "Contar em dias corridos | dias úteis". Nota
-   no cartão: "As automações passam a rodar quando o motor do funil entrar no ar" (CRMLAB-59/60).
+   no cartão (desde o CRMLAB-59, D-205): "Os prazos contam desde que o cartão entrou no estágio e
+   são conferidos a cada poucos minutos. Dias úteis: segunda a sexta, sem descontar feriados."
 3. **Movimentação manual (travas)** — `Toggle` "Reabrir Ganho/Perdido" + caixas "Atendente" /
    "Gestor" (o admin sempre pode, dito no texto); `Toggle` "Pular etapas"; `Toggle` "Exigir
    motivo ao marcar Perdido"; `Toggle` "Gestor pode mover card de outra atendente".

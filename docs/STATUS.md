@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-26 (CRMLAB-56 — página de Regras, em branch; v1.22.0 em PRODUÇÃO)
+**Última atualização:** 2026-09-26 (CRMLAB-59 — motor de tempo do funil, em branch; v1.22.0 em PRODUÇÃO)
 
 ---
 
@@ -2855,3 +2855,33 @@ Branch `feature/CRMLAB-57-proposta-nasce-bitlab`. Decisões D-195..D-199, migra�
   continua barrado pela matriz — cartão de balcão passa por "Orçamento enviado" (travas: CRMLAB-56);
   cartão com pré-cadastro enviado depois só vai a ganho quando o orçamento mudar de novo no Bitlab
   (CRMLAB-60); mudança de valor no re-sync não emite WS próprio.
+
+### ✅ CRMLAB-59 [D] — motor de tempo do funil (Epic CRMLAB-55, 2026-09-26)
+
+Branch `feature/CRMLAB-59-motor-tempo` (de `integ/onda-funil`). Decisões D-205..D-209, migração
+`030_funnel_timer.sql`.
+
+- **Motor (D-205):** `FunnelTimerService` (`backend/src/services/funnel-timer.service.ts`,
+  SERVICES §27), agendado no `main.ts` por `FUNNEL_TIMER_INTERVAL_MS` (padrão 5 min, `0` desliga),
+  um tique por vez, laboratórios em série, até 200 cartões por regra/laboratório/tique, uma
+  transação por cartão, `debug` no tique vazio. Relógio = última linha do histórico com o estágio
+  atual; dias corridos ou úteis (seg–sex, Brasília, **sem feriados**) pelas funções puras de
+  `shared/types/funnel-timer.types.ts`.
+- **Fato vence tempo (D-206):** pagamento impede tudo; requisição impede `orcamento_enviado`/
+  `follow_up`; matriz vigente sem o passo não move; terminais intocados.
+- **Transição de sistema (D-208):** `applyTimerTransition(tx, { tenantId, proposalId, step,
+  automation, enteredHistoryId, now })` — histórico com `changed_by NULL` e `automation`, mensagem
+  de sistema só com conversa, audit `source: "rule"`, WS + cache depois do commit. A unificar com a
+  transição de sistema do CRMLAB-58 na integração.
+- **Alerta (D-207):** "Novo orçamento" parado há N h corridas → WS `proposal.stale_alert` para o
+  responsável (ou gestores/admins), uma vez por entrada (`stale_alerted_at` na linha de entrada);
+  toast no front + selo "Parado há N h" no cartão calculado pela mesma função
+  (`Proposal.stageEnteredAt`, novo). Modal: "movido pela regra: Enviado há 3 dias".
+- **Prazo mudado (D-209):** vale no próximo tique, inclusive para quem já passou do prazo novo; sem
+  marco de ativação — no primeiro deploy os cartões vencidos andam no primeiro tique.
+- **Pendência encontrada (fora do escopo, não corrigida):** `changedAt` do histórico e demais
+  `TIMESTAMP` lidos como `Date` pelo driver dependem do **fuso do processo Node**. Numa máquina em
+  UTC−3 (este WSL) o `changedAt` sai 3 h adiantado; em produção o container roda em UTC e não
+  aparece. O código novo lê com `to_char` em UTC e não é afetado. Fechar a classe (fixar `TZ=UTC`
+  no processo/teste ou parser de tipo no driver) é um card de Kernel.
+

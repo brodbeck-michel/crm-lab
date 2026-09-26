@@ -209,6 +209,12 @@ interface ProposalService {
 - **`setLisReference`:** normaliza o número (D-119 item 1), recusa em `ganho`
   (`PROPOSAL_ALREADY_CLOSED`), traduz a violação do índice único para `CONFLICT
   lis_budget_number_taken` e chama `LisReconcileService.reconcileProposal` na mesma transação.
+  Número de um cartão `bitlab` ainda em `novo_contato`, nunca enviado e sem conversa → absorve
+  (apaga) o cartão e vincula aqui (D-198).
+- **Origem `bitlab` (CRMLAB-57, D-195):** `updateDiscount`, `updateItems` e `setLisReference`
+  recusam com `PROPOSAL_EDIT_NOT_ALLOWED` (`reason: "bitlab_origin"`). Sem conversa, a transição
+  não grava mensagem de sistema. `canSeeProposal`: proposta `bitlab` sem responsável é visível a
+  todo o tenant; `list` do atendente traz as dele **e** essas.
 
 ---
 
@@ -1085,7 +1091,13 @@ chama (`import`) é este service.
   números daquele chunk. O total vai para `lis_imports.proposals_won`.
 - **`purge` bloqueado com vínculo (D-119 item 8):** `CONFLICT lis_budgets_reconciled` se algum
   `lis_budgets.proposal_id` do tenant estiver preenchido. Checado antes de gravar o
-  `lis_imports(kind: 'purge')`.
+  `lis_imports(kind: 'purge')`. Com as propostas de origem `bitlab` (§26), todo orçamento
+  emitido depois da ativação ganha vínculo, então na prática o purge fica bloqueado a partir daí.
+- **Proposta nasce do orçamento (CRMLAB-57, D-196):** no mesmo chunk, depois do upsert e antes
+  da conciliação, `BitlabProposalService.createBitlabProposals(tx, tenantId, numbers)` (§26). A
+  ordem importa: a proposta criada já entra na conciliação do mesmo chunk, que grava
+  `lis_budgets.proposal_id` e espelha a requisição (selo). O total vai para
+  `lis_imports.proposals_created`; os ids, para `announceBitlabProposals` depois do commit.
 
 ---
 
@@ -1279,6 +1291,9 @@ ao agendador):
 8. Libera a trava num `finally`.
 
 **Regras:**
+- **Intervalo padrão de 2 min** (`LIS_SYNC_INTERVAL_MS=120000`, D-199). O tique é ignorado
+  inteiro enquanto o anterior ainda roda (`tickInProgress`), além da trava por tenant.
+  `lis_sync.completed` sai em `info` só quando a rodada recebeu orçamentos; rodada vazia é `debug`.
 - `runScheduledTick` roda os tenants **em série**, não em paralelo: é um por laboratório, e
   série não compete com as requisições da tela pelo pool.
 - O tique nunca lança: cada tenant tem o próprio `try/catch`. Um laboratório com erro não impede
@@ -1364,6 +1379,45 @@ announceLisWins(deps: { wsHub; cache }, tenantId: string, proposalIds: readonly 
   chama com `announceLisWins` **depois do commit**, para não anunciar um `ganho` que um rollback
   desfaria. O audit `update_proposal_status`/`lis_reconcile_conflict` entra **na** transação
   (`auditRepo.insert`), porque `db.withTenant` não aninha e ele tem que sumir junto num rollback.
+- **Exceção da origem `bitlab` (CRMLAB-57, D-197):** proposta `bitlab` em `novo_contato` com
+  requisição **não** chama `markWonFromLis`: só espelha a requisição (selo "Pré-cadastro
+  feito"). Nos outros estágios, D-119 como acima.
+- **Valor do Bitlab (D-195 item 2):** proposta `bitlab` não terminal tem `total_price` e
+  `insurance_id` regravados a partir de `lis_budgets.total_value`/`insurance_id` quando mudaram.
+
+---
+
+## 26. BitlabProposalService (CRMLAB-57 — D-195/D-196)
+
+**Responsabilidade:** criar a proposta de origem `bitlab` a partir do orçamento do LIS. Sem
+rota e sem estado, como §25: roda **dentro** da transação do chunk de
+`LisImportService.ingestRows` (§19).
+
+```typescript
+// backend/src/services/bitlab-origin-gate.ts
+/** A regra "Nascer do orçamento do Bitlab" (CRMLAB-56). Hoje devolve true. */
+isBitlabOriginEnabled(tx: DbTx, tenantId: string): Promise<boolean>;
+
+// backend/src/services/bitlab-proposal.service.ts — funções
+/** Cria as propostas dos orçamentos de `numbers` sem proposta. Devolve os ids criados. */
+createBitlabProposals(tx: DbTx, tenantId: string, numbers: readonly string[]): Promise<string[]>;
+/** Depois do commit: WS `proposal.created` por id + invalidação do cache de analytics. */
+announceBitlabProposals(deps: { wsHub; cache }, tenantId: string, proposalIds: readonly string[]): Promise<void>;
+```
+
+**Regras** (D-196):
+1. `isBitlabOriginEnabled` falso → nada.
+2. Marca do tenant: `tenant_settings.bitlab_proposals_since` (dia de Brasília), gravada com
+   `COALESCE` na primeira chamada com a regra ligada.
+3. Candidatos: orçamentos de `numbers` com `issued_on >= marca` e **sem** proposta com o mesmo
+   `lis_budget_number`. Sem `issued_on` → não nasce.
+4. Para cada um: `proposal_number` pelo `pg_advisory_xact_lock` de sempre; `INSERT ... ON
+   CONFLICT (tenant_id, lis_budget_number) WHERE lis_budget_number IS NOT NULL DO NOTHING`;
+   `origin: 'bitlab'`, `status: 'novo_contato'`, sem conversa, `created_by` = login do atendente
+   do Bitlab (`attendants.user_id`, usuário ativo) ou `NULL`, `total_price` = `total_value`,
+   `insurance_id` do orçamento, `discount_percent: 0`, `approval_status: 'none'`.
+5. Histórico `novo_contato` com `changed_by NULL`; audit `create_proposal` com `userId: null` e
+   `newValues: { origin: "bitlab", lisBudgetNumber, totalPrice, status }`.
 
 ---
 

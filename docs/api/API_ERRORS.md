@@ -104,7 +104,7 @@ renderiza. "Não sei onde mostrar" nunca pode virar silêncio.
 | `INVALID_LOSS_REASON` | 400 | reasonLost fora do enum | `{ allowed[] }` |
 | `PROPOSAL_PENDING_APPROVAL` | 409 | Tentativa de enviar proposta pending | — |
 | `PROPOSAL_ALREADY_CLOSED` | 409 | Mutação em proposta ganha/perdida (inclui reabrir desligado nas Regras, D-192) | `{ status }`; `reason: "lis_reconciled"` quando o ganho veio do LIS e por isso não reabre |
-| `PROPOSAL_EDIT_NOT_ALLOWED` | 409 | `PATCH /proposals/:id/items` fora de `novo_contato`/`orcamento_enviado` (CRMLAB-12, D-134) | `{ status }` |
+| `PROPOSAL_EDIT_NOT_ALLOWED` | 409 | `PATCH /proposals/:id/items` fora de `novo_contato`/`orcamento_enviado` (CRMLAB-12, D-134); `/items`, `/discount` e `/lis-reference` em proposta de origem `bitlab` (CRMLAB-57, D-195) | `{ status }` · `{ status, reason: "bitlab_origin" }` |
 | `APPROVAL_NOT_ALLOWED` | 403 | Aprovador sem alçada suficiente | `{ discount, approverLimit }` |
 | `EXAM_NOT_FOUND_OR_INACTIVE` | 400 | Item referencia exame inexistente/inativo | `{ examIds[] }` |
 | `MANUAL_PROPOSAL_DISABLED` | 409 | `POST /proposals` com "Criar proposta manualmente no CRM" desligado em Regras (CRMLAB-56, D-193) | — |

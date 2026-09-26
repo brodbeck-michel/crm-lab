@@ -177,6 +177,9 @@ function proposal(overrides: Partial<ProposalDetail> = {}): ProposalDetail {
     lisRequisitionNumber: overrides.lisRequisitionNumber ?? null,
     lisPaidValue: overrides.lisPaidValue ?? null,
     lisPaidOn: overrides.lisPaidOn ?? null,
+    origin: overrides.origin ?? 'crm',
+    lisIssuedOn: overrides.lisIssuedOn ?? null,
+    lisAttendantName: overrides.lisAttendantName ?? null,
   };
 }
 

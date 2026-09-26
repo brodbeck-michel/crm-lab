@@ -6,6 +6,7 @@ import { useAuthStore } from '@/stores/auth.store';
 import {
   PROPOSAL_STATUSES,
   canTransition,
+  isCardOwner,
   type ProposalStatus,
   type ListProposalsQuery,
   type Proposal,
@@ -118,7 +119,7 @@ export default function Proposals() {
    * o formulário de motivo já mora no modal.
    */
   const handleDrop = (proposal: Proposal, target: ProposalStatus) => {
-    const actor = { role, isOwner: proposal.createdBy === currentUserId };
+    const actor = { role, isOwner: isCardOwner(proposal.createdBy, currentUserId) };
     if (!canTransition(funnelRules.manualMoves, proposal.status, target, actor)) {
       toast('As regras do laboratório não permitem essa mudança.', { tone: 'attention' });
       return;

@@ -31,6 +31,7 @@ import {
   LOSS_REASONS,
   buildAllowedTransitions,
   checkTransition,
+  isCardOwner,
   TERMINAL_STATUSES,
   calculateSubtotal,
   calculateTotal,
@@ -130,7 +131,22 @@ export interface ProposalServiceDeps {
  */
 export function canSeeProposal(ctx: TenantContext, row: ProposalRow): boolean {
   if (ctx.role === 'manager' || ctx.role === 'admin') return true;
+  // Cartao `bitlab` sem responsavel e fila comum do tenant (D-195 item 6).
+  if (row.created_by === null && row.origin === 'bitlab') return true;
   return row.created_by === ctx.userId;
+}
+
+/**
+ * Proposta de origem `bitlab` nao edita itens, desconto nem o nº do orcamento
+ * (D-195 item 7): o valor e a identidade sao os do orcamento do Bitlab.
+ */
+function assertNotBitlab(row: ProposalRow): void {
+  if (row.origin === 'bitlab') {
+    throw new BusinessError('PROPOSAL_EDIT_NOT_ALLOWED', {
+      status: row.status,
+      reason: 'bitlab_origin',
+    });
+  }
 }
 
 /**
@@ -236,7 +252,8 @@ async function recordTransitionInTx(
   input: {
     tenantId: string;
     proposalId: string;
-    conversationId: string;
+    /** `null` na origem `bitlab` sem conversa: nao ha onde gravar a mensagem (D-195). */
+    conversationId: string | null;
     status: ProposalStatus;
     changedBy: string | null;
     systemMessage: string | null;
@@ -248,7 +265,7 @@ async function recordTransitionInTx(
     status: input.status,
     changedBy: input.changedBy,
   });
-  if (input.systemMessage !== null) {
+  if (input.systemMessage !== null && input.conversationId !== null) {
     await repo.insertSystemMessage(tx, {
       tenantId: input.tenantId,
       conversationId: input.conversationId,
@@ -274,7 +291,7 @@ export async function markWonFromLis(
   tenantId: string,
   proposalId: string,
 ): Promise<boolean> {
-  const current = await tx.query<{ status: string; conversation_id: string }>(
+  const current = await tx.query<{ status: string; conversation_id: string | null }>(
     'SELECT status, conversation_id FROM proposals WHERE id = $1 AND tenant_id = $2 FOR UPDATE',
     [proposalId, tenantId],
   );
@@ -551,6 +568,8 @@ export class ProposalService {
         // D-042). O recorte por papel acima continua valendo por cima dele.
         ...(filters.patientId !== undefined ? { patientId: filters.patientId } : {}),
         ...(createdBy !== undefined ? { createdBy } : {}),
+        // O atendente ve tambem a fila comum de cartoes `bitlab` sem responsavel (D-195 item 6).
+        ...(ctx.role === 'attendant' ? { includeUnowned: true } : {}),
         ...(filters.startDate !== undefined ? { startDate: filters.startDate } : {}),
         ...(filters.endDate !== undefined ? { endDate: filters.endDate } : {}),
         ...(filters.search !== undefined ? { search: filters.search } : {}),
@@ -600,7 +619,7 @@ export class ProposalService {
 
       const denial = checkTransition(manualMoves, from, status, {
         role: ctx.role,
-        isOwner: row.created_by === ctx.userId,
+        isOwner: isCardOwner(row.created_by, ctx.userId),
       });
       if (denial === 'closed') {
         throw new BusinessError('PROPOSAL_ALREADY_CLOSED', { status: from });
@@ -725,7 +744,12 @@ export class ProposalService {
     }
     const number = lisBudgetNumber;
 
-    let outcome: { previous: string | null; won: boolean; detail: ProposalDetail };
+    let outcome: {
+      previous: string | null;
+      won: boolean;
+      detail: ProposalDetail;
+      absorbed: repo.LisBudgetHolder | null;
+    };
     try {
       outcome = await db.withTenant(ctx.tenantId, async (tx) => {
         const row = await loadVisibleProposal(tx, ctx, id);
@@ -736,20 +760,48 @@ export class ProposalService {
         if (row.status === 'ganho') {
           throw new BusinessError('PROPOSAL_ALREADY_CLOSED', { status: row.status });
         }
+        // O numero e a identidade do cartao `bitlab` (D-195 item 7).
+        assertNotBitlab(row);
+
+        let absorbed: repo.LisBudgetHolder | null = null;
         if (number !== null && number !== row.lis_budget_number) {
-          const taken = await repo.findProposalNumberByLisBudget(tx, number);
-          if (taken !== null) {
-            throw new BusinessError('CONFLICT', {
-              reason: 'lis_budget_number_taken',
-              proposalNumber: taken,
+          const holder = await repo.findLisBudgetHolder(tx, number);
+          if (holder !== null) {
+            // D-198: cartao automatico que ninguem tocou e absorvido; o resto conflita.
+            const absorbable =
+              holder.origin === 'bitlab' &&
+              holder.status === 'novo_contato' &&
+              holder.sentAt === null &&
+              holder.conversationId === null;
+            if (!absorbable) {
+              throw new BusinessError('CONFLICT', {
+                reason: 'lis_budget_number_taken',
+                proposalNumber: holder.proposalNumber,
+              });
+            }
+            await repo.deleteProposal(tx, holder.id);
+            await auditRepo.insert(tx, {
+              tenantId: ctx.tenantId,
+              userId: ctx.userId,
+              action: 'absorb_bitlab_proposal',
+              entityType: 'proposal',
+              entityId: holder.id,
+              oldValues: {
+                proposalNumber: holder.proposalNumber,
+                lisBudgetNumber: number,
+                totalPrice: holder.totalPrice,
+              },
+              newValues: { absorbedBy: id },
+              ipAddress: ctx.ip,
             });
+            absorbed = holder;
           }
         }
 
         await repo.setLisBudgetNumber(tx, id, number);
         const won = number !== null && (await reconcileProposal(tx, ctx.tenantId, id));
         const detail = await loadDetail(tx, id);
-        return { previous: row.lis_budget_number, won, detail };
+        return { previous: row.lis_budget_number, won, detail, absorbed };
       });
     } catch (err) {
       // Corrida entre dois PATCH com o mesmo numero: o indice unico decide.
@@ -769,6 +821,13 @@ export class ProposalService {
       });
     }
 
+    if (outcome.absorbed !== null) {
+      // O cartao absorvido some do Kanban (D-198).
+      this.deps.wsHub.emitToTenant(ctx.tenantId, 'proposal.updated', {
+        proposalId: outcome.absorbed.id,
+      });
+      await this.invalidateAnalytics(ctx.tenantId);
+    }
     if (outcome.won) {
       await announceLisWins(this.deps, ctx.tenantId, [id]);
     } else {
@@ -801,6 +860,7 @@ export class ProposalService {
       if (isTerminal(status)) {
         throw new BusinessError('PROPOSAL_ALREADY_CLOSED', { status });
       }
+      assertNotBitlab(row);
 
       const userLimit = await readDiscountLimit(tx, ctx.userId, ctx.discountLimit);
       const withinLimit = discountPercent <= userLimit;
@@ -916,6 +976,7 @@ export class ProposalService {
     if (isTerminal(preCheck.status as ProposalStatus)) {
       throw new BusinessError('PROPOSAL_ALREADY_CLOSED', { status: preCheck.status });
     }
+    assertNotBitlab(preCheck);
     if (!isProposalEditable(preCheck.status as ProposalStatus)) {
       throw new BusinessError('PROPOSAL_EDIT_NOT_ALLOWED', { status: preCheck.status });
     }

@@ -82,6 +82,9 @@ function buildProposal(overrides: Partial<ProposalDetail> = {}): ProposalDetail 
     lisRequisitionNumber: overrides.lisRequisitionNumber ?? null,
     lisPaidValue: overrides.lisPaidValue ?? null,
     lisPaidOn: overrides.lisPaidOn ?? null,
+    origin: overrides.origin ?? 'crm',
+    lisIssuedOn: overrides.lisIssuedOn ?? null,
+    lisAttendantName: overrides.lisAttendantName ?? null,
   };
 }
 
@@ -161,6 +164,9 @@ describe('ProposalModal', () => {
       lisRequisitionNumber: null,
       lisPaidValue: null,
       lisPaidOn: null,
+      origin: 'crm' as const,
+      lisIssuedOn: null,
+      lisAttendantName: null,
       history: [
         {
           status: 'novo_contato' as const,
@@ -228,6 +234,9 @@ describe('ProposalModal', () => {
       lisRequisitionNumber: null,
       lisPaidValue: null,
       lisPaidOn: null,
+      origin: 'crm' as const,
+      lisIssuedOn: null,
+      lisAttendantName: null,
       history: [],
     };
 
@@ -336,5 +345,55 @@ describe('ProposalModal', () => {
     renderModal();
 
     expect(screen.queryByText('Médico solicitante')).not.toBeInTheDocument();
+  });
+
+  // CRMLAB-57 (D-195, PAGES.md §6): proposta que nasceu do orçamento do Bitlab.
+  describe('origem Bitlab', () => {
+    const bitlab = (overrides: Partial<ProposalDetail> = {}) =>
+      buildProposal({
+        origin: 'bitlab',
+        conversationId: null,
+        patientName: 'Joana do Bitlab',
+        patientPhone: '',
+        status: 'novo_contato',
+        createdBy: null,
+        createdByName: '',
+        totalPrice: 150.5,
+        subtotal: 0,
+        lisBudgetNumber: '5001',
+        lisIssuedOn: '2026-09-20',
+        lisAttendantName: 'MARIA SOUZA',
+        ...overrides,
+      });
+
+    it('mostra o bloco do orçamento, o valor do Bitlab e o aviso de conversa; sem Editar nem Enviar', () => {
+      mockProposalDetail(bitlab());
+      renderModal();
+
+      expect(screen.getByText('Orçamento do Bitlab')).toBeInTheDocument();
+      expect(screen.getByText(/Nº 5001/)).toHaveTextContent('Nº 5001 · emitido em 20/09/2026');
+      expect(screen.getByText('Atendente no Bitlab: MARIA SOUZA')).toBeInTheDocument();
+      expect(screen.getByText('Valor do orçamento no Bitlab')).toBeInTheDocument();
+      expect(screen.getByText('Sem conversa vinculada')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Editar' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Enviar orçamento' })).not.toBeInTheDocument();
+      // O nº do orçamento é a identidade do cartão: sem "Alterar".
+      expect(screen.queryByRole('button', { name: 'Alterar' })).not.toBeInTheDocument();
+      // Perdido continua possível direto de "Novo orçamento".
+      expect(screen.getByRole('button', { name: 'Marcar como Perdido' })).toBeEnabled();
+    });
+
+    it('selo "Pré-cadastro feito" com requisição em "Novo orçamento"', () => {
+      mockProposalDetail(bitlab({ lisRequisitionNumber: '001-0001234' }));
+      renderModal();
+      expect(screen.getByText('Pré-cadastro feito')).toBeInTheDocument();
+    });
+
+    it('proposta do CRM em "Novo orçamento" continua com o botão Enviar orçamento', () => {
+      mockProposalDetail(buildProposal({ status: 'novo_contato' }));
+      renderModal();
+      expect(screen.getByRole('button', { name: 'Enviar orçamento' })).toBeInTheDocument();
+      expect(screen.queryByText('Orçamento do Bitlab')).not.toBeInTheDocument();
+    });
   });
 });

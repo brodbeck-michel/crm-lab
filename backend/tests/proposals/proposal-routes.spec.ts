@@ -51,6 +51,10 @@ const DETAIL_KEYS = [
   'lisRequisitionNumber',
   'lisPaidValue',
   'lisPaidOn',
+  // CRMLAB-57 (D-195)
+  'origin',
+  'lisIssuedOn',
+  'lisAttendantName',
 ].sort();
 
 describe('/api/v1/proposals', () => {

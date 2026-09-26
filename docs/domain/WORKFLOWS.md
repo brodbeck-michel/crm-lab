@@ -198,7 +198,8 @@ essas travas: são do sistema.
 | negociacao | ganho | Acordo fechado |
 | negociacao | perdido | Sem acordo |
 | qualquer aberto | perdido | Com motivo |
-| qualquer aberto | ganho | **Só pelo sistema:** o orçamento do LIS vinculado aparece com requisição (CRMLAB-52, D-119). Pula a matriz, inclusive a partir de `novo_contato`. Nunca a partir de `perdido` |
+| qualquer aberto | ganho | **Só pelo sistema:** o orçamento do LIS vinculado aparece com requisição (CRMLAB-52, D-119). Pula a matriz, inclusive a partir de `novo_contato`. Nunca a partir de `perdido`. **Exceção:** proposta de origem `bitlab` em `novo_contato` não fecha, só ganha o selo "Pré-cadastro feito" (CRMLAB-57, D-197) |
+| (nasce) | novo_contato | **Só pelo sistema:** orçamento do LIS emitido depois da ativação e sem proposta vira proposta de origem `bitlab` ("Novo orçamento"), sem conversa (CRMLAB-57, D-196) |
 
 ### Ao mudar para `ganho`:
 ```typescript

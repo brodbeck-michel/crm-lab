@@ -81,6 +81,10 @@ function proposta(id: string, patientName: string): Proposal {
     insuranceId: null,
     lisBudgetNumber: null,
     lisReconciledAt: null,
+    origin: 'crm',
+    lisRequisitionNumber: null,
+    lisIssuedOn: null,
+    lisAttendantName: null,
   };
 }
 
@@ -172,7 +176,7 @@ describe('Proposals', () => {
     renderPage();
 
     for (const titulo of [
-      'Novo contato',
+      'Novo orçamento',
       'Orçamento enviado',
       'Follow-up',
       'Negociação',
@@ -280,7 +284,7 @@ describe('Proposals', () => {
   it('arrastar para um estágio proibido não dispara nada', () => {
     renderPage();
 
-    dragCard(screen.getByText('Rafael da Pagina 1'), colunaDe('Novo contato'));
+    dragCard(screen.getByText('Rafael da Pagina 1'), colunaDe('Novo orçamento'));
 
     expect(mutate).not.toHaveBeenCalled();
   });

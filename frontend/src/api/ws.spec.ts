@@ -107,6 +107,15 @@ describe('ws — evento invalida a query certa', () => {
     expect(keysPassed()).toEqual([queryScopes.conversations, queryKeys.conversation('c-1')]);
   });
 
+  // CRMLAB-57/D-196: cartão nascido do orçamento do Bitlab entra no Kanban sem recarregar.
+  it('proposal.created → ["proposals"]', () => {
+    const client = build();
+    client.connect();
+    socket(0).emitMessage({ event: 'proposal.created', data: { proposalId: 'p-7' } });
+
+    expect(keysPassed()).toEqual([queryScopes.proposals]);
+  });
+
   it('proposal.status_changed → ["proposals"] + ["proposal", id]', () => {
     const client = build();
     client.connect();

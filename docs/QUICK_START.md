@@ -9,7 +9,7 @@ Para novos desenvolvedores que entram no projeto. Leia isso primeiro antes de me
 - **Multitenant:** Múltiplos laboratórios no mesmo sistema
 - **Real-time:** Chat com pacientes em tempo real
 - **Personalização:** Cada laboratório tem seu próprio tema e branding
-- **Pipeline:** Orçamentos passam por 6 estágios (novo contato → ganho/perdido)
+- **Pipeline:** Orçamentos passam por 6 estágios (novo orçamento → ganho/perdido)
 
 ---
 

@@ -27,6 +27,7 @@ interface LisImportRow {
   rows_accepted: number | null;
   rows_rejected: number | null;
   proposals_won: number | null;
+  proposals_created: number | null;
   status: string;
   error_message: string | null;
   created_by: string | null;
@@ -35,7 +36,7 @@ interface LisImportRow {
 }
 
 const IMPORT_COLUMNS = `id, kind, file_name, rows_in_file, rows_accepted, rows_rejected,
-                         proposals_won, status, error_message, created_by, created_at, finished_at`;
+                         proposals_won, proposals_created, status, error_message, created_by, created_at, finished_at`;
 
 export function toLisImport(row: LisImportRow): LisImport {
   return {
@@ -46,6 +47,7 @@ export function toLisImport(row: LisImportRow): LisImport {
     rowsAccepted: row.rows_accepted,
     rowsRejected: row.rows_rejected,
     proposalsWon: row.proposals_won,
+    proposalsCreated: row.proposals_created,
     status: row.status as LisImportStatus,
     errorMessage: row.error_message,
     createdBy: row.created_by,
@@ -111,16 +113,25 @@ export class LisImportRepository {
       errorMessage: string | null;
       /** Propostas que esta rodada levou a `ganho` pela conciliacao (D-119 item 9). */
       proposalsWon: number;
+      proposalsCreated: number;
     },
   ): Promise<LisImport> {
     return this.db.withTenant(tenantId, async (tx) => {
       const result = await tx.query<LisImportRow>(
         `UPDATE lis_imports
             SET status = $2, rows_accepted = $3, rows_rejected = $4,
-                error_message = $5, proposals_won = $6, finished_at = NOW()
+                error_message = $5, proposals_won = $6, proposals_created = $7, finished_at = NOW()
           WHERE id = $1
           RETURNING ${IMPORT_COLUMNS}`,
-        [id, data.status, data.rowsAccepted, data.rowsRejected, data.errorMessage, data.proposalsWon],
+        [
+          id,
+          data.status,
+          data.rowsAccepted,
+          data.rowsRejected,
+          data.errorMessage,
+          data.proposalsWon,
+          data.proposalsCreated,
+        ],
       );
       const row = result.rows[0];
       if (!row) throw new Error('lis_imports nao encontrado ao finalizar');

@@ -96,6 +96,7 @@ mais de alguns minutos, reconectando na hora quando ela volta a ficar visível.
 | Evento | Payload | Reação do frontend |
 |--------|---------|--------------------|
 | `conversation.new_message` | `{ conversationId, messageId }` | invalidate `['conversations']` + `['conversation', id]` |
+| `proposal.created` | `{ proposalId }` | proposta nasceu sem ninguém clicar — hoje só a origem `bitlab`, na ingestão do orçamento (CRMLAB-57, D-196), depois do commit — invalidate `['proposals']` |
 | `proposal.status_changed` | `{ proposalId, status }` | invalidate `['proposals']` + `['proposal', id]` |
 | `proposal.updated` | `{ proposalId }` | itens/desconto/médico solicitante mudaram (CRMLAB-12, D-134) — invalidate `['proposals']` + `['proposal', id]` |
 | `approval.requested` | `{ proposalId }` | badge em #aprovacoes + invalidate pendentes |

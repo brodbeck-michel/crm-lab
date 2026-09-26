@@ -24,6 +24,9 @@ import { markWonFromLis } from './proposal.service.js';
 interface ReconcileRow {
   proposal_id: string;
   status: string;
+  origin: string;
+  total_price: unknown;
+  insurance_id: string | null;
   lis_budget_number: string;
   lis_requisition_number: string | null;
   lis_paid_value: unknown;
@@ -33,6 +36,8 @@ interface ReconcileRow {
   requisition_number: string | null;
   paid_value: unknown;
   paid_on: string | null;
+  budget_total_value: unknown;
+  budget_insurance_id: string | null;
 }
 
 function moneyOrNull(value: unknown): number | null {
@@ -84,7 +89,26 @@ async function reconcileRows(tx: DbTx, tenantId: string, rows: ReconcileRow[]): 
       );
     }
 
-    if (requisition !== null && !TERMINAL_STATUSES.includes(row.status as ProposalStatus)) {
+    const open = !TERMINAL_STATUSES.includes(row.status as ProposalStatus);
+    const bitlab = row.origin === 'bitlab';
+
+    // Origem `bitlab`: o valor e o convenio sao os do orcamento (D-195 item 2),
+    // regravados enquanto a proposta nao fecha, so se mudaram.
+    if (bitlab && open) {
+      const budgetTotal = toNumber(row.budget_total_value);
+      if (toNumber(row.total_price) !== budgetTotal || row.insurance_id !== row.budget_insurance_id) {
+        await tx.query(
+          `UPDATE proposals SET total_price = $2, insurance_id = $3, updated_at = NOW()
+            WHERE id = $1`,
+          [row.proposal_id, budgetTotal, row.budget_insurance_id],
+        );
+      }
+    }
+
+    // D-197: cartao `bitlab` ainda em "Novo orcamento" com requisicao e
+    // pre-cadastro — so espelha (selo), nao fecha como ganho.
+    const preRegistration = bitlab && row.status === 'novo_contato';
+    if (requisition !== null && open && !preRegistration) {
       if (await markWonFromLis(tx, tenantId, row.proposal_id)) won.push(row.proposal_id);
     }
   }
@@ -92,11 +116,13 @@ async function reconcileRows(tx: DbTx, tenantId: string, rows: ReconcileRow[]): 
 }
 
 const SELECT_JOIN = `
-  SELECT p.id AS proposal_id, p.status, p.lis_budget_number, p.lis_requisition_number,
+  SELECT p.id AS proposal_id, p.status, p.origin, p.total_price, p.insurance_id,
+         p.lis_budget_number, p.lis_requisition_number,
          p.lis_paid_value, to_char(p.lis_paid_on, 'YYYY-MM-DD') AS lis_paid_on,
          b.id AS budget_id, b.proposal_id AS budget_proposal_id,
          NULLIF(b.requisition_number, '') AS requisition_number,
-         b.paid_value, to_char(b.paid_on, 'YYYY-MM-DD') AS paid_on
+         b.paid_value, to_char(b.paid_on, 'YYYY-MM-DD') AS paid_on,
+         b.total_value AS budget_total_value, b.insurance_id AS budget_insurance_id
     FROM proposals p
     JOIN lis_budgets b ON b.tenant_id = p.tenant_id AND b.number = p.lis_budget_number
    WHERE p.tenant_id = $1`;

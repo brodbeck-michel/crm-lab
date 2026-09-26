@@ -3238,6 +3238,127 @@ desligou o fluxo, e a tela precisa mostrar isso.
 mexer no endpoint nem na permissão mantém `/sales/summary` e os testes da comissão como estão.
 **Impacto:** `shared/types/funnel-rules.types.ts`; frontend `Settings/Rules.tsx` (novo),
 `Settings/Commissions.tsx` (vira seção), `route-config.ts`, `routes/index.tsx`; PAGES §19/§21.
+### D-195: Proposta de origem `bitlab` — sem conversa, sem itens, total = o do orçamento do Bitlab (CRMLAB-57)
+**Decisão:** `proposals` ganha `origin` (`'crm'` | `'bitlab'`, `NOT NULL DEFAULT 'crm'`: toda
+proposta existente é `crm`). Na origem `bitlab` a proposta nasce do orçamento do LIS (D-196) e:
+1. **`conversation_id` e `created_by` passam a aceitar `NULL`**, e só nessa origem: o CHECK
+   `proposals_crm_origin_complete` exige os dois quando `origin = 'crm'`. A API de Orçamentos não
+   traz telefone, então não há conversa nem paciente; o vínculo com a conversa é do CRMLAB-58.
+2. **Total:** `total_price` espelha `lis_budgets.total_value`. É a exceção declarada à regra §1 de
+   BUSINESS_RULES: a proposta `bitlab` **não tem itens** do catálogo, e a fonte da verdade do
+   valor é o orçamento do Bitlab. `discount_percent = 0`, `approval_status = 'none'`. A cada
+   ingestão do mesmo orçamento a conciliação regrava `total_price` (e `insurance_id`) se
+   mudaram, **enquanto a proposta não for terminal**. Guardar o número em `total_price` (e não
+   só no JOIN) mantém o funil, o pipeline, a receita e o ranking sem nenhum caso especial.
+3. **Nada de dado pessoal novo:** nome do paciente, data do orçamento e atendente do Bitlab vêm
+   por JOIN com `lis_budgets` (`patient_name`, `issued_on`, `attendant_name`), nunca copiados.
+   Na resposta: `patientName` = `COALESCE(conversa, lis_budgets)`, `lisIssuedOn`,
+   `lisAttendantName`. `lisRequisitionNumber` sobe de `ProposalDetail` para `Proposal` (o selo
+   "Pré-cadastro feito" do cartão lê a listagem).
+4. **Convênio** = `lis_budgets.insurance_id` (o mesmo resolvido pela ingestão, D-114).
+5. **Responsável provisório** = o login ligado ao atendente do Bitlab (`lis_budgets.attendant_id
+   → attendants.user_id`, só usuário ativo). Sem vínculo, `created_by` fica `NULL`. O dono
+   definitivo é quem enviar (CRMLAB-58).
+6. **Visibilidade:** proposta `bitlab` **sem responsável** é vista por qualquer pessoa do tenant
+   (fila comum de "Novo orçamento"); com responsável, vale D-042 (atendente vê só as suas). Sem
+   isso, a atendente que emitiu o orçamento no Bitlab e ainda não tem o login ligado ao nome do
+   LIS não veria o próprio cartão.
+7. **O que ela não faz:** não edita itens, desconto nem o nº do orçamento (é a identidade dela):
+   `PATCH /items`, `/discount` e `/lis-reference` → `PROPOSAL_EDIT_NOT_ALLOWED` com
+   `details.reason: "bitlab_origin"`. Não passa por aprovação de desconto. Transição de estágio
+   sem conversa não grava mensagem de sistema (não há onde). A ficha do paciente não a mostra
+   (não há paciente), e o ranking por atendente ignora as sem responsável.
+**Motivo:** o fluxo das atendentes (Epic CRMLAB-55) é criar o orçamento no Bitlab, como sempre, e
+conferir no CRM. Um card que exigisse conversa e itens não poderia nascer sozinho. Deixar os
+campos nulos só na origem nova, com CHECK, mantém o invariante antigo intacto para `crm`.
+**Impacto:** migração `028_bitlab_origin.sql`, `shared/types/proposal.types.ts`,
+`proposal.repository.ts`, `proposal.service.ts`, `analytics.repository.ts`,
+`lis-reconcile.service.ts`; frontend `ProposalCard`, `ProposalModal`, `ActionsRow`; SCHEMA §5,
+API_CONTRACTS §3, BUSINESS_RULES §1/§3, SERVICES §4.
+
+**Emenda (integração CRMLAB-56 × 57, 26/09/2026):** para a trava "mover card de outra atendente" (D-192), cartão sem responsável conta como da fila comum: `isCardOwner(createdBy, userId)` em `shared/` devolve `true` quando `createdBy` é `null`. Sem isso a atendente via o cartão do Bitlab e não conseguia movê-lo (403 `not_owner`). O gate `isBitlabOriginEnabled` passa a ler `origin.fromBitlab` das Regras.
+
+### D-196: Proposta nasce na ingestão do orçamento, só a partir da ativação, sem duplicar (CRMLAB-57)
+**Decisão:** no hook por chunk de `LisImportService.ingestRows` (planilha e sincronização),
+depois do upsert e **antes** da conciliação, `createBitlabProposals(tx, tenantId, numbers)` cria
+uma proposta `bitlab` em `novo_contato` para cada orçamento do chunk **sem proposta vinculada**.
+1. **Liga/desliga:** `isBitlabOriginEnabled(tx, tenantId)` (`backend/src/services/bitlab-origin-gate.ts`),
+   uma função só. Enquanto a regra "Nascer do orçamento do Bitlab" (CRMLAB-56) não existe, devolve
+   `true`; a integração troca o corpo.
+2. **Sem avalanche de histórico:** `tenant_settings.bitlab_proposals_since` (`DATE`, dia de
+   Brasília). É gravado na **primeira ingestão com a regra ligada** (`COALESCE`: nunca anda
+   depois) e só nasce proposta de orçamento com `issued_on >= bitlab_proposals_since`. A migração
+   não preenche nada. Orçamento sem data de emissão não nasce. Assim, a primeira carga de 90 dias
+   e o dump de produção restaurado na hml (com `lis_budgets` antigos) não viram cartão, e não
+   existe backfill. Quando a regra do CRMLAB-56 for ligada pela primeira vez, a marca é a data
+   dessa ligação (a primeira ingestão depois dela).
+3. **Idempotente e à prova de corrida:** a seleção é "orçamento do chunk sem `proposals` com
+   esse `lis_budget_number`", e o INSERT usa `ON CONFLICT (tenant_id, lis_budget_number) WHERE
+   lis_budget_number IS NOT NULL DO NOTHING` sobre o índice único parcial de D-118. Reimportar a
+   planilha, reler a janela da sincronização ou repetir um chunk não duplica. Planilha e
+   sincronização ao mesmo tempo também não: o `pg_advisory_xact_lock` do `proposal_number`
+   serializa as duas transações, e a segunda cai no `DO NOTHING`.
+4. **Registro:** histórico `novo_contato` com `changedBy: null`; audit `create_proposal` na
+   transação do chunk com `userId: null` e `newValues: { origin: "bitlab", lisBudgetNumber,
+   totalPrice, status }`. `lis_imports.proposals_created` conta as criadas na rodada.
+5. **Tempo real:** WS `proposal.created` (`{ proposalId }`) por proposta, **depois do commit**, e
+   invalidação do cache de analytics. O cartão aparece no Kanban sem recarregar.
+**Motivo:** o card tem que aparecer sozinho, pelos dois caminhos de entrada, sem inundar o funil
+com meses de orçamentos antigos e sem cartão duplicado quando a mesma janela é relida (a
+sincronização relê o último orçamento a cada rodada, D-187).
+**Impacto:** `028_bitlab_origin.sql`, `bitlab-origin-gate.ts` e `bitlab-proposal.service.ts`
+(novos), `lis-import.service.ts`, `shared/types/websocket.types.ts`, `lis.types.ts`; frontend
+`api/ws.ts`; SERVICES §19/§26, SCHEMA §5/§16/§25, FRONTEND_BACKEND "Real-time".
+
+### D-197: Exceção à D-119 — orçamento do Bitlab com requisição em "Novo orçamento" não vira `ganho`, ganha o selo "Pré-cadastro feito" (CRMLAB-57)
+**Decisão:** na conciliação (D-119 item 4), proposta de origem `bitlab` **em `novo_contato`** com
+requisição encontrada **não** vai para `ganho`: só espelha `lis_requisition_number` (e
+pagamento), que o cartão mostra como o selo **"Pré-cadastro feito"**. Isso vale também para o
+orçamento que já chega com requisição (pré-cadastro): o cartão nasce em "Novo orçamento". Em
+qualquer outro estágio, e em toda proposta de origem `crm`, a D-119 continua como está.
+**Motivo:** requisição no mesmo dia do orçamento é, no balcão, o pré-cadastro, não o paciente
+aceitando uma proposta que o CRM enviou. Fechar como ganho um cartão que ninguém conferiu nem
+enviou inflaria a conversão. A régua nova (requisição → negociação, pagamento → ganho) é o
+CRMLAB-60.
+**Limitação conhecida:** a conciliação só roda quando o orçamento volta numa ingestão ou quando
+alguém digita o número. Um cartão com pré-cadastro que depois é enviado (`orcamento_enviado`) só
+vai a `ganho` na próxima vez que esse orçamento mudar no Bitlab. Fica para o CRMLAB-60.
+**Impacto:** `lis-reconcile.service.ts`, BUSINESS_RULES §3, SERVICES §25, WORKFLOWS §4.
+
+### D-198: Número digitado numa proposta do CRM absorve o cartão automático ainda não enviado (CRMLAB-57)
+**Decisão:** em `PATCH /proposals/:id/lis-reference` numa proposta de origem `crm`, se o número
+já pertence a uma proposta `bitlab` que está em `novo_contato`, **nunca foi enviada**
+(`sent_at IS NULL`) e não tem conversa, o cartão automático é **absorvido**: apagado (`DELETE`,
+o histórico e os itens vão em cascata, `lis_budgets.proposal_id` vira `NULL`), com audit
+`absorb_bitlab_proposal` no id apagado (`oldValues: { proposalNumber, lisBudgetNumber,
+totalPrice }`, `newValues: { absorbedBy }`), e o vínculo passa para a proposta manual, que
+concilia na mesma transação. Depois do commit sai `proposal.updated` com o id apagado, para o
+Kanban tirar o cartão. Em qualquer outro caso (cartão automático já enviado, em outro estágio ou
+número de outra proposta `crm`), continua `CONFLICT` `lis_budget_number_taken`.
+**Motivo:** é o mesmo orçamento. A atendente que fez tudo pela conversa, do jeito antigo, não
+pode ficar bloqueada por um cartão que o sistema criou sozinho, e deixar os dois produziria dois
+cartões para uma venda. O cartão absorvido não tinha nada que a pessoa fez (sem envio, sem
+conversa, sem itens), então apagar não perde trabalho; o audit guarda o que ele era.
+**Impacto:** `proposal.service.ts` (`setLisReference`), `proposal.repository.ts`,
+API_CONTRACTS §3, SERVICES §4.
+
+### D-199: Sincronização a cada 2 minutos, sem sobrepor rodadas e sem log a cada tique vazio (CRMLAB-57)
+**Decisão:** o padrão de `LIS_SYNC_INTERVAL_MS` cai de 30 min para **2 min** (`120000`), em
+`env.ts`, `.env.example` e `docker-compose.prod.yml`. Isso emenda D-185 item 5. Para aguentar o
+ritmo:
+1. **Um tique por vez:** além da trava por tenant (D-185 item 5), o agendador ignora o tique
+   quando o anterior ainda está rodando (`tickInProgress` no módulo). Uma rodada lenta nunca
+   empilha outra.
+2. **Log:** rodada **com** orçamentos recebidos continua `info` `lis_sync.completed`. Rodada
+   vazia vira `debug`. Com 720 tiques por dia por laboratório, `info` em todos seria ruído.
+3. **Chave recusada** continua desligando a sincronização (D-185 item 6). Com 2 min isso passa a
+   ser o que evita 720 chamadas por dia com chave errada, em vez de 48.
+A carga incremental (D-185 item 2, `dataInicio` = marca d'água) já relê só o que mudou desde a
+marca. Uma rodada vazia é uma página com `orcamentos: []`.
+**Motivo:** o cartão de "Novo orçamento" tem que aparecer enquanto a atendente ainda está com o
+paciente no WhatsApp. 30 min é tarde demais para isso.
+**Impacto:** `config/env.ts`, `backend/.env.example`, `docker-compose.prod.yml`,
+`lis-sync.service.ts`; DEPLOYMENT.md, ENVIRONMENTS.md, SERVICES §24.
 
 ## Template para novas decisões
 

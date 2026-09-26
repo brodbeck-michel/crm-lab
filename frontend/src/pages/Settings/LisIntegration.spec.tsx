@@ -141,6 +141,7 @@ describe('LisIntegration (/settings/lis-integration)', () => {
       importId: null,
       rowsAccepted: 0,
       proposalsWon: 0,
+      proposalsCreated: 0,
       watermark: null,
       error: { kind: 'unavailable', message: 'O Bitlab não respondeu.' },
       settings: ON,

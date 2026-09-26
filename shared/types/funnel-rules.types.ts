@@ -179,8 +179,21 @@ export const REOPEN_TARGETS: readonly ProposalStatus[] = [
 /** Quem tenta mover o card. */
 export interface TransitionActor {
   role: UserRole;
-  /** `true` quando o card é de quem move (`createdBy === userId`). */
+  /**
+   * `true` quando o card é de quem move (`createdBy === userId`) ou quando o
+   * card ainda não tem responsável (cartão do Bitlab na fila comum, D-195) —
+   * use `isCardOwner` para calcular.
+   */
   isOwner: boolean;
+}
+
+/**
+ * Dono para efeito da trava "mover card de outra atendente". Cartão sem
+ * responsável (origem `bitlab` antes do envio, D-195) é da fila comum:
+ * qualquer atendente que o vê pode movê-lo.
+ */
+export function isCardOwner(createdBy: string | null, userId: string | null | undefined): boolean {
+  return createdBy === null || createdBy === userId;
 }
 
 /**

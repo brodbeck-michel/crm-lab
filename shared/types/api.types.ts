@@ -55,6 +55,8 @@ export type ApiErrorCode =
   | 'PROPOSAL_EDIT_NOT_ALLOWED'
   | 'APPROVAL_NOT_ALLOWED'
   | 'EXAM_NOT_FOUND_OR_INACTIVE'
+  /** `POST /proposals` com "Criar proposta manualmente no CRM" desligado (CRMLAB-56, D-193). */
+  | 'MANUAL_PROPOSAL_DISABLED'
   // Conversas
   | 'CONVERSATION_ALREADY_ASSIGNED'
   | 'CONVERSATION_ARCHIVED'

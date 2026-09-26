@@ -14,6 +14,11 @@ interface StageColumnProps {
   proposals: Proposal[];
   /** Card solto na coluna. Sem handler, a coluna nao aceita drop. */
   onDropProposal?: (proposal: Proposal, target: ProposalStatus) => void;
+  /**
+   * A coluna aceita um card vindo de `origin`? Omitido = matriz padrao
+   * (`isTransitionAllowed`). O pipeline passa as travas das Regras (D-192).
+   */
+  accepts?: (origin: ProposalStatus, target: ProposalStatus) => boolean;
 }
 
 /**
@@ -43,14 +48,19 @@ function readOriginStatus(event: React.DragEvent): ProposalStatus | null {
   return type === undefined ? null : (type.slice(DRAG_STATUS_PREFIX.length) as ProposalStatus);
 }
 
-export default function StageColumn({ status, proposals, onDropProposal }: StageColumnProps) {
+export default function StageColumn({
+  status,
+  proposals,
+  onDropProposal,
+  accepts: acceptsFrom = isTransitionAllowed,
+}: StageColumnProps) {
   const total = proposals.reduce((sum, p) => sum + (p.totalPrice || 0), 0);
   const [over, setOver] = useState(false);
 
   const accepts = (event: React.DragEvent) => {
     if (onDropProposal === undefined) return false;
     const origin = readOriginStatus(event);
-    return origin !== null && isTransitionAllowed(origin, status);
+    return origin !== null && acceptsFrom(origin, status);
   };
 
   return (

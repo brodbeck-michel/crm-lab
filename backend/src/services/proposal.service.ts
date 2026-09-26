@@ -15,10 +15,10 @@
  *    Dentro do limite: nasce `approved` por si mesma. Acima: nasce `pending` e
  *    dispara o ApprovalService — e proposta `pending` NAO vai para o paciente.
  *
- * 3. **A matriz de transicoes e a de `@crm-lab/shared`** (BUSINESS_RULES §3,
- *    WORKFLOWS §4). `ALLOWED_TRANSITIONS`/`isTransitionAllowed` sao importados,
- *    nunca reescritos: front e back leem a mesma constante, entao divergir e
- *    impossivel por construcao.
+ * 3. **As travas de transicao sao as de `@crm-lab/shared`** (BUSINESS_RULES §3,
+ *    WORKFLOWS §4). `checkTransition` com as Regras do laboratorio (CRMLAB-56,
+ *    D-192; padrao = `ALLOWED_TRANSITIONS`) e importado, nunca reescrito: front
+ *    e back leem a mesma funcao, entao divergir e impossivel por construcao.
  *
  * Toda mutacao grava `proposal_status_history`, emite WebSocket e audita.
  *
@@ -29,11 +29,12 @@
 import {
   ALLOWED_TRANSITIONS,
   LOSS_REASONS,
+  buildAllowedTransitions,
+  checkTransition,
   TERMINAL_STATUSES,
   calculateSubtotal,
   calculateTotal,
   isProposalEditable,
-  isTransitionAllowed,
   type ApprovalStatus,
   type CreateProposalItemInput,
   type CreateProposalRequest,
@@ -62,6 +63,7 @@ import * as auditRepo from '../repositories/audit.repository.js';
 import { isUniqueViolation } from '../repositories/exam-package.repository.js';
 import * as repo from '../repositories/proposal.repository.js';
 import { announceLisWins, reconcileProposal } from './lis-reconcile.service.js';
+import { readFunnelRules } from './funnel-rules.service.js';
 import type { ProposalRow } from '../repositories/proposal.repository.js';
 
 export const DEFAULT_PAGE = 1;
@@ -364,6 +366,13 @@ export class ProposalService {
   async create(ctx: TenantContext, dto: CreateProposalRequest): Promise<CreateProposalResponse> {
     const { db, examCatalog, audit, approvals, insurances } = this.deps;
 
+    // Regras do laboratorio (CRMLAB-56, D-193): "Criar proposta manualmente no
+    // CRM" desligado recusa antes de qualquer outra validacao.
+    const rules = await db.withTenant(ctx.tenantId, (tx) => readFunnelRules(tx, ctx.tenantId));
+    if (!rules.origin.manualInCrm) {
+      throw new BusinessError('MANUAL_PROPOSAL_DISABLED');
+    }
+
     if (dto.items.length === 0 || dto.items.length > MAX_ITEMS) {
       throw new BusinessError('VALIDATION_ERROR', {
         fields: { items: 'Informe de 1 a 100 itens' },
@@ -576,30 +585,55 @@ export class ProposalService {
     const outcome = await db.withTenant(ctx.tenantId, async (tx) => {
       const row = await loadVisibleProposal(tx, ctx, id);
       const from = row.status as ProposalStatus;
+      // Travas do laboratorio (CRMLAB-56, D-192) — a MESMA funcao que o front
+      // usa para esconder. Com os padroes: matriz ALLOWED_TRANSITIONS,
+      // ganho/perdido terminais, motivo obrigatorio (D-191).
+      const { manualMoves } = await readFunnelRules(tx, ctx.tenantId);
 
-      // Terminal: nenhuma mutacao posterior (SERVICES.md §4).
-      if (isTerminal(from)) {
-        throw new BusinessError('PROPOSAL_ALREADY_CLOSED', { status: from });
+      // Ganho fechado pelo LIS nao reabre, com qualquer regra (D-192 item 2).
+      if (isTerminal(from) && row.lis_reconciled_at !== null && row.lis_reconciled_at !== undefined) {
+        throw new BusinessError('PROPOSAL_ALREADY_CLOSED', {
+          status: from,
+          reason: 'lis_reconciled',
+        });
       }
 
-      if (!isTransitionAllowed(from, status)) {
+      const denial = checkTransition(manualMoves, from, status, {
+        role: ctx.role,
+        isOwner: row.created_by === ctx.userId,
+      });
+      if (denial === 'closed') {
+        throw new BusinessError('PROPOSAL_ALREADY_CLOSED', { status: from });
+      }
+      if (denial === 'reopen_role') {
+        throw new BusinessError('FORBIDDEN', { reason: 'reopen_not_allowed' });
+      }
+      if (denial === 'not_allowed') {
         throw new BusinessError('INVALID_STATUS_TRANSITION', {
           from,
           to: status,
-          allowed: [...ALLOWED_TRANSITIONS[from]],
+          allowed: [...buildAllowedTransitions(manualMoves)[from]],
         });
+      }
+      if (denial === 'not_owner') {
+        throw new BusinessError('FORBIDDEN', { reason: 'move_others_not_allowed' });
       }
 
       let loss: LossReason | null = null;
       if (status === 'perdido') {
-        if (reasonLost === undefined || reasonLost === null || reasonLost === '') {
+        const missing = reasonLost === undefined || reasonLost === null || reasonLost === '';
+        if (missing && manualMoves.requireLossReason) {
           throw new BusinessError('LOSS_REASON_REQUIRED');
         }
-        if (!isLossReason(reasonLost)) {
-          throw new BusinessError('INVALID_LOSS_REASON', { allowed: [...LOSS_REASONS] });
+        if (!missing) {
+          if (!isLossReason(reasonLost)) {
+            throw new BusinessError('INVALID_LOSS_REASON', { allowed: [...LOSS_REASONS] });
+          }
+          loss = reasonLost;
         }
-        loss = reasonLost;
       }
+      // Reabrir (D-192 item 2): sai do terminal limpando closedAt e reasonLost.
+      const reopening = isTerminal(from) && !isTerminal(status);
 
       // Proposta sem aprovacao concedida nao vai para o paciente (WORKFLOWS §3).
       // `rejected` entra junto com `pending`: a rejeicao nao autoriza o
@@ -620,6 +654,7 @@ export class ProposalService {
         ...(loss !== null ? { reasonLost: loss } : {}),
         ...(status === 'orcamento_enviado' ? { sentAt: now } : {}),
         ...(isTerminal(status) ? { closedAt: now } : {}),
+        ...(reopening ? { closedAt: null, reasonLost: null } : {}),
       });
       if (!updated) throw notFound({ resource: 'proposal', id });
 

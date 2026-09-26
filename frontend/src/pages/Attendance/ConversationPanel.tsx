@@ -33,7 +33,8 @@ export interface ConversationPanelProps {
   assignees: ConversationAssignee[];
   /** Atendente escolhida no menu, ou `null` para devolver à fila. */
   onAssign: (userId: string | null) => void;
-  onNewBudget: () => void;
+  /** Ausente = sem "Novo Orçamento" (origem manual desligada nas Regras, D-193). */
+  onNewBudget?: () => void;
   /** Encerrar atendimento (D-174). */
   onCloseAttendance: () => void;
   /** Dona, gestor ou admin — o backend valida de novo; aqui é só UX. */
@@ -299,9 +300,11 @@ export function ConversationPanel({
             assignedTo={conversation.assignedTo}
             onAssign={onAssign}
           />
-          <Button size="sm" onClick={onNewBudget}>
-            Novo Orçamento
-          </Button>
+          {onNewBudget && (
+            <Button size="sm" onClick={onNewBudget}>
+              Novo Orçamento
+            </Button>
+          )}
           <Button
             variant="destructive"
             size="sm"

@@ -17,3 +17,4 @@ export * from './audit.types.js';
 export * from './platform.types.js';
 export * from './websocket.types.js';
 export * from './lis.types.js';
+export * from './funnel-rules.types.js';

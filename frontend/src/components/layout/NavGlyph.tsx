@@ -23,6 +23,7 @@ import {
   CircleUserRound,
   Megaphone,
   RefreshCw,
+  Scale,
   type LucideIcon,
 } from 'lucide-react';
 import type { NavIcon } from '@/routes/route-config';
@@ -49,6 +50,7 @@ const ICONS: Record<NavIcon, LucideIcon> = {
   insurances: ShieldCheck,
   attendants: UserCog,
   commissions: Percent,
+  rules: Scale,
   integration: RefreshCw,
   users: KeyRound,
   theme: Palette,

@@ -27,7 +27,8 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 /settings/operation           → Gestão da Operação        (gestor+)
 /settings/insurances          → Convênios                 (gestor+)
 /settings/attendants          → Atendentes (LIS)           (gestor+)
-/settings/commissions         → Comissão (LIS)            (gestor lê; admin edita)
+/settings/rules               → Regras                    (todos veem; gestor/admin editam — CRMLAB-56)
+/settings/commissions         → redireciona para /settings/rules#comissoes (CRMLAB-56)
 /settings/lis-integration     → Integração LIS            (gestor lê e sincroniza; admin edita — CRMLAB-52)
 /settings/account             → Minha Conta               (todos os papéis de tenant)
 /settings/users               → Usuários & Permissões     (admin)
@@ -69,7 +70,8 @@ padrão; estado por grupo persiste em localStorage por usuário.
 | `/settings/operation` | manager · admin | sim | Gestão |
 | `/settings/insurances` | manager · admin | sim | Configurações |
 | `/settings/attendants` | manager · admin | sim | Configurações |
-| `/settings/commissions` | manager · admin | sim | Configurações |
+| `/settings/rules` (CRMLAB-56) | attendant · manager · admin | sim | Configurações |
+| `/settings/commissions` → redirect `/settings/rules#comissoes` | manager · admin | não | — |
 | `/settings/lis-integration` (CRMLAB-52) | manager · admin | sim | Configurações |
 | `/settings/account` | attendant · manager · admin | sim | Configurações |
 | `/settings/users` | admin | sim | Configurações |
@@ -1081,6 +1083,10 @@ Cadastro do atendente do LIS, com vínculo opcional a um login do CRM (D-112). F
 
 ### 19. Comissão (`/settings/commissions`) — gestor lê, admin edita
 
+> **Desde o CRMLAB-56 (D-194)** este formulário é a seção 6 da página **Regras** (§21), e
+> `/settings/commissions` redireciona para `/settings/rules#comissoes`. O item "Comissão" saiu do
+> menu. Regras e permissões abaixo continuam valendo.
+
 Percentuais de comissão sobre venda de exame e de check-up (D-113 — antes viviam em
 `localStorage` no FluxoLab, agora por tenant). Fonte: `GET /settings/commissions`,
 `PATCH /settings/commissions` (§6b).
@@ -1131,6 +1137,52 @@ rótulo "Integração LIS", `requiredRoles: MANAGER_PLUS`. Fonte: `GET/PATCH
 - Rodapé: "Os orçamentos sincronizados aparecem em Conferência e no histórico de importações
   (origem: API)". O histórico de `/results` (§14) mostra `kind: "sync"` como "API" em vez do
   nome do arquivo.
+
+### 21. Regras (`/settings/rules`) — todos veem, gestor/admin editam (CRMLAB-56, D-190..D-194)
+
+Onde o laboratório define as regras do funil. Grupo "Configurações" da sidebar, rótulo "Regras",
+`requiredRoles: TENANT_ROLES`. Fonte: `GET/PATCH /settings/funnel-rules` (API_CONTRACTS.md §6c) e,
+na seção 6, `GET/PATCH /settings/commissions` (§6b).
+
+Seis seções, uma embaixo da outra, cada uma num cartão com título e descrição curta. Um único
+[Salvar regras] no fim (seções 1–4) envia **só o que mudou** (diff contra o `GET`); comissão tem o
+seu próprio [Salvar] (endpoint e permissão diferentes).
+
+1. **Origem das propostas** — dois `Toggle`: "Nascer do orçamento do Bitlab" e "Criar proposta
+   manualmente no CRM (itens pelo catálogo)". Não dá para salvar com os dois desligados (aviso no
+   cartão; o servidor também recusa).
+2. **Automação do funil** — um `Toggle` por automação, com o prazo ao lado (`Input` numérico,
+   desabilitado quando a automação está desligada): Requisição → Negociação; Pagamento → Ganho;
+   Orçamento enviado há **X dias** → Follow-up; Negociação sem pagamento há **Y dias** →
+   Follow-up; Follow-up há **Z dias** → Perdido (motivo "Silêncio"); Alerta de "Novo orçamento"
+   parado há **N horas**. Mais o `SegmentedControl` "Contar em dias corridos | dias úteis". Nota
+   no cartão: "As automações passam a rodar quando o motor do funil entrar no ar" (CRMLAB-59/60).
+3. **Movimentação manual (travas)** — `Toggle` "Reabrir Ganho/Perdido" + caixas "Atendente" /
+   "Gestor" (o admin sempre pode, dito no texto); `Toggle` "Pular etapas"; `Toggle` "Exigir
+   motivo ao marcar Perdido"; `Toggle` "Gestor pode mover card de outra atendente".
+4. **Mensagem de envio** — `TextArea` do modelo, os botões de variável (`{paciente}`,
+   `{numero_orcamento}`, `{valor}`, `{convenio}`) que inserem no fim do texto, erro em tempo real
+   para variável desconhecida (`findUnknownTemplateVariables`) e a **pré-visualização** com dados
+   de exemplo, pela mesma `renderSendMessageTemplate` que o envio vai usar.
+5. **Descontos e aprovação** — **só aparece com "Criar pelo CRM" ligado** (o valor salvo). Texto da
+   regra (dentro da alçada aprova sozinha; acima vai para o gestor) e os limites padrão por perfil
+   (`DEFAULT_DISCOUNT_LIMIT`). O limite de cada pessoa se edita em Usuários & Permissões — link
+   para o admin.
+6. **Comissões** (`id="comissoes"`) — o formulário que era de `/settings/commissions` (§19), sem
+   mudança de regra. Só gestor/admin veem a seção; só admin edita.
+
+**Quem edita:** gestor e admin editam as seções 1–4. A **atendente vê tudo desabilitado**, sem
+[Salvar regras], e não vê a seção 6. Erro de campo (`details.fields`) aparece no campo pelo
+caminho (`automation.sentToFollowUp.days`); chave que a tela não conhece vira toast geral.
+
+**Efeitos em outras telas (valem já neste card):**
+- "Criar pelo CRM" desligado: some "Novo Orçamento" do Atendimento e "Novo atendimento" do
+  pipeline; `/budget/new` mostra o aviso em vez do formulário; o modal da proposta só mostra o
+  desconto quando ele é maior que zero (D-193).
+- Travas (D-192): o seletor "Mudar estágio", os botões "Avançar", "Marcar como Ganho/Perdido" e o
+  arrastar do kanban só oferecem o que `checkTransition` aceita para quem está logado; proposta
+  fechada ganha "Reabrir em…" quando a regra deixa; o formulário de perda aceita confirmar sem
+  motivo quando o motivo não é exigido.
 
 ---
 

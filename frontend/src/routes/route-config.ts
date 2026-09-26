@@ -29,6 +29,7 @@ export type NavIcon =
   | 'insurances'
   | 'attendants'
   | 'commissions'
+  | 'rules'
   | 'integration'
   | 'users'
   | 'theme'
@@ -208,11 +209,13 @@ export const APP_ROUTES: readonly AppRoute[] = [
     group: 'configuracoes',
   },
   {
-    path: '/settings/commissions',
-    label: 'Comissão',
-    requiredRoles: MANAGER_PLUS,
+    // CRMLAB-56 (D-190..D-194): regras do funil + comissão (seção 6). Todos
+    // veem; gestor/admin editam. `/settings/commissions` redireciona para cá.
+    path: '/settings/rules',
+    label: 'Regras',
+    requiredRoles: TENANT_ROLES,
     inSidebar: true,
-    icon: 'commissions',
+    icon: 'rules',
     group: 'configuracoes',
   },
   {

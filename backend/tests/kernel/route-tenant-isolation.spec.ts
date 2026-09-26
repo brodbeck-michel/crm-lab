@@ -39,6 +39,7 @@ import { auditModule } from '../../src/controllers/audit.routes.js';
 import { makeChannelSettingsModule } from '../../src/controllers/channel-settings.routes.js';
 import { conversationModule } from '../../src/controllers/conversation.routes.js';
 import { examModule } from '../../src/controllers/exam.routes.js';
+import { funnelRulesModule } from '../../src/controllers/funnel-rules.routes.js';
 import { insuranceModule } from '../../src/controllers/insurance.routes.js';
 import { internalChatModule } from '../../src/controllers/internal-chat.routes.js';
 import { mediaModule } from '../../src/controllers/media.routes.js';
@@ -109,6 +110,7 @@ const LAB_MODULES = [
   makeChannelSettingsModule({ evolutionClient: fakeEvolutionClient() }),
   conversationModule,
   examModule,
+  funnelRulesModule,
   insuranceModule,
   internalChatModule,
   mediaModule,
@@ -531,6 +533,17 @@ const LAB_ROUTES: readonly LabRoute[] = [
     addressable: false,
   },
 
+  // --- regras do funil (CRMLAB-56 — D-190) ---
+  { name: 'GET /settings/funnel-rules', method: 'get', path: () => '/api/v1/settings/funnel-rules', actor: 'attendant', addressable: false },
+  {
+    name: 'PATCH /settings/funnel-rules',
+    method: 'patch',
+    path: () => '/api/v1/settings/funnel-rules',
+    body: () => ({ automation: { sentToFollowUp: { days: 4 } } }),
+    actor: 'manager',
+    addressable: false,
+  },
+
   // --- gestao da operacao (Onda 6 — D-067) ---
   { name: 'GET /operations/overview', method: 'get', path: () => '/api/v1/operations/overview', actor: 'manager', addressable: false },
 
@@ -858,7 +871,7 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 68 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 70 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
@@ -874,7 +887,8 @@ describe('inventario de rotas de laboratorio', () => {
     // CRMLAB-50/D-175 soma 1: `POST /conversations/whatsapp` (Nova conversa).
     // CRMLAB-23/D-177 soma 2: `POST /exams/import/preview` e `POST /exams/import`.
     // CRMLAB-52/D-119 soma 1: `PATCH /proposals/:id/lis-reference`.
-    expect(LAB_ROUTES).toHaveLength(68);
+    // CRMLAB-56/D-190 soma 2: `GET|PATCH /settings/funnel-rules`.
+    expect(LAB_ROUTES).toHaveLength(70);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

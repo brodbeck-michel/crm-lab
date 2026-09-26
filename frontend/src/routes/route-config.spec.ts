@@ -20,7 +20,7 @@ describe('route-config — domínio LIS (Onda 10)', () => {
     expect(paths).not.toContain('/settings/lis-integration');
   });
 
-  it('gestor (manager) vê as 3 telas de leitura do LIS + Atendentes + Comissão', () => {
+  it('gestor (manager) vê as 3 telas de leitura do LIS + Atendentes + Regras (com a comissão)', () => {
     const paths = sidebarRoutesFor('manager').map((r) => r.path);
 
     expect(paths).toEqual(
@@ -29,11 +29,13 @@ describe('route-config — domínio LIS (Onda 10)', () => {
         '/reconciliation',
         '/active-search',
         '/settings/attendants',
-        '/settings/commissions',
+        '/settings/rules',
         '/settings/lis-integration',
         '/sales',
       ]),
     );
+    // CRMLAB-56 (D-194): a comissão virou seção de Regras; a rota antiga só redireciona.
+    expect(paths).not.toContain('/settings/commissions');
   });
 
   it('platform_operator não vê nenhuma rota do domínio LIS', () => {
@@ -61,8 +63,9 @@ describe('route-config — domínio LIS (Onda 10)', () => {
     expect(canAccess('attendant', byPath['/sales']!.requiredRoles)).toBe(true);
     expect(canAccess('manager', byPath['/sales']!.requiredRoles)).toBe(true);
 
-    expect(canAccess('manager', byPath['/settings/commissions']!.requiredRoles)).toBe(true);
-    expect(canAccess('admin', byPath['/settings/commissions']!.requiredRoles)).toBe(true);
+    // CRMLAB-56: Regras é de todo perfil de laboratório (atendente só vê).
+    expect(canAccess('attendant', byPath['/settings/rules']!.requiredRoles)).toBe(true);
+    expect(canAccess('platform_operator', byPath['/settings/rules']!.requiredRoles)).toBe(false);
   });
 });
 
@@ -97,7 +100,7 @@ describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, revisado em D-129)'
       'Canais & Equipe',
       'Convênios',
       'Atendentes',
-      'Comissão',
+      'Regras',
       'Integração LIS',
       'Usuários & Permissões',
       // CRMLAB-35: trocar a propria senha nao e privilegio de admin — e o
@@ -113,13 +116,15 @@ describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, revisado em D-129)'
     expect(ungrouped.map((r) => r.label)).toEqual(['Atendimento', 'Pacientes', 'Propostas', 'Vendas']);
   });
 
-  it('atendente vê Gestão só com Conversão e Configurações com Cadastro de Exames + Minha Conta (únicos itens TENANT_ROLES dos grupos)', () => {
+  it('atendente vê Gestão só com Conversão e Configurações com Cadastro de Exames + Regras + Minha Conta (únicos itens TENANT_ROLES dos grupos)', () => {
     const { groups } = sidebarSectionsFor('attendant');
 
     expect(groups.map((g) => g.id)).toEqual(['comunicacao', 'gestao', 'configuracoes']);
     expect(groups.find((g) => g.id === 'gestao')?.items.map((r) => r.label)).toEqual(['Conversão']);
     expect(groups.find((g) => g.id === 'configuracoes')?.items.map((r) => r.label)).toEqual([
       'Cadastro de Exames',
+      // CRMLAB-56: a atendente vê as Regras do laboratório (sem editar).
+      'Regras',
       // CRMLAB-35: trocar a propria senha nao e privilegio de admin.
       'Minha Conta',
     ]);

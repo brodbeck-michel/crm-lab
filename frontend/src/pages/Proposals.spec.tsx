@@ -3,7 +3,15 @@ import userEvent from '@testing-library/user-event';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { ListProposalsQuery, ListProposalsResponse, Proposal } from '@crm-lab/shared';
+import {
+  DEFAULT_FUNNEL_RULES,
+  type FunnelRules,
+  type ListProposalsQuery,
+  type ListProposalsResponse,
+  type Proposal,
+} from '@crm-lab/shared';
+import * as funnelRulesApi from '@/api/funnel-rules';
+import { useAuthStore } from '@/stores/auth.store';
 import { queryClient } from '@/api/query-client';
 import { ToastProvider } from '@/components/ui';
 import { querySuccess } from '@/test/query-mocks';
@@ -22,6 +30,24 @@ vi.mock('@/api/proposals', async (importOriginal) => ({
   useProposalList: vi.fn(),
   useUpdateProposalStatus: vi.fn(),
 }));
+
+vi.mock('@/api/funnel-rules', async (importOriginal) => ({
+  ...(await importOriginal<typeof funnelRulesApi>()),
+  useEffectiveFunnelRules: vi.fn(),
+}));
+const useEffectiveFunnelRules = vi.mocked(funnelRulesApi.useEffectiveFunnelRules);
+
+/** Regras do laboratório com um trecho alterado (CRMLAB-56). */
+function rulesWith(patch: {
+  origin?: Partial<FunnelRules['origin']>;
+  manualMoves?: Partial<FunnelRules['manualMoves']>;
+}): FunnelRules {
+  return {
+    ...DEFAULT_FUNNEL_RULES,
+    origin: { ...DEFAULT_FUNNEL_RULES.origin, ...patch.origin },
+    manualMoves: { ...DEFAULT_FUNNEL_RULES.manualMoves, ...patch.manualMoves },
+  };
+}
 
 const useProposalList = vi.mocked(proposalsApi.useProposalList);
 const useUpdateProposalStatus = vi.mocked(proposalsApi.useUpdateProposalStatus);
@@ -121,6 +147,12 @@ function colunaDe(titulo: string): HTMLElement {
 describe('Proposals', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useUIStore.setState({ activeModal: null });
+    useEffectiveFunnelRules.mockReturnValue(DEFAULT_FUNNEL_RULES);
+    // A dona dos cards de teste (`createdBy: 'user-1'`).
+    useAuthStore.setState({
+      user: { id: 'user-1', email: 'ana@lab.com.br', name: 'Ana', role: 'attendant', discountLimit: 15 },
+    });
     useUpdateProposalStatus.mockReturnValue({ mutate } as unknown as ReturnType<
       typeof proposalsApi.useUpdateProposalStatus
     >);
@@ -261,6 +293,45 @@ describe('Proposals', () => {
 
     expect(mutate).not.toHaveBeenCalled();
     expect(useUIStore.getState().activeModal).toEqual({ kind: 'proposal', id: PAGINA_1.id });
+  });
+
+  // --- CRMLAB-56: travas das Regras (D-192) e origem manual (D-193) ---
+
+  it('sem "Pular etapas", arrastar negociação → Ganho continua valendo (passo seguinte)', () => {
+    useEffectiveFunnelRules.mockReturnValue(rulesWith({ manualMoves: { skipStages: false } }));
+    renderPage();
+
+    dragCard(screen.getByText('Rafael da Pagina 1'), colunaDe('Ganho'));
+
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({ proposalId: PAGINA_1.id, status: 'ganho' }),
+      expect.anything(),
+    );
+  });
+
+  it('gestor com "mover card de outra atendente" desligado não move o card alheio', () => {
+    useEffectiveFunnelRules.mockReturnValue(rulesWith({ manualMoves: { moveOthersCards: false } }));
+    useAuthStore.setState({
+      user: { id: 'gestor-1', email: 'g@lab.com.br', name: 'Gil', role: 'manager', discountLimit: 30 },
+    });
+    renderPage();
+
+    dragCard(screen.getByText('Rafael da Pagina 1'), colunaDe('Ganho'));
+
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it('"Novo atendimento" some com "Criar proposta manualmente no CRM" desligado', () => {
+    useEffectiveFunnelRules.mockReturnValue(rulesWith({ origin: { manualInCrm: false } }));
+    renderPage();
+
+    expect(screen.queryByRole('button', { name: 'Novo atendimento' })).not.toBeInTheDocument();
+  });
+
+  it('"Novo atendimento" aparece com a origem manual ligada (padrão)', () => {
+    renderPage();
+
+    expect(screen.getByRole('button', { name: 'Novo atendimento' })).toBeInTheDocument();
   });
 
   it('não mostra paginação quando cabe tudo em uma página', () => {

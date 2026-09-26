@@ -188,9 +188,14 @@ interface ProposalService {
 - `create`: busca preços ATUAIS do catálogo (ignora preços vindos do cliente); snapshot em items
 - `totalPrice = Σ(items.unitPrice × qty) × (1 − discount/100)` — recalculado a CADA escrita
 - Se `discount > user.discountLimit` → `approvalStatus = 'pending'` + dispara ApprovalService
-- `updateStatus`: valida matriz de transições (WORKFLOWS.md §4); `perdido` exige `reasonLost` válido
+- `create`: recusa com `MANUAL_PROPOSAL_DISABLED` quando as Regras desligaram "Criar pelo CRM"
+  (`origin.manualInCrm`, D-193)
+- `updateStatus`: decide pela regra do laboratório — `checkTransition(readFunnelRules(...).manualMoves,
+  from, to, actor)` (D-192, §26). Com os padrões: matriz de WORKFLOWS.md §4, `perdido` exige
+  `reasonLost` válido, `ganho`/`perdido` terminais
 - Proposta `pending` não pode ir para `orcamento_enviado`
-- `ganho`/`perdido` são terminais: seta `closedAt`, nenhuma transição posterior
+- `ganho`/`perdido` setam `closedAt`; só saem dali se a regra "Reabrir" deixar (limpa `closedAt`
+  e `reasonLost`; ganho conciliado pelo LIS nunca reabre)
 - Toda mutação → AuditService
 - **`markWonFromLis` (D-119 item 4)** é a única transição que ignora `ALLOWED_TRANSITIONS`: vai
   de **qualquer** estágio não terminal para `ganho`, porque quem fechou foi o LIS. Ela e o
@@ -1359,6 +1364,37 @@ announceLisWins(deps: { wsHub; cache }, tenantId: string, proposalIds: readonly 
   chama com `announceLisWins` **depois do commit**, para não anunciar um `ganho` que um rollback
   desfaria. O audit `update_proposal_status`/`lis_reconcile_conflict` entra **na** transação
   (`auditRepo.insert`), porque `db.withTenant` não aninha e ele tem que sumir junto num rollback.
+
+---
+
+## 26. FunnelRulesService (CRMLAB-56 — D-190..D-194)
+
+**Responsabilidade:** as regras do funil do laboratório (`funnel_rules`, SCHEMA.md §32). Rotas
+`GET|PATCH /settings/funnel-rules` (API_CONTRACTS.md §6c).
+
+```typescript
+// backend/src/services/funnel-rules.service.ts
+/** PONTO ÚNICO DE LEITURA — dentro da transação de quem chama. Sempre o objeto completo. */
+export function readFunnelRules(tx: DbTx, tenantId: string): Promise<FunnelRules>;
+export const funnelRules = { get: readFunnelRules };
+
+export interface FunnelRulesService {
+  /** Todo perfil de laboratório. Padrões quando não há linha. */
+  get(ctx: TenantContext): Promise<FunnelRules>;
+  /** manager/admin. Patch parcial em qualquer nível; upsert por tenant_id. */
+  update(ctx: TenantContext, dto: UpdateFunnelRulesRequest): Promise<FunnelRules>;
+}
+```
+
+**Regras:**
+- `get` nunca grava (D-065). A leitura mescla o JSON gravado sobre `DEFAULT_FUNNEL_RULES`, chave
+  por chave, conferindo o tipo (D-190 item 1).
+- `update` valida contra o shape dos padrões (campo desconhecido, tipo, faixa, `roles`, variáveis
+  do modelo, ao menos uma origem), grava o objeto inteiro com `INSERT ... ON CONFLICT (tenant_id)
+  DO UPDATE` e audita `update_funnel_rules` só quando algo mudou (diff-then-audit, como §18).
+- Quem consome: `ProposalService.create` (`origin.manualInCrm`, D-193) e
+  `ProposalService.updateStatus` (`manualMoves` via `checkTransition`, D-192), lendo com
+  `readFunnelRules` na mesma transação. Os cards CRMLAB-57..60 leem pelo mesmo ponto.
 
 ---
 

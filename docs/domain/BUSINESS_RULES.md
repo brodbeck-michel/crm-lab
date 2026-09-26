@@ -173,6 +173,20 @@ if (allowedTransitions[currentStatus].includes(newStatus)) {
 }
 ```
 
+### As travas são regra do laboratório (CRMLAB-56, D-192)
+Desde o CRMLAB-56, a matriz acima e os estágios terminais são o **padrão** das travas de
+**Configurações → Regras** (`manualMoves`, API_CONTRACTS.md §6c). O laboratório pode:
+- **desligar "Pular etapas"** → vale `SEQUENTIAL_TRANSITIONS`: um passo para a frente, um para
+  trás e `perdido`; `ganho` só a partir de `negociacao`;
+- **ligar "Reabrir Ganho/Perdido"** para gestor e/ou atendente (admin sempre) → volta para
+  `orcamento_enviado`, `follow_up` ou `negociacao`, limpando `closedAt` e `reasonLost`. Ganho
+  conciliado pelo LIS nunca reabre;
+- **desligar "Exigir motivo ao marcar Perdido"** → `perdido` sem motivo é aceito;
+- **desligar "Mover card de outra atendente"** → o gestor só move os cards que criou (admin
+  sempre pode; a atendente já só vê os próprios, D-042).
+Front e back decidem pela mesma função, `checkTransition` (`shared/types/funnel-rules.types.ts`).
+Sem nada configurado, o comportamento é exatamente o de antes (D-191).
+
 ### Exceção única: `ganho` pela conciliação com o LIS (CRMLAB-52, D-119)
 A matriz acima vale para **pessoas**. Quando o orçamento do LIS vinculado à proposta
 (`lis_budget_number`) aparece **com requisição**, a proposta vai para `ganho` a partir de
@@ -183,7 +197,8 @@ reabre por esse caminho: o conflito é auditado (`lis_reconcile_conflict`) e o g
 
 ### Motivo de Perda (Obrigatório)
 
-**Regra:** Ao passar para "perdido", motivo é obrigatório.
+**Regra:** Ao passar para "perdido", motivo é obrigatório — é o padrão da trava
+`manualMoves.requireLossReason` (D-192). Motivo enviado sempre tem que ser do enum.
 
 ```typescript
 @Patch('/proposals/:id/status')

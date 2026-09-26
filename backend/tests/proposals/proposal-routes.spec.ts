@@ -55,6 +55,8 @@ const DETAIL_KEYS = [
   'origin',
   'lisIssuedOn',
   'lisAttendantName',
+  // CRMLAB-59 (D-207)
+  'stageEnteredAt',
 ].sort();
 
 describe('/api/v1/proposals', () => {
@@ -148,6 +150,12 @@ describe('/api/v1/proposals', () => {
       expect(body.totalPrice).toBe(161.82);
       expect(body.approvalStatus).toBe('approved');
       expect(body.history).toHaveLength(1);
+      // CRMLAB-59 (D-207/D-208): transicao de pessoa nao tem `automation`; o
+      // relogio do estagio e a linha de entrada, em UTC pelo `to_char` — nao
+      // depende do fuso do processo Node (o `changedAt` do historico, lido como
+      // `Date` pelo driver, depende: ver STATUS.md, pendencia do CRMLAB-59).
+      expect(body.history[0]?.automation).toBeNull();
+      expect(Math.abs(Date.parse(body.stageEnteredAt ?? '') - Date.now())).toBeLessThan(60_000);
       // Dinheiro no fio e numero decimal, nunca string formatada (regra 9).
       expect(typeof body.totalPrice).toBe('number');
       // CRMLAB-9: sem o campo no request, o medico solicitante fica null.

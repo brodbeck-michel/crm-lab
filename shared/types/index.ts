@@ -18,3 +18,4 @@ export * from './platform.types.js';
 export * from './websocket.types.js';
 export * from './lis.types.js';
 export * from './funnel-rules.types.js';
+export * from './funnel-timer.types.js';

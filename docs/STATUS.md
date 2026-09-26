@@ -2810,3 +2810,26 @@ Sobe CRMLAB-52 (PR #67 e #69): orçamentos do LIS pela API do Bitlab e concilia�
   https://vitrocrm.cloud confirma `1.22.0` e traz a tela nova.
 - **Falta para ligar:** salvar a chave de orçamentos do Bitlab em Configurações → Integração LIS do
   laboratório e ligar a sincronização (agendador de 30 min em prod, primeira rodada = 90 dias).
+
+### ✅ CRMLAB-57 [B] — proposta nasce do orçamento do Bitlab (Epic CRMLAB-55, 2026-09-26)
+
+Branch `feature/CRMLAB-57-proposta-nasce-bitlab`. Decisões D-195..D-199, migração `028_bitlab_origin.sql`.
+
+- **Modelo (D-195):** `proposals.origin` (`crm` | `bitlab`); `conversation_id`/`created_by`
+  nulláveis só na origem `bitlab` (CHECK `proposals_crm_origin_complete`). Total = `total_value` do
+  orçamento (sem itens, sem desconto, `approval_status 'none'`), regravado pela conciliação
+  enquanto não fecha. Nome, data e atendente do Bitlab por JOIN com `lis_budgets` (nada copiado).
+  Responsável provisório = login do atendente do LIS; sem ele, fila comum do tenant.
+- **Nascimento (D-196):** hook por chunk de `ingestRows`, antes da conciliação;
+  `isBitlabOriginEnabled` (`backend/src/services/bitlab-origin-gate.ts`, hoje `true`, a ligar às
+  Regras do CRMLAB-56); marca `tenant_settings.bitlab_proposals_since` gravada na primeira
+  ingestão; `ON CONFLICT DO NOTHING` no índice parcial; WS `proposal.created` depois do commit.
+- **Pré-cadastro (D-197):** cartão `bitlab` em "Novo orçamento" com requisição não vira ganho,
+  ganha o selo "Pré-cadastro feito". **Absorção (D-198)** do cartão automático não enviado quando o
+  número é digitado numa proposta do CRM. **Sync a cada 2 min (D-199)** com um tique por vez e log
+  `debug` na rodada vazia.
+- Rótulo de `novo_contato` agora é "Novo orçamento".
+- **Pendente / fora do escopo:** envio pela conversa (CRMLAB-58); `novo_contato → ganho` direto
+  continua barrado pela matriz — cartão de balcão passa por "Orçamento enviado" (travas: CRMLAB-56);
+  cartão com pré-cadastro enviado depois só vai a ganho quando o orçamento mudar de novo no Bitlab
+  (CRMLAB-60); mudança de valor no re-sync não emite WS próprio.

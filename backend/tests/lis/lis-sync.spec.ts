@@ -346,4 +346,37 @@ describe('agendador (runScheduledTick, D-186)', () => {
     expect(bitlab.calls).toHaveLength(2);
     expect((await budgetsOf(ordered[1] ?? '')).map((b) => b.number)).toEqual(['7']);
   });
+
+  // D-199: a cada 2 min, um tique lento nao pode empilhar o proximo. Sem a
+  // guarda, o segundo tique pularia o tenant travado e rodaria o outro, que o
+  // primeiro tique rodaria de novo logo depois (3 chamadas em vez de 2).
+  it('tique que chega com o anterior ainda rodando e ignorado inteiro', async () => {
+    await configure(adminA, { apiKey: KEY, enabled: true });
+    await configure(adminB, { apiKey: 'chave-do-lab-b-0000', enabled: true });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    const slow: BitlabClient = {
+      fetchBudgetsPage: async (apiKey, query) => {
+        calls += 1;
+        if (calls === 1) await gate;
+        return bitlab.fetchBudgetsPage(apiKey, query);
+      },
+    };
+    const service = createLisSyncServiceFromDeps({ db, cache: createCache(), wsHub: noopWsHub }, { bitlab: slow });
+
+    const first = service.runScheduledTick();
+    // Deixa o primeiro tique chegar na chamada ao Bitlab do primeiro tenant.
+    while (calls === 0) await new Promise((resolve) => setTimeout(resolve, 5));
+    await service.runScheduledTick();
+    release();
+    await first;
+
+    expect(bitlab.calls).toHaveLength(2);
+    // Depois que o primeiro termina, o proximo tique roda normalmente.
+    await service.runScheduledTick();
+    expect(bitlab.calls).toHaveLength(4);
+  });
 });

@@ -198,7 +198,8 @@ essas travas: são do sistema.
 | negociacao | ganho | Acordo fechado |
 | negociacao | perdido | Sem acordo |
 | qualquer aberto | perdido | Com motivo |
-| qualquer aberto | ganho | **Só pelo sistema:** o orçamento do LIS vinculado aparece com requisição (CRMLAB-52, D-119). Pula a matriz, inclusive a partir de `novo_contato`. Nunca a partir de `perdido`. **Exceção:** proposta de origem `bitlab` em `novo_contato` não fecha, só ganha o selo "Pré-cadastro feito" (CRMLAB-57, D-197) |
+| qualquer aberto | ganho | **Só pelo sistema:** o orçamento do LIS vinculado aparece com requisição (CRMLAB-52, D-119). Pula a matriz, inclusive a partir de `novo_contato`. Nunca a partir de `perdido`. **Só na origem `crm`.** Na origem `bitlab` (D-204, provisória até o CRMLAB-53): **pagamento** no LIS → `ganho` de qualquer estágio aberto, inclusive `novo_contato`; requisição sozinha não fecha (em `novo_contato` só o selo "Pré-cadastro feito", D-197) |
+| orcamento_enviado / follow_up | negociacao | **Só pelo sistema, origem `bitlab`:** requisição no LIS com "Requisição → Negociação" ligada (CRMLAB-60 parcial, D-204) |
 | novo_contato | negociacao | **Envio do cartão do Bitlab com requisição** (pré-cadastro) e "Requisição → Negociação" ligada (CRMLAB-58, D-200). Fora da matriz manual; sem requisição o envio vai a `orcamento_enviado` |
 | (nasce) | novo_contato | **Só pelo sistema:** orçamento do LIS emitido depois da ativação e sem proposta vira proposta de origem `bitlab` ("Novo orçamento"), sem conversa (CRMLAB-57, D-196) |
 

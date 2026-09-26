@@ -254,7 +254,7 @@ describe('Regras do funil no ProposalService', () => {
       await setRules({ manualMoves: { skipStages: false } });
       const proposal = await createProposal({ tenantId: tenant.id, createdBy: manager.id });
       const won = await db.withTenant(tenant.id, (tx) => markWonFromLis(tx, tenant.id, proposal.id));
-      expect(won).toBe(true);
+      expect(won).toMatchObject({ from: 'novo_contato', to: 'ganho', source: 'lis' });
     });
   });
 

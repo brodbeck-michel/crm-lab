@@ -3496,6 +3496,47 @@ busca evita um endpoint novo (Regra Zero) e reaproveita o recorte de visibilidad
 busca). O paciente que está sendo atendido agora está nelas; para os outros existe a busca.
 **Impacto:** `shared/types/name-similarity.ts` (novo); frontend `SendProposalPanel`; PAGES §6.
 
+### D-204: Régua de fatos do LIS para o cartão do Bitlab — requisição leva a Negociação, pagamento leva a Ganho (CRMLAB-60 parcial; emenda D-119 e D-197)
+**Decisão:** na conciliação (D-119 item 4), a proposta de origem **`bitlab`** deixa de ir a
+`ganho` pela requisição e passa a seguir as duas regras de automação das Regras (CRMLAB-56). A
+origem **`crm` continua exatamente com a D-119** (requisição em qualquer estágio aberto →
+`ganho`, sem olhar as Regras).
+1. **Pagamento → Ganho** (`automation.paymentToWon`): `lis_budgets.paid_on` preenchido, com
+   **qualquer valor**, num cartão `bitlab` em **qualquer estágio não terminal**, inclusive
+   `novo_contato` (o paciente pagou no balcão antes de qualquer envio) → `ganho`, com
+   `lis_reconciled_at` (selo "Conciliado"; não reabre, D-192 item 2). Desligada: não move.
+2. **Requisição → Negociação** (`automation.requisitionToNegotiation`): requisição encontrada
+   num cartão `bitlab` em `orcamento_enviado` ou `follow_up` → `negociacao`. Desligada: não
+   move. Em `novo_contato` continua só o selo "Pré-cadastro feito" (D-197); em `negociacao`, com
+   requisição e sem pagamento, o cartão fica onde está.
+3. **Requisição sozinha nunca mais leva um cartão `bitlab` a `ganho`.** Requisição e pagamento
+   juntos: vence o pagamento (vai direto a `ganho`).
+4. **`perdido` não reabre** (D-119 item 5 continua): o espelho é gravado e o conflito de
+   requisição é auditado uma vez (`lis_reconcile_conflict`).
+5. **Transição de sistema reaproveitável:** `applySystemTransition(tx, tenantId, proposalId, {
+   to, source, systemMessage, lisReconciled? })` em `proposal.service.ts` generaliza o antigo
+   `markWonFromLis` (que agora a chama com `to: 'ganho', source: 'lis'`): trava a linha, não
+   mexe em proposta fechada nem no mesmo estágio, grava histórico com `changedBy: null`,
+   mensagem de sistema **só se houver conversa**, audit `update_proposal_status` com
+   `userId: null` e `newValues.source` (`lis` = D-119 da origem `crm`, `lis_payment`,
+   `lis_requisition`), tudo na transação de quem chama. Devolve `SystemTransition { proposalId,
+   from, to, source }` ou `null`. Depois do commit, `announceSystemTransitions` emite um
+   `proposal.status_changed` por transição (com o estágio de destino) e invalida o cache de
+   analytics. `ImportLisResponse.proposalsWon` conta só as que foram a `ganho`.
+6. **Idempotente** como a D-119 item 7: a segunda conciliação do mesmo orçamento não acha
+   transição a fazer (o cartão já está no destino ou fechado).
+**Provisória.** O valor pago que a sincronização grava ainda pode ser sobrescrito (é o que o
+**CRMLAB-53** corrige, e a sincronização de produção está desligada até lá); por isso esta
+decisão olha só a **data** de pagamento e vale "qualquer valor". O **CRMLAB-60 completo** fecha o
+resto da régua (o que depende do valor pago e a conciliação que hoje só roda quando o orçamento
+volta numa ingestão, D-197 "Limitação conhecida"). Até lá, esta regra é o comportamento.
+**Motivo:** no fluxo novo (Epic CRMLAB-55) requisição é o paciente avançando, não fechando: o
+dinheiro é que fecha. A D-119 fazia sentido quando a proposta nascia no CRM e o LIS só
+confirmava; para o cartão que nasce do Bitlab ela inflava a conversão.
+**Impacto:** `proposal.service.ts` (`applySystemTransition`, `announceSystemTransitions`,
+`markWonFromLis`), `lis-reconcile.service.ts`, `lis-import.service.ts`; SERVICES §4/§25,
+BUSINESS_RULES §3, WORKFLOWS §4.
+
 ## Template para novas decisões
 
 ```

@@ -69,7 +69,7 @@ import type { InsuranceRepository } from '../repositories/insurance.repository.j
 import * as auditRepo from '../repositories/audit.repository.js';
 import { isUniqueViolation } from '../repositories/exam-package.repository.js';
 import * as repo from '../repositories/proposal.repository.js';
-import { announceLisWins, reconcileProposal } from './lis-reconcile.service.js';
+import { reconcileProposal } from './lis-reconcile.service.js';
 import { readFunnelRules } from './funnel-rules.service.js';
 import type { ProposalRow } from '../repositories/proposal.repository.js';
 
@@ -304,45 +304,76 @@ async function recordTransitionInTx(
 }
 
 /**
- * `ganho` pela conciliacao com o LIS (CRMLAB-52, D-119 item 4). A UNICA
- * transicao que ignora `ALLOWED_TRANSITIONS`: vai de qualquer estagio nao
- * terminal para `ganho`, inclusive `novo_contato` e com aprovacao `pending`,
- * porque quem fechou foi o LIS (BUSINESS_RULES §3). `changedBy`/`userId` ficam
- * `null`. O audit entra na transacao de quem chama (`auditRepo.insert`), porque
- * ela e a do chunk de importacao ou do `PATCH` e nao aninha.
- *
- * O `WHERE status NOT IN ('ganho','perdido')` decide: 0 linhas -> `false` e
- * nada e gravado (idempotencia, item 7). WS e invalidacao de analytics ficam
- * com quem chama, depois do commit (`announceLisWins`).
+ * Quem pediu a transicao de sistema, gravado em `audit_logs.new_values.source`:
+ * - `lis`: requisicao no LIS fechando proposta de origem `crm` (D-119);
+ * - `lis_payment`: pagamento no LIS fechando cartao `bitlab` (D-204 item 1);
+ * - `lis_requisition`: requisicao no LIS levando cartao `bitlab` a negociacao (D-204 item 2).
+ * O motor de tempo (CRMLAB-59) acrescenta as suas.
  */
-export async function markWonFromLis(
+export type SystemTransitionSource = 'lis' | 'lis_payment' | 'lis_requisition';
+
+/** Uma transicao que o SISTEMA fez — o que `announceSystemTransitions` anuncia. */
+export interface SystemTransition {
+  proposalId: string;
+  from: ProposalStatus;
+  to: ProposalStatus;
+  source: SystemTransitionSource;
+}
+
+/**
+ * Transicao de estagio feita pelo SISTEMA, nao por uma pessoa (D-204 item 5,
+ * generaliza o antigo `markWonFromLis` da D-119). Nao passa por
+ * `checkTransition`: vai de qualquer estagio nao terminal para `to`. Roda na
+ * transacao de quem chama (conciliacao, motor de tempo) e grava ali:
+ * historico com `changedBy: null`, mensagem de sistema so se houver conversa
+ * (`systemMessage`), audit `update_proposal_status` com `userId: null` e
+ * `newValues.source`. `lisReconciled` marca `lis_reconciled_at` (selo
+ * "Conciliado", ganho que nao reabre). `closed_at` quando `to` e terminal.
+ *
+ * `null` = nada feito: proposta inexistente, ja fechada, ou ja em `to`
+ * (idempotencia). WS e cache ficam com quem chama, DEPOIS do commit
+ * (`announceSystemTransitions`).
+ */
+export async function applySystemTransition(
   tx: DbTx,
   tenantId: string,
   proposalId: string,
-): Promise<boolean> {
+  input: {
+    to: ProposalStatus;
+    source: SystemTransitionSource;
+    systemMessage: string | null;
+    lisReconciled?: boolean;
+  },
+): Promise<SystemTransition | null> {
   const current = await tx.query<{ status: string; conversation_id: string | null }>(
     'SELECT status, conversation_id FROM proposals WHERE id = $1 AND tenant_id = $2 FOR UPDATE',
     [proposalId, tenantId],
   );
   const before = current.rows[0];
-  if (!before) return false;
+  if (!before) return null;
+  const from = before.status as ProposalStatus;
+  if (isTerminal(from) || from === input.to) return null;
 
+  const closing = isTerminal(input.to);
   const updated = await tx.query<{ id: string }>(
     `UPDATE proposals
-        SET status = 'ganho', closed_at = NOW(), lis_reconciled_at = NOW(), updated_at = NOW()
+        SET status = $3,
+            closed_at = CASE WHEN $4::boolean THEN NOW() ELSE closed_at END,
+            lis_reconciled_at = CASE WHEN $5::boolean THEN NOW() ELSE lis_reconciled_at END,
+            updated_at = NOW()
       WHERE id = $1 AND tenant_id = $2 AND status NOT IN ('ganho', 'perdido')
       RETURNING id`,
-    [proposalId, tenantId],
+    [proposalId, tenantId, input.to, closing, input.lisReconciled === true],
   );
-  if (updated.rows.length === 0) return false;
+  if (updated.rows.length === 0) return null;
 
   await recordTransitionInTx(tx, {
     tenantId,
     proposalId,
     conversationId: before.conversation_id,
-    status: 'ganho',
+    status: input.to,
     changedBy: null,
-    systemMessage: `Proposta #${proposalRef(proposalId)} ganha — orçamento convertido em requisição no LIS 🎉`,
+    systemMessage: input.systemMessage,
   });
   await auditRepo.insert(tx, {
     tenantId,
@@ -350,10 +381,55 @@ export async function markWonFromLis(
     action: 'update_proposal_status',
     entityType: 'proposal',
     entityId: proposalId,
-    oldValues: { status: before.status },
-    newValues: { status: 'ganho', source: 'lis' },
+    oldValues: { status: from },
+    newValues: { status: input.to, source: input.source },
   });
-  return true;
+  return { proposalId, from, to: input.to, source: input.source };
+}
+
+/**
+ * `ganho` pela requisicao no LIS (CRMLAB-52, D-119 item 4) — hoje so para a
+ * origem `crm` (a `bitlab` segue a D-204). Vai de qualquer estagio nao
+ * terminal, inclusive `novo_contato` e com aprovacao `pending`. `null` = nada feito.
+ */
+export async function markWonFromLis(
+  tx: DbTx,
+  tenantId: string,
+  proposalId: string,
+): Promise<SystemTransition | null> {
+  return applySystemTransition(tx, tenantId, proposalId, {
+    to: 'ganho',
+    source: 'lis',
+    systemMessage: `Proposta #${proposalRef(proposalId)} ganha — orçamento convertido em requisição no LIS 🎉`,
+    lisReconciled: true,
+  });
+}
+
+/**
+ * Depois do commit: um `proposal.status_changed` por transicao de sistema (com
+ * o estagio de destino) e a invalidacao do cache de analytics. Falha de cache
+ * nao derruba nada.
+ */
+export async function announceSystemTransitions(
+  deps: { wsHub: WsHub; cache: CacheService },
+  tenantId: string,
+  transitions: readonly SystemTransition[],
+): Promise<void> {
+  if (transitions.length === 0) return;
+  for (const transition of transitions) {
+    deps.wsHub.emitToTenant(tenantId, 'proposal.status_changed', {
+      proposalId: transition.proposalId,
+      status: transition.to,
+    });
+  }
+  try {
+    await deps.cache.delByPrefix(analyticsCachePrefix(tenantId));
+  } catch (err) {
+    logger.warn('analytics.cache_invalidation_failed', {
+      tenantId,
+      detail: err instanceof Error ? err.message : 'erro desconhecido',
+    });
+  }
 }
 
 /** Nº do orcamento do LIS: so digitos, 1..20, sem zeros a esquerda (D-119 item 1). */
@@ -775,7 +851,7 @@ export class ProposalService {
 
     let outcome: {
       previous: string | null;
-      won: boolean;
+      transitions: SystemTransition[];
       detail: ProposalDetail;
       absorbed: repo.LisBudgetHolder | null;
     };
@@ -828,9 +904,9 @@ export class ProposalService {
         }
 
         await repo.setLisBudgetNumber(tx, id, number);
-        const won = number !== null && (await reconcileProposal(tx, ctx.tenantId, id));
+        const transitions = number !== null ? await reconcileProposal(tx, ctx.tenantId, id) : [];
         const detail = await loadDetail(tx, id);
-        return { previous: row.lis_budget_number, won, detail, absorbed };
+        return { previous: row.lis_budget_number, transitions, detail, absorbed };
       });
     } catch (err) {
       // Corrida entre dois PATCH com o mesmo numero: o indice unico decide.
@@ -857,8 +933,8 @@ export class ProposalService {
       });
       await this.invalidateAnalytics(ctx.tenantId);
     }
-    if (outcome.won) {
-      await announceLisWins(this.deps, ctx.tenantId, [id]);
+    if (outcome.transitions.length > 0) {
+      await announceSystemTransitions(this.deps, ctx.tenantId, outcome.transitions);
     } else {
       this.deps.wsHub.emitToTenant(ctx.tenantId, 'proposal.updated', { proposalId: id });
     }

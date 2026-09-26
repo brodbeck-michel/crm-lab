@@ -379,7 +379,7 @@ describe('pre-cadastro e a excecao a D-119 (D-197)', () => {
     expect(card).toMatchObject({ status: 'novo_contato', lisRequisitionNumber: '001-0001234' });
   });
 
-  it('cartao bitlab ja enviado segue a D-119: requisicao fecha como ganho', async () => {
+  it('cartao bitlab ja enviado: requisicao leva a negociacao, nao a ganho (D-204)', async () => {
     await setSince(tenantA, SINCE);
     await ingest(tenantA, [row('7003')]);
     const [created] = await proposalsOf(tenantA);
@@ -390,10 +390,10 @@ describe('pre-cadastro e a excecao a D-119 (D-197)', () => {
     expect(moved.status).toBe(200);
 
     const imported = await ingest(tenantA, [row('7003', REQ)]);
-    expect(imported.proposalsWon).toBe(1);
+    expect(imported.proposalsWon).toBe(0);
     const body = await detail(managerA, created!.id);
-    expect(body.status).toBe('ganho');
-    expect(body.lisReconciledAt).not.toBeNull();
+    expect(body.status).toBe('negociacao');
+    expect(body.lisReconciledAt).toBeNull();
   });
 
   it('proposta de origem crm em novo_contato continua indo a ganho (D-119 intacta)', async () => {

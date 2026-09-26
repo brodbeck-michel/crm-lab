@@ -193,6 +193,20 @@ Desde o CRMLAB-56, a matriz acima e os estágios terminais são o **padrão** da
 Front e back decidem pela mesma função, `checkTransition` (`shared/types/funnel-rules.types.ts`).
 Sem nada configurado, o comportamento é exatamente o de antes (D-191).
 
+### Motor de tempo (CRMLAB-59, D-205..D-209)
+Os prazos da seção Automação das Regras movem cartões parados, cada um só se ligado:
+`orcamento_enviado` há X dias → `follow_up`; `negociacao` há Y dias sem pagamento → `follow_up`;
+`follow_up` há Z dias → `perdido` com motivo `silencio`. O relógio conta desde a **entrada no
+estágio atual** (última linha do histórico com esse estágio): qualquer mudança de estágio o zera.
+Dias corridos (múltiplos de 24 h) ou úteis (seg–sex, Brasília; **sem feriados**). **Fato vence
+tempo:** cartão com pagamento não é movido pelo motor, e cartão com requisição não vai para
+`follow_up`/`perdido` a partir de `orcamento_enviado`/`follow_up` (D-206). O passo precisa estar
+na matriz vigente; terminais nunca se movem. "Novo orçamento" parado há N horas (corridas) só
+**alerta** o responsável (ou gestores/admins, se não houver), uma vez por entrada na coluna, sem
+mover (D-207). Prazo mudado vale no próximo tique, inclusive para os cartões que já passaram do
+prazo novo (D-209). Quem move é o sistema: `changedBy: null`, histórico com `automation`, audit
+`source: "rule"` (D-208).
+
 ### Exceção única: `ganho` pela conciliação com o LIS (CRMLAB-52, D-119)
 A matriz acima vale para **pessoas**. Quando o orçamento do LIS vinculado à proposta
 (`lis_budget_number`) aparece **com requisição**, a proposta vai para `ganho` a partir de

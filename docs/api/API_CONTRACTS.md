@@ -1746,7 +1746,8 @@ Paciente inexistente ou fora da visibilidade devolve **lista vazia**, não `404`
       "origin": "crm",
       "lisRequisitionNumber": null,
       "lisIssuedOn": "2026-09-20",
-      "lisAttendantName": "MARIA SOUZA"
+      "lisAttendantName": "MARIA SOUZA",
+      "stageEnteredAt": "2024-08-23T14:45:00Z"
     }
   ],
   "pagination": {
@@ -1773,6 +1774,10 @@ uma conversa) ou `"bitlab"` (nasceu sozinha do orçamento do LIS, em `novo_conta
 - **Visibilidade:** proposta `bitlab` com `createdBy: null` aparece para **qualquer** papel do
   tenant (fila comum). Com responsável, vale D-042.
 - `?search=` casa também o nome do paciente do orçamento do LIS.
+
+**`stageEnteredAt` (CRMLAB-59, D-207)** — opcional no tipo, sempre presente na resposta: quando a
+proposta entrou no estágio atual (a última linha de `history` com esse estágio), ISO 8601 UTC;
+`null` se não houver linha. É o relógio do motor de tempo (D-205) e do selo "Parado há N h".
 
 `proposalNumber` é sequencial **POR TENANT** (não global), gerado no servidor em `POST
 /proposals` — o cliente nunca envia. Serve para rastreamento citável por telefone/WhatsApp
@@ -1830,12 +1835,24 @@ Detalhes completos de uma proposta.
     {
       "status": "orcamento_enviado",
       "changedAt": "2024-08-23T14:45:00Z",
-      "changedBy": "uuid"
+      "changedBy": "uuid",
+      "automation": null
+    },
+    {
+      "status": "follow_up",
+      "changedAt": "2024-08-26T14:50:00Z",
+      "changedBy": null,
+      "automation": { "rule": "sentToFollowUp", "days": 3, "dayCounting": "calendar" }
     }
   ],
   "createdAt": "2024-08-23T14:40:00Z"
 }
 ```
+
+`history[].automation` (CRMLAB-59, D-208) — opcional no tipo, sempre presente na resposta: `null`
+quando a linha não veio do motor de tempo; preenchido (`StageAutomation`: `rule` ∈
+`sentToFollowUp | negotiationToFollowUp | followUpToLost`, o prazo `days` e a `dayCounting`
+vigentes na hora) quando a regra moveu o cartão. Nesses casos `changedBy` é `null`.
 
 `insuranceId` (Onda 7) é `null` numa proposta particular. `items[].priceSource` é o snapshot de
 onde `unitPrice` veio no momento da criação: `"insurance"` quando havia preço cadastrado em

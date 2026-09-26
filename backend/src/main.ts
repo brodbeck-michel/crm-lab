@@ -12,6 +12,7 @@ import { createWsHub } from './lib/ws-hub.js';
 import { deleteExpiredOrRevoked } from './repositories/refresh-token.repository.js';
 import { deleteExpiredOrUsed as deleteExpiredResetTokens } from './repositories/password-reset-token.repository.js';
 import { createLisSyncServiceFromDeps } from './controllers/lis-sync.routes.js';
+import { createFunnelTimerService } from './services/funnel-timer.service.js';
 
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
@@ -133,6 +134,20 @@ async function bootstrap(): Promise<void> {
       void lisSync.runScheduledTick();
     }, env.LIS_SYNC_INTERVAL_MS);
     lisSyncInterval.unref();
+  }
+
+  // =========================================================================
+  // Motor de tempo do funil (CRMLAB-59, D-205)
+  // =========================================================================
+  // Mesmo padrao da sincronizacao acima: `runTick` nao lanca (cada laboratorio
+  // tem o proprio try/catch) e ignora o tique se o anterior ainda roda.
+  // `FUNNEL_TIMER_INTERVAL_MS=0` desliga.
+  if (env.FUNNEL_TIMER_INTERVAL_MS > 0) {
+    const funnelTimer = createFunnelTimerService({ db, wsHub, cache });
+    const funnelTimerInterval = setInterval(() => {
+      void funnelTimer.runTick();
+    }, env.FUNNEL_TIMER_INTERVAL_MS);
+    funnelTimerInterval.unref();
   }
 
   // =========================================================================

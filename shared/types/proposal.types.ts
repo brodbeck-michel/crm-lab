@@ -1,4 +1,5 @@
 import type { IsoDate, IsoDateTime, PaginationMeta, PaginationQuery } from './api.types.js';
+import type { StageAutomation } from './funnel-timer.types.js';
 
 /** Os 6 estagios. BUSINESS_RULES.md §3. */
 export type ProposalStatus =
@@ -177,6 +178,12 @@ export interface Proposal {
   lisIssuedOn: IsoDate | null;
   /** `USUÁRIO` do orçamento vinculado no LIS, cru. JOIN com `lis_budgets`. */
   lisAttendantName: string | null;
+  /**
+   * Entrada no estágio atual: a última linha do histórico com esse estágio
+   * (CRMLAB-59, D-207). Relógio do motor de tempo e do selo "Parado há N h".
+   * Opcional no tipo (campo novo), sempre presente na resposta; `null` sem linha.
+   */
+  stageEnteredAt?: IsoDateTime | null;
 }
 
 export interface ProposalStageHistoryEntry {
@@ -184,6 +191,11 @@ export interface ProposalStageHistoryEntry {
   changedAt: IsoDateTime;
   changedBy: string | null;
   changedByName: string | null;
+  /**
+   * Preenchido quando o motor de tempo moveu o cartão (CRMLAB-59, D-208) — e
+   * então `changedBy` é `null`. Opcional no tipo, sempre presente na resposta.
+   */
+  automation?: StageAutomation | null;
 }
 
 export interface ProposalDetail extends Proposal {

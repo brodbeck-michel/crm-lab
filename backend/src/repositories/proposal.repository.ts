@@ -12,9 +12,11 @@
  * `proposal_items.tenant_id` e NOT NULL (pedido do Agent-DB em STATUS.md): todo
  * insert de item repete o tenant da proposta pai.
  */
+import { TIMER_STEPS } from '@crm-lab/shared';
 import type {
   ApprovalStatus,
   LossReason,
+  StageAutomation,
   ProposalOrigin,
   Proposal,
   ProposalDetail,
@@ -69,6 +71,12 @@ export interface ProposalRow {
   /** JOIN com `lis_budgets` (D-195 item 3) — nunca copiados para `proposals`. */
   lis_issued_on: string | null;
   lis_attendant_name: string | null;
+  /**
+   * Entrada no estagio atual (CRMLAB-59, D-207): MAX(changed_at) do historico
+   * com o estagio atual, ja em ISO UTC pelo `to_char` (a coluna e TIMESTAMP em
+   * UTC, D-078). Opcional: so o SELECT canonico traz.
+   */
+  stage_entered_at?: string | null;
 }
 
 interface ProposalItemRow {
@@ -86,6 +94,29 @@ interface HistoryRow {
   changed_at: unknown;
   changed_by: string | null;
   changed_by_name: string | null;
+  /** Motor de tempo (CRMLAB-59, D-208). JSONB: o driver devolve objeto. */
+  automation?: unknown;
+}
+
+const TIMER_RULE_KEYS: readonly string[] = TIMER_STEPS.map((step) => step.rule);
+
+/** `automation` gravado -> `StageAutomation`, ou `null` se ausente/fora do shape. */
+function parseAutomation(raw: unknown): StageAutomation | null {
+  const value: unknown = typeof raw === 'string' ? safeJson(raw) : raw;
+  if (typeof value !== 'object' || value === null) return null;
+  const v = value as Record<string, unknown>;
+  if (typeof v.rule !== 'string' || !TIMER_RULE_KEYS.includes(v.rule)) return null;
+  if (typeof v.days !== 'number') return null;
+  if (v.dayCounting !== 'calendar' && v.dayCounting !== 'business') return null;
+  return { rule: v.rule as StageAutomation['rule'], days: v.days, dayCounting: v.dayCounting };
+}
+
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -118,7 +149,10 @@ const SELECT_PROPOSAL = `
          p.insurance_id, p.requesting_doctor,
          p.lis_budget_number, p.lis_requisition_number, p.lis_paid_value,
          to_char(p.lis_paid_on, 'YYYY-MM-DD') AS lis_paid_on, p.lis_reconciled_at,
-         to_char(lb.issued_on, 'YYYY-MM-DD') AS lis_issued_on, lb.attendant_name AS lis_attendant_name
+         to_char(lb.issued_on, 'YYYY-MM-DD') AS lis_issued_on, lb.attendant_name AS lis_attendant_name,
+         (SELECT to_char(MAX(h.changed_at), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+            FROM proposal_status_history h
+           WHERE h.proposal_id = p.id AND h.status = p.status) AS stage_entered_at
     ${FROM_PROPOSAL}
     LEFT JOIN users u ON u.id = p.created_by
     LEFT JOIN users a ON a.id = p.approved_by`;
@@ -147,6 +181,7 @@ export function mapProposal(row: ProposalRow): Proposal {
     lisRequisitionNumber: row.lis_requisition_number,
     lisIssuedOn: row.lis_issued_on,
     lisAttendantName: row.lis_attendant_name,
+    stageEnteredAt: row.stage_entered_at ?? null,
   };
 }
 
@@ -167,6 +202,7 @@ export function mapHistory(row: HistoryRow): ProposalStageHistoryEntry {
     changedAt: toIso(row.changed_at),
     changedBy: row.changed_by,
     changedByName: row.changed_by_name,
+    automation: parseAutomation(row.automation),
   };
 }
 
@@ -439,12 +475,23 @@ export async function insertHistory(
     proposalId: string;
     status: ProposalStatus;
     changedBy: string | null;
+    /** Motor de tempo (CRMLAB-59, D-208): a regra que moveu. */
+    automation?: StageAutomation | null;
+    /** Instante da transicao; ausente = `NOW()` do banco. O motor passa o `now` injetado. */
+    changedAt?: Date;
   },
 ): Promise<void> {
   await tx.query(
-    `INSERT INTO proposal_status_history (tenant_id, proposal_id, status, changed_by)
-     VALUES ($1, $2, $3, $4)`,
-    [input.tenantId, input.proposalId, input.status, input.changedBy],
+    `INSERT INTO proposal_status_history (tenant_id, proposal_id, status, changed_by, automation, changed_at)
+     VALUES ($1, $2, $3, $4, $5::jsonb, COALESCE($6::timestamp, NOW()))`,
+    [
+      input.tenantId,
+      input.proposalId,
+      input.status,
+      input.changedBy,
+      input.automation ? JSON.stringify(input.automation) : null,
+      input.changedAt ? input.changedAt.toISOString() : null,
+    ],
   );
 }
 
@@ -613,7 +660,7 @@ export async function findHistory(
   proposalId: string,
 ): Promise<ProposalStageHistoryEntry[]> {
   const result = await tx.query<HistoryRow>(
-    `SELECT h.status, h.changed_at, h.changed_by, u.name AS changed_by_name
+    `SELECT h.status, h.changed_at, h.changed_by, u.name AS changed_by_name, h.automation
        FROM proposal_status_history h
        LEFT JOIN users u ON u.id = h.changed_by
       WHERE h.proposal_id = $1

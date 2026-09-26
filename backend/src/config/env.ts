@@ -178,6 +178,15 @@ const envSchema = z
     }, z.number().int().min(0)),
     /** Primeira carga, sem marca d'agua: quantos dias para tras. */
     LIS_SYNC_INITIAL_DAYS: numberFrom(90),
+    /**
+     * Motor de tempo do funil (CRMLAB-59, D-205): 5 min. `0` desliga o
+     * agendador (os cartoes param de andar sozinhos e o alerta nao sai).
+     */
+    FUNNEL_TIMER_INTERVAL_MS: z.preprocess((v) => {
+      if (v === undefined || v === null || v === '') return 5 * 60 * 1000;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : v;
+    }, z.number().int().min(0)),
   })
   .superRefine((value, ctx) => {
     if (value.NODE_ENV !== 'production') return;

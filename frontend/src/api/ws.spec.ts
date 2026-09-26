@@ -417,3 +417,22 @@ describe('channel.connection_changed', () => {
     expect(toast).not.toHaveBeenCalled();
   });
 });
+
+// CRMLAB-59/D-207: alerta de "Novo orçamento" parado — toast de atenção + pipeline atualizado.
+describe('proposal.stale_alert', () => {
+  it('avisa com tom de atenção e invalida as propostas', () => {
+    const toast = vi.fn();
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+
+    applyWsEvent(
+      queryClient,
+      { event: 'proposal.stale_alert', data: { proposalId: 'p-1', hours: 5 } } as WsEvent,
+      toast,
+    );
+
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast.mock.calls[0]?.[0]).toMatch(/parado em "Novo orçamento" há 5 h/);
+    expect(toast.mock.calls[0]?.[1]).toBe('attention');
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryScopes.proposals });
+  });
+});

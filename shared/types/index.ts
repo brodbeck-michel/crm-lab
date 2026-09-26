@@ -19,3 +19,4 @@ export * from './websocket.types.js';
 export * from './lis.types.js';
 export * from './funnel-rules.types.js';
 export * from './name-similarity.js';
+export * from './funnel-timer.types.js';

@@ -161,6 +161,17 @@ export function applyWsEvent(
       return;
     }
 
+    // CRMLAB-59/D-207: cartão parado em "Novo orçamento" — uma vez por entrada na coluna.
+    case 'proposal.stale_alert': {
+      const data = event.data as WsEventPayloads['proposal.stale_alert'];
+      toast?.(
+        `Um cartão está parado em "Novo orçamento" há ${data.hours} h sem envio.`,
+        'attention',
+      );
+      void queryClient.invalidateQueries({ queryKey: queryScopes.proposals });
+      return;
+    }
+
     case 'internal_chat.new_message': {
       const data = event.data as { channelId: string };
       void queryClient.invalidateQueries({ queryKey: queryKeys.internalChannels() });

@@ -569,6 +569,21 @@ CREATE INDEX idx_proposal_status_history_proposal ON proposal_status_history(pro
 CREATE INDEX idx_proposal_status_history_tenant_id ON proposal_status_history(tenant_id);
 ```
 
+**Migração 030 (CRMLAB-59, D-207/D-208)** acrescenta duas colunas, ambas nulas em toda linha
+existente (sem backfill):
+
+```sql
+ALTER TABLE proposal_status_history
+  ADD COLUMN automation JSONB NULL,           -- { rule, days, dayCounting } quando o motor de tempo moveu
+  ADD COLUMN stale_alerted_at TIMESTAMP NULL; -- alerta de "Novo orçamento" parado já saiu para esta entrada
+```
+
+- `automation` preenchido = a linha foi gravada pelo **motor de tempo** (`changed_by` é `NULL`).
+  `changed_by` nulo com `automation` nulo = LIS ou criação automática do Bitlab. `rule` é uma das
+  chaves de `TimerRuleKey` (`sentToFollowUp`, `negotiationToFollowUp`, `followUpToLost`).
+- `stale_alerted_at` só é escrito na linha de **entrada** em `novo_contato` (a última linha com o
+  estágio atual) e marca que o alerta daquela entrada já saiu: é o "uma vez por entrada" (D-207).
+
 O ProposalService grava uma linha a cada transição aceita (inclusive a criação, com
 `novo_contato`). A ordenação do `history` na resposta é `changed_at ASC`.
 
@@ -1778,6 +1793,7 @@ para ser a exceção visível e auditável, nunca o caminho normal:
 | **Login** | busca o usuário por email **antes** de saber a qual tenant ele pertence |
 | **Console da plataforma** | opera sobre todos os tenants por definição (`platform_operator`) |
 | **Agendador da sincronização LIS** | lista **só os `tenant_id`** com sincronização ligada, antes de ter contexto (D-186). A rodada de cada tenant roda com `withTenant()` |
+| **Motor de tempo do funil** | lista **só os `tenant_id`** de tenants ativos com proposta aberta, antes de ter contexto (D-205 item 6). Leitura das regras, dos cartões e cada transição rodam com `withTenant()` |
 
 Nenhum outro caminho de código deve usar `withoutTenant()`.
 
@@ -1909,7 +1925,8 @@ migrations/
 ├── …                             # 022–025: ver o cabeçalho de cada arquivo
 ├── 026_lis_sync.sql              # lis_sync_settings + policy; lis_imports.kind ganha 'sync' (CRMLAB-52, D-185)
 ├── 027_funnel_rules.sql          # funnel_rules + policy — Regras do funil (CRMLAB-56, D-190)
-└── 028_bitlab_origin.sql         # proposals.origin, conversa/autor nulláveis só na origem bitlab (CRMLAB-57, D-195/D-196)
+├── 028_bitlab_origin.sql         # proposals.origin, conversa/autor nulláveis só na origem bitlab (CRMLAB-57, D-195/D-196)
+└── 030_funnel_timer.sql          # proposal_status_history.automation + stale_alerted_at — motor de tempo (CRMLAB-59, D-207/D-208)
 ```
 
 A 007 e a 008 são arquivos ÚNICOS (tabela + policy), diferente dos pares 003/004 e 005/006: a

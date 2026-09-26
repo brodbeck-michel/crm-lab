@@ -174,6 +174,7 @@ export default function Proposals() {
                 proposals={proposalsByStatus[status]}
                 onDropProposal={handleDrop}
                 accepts={columnAccepts}
+                staleAlert={funnelRules.automation.staleNewBudgetAlert}
               />
             ))}
           </div>
@@ -190,7 +191,13 @@ export default function Proposals() {
             {proposals.length === 0 ? (
               <p className="text-caption text-neutral-600">Nenhuma proposta</p>
             ) : (
-              proposals.map((proposal) => <ProposalCard key={proposal.id} proposal={proposal} />)
+              proposals.map((proposal) => (
+                <ProposalCard
+                  key={proposal.id}
+                  proposal={proposal}
+                  staleAlert={funnelRules.automation.staleNewBudgetAlert}
+                />
+              ))
             )}
           </div>
           {data && (

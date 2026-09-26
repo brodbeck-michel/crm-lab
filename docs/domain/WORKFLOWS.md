@@ -173,6 +173,14 @@ novo_contato ──→ orcamento_enviado ──→ follow_up ──→ negociaca
 
 `ganho`/`perdido` são terminais em qualquer direção — nenhuma seta sai deles, nem de volta.
 
+**Travas configuráveis (CRMLAB-56, D-192):** o diagrama e a tabela abaixo são o **padrão**. Em
+**Configurações → Regras** o laboratório liga "Reabrir Ganho/Perdido" (setas de `ganho`/`perdido`
+para `orcamento_enviado`/`follow_up`/`negociacao`), desliga "Pular etapas" (somem
+`orcamento_enviado → negociacao/ganho` e `follow_up → ganho`), desliga o motivo obrigatório e
+restringe o gestor aos próprios cards. A decisão é `checkTransition` (`@crm-lab/shared`), no front
+e no back. As automações de tempo e de fatos (CRMLAB-59/60) e a conciliação LIS não passam por
+essas travas: são do sistema.
+
 ### Transições válidas:
 
 | De | Para | Trigger |

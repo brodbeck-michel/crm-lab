@@ -3102,6 +3102,143 @@ rodada anterior volta na seguinte, o que é inofensivo porque o upsert é idempo
 **Impacto:** `bitlab-client.ts` (`parseBitlabDateTime`, `bitlabDateToIsoDate`,
 `watermarkToBitlabDateTime`), SERVICES.md §24.1, BUSINESS_RULES.md §11.10.
 
+## 2026-09-26 — Página de Regras do funil (CRMLAB-56)
+
+### D-190: Regras do funil por laboratório, numa linha JSONB própria, com um ponto único de leitura
+**Decisão:** as regras que o laboratório define na página **Configurações → Regras** ficam em
+`funnel_rules` (SCHEMA.md §32, migração 027): uma linha por tenant, `rules JSONB` com o objeto
+`FunnelRules` inteiro (`shared/types/funnel-rules.types.ts`, API_CONTRACTS.md §6c).
+1. **Sem linha = padrões** (`DEFAULT_FUNNEL_RULES`, D-191), sem gravar nada, mesma disciplina de
+   D-065. A leitura sempre sobrepõe o que está gravado aos padrões, chave por chave e com
+   conferência de tipo: campo novo que um card futuro acrescentar nasce com o padrão em todo
+   laboratório, e lixo no JSON cai no padrão em vez de derrubar a tela.
+2. **Ponto único de leitura para os outros cards:** `readFunnelRules(tx, tenantId)`
+   (`backend/src/services/funnel-rules.service.ts`, também exportado como `funnelRules.get`). Uma
+   consulta por chave primária, dentro da transação de quem chama. É daqui que leem
+   `ProposalService` (travas e origem, neste card), a proposta do Bitlab (CRMLAB-57), o envio
+   (CRMLAB-58), o motor de tempo (CRMLAB-59) e a régua de fatos (CRMLAB-60). Ninguém lê a tabela
+   direto.
+3. **Quem lê e quem edita:** `GET /settings/funnel-rules` é de todo perfil de laboratório
+   (a atendente vê a página, e o front precisa das travas para esconder o que o back recusaria).
+   `PATCH` é **manager/admin**.
+4. **PATCH parcial em qualquer nível** (`UpdateFunnelRulesRequest`): campo ausente preserva;
+   campo desconhecido, tipo errado, prazo fora da faixa ou variável desconhecida no modelo →
+   `VALIDATION_ERROR` com `details.fields` pelo caminho (`automation.sentToFollowUp.days`). Listas
+   (`roles`) são trocadas inteiras.
+5. **Auditoria:** `update_funnel_rules` (`entityType: "funnel_rules"`, `entityId` = tenant), com o
+   objeto inteiro antes e depois, só quando algo mudou de fato (diff-then-audit, como a comissão).
+6. **Vale dali para frente:** nenhuma regra reprocessa proposta existente. Trava nova vale na
+   próxima tentativa de mover; prazo novo vale na próxima rodada do motor (CRMLAB-59).
+**Motivo:** o Michel quer "a ferramenta bem ajustável: as regras de negócio o lab define". São ~20
+campos em 4 seções, e mais cards vão acrescentar. Uma coluna por campo em `tenant_settings`
+exigiria migração a cada regra nova. O JSONB com padrões no código mantém a migração única e o
+tipo como contrato.
+**Impacto:** `backend/migrations/027_funnel_rules.sql`, `funnel-rules.repository.ts`,
+`funnel-rules.service.ts`, `funnel-rules.routes.ts` (novos), `modules.ts`; `shared/types/funnel-rules.types.ts`;
+API_CONTRACTS §6c, SCHEMA §32, SERVICES §26, PAGES §21.
+
+### D-191: Os padrões reproduzem o comportamento de hoje; "Criar pelo CRM" nasce ligado
+**Decisão:** sem nada gravado, o CRM se comporta **exatamente** como antes do card:
+- travas: `skipStages: true` (a matriz `ALLOWED_TRANSITIONS`), `reopenClosed.enabled: false`
+  (`ganho`/`perdido` terminais), `requireLossReason: true`, `moveOthersCards: true` (gestor move
+  card de qualquer atendente, como hoje);
+- origem: `fromBitlab: true` **e** `manualInCrm: true`;
+- automação (só guardada, D-190 item 6): Requisição → Negociação ligada; Pagamento → Ganho
+  ligada; Orçamento enviado há **3** dias → Follow-up, ligada; Negociação sem pagamento há **7**
+  dias → Follow-up, ligada; Follow-up há **15** dias → Perdido ("Silêncio"), **desligada**; alerta
+  de "Novo orçamento" parado há **4 h**, ligado; **dias corridos**.
+- mensagem de envio: `Olá, {paciente}! Segue o orçamento nº {numero_orcamento} ({convenio}), no
+  valor de {valor}.` (o texto que o botão "Enviar orçamento" monta hoje, com as variáveis).
+**Motivo:** o card não pode mudar nada até o laboratório editar, e a suíte atual tem que continuar
+verde. `manualInCrm` desligado por padrão quebraria o único fluxo de criação que existe hoje (a
+proposta do Bitlab chega no CRMLAB-57). **O Michel desliga "Criar proposta manualmente no CRM"
+pela página quando quiser só o fluxo Bitlab.** Os prazos são os sugeridos no card; "corridos" é o
+mais simples de explicar e de conferir.
+**Impacto:** `DEFAULT_FUNNEL_RULES` em `shared/types/funnel-rules.types.ts`.
+
+### D-192: As travas manuais valem no back e no front pela mesma função (`checkTransition`)
+**Decisão:** `ALLOWED_TRANSITIONS`/`TERMINAL_STATUSES` deixam de ser a trava final e passam a ser
+o **padrão** de uma regra. `checkTransition(rules.manualMoves, from, to, actor)` em
+`shared/types/funnel-rules.types.ts` decide toda mudança de estágio **feita por uma pessoa**;
+`ProposalService.updateStatus` recusa o que ela recusa, e o front (seletor "Mudar estágio",
+botões Ganho/Perdido/Avançar, colunas do kanban) só oferece o que ela aceita (`allowedTargets`).
+1. **Pular etapas** (`skipStages`): ligado = `ALLOWED_TRANSITIONS` (inclui `orcamento_enviado →
+   negociacao/ganho` e `follow_up → ganho`). Desligado = `SEQUENTIAL_TRANSITIONS`: um passo para a
+   frente, um para trás (D-105) e `perdido` de qualquer estágio aberto; `ganho` só a partir de
+   `negociacao`.
+2. **Reabrir Ganho/Perdido** (`reopenClosed`): desligado = terminais, como antes
+   (`PROPOSAL_ALREADY_CLOSED`). Ligado, a proposta fechada volta para `orcamento_enviado`,
+   `follow_up` ou `negociacao` (`REOPEN_TARGETS`), limpando `closed_at` e `reason_lost`
+   (`sent_at` fica). Quem reabre: os perfis de `roles` (`attendant`/`manager`) e **sempre o
+   admin**; perfil fora da lista → `FORBIDDEN` com `details.reason: "reopen_not_allowed"`. **Ganho
+   conciliado pelo LIS não reabre** (`lis_reconciled_at` preenchido → `PROPOSAL_ALREADY_CLOSED`
+   com `details.reason: "lis_reconciled"`): o LIS diz que virou requisição, e reabrir faria a
+   próxima conciliação não fechar de novo. Reabrir grava histórico, audit
+   `update_proposal_status` e WS como qualquer transição.
+3. **Exigir motivo no Perdido** (`requireLossReason`): desligado, `perdido` sem `reasonLost` é
+   aceito (`reason_lost` fica `NULL`, que o relatório de motivos já agrupa). Motivo enviado
+   continua tendo que ser do enum (`INVALID_LOSS_REASON`).
+4. **Mover card de outra atendente** (`moveOthersCards`): vale para o **gestor**. Desligado, o
+   gestor só muda o estágio dos cards que ele mesmo criou → `FORBIDDEN` com `details.reason:
+   "move_others_not_allowed"`. O **admin sempre pode** (é quem corrige). A atendente continua
+   vendo só as próprias propostas (D-042); a regra não amplia a visibilidade.
+5. **Ordem das recusas:** fechada (`closed`/`reopen_role`) → fora da matriz
+   (`INVALID_STATUS_TRANSITION`, `details.allowed` = destinos vigentes) → dono do card → motivo de
+   perda → aprovação pendente. A ordem antiga (fechada → matriz → motivo → aprovação) fica igual.
+6. **Exceção de sistema:** `markWonFromLis` (D-119) **não** passa pelas travas: o LIS fecha em
+   qualquer estágio aberto, com qualquer regra. O mesmo vale para as automações de CRMLAB-59/60,
+   que são do sistema, não de uma pessoa.
+7. **Arrastar no kanban:** durante o `dragover` só o estágio de origem é legível
+   (`StageColumn`); a coluna usa `canTransition` com o ator "dono", e o `drop` confere a regra
+   completa (dono incluído) antes de chamar a API. Quem decide continua sendo o back.
+**Motivo:** o card pede que as travas "valham de fato" e que front e back não possam divergir,
+como já era com a matriz compartilhada. Reabrir para um estágio aberto (e não para o estágio
+anterior do histórico) evita depender do histórico e deixa a pessoa escolher onde retomar.
+**Impacto:** `shared/types/funnel-rules.types.ts`, `proposal.service.ts` (`updateStatus`),
+frontend `ActionsRow.tsx`, `ProposalModal.tsx`, `StageColumn.tsx`, `Proposals.tsx`,
+`LostReasonForm.tsx`; BUSINESS_RULES §3, WORKFLOWS §4, API_ERRORS.
+
+### D-193: "Criar proposta manualmente no CRM" desligado some da tela e o back recusa
+**Decisão:** `origin.manualInCrm: false` → `POST /proposals` devolve **`MANUAL_PROPOSAL_DISABLED`
+(409)**, antes de ler catálogo ou conversa. O front esconde "Novo Orçamento" (Atendimento),
+"Novo atendimento" (pipeline, que só existe para levar ao `/budget/new`), a tela `/budget/new`
+mostra o aviso em vez do formulário, e a seção **Descontos e aprovação** da página de Regras some.
+No modal da proposta, a linha de desconto só aparece quando a proposta tem desconto (> 0): as
+propostas manuais antigas continuam mostrando o desconto que tiveram.
+1. **Ao menos uma origem ligada:** desligar as duas → `VALIDATION_ERROR` em `origin`.
+2. **A alçada não muda de lugar nem de regra.** A seção Descontos e aprovação mostra a regra
+   vigente (dentro da alçada aprova sozinha; acima vai para aprovação do gestor) e os limites
+   padrão por perfil (`DEFAULT_DISCOUNT_LIMIT`). O limite de cada pessoa continua sendo editado em
+   **Usuários & Permissões** (admin), e a página leva para lá.
+3. **Proposta do Bitlab não passa por aprovação:** isso depende do campo de origem da proposta,
+   que nasce no CRMLAB-57. Aqui fica só o liga/desliga e a visibilidade.
+**Motivo:** "a UI esconde, o servidor recusa" (FRONTEND_BACKEND.md §4). Código novo e próprio,
+em vez de `FORBIDDEN`, porque não é falta de permissão de quem chama: é o laboratório que
+desligou o fluxo, e a tela precisa mostrar isso.
+**Impacto:** `proposal.service.ts` (`create`), `api.types.ts`/`errors.ts`/API_ERRORS.md
+(`MANUAL_PROPOSAL_DISABLED`), frontend `ConversationPanel`, `Proposals.tsx`, `Budget/New.tsx`,
+`ProposalModal.tsx`, `Settings/Rules.tsx`.
+
+### D-194: Modelo da mensagem de envio com variáveis fixas; Comissão passa a morar na página de Regras
+**Decisão:**
+1. **Mensagem de envio** (`sendMessage.template`, 1..1000 caracteres): as variáveis são
+   `{paciente}`, `{numero_orcamento}`, `{valor}` e `{convenio}` (`SEND_MESSAGE_VARIABLES`).
+   Qualquer outra `{coisa}` → `VALIDATION_ERROR` em `sendMessage.template`, com as desconhecidas
+   listadas. `renderSendMessageTemplate(template, values)` em `shared/` é a função pura que o
+   envio (CRMLAB-58) vai usar; os valores entram **já formatados** (`valor` em `R$ 1.234,50`). A
+   página mostra a pré-visualização com dados de exemplo pela mesma função. Neste card o botão
+   "Enviar orçamento" continua com o texto de hoje: trocar é do CRMLAB-58.
+2. **Comissão** vira a seção 6 da página de Regras, com o mesmo formulário, o mesmo endpoint
+   (`/settings/commissions`, API_CONTRACTS §6b) e as mesmas permissões: gestor lê, **admin
+   edita** (a página de Regras deixa o gestor editar as outras seções, mas não a comissão, que
+   continua sendo decisão de admin, D-113). A atendente **não vê** a seção (o `GET` é manager+).
+   A rota antiga `/settings/commissions` **redireciona** para `/settings/rules#comissoes`, e o
+   item "Comissão" sai do menu. Nenhuma regra de cálculo muda.
+**Motivo:** o card pede uma página só para as regras do laboratório, e comissão é uma delas. Não
+mexer no endpoint nem na permissão mantém `/sales/summary` e os testes da comissão como estão.
+**Impacto:** `shared/types/funnel-rules.types.ts`; frontend `Settings/Rules.tsx` (novo),
+`Settings/Commissions.tsx` (vira seção), `route-config.ts`, `routes/index.tsx`; PAGES §19/§21.
+
 ## Template para novas decisões
 
 ```

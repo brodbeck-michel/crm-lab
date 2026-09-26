@@ -1945,7 +1945,9 @@ o desconto de uma proposta que **não criou**:
 **Outros erros:** `EXAM_NOT_FOUND_OR_INACTIVE` (400, `details.examIds[]` — exame
 inexistente, inativo ou de outro tenant), `NOT_FOUND` (404, conversa inexistente **ou de
 outro tenant**), `VALIDATION_ERROR` (400 — o DTO é estrito: `totalPrice`, `unitPrice` ou
-qualquer campo de preço vindo do cliente é recusado, nunca ignorado).
+qualquer campo de preço vindo do cliente é recusado, nunca ignorado),
+`MANUAL_PROPOSAL_DISABLED` (409 — o laboratório desligou "Criar proposta manualmente no CRM"
+em Regras, `origin.manualInCrm: false`, §6c/D-193; recusado antes de qualquer outra validação).
 
 **Visibilidade (D-042):** atendente lista e abre apenas as propostas que criou;
 gestor/admin veem todas do tenant. Fora da visibilidade: `404`, nunca `403`.
@@ -1961,6 +1963,22 @@ Atualizar status da proposta.
 ```
 
 **Valores válidos:** `novo_contato`, `orcamento_enviado`, `follow_up`, `negociacao`, `ganho`, `perdido`
+
+**Travas (CRMLAB-56, D-192):** a transição é decidida por `checkTransition(rules.manualMoves,
+from, to, actor)` com as regras do laboratório (§6c). Com os padrões, é a matriz
+`ALLOWED_TRANSITIONS` com `ganho`/`perdido` terminais, como antes. Recusas, nesta ordem:
+- proposta fechada e reabrir desligado → `PROPOSAL_ALREADY_CLOSED` (409, `{ status }`); ganho
+  conciliado pelo LIS nunca reabre → o mesmo código com `details.reason: "lis_reconciled"`;
+- reabrir ligado mas não para o perfil → `FORBIDDEN` (403, `details.reason: "reopen_not_allowed"`);
+- destino fora da matriz vigente → `INVALID_STATUS_TRANSITION` (400, `{ from, to, allowed[] }`);
+- card de outra pessoa com "Mover card de outra atendente" desligado (gestor) →
+  `FORBIDDEN` (403, `details.reason: "move_others_not_allowed"`);
+- `perdido` sem motivo com "Exigir motivo" ligado → `LOSS_REASON_REQUIRED`; motivo fora do enum →
+  `INVALID_LOSS_REASON` (sempre);
+- `orcamento_enviado` com aprovação `pending`/`rejected` → `PROPOSAL_PENDING_APPROVAL`.
+
+Reabrir (`ganho`/`perdido` → `orcamento_enviado`/`follow_up`/`negociacao`) limpa `closedAt` e
+`reasonLost`.
 
 **Response (200):**
 ```json
@@ -3574,6 +3592,102 @@ Gera audit log `update_commission_settings` (`entityType: "tenant_settings"`, `e
 
 **Erros:** `VALIDATION_ERROR` (400, `details.fields`), `FORBIDDEN` (403,
 `details.requiredRoles: ["admin"]`)
+
+---
+
+## 6c. Funnel Rules (Regras do funil — CRMLAB-56)
+
+Regras que o laboratório define na página **Configurações → Regras** (PAGES.md §21, D-190..D-194).
+Uma linha por tenant em `funnel_rules` (SCHEMA.md §32). Shapes em
+`shared/types/funnel-rules.types.ts` (`FunnelRules`, `UpdateFunnelRulesRequest`,
+`DEFAULT_FUNNEL_RULES`).
+
+**Papéis:** `GET` é **todo perfil de laboratório** (`attendant`/`manager`/`admin`): a atendente vê
+a página e o front lê as travas para esconder o que o back recusaria. `PATCH` é
+**manager/admin**; `attendant` → `403 FORBIDDEN` com `details.requiredRoles: ["manager","admin"]`.
+`platform_operator` → `403`.
+
+**Ponto único de leitura no backend (para os cards CRMLAB-57..60):**
+`readFunnelRules(tx, tenantId): Promise<FunnelRules>` em
+`backend/src/services/funnel-rules.service.ts` (também `funnelRules.get`). Roda dentro da transação
+de quem chama (`db.withTenant`), uma consulta por chave primária, e devolve sempre o objeto
+completo com os padrões aplicados. Nenhum outro código lê `funnel_rules` direto.
+
+### GET /settings/funnel-rules
+
+**Response (200)** — sem linha gravada, exatamente os padrões (D-191):
+```json
+{
+  "origin": { "fromBitlab": true, "manualInCrm": true },
+  "automation": {
+    "requisitionToNegotiation": { "enabled": true },
+    "paymentToWon": { "enabled": true },
+    "sentToFollowUp": { "enabled": true, "days": 3 },
+    "negotiationToFollowUp": { "enabled": true, "days": 7 },
+    "followUpToLost": { "enabled": false, "days": 15 },
+    "staleNewBudgetAlert": { "enabled": true, "hours": 4 },
+    "dayCounting": "calendar"
+  },
+  "manualMoves": {
+    "reopenClosed": { "enabled": false, "roles": ["manager"] },
+    "skipStages": true,
+    "requireLossReason": true,
+    "moveOthersCards": true
+  },
+  "sendMessage": {
+    "template": "Olá, {paciente}! Segue o orçamento nº {numero_orcamento} ({convenio}), no valor de {valor}."
+  }
+}
+```
+
+| Campo | Significado | Quem executa |
+|-------|-------------|--------------|
+| `origin.fromBitlab` | A proposta nasce do orçamento do Bitlab | CRMLAB-57 |
+| `origin.manualInCrm` | A atendente cria a proposta no CRM (catálogo). `false` → `POST /proposals` = `MANUAL_PROPOSAL_DISABLED` | este card |
+| `automation.requisitionToNegotiation` | Requisição no LIS → `negociacao` | CRMLAB-60 |
+| `automation.paymentToWon` | Pagamento no LIS → `ganho` | CRMLAB-60 |
+| `automation.sentToFollowUp` | `orcamento_enviado` há `days` → `follow_up` | CRMLAB-59 |
+| `automation.negotiationToFollowUp` | `negociacao` sem pagamento há `days` → `follow_up` | CRMLAB-59 |
+| `automation.followUpToLost` | `follow_up` há `days` → `perdido` (`silencio`) | CRMLAB-59 |
+| `automation.staleNewBudgetAlert` | Alerta de `novo_contato` parado há `hours` sem envio | CRMLAB-59 |
+| `automation.dayCounting` | `calendar` (corridos) ou `business` (úteis) | CRMLAB-59 |
+| `manualMoves.*` | Travas de movimentação manual (D-192), via `checkTransition` | este card (back e front) |
+| `sendMessage.template` | Modelo do WhatsApp; render por `renderSendMessageTemplate` | CRMLAB-58 |
+
+`checkTransition`, `canTransition`, `allowedTargets`, `buildAllowedTransitions`, `canReopen`,
+`SEQUENTIAL_TRANSITIONS`, `REOPEN_TARGETS`, `findUnknownTemplateVariables` e
+`renderSendMessageTemplate` são exportados de `@crm-lab/shared`.
+
+**Erros:** `FORBIDDEN` (403, `platform_operator`)
+
+### PATCH /settings/funnel-rules (manager/admin)
+Parcial em qualquer nível: campo ausente preserva; listas (`roles`) são trocadas inteiras.
+
+**Request:**
+```json
+{
+  "origin": { "manualInCrm": false },
+  "automation": { "sentToFollowUp": { "days": 5 } },
+  "manualMoves": { "reopenClosed": { "enabled": true, "roles": ["manager"] } }
+}
+```
+
+Validação (`VALIDATION_ERROR`, `details.fields` pelo caminho do campo):
+- corpo vazio (`{}`) → `fields._root`; campo desconhecido em qualquer nível → `Campo desconhecido`;
+- booleanos são `boolean`; `days` inteiro `1..365`; `hours` inteiro `1..720`;
+- `dayCounting` ∈ `calendar | business`; `roles` ⊆ `["attendant","manager"]`, sem repetição;
+- `origin`: ao menos uma das duas ligada depois do merge → `fields.origin`;
+- `sendMessage.template`: string `1..1000` depois do `trim`, só com as variáveis
+  `{paciente}`, `{numero_orcamento}`, `{valor}`, `{convenio}` → senão
+  `fields["sendMessage.template"]` citando as desconhecidas.
+
+**Response (200):** o objeto completo depois da escrita (mesmo shape do `GET`), cru.
+
+Gera audit log `update_funnel_rules` (`entityType: "funnel_rules"`, `entityId` = `tenantId`,
+`oldValues`/`newValues` = objeto inteiro) só quando algo mudou de fato. Mudança vale dali para
+frente (D-190 item 6).
+
+**Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
 
 ---
 

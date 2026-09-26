@@ -1579,6 +1579,38 @@ CREATE POLICY lis_sync_settings_tenant_isolation ON lis_sync_settings
 
 ---
 
+### 32. `funnel_rules` (migração 027 — CRMLAB-56, D-190)
+Regras do funil que o laboratório define em **Configurações → Regras**, uma linha por tenant.
+Dono: `FunnelRulesService` (SERVICES.md §26). O shape de `rules` é `FunnelRules`
+(`shared/types/funnel-rules.types.ts`, API_CONTRACTS.md §6c).
+
+```sql
+CREATE TABLE funnel_rules (
+  tenant_id UUID PRIMARY KEY,
+  rules JSONB NOT NULL,                  -- FunnelRules inteiro, já mesclado com os padrões
+  updated_by UUID NULL,                  -- último gestor/admin que salvou
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX idx_funnel_rules_updated_by ON funnel_rules(updated_by);
+-- trigger set_updated_at + ENABLE ROW LEVEL SECURITY + policy funnel_rules_tenant_isolation
+-- (mesmo padrão de lis_sync_settings, §31)
+```
+
+- **Sem linha = padrões** (`DEFAULT_FUNNEL_RULES`, D-191), sem gravar, como `tenant_settings`
+  (D-065).
+- **A leitura sempre mescla com os padrões** (`readFunnelRules`): chave que falta ou com tipo
+  errado vale o padrão. Campo novo de um card futuro não precisa de migração nem de backfill.
+- **Validação no service, não no banco:** o JSON é um contrato do TypeScript; o `PATCH` recusa o
+  que não cabe antes de gravar (API_CONTRACTS.md §6c).
+- Migração **única** (tabela + policy), como 026: sem backfill, a tabela nasce vazia.
+
+---
+
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
 
 O isolamento multitenant não é convenção: é imposto pelo banco. O backend conecta com o papel
@@ -1822,7 +1854,8 @@ migrations/
 ├── 020_crm_login_role.sql        # role `crm_login` sem superuser para a pool (CRMLAB-38, D-145)
 ├── 021_fk_indexes.sql            # índice nas 15 FKs que não tinham (CRMLAB-38, D-146)
 ├── …                             # 022–025: ver o cabeçalho de cada arquivo
-└── 026_lis_sync.sql              # lis_sync_settings + policy; lis_imports.kind ganha 'sync' (CRMLAB-52, D-185)
+├── 026_lis_sync.sql              # lis_sync_settings + policy; lis_imports.kind ganha 'sync' (CRMLAB-52, D-185)
+└── 027_funnel_rules.sql          # funnel_rules + policy — Regras do funil (CRMLAB-56, D-190)
 ```
 
 A 007 e a 008 são arquivos ÚNICOS (tabela + policy), diferente dos pares 003/004 e 005/006: a

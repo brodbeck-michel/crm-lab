@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useProposalList, useUpdateProposalStatus } from '@/api/proposals';
+import { useEffectiveFunnelRules } from '@/api/funnel-rules';
+import { useAuthStore } from '@/stores/auth.store';
 import {
   PROPOSAL_STATUSES,
-  isTransitionAllowed,
+  canTransition,
   type ProposalStatus,
   type ListProposalsQuery,
   type Proposal,
@@ -97,6 +99,14 @@ export default function Proposals() {
     {} as Record<ProposalStatus, Proposal[]>
   );
 
+  // Travas das Regras (CRMLAB-56, D-192): no `dragover` so o estagio de origem
+  // e legivel, entao a coluna confere como "dona"; o drop confere com o dono real.
+  const funnelRules = useEffectiveFunnelRules();
+  const role = useAuthStore((s) => s.user?.role) ?? 'attendant';
+  const currentUserId = useAuthStore((s) => s.user?.id);
+  const columnAccepts = (origin: ProposalStatus, target: ProposalStatus) =>
+    canTransition(funnelRules.manualMoves, origin, target, { role, isOwner: true });
+
   const openModal = useUIStore((s) => s.openModal);
   const { toast } = useToast();
   const updateStatus = useUpdateProposalStatus();
@@ -108,7 +118,11 @@ export default function Proposals() {
    * o formulário de motivo já mora no modal.
    */
   const handleDrop = (proposal: Proposal, target: ProposalStatus) => {
-    if (!isTransitionAllowed(proposal.status, target)) return;
+    const actor = { role, isOwner: proposal.createdBy === currentUserId };
+    if (!canTransition(funnelRules.manualMoves, proposal.status, target, actor)) {
+      toast('As regras do laboratório não permitem essa mudança.', { tone: 'attention' });
+      return;
+    }
     if (target === 'perdido') {
       openModal({ kind: 'proposal', id: proposal.id });
       return;
@@ -133,9 +147,12 @@ export default function Proposals() {
               { value: 'lista', label: 'Lista' },
             ]}
           />
-          <Button variant="primary" onClick={() => setNewAttendanceOpen(true)}>
-            Novo atendimento
-          </Button>
+          {/* D-193: "Novo atendimento" so leva ao /budget/new — some sem a origem manual. */}
+          {funnelRules.origin.manualInCrm && (
+            <Button variant="primary" onClick={() => setNewAttendanceOpen(true)}>
+              Novo atendimento
+            </Button>
+          )}
         </div>
       </div>
 
@@ -155,6 +172,7 @@ export default function Proposals() {
                 status={status}
                 proposals={proposalsByStatus[status]}
                 onDropProposal={handleDrop}
+                accepts={columnAccepts}
               />
             ))}
           </div>

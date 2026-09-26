@@ -55,8 +55,10 @@ function leafError(path: string, template: unknown, value: unknown): string | nu
   }
   if (typeof template === 'number') {
     const key = lastKey(path);
-    if (key === 'days') return isIntIn(value, 1, 365) ? null : 'Informe um número inteiro de 1 a 365';
-    if (key === 'hours') return isIntIn(value, 1, 720) ? null : 'Informe um número inteiro de 1 a 720';
+    if (key === 'days')
+      return isIntIn(value, 1, 365) ? null : 'Informe um número inteiro de 1 a 365';
+    if (key === 'hours')
+      return isIntIn(value, 1, 720) ? null : 'Informe um número inteiro de 1 a 720';
     return 'Campo desconhecido';
   }
   if (Array.isArray(template)) {

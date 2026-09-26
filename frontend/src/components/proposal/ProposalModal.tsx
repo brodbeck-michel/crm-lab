@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import type { ProposalStatus, LossReason } from '@crm-lab/shared';
 import { formatProposalNumber, isProposalEditable } from '@crm-lab/shared';
 import { useProposalDetail, useUpdateProposalStatus, useUpdateProposalItems } from '@/api/proposals';
+import { useEffectiveFunnelRules } from '@/api/funnel-rules';
+import { useAuthStore } from '@/stores/auth.store';
 import { useInsuranceList } from '@/api/insurances';
 import { useApiErrorHandler } from '@/hooks';
 import { formatMoney } from '@/lib/format';
@@ -40,6 +42,9 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
   const { data: insurancesData } = useInsuranceList({ limit: 100 });
   const [showLostForm, setShowLostForm] = useState(false);
   const updateItems = useUpdateProposalItems();
+  // Regras do laboratório (CRMLAB-56): travas de movimentação e a origem manual.
+  const funnelRules = useEffectiveFunnelRules();
+  const currentUser = useAuthStore((s) => s.user);
 
   // CRMLAB-12/D-132: itens/desconto/médico só editáveis nestes estágios —
   // mesma constante que o backend usa em `PATCH /proposals/:id/items`.
@@ -53,6 +58,8 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
   }
 
   const canEdit = isProposalEditable(proposal.status);
+  // D-193: com "Criar pelo CRM" desligado o desconto some, menos onde já existe.
+  const showDiscount = funnelRules.origin.manualInCrm || proposal.discountPercent > 0;
 
   const handleStartEdit = () => {
     setEditItems(
@@ -92,16 +99,21 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
         ?.name ?? 'Convênio')
     : 'Particular';
 
+  // As travas das Regras podem recusar no servidor (D-192): o motivo vira toast.
   const handleChangeStatus = (newStatus: ProposalStatus) => {
-    updateStatus.mutate({ proposalId, status: newStatus });
+    updateStatus.mutate({ proposalId, status: newStatus }, { onError: handleApiError });
   };
 
   const handleMarkWon = () => {
-    updateStatus.mutate({ proposalId, status: 'ganho' });
+    updateStatus.mutate({ proposalId, status: 'ganho' }, { onError: handleApiError });
   };
 
-  const handleMarkLost = (reasonLost: LossReason) => {
-    updateStatus.mutate({ proposalId, status: 'perdido', reasonLost });
+  const handleMarkLost = (reasonLost: LossReason | undefined) => {
+    updateStatus.mutate({
+      proposalId,
+      status: 'perdido',
+      ...(reasonLost !== undefined ? { reasonLost } : {}),
+    }, { onError: handleApiError });
     setShowLostForm(false);
   };
 
@@ -167,11 +179,13 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
                 onChange={setEditItems}
               />
 
-              <DiscountSection
-                discountPercent={editDiscount}
-                discountLimit={100}
-                onChange={setEditDiscount}
-              />
+              {showDiscount && (
+                <DiscountSection
+                  discountPercent={editDiscount}
+                  discountLimit={100}
+                  onChange={setEditDiscount}
+                />
+              )}
 
               <div className="border-t pt-md">
                 <div className="flex justify-between">
@@ -211,12 +225,14 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
 
               <ItemsList items={proposal.items} insuranceId={proposal.insuranceId} />
 
-              <DiscountSection
-                discountPercent={proposal.discountPercent}
-                discountLimit={100}
-                onChange={() => {}}
-                readOnly
-              />
+              {showDiscount && (
+                <DiscountSection
+                  discountPercent={proposal.discountPercent}
+                  discountLimit={100}
+                  onChange={() => {}}
+                  readOnly
+                />
+              )}
 
               <div className="border-t pt-md">
                 <div className="flex justify-between">
@@ -238,6 +254,7 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
           <LostReasonForm
             onSubmit={handleMarkLost}
             isPending={updateStatus.isPending}
+            requireReason={funnelRules.manualMoves.requireLossReason}
           />
         ) : (
           <ActionsRow
@@ -247,6 +264,12 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
             onMarkLost={() => setShowLostForm(true)}
             onSendProposal={handleSendProposal}
             isPending={updateStatus.isPending}
+            rules={funnelRules.manualMoves}
+            actor={{
+              role: currentUser?.role ?? 'attendant',
+              isOwner: currentUser?.id === proposal.createdBy,
+            }}
+            lisReconciled={proposal.lisReconciledAt !== null}
           />
         )}
       </div>

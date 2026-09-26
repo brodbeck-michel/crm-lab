@@ -3,6 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import { BudgetLayout } from '@/components/layout/BudgetLayout';
 import CatalogSegments from '@/components/budget/CatalogSegments';
 import SummaryColumn from '@/components/budget/SummaryColumn';
+import { EmptyState } from '@/components/shared';
+import { useEffectiveFunnelRules } from '@/api/funnel-rules';
 import type { ExamPackage } from '@crm-lab/shared';
 
 interface BudgetItem {
@@ -20,6 +22,7 @@ export default function BudgetNew() {
   const [items, setItems] = useState<BudgetItem[]>([]);
   /** Convênio da proposta em montagem (D-082). `null` = particular. */
   const [insuranceId, setInsuranceId] = useState<string | null>(null);
+  const manualProposals = useEffectiveFunnelRules().origin.manualInCrm;
 
   /**
    * Updater funcional (`setItems(current => ...)`): `handleAddPackage` chama
@@ -62,6 +65,17 @@ export default function BudgetNew() {
       handleAddItem(item.examId, item.examName, item.pricePrivate, 'private');
     }
   };
+
+  // D-193: com "Criar proposta manualmente no CRM" desligado nas Regras, a
+  // tela não monta o formulário — o backend recusaria o POST de qualquer forma.
+  if (!manualProposals) {
+    return (
+      <EmptyState
+        message="A criação manual de propostas está desligada."
+        hint="As propostas deste laboratório nascem do orçamento do Bitlab. Um gestor pode religar em Configurações → Regras."
+      />
+    );
+  }
 
   return (
     <BudgetLayout

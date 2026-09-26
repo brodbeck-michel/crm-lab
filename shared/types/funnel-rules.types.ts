@@ -14,11 +14,7 @@
  * fatos (CRMLAB-60).
  */
 import type { UserRole } from './auth.types.js';
-import {
-  ALLOWED_TRANSITIONS,
-  TERMINAL_STATUSES,
-  type ProposalStatus,
-} from './proposal.types.js';
+import { ALLOWED_TRANSITIONS, TERMINAL_STATUSES, type ProposalStatus } from './proposal.types.js';
 
 /** Perfis que a regra pode liberar. `admin` sempre pode (D-192). */
 export type RuleActorRole = 'attendant' | 'manager';

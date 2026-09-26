@@ -37,17 +37,13 @@ export function funnelRulesModule(deps: ApiModuleDeps): ApiModule {
     },
   );
 
-  router.patch(
-    '/',
-    requireRoles('manager', 'admin'),
-    (req: Request, res: Response, next): void => {
-      const dto = (req.body ?? {}) as UpdateFunnelRulesRequest;
-      service
-        .update(getContext(req), dto)
-        .then((response) => res.status(200).json(response))
-        .catch(next);
-    },
-  );
+  router.patch('/', requireRoles('manager', 'admin'), (req: Request, res: Response, next): void => {
+    const dto = (req.body ?? {}) as UpdateFunnelRulesRequest;
+    service
+      .update(getContext(req), dto)
+      .then((response) => res.status(200).json(response))
+      .catch(next);
+  });
 
   return { basePath: '/settings/funnel-rules', router, requiresAuth: true };
 }

@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-25 (v1.22.0 em PRODUÇÃO — CRMLAB-52, ver fim do arquivo)
+**Última atualização:** 2026-09-26 (CRMLAB-56 — página de Regras, em branch; v1.22.0 em PRODUÇÃO)
 
 ---
 
@@ -2810,3 +2810,26 @@ Sobe CRMLAB-52 (PR #67 e #69): orçamentos do LIS pela API do Bitlab e concilia�
   https://vitrocrm.cloud confirma `1.22.0` e traz a tela nova.
 - **Falta para ligar:** salvar a chave de orçamentos do Bitlab em Configurações → Integração LIS do
   laboratório e ligar a sincronização (agendador de 30 min em prod, primeira rodada = 90 dias).
+
+### ✅ CRMLAB-56 — página de Regras do funil (Epic CRMLAB-55, 2026-09-26)
+
+Branch `feature/CRMLAB-56-pagina-regras`. Decisões D-190..D-194.
+
+- **Backend:** migração 027 (`funnel_rules` + policy), `GET|PATCH /settings/funnel-rules`
+  (API_CONTRACTS §6c), `readFunnelRules(tx, tenantId)` como **ponto único de leitura** para os
+  cards CRMLAB-57..60 (`funnel-rules.service.ts`). `ProposalService.create` recusa com
+  `MANUAL_PROPOSAL_DISABLED` (409) quando "Criar pelo CRM" está desligado; `updateStatus` decide por
+  `checkTransition` (shared) — reabrir, pular etapas, motivo no perdido e mover card alheio. A
+  conciliação LIS (`markWonFromLis`) continua fora das travas.
+- **Shared:** `funnel-rules.types.ts` — `FunnelRules`, `DEFAULT_FUNNEL_RULES` (reproduzem o
+  comportamento anterior), `checkTransition`/`canTransition`/`allowedTargets`,
+  `renderSendMessageTemplate`/`findUnknownTemplateVariables`.
+- **Frontend:** `/settings/rules` (6 seções; atendente só vê; comissão = seção 6, admin edita),
+  `/settings/commissions` redireciona para `#comissoes` e saiu do menu. Travas no modal
+  (`ActionsRow`, "Reabrir em…", motivo opcional) e no kanban; origem manual desligada esconde
+  "Novo Orçamento", "Novo atendimento", o formulário de `/budget/new` e o desconto zerado.
+- **Padrão a revisar pelo Michel:** "Criar proposta manualmente no CRM" nasce **ligado** (senão o
+  fluxo atual quebraria antes do CRMLAB-57). Desligar pela página quando quiser só o fluxo Bitlab.
+- **Não feito aqui (por escopo):** o motor que executa as automações (CRMLAB-59/60), o envio com o
+  modelo de mensagem (CRMLAB-58) e o campo de origem da proposta/isenção de aprovação para
+  proposta do Bitlab (CRMLAB-57).

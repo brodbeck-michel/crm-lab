@@ -347,4 +347,27 @@ describe('Proposals', () => {
 
     expect(screen.queryByRole('button', { name: 'Próxima' })).not.toBeInTheDocument();
   });
+
+  // CRMLAB-59/D-207: o pipeline repassa a regra das Regras até o cartão.
+  it('cartão em "Novo orçamento" parado leva o selo pela regra do laboratório', () => {
+    const parado: Proposal = {
+      ...proposta('33333333-3333-4333-8333-333333333333', 'Paciente Parado'),
+      status: 'novo_contato',
+      stageEnteredAt: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(),
+    };
+    useProposalList.mockImplementation(() => listResult({ proposals: [parado] }));
+    const { unmount } = renderPage();
+    expect(screen.getByText('Parado há 6 h')).toBeInTheDocument();
+    unmount();
+
+    useEffectiveFunnelRules.mockReturnValue({
+      ...DEFAULT_FUNNEL_RULES,
+      automation: {
+        ...DEFAULT_FUNNEL_RULES.automation,
+        staleNewBudgetAlert: { enabled: true, hours: 8 },
+      },
+    });
+    renderPage();
+    expect(screen.queryByText(/Parado há/)).not.toBeInTheDocument();
+  });
 });

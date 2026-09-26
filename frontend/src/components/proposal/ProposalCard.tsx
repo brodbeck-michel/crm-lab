@@ -1,5 +1,12 @@
 import { useUIStore } from '@/stores/ui.store';
-import { type Proposal, PROPOSAL_STATUS_LABELS, formatProposalNumber } from '@crm-lab/shared';
+import {
+  type HoursRule,
+  type Proposal,
+  PROPOSAL_STATUS_LABELS,
+  formatProposalNumber,
+  hoursSince,
+  isStaleNewBudget,
+} from '@crm-lab/shared';
 import { Chip } from '@/components/ui/Chip';
 import { MoneyDisplay } from '@/components/shared/MoneyDisplay';
 import { formatIsoDay } from '@/lib/format';
@@ -11,9 +18,20 @@ interface ProposalCardProps {
   proposal: Proposal;
   /** Arrastavel no kanban; na lista nao ha para onde soltar. */
   draggable?: boolean;
+  /**
+   * Regra "Novo orçamento parado" das Regras (CRMLAB-59, D-207). Sem ela, nada
+   * de selo. `now` so existe para teste.
+   */
+  staleAlert?: HoursRule;
+  now?: Date;
 }
 
-export default function ProposalCard({ proposal, draggable = false }: ProposalCardProps) {
+export default function ProposalCard({
+  proposal,
+  draggable = false,
+  staleAlert,
+  now,
+}: ProposalCardProps) {
   const openModal = useUIStore((s) => s.openModal);
 
   const statusTone =
@@ -31,6 +49,14 @@ export default function ProposalCard({ proposal, draggable = false }: ProposalCa
   const fromBitlab = proposal.origin === 'bitlab';
   const preRegistered =
     fromBitlab && proposal.status === 'novo_contato' && proposal.lisRequisitionNumber !== null;
+
+  // CRMLAB-59/D-207: a mesma função do motor decide o selo.
+  const clock = now ?? new Date();
+  const stale =
+    staleAlert !== undefined &&
+    isStaleNewBudget(proposal.status, proposal.stageEnteredAt, staleAlert, clock);
+  const staleHours =
+    stale && proposal.stageEnteredAt ? hoursSince(new Date(proposal.stageEnteredAt), clock) : 0;
 
   return (
     <button
@@ -83,6 +109,8 @@ export default function ProposalCard({ proposal, draggable = false }: ProposalCa
           {proposal.lisReconciledAt && <Chip tone="positive">Conciliado</Chip>}
           {/* CRMLAB-57/D-197: requisição já existe, cartão ainda em "Novo orçamento". */}
           {preRegistered && <Chip tone="positive">Pré-cadastro feito</Chip>}
+          {/* CRMLAB-59/D-207: "Novo orçamento" parado há N horas sem envio. */}
+          {stale && <Chip tone="attention">Parado há {staleHours} h</Chip>}
         </div>
         {proposal.approvalStatus === 'pending' && (
           <span className="text-caption text-accent-700 font-semibold">Aguardando aprovação</span>

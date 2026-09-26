@@ -105,3 +105,53 @@ describe('ProposalCard de origem Bitlab', () => {
     expect(screen.queryByText('Sem conversa vinculada')).not.toBeInTheDocument();
   });
 });
+
+// CRMLAB-59/D-207 — PAGES.md §5: selo "Parado há N h" calculado com a mesma função do motor.
+describe('ProposalCard — Novo orçamento parado', () => {
+  const rule = { enabled: true, hours: 4 };
+  const entered = '2026-09-21T13:00:00.000Z';
+
+  it('mostra "Parado há N h" em "Novo orçamento" depois de N horas', () => {
+    render(
+      <ProposalCard
+        proposal={bitlabProposal({ stageEnteredAt: entered })}
+        staleAlert={rule}
+        now={new Date('2026-09-21T18:30:00.000Z')}
+      />,
+    );
+    expect(screen.getByText('Parado há 5 h')).toBeInTheDocument();
+  });
+
+  it('antes do prazo, com a regra desligada, fora da coluna ou sem a regra: sem selo', () => {
+    const { rerender } = render(
+      <ProposalCard
+        proposal={bitlabProposal({ stageEnteredAt: entered })}
+        staleAlert={rule}
+        now={new Date('2026-09-21T16:59:00.000Z')}
+      />,
+    );
+    expect(screen.queryByText(/Parado há/)).not.toBeInTheDocument();
+
+    const later = new Date('2026-09-22T13:00:00.000Z');
+    rerender(
+      <ProposalCard
+        proposal={bitlabProposal({ stageEnteredAt: entered })}
+        staleAlert={{ ...rule, enabled: false }}
+        now={later}
+      />,
+    );
+    expect(screen.queryByText(/Parado há/)).not.toBeInTheDocument();
+
+    rerender(
+      <ProposalCard
+        proposal={bitlabProposal({ status: 'orcamento_enviado', stageEnteredAt: entered })}
+        staleAlert={rule}
+        now={later}
+      />,
+    );
+    expect(screen.queryByText(/Parado há/)).not.toBeInTheDocument();
+
+    rerender(<ProposalCard proposal={bitlabProposal({ stageEnteredAt: entered })} now={later} />);
+    expect(screen.queryByText(/Parado há/)).not.toBeInTheDocument();
+  });
+});

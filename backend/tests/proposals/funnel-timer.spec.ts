@@ -7,6 +7,7 @@
  * que usa o `updateStatus` real e por isso mede a partir do relogio real.
  */
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as Shared from '@crm-lab/shared';
 import type { ProposalStatus, UpdateFunnelRulesRequest } from '@crm-lab/shared';
 import type { DbClient } from '../../src/db/types.js';
 import { MemoryCache } from '../../src/lib/cache.js';
@@ -32,7 +33,7 @@ import { buildHarness, ctxOf, systemMessagesOf } from './support.js';
 /** Matriz controlavel: prova que o motor respeita a matriz vigente (D-206 item 3). */
 const matrix = vi.hoisted(() => ({ drop: null as null | { from: string; to: string } }));
 vi.mock('@crm-lab/shared', async (importOriginal) => {
-  const original = await importOriginal<typeof import('@crm-lab/shared')>();
+  const original = await importOriginal<typeof Shared>();
   return {
     ...original,
     buildAllowedTransitions: (rules: Parameters<typeof original.buildAllowedTransitions>[0]) => {

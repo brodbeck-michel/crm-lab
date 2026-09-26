@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   PROPOSAL_STATUS_LABELS,
   isTransitionAllowed,
+  type HoursRule,
   type Proposal,
   type ProposalStatus,
 } from '@crm-lab/shared';
@@ -19,6 +20,8 @@ interface StageColumnProps {
    * (`isTransitionAllowed`). O pipeline passa as travas das Regras (D-192).
    */
   accepts?: (origin: ProposalStatus, target: ProposalStatus) => boolean;
+  /** Regra "Novo orçamento parado" (CRMLAB-59, D-207), repassada ao cartão para o selo. */
+  staleAlert?: HoursRule;
 }
 
 /**
@@ -53,6 +56,7 @@ export default function StageColumn({
   proposals,
   onDropProposal,
   accepts: acceptsFrom = isTransitionAllowed,
+  staleAlert,
 }: StageColumnProps) {
   const total = proposals.reduce((sum, p) => sum + (p.totalPrice || 0), 0);
   const [over, setOver] = useState(false);
@@ -100,7 +104,12 @@ export default function StageColumn({
           <p className="text-caption text-neutral-600 text-center py-lg">Nenhuma proposta</p>
         ) : (
           proposals.map((proposal) => (
-            <ProposalCard key={proposal.id} proposal={proposal} draggable={onDropProposal !== undefined} />
+            <ProposalCard
+              key={proposal.id}
+              proposal={proposal}
+              draggable={onDropProposal !== undefined}
+              staleAlert={staleAlert}
+            />
           ))
         )}
       </div>

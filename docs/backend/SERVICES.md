@@ -178,6 +178,12 @@ interface ProposalService {
   updateDiscount(ctx: TenantContext, id: string, discountPercent: number): Promise<Proposal>;
   /** CRMLAB-52 (D-119). Dona ou manager+. Grava o vínculo e concilia na mesma transação. */
   setLisReference(ctx: TenantContext, id: string, lisBudgetNumber: string | null): Promise<ProposalDetail>;
+  /** CRMLAB-58 (D-200/D-201). Reserva -> envio pelo MessageService -> vínculo. */
+  sendFromCard(ctx: TenantContext, id: string, dto: { conversationId: string; message: string }): Promise<ProposalDetail>;
+  /** CRMLAB-58 (D-202). */
+  resendFromCard(ctx: TenantContext, id: string, message: string): Promise<Message>;
+  relinkConversation(ctx: TenantContext, id: string, conversationId: string): Promise<ProposalDetail>;
+  setResponsible(ctx: TenantContext, id: string, userId: string): Promise<ProposalDetail>;
   // markWonFromLis(tx, tenantId, proposalId): Promise<boolean> — função exportada de
   // proposal.service.ts, não método: roda na transação de quem chama (LisReconcileService, §25)
   // e não precisa das deps do service.
@@ -215,6 +221,17 @@ interface ProposalService {
   recusam com `PROPOSAL_EDIT_NOT_ALLOWED` (`reason: "bitlab_origin"`). Sem conversa, a transição
   não grava mensagem de sistema. `canSeeProposal`: proposta `bitlab` sem responsável é visível a
   todo o tenant; `list` do atendente traz as dele **e** essas.
+- **Envio pelo cartão (CRMLAB-58, D-200/D-201):** `sendFromCard` recebe um `MessageSender`
+  (o `createFromAgent` do `MessageService`, injetado por `createProposalServices`; o teste troca o
+  `WhatsAppService` por `makeProposalModule({ whatsapp })`). Três passos: (1) transação curta com
+  `lockForSend` (`FOR UPDATE`), todas as checagens e a reserva `send_claim_id`; (2) envio **fora**
+  da transação pelo caminho do Composer — falhou, `releaseSend` e o erro sobe; (3) transação curta
+  com `finalizeSend` (confere a reserva), histórico, mensagem de sistema, audit
+  `update_proposal_status` (`source: "send"`) na mesma transação; WS e analytics depois do
+  commit. Falha no passo 3 é logada como `proposal.send_finalize_failed` (risco declarado, D-201).
+- **Depois do envio (D-202):** `resendFromCard` (sem mudar estágio), `relinkConversation` e
+  `setResponsible`, cada um com audit próprio (`resend_proposal_message`,
+  `update_proposal_conversation`, `update_proposal_responsible`) e WS `proposal.updated`.
 
 ---
 

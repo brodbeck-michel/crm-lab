@@ -3373,8 +3373,11 @@ texto final é o que ela confirmou: o servidor não remonta o modelo.
    `PROPOSAL_EDIT_NOT_ALLOWED` com `details.reason: "crm_origin"` (a proposta do CRM continua
    com o "Enviar orçamento" de sempre, que muda o estágio e leva à conversa). Outro estágio
    aberto → `INVALID_STATUS_TRANSITION`; fechada → `PROPOSAL_ALREADY_CLOSED`; já enviada
-   (`sent_at` preenchido) ou sendo enviada agora → `PROPOSAL_ALREADY_SENT` (409, código novo,
-   `details.reason: "sent" | "in_progress"`).
+   (já tem conversa vinculada) ou sendo enviada agora → `PROPOSAL_ALREADY_SENT` (409, código novo,
+   `details.reason: "sent" | "in_progress"`). A atendente que perdeu a corrida para a colega
+   deixa de enxergar o cartão (ele virou da colega, D-042), e mesmo assim recebe
+   `PROPOSAL_ALREADY_SENT` `sent`, e não `NOT_FOUND`: ela o via na fila comum um instante antes,
+   e o erro não revela nada além disso (achado do teste de concorrência).
 2. **Quem envia:** quem vê o cartão (fila comum ou dona) e pode mexer nele pela trava "mover card
    de outra atendente" (`canActOnCard`, a mesma de `checkTransition`): dona ou cartão sem
    responsável, admin sempre, gestor se `moveOthersCards`. Recusa → `FORBIDDEN` com

@@ -146,6 +146,10 @@ interface Lab {
   openProposal: ProposalRecord;
   /** Proposta aberta AGUARDANDO alcada — alvo legitimo de approve/reject. */
   pendingProposal: ProposalRecord;
+  /** Cartao do Bitlab em "Novo orcamento", sem conversa (CRMLAB-58) — alvo de `/send`. */
+  bitlabCard: { id: string };
+  /** Cartao do Bitlab ja enviado, ligado a `conversation` — alvo de `/resend` e `/conversation`. */
+  sentBitlabCard: { id: string };
   /** `#geral` — criado sob demanda pelo InternalChatService no primeiro GET. */
   channel: Channel;
   /** Convenio do laboratorio (Onda 7 — D-081/D-082). */
@@ -299,6 +303,44 @@ const LAB_ROUTES: readonly LabRoute[] = [
     method: 'patch',
     path: (l) => `/api/v1/proposals/${l.openProposal.id}/lis-reference`,
     body: () => ({ lisBudgetNumber: '999999' }),
+    actor: 'admin',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    // CRMLAB-58/D-200 — o envio sai pelo driver mock do canal (sem URL de API).
+    name: 'POST /proposals/:id/send',
+    method: 'post',
+    path: (l) => `/api/v1/proposals/${l.bitlabCard.id}/send`,
+    body: (l) => ({ conversationId: l.conversation.id, message: 'sonda de isolamento' }),
+    actor: 'admin',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    name: 'POST /proposals/:id/resend',
+    method: 'post',
+    path: (l) => `/api/v1/proposals/${l.sentBitlabCard.id}/resend`,
+    body: () => ({ message: 'sonda de isolamento' }),
+    actor: 'admin',
+    addressable: true,
+    ownStatus: 201,
+  },
+  {
+    // A mesma conversa ja vinculada: 200 sem gravar.
+    name: 'PATCH /proposals/:id/conversation',
+    method: 'patch',
+    path: (l) => `/api/v1/proposals/${l.sentBitlabCard.id}/conversation`,
+    body: (l) => ({ conversationId: l.conversation.id }),
+    actor: 'admin',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    name: 'PATCH /proposals/:id/responsible',
+    method: 'patch',
+    path: (l) => `/api/v1/proposals/${l.openProposal.id}/responsible`,
+    body: (l) => ({ userId: l.attendant.id }),
     actor: 'admin',
     addressable: true,
     ownStatus: 200,
@@ -733,6 +775,20 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     db,
   });
 
+  // Cartoes do Bitlab (CRMLAB-58): numeros altos para nao colidir com a factory.
+  const bitlabRows = await db.withoutTenant((tx) =>
+    tx.query<{ id: string }>(
+      `INSERT INTO proposals (tenant_id, origin, conversation_id, created_by, status, total_price,
+                              approval_status, proposal_number, lis_budget_number, sent_at)
+       VALUES ($1, 'bitlab', NULL, NULL, 'novo_contato', 150, 'none', 900, '90001', NULL),
+              ($1, 'bitlab', $2, $3, 'orcamento_enviado', 150, 'none', 901, '90002', NOW())
+       RETURNING id`,
+      [tenant.id, conversation.id, attendant.id],
+    ),
+  );
+  const bitlabCard = { id: bitlabRows.rows[0]?.id as string };
+  const sentBitlabCard = { id: bitlabRows.rows[1]?.id as string };
+
   const insuranceRow = await db.withoutTenant((tx) =>
     tx.query<{ id: string }>(
       `INSERT INTO insurances (tenant_id, name, type) VALUES ($1, $2, 'cooperativa') RETURNING id`,
@@ -786,6 +842,8 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     proposal,
     openProposal,
     pendingProposal,
+    bitlabCard,
+    sentBitlabCard,
     channel,
     insurance,
     quickReply,
@@ -871,7 +929,7 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 70 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 74 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
@@ -888,7 +946,9 @@ describe('inventario de rotas de laboratorio', () => {
     // CRMLAB-23/D-177 soma 2: `POST /exams/import/preview` e `POST /exams/import`.
     // CRMLAB-52/D-119 soma 1: `PATCH /proposals/:id/lis-reference`.
     // CRMLAB-56/D-190 soma 2: `GET|PATCH /settings/funnel-rules`.
-    expect(LAB_ROUTES).toHaveLength(70);
+    // CRMLAB-58/D-200..D-202 soma 4: `POST /proposals/:id/send|resend` e
+    // `PATCH /proposals/:id/conversation|responsible`.
+    expect(LAB_ROUTES).toHaveLength(74);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)
@@ -1048,7 +1108,13 @@ describe('listagens e relatorios do tenant A', () => {
     const response = await app.agent.get('/api/v1/proposals').set(app.auth(alfa.admin)).expect(200);
     const body = response.body as ListProposalsResponse;
     expect(body.proposals.map((p) => p.id).sort()).toEqual(
-      [alfa.proposal.id, alfa.openProposal.id, alfa.pendingProposal.id].sort(),
+      [
+        alfa.proposal.id,
+        alfa.openProposal.id,
+        alfa.pendingProposal.id,
+        alfa.bitlabCard.id,
+        alfa.sentBitlabCard.id,
+      ].sort(),
     );
   });
 

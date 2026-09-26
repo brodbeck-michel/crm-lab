@@ -36,8 +36,13 @@ import {
   calculateSubtotal,
   calculateTotal,
   isProposalEditable,
+  RESEND_PROPOSAL_STATUSES,
+  bitlabSendTarget,
+  canActOnCard,
   type ApprovalStatus,
+  type CreateMessageRequest,
   type CreateProposalItemInput,
+  type Message,
   type CreateProposalRequest,
   type CreateProposalResponse,
   type ListProposalsResponse,
@@ -47,6 +52,7 @@ import {
   type ProposalDetail,
   type ProposalStatus,
 } from '@crm-lab/shared';
+import { randomUUID } from 'node:crypto';
 import type { DbClient, DbTx } from '../db/types.js';
 import type { TenantContext } from '../http/context.js';
 import type { CacheService } from '../lib/cache.js';
@@ -118,7 +124,30 @@ export interface ProposalServiceDeps {
    * `invalidateAnalytics`.
    */
   cache: CacheService;
+  /**
+   * Envio pelo cartao (CRMLAB-58, D-201): o MESMO `createFromAgent` do
+   * Composer do atendimento. Ausente => `/send` e `/resend` indisponiveis
+   * (testes de unidade que nao enviam).
+   */
+  messages?: MessageSender;
 }
+
+/** A parte do `MessageService` que o envio pelo cartao usa. */
+export interface MessageSender {
+  createFromAgent(
+    tenantId: string,
+    conversationId: string,
+    senderId: string,
+    dto: CreateMessageRequest,
+  ): Promise<Message>;
+}
+
+function isSupervisor(ctx: TenantContext): boolean {
+  return ctx.role === 'manager' || ctx.role === 'admin';
+}
+
+/** Papeis que podem ser responsavel por uma proposta (D-202 item 3). */
+const RESPONSIBLE_ROLES: readonly string[] = ['attendant', 'manager', 'admin'];
 
 // ---------------------------------------------------------------------------
 // Helpers compartilhados com o ApprovalService
@@ -1099,6 +1128,321 @@ export class ProposalService {
 
     this.deps.wsHub.emitToTenant(ctx.tenantId, 'proposal.updated', { proposalId: id });
 
+    return outcome.detail;
+  }
+
+  // -------------------------------------------------------------------------
+  // Envio pelo cartao do Bitlab (CRMLAB-58, D-200..D-202)
+  // -------------------------------------------------------------------------
+
+  private requireMessages(): MessageSender {
+    if (!this.deps.messages) throw new Error('ProposalService sem MessageSender (envio pelo cartao)');
+    return this.deps.messages;
+  }
+
+  /**
+   * Conversa que QUEM CHAMA enxerga (D-200 item 3): atendente, as dela e a
+   * fila livre; gestor/admin, todas. De outro tenant (RLS) ou fora da
+   * visibilidade -> `NOT_FOUND`, nunca `FORBIDDEN`.
+   */
+  private async loadVisibleConversation(
+    tx: DbTx,
+    ctx: TenantContext,
+    conversationId: string,
+  ): Promise<repo.ConversationRef> {
+    const conversation = await repo.findConversation(tx, conversationId);
+    const visible =
+      conversation !== null &&
+      (isSupervisor(ctx) ||
+        conversation.assignedTo === null ||
+        conversation.assignedTo === ctx.userId);
+    if (!conversation || !visible) {
+      throw notFound({ resource: 'conversation', id: conversationId });
+    }
+    return conversation;
+  }
+
+  /**
+   * `POST /proposals/:id/send` — tudo ou nada em tres passos (D-201):
+   * reserva (trava de linha) -> envio pelo caminho do atendimento -> vinculo.
+   * O cartao so muda no ultimo passo; falha do envio desfaz a reserva.
+   */
+  async sendFromCard(
+    ctx: TenantContext,
+    id: string,
+    dto: { conversationId: string; message: string },
+  ): Promise<ProposalDetail> {
+    const { db, wsHub } = this.deps;
+    const messages = this.requireMessages();
+    const claimId = randomUUID();
+
+    // 1. Reserva.
+    const claim = await db.withTenant(ctx.tenantId, async (tx) => {
+      const lock = await repo.lockForSend(tx, id);
+      const row = lock ? await repo.findRowById(tx, id) : null;
+      if (!lock || !row) throw notFound({ resource: 'proposal', id });
+      if (!canSeeProposal(ctx, row)) {
+        // Quem perdeu a corrida via o cartao na fila comum um instante antes; o
+        // envio da colega o tirou da visibilidade dela. "Ja enviado" e o erro
+        // que ela entende, e nao revela nada alem do que a fila ja mostrava.
+        if (row.origin === 'bitlab' && row.conversation_id !== null) {
+          throw new BusinessError('PROPOSAL_ALREADY_SENT', { reason: 'sent' });
+        }
+        throw notFound({ resource: 'proposal', id });
+      }
+      if (row.origin !== 'bitlab') {
+        throw new BusinessError('PROPOSAL_EDIT_NOT_ALLOWED', {
+          status: row.status,
+          reason: 'crm_origin',
+        });
+      }
+      const from = row.status as ProposalStatus;
+      if (isTerminal(from)) throw new BusinessError('PROPOSAL_ALREADY_CLOSED', { status: from });
+      // Enviado = vinculado a uma conversa (o envio e o unico caminho do vinculo).
+      if (row.conversation_id !== null) {
+        throw new BusinessError('PROPOSAL_ALREADY_SENT', { reason: 'sent' });
+      }
+      if (lock.claimAlive) throw new BusinessError('PROPOSAL_ALREADY_SENT', { reason: 'in_progress' });
+
+      const rules = await readFunnelRules(tx, ctx.tenantId);
+      const to = bitlabSendTarget(row.lis_requisition_number, rules.automation);
+      if (from !== 'novo_contato') {
+        throw new BusinessError('INVALID_STATUS_TRANSITION', { from, to, allowed: [] });
+      }
+      if (
+        !canActOnCard(rules.manualMoves, {
+          role: ctx.role,
+          isOwner: isCardOwner(row.created_by, ctx.userId),
+        })
+      ) {
+        throw new BusinessError('FORBIDDEN', { reason: 'move_others_not_allowed' });
+      }
+
+      const conversation = await this.loadVisibleConversation(tx, ctx, dto.conversationId);
+      if (conversation.status !== 'active') {
+        throw new BusinessError('CONVERSATION_ARCHIVED', { status: conversation.status });
+      }
+
+      await repo.claimSend(tx, id, claimId);
+      return { to, previousOwner: row.created_by };
+    });
+
+    // 2. Envio — fora da transacao, pelo mesmo caminho do Composer.
+    let sent: Message;
+    try {
+      sent = await messages.createFromAgent(ctx.tenantId, dto.conversationId, ctx.userId, {
+        content: dto.message,
+        messageType: 'text',
+      });
+    } catch (err) {
+      await db.withTenant(ctx.tenantId, (tx) => repo.releaseSend(tx, id, claimId));
+      throw err;
+    }
+
+    // 3. Vinculo.
+    let outcome: { from: ProposalStatus; to: ProposalStatus; detail: ProposalDetail };
+    try {
+      outcome = await db.withTenant(ctx.tenantId, async (tx) => {
+        const moved = await repo.finalizeSend(tx, {
+          id,
+          claimId,
+          conversationId: dto.conversationId,
+          createdBy: ctx.userId,
+          status: claim.to,
+        });
+        if (!moved) throw new BusinessError('PROPOSAL_ALREADY_SENT', { reason: 'in_progress' });
+
+        const current = await repo.findRowById(tx, id);
+        if (moved.from !== moved.to) {
+          await recordTransitionInTx(tx, {
+            tenantId: ctx.tenantId,
+            proposalId: id,
+            conversationId: dto.conversationId,
+            status: moved.to,
+            changedBy: ctx.userId,
+            systemMessage: `Orçamento #${proposalRef(id)} enviado — ${formatMoney(
+              Number(current?.total_price ?? 0),
+            )}`,
+          });
+        }
+        await auditRepo.insert(tx, {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          action: 'update_proposal_status',
+          entityType: 'proposal',
+          entityId: id,
+          oldValues: { status: moved.from, conversationId: null, createdBy: claim.previousOwner },
+          newValues: {
+            status: moved.to,
+            source: 'send',
+            conversationId: dto.conversationId,
+            createdBy: ctx.userId,
+            messageId: sent.id,
+          },
+          ipAddress: ctx.ip,
+        });
+        return { ...moved, detail: await loadDetail(tx, id) };
+      });
+    } catch (err) {
+      // D-201, risco declarado: a mensagem saiu e o vinculo nao gravou.
+      logger.error('proposal.send_finalize_failed', {
+        tenantId: ctx.tenantId,
+        proposalId: id,
+        messageId: sent.id,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+
+    if (outcome.from !== outcome.to) {
+      wsHub.emitToTenant(ctx.tenantId, 'proposal.status_changed', {
+        proposalId: id,
+        status: outcome.to,
+      });
+    } else {
+      wsHub.emitToTenant(ctx.tenantId, 'proposal.updated', { proposalId: id });
+    }
+    await this.invalidateAnalytics(ctx.tenantId);
+    return outcome.detail;
+  }
+
+  /** Dona, gestor ou admin — para as correcoes depois do envio (D-202). */
+  private assertOwnerOrSupervisor(ctx: TenantContext, row: ProposalRow): void {
+    if (isSupervisor(ctx) || row.created_by === ctx.userId) return;
+    throw new BusinessError('FORBIDDEN', { reason: 'not_owner' });
+  }
+
+  /** Cartao `bitlab` ja vinculado: pre-condicao de reenviar e de trocar a conversa. */
+  private assertLinkedBitlab(row: ProposalRow): void {
+    if (row.origin !== 'bitlab') {
+      throw new BusinessError('PROPOSAL_EDIT_NOT_ALLOWED', {
+        status: row.status,
+        reason: 'crm_origin',
+      });
+    }
+    if (isTerminal(row.status as ProposalStatus)) {
+      throw new BusinessError('PROPOSAL_ALREADY_CLOSED', { status: row.status });
+    }
+    if (row.conversation_id === null) {
+      throw new BusinessError('PROPOSAL_EDIT_NOT_ALLOWED', {
+        status: row.status,
+        reason: 'not_sent',
+      });
+    }
+  }
+
+  /** `POST /proposals/:id/resend` (D-202 item 1): sem mudar estagio nem `sent_at`. */
+  async resendFromCard(ctx: TenantContext, id: string, message: string): Promise<Message> {
+    const messages = this.requireMessages();
+    const row = await this.deps.db.withTenant(ctx.tenantId, (tx) =>
+      loadVisibleProposal(tx, ctx, id),
+    );
+    this.assertLinkedBitlab(row);
+    const status = row.status as ProposalStatus;
+    if (!RESEND_PROPOSAL_STATUSES.includes(status)) {
+      throw new BusinessError('INVALID_STATUS_TRANSITION', {
+        from: status,
+        to: status,
+        allowed: [...RESEND_PROPOSAL_STATUSES],
+      });
+    }
+    this.assertOwnerOrSupervisor(ctx, row);
+    const conversationId = row.conversation_id as string;
+
+    const sent = await messages.createFromAgent(ctx.tenantId, conversationId, ctx.userId, {
+      content: message,
+      messageType: 'text',
+    });
+    await this.deps.audit.record(ctx, {
+      action: 'resend_proposal_message',
+      entityType: 'proposal',
+      entityId: id,
+      newValues: { conversationId, messageId: sent.id },
+    });
+    return sent;
+  }
+
+  /** `PATCH /proposals/:id/conversation` (D-202 item 2). Nao envia mensagem. */
+  async relinkConversation(
+    ctx: TenantContext,
+    id: string,
+    conversationId: string,
+  ): Promise<ProposalDetail> {
+    const outcome = await this.deps.db.withTenant(ctx.tenantId, async (tx) => {
+      const row = await loadVisibleProposal(tx, ctx, id);
+      this.assertLinkedBitlab(row);
+      this.assertOwnerOrSupervisor(ctx, row);
+      await this.loadVisibleConversation(tx, ctx, conversationId);
+      const previous = row.conversation_id;
+      if (previous === conversationId) return { changed: false, detail: await loadDetail(tx, id) };
+      await repo.setConversation(tx, id, conversationId);
+      await auditRepo.insert(tx, {
+        tenantId: ctx.tenantId,
+        userId: ctx.userId,
+        action: 'update_proposal_conversation',
+        entityType: 'proposal',
+        entityId: id,
+        oldValues: { conversationId: previous },
+        newValues: { conversationId },
+        ipAddress: ctx.ip,
+      });
+      return { changed: true, detail: await loadDetail(tx, id) };
+    });
+    if (outcome.changed) {
+      this.deps.wsHub.emitToTenant(ctx.tenantId, 'proposal.updated', { proposalId: id });
+      await this.invalidateAnalytics(ctx.tenantId);
+    }
+    return outcome.detail;
+  }
+
+  /**
+   * `PATCH /proposals/:id/responsible` (D-202 item 3). Gestor/admin: qualquer
+   * usuario ativo do laboratorio, em qualquer estagio. Atendente: so o cartao
+   * de que e dona, aberto, para outra atendente ativa.
+   */
+  async setResponsible(ctx: TenantContext, id: string, userId: string): Promise<ProposalDetail> {
+    const outcome = await this.deps.db.withTenant(ctx.tenantId, async (tx) => {
+      const row = await loadVisibleProposal(tx, ctx, id);
+      const supervisor = isSupervisor(ctx);
+      if (!supervisor) {
+        if (row.created_by !== ctx.userId) {
+          throw new BusinessError('FORBIDDEN', { reason: 'not_owner' });
+        }
+        if (isTerminal(row.status as ProposalStatus)) {
+          throw new BusinessError('FORBIDDEN', { reason: 'closed' });
+        }
+      }
+      const target = await repo.findTenantUser(tx, ctx.tenantId, userId);
+      const allowedRoles = supervisor ? RESPONSIBLE_ROLES : ['attendant'];
+      if (!target || !target.isActive || !allowedRoles.includes(target.role)) {
+        throw new BusinessError('VALIDATION_ERROR', {
+          fields: {
+            userId: supervisor
+              ? 'Usuário inexistente ou inativo neste laboratório'
+              : 'Escolha outra atendente ativa deste laboratório',
+          },
+        });
+      }
+      const previous = row.created_by;
+      if (previous === userId) return { changed: false, detail: await loadDetail(tx, id) };
+      await repo.setResponsible(tx, id, userId);
+      await auditRepo.insert(tx, {
+        tenantId: ctx.tenantId,
+        userId: ctx.userId,
+        action: 'update_proposal_responsible',
+        entityType: 'proposal',
+        entityId: id,
+        oldValues: { createdBy: previous },
+        newValues: { createdBy: userId },
+        ipAddress: ctx.ip,
+      });
+      return { changed: true, detail: await loadDetail(tx, id) };
+    });
+    if (outcome.changed) {
+      this.deps.wsHub.emitToTenant(ctx.tenantId, 'proposal.updated', { proposalId: id });
+      // Ranking e comissao sao por responsavel.
+      await this.invalidateAnalytics(ctx.tenantId);
+    }
     return outcome.detail;
   }
 }

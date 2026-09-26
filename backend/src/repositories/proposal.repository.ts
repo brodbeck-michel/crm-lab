@@ -15,6 +15,7 @@
 import type {
   ApprovalStatus,
   LossReason,
+  ProposalOrigin,
   Proposal,
   ProposalDetail,
   ProposalItem,
@@ -33,8 +34,12 @@ export interface ProposalRow {
   /** Numero sequencial POR TENANT (migracao 011) — rastreamento citavel. */
   proposal_number: unknown;
   tenant_id: string;
-  conversation_id: string;
-  created_by: string;
+  /** Origem (CRMLAB-57, D-195). */
+  origin: string;
+  /** `null` so na origem `bitlab` sem conversa (D-195 item 1, CHECK da migracao 028). */
+  conversation_id: string | null;
+  /** `null` so na origem `bitlab` sem responsavel (D-195 item 5). */
+  created_by: string | null;
   created_by_name: string | null;
   patient_name: string | null;
   patient_phone: string | null;
@@ -61,6 +66,9 @@ export interface ProposalRow {
   /** `DATE` pura (D-110) — `to_char` no SELECT evita o driver devolver `Date`. */
   lis_paid_on: string | null;
   lis_reconciled_at: unknown;
+  /** JOIN com `lis_budgets` (D-195 item 3) — nunca copiados para `proposals`. */
+  lis_issued_on: string | null;
+  lis_attendant_name: string | null;
 }
 
 interface ProposalItemRow {
@@ -81,21 +89,37 @@ interface HistoryRow {
 }
 
 /**
+ * FROM + JOINs comuns ao SELECT canonico e ao COUNT da listagem.
+ *
+ * `conversations` e LEFT JOIN desde o CRMLAB-57: a proposta de origem `bitlab`
+ * nasce sem conversa (D-195). `lis_budgets` entra pelo numero do orcamento
+ * vinculado — de la vem o nome do paciente quando nao ha conversa, a data e o
+ * atendente do Bitlab, sem copiar nada para `proposals` (D-195 item 3).
+ */
+const FROM_PROPOSAL = `
+    FROM proposals p
+    LEFT JOIN conversations c ON c.id = p.conversation_id
+    LEFT JOIN lis_budgets lb ON lb.tenant_id = p.tenant_id AND lb.number = p.lis_budget_number`;
+
+/** Nome do paciente: o da conversa; sem conversa, o do orcamento do LIS. */
+const PATIENT_NAME = 'CASE WHEN c.id IS NULL THEN lb.patient_name ELSE c.patient_name END';
+
+/**
  * SELECT canonico. Os nomes de paciente e de autor vem por JOIN — nunca sao
  * duplicados em `proposals` (BUSINESS_RULES §5: um numero, uma origem).
  */
 const SELECT_PROPOSAL = `
-  SELECT p.id, p.proposal_number, p.tenant_id, p.conversation_id, p.created_by,
+  SELECT p.id, p.proposal_number, p.tenant_id, p.origin, p.conversation_id, p.created_by,
          u.name AS created_by_name,
-         c.patient_name, c.patient_phone,
+         ${PATIENT_NAME} AS patient_name, c.patient_phone,
          p.status, p.discount_percent, p.total_price, p.reason_lost,
          p.approval_status, p.approved_by, a.name AS approved_by_name,
          p.approved_at, p.sent_at, p.closed_at, p.created_at, p.updated_at,
          p.insurance_id, p.requesting_doctor,
          p.lis_budget_number, p.lis_requisition_number, p.lis_paid_value,
-         to_char(p.lis_paid_on, 'YYYY-MM-DD') AS lis_paid_on, p.lis_reconciled_at
-    FROM proposals p
-    JOIN conversations c ON c.id = p.conversation_id
+         to_char(p.lis_paid_on, 'YYYY-MM-DD') AS lis_paid_on, p.lis_reconciled_at,
+         to_char(lb.issued_on, 'YYYY-MM-DD') AS lis_issued_on, lb.attendant_name AS lis_attendant_name
+    ${FROM_PROPOSAL}
     LEFT JOIN users u ON u.id = p.created_by
     LEFT JOIN users a ON a.id = p.approved_by`;
 
@@ -104,6 +128,7 @@ export function mapProposal(row: ProposalRow): Proposal {
   return {
     id: row.id,
     proposalNumber: toNumber(row.proposal_number),
+    origin: row.origin as ProposalOrigin,
     conversationId: row.conversation_id,
     patientName: row.patient_name,
     status: row.status as ProposalStatus,
@@ -119,6 +144,9 @@ export function mapProposal(row: ProposalRow): Proposal {
     insuranceId: row.insurance_id,
     lisBudgetNumber: row.lis_budget_number,
     lisReconciledAt: toIsoOrNull(row.lis_reconciled_at),
+    lisRequisitionNumber: row.lis_requisition_number,
+    lisIssuedOn: row.lis_issued_on,
+    lisAttendantName: row.lis_attendant_name,
   };
 }
 
@@ -161,7 +189,6 @@ export function mapDetail(
     sentAt: toIsoOrNull(row.sent_at),
     history,
     requestingDoctor: row.requesting_doctor,
-    lisRequisitionNumber: row.lis_requisition_number,
     lisPaidValue: row.lis_paid_value === null ? null : toNumber(row.lis_paid_value),
     lisPaidOn: row.lis_paid_on,
   };
@@ -306,6 +333,49 @@ export async function insertProposal(tx: DbTx, input: ProposalInsert): Promise<s
   const row = result.rows[0];
   if (!row) throw new Error('INSERT em proposals nao retornou linha');
   return row.id;
+}
+
+export interface BitlabProposalInsert {
+  tenantId: string;
+  lisBudgetNumber: string;
+  /** Login do atendente do Bitlab, ou `null` (D-195 item 5). */
+  createdBy: string | null;
+  /** `lis_budgets.total_value` (D-195 item 2). */
+  totalPrice: number;
+  insuranceId: string | null;
+}
+
+/**
+ * Proposta de origem `bitlab` (CRMLAB-57, D-196): `novo_contato`, sem conversa,
+ * sem itens, sem desconto, `approval_status 'none'`. `ON CONFLICT DO NOTHING`
+ * no indice unico parcial de D-118: se outra transacao (planilha x
+ * sincronizacao) ja criou a proposta desse orcamento, devolve `null` e nada e
+ * gravado. O `pg_advisory_xact_lock` de `nextProposalNumber` serializa as
+ * duas, entao a segunda ve a linha ja commitada.
+ */
+export async function insertBitlabProposal(
+  tx: DbTx,
+  input: BitlabProposalInsert,
+): Promise<string | null> {
+  const proposalNumber = await nextProposalNumber(tx, input.tenantId);
+  const result = await tx.query<{ id: string }>(
+    `INSERT INTO proposals (tenant_id, origin, conversation_id, created_by, status,
+                            discount_percent, total_price, approval_status,
+                            insurance_id, proposal_number, lis_budget_number)
+     VALUES ($1, 'bitlab', NULL, $2, 'novo_contato', 0, $3, 'none', $4, $5, $6)
+     ON CONFLICT (tenant_id, lis_budget_number) WHERE lis_budget_number IS NOT NULL
+     DO NOTHING
+     RETURNING id`,
+    [
+      input.tenantId,
+      input.createdBy,
+      input.totalPrice,
+      input.insuranceId,
+      proposalNumber,
+      input.lisBudgetNumber,
+    ],
+  );
+  return result.rows[0]?.id ?? null;
 }
 
 /**
@@ -461,17 +531,58 @@ export async function setLisBudgetNumber(
   );
 }
 
-/** Numero da proposta que ja usa esse orcamento do LIS (para `details.proposalNumber`). */
-export async function findProposalNumberByLisBudget(
+export interface LisBudgetHolder {
+  id: string;
+  proposalNumber: number;
+  origin: ProposalOrigin;
+  status: ProposalStatus;
+  conversationId: string | null;
+  sentAt: string | null;
+  totalPrice: number;
+}
+
+/**
+ * A proposta que ja usa esse orcamento do LIS (para `details.proposalNumber`
+ * e para a absorcao do cartao automatico, D-198). `FOR UPDATE`: quem chama
+ * pode apaga-la na mesma transacao.
+ */
+export async function findLisBudgetHolder(
   tx: DbTx,
   lisBudgetNumber: string,
-): Promise<number | null> {
-  const result = await tx.query<{ proposal_number: unknown }>(
-    'SELECT proposal_number FROM proposals WHERE lis_budget_number = $1',
+): Promise<LisBudgetHolder | null> {
+  const result = await tx.query<{
+    id: string;
+    proposal_number: unknown;
+    origin: string;
+    status: string;
+    conversation_id: string | null;
+    sent_at: unknown;
+    total_price: unknown;
+  }>(
+    `SELECT id, proposal_number, origin, status, conversation_id, sent_at, total_price
+       FROM proposals WHERE lis_budget_number = $1 FOR UPDATE`,
     [lisBudgetNumber],
   );
   const row = result.rows[0];
-  return row ? toNumber(row.proposal_number) : null;
+  if (!row) return null;
+  return {
+    id: row.id,
+    proposalNumber: toNumber(row.proposal_number),
+    origin: row.origin as ProposalOrigin,
+    status: row.status as ProposalStatus,
+    conversationId: row.conversation_id,
+    sentAt: toIsoOrNull(row.sent_at),
+    totalPrice: toNumber(row.total_price),
+  };
+}
+
+/**
+ * Apaga a proposta (so a absorcao do cartao `bitlab`, D-198). Itens e
+ * historico vao em cascata; `lis_budgets.proposal_id` e
+ * `messages.attached_proposal_id` viram NULL (FKs da 001/012).
+ */
+export async function deleteProposal(tx: DbTx, id: string): Promise<void> {
+  await tx.query('DELETE FROM proposals WHERE id = $1', [id]);
 }
 
 // ---------------------------------------------------------------------------
@@ -552,6 +663,11 @@ export interface ProposalListCriteria {
   /** D-060: resolvido por `conversations.patient_id` — proposta nao tem coluna de paciente. */
   patientId?: string;
   createdBy?: string;
+  /**
+   * Junto com `createdBy`: inclui as propostas `bitlab` SEM responsavel, que
+   * todo o tenant ve (D-195 item 6). E o recorte do atendente.
+   */
+  includeUnowned?: boolean;
   approvalStatus?: ApprovalStatus;
   startDate?: string;
   endDate?: string;
@@ -589,7 +705,11 @@ export async function list(tx: DbTx, criteria: ProposalListCriteria): Promise<Pr
   }
   if (criteria.createdBy !== undefined) {
     params.push(criteria.createdBy);
-    where.push(`p.created_by = $${params.length}`);
+    where.push(
+      criteria.includeUnowned === true
+        ? `(p.created_by = $${params.length} OR (p.created_by IS NULL AND p.origin = 'bitlab'))`
+        : `p.created_by = $${params.length}`,
+    );
   }
   if (criteria.approvalStatus !== undefined) {
     params.push(criteria.approvalStatus);
@@ -607,7 +727,7 @@ export async function list(tx: DbTx, criteria: ProposalListCriteria): Promise<Pr
     // rangel: ILIKE simples resolve o volume de um laboratorio. Se a tabela
     // crescer a ponto do seq scan doer, o upgrade e um indice trigram (pg_trgm).
     params.push(`%${criteria.search.trim()}%`);
-    where.push(`c.patient_name ILIKE $${params.length}`);
+    where.push(`${PATIENT_NAME} ILIKE $${params.length}`);
   }
 
   const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
@@ -617,8 +737,7 @@ export async function list(tx: DbTx, criteria: ProposalListCriteria): Promise<Pr
 
   const counted = await tx.query<{ total: number | string }>(
     `SELECT COUNT(*)::int AS total
-       FROM proposals p
-       JOIN conversations c ON c.id = p.conversation_id
+       ${FROM_PROPOSAL}
        ${whereSql}`,
     params,
   );

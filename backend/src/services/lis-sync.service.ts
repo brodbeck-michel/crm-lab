@@ -49,6 +49,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  */
 const running = new Set<string>();
 
+/**
+ * Um tique por vez (D-199): com o agendador a cada 2 min, uma rodada lenta
+ * (varios laboratorios, Bitlab devagar) nao pode empilhar o proximo tique.
+ */
+let tickInProgress = false;
+
 export interface LisSyncService {
   getSettings(ctx: TenantContext): Promise<LisIntegrationSettings>;
   updateSettings(ctx: TenantContext, dto: UpdateLisIntegrationRequest): Promise<LisIntegrationSettings>;
@@ -72,6 +78,7 @@ interface RunSummary {
   importId: string | null;
   rowsAccepted: number;
   proposalsWon: number;
+  proposalsCreated: number;
   watermark: string | null;
   error: { kind: LisSyncErrorKind; message: string } | null;
   view: LisSyncSettingsView;
@@ -184,6 +191,7 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
           importId: null,
           rowsAccepted: 0,
           proposalsWon: 0,
+          proposalsCreated: 0,
           watermark: started.watermark,
           error: { kind, message },
           view,
@@ -193,6 +201,7 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
       let importId: string | null = null;
       let rowsAccepted = 0;
       let proposalsWon = 0;
+      let proposalsCreated = 0;
       if (fetched.rows.length > 0) {
         const imported = await deps.lisImport.ingestRows(
           { tenantId, createdBy: triggeredBy },
@@ -202,6 +211,7 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
         importId = imported.id;
         rowsAccepted = imported.rowsAccepted ?? 0;
         proposalsWon = imported.proposalsWon ?? 0;
+        proposalsCreated = imported.proposalsCreated ?? 0;
         if (imported.status === 'failed') {
           // Falha de banco no meio dos chunks: a marca NAO anda — a proxima
           // rodada rele a janela, e o upsert absorve o que ja entrou.
@@ -214,6 +224,7 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
             importId,
             rowsAccepted,
             proposalsWon,
+            proposalsCreated,
             watermark: started.watermark,
             error: { kind: 'unavailable', message },
             view,
@@ -222,13 +233,17 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
       }
 
       const view = await repo.finishRun(tenantId, { success: { watermark: fetched.watermark }, error: null });
-      logger.info('lis_sync.completed', { tenantId, received: fetched.rows.length, importId });
+      // A cada 2 min (D-199): rodada vazia e `debug`, senao o log vira ruido.
+      const completed = { tenantId, received: fetched.rows.length, importId, proposalsCreated };
+      if (fetched.rows.length > 0) logger.info('lis_sync.completed', completed);
+      else logger.debug('lis_sync.completed', completed);
       return {
         status: 'completed',
         received: fetched.rows.length,
         importId,
         rowsAccepted,
         proposalsWon,
+        proposalsCreated,
         watermark: view.watermark,
         error: null,
         view,
@@ -298,26 +313,32 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
     },
 
     async runScheduledTick() {
-      let tenantIds: string[];
+      if (tickInProgress) return;
+      tickInProgress = true;
       try {
-        tenantIds = await repo.listEnabledTenantIds();
-      } catch (error) {
-        logger.warn('lis_sync.tick_failed', {
-          message: error instanceof Error ? error.message : String(error),
-        });
-        return;
-      }
-      // Em serie: um laboratorio por vez nao compete com a tela pelo pool.
-      for (const tenantId of tenantIds) {
-        if (running.has(tenantId)) continue;
+        let tenantIds: string[];
         try {
-          await runForTenant(tenantId, null);
+          tenantIds = await repo.listEnabledTenantIds();
         } catch (error) {
-          logger.warn('lis_sync.tenant_failed', {
-            tenantId,
+          logger.warn('lis_sync.tick_failed', {
             message: error instanceof Error ? error.message : String(error),
           });
+          return;
         }
+        // Em serie: um laboratorio por vez nao compete com a tela pelo pool.
+        for (const tenantId of tenantIds) {
+          if (running.has(tenantId)) continue;
+          try {
+            await runForTenant(tenantId, null);
+          } catch (error) {
+            logger.warn('lis_sync.tenant_failed', {
+              tenantId,
+              message: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+      } finally {
+        tickInProgress = false;
       }
     },
   };
@@ -326,4 +347,5 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
 /** So para teste: garante que nenhuma trava sobrou entre casos. */
 export function resetLisSyncLocksForTest(): void {
   running.clear();
+  tickInProgress = false;
 }

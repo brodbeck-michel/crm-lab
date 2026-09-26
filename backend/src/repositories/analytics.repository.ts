@@ -205,7 +205,11 @@ export interface PerformerRow {
   revenue: number;
 }
 
-/** Ranking por receita entre as propostas GANHAS na janela de fechamento. */
+/**
+ * Ranking por receita entre as propostas GANHAS na janela de fechamento.
+ * Proposta `bitlab` sem responsavel (D-195 item 5) nao tem de quem ser: fica de
+ * fora do ranking, mas continua na receita e no funil.
+ */
 export async function topPerformersIn(
   tx: DbTx,
   scope: AnalyticsScope,
@@ -226,7 +230,7 @@ export async function topPerformersIn(
             COALESCE(SUM(p.total_price), 0) AS revenue
        FROM proposals p
        LEFT JOIN users u ON u.id = p.created_by
-       ${where} AND p.status = 'ganho'
+       ${where} AND p.status = 'ganho' AND p.created_by IS NOT NULL
       GROUP BY p.created_by, u.name
       ORDER BY revenue DESC, conversions DESC, u.name ASC
       LIMIT $${params.length}`,

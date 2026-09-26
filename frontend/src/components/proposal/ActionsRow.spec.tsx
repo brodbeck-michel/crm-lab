@@ -50,7 +50,7 @@ describe('ActionsRow — travas das Regras', () => {
   it('padrão: orçamento enviado oferece a matriz de hoje (pula etapas)', () => {
     renderRow('orcamento_enviado');
     expect(stageOptions('Mudar estágio')).toEqual([
-      'Novo contato',
+      'Novo orçamento',
       'Follow-up',
       'Negociação',
       'Ganho',
@@ -67,7 +67,7 @@ describe('ActionsRow — travas das Regras', () => {
 
   it('sem pular etapas: orçamento enviado não vai direto a Ganho nem a Negociação', () => {
     renderRow('orcamento_enviado', { rules: rules({ skipStages: false }), actor: OWNER });
-    expect(stageOptions('Mudar estágio')).toEqual(['Novo contato', 'Follow-up', 'Perdido']);
+    expect(stageOptions('Mudar estágio')).toEqual(['Novo orçamento', 'Follow-up', 'Perdido']);
     expect(screen.getByRole('button', { name: 'Marcar como Ganho' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Avançar para Follow-up' })).toBeInTheDocument();
   });

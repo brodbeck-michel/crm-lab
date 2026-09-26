@@ -16,6 +16,7 @@ import ProposalModal from './ProposalModal';
 import * as proposalsApi from '@/api/proposals';
 import * as insurancesApi from '@/api/insurances';
 import { queryClient } from '@/api/query-client';
+import { useAuthStore } from '@/stores/auth.store';
 
 vi.mock('@/api/proposals');
 vi.mock('@/api/insurances');
@@ -390,6 +391,10 @@ describe('ProposalModal', () => {
     });
 
     it('proposta do CRM em "Novo orçamento" continua com o botão Enviar orçamento', () => {
+      // A dona da proposta (CRMLAB-56: a trava "mover card de outra atendente" vale aqui).
+      useAuthStore.setState({
+        user: { id: 'user-1', email: 'maria@lab.test', name: 'Maria', role: 'attendant', discountLimit: 5 },
+      });
       mockProposalDetail(buildProposal({ status: 'novo_contato' }));
       renderModal();
       expect(screen.getByRole('button', { name: 'Enviar orçamento' })).toBeInTheDocument();

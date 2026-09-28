@@ -184,8 +184,10 @@ interface ProposalService {
   resendFromCard(ctx: TenantContext, id: string, message: string): Promise<Message>;
   relinkConversation(ctx: TenantContext, id: string, conversationId: string): Promise<ProposalDetail>;
   setResponsible(ctx: TenantContext, id: string, userId: string): Promise<ProposalDetail>;
-  // applySystemTransition(tx, tenantId, proposalId, { to, source, systemMessage, lisReconciled? })
-  //   : Promise<SystemTransition | null> — transição de SISTEMA (D-204 item 5), e
+  // applySystemTransition(tx, tenantId, proposalId, { to, source, systemMessage, lisReconciled?,
+  //   from?, guard?, reasonLost?, automation?, at?, auditExtra? })
+  //   : Promise<SystemTransition | null> — transição de SISTEMA (D-204 item 5; LIS e motor de
+  //   tempo, D-210), e
   // announceSystemTransitions(deps, tenantId, transitions) depois do commit.
   // markWonFromLis(tx, tenantId, proposalId): Promise<SystemTransition | null> — função exportada de
   // proposal.service.ts, não método: roda na transação de quem chama (LisReconcileService, §25)
@@ -1497,11 +1499,11 @@ export function createFunnelTimerService(deps: {
   db: DbClient; wsHub: WsHub; cache: CacheService; now?: () => Date;
 }): FunnelTimerService;
 
-/** A transição de sistema do motor, na transação de quem chama (D-208). `false` = nada mudou. */
+/** A transição de sistema do motor, na transação de quem chama (D-208, D-210). `null` = nada mudou. */
 export function applyTimerTransition(tx: DbTx, input: {
   tenantId: string; proposalId: string; step: TimerStep; automation: StageAutomation;
   enteredHistoryId: string; now: Date;
-}): Promise<boolean>;
+}): Promise<SystemTransition | null>;
 
 /** Só para teste. */
 export function resetFunnelTimerLocksForTest(): void;
@@ -1520,8 +1522,8 @@ export function resetFunnelTimerLocksForTest(): void;
    linha do histórico com o estágio atual) é anterior a `agora − dias × 24 h`, sem os fatos que a
    regra exclui (D-206 item 1), do mais antigo para o mais novo; confere o prazo exato
    (`isDelayElapsed`, corridos ou úteis) e aplica `applyTimerTransition` em **uma transação por
-   cartão**. Depois de cada commit: WS `proposal.status_changed` + invalidação do cache de
-   analytics.
+   cartão**. Depois de cada commit: `announceSystemTransitions` (WS `proposal.status_changed` +
+   invalidação do cache de analytics).
 4. Alerta (D-207): cartões em `novo_contato` sem pagamento, com a linha de entrada sem
    `stale_alerted_at` e entrada há N horas ou mais. Numa transação por cartão, grava
    `stale_alerted_at` (condicionado a ainda estar nulo e o cartão ainda em `novo_contato`) e resolve
@@ -1531,7 +1533,9 @@ export function resetFunnelTimerLocksForTest(): void;
    `funnel_timer.completed` com `{ tenantId, moved, alerted }` quando houve algo; `debug`
    `funnel_timer.tick_empty` quando nada aconteceu.
 
-**`applyTimerTransition`** (D-208): `SELECT ... FOR UPDATE`; recusa (`false`) se o estágio não é
+**`applyTimerTransition`** (D-208, D-210): chama `applySystemTransition` com `from: step.from`,
+`source: "rule"`, `reasonLost: "silencio"`, `automation`, `at: now`, `auditExtra` com a regra e um
+`guard` que confere, sob o `FOR UPDATE` dela, os fatos e a linha de entrada. Recusa (`null`) se o estágio não é
 mais o de origem, se a última linha do histórico para o estágio não é mais `enteredHistoryId` ou se
 um fato apareceu. `UPDATE` do estágio (`perdido`: `reason_lost = 'silencio'`, `closed_at`),
 histórico com `changed_by NULL` e `automation`, mensagem de sistema se houver conversa, audit

@@ -2926,3 +2926,16 @@ Branch `feature/CRMLAB-59-motor-tempo` (de `integ/onda-funil`). Decisões D-205.
   aparece. O código novo lê com `to_char` em UTC e não é afetado. Fechar a classe (fixar `TZ=UTC`
   no processo/teste ou parser de tipo no driver) é um card de Kernel.
 
+
+### ✅ CRMLAB-60 (item 3) — transição de sistema única para LIS e motor de tempo (2026-09-28)
+
+Branch `feature/CRMLAB-60-unifica-transicao-sistema`. Decisão D-210. Só refatoração: nenhum
+comportamento muda.
+
+- `applyTimerTransition` (motor de tempo, D-208) virou uma chamada a `applySystemTransition`, que
+  ganhou `from`, `guard` (conferência sob o `FOR UPDATE`), `reasonLost`, `automation`, `at` e
+  `auditExtra`; `SystemTransitionSource` ganhou `rule`. O motor anuncia pelo mesmo
+  `announceSystemTransitions` do LIS.
+- Testes: `tests/proposals` (163) e `tests/lis` (222) verdes, typecheck e lint do backend limpos.
+- **Continua pendente no CRMLAB-60:** Ganho pelo extrato de pagamentos corrigido (depende do
+  CRMLAB-53) e a decisão sobre a origem `crm` migrar para a régua nova.

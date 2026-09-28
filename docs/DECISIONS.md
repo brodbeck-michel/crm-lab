@@ -3681,6 +3681,30 @@ considera parados.
 **Impacto:** `funnel-timer.service.ts`; SERVICES §27; relatório do card (pergunta ao Michel sobre o
 primeiro tique em produção).
 
+## 2026-09-28 — Transição de sistema única (CRMLAB-60, item 3)
+
+### D-210: O motor de tempo usa a mesma transição de sistema do LIS
+**Decisão:** `applyTimerTransition` (D-208) deixa de ter `UPDATE`/histórico/audit próprios e passa
+a ser uma chamada a `applySystemTransition` (D-204 item 5), que ganha as opções que o motor usava:
+1. `from`: só transita se o estágio atual (lido sob `FOR UPDATE`) for esse;
+2. `guard(locked)`: conferência extra sob o lock, com `status`, `conversationId`, `lisPaidOn` e
+   `lisRequisitionNumber` da linha travada — o motor confere ali os fatos (D-206) e a linha de
+   entrada no estágio; `false` = nada feito;
+3. `reasonLost` (gravado só quando `to` é `perdido`, e repetido em `newValues.reasonLost`),
+   `automation` (histórico, D-208 item 2), `at` (instante do histórico e do `closed_at`; ausente =
+   `NOW()` do banco) e `auditExtra` (campos a mais em `newValues`, ex. `rule`/`days`/`dayCounting`).
+4. `SystemTransitionSource` ganha `rule`. `applyTimerTransition` devolve `SystemTransition | null`
+   (antes `boolean`) e o motor anuncia pelo mesmo `announceSystemTransitions` do LIS (WS
+   `proposal.status_changed` + invalidação do cache de analytics, depois do commit).
+5. O `UPDATE` passa a ser condicionado ao estágio lido sob o lock (`status = from`) em vez de
+   "não terminal": sob `FOR UPDATE` dá no mesmo, e é a forma que o motor já usava.
+Nenhum comportamento muda: mesmo histórico, mesma mensagem, mesmo audit, mesmos eventos.
+**Motivo:** o comentário do CRMLAB-60 pedia a unificação; duas cópias da mesma gravação
+(histórico + mensagem + audit + WS/cache) divergiriam na próxima mudança de regra.
+**Impacto:** `proposal.service.ts` (`applySystemTransition`, `LockedProposal`,
+`recordTransitionInTx` repassa `automation`/`changedAt`), `funnel-timer.service.ts`; SERVICES §4
+e §27.
+
 ## Template para novas decisões
 
 ```

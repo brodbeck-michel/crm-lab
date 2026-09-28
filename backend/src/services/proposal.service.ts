@@ -51,6 +51,7 @@ import {
   type Proposal,
   type ProposalDetail,
   type ProposalStatus,
+  type StageAutomation,
 } from '@crm-lab/shared';
 import { randomUUID } from 'node:crypto';
 import type { DbClient, DbTx } from '../db/types.js';
@@ -273,7 +274,7 @@ function parseStatuses(raw: string | undefined): ProposalStatus[] | undefined {
 
 /**
  * O que toda transicao aceita grava na mesma transacao, venha de uma pessoa
- * (`updateStatus`) ou do LIS (`markWonFromLis`): a linha do historico e a
+ * (`updateStatus`) ou do sistema (`applySystemTransition`): a linha do historico e a
  * mensagem de sistema na conversa (WORKFLOWS §2 passo 6 e §4).
  */
 async function recordTransitionInTx(
@@ -286,6 +287,9 @@ async function recordTransitionInTx(
     status: ProposalStatus;
     changedBy: string | null;
     systemMessage: string | null;
+    /** Motor de tempo (D-208): a regra que moveu e o instante injetado. */
+    automation?: StageAutomation;
+    changedAt?: Date;
   },
 ): Promise<void> {
   await repo.insertHistory(tx, {
@@ -293,6 +297,8 @@ async function recordTransitionInTx(
     proposalId: input.proposalId,
     status: input.status,
     changedBy: input.changedBy,
+    automation: input.automation,
+    changedAt: input.changedAt,
   });
   if (input.systemMessage !== null && input.conversationId !== null) {
     await repo.insertSystemMessage(tx, {
@@ -307,10 +313,10 @@ async function recordTransitionInTx(
  * Quem pediu a transicao de sistema, gravado em `audit_logs.new_values.source`:
  * - `lis`: requisicao no LIS fechando proposta de origem `crm` (D-119);
  * - `lis_payment`: pagamento no LIS fechando cartao `bitlab` (D-204 item 1);
- * - `lis_requisition`: requisicao no LIS levando cartao `bitlab` a negociacao (D-204 item 2).
- * O motor de tempo (CRMLAB-59) acrescenta as suas.
+ * - `lis_requisition`: requisicao no LIS levando cartao `bitlab` a negociacao (D-204 item 2);
+ * - `rule`: prazo das Regras vencido, motor de tempo (CRMLAB-59, D-208).
  */
-export type SystemTransitionSource = 'lis' | 'lis_payment' | 'lis_requisition';
+export type SystemTransitionSource = 'lis' | 'lis_payment' | 'lis_requisition' | 'rule';
 
 /** Uma transicao que o SISTEMA fez — o que `announceSystemTransitions` anuncia. */
 export interface SystemTransition {
@@ -320,19 +326,33 @@ export interface SystemTransition {
   source: SystemTransitionSource;
 }
 
+/** A proposta como `applySystemTransition` a leu sob `FOR UPDATE` — o que `guard` confere. */
+export interface LockedProposal {
+  status: ProposalStatus;
+  conversationId: string | null;
+  lisPaidOn: unknown;
+  lisRequisitionNumber: string | null;
+}
+
 /**
  * Transicao de estagio feita pelo SISTEMA, nao por uma pessoa (D-204 item 5,
- * generaliza o antigo `markWonFromLis` da D-119). Nao passa por
- * `checkTransition`: vai de qualquer estagio nao terminal para `to`. Roda na
- * transacao de quem chama (conciliacao, motor de tempo) e grava ali:
- * historico com `changedBy: null`, mensagem de sistema so se houver conversa
- * (`systemMessage`), audit `update_proposal_status` com `userId: null` e
- * `newValues.source`. `lisReconciled` marca `lis_reconciled_at` (selo
- * "Conciliado", ganho que nao reabre). `closed_at` quando `to` e terminal.
+ * generaliza o antigo `markWonFromLis` da D-119; D-210 junta aqui a do motor
+ * de tempo, D-208). Nao passa por `checkTransition`: vai de qualquer estagio
+ * nao terminal para `to`. Roda na transacao de quem chama (conciliacao, motor
+ * de tempo) e grava ali: historico com `changedBy: null` (e `automation`, se
+ * veio), mensagem de sistema so se houver conversa (`systemMessage`), audit
+ * `update_proposal_status` com `userId: null` e `newValues.source` (+
+ * `auditExtra`). `lisReconciled` marca `lis_reconciled_at` (selo
+ * "Conciliado", ganho que nao reabre). `closed_at` quando `to` e terminal;
+ * `reasonLost` grava o motivo quando `to` e `perdido`.
  *
- * `null` = nada feito: proposta inexistente, ja fechada, ou ja em `to`
- * (idempotencia). WS e cache ficam com quem chama, DEPOIS do commit
- * (`announceSystemTransitions`).
+ * Travas do motor: `from` exige que o estagio atual seja esse; `guard` confere
+ * o resto sob o lock (fatos, linha de entrada). `at` e o instante do
+ * historico e do `closed_at` (ausente = `NOW()` do banco).
+ *
+ * `null` = nada feito: proposta inexistente, ja fechada, ja em `to`
+ * (idempotencia), fora de `from` ou recusada pelo `guard`. WS e cache ficam
+ * com quem chama, DEPOIS do commit (`announceSystemTransitions`).
  */
 export async function applySystemTransition(
   tx: DbTx,
@@ -343,27 +363,54 @@ export async function applySystemTransition(
     source: SystemTransitionSource;
     systemMessage: string | null;
     lisReconciled?: boolean;
+    from?: ProposalStatus;
+    guard?: (locked: LockedProposal) => Promise<boolean> | boolean;
+    reasonLost?: LossReason;
+    automation?: StageAutomation;
+    at?: Date;
+    auditExtra?: Record<string, unknown>;
   },
 ): Promise<SystemTransition | null> {
-  const current = await tx.query<{ status: string; conversation_id: string | null }>(
-    'SELECT status, conversation_id FROM proposals WHERE id = $1 AND tenant_id = $2 FOR UPDATE',
+  const current = await tx.query<{
+    status: string;
+    conversation_id: string | null;
+    lis_paid_on: unknown;
+    lis_requisition_number: string | null;
+  }>(
+    `SELECT status, conversation_id, lis_paid_on, lis_requisition_number
+       FROM proposals WHERE id = $1 AND tenant_id = $2 FOR UPDATE`,
     [proposalId, tenantId],
   );
   const before = current.rows[0];
   if (!before) return null;
   const from = before.status as ProposalStatus;
   if (isTerminal(from) || from === input.to) return null;
+  if (input.from !== undefined && from !== input.from) return null;
+  if (
+    input.guard &&
+    !(await input.guard({
+      status: from,
+      conversationId: before.conversation_id,
+      lisPaidOn: before.lis_paid_on,
+      lisRequisitionNumber: before.lis_requisition_number,
+    }))
+  ) {
+    return null;
+  }
 
   const closing = isTerminal(input.to);
+  const reasonLost = input.to === 'perdido' ? (input.reasonLost ?? null) : null;
+  const at = input.at ? input.at.toISOString() : null;
   const updated = await tx.query<{ id: string }>(
     `UPDATE proposals
         SET status = $3,
-            closed_at = CASE WHEN $4::boolean THEN NOW() ELSE closed_at END,
+            closed_at = CASE WHEN $4::boolean THEN COALESCE($7::timestamp, NOW()) ELSE closed_at END,
             lis_reconciled_at = CASE WHEN $5::boolean THEN NOW() ELSE lis_reconciled_at END,
+            reason_lost = COALESCE($6, reason_lost),
             updated_at = NOW()
-      WHERE id = $1 AND tenant_id = $2 AND status NOT IN ('ganho', 'perdido')
+      WHERE id = $1 AND tenant_id = $2 AND status = $8
       RETURNING id`,
-    [proposalId, tenantId, input.to, closing, input.lisReconciled === true],
+    [proposalId, tenantId, input.to, closing, input.lisReconciled === true, reasonLost, at, from],
   );
   if (updated.rows.length === 0) return null;
 
@@ -374,6 +421,8 @@ export async function applySystemTransition(
     status: input.to,
     changedBy: null,
     systemMessage: input.systemMessage,
+    automation: input.automation,
+    changedAt: input.at,
   });
   await auditRepo.insert(tx, {
     tenantId,
@@ -382,7 +431,12 @@ export async function applySystemTransition(
     entityType: 'proposal',
     entityId: proposalId,
     oldValues: { status: from },
-    newValues: { status: input.to, source: input.source },
+    newValues: {
+      status: input.to,
+      source: input.source,
+      ...input.auditExtra,
+      ...(reasonLost !== null ? { reasonLost } : {}),
+    },
   });
   return { proposalId, from, to: input.to, source: input.source };
 }

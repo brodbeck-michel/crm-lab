@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   CreateAttachmentRequest,
@@ -14,10 +14,11 @@ import { useToast } from '@/components/ui';
 import { InboxLayout } from '@/components/layout';
 import type { RecordedAudio } from '@/components/conversation';
 import { useApiErrorHandler } from '@/hooks';
-import { useAuthStore, useUIStore, selectUser } from '@/stores';
+import { useAuthStore, useMessageAlertsStore, useUIStore, selectUser } from '@/stores';
 import { ConversationList } from './ConversationList';
 import type { ConversationScope } from './ConversationList';
 import { ConversationPanel } from './ConversationPanel';
+import { EnableNotificationsBanner } from './EnableNotificationsBanner';
 import { PatientContext } from './PatientContext';
 import { MESSAGE_PAGE_SIZE, conversationDetailOptions, useMarkAsRead } from './queries';
 
@@ -152,11 +153,22 @@ export function Attendance() {
    */
   const initialConversationId = searchParams.get('conversationId');
   const initialDraft = searchParams.get('draft') ?? undefined;
+  // CRMLAB-72 (D-240): clicar na notificação navega para cá com
+  // `?conversationId=` — inclusive já estando nesta tela. Por isso relê a cada
+  // NAVEGAÇÃO (`location.key`), não só no mount; o clique na fila não navega,
+  // então continua mandando em `selectedId`. O projeto não tem
+  // eslint-plugin-react-hooks configurado (ver eslint.config.js).
+  const location = useLocation();
   useEffect(() => {
     if (initialConversationId) handleSelect(initialConversationId);
-    // Só no mount — o projeto não tem eslint-plugin-react-hooks configurado
-    // (ver eslint.config.js), então não há regra de deps para desligar aqui.
-  }, []);
+  }, [location.key]);
+
+  // CRMLAB-72 (D-241 item 3): a conversa aberta não gera aviso com a aba em foco.
+  const setOpenConversationId = useMessageAlertsStore((s) => s.setOpenConversationId);
+  useEffect(() => {
+    setOpenConversationId(selectedId);
+    return () => setOpenConversationId(null);
+  }, [selectedId, setOpenConversationId]);
 
   const invalidateConversation = useCallback(async () => {
     if (!selectedId) return;
@@ -358,6 +370,7 @@ export function Attendance() {
             onOpenProposal={(id) => openModal({ kind: 'proposal', id })}
           />
         }
+        listBanner={<EnableNotificationsBanner />}
       />
     </>
   );

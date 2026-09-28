@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthTenant, AuthUser, Channel, UserRole } from '@crm-lab/shared';
-import { useAuthStore, useUIStore, useSidebarGroupsStore } from '@/stores';
+import { useAuthStore, useMessageAlertsStore, useUIStore, useSidebarGroupsStore } from '@/stores';
 import { Sidebar } from './Sidebar';
 
 // Sidebar busca `pendingDecisions.total` para o sino de "Decisões" (PAGES.md §12).
@@ -348,5 +348,38 @@ describe('Sidebar — recolhe sozinha no inbox do atendente', () => {
     renderSidebar('/proposals');
 
     expect(screen.getByTestId('sidebar')).toHaveStyle({ width: '264px' });
+  });
+});
+
+describe('Sidebar — preferências do aviso de mensagem nova (CRMLAB-72, D-241)', () => {
+  it('alterna som e notificação no menu do usuário e grava no localStorage', async () => {
+    useMessageAlertsStore.setState({ soundEnabled: true, notificationsEnabled: true });
+    login('attendant');
+    renderSidebar();
+
+    await userEvent.click(screen.getByRole('button', { name: /Marina Alves/ }));
+    const sound = screen.getByRole('menuitemcheckbox', { name: 'Som de mensagem nova' });
+    const notifications = screen.getByRole('menuitemcheckbox', {
+      name: 'Notificações do navegador',
+    });
+    expect(sound).toHaveAttribute('aria-checked', 'true');
+    expect(notifications).toHaveAttribute('aria-checked', 'true');
+
+    await userEvent.click(sound);
+    await userEvent.click(notifications);
+
+    expect(sound).toHaveAttribute('aria-checked', 'false');
+    expect(notifications).toHaveAttribute('aria-checked', 'false');
+    expect(localStorage.getItem('crm-lab.alerts.sound')).toBe('false');
+    expect(localStorage.getItem('crm-lab.alerts.notifications')).toBe('false');
+  });
+
+  it('operador da plataforma não vê as preferências (não recebe conversa)', async () => {
+    login('platform_operator');
+    renderSidebar('/platform/tenants');
+
+    await userEvent.click(screen.getByRole('button', { name: /Marina Alves/ }));
+    expect(screen.queryByRole('menuitemcheckbox')).not.toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Sair' })).toBeInTheDocument();
   });
 });

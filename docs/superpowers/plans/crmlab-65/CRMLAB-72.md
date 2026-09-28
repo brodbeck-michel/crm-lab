@@ -2,7 +2,7 @@
 
 Branch `feature/CRMLAB-72-aviso-mensagem-nova` · worktree `../CRM Lab-72` · faixa D-240…D-241 · sem migração.
 
-## Estado: 🔄 docs escritos, código em andamento
+## Estado: 🔄 código escrito (typecheck verde), testes em andamento
 
 ## Feito
 - [x] Leitura de CLAUDE.md, AGENTS.md, plano do épico e card no Jira.
@@ -12,12 +12,12 @@ Branch `feature/CRMLAB-72-aviso-mensagem-nova` · worktree `../CRM Lab-72` · fa
       useNewMessageAlerts).
 
 ## Falta
-- [ ] `stores/message-alerts.store.ts` (preferências + conversa aberta)
-- [ ] `lib/notification-sound.ts` (tom WebAudio)
-- [ ] `hooks/useNewMessageAlerts.ts` + montar no `AppShell`
-- [ ] `EnableNotificationsBanner` + `InboxLayout.listBanner` + Attendance publica conversa aberta
+- [x] `stores/message-alerts.store.ts` (preferências + conversa aberta)
+- [x] `lib/notification-sound.ts` (tom WebAudio)
+- [x] `hooks/useNewMessageAlerts.ts` + montar no `AppShell`
+- [x] `EnableNotificationsBanner` + `InboxLayout.listBanner` + Attendance publica conversa aberta
       e relê `?conversationId=` a cada navegação
-- [ ] Toggles no menu do usuário (Sidebar)
+- [x] Toggles no menu do usuário (Sidebar)
 - [ ] Specs: hook (quem é avisado, foco, conversa aberta, permissão negada, body sem conteúdo,
       título) + banner + Sidebar toggles
 - [ ] Typecheck + specs afetados verdes
@@ -32,4 +32,4 @@ Branch `feature/CRMLAB-72-aviso-mensagem-nova` · worktree `../CRM Lab-72` · fa
   não precisa de mudança de infra.
 
 ## Próximo passo exato
-Criar o store, o som e o hook (`frontend/src/hooks/useNewMessageAlerts.ts`).
+Escrever `frontend/src/hooks/useNewMessageAlerts.spec.tsx` e specs do banner/Sidebar; rodar typecheck + specs afetados (Attendance, InboxLayout, Sidebar).

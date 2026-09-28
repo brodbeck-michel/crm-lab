@@ -119,7 +119,7 @@ test.describe('Onda 8 §3 — respostas rápidas', () => {
       .filter({ hasText: E2E_CONVERSATIONS.atribuida.patientName })
       .click();
 
-    const campo = page.getByLabel('Mensagem');
+    const campo = page.getByLabel('Mensagem', { exact: true });
     await campo.click();
     await campo.type('/');
     await expect(page.getByRole('listbox', { name: 'Respostas rápidas' })).toBeVisible();
@@ -152,7 +152,7 @@ test.describe('Onda 8 §3 — respostas rápidas', () => {
       .filter({ hasText: E2E_CONVERSATIONS.atribuida.patientName })
       .click();
 
-    const campo = page.getByLabel('Mensagem');
+    const campo = page.getByLabel('Mensagem', { exact: true });
     await campo.click();
     await campo.type('o resultado sai em 24/48h');
 

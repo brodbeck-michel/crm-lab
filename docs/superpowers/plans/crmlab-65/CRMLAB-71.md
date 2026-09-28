@@ -5,7 +5,7 @@ Faixa: D-237…D-239 · migração 046 (não usada — o índice da 001 já serv
 
 ## Estado
 
-🔄 backend pronto — próximo: frontend.
+✅ pronto para integração (2026-09-28).
 
 ## Feito
 
@@ -18,13 +18,30 @@ Faixa: D-237…D-239 · migração 046 (não usada — o índice da 001 já serv
   repository (`limit+1`, `(created_at,id) < (SELECT ... WHERE id = before)`). Testes novos em
   `backend/tests/conversations/cursor.spec.ts` (6) + `list.spec.ts` ajustado. 37 verdes
   (cursor + list + messages), `tsc -p tsconfig.wt.json` limpo.
+- [x] frontend:
+  - `components/conversation/DateSeparator.tsx` (`dateSeparatorLabel`, `isSameLocalDay`,
+    exportados no barril).
+  - `pages/Attendance/queries.ts`: `conversationDetailOptions(id)` infinita
+    (chave `[...conversation(id), 'messages']`), `flattenMessages`, `useMarkAsRead` com
+    `fetchInfiniteQuery`.
+  - `index.tsx`: `useInfiniteQuery`, `unreadAtOpen` lido da lista no clique, `loadOlder` só com
+    `hasNextPage && !isFetching`.
+  - `useConversationScroll.ts` (novo): abertura na faixa ou no fim, âncora por `data-anchor-id`,
+    contador do ↓, carregamento perto do topo.
+  - `ConversationPanel.tsx`: separador, faixa, botão ↓ com `Badge`, indicador fora da área
+    rolável, `[overflow-anchor:none]`; o botão "Carregar mensagens anteriores" saiu; envio
+    (texto/anexo/áudio) tira a faixa e desce ao fim.
+  - `api/conversations.ts`: `get` tipado com `GetConversationQuery`.
+- [x] Testes: `ConversationReading.spec.tsx` (16, novo: separador incl. 23h59×00h01, faixa,
+  botão ↓, carregamento sem pular, fim sem pedido), `Attendance.spec.tsx` (+2: N da lista no
+  clique; `before` no topo e nenhum pedido no começo), `ConversationPanel.spec.tsx` ajustado.
+  Front: 656 verdes em `src/pages/Attendance`, `src/components/conversation`,
+  `no-hardcoded-tokens`, `api/ws.spec`. `tsc` front/back/shared limpos; eslint limpo.
 
 ## Falta
 
-- [ ] frontend: `DateSeparator` (+ spec), `queries.ts` com opções infinitas, `index.tsx` com
-  `useInfiniteQuery` e `unreadAtOpen`, `useConversationScroll.ts`, `ConversationPanel.tsx`
-  (separador, faixa, botão ↓, carregamento no topo, sem botão antigo), specs de tela
-- [ ] typecheck (wt configs) + specs afetados verdes; diário ✅
+- [x] Nada no escopo do card. Fora do escopo, de propósito: pílula de data fixa no topo durante a
+  rolagem (opcional no card, D-239 item 1) e o `around`/`after` (CRMLAB-68).
 
 ## Decisões escritas
 
@@ -40,4 +57,7 @@ Faixa: D-237…D-239 · migração 046 (não usada — o índice da 001 já serv
 
 ## Próximo passo exato
 
-Frontend: criar `components/conversation/DateSeparator.tsx` (+ spec) e seguir a lista de "Falta".
+Nenhum no card. Integração: merge em `integ/epic-65`; risco de conflito em
+`ConversationPanel.tsx`, `Attendance.spec.tsx`, `components/conversation/index.ts`,
+`api/conversations.ts`, `shared/types/conversation.types.ts` e `docs/DECISIONS.md` (fim do
+arquivo) — ver relatório.

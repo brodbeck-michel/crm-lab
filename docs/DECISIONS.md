@@ -3733,7 +3733,8 @@ formato é o mesmo que o `around=<messageId>` do CRMLAB-68 vai usar.
 4. O botão "Carregar mensagens anteriores" sai. Chegou a menos de 200px do topo e existe
    `cursors.before`, a tela pede a página anterior — **uma de cada vez** (nada sai enquanto a query
    está buscando) e **nenhuma** quando o cursor é `null` (começo da conversa). Enquanto carrega,
-   um "Carregando mensagens anteriores…" pequeno no topo da lista.
+   um "Carregando mensagens anteriores…" pequeno sobre o topo da lista — **fora** da área
+   rolável, senão o próprio indicador empurraria as mensagens.
 5. A âncora nativa do navegador (`overflow-anchor`) fica desligada na lista: a tela faz a
    compensação sozinha, e as duas juntas somariam o deslocamento duas vezes.
 **Motivo:** é o comportamento do WhatsApp Web que o card pede, e o cursor evita rebuscar o que já

@@ -3,12 +3,12 @@ import type {
   CreateConversationRequest,
   CreateConversationResponse,
   CreateMessageRequest,
+  GetConversationQuery,
   GetConversationResponse,
   ListAssigneesResponse,
   ListConversationsQuery,
   ListConversationsResponse,
   Message,
-  PaginationQuery,
   StartWhatsAppConversationRequest,
   StartWhatsAppConversationResponse,
   UpdateConversationRequest,
@@ -22,7 +22,8 @@ export const conversationsApi = {
   list: (query: ListConversationsQuery = {}) =>
     http.get<ListConversationsResponse>('/conversations', query as QueryParams),
 
-  get: (id: string, query: PaginationQuery = {}) =>
+  /** `before` = cursor (D-237); `page` segue aceito por compatibilidade. */
+  get: (id: string, query: GetConversationQuery = {}) =>
     http.get<GetConversationResponse>(`/conversations/${id}`, query as QueryParams),
 
   /** Atendimento manual — ligacao, balcao, site (nao vem do WhatsApp). */

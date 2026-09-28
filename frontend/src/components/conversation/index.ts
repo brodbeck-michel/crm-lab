@@ -7,6 +7,8 @@ export {
   bubbleTypeFor,
 } from './MessageBubble';
 export type { MessageBubbleProps, MessageBubbleType } from './MessageBubble';
+export { DateSeparator, dateSeparatorLabel, isSameLocalDay } from './DateSeparator';
+export type { DateSeparatorProps } from './DateSeparator';
 export { AudioMessage } from './AudioMessage';
 export type { AudioMessageProps } from './AudioMessage';
 export { Composer } from './Composer';

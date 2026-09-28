@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   CreateAttachmentRequest,
   ListConversationsQuery,
@@ -19,7 +19,7 @@ import { ConversationList } from './ConversationList';
 import type { ConversationScope } from './ConversationList';
 import { ConversationPanel } from './ConversationPanel';
 import { PatientContext } from './PatientContext';
-import { MESSAGE_PAGE_SIZE, conversationDetailOptions, useMarkAsRead } from './queries';
+import { conversationDetailOptions, flattenMessages, useMarkAsRead } from './queries';
 
 /**
  * Atendimento (`/attendance`) — TELA PRINCIPAL (PAGES.md §2).
@@ -55,7 +55,8 @@ export function Attendance() {
   const [scope, setScope] = useState<ConversationScope>('mine');
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [messageLimit, setMessageLimit] = useState(MESSAGE_PAGE_SIZE);
+  /** `unreadCount` da lista no clique — o GET do detalhe zera o contador (D-239). */
+  const [unreadAtOpen, setUnreadAtOpen] = useState(0);
 
   const showClosed = scope === 'closed';
   const searchFilter = useMemo(
@@ -117,8 +118,8 @@ export function Attendance() {
     staleTime: staleTimes.patients,
   });
 
-  const detailQuery = useQuery({
-    ...conversationDetailOptions(selectedId ?? '', messageLimit),
+  const detailQuery = useInfiniteQuery({
+    ...conversationDetailOptions(selectedId ?? ''),
     enabled: selectedId !== null,
   });
 
@@ -130,18 +131,30 @@ export function Attendance() {
     enabled: selectedId !== null,
   });
 
-  const conversation = detailQuery.data?.conversation ?? null;
-  const messages = detailQuery.data?.messages ?? [];
-  const loadedAll = (detailQuery.data?.pagination.total ?? 0) <= messages.length;
+  // A primeira página é a mais recente: é dela que vem a conversa atualizada.
+  const conversation = detailQuery.data?.pages[0]?.conversation ?? null;
+  const messages = useMemo(() => flattenMessages(detailQuery.data), [detailQuery.data]);
+
+  /**
+   * Página anterior (D-238): uma de cada vez e nunca durante um refetch — o
+   * `fetchNextPage` do TanStack cancelaria a busca em voo e pediria de novo.
+   */
+  const { hasNextPage, isFetching, fetchNextPage } = detailQuery;
+  const loadOlder = useCallback(() => {
+    if (hasNextPage && !isFetching) void fetchNextPage();
+  }, [hasNextPage, isFetching, fetchNextPage]);
+
+  /** Lido ANTES de abrir: é o N da faixa de não lidas (D-239). */
+  const listedConversations = shownList.data?.conversations;
 
   /** Abrir a conversa É marcar como lida (ver `queries.ts`). */
   const handleSelect = useCallback(
     (id: string) => {
+      setUnreadAtOpen(listedConversations?.find((item) => item.id === id)?.unreadCount ?? 0);
       setSelectedId(id);
-      setMessageLimit(MESSAGE_PAGE_SIZE);
       void markAsRead(id).catch(handleApiError);
     },
-    [markAsRead, handleApiError],
+    [markAsRead, handleApiError, listedConversations],
   );
 
   /**
@@ -344,8 +357,10 @@ export function Attendance() {
             onSendAudio={handleSendAudio}
             quickReplies={quickRepliesQuery.data?.quickReplies ?? []}
             contextOpen={contextOpen}
-            hasOlderMessages={!loadedAll}
-            onLoadOlder={() => setMessageLimit((limit) => limit + MESSAGE_PAGE_SIZE)}
+            hasOlderMessages={hasNextPage}
+            loadingOlder={detailQuery.isFetchingNextPage}
+            onLoadOlder={loadOlder}
+            unreadAtOpen={unreadAtOpen}
             draftMessage={selectedId === initialConversationId ? initialDraft : undefined}
           />
         }

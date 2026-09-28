@@ -99,11 +99,15 @@ export interface MessageInsert {
 export interface MessagePage {
   rows: Message[];
   total: number;
+  /** Ainda ha mensagens anteriores a mais antiga de `rows` (D-237). */
+  hasOlder: boolean;
 }
 
 export interface ListMessagesCriteria {
   page: number;
   limit: number;
+  /** Cursor (D-237): id da mensagem; a pagina sao as `limit` anteriores a ela. */
+  before?: string;
 }
 
 export class MessageRepository {
@@ -113,12 +117,20 @@ export class MessageRepository {
    * Uma pagina do historico. A pagina 1 traz as mensagens MAIS RECENTES (e o
    * que a tela de Atendimento abre), mas as linhas voltam em ordem cronologica
    * crescente — o frontend renderiza de cima para baixo sem reordenar.
+   *
+   * Com `before` (D-237) a pagina sao as `limit` mensagens anteriores a
+   * mensagem-cursor, na ordem `(created_at, id)`. O par do cursor e lido NO
+   * BANCO pelo id: `created_at` tem microssegundos e o `createdAt` do fio so
+   * milissegundos — um par vindo do cliente pularia mensagens do mesmo ms.
+   * Cursor que nao e mensagem desta conversa -> `null` (o service vira 404).
+   *
+   * Busca `limit + 1` linhas: a sobra so diz se ainda ha historico anterior.
    */
   async listByConversation(
     tenantId: string,
     conversationId: string,
     criteria: ListMessagesCriteria,
-  ): Promise<MessagePage> {
+  ): Promise<MessagePage | null> {
     return this.db.withTenant(tenantId, async (tx) => {
       const counted = await tx.query<{ total: number | string }>(
         'SELECT COUNT(*)::int AS total FROM messages WHERE conversation_id = $1',
@@ -126,16 +138,38 @@ export class MessageRepository {
       );
       const total = toNumber(counted.rows[0]?.total, 0);
 
-      const offset = (criteria.page - 1) * criteria.limit;
-      const paged = await tx.query<MessageRow>(
-        `SELECT ${COLUMNS} ${FROM}
-         WHERE m.conversation_id = $1
-         ORDER BY m.created_at DESC, m.id DESC
-         LIMIT $2 OFFSET $3`,
-        [conversationId, criteria.limit, offset],
-      );
+      let paged: { rows: MessageRow[] };
+      if (criteria.before !== undefined) {
+        const cursor = await tx.query<{ id: string }>(
+          'SELECT id FROM messages WHERE id = $1 AND conversation_id = $2',
+          [criteria.before, conversationId],
+        );
+        if (cursor.rows.length === 0) return null;
 
-      return { rows: paged.rows.map(toMessage).reverse(), total };
+        paged = await tx.query<MessageRow>(
+          `SELECT ${COLUMNS} ${FROM}
+           WHERE m.conversation_id = $1
+             AND (m.created_at, m.id) < (
+               SELECT b.created_at, b.id FROM messages b WHERE b.id = $2
+             )
+           ORDER BY m.created_at DESC, m.id DESC
+           LIMIT $3`,
+          [conversationId, criteria.before, criteria.limit + 1],
+        );
+      } else {
+        const offset = (criteria.page - 1) * criteria.limit;
+        paged = await tx.query<MessageRow>(
+          `SELECT ${COLUMNS} ${FROM}
+           WHERE m.conversation_id = $1
+           ORDER BY m.created_at DESC, m.id DESC
+           LIMIT $2 OFFSET $3`,
+          [conversationId, criteria.limit + 1, offset],
+        );
+      }
+
+      const hasOlder = paged.rows.length > criteria.limit;
+      const rows = paged.rows.slice(0, criteria.limit).map(toMessage).reverse();
+      return { rows, total, hasOlder };
     });
   }
 

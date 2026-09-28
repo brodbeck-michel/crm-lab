@@ -6,11 +6,9 @@ import { ConversationPanel } from './ConversationPanel';
 import type { ConversationPanelProps } from './ConversationPanel';
 
 /**
- * Rolagem da conversa (PAGES.md §2):
- * mensagem NOVA rola para o fim; histórico ANTIGO mantém a posição de leitura.
- *
- * jsdom não faz layout, então `scrollHeight` é injetado — o que se verifica
- * aqui é a decisão do componente, não o motor de layout do navegador.
+ * Painel da conversa (PAGES.md §2). A leitura (separador, faixa, botão ↓,
+ * histórico pela rolagem — CRMLAB-71) tem spec própria:
+ * `ConversationReading.spec.tsx`.
  */
 
 const CONVERSATION: ConversationDetail = {
@@ -71,37 +69,13 @@ function props(messages: Message[]): ConversationPanelProps {
     onAttach: vi.fn(),
     contextOpen: true,
     hasOlderMessages: false,
+    loadingOlder: false,
     onLoadOlder: vi.fn(),
+    unreadAtOpen: 0,
   };
 }
 
-function stubScrollHeight(element: HTMLElement, value: number): void {
-  Object.defineProperty(element, 'scrollHeight', { configurable: true, get: () => value });
-}
-
-describe('ConversationPanel — rolagem', () => {
-  it('mensagem nova rola para o fim; histórico antigo preserva a posição', () => {
-    const { rerender } = render(<ConversationPanel {...props([message('m-1'), message('m-2')])} />);
-    const scroller = screen.getByTestId('message-scroll');
-
-    // 1) chega uma mensagem NOVA (último id muda) → vai para o fim.
-    stubScrollHeight(scroller, 1000);
-    rerender(<ConversationPanel {...props([message('m-1'), message('m-2'), message('m-3')])} />);
-    expect(scroller.scrollTop).toBe(1000);
-
-    // 2) usuário sobe a leitura e carrega histórico ANTIGO (mesmo último id).
-    scroller.scrollTop = 400;
-    stubScrollHeight(scroller, 1600);
-    rerender(
-      <ConversationPanel
-        {...props([message('m-0'), message('m-1'), message('m-2'), message('m-3')])}
-      />,
-    );
-
-    // some a altura acrescentada acima (600), em vez de pular para o fim (1600).
-    expect(scroller.scrollTop).toBe(1000);
-  });
-
+describe('ConversationPanel — rolagem e ações', () => {
   it('composer cresceu e a lista encolheu: a borda de baixo fica parada (CRMLAB-49)', () => {
     let notify = (): void => undefined;
     vi.stubGlobal(
@@ -181,11 +155,11 @@ describe('ConversationPanel — rolagem', () => {
     expect(onCloseAttendance).toHaveBeenCalledTimes(1);
   });
 
-  it('oferece carregar mensagens anteriores quando há histórico', () => {
+  it('histórico carrega pela rolagem: o botão "Carregar mensagens anteriores" não existe mais (D-238)', () => {
     render(<ConversationPanel {...props([message('m-1')])} hasOlderMessages />);
     expect(
-      screen.getByRole('button', { name: 'Carregar mensagens anteriores' }),
-    ).toBeInTheDocument();
+      screen.queryByRole('button', { name: 'Carregar mensagens anteriores' }),
+    ).not.toBeInTheDocument();
   });
 
   it('botão fechar chama onClose (CRMLAB-16)', async () => {

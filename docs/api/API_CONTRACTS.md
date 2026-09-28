@@ -725,11 +725,28 @@ Mensagens vêm em ordem cronológica **crescente**; `page=1` é a página mais r
 **Query Params:**
 ```
 ?messageLimit=50&page=1
+?messageLimit=50&before=<messageId>      (cursor — D-237, CRMLAB-71)
 ```
 
 `messageLimit` é o nome do contrato; `limit` é aceito como alias tolerante e vale o
 mesmo (`messageLimit` ganha quando os dois vêm). Valor acima de 100 é recusado com
 `VALIDATION_ERROR` — não é silenciosamente reduzido.
+
+**Cursor (`before`, D-237).** `before=<messageId>` devolve as `messageLimit` mensagens
+imediatamente **anteriores** àquela, na ordem `(createdAt, id)`. É o jeito de carregar
+histórico: a tela de Atendimento pede a primeira página sem cursor e depois repete
+`before=cursors.before` até ele voltar `null`.
+- `cursors.before`: id da mensagem mais antiga da página quando **ainda há** histórico
+  anterior; `null` quando a página chegou ao começo da conversa (não há o que pedir).
+- `cursors.after`: sempre `null` por enquanto — reservado para "carregar ao redor de uma
+  mensagem" (CRMLAB-68). `around`/`after` **não** são aceitos como parâmetro.
+- `before` + `page` juntos → `VALIDATION_ERROR` (400). `before` que não é uuid →
+  `VALIDATION_ERROR`. `before` que não é mensagem **desta** conversa (outra conversa, outro
+  tenant, inexistente) → `NOT_FOUND` (404, `details.resource: "message"`).
+- `pagination` segue com os quatro campos: `total`/`totalPages` são da conversa inteira; com
+  `before`, `page` volta `1`.
+- `cursors` vem também sem `before` (paginação por `page`): na primeira página é o ponto de
+  partida do cursor.
 
 **Response (200):**
 ```json
@@ -780,6 +797,10 @@ mesmo (`messageLimit` ganha quando os dois vêm). Valor acima de 100 é recusado
     "limit": 50,
     "total": 120,
     "totalPages": 3
+  },
+  "cursors": {
+    "before": "uuid-da-mensagem-mais-antiga-desta-pagina",
+    "after": null
   }
 }
 ```
@@ -788,6 +809,7 @@ mesmo (`messageLimit` ganha quando os dois vêm). Valor acima de 100 é recusado
 `customFields`) — inclui `patientId`, que é de onde a coluna 3 do inbox tira o link para a
 ficha (D-079); `messages[]` é `Message`, com `senderName`, `attachmentUrl` e `readAt`
 anuláveis. `pagination` é o `PaginationMeta` padrão — os quatro campos, sempre.
+`cursors` é `MessageCursors` (`before`/`after`, ambos `string | null` — D-237).
 
 **Erros:** `NOT_FOUND` (404 — inexistente, de outro tenant **ou de outro atendente**;
 nunca 403), `FORBIDDEN` (403, `platform_operator`), `VALIDATION_ERROR` (400, `:id` não-uuid)

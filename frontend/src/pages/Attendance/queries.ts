@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import type { GetConversationResponse, Message } from '@crm-lab/shared';
 import { api, queryKeys, queryScopes, staleTimes } from '@/api';
 
 /**
@@ -7,21 +8,37 @@ import { api, queryKeys, queryScopes, staleTimes } from '@/api';
  * do painel e o `markAsRead` NUNCA usem chaves diferentes (seriam dois
  * requests para o mesmo dado).
  *
- * A chave do detalhe é `[...queryKeys.conversation(id), messageLimit]`:
- * continua derivada de `api/query-keys.ts` e continua sendo invalidada pelo
- * evento WS `conversation.new_message`, que invalida o PREFIXO
- * `['conversation', id]`.
+ * O detalhe é uma query INFINITA (D-238): a primeira página é a mais recente
+ * (sem cursor) e cada página seguinte é MAIS ANTIGA, pedida com
+ * `before=cursors.before` (D-237). A chave `[...queryKeys.conversation(id),
+ * 'messages']` continua derivada de `api/query-keys.ts` e continua sendo
+ * invalidada pelo evento WS `conversation.new_message`, que invalida o PREFIXO
+ * `['conversation', id]` — o TanStack v5 refaz as páginas carregadas
+ * recalculando cada cursor a partir da página que acabou de voltar.
  */
 
-/** Mensagens carregadas por vez (`GET /conversations/:id?limit=`). */
+/** Mensagens carregadas por vez (`GET /conversations/:id?messageLimit=`). */
 export const MESSAGE_PAGE_SIZE = 50;
 
-export function conversationDetailOptions(id: string, messageLimit: number) {
+export function conversationDetailOptions(id: string) {
   return {
-    queryKey: [...queryKeys.conversation(id), messageLimit] as const,
-    queryFn: () => api.conversations.get(id, { limit: messageLimit }),
+    queryKey: [...queryKeys.conversation(id), 'messages'] as const,
+    queryFn: ({ pageParam }: { pageParam: string | null }) =>
+      api.conversations.get(id, {
+        messageLimit: MESSAGE_PAGE_SIZE,
+        ...(pageParam !== null ? { before: pageParam } : {}),
+      }),
+    initialPageParam: null as string | null,
+    /** "Próxima" é a mais antiga; `null` = começo da conversa, nada a pedir. */
+    getNextPageParam: (last: GetConversationResponse): string | null => last.cursors.before,
     staleTime: staleTimes.conversations,
   };
+}
+
+/** Páginas → lista em ordem crescente (cada página já vem crescente). */
+export function flattenMessages(data: { pages: GetConversationResponse[] } | undefined): Message[] {
+  if (!data) return [];
+  return [...data.pages].reverse().flatMap((page) => page.messages);
 }
 
 /**
@@ -41,7 +58,7 @@ export function useMarkAsRead(): (conversationId: string) => Promise<void> {
 
   return useCallback(
     async (conversationId: string) => {
-      await queryClient.fetchQuery(conversationDetailOptions(conversationId, MESSAGE_PAGE_SIZE));
+      await queryClient.fetchInfiniteQuery(conversationDetailOptions(conversationId));
       await queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
     },
     [queryClient],

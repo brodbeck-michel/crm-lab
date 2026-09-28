@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useParams } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -108,6 +108,8 @@ function detailResponse(messages: Message[] = [message()]): GetConversationRespo
     },
     messages,
     pagination: { page: 1, limit: 50, total: messages.length, totalPages: 1 },
+
+    cursors: { before: null, after: null },
   };
 }
 
@@ -300,12 +302,62 @@ describe('Atendimento — abrir conversa', () => {
     await userEvent.click(await screen.findByTestId('conversation-item'));
 
     await waitFor(() => {
-      expect(getMock).toHaveBeenCalledWith('c-1', { limit: 50 });
+      expect(getMock).toHaveBeenCalledWith('c-1', { messageLimit: 50 });
     });
     // markAsRead invalida a listagem para o badge e as contagens caírem.
     await waitFor(() => {
       expect(listMock.mock.calls.length).toBeGreaterThan(1);
     });
+  });
+
+  it('faixa de não lidas usa o unreadCount da LISTA no clique, não o do detalhe (D-239)', async () => {
+    // Lista diz 2 não lidas; o detalhe já volta zerado (o GET marca como lida).
+    listMock.mockResolvedValue(listResponse([conversation({ unreadCount: 2 })]));
+    getMock.mockResolvedValue(
+      detailResponse([
+        message({ id: 'm-1', content: 'lida' }),
+        message({ id: 'm-2', content: 'primeira não lida' }),
+        message({ id: 'm-3', content: 'segunda não lida' }),
+      ]),
+    );
+    renderScreen();
+
+    await userEvent.click(await screen.findByTestId('conversation-item'));
+
+    const divider = await screen.findByTestId('unread-divider');
+    expect(divider).toHaveTextContent('2 mensagens não lidas');
+    expect(divider.nextElementSibling).toHaveAttribute('data-anchor-id', 'm-2');
+  });
+
+  it('histórico por cursor: topo pede `before`; no começo da conversa, nenhum pedido a mais (D-237/D-238)', async () => {
+    const recent = detailResponse([message({ id: 'm-2', content: 'recente' })]);
+    const older = detailResponse([message({ id: 'm-1', content: 'antiga' })]);
+    getMock.mockImplementation((_id: string, query: { before?: string }) =>
+      Promise.resolve(
+        query.before === 'm-2'
+          ? older
+          : { ...recent, cursors: { before: 'm-2', after: null } },
+      ),
+    );
+    listMock.mockResolvedValue(listResponse([conversation({ unreadCount: 0 })]));
+    renderScreen();
+
+    await userEvent.click(await screen.findByTestId('conversation-item'));
+    await screen.findByText('recente');
+    const initialCalls = getMock.mock.calls.length;
+
+    const scroller = screen.getByTestId('message-scroll');
+    scroller.scrollTop = 0;
+    fireEvent.scroll(scroller);
+
+    expect(await screen.findByText('antiga')).toBeInTheDocument();
+    expect(getMock).toHaveBeenCalledWith('c-1', { messageLimit: 50, before: 'm-2' });
+    expect(getMock.mock.calls.length).toBe(initialCalls + 1);
+
+    // `cursors.before: null` — começo da conversa: rolar de novo não pede nada.
+    fireEvent.scroll(scroller);
+    fireEvent.scroll(scroller);
+    expect(getMock.mock.calls.length).toBe(initialCalls + 1);
   });
 
   it('renderiza a conversa aberta com header, bolhas e composer', async () => {

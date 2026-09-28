@@ -99,6 +99,8 @@ function detail(): GetConversationResponse {
     conversation: { ...conversation(), patientEmail: null, customFields: {} },
     messages: [message()],
     pagination: { page: 1, limit: 50, total: 1, totalPages: 1 },
+
+    cursors: { before: null, after: null },
   };
 }
 

@@ -4,8 +4,11 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_FUNNEL_RULES,
+  nationalHolidays,
+  type ChannelSettingsResponse,
   type CommissionSettings,
   type FunnelRules,
+  type HolidaysResponse,
   type UserRole,
 } from '@crm-lab/shared';
 import { mutationIdle, querySuccess } from '@/test/query-mocks';
@@ -13,6 +16,8 @@ import { ToastProvider } from '@/components/ui';
 import { useAuthStore } from '@/stores/auth.store';
 import * as funnelRulesApi from '@/api/funnel-rules';
 import * as commissionApi from '@/api/commission-settings';
+import * as holidaysApi from '@/api/holidays';
+import * as settingsApi from '@/api/settings';
 import Rules from './Rules';
 
 vi.mock('@/api/funnel-rules', async (importOriginal) => ({
@@ -26,6 +31,32 @@ vi.mock('@/api/commission-settings', async (importOriginal) => ({
   useCommissionSettings: vi.fn(),
   useUpdateCommissionSettings: vi.fn(),
 }));
+
+vi.mock('@/api/holidays', () => ({
+  useHolidays: vi.fn(),
+  useCreateHoliday: vi.fn(),
+  useDeleteHoliday: vi.fn(),
+}));
+
+vi.mock('@/api/settings', async (importOriginal) => ({
+  ...(await importOriginal<typeof settingsApi>()),
+  useChannelSettings: vi.fn(),
+}));
+
+const useHolidays = vi.mocked(holidaysApi.useHolidays);
+const useCreateHoliday = vi.mocked(holidaysApi.useCreateHoliday);
+const useDeleteHoliday = vi.mocked(holidaysApi.useDeleteHoliday);
+const useChannelSettings = vi.mocked(settingsApi.useChannelSettings);
+
+function holidays(custom: HolidaysResponse['custom'] = []): HolidaysResponse {
+  return { year: 2026, national: nationalHolidays(2026), custom };
+}
+
+function channelsWith(connectionMode: 'qr' | 'cloud_api'): ChannelSettingsResponse {
+  return {
+    channels: [{ channel: 'whatsapp', connectionMode } as ChannelSettingsResponse['channels'][number]],
+  } as ChannelSettingsResponse;
+}
 
 const useFunnelRules = vi.mocked(funnelRulesApi.useFunnelRules);
 const useUpdateFunnelRules = vi.mocked(funnelRulesApi.useUpdateFunnelRules);
@@ -61,12 +92,18 @@ function section(name: RegExp): HTMLElement {
 
 describe('Regras (/settings/rules)', () => {
   const mutate = vi.fn();
+  const createHoliday = vi.fn();
+  const deleteHoliday = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
     useUpdateFunnelRules.mockReturnValue(mutationIdle(mutate));
     useCommissionSettings.mockReturnValue(querySuccess(COMMISSIONS));
     useUpdateCommissionSettings.mockReturnValue(mutationIdle(vi.fn()));
+    useHolidays.mockReturnValue(querySuccess(holidays()));
+    useCreateHoliday.mockReturnValue(mutationIdle(createHoliday));
+    useDeleteHoliday.mockReturnValue(mutationIdle(deleteHoliday));
+    useChannelSettings.mockReturnValue(querySuccess(channelsWith('qr')));
   });
 
   afterEach(() => {
@@ -216,5 +253,122 @@ describe('Regras (/settings/rules)', () => {
     await user.click(screen.getByRole('button', { name: 'Salvar regras' }));
 
     expect(await screen.findByText('Fora da faixa')).toBeInTheDocument();
+  });
+  describe('reingajamento (CRMLAB-62)', () => {
+    it('padrão: 1º e 2º desligados, 1 h e 24 h, 2º travado sem o 1º', () => {
+      signIn('manager');
+      renderPage();
+      const box = section(/reingajamento da conversa/i);
+      const first = within(box).getByRole('switch', { name: /1º reingajamento/i });
+      const second = within(box).getByRole('switch', { name: /2º reingajamento/i });
+      expect(first).not.toBeChecked();
+      expect(second).toBeDisabled();
+      expect(within(box).getByLabelText('Horas sem resposta')).toHaveValue(1);
+      expect(within(box).getByLabelText('Horas depois do 1º')).toHaveValue(24);
+      expect(within(box).getByText(/ligue o 1º reingajamento/i)).toBeInTheDocument();
+    });
+
+    it('ligar o 1º com 2 h salva só o que mudou', async () => {
+      const user = userEvent.setup();
+      signIn('manager');
+      renderPage();
+      const box = section(/reingajamento da conversa/i);
+      await user.click(within(box).getByRole('switch', { name: /1º reingajamento/i }));
+      const hours = within(box).getByLabelText('Horas sem resposta');
+      await user.clear(hours);
+      await user.type(hours, '2');
+      await user.click(screen.getByRole('button', { name: 'Salvar regras' }));
+      expect(mutate.mock.calls[0]?.[0]).toEqual({ reengagement: { first: { enabled: true, hours: 2 } } });
+    });
+
+    it('desligar o 1º desliga o 2º junto', async () => {
+      const user = userEvent.setup();
+      signIn('manager');
+      const on: FunnelRules = {
+        ...DEFAULT_FUNNEL_RULES,
+        reengagement: {
+          first: { ...DEFAULT_FUNNEL_RULES.reengagement.first, enabled: true },
+          second: { ...DEFAULT_FUNNEL_RULES.reengagement.second, enabled: true },
+        },
+      };
+      renderPage(on);
+      const box = section(/reingajamento da conversa/i);
+      await user.click(within(box).getByRole('switch', { name: /1º reingajamento/i }));
+      expect(within(box).getByRole('switch', { name: /2º reingajamento/i })).not.toBeChecked();
+      await user.click(screen.getByRole('button', { name: 'Salvar regras' }));
+      expect(mutate.mock.calls[0]?.[0]).toEqual({
+        reengagement: { first: { enabled: false }, second: { enabled: false } },
+      });
+    });
+
+    it('mensagem vazia bloqueia salvar', async () => {
+      const user = userEvent.setup();
+      signIn('manager');
+      renderPage();
+      const box = section(/reingajamento da conversa/i);
+      await user.click(within(box).getByRole('switch', { name: /1º reingajamento/i }));
+      await user.clear(within(box).getAllByLabelText('Mensagem')[0]!);
+      expect(screen.getByRole('button', { name: 'Salvar regras' })).toBeDisabled();
+    });
+
+    it('canal na API oficial: avisa que está inativo', () => {
+      useChannelSettings.mockReturnValue(querySuccess(channelsWith('cloud_api')));
+      signIn('manager');
+      renderPage();
+      expect(within(section(/reingajamento da conversa/i)).getByRole('status')).toHaveTextContent(
+        /inativo para este canal/i,
+      );
+    });
+
+    it('atendente não consulta os canais e vê tudo desabilitado', () => {
+      signIn('attendant');
+      renderPage();
+      expect(useChannelSettings).toHaveBeenCalledWith({ enabled: false });
+      const box = section(/reingajamento da conversa/i);
+      expect(within(box).getByRole('switch', { name: /1º reingajamento/i })).toBeDisabled();
+    });
+  });
+
+  describe('feriados (CRMLAB-62)', () => {
+    it('mostra os nacionais do ano e os do laboratório', () => {
+      useHolidays.mockReturnValue(
+        querySuccess(holidays([{ id: 'h1', date: '2026-03-19', description: 'São José', source: 'custom' }])),
+      );
+      signIn('manager');
+      renderPage();
+      const box = section(/^feriados$/i);
+      const nacionais = within(box).getByRole('list', { name: /feriados nacionais/i });
+      expect(within(nacionais).getByText('Corpus Christi')).toBeInTheDocument();
+      expect(within(nacionais).getByText('Carnaval (terça-feira)')).toBeInTheDocument();
+      const doLab = within(box).getByRole('list', { name: /feriados do laboratório/i });
+      expect(within(doLab).getByText('São José')).toBeInTheDocument();
+    });
+
+    it('gestor inclui e remove', async () => {
+      const user = userEvent.setup();
+      useHolidays.mockReturnValue(
+        querySuccess(holidays([{ id: 'h1', date: '2026-03-19', description: 'São José', source: 'custom' }])),
+      );
+      signIn('manager');
+      renderPage();
+      const box = section(/^feriados$/i);
+      await user.type(within(box).getByLabelText('Data'), '2026-06-13');
+      await user.type(within(box).getByLabelText('Descrição'), 'Santo Antônio');
+      await user.click(within(box).getByRole('button', { name: 'Incluir feriado' }));
+      expect(createHoliday.mock.calls[0]?.[0]).toEqual({ date: '2026-06-13', description: 'Santo Antônio' });
+      await user.click(within(box).getByRole('button', { name: 'Remover São José' }));
+      expect(deleteHoliday.mock.calls[0]?.[0]).toBe('h1');
+    });
+
+    it('atendente só vê: sem incluir nem remover', () => {
+      useHolidays.mockReturnValue(
+        querySuccess(holidays([{ id: 'h1', date: '2026-03-19', description: 'São José', source: 'custom' }])),
+      );
+      signIn('attendant');
+      renderPage();
+      const box = section(/^feriados$/i);
+      expect(within(box).queryByRole('button', { name: 'Incluir feriado' })).not.toBeInTheDocument();
+      expect(within(box).queryByRole('button', { name: /remover/i })).not.toBeInTheDocument();
+    });
   });
 });

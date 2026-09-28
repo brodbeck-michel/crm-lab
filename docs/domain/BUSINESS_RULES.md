@@ -207,6 +207,18 @@ mover (D-207). Prazo mudado vale no próximo tique, inclusive para os cartões q
 prazo novo (D-209). Quem move é o sistema: `changedBy: null`, histórico com `automation`, audit
 `source: "rule"` (D-208).
 
+### Reingajamento da conversa (CRMLAB-62, D-211..D-214)
+Não mexe em proposta: é uma mensagem ao paciente, no mesmo tique do motor. Com a regra ligada
+(padrão **desligada**), conversa **ativa** de WhatsApp **por QR Code** em que a última mensagem de
+pessoa do laboratório (CRM ou celular) ficou sem resposta do paciente por X horas (padrão 1 h)
+recebe o texto do 1º reingajamento; o 2º (opcional, só com o 1º ligado) sai Y horas depois do
+envio do 1º, se continuar sem resposta. **No máximo dois por silêncio**; resposta do paciente
+seguida de nova mensagem da atendente abre um silêncio novo. Respeita o horário de
+funcionamento (fora dele, fica para a abertura; sem nenhum dia configurado = sempre aberto) e
+**feriados** (nacionais, com Carnaval e Corpus Christi, e os cadastrados pelo laboratório): se a
+hora de sair cai em feriado, **descarta**, não empurra. Mais de 2 h atrasado → descarta também.
+API oficial da Meta não entra na rotina. A mensagem aparece como "Mensagem automática".
+
 ### Exceção única: `ganho` pela conciliação com o LIS (CRMLAB-52, D-119)
 A matriz acima vale para **pessoas**. Quando o orçamento do LIS vinculado à proposta
 (`lis_budget_number`) aparece **com requisição**, a proposta vai para `ganho` a partir de

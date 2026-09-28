@@ -88,7 +88,13 @@ export interface LisBudgetInput extends LisSpreadsheetRow {
  * variantes defensaveis; ajustar aqui e o unico ponto de mudanca se surgir
  * uma planilha real com um cabecalho novo.
  */
-const FIELD_ALIASES: Record<keyof Omit<LisSpreadsheetRow, 'number'> | 'number', string[]> = {
+/** Colunas da planilha. Os campos do pagamento da API (D-188) não têm coluna. */
+type SheetField = Exclude<
+  keyof LisSpreadsheetRow,
+  'paidAt' | 'paymentId' | 'paymentStatus' | 'reversedAt' | 'paymentMethod' | 'cardBrand'
+>;
+
+const FIELD_ALIASES: Record<SheetField, string[]> = {
   number: ['ORCAMENTO'],
   issuedOn: ['DATA_ORCAMENTO'],
   patientName: ['NM_PACIENTE'],

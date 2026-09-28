@@ -73,7 +73,7 @@ describe('Regras (/settings/rules)', () => {
     useAuthStore.setState({ user: null });
   });
 
-  it('gestor vê as 6 seções', () => {
+  it('gestor vê as 7 seções', () => {
     signIn('manager');
     renderPage();
 
@@ -83,6 +83,7 @@ describe('Regras (/settings/rules)', () => {
       /movimentação manual/i,
       /mensagem de envio/i,
       /descontos e aprovação/i,
+      /carga do lis/i,
       /comissões/i,
     ]) {
       expect(section(name)).toBeInTheDocument();
@@ -121,6 +122,19 @@ describe('Regras (/settings/rules)', () => {
       automation: { sentToFollowUp: { days: 5 } },
       manualMoves: { skipStages: false },
     });
+  });
+
+  it('carga do LIS: planilha nasce desligada; ligar envia lisSource (CRMLAB-53, D-189)', async () => {
+    const user = userEvent.setup();
+    signIn('manager');
+    renderPage();
+
+    const toggle = within(section(/carga do lis/i)).getByRole('switch', { name: /importar a planilha/i });
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await user.click(toggle);
+    await user.click(screen.getByRole('button', { name: 'Salvar regras' }));
+
+    expect(mutate.mock.calls[0]?.[0]).toEqual({ lisSource: { spreadsheetImport: { enabled: true } } });
   });
 
   it('sem alteração o botão fica desabilitado', () => {

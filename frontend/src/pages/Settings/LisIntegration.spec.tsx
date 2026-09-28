@@ -31,6 +31,7 @@ const OFF: LisIntegrationSettings = {
   lastRunAt: null,
   lastSuccessAt: null,
   lastError: null,
+  lastFullScanOn: null,
   running: false,
   intervalMinutes: 30,
 };

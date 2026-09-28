@@ -357,7 +357,8 @@ export async function upsertPayments(
  *   orçamento são ignorados, para não contar o mesmo pagamento duas vezes);
  * - só com pagamentos da planilha: soma de todos (a planilha não tem situação);
  * - teto em `requisition_value` quando ele é > 0;
- * - `paid_on` = dia do último pagamento considerado com valor > 0;
+ * - `paid_on` = dia do último pagamento considerado, de QUALQUER valor (a régua
+ *   de fatos da D-204 conta pagamento de R$ 0 como pagamento);
  * - orçamento SEM nenhuma linha no extrato (carga anterior ao card) não é tocado.
  * Só escreve quando o valor muda, para não mexer em `updated_at` à toa.
  */
@@ -372,7 +373,7 @@ export async function recomputePaidValues(tx: DbTx, tenantId: string, numbers: s
      ), agg AS (
        SELECT budget_number,
               COALESCE(SUM(paid_value) FILTER (WHERE counts), 0) AS total,
-              MAX(paid_at) FILTER (WHERE counts AND paid_value > 0) AS last_paid_at
+              MAX(paid_at) FILTER (WHERE counts) AS last_paid_at
          FROM (
            SELECT *, (status = 'ativo' AND (source = 'api' OR NOT has_api)) AS counts FROM scoped
          ) considered

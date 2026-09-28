@@ -3122,8 +3122,9 @@ rodada anterior volta na seguinte, o que é inofensivo porque o upsert é idempo
      dois contaria o mesmo pagamento duas vezes).
    - Senão, se tem pagamentos **só da planilha**: `LEAST(SUM(todos), requisition_value)` (a
      planilha não diz quem foi estornado; o teto é a proteção).
-   - `paid_on` = data do último pagamento considerado com valor > 0; nenhum → `paid_value = 0`,
-     `paid_on = NULL`.
+   - `paid_on` = data do último pagamento considerado, **de qualquer valor** (a régua de fatos da
+     D-204 conta pagamento de R$ 0 como pagamento, e isso não muda); nenhum considerado (só
+     estornados) → `paid_value = 0`, `paid_on = NULL`.
    - Orçamento **sem nenhuma linha no extrato** (carga anterior ao card) fica como está.
    - `requisition_value` nulo → sem teto.
 5. **`consolidateLisRows`** deixa de decidir pagamento: só consolida os campos do orçamento (maior

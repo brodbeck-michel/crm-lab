@@ -440,6 +440,21 @@ export default function Rules() {
           </div>
         </Section>
 
+        <Section
+          id="carga-lis"
+          title="Carga do LIS"
+          description="A carga principal dos orçamentos é a API do Bitlab. Ligue a importação por planilha só se a API estiver fora do ar."
+        >
+          <Toggle
+            label="Permitir importar a planilha do LIS em Resultados"
+            checked={draft.lisSource.spreadsheetImport.enabled}
+            disabled={!canEdit}
+            onChange={(checked) =>
+              set((next) => void (next.lisSource.spreadsheetImport.enabled = checked))
+            }
+          />
+        </Section>
+
         {data.origin.manualInCrm && (
           <Section
             id="descontos"

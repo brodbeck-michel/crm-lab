@@ -37,8 +37,12 @@ import type { RecordedAudio } from './useVoiceRecorder';
  */
 
 export interface ComposerProps {
-  /** Recebe o texto já aparado. Não é chamado com string vazia. */
-  onSend: (content: string) => void;
+  /**
+   * Recebe o texto já aparado. Não é chamado com string vazia. O campo limpa na
+   * hora; devolvendo uma Promise que rejeita, o texto volta para o campo (se a
+   * pessoa não começou outra mensagem) — quem avisa do erro é quem chama (CRMLAB-63).
+   */
+  onSend: (content: string) => void | Promise<unknown>;
   /** Anexo — sem handler, o botão não aparece (nada de botão morto). */
   onAttach?: () => void;
   /**
@@ -176,9 +180,13 @@ export function Composer({
   function submit(): void {
     const content = value.trim();
     if (!content || blocked) return;
-    onSend(content);
+    const result = onSend(content);
     setValue('');
     fieldRef.current?.focus();
+    result?.catch(() => {
+      setValue((current) => (current === '' ? content : current));
+      fieldRef.current?.focus();
+    });
   }
 
   /**
@@ -341,7 +349,10 @@ export function Composer({
                 ref={fieldRef}
                 rows={1}
                 value={value}
-                disabled={blocked}
+                // `disabled`, não `blocked` (CRMLAB-63): campo desabilitado perde o
+                // foco e o navegador não devolve. Durante o envio só o Enter e o
+                // botão travam (`submit`), e dá para ir escrevendo a próxima.
+                disabled={disabled}
                 onChange={(event) => handleChange(event.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder={placeholder}

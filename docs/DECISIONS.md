@@ -3681,6 +3681,83 @@ considera parados.
 **Impacto:** `funnel-timer.service.ts`; SERVICES §27; relatório do card (pergunta ao Michel sobre o
 primeiro tique em produção).
 
+## 2026-09-28 — Aviso de mensagem nova (CRMLAB-72)
+
+### D-240: A notificação do navegador NUNCA mostra o conteúdo da mensagem (CRMLAB-72)
+**Decisão:** a `Notification` de mensagem nova leva **só** o nome do paciente no título
+(`patientName`; sem nome, o telefone que a fila já mostra) e, no `body`, **"Nova mensagem"** ou
+**"N novas mensagens"**. Nunca o texto, nunca a legenda, nunca a mídia (`icon`/`image` não
+recebem anexo). **Não existe opção para ligar a prévia**, nem por usuário, nem por laboratório.
+O `body` é montado por uma função pura (`alertBody(count)`) que só recebe um número, e um teste
+automatizado garante que o `body` não contém `message.content` nem `lastMessagePreview`.
+`tag = conversationId`: a notificação nova da mesma conversa substitui a anterior em vez de
+empilhar. Clicar traz a aba para a frente (`window.focus()`) e abre a conversa
+(`/attendance?conversationId=…`).
+**Motivo:** decidido pelo Michel em 28/09/2026. Mensagem de laboratório é dado de saúde
+(resultado, exame, sintoma). A notificação aparece na tela bloqueada, na central de
+notificações do sistema e para quem passa perto do computador; a LGPD trata dado de saúde como
+sensível. Saber *quem* escreveu basta para a atendente decidir voltar à aba.
+**Impacto:** `frontend/src/hooks/useNewMessageAlerts.ts` e o spec; PAGES.md §2 ("Aviso de
+mensagem nova"). Se um dia pedirem prévia, é decisão nova, não flag.
+
+### D-241: Quem é avisado, onde o aviso vive e de onde sai o contador do título (CRMLAB-72)
+**Decisão:**
+1. **Quem é avisado = a fila da atendente:** conversa **atribuída a ela** ou **sem dona**
+   (`assignedTo === userId || assignedTo === null`) — o mesmo recorte de visibilidade do
+   `ConversationRepository.list` para atendente (`c.assigned_to = $me OR c.assigned_to IS NULL`)
+   e o mesmo par dos chips "Minhas"/"Não atribuídas". Para **gestor e admin**, que enxergam todas
+   as conversas, o aviso usa o **mesmo recorte da fila** (dele + sem dona), não a visibilidade
+   total: conversa de outra atendente não toca para ninguém além dela (interpretação mais
+   restritiva do card, "Conversa de outra atendente não toca"). A regra mora em uma função só
+   (`isInMyQueue`) e é a mesma para aviso e contador.
+2. **Só mensagem do paciente avisa.** O sinal é o `unreadCount` da conversa **subir** junto com o
+   `lastMessageAt` — e o servidor só incrementa `unread_count` em `createFromPatient`
+   (`message.service.ts`). Mensagem de agente (`fromMe`) e evento de sistema não sobem o
+   contador, então não avisam, sem campo novo no payload WS (que continua só com ids). Conversa
+   que aparece na lista pela primeira vez só avisa se o `lastMessageAt` dela for mais novo que o
+   da lista anterior (conversa nova ou reaberta pelo paciente); conversa que chega por
+   transferência, com mensagens antigas, não avisa. A primeira carga é linha de base: não avisa.
+3. **Conversa aberta:** é a que o Atendimento publica (`useMessageAlertsStore.openConversationId`).
+   Abrir a conversa zera o `unreadCount` no servidor (`GET /conversations/:id`), então para ela o
+   sinal é o **detalhe**: mensagem `senderType: 'patient'` mais nova que a última vista. Com a aba
+   em foco, a conversa aberta não gera nada (nem som).
+4. **Foco:** "aba em foco" = `document.visibilityState === 'visible' && document.hasFocus()`.
+   Notificação só **sem foco**. Som sem foco, ou com foco quando a mensagem é de **outra** conversa.
+5. **Onde vive:** o hook é montado no `AppShell` (todas as telas do laboratório, não só
+   `/attendance`), como o WhatsApp Web, que avisa em qualquer lugar enquanto a aba está aberta. O
+   Console da Plataforma (`PlatformShell`) não monta. O pedido de permissão **não** sai no
+   carregamento: um aviso discreto "Ativar notificações" no topo da fila do Atendimento pede com um
+   clique, e some com a permissão concedida, negada, ou com a notificação desligada na preferência.
+6. **Contador do título "(N) <título>":** N = conversas da fila (regra do item 1) com
+   `unreadCount > 0`, derivado da query `GET /conversations?status=active&scope=all&
+   sortBy=unreadCount&order=desc&limit=100` (a chave vem de `queryKeys.conversations`, então o
+   mesmo evento WS `conversation.new_message` que invalida a fila invalida esta, e ler uma conversa
+   também). É **uma** query a mais por aba, a mesma do aviso: a fila do Atendimento é paginada e
+   filtrada por chip (e não existe fora de `/attendance`), então não serve de fonte para um número
+   que vale em qualquer tela. Ordenar por não lidas faz os 100 primeiros conterem todas as não lidas
+   em qualquer operação realista; acima de 100 conversas não lidas o número satura em 100.
+   Zerado, o título volta ao original.
+7. **Som:** tom sintético curto gerado por WebAudio (`OscillatorNode`, ~180 ms), sem arquivo de
+   terceiros e sem download. Não depende de `media-src` (a CSP em `nginx/security-headers.conf`
+   já tem `media-src 'self' blob:` e segue sem mudança).
+8. **Preferências** (som, notificação) por navegador, em `localStorage`
+   (`crm-lab.alerts.sound`, `crm-lab.alerts.notifications`, padrão ligado), com `try/catch`:
+   armazenamento bloqueado só faz a preferência não persistir. Ficam no menu do usuário (rodapé
+   da Sidebar).
+9. **Permissão negada ou API ausente:** nada quebra; título e som seguem funcionando.
+**Motivo:** o card pede que o aviso siga a regra da fila e que agente/`fromMe` não avise; o
+`unreadCount` já é exatamente "mensagem de paciente ainda não lida", então reaproveitá-lo evita
+um segundo critério no cliente e mudança no contrato WS (que CRMLAB-66 e CRMLAB-71 estão
+mexendo em paralelo).
+**Limitações declaradas:** (a) várias abas abertas tocam o som em cada uma (a notificação se
+sobrepõe pela `tag`); (b) conversa aberta com a aba escondida é marcada lida no servidor pelo
+refetch do detalhe, comportamento anterior a este card.
+**Impacto:** `frontend/src/hooks/useNewMessageAlerts.ts`, `stores/message-alerts.store.ts`,
+`lib/notification-sound.ts`, `pages/Attendance/EnableNotificationsBanner.tsx`,
+`pages/Attendance/index.tsx` (publica a conversa aberta, reabre por `?conversationId=` a cada
+navegação, banner), `components/layout/{AppShell,InboxLayout,Sidebar}.tsx`; PAGES.md §2,
+COMPONENTS.md (`layout/`).
+
 ## Template para novas decisões
 
 ```

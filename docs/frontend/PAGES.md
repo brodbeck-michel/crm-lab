@@ -156,6 +156,34 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 - Dados: `GET /conversations/:id`, `POST /conversations/:id/messages`
 - Ao abrir: `markAsRead`
 
+### Aviso de mensagem nova (CRMLAB-72, D-240/D-241) — padrão WhatsApp Web
+Vale em **todas as telas do laboratório** (hook `useNewMessageAlerts`, montado no `AppShell`),
+não só aqui. O Console da Plataforma não avisa.
+- **Quem é avisado:** conversa da fila da pessoa logada — atribuída a ela ou sem dona
+  (`isInMyQueue`, o mesmo recorte do servidor para atendente). Conversa de outra atendente não
+  avisa ninguém além dela, nem gestor. Só mensagem de **paciente** avisa (o sinal é o
+  `unreadCount` subir); mensagem da equipe e evento de sistema não
+- **Título da aba:** `"(N) <título>"`, N = conversas da fila com não lidas; zerou, volta ao
+  título original. Acompanha a leitura (abrir a conversa invalida a query)
+- **Notificação do navegador**, só com a aba **sem foco**: título = nome do paciente (sem nome,
+  o telefone); corpo = **"Nova mensagem"** ou **"N novas mensagens"**. **Nunca o texto nem a
+  mídia** (D-240, sem opção de ligar prévia). `tag` = id da conversa (a nova substitui a
+  anterior). Clicar traz a aba para a frente e abre a conversa (`/attendance?conversationId=…`,
+  lido a cada navegação, não só no mount)
+- **Som** (tom sintético WebAudio, ~180 ms): aba sem foco, ou mensagem de **outra** conversa que
+  não a aberta. Conversa aberta com a aba em foco: nada
+- **Permissão:** nunca pedida no carregamento. Com `Notification.permission === 'default'` e a
+  notificação ligada na preferência, o topo da coluna 1 mostra um aviso discreto
+  (`EnableNotificationsBanner`): "Receba um aviso quando chegar mensagem com a aba em segundo
+  plano." + botão **[Ativar notificações]**, que chama `Notification.requestPermission()`. Some
+  com a permissão concedida ou negada. Negada ou navegador sem a API: título e som seguem
+  funcionando, nada quebra
+- **Preferências** (por navegador, `localStorage`): no menu do usuário (rodapé da Sidebar),
+  "Som de mensagem nova" e "Notificações do navegador", ligados por padrão
+- Dados: `GET /conversations?status=active&scope=all&sortBy=unreadCount&order=desc&limit=100`
+  (uma query por aba, invalidada pelo mesmo WS `conversation.new_message`) + o detalhe da
+  conversa aberta, que o Atendimento já carrega
+
 ### Coluna 3 — Contexto do paciente (recolhível)
 - Cadastro resumido, propostas da conversa (cartões clicáveis → modal), tags
 - **Link "Ver ficha completa" → `/patients/:id`**, a porta de entrada da Ficha (§3). Usa

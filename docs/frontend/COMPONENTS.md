@@ -241,6 +241,9 @@ Anatomia (padrão WhatsApp):
 - Ícones: `lucide-react`, 19px, `strokeWidth={1.7}` (`NavGlyph.tsx`, mapa `NavIcon → LucideIcon`)
 - Rodapé: avatar + nome do usuário é um botão; clique abre menu com [Sair] (`useLogout`,
   `POST /auth/logout` — API_CONTRACTS.md §1). Fecha ao clicar fora, `Esc` ou depois de sair
+- Menu do usuário, acima de [Sair] (CRMLAB-72, D-241): dois `menuitemcheckbox` —
+  "Som de mensagem nova" e "Notificações do navegador" — com ✓ quando ligados. Clicar alterna a
+  preferência (`useMessageAlertsStore`, `localStorage`) sem fechar o menu
 - Rodapé: nome, "Cargo · vX.Y.Z" (cargo = `role` traduzido em pt-BR, CRMLAB-44) — só a versão
   quando recolhido. `__APP_VERSION__` injetada em build-time pelo Vite a partir do `package.json`
   da raiz do monorepo (`frontend/vite.config.ts`), sem chamada de rede
@@ -251,6 +254,26 @@ Anatomia (padrão WhatsApp):
 ### InboxLayout
 - 3 colunas: 336px fixo | flex 1 min 440px | 316px recolhível
 - Estreito: overflow-x na linha (não colapsar colunas)
+- `listBanner?: ReactNode` (CRMLAB-72): faixa opcional no topo da coluna 1, acima da lista, fora
+  da rolagem dela. O Atendimento usa para o `EnableNotificationsBanner`
+
+### AppShell
+- Sidebar + `<Outlet/>` + modais globais. Monta `useNewMessageAlerts()` (CRMLAB-72, D-241): o
+  aviso de mensagem nova vale em qualquer tela do laboratório. `PlatformShell` não monta
+
+### EnableNotificationsBanner (`pages/Attendance/`, local da tela — CRMLAB-72)
+- Aviso discreto no topo da fila: texto `text-caption` `text-neutral-700` + `Button` `secondary`
+  `sm` "Ativar notificações", fundo `bg-accent-100`, padding `px-md py-sm`, borda inferior
+  `border-neutral-300`
+- Só renderiza com `Notification` disponível, `permission === 'default'` e a preferência de
+  notificação ligada. O clique chama `Notification.requestPermission()`; qualquer resposta
+  esconde o aviso
+
+### useNewMessageAlerts (`hooks/`, CRMLAB-72, D-240/D-241)
+- Título "(N) <título>", notificação sem prévia, som e a regra `isInMyQueue`. Funções puras
+  exportadas para teste: `isInMyQueue`, `detectNewMessages`, `alertBody`, `countUnreadInQueue`,
+  `titleWithCount`. Estado auxiliar em `stores/message-alerts.store.ts` (preferências +
+  conversa aberta); som em `lib/notification-sound.ts`
 
 ### BudgetLayout
 - 2 colunas: flex 1 min 520px | 372px fixo; total em rodapé fixo

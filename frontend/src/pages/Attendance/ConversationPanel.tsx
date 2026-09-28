@@ -39,7 +39,7 @@ export interface ConversationPanelProps {
   isError: boolean;
   onRetry: () => void;
   /** `quotedMessageId` = respondendo citando (CRMLAB-66, D-221). */
-  onSend: (content: string, quotedMessageId?: string) => void;
+  onSend: (content: string, quotedMessageId?: string) => void | Promise<unknown>;
   sending: boolean;
   /** Quem pode receber a conversa — `GET /conversations/assignees`. */
   assignees: ConversationAssignee[];
@@ -473,8 +473,9 @@ export function ConversationPanel({
         key={conversation.id}
         onSend={(content) => {
           beforeReply();
-          onSend(content, quotedId);
+          const result = onSend(content, quotedId);
           clearReply();
+          return result;
         }}
         onAttach={() => {
           beforeReply();

@@ -374,7 +374,7 @@ export function Attendance() {
             isError={detailQuery.isError}
             onRetry={() => void detailQuery.refetch()}
             onSend={(content, quotedMessageId) =>
-              sendMessage.mutate({ content, ...(quotedMessageId ? { quotedMessageId } : {}) })
+              sendMessage.mutateAsync({ content, ...(quotedMessageId ? { quotedMessageId } : {}) })
             }
             onReact={(messageId, emoji) => react.mutate({ messageId, emoji })}
             onQuoteUnavailable={() =>

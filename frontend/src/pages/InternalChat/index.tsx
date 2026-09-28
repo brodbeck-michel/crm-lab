@@ -151,7 +151,7 @@ export function InternalChat() {
           isLoading={selectedId !== null && messagesQuery.isPending}
           isError={messagesQuery.isError}
           onRetry={() => void messagesQuery.refetch()}
-          onSend={(content) => sendMessage.mutate(content)}
+          onSend={(content) => sendMessage.mutateAsync(content)}
           sending={sendMessage.isPending}
           currentUserId={currentUser?.id ?? null}
           currentUserRole={currentUser?.role ?? null}

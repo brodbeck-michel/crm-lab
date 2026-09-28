@@ -64,8 +64,9 @@ node_modules são symlinks para a pasta principal; `*.wt.*` (vitest/tsconfig com
 1. Ler `CLAUDE.md`, `docs/AGENTS.md` e o card no Jira antes de codar. Docs primeiro (Regra Zero).
 2. **Commit WIP cedo e sempre** (a cada etapa: docs, migração, backend, frontend, testes) e
    `git push -u origin <branch>`. Trabalho não commitado some quando a sessão cai.
-3. Atualizar a seção "Diário" do card **neste arquivo, no worktree do card**
-   (`docs/superpowers/plans/2026-09-28-crmlab-65-whatsapp-web.md`), a cada etapa.
+3. Escrever o diário do card em `docs/superpowers/plans/crmlab-65/CRMLAB-<n>.md` (um arquivo
+   por card, para não conflitar na integração), a cada etapa, no mesmo commit da etapa.
+   **Não mexer em `docs/STATUS.md` nem neste arquivo**: quem atualiza é o orquestrador.
 4. Comando pesado (typecheck, vitest) sempre atrás de
    `flock /tmp/claude-1000/crmlab-heavy.lock`, com `--maxWorkers=3 --minWorkers=1` no vitest.
    Rodar só os specs afetados; a suíte completa roda na integração.
@@ -76,9 +77,9 @@ node_modules são symlinks para a pasta principal; `*.wt.*` (vitest/tsconfig com
 
 | Card | Fase | Último commit | Observação |
 |---|---|---|---|
-| 66 [A] | ⬜ não iniciado | — | |
-| 71 [F] | ⬜ não iniciado | — | |
-| 72 [G] | ⬜ não iniciado | — | |
+| 66 [A] | 🔄 disparado (onda 1) | — | |
+| 71 [F] | 🔄 disparado (onda 1) | — | |
+| 72 [G] | 🔄 disparado (onda 1) | — | |
 | 67 [B] | ⬜ aguarda onda 2 | — | |
 | 68 [C] | ⬜ aguarda onda 2 | — | |
 | 69 [D] | ⬜ aguarda onda 2 | — | |
@@ -93,13 +94,15 @@ Fases: ⬜ não iniciado → 🔄 docs → 🔄 backend → 🔄 frontend → �
 
 1. `git worktree list` e, em cada worktree de card: `git status --short` (trabalho solto aparece
    aqui, não no `git log`) e `git log --oneline origin/main..HEAD`.
-2. Ler o "Diário" do card no arquivo deste plano **dentro do worktree do card** (é lá que o
-   agente escreve) e a tabela "Estado atual" na `integ/epic-65`.
+2. Ler o diário `docs/superpowers/plans/crmlab-65/CRMLAB-<n>.md` **dentro do worktree do card**
+   (é lá que o agente escreve; também no GitHub, na branch do card) e a tabela "Estado atual"
+   na `integ/epic-65`.
 3. Conferir o status no Jira (o card diz a fase oficial).
 4. Retomar o card do ponto do diário com um agente novo apontado para o mesmo worktree/branch.
 5. Não recriar worktree que já existe; não renumerar D-NNN/migração fora da faixa.
 
-## Diário
+## Diário do orquestrador
 
-### Orquestrador
+Diário de cada card: `docs/superpowers/plans/crmlab-65/CRMLAB-<n>.md`.
+
 - 2026-09-28: criada `integ/epic-65`, plano e faixas. Onda 1 (66, 71, 72) disparada.

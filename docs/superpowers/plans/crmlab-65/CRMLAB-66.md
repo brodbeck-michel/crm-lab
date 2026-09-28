@@ -23,9 +23,13 @@ Faixas: decisões D-220…D-224 · migrações 040, 041.
       reactionMessage, protocolMessage REVOKE/EDIT, MESSAGES_EDITED, MESSAGES_DELETE),
       syncEvolutionWebhooks no boot (main.ts), prévia/timeline escondendo apagada.
       Testes de shape atualizados (list/messages/evolution-client).
-- [ ] Frontend: MessageBubble (menu, citação, reações, apagada/editada, data-message-id),
-      Composer (faixa "Respondendo a"), ConversationPanel (estado replyTo, scrollToMessage),
-      Attendance (envio com quotedMessageId, reação), ws.ts (message_updated).
+- [x] Frontend: MessageBubble (setinha + menu Responder/Reagir/Copiar, barra QUICK_REACTIONS,
+      bloco citado clicável, pílula de reações, "🚫 Mensagem apagada", "Editada",
+      `data-message-id` + `data-highlighted`), Composer (faixa "Respondendo a" + × + Esc),
+      ConversationPanel (estado reply por conversa, `renderRows(..., actions)`,
+      `scroll-to-message.ts`), Attendance/index (quotedMessageId em texto/anexo/áudio, mutation de
+      reação, toast "original não carregada"), api/conversations (setReaction/removeReaction),
+      ws.ts (`conversation.message_updated` = mesma invalidação de new_message).
 - [x] Testes backend: `tests/webhooks/evolution-crmlab66.spec.ts` (16, payloads Evolution v2:
       contextInfo.stanzaId no topo e no extendedTextMessage, reactionMessage set/troca/remove,
       fromMe, protocolMessage REVOKE, messages.delete, messages.edited REVOKE/MESSAGE_EDIT,
@@ -52,4 +56,4 @@ D-220, D-221, D-222, D-223 (D-224 livre).
 - Miniatura real no bloco citado: usa rótulo ("📷 Foto") em vez de buscar a imagem.
 
 ## Próximo passo exato
-Frontend: `ws.ts` (conversation.message_updated), `api/conversations.ts` (setReaction/removeReaction, quotedMessageId), MessageBubble (menu/citação/reações/apagada/editada), Composer (faixa replyTo), ConversationPanel + scroll-to-message.ts, Attendance/index.tsx.
+Testes frontend: MessageBubble.crmlab66.spec.tsx (menu, reagir, copiar, apagada, editada, citação), Composer (faixa), scroll-to-message.spec.ts, ws.spec (message_updated).

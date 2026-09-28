@@ -5,6 +5,7 @@ export {
   MESSAGE_BUBBLE_TYPES,
   INBOX_BUBBLE_MAX_WIDTH,
   bubbleTypeFor,
+  quotedLabel,
 } from './MessageBubble';
 export type { MessageBubbleProps, MessageBubbleType } from './MessageBubble';
 export { DateSeparator, dateSeparatorLabel, isSameLocalDay } from './DateSeparator';

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode, RefObject } from 'react';
+import { QUOTED_PREVIEW_MAX } from '@crm-lab/shared';
 import type {
   ConversationAssignee,
   ConversationDetail,
@@ -14,8 +15,10 @@ import {
   MessageBubble,
   bubbleTypeFor,
   isSameLocalDay,
+  quotedLabel,
 } from '@/components/conversation';
-import type { RecordedAudio } from '@/components/conversation';
+import type { MessageBubbleProps, RecordedAudio } from '@/components/conversation';
+import { scrollToMessage } from './scroll-to-message';
 import { useConversationScroll } from './useConversationScroll';
 
 /**
@@ -35,7 +38,8 @@ export interface ConversationPanelProps {
   isLoading: boolean;
   isError: boolean;
   onRetry: () => void;
-  onSend: (content: string) => void;
+  /** `quotedMessageId` = respondendo citando (CRMLAB-66, D-221). */
+  onSend: (content: string, quotedMessageId?: string) => void;
   sending: boolean;
   /** Quem pode receber a conversa — `GET /conversations/assignees`. */
   assignees: ConversationAssignee[];
@@ -50,10 +54,14 @@ export interface ConversationPanelProps {
   onToggleContext: () => void;
   /** Fecha a conversa aberta, voltando ao estado "nenhuma selecionada" (padrão WhatsApp Web). */
   onClose: () => void;
-  /** Anexo no composer. */
-  onAttach: () => void;
+  /** Anexo no composer. `quotedMessageId` = o anexo sai citando (CRMLAB-66). */
+  onAttach: (quotedMessageId?: string) => void;
   /** Recado de voz gravado no composer (CRMLAB-24) — ver `Composer.onSendAudio`. */
-  onSendAudio?: (audio: RecordedAudio) => Promise<unknown>;
+  onSendAudio?: (audio: RecordedAudio, quotedMessageId?: string) => Promise<unknown>;
+  /** Reação do laboratório (D-222); `null` tira. Sem handler, "Reagir" some do menu. */
+  onReact?: (messageId: string, emoji: string | null) => void;
+  /** A citada não está no que foi carregado — quem monta a tela avisa (toast). */
+  onQuoteUnavailable?: () => void;
   /** Macros do laboratório — a `/` do composer (Onda 8 §3.4). */
   quickReplies: QuickReply[];
   contextOpen: boolean;
@@ -243,6 +251,8 @@ export function ConversationPanel({
   onClose,
   onAttach,
   onSendAudio,
+  onReact,
+  onQuoteUnavailable,
   quickReplies,
   contextOpen,
   hasOlderMessages,
@@ -274,6 +284,26 @@ export function ConversationPanel({
     onLoadOlder,
   });
   useBottomAnchor(scrollRef, !isError && !isLoading && conversation !== null);
+
+  // Respondendo a (CRMLAB-66): presa à conversa — trocar de conversa esquece.
+  const [reply, setReply] = useState<{ conversationId: string; message: Message } | null>(null);
+  const replyTo = reply && reply.conversationId === conversationId ? reply.message : null;
+  const quotedId = replyTo?.id;
+  const clearReply = (): void => setReply(null);
+
+  const bubbleActions: BubbleActions = {
+    onReply:
+      conversation?.status === 'active' && conversationId !== null
+        ? (message) => setReply({ conversationId, message })
+        : undefined,
+    onReact:
+      onReact && conversation?.status === 'active'
+        ? (message, emoji) => onReact(message.id, emoji)
+        : undefined,
+    onQuoteClick: (messageId) => {
+      if (!scrollToMessage(scrollRef.current, messageId)) onQuoteUnavailable?.();
+    },
+  };
 
   /** A atendente respondeu: a faixa sai e a resposta aparece no fim (D-239). */
   function beforeReply(): void {
@@ -395,7 +425,7 @@ export function ConversationPanel({
               hint="Escreva a primeira mensagem para começar o atendimento."
             />
           ) : (
-            renderRows(messages, unread, dividerRef)
+            renderRows(messages, unread, dividerRef, bubbleActions)
           )}
         </div>
 
@@ -443,20 +473,43 @@ export function ConversationPanel({
         key={conversation.id}
         onSend={(content) => {
           beforeReply();
-          onSend(content);
+          onSend(content, quotedId);
+          clearReply();
         }}
         onAttach={() => {
           beforeReply();
-          onAttach();
+          onAttach(quotedId);
+          clearReply();
         }}
         onSendAudio={
           onSendAudio
-            ? (audio) => {
+            ? async (audio) => {
                 beforeReply();
-                return onSendAudio(audio);
+                const sent = await onSendAudio(audio, quotedId);
+                clearReply();
+                return sent;
               }
             : undefined
         }
+        replyTo={
+          replyTo
+            ? {
+                authorName:
+                  replyTo.senderType === 'patient'
+                    ? (replyTo.senderName ?? conversation.patientName ?? 'Paciente')
+                    : (replyTo.senderName ?? 'Você'),
+                preview: quotedLabel({
+                  id: replyTo.id,
+                  senderType: replyTo.senderType,
+                  senderName: replyTo.senderName,
+                  preview: replyTo.content.slice(0, QUOTED_PREVIEW_MAX),
+                  messageType: replyTo.messageType,
+                  deleted: false,
+                }),
+              }
+            : null
+        }
+        onCancelReply={clearReply}
         sending={sending}
         disabled={closed}
         quickReplies={quickReplies}
@@ -471,10 +524,13 @@ export function ConversationPanel({
  * Cada bolha vai numa linha com `data-anchor-id` — é nela que a rolagem se
  * ancora (D-238). O `data-message-id` do balão é do `MessageBubble`.
  */
+type BubbleActions = Pick<MessageBubbleProps, 'onReply' | 'onReact' | 'onQuoteClick'>;
+
 function renderRows(
   messages: Message[],
   unread: UnreadMark | null,
   dividerRef: RefObject<HTMLDivElement>,
+  actions: BubbleActions,
 ): ReactNode[] {
   const now = new Date();
   const nodes: ReactNode[] = [];
@@ -501,7 +557,7 @@ function renderRows(
     }
     nodes.push(
       <div key={message.id} data-anchor-id={message.id} className="flex min-w-0 flex-col">
-        <MessageBubble type={bubbleTypeFor(message.senderType)} message={message} />
+        <MessageBubble type={bubbleTypeFor(message.senderType)} message={message} {...actions} />
       </div>,
     );
     previous = message;

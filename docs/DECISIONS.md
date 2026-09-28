@@ -3102,6 +3102,86 @@ rodada anterior volta na seguinte, o que é inofensivo porque o upsert é idempo
 **Impacto:** `bitlab-client.ts` (`parseBitlabDateTime`, `bitlabDateToIsoDate`,
 `watermarkToBitlabDateTime`), SERVICES.md §24.1, BUSINESS_RULES.md §11.10.
 
+### D-188: Recebido do LIS = soma dos pagamentos ativos, a partir de um extrato por `ID_PAGAMENTO` (CRMLAB-53)
+*(Número reservado em 25/09/2026; decisão escrita em 28/09/2026, depois da resposta do Bitlab.)*
+**Decisão:**
+1. **Extrato de pagamentos:** tabela nova `lis_budget_payments` (migração 032, RLS por tenant),
+   uma linha por pagamento: `budget_number`, `requisition_number`, `payment_key`, `source`
+   (`api` | `planilha`), `paid_at` (`TIMESTAMP` sem fuso, com segundos, relógio de Brasília,
+   D-187), `paid_value`, `status` (`ativo` | `estornado`), `reversed_at`, `payment_method`,
+   `card_brand`, `import_id`, `updated_at`. Chave única `(tenant_id, budget_number, payment_key)`.
+2. **Chave do pagamento:** na API é o `ID_PAGAMENTO`. Na planilha, que não tem ID nem situação,
+   é `planilha:<paid_at>:<valor>`.
+3. **Gravação:** `ON CONFLICT ... DO UPDATE` de situação, data do estorno, forma e bandeira. O
+   pagamento muda de `ATIVO` para `ESTORNADO` **na mesma linha**; rodar a mesma carga duas vezes
+   não muda nada. A linha nunca é apagada pela carga (o LIS não apaga: o mecanismo é o estorno).
+   Linha da API sem `ID_PAGAMENTO` (orçamento sem pagamento) não gera extrato.
+4. **Valor derivado** em `lis_budgets`, recalculado no mesmo chunk, para os orçamentos do chunk:
+   - Se o orçamento tem **algum pagamento da API**: `paid_value = LEAST(SUM(ativos da API),
+     requisition_value)`. Os da planilha desse orçamento são ignorados (a API manda, e somar os
+     dois contaria o mesmo pagamento duas vezes).
+   - Senão, se tem pagamentos **só da planilha**: `LEAST(SUM(todos), requisition_value)` (a
+     planilha não diz quem foi estornado; o teto é a proteção).
+   - `paid_on` = data do último pagamento considerado, **de qualquer valor** (a régua de fatos da
+     D-204 conta pagamento de R$ 0 como pagamento, e isso não muda); nenhum considerado (só
+     estornados) → `paid_value = 0`, `paid_on = NULL`.
+   - Orçamento **sem nenhuma linha no extrato** (carga anterior ao card) fica como está.
+   - `requisition_value` nulo → sem teto.
+5. **`consolidateLisRows`** deixa de decidir pagamento: só consolida os campos do orçamento (maior
+   total vence, §11.1). O `upsertBudget` deixa de gravar `paid_value`/`paid_on`.
+6. **Relatórios:** continuam lendo `lis_budgets.paid_value`/`paid_on`. O `DISTINCT ON
+   (requisition_number)` da §11.2 **fica**, porque ele resolve outra coisa: dois orçamentos com a
+   mesma requisição.
+7. **Estorno depois de `ganho`:** a proposta **não reabre** (D-192 item 2); `lis_paid_value` e
+   `lis_paid_on` são atualizados pela conciliação (D-119 item 6), e Resultados/comissão refletem o
+   valor novo.
+**Motivo:** o Bitlab confirmou em 28/09/2026 que a API devolve um movimento por linha, que linha
+zerada, valor repetido e soma acima da requisição são **estornos**, e que a linha estornada continua
+saindo. Ele incluiu na v1 `ID_PAGAMENTO`, `SITUACAO_PAGAMENTO` (`ATIVO`/`ESTORNADO`), `DATA_ESTORNO`,
+`FORMA_PAGAMENTO` e `BANDEIRA_CARTAO`, que a consulta pela VPS confirmou já estarem em produção
+(1.198 pagamentos, `ID_PAGAMENTO` único). Os casos 66760 (528,26), 68905 (783,55), 68785 (837,47) e
+66210 (676,24) fecham com a soma dos ativos. A regra antiga ("a última linha sobrescreve") zerava
+orçamentos pagos (68281) e deixava R$ 17 mil de fora.
+**Impacto:** migração 032; `bitlab-client.ts` (schema e `toLisRow` com os campos novos, `paidAt`
+com segundos), `lis-spreadsheet.ts` (`paidAt` com hora; `consolidateLisRows`),
+`lis-import.repository.ts` (`upsertPayments`, `recomputePaidValues`), `lis-import.service.ts`;
+BUSINESS_RULES §11.1/§11.2/§11.10, SCHEMA §26 + tabela nova, SERVICES §19/§24.1.
+
+### D-189: Releitura diária de 90 dias pega o estorno; a planilha vira plano B, ligada por regra (CRMLAB-53)
+**Decisão:**
+1. **O estorno não volta na consulta incremental.** A consulta pela VPS (28/09/2026) mostrou que
+   `tipoData=alteracao` filtra só por emissão/`Data_Pagamento`: nos 5 estornos testados, a linha
+   não voltou na janela da `DATA_ESTORNO`. O maior intervalo observado entre pagamento e estorno
+   foi de 15 dias.
+2. **Duas marchas na mesma sincronização:**
+   - **incremental**, a cada tique (2 min, D-199), como hoje, a partir da `marcaDagua`;
+   - **releitura completa**, uma vez por dia, no primeiro tique depois das **03:00 de Brasília**:
+     janela dos últimos `LIS_SYNC_INITIAL_DAYS` (90) dias. Grava pelo mesmo `ingestRows`, e os
+     estornos corrigem a situação pelo `ID_PAGAMENTO` (D-188 item 3).
+   - A releitura **não recua a marca**: a marca gravada é a maior entre a atual e a recebida.
+   - Controle em `lis_sync_settings.last_full_scan_on` (`DATE`, Brasília): só é gravado quando a
+     releitura termina sem erro; se falhar, o próximo tique tenta de novo.
+   - "Sincronizar agora" continua incremental.
+3. **Estorno com mais de 90 dias** não é pego. Aceito: o maior intervalo visto foi de 15 dias, e
+   o laboratório fecha comissão mensalmente. O pedido ao Bitlab para a `DATA_ESTORNO` contar no
+   filtro `alteracao` fica registrado no card; se ele atender, a releitura continua como rede de
+   segurança.
+4. **Planilha como plano B:** nova seção nas Regras (D-190), `lisSource.spreadsheetImport`
+   (`enabled: boolean`), **desligada por padrão**. Desligada: o botão "Importar planilha" some em
+   Resultados e `POST /lis-imports` devolve `SPREADSHEET_IMPORT_DISABLED` (mesmo padrão de
+   `MANUAL_PROPOSAL_DISABLED`, D-193). Ligada: a importação funciona como hoje, com a regra da
+   planilha da D-188 item 4. Limpar a base (`purge`, admin) não depende da flag.
+5. **Emenda à D-191:** este padrão **não** reproduz o comportamento anterior (a planilha estava
+   sempre disponível). É intencional: o Michel decidiu em 28/09/2026 que a API é a carga principal.
+**Motivo:** sem a releitura, um pagamento lido como ativo e estornado depois ficaria ativo para
+sempre, e o recebido e a comissão ficariam acima do real. A consulta completa de 01/05 até hoje
+tem 4 páginas, então reler 90 dias por dia custa pouco. A planilha não tem situação por pagamento,
+então só serve de reserva para o caso de a API ficar fora do ar.
+**Impacto:** migração 032 (`last_full_scan_on`); `lis-sync.service.ts` (modo da rodada,
+`windowStart`); `shared/types/funnel-rules.types.ts` + `funnel-rules.service.ts` (seção nova);
+`lis-import.service.ts` (trava); `errors.ts`/`api.types.ts` (`SPREADSHEET_IMPORT_DISABLED`);
+frontend `Settings/Rules.tsx` e `Results.tsx`; SERVICES §24/§26, API_CONTRACTS §6c/§10.1.
+
 ## 2026-09-26 — Página de Regras do funil (CRMLAB-56)
 
 ### D-190: Regras do funil por laboratório, numa linha JSONB própria, com um ponto único de leitura

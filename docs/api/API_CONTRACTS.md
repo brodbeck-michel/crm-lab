@@ -3781,6 +3781,9 @@ completo com os padrões aplicados. Nenhum outro código lê `funnel_rules` dire
       "hours": 24,
       "message": "Olá! Como não tivemos retorno, vamos deixar o atendimento em aberto. Quando quiser, é só responder esta mensagem."
     }
+  },
+  "lisSource": {
+    "spreadsheetImport": { "enabled": false }
   }
 }
 ```
@@ -3800,6 +3803,7 @@ completo com os padrões aplicados. Nenhum outro código lê `funnel_rules` dire
 | `sendMessage.template` | Modelo do WhatsApp; render por `renderSendMessageTemplate` | CRMLAB-58 |
 | `reengagement.first` | Paciente sem responder há `hours` depois da última mensagem da atendente → manda `message` (D-211) | CRMLAB-62 |
 | `reengagement.second` | `hours` depois do envio do 1º, se continuar sem resposta → manda `message`. Só com o 1º ligado | CRMLAB-62 |
+| `lisSource.spreadsheetImport` | Importar a planilha do LIS (plano B; a carga principal é a API do Bitlab). Padrão **`false`**. `false` → `POST /lis-imports` = `SPREADSHEET_IMPORT_DISABLED` e o botão "Importar" some em Resultados (D-189) | CRMLAB-53 |
 
 `checkTransition`, `canTransition`, `allowedTargets`, `buildAllowedTransitions`, `canReopen`,
 `SEQUENTIAL_TRANSITIONS`, `REOPEN_TARGETS`, `findUnknownTemplateVariables` e
@@ -4338,7 +4342,13 @@ Gera audit log `import_lis_spreadsheet` (`entityType: "lis_import"`) e invalida 
 **Erros:** `VALIDATION_ERROR` (400) com `details.reason` ∈ `pdf_disguised | missing_column |
 empty` (arquivo é PDF renomeado; falta a coluna `ORCAMENTO`; planilha sem nenhuma linha de
 dado), `MEDIA_TOO_LARGE` (413, acima de 10 MiB), `FORBIDDEN` (403,
-`details.requiredRoles: ["manager","admin"]`)
+`details.requiredRoles: ["manager","admin"]`), `SPREADSHEET_IMPORT_DISABLED` (409, a regra
+`lisSource.spreadsheetImport` está desligada — o padrão; checado antes de ler o arquivo, nada é
+gravado. CRMLAB-53, D-189).
+
+Desde a D-188 cada linha com `VALOR_PAGO` vira um pagamento no extrato (`lis_budget_payments`) e o
+recebido do orçamento é a soma deles com teto na requisição (BUSINESS_RULES.md §11.11). A coluna
+`DATA_PAGAMENTO` é lida com a hora, quando a célula tem.
 
 #### GET /lis-imports
 Histórico de importações e purges do tenant.
@@ -4629,6 +4639,7 @@ Configuração e disparo da sincronização dos orçamentos pela API de Orçamen
   "lastRunAt": "2026-09-25T14:00:00.000Z",
   "lastSuccessAt": "2026-09-25T14:00:00.000Z",
   "lastError": null,
+  "lastFullScanOn": "2026-09-25",
   "running": false,
   "intervalMinutes": 2
 }
@@ -4640,6 +4651,9 @@ Configuração e disparo da sincronização dos orçamentos pela API de Orçamen
   resposta. Volta a `null` na primeira rodada bem-sucedida.
 - `running`: há uma rodada em andamento agora (trava em memória, D-185 item 5).
 - `intervalMinutes`: de `LIS_SYNC_INTERVAL_MS`, só para a tela dizer "a cada N minutos".
+- `lastFullScanOn` (CRMLAB-53, D-189): dia (`YYYY-MM-DD`, Brasília) da última releitura dos últimos
+  90 dias que terminou sem erro — é ela que pega os estornos. `null` = nunca. A releitura roda no
+  primeiro tique depois das 03:00; "Sincronizar agora" continua incremental.
 
 #### PATCH /settings/lis-integration (admin)
 

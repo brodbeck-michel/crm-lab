@@ -39,6 +39,8 @@ type UpdateBody = z.infer<typeof updateLisIntegrationSchema>;
 
 export interface LisSyncModuleOverrides {
   bitlab?: BitlabClient;
+  /** Relogio (so teste): decide a releitura diaria das 03:00 (D-189). */
+  now?: () => Date;
 }
 
 /** Monta o service com as mesmas deps do agendador do `main.ts`. */
@@ -54,6 +56,7 @@ export function createLisSyncServiceFromDeps(
     bitlab: overrides.bitlab ?? createBitlabClient({ baseUrl: env.BITLAB_API_BASE_URL }),
     intervalMs: env.LIS_SYNC_INTERVAL_MS,
     initialDays: env.LIS_SYNC_INITIAL_DAYS,
+    ...(overrides.now ? { now: overrides.now } : {}),
   });
 }
 

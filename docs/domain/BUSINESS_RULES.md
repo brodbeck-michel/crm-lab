@@ -547,6 +547,12 @@ paciente, atendente), mas `requisition_number` cai para a outra linha se a vence
 `paid_value`/`paid_on`/`requisition_value` vêm de **qual das duas linhas tiver o maior
 `paid_value`** — nunca descartados junto com a perdedora do total.
 
+**Substituída pela D-188 (CRMLAB-53) na parte do pagamento:** `consolidateLisRows` continua
+mesclando `requisition_number` e ficando com o **maior** `requisition_value`, mas **não decide
+mais o pagamento**. Cada linha com `Valor_Pago` é um pagamento, e todos vão para o extrato
+(`lis_budget_payments`, §11.11). O upsert de `lis_budgets` não grava `paid_value`/`paid_on`, que
+passam a ser derivados do extrato.
+
 ### 11.2 Dedupe por requisição (KPI de pagamento)
 A mesma `REQUISICAO` pode aparecer em mais de uma linha de `lis_budgets` (o LIS atualiza o valor
 pago em cima de um orçamento já existente, gerando uma nova linha ou uma linha atualizada) — para
@@ -556,6 +562,11 @@ qualquer KPI de pagamento, **a linha de maior `paid_value` vence**, via
 do dedupe de **escrita** de 11.1 (a linha de `lis_budgets` em si) — as duas regras coexistem
 porque perguntam coisas diferentes: "qual é o orçamento" vs. "quanto foi pago por aquela
 requisição".
+
+**Depois da D-188 (CRMLAB-53):** o `DISTINCT ON` **continua**. Ele não escolhe mais entre
+pagamentos (isso agora é a soma do extrato, §11.11): escolhe entre **orçamentos diferentes com a
+mesma requisição**, cada um com o seu `paid_value` já derivado. Sem ele, dois orçamentos da mesma
+requisição contariam o mesmo recebido duas vezes.
 
 ### 11.3 Convênio principal
 De `insurance_1`/`insurance_2`/`insurance_3` (com `value_1..3` correspondentes), o convênio
@@ -664,8 +675,44 @@ planilha produz (`LisSpreadsheetRow`) e segue §11.1–§11.6 sem diferença:
 
 A regra do maior total (§11.1) continua valendo entre as fontes: um orçamento que veio primeiro
 pela planilha e depois pela API (ou o contrário) é a mesma linha `(tenant_id, number)`. A API
-traz o pagamento no mesmo orçamento, com o mesmo total, então o `>=` do upsert deixa o pagamento
-entrar.
+traz o pagamento no mesmo orçamento, com o mesmo total. Desde a D-188 o pagamento não passa pelo
+upsert do orçamento: vai para o extrato (§11.11).
+
+**Campos do pagamento (v1, aditivos, CRMLAB-53, D-188):** a API devolve **uma linha por
+pagamento** (o mesmo orçamento repete em várias linhas).
+
+| Campo da API | Campo interno | Conversão |
+|---|---|---|
+| `Data_Pagamento` | `paidAt` | `YYYY-MM-DD HH:mm:ss` com os segundos (D-187); `paid_on` segue sendo o dia |
+| `ID_PAGAMENTO` | `paymentId` → `payment_key` | `String(n)`. Único por pagamento. Ausente = linha sem pagamento |
+| `SITUACAO_PAGAMENTO` | `paymentStatus` | `ESTORNADO` → `estornado`; qualquer outro valor → `ativo` |
+| `DATA_ESTORNO` | `reversedAt` | mesma conversão (D-187) |
+| `FORMA_PAGAMENTO` / `BANDEIRA_CARTAO` | `paymentMethod` / `cardBrand` | crus. Só guardados (sem tela ainda) |
+
+**O filtro `tipoData=alteracao` olha só emissão e `Data_Pagamento`, nunca `DATA_ESTORNO`**
+(conferido pela VPS em 28/09/2026). Um pagamento estornado depois da leitura **não volta** na
+consulta incremental. Por isso a sincronização relê os últimos 90 dias uma vez por dia (D-189,
+SERVICES.md §24).
+
+### 11.11 Extrato de pagamentos e recebido (CRMLAB-53, D-188/D-189)
+- **Extrato:** `lis_budget_payments` (SCHEMA.md §26a), uma linha por pagamento, chave
+  `(tenant_id, budget_number, payment_key)`. `payment_key` = `ID_PAGAMENTO`; na planilha, que não
+  tem ID, `planilha:<paidAt>:<valor com 2 casas>`. Rodar a mesma carga duas vezes não soma nada. O
+  estorno **atualiza a mesma linha** (`ativo` → `estornado`); valor e data não mudam depois de
+  gravados, e a carga nunca apaga pagamento.
+- **Origem:** o que chega pela sincronização é `api`; pela planilha, `planilha`.
+- **Recebido** (`lis_budgets.paid_value`), recalculado no mesmo chunk da gravação:
+  - orçamento com **algum pagamento da API** → soma dos pagamentos **ativos da API** (os da
+    planilha desse orçamento são ignorados, para não contar o mesmo pagamento duas vezes);
+  - só pagamentos da **planilha** → soma de todos (a planilha não diz o que foi estornado);
+  - **teto** em `requisition_value` quando ele é > 0.
+- **`paid_on`** = dia do último pagamento considerado, **de qualquer valor** (a régua de fatos da
+  D-204 conta pagamento de R$ 0 como pagamento). Só estornos → `paid_value = 0`, `paid_on = NULL`.
+- Orçamento **sem nenhuma linha no extrato** (carga anterior ao card) não é tocado.
+- **Estorno depois de `ganho`:** a proposta não reabre (D-192 item 2); `lis_paid_value`/
+  `lis_paid_on` são atualizados pela conciliação (D-119 item 6).
+- **Planilha é plano B:** só importa com `lisSource.spreadsheetImport.enabled` ligado nas Regras
+  (padrão desligado, D-189 item 4).
 
 ---
 

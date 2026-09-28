@@ -1118,6 +1118,18 @@ chama (`import`) é este service.
   ordem importa: a proposta criada já entra na conciliação do mesmo chunk, que grava
   `lis_budgets.proposal_id` e espelha a requisição (selo). O total vai para
   `lis_imports.proposals_created`; os ids, para `announceBitlabProposals` depois do commit.
+- **Extrato de pagamentos (CRMLAB-53, D-188):** `consolidateLisRows` não decide mais o pagamento;
+  junta os pagamentos de todas as linhas do orçamento em `payments` (`paymentOf`, sem repetir
+  chave). Por chunk, na mesma transação: `upsertBudget` (sem `paid_value`/`paid_on`) →
+  `upsertPayments(tx, tenantId, importId, source, number, payments)` em `lis_budget_payments`
+  (SCHEMA.md §26a; `source` = `api` para `kind: 'sync'`, `planilha` para `kind: 'import'`) →
+  `recomputePaidValues(tx, tenantId, numbers)` → `createBitlabProposals` → `reconcileBudgets`. A
+  proposta e a conciliação leem o recebido já recalculado (regra em BUSINESS_RULES.md §11.11).
+  `purge` apaga também o extrato do tenant.
+- **Planilha é plano B (D-189 item 4):** `import` lê as Regras (`readFunnelRules`, §26) antes do
+  parser; com `lisSource.spreadsheetImport.enabled = false` (padrão) lança
+  `SPREADSHEET_IMPORT_DISABLED` (409) e nada é gravado. `ingestRows` não tem a trava: a
+  sincronização usa o mesmo caminho.
 
 ---
 
@@ -1145,7 +1157,9 @@ consumidor):**
 - **`req`** — `DISTINCT ON (requisition_number) ... ORDER BY requisition_number, paid_value
   DESC`: dedupe por requisição, maior `paid_value` vence (BUSINESS_RULES.md §11) — a mesma
   requisição pode aparecer em duas linhas de `lis_budgets` (reimportação com pagamento
-  atualizado), e só a de maior valor pago conta.
+  atualizado), e só a de maior valor pago conta. Desde a D-188 (CRMLAB-53) o `paid_value` de cada
+  linha já é a soma dos pagamentos ativos do extrato; o `DISTINCT ON` só escolhe entre orçamentos
+  diferentes da mesma requisição (BUSINESS_RULES.md §11.2).
 - **`paid`** — sobre `req`, janela de **pagamento**: `paid_on` dentro do período pedido e
   `paid_value > 0`.
 
@@ -1321,6 +1335,17 @@ ao agendador):
 - A chave nunca é logada, nunca vai para `last_error` e nunca aparece numa mensagem de erro
   (inclusive `error.cause`).
 - Auditoria: `update_lis_integration` (com `"[REDACTED]"`) e `run_lis_sync` (só no `runNow`).
+- **Duas marchas (CRMLAB-53, D-189):** `runForTenant(tenantId, triggeredBy, mode)` com `mode`
+  `incremental` | `full` | `auto` (só o agendador passa `auto`). O estorno não volta na janela
+  incremental (BUSINESS_RULES.md §11.10), então:
+  - `auto` vira `full` quando o relógio de Brasília passou de `FULL_SCAN_HOUR` (**03:00**) e
+    `last_full_scan_on` é `NULL` ou anterior a hoje; senão, `incremental`;
+  - `full` ignora a marca: `dataInicio` = hoje − `LIS_SYNC_INITIAL_DAYS` (90) às 00:00:00. Grava
+    pelo mesmo `ingestRows`, e o estorno atualiza a situação pelo `ID_PAGAMENTO` (§19);
+  - sucesso em `full` grava `last_full_scan_on = hoje`; falha não grava, e o próximo tique tenta
+    de novo;
+  - a marca **nunca recua**: `finishRun` guarda a maior entre a gravada e a recebida;
+  - **"Sincronizar agora" é sempre `incremental`**. A rodada `full` sai em `info` mesmo vazia.
 
 ### 24.1 Contrato assumido da API de Orçamentos do Bitlab (`backend/src/lib/bitlab-client.ts`)
 
@@ -1348,6 +1373,14 @@ emendar aqui o que divergir, como foi feito com a sandbox em 18/09.
 `ID_CPF`, `CONVENIO1..3` (string \| null), `VL_TOTAL1..3` (number \| null), `MEDIA_CONVENIO`,
 `QTD_EXAMES`, `USUÁRIO`, `REQUISICAO` (string \| null, `posto-requisição`), `CONVENIO_REQUISICAO`,
 `VALOR_REQUISICAO`, `Valor_Pago`, `Data_Pagamento` (data/hora \| null), `CONTA_NULO` (0 \| 1).
+
+**Pagamento (aditivos na v1, conferido 28/09/2026, CRMLAB-53):** a resposta traz **uma linha por
+pagamento**. `ID_PAGAMENTO` (number, único), `SITUACAO_PAGAMENTO` (`ATIVO` \| `ESTORNADO`),
+`DATA_ESTORNO` (data/hora \| null), `FORMA_PAGAMENTO` (`Dinheiro`, `Cartão Crédito`, `Cartão
+Débito`, `PIX`, `Boleto`…), `BANDEIRA_CARTAO` (string \| null). Linha de orçamento sem pagamento
+vem com todos eles `null`. A linha estornada **continua saindo**, com `ESTORNADO`; o filtro
+`alteracao` **não** considera `DATA_ESTORNO` (5 casos testados em 28/09). Todos opcionais no
+schema: a falta deles não quebra a rodada, e a linha cai na chave da planilha (D-188 item 2).
 
 **Tolerância na borda** (lições da sandbox de 18/09, `Avaliacao_APIs_Bitlab_2026-09-18.md`):
 - Envelope validado com zod. Os campos que usamos são obrigatórios no schema, os desconhecidos
@@ -1474,6 +1507,10 @@ export interface FunnelRulesService {
 - Quem consome: `ProposalService.create` (`origin.manualInCrm`, D-193) e
   `ProposalService.updateStatus` (`manualMoves` via `checkTransition`, D-192), lendo com
   `readFunnelRules` na mesma transação. Os cards CRMLAB-57..60 leem pelo mesmo ponto.
+- **Seção `lisSource` (CRMLAB-53, D-189 item 4):** `lisSource.spreadsheetImport.enabled`, padrão
+  `false` (emenda à D-191: a API é a carga principal). Folha booleana comum, sem validação
+  própria. Quem consome: `LisImportService.import` (§19), que recusa com
+  `SPREADSHEET_IMPORT_DISABLED`.
 
 ---
 

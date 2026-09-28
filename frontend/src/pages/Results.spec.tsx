@@ -19,6 +19,8 @@ import * as lisApi from '@/api/lis';
 import * as reportsApi from '@/api/reports';
 import * as salesApi from '@/api/sales';
 import * as commissionApi from '@/api/commission-settings';
+import * as funnelRulesApi from '@/api/funnel-rules';
+import { DEFAULT_FUNNEL_RULES, type FunnelRules } from '@crm-lab/shared';
 
 vi.mock('@/api/lis', async () => {
   const actual = await vi.importActual('@/api/lis');
@@ -47,6 +49,18 @@ vi.mock('@/api/commission-settings', async () => {
   const actual = await vi.importActual('@/api/commission-settings');
   return { ...actual, useCommissionSettings: vi.fn() };
 });
+
+vi.mock('@/api/funnel-rules', async () => {
+  const actual = await vi.importActual('@/api/funnel-rules');
+  return { ...actual, useEffectiveFunnelRules: vi.fn() };
+});
+
+const useEffectiveFunnelRules = vi.mocked(funnelRulesApi.useEffectiveFunnelRules);
+
+/** Regras com a planilha ligada ou desligada (CRMLAB-53, D-189). */
+function rulesWithSpreadsheet(enabled: boolean): FunnelRules {
+  return { ...DEFAULT_FUNNEL_RULES, lisSource: { spreadsheetImport: { enabled } } };
+}
 
 const useLisBudgetsFilters = vi.mocked(lisApi.useLisBudgetsFilters);
 const useLisBudgetsSummary = vi.mocked(lisApi.useLisBudgetsSummary);
@@ -163,6 +177,7 @@ describe('Results (/results)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useUIStore.setState({ lisFilters: defaultLisFilters() });
+    useEffectiveFunnelRules.mockReturnValue(rulesWithSpreadsheet(true));
     useLisBudgetsFilters.mockReturnValue(querySuccess(filters));
     useLisImportsLatest.mockReturnValue(querySuccess<LisImport | null>(latestImport));
     useExecutiveReport.mockReturnValue(querySuccess(executiveReport));
@@ -262,6 +277,24 @@ describe('Results (/results)', () => {
       await screen.findByText('Nenhum orçamento importado neste período.'),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Importar planilha' })).toBeInTheDocument();
+  });
+
+  it('planilha desligada nas Regras: nenhum botão de importar (CRMLAB-53)', async () => {
+    useEffectiveFunnelRules.mockReturnValue(rulesWithSpreadsheet(false));
+    useLisBudgetsSummary.mockReturnValue(
+      querySuccess<LisBudgetsSummary>({
+        ...summary,
+        issued: { count: 0, totalValue: 0, averageTicket: 0 },
+      }),
+    );
+    signIn('manager');
+    renderPage();
+
+    expect(
+      await screen.findByText('Troque o período acima. Os orçamentos chegam pela sincronização com o Bitlab.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Importar planilha' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Importar' })).not.toBeInTheDocument();
   });
 
   it('o carimbo da importação mostra o arquivo que está na tela', async () => {

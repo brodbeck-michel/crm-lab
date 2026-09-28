@@ -167,6 +167,9 @@ export const queryKeys = {
 
   /** ['settings', 'funnel-rules'] — `/settings/funnel-rules` (§21, CRMLAB-56) */
   funnelRules: () => ['settings', 'funnel-rules'] as const,
+
+  /** ['settings', 'holidays', year] — `/settings/holidays` (§21, CRMLAB-62) */
+  holidays: (year: number) => ['settings', 'holidays', year] as const,
 } as const;
 
 /** Prefixos usados para invalidar um escopo inteiro (todas as variações de filtro). */

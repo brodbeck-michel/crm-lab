@@ -3681,6 +3681,102 @@ considera parados.
 **Impacto:** `funnel-timer.service.ts`; SERVICES §27; relatório do card (pergunta ao Michel sobre o
 primeiro tique em produção).
 
+### D-220: Mensagem apagada ou editada pelo remetente é escondida, nunca apagada (CRMLAB-66)
+**Decisão (Michel, 28/09/2026):** quando o paciente (ou o celular do laboratório) apaga "para
+todos" ou edita uma mensagem no WhatsApp, o CRM **não apaga nada**:
+1. **Apagada:** a linha de `messages` e o arquivo de `message_media` continuam como estavam.
+   Grava `deleted_at` e `deleted_by` (`patient` | `agent` — o lado de quem mandou a original; no
+   WhatsApp só o autor apaga para todos). Nenhum `DELETE` físico.
+2. **A API não devolve o conteúdo escondido** para a tela: com `deletedAt` preenchido, `content`
+   vem `''`, `attachmentUrl` `null`, `quoted` `null` e `reactions` `[]`. A prévia da lista de
+   conversas e a timeline do paciente também mostram `''` para a mensagem apagada. A tela desenha
+   "🚫 Mensagem apagada".
+3. **Editada:** o texto novo substitui `messages.content` e `edited_at` é gravado; a versão
+   ANTERIOR vai para `message_edits` (uma linha por edição, nunca sobrescrita). A tela mostra o
+   texto novo + "Editada".
+4. **Os dois geram audit log** (`message_deleted_by_sender`, `message_edited_by_sender`,
+   `entityType: 'message'`, `userId: null`). O registro **não carrega o texto**: só `externalId`,
+   quem, quando e o id da versão guardada. Motivo: a anonimização LGPD (D-063/D-075) reescreve os
+   valores do audit log do paciente, mas não o texto das mensagens (limitação declarada); copiar o
+   texto para o audit criaria uma terceira cópia fora do alcance dela.
+5. **Quem vê o original:** só quem faz auditoria, por consulta ao banco (`messages.content` da
+   apagada, `message_edits.previous_content`). Tela de auditoria: fora de escopo. O export LGPD
+   (`GET /patients/:id/export`, admin) continua trazendo o conteúdo — é dado do titular e a rota é
+   de admin.
+6. Mensagem apagada não pode ser citada nem receber reação pelo CRM (`NOT_FOUND`, igual a
+   inexistente). Edição de mensagem já apagada é ignorada.
+**Motivo:** auditoria. Em laboratório, o que o paciente disse (pedido, reclamação, resultado
+enviado) pode precisar ser consultado depois; apagar do banco porque ele apagou no celular
+destruiria a prova.
+**Impacto:** migração 040; `message.repository.ts` (`toMessage`, `markDeletedByExternalId`,
+`applyEdit`); prévia em `conversation.repository.ts` e timeline em `patient.repository.ts`;
+webhook Evolution; API_CONTRACTS §2/§2b, SCHEMA §4/§33/§34; MessageBubble.
+
+### D-221: Citação guarda o id externo e o id interno, e resolve na leitura (CRMLAB-66)
+**Decisão:**
+1. `messages.quoted_external_id` guarda o `stanzaId` que veio do WhatsApp (ou o id externo da
+   original, no envio do CRM); `messages.quoted_message_id` guarda a original quando ela já está no
+   CRM. A leitura resolve pela id interna e, sem ela, pelo `(tenant, external_message_id)` —
+   original que chegou depois da resposta (fora de ordem) aparece sem backfill.
+2. Citação só vale **dentro da mesma conversa**. `quotedMessageId` de outra conversa, de outro
+   tenant ou de mensagem apagada → `NOT_FOUND` (nunca `FORBIDDEN`, regra 8).
+3. `Message.quoted` é um RESUMO (`id`, `senderType`, `senderName`, `preview` de até 160
+   caracteres, `messageType`, `deleted`), não a mensagem inteira. Original ausente do CRM (anterior
+   à conversa): `id: null`, `preview: ''` — a tela diz "Mensagem original indisponível".
+4. Envio: Evolution recebe `quoted: { key: { id, remoteJid, fromMe }, message: { conversation } }`
+   em `sendText`/`sendMedia` (o `message` evita depender do cache do gateway); a Cloud API da Meta
+   recebe `context.message_id`. Original sem id externo (canal `direct`, envio que falhou): a
+   mensagem sai sem citação para o WhatsApp e continua citada no CRM.
+5. A leitura do `stanzaId` aceita `data.contextInfo` (o Evolution v2 sobe o `contextInfo` para o
+   topo do `data`) e `message.<tipo>.contextInfo` (forma crua do Baileys).
+**Motivo:** o `stanzaId` é a única ligação que o WhatsApp manda; guardar só a id interna perderia
+a citação de mensagem que ainda não chegou.
+**Impacto:** migração 040; `message.repository.ts`, `message.service.ts`, drivers do
+`whatsapp.service.ts`, `evolution-client.ts`; API_CONTRACTS §2; MessageBubble, Composer.
+
+### D-222: Reação é uma por LADO (paciente / laboratório), não uma por usuário (CRMLAB-66)
+**Decisão:**
+1. `message_reactions` tem no máximo **uma linha por `(mensagem, reactor_type)`**, com
+   `reactor_type` ∈ `patient` | `agent`. `user_id` diz qual atendente reagiu pelo CRM (informativo;
+   `NULL` quando veio do celular do laboratório).
+2. Reação nova do mesmo lado **substitui** a anterior; emoji vazio **remove** (a linha sai — reação
+   não é conteúdo de mensagem, D-220 não se aplica).
+3. Pelo CRM a reação sai para o WhatsApp **antes** de gravar (fila com 3 tentativas); falhou →
+   `MESSAGE_SEND_FAILED` e nada gravado. Mensagem sem id externo (canal `direct`) grava só no CRM.
+4. O eco `fromMe` da reação feita pelo CRM volta pelo webhook: mesmo emoji preserva o `user_id`
+   gravado; emoji diferente (reagiu pelo celular) grava com `user_id` nulo.
+5. Barra rápida da tela: 👍 ❤️ 😂 😮 😢 🙏 (`QUICK_REACTIONS` em `shared/`). A API aceita qualquer
+   emoji de até 32 bytes.
+**Motivo:** para o paciente, o laboratório é UM número. Duas atendentes reagindo com emojis
+diferentes apareceriam no celular dele como uma só (a última). Guardar duas linhas faria o CRM
+mostrar algo que o paciente não vê.
+**Impacto:** migração 040; `message.repository.ts`, `message.service.ts`, rota
+`PUT|DELETE /conversations/:id/messages/:messageId/reaction`; API_CONTRACTS §2; MessageBubble.
+
+### D-223: Eventos do webhook do Evolution numa constante única, reaplicados sozinhos (CRMLAB-66)
+**Decisão:**
+1. `EVOLUTION_WEBHOOK_EVENTS` (`lib/evolution-client.ts`) é a **única** lista de eventos
+   assinados: `MESSAGES_UPSERT`, `MESSAGES_EDITED`, `MESSAGES_DELETE`, `CONNECTION_UPDATE`,
+   `QRCODE_UPDATED`. Criar instância e `/webhook/set` usam a mesma constante. Card que precisar
+   de evento novo (ex.: CRMLAB-67 com `MESSAGES_UPDATE`/`PRESENCE_UPDATE`) só acrescenta aqui.
+2. **Instância já criada se corrige sozinha, sem script e sem ninguém entrar na VPS:**
+   - **ao subir o backend** (`main.ts` → `syncEvolutionWebhooks`): para cada laboratório com canal
+     WhatsApp em `connection_mode = 'qr'`, reenvia `/webhook/set` com a lista vigente.
+     Best-effort: instância ausente no gateway é ignorada, erro vira log `warn` e não derruba o
+     boot. Todo deploy recria o container, então todo deploy reaplica;
+   - **ao conectar** (`connectWhatsAppQr`): `createInstance` já reaplica o webhook quando a
+     instância existe (`already in use`).
+3. Lida fora do contexto de tenant: só `tenant_id` de `tenant_channels` (mesma exceção de D-205
+   item 6); o resto roda por laboratório.
+4. WebSocket: `conversation.message_updated { conversationId, messageId }` avisa reação, edição e
+   apagamento. Evento separado de `conversation.new_message` de propósito — quem conta mensagem
+   nova (aviso, som, badge) não pode disparar por uma reação.
+**Motivo:** a lista estava escrita dentro de `webhookBody` e a instância criada antes do deploy
+nunca receberia os eventos novos. Reaplicar no boot é idempotente e barato (1 POST por
+laboratório conectado).
+**Impacto:** `evolution-client.ts`, `channel-settings.service.ts`, `main.ts`; webhook Evolution;
+`shared/types/websocket.types.ts`; FRONTEND_BACKEND "Real-time"; API_CONTRACTS §2b; SERVICES §16.
+
 ## Template para novas decisões
 
 ```

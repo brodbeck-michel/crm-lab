@@ -5,6 +5,7 @@
 
 export type WsEventName =
   | 'conversation.new_message'
+  | 'conversation.message_updated'
   | 'proposal.created'
   | 'proposal.status_changed'
   | 'proposal.updated'
@@ -16,6 +17,11 @@ export type WsEventName =
 
 export interface WsEventPayloads {
   'conversation.new_message': { conversationId: string; messageId: string };
+  /**
+   * Reacao, edicao ou apagamento de uma mensagem que ja existia (CRMLAB-66, D-223).
+   * Separado de `new_message` de proposito: nao e mensagem nova (sem aviso/som/badge).
+   */
+  'conversation.message_updated': { conversationId: string; messageId: string };
   /** Proposta nova que o usuario nao criou pela tela — hoje so a origem `bitlab` (CRMLAB-57, D-196). */
   'proposal.created': { proposalId: string };
   'proposal.status_changed': { proposalId: string; status: string };

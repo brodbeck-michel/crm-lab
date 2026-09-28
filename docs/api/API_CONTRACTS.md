@@ -600,6 +600,8 @@ Cada item traz `assignedToName` e `lastMessagePreview` já resolvidos (o fronten
 faz request extra por conversa). Shape completo: `Conversation` em
 `shared/types/conversation.types.ts`. Anuláveis: `patientId`, `patientName`, `assignedTo`,
 `assignedToName`, `lastMessagePreview`, `lastMessageAt`.
+`lastMessagePreview` de mensagem **apagada** pelo remetente vem `""` (D-220) — a prévia
+nunca devolve o conteúdo escondido.
 
 `patientId` é o **id do cadastro** (`patients.id`, D-059) — a porta de entrada da Ficha do
 Paciente (`/patients/:id`, PAGES.md §3). Campo **opcional acrescentado em D-079**: backward
@@ -789,6 +791,42 @@ mesmo (`messageLimit` ganha quando os dois vêm). Valor acima de 100 é recusado
 ficha (D-079); `messages[]` é `Message`, com `senderName`, `attachmentUrl` e `readAt`
 anuláveis. `pagination` é o `PaginationMeta` padrão — os quatro campos, sempre.
 
+**Citação, reações, edição e apagamento (CRMLAB-66, D-220/D-221/D-222).** Todo `Message`
+(aqui, no `POST /messages`, no `/attachments` e em qualquer resposta que devolva mensagem)
+traz também:
+
+```json
+{
+  "quotedMessageId": "uuid | null",
+  "quoted": {
+    "id": "uuid | null",
+    "senderType": "patient",
+    "senderName": "João Santos",
+    "preview": "Olá, quanto custa um hemograma?",
+    "messageType": "text",
+    "deleted": false
+  },
+  "reactions": [
+    { "emoji": "👍", "reactorType": "patient", "userId": null, "userName": null, "reactedAt": "2024-08-23T14:31:00Z" }
+  ],
+  "editedAt": null,
+  "deletedAt": null
+}
+```
+
+- `quotedMessageId`: a mensagem citada, quando ela está no CRM. `quoted` é o **resumo** para a
+  faixa do balão (`null` = não é resposta). `quoted.id` `null` = a original não está no CRM
+  (anterior à conversa) — `preview` vem `''`. `quoted.deleted: true` = a original foi apagada:
+  `preview` vem `''`. `preview` tem até 160 caracteres.
+- `reactions`: no máximo **uma por lado** (`reactorType` `patient` | `agent`, D-222). `userId`/
+  `userName` = atendente que reagiu pelo CRM; `null` para o paciente e para reação feita no
+  celular do laboratório. Ordem: `patient` antes de `agent`.
+- `editedAt`: preenchido quando o remetente editou no WhatsApp; `content` já é o texto novo. A
+  versão anterior fica no banco (`message_edits`), **não** na API.
+- `deletedAt`: preenchido quando o remetente apagou "para todos". **A API não devolve o conteúdo
+  escondido** (D-220): `content: ""`, `attachmentUrl: null`, `quoted: null`, `reactions: []`. A
+  linha e a mídia continuam no banco.
+
 **Erros:** `NOT_FOUND` (404 — inexistente, de outro tenant **ou de outro atendente**;
 nunca 403), `FORBIDDEN` (403, `platform_operator`), `VALIDATION_ERROR` (400, `:id` não-uuid)
 
@@ -807,6 +845,11 @@ Enviar mensagem em uma conversa.
 - `content`: 1..4000 caracteres (trim aplicado)
 - `messageType` (opcional, default `text`) ∈ `text | image | audio | pdf | doc`
 - `attachmentUrl` (opcional, anulável): máx. 500 caracteres
+- `quotedMessageId` (opcional, anulável, uuid — CRMLAB-66, D-221): **responder citando**. Tem de
+  ser uma mensagem **desta** conversa e não apagada; de outra conversa, de outro tenant,
+  inexistente ou apagada → `NOT_FOUND` (`resource: "message"`). No WhatsApp a mensagem sai citada
+  (Evolution `quoted`, Cloud API `context.message_id`); se a original não tem id externo, sai sem
+  a citação para o canal e continua citada no CRM.
 
 O recorte por papel é aplicado **antes** de escrever: conversa que o usuário não
 enxerga devolve `NOT_FOUND`.
@@ -854,6 +897,8 @@ médico.
 - `mimeType`: 1..127 caracteres
 - `contentBase64`: obrigatório, decodificado e checado contra o teto de
   tamanho (15 MiB por arquivo)
+- `quotedMessageId` (opcional, anulável, uuid): mesma regra de `POST /messages` (CRMLAB-66,
+  D-221) — o anexo sai citando a mensagem
 
 O recorte por papel é aplicado **antes** de gravar: conversa que o usuário não
 enxerga devolve `NOT_FOUND`. `messageType` é derivado do `mimeType`
@@ -889,6 +934,29 @@ recado de voz — e não por `/message/sendMedia`. O request e a resposta deste 
 `MEDIA_TOO_LARGE` (413, acima do teto de 15 MiB), `MESSAGE_SEND_FAILED` (502, canal
 externo falhou após os retries — a WhatsApp Cloud API `cloud_api` ainda não envia
 mídia, só o gateway Evolution `qr`), `FORBIDDEN` (403, `platform_operator`)
+
+### PUT /conversations/:id/messages/:messageId/reaction · DELETE (CRMLAB-66, D-222)
+Reagir a uma mensagem com um emoji (a barra rápida da tela: 👍 ❤️ 😂 😮 😢 🙏). A reação é
+**do laboratório** (um lado só): uma nova substitui a anterior, `DELETE` remove.
+
+**Request (PUT):**
+```json
+{ "emoji": "👍" }
+```
+- `emoji`: 1..32 bytes (trim aplicado)
+
+**Response:** `PUT` → `200` com a `Message` atualizada (objeto cru, D-070). `DELETE` → `204`
+(idempotente: sem reação, continua `204`).
+
+No WhatsApp a reação sai **antes** de gravar (Evolution `POST /message/sendReaction`, Cloud API
+`type: "reaction"`); falhou após os retries → `MESSAGE_SEND_FAILED` e nada muda. Mensagem sem id
+externo (canal `direct`/`web`, envio que falhou) reage só no CRM. Emite
+`conversation.message_updated`.
+
+**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404 — conversa fora do recorte, mensagem de
+outra conversa ou de outro tenant, mensagem apagada), `CONVERSATION_ARCHIVED` (409, atendimento
+encerrado), `MESSAGE_SEND_FAILED` (502), `FORBIDDEN` (403, `platform_operator`). Mensagem de
+sistema também é `NOT_FOUND` — não existe no WhatsApp do paciente.
 
 ### POST /conversations/:id/read
 Marcar a conversa como lida sem carregar o histórico. Idempotente.
@@ -1162,6 +1230,28 @@ responder):
   de onde `GET /settings/channels/whatsapp/qr` passa a ler. **Este evento é obrigatório na
   assinatura do webhook** (`evolution-client.ts`): sem ele o polling não tem fonte de QR.
 
+**Citação, reação, edição e apagamento (CRMLAB-66, D-220..D-223).** Eventos assinados:
+`EVOLUTION_WEBHOOK_EVENTS` (`lib/evolution-client.ts`) = `MESSAGES_UPSERT`, `MESSAGES_EDITED`,
+`MESSAGES_DELETE`, `CONNECTION_UPDATE`, `QRCODE_UPDATED`. Instância criada antes disso recebe a
+lista nova sozinha: o backend reaplica `/webhook/set` em todo laboratório `qr` **ao subir** e ao
+conectar (D-223). Todos passam pela mesma checagem de `instance` do `MESSAGES_UPSERT`.
+
+| Payload (forma do Evolution v2) | Efeito |
+|---|---|
+| `messages.upsert` com `data.contextInfo.stanzaId` (ou `message.<tipo>.contextInfo.stanzaId`) | mensagem gravada com `quoted_external_id` = `stanzaId` — a tela mostra a citação |
+| `messages.upsert` com `messageType: "reactionMessage"`, `message.reactionMessage: { key: { id }, text: "👍" }` | reação do lado de quem mandou (`key.fromMe` false = paciente, true = laboratório) na mensagem `reactionMessage.key.id`; `text: ""` remove. Mensagem alvo desconhecida → descarte `mensagem_alvo_desconhecida` |
+| `messages.upsert` com `message.protocolMessage: { type: "REVOKE" \| 0, key: { id } }` | marca `deleted_at` na mensagem `key.id` (D-220) |
+| `messages.upsert` com `message.protocolMessage: { type: "MESSAGE_EDIT" \| 14, key: { id }, editedMessage: {...} }` (ou `message.editedMessage.message.protocolMessage`) | edição: texto novo em `content`, anterior em `message_edits` |
+| `messages.edited` com `data` = o `protocolMessage` (`{ key, type, editedMessage }`) | idem — REVOKE que chegue por aqui também apaga |
+| `messages.delete` com `data` = a `key` achatada (`{ remoteJid, fromMe, id, status: "DELETED" }`) ou `{ key: {...} }` | marca `deleted_at` |
+
+Apagar e editar: **nunca `DELETE`**; `deleted_by`/`edited_by` = o lado de quem mandou a original
+(no WhatsApp só o autor apaga ou edita); mensagem de sistema nunca é afetada; editar mensagem já
+apagada é ignorado; edição com o mesmo texto é no-op. Os dois gravam audit log
+(`message_deleted_by_sender`/`message_edited_by_sender`, sem o texto) e os três (reação, edição,
+apagamento) emitem `conversation.message_updated`. Alvo desconhecido → descarte contável
+(`mensagem_alvo_desconhecida`).
+
 **Idempotente:** mesma disciplina do webhook Meta — reentrega da mesma mensagem
 (`externalId`/`key.id`) não duplica linha nem evento. Desde a migração **019** a garantia é
 do **banco** (índice único parcial em `(tenant_id, external_message_id)`), não só do service:
@@ -1195,6 +1285,7 @@ descarte correto —, mas todos precisam ser contáveis, senão não há como di
 | `sem_texto_nem_midia` | `message` vazio | não |
 | `midia_recusada` | arquivo acima do teto | esperado, mas o paciente não é avisado |
 | `erro_no_processamento` | exceção ao gravar | **sim** |
+| `mensagem_alvo_desconhecida` | reação, edição ou apagamento de uma mensagem que não está no CRM (anterior à conversa) — CRMLAB-66 | não |
 
 ---
 
@@ -1441,6 +1532,7 @@ Histórico de interações: mensagens, propostas e mudanças de estágio em **um
 - `preview` é o `content` da mensagem **truncado em 160 caracteres** pelo backend, sem
   reticências adicionadas — a tela decide como indicar o corte. Anexo sem texto vira string
   vazia; `messageType` diz o que era.
+  Mensagem apagada pelo remetente (CRMLAB-66, D-220) também vem com `preview` vazio.
 - **Mesmo recorte de visibilidade da ficha:** entram só mensagens/aberturas de conversas
   visíveis ao solicitante e propostas visíveis por D-042. Sem isso a timeline seria um caminho
   lateral para o atendente ler a conversa de outro atendente.

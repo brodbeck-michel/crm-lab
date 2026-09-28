@@ -130,6 +130,11 @@ interface MessageService {
   createFromPatient(tenantId: string, conversationId: string, dto: InboundMessageDTO): Promise<Message>; // via webhook
   createFromPhone(tenantId: string, conversationId: string, dto: InboundMessageDTO): Promise<Message | null>; // fromMe via webhook (D-173); null = eco do CRM
   createSystemEvent(tenantId: string, conversationId: string, content: string): Promise<Message>;
+  // CRMLAB-66 (D-220..D-222)
+  setAgentReaction(tenantId: string, conversationId: string, messageId: string, userId: string, emoji: string | null): Promise<Message | null>;
+  applyInboundReaction(tenantId: string, input: { targetExternalId: string; fromMe: boolean; emoji: string }): Promise<boolean>;
+  applySenderDelete(tenantId: string, targetExternalId: string): Promise<boolean>;
+  applySenderEdit(tenantId: string, targetExternalId: string, newContent: string): Promise<boolean>;
 }
 ```
 
@@ -162,6 +167,16 @@ interface que ProposalService/ApprovalService consomem. Instanciação:
 - `setStatus` com `externalId` que já é de uma cópia do celular (envio mais lento que a espera)
   apaga a cópia e grava o id na mensagem do CRM, na mesma transação; o service reemite
   `conversation.new_message`
+- **Citação (D-221):** `createFromAgent`/`createAttachmentFromAgent` aceitam `quotedMessageId`
+  (mesma conversa, não apagada — senão `NOT_FOUND`) e repassam ao driver `{ externalId, fromMe,
+  content }` da original; `createFromPatient`/`createFromPhone` aceitam `quotedExternalId`
+  (`stanzaId` do webhook)
+- **Reação (D-222):** `setAgentReaction` envia pelo canal ANTES de gravar; `emoji: null` remove.
+  `applyInboundReaction` é o webhook (`fromMe` decide o lado). Os dois emitem
+  `conversation.message_updated`
+- **Apagada/editada pelo remetente (D-220):** `applySenderDelete` grava `deleted_at` (nunca
+  `DELETE`), `applySenderEdit` guarda a versão anterior em `message_edits`. Os dois gravam audit log
+  sem o texto e emitem `conversation.message_updated`. `false` = alvo desconhecido/no-op
 
 ---
 
@@ -779,6 +794,12 @@ export function createInsuranceService(deps: { db: DbClient; audit: AuditService
 ---
 
 ## 16. Extensões para conexão WhatsApp por QR (Onda 7 — Bloco B)
+
+> **CRMLAB-66 (D-223):** a lista de eventos do webhook é `EVOLUTION_WEBHOOK_EVENTS`
+> (`lib/evolution-client.ts`), usada por `createInstance` e `setWebhook`. `syncEvolutionWebhooks`
+> (`channel-settings.service.ts`), chamado no boot pelo `main.ts`, reaplica a lista em toda
+> instância `qr` — instância antiga passa a receber evento novo sem script manual.
+> `EvolutionClient` ganhou `setWebhook` e `sendReaction`; `sendText`/`sendMedia` aceitam `quoted`.
 
 **Responsabilidade:** conectar o WhatsApp do próprio laboratório via QR code (Evolution API),
 sem depender da API oficial da Meta. Estende `WhatsAppService` (§11) e `ChannelSettingsService`

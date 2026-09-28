@@ -78,7 +78,7 @@ node_modules são symlinks para a pasta principal; `*.wt.*` (vitest/tsconfig com
 | Card | Fase | Último commit | Observação |
 |---|---|---|---|
 | 66 [A] | 🔄 disparado (onda 1) | — | |
-| 71 [F] | 🔄 disparado (onda 1) | — | |
+| 71 [F] | ✅ pronto no card | e35cbfc | D-237..D-239. Cursor `before=<messageId>`, `cursors.after` reservado p/ 68. 37 back + 656 front verdes. Migração 046 não usada. |
 | 72 [G] | ✅ pronto no card | d356ac6 | D-240, D-241. 645 testes front verdes. Dúvida p/ Michel: gestor/admin avisados só da própria fila. |
 | 67 [B] | ⬜ aguarda onda 2 | — | |
 | 68 [C] | ⬜ aguarda onda 2 | — | |

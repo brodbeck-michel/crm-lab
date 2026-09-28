@@ -3,7 +3,7 @@
 Worktree `../CRM Lab-66` · branch `feature/CRMLAB-66-responder-reagir-apagada` (de `integ/epic-65`).
 Faixas: decisões D-220…D-224 · migrações 040, 041.
 
-## Estado: 🔄 docs
+## Estado: 🔄 backend
 
 ## Feito
 - Docs (Regra Zero): D-220 (esconder, não apagar), D-221 (citação), D-222 (reação por lado),
@@ -14,7 +14,7 @@ Faixas: decisões D-220…D-224 · migrações 040, 041.
   `SetMessageReactionRequest`, `CreateAttachmentRequest.quotedMessageId`).
 
 ## Falta
-- [ ] Migração 040 (colunas em messages + message_reactions + message_edits + RLS). 041 não usada.
+- [x] Migração 040 (colunas em messages + message_reactions + message_edits + RLS). 041 não usada (arquivo único, sem backfill).
 - [ ] Backend: evolution-client (constante de eventos, setWebhook, sendReaction, quoted),
       drivers (quoted, sendReaction), message.repository/service, rotas de reação, webhook
       (stanzaId, reactionMessage, protocolMessage REVOKE/EDIT, MESSAGES_EDITED, MESSAGES_DELETE),
@@ -33,4 +33,4 @@ D-220, D-221, D-222, D-223 (D-224 livre).
 - Miniatura real no bloco citado: usa rótulo ("📷 Foto") em vez de buscar a imagem.
 
 ## Próximo passo exato
-Escrever `backend/migrations/040_message_quote_reactions_edits.sql` conforme SCHEMA §4/§33/§34.
+Backend: começar por `lib/evolution-client.ts` (EVOLUTION_WEBHOOK_EVENTS, setWebhook, sendReaction, quoted).

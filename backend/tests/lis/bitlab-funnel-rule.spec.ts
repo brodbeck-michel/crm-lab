@@ -240,6 +240,19 @@ describe('pagamento -> ganho (cartao bitlab)', () => {
     expect((await historyOf(id)).map((h) => h.status)).toEqual(['novo_contato', 'ganho']);
   });
 
+  it('estorno depois de ganho: o cartao nao reabre e o valor pago espelhado vai a 0 (CRMLAB-53, D-188 item 7)', async () => {
+    const { id } = await card('2005', 'negociacao');
+    const pago = { ...REQ, paidValue: 100, paidOn: '2026-09-22', paidAt: '2026-09-22 08:00:00', paymentId: '77' };
+    await ingest([row('2005', { ...pago, paymentStatus: 'ativo' })]);
+    expect((await detail(id)).status).toBe('ganho');
+
+    await ingest([row('2005', { ...pago, paymentStatus: 'estornado', reversedAt: '2026-09-23 09:00:00' })]);
+    const after = await detail(id);
+    expect(after.status).toBe('ganho');
+    expect(after.lisPaidValue).toBe(0);
+    expect(after.lisPaidOn).toBeNull();
+  });
+
   it('regra desligada: pagamento nao move', async () => {
     await setRules({ automation: { paymentToWon: { enabled: false } } });
     const { id } = await card('2004', 'negociacao');

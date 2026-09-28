@@ -120,11 +120,55 @@ describe('BitlabClient.fetchBudgetsPage', () => {
         requisitionValue: 250,
         paidValue: 100,
         paidOn: '2026-09-28',
+        paidAt: '2026-09-28 14:05:00',
+        paymentId: null,
+        paymentStatus: null,
+        reversedAt: null,
+        paymentMethod: null,
+        cardBrand: null,
       },
     ]);
     const serialized = JSON.stringify(page);
     expect(serialized).not.toContain('12345678900');
     expect(serialized).not.toContain('1980-05-10');
+  });
+
+  it('le os campos do pagamento da v1 (CRMLAB-53, D-188): ID, situacao, estorno, forma e bandeira', async () => {
+    const page = await client(
+      fakeFetch(
+        200,
+        listResponse({
+          orcamentos: [
+            {
+              ...BUDGET,
+              ID_PAGAMENTO: 68643,
+              SITUACAO_PAGAMENTO: 'ESTORNADO',
+              DATA_ESTORNO: '30/06/2026 16:39:05',
+              FORMA_PAGAMENTO: 'Cartão Crédito',
+              BANDEIRA_CARTAO: 'MASTER CREDITO',
+            },
+          ],
+        }),
+      ),
+    ).fetchBudgetsPage('k', QUERY);
+
+    expect(page.rows[0]).toMatchObject({
+      paymentId: '68643',
+      paymentStatus: 'estornado',
+      reversedAt: '2026-06-30 16:39:05',
+      paymentMethod: 'Cartão Crédito',
+      cardBrand: 'MASTER CREDITO',
+    });
+  });
+
+  it('SITUACAO_PAGAMENTO ATIVO vira ativo', async () => {
+    const page = await client(
+      fakeFetch(
+        200,
+        listResponse({ orcamentos: [{ ...BUDGET, ID_PAGAMENTO: '70070', SITUACAO_PAGAMENTO: 'ATIVO' }] }),
+      ),
+    ).fetchBudgetsPage('k', QUERY);
+    expect(page.rows[0]).toMatchObject({ paymentId: '70070', paymentStatus: 'ativo', reversedAt: null });
   });
 
   it('SEM_RESULTADOS sem avisos devolve pagina vazia', async () => {

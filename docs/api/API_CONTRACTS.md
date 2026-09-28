@@ -1136,7 +1136,7 @@ responder):
   | Situação | Efeito |
   |---|---|
   | `key.id` já existe em `messages` | eco do CRM ou reentrega — nada gravado, nada emitido |
-  | `key.id` desconhecido, com envio do CRM **em voo** na conversa (atendente, `status: sent`, sem `externalId`, < 60 s) | espera até 8 s o envio gravar o `externalId`; apareceu → eco, descarta |
+  | `key.id` desconhecido, com envio do CRM **em voo** na conversa (atendente ou mensagem automática, `status: sent`, sem `externalId`, < 60 s) | espera até 8 s o envio gravar o `externalId`; apareceu → eco, descarta |
   | `key.id` desconhecido, sem envio em voo | mensagem do celular: `MessageService.createFromPhone` |
 
   A mensagem do celular volta em `GET /conversations/:id/messages` como
@@ -1147,6 +1147,11 @@ responder):
   parser das recebidas. **Rede de segurança:** se o envio do CRM demorar mais que a espera, a
   cópia do celular é apagada quando o envio grava o mesmo `externalId` (conflito no índice da
   019), e `conversation.new_message` é reemitido — a duplicata nunca fica.
+
+  **Mensagem automática (reingajamento, CRMLAB-62 — D-211 item 5):** o que o sistema manda
+  sozinho volta como `senderType: "agent"`, `senderId: null`, `senderName: "Mensagem automática"`
+  (coluna `messages.automation = 'reengagement'`). Mesmo lado das enviadas pelo CRM; não é
+  cópia do celular e nunca é apagada pela rede de segurança acima.
 - `CONNECTION_UPDATE` com `state: "open"` → grava `connected_at`, `phone_number` (informado
   pelo gateway), `connection_mode: "qr"`, `is_active: true` em `tenant_channels`.
 - `CONNECTION_UPDATE` com `state: "close"` (inclusive `loggedOut`, que é como o gateway informa
@@ -3764,6 +3769,21 @@ completo com os padrões aplicados. Nenhum outro código lê `funnel_rules` dire
   },
   "sendMessage": {
     "template": "Olá, {paciente}! Segue o orçamento nº {numero_orcamento} ({convenio}), no valor de {valor}."
+  },
+  "reengagement": {
+    "first": {
+      "enabled": false,
+      "hours": 1,
+      "message": "Olá! Passando para saber se ficou alguma dúvida sobre o que conversamos. Seguimos à disposição para ajudar."
+    },
+    "second": {
+      "enabled": false,
+      "hours": 24,
+      "message": "Olá! Como não tivemos retorno, vamos deixar o atendimento em aberto. Quando quiser, é só responder esta mensagem."
+    }
+  },
+  "lisSource": {
+    "spreadsheetImport": { "enabled": false }
   }
 }
 ```
@@ -3781,6 +3801,9 @@ completo com os padrões aplicados. Nenhum outro código lê `funnel_rules` dire
 | `automation.dayCounting` | `calendar` (corridos) ou `business` (úteis) | CRMLAB-59 |
 | `manualMoves.*` | Travas de movimentação manual (D-192), via `checkTransition` | este card (back e front) |
 | `sendMessage.template` | Modelo do WhatsApp; render por `renderSendMessageTemplate` | CRMLAB-58 |
+| `reengagement.first` | Paciente sem responder há `hours` depois da última mensagem da atendente → manda `message` (D-211) | CRMLAB-62 |
+| `reengagement.second` | `hours` depois do envio do 1º, se continuar sem resposta → manda `message`. Só com o 1º ligado | CRMLAB-62 |
+| `lisSource.spreadsheetImport` | Importar a planilha do LIS (plano B; a carga principal é a API do Bitlab). Padrão **`false`**. `false` → `POST /lis-imports` = `SPREADSHEET_IMPORT_DISABLED` e o botão "Importar" some em Resultados (D-189) | CRMLAB-53 |
 
 `checkTransition`, `canTransition`, `allowedTargets`, `buildAllowedTransitions`, `canReopen`,
 `SEQUENTIAL_TRANSITIONS`, `REOPEN_TARGETS`, `findUnknownTemplateVariables` e
@@ -3807,7 +3830,11 @@ Validação (`VALIDATION_ERROR`, `details.fields` pelo caminho do campo):
 - `origin`: ao menos uma das duas ligada depois do merge → `fields.origin`;
 - `sendMessage.template`: string `1..1000` depois do `trim`, só com as variáveis
   `{paciente}`, `{numero_orcamento}`, `{valor}`, `{convenio}` → senão
-  `fields["sendMessage.template"]` citando as desconhecidas.
+  `fields["sendMessage.template"]` citando as desconhecidas;
+- `reengagement.*.message`: string `1..1000` depois do `trim`, texto fixo (sem variáveis) →
+  `fields["reengagement.first.message"]` / `["reengagement.second.message"]`;
+- `reengagement.second.enabled: true` com o 1º desligado (depois do merge) →
+  `fields["reengagement.second.enabled"] = "Ligue o 1º reingajamento antes do 2º"` (D-211 item 4).
 
 **Response (200):** o objeto completo depois da escrita (mesmo shape do `GET`), cru.
 
@@ -3816,6 +3843,52 @@ Gera audit log `update_funnel_rules` (`entityType: "funnel_rules"`, `entityId` =
 frente (D-190 item 6).
 
 **Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
+
+---
+
+## 6d. Holidays (Feriados — CRMLAB-62)
+
+Feriados que o reingajamento respeita (D-213). Os **nacionais** são calculados por ano em
+`shared/types/reengagement.types.ts` (`nationalHolidays`) e **não são gravados**: fixos (1/1,
+21/4, 1/5, 7/9, 12/10, 2/11, 15/11, 20/11, 25/12) e móveis pela Páscoa (Carnaval segunda e terça,
+Sexta-feira Santa, Corpus Christi). Os do **laboratório** ficam em `tenant_holidays`
+(SCHEMA.md §34). Shapes: `Holiday`, `HolidaysResponse`, `CreateHolidayRequest`.
+
+**Papéis:** `GET` todo perfil de laboratório; `POST`/`DELETE` **manager/admin**
+(`attendant` → `403 FORBIDDEN`, `details.requiredRoles: ["manager","admin"]`). `platform_operator` → `403`.
+
+### GET /settings/holidays?year=AAAA
+`year` opcional (padrão: ano corrente), inteiro `2000..2100` → senão `VALIDATION_ERROR` em
+`fields.year`.
+
+**Response (200):**
+```json
+{
+  "year": 2026,
+  "national": [
+    { "id": null, "date": "2026-01-01", "description": "Confraternização Universal", "source": "national" }
+  ],
+  "custom": [
+    { "id": "8b1d…", "date": "2026-03-19", "description": "São José", "source": "custom" }
+  ]
+}
+```
+As duas listas em ordem de data. `custom` só traz os do ano pedido e do próprio laboratório.
+
+### POST /settings/holidays (manager/admin)
+**Request:** `{ "date": "2026-03-19", "description": "São José" }`
+- `date`: `YYYY-MM-DD` de um dia que existe, ano `2000..2100` → senão `fields.date`;
+- `description`: `1..100` depois do `trim` → senão `fields.description`;
+- data já cadastrada no laboratório → `409 CONFLICT` (`details.fields.date`).
+
+**Response (201):** o `Holiday` criado (`source: "custom"`). Audit `create_holiday`
+(`entityType: "holiday"`).
+
+### DELETE /settings/holidays/:id (manager/admin)
+`:id` UUID (senão `VALIDATION_ERROR`). **204** sem corpo. Inexistente ou de outro laboratório →
+`404 NOT_FOUND`. Audit `delete_holiday` com `oldValues: { date, description }`.
+
+**Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403), `NOT_FOUND` (404), `CONFLICT` (409)
 
 ---
 
@@ -4269,7 +4342,13 @@ Gera audit log `import_lis_spreadsheet` (`entityType: "lis_import"`) e invalida 
 **Erros:** `VALIDATION_ERROR` (400) com `details.reason` ∈ `pdf_disguised | missing_column |
 empty` (arquivo é PDF renomeado; falta a coluna `ORCAMENTO`; planilha sem nenhuma linha de
 dado), `MEDIA_TOO_LARGE` (413, acima de 10 MiB), `FORBIDDEN` (403,
-`details.requiredRoles: ["manager","admin"]`)
+`details.requiredRoles: ["manager","admin"]`), `SPREADSHEET_IMPORT_DISABLED` (409, a regra
+`lisSource.spreadsheetImport` está desligada — o padrão; checado antes de ler o arquivo, nada é
+gravado. CRMLAB-53, D-189).
+
+Desde a D-188 cada linha com `VALOR_PAGO` vira um pagamento no extrato (`lis_budget_payments`) e o
+recebido do orçamento é a soma deles com teto na requisição (BUSINESS_RULES.md §11.11). A coluna
+`DATA_PAGAMENTO` é lida com a hora, quando a célula tem.
 
 #### GET /lis-imports
 Histórico de importações e purges do tenant.
@@ -4560,6 +4639,7 @@ Configuração e disparo da sincronização dos orçamentos pela API de Orçamen
   "lastRunAt": "2026-09-25T14:00:00.000Z",
   "lastSuccessAt": "2026-09-25T14:00:00.000Z",
   "lastError": null,
+  "lastFullScanOn": "2026-09-25",
   "running": false,
   "intervalMinutes": 2
 }
@@ -4571,6 +4651,9 @@ Configuração e disparo da sincronização dos orçamentos pela API de Orçamen
   resposta. Volta a `null` na primeira rodada bem-sucedida.
 - `running`: há uma rodada em andamento agora (trava em memória, D-185 item 5).
 - `intervalMinutes`: de `LIS_SYNC_INTERVAL_MS`, só para a tela dizer "a cada N minutos".
+- `lastFullScanOn` (CRMLAB-53, D-189): dia (`YYYY-MM-DD`, Brasília) da última releitura dos últimos
+  90 dias que terminou sem erro — é ela que pega os estornos. `null` = nunca. A releitura roda no
+  primeiro tique depois das 03:00; "Sincronizar agora" continua incremental.
 
 #### PATCH /settings/lis-integration (admin)
 

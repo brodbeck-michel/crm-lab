@@ -109,6 +109,7 @@ renderiza. "Não sei onde mostrar" nunca pode virar silêncio.
 | `APPROVAL_NOT_ALLOWED` | 403 | Aprovador sem alçada suficiente | `{ discount, approverLimit }` |
 | `EXAM_NOT_FOUND_OR_INACTIVE` | 400 | Item referencia exame inexistente/inativo | `{ examIds[] }` |
 | `MANUAL_PROPOSAL_DISABLED` | 409 | `POST /proposals` com "Criar proposta manualmente no CRM" desligado em Regras (CRMLAB-56, D-193) | — |
+| `SPREADSHEET_IMPORT_DISABLED` | 409 | `POST /lis-imports` com "Importação por planilha" desligada em Regras (`lisSource.spreadsheetImport`, padrão desligado — CRMLAB-53, D-189) | — |
 
 ## Conversas
 

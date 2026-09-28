@@ -1285,8 +1285,8 @@ CREATE TABLE lis_budgets (
 
   requisition_number VARCHAR(50),        -- REQUISICAO (5 aliases na planilha)
   requisition_value NUMERIC(12,2),       -- VALOR_REQUISICAO
-  paid_value NUMERIC(12,2),              -- Valor_Pago (3 aliases)
-  paid_on DATE,                          -- DATA_PAGAMENTO (5 aliases; D-110: DATE)
+  paid_value NUMERIC(12,2),              -- DERIVADO do extrato §26a (D-188): soma dos ativos, teto na requisição
+  paid_on DATE,                          -- DERIVADO do extrato §26a (D-188): dia do último pagamento considerado
 
   import_id UUID NOT NULL,               -- importação que gravou/atualizou esta linha por último
   proposal_id UUID NULL,                 -- conciliação (Onda 13, D-119) — nasce NULL nesta onda
@@ -1340,6 +1340,53 @@ CREATE TRIGGER trg_lis_budgets_updated_at
 - **`proposal_id`** nasce sempre `NULL` nesta onda — a coluna existe desde já porque `lis_budgets`
   é o lado "B" da conciliação, mas quem grava é o hook da Onda 13 (D-119); `ON DELETE SET NULL`
   para não travar a exclusão de uma proposta antiga.
+
+- **`paid_value`/`paid_on` são derivados desde a D-188 (CRMLAB-53):** o upsert do orçamento não
+  os grava mais; `recomputePaidValues` os recalcula a partir de `lis_budget_payments` (§26a) no
+  mesmo chunk da gravação (BUSINESS_RULES.md §11.11). Orçamento sem nenhuma linha no extrato
+  (carga anterior à migração 032) fica com o valor antigo.
+
+### 26a. `lis_budget_payments` (migração 032 — CRMLAB-53, D-188)
+Extrato de pagamentos do LIS: uma linha por pagamento. Dono: `LisImportService` (SERVICES.md
+§19). É a fonte de `lis_budgets.paid_value`/`paid_on` (§26).
+
+```sql
+CREATE TABLE lis_budget_payments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL,
+  budget_number VARCHAR(50) NOT NULL,    -- = lis_budgets.number
+  requisition_number VARCHAR(50) NULL,
+  payment_key VARCHAR(80) NOT NULL,      -- ID_PAGAMENTO, ou 'planilha:<paid_at>:<valor>'
+  source VARCHAR(10) NOT NULL CHECK (source IN ('api', 'planilha')),
+  paid_at TIMESTAMP NULL,                -- sem fuso, relógio de Brasília (D-187)
+  paid_value NUMERIC(12, 2) NOT NULL,
+  status VARCHAR(10) NOT NULL CHECK (status IN ('ativo', 'estornado')),
+  reversed_at TIMESTAMP NULL,            -- DATA_ESTORNO
+  payment_method VARCHAR(60) NULL,       -- FORMA_PAGAMENTO
+  card_brand VARCHAR(60) NULL,           -- BANDEIRA_CARTAO
+  import_id UUID NULL,                   -- última carga que mexeu na linha
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (import_id) REFERENCES lis_imports(id) ON DELETE SET NULL,
+  CONSTRAINT lis_budget_payments_key UNIQUE (tenant_id, budget_number, payment_key)
+);
+
+CREATE INDEX idx_lis_budget_payments_import ON lis_budget_payments(import_id);
+-- trigger set_updated_at + RLS lis_budget_payments_tenant_isolation, mesmo padrão de §31
+```
+
+- **Chave `(tenant_id, budget_number, payment_key)`:** rodar a mesma carga duas vezes não
+  duplica. O `ON CONFLICT DO UPDATE` só troca situação, data do estorno, requisição, forma,
+  bandeira e `import_id` (e só escreve se algo mudou); valor e data do pagamento não mudam depois
+  de gravados — o LIS não altera um pagamento, ele estorna e lança outro.
+- **`paid_at` é `TIMESTAMP`** (e não `DATE` como §26): a hora é parte da chave da planilha e o
+  segundo distingue pagamentos divididos em formas. Continua sem fuso, pela mesma razão de D-110.
+- **A carga nunca apaga linha.** Só o `purge` (API_CONTRACTS.md §10.1) apaga o extrato do tenant,
+  junto com `lis_budgets`.
+- Migração **única** (tabela + policy), como a 026: sem backfill; o extrato nasce na primeira
+  rodada depois do deploy (recarga de 90 dias com a marca zerada).
 
 ### 27. `sales` (migração 012 — Onda 9)
 Vendas avulsas (exames e check-ups) do laboratório, para o cálculo de comissão — herdado do
@@ -1558,6 +1605,7 @@ CREATE TABLE lis_sync_settings (
   last_run_at TIMESTAMP NULL,            -- início da última rodada (com ou sem sucesso)
   last_success_at TIMESTAMP NULL,
   last_error TEXT NULL,                  -- NULL depois de uma rodada bem-sucedida
+  last_full_scan_on DATE NULL,           -- dia (Brasília) da última releitura de 90 dias ok (migração 032, D-189)
   updated_by UUID NULL,                  -- último admin que mudou `enabled`/`api_key`
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW(),
@@ -1595,6 +1643,9 @@ CREATE POLICY lis_sync_settings_tenant_isolation ON lis_sync_settings
   tabela nasce vazia. O `ALTER` de `lis_imports.kind` (§25) vai no mesmo arquivo.
 - `listEnabledTenantIds()` é a única leitura fora do contexto de tenant (D-186) e só projeta
   `tenant_id`.
+- **`last_full_scan_on`** (migração 032, D-189): só é gravado quando a releitura completa termina
+  sem erro. `NULL` ou dia anterior + passou das 03:00 de Brasília = o próximo tique relê os últimos
+  90 dias. A `watermark` **nunca recua** na gravação (a releitura pode devolver marca menor).
 
 ### Colunas novas em `proposals`, `tenant_settings` e `lis_imports` (migração 028 — CRMLAB-57, D-195/D-196)
 

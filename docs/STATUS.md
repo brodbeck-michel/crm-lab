@@ -2926,3 +2926,34 @@ Branch `feature/CRMLAB-59-motor-tempo` (de `integ/onda-funil`). Decisões D-205.
   aparece. O código novo lê com `to_char` em UTC e não é afetado. Fechar a classe (fixar `TZ=UTC`
   no processo/teste ou parser de tipo no driver) é um card de Kernel.
 
+
+### 🚧 CRMLAB-53 — extrato de pagamentos do LIS e releitura diária (2026-09-28, aguardando validação)
+
+Branch `feature/CRMLAB-53-extrato-pagamentos-lis`. Decisões D-188/D-189, migração
+`032_lis_budget_payments.sql`. Spec: `docs/superpowers/specs/2026-09-28-crmlab-53-extrato-pagamentos-design.md`.
+
+- **Por quê:** a API de Orçamentos devolve uma linha por pagamento, e a última que chegava
+  sobrescrevia `paid_value` (podia zerar orçamento pago). O Bitlab confirmou em 28/09 que linha
+  zerada, valor repetido e soma acima da requisição são **estornos** e incluiu na v1
+  `ID_PAGAMENTO`, `SITUACAO_PAGAMENTO`, `DATA_ESTORNO`, `FORMA_PAGAMENTO` e `BANDEIRA_CARTAO`.
+- **Extrato (D-188):** `lis_budget_payments` (SCHEMA §26a), chave `(tenant_id, budget_number,
+  payment_key)` com `ID_PAGAMENTO` (planilha: `planilha:<paid_at>:<valor>`). `consolidateLisRows`
+  não decide mais pagamento; por chunk, `upsertPayments` + `recomputePaidValues`. Recebido = soma
+  dos ativos da API (ou, só planilha, de todos), teto em `requisition_value`; `paid_on` = último
+  pagamento considerado, de qualquer valor (D-204 intacta). Estorno depois de `ganho` não reabre.
+- **Releitura diária (D-189):** o estorno não volta na janela incremental; o primeiro tique
+  depois das 03:00 (Brasília) relê 90 dias. `lis_sync_settings.last_full_scan_on`, marca que não
+  recua, "Sincronizar agora" incremental; a tela de integração mostra a última releitura.
+- **Planilha como plano B:** Regras → "Carga do LIS" (`lisSource.spreadsheetImport`, padrão
+  desligado). Desligada: `POST /lis-imports` = `SPREADSHEET_IMPORT_DISABLED` (409) e o botão
+  "Importar" some em Resultados.
+- **Testes:** novo `backend/tests/lis/lis-payments.spec.ts` (casos reais 66760, 66210, 68905,
+  68281, 68785, idempotência, planilha × API, carga antiga, releitura das 03:00); ajustados
+  `bitlab-client`, `lis-spreadsheet`, `lis-import-idempotency`, `lis-reconcile`,
+  `bitlab-funnel-rule` (estorno depois de ganho); front `Results.spec`, `Rules.spec`,
+  `LisIntegration.spec`; e2e `flow-17` liga a planilha antes de importar.
+- **Pendente:** deploy em hml, zerar `watermark`/`last_full_scan_on` do Santé e recarregar 90 dias;
+  conferir 66760/68905/68785/66210/68281 e validar Resultados e comissão com o gestor do
+  laboratório; pedir ao Bitlab que `DATA_ESTORNO` conte no filtro `alteracao`; em prod (com
+  confirmação, bump + tag), religar a sincronização **só depois** do deploy. Estorno com mais de 90
+  dias fica de fora (declarado na D-189).

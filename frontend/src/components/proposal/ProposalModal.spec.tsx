@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import type {
@@ -15,10 +15,13 @@ import { ToastProvider } from '@/components/ui';
 import ProposalModal from './ProposalModal';
 import * as proposalsApi from '@/api/proposals';
 import * as insurancesApi from '@/api/insurances';
+import { conversationsApi } from '@/api/conversations';
 import { queryClient } from '@/api/query-client';
+import { useAuthStore } from '@/stores/auth.store';
 
 vi.mock('@/api/proposals');
 vi.mock('@/api/insurances');
+vi.mock('@/api/conversations');
 
 /** Convênio usado nos testes de resolução de nome/badge (D-082). */
 const UNIMED: Insurance = {
@@ -82,6 +85,9 @@ function buildProposal(overrides: Partial<ProposalDetail> = {}): ProposalDetail 
     lisRequisitionNumber: overrides.lisRequisitionNumber ?? null,
     lisPaidValue: overrides.lisPaidValue ?? null,
     lisPaidOn: overrides.lisPaidOn ?? null,
+    origin: overrides.origin ?? 'crm',
+    lisIssuedOn: overrides.lisIssuedOn ?? null,
+    lisAttendantName: overrides.lisAttendantName ?? null,
   };
 }
 
@@ -92,6 +98,11 @@ function mockProposalDetail(proposal: ProposalDetail) {
   vi.mocked(proposalsApi.useUpdateProposalStatus).mockReturnValue(
     mutationIdle<UpdateProposalStatusResponse, { proposalId: string } & UpdateProposalStatusRequest>(),
   );
+  // CRMLAB-58: painel de envio e campo Responsável.
+  vi.mocked(proposalsApi.useSendProposal).mockReturnValue(mutationIdle());
+  vi.mocked(proposalsApi.useResendProposal).mockReturnValue(mutationIdle());
+  vi.mocked(proposalsApi.useUpdateProposalConversation).mockReturnValue(mutationIdle());
+  vi.mocked(proposalsApi.useUpdateProposalResponsible).mockReturnValue(mutationIdle());
 }
 
 function mockInsurances(insurances: Insurance[]) {
@@ -161,6 +172,9 @@ describe('ProposalModal', () => {
       lisRequisitionNumber: null,
       lisPaidValue: null,
       lisPaidOn: null,
+      origin: 'crm' as const,
+      lisIssuedOn: null,
+      lisAttendantName: null,
       history: [
         {
           status: 'novo_contato' as const,
@@ -228,6 +242,9 @@ describe('ProposalModal', () => {
       lisRequisitionNumber: null,
       lisPaidValue: null,
       lisPaidOn: null,
+      origin: 'crm' as const,
+      lisIssuedOn: null,
+      lisAttendantName: null,
       history: [],
     };
 
@@ -336,5 +353,106 @@ describe('ProposalModal', () => {
     renderModal();
 
     expect(screen.queryByText('Médico solicitante')).not.toBeInTheDocument();
+  });
+
+  // CRMLAB-57 (D-195, PAGES.md §6): proposta que nasceu do orçamento do Bitlab.
+  describe('origem Bitlab', () => {
+    const bitlab = (overrides: Partial<ProposalDetail> = {}) =>
+      buildProposal({
+        origin: 'bitlab',
+        conversationId: null,
+        patientName: 'Joana do Bitlab',
+        patientPhone: '',
+        status: 'novo_contato',
+        createdBy: null,
+        createdByName: '',
+        totalPrice: 150.5,
+        subtotal: 0,
+        lisBudgetNumber: '5001',
+        lisIssuedOn: '2026-09-20',
+        lisAttendantName: 'MARIA SOUZA',
+        ...overrides,
+      });
+
+    it('mostra o bloco do orçamento, o valor do Bitlab e o aviso de conversa; Enviar abre o painel', () => {
+      mockProposalDetail(bitlab());
+      renderModal();
+
+      expect(screen.getByText('Orçamento do Bitlab')).toBeInTheDocument();
+      expect(screen.getByText(/Nº 5001/)).toHaveTextContent('Nº 5001 · emitido em 20/09/2026');
+      expect(screen.getByText('Atendente no Bitlab: MARIA SOUZA')).toBeInTheDocument();
+      expect(screen.getByText('Valor do orçamento no Bitlab')).toBeInTheDocument();
+      expect(screen.getByText('Sem conversa vinculada')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Editar' })).not.toBeInTheDocument();
+      // CRMLAB-58: o cartão do Bitlab envia pelo painel (fila comum: qualquer atendente).
+      expect(screen.getByRole('button', { name: 'Enviar orçamento' })).toBeInTheDocument();
+      // O nº do orçamento é a identidade do cartão: sem "Alterar".
+      expect(screen.queryByRole('button', { name: 'Alterar' })).not.toBeInTheDocument();
+      // Perdido continua possível direto de "Novo orçamento".
+      expect(screen.getByRole('button', { name: 'Marcar como Perdido' })).toBeEnabled();
+    });
+
+    it('Enviar orçamento abre o painel de envio no lugar dos botões', () => {
+      vi.mocked(conversationsApi.list).mockResolvedValue({
+        conversations: [],
+        pagination: { page: 1, limit: 100, total: 0, totalPages: 0 },
+        counts: { mine: 0, unassigned: 0 },
+      });
+      mockProposalDetail(bitlab());
+      renderModal();
+      fireEvent.click(screen.getByRole('button', { name: 'Enviar orçamento' }));
+      expect(screen.getByRole('region', { name: 'Enviar orçamento' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Marcar como Perdido' })).not.toBeInTheDocument();
+    });
+
+    it('cartão já enviado: Reenviar mensagem e Trocar conversa para a dona', () => {
+      useAuthStore.setState({
+        user: { id: 'user-1', email: 'maria@lab.test', name: 'Maria', role: 'attendant', discountLimit: 5 },
+      });
+      mockProposalDetail(
+        bitlab({
+          status: 'orcamento_enviado',
+          conversationId: 'conv-1',
+          patientName: 'Maria Souza',
+          patientPhone: '+5548999990001',
+          createdBy: 'user-1',
+          createdByName: 'Maria',
+        }),
+      );
+      renderModal();
+      expect(screen.getByText('Conversa: Maria Souza · +5548999990001')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Reenviar mensagem' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Trocar conversa' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Enviar orçamento' })).not.toBeInTheDocument();
+    });
+
+    it('cartão já enviado de outra pessoa: atendente não reenvia nem troca', () => {
+      useAuthStore.setState({
+        user: { id: 'user-2', email: 'bia@lab.test', name: 'Bia', role: 'attendant', discountLimit: 5 },
+      });
+      mockProposalDetail(
+        bitlab({ status: 'follow_up', conversationId: 'conv-1', createdBy: 'user-1', createdByName: 'Maria' }),
+      );
+      renderModal();
+      expect(screen.queryByRole('button', { name: 'Reenviar mensagem' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Trocar conversa' })).not.toBeInTheDocument();
+    });
+
+    it('selo "Pré-cadastro feito" com requisição em "Novo orçamento"', () => {
+      mockProposalDetail(bitlab({ lisRequisitionNumber: '001-0001234' }));
+      renderModal();
+      expect(screen.getByText('Pré-cadastro feito')).toBeInTheDocument();
+    });
+
+    it('proposta do CRM em "Novo orçamento" continua com o botão Enviar orçamento', () => {
+      // A dona da proposta (CRMLAB-56: a trava "mover card de outra atendente" vale aqui).
+      useAuthStore.setState({
+        user: { id: 'user-1', email: 'maria@lab.test', name: 'Maria', role: 'attendant', discountLimit: 5 },
+      });
+      mockProposalDetail(buildProposal({ status: 'novo_contato' }));
+      renderModal();
+      expect(screen.getByRole('button', { name: 'Enviar orçamento' })).toBeInTheDocument();
+      expect(screen.queryByText('Orçamento do Bitlab')).not.toBeInTheDocument();
+    });
   });
 });

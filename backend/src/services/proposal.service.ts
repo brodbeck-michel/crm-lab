@@ -15,10 +15,10 @@
  *    Dentro do limite: nasce `approved` por si mesma. Acima: nasce `pending` e
  *    dispara o ApprovalService — e proposta `pending` NAO vai para o paciente.
  *
- * 3. **A matriz de transicoes e a de `@crm-lab/shared`** (BUSINESS_RULES §3,
- *    WORKFLOWS §4). `ALLOWED_TRANSITIONS`/`isTransitionAllowed` sao importados,
- *    nunca reescritos: front e back leem a mesma constante, entao divergir e
- *    impossivel por construcao.
+ * 3. **As travas de transicao sao as de `@crm-lab/shared`** (BUSINESS_RULES §3,
+ *    WORKFLOWS §4). `checkTransition` com as Regras do laboratorio (CRMLAB-56,
+ *    D-192; padrao = `ALLOWED_TRANSITIONS`) e importado, nunca reescrito: front
+ *    e back leem a mesma funcao, entao divergir e impossivel por construcao.
  *
  * Toda mutacao grava `proposal_status_history`, emite WebSocket e audita.
  *
@@ -29,13 +29,20 @@
 import {
   ALLOWED_TRANSITIONS,
   LOSS_REASONS,
+  buildAllowedTransitions,
+  checkTransition,
+  isCardOwner,
   TERMINAL_STATUSES,
   calculateSubtotal,
   calculateTotal,
   isProposalEditable,
-  isTransitionAllowed,
+  RESEND_PROPOSAL_STATUSES,
+  bitlabSendTarget,
+  canActOnCard,
   type ApprovalStatus,
+  type CreateMessageRequest,
   type CreateProposalItemInput,
+  type Message,
   type CreateProposalRequest,
   type CreateProposalResponse,
   type ListProposalsResponse,
@@ -45,6 +52,7 @@ import {
   type ProposalDetail,
   type ProposalStatus,
 } from '@crm-lab/shared';
+import { randomUUID } from 'node:crypto';
 import type { DbClient, DbTx } from '../db/types.js';
 import type { TenantContext } from '../http/context.js';
 import type { CacheService } from '../lib/cache.js';
@@ -61,7 +69,8 @@ import type { InsuranceRepository } from '../repositories/insurance.repository.j
 import * as auditRepo from '../repositories/audit.repository.js';
 import { isUniqueViolation } from '../repositories/exam-package.repository.js';
 import * as repo from '../repositories/proposal.repository.js';
-import { announceLisWins, reconcileProposal } from './lis-reconcile.service.js';
+import { reconcileProposal } from './lis-reconcile.service.js';
+import { readFunnelRules } from './funnel-rules.service.js';
 import type { ProposalRow } from '../repositories/proposal.repository.js';
 
 export const DEFAULT_PAGE = 1;
@@ -115,7 +124,30 @@ export interface ProposalServiceDeps {
    * `invalidateAnalytics`.
    */
   cache: CacheService;
+  /**
+   * Envio pelo cartao (CRMLAB-58, D-201): o MESMO `createFromAgent` do
+   * Composer do atendimento. Ausente => `/send` e `/resend` indisponiveis
+   * (testes de unidade que nao enviam).
+   */
+  messages?: MessageSender;
 }
+
+/** A parte do `MessageService` que o envio pelo cartao usa. */
+export interface MessageSender {
+  createFromAgent(
+    tenantId: string,
+    conversationId: string,
+    senderId: string,
+    dto: CreateMessageRequest,
+  ): Promise<Message>;
+}
+
+function isSupervisor(ctx: TenantContext): boolean {
+  return ctx.role === 'manager' || ctx.role === 'admin';
+}
+
+/** Papeis que podem ser responsavel por uma proposta (D-202 item 3). */
+const RESPONSIBLE_ROLES: readonly string[] = ['attendant', 'manager', 'admin'];
 
 // ---------------------------------------------------------------------------
 // Helpers compartilhados com o ApprovalService
@@ -128,7 +160,22 @@ export interface ProposalServiceDeps {
  */
 export function canSeeProposal(ctx: TenantContext, row: ProposalRow): boolean {
   if (ctx.role === 'manager' || ctx.role === 'admin') return true;
+  // Cartao `bitlab` sem responsavel e fila comum do tenant (D-195 item 6).
+  if (row.created_by === null && row.origin === 'bitlab') return true;
   return row.created_by === ctx.userId;
+}
+
+/**
+ * Proposta de origem `bitlab` nao edita itens, desconto nem o nº do orcamento
+ * (D-195 item 7): o valor e a identidade sao os do orcamento do Bitlab.
+ */
+function assertNotBitlab(row: ProposalRow): void {
+  if (row.origin === 'bitlab') {
+    throw new BusinessError('PROPOSAL_EDIT_NOT_ALLOWED', {
+      status: row.status,
+      reason: 'bitlab_origin',
+    });
+  }
 }
 
 /**
@@ -234,7 +281,8 @@ async function recordTransitionInTx(
   input: {
     tenantId: string;
     proposalId: string;
-    conversationId: string;
+    /** `null` na origem `bitlab` sem conversa: nao ha onde gravar a mensagem (D-195). */
+    conversationId: string | null;
     status: ProposalStatus;
     changedBy: string | null;
     systemMessage: string | null;
@@ -246,7 +294,7 @@ async function recordTransitionInTx(
     status: input.status,
     changedBy: input.changedBy,
   });
-  if (input.systemMessage !== null) {
+  if (input.systemMessage !== null && input.conversationId !== null) {
     await repo.insertSystemMessage(tx, {
       tenantId: input.tenantId,
       conversationId: input.conversationId,
@@ -256,45 +304,76 @@ async function recordTransitionInTx(
 }
 
 /**
- * `ganho` pela conciliacao com o LIS (CRMLAB-52, D-119 item 4). A UNICA
- * transicao que ignora `ALLOWED_TRANSITIONS`: vai de qualquer estagio nao
- * terminal para `ganho`, inclusive `novo_contato` e com aprovacao `pending`,
- * porque quem fechou foi o LIS (BUSINESS_RULES §3). `changedBy`/`userId` ficam
- * `null`. O audit entra na transacao de quem chama (`auditRepo.insert`), porque
- * ela e a do chunk de importacao ou do `PATCH` e nao aninha.
- *
- * O `WHERE status NOT IN ('ganho','perdido')` decide: 0 linhas -> `false` e
- * nada e gravado (idempotencia, item 7). WS e invalidacao de analytics ficam
- * com quem chama, depois do commit (`announceLisWins`).
+ * Quem pediu a transicao de sistema, gravado em `audit_logs.new_values.source`:
+ * - `lis`: requisicao no LIS fechando proposta de origem `crm` (D-119);
+ * - `lis_payment`: pagamento no LIS fechando cartao `bitlab` (D-204 item 1);
+ * - `lis_requisition`: requisicao no LIS levando cartao `bitlab` a negociacao (D-204 item 2).
+ * O motor de tempo (CRMLAB-59) acrescenta as suas.
  */
-export async function markWonFromLis(
+export type SystemTransitionSource = 'lis' | 'lis_payment' | 'lis_requisition';
+
+/** Uma transicao que o SISTEMA fez — o que `announceSystemTransitions` anuncia. */
+export interface SystemTransition {
+  proposalId: string;
+  from: ProposalStatus;
+  to: ProposalStatus;
+  source: SystemTransitionSource;
+}
+
+/**
+ * Transicao de estagio feita pelo SISTEMA, nao por uma pessoa (D-204 item 5,
+ * generaliza o antigo `markWonFromLis` da D-119). Nao passa por
+ * `checkTransition`: vai de qualquer estagio nao terminal para `to`. Roda na
+ * transacao de quem chama (conciliacao, motor de tempo) e grava ali:
+ * historico com `changedBy: null`, mensagem de sistema so se houver conversa
+ * (`systemMessage`), audit `update_proposal_status` com `userId: null` e
+ * `newValues.source`. `lisReconciled` marca `lis_reconciled_at` (selo
+ * "Conciliado", ganho que nao reabre). `closed_at` quando `to` e terminal.
+ *
+ * `null` = nada feito: proposta inexistente, ja fechada, ou ja em `to`
+ * (idempotencia). WS e cache ficam com quem chama, DEPOIS do commit
+ * (`announceSystemTransitions`).
+ */
+export async function applySystemTransition(
   tx: DbTx,
   tenantId: string,
   proposalId: string,
-): Promise<boolean> {
-  const current = await tx.query<{ status: string; conversation_id: string }>(
+  input: {
+    to: ProposalStatus;
+    source: SystemTransitionSource;
+    systemMessage: string | null;
+    lisReconciled?: boolean;
+  },
+): Promise<SystemTransition | null> {
+  const current = await tx.query<{ status: string; conversation_id: string | null }>(
     'SELECT status, conversation_id FROM proposals WHERE id = $1 AND tenant_id = $2 FOR UPDATE',
     [proposalId, tenantId],
   );
   const before = current.rows[0];
-  if (!before) return false;
+  if (!before) return null;
+  const from = before.status as ProposalStatus;
+  if (isTerminal(from) || from === input.to) return null;
 
+  const closing = isTerminal(input.to);
   const updated = await tx.query<{ id: string }>(
     `UPDATE proposals
-        SET status = 'ganho', closed_at = NOW(), lis_reconciled_at = NOW(), updated_at = NOW()
+        SET status = $3,
+            closed_at = CASE WHEN $4::boolean THEN NOW() ELSE closed_at END,
+            lis_reconciled_at = CASE WHEN $5::boolean THEN NOW() ELSE lis_reconciled_at END,
+            updated_at = NOW()
       WHERE id = $1 AND tenant_id = $2 AND status NOT IN ('ganho', 'perdido')
       RETURNING id`,
-    [proposalId, tenantId],
+    [proposalId, tenantId, input.to, closing, input.lisReconciled === true],
   );
-  if (updated.rows.length === 0) return false;
+  if (updated.rows.length === 0) return null;
 
   await recordTransitionInTx(tx, {
     tenantId,
     proposalId,
     conversationId: before.conversation_id,
-    status: 'ganho',
+    status: input.to,
     changedBy: null,
-    systemMessage: `Proposta #${proposalRef(proposalId)} ganha — orçamento convertido em requisição no LIS 🎉`,
+    systemMessage: input.systemMessage,
   });
   await auditRepo.insert(tx, {
     tenantId,
@@ -302,10 +381,55 @@ export async function markWonFromLis(
     action: 'update_proposal_status',
     entityType: 'proposal',
     entityId: proposalId,
-    oldValues: { status: before.status },
-    newValues: { status: 'ganho', source: 'lis' },
+    oldValues: { status: from },
+    newValues: { status: input.to, source: input.source },
   });
-  return true;
+  return { proposalId, from, to: input.to, source: input.source };
+}
+
+/**
+ * `ganho` pela requisicao no LIS (CRMLAB-52, D-119 item 4) — hoje so para a
+ * origem `crm` (a `bitlab` segue a D-204). Vai de qualquer estagio nao
+ * terminal, inclusive `novo_contato` e com aprovacao `pending`. `null` = nada feito.
+ */
+export async function markWonFromLis(
+  tx: DbTx,
+  tenantId: string,
+  proposalId: string,
+): Promise<SystemTransition | null> {
+  return applySystemTransition(tx, tenantId, proposalId, {
+    to: 'ganho',
+    source: 'lis',
+    systemMessage: `Proposta #${proposalRef(proposalId)} ganha — orçamento convertido em requisição no LIS 🎉`,
+    lisReconciled: true,
+  });
+}
+
+/**
+ * Depois do commit: um `proposal.status_changed` por transicao de sistema (com
+ * o estagio de destino) e a invalidacao do cache de analytics. Falha de cache
+ * nao derruba nada.
+ */
+export async function announceSystemTransitions(
+  deps: { wsHub: WsHub; cache: CacheService },
+  tenantId: string,
+  transitions: readonly SystemTransition[],
+): Promise<void> {
+  if (transitions.length === 0) return;
+  for (const transition of transitions) {
+    deps.wsHub.emitToTenant(tenantId, 'proposal.status_changed', {
+      proposalId: transition.proposalId,
+      status: transition.to,
+    });
+  }
+  try {
+    await deps.cache.delByPrefix(analyticsCachePrefix(tenantId));
+  } catch (err) {
+    logger.warn('analytics.cache_invalidation_failed', {
+      tenantId,
+      detail: err instanceof Error ? err.message : 'erro desconhecido',
+    });
+  }
 }
 
 /** Nº do orcamento do LIS: so digitos, 1..20, sem zeros a esquerda (D-119 item 1). */
@@ -363,6 +487,13 @@ export class ProposalService {
    */
   async create(ctx: TenantContext, dto: CreateProposalRequest): Promise<CreateProposalResponse> {
     const { db, examCatalog, audit, approvals, insurances } = this.deps;
+
+    // Regras do laboratorio (CRMLAB-56, D-193): "Criar proposta manualmente no
+    // CRM" desligado recusa antes de qualquer outra validacao.
+    const rules = await db.withTenant(ctx.tenantId, (tx) => readFunnelRules(tx, ctx.tenantId));
+    if (!rules.origin.manualInCrm) {
+      throw new BusinessError('MANUAL_PROPOSAL_DISABLED');
+    }
 
     if (dto.items.length === 0 || dto.items.length > MAX_ITEMS) {
       throw new BusinessError('VALIDATION_ERROR', {
@@ -542,6 +673,8 @@ export class ProposalService {
         // D-042). O recorte por papel acima continua valendo por cima dele.
         ...(filters.patientId !== undefined ? { patientId: filters.patientId } : {}),
         ...(createdBy !== undefined ? { createdBy } : {}),
+        // O atendente ve tambem a fila comum de cartoes `bitlab` sem responsavel (D-195 item 6).
+        ...(ctx.role === 'attendant' ? { includeUnowned: true } : {}),
         ...(filters.startDate !== undefined ? { startDate: filters.startDate } : {}),
         ...(filters.endDate !== undefined ? { endDate: filters.endDate } : {}),
         ...(filters.search !== undefined ? { search: filters.search } : {}),
@@ -576,30 +709,55 @@ export class ProposalService {
     const outcome = await db.withTenant(ctx.tenantId, async (tx) => {
       const row = await loadVisibleProposal(tx, ctx, id);
       const from = row.status as ProposalStatus;
+      // Travas do laboratorio (CRMLAB-56, D-192) — a MESMA funcao que o front
+      // usa para esconder. Com os padroes: matriz ALLOWED_TRANSITIONS,
+      // ganho/perdido terminais, motivo obrigatorio (D-191).
+      const { manualMoves } = await readFunnelRules(tx, ctx.tenantId);
 
-      // Terminal: nenhuma mutacao posterior (SERVICES.md §4).
-      if (isTerminal(from)) {
-        throw new BusinessError('PROPOSAL_ALREADY_CLOSED', { status: from });
+      // Ganho fechado pelo LIS nao reabre, com qualquer regra (D-192 item 2).
+      if (isTerminal(from) && row.lis_reconciled_at !== null && row.lis_reconciled_at !== undefined) {
+        throw new BusinessError('PROPOSAL_ALREADY_CLOSED', {
+          status: from,
+          reason: 'lis_reconciled',
+        });
       }
 
-      if (!isTransitionAllowed(from, status)) {
+      const denial = checkTransition(manualMoves, from, status, {
+        role: ctx.role,
+        isOwner: isCardOwner(row.created_by, ctx.userId),
+      });
+      if (denial === 'closed') {
+        throw new BusinessError('PROPOSAL_ALREADY_CLOSED', { status: from });
+      }
+      if (denial === 'reopen_role') {
+        throw new BusinessError('FORBIDDEN', { reason: 'reopen_not_allowed' });
+      }
+      if (denial === 'not_allowed') {
         throw new BusinessError('INVALID_STATUS_TRANSITION', {
           from,
           to: status,
-          allowed: [...ALLOWED_TRANSITIONS[from]],
+          allowed: [...buildAllowedTransitions(manualMoves)[from]],
         });
+      }
+      if (denial === 'not_owner') {
+        throw new BusinessError('FORBIDDEN', { reason: 'move_others_not_allowed' });
       }
 
       let loss: LossReason | null = null;
       if (status === 'perdido') {
-        if (reasonLost === undefined || reasonLost === null || reasonLost === '') {
+        const missing = reasonLost === undefined || reasonLost === null || reasonLost === '';
+        if (missing && manualMoves.requireLossReason) {
           throw new BusinessError('LOSS_REASON_REQUIRED');
         }
-        if (!isLossReason(reasonLost)) {
-          throw new BusinessError('INVALID_LOSS_REASON', { allowed: [...LOSS_REASONS] });
+        if (!missing) {
+          if (!isLossReason(reasonLost)) {
+            throw new BusinessError('INVALID_LOSS_REASON', { allowed: [...LOSS_REASONS] });
+          }
+          loss = reasonLost;
         }
-        loss = reasonLost;
       }
+      // Reabrir (D-192 item 2): sai do terminal limpando closedAt e reasonLost.
+      const reopening = isTerminal(from) && !isTerminal(status);
 
       // Proposta sem aprovacao concedida nao vai para o paciente (WORKFLOWS §3).
       // `rejected` entra junto com `pending`: a rejeicao nao autoriza o
@@ -620,6 +778,7 @@ export class ProposalService {
         ...(loss !== null ? { reasonLost: loss } : {}),
         ...(status === 'orcamento_enviado' ? { sentAt: now } : {}),
         ...(isTerminal(status) ? { closedAt: now } : {}),
+        ...(reopening ? { closedAt: null, reasonLost: null } : {}),
       });
       if (!updated) throw notFound({ resource: 'proposal', id });
 
@@ -690,7 +849,12 @@ export class ProposalService {
     }
     const number = lisBudgetNumber;
 
-    let outcome: { previous: string | null; won: boolean; detail: ProposalDetail };
+    let outcome: {
+      previous: string | null;
+      transitions: SystemTransition[];
+      detail: ProposalDetail;
+      absorbed: repo.LisBudgetHolder | null;
+    };
     try {
       outcome = await db.withTenant(ctx.tenantId, async (tx) => {
         const row = await loadVisibleProposal(tx, ctx, id);
@@ -701,20 +865,48 @@ export class ProposalService {
         if (row.status === 'ganho') {
           throw new BusinessError('PROPOSAL_ALREADY_CLOSED', { status: row.status });
         }
+        // O numero e a identidade do cartao `bitlab` (D-195 item 7).
+        assertNotBitlab(row);
+
+        let absorbed: repo.LisBudgetHolder | null = null;
         if (number !== null && number !== row.lis_budget_number) {
-          const taken = await repo.findProposalNumberByLisBudget(tx, number);
-          if (taken !== null) {
-            throw new BusinessError('CONFLICT', {
-              reason: 'lis_budget_number_taken',
-              proposalNumber: taken,
+          const holder = await repo.findLisBudgetHolder(tx, number);
+          if (holder !== null) {
+            // D-198: cartao automatico que ninguem tocou e absorvido; o resto conflita.
+            const absorbable =
+              holder.origin === 'bitlab' &&
+              holder.status === 'novo_contato' &&
+              holder.sentAt === null &&
+              holder.conversationId === null;
+            if (!absorbable) {
+              throw new BusinessError('CONFLICT', {
+                reason: 'lis_budget_number_taken',
+                proposalNumber: holder.proposalNumber,
+              });
+            }
+            await repo.deleteProposal(tx, holder.id);
+            await auditRepo.insert(tx, {
+              tenantId: ctx.tenantId,
+              userId: ctx.userId,
+              action: 'absorb_bitlab_proposal',
+              entityType: 'proposal',
+              entityId: holder.id,
+              oldValues: {
+                proposalNumber: holder.proposalNumber,
+                lisBudgetNumber: number,
+                totalPrice: holder.totalPrice,
+              },
+              newValues: { absorbedBy: id },
+              ipAddress: ctx.ip,
             });
+            absorbed = holder;
           }
         }
 
         await repo.setLisBudgetNumber(tx, id, number);
-        const won = number !== null && (await reconcileProposal(tx, ctx.tenantId, id));
+        const transitions = number !== null ? await reconcileProposal(tx, ctx.tenantId, id) : [];
         const detail = await loadDetail(tx, id);
-        return { previous: row.lis_budget_number, won, detail };
+        return { previous: row.lis_budget_number, transitions, detail, absorbed };
       });
     } catch (err) {
       // Corrida entre dois PATCH com o mesmo numero: o indice unico decide.
@@ -734,8 +926,15 @@ export class ProposalService {
       });
     }
 
-    if (outcome.won) {
-      await announceLisWins(this.deps, ctx.tenantId, [id]);
+    if (outcome.absorbed !== null) {
+      // O cartao absorvido some do Kanban (D-198).
+      this.deps.wsHub.emitToTenant(ctx.tenantId, 'proposal.updated', {
+        proposalId: outcome.absorbed.id,
+      });
+      await this.invalidateAnalytics(ctx.tenantId);
+    }
+    if (outcome.transitions.length > 0) {
+      await announceSystemTransitions(this.deps, ctx.tenantId, outcome.transitions);
     } else {
       this.deps.wsHub.emitToTenant(ctx.tenantId, 'proposal.updated', { proposalId: id });
     }
@@ -766,6 +965,7 @@ export class ProposalService {
       if (isTerminal(status)) {
         throw new BusinessError('PROPOSAL_ALREADY_CLOSED', { status });
       }
+      assertNotBitlab(row);
 
       const userLimit = await readDiscountLimit(tx, ctx.userId, ctx.discountLimit);
       const withinLimit = discountPercent <= userLimit;
@@ -881,6 +1081,7 @@ export class ProposalService {
     if (isTerminal(preCheck.status as ProposalStatus)) {
       throw new BusinessError('PROPOSAL_ALREADY_CLOSED', { status: preCheck.status });
     }
+    assertNotBitlab(preCheck);
     if (!isProposalEditable(preCheck.status as ProposalStatus)) {
       throw new BusinessError('PROPOSAL_EDIT_NOT_ALLOWED', { status: preCheck.status });
     }
@@ -1003,6 +1204,321 @@ export class ProposalService {
 
     this.deps.wsHub.emitToTenant(ctx.tenantId, 'proposal.updated', { proposalId: id });
 
+    return outcome.detail;
+  }
+
+  // -------------------------------------------------------------------------
+  // Envio pelo cartao do Bitlab (CRMLAB-58, D-200..D-202)
+  // -------------------------------------------------------------------------
+
+  private requireMessages(): MessageSender {
+    if (!this.deps.messages) throw new Error('ProposalService sem MessageSender (envio pelo cartao)');
+    return this.deps.messages;
+  }
+
+  /**
+   * Conversa que QUEM CHAMA enxerga (D-200 item 3): atendente, as dela e a
+   * fila livre; gestor/admin, todas. De outro tenant (RLS) ou fora da
+   * visibilidade -> `NOT_FOUND`, nunca `FORBIDDEN`.
+   */
+  private async loadVisibleConversation(
+    tx: DbTx,
+    ctx: TenantContext,
+    conversationId: string,
+  ): Promise<repo.ConversationRef> {
+    const conversation = await repo.findConversation(tx, conversationId);
+    const visible =
+      conversation !== null &&
+      (isSupervisor(ctx) ||
+        conversation.assignedTo === null ||
+        conversation.assignedTo === ctx.userId);
+    if (!conversation || !visible) {
+      throw notFound({ resource: 'conversation', id: conversationId });
+    }
+    return conversation;
+  }
+
+  /**
+   * `POST /proposals/:id/send` — tudo ou nada em tres passos (D-201):
+   * reserva (trava de linha) -> envio pelo caminho do atendimento -> vinculo.
+   * O cartao so muda no ultimo passo; falha do envio desfaz a reserva.
+   */
+  async sendFromCard(
+    ctx: TenantContext,
+    id: string,
+    dto: { conversationId: string; message: string },
+  ): Promise<ProposalDetail> {
+    const { db, wsHub } = this.deps;
+    const messages = this.requireMessages();
+    const claimId = randomUUID();
+
+    // 1. Reserva.
+    const claim = await db.withTenant(ctx.tenantId, async (tx) => {
+      const lock = await repo.lockForSend(tx, id);
+      const row = lock ? await repo.findRowById(tx, id) : null;
+      if (!lock || !row) throw notFound({ resource: 'proposal', id });
+      if (!canSeeProposal(ctx, row)) {
+        // Quem perdeu a corrida via o cartao na fila comum um instante antes; o
+        // envio da colega o tirou da visibilidade dela. "Ja enviado" e o erro
+        // que ela entende, e nao revela nada alem do que a fila ja mostrava.
+        if (row.origin === 'bitlab' && row.conversation_id !== null) {
+          throw new BusinessError('PROPOSAL_ALREADY_SENT', { reason: 'sent' });
+        }
+        throw notFound({ resource: 'proposal', id });
+      }
+      if (row.origin !== 'bitlab') {
+        throw new BusinessError('PROPOSAL_EDIT_NOT_ALLOWED', {
+          status: row.status,
+          reason: 'crm_origin',
+        });
+      }
+      const from = row.status as ProposalStatus;
+      if (isTerminal(from)) throw new BusinessError('PROPOSAL_ALREADY_CLOSED', { status: from });
+      // Enviado = vinculado a uma conversa (o envio e o unico caminho do vinculo).
+      if (row.conversation_id !== null) {
+        throw new BusinessError('PROPOSAL_ALREADY_SENT', { reason: 'sent' });
+      }
+      if (lock.claimAlive) throw new BusinessError('PROPOSAL_ALREADY_SENT', { reason: 'in_progress' });
+
+      const rules = await readFunnelRules(tx, ctx.tenantId);
+      const to = bitlabSendTarget(row.lis_requisition_number, rules.automation);
+      if (from !== 'novo_contato') {
+        throw new BusinessError('INVALID_STATUS_TRANSITION', { from, to, allowed: [] });
+      }
+      if (
+        !canActOnCard(rules.manualMoves, {
+          role: ctx.role,
+          isOwner: isCardOwner(row.created_by, ctx.userId),
+        })
+      ) {
+        throw new BusinessError('FORBIDDEN', { reason: 'move_others_not_allowed' });
+      }
+
+      const conversation = await this.loadVisibleConversation(tx, ctx, dto.conversationId);
+      if (conversation.status !== 'active') {
+        throw new BusinessError('CONVERSATION_ARCHIVED', { status: conversation.status });
+      }
+
+      await repo.claimSend(tx, id, claimId);
+      return { to, previousOwner: row.created_by };
+    });
+
+    // 2. Envio — fora da transacao, pelo mesmo caminho do Composer.
+    let sent: Message;
+    try {
+      sent = await messages.createFromAgent(ctx.tenantId, dto.conversationId, ctx.userId, {
+        content: dto.message,
+        messageType: 'text',
+      });
+    } catch (err) {
+      await db.withTenant(ctx.tenantId, (tx) => repo.releaseSend(tx, id, claimId));
+      throw err;
+    }
+
+    // 3. Vinculo.
+    let outcome: { from: ProposalStatus; to: ProposalStatus; detail: ProposalDetail };
+    try {
+      outcome = await db.withTenant(ctx.tenantId, async (tx) => {
+        const moved = await repo.finalizeSend(tx, {
+          id,
+          claimId,
+          conversationId: dto.conversationId,
+          createdBy: ctx.userId,
+          status: claim.to,
+        });
+        if (!moved) throw new BusinessError('PROPOSAL_ALREADY_SENT', { reason: 'in_progress' });
+
+        const current = await repo.findRowById(tx, id);
+        if (moved.from !== moved.to) {
+          await recordTransitionInTx(tx, {
+            tenantId: ctx.tenantId,
+            proposalId: id,
+            conversationId: dto.conversationId,
+            status: moved.to,
+            changedBy: ctx.userId,
+            systemMessage: `Orçamento #${proposalRef(id)} enviado — ${formatMoney(
+              Number(current?.total_price ?? 0),
+            )}`,
+          });
+        }
+        await auditRepo.insert(tx, {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          action: 'update_proposal_status',
+          entityType: 'proposal',
+          entityId: id,
+          oldValues: { status: moved.from, conversationId: null, createdBy: claim.previousOwner },
+          newValues: {
+            status: moved.to,
+            source: 'send',
+            conversationId: dto.conversationId,
+            createdBy: ctx.userId,
+            messageId: sent.id,
+          },
+          ipAddress: ctx.ip,
+        });
+        return { ...moved, detail: await loadDetail(tx, id) };
+      });
+    } catch (err) {
+      // D-201, risco declarado: a mensagem saiu e o vinculo nao gravou.
+      logger.error('proposal.send_finalize_failed', {
+        tenantId: ctx.tenantId,
+        proposalId: id,
+        messageId: sent.id,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+
+    if (outcome.from !== outcome.to) {
+      wsHub.emitToTenant(ctx.tenantId, 'proposal.status_changed', {
+        proposalId: id,
+        status: outcome.to,
+      });
+    } else {
+      wsHub.emitToTenant(ctx.tenantId, 'proposal.updated', { proposalId: id });
+    }
+    await this.invalidateAnalytics(ctx.tenantId);
+    return outcome.detail;
+  }
+
+  /** Dona, gestor ou admin — para as correcoes depois do envio (D-202). */
+  private assertOwnerOrSupervisor(ctx: TenantContext, row: ProposalRow): void {
+    if (isSupervisor(ctx) || row.created_by === ctx.userId) return;
+    throw new BusinessError('FORBIDDEN', { reason: 'not_owner' });
+  }
+
+  /** Cartao `bitlab` ja vinculado: pre-condicao de reenviar e de trocar a conversa. */
+  private assertLinkedBitlab(row: ProposalRow): void {
+    if (row.origin !== 'bitlab') {
+      throw new BusinessError('PROPOSAL_EDIT_NOT_ALLOWED', {
+        status: row.status,
+        reason: 'crm_origin',
+      });
+    }
+    if (isTerminal(row.status as ProposalStatus)) {
+      throw new BusinessError('PROPOSAL_ALREADY_CLOSED', { status: row.status });
+    }
+    if (row.conversation_id === null) {
+      throw new BusinessError('PROPOSAL_EDIT_NOT_ALLOWED', {
+        status: row.status,
+        reason: 'not_sent',
+      });
+    }
+  }
+
+  /** `POST /proposals/:id/resend` (D-202 item 1): sem mudar estagio nem `sent_at`. */
+  async resendFromCard(ctx: TenantContext, id: string, message: string): Promise<Message> {
+    const messages = this.requireMessages();
+    const row = await this.deps.db.withTenant(ctx.tenantId, (tx) =>
+      loadVisibleProposal(tx, ctx, id),
+    );
+    this.assertLinkedBitlab(row);
+    const status = row.status as ProposalStatus;
+    if (!RESEND_PROPOSAL_STATUSES.includes(status)) {
+      throw new BusinessError('INVALID_STATUS_TRANSITION', {
+        from: status,
+        to: status,
+        allowed: [...RESEND_PROPOSAL_STATUSES],
+      });
+    }
+    this.assertOwnerOrSupervisor(ctx, row);
+    const conversationId = row.conversation_id as string;
+
+    const sent = await messages.createFromAgent(ctx.tenantId, conversationId, ctx.userId, {
+      content: message,
+      messageType: 'text',
+    });
+    await this.deps.audit.record(ctx, {
+      action: 'resend_proposal_message',
+      entityType: 'proposal',
+      entityId: id,
+      newValues: { conversationId, messageId: sent.id },
+    });
+    return sent;
+  }
+
+  /** `PATCH /proposals/:id/conversation` (D-202 item 2). Nao envia mensagem. */
+  async relinkConversation(
+    ctx: TenantContext,
+    id: string,
+    conversationId: string,
+  ): Promise<ProposalDetail> {
+    const outcome = await this.deps.db.withTenant(ctx.tenantId, async (tx) => {
+      const row = await loadVisibleProposal(tx, ctx, id);
+      this.assertLinkedBitlab(row);
+      this.assertOwnerOrSupervisor(ctx, row);
+      await this.loadVisibleConversation(tx, ctx, conversationId);
+      const previous = row.conversation_id;
+      if (previous === conversationId) return { changed: false, detail: await loadDetail(tx, id) };
+      await repo.setConversation(tx, id, conversationId);
+      await auditRepo.insert(tx, {
+        tenantId: ctx.tenantId,
+        userId: ctx.userId,
+        action: 'update_proposal_conversation',
+        entityType: 'proposal',
+        entityId: id,
+        oldValues: { conversationId: previous },
+        newValues: { conversationId },
+        ipAddress: ctx.ip,
+      });
+      return { changed: true, detail: await loadDetail(tx, id) };
+    });
+    if (outcome.changed) {
+      this.deps.wsHub.emitToTenant(ctx.tenantId, 'proposal.updated', { proposalId: id });
+      await this.invalidateAnalytics(ctx.tenantId);
+    }
+    return outcome.detail;
+  }
+
+  /**
+   * `PATCH /proposals/:id/responsible` (D-202 item 3). Gestor/admin: qualquer
+   * usuario ativo do laboratorio, em qualquer estagio. Atendente: so o cartao
+   * de que e dona, aberto, para outra atendente ativa.
+   */
+  async setResponsible(ctx: TenantContext, id: string, userId: string): Promise<ProposalDetail> {
+    const outcome = await this.deps.db.withTenant(ctx.tenantId, async (tx) => {
+      const row = await loadVisibleProposal(tx, ctx, id);
+      const supervisor = isSupervisor(ctx);
+      if (!supervisor) {
+        if (row.created_by !== ctx.userId) {
+          throw new BusinessError('FORBIDDEN', { reason: 'not_owner' });
+        }
+        if (isTerminal(row.status as ProposalStatus)) {
+          throw new BusinessError('FORBIDDEN', { reason: 'closed' });
+        }
+      }
+      const target = await repo.findTenantUser(tx, ctx.tenantId, userId);
+      const allowedRoles = supervisor ? RESPONSIBLE_ROLES : ['attendant'];
+      if (!target || !target.isActive || !allowedRoles.includes(target.role)) {
+        throw new BusinessError('VALIDATION_ERROR', {
+          fields: {
+            userId: supervisor
+              ? 'Usuário inexistente ou inativo neste laboratório'
+              : 'Escolha outra atendente ativa deste laboratório',
+          },
+        });
+      }
+      const previous = row.created_by;
+      if (previous === userId) return { changed: false, detail: await loadDetail(tx, id) };
+      await repo.setResponsible(tx, id, userId);
+      await auditRepo.insert(tx, {
+        tenantId: ctx.tenantId,
+        userId: ctx.userId,
+        action: 'update_proposal_responsible',
+        entityType: 'proposal',
+        entityId: id,
+        oldValues: { createdBy: previous },
+        newValues: { createdBy: userId },
+        ipAddress: ctx.ip,
+      });
+      return { changed: true, detail: await loadDetail(tx, id) };
+    });
+    if (outcome.changed) {
+      this.deps.wsHub.emitToTenant(ctx.tenantId, 'proposal.updated', { proposalId: id });
+      // Ranking e comissao sao por responsavel.
+      await this.invalidateAnalytics(ctx.tenantId);
+    }
     return outcome.detail;
   }
 }

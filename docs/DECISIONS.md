@@ -3102,6 +3102,585 @@ rodada anterior volta na seguinte, o que é inofensivo porque o upsert é idempo
 **Impacto:** `bitlab-client.ts` (`parseBitlabDateTime`, `bitlabDateToIsoDate`,
 `watermarkToBitlabDateTime`), SERVICES.md §24.1, BUSINESS_RULES.md §11.10.
 
+## 2026-09-26 — Página de Regras do funil (CRMLAB-56)
+
+### D-190: Regras do funil por laboratório, numa linha JSONB própria, com um ponto único de leitura
+**Decisão:** as regras que o laboratório define na página **Configurações → Regras** ficam em
+`funnel_rules` (SCHEMA.md §32, migração 027): uma linha por tenant, `rules JSONB` com o objeto
+`FunnelRules` inteiro (`shared/types/funnel-rules.types.ts`, API_CONTRACTS.md §6c).
+1. **Sem linha = padrões** (`DEFAULT_FUNNEL_RULES`, D-191), sem gravar nada, mesma disciplina de
+   D-065. A leitura sempre sobrepõe o que está gravado aos padrões, chave por chave e com
+   conferência de tipo: campo novo que um card futuro acrescentar nasce com o padrão em todo
+   laboratório, e lixo no JSON cai no padrão em vez de derrubar a tela.
+2. **Ponto único de leitura para os outros cards:** `readFunnelRules(tx, tenantId)`
+   (`backend/src/services/funnel-rules.service.ts`, também exportado como `funnelRules.get`). Uma
+   consulta por chave primária, dentro da transação de quem chama. É daqui que leem
+   `ProposalService` (travas e origem, neste card), a proposta do Bitlab (CRMLAB-57), o envio
+   (CRMLAB-58), o motor de tempo (CRMLAB-59) e a régua de fatos (CRMLAB-60). Ninguém lê a tabela
+   direto.
+3. **Quem lê e quem edita:** `GET /settings/funnel-rules` é de todo perfil de laboratório
+   (a atendente vê a página, e o front precisa das travas para esconder o que o back recusaria).
+   `PATCH` é **manager/admin**.
+4. **PATCH parcial em qualquer nível** (`UpdateFunnelRulesRequest`): campo ausente preserva;
+   campo desconhecido, tipo errado, prazo fora da faixa ou variável desconhecida no modelo →
+   `VALIDATION_ERROR` com `details.fields` pelo caminho (`automation.sentToFollowUp.days`). Listas
+   (`roles`) são trocadas inteiras.
+5. **Auditoria:** `update_funnel_rules` (`entityType: "funnel_rules"`, `entityId` = tenant), com o
+   objeto inteiro antes e depois, só quando algo mudou de fato (diff-then-audit, como a comissão).
+6. **Vale dali para frente:** nenhuma regra reprocessa proposta existente. Trava nova vale na
+   próxima tentativa de mover; prazo novo vale na próxima rodada do motor (CRMLAB-59).
+**Motivo:** o Michel quer "a ferramenta bem ajustável: as regras de negócio o lab define". São ~20
+campos em 4 seções, e mais cards vão acrescentar. Uma coluna por campo em `tenant_settings`
+exigiria migração a cada regra nova. O JSONB com padrões no código mantém a migração única e o
+tipo como contrato.
+**Impacto:** `backend/migrations/027_funnel_rules.sql`, `funnel-rules.repository.ts`,
+`funnel-rules.service.ts`, `funnel-rules.routes.ts` (novos), `modules.ts`; `shared/types/funnel-rules.types.ts`;
+API_CONTRACTS §6c, SCHEMA §32, SERVICES §26, PAGES §21.
+
+### D-191: Os padrões reproduzem o comportamento de hoje; "Criar pelo CRM" nasce ligado
+**Decisão:** sem nada gravado, o CRM se comporta **exatamente** como antes do card:
+- travas: `skipStages: true` (a matriz `ALLOWED_TRANSITIONS`), `reopenClosed.enabled: false`
+  (`ganho`/`perdido` terminais), `requireLossReason: true`, `moveOthersCards: true` (gestor move
+  card de qualquer atendente, como hoje);
+- origem: `fromBitlab: true` **e** `manualInCrm: true`;
+- automação (só guardada, D-190 item 6): Requisição → Negociação ligada; Pagamento → Ganho
+  ligada; Orçamento enviado há **3** dias → Follow-up, ligada; Negociação sem pagamento há **7**
+  dias → Follow-up, ligada; Follow-up há **15** dias → Perdido ("Silêncio"), **desligada**; alerta
+  de "Novo orçamento" parado há **4 h**, ligado; **dias corridos**.
+- mensagem de envio: `Olá, {paciente}! Segue o orçamento nº {numero_orcamento} ({convenio}), no
+  valor de {valor}.` (o texto que o botão "Enviar orçamento" monta hoje, com as variáveis).
+**Motivo:** o card não pode mudar nada até o laboratório editar, e a suíte atual tem que continuar
+verde. `manualInCrm` desligado por padrão quebraria o único fluxo de criação que existe hoje (a
+proposta do Bitlab chega no CRMLAB-57). **O Michel desliga "Criar proposta manualmente no CRM"
+pela página quando quiser só o fluxo Bitlab.** Os prazos são os sugeridos no card; "corridos" é o
+mais simples de explicar e de conferir.
+**Impacto:** `DEFAULT_FUNNEL_RULES` em `shared/types/funnel-rules.types.ts`.
+
+### D-192: As travas manuais valem no back e no front pela mesma função (`checkTransition`)
+**Decisão:** `ALLOWED_TRANSITIONS`/`TERMINAL_STATUSES` deixam de ser a trava final e passam a ser
+o **padrão** de uma regra. `checkTransition(rules.manualMoves, from, to, actor)` em
+`shared/types/funnel-rules.types.ts` decide toda mudança de estágio **feita por uma pessoa**;
+`ProposalService.updateStatus` recusa o que ela recusa, e o front (seletor "Mudar estágio",
+botões Ganho/Perdido/Avançar, colunas do kanban) só oferece o que ela aceita (`allowedTargets`).
+1. **Pular etapas** (`skipStages`): ligado = `ALLOWED_TRANSITIONS` (inclui `orcamento_enviado →
+   negociacao/ganho` e `follow_up → ganho`). Desligado = `SEQUENTIAL_TRANSITIONS`: um passo para a
+   frente, um para trás (D-105) e `perdido` de qualquer estágio aberto; `ganho` só a partir de
+   `negociacao`.
+2. **Reabrir Ganho/Perdido** (`reopenClosed`): desligado = terminais, como antes
+   (`PROPOSAL_ALREADY_CLOSED`). Ligado, a proposta fechada volta para `orcamento_enviado`,
+   `follow_up` ou `negociacao` (`REOPEN_TARGETS`), limpando `closed_at` e `reason_lost`
+   (`sent_at` fica). Quem reabre: os perfis de `roles` (`attendant`/`manager`) e **sempre o
+   admin**; perfil fora da lista → `FORBIDDEN` com `details.reason: "reopen_not_allowed"`. **Ganho
+   conciliado pelo LIS não reabre** (`lis_reconciled_at` preenchido → `PROPOSAL_ALREADY_CLOSED`
+   com `details.reason: "lis_reconciled"`): o LIS diz que virou requisição, e reabrir faria a
+   próxima conciliação não fechar de novo. Reabrir grava histórico, audit
+   `update_proposal_status` e WS como qualquer transição.
+3. **Exigir motivo no Perdido** (`requireLossReason`): desligado, `perdido` sem `reasonLost` é
+   aceito (`reason_lost` fica `NULL`, que o relatório de motivos já agrupa). Motivo enviado
+   continua tendo que ser do enum (`INVALID_LOSS_REASON`).
+4. **Mover card de outra atendente** (`moveOthersCards`): vale para o **gestor**. Desligado, o
+   gestor só muda o estágio dos cards que ele mesmo criou → `FORBIDDEN` com `details.reason:
+   "move_others_not_allowed"`. O **admin sempre pode** (é quem corrige). A atendente continua
+   vendo só as próprias propostas (D-042); a regra não amplia a visibilidade.
+5. **Ordem das recusas:** fechada (`closed`/`reopen_role`) → fora da matriz
+   (`INVALID_STATUS_TRANSITION`, `details.allowed` = destinos vigentes) → dono do card → motivo de
+   perda → aprovação pendente. A ordem antiga (fechada → matriz → motivo → aprovação) fica igual.
+6. **Exceção de sistema:** `markWonFromLis` (D-119) **não** passa pelas travas: o LIS fecha em
+   qualquer estágio aberto, com qualquer regra. O mesmo vale para as automações de CRMLAB-59/60,
+   que são do sistema, não de uma pessoa.
+7. **Arrastar no kanban:** durante o `dragover` só o estágio de origem é legível
+   (`StageColumn`); a coluna usa `canTransition` com o ator "dono", e o `drop` confere a regra
+   completa (dono incluído) antes de chamar a API. Quem decide continua sendo o back.
+**Motivo:** o card pede que as travas "valham de fato" e que front e back não possam divergir,
+como já era com a matriz compartilhada. Reabrir para um estágio aberto (e não para o estágio
+anterior do histórico) evita depender do histórico e deixa a pessoa escolher onde retomar.
+**Impacto:** `shared/types/funnel-rules.types.ts`, `proposal.service.ts` (`updateStatus`),
+frontend `ActionsRow.tsx`, `ProposalModal.tsx`, `StageColumn.tsx`, `Proposals.tsx`,
+`LostReasonForm.tsx`; BUSINESS_RULES §3, WORKFLOWS §4, API_ERRORS.
+
+### D-193: "Criar proposta manualmente no CRM" desligado some da tela e o back recusa
+**Decisão:** `origin.manualInCrm: false` → `POST /proposals` devolve **`MANUAL_PROPOSAL_DISABLED`
+(409)**, antes de ler catálogo ou conversa. O front esconde "Novo Orçamento" (Atendimento),
+"Novo atendimento" (pipeline, que só existe para levar ao `/budget/new`), a tela `/budget/new`
+mostra o aviso em vez do formulário, e a seção **Descontos e aprovação** da página de Regras some.
+No modal da proposta, a linha de desconto só aparece quando a proposta tem desconto (> 0): as
+propostas manuais antigas continuam mostrando o desconto que tiveram.
+1. **Ao menos uma origem ligada:** desligar as duas → `VALIDATION_ERROR` em `origin`.
+2. **A alçada não muda de lugar nem de regra.** A seção Descontos e aprovação mostra a regra
+   vigente (dentro da alçada aprova sozinha; acima vai para aprovação do gestor) e os limites
+   padrão por perfil (`DEFAULT_DISCOUNT_LIMIT`). O limite de cada pessoa continua sendo editado em
+   **Usuários & Permissões** (admin), e a página leva para lá.
+3. **Proposta do Bitlab não passa por aprovação:** isso depende do campo de origem da proposta,
+   que nasce no CRMLAB-57. Aqui fica só o liga/desliga e a visibilidade.
+**Motivo:** "a UI esconde, o servidor recusa" (FRONTEND_BACKEND.md §4). Código novo e próprio,
+em vez de `FORBIDDEN`, porque não é falta de permissão de quem chama: é o laboratório que
+desligou o fluxo, e a tela precisa mostrar isso.
+**Impacto:** `proposal.service.ts` (`create`), `api.types.ts`/`errors.ts`/API_ERRORS.md
+(`MANUAL_PROPOSAL_DISABLED`), frontend `ConversationPanel`, `Proposals.tsx`, `Budget/New.tsx`,
+`ProposalModal.tsx`, `Settings/Rules.tsx`.
+
+### D-194: Modelo da mensagem de envio com variáveis fixas; Comissão passa a morar na página de Regras
+**Decisão:**
+1. **Mensagem de envio** (`sendMessage.template`, 1..1000 caracteres): as variáveis são
+   `{paciente}`, `{numero_orcamento}`, `{valor}` e `{convenio}` (`SEND_MESSAGE_VARIABLES`).
+   Qualquer outra `{coisa}` → `VALIDATION_ERROR` em `sendMessage.template`, com as desconhecidas
+   listadas. `renderSendMessageTemplate(template, values)` em `shared/` é a função pura que o
+   envio (CRMLAB-58) vai usar; os valores entram **já formatados** (`valor` em `R$ 1.234,50`). A
+   página mostra a pré-visualização com dados de exemplo pela mesma função. Neste card o botão
+   "Enviar orçamento" continua com o texto de hoje: trocar é do CRMLAB-58.
+2. **Comissão** vira a seção 6 da página de Regras, com o mesmo formulário, o mesmo endpoint
+   (`/settings/commissions`, API_CONTRACTS §6b) e as mesmas permissões: gestor lê, **admin
+   edita** (a página de Regras deixa o gestor editar as outras seções, mas não a comissão, que
+   continua sendo decisão de admin, D-113). A atendente **não vê** a seção (o `GET` é manager+).
+   A rota antiga `/settings/commissions` **redireciona** para `/settings/rules#comissoes`, e o
+   item "Comissão" sai do menu. Nenhuma regra de cálculo muda.
+**Motivo:** o card pede uma página só para as regras do laboratório, e comissão é uma delas. Não
+mexer no endpoint nem na permissão mantém `/sales/summary` e os testes da comissão como estão.
+**Impacto:** `shared/types/funnel-rules.types.ts`; frontend `Settings/Rules.tsx` (novo),
+`Settings/Commissions.tsx` (vira seção), `route-config.ts`, `routes/index.tsx`; PAGES §19/§21.
+### D-195: Proposta de origem `bitlab` — sem conversa, sem itens, total = o do orçamento do Bitlab (CRMLAB-57)
+**Decisão:** `proposals` ganha `origin` (`'crm'` | `'bitlab'`, `NOT NULL DEFAULT 'crm'`: toda
+proposta existente é `crm`). Na origem `bitlab` a proposta nasce do orçamento do LIS (D-196) e:
+1. **`conversation_id` e `created_by` passam a aceitar `NULL`**, e só nessa origem: o CHECK
+   `proposals_crm_origin_complete` exige os dois quando `origin = 'crm'`. A API de Orçamentos não
+   traz telefone, então não há conversa nem paciente; o vínculo com a conversa é do CRMLAB-58.
+2. **Total:** `total_price` espelha `lis_budgets.total_value`. É a exceção declarada à regra §1 de
+   BUSINESS_RULES: a proposta `bitlab` **não tem itens** do catálogo, e a fonte da verdade do
+   valor é o orçamento do Bitlab. `discount_percent = 0`, `approval_status = 'none'`. A cada
+   ingestão do mesmo orçamento a conciliação regrava `total_price` (e `insurance_id`) se
+   mudaram, **enquanto a proposta não for terminal**. Guardar o número em `total_price` (e não
+   só no JOIN) mantém o funil, o pipeline, a receita e o ranking sem nenhum caso especial.
+3. **Nada de dado pessoal novo:** nome do paciente, data do orçamento e atendente do Bitlab vêm
+   por JOIN com `lis_budgets` (`patient_name`, `issued_on`, `attendant_name`), nunca copiados.
+   Na resposta: `patientName` = `COALESCE(conversa, lis_budgets)`, `lisIssuedOn`,
+   `lisAttendantName`. `lisRequisitionNumber` sobe de `ProposalDetail` para `Proposal` (o selo
+   "Pré-cadastro feito" do cartão lê a listagem).
+4. **Convênio** = `lis_budgets.insurance_id` (o mesmo resolvido pela ingestão, D-114).
+5. **Responsável provisório** = o login ligado ao atendente do Bitlab (`lis_budgets.attendant_id
+   → attendants.user_id`, só usuário ativo). Sem vínculo, `created_by` fica `NULL`. O dono
+   definitivo é quem enviar (CRMLAB-58).
+6. **Visibilidade:** proposta `bitlab` **sem responsável** é vista por qualquer pessoa do tenant
+   (fila comum de "Novo orçamento"); com responsável, vale D-042 (atendente vê só as suas). Sem
+   isso, a atendente que emitiu o orçamento no Bitlab e ainda não tem o login ligado ao nome do
+   LIS não veria o próprio cartão.
+7. **O que ela não faz:** não edita itens, desconto nem o nº do orçamento (é a identidade dela):
+   `PATCH /items`, `/discount` e `/lis-reference` → `PROPOSAL_EDIT_NOT_ALLOWED` com
+   `details.reason: "bitlab_origin"`. Não passa por aprovação de desconto. Transição de estágio
+   sem conversa não grava mensagem de sistema (não há onde). A ficha do paciente não a mostra
+   (não há paciente), e o ranking por atendente ignora as sem responsável.
+**Motivo:** o fluxo das atendentes (Epic CRMLAB-55) é criar o orçamento no Bitlab, como sempre, e
+conferir no CRM. Um card que exigisse conversa e itens não poderia nascer sozinho. Deixar os
+campos nulos só na origem nova, com CHECK, mantém o invariante antigo intacto para `crm`.
+**Impacto:** migração `028_bitlab_origin.sql`, `shared/types/proposal.types.ts`,
+`proposal.repository.ts`, `proposal.service.ts`, `analytics.repository.ts`,
+`lis-reconcile.service.ts`; frontend `ProposalCard`, `ProposalModal`, `ActionsRow`; SCHEMA §5,
+API_CONTRACTS §3, BUSINESS_RULES §1/§3, SERVICES §4.
+
+**Emenda (integração CRMLAB-56 × 57, 26/09/2026):** para a trava "mover card de outra atendente" (D-192), cartão sem responsável conta como da fila comum: `isCardOwner(createdBy, userId)` em `shared/` devolve `true` quando `createdBy` é `null`. Sem isso a atendente via o cartão do Bitlab e não conseguia movê-lo (403 `not_owner`). O gate `isBitlabOriginEnabled` passa a ler `origin.fromBitlab` das Regras.
+
+### D-196: Proposta nasce na ingestão do orçamento, só a partir da ativação, sem duplicar (CRMLAB-57)
+**Decisão:** no hook por chunk de `LisImportService.ingestRows` (planilha e sincronização),
+depois do upsert e **antes** da conciliação, `createBitlabProposals(tx, tenantId, numbers)` cria
+uma proposta `bitlab` em `novo_contato` para cada orçamento do chunk **sem proposta vinculada**.
+1. **Liga/desliga:** `isBitlabOriginEnabled(tx, tenantId)` (`backend/src/services/bitlab-origin-gate.ts`),
+   uma função só. Enquanto a regra "Nascer do orçamento do Bitlab" (CRMLAB-56) não existe, devolve
+   `true`; a integração troca o corpo.
+2. **Sem avalanche de histórico:** `tenant_settings.bitlab_proposals_since` (`DATE`, dia de
+   Brasília). É gravado na **primeira ingestão com a regra ligada** (`COALESCE`: nunca anda
+   depois) e só nasce proposta de orçamento com `issued_on >= bitlab_proposals_since`. A migração
+   não preenche nada. Orçamento sem data de emissão não nasce. Assim, a primeira carga de 90 dias
+   e o dump de produção restaurado na hml (com `lis_budgets` antigos) não viram cartão, e não
+   existe backfill. Quando a regra do CRMLAB-56 for ligada pela primeira vez, a marca é a data
+   dessa ligação (a primeira ingestão depois dela).
+3. **Idempotente e à prova de corrida:** a seleção é "orçamento do chunk sem `proposals` com
+   esse `lis_budget_number`", e o INSERT usa `ON CONFLICT (tenant_id, lis_budget_number) WHERE
+   lis_budget_number IS NOT NULL DO NOTHING` sobre o índice único parcial de D-118. Reimportar a
+   planilha, reler a janela da sincronização ou repetir um chunk não duplica. Planilha e
+   sincronização ao mesmo tempo também não: o `pg_advisory_xact_lock` do `proposal_number`
+   serializa as duas transações, e a segunda cai no `DO NOTHING`.
+4. **Registro:** histórico `novo_contato` com `changedBy: null`; audit `create_proposal` na
+   transação do chunk com `userId: null` e `newValues: { origin: "bitlab", lisBudgetNumber,
+   totalPrice, status }`. `lis_imports.proposals_created` conta as criadas na rodada.
+5. **Tempo real:** WS `proposal.created` (`{ proposalId }`) por proposta, **depois do commit**, e
+   invalidação do cache de analytics. O cartão aparece no Kanban sem recarregar.
+**Motivo:** o card tem que aparecer sozinho, pelos dois caminhos de entrada, sem inundar o funil
+com meses de orçamentos antigos e sem cartão duplicado quando a mesma janela é relida (a
+sincronização relê o último orçamento a cada rodada, D-187).
+**Impacto:** `028_bitlab_origin.sql`, `bitlab-origin-gate.ts` e `bitlab-proposal.service.ts`
+(novos), `lis-import.service.ts`, `shared/types/websocket.types.ts`, `lis.types.ts`; frontend
+`api/ws.ts`; SERVICES §19/§26, SCHEMA §5/§16/§25, FRONTEND_BACKEND "Real-time".
+
+### D-197: Exceção à D-119 — orçamento do Bitlab com requisição em "Novo orçamento" não vira `ganho`, ganha o selo "Pré-cadastro feito" (CRMLAB-57)
+**Decisão:** na conciliação (D-119 item 4), proposta de origem `bitlab` **em `novo_contato`** com
+requisição encontrada **não** vai para `ganho`: só espelha `lis_requisition_number` (e
+pagamento), que o cartão mostra como o selo **"Pré-cadastro feito"**. Isso vale também para o
+orçamento que já chega com requisição (pré-cadastro): o cartão nasce em "Novo orçamento". Em
+qualquer outro estágio, e em toda proposta de origem `crm`, a D-119 continua como está.
+**Motivo:** requisição no mesmo dia do orçamento é, no balcão, o pré-cadastro, não o paciente
+aceitando uma proposta que o CRM enviou. Fechar como ganho um cartão que ninguém conferiu nem
+enviou inflaria a conversão. A régua nova (requisição → negociação, pagamento → ganho) é o
+CRMLAB-60.
+**Limitação conhecida:** a conciliação só roda quando o orçamento volta numa ingestão ou quando
+alguém digita o número. Um cartão com pré-cadastro que depois é enviado (`orcamento_enviado`) só
+vai a `ganho` na próxima vez que esse orçamento mudar no Bitlab. Fica para o CRMLAB-60.
+**Impacto:** `lis-reconcile.service.ts`, BUSINESS_RULES §3, SERVICES §25, WORKFLOWS §4.
+
+### D-198: Número digitado numa proposta do CRM absorve o cartão automático ainda não enviado (CRMLAB-57)
+**Decisão:** em `PATCH /proposals/:id/lis-reference` numa proposta de origem `crm`, se o número
+já pertence a uma proposta `bitlab` que está em `novo_contato`, **nunca foi enviada**
+(`sent_at IS NULL`) e não tem conversa, o cartão automático é **absorvido**: apagado (`DELETE`,
+o histórico e os itens vão em cascata, `lis_budgets.proposal_id` vira `NULL`), com audit
+`absorb_bitlab_proposal` no id apagado (`oldValues: { proposalNumber, lisBudgetNumber,
+totalPrice }`, `newValues: { absorbedBy }`), e o vínculo passa para a proposta manual, que
+concilia na mesma transação. Depois do commit sai `proposal.updated` com o id apagado, para o
+Kanban tirar o cartão. Em qualquer outro caso (cartão automático já enviado, em outro estágio ou
+número de outra proposta `crm`), continua `CONFLICT` `lis_budget_number_taken`.
+**Motivo:** é o mesmo orçamento. A atendente que fez tudo pela conversa, do jeito antigo, não
+pode ficar bloqueada por um cartão que o sistema criou sozinho, e deixar os dois produziria dois
+cartões para uma venda. O cartão absorvido não tinha nada que a pessoa fez (sem envio, sem
+conversa, sem itens), então apagar não perde trabalho; o audit guarda o que ele era.
+**Impacto:** `proposal.service.ts` (`setLisReference`), `proposal.repository.ts`,
+API_CONTRACTS §3, SERVICES §4.
+
+### D-199: Sincronização a cada 2 minutos, sem sobrepor rodadas e sem log a cada tique vazio (CRMLAB-57)
+**Decisão:** o padrão de `LIS_SYNC_INTERVAL_MS` cai de 30 min para **2 min** (`120000`), em
+`env.ts`, `.env.example` e `docker-compose.prod.yml`. Isso emenda D-185 item 5. Para aguentar o
+ritmo:
+1. **Um tique por vez:** além da trava por tenant (D-185 item 5), o agendador ignora o tique
+   quando o anterior ainda está rodando (`tickInProgress` no módulo). Uma rodada lenta nunca
+   empilha outra.
+2. **Log:** rodada **com** orçamentos recebidos continua `info` `lis_sync.completed`. Rodada
+   vazia vira `debug`. Com 720 tiques por dia por laboratório, `info` em todos seria ruído.
+3. **Chave recusada** continua desligando a sincronização (D-185 item 6). Com 2 min isso passa a
+   ser o que evita 720 chamadas por dia com chave errada, em vez de 48.
+A carga incremental (D-185 item 2, `dataInicio` = marca d'água) já relê só o que mudou desde a
+marca. Uma rodada vazia é uma página com `orcamentos: []`.
+**Motivo:** o cartão de "Novo orçamento" tem que aparecer enquanto a atendente ainda está com o
+paciente no WhatsApp. 30 min é tarde demais para isso.
+**Impacto:** `config/env.ts`, `backend/.env.example`, `docker-compose.prod.yml`,
+`lis-sync.service.ts`; DEPLOYMENT.md, ENVIRONMENTS.md, SERVICES §24.
+
+## 2026-09-26 — Enviar orçamento pelo cartão (CRMLAB-58)
+
+### D-200: "Enviar orçamento" do cartão do Bitlab escolhe a conversa, envia e define o dono e o estágio (CRMLAB-58)
+**Decisão:** o cartão de origem `bitlab` em `novo_contato` ganha o envio pelo próprio cartão,
+`POST /proposals/:id/send` com `{ conversationId, message }` (API_CONTRACTS §3). A atendente
+confere os dados do Bitlab, **escolhe** a conversa do paciente (o sistema só sugere, D-203) e
+revisa a mensagem montada pelo modelo das Regras (`sendMessage.template` +
+`renderSendMessageTemplate`, `valor` em R$, `convenio` = nome do convênio ou "Particular"). O
+texto final é o que ela confirmou: o servidor não remonta o modelo.
+1. **Só a partir de "Novo orçamento"** e só na origem `bitlab`. Origem `crm` →
+   `PROPOSAL_EDIT_NOT_ALLOWED` com `details.reason: "crm_origin"` (a proposta do CRM continua
+   com o "Enviar orçamento" de sempre, que muda o estágio e leva à conversa). Outro estágio
+   aberto → `INVALID_STATUS_TRANSITION`; fechada → `PROPOSAL_ALREADY_CLOSED`; já enviada
+   (já tem conversa vinculada) ou sendo enviada agora → `PROPOSAL_ALREADY_SENT` (409, código novo,
+   `details.reason: "sent" | "in_progress"`). A atendente que perdeu a corrida para a colega
+   deixa de enxergar o cartão (ele virou da colega, D-042), e mesmo assim recebe
+   `PROPOSAL_ALREADY_SENT` `sent`, e não `NOT_FOUND`: ela o via na fila comum um instante antes,
+   e o erro não revela nada além disso (achado do teste de concorrência).
+2. **Quem envia:** quem vê o cartão (fila comum ou dona) e pode mexer nele pela trava "mover card
+   de outra atendente" (`canActOnCard`, a mesma de `checkTransition`): dona ou cartão sem
+   responsável, admin sempre, gestor se `moveOthersCards`. Recusa → `FORBIDDEN` com
+   `details.reason: "move_others_not_allowed"`.
+3. **A conversa** tem que ser uma que quem envia enxerga (atendente: as dela e a fila livre;
+   gestor/admin: todas) e estar ativa. De outro tenant ou fora da visibilidade → `NOT_FOUND`;
+   encerrada → `CONVERSATION_ARCHIVED`.
+4. **O que o envio grava:** `conversation_id` = a conversa escolhida (o paciente vem junto, pelo
+   `conversations.patient_id`: a ficha passa a listar a proposta); **`created_by` = quem enviou**
+   (o responsável provisório da D-195 item 5 é substituído; é quem enviou que ganha a comissão);
+   `sent_at = NOW()`; histórico de estágio com `changedBy` = quem enviou; mensagem de sistema
+   "Orçamento #… enviado — R$ …" na conversa; audit `update_proposal_status` com
+   `newValues: { status, source: "send", conversationId, createdBy, messageId }` e
+   `oldValues: { status, conversationId: null, createdBy }`; WS `proposal.status_changed` depois
+   do commit; cache de analytics invalidado.
+5. **Estágio de destino** (`bitlabSendTarget` em `shared/`): **sem requisição →
+   `orcamento_enviado`**; **com requisição (pré-cadastro, D-197) → `negociacao`**, se a regra
+   "Requisição → Negociação" (`automation.requisitionToNegotiation`) estiver ligada; desligada,
+   vai para `orcamento_enviado`. `novo_contato → negociacao` não existe na matriz manual: é uma
+   **transição de sistema** (como a D-119 fez com `ganho`), que não passa por `checkTransition`
+   no destino — só pela trava de dono do item 2. O paciente já fez o pré-cadastro: o orçamento
+   enviado nesse caso já está em negociação.
+**Motivo:** o fluxo do Epic CRMLAB-55 é o orçamento nascer no Bitlab e a atendente só conferir e
+mandar. O vínculo com a conversa é o momento em que o cartão ganha paciente e dona.
+**Impacto:** `proposal.service.ts` (`sendFromCard`), `proposal.routes.ts`,
+`shared/types/{proposal,funnel-rules,api}.types.ts`, `errors.ts`; frontend `ProposalModal`,
+`SendProposalPanel` (novo), `ActionsRow`; API_CONTRACTS §3, API_ERRORS, SERVICES §4, WORKFLOWS §4,
+BUSINESS_RULES §3, PAGES §6.
+
+### D-201: Tudo ou nada no envio — reserva do cartão, envio pelo caminho do atendimento, e só então o vínculo (CRMLAB-58)
+**Decisão:** o envio acontece em três passos, e o cartão só muda no último:
+1. **Reserva** (transação curta, `SELECT … FOR UPDATE` na proposta): todas as checagens da D-200
+   e, se passarem, grava `send_claim_id` (UUID novo) e `send_claimed_at = NOW()` (migração 029).
+   Duas atendentes ao mesmo tempo: a trava de linha serializa, a segunda vê a reserva viva e
+   recebe `PROPOSAL_ALREADY_SENT` `in_progress` **sem mandar nada ao paciente**. Reserva com mais
+   de **2 minutos** é considerada abandonada (queda do processo no meio do envio) e pode ser
+   retomada; o envio mais lento possível (3 tentativas, teto de 60 s do nginx) cabe folgado.
+2. **Envio** fora da transação, por `MessageService.createFromAgent`, o **mesmo** caminho do
+   Composer do atendimento: grava a mensagem, emite `conversation.new_message`, respeita o canal
+   (WhatsApp sai pelo driver do tenant; `direct`/`web` só grava) e o retry. **Falhou → desfaz a
+   reserva e devolve o erro do envio** (`MESSAGE_SEND_FAILED` 502, `CONVERSATION_ARCHIVED`):
+   estágio, conversa, dono e `sent_at` ficam como estavam. A mensagem fica na conversa com
+   `status: "failed"`, como qualquer envio que falha no atendimento (a atendente vê o que não
+   saiu); isso é histórico da conversa, não vínculo.
+3. **Vínculo** (transação curta): confere que a reserva ainda é a dela (`send_claim_id`) e grava
+   tudo da D-200 item 4 de uma vez, limpando a reserva. Se nesse meio-tempo o estágio mudou por
+   outro caminho (a conciliação levou a `ganho`, alguém moveu à mão), o vínculo, o dono e o
+   `sent_at` são gravados e o estágio fica como está.
+**Por que não enviar dentro da transação:** `db.withTenant` não aninha (o driver de teste tem uma
+conexão e serializa as transações, D-008), e o `MessageService` abre as próprias transações;
+reproduzir o envio dentro da nossa duplicaria o caminho do atendimento. Além disso, segurar a
+trava de linha durante uma chamada de rede de até 60 s travaria a conciliação daquele orçamento.
+E enviar dentro da transação não elimina o risco que sobra: o commit ainda pode falhar depois do
+WhatsApp aceitar.
+**Risco que sobra (declarado):** se o passo 3 falhar depois de o WhatsApp aceitar (banco fora do
+ar entre os dois passos), o paciente recebeu a mensagem e o cartão continua em "Novo orçamento",
+com a reserva até expirar. É logado como `proposal.send_finalize_failed` com o `messageId`, a
+mensagem aparece na conversa e a atendente recebe o erro. Tentar de novo depois de 2 minutos
+reenvia a mensagem.
+**Impacto:** migração `029_proposal_send_claim.sql`, SCHEMA §5, `proposal.service.ts`,
+`proposal.repository.ts`, SERVICES §4.
+
+### D-202: Depois do envio — "Reenviar mensagem", trocar a conversa e editar o responsável (CRMLAB-58)
+**Decisão:**
+1. **Reenviar mensagem** — `POST /proposals/:id/resend` `{ message }`: cartão `bitlab` já
+   vinculado (conversa preenchida) em `orcamento_enviado`, `follow_up` ou `negociacao`. Manda de
+   novo pela conversa vinculada, pelo mesmo `createFromAgent`, **sem mudar estágio nem
+   `sent_at`**. Quem: a dona, gestor ou admin. Audit `resend_proposal_message`
+   (`newValues: { conversationId, messageId }`). Resposta `201` com a `Message`. Falha do canal →
+   o erro do envio, nada muda no cartão. Só na origem `bitlab`: a proposta `crm` não mudou (item
+   8 do card), e o texto das Regras usa o nº do orçamento do Bitlab.
+2. **Trocar a conversa vinculada** — `PATCH /proposals/:id/conversation` `{ conversationId }`:
+   cartão `bitlab` já enviado, **não fechado** (`PROPOSAL_ALREADY_CLOSED`). Quem: dona, gestor ou
+   admin (atendente que não é dona → `FORBIDDEN`). A conversa nova segue a regra de
+   visibilidade da D-200 item 3 (encerrada é aceita: é correção de vínculo, nada é enviado). Não
+   manda mensagem. Audit `update_proposal_conversation` (`oldValues/newValues: {
+   conversationId }`), WS `proposal.updated`. Mesma conversa → nada gravado.
+3. **Responsável** — `PATCH /proposals/:id/responsible` `{ userId }`, qualquer origem. É o
+   `created_by`, que decide visibilidade e **comissão**:
+   - **gestor/admin**: qualquer usuário **ativo** do laboratório com papel de tenant
+     (`attendant`, `manager`, `admin`), em qualquer estágio, inclusive `ganho` (é como se
+     corrige a comissão de uma venda atribuída errado);
+   - **atendente**: só no cartão **de que ela é dona**, **não fechado**, e só para **outra
+     atendente ativa**. Cartão sem responsável não é "dela": quem o assume é o envio. Fora disso
+     → `FORBIDDEN` (`details.reason: "not_owner"` / `"closed"`); destino inválido (inativo, outro
+     tenant, papel de fora) → `VALIDATION_ERROR` em `userId`.
+   Audit `update_proposal_responsible` (`oldValues/newValues: { createdBy }`), WS
+   `proposal.updated`, cache de analytics invalidado (ranking e comissão mudam). Mesmo usuário →
+   nada gravado.
+**Motivo:** o envio é o que fixa dona e conversa, mas quem erra de conversa ou pega o cartão da
+colega precisa corrigir sem abrir um card novo. A atendente passar só para outra atendente e só o
+que é dela é o recorte mais conservador que ainda resolve "fiquei com o cartão da Ana"; mexer em
+venda fechada é do gestor, porque muda comissão paga.
+**Impacto:** `proposal.service.ts` (`resendFromCard`, `relinkConversation`, `setResponsible`),
+`proposal.routes.ts`, `shared/types/proposal.types.ts`; frontend `ProposalModal`,
+`SendProposalPanel`, `ResponsibleField` (novo); API_CONTRACTS §3, SERVICES §4, PAGES §6.
+
+### D-203: Sugestão de conversa por nome — tokens em comum, sem acento e sem caixa, a atendente sempre confirma (CRMLAB-58)
+**Decisão:** o painel de envio lista as conversas **ativas** que a pessoa enxerga (o mesmo
+`GET /conversations?status=active`, 100 mais recentes, ou o resultado da busca livre por nome ou
+telefone, que é a busca do atendimento). Em cima vêm as **sugeridas**: as que têm nota de
+semelhança > 0 entre o nome do paciente no Bitlab e o nome do contato/paciente da conversa, da
+maior para a menor. A nota é `nameSimilarity(a, b)` em `shared/` (função pura, sem dependência):
+1. normaliza (NFD sem diacríticos, minúsculas, só letras e dígitos) e quebra em palavras;
+2. descarta partículas (`da`, `de`, `do`, `das`, `dos`, `e`) e palavras de 1 letra;
+3. nota = palavras em comum ÷ palavras do nome menor (0 a 1). "MARIA DA SILVA SOUZA" × "Maria
+   Souza" = 1; × "Maria Oliveira" = 0,5; × "João" = 0.
+Nunca vincula sozinho: a sugestão só ordena e destaca; o botão fica desligado até a atendente
+clicar numa conversa.
+**Motivo:** o nome do Bitlab (cadastro, caixa alta, completo) e o do WhatsApp (o que o paciente
+escreveu no perfil, curto) raramente são iguais, mas quase sempre dividem prenome e um sobrenome.
+Palavras em comum explicam-se sozinhas, são determinísticas e testáveis; distância de edição ou
+fonética seria dependência nova para ganho pequeno. Fazer no front sobre a lista que a tela já
+busca evita um endpoint novo (Regra Zero) e reaproveita o recorte de visibilidade das conversas.
+**Limitação:** a sugestão só enxerga as 100 conversas ativas mais recentes (ou o resultado da
+busca). O paciente que está sendo atendido agora está nelas; para os outros existe a busca.
+**Impacto:** `shared/types/name-similarity.ts` (novo); frontend `SendProposalPanel`; PAGES §6.
+
+### D-204: Régua de fatos do LIS para o cartão do Bitlab — requisição leva a Negociação, pagamento leva a Ganho (CRMLAB-60 parcial; emenda D-119 e D-197)
+**Decisão:** na conciliação (D-119 item 4), a proposta de origem **`bitlab`** deixa de ir a
+`ganho` pela requisição e passa a seguir as duas regras de automação das Regras (CRMLAB-56). A
+origem **`crm` continua exatamente com a D-119** (requisição em qualquer estágio aberto →
+`ganho`, sem olhar as Regras).
+1. **Pagamento → Ganho** (`automation.paymentToWon`): `lis_budgets.paid_on` preenchido, com
+   **qualquer valor**, num cartão `bitlab` em **qualquer estágio não terminal**, inclusive
+   `novo_contato` (o paciente pagou no balcão antes de qualquer envio) → `ganho`, com
+   `lis_reconciled_at` (selo "Conciliado"; não reabre, D-192 item 2). Desligada: não move.
+2. **Requisição → Negociação** (`automation.requisitionToNegotiation`): requisição encontrada
+   num cartão `bitlab` em `orcamento_enviado` ou `follow_up` → `negociacao`. Desligada: não
+   move. Em `novo_contato` continua só o selo "Pré-cadastro feito" (D-197); em `negociacao`, com
+   requisição e sem pagamento, o cartão fica onde está.
+3. **Requisição sozinha nunca mais leva um cartão `bitlab` a `ganho`.** Requisição e pagamento
+   juntos: vence o pagamento (vai direto a `ganho`).
+4. **`perdido` não reabre** (D-119 item 5 continua): o espelho é gravado e o conflito de
+   requisição é auditado uma vez (`lis_reconcile_conflict`).
+5. **Transição de sistema reaproveitável:** `applySystemTransition(tx, tenantId, proposalId, {
+   to, source, systemMessage, lisReconciled? })` em `proposal.service.ts` generaliza o antigo
+   `markWonFromLis` (que agora a chama com `to: 'ganho', source: 'lis'`): trava a linha, não
+   mexe em proposta fechada nem no mesmo estágio, grava histórico com `changedBy: null`,
+   mensagem de sistema **só se houver conversa**, audit `update_proposal_status` com
+   `userId: null` e `newValues.source` (`lis` = D-119 da origem `crm`, `lis_payment`,
+   `lis_requisition`), tudo na transação de quem chama. Devolve `SystemTransition { proposalId,
+   from, to, source }` ou `null`. Depois do commit, `announceSystemTransitions` emite um
+   `proposal.status_changed` por transição (com o estágio de destino) e invalida o cache de
+   analytics. `ImportLisResponse.proposalsWon` conta só as que foram a `ganho`.
+6. **Idempotente** como a D-119 item 7: a segunda conciliação do mesmo orçamento não acha
+   transição a fazer (o cartão já está no destino ou fechado).
+**Provisória.** O valor pago que a sincronização grava ainda pode ser sobrescrito (é o que o
+**CRMLAB-53** corrige, e a sincronização de produção está desligada até lá); por isso esta
+decisão olha só a **data** de pagamento e vale "qualquer valor". O **CRMLAB-60 completo** fecha o
+resto da régua (o que depende do valor pago e a conciliação que hoje só roda quando o orçamento
+volta numa ingestão, D-197 "Limitação conhecida"). Até lá, esta regra é o comportamento.
+**Motivo:** no fluxo novo (Epic CRMLAB-55) requisição é o paciente avançando, não fechando: o
+dinheiro é que fecha. A D-119 fazia sentido quando a proposta nascia no CRM e o LIS só
+confirmava; para o cartão que nasce do Bitlab ela inflava a conversão.
+**Impacto:** `proposal.service.ts` (`applySystemTransition`, `announceSystemTransitions`,
+`markWonFromLis`), `lis-reconcile.service.ts`, `lis-import.service.ts`; SERVICES §4/§25,
+BUSINESS_RULES §3, WORKFLOWS §4.
+## 2026-09-26 — Motor de tempo do funil (CRMLAB-59)
+
+### D-205: O motor de tempo é um job periódico que conta o prazo desde a entrada no estágio atual
+**Decisão:** `FunnelTimerService` (`backend/src/services/funnel-timer.service.ts`, SERVICES.md
+§27) executa as três regras de prazo das Regras (D-190) e o alerta de "Novo orçamento" parado
+(D-207). Cada regra só roda se estiver ligada.
+
+| Regra (`automation.*`) | De → para | Quando |
+|---|---|---|
+| `sentToFollowUp` | `orcamento_enviado` → `follow_up` | há X dias no estágio |
+| `negotiationToFollowUp` | `negociacao` → `follow_up` | há Y dias no estágio e `lis_paid_on` nulo |
+| `followUpToLost` | `follow_up` → `perdido` (`reasonLost: "silencio"`) | há Z dias no estágio |
+
+1. **Relógio:** conta a partir da **última linha de `proposal_status_history` com o estágio
+   atual** da proposta. Toda mudança de estágio (manual, reabertura, LIS, régua de fatos, o
+   próprio motor) grava uma linha nova, então o relógio zera sozinho, sem estado extra. Proposta
+   sem linha para o estágio atual (não deveria existir, SCHEMA §10) é ignorada.
+2. **Dias corridos** (`dayCounting: "calendar"`): o prazo vence quando `agora − entrada ≥ X × 24 h`.
+   "X = 3" move no terceiro dia depois da entrada, na mesma hora, e não antes.
+3. **Dias úteis** (`"business"`): segunda a sexta no relógio de Brasília. Entrada no fim de
+   semana começa a contar na segunda 00:00. Cada dia útil soma 24 h e pula sábado e domingo
+   (entrada quinta 10:00 com X = 3 vence terça 10:00). **Feriados ficam fora** (nem nacionais nem
+   municipais): não há calendário de feriados no produto. Fuso fixo UTC−3 (`America/Sao_Paulo`,
+   sem horário de verão desde 2019), mesma referência do Bitlab (D-187).
+4. As funções são puras e ficam em `shared/types/funnel-timer.types.ts` (`timerDeadline`,
+   `isDelayElapsed`, `isStaleNewBudget`): o front usa as mesmas para o selo (D-207).
+5. **Agendamento:** `setInterval` no `main.ts`, mesmo padrão da sincronização LIS (D-185 item 5,
+   D-199): `FUNNEL_TIMER_INTERVAL_MS` (padrão **300000 = 5 min**; **`0` desliga**), `.unref()`,
+   best effort. Um tique por vez (`tickInProgress` no módulo): tique lento não empilha o seguinte.
+6. **Percorre os laboratórios** com `withoutTenant()` projetando só `tenant_id` (tenants ativos
+   com proposta aberta), a mesma exceção de D-186; todo o resto roda em `withTenant()`, sob RLS.
+   Um laboratório com erro não para os outros (`warn` `funnel_timer.tenant_failed`).
+7. **Lotes:** no máximo 200 cartões por regra, por laboratório, por tique (`FUNNEL_TIMER_BATCH`,
+   constante), do mais antigo para o mais novo. O excedente anda nos tiques seguintes.
+8. **Idempotente:** cada transição roda na própria transação, com `FOR UPDATE` e a conferência de
+   que o estágio e a linha de entrada ainda são os que foram lidos. Dois tiques seguidos fazem uma
+   transição só; um cartão que alguém moveu entre a leitura e a escrita não é tocado.
+9. **Log:** tique com transição ou alerta → `info` `funnel_timer.completed` (por laboratório,
+   com as contagens); tique vazio → `debug` `funnel_timer.tick_empty`.
+**Motivo:** o card pede que os cartões parados andem sozinhos pelos prazos que o laboratório
+definiu. Contar pelo histórico reaproveita o que toda transição já grava; guardar um "relógio"
+separado exigiria zerá-lo em cada caminho de transição (e o próximo caminho novo esqueceria).
+**Impacto:** `shared/types/funnel-timer.types.ts` (novo), `funnel-timer.service.ts` (novo),
+`main.ts`, `config/env.ts`, `.env.example`, `docker-compose.prod.yml`; SERVICES §27, DEPLOYMENT,
+ENVIRONMENTS, SCHEMA (exceções de RLS), BUSINESS_RULES §3, WORKFLOWS §4.
+
+### D-206: Fato vence tempo; o motor respeita a matriz vigente e nunca toca terminal
+**Decisão:**
+1. **Fato vence tempo.** O motor não move cartão com pagamento (`lis_paid_on` preenchido), em
+   nenhuma regra: ele é da régua de fatos (pagamento → ganho, CRMLAB-60/58). Também não move para
+   `follow_up`/`perdido` o cartão de `orcamento_enviado` ou `follow_up` que já tem requisição
+   (`lis_requisition_number`): o paciente foi ao laboratório, e perseguir ou perder esse cartão
+   seria errado. Em `negociacao` a regra é literalmente "sem pagamento", então requisição sem
+   pagamento **anda** para `follow_up` no prazo Y. Isso vale com a régua de fatos ligada ou
+   desligada: o fato impede o tempo mesmo quando ninguém o transforma em transição.
+2. **Ordem com a régua de fatos:** as duas nunca brigam pelo mesmo cartão, porque (a) a régua de
+   fatos roda na ingestão/conciliação e o motor no seu tique, cada um na própria transação com
+   `FOR UPDATE`; (b) o motor confere de novo, sob a trava, o estágio, a linha de entrada e os
+   campos `lis_*`. Se a régua de fatos mudou o cartão antes, o motor não encontra mais a condição
+   e não faz nada; se o motor moveu antes, a régua de fatos age sobre o estágio novo (que é aberto)
+   normalmente. Ordem declarada: **fatos primeiro, tempo depois**.
+3. **Matriz vigente:** o passo do motor tem que estar em
+   `buildAllowedTransitions(rules.manualMoves)[de]`. Se a matriz configurada não tiver o passo, a
+   regra não roda naquele tique (`debug` `funnel_timer.step_not_allowed`). Com as duas matrizes de
+   hoje (`ALLOWED_TRANSITIONS` e `SEQUENTIAL_TRANSITIONS`) os três passos existem; a conferência
+   protege uma matriz futura. As demais travas manuais (dono do card, motivo obrigatório) não se
+   aplicam: quem move é o sistema (D-192 item 6), e o motivo do `perdido` é sempre `silencio`.
+4. **Terminais nunca se movem** (`ganho`, `perdido`), com ou sem "Reabrir" ligado.
+5. **Aprovação pendente** não é obstáculo: nenhum dos três passos leva a `orcamento_enviado`.
+**Motivo:** o card pede "fato vence tempo" e que o motor não brigue com a régua de requisição e
+pagamento feita em paralelo. A condição re-conferida sob trava é o que torna a ordem irrelevante
+para a consistência.
+**Impacto:** `funnel-timer.service.ts`; BUSINESS_RULES §3, WORKFLOWS §4.
+
+### D-207: Alerta de "Novo orçamento" parado — uma vez por entrada, por WS, e selo calculado no front
+**Decisão:** com `staleNewBudgetAlert` ligado, cartão em `novo_contato` há N horas ou mais (horas
+**corridas**, qualquer `dayCounting`) e sem pagamento gera **um** alerta, **sem mover** o cartão.
+1. **Uma vez por entrada na coluna:** a linha de entrada do histórico ganha `stale_alerted_at`
+   (migração 030). O motor só alerta linha com `stale_alerted_at` nulo e grava a marca na mesma
+   transação. Sair e voltar para "Novo orçamento" cria outra linha, e o alerta pode sair de novo.
+   Mudar N depois de alertado não repete o alerta daquela entrada.
+2. **Para quem:** o responsável (`created_by`, se ativo); sem responsável (cartão do Bitlab na fila
+   comum, D-195) ou com responsável inativo, todos os **gestores e admins ativos** do laboratório.
+3. **Como chega:** WS `proposal.stale_alert` (`{ proposalId, hours }`) por `emitToUser`, depois do
+   commit. O front mostra um toast de atenção e invalida `['proposals']`. Não existe central de
+   notificações persistente no produto (o chat interno é por canal, não por pessoa), então quem
+   estava desconectado não recebe o toast.
+4. **Selo persistente:** por isso o cartão em "Novo orçamento" mostra **"Parado há N h"** calculado
+   no front com `isStaleNewBudget(status, stageEnteredAt, regra, agora)`, a mesma função do motor.
+   `Proposal.stageEnteredAt` (novo, opcional) é a entrada no estágio atual, lida do histórico.
+   O selo aparece para quem abrir o pipeline, conectado ou não na hora do alerta.
+**Motivo:** o card pede o alerta sem repetir a cada tique e sem mexer no cartão. Marcar na linha
+de entrada dá o "uma vez por entrada" sem tabela nova e sem precisar zerar nada nos outros caminhos
+de transição. Horas corridas porque o alerta é sobre o paciente esperando agora (ver pergunta ao
+Michel no relatório do card).
+**Impacto:** migração `030_funnel_timer.sql`, `shared/types/websocket.types.ts`,
+`proposal.types.ts` (`stageEnteredAt`), `proposal.repository.ts`, `funnel-timer.service.ts`;
+frontend `api/ws.ts`, `ProposalCard`, `StageColumn`, `Proposals.tsx`; FRONTEND_BACKEND "Real-time",
+API_CONTRACTS §3, PAGES §5.
+
+### D-208: Transição do motor — `changedBy: null`, `automation` no histórico, audit `source: "rule"`
+**Decisão:** `applyTimerTransition(tx, input)` (exportada de `funnel-timer.service.ts`) é a
+transição de sistema do motor, no molde de `markWonFromLis` (D-119 item 4):
+1. `UPDATE proposals` condicionado ao estágio de origem e aos fatos (D-206); `perdido` grava
+   `reason_lost = 'silencio'` e `closed_at`.
+2. Histórico com `changed_by = NULL` e `automation` preenchido (`{ rule, days, dayCounting }`,
+   coluna `JSONB` nova da migração 030). É assim que "movido pela regra" se distingue de uma
+   pessoa (`changed_by` preenchido) e do LIS/criação automática (`changed_by` nulo, `automation`
+   nulo). A API expõe `history[].automation` (API_CONTRACTS §3).
+3. Mensagem de sistema na conversa **só se houver conversa** (cartão do Bitlab sem conversa não
+   grava, D-195): `"Proposta #ref movida para Follow-up pela regra: enviado há 3 dias."`.
+4. Audit `update_proposal_status`, `userId: null`, `newValues: { status, source: "rule", rule,
+   days, dayCounting }` (+ `reasonLost` no `perdido`), na mesma transação.
+5. Depois do commit: WS `proposal.status_changed` e invalidação do cache de analytics do tenant.
+6. O modal da proposta mostra no histórico **"movido pela regra: Enviado há 3 dias"**
+   (`describeStageAutomation` em `shared/`).
+**Motivo:** o CRMLAB-58/60 vai generalizar `markWonFromLis` numa transição de sistema. Deixar a do
+motor separada, exportada e com o mesmo contrato (transação de quem chama; WS e cache depois do
+commit) facilita a unificação na integração.
+**Impacto:** migração 030, `proposal.repository.ts` (`insertHistory` aceita `automation` e
+`changedAt`; `mapHistory`), `shared/types/proposal.types.ts`; SCHEMA §10, API_CONTRACTS §3,
+SERVICES §27; frontend `StageHistory.tsx`.
+
+### D-209: Prazo mudado vale no próximo tique, inclusive para trás; sem marco de ativação
+**Decisão:** o motor recalcula o prazo de cada cartão **a cada tique**, com a regra vigente, a
+partir da entrada no estágio. Consequências, todas declaradas:
+1. **Encurtar o prazo** (ex.: 7 → 3 dias): cartão que já está há 3 dias ou mais anda **no próximo
+   tique**. Não há reprocessamento além disso: nada que já foi movido volta, nenhum alerta antigo
+   é repetido.
+2. **Alongar o prazo:** cartão ainda não movido espera o prazo novo.
+3. **Desligar** a regra: para de mover a partir do próximo tique. **Ligar** (inclusive a primeira
+   vez, no deploy do card): todo cartão já vencido anda no próximo tique, respeitando o lote de 200
+   por regra e laboratório (D-205 item 7).
+4. **Trocar corridos ↔ úteis:** idem, recalculado no próximo tique.
+5. Não existe "marco de ativação" (como `bitlab_proposals_since`, D-196): o prazo é sobre a
+   **idade no estágio**, e é o que o laboratório pediu. Com os padrões (D-191), o primeiro tique
+   em produção leva para `follow_up` os cartões em "Orçamento enviado" há 3 dias ou mais e os em
+   "Negociação" sem pagamento há 7 dias ou mais; "Follow-up → Perdido" nasce desligada, então
+   ninguém é perdido sem o gestor ligar.
+**Motivo:** é a regra mais simples de explicar ("o cartão anda quando passa do prazo que está na
+tela") e é a que o card descreve. Um marco de ativação esconderia do laboratório cartões que ele
+considera parados.
+**Impacto:** `funnel-timer.service.ts`; SERVICES §27; relatório do card (pergunta ao Michel sobre o
+primeiro tique em produção).
+
 ## Template para novas decisões
 
 ```

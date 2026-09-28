@@ -20,7 +20,8 @@ export default function LisReferenceSection({ proposal }: { proposal: ProposalDe
   const [value, setValue] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const readOnly = proposal.status === 'ganho';
+  // Na origem `bitlab` o número é a identidade do cartão (CRMLAB-57, D-195 item 7).
+  const readOnly = proposal.status === 'ganho' || proposal.origin === 'bitlab';
 
   const startEdit = () => {
     setValue(proposal.lisBudgetNumber ?? '');

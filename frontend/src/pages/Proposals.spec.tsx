@@ -3,7 +3,15 @@ import userEvent from '@testing-library/user-event';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { ListProposalsQuery, ListProposalsResponse, Proposal } from '@crm-lab/shared';
+import {
+  DEFAULT_FUNNEL_RULES,
+  type FunnelRules,
+  type ListProposalsQuery,
+  type ListProposalsResponse,
+  type Proposal,
+} from '@crm-lab/shared';
+import * as funnelRulesApi from '@/api/funnel-rules';
+import { useAuthStore } from '@/stores/auth.store';
 import { queryClient } from '@/api/query-client';
 import { ToastProvider } from '@/components/ui';
 import { querySuccess } from '@/test/query-mocks';
@@ -22,6 +30,24 @@ vi.mock('@/api/proposals', async (importOriginal) => ({
   useProposalList: vi.fn(),
   useUpdateProposalStatus: vi.fn(),
 }));
+
+vi.mock('@/api/funnel-rules', async (importOriginal) => ({
+  ...(await importOriginal<typeof funnelRulesApi>()),
+  useEffectiveFunnelRules: vi.fn(),
+}));
+const useEffectiveFunnelRules = vi.mocked(funnelRulesApi.useEffectiveFunnelRules);
+
+/** Regras do laboratório com um trecho alterado (CRMLAB-56). */
+function rulesWith(patch: {
+  origin?: Partial<FunnelRules['origin']>;
+  manualMoves?: Partial<FunnelRules['manualMoves']>;
+}): FunnelRules {
+  return {
+    ...DEFAULT_FUNNEL_RULES,
+    origin: { ...DEFAULT_FUNNEL_RULES.origin, ...patch.origin },
+    manualMoves: { ...DEFAULT_FUNNEL_RULES.manualMoves, ...patch.manualMoves },
+  };
+}
 
 const useProposalList = vi.mocked(proposalsApi.useProposalList);
 const useUpdateProposalStatus = vi.mocked(proposalsApi.useUpdateProposalStatus);
@@ -55,6 +81,10 @@ function proposta(id: string, patientName: string): Proposal {
     insuranceId: null,
     lisBudgetNumber: null,
     lisReconciledAt: null,
+    origin: 'crm',
+    lisRequisitionNumber: null,
+    lisIssuedOn: null,
+    lisAttendantName: null,
   };
 }
 
@@ -121,6 +151,12 @@ function colunaDe(titulo: string): HTMLElement {
 describe('Proposals', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useUIStore.setState({ activeModal: null });
+    useEffectiveFunnelRules.mockReturnValue(DEFAULT_FUNNEL_RULES);
+    // A dona dos cards de teste (`createdBy: 'user-1'`).
+    useAuthStore.setState({
+      user: { id: 'user-1', email: 'ana@lab.com.br', name: 'Ana', role: 'attendant', discountLimit: 15 },
+    });
     useUpdateProposalStatus.mockReturnValue({ mutate } as unknown as ReturnType<
       typeof proposalsApi.useUpdateProposalStatus
     >);
@@ -140,7 +176,7 @@ describe('Proposals', () => {
     renderPage();
 
     for (const titulo of [
-      'Novo contato',
+      'Novo orçamento',
       'Orçamento enviado',
       'Follow-up',
       'Negociação',
@@ -248,7 +284,7 @@ describe('Proposals', () => {
   it('arrastar para um estágio proibido não dispara nada', () => {
     renderPage();
 
-    dragCard(screen.getByText('Rafael da Pagina 1'), colunaDe('Novo contato'));
+    dragCard(screen.getByText('Rafael da Pagina 1'), colunaDe('Novo orçamento'));
 
     expect(mutate).not.toHaveBeenCalled();
   });
@@ -263,6 +299,45 @@ describe('Proposals', () => {
     expect(useUIStore.getState().activeModal).toEqual({ kind: 'proposal', id: PAGINA_1.id });
   });
 
+  // --- CRMLAB-56: travas das Regras (D-192) e origem manual (D-193) ---
+
+  it('sem "Pular etapas", arrastar negociação → Ganho continua valendo (passo seguinte)', () => {
+    useEffectiveFunnelRules.mockReturnValue(rulesWith({ manualMoves: { skipStages: false } }));
+    renderPage();
+
+    dragCard(screen.getByText('Rafael da Pagina 1'), colunaDe('Ganho'));
+
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({ proposalId: PAGINA_1.id, status: 'ganho' }),
+      expect.anything(),
+    );
+  });
+
+  it('gestor com "mover card de outra atendente" desligado não move o card alheio', () => {
+    useEffectiveFunnelRules.mockReturnValue(rulesWith({ manualMoves: { moveOthersCards: false } }));
+    useAuthStore.setState({
+      user: { id: 'gestor-1', email: 'g@lab.com.br', name: 'Gil', role: 'manager', discountLimit: 30 },
+    });
+    renderPage();
+
+    dragCard(screen.getByText('Rafael da Pagina 1'), colunaDe('Ganho'));
+
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it('"Novo atendimento" some com "Criar proposta manualmente no CRM" desligado', () => {
+    useEffectiveFunnelRules.mockReturnValue(rulesWith({ origin: { manualInCrm: false } }));
+    renderPage();
+
+    expect(screen.queryByRole('button', { name: 'Novo atendimento' })).not.toBeInTheDocument();
+  });
+
+  it('"Novo atendimento" aparece com a origem manual ligada (padrão)', () => {
+    renderPage();
+
+    expect(screen.getByRole('button', { name: 'Novo atendimento' })).toBeInTheDocument();
+  });
+
   it('não mostra paginação quando cabe tudo em uma página', () => {
     useProposalList.mockReturnValue(
       listResult({ pagination: { page: 1, limit: 20, total: 4, totalPages: 1 } }),
@@ -271,5 +346,28 @@ describe('Proposals', () => {
     renderPage('/proposals?view=lista');
 
     expect(screen.queryByRole('button', { name: 'Próxima' })).not.toBeInTheDocument();
+  });
+
+  // CRMLAB-59/D-207: o pipeline repassa a regra das Regras até o cartão.
+  it('cartão em "Novo orçamento" parado leva o selo pela regra do laboratório', () => {
+    const parado: Proposal = {
+      ...proposta('33333333-3333-4333-8333-333333333333', 'Paciente Parado'),
+      status: 'novo_contato',
+      stageEnteredAt: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(),
+    };
+    useProposalList.mockImplementation(() => listResult({ proposals: [parado] }));
+    const { unmount } = renderPage();
+    expect(screen.getByText('Parado há 6 h')).toBeInTheDocument();
+    unmount();
+
+    useEffectiveFunnelRules.mockReturnValue({
+      ...DEFAULT_FUNNEL_RULES,
+      automation: {
+        ...DEFAULT_FUNNEL_RULES.automation,
+        staleNewBudgetAlert: { enabled: true, hours: 8 },
+      },
+    });
+    renderPage();
+    expect(screen.queryByText(/Parado há/)).not.toBeInTheDocument();
   });
 });

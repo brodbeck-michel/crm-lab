@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   PROPOSAL_STATUS_LABELS,
   isTransitionAllowed,
+  type HoursRule,
   type Proposal,
   type ProposalStatus,
 } from '@crm-lab/shared';
@@ -14,6 +15,13 @@ interface StageColumnProps {
   proposals: Proposal[];
   /** Card solto na coluna. Sem handler, a coluna nao aceita drop. */
   onDropProposal?: (proposal: Proposal, target: ProposalStatus) => void;
+  /**
+   * A coluna aceita um card vindo de `origin`? Omitido = matriz padrao
+   * (`isTransitionAllowed`). O pipeline passa as travas das Regras (D-192).
+   */
+  accepts?: (origin: ProposalStatus, target: ProposalStatus) => boolean;
+  /** Regra "Novo orçamento parado" (CRMLAB-59, D-207), repassada ao cartão para o selo. */
+  staleAlert?: HoursRule;
 }
 
 /**
@@ -43,14 +51,20 @@ function readOriginStatus(event: React.DragEvent): ProposalStatus | null {
   return type === undefined ? null : (type.slice(DRAG_STATUS_PREFIX.length) as ProposalStatus);
 }
 
-export default function StageColumn({ status, proposals, onDropProposal }: StageColumnProps) {
+export default function StageColumn({
+  status,
+  proposals,
+  onDropProposal,
+  accepts: acceptsFrom = isTransitionAllowed,
+  staleAlert,
+}: StageColumnProps) {
   const total = proposals.reduce((sum, p) => sum + (p.totalPrice || 0), 0);
   const [over, setOver] = useState(false);
 
   const accepts = (event: React.DragEvent) => {
     if (onDropProposal === undefined) return false;
     const origin = readOriginStatus(event);
-    return origin !== null && isTransitionAllowed(origin, status);
+    return origin !== null && acceptsFrom(origin, status);
   };
 
   return (
@@ -90,7 +104,12 @@ export default function StageColumn({ status, proposals, onDropProposal }: Stage
           <p className="text-caption text-neutral-600 text-center py-lg">Nenhuma proposta</p>
         ) : (
           proposals.map((proposal) => (
-            <ProposalCard key={proposal.id} proposal={proposal} draggable={onDropProposal !== undefined} />
+            <ProposalCard
+              key={proposal.id}
+              proposal={proposal}
+              draggable={onDropProposal !== undefined}
+              staleAlert={staleAlert}
+            />
           ))
         )}
       </div>

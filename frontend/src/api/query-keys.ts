@@ -164,6 +164,9 @@ export const queryKeys = {
 
   /** ['settings', 'lis-integration'] — `/settings/lis-integration` (§20, CRMLAB-52) */
   lisIntegration: () => ['settings', 'lis-integration'] as const,
+
+  /** ['settings', 'funnel-rules'] — `/settings/funnel-rules` (§21, CRMLAB-56) */
+  funnelRules: () => ['settings', 'funnel-rules'] as const,
 } as const;
 
 /** Prefixos usados para invalidar um escopo inteiro (todas as variações de filtro). */

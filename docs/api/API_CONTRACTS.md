@@ -1742,7 +1742,12 @@ Paciente inexistente ou fora da visibilidade devolve **lista vazia**, não `404`
       "approvalStatus": "none",
       "createdAt": "2024-08-23T14:40:00Z",
       "lisBudgetNumber": "1234",
-      "lisReconciledAt": null
+      "lisReconciledAt": null,
+      "origin": "crm",
+      "lisRequisitionNumber": null,
+      "lisIssuedOn": "2026-09-20",
+      "lisAttendantName": "MARIA SOUZA",
+      "stageEnteredAt": "2024-08-23T14:45:00Z"
     }
   ],
   "pagination": {
@@ -1754,6 +1759,25 @@ Paciente inexistente ou fora da visibilidade devolve **lista vazia**, não `404`
 
 `insuranceId` (Onda 7) é `null` numa proposta particular — mesmo campo de `GET /proposals/:id`
 abaixo.
+
+**Origem `bitlab` (CRMLAB-57, D-195/D-196).** `origin` é `"crm"` (montada pela tela, a partir de
+uma conversa) ou `"bitlab"` (nasceu sozinha do orçamento do LIS, em `novo_contato`). Na origem
+`bitlab`:
+- `conversationId` é `null` enquanto não houver conversa vinculada (CRMLAB-58), e `createdBy`
+  é `null` quando o atendente do Bitlab não está ligado a um login (`createdByName: ""`).
+- `patientName` vem do `NM_PACIENTE` do orçamento; `totalPrice` é o total do orçamento no Bitlab
+  (não há itens, `discountPercent: 0`, `approvalStatus: "none"`).
+- `lisIssuedOn` (data de emissão, `YYYY-MM-DD`) e `lisAttendantName` (`USUÁRIO` cru) vêm do
+  orçamento vinculado — preenchidos em **qualquer** proposta com orçamento vinculado que já
+  exista em `lis_budgets`, não só na `bitlab`. `lisRequisitionNumber` (antes só no detalhe) é o
+  selo "Pré-cadastro feito" (D-197).
+- **Visibilidade:** proposta `bitlab` com `createdBy: null` aparece para **qualquer** papel do
+  tenant (fila comum). Com responsável, vale D-042.
+- `?search=` casa também o nome do paciente do orçamento do LIS.
+
+**`stageEnteredAt` (CRMLAB-59, D-207)** — opcional no tipo, sempre presente na resposta: quando a
+proposta entrou no estágio atual (a última linha de `history` com esse estágio), ISO 8601 UTC;
+`null` se não houver linha. É o relógio do motor de tempo (D-205) e do selo "Parado há N h".
 
 `proposalNumber` é sequencial **POR TENANT** (não global), gerado no servidor em `POST
 /proposals` — o cliente nunca envia. Serve para rastreamento citável por telefone/WhatsApp
@@ -1811,12 +1835,24 @@ Detalhes completos de uma proposta.
     {
       "status": "orcamento_enviado",
       "changedAt": "2024-08-23T14:45:00Z",
-      "changedBy": "uuid"
+      "changedBy": "uuid",
+      "automation": null
+    },
+    {
+      "status": "follow_up",
+      "changedAt": "2024-08-26T14:50:00Z",
+      "changedBy": null,
+      "automation": { "rule": "sentToFollowUp", "days": 3, "dayCounting": "calendar" }
     }
   ],
   "createdAt": "2024-08-23T14:40:00Z"
 }
 ```
+
+`history[].automation` (CRMLAB-59, D-208) — opcional no tipo, sempre presente na resposta: `null`
+quando a linha não veio do motor de tempo; preenchido (`StageAutomation`: `rule` ∈
+`sentToFollowUp | negotiationToFollowUp | followUpToLost`, o prazo `days` e a `dayCounting`
+vigentes na hora) quando a regra moveu o cartão. Nesses casos `changedBy` é `null`.
 
 `insuranceId` (Onda 7) é `null` numa proposta particular. `items[].priceSource` é o snapshot de
 onde `unitPrice` veio no momento da criação: `"insurance"` quando havia preço cadastrado em
@@ -1945,7 +1981,9 @@ o desconto de uma proposta que **não criou**:
 **Outros erros:** `EXAM_NOT_FOUND_OR_INACTIVE` (400, `details.examIds[]` — exame
 inexistente, inativo ou de outro tenant), `NOT_FOUND` (404, conversa inexistente **ou de
 outro tenant**), `VALIDATION_ERROR` (400 — o DTO é estrito: `totalPrice`, `unitPrice` ou
-qualquer campo de preço vindo do cliente é recusado, nunca ignorado).
+qualquer campo de preço vindo do cliente é recusado, nunca ignorado),
+`MANUAL_PROPOSAL_DISABLED` (409 — o laboratório desligou "Criar proposta manualmente no CRM"
+em Regras, `origin.manualInCrm: false`, §6c/D-193; recusado antes de qualquer outra validação).
 
 **Visibilidade (D-042):** atendente lista e abre apenas as propostas que criou;
 gestor/admin veem todas do tenant. Fora da visibilidade: `404`, nunca `403`.
@@ -1961,6 +1999,22 @@ Atualizar status da proposta.
 ```
 
 **Valores válidos:** `novo_contato`, `orcamento_enviado`, `follow_up`, `negociacao`, `ganho`, `perdido`
+
+**Travas (CRMLAB-56, D-192):** a transição é decidida por `checkTransition(rules.manualMoves,
+from, to, actor)` com as regras do laboratório (§6c). Com os padrões, é a matriz
+`ALLOWED_TRANSITIONS` com `ganho`/`perdido` terminais, como antes. Recusas, nesta ordem:
+- proposta fechada e reabrir desligado → `PROPOSAL_ALREADY_CLOSED` (409, `{ status }`); ganho
+  conciliado pelo LIS nunca reabre → o mesmo código com `details.reason: "lis_reconciled"`;
+- reabrir ligado mas não para o perfil → `FORBIDDEN` (403, `details.reason: "reopen_not_allowed"`);
+- destino fora da matriz vigente → `INVALID_STATUS_TRANSITION` (400, `{ from, to, allowed[] }`);
+- card de outra pessoa com "Mover card de outra atendente" desligado (gestor) →
+  `FORBIDDEN` (403, `details.reason: "move_others_not_allowed"`);
+- `perdido` sem motivo com "Exigir motivo" ligado → `LOSS_REASON_REQUIRED`; motivo fora do enum →
+  `INVALID_LOSS_REASON` (sempre);
+- `orcamento_enviado` com aprovação `pending`/`rejected` → `PROPOSAL_PENDING_APPROVAL`.
+
+Reabrir (`ganho`/`perdido` → `orcamento_enviado`/`follow_up`/`negociacao`) limpa `closedAt` e
+`reasonLost`.
 
 **Response (200):**
 ```json
@@ -2027,10 +2081,97 @@ a conciliação levou a proposta a `ganho`, gera **também** o `update_proposal_
 `newValues.source: "lis"`, o histórico, a mensagem de sistema e o WS `proposal.status_changed`,
 iguais aos da importação (D-119 item 4).
 
+**Absorção do cartão automático (CRMLAB-57, D-198):** se o número já pertence a uma proposta
+de origem `bitlab` em `novo_contato`, nunca enviada (`sentAt: null`) e sem conversa, essa
+proposta é **apagada** e o vínculo passa para esta, na mesma transação (audit
+`absorb_bitlab_proposal` no id apagado; WS `proposal.updated` com o id apagado depois do
+commit). Nos outros casos, `CONFLICT` como abaixo. Em proposta de origem `bitlab` a rota recusa
+qualquer mudança: `PROPOSAL_EDIT_NOT_ALLOWED` (409, `details.reason: "bitlab_origin"`) — o
+número é a identidade dela.
+
 **Erros:** `VALIDATION_ERROR` (400), `CONFLICT` (409, `details.reason:
 "lis_budget_number_taken"` e `details.proposalNumber` da outra proposta), `PROPOSAL_ALREADY_CLOSED`
 (409, só quando a proposta está `ganho`. Em `perdido` o vínculo é aceito, D-119 item 2),
-`FORBIDDEN` (403), `NOT_FOUND` (404).
+`FORBIDDEN` (403), `NOT_FOUND` (404), `PROPOSAL_EDIT_NOT_ALLOWED` (409, origem `bitlab`).
+
+### POST /proposals/:id/send (CRMLAB-58, D-200/D-201)
+"Enviar orçamento" do cartão de origem `bitlab`: manda a mensagem pela conversa escolhida e, só
+se o envio der certo, vincula a conversa, define o responsável e move o estágio.
+
+**Papéis:** quem enxerga o cartão (fila comum ou dona; gestor/admin veem todos) **e** pode mexer
+nele pela trava "Mover card de outra atendente" (`canActOnCard`, §6c): dona ou cartão sem
+responsável, admin sempre, gestor se `moveOthersCards`. `platform_operator` → `403`.
+
+**Request:**
+```json
+{ "conversationId": "uuid", "message": "Olá, Maria! Segue o orçamento nº 5001 (Particular), no valor de R$ 150,50." }
+```
+- `conversationId`: conversa **ativa** que quem envia enxerga (atendente: as dela e a fila livre).
+- `message`: `string` 1..4000 depois do `trim`. É o texto que a tela montou pelo modelo das Regras
+  (`sendMessage.template`, §6c) e a atendente revisou; o servidor não remonta.
+
+**Comportamento (D-201):** reserva o cartão (trava de linha + `send_claim_id`), envia pelo mesmo
+caminho de `POST /conversations/:id/messages` e, com o envio aceito, grava numa transação:
+`conversationId` = a escolhida, `createdBy` = quem enviou, `sentAt`, e o estágio
+`bitlabSendTarget(lisRequisitionNumber, automation)`: sem requisição → `orcamento_enviado`; com
+requisição e "Requisição → Negociação" ligada → `negociacao` (transição de sistema, fora da matriz
+manual). Histórico, mensagem de sistema na conversa, audit `update_proposal_status`
+(`newValues.source: "send"`) e WS `proposal.status_changed`. **Falha do envio não muda nada no
+cartão** (a mensagem fica na conversa como `failed`, como no atendimento).
+
+**Response (200):** o `ProposalDetail` atualizado.
+
+**Erros:** `VALIDATION_ERROR` (400); `NOT_FOUND` (404, proposta ou conversa de outro tenant ou
+fora da visibilidade); `FORBIDDEN` (403, `details.reason: "move_others_not_allowed"`);
+`PROPOSAL_EDIT_NOT_ALLOWED` (409, `details.reason: "crm_origin"`); `INVALID_STATUS_TRANSITION`
+(400, cartão fora de `novo_contato`); `PROPOSAL_ALREADY_CLOSED` (409);
+`PROPOSAL_ALREADY_SENT` (409, `details.reason: "sent"` ou `"in_progress"` — outra pessoa está
+enviando agora); `CONVERSATION_ARCHIVED` (409); `MESSAGE_SEND_FAILED` (502, com
+`details.messageId`).
+
+### POST /proposals/:id/resend (CRMLAB-58, D-202)
+"Reenviar mensagem": manda de novo pela conversa vinculada, **sem mudar estágio nem `sentAt`**.
+Só cartão `bitlab` já vinculado em `orcamento_enviado`, `follow_up` ou `negociacao`. Papéis: dona,
+gestor ou admin.
+
+**Request:** `{ "message": "texto 1..4000" }`
+
+**Response (201):** a `Message` criada (mesmo shape de `POST /conversations/:id/messages`).
+
+Audit `resend_proposal_message` (`newValues: { conversationId, messageId }`).
+
+**Erros:** `VALIDATION_ERROR`, `NOT_FOUND`, `FORBIDDEN` (`details.reason: "not_owner"`),
+`PROPOSAL_EDIT_NOT_ALLOWED` (`details.reason: "crm_origin"` ou `"not_sent"`),
+`INVALID_STATUS_TRANSITION` (fora dos três estágios), `PROPOSAL_ALREADY_CLOSED`,
+`CONVERSATION_ARCHIVED`, `MESSAGE_SEND_FAILED`.
+
+### PATCH /proposals/:id/conversation (CRMLAB-58, D-202)
+Troca a conversa vinculada de um cartão `bitlab` já enviado e não fechado. Não envia mensagem.
+Papéis: dona, gestor ou admin.
+
+**Request:** `{ "conversationId": "uuid" }` — conversa que quem troca enxerga (encerrada é aceita).
+
+**Response (200):** o `ProposalDetail` atualizado. Audit `update_proposal_conversation`
+(`oldValues/newValues: { conversationId }`), WS `proposal.updated`. Mesma conversa → 200 sem gravar.
+
+**Erros:** `VALIDATION_ERROR`, `NOT_FOUND`, `FORBIDDEN` (`details.reason: "not_owner"`),
+`PROPOSAL_EDIT_NOT_ALLOWED` (`details.reason: "crm_origin"` ou `"not_sent"`),
+`PROPOSAL_ALREADY_CLOSED`.
+
+### PATCH /proposals/:id/responsible (CRMLAB-58, D-202)
+Edita o responsável (`createdBy`), que decide visibilidade e comissão. Qualquer origem.
+
+**Request:** `{ "userId": "uuid" }`
+
+**Regras:** gestor/admin → qualquer usuário **ativo** do laboratório com papel `attendant`,
+`manager` ou `admin`, em qualquer estágio. Atendente → só no cartão **de que é dona**, não
+fechado, e só para **outra atendente ativa**.
+
+**Response (200):** o `ProposalDetail` atualizado. Audit `update_proposal_responsible`
+(`oldValues/newValues: { createdBy }`), WS `proposal.updated`. Mesmo usuário → 200 sem gravar.
+
+**Erros:** `VALIDATION_ERROR` (`details.fields.userId`), `NOT_FOUND`, `FORBIDDEN`
+(`details.reason: "not_owner"` ou `"closed"`).
 
 ### PATCH /proposals/:id/discount
 Atualizar desconto (se aprovação pendente).
@@ -2050,6 +2191,9 @@ Atualizar desconto (se aprovação pendente).
   "totalPrice": 175.78
 }
 ```
+
+Proposta de origem `bitlab` (CRMLAB-57, D-195 item 7): `PROPOSAL_EDIT_NOT_ALLOWED` (409,
+`details: { status, reason: "bitlab_origin" }`) — o valor é o do orçamento do Bitlab.
 
 ### PATCH /proposals/:id/items
 Substitui a lista de itens e, opcionalmente, desconto e médico solicitante (CRMLAB-12, D-134).
@@ -2074,6 +2218,8 @@ Substitui a lista de itens e, opcionalmente, desconto e médico solicitante (CRM
 - **Só aceito com a proposta em `novo_contato` ou `orcamento_enviado`** (`EDITABLE_STATUSES` de
   `@crm-lab/shared`) — fora disso, `PROPOSAL_EDIT_NOT_ALLOWED` (409). Proposta terminal
   (`ganho`/`perdido`) responde `PROPOSAL_ALREADY_CLOSED` (409) antes mesmo dessa checagem.
+- **Origem `bitlab`** (CRMLAB-57, D-195 item 7): `PROPOSAL_EDIT_NOT_ALLOWED` (409,
+  `details.reason: "bitlab_origin"`) em qualquer estágio — ela não tem itens do catálogo.
 - Alçada de `discountPercent`: mesma regra de `PATCH /discount` — dentro do limite do autor,
   aprova por si mesma; acima, `approvalStatus` volta para `pending` e reabre o fluxo de
   aprovação (WORKFLOWS.md §3). Terceiro tentando subir o desconto de proposta que não criou
@@ -3577,6 +3723,102 @@ Gera audit log `update_commission_settings` (`entityType: "tenant_settings"`, `e
 
 ---
 
+## 6c. Funnel Rules (Regras do funil — CRMLAB-56)
+
+Regras que o laboratório define na página **Configurações → Regras** (PAGES.md §21, D-190..D-194).
+Uma linha por tenant em `funnel_rules` (SCHEMA.md §32). Shapes em
+`shared/types/funnel-rules.types.ts` (`FunnelRules`, `UpdateFunnelRulesRequest`,
+`DEFAULT_FUNNEL_RULES`).
+
+**Papéis:** `GET` é **todo perfil de laboratório** (`attendant`/`manager`/`admin`): a atendente vê
+a página e o front lê as travas para esconder o que o back recusaria. `PATCH` é
+**manager/admin**; `attendant` → `403 FORBIDDEN` com `details.requiredRoles: ["manager","admin"]`.
+`platform_operator` → `403`.
+
+**Ponto único de leitura no backend (para os cards CRMLAB-57..60):**
+`readFunnelRules(tx, tenantId): Promise<FunnelRules>` em
+`backend/src/services/funnel-rules.service.ts` (também `funnelRules.get`). Roda dentro da transação
+de quem chama (`db.withTenant`), uma consulta por chave primária, e devolve sempre o objeto
+completo com os padrões aplicados. Nenhum outro código lê `funnel_rules` direto.
+
+### GET /settings/funnel-rules
+
+**Response (200)** — sem linha gravada, exatamente os padrões (D-191):
+```json
+{
+  "origin": { "fromBitlab": true, "manualInCrm": true },
+  "automation": {
+    "requisitionToNegotiation": { "enabled": true },
+    "paymentToWon": { "enabled": true },
+    "sentToFollowUp": { "enabled": true, "days": 3 },
+    "negotiationToFollowUp": { "enabled": true, "days": 7 },
+    "followUpToLost": { "enabled": false, "days": 15 },
+    "staleNewBudgetAlert": { "enabled": true, "hours": 4 },
+    "dayCounting": "calendar"
+  },
+  "manualMoves": {
+    "reopenClosed": { "enabled": false, "roles": ["manager"] },
+    "skipStages": true,
+    "requireLossReason": true,
+    "moveOthersCards": true
+  },
+  "sendMessage": {
+    "template": "Olá, {paciente}! Segue o orçamento nº {numero_orcamento} ({convenio}), no valor de {valor}."
+  }
+}
+```
+
+| Campo | Significado | Quem executa |
+|-------|-------------|--------------|
+| `origin.fromBitlab` | A proposta nasce do orçamento do Bitlab | CRMLAB-57 |
+| `origin.manualInCrm` | A atendente cria a proposta no CRM (catálogo). `false` → `POST /proposals` = `MANUAL_PROPOSAL_DISABLED` | este card |
+| `automation.requisitionToNegotiation` | Requisição no LIS → `negociacao` | CRMLAB-60 |
+| `automation.paymentToWon` | Pagamento no LIS → `ganho` | CRMLAB-60 |
+| `automation.sentToFollowUp` | `orcamento_enviado` há `days` → `follow_up` | CRMLAB-59 |
+| `automation.negotiationToFollowUp` | `negociacao` sem pagamento há `days` → `follow_up` | CRMLAB-59 |
+| `automation.followUpToLost` | `follow_up` há `days` → `perdido` (`silencio`) | CRMLAB-59 |
+| `automation.staleNewBudgetAlert` | Alerta de `novo_contato` parado há `hours` sem envio | CRMLAB-59 |
+| `automation.dayCounting` | `calendar` (corridos) ou `business` (úteis) | CRMLAB-59 |
+| `manualMoves.*` | Travas de movimentação manual (D-192), via `checkTransition` | este card (back e front) |
+| `sendMessage.template` | Modelo do WhatsApp; render por `renderSendMessageTemplate` | CRMLAB-58 |
+
+`checkTransition`, `canTransition`, `allowedTargets`, `buildAllowedTransitions`, `canReopen`,
+`SEQUENTIAL_TRANSITIONS`, `REOPEN_TARGETS`, `findUnknownTemplateVariables` e
+`renderSendMessageTemplate` são exportados de `@crm-lab/shared`.
+
+**Erros:** `FORBIDDEN` (403, `platform_operator`)
+
+### PATCH /settings/funnel-rules (manager/admin)
+Parcial em qualquer nível: campo ausente preserva; listas (`roles`) são trocadas inteiras.
+
+**Request:**
+```json
+{
+  "origin": { "manualInCrm": false },
+  "automation": { "sentToFollowUp": { "days": 5 } },
+  "manualMoves": { "reopenClosed": { "enabled": true, "roles": ["manager"] } }
+}
+```
+
+Validação (`VALIDATION_ERROR`, `details.fields` pelo caminho do campo):
+- corpo vazio (`{}`) → `fields._root`; campo desconhecido em qualquer nível → `Campo desconhecido`;
+- booleanos são `boolean`; `days` inteiro `1..365`; `hours` inteiro `1..720`;
+- `dayCounting` ∈ `calendar | business`; `roles` ⊆ `["attendant","manager"]`, sem repetição;
+- `origin`: ao menos uma das duas ligada depois do merge → `fields.origin`;
+- `sendMessage.template`: string `1..1000` depois do `trim`, só com as variáveis
+  `{paciente}`, `{numero_orcamento}`, `{valor}`, `{convenio}` → senão
+  `fields["sendMessage.template"]` citando as desconhecidas.
+
+**Response (200):** o objeto completo depois da escrita (mesmo shape do `GET`), cru.
+
+Gera audit log `update_funnel_rules` (`entityType: "funnel_rules"`, `entityId` = `tenantId`,
+`oldValues`/`newValues` = objeto inteiro) só quando algo mudou de fato. Mudança vale dali para
+frente (D-190 item 6).
+
+**Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
+
+---
+
 ## 7. Operation (Gestão da Operação)
 
 Tela `/settings/operation` (PAGES.md §10) — **somente leitura, gestor+**. Shapes em
@@ -4006,6 +4248,7 @@ chunk. Ao final, grava `lis_imports` com `status: "completed"` e os contadores.
   "rowsAccepted": 505,
   "rowsRejected": 7,
   "proposalsWon": 0,
+  "proposalsCreated": 0,
   "status": "completed",
   "errorMessage": null,
   "createdBy": "9f8e7d6c-5b4a-4392-8180-7f6e5d4c3b2a",
@@ -4014,7 +4257,8 @@ chunk. Ao final, grava `lis_imports` com `status: "completed"` e os contadores.
 }
 ```
 `proposalsWon` conta as propostas que esta importação levou a `ganho` pela conciliação (D-119,
-CRMLAB-52). Era sempre `0` até a Onda 13. `status: "failed"` é possível quando a
+CRMLAB-52). Era sempre `0` até a Onda 13. `proposalsCreated` conta as propostas de origem
+`bitlab` que a rodada criou (CRMLAB-57, D-196); `null` nas linhas anteriores a ele. `status: "failed"` é possível quando a
 importação passa da validação de arquivo mas falha durante o processamento (ex.: erro de banco
 no meio de um chunk); nesse caso `errorMessage` traz o motivo e `finishedAt` fica preenchido do
 mesmo jeito — a linha de `lis_imports` registra a falha, nunca é apagada.
@@ -4317,7 +4561,7 @@ Configuração e disparo da sincronização dos orçamentos pela API de Orçamen
   "lastSuccessAt": "2026-09-25T14:00:00.000Z",
   "lastError": null,
   "running": false,
-  "intervalMinutes": 30
+  "intervalMinutes": 2
 }
 ```
 - Sem linha em `lis_sync_settings`: `enabled: false`, `apiKeySet: false`, `apiKeyMasked: null` e
@@ -4364,6 +4608,7 @@ tela mostra (`status: "failed"`).
   "importId": "8c2e1f77-0b13-4a3d-9d54-1f0e6b7a2c19",
   "rowsAccepted": 42,
   "proposalsWon": 3,
+  "proposalsCreated": 5,
   "watermark": "2026-09-25T14:02:11.000Z",
   "error": null,
   "settings": { "enabled": true, "apiKeySet": true, "...": "mesmo shape do GET" }

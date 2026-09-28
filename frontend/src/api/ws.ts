@@ -117,6 +117,12 @@ export function applyWsEvent(
       return;
     }
 
+    // CRMLAB-57/D-196: proposta nasceu do orçamento do Bitlab — o cartão aparece no Kanban.
+    case 'proposal.created': {
+      void queryClient.invalidateQueries({ queryKey: queryScopes.proposals });
+      return;
+    }
+
     case 'proposal.status_changed': {
       const data = event.data as { proposalId: string };
       void queryClient.invalidateQueries({ queryKey: queryScopes.proposals });
@@ -152,6 +158,17 @@ export function applyWsEvent(
       void queryClient.invalidateQueries({ queryKey: queryKeys.proposal(data.proposalId) });
       void queryClient.invalidateQueries({ queryKey: queryScopes.proposals });
       void queryClient.invalidateQueries({ queryKey: queryScopes.operations });
+      return;
+    }
+
+    // CRMLAB-59/D-207: cartão parado em "Novo orçamento" — uma vez por entrada na coluna.
+    case 'proposal.stale_alert': {
+      const data = event.data as WsEventPayloads['proposal.stale_alert'];
+      toast?.(
+        `Um cartão está parado em "Novo orçamento" há ${data.hours} h sem envio.`,
+        'attention',
+      );
+      void queryClient.invalidateQueries({ queryKey: queryScopes.proposals });
       return;
     }
 

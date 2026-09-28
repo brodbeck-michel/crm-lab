@@ -96,10 +96,12 @@ mais de alguns minutos, reconectando na hora quando ela volta a ficar visível.
 | Evento | Payload | Reação do frontend |
 |--------|---------|--------------------|
 | `conversation.new_message` | `{ conversationId, messageId }` | invalidate `['conversations']` + `['conversation', id]` |
+| `proposal.created` | `{ proposalId }` | proposta nasceu sem ninguém clicar — hoje só a origem `bitlab`, na ingestão do orçamento (CRMLAB-57, D-196), depois do commit — invalidate `['proposals']` |
 | `proposal.status_changed` | `{ proposalId, status }` | invalidate `['proposals']` + `['proposal', id]` |
 | `proposal.updated` | `{ proposalId }` | itens/desconto/médico solicitante mudaram (CRMLAB-12, D-134) — invalidate `['proposals']` + `['proposal', id]` |
 | `approval.requested` | `{ proposalId }` | badge em #aprovacoes + invalidate pendentes |
 | `approval.decided` | `{ proposalId, decision }` | toast + invalidate `['proposal', id]` |
+| `proposal.stale_alert` | `{ proposalId, hours }` | só para o responsável do cartão (ou, sem responsável, gestores/admins): cartão parado em "Novo orçamento" há `hours` h (CRMLAB-59, D-207), uma vez por entrada na coluna — toast de atenção + invalidate `['proposals']` |
 
 **Regra:** eventos WS são NOTIFICAÇÃO, não transporte de dados — o cliente refaz fetch (invalidateQueries). Payloads carregam só IDs. Ao reconectar, invalidar queries ativas (pode ter perdido eventos).
 

@@ -107,6 +107,15 @@ describe('ws — evento invalida a query certa', () => {
     expect(keysPassed()).toEqual([queryScopes.conversations, queryKeys.conversation('c-1')]);
   });
 
+  // CRMLAB-57/D-196: cartão nascido do orçamento do Bitlab entra no Kanban sem recarregar.
+  it('proposal.created → ["proposals"]', () => {
+    const client = build();
+    client.connect();
+    socket(0).emitMessage({ event: 'proposal.created', data: { proposalId: 'p-7' } });
+
+    expect(keysPassed()).toEqual([queryScopes.proposals]);
+  });
+
   it('proposal.status_changed → ["proposals"] + ["proposal", id]', () => {
     const client = build();
     client.connect();
@@ -406,5 +415,24 @@ describe('channel.connection_changed', () => {
     );
 
     expect(toast).not.toHaveBeenCalled();
+  });
+});
+
+// CRMLAB-59/D-207: alerta de "Novo orçamento" parado — toast de atenção + pipeline atualizado.
+describe('proposal.stale_alert', () => {
+  it('avisa com tom de atenção e invalida as propostas', () => {
+    const toast = vi.fn();
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+
+    applyWsEvent(
+      queryClient,
+      { event: 'proposal.stale_alert', data: { proposalId: 'p-1', hours: 5 } } as WsEvent,
+      toast,
+    );
+
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast.mock.calls[0]?.[0]).toMatch(/parado em "Novo orçamento" há 5 h/);
+    expect(toast.mock.calls[0]?.[1]).toBe('attention');
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryScopes.proposals });
   });
 });

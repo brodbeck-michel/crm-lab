@@ -57,6 +57,14 @@ export const ERROR_CATALOG = {
   },
   APPROVAL_NOT_ALLOWED: { statusCode: 403, message: 'Sua alcada nao cobre este desconto' },
   EXAM_NOT_FOUND_OR_INACTIVE: { statusCode: 400, message: 'Exame inexistente ou inativo' },
+  MANUAL_PROPOSAL_DISABLED: {
+    statusCode: 409,
+    message: 'Criacao manual de proposta desligada nas Regras do laboratorio',
+  },
+  PROPOSAL_ALREADY_SENT: {
+    statusCode: 409,
+    message: 'Este orcamento ja foi enviado ou esta sendo enviado por outra pessoa agora',
+  },
 
   // --- Conversas ---
   CONVERSATION_ALREADY_ASSIGNED: {

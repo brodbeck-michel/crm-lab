@@ -75,7 +75,11 @@ export class ApprovalService implements ApprovalRequester {
 
     const summary = await db.withTenant(ctx.tenantId, async (tx) => {
       const row = await loadVisibleProposal(tx, ctx, proposalId);
-      const creatorLimit = await readDiscountLimit(tx, row.created_by, ctx.discountLimit);
+      // Sem responsavel so na origem `bitlab`, que nunca pede aprovacao (D-195 item 7).
+      const creatorLimit =
+        row.created_by === null
+          ? ctx.discountLimit
+          : await readDiscountLimit(tx, row.created_by, ctx.discountLimit);
       return {
         patientName: row.patient_name ?? 'Paciente',
         totalPrice: Number(row.total_price),
@@ -152,10 +156,12 @@ export class ApprovalService implements ApprovalRequester {
     );
 
     // Notifica o criador (WORKFLOWS §3: "Atendente e notificado via WebSocket").
-    wsHub.emitToUser(ctx.tenantId, outcome.createdBy, 'approval.decided', {
-      proposalId,
-      decision: 'approved',
-    });
+    if (outcome.createdBy !== null) {
+      wsHub.emitToUser(ctx.tenantId, outcome.createdBy, 'approval.decided', {
+        proposalId,
+        decision: 'approved',
+      });
+    }
 
     await audit.record(ctx, {
       action: APPROVE_ACTION,
@@ -226,10 +232,12 @@ export class ApprovalService implements ApprovalRequester {
       proposalId,
     );
 
-    wsHub.emitToUser(ctx.tenantId, outcome.createdBy, 'approval.decided', {
-      proposalId,
-      decision: 'rejected',
-    });
+    if (outcome.createdBy !== null) {
+      wsHub.emitToUser(ctx.tenantId, outcome.createdBy, 'approval.decided', {
+        proposalId,
+        decision: 'rejected',
+      });
+    }
 
     return outcome.proposal;
   }

@@ -44,6 +44,9 @@ function buildProposal(overrides: Partial<ProposalDetail> = {}): ProposalDetail 
     lisRequisitionNumber: null,
     lisPaidValue: null,
     lisPaidOn: null,
+    origin: 'crm',
+    lisIssuedOn: null,
+    lisAttendantName: null,
     ...overrides,
   };
 }

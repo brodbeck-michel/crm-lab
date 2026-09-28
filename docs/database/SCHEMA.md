@@ -336,6 +336,10 @@ CREATE INDEX idx_proposals_status ON proposals(status);
 CREATE INDEX idx_proposals_created_at ON proposals(created_at);
 ```
 
+> **Migração 028 (CRMLAB-57, D-195):** `conversation_id` e `created_by` passaram a aceitar `NULL`,
+> **só** na origem `bitlab` (coluna `origin`, CHECK `proposals_crm_origin_complete`). Ver a seção
+> "Colunas novas … (migração 028)" abaixo, antes do RLS.
+
 **Coluna nova (migração `005_insurances_and_catalog.sql`, Onda 7):**
 
 ```sql
@@ -564,6 +568,21 @@ CREATE TABLE proposal_status_history (
 CREATE INDEX idx_proposal_status_history_proposal ON proposal_status_history(proposal_id, changed_at);
 CREATE INDEX idx_proposal_status_history_tenant_id ON proposal_status_history(tenant_id);
 ```
+
+**Migração 030 (CRMLAB-59, D-207/D-208)** acrescenta duas colunas, ambas nulas em toda linha
+existente (sem backfill):
+
+```sql
+ALTER TABLE proposal_status_history
+  ADD COLUMN automation JSONB NULL,           -- { rule, days, dayCounting } quando o motor de tempo moveu
+  ADD COLUMN stale_alerted_at TIMESTAMP NULL; -- alerta de "Novo orçamento" parado já saiu para esta entrada
+```
+
+- `automation` preenchido = a linha foi gravada pelo **motor de tempo** (`changed_by` é `NULL`).
+  `changed_by` nulo com `automation` nulo = LIS ou criação automática do Bitlab. `rule` é uma das
+  chaves de `TimerRuleKey` (`sentToFollowUp`, `negotiationToFollowUp`, `followUpToLost`).
+- `stale_alerted_at` só é escrito na linha de **entrada** em `novo_contato` (a última linha com o
+  estágio atual) e marca que o alerta daquela entrada já saiu: é o "uma vez por entrada" (D-207).
 
 O ProposalService grava uma linha a cada transição aceita (inclusive a criação, com
 `novo_contato`). A ordenação do `history` na resposta é `changed_at ASC`.
@@ -1577,6 +1596,87 @@ CREATE POLICY lis_sync_settings_tenant_isolation ON lis_sync_settings
 - `listEnabledTenantIds()` é a única leitura fora do contexto de tenant (D-186) e só projeta
   `tenant_id`.
 
+### Colunas novas em `proposals`, `tenant_settings` e `lis_imports` (migração 028 — CRMLAB-57, D-195/D-196)
+
+```sql
+ALTER TABLE proposals
+  ADD COLUMN origin VARCHAR(20) NOT NULL DEFAULT 'crm',
+  ADD CONSTRAINT proposals_origin_check CHECK (origin IN ('crm', 'bitlab'));
+ALTER TABLE proposals ALTER COLUMN conversation_id DROP NOT NULL;
+ALTER TABLE proposals ALTER COLUMN created_by DROP NOT NULL;
+ALTER TABLE proposals
+  ADD CONSTRAINT proposals_crm_origin_complete
+    CHECK (origin <> 'crm' OR (conversation_id IS NOT NULL AND created_by IS NOT NULL));
+
+ALTER TABLE tenant_settings ADD COLUMN bitlab_proposals_since DATE NULL;
+ALTER TABLE lis_imports ADD COLUMN proposals_created INT NULL;
+```
+
+- **`proposals.origin`**: `crm` (toda proposta anterior, pelo `DEFAULT`) ou `bitlab` (nasceu
+  sozinha do orçamento do LIS, D-196). **Só** a origem `bitlab` pode ter `conversation_id` e
+  `created_by` nulos; o CHECK mantém o invariante antigo para `crm`. Na origem `bitlab`:
+  `lis_budget_number` sempre preenchido (é a identidade dela), sem `proposal_items`,
+  `discount_percent = 0`, `approval_status = 'none'`, e **`total_price` = `lis_budgets.total_value`**
+  (D-195 item 2, regravado pela conciliação enquanto não terminal). Nome do paciente, data de
+  emissão e atendente **não** são copiados: vêm por JOIN com `lis_budgets` no SELECT canônico do
+  repositório.
+- **`tenant_settings.bitlab_proposals_since`**: dia de Brasília a partir do qual orçamento emitido
+  (`lis_budgets.issued_on`) vira proposta. `NULL` = nunca ativado. Gravado uma vez, na primeira
+  ingestão com a regra ligada (`COALESCE`, nunca anda). A migração não preenche (D-196 item 2).
+  Se a linha de `tenant_settings` não existe, a ingestão faz `INSERT ... ON CONFLICT`.
+- **`lis_imports.proposals_created`**: quantas propostas `bitlab` a rodada criou.
+- Nenhuma tabela nova: as três já têm policy.
+
+---
+
+### Colunas novas em `proposals` (migração 029 — CRMLAB-58, D-201)
+
+```sql
+ALTER TABLE proposals
+  ADD COLUMN send_claim_id UUID NULL,
+  ADD COLUMN send_claimed_at TIMESTAMPTZ NULL;
+```
+
+- **Reserva do envio pelo cartão** (`POST /proposals/:id/send`, D-201): gravadas na transação
+  curta que confere o cartão, antes de a mensagem sair; zeradas quando o envio falha ou quando o
+  vínculo é gravado. Reserva com mais de 2 minutos (`send_claimed_at < NOW() - INTERVAL '2
+  minutes'`) é considerada abandonada. `send_claim_id` é o que o passo final confere (um UUID, e
+  não o timestamp, para não depender da precisão com que o driver devolve o horário).
+  `TIMESTAMPTZ` porque só é comparado dentro do banco.
+- Nunca aparecem na API. Nenhuma tabela nova, nenhuma policy nova.
+
+---
+
+### 32. `funnel_rules` (migração 027 — CRMLAB-56, D-190)
+Regras do funil que o laboratório define em **Configurações → Regras**, uma linha por tenant.
+Dono: `FunnelRulesService` (SERVICES.md §26). O shape de `rules` é `FunnelRules`
+(`shared/types/funnel-rules.types.ts`, API_CONTRACTS.md §6c).
+
+```sql
+CREATE TABLE funnel_rules (
+  tenant_id UUID PRIMARY KEY,
+  rules JSONB NOT NULL,                  -- FunnelRules inteiro, já mesclado com os padrões
+  updated_by UUID NULL,                  -- último gestor/admin que salvou
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX idx_funnel_rules_updated_by ON funnel_rules(updated_by);
+-- trigger set_updated_at + ENABLE ROW LEVEL SECURITY + policy funnel_rules_tenant_isolation
+-- (mesmo padrão de lis_sync_settings, §31)
+```
+
+- **Sem linha = padrões** (`DEFAULT_FUNNEL_RULES`, D-191), sem gravar, como `tenant_settings`
+  (D-065).
+- **A leitura sempre mescla com os padrões** (`readFunnelRules`): chave que falta ou com tipo
+  errado vale o padrão. Campo novo de um card futuro não precisa de migração nem de backfill.
+- **Validação no service, não no banco:** o JSON é um contrato do TypeScript; o `PATCH` recusa o
+  que não cabe antes de gravar (API_CONTRACTS.md §6c).
+- Migração **única** (tabela + policy), como 026: sem backfill, a tabela nasce vazia.
+
 ---
 
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
@@ -1693,6 +1793,7 @@ para ser a exceção visível e auditável, nunca o caminho normal:
 | **Login** | busca o usuário por email **antes** de saber a qual tenant ele pertence |
 | **Console da plataforma** | opera sobre todos os tenants por definição (`platform_operator`) |
 | **Agendador da sincronização LIS** | lista **só os `tenant_id`** com sincronização ligada, antes de ter contexto (D-186). A rodada de cada tenant roda com `withTenant()` |
+| **Motor de tempo do funil** | lista **só os `tenant_id`** de tenants ativos com proposta aberta, antes de ter contexto (D-205 item 6). Leitura das regras, dos cartões e cada transição rodam com `withTenant()` |
 
 Nenhum outro caminho de código deve usar `withoutTenant()`.
 
@@ -1822,7 +1923,10 @@ migrations/
 ├── 020_crm_login_role.sql        # role `crm_login` sem superuser para a pool (CRMLAB-38, D-145)
 ├── 021_fk_indexes.sql            # índice nas 15 FKs que não tinham (CRMLAB-38, D-146)
 ├── …                             # 022–025: ver o cabeçalho de cada arquivo
-└── 026_lis_sync.sql              # lis_sync_settings + policy; lis_imports.kind ganha 'sync' (CRMLAB-52, D-185)
+├── 026_lis_sync.sql              # lis_sync_settings + policy; lis_imports.kind ganha 'sync' (CRMLAB-52, D-185)
+├── 027_funnel_rules.sql          # funnel_rules + policy — Regras do funil (CRMLAB-56, D-190)
+├── 028_bitlab_origin.sql         # proposals.origin, conversa/autor nulláveis só na origem bitlab (CRMLAB-57, D-195/D-196)
+└── 030_funnel_timer.sql          # proposal_status_history.automation + stale_alerted_at — motor de tempo (CRMLAB-59, D-207/D-208)
 ```
 
 A 007 e a 008 são arquivos ÚNICOS (tabela + policy), diferente dos pares 003/004 e 005/006: a

@@ -21,6 +21,12 @@ total = (89.90 + 89.90) * (1 - 0.10) = 161.82
 
 O total é **sempre calculado** a partir dos itens + desconto.
 
+> **Exceção declarada — proposta de origem `bitlab` (CRMLAB-57, D-195).** A proposta que nasce
+> sozinha do orçamento do LIS não tem itens do catálogo: o total é o `total_value` do orçamento
+> no Bitlab, que é a fonte da verdade desse valor, e é regravado a cada ingestão enquanto a
+> proposta não fecha. Ela não tem desconto, não passa por alçada, e nome do paciente, data e
+> atendente vêm por JOIN com `lis_budgets` (nunca copiados).
+
 ### ❌ Errado:
 ```
 proposal.items = [...]
@@ -173,6 +179,34 @@ if (allowedTransitions[currentStatus].includes(newStatus)) {
 }
 ```
 
+### As travas são regra do laboratório (CRMLAB-56, D-192)
+Desde o CRMLAB-56, a matriz acima e os estágios terminais são o **padrão** das travas de
+**Configurações → Regras** (`manualMoves`, API_CONTRACTS.md §6c). O laboratório pode:
+- **desligar "Pular etapas"** → vale `SEQUENTIAL_TRANSITIONS`: um passo para a frente, um para
+  trás e `perdido`; `ganho` só a partir de `negociacao`;
+- **ligar "Reabrir Ganho/Perdido"** para gestor e/ou atendente (admin sempre) → volta para
+  `orcamento_enviado`, `follow_up` ou `negociacao`, limpando `closedAt` e `reasonLost`. Ganho
+  conciliado pelo LIS nunca reabre;
+- **desligar "Exigir motivo ao marcar Perdido"** → `perdido` sem motivo é aceito;
+- **desligar "Mover card de outra atendente"** → o gestor só move os cards que criou (admin
+  sempre pode; a atendente já só vê os próprios, D-042).
+Front e back decidem pela mesma função, `checkTransition` (`shared/types/funnel-rules.types.ts`).
+Sem nada configurado, o comportamento é exatamente o de antes (D-191).
+
+### Motor de tempo (CRMLAB-59, D-205..D-209)
+Os prazos da seção Automação das Regras movem cartões parados, cada um só se ligado:
+`orcamento_enviado` há X dias → `follow_up`; `negociacao` há Y dias sem pagamento → `follow_up`;
+`follow_up` há Z dias → `perdido` com motivo `silencio`. O relógio conta desde a **entrada no
+estágio atual** (última linha do histórico com esse estágio): qualquer mudança de estágio o zera.
+Dias corridos (múltiplos de 24 h) ou úteis (seg–sex, Brasília; **sem feriados**). **Fato vence
+tempo:** cartão com pagamento não é movido pelo motor, e cartão com requisição não vai para
+`follow_up`/`perdido` a partir de `orcamento_enviado`/`follow_up` (D-206). O passo precisa estar
+na matriz vigente; terminais nunca se movem. "Novo orçamento" parado há N horas (corridas) só
+**alerta** o responsável (ou gestores/admins, se não houver), uma vez por entrada na coluna, sem
+mover (D-207). Prazo mudado vale no próximo tique, inclusive para os cartões que já passaram do
+prazo novo (D-209). Quem move é o sistema: `changedBy: null`, histórico com `automation`, audit
+`source: "rule"` (D-208).
+
 ### Exceção única: `ganho` pela conciliação com o LIS (CRMLAB-52, D-119)
 A matriz acima vale para **pessoas**. Quando o orçamento do LIS vinculado à proposta
 (`lis_budget_number`) aparece **com requisição**, a proposta vai para `ganho` a partir de
@@ -181,9 +215,30 @@ A matriz acima vale para **pessoas**. Quando o orçamento do LIS vinculado à pr
 `isTransitionAllowed`, e ele mora só em `ProposalService.markWonFromLis`. `perdido` **nunca**
 reabre por esse caminho: o conflito é auditado (`lis_reconcile_conflict`) e o gestor decide.
 
+**Exceção da exceção (CRMLAB-57, D-197):** proposta de origem `bitlab` **em `novo_contato`**
+com requisição **não** vai a `ganho`: a requisição só é espelhada e vira o selo "Pré-cadastro
+feito". Requisição no balcão é pré-cadastro, não aceite de uma proposta que o CRM enviou.
+
+**Régua do cartão do Bitlab (CRMLAB-60 parcial, D-204 — emenda as duas acima, provisória até
+o CRMLAB-53):** na origem `bitlab`, requisição **não** fecha mais como ganho. Pagamento no LIS
+(`paid_on`, qualquer valor) em qualquer estágio aberto, inclusive `novo_contato` → `ganho`;
+requisição em `orcamento_enviado`/`follow_up` → `negociacao`. Cada uma só com a regra
+correspondente ligada nas Regras. `perdido` não reabre. A origem `crm` continua com a D-119.
+
+**Enviar pelo cartão (CRMLAB-58, D-200):** o cartão `bitlab` em `novo_contato` enviado com
+requisição (pré-cadastro) vai direto a `negociacao` se a regra "Requisição → Negociação" estiver
+ligada — transição de sistema que a matriz manual não tem. Sem requisição, `orcamento_enviado`.
+Quem envia vira a responsável (`created_by`).
+
+**Nascer do orçamento (CRMLAB-57, D-196):** com a regra ligada, todo orçamento do LIS emitido a
+partir da data de ativação (`tenant_settings.bitlab_proposals_since`) e sem proposta vira uma
+proposta de origem `bitlab` em `novo_contato` ("Novo orçamento"), sem conversa. Histórico
+anterior à ativação nunca vira cartão.
+
 ### Motivo de Perda (Obrigatório)
 
-**Regra:** Ao passar para "perdido", motivo é obrigatório.
+**Regra:** Ao passar para "perdido", motivo é obrigatório — é o padrão da trava
+`manualMoves.requireLossReason` (D-192). Motivo enviado sempre tem que ser do enum.
 
 ```typescript
 @Patch('/proposals/:id/status')

@@ -1,4 +1,4 @@
-import type { RouteObject } from 'react-router-dom';
+import { Navigate, type RouteObject } from 'react-router-dom';
 import { AppShell, PlatformShell } from '@/components/layout';
 import { NotFoundPlaceholder } from '@/pages/_placeholders';
 import { Attendance } from '@/pages/Attendance';
@@ -14,7 +14,7 @@ import ChannelsSettings from '@/pages/Settings/Channels';
 import OperationSettings from '@/pages/Settings/Operation';
 import Insurances from '@/pages/Settings/Insurances';
 import AttendantsSettings from '@/pages/Settings/Attendants';
-import CommissionsSettings from '@/pages/Settings/Commissions';
+import RulesSettings from '@/pages/Settings/Rules';
 import LisIntegrationSettings from '@/pages/Settings/LisIntegration';
 import AccountSettings from '@/pages/Settings/Account';
 import ThemeSettings from '@/pages/Settings/Theme';
@@ -75,6 +75,7 @@ export const appRoutes: RouteObject[] = [
               { path: 'quick-replies', element: <QuickReplies /> },
               { path: 'sales', element: <Sales /> },
               { path: 'settings/account', element: <AccountSettings /> },
+              { path: 'settings/rules', element: <RulesSettings /> },
             ],
           },
         ],
@@ -95,7 +96,11 @@ export const appRoutes: RouteObject[] = [
               { path: 'settings/operation', element: <OperationSettings /> },
               { path: 'settings/insurances', element: <Insurances /> },
               { path: 'settings/attendants', element: <AttendantsSettings /> },
-              { path: 'settings/commissions', element: <CommissionsSettings /> },
+              // CRMLAB-56 (D-194): a comissão virou a seção 6 de Regras.
+              {
+                path: 'settings/commissions',
+                element: <Navigate to="/settings/rules#comissoes" replace />,
+              },
               { path: 'settings/lis-integration', element: <LisIntegrationSettings /> },
             ],
           },

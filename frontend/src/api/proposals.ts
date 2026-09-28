@@ -3,8 +3,13 @@ import type {
   CreateProposalResponse,
   ListProposalsQuery,
   ListProposalsResponse,
+  Message,
   ProposalDetail,
   RejectProposalRequest,
+  ResendProposalMessageRequest,
+  SendProposalRequest,
+  UpdateProposalConversationRequest,
+  UpdateProposalResponsibleRequest,
   UpdateProposalDiscountRequest,
   UpdateProposalItemsRequest,
   UpdateProposalItemsResponse,
@@ -62,6 +67,22 @@ export const proposalsApi = {
   /** CRMLAB-52/D-119 — dona ou gestor+. Concilia na hora; devolve o detalhe inteiro. */
   updateLisReference: (id: string, body: UpdateProposalLisReferenceRequest) =>
     http.patch<ProposalDetail>(`/proposals/${id}/lis-reference`, body),
+
+  /** CRMLAB-58/D-200 — envia pela conversa escolhida e só então vincula e move. */
+  send: (id: string, body: SendProposalRequest) =>
+    http.post<ProposalDetail>(`/proposals/${id}/send`, body),
+
+  /** CRMLAB-58/D-202 — manda de novo pela conversa vinculada, sem mudar o estágio. */
+  resend: (id: string, body: ResendProposalMessageRequest) =>
+    http.post<Message>(`/proposals/${id}/resend`, body),
+
+  /** CRMLAB-58/D-202 — troca a conversa vinculada; não envia nada. */
+  updateConversation: (id: string, body: UpdateProposalConversationRequest) =>
+    http.patch<ProposalDetail>(`/proposals/${id}/conversation`, body),
+
+  /** CRMLAB-58/D-202 — responsável (visibilidade e comissão). */
+  updateResponsible: (id: string, body: UpdateProposalResponsibleRequest) =>
+    http.patch<ProposalDetail>(`/proposals/${id}/responsible`, body),
 
   /** gestor/admin — alçada validada no servidor. */
   approve: (id: string) => http.patch<ApproveProposalResponse>(`/proposals/${id}/approve`),
@@ -199,4 +220,45 @@ export function useUpdateProposalLisReference() {
       queryClient.invalidateQueries({ queryKey: queryScopes.analytics });
     },
   });
+}
+
+/**
+ * CRMLAB-58 — as quatro mutações do cartão do Bitlab devolvem (ou mudam) o
+ * detalhe: grava o novo no cache e derruba listagens (kanban, ficha do
+ * paciente) e a conversa, que ganhou mensagem.
+ */
+function useCardMutation<TBody, TResult>(
+  call: (id: string, body: TBody) => Promise<TResult>,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: { proposalId: string; body: TBody }) =>
+      call(data.proposalId, data.body),
+    onSuccess: (result, { proposalId }) => {
+      if (result && typeof result === 'object' && 'history' in result) {
+        queryClient.setQueryData(queryKeys.proposal(proposalId), result);
+      } else {
+        queryClient.invalidateQueries({ queryKey: queryKeys.proposal(proposalId) });
+      }
+      queryClient.invalidateQueries({ queryKey: queryKeys.proposals() });
+      queryClient.invalidateQueries({ queryKey: queryScopes.analytics });
+      queryClient.invalidateQueries({ queryKey: ['conversation'] });
+    },
+  });
+}
+
+export function useSendProposal() {
+  return useCardMutation(proposalsApi.send);
+}
+
+export function useResendProposal() {
+  return useCardMutation(proposalsApi.resend);
+}
+
+export function useUpdateProposalConversation() {
+  return useCardMutation(proposalsApi.updateConversation);
+}
+
+export function useUpdateProposalResponsible() {
+  return useCardMutation(proposalsApi.updateResponsible);
 }

@@ -12,9 +12,12 @@
  * `proposal_items.tenant_id` e NOT NULL (pedido do Agent-DB em STATUS.md): todo
  * insert de item repete o tenant da proposta pai.
  */
+import { TIMER_STEPS } from '@crm-lab/shared';
 import type {
   ApprovalStatus,
   LossReason,
+  StageAutomation,
+  ProposalOrigin,
   Proposal,
   ProposalDetail,
   ProposalItem,
@@ -33,8 +36,12 @@ export interface ProposalRow {
   /** Numero sequencial POR TENANT (migracao 011) — rastreamento citavel. */
   proposal_number: unknown;
   tenant_id: string;
-  conversation_id: string;
-  created_by: string;
+  /** Origem (CRMLAB-57, D-195). */
+  origin: string;
+  /** `null` so na origem `bitlab` sem conversa (D-195 item 1, CHECK da migracao 028). */
+  conversation_id: string | null;
+  /** `null` so na origem `bitlab` sem responsavel (D-195 item 5). */
+  created_by: string | null;
   created_by_name: string | null;
   patient_name: string | null;
   patient_phone: string | null;
@@ -61,6 +68,15 @@ export interface ProposalRow {
   /** `DATE` pura (D-110) — `to_char` no SELECT evita o driver devolver `Date`. */
   lis_paid_on: string | null;
   lis_reconciled_at: unknown;
+  /** JOIN com `lis_budgets` (D-195 item 3) — nunca copiados para `proposals`. */
+  lis_issued_on: string | null;
+  lis_attendant_name: string | null;
+  /**
+   * Entrada no estagio atual (CRMLAB-59, D-207): MAX(changed_at) do historico
+   * com o estagio atual, ja em ISO UTC pelo `to_char` (a coluna e TIMESTAMP em
+   * UTC, D-078). Opcional: so o SELECT canonico traz.
+   */
+  stage_entered_at?: string | null;
 }
 
 interface ProposalItemRow {
@@ -78,24 +94,66 @@ interface HistoryRow {
   changed_at: unknown;
   changed_by: string | null;
   changed_by_name: string | null;
+  /** Motor de tempo (CRMLAB-59, D-208). JSONB: o driver devolve objeto. */
+  automation?: unknown;
 }
+
+const TIMER_RULE_KEYS: readonly string[] = TIMER_STEPS.map((step) => step.rule);
+
+/** `automation` gravado -> `StageAutomation`, ou `null` se ausente/fora do shape. */
+function parseAutomation(raw: unknown): StageAutomation | null {
+  const value: unknown = typeof raw === 'string' ? safeJson(raw) : raw;
+  if (typeof value !== 'object' || value === null) return null;
+  const v = value as Record<string, unknown>;
+  if (typeof v.rule !== 'string' || !TIMER_RULE_KEYS.includes(v.rule)) return null;
+  if (typeof v.days !== 'number') return null;
+  if (v.dayCounting !== 'calendar' && v.dayCounting !== 'business') return null;
+  return { rule: v.rule as StageAutomation['rule'], days: v.days, dayCounting: v.dayCounting };
+}
+
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * FROM + JOINs comuns ao SELECT canonico e ao COUNT da listagem.
+ *
+ * `conversations` e LEFT JOIN desde o CRMLAB-57: a proposta de origem `bitlab`
+ * nasce sem conversa (D-195). `lis_budgets` entra pelo numero do orcamento
+ * vinculado — de la vem o nome do paciente quando nao ha conversa, a data e o
+ * atendente do Bitlab, sem copiar nada para `proposals` (D-195 item 3).
+ */
+const FROM_PROPOSAL = `
+    FROM proposals p
+    LEFT JOIN conversations c ON c.id = p.conversation_id
+    LEFT JOIN lis_budgets lb ON lb.tenant_id = p.tenant_id AND lb.number = p.lis_budget_number`;
+
+/** Nome do paciente: o da conversa; sem conversa, o do orcamento do LIS. */
+const PATIENT_NAME = 'CASE WHEN c.id IS NULL THEN lb.patient_name ELSE c.patient_name END';
 
 /**
  * SELECT canonico. Os nomes de paciente e de autor vem por JOIN — nunca sao
  * duplicados em `proposals` (BUSINESS_RULES §5: um numero, uma origem).
  */
 const SELECT_PROPOSAL = `
-  SELECT p.id, p.proposal_number, p.tenant_id, p.conversation_id, p.created_by,
+  SELECT p.id, p.proposal_number, p.tenant_id, p.origin, p.conversation_id, p.created_by,
          u.name AS created_by_name,
-         c.patient_name, c.patient_phone,
+         ${PATIENT_NAME} AS patient_name, c.patient_phone,
          p.status, p.discount_percent, p.total_price, p.reason_lost,
          p.approval_status, p.approved_by, a.name AS approved_by_name,
          p.approved_at, p.sent_at, p.closed_at, p.created_at, p.updated_at,
          p.insurance_id, p.requesting_doctor,
          p.lis_budget_number, p.lis_requisition_number, p.lis_paid_value,
-         to_char(p.lis_paid_on, 'YYYY-MM-DD') AS lis_paid_on, p.lis_reconciled_at
-    FROM proposals p
-    JOIN conversations c ON c.id = p.conversation_id
+         to_char(p.lis_paid_on, 'YYYY-MM-DD') AS lis_paid_on, p.lis_reconciled_at,
+         to_char(lb.issued_on, 'YYYY-MM-DD') AS lis_issued_on, lb.attendant_name AS lis_attendant_name,
+         (SELECT to_char(MAX(h.changed_at), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+            FROM proposal_status_history h
+           WHERE h.proposal_id = p.id AND h.status = p.status) AS stage_entered_at
+    ${FROM_PROPOSAL}
     LEFT JOIN users u ON u.id = p.created_by
     LEFT JOIN users a ON a.id = p.approved_by`;
 
@@ -104,6 +162,7 @@ export function mapProposal(row: ProposalRow): Proposal {
   return {
     id: row.id,
     proposalNumber: toNumber(row.proposal_number),
+    origin: row.origin as ProposalOrigin,
     conversationId: row.conversation_id,
     patientName: row.patient_name,
     status: row.status as ProposalStatus,
@@ -119,6 +178,10 @@ export function mapProposal(row: ProposalRow): Proposal {
     insuranceId: row.insurance_id,
     lisBudgetNumber: row.lis_budget_number,
     lisReconciledAt: toIsoOrNull(row.lis_reconciled_at),
+    lisRequisitionNumber: row.lis_requisition_number,
+    lisIssuedOn: row.lis_issued_on,
+    lisAttendantName: row.lis_attendant_name,
+    stageEnteredAt: row.stage_entered_at ?? null,
   };
 }
 
@@ -139,6 +202,7 @@ export function mapHistory(row: HistoryRow): ProposalStageHistoryEntry {
     changedAt: toIso(row.changed_at),
     changedBy: row.changed_by,
     changedByName: row.changed_by_name,
+    automation: parseAutomation(row.automation),
   };
 }
 
@@ -161,7 +225,6 @@ export function mapDetail(
     sentAt: toIsoOrNull(row.sent_at),
     history,
     requestingDoctor: row.requesting_doctor,
-    lisRequisitionNumber: row.lis_requisition_number,
     lisPaidValue: row.lis_paid_value === null ? null : toNumber(row.lis_paid_value),
     lisPaidOn: row.lis_paid_on,
   };
@@ -176,6 +239,8 @@ export interface ConversationRef {
   patientName: string | null;
   patientPhone: string;
   status: string;
+  /** Dona da conversa; `null` = fila livre. Decide a visibilidade no envio pelo cartao (D-200 item 3). */
+  assignedTo: string | null;
 }
 
 /**
@@ -197,8 +262,9 @@ export async function findConversation(
     patient_name: string | null;
     patient_phone: string;
     status: string;
+    assigned_to: string | null;
   }>(
-    `SELECT id, patient_name, patient_phone, status
+    `SELECT id, patient_name, patient_phone, status, assigned_to
        FROM conversations WHERE id = $1`,
     [conversationId],
   );
@@ -209,6 +275,7 @@ export async function findConversation(
     patientName: row.patient_name,
     patientPhone: row.patient_phone,
     status: row.status,
+    assignedTo: row.assigned_to,
   };
 }
 
@@ -308,6 +375,49 @@ export async function insertProposal(tx: DbTx, input: ProposalInsert): Promise<s
   return row.id;
 }
 
+export interface BitlabProposalInsert {
+  tenantId: string;
+  lisBudgetNumber: string;
+  /** Login do atendente do Bitlab, ou `null` (D-195 item 5). */
+  createdBy: string | null;
+  /** `lis_budgets.total_value` (D-195 item 2). */
+  totalPrice: number;
+  insuranceId: string | null;
+}
+
+/**
+ * Proposta de origem `bitlab` (CRMLAB-57, D-196): `novo_contato`, sem conversa,
+ * sem itens, sem desconto, `approval_status 'none'`. `ON CONFLICT DO NOTHING`
+ * no indice unico parcial de D-118: se outra transacao (planilha x
+ * sincronizacao) ja criou a proposta desse orcamento, devolve `null` e nada e
+ * gravado. O `pg_advisory_xact_lock` de `nextProposalNumber` serializa as
+ * duas, entao a segunda ve a linha ja commitada.
+ */
+export async function insertBitlabProposal(
+  tx: DbTx,
+  input: BitlabProposalInsert,
+): Promise<string | null> {
+  const proposalNumber = await nextProposalNumber(tx, input.tenantId);
+  const result = await tx.query<{ id: string }>(
+    `INSERT INTO proposals (tenant_id, origin, conversation_id, created_by, status,
+                            discount_percent, total_price, approval_status,
+                            insurance_id, proposal_number, lis_budget_number)
+     VALUES ($1, 'bitlab', NULL, $2, 'novo_contato', 0, $3, 'none', $4, $5, $6)
+     ON CONFLICT (tenant_id, lis_budget_number) WHERE lis_budget_number IS NOT NULL
+     DO NOTHING
+     RETURNING id`,
+    [
+      input.tenantId,
+      input.createdBy,
+      input.totalPrice,
+      input.insuranceId,
+      proposalNumber,
+      input.lisBudgetNumber,
+    ],
+  );
+  return result.rows[0]?.id ?? null;
+}
+
 /**
  * Snapshot de nome e preco (D-004). `tenant_id` repetido por exigencia do schema.
  *
@@ -365,12 +475,23 @@ export async function insertHistory(
     proposalId: string;
     status: ProposalStatus;
     changedBy: string | null;
+    /** Motor de tempo (CRMLAB-59, D-208): a regra que moveu. */
+    automation?: StageAutomation | null;
+    /** Instante da transicao; ausente = `NOW()` do banco. O motor passa o `now` injetado. */
+    changedAt?: Date;
   },
 ): Promise<void> {
   await tx.query(
-    `INSERT INTO proposal_status_history (tenant_id, proposal_id, status, changed_by)
-     VALUES ($1, $2, $3, $4)`,
-    [input.tenantId, input.proposalId, input.status, input.changedBy],
+    `INSERT INTO proposal_status_history (tenant_id, proposal_id, status, changed_by, automation, changed_at)
+     VALUES ($1, $2, $3, $4, $5::jsonb, COALESCE($6::timestamp, NOW()))`,
+    [
+      input.tenantId,
+      input.proposalId,
+      input.status,
+      input.changedBy,
+      input.automation ? JSON.stringify(input.automation) : null,
+      input.changedAt ? input.changedAt.toISOString() : null,
+    ],
   );
 }
 
@@ -461,17 +582,58 @@ export async function setLisBudgetNumber(
   );
 }
 
-/** Numero da proposta que ja usa esse orcamento do LIS (para `details.proposalNumber`). */
-export async function findProposalNumberByLisBudget(
+export interface LisBudgetHolder {
+  id: string;
+  proposalNumber: number;
+  origin: ProposalOrigin;
+  status: ProposalStatus;
+  conversationId: string | null;
+  sentAt: string | null;
+  totalPrice: number;
+}
+
+/**
+ * A proposta que ja usa esse orcamento do LIS (para `details.proposalNumber`
+ * e para a absorcao do cartao automatico, D-198). `FOR UPDATE`: quem chama
+ * pode apaga-la na mesma transacao.
+ */
+export async function findLisBudgetHolder(
   tx: DbTx,
   lisBudgetNumber: string,
-): Promise<number | null> {
-  const result = await tx.query<{ proposal_number: unknown }>(
-    'SELECT proposal_number FROM proposals WHERE lis_budget_number = $1',
+): Promise<LisBudgetHolder | null> {
+  const result = await tx.query<{
+    id: string;
+    proposal_number: unknown;
+    origin: string;
+    status: string;
+    conversation_id: string | null;
+    sent_at: unknown;
+    total_price: unknown;
+  }>(
+    `SELECT id, proposal_number, origin, status, conversation_id, sent_at, total_price
+       FROM proposals WHERE lis_budget_number = $1 FOR UPDATE`,
     [lisBudgetNumber],
   );
   const row = result.rows[0];
-  return row ? toNumber(row.proposal_number) : null;
+  if (!row) return null;
+  return {
+    id: row.id,
+    proposalNumber: toNumber(row.proposal_number),
+    origin: row.origin as ProposalOrigin,
+    status: row.status as ProposalStatus,
+    conversationId: row.conversation_id,
+    sentAt: toIsoOrNull(row.sent_at),
+    totalPrice: toNumber(row.total_price),
+  };
+}
+
+/**
+ * Apaga a proposta (so a absorcao do cartao `bitlab`, D-198). Itens e
+ * historico vao em cascata; `lis_budgets.proposal_id` e
+ * `messages.attached_proposal_id` viram NULL (FKs da 001/012).
+ */
+export async function deleteProposal(tx: DbTx, id: string): Promise<void> {
+  await tx.query('DELETE FROM proposals WHERE id = $1', [id]);
 }
 
 // ---------------------------------------------------------------------------
@@ -498,7 +660,7 @@ export async function findHistory(
   proposalId: string,
 ): Promise<ProposalStageHistoryEntry[]> {
   const result = await tx.query<HistoryRow>(
-    `SELECT h.status, h.changed_at, h.changed_by, u.name AS changed_by_name
+    `SELECT h.status, h.changed_at, h.changed_by, u.name AS changed_by_name, h.automation
        FROM proposal_status_history h
        LEFT JOIN users u ON u.id = h.changed_by
       WHERE h.proposal_id = $1
@@ -552,6 +714,11 @@ export interface ProposalListCriteria {
   /** D-060: resolvido por `conversations.patient_id` — proposta nao tem coluna de paciente. */
   patientId?: string;
   createdBy?: string;
+  /**
+   * Junto com `createdBy`: inclui as propostas `bitlab` SEM responsavel, que
+   * todo o tenant ve (D-195 item 6). E o recorte do atendente.
+   */
+  includeUnowned?: boolean;
   approvalStatus?: ApprovalStatus;
   startDate?: string;
   endDate?: string;
@@ -589,7 +756,11 @@ export async function list(tx: DbTx, criteria: ProposalListCriteria): Promise<Pr
   }
   if (criteria.createdBy !== undefined) {
     params.push(criteria.createdBy);
-    where.push(`p.created_by = $${params.length}`);
+    where.push(
+      criteria.includeUnowned === true
+        ? `(p.created_by = $${params.length} OR (p.created_by IS NULL AND p.origin = 'bitlab'))`
+        : `p.created_by = $${params.length}`,
+    );
   }
   if (criteria.approvalStatus !== undefined) {
     params.push(criteria.approvalStatus);
@@ -607,7 +778,7 @@ export async function list(tx: DbTx, criteria: ProposalListCriteria): Promise<Pr
     // rangel: ILIKE simples resolve o volume de um laboratorio. Se a tabela
     // crescer a ponto do seq scan doer, o upgrade e um indice trigram (pg_trgm).
     params.push(`%${criteria.search.trim()}%`);
-    where.push(`c.patient_name ILIKE $${params.length}`);
+    where.push(`${PATIENT_NAME} ILIKE $${params.length}`);
   }
 
   const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
@@ -617,8 +788,7 @@ export async function list(tx: DbTx, criteria: ProposalListCriteria): Promise<Pr
 
   const counted = await tx.query<{ total: number | string }>(
     `SELECT COUNT(*)::int AS total
-       FROM proposals p
-       JOIN conversations c ON c.id = p.conversation_id
+       ${FROM_PROPOSAL}
        ${whereSql}`,
     params,
   );
@@ -632,4 +802,117 @@ export async function list(tx: DbTx, criteria: ProposalListCriteria): Promise<Pr
   );
 
   return { rows: paged.rows.map(mapProposal), total };
+}
+
+// ---------------------------------------------------------------------------
+// Envio pelo cartao (CRMLAB-58, D-201)
+// ---------------------------------------------------------------------------
+
+/** Reserva com mais do que isto e considerada abandonada (D-201 item 1). */
+export const SEND_CLAIM_TTL_SQL = "INTERVAL '2 minutes'";
+
+/**
+ * Trava a linha (`FOR UPDATE`) e diz se ha reserva de envio viva. `null` =
+ * proposta inexistente NESTE tenant (o RLS escondeu). A trava vale ate o fim
+ * da transacao de quem chama: e ela que serializa duas atendentes enviando o
+ * mesmo cartao.
+ */
+export async function lockForSend(
+  tx: DbTx,
+  id: string,
+): Promise<{ claimAlive: boolean } | null> {
+  const result = await tx.query<{ claim_alive: boolean | null }>(
+    `SELECT send_claim_id IS NOT NULL
+              AND send_claimed_at > NOW() - ${SEND_CLAIM_TTL_SQL} AS claim_alive
+       FROM proposals WHERE id = $1 FOR UPDATE`,
+    [id],
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return { claimAlive: row.claim_alive === true };
+}
+
+/** Grava a reserva. So chamar com a linha travada por `lockForSend`. */
+export async function claimSend(tx: DbTx, id: string, claimId: string): Promise<void> {
+  await tx.query(
+    `UPDATE proposals SET send_claim_id = $2, send_claimed_at = NOW() WHERE id = $1`,
+    [id, claimId],
+  );
+}
+
+/** Desfaz a reserva — so a desta tentativa (`send_claim_id` confere). */
+export async function releaseSend(tx: DbTx, id: string, claimId: string): Promise<void> {
+  await tx.query(
+    `UPDATE proposals SET send_claim_id = NULL, send_claimed_at = NULL
+      WHERE id = $1 AND send_claim_id = $2`,
+    [id, claimId],
+  );
+}
+
+/**
+ * Passo final do envio (D-201 item 3): vinculo, responsavel, `sent_at` e — se
+ * o cartao ainda esta em `novo_contato` — o estagio. So escreve se a reserva
+ * ainda e desta tentativa. Devolve o estagio anterior e o resultante, ou
+ * `null` quando a reserva nao e mais dela.
+ */
+export async function finalizeSend(
+  tx: DbTx,
+  input: {
+    id: string;
+    claimId: string;
+    conversationId: string;
+    createdBy: string;
+    status: ProposalStatus;
+  },
+): Promise<{ from: ProposalStatus; to: ProposalStatus } | null> {
+  const current = await tx.query<{ status: string }>(
+    'SELECT status FROM proposals WHERE id = $1 AND send_claim_id = $2 FOR UPDATE',
+    [input.id, input.claimId],
+  );
+  const before = current.rows[0];
+  if (!before) return null;
+  const from = before.status as ProposalStatus;
+  const to = from === 'novo_contato' ? input.status : from;
+  await tx.query(
+    `UPDATE proposals
+        SET conversation_id = $2, created_by = $3, sent_at = NOW(), status = $4,
+            send_claim_id = NULL, send_claimed_at = NULL, updated_at = NOW()
+      WHERE id = $1`,
+    [input.id, input.conversationId, input.createdBy, to],
+  );
+  return { from, to };
+}
+
+/** Troca a conversa vinculada (D-202 item 2). */
+export async function setConversation(
+  tx: DbTx,
+  id: string,
+  conversationId: string,
+): Promise<void> {
+  await tx.query(
+    'UPDATE proposals SET conversation_id = $2, updated_at = NOW() WHERE id = $1',
+    [id, conversationId],
+  );
+}
+
+/** Troca o responsavel (D-202 item 3). */
+export async function setResponsible(tx: DbTx, id: string, userId: string): Promise<void> {
+  await tx.query('UPDATE proposals SET created_by = $2, updated_at = NOW() WHERE id = $1', [
+    id,
+    userId,
+  ]);
+}
+
+/** Usuario do laboratorio para ser responsavel. `null` = inexistente neste tenant. */
+export async function findTenantUser(
+  tx: DbTx,
+  tenantId: string,
+  userId: string,
+): Promise<{ id: string; role: string; isActive: boolean } | null> {
+  const result = await tx.query<{ id: string; role: string; is_active: boolean }>(
+    'SELECT id, role, is_active FROM users WHERE id = $1 AND tenant_id = $2',
+    [userId, tenantId],
+  );
+  const row = result.rows[0];
+  return row ? { id: row.id, role: row.role, isActive: row.is_active } : null;
 }

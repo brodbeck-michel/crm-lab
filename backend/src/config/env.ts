@@ -167,14 +167,26 @@ const envSchema = z
      * A URL base e da instalacao — o Bitlab e um so.
      */
     BITLAB_API_BASE_URL: z.string().url().default('https://integracoes.bitlab.net.br/webhook'),
-    /** Intervalo do agendador. `0` desliga o agendador (hml, testes); "Sincronizar agora" continua. */
+    /**
+     * Intervalo do agendador: 2 min (CRMLAB-57, D-199). `0` desliga o agendador
+     * (hml, testes); "Sincronizar agora" continua.
+     */
     LIS_SYNC_INTERVAL_MS: z.preprocess((v) => {
-      if (v === undefined || v === null || v === '') return 30 * 60 * 1000;
+      if (v === undefined || v === null || v === '') return 2 * 60 * 1000;
       const n = Number(v);
       return Number.isFinite(n) ? n : v;
     }, z.number().int().min(0)),
     /** Primeira carga, sem marca d'agua: quantos dias para tras. */
     LIS_SYNC_INITIAL_DAYS: numberFrom(90),
+    /**
+     * Motor de tempo do funil (CRMLAB-59, D-205): 5 min. `0` desliga o
+     * agendador (os cartoes param de andar sozinhos e o alerta nao sai).
+     */
+    FUNNEL_TIMER_INTERVAL_MS: z.preprocess((v) => {
+      if (v === undefined || v === null || v === '') return 5 * 60 * 1000;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : v;
+    }, z.number().int().min(0)),
   })
   .superRefine((value, ctx) => {
     if (value.NODE_ENV !== 'production') return;

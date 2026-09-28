@@ -1,4 +1,5 @@
 import type { IsoDate, IsoDateTime, PaginationMeta, PaginationQuery } from './api.types.js';
+import type { StageAutomation } from './funnel-timer.types.js';
 
 /** Os 6 estagios. BUSINESS_RULES.md §3. */
 export type ProposalStatus =
@@ -12,6 +13,15 @@ export type ProposalStatus =
 export type LossReason = 'preco' | 'silencio' | 'exame_indisponivel' | 'prazo' | 'outro';
 
 export type ApprovalStatus = 'none' | 'pending' | 'approved' | 'rejected';
+
+/**
+ * De onde a proposta nasceu (CRMLAB-57, D-195). `crm`: montada pela atendente
+ * a partir de uma conversa, com itens do catalogo. `bitlab`: nasceu sozinha do
+ * orcamento do LIS (D-196) — sem conversa, sem itens, total = o do Bitlab.
+ */
+export type ProposalOrigin = 'crm' | 'bitlab';
+
+export const PROPOSAL_ORIGINS: readonly ProposalOrigin[] = ['crm', 'bitlab'] as const;
 
 export const PROPOSAL_STATUSES: readonly ProposalStatus[] = [
   'novo_contato',
@@ -88,7 +98,7 @@ export const NEXT_STAGE: Readonly<Partial<Record<ProposalStatus, ProposalStatus>
 
 /** Rotulos pt-BR dos estagios — unico lugar que os define. */
 export const PROPOSAL_STATUS_LABELS: Readonly<Record<ProposalStatus, string>> = {
-  novo_contato: 'Novo contato',
+  novo_contato: 'Novo orçamento',
   orcamento_enviado: 'Orçamento enviado',
   follow_up: 'Follow-up',
   negociacao: 'Negociação',
@@ -121,13 +131,28 @@ export interface Proposal {
   id: string;
   /** Numero sequencial POR TENANT, para rastreamento (citavel por telefone/WhatsApp). */
   proposalNumber: number;
-  conversationId: string;
+  /** Origem (CRMLAB-57, D-195). Toda proposta anterior e `crm`. */
+  origin: ProposalOrigin;
+  /** `null` so na origem `bitlab` ainda sem conversa vinculada (D-195 item 1). */
+  conversationId: string | null;
+  /**
+   * Nome do paciente: o da conversa; na origem `bitlab` sem conversa, o
+   * `NM_PACIENTE` do orcamento do LIS (JOIN, nunca copiado — D-195 item 3).
+   */
   patientName: string | null;
   status: ProposalStatus;
   discountPercent: number;
-  /** SEMPRE calculado pelo backend a partir de items + desconto (D-003). */
+  /**
+   * SEMPRE calculado pelo backend: de items + desconto na origem `crm` (D-003);
+   * na origem `bitlab`, o total do orcamento do LIS (D-195 item 2).
+   */
   totalPrice: number;
-  createdBy: string;
+  /**
+   * Responsavel. `null` so na origem `bitlab` sem atendente do LIS ligado a um
+   * login (D-195 item 5) — e ai a proposta e visivel a todo o tenant (item 6).
+   */
+  createdBy: string | null;
+  /** `''` quando `createdBy` e `null`. */
   createdByName: string;
   approvalStatus: ApprovalStatus;
   reasonLost: LossReason | null;
@@ -143,6 +168,22 @@ export interface Proposal {
   lisBudgetNumber: string | null;
   /** Quando o LIS confirmou a requisição e isso fechou a proposta (selo "Conciliado"). */
   lisReconciledAt: IsoDateTime | null;
+  /**
+   * Requisição do orçamento vinculado (D-119 item 6). Na origem `bitlab` em
+   * `novo_contato` e o selo "Pré-cadastro feito" (D-197). Subiu de
+   * `ProposalDetail` para ca no CRMLAB-57.
+   */
+  lisRequisitionNumber: string | null;
+  /** Data de emissão do orçamento vinculado no LIS, `YYYY-MM-DD` (D-110). JOIN com `lis_budgets`. */
+  lisIssuedOn: IsoDate | null;
+  /** `USUÁRIO` do orçamento vinculado no LIS, cru. JOIN com `lis_budgets`. */
+  lisAttendantName: string | null;
+  /**
+   * Entrada no estágio atual: a última linha do histórico com esse estágio
+   * (CRMLAB-59, D-207). Relógio do motor de tempo e do selo "Parado há N h".
+   * Opcional no tipo (campo novo), sempre presente na resposta; `null` sem linha.
+   */
+  stageEnteredAt?: IsoDateTime | null;
 }
 
 export interface ProposalStageHistoryEntry {
@@ -150,9 +191,15 @@ export interface ProposalStageHistoryEntry {
   changedAt: IsoDateTime;
   changedBy: string | null;
   changedByName: string | null;
+  /**
+   * Preenchido quando o motor de tempo moveu o cartão (CRMLAB-59, D-208) — e
+   * então `changedBy` é `null`. Opcional no tipo, sempre presente na resposta.
+   */
+  automation?: StageAutomation | null;
 }
 
 export interface ProposalDetail extends Proposal {
+  /** `''` quando nao ha conversa (origem `bitlab`, D-195). */
   patientPhone: string;
   items: ProposalItem[];
   /** Soma dos itens antes do desconto — derivado, exposto por conveniencia de exibicao. */
@@ -173,7 +220,6 @@ export interface ProposalDetail extends Proposal {
    */
   requestingDoctor: string | null;
   /** Espelho do orçamento do LIS vinculado (CRMLAB-52, D-119 item 6). `null` até existir. */
-  lisRequisitionNumber: string | null;
   lisPaidValue: number | null;
   /** `YYYY-MM-DD` (D-110). */
   lisPaidOn: IsoDate | null;
@@ -243,6 +289,42 @@ export interface UpdateProposalItemsRequest {
  * desconto, alcada e medico solicitante podem mudar juntos nesta chamada.
  */
 export type UpdateProposalItemsResponse = ProposalDetail;
+
+/**
+ * `POST /proposals/:id/send` (CRMLAB-58, D-200/D-201) — "Enviar orçamento" do
+ * cartão de origem `bitlab`. `message` e o texto que a atendente revisou (a
+ * tela monta pelo modelo das Regras). Resposta: `ProposalDetail`.
+ */
+export interface SendProposalRequest {
+  conversationId: string;
+  /** 1..4000 depois do `trim`. */
+  message: string;
+}
+
+/** `POST /proposals/:id/resend` (D-202 item 1). Resposta `201`: a `Message` criada. */
+export interface ResendProposalMessageRequest {
+  message: string;
+}
+
+/** `PATCH /proposals/:id/conversation` (D-202 item 2). Resposta: `ProposalDetail`. */
+export interface UpdateProposalConversationRequest {
+  conversationId: string;
+}
+
+/** `PATCH /proposals/:id/responsible` (D-202 item 3). Resposta: `ProposalDetail`. */
+export interface UpdateProposalResponsibleRequest {
+  userId: string;
+}
+
+/** Tamanho maximo da mensagem de envio — o mesmo de `POST /conversations/:id/messages`. */
+export const SEND_PROPOSAL_MESSAGE_MAX = 4000;
+
+/** Estagios em que "Reenviar mensagem" existe (D-202 item 1). */
+export const RESEND_PROPOSAL_STATUSES: readonly ProposalStatus[] = [
+  'orcamento_enviado',
+  'follow_up',
+  'negociacao',
+] as const;
 
 export interface RejectProposalRequest {
   reason: string;

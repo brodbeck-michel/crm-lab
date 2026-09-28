@@ -1,11 +1,20 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { ProposalStatus, LossReason } from '@crm-lab/shared';
-import { formatProposalNumber, isProposalEditable } from '@crm-lab/shared';
+import {
+  TERMINAL_STATUSES,
+  bitlabSendTarget,
+  canActOnCard,
+  formatProposalNumber,
+  isCardOwner,
+  isProposalEditable,
+} from '@crm-lab/shared';
 import { useProposalDetail, useUpdateProposalStatus, useUpdateProposalItems } from '@/api/proposals';
+import { useEffectiveFunnelRules } from '@/api/funnel-rules';
+import { useAuthStore } from '@/stores/auth.store';
 import { useInsuranceList } from '@/api/insurances';
 import { useApiErrorHandler } from '@/hooks';
-import { formatMoney } from '@/lib/format';
+import { formatIsoDay, formatMoney } from '@/lib/format';
 import { Modal, MoneyDisplay } from '@/components/shared';
 import { Button, Chip, Input } from '@/components/ui';
 import ItemsList from './ItemsList';
@@ -16,6 +25,8 @@ import StageHistory from './StageHistory';
 import ActionsRow from './ActionsRow';
 import LostReasonForm from './LostReasonForm';
 import LisReferenceSection from './LisReferenceSection';
+import ResponsibleField from './ResponsibleField';
+import SendProposalPanel, { type SendPanelMode } from './SendProposalPanel';
 
 interface ProposalModalProps {
   proposalId: string;
@@ -40,6 +51,9 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
   const { data: insurancesData } = useInsuranceList({ limit: 100 });
   const [showLostForm, setShowLostForm] = useState(false);
   const updateItems = useUpdateProposalItems();
+  // Regras do laboratório (CRMLAB-56): travas de movimentação e a origem manual.
+  const funnelRules = useEffectiveFunnelRules();
+  const currentUser = useAuthStore((s) => s.user);
 
   // CRMLAB-12/D-132: itens/desconto/médico só editáveis nestes estágios —
   // mesma constante que o backend usa em `PATCH /proposals/:id/items`.
@@ -47,12 +61,31 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
   const [editItems, setEditItems] = useState<EditableProposalItem[]>([]);
   const [editDiscount, setEditDiscount] = useState(0);
   const [editDoctor, setEditDoctor] = useState('');
+  // CRMLAB-58: painel de envio/reenvio/troca de conversa do cartão do Bitlab.
+  const [panel, setPanel] = useState<SendPanelMode | null>(null);
 
   if (isLoading || !proposal) {
     return null;
   }
 
-  const canEdit = isProposalEditable(proposal.status);
+  // CRMLAB-57/D-195: proposta que nasceu do orçamento do Bitlab — sem itens,
+  // sem desconto e, até o CRMLAB-58, sem conversa.
+  const fromBitlab = proposal.origin === 'bitlab';
+  const hasConversation = proposal.conversationId !== null;
+  const actor = {
+    role: currentUser?.role ?? ('attendant' as const),
+    isOwner: isCardOwner(proposal.createdBy, currentUser?.id),
+  };
+  const supervisor = actor.role === 'manager' || actor.role === 'admin';
+  const ownerOrSupervisor = supervisor || proposal.createdBy === currentUser?.id;
+  const closed = TERMINAL_STATUSES.includes(proposal.status);
+  // CRMLAB-58 (D-200/D-202): o cartão do Bitlab envia pelo painel, e depois
+  // de enviado reenvia e troca de conversa.
+  const bitlabUnsent = fromBitlab && !hasConversation;
+  const bitlabLinked = fromBitlab && hasConversation && !closed && ownerOrSupervisor;
+  const canEdit = isProposalEditable(proposal.status) && !fromBitlab;
+  // D-193: com "Criar pelo CRM" desligado o desconto some, menos onde já existe.
+  const showDiscount = funnelRules.origin.manualInCrm || proposal.discountPercent > 0;
 
   const handleStartEdit = () => {
     setEditItems(
@@ -92,16 +125,21 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
         ?.name ?? 'Convênio')
     : 'Particular';
 
+  // As travas das Regras podem recusar no servidor (D-192): o motivo vira toast.
   const handleChangeStatus = (newStatus: ProposalStatus) => {
-    updateStatus.mutate({ proposalId, status: newStatus });
+    updateStatus.mutate({ proposalId, status: newStatus }, { onError: handleApiError });
   };
 
   const handleMarkWon = () => {
-    updateStatus.mutate({ proposalId, status: 'ganho' });
+    updateStatus.mutate({ proposalId, status: 'ganho' }, { onError: handleApiError });
   };
 
-  const handleMarkLost = (reasonLost: LossReason) => {
-    updateStatus.mutate({ proposalId, status: 'perdido', reasonLost });
+  const handleMarkLost = (reasonLost: LossReason | undefined) => {
+    updateStatus.mutate({
+      proposalId,
+      status: 'perdido',
+      ...(reasonLost !== undefined ? { reasonLost } : {}),
+    }, { onError: handleApiError });
     setShowLostForm(false);
   };
 
@@ -112,6 +150,8 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
    * exigir mudar o estágio manualmente depois de mandar a mensagem.
    */
   const handleSendProposal = () => {
+    if (proposal.conversationId === null) return;
+    const conversationId = proposal.conversationId;
     const message = `Olá! Segue o orçamento nº ${formatProposalNumber(proposal.proposalNumber)}, no valor de ${formatMoney(proposal.totalPrice)}.`;
     updateStatus.mutate(
       { proposalId, status: 'orcamento_enviado' },
@@ -119,7 +159,7 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
         onSuccess: () => {
           onClose();
           navigate(
-            `/attendance?conversationId=${proposal.conversationId}&draft=${encodeURIComponent(message)}`,
+            `/attendance?conversationId=${conversationId}&draft=${encodeURIComponent(message)}`,
           );
         },
         onError: handleApiError,
@@ -131,9 +171,50 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
     <Modal open onClose={onClose} title={proposal.patientName || 'Proposta'}>
       <div className="space-y-xl">
         <div className="space-y-lg">
-          <p className="text-caption text-neutral-600">
-            {formatProposalNumber(proposal.proposalNumber)}
-          </p>
+          <div className="flex items-center gap-sm">
+            <p className="text-caption text-neutral-600">
+              {formatProposalNumber(proposal.proposalNumber)}
+            </p>
+            {fromBitlab && <Chip tone="inactive">Bitlab</Chip>}
+          </div>
+
+          {fromBitlab && (
+            <div className="space-y-xs">
+              <p className="text-caption text-neutral-600">Orçamento do Bitlab</p>
+              <p className="text-body">
+                Nº {proposal.lisBudgetNumber}
+                {proposal.lisIssuedOn && <> · emitido em {formatIsoDay(proposal.lisIssuedOn)}</>}
+              </p>
+              {proposal.lisAttendantName && (
+                <p className="text-body">Atendente no Bitlab: {proposal.lisAttendantName}</p>
+              )}
+              <div className="flex items-center gap-xs">
+                {proposal.status === 'novo_contato' && proposal.lisRequisitionNumber !== null && (
+                  <Chip tone="positive">Pré-cadastro feito</Chip>
+                )}
+                {!hasConversation && (
+                  <span className="text-caption text-neutral-600">Sem conversa vinculada</span>
+                )}
+              </div>
+              {hasConversation && (
+                <div className="flex items-center justify-between gap-sm">
+                  <p className="text-body">
+                    Conversa: {proposal.patientName ?? 'Sem nome'} · {proposal.patientPhone}
+                  </p>
+                  {bitlabLinked && panel === null && (
+                    <Button variant="secondary" size="sm" onClick={() => setPanel('relink')}>
+                      Trocar conversa
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          <ResponsibleField
+            proposal={proposal}
+            user={currentUser ? { id: currentUser.id, role: currentUser.role } : null}
+          />
 
           <div className="flex items-center justify-between gap-sm">
             <div className="flex items-center gap-sm">
@@ -167,11 +248,13 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
                 onChange={setEditItems}
               />
 
-              <DiscountSection
-                discountPercent={editDiscount}
-                discountLimit={100}
-                onChange={setEditDiscount}
-              />
+              {showDiscount && (
+                <DiscountSection
+                  discountPercent={editDiscount}
+                  discountLimit={100}
+                  onChange={setEditDiscount}
+                />
+              )}
 
               <div className="border-t pt-md">
                 <div className="flex justify-between">
@@ -209,18 +292,26 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
                 </div>
               )}
 
-              <ItemsList items={proposal.items} insuranceId={proposal.insuranceId} />
+              {!fromBitlab && (
+                <>
+                  <ItemsList items={proposal.items} insuranceId={proposal.insuranceId} />
 
-              <DiscountSection
-                discountPercent={proposal.discountPercent}
-                discountLimit={100}
-                onChange={() => {}}
-                readOnly
-              />
+                  {showDiscount && (
+                    <DiscountSection
+                      discountPercent={proposal.discountPercent}
+                      discountLimit={100}
+                      onChange={() => {}}
+                      readOnly
+                    />
+                  )}
+                </>
+              )}
 
               <div className="border-t pt-md">
                 <div className="flex justify-between">
-                  <span className="font-semibold">Total</span>
+                  <span className="font-semibold">
+                    {fromBitlab ? 'Valor do orçamento no Bitlab' : 'Total'}
+                  </span>
                   <MoneyDisplay value={proposal.totalPrice} />
                 </div>
               </div>
@@ -234,10 +325,21 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
           <StageHistory history={proposal.history} />
         </div>
 
-        {isEditing ? null : showLostForm ? (
+        {isEditing ? null : panel !== null ? (
+          <SendProposalPanel
+            proposal={proposal}
+            mode={panel}
+            insuranceName={insuranceName}
+            template={funnelRules.sendMessage.template}
+            target={bitlabSendTarget(proposal.lisRequisitionNumber, funnelRules.automation)}
+            onDone={() => setPanel(null)}
+            onCancel={() => setPanel(null)}
+          />
+        ) : showLostForm ? (
           <LostReasonForm
             onSubmit={handleMarkLost}
             isPending={updateStatus.isPending}
+            requireReason={funnelRules.manualMoves.requireLossReason}
           />
         ) : (
           <ActionsRow
@@ -245,8 +347,19 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
             onChangeStatus={handleChangeStatus}
             onMarkWon={handleMarkWon}
             onMarkLost={() => setShowLostForm(true)}
-            onSendProposal={handleSendProposal}
+            onSendProposal={
+              bitlabUnsent
+                ? () => setPanel('send')
+                : hasConversation && !fromBitlab
+                  ? handleSendProposal
+                  : undefined
+            }
+            {...(bitlabUnsent ? { canSend: canActOnCard(funnelRules.manualMoves, actor) } : {})}
+            {...(bitlabLinked ? { onResend: () => setPanel('resend') } : {})}
             isPending={updateStatus.isPending}
+            rules={funnelRules.manualMoves}
+            actor={actor}
+            lisReconciled={proposal.lisReconciledAt !== null}
           />
         )}
       </div>

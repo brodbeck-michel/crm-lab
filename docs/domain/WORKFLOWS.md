@@ -173,24 +173,35 @@ novo_contato ──→ orcamento_enviado ──→ follow_up ──→ negociaca
 
 `ganho`/`perdido` são terminais em qualquer direção — nenhuma seta sai deles, nem de volta.
 
+**Travas configuráveis (CRMLAB-56, D-192):** o diagrama e a tabela abaixo são o **padrão**. Em
+**Configurações → Regras** o laboratório liga "Reabrir Ganho/Perdido" (setas de `ganho`/`perdido`
+para `orcamento_enviado`/`follow_up`/`negociacao`), desliga "Pular etapas" (somem
+`orcamento_enviado → negociacao/ganho` e `follow_up → ganho`), desliga o motivo obrigatório e
+restringe o gestor aos próprios cards. A decisão é `checkTransition` (`@crm-lab/shared`), no front
+e no back. As automações de tempo e de fatos (CRMLAB-59/60) e a conciliação LIS não passam por
+essas travas: são do sistema.
+
 ### Transições válidas:
 
 | De | Para | Trigger |
 |----|------|---------|
 | novo_contato | orcamento_enviado | Atendente envia orçamento |
 | orcamento_enviado | novo_contato | Voltar (D-105) — "Enviar orçamento" clicado por engano |
-| orcamento_enviado | follow_up | Sem resposta (manual ou automação) |
+| orcamento_enviado | follow_up | Sem resposta (manual, ou o motor de tempo: há X dias no estágio, sem pagamento nem requisição — CRMLAB-59, D-205/D-206) |
 | orcamento_enviado | negociacao | Paciente pede desconto |
 | orcamento_enviado | ganho | Paciente aceita direto |
 | follow_up | orcamento_enviado | Voltar (D-105) — reavaliar antes do follow-up |
 | follow_up | negociacao | Paciente responde negociando |
 | follow_up | ganho | Paciente aceita |
-| follow_up | perdido | Sem resposta definitiva |
-| negociacao | follow_up | Voltar (D-105) — negociação esfriou |
+| follow_up | perdido | Sem resposta definitiva (manual, ou o motor de tempo com a regra ligada: há Z dias no estágio → motivo `silencio`, CRMLAB-59) |
+| negociacao | follow_up | Voltar (D-105) — negociação esfriou (ou o motor de tempo: há Y dias no estágio sem pagamento, CRMLAB-59) |
 | negociacao | ganho | Acordo fechado |
 | negociacao | perdido | Sem acordo |
 | qualquer aberto | perdido | Com motivo |
-| qualquer aberto | ganho | **Só pelo sistema:** o orçamento do LIS vinculado aparece com requisição (CRMLAB-52, D-119). Pula a matriz, inclusive a partir de `novo_contato`. Nunca a partir de `perdido` |
+| qualquer aberto | ganho | **Só pelo sistema:** o orçamento do LIS vinculado aparece com requisição (CRMLAB-52, D-119). Pula a matriz, inclusive a partir de `novo_contato`. Nunca a partir de `perdido`. **Só na origem `crm`.** Na origem `bitlab` (D-204, provisória até o CRMLAB-53): **pagamento** no LIS → `ganho` de qualquer estágio aberto, inclusive `novo_contato`; requisição sozinha não fecha (em `novo_contato` só o selo "Pré-cadastro feito", D-197) |
+| orcamento_enviado / follow_up | negociacao | **Só pelo sistema, origem `bitlab`:** requisição no LIS com "Requisição → Negociação" ligada (CRMLAB-60 parcial, D-204) |
+| novo_contato | negociacao | **Envio do cartão do Bitlab com requisição** (pré-cadastro) e "Requisição → Negociação" ligada (CRMLAB-58, D-200). Fora da matriz manual; sem requisição o envio vai a `orcamento_enviado` |
+| (nasce) | novo_contato | **Só pelo sistema:** orçamento do LIS emitido depois da ativação e sem proposta vira proposta de origem `bitlab` ("Novo orçamento"), sem conversa (CRMLAB-57, D-196) |
 
 ### Ao mudar para `ganho`:
 ```typescript

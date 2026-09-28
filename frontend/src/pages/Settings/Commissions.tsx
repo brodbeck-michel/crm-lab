@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useCommissionSettings, useUpdateCommissionSettings } from '@/api/commission-settings';
 import { useAuthStore } from '@/stores/auth.store';
-import { PageContainer, PageHeader } from '@/components/layout';
 import { Button, Input, useToast } from '@/components/ui';
 
 /**
- * Comissão (`/settings/commissions`) — percentuais de comissão sobre venda de
- * exame e check-up (PAGES.md §19, D-113). `GET` gestor+, `PATCH` admin.
+ * Comissão — percentuais de comissão sobre venda de exame e check-up
+ * (PAGES.md §19, D-113). `GET` gestor+, `PATCH` admin. Desde o CRMLAB-56
+ * (D-194) é a seção 6 da página Regras (`/settings/rules#comissoes`); a rota
+ * antiga redireciona. Quem monta decide se o perfil vê a seção (atendente não).
  */
 export default function Commissions() {
   const role = useAuthStore((s) => s.user?.role);
@@ -60,63 +61,66 @@ export default function Commissions() {
     });
   }
 
-  if (isLoading) {
-    return (
-      <PageContainer>
-        <PageHeader title="Comissão" />
-        <div className="font-body text-body text-neutral-600">Carregando...</div>
-      </PageContainer>
-    );
-  }
-
   return (
-    <PageContainer>
-      <PageHeader
-        title="Comissão"
-        description="Percentuais de comissão sobre venda de exame e check-up."
-      />
+    <section
+      id="comissoes"
+      aria-labelledby="comissoes-titulo"
+      className="space-y-md rounded-lg border border-neutral-200 bg-surface p-lg"
+    >
+      <div className="space-y-xs">
+        <h2 id="comissoes-titulo" className="font-heading text-section text-text">
+          Comissões
+        </h2>
+        <p className="font-body text-caption text-neutral-600">
+          Percentuais de comissão sobre venda de exame e check-up. Só o admin edita.
+        </p>
+      </div>
 
-      <form onSubmit={handleSubmit} className="space-y-md max-w-md">
-        <Input
-          type="number"
-          label="Comissão sobre orçamento (%)"
-          hint="Usado a partir da conciliação de orçamentos (Onda 13) — ainda não afeta cálculo algum."
-          value={form.commissionBudgetPct}
-          onChange={(e) => setForm({ ...form, commissionBudgetPct: e.target.value })}
-          error={fieldErrors.commissionBudgetPct}
-          disabled={!canEdit}
-          min={0}
-          max={100}
-          step="0.01"
-        />
-        <Input
-          type="number"
-          label="Comissão sobre exames (%)"
-          value={form.commissionExamsPct}
-          onChange={(e) => setForm({ ...form, commissionExamsPct: e.target.value })}
-          error={fieldErrors.commissionExamsPct}
-          disabled={!canEdit}
-          min={0}
-          max={100}
-          step="0.01"
-        />
-        <Input
-          type="number"
-          label="Comissão sobre check-up (%)"
-          value={form.commissionCheckupPct}
-          onChange={(e) => setForm({ ...form, commissionCheckupPct: e.target.value })}
-          error={fieldErrors.commissionCheckupPct}
-          disabled={!canEdit}
-          min={0}
-          max={100}
-          step="0.01"
-        />
-        {canEdit && (
-          <Button type="submit" variant="primary" loading={updateCommissions.isPending}>
-            Salvar
-          </Button>
-        )}
-      </form>
-    </PageContainer>
+      {isLoading ? (
+        <div className="font-body text-body text-neutral-600">Carregando...</div>
+      ) : (
+        <form onSubmit={handleSubmit} className="space-y-md max-w-md">
+          <Input
+            type="number"
+            label="Comissão sobre orçamento (%)"
+            hint="Usado a partir da conciliação de orçamentos (Onda 13) — ainda não afeta cálculo algum."
+            value={form.commissionBudgetPct}
+            onChange={(e) => setForm({ ...form, commissionBudgetPct: e.target.value })}
+            error={fieldErrors.commissionBudgetPct}
+            disabled={!canEdit}
+            min={0}
+            max={100}
+            step="0.01"
+          />
+          <Input
+            type="number"
+            label="Comissão sobre exames (%)"
+            value={form.commissionExamsPct}
+            onChange={(e) => setForm({ ...form, commissionExamsPct: e.target.value })}
+            error={fieldErrors.commissionExamsPct}
+            disabled={!canEdit}
+            min={0}
+            max={100}
+            step="0.01"
+          />
+          <Input
+            type="number"
+            label="Comissão sobre check-up (%)"
+            value={form.commissionCheckupPct}
+            onChange={(e) => setForm({ ...form, commissionCheckupPct: e.target.value })}
+            error={fieldErrors.commissionCheckupPct}
+            disabled={!canEdit}
+            min={0}
+            max={100}
+            step="0.01"
+          />
+          {canEdit && (
+            <Button type="submit" variant="primary" loading={updateCommissions.isPending}>
+              Salvar
+            </Button>
+          )}
+        </form>
+      )}
+    </section>
   );
 }

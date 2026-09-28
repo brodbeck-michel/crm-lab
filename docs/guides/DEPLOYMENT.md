@@ -123,10 +123,13 @@ Fonte única: **`backend/.env.example`**. Nenhum valor real aparece neste doc.
 fila usam adaptador in-memory — D-011) · `JWT_ACCESS_TTL` (900) ·
 `JWT_REFRESH_TTL` (604800) · `CORS_ORIGIN` (origem da UI) ·
 `RATE_LIMIT_PER_MINUTE` (100) · `BITLAB_API_BASE_URL` (`https://integracoes.bitlab.net.br/webhook`) ·
-`LIS_SYNC_INTERVAL_MS` (1800000 = 30 min; **`0` desliga o agendador**, e "Sincronizar agora"
+`LIS_SYNC_INTERVAL_MS` (120000 = 2 min desde o CRMLAB-57, D-199; **`0` desliga o agendador**, e "Sincronizar agora"
 continua funcionando) · `LIS_SYNC_INITIAL_DAYS` (90) — CRMLAB-52, D-185. A chave do Bitlab **não**
 é env var: é por laboratório, cifrada no banco, e colada pelo admin em Configurações → Integração
-LIS.
+LIS. `FUNNEL_TIMER_INTERVAL_MS` (300000 = 5 min; **`0` desliga** o motor de tempo do funil,
+CRMLAB-59, D-205): a cada tique os cartões parados andam pelos prazos das Regras e sai o alerta
+de "Novo orçamento" parado. **No primeiro deploy com o motor ligado**, os cartões que já passaram
+do prazo andam no primeiro tique (até 200 por regra e laboratório a cada tique, D-209).
 
 ### WhatsApp
 

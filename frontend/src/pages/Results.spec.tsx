@@ -107,6 +107,7 @@ const latestImport: LisImport = {
   rowsAccepted: 225,
   rowsRejected: 0,
   proposalsWon: 0,
+  proposalsCreated: 0,
   status: 'completed',
   errorMessage: null,
   createdBy: 'u-1',

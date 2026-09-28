@@ -27,7 +27,8 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 /settings/operation           → Gestão da Operação        (gestor+)
 /settings/insurances          → Convênios                 (gestor+)
 /settings/attendants          → Atendentes (LIS)           (gestor+)
-/settings/commissions         → Comissão (LIS)            (gestor lê; admin edita)
+/settings/rules               → Regras                    (todos veem; gestor/admin editam — CRMLAB-56)
+/settings/commissions         → redireciona para /settings/rules#comissoes (CRMLAB-56)
 /settings/lis-integration     → Integração LIS            (gestor lê e sincroniza; admin edita — CRMLAB-52)
 /settings/account             → Minha Conta               (todos os papéis de tenant)
 /settings/users               → Usuários & Permissões     (admin)
@@ -69,7 +70,8 @@ padrão; estado por grupo persiste em localStorage por usuário.
 | `/settings/operation` | manager · admin | sim | Gestão |
 | `/settings/insurances` | manager · admin | sim | Configurações |
 | `/settings/attendants` | manager · admin | sim | Configurações |
-| `/settings/commissions` | manager · admin | sim | Configurações |
+| `/settings/rules` (CRMLAB-56) | attendant · manager · admin | sim | Configurações |
+| `/settings/commissions` → redirect `/settings/rules#comissoes` | manager · admin | não | — |
 | `/settings/lis-integration` (CRMLAB-52) | manager · admin | sim | Configurações |
 | `/settings/account` | attendant · manager · admin | sim | Configurações |
 | `/settings/users` | admin | sim | Configurações |
@@ -348,9 +350,24 @@ nunca "sem permissão" (não vazar existência).
     Acima de 100 a tela avisa o total e manda usar busca/filtros.
   - **Lista** — grade de `ProposalCard` (1/2/3 colunas conforme a largura) com a `Pagination`
     padrão e `limit=20`. Trocar de visão reinicia a página, porque os limites diferem.
-- Colunas por estágio: novo contato → orçamento enviado → follow-up → negociação | ganho | perdido
+- Colunas por estágio: novo orçamento → orçamento enviado → follow-up → negociação | ganho | perdido
+  (o rótulo de `novo_contato` é "Novo orçamento" desde o CRMLAB-57; o código interno não muda)
 - Header de coluna: nome + contagem + soma (derivada)
 - `ProposalCard`: nome, #id, nota, valor (heading nowrap), dias, chip status
+- **Cartão de origem Bitlab (CRMLAB-57, D-195):** quando `origin === "bitlab"`, o cartão leva o
+  `Chip` "Bitlab" (tom `inactive`) ao lado do número, e mostra, além do nome do paciente (do
+  orçamento) e do valor: "Orç. LIS {lisBudgetNumber}", o convênio não aparece no cartão (fica no
+  modal), a atendente do Bitlab (`lisAttendantName`) e a data do orçamento (`lisIssuedOn`,
+  `DD/MM/AAAA`). Selo **"Pré-cadastro feito"** (`Chip tone="positive"`) quando
+  `lisRequisitionNumber` não é `null` e o estágio é `novo_contato` (D-197). Sem conversa
+  (`conversationId === null`): aviso "Sem conversa vinculada" em `text-caption`. O selo
+  "Conciliado" continua o mesmo.
+- **Selo "Parado há N h" (CRMLAB-59, D-207):** cartão em `novo_contato` com a regra
+  "Novo orçamento parado" ligada e `stageEnteredAt` há N horas ou mais leva o
+  `Chip tone="attention"` "Parado há {N} h" (N = horas inteiras desde a entrada na coluna).
+  Calculado no front com `isStaleNewBudget` (`@crm-lab/shared`), a mesma função do motor; o
+  pipeline passa `automation.staleNewBudgetAlert` das Regras (`useEffectiveFunnelRules`) para
+  `StageColumn` → `ProposalCard`. O alerta em si chega pelo WS `proposal.stale_alert` como toast.
 - Todo cartão clicável → Modal da Proposta
 - **Arrastar o cartão** entre colunas move o estágio (HTML5 drag-and-drop nativo, sem
   biblioteca). A proposta viaja no `dataTransfer` como JSON **e o estágio de origem viaja
@@ -397,7 +414,9 @@ nunca "sem permissão" (não vazar existência).
   quando a proposta não tem médico informado), itens + preços (badge
   "Particular" por item nas mesmas condições da coluna de resumo de
   `/budget/new`), desconto, total derivado, alerta de aprovação (se pending),
-  histórico de estágios, ações
+  histórico de estágios (linha movida pelo motor de tempo — `history[].automation` preenchido —
+  mostra "movido pela regra: {describeStageAutomation}", ex.: "movido pela regra: Enviado há 3
+  dias", no lugar de "por {pessoa}"; CRMLAB-59, D-208), ações
 - Ações (uma linha): [Mudar estágio ▾] à esquerda, [Marcar como ganho] (accent-2) à direita, [Marcar como perdido] fantasma ao fim
 - "Perdido" abre sub-form com motivo OBRIGATÓRIO (select: preço, silêncio, exame indisponível, prazo, outro)
 - **Editar (CRMLAB-12, D-134):** botão "Editar" some quando `status` não está em
@@ -407,7 +426,8 @@ nunca "sem permissão" (não vazar existência).
   vira `Input` editável (`DiscountSection` sem `readOnly`) e médico solicitante vira `Input` de
   texto. "Salvar" chama `PATCH /proposals/:id/items` com o carrinho inteiro; erro
   `DISCOUNT_EXCEEDS_LIMIT` vira toast pelo handler genérico, mantendo o modal aberto em edição
-- Dados: `GET /proposals/:id`, `PATCH /proposals/:id/status`, `PATCH /proposals/:id/items`
+- Dados: `GET /proposals/:id`, `PATCH /proposals/:id/status`, `PATCH /proposals/:id/items`,
+  `POST /proposals/:id/send|resend`, `PATCH /proposals/:id/conversation|responsible` (CRMLAB-58)
 - **Nº do orçamento no LIS (CRMLAB-52, D-119):** campo sempre visível abaixo do convênio, com o
   rótulo "Nº do orçamento no LIS". Vazio mostra "Informar" (link). Clicar vira `Input`
   numérico + [Salvar]/[Cancelar] e chama `PATCH /proposals/:id/lis-reference`. Em `ganho` o
@@ -419,6 +439,29 @@ nunca "sem permissão" (não vazar existência).
   `null`, com tooltip "Requisição Nº {lisRequisitionNumber} no LIS". Quando há `lisPaidValue`,
   uma linha "Pago no LIS: R$ X em DD/MM/AAAA" (`MoneyDisplay`/`DateDisplay`). O mesmo selo, sem
   tooltip, aparece no cartão do pipeline (§5), que lê `lisReconciledAt` da listagem.
+- **Proposta de origem Bitlab (CRMLAB-57, D-195):** o título é o nome do paciente do orçamento;
+  abaixo do número, o bloco "Orçamento do Bitlab" com nº, data, atendente e convênio. No lugar
+  dos itens, a linha "Valor do orçamento no Bitlab" com o total (não há itens nem desconto). Sem
+  botão "Editar", e o nº do orçamento no LIS é só leitura. Sem conversa: aviso "Sem conversa
+  vinculada" (o envio pelo cartão é o item abaixo).
+  "Mudar estágio", "Marcar como ganho" e "Marcar como perdido" seguem a matriz de sempre — de
+  "Novo orçamento" dá para ir a "Orçamento enviado" ou "Perdido".
+  - **Enviar pelo cartão (CRMLAB-58, D-200/D-203):** em "Novo orçamento" sem conversa, o botão
+    "Enviar orçamento" aparece para quem pode mexer no cartão (`canActOnCard`) e abre, no lugar
+    das ações, o painel `SendProposalPanel`: dados do Bitlab para conferir (paciente, nº, valor,
+    convênio, "Vai para" = `bitlabSendTarget`), lista das conversas ativas que a pessoa vê
+    (`GET /conversations?status=active&limit=100`, busca livre por nome/telefone com
+    `SearchInput`), com as **sugeridas** em cima (chip "Sugerida", `nameSimilarity` > 0) e a
+    mensagem do modelo das Regras num `TextArea` editável. "Enviar" só liga depois de clicar
+    numa conversa. Erro do envio aparece no painel (`role="alert"`) e ele fica aberto.
+  - **Depois do envio (D-202):** linha "Conversa: {nome} · {telefone}"; para a dona, gestor ou
+    admin, com o cartão aberto, [Trocar conversa] (o mesmo painel, só a lista) e, em
+    `orcamento_enviado`/`follow_up`/`negociacao`, [Reenviar mensagem] nas ações (o painel, só a
+    mensagem).
+- **Responsável (CRMLAB-58, D-202 item 3):** `ResponsibleField` abaixo do bloco do Bitlab, em
+  toda proposta. Gestor/admin: `Select` com toda a equipe (`GET /conversations/assignees`), em
+  qualquer estágio. Atendente dona com o cartão aberto: `Select` só com as atendentes. Os
+  demais veem só o nome ("Sem responsável (fila comum)" quando não há).
 
 ---
 
@@ -1081,6 +1124,10 @@ Cadastro do atendente do LIS, com vínculo opcional a um login do CRM (D-112). F
 
 ### 19. Comissão (`/settings/commissions`) — gestor lê, admin edita
 
+> **Desde o CRMLAB-56 (D-194)** este formulário é a seção 6 da página **Regras** (§21), e
+> `/settings/commissions` redireciona para `/settings/rules#comissoes`. O item "Comissão" saiu do
+> menu. Regras e permissões abaixo continuam valendo.
+
 Percentuais de comissão sobre venda de exame e de check-up (D-113 — antes viviam em
 `localStorage` no FluxoLab, agora por tenant). Fonte: `GET /settings/commissions`,
 `PATCH /settings/commissions` (§6b).
@@ -1131,6 +1178,53 @@ rótulo "Integração LIS", `requiredRoles: MANAGER_PLUS`. Fonte: `GET/PATCH
 - Rodapé: "Os orçamentos sincronizados aparecem em Conferência e no histórico de importações
   (origem: API)". O histórico de `/results` (§14) mostra `kind: "sync"` como "API" em vez do
   nome do arquivo.
+
+### 21. Regras (`/settings/rules`) — todos veem, gestor/admin editam (CRMLAB-56, D-190..D-194)
+
+Onde o laboratório define as regras do funil. Grupo "Configurações" da sidebar, rótulo "Regras",
+`requiredRoles: TENANT_ROLES`. Fonte: `GET/PATCH /settings/funnel-rules` (API_CONTRACTS.md §6c) e,
+na seção 6, `GET/PATCH /settings/commissions` (§6b).
+
+Seis seções, uma embaixo da outra, cada uma num cartão com título e descrição curta. Um único
+[Salvar regras] no fim (seções 1–4) envia **só o que mudou** (diff contra o `GET`); comissão tem o
+seu próprio [Salvar] (endpoint e permissão diferentes).
+
+1. **Origem das propostas** — dois `Toggle`: "Nascer do orçamento do Bitlab" e "Criar proposta
+   manualmente no CRM (itens pelo catálogo)". Não dá para salvar com os dois desligados (aviso no
+   cartão; o servidor também recusa).
+2. **Automação do funil** — um `Toggle` por automação, com o prazo ao lado (`Input` numérico,
+   desabilitado quando a automação está desligada): Requisição → Negociação; Pagamento → Ganho;
+   Orçamento enviado há **X dias** → Follow-up; Negociação sem pagamento há **Y dias** →
+   Follow-up; Follow-up há **Z dias** → Perdido (motivo "Silêncio"); Alerta de "Novo orçamento"
+   parado há **N horas**. Mais o `SegmentedControl` "Contar em dias corridos | dias úteis". Nota
+   no cartão (desde o CRMLAB-59, D-205): "Os prazos contam desde que o cartão entrou no estágio e
+   são conferidos a cada poucos minutos. Dias úteis: segunda a sexta, sem descontar feriados."
+3. **Movimentação manual (travas)** — `Toggle` "Reabrir Ganho/Perdido" + caixas "Atendente" /
+   "Gestor" (o admin sempre pode, dito no texto); `Toggle` "Pular etapas"; `Toggle` "Exigir
+   motivo ao marcar Perdido"; `Toggle` "Gestor pode mover card de outra atendente".
+4. **Mensagem de envio** — `TextArea` do modelo, os botões de variável (`{paciente}`,
+   `{numero_orcamento}`, `{valor}`, `{convenio}`) que inserem no fim do texto, erro em tempo real
+   para variável desconhecida (`findUnknownTemplateVariables`) e a **pré-visualização** com dados
+   de exemplo, pela mesma `renderSendMessageTemplate` que o envio vai usar.
+5. **Descontos e aprovação** — **só aparece com "Criar pelo CRM" ligado** (o valor salvo). Texto da
+   regra (dentro da alçada aprova sozinha; acima vai para o gestor) e os limites padrão por perfil
+   (`DEFAULT_DISCOUNT_LIMIT`). O limite de cada pessoa se edita em Usuários & Permissões — link
+   para o admin.
+6. **Comissões** (`id="comissoes"`) — o formulário que era de `/settings/commissions` (§19), sem
+   mudança de regra. Só gestor/admin veem a seção; só admin edita.
+
+**Quem edita:** gestor e admin editam as seções 1–4. A **atendente vê tudo desabilitado**, sem
+[Salvar regras], e não vê a seção 6. Erro de campo (`details.fields`) aparece no campo pelo
+caminho (`automation.sentToFollowUp.days`); chave que a tela não conhece vira toast geral.
+
+**Efeitos em outras telas (valem já neste card):**
+- "Criar pelo CRM" desligado: some "Novo Orçamento" do Atendimento e "Novo atendimento" do
+  pipeline; `/budget/new` mostra o aviso em vez do formulário; o modal da proposta só mostra o
+  desconto quando ele é maior que zero (D-193).
+- Travas (D-192): o seletor "Mudar estágio", os botões "Avançar", "Marcar como Ganho/Perdido" e o
+  arrastar do kanban só oferecem o que `checkTransition` aceita para quem está logado; proposta
+  fechada ganha "Reabrir em…" quando a regra deixa; o formulário de perda aceita confirmar sem
+  motivo quando o motivo não é exigido.
 
 ---
 

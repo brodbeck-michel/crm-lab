@@ -32,6 +32,7 @@ Formato padrão e catálogo completo de códigos. Backend emite EXATAMENTE estes
 | `TOKEN_INVALID` | 401 | Token malformado/assinatura inválida | — |
 | `REFRESH_TOKEN_INVALID` | 401 | Refresh expirado/revogado → redirect login | — |
 | `FORBIDDEN` | 403 | Role sem permissão para a ação | `{ requiredRoles }` |
+| `FORBIDDEN` | 403 | Trava das Regras do funil em `PATCH /proposals/:id/status` (CRMLAB-56, D-192) | `{ reason: "reopen_not_allowed" \| "move_others_not_allowed" }` |
 | `USER_INACTIVE` | 403 | Usuário desativado | — |
 | `TENANT_INACTIVE` | 403 | Laboratório suspenso/inativo | — |
 | `RESET_TOKEN_INVALID` | 400 | `POST /auth/reset-password`: token inexistente, já usado ou vencido (CRMLAB-39, D-172) — os três casos respondem igual, de propósito | — |
@@ -102,10 +103,12 @@ renderiza. "Não sei onde mostrar" nunca pode virar silêncio.
 | `LOSS_REASON_REQUIRED` | 400 | status=perdido sem reasonLost | — |
 | `INVALID_LOSS_REASON` | 400 | reasonLost fora do enum | `{ allowed[] }` |
 | `PROPOSAL_PENDING_APPROVAL` | 409 | Tentativa de enviar proposta pending | — |
-| `PROPOSAL_ALREADY_CLOSED` | 409 | Mutação em proposta ganha/perdida | `{ status }` |
-| `PROPOSAL_EDIT_NOT_ALLOWED` | 409 | `PATCH /proposals/:id/items` fora de `novo_contato`/`orcamento_enviado` (CRMLAB-12, D-134) | `{ status }` |
+| `PROPOSAL_ALREADY_CLOSED` | 409 | Mutação em proposta ganha/perdida (inclui reabrir desligado nas Regras, D-192) | `{ status }`; `reason: "lis_reconciled"` quando o ganho veio do LIS e por isso não reabre |
+| `PROPOSAL_EDIT_NOT_ALLOWED` | 409 | `PATCH /proposals/:id/items` fora de `novo_contato`/`orcamento_enviado` (CRMLAB-12, D-134); `/items`, `/discount` e `/lis-reference` em proposta de origem `bitlab` (CRMLAB-57, D-195); `/send`, `/resend` e `/conversation` em proposta de origem `crm`, e `/resend`/`/conversation` em cartão ainda não enviado (CRMLAB-58, D-200/D-202) | `{ status }` · `{ status, reason: "bitlab_origin" }` · `{ status, reason: "crm_origin" \| "not_sent" }` |
+| `PROPOSAL_ALREADY_SENT` | 409 | `POST /proposals/:id/send` em cartão já enviado, ou que outra pessoa está enviando neste momento (CRMLAB-58, D-200/D-201) | `{ reason: "sent" \| "in_progress" }` |
 | `APPROVAL_NOT_ALLOWED` | 403 | Aprovador sem alçada suficiente | `{ discount, approverLimit }` |
 | `EXAM_NOT_FOUND_OR_INACTIVE` | 400 | Item referencia exame inexistente/inativo | `{ examIds[] }` |
+| `MANUAL_PROPOSAL_DISABLED` | 409 | `POST /proposals` com "Criar proposta manualmente no CRM" desligado em Regras (CRMLAB-56, D-193) | — |
 
 ## Conversas
 

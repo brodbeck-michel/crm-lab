@@ -9,6 +9,7 @@ import type {
 } from '@crm-lab/shared';
 import { api, queryKeys, queryScopes, staleTimes } from '@/api';
 import { useQuickReplyList } from '@/api/quick-replies';
+import { useEffectiveFunnelRules } from '@/api/funnel-rules';
 import { useToast } from '@/components/ui';
 import { InboxLayout } from '@/components/layout';
 import type { RecordedAudio } from '@/components/conversation';
@@ -39,6 +40,8 @@ const PATIENT_RESULT_LIMIT = 5;
 
 export function Attendance() {
   const navigate = useNavigate();
+  // D-193: "Novo Orçamento" some quando as Regras desligam a criação manual.
+  const manualProposals = useEffectiveFunnelRules().origin.manualInCrm;
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -324,7 +327,11 @@ export function Attendance() {
             sending={sendMessage.isPending}
             assignees={assigneesQuery.data?.assignees ?? []}
             onAssign={(userId) => assign.mutate(userId)}
-            onNewBudget={() => navigate(`/budget/new?conversationId=${selectedId ?? ''}`)}
+            onNewBudget={
+              manualProposals
+                ? () => navigate(`/budget/new?conversationId=${selectedId ?? ''}`)
+                : undefined
+            }
             onCloseAttendance={() => closeAttendance.mutate()}
             canCloseAttendance={
               currentUser?.role === 'manager' ||

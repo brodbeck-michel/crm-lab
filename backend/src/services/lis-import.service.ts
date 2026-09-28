@@ -29,7 +29,9 @@ import {
   upsertBudget,
 } from '../repositories/lis-import.repository.js';
 import type { AuditService } from './audit.service.js';
+import { announceBitlabProposals, createBitlabProposals } from './bitlab-proposal.service.js';
 import { announceLisWins, reconcileBudgets } from './lis-reconcile.service.js';
+import type { SystemTransition } from './proposal.service.js';
 
 export const DEFAULT_PAGE = 1;
 export const DEFAULT_LIMIT = 20;
@@ -128,26 +130,29 @@ export function createLisImportService(deps: LisImportServiceDeps): LisImportSer
 
     let actualAccepted = 0;
     let errorMessage: string | null = null;
-    const won: string[] = [];
+    const won: SystemTransition[] = [];
+    const createdProposals: string[] = [];
 
     const chunks = chunk(consolidated, CHUNK_SIZE);
     for (const batch of chunks) {
       try {
-        const wonInChunk = await db.withTenant(tenantId, async (tx) => {
+        const outcome = await db.withTenant(tenantId, async (tx) => {
           for (const row of batch) {
             const insuranceId = await resolveInsuranceId(tx, tenantId, row);
             const attendantId = await resolveAttendantId(tx, tenantId, row);
             await upsertBudget(tx, tenantId, created.id, row, insuranceId, attendantId);
           }
+          const numbers = batch.map((row) => row.number.trim());
+          // Proposta nasce do orcamento (CRMLAB-57, D-196) ANTES da conciliacao:
+          // a criada ja e vinculada e espelhada no mesmo chunk.
+          const createdInChunk = await createBitlabProposals(tx, tenantId, numbers);
           // Conciliacao por chunk, na mesma transacao (D-119 item 3b).
-          return reconcileBudgets(
-            tx,
-            tenantId,
-            batch.map((row) => row.number.trim()),
-          );
+          const wonInChunk = await reconcileBudgets(tx, tenantId, numbers);
+          return { createdInChunk, wonInChunk };
         });
         actualAccepted += batch.length;
-        won.push(...wonInChunk);
+        won.push(...outcome.wonInChunk);
+        createdProposals.push(...outcome.createdInChunk);
       } catch (err) {
         errorMessage = err instanceof Error ? err.message : String(err);
         break;
@@ -160,10 +165,13 @@ export function createLisImportService(deps: LisImportServiceDeps): LisImportSer
       rowsAccepted: actualAccepted,
       rowsRejected: rowsInFile - actualAccepted,
       errorMessage,
-      proposalsWon: won.length,
+      // So as que foram a `ganho` (D-119 item 9; a negociacao da D-204 nao conta).
+      proposalsWon: won.filter((t) => t.to === 'ganho').length,
+      proposalsCreated: createdProposals.length,
     });
 
     await cache.delByPrefix(CACHE_PREFIX(tenantId));
+    await announceBitlabProposals({ wsHub, cache }, tenantId, createdProposals);
     await announceLisWins({ wsHub, cache }, tenantId, won);
     return finished;
   }

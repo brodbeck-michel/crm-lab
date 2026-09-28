@@ -5,15 +5,19 @@
 
 export type WsEventName =
   | 'conversation.new_message'
+  | 'proposal.created'
   | 'proposal.status_changed'
   | 'proposal.updated'
   | 'approval.requested'
   | 'approval.decided'
   | 'internal_chat.new_message'
-  | 'channel.connection_changed';
+  | 'channel.connection_changed'
+  | 'proposal.stale_alert';
 
 export interface WsEventPayloads {
   'conversation.new_message': { conversationId: string; messageId: string };
+  /** Proposta nova que o usuario nao criou pela tela — hoje so a origem `bitlab` (CRMLAB-57, D-196). */
+  'proposal.created': { proposalId: string };
   'proposal.status_changed': { proposalId: string; status: string };
   /** Itens, desconto ou medico solicitante mudaram (CRMLAB-12, D-132). */
   'proposal.updated': { proposalId: string };
@@ -27,6 +31,11 @@ export interface WsEventPayloads {
    * — a sessao foi apagada e so um QR novo reconecta. Ausente = `false`.
    */
   'channel.connection_changed': { channel: string; connected: boolean; requiresNewQr?: boolean };
+  /**
+   * Cartão parado em "Novo orçamento" há `hours` h (CRMLAB-59, D-207). Só para o
+   * responsável — ou, sem responsável, gestores e admins —, uma vez por entrada.
+   */
+  'proposal.stale_alert': { proposalId: string; hours: number };
 }
 
 export interface WsEvent<E extends WsEventName = WsEventName> {

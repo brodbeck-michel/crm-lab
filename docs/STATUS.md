@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-25 (v1.22.0 em PRODUÇÃO — CRMLAB-52, ver fim do arquivo)
+**Última atualização:** 2026-09-26 (Epic CRMLAB-55 — CRMLAB-56/57/58/59 + CRMLAB-60 parcial integrados em `integ/onda-funil`; v1.22.0 em PRODUÇÃO)
 
 ---
 
@@ -2810,3 +2810,119 @@ Sobe CRMLAB-52 (PR #67 e #69): orçamentos do LIS pela API do Bitlab e concilia�
   https://vitrocrm.cloud confirma `1.22.0` e traz a tela nova.
 - **Falta para ligar:** salvar a chave de orçamentos do Bitlab em Configurações → Integração LIS do
   laboratório e ligar a sincronização (agendador de 30 min em prod, primeira rodada = 90 dias).
+
+### ✅ CRMLAB-56 — página de Regras do funil (Epic CRMLAB-55, 2026-09-26)
+
+Branch `feature/CRMLAB-56-pagina-regras`. Decisões D-190..D-194.
+
+- **Backend:** migração 027 (`funnel_rules` + policy), `GET|PATCH /settings/funnel-rules`
+  (API_CONTRACTS §6c), `readFunnelRules(tx, tenantId)` como **ponto único de leitura** para os
+  cards CRMLAB-57..60 (`funnel-rules.service.ts`). `ProposalService.create` recusa com
+  `MANUAL_PROPOSAL_DISABLED` (409) quando "Criar pelo CRM" está desligado; `updateStatus` decide por
+  `checkTransition` (shared) — reabrir, pular etapas, motivo no perdido e mover card alheio. A
+  conciliação LIS (`markWonFromLis`) continua fora das travas.
+- **Shared:** `funnel-rules.types.ts` — `FunnelRules`, `DEFAULT_FUNNEL_RULES` (reproduzem o
+  comportamento anterior), `checkTransition`/`canTransition`/`allowedTargets`,
+  `renderSendMessageTemplate`/`findUnknownTemplateVariables`.
+- **Frontend:** `/settings/rules` (6 seções; atendente só vê; comissão = seção 6, admin edita),
+  `/settings/commissions` redireciona para `#comissoes` e saiu do menu. Travas no modal
+  (`ActionsRow`, "Reabrir em…", motivo opcional) e no kanban; origem manual desligada esconde
+  "Novo Orçamento", "Novo atendimento", o formulário de `/budget/new` e o desconto zerado.
+- **Padrão a revisar pelo Michel:** "Criar proposta manualmente no CRM" nasce **ligado** (senão o
+  fluxo atual quebraria antes do CRMLAB-57). Desligar pela página quando quiser só o fluxo Bitlab.
+- **Não feito aqui (por escopo):** o motor que executa as automações (CRMLAB-59/60), o envio com o
+  modelo de mensagem (CRMLAB-58) e o campo de origem da proposta/isenção de aprovação para
+  proposta do Bitlab (CRMLAB-57).
+### ✅ CRMLAB-57 [B] — proposta nasce do orçamento do Bitlab (Epic CRMLAB-55, 2026-09-26)
+
+Branch `feature/CRMLAB-57-proposta-nasce-bitlab`. Decisões D-195..D-199, migração `028_bitlab_origin.sql`.
+
+- **Modelo (D-195):** `proposals.origin` (`crm` | `bitlab`); `conversation_id`/`created_by`
+  nulláveis só na origem `bitlab` (CHECK `proposals_crm_origin_complete`). Total = `total_value` do
+  orçamento (sem itens, sem desconto, `approval_status 'none'`), regravado pela conciliação
+  enquanto não fecha. Nome, data e atendente do Bitlab por JOIN com `lis_budgets` (nada copiado).
+  Responsável provisório = login do atendente do LIS; sem ele, fila comum do tenant.
+- **Nascimento (D-196):** hook por chunk de `ingestRows`, antes da conciliação;
+  `isBitlabOriginEnabled` (`backend/src/services/bitlab-origin-gate.ts`, hoje `true`, a ligar às
+  Regras do CRMLAB-56); marca `tenant_settings.bitlab_proposals_since` gravada na primeira
+  ingestão; `ON CONFLICT DO NOTHING` no índice parcial; WS `proposal.created` depois do commit.
+- **Pré-cadastro (D-197):** cartão `bitlab` em "Novo orçamento" com requisição não vira ganho,
+  ganha o selo "Pré-cadastro feito". **Absorção (D-198)** do cartão automático não enviado quando o
+  número é digitado numa proposta do CRM. **Sync a cada 2 min (D-199)** com um tique por vez e log
+  `debug` na rodada vazia.
+- Rótulo de `novo_contato` agora é "Novo orçamento".
+- **Pendente / fora do escopo:** envio pela conversa (CRMLAB-58); `novo_contato → ganho` direto
+  continua barrado pela matriz — cartão de balcão passa por "Orçamento enviado" (travas: CRMLAB-56);
+  cartão com pré-cadastro enviado depois só vai a ganho quando o orçamento mudar de novo no Bitlab
+  (CRMLAB-60); mudança de valor no re-sync não emite WS próprio.
+
+### ✅ CRMLAB-58 [C] — enviar orçamento pelo cartão (Epic CRMLAB-55, 2026-09-26)
+
+Branch `feature/CRMLAB-58-enviar-pelo-card` (de `integ/onda-funil`). Decisões D-200..D-203,
+migração `029_proposal_send_claim.sql`.
+
+- **Envio (D-200):** `POST /proposals/:id/send` no cartão `bitlab` em "Novo orçamento": a
+  mensagem sai pela conversa escolhida pelo `MessageService.createFromAgent` (o mesmo do
+  Composer), e só então a proposta ganha conversa (e paciente, pela conversa), responsável = quem
+  enviou, `sent_at`, histórico, audit (`source: "send"`) e WS. Sem requisição →
+  `orcamento_enviado`; com requisição e "Requisição → Negociação" ligada → `negociacao`
+  (`bitlabSendTarget`, transição de sistema fora da matriz manual). Código novo
+  `PROPOSAL_ALREADY_SENT` (409, `sent` | `in_progress`).
+- **Tudo ou nada (D-201):** reserva com trava de linha (`send_claim_id`/`send_claimed_at`, 2 min),
+  envio fora da transação, vínculo numa transação curta que confere a reserva. WhatsApp falhou →
+  reserva desfeita, cartão intacto, mensagem `failed` na conversa como no atendimento. Duas
+  atendentes ao mesmo tempo → uma vence, a outra recebe `PROPOSAL_ALREADY_SENT` sem segunda
+  mensagem ao paciente. Risco declarado: vínculo falhar depois de o WhatsApp aceitar (log
+  `proposal.send_finalize_failed`).
+- **Depois do envio (D-202):** `POST /:id/resend` (sem mudar estágio), `PATCH /:id/conversation`
+  (dona/gestor/admin, não fechada) e `PATCH /:id/responsible` (gestor/admin qualquer pessoa ativa
+  em qualquer estágio; atendente só o dela, aberto, para outra atendente), todos com audit.
+- **Sugestão (D-203):** `nameSimilarity` em `shared/` (palavras em comum sem acento/caixa/
+  partículas), aplicada no front sobre as 100 conversas ativas mais recentes ou a busca livre.
+- **Front:** `SendProposalPanel` (envio / reenvio / troca de conversa) e `ResponsibleField` no
+  modal; proposta `crm` mantém o "Enviar orçamento" de sempre. Inventário de rotas 70 → 74.
+- **Pendente / fora do escopo:** cartão `bitlab` movido à mão para fora de "Novo orçamento" sem
+  conversa não tem mais como ser enviado pelo cartão (só volta para "Novo orçamento"); a sugestão
+  só enxerga 100 conversas ativas recentes; sem E2E do fluxo.
+
+### ✅ CRMLAB-60 (parcial) — régua de fatos do LIS no cartão do Bitlab (2026-09-26)
+
+Mesma branch. Decisão D-204 (emenda D-119/D-197, **provisória até o CRMLAB-53**).
+
+- Origem `bitlab`: pagamento (`paid_on`, qualquer valor) → `ganho` de qualquer estágio aberto,
+  inclusive `novo_contato`; requisição em `orcamento_enviado`/`follow_up` → `negociacao`; cada uma
+  só com a regra ligada. Requisição sozinha não fecha mais. `perdido` não reabre. Origem `crm`
+  intacta (D-119).
+- `applySystemTransition` / `announceSystemTransitions` (`proposal.service.ts`) generalizam
+  `markWonFromLis` — ponto de unificação com o motor de tempo do CRMLAB-59.
+- **Fica para o CRMLAB-60 completo:** tudo o que depende do valor pago (sobrescrito pela sync até
+  o CRMLAB-53) e a conciliação que só roda quando o orçamento volta numa ingestão.
+### ✅ CRMLAB-59 [D] — motor de tempo do funil (Epic CRMLAB-55, 2026-09-26)
+
+Branch `feature/CRMLAB-59-motor-tempo` (de `integ/onda-funil`). Decisões D-205..D-209, migração
+`030_funnel_timer.sql`.
+
+- **Motor (D-205):** `FunnelTimerService` (`backend/src/services/funnel-timer.service.ts`,
+  SERVICES §27), agendado no `main.ts` por `FUNNEL_TIMER_INTERVAL_MS` (padrão 5 min, `0` desliga),
+  um tique por vez, laboratórios em série, até 200 cartões por regra/laboratório/tique, uma
+  transação por cartão, `debug` no tique vazio. Relógio = última linha do histórico com o estágio
+  atual; dias corridos ou úteis (seg–sex, Brasília, **sem feriados**) pelas funções puras de
+  `shared/types/funnel-timer.types.ts`.
+- **Fato vence tempo (D-206):** pagamento impede tudo; requisição impede `orcamento_enviado`/
+  `follow_up`; matriz vigente sem o passo não move; terminais intocados.
+- **Transição de sistema (D-208):** `applyTimerTransition(tx, { tenantId, proposalId, step,
+  automation, enteredHistoryId, now })` — histórico com `changed_by NULL` e `automation`, mensagem
+  de sistema só com conversa, audit `source: "rule"`, WS + cache depois do commit. A unificar com a
+  transição de sistema do CRMLAB-58 na integração.
+- **Alerta (D-207):** "Novo orçamento" parado há N h corridas → WS `proposal.stale_alert` para o
+  responsável (ou gestores/admins), uma vez por entrada (`stale_alerted_at` na linha de entrada);
+  toast no front + selo "Parado há N h" no cartão calculado pela mesma função
+  (`Proposal.stageEnteredAt`, novo). Modal: "movido pela regra: Enviado há 3 dias".
+- **Prazo mudado (D-209):** vale no próximo tique, inclusive para quem já passou do prazo novo; sem
+  marco de ativação — no primeiro deploy os cartões vencidos andam no primeiro tique.
+- **Pendência encontrada (fora do escopo, não corrigida):** `changedAt` do histórico e demais
+  `TIMESTAMP` lidos como `Date` pelo driver dependem do **fuso do processo Node**. Numa máquina em
+  UTC−3 (este WSL) o `changedAt` sai 3 h adiantado; em produção o container roda em UTC e não
+  aparece. O código novo lê com `to_char` em UTC e não é afetado. Fechar a classe (fixar `TZ=UTC`
+  no processo/teste ou parser de tipo no driver) é um card de Kernel.
+

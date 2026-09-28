@@ -10,6 +10,7 @@
 import {
   DAY_COUNTINGS,
   DEFAULT_FUNNEL_RULES,
+  REENGAGEMENT_MESSAGE_MAX,
   RULE_ACTOR_ROLES,
   SEND_MESSAGE_TEMPLATE_MAX,
   findUnknownTemplateVariables,
@@ -85,6 +86,14 @@ function leafError(path: string, template: unknown, value: unknown): string | nu
     const unknown = findUnknownTemplateVariables(trimmed);
     if (unknown.length > 0) {
       return `Variável desconhecida: ${unknown.map((name) => `{${name}}`).join(', ')}`;
+    }
+    return null;
+  }
+  if (path === 'reengagement.first.message' || path === 'reengagement.second.message') {
+    if (typeof value !== 'string') return 'Deve ser um texto';
+    const length = value.trim().length;
+    if (length === 0 || length > REENGAGEMENT_MESSAGE_MAX) {
+      return `A mensagem deve ter de 1 a ${REENGAGEMENT_MESSAGE_MAX} caracteres`;
     }
     return null;
   }
@@ -193,6 +202,14 @@ export function createFunnelRulesService(deps: FunnelRulesServiceDeps): FunnelRu
       const next = applyPatch(DEFAULT_FUNNEL_RULES, previous, raw, '', errors) as FunnelRules;
       if (Object.keys(errors).length === 0 && !next.origin.fromBitlab && !next.origin.manualInCrm) {
         errors.origin = 'Deixe ao menos uma origem de proposta ligada';
+      }
+      // D-211 item 4: o 2º conta a partir do envio do 1º.
+      if (
+        Object.keys(errors).length === 0 &&
+        next.reengagement.second.enabled &&
+        !next.reengagement.first.enabled
+      ) {
+        errors['reengagement.second.enabled'] = 'Ligue o 1º reingajamento antes do 2º';
       }
       if (Object.keys(errors).length > 0) {
         throw new BusinessError('VALIDATION_ERROR', { fields: errors });

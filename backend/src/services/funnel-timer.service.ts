@@ -40,6 +40,7 @@ import * as repo from '../repositories/proposal.repository.js';
 import { cachePrefix as analyticsCachePrefix } from './analytics.service.js';
 import { readFunnelRules } from './funnel-rules.service.js';
 import { proposalRef } from './proposal.service.js';
+import type { ReengagementService } from './reengagement.service.js';
 
 /** Teto por regra, por laboratorio, por tique (D-205 item 7). */
 export const FUNNEL_TIMER_BATCH = 200;
@@ -54,6 +55,8 @@ export interface FunnelTimerTenantResult {
   tenantId: string;
   moved: number;
   alerted: number;
+  /** Reingajamentos enviados neste tique (CRMLAB-62, D-211). */
+  reengaged: number;
 }
 
 export interface FunnelTimerTickResult {
@@ -71,6 +74,8 @@ export interface FunnelTimerServiceDeps {
   db: DbClient;
   wsHub: WsHub;
   cache: CacheService;
+  /** Reingajamento da conversa (CRMLAB-62). Ausente => o tique so cuida do funil. */
+  reengagement?: ReengagementService;
   now?: () => Date;
 }
 
@@ -356,18 +361,39 @@ export function createFunnelTimerService(deps: FunnelTimerServiceDeps): FunnelTi
       moved += await runStep(tenantId, rules, step, at);
     }
     const alerted = await runStaleAlert(tenantId, rules, at);
-    return { tenantId, moved, alerted };
+    let reengaged = 0;
+    if (deps.reengagement) {
+      // Falha do reingajamento nao desfaz nem esconde o que o funil ja fez.
+      try {
+        reengaged = (await deps.reengagement.runForTenant(tenantId, at)).sent;
+      } catch (error) {
+        logger.warn('reengagement.tenant_failed', {
+          tenantId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    return { tenantId, moved, alerted, reengaged };
   }
 
-  /** D-205 item 6: fora do contexto de tenant, SO `tenant_id`. */
+  /**
+   * D-205 item 6: fora do contexto de tenant, SO `tenant_id`. Entram os
+   * laboratorios com proposta aberta e os com o reingajamento ligado (D-211
+   * item 1), mesmo sem proposta.
+   */
   async function listTenantIds(): Promise<string[]> {
     return db.withoutTenant(async (tx) => {
       const result = await tx.query<{ tenant_id: string }>(
-        `SELECT DISTINCT p.tenant_id
+        `SELECT p.tenant_id
            FROM proposals p
            JOIN tenants t ON t.id = p.tenant_id AND t.is_active = TRUE
           WHERE p.status NOT IN ('ganho', 'perdido')
-          ORDER BY p.tenant_id`,
+         UNION
+         SELECT r.tenant_id
+           FROM funnel_rules r
+           JOIN tenants t ON t.id = r.tenant_id AND t.is_active = TRUE
+          WHERE r.rules -> 'reengagement' -> 'first' ->> 'enabled' = 'true'
+          ORDER BY tenant_id`,
       );
       return result.rows.map((r) => r.tenant_id);
     });
@@ -395,7 +421,7 @@ export function createFunnelTimerService(deps: FunnelTimerServiceDeps): FunnelTi
           try {
             const result = await runForTenant(tenantId);
             results.push(result);
-            if (result.moved > 0 || result.alerted > 0) {
+            if (result.moved > 0 || result.alerted > 0 || result.reengaged > 0) {
               logger.info('funnel_timer.completed', { ...result });
             }
           } catch (error) {
@@ -405,7 +431,7 @@ export function createFunnelTimerService(deps: FunnelTimerServiceDeps): FunnelTi
             });
           }
         }
-        if (results.every((r) => r.moved === 0 && r.alerted === 0)) {
+        if (results.every((r) => r.moved === 0 && r.alerted === 0 && r.reengaged === 0)) {
           logger.debug('funnel_timer.tick_empty', { tenants: tenantIds.length });
         }
         return { skipped: false, tenants: results };

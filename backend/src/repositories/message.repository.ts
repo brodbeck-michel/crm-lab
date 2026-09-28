@@ -56,9 +56,16 @@ function toSenderType(value: string): SenderType {
  */
 export const PHONE_SENDER_NAME = 'Enviada pelo celular';
 
+/**
+ * Agente sem autor COM `automation` e a mensagem que o sistema mandou sozinho
+ * ao paciente (reingajamento, CRMLAB-62 — D-211 item 5).
+ */
+export const AUTOMATED_SENDER_NAME = 'Mensagem automática';
+
 const COLUMNS = `m.id, m.conversation_id, m.sender_type, m.sender_id, m.content,
        m.message_type, m.attachment_url, m.status, m.read_at, m.created_at,
        CASE
+         WHEN m.sender_type = 'agent' AND m.automation IS NOT NULL THEN '${AUTOMATED_SENDER_NAME}'
          WHEN m.sender_type = 'agent' AND m.sender_id IS NULL THEN '${PHONE_SENDER_NAME}'
          WHEN m.sender_type = 'agent' THEN u.name
          WHEN m.sender_type = 'patient' THEN c.patient_name
@@ -94,6 +101,8 @@ export interface MessageInsert {
   attachmentUrl?: string | null;
   status?: MessageStatus;
   externalMessageId?: string | null;
+  /** So o reingajamento (D-211 item 5); `null`/ausente para todo o resto. */
+  automation?: 'reengagement' | null;
 }
 
 export interface MessagePage {
@@ -155,8 +164,8 @@ export class MessageRepository {
       const inserted = await tx.query<{ id: string }>(
         `INSERT INTO messages
            (tenant_id, conversation_id, sender_type, sender_id, content, message_type,
-            attachment_url, status, external_message_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            attachment_url, status, external_message_id, automation)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING id`,
         [
           tenantId,
@@ -168,6 +177,7 @@ export class MessageRepository {
           data.attachmentUrl ?? null,
           data.status ?? 'sent',
           data.externalMessageId ?? null,
+          data.automation ?? null,
         ],
       );
       const id = inserted.rows[0]?.id;
@@ -234,6 +244,7 @@ export class MessageRepository {
          WHERE external_message_id = $1
            AND sender_type = 'agent'
            AND sender_id IS NULL
+           AND automation IS NULL
            AND id <> $2
          RETURNING id`,
         [externalMessageId, id],
@@ -269,7 +280,7 @@ export class MessageRepository {
         `SELECT id FROM messages
          WHERE conversation_id = $1
            AND sender_type = 'agent'
-           AND sender_id IS NOT NULL
+           AND (sender_id IS NOT NULL OR automation IS NOT NULL)
            AND status = 'sent'
            AND external_message_id IS NULL
            AND created_at > NOW() - INTERVAL '60 seconds'

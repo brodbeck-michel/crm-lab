@@ -95,12 +95,35 @@ export interface SendMessageRules {
   template: string;
 }
 
+/** Um disparo de reingajamento (CRMLAB-62, D-211). */
+export interface ReengagementStepRule {
+  enabled: boolean;
+  /**
+   * Inteiro 1..720. No 1º: horas desde a última mensagem da atendente.
+   * No 2º: horas desde o envio do 1º.
+   */
+  hours: number;
+  /** 1..1000 caracteres, texto fixo (sem variáveis). */
+  message: string;
+}
+
+/**
+ * Seção 5 — reingajamento da conversa (CRMLAB-62, D-211..D-214). Só WhatsApp
+ * por QR Code; respeita horário de funcionamento e feriados. O 2º só liga com
+ * o 1º ligado.
+ */
+export interface ReengagementRules {
+  first: ReengagementStepRule;
+  second: ReengagementStepRule;
+}
+
 /** `GET /settings/funnel-rules` — objeto completo, já com os padrões aplicados. */
 export interface FunnelRules {
   origin: ProposalOriginRules;
   automation: FunnelAutomationRules;
   manualMoves: ManualMoveRules;
   sendMessage: SendMessageRules;
+  reengagement: ReengagementRules;
 }
 
 type DeepPartial<T> = {
@@ -131,6 +154,14 @@ export const SEND_MESSAGE_TEMPLATE_MAX = 1000;
 export const DEFAULT_SEND_MESSAGE_TEMPLATE =
   'Olá, {paciente}! Segue o orçamento nº {numero_orcamento} ({convenio}), no valor de {valor}.';
 
+export const REENGAGEMENT_MESSAGE_MAX = 1000;
+
+export const DEFAULT_REENGAGEMENT_FIRST_MESSAGE =
+  'Olá! Passando para saber se ficou alguma dúvida sobre o que conversamos. Seguimos à disposição para ajudar.';
+
+export const DEFAULT_REENGAGEMENT_SECOND_MESSAGE =
+  'Olá! Como não tivemos retorno, vamos deixar o atendimento em aberto. Quando quiser, é só responder esta mensagem.';
+
 /** Padrões (D-191). Ver o comentário do topo do arquivo. */
 export const DEFAULT_FUNNEL_RULES: FunnelRules = {
   origin: { fromBitlab: true, manualInCrm: true },
@@ -150,6 +181,11 @@ export const DEFAULT_FUNNEL_RULES: FunnelRules = {
     moveOthersCards: true,
   },
   sendMessage: { template: DEFAULT_SEND_MESSAGE_TEMPLATE },
+  // Desligado: laboratório que já usa não passa a mandar nada sozinho (D-211).
+  reengagement: {
+    first: { enabled: false, hours: 1, message: DEFAULT_REENGAGEMENT_FIRST_MESSAGE },
+    second: { enabled: false, hours: 24, message: DEFAULT_REENGAGEMENT_SECOND_MESSAGE },
+  },
 };
 
 // ---------------------------------------------------------------------------

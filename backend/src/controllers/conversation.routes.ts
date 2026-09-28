@@ -67,12 +67,22 @@ export const listConversationsQuerySchema = z.object({
   order: z.enum(['asc', 'desc']).optional(),
 });
 
-/** `?messageLimit=50&page=1` — o nome vem do contrato (API_CONTRACTS.md §2). */
-export const getConversationQuerySchema = z.object({
-  messageLimit: z.coerce.number().int().min(1).max(MAX_MESSAGE_LIMIT).optional(),
-  limit: z.coerce.number().int().min(1).max(MAX_MESSAGE_LIMIT).optional(),
-  page: z.coerce.number().int().min(1).optional(),
-});
+/**
+ * `?messageLimit=50&page=1` ou `?messageLimit=50&before=<messageId>` — o nome
+ * vem do contrato (API_CONTRACTS.md §2). `before` e o cursor (D-237) e nao
+ * convive com `page`: os dois juntos seriam duas ideias de "qual pagina".
+ */
+export const getConversationQuerySchema = z
+  .object({
+    messageLimit: z.coerce.number().int().min(1).max(MAX_MESSAGE_LIMIT).optional(),
+    limit: z.coerce.number().int().min(1).max(MAX_MESSAGE_LIMIT).optional(),
+    page: z.coerce.number().int().min(1).optional(),
+    before: z.string().uuid().optional(),
+  })
+  .refine((query) => query.before === undefined || query.page === undefined, {
+    message: '`before` e `page` sao excludentes',
+    path: ['before'],
+  });
 
 /**
  * `POST /conversations` — atendimento que nao veio do WhatsApp.
@@ -226,12 +236,14 @@ export function getConversation(services: ConversationServices): RequestHandler 
     const page = await services.messages.listByConversation(ctx.tenantId, id, {
       ...(query.page !== undefined ? { page: query.page } : {}),
       ...(messageLimit !== undefined ? { limit: messageLimit } : {}),
+      ...(query.before !== undefined ? { before: query.before } : {}),
     });
 
     const body: GetConversationResponse = {
       conversation,
       messages: page.messages,
       pagination: page.pagination,
+      cursors: page.cursors,
     };
     res.status(200).json(body);
   });

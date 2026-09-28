@@ -5,7 +5,7 @@ Faixa: D-237…D-239 · migração 046 (não usada — o índice da 001 já serv
 
 ## Estado
 
-🔄 docs prontos — próximo: backend.
+🔄 backend pronto — próximo: frontend.
 
 ## Feito
 
@@ -13,12 +13,14 @@ Faixa: D-237…D-239 · migração 046 (não usada — o índice da 001 já serv
   rolagem que carrega sozinha), D-239 (separador, faixa de não lidas, botão ↓);
   API_CONTRACTS §2 (`GET /conversations/:id` com `before` e `cursors`), SERVICES §3,
   ARCHITECTURE (tabela de rotas), PAGES §2 + tabela de chaves, COMPONENTS (`DateSeparator`).
+- [x] shared: `GetConversationQuery`, `MessageCursors`, `GetConversationResponse.cursors`.
+- [x] backend: zod `before` (uuid, excludente com `page`), service (404 `message`, `cursors`),
+  repository (`limit+1`, `(created_at,id) < (SELECT ... WHERE id = before)`). Testes novos em
+  `backend/tests/conversations/cursor.spec.ts` (6) + `list.spec.ts` ajustado. 37 verdes
+  (cursor + list + messages), `tsc -p tsconfig.wt.json` limpo.
 
 ## Falta
 
-- [ ] shared: `GetConversationQuery`, `MessageCursors`, `GetConversationResponse.cursors`
-- [ ] backend: zod `before` (uuid, excludente com `page`), service + repository (limit+1,
-  `(created_at,id) < (SELECT ...)`, 404 `message`), testes em `backend/tests/conversations/list.spec.ts`
 - [ ] frontend: `DateSeparator` (+ spec), `queries.ts` com opções infinitas, `index.tsx` com
   `useInfiniteQuery` e `unreadAtOpen`, `useConversationScroll.ts`, `ConversationPanel.tsx`
   (separador, faixa, botão ↓, carregamento no topo, sem botão antigo), specs de tela
@@ -38,4 +40,4 @@ Faixa: D-237…D-239 · migração 046 (não usada — o índice da 001 já serv
 
 ## Próximo passo exato
 
-Editar `shared/types/conversation.types.ts` (tipos acima) e seguir para o backend.
+Frontend: criar `components/conversation/DateSeparator.tsx` (+ spec) e seguir a lista de "Falta".

@@ -15,10 +15,14 @@ Faixas: decisões D-220…D-224 · migrações 040, 041.
 
 ## Falta
 - [x] Migração 040 (colunas em messages + message_reactions + message_edits + RLS). 041 não usada (arquivo único, sem backfill).
-- [ ] Backend: evolution-client (constante de eventos, setWebhook, sendReaction, quoted),
-      drivers (quoted, sendReaction), message.repository/service, rotas de reação, webhook
-      (stanzaId, reactionMessage, protocolMessage REVOKE/EDIT, MESSAGES_EDITED, MESSAGES_DELETE),
-      syncEvolutionWebhooks no boot, prévia/timeline escondendo apagada.
+- [x] Backend: evolution-client (EVOLUTION_WEBHOOK_EVENTS, setWebhook, sendReaction, quoted),
+      drivers (quoted, sendReaction opcional no WhatsAppDriver), message.repository/service
+      (findRef, upsert/deleteReaction, markDeleted, applyEdit, setAgentReaction,
+      applyInboundReaction, applySenderDelete, applySenderEdit), rotas
+      PUT|DELETE /conversations/:id/messages/:messageId/reaction, webhook (stanzaId,
+      reactionMessage, protocolMessage REVOKE/EDIT, MESSAGES_EDITED, MESSAGES_DELETE),
+      syncEvolutionWebhooks no boot (main.ts), prévia/timeline escondendo apagada.
+      Testes de shape atualizados (list/messages/evolution-client).
 - [ ] Frontend: MessageBubble (menu, citação, reações, apagada/editada, data-message-id),
       Composer (faixa "Respondendo a"), ConversationPanel (estado replyTo, scrollToMessage),
       Attendance (envio com quotedMessageId, reação), ws.ts (message_updated).
@@ -33,4 +37,4 @@ D-220, D-221, D-222, D-223 (D-224 livre).
 - Miniatura real no bloco citado: usa rótulo ("📷 Foto") em vez de buscar a imagem.
 
 ## Próximo passo exato
-Backend: começar por `lib/evolution-client.ts` (EVOLUTION_WEBHOOK_EVENTS, setWebhook, sendReaction, quoted).
+Testes backend novos: `tests/whatsapp/webhook-crmlab66.spec.ts` (payloads reais), `tests/messages/reactions-quotes.spec.ts` (rotas, NOT_FOUND cross-tenant), `tests/db/rls-crmlab66.spec.ts`, sync de webhook; depois inventário em route-tenant-isolation.

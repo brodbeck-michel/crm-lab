@@ -62,10 +62,15 @@ import { BusinessError, notFound } from '../http/errors.js';
 import { logger } from '../lib/logger.js';
 import type { WsHub } from '../lib/ws-hub.js';
 import { ConversationRepository } from '../repositories/conversation.repository.js';
-import { MessageRepository } from '../repositories/message.repository.js';
+import { MessageRepository, type MessageRef } from '../repositories/message.repository.js';
 import { isUniqueViolation } from '../repositories/quick-reply.repository.js';
 import { createAuditService, type AuditService } from './audit.service.js';
-import { createWhatsAppService, type WhatsAppService } from './whatsapp.service.js';
+import {
+  createWhatsAppService,
+  type QuotedRef,
+  type SendOptions,
+  type WhatsAppService,
+} from './whatsapp.service.js';
 
 /** `image/jpeg` -> `'image'`; `audio/*` -> `'audio'`; `application/pdf` -> `'pdf'`; resto -> `'doc'`. */
 function messageTypeFromMime(mimeType: string): MessageType {
@@ -81,7 +86,16 @@ export interface OutboundAttachmentInput {
   mimeType: string;
   attachmentUrl: string;
   buffer: Buffer;
+  /** Responder citando (CRMLAB-66, D-221). */
+  quotedMessageId?: string | null;
 }
+
+/**
+ * Resultado de reacao/edicao/apagamento vindo do webhook (CRMLAB-66).
+ * `alvo_desconhecido` = a mensagem nao esta no CRM (vira descarte contavel);
+ * `sem_efeito` = achou, mas nao muda nada (reentrega, sistema, ja apagada).
+ */
+export type TargetOutcome = 'aplicado' | 'alvo_desconhecido' | 'sem_efeito';
 
 export const DEFAULT_MESSAGE_PAGE = 1;
 export const DEFAULT_MESSAGE_LIMIT = 50;
@@ -105,6 +119,8 @@ export interface InboundMessageInput {
   /** Id do canal — dedupe de reentrega (SECURITY.md "Webhooks"). */
   externalId?: string | null;
   patientName?: string | null;
+  /** `contextInfo.stanzaId` — a mensagem que o remetente citou (D-221). */
+  quotedExternalId?: string | null;
 }
 
 function clampPage(value: number | undefined): number {
@@ -204,6 +220,7 @@ export class MessageService {
     if (conversation.status !== 'active') {
       throw new BusinessError('CONVERSATION_ARCHIVED', { status: conversation.status });
     }
+    const quote = await this.resolveQuote(tenantId, conversationId, dto.quotedMessageId);
 
     const message = await this.messages.insert(tenantId, {
       conversationId,
@@ -213,6 +230,8 @@ export class MessageService {
       messageType: dto.messageType ?? 'text',
       attachmentUrl: dto.attachmentUrl ?? null,
       status: 'sent',
+      quotedMessageId: quote?.id ?? null,
+      quotedExternalId: quote?.externalMessageId ?? null,
     });
     this.emitNewMessage(tenantId, conversationId, message.id);
 
@@ -224,6 +243,7 @@ export class MessageService {
         tenantId,
         conversation.patientPhone,
         dto.content,
+        sendOptionsFor(quote),
       );
       return await this.confirmSent(tenantId, conversationId, message, externalId);
     } catch (err) {
@@ -254,6 +274,7 @@ export class MessageService {
     if (conversation.status !== 'active') {
       throw new BusinessError('CONVERSATION_ARCHIVED', { status: conversation.status });
     }
+    const quote = await this.resolveQuote(tenantId, conversationId, dto.quotedMessageId);
 
     const message = await this.messages.insert(tenantId, {
       conversationId,
@@ -263,17 +284,20 @@ export class MessageService {
       messageType: messageTypeFromMime(dto.mimeType),
       attachmentUrl: dto.attachmentUrl,
       status: 'sent',
+      quotedMessageId: quote?.id ?? null,
+      quotedExternalId: quote?.externalMessageId ?? null,
     });
     this.emitNewMessage(tenantId, conversationId, message.id);
 
     if (!this.whatsapp || conversation.channel !== 'whatsapp') return message;
 
     try {
-      const { externalId } = await this.whatsapp.sendMedia(tenantId, conversation.patientPhone, {
-        buffer: dto.buffer,
-        mimeType: dto.mimeType,
-        fileName: dto.fileName,
-      });
+      const { externalId } = await this.whatsapp.sendMedia(
+        tenantId,
+        conversation.patientPhone,
+        { buffer: dto.buffer, mimeType: dto.mimeType, fileName: dto.fileName },
+        sendOptionsFor(quote),
+      );
       return await this.confirmSent(tenantId, conversationId, message, externalId);
     } catch (err) {
       await this.messages.setStatus(tenantId, message.id, 'failed');
@@ -321,6 +345,7 @@ export class MessageService {
         // Entrou no sistema: para o paciente, ja foi entregue.
         status: 'delivered',
         externalMessageId: dto.externalId ?? null,
+        quotedExternalId: dto.quotedExternalId ?? null,
       });
 
     let message: Message;
@@ -383,6 +408,7 @@ export class MessageService {
         attachmentUrl: dto.attachmentUrl ?? null,
         status: 'sent',
         externalMessageId: externalId,
+        quotedExternalId: dto.quotedExternalId ?? null,
       });
       this.emitNewMessage(tenantId, conversationId, message.id);
       return message;
@@ -491,6 +517,174 @@ export class MessageService {
     });
   }
 
+  // -------------------------------------------------------------------------
+  // CRMLAB-66 — citacao, reacao, apagada/editada pelo remetente
+  // -------------------------------------------------------------------------
+
+  /**
+   * Citada pelo atendente (D-221): mensagem DESTA conversa, nao apagada e nao
+   * de sistema. Qualquer outro caso e `NOT_FOUND` — de outro tenant o RLS ja
+   * devolve `null`, e de outra conversa nao se distingue de inexistente.
+   */
+  private async resolveQuote(
+    tenantId: string,
+    conversationId: string,
+    quotedMessageId: string | null | undefined,
+  ): Promise<MessageRef | null> {
+    if (!quotedMessageId) return null;
+    const ref = await this.messages.findRef(tenantId, quotedMessageId);
+    if (!ref || ref.conversationId !== conversationId || ref.deleted || ref.senderType === 'system') {
+      throw notFound({ resource: 'message', id: quotedMessageId });
+    }
+    return ref;
+  }
+
+  /**
+   * Reacao do laboratorio pelo CRM (D-222). `emoji: null` remove. Sai para o
+   * WhatsApp ANTES de gravar: falhou, nada muda e a tela recebe
+   * `MESSAGE_SEND_FAILED`. Devolve a mensagem atualizada.
+   */
+  async setAgentReaction(
+    tenantId: string,
+    conversationId: string,
+    messageId: string,
+    userId: string,
+    emoji: string | null,
+  ): Promise<Message | null> {
+    const conversation = await this.conversations.findById(tenantId, conversationId);
+    if (!conversation) throw notFound({ resource: 'conversation', id: conversationId });
+    if (conversation.status !== 'active') {
+      throw new BusinessError('CONVERSATION_ARCHIVED', { status: conversation.status });
+    }
+    const ref = await this.messages.findRef(tenantId, messageId);
+    if (!ref || ref.conversationId !== conversationId || ref.deleted || ref.senderType === 'system') {
+      throw notFound({ resource: 'message', id: messageId });
+    }
+
+    // Remover o que nao existe e no-op: nem vai ao canal.
+    if (emoji === null && !(await this.messages.hasReaction(tenantId, messageId, 'agent'))) {
+      return this.messages.findById(tenantId, messageId);
+    }
+
+    if (this.whatsapp && conversation.channel === 'whatsapp' && ref.externalMessageId) {
+      try {
+        await this.whatsapp.sendReaction(
+          tenantId,
+          conversation.patientPhone,
+          { externalId: ref.externalMessageId, fromMe: ref.senderType === 'agent' },
+          emoji ?? '',
+        );
+      } catch (err) {
+        logger.error('whatsapp.send_reaction_failed', {
+          tenantId,
+          conversationId,
+          messageId,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+        throw new BusinessError('MESSAGE_SEND_FAILED', { messageId });
+      }
+    }
+
+    if (emoji === null) {
+      await this.messages.deleteReaction(tenantId, messageId, 'agent');
+    } else {
+      await this.messages.upsertReaction(tenantId, {
+        messageId,
+        reactorType: 'agent',
+        userId,
+        emoji,
+      });
+    }
+    this.emitMessageUpdated(tenantId, conversationId, messageId);
+    return this.messages.findById(tenantId, messageId);
+  }
+
+  /**
+   * Reacao que chegou pelo webhook (D-222). `fromMe` = celular do laboratorio
+   * (ou o eco da reacao feita pelo CRM, que preserva o autor se o emoji e o
+   * mesmo). `emoji: ''` remove.
+   */
+  async applyInboundReaction(
+    tenantId: string,
+    input: { targetExternalId: string; fromMe: boolean; emoji: string },
+  ): Promise<TargetOutcome> {
+    const ref = await this.messages.findRefByExternalId(tenantId, input.targetExternalId);
+    if (!ref) return 'alvo_desconhecido';
+    if (ref.deleted || ref.senderType === 'system') return 'sem_efeito';
+
+    const reactorType = input.fromMe ? 'agent' : 'patient';
+    if (input.emoji.length === 0) {
+      const removed = await this.messages.deleteReaction(tenantId, ref.id, reactorType);
+      if (!removed) return 'sem_efeito';
+    } else {
+      await this.messages.upsertReaction(tenantId, {
+        messageId: ref.id,
+        reactorType,
+        userId: null,
+        emoji: input.emoji,
+        keepUserOnSameEmoji: input.fromMe,
+      });
+    }
+    this.emitMessageUpdated(tenantId, ref.conversationId, ref.id);
+    return 'aplicado';
+  }
+
+  /**
+   * "Apagar para todos" pelo remetente (D-220): ESCONDE (`deleted_at`), nunca
+   * apaga. `deleted_by` e o lado da original — no WhatsApp so o autor apaga para
+   * todos. Audit log sem o texto.
+   */
+  async applySenderDelete(tenantId: string, targetExternalId: string): Promise<TargetOutcome> {
+    const ref = await this.messages.findRefByExternalId(tenantId, targetExternalId);
+    if (!ref) return 'alvo_desconhecido';
+    if (ref.senderType === 'system') return 'sem_efeito';
+    const deletedBy = ref.senderType === 'patient' ? 'patient' : 'agent';
+
+    const deletedAt = await this.messages.markDeleted(tenantId, ref.id, deletedBy);
+    if (!deletedAt) return 'sem_efeito';
+
+    await this.audit?.log({
+      tenantId,
+      userId: null,
+      action: 'message_deleted_by_sender',
+      entityType: 'message',
+      entityId: ref.id,
+      oldValues: { deletedAt: null },
+      newValues: { deletedAt, deletedBy, externalId: targetExternalId },
+    });
+    this.emitMessageUpdated(tenantId, ref.conversationId, ref.id);
+    return 'aplicado';
+  }
+
+  /**
+   * Edicao pelo remetente (D-220): texto novo em `content`, o anterior em
+   * `message_edits`. Audit log sem o texto (so o id da versao guardada).
+   */
+  async applySenderEdit(
+    tenantId: string,
+    targetExternalId: string,
+    newContent: string,
+  ): Promise<TargetOutcome> {
+    const ref = await this.messages.findRefByExternalId(tenantId, targetExternalId);
+    if (!ref) return 'alvo_desconhecido';
+    if (ref.senderType === 'system') return 'sem_efeito';
+    const editedBy = ref.senderType === 'patient' ? 'patient' : 'agent';
+
+    const edit = await this.messages.applyEdit(tenantId, ref.id, newContent, editedBy);
+    if (!edit) return 'sem_efeito';
+
+    await this.audit?.log({
+      tenantId,
+      userId: null,
+      action: 'message_edited_by_sender',
+      entityType: 'message',
+      entityId: ref.id,
+      newValues: { editedAt: edit.editedAt, editedBy, editId: edit.editId, externalId: targetExternalId },
+    });
+    this.emitMessageUpdated(tenantId, ref.conversationId, ref.id);
+    return 'aplicado';
+  }
+
   /** Status vindo do callback do canal. `null` = id externo de outro tenant. */
   async applyExternalStatus(
     tenantId: string,
@@ -507,6 +701,22 @@ export class MessageService {
   private emitNewMessage(tenantId: string, conversationId: string, messageId: string): void {
     this.wsHub.emitToTenant(tenantId, 'conversation.new_message', { conversationId, messageId });
   }
+
+  /** Reacao/edicao/apagamento (D-223) — nunca `new_message`, que conta como nova. */
+  private emitMessageUpdated(tenantId: string, conversationId: string, messageId: string): void {
+    this.wsHub.emitToTenant(tenantId, 'conversation.message_updated', { conversationId, messageId });
+  }
+}
+
+/** Citada -> opcoes do driver. Sem id externo, sai sem citacao para o canal (D-221 item 4). */
+function sendOptionsFor(quote: MessageRef | null): SendOptions {
+  if (!quote?.externalMessageId) return {};
+  const quoted: QuotedRef = {
+    externalId: quote.externalMessageId,
+    fromMe: quote.senderType !== 'patient',
+    content: quote.content,
+  };
+  return { quoted };
 }
 
 /**

@@ -100,6 +100,12 @@ function fakeEvolutionClient(): EvolutionClient {
     async sendMedia() {
       return { externalId: 'evo-sonda-media' };
     },
+    async setWebhook() {
+      return undefined;
+    },
+    async sendReaction() {
+      return undefined;
+    },
   };
 }
 

@@ -182,10 +182,30 @@ export interface ListConversationsResponse {
   counts: { mine: number; unassigned: number };
 }
 
+/**
+ * `GET /conversations/:id` — API_CONTRACTS.md §2.
+ * `before` (cursor, D-237) e `page` sao excludentes.
+ */
+export interface GetConversationQuery {
+  messageLimit?: number;
+  page?: number;
+  /** Id da mensagem: devolve as `messageLimit` anteriores a ela, na ordem `(createdAt, id)`. */
+  before?: string;
+}
+
+/** Cursores do historico (D-237). `null` = nao ha mais nada naquela direcao. */
+export interface MessageCursors {
+  /** Id da mensagem mais antiga da pagina quando ainda ha historico anterior. */
+  before: string | null;
+  /** Reservado para "carregar ao redor" (CRMLAB-68); sempre `null` por enquanto. */
+  after: string | null;
+}
+
 export interface GetConversationResponse {
   conversation: ConversationDetail;
   messages: Message[];
   pagination: PaginationMeta;
+  cursors: MessageCursors;
 }
 
 export interface CreateMessageRequest {

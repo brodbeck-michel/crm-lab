@@ -3777,6 +3777,173 @@ laboratório conectado).
 **Impacto:** `evolution-client.ts`, `channel-settings.service.ts`, `main.ts`; webhook Evolution;
 `shared/types/websocket.types.ts`; FRONTEND_BACKEND "Real-time"; API_CONTRACTS §2b; SERVICES §16.
 
+## 2026-09-28 — Aviso de mensagem nova (CRMLAB-72)
+
+### D-240: A notificação do navegador NUNCA mostra o conteúdo da mensagem (CRMLAB-72)
+**Decisão:** a `Notification` de mensagem nova leva **só** o nome do paciente no título
+(`patientName`; sem nome, o telefone que a fila já mostra) e, no `body`, **"Nova mensagem"** ou
+**"N novas mensagens"**. Nunca o texto, nunca a legenda, nunca a mídia (`icon`/`image` não
+recebem anexo). **Não existe opção para ligar a prévia**, nem por usuário, nem por laboratório.
+O `body` é montado por uma função pura (`alertBody(count)`) que só recebe um número, e um teste
+automatizado garante que o `body` não contém `message.content` nem `lastMessagePreview`.
+`tag = conversationId`: a notificação nova da mesma conversa substitui a anterior em vez de
+empilhar. Clicar traz a aba para a frente (`window.focus()`) e abre a conversa
+(`/attendance?conversationId=…`).
+**Motivo:** decidido pelo Michel em 28/09/2026. Mensagem de laboratório é dado de saúde
+(resultado, exame, sintoma). A notificação aparece na tela bloqueada, na central de
+notificações do sistema e para quem passa perto do computador; a LGPD trata dado de saúde como
+sensível. Saber *quem* escreveu basta para a atendente decidir voltar à aba.
+**Impacto:** `frontend/src/hooks/useNewMessageAlerts.ts` e o spec; PAGES.md §2 ("Aviso de
+mensagem nova"). Se um dia pedirem prévia, é decisão nova, não flag.
+
+### D-241: Quem é avisado, onde o aviso vive e de onde sai o contador do título (CRMLAB-72)
+**Decisão:**
+1. **Quem é avisado = a fila da atendente:** conversa **atribuída a ela** ou **sem dona**
+   (`assignedTo === userId || assignedTo === null`) — o mesmo recorte de visibilidade do
+   `ConversationRepository.list` para atendente (`c.assigned_to = $me OR c.assigned_to IS NULL`)
+   e o mesmo par dos chips "Minhas"/"Não atribuídas". Para **gestor e admin**, que enxergam todas
+   as conversas, o aviso usa o **mesmo recorte da fila** (dele + sem dona), não a visibilidade
+   total: conversa de outra atendente não toca para ninguém além dela (interpretação mais
+   restritiva do card, "Conversa de outra atendente não toca"). A regra mora em uma função só
+   (`isInMyQueue`) e é a mesma para aviso e contador.
+2. **Só mensagem do paciente avisa.** O sinal é o `unreadCount` da conversa **subir** junto com o
+   `lastMessageAt` — e o servidor só incrementa `unread_count` em `createFromPatient`
+   (`message.service.ts`). Mensagem de agente (`fromMe`) e evento de sistema não sobem o
+   contador, então não avisam, sem campo novo no payload WS (que continua só com ids). Conversa
+   que aparece na lista pela primeira vez só avisa se o `lastMessageAt` dela for mais novo que o
+   da lista anterior (conversa nova ou reaberta pelo paciente); conversa que chega por
+   transferência, com mensagens antigas, não avisa. A primeira carga é linha de base: não avisa.
+3. **Conversa aberta:** é a que o Atendimento publica (`useMessageAlertsStore.openConversationId`).
+   Abrir a conversa zera o `unreadCount` no servidor (`GET /conversations/:id`), então para ela o
+   sinal é o **detalhe**: mensagem `senderType: 'patient'` mais nova que a última vista. Com a aba
+   em foco, a conversa aberta não gera nada (nem som).
+4. **Foco:** "aba em foco" = `document.visibilityState === 'visible' && document.hasFocus()`.
+   Notificação só **sem foco**. Som sem foco, ou com foco quando a mensagem é de **outra** conversa.
+5. **Onde vive:** o hook é montado no `AppShell` (todas as telas do laboratório, não só
+   `/attendance`), como o WhatsApp Web, que avisa em qualquer lugar enquanto a aba está aberta. O
+   Console da Plataforma (`PlatformShell`) não monta. O pedido de permissão **não** sai no
+   carregamento: um aviso discreto "Ativar notificações" no topo da fila do Atendimento pede com um
+   clique, e some com a permissão concedida, negada, ou com a notificação desligada na preferência.
+6. **Contador do título "(N) <título>":** N = conversas da fila (regra do item 1) com
+   `unreadCount > 0`, derivado da query `GET /conversations?status=active&scope=all&
+   sortBy=unreadCount&order=desc&limit=100` (a chave vem de `queryKeys.conversations`, então o
+   mesmo evento WS `conversation.new_message` que invalida a fila invalida esta, e ler uma conversa
+   também). É **uma** query a mais por aba, a mesma do aviso: a fila do Atendimento é paginada e
+   filtrada por chip (e não existe fora de `/attendance`), então não serve de fonte para um número
+   que vale em qualquer tela. Ordenar por não lidas faz os 100 primeiros conterem todas as não lidas
+   em qualquer operação realista; acima de 100 conversas não lidas o número satura em 100.
+   Zerado, o título volta ao original.
+7. **Som:** tom sintético curto gerado por WebAudio (`OscillatorNode`, ~180 ms), sem arquivo de
+   terceiros e sem download. Não depende de `media-src` (a CSP em `nginx/security-headers.conf`
+   já tem `media-src 'self' blob:` e segue sem mudança).
+8. **Preferências** (som, notificação) por navegador, em `localStorage`
+   (`crm-lab.alerts.sound`, `crm-lab.alerts.notifications`, padrão ligado), com `try/catch`:
+   armazenamento bloqueado só faz a preferência não persistir. Ficam no menu do usuário (rodapé
+   da Sidebar).
+9. **Permissão negada ou API ausente:** nada quebra; título e som seguem funcionando.
+**Motivo:** o card pede que o aviso siga a regra da fila e que agente/`fromMe` não avise; o
+`unreadCount` já é exatamente "mensagem de paciente ainda não lida", então reaproveitá-lo evita
+um segundo critério no cliente e mudança no contrato WS (que CRMLAB-66 e CRMLAB-71 estão
+mexendo em paralelo).
+**Limitações declaradas:** (a) várias abas abertas tocam o som em cada uma (a notificação se
+sobrepõe pela `tag`); (b) conversa aberta com a aba escondida é marcada lida no servidor pelo
+refetch do detalhe, comportamento anterior a este card.
+**Impacto:** `frontend/src/hooks/useNewMessageAlerts.ts`, `stores/message-alerts.store.ts`,
+`lib/notification-sound.ts`, `pages/Attendance/EnableNotificationsBanner.tsx`,
+`pages/Attendance/index.tsx` (publica a conversa aberta, reabre por `?conversationId=` a cada
+navegação, banner), `components/layout/{AppShell,InboxLayout,Sidebar}.tsx`; PAGES.md §2,
+COMPONENTS.md (`layout/`).
+
+## 2026-09-28 — Leitura da conversa estilo WhatsApp Web (CRMLAB-71)
+
+### D-237: Histórico da conversa paginado por cursor (`before=<messageId>`), com a ordem `(created_at, id)`
+**Decisão:** `GET /conversations/:id` aceita `?before=<messageId>`: devolve as `messageLimit`
+mensagens **imediatamente anteriores** à mensagem indicada, na ordem `(created_at, id)` — a mesma
+do `ORDER BY` de sempre, com o `id` desempatando mensagens do mesmo instante. A resposta ganha
+`cursors: { before, after }`:
+1. `cursors.before` é o id da mensagem mais antiga da página **quando ainda existe histórico
+   anterior**; `null` quando a página chegou ao começo da conversa. É o valor que o cliente manda
+   no próximo `before` — fim do histórico é `null`, e o cliente para de pedir.
+2. `cursors.after` fica **sempre `null` neste card**. Existe no shape para o CRMLAB-68
+   ("carregar ao redor de uma mensagem", `around=<messageId>`), que vai abrir uma janela no meio
+   da conversa e precisar do cursor para as mensagens mais novas. `around` e `after` **não** são
+   aceitos como parâmetro hoje.
+3. `before` e `page` são excludentes: os dois juntos → `VALIDATION_ERROR`. `before` que não é
+   mensagem **desta** conversa (outra conversa, outro tenant, id inexistente) → `NOT_FOUND`
+   (`resource: "message"`), nunca uma lista vazia que a tela confundiria com "fim do histórico".
+4. `page`/`messageLimit` continuam funcionando como antes (compatibilidade: e2e e qualquer
+   cliente antigo). Sem `before` e sem `page`, a resposta é a página mais recente — e já traz
+   `cursors.before`, então a primeira página é o ponto de partida do cursor.
+5. `pagination` continua com os quatro campos (D-070): `total`/`totalPages` são da conversa
+   inteira; com `before`, `page` volta `1` — é campo da navegação por página, que o cursor não usa.
+6. Sem migração nova: o índice `idx_messages_conversation_created (conversation_id, created_at
+   DESC)` da 001 já serve o `WHERE conversation_id = $1 AND (created_at, id) < (...)`. O número 046
+   reservado para o card fica sem uso.
+**Motivo:** o botão antigo aumentava o `LIMIT` de 50 em 50 e rebuscava a conversa inteira a cada
+clique — e passava de 100, o máximo do contrato, na terceira página (400). O cursor vai no fio
+como **id da mensagem**, não como o par `createdAt,id` em texto: `created_at` é `TIMESTAMP` com
+microssegundos e o `createdAt` do fio é ISO com milissegundos, então um cursor montado pelo cliente
+a partir do `createdAt` pularia mensagens gravadas no mesmo milissegundo. Com o id, o par exato é
+lido no banco (`SELECT created_at, id FROM messages WHERE id = $2 AND conversation_id = $1`), e o
+formato é o mesmo que o `around=<messageId>` do CRMLAB-68 vai usar.
+**Impacto:** backend (`conversation.routes.ts`, `message.service.ts`, `message.repository.ts`),
+`shared/types/conversation.types.ts` (`GetConversationQuery`, `MessageCursors`,
+`GetConversationResponse.cursors`), API_CONTRACTS §2, SERVICES §3.
+
+### D-238: Tela de Atendimento carrega o histórico com `useInfiniteQuery` e rolagem, sem botão
+**Decisão:**
+1. O detalhe da conversa vira uma `useInfiniteQuery` com a chave
+   `[...queryKeys.conversation(id), 'messages']` (continua sob o prefixo que o WS
+   `conversation.new_message` invalida). `pageParam` é o `before` (D-237); a primeira página não
+   manda cursor; `getNextPageParam` devolve `cursors.before` — "próxima página" é **mais antiga**.
+   A tela junta as páginas de trás para frente, cada uma já em ordem crescente.
+2. `useMarkAsRead` chama `fetchInfiniteQuery` com as **mesmas** opções: abrir a conversa continua
+   sendo um GET só.
+3. Invalidação (mensagem nova pelo WS, envio, transferência) refaz **todas** as páginas carregadas,
+   em sequência, e o TanStack v5 recalcula cada cursor a partir da página que acabou de voltar —
+   não fica buraco entre páginas. Efeito colateral aceito: com várias páginas abertas, cada
+   mensagem nova custa uma requisição por página, e a mensagem mais antiga carregada pode sair do
+   topo (a janela anda junto com a conversa). A rolagem se ancora numa mensagem visível
+   (`data-anchor-id` na linha), então nem o carregamento de cima nem essa saída fazem a tela pular.
+4. O botão "Carregar mensagens anteriores" sai. Chegou a menos de 200px do topo e existe
+   `cursors.before`, a tela pede a página anterior — **uma de cada vez** (nada sai enquanto a query
+   está buscando) e **nenhuma** quando o cursor é `null` (começo da conversa). Enquanto carrega,
+   um "Carregando mensagens anteriores…" pequeno sobre o topo da lista — **fora** da área
+   rolável, senão o próprio indicador empurraria as mensagens.
+5. A âncora nativa do navegador (`overflow-anchor`) fica desligada na lista: a tela faz a
+   compensação sozinha, e as duas juntas somariam o deslocamento duas vezes.
+**Motivo:** é o comportamento do WhatsApp Web que o card pede, e o cursor evita rebuscar o que já
+está na tela. Refazer todas as páginas é o que o TanStack já faz; buscar só o que chegou depois
+exigiria o `after` (D-237 item 2), que é escopo do CRMLAB-68.
+**Impacto:** `pages/Attendance/{queries.ts,index.tsx,ConversationPanel.tsx,useConversationScroll.ts}`;
+PAGES.md §2 e a tabela de chaves do Atendimento.
+
+### D-239: Leitura da conversa — separador de data, faixa de não lidas e botão ↓
+**Decisão:**
+1. **Separador de data** (`DateSeparator`) entre mensagens de dias diferentes, **no fuso do
+   navegador** (o fio é ISO UTC): "Hoje", "Ontem", o dia da semana por extenso ("Segunda-feira")
+   de 2 a 6 dias atrás, e `dd/mm/aaaa` a partir de 7 dias (7 dias atrás é o mesmo dia da semana
+   de hoje, então o nome seria ambíguo) e para qualquer data futura. A conta é por **dia de
+   calendário** local, não por 24h: 23h59 e 00h01 são dias diferentes. A pílula fixa no topo
+   durante a rolagem (opcional no card) **não** entrou.
+2. **Faixa "N mensagens não lidas"** ("1 mensagem não lida" no singular). N é o `unreadCount` da
+   **lista** no momento do clique — o `GET` do detalhe zera o contador (D-035) antes de a tela ler.
+   A faixa vai antes da N-ésima mensagem **do paciente** contando do fim (só mensagem de paciente
+   soma no contador, D-035/§5), fica presa àquela mensagem (mensagem nova não a desloca) e a
+   conversa abre rolada nela, não no fim. Se N passa das mensagens de paciente carregadas, a faixa
+   vai antes da primeira mensagem carregada, com o N verdadeiro. Some ao trocar ou fechar a
+   conversa e quando a atendente envia (texto, anexo ou áudio). Abrir por link direto
+   (`?conversationId=`) antes de a lista carregar não mostra faixa: não há contador para ler.
+3. **Botão ↓** aparece quando a lista está a mais de 80px do fim. Clique: rolagem suave até a
+   última mensagem e o contador zera. Mensagem nova com a atendente longe do fim **não** move a
+   tela e soma no contador (`Badge`, a mesma pílula de não lidas da fila), que zera ao chegar no
+   fim por qualquer caminho. Perto do fim, mensagem nova continua descendo sozinha. Quem envia
+   vai para o fim na hora, esteja onde estiver — como no WhatsApp Web.
+**Motivo:** são as regras do card; os limites (80px do fim, 200px do topo) são de interface e
+ficam como constantes no hook.
+**Impacto:** `components/conversation/DateSeparator.tsx`, `pages/Attendance/*`; COMPONENTS.md
+(`DateSeparator`), PAGES.md §2.
+
 ## Template para novas decisões
 
 ```

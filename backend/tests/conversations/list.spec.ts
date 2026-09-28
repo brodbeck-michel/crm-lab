@@ -303,6 +303,7 @@ describe('GET /conversations/:id', () => {
 
     expect(Object.keys(response.body).sort()).toEqual([
       'conversation',
+      'cursors',
       'messages',
       'pagination',
     ]);

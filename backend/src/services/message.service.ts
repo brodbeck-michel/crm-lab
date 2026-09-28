@@ -55,6 +55,7 @@ import type {
   Message,
   MessageStatus,
   MessageType,
+  MessageCursors,
   PaginationMeta,
 } from '@crm-lab/shared';
 import type { ApiModuleDeps } from '../http/api-module.js';
@@ -104,11 +105,14 @@ export const MAX_MESSAGE_LIMIT = 100;
 export interface MessagePagination {
   page?: number;
   limit?: number;
+  /** Cursor (D-237) — excludente com `page` (o controller valida). */
+  before?: string;
 }
 
 export interface ListMessagesResult {
   messages: Message[];
   pagination: PaginationMeta;
+  cursors: MessageCursors;
 }
 
 /** Mensagem que chega do canal externo (webhook). */
@@ -191,8 +195,16 @@ export class MessageService {
     const exists = await this.conversations.exists(tenantId, conversationId);
     if (!exists) throw notFound({ resource: 'conversation', id: conversationId });
 
-    const criteria = { page: clampPage(page.page), limit: clampLimit(page.limit) };
+    // Com cursor, `page` nao se aplica: volta 1 (D-237 item 5).
+    const criteria = {
+      page: page.before !== undefined ? DEFAULT_MESSAGE_PAGE : clampPage(page.page),
+      limit: clampLimit(page.limit),
+      ...(page.before !== undefined ? { before: page.before } : {}),
+    };
     const result = await this.messages.listByConversation(tenantId, conversationId, criteria);
+    // Cursor de outra conversa/tenant ou inexistente: 404, nunca lista vazia —
+    // a tela leria "fim do historico" (D-237 item 3).
+    if (!result) throw notFound({ resource: 'message', id: page.before });
 
     return {
       messages: result.rows,
@@ -201,6 +213,10 @@ export class MessageService {
         limit: criteria.limit,
         total: result.total,
         totalPages: result.total === 0 ? 0 : Math.ceil(result.total / criteria.limit),
+      },
+      cursors: {
+        before: result.hasOlder ? (result.rows[0]?.id ?? null) : null,
+        after: null,
       },
     };
   }

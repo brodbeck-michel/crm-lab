@@ -153,8 +153,53 @@ Duas leituras registradas aqui porque o doc original não as fixava:
   por cor (`--color-chat-received` / `--color-chat-sent`)
 - Composer: input pílula + anexos + **emoji** + enviar. O emoji entra na posição do cursor
   (Onda 8 §2.2), grade fixa de 48, sem dependência nova
-- Dados: `GET /conversations/:id`, `POST /conversations/:id/messages`
+- **Leitura padrão WhatsApp Web (CRMLAB-71, D-238/D-239):**
+  - **Separador de data** (`DateSeparator`) entre mensagens de dias diferentes, no fuso do
+    navegador: "Hoje", "Ontem", dia da semana por extenso de 2 a 6 dias atrás, `dd/mm/aaaa`
+    daí para trás. Dia de calendário, não 24h (23h59 e 00h01 caem em dias diferentes)
+  - **Faixa "N mensagens não lidas"** antes da primeira não lida, com N lido da **lista** no
+    clique (o GET do detalhe zera o contador). A conversa abre **rolada na faixa**, não no fim.
+    A faixa some ao trocar/fechar a conversa ou quando a atendente envia
+  - **Botão ↓** (`aria-label="Ir para a última mensagem"`) no canto de baixo da lista quando ela
+    está longe do fim. Mensagem nova com a atendente lendo mais acima **não move a tela** e soma
+    num contador (`Badge`) no botão; clicar desce suave ao fim e zera. Perto do fim, mensagem nova
+    desce sozinha; quem envia vai ao fim na hora
+  - **Histórico sem botão:** chegar perto do topo carrega a página anterior sozinho
+    (`GET /conversations/:id?before=<messageId>`, D-237), com "Carregando mensagens
+    anteriores…" pequeno no topo, e a mensagem que estava na tela continua no lugar. No começo da
+    conversa (`cursors.before: null`) nada mais é pedido. O antigo "Carregar mensagens
+    anteriores" deixou de existir
+- Dados: `GET /conversations/:id` (paginado por cursor, `useInfiniteQuery`),
+  `POST /conversations/:id/messages`
 - Ao abrir: `markAsRead`
+
+### Aviso de mensagem nova (CRMLAB-72, D-240/D-241) — padrão WhatsApp Web
+Vale em **todas as telas do laboratório** (hook `useNewMessageAlerts`, montado no `AppShell`),
+não só aqui. O Console da Plataforma não avisa.
+- **Quem é avisado:** conversa da fila da pessoa logada — atribuída a ela ou sem dona
+  (`isInMyQueue`, o mesmo recorte do servidor para atendente). Conversa de outra atendente não
+  avisa ninguém além dela, nem gestor. Só mensagem de **paciente** avisa (o sinal é o
+  `unreadCount` subir); mensagem da equipe e evento de sistema não
+- **Título da aba:** `"(N) <título>"`, N = conversas da fila com não lidas; zerou, volta ao
+  título original. Acompanha a leitura (abrir a conversa invalida a query)
+- **Notificação do navegador**, só com a aba **sem foco**: título = nome do paciente (sem nome,
+  o telefone); corpo = **"Nova mensagem"** ou **"N novas mensagens"**. **Nunca o texto nem a
+  mídia** (D-240, sem opção de ligar prévia). `tag` = id da conversa (a nova substitui a
+  anterior). Clicar traz a aba para a frente e abre a conversa (`/attendance?conversationId=…`,
+  lido a cada navegação, não só no mount)
+- **Som** (tom sintético WebAudio, ~180 ms): aba sem foco, ou mensagem de **outra** conversa que
+  não a aberta. Conversa aberta com a aba em foco: nada
+- **Permissão:** nunca pedida no carregamento. Com `Notification.permission === 'default'` e a
+  notificação ligada na preferência, o topo da coluna 1 mostra um aviso discreto
+  (`EnableNotificationsBanner`): "Receba um aviso quando chegar mensagem com a aba em segundo
+  plano." + botão **[Ativar notificações]**, que chama `Notification.requestPermission()`. Some
+  com a permissão concedida ou negada. Negada ou navegador sem a API: título e som seguem
+  funcionando, nada quebra
+- **Preferências** (por navegador, `localStorage`): no menu do usuário (rodapé da Sidebar),
+  "Som de mensagem nova" e "Notificações do navegador", ligados por padrão
+- Dados: `GET /conversations?status=active&scope=all&sortBy=unreadCount&order=desc&limit=100`
+  (uma query por aba, invalidada pelo mesmo WS `conversation.new_message`) + o detalhe da
+  conversa aberta, que o Atendimento já carrega
 
 ### Coluna 3 — Contexto do paciente (recolhível)
 - Cadastro resumido, propostas da conversa (cartões clicáveis → modal), tags
@@ -1413,13 +1458,15 @@ Constantes exportadas: `GENERIC_CREDENTIALS_ERROR`, `SYSTEM_ERROR`,
 | Dado | Chave | staleTime |
 |------|-------|-----------|
 | lista | `queryKeys.conversations(filters)` | `staleTimes.conversations` (10s) |
-| detalhe | `[...queryKeys.conversation(id), messageLimit]` | idem |
+| detalhe (infinita, D-238) | `[...queryKeys.conversation(id), 'messages']` | idem |
 | propostas da conversa | `queryKeys.proposals({ conversationId })` | padrão |
 
-A chave do detalhe leva o `messageLimit` no fim para que "carregar mensagens
-anteriores" não precise de um segundo cache. Continua derivada de
-`query-keys.ts` e continua sendo invalidada pelo evento WS
-`conversation.new_message`, que invalida o **prefixo** `['conversation', id]`.
+O detalhe é uma `useInfiniteQuery` (D-238): cada página é uma resposta de
+`GET /conversations/:id`, a primeira sem cursor e as seguintes com
+`before=cursors.before` (mais antigas). Continua derivada de `query-keys.ts` e
+continua sendo invalidada pelo evento WS `conversation.new_message`, que invalida
+o **prefixo** `['conversation', id]` — o TanStack refaz as páginas carregadas
+recalculando os cursores.
 
 **Decisões registradas (o doc não fixava):**
 
@@ -1443,6 +1490,5 @@ anteriores" não precise de um segundo cache. Continua derivada de
    'proposal', id })`; o Modal da Proposta (§6) é de outro agente — falta só
    montá-lo na árvore.
 
-**Pendência conhecida:** paginação de histórico usa `limit` crescente
-(`+50` por clique), não `page`. Uma lista infinita de verdade entra quando o
-`MessageService` existir e o volume real aparecer.
+~~**Pendência conhecida:** paginação de histórico usa `limit` crescente.~~
+Resolvida no CRMLAB-71: cursor `before` (D-237) + rolagem infinita (D-238).

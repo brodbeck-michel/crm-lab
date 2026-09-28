@@ -125,7 +125,7 @@ Devolve `{ conversation, message }`, com a conversa relida depois do envio.
 
 ```typescript
 interface MessageService {
-  listByConversation(tenantId: string, conversationId: string, page: Pagination): Promise<Paginated<Message>>;
+  listByConversation(tenantId: string, conversationId: string, page: Pagination & { before?: string }): Promise<Paginated<Message> & { cursors: MessageCursors }>; // cursor D-237
   createFromAgent(tenantId: string, conversationId: string, senderId: string, dto: CreateMessageDTO): Promise<Message>;
   createFromPatient(tenantId: string, conversationId: string, dto: InboundMessageDTO): Promise<Message>; // via webhook
   createFromPhone(tenantId: string, conversationId: string, dto: InboundMessageDTO): Promise<Message | null>; // fromMe via webhook (D-173); null = eco do CRM
@@ -145,6 +145,11 @@ interface que ProposalService/ApprovalService consomem. Instanciação:
 `InboundMessageInput` (`content`, `messageType?`, `attachmentUrl?`, `externalId?`).
 
 **Regras:**
+- `listByConversation` com `before` (D-237): as `limit` mensagens anteriores à mensagem
+  `before`, na ordem `(created_at, id)`, lida no banco pelo id (nunca por um `createdAt` vindo
+  do cliente — o fio tem milissegundos, a coluna tem microssegundos). `before` que não é desta
+  conversa → `NOT_FOUND` (`resource: 'message'`). Busca `limit + 1` linhas para saber se ainda
+  há histórico: `cursors.before` é o id da mais antiga devolvida, ou `null` no começo da conversa
 - `createFromAgent` → chama WhatsAppService.send() → atualiza `status` conforme callback.
   A mensagem é persistida ANTES do envio: falha de canal deixa a linha com
   `status: 'failed'` e devolve `MESSAGE_SEND_FAILED` (502) — a bolha não some da tela

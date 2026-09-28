@@ -29,6 +29,15 @@ Faixas: decisões D-220…D-224 · migrações 040, 041.
 - [ ] Testes: webhook com payloads reais, reação/citação isolamento, RLS, frontend.
 - [ ] Typecheck + specs afetados verdes.
 
+## Integração
+- 28/09: merge de `origin/integ/epic-65` (CRMLAB-71 e 72 já integrados). Único conflito: fim do
+  `DECISIONS.md` — mantidos os dois lados (D-220..D-223 + D-237..D-241). O detalhe da conversa
+  agora é `useInfiniteQuery` (`[...queryKeys.conversation(id), 'messages']`, `pages[0]` = mais
+  recente) e `GetConversationResponse.cursors` é obrigatório; a lista envolve cada bolha em
+  `<div data-anchor-id>` — o `data-message-id` do 66 fica no balão, dentro dela. O 66 só
+  INVALIDA por `queryKeys.conversation(id)` (não faz `setQueryData`), então o formato novo não
+  exige adaptação no cache.
+
 ## Decisões escritas
 D-220, D-221, D-222, D-223 (D-224 livre).
 

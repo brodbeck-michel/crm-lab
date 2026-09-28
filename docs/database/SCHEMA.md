@@ -285,6 +285,7 @@ CREATE TABLE messages (
   external_message_id VARCHAR(255), -- ID da API externa (WhatsApp, etc)
   read_at TIMESTAMP,
   created_at TIMESTAMP DEFAULT NOW(),
+  automation VARCHAR(20) NULL,     -- migração 031: 'reengagement' = o sistema mandou sozinho (D-211)
   
   FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
@@ -1677,6 +1678,59 @@ CREATE INDEX idx_funnel_rules_updated_by ON funnel_rules(updated_by);
   que não cabe antes de gravar (API_CONTRACTS.md §6c).
 - Migração **única** (tabela + policy), como 026: sem backfill, a tabela nasce vazia.
 
+### 33. `conversation_reengagements` (migração 031 — CRMLAB-62, D-211)
+Uma linha por disparo de reingajamento decidido: o que aconteceu com o 1º e o 2º de cada
+silêncio. Dono: `ReengagementService` (SERVICES.md §28).
+
+```sql
+CREATE TABLE conversation_reengagements (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL,
+  conversation_id UUID NOT NULL,
+  anchor_message_id UUID NOT NULL,   -- última mensagem de pessoa do laboratório: identifica o silêncio
+  step VARCHAR(10) NOT NULL,         -- 'first' | 'second'
+  outcome VARCHAR(20) NOT NULL,      -- 'sent' | 'discarded' | 'failed'
+  reason VARCHAR(20) NULL,           -- só em 'discarded': 'holiday' | 'stale'
+  message_id UUID NULL,              -- a mensagem automática (sent/failed)
+  decided_at TIMESTAMP NOT NULL DEFAULT NOW(),  -- no 'first' enviado, é o relógio do 2º
+
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+  FOREIGN KEY (anchor_message_id) REFERENCES messages(id) ON DELETE CASCADE,
+  FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE SET NULL,
+  CONSTRAINT conversation_reengagements_once UNIQUE (anchor_message_id, step)
+);
+-- CHECKs de step/outcome/reason; índices em tenant_id, conversation_id, message_id;
+-- ENABLE ROW LEVEL SECURITY + policy conversation_reengagements_tenant_isolation
+```
+
+- **A UNIQUE `(anchor_message_id, step)` é a trava contra mandar duas vezes.** A linha nasce
+  `sent` ANTES do envio (reserva) e vira `failed` se o canal recusar; tique concorrente cai no
+  `ON CONFLICT DO NOTHING`.
+- **Âncora:** `messages` com `sender_type = 'agent'` e `automation IS NULL` (CRM ou celular). A
+  mensagem automática nunca vira âncora, então não há loop.
+- Descarte (`holiday`/`stale`) fica gravado para não ser reavaliado nos tiques seguintes.
+
+### 34. `tenant_holidays` (migração 031 — CRMLAB-62, D-213)
+Feriados do laboratório (municipais, estaduais, dias sem expediente). Os **nacionais não ficam
+aqui**: são calculados em `shared/` (`nationalHolidays`). Dono: `HolidayService` (SERVICES.md §29).
+
+```sql
+CREATE TABLE tenant_holidays (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL,
+  holiday_date DATE NOT NULL,        -- data local do laboratório
+  description VARCHAR(100) NOT NULL,
+  created_by UUID NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT tenant_holidays_once UNIQUE (tenant_id, holiday_date)
+);
+-- índice em created_by; ENABLE ROW LEVEL SECURITY + policy tenant_holidays_tenant_isolation
+```
+
 ---
 
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
@@ -1829,6 +1883,9 @@ Nenhum outro caminho de código deve usar `withoutTenant()`.
 | `exam_package_items` | ✅ | idem |
 | `exam_package_prices` | ✅ | idem |
 | `lis_sync_settings` | ✅ | migração `026_lis_sync.sql` (tabela + policy no mesmo arquivo) — e a chave nunca sai do repositório (projeção explícita) |
+| `funnel_rules` | ✅ | migração `027` (tabela + policy no mesmo arquivo) |
+| `conversation_reengagements` | ✅ | migração `031_reengagement.sql` (tabela + policy no mesmo arquivo), `rls-reengagement.spec.ts` |
+| `tenant_holidays` | ✅ | idem |
 
 As **4 tabelas da migração 003** entram sob RLS na `004_rls_onda6.sql`, as **3 tabelas da
 migração 005** entram na `006_rls_onda7.sql`, e as **4 tabelas novas da migração 012**
@@ -1926,7 +1983,8 @@ migrations/
 ├── 026_lis_sync.sql              # lis_sync_settings + policy; lis_imports.kind ganha 'sync' (CRMLAB-52, D-185)
 ├── 027_funnel_rules.sql          # funnel_rules + policy — Regras do funil (CRMLAB-56, D-190)
 ├── 028_bitlab_origin.sql         # proposals.origin, conversa/autor nulláveis só na origem bitlab (CRMLAB-57, D-195/D-196)
-└── 030_funnel_timer.sql          # proposal_status_history.automation + stale_alerted_at — motor de tempo (CRMLAB-59, D-207/D-208)
+├── 030_funnel_timer.sql          # proposal_status_history.automation + stale_alerted_at — motor de tempo (CRMLAB-59, D-207/D-208)
+└── 031_reengagement.sql          # messages.automation + conversation_reengagements + tenant_holidays (CRMLAB-62, D-211/D-213)
 ```
 
 A 007 e a 008 são arquivos ÚNICOS (tabela + policy), diferente dos pares 003/004 e 005/006: a

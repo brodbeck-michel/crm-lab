@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-26 (Epic CRMLAB-55 — CRMLAB-56/57/58/59 + CRMLAB-60 parcial integrados em `integ/onda-funil`; v1.22.0 em PRODUÇÃO)
+**Última atualização:** 2026-09-28 (CRMLAB-62 — reingajamento da conversa + feriados, branch `feature/CRMLAB-62-reingajamento`)
 
 ---
 
@@ -2926,3 +2926,28 @@ Branch `feature/CRMLAB-59-motor-tempo` (de `integ/onda-funil`). Decisões D-205.
   aparece. O código novo lê com `to_char` em UTC e não é afetado. Fechar a classe (fixar `TZ=UTC`
   no processo/teste ou parser de tipo no driver) é um card de Kernel.
 
+
+### ✅ CRMLAB-62 — reingajamento da conversa + feriados (2026-09-28)
+
+Branch `feature/CRMLAB-62-reingajamento` (de `main` v1.23.0). Decisões D-211..D-214, migração
+`031_reengagement.sql`. D-210 é do CRMLAB-60 (branch própria, ainda fora da main).
+
+- **Reingajamento (D-211):** `ReengagementService` (SERVICES §28) roda no tique do motor de tempo.
+  Conversa ativa de WhatsApp em que a última mensagem de pessoa do laboratório (CRM ou celular)
+  ficou sem resposta do paciente por X h recebe o texto do 1º; o 2º (opcional) sai Y h depois do
+  envio do 1º. No máximo dois por silêncio; uma linha por disparo em `conversation_reengagements`
+  com `UNIQUE (anchor_message_id, step)`, gravada antes do envio. Na conversa: "Mensagem
+  automática" (`messages.automation = 'reengagement'`). Regras em `FunnelRules.reengagement`,
+  padrão desligado, 1 h / 24 h.
+- **Quando sai (D-212):** horário de funcionamento do laboratório (sem dia configurado = sempre
+  aberto); fora do horário, na próxima abertura; feriado → descarta; mais de 2 h atrasado →
+  descarta (`stale`); janela de busca de 8 dias além dos prazos — ligar a regra não dispara em
+  massa para conversas antigas.
+- **Feriados (D-213):** nacionais calculados em `shared/` (com Carnaval seg/ter e Corpus Christi);
+  os do laboratório em `tenant_holidays`, `GET/POST/DELETE /settings/holidays` (§6d). Por ora só
+  o reingajamento usa; os dias úteis do funil seguem sem feriados.
+- **Só QR (D-214):** canal na API oficial da Meta não entra na rotina.
+- **Tela:** página de Regras ganhou "Reingajamento da conversa" (no formulário) e "Feriados"
+  (salva na hora).
+- **Testes:** `tests/reengagement/` (funções puras + integração com PGlite), `settings/holidays`,
+  `db/rls-reengagement`, casos novos em `settings/funnel-rules` e `Rules.spec.tsx`.

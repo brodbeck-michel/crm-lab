@@ -1494,7 +1494,9 @@ export interface FunnelTimerService {
   runForTenant(tenantId: string): Promise<FunnelTimerTenantResult>;
 }
 export function createFunnelTimerService(deps: {
-  db: DbClient; wsHub: WsHub; cache: CacheService; now?: () => Date;
+  db: DbClient; wsHub: WsHub; cache: CacheService;
+  reengagement?: ReengagementService; // CRMLAB-62: roda no fim de cada laboratório (§28)
+  now?: () => Date;
 }): FunnelTimerService;
 
 /** A transição de sistema do motor, na transação de quem chama (D-208). `false` = nada mudou. */
@@ -1512,8 +1514,8 @@ export function resetFunnelTimerLocksForTest(): void;
 
 **Tique** (D-205):
 1. `tickInProgress` no módulo: tique sobreposto é ignorado.
-2. `withoutTenant()` → só os `tenant_id` de tenants ativos com proposta aberta (exceção de RLS
-   declarada em SCHEMA.md).
+2. `withoutTenant()` → só os `tenant_id` de tenants ativos com proposta aberta **ou com o
+   reingajamento ligado** em `funnel_rules` (exceção de RLS declarada em SCHEMA.md; CRMLAB-62).
 3. Por laboratório, em série: `readFunnelRules` (`withTenant`); para cada regra de prazo
    **ligada** e cujo passo está na matriz vigente (`buildAllowedTransitions`, D-206 item 3),
    seleciona até `FUNNEL_TIMER_BATCH` cartões do estágio de origem cuja entrada no estágio (última
@@ -1527,15 +1529,74 @@ export function resetFunnelTimerLocksForTest(): void;
    `stale_alerted_at` (condicionado a ainda estar nulo e o cartão ainda em `novo_contato`) e resolve
    os destinatários (responsável ativo; senão gestores e admins ativos). Depois do commit:
    `emitToUser` `proposal.stale_alert` para cada um.
-5. Erro num laboratório → `warn` `funnel_timer.tenant_failed`, segue para o próximo. Log `info`
-   `funnel_timer.completed` com `{ tenantId, moved, alerted }` quando houve algo; `debug`
-   `funnel_timer.tick_empty` quando nada aconteceu.
+5. Reingajamento (§28), se injetado: `reengagement.runForTenant(tenantId, agora)`. Falha dele →
+   `warn` `reengagement.tenant_failed`, sem desfazer o que o funil fez.
+6. Erro num laboratório → `warn` `funnel_timer.tenant_failed`, segue para o próximo. Log `info`
+   `funnel_timer.completed` com `{ tenantId, moved, alerted, reengaged }` quando houve algo;
+   `debug` `funnel_timer.tick_empty` quando nada aconteceu.
 
 **`applyTimerTransition`** (D-208): `SELECT ... FOR UPDATE`; recusa (`false`) se o estágio não é
 mais o de origem, se a última linha do histórico para o estágio não é mais `enteredHistoryId` ou se
 um fato apareceu. `UPDATE` do estágio (`perdido`: `reason_lost = 'silencio'`, `closed_at`),
 histórico com `changed_by NULL` e `automation`, mensagem de sistema se houver conversa, audit
 `update_proposal_status` com `userId: null` e `newValues.source: "rule"`.
+
+---
+
+## 28. ReengagementService — reingajamento da conversa (CRMLAB-62 — D-211..D-214)
+
+**Responsabilidade:** mandar sozinho a mensagem de reingajamento quando a atendente falou por
+último e o paciente parou de responder. Sem rota: roda **dentro do tique do motor de tempo** (§27).
+
+```typescript
+// backend/src/services/reengagement.service.ts
+export const REENGAGEMENT_BATCH = 200; // silêncios por laboratório, por tique
+
+export interface ReengagementService {
+  runForTenant(tenantId: string, at: Date): Promise<{ sent: number; discarded: number; failed: number }>;
+}
+export function createReengagementService(deps: {
+  db: DbClient;
+  sender: { createAutomated(tenantId: string, conversationId: string, content: string): Promise<Message> };
+}): ReengagementService;
+```
+
+`planReengagement`, `nextOpening`, `nationalHolidays`, `isHoliday`, `localDateOf`,
+`REENGAGEMENT_STALE_GRACE_MS` e `REENGAGEMENT_LOOKBACK_DAYS` estão em
+`shared/types/reengagement.types.ts` (funções puras).
+
+**Por laboratório** (D-211/D-212):
+1. `readFunnelRules`: 1º desligado → nada. Canal WhatsApp que não está ativo **em `qr`** → nada
+   (D-214). Lê o horário de funcionamento (`readBusinessHours`, de `tenant_settings`).
+2. `selectSilences`: conversas `active` de WhatsApp cuja âncora (última `agent` com
+   `automation` nulo) é posterior a `agora − (horas do 1º + do 2º) − 8 dias`, sem mensagem do
+   paciente depois dela e sem o 2º decidido. Até `REENGAGEMENT_BATCH`, da mais antiga.
+3. Feriados do laboratório no intervalo (`holiday.repository.listDates`).
+4. Para cada silêncio, `planReengagement` → `none` | `wait` | `discard` | `send`.
+5. **Descarte** (`holiday`/`stale`): grava a decisão `discarded` com o motivo; `info`
+   `reengagement.discarded`.
+6. **Envio:** numa transação, `lockSilence` (conversa `FOR UPDATE`, ainda ativa, mesma âncora,
+   sem resposta do paciente) e, no 2º, o 1º ainda `sent`; grava a decisão `sent` (reserva,
+   `ON CONFLICT DO NOTHING`). Depois do commit, `MessageService.createAutomated`: mensagem
+   `agent` sem autor com `automation = 'reengagement'`, `conversation.new_message`, envio pelo
+   canal. Sucesso: `message_id` na decisão, `info` `reengagement.sent`. Falha do canal: mensagem
+   `failed`, decisão `failed`, `warn` `reengagement.failed`. Não há nova tentativa.
+
+## 29. HolidayService — feriados (CRMLAB-62 — D-213)
+
+**Responsabilidade:** `GET/POST/DELETE /settings/holidays` (API_CONTRACTS.md §6d). Dono de
+`tenant_holidays` (SCHEMA.md §34). O `GET` junta `nationalHolidays(year)` (calculados) e os do
+laboratório no ano. `POST`/`DELETE` só manager/admin, com audit `create_holiday`/`delete_holiday`.
+
+```typescript
+// backend/src/services/holiday.service.ts
+export interface HolidayService {
+  list(ctx: TenantContext, year: number): Promise<HolidaysResponse>;
+  create(ctx: TenantContext, dto: unknown): Promise<Holiday>;      // CONFLICT em data repetida
+  remove(ctx: TenantContext, id: string): Promise<void>;           // NOT_FOUND se não é do tenant
+}
+export function parseYear(raw: unknown, now?: Date): number;       // VALIDATION_ERROR fora de 2000..2100
+```
 
 ---
 

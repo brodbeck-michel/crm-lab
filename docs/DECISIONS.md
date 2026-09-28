@@ -3681,6 +3681,96 @@ considera parados.
 **Impacto:** `funnel-timer.service.ts`; SERVICES §27; relatório do card (pergunta ao Michel sobre o
 primeiro tique em produção).
 
+<!-- D-210 é do CRMLAB-60 (branch feature/CRMLAB-60-unifica-transicao-sistema, ainda fora da main). -->
+
+### D-211: Reingajamento da conversa roda no motor de tempo, com uma linha por disparo
+**Decisão:** quando a atendente fala por último e o paciente para de responder, o sistema manda
+sozinho uma mensagem (CRMLAB-62). Regras em `FunnelRules.reengagement` (página de Regras, §6c):
+`first` e `second`, cada um com `enabled`, `hours` (1..720) e `message` (1..1000, texto fixo).
+1. **Onde roda:** dentro do tique do `FunnelTimerService` (D-205), no fim de cada laboratório,
+   pelo `ReengagementService` (SERVICES §28). O tique passa a incluir laboratórios com o 1º ligado,
+   mesmo sem proposta aberta. Falha do reingajamento não desfaz o que o funil fez.
+2. **Silêncio e âncora:** a âncora é a última mensagem de pessoa do laboratório na conversa
+   (`sender_type = 'agent'` e `automation` nulo: CRM **ou celular**, D-173). Há silêncio quando
+   não existe mensagem do paciente depois dela e a conversa está `active`. A mensagem automática
+   **nunca vira âncora**: não há loop. Resposta do paciente seguida de nova mensagem da atendente
+   abre um silêncio novo.
+3. **Uma linha por disparo** em `conversation_reengagements` (migração 031), com
+   `UNIQUE (anchor_message_id, step)`: `sent` | `discarded` (+ motivo) | `failed`. A linha `sent`
+   é gravada **antes** do envio, sob `FOR UPDATE` na conversa e com a reconferência do silêncio;
+   tique concorrente cai no `ON CONFLICT DO NOTHING`. Se o processo cair entre a linha e o envio,
+   o paciente fica sem a mensagem, nunca com duas. Falha do canal: mensagem `failed`, decisão
+   `failed`, **sem nova tentativa**.
+4. **O 2º** conta a partir do envio do 1º (`decided_at` da linha `sent`) e só existe depois de um
+   1º **enviado**; o 1º descartado ou com falha encerra o silêncio. Não há terceiro. O `PATCH`
+   recusa ligar o 2º com o 1º desligado; a tela desliga o 2º junto com o 1º.
+5. **Na conversa:** `MessageService.createAutomated` grava `agent` sem autor com
+   `messages.automation = 'reengagement'`, emite `conversation.new_message` e envia pelo mesmo
+   caminho do Composer. A API devolve `senderName: "Mensagem automática"`. A mensagem entra no
+   "envio em voo" do eco (D-173) e nunca é apagada como cópia do celular.
+6. **Padrões:** os dois desligados (quem já usa não passa a mandar nada), 1º em 1 h, 2º em 24 h,
+   textos profissionais editáveis.
+**Motivo:** o Michel pediu que o motor de tempo fosse reaproveitado e que o reingajamento
+dispare uma vez por silêncio. Gravar a decisão (e não só a mensagem) é o que permite o descarte
+de feriado ser definitivo e o 2º contar do envio real do 1º.
+**Impacto:** migração 031; `shared/types/funnel-rules.types.ts`, `reengagement.types.ts` (novo);
+`reengagement.service.ts`, `reengagement.repository.ts` (novos), `funnel-timer.service.ts`,
+`message.service.ts`, `message.repository.ts`, `funnel-rules.service.ts`, `main.ts`; SCHEMA §4/§33,
+API_CONTRACTS §2/§6c, SERVICES §27/§28, BUSINESS_RULES §3, PAGES §21.
+
+### D-212: Quando o reingajamento sai — horário de funcionamento, feriado e atraso máximo
+**Decisão:** a hora de sair é calculada a cada tique, com a regra vigente (como D-209):
+1. **Horário:** o de `tenant_settings.business_hours` (tela de Canais, o mesmo da resposta de
+   fora do horário). Ele é **do laboratório**, não de cada canal. Sem nenhum dia com faixa =
+   **sempre aberto** (decisão do Michel, 28/09/2026).
+2. **Prazo vencido fora do horário** → sai na **próxima abertura** (`nextOpening`, só dia da
+   semana e faixa, no fuso IANA do horário). As horas contam em tempo corrido; o horário decide
+   só **quando** sai.
+3. **Feriado não mantém** (Michel, 28/09/2026): se a data local da hora de sair é feriado
+   (nacional ou do laboratório, D-213), o disparo é **descartado** (`holiday`), sem empurrar para
+   depois. Vale também para o canal sempre aberto.
+4. **Atraso máximo de 2 h** (`REENGAGEMENT_STALE_GRACE_MS`): se o tique que enviaria roda mais de
+   2 h depois da hora de sair, descarta (`stale`). Cobre sistema fora do ar, regra recém-ligada e
+   canal que voltou da API oficial para QR — em vez de mandar "ainda está aí?" horas ou dias
+   depois.
+5. **Janela de busca:** o motor só olha silêncios com âncora posterior a
+   `agora − (horas do 1º + do 2º) − 8 dias` (`REENGAGEMENT_LOOKBACK_DAYS`). Ligar a regra não
+   dispara para conversas paradas há semanas: as da janela viram `stale` uma vez, as de fora
+   são ignoradas.
+6. Na hora de enviar, reconfere: conversa ainda ativa, mesma âncora, paciente sem responder.
+**Motivo:** o card pede "respeitar o horário" e "feriado não mantém". O atraso máximo e a janela
+evitam o disparo em massa ao ligar a regra e a mensagem fora de contexto depois de uma queda.
+**Impacto:** `shared/types/reengagement.types.ts` (`nextOpening`, `planReengagement`),
+`channel-settings.service.ts` (`readBusinessHours`), `reengagement.service.ts`; SERVICES §28.
+
+### D-213: Feriados — nacionais calculados no código, os do laboratório cadastrados nas Regras
+**Decisão:** (opção "b" do Michel, 28/09/2026)
+1. **Nacionais prontos**, calculados por ano em `shared/` (`nationalHolidays`), **não gravados**:
+   fixos 1/1, 21/4, 1/5, 7/9, 12/10, 2/11, 15/11, 20/11, 25/12; móveis pela Páscoa (algoritmo
+   gregoriano): **segunda e terça de Carnaval**, Sexta-feira Santa, Corpus Christi. Carnaval e
+   Corpus Christi são ponto facultativo, mas entram como feriado (Michel, 28/09/2026).
+2. **Do laboratório** em `tenant_holidays` (migração 031, `UNIQUE (tenant_id, holiday_date)`),
+   com `GET/POST/DELETE /settings/holidays` (§6d): `GET` todo perfil; incluir e remover
+   manager/admin, com audit. Data repetida → `CONFLICT`.
+3. **Por ora o feriado só vale para o reingajamento.** O motor de tempo do funil continua sem
+   descontar feriados nos dias úteis (D-205 item 3); usar a lista lá é outro card.
+**Motivo:** o produto não tinha calendário de feriados (D-205). Nacionais no código dispensam
+cadastro e manutenção; os municipais variam por cidade e ficam com o laboratório.
+**Impacto:** migração 031; `shared/types/reengagement.types.ts`; `holiday.service.ts`,
+`holiday.repository.ts`, `holiday.routes.ts` (novos), `http/modules.ts`; frontend
+`api/holidays.ts`, `Settings/HolidaysSection.tsx`; SCHEMA §34, API_CONTRACTS §6d, SERVICES §29,
+PAGES §21.
+
+### D-214: Reingajamento só para WhatsApp conectado por QR Code
+**Decisão:** o reingajamento só considera o laboratório cujo canal `whatsapp` está **ativo e em
+`connection_mode = 'qr'`** (Evolution). Na API oficial da Meta (`cloud_api`) nenhuma conversa
+entra na rotina, com a regra ligada ou não (Michel, 28/09/2026). A página de Regras avisa
+"Inativo para este canal" quando o gestor/admin vê o WhatsApp em `cloud_api`.
+**Motivo:** na API oficial, texto livre só sai até 24 h depois da última mensagem do paciente;
+fora disso a Meta exige template aprovado (pago), que o CRM não tem. Em vez de meio suporte, a
+regra fica fora. Template aprovado, se o laboratório migrar, é outro card.
+**Impacto:** `reengagement.repository.ts` (`isQrWhatsAppActive`), `ReengagementSection.tsx`.
+
 ## Template para novas decisões
 
 ```

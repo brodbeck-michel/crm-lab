@@ -106,3 +106,8 @@ Fases: ⬜ não iniciado → 🔄 docs → 🔄 backend → 🔄 frontend → �
 Diário de cada card: `docs/superpowers/plans/crmlab-65/CRMLAB-<n>.md`.
 
 - 2026-09-28: criada `integ/epic-65`, plano e faixas. Onda 1 (66, 71, 72) disparada.
+- 2026-09-28: 72 e 71 mergeados na `integ/epic-65`. Conflitos: fim de `DECISIONS.md` (mantidos os
+  dois blocos) e imports de `Attendance/index.tsx`. **Conflito semântico achado na junção:** o hook
+  de aviso (72) lia o detalhe no formato antigo; o 71 trocou para páginas do `useInfiniteQuery`.
+  Corrigido na integração (`detailOf` no hook + specs com o cache real). Specs afetados: 203 verdes.
+  Falta: 66 terminar → merge → suíte completa.

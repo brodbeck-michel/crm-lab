@@ -910,7 +910,8 @@ médico.
 {
   "fileName": "pedido-medico.jpg",
   "mimeType": "image/jpeg",
-  "contentBase64": "/9j/4AAQSkZJRg..."
+  "contentBase64": "/9j/4AAQSkZJRg...",
+  "caption": "Pedido do Dr. Silva"
 }
 ```
 
@@ -921,6 +922,12 @@ médico.
   tamanho (15 MiB por arquivo)
 - `quotedMessageId` (opcional, anulável, uuid): mesma regra de `POST /messages` (CRMLAB-66,
   D-221) — o anexo sai citando a mensagem
+- `caption` (opcional, anulável, 0..1024 caracteres — CRMLAB-69, D-231): **legenda**. Aparada;
+  vazia = sem legenda. Imagem, vídeo e documento levam a legenda ao WhatsApp e a mensagem gravada
+  tem `content` = legenda (sem legenda, `content` = `fileName`, como antes). **Áudio não tem
+  legenda**: o campo é ignorado (não vai ao gateway nem ao `content`)
+- Vários arquivos = um POST por arquivo, em sequência (D-233). O `quotedMessageId` vai só no
+  primeiro
 
 O recorte por papel é aplicado **antes** de gravar: conversa que o usuário não
 enxerga devolve `NOT_FOUND`. `messageType` é derivado do `mimeType`
@@ -933,6 +940,10 @@ enxerga devolve `NOT_FOUND`. `messageType` é derivado do `mimeType`
 `POST /message/sendWhatsAppAudio/:instance` — o gateway converte para `ogg/opus` e entrega como
 recado de voz — e não por `/message/sendMedia`. O request e a resposta deste endpoint não mudam.
 
+**Vídeo (CRMLAB-69, D-231):** `video/*` sai no `/message/sendMedia` com `mediatype: "video"`
+(antes ia como `document`). O `messageType` gravado continua `doc` até o CRMLAB-70 criar o tipo
+`video`.
+
 **Response (201):** o mesmo shape de `POST /conversations/:id/messages`, com
 `attachmentUrl` apontando para `GET /media/:id` (nunca uma URL pública):
 
@@ -943,7 +954,7 @@ recado de voz — e não por `/message/sendMedia`. O request e a resposta deste 
   "senderType": "agent",
   "senderId": "uuid",
   "senderName": "Maria Souza",
-  "content": "pedido-medico.jpg",
+  "content": "Pedido do Dr. Silva",
   "messageType": "image",
   "attachmentUrl": "/api/v1/media/uuid",
   "status": "sent",

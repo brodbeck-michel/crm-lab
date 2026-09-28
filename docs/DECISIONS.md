@@ -3944,6 +3944,81 @@ ficam como constantes no hook.
 **Impacto:** `components/conversation/DateSeparator.tsx`, `pages/Attendance/*`; COMPONENTS.md
 (`DateSeparator`), PAGES.md §2.
 
+## 2026-09-28 — Anexos com prévia e legenda (CRMLAB-69)
+
+### D-231: Legenda (`caption`) no envio de anexo; vídeo sai como `video` para o gateway (CRMLAB-69)
+**Decisão:**
+1. `POST /conversations/:id/attachments` aceita `caption` (opcional, anulável, até **1024**
+   caracteres — o teto de legenda do WhatsApp). Aparado; vazio depois de aparar = sem legenda.
+2. **A mensagem gravada leva a legenda em `content`**, igual à entrada (o webhook já grava
+   `caption ?? fileName`). Sem legenda, `content` continua sendo o nome do arquivo.
+3. **Imagem, vídeo e documento** mandam a legenda ao Evolution (`caption` no corpo de
+   `/message/sendMedia`). **Áudio não tem legenda** no WhatsApp (sai por `sendWhatsAppAudio`,
+   D-182): a legenda é **descartada** — não vai ao gateway e não vira `content` (senão a atendente
+   veria no CRM um texto que o paciente nunca recebeu). A Cloud API da Meta segue sem enviar mídia.
+4. **Vídeo:** `video/*` passa a sair como `mediatype: 'video'` no `/message/sendMedia` (antes ia
+   como `document`, e o paciente recebia um arquivo em vez de um vídeo). **Só o envio muda:** o
+   `MessageType` continua `doc` para vídeo e a bolha continua a mesma — tipo `video` na tela e no
+   banco é do CRMLAB-70 [E]. A allow-list não muda (`video/mp4` é o único vídeo aceito).
+**Motivo:** o card pede legenda como no WhatsApp Web; gravar a legenda em `content` deixa a bolha,
+a prévia da lista e a timeline do paciente iguais para mensagem de entrada e de saída.
+**Impacto:** `shared/types/media.types.ts` (`CreateAttachmentRequest.caption`),
+`conversation.routes.ts` (zod), `message.service.ts`, `whatsapp.service.ts` (`OutboundMedia.caption`),
+`evolution-client.ts` (`sendMedia`, `evolutionMediaType`); API_CONTRACTS §2 (attachments).
+
+### D-232: Prévia de anexos — entradas, validação no cliente e o que ela cobre (CRMLAB-69)
+**Decisão:**
+1. **Entradas:** o clipe abre um menu com **"Fotos e vídeos"** (`accept="image/*,video/*"`) e
+   **"Documento"** (`accept` = a allow-list `ALLOWED_MEDIA_MIME_TYPES` inteira, sem lista nova).
+   Os dois aceitam **vários arquivos**. **Ctrl+V** no campo da mensagem com arquivo na área de
+   transferência (print de tela) abre a prévia e não cola nada; só texto cola normal.
+   **Arrastar** arquivo sobre a conversa mostra "Solte o arquivo aqui"; soltar abre a prévia.
+   Arrastar texto não mostra a área.
+2. **Validação no cliente, antes de subir**, com as MESMAS regras do backend (D-169): MIME
+   normalizado fora da allow-list → "Tipo de arquivo não permitido"; acima de
+   `MAX_MEDIA_BYTES` (15 MiB, agora exportado de `shared/` para os dois lados usarem o mesmo
+   número) → "Arquivo acima de 15 MB"; vazio → "Arquivo vazio". O arquivo inválido **fica na
+   prévia com o aviso** (a pessoa vê por que não vai) e **não sobe**. Enviar manda só os válidos;
+   sem nenhum válido, Enviar fica desligado. O backend continua validando (regra de ouro: o
+   cliente é só UX).
+3. **A prévia cobre a área da conversa** (lista + compositor) por cima, **sem desmontar** a lista:
+   rolagem, faixa de não lidas e rascunho do compositor ficam como estavam ao fechar. Mostra o
+   arquivo selecionado grande (imagem) ou ícone + nome + tamanho (resto), o campo
+   **"Adicionar legenda"** (uma legenda por arquivo; Enter envia, Shift+Enter quebra linha), a
+   faixa de miniaturas com remover (×) e **+** para adicionar mais, **Enviar** e **×** que
+   descarta tudo. **Esc** fecha a prévia primeiro; a faixa "Respondendo a…" continua.
+4. **Object URL** de imagem é criado por quem desenha a miniatura e **revogado** ao remover o
+   arquivo, fechar ou enviar a prévia, e ao desmontar a tela.
+5. A prévia é **da conversa em que foi aberta**: trocar de conversa descarta.
+**Motivo:** é o fluxo do WhatsApp Web que o card pede. Validar antes evita subir 15 MiB em base64
+para ouvir um 400/413 depois.
+**Impacto:** `components/conversation/{Composer,AttachmentPreview,attachment-draft}.ts(x)`,
+`pages/Attendance/ConversationPanel.tsx`, `shared/types/media.types.ts` (`MAX_MEDIA_BYTES`);
+COMPONENTS.md (Composer, AttachmentPreview), PAGES.md §2.
+
+### D-233: Vários anexos saem em sequência, um POST por arquivo; só o primeiro cita (CRMLAB-69)
+**Decisão:**
+1. **Um `POST /attachments` por arquivo, em sequência, na ordem da faixa** — o próximo só sai
+   quando o anterior respondeu. Nada de endpoint em lote: o contrato do anexo não muda além da
+   `caption`, e a ordem de chegada no celular do paciente é a ordem da faixa.
+2. **Erro é por arquivo:** falhou um, aparece um aviso com o nome dele e os seguintes continuam
+   saindo. Falha depois de gravar (gateway fora) já vira a bolha `failed` do servidor, como
+   hoje; falha antes (rede, 4xx) é o aviso.
+3. **A prévia fecha ao clicar Enviar** (como no WhatsApp): cada mensagem aparece na conversa
+   quando o servidor a grava (WS `conversation.new_message`), antes de o gateway confirmar. O
+   relógio "enviando" na bolha é do status de entrega (CRMLAB-67 [B]); este card não cria status
+   novo.
+4. **Resposta citando com vários arquivos: só o PRIMEIRO arquivo enviado leva o
+   `quotedMessageId`**, como no WhatsApp; os outros saem sem citação. A faixa "Respondendo a…"
+   sai quando a prévia é enviada (e fica se a prévia for descartada).
+5. A conversa de destino é lida **no clique em Enviar**, antes de ler qualquer arquivo (mesma
+   regra de D-181 item 7): trocar de conversa durante o envio não muda o destino dos que faltam.
+6. A faixa de não lidas (D-239) sai ao clicar no clipe e ao enviar, como antes.
+**Motivo:** sequência simples mantém a ordem e isola a falha de um arquivo; citar só o primeiro é
+o que o paciente vê no WhatsApp quando a atendente responde com um álbum.
+**Impacto:** `pages/Attendance/index.tsx` (`handleSendAttachments`), `ConversationPanel.tsx`;
+PAGES.md §2.
+
 ## Template para novas decisões
 
 ```

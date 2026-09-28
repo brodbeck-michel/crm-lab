@@ -153,6 +153,19 @@ Duas leituras registradas aqui porque o doc original não as fixava:
   por cor (`--color-chat-received` / `--color-chat-sent`)
 - Composer: input pílula + anexos + **emoji** + enviar. O emoji entra na posição do cursor
   (Onda 8 §2.2), grade fixa de 48, sem dependência nova
+- **Anexos com prévia (CRMLAB-69, D-231..D-233)** — padrão WhatsApp Web:
+  - Entradas: clipe → menu **"Fotos e vídeos"** / **"Documento"** (vários arquivos), **Ctrl+V** de
+    print no campo da mensagem, e **arrastar** arquivo sobre a conversa (área "Solte o arquivo
+    aqui"). Nenhuma delas envia na hora: todas abrem a prévia (`AttachmentPreview`)
+  - A prévia cobre lista + composer **sem desmontá-los** (rolagem, faixa e rascunho ficam). Uma
+    legenda por arquivo, miniaturas com remover e +, **Enviar** e **×**. **Esc** fecha a prévia e
+    mantém "Respondendo a…". Trocar de conversa descarta a prévia
+  - Tipo fora da allow-list, acima de 15 MB ou vazio: aviso no próprio arquivo, e ele não sobe
+  - Enviar fecha a prévia e sobe **um arquivo por vez, na ordem** (`POST /conversations/:id/attachments`
+    com `caption`); falha de um vira toast com o nome do arquivo e os outros seguem. Com resposta
+    aberta, **só o primeiro** leva `quotedMessageId`. A conversa de destino é a do clique em Enviar
+  - A faixa de não lidas sai ao clicar no clipe e ao enviar (D-239)
+  - Vídeo sai para o WhatsApp como vídeo; a bolha de vídeo é do CRMLAB-70
 - **Leitura padrão WhatsApp Web (CRMLAB-71, D-238/D-239):**
   - **Separador de data** (`DateSeparator`) entre mensagens de dias diferentes, no fuso do
     navegador: "Hoje", "Ontem", dia da semana por extenso de 2 a 6 dias atrás, `dd/mm/aaaa`
@@ -170,7 +183,7 @@ Duas leituras registradas aqui porque o doc original não as fixava:
     conversa (`cursors.before: null`) nada mais é pedido. O antigo "Carregar mensagens
     anteriores" deixou de existir
 - Dados: `GET /conversations/:id` (paginado por cursor, `useInfiniteQuery`),
-  `POST /conversations/:id/messages`
+  `POST /conversations/:id/messages`, `POST /conversations/:id/attachments`
 - Ao abrir: `markAsRead`
 
 ### Aviso de mensagem nova (CRMLAB-72, D-240/D-241) — padrão WhatsApp Web

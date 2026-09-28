@@ -201,7 +201,7 @@ describe('Orçamento enviado há X dias → Follow-up (sentToFollowUp)', () => {
 
     clock = new Date(MONDAY_10H.getTime() + 3 * DAY);
     const result = await timer.runForTenant(tenantA.id);
-    expect(result).toEqual({ tenantId: tenantA.id, moved: 1, alerted: 0 });
+    expect(result).toEqual({ tenantId: tenantA.id, moved: 1, alerted: 0, reengaged: 0 });
     expect((await statusOf(id)).status).toBe('follow_up');
   });
 
@@ -405,7 +405,7 @@ describe('terminais', () => {
     const lost = await card({ status: 'perdido', enteredAt: MONDAY_10H });
     clock = new Date(MONDAY_10H.getTime() + 90 * DAY);
     const result = await timer.runForTenant(tenantA.id);
-    expect(result).toEqual({ tenantId: tenantA.id, moved: 0, alerted: 0 });
+    expect(result).toEqual({ tenantId: tenantA.id, moved: 0, alerted: 0, reengaged: 0 });
     expect((await statusOf(won)).status).toBe('ganho');
     expect((await statusOf(lost)).status).toBe('perdido');
   });

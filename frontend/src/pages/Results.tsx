@@ -21,6 +21,7 @@ import { AttendantRevenueChart } from '@/components/lis/AttendantRevenueChart';
 import { InsuranceDonutChart } from '@/components/lis/InsuranceDonutChart';
 import { MonthlySeriesChart } from '@/components/lis/MonthlySeriesChart';
 import { ImportModal } from '@/components/lis/ImportModal';
+import { useEffectiveFunnelRules } from '@/api/funnel-rules';
 import { PurgeDialog } from '@/components/lis/PurgeDialog';
 import { buildCommissionDetail, totalsOf } from '@/lib/lis/commission-detail';
 import type { CommissionDetailRow } from '@/lib/lis/commission-detail';
@@ -93,6 +94,8 @@ function ImportStamp({
 export default function Results() {
   const role = useAuthStore((s) => s.user?.role);
   const isAdmin = role === 'admin';
+  // Planilha e plano B, ligada nas Regras (CRMLAB-53, D-189 item 4).
+  const canImportSpreadsheet = useEffectiveFunnelRules().lisSource.spreadsheetImport.enabled;
   const { toast } = useToast();
 
   const lisFilters = useUIStore((s) => s.lisFilters);
@@ -240,9 +243,11 @@ export default function Results() {
         description="Orçamentos do LIS no período selecionado."
         actions={
           <>
-            <Button variant="secondary" onClick={() => setShowImport(true)}>
-              Importar
-            </Button>
+            {canImportSpreadsheet && (
+              <Button variant="secondary" onClick={() => setShowImport(true)}>
+                Importar
+              </Button>
+            )}
             <Button variant="primary" onClick={handleExportExecutivePdf} disabled={!executiveReport}>
               Exportar relatório executivo
             </Button>
@@ -285,11 +290,17 @@ export default function Results() {
         <div className="rounded-lg border border-neutral-200 bg-neutral-100 shadow-sm">
           <EmptyState
             message="Nenhum orçamento importado neste período."
-            hint="Troque o período acima ou importe a planilha do LIS para ver os números."
+            hint={
+              canImportSpreadsheet
+                ? 'Troque o período acima ou importe a planilha do LIS para ver os números.'
+                : 'Troque o período acima. Os orçamentos chegam pela sincronização com o Bitlab.'
+            }
             action={
-              <Button variant="secondary" onClick={() => setShowImport(true)}>
-                Importar planilha
-              </Button>
+              canImportSpreadsheet ? (
+                <Button variant="secondary" onClick={() => setShowImport(true)}>
+                  Importar planilha
+                </Button>
+              ) : undefined
             }
           />
         </div>

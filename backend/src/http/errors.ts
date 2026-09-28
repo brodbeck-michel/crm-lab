@@ -61,6 +61,11 @@ export const ERROR_CATALOG = {
     statusCode: 409,
     message: 'Criacao manual de proposta desligada nas Regras do laboratorio',
   },
+  SPREADSHEET_IMPORT_DISABLED: {
+    statusCode: 409,
+    message:
+      'Importacao por planilha desligada nas Regras do laboratorio (a carga principal e a API do Bitlab)',
+  },
   PROPOSAL_ALREADY_SENT: {
     statusCode: 409,
     message: 'Este orcamento ja foi enviado ou esta sendo enviado por outra pessoa agora',

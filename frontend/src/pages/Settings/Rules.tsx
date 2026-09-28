@@ -18,14 +18,17 @@ import { PageContainer, PageHeader } from '@/components/layout';
 import { Button, Input, SegmentedControl, TextArea, Toggle, useToast } from '@/components/ui';
 import { formatMoney } from '@/lib/format';
 import Commissions from './Commissions';
+import { HolidaysSection } from './HolidaysSection';
+import { ReengagementSection, reengagementBlocked } from './ReengagementSection';
 
 /**
  * Regras (`/settings/rules`) — PAGES.md §21, CRMLAB-56 (D-190..D-194).
  *
- * Seções 1–4 são um formulário só, salvo em `PATCH /settings/funnel-rules`
- * com SÓ o que mudou. A seção 5 (desconto) aparece com "Criar pelo CRM"
- * ligado (valor salvo). A 6 é o formulário de comissão, com endpoint e
- * permissão próprios (admin edita). Atendente vê tudo desabilitado.
+ * Seções 1–4 e o reingajamento (CRMLAB-62) são um formulário só, salvo em
+ * `PATCH /settings/funnel-rules` com SÓ o que mudou. A seção de desconto
+ * aparece com "Criar pelo CRM" ligado (valor salvo). Feriados e comissão têm
+ * endpoint e permissão próprios, fora do formulário. Atendente vê tudo
+ * desabilitado.
  */
 
 type Json = Record<string, unknown>;
@@ -174,7 +177,10 @@ export default function Rules() {
       : undefined);
   const noOrigin = !draft.origin.fromBitlab && !draft.origin.manualInCrm;
   const blocked =
-    noOrigin || unknownVariables.length > 0 || draft.sendMessage.template.trim() === '';
+    noOrigin ||
+    unknownVariables.length > 0 ||
+    draft.sendMessage.template.trim() === '' ||
+    reengagementBlocked(draft.reengagement);
 
   function handleSave(event: React.FormEvent) {
     event.preventDefault();
@@ -440,6 +446,28 @@ export default function Rules() {
           </div>
         </Section>
 
+        <ReengagementSection
+          draft={draft}
+          canEdit={canEdit}
+          fieldErrors={fieldErrors}
+          set={set}
+        />
+
+        <Section
+          id="carga-lis"
+          title="Carga do LIS"
+          description="A carga principal dos orçamentos é a API do Bitlab. Ligue a importação por planilha só se a API estiver fora do ar."
+        >
+          <Toggle
+            label="Permitir importar a planilha do LIS em Resultados"
+            checked={draft.lisSource.spreadsheetImport.enabled}
+            disabled={!canEdit}
+            onChange={(checked) =>
+              set((next) => void (next.lisSource.spreadsheetImport.enabled = checked))
+            }
+          />
+        </Section>
+
         {data.origin.manualInCrm && (
           <Section
             id="descontos"
@@ -485,6 +513,10 @@ export default function Rules() {
           </div>
         )}
       </form>
+
+      <div className="mt-lg max-w-3xl">
+        <HolidaysSection canEdit={canEdit} />
+      </div>
 
       {seesCommissions && (
         <div className="mt-lg max-w-3xl">

@@ -3,7 +3,7 @@
 Worktree `../CRM Lab-66` · branch `feature/CRMLAB-66-responder-reagir-apagada` (de `integ/epic-65`).
 Faixas: decisões D-220…D-224 · migrações 040, 041.
 
-## Estado: 🔄 backend
+## Estado: 🔄 frontend
 
 ## Feito
 - Docs (Regra Zero): D-220 (esconder, não apagar), D-221 (citação), D-222 (reação por lado),
@@ -26,7 +26,13 @@ Faixas: decisões D-220…D-224 · migrações 040, 041.
 - [ ] Frontend: MessageBubble (menu, citação, reações, apagada/editada, data-message-id),
       Composer (faixa "Respondendo a"), ConversationPanel (estado replyTo, scrollToMessage),
       Attendance (envio com quotedMessageId, reação), ws.ts (message_updated).
-- [ ] Testes: webhook com payloads reais, reação/citação isolamento, RLS, frontend.
+- [x] Testes backend: `tests/webhooks/evolution-crmlab66.spec.ts` (16, payloads Evolution v2:
+      contextInfo.stanzaId no topo e no extendedTextMessage, reactionMessage set/troca/remove,
+      fromMe, protocolMessage REVOKE, messages.delete, messages.edited REVOKE/MESSAGE_EDIT,
+      editedMessage wrapper, cross-tenant, instance errada), `tests/messages/reactions-quotes.spec.ts`
+      (12), `tests/db/rls-crmlab66.spec.ts` (8), `tests/whatsapp/evolution-webhook-sync.spec.ts` (4),
+      +5 em evolution-client.spec; inventário de rotas 74 → 76.
+- [ ] Testes frontend.
 - [ ] Typecheck + specs afetados verdes.
 
 ## Integração
@@ -46,4 +52,4 @@ D-220, D-221, D-222, D-223 (D-224 livre).
 - Miniatura real no bloco citado: usa rótulo ("📷 Foto") em vez de buscar a imagem.
 
 ## Próximo passo exato
-Testes backend novos: `tests/whatsapp/webhook-crmlab66.spec.ts` (payloads reais), `tests/messages/reactions-quotes.spec.ts` (rotas, NOT_FOUND cross-tenant), `tests/db/rls-crmlab66.spec.ts`, sync de webhook; depois inventário em route-tenant-isolation.
+Frontend: `ws.ts` (conversation.message_updated), `api/conversations.ts` (setReaction/removeReaction, quotedMessageId), MessageBubble (menu/citação/reações/apagada/editada), Composer (faixa replyTo), ConversationPanel + scroll-to-message.ts, Attendance/index.tsx.

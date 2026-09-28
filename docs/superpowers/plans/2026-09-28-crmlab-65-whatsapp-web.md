@@ -75,6 +75,14 @@ node_modules são symlinks para a pasta principal; `*.wt.*` (vitest/tsconfig com
 
 ## Estado atual
 
+> ⏸️ **PAUSADO em 28/09/2026 17:20** a pedido do Michel (computador desligado). Onda 1 (66/71/72) integrada,
+> verde e em "Pronto p/ Validação". Onda 2 (67/68/69) interrompida no meio: cada agente foi
+> instruído a commitar WIP + push e escrever "⏸️ PAUSADO" no diário do card. **Para retomar:**
+> em cada `../CRM Lab-67|68|69`, `git status --short` (se houver arquivo solto, o WIP não entrou)
+> e `git log --oneline -3`; ler o diário do card; disparar um agente novo por card apontando
+> para o mesmo worktree/branch, com o prompt da onda 2 + "continue do diário". hml ainda não
+> subiu (aguarda autorização). 4 perguntas de regra em aberto (ver comentários nos cards 66 e 72).
+
 | Card | Fase | Último commit | Observação |
 |---|---|---|---|
 | 66 [A] | 🔗 integrado · Pronto p/ Validação | 6dd7c9e | D-220..D-223 (D-224 e migração 041 sem uso). Migração 040. `EVOLUTION_WEBHOOK_EVENTS` + `syncEvolutionWebhooks` no boot: o 67 só acrescenta eventos. 829 back + 716 front verdes no card. |

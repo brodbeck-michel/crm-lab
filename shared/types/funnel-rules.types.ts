@@ -95,12 +95,23 @@ export interface SendMessageRules {
   template: string;
 }
 
+/**
+ * Seção 5 — de onde vêm os orçamentos do LIS (CRMLAB-53, D-189 item 4). A carga
+ * principal é a API do Bitlab; a planilha é plano B. Desligada: o botão
+ * "Importar planilha" some e `POST /lis-imports` devolve
+ * `SPREADSHEET_IMPORT_DISABLED`.
+ */
+export interface LisSourceRules {
+  spreadsheetImport: ToggleRule;
+}
+
 /** `GET /settings/funnel-rules` — objeto completo, já com os padrões aplicados. */
 export interface FunnelRules {
   origin: ProposalOriginRules;
   automation: FunnelAutomationRules;
   manualMoves: ManualMoveRules;
   sendMessage: SendMessageRules;
+  lisSource: LisSourceRules;
 }
 
 type DeepPartial<T> = {
@@ -150,6 +161,8 @@ export const DEFAULT_FUNNEL_RULES: FunnelRules = {
     moveOthersCards: true,
   },
   sendMessage: { template: DEFAULT_SEND_MESSAGE_TEMPLATE },
+  // Emenda à D-191 (D-189 item 5): a planilha nasce DESLIGADA — a API é a carga principal.
+  lisSource: { spreadsheetImport: { enabled: false } },
 };
 
 // ---------------------------------------------------------------------------

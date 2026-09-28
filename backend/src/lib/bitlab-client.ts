@@ -158,7 +158,22 @@ const budgetSchema = z.object({
   VALOR_REQUISICAO: money,
   Valor_Pago: money,
   Data_Pagamento: text,
+  // Campos aditivos da v1 (CRMLAB-53, D-188): um por pagamento.
+  ID_PAGAMENTO: z
+    .union([z.number().int(), z.string(), z.null()])
+    .optional()
+    .transform((v) => (v === undefined || v === null || String(v).trim() === '' ? null : String(v).trim())),
+  SITUACAO_PAGAMENTO: text,
+  DATA_ESTORNO: text,
+  FORMA_PAGAMENTO: text,
+  BANDEIRA_CARTAO: text,
 });
+
+/** `SITUACAO_PAGAMENTO` -> situação do extrato. Desconhecida ou ausente = ativo. */
+function paymentStatus(value: string | null): 'ativo' | 'estornado' | null {
+  if (value === null) return null;
+  return value.trim().toUpperCase() === 'ESTORNADO' ? 'estornado' : 'ativo';
+}
 
 const successSchema = z.object({
   sucesso: z.literal(true),
@@ -198,6 +213,12 @@ export function toLisRow(budget: BitlabBudget): LisSpreadsheetRow {
     requisitionValue: budget.VALOR_REQUISICAO,
     paidValue: budget.Valor_Pago,
     paidOn: bitlabDateToIsoDate(budget.Data_Pagamento),
+    paidAt: parseBitlabDateTime(budget.Data_Pagamento),
+    paymentId: budget.ID_PAGAMENTO,
+    paymentStatus: paymentStatus(budget.SITUACAO_PAGAMENTO),
+    reversedAt: parseBitlabDateTime(budget.DATA_ESTORNO),
+    paymentMethod: budget.FORMA_PAGAMENTO,
+    cardBrand: budget.BANDEIRA_CARTAO,
   };
 }
 

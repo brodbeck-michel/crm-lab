@@ -12,7 +12,7 @@ import type { LisImport, LisImportKind, LisImportStatus } from '@crm-lab/shared'
 import type { DbClient, DbTx } from '../db/types.js';
 import { findAttendantIdByFoldedName } from './attendant.repository.js';
 import { toIso, toIsoOrNull } from './row-mappers.js';
-import type { LisSpreadsheetRow } from '../lib/lis-spreadsheet.js';
+import type { LisPayment, LisSpreadsheetRow } from '../lib/lis-spreadsheet.js';
 import { principalInsuranceName } from '../lib/lis-spreadsheet.js';
 
 // ---------------------------------------------------------------------------
@@ -235,6 +235,9 @@ export async function resolveAttendantId(
  * Upsert em `lis_budgets` — `ON CONFLICT (tenant_id, number)` só sobrescreve
  * quando o novo total é maior ou igual (BUSINESS_RULES.md §11.1). `EXCLUDED`
  * inclui as colunas GERADAS (`total_value`) computadas para a linha proposta.
+ *
+ * `paid_value`/`paid_on` NÃO são gravados aqui (CRMLAB-53, D-188 item 5): são
+ * derivados do extrato por `recomputePaidValues`.
  */
 export async function upsertBudget(
   tx: DbTx,
@@ -249,9 +252,9 @@ export async function upsertBudget(
        tenant_id, number, issued_on, patient_name,
        insurance_1, value_1, insurance_2, value_2, insurance_3, value_3,
        insurance_id, attendant_name, attendant_id, insurance_average,
-       requisition_number, requisition_value, paid_value, paid_on, import_id
+       requisition_number, requisition_value, import_id
      ) VALUES (
-       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
+       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
      )
      ON CONFLICT (tenant_id, number) DO UPDATE SET
        issued_on = EXCLUDED.issued_on,
@@ -268,8 +271,6 @@ export async function upsertBudget(
        insurance_average = EXCLUDED.insurance_average,
        requisition_number = EXCLUDED.requisition_number,
        requisition_value = EXCLUDED.requisition_value,
-       paid_value = EXCLUDED.paid_value,
-       paid_on = EXCLUDED.paid_on,
        import_id = EXCLUDED.import_id,
        updated_at = NOW()
      WHERE EXCLUDED.total_value >= lis_budgets.total_value`,
@@ -290,10 +291,107 @@ export async function upsertBudget(
       row.insuranceAverage,
       row.requisitionNumber,
       row.requisitionValue,
-      row.paidValue,
-      row.paidOn,
       importId,
     ],
+  );
+}
+
+/** Origem do pagamento no extrato: a API (tem ID e situação) ou a planilha (D-188). */
+export type LisPaymentSource = 'api' | 'planilha';
+
+/**
+ * Grava os pagamentos de um orçamento no extrato (D-188 item 3). A chave é
+ * `(tenant_id, budget_number, payment_key)`: a mesma carga duas vezes não
+ * soma, e o estorno atualiza a linha que já estava lá (ativo -> estornado).
+ * Valor e data não mudam depois de gravados (o LIS não altera um pagamento:
+ * ele estorna e lança outro).
+ */
+export async function upsertPayments(
+  tx: DbTx,
+  tenantId: string,
+  importId: string,
+  source: LisPaymentSource,
+  budgetNumber: string,
+  payments: LisPayment[],
+): Promise<void> {
+  for (const payment of payments) {
+    await tx.query(
+      `INSERT INTO lis_budget_payments (
+         tenant_id, budget_number, requisition_number, payment_key, source, paid_at,
+         paid_value, status, reversed_at, payment_method, card_brand, import_id
+       ) VALUES ($1, $2, $3, $4, $5, $6::timestamp, $7, $8, $9::timestamp, $10, $11, $12)
+       ON CONFLICT (tenant_id, budget_number, payment_key) DO UPDATE SET
+         requisition_number = COALESCE(EXCLUDED.requisition_number, lis_budget_payments.requisition_number),
+         status = EXCLUDED.status,
+         reversed_at = EXCLUDED.reversed_at,
+         payment_method = COALESCE(EXCLUDED.payment_method, lis_budget_payments.payment_method),
+         card_brand = COALESCE(EXCLUDED.card_brand, lis_budget_payments.card_brand),
+         import_id = EXCLUDED.import_id
+       WHERE lis_budget_payments.status IS DISTINCT FROM EXCLUDED.status
+          OR lis_budget_payments.reversed_at IS DISTINCT FROM EXCLUDED.reversed_at
+          OR lis_budget_payments.requisition_number IS DISTINCT FROM COALESCE(EXCLUDED.requisition_number, lis_budget_payments.requisition_number)
+          OR lis_budget_payments.payment_method IS DISTINCT FROM COALESCE(EXCLUDED.payment_method, lis_budget_payments.payment_method)
+          OR lis_budget_payments.card_brand IS DISTINCT FROM COALESCE(EXCLUDED.card_brand, lis_budget_payments.card_brand)`,
+      [
+        tenantId,
+        budgetNumber,
+        payment.requisitionNumber,
+        payment.key,
+        source,
+        payment.paidAt,
+        payment.value,
+        payment.status,
+        payment.reversedAt,
+        payment.method,
+        payment.brand,
+        importId,
+      ],
+    );
+  }
+}
+
+/**
+ * Recalcula `lis_budgets.paid_value`/`paid_on` a partir do extrato, para os
+ * orçamentos dados (D-188 item 4):
+ * - com algum pagamento da API: soma dos ATIVOS da API (os da planilha desse
+ *   orçamento são ignorados, para não contar o mesmo pagamento duas vezes);
+ * - só com pagamentos da planilha: soma de todos (a planilha não tem situação);
+ * - teto em `requisition_value` quando ele é > 0;
+ * - `paid_on` = dia do último pagamento considerado com valor > 0;
+ * - orçamento SEM nenhuma linha no extrato (carga anterior ao card) não é tocado.
+ * Só escreve quando o valor muda, para não mexer em `updated_at` à toa.
+ */
+export async function recomputePaidValues(tx: DbTx, tenantId: string, numbers: string[]): Promise<void> {
+  if (numbers.length === 0) return;
+  await tx.query(
+    `WITH scoped AS (
+       SELECT budget_number, source, status, paid_value, paid_at,
+              bool_or(source = 'api') OVER (PARTITION BY budget_number) AS has_api
+         FROM lis_budget_payments
+        WHERE tenant_id = $1 AND budget_number = ANY($2::text[])
+     ), agg AS (
+       SELECT budget_number,
+              COALESCE(SUM(paid_value) FILTER (WHERE counts), 0) AS total,
+              MAX(paid_at) FILTER (WHERE counts AND paid_value > 0) AS last_paid_at
+         FROM (
+           SELECT *, (status = 'ativo' AND (source = 'api' OR NOT has_api)) AS counts FROM scoped
+         ) considered
+        GROUP BY budget_number
+     ), derived AS (
+       SELECT b.id,
+              CASE WHEN COALESCE(b.requisition_value, 0) > 0
+                   THEN LEAST(agg.total, b.requisition_value)
+                   ELSE agg.total END AS paid_value,
+              agg.last_paid_at::date AS paid_on
+         FROM agg
+         JOIN lis_budgets b ON b.tenant_id = $1 AND b.number = agg.budget_number
+     )
+     UPDATE lis_budgets b
+        SET paid_value = derived.paid_value, paid_on = derived.paid_on, updated_at = NOW()
+       FROM derived
+      WHERE b.id = derived.id
+        AND (b.paid_value IS DISTINCT FROM derived.paid_value OR b.paid_on IS DISTINCT FROM derived.paid_on)`,
+    [tenantId, numbers],
   );
 }
 
@@ -308,5 +406,6 @@ export async function countReconciledBudgets(tx: DbTx, tenantId: string): Promis
 
 /** `POST /lis-imports/purge` — apaga TODAS as linhas de `lis_budgets` do tenant. */
 export async function purgeBudgets(tx: DbTx, tenantId: string): Promise<void> {
+  await tx.query('DELETE FROM lis_budget_payments WHERE tenant_id = $1', [tenantId]);
   await tx.query('DELETE FROM lis_budgets WHERE tenant_id = $1', [tenantId]);
 }

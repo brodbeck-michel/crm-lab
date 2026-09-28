@@ -17,6 +17,7 @@
  *    (BUSINESS_RULES.md §11.1) — port de `consolidateOrcamentos`
  */
 import ExcelJS from 'exceljs';
+import { parseBitlabDateTime } from './bitlab-client.js';
 
 export type LisImportInvalidReason = 'pdf_disguised' | 'missing_column' | 'empty';
 
@@ -44,6 +45,39 @@ export interface LisSpreadsheetRow {
   requisitionValue: number | null;
   paidValue: number | null;
   paidOn: string | null;
+  /**
+   * Data/hora do pagamento, `YYYY-MM-DD HH:mm:ss` (Brasília, D-187). A planilha e
+   * a API trazem os segundos; ausente = só a data de `paidOn` (CRMLAB-53, D-188).
+   */
+  paidAt?: string | null;
+  /** `ID_PAGAMENTO` do Bitlab. Só a API tem (D-188 item 2). */
+  paymentId?: string | null;
+  /** `SITUACAO_PAGAMENTO`. Ausente = ativo (a planilha não tem situação). */
+  paymentStatus?: LisPaymentStatus | null;
+  /** `DATA_ESTORNO`, `YYYY-MM-DD HH:mm:ss`. */
+  reversedAt?: string | null;
+  paymentMethod?: string | null;
+  cardBrand?: string | null;
+}
+
+export type LisPaymentStatus = 'ativo' | 'estornado';
+
+/** Um pagamento do extrato (`lis_budget_payments`, D-188). */
+export interface LisPayment {
+  /** `ID_PAGAMENTO`, ou `planilha:<paidAt>:<valor>` quando não há ID. */
+  key: string;
+  requisitionNumber: string | null;
+  paidAt: string | null;
+  value: number;
+  status: LisPaymentStatus;
+  reversedAt: string | null;
+  method: string | null;
+  brand: string | null;
+}
+
+/** Orçamento consolidado + todos os pagamentos das linhas dele (D-188 item 5). */
+export interface LisBudgetInput extends LisSpreadsheetRow {
+  payments: LisPayment[];
 }
 
 /**
@@ -139,6 +173,36 @@ function dateToIsoDate(value: Date): string {
   const m = String(value.getUTCMonth() + 1).padStart(2, '0');
   const d = String(value.getUTCDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
+}
+
+/** Como `cellToDate`, mas com a hora (`YYYY-MM-DD HH:mm:ss`), sem fuso (D-187). */
+function cellToDateTime(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) {
+    const hh = String(value.getUTCHours()).padStart(2, '0');
+    const mi = String(value.getUTCMinutes()).padStart(2, '0');
+    const ss = String(value.getUTCSeconds()).padStart(2, '0');
+    return `${dateToIsoDate(value)} ${hh}:${mi}:${ss}`;
+  }
+  const serial =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && /^\d+(\.\d+)?$/.test(value.trim())
+        ? Number(value.trim())
+        : null;
+  if (serial !== null && Number.isFinite(serial)) {
+    const seconds = Math.round((serial - Math.trunc(serial)) * 86_400);
+    const hh = String(Math.floor(seconds / 3600) % 24).padStart(2, '0');
+    const mi = String(Math.floor((seconds % 3600) / 60)).padStart(2, '0');
+    const ss = String(seconds % 60).padStart(2, '0');
+    return `${excelSerialToIsoDate(serial)} ${hh}:${mi}:${ss}`;
+  }
+  if (typeof value === 'string') {
+    const parsed = parseBitlabDateTime(value);
+    if (parsed) return parsed;
+  }
+  const day = cellToDate(value);
+  return day === null ? null : `${day} 00:00:00`;
 }
 
 function cellToDate(value: unknown): string | null {
@@ -246,6 +310,7 @@ export async function parseLisSpreadsheet(buffer: Buffer): Promise<LisSpreadshee
       const raw = parsed[field];
       if (DATE_FIELDS.includes(field as DateField)) {
         record[field] = cellToDate(raw);
+        if (field === 'paidOn') record.paidAt = cellToDateTime(raw);
       } else if (NUMBER_FIELDS.includes(field as NumberField)) {
         record[field] = cellToNumber(raw);
       } else {
@@ -312,55 +377,71 @@ export function totalValue(row: LisSpreadsheetRow): number {
 }
 
 /**
- * Dedupe por `number` — a de maior `total_value` vence PARA OS DEMAIS CAMPOS
- * (BUSINESS_RULES.md §11.1), mas requisição/pagamento são MESCLADOS entre as
- * duas linhas, não descartados junto com a perdedora (D-126, port EXATO de
- * `consolidateOrcamentos` do app de referência).
+ * O pagamento de uma linha, ou `null` se ela não tem `Valor_Pago` (D-188).
+ * Sem `ID_PAGAMENTO` (planilha), a chave é a data/hora + o valor: a mesma linha
+ * importada duas vezes cai na mesma chave e não soma em dobro.
+ */
+export function paymentOf(row: LisSpreadsheetRow): LisPayment | null {
+  if (row.paidValue === null) return null;
+  const paidAt = row.paidAt ?? (row.paidOn ? `${row.paidOn} 00:00:00` : null);
+  const id = row.paymentId?.trim();
+  return {
+    key: id ? id : `planilha:${paidAt ?? ''}:${row.paidValue.toFixed(2)}`,
+    requisitionNumber: row.requisitionNumber,
+    paidAt,
+    value: row.paidValue,
+    status: row.paymentStatus ?? 'ativo',
+    reversedAt: row.reversedAt ?? null,
+    method: row.paymentMethod ?? null,
+    brand: row.cardBrand ?? null,
+  };
+}
+
+/**
+ * Dedupe por `number` — a de maior `total_value` vence para os campos do
+ * orçamento (BUSINESS_RULES.md §11.1); a requisição é mesclada entre as linhas
+ * (D-126) e o valor da requisição fica com o maior.
  *
- * BUG corrigido (achado comparando número a número com o app de referência,
- * mesma planilha real, mesmo período — "Recebido" batia 167 pagos aqui contra
- * 169 lá): a versão anterior substituía a linha INTEIRA pela de maior
- * `total_value`, mesmo quando a linha perdedora era a que tinha o pagamento/
- * requisição — a mesma REQUISIÇÃO pode gerar mais de uma linha na planilha
- * (um exame por linha) com o mesmo número de ORÇAMENTO mas dados de
- * requisição/pagamento só preenchidos numa delas. Descartar a linha inteira
- * jogava fora um pagamento de verdade.
- *
- * Regra (idêntica à referência):
- *   - `rep` = linha de maior `total_value` (dona dos demais campos: convênio,
- *     paciente, atendente — nunca a requisição/pagamento sozinha)
- *   - `requisitionNumber` = `rep.requisitionNumber ?? outra.requisitionNumber`
- *   - `paidValue`/`paidOn` = da linha com MAIOR `paidValue` entre as duas
- *     (pode ser a perdedora do total_value)
- *   - `requisitionValue` = `MAX` das duas
+ * Pagamento NÃO é decidido aqui (CRMLAB-53, D-188 item 5): cada linha é um
+ * pagamento, e todos vão em `payments` (sem repetir chave; a última vista
+ * vence, que é a mais nova numa mesma resposta). O recebido é calculado no
+ * banco, a partir do extrato. `paidValue`/`paidOn` da linha consolidada ficam
+ * só como vieram da linha representante e não são gravados.
  *
  * Linhas sem `number` (string vazia) NAO entram aqui — filtre antes de
  * chamar. Empate de `total_value`: mantém a primeira vista (ordem estável).
  */
-export function consolidateLisRows(rows: LisSpreadsheetRow[]): LisSpreadsheetRow[] {
-  const byNumber = new Map<string, LisSpreadsheetRow>();
+export function consolidateLisRows(rows: LisSpreadsheetRow[]): LisBudgetInput[] {
+  const byNumber = new Map<string, LisBudgetInput>();
+  const paymentsByNumber = new Map<string, Map<string, LisPayment>>();
   for (const row of rows) {
     const key = row.number.trim();
     if (key === '') continue;
+
+    const payment = paymentOf(row);
+    if (payment) {
+      const payments = paymentsByNumber.get(key) ?? new Map<string, LisPayment>();
+      payments.set(payment.key, payment);
+      paymentsByNumber.set(key, payments);
+    }
+
     const existing = byNumber.get(key);
     if (!existing) {
-      byNumber.set(key, row);
+      byNumber.set(key, { ...row, payments: [] });
       continue;
     }
 
     const rep = totalValue(row) > totalValue(existing) ? row : existing;
     const other = rep === row ? existing : row;
-    const repPaid = rep.paidValue ?? 0;
-    const otherPaid = other.paidValue ?? 0;
-    const maiorPago = otherPaid > repPaid ? other : rep;
-
     byNumber.set(key, {
       ...rep,
+      payments: [],
       requisitionNumber: rep.requisitionNumber ?? other.requisitionNumber,
-      paidValue: maiorPago.paidValue ?? 0,
-      paidOn: maiorPago.paidOn,
       requisitionValue: Math.max(rep.requisitionValue ?? 0, other.requisitionValue ?? 0),
     });
   }
-  return [...byNumber.values()];
+  return [...byNumber.entries()].map(([key, budget]) => ({
+    ...budget,
+    payments: [...(paymentsByNumber.get(key)?.values() ?? [])],
+  }));
 }

@@ -6,13 +6,20 @@
  */
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DbClient } from '../../src/db/types.js';
-import type { BitlabBudgetsPage, BitlabBudgetsQuery, BitlabClient } from '../../src/lib/bitlab-client.js';
+import type {
+  BitlabBudgetsPage,
+  BitlabBudgetsQuery,
+  BitlabClient,
+} from '../../src/lib/bitlab-client.js';
 import { MemoryCache, createCache } from '../../src/lib/cache.js';
 import type { LisSpreadsheetRow } from '../../src/lib/lis-spreadsheet.js';
 import { noopWsHub } from '../../src/lib/ws-hub.js';
 import { createLisSyncServiceFromDeps } from '../../src/controllers/lis-sync.routes.js';
 import { createAuditService } from '../../src/services/audit.service.js';
-import { createLisImportService, type LisImportService } from '../../src/services/lis-import.service.js';
+import {
+  createLisImportService,
+  type LisImportService,
+} from '../../src/services/lis-import.service.js';
 import { resetLisSyncLocksForTest } from '../../src/services/lis-sync.service.js';
 import { encryptSecret } from '../../src/lib/secret-box.js';
 import { createTenant, type TenantRecord } from '../helpers/factories.js';
@@ -69,7 +76,12 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await resetDatabase(db);
-  lis = createLisImportService({ db, cache: new MemoryCache(), audit: createAuditService(db), wsHub: noopWsHub });
+  lis = createLisImportService({
+    db,
+    cache: new MemoryCache(),
+    audit: createAuditService(db),
+    wsHub: noopWsHub,
+  });
   tenant = await createTenant({ db });
 });
 
@@ -78,10 +90,15 @@ async function sync(rows: LisSpreadsheetRow[]) {
 }
 
 async function sheet(rows: LisSpreadsheetRow[]) {
-  return lis.ingestRows({ tenantId: tenant.id, createdBy: null }, rows, { kind: 'import', fileName: 'x.xlsx' });
+  return lis.ingestRows({ tenantId: tenant.id, createdBy: null }, rows, {
+    kind: 'import',
+    fileName: 'x.xlsx',
+  });
 }
 
-async function paid(number: string): Promise<{ paid_value: number | null; paid_on: string | null }> {
+async function paid(
+  number: string,
+): Promise<{ paid_value: number | null; paid_on: string | null }> {
   const result = await db.withTenant(tenant.id, (tx) =>
     tx.query<{ paid_value: number | null; paid_on: string | null }>(
       `SELECT paid_value::float8 AS paid_value, to_char(paid_on, 'YYYY-MM-DD') AS paid_on
@@ -165,8 +182,18 @@ describe('recebido = soma dos pagamentos ativos (D-188)', () => {
 
   it('so planilha: soma tudo com teto na requisicao', async () => {
     await sheet([
-      budget('8', { requisitionValue: 293.96, paidValue: 293.96, paidOn: '2026-06-01', paidAt: '2026-06-01 07:38:00' }),
-      budget('8', { requisitionValue: 293.96, paidValue: 293.96, paidOn: '2026-06-01', paidAt: '2026-06-01 07:42:00' }),
+      budget('8', {
+        requisitionValue: 293.96,
+        paidValue: 293.96,
+        paidOn: '2026-06-01',
+        paidAt: '2026-06-01 07:38:00',
+      }),
+      budget('8', {
+        requisitionValue: 293.96,
+        paidValue: 293.96,
+        paidOn: '2026-06-01',
+        paidAt: '2026-06-01 07:42:00',
+      }),
     ]);
     expect((await paid('8')).paid_value).toBe(293.96);
   });
@@ -187,7 +214,12 @@ describe('releitura diaria (D-189)', () => {
     watermark = '2026-09-28 10:00:00';
     fetchBudgetsPage(_apiKey: string, query: BitlabBudgetsQuery): Promise<BitlabBudgetsPage> {
       this.calls.push(query);
-      return Promise.resolve({ rows: [], hasNext: false, watermark: this.watermark, deprecationNotices: [] });
+      return Promise.resolve({
+        rows: [],
+        hasNext: false,
+        watermark: this.watermark,
+        deprecationNotices: [],
+      });
     }
   }
 
@@ -208,7 +240,10 @@ describe('releitura diaria (D-189)', () => {
   });
 
   function service() {
-    return createLisSyncServiceFromDeps({ db, cache: createCache(), wsHub: noopWsHub }, { bitlab, now: () => clock });
+    return createLisSyncServiceFromDeps(
+      { db, cache: createCache(), wsHub: noopWsHub },
+      { bitlab, now: () => clock },
+    );
   }
 
   async function settings() {

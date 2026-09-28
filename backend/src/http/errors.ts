@@ -63,7 +63,8 @@ export const ERROR_CATALOG = {
   },
   SPREADSHEET_IMPORT_DISABLED: {
     statusCode: 409,
-    message: 'Importacao por planilha desligada nas Regras do laboratorio (a carga principal e a API do Bitlab)',
+    message:
+      'Importacao por planilha desligada nas Regras do laboratorio (a carga principal e a API do Bitlab)',
   },
   PROPOSAL_ALREADY_SENT: {
     statusCode: 409,

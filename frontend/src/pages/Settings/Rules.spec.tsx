@@ -129,12 +129,16 @@ describe('Regras (/settings/rules)', () => {
     signIn('manager');
     renderPage();
 
-    const toggle = within(section(/carga do lis/i)).getByRole('switch', { name: /importar a planilha/i });
+    const toggle = within(section(/carga do lis/i)).getByRole('switch', {
+      name: /importar a planilha/i,
+    });
     expect(toggle).toHaveAttribute('aria-checked', 'false');
     await user.click(toggle);
     await user.click(screen.getByRole('button', { name: 'Salvar regras' }));
 
-    expect(mutate.mock.calls[0]?.[0]).toEqual({ lisSource: { spreadsheetImport: { enabled: true } } });
+    expect(mutate.mock.calls[0]?.[0]).toEqual({
+      lisSource: { spreadsheetImport: { enabled: true } },
+    });
   });
 
   it('sem alteração o botão fica desabilitado', () => {

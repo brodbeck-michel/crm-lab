@@ -115,6 +115,38 @@ describe('PATCH /settings/funnel-rules', () => {
     expect(again.body).toEqual(body);
   });
 
+  it('reingajamento: padrao desligado, 1h e 24h, textos editaveis (CRMLAB-62)', async () => {
+    expect(DEFAULT_FUNNEL_RULES.reengagement.first).toMatchObject({ enabled: false, hours: 1 });
+    expect(DEFAULT_FUNNEL_RULES.reengagement.second).toMatchObject({ enabled: false, hours: 24 });
+    const res = await app.agent
+      .patch(BASE)
+      .set(app.auth(managerA))
+      .send({ reengagement: { first: { enabled: true, hours: 3, message: '  Oi, tudo bem?  ' } } });
+    expect(res.status).toBe(200);
+    expect((res.body as FunnelRules).reengagement.first).toEqual({ enabled: true, hours: 3, message: 'Oi, tudo bem?' });
+  });
+
+  it('reingajamento: 2º nao liga sem o 1º (D-211 item 4)', async () => {
+    const res = await app.agent
+      .patch(BASE)
+      .set(app.auth(managerA))
+      .send({ reengagement: { second: { enabled: true } } });
+    expect(res.status).toBe(400);
+    expect((res.body as ApiErrorBody).error.details).toMatchObject({
+      fields: { 'reengagement.second.enabled': 'Ligue o 1º reingajamento antes do 2º' },
+    });
+  });
+
+  it('reingajamento: horas e texto validados pelo caminho', async () => {
+    const res = await app.agent
+      .patch(BASE)
+      .set(app.auth(managerA))
+      .send({ reengagement: { first: { hours: 0, message: '   ' } } });
+    expect(res.status).toBe(400);
+    const fields = (res.body as ApiErrorBody).error.details?.fields as Record<string, string>;
+    expect(Object.keys(fields).sort()).toEqual(['reengagement.first.hours', 'reengagement.first.message']);
+  });
+
   it('admin tambem edita', async () => {
     const res = await app.agent
       .patch(BASE)

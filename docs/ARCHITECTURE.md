@@ -338,7 +338,7 @@ as projeções parciais de `PATCH /proposals/:id/{status,discount,approve,reject
 | Endpoint | Resposta de verdade |
 |----------|---------------------|
 | `GET /conversations` | `{ conversations: Conversation[], pagination, counts: { mine, unassigned } }` — **não** `totalCount`/`unreadCount`. Os `counts` alimentam os chips e **não** mudam com `?scope=` |
-| `GET /conversations/:id` | `{ conversation, messages, pagination }` — e este GET **marca a conversa como lida** (D-027) |
+| `GET /conversations/:id` | `{ conversation, messages, pagination, cursors }` (cursor `before`, D-237) — e este GET **marca a conversa como lida** (D-027) |
 | `GET /proposals/:id` | `ProposalDetail` **cru** (items, subtotal, history, approvals embutidos) — não `{ proposal, history, approvals }` |
 | `PATCH /proposals/:id/status` | projeção parcial `{ id, status, reasonLost, updatedAt }` |
 | `PATCH /proposals/:id/discount` | projeção parcial `{ id, discountPercent, totalPrice }` |

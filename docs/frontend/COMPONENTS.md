@@ -98,6 +98,23 @@ Anatomia (padrão WhatsApp):
 - `useAuthenticatedMedia` devolve também o `fileName` (do `Content-Disposition` de
   `GET /media/:id`), repassado ao `ImageLightbox` — é o nome com que a imagem é salva (CRMLAB-26)
 
+### DateSeparator (CRMLAB-71, D-239)
+```tsx
+<DateSeparator date={message.createdAt} now={new Date()} />
+```
+- Pílula centralizada entre mensagens de dias diferentes, no fuso do navegador (o fio é ISO UTC)
+- Rótulo por `dateSeparatorLabel(date, now)` (exportada, fonte única): "Hoje", "Ontem", dia da
+  semana por extenso de 2 a 6 dias atrás ("Segunda-feira"), `dd/mm/aaaa` a partir de 7 dias e
+  para data futura. Conta por **dia de calendário** local: 23h59 e 00h01 são dias diferentes
+- `isSameLocalDay(a, b)` (exportada) decide onde entra um separador
+- `role="separator"` com o rótulo como nome acessível; mesma família visual da bolha de sistema
+  (`rounded-pill`, texto `caption`), mas neutra — é marcação de tempo, não evento
+- `now` é injetável para teste determinístico (mesma ideia do `ConversationItem`)
+- Quem usa: `ConversationPanel` (Atendimento). A faixa "N mensagens não lidas" e o botão ↓ com
+  contador são **locais da tela** (`pages/Attendance/`), não primitivos — ver PAGES.md §2. A
+  lista marca cada linha com `data-anchor-id` (o id da mensagem), que é onde a rolagem se ancora
+  ao carregar histórico (D-238); o `data-message-id` do balão é do `MessageBubble`
+
 ### AudioMessage (CRMLAB-2)
 ```tsx
 <AudioMessage url={message.attachmentUrl} />
@@ -587,6 +604,7 @@ tela passa tudo por props (o dado vem do TanStack Query).
 |------------|-----------|-------|
 | `ConversationItem` | `<ConversationItem conversation selected? onClick?(id) now? />` | `now` é injetável só para tornar "aguardando N min" determinístico em teste |
 | `MessageBubble` | `<MessageBubble type message maxWidth? showMeta? />` | `type` ∈ `received \| sent \| system` — os únicos 3 · `*texto*` em negrito (D-183) |
+| `DateSeparator` | `<DateSeparator date now? />` | Pílula de dia (CRMLAB-71, D-239) · `dateSeparatorLabel` e `isSameLocalDay` exportadas |
 | `AudioMessage` | `<AudioMessage url />` | `<audio controls>` nativo com blob autenticado · download sempre disponível |
 | `Composer` | `<Composer onSend(content) onAttach? onSendAudio?(audio) disabled? sending? placeholder? quickReplies? />` | Enter envia · Shift+Enter quebra linha · Ctrl/Cmd+B envolve a seleção em `*` · emoji insere no cursor · `/` no campo vazio abre as macros · microfone grava recado de voz (clique/clique, 5 min, D-181) |
 | `EmojiPicker` | `<EmojiPicker onPick(emoji) disabled? />` | Grade fixa de 48, sem biblioteca · `Esc` fecha e devolve o foco |

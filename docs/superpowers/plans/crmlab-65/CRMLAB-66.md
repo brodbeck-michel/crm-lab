@@ -3,7 +3,7 @@
 Worktree `../CRM Lab-66` · branch `feature/CRMLAB-66-responder-reagir-apagada` (de `integ/epic-65`).
 Faixas: decisões D-220…D-224 · migrações 040, 041.
 
-## Estado: 🔄 frontend
+## Estado: ✅ pronto para integração
 
 ## Feito
 - Docs (Regra Zero): D-220 (esconder, não apagar), D-221 (citação), D-222 (reação por lado),
@@ -36,8 +36,12 @@ Faixas: decisões D-220…D-224 · migrações 040, 041.
       editedMessage wrapper, cross-tenant, instance errada), `tests/messages/reactions-quotes.spec.ts`
       (12), `tests/db/rls-crmlab66.spec.ts` (8), `tests/whatsapp/evolution-webhook-sync.spec.ts` (4),
       +5 em evolution-client.spec; inventário de rotas 74 → 76.
-- [ ] Testes frontend.
-- [ ] Typecheck + specs afetados verdes.
+- [x] Testes frontend: `MessageBubble.crmlab66.spec.tsx`, `Composer.reply.spec.tsx`,
+      `ConversationPanel.reply.spec.tsx`, `scroll-to-message.spec.ts`, +1 em `ws.spec.ts`.
+- [x] Typecheck backend/frontend (`tsconfig.wt.json`) e shared verdes; eslint limpo nos arquivos
+      mexidos. Backend: 59 arquivos / 829 testes verdes (messages, webhooks, whatsapp,
+      conversations, kernel, db, patients, operation, settings, send-from-card). Frontend: 18
+      arquivos / 716 testes verdes (conversation, Attendance, ws, hooks, tokens).
 
 ## Integração
 - 28/09: merge de `origin/integ/epic-65` (CRMLAB-71 e 72 já integrados). Único conflito: fim do
@@ -55,5 +59,21 @@ D-220, D-221, D-222, D-223 (D-224 livre).
 - Encaminhar: fora desta história (opcional no card).
 - Miniatura real no bloco citado: usa rótulo ("📷 Foto") em vez de buscar a imagem.
 
+## Para validar na hml (depende do gateway real)
+- Conferir no log do boot `evolution.webhook_sync` com `updated >= 1` (a instância antiga passa a
+  assinar MESSAGES_EDITED/MESSAGES_DELETE).
+- Payloads de reação/edição/apagamento vieram da leitura do código do Evolution v2 + forma do
+  Baileys; o parser aceita as variações conhecidas. Se algum não bater, o log
+  `evolution.inbound_discarded` / `evolution.webhook_processed` mostra o evento.
+
+## Arquivos com risco de conflito na integração
+`backend/src/repositories/message.repository.ts` (COLUMNS/FROM/toMessage),
+`backend/src/services/message.service.ts`, `backend/src/controllers/webhook.routes.ts`,
+`backend/src/lib/evolution-client.ts` (CRMLAB-67 acrescenta eventos na constante),
+`frontend/src/components/conversation/MessageBubble.tsx`, `Composer.tsx`,
+`frontend/src/pages/Attendance/ConversationPanel.tsx` (`renderRows` ganhou `actions`) e `index.tsx`,
+`shared/types/conversation.types.ts`, `backend/tests/kernel/route-tenant-isolation.spec.ts`
+(contagem 76), `docs/DECISIONS.md` (fim do arquivo).
+
 ## Próximo passo exato
-Testes frontend: MessageBubble.crmlab66.spec.tsx (menu, reagir, copiar, apagada, editada, citação), Composer (faixa), scroll-to-message.spec.ts, ws.spec (message_updated).
+Nada no card. Orquestrador: mergear em `integ/epic-65`, rodar a suíte completa e subir na hml.

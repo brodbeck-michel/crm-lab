@@ -142,6 +142,22 @@ function notificationsGranted(): boolean {
   return typeof Notification !== 'undefined' && Notification.permission === 'granted';
 }
 
+/**
+ * O detalhe da conversa vive no cache em dois formatos: o objeto simples e, desde o CRMLAB-71
+ * (D-238), as páginas do `useInfiniteQuery` (`{ pages, pageParams }`). Achata os dois.
+ */
+function detailOf(data: unknown): GetConversationResponse | null {
+  if (typeof data !== 'object' || data === null) return null;
+  if ('pages' in data && Array.isArray(data.pages)) {
+    const pages = data.pages as GetConversationResponse[];
+    const first = pages[0];
+    if (!first) return null;
+    return { ...first, messages: pages.flatMap((p) => p.messages ?? []) };
+  }
+  if ('messages' in data && Array.isArray(data.messages)) return data as GetConversationResponse;
+  return null;
+}
+
 function newestMessageAt(data: GetConversationResponse): string | null {
   let max: string | null = null;
   for (const m of data.messages) {
@@ -238,8 +254,8 @@ export function useNewMessageAlerts(): void {
       const [scope, conversationId] = event.query.queryKey;
       if (scope !== 'conversation' || typeof conversationId !== 'string') return;
       if (conversationId !== useMessageAlertsStore.getState().openConversationId) return;
-      const data = event.query.state.data as GetConversationResponse | undefined;
-      if (!data?.messages) return;
+      const data = detailOf(event.query.state.data);
+      if (!data) return;
 
       // `undefined` = primeira carga desta conversa aberta = linha de base.
       const seenAt = lastSeen.get(conversationId);

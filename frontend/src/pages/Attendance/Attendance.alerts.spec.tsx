@@ -63,6 +63,7 @@ function detail(id: string): GetConversationResponse {
     conversation: { ...conversation(id), patientEmail: null, customFields: {} },
     messages: [],
     pagination: { page: 1, limit: 50, total: 0, totalPages: 0 },
+    cursors: { before: null, after: null },
   };
 }
 

@@ -106,7 +106,13 @@ function detail(
     conversation: { ...conversation(overrides), patientEmail: null, customFields: {} },
     messages,
     pagination: { page: 1, limit: 50, total: messages.length, totalPages: 1 },
+    cursors: { before: null, after: null },
   };
+}
+
+/** Formato real do cache desde o CRMLAB-71 (D-238): páginas do `useInfiniteQuery`. */
+function infinite(...pages: GetConversationResponse[]) {
+  return { pages, pageParams: pages.map((_, i) => (i === 0 ? null : `cursor-${i}`)) };
 }
 
 class FakeNotification {
@@ -303,14 +309,14 @@ describe('useNewMessageAlerts — foco e conversa aberta', () => {
     useMessageAlertsStore.setState({ openConversationId: 'c-1' });
     listMock.mockResolvedValue(listResponse([conversation()]));
     renderHarness();
-    const key = [...queryKeys.conversation('c-1'), 50];
+    const key = [...queryKeys.conversation('c-1'), 'messages'];
     act(() => {
-      queryClient.setQueryData(key, detail([message()]));
+      queryClient.setQueryData(key, infinite(detail([message()])));
     });
     act(() => {
       queryClient.setQueryData(
         key,
-        detail([message(), message({ id: 'm-2', createdAt: '2026-09-28T10:01:00Z' })]),
+        infinite(detail([message(), message({ id: 'm-2', createdAt: '2026-09-28T10:01:00Z' })])),
       );
     });
     expect(FakeNotification.instances).toHaveLength(0);
@@ -321,19 +327,22 @@ describe('useNewMessageAlerts — foco e conversa aberta', () => {
     useMessageAlertsStore.setState({ openConversationId: 'c-1' });
     listMock.mockResolvedValue(listResponse([conversation()]));
     renderHarness();
-    const key = [...queryKeys.conversation('c-1'), 50];
+    const key = [...queryKeys.conversation('c-1'), 'messages'];
     act(() => {
-      queryClient.setQueryData(key, detail([message()]));
+      queryClient.setQueryData(key, infinite(detail([message()])));
     });
     act(() => {
       queryClient.setQueryData(
         key,
-        detail([
-          message(),
-          message({ id: 'm-2', senderType: 'agent', createdAt: '2026-09-28T10:01:00Z' }),
-          message({ id: 'm-3', createdAt: '2026-09-28T10:02:00Z' }),
-          message({ id: 'm-4', createdAt: '2026-09-28T10:03:00Z' }),
-        ]),
+        // Duas páginas: a nova mais recente e a antiga já carregada pela rolagem.
+        infinite(
+          detail([
+            message({ id: 'm-2', senderType: 'agent', createdAt: '2026-09-28T10:01:00Z' }),
+            message({ id: 'm-3', createdAt: '2026-09-28T10:02:00Z' }),
+            message({ id: 'm-4', createdAt: '2026-09-28T10:03:00Z' }),
+          ]),
+          detail([message()]),
+        ),
       );
     });
     expect(FakeNotification.instances).toHaveLength(1);

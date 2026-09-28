@@ -81,13 +81,13 @@ node_modules são symlinks para a pasta principal; `*.wt.*` (vitest/tsconfig com
 > em cada `../CRM Lab-67|68|69`, `git status --short` (se houver arquivo solto, o WIP não entrou)
 > e `git log --oneline -3`; ler o diário do card; disparar um agente novo por card apontando
 > para o mesmo worktree/branch, com o prompt da onda 2 + "continue do diário". hml ainda não
-> subiu (aguarda autorização). 4 perguntas de regra em aberto (ver comentários nos cards 66 e 72).
+> subiu em 28/09 20:15 (`hml-3f52c86`, com a main v1.23.0+62/53 dentro). 4 perguntas de regra em aberto (ver comentários nos cards 66 e 72).
 
 | Card | Fase | Último commit | Observação |
 |---|---|---|---|
-| 66 [A] | 🔗 integrado · Pronto p/ Validação | 6dd7c9e | D-220..D-223 (D-224 e migração 041 sem uso). Migração 040. `EVOLUTION_WEBHOOK_EVENTS` + `syncEvolutionWebhooks` no boot: o 67 só acrescenta eventos. 829 back + 716 front verdes no card. |
-| 71 [F] | 🔗 integrado · Pronto p/ Validação | e35cbfc | D-237..D-239. Cursor `before=<messageId>`, `cursors.after` reservado p/ 68. 37 back + 656 front verdes. Migração 046 não usada. |
-| 72 [G] | 🔗 integrado · Pronto p/ Validação | d356ac6 | D-240, D-241. 645 testes front verdes. Dúvida p/ Michel: gestor/admin avisados só da própria fila. |
+| 66 [A] | 🧪 hml (`hml-3f52c86`) · Pronto p/ Validação | 6dd7c9e | D-220..D-223 (D-224 e migração 041 sem uso). Migração 040. `EVOLUTION_WEBHOOK_EVENTS` + `syncEvolutionWebhooks` no boot: o 67 só acrescenta eventos. 829 back + 716 front verdes no card. |
+| 71 [F] | 🧪 hml (`hml-3f52c86`) · Pronto p/ Validação | e35cbfc | D-237..D-239. Cursor `before=<messageId>`, `cursors.after` reservado p/ 68. 37 back + 656 front verdes. Migração 046 não usada. |
+| 72 [G] | 🧪 hml (`hml-3f52c86`) · Pronto p/ Validação | d356ac6 | D-240, D-241. 645 testes front verdes. Dúvida p/ Michel: gestor/admin avisados só da própria fila. |
 | 67 [B] | ⏸️ pausado (só leitura/pesquisa) | df4df03 | Ack Evolution 0..5 mapeado; sem `presenceSubscribe` no v2 (usar `sendPresence`); rascunho D-225..227 no diário. Próximo: escrever D-225..227 + shared + API_CONTRACTS. |
 | 68 [C] | ⏸️ pausado (só desenho) | 87b2a57 | Desenho D-228..230 no diário (função própria sem acento, GIN parcial sem apagadas, `POST /:id/unread`, `around`/`after`). Próximo: escrever D-228..230 + contratos. |
 | 69 [D] | ⏸️ pausado (docs prontos) | 2535933 | D-231..233 + API_CONTRACTS/COMPONENTS/PAGES escritos; nenhum código. Próximo: shared (`caption`, `MAX_MEDIA_BYTES`) → backend → frontend → testes. |
@@ -126,3 +126,9 @@ Diário de cada card: `docs/superpowers/plans/crmlab-65/CRMLAB-<n>.md`.
   backend 1637/1637 (109 arquivos), frontend 1374/1374 (99 arquivos). E2E Playwright não rodado
   (precisa da stack Docker). 66/71/72 → Pronto p/ Validação. Onda 2 (67, 68, 69) disparada a
   partir desta integração. hml: aguardando autorização do Michel.
+- 2026-09-28 20:15: **onda 1 na hml** (`hml-3f52c86`). Antes, merge da `origin/main` (62/53) na
+  `integ/epic-65`, porque a hml rodava a `integ/onda-53-62` e subir sem ela tiraria o 031/032 do
+  código. Conflitos: `main.ts`, `message.repository.ts` (autor "Mensagem automática" entrou no
+  `senderNameSql`; INSERT grava citação + `automation`), `DECISIONS.md`, `SCHEMA.md`. Conflito
+  semântico: spec do reengajamento com `listByConversation` antigo. E2E do CI achou
+  `getByLabel('Mensagem')` casando "Ações da mensagem" do 66 → rótulo exato. Suíte local e CI verdes.

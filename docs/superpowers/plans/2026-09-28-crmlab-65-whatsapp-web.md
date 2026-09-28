@@ -77,12 +77,12 @@ node_modules são symlinks para a pasta principal; `*.wt.*` (vitest/tsconfig com
 
 | Card | Fase | Último commit | Observação |
 |---|---|---|---|
-| 66 [A] | 🔗 integrado | 6dd7c9e | D-220..D-223 (D-224 e migração 041 sem uso). Migração 040. `EVOLUTION_WEBHOOK_EVENTS` + `syncEvolutionWebhooks` no boot: o 67 só acrescenta eventos. 829 back + 716 front verdes no card. |
-| 71 [F] | 🔗 integrado | e35cbfc | D-237..D-239. Cursor `before=<messageId>`, `cursors.after` reservado p/ 68. 37 back + 656 front verdes. Migração 046 não usada. |
-| 72 [G] | 🔗 integrado | d356ac6 | D-240, D-241. 645 testes front verdes. Dúvida p/ Michel: gestor/admin avisados só da própria fila. |
-| 67 [B] | ⬜ aguarda onda 2 | — | |
-| 68 [C] | ⬜ aguarda onda 2 | — | |
-| 69 [D] | ⬜ aguarda onda 2 | — | |
+| 66 [A] | 🔗 integrado · Pronto p/ Validação | 6dd7c9e | D-220..D-223 (D-224 e migração 041 sem uso). Migração 040. `EVOLUTION_WEBHOOK_EVENTS` + `syncEvolutionWebhooks` no boot: o 67 só acrescenta eventos. 829 back + 716 front verdes no card. |
+| 71 [F] | 🔗 integrado · Pronto p/ Validação | e35cbfc | D-237..D-239. Cursor `before=<messageId>`, `cursors.after` reservado p/ 68. 37 back + 656 front verdes. Migração 046 não usada. |
+| 72 [G] | 🔗 integrado · Pronto p/ Validação | d356ac6 | D-240, D-241. 645 testes front verdes. Dúvida p/ Michel: gestor/admin avisados só da própria fila. |
+| 67 [B] | 🔄 disparado (onda 2) | — | |
+| 68 [C] | 🔄 disparado (onda 2) | — | |
+| 69 [D] | 🔄 disparado (onda 2) | — | |
 | 70 [E] | ⬜ aguarda onda 3 | — | |
 | 73 [H] | ⬜ aguarda onda 3 | — | |
 | 64    | ⬜ aguarda onda 3 | — | |
@@ -114,3 +114,7 @@ Diário de cada card: `docs/superpowers/plans/crmlab-65/CRMLAB-<n>.md`.
 - 2026-09-28: 66 mergeado na `integ/epic-65` sem conflito (o agente já tinha trazido a integ). Suíte
   completa rodando (logs em scratchpad `onda1/`). Se a sessão cair aqui: rodar de novo o typecheck
   (`*.wt.*`), `eslint .` e os dois vitest com `--maxWorkers=3 --minWorkers=1` na `integ/epic-65`.
+- 2026-09-28: **suíte completa da onda 1 verde na `integ/epic-65`**: tsc shared/back/front, eslint,
+  backend 1637/1637 (109 arquivos), frontend 1374/1374 (99 arquivos). E2E Playwright não rodado
+  (precisa da stack Docker). 66/71/72 → Pronto p/ Validação. Onda 2 (67, 68, 69) disparada a
+  partir desta integração. hml: aguardando autorização do Michel.

@@ -9,6 +9,7 @@ import type {
   ListConversationsQuery,
   ListConversationsResponse,
   Message,
+  SetMessageReactionRequest,
   StartWhatsAppConversationRequest,
   StartWhatsAppConversationResponse,
   UpdateConversationRequest,
@@ -40,6 +41,14 @@ export const conversationsApi = {
   /** Anexo — base64 em JSON, não multipart (Onda 8 §4.3). */
   sendAttachment: (id: string, body: CreateAttachmentRequest) =>
     http.post<Message>(`/conversations/${id}/attachments`, body),
+
+  /** Reação do laboratório (CRMLAB-66, D-222) — substitui a anterior. */
+  setReaction: (id: string, messageId: string, body: SetMessageReactionRequest) =>
+    http.put<Message>(`/conversations/${id}/messages/${messageId}/reaction`, body),
+
+  /** Tira a reação do laboratório (204, idempotente). */
+  removeReaction: (id: string, messageId: string) =>
+    http.delete<void>(`/conversations/${id}/messages/${messageId}/reaction`),
 
   update: (id: string, body: UpdateConversationRequest) =>
     http.patch<UpdateConversationResponse>(`/conversations/${id}`, body),

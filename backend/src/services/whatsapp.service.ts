@@ -278,14 +278,50 @@ export interface OutboundMedia {
   fileName: string;
 }
 
+/**
+ * Mensagem citada no envio (CRMLAB-66, D-221): id externo da original, de que
+ * lado ela esta e o texto (o Evolution usa para montar a citacao).
+ */
+export interface QuotedRef {
+  externalId: string;
+  fromMe: boolean;
+  content: string;
+}
+
+export interface SendOptions {
+  quoted?: QuotedRef;
+}
+
+/** Alvo de uma reacao (D-222). */
+export interface ReactionTarget {
+  externalId: string;
+  fromMe: boolean;
+}
+
 export interface WhatsAppDriver {
   readonly name: string;
-  send(credentials: WhatsAppCredentials, phone: string, content: string): Promise<SendResult>;
+  send(
+    credentials: WhatsAppCredentials,
+    phone: string,
+    content: string,
+    options?: SendOptions,
+  ): Promise<SendResult>;
   sendMedia(
     credentials: WhatsAppCredentials,
     phone: string,
     media: OutboundMedia,
+    options?: SendOptions,
   ): Promise<SendResult>;
+  /**
+   * Reacao com emoji (D-222); `''` remove. OPCIONAL: driver sem suporte faz o
+   * `WhatsAppService.sendReaction` lancar, e a API responde `MESSAGE_SEND_FAILED`.
+   */
+  sendReaction?(
+    credentials: WhatsAppCredentials,
+    phone: string,
+    target: ReactionTarget,
+    emoji: string,
+  ): Promise<void>;
 }
 
 export interface MockSentMessage {
@@ -294,6 +330,15 @@ export interface MockSentMessage {
   content: string;
   externalId: string;
   at: string;
+  /** Id externo da mensagem citada (D-221), quando houve. */
+  quotedExternalId?: string;
+}
+
+export interface MockSentReaction {
+  tenantId: string;
+  phone: string;
+  targetExternalId: string;
+  emoji: string;
 }
 
 /**
@@ -304,11 +349,13 @@ export interface MockSentMessage {
 export class MockWhatsAppDriver implements WhatsAppDriver {
   readonly name = 'mock';
   readonly sent: MockSentMessage[] = [];
+  readonly reactions: MockSentReaction[] = [];
 
   async send(
     credentials: WhatsAppCredentials,
     phone: string,
     content: string,
+    options: SendOptions = {},
   ): Promise<SendResult> {
     const externalId = `wamid.mock.${randomUUID()}`;
     this.sent.push({
@@ -317,6 +364,7 @@ export class MockWhatsAppDriver implements WhatsAppDriver {
       content,
       externalId,
       at: new Date().toISOString(),
+      ...(options.quoted ? { quotedExternalId: options.quoted.externalId } : {}),
     });
     // Conteudo de mensagem de paciente NUNCA vai para o log (SECURITY.md).
     logger.debug('whatsapp.mock_send', { tenantId: credentials.tenantId, externalId });
@@ -327,6 +375,7 @@ export class MockWhatsAppDriver implements WhatsAppDriver {
     credentials: WhatsAppCredentials,
     phone: string,
     media: OutboundMedia,
+    options: SendOptions = {},
   ): Promise<SendResult> {
     const externalId = `wamid.mock.${randomUUID()}`;
     this.sent.push({
@@ -335,13 +384,29 @@ export class MockWhatsAppDriver implements WhatsAppDriver {
       content: `[mídia] ${media.fileName}`,
       externalId,
       at: new Date().toISOString(),
+      ...(options.quoted ? { quotedExternalId: options.quoted.externalId } : {}),
     });
     logger.debug('whatsapp.mock_send_media', { tenantId: credentials.tenantId, externalId });
     return { externalId };
   }
 
+  async sendReaction(
+    credentials: WhatsAppCredentials,
+    phone: string,
+    target: ReactionTarget,
+    emoji: string,
+  ): Promise<void> {
+    this.reactions.push({
+      tenantId: credentials.tenantId,
+      phone,
+      targetExternalId: target.externalId,
+      emoji,
+    });
+  }
+
   clear(): void {
     this.sent.length = 0;
+    this.reactions.length = 0;
   }
 }
 
@@ -364,7 +429,40 @@ export class HttpWhatsAppDriver implements WhatsAppDriver {
     credentials: WhatsAppCredentials,
     phone: string,
     content: string,
+    options: SendOptions = {},
   ): Promise<SendResult> {
+    const payload = await this.post(credentials, {
+      messaging_product: 'whatsapp',
+      to: phone,
+      type: 'text',
+      text: { body: content },
+      // Responder citando na Cloud API (D-221).
+      ...(options.quoted ? { context: { message_id: options.quoted.externalId } } : {}),
+    });
+    const externalId = firstMessageId(payload);
+    if (!externalId) throw new Error('WhatsApp API nao devolveu id da mensagem');
+    return { externalId };
+  }
+
+  /** Reacao na Cloud API (`type: reaction`, D-222); `emoji: ''` remove. */
+  async sendReaction(
+    credentials: WhatsAppCredentials,
+    phone: string,
+    target: ReactionTarget,
+    emoji: string,
+  ): Promise<void> {
+    await this.post(credentials, {
+      messaging_product: 'whatsapp',
+      to: phone,
+      type: 'reaction',
+      reaction: { message_id: target.externalId, emoji },
+    });
+  }
+
+  private async post(
+    credentials: WhatsAppCredentials,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
     // `fetch` + leitura do corpo dentro do MESMO signal: o `fetch` resolve nos
     // headers, entao um corpo que nunca termina travaria igual (D-137).
     const { ok, status, payload } = await withGatewayTimeout(
@@ -379,12 +477,7 @@ export class HttpWhatsAppDriver implements WhatsAppDriver {
               'Content-Type': 'application/json',
               Authorization: `Bearer ${credentials.apiToken}`,
             },
-            body: JSON.stringify({
-              messaging_product: 'whatsapp',
-              to: phone,
-              type: 'text',
-              text: { body: content },
-            }),
+            body: JSON.stringify(body),
           },
         );
         // O corpo so e lido quando ha o que ler: um erro da Meta com corpo
@@ -397,9 +490,7 @@ export class HttpWhatsAppDriver implements WhatsAppDriver {
     if (!ok) {
       throw new Error(`WhatsApp API respondeu ${status}`);
     }
-    const externalId = firstMessageId(payload);
-    if (!externalId) throw new Error('WhatsApp API nao devolveu id da mensagem');
-    return { externalId };
+    return payload;
   }
 
   // rangel: a API oficial da Meta exige upload multipart previo (endpoint
@@ -446,6 +537,7 @@ export class EvolutionWhatsAppDriver implements WhatsAppDriver {
     credentials: WhatsAppCredentials,
     phone: string,
     content: string,
+    options: SendOptions = {},
   ): Promise<SendResult> {
     const instanceName = evolutionInstanceName(credentials.tenantId);
     // Fix do Important 6 (rodada 1) + N1 (rodada 2) da revisao da Task 5: a
@@ -466,14 +558,34 @@ export class EvolutionWhatsAppDriver implements WhatsAppDriver {
       phone,
       content,
       credentials.qrInstanceApiKey,
+      options.quoted,
     );
     return { externalId };
+  }
+
+  async sendReaction(
+    credentials: WhatsAppCredentials,
+    phone: string,
+    target: ReactionTarget,
+    emoji: string,
+  ): Promise<void> {
+    if (!credentials.qrInstanceApiKey) {
+      throw new EvolutionCredentialError(credentials.tenantId);
+    }
+    await this.client.sendReaction(
+      evolutionInstanceName(credentials.tenantId),
+      phone,
+      target,
+      emoji,
+      credentials.qrInstanceApiKey,
+    );
   }
 
   async sendMedia(
     credentials: WhatsAppCredentials,
     phone: string,
     media: OutboundMedia,
+    options: SendOptions = {},
   ): Promise<SendResult> {
     const instanceName = evolutionInstanceName(credentials.tenantId);
     if (!credentials.qrInstanceApiKey) {
@@ -488,6 +600,7 @@ export class EvolutionWhatsAppDriver implements WhatsAppDriver {
         fileName: media.fileName,
       },
       credentials.qrInstanceApiKey,
+      options.quoted,
     );
     return { externalId };
   }
@@ -698,18 +811,13 @@ export class WhatsAppService {
    * erro: quem chama (MessageService) e que marca a mensagem como `failed` e
    * devolve `MESSAGE_SEND_FAILED` (502) — o adapter nao conhece o contrato HTTP.
    */
-  async send(tenantId: string, phone: string, content: string): Promise<SendResult> {
-    const credentials = await this.credentials.forTenant(tenantId);
-
-    // D-074: canal desligado NAO envia. Antes da fila, porque isso nao e falha
-    // transitoria — repetir tres vezes so atrasaria o `failed` do atendente.
-    if (!credentials.isActive) {
-      throw new Error('canal whatsapp desativado para este laboratorio (isActive: false)');
-    }
-    // D-073 emendada: token revogado nao volta a sair pelo numero global.
-    if (credentials.apiTokenRevoked) {
-      throw new Error('token do canal whatsapp foi revogado por este laboratorio');
-    }
+  async send(
+    tenantId: string,
+    phone: string,
+    content: string,
+    options: SendOptions = {},
+  ): Promise<SendResult> {
+    const credentials = await this.sendableCredentials(tenantId);
 
     // Seleciona o driver PELO TENANT (D-024/D-032) — nunca um driver global: um
     // laboratorio em `qr` nao pode acidentalmente sair pela API oficial de outro.
@@ -717,29 +825,62 @@ export class WhatsAppService {
 
     return this.queue.run(
       'whatsapp.send',
-      () => driver.send(credentials, phone, content),
+      () => driver.send(credentials, phone, content, options),
       { attempts: this.attempts },
     );
   }
 
   /** Mesma disciplina de `send`, para mídia (Onda 8 §4.3). */
-  async sendMedia(tenantId: string, phone: string, media: OutboundMedia): Promise<SendResult> {
-    const credentials = await this.credentials.forTenant(tenantId);
+  async sendMedia(
+    tenantId: string,
+    phone: string,
+    media: OutboundMedia,
+    options: SendOptions = {},
+  ): Promise<SendResult> {
+    const credentials = await this.sendableCredentials(tenantId);
+    const driver = this.driverFor(credentials);
 
+    return this.queue.run(
+      'whatsapp.send_media',
+      () => driver.sendMedia(credentials, phone, media, options),
+      { attempts: this.attempts },
+    );
+  }
+
+  /** Reacao (CRMLAB-66, D-222) — mesma disciplina de `send`. `emoji: ''` remove. */
+  async sendReaction(
+    tenantId: string,
+    phone: string,
+    target: ReactionTarget,
+    emoji: string,
+  ): Promise<void> {
+    const credentials = await this.sendableCredentials(tenantId);
+    const driver = this.driverFor(credentials);
+    const sendReaction = driver.sendReaction?.bind(driver);
+    if (!sendReaction) {
+      throw new Error(`driver whatsapp "${driver.name}" nao envia reacao`);
+    }
+    await this.queue.run(
+      'whatsapp.send_reaction',
+      () => sendReaction(credentials, phone, target, emoji),
+      { attempts: this.attempts },
+    );
+  }
+
+  /**
+   * D-074: canal desligado NAO envia. Antes da fila, porque isso nao e falha
+   * transitoria — repetir tres vezes so atrasaria o `failed` do atendente.
+   * D-073 emendada: token revogado nao volta a sair pelo numero global.
+   */
+  private async sendableCredentials(tenantId: string): Promise<WhatsAppCredentials> {
+    const credentials = await this.credentials.forTenant(tenantId);
     if (!credentials.isActive) {
       throw new Error('canal whatsapp desativado para este laboratorio (isActive: false)');
     }
     if (credentials.apiTokenRevoked) {
       throw new Error('token do canal whatsapp foi revogado por este laboratorio');
     }
-
-    const driver = this.driverFor(credentials);
-
-    return this.queue.run(
-      'whatsapp.send_media',
-      () => driver.sendMedia(credentials, phone, media),
-      { attempts: this.attempts },
-    );
+    return credentials;
   }
 
   private driverFor(credentials: WhatsAppCredentials): WhatsAppDriver {

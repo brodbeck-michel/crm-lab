@@ -192,14 +192,33 @@ export function Attendance() {
   }, [queryClient, selectedId]);
 
   const sendMessage = useMutation({
-    mutationFn: (content: string) =>
-      api.conversations.sendMessage(selectedId as string, { content, messageType: 'text' }),
+    mutationFn: ({ content, quotedMessageId }: { content: string; quotedMessageId?: string }) =>
+      api.conversations.sendMessage(selectedId as string, {
+        content,
+        messageType: 'text',
+        ...(quotedMessageId ? { quotedMessageId } : {}),
+      }),
+    onSuccess: invalidateConversation,
+    onError: handleApiError,
+  });
+
+  /**
+   * Reação do laboratório (CRMLAB-66, D-222). Só invalida: o WS
+   * `conversation.message_updated` faz o mesmo nas outras abas.
+   */
+  const react = useMutation({
+    mutationFn: async ({ messageId, emoji }: { messageId: string; emoji: string | null }) => {
+      if (emoji === null) await api.conversations.removeReaction(selectedId as string, messageId);
+      else await api.conversations.setReaction(selectedId as string, messageId, { emoji });
+    },
     onSuccess: invalidateConversation,
     onError: handleApiError,
   });
 
   /** Anexo (Onda 8 §4.3) — o clipe abre o seletor de arquivo do SO. */
   const fileInputRef = useRef<HTMLInputElement>(null);
+  /** Citação escolhida quando o clipe foi clicado (CRMLAB-66) — o arquivo chega depois. */
+  const pendingQuoteRef = useRef<{ conversationId: string; quotedMessageId: string } | null>(null);
   /**
    * `conversationId` vem de quem chama, lido ANTES de ler o arquivo: entre o
    * clique e o POST há o `FileReader`, e trocar de conversa nessa janela
@@ -229,13 +248,18 @@ export function Attendance() {
     const file = event.target.files?.[0];
     event.target.value = '';
     const conversationId = selectedId;
+    const pending = pendingQuoteRef.current;
+    pendingQuoteRef.current = null;
     if (!file || !conversationId) return;
+    const quotedMessageId =
+      pending?.conversationId === conversationId ? pending.quotedMessageId : undefined;
     const contentBase64 = await readFileAsBase64(file);
     sendAttachment.mutate({
       conversationId,
       fileName: file.name,
       mimeType: file.type || 'application/octet-stream',
       contentBase64,
+      ...(quotedMessageId ? { quotedMessageId } : {}),
     });
   }
 
@@ -244,7 +268,7 @@ export function Attendance() {
    * `mutateAsync` para o Composer saber se foi — falhou, a prévia fica e o
    * erro já saiu pelo `handleApiError` do `onError`.
    */
-  async function handleSendAudio(audio: RecordedAudio): Promise<void> {
+  async function handleSendAudio(audio: RecordedAudio, quotedMessageId?: string): Promise<void> {
     const conversationId = selectedId;
     if (!conversationId) return;
     const contentBase64 = await readFileAsBase64(audio.blob);
@@ -253,6 +277,7 @@ export function Attendance() {
       fileName: audio.fileName,
       mimeType: audio.mimeType,
       contentBase64,
+      ...(quotedMessageId ? { quotedMessageId } : {}),
     });
   }
 
@@ -348,7 +373,15 @@ export function Attendance() {
             isLoading={selectedId !== null && detailQuery.isPending}
             isError={detailQuery.isError}
             onRetry={() => void detailQuery.refetch()}
-            onSend={(content) => sendMessage.mutate(content)}
+            onSend={(content, quotedMessageId) =>
+              sendMessage.mutate({ content, ...(quotedMessageId ? { quotedMessageId } : {}) })
+            }
+            onReact={(messageId, emoji) => react.mutate({ messageId, emoji })}
+            onQuoteUnavailable={() =>
+              toast('A mensagem original não está carregada — role para cima para vê-la.', {
+                tone: 'attention',
+              })
+            }
             sending={sendMessage.isPending}
             assignees={assigneesQuery.data?.assignees ?? []}
             onAssign={(userId) => assign.mutate(userId)}
@@ -365,7 +398,11 @@ export function Attendance() {
             }
             onToggleContext={toggleContextPanel}
             onClose={() => setSelectedId(null)}
-            onAttach={() => fileInputRef.current?.click()}
+            onAttach={(quotedMessageId) => {
+              pendingQuoteRef.current =
+                quotedMessageId && selectedId ? { conversationId: selectedId, quotedMessageId } : null;
+              fileInputRef.current?.click();
+            }}
             onSendAudio={handleSendAudio}
             quickReplies={quickRepliesQuery.data?.quickReplies ?? []}
             contextOpen={contextOpen}

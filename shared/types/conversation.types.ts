@@ -48,18 +48,69 @@ export interface ConversationDetail extends Conversation {
   customFields: Record<string, string>;
 }
 
+/**
+ * Lado de quem reage (D-222): para o paciente o laboratorio e UM numero, entao
+ * existe no maximo uma reacao por lado em cada mensagem.
+ */
+export type ReactorType = 'patient' | 'agent';
+
+export interface MessageReaction {
+  emoji: string;
+  reactorType: ReactorType;
+  /** Atendente que reagiu pelo CRM. `null` para o paciente e para o celular do laboratorio. */
+  userId: string | null;
+  userName: string | null;
+  reactedAt: IsoDateTime;
+}
+
+/** Tamanho maximo de `QuotedMessageSummary.preview` (D-221). */
+export const QUOTED_PREVIEW_MAX = 160;
+
+/** Resumo da mensagem citada — o bloco em cima do balao (D-221). */
+export interface QuotedMessageSummary {
+  /** `null` = a original nao esta no CRM (anterior a conversa). */
+  id: string | null;
+  senderType: SenderType | null;
+  senderName: string | null;
+  /** Ate `QUOTED_PREVIEW_MAX` caracteres; `''` quando apagada ou indisponivel. */
+  preview: string;
+  messageType: MessageType | null;
+  /** A original foi apagada pelo remetente (D-220). */
+  deleted: boolean;
+}
+
+/** Barra rapida de reacoes da tela (D-222). A API aceita qualquer emoji. */
+export const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'] as const;
+
 export interface Message {
   id: string;
   conversationId: string;
   senderType: SenderType;
   senderId: string | null;
   senderName: string | null;
+  /** `''` quando `deletedAt` esta preenchido — a API nunca devolve o conteudo escondido (D-220). */
   content: string;
   messageType: MessageType;
+  /** `null` quando apagada (D-220). */
   attachmentUrl: string | null;
   status: MessageStatus;
   readAt: IsoDateTime | null;
   createdAt: IsoDateTime;
+  /*
+   * CRMLAB-66: os cinco campos abaixo sao OPCIONAIS no tipo (AGENTS.md: campo
+   * novo e opcional ate os dois lados suportarem), mas o backend SEMPRE os
+   * preenche. Ausente = `null`/`[]`.
+   */
+  /** Mensagem citada, quando ela esta no CRM (D-221). */
+  quotedMessageId?: string | null;
+  /** `null` = nao e resposta (ou a mensagem foi apagada). */
+  quoted?: QuotedMessageSummary | null;
+  /** No maximo uma por lado; `patient` antes de `agent`. `[]` quando apagada. */
+  reactions?: MessageReaction[];
+  /** O remetente editou no WhatsApp; `content` ja e o texto novo (D-220). */
+  editedAt?: IsoDateTime | null;
+  /** O remetente apagou "para todos": a tela mostra "Mensagem apagada" (D-220). */
+  deletedAt?: IsoDateTime | null;
 }
 
 /**
@@ -161,6 +212,13 @@ export interface CreateMessageRequest {
   content: string;
   messageType?: MessageType;
   attachmentUrl?: string | null;
+  /** Responder citando (CRMLAB-66, D-221): mensagem DESTA conversa, nao apagada. */
+  quotedMessageId?: string | null;
+}
+
+/** `PUT /conversations/:id/messages/:messageId/reaction` (D-222). */
+export interface SetMessageReactionRequest {
+  emoji: string;
 }
 
 /**

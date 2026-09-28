@@ -11,7 +11,16 @@
  * `last_message_at` acontecem na MESMA transacao: contador e mensagem nao podem
  * divergir (BUSINESS_RULES §5 — um numero, uma origem).
  */
-import type { Message, MessageStatus, MessageType, SenderType } from '@crm-lab/shared';
+import {
+  QUOTED_PREVIEW_MAX,
+  type Message,
+  type MessageReaction,
+  type MessageStatus,
+  type MessageType,
+  type QuotedMessageSummary,
+  type ReactorType,
+  type SenderType,
+} from '@crm-lab/shared';
 import type { DbClient, DbTx } from '../db/types.js';
 import { toIso, toIsoOrNull, toNumber } from './row-mappers.js';
 
@@ -27,6 +36,18 @@ interface MessageRow {
   status: string | null;
   read_at: Date | string | null;
   created_at: Date | string;
+  // CRMLAB-66 (D-220/D-221/D-222)
+  quoted_message_id: string | null;
+  quoted_external_id: string | null;
+  edited_at: Date | string | null;
+  deleted_at: Date | string | null;
+  q_id: string | null;
+  q_sender_type: string | null;
+  q_sender_name: string | null;
+  q_preview: string | null;
+  q_message_type: string | null;
+  q_deleted_at: Date | string | null;
+  reactions: unknown;
 }
 
 const MESSAGE_TYPES: MessageType[] = ['text', 'image', 'audio', 'pdf', 'doc'];
@@ -56,32 +77,169 @@ function toSenderType(value: string): SenderType {
  */
 export const PHONE_SENDER_NAME = 'Enviada pelo celular';
 
+/** ISO-UTC montado no banco (D-021/D-078), para a data dentro do JSON das reacoes. */
+const ISO_UTC = `'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'`;
+
+/**
+ * Autor de uma mensagem a partir de `<alias>.sender_type`/`sender_id`. O mesmo
+ * CASE serve a mensagem e a citada (D-221) — nao duplique a regra.
+ */
+function senderNameSql(alias: string, userAlias: string): string {
+  return `CASE
+         WHEN ${alias}.sender_type = 'agent' AND ${alias}.sender_id IS NULL THEN '${PHONE_SENDER_NAME}'
+         WHEN ${alias}.sender_type = 'agent' THEN ${userAlias}.name
+         WHEN ${alias}.sender_type = 'patient' THEN c.patient_name
+         ELSE NULL
+       END`;
+}
+
 const COLUMNS = `m.id, m.conversation_id, m.sender_type, m.sender_id, m.content,
        m.message_type, m.attachment_url, m.status, m.read_at, m.created_at,
-       CASE
-         WHEN m.sender_type = 'agent' AND m.sender_id IS NULL THEN '${PHONE_SENDER_NAME}'
-         WHEN m.sender_type = 'agent' THEN u.name
-         WHEN m.sender_type = 'patient' THEN c.patient_name
-         ELSE NULL
-       END AS sender_name`;
+       ${senderNameSql('m', 'u')} AS sender_name,
+       m.quoted_message_id, m.quoted_external_id, m.edited_at, m.deleted_at,
+       q.id AS q_id, q.sender_type AS q_sender_type, q.sender_name AS q_sender_name,
+       left(q.content, ${QUOTED_PREVIEW_MAX}) AS q_preview, q.message_type AS q_message_type,
+       q.deleted_at AS q_deleted_at,
+       COALESCE((
+         SELECT json_agg(json_build_object(
+                  'emoji', r.emoji,
+                  'reactorType', r.reactor_type,
+                  'userId', r.user_id,
+                  'userName', ru.name,
+                  'reactedAt', to_char(r.updated_at AT TIME ZONE 'UTC', ${ISO_UTC}))
+                ORDER BY r.reactor_type DESC)
+           FROM message_reactions r
+           LEFT JOIN users ru ON ru.id = r.user_id
+          WHERE r.message_id = m.id
+       ), '[]'::json) AS reactions`;
 
+/**
+ * A citada (D-221) e resolvida NA LEITURA: pela id interna quando a original ja
+ * estava no CRM ao gravar, senao pelo `stanzaId` na mesma conversa — assim a
+ * original que chega depois da resposta aparece sem backfill. `LATERAL` + `LIMIT
+ * 1` porque o `external_message_id` e unico por tenant (019), e o RLS ja
+ * recorta o tenant.
+ */
 const FROM = `FROM messages m
      LEFT JOIN users u ON u.id = m.sender_id
-     LEFT JOIN conversations c ON c.id = m.conversation_id`;
+     LEFT JOIN conversations c ON c.id = m.conversation_id
+     LEFT JOIN LATERAL (
+       SELECT q.id, q.sender_type, q.content, q.message_type, q.deleted_at,
+              ${senderNameSql('q', 'qu')} AS sender_name
+         FROM messages q
+         LEFT JOIN users qu ON qu.id = q.sender_id
+        WHERE q.conversation_id = m.conversation_id
+          AND (q.id = m.quoted_message_id
+               OR (m.quoted_message_id IS NULL
+                   AND m.quoted_external_id IS NOT NULL
+                   AND q.external_message_id = m.quoted_external_id))
+        LIMIT 1
+     ) q ON TRUE`;
 
+function toReactions(value: unknown): MessageReaction[] {
+  const list: unknown = typeof value === 'string' ? safeParse(value) : value;
+  if (!Array.isArray(list)) return [];
+  const out: MessageReaction[] = [];
+  for (const item of list) {
+    if (typeof item !== 'object' || item === null) continue;
+    const r = item as Record<string, unknown>;
+    if (typeof r.emoji !== 'string') continue;
+    out.push({
+      emoji: r.emoji,
+      reactorType: r.reactorType === 'agent' ? 'agent' : 'patient',
+      userId: typeof r.userId === 'string' ? r.userId : null,
+      userName: typeof r.userName === 'string' ? r.userName : null,
+      reactedAt: toIso(r.reactedAt),
+    });
+  }
+  return out;
+}
+
+function safeParse(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function toQuoted(row: MessageRow): QuotedMessageSummary | null {
+  if (!row.quoted_message_id && !row.quoted_external_id) return null;
+  if (!row.q_id) {
+    // A original nao esta no CRM (anterior a conversa) — D-221 item 3.
+    return { id: null, senderType: null, senderName: null, preview: '', messageType: null, deleted: false };
+  }
+  const deleted = row.q_deleted_at !== null;
+  return {
+    id: row.q_id,
+    senderType: row.q_sender_type ? toSenderType(row.q_sender_type) : null,
+    senderName: row.q_sender_name,
+    // Citada apagada tambem nao vaza o conteudo escondido (D-220).
+    preview: deleted ? '' : (row.q_preview ?? ''),
+    messageType: row.q_message_type ? toMessageType(row.q_message_type) : null,
+    deleted,
+  };
+}
+
+/**
+ * Linha -> `Message`. Mensagem APAGADA pelo remetente (D-220) sai sem o
+ * conteudo: `content` vazio, sem anexo, sem citacao e sem reacoes. A linha e a
+ * midia continuam no banco — quem esconde e ESTA funcao, o unico caminho de
+ * `messages` ate a API.
+ */
 export function toMessage(row: MessageRow): Message {
+  const deletedAt = toIsoOrNull(row.deleted_at);
+  const hidden = deletedAt !== null;
   return {
     id: row.id,
     conversationId: row.conversation_id,
     senderType: toSenderType(row.sender_type),
     senderId: row.sender_id,
     senderName: row.sender_name,
-    content: row.content,
+    content: hidden ? '' : row.content,
     messageType: toMessageType(row.message_type),
-    attachmentUrl: row.attachment_url,
+    attachmentUrl: hidden ? null : row.attachment_url,
     status: toMessageStatus(row.status),
     readAt: toIsoOrNull(row.read_at),
     createdAt: toIso(row.created_at),
+    quotedMessageId: hidden ? null : (row.quoted_message_id ?? row.q_id),
+    quoted: hidden ? null : toQuoted(row),
+    reactions: hidden ? [] : toReactions(row.reactions),
+    editedAt: toIsoOrNull(row.edited_at),
+    deletedAt,
+  };
+}
+
+/**
+ * O que o service precisa saber de uma mensagem para citar, reagir, apagar ou
+ * editar (CRMLAB-66) — inclusive o id externo, que `Message` nao expoe.
+ */
+export interface MessageRef {
+  id: string;
+  conversationId: string;
+  senderType: SenderType;
+  externalMessageId: string | null;
+  content: string;
+  deleted: boolean;
+}
+
+const REF_COLUMNS = `id, conversation_id, sender_type, external_message_id, content, deleted_at`;
+
+function toRef(row: {
+  id: string;
+  conversation_id: string;
+  sender_type: string;
+  external_message_id: string | null;
+  content: string;
+  deleted_at: unknown;
+}): MessageRef {
+  return {
+    id: row.id,
+    conversationId: row.conversation_id,
+    senderType: toSenderType(row.sender_type),
+    externalMessageId: row.external_message_id,
+    content: row.content,
+    deleted: row.deleted_at !== null && row.deleted_at !== undefined,
   };
 }
 
@@ -94,6 +252,10 @@ export interface MessageInsert {
   attachmentUrl?: string | null;
   status?: MessageStatus;
   externalMessageId?: string | null;
+  /** Citada (D-221) — id interna, quando conhecida. */
+  quotedMessageId?: string | null;
+  /** `stanzaId` do webhook / id externo da citada. Sem `quotedMessageId`, resolve pela conversa. */
+  quotedExternalId?: string | null;
 }
 
 export interface MessagePage {
@@ -189,8 +351,13 @@ export class MessageRepository {
       const inserted = await tx.query<{ id: string }>(
         `INSERT INTO messages
            (tenant_id, conversation_id, sender_type, sender_id, content, message_type,
-            attachment_url, status, external_message_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            attachment_url, status, external_message_id, quoted_external_id, quoted_message_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text,
+                 COALESCE($11::uuid, (SELECT q.id FROM messages q
+                                       WHERE $10::text IS NOT NULL
+                                         AND q.conversation_id = $2
+                                         AND q.external_message_id = $10::text
+                                       LIMIT 1)))
          RETURNING id`,
         [
           tenantId,
@@ -202,6 +369,8 @@ export class MessageRepository {
           data.attachmentUrl ?? null,
           data.status ?? 'sent',
           data.externalMessageId ?? null,
+          data.quotedExternalId ?? null,
+          data.quotedMessageId ?? null,
         ],
       );
       const id = inserted.rows[0]?.id;
@@ -334,6 +503,149 @@ export class MessageRepository {
       );
       const changedId = updated.rows[0]?.id;
       return changedId ? selectOne(tx, changedId) : null;
+    });
+  }
+
+  /** Referencia por id interna (citar/reagir pela API). `null` = inexistente ou de outro tenant. */
+  async findRef(tenantId: string, id: string): Promise<MessageRef | null> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const found = await tx.query<Parameters<typeof toRef>[0]>(
+        `SELECT ${REF_COLUMNS} FROM messages WHERE id = $1`,
+        [id],
+      );
+      const row = found.rows[0];
+      return row ? toRef(row) : null;
+    });
+  }
+
+  /** Referencia pelo id externo (reacao/edicao/apagamento que chega pelo webhook). */
+  async findRefByExternalId(tenantId: string, externalMessageId: string): Promise<MessageRef | null> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const found = await tx.query<Parameters<typeof toRef>[0]>(
+        `SELECT ${REF_COLUMNS} FROM messages WHERE external_message_id = $1 LIMIT 1`,
+        [externalMessageId],
+      );
+      const row = found.rows[0];
+      return row ? toRef(row) : null;
+    });
+  }
+
+  /** `true` quando o lado ja tem reacao nesta mensagem (D-222). */
+  async hasReaction(tenantId: string, messageId: string, reactorType: ReactorType): Promise<boolean> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const found = await tx.query<{ id: string }>(
+        'SELECT id FROM message_reactions WHERE message_id = $1 AND reactor_type = $2',
+        [messageId, reactorType],
+      );
+      return found.rows.length > 0;
+    });
+  }
+
+  /**
+   * Grava/substitui a reacao do lado (D-222). `keepUserOnSameEmoji` e o eco
+   * `fromMe` da reacao feita pelo CRM: mesmo emoji preserva quem reagiu; emoji
+   * diferente (reagiu pelo celular) grava o `userId` informado (nulo).
+   */
+  async upsertReaction(
+    tenantId: string,
+    input: {
+      messageId: string;
+      reactorType: ReactorType;
+      userId: string | null;
+      emoji: string;
+      keepUserOnSameEmoji?: boolean;
+    },
+  ): Promise<void> {
+    await this.db.withTenant(tenantId, (tx) =>
+      tx.query(
+        `INSERT INTO message_reactions (tenant_id, message_id, reactor_type, user_id, emoji)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (tenant_id, message_id, reactor_type)
+         DO UPDATE SET
+           user_id = CASE
+             WHEN $6::boolean AND message_reactions.emoji = EXCLUDED.emoji
+               THEN message_reactions.user_id
+             ELSE EXCLUDED.user_id
+           END,
+           emoji = EXCLUDED.emoji,
+           updated_at = now()`,
+        [
+          tenantId,
+          input.messageId,
+          input.reactorType,
+          input.userId,
+          input.emoji,
+          input.keepUserOnSameEmoji === true,
+        ],
+      ),
+    );
+  }
+
+  /** Remove a reacao do lado. `true` = havia reacao. Reacao nao e conteudo (D-222). */
+  async deleteReaction(tenantId: string, messageId: string, reactorType: ReactorType): Promise<boolean> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const removed = await tx.query<{ id: string }>(
+        'DELETE FROM message_reactions WHERE message_id = $1 AND reactor_type = $2 RETURNING id',
+        [messageId, reactorType],
+      );
+      return removed.rows.length > 0;
+    });
+  }
+
+  /**
+   * Apagada pelo remetente (D-220): ESCONDE, nunca apaga. `null` = ja estava
+   * apagada (reentrega) — nada muda. Devolve o instante gravado.
+   */
+  async markDeleted(
+    tenantId: string,
+    id: string,
+    deletedBy: 'patient' | 'agent',
+  ): Promise<string | null> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const updated = await tx.query<{ deleted_at: unknown }>(
+        `UPDATE messages
+            SET deleted_at = now(), deleted_by = $2
+          WHERE id = $1 AND deleted_at IS NULL
+          RETURNING deleted_at`,
+        [id, deletedBy],
+      );
+      const row = updated.rows[0];
+      return row ? toIsoOrNull(row.deleted_at) : null;
+    });
+  }
+
+  /**
+   * Editada pelo remetente (D-220): guarda a versao ANTERIOR em `message_edits`
+   * e troca o texto, na mesma transacao. `null` = nada a fazer (apagada, ou o
+   * texto e o mesmo — reentrega).
+   */
+  async applyEdit(
+    tenantId: string,
+    id: string,
+    newContent: string,
+    editedBy: 'patient' | 'agent',
+  ): Promise<{ editId: string; editedAt: string | null } | null> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const current = await tx.query<{ content: string; deleted_at: unknown }>(
+        'SELECT content, deleted_at FROM messages WHERE id = $1 FOR UPDATE',
+        [id],
+      );
+      const row = current.rows[0];
+      if (!row || (row.deleted_at !== null && row.deleted_at !== undefined)) return null;
+      if (row.content === newContent) return null;
+
+      const edit = await tx.query<{ id: string }>(
+        `INSERT INTO message_edits (tenant_id, message_id, previous_content, edited_by)
+         VALUES ($1, $2, $3, $4) RETURNING id`,
+        [tenantId, id, row.content, editedBy],
+      );
+      const updated = await tx.query<{ edited_at: unknown }>(
+        'UPDATE messages SET content = $2, edited_at = now() WHERE id = $1 RETURNING edited_at',
+        [id, newContent],
+      );
+      const editId = edit.rows[0]?.id;
+      if (!editId) throw new Error('INSERT em message_edits nao retornou linha');
+      return { editId, editedAt: toIsoOrNull(updated.rows[0]?.edited_at) };
     });
   }
 

@@ -12,6 +12,8 @@ export interface CreateAttachmentRequest {
   fileName: string;
   mimeType: string;
   contentBase64: string;
+  /** Responder citando (CRMLAB-66, D-221) — mesma regra de `CreateMessageRequest`. */
+  quotedMessageId?: string | null;
 }
 
 /**

@@ -100,6 +100,12 @@ function fakeEvolutionClient(): EvolutionClient {
     async sendMedia() {
       return { externalId: 'evo-sonda-media' };
     },
+    async setWebhook() {
+      return undefined;
+    },
+    async sendReaction() {
+      return undefined;
+    },
   };
 }
 
@@ -158,6 +164,8 @@ interface Lab {
   quickReply: { id: string; content: string };
   /** Mídia de mensagem (Onda 8 §4). */
   media: { id: string };
+  /** Mensagem do paciente na `conversation` — alvo de reação (CRMLAB-66). */
+  message: { id: string };
 }
 
 interface LabRoute {
@@ -240,6 +248,23 @@ const LAB_ROUTES: readonly LabRoute[] = [
     actor: 'attendant',
     addressable: true,
     ownStatus: 201,
+  },
+  {
+    name: 'PUT /conversations/:id/messages/:messageId/reaction',
+    method: 'put',
+    path: (l) => `/api/v1/conversations/${l.conversation.id}/messages/${l.message.id}/reaction`,
+    body: () => ({ emoji: '👍' }),
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    name: 'DELETE /conversations/:id/messages/:messageId/reaction',
+    method: 'delete',
+    path: (l) => `/api/v1/conversations/${l.conversation.id}/messages/${l.message.id}/reaction`,
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 204,
   },
   { name: 'POST /conversations/:id/read', method: 'post', path: (l) => `/api/v1/conversations/${l.conversation.id}/read`, actor: 'attendant', addressable: true, ownStatus: 204 },
   {
@@ -820,6 +845,16 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     ),
   );
   const media = { id: mediaRow.rows[0]?.id as string };
+
+  // Alvo das rotas de reação (CRMLAB-66). Sem id externo: reage só no CRM.
+  const messageRow = await db.withoutTenant((tx) =>
+    tx.query<{ id: string }>(
+      `INSERT INTO messages (tenant_id, conversation_id, sender_type, content, status)
+       VALUES ($1, $2, 'patient', $3, 'delivered') RETURNING id`,
+      [tenant.id, conversation.id, secret ? BETA_SECRETS.patient : `Oi ${prefix}`],
+    ),
+  );
+  const message = { id: messageRow.rows[0]?.id as string };
   await writeMediaFile(media.id, Buffer.from('sonda'));
 
   // O primeiro GET cria `#geral`/`#aprovacoes` do tenant (InternalChatService).
@@ -848,6 +883,7 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     insurance,
     quickReply,
     media,
+    message,
   };
 }
 
@@ -929,7 +965,7 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 74 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 76 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
@@ -948,7 +984,8 @@ describe('inventario de rotas de laboratorio', () => {
     // CRMLAB-56/D-190 soma 2: `GET|PATCH /settings/funnel-rules`.
     // CRMLAB-58/D-200..D-202 soma 4: `POST /proposals/:id/send|resend` e
     // `PATCH /proposals/:id/conversation|responsible`.
-    expect(LAB_ROUTES).toHaveLength(74);
+    // CRMLAB-66/D-222 soma 2: `PUT|DELETE /conversations/:id/messages/:messageId/reaction`.
+    expect(LAB_ROUTES).toHaveLength(76);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

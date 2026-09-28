@@ -9,6 +9,8 @@
  *   POST  /api/v1/conversations/:id/messages  envia mensagem (201)
  *   PATCH /api/v1/conversations/:id         status / assignedTo / tags
  *   POST  /api/v1/conversations/:id/attachments  anexo (base64 em JSON, 201)
+ *   PUT   /api/v1/conversations/:id/messages/:messageId/reaction  reage (200, D-222)
+ *   DELETE /api/v1/conversations/:id/messages/:messageId/reaction remove a reacao (204)
  *   POST  /api/v1/conversations/:id/read    zera o contador de nao lidas (204)
  *   POST  /api/v1/conversations/:id/pin     fixa a conversa para o usuario (204)
  *   DELETE /api/v1/conversations/:id/pin    desafixa (204)
@@ -31,6 +33,7 @@ import type {
   ListConversationsQuery,
   ListConversationsResponse,
   Message,
+  SetMessageReactionRequest,
   StartWhatsAppConversationRequest,
   StartWhatsAppConversationResponse,
   UpdateConversationRequest,
@@ -41,6 +44,7 @@ import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
 import { getContext } from '../http/context.js';
 import { denyPlatformOperator, requireAuth } from '../http/middleware/auth.js';
 import { validate, validated } from '../http/middleware/validate.js';
+import { notFound } from '../http/errors.js';
 import { ConversationRepository, phoneDigits } from '../repositories/conversation.repository.js';
 import { MediaRepository } from '../repositories/media.repository.js';
 import { MessageRepository } from '../repositories/message.repository.js';
@@ -127,6 +131,22 @@ export const createMessageSchema = z.object({
   content: z.string().trim().min(1).max(4000),
   messageType: z.enum(['text', 'image', 'audio', 'pdf', 'doc']).optional(),
   attachmentUrl: z.string().max(500).nullish(),
+  /** Responder citando (CRMLAB-66, D-221). */
+  quotedMessageId: z.string().uuid().nullish(),
+});
+
+/** Emoji de 1..32 BYTES (a coluna e VARCHAR(32) e um emoji composto passa de 1 char) — D-222. */
+export const setReactionSchema = z.object({
+  emoji: z
+    .string()
+    .trim()
+    .min(1)
+    .refine((value) => Buffer.byteLength(value, 'utf8') <= 32, 'Emoji acima de 32 bytes'),
+});
+
+export const messageParamsSchema = z.object({
+  id: z.string().uuid(),
+  messageId: z.string().uuid(),
 });
 
 export const updateConversationSchema = z
@@ -151,6 +171,7 @@ export const createAttachmentSchema = z.object({
   fileName: z.string().trim().min(1).max(255),
   mimeType: z.string().trim().min(1).max(127),
   contentBase64: z.string().min(1),
+  quotedMessageId: z.string().uuid().nullish(),
 });
 
 type CreateMessageBody = z.infer<typeof createMessageSchema>;
@@ -280,6 +301,7 @@ export function createMessage(services: ConversationServices): RequestHandler {
       content: dto.content,
       ...(dto.messageType !== undefined ? { messageType: dto.messageType } : {}),
       ...(dto.attachmentUrl !== undefined ? { attachmentUrl: dto.attachmentUrl } : {}),
+      ...(dto.quotedMessageId ? { quotedMessageId: dto.quotedMessageId } : {}),
     });
     res.status(201).json(message);
   });
@@ -309,10 +331,42 @@ export function createAttachment(services: ConversationServices): RequestHandler
       mimeType: stored.mimeType,
       attachmentUrl: `/api/v1/media/${stored.id}`,
       buffer: stored.buffer,
+      quotedMessageId: dto.quotedMessageId ?? null,
     });
     await services.media.attachToMessage(ctx.tenantId, stored.id, message.id);
 
     res.status(201).json(message);
+  });
+}
+
+/**
+ * `PUT|DELETE /:id/messages/:messageId/reaction` (CRMLAB-66, D-222). Recorte
+ * por papel antes: conversa invisivel e `NOT_FOUND`, como nas outras escritas.
+ */
+export function setMessageReaction(
+  services: ConversationServices,
+  mode: 'set' | 'remove',
+): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const { id, messageId } = validated<{ id: string; messageId: string }>(req, 'params');
+    await services.conversations.getById(ctx, id);
+
+    if (mode === 'remove') {
+      await services.messages.setAgentReaction(ctx.tenantId, id, messageId, ctx.userId, null);
+      res.status(204).end();
+      return;
+    }
+    const { emoji } = validated<SetMessageReactionRequest>(req, 'body');
+    const message = await services.messages.setAgentReaction(
+      ctx.tenantId,
+      id,
+      messageId,
+      ctx.userId,
+      emoji,
+    );
+    if (!message) throw notFound({ resource: 'message', id: messageId });
+    res.status(200).json(message);
   });
 }
 
@@ -447,6 +501,21 @@ function buildConversationModule(
     ...guards,
     validate(conversationIdParamSchema, 'params'),
     setConversationPinned(services.conversations, false),
+  );
+
+  router.put(
+    '/:id/messages/:messageId/reaction',
+    ...guards,
+    validate(messageParamsSchema, 'params'),
+    validate(setReactionSchema, 'body'),
+    setMessageReaction(services, 'set'),
+  );
+
+  router.delete(
+    '/:id/messages/:messageId/reaction',
+    ...guards,
+    validate(messageParamsSchema, 'params'),
+    setMessageReaction(services, 'remove'),
   );
 
   router.post(

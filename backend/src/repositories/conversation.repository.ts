@@ -116,7 +116,8 @@ const LIST_COLUMNS = `c.id, c.patient_id, c.patient_name, c.patient_phone, c.pat
 const LIST_FROM = `FROM conversations c
      LEFT JOIN users u ON u.id = c.assigned_to
      LEFT JOIN LATERAL (
-       SELECT m.content
+       -- Apagada pelo remetente: a previa nao devolve o conteudo escondido (D-220).
+       SELECT CASE WHEN m.deleted_at IS NULL THEN m.content ELSE '' END AS content
        FROM messages m
        WHERE m.conversation_id = c.id
        ORDER BY m.created_at DESC, m.id DESC

@@ -91,9 +91,9 @@ node_modules são symlinks para a pasta principal; `*.wt.*` (vitest/tsconfig com
 | 67 [B] | 🧪 hml (`hml-deb5132`) · Pronto p/ Validação | 08d161c | D-225..D-227, 042 sem uso. Tiques/pending/retry, presença efêmera, composing. |
 | 68 [C] | 🧪 hml (`hml-deb5132`) · Pronto p/ Validação | 8931970 | D-228..D-230, migração 043. Busca, Não lidas, around/after. Isolamento 81 rotas. |
 | 69 [D] | 🧪 hml (`hml-deb5132`) · Pronto p/ Validação | a59817c | D-231..D-233, 044 sem uso. Prévia, vários, Ctrl+V, drop, caption. |
-| 70 [E] | ⬜ aguarda onda 3 | — | |
-| 73 [H] | ⬜ aguarda onda 3 | — | |
-| 64    | ⬜ aguarda onda 3 | — | |
+| 70 [E] | 🔄 docs (onda 3, 29/09) | — | Vídeo toca no balão (fora do lightbox); `sticker` vira tipo próprio. |
+| 73 [H] | 🔄 docs (onda 3, 29/09) | — | Emoji: preferência por lista estática (sem dependência nova). |
+| 64    | 🔄 docs (onda 3, 29/09) | — | Navega só `type === 'image'` → sticker do 70 sai sozinho na integração. |
 
 Fases: ⬜ não iniciado → 🔄 docs → 🔄 backend → 🔄 frontend → 🔄 testes → ✅ pronto no card
 → 🔗 integrado em `integ/epic-65` → 🧪 hml → ✔️ aprovado → PR.
@@ -144,3 +144,10 @@ Diário de cada card: `docs/superpowers/plans/crmlab-65/CRMLAB-<n>.md`.
   (6 arquivos; área de mensagens reconstruída sobre a drop area do 69 + 3 mudanças do 68; spec
   `onAttach` e `useRef`). Suíte completa verde (back 1795, front 1486), CI verde, hml `hml-deb5132`.
   Massa: `simula-onda1.sh base|ao-vivo|tiques|presenca|limpar`.
+- 2026-09-29 ~15h: **onda 3 iniciada** a pedido do Michel. Antes, merge da `origin/main` (#81 do
+  CRMLAB-75 + bump v1.24.0) na `integ/epic-65`, sem conflito (25b2eee). Worktrees `../CRM Lab-70|73|64`
+  saindo de 25b2eee, com `node_modules/` real (`@crm-lab/*` → pacotes do próprio worktree) e `*.wt.*`.
+  Cards 70/73/64 → Em Desenvolvimento; 3 agentes disparados. Para evitar conflito no `MessageBubble`:
+  70 = componentes novos por tipo + despacho; 64 = só o trecho da imagem (lightbox sobe p/ ConversationPanel);
+  73 = só o trecho do texto (parser). Conflito provável na junção: `MessageBubble.tsx`, `DECISIONS.md`,
+  `COMPONENTS.md`. **Se a sessão cair:** seguir "Como retomar" com o prompt da onda 3 + "continue do diário".

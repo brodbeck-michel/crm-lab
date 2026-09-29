@@ -322,6 +322,26 @@ describe('EvolutionClient', () => {
     expect(lastBody).toMatchObject({ mediatype: 'video', mimetype: 'video/mp4', caption: 'Olha' });
   });
 
+  it('3GP sai como `video`; .mov e WebM saem como documento (CRMLAB-70, D-234 item 8)', async () => {
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    const send = async (mimeType: string, fileName: string) => {
+      await client.sendMedia(
+        'tenant-abc',
+        '5511987654321',
+        { base64: 'dmlk', mimeType, fileName, caption: null },
+        'apikey-da-instancia',
+      );
+      return lastBody;
+    };
+    expect(await send('video/3gpp', 'a.3gp')).toMatchObject({ mediatype: 'video' });
+    expect(await send('video/quicktime', 'IMG_0001.MOV')).toMatchObject({
+      mediatype: 'document',
+      mimetype: 'video/quicktime',
+      fileName: 'IMG_0001.MOV',
+    });
+    expect(await send('video/webm', 'tela.webm')).toMatchObject({ mediatype: 'document' });
+  });
+
   it('sendMedia de áudio nunca manda legenda (WhatsApp não tem)', async () => {
     const client = createEvolutionClient(baseUrl, 'admin-key');
     await client.sendMedia(

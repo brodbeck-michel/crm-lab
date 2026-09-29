@@ -4448,6 +4448,17 @@ API_CONTRACTS §2, PAGES §2, COMPONENTS.
 7. **LGPD (emenda a D-075):** a anonimização do paciente zera `metadata` junto com
    `attachment_url` — miniatura de vídeo, coordenada e contato compartilhado são dado pessoal
    do mesmo jeito que o arquivo. O texto de fallback em `content` fica, como todo texto (D-063).
+8. **Formatos de vídeo (decisão do Michel, 29/09):** a allow-list (CRMLAB-31) ganha
+   `video/quicktime` (.mov do iPhone), `video/3gpp` e `video/webm`, no envio e no recebimento,
+   com o mesmo teto de 15 MiB; vídeo passa pelo sniff de magic bytes por **categoria** (`video/*`),
+   então `.mov`, 3GP e MP4 se reconhecem entre si. Recebido, qualquer um deles vira `video`.
+   **Envio:** o gateway não converte vídeo (só áudio, D-182) e o WhatsApp do paciente só garante
+   tocar MP4/3GP. Por isso **só `video/mp4` e `video/3gpp` saem como `mediatype: 'video'`**;
+   `.mov` e WebM saem como **documento** com o nome original (`WHATSAPP_VIDEO_MIME_TYPES`,
+   `shared/`) — o paciente recebe o arquivo inteiro em vez de um vídeo que talvez não abra. No CRM
+   a mensagem continua `video`. **Risco:** o paciente vê "documento .mov" em vez do player; o
+   navegador da atendente pode não tocar `.mov`/HEVC (o balão avisa e oferece o download). A
+   conferir na hml.
 **Motivo:** o card pede nome/tamanho no documento e cartões estruturados para localização e
 contato. Guardar o nome/tamanho de novo em `metadata` duplicaria o que `message_media` já tem (e
 deixaria de fora os documentos antigos); uma coluna JSONB resolve o resto sem tabela nova.
@@ -4489,11 +4500,11 @@ create do paciente e do celular); API_CONTRACTS §Evolution; fixtures dos specs.
 2. **Vídeo toca no próprio balão** (não no lightbox — o CRMLAB-64 navega só por `image`): a
    miniatura (`thumbnail`, ou um fundo neutro quando não veio — vídeo enviado pelo CRM) com ▶ e a
    duração; o arquivo (até 15 MiB) só é baixado **no clique**, como o documento (revisão do PR
-   #43), e aí vira `<video controls autoplay>` ali mesmo.
+   #43), e aí vira `<video controls autoplay>` ali mesmo. Navegador que não toca o formato
+   (`.mov`/HEVC no Chrome) mostra o aviso e o link de download.
 3. **Áudio:** continua no `<audio>` nativo (barra clicável e tempo total de graça) e ganha o botão
    de velocidade **1x → 1,5x → 2x → 1x**, que vale só para aquele áudio. A duração do metadado
-   aparece antes de carregar. Bolinha de "não ouvido": fora (opcional no card, pediria estado
-   por usuário).
+   aparece antes de carregar. Bolinha de "não ouvido": **fora, por decisão do Michel (29/09)**.
 4. **Documento:** cartão com ícone pelo tipo (PDF, Word, Excel, PowerPoint, planilha/texto,
    genérico), nome, tamanho e, no PDF, páginas quando vierem. O clique abre/baixa como antes.
 5. **Figurinha:** 120×120 (`object-contain`), **sem balão** (fundo e borda transparentes), sem
@@ -4501,14 +4512,21 @@ create do paciente e do celular); API_CONTRACTS §Evolution; fixtures dos specs.
 6. **Localização:** cartão com nome/endereço e **"Abrir no mapa"** →
    `https://www.google.com/maps/search/?api=1&query=<lat>,<lng>` em outra aba. **Sem mapa
    estático**: pediria liberar um host externo em `img-src` (CSP, CRMLAB-32).
-7. **Contato:** cartão com nome e telefone; **"Conversar"** abre o modal de Nova conversa
-   (CRMLAB-50) com o telefone preenchido — é ele que reaproveita a conversa existente daquele
-   número ou cria uma, e depois a tela navega para `/attendance?conversationId=`. Sem telefone
-   no vCard, sem botão.
+7. **Contato:** cartão com nome e telefone; **"Conversar"** (decisão do Michel, 29/09) **abre
+   direto a conversa que já existe** com o número — `POST /conversations/whatsapp/open`, sem
+   mensagem — e navega para `/attendance?conversationId=`. Só quando o número não tem conversa
+   (`404`) abre a Nova conversa (CRMLAB-50) com o telefone preenchido. Conversa **encerrada**
+   reabre atribuída a quem clicou (o mesmo de `POST /conversations` e da Nova conversa com
+   número encerrado, D-174); **de outra atendente** → 409 e toast com o nome, sem abrir; fila
+   livre abre sem mudar de dona. Telefone fora do padrão BR vai direto para o modal (que mostra o
+   erro). Sem telefone no vCard, sem botão.
 8. **Texto do balão:** some quando é só o fallback — figurinha, localização, contato, e mídia
    cujo `content` é igual a `media.fileName` (sem legenda). A legenda continua no lugar de hoje
    (o texto do balão é do CRMLAB-73, em paralelo). Mensagem antiga `[Localizacao] …` (tipo `text`) aparece como texto.
 **Motivo:** paridade com o WhatsApp Web sem mexer no lightbox (64) nem no parser de texto (73),
 que andam em paralelo.
 **Impacto:** `components/conversation/*` (novos), `MessageBubble.tsx` (despacho + rótulos do
-bloco citado), `AudioMessage.tsx`, `NewConversationModal.tsx` (`initialPhone`); COMPONENTS.md.
+bloco citado), `AudioMessage.tsx`, `NewConversationModal.tsx` (`initialPhone`); rota
+`POST /conversations/whatsapp/open` (`conversation.routes.ts`, `ConversationService.openWhatsApp`,
+`OpenWhatsAppConversationRequest`, inventário de isolamento 81 → 82); COMPONENTS.md,
+API_CONTRACTS §2.

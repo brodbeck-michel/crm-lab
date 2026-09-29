@@ -68,6 +68,7 @@ import type {
   PaginationMeta,
   SearchMessagesQuery,
   SearchMessagesResponse,
+  OpenWhatsAppConversationRequest,
   StartWhatsAppConversationRequest,
   StartWhatsAppConversationResponse,
   UpdateConversationRequest,
@@ -296,6 +297,42 @@ export class ConversationService {
         entityType: 'conversation',
         entityId: conversation.id,
         newValues: { patientPhone: conversation.patientPhone, channel: conversation.channel },
+      });
+    }
+    return conversation;
+  }
+
+  /**
+   * "Conversar" do cartao de contato (`POST /conversations/whatsapp/open`,
+   * CRMLAB-70, D-236 item 7): abre a conversa que JA existe com o numero, sem
+   * enviar nada e sem criar. Mesmo casamento de telefone do
+   * `findOrCreateByPhone` (D-176), recortado pelo tenant (RLS).
+   *
+   * Encerrada reabre para quem pediu — o que `createManual` e `startWhatsApp`
+   * ja fazem com numero encerrado (D-174). De outra atendente: o mesmo 409 da
+   * Nova conversa. Fila livre abre sem mudar de dona (nao ha resposta, D-215).
+   */
+  async openWhatsApp(
+    ctx: TenantContext,
+    dto: OpenWhatsAppConversationRequest,
+  ): Promise<ConversationDetail> {
+    const phone = normalizeBrazilianPhone(dto.phone);
+    if (phone === null) {
+      throw new BusinessError('VALIDATION_ERROR', {
+        fields: { phone: 'Telefone invalido: informe DDD + numero' },
+      });
+    }
+    const found = await this.repository.findByPhone(ctx.tenantId, phone);
+    if (!found) throw notFound({ resource: 'conversation' });
+
+    let conversation = found;
+    if (conversation.status === 'closed') {
+      conversation = await this.reopenManually(ctx, conversation);
+    }
+    if (!this.canSee(ctx, conversation)) {
+      throw new BusinessError('CONVERSATION_ALREADY_ASSIGNED', {
+        assignedTo: conversation.assignedTo,
+        assignedToName: conversation.assignedToName,
       });
     }
     return conversation;

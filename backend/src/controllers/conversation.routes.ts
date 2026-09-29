@@ -32,12 +32,14 @@ import { z } from 'zod';
 import type {
   CreateAttachmentRequest,
   CreateConversationRequest,
+  ConversationDetail,
   CreateConversationResponse,
   GetConversationResponse,
   ListAssigneesResponse,
   ListConversationsQuery,
   ListConversationsResponse,
   Message,
+  OpenWhatsAppConversationRequest,
   SendPresenceRequest,
   SearchMessagesQuery,
   SearchMessagesResponse,
@@ -168,6 +170,9 @@ export const startWhatsAppConversationSchema = z.object({
     ),
   content: z.string().trim().min(1).max(4000),
 });
+
+/** `POST /conversations/whatsapp/open` (CRMLAB-70, D-236) — o `phone` do schema acima. */
+export const openWhatsAppConversationSchema = startWhatsAppConversationSchema.pick({ phone: true });
 
 export const createMessageSchema = z.object({
   content: z.string().trim().min(1).max(4000),
@@ -334,6 +339,15 @@ export function startWhatsAppConversation(service: ConversationService): Request
     const dto = validated<StartWhatsAppConversationRequest>(req, 'body');
     const body: StartWhatsAppConversationResponse = await service.startWhatsApp(ctx, dto);
     res.status(201).json(body);
+  });
+}
+
+export function openWhatsAppConversation(service: ConversationService): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const dto = validated<OpenWhatsAppConversationRequest>(req, 'body');
+    const body: ConversationDetail = await service.openWhatsApp(ctx, dto);
+    res.status(200).json(body);
   });
 }
 
@@ -551,6 +565,14 @@ function buildConversationModule(
     ...guards,
     validate(startWhatsAppConversationSchema, 'body'),
     startWhatsAppConversation(services.conversations),
+  );
+
+  // CRMLAB-70 (D-236): "Conversar" do cartao de contato — abre a existente, sem enviar.
+  router.post(
+    '/whatsapp/open',
+    ...guards,
+    validate(openWhatsAppConversationSchema, 'body'),
+    openWhatsAppConversation(services.conversations),
   );
 
   // ANTES de `/:id`: registrada depois, o validador de uuid rejeitaria

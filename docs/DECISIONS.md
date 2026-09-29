@@ -4409,6 +4409,60 @@ banco (nunca do `createdAt` do fio).
 `lib/search-snippet.ts` (novo), `hooks/useNewMessageAlerts.ts` (linha de base do detalhe);
 API_CONTRACTS §2, PAGES §2, COMPONENTS.
 
+### D-244: Setas no lightbox da conversa — a lista sai do que já está carregado (CRMLAB-64)
+**Decisão:**
+1. **O estado do lightbox mora no `ConversationPanel`**, não no `MessageBubble`. O balão só avisa
+   `onOpenImage(message)`; o painel guarda **o id da mensagem aberta** (preso à conversa: trocar de
+   conversa fecha) e renderiza um `ImageLightbox` só, por `ConversationImageViewer`.
+2. **A lista de imagens** (`conversationImages`, `pages/Attendance/useConversationImages.ts`) sai
+   das mensagens que o painel já recebe — as páginas do `useInfiniteQuery` já no cache, achatadas
+   por `flattenMessages` —, filtradas por `messageType === 'image'`, com `attachmentUrl` e **sem
+   `deletedAt`** (apagada fica escondida, D-220). Ordem cronológica por `(createdAt, id)` e **sem
+   repetir id** (uma página refeita pelo WS ou uma janela `around` do D-230 que encosta noutra não
+   duplica foto). Esquerda = mais antiga, direita = mais nova. **Só o carregado:** chegou na
+   primeira imagem carregada, a seta some — carregar histórico pela seta fica para outro card.
+3. **Âncora pelo id, nunca pelo índice.** O índice é recalculado a cada render a partir do id
+   aberto: mensagem nova chegando pelo WebSocket (ou página antiga carregada pela rolagem) muda a
+   lista, mas o lightbox continua na mesma foto e só as setas se ajustam. Se a mensagem aberta
+   **sair** da lista (apagada pelo remetente enquanto estava aberta), o lightbox fecha.
+4. **Navegação:** setas nas laterais (`aria-label` "Imagem anterior"/"Próxima imagem"), ← → no
+   teclado, Esc fecha. **Não dá a volta**: na primeira some a da esquerda, na última a da direita;
+   com uma imagem só, nenhuma seta. Trocar de imagem zera zoom e arrasto (efeito no `src`, que já
+   existia no CRMLAB-21). Com o lightbox aberto, ← → são dele (`preventDefault`): a tela cobre
+   tudo, então o cursor do Composer que ficou com o foco não anda junto.
+5. **Cabeçalho** "remetente · dd/mm/aaaa hh:mm" (`formatDateTime`). Remetente: `senderName`; sem
+   ele, o nome do paciente (ou "Paciente") para mensagem recebida e "Você" para a enviada — o
+   mesmo fallback do "respondendo a" do Composer. **Legenda** embaixo da imagem: o `content`
+   aparado, **exceto** quando é só o nome do arquivo (a API grava `content = fileName` quando não
+   houve legenda — CRMLAB-69/D-231 e webhook) ou o marcador `[image]`/`[imagem]` da Cloud API.
+6. **Figurinhas:** hoje chegam como `image` (o Evolution manda `image/webp`) e **não há como
+   distinguir** no frontend; entram na navegação. O CRMLAB-70 cria o tipo `sticker`: como a lista
+   filtra por `messageType === 'image'`, a figurinha sai da navegação sozinha quando os dois
+   estiverem integrados — sem mudança neste código.
+**Motivo:** padrão WhatsApp Web; ancorar pelo id é o que impede o pulo quando a lista cresce
+dos dois lados (mensagem nova embaixo, histórico em cima).
+**Impacto:** frontend `MessageBubble.tsx` (trecho da imagem: `onOpenImage`),
+`ImageLightbox.tsx` (setas, teclas, cabeçalho, legenda, carregando), `ConversationPanel.tsx`,
+`pages/Attendance/useConversationImages.ts` e `ConversationImageViewer.tsx` (novos);
+COMPONENTS, PAGES §2.
+
+### D-245: Blob de mídia autenticada compartilhado entre quem usa a mesma URL (CRMLAB-64)
+**Decisão:** `useAuthenticatedMedia` passa a guardar os blobs num cache **do módulo**, por URL e
+com **contagem de referências**: o primeiro que pede busca; os outros que pedem a mesma URL
+enquanto ela está em uso recebem o mesmo `object URL` na hora (sem novo `GET /media/:id`). Quando
+o último solta, o `object URL` é revogado e a entrada sai — a regra "nada preso na memória" do
+hook continua. Erro não fica em cache (a próxima montagem tenta de novo). A assinatura do hook
+não muda.
+O lightbox usa isso para: (a) **reaproveitar o blob que o balão já baixou** — a foto abre
+instantânea; se o balão ainda não terminou (ou a URL não está em uso), mostra "Carregando
+imagem…" no lugar da imagem; (b) **pré-carregar as vizinhas** (anterior e próxima) pedindo as
+duas URLs ao mesmo hook enquanto o lightbox está aberto — e, para imagem de fora do nosso backend,
+um `<img>` escondido.
+**Motivo:** o card pede não baixar de novo. Passar o `object URL` do balão ao painel por callback
+quebraria quando o balão desmontasse (revoga o blob) e não serve para as vizinhas.
+**Impacto:** `frontend/src/hooks/useAuthenticatedMedia.ts` (+ spec); `AudioMessage` e o balão
+ganham o reaproveitamento de graça. COMPONENTS (`MessageBubble`, `ImageLightbox`).
+
 ## Template para novas decisões
 
 ```

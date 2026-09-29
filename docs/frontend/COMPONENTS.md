@@ -93,7 +93,9 @@ Anatomia (padrão WhatsApp):
   se sabe quem falou. As antigas `surface` / `accent-200` misturavam com `--color-bg` e, sobre o
   bege do tema, fundo e as duas bolhas viravam a mesma coisa
 - Anexo `messageType: 'image'` (CRMLAB-15): thumbnail (`rounded-md`, máx. 300px de altura) no lugar
-  do link "Anexo (tipo)". Clique abre `ImageLightbox` em tela cheia — padrão WhatsApp Web
+  do link "Anexo (tipo)". Clique chama `onOpenImage(message)` (CRMLAB-64, D-244): o balão **não**
+  tem lightbox próprio — quem abre, navega entre as fotos e fecha é o `ConversationPanel`. Sem
+  handler, a thumbnail não é clicável
 - Anexo `messageType: 'audio'` (CRMLAB-2): `AudioMessage` na própria bolha no lugar do link.
   Os demais `messageType` continuam com o link genérico
 - `GET /media/:id` exige `Authorization` (requireAuth) — um `<img src>`/`<audio src>` cru nunca
@@ -108,7 +110,9 @@ Anatomia (padrão WhatsApp):
   (`2*3*4` fica como está). Renderiza como nós React (`<strong>`), nunca
   `dangerouslySetInnerHTML`. A prévia da lista (`ConversationItem`) mostra o texto cru
 - `useAuthenticatedMedia` devolve também o `fileName` (do `Content-Disposition` de
-  `GET /media/:id`), repassado ao `ImageLightbox` — é o nome com que a imagem é salva (CRMLAB-26)
+  `GET /media/:id`), repassado ao `ImageLightbox` — é o nome com que a imagem é salva (CRMLAB-26).
+  O blob é **compartilhado por URL** entre quem está usando (D-245): o lightbox aberto a partir do
+  balão reaproveita o que o balão já baixou
 - **Menu da mensagem (CRMLAB-66, padrão WhatsApp Web):** passar o mouse (ou focar) mostra uma
   setinha no canto de cima do balão; ela abre o menu **Responder · Reagir · Copiar**. Reagir abre
   a barra rápida `QUICK_REACTIONS` (👍 ❤️ 😂 😮 😢 🙏, `shared/`); clicar no emoji que já é o do
@@ -413,10 +417,27 @@ Anatomia (padrão WhatsApp):
 - Backdrop translúcido escuro, cartão radius-lg + shadow-lg, máx 720px
 - Rolagem interna; fecha por × e clique-fora (stopPropagation no cartão)
 
-### ImageLightbox (CRMLAB-15, zoom em CRMLAB-21)
+### ImageLightbox (CRMLAB-15, zoom em CRMLAB-21, setas em CRMLAB-64)
 ```tsx
-<ImageLightbox src={url | null} fileName="foto.jpg" onClose={() => {}} />
+<ImageLightbox
+  src={url | null} fileName="foto.jpg" onClose={() => {}}
+  // opcionais (CRMLAB-64, D-244):
+  open={true} loading={false} error={false}
+  title="Maria Silva · 27/09/2026 14:32" caption="Pedido do Dr. Silva"
+  onPrev={() => {}} onNext={() => {}} preload={['blob:…']}
+/>
 ```
+- **Setas (CRMLAB-64, D-244):** `onPrev`/`onNext` desenham as setas nas laterais ("Imagem
+  anterior" / "Próxima imagem") e ligam ← → no teclado (`preventDefault`). Sem o handler, a seta
+  daquele lado some — é assim que o chamador diz "primeira", "última" ou "imagem só" (não dá a
+  volta). Clicar na seta não fecha o lightbox
+- **Cabeçalho** `title` no canto superior esquerdo (quem mandou · quando) e **legenda** `caption`
+  embaixo da imagem; ambos opcionais, texto cru (sem HTML)
+- **Carregando:** `open` mantém o lightbox aberto sem `src` — com `loading` mostra "Carregando
+  imagem…" no lugar da imagem, com `error` "Não foi possível carregar a imagem"; setas, cabeçalho e
+  × continuam. Sem `open`, vale o de sempre: `src={null}` não renderiza nada
+- `preload`: URLs das vizinhas, em `<img>` escondidos (a troca fica instantânea)
+- O ↓ baixa sempre a imagem **da tela**, com o `fileName` dela
 - Visualização de imagem em tela cheia — referência WhatsApp Web. Mais leve que `Modal`: mesmo
   backdrop (`bg-backdrop`), mas sem cartão/título/foco preso — só a imagem (`rounded-lg`,
   `shadow-lg`, `max-h-[86vh]`) sobre o fundo
@@ -700,7 +721,7 @@ tela passa tudo por props (o dado vem do TanStack Query).
 | Componente | Assinatura | Notas |
 |------------|-----------|-------|
 | `ConversationItem` | `<ConversationItem conversation selected? onClick?(id) now? />` | `now` é injetável só para tornar "aguardando N min" determinístico em teste |
-| `MessageBubble` | `<MessageBubble type message maxWidth? showMeta? onRetry? />` | `type` ∈ `received \| sent \| system` — os únicos 3 · `*texto*` em negrito (D-183) · tiques e "Tentar de novo" (D-225/D-227) |
+| `MessageBubble` | `<MessageBubble type message maxWidth? showMeta? onRetry? onOpenImage? />` | `type` ∈ `received \| sent \| system` — os únicos 3 · `*texto*` em negrito (D-183) · tiques e "Tentar de novo" (D-225/D-227) |
 | `DateSeparator` | `<DateSeparator date now? />` | Pílula de dia (CRMLAB-71, D-239) · `dateSeparatorLabel` e `isSameLocalDay` exportadas |
 | `AudioMessage` | `<AudioMessage url />` | `<audio controls>` nativo com blob autenticado · download sempre disponível |
 | `Composer` | `<Composer onSend(content) → void | Promise onPickFiles?(files) onAttachClick? onSendAudio?(audio) disabled? sending? placeholder? quickReplies? />` | Enter envia · Shift+Enter quebra linha · Ctrl/Cmd+B envolve a seleção em `*` · emoji insere no cursor · `/` no campo vazio abre as macros · microfone grava recado de voz (clique/clique, 5 min, D-181) |

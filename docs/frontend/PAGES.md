@@ -179,6 +179,16 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 - Bolhas: recebida / enviada / evento de sistema (3 tipos, máx. 62% largura). Anexo de imagem
   (CRMLAB-15) renderiza como thumbnail; clique abre `ImageLightbox` em tela cheia (com ↓ que
   salva a imagem em Downloads, CRMLAB-26) — ver COMPONENTS.md `conversation/` e `shared/`
+- **Setas entre as imagens (CRMLAB-64, D-244/D-245):** o lightbox é **um só, do painel**
+  (`ConversationImageViewer`); o balão só pede para abrir. A lista são as imagens (`image`, não
+  apagadas) **já carregadas** na conversa, em ordem cronológica e sem repetir — esquerda = mais
+  antiga. ← → navegam, Esc fecha, sem dar a volta, nenhuma seta com uma imagem só; a troca zera
+  o zoom. No topo "remetente · dd/mm/aaaa hh:mm", embaixo a legenda (quando o `content` não é só
+  o nome do arquivo). O ↓ baixa a da tela. O lightbox guarda o **id** da mensagem aberta:
+  mensagem nova pelo WebSocket ou histórico carregado não fecha nem pula; se a aberta for apagada,
+  fecha. O blob do balão é reaproveitado e as vizinhas são pré-carregadas; o que ainda não chegou
+  mostra "Carregando imagem…". Chegar na primeira carregada não busca histórico (fica para outro
+  card). Figurinha ainda chega como `image` e entra na lista até o tipo `sticker` do CRMLAB-70
 - **Fundo branco (CRMLAB-25):** só a área rolável das mensagens é branca (`--color-chat-bg`);
   header e composer seguem no fundo do tema, o que também marca onde a conversa começa e
   termina. Sobre o papel branco, bolha do paciente e bolha da atendente se separam por lado E

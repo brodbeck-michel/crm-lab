@@ -51,6 +51,7 @@
  *   encerrada REABRE antes, na fila livre (D-174).
  */
 import type {
+  Conversation,
   CreateMessageRequest,
   Message,
   MessageStatus,
@@ -72,6 +73,7 @@ import {
 } from '../repositories/message.repository.js';
 import { isUniqueViolation } from '../repositories/quick-reply.repository.js';
 import { createAuditService, type AuditService } from './audit.service.js';
+import { claimFreeConversation } from './conversation-claim.js';
 import {
   createWhatsAppService,
   type OutboundPresence,
@@ -177,7 +179,10 @@ export interface MessageServiceDeps {
   /** Ausente => nenhum envio externo (usado por testes de unidade). */
   whatsapp?: WhatsAppService;
   echoWait?: Partial<EchoWaitOptions>;
-  /** Registra a reabertura pelo paciente (D-174). Ausente => sem audit (testes de unidade). */
+  /**
+   * Registra a reabertura pelo paciente (D-174) e a conversa assumida ao
+   * responder (D-215). Ausente => sem audit (testes de unidade).
+   */
   audit?: AuditService;
 }
 
@@ -278,6 +283,8 @@ export class MessageService {
       throw new BusinessError('CONVERSATION_ARCHIVED', { status: conversation.status });
     }
     const quote = await this.resolveQuote(tenantId, conversationId, dto.quotedMessageId);
+    // Antes do INSERT: quem perde a corrida nao grava nem envia nada (D-215).
+    await this.claimIfFree(tenantId, conversation, senderId);
 
     const message = await this.messages.insert(tenantId, {
       conversationId,
@@ -336,6 +343,7 @@ export class MessageService {
     // D-231: áudio não tem legenda no WhatsApp — descarta, senão o CRM
     // mostraria um texto que o paciente nunca recebeu.
     const caption = messageType === 'audio' ? null : dto.caption || null;
+    await this.claimIfFree(tenantId, conversation, senderId);
 
     const message = await this.messages.insert(tenantId, {
       conversationId,
@@ -370,6 +378,50 @@ export class MessageService {
       });
       throw new BusinessError('MESSAGE_SEND_FAILED', { messageId: message.id });
     }
+  }
+
+  /**
+   * Responder assume a conversa (CRMLAB-75, D-215): conversa da fila livre
+   * passa a ser de quem vai escrever nela. A rota de anexo chama isto ANTES de
+   * gravar a midia — perdeu a corrida, nao sobra arquivo orfao em disco.
+   * Conversa ja atribuida (a quem envia ou a outra pessoa) nao muda de dona.
+   */
+  async claimForAgent(tenantId: string, conversationId: string, senderId: string): Promise<void> {
+    const conversation = await this.conversations.findById(tenantId, conversationId);
+    if (!conversation) throw notFound({ resource: 'conversation', id: conversationId });
+    if (conversation.status !== 'active') {
+      throw new BusinessError('CONVERSATION_ARCHIVED', { status: conversation.status });
+    }
+    await this.claimIfFree(tenantId, conversation, senderId);
+  }
+
+  /**
+   * O claim do botao "Assumir" (`claimFreeConversation`), com o mesmo audit
+   * `assign_conversation`. So mensagem de ATENDENTE com autor passa aqui:
+   * automatica, sistema, paciente e eco do celular nunca atribuem.
+   */
+  private async claimIfFree(
+    tenantId: string,
+    conversation: Conversation,
+    senderId: string,
+  ): Promise<void> {
+    if (conversation.assignedTo !== null) return;
+    const { conversation: after, claimed } = await claimFreeConversation(
+      this.conversations,
+      tenantId,
+      conversation.id,
+      senderId,
+    );
+    if (!claimed) return;
+    await this.audit?.log({
+      tenantId,
+      userId: senderId,
+      action: 'assign_conversation',
+      entityType: 'conversation',
+      entityId: conversation.id,
+      oldValues: { assignedTo: null },
+      newValues: { assignedTo: after.assignedTo },
+    });
   }
 
   /**

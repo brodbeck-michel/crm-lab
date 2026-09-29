@@ -185,6 +185,11 @@ Duas leituras registradas aqui porque o doc original não as fixava:
   por cor (`--color-chat-received` / `--color-chat-sent`)
 - Composer: input pílula + anexos + **emoji** + enviar. O emoji entra na posição do cursor
   (Onda 8 §2.2), grade fixa de 48, sem dependência nova
+- **Responder assume (CRMLAB-75, D-215):** enviar numa conversa de "Não atribuídas" a torna da
+  pessoa (o backend faz o claim); a lista troca de chip pelo `conversation.new_message`, sem
+  clique em "Assumir". Se outra pessoa assumiu no mesmo instante, o envio volta
+  `CONVERSATION_ALREADY_ASSIGNED` (409): toast "Conversa já assumida por {assignedToName}", o
+  texto volta ao Composer (o recado de voz fica na prévia) e a lista/conversa são reconsultadas
 - **Anexos com prévia (CRMLAB-69, D-231..D-233)** — padrão WhatsApp Web:
   - Entradas: clipe → menu **"Fotos e vídeos"** / **"Documento"** (vários arquivos), **Ctrl+V** de
     print no campo da mensagem, e **arrastar** arquivo sobre a conversa (área "Solte o arquivo

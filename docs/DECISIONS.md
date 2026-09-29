@@ -4113,6 +4113,30 @@ fora disso a Meta exige template aprovado (pago), que o CRM não tem. Em vez de 
 regra fica fora. Template aprovado, se o laboratório migrar, é outro card.
 **Impacto:** `reengagement.repository.ts` (`isQrWhatsAppActive`), `ReengagementSection.tsx`.
 
+### D-215: Responder conversa da fila livre assume a conversa (CRMLAB-75)
+**Decisão:** mensagem de atendente (texto, resposta rápida, anexo, recado de voz e o orçamento
+enviado/reenviado pelo cartão) numa conversa **sem dona** atribui a conversa a **quem enviou**,
+antes de gravar a mensagem. O claim é o mesmo do botão "Assumir" — `claimIfUnassigned`
+(`UPDATE ... WHERE assigned_to IS NULL`), extraído para `services/conversation-claim.ts` e usado
+por `ConversationService.assign` e por `MessageService` — com o mesmo audit `assign_conversation`
+(sem mensagem de sistema, como o botão na fila livre). Quem perde a corrida recebe
+`CONVERSATION_ALREADY_ASSIGNED` (409, `details: { assignedTo, assignedToName }`) e **nada é
+gravado nem enviado** ao paciente; no anexo o claim roda antes de gravar a mídia. Conversa já da
+própria pessoa: nada muda. Conversa de outra pessoa: **não** transfere (gestor/admin continuam
+podendo escrever nela, como antes). `createAutomated` (reingajamento), `createSystemEvent` e
+`createFromPhone` (eco do celular) nunca atribuem. **Substitui** a linha de D-175 "conversa da
+fila livre é usada como está (enviar não assume)" do botão "Nova conversa": ele envia por
+`createFromAgent` e agora também assume (confirmado pelo Michel em 29/09/2026). O frontend, no 409, avisa "Conversa já
+assumida por Fulana" e devolve o texto ao Composer.
+**Motivo:** a atendente respondia pela fila e esquecia de clicar em "Assumir": a conversa ficava
+sem dona, sumia do "Minhas", outra atendente pegava no meio e os relatórios por atendente não a
+contavam (Michel, CRMLAB-75). Nenhum evento WS novo: o `conversation.new_message` que o envio já
+emite invalida as listas de todas as telas, e a conversa troca de chip sozinha.
+**Impacto:** `conversation-claim.ts` (novo), `conversation.service.ts` (`assign` usa o helper),
+`message.service.ts` (`claimForAgent`, chamado por `createFromAgent`/`createAttachmentFromAgent`),
+`conversation.routes.ts` (anexo: claim antes de gravar a mídia), `Composer.tsx` (`onSend` pode
+devolver Promise; rejeitou → texto volta), `Attendance/index.tsx` (409 no envio).
+
 ## 2026-09-29 — Tiques de entrega e presença do paciente (CRMLAB-67)
 
 ### D-225: Status da mensagem do atendimento — `pending`, ordem que nunca rebaixa e ack do Evolution (CRMLAB-67)

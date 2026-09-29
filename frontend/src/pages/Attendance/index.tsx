@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ChangeEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
@@ -33,6 +32,14 @@ import { conversationDetailOptions, flattenMessages, useMarkAsRead } from './que
  * `conversation.new_message` invalida essas chaves — a tela não faz patch
  * manual de cache.
  */
+
+/** Erros de sessão: o `handleApiError` manda para o login — não adianta seguir enviando. */
+const SESSION_ERRORS: ReadonlySet<string> = new Set([
+  'TOKEN_EXPIRED',
+  'TOKEN_INVALID',
+  'REFRESH_TOKEN_INVALID',
+  'UNAUTHORIZED',
+]);
 
 /** Mínimo de caracteres para a busca de paciente sair (ver `patientsQuery`). */
 const PATIENT_SEARCH_MIN = 2;
@@ -215,10 +222,6 @@ export function Attendance() {
     onError: handleApiError,
   });
 
-  /** Anexo (Onda 8 §4.3) — o clipe abre o seletor de arquivo do SO. */
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  /** Citação escolhida quando o clipe foi clicado (CRMLAB-66) — o arquivo chega depois. */
-  const pendingQuoteRef = useRef<{ conversationId: string; quotedMessageId: string } | null>(null);
   /**
    * `conversationId` vem de quem chama, lido ANTES de ler o arquivo: entre o
    * clique e o POST há o `FileReader`, e trocar de conversa nessa janela
@@ -244,23 +247,47 @@ export function Attendance() {
     });
   }
 
-  async function handleFileChange(event: ChangeEvent<HTMLInputElement>): Promise<void> {
-    const file = event.target.files?.[0];
-    event.target.value = '';
+  /**
+   * Anexos da prévia (CRMLAB-69, D-233): um POST por arquivo, EM SEQUÊNCIA, na
+   * ordem da faixa. Destino lido no clique (antes de qualquer `FileReader`).
+   * Só o PRIMEIRO leva a citação. Erro é por arquivo: avisa com o nome e segue
+   * — menos sessão caída, que manda para o login e para o resto.
+   */
+  async function handleSendAttachments(
+    items: { file: File; caption: string }[],
+    quotedMessageId?: string,
+  ): Promise<void> {
     const conversationId = selectedId;
-    const pending = pendingQuoteRef.current;
-    pendingQuoteRef.current = null;
-    if (!file || !conversationId) return;
-    const quotedMessageId =
-      pending?.conversationId === conversationId ? pending.quotedMessageId : undefined;
-    const contentBase64 = await readFileAsBase64(file);
-    sendAttachment.mutate({
-      conversationId,
-      fileName: file.name,
-      mimeType: file.type || 'application/octet-stream',
-      contentBase64,
-      ...(quotedMessageId ? { quotedMessageId } : {}),
-    });
+    if (!conversationId) return;
+    for (const [index, { file, caption }] of items.entries()) {
+      try {
+        const contentBase64 = await readFileAsBase64(file);
+        await api.conversations.sendAttachment(conversationId, {
+          fileName: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          contentBase64,
+          ...(caption ? { caption } : {}),
+          ...(index === 0 && quotedMessageId ? { quotedMessageId } : {}),
+        });
+      } catch (error: unknown) {
+        // MESSAGE_SEND_FAILED: gravou como falha e a bolha já mostra — mesmo
+        // aviso de hoje. Sessão caída: o handler manda para o login e para.
+        if (isApiError(error) && error.code === 'MESSAGE_SEND_FAILED') {
+          handleApiError(error);
+        } else if (isApiError(error) && SESSION_ERRORS.has(error.code)) {
+          handleApiError(error);
+          break;
+        } else {
+          const reason = error instanceof Error ? error.message : 'erro inesperado';
+          toast(`Não foi possível enviar "${file.name}": ${reason}`, { tone: 'attention' });
+        }
+      } finally {
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: queryKeys.conversation(conversationId) }),
+          queryClient.invalidateQueries({ queryKey: queryScopes.conversations }),
+        ]);
+      }
+    }
   }
 
   /**
@@ -340,12 +367,6 @@ export function Attendance() {
 
   return (
     <>
-      <input
-        ref={fileInputRef}
-        type="file"
-        hidden
-        onChange={(event) => void handleFileChange(event)}
-      />
       <InboxLayout
         list={
           <ConversationList
@@ -406,11 +427,9 @@ export function Attendance() {
             }
             onToggleContext={toggleContextPanel}
             onClose={() => setSelectedId(null)}
-            onAttach={(quotedMessageId) => {
-              pendingQuoteRef.current =
-                quotedMessageId && selectedId ? { conversationId: selectedId, quotedMessageId } : null;
-              fileInputRef.current?.click();
-            }}
+            onSendAttachments={(items, quotedMessageId) =>
+              void handleSendAttachments(items, quotedMessageId)
+            }
             onSendAudio={handleSendAudio}
             quickReplies={quickRepliesQuery.data?.quickReplies ?? []}
             contextOpen={contextOpen}

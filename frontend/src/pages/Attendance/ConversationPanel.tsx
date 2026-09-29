@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ReactNode, RefObject } from 'react';
+import type { DragEvent, ReactNode, RefObject } from 'react';
 import { QUOTED_PREVIEW_MAX } from '@crm-lab/shared';
 import type {
   ConversationAssignee,
@@ -10,14 +10,22 @@ import type {
 import { Badge, Button, cn } from '@/components/ui';
 import { EmptyState } from '@/components/shared';
 import {
+  AttachmentPreview,
   Composer,
   DateSeparator,
+  createAttachmentDraft,
+  dragHasFiles,
+  filesFromDataTransfer,
   MessageBubble,
   bubbleTypeFor,
   isSameLocalDay,
   quotedLabel,
 } from '@/components/conversation';
-import type { MessageBubbleProps, RecordedAudio } from '@/components/conversation';
+import type {
+  AttachmentDraft,
+  MessageBubbleProps,
+  RecordedAudio,
+} from '@/components/conversation';
 import { scrollToMessage } from './scroll-to-message';
 import { useConversationScroll } from './useConversationScroll';
 
@@ -54,8 +62,15 @@ export interface ConversationPanelProps {
   onToggleContext: () => void;
   /** Fecha a conversa aberta, voltando ao estado "nenhuma selecionada" (padrão WhatsApp Web). */
   onClose: () => void;
-  /** Anexo no composer. `quotedMessageId` = o anexo sai citando (CRMLAB-66). */
-  onAttach: (quotedMessageId?: string) => void;
+  /**
+   * Anexos confirmados na prévia (CRMLAB-69, D-233): só os válidos, na ordem
+   * da faixa. `quotedMessageId` = respondendo citando — quem monta a tela põe
+   * a citação SÓ no primeiro (CRMLAB-66, D-233 item 4).
+   */
+  onSendAttachments: (
+    items: { file: File; caption: string }[],
+    quotedMessageId?: string,
+  ) => void;
   /** Recado de voz gravado no composer (CRMLAB-24) — ver `Composer.onSendAudio`. */
   onSendAudio?: (audio: RecordedAudio, quotedMessageId?: string) => Promise<unknown>;
   /** Reação do laboratório (D-222); `null` tira. Sem handler, "Reagir" some do menu. */
@@ -249,7 +264,7 @@ export function ConversationPanel({
   canCloseAttendance,
   onToggleContext,
   onClose,
-  onAttach,
+  onSendAttachments,
   onSendAudio,
   onReact,
   onQuoteUnavailable,
@@ -304,6 +319,74 @@ export function ConversationPanel({
       if (!scrollToMessage(scrollRef.current, messageId)) onQuoteUnavailable?.();
     },
   };
+
+  // Prévia de anexos (CRMLAB-69, D-232): presa à conversa em que abriu —
+  // trocar de conversa descarta (e a prévia desmonta, revogando os object URLs).
+  const [preview, setPreview] = useState<{ conversationId: string; items: AttachmentDraft[] } | null>(
+    null,
+  );
+  const drafts = preview && preview.conversationId === conversationId ? preview.items : null;
+  const closePreview = (): void => setPreview(null);
+
+  function openPreview(files: File[]): void {
+    if (conversationId === null || files.length === 0) return;
+    const added = files.map(createAttachmentDraft);
+    setPreview((current) => ({
+      conversationId,
+      items: current && current.conversationId === conversationId ? [...current.items, ...added] : added,
+    }));
+  }
+
+  function updateDrafts(update: (items: AttachmentDraft[]) => AttachmentDraft[]): void {
+    setPreview((current) => (current ? { ...current, items: update(current.items) } : current));
+  }
+
+  function sendPreview(): void {
+    const valid = (drafts ?? []).filter((item) => item.error === null);
+    if (valid.length === 0) return;
+    beforeReply();
+    onSendAttachments(
+      valid.map((item) => ({ file: item.file, caption: item.caption.trim() })),
+      quotedId,
+    );
+    clearReply();
+    closePreview();
+  }
+
+  // Arrastar arquivo (D-232): contador porque cada filho dispara enter/leave.
+  const dragDepth = useRef(0);
+  const [dragging, setDragging] = useState(false);
+  const acceptsFiles = conversation?.status === 'active';
+
+  function handleDragEnter(event: DragEvent<HTMLDivElement>): void {
+    if (!acceptsFiles || !dragHasFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    dragDepth.current += 1;
+    setDragging(true);
+  }
+
+  function handleDragOver(event: DragEvent<HTMLDivElement>): void {
+    if (!acceptsFiles || !dragHasFiles(event.dataTransfer)) return;
+    // Sem `preventDefault` no dragover o navegador não deixa soltar (abre o arquivo).
+    event.preventDefault();
+  }
+
+  function handleDragLeave(event: DragEvent<HTMLDivElement>): void {
+    if (!dragging) return;
+    event.preventDefault();
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragging(false);
+  }
+
+  function handleDrop(event: DragEvent<HTMLDivElement>): void {
+    dragDepth.current = 0;
+    setDragging(false);
+    if (!acceptsFiles) return;
+    const files = filesFromDataTransfer(event.dataTransfer);
+    if (files.length === 0) return;
+    event.preventDefault();
+    openPreview(files);
+  }
 
   /** A atendente respondeu: a faixa sai e a resposta aparece no fim (D-239). */
   function beforeReply(): void {
@@ -412,110 +495,140 @@ export function ConversationPanel({
         </div>
       </header>
 
-      <div className="relative flex min-h-0 flex-1 flex-col">
-        <div
-          ref={scrollRef}
-          data-testid="message-scroll"
-          onScroll={scroll.onScroll}
-          className="relative flex min-h-0 flex-1 flex-col gap-sm overflow-y-auto bg-chat-bg px-lg py-lg [overflow-anchor:none]"
-        >
-          {messages.length === 0 ? (
-            <EmptyState
-              message="Nenhuma mensagem ainda"
-              hint="Escreva a primeira mensagem para começar o atendimento."
-            />
-          ) : (
-            renderRows(messages, unread, dividerRef, bubbleActions)
+      <div
+        data-testid="conversation-drop-area"
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className="relative flex min-h-0 flex-1 flex-col"
+      >
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <div
+            ref={scrollRef}
+            data-testid="message-scroll"
+            onScroll={scroll.onScroll}
+            className="relative flex min-h-0 flex-1 flex-col gap-sm overflow-y-auto bg-chat-bg px-lg py-lg [overflow-anchor:none]"
+          >
+            {messages.length === 0 ? (
+              <EmptyState
+                message="Nenhuma mensagem ainda"
+                hint="Escreva a primeira mensagem para começar o atendimento."
+              />
+            ) : (
+              renderRows(messages, unread, dividerRef, bubbleActions)
+            )}
+          </div>
+
+          {/* Fora da área rolável: dentro dela, o indicador empurraria as mensagens
+              e a tela pularia justamente enquanto o histórico carrega (D-238). */}
+          {loadingOlder && (
+            <p
+              role="status"
+              className="pointer-events-none absolute left-0 right-0 top-sm m-0 flex justify-center"
+            >
+              <span className="rounded-pill bg-surface px-md py-xs font-body text-caption text-neutral-600 shadow-sm">
+                Carregando mensagens anteriores…
+              </span>
+            </p>
+          )}
+
+          {scroll.showJumpButton && (
+            <button
+              type="button"
+              onClick={() => scroll.jumpToBottom()}
+              aria-label={
+                scroll.newCount > 0
+                  ? `Ir para a última mensagem (${scroll.newCount} ${scroll.newCount === 1 ? 'nova' : 'novas'})`
+                  : 'Ir para a última mensagem'
+              }
+              className={cn(
+                'absolute bottom-md right-lg flex h-[40px] w-[40px] cursor-pointer items-center justify-center',
+                'rounded-pill border border-neutral-200 bg-surface font-body text-label text-neutral-700 shadow-md',
+                'hover:bg-neutral-100',
+              )}
+            >
+              ↓
+              {scroll.newCount > 0 && (
+                <span className="absolute -right-xs -top-xs">
+                  <Badge count={scroll.newCount} />
+                </span>
+              )}
+            </button>
           )}
         </div>
 
-        {/* Fora da área rolável: dentro dela, o indicador empurraria as mensagens
-            e a tela pularia justamente enquanto o histórico carrega (D-238). */}
-        {loadingOlder && (
-          <p
-            role="status"
-            className="pointer-events-none absolute left-0 right-0 top-sm m-0 flex justify-center"
+        {/* Um Composer POR conversa (D-181): trocar de conversa cancela a gravação
+            e solta o microfone — o recado feito para um paciente não vai para outro. */}
+        <Composer
+          key={conversation.id}
+          onSend={(content) => {
+            beforeReply();
+            const result = onSend(content, quotedId);
+            clearReply();
+            return result;
+          }}
+          onPickFiles={openPreview}
+          onAttachClick={beforeReply}
+          onSendAudio={
+            onSendAudio
+              ? async (audio) => {
+                  beforeReply();
+                  const sent = await onSendAudio(audio, quotedId);
+                  clearReply();
+                  return sent;
+                }
+              : undefined
+          }
+          replyTo={
+            replyTo
+              ? {
+                  authorName:
+                    replyTo.senderType === 'patient'
+                      ? (replyTo.senderName ?? conversation.patientName ?? 'Paciente')
+                      : (replyTo.senderName ?? 'Você'),
+                  preview: quotedLabel({
+                    id: replyTo.id,
+                    senderType: replyTo.senderType,
+                    senderName: replyTo.senderName,
+                    preview: replyTo.content.slice(0, QUOTED_PREVIEW_MAX),
+                    messageType: replyTo.messageType,
+                    deleted: false,
+                  }),
+                }
+              : null
+          }
+          onCancelReply={clearReply}
+          sending={sending}
+          disabled={closed}
+          quickReplies={quickReplies}
+          initialValue={draftMessage}
+        />
+
+        {dragging && !drafts && (
+          <div
+            data-testid="drop-zone"
+            className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-bg p-lg"
           >
-            <span className="rounded-pill bg-surface px-md py-xs font-body text-caption text-neutral-600 shadow-sm">
-              Carregando mensagens anteriores…
+            <span className="flex h-full w-full items-center justify-center rounded-md border-2 border-dashed border-accent font-body text-label font-semibold text-accent-800">
+              Solte o arquivo aqui
             </span>
-          </p>
+          </div>
         )}
 
-        {scroll.showJumpButton && (
-          <button
-            type="button"
-            onClick={() => scroll.jumpToBottom()}
-            aria-label={
-              scroll.newCount > 0
-                ? `Ir para a última mensagem (${scroll.newCount} ${scroll.newCount === 1 ? 'nova' : 'novas'})`
-                : 'Ir para a última mensagem'
+        {drafts && (
+          <AttachmentPreview
+            items={drafts}
+            onCaptionChange={(id, caption) =>
+              updateDrafts((items) => items.map((item) => (item.id === id ? { ...item, caption } : item)))
             }
-            className={cn(
-              'absolute bottom-md right-lg flex h-[40px] w-[40px] cursor-pointer items-center justify-center',
-              'rounded-pill border border-neutral-200 bg-surface font-body text-label text-neutral-700 shadow-md',
-              'hover:bg-neutral-100',
-            )}
-          >
-            ↓
-            {scroll.newCount > 0 && (
-              <span className="absolute -right-xs -top-xs">
-                <Badge count={scroll.newCount} />
-              </span>
-            )}
-          </button>
+            onRemove={(id) => updateDrafts((items) => items.filter((item) => item.id !== id))}
+            onAdd={openPreview}
+            onSend={sendPreview}
+            onClose={closePreview}
+          />
         )}
       </div>
-
-      {/* Um Composer POR conversa (D-181): trocar de conversa cancela a gravação
-          e solta o microfone — o recado feito para um paciente não vai para outro. */}
-      <Composer
-        key={conversation.id}
-        onSend={(content) => {
-          beforeReply();
-          const result = onSend(content, quotedId);
-          clearReply();
-          return result;
-        }}
-        onAttach={() => {
-          beforeReply();
-          onAttach(quotedId);
-          clearReply();
-        }}
-        onSendAudio={
-          onSendAudio
-            ? async (audio) => {
-                beforeReply();
-                const sent = await onSendAudio(audio, quotedId);
-                clearReply();
-                return sent;
-              }
-            : undefined
-        }
-        replyTo={
-          replyTo
-            ? {
-                authorName:
-                  replyTo.senderType === 'patient'
-                    ? (replyTo.senderName ?? conversation.patientName ?? 'Paciente')
-                    : (replyTo.senderName ?? 'Você'),
-                preview: quotedLabel({
-                  id: replyTo.id,
-                  senderType: replyTo.senderType,
-                  senderName: replyTo.senderName,
-                  preview: replyTo.content.slice(0, QUOTED_PREVIEW_MAX),
-                  messageType: replyTo.messageType,
-                  deleted: false,
-                }),
-              }
-            : null
-        }
-        onCancelReply={clearReply}
-        sending={sending}
-        disabled={closed}
-        quickReplies={quickReplies}
-        initialValue={draftMessage}
-      />
     </div>
   );
 }

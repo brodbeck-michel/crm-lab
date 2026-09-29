@@ -126,6 +126,13 @@ test.describe('Fluxo 17: importação do LIS + Resultados', () => {
     });
     expect([201, 409]).toContain(created.status());
 
+    // A planilha é plano B e nasce desligada nas Regras (CRMLAB-53, D-189).
+    const rules = await request.patch(`${API_URL}/settings/funnel-rules`, {
+      headers: authHeaders(managerToken),
+      data: { lisSource: { spreadsheetImport: { enabled: true } } },
+    });
+    expect(rules.status()).toBe(200);
+
     await loginAs(page, E2E_USERS.alfaManager);
     await gotoScreen(page, RESULTS, HEADING);
 

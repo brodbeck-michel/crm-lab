@@ -17,7 +17,7 @@ export interface MessagePanelProps {
   isLoading: boolean;
   isError: boolean;
   onRetry: () => void;
-  onSend: (content: string) => void;
+  onSend: (content: string) => void | Promise<unknown>;
   sending: boolean;
   currentUserId: string | null;
   currentUserRole: UserRole | null;

@@ -421,6 +421,8 @@ test.describe('Fluxo 8: a ficha tem porta de entrada (D-079)', () => {
 
     // Abre a conversa da Carla pela lista — como um atendente faria.
     await page.getByTestId('conversation-item').filter({ hasText: CARLA.name }).first().click();
+    // A coluna 3 começa fechada (CRMLAB-74): abre pelo botão [Contexto], como a atendente.
+    await page.getByRole('button', { name: 'Mostrar contexto do paciente' }).click();
 
     const link = page.getByTestId('patient-profile-link');
     await expect(link).toBeVisible();

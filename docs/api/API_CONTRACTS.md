@@ -684,8 +684,8 @@ mensagem pelo canal WhatsApp do laboratório, pelo **mesmo** `MessageService.cre
   de `patients` na mesma transação, **sem nome** — igual ao número desconhecido que escreve pela
   primeira vez sem nome de perfil (o nome entra depois, pelo perfil do WhatsApp ou pela Ficha).
 - Conversa existente **ativa de outro atendente** → `CONVERSATION_ALREADY_ASSIGNED` (409), a
-  mesma regra de `POST /conversations`. Conversa da **fila livre** é usada como está (enviar
-  não assume — assumir é `PATCH /conversations/:id`).
+  mesma regra de `POST /conversations`. Conversa da **fila livre** é reaproveitada e, como toda
+  resposta de atendente, **passa a ser de quem enviou** (CRMLAB-75, D-215 — antes ficava livre).
 - Conversa existente **encerrada** → reabre atribuída a quem enviou, com "Atendimento reaberto
   por <nome>" (D-174), e então envia.
 - Conversa existente de outro canal (`direct`/`web`/`sms`, atendimento manual) → passa a
@@ -811,6 +811,14 @@ Enviar mensagem em uma conversa.
 O recorte por papel é aplicado **antes** de escrever: conversa que o usuário não
 enxerga devolve `NOT_FOUND`.
 
+**Responder assume a conversa (CRMLAB-75, D-215):** conversa **sem dona** (`assignedTo: null`)
+passa a ser de quem enviou ANTES de a mensagem ser gravada — o mesmo claim atômico de
+`PATCH /conversations/:id` (`assignedTo`), com o mesmo audit `assign_conversation`. Quem perde a
+corrida recebe `CONVERSATION_ALREADY_ASSIGNED` (409, `details: { assignedTo, assignedToName }`) e a
+mensagem **não** é gravada nem enviada ao paciente. Conversa já atribuída (à própria pessoa ou a
+outra) não muda de dona. Vale também para `POST /conversations/:id/attachments` e para o envio
+pelo cartão (`POST /proposals/:id/send`, `POST /proposals/:id/resend`), que usam o mesmo caminho.
+
 **Response (201):**
 ```json
 {
@@ -829,8 +837,9 @@ enxerga devolve `NOT_FOUND`.
 ```
 
 **Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404), `CONVERSATION_ARCHIVED` (409),
-`MESSAGE_SEND_FAILED` (502, canal externo falhou após os retries), `FORBIDDEN` (403,
-`platform_operator`)
+`CONVERSATION_ALREADY_ASSIGNED` (409, conversa da fila livre assumida por outra pessoa no mesmo
+instante — D-215), `MESSAGE_SEND_FAILED` (502, canal externo falhou após os retries), `FORBIDDEN`
+(403, `platform_operator`)
 
 ### POST /conversations/:id/attachments
 Enviar um anexo (Onda 8 §4.3) — foto, PDF ou áudio para o paciente.
@@ -856,7 +865,8 @@ médico.
   tamanho (15 MiB por arquivo)
 
 O recorte por papel é aplicado **antes** de gravar: conversa que o usuário não
-enxerga devolve `NOT_FOUND`. `messageType` é derivado do `mimeType`
+enxerga devolve `NOT_FOUND`. Conversa sem dona é assumida por quem envia antes de gravar a
+mídia (D-215, mesma regra e mesmo 409 de `POST /conversations/:id/messages`). `messageType` é derivado do `mimeType`
 (`image/* → image`, `audio/* → audio`, `application/pdf → pdf`, resto →
 `doc`) — o cliente não escolhe.
 

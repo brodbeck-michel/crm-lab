@@ -140,6 +140,13 @@ interface que ProposalService/ApprovalService consomem. Instanciação:
 `InboundMessageInput` (`content`, `messageType?`, `attachmentUrl?`, `externalId?`).
 
 **Regras:**
+- `createFromAgent` / `createAttachmentFromAgent` em conversa **sem dona** assumem a conversa
+  para `senderId` ANTES do INSERT (CRMLAB-75, D-215) — `claimForAgent`, sobre o mesmo
+  `claimFreeConversation` (`services/conversation-claim.ts`) que `ConversationService.assign` usa
+  na fila livre, com o mesmo audit `assign_conversation`. Perdeu a corrida →
+  `CONVERSATION_ALREADY_ASSIGNED` e nada é gravado nem enviado. Conversa já atribuída não muda
+  de dona. `createAutomated`, `createSystemEvent`, `createFromPatient` e `createFromPhone` não
+  atribuem. A rota de anexo chama `claimForAgent` antes de gravar a mídia (sem arquivo órfão)
 - `createFromAgent` → chama WhatsAppService.send() → atualiza `status` conforme callback.
   A mensagem é persistida ANTES do envio: falha de canal deixa a linha com
   `status: 'failed'` e devolve `MESSAGE_SEND_FAILED` (502) — a bolha não some da tela

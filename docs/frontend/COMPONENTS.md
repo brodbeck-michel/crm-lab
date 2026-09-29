@@ -112,6 +112,9 @@ Anatomia (padrão WhatsApp):
 ### Composer
 - Input pílula + botão anexo + botão emoji + botão microfone + botão enviar (primary)
 - Enter envia, Shift+Enter quebra linha
+- O campo esvazia no envio. `onSend` pode devolver `Promise`: **rejeitou**, o texto enviado volta
+  ao campo (se a pessoa não começou outro) — é assim que a tela devolve o rascunho quando o envio
+  é recusado (CRMLAB-75, D-215). Quem decide quais erros rejeitam é a tela
 - **Ctrl+B / Cmd+B** (CRMLAB-51, D-183): envolve a seleção em asteriscos (`*seleção*`, que a
   bolha e o WhatsApp mostram em negrito) e mantém o texto selecionado; sem seleção, insere `**`
   com o cursor no meio

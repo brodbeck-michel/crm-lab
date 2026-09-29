@@ -3,6 +3,7 @@ import type { Conversation } from '@crm-lab/shared';
 import { Badge, Chip, cn } from '@/components/ui';
 import { Avatar, DateDisplay } from '@/components/shared';
 import { formatDurationSeconds } from '@/lib/format';
+import { clearConversationDraft, useConversationDraft } from '@/stores';
 
 /**
  * ConversationItem — COMPONENTS.md (`conversation/`), anatomia padrão WhatsApp.
@@ -121,6 +122,15 @@ export function ConversationItem({
   const displayName = patientName ?? patientPhone;
   const hasUnread = unreadCount > 0;
 
+  // Rascunho (CRMLAB-73, D-243): aparece no lugar da prévia, menos na conversa
+  // aberta (é ela que está sendo digitada). Encerrada não guarda rascunho.
+  const savedDraft = useConversationDraft(id);
+  const closed = status !== 'active';
+  const draft = !selected && !closed ? savedDraft : null;
+  useEffect(() => {
+    if (closed && savedDraft !== null) clearConversationDraft(id);
+  }, [closed, savedDraft, id]);
+
   // Estado derivado: useMemo, nunca useEffect (CONVENTIONS.md).
   const waiting = useMemo(
     () => (hasUnread ? minutesWaiting(lastMessageAt, now ?? new Date()) : null),
@@ -189,7 +199,16 @@ export function ConversationItem({
               data-testid="conversation-preview"
               className="min-w-0 flex-1 truncate text-caption text-neutral-700"
             >
-              {lastMessagePreview ?? 'Sem mensagens ainda'}
+              {draft !== null ? (
+                <>
+                  <span data-testid="conversation-draft" className="font-semibold text-accent2-700">
+                    Rascunho:
+                  </span>{' '}
+                  {draft}
+                </>
+              ) : (
+                (lastMessagePreview ?? 'Sem mensagens ainda')
+              )}
             </span>
             <Badge count={unreadCount} label={`${unreadCount} mensagens não lidas`} />
           </span>

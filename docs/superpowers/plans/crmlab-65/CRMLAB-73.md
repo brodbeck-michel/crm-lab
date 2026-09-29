@@ -39,3 +39,5 @@ main v1.24.0). Faixa: D-242…D-243 · sem migração · só frontend.
 - `ConversationPanel`: só `draftId={conversation.id}` no Composer.
 - Specs: `drafts.store.spec.ts` 10 ✓, `Composer*.spec.tsx` (5 arquivos, inclui o novo
   `Composer.format-draft.spec.tsx`) 56 ✓.
+- `ConversationItem`: "Rascunho: …" (menos selecionada), encerrada apaga (efeito). Spec novo
+  `ConversationItem.draft.spec.tsx` 4 ✓ (+ 17 do spec antigo ✓).

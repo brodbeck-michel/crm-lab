@@ -20,8 +20,13 @@ Faixas: decisões D-228…D-230 · migração 043.
       `ConversationService.searchMessages`/`markAsUnread`, `MessageService.search`, rotas
       `GET /search/messages`, `GET /:id/messages`, `POST /:id/unread`. Typecheck verde.
 
+- [x] Specs de backend: `message-search.spec.ts` (shape, acento/caixa/prefixo, apagada/sistema/
+      editada, recorte atendente/gestor/tenant, ordem/paginação, validação, 4000 mensagens +
+      EXPLAIN usa o GIN parcial), `unread.spec.ts`, `cursor-around.spec.ts`; inventário 76 → 79;
+      `cursor.spec`/`list.spec`/`assign.spec` ajustados (`counts.unread`, `cursors.after`).
+      `tests/conversations` 104 ✓; `tests/messages` + inventário + migrator + `tests/db` 299 ✓.
+
 ### Próximo passo exato
-1. Inventário `route-tenant-isolation.spec.ts` (+3 rotas) → specs de backend.
 3. Frontend: `lib/search-snippet.ts`, queries/scroll/panel/lista/item/busca + specs.
 
 ## Critérios de aceite (do card)

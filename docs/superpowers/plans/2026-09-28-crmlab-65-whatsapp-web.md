@@ -88,9 +88,9 @@ node_modules são symlinks para a pasta principal; `*.wt.*` (vitest/tsconfig com
 | 66 [A] | ✔️ aprovado na hml (28/09) · aguarda PR | 6dd7c9e | D-220..D-223 (D-224 e migração 041 sem uso). Migração 040. `EVOLUTION_WEBHOOK_EVENTS` + `syncEvolutionWebhooks` no boot: o 67 só acrescenta eventos. 829 back + 716 front verdes no card. |
 | 71 [F] | ✔️ aprovado na hml (28/09) · aguarda PR | e35cbfc | D-237..D-239. Cursor `before=<messageId>`, `cursors.after` reservado p/ 68. 37 back + 656 front verdes. Migração 046 não usada. |
 | 72 [G] | ✔️ aprovado na hml (28/09) · aguarda PR | d356ac6 | D-240, D-241. 645 testes front verdes. Dúvida p/ Michel: gestor/admin avisados só da própria fila. |
-| 67 [B] | ⏸️ pausado (só leitura/pesquisa) | df4df03 | Ack Evolution 0..5 mapeado; sem `presenceSubscribe` no v2 (usar `sendPresence`); rascunho D-225..227 no diário. Próximo: escrever D-225..227 + shared + API_CONTRACTS. |
-| 68 [C] | ⏸️ pausado (só desenho) | 87b2a57 | Desenho D-228..230 no diário (função própria sem acento, GIN parcial sem apagadas, `POST /:id/unread`, `around`/`after`). Próximo: escrever D-228..230 + contratos. |
-| 69 [D] | ⏸️ pausado (docs prontos) | 2535933 | D-231..233 + API_CONTRACTS/COMPONENTS/PAGES escritos; nenhum código. Próximo: shared (`caption`, `MAX_MEDIA_BYTES`) → backend → frontend → testes. |
+| 67 [B] | 🧪 hml (`hml-deb5132`) · Pronto p/ Validação | 08d161c | D-225..D-227, 042 sem uso. Tiques/pending/retry, presença efêmera, composing. |
+| 68 [C] | 🧪 hml (`hml-deb5132`) · Pronto p/ Validação | 8931970 | D-228..D-230, migração 043. Busca, Não lidas, around/after. Isolamento 81 rotas. |
+| 69 [D] | 🧪 hml (`hml-deb5132`) · Pronto p/ Validação | a59817c | D-231..D-233, 044 sem uso. Prévia, vários, Ctrl+V, drop, caption. |
 | 70 [E] | ⬜ aguarda onda 3 | — | |
 | 73 [H] | ⬜ aguarda onda 3 | — | |
 | 64    | ⬜ aguarda onda 3 | — | |
@@ -138,3 +138,9 @@ Diário de cada card: `docs/superpowers/plans/crmlab-65/CRMLAB-<n>.md`.
   **CRMLAB-63** (cursor no campo após enviar; `MESSAGE_SEND_FAILED` não devolve o texto) e
   **CRMLAB-74** (contexto começa fechado; E2E `flow-8` abre pelo botão). Ambos aprovados.
   hml em `hml-082cbac`. Falta decidir a forma dos PRs para a main.
+- 2026-09-29: PR #79 (onda 1 + 63 + 74) mergeado por squash (`c5b16fc`); `merge -s ours origin/main`
+  na integ (3d0ef03). **Onda 2 retomada** por 3 agentes, cada um trouxe a integ antes. Integração:
+  67 sem conflito; 69 × 67 (ConversationPanel/index/DECISIONS + spec com `onAttach`); 68 × 67/69
+  (6 arquivos; área de mensagens reconstruída sobre a drop area do 69 + 3 mudanças do 68; spec
+  `onAttach` e `useRef`). Suíte completa verde (back 1795, front 1486), CI verde, hml `hml-deb5132`.
+  Massa: `simula-onda1.sh base|ao-vivo|tiques|presenca|limpar`.

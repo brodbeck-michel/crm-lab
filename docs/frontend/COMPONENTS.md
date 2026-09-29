@@ -77,8 +77,10 @@ Anatomia (padrão WhatsApp):
 - `ConversationSearch`: barra da busca dentro da conversa (campo, "N de M", ↑ ↓, fechar) + lista
   de resultados. Recebe os `MessageSearchHit` prontos e devolve o id escolhido (`onGoTo`)
 - `MessageResults`: o bloco "Mensagens" da busca da coluna 1 (mesma forma de `PatientResults`)
-- O trecho e o destaque vêm de `lib/search-snippet.ts` (`searchSnippet`, `highlightParts`):
-  comparação sem acento e sem caixa; o destaque é `<mark>` com tokens, nunca HTML vindo da API
+- `SearchSnippet` (`content`, `term`): o trecho com o destaque, usado pelos dois
+- O trecho e o destaque vêm de `lib/search-snippet.ts` (`searchSnippet`, `highlightParts`,
+  `isSearchableTerm`): comparação sem acento e sem caixa; o destaque é `<mark>` com tokens, nunca
+  HTML vindo da API
 
 ### MessageBubble
 ```tsx

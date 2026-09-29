@@ -35,11 +35,18 @@ describe('GET /conversations/:id — `around` e `after` (D-230)', () => {
   async function scenario(count: number) {
     const tenant = await createTenant();
     const attendant = await createUser({ tenantId: tenant.id, role: 'attendant' });
-    const conversation = await createConversation({ tenantId: tenant.id, assignedTo: attendant.id });
+    const conversation = await createConversation({
+      tenantId: tenant.id,
+      assignedTo: attendant.id,
+    });
     const db = await getTestDb();
     const ids: string[] = [];
     for (let i = 1; i <= count; i += 1) {
-      const seeded = await seedMessage({ tenantId: tenant.id, conversationId: conversation.id, content: `m${i}` });
+      const seeded = await seedMessage({
+        tenantId: tenant.id,
+        conversationId: conversation.id,
+        content: `m${i}`,
+      });
       await db.withoutTenant((tx) =>
         tx.query('UPDATE messages SET created_at = $2::timestamp WHERE id = $1', [
           seeded.id,
@@ -113,7 +120,10 @@ describe('GET /conversations/:id — `around` e `after` (D-230)', () => {
     const foreign = await seedMessage({ tenantId: tenant.id, conversationId: other.id });
     const alienTenant = await createTenant();
     const alienConversation = await createConversation({ tenantId: alienTenant.id });
-    const alien = await seedMessage({ tenantId: alienTenant.id, conversationId: alienConversation.id });
+    const alien = await seedMessage({
+      tenantId: alienTenant.id,
+      conversationId: alienConversation.id,
+    });
     for (const cursor of [foreign.id, alien.id]) {
       for (const mode of ['around', 'after']) {
         const response = await get(`${mode}=${cursor}`).expect(404);

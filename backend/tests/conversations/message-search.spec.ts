@@ -24,7 +24,9 @@ const SEARCH = '/api/v1/conversations/search/messages';
 
 async function setMessage(id: string, sql: string, params: unknown[] = []): Promise<void> {
   const db = await getTestDb();
-  await db.withoutTenant((tx) => tx.query(`UPDATE messages SET ${sql} WHERE id = $1`, [id, ...params]));
+  await db.withoutTenant((tx) =>
+    tx.query(`UPDATE messages SET ${sql} WHERE id = $1`, [id, ...params]),
+  );
 }
 
 function contents(body: SearchMessagesResponse): string[] {
@@ -97,8 +99,12 @@ describe('GET /conversations/search/messages (D-228)', () => {
     }
     const search = async (q: string) =>
       contents(
-        (await app.agent.get(`${SEARCH}?q=${encodeURIComponent(q)}`).set(app.auth(ana)).expect(200))
-          .body,
+        (
+          await app.agent
+            .get(`${SEARCH}?q=${encodeURIComponent(q)}`)
+            .set(app.auth(ana))
+            .expect(200)
+        ).body,
       );
 
     expect(await search('glicose')).toEqual(['Resultado da Glicose saiu']);
@@ -164,16 +170,16 @@ describe('GET /conversations/search/messages (D-228)', () => {
     }
 
     const ids = async (user: typeof ana) =>
-      ((await app.agent.get(`${SEARCH}?q=glicose`).set(app.auth(user)).expect(200))
-        .body as SearchMessagesResponse).results
+      (
+        (await app.agent.get(`${SEARCH}?q=glicose`).set(app.auth(user)).expect(200))
+          .body as SearchMessagesResponse
+      ).results
         .map((hit) => hit.conversationId)
         .sort();
 
     expect(await ids(ana)).toEqual([conversation.id, livre.id, encerrada.id].sort());
     expect(await ids(bia)).toEqual([daBia.id, livre.id].sort());
-    expect(await ids(gestor)).toEqual(
-      [conversation.id, daBia.id, livre.id, encerrada.id].sort(),
-    );
+    expect(await ids(gestor)).toEqual([conversation.id, daBia.id, livre.id, encerrada.id].sort());
     expect(await ids(gestorOutro)).toEqual([outraConversa.id]);
   });
 

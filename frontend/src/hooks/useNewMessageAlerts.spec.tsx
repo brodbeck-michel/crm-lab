@@ -448,3 +448,51 @@ describe('useNewMessageAlerts — título "(N) CRM Lab"', () => {
     await waitFor(() => expect(document.title).toBe('CRM Lab'));
   });
 });
+
+describe('CRMLAB-68 — marcar como não lida e conversa aberta pela busca', () => {
+  it('"Marcar como não lida" (contador sobe sem lastMessageAt mudar) não avisa (D-229 item 3)', () => {
+    const previous = baselineOf([conversation({ id: 'c-1', unreadCount: 0 })]);
+    const alerts = detectNewMessages(
+      previous,
+      [conversation({ id: 'c-1', unreadCount: 1 })],
+      'u-1',
+      null,
+    );
+    expect(alerts).toEqual([]);
+  });
+
+  it('aberta numa mensagem antiga (around): ir para a ponta não avisa do que já estava lá', async () => {
+    useMessageAlertsStore.setState({ openConversationId: 'c-1' });
+    listMock.mockResolvedValue(listResponse([conversation()]));
+    renderHarness();
+    const old = message({ id: 'm-old', createdAt: '2026-09-01T09:00:00Z' });
+    act(() => {
+      queryClient.setQueryData(
+        [...queryKeys.conversation('c-1'), 'messages', { around: 'm-old' }],
+        infinite(detail([old])),
+      );
+    });
+    const tip = [...queryKeys.conversation('c-1'), 'messages'];
+    act(() => {
+      queryClient.setQueryData(
+        tip,
+        infinite(detail([old, message({ id: 'm-last', createdAt: '2026-09-28T10:00:00Z' })])),
+      );
+    });
+    expect(FakeNotification.instances).toHaveLength(0);
+
+    act(() => {
+      queryClient.setQueryData(
+        tip,
+        infinite(
+          detail([
+            message({ id: 'm-last', createdAt: '2026-09-28T10:00:00Z' }),
+            message({ id: 'm-new', createdAt: '2026-09-28T10:05:00Z' }),
+          ]),
+        ),
+      );
+    });
+    expect(FakeNotification.instances).toHaveLength(1);
+    expect(FakeNotification.instances[0]?.options?.body).toBe('Nova mensagem');
+  });
+});

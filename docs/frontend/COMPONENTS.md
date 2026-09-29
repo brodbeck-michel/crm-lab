@@ -109,6 +109,13 @@ Anatomia (padrão WhatsApp):
 - **Reações**: pílula pequena embaixo do balão com o emoji de cada lado
 - **Apagada** (`deletedAt`): o balão mostra só "🚫 Mensagem apagada" em itálico, sem menu, sem
   mídia. **Editada** (`editedAt`): rótulo "Editada" na linha da hora
+- **Tiques (CRMLAB-67, D-225):** só no balão `sent`, na linha da hora, pelo `status`: 🕓
+  `pending` (enviando), ✓ `sent`, ✓✓ `delivered` (cinza, `text-neutral-600`), ✓✓ `read`
+  (`--color-chat-tick-read`, o azul do WhatsApp — literal como o branco do papel), ⚠
+  `failed` (`text-accent-700`, a cor de erro do app) com "Não foi possível enviar" e o botão
+  **Tentar de novo** (`onRetry(message)`; sem handler, o botão some). `aria-label` diz o estado
+  ("Enviando", "Enviada", "Entregue", "Lida", "Falhou"); `data-testid="message-status"` +
+  `data-status`
 - `data-message-id` no balão: é por ele que o painel rola até a original
   (`scrollToMessage`, `pages/Attendance/scroll-to-message.ts`) e a destaca por um instante
   (`data-highlighted`). Original fora do que está carregado: toast "A mensagem original não está
@@ -654,7 +661,7 @@ tela passa tudo por props (o dado vem do TanStack Query).
 | Componente | Assinatura | Notas |
 |------------|-----------|-------|
 | `ConversationItem` | `<ConversationItem conversation selected? onClick?(id) now? />` | `now` é injetável só para tornar "aguardando N min" determinístico em teste |
-| `MessageBubble` | `<MessageBubble type message maxWidth? showMeta? />` | `type` ∈ `received \| sent \| system` — os únicos 3 · `*texto*` em negrito (D-183) |
+| `MessageBubble` | `<MessageBubble type message maxWidth? showMeta? onRetry? />` | `type` ∈ `received \| sent \| system` — os únicos 3 · `*texto*` em negrito (D-183) · tiques e "Tentar de novo" (D-225/D-227) |
 | `DateSeparator` | `<DateSeparator date now? />` | Pílula de dia (CRMLAB-71, D-239) · `dateSeparatorLabel` e `isSameLocalDay` exportadas |
 | `AudioMessage` | `<AudioMessage url />` | `<audio controls>` nativo com blob autenticado · download sempre disponível |
 | `Composer` | `<Composer onSend(content) → void | Promise onAttach? onSendAudio?(audio) disabled? sending? placeholder? quickReplies? />` | Enter envia · Shift+Enter quebra linha · Ctrl/Cmd+B envolve a seleção em `*` · emoji insere no cursor · `/` no campo vazio abre as macros · microfone grava recado de voz (clique/clique, 5 min, D-181) |

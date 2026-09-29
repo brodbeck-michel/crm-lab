@@ -4,7 +4,16 @@ Worktree `../CRM Lab-67` · branch `feature/CRMLAB-67-tiques-presenca` (de `inte
 Faixas: decisões D-225…D-227 · migração 042 (provavelmente não usada: `messages.status` é
 `VARCHAR(50)` sem CHECK na 001).
 
-## ⏸️ PAUSADO em 28/09/2026 17:21 (pedido do Michel: computador vai ser desligado)
+## ▶️ Retomado em 29/09/2026
+- Merge de `origin/integ/epic-65` (main + onda 1 + 63 + 74) sem conflito: `3e5b686`.
+- Etapa 1 (docs + shared): D-225..D-227 escritas; API_CONTRACTS §2 (status, retry, presence) e
+  §2b (`messages.update`, `presence.update`); FRONTEND_BACKEND "Real-time"; SERVICES §3/§16;
+  COMPONENTS (tiques); PAGES §2 (presença, tiques); DESIGN_TOKENS (`--color-chat-tick-read`);
+  `shared/types` (`MessageStatus` + `pending`, `MESSAGE_STATUS_RANK`, `canAdvanceMessageStatus`,
+  `PatientPresence`, `SendPresenceRequest`, eventos WS `message.status_updated` e
+  `conversation.presence`). Migração 042 sem uso (status é VARCHAR sem CHECK).
+
+## (histórico) Pausa de 28/09/2026 17:21 (pedido do Michel: computador vai ser desligado)
 
 **Nenhum código nem doc de domínio foi alterado ainda.** Só leitura e pesquisa. Este diário é o
 único arquivo do commit.

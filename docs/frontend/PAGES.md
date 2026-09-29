@@ -130,6 +130,15 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 
 ### Coluna 2 — Conversa
 - Header: nome, telefone, botões [Transferir ▾] [Novo Orçamento] [Encerrar] [Contexto] [× Fechar]
+- **Presença do paciente (CRMLAB-67, D-226):** abaixo do nome, no lugar do telefone enquanto
+  houver: "digitando…", "gravando áudio…", "online" ou "visto por último hoje às 14:32" /
+  "ontem às 14:32" / "dd/mm às 14:32" (sem `lastSeenAt` — paciente esconde — mostra só o telefone).
+  Vem do WS `conversation.presence` via `usePresenceStore`; "digitando…" some sozinho em 10 s.
+  Ao abrir a conversa a tela chama `POST /conversations/:id/presence { presence: 'paused' }`
+  (assina a presença); enquanto a atendente digita, `composing` no máximo a cada 4 s (D-227)
+- **Tiques e "Tentar de novo" (D-225/D-227):** balão enviado mostra 🕓/✓/✓✓/✓✓ azul/⚠; o botão
+  chama `POST /conversations/:id/messages/:messageId/retry`. O tique muda sozinho pelo WS
+  `message.status_updated`
 - **[Encerrar]** (CRMLAB-48, D-174): `PATCH /conversations/:id { status: 'closed' }`. Substitui o
   antigo [Arquivar]. Habilitado só para a **dona**, gestor e admin (o backend valida de novo) e
   só em conversa `active`. Sucesso: toast "Atendimento encerrado.", limpa a seleção e invalida a

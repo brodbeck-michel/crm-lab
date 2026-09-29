@@ -97,6 +97,8 @@ mais de alguns minutos, reconectando na hora quando ela volta a ficar visível.
 |--------|---------|--------------------|
 | `conversation.new_message` | `{ conversationId, messageId }` | invalidate `['conversations']` + `['conversation', id]` |
 | `conversation.message_updated` | `{ conversationId, messageId }` | reação, edição ou apagamento de uma mensagem que já existia (CRMLAB-66, D-223) — invalidate `['conversations']` + `['conversation', id]`. **Não** conta como mensagem nova (sem aviso/som/badge) |
+| `message.status_updated` | `{ conversationId, messageId, status }` | tique da mensagem subiu (CRMLAB-67, D-225) — invalidate **só** `['conversation', id]` (a lista não muda; não é mensagem nova) |
+| `conversation.presence` | `{ conversationId, presence, lastSeenAt }` | presença do paciente (D-226) — **exceção à regra abaixo**: nada é gravado, o valor vai no payload e o frontend guarda num store em memória (`presence.store.ts`) com validade (`typing`/`recording` 10 s, `online` 5 min); **sem** invalidate |
 | `proposal.created` | `{ proposalId }` | proposta nasceu sem ninguém clicar — hoje só a origem `bitlab`, na ingestão do orçamento (CRMLAB-57, D-196), depois do commit — invalidate `['proposals']` |
 | `proposal.status_changed` | `{ proposalId, status }` | invalidate `['proposals']` + `['proposal', id]` |
 | `proposal.updated` | `{ proposalId }` | itens/desconto/médico solicitante mudaram (CRMLAB-12, D-134) — invalidate `['proposals']` + `['proposal', id]` |
@@ -104,7 +106,7 @@ mais de alguns minutos, reconectando na hora quando ela volta a ficar visível.
 | `approval.decided` | `{ proposalId, decision }` | toast + invalidate `['proposal', id]` |
 | `proposal.stale_alert` | `{ proposalId, hours }` | só para o responsável do cartão (ou, sem responsável, gestores/admins): cartão parado em "Novo orçamento" há `hours` h (CRMLAB-59, D-207), uma vez por entrada na coluna — toast de atenção + invalidate `['proposals']` |
 
-**Regra:** eventos WS são NOTIFICAÇÃO, não transporte de dados — o cliente refaz fetch (invalidateQueries). Payloads carregam só IDs. Ao reconectar, invalidar queries ativas (pode ter perdido eventos).
+**Regra:** eventos WS são NOTIFICAÇÃO, não transporte de dados — o cliente refaz fetch (invalidateQueries). Payloads carregam só IDs. Única exceção: `conversation.presence` (D-226), porque presença não existe no banco. Ao reconectar, invalidar queries ativas (pode ter perdido eventos).
 
 ---
 

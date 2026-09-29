@@ -99,6 +99,7 @@ Cada cor base gera automaticamente 9 tons (100-900):
 | `--color-chat-bg` | Papel da conversa — BRANCO literal | Área de mensagens do atendimento |
 | `--color-chat-received` / `-border` | Bolha do paciente sobre o papel | `MessageBubble type="received"` |
 | `--color-chat-sent` / `-border` | Bolha da atendente sobre o papel | `MessageBubble type="sent"` |
+| `--color-chat-tick-read` | Tique ✓✓ de "lida" — o azul do WhatsApp, LITERAL (não acompanha o tema, como o papel branco; CRMLAB-67) | `MessageBubble` `status: read` |
 
 ### Uso de Rampas
 

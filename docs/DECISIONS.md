@@ -4113,6 +4113,99 @@ fora disso a Meta exige template aprovado (pago), que o CRM não tem. Em vez de 
 regra fica fora. Template aprovado, se o laboratório migrar, é outro card.
 **Impacto:** `reengagement.repository.ts` (`isQrWhatsAppActive`), `ReengagementSection.tsx`.
 
+## 2026-09-29 — Tiques de entrega e presença do paciente (CRMLAB-67)
+
+### D-225: Status da mensagem do atendimento — `pending`, ordem que nunca rebaixa e ack do Evolution (CRMLAB-67)
+**Decisão:**
+1. `MessageStatus` ganha **`pending`** (o relógio 🕓, "enviando"): `pending | sent | delivered |
+   read | failed`. A mensagem do atendimento (`createFromAgent`, `createAttachmentFromAgent`,
+   `createAutomated`) que vai sair pelo canal `whatsapp` nasce `pending`; o id externo devolvido
+   pelo gateway (`confirmSent`) passa a `sent`; esgotado o retry, `failed`. Canal sem gateway
+   (`direct`/`web`) continua nascendo `sent`. Sem migração: `messages.status` é `VARCHAR(50)` sem
+   CHECK (migração 001) — a faixa 042 fica sem uso.
+2. **Nunca rebaixa.** Ordem `pending < sent < delivered < read`. Callback de status (webhook
+   Evolution **e** a rota Cloud API `/whatsapp/:tenant/status`) só grava se o novo status for
+   **maior** que o atual; `failed` só entra a partir de `pending`/`sent` (mensagem entregue ou
+   lida não "falha" depois). A regra mora no `UPDATE` (`setStatusByExternalId`), não no service,
+   para valer nos dois caminhos e sob reentrega concorrente. Mudou → emite
+   `message.status_updated`; não mudou → nada.
+3. **Ack do Evolution v2** (`MESSAGES_UPDATE`, `data = { keyId, remoteJid, fromMe, status }`),
+   texto ou número: `ERROR`/0 → `failed`; `PENDING`/1 → ignorado; `SERVER_ACK`/2 → `sent`;
+   `DELIVERY_ACK`/3 → `delivered`; `READ`/4 e `PLAYED`/5 (áudio ouvido) → `read`. Ignorados:
+   `fromMe: false` (ack de mensagem do paciente não mexe no status dela), `status@broadcast`,
+   status desconhecido. O alvo é achado por `keyId` = `external_message_id`, então `@lid` não
+   atrapalha.
+4. **Paciente com a confirmação de leitura desligada:** o WhatsApp não manda `READ`, e a
+   mensagem fica em ✓✓ cinza — o mesmo que o WhatsApp mostra. Nada a tratar.
+5. `hasPendingOutbound` (D-173) procura `status IN ('pending', 'sent')` sem id externo: `pending`
+   é o envio em voo de agora; `sent` sem id cobre linha gravada antes deste card.
+6. WebSocket `message.status_updated { conversationId, messageId, status }`: o frontend invalida
+   **só** `['conversation', id]` — a lista de conversas não muda por causa de um tique, e o aviso
+   de mensagem nova (D-240/D-241) não escuta este evento.
+**Motivo:** a mensagem nascia `sent` antes de o gateway responder e o WS saía antes do envio — a
+tela mostraria ✓ para algo que ainda não saiu. O ack do Evolution não era assinado, e o callback
+da Cloud API sobrescrevia às cegas (um `delivered` atrasado apagava o `read`).
+**Impacto:** `shared/types/conversation.types.ts`, `websocket.types.ts`; `message.service.ts`,
+`message.repository.ts`, `webhook.routes.ts`, `evolution-client.ts`; `ws.ts`; API_CONTRACTS §2 e
+§2b; FRONTEND_BACKEND "Real-time"; SERVICES §3/§16.
+
+### D-226: Presença do paciente é efêmera — webhook → WS, nada no banco (CRMLAB-67)
+**Decisão:**
+1. `PRESENCE_UPDATE` entra em `EVOLUTION_WEBHOOK_EVENTS` (junto com `MESSAGES_UPDATE`) e é
+   reaplicado sozinho em instância antiga pelo `syncEvolutionWebhooks` do boot (D-223).
+2. Payload do Baileys repassado pelo gateway: `data = { id: '<jid>', presences: { '<jid>':
+   { lastKnownPresence, lastSeen? } } }`. Mapa: `composing` → `typing`, `recording` →
+   `recording`, `available` e `paused` → `online`, `unavailable` → `offline`. `lastSeen`
+   (segundos) vira `lastSeenAt` ISO UTC; ausente = `null` (o paciente esconde o "visto por
+   último" — a tela não mostra nada).
+3. Só `@s.whatsapp.net`: o telefone acha a conversa **sem criar** (`findByPhone`); grupo, `@lid` e
+   número sem conversa são ignorados. Emite `conversation.presence { conversationId, presence,
+   lastSeenAt }` na room do tenant (nunca em outra). **Nada é gravado.**
+4. Exceção declarada à regra "evento é notificação, payload só com ids": não há o que refazer
+   por fetch. O frontend guarda a presença num store em memória (`presence.store.ts`) com
+   validade: `typing`/`recording` 10 s (o "digitando…" some sozinho se o `paused` se perder);
+   `online` 5 min; `offline` até o próximo evento. Nada em `localStorage`.
+5. **Assinatura:** o WhatsApp só manda presença de quem foi "assinado" (`presenceSubscribe`). O
+   Evolution v2 não expõe essa rota; a única é `POST /chat/sendPresence/{instance}`
+   (`{ number, presence, delay }`), que assina antes de mandar. Ao abrir a conversa, a tela chama
+   `POST /conversations/:id/presence { presence: 'paused' }` — assina sem mostrar nada ao
+   paciente.
+6. Presença sai do fluxo de replay (`replayExempt`): o corpo de um `composing` repete idêntico e
+   seria descartado como replay; é efêmera e idempotente. `MESSAGES_UPDATE` também é idempotente
+   pela regra de não rebaixar, e fica no anti-replay normal. Os dois passam pela checagem de
+   `instance` (`INSTANCE_CHECKED_EVENTS`).
+7. "Digitando…" na lista de conversas (opcional no card): **fora** deste card.
+**Motivo:** presença muda várias vezes por minuto e só vale no instante; gravar seria custo sem
+leitor e dado pessoal a mais para LGPD.
+**Impacto:** `evolution-client.ts` (`sendPresence`), `whatsapp.service.ts`, `webhook.routes.ts`,
+`conversation.routes.ts`; `shared/types/websocket.types.ts`, `conversation.types.ts`; frontend
+`stores/presence.store.ts`, `api/ws.ts`, `ConversationPanel`; API_CONTRACTS §2/§2b;
+FRONTEND_BACKEND "Real-time"; PAGES §2.
+
+### D-227: O paciente vê "digitando…" da atendente; "Tentar de novo" reenvia a mesma mensagem (CRMLAB-67)
+**Decisão:**
+1. **Sim, o paciente vê a atendente digitando** (decisão pedida no card): enquanto ela digita no
+   Composer, a tela chama `POST /conversations/:id/presence { presence: 'composing' }` no máximo
+   uma vez a cada 4 s; o backend manda `sendPresence composing` com `delay` de 4 s (o gateway
+   manda `paused` sozinho no fim). Só canal `whatsapp` em `connection_mode = 'qr'`; na Cloud API
+   (sem presença) e em `direct`/`web` a rota responde `204` sem fazer nada.
+2. `POST /conversations/:id/presence` é **best-effort**: responde `204` na hora e chama o gateway
+   em segundo plano, uma tentativa, sem fila; erro vira log `warn`. Conversa fora do recorte →
+   `NOT_FOUND`, como toda rota de conversa.
+3. **"Tentar de novo"**: `POST /conversations/:id/messages/:messageId/retry` reenvia a **mesma**
+   linha (mesmo id, nada duplicado): volta a `pending`, emite `message.status_updated`, envia e
+   termina em `sent` (200 com a `Message`) ou de novo `failed` (`MESSAGE_SEND_FAILED`, 502). Só
+   mensagem do atendimento (`senderType: agent`) em `failed`, em conversa `active` → senão
+   `CONFLICT` (409); de outra conversa/tenant → `NOT_FOUND`. Citação original vai junto. Anexo
+   relê o arquivo guardado (`attachmentUrl` = `/api/v1/media/:id`); arquivo sumido do disco →
+   continua `failed` com `MESSAGE_SEND_FAILED`.
+**Motivo:** é o padrão do WhatsApp Web que o card pede, e sem ele a atendente não sabe se o
+paciente vai receber resposta; retry sem duplicar evita duas bolhas iguais no celular do paciente
+quando o primeiro envio só pareceu falhar.
+**Impacto:** `conversation.routes.ts`, `message.service.ts`, `whatsapp.service.ts`; inventário
+`route-tenant-isolation.spec.ts` (+2 rotas); frontend `api/conversations.ts`, `Composer`,
+`MessageBubble`, `Attendance/index.tsx`; API_CONTRACTS §2; COMPONENTS; PAGES §2.
+
 ## Template para novas decisões
 
 ```

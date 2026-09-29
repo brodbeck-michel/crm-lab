@@ -9,7 +9,45 @@ export type ConversationStatus = 'active' | 'closed';
 export type ConversationChannel = 'whatsapp' | 'sms' | 'web' | 'direct';
 export type SenderType = 'patient' | 'agent' | 'system';
 export type MessageType = 'text' | 'image' | 'audio' | 'pdf' | 'doc';
-export type MessageStatus = 'sent' | 'delivered' | 'read' | 'failed';
+/**
+ * `pending` = enviando (relogio), antes de o gateway devolver o id (D-225).
+ * Ordem que nunca rebaixa: pending < sent < delivered < read; `failed` so a
+ * partir de pending/sent — `MESSAGE_STATUS_RANK`.
+ */
+export type MessageStatus = 'pending' | 'sent' | 'delivered' | 'read' | 'failed';
+
+/** Posicao de cada status na ordem de D-225. `failed` fica fora da escada. */
+export const MESSAGE_STATUS_RANK: Readonly<Record<Exclude<MessageStatus, 'failed'>, number>> = {
+  pending: 0,
+  sent: 1,
+  delivered: 2,
+  read: 3,
+};
+
+/**
+ * `true` quando `next` pode substituir `current` (D-225 item 2): so sobe na
+ * escada; `failed` so a partir de pending/sent; de `failed` so sai pelo reenvio
+ * (que nao passa por aqui).
+ */
+export function canAdvanceMessageStatus(current: MessageStatus, next: MessageStatus): boolean {
+  if (current === 'failed') return false;
+  if (next === 'failed') return current === 'pending' || current === 'sent';
+  return MESSAGE_STATUS_RANK[next] > MESSAGE_STATUS_RANK[current];
+}
+
+/**
+ * Presenca do paciente no WhatsApp (D-226) — efemera, nunca gravada.
+ * `typing` = digitando, `recording` = gravando audio.
+ */
+export type PatientPresence = 'typing' | 'recording' | 'online' | 'offline';
+
+/**
+ * `POST /conversations/:id/presence` (D-226/D-227). `paused` assina a presenca
+ * do paciente sem mostrar nada a ele; `composing` mostra "digitando…".
+ */
+export interface SendPresenceRequest {
+  presence: 'paused' | 'composing';
+}
 
 /** Item da lista de conversas (coluna 1 do inbox). */
 export interface Conversation {

@@ -91,9 +91,9 @@ node_modules são symlinks para a pasta principal; `*.wt.*` (vitest/tsconfig com
 | 67 [B] | 🧪 hml (`hml-deb5132`) · Pronto p/ Validação | 08d161c | D-225..D-227, 042 sem uso. Tiques/pending/retry, presença efêmera, composing. |
 | 68 [C] | 🧪 hml (`hml-deb5132`) · Pronto p/ Validação | 8931970 | D-228..D-230, migração 043. Busca, Não lidas, around/after. Isolamento 81 rotas. |
 | 69 [D] | 🧪 hml (`hml-deb5132`) · Pronto p/ Validação | a59817c | D-231..D-233, 044 sem uso. Prévia, vários, Ctrl+V, drop, caption. |
-| 70 [E] | 🔗 integrado (29/09) | 1579fb8 | D-234..D-236, migração 045 (`messages.metadata JSONB`; nome/tamanho via JOIN em `message_media`). Vídeo no balão, sticker, localização, contato + "Conversar". 204 back + 841 front afetados verdes. Michel (29/09): "Conversar" abre a conversa existente; liberar .mov/3gp/webm; sem bolinha de não ouvido — ajustes em andamento. |
-| 73 [H] | 🔗 integrado (29/09) | f294454 | D-242, D-243. Parser em árvore (`WhatsAppText`), rascunho `userId:conversationId` em localStorage (7 dias; logout apaga), 549 emojis estáticos. 925 specs afetados verdes. Michel (29/09): logout apaga, prazo 5 dias (bdaf7ce). |
-| 64    | 🔗 integrado (29/09) | a815f0d | D-244, D-245. Lightbox único no painel (`ConversationImageViewer`, `useConversationImages`); cache por URL com refcount em `useAuthenticatedMedia`. 860 specs afetados verdes. Sticker sai da navegação quando o 70 entrar. |
+| 70 [E] | 🧪 hml (`hml-580d3d2`) · Pronto p/ Validação | 8b334b3 | D-234..D-236, migração 045 (`messages.metadata JSONB`; nome/tamanho via JOIN em `message_media`). Vídeo no balão, sticker, localização, contato + "Conversar". 204 back + 841 front afetados verdes. Michel (29/09): "Conversar" abre a conversa existente (`POST /conversations/whatsapp/open`, 82 rotas); .mov/webm saem como documento, MP4/3GP como vídeo; sem bolinha de não ouvido. |
+| 73 [H] | 🧪 hml (`hml-580d3d2`) · Pronto p/ Validação | bdaf7ce | D-242, D-243. Parser em árvore (`WhatsAppText`), rascunho `userId:conversationId` em localStorage (7 dias; logout apaga), 549 emojis estáticos. 925 specs afetados verdes. Michel (29/09): logout apaga, prazo 5 dias (bdaf7ce). |
+| 64    | 🧪 hml (`hml-580d3d2`) · Pronto p/ Validação | a815f0d | D-244, D-245. Lightbox único no painel (`ConversationImageViewer`, `useConversationImages`); cache por URL com refcount em `useAuthenticatedMedia`. 860 specs afetados verdes. Sticker sai da navegação quando o 70 entrar. |
 
 Fases: ⬜ não iniciado → 🔄 docs → 🔄 backend → 🔄 frontend → 🔄 testes → ✅ pronto no card
 → 🔗 integrado em `integ/epic-65` → 🧪 hml → ✔️ aprovado → PR.
@@ -159,3 +159,6 @@ Diário de cada card: `docs/superpowers/plans/crmlab-65/CRMLAB-<n>.md`.
 - 2026-09-29 ~16h: **suíte completa da onda 3 verde em b50796a**: tsc shared/back/front/e2e, eslint,
   backend 1836/1836 (122 arquivos), frontend 1621/1621 (120 arquivos). E2E não rodado. Depois:
   73 com prazo de 5 dias (bdaf7ce) mergeado; 70 fazendo os ajustes das respostas do Michel.
+- 2026-09-29 ~16h40: ajustes do 70 (respostas do Michel) mergeados sem conflito (580d3d2). Suíte completa
+  verde de novo (back 1851, front 1625), CI completo verde (inclui E2E), **hml em `hml-580d3d2`**
+  (migração 045 aplicada). Os três cards em Pronto p/ Validação. Próximo: validação do Michel → PR.

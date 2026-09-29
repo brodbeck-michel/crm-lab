@@ -170,7 +170,9 @@ Anatomia (padrão WhatsApp):
   permissão). `onSend` pode devolver `Promise`: se rejeitar, o texto volta para o campo, com o foco,
   a não ser que a pessoa já tenha começado outra mensagem. O aviso do erro é de quem chama.
   No Atendimento, `MESSAGE_SEND_FAILED` NÃO rejeita para o Composer: a mensagem já foi gravada
-  como falha e aparece na conversa; devolver o texto convidaria a reenviar e duplicar
+  como falha e aparece na conversa; devolver o texto convidaria a reenviar e duplicar. Já o
+  `CONVERSATION_ALREADY_ASSIGNED` (409) rejeita: é assim que a tela devolve o rascunho quando
+  outra pessoa assumiu a conversa no mesmo instante (CRMLAB-75, D-215)
 - **Ctrl+B / Cmd+B** (CRMLAB-51, D-183): envolve a seleção em asteriscos (`*seleção*`, que a
   bolha e o WhatsApp mostram em negrito) e mantém o texto selecionado; sem seleção, insere `**`
   com o cursor no meio

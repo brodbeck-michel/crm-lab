@@ -42,6 +42,7 @@ export interface ComposerProps {
    * Recebe o texto já aparado. Não é chamado com string vazia. O campo limpa na
    * hora; devolvendo uma Promise que rejeita, o texto volta para o campo (se a
    * pessoa não começou outra mensagem) — quem avisa do erro é quem chama (CRMLAB-63).
+   * É assim que o 409 de conversa já assumida devolve o rascunho (CRMLAB-75, D-215).
    */
   onSend: (content: string) => void | Promise<unknown>;
   /**

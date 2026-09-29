@@ -402,6 +402,28 @@ describe('Atendimento — abrir conversa', () => {
     });
   });
 
+  it('CRMLAB-75: outra pessoa assumiu no mesmo instante — avisa de quem é e o texto volta ao campo', async () => {
+    const { ApiError } = await import('@/api');
+    listMock.mockResolvedValue(listResponse([conversation({ assignedTo: null, assignedToName: null })]));
+    getMock.mockResolvedValue(detailResponse());
+    sendMessageMock.mockRejectedValue(
+      new ApiError('CONVERSATION_ALREADY_ASSIGNED', 'Conversa ja atribuida a outro atendente', 409, {
+        assignedTo: 'u-2',
+        assignedToName: 'Bia',
+      }),
+    );
+    renderScreen();
+
+    await userEvent.click(await screen.findByTestId('conversation-item'));
+    const composer = await screen.findByTestId('composer');
+    const field = within(composer).getByLabelText('Mensagem');
+    await userEvent.type(field, 'Bom dia!');
+    await userEvent.click(within(composer).getByRole('button', { name: 'Enviar' }));
+
+    expect(await screen.findByText('Conversa já assumida por Bia.')).toBeInTheDocument();
+    await waitFor(() => expect(field).toHaveValue('Bom dia!'));
+  });
+
   it('falha no canal (MESSAGE_SEND_FAILED): a mensagem já foi gravada, o texto NÃO volta ao campo (CRMLAB-63)', async () => {
     const { ApiError } = await import('@/api');
     listMock.mockResolvedValue(listResponse([conversation()]));

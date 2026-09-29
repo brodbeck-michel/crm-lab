@@ -282,6 +282,30 @@ export function Attendance() {
     ]);
   }, [queryClient, selectedId]);
 
+  /**
+   * Responder assume a conversa da fila livre (CRMLAB-75, D-215). Se outra
+   * pessoa assumiu no mesmo instante, o backend recusa com
+   * `CONVERSATION_ALREADY_ASSIGNED` e NADA sai para o paciente: avisa de quem
+   * a conversa é agora e reconsulta lista e conversa.
+   */
+  const handleSendError = useCallback(
+    (error: unknown) => {
+      if (isApiError(error) && error.code === 'CONVERSATION_ALREADY_ASSIGNED') {
+        const name = error.details?.assignedToName;
+        toast(
+          typeof name === 'string' && name.length > 0
+            ? `Conversa já assumida por ${name}.`
+            : 'Conversa já assumida por outra pessoa.',
+          { tone: 'attention' },
+        );
+        void queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
+        return;
+      }
+      handleApiError(error);
+    },
+    [handleApiError, queryClient, toast],
+  );
+
   const sendMessage = useMutation({
     mutationFn: ({ content, quotedMessageId }: { content: string; quotedMessageId?: string }) =>
       api.conversations.sendMessage(selectedId as string, {
@@ -290,7 +314,7 @@ export function Attendance() {
         ...(quotedMessageId ? { quotedMessageId } : {}),
       }),
     onSuccess: invalidateConversation,
-    onError: handleApiError,
+    onError: handleSendError,
   });
 
   /**
@@ -337,7 +361,7 @@ export function Attendance() {
         queryClient.invalidateQueries({ queryKey: queryKeys.conversation(conversationId) }),
         queryClient.invalidateQueries({ queryKey: queryScopes.conversations }),
       ]),
-    onError: handleApiError,
+    onError: handleSendError,
   });
 
   function readFileAsBase64(file: Blob): Promise<string> {
@@ -378,6 +402,10 @@ export function Attendance() {
           handleApiError(error);
         } else if (isApiError(error) && SESSION_ERRORS.has(error.code)) {
           handleApiError(error);
+          break;
+        } else if (isApiError(error) && error.code === 'CONVERSATION_ALREADY_ASSIGNED') {
+          // Outra pessoa assumiu (D-215): nada deste nem dos próximos sai.
+          handleSendError(error);
           break;
         } else {
           const reason = error instanceof Error ? error.message : 'erro inesperado';

@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-28 (CRMLAB-62 — reingajamento da conversa + feriados, branch `feature/CRMLAB-62-reingajamento`)
+**Última atualização:** 2026-09-29 (CRMLAB-75 — responder assume a conversa da fila livre, branch `feature/CRMLAB-75-auto-atribuir-ao-responder`)
 
 ---
 
@@ -2982,3 +2982,22 @@ Branch `feature/CRMLAB-53-extrato-pagamentos-lis`. Decisões D-188/D-189, migra�
   laboratório; pedir ao Bitlab que `DATA_ESTORNO` conte no filtro `alteracao`; em prod (com
   confirmação, bump + tag), religar a sincronização **só depois** do deploy. Estorno com mais de 90
   dias fica de fora (declarado na D-189).
+
+### 🚧 CRMLAB-75 — responder conversa da fila livre assume a conversa (2026-09-29, em desenvolvimento)
+
+Branch `feature/CRMLAB-75-auto-atribuir-ao-responder` (de `main`). Decisão D-215.
+
+- **Backend:** `services/conversation-claim.ts` (`claimFreeConversation`) é o único claim da fila
+  livre — `ConversationService.assign` e `MessageService` usam o mesmo. `createFromAgent` /
+  `createAttachmentFromAgent` assumem a conversa sem dona para quem envia ANTES do INSERT, com o
+  audit `assign_conversation`; quem perde a corrida recebe `CONVERSATION_ALREADY_ASSIGNED` e nada
+  é gravado nem enviado. A rota de anexo chama `claimForAgent` antes de gravar a mídia. O envio
+  e o reenvio pelo cartão herdam (mesmo `createFromAgent`). Automática, sistema, paciente e eco do
+  celular não atribuem; conversa já atribuída não muda de dona.
+- **"Nova conversa" (D-175 emendada):** na fila livre, enviar agora também assume.
+- **Frontend:** `Composer.onSend` pode devolver `Promise` (rejeitou → texto volta); na tela de
+  Atendimento o 409 vira "Conversa já assumida por {nome}." e o rascunho volta. Outras falhas
+  (ex.: 502) não devolvem o texto.
+- **Testes:** novo `backend/tests/messages/auto-assign.spec.ts` (10 casos, com a corrida), caso
+  novo em `proposals/send-from-card.spec.ts`, `start-whatsapp.spec.ts` ajustado; `Composer.spec` e
+  `Attendance.spec` com os casos do 409.

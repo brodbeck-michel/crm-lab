@@ -259,6 +259,27 @@ describe('POST /proposals/:id/send', () => {
     expect((await rawProposal(id))?.send_claim_id).toBeNull();
   });
 
+  it('conversa da fila livre: enviar o cartao assume a conversa para quem enviou (CRMLAB-75)', async () => {
+    const id = await bitlabCard(tenantA, '5009');
+    const livre = await createConversation({
+      tenantId: tenantA.id,
+      assignedTo: null,
+      patientPhone: '+5548999990009',
+      db,
+    });
+
+    const res = await send(ana, id, livre.id);
+    expect(res.status).toBe(200);
+    const owner = await db.withoutTenant((tx) =>
+      tx.query<{ assigned_to: string | null }>('SELECT assigned_to FROM conversations WHERE id = $1', [
+        livre.id,
+      ]),
+    );
+    expect(owner.rows[0]?.assigned_to).toBe(ana.id);
+    const [audit] = await auditOf(livre.id, 'assign_conversation');
+    expect(audit).toMatchObject({ user_id: ana.id, new_values: { assignedTo: ana.id } });
+  });
+
   it('com requisicao (pre-cadastro) vai direto a negociacao', async () => {
     const id = await bitlabCard(tenantA, '5002', { requisitionNumber: '001-1', requisitionValue: 150.5 });
     const res = await send(ana, id, anaConversation.id);

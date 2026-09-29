@@ -91,9 +91,9 @@ node_modules são symlinks para a pasta principal; `*.wt.*` (vitest/tsconfig com
 | 67 [B] | 🧪 hml (`hml-deb5132`) · Pronto p/ Validação | 08d161c | D-225..D-227, 042 sem uso. Tiques/pending/retry, presença efêmera, composing. |
 | 68 [C] | 🧪 hml (`hml-deb5132`) · Pronto p/ Validação | 8931970 | D-228..D-230, migração 043. Busca, Não lidas, around/after. Isolamento 81 rotas. |
 | 69 [D] | 🧪 hml (`hml-deb5132`) · Pronto p/ Validação | a59817c | D-231..D-233, 044 sem uso. Prévia, vários, Ctrl+V, drop, caption. |
-| 70 [E] | 🔄 docs (onda 3, 29/09) | — | Vídeo toca no balão (fora do lightbox); `sticker` vira tipo próprio. |
-| 73 [H] | ✅ pronto no card (29/09) | f294454 | D-242, D-243. Parser em árvore (`WhatsAppText`), rascunho `userId:conversationId` em localStorage (7 dias; logout apaga), 549 emojis estáticos. 925 specs afetados verdes. 2 perguntas p/ Michel (logout apaga? 7 dias?). |
-| 64    | ✅ pronto no card (29/09) | a815f0d | D-244, D-245. Lightbox único no painel (`ConversationImageViewer`, `useConversationImages`); cache por URL com refcount em `useAuthenticatedMedia`. 860 specs afetados verdes. Sticker sai da navegação quando o 70 entrar. |
+| 70 [E] | 🔗 integrado (29/09) | 1579fb8 | D-234..D-236, migração 045 (`messages.metadata JSONB`; nome/tamanho via JOIN em `message_media`). Vídeo no balão, sticker, localização, contato + "Conversar". 204 back + 841 front afetados verdes. Michel (29/09): "Conversar" abre a conversa existente; liberar .mov/3gp/webm; sem bolinha de não ouvido — ajustes em andamento. |
+| 73 [H] | 🔗 integrado (29/09) | f294454 | D-242, D-243. Parser em árvore (`WhatsAppText`), rascunho `userId:conversationId` em localStorage (7 dias; logout apaga), 549 emojis estáticos. 925 specs afetados verdes. Michel (29/09): logout apaga, prazo 5 dias (bdaf7ce). |
+| 64    | 🔗 integrado (29/09) | a815f0d | D-244, D-245. Lightbox único no painel (`ConversationImageViewer`, `useConversationImages`); cache por URL com refcount em `useAuthenticatedMedia`. 860 specs afetados verdes. Sticker sai da navegação quando o 70 entrar. |
 
 Fases: ⬜ não iniciado → 🔄 docs → 🔄 backend → 🔄 frontend → 🔄 testes → ✅ pronto no card
 → 🔗 integrado em `integ/epic-65` → 🧪 hml → ✔️ aprovado → PR.
@@ -151,3 +151,11 @@ Diário de cada card: `docs/superpowers/plans/crmlab-65/CRMLAB-<n>.md`.
   70 = componentes novos por tipo + despacho; 64 = só o trecho da imagem (lightbox sobe p/ ConversationPanel);
   73 = só o trecho do texto (parser). Conflito provável na junção: `MessageBubble.tsx`, `DECISIONS.md`,
   `COMPONENTS.md`. **Se a sessão cair:** seguir "Como retomar" com o prompt da onda 3 + "continue do diário".
+- 2026-09-29 ~16h: 64, 73 e 70 mergeados na `integ/epic-65` (b50796a). Conflitos: `MessageBubble.tsx`
+  (imports; o `<p>` do texto ficou `showsMessageText(message) && <WhatsAppText/>` — 70 × 73) e a
+  tabela do `COMPONENTS.md`. `DECISIONS.md` fundiu sozinho (ordem 244/245/242/243/234..236). Suíte
+  completa rodando (logs no scratchpad `onda3/`). **Se cair aqui:** rodar de novo tsc (`*.wt.*`),
+  `eslint .` e os dois vitest com `--maxWorkers=3 --minWorkers=1`.
+- 2026-09-29 ~16h: **suíte completa da onda 3 verde em b50796a**: tsc shared/back/front/e2e, eslint,
+  backend 1836/1836 (122 arquivos), frontend 1621/1621 (120 arquivos). E2E não rodado. Depois:
+  73 com prazo de 5 dias (bdaf7ce) mergeado; 70 fazendo os ajustes das respostas do Michel.

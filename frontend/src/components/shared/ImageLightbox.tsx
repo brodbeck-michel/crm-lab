@@ -100,6 +100,11 @@ function zoomAt(current: Transform, factor: number, anchorX: number, anchorY: nu
  * volta ao tamanho original no botão de reset ou em outro duplo clique. Com a
  * imagem ampliada, arrastar navega pelas partes fora da tela — e o arraste
  * terminado fora da imagem NÃO fecha o lightbox.
+ *
+ * Setas (CRMLAB-64, D-244): `onPrev`/`onNext` desenham as setas laterais e
+ * ligam ← →; sem o handler, aquele lado some (não dá a volta). `title` é o
+ * cabeçalho (quem mandou · quando), `caption` a legenda, `open` + `loading`
+ * mantém aberto mostrando "Carregando imagem…" enquanto o blob não chega.
  */
 export function ImageLightbox({
   src,

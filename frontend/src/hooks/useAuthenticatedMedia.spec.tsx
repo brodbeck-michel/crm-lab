@@ -30,7 +30,12 @@ beforeEach(() => {
 describe('useAuthenticatedMedia', () => {
   it('null não busca nada', () => {
     const { result } = renderHook(() => useAuthenticatedMedia(null));
-    expect(result.current).toEqual({ objectUrl: null, fileName: null, isLoading: false, isError: false });
+    expect(result.current).toEqual({
+      objectUrl: null,
+      fileName: null,
+      isLoading: false,
+      isError: false,
+    });
     expect(fetchAuthenticatedBlobMock).not.toHaveBeenCalled();
   });
 

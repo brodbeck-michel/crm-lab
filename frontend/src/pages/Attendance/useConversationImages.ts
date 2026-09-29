@@ -41,8 +41,7 @@ export function useConversationImages(messages: Message[]): Message[] {
  */
 export function imageTitle(message: Message, patientName: string | null): string {
   const sender =
-    message.senderName ??
-    (message.senderType === 'patient' ? (patientName ?? 'Paciente') : 'Você');
+    message.senderName ?? (message.senderType === 'patient' ? (patientName ?? 'Paciente') : 'Você');
   const when = formatDateTime(message.createdAt);
   return when ? `${sender} · ${when}` : sender;
 }

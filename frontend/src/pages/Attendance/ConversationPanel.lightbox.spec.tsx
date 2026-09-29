@@ -168,11 +168,7 @@ describe('ConversationPanel — lightbox com setas', () => {
     await waitFor(() => expect(shownFile()).toBe('img-2.jpg'));
 
     // Chega uma imagem mais nova (WS) e uma página mais antiga (rolagem).
-    rerender(
-      <ConversationPanel
-        {...props([image('img-0', 0), ...MESSAGES, image('img-4', 7)])}
-      />,
-    );
+    rerender(<ConversationPanel {...props([image('img-0', 0), ...MESSAGES, image('img-4', 7)])} />);
     await waitFor(() => expect(shownFile()).toBe('img-2.jpg'));
     expect(screen.getByTestId('image-lightbox-backdrop')).toBeInTheDocument();
 
@@ -206,13 +202,12 @@ describe('ConversationPanel — lightbox com setas', () => {
     await waitFor(() => expect(shownFile()).toBe('img-1.jpg'));
 
     rerender(
-      <ConversationPanel
-        {...props(MESSAGES)}
-        conversation={{ ...CONVERSATION, id: 'c-2' }}
-      />,
+      <ConversationPanel {...props(MESSAGES)} conversation={{ ...CONVERSATION, id: 'c-2' }} />,
     );
     expect(screen.queryByTestId('image-lightbox-backdrop')).not.toBeInTheDocument();
     // O balão continua lá — só o lightbox fechou.
-    expect(within(screen.getByTestId('message-scroll')).getAllByRole('img').length).toBeGreaterThan(0);
+    expect(within(screen.getByTestId('message-scroll')).getAllByRole('img').length).toBeGreaterThan(
+      0,
+    );
   });
 });

@@ -172,7 +172,12 @@ describe('ImageLightbox', () => {
     it('trocar de imagem zera zoom; o ↓ baixa a da tela com o nome dela', async () => {
       const user = userEvent.setup();
       const { rerender } = render(
-        <ImageLightbox src="blob:frente" fileName="frente.jpg" onClose={vi.fn()} onNext={vi.fn()} />,
+        <ImageLightbox
+          src="blob:frente"
+          fileName="frente.jpg"
+          onClose={vi.fn()}
+          onNext={vi.fn()}
+        />,
       );
       await user.click(screen.getByRole('button', { name: 'Aproximar' }));
       expect(scaleOf(screen.getByTestId('image-lightbox-image'))).toBeGreaterThan(1);

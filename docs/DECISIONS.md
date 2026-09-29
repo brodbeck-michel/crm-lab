@@ -4463,6 +4463,65 @@ quebraria quando o balão desmontasse (revoga o blob) e não serve para as vizin
 **Impacto:** `frontend/src/hooks/useAuthenticatedMedia.ts` (+ spec); `AudioMessage` e o balão
 ganham o reaproveitamento de graça. COMPONENTS (`MessageBubble`, `ImageLightbox`).
 
+### D-242: Formatação do WhatsApp na bolha — parser único, links clicáveis, só nós React (CRMLAB-73)
+**Decisão:** estende a D-183 (que continua valendo para o `*negrito*`).
+1. `parseWhatsApp(text)` (`frontend/src/lib/whatsapp-format.ts`) devolve uma árvore
+   (`WhatsAppLine[]` de `WhatsAppNode`) e `WhatsAppText` (`components/conversation/`) a desenha
+   com nós React. **Nunca** `dangerouslySetInnerHTML`: `<script>` e qualquer HTML do paciente
+   aparecem como texto. É só exibição: o `content` guardado e enviado continua com os símbolos.
+   `splitBold` sai (o único uso era a bolha).
+2. **Ênfase:** `*negrito*`, `_itálico_`, `~tachado~`, com a mesma regra da D-183 para os três:
+   abertura não seguida de espaço, fechamento não precedido de espaço, não atravessa quebra de
+   linha, o trecho não contém o mesmo símbolo e o símbolo fica na **borda da palavra** (colado por
+   fora a letra/dígito ou ao mesmo símbolo não formata: `snake_case_var`, `2*3*4`, `a~b~c`).
+   Símbolos **diferentes** aninham (`_*x*_`, `*_x_*`, `~*x*~`). Sobreposição (`_a *b_ c*`) fica
+   com o que abriu primeiro; o outro símbolo sobra como texto.
+3. **Literais** (nada de ênfase dentro): ```` ```monoespaçado``` ```` (pode atravessar linhas;
+   `<code>` com `font-mono`) e `` `código` `` (uma linha). Links também são literais: o `_` e o
+   `~` de `https://site.com/a_b~c` não viram itálico/tachado.
+4. **Links:** `http://…`, `https://…` e `www.…` (até o primeiro espaço; pontuação final
+   `.,;:!?'"*_~` e `)` sem par ficam fora do link). Viram `<a target="_blank"
+   rel="noopener noreferrer">`; `www.` ganha `https://` no `href`. Só esses dois esquemas existem,
+   então `javascript:` nunca vira link. Telefone e e-mail **não** viram link nesta história
+   (opcionais no card). **Prévia de link** (card com imagem/título) fica **fora**: exigiria o
+   backend buscar URL externa.
+5. **Linha:** `> ` no começo = citação (barra à esquerda); `- ` ou `* ` = item de lista (vira
+   `•`); `1. ` = item numerado (o número fica, com recuo). O resto da linha formata normal.
+6. A prévia da lista (`ConversationItem`) continua crua (D-183 item 5).
+**Motivo:** o card pede o padrão do WhatsApp Web; um parser só, com a regra de borda da D-183
+estendida, evita três regex brigando e mantém o texto do paciente longe do HTML.
+**Impacto:** `lib/whatsapp-format.ts`, `components/conversation/WhatsAppText.tsx` (novo),
+`MessageBubble.tsx` (só o trecho do texto), `Composer.tsx` (atalhos Ctrl+I e Ctrl+Shift+X),
+`COMPONENTS.md`.
+
+### D-243: Rascunho por conversa no navegador e seletor de emoji com lista estática (CRMLAB-73)
+**Decisão:**
+1. **Rascunho:** store Zustand `stores/drafts.store.ts` persistida em `localStorage`
+   (`crm-lab.drafts`) por um `StateStorage` com try/catch (modo privado, cota cheia: o rascunho
+   só não persiste, a tela não quebra). Chave `userId:conversationId` — no computador
+   compartilhado da recepção, uma atendente não vê o rascunho da outra. Nada no backend.
+2. O `Composer` recebe `draftId` (o `ConversationPanel` passa `conversation.id`; o chat interno
+   não passa e não guarda nada). Semeia o campo com `initialValue` (o `?draft=` do link profundo
+   vence) ou o rascunho salvo, com o cursor no fim; cada mudança grava; campo vazio (enviou ou
+   apagou) remove. Envio que falha devolve o texto ao campo e, com ele, o rascunho.
+3. **Lista:** a conversa com rascunho mostra **"Rascunho: …"** no lugar da última mensagem, exceto
+   a conversa aberta (é ela que está sendo digitada).
+4. **Limpeza:** (a) a conversa aparece na lista como encerrada → o rascunho some; (b) rascunho
+   sem mexer há **7 dias** é descartado ao carregar a página (conversa que nunca mais apareceu na
+   lista); (c) **sair do sistema apaga todos os rascunhos** do navegador — é texto de atendimento
+   de paciente parado no `localStorage`, então vale a leitura mais restritiva (AGENTS.md,
+   "Resolução de Conflitos"). Recarregar a página não é sair: o rascunho fica.
+5. **Emoji:** lista estática versionada no repo (`components/conversation/emoji-data.ts`,
+   ~550 emojis em 8 categorias no padrão do WhatsApp, cada um com nome e palavras-chave em
+   pt-BR), **sem dependência nova**. `emoji-mart` com os dados traz centenas de KB ao bundle e
+   nomes em inglês (a busca em pt-BR teria de ser traduzida do mesmo jeito). Busca sem acento e
+   sem caixa, por nome e palavras-chave; aba **Recentes** (até 24, `localStorage`
+   `crm-lab.emoji-recent`, com try/catch) aparece quando há algum. Continua inserindo no cursor.
+**Motivo:** o texto digitado se perdia ao trocar de conversa (`key={conversation.id}` remonta o
+Composer). O seletor de 48 sem busca não achava emoji fora do dia a dia.
+**Impacto:** `stores/drafts.store.ts` (novo), `Composer.tsx`, `ConversationPanel.tsx` (uma prop),
+`ConversationItem.tsx`, `EmojiPicker.tsx`, `emoji-data.ts` (novo), `COMPONENTS.md`.
+
 ## Template para novas decisões
 
 ```

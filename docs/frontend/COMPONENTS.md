@@ -9,7 +9,7 @@ Inventário COMPLETO de componentes reutilizáveis. Regra do design system: **n�
 ```
 frontend/src/components/
 ├── ui/            # Primitivos (Button, Chip, Input, ...)
-├── conversation/  # ConversationItem, MessageBubble, AudioMessage, Composer, AttachmentPreview
+├── conversation/  # ConversationItem, MessageBubble, WhatsAppText, AudioMessage, Composer, AttachmentPreview
 ├── proposal/      # ProposalCard, ProposalModal, StageColumn
 ├── layout/        # Sidebar, InboxLayout, PageHeader
 └── shared/        # Avatar, EmptyState, DataTable, Modal
@@ -72,6 +72,9 @@ Anatomia (padrão WhatsApp):
 - `onMarkUnread?(id)` (CRMLAB-68, D-229): clique direito ou botão "⋯" abrem o menu
   (`role="menu"`) com "Marcar como não lida", só quando `unreadCount === 0`. Sem handler, nem
   botão nem menu
+- **Rascunho (CRMLAB-73, D-243):** com rascunho guardado para a conversa (`useConversationDraft`,
+  `stores/drafts.store.ts`), a prévia mostra **"Rascunho:"** (em destaque) + o texto, no lugar da
+  última mensagem — menos na conversa selecionada. Conversa encerrada na lista apaga o rascunho
 
 ### ConversationSearch · MessageResults (`pages/Attendance/`, locais da tela — CRMLAB-68)
 - `ConversationSearch`: barra da busca dentro da conversa (campo, "N de M", ↑ ↓, fechar) + lista
@@ -109,6 +112,13 @@ Anatomia (padrão WhatsApp):
   linha, `**` vazio e `2 * 3 * 4` não formatam, e o asterisco precisa estar na borda da palavra
   (`2*3*4` fica como está). Renderiza como nós React (`<strong>`), nunca
   `dangerouslySetInnerHTML`. A prévia da lista (`ConversationItem`) mostra o texto cru
+- **Formatação completa e links (CRMLAB-73, D-242):** o texto passa por `WhatsAppText`
+  (`parseWhatsApp` de `lib/whatsapp-format.ts`): `*negrito*`, `_itálico_`, `~tachado~` (mesma
+  regra de borda do negrito, aninhando símbolos diferentes), ```` ```monoespaçado``` ```` e
+  `` `código` `` (literais, `font-mono`), linha com `> ` (citação), `- `/`* ` (lista com •) e
+  `1. ` (numerada). `http(s)://…` e `www.…` viram link em nova aba
+  (`rel="noopener noreferrer"`); o `_`/`~` dentro da URL não formata. Sem prévia de link.
+  HTML/`<script>` do paciente aparece como texto
 - `useAuthenticatedMedia` devolve também o `fileName` (do `Content-Disposition` de
   `GET /media/:id`), repassado ao `ImageLightbox` — é o nome com que a imagem é salva (CRMLAB-26).
   O blob é **compartilhado por URL** entre quem está usando (D-245): o lightbox aberto a partir do
@@ -179,7 +189,12 @@ Anatomia (padrão WhatsApp):
   outra pessoa assumiu a conversa no mesmo instante (CRMLAB-75, D-215)
 - **Ctrl+B / Cmd+B** (CRMLAB-51, D-183): envolve a seleção em asteriscos (`*seleção*`, que a
   bolha e o WhatsApp mostram em negrito) e mantém o texto selecionado; sem seleção, insere `**`
-  com o cursor no meio
+  com o cursor no meio. **Ctrl+I** (`_itálico_`) e **Ctrl+Shift+X** (`~tachado~`) fazem o mesmo
+  com o seu símbolo (CRMLAB-73, D-242). Ctrl+X sem Shift continua sendo recortar
+- **Rascunho por conversa (CRMLAB-73, D-243):** `draftId` (opcional) liga o campo à store
+  `stores/drafts.store.ts`. O campo começa com `initialValue` (o `?draft=` vence) ou o rascunho
+  salvo, com o cursor no fim; cada mudança grava, campo vazio (enviou/apagou) remove. Sem
+  `draftId` (chat interno), nada é guardado
 - **Cresce com o texto** (CRMLAB-49, padrão WhatsApp Web): começa com uma linha e
   ganha altura a cada quebra (por tamanho ou Shift+Enter) até **150px** (~6 linhas);
   dali em diante trava e rola por dentro. Apagar ou enviar faz o campo voltar a
@@ -247,11 +262,13 @@ Anatomia (padrão WhatsApp):
 - Object URL criado por miniatura/destaque e revogado ao desmontar (remover, fechar, enviar).
 - Componente burro: não chama API, não conhece conversa nem citação.
 
-#### Emoji (Onda 8 §2.2)
-- Popover com grade de ~48 emojis de uso comum em atendimento; **sem
-  dependência** — um seletor com busca por nome custa centenas de KB para um
-  caso que não pede busca. Se a busca virar necessidade real, entra biblioteca,
-  e o popover já está isolado num componente (`EmojiPicker`).
+#### Emoji (Onda 8 §2.2, refeito no CRMLAB-73 / D-243)
+- Popover com **busca** (campo "Buscar emoji", pt-BR, sem acento e sem caixa, por nome e
+  palavras-chave), **abas de categoria** (Recentes · Smileys e pessoas · Animais e natureza ·
+  Comidas e bebidas · Atividades · Viagens e lugares · Objetos · Símbolos · Bandeiras) e
+  **Recentes** (até 24, `localStorage`, só aparece quando há algum). Lista estática
+  versionada (`emoji-data.ts`, ~550), **sem dependência** — `emoji-mart` pesa centenas de KB
+  e fala inglês.
 - Insere **na posição do cursor**, não no fim do texto.
 - Cada emoji é um `<button>` com `aria-label` (nome em pt-BR), navegável por
   teclado; `Esc` fecha e devolve o foco ao campo.
@@ -721,11 +738,12 @@ tela passa tudo por props (o dado vem do TanStack Query).
 | Componente | Assinatura | Notas |
 |------------|-----------|-------|
 | `ConversationItem` | `<ConversationItem conversation selected? onClick?(id) now? />` | `now` é injetável só para tornar "aguardando N min" determinístico em teste |
-| `MessageBubble` | `<MessageBubble type message maxWidth? showMeta? onRetry? onOpenImage? />` | `type` ∈ `received \| sent \| system` — os únicos 3 · `*texto*` em negrito (D-183) · tiques e "Tentar de novo" (D-225/D-227) |
+| `MessageBubble` | `<MessageBubble type message maxWidth? showMeta? onRetry? onOpenImage? />` | `type` ∈ `received \| sent \| system` — os únicos 3 · formatação do WhatsApp e links (D-183, D-242) · tiques e "Tentar de novo" (D-225/D-227) · imagem abre o lightbox da conversa (D-244) |
 | `DateSeparator` | `<DateSeparator date now? />` | Pílula de dia (CRMLAB-71, D-239) · `dateSeparatorLabel` e `isSameLocalDay` exportadas |
 | `AudioMessage` | `<AudioMessage url />` | `<audio controls>` nativo com blob autenticado · download sempre disponível |
-| `Composer` | `<Composer onSend(content) → void | Promise onPickFiles?(files) onAttachClick? onSendAudio?(audio) disabled? sending? placeholder? quickReplies? />` | Enter envia · Shift+Enter quebra linha · Ctrl/Cmd+B envolve a seleção em `*` · emoji insere no cursor · `/` no campo vazio abre as macros · microfone grava recado de voz (clique/clique, 5 min, D-181) |
-| `EmojiPicker` | `<EmojiPicker onPick(emoji) disabled? />` | Grade fixa de 48, sem biblioteca · `Esc` fecha e devolve o foco |
+| `Composer` | `<Composer onSend(content) → void | Promise onPickFiles?(files) onAttachClick? onSendAudio?(audio) disabled? sending? placeholder? quickReplies? draftId? />` | Enter envia · Shift+Enter quebra linha · Ctrl/Cmd+B envolve a seleção em `*`, Ctrl+I em `_`, Ctrl+Shift+X em `~` (D-242) · rascunho por `draftId` (D-243) · emoji insere no cursor · `/` no campo vazio abre as macros · microfone grava recado de voz (clique/clique, 5 min, D-181) |
+| `EmojiPicker` | `<EmojiPicker onPick(emoji) disabled? />` | Busca pt-BR, categorias e recentes sobre lista estática (D-243), sem biblioteca · `Esc` fecha e devolve o foco |
+| `WhatsAppText` | `<WhatsAppText text />` | Formatação do WhatsApp + links como nós React (D-242) · usado pela `MessageBubble` |
 | `QuickReplyMenu` | `<QuickReplyMenu items filter onPick(reply) onClose() />` | Aberto pela `/` no campo vazio · ↑↓ navega, Enter escolhe, Esc fecha |
 
 Exportações auxiliares (fonte única, para não duplicar regra em tela):

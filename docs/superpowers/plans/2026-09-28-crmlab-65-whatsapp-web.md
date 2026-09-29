@@ -92,7 +92,7 @@ node_modules são symlinks para a pasta principal; `*.wt.*` (vitest/tsconfig com
 | 68 [C] | 🧪 hml (`hml-deb5132`) · Pronto p/ Validação | 8931970 | D-228..D-230, migração 043. Busca, Não lidas, around/after. Isolamento 81 rotas. |
 | 69 [D] | 🧪 hml (`hml-deb5132`) · Pronto p/ Validação | a59817c | D-231..D-233, 044 sem uso. Prévia, vários, Ctrl+V, drop, caption. |
 | 70 [E] | 🔄 docs (onda 3, 29/09) | — | Vídeo toca no balão (fora do lightbox); `sticker` vira tipo próprio. |
-| 73 [H] | 🔄 docs (onda 3, 29/09) | — | Emoji: preferência por lista estática (sem dependência nova). |
+| 73 [H] | ✅ pronto no card (29/09) | f294454 | D-242, D-243. Parser em árvore (`WhatsAppText`), rascunho `userId:conversationId` em localStorage (7 dias; logout apaga), 549 emojis estáticos. 925 specs afetados verdes. 2 perguntas p/ Michel (logout apaga? 7 dias?). |
 | 64    | ✅ pronto no card (29/09) | a815f0d | D-244, D-245. Lightbox único no painel (`ConversationImageViewer`, `useConversationImages`); cache por URL com refcount em `useAuthenticatedMedia`. 860 specs afetados verdes. Sticker sai da navegação quando o 70 entrar. |
 
 Fases: ⬜ não iniciado → 🔄 docs → 🔄 backend → 🔄 frontend → 🔄 testes → ✅ pronto no card

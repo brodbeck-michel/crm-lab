@@ -25,6 +25,11 @@ import type { MediaRepository } from '../repositories/media.repository.js';
  */
 export { MAX_MEDIA_BYTES };
 
+/**
+ * `image/*` -> `image`, `audio/*` -> `audio`, `video/*` -> `video` (CRMLAB-70),
+ * PDF -> `pdf`, resto -> `doc`. Fonte unica: webhook (MIME gravado) e anexo do
+ * atendente usam esta.
+ */
 export function messageTypeFromMime(mimeType: string): MessageType {
   const category = mediaCategoryOf(mimeType);
   if (category === 'other') return 'doc';

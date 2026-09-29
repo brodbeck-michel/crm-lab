@@ -92,6 +92,36 @@ describe('POST /conversations/:id/attachments', () => {
     expect(media.headers['content-disposition']).toMatch(/^inline/);
   });
 
+  it('video/mp4 vira mensagem de vídeo com nome e tamanho do arquivo (CRMLAB-70, D-234)', async () => {
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Ana' });
+    const conversation = await createConversation({ tenantId: tenant.id, assignedTo: ana.id });
+    // Cabeçalho `ftyp` de MP4 de verdade: passa pelo sniff de magic bytes (categoria video).
+    const mp4 = Buffer.concat([
+      Buffer.from([0x00, 0x00, 0x00, 0x18]),
+      Buffer.from('ftypmp42'),
+      Buffer.from([0x00, 0x00, 0x00, 0x00]),
+      Buffer.from('mp42isom'),
+      Buffer.alloc(64),
+    ]);
+
+    const created = await app.agent
+      .post(`/api/v1/conversations/${conversation.id}/attachments`)
+      .set(app.auth(ana))
+      .send({ fileName: 'resultado.mp4', mimeType: 'video/mp4', contentBase64: mp4.toString('base64') })
+      .expect(201);
+
+    expect(created.body.messageType).toBe('video');
+    expect(created.body.media).toEqual({
+      fileName: 'resultado.mp4',
+      fileSize: mp4.length,
+      mimeType: 'video/mp4',
+      durationSec: null,
+      pageCount: null,
+      thumbnail: null,
+    });
+  });
+
   it('arquivo acima do teto é MEDIA_TOO_LARGE e não grava mensagem', async () => {
     const tenant = await createTenant();
     const ana = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Ana' });

@@ -334,6 +334,22 @@ CREATE INDEX idx_messages_content_search
   predicado diferente = índice não usado.
 - Sem coluna nova e sem backfill: o índice é construído sobre as linhas que já existem.
 
+**Metadados da mensagem — migração 045 (CRMLAB-70, D-234):**
+
+```sql
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS metadata JSONB;  -- anulável, sem backfill
+```
+
+- Guarda o que o WhatsApp manda junto com a mensagem e o arquivo não tem: `durationSec` (vídeo,
+  áudio), `pageCount` (PDF), `thumbnail` (JPEG base64 da miniatura do vídeo, até 48 KiB),
+  `location` (`{ latitude, longitude, name, address }`) e `contacts` (`[{ name, phone }]`).
+  `NULL` para texto e para toda mensagem anterior à 045.
+- **Nome, tamanho e MIME do arquivo NÃO moram aqui:** a leitura busca em `message_media` pelo id
+  que está em `attachment_url` (`/api/v1/media/<uuid>`, PK) — o `message_id` de lá só é
+  preenchido depois do INSERT da mensagem (§23).
+- A anonimização LGPD zera `metadata` junto com `attachment_url` (D-234 item 7).
+- `message_type` ganhou `video`, `sticker`, `location`, `contact` (sem CHECK, sem migração).
+
 ### 5. `proposals`
 Orçamentos/Propostas.
 
@@ -2129,7 +2145,8 @@ migrations/
 ├── 030_funnel_timer.sql          # proposal_status_history.automation + stale_alerted_at — motor de tempo (CRMLAB-59, D-207/D-208)
 ├── 031_reengagement.sql          # messages.automation + conversation_reengagements + tenant_holidays (CRMLAB-62, D-211/D-213)
 ├── 040_message_quote_reactions_edits.sql # citação/edição/apagamento em messages + message_reactions + message_edits (CRMLAB-66, D-220..D-222)
-└── 043_message_search.sql        # crm_unaccent() + GIN parcial de busca em messages.content (CRMLAB-68, D-228)
+├── 043_message_search.sql        # crm_unaccent() + GIN parcial de busca em messages.content (CRMLAB-68, D-228)
+└── 045_message_metadata.sql      # messages.metadata JSONB — vídeo, PDF, localização, contato (CRMLAB-70, D-234)
 ```
 
 A 007 e a 008 são arquivos ÚNICOS (tabela + policy), diferente dos pares 003/004 e 005/006: a

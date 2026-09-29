@@ -314,6 +314,7 @@ describe('GET /conversations/:id', () => {
     const [primeira, segunda] = response.body.messages;
     expect(Object.keys(primeira).sort()).toEqual([
       'attachmentUrl',
+      'contacts', // CRMLAB-70 (D-234)
       'content',
       'conversationId',
       'createdAt',
@@ -321,6 +322,8 @@ describe('GET /conversations/:id', () => {
       'deletedAt',
       'editedAt',
       'id',
+      'location', // CRMLAB-70
+      'media', // CRMLAB-70
       'messageType',
       'quoted',
       'quotedMessageId',

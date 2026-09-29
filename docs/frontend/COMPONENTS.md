@@ -296,7 +296,8 @@ Anatomia (padrão WhatsApp):
   D-117)
 
 ### InboxLayout
-- 3 colunas: 336px fixo | flex 1 min 440px | 316px recolhível
+- 3 colunas: 336px fixo | flex 1 min 440px | 316px recolhível (começa fechada, `contextPanelOpen:
+  false` — CRMLAB-74)
 - Estreito: overflow-x na linha (não colapsar colunas)
 - `listBanner?: ReactNode` (CRMLAB-72): faixa opcional no topo da coluna 1, acima da lista, fora
   da rolagem dela. O Atendimento usa para o `EnableNotificationsBanner`

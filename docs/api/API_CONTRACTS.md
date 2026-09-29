@@ -922,6 +922,39 @@ traz também:
   escondido** (D-220): `content: ""`, `attachmentUrl: null`, `quoted: null`, `reactions: []`. A
   linha e a mídia continuam no banco.
 
+**Tipos de mensagem e metadados (CRMLAB-70, D-234).** `messageType` ∈ `text | image | audio |
+pdf | doc | video | sticker | location | contact` (`MESSAGE_TYPES`). Todo `Message` traz também
+(campos **opcionais** no tipo; o backend sempre manda):
+
+```json
+{
+  "media": {
+    "fileName": "exame.pdf",
+    "fileSize": 184320,
+    "mimeType": "application/pdf",
+    "durationSec": null,
+    "pageCount": 3,
+    "thumbnail": null
+  },
+  "location": null,
+  "contacts": []
+}
+```
+
+- `media` (`MessageMediaInfo | null`): nome, tamanho em bytes e MIME **do arquivo gravado**
+  (`message_media`), mais o que o WhatsApp mandou junto: `durationSec` (vídeo/áudio), `pageCount`
+  (PDF) e `thumbnail` (miniatura JPEG do vídeo em base64, sem o prefixo `data:`). `null` sem
+  anexo, com anexo de URL externa ou apagado/anonimizado.
+- `location` (`MessageLocation | null`, só em `messageType: "location"`):
+  `{ "latitude": -28.48, "longitude": -49.01, "name": "Laboratório", "address": "Rua X, 10" }`
+  (`name`/`address` anuláveis).
+- `contacts` (`MessageContact[]`, só em `messageType: "contact"`): `[{ "name": "Ana", "phone":
+  "+5548999991234" }]` — `phone` anulável (vCard sem telefone).
+- `content` continua sendo o **texto de fallback** (busca, prévia da lista, citação):
+  `📍 <nome>`, `👤 <nome>`, `Figurinha`, ou a legenda/nome do arquivo. Mensagem apagada (D-220):
+  `media: null`, `location: null`, `contacts: []`.
+- Mensagens gravadas antes do CRMLAB-70 como `[Localizacao] …`/`[Contato] …` continuam `text`.
+
 **Erros:** `NOT_FOUND` (404 — inexistente, de outro tenant **ou de outro atendente**;
 nunca 403), `FORBIDDEN` (403, `platform_operator`), `VALIDATION_ERROR` (400, `:id` não-uuid)
 
@@ -1022,8 +1055,8 @@ médico.
 O recorte por papel é aplicado **antes** de gravar: conversa que o usuário não
 enxerga devolve `NOT_FOUND`. Conversa sem dona é assumida por quem envia antes de gravar a
 mídia (D-215, mesma regra e mesmo 409 de `POST /conversations/:id/messages`). `messageType` é derivado do `mimeType`
-(`image/* → image`, `audio/* → audio`, `application/pdf → pdf`, resto →
-`doc`) — o cliente não escolhe.
+(`image/* → image`, `audio/* → audio`, `video/* → video` (CRMLAB-70), `application/pdf → pdf`,
+resto → `doc`) — o cliente não escolhe.
 
 **Áudio (CRMLAB-24, D-182):** o recado gravado no compositor usa este mesmo endpoint
 (`fileName` `recado-de-voz.<ogg|webm|m4a>`, `mimeType` o do `MediaRecorder`, ex.
@@ -1032,8 +1065,8 @@ mídia (D-215, mesma regra e mesmo 409 de `POST /conversations/:id/messages`). `
 recado de voz — e não por `/message/sendMedia`. O request e a resposta deste endpoint não mudam.
 
 **Vídeo (CRMLAB-69, D-231):** `video/*` sai no `/message/sendMedia` com `mediatype: "video"`
-(antes ia como `document`). O `messageType` gravado continua `doc` até o CRMLAB-70 criar o tipo
-`video`.
+(antes ia como `document`). Desde o CRMLAB-70 (D-234) o `messageType` gravado é `video`; a
+allow-list continua aceitando só `video/mp4` como vídeo, com o teto de 15 MiB.
 
 **Response (201):** o mesmo shape de `POST /conversations/:id/messages`, com
 `attachmentUrl` apontando para `GET /media/:id` (nunca uma URL pública):
@@ -1361,12 +1394,14 @@ responder):
   `videoMessage`/`stickerMessage` são reconhecidos ao lado de
   `conversation`/`extendedTextMessage` (o webhook é registrado com
   `base64: true`). Vídeo e figurinha entraram na auditoria de 2026-09-17 — antes eram
-  descartados em silêncio. Ambos chegam pelo `messageType` derivado do mime
-  (`video/*` → `doc`): anexo genérico é pior que um player dedicado, mas incomparavelmente
-  melhor que perda silenciosa, e não espalha mudança de contrato pelo frontend.
-  **Sem arquivo:** `locationMessage`/`liveLocationMessage`/`contactMessage`/
-  `contactsArrayMessage` viram uma linha de texto descritiva (`[Localizacao] …`,
-  `[Contato] …`) em vez de sumir.
+  descartados em silêncio. **Desde o CRMLAB-70 (D-235):** vídeo gravado como `video/*` vira
+  `messageType: "video"` (`seconds` → `media.durationSec`, `jpegThumbnail` → `media.thumbnail`);
+  figurinha com arquivo de imagem vira `"sticker"`; áudio leva `durationSec` e PDF `pageCount`.
+  **Sem arquivo:** `locationMessage`/`liveLocationMessage` viram `messageType: "location"` com
+  `location` estruturado (sem coordenada válida: a linha de texto `[Localizacao] …` de antes);
+  `contactMessage`/`contactsArrayMessage` viram `"contact"` com `contacts` (nome do
+  `displayName`/`FN:`, telefone do `waid=` ou do `TEL` do vCard, até 10). `content` = texto de
+  fallback (`📍 …`, `👤 …`).
   Arquivo acima do teto (15 MiB) é recusado com log — a mensagem não é
   criada, mas o evento continua respondendo `200 {received:true}` do mesmo jeito. **Risco
   aceito:** o campo exato onde o gateway v2.3.7 grava o base64 não foi confirmado contra um

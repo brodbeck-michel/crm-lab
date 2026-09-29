@@ -95,7 +95,11 @@ Anatomia (padrão WhatsApp):
 - Anexo `messageType: 'image'` (CRMLAB-15): thumbnail (`rounded-md`, máx. 300px de altura) no lugar
   do link "Anexo (tipo)". Clique abre `ImageLightbox` em tela cheia — padrão WhatsApp Web
 - Anexo `messageType: 'audio'` (CRMLAB-2): `AudioMessage` na própria bolha no lugar do link.
-  Os demais `messageType` continuam com o link genérico
+- **Um componente por tipo (CRMLAB-70, D-236)** — o balão só despacha: `video` → `VideoMessage`,
+  `pdf`/`doc` → `DocumentCard`, `sticker` → `StickerMessage` (balão sem fundo nem borda),
+  `location` → `LocationCard`, `contact` → `ContactCard`. O texto do balão some quando é só o
+  fallback (figurinha, localização, contato, e mídia cujo `content` é o próprio `media.fileName`).
+  Bloco citado ganha "🎥 Vídeo", "Figurinha", "📍 Localização" e "👤 Contato"
 - `GET /media/:id` exige `Authorization` (requireAuth) — um `<img src>`/`<audio src>` cru nunca
   manda esse header. A mídia vem por `useAuthenticatedMedia` (`hooks/`), que chama
   `fetchAuthenticatedBlob` (`api/client.ts`) e usa `URL.createObjectURL` como `src`. Enquanto
@@ -152,14 +156,37 @@ Anatomia (padrão WhatsApp):
 
 ### AudioMessage (CRMLAB-2)
 ```tsx
-<AudioMessage url={message.attachmentUrl} />
+<AudioMessage url={message.attachmentUrl} durationSec={message.media?.durationSec} />
 ```
+- **Velocidade (CRMLAB-70, D-236):** botão `1x → 1,5x → 2x → 1x` ao lado do player
+  (`playbackRate`, só daquele áudio). `durationSec` (opcional) aparece antes de o áudio carregar
 - Player de áudio dentro da bolha: `<audio controls>` NATIVO — play/pause, barra com tempo
   decorrido/total, seek e teclado de graça. Player desenhado à mão só entra se o visual virar
   exigência real (mesma lógica do `EmojiPicker` sem biblioteca)
 - Busca o blob autenticado por `useAuthenticatedMedia`; `src` é o object URL, nunca a URL crua
 - Link "Baixar áudio" sempre visível: o Evolution entrega ogg/opus, que o Safari não toca. Se o
   `<audio>` dispara `error`, o player dá lugar a um aviso e o download fica como plano B
+
+### VideoMessage · DocumentCard · StickerMessage · LocationCard · ContactCard (CRMLAB-70, D-236)
+```tsx
+<VideoMessage url={message.attachmentUrl} media={message.media} />
+<DocumentCard url={message.attachmentUrl} messageType={message.messageType} media={message.media} />
+<StickerMessage url={message.attachmentUrl} />
+<LocationCard location={message.location} />
+<ContactCard contacts={message.contacts} />
+```
+- **VideoMessage:** miniatura (`media.thumbnail`, JPEG em `data:` — a CSP já libera `img-src data:`;
+  sem miniatura, fundo neutro) com ▶ e a duração. O arquivo só é baixado **no clique** e toca ali
+  mesmo (`<video controls autoplay>`) — nunca no `ImageLightbox`
+- **DocumentCard:** ícone pelo tipo (PDF, Word, Excel, PowerPoint, texto/CSV, genérico), nome,
+  tamanho (`formatBytes`) e "N páginas" no PDF quando vier. Clique abre (PDF) ou baixa — o blob
+  autenticado só é buscado no clique (revisão do PR #43)
+- **StickerMessage:** 120×120 `object-contain`, sem lightbox
+- **LocationCard:** 📍 nome/endereço + "Abrir no mapa" (Google Maps `?api=1&query=lat,lng`, nova
+  aba). Sem mapa estático (CSP, CRMLAB-32)
+- **ContactCard:** nome + telefone por contato; "Conversar" abre `NewConversationModal`
+  (`pages/Attendance/`) com `initialPhone` e, ao iniciar, navega para
+  `/attendance?conversationId=`. Sem telefone, sem botão
 
 ### Composer
 - Input pílula + botão anexo + botão emoji + botão microfone + botão enviar (primary)
@@ -702,7 +729,8 @@ tela passa tudo por props (o dado vem do TanStack Query).
 | `ConversationItem` | `<ConversationItem conversation selected? onClick?(id) now? />` | `now` é injetável só para tornar "aguardando N min" determinístico em teste |
 | `MessageBubble` | `<MessageBubble type message maxWidth? showMeta? onRetry? />` | `type` ∈ `received \| sent \| system` — os únicos 3 · `*texto*` em negrito (D-183) · tiques e "Tentar de novo" (D-225/D-227) |
 | `DateSeparator` | `<DateSeparator date now? />` | Pílula de dia (CRMLAB-71, D-239) · `dateSeparatorLabel` e `isSameLocalDay` exportadas |
-| `AudioMessage` | `<AudioMessage url />` | `<audio controls>` nativo com blob autenticado · download sempre disponível |
+| `AudioMessage` | `<AudioMessage url durationSec? />` | `<audio controls>` nativo com blob autenticado · velocidade 1x/1,5x/2x (D-236) · download sempre disponível |
+| `VideoMessage` · `DocumentCard` · `StickerMessage` · `LocationCard` · `ContactCard` | ver acima | Um por tipo de mensagem (CRMLAB-70, D-236) |
 | `Composer` | `<Composer onSend(content) → void | Promise onPickFiles?(files) onAttachClick? onSendAudio?(audio) disabled? sending? placeholder? quickReplies? />` | Enter envia · Shift+Enter quebra linha · Ctrl/Cmd+B envolve a seleção em `*` · emoji insere no cursor · `/` no campo vazio abre as macros · microfone grava recado de voz (clique/clique, 5 min, D-181) |
 | `EmojiPicker` | `<EmojiPicker onPick(emoji) disabled? />` | Grade fixa de 48, sem biblioteca · `Esc` fecha e devolve o foco |
 | `QuickReplyMenu` | `<QuickReplyMenu items filter onPick(reply) onClose() />` | Aberto pela `/` no campo vazio · ↑↓ navega, Enter escolhe, Esc fecha |

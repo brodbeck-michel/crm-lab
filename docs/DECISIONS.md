@@ -4417,3 +4417,97 @@ API_CONTRACTS §2, PAGES §2, COMPONENTS.
 **Motivo:** Por quê.
 **Impacto:** Domínios afetados + o que muda na prática.
 ```
+
+### D-234: Tipos `video`, `sticker`, `location`, `contact` e onde moram os metadados (CRMLAB-70)
+**Decisão:**
+1. `MessageType` ganha **`video`, `sticker`, `location` e `contact`** (`messages.message_type` é
+   `VARCHAR(50)` sem CHECK: o tipo não pede migração). Lista canônica em `MESSAGE_TYPES`
+   (`shared/`); valor desconhecido na leitura continua virando `text`.
+2. **Fato do ARQUIVO vem de `message_media`, não é copiado.** `media.fileName`, `media.fileSize`
+   e `media.mimeType` saem de `message_media` (`file_name`, `byte_size`, `mime_type`), achada
+   pelo id que está em `messages.attachment_url` (`/api/v1/media/<uuid>` → PK). Pelo id da URL, e
+   não por `message_media.message_id`, porque o `message_id` só é preenchido **depois** do INSERT
+   da mensagem e do evento de WS (§23) — a leitura disparada pelo WS acharia o arquivo sem dono.
+   Ganho de graça: **documento antigo também mostra nome e tamanho**, sem backfill. URL externa
+   (Meta) ou anexo apagado/anonimizado → `media: null`.
+3. **Fato da MENSAGEM vai em `messages.metadata JSONB`** (migração 045, anulável, sem backfill):
+   o que o WhatsApp manda junto e o arquivo não tem — `durationSec` (vídeo/áudio), `pageCount`
+   (PDF), `thumbnail` (miniatura JPEG do vídeo, base64), `location` e `contacts`. Tabela nova
+   seria cerimônia: é 1:1 com a mensagem, lido sempre junto e nunca filtrado.
+4. **Na API** (`Message`, campos **opcionais** no tipo, o backend sempre manda): `media`
+   (`MessageMediaInfo | null`: `fileName`, `fileSize`, `mimeType`, `durationSec`, `pageCount`,
+   `thumbnail`), `location` (`MessageLocation | null`: `latitude`, `longitude`, `name`,
+   `address`) e `contacts` (`MessageContact[]`: `name`, `phone`). Mensagem apagada (D-220) sai
+   com os três vazios, como o anexo.
+5. **`content` continua sendo o texto de fallback** — é ele que a busca (D-228), a prévia da lista,
+   a citação e a timeline do paciente leem. Localização: `📍 <nome ou endereço>` (sem nome:
+   `📍 Localização`); contato: `👤 <nome>` (vários: `👤 <primeiro> e mais N`); figurinha:
+   `Figurinha`; vídeo/documento/áudio: legenda ou nome do arquivo, como antes.
+6. **Mensagens antigas não migram:** o `[Localizacao] …`/`[Contato] …` gravado como `text` segue
+   aparecendo como texto.
+7. **LGPD (emenda a D-075):** a anonimização do paciente zera `metadata` junto com
+   `attachment_url` — miniatura de vídeo, coordenada e contato compartilhado são dado pessoal
+   do mesmo jeito que o arquivo. O texto de fallback em `content` fica, como todo texto (D-063).
+**Motivo:** o card pede nome/tamanho no documento e cartões estruturados para localização e
+contato. Guardar o nome/tamanho de novo em `metadata` duplicaria o que `message_media` já tem (e
+deixaria de fora os documentos antigos); uma coluna JSONB resolve o resto sem tabela nova.
+**Impacto:** migração 045; `shared/types/conversation.types.ts`, `media.types.ts`
+(`mediaCategoryOf` ganha `video`); `message.repository.ts` (COLUMNS/FROM/`toMessage`, INSERT),
+`patient.repository.ts` (anonimização); SCHEMA §4, API_CONTRACTS §2.
+
+### D-235: Webhook do Evolution grava vídeo, figurinha, localização e contato estruturados (CRMLAB-70)
+**Decisão:**
+1. **Vídeo:** `videoMessage` com arquivo gravado como `video/*` vira `messageType: 'video'` (o
+   tipo sai do MIME **gravado**, D-169: rebaixado para `application/octet-stream` continua `doc`).
+   `seconds` → `durationSec`; `jpegThumbnail` → `thumbnail` quando é um JPEG de verdade (magic
+   `FF D8 FF`) de até **48 KiB** — o gateway pode mandar base64, `{type:'Buffer',data}` ou o
+   objeto de índices de um `Uint8Array`, e os três são aceitos. `gifPlayback` segue como vídeo.
+2. **Figurinha:** `stickerMessage` com arquivo de imagem vira `messageType: 'sticker'` (tipo
+   próprio: fica fora do lightbox e da navegação de imagens do CRMLAB-64). MIME fora de imagem
+   continua pelo mapeamento do MIME.
+3. **Áudio:** `seconds` → `durationSec`. **Documento:** `pageCount` → `pageCount`.
+4. **Localização** (`locationMessage`, `liveLocationMessage`): vira `messageType: 'location'`
+   **sem arquivo**, com `metadata.location` (`degreesLatitude`/`degreesLongitude`, `name`,
+   `address`; da localização em tempo real vale o ponto recebido e a `caption` vira o nome).
+   Sem coordenada numérica válida (lat −90..90, lng −180..180) continua a linha de texto de antes.
+5. **Contato** (`contactMessage`, `contactsArrayMessage`): vira `messageType: 'contact'` com
+   `metadata.contacts` — nome = `displayName` (ou o `FN:` do vCard) e telefone do vCard: o
+   `waid=` do `TEL` quando vier (é o número do WhatsApp), senão os dígitos do `TEL`, em
+   `+<dígitos>`; sem telefone, `phone: null`. Até **10** contatos por mensagem.
+6. **Mídia recusada** (tamanho, D-169) continua sem criar mensagem, como antes.
+**Motivo:** o card pede cartões e player; guardar estruturado no webhook é o único momento em
+que o dado existe (o WhatsApp não reenvia).
+**Impacto:** `webhook.routes.ts` (`evolutionInboundOf`, `ingestEvolutionMessage`),
+`media.service.ts` (`messageTypeFromMime` com `video`), `message.service.ts` (`metadata` no
+create do paciente e do celular); API_CONTRACTS §Evolution; fixtures dos specs.
+
+### D-236: Balão por tipo — vídeo toca no balão, áudio com velocidade, cartões, "Conversar" (CRMLAB-70)
+**Decisão:**
+1. **Um componente por tipo** (`VideoMessage`, `DocumentCard`, `StickerMessage`, `LocationCard`,
+   `ContactCard`, em `components/conversation/`); o `MessageBubble` só despacha pelo tipo.
+2. **Vídeo toca no próprio balão** (não no lightbox — o CRMLAB-64 navega só por `image`): a
+   miniatura (`thumbnail`, ou um fundo neutro quando não veio — vídeo enviado pelo CRM) com ▶ e a
+   duração; o arquivo (até 15 MiB) só é baixado **no clique**, como o documento (revisão do PR
+   #43), e aí vira `<video controls autoplay>` ali mesmo.
+3. **Áudio:** continua no `<audio>` nativo (barra clicável e tempo total de graça) e ganha o botão
+   de velocidade **1x → 1,5x → 2x → 1x**, que vale só para aquele áudio. A duração do metadado
+   aparece antes de carregar. Bolinha de "não ouvido": fora (opcional no card, pediria estado
+   por usuário).
+4. **Documento:** cartão com ícone pelo tipo (PDF, Word, Excel, PowerPoint, planilha/texto,
+   genérico), nome, tamanho e, no PDF, páginas quando vierem. O clique abre/baixa como antes.
+5. **Figurinha:** 120×120 (`object-contain`), **sem balão** (fundo e borda transparentes), sem
+   lightbox; hora, menu e reações continuam.
+6. **Localização:** cartão com nome/endereço e **"Abrir no mapa"** →
+   `https://www.google.com/maps/search/?api=1&query=<lat>,<lng>` em outra aba. **Sem mapa
+   estático**: pediria liberar um host externo em `img-src` (CSP, CRMLAB-32).
+7. **Contato:** cartão com nome e telefone; **"Conversar"** abre o modal de Nova conversa
+   (CRMLAB-50) com o telefone preenchido — é ele que reaproveita a conversa existente daquele
+   número ou cria uma, e depois a tela navega para `/attendance?conversationId=`. Sem telefone
+   no vCard, sem botão.
+8. **Texto do balão:** some quando é só o fallback — figurinha, localização, contato, e mídia
+   cujo `content` é igual a `media.fileName` (sem legenda). A legenda continua no lugar de hoje
+   (o texto do balão é do CRMLAB-73, em paralelo). Mensagem antiga `[Localizacao] …` (tipo `text`) aparece como texto.
+**Motivo:** paridade com o WhatsApp Web sem mexer no lightbox (64) nem no parser de texto (73),
+que andam em paralelo.
+**Impacto:** `components/conversation/*` (novos), `MessageBubble.tsx` (despacho + rótulos do
+bloco citado), `AudioMessage.tsx`, `NewConversationModal.tsx` (`initialPhone`); COMPONENTS.md.

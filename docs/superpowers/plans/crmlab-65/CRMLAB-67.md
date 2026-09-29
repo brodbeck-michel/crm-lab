@@ -23,6 +23,39 @@ Faixas: decisões D-225…D-227 · migração 042 (provavelmente não usada: `me
   `evolution-client.spec.ts` (+ sendPresence, lista de eventos). Verdes + messages/whatsapp/
   webhooks/conversations/reengagement/send-from-card (389). tsc `.wt` e eslint limpos.
 
+- Etapa 4 (frontend, `436be11`): `MessageStatusTick` + aviso "Não foi possível enviar" com
+  **Tentar de novo** no `MessageBubble`; token `--color-chat-tick-read` (azul literal do
+  WhatsApp); `stores/presence.store.ts` (validade 10 s / 5 min); `ws.ts` (`message.status_updated`
+  invalida só a conversa; `conversation.presence` → store); `ConversationPanel`: presença no lugar
+  do telefone (`usePatientPresence`, `presence-label.ts`), `paused` ao abrir, `composing` a cada
+  4 s via `Composer.onTyping`; `Attendance/index.tsx`: mutation de retry + `sendPresence`.
+- Etapa 5 (testes front): `MessageBubble.crmlab67`, `ConversationPanel.crmlab67`,
+  `ws.crmlab67`, `presence.store` (19 verdes) + conversation/Attendance/ws/stores/tokens
+  existentes (751 verdes). tsc `.wt` e eslint limpos.
+
+## ✅ pronto para integração (29/09/2026)
+Critérios de aceite do Jira:
+- [x] relógio → ✓ → ✓✓ → ✓✓ azul em tempo real (pending no insert, sent no confirmSent, ack do
+      Evolution, WS `message.status_updated`).
+- [x] sem confirmação de leitura: fica ✓✓ cinza (sem `READ`, nada sobe).
+- [x] falhou: aviso + **Tentar de novo** (`POST .../retry`, mesma linha, texto e anexo).
+- [x] ack fora de ordem não rebaixa (guarda no `UPDATE`, matriz testada).
+- [x] "digitando…" aparece e some sozinho (10 s).
+- [x] presença não grava nada; WS só na room do tenant (testado com 2 laboratórios).
+- [x] instância antiga recebe os eventos sem VPS (lista única + `syncEvolutionWebhooks` no boot).
+- [x] testes de ack e WS, typecheck verdes.
+
+### Riscos / conferir na hml
+1. **`@lid` na presença:** se o WhatsApp mandar `presence.update` com o id `@lid` (e não o
+   `@s.whatsapp.net` que assinamos), a presença é ignorada. O tique não sofre disso (casa por
+   `keyId`). Conferir na hml com um número real.
+2. **Assinatura por `sendPresence paused`:** confirmar na hml que, depois dela, o gateway passa a
+   mandar `presence.update` do paciente.
+3. Cor do "falhou": `text-accent-700` (a cor de erro do app), não um vermelho literal — o card diz
+   "vermelho"; no tema padrão (terracota) fica avermelhado. Se o Michel quiser vermelho fixo, é
+   um token literal novo como o do azul.
+4. "digitando…" na lista de conversas (opcional no card): fora (D-226 item 7).
+
 ## (histórico) Pausa de 28/09/2026 17:21 (pedido do Michel: computador vai ser desligado)
 
 **Nenhum código nem doc de domínio foi alterado ainda.** Só leitura e pesquisa. Este diário é o
@@ -103,7 +136,7 @@ Faixas: decisões D-225…D-227 · migração 042 (provavelmente não usada: `me
 ## Decisões escritas
 Nenhuma ainda (faixa D-225..D-227 livre).
 
-## Próximo passo exato
+## Próximo passo exato (histórico, já feito)
 Escrever D-225 (status `pending` + ordem que nunca rebaixa + mapeamento de ack), D-226 (presença
 efêmera: WS, expiração 10 s, assinatura por `sendPresence paused`, replay isento) e D-227
 (composing para o paciente + rota de retry) no fim de `docs/DECISIONS.md`, antes do "Template";

@@ -62,7 +62,7 @@ function props(messages: Message[], overrides: Partial<ConversationPanelProps> =
     canCloseAttendance: true,
     onToggleContext: vi.fn(),
     onClose: vi.fn(),
-    onAttach: vi.fn(),
+    onSendAttachments: vi.fn(),
     contextOpen: true,
     hasOlderMessages: false,
     loadingOlder: false,
@@ -100,13 +100,21 @@ describe('ConversationPanel — responder citando', () => {
     expect(onSend).toHaveBeenCalledWith('Oi', undefined);
   });
 
-  it('anexo com resposta escolhida leva o quotedMessageId', async () => {
-    const onAttach = vi.fn();
-    render(<ConversationPanel {...props([message('m-1', { content: 'manda o pedido' })], { onAttach })} />);
+  it('anexo com resposta escolhida leva o quotedMessageId (CRMLAB-69: pela prévia)', async () => {
+    const onSendAttachments = vi.fn();
+    render(
+      <ConversationPanel
+        {...props([message('m-1', { content: 'manda o pedido' })], { onSendAttachments })}
+      />,
+    );
     await openMenuOf('manda o pedido');
     await userEvent.click(screen.getByRole('menuitem', { name: 'Responder' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Anexar arquivo' }));
-    expect(onAttach).toHaveBeenCalledWith('m-1');
+    const pdf = new File(['%PDF'], 'pedido.pdf', { type: 'application/pdf' });
+    await userEvent.upload(screen.getByTestId('attach-document-input'), pdf);
+    const preview = screen.getByRole('dialog', { name: 'Prévia do anexo' });
+    await userEvent.click(within(preview).getByRole('button', { name: 'Enviar' }));
+    expect(onSendAttachments).toHaveBeenCalledWith([{ file: pdf, caption: '' }], 'm-1');
+    expect(screen.queryByTestId('reply-banner')).not.toBeInTheDocument();
   });
 
   it('atendimento encerrado: sem Responder nem Reagir', async () => {

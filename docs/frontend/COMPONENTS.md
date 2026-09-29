@@ -9,7 +9,7 @@ Inventário COMPLETO de componentes reutilizáveis. Regra do design system: **n�
 ```
 frontend/src/components/
 ├── ui/            # Primitivos (Button, Chip, Input, ...)
-├── conversation/  # ConversationItem, MessageBubble, AudioMessage, Composer
+├── conversation/  # ConversationItem, MessageBubble, AudioMessage, Composer, AttachmentPreview
 ├── proposal/      # ProposalCard, ProposalModal, StageColumn
 ├── layout/        # Sidebar, InboxLayout, PageHeader
 └── shared/        # Avatar, EmptyState, DataTable, Modal
@@ -69,6 +69,18 @@ Anatomia (padrão WhatsApp):
 - Prévia truncada 1 linha (elipse) + Badge contagem
 - Chips de status + "aguardando N min" (accent-700)
 - Selecionado: fundo neutral-100 + shadow-sm
+- `onMarkUnread?(id)` (CRMLAB-68, D-229): clique direito ou botão "⋯" abrem o menu
+  (`role="menu"`) com "Marcar como não lida", só quando `unreadCount === 0`. Sem handler, nem
+  botão nem menu
+
+### ConversationSearch · MessageResults (`pages/Attendance/`, locais da tela — CRMLAB-68)
+- `ConversationSearch`: barra da busca dentro da conversa (campo, "N de M", ↑ ↓, fechar) + lista
+  de resultados. Recebe os `MessageSearchHit` prontos e devolve o id escolhido (`onGoTo`)
+- `MessageResults`: o bloco "Mensagens" da busca da coluna 1 (mesma forma de `PatientResults`)
+- `SearchSnippet` (`content`, `term`): o trecho com o destaque, usado pelos dois
+- O trecho e o destaque vêm de `lib/search-snippet.ts` (`searchSnippet`, `highlightParts`,
+  `isSearchableTerm`): comparação sem acento e sem caixa; o destaque é `<mark>` com tokens, nunca
+  HTML vindo da API
 
 ### MessageBubble
 ```tsx
@@ -109,6 +121,13 @@ Anatomia (padrão WhatsApp):
 - **Reações**: pílula pequena embaixo do balão com o emoji de cada lado
 - **Apagada** (`deletedAt`): o balão mostra só "🚫 Mensagem apagada" em itálico, sem menu, sem
   mídia. **Editada** (`editedAt`): rótulo "Editada" na linha da hora
+- **Tiques (CRMLAB-67, D-225):** só no balão `sent`, na linha da hora, pelo `status`: 🕓
+  `pending` (enviando), ✓ `sent`, ✓✓ `delivered` (cinza, `text-neutral-600`), ✓✓ `read`
+  (`--color-chat-tick-read`, o azul do WhatsApp — literal como o branco do papel), ⚠
+  `failed` (`text-accent-700`, a cor de erro do app) com "Não foi possível enviar" e o botão
+  **Tentar de novo** (`onRetry(message)`; sem handler, o botão some). `aria-label` diz o estado
+  ("Enviando", "Enviada", "Entregue", "Lida", "Falhou"); `data-testid="message-status"` +
+  `data-status`
 - `data-message-id` no balão: é por ele que o painel rola até a original
   (`scrollToMessage`, `pages/Attendance/scroll-to-message.ts`) e a destaca por um instante
   (`data-highlighted`). Original fora do que está carregado: toast "A mensagem original não está
@@ -170,6 +189,12 @@ Anatomia (padrão WhatsApp):
   campo mostra "Respondendo a *Maria*: trecho…" com × (`onCancelReply`); `Esc` no campo também
   cancela. Quem monta a tela guarda a mensagem escolhida e manda `quotedMessageId` no envio; a
   faixa some depois de enviar
+- **Clipe com menu (CRMLAB-69, D-232):** `onPickFiles(files: File[])` — o clipe
+  (`aria-label="Anexar arquivo"`) abre um menu com **"Fotos e vídeos"** (`accept="image/*,video/*"`)
+  e **"Documento"** (`accept` = `ALLOWED_MEDIA_MIME_TYPES`); os dois com `multiple`. `onAttachClick`
+  (opcional) avisa o clique no clipe — a tela usa para tirar a faixa de não lidas. **Ctrl+V** no
+  campo com arquivo na área de transferência entrega os arquivos por `onPickFiles` e não cola nada;
+  com só texto, cola normal. Sem `onPickFiles`, nem clipe nem colar arquivo (nada de botão morto)
 
 #### Recado de voz (CRMLAB-24, D-181)
 - Botão de **microfone** (`aria-label="Gravar áudio"`) ao lado do anexo e do emoji. Só aparece
@@ -196,6 +221,25 @@ Anatomia (padrão WhatsApp):
   (`key={conversation.id}`): trocar de conversa cancela a gravação em andamento.
 - Implementação: hook `useVoiceRecorder` (máquina de estados + `MediaRecorder`) e a barra
   `VoiceRecorder`, ambos em `components/conversation/`, usados só pelo Composer.
+
+### AttachmentPreview (CRMLAB-69, D-232/D-233)
+```tsx
+<AttachmentPreview items={drafts} onCaptionChange={(id, caption) => …} onRemove={(id) => …}
+  onAdd={(files) => …} onSend={() => …} onClose={() => …} />
+```
+- Prévia de anexos **antes de enviar**, padrão WhatsApp Web. Cobre a área da conversa (quem monta
+  posiciona; o componente ocupa 100% do pai) sem desmontar a lista de mensagens.
+- `items: AttachmentDraft[]` (`{ id, file, caption, error }`, montados por
+  `createAttachmentDraft(file)` de `attachment-draft.ts`, que valida contra a allow-list e
+  `MAX_MEDIA_BYTES` de `shared/`). `error` preenchido = aviso no arquivo ("Tipo de arquivo não
+  permitido", "Arquivo acima de 15 MB", "Arquivo vazio") e ele não sobe.
+- Arquivo selecionado em destaque: imagem grande (object URL) ou ícone + nome + tamanho. Campo
+  **"Adicionar legenda"** (uma por arquivo; Enter envia, Shift+Enter quebra linha). Faixa de
+  miniaturas (clique seleciona, × remove) e **+** para adicionar mais (mesmo `accept` do
+  "Documento"). **Enviar** (desligado sem nenhum arquivo válido) e **×** que descarta tudo. **Esc**
+  fecha. Remover o último arquivo fecha.
+- Object URL criado por miniatura/destaque e revogado ao desmontar (remover, fechar, enviar).
+- Componente burro: não chama API, não conhece conversa nem citação.
 
 #### Emoji (Onda 8 §2.2)
 - Popover com grade de ~48 emojis de uso comum em atendimento; **sem
@@ -654,10 +698,10 @@ tela passa tudo por props (o dado vem do TanStack Query).
 | Componente | Assinatura | Notas |
 |------------|-----------|-------|
 | `ConversationItem` | `<ConversationItem conversation selected? onClick?(id) now? />` | `now` é injetável só para tornar "aguardando N min" determinístico em teste |
-| `MessageBubble` | `<MessageBubble type message maxWidth? showMeta? />` | `type` ∈ `received \| sent \| system` — os únicos 3 · `*texto*` em negrito (D-183) |
+| `MessageBubble` | `<MessageBubble type message maxWidth? showMeta? onRetry? />` | `type` ∈ `received \| sent \| system` — os únicos 3 · `*texto*` em negrito (D-183) · tiques e "Tentar de novo" (D-225/D-227) |
 | `DateSeparator` | `<DateSeparator date now? />` | Pílula de dia (CRMLAB-71, D-239) · `dateSeparatorLabel` e `isSameLocalDay` exportadas |
 | `AudioMessage` | `<AudioMessage url />` | `<audio controls>` nativo com blob autenticado · download sempre disponível |
-| `Composer` | `<Composer onSend(content) → void | Promise onAttach? onSendAudio?(audio) disabled? sending? placeholder? quickReplies? />` | Enter envia · Shift+Enter quebra linha · Ctrl/Cmd+B envolve a seleção em `*` · emoji insere no cursor · `/` no campo vazio abre as macros · microfone grava recado de voz (clique/clique, 5 min, D-181) |
+| `Composer` | `<Composer onSend(content) → void | Promise onPickFiles?(files) onAttachClick? onSendAudio?(audio) disabled? sending? placeholder? quickReplies? />` | Enter envia · Shift+Enter quebra linha · Ctrl/Cmd+B envolve a seleção em `*` · emoji insere no cursor · `/` no campo vazio abre as macros · microfone grava recado de voz (clique/clique, 5 min, D-181) |
 | `EmojiPicker` | `<EmojiPicker onPick(emoji) disabled? />` | Grade fixa de 48, sem biblioteca · `Esc` fecha e devolve o foco |
 | `QuickReplyMenu` | `<QuickReplyMenu items filter onPick(reply) onClose() />` | Aberto pela `/` no campo vazio · ↑↓ navega, Enter escolhe, Esc fecha |
 

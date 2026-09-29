@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ReactNode, RefObject } from 'react';
+import type { DragEvent, ReactNode, RefObject } from 'react';
 import { QUOTED_PREVIEW_MAX } from '@crm-lab/shared';
 import type {
   ConversationAssignee,
@@ -10,15 +10,26 @@ import type {
 import { Badge, Button, cn } from '@/components/ui';
 import { EmptyState } from '@/components/shared';
 import {
+  AttachmentPreview,
   Composer,
   DateSeparator,
+  createAttachmentDraft,
+  dragHasFiles,
+  filesFromDataTransfer,
   MessageBubble,
   bubbleTypeFor,
   isSameLocalDay,
   quotedLabel,
 } from '@/components/conversation';
-import type { MessageBubbleProps, RecordedAudio } from '@/components/conversation';
+import type {
+  AttachmentDraft,
+  MessageBubbleProps,
+  RecordedAudio,
+} from '@/components/conversation';
+import { presenceLabel } from './presence-label';
+import { ConversationSearch } from './ConversationSearch';
 import { scrollToMessage } from './scroll-to-message';
+import { usePatientPresence } from './usePatientPresence';
 import { useConversationScroll } from './useConversationScroll';
 
 /**
@@ -54,8 +65,15 @@ export interface ConversationPanelProps {
   onToggleContext: () => void;
   /** Fecha a conversa aberta, voltando ao estado "nenhuma selecionada" (padrão WhatsApp Web). */
   onClose: () => void;
-  /** Anexo no composer. `quotedMessageId` = o anexo sai citando (CRMLAB-66). */
-  onAttach: (quotedMessageId?: string) => void;
+  /**
+   * Anexos confirmados na prévia (CRMLAB-69, D-233): só os válidos, na ordem
+   * da faixa. `quotedMessageId` = respondendo citando — quem monta a tela põe
+   * a citação SÓ no primeiro (CRMLAB-66, D-233 item 4).
+   */
+  onSendAttachments: (
+    items: { file: File; caption: string }[],
+    quotedMessageId?: string,
+  ) => void;
   /** Recado de voz gravado no composer (CRMLAB-24) — ver `Composer.onSendAudio`. */
   onSendAudio?: (audio: RecordedAudio, quotedMessageId?: string) => Promise<unknown>;
   /** Reação do laboratório (D-222); `null` tira. Sem handler, "Reagir" some do menu. */
@@ -77,7 +95,34 @@ export interface ConversationPanelProps {
   unreadAtOpen: number;
   /** Mensagem pronta ao chegar aqui por "Enviar orçamento" (ver `Composer.initialValue`). */
   draftMessage?: string;
+  /** "Tentar de novo" de mensagem que falhou (D-227). Sem handler, o botão some. */
+  onRetryMessage?: (messageId: string) => void;
+  /**
+   * Presença da atendente para o paciente (D-226/D-227): `paused` ao abrir a
+   * conversa (assina a presença dele), `composing` enquanto ela digita — no
+   * máximo 1 a cada `COMPOSING_INTERVAL_MS`.
+   */
+  onPresence?: (presence: 'paused' | 'composing') => void;
+  /**
+   * Janela carregada (CRMLAB-68, D-230): muda quando a conversa reabre em volta
+   * de uma mensagem ou volta para a ponta — a rolagem trata como abertura.
+   * Ausente = o id da conversa.
+   */
+  viewKey?: string;
+  /** Mensagem onde a janela abre (busca): rola até ela e acende o destaque. */
+  focusMessageId?: string | null;
+  /** Há mensagens mais novas que a última carregada (`cursors.after`). */
+  hasNewerMessages?: boolean;
+  loadingNewer?: boolean;
+  onLoadNewer?: () => void;
+  /** Volta para a ponta da conversa (sem `around`). */
+  onJumpToLatest?: () => void;
+  /** A mensagem não está carregada: reabre a conversa em volta dela. Sem handler, sem lupa. */
+  onOpenAround?: (messageId: string) => void;
 }
+
+/** Ritmo do "digitando…" enviado ao paciente (D-227) — casa com o `delay` do backend. */
+export const COMPOSING_INTERVAL_MS = 4_000;
 
 /**
  * A lista encolheu ou cresceu porque o Composer mudou de altura (CRMLAB-49) →
@@ -249,7 +294,7 @@ export function ConversationPanel({
   canCloseAttendance,
   onToggleContext,
   onClose,
-  onAttach,
+  onSendAttachments,
   onSendAudio,
   onReact,
   onQuoteUnavailable,
@@ -260,6 +305,15 @@ export function ConversationPanel({
   onLoadOlder,
   unreadAtOpen,
   draftMessage,
+  onRetryMessage,
+  onPresence,
+  viewKey,
+  focusMessageId = null,
+  hasNewerMessages = false,
+  loadingNewer = false,
+  onLoadNewer,
+  onJumpToLatest,
+  onOpenAround,
 }: ConversationPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const dividerRef = useRef<HTMLDivElement>(null);
@@ -278,11 +332,33 @@ export function ConversationPanel({
   const scroll = useConversationScroll({
     scrollRef,
     messages,
-    conversationId,
+    conversationId: conversationId === null ? null : (viewKey ?? conversationId),
     dividerRef,
     canLoadOlder: hasOlderMessages && !loadingOlder,
     onLoadOlder,
+    focusMessageId,
+    hasNewer: hasNewerMessages,
+    canLoadNewer: hasNewerMessages && !loadingNewer,
+    onLoadNewer,
   });
+
+  // Busca dentro da conversa (D-228): presa à conversa — trocar de conversa fecha.
+  const [searchOpenFor, setSearchOpenFor] = useState<string | null>(null);
+  const searchOpen = searchOpenFor !== null && searchOpenFor === conversationId;
+
+  /** Ir até a mensagem: carregada, só rola; senão, reabre em volta dela (D-230). */
+  function goToMessage(messageId: string): void {
+    if (scrollToMessage(scrollRef.current, messageId)) return;
+    // A faixa de não lidas é da abertura: voltar à ponta depois não rola até ela.
+    if (conversationId !== null) setMark({ conversationId, messageId: null, count: 0 });
+    onOpenAround?.(messageId);
+  }
+
+  /** ↓: com mais novas fora da tela, volta para a ponta; senão, desce. */
+  function jumpToLatest(behavior?: ScrollBehavior): void {
+    if (hasNewerMessages && onJumpToLatest) onJumpToLatest();
+    else scroll.jumpToBottom(behavior);
+  }
   useBottomAnchor(scrollRef, !isError && !isLoading && conversation !== null);
 
   // Respondendo a (CRMLAB-66): presa à conversa — trocar de conversa esquece.
@@ -291,7 +367,29 @@ export function ConversationPanel({
   const quotedId = replyTo?.id;
   const clearReply = (): void => setReply(null);
 
+  // Presença (D-226/D-227): assina ao abrir; "digitando…" com ritmo próprio.
+  const presence = usePatientPresence(conversationId);
+  const canSignalPresence = conversation?.status === 'active' && onPresence !== undefined;
+  const lastComposingRef = useRef(0);
+  useEffect(() => {
+    lastComposingRef.current = 0;
+    if (conversationId !== null && canSignalPresence) onPresence?.('paused');
+    // Só ao TROCAR de conversa — `onPresence` muda de identidade a cada render,
+    // por isso fica fora da lista de dependências.
+  }, [conversationId, canSignalPresence]);
+  function handleTyping(): void {
+    if (!canSignalPresence) return;
+    const now = Date.now();
+    if (now - lastComposingRef.current < COMPOSING_INTERVAL_MS) return;
+    lastComposingRef.current = now;
+    onPresence?.('composing');
+  }
+
   const bubbleActions: BubbleActions = {
+    onRetry:
+      onRetryMessage && conversation?.status === 'active'
+        ? (message) => onRetryMessage(message.id)
+        : undefined,
     onReply:
       conversation?.status === 'active' && conversationId !== null
         ? (message) => setReply({ conversationId, message })
@@ -305,11 +403,79 @@ export function ConversationPanel({
     },
   };
 
+  // Prévia de anexos (CRMLAB-69, D-232): presa à conversa em que abriu —
+  // trocar de conversa descarta (e a prévia desmonta, revogando os object URLs).
+  const [preview, setPreview] = useState<{ conversationId: string; items: AttachmentDraft[] } | null>(
+    null,
+  );
+  const drafts = preview && preview.conversationId === conversationId ? preview.items : null;
+  const closePreview = (): void => setPreview(null);
+
+  function openPreview(files: File[]): void {
+    if (conversationId === null || files.length === 0) return;
+    const added = files.map(createAttachmentDraft);
+    setPreview((current) => ({
+      conversationId,
+      items: current && current.conversationId === conversationId ? [...current.items, ...added] : added,
+    }));
+  }
+
+  function updateDrafts(update: (items: AttachmentDraft[]) => AttachmentDraft[]): void {
+    setPreview((current) => (current ? { ...current, items: update(current.items) } : current));
+  }
+
+  function sendPreview(): void {
+    const valid = (drafts ?? []).filter((item) => item.error === null);
+    if (valid.length === 0) return;
+    beforeReply();
+    onSendAttachments(
+      valid.map((item) => ({ file: item.file, caption: item.caption.trim() })),
+      quotedId,
+    );
+    clearReply();
+    closePreview();
+  }
+
+  // Arrastar arquivo (D-232): contador porque cada filho dispara enter/leave.
+  const dragDepth = useRef(0);
+  const [dragging, setDragging] = useState(false);
+  const acceptsFiles = conversation?.status === 'active';
+
+  function handleDragEnter(event: DragEvent<HTMLDivElement>): void {
+    if (!acceptsFiles || !dragHasFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    dragDepth.current += 1;
+    setDragging(true);
+  }
+
+  function handleDragOver(event: DragEvent<HTMLDivElement>): void {
+    if (!acceptsFiles || !dragHasFiles(event.dataTransfer)) return;
+    // Sem `preventDefault` no dragover o navegador não deixa soltar (abre o arquivo).
+    event.preventDefault();
+  }
+
+  function handleDragLeave(event: DragEvent<HTMLDivElement>): void {
+    if (!dragging) return;
+    event.preventDefault();
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragging(false);
+  }
+
+  function handleDrop(event: DragEvent<HTMLDivElement>): void {
+    dragDepth.current = 0;
+    setDragging(false);
+    if (!acceptsFiles) return;
+    const files = filesFromDataTransfer(event.dataTransfer);
+    if (files.length === 0) return;
+    event.preventDefault();
+    openPreview(files);
+  }
+
   /** A atendente respondeu: a faixa sai e a resposta aparece no fim (D-239). */
   function beforeReply(): void {
     if (conversationId !== null) setMark({ conversationId, messageId: null, count: 0 });
     scroll.stickOnNextMessage();
-    scroll.jumpToBottom('auto');
+    jumpToLatest('auto');
   }
 
   if (isError) {
@@ -350,6 +516,7 @@ export function ConversationPanel({
   }
 
   const closed = conversation.status !== 'active';
+  const presenceText = presenceLabel(presence, new Date());
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-bg">
@@ -358,12 +525,47 @@ export function ConversationPanel({
           <span className="truncate font-body text-label font-semibold text-text">
             {conversation.patientName ?? conversation.patientPhone}
           </span>
-          <span className="truncate font-body text-caption text-neutral-600">
-            {conversation.patientPhone}
+          {/* Presença do paciente no lugar do telefone enquanto houver (D-226). */}
+          <span
+            data-testid="patient-presence"
+            aria-live="polite"
+            className={cn(
+              'truncate font-body text-caption',
+              presenceText && presence?.presence !== 'offline' ? 'text-accent2-700' : 'text-neutral-600',
+            )}
+          >
+            {presenceText ?? conversation.patientPhone}
           </span>
         </div>
 
         <div className="flex flex-[0_0_auto] items-center gap-sm">
+          {onOpenAround && (
+            <button
+              type="button"
+              onClick={() => setSearchOpenFor(searchOpen ? null : conversation.id)}
+              aria-label="Buscar nesta conversa"
+              aria-pressed={searchOpen}
+              title="Buscar nesta conversa"
+              className={cn(
+                'flex h-[28px] w-[28px] flex-[0_0_28px] cursor-pointer items-center justify-center',
+                'rounded-pill border-none bg-transparent text-neutral-700 hover:bg-neutral-200',
+              )}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <circle cx="7" cy="7" r="4.5" />
+                <path d="M10.5 10.5 L14 14" strokeLinecap="round" />
+              </svg>
+            </button>
+          )}
           <TransferMenu
             assignees={assignees}
             assignedTo={conversation.assignedTo}
@@ -412,110 +614,149 @@ export function ConversationPanel({
         </div>
       </header>
 
-      <div className="relative flex min-h-0 flex-1 flex-col">
-        <div
-          ref={scrollRef}
-          data-testid="message-scroll"
-          onScroll={scroll.onScroll}
-          className="relative flex min-h-0 flex-1 flex-col gap-sm overflow-y-auto bg-chat-bg px-lg py-lg [overflow-anchor:none]"
-        >
-          {messages.length === 0 ? (
-            <EmptyState
-              message="Nenhuma mensagem ainda"
-              hint="Escreva a primeira mensagem para começar o atendimento."
-            />
-          ) : (
-            renderRows(messages, unread, dividerRef, bubbleActions)
+      {searchOpen && (
+        <ConversationSearch
+          conversationId={conversation.id}
+          onGoTo={goToMessage}
+          onClose={() => setSearchOpenFor(null)}
+        />
+      )}
+
+      <div
+        data-testid="conversation-drop-area"
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className="relative flex min-h-0 flex-1 flex-col"
+      >
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <div
+            ref={scrollRef}
+            data-testid="message-scroll"
+            onScroll={scroll.onScroll}
+            className="relative flex min-h-0 flex-1 flex-col gap-sm overflow-y-auto bg-chat-bg px-lg py-lg [overflow-anchor:none]"
+          >
+            {messages.length === 0 ? (
+              <EmptyState
+                message="Nenhuma mensagem ainda"
+                hint="Escreva a primeira mensagem para começar o atendimento."
+              />
+            ) : (
+              renderRows(messages, unread, dividerRef, bubbleActions)
+            )}
+          </div>
+
+          {/* Fora da área rolável: dentro dela, o indicador empurraria as mensagens
+              e a tela pularia justamente enquanto o histórico carrega (D-238). */}
+          {loadingOlder && (
+            <p
+              role="status"
+              className="pointer-events-none absolute left-0 right-0 top-sm m-0 flex justify-center"
+            >
+              <span className="rounded-pill bg-surface px-md py-xs font-body text-caption text-neutral-600 shadow-sm">
+                Carregando mensagens anteriores…
+              </span>
+            </p>
+          )}
+
+          {(scroll.showJumpButton || hasNewerMessages) && (
+            <button
+              type="button"
+              onClick={() => jumpToLatest()}
+              aria-label={
+                scroll.newCount > 0
+                  ? `Ir para a última mensagem (${scroll.newCount} ${scroll.newCount === 1 ? 'nova' : 'novas'})`
+                  : 'Ir para a última mensagem'
+              }
+              className={cn(
+                'absolute bottom-md right-lg flex h-[40px] w-[40px] cursor-pointer items-center justify-center',
+                'rounded-pill border border-neutral-200 bg-surface font-body text-label text-neutral-700 shadow-md',
+                'hover:bg-neutral-100',
+              )}
+            >
+              ↓
+              {scroll.newCount > 0 && (
+                <span className="absolute -right-xs -top-xs">
+                  <Badge count={scroll.newCount} />
+                </span>
+              )}
+            </button>
           )}
         </div>
 
-        {/* Fora da área rolável: dentro dela, o indicador empurraria as mensagens
-            e a tela pularia justamente enquanto o histórico carrega (D-238). */}
-        {loadingOlder && (
-          <p
-            role="status"
-            className="pointer-events-none absolute left-0 right-0 top-sm m-0 flex justify-center"
+        {/* Um Composer POR conversa (D-181): trocar de conversa cancela a gravação
+            e solta o microfone — o recado feito para um paciente não vai para outro. */}
+        <Composer
+          key={conversation.id}
+          onSend={(content) => {
+            beforeReply();
+            const result = onSend(content, quotedId);
+            clearReply();
+            return result;
+          }}
+          onPickFiles={openPreview}
+          onAttachClick={beforeReply}
+          onSendAudio={
+            onSendAudio
+              ? async (audio) => {
+                  beforeReply();
+                  const sent = await onSendAudio(audio, quotedId);
+                  clearReply();
+                  return sent;
+                }
+              : undefined
+          }
+          replyTo={
+            replyTo
+              ? {
+                  authorName:
+                    replyTo.senderType === 'patient'
+                      ? (replyTo.senderName ?? conversation.patientName ?? 'Paciente')
+                      : (replyTo.senderName ?? 'Você'),
+                  preview: quotedLabel({
+                    id: replyTo.id,
+                    senderType: replyTo.senderType,
+                    senderName: replyTo.senderName,
+                    preview: replyTo.content.slice(0, QUOTED_PREVIEW_MAX),
+                    messageType: replyTo.messageType,
+                    deleted: false,
+                  }),
+                }
+              : null
+          }
+          onCancelReply={clearReply}
+          onTyping={handleTyping}
+          sending={sending}
+          disabled={closed}
+          quickReplies={quickReplies}
+          initialValue={draftMessage}
+        />
+
+        {dragging && !drafts && (
+          <div
+            data-testid="drop-zone"
+            className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-bg p-lg"
           >
-            <span className="rounded-pill bg-surface px-md py-xs font-body text-caption text-neutral-600 shadow-sm">
-              Carregando mensagens anteriores…
+            <span className="flex h-full w-full items-center justify-center rounded-md border-2 border-dashed border-accent font-body text-label font-semibold text-accent-800">
+              Solte o arquivo aqui
             </span>
-          </p>
+          </div>
         )}
 
-        {scroll.showJumpButton && (
-          <button
-            type="button"
-            onClick={() => scroll.jumpToBottom()}
-            aria-label={
-              scroll.newCount > 0
-                ? `Ir para a última mensagem (${scroll.newCount} ${scroll.newCount === 1 ? 'nova' : 'novas'})`
-                : 'Ir para a última mensagem'
+        {drafts && (
+          <AttachmentPreview
+            items={drafts}
+            onCaptionChange={(id, caption) =>
+              updateDrafts((items) => items.map((item) => (item.id === id ? { ...item, caption } : item)))
             }
-            className={cn(
-              'absolute bottom-md right-lg flex h-[40px] w-[40px] cursor-pointer items-center justify-center',
-              'rounded-pill border border-neutral-200 bg-surface font-body text-label text-neutral-700 shadow-md',
-              'hover:bg-neutral-100',
-            )}
-          >
-            ↓
-            {scroll.newCount > 0 && (
-              <span className="absolute -right-xs -top-xs">
-                <Badge count={scroll.newCount} />
-              </span>
-            )}
-          </button>
+            onRemove={(id) => updateDrafts((items) => items.filter((item) => item.id !== id))}
+            onAdd={openPreview}
+            onSend={sendPreview}
+            onClose={closePreview}
+          />
         )}
       </div>
-
-      {/* Um Composer POR conversa (D-181): trocar de conversa cancela a gravação
-          e solta o microfone — o recado feito para um paciente não vai para outro. */}
-      <Composer
-        key={conversation.id}
-        onSend={(content) => {
-          beforeReply();
-          const result = onSend(content, quotedId);
-          clearReply();
-          return result;
-        }}
-        onAttach={() => {
-          beforeReply();
-          onAttach(quotedId);
-          clearReply();
-        }}
-        onSendAudio={
-          onSendAudio
-            ? async (audio) => {
-                beforeReply();
-                const sent = await onSendAudio(audio, quotedId);
-                clearReply();
-                return sent;
-              }
-            : undefined
-        }
-        replyTo={
-          replyTo
-            ? {
-                authorName:
-                  replyTo.senderType === 'patient'
-                    ? (replyTo.senderName ?? conversation.patientName ?? 'Paciente')
-                    : (replyTo.senderName ?? 'Você'),
-                preview: quotedLabel({
-                  id: replyTo.id,
-                  senderType: replyTo.senderType,
-                  senderName: replyTo.senderName,
-                  preview: replyTo.content.slice(0, QUOTED_PREVIEW_MAX),
-                  messageType: replyTo.messageType,
-                  deleted: false,
-                }),
-              }
-            : null
-        }
-        onCancelReply={clearReply}
-        sending={sending}
-        disabled={closed}
-        quickReplies={quickReplies}
-        initialValue={draftMessage}
-      />
     </div>
   );
 }
@@ -525,7 +766,7 @@ export function ConversationPanel({
  * Cada bolha vai numa linha com `data-anchor-id` — é nela que a rolagem se
  * ancora (D-238). O `data-message-id` do balão é do `MessageBubble`.
  */
-type BubbleActions = Pick<MessageBubbleProps, 'onReply' | 'onReact' | 'onQuoteClick'>;
+type BubbleActions = Pick<MessageBubbleProps, 'onReply' | 'onReact' | 'onQuoteClick' | 'onRetry'>;
 
 function renderRows(
   messages: Message[],

@@ -15,3 +15,6 @@ export type { MessageAlertsState } from './message-alerts.store';
 
 export { useSidebarGroupsStore } from './sidebar-groups.store';
 export type { SidebarGroupsState } from './sidebar-groups.store';
+
+export { usePresenceStore, presenceFor, PRESENCE_TTL_MS } from './presence.store';
+export type { PresenceState, PresenceEntry } from './presence.store';

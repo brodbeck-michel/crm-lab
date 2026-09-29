@@ -125,7 +125,9 @@ describe('EvolutionClient', () => {
       // CRMLAB-66: reacao e reaplicacao do webhook.
       if (
         req.method === 'POST' &&
-        (req.url === '/message/sendReaction/tenant-abc' || req.url === '/webhook/set/tenant-abc')
+        (req.url === '/message/sendReaction/tenant-abc' ||
+          req.url === '/webhook/set/tenant-abc' ||
+          req.url === '/chat/sendPresence/tenant-abc')
       ) {
         res.writeHead(201, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ key: { id: 'EVOREACT' } }));
@@ -166,12 +168,15 @@ describe('EvolutionClient', () => {
     expect(webhook.headers).toEqual({ 'x-evolution-webhook-token': 'segredo' });
     // `QRCODE_UPDATED` e o que permite servir o QR pelo cache em vez de chamar
     // `/instance/connect` a cada polling — ver `getWhatsAppQr`.
-    // A lista e UMA constante (D-223); editar/apagar entraram no CRMLAB-66.
+    // A lista e UMA constante (D-223); editar/apagar entraram no CRMLAB-66,
+    // ack e presenca no CRMLAB-67 (D-225/D-226).
     expect(webhook.events).toEqual([...EVOLUTION_WEBHOOK_EVENTS]);
     expect(webhook.events).toEqual([
       'MESSAGES_UPSERT',
       'MESSAGES_EDITED',
       'MESSAGES_DELETE',
+      'MESSAGES_UPDATE',
+      'PRESENCE_UPDATE',
       'CONNECTION_UPDATE',
       'QRCODE_UPDATED',
     ]);
@@ -285,6 +290,50 @@ describe('EvolutionClient', () => {
     expect(lastApikeyHeader).toBe('apikey-da-instancia');
   });
 
+  // --- CRMLAB-69 (D-231) -------------------------------------------------
+  it('sendMedia com legenda manda `caption` no corpo; sem legenda não manda', async () => {
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    await client.sendMedia(
+      'tenant-abc',
+      '5511987654321',
+      { base64: 'cGRm', mimeType: 'application/pdf', fileName: 'pedido.pdf', caption: 'Seu pedido' },
+      'apikey-da-instancia',
+    );
+    expect(lastBody).toMatchObject({ mediatype: 'document', caption: 'Seu pedido' });
+
+    await client.sendMedia(
+      'tenant-abc',
+      '5511987654321',
+      { base64: 'aW1n', mimeType: 'image/jpeg', fileName: 'foto.jpg', caption: null },
+      'apikey-da-instancia',
+    );
+    expect(lastBody).not.toHaveProperty('caption');
+  });
+
+  it('sendMedia de vídeo sai como `video`, não como documento', async () => {
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    await client.sendMedia(
+      'tenant-abc',
+      '5511987654321',
+      { base64: 'dmlk', mimeType: 'video/mp4', fileName: 'exame.mp4', caption: 'Olha' },
+      'apikey-da-instancia',
+    );
+    expect(lastUrl).toBe('/message/sendMedia/tenant-abc');
+    expect(lastBody).toMatchObject({ mediatype: 'video', mimetype: 'video/mp4', caption: 'Olha' });
+  });
+
+  it('sendMedia de áudio nunca manda legenda (WhatsApp não tem)', async () => {
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    await client.sendMedia(
+      'tenant-abc',
+      '5511987654321',
+      { base64: 'YXVkaW8=', mimeType: 'audio/webm', fileName: 'recado.webm', caption: 'não vai' },
+      'apikey-da-instancia',
+    );
+    expect(lastUrl).toBe('/message/sendWhatsAppAudio/tenant-abc');
+    expect(lastBody).toEqual({ number: '5511987654321', audio: 'YXVkaW8=' });
+  });
+
   // --- CRMLAB-66 (D-221/D-222/D-223) -------------------------------------
   it('sendText com citacao manda `quoted` no formato do Evolution v2', async () => {
     const client = createEvolutionClient(baseUrl, 'admin-key');
@@ -339,6 +388,14 @@ describe('EvolutionClient', () => {
       key: { id: '3EB0ALVO', remoteJid: '5511987654321@s.whatsapp.net', fromMe: false },
       reaction: '👍',
     });
+    expect(lastApikeyHeader).toBe('apikey-da-instancia');
+  });
+
+  it('sendPresence vai por /chat/sendPresence com number, presence, delay e a apikey da instancia (D-226)', async () => {
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    await client.sendPresence('tenant-abc', '5511987654321', 'composing', 4000, 'apikey-da-instancia');
+    expect(lastUrl).toBe('/chat/sendPresence/tenant-abc');
+    expect(lastBody).toEqual({ number: '5511987654321', presence: 'composing', delay: 4000 });
     expect(lastApikeyHeader).toBe('apikey-da-instancia');
   });
 

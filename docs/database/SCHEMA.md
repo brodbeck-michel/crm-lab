@@ -316,6 +316,24 @@ CREATE INDEX idx_messages_quoted_message_id ON messages(quoted_message_id);
 - A citação é resolvida **na leitura**: `quoted_message_id` quando a original já estava no
   CRM, senão `(tenant_id, external_message_id) = quoted_external_id` na mesma conversa (D-221).
 
+**Busca pelo conteúdo — migração 043 (CRMLAB-68, D-228):**
+
+```sql
+-- Sem extensão: translate() das letras acentuadas. IMMUTABLE para poder entrar em índice.
+CREATE FUNCTION crm_unaccent(text) RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT
+  AS $$ SELECT translate($1, 'áàâãäéèêëíìîïóòôõöúùûüçñÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇÑ',
+                             'aaaaaeeeeiiiiooooouuuucnAAAAAEEEEIIIIOOOOOUUUUCN') $$;
+
+CREATE INDEX idx_messages_content_search
+  ON messages USING GIN (to_tsvector('portuguese', crm_unaccent(content)))
+  WHERE deleted_at IS NULL;
+```
+
+- **Parcial:** mensagem apagada (D-220) nunca pode ser achada, então nem entra no índice. A
+  consulta repete a expressão **e** o `WHERE deleted_at IS NULL` literalmente — expressão ou
+  predicado diferente = índice não usado.
+- Sem coluna nova e sem backfill: o índice é construído sobre as linhas que já existem.
+
 ### 5. `proposals`
 Orçamentos/Propostas.
 
@@ -2046,6 +2064,11 @@ CREATE INDEX idx_proposals_conversation_id ON proposals(conversation_id); -- já
 -- Search (busca por nome de paciente)
 CREATE INDEX idx_conversations_patient_name
   ON conversations USING GIN (to_tsvector('portuguese', COALESCE(patient_name, '')));
+
+-- Search (busca pelo conteúdo das mensagens — migração 043, D-228)
+CREATE INDEX idx_messages_content_search
+  ON messages USING GIN (to_tsvector('portuguese', crm_unaccent(content)))
+  WHERE deleted_at IS NULL;
 ```
 
 `patient_name` é nullable; o `COALESCE` mantém a expressão indexável para toda linha (e a query de
@@ -2105,7 +2128,8 @@ migrations/
 ├── 028_bitlab_origin.sql         # proposals.origin, conversa/autor nulláveis só na origem bitlab (CRMLAB-57, D-195/D-196)
 ├── 030_funnel_timer.sql          # proposal_status_history.automation + stale_alerted_at — motor de tempo (CRMLAB-59, D-207/D-208)
 ├── 031_reengagement.sql          # messages.automation + conversation_reengagements + tenant_holidays (CRMLAB-62, D-211/D-213)
-└── 040_message_quote_reactions_edits.sql # citação/edição/apagamento em messages + message_reactions + message_edits (CRMLAB-66, D-220..D-222)
+├── 040_message_quote_reactions_edits.sql # citação/edição/apagamento em messages + message_reactions + message_edits (CRMLAB-66, D-220..D-222)
+└── 043_message_search.sql        # crm_unaccent() + GIN parcial de busca em messages.content (CRMLAB-68, D-228)
 ```
 
 A 007 e a 008 são arquivos ÚNICOS (tabela + policy), diferente dos pares 003/004 e 005/006: a

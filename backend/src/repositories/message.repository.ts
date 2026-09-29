@@ -14,6 +14,7 @@
 import {
   QUOTED_PREVIEW_MAX,
   type Message,
+  type MessageSearchHit,
   type MessageReaction,
   type MessageStatus,
   type MessageType,
@@ -51,11 +52,19 @@ interface MessageRow {
 }
 
 const MESSAGE_TYPES: MessageType[] = ['text', 'image', 'audio', 'pdf', 'doc'];
-const MESSAGE_STATUSES: MessageStatus[] = ['sent', 'delivered', 'read', 'failed'];
+const MESSAGE_STATUSES: MessageStatus[] = ['pending', 'sent', 'delivered', 'read', 'failed'];
 const SENDER_TYPES: SenderType[] = ['patient', 'agent', 'system'];
 
 function toMessageType(value: string | null): MessageType {
   return MESSAGE_TYPES.includes(value as MessageType) ? (value as MessageType) : 'text';
+}
+
+/**
+ * Posicao na escada de D-225 em SQL. `failed` e desconhecido ficam em 99:
+ * nunca "sobem" para nada. Espelha `MESSAGE_STATUS_RANK` (`shared/`).
+ */
+function statusRankSql(expr: string): string {
+  return `(CASE ${expr} WHEN 'pending' THEN 0 WHEN 'sent' THEN 1 WHEN 'delivered' THEN 2 WHEN 'read' THEN 3 ELSE 99 END)`;
 }
 
 function toMessageStatus(value: string | null): MessageStatus {
@@ -272,6 +281,8 @@ export interface MessagePage {
   total: number;
   /** Ainda ha mensagens anteriores a mais antiga de `rows` (D-237). */
   hasOlder: boolean;
+  /** Ainda ha mensagens mais novas que a mais nova de `rows` (D-230). */
+  hasNewer: boolean;
 }
 
 export interface ListMessagesCriteria {
@@ -279,6 +290,59 @@ export interface ListMessagesCriteria {
   limit: number;
   /** Cursor (D-237): id da mensagem; a pagina sao as `limit` anteriores a ela. */
   before?: string;
+  /** Cursor (D-230): as `limit` imediatamente posteriores a ela. */
+  after?: string;
+  /** Cursor (D-230): a janela em volta dela. */
+  around?: string;
+}
+
+/**
+ * A expressao indexada por `idx_messages_content_search` (migracao 043, D-228).
+ * Indice por expressao so e usado quando a query repete a expressao — e, por
+ * ser parcial, tambem o predicado `m.deleted_at IS NULL`. Nao reescreva a mao.
+ */
+export const MESSAGE_SEARCH_EXPRESSION = `to_tsvector('portuguese', crm_unaccent(m.content))`;
+
+/**
+ * Termo digitado -> `tsquery` (D-228 item 3): palavras (so letras e digitos),
+ * cada uma por prefixo (`:*`), todas obrigatorias (`&`). Nenhum caractere de
+ * sintaxe do `to_tsquery` sobrevive. `null` = nada buscavel.
+ */
+export function toSearchTsQuery(term: string): string | null {
+  const words = term
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((word) => word.length > 0)
+    .slice(0, 12);
+  return words.length > 0 ? words.map((word) => `${word}:*`).join(' & ') : null;
+}
+
+export interface MessageSearchCriteria {
+  /** Saida de `toSearchTsQuery`. */
+  tsQuery: string;
+  /** `null` = todas as conversas (gestor/admin); id = as do atendente + a fila livre. */
+  visibleTo: string | null;
+  /** So esta conversa (busca dentro da conversa). */
+  conversationId?: string;
+  page: number;
+  limit: number;
+}
+
+export interface MessageSearchPage {
+  rows: MessageSearchHit[];
+  total: number;
+}
+
+interface SearchRow {
+  id: string;
+  conversation_id: string;
+  patient_name: string | null;
+  patient_phone: string;
+  sender_type: string;
+  sender_name: string | null;
+  message_type: string | null;
+  content: string;
+  created_at: Date | string;
 }
 
 export class MessageRepository {
@@ -309,24 +373,63 @@ export class MessageRepository {
       );
       const total = toNumber(counted.rows[0]?.total, 0);
 
-      let paged: { rows: MessageRow[] };
-      if (criteria.before !== undefined) {
+      const cursorId = criteria.before ?? criteria.after ?? criteria.around;
+      if (cursorId !== undefined) {
         const cursor = await tx.query<{ id: string }>(
           'SELECT id FROM messages WHERE id = $1 AND conversation_id = $2',
-          [criteria.before, conversationId],
+          [cursorId, conversationId],
         );
         if (cursor.rows.length === 0) return null;
+      }
 
-        paged = await tx.query<MessageRow>(
+      // O par `(created_at, id)` do cursor e lido NO BANCO pelo id (D-237).
+      const cursorPair = `(SELECT b.created_at, b.id FROM messages b WHERE b.id = $2)`;
+      const older = (limit: number, inclusive: boolean) =>
+        tx.query<MessageRow>(
           `SELECT ${COLUMNS} ${FROM}
-           WHERE m.conversation_id = $1
-             AND (m.created_at, m.id) < (
-               SELECT b.created_at, b.id FROM messages b WHERE b.id = $2
-             )
+           WHERE m.conversation_id = $1 AND (m.created_at, m.id) ${inclusive ? '<=' : '<'} ${cursorPair}
            ORDER BY m.created_at DESC, m.id DESC
            LIMIT $3`,
-          [conversationId, criteria.before, criteria.limit + 1],
+          [conversationId, cursorId, limit + 1],
         );
+      const newer = (limit: number) =>
+        tx.query<MessageRow>(
+          `SELECT ${COLUMNS} ${FROM}
+           WHERE m.conversation_id = $1 AND (m.created_at, m.id) > ${cursorPair}
+           ORDER BY m.created_at ASC, m.id ASC
+           LIMIT $3`,
+          [conversationId, cursorId, limit + 1],
+        );
+
+      if (criteria.after !== undefined) {
+        const found = await newer(criteria.limit);
+        const rows = found.rows.slice(0, criteria.limit).map(toMessage);
+        // A propria mensagem-cursor e mais antiga que a pagina.
+        return { rows, total, hasOlder: true, hasNewer: found.rows.length > criteria.limit };
+      }
+
+      if (criteria.around !== undefined) {
+        // Ate metade mais novas; o resto (ela inclusa) com as anteriores (D-230 item 1).
+        const newerLimit = Math.floor(criteria.limit / 2);
+        const after = await newer(newerLimit);
+        const newerRows = after.rows.slice(0, newerLimit);
+        const olderLimit = criteria.limit - newerRows.length;
+        const before = await older(olderLimit, true);
+        const olderRows = before.rows.slice(0, olderLimit).reverse();
+        return {
+          rows: [...olderRows, ...newerRows].map(toMessage),
+          total,
+          hasOlder: before.rows.length > olderLimit,
+          hasNewer: after.rows.length > newerLimit,
+        };
+      }
+
+      let paged: { rows: MessageRow[] };
+      let hasNewer: boolean;
+      if (criteria.before !== undefined) {
+        paged = await older(criteria.limit, false);
+        // A propria mensagem-cursor e mais nova que a pagina.
+        hasNewer = true;
       } else {
         const offset = (criteria.page - 1) * criteria.limit;
         paged = await tx.query<MessageRow>(
@@ -336,11 +439,69 @@ export class MessageRepository {
            LIMIT $2 OFFSET $3`,
           [conversationId, criteria.limit + 1, offset],
         );
+        hasNewer = offset > 0 && total > 0;
       }
 
       const hasOlder = paged.rows.length > criteria.limit;
       const rows = paged.rows.slice(0, criteria.limit).map(toMessage).reverse();
-      return { rows, total, hasOlder };
+      return { rows, total, hasOlder, hasNewer };
+    });
+  }
+
+  /**
+   * Busca pelo conteudo (D-228). Nunca devolve apagada (o predicado do indice
+   * parcial), evento de sistema, nem conversa fora do recorte do atendente —
+   * o MESMO recorte da fila (`ConversationRepository.list`). O RLS recorta o
+   * tenant. Mais nova primeiro.
+   */
+  async search(tenantId: string, criteria: MessageSearchCriteria): Promise<MessageSearchPage> {
+    const params: unknown[] = [criteria.tsQuery];
+    const where = [
+      'm.deleted_at IS NULL',
+      `${MESSAGE_SEARCH_EXPRESSION} @@ to_tsquery('portuguese', crm_unaccent($1::text))`,
+      "m.sender_type <> 'system'",
+    ];
+    if (criteria.visibleTo !== null) {
+      params.push(criteria.visibleTo);
+      where.push(`(c.assigned_to = $${params.length} OR c.assigned_to IS NULL)`);
+    }
+    if (criteria.conversationId !== undefined) {
+      params.push(criteria.conversationId);
+      where.push(`m.conversation_id = $${params.length}`);
+    }
+    const from = `FROM messages m
+       JOIN conversations c ON c.id = m.conversation_id
+       LEFT JOIN users u ON u.id = m.sender_id
+       WHERE ${where.join(' AND ')}`;
+
+    return this.db.withTenant(tenantId, async (tx) => {
+      const counted = await tx.query<{ total: number | string }>(
+        `SELECT COUNT(*)::int AS total ${from}`,
+        params,
+      );
+      const offset = (criteria.page - 1) * criteria.limit;
+      const found = await tx.query<SearchRow>(
+        `SELECT m.id, m.conversation_id, c.patient_name, c.patient_phone, m.sender_type,
+                ${senderNameSql('m', 'u')} AS sender_name, m.message_type, m.content, m.created_at
+         ${from}
+         ORDER BY m.created_at DESC, m.id DESC
+         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        [...params, criteria.limit, offset],
+      );
+      return {
+        total: toNumber(counted.rows[0]?.total, 0),
+        rows: found.rows.map((row) => ({
+          messageId: row.id,
+          conversationId: row.conversation_id,
+          patientName: row.patient_name,
+          patientPhone: row.patient_phone,
+          senderType: toSenderType(row.sender_type),
+          senderName: row.sender_name,
+          messageType: toMessageType(row.message_type),
+          content: row.content,
+          createdAt: toIso(row.created_at),
+        })),
+      };
     });
   }
 
@@ -471,7 +632,7 @@ export class MessageRepository {
 
   /**
    * Envio do CRM EM VOO nesta conversa (D-173): mensagem de atendente, com
-   * autor, ainda `sent` e sem id externo — gravada antes do envio e esperando
+   * autor, ainda `pending` (D-225; `sent` cobre linha anterior) e sem id externo — gravada antes do envio e esperando
    * o gateway responder. E o que diz ao webhook `fromMe` que um `key.id`
    * desconhecido pode ser o eco de um envio que ainda nao gravou o id.
    *
@@ -486,7 +647,7 @@ export class MessageRepository {
          WHERE conversation_id = $1
            AND sender_type = 'agent'
            AND (sender_id IS NOT NULL OR automation IS NOT NULL)
-           AND status = 'sent'
+           AND status IN ('pending', 'sent')
            AND external_message_id IS NULL
            AND created_at > NOW() - INTERVAL '60 seconds'
          LIMIT 1`,
@@ -498,7 +659,11 @@ export class MessageRepository {
 
   /**
    * Status vindo do callback do canal, que so conhece o id externo.
-   * `null` quando o id externo nao pertence a este tenant.
+   * `null` quando o id externo nao pertence a este tenant OU quando o status
+   * nao sobe (D-225): a escada `pending < sent < delivered < read` so anda para
+   * frente, `failed` so entra a partir de `pending`/`sent`, e de `failed` nada
+   * sai por aqui. A guarda mora no `WHERE` para valer sob reentrega concorrente
+   * — mesma regra de `canAdvanceMessageStatus` (`shared/`).
    */
   async setStatusByExternalId(
     tenantId: string,
@@ -511,6 +676,10 @@ export class MessageRepository {
          SET status = $1::text,
              read_at = CASE WHEN $1::text = 'read' THEN COALESCE(read_at, NOW()) ELSE read_at END
          WHERE external_message_id = $2
+           AND CASE
+                 WHEN $1::text = 'failed' THEN status IN ('pending', 'sent')
+                 ELSE ${statusRankSql('$1::text')} > ${statusRankSql('status')}
+               END
          RETURNING id`,
         [status, externalMessageId],
       );

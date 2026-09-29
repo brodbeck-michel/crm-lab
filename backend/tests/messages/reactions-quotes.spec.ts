@@ -111,6 +111,22 @@ describe('responder citando (D-221)', () => {
     expect(driver.sent.at(-1)?.quotedExternalId).toBe('WA-PAC-1');
   });
 
+  it('anexo com legenda leva a legenda ao canal e ao content (CRMLAB-69, D-231)', async () => {
+    const { ana, conversation } = await scenario();
+    const response = await app.agent
+      .post(`/api/v1/conversations/${conversation.id}/attachments`)
+      .set(app.auth(ana))
+      .send({
+        fileName: 'preparo.pdf',
+        mimeType: 'application/pdf',
+        contentBase64: Buffer.from('%PDF-1.4 teste').toString('base64'),
+        caption: 'Preparo do exame',
+      })
+      .expect(201);
+    expect((response.body as Message).content).toBe('Preparo do exame');
+    expect(driver.sent.at(-1)).toMatchObject({ content: '[mídia] preparo.pdf', caption: 'Preparo do exame' });
+  });
+
   it('citada de OUTRA conversa, de outro tenant, inexistente ou apagada -> NOT_FOUND e nada gravado', async () => {
     const { tenant, ana, conversation } = await scenario();
     const otherConversation = await createConversation({ tenantId: tenant.id, assignedTo: ana.id });

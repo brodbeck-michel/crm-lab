@@ -116,7 +116,19 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 - Chip **"Encerradas"** (CRMLAB-48, D-174), sem número: lista `?status=closed` (o atendente vê só
   as dele, pelo recorte do servidor). Ligado, os números de "Minhas"/"Não atribuídas" continuam os
   das **ativas** — vêm da mesma query da fila, que segue rodando. Clicar de novo volta à fila
+- **Sem chip "Não lidas"** (CRMLAB-68, D-229 item 5): o Michel preferiu só Minhas / Não
+  atribuídas / Encerradas — o número de não lidas no item e no título da aba já avisam. A API
+  mantém `?unread=true` e `counts.unread`
 - Busca (pílula): paciente, telefone ou exame
+- **Busca nas mensagens (CRMLAB-68, D-228):** com 2+ caracteres a coluna também consulta
+  `GET /conversations/search/messages?q=&limit=20` e mostra o bloco **"Mensagens"** (entre a fila
+  e "Pacientes"): nome do paciente, data e o trecho com o termo em destaque (sem acento e sem
+  caixa). Clicar abre a conversa **rolada até a mensagem**, com destaque, carregando a janela em
+  volta dela (`around`, D-230) — mesmo que seja antiga. Mensagem apagada nunca aparece
+- **Marcar como não lida (D-229):** clique direito no item ou o botão "⋯" abre o menu com
+  "Marcar como não lida" (só com `unreadCount === 0`) → `POST /conversations/:id/unread`. A
+  conversa volta com a bolinha e só zera quando for aberta de novo. Se era a conversa aberta, o
+  painel fecha
 - **A mesma busca também procura PACIENTE** (D-079): com 2+ caracteres a coluna consulta
   `GET /patients?search=&limit=5` e mostra um bloco "Pacientes" abaixo da fila; cada linha leva
   a `/patients/:id`. Sem termo digitado o bloco não existe. É o consumidor de `GET /patients`
@@ -129,7 +141,27 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 - Dados: `GET /conversations` + WS `conversation.new_message` (refetch)
 
 ### Coluna 2 — Conversa
-- Header: nome, telefone, botões [Transferir ▾] [Novo Orçamento] [Encerrar] [Contexto] [× Fechar]
+- Header: nome, telefone, botões [🔍 Buscar] [Transferir ▾] [Novo Orçamento] [Encerrar] [Contexto] [× Fechar]
+- **Presença do paciente (CRMLAB-67, D-226):** abaixo do nome, no lugar do telefone enquanto
+  houver: "digitando…", "gravando áudio…", "online" ou "visto por último hoje às 14:32" /
+  "ontem às 14:32" / "dd/mm às 14:32" (sem `lastSeenAt` — paciente esconde — mostra só o telefone).
+  Vem do WS `conversation.presence` via `usePresenceStore`; "digitando…" some sozinho em 10 s.
+  Ao abrir a conversa a tela chama `POST /conversations/:id/presence { presence: 'paused' }`
+  (assina a presença); enquanto a atendente digita, `composing` no máximo a cada 4 s (D-227)
+- **Tiques e "Tentar de novo" (D-225/D-227):** balão enviado mostra 🕓/✓/✓✓/✓✓ azul/⚠; o botão
+  chama `POST /conversations/:id/messages/:messageId/retry`. O tique muda sozinho pelo WS
+  `message.status_updated`
+- **Busca dentro da conversa (CRMLAB-68, D-228/D-230):** a lupa abre uma barra abaixo do
+  cabeçalho (`ConversationSearch`) com o campo, "N de M" e as setas ↑ (ocorrência mais antiga) e
+  ↓ (mais nova); Enter = ↑, Esc fecha. Abaixo, a lista dos resultados (data + trecho com
+  destaque). Clicar num resultado ou navegar pelas setas rola até a mensagem e acende o
+  destaque; se ela ainda não está carregada, a conversa reabre na janela em volta dela
+  (`around`). `GET /conversations/:id/messages?q=&limit=100`
+- **Janela no meio da conversa (D-230):** aberta por uma busca, a conversa mostra só a janela em
+  volta da mensagem. Perto do fim ela carrega as mais novas (`after=cursors.after`) sem descer
+  sozinha; o botão ↓ fica visível e, com mais novas ainda não carregadas, volta para o fim da
+  conversa. Enviar também volta para o fim. A faixa de não lidas não aparece quando a conversa
+  é aberta por busca
 - **[Encerrar]** (CRMLAB-48, D-174): `PATCH /conversations/:id { status: 'closed' }`. Substitui o
   antigo [Arquivar]. Habilitado só para a **dona**, gestor e admin (o backend valida de novo) e
   só em conversa `active`. Sucesso: toast "Atendimento encerrado.", limpa a seleção e invalida a
@@ -153,6 +185,19 @@ Duas leituras registradas aqui porque o doc original não as fixava:
   por cor (`--color-chat-received` / `--color-chat-sent`)
 - Composer: input pílula + anexos + **emoji** + enviar. O emoji entra na posição do cursor
   (Onda 8 §2.2), grade fixa de 48, sem dependência nova
+- **Anexos com prévia (CRMLAB-69, D-231..D-233)** — padrão WhatsApp Web:
+  - Entradas: clipe → menu **"Fotos e vídeos"** / **"Documento"** (vários arquivos), **Ctrl+V** de
+    print no campo da mensagem, e **arrastar** arquivo sobre a conversa (área "Solte o arquivo
+    aqui"). Nenhuma delas envia na hora: todas abrem a prévia (`AttachmentPreview`)
+  - A prévia cobre lista + composer **sem desmontá-los** (rolagem, faixa e rascunho ficam). Uma
+    legenda por arquivo, miniaturas com remover e +, **Enviar** e **×**. **Esc** fecha a prévia e
+    mantém "Respondendo a…". Trocar de conversa descarta a prévia
+  - Tipo fora da allow-list, acima de 15 MB ou vazio: aviso no próprio arquivo, e ele não sobe
+  - Enviar fecha a prévia e sobe **um arquivo por vez, na ordem** (`POST /conversations/:id/attachments`
+    com `caption`); falha de um vira toast com o nome do arquivo e os outros seguem. Com resposta
+    aberta, **só o primeiro** leva `quotedMessageId`. A conversa de destino é a do clique em Enviar
+  - A faixa de não lidas sai ao clicar no clipe e ao enviar (D-239)
+  - Vídeo sai para o WhatsApp como vídeo; a bolha de vídeo é do CRMLAB-70
 - **Leitura padrão WhatsApp Web (CRMLAB-71, D-238/D-239):**
   - **Separador de data** (`DateSeparator`) entre mensagens de dias diferentes, no fuso do
     navegador: "Hoje", "Ontem", dia da semana por extenso de 2 a 6 dias atrás, `dd/mm/aaaa`
@@ -170,7 +215,7 @@ Duas leituras registradas aqui porque o doc original não as fixava:
     conversa (`cursors.before: null`) nada mais é pedido. O antigo "Carregar mensagens
     anteriores" deixou de existir
 - Dados: `GET /conversations/:id` (paginado por cursor, `useInfiniteQuery`),
-  `POST /conversations/:id/messages`
+  `POST /conversations/:id/messages`, `POST /conversations/:id/attachments`
 - Ao abrir: `markAsRead`
 
 ### Aviso de mensagem nova (CRMLAB-72, D-240/D-241) — padrão WhatsApp Web
@@ -1478,6 +1523,8 @@ Constantes exportadas: `GENERIC_CREDENTIALS_ERROR`, `SYSTEM_ERROR`,
 |------|-------|-----------|
 | lista | `queryKeys.conversations(filters)` | `staleTimes.conversations` (10s) |
 | detalhe (infinita, D-238) | `[...queryKeys.conversation(id), 'messages']` | idem |
+| detalhe aberto numa mensagem (D-230) | `[...queryKeys.conversation(id), 'messages', { around }]` | idem |
+| busca nas mensagens (D-228) | `queryKeys.messageSearch({ q, conversationId? })` | idem |
 | propostas da conversa | `queryKeys.proposals({ conversationId })` | padrão |
 
 O detalhe é uma `useInfiniteQuery` (D-238): cada página é uma resposta de

@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { MessageSquarePlus } from 'lucide-react';
-import type { Conversation, PatientListItem } from '@crm-lab/shared';
+import type { Conversation, MessageSearchHit, PatientListItem } from '@crm-lab/shared';
 import { Button, Chip, SearchInput, Tooltip, cn } from '@/components/ui';
 import { EmptyState } from '@/components/shared';
 import { ConversationItem } from '@/components/conversation';
+import { MessageResults } from './MessageResults';
 import { NewConversationModal } from './NewConversationModal';
 import { PatientResults } from './PatientResults';
 
@@ -28,13 +29,14 @@ import { PatientResults } from './PatientResults';
 /**
  * Chip ligado na coluna. `mine`/`unassigned`/`all` são o `scope` de
  * `ListConversationsQuery` sobre as ATIVAS (`all` = nenhum chip ligado);
- * `closed` é a lista das encerradas (D-174), `?status=closed`.
+ * `closed` é a lista das encerradas (D-174), `?status=closed`. Sem chip
+ * "Não lidas" (D-229 item 5, retirado a pedido do Michel): a API mantém `?unread=true`.
  */
 export type ConversationScope = 'mine' | 'unassigned' | 'all' | 'closed';
 
 export interface ConversationListProps {
   conversations: Conversation[];
-  counts: { mine: number; unassigned: number } | undefined;
+  counts: { mine: number; unassigned: number; unread?: number } | undefined;
   scope: ConversationScope;
   onScopeChange: (scope: ConversationScope) => void;
   onSearch: (term: string) => void;
@@ -50,6 +52,15 @@ export interface ConversationListProps {
   patients: PatientListItem[];
   patientsLoading: boolean;
   patientsError: boolean;
+  /** Termo da busca nas mensagens (D-228); vazio = o bloco "Mensagens" não existe. */
+  messageTerm?: string;
+  messageHits?: MessageSearchHit[];
+  messagesLoading?: boolean;
+  messagesError?: boolean;
+  /** Clique num resultado: abre a conversa na mensagem (D-230). */
+  onOpenMessage?: (hit: MessageSearchHit) => void;
+  /** "Marcar como não lida" no menu do item (D-229). */
+  onMarkUnread?: (id: string) => void;
 }
 
 export function ConversationList({
@@ -68,7 +79,14 @@ export function ConversationList({
   patients,
   patientsLoading,
   patientsError,
+  messageTerm = '',
+  messageHits = [],
+  messagesLoading = false,
+  messagesError = false,
+  onOpenMessage,
+  onMarkUnread,
 }: ConversationListProps) {
+  const showMessages = messageTerm.length > 0 && onOpenMessage !== undefined;
   /** Clicar no chip ligado desliga o filtro (volta a ver tudo). */
   const toggle = (next: Exclude<ConversationScope, 'all'>) =>
     onScopeChange(scope === next ? 'all' : next);
@@ -170,7 +188,14 @@ export function ConversationList({
           />
         )}
 
-        {!isLoading && !isError && conversations.length === 0 && (
+        {/* Buscando, a falta de conversa por nome não é "vazio" se houver mensagem achada. */}
+        {!isLoading && !isError && conversations.length === 0 && showMessages && (
+          <p className="m-0 px-sm py-sm text-caption text-neutral-600">
+            Nenhuma conversa com esse nome ou telefone.
+          </p>
+        )}
+
+        {!isLoading && !isError && conversations.length === 0 && !showMessages && (
           <EmptyState
             message="Nenhuma conversa por aqui"
             hint="Ajuste os filtros ou aguarde a próxima mensagem."
@@ -186,8 +211,19 @@ export function ConversationList({
               selected={conversation.id === selectedId}
               onClick={onSelect}
               onTogglePin={onTogglePin}
+              onMarkUnread={onMarkUnread}
             />
           ))}
+
+        {showMessages && onOpenMessage && (
+          <MessageResults
+            term={messageTerm}
+            hits={messageHits}
+            isLoading={messagesLoading}
+            isError={messagesError}
+            onOpen={onOpenMessage}
+          />
+        )}
       </div>
 
       <PatientResults

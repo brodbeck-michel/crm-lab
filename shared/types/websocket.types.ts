@@ -3,9 +3,13 @@
  * Regra: evento e NOTIFICACAO, nao transporte de dados — payload carrega so IDs.
  */
 
+import type { MessageStatus, PatientPresence } from './conversation.types.js';
+
 export type WsEventName =
   | 'conversation.new_message'
   | 'conversation.message_updated'
+  | 'conversation.presence'
+  | 'message.status_updated'
   | 'proposal.created'
   | 'proposal.status_changed'
   | 'proposal.updated'
@@ -22,6 +26,18 @@ export interface WsEventPayloads {
    * Separado de `new_message` de proposito: nao e mensagem nova (sem aviso/som/badge).
    */
   'conversation.message_updated': { conversationId: string; messageId: string };
+  /**
+   * Presenca do paciente (D-226). EXCECAO declarada a regra "so ids": nada e
+   * gravado, entao nao ha o que refazer por fetch — o valor vai no payload.
+   * `lastSeenAt` so com `offline` e quando o paciente nao esconde o "visto por ultimo".
+   */
+  'conversation.presence': {
+    conversationId: string;
+    presence: PatientPresence;
+    lastSeenAt: string | null;
+  };
+  /** Tique da mensagem subiu (D-225) — o frontend invalida so `['conversation', id]`. */
+  'message.status_updated': { conversationId: string; messageId: string; status: MessageStatus };
   /** Proposta nova que o usuario nao criou pela tela — hoje so a origem `bitlab` (CRMLAB-57, D-196). */
   'proposal.created': { proposalId: string };
   'proposal.status_changed': { proposalId: string; status: string };

@@ -54,8 +54,10 @@ import type {
   CreateMessageRequest,
   Message,
   MessageStatus,
+  PatientPresence,
   MessageType,
   MessageCursors,
+  MessageSearchHit,
   PaginationMeta,
 } from '@crm-lab/shared';
 import type { ApiModuleDeps } from '../http/api-module.js';
@@ -63,11 +65,16 @@ import { BusinessError, notFound } from '../http/errors.js';
 import { logger } from '../lib/logger.js';
 import type { WsHub } from '../lib/ws-hub.js';
 import { ConversationRepository } from '../repositories/conversation.repository.js';
-import { MessageRepository, type MessageRef } from '../repositories/message.repository.js';
+import {
+  MessageRepository,
+  type MessageRef,
+  type MessageSearchCriteria,
+} from '../repositories/message.repository.js';
 import { isUniqueViolation } from '../repositories/quick-reply.repository.js';
 import { createAuditService, type AuditService } from './audit.service.js';
 import {
   createWhatsAppService,
+  type OutboundPresence,
   type QuotedRef,
   type SendOptions,
   type WhatsAppService,
@@ -89,6 +96,8 @@ export interface OutboundAttachmentInput {
   buffer: Buffer;
   /** Responder citando (CRMLAB-66, D-221). */
   quotedMessageId?: string | null;
+  /** Legenda (CRMLAB-69, D-231) — ja aparada; áudio descarta. */
+  caption?: string | null;
 }
 
 /**
@@ -105,8 +114,12 @@ export const MAX_MESSAGE_LIMIT = 100;
 export interface MessagePagination {
   page?: number;
   limit?: number;
-  /** Cursor (D-237) — excludente com `page` (o controller valida). */
+  /** Cursor (D-237) — excludente com `page`, `after` e `around` (o controller valida). */
   before?: string;
+  /** Cursor (D-230): as mais novas que a mensagem. */
+  after?: string;
+  /** Cursor (D-230): a janela em volta da mensagem. */
+  around?: string;
 }
 
 export interface ListMessagesResult {
@@ -195,16 +208,24 @@ export class MessageService {
     const exists = await this.conversations.exists(tenantId, conversationId);
     if (!exists) throw notFound({ resource: 'conversation', id: conversationId });
 
-    // Com cursor, `page` nao se aplica: volta 1 (D-237 item 5).
+    // Com cursor, `page` nao se aplica: volta 1 (D-237 item 5). Um cursor so:
+    // o controller ja recusou dois juntos (D-230 item 1).
+    const cursor = page.before ?? page.after ?? page.around;
     const criteria = {
-      page: page.before !== undefined ? DEFAULT_MESSAGE_PAGE : clampPage(page.page),
+      page: cursor !== undefined ? DEFAULT_MESSAGE_PAGE : clampPage(page.page),
       limit: clampLimit(page.limit),
-      ...(page.before !== undefined ? { before: page.before } : {}),
+      ...(page.before !== undefined
+        ? { before: page.before }
+        : page.after !== undefined
+          ? { after: page.after }
+          : page.around !== undefined
+            ? { around: page.around }
+            : {}),
     };
     const result = await this.messages.listByConversation(tenantId, conversationId, criteria);
     // Cursor de outra conversa/tenant ou inexistente: 404, nunca lista vazia —
     // a tela leria "fim do historico" (D-237 item 3).
-    if (!result) throw notFound({ resource: 'message', id: page.before });
+    if (!result) throw notFound({ resource: 'message', id: cursor });
 
     return {
       messages: result.rows,
@@ -216,7 +237,27 @@ export class MessageService {
       },
       cursors: {
         before: result.hasOlder ? (result.rows[0]?.id ?? null) : null,
-        after: null,
+        after: result.hasNewer ? (result.rows.at(-1)?.id ?? null) : null,
+      },
+    };
+  }
+
+  /**
+   * Busca pelo conteudo (D-228). O recorte por papel (`visibleTo`) chega pronto
+   * do `ConversationService`, que e quem sabe quem esta perguntando.
+   */
+  async search(
+    tenantId: string,
+    criteria: MessageSearchCriteria,
+  ): Promise<{ results: MessageSearchHit[]; pagination: PaginationMeta }> {
+    const found = await this.messages.search(tenantId, criteria);
+    return {
+      results: found.rows,
+      pagination: {
+        page: criteria.page,
+        limit: criteria.limit,
+        total: found.total,
+        totalPages: found.total === 0 ? 0 : Math.ceil(found.total / criteria.limit),
       },
     };
   }
@@ -245,7 +286,7 @@ export class MessageService {
       content: dto.content,
       messageType: dto.messageType ?? 'text',
       attachmentUrl: dto.attachmentUrl ?? null,
-      status: 'sent',
+      status: this.initialStatus(conversation.channel),
       quotedMessageId: quote?.id ?? null,
       quotedExternalId: quote?.externalMessageId ?? null,
     });
@@ -264,7 +305,7 @@ export class MessageService {
       return await this.confirmSent(tenantId, conversationId, message, externalId);
     } catch (err) {
       // Retry ja esgotado dentro do adapter (3 tentativas, backoff exponencial).
-      await this.messages.setStatus(tenantId, message.id, 'failed');
+      await this.markFailed(tenantId, conversationId, message.id);
       logger.error('whatsapp.send_failed', {
         tenantId,
         conversationId,
@@ -291,15 +332,19 @@ export class MessageService {
       throw new BusinessError('CONVERSATION_ARCHIVED', { status: conversation.status });
     }
     const quote = await this.resolveQuote(tenantId, conversationId, dto.quotedMessageId);
+    const messageType = messageTypeFromMime(dto.mimeType);
+    // D-231: áudio não tem legenda no WhatsApp — descarta, senão o CRM
+    // mostraria um texto que o paciente nunca recebeu.
+    const caption = messageType === 'audio' ? null : dto.caption || null;
 
     const message = await this.messages.insert(tenantId, {
       conversationId,
       senderType: 'agent',
       senderId,
-      content: dto.fileName,
-      messageType: messageTypeFromMime(dto.mimeType),
+      content: caption ?? dto.fileName,
+      messageType,
       attachmentUrl: dto.attachmentUrl,
-      status: 'sent',
+      status: this.initialStatus(conversation.channel),
       quotedMessageId: quote?.id ?? null,
       quotedExternalId: quote?.externalMessageId ?? null,
     });
@@ -311,12 +356,12 @@ export class MessageService {
       const { externalId } = await this.whatsapp.sendMedia(
         tenantId,
         conversation.patientPhone,
-        { buffer: dto.buffer, mimeType: dto.mimeType, fileName: dto.fileName },
+        { buffer: dto.buffer, mimeType: dto.mimeType, fileName: dto.fileName, caption },
         sendOptionsFor(quote),
       );
       return await this.confirmSent(tenantId, conversationId, message, externalId);
     } catch (err) {
-      await this.messages.setStatus(tenantId, message.id, 'failed');
+      await this.markFailed(tenantId, conversationId, message.id);
       logger.error('whatsapp.send_media_failed', {
         tenantId,
         conversationId,
@@ -483,7 +528,139 @@ export class MessageService {
       });
       this.emitNewMessage(tenantId, conversationId, message.id);
     }
+    // pending -> sent (D-225): as OUTRAS abas so sabem pelo WS.
+    this.emitStatusUpdated(tenantId, conversationId, message.id, 'sent');
     return updated ?? message;
+  }
+
+  /**
+   * Status de nascimento da mensagem do atendimento (D-225): `pending` quando
+   * vai sair por um gateway (o relogio da tela), `sent` quando nao ha gateway.
+   */
+  private initialStatus(channel: string): MessageStatus {
+    return this.whatsapp && channel === 'whatsapp' ? 'pending' : 'sent';
+  }
+
+  private async markFailed(tenantId: string, conversationId: string, messageId: string): Promise<void> {
+    await this.messages.setStatus(tenantId, messageId, 'failed');
+    this.emitStatusUpdated(tenantId, conversationId, messageId, 'failed');
+  }
+
+  /**
+   * "Tentar de novo" (D-227): reenvia a MESMA linha — `failed` -> `pending` ->
+   * `sent`/`failed`, sem mensagem nova. So mensagem do atendimento em `failed`,
+   * em conversa `active` (senao `CONFLICT`). Anexo rele a midia guardada;
+   * arquivo sumido = falha de novo (`MESSAGE_SEND_FAILED`).
+   */
+  async retryFailed(
+    tenantId: string,
+    conversationId: string,
+    messageId: string,
+    readMedia: (mediaId: string) => Promise<{ buffer: Buffer; mimeType: string; fileName: string } | null>,
+  ): Promise<Message> {
+    const conversation = await this.conversations.findById(tenantId, conversationId);
+    if (!conversation) throw notFound({ resource: 'conversation', id: conversationId });
+    const message = await this.messages.findById(tenantId, messageId);
+    if (!message || message.conversationId !== conversationId) {
+      throw notFound({ resource: 'message', id: messageId });
+    }
+    if (message.senderType !== 'agent' || message.status !== 'failed' || conversation.status !== 'active') {
+      throw new BusinessError('CONFLICT', {
+        reason: conversation.status !== 'active' ? 'conversation_closed' : 'not_retryable',
+        status: message.status,
+      });
+    }
+    if (!this.whatsapp || conversation.channel !== 'whatsapp') {
+      // Sem gateway nao ha o que reenviar: a mensagem ja esta no CRM.
+      const updated = await this.messages.setStatus(tenantId, messageId, 'sent');
+      this.emitStatusUpdated(tenantId, conversationId, messageId, 'sent');
+      return updated ?? message;
+    }
+
+    await this.messages.setStatus(tenantId, messageId, 'pending');
+    this.emitStatusUpdated(tenantId, conversationId, messageId, 'pending');
+
+    const quote = message.quotedMessageId
+      ? await this.messages.findRef(tenantId, message.quotedMessageId)
+      : null;
+    const whatsapp = this.whatsapp;
+    try {
+      const mediaId = mediaIdOf(message.attachmentUrl);
+      let externalId: string;
+      if (mediaId) {
+        const media = await readMedia(mediaId);
+        if (!media) throw new Error('midia do anexo nao encontrada para o reenvio');
+        ({ externalId } = await whatsapp.sendMedia(
+          tenantId,
+          conversation.patientPhone,
+          media,
+          sendOptionsFor(quote),
+        ));
+      } else {
+        ({ externalId } = await whatsapp.send(
+          tenantId,
+          conversation.patientPhone,
+          message.content,
+          sendOptionsFor(quote),
+        ));
+      }
+      return await this.confirmSent(tenantId, conversationId, message, externalId);
+    } catch (err) {
+      await this.markFailed(tenantId, conversationId, messageId);
+      logger.error('whatsapp.retry_failed', {
+        tenantId,
+        conversationId,
+        messageId,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+      throw new BusinessError('MESSAGE_SEND_FAILED', { messageId });
+    }
+  }
+
+  /**
+   * Presenca da atendente para o paciente (D-226/D-227). Best-effort: NAO
+   * espera o gateway (que segura a resposta pelo `delay`) e erro vira log.
+   * `NOT_FOUND` so para conversa inexistente/de outro tenant.
+   */
+  async sendAgentPresence(
+    tenantId: string,
+    conversationId: string,
+    presence: OutboundPresence,
+  ): Promise<void> {
+    const conversation = await this.conversations.findById(tenantId, conversationId);
+    if (!conversation) throw notFound({ resource: 'conversation', id: conversationId });
+    if (!this.whatsapp || conversation.channel !== 'whatsapp' || conversation.status !== 'active') return;
+    void this.whatsapp
+      .sendPresence(tenantId, conversation.patientPhone, presence)
+      .catch((err: unknown) => {
+        logger.warn('whatsapp.presence_failed', {
+          tenantId,
+          conversationId,
+          presence,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
+
+  /**
+   * Presenca do paciente vinda do webhook (D-226): acha a conversa pelo
+   * telefone SEM criar e so emite o WS — nada e gravado. `false` = telefone
+   * sem conversa neste laboratorio.
+   */
+  async emitPatientPresence(
+    tenantId: string,
+    phone: string,
+    presence: PatientPresence,
+    lastSeenAt: string | null,
+  ): Promise<boolean> {
+    const conversation = await this.conversations.findByPhone(tenantId, phone);
+    if (!conversation) return false;
+    this.wsHub.emitToTenant(tenantId, 'conversation.presence', {
+      conversationId: conversation.id,
+      presence,
+      lastSeenAt,
+    });
+    return true;
   }
 
   /**
@@ -506,7 +683,7 @@ export class MessageService {
       senderId: null,
       content,
       messageType: 'text',
-      status: 'sent',
+      status: this.initialStatus(conversation.channel),
       automation: 'reengagement',
     });
     this.emitNewMessage(tenantId, conversationId, message.id);
@@ -517,7 +694,7 @@ export class MessageService {
       const { externalId } = await this.whatsapp.send(tenantId, conversation.patientPhone, content);
       return await this.confirmSent(tenantId, conversationId, message, externalId);
     } catch (err) {
-      await this.messages.setStatus(tenantId, message.id, 'failed');
+      await this.markFailed(tenantId, conversationId, message.id);
       logger.error('whatsapp.send_failed', {
         tenantId,
         conversationId,
@@ -744,13 +921,29 @@ export class MessageService {
     return 'aplicado';
   }
 
-  /** Status vindo do callback do canal. `null` = id externo de outro tenant. */
+  /**
+   * Status vindo do callback do canal (Cloud API) ou do ack do Evolution.
+   * `null` = id externo de outro tenant OU status que nao sobe (D-225: nunca
+   * rebaixa). Mudou -> `message.status_updated`.
+   */
   async applyExternalStatus(
     tenantId: string,
     externalId: string,
     status: MessageStatus,
   ): Promise<Message | null> {
-    return this.messages.setStatusByExternalId(tenantId, externalId, status);
+    const updated = await this.messages.setStatusByExternalId(tenantId, externalId, status);
+    if (updated) this.emitStatusUpdated(tenantId, updated.conversationId, updated.id, updated.status);
+    return updated;
+  }
+
+  /** Tique mudou (D-225). O front invalida so a conversa — nao e mensagem nova. */
+  private emitStatusUpdated(
+    tenantId: string,
+    conversationId: string,
+    messageId: string,
+    status: MessageStatus,
+  ): void {
+    this.wsHub.emitToTenant(tenantId, 'message.status_updated', { conversationId, messageId, status });
   }
 
   /**
@@ -765,6 +958,12 @@ export class MessageService {
   private emitMessageUpdated(tenantId: string, conversationId: string, messageId: string): void {
     this.wsHub.emitToTenant(tenantId, 'conversation.message_updated', { conversationId, messageId });
   }
+}
+
+/** `/api/v1/media/<id>` -> `<id>`. Outra URL (ou nenhuma) = mensagem sem midia nossa. */
+function mediaIdOf(attachmentUrl: string | null): string | null {
+  const match = attachmentUrl ? /^\/api\/v1\/media\/([0-9a-f-]{36})$/i.exec(attachmentUrl) : null;
+  return match?.[1] ?? null;
 }
 
 /** Citada -> opcoes do driver. Sem id externo, sai sem citacao para o canal (D-221 item 4). */

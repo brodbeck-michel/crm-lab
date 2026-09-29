@@ -125,6 +125,9 @@ export interface EvolutionReactionTarget {
  *   mesmo desvio, o REVOKE) — ele NAO sai no upsert.
  * - `MESSAGES_DELETE`: "apagar para todos" (`messages.update` com
  *   `message: null`), `data` = a `key` achatada.
+ * - `MESSAGES_UPDATE`: ack do envio (`SERVER_ACK`/`DELIVERY_ACK`/`READ`...) — o
+ *   tique da mensagem (CRMLAB-67, D-225).
+ * - `PRESENCE_UPDATE`: "digitando…"/"online" do paciente, so WS (D-226).
  * - `QRCODE_UPDATED` entrou na auditoria de 2026-09-17. Sem ele, a unica forma
  *   de obter o QR era `GET /instance/connect`, que NAO e uma leitura: cada
  *   chamada instancia uma conexao Baileys nova (169 sockets em 3 minutos e o
@@ -135,15 +138,22 @@ export const EVOLUTION_WEBHOOK_EVENTS = [
   'MESSAGES_UPSERT',
   'MESSAGES_EDITED',
   'MESSAGES_DELETE',
+  'MESSAGES_UPDATE',
+  'PRESENCE_UPDATE',
   'CONNECTION_UPDATE',
   'QRCODE_UPDATED',
 ] as const;
+
+/** Presenca que o CRM manda ao paciente (D-226/D-227). */
+export type EvolutionOutboundPresence = 'paused' | 'composing';
 
 /** Mídia a enviar — base64 (o mesmo formato em que o gateway devolve mídia recebida). */
 export interface EvolutionMediaPayload {
   base64: string;
   mimeType: string;
   fileName: string;
+  /** Legenda (CRMLAB-69, D-231): vai em imagem/vídeo/documento; áudio não tem. */
+  caption?: string | null;
 }
 
 /**
@@ -208,12 +218,30 @@ export interface EvolutionClient {
     emoji: string,
     apikey: string,
   ): Promise<void>;
+  /**
+   * `POST /chat/sendPresence/{instance}` (D-226). O Evolution v2 nao tem
+   * `presenceSubscribe`: esta rota assina a presenca do numero antes de mandar
+   * a nossa, e SEGURA a resposta por `delayMs` (depois manda `paused`). Mesma
+   * disciplina de privilegio minimo: `apikey` da instancia.
+   */
+  sendPresence(
+    instanceName: string,
+    phone: string,
+    presence: EvolutionOutboundPresence,
+    delayMs: number,
+    apikey: string,
+  ): Promise<void>;
 }
 
-/** `image/jpeg` -> `'image'`. `audio/*` -> `'audio'`. Resto -> `'document'` (contrato do `/message/sendMedia`). */
-function evolutionMediaType(mimeType: string): 'image' | 'audio' | 'document' {
+/**
+ * `image/jpeg` -> `'image'`. `audio/*` -> `'audio'`. `video/*` -> `'video'`
+ * (CRMLAB-69, D-231: antes saía como documento). Resto -> `'document'`
+ * (contrato do `/message/sendMedia`).
+ */
+function evolutionMediaType(mimeType: string): 'image' | 'audio' | 'video' | 'document' {
   if (mimeType.startsWith('image/')) return 'image';
   if (mimeType.startsWith('audio/')) return 'audio';
+  if (mimeType.startsWith('video/')) return 'video';
   return 'document';
 }
 
@@ -520,6 +548,7 @@ export function createEvolutionClient(
                 mimetype: media.mimeType,
                 fileName: media.fileName,
                 media: media.base64,
+                ...(media.caption ? { caption: media.caption } : {}),
                 ...quotedPart,
               },
             ] as const);
@@ -555,6 +584,20 @@ export function createEvolutionClient(
             reaction: emoji,
           }),
         },
+        apikey,
+      );
+    },
+
+    async sendPresence(
+      instanceName: string,
+      phone: string,
+      presence: EvolutionOutboundPresence,
+      delayMs: number,
+      apikey: string,
+    ): Promise<void> {
+      await request(
+        `/chat/sendPresence/${encodeURIComponent(instanceName)}`,
+        { method: 'POST', body: JSON.stringify({ number: phone, presence, delay: delayMs }) },
         apikey,
       );
     },

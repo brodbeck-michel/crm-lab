@@ -82,6 +82,9 @@
     --color-chat-received-border: color-mix(in oklab, var(--color-surface) 92%, var(--color-text));
     --color-chat-sent: color-mix(in oklab, var(--color-accent) 18%, white);
     --color-chat-sent-border: color-mix(in oklab, var(--color-accent) 42%, white);
+    /* Tique "lida" (CRMLAB-67, D-225): o azul do WhatsApp, LITERAL como o
+     * papel branco — é convenção que o usuário já conhece, não cor do tema. */
+    --color-chat-tick-read: #53bdeb;
 
     /* --------------------------------------------------------------- */
     /* Tipografia                                                       */

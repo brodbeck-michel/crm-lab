@@ -9,7 +9,45 @@ export type ConversationStatus = 'active' | 'closed';
 export type ConversationChannel = 'whatsapp' | 'sms' | 'web' | 'direct';
 export type SenderType = 'patient' | 'agent' | 'system';
 export type MessageType = 'text' | 'image' | 'audio' | 'pdf' | 'doc';
-export type MessageStatus = 'sent' | 'delivered' | 'read' | 'failed';
+/**
+ * `pending` = enviando (relogio), antes de o gateway devolver o id (D-225).
+ * Ordem que nunca rebaixa: pending < sent < delivered < read; `failed` so a
+ * partir de pending/sent — `MESSAGE_STATUS_RANK`.
+ */
+export type MessageStatus = 'pending' | 'sent' | 'delivered' | 'read' | 'failed';
+
+/** Posicao de cada status na ordem de D-225. `failed` fica fora da escada. */
+export const MESSAGE_STATUS_RANK: Readonly<Record<Exclude<MessageStatus, 'failed'>, number>> = {
+  pending: 0,
+  sent: 1,
+  delivered: 2,
+  read: 3,
+};
+
+/**
+ * `true` quando `next` pode substituir `current` (D-225 item 2): so sobe na
+ * escada; `failed` so a partir de pending/sent; de `failed` so sai pelo reenvio
+ * (que nao passa por aqui).
+ */
+export function canAdvanceMessageStatus(current: MessageStatus, next: MessageStatus): boolean {
+  if (current === 'failed') return false;
+  if (next === 'failed') return current === 'pending' || current === 'sent';
+  return MESSAGE_STATUS_RANK[next] > MESSAGE_STATUS_RANK[current];
+}
+
+/**
+ * Presenca do paciente no WhatsApp (D-226) — efemera, nunca gravada.
+ * `typing` = digitando, `recording` = gravando audio.
+ */
+export type PatientPresence = 'typing' | 'recording' | 'online' | 'offline';
+
+/**
+ * `POST /conversations/:id/presence` (D-226/D-227). `paused` assina a presenca
+ * do paciente sem mostrar nada a ele; `composing` mostra "digitando…".
+ */
+export interface SendPresenceRequest {
+  presence: 'paused' | 'composing';
+}
 
 /** Item da lista de conversas (coluna 1 do inbox). */
 export interface Conversation {
@@ -173,32 +211,69 @@ export interface ListConversationsQuery extends PaginationQuery {
   /** 'mine' = atribuidas ao usuario logado; 'unassigned' = fila livre. */
   scope?: 'mine' | 'unassigned' | 'all';
   search?: string;
+  /** So conversas com `unreadCount > 0` (CRMLAB-68, D-229) — recorte como o `scope`. */
+  unread?: boolean;
 }
 
 export interface ListConversationsResponse {
   conversations: Conversation[];
   pagination: PaginationMeta;
-  /** Contagens dos chips de filtro — derivadas, nunca contadores separados. */
-  counts: { mine: number; unassigned: number };
+  /**
+   * Contagens dos chips de filtro — derivadas, nunca contadores separados.
+   * `unread` (chip "Nao lidas", D-229) e opcional no tipo; o backend sempre manda.
+   */
+  counts: { mine: number; unassigned: number; unread?: number };
 }
 
 /**
  * `GET /conversations/:id` — API_CONTRACTS.md §2.
- * `before` (cursor, D-237) e `page` sao excludentes.
+ * `before`/`after`/`around` (cursores, D-237/D-230) e `page` sao excludentes entre si.
  */
 export interface GetConversationQuery {
   messageLimit?: number;
   page?: number;
   /** Id da mensagem: devolve as `messageLimit` anteriores a ela, na ordem `(createdAt, id)`. */
   before?: string;
+  /** Id da mensagem: as `messageLimit` imediatamente posteriores a ela (D-230). */
+  after?: string;
+  /** Id da mensagem: a janela em volta dela — "ir ate a mensagem" da busca (D-230). */
+  around?: string;
 }
 
-/** Cursores do historico (D-237). `null` = nao ha mais nada naquela direcao. */
+/** Cursores do historico (D-237/D-230). `null` = nao ha mais nada naquela direcao. */
 export interface MessageCursors {
   /** Id da mensagem mais antiga da pagina quando ainda ha historico anterior. */
   before: string | null;
-  /** Reservado para "carregar ao redor" (CRMLAB-68); sempre `null` por enquanto. */
+  /** Id da mensagem mais nova da pagina quando ainda ha mensagens mais novas (D-230). */
   after: string | null;
+}
+
+/**
+ * `GET /conversations/search/messages` e `GET /conversations/:id/messages`
+ * (CRMLAB-68, D-228). `q`: 2 a 120 caracteres; ignora acento e caixa.
+ */
+export interface SearchMessagesQuery {
+  q: string;
+  page?: number;
+  limit?: number;
+}
+
+/** Uma mensagem achada pela busca. `content` vem inteiro: o trecho e da tela (D-228). */
+export interface MessageSearchHit {
+  messageId: string;
+  conversationId: string;
+  patientName: string | null;
+  patientPhone: string;
+  senderType: SenderType;
+  senderName: string | null;
+  messageType: MessageType;
+  content: string;
+  createdAt: IsoDateTime;
+}
+
+export interface SearchMessagesResponse {
+  results: MessageSearchHit[];
+  pagination: PaginationMeta;
 }
 
 export interface GetConversationResponse {

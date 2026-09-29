@@ -9,6 +9,9 @@ import type {
   ListConversationsQuery,
   ListConversationsResponse,
   Message,
+  SendPresenceRequest,
+  SearchMessagesQuery,
+  SearchMessagesResponse,
   SetMessageReactionRequest,
   StartWhatsAppConversationRequest,
   StartWhatsAppConversationResponse,
@@ -50,6 +53,14 @@ export const conversationsApi = {
   removeReaction: (id: string, messageId: string) =>
     http.delete<void>(`/conversations/${id}/messages/${messageId}/reaction`),
 
+  /** "Tentar de novo" (CRMLAB-67, D-227) — reenvia a MESMA mensagem que falhou. */
+  retryMessage: (id: string, messageId: string) =>
+    http.post<Message>(`/conversations/${id}/messages/${messageId}/retry`, {}),
+
+  /** Presença da atendente (D-226/D-227): `paused` assina, `composing` = digitando. 204. */
+  sendPresence: (id: string, body: SendPresenceRequest) =>
+    http.post<void>(`/conversations/${id}/presence`, body),
+
   update: (id: string, body: UpdateConversationRequest) =>
     http.patch<UpdateConversationResponse>(`/conversations/${id}`, body),
 
@@ -65,6 +76,23 @@ export const conversationsApi = {
     pinned
       ? http.post<void>(`/conversations/${id}/pin`, {})
       : http.delete<void>(`/conversations/${id}/pin`),
+
+  /** Busca pelo conteúdo em todas as conversas visíveis (D-228). */
+  searchMessages: (query: SearchMessagesQuery) =>
+    http.get<SearchMessagesResponse>(
+      '/conversations/search/messages',
+      query as unknown as QueryParams,
+    ),
+
+  /** Busca dentro de uma conversa (D-228). */
+  searchInConversation: (id: string, query: SearchMessagesQuery) =>
+    http.get<SearchMessagesResponse>(
+      `/conversations/${id}/messages`,
+      query as unknown as QueryParams,
+    ),
+
+  /** "Marcar como não lida" (D-229) — 204, idempotente. */
+  markUnread: (id: string) => http.post<void>(`/conversations/${id}/unread`, {}),
 
   /** Encerrar atendimento (D-174) — só dona, gestor ou admin; o backend valida. */
   close: (id: string) =>

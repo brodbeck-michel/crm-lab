@@ -85,8 +85,9 @@ describe('GET /conversations/:id — cursor `before` (D-237)', () => {
       .set(app.auth(attendant))
       .expect(200);
     expect(third.body.messages.map((m: WireMessage) => m.content)).toEqual(['m1']);
-    // Comeco da conversa: nada mais para pedir.
-    expect(third.body.cursors).toEqual({ before: null, after: null });
+    // Comeco da conversa: nada mais para pedir. Pagina `before` sempre tem mais
+    // novas (a propria mensagem-cursor): `after` e a mais nova dela (D-230).
+    expect(third.body.cursors).toEqual({ before: null, after: third.body.messages[0].id });
   });
 
   it('pagina que termina exatamente no comeco ja volta `before: null`', async () => {
@@ -185,6 +186,10 @@ describe('GET /conversations/:id — cursor `before` (D-237)', () => {
       .expect(200);
     expect(response.body.messages.map((m: WireMessage) => m.content)).toEqual(['m2', 'm3']);
     expect(response.body.pagination).toEqual({ page: 2, limit: 2, total: 5, totalPages: 3 });
-    expect(response.body.cursors).toEqual({ before: response.body.messages[0].id, after: null });
+    expect(response.body.cursors).toEqual({
+      before: response.body.messages[0].id,
+      // Pagina 2 nao e a ponta: ha mensagens mais novas (D-230 item 2).
+      after: response.body.messages[1].id,
+    });
   });
 });

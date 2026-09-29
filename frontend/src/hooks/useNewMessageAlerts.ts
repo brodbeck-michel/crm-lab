@@ -259,7 +259,13 @@ export function useNewMessageAlerts(): void {
 
       // `undefined` = primeira carga desta conversa aberta = linha de base.
       const seenAt = lastSeen.get(conversationId);
-      const newest = newestMessageAt(data);
+      const loaded = newestMessageAt(data);
+      // Aberta no meio (busca, CRMLAB-68/D-230): a janela pode não ter a última
+      // mensagem — a linha de base é a da CONVERSA, senão ir para a ponta depois
+      // contaria como "nova" toda mensagem que já estava lá.
+      const last = data.conversation.lastMessageAt;
+      const newest =
+        seenAt === undefined && last !== null && (loaded === null || last > loaded) ? last : loaded;
       lastSeen.set(
         conversationId,
         seenAt === undefined || seenAt === null || (newest !== null && newest > seenAt)

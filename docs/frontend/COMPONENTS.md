@@ -69,6 +69,18 @@ Anatomia (padrão WhatsApp):
 - Prévia truncada 1 linha (elipse) + Badge contagem
 - Chips de status + "aguardando N min" (accent-700)
 - Selecionado: fundo neutral-100 + shadow-sm
+- `onMarkUnread?(id)` (CRMLAB-68, D-229): clique direito ou botão "⋯" abrem o menu
+  (`role="menu"`) com "Marcar como não lida", só quando `unreadCount === 0`. Sem handler, nem
+  botão nem menu
+
+### ConversationSearch · MessageResults (`pages/Attendance/`, locais da tela — CRMLAB-68)
+- `ConversationSearch`: barra da busca dentro da conversa (campo, "N de M", ↑ ↓, fechar) + lista
+  de resultados. Recebe os `MessageSearchHit` prontos e devolve o id escolhido (`onGoTo`)
+- `MessageResults`: o bloco "Mensagens" da busca da coluna 1 (mesma forma de `PatientResults`)
+- `SearchSnippet` (`content`, `term`): o trecho com o destaque, usado pelos dois
+- O trecho e o destaque vêm de `lib/search-snippet.ts` (`searchSnippet`, `highlightParts`,
+  `isSearchableTerm`): comparação sem acento e sem caixa; o destaque é `<mark>` com tokens, nunca
+  HTML vindo da API
 
 ### MessageBubble
 ```tsx

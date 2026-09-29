@@ -10,6 +10,8 @@ import type {
   ListConversationsResponse,
   Message,
   SendPresenceRequest,
+  SearchMessagesQuery,
+  SearchMessagesResponse,
   SetMessageReactionRequest,
   StartWhatsAppConversationRequest,
   StartWhatsAppConversationResponse,
@@ -74,6 +76,23 @@ export const conversationsApi = {
     pinned
       ? http.post<void>(`/conversations/${id}/pin`, {})
       : http.delete<void>(`/conversations/${id}/pin`),
+
+  /** Busca pelo conteúdo em todas as conversas visíveis (D-228). */
+  searchMessages: (query: SearchMessagesQuery) =>
+    http.get<SearchMessagesResponse>(
+      '/conversations/search/messages',
+      query as unknown as QueryParams,
+    ),
+
+  /** Busca dentro de uma conversa (D-228). */
+  searchInConversation: (id: string, query: SearchMessagesQuery) =>
+    http.get<SearchMessagesResponse>(
+      `/conversations/${id}/messages`,
+      query as unknown as QueryParams,
+    ),
+
+  /** "Marcar como não lida" (D-229) — 204, idempotente. */
+  markUnread: (id: string) => http.post<void>(`/conversations/${id}/unread`, {}),
 
   /** Encerrar atendimento (D-174) — só dona, gestor ou admin; o backend valida. */
   close: (id: string) =>

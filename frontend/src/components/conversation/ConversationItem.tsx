@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Conversation } from '@crm-lab/shared';
 import { Badge, Chip, cn } from '@/components/ui';
 import { Avatar, DateDisplay } from '@/components/shared';
@@ -33,6 +33,35 @@ export interface ConversationItemProps {
    * não aparece (nada de botão morto, mesma regra do `onAttach` do Composer).
    */
   onTogglePin?: (id: string, pinned: boolean) => void;
+  /**
+   * "Marcar como não lida" (CRMLAB-68, D-229): clique direito ou "⋯" abrem o
+   * menu. Só existe com `unreadCount === 0` — sem handler, nem botão nem menu.
+   */
+  onMarkUnread?: (id: string) => void;
+}
+
+/**
+ * Menu do item — mesmo padrão do "Transferir" (clique fora + Esc,
+ * `role="menu"`), sem biblioteca de popover para um item.
+ */
+function useDismiss(open: boolean, close: () => void) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: MouseEvent) {
+      if (!ref.current?.contains(event.target as Node)) close();
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') close();
+    }
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open, close]);
+  return ref;
 }
 
 /**
@@ -75,6 +104,7 @@ export function ConversationItem({
   onClick,
   now,
   onTogglePin,
+  onMarkUnread,
 }: ConversationItemProps) {
   const {
     id,
@@ -97,11 +127,28 @@ export function ConversationItem({
     [hasUnread, lastMessageAt, now],
   );
 
+  const canMarkUnread = onMarkUnread !== undefined && !hasUnread;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const closeMenu = useMemo(() => () => setMenuOpen(false), []);
+  const menuRef = useDismiss(menuOpen, closeMenu);
+  const hasControls = onTogglePin !== undefined || canMarkUnread;
+
   const visibleTags = tags.slice(0, MAX_TAG_CHIPS);
   const hiddenTags = tags.length - visibleTags.length;
 
   return (
-    <div className="relative">
+    <div
+      ref={menuRef}
+      className="relative"
+      onContextMenu={
+        canMarkUnread
+          ? (event) => {
+              event.preventDefault();
+              setMenuOpen(true);
+            }
+          : undefined
+      }
+    >
       <button
         type="button"
         data-testid="conversation-item"
@@ -111,7 +158,7 @@ export function ConversationItem({
         className={cn(
           'flex w-full cursor-pointer items-start gap-md rounded-md border-none py-md text-left',
           // Espaço à direita reservado para o alfinete, que fica por cima.
-          onTogglePin ? 'pl-lg pr-xl' : 'px-lg',
+          hasControls ? 'pl-lg pr-xl' : 'px-lg',
           'font-body transition-colors hover:bg-accent-100',
           selected ? 'bg-neutral-100 shadow-sm' : 'bg-transparent',
         )}
@@ -171,24 +218,59 @@ export function ConversationItem({
         </span>
       </button>
 
-      {onTogglePin && (
-        <button
-          type="button"
-          onClick={() => onTogglePin(id, !pinned)}
-          aria-pressed={pinned}
-          // O nome do paciente entra no rótulo porque a lista tem um destes
-          // por conversa: "Fixar conversa" repetido 20 vezes não diz a um
-          // leitor de tela QUAL conversa o botão fixa.
-          aria-label={`${pinned ? 'Desafixar' : 'Fixar'} conversa com ${displayName}`}
-          title={pinned ? 'Desafixar conversa' : 'Fixar conversa'}
-          className={cn(
-            'absolute right-sm top-1/2 -translate-y-1/2 cursor-pointer rounded-sm border-none',
-            'bg-transparent p-xs hover:bg-accent-100',
-            pinned ? 'text-accent-700' : 'text-neutral-600',
+      {hasControls && (
+        <div className="absolute right-sm top-1/2 flex -translate-y-1/2 flex-col items-center gap-xs">
+          {onTogglePin && (
+            <button
+              type="button"
+              onClick={() => onTogglePin(id, !pinned)}
+              aria-pressed={pinned}
+              // O nome do paciente entra no rótulo porque a lista tem um destes
+              // por conversa: "Fixar conversa" repetido 20 vezes não diz a um
+              // leitor de tela QUAL conversa o botão fixa.
+              aria-label={`${pinned ? 'Desafixar' : 'Fixar'} conversa com ${displayName}`}
+              title={pinned ? 'Desafixar conversa' : 'Fixar conversa'}
+              className={cn(
+                'cursor-pointer rounded-sm border-none bg-transparent p-xs hover:bg-accent-100',
+                pinned ? 'text-accent-700' : 'text-neutral-600',
+              )}
+            >
+              <PinIcon filled={pinned} />
+            </button>
           )}
+          {canMarkUnread && (
+            <button
+              type="button"
+              onClick={() => setMenuOpen((value) => !value)}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              aria-label={`Mais opções da conversa com ${displayName}`}
+              title="Mais opções"
+              className="cursor-pointer rounded-sm border-none bg-transparent px-xs font-body text-caption leading-none text-neutral-600 hover:bg-accent-100"
+            >
+              ⋯
+            </button>
+          )}
+        </div>
+      )}
+
+      {canMarkUnread && menuOpen && (
+        <div
+          role="menu"
+          className="absolute right-sm top-full z-50 w-[200px] rounded-md border border-neutral-200 bg-surface py-xs shadow-md"
         >
-          <PinIcon filled={pinned} />
-        </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setMenuOpen(false);
+              onMarkUnread?.(id);
+            }}
+            className="w-full cursor-pointer border-none bg-transparent px-md py-xs text-left font-body text-label text-text hover:bg-accent-100"
+          >
+            Marcar como não lida
+          </button>
+        </div>
       )}
     </div>
   );

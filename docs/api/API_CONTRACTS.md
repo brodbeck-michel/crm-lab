@@ -544,6 +544,7 @@ laboratório. `platform_operator` recebe `FORBIDDEN` (PAGES.md §11).
 ```
 ?status=active|closed          # D-174: `archived` não existe mais
 ?scope=mine|unassigned|all        # default: all — os chips da coluna 1
+?unread=true                      # só com não lidas (`unreadCount > 0`) — CRMLAB-68, D-229
 ?page=1&limit=20                  # limit máx. 100
 ?search=joão                      # máx. 120 caracteres
 ?sortBy=lastMessageAt|createdAt|unreadCount|patientName&order=desc
@@ -581,7 +582,7 @@ telefone quando sobram **3 dígitos ou mais**.
     "total": 150,
     "totalPages": 8
   },
-  "counts": { "mine": 12, "unassigned": 7 }
+  "counts": { "mine": 12, "unassigned": 7, "unread": 4 }
 }
 ```
 
@@ -595,6 +596,12 @@ MESMO `SELECT` da listagem (`COUNT(*) FILTER (...)`), com os mesmos filtros de
 visibilidade, status e busca — nunca de contador mantido à parte (BUSINESS_RULES §5).
 Por isso eles **não** mudam quando `?scope=` muda: o chip não clicado continua
 mostrando o próprio número, e `pagination.total` é que acompanha o escopo.
+
+**Não lidas (CRMLAB-68, D-229).** `?unread=true` é recorte de listagem como o `scope`: filtra
+`unreadCount > 0`, entra em `pagination.total` e **não** nos `counts`. `counts.unread` (chip
+"Não lidas N") sai do mesmo `COUNT(*) FILTER` dos outros dois — conversas com `unreadCount > 0`
+no recorte de visibilidade/status/busca. Campo **opcional** no tipo (acrescentado no CRMLAB-68);
+o backend sempre manda. `unread` aceita `true`/`false`; `false` = sem filtro.
 
 Cada item traz `assignedToName` e `lastMessagePreview` já resolvidos (o frontend não
 faz request extra por conversa). Shape completo: `Conversation` em
@@ -612,7 +619,63 @@ da migração 003 que ainda não passou por `findOrCreateByPhone` (D-072) — e 
 para navegar, não para exibir.
 
 **Erros:** `FORBIDDEN` (403, `platform_operator`), `VALIDATION_ERROR` (400, query fora
-do enum — `scope`, `status`, `sortBy`, `order`, `limit` > 100)
+do enum — `scope`, `status`, `sortBy`, `order`, `unread`, `limit` > 100)
+
+### GET /conversations/search/messages (CRMLAB-68, D-228)
+Busca pelo **conteúdo** das mensagens em todas as conversas que o usuário pode ver — o bloco
+"Mensagens" da busca do inbox (PAGES.md §2).
+
+**Query Params:**
+```
+?q=glicose            # obrigatório; 2 a 120 caracteres depois do trim
+?page=1&limit=20      # limit máx. 100
+```
+
+**Como casa:** ignora maiúscula e acento ("orcamento" acha "orçamento", "glicose" acha
+"Glicose"); cada palavra do termo casa por **prefixo** ("hemog" acha "hemograma") e **todas** as
+palavras precisam estar na mensagem. Full-text `portuguese` sobre `crm_unaccent(content)`, com
+índice GIN (migração 043).
+
+**Nunca aparece:** mensagem apagada pelo remetente (D-220), evento de sistema, outro laboratório
+e — para atendente — conversa de outra atendente (o recorte da fila: as dela + as livres;
+gestor/admin veem todas). Conversa encerrada aparece.
+
+**Response (200):**
+```json
+{
+  "results": [
+    {
+      "messageId": "uuid",
+      "conversationId": "uuid",
+      "patientName": "João Santos",
+      "patientPhone": "+5511987654321",
+      "senderType": "patient",
+      "senderName": "João Santos",
+      "messageType": "text",
+      "content": "Preciso fazer o exame de glicose em jejum?",
+      "createdAt": "2024-08-23T14:25:00Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 20, "total": 1, "totalPages": 1 }
+}
+```
+
+Ordem: da mensagem mais nova para a mais antiga. `content` vem **inteiro**: o trecho e o
+destaque são montados pela tela (D-228 item 6). Shape: `MessageSearchHit`.
+
+**Erros:** `VALIDATION_ERROR` (400 — `q` ausente, curto ou acima de 120; `limit` > 100),
+`FORBIDDEN` (403, `platform_operator`)
+
+### GET /conversations/:id/messages (CRMLAB-68, D-228)
+A mesma busca, **dentro de uma conversa** — a lupa do cabeçalho (PAGES.md §2).
+
+**Query Params:** `?q=` (obrigatório, como acima) `&page=1&limit=20` (máx. 100).
+
+**Response (200):** o mesmo `{ results: MessageSearchHit[], pagination }`, só com mensagens desta
+conversa, da mais nova para a mais antiga.
+
+**Erros:** `NOT_FOUND` (404 — inexistente, de outro tenant ou fora do recorte do usuário),
+`VALIDATION_ERROR` (400, `:id` não-uuid ou `q` inválido), `FORBIDDEN` (403, `platform_operator`)
 
 ### POST /conversations
 Criar um atendimento que **não veio do WhatsApp** — ligação, balcão, formulário do site.
@@ -728,6 +791,8 @@ Mensagens vêm em ordem cronológica **crescente**; `page=1` é a página mais r
 ```
 ?messageLimit=50&page=1
 ?messageLimit=50&before=<messageId>      (cursor — D-237, CRMLAB-71)
+?messageLimit=50&after=<messageId>       (mais novas — D-230, CRMLAB-68)
+?messageLimit=50&around=<messageId>      (janela em volta — D-230, CRMLAB-68)
 ```
 
 `messageLimit` é o nome do contrato; `limit` é aceito como alias tolerante e vale o
@@ -740,13 +805,21 @@ histórico: a tela de Atendimento pede a primeira página sem cursor e depois re
 `before=cursors.before` até ele voltar `null`.
 - `cursors.before`: id da mensagem mais antiga da página quando **ainda há** histórico
   anterior; `null` quando a página chegou ao começo da conversa (não há o que pedir).
-- `cursors.after`: sempre `null` por enquanto — reservado para "carregar ao redor de uma
-  mensagem" (CRMLAB-68). `around`/`after` **não** são aceitos como parâmetro.
-- `before` + `page` juntos → `VALIDATION_ERROR` (400). `before` que não é uuid →
-  `VALIDATION_ERROR`. `before` que não é mensagem **desta** conversa (outra conversa, outro
-  tenant, inexistente) → `NOT_FOUND` (404, `details.resource: "message"`).
+- `cursors.after` (D-230): id da mensagem mais **nova** da página quando **ainda há** mensagens
+  mais novas que ela; `null` quando a página chega à última mensagem da conversa (a página mais
+  recente é sempre `null`; uma página `before` sempre traz o id).
+- **`after=<messageId>`**: as `messageLimit` mensagens imediatamente **posteriores** àquela, em
+  ordem crescente. É como a tela desce de uma janela antiga até o fim, repetindo
+  `after=cursors.after` até ele voltar `null`.
+- **`around=<messageId>`**: a janela em volta da mensagem — até `floor(messageLimit/2)` mais
+  novas que ela, e o restante com ela e as anteriores (perto do fim, a janela completa com
+  histórico). É como "Ir até a mensagem" da busca abre a conversa. Também marca como lida.
+- `before`, `after`, `around` e `page` são **excludentes** entre si: dois juntos →
+  `VALIDATION_ERROR` (400). Cursor que não é uuid → `VALIDATION_ERROR`. Cursor que não é
+  mensagem **desta** conversa (outra conversa, outro tenant, inexistente) → `NOT_FOUND` (404,
+  `details.resource: "message"`).
 - `pagination` segue com os quatro campos: `total`/`totalPages` são da conversa inteira; com
-  `before`, `page` volta `1`.
+  qualquer cursor, `page` volta `1`.
 - `cursors` vem também sem `before` (paginação por `page`): na primeira página é o ponto de
   partida do cursor.
 
@@ -1037,6 +1110,20 @@ efeito.
 
 ### POST /conversations/:id/read
 Marcar a conversa como lida sem carregar o histórico. Idempotente.
+
+**Response:** `204 No Content`
+
+**Erros:** `NOT_FOUND` (404 — inexistente, de outro tenant ou fora do recorte do
+usuário), `VALIDATION_ERROR` (400, `:id` não-uuid), `FORBIDDEN` (403, `platform_operator`)
+
+### POST /conversations/:id/unread (CRMLAB-68, D-229)
+"Marcar como não lida", padrão WhatsApp Web. Sem corpo. Idempotente.
+
+Grava `unreadCount = max(unreadCount, 1)`: a conversa volta com a bolinha e só zera ao ser
+aberta de novo (`GET /conversations/:id`) ou por `POST /read`. O contador é **por conversa**
+(o mesmo que a fila já mostra), então vale para quem mais vê a conversa. **Não** muda
+`lastMessageAt` nem o status das mensagens, **não** emite WebSocket (o aviso de mensagem nova
+não dispara) e **não** gera audit log.
 
 **Response:** `204 No Content`
 

@@ -276,6 +276,8 @@ export interface OutboundMedia {
   buffer: Buffer;
   mimeType: string;
   fileName: string;
+  /** Legenda (CRMLAB-69, D-231); o driver Evolution descarta em áudio. */
+  caption?: string | null;
 }
 
 /**
@@ -332,6 +334,8 @@ export interface MockSentMessage {
   at: string;
   /** Id externo da mensagem citada (D-221), quando houve. */
   quotedExternalId?: string;
+  /** Legenda da mídia (CRMLAB-69, D-231), quando houve. */
+  caption?: string;
 }
 
 export interface MockSentReaction {
@@ -385,6 +389,7 @@ export class MockWhatsAppDriver implements WhatsAppDriver {
       externalId,
       at: new Date().toISOString(),
       ...(options.quoted ? { quotedExternalId: options.quoted.externalId } : {}),
+      ...(media.caption ? { caption: media.caption } : {}),
     });
     logger.debug('whatsapp.mock_send_media', { tenantId: credentials.tenantId, externalId });
     return { externalId };
@@ -598,6 +603,7 @@ export class EvolutionWhatsAppDriver implements WhatsAppDriver {
         base64: media.buffer.toString('base64'),
         mimeType: media.mimeType,
         fileName: media.fileName,
+        caption: media.caption ?? null,
       },
       credentials.qrInstanceApiKey,
       options.quoted,

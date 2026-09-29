@@ -89,6 +89,8 @@ export interface OutboundAttachmentInput {
   buffer: Buffer;
   /** Responder citando (CRMLAB-66, D-221). */
   quotedMessageId?: string | null;
+  /** Legenda (CRMLAB-69, D-231) — ja aparada; áudio descarta. */
+  caption?: string | null;
 }
 
 /**
@@ -291,13 +293,17 @@ export class MessageService {
       throw new BusinessError('CONVERSATION_ARCHIVED', { status: conversation.status });
     }
     const quote = await this.resolveQuote(tenantId, conversationId, dto.quotedMessageId);
+    const messageType = messageTypeFromMime(dto.mimeType);
+    // D-231: áudio não tem legenda no WhatsApp — descarta, senão o CRM
+    // mostraria um texto que o paciente nunca recebeu.
+    const caption = messageType === 'audio' ? null : dto.caption || null;
 
     const message = await this.messages.insert(tenantId, {
       conversationId,
       senderType: 'agent',
       senderId,
-      content: dto.fileName,
-      messageType: messageTypeFromMime(dto.mimeType),
+      content: caption ?? dto.fileName,
+      messageType,
       attachmentUrl: dto.attachmentUrl,
       status: 'sent',
       quotedMessageId: quote?.id ?? null,
@@ -311,7 +317,7 @@ export class MessageService {
       const { externalId } = await this.whatsapp.sendMedia(
         tenantId,
         conversation.patientPhone,
-        { buffer: dto.buffer, mimeType: dto.mimeType, fileName: dto.fileName },
+        { buffer: dto.buffer, mimeType: dto.mimeType, fileName: dto.fileName, caption },
         sendOptionsFor(quote),
       );
       return await this.confirmSent(tenantId, conversationId, message, externalId);

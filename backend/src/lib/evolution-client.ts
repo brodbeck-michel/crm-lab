@@ -144,6 +144,8 @@ export interface EvolutionMediaPayload {
   base64: string;
   mimeType: string;
   fileName: string;
+  /** Legenda (CRMLAB-69, D-231): vai em imagem/vídeo/documento; áudio não tem. */
+  caption?: string | null;
 }
 
 /**
@@ -210,10 +212,15 @@ export interface EvolutionClient {
   ): Promise<void>;
 }
 
-/** `image/jpeg` -> `'image'`. `audio/*` -> `'audio'`. Resto -> `'document'` (contrato do `/message/sendMedia`). */
-function evolutionMediaType(mimeType: string): 'image' | 'audio' | 'document' {
+/**
+ * `image/jpeg` -> `'image'`. `audio/*` -> `'audio'`. `video/*` -> `'video'`
+ * (CRMLAB-69, D-231: antes saía como documento). Resto -> `'document'`
+ * (contrato do `/message/sendMedia`).
+ */
+function evolutionMediaType(mimeType: string): 'image' | 'audio' | 'video' | 'document' {
   if (mimeType.startsWith('image/')) return 'image';
   if (mimeType.startsWith('audio/')) return 'audio';
+  if (mimeType.startsWith('video/')) return 'video';
   return 'document';
 }
 
@@ -520,6 +527,7 @@ export function createEvolutionClient(
                 mimetype: media.mimeType,
                 fileName: media.fileName,
                 media: media.base64,
+                ...(media.caption ? { caption: media.caption } : {}),
                 ...quotedPart,
               },
             ] as const);

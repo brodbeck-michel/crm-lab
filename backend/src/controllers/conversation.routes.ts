@@ -39,7 +39,7 @@ import type {
   UpdateConversationRequest,
   UpdateConversationResponse,
 } from '@crm-lab/shared';
-import { normalizeBrazilianPhone } from '@crm-lab/shared';
+import { MAX_CAPTION_LENGTH, normalizeBrazilianPhone } from '@crm-lab/shared';
 import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
 import { getContext } from '../http/context.js';
 import { denyPlatformOperator, requireAuth } from '../http/middleware/auth.js';
@@ -172,6 +172,8 @@ export const createAttachmentSchema = z.object({
   mimeType: z.string().trim().min(1).max(127),
   contentBase64: z.string().min(1),
   quotedMessageId: z.string().uuid().nullish(),
+  // Legenda (CRMLAB-69, D-231): aparada; vazia = sem legenda.
+  caption: z.string().trim().max(MAX_CAPTION_LENGTH).nullish(),
 });
 
 type CreateMessageBody = z.infer<typeof createMessageSchema>;
@@ -332,6 +334,7 @@ export function createAttachment(services: ConversationServices): RequestHandler
       attachmentUrl: `/api/v1/media/${stored.id}`,
       buffer: stored.buffer,
       quotedMessageId: dto.quotedMessageId ?? null,
+      caption: dto.caption || null,
     });
     await services.media.attachToMessage(ctx.tenantId, stored.id, message.id);
 

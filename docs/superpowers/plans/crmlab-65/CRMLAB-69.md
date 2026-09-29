@@ -3,7 +3,7 @@
 Worktree `../CRM Lab-69` · branch `feature/CRMLAB-69-anexos-previa` (de `integ/epic-65`).
 Faixas: decisões D-231…D-233 · migração 044 (não vai ser usada — sem mudança de banco).
 
-## ⏸️ PAUSADO em 2026-09-28 (pedido do Michel: computador desligando)
+## ▶️ Retomado em 2026-09-29 (merge de `origin/integ/epic-65` feito: conflito só em COMPONENTS.md, linha do Composer unindo `→ void | Promise` do 63 e `onPickFiles/onAttachClick`)
 
 ### Pronto (etapa 1 — docs, Regra Zero)
 - [x] Leitura: CLAUDE.md, AGENTS.md, plano do épico, card no Jira, diários 66/71, D-169/181/182,
@@ -15,19 +15,19 @@ Faixas: decisões D-231…D-233 · migração 044 (não vai ser usada — sem mu
 - [x] `API_CONTRACTS.md` §2 attachments (`caption` 0..1024, vídeo), `COMPONENTS.md` (Composer
       `onPickFiles`/`onAttachClick`, `AttachmentPreview` novo), `PAGES.md` §2 (anexos com prévia).
 
-### Nada pela metade no código (nenhum arquivo de código foi tocado ainda)
+### Etapas 2–3 (shared + backend) prontas; specs attachments/evolution-client/webhook-media/reactions-quotes verdes. `MAX_CAPTION_LENGTH = 1024` também em shared.
 
 ### Falta (checklist)
-- [ ] shared: `CreateAttachmentRequest.caption?: string | null`; mover `MAX_MEDIA_BYTES`
+- [x] shared: `CreateAttachmentRequest.caption?: string | null`; mover `MAX_MEDIA_BYTES`
       (15 MiB) para `shared/types/media.types.ts` e o `backend/src/services/media.service.ts`
       reexportar (`attachments.spec.ts` e `evolution-webhook-media.spec.ts` importam de lá).
-- [ ] backend: zod `caption: z.string().trim().max(1024).nullish()` em `createAttachmentSchema`
+- [x] backend: zod `caption: z.string().trim().max(1024).nullish()` em `createAttachmentSchema`
       (`conversation.routes.ts`) e repassar em `createAttachment`; `OutboundAttachmentInput.caption`
       + `content = caption || fileName` (áudio: ignora) em `message.service.ts`
       `createAttachmentFromAgent`; `OutboundMedia.caption` em `whatsapp.service.ts` (Evolution
       driver repassa; mock grava); `EvolutionMediaPayload.caption` + `evolutionMediaType` com
       `video/*` → `'video'` e `caption` no corpo do `sendMedia` (não no `sendWhatsAppAudio`).
-- [ ] testes backend: `tests/conversations/attachments.spec.ts` (legenda em content, áudio sem
+- [x] testes backend (+ `reactions-quotes.spec` legenda chega ao driver mock): `tests/conversations/attachments.spec.ts` (legenda em content, áudio sem
       legenda, >1024 = 400) e `evolution-client.spec` (caption no corpo; vídeo `video`; áudio sem caption).
 - [ ] frontend: `components/conversation/attachment-draft.ts` (`createAttachmentDraft`,
       `validateAttachment`, `formatBytes`, `DOCUMENT_ACCEPT`), `AttachmentPreview.tsx`
@@ -49,6 +49,6 @@ Faixas: decisões D-231…D-233 · migração 044 (não vai ser usada — sem mu
 D-231, D-232, D-233.
 
 ## Próximo passo exato
-Começar pelo shared (`caption` + `MAX_MEDIA_BYTES`) e depois o backend, na ordem do checklist.
+Frontend: `attachment-draft.ts` → `AttachmentPreview.tsx` → Composer → ConversationPanel → Attendance.
 Notas: não existe status "enviando" (relógio) — a mensagem aparece pelo WS quando o servidor grava;
 o ícone de relógio é do CRMLAB-67 [B] (registrado em D-233 item 3).

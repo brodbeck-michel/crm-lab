@@ -202,6 +202,8 @@ não só aqui. O Console da Plataforma não avisa.
   conversa aberta, que o Atendimento já carrega
 
 ### Coluna 3 — Contexto do paciente (recolhível)
+- **Começa fechada (CRMLAB-74).** Só abre pelo botão [Contexto] do header. Aberta, continua
+  aberta ao trocar de conversa até recarregar a página (não persiste — D-117).
 - Cadastro resumido, propostas da conversa (cartões clicáveis → modal), tags
 - **Link "Ver ficha completa" → `/patients/:id`**, a porta de entrada da Ficha (§3). Usa
   `conversation.patientId` (D-079), que vem em `GET /conversations/:id`. Conversa anterior ao

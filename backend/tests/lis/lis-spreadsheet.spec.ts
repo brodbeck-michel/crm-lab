@@ -5,6 +5,7 @@ import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
 import {
   consolidateLisRows,
+  paymentOf,
   parseLisSpreadsheet,
   principalInsuranceName,
   totalValue,
@@ -228,12 +229,14 @@ describe('consolidateLisRows (BUSINESS_RULES.md §11.1)', () => {
     const row = consolidated[0]!;
     expect(totalValue(row)).toBe(300); // rep continua sendo a de maior total_value
     expect(row.requisitionNumber).toBe('REQ-1'); // resgatado da linha perdedora
-    expect(row.paidValue).toBe(100);
-    expect(row.paidOn).toBe('2026-08-20');
+    // O pagamento vai para o extrato (CRMLAB-53, D-188 item 5), nao para a linha.
+    expect(row.payments).toEqual([
+      expect.objectContaining({ value: 100, paidAt: '2026-08-20 00:00:00', status: 'ativo' }),
+    ]);
     expect(row.requisitionValue).toBe(100);
   });
 
-  it('D-126: quando as duas linhas têm pagamento, o MAIOR valor pago vence (não necessariamente a linha de maior total_value)', () => {
+  it('CRMLAB-53: quando as duas linhas têm pagamento, os DOIS vão para o extrato (a soma é feita no banco)', () => {
     const repMenosPago: LisSpreadsheetRow = {
       ...make('2', 300),
       requisitionNumber: 'REQ-A',
@@ -252,9 +255,55 @@ describe('consolidateLisRows (BUSINESS_RULES.md §11.1)', () => {
     const consolidated = consolidateLisRows([repMenosPago, outraMaisPaga]);
     const row = consolidated[0]!;
     expect(totalValue(row)).toBe(300);
-    expect(row.paidValue).toBe(400);
-    expect(row.paidOn).toBe('2026-08-15');
+    expect(row.payments.map((p) => [p.value, p.paidAt, p.requisitionNumber])).toEqual([
+      [50, '2026-08-10 00:00:00', 'REQ-A'],
+      [400, '2026-08-15 00:00:00', 'REQ-B'],
+    ]);
     expect(row.requisitionNumber).toBe('REQ-A'); // rep já tinha requisição própria — não sobrescreve
     expect(row.requisitionValue).toBe(300); // MAX(300, 100)
+  });
+});
+
+describe('paymentOf / consolidateLisRows — extrato (CRMLAB-53, D-188)', () => {
+  const make = (number: string, value1: number): LisSpreadsheetRow => ({
+    number,
+    issuedOn: null,
+    patientName: null,
+    insurance1: null,
+    value1,
+    insurance2: null,
+    value2: null,
+    insurance3: null,
+    value3: null,
+    attendantName: null,
+    insuranceAverage: null,
+    requisitionNumber: null,
+    requisitionValue: null,
+    paidValue: null,
+    paidOn: null,
+  });
+
+  it('linha sem Valor_Pago nao gera pagamento', () => {
+    expect(paymentOf({ ...make('1', 10), paidValue: null, paidOn: null })).toBeNull();
+  });
+
+  it('com ID_PAGAMENTO a chave e o ID; sem ID, data/hora + valor', () => {
+    expect(paymentOf({ ...make('1', 10), paidValue: 5, paidOn: '2026-08-01', paymentId: '69948' })?.key).toBe(
+      '69948',
+    );
+    expect(
+      paymentOf({ ...make('1', 10), paidValue: 5, paidOn: '2026-08-01', paidAt: '2026-08-01 07:24:26' })?.key,
+    ).toBe('planilha:2026-08-01 07:24:26:5.00');
+  });
+
+  it('a mesma chave duas vezes na rodada fica uma so, com a situacao da ultima vista', () => {
+    const base = { ...make('7', 10), paidValue: 528.26, paidOn: '2026-06-30', paymentId: '68643' };
+    const [row] = consolidateLisRows([
+      { ...base, paymentStatus: 'ativo' },
+      { ...base, paymentStatus: 'estornado', reversedAt: '2026-06-30 16:39:05' },
+    ]);
+    expect(row?.payments).toEqual([
+      expect.objectContaining({ key: '68643', status: 'estornado', reversedAt: '2026-06-30 16:39:05' }),
+    ]);
   });
 });

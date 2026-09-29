@@ -77,6 +77,12 @@ function toSenderType(value: string): SenderType {
  */
 export const PHONE_SENDER_NAME = 'Enviada pelo celular';
 
+/**
+ * Agente sem autor COM `automation` e a mensagem que o sistema mandou sozinho
+ * ao paciente (reingajamento, CRMLAB-62 — D-211 item 5).
+ */
+export const AUTOMATED_SENDER_NAME = 'Mensagem automática';
+
 /** ISO-UTC montado no banco (D-021/D-078), para a data dentro do JSON das reacoes. */
 const ISO_UTC = `'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'`;
 
@@ -86,6 +92,7 @@ const ISO_UTC = `'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'`;
  */
 function senderNameSql(alias: string, userAlias: string): string {
   return `CASE
+         WHEN ${alias}.sender_type = 'agent' AND ${alias}.automation IS NOT NULL THEN '${AUTOMATED_SENDER_NAME}'
          WHEN ${alias}.sender_type = 'agent' AND ${alias}.sender_id IS NULL THEN '${PHONE_SENDER_NAME}'
          WHEN ${alias}.sender_type = 'agent' THEN ${userAlias}.name
          WHEN ${alias}.sender_type = 'patient' THEN c.patient_name
@@ -256,6 +263,8 @@ export interface MessageInsert {
   quotedMessageId?: string | null;
   /** `stanzaId` do webhook / id externo da citada. Sem `quotedMessageId`, resolve pela conversa. */
   quotedExternalId?: string | null;
+  /** So o reingajamento (D-211 item 5); `null`/ausente para todo o resto. */
+  automation?: 'reengagement' | null;
 }
 
 export interface MessagePage {
@@ -351,13 +360,15 @@ export class MessageRepository {
       const inserted = await tx.query<{ id: string }>(
         `INSERT INTO messages
            (tenant_id, conversation_id, sender_type, sender_id, content, message_type,
-            attachment_url, status, external_message_id, quoted_external_id, quoted_message_id)
+            attachment_url, status, external_message_id, quoted_external_id, quoted_message_id,
+            automation)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text,
                  COALESCE($11::uuid, (SELECT q.id FROM messages q
                                        WHERE $10::text IS NOT NULL
                                          AND q.conversation_id = $2
                                          AND q.external_message_id = $10::text
-                                       LIMIT 1)))
+                                       LIMIT 1)),
+                 $12)
          RETURNING id`,
         [
           tenantId,
@@ -371,6 +382,7 @@ export class MessageRepository {
           data.externalMessageId ?? null,
           data.quotedExternalId ?? null,
           data.quotedMessageId ?? null,
+          data.automation ?? null,
         ],
       );
       const id = inserted.rows[0]?.id;
@@ -437,6 +449,7 @@ export class MessageRepository {
          WHERE external_message_id = $1
            AND sender_type = 'agent'
            AND sender_id IS NULL
+           AND automation IS NULL
            AND id <> $2
          RETURNING id`,
         [externalMessageId, id],
@@ -472,7 +485,7 @@ export class MessageRepository {
         `SELECT id FROM messages
          WHERE conversation_id = $1
            AND sender_type = 'agent'
-           AND sender_id IS NOT NULL
+           AND (sender_id IS NOT NULL OR automation IS NOT NULL)
            AND status = 'sent'
            AND external_message_id IS NULL
            AND created_at > NOW() - INTERVAL '60 seconds'

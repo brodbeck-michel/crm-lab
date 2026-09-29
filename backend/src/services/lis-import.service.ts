@@ -24,12 +24,15 @@ import {
   countReconciledBudgets,
   LisImportRepository,
   purgeBudgets,
+  recomputePaidValues,
   resolveAttendantId,
   resolveInsuranceId,
   upsertBudget,
+  upsertPayments,
 } from '../repositories/lis-import.repository.js';
 import type { AuditService } from './audit.service.js';
 import { announceBitlabProposals, createBitlabProposals } from './bitlab-proposal.service.js';
+import { readFunnelRules } from './funnel-rules.service.js';
 import { announceLisWins, reconcileBudgets } from './lis-reconcile.service.js';
 import type { SystemTransition } from './proposal.service.js';
 
@@ -133,6 +136,8 @@ export function createLisImportService(deps: LisImportServiceDeps): LisImportSer
     const won: SystemTransition[] = [];
     const createdProposals: string[] = [];
 
+    // A API manda ID e situação; a planilha, não (D-188 item 4).
+    const paymentSource = source.kind === 'sync' ? 'api' : 'planilha';
     const chunks = chunk(consolidated, CHUNK_SIZE);
     for (const batch of chunks) {
       try {
@@ -141,8 +146,11 @@ export function createLisImportService(deps: LisImportServiceDeps): LisImportSer
             const insuranceId = await resolveInsuranceId(tx, tenantId, row);
             const attendantId = await resolveAttendantId(tx, tenantId, row);
             await upsertBudget(tx, tenantId, created.id, row, insuranceId, attendantId);
+            await upsertPayments(tx, tenantId, created.id, paymentSource, row.number.trim(), row.payments);
           }
           const numbers = batch.map((row) => row.number.trim());
+          // Recebido derivado do extrato (CRMLAB-53, D-188) ANTES de quem le o pago.
+          await recomputePaidValues(tx, tenantId, numbers);
           // Proposta nasce do orcamento (CRMLAB-57, D-196) ANTES da conciliacao:
           // a criada ja e vinculada e espelhada no mesmo chunk.
           const createdInChunk = await createBitlabProposals(tx, tenantId, numbers);
@@ -181,6 +189,12 @@ export function createLisImportService(deps: LisImportServiceDeps): LisImportSer
 
     async import(ctx: TenantContext, dto: ImportLisSpreadsheetRequest): Promise<LisImport> {
       assertManagerOrAdmin(ctx);
+
+      // Planilha e plano B: so com a regra ligada (CRMLAB-53, D-189 item 4).
+      const rules = await db.withTenant(ctx.tenantId, (tx) => readFunnelRules(tx, ctx.tenantId));
+      if (!rules.lisSource.spreadsheetImport.enabled) {
+        throw new BusinessError('SPREADSHEET_IMPORT_DISABLED');
+      }
 
       const buffer = decodeBase64(dto.contentBase64);
       if (buffer.byteLength === 0 || buffer.byteLength > LIS_IMPORT_MAX_BYTES) {

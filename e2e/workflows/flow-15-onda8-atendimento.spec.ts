@@ -103,7 +103,7 @@ test.describe('Onda 8 §2 — transferência, emoji e fixar', () => {
     await abrirAtendimento(page);
     await page.getByTestId('conversation-item').filter({ hasText: conversa.patientName }).click();
 
-    const campo = page.getByLabel('Mensagem');
+    const campo = page.getByLabel('Mensagem', { exact: true });
     await campo.fill('bom dia tudo bem');
     // Cursor logo depois de "bom dia" — o navegador de verdade é quem move o
     // caret; jsdom só finge, e é por isso que este teste existe aqui.

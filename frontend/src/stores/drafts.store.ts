@@ -30,7 +30,7 @@ export interface DraftsState {
 }
 
 export const DRAFTS_STORAGE_KEY = 'crm-lab.drafts';
-export const DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const DRAFT_TTL_MS = 5 * 24 * 60 * 60 * 1000;
 
 export const draftKey = (userId: string, conversationId: string): string =>
   `${userId}:${conversationId}`;

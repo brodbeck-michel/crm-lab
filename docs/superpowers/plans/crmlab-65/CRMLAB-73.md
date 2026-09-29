@@ -1,0 +1,25 @@
+# Diário — CRMLAB-73 [H] Texto da conversa: rascunho, links, formatação e emoji
+
+Worktree `../CRM Lab-73` · branch `feature/CRMLAB-73-texto-rascunho` (de `integ/epic-65`, com a
+main v1.24.0). Faixa: D-242…D-243 · sem migração · só frontend.
+
+## Etapa 1 — docs (Regra Zero) ✅
+- Lido: CLAUDE.md, AGENTS.md, plano do épico, card no Jira, D-183, diário do 69, Composer,
+  MessageBubble, EmojiPicker, ConversationItem, ConversationPanel.
+- `DECISIONS.md`: D-242 (parser/links/ênfase/linhas) e D-243 (rascunho + emoji estático).
+- `COMPONENTS.md`: ConversationItem (Rascunho), MessageBubble (formatação), Composer (atalhos,
+  `draftId`), EmojiPicker, `WhatsAppText` novo.
+
+## Plano (arquivos)
+- `lib/whatsapp-format.ts` — `parseWhatsApp` (sai `splitBold`) + spec.
+- `components/conversation/WhatsAppText.tsx` — desenha a árvore.
+- `MessageBubble.tsx` — só o `<p>` do texto troca para `WhatsAppText` (70/64 mexem no resto).
+- `stores/drafts.store.ts` + spec; `Composer.tsx` (`draftId`, Ctrl+I, Ctrl+Shift+X) + spec.
+- `ConversationPanel.tsx` — uma prop (`draftId={conversation.id}`).
+- `ConversationItem.tsx` — "Rascunho: …" + limpeza de encerrada.
+- `EmojiPicker.tsx` + `emoji-data.ts` + spec.
+
+## Perguntas em aberto (regra de negócio)
+- Sair do sistema apaga todos os rascunhos do navegador (leitura restritiva, D-243 item 4c).
+  Confirmar com o Michel se prefere manter entre sessões (só escopados por usuário).
+- Prazo de 7 dias para descartar rascunho esquecido (D-243 item 4b): valor escolhido, confirmar.

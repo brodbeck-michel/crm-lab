@@ -96,9 +96,7 @@ export function Attendance() {
   const filters = useMemo<ListConversationsQuery>(
     () => ({
       status: 'active',
-      scope: showClosed || scope === 'unread' ? 'all' : scope,
-      // "Não lidas" (D-229): recorte de listagem como o escopo.
-      ...(scope === 'unread' ? { unread: true } : {}),
+      scope: showClosed ? 'all' : scope,
       ...searchFilter,
     }),
     [scope, showClosed, searchFilter],

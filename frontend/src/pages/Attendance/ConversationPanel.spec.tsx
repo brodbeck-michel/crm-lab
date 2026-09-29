@@ -66,7 +66,7 @@ function props(messages: Message[]): ConversationPanelProps {
     canCloseAttendance: true,
     onToggleContext: vi.fn(),
     onClose: vi.fn(),
-    onAttach: vi.fn(),
+    onSendAttachments: vi.fn(),
     contextOpen: true,
     hasOlderMessages: false,
     loadingOlder: false,

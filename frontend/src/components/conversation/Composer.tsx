@@ -1,7 +1,8 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { ClipboardEvent, KeyboardEvent } from 'react';
 import type { QuickReply } from '@crm-lab/shared';
 import { Button, cn } from '@/components/ui';
+import { DOCUMENT_ACCEPT, MEDIA_ACCEPT, filesFromDataTransfer } from './attachment-draft';
 import { EmojiPicker } from './EmojiPicker';
 import { QuickReplyMenu, filterQuickReplies, quickReplyOptionId } from './QuickReplyMenu';
 import { MicIcon, VoiceRecorder } from './VoiceRecorder';
@@ -43,8 +44,14 @@ export interface ComposerProps {
    * pessoa não começou outra mensagem) — quem avisa do erro é quem chama (CRMLAB-63).
    */
   onSend: (content: string) => void | Promise<unknown>;
-  /** Anexo — sem handler, o botão não aparece (nada de botão morto). */
-  onAttach?: () => void;
+  /**
+   * Arquivos escolhidos no clipe ("Fotos e vídeos" / "Documento", vários) ou
+   * colados com Ctrl+V (CRMLAB-69, D-232). Sem handler, nem clipe nem colar
+   * arquivo (nada de botão morto). Quem monta a tela abre a prévia.
+   */
+  onPickFiles?: (files: File[]) => void;
+  /** Clique no clipe (a tela tira a faixa de não lidas, D-239). */
+  onAttachClick?: () => void;
   /**
    * Recado de voz gravado (D-181) — sem handler, o microfone não aparece.
    * Resolveu: o gravador volta ao normal. Rejeitou: a prévia fica para tentar
@@ -109,9 +116,121 @@ function AttachIcon() {
   );
 }
 
+/**
+ * Clipe com menu (CRMLAB-69, D-232): "Fotos e vídeos" e "Documento", os dois
+ * com `multiple`. Mesmo padrão de menu do `TransferMenu` (clique fora + Esc).
+ */
+function AttachMenu({
+  onPickFiles,
+  onOpen,
+  disabled,
+}: {
+  onPickFiles: (files: File[]) => void;
+  onOpen?: () => void;
+  disabled: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const mediaInputRef = useRef<HTMLInputElement>(null);
+  const documentInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: MouseEvent) {
+      if (!ref.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function onKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      setOpen(false);
+      ref.current?.querySelector('button')?.focus();
+    }
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  function pick(input: HTMLInputElement | null): void {
+    setOpen(false);
+    input?.click();
+  }
+
+  function handleChange(input: HTMLInputElement): void {
+    const files = Array.from(input.files ?? []);
+    input.value = '';
+    if (files.length > 0) onPickFiles(files);
+  }
+
+  const itemClass =
+    'w-full cursor-pointer border-none bg-transparent px-md py-xs text-left font-body text-label text-text hover:bg-accent-100';
+
+  return (
+    <div ref={ref} className="relative">
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => {
+          if (!open) onOpen?.();
+          setOpen((value) => !value);
+        }}
+        disabled={disabled}
+        aria-label="Anexar arquivo"
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        <AttachIcon />
+      </Button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute bottom-full left-0 z-50 mb-xs w-[180px] rounded-md border border-neutral-200 bg-surface py-xs shadow-md"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className={itemClass}
+            onClick={() => pick(mediaInputRef.current)}
+          >
+            Fotos e vídeos
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={itemClass}
+            onClick={() => pick(documentInputRef.current)}
+          >
+            Documento
+          </button>
+        </div>
+      )}
+      <input
+        ref={mediaInputRef}
+        type="file"
+        multiple
+        hidden
+        accept={MEDIA_ACCEPT}
+        data-testid="attach-media-input"
+        onChange={(event) => handleChange(event.target)}
+      />
+      <input
+        ref={documentInputRef}
+        type="file"
+        multiple
+        hidden
+        accept={DOCUMENT_ACCEPT}
+        data-testid="attach-document-input"
+        onChange={(event) => handleChange(event.target)}
+      />
+    </div>
+  );
+}
+
 export function Composer({
   onSend,
-  onAttach,
+  onPickFiles,
+  onAttachClick,
   onSendAudio,
   disabled = false,
   sending = false,
@@ -230,6 +349,18 @@ export function Composer({
     requestAnimationFrame(() => fieldRef.current?.setSelectionRange(start + 1, end + 1));
   }
 
+  /**
+   * Ctrl+V com arquivo (print de tela) abre a prévia e não cola nada; só texto
+   * cola normal (CRMLAB-69, D-232).
+   */
+  function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>): void {
+    if (!onPickFiles) return;
+    const files = filesFromDataTransfer(event.clipboardData);
+    if (files.length === 0) return;
+    event.preventDefault();
+    onPickFiles(files);
+  }
+
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
     // `!altKey`: AltGr no Windows chega como Ctrl+Alt e digita caractere em alguns teclados.
     if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'b') {
@@ -309,16 +440,8 @@ export function Composer({
         </p>
       )}
       <div className="flex items-end gap-sm">
-        {onAttach && !recording && (
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={onAttach}
-            disabled={blocked}
-            aria-label="Anexar arquivo"
-          >
-            <AttachIcon />
-          </Button>
+        {onPickFiles && !recording && (
+          <AttachMenu onPickFiles={onPickFiles} onOpen={onAttachClick} disabled={blocked} />
         )}
 
         {recording && onSendAudio ? (
@@ -362,6 +485,7 @@ export function Composer({
                 disabled={disabled}
                 onChange={(event) => handleChange(event.target.value)}
                 onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
                 placeholder={placeholder}
                 aria-label="Mensagem"
                 role={macroOpen ? 'combobox' : undefined}

@@ -290,6 +290,50 @@ describe('EvolutionClient', () => {
     expect(lastApikeyHeader).toBe('apikey-da-instancia');
   });
 
+  // --- CRMLAB-69 (D-231) -------------------------------------------------
+  it('sendMedia com legenda manda `caption` no corpo; sem legenda não manda', async () => {
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    await client.sendMedia(
+      'tenant-abc',
+      '5511987654321',
+      { base64: 'cGRm', mimeType: 'application/pdf', fileName: 'pedido.pdf', caption: 'Seu pedido' },
+      'apikey-da-instancia',
+    );
+    expect(lastBody).toMatchObject({ mediatype: 'document', caption: 'Seu pedido' });
+
+    await client.sendMedia(
+      'tenant-abc',
+      '5511987654321',
+      { base64: 'aW1n', mimeType: 'image/jpeg', fileName: 'foto.jpg', caption: null },
+      'apikey-da-instancia',
+    );
+    expect(lastBody).not.toHaveProperty('caption');
+  });
+
+  it('sendMedia de vídeo sai como `video`, não como documento', async () => {
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    await client.sendMedia(
+      'tenant-abc',
+      '5511987654321',
+      { base64: 'dmlk', mimeType: 'video/mp4', fileName: 'exame.mp4', caption: 'Olha' },
+      'apikey-da-instancia',
+    );
+    expect(lastUrl).toBe('/message/sendMedia/tenant-abc');
+    expect(lastBody).toMatchObject({ mediatype: 'video', mimetype: 'video/mp4', caption: 'Olha' });
+  });
+
+  it('sendMedia de áudio nunca manda legenda (WhatsApp não tem)', async () => {
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    await client.sendMedia(
+      'tenant-abc',
+      '5511987654321',
+      { base64: 'YXVkaW8=', mimeType: 'audio/webm', fileName: 'recado.webm', caption: 'não vai' },
+      'apikey-da-instancia',
+    );
+    expect(lastUrl).toBe('/message/sendWhatsAppAudio/tenant-abc');
+    expect(lastBody).toEqual({ number: '5511987654321', audio: 'YXVkaW8=' });
+  });
+
   // --- CRMLAB-66 (D-221/D-222/D-223) -------------------------------------
   it('sendText com citacao manda `quoted` no formato do Evolution v2', async () => {
     const client = createEvolutionClient(baseUrl, 'admin-key');

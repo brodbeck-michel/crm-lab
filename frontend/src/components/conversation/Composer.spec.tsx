@@ -61,7 +61,7 @@ describe('Composer', () => {
     const { rerender } = render(<Composer onSend={vi.fn()} />);
     expect(screen.queryByRole('button', { name: 'Anexar arquivo' })).not.toBeInTheDocument();
 
-    rerender(<Composer onSend={vi.fn()} onAttach={vi.fn()} />);
+    rerender(<Composer onSend={vi.fn()} onPickFiles={vi.fn()} />);
     expect(screen.getByRole('button', { name: 'Anexar arquivo' })).toBeInTheDocument();
   });
 });

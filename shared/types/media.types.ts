@@ -14,7 +14,21 @@ export interface CreateAttachmentRequest {
   contentBase64: string;
   /** Responder citando (CRMLAB-66, D-221) — mesma regra de `CreateMessageRequest`. */
   quotedMessageId?: string | null;
+  /**
+   * Legenda (CRMLAB-69, D-231): até `MAX_CAPTION_LENGTH` caracteres, aparada;
+   * vira o `content` da mensagem. Áudio descarta a legenda.
+   */
+  caption?: string | null;
 }
+
+/**
+ * 15 MiB — teto de um anexo (CRMLAB-31). Em `shared/` para o cliente validar
+ * na prévia com o MESMO número do backend (CRMLAB-69, D-232).
+ */
+export const MAX_MEDIA_BYTES = 15 * 1024 * 1024;
+
+/** Teto de legenda do WhatsApp (CRMLAB-69, D-231). */
+export const MAX_CAPTION_LENGTH = 1024;
 
 /**
  * Allow-list de MIME de mídia (CRMLAB-31). Espelha docs/api/API_CONTRACTS.md

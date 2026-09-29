@@ -93,7 +93,7 @@ node_modules são symlinks para a pasta principal; `*.wt.*` (vitest/tsconfig com
 | 69 [D] | 🧪 hml (`hml-deb5132`) · Pronto p/ Validação | a59817c | D-231..D-233, 044 sem uso. Prévia, vários, Ctrl+V, drop, caption. |
 | 70 [E] | 🔄 docs (onda 3, 29/09) | — | Vídeo toca no balão (fora do lightbox); `sticker` vira tipo próprio. |
 | 73 [H] | 🔄 docs (onda 3, 29/09) | — | Emoji: preferência por lista estática (sem dependência nova). |
-| 64    | 🔄 docs (onda 3, 29/09) | — | Navega só `type === 'image'` → sticker do 70 sai sozinho na integração. |
+| 64    | ✅ pronto no card (29/09) | a815f0d | D-244, D-245. Lightbox único no painel (`ConversationImageViewer`, `useConversationImages`); cache por URL com refcount em `useAuthenticatedMedia`. 860 specs afetados verdes. Sticker sai da navegação quando o 70 entrar. |
 
 Fases: ⬜ não iniciado → 🔄 docs → 🔄 backend → 🔄 frontend → 🔄 testes → ✅ pronto no card
 → 🔗 integrado em `integ/epic-65` → 🧪 hml → ✔️ aprovado → PR.

@@ -27,7 +27,8 @@ export interface ConversationPanelProps {
   isLoading: boolean;
   isError: boolean;
   onRetry: () => void;
-  onSend: (content: string) => void;
+  /** Rejeitou: o Composer devolve o texto ao campo (CRMLAB-75). */
+  onSend: (content: string) => void | Promise<unknown>;
   sending: boolean;
   /** Quem pode receber a conversa — `GET /conversations/assignees`. */
   assignees: ConversationAssignee[];

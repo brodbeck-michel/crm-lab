@@ -37,8 +37,12 @@ import type { RecordedAudio } from './useVoiceRecorder';
  */
 
 export interface ComposerProps {
-  /** Recebe o texto já aparado. Não é chamado com string vazia. */
-  onSend: (content: string) => void;
+  /**
+   * Recebe o texto já aparado. Não é chamado com string vazia. O campo esvazia
+   * na hora; se devolver uma `Promise` que REJEITA, o texto volta ao campo —
+   * a menos que a pessoa já tenha começado outro (CRMLAB-75, D-215).
+   */
+  onSend: (content: string) => void | Promise<unknown>;
   /** Anexo — sem handler, o botão não aparece (nada de botão morto). */
   onAttach?: () => void;
   /**
@@ -166,9 +170,12 @@ export function Composer({
   function submit(): void {
     const content = value.trim();
     if (!content || blocked) return;
-    onSend(content);
+    const result = onSend(content);
     setValue('');
     fieldRef.current?.focus();
+    if (result instanceof Promise) {
+      result.catch(() => setValue((current) => (current === '' ? content : current)));
+    }
   }
 
   /**

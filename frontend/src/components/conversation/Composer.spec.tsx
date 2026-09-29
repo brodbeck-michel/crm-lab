@@ -18,6 +18,31 @@ describe('Composer', () => {
     expect(field).toHaveValue('');
   });
 
+  it('onSend rejeitou: o texto volta ao campo (CRMLAB-75)', async () => {
+    const onSend = vi.fn().mockRejectedValue(new Error('409'));
+    render(<Composer onSend={onSend} />);
+
+    const field = screen.getByLabelText('Mensagem');
+    await userEvent.type(field, 'Bom dia!');
+    await userEvent.keyboard('{Enter}');
+
+    await waitFor(() => expect(field).toHaveValue('Bom dia!'));
+  });
+
+  it('onSend rejeitou depois de a pessoa começar outro texto: não sobrescreve', async () => {
+    let reject: (reason: unknown) => void = () => undefined;
+    const onSend = vi.fn(() => new Promise((_resolve, rej) => (reject = rej)));
+    render(<Composer onSend={onSend} />);
+
+    const field = screen.getByLabelText('Mensagem');
+    await userEvent.type(field, 'primeiro');
+    await userEvent.keyboard('{Enter}');
+    await userEvent.type(field, 'segundo');
+    reject(new Error('409'));
+
+    await waitFor(() => expect(field).toHaveValue('segundo'));
+  });
+
   it('Shift+Enter NAO envia — quebra linha', async () => {
     const onSend = vi.fn();
     render(<Composer onSend={onSend} />);

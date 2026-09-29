@@ -7,7 +7,7 @@ import type {
   ListConversationsQuery,
   ListPatientsQuery,
 } from '@crm-lab/shared';
-import { api, queryKeys, queryScopes, staleTimes } from '@/api';
+import { api, isApiError, queryKeys, queryScopes, staleTimes } from '@/api';
 import { useQuickReplyList } from '@/api/quick-replies';
 import { useEffectiveFunnelRules } from '@/api/funnel-rules';
 import { useToast } from '@/components/ui';
@@ -166,12 +166,50 @@ export function Attendance() {
     ]);
   }, [queryClient, selectedId]);
 
+  /**
+   * Responder assume a conversa da fila livre (CRMLAB-75, D-215). Se outra
+   * pessoa assumiu no mesmo instante, o backend recusa com
+   * `CONVERSATION_ALREADY_ASSIGNED` e NADA sai para o paciente: avisa de quem
+   * a conversa é agora e reconsulta lista e conversa.
+   */
+  const handleSendError = useCallback(
+    (error: unknown) => {
+      if (isApiError(error) && error.code === 'CONVERSATION_ALREADY_ASSIGNED') {
+        const name = error.details?.assignedToName;
+        toast(
+          typeof name === 'string' && name.length > 0
+            ? `Conversa já assumida por ${name}.`
+            : 'Conversa já assumida por outra pessoa.',
+          { tone: 'attention' },
+        );
+        void queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
+        return;
+      }
+      handleApiError(error);
+    },
+    [handleApiError, queryClient, toast],
+  );
+
   const sendMessage = useMutation({
     mutationFn: (content: string) =>
       api.conversations.sendMessage(selectedId as string, { content, messageType: 'text' }),
     onSuccess: invalidateConversation,
-    onError: handleApiError,
+    onError: handleSendError,
   });
+
+  /**
+   * O Composer devolve o texto ao campo quando a Promise rejeita — só no 409
+   * de conversa já assumida (a mensagem não foi gravada). Qualquer outra falha
+   * (ex.: `MESSAGE_SEND_FAILED`) deixou a bolha gravada como falha na tela;
+   * devolver o texto convidaria a mandar duas vezes.
+   */
+  async function handleSend(content: string): Promise<void> {
+    try {
+      await sendMessage.mutateAsync(content);
+    } catch (error) {
+      if (isApiError(error) && error.code === 'CONVERSATION_ALREADY_ASSIGNED') throw error;
+    }
+  }
 
   /** Anexo (Onda 8 §4.3) — o clipe abre o seletor de arquivo do SO. */
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -188,7 +226,7 @@ export function Attendance() {
         queryClient.invalidateQueries({ queryKey: queryKeys.conversation(conversationId) }),
         queryClient.invalidateQueries({ queryKey: queryScopes.conversations }),
       ]),
-    onError: handleApiError,
+    onError: handleSendError,
   });
 
   function readFileAsBase64(file: Blob): Promise<string> {
@@ -323,7 +361,7 @@ export function Attendance() {
             isLoading={selectedId !== null && detailQuery.isPending}
             isError={detailQuery.isError}
             onRetry={() => void detailQuery.refetch()}
-            onSend={(content) => sendMessage.mutate(content)}
+            onSend={handleSend}
             sending={sendMessage.isPending}
             assignees={assigneesQuery.data?.assignees ?? []}
             onAssign={(userId) => assign.mutate(userId)}

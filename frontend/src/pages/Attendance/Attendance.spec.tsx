@@ -350,6 +350,47 @@ describe('Atendimento — abrir conversa', () => {
     });
   });
 
+  it('CRMLAB-75: outra pessoa assumiu no mesmo instante — avisa de quem é e o texto volta ao campo', async () => {
+    const { ApiError } = await import('@/api');
+    listMock.mockResolvedValue(listResponse([conversation({ assignedTo: null, assignedToName: null })]));
+    getMock.mockResolvedValue(detailResponse());
+    sendMessageMock.mockRejectedValue(
+      new ApiError('CONVERSATION_ALREADY_ASSIGNED', 'Conversa ja atribuida a outro atendente', 409, {
+        assignedTo: 'u-2',
+        assignedToName: 'Bia',
+      }),
+    );
+    renderScreen();
+
+    await userEvent.click(await screen.findByTestId('conversation-item'));
+    const composer = await screen.findByTestId('composer');
+    const field = within(composer).getByLabelText('Mensagem');
+    await userEvent.type(field, 'Bom dia!');
+    await userEvent.click(within(composer).getByRole('button', { name: 'Enviar' }));
+
+    expect(await screen.findByText('Conversa já assumida por Bia.')).toBeInTheDocument();
+    await waitFor(() => expect(field).toHaveValue('Bom dia!'));
+  });
+
+  it('CRMLAB-75: falha do canal (502) NÃO devolve o texto — a bolha já ficou como falha', async () => {
+    const { ApiError } = await import('@/api');
+    listMock.mockResolvedValue(listResponse([conversation()]));
+    getMock.mockResolvedValue(detailResponse());
+    sendMessageMock.mockRejectedValue(
+      new ApiError('MESSAGE_SEND_FAILED', 'Falha ao enviar a mensagem pelo canal', 502),
+    );
+    renderScreen();
+
+    await userEvent.click(await screen.findByTestId('conversation-item'));
+    const composer = await screen.findByTestId('composer');
+    const field = within(composer).getByLabelText('Mensagem');
+    await userEvent.type(field, 'Bom dia!');
+    await userEvent.click(within(composer).getByRole('button', { name: 'Enviar' }));
+
+    expect(await screen.findByText('Falha ao enviar a mensagem pelo canal')).toBeInTheDocument();
+    expect(field).toHaveValue('');
+  });
+
   it('recado de voz gravado sai pelo MESMO POST /attachments do clipe (CRMLAB-24)', async () => {
     listMock.mockResolvedValue(listResponse([conversation()]));
     getMock.mockResolvedValue(detailResponse());

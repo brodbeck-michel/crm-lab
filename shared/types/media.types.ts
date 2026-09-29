@@ -106,12 +106,14 @@ export function isAllowedMediaMimeType(mimeType: string): mimeType is AllowedMed
  * cópia — a revisão do PR #43 achou cinco mapeamentos MIME→categoria
  * divergentes espalhados pelo backend.
  */
-export type MediaCategory = 'image' | 'audio' | 'pdf' | 'other';
+export type MediaCategory = 'image' | 'audio' | 'video' | 'pdf' | 'other';
 
 export function mediaCategoryOf(mimeType: string): MediaCategory {
   const mime = normalizeMediaMimeType(mimeType);
   if (mime.startsWith('image/')) return 'image';
   if (mime.startsWith('audio/')) return 'audio';
+  // CRMLAB-70 (D-234): video ganhou tipo proprio e passa pelo sniff de magic bytes.
+  if (mime.startsWith('video/')) return 'video';
   if (mime === 'application/pdf') return 'pdf';
   return 'other';
 }

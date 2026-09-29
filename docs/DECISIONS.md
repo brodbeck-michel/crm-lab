@@ -4472,8 +4472,9 @@ deixaria de fora os documentos antigos); uma coluna JSONB resolve o resto sem ta
    Sem coordenada numérica válida (lat −90..90, lng −180..180) continua a linha de texto de antes.
 5. **Contato** (`contactMessage`, `contactsArrayMessage`): vira `messageType: 'contact'` com
    `metadata.contacts` — nome = `displayName` (ou o `FN:` do vCard) e telefone do vCard: o
-   `waid=` do `TEL` quando vier (é o número do WhatsApp), senão os dígitos do `TEL`, em
-   `+<dígitos>`; sem telefone, `phone: null`. Até **10** contatos por mensagem.
+   `waid=` do `TEL` quando vier (é o número do WhatsApp, vira `+<dígitos>`); senão o `TEL`:
+   com `+` vira `+<dígitos>`, sem `+` passa por `normalizeBrazilianPhone` e, não sendo número BR,
+   ficam os dígitos crus; sem telefone, `phone: null`. Até **10** contatos por mensagem.
 6. **Mídia recusada** (tamanho, D-169) continua sem criar mensagem, como antes.
 **Motivo:** o card pede cartões e player; guardar estruturado no webhook é o único momento em
 que o dado existe (o WhatsApp não reenvia).

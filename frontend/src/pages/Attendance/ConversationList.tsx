@@ -29,10 +29,10 @@ import { PatientResults } from './PatientResults';
 /**
  * Chip ligado na coluna. `mine`/`unassigned`/`all` são o `scope` de
  * `ListConversationsQuery` sobre as ATIVAS (`all` = nenhum chip ligado);
- * `unread` = as ativas com não lidas (`?unread=true`, D-229); `closed` é a
- * lista das encerradas (D-174), `?status=closed`.
+ * `closed` é a lista das encerradas (D-174), `?status=closed`. Sem chip
+ * "Não lidas" (D-229 item 5, retirado a pedido do Michel): a API mantém `?unread=true`.
  */
-export type ConversationScope = 'mine' | 'unassigned' | 'unread' | 'all' | 'closed';
+export type ConversationScope = 'mine' | 'unassigned' | 'all' | 'closed';
 
 export interface ConversationListProps {
   conversations: Conversation[];
@@ -150,14 +150,6 @@ export function ConversationList({
             title="Fila livre — ninguém assumiu ainda"
           >
             {`Não atribuídas ${counts?.unassigned ?? 0}`}
-          </Chip>
-          <Chip
-            tone={scope === 'unread' ? 'attention' : 'inactive'}
-            selected={scope === 'unread'}
-            onClick={() => toggle('unread')}
-            title="Conversas com mensagem não lida"
-          >
-            {`Não lidas ${counts?.unread ?? 0}`}
           </Chip>
           {/* Sem número: o chip existe para ACHAR uma encerrada, não para medir fila. */}
           <Chip

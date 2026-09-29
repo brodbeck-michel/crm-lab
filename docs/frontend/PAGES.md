@@ -116,8 +116,9 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 - Chip **"Encerradas"** (CRMLAB-48, D-174), sem número: lista `?status=closed` (o atendente vê só
   as dele, pelo recorte do servidor). Ligado, os números de "Minhas"/"Não atribuídas" continuam os
   das **ativas** — vêm da mesma query da fila, que segue rodando. Clicar de novo volta à fila
-- Chip **"Não lidas N"** (CRMLAB-68, D-229): lista só as ativas com `unreadCount > 0`
-  (`?unread=true`), exclusivo como os outros; N = `counts.unread`
+- **Sem chip "Não lidas"** (CRMLAB-68, D-229 item 5): o Michel preferiu só Minhas / Não
+  atribuídas / Encerradas — o número de não lidas no item e no título da aba já avisam. A API
+  mantém `?unread=true` e `counts.unread`
 - Busca (pílula): paciente, telefone ou exame
 - **Busca nas mensagens (CRMLAB-68, D-228):** com 2+ caracteres a coluna também consulta
   `GET /conversations/search/messages?q=&limit=20` e mostra o bloco **"Mensagens"** (entre a fila

@@ -154,18 +154,13 @@ beforeEach(() => {
 });
 
 describe('Atendimento — "Não lidas" (D-229)', () => {
-  it('o chip mostra counts.unread e, ligado, pede ?unread=true sobre as ativas', async () => {
+  it('sem chip "Não lidas" na lista — só Minhas, Não atribuídas e Encerradas (D-229 item 5)', async () => {
     listMock.mockResolvedValue(listResponse([conversation()]));
-    const user = userEvent.setup();
     renderScreen();
 
-    const chip = await screen.findByRole('button', { name: 'Não lidas 2' });
-    await user.click(chip);
-    await waitFor(() =>
-      expect(listMock).toHaveBeenCalledWith(
-        expect.objectContaining({ status: 'active', scope: 'all', unread: true }),
-      ),
-    );
+    expect(await screen.findByRole('button', { name: /^Minhas/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Não lidas/ })).not.toBeInTheDocument();
+    expect(listMock).not.toHaveBeenCalledWith(expect.objectContaining({ unread: true }));
   });
 
   it('"Marcar como não lida" pelo menu chama POST /unread e fecha a conversa aberta', async () => {

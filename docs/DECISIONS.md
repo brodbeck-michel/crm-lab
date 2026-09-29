@@ -4332,8 +4332,9 @@ guarda as apagadas, que nunca podem ser achadas.
 4. **Listagem:** `GET /conversations?unread=true` filtra `unread_count > 0`, e `counts.unread`
    sai do mesmo `COUNT(*) FILTER` dos outros chips. `unread` é recorte de listagem como o
    `scope`: entra no `total`, **não** nos `counts` (o chip não clicado mantém o número).
-5. **Tela:** chip "Não lidas N" ao lado de "Minhas"/"Não atribuídas", exclusivo como eles (ligado,
-   lista as ativas com não lida de todo o recorte do usuário). No item da lista, clique direito
+5. **Tela:** ~~chip "Não lidas N"~~ — **retirado na validação (Michel, 29/09/2026):** com o número
+   de não lidas no item e no título da aba, o chip repetia a informação; ficam Minhas / Não
+   atribuídas / Encerradas. A API mantém `?unread=true`/`counts.unread` (baratos, testados). No item da lista, clique direito
    ou o botão "⋯" abre o menu com "Marcar como não lida" (só aparece com `unreadCount === 0`).
    Marcar a conversa **aberta** fecha o painel — senão o próximo refetch do detalhe zeraria o
    contador na hora.

@@ -287,6 +287,9 @@ export function createAttachment(services: ConversationServices): RequestHandler
 
     // Recorte por papel antes de gravar: 404 para conversa que nao e visivel.
     await services.conversations.getById(ctx, id);
+    // Responder assume a fila livre (D-215) — antes da midia: quem perde a
+    // corrida recebe o 409 sem deixar arquivo gravado.
+    await services.messages.claimForAgent(ctx.tenantId, id, ctx.userId);
 
     const stored = await services.media.storeOutbound(ctx.tenantId, dto);
     // `stored.mimeType` (nao `dto.mimeType`): allow-list/sniff (CRMLAB-31)

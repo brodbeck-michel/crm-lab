@@ -199,8 +199,8 @@ describe('POST /conversations/whatsapp', () => {
       .expect(201);
 
     expect(response.body.conversation.id).toBe(existing.id);
-    // Fila livre continua livre: enviar nao assume.
-    expect(response.body.conversation.assignedTo).toBeNull();
+    // Fila livre: responder assume, como em qualquer envio (CRMLAB-75, D-215).
+    expect(response.body.conversation.assignedTo).toBe(ana.id);
     expect(await countConversations(tenant.id)).toBe(1);
   });
 

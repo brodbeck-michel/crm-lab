@@ -75,6 +75,7 @@ import type { DbClient } from '../db/types.js';
 import type { TenantContext } from '../http/context.js';
 import { BusinessError, isBusinessError, notFound } from '../http/errors.js';
 import type { AuditService } from './audit.service.js';
+import { claimFreeConversation } from './conversation-claim.js';
 import type { MessageService } from './message.service.js';
 import {
   isConversationSortBy,
@@ -424,13 +425,15 @@ export class ConversationService {
 
     // --- fila livre: a corrida e decidida pelo banco -------------------------
     if (current.assignedTo === null) {
-      const claimed = await this.repository.claimIfUnassigned(ctx.tenantId, id, target.id);
-      if (claimed) {
-        await this.recordAssignment(ctx, current, claimed);
-        return claimed;
-      }
-      // Perdeu a corrida: alguem atribuiu entre o SELECT e o UPDATE.
-      throw await this.alreadyAssigned(ctx.tenantId, id);
+      // Mesmo claim de quem assume respondendo (CRMLAB-75, D-215).
+      const { conversation, claimed } = await claimFreeConversation(
+        this.repository,
+        ctx.tenantId,
+        id,
+        target.id,
+      );
+      if (claimed) await this.recordAssignment(ctx, current, conversation);
+      return conversation;
     }
 
     // --- transferencia (WORKFLOWS §5) ----------------------------------------
@@ -625,15 +628,6 @@ export class ConversationService {
       });
     }
     return { id: user.id, name: user.name };
-  }
-
-  /** Le quem ganhou a corrida para montar `details` do 409. */
-  private async alreadyAssigned(tenantId: string, id: string): Promise<BusinessError> {
-    const winner = await this.repository.findById(tenantId, id);
-    return new BusinessError('CONVERSATION_ALREADY_ASSIGNED', {
-      assignedTo: winner?.assignedTo ?? null,
-      assignedToName: winner?.assignedToName ?? null,
-    });
   }
 
   private async recordAssignment(

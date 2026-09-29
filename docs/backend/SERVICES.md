@@ -62,6 +62,7 @@ interface ConversationService {
   // D-174: so dona/gestor/admin; 'closed' grava evento de sistema. Reabertura manual: createManual.
   updateStatus(tenantId: string, id: string, status: 'active' | 'closed'): Promise<Conversation>;
   markAsRead(tenantId: string, id: string, userId: string): Promise<void>;
+  markAsUnread(ctx: TenantContext, id: string): Promise<void>; // CRMLAB-68, D-229
 }
 ```
 
@@ -110,6 +111,11 @@ Devolve `{ conversation, message }`, com a conversa relida depois do envio.
 - `markAsRead` zera `unread_count` e marca mensagens. `GET /conversations/:id` chama-o
   (PAGES.md §2 "Ao abrir: markAsRead"); `POST /conversations/:id/read` é o caminho
   explícito
+- `markAsUnread` (D-229) grava `unread_count = GREATEST(unread_count, 1)` com o mesmo recorte
+  do `markAsRead` (invisível → `NOT_FOUND`). Não mexe em `last_message_at`, não emite WS, sem
+  audit. `list` aceita `unread: true` (recorte como o `scope`) e devolve `counts.unread`
+- `searchMessages(ctx, query)` e `searchInConversation(ctx, id, query)` (D-228) resolvem o
+  recorte por papel (`visibleTo` igual ao da listagem) e delegam a `MessageService.search`
 - **`findOrCreateByPhone` cria ou reaproveita o paciente e grava `conversations.patient_id`
   na mesma transação (D-072).** A ligação mora no *repositório*, sobre a `DbTx` já aberta —
   chamar `PatientService` daqui abriria um segundo `withTenant` e travaria (D-008, uma
@@ -125,7 +131,8 @@ Devolve `{ conversation, message }`, com a conversa relida depois do envio.
 
 ```typescript
 interface MessageService {
-  listByConversation(tenantId: string, conversationId: string, page: Pagination & { before?: string }): Promise<Paginated<Message> & { cursors: MessageCursors }>; // cursor D-237
+  listByConversation(tenantId: string, conversationId: string, page: Pagination & { before?: string; after?: string; around?: string }): Promise<Paginated<Message> & { cursors: MessageCursors }>; // cursor D-237, after/around D-230
+  search(tenantId: string, criteria: { term: string; visibleTo: string | null; conversationId?: string; page: number; limit: number }): Promise<Paginated<MessageSearchHit>>; // D-228
   createFromAgent(tenantId: string, conversationId: string, senderId: string, dto: CreateMessageDTO): Promise<Message>;
   createFromPatient(tenantId: string, conversationId: string, dto: InboundMessageDTO): Promise<Message>; // via webhook
   createFromPhone(tenantId: string, conversationId: string, dto: InboundMessageDTO): Promise<Message | null>; // fromMe via webhook (D-173); null = eco do CRM
@@ -150,6 +157,10 @@ interface que ProposalService/ApprovalService consomem. Instanciação:
   do cliente — o fio tem milissegundos, a coluna tem microssegundos). `before` que não é desta
   conversa → `NOT_FOUND` (`resource: 'message'`). Busca `limit + 1` linhas para saber se ainda
   há histórico: `cursors.before` é o id da mais antiga devolvida, ou `null` no começo da conversa
+- `after`/`around` (D-230): mesmo cursor por id, lido no banco. `cursors.after` é o id da mais
+  nova devolvida quando existem mais novas, `null` na ponta da conversa
+- `search` (D-228): full-text `portuguese` sobre `crm_unaccent(content)` com a expressão e o
+  predicado do índice parcial da 043; sem apagadas, sem sistema; mais nova primeiro
 - `createFromAgent` → chama WhatsAppService.send() → atualiza `status` conforme callback.
   A mensagem é persistida ANTES do envio: falha de canal deixa a linha com
   `status: 'failed'` e devolve `MESSAGE_SEND_FAILED` (502) — a bolha não some da tela

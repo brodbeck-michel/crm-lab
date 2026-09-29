@@ -173,32 +173,69 @@ export interface ListConversationsQuery extends PaginationQuery {
   /** 'mine' = atribuidas ao usuario logado; 'unassigned' = fila livre. */
   scope?: 'mine' | 'unassigned' | 'all';
   search?: string;
+  /** So conversas com `unreadCount > 0` (CRMLAB-68, D-229) — recorte como o `scope`. */
+  unread?: boolean;
 }
 
 export interface ListConversationsResponse {
   conversations: Conversation[];
   pagination: PaginationMeta;
-  /** Contagens dos chips de filtro — derivadas, nunca contadores separados. */
-  counts: { mine: number; unassigned: number };
+  /**
+   * Contagens dos chips de filtro — derivadas, nunca contadores separados.
+   * `unread` (chip "Nao lidas", D-229) e opcional no tipo; o backend sempre manda.
+   */
+  counts: { mine: number; unassigned: number; unread?: number };
 }
 
 /**
  * `GET /conversations/:id` — API_CONTRACTS.md §2.
- * `before` (cursor, D-237) e `page` sao excludentes.
+ * `before`/`after`/`around` (cursores, D-237/D-230) e `page` sao excludentes entre si.
  */
 export interface GetConversationQuery {
   messageLimit?: number;
   page?: number;
   /** Id da mensagem: devolve as `messageLimit` anteriores a ela, na ordem `(createdAt, id)`. */
   before?: string;
+  /** Id da mensagem: as `messageLimit` imediatamente posteriores a ela (D-230). */
+  after?: string;
+  /** Id da mensagem: a janela em volta dela — "ir ate a mensagem" da busca (D-230). */
+  around?: string;
 }
 
-/** Cursores do historico (D-237). `null` = nao ha mais nada naquela direcao. */
+/** Cursores do historico (D-237/D-230). `null` = nao ha mais nada naquela direcao. */
 export interface MessageCursors {
   /** Id da mensagem mais antiga da pagina quando ainda ha historico anterior. */
   before: string | null;
-  /** Reservado para "carregar ao redor" (CRMLAB-68); sempre `null` por enquanto. */
+  /** Id da mensagem mais nova da pagina quando ainda ha mensagens mais novas (D-230). */
   after: string | null;
+}
+
+/**
+ * `GET /conversations/search/messages` e `GET /conversations/:id/messages`
+ * (CRMLAB-68, D-228). `q`: 2 a 120 caracteres; ignora acento e caixa.
+ */
+export interface SearchMessagesQuery {
+  q: string;
+  page?: number;
+  limit?: number;
+}
+
+/** Uma mensagem achada pela busca. `content` vem inteiro: o trecho e da tela (D-228). */
+export interface MessageSearchHit {
+  messageId: string;
+  conversationId: string;
+  patientName: string | null;
+  patientPhone: string;
+  senderType: SenderType;
+  senderName: string | null;
+  messageType: MessageType;
+  content: string;
+  createdAt: IsoDateTime;
+}
+
+export interface SearchMessagesResponse {
+  results: MessageSearchHit[];
+  pagination: PaginationMeta;
 }
 
 export interface GetConversationResponse {

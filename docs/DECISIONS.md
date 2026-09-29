@@ -4113,6 +4113,111 @@ fora disso a Meta exige template aprovado (pago), que o CRM não tem. Em vez de 
 regra fica fora. Template aprovado, se o laboratório migrar, é outro card.
 **Impacto:** `reengagement.repository.ts` (`isQrWhatsAppActive`), `ReengagementSection.tsx`.
 
+## 2026-09-29 — Busca nas mensagens, "Não lidas" e ir até a mensagem (CRMLAB-68)
+
+### D-228: Busca pelo conteúdo das mensagens — função própria sem acento e GIN parcial
+**Decisão:**
+1. **Sem extensão `unaccent`.** A migração 043 cria a função `crm_unaccent(text)` (`LANGUAGE sql
+   IMMUTABLE`, `translate()` das vogais acentuadas, `ç` e `ñ`, maiúsculas e minúsculas). Funciona
+   no PGlite dos testes e no Postgres de prod/hml sem superusuário, e por ser `IMMUTABLE` pode
+   entrar em índice. Maiúscula/minúscula quem resolve é o `to_tsvector`.
+2. **Índice:** `idx_messages_content_search` — GIN em
+   `to_tsvector('portuguese', crm_unaccent(content))`, **parcial** `WHERE deleted_at IS NULL`. A
+   consulta repete a expressão e o predicado **caractere a caractere** (constante
+   `MESSAGE_SEARCH_EXPRESSION` no repositório), senão o índice não é usado.
+3. **Consulta:** o termo vira palavras (só letras e dígitos; o resto separa), cada uma com `:*`
+   (prefixo: "hemog" acha "hemograma"), unidas por `&` (todas precisam estar na mensagem),
+   passadas por `crm_unaccent` e `to_tsquery('portuguese', …)`. Termo com menos de 2 caracteres
+   úteis → `VALIDATION_ERROR`. Termo só de palavras vazias ("de", "a") não acha nada.
+4. **O que nunca aparece:** mensagem **apagada** pelo remetente (`deleted_at`, D-220 — nem o
+   trecho), evento de sistema (`sender_type = 'system'`), mensagem de outro laboratório (RLS) e,
+   para atendente, conversa de outra atendente — o recorte é o **mesmo da fila**
+   (`assigned_to = eu OR assigned_to IS NULL`; gestor/admin veem todas). Conversa encerrada
+   entra (o recorte não olha status). Mensagem editada é achada pelo texto **novo**.
+5. **Rotas:** `GET /conversations/search/messages?q=` (todas as conversas visíveis) e
+   `GET /conversations/:id/messages?q=` (uma conversa; invisível → `NOT_FOUND`). As duas
+   devolvem `{ results: MessageSearchHit[], pagination }`, da mais nova para a mais antiga
+   (`created_at DESC, id DESC`); `limit` padrão 20, máximo 100.
+6. **Trecho e destaque são do frontend:** a API devolve o `content` inteiro, e a tela recorta o
+   trecho em volta da primeira ocorrência e destaca o termo comparando **sem acento e sem
+   caixa** (função pura). `ts_headline` ficou de fora: devolve HTML (a tela nunca usa
+   `dangerouslySetInnerHTML`) e não destaca "orçamento" quando a pessoa digitou "orcamento".
+**Motivo:** o card pede ignorar acento e responder rápido com volume de produção. A extensão
+`unaccent` exige `CREATE EXTENSION` (superusuário no Postgres gerenciado) e não existe no PGlite;
+a função própria cobre o português, que é o que o laboratório escreve. O índice parcial não
+guarda as apagadas, que nunca podem ser achadas.
+**Impacto:** migração 043; `message.repository.ts` (`search`), `message.service.ts`,
+`conversation.routes.ts`; `shared/types/conversation.types.ts` (`MessageSearchHit`,
+`SearchMessagesQuery`, `SearchMessagesResponse`); API_CONTRACTS §2, SCHEMA §4, SERVICES §3.
+
+### D-229: "Não lidas" continua por conversa; marcar como não lida é `unread_count ≥ 1`
+**Decisão:**
+1. O contador **continua por conversa** (`conversations.unread_count`), como sempre foi: não
+   existe contador por atendente. Marcar como não lida vale para quem mais vê a conversa (a
+   colega da fila livre, a gestora) — é o mesmo número que a fila já mostra.
+2. `POST /conversations/:id/unread` (204, idempotente) grava
+   `unread_count = GREATEST(unread_count, 1)`: a conversa sem não lidas volta com 1; a que já tinha
+   fica como está. **Não** mexe em `last_message_at`, **não** mexe no status das mensagens e **não**
+   emite WebSocket. Recorte igual ao do `POST /read`: invisível → `NOT_FOUND`. Sem audit log
+   (preferência de tela, como o pin). Abrir a conversa zera de novo (o `GET /:id` de sempre).
+3. Como o `lastMessageAt` não muda, o aviso de mensagem nova (D-241 item 2) **não** dispara: ele
+   exige o contador subir **junto** com o `lastMessageAt`. O título da aba passa a contar a
+   conversa, como no WhatsApp Web.
+4. **Listagem:** `GET /conversations?unread=true` filtra `unread_count > 0`, e `counts.unread`
+   sai do mesmo `COUNT(*) FILTER` dos outros chips. `unread` é recorte de listagem como o
+   `scope`: entra no `total`, **não** nos `counts` (o chip não clicado mantém o número).
+5. **Tela:** chip "Não lidas N" ao lado de "Minhas"/"Não atribuídas", exclusivo como eles (ligado,
+   lista as ativas com não lida de todo o recorte do usuário). No item da lista, clique direito
+   ou o botão "⋯" abre o menu com "Marcar como não lida" (só aparece com `unreadCount === 0`).
+   Marcar a conversa **aberta** fecha o painel — senão o próximo refetch do detalhe zeraria o
+   contador na hora.
+**Motivo:** o card pede seguir o que já existe e registrar. Contador por atendente exigiria tabela
+nova, mudaria o significado do número que a fila, os chips e o título da aba já usam, e a
+maioria das conversas tem uma atendente só.
+**Impacto:** `conversation.repository.ts` (`list`, `markAsUnread`), `conversation.service.ts`,
+`conversation.routes.ts`; `shared/types/conversation.types.ts` (`ListConversationsQuery.unread`,
+`counts.unread`); frontend `ConversationList.tsx`, `ConversationItem.tsx`, `index.tsx`;
+API_CONTRACTS §2, PAGES §2, COMPONENTS.
+
+### D-230: Ir até a mensagem — `around` e `after` no mesmo cursor do CRMLAB-71
+**Decisão:**
+1. `GET /conversations/:id` aceita `around=<messageId>` (a janela em volta da mensagem: até
+   `floor(messageLimit/2)` mais novas que ela, e o resto com ela e as anteriores — perto do fim da
+   conversa a janela completa com histórico) e `after=<messageId>` (as `messageLimit` mensagens
+   **imediatamente posteriores**, em ordem crescente). `before`, `after`, `around` e `page` são
+   **excludentes** entre si → `VALIDATION_ERROR`. Mensagem que não é desta conversa (outra
+   conversa, outro tenant, inexistente) → `NOT_FOUND` (`resource: "message"`), igual ao `before`.
+2. `cursors.after` deixa de ser sempre `null` (fecha o D-237 item 2): é o id da mensagem **mais
+   nova** da página quando **existem** mensagens mais novas que ela; `null` quando a página chega à
+   última mensagem. Vale para todo modo: página mais recente → `null`; página `before` → id da
+   mais nova (sempre há mais novas); `after`/`around` → conforme o caso.
+3. Abrir com `around` também marca a conversa como lida (é o `GET /:id` de sempre).
+4. **Frontend:** o `pageParam` da query infinita vira `{ before } | { after } | { around } | null`
+   e `getPreviousPageParam` lê `cursors.after` da primeira página. Aberta por `around`, a chave
+   ganha um 4º elemento — `[...queryKeys.conversation(id), 'messages', { around }]` —, continua
+   sob o prefixo que o WS invalida, e o `useMarkAsRead(id, around)` usa as mesmas opções (abrir
+   continua sendo um GET só). Trocar de janela na mesma conversa mantém a anterior na tela
+   (`placeholderData` só da mesma conversa) até a nova chegar.
+5. **Rolagem:** abrir numa mensagem rola até ela (centro da tela) e acende o destaque; a faixa de
+   não lidas não aparece (`unreadAtOpen = 0`). Perto do fim com `cursors.after`, a tela pede as
+   mais novas — página carregada embaixo **não** é mensagem nova: a tela fica parada e o contador
+   do ↓ não sobe. O botão ↓ com mais novas ainda não carregadas volta para a chave da ponta (sem
+   `around`) e desce ao fim; enviar mensagem faz o mesmo.
+6. **Busca dentro da conversa:** lupa no cabeçalho abre a barra com o campo, "N de M" e ↑ ↓
+   (↑ = ocorrência mais antiga, ↓ = mais nova; Enter = ↑), e a lista de resultados (data +
+   trecho). Clicar ou navegar: se a mensagem já está carregada, só rola (`scrollToMessage`);
+   senão, reabre a conversa com `around`. A busca da lista ganha o bloco **Mensagens** (nome do
+   paciente, data e trecho com destaque) e o clique abre a conversa com `around`.
+**Motivo:** "abrir na mensagem certa, mesmo antiga" sem baixar a conversa inteira. Reaproveitar o
+cursor por id do CRMLAB-71 mantém um formato só e a mesma leitura do par `(created_at, id)` no
+banco (nunca do `createdAt` do fio).
+**Impacto:** `message.repository.ts`, `message.service.ts`, `conversation.routes.ts`;
+`shared/types/conversation.types.ts` (`GetConversationQuery`, `MessageCursors`); frontend
+`queries.ts`, `index.tsx`, `ConversationPanel.tsx`, `useConversationScroll.ts`,
+`scroll-to-message.ts`, `ConversationSearch.tsx` e `MessageResults.tsx` (novos),
+`lib/search-snippet.ts` (novo), `hooks/useNewMessageAlerts.ts` (linha de base do detalhe);
+API_CONTRACTS §2, PAGES §2, COMPONENTS.
+
 ## Template para novas decisões
 
 ```

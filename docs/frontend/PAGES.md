@@ -116,7 +116,18 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 - Chip **"Encerradas"** (CRMLAB-48, D-174), sem número: lista `?status=closed` (o atendente vê só
   as dele, pelo recorte do servidor). Ligado, os números de "Minhas"/"Não atribuídas" continuam os
   das **ativas** — vêm da mesma query da fila, que segue rodando. Clicar de novo volta à fila
+- Chip **"Não lidas N"** (CRMLAB-68, D-229): lista só as ativas com `unreadCount > 0`
+  (`?unread=true`), exclusivo como os outros; N = `counts.unread`
 - Busca (pílula): paciente, telefone ou exame
+- **Busca nas mensagens (CRMLAB-68, D-228):** com 2+ caracteres a coluna também consulta
+  `GET /conversations/search/messages?q=&limit=20` e mostra o bloco **"Mensagens"** (entre a fila
+  e "Pacientes"): nome do paciente, data e o trecho com o termo em destaque (sem acento e sem
+  caixa). Clicar abre a conversa **rolada até a mensagem**, com destaque, carregando a janela em
+  volta dela (`around`, D-230) — mesmo que seja antiga. Mensagem apagada nunca aparece
+- **Marcar como não lida (D-229):** clique direito no item ou o botão "⋯" abre o menu com
+  "Marcar como não lida" (só com `unreadCount === 0`) → `POST /conversations/:id/unread`. A
+  conversa volta com a bolinha e só zera quando for aberta de novo. Se era a conversa aberta, o
+  painel fecha
 - **A mesma busca também procura PACIENTE** (D-079): com 2+ caracteres a coluna consulta
   `GET /patients?search=&limit=5` e mostra um bloco "Pacientes" abaixo da fila; cada linha leva
   a `/patients/:id`. Sem termo digitado o bloco não existe. É o consumidor de `GET /patients`
@@ -129,7 +140,18 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 - Dados: `GET /conversations` + WS `conversation.new_message` (refetch)
 
 ### Coluna 2 — Conversa
-- Header: nome, telefone, botões [Transferir ▾] [Novo Orçamento] [Encerrar] [Contexto] [× Fechar]
+- Header: nome, telefone, botões [🔍 Buscar] [Transferir ▾] [Novo Orçamento] [Encerrar] [Contexto] [× Fechar]
+- **Busca dentro da conversa (CRMLAB-68, D-228/D-230):** a lupa abre uma barra abaixo do
+  cabeçalho (`ConversationSearch`) com o campo, "N de M" e as setas ↑ (ocorrência mais antiga) e
+  ↓ (mais nova); Enter = ↑, Esc fecha. Abaixo, a lista dos resultados (data + trecho com
+  destaque). Clicar num resultado ou navegar pelas setas rola até a mensagem e acende o
+  destaque; se ela ainda não está carregada, a conversa reabre na janela em volta dela
+  (`around`). `GET /conversations/:id/messages?q=&limit=100`
+- **Janela no meio da conversa (D-230):** aberta por uma busca, a conversa mostra só a janela em
+  volta da mensagem. Perto do fim ela carrega as mais novas (`after=cursors.after`) sem descer
+  sozinha; o botão ↓ fica visível e, com mais novas ainda não carregadas, volta para o fim da
+  conversa. Enviar também volta para o fim. A faixa de não lidas não aparece quando a conversa
+  é aberta por busca
 - **[Encerrar]** (CRMLAB-48, D-174): `PATCH /conversations/:id { status: 'closed' }`. Substitui o
   antigo [Arquivar]. Habilitado só para a **dona**, gestor e admin (o backend valida de novo) e
   só em conversa `active`. Sucesso: toast "Atendimento encerrado.", limpa a seleção e invalida a
@@ -1478,6 +1500,8 @@ Constantes exportadas: `GENERIC_CREDENTIALS_ERROR`, `SYSTEM_ERROR`,
 |------|-------|-----------|
 | lista | `queryKeys.conversations(filters)` | `staleTimes.conversations` (10s) |
 | detalhe (infinita, D-238) | `[...queryKeys.conversation(id), 'messages']` | idem |
+| detalhe aberto numa mensagem (D-230) | `[...queryKeys.conversation(id), 'messages', { around }]` | idem |
+| busca nas mensagens (D-228) | `queryKeys.messageSearch({ q, conversationId? })` | idem |
 | propostas da conversa | `queryKeys.proposals({ conversationId })` | padrão |
 
 O detalhe é uma `useInfiniteQuery` (D-238): cada página é uma resposta de

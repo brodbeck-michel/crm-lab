@@ -595,6 +595,14 @@ function toSettings(row: channelSettingsRepo.SettingsRow | null): {
   };
 }
 
+/**
+ * Horario de funcionamento do laboratorio (padrao sem linha = sem nenhum dia),
+ * na transacao de quem chama. O reingajamento le por aqui (CRMLAB-62, D-212).
+ */
+export async function readBusinessHours(tx: DbTx, tenantId: string): Promise<BusinessHours> {
+  return toSettings(await channelSettingsRepo.findSettings(tx, tenantId)).businessHours;
+}
+
 /** Leitura completa da tela dentro de uma transacao ja aberta. */
 async function readAll(tx: DbTx, tenantId: string): Promise<ChannelSettingsResponse> {
   const channels = await channelSettingsRepo.listChannels(tx, tenantId);

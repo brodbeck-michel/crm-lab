@@ -76,7 +76,7 @@ test.describe('CRMLAB-48 — encerrar atendimento', () => {
     await expect(
       page.getByTestId('message-bubble').filter({ hasText: `Atendimento encerrado por ${ana.name}` }),
     ).toBeVisible();
-    await expect(page.getByLabel('Mensagem')).toBeDisabled();
+    await expect(page.getByLabel('Mensagem', { exact: true })).toBeDisabled();
     await expect(page.getByRole('button', { name: 'Encerrar' })).toBeDisabled();
 
     // Atendimento manual no mesmo telefone reabre para quem cadastrou (D-174).

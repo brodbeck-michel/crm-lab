@@ -145,6 +145,13 @@ Anatomia (padrão WhatsApp):
 ### Composer
 - Input pílula + botão anexo + botão emoji + botão microfone + botão enviar (primary)
 - Enter envia, Shift+Enter quebra linha
+- **O cursor fica no campo depois de enviar (CRMLAB-63).** Com `sending`, só o Enter e o botão
+  travam; o textarea segue habilitado (campo desabilitado perde o foco e o navegador não devolve),
+  então dá para ir escrevendo a próxima. O textarea só desabilita com `disabled` (arquivada, sem
+  permissão). `onSend` pode devolver `Promise`: se rejeitar, o texto volta para o campo, com o foco,
+  a não ser que a pessoa já tenha começado outra mensagem. O aviso do erro é de quem chama.
+  No Atendimento, `MESSAGE_SEND_FAILED` NÃO rejeita para o Composer: a mensagem já foi gravada
+  como falha e aparece na conversa; devolver o texto convidaria a reenviar e duplicar
 - **Ctrl+B / Cmd+B** (CRMLAB-51, D-183): envolve a seleção em asteriscos (`*seleção*`, que a
   bolha e o WhatsApp mostram em negrito) e mantém o texto selecionado; sem seleção, insere `**`
   com o cursor no meio
@@ -314,7 +321,8 @@ Anatomia (padrão WhatsApp):
   D-117)
 
 ### InboxLayout
-- 3 colunas: 336px fixo | flex 1 min 440px | 316px recolhível
+- 3 colunas: 336px fixo | flex 1 min 440px | 316px recolhível (começa fechada, `contextPanelOpen:
+  false` — CRMLAB-74)
 - Estreito: overflow-x na linha (não colapsar colunas)
 - `listBanner?: ReactNode` (CRMLAB-72): faixa opcional no topo da coluna 1, acima da lista, fora
   da rolagem dela. O Atendimento usa para o `EnableNotificationsBanner`
@@ -674,7 +682,7 @@ tela passa tudo por props (o dado vem do TanStack Query).
 | `MessageBubble` | `<MessageBubble type message maxWidth? showMeta? />` | `type` ∈ `received \| sent \| system` — os únicos 3 · `*texto*` em negrito (D-183) |
 | `DateSeparator` | `<DateSeparator date now? />` | Pílula de dia (CRMLAB-71, D-239) · `dateSeparatorLabel` e `isSameLocalDay` exportadas |
 | `AudioMessage` | `<AudioMessage url />` | `<audio controls>` nativo com blob autenticado · download sempre disponível |
-| `Composer` | `<Composer onSend(content) onPickFiles?(files) onAttachClick? onSendAudio?(audio) disabled? sending? placeholder? quickReplies? />` | Enter envia · Shift+Enter quebra linha · Ctrl/Cmd+B envolve a seleção em `*` · emoji insere no cursor · `/` no campo vazio abre as macros · microfone grava recado de voz (clique/clique, 5 min, D-181) |
+| `Composer` | `<Composer onSend(content) → void | Promise onPickFiles?(files) onAttachClick? onSendAudio?(audio) disabled? sending? placeholder? quickReplies? />` | Enter envia · Shift+Enter quebra linha · Ctrl/Cmd+B envolve a seleção em `*` · emoji insere no cursor · `/` no campo vazio abre as macros · microfone grava recado de voz (clique/clique, 5 min, D-181) |
 | `EmojiPicker` | `<EmojiPicker onPick(emoji) disabled? />` | Grade fixa de 48, sem biblioteca · `Esc` fecha e devolve o foco |
 | `QuickReplyMenu` | `<QuickReplyMenu items filter onPick(reply) onClose() />` | Aberto pela `/` no campo vazio · ↑↓ navega, Enter escolhe, Esc fecha |
 

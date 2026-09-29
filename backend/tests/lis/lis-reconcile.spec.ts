@@ -367,7 +367,8 @@ describe('GET /analytics/conversion -> realized', () => {
     await link(otherAttendantA, other.id, '2');
     const today = new Date().toISOString().slice(0, 10);
     await ingest(tenantA, [
-      row('1', { ...PAID, paidValue: 150, paidOn: today }),
+      // Teto na requisicao (D-188): a requisicao cobre o valor pago.
+      row('1', { ...PAID, requisitionValue: 150, paidValue: 150, paidOn: today }),
       row('2', { paidValue: 40, paidOn: today }),
     ]);
 

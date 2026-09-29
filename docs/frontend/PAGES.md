@@ -215,6 +215,8 @@ não só aqui. O Console da Plataforma não avisa.
   conversa aberta, que o Atendimento já carrega
 
 ### Coluna 3 — Contexto do paciente (recolhível)
+- **Começa fechada (CRMLAB-74).** Só abre pelo botão [Contexto] do header. Aberta, continua
+  aberta ao trocar de conversa até recarregar a página (não persiste — D-117).
 - Cadastro resumido, propostas da conversa (cartões clicáveis → modal), tags
 - **Link "Ver ficha completa" → `/patients/:id`**, a porta de entrada da Ficha (§3). Usa
   `conversation.patientId` (D-079), que vem em `GET /conversations/:id`. Conversa anterior ao
@@ -1270,6 +1272,23 @@ seu próprio [Salvar] (endpoint e permissão diferentes).
    para o admin.
 6. **Comissões** (`id="comissoes"`) — o formulário que era de `/settings/commissions` (§19), sem
    mudança de regra. Só gestor/admin veem a seção; só admin edita.
+
+**Desde o CRMLAB-62 (D-211..D-214)**, duas seções a mais (componentes
+`Settings/ReengagementSection.tsx` e `Settings/HolidaysSection.tsx`):
+
+- **Reingajamento da conversa** (`id="reingajamento"`, depois da "Mensagem de envio") — faz
+  parte do formulário das Regras (salva no mesmo [Salvar regras], chave `reengagement`). Para o
+  1º e o 2º: `Toggle`, `Input` de horas ("Horas sem resposta" / "Horas depois do 1º") e
+  `TextArea` "Mensagem", desabilitados com o disparo desligado. O 2º fica travado ("Ligue o 1º
+  reingajamento para usar o 2º") com o 1º desligado, e desligar o 1º desliga o 2º junto. Texto
+  vazio bloqueia salvar. Nota: vale só para conversa aberta e WhatsApp por QR Code, respeita o
+  horário de funcionamento (link para Canais) e não envia em feriado. Gestor/admin leem os
+  canais (`useChannelSettings`): WhatsApp na API oficial → aviso "Inativo para este canal".
+- **Feriados** (`id="feriados"`, fora do formulário, antes de Comissões) — fonte
+  `GET/POST/DELETE /settings/holidays` (§6d), salvo na hora. Seletor de ano (‹ 2026 ›), lista
+  "Do laboratório" (com [Remover] para gestor/admin) e lista "Nacionais" (só leitura, Carnaval e
+  Corpus Christi incluídos). Gestor/admin incluem com `Input` de data + descrição e [Incluir
+  feriado]; data repetida volta como erro no campo. Atendente só vê.
 
 **Quem edita:** gestor e admin editam as seções 1–4. A **atendente vê tudo desabilitado**, sem
 [Salvar regras], e não vê a seção 6. Erro de campo (`details.fields`) aparece no campo pelo

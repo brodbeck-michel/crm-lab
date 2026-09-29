@@ -402,6 +402,40 @@ describe('Atendimento — abrir conversa', () => {
     });
   });
 
+  it('falha no canal (MESSAGE_SEND_FAILED): a mensagem já foi gravada, o texto NÃO volta ao campo (CRMLAB-63)', async () => {
+    const { ApiError } = await import('@/api');
+    listMock.mockResolvedValue(listResponse([conversation()]));
+    getMock.mockResolvedValue(detailResponse());
+    sendMessageMock.mockRejectedValue(
+      new ApiError('MESSAGE_SEND_FAILED', 'Falha ao enviar a mensagem pelo canal', 502, { messageId: 'm-2' }),
+    );
+    renderScreen();
+
+    await userEvent.click(await screen.findByTestId('conversation-item'));
+    const field = within(await screen.findByTestId('composer')).getByLabelText('Mensagem');
+    await userEvent.type(field, 'Bom dia!{Enter}');
+
+    await waitFor(() => expect(sendMessageMock).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(field).toHaveValue('');
+    expect(field).toHaveFocus();
+  });
+
+  it('erro sem mensagem gravada (ex. 500): o texto volta ao campo (CRMLAB-63)', async () => {
+    const { ApiError } = await import('@/api');
+    listMock.mockResolvedValue(listResponse([conversation()]));
+    getMock.mockResolvedValue(detailResponse());
+    sendMessageMock.mockRejectedValue(new ApiError('INTERNAL_ERROR', 'Erro inesperado no servidor', 500));
+    renderScreen();
+
+    await userEvent.click(await screen.findByTestId('conversation-item'));
+    const field = within(await screen.findByTestId('composer')).getByLabelText('Mensagem');
+    await userEvent.type(field, 'Bom dia!{Enter}');
+
+    await waitFor(() => expect(field).toHaveValue('Bom dia!'));
+    expect(field).toHaveFocus();
+  });
+
   it('recado de voz gravado sai pelo MESMO POST /attachments do clipe (CRMLAB-24)', async () => {
     listMock.mockResolvedValue(listResponse([conversation()]));
     getMock.mockResolvedValue(detailResponse());

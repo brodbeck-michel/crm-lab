@@ -7,7 +7,7 @@ import type {
   ListConversationsQuery,
   ListPatientsQuery,
 } from '@crm-lab/shared';
-import { api, queryKeys, queryScopes, staleTimes } from '@/api';
+import { api, isApiError, queryKeys, queryScopes, staleTimes } from '@/api';
 import { useQuickReplyList } from '@/api/quick-replies';
 import { useEffectiveFunnelRules } from '@/api/funnel-rules';
 import { useToast } from '@/components/ui';
@@ -374,7 +374,15 @@ export function Attendance() {
             isError={detailQuery.isError}
             onRetry={() => void detailQuery.refetch()}
             onSend={(content, quotedMessageId) =>
-              sendMessage.mutate({ content, ...(quotedMessageId ? { quotedMessageId } : {}) })
+              sendMessage
+                .mutateAsync({ content, ...(quotedMessageId ? { quotedMessageId } : {}) })
+                .catch((error: unknown) => {
+                  // MESSAGE_SEND_FAILED: a mensagem FOI gravada (como falha) e já está
+                  // na conversa. Devolver o texto ao campo convidaria a mandar de novo
+                  // e duplicar (CRMLAB-63). Só volta quando nada foi gravado.
+                  if (isApiError(error) && error.code === 'MESSAGE_SEND_FAILED') return;
+                  throw error;
+                })
             }
             onReact={(messageId, emoji) => react.mutate({ messageId, emoji })}
             onQuoteUnavailable={() =>

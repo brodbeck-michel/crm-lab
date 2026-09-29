@@ -3102,6 +3102,86 @@ rodada anterior volta na seguinte, o que é inofensivo porque o upsert é idempo
 **Impacto:** `bitlab-client.ts` (`parseBitlabDateTime`, `bitlabDateToIsoDate`,
 `watermarkToBitlabDateTime`), SERVICES.md §24.1, BUSINESS_RULES.md §11.10.
 
+### D-188: Recebido do LIS = soma dos pagamentos ativos, a partir de um extrato por `ID_PAGAMENTO` (CRMLAB-53)
+*(Número reservado em 25/09/2026; decisão escrita em 28/09/2026, depois da resposta do Bitlab.)*
+**Decisão:**
+1. **Extrato de pagamentos:** tabela nova `lis_budget_payments` (migração 032, RLS por tenant),
+   uma linha por pagamento: `budget_number`, `requisition_number`, `payment_key`, `source`
+   (`api` | `planilha`), `paid_at` (`TIMESTAMP` sem fuso, com segundos, relógio de Brasília,
+   D-187), `paid_value`, `status` (`ativo` | `estornado`), `reversed_at`, `payment_method`,
+   `card_brand`, `import_id`, `updated_at`. Chave única `(tenant_id, budget_number, payment_key)`.
+2. **Chave do pagamento:** na API é o `ID_PAGAMENTO`. Na planilha, que não tem ID nem situação,
+   é `planilha:<paid_at>:<valor>`.
+3. **Gravação:** `ON CONFLICT ... DO UPDATE` de situação, data do estorno, forma e bandeira. O
+   pagamento muda de `ATIVO` para `ESTORNADO` **na mesma linha**; rodar a mesma carga duas vezes
+   não muda nada. A linha nunca é apagada pela carga (o LIS não apaga: o mecanismo é o estorno).
+   Linha da API sem `ID_PAGAMENTO` (orçamento sem pagamento) não gera extrato.
+4. **Valor derivado** em `lis_budgets`, recalculado no mesmo chunk, para os orçamentos do chunk:
+   - Se o orçamento tem **algum pagamento da API**: `paid_value = LEAST(SUM(ativos da API),
+     requisition_value)`. Os da planilha desse orçamento são ignorados (a API manda, e somar os
+     dois contaria o mesmo pagamento duas vezes).
+   - Senão, se tem pagamentos **só da planilha**: `LEAST(SUM(todos), requisition_value)` (a
+     planilha não diz quem foi estornado; o teto é a proteção).
+   - `paid_on` = data do último pagamento considerado, **de qualquer valor** (a régua de fatos da
+     D-204 conta pagamento de R$ 0 como pagamento, e isso não muda); nenhum considerado (só
+     estornados) → `paid_value = 0`, `paid_on = NULL`.
+   - Orçamento **sem nenhuma linha no extrato** (carga anterior ao card) fica como está.
+   - `requisition_value` nulo → sem teto.
+5. **`consolidateLisRows`** deixa de decidir pagamento: só consolida os campos do orçamento (maior
+   total vence, §11.1). O `upsertBudget` deixa de gravar `paid_value`/`paid_on`.
+6. **Relatórios:** continuam lendo `lis_budgets.paid_value`/`paid_on`. O `DISTINCT ON
+   (requisition_number)` da §11.2 **fica**, porque ele resolve outra coisa: dois orçamentos com a
+   mesma requisição.
+7. **Estorno depois de `ganho`:** a proposta **não reabre** (D-192 item 2); `lis_paid_value` e
+   `lis_paid_on` são atualizados pela conciliação (D-119 item 6), e Resultados/comissão refletem o
+   valor novo.
+**Motivo:** o Bitlab confirmou em 28/09/2026 que a API devolve um movimento por linha, que linha
+zerada, valor repetido e soma acima da requisição são **estornos**, e que a linha estornada continua
+saindo. Ele incluiu na v1 `ID_PAGAMENTO`, `SITUACAO_PAGAMENTO` (`ATIVO`/`ESTORNADO`), `DATA_ESTORNO`,
+`FORMA_PAGAMENTO` e `BANDEIRA_CARTAO`, que a consulta pela VPS confirmou já estarem em produção
+(1.198 pagamentos, `ID_PAGAMENTO` único). Os casos 66760 (528,26), 68905 (783,55), 68785 (837,47) e
+66210 (676,24) fecham com a soma dos ativos. A regra antiga ("a última linha sobrescreve") zerava
+orçamentos pagos (68281) e deixava R$ 17 mil de fora.
+**Impacto:** migração 032; `bitlab-client.ts` (schema e `toLisRow` com os campos novos, `paidAt`
+com segundos), `lis-spreadsheet.ts` (`paidAt` com hora; `consolidateLisRows`),
+`lis-import.repository.ts` (`upsertPayments`, `recomputePaidValues`), `lis-import.service.ts`;
+BUSINESS_RULES §11.1/§11.2/§11.10, SCHEMA §26 + tabela nova, SERVICES §19/§24.1.
+
+### D-189: Releitura diária de 90 dias pega o estorno; a planilha vira plano B, ligada por regra (CRMLAB-53)
+**Decisão:**
+1. **O estorno não volta na consulta incremental.** A consulta pela VPS (28/09/2026) mostrou que
+   `tipoData=alteracao` filtra só por emissão/`Data_Pagamento`: nos 5 estornos testados, a linha
+   não voltou na janela da `DATA_ESTORNO`. O maior intervalo observado entre pagamento e estorno
+   foi de 15 dias.
+2. **Duas marchas na mesma sincronização:**
+   - **incremental**, a cada tique (2 min, D-199), como hoje, a partir da `marcaDagua`;
+   - **releitura completa**, uma vez por dia, no primeiro tique depois das **03:00 de Brasília**:
+     janela dos últimos `LIS_SYNC_INITIAL_DAYS` (90) dias. Grava pelo mesmo `ingestRows`, e os
+     estornos corrigem a situação pelo `ID_PAGAMENTO` (D-188 item 3).
+   - A releitura **não recua a marca**: a marca gravada é a maior entre a atual e a recebida.
+   - Controle em `lis_sync_settings.last_full_scan_on` (`DATE`, Brasília): só é gravado quando a
+     releitura termina sem erro; se falhar, o próximo tique tenta de novo.
+   - "Sincronizar agora" continua incremental.
+3. **Estorno com mais de 90 dias** não é pego. Aceito: o maior intervalo visto foi de 15 dias, e
+   o laboratório fecha comissão mensalmente. O pedido ao Bitlab para a `DATA_ESTORNO` contar no
+   filtro `alteracao` fica registrado no card; se ele atender, a releitura continua como rede de
+   segurança.
+4. **Planilha como plano B:** nova seção nas Regras (D-190), `lisSource.spreadsheetImport`
+   (`enabled: boolean`), **desligada por padrão**. Desligada: o botão "Importar planilha" some em
+   Resultados e `POST /lis-imports` devolve `SPREADSHEET_IMPORT_DISABLED` (mesmo padrão de
+   `MANUAL_PROPOSAL_DISABLED`, D-193). Ligada: a importação funciona como hoje, com a regra da
+   planilha da D-188 item 4. Limpar a base (`purge`, admin) não depende da flag.
+5. **Emenda à D-191:** este padrão **não** reproduz o comportamento anterior (a planilha estava
+   sempre disponível). É intencional: o Michel decidiu em 28/09/2026 que a API é a carga principal.
+**Motivo:** sem a releitura, um pagamento lido como ativo e estornado depois ficaria ativo para
+sempre, e o recebido e a comissão ficariam acima do real. A consulta completa de 01/05 até hoje
+tem 4 páginas, então reler 90 dias por dia custa pouco. A planilha não tem situação por pagamento,
+então só serve de reserva para o caso de a API ficar fora do ar.
+**Impacto:** migração 032 (`last_full_scan_on`); `lis-sync.service.ts` (modo da rodada,
+`windowStart`); `shared/types/funnel-rules.types.ts` + `funnel-rules.service.ts` (seção nova);
+`lis-import.service.ts` (trava); `errors.ts`/`api.types.ts` (`SPREADSHEET_IMPORT_DISABLED`);
+frontend `Settings/Rules.tsx` e `Results.tsx`; SERVICES §24/§26, API_CONTRACTS §6c/§10.1.
+
 ## 2026-09-26 — Página de Regras do funil (CRMLAB-56)
 
 ### D-190: Regras do funil por laboratório, numa linha JSONB própria, com um ponto único de leitura
@@ -3943,6 +4023,95 @@ PAGES.md §2 e a tabela de chaves do Atendimento.
 ficam como constantes no hook.
 **Impacto:** `components/conversation/DateSeparator.tsx`, `pages/Attendance/*`; COMPONENTS.md
 (`DateSeparator`), PAGES.md §2.
+<!-- D-210 é do CRMLAB-60 (branch feature/CRMLAB-60-unifica-transicao-sistema, ainda fora da main). -->
+
+### D-211: Reingajamento da conversa roda no motor de tempo, com uma linha por disparo
+**Decisão:** quando a atendente fala por último e o paciente para de responder, o sistema manda
+sozinho uma mensagem (CRMLAB-62). Regras em `FunnelRules.reengagement` (página de Regras, §6c):
+`first` e `second`, cada um com `enabled`, `hours` (1..720) e `message` (1..1000, texto fixo).
+1. **Onde roda:** dentro do tique do `FunnelTimerService` (D-205), no fim de cada laboratório,
+   pelo `ReengagementService` (SERVICES §28). O tique passa a incluir laboratórios com o 1º ligado,
+   mesmo sem proposta aberta. Falha do reingajamento não desfaz o que o funil fez.
+2. **Silêncio e âncora:** a âncora é a última mensagem de pessoa do laboratório na conversa
+   (`sender_type = 'agent'` e `automation` nulo: CRM **ou celular**, D-173). Há silêncio quando
+   não existe mensagem do paciente depois dela e a conversa está `active`. A mensagem automática
+   **nunca vira âncora**: não há loop. Resposta do paciente seguida de nova mensagem da atendente
+   abre um silêncio novo.
+3. **Uma linha por disparo** em `conversation_reengagements` (migração 031), com
+   `UNIQUE (anchor_message_id, step)`: `sent` | `discarded` (+ motivo) | `failed`. A linha `sent`
+   é gravada **antes** do envio, sob `FOR UPDATE` na conversa e com a reconferência do silêncio;
+   tique concorrente cai no `ON CONFLICT DO NOTHING`. Se o processo cair entre a linha e o envio,
+   o paciente fica sem a mensagem, nunca com duas. Falha do canal: mensagem `failed`, decisão
+   `failed`, **sem nova tentativa**.
+4. **O 2º** conta a partir do envio do 1º (`decided_at` da linha `sent`) e só existe depois de um
+   1º **enviado**; o 1º descartado ou com falha encerra o silêncio. Não há terceiro. O `PATCH`
+   recusa ligar o 2º com o 1º desligado; a tela desliga o 2º junto com o 1º.
+5. **Na conversa:** `MessageService.createAutomated` grava `agent` sem autor com
+   `messages.automation = 'reengagement'`, emite `conversation.new_message` e envia pelo mesmo
+   caminho do Composer. A API devolve `senderName: "Mensagem automática"`. A mensagem entra no
+   "envio em voo" do eco (D-173) e nunca é apagada como cópia do celular.
+6. **Padrões:** os dois desligados (quem já usa não passa a mandar nada), 1º em 1 h, 2º em 24 h,
+   textos profissionais editáveis.
+**Motivo:** o Michel pediu que o motor de tempo fosse reaproveitado e que o reingajamento
+dispare uma vez por silêncio. Gravar a decisão (e não só a mensagem) é o que permite o descarte
+de feriado ser definitivo e o 2º contar do envio real do 1º.
+**Impacto:** migração 031; `shared/types/funnel-rules.types.ts`, `reengagement.types.ts` (novo);
+`reengagement.service.ts`, `reengagement.repository.ts` (novos), `funnel-timer.service.ts`,
+`message.service.ts`, `message.repository.ts`, `funnel-rules.service.ts`, `main.ts`; SCHEMA §4/§33,
+API_CONTRACTS §2/§6c, SERVICES §27/§28, BUSINESS_RULES §3, PAGES §21.
+
+### D-212: Quando o reingajamento sai — horário de funcionamento, feriado e atraso máximo
+**Decisão:** a hora de sair é calculada a cada tique, com a regra vigente (como D-209):
+1. **Horário:** o de `tenant_settings.business_hours` (tela de Canais, o mesmo da resposta de
+   fora do horário). Ele é **do laboratório**, não de cada canal. Sem nenhum dia com faixa =
+   **sempre aberto** (decisão do Michel, 28/09/2026).
+2. **Prazo vencido fora do horário** → sai na **próxima abertura** (`nextOpening`, só dia da
+   semana e faixa, no fuso IANA do horário). As horas contam em tempo corrido; o horário decide
+   só **quando** sai.
+3. **Feriado não mantém** (Michel, 28/09/2026): se a data local da hora de sair é feriado
+   (nacional ou do laboratório, D-213), o disparo é **descartado** (`holiday`), sem empurrar para
+   depois. Vale também para o canal sempre aberto.
+4. **Atraso máximo de 2 h** (`REENGAGEMENT_STALE_GRACE_MS`): se o tique que enviaria roda mais de
+   2 h depois da hora de sair, descarta (`stale`). Cobre sistema fora do ar, regra recém-ligada e
+   canal que voltou da API oficial para QR — em vez de mandar "ainda está aí?" horas ou dias
+   depois.
+5. **Janela de busca:** o motor só olha silêncios com âncora posterior a
+   `agora − (horas do 1º + do 2º) − 8 dias` (`REENGAGEMENT_LOOKBACK_DAYS`). Ligar a regra não
+   dispara para conversas paradas há semanas: as da janela viram `stale` uma vez, as de fora
+   são ignoradas.
+6. Na hora de enviar, reconfere: conversa ainda ativa, mesma âncora, paciente sem responder.
+**Motivo:** o card pede "respeitar o horário" e "feriado não mantém". O atraso máximo e a janela
+evitam o disparo em massa ao ligar a regra e a mensagem fora de contexto depois de uma queda.
+**Impacto:** `shared/types/reengagement.types.ts` (`nextOpening`, `planReengagement`),
+`channel-settings.service.ts` (`readBusinessHours`), `reengagement.service.ts`; SERVICES §28.
+
+### D-213: Feriados — nacionais calculados no código, os do laboratório cadastrados nas Regras
+**Decisão:** (opção "b" do Michel, 28/09/2026)
+1. **Nacionais prontos**, calculados por ano em `shared/` (`nationalHolidays`), **não gravados**:
+   fixos 1/1, 21/4, 1/5, 7/9, 12/10, 2/11, 15/11, 20/11, 25/12; móveis pela Páscoa (algoritmo
+   gregoriano): **segunda e terça de Carnaval**, Sexta-feira Santa, Corpus Christi. Carnaval e
+   Corpus Christi são ponto facultativo, mas entram como feriado (Michel, 28/09/2026).
+2. **Do laboratório** em `tenant_holidays` (migração 031, `UNIQUE (tenant_id, holiday_date)`),
+   com `GET/POST/DELETE /settings/holidays` (§6d): `GET` todo perfil; incluir e remover
+   manager/admin, com audit. Data repetida → `CONFLICT`.
+3. **Por ora o feriado só vale para o reingajamento.** O motor de tempo do funil continua sem
+   descontar feriados nos dias úteis (D-205 item 3); usar a lista lá é outro card.
+**Motivo:** o produto não tinha calendário de feriados (D-205). Nacionais no código dispensam
+cadastro e manutenção; os municipais variam por cidade e ficam com o laboratório.
+**Impacto:** migração 031; `shared/types/reengagement.types.ts`; `holiday.service.ts`,
+`holiday.repository.ts`, `holiday.routes.ts` (novos), `http/modules.ts`; frontend
+`api/holidays.ts`, `Settings/HolidaysSection.tsx`; SCHEMA §34, API_CONTRACTS §6d, SERVICES §29,
+PAGES §21.
+
+### D-214: Reingajamento só para WhatsApp conectado por QR Code
+**Decisão:** o reingajamento só considera o laboratório cujo canal `whatsapp` está **ativo e em
+`connection_mode = 'qr'`** (Evolution). Na API oficial da Meta (`cloud_api`) nenhuma conversa
+entra na rotina, com a regra ligada ou não (Michel, 28/09/2026). A página de Regras avisa
+"Inativo para este canal" quando o gestor/admin vê o WhatsApp em `cloud_api`.
+**Motivo:** na API oficial, texto livre só sai até 24 h depois da última mensagem do paciente;
+fora disso a Meta exige template aprovado (pago), que o CRM não tem. Em vez de meio suporte, a
+regra fica fora. Template aprovado, se o laboratório migrar, é outro card.
+**Impacto:** `reengagement.repository.ts` (`isQrWhatsAppActive`), `ReengagementSection.tsx`.
 
 ## 2026-09-28 — Anexos com prévia e legenda (CRMLAB-69)
 

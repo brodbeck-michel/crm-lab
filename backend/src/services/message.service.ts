@@ -487,6 +487,49 @@ export class MessageService {
   }
 
   /**
+   * Mensagem que o SISTEMA manda sozinho ao paciente — reingajamento
+   * (CRMLAB-62, D-211 item 5). Mesmo caminho de `createFromAgent` (grava,
+   * notifica, so entao tenta o canal), sem autor e com `automation`: a tela
+   * mostra "Mensagem automatica". Falha do canal: `status = 'failed'` e
+   * `MESSAGE_SEND_FAILED`, como no Composer.
+   */
+  async createAutomated(tenantId: string, conversationId: string, content: string): Promise<Message> {
+    const conversation = await this.conversations.findById(tenantId, conversationId);
+    if (!conversation) throw notFound({ resource: 'conversation', id: conversationId });
+    if (conversation.status !== 'active') {
+      throw new BusinessError('CONVERSATION_ARCHIVED', { status: conversation.status });
+    }
+
+    const message = await this.messages.insert(tenantId, {
+      conversationId,
+      senderType: 'agent',
+      senderId: null,
+      content,
+      messageType: 'text',
+      status: 'sent',
+      automation: 'reengagement',
+    });
+    this.emitNewMessage(tenantId, conversationId, message.id);
+
+    if (!this.whatsapp || conversation.channel !== 'whatsapp') return message;
+
+    try {
+      const { externalId } = await this.whatsapp.send(tenantId, conversation.patientPhone, content);
+      return await this.confirmSent(tenantId, conversationId, message, externalId);
+    } catch (err) {
+      await this.messages.setStatus(tenantId, message.id, 'failed');
+      logger.error('whatsapp.send_failed', {
+        tenantId,
+        conversationId,
+        messageId: message.id,
+        automation: 'reengagement',
+        reason: err instanceof Error ? err.message : String(err),
+      });
+      throw new BusinessError('MESSAGE_SEND_FAILED', { messageId: message.id });
+    }
+  }
+
+  /**
    * Evento de sistema — a interface que ProposalService/ApprovalService usam.
    * Ver o cabecalho deste arquivo.
    */

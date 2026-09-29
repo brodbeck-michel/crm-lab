@@ -18,3 +18,16 @@ export type { SidebarGroupsState } from './sidebar-groups.store';
 
 export { usePresenceStore, presenceFor, PRESENCE_TTL_MS } from './presence.store';
 export type { PresenceState, PresenceEntry } from './presence.store';
+
+export {
+  useDraftsStore,
+  useConversationDraft,
+  readConversationDraft,
+  saveConversationDraft,
+  clearConversationDraft,
+  pruneDrafts,
+  draftKey,
+  DRAFTS_STORAGE_KEY,
+  DRAFT_TTL_MS,
+} from './drafts.store';
+export type { DraftsState, ConversationDraft } from './drafts.store';

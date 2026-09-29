@@ -30,3 +30,12 @@ main v1.24.0). Faixa: D-242…D-243 · sem migração · só frontend.
 - Bug achado pelo teste: a crase de fechamento de ```` ``` ```` casava com a do `` `código` ``
   seguinte. Correção: cada passada de literais procura no texto com os anteriores mascarados.
 - Specs: `whatsapp-format.spec.ts` 37 ✓, `WhatsAppText.spec.tsx` 4 ✓, MessageBubble (3 arquivos) 43 ✓.
+
+## Etapa 3 — rascunho ✅ (lista pendente)
+- `stores/drafts.store.ts` (+ barril): chave `userId:conversationId`, `StateStorage` com
+  try/catch, `merge` com `pruneDrafts` (formato + 7 dias), `clearSession` apaga tudo.
+- `Composer`: `draftId`, semente `initialValue ?? rascunho`, cursor no fim ao montar, efeito
+  grava a cada mudança; `wrapSelection(marker)` com Ctrl+B / Ctrl+I / Ctrl+Shift+X.
+- `ConversationPanel`: só `draftId={conversation.id}` no Composer.
+- Specs: `drafts.store.spec.ts` 10 ✓, `Composer*.spec.tsx` (5 arquivos, inclui o novo
+  `Composer.format-draft.spec.tsx`) 56 ✓.

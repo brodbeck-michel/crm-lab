@@ -731,6 +731,7 @@ export function ConversationPanel({
           disabled={closed}
           quickReplies={quickReplies}
           initialValue={draftMessage}
+          draftId={conversation.id}
         />
 
         {dragging && !drafts && (

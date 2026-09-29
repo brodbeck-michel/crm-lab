@@ -20,9 +20,8 @@ main v1.24.0). Faixa: D-242…D-243 · sem migração · só frontend.
 - `EmojiPicker.tsx` + `emoji-data.ts` + spec.
 
 ## Perguntas em aberto (regra de negócio)
-- Sair do sistema apaga todos os rascunhos do navegador (leitura restritiva, D-243 item 4c).
-  Confirmar com o Michel se prefere manter entre sessões (só escopados por usuário).
-- Prazo de 7 dias para descartar rascunho esquecido (D-243 item 4b): valor escolhido, confirmar.
+- ✔️ Respondidas pelo Michel em 29/09: sair do sistema **apaga** os rascunhos (D-243 item 4c,
+  mantido); rascunho esquecido some depois de **5 dias** (D-243 item 4b, era 7).
 
 ## Etapa 2 — parser e bolha ✅
 - `parseWhatsApp` + `plainText` em `lib/whatsapp-format.ts` (sai `splitBold`); `WhatsAppText`
@@ -33,7 +32,7 @@ main v1.24.0). Faixa: D-242…D-243 · sem migração · só frontend.
 
 ## Etapa 3 — rascunho ✅ (lista pendente)
 - `stores/drafts.store.ts` (+ barril): chave `userId:conversationId`, `StateStorage` com
-  try/catch, `merge` com `pruneDrafts` (formato + 7 dias), `clearSession` apaga tudo.
+  try/catch, `merge` com `pruneDrafts` (formato + 5 dias), `clearSession` apaga tudo.
 - `Composer`: `draftId`, semente `initialValue ?? rascunho`, cursor no fim ao montar, efeito
   grava a cada mudança; `wrapSelection(marker)` com Ctrl+B / Ctrl+I / Ctrl+Shift+X.
 - `ConversationPanel`: só `draftId={conversation.id}` no Composer.

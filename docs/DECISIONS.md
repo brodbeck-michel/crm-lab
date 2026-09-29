@@ -4507,7 +4507,7 @@ estendida, evita três regex brigando e mantém o texto do paciente longe do HTM
 3. **Lista:** a conversa com rascunho mostra **"Rascunho: …"** no lugar da última mensagem, exceto
    a conversa aberta (é ela que está sendo digitada).
 4. **Limpeza:** (a) a conversa aparece na lista como encerrada → o rascunho some; (b) rascunho
-   sem mexer há **7 dias** é descartado ao carregar a página (conversa que nunca mais apareceu na
+   sem mexer há **5 dias** (valor do Michel, 29/09) é descartado ao carregar a página (conversa que nunca mais apareceu na
    lista); (c) **sair do sistema apaga todos os rascunhos** do navegador — é texto de atendimento
    de paciente parado no `localStorage`, então vale a leitura mais restritiva (AGENTS.md,
    "Resolução de Conflitos"). Recarregar a página não é sair: o rascunho fica.

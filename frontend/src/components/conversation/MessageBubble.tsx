@@ -10,7 +10,7 @@ import type {
 import { cn } from '@/components/ui';
 import { fetchAuthenticatedBlob, resolveMediaUrl } from '@/api';
 import { useAuthenticatedMedia } from '@/hooks';
-import { DateDisplay, ImageLightbox } from '@/components/shared';
+import { DateDisplay } from '@/components/shared';
 import { splitBold } from '@/lib/whatsapp-format';
 import { AudioMessage } from './AudioMessage';
 
@@ -90,6 +90,11 @@ export interface MessageBubbleProps {
   onQuoteClick?: (quotedMessageId: string) => void;
   /** "Tentar de novo" de mensagem `failed` (D-227). Sem handler, o botão some. */
   onRetry?: (message: Message) => void;
+  /**
+   * Clique na thumbnail (CRMLAB-64, D-244): quem abre o lightbox e navega entre
+   * as fotos é o painel. Sem handler, a thumbnail não é clicável.
+   */
+  onOpenImage?: (message: Message) => void;
 }
 
 /** Tique por status (D-225) — glifo, nome acessível e cor (só tokens). */
@@ -331,6 +336,7 @@ export function MessageBubble({
   onReact,
   onQuoteClick,
   onRetry,
+  onOpenImage,
 }: MessageBubbleProps) {
   const isSystem = type === 'system';
   // Apagada pelo remetente (D-220): a API já mandou sem conteúdo; o balão só avisa.
@@ -341,17 +347,12 @@ export function MessageBubble({
   const isAudio = message.messageType === 'audio' && hasAttachment;
   const isDoc = !isImage && !isAudio && hasAttachment;
   const isProtected = attachmentUrl ? isProtectedMediaUrl(attachmentUrl) : false;
-  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   // `GET /media/:id` exige Authorization (requireAuth()) — um <img src> cru
   // nunca manda esse header, por isso a imagem sempre vinha em branco/401.
   // O hook busca autenticado e devolve um object URL utilizável em <img>.
   // URL externa (`isProtected` falso) vai direto no <img>, sem token.
-  const {
-    objectUrl: fetchedImageUrl,
-    fileName: imageFileName,
-    isLoading: imageLoading,
-  } = useAuthenticatedMedia(isImage && isProtected ? attachmentUrl : null);
+  const { objectUrl: fetchedImageUrl, isLoading: imageLoading } = useAuthenticatedMedia(isImage && isProtected ? attachmentUrl : null);
   const imageUrl = isImage && !isProtected ? attachmentUrl : fetchedImageUrl;
 
   // PDF/doc: o blob só é buscado NO CLIQUE (revisão do PR #43). Buscar na
@@ -447,10 +448,10 @@ export function MessageBubble({
 
       {isImage &&
         (imageUrl ? (
-          <>
+          onOpenImage ? (
             <button
               type="button"
-              onClick={() => setLightboxOpen(true)}
+              onClick={() => onOpenImage(message)}
               className="cursor-pointer self-start rounded-md border-none bg-transparent p-0"
             >
               <img
@@ -459,12 +460,13 @@ export function MessageBubble({
                 className="max-h-[300px] max-w-full rounded-md object-cover"
               />
             </button>
-            <ImageLightbox
-              src={lightboxOpen ? imageUrl : null}
-              fileName={imageFileName ?? undefined}
-              onClose={() => setLightboxOpen(false)}
+          ) : (
+            <img
+              src={imageUrl}
+              alt="Anexo enviado na conversa"
+              className="max-h-[300px] max-w-full self-start rounded-md object-cover"
             />
-          </>
+          )
         ) : (
           <span className="text-caption text-neutral-600">
             {imageLoading ? 'Carregando imagem…' : 'Não foi possível carregar a imagem'}

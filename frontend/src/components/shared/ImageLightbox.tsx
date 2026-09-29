@@ -2,11 +2,28 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { cn } from '@/components/ui/cn';
 
 export interface ImageLightboxProps {
-  /** URL da imagem a exibir em tela cheia. `null`/vazio não renderiza nada. */
+  /**
+   * URL da imagem a exibir em tela cheia. `null`/vazio não renderiza nada —
+   * a não ser com `open` (imagem ainda carregando, CRMLAB-64).
+   */
   src: string | null;
   /** Nome sugerido no download. Sem ele, o browser nomeia pelo tipo do arquivo. */
   fileName?: string;
   onClose: () => void;
+  /** Mantém aberto sem `src`: mostra "carregando" ou o erro no lugar da imagem. */
+  open?: boolean;
+  loading?: boolean;
+  error?: boolean;
+  /** Cabeçalho no topo — "remetente · dd/mm/aaaa hh:mm" (D-244). */
+  title?: string;
+  /** Legenda embaixo da imagem. */
+  caption?: string;
+  /** Imagem anterior. Sem handler, a seta da esquerda some (e ← não faz nada). */
+  onPrev?: () => void;
+  /** Próxima imagem. Sem handler, a seta da direita some (e → não faz nada). */
+  onNext?: () => void;
+  /** URLs das vizinhas, pré-carregadas em `<img>` escondidos. */
+  preload?: string[];
 }
 
 /** Limites do zoom (CRMLAB-21). 1 = imagem inteira na tela; 6 lê letra miúda de receita. */
@@ -25,6 +42,13 @@ const DRAG_SLOP_PX = 4;
  * `type` do blob.
  */
 const DOWNLOAD_FALLBACK_NAME = 'imagem';
+
+/** Setas nas laterais (CRMLAB-64) — mesmo círculo dos botões do canto, um pouco maior. */
+const ARROW_BUTTON = cn(
+  'absolute top-1/2 z-10 flex h-[44px] w-[44px] -translate-y-1/2 cursor-pointer items-center',
+  'justify-center rounded-pill border-none bg-neutral-100 font-body text-section text-neutral-700',
+  'hover:bg-neutral-200',
+);
 
 interface Transform {
   scale: number;
@@ -77,7 +101,20 @@ function zoomAt(current: Transform, factor: number, anchorX: number, anchorY: nu
  * imagem ampliada, arrastar navega pelas partes fora da tela — e o arraste
  * terminado fora da imagem NÃO fecha o lightbox.
  */
-export function ImageLightbox({ src, fileName, onClose }: ImageLightboxProps) {
+export function ImageLightbox({
+  src,
+  fileName,
+  onClose,
+  open = false,
+  loading = false,
+  error = false,
+  title,
+  caption,
+  onPrev,
+  onNext,
+  preload = [],
+}: ImageLightboxProps) {
+  const visible = Boolean(src) || open;
   const backdropRef = useRef<HTMLDivElement>(null);
   const [transform, setTransform] = useState<Transform>(IDENTITY);
   const isZoomed = transform.scale > MIN_SCALE;
@@ -107,13 +144,19 @@ export function ImageLightbox({ src, fileName, onClose }: ImageLightboxProps) {
   }, [src]);
 
   useEffect(() => {
-    if (!src) return;
+    if (!visible) return;
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') onClose();
+      // A tela cobre tudo: ← → são do lightbox, não do campo que ficou com o foco.
+      const step = event.key === 'ArrowLeft' ? onPrev : event.key === 'ArrowRight' ? onNext : null;
+      if (step) {
+        event.preventDefault();
+        step();
+      }
     }
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [src, onClose]);
+  }, [visible, onClose, onPrev, onNext]);
 
   // `wheel` precisa de listener não-passivo: o React registra o dele como
   // passivo e o `preventDefault()` lá dentro é ignorado — aí a página atrás
@@ -179,7 +222,7 @@ export function ImageLightbox({ src, fileName, onClose }: ImageLightboxProps) {
     if (pointersRef.current.size < 2) pinchDistanceRef.current = null;
   }
 
-  if (!src) return null;
+  if (!visible) return null;
 
   return (
     <div
@@ -195,33 +238,96 @@ export function ImageLightbox({ src, fileName, onClose }: ImageLightboxProps) {
       }}
       className="fixed inset-0 z-50 flex touch-none items-center justify-center overflow-hidden bg-backdrop p-lg"
     >
-      <img
-        src={src}
-        alt=""
-        data-testid="image-lightbox-image"
-        draggable={false}
-        onClick={(event) => event.stopPropagation()}
-        onDoubleClick={(event) => {
-          event.stopPropagation();
-          const anchor = centerOf(event);
-          setTransform((current) =>
-            current.scale > MIN_SCALE
-              ? IDENTITY
-              : zoomAt(current, DOUBLE_CLICK_SCALE, anchor.x, anchor.y),
-          );
-        }}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-        style={{
-          transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
-        }}
-        className={cn(
-          'max-h-[86vh] max-w-full select-none rounded-lg object-contain shadow-lg',
-          isZoomed ? 'cursor-grab active:cursor-grabbing' : 'cursor-zoom-in',
+      {title && (
+        <p
+          data-testid="image-lightbox-title"
+          onClick={(event) => event.stopPropagation()}
+          className="absolute left-lg top-lg m-0 max-w-[50%] truncate rounded-pill bg-neutral-100 px-md py-xs font-body text-label text-text"
+        >
+          {title}
+        </p>
+      )}
+
+      {onPrev && (
+        <button
+          type="button"
+          aria-label="Imagem anterior"
+          onClick={(event) => {
+            event.stopPropagation();
+            onPrev();
+          }}
+          className={cn(ARROW_BUTTON, 'left-lg')}
+        >
+          ‹
+        </button>
+      )}
+      {onNext && (
+        <button
+          type="button"
+          aria-label="Próxima imagem"
+          onClick={(event) => {
+            event.stopPropagation();
+            onNext();
+          }}
+          className={cn(ARROW_BUTTON, 'right-lg')}
+        >
+          ›
+        </button>
+      )}
+
+      {preload.map((url) => (
+        <img key={url} src={url} alt="" aria-hidden="true" className="hidden" />
+      ))}
+
+      <figure className="m-0 flex max-h-full max-w-full flex-col items-center gap-sm">
+        {!src ? (
+          <p
+            role="status"
+            data-testid="image-lightbox-status"
+            onClick={(event) => event.stopPropagation()}
+            className="m-0 rounded-pill bg-neutral-100 px-md py-xs font-body text-label text-neutral-700"
+          >
+            {error || !loading ? 'Não foi possível carregar a imagem' : 'Carregando imagem…'}
+          </p>
+        ) : (
+          <img
+            src={src}
+            alt=""
+            data-testid="image-lightbox-image"
+            draggable={false}
+            onClick={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+              const anchor = centerOf(event);
+              setTransform((current) =>
+                current.scale > MIN_SCALE
+                  ? IDENTITY
+                  : zoomAt(current, DOUBLE_CLICK_SCALE, anchor.x, anchor.y),
+              );
+            }}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+            style={{
+              transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
+            }}
+            className={cn(
+              'max-h-[80vh] max-w-full select-none rounded-lg object-contain shadow-lg',
+              isZoomed ? 'cursor-grab active:cursor-grabbing' : 'cursor-zoom-in',
+            )}
+          />
         )}
-      />
+        {caption && (
+          <figcaption
+            data-testid="image-lightbox-caption"
+            onClick={(event) => event.stopPropagation()}
+            className="max-w-[70ch] whitespace-pre-wrap break-words rounded-md bg-neutral-100 px-md py-xs font-body text-label text-text"
+          >
+            {caption}
+          </figcaption>
+        )}
+      </figure>
 
       <div
         className="absolute right-lg top-lg flex items-center gap-sm"
@@ -266,18 +372,20 @@ export function ImageLightbox({ src, fileName, onClose }: ImageLightboxProps) {
             ⤢
           </button>
         )}
-        <a
-          href={src}
-          download={fileName ?? DOWNLOAD_FALLBACK_NAME}
-          title="Baixar"
-          aria-label="Baixar imagem"
-          className={cn(
-            'flex h-[36px] w-[36px] items-center justify-center rounded-pill border-none',
-            'bg-neutral-100 font-body text-neutral-700 no-underline hover:bg-neutral-200',
-          )}
-        >
-          ↓
-        </a>
+        {src && (
+          <a
+            href={src}
+            download={fileName ?? DOWNLOAD_FALLBACK_NAME}
+            title="Baixar"
+            aria-label="Baixar imagem"
+            className={cn(
+              'flex h-[36px] w-[36px] items-center justify-center rounded-pill border-none',
+              'bg-neutral-100 font-body text-neutral-700 no-underline hover:bg-neutral-200',
+            )}
+          >
+            ↓
+          </a>
+        )}
         <button
           type="button"
           aria-label="Fechar"

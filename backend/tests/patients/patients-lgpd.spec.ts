@@ -568,4 +568,34 @@ describe('D-075 — audit log e anexo nao sobrevivem ao apagamento', () => {
     );
     expect(daMaria.rows[0]?.attachment_url).toBe('https://cdn.canal.example/exames/maria.pdf');
   });
+
+  it('metadata das mensagens do titular vira NULL — localizacao e contato sao dado pessoal (D-234)', async () => {
+    const { daAna } = await cenario();
+    const message = await createMessage({
+      tenantId: tenantA.id,
+      conversationId: daAna,
+      senderType: 'patient',
+      content: '📍 Minha casa',
+      messageType: 'location',
+      db,
+    });
+    await db.withoutTenant((tx) =>
+      tx.query(
+        `UPDATE messages SET metadata = '{"location":{"latitude":-28.4,"longitude":-49.0,"name":"Minha casa","address":null}}'::jsonb
+          WHERE id = $1`,
+        [message.id],
+      ),
+    );
+
+    await app.agent
+      .post(`${BASE}/${patient.id}/anonymize`)
+      .set(app.auth(admin))
+      .send({ reason: REASON })
+      .expect(200);
+
+    const rows = await db.withoutTenant((tx) =>
+      tx.query<{ metadata: unknown }>(`SELECT metadata FROM messages WHERE id = $1`, [message.id]),
+    );
+    expect(rows.rows[0]?.metadata).toBeNull();
+  });
 });

@@ -6,6 +6,7 @@
  * RLS e o recorte por papel que o teste vai exercitar depois, pela API.
  */
 import { randomUUID } from 'node:crypto';
+import type { MessageStatus } from '@crm-lab/shared';
 import type { DbClient } from '../../src/db/types.js';
 import { getTestDb } from '../helpers/test-db.js';
 
@@ -15,7 +16,7 @@ export interface SeedMessageInput {
   senderType?: 'patient' | 'agent' | 'system';
   senderId?: string | null;
   content?: string;
-  status?: 'sent' | 'delivered' | 'read' | 'failed';
+  status?: MessageStatus;
   externalMessageId?: string | null;
   db?: DbClient;
 }

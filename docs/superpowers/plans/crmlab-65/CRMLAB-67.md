@@ -13,6 +13,16 @@ Faixas: decisões D-225…D-227 · migração 042 (provavelmente não usada: `me
   `PatientPresence`, `SendPresenceRequest`, eventos WS `message.status_updated` e
   `conversation.presence`). Migração 042 sem uso (status é VARCHAR sem CHECK).
 
+- Etapa 2 (backend, `3284fef`): `EVOLUTION_WEBHOOK_EVENTS` + `MESSAGES_UPDATE`/`PRESENCE_UPDATE`;
+  `sendPresence` no cliente/driver/WhatsAppService; `pending` no nascimento; escada que nunca
+  rebaixa no `UPDATE` (`setStatusByExternalId`); WS `message.status_updated` (confirmSent, falha,
+  ack, retry); `evolutionAckOf`/`evolutionPresenceOf` no webhook (presença fora do anti-replay);
+  rotas `POST /:id/messages/:messageId/retry` e `POST /:id/presence`.
+- Etapa 3 (testes back): `tests/messages/crmlab67-status-retry.spec.ts` (11),
+  `tests/webhooks/evolution-crmlab67.spec.ts` (23), inventário de rotas 76 → 78,
+  `evolution-client.spec.ts` (+ sendPresence, lista de eventos). Verdes + messages/whatsapp/
+  webhooks/conversations/reengagement/send-from-card (389). tsc `.wt` e eslint limpos.
+
 ## (histórico) Pausa de 28/09/2026 17:21 (pedido do Michel: computador vai ser desligado)
 
 **Nenhum código nem doc de domínio foi alterado ainda.** Só leitura e pesquisa. Este diário é o

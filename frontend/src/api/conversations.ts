@@ -9,6 +9,7 @@ import type {
   ListConversationsQuery,
   ListConversationsResponse,
   Message,
+  SendPresenceRequest,
   SetMessageReactionRequest,
   StartWhatsAppConversationRequest,
   StartWhatsAppConversationResponse,
@@ -49,6 +50,14 @@ export const conversationsApi = {
   /** Tira a reação do laboratório (204, idempotente). */
   removeReaction: (id: string, messageId: string) =>
     http.delete<void>(`/conversations/${id}/messages/${messageId}/reaction`),
+
+  /** "Tentar de novo" (CRMLAB-67, D-227) — reenvia a MESMA mensagem que falhou. */
+  retryMessage: (id: string, messageId: string) =>
+    http.post<Message>(`/conversations/${id}/messages/${messageId}/retry`, {}),
+
+  /** Presença da atendente (D-226/D-227): `paused` assina, `composing` = digitando. 204. */
+  sendPresence: (id: string, body: SendPresenceRequest) =>
+    http.post<void>(`/conversations/${id}/presence`, body),
 
   update: (id: string, body: UpdateConversationRequest) =>
     http.patch<UpdateConversationResponse>(`/conversations/${id}`, body),

@@ -1,0 +1,143 @@
+# Diário — CRMLAB-67 [B] Tiques de enviado/entregue/lido e "digitando…"/"online"
+
+Worktree `../CRM Lab-67` · branch `feature/CRMLAB-67-tiques-presenca` (de `integ/epic-65` @ 97a3e19).
+Faixas: decisões D-225…D-227 · migração 042 (provavelmente não usada: `messages.status` é
+`VARCHAR(50)` sem CHECK na 001).
+
+## ▶️ Retomado em 29/09/2026
+- Merge de `origin/integ/epic-65` (main + onda 1 + 63 + 74) sem conflito: `3e5b686`.
+- Etapa 1 (docs + shared): D-225..D-227 escritas; API_CONTRACTS §2 (status, retry, presence) e
+  §2b (`messages.update`, `presence.update`); FRONTEND_BACKEND "Real-time"; SERVICES §3/§16;
+  COMPONENTS (tiques); PAGES §2 (presença, tiques); DESIGN_TOKENS (`--color-chat-tick-read`);
+  `shared/types` (`MessageStatus` + `pending`, `MESSAGE_STATUS_RANK`, `canAdvanceMessageStatus`,
+  `PatientPresence`, `SendPresenceRequest`, eventos WS `message.status_updated` e
+  `conversation.presence`). Migração 042 sem uso (status é VARCHAR sem CHECK).
+
+- Etapa 2 (backend, `3284fef`): `EVOLUTION_WEBHOOK_EVENTS` + `MESSAGES_UPDATE`/`PRESENCE_UPDATE`;
+  `sendPresence` no cliente/driver/WhatsAppService; `pending` no nascimento; escada que nunca
+  rebaixa no `UPDATE` (`setStatusByExternalId`); WS `message.status_updated` (confirmSent, falha,
+  ack, retry); `evolutionAckOf`/`evolutionPresenceOf` no webhook (presença fora do anti-replay);
+  rotas `POST /:id/messages/:messageId/retry` e `POST /:id/presence`.
+- Etapa 3 (testes back): `tests/messages/crmlab67-status-retry.spec.ts` (11),
+  `tests/webhooks/evolution-crmlab67.spec.ts` (23), inventário de rotas 76 → 78,
+  `evolution-client.spec.ts` (+ sendPresence, lista de eventos). Verdes + messages/whatsapp/
+  webhooks/conversations/reengagement/send-from-card (389). tsc `.wt` e eslint limpos.
+
+- Etapa 4 (frontend, `436be11`): `MessageStatusTick` + aviso "Não foi possível enviar" com
+  **Tentar de novo** no `MessageBubble`; token `--color-chat-tick-read` (azul literal do
+  WhatsApp); `stores/presence.store.ts` (validade 10 s / 5 min); `ws.ts` (`message.status_updated`
+  invalida só a conversa; `conversation.presence` → store); `ConversationPanel`: presença no lugar
+  do telefone (`usePatientPresence`, `presence-label.ts`), `paused` ao abrir, `composing` a cada
+  4 s via `Composer.onTyping`; `Attendance/index.tsx`: mutation de retry + `sendPresence`.
+- Etapa 5 (testes front): `MessageBubble.crmlab67`, `ConversationPanel.crmlab67`,
+  `ws.crmlab67`, `presence.store` (19 verdes) + conversation/Attendance/ws/stores/tokens
+  existentes (751 verdes). tsc `.wt` e eslint limpos.
+
+## ✅ pronto para integração (29/09/2026)
+Critérios de aceite do Jira:
+- [x] relógio → ✓ → ✓✓ → ✓✓ azul em tempo real (pending no insert, sent no confirmSent, ack do
+      Evolution, WS `message.status_updated`).
+- [x] sem confirmação de leitura: fica ✓✓ cinza (sem `READ`, nada sobe).
+- [x] falhou: aviso + **Tentar de novo** (`POST .../retry`, mesma linha, texto e anexo).
+- [x] ack fora de ordem não rebaixa (guarda no `UPDATE`, matriz testada).
+- [x] "digitando…" aparece e some sozinho (10 s).
+- [x] presença não grava nada; WS só na room do tenant (testado com 2 laboratórios).
+- [x] instância antiga recebe os eventos sem VPS (lista única + `syncEvolutionWebhooks` no boot).
+- [x] testes de ack e WS, typecheck verdes.
+
+### Riscos / conferir na hml
+1. **`@lid` na presença:** se o WhatsApp mandar `presence.update` com o id `@lid` (e não o
+   `@s.whatsapp.net` que assinamos), a presença é ignorada. O tique não sofre disso (casa por
+   `keyId`). Conferir na hml com um número real.
+2. **Assinatura por `sendPresence paused`:** confirmar na hml que, depois dela, o gateway passa a
+   mandar `presence.update` do paciente.
+3. Cor do "falhou": `text-accent-700` (a cor de erro do app), não um vermelho literal — o card diz
+   "vermelho"; no tema padrão (terracota) fica avermelhado. Se o Michel quiser vermelho fixo, é
+   um token literal novo como o do azul.
+4. "digitando…" na lista de conversas (opcional no card): fora (D-226 item 7).
+
+## (histórico) Pausa de 28/09/2026 17:21 (pedido do Michel: computador vai ser desligado)
+
+**Nenhum código nem doc de domínio foi alterado ainda.** Só leitura e pesquisa. Este diário é o
+único arquivo do commit.
+
+### Pronto (leitura e pesquisa)
+- Lidos: `CLAUDE.md`, `docs/AGENTS.md`, plano do épico, diários 66/71/72, D-220..D-223 e
+  D-237..D-241, card CRMLAB-67 no Jira (status "Aprovado p/ Dev", não mexido).
+- Código lido: `backend/src/lib/evolution-client.ts`, `lib/ws-hub.ts`,
+  `controllers/webhook.routes.ts` (Evolution), `services/message.service.ts`,
+  `repositories/message.repository.ts` (setStatus, confirmSent, hasPendingOutbound,
+  setStatusByExternalId), `shared/types/{websocket,conversation}.types.ts`,
+  `frontend/src/api/ws.ts` (`applyWsEvent`).
+
+### Fatos levantados (Evolution API v2, código-fonte no GitHub)
+- `MESSAGES_UPDATE` (`messages.update`): `data = { keyId, remoteJid, fromMe, participant,
+  status, messageId?, instanceId }`; `status` é texto de `renderStatus.ts`:
+  `0 ERROR, 1 PENDING, 2 SERVER_ACK, 3 DELIVERY_ACK, 4 READ, 5 PLAYED` (fallback `SERVER_ACK`).
+  Aceitar também o número (0..5). Ignorar `remoteJid = status@broadcast`.
+- `PRESENCE_UPDATE`: repassa o payload cru do Baileys:
+  `data = { id: '<jid>', presences: { '<jid>': { lastKnownPresence, lastSeen? } } }`,
+  presença ∈ `unavailable | available | composing | recording | paused`; `lastSeen` em segundos.
+- **Não existe rota `presenceSubscribe`** no Evolution v2. A única é
+  `POST /chat/sendPresence/{instance}` com `{ number, presence, delay }` (os três obrigatórios);
+  ela chama `presenceSubscribe(jid)` do Baileys antes de mandar a presença, **bloqueia `delay` ms**
+  e manda `paused` no fim. Para assinar ao abrir a conversa: `sendPresence` com
+  `presence: 'paused'` e `delay` pequeno (não mostra nada ao paciente).
+
+### Achados que viram decisão (rascunho — ainda não escritos em DECISIONS.md)
+1. **Relógio (enviando):** hoje a mensagem nasce `status='sent'` ANTES do envio
+   (`createFromAgent`/`createAttachmentFromAgent`) e o WS `new_message` sai antes do gateway
+   responder, então a tela mostraria ✓ para algo não enviado. Proposta D-225: novo
+   `MessageStatus = 'pending'` (shared + API_CONTRACTS), gravado no insert do canal `whatsapp`;
+   `confirmSent` passa a `sent`; canal `direct`/`web` nasce `sent`. Ajustar
+   `hasPendingOutbound` (hoje filtra `status='sent' AND external_message_id IS NULL`) e
+   `MESSAGE_STATUSES`/`toMessageStatus` no repositório. Sem migração.
+2. **Nunca rebaixar:** `setStatusByExternalId` e `applyExternalStatus` hoje sobrescrevem
+   cegamente e **não emitem WS**. Ordem proposta: `pending < sent < delivered < read`;
+   `failed` só a partir de `pending`/`sent`; ack nunca volta. Fazer no SQL (CASE de ranking)
+   para valer também na rota da Cloud API. `PLAYED` → `read`; `ERROR` → `failed`;
+   `PENDING` → ignorado (não rebaixa `sent`).
+3. **WS:** evento novo `message.status_updated { conversationId, messageId, status }` (o card
+   sugere) e `conversation.presence { conversationId, presence, lastSeenAt }`. Status leva o
+   valor no payload (exceção à regra "só ids", registrar) e o front aplica direto no cache em
+   formato de páginas (`{ pages, pageParams }`, chave `[...queryKeys.conversation(id),
+   'messages']`), sem refetch e sem tocar `queryScopes.conversations` (não dispara o aviso do 72).
+   Presença vai para um store Zustand com expiração de ~10 s; nada no banco.
+4. **Anti-replay (`isReplay`, 10 min):** `presence.update` repete corpo idêntico
+   (ex. `composing` de novo) e seria descartado como replay. Colocar `PRESENCE_UPDATE` em
+   `replayExempt` (efêmero, idempotente). `MESSAGES_UPDATE` também é idempotente com a regra de
+   não rebaixar. Ambos entram em `INSTANCE_CHECKED_EVENTS` (checagem de `instance`).
+5. **"Tentar de novo":** não existe rota de reenvio. Criar
+   `POST /conversations/:id/messages/:messageId/retry` (só mensagem `failed` do lado `agent`,
+   conversa ativa, 404 cross-tenant), entrada no inventário de
+   `backend/tests/kernel/route-tenant-isolation.spec.ts` (76 → 77). Dúvida técnica em aberto:
+   reenvio de ANEXO precisa reler o buffer da mídia guardada (`MediaService`/`message_media`) —
+   conferir se dá; se não, retry só de texto e registrar.
+6. **`composing` para o paciente** (decidir): proposta D-227 = sim, com debounce (1 envio a cada
+   ~5 s enquanto digita, `delay` curto), só canal `whatsapp` em modo Evolution; rota nova
+   `POST /conversations/:id/presence` (entra no inventário) ou reaproveitar a de assinatura.
+
+## Checklist do que falta
+- [ ] Docs (Regra Zero): D-225..D-227, API_CONTRACTS (eventos WS, `pending`, rota retry e
+      presença), FRONTEND_BACKEND "Real-time", SERVICES §3/§16, COMPONENTS (MessageBubble
+      tiques, cabeçalho do ConversationPanel), PAGES §2; `shared/types` (`MessageStatus`,
+      `WsEventName`/`WsEventPayloads`).
+- [ ] Backend: `EVOLUTION_WEBHOOK_EVENTS` + `MESSAGES_UPDATE`/`PRESENCE_UPDATE`;
+      `sendPresence` no `evolution-client.ts`; parser de ack e de presença no
+      `webhook.routes.ts`; `applyExternalStatus` sem rebaixar + WS; status `pending`;
+      rota retry; rota de presença/assinatura.
+- [ ] Frontend: tiques no `MessageBubble` (tokens de cor, zero hex/px), "Tentar de novo",
+      `ws.ts` (status no cache em páginas, presença no store), linha de presença no cabeçalho
+      do `ConversationPanel` (aditiva; a lupa do CRMLAB-68 fica nos botões), debounce no Composer.
+- [ ] Testes: payloads Evolution v2 reais (`messages.update` com ack texto e número,
+      `presence.update`), não rebaixar, cross-tenant no WS, retry, specs de front com o cache real.
+- [ ] Typecheck `.wt` back/front/shared + specs afetados (com `flock` e `--maxWorkers=3`).
+
+## Decisões escritas
+Nenhuma ainda (faixa D-225..D-227 livre).
+
+## Próximo passo exato (histórico, já feito)
+Escrever D-225 (status `pending` + ordem que nunca rebaixa + mapeamento de ack), D-226 (presença
+efêmera: WS, expiração 10 s, assinatura por `sendPresence paused`, replay isento) e D-227
+(composing para o paciente + rota de retry) no fim de `docs/DECISIONS.md`, antes do "Template";
+depois `shared/types` + API_CONTRACTS no mesmo commit.

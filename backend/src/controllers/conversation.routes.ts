@@ -11,6 +11,8 @@
  *   POST  /api/v1/conversations/:id/attachments  anexo (base64 em JSON, 201)
  *   PUT   /api/v1/conversations/:id/messages/:messageId/reaction  reage (200, D-222)
  *   DELETE /api/v1/conversations/:id/messages/:messageId/reaction remove a reacao (204)
+ *   POST  /api/v1/conversations/:id/messages/:messageId/retry  reenvia a que falhou (200, D-227)
+ *   POST  /api/v1/conversations/:id/presence  "digitando"/assinatura de presenca (204, D-226)
  *   POST  /api/v1/conversations/:id/read    zera o contador de nao lidas (204)
  *   POST  /api/v1/conversations/:id/pin     fixa a conversa para o usuario (204)
  *   DELETE /api/v1/conversations/:id/pin    desafixa (204)
@@ -33,6 +35,7 @@ import type {
   ListConversationsQuery,
   ListConversationsResponse,
   Message,
+  SendPresenceRequest,
   SetMessageReactionRequest,
   StartWhatsAppConversationRequest,
   StartWhatsAppConversationResponse,
@@ -161,6 +164,9 @@ export const updateConversationSchema = z
   });
 
 export const conversationIdParamSchema = z.object({ id: z.string().uuid() });
+
+/** `POST /:id/presence` (D-226/D-227). */
+export const sendPresenceSchema = z.object({ presence: z.enum(['paused', 'composing']) });
 
 /**
  * Base64 em JSON, nao multipart (spec Onda 8 §4.3): Express 4 nao faz
@@ -370,6 +376,34 @@ export function setMessageReaction(
   });
 }
 
+/**
+ * `POST /:id/messages/:messageId/retry` (D-227). Recorte por papel antes,
+ * como nas outras escritas.
+ */
+export function retryMessage(services: ConversationServices): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const { id, messageId } = validated<{ id: string; messageId: string }>(req, 'params');
+    await services.conversations.getById(ctx, id);
+    const message: Message = await services.messages.retryFailed(ctx.tenantId, id, messageId, (mediaId) =>
+      services.media.read(ctx.tenantId, mediaId),
+    );
+    res.status(200).json(message);
+  });
+}
+
+/** `POST /:id/presence` (D-226/D-227): 204 na hora — o gateway e chamado em segundo plano. */
+export function sendPresence(services: ConversationServices): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const { id } = validated<{ id: string }>(req, 'params');
+    const { presence } = validated<SendPresenceRequest>(req, 'body');
+    await services.conversations.getById(ctx, id);
+    await services.messages.sendAgentPresence(ctx.tenantId, id, presence);
+    res.status(204).end();
+  });
+}
+
 export function updateConversation(service: ConversationService): RequestHandler {
   return handle(async (req, res) => {
     const ctx = getContext(req);
@@ -516,6 +550,21 @@ function buildConversationModule(
     ...guards,
     validate(messageParamsSchema, 'params'),
     setMessageReaction(services, 'remove'),
+  );
+
+  router.post(
+    '/:id/messages/:messageId/retry',
+    ...guards,
+    validate(messageParamsSchema, 'params'),
+    retryMessage(services),
+  );
+
+  router.post(
+    '/:id/presence',
+    ...guards,
+    validate(conversationIdParamSchema, 'params'),
+    validate(sendPresenceSchema, 'body'),
+    sendPresence(services),
   );
 
   router.post(

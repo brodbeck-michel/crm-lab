@@ -125,7 +125,9 @@ describe('EvolutionClient', () => {
       // CRMLAB-66: reacao e reaplicacao do webhook.
       if (
         req.method === 'POST' &&
-        (req.url === '/message/sendReaction/tenant-abc' || req.url === '/webhook/set/tenant-abc')
+        (req.url === '/message/sendReaction/tenant-abc' ||
+          req.url === '/webhook/set/tenant-abc' ||
+          req.url === '/chat/sendPresence/tenant-abc')
       ) {
         res.writeHead(201, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ key: { id: 'EVOREACT' } }));
@@ -166,12 +168,15 @@ describe('EvolutionClient', () => {
     expect(webhook.headers).toEqual({ 'x-evolution-webhook-token': 'segredo' });
     // `QRCODE_UPDATED` e o que permite servir o QR pelo cache em vez de chamar
     // `/instance/connect` a cada polling — ver `getWhatsAppQr`.
-    // A lista e UMA constante (D-223); editar/apagar entraram no CRMLAB-66.
+    // A lista e UMA constante (D-223); editar/apagar entraram no CRMLAB-66,
+    // ack e presenca no CRMLAB-67 (D-225/D-226).
     expect(webhook.events).toEqual([...EVOLUTION_WEBHOOK_EVENTS]);
     expect(webhook.events).toEqual([
       'MESSAGES_UPSERT',
       'MESSAGES_EDITED',
       'MESSAGES_DELETE',
+      'MESSAGES_UPDATE',
+      'PRESENCE_UPDATE',
       'CONNECTION_UPDATE',
       'QRCODE_UPDATED',
     ]);
@@ -339,6 +344,14 @@ describe('EvolutionClient', () => {
       key: { id: '3EB0ALVO', remoteJid: '5511987654321@s.whatsapp.net', fromMe: false },
       reaction: '👍',
     });
+    expect(lastApikeyHeader).toBe('apikey-da-instancia');
+  });
+
+  it('sendPresence vai por /chat/sendPresence com number, presence, delay e a apikey da instancia (D-226)', async () => {
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    await client.sendPresence('tenant-abc', '5511987654321', 'composing', 4000, 'apikey-da-instancia');
+    expect(lastUrl).toBe('/chat/sendPresence/tenant-abc');
+    expect(lastBody).toEqual({ number: '5511987654321', presence: 'composing', delay: 4000 });
     expect(lastApikeyHeader).toBe('apikey-da-instancia');
   });
 

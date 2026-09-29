@@ -182,6 +182,16 @@ interface que ProposalService/ApprovalService consomem. Instanciação:
 - **Apagada/editada pelo remetente (D-220):** `applySenderDelete` grava `deleted_at` (nunca
   `DELETE`), `applySenderEdit` guarda a versão anterior em `message_edits`. Os dois gravam audit log
   sem o texto e emitem `conversation.message_updated`. `false` = alvo desconhecido/no-op
+- **Tiques (CRMLAB-67, D-225):** mensagem do atendimento no canal `whatsapp` nasce `pending`;
+  `confirmSent` → `sent`; falha → `failed`. `applyExternalStatus` (webhook Evolution
+  `MESSAGES_UPDATE` e callback Cloud API) só sobe na ordem `pending < sent < delivered < read`
+  (`failed` só de `pending`/`sent`) — a guarda está no `UPDATE` de `setStatusByExternalId` — e
+  emite `message.status_updated` quando mudou
+- **Reenvio (D-227):** `retryFailed(tenantId, conversationId, messageId)` reenvia a mesma linha
+  (`failed` → `pending` → `sent`/`failed`), com a citação original; anexo relê a mídia por
+  `MediaService.read`. Não é do atendimento, não está `failed` ou conversa encerrada → `CONFLICT`
+- **Presença (D-226/D-227):** `sendAgentPresence` (best-effort, sem fila, sem esperar) e
+  `emitPatientPresence` (webhook `PRESENCE_UPDATE` → WS `conversation.presence`, nada gravado)
 
 ---
 
@@ -805,6 +815,12 @@ export function createInsuranceService(deps: { db: DbClient; audit: AuditService
 > (`channel-settings.service.ts`), chamado no boot pelo `main.ts`, reaplica a lista em toda
 > instância `qr` — instância antiga passa a receber evento novo sem script manual.
 > `EvolutionClient` ganhou `setWebhook` e `sendReaction`; `sendText`/`sendMedia` aceitam `quoted`.
+>
+> **CRMLAB-67 (D-225..D-227):** a lista ganhou `MESSAGES_UPDATE` (ack → tique) e
+> `PRESENCE_UPDATE` (presença do paciente, só WS). `EvolutionClient.sendPresence(instance, phone,
+> presence, delay, apikey)` → `POST /chat/sendPresence/{instance}` (o Evolution v2 não tem
+> `presenceSubscribe`; esta rota assina antes de mandar). `WhatsAppDriver.sendPresence` é
+> opcional — só o driver Evolution implementa.
 
 **Responsabilidade:** conectar o WhatsApp do próprio laboratório via QR code (Evolution API),
 sem depender da API oficial da Meta. Estende `WhatsAppService` (§11) e `ChannelSettingsService`

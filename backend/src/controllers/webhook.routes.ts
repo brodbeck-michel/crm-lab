@@ -36,7 +36,7 @@
  * caminho deste arquivo grava com `withoutTenant()`.
  */
 import { createHash } from 'node:crypto';
-import type { MessageType } from '@crm-lab/shared';
+import type { MessageStatus, MessageType, PatientPresence } from '@crm-lab/shared';
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { env } from '../config/env.js';
 import type { DbClient } from '../db/types.js';
@@ -159,7 +159,9 @@ export async function isReplay(
 export function replayExempt(req: Request): boolean {
   const body = asRecord(req.body);
   const event = normalizeEvolutionEvent(body ? asNonEmptyString(body.event) : null);
-  return event === 'CONNECTION_UPDATE';
+  // `PRESENCE_UPDATE` (D-226 item 6): um `composing` repete o corpo byte a byte
+  // e seria descartado como replay; e efemero e nao grava nada.
+  return event === 'CONNECTION_UPDATE' || event === 'PRESENCE_UPDATE';
 }
 
 /** Resposta unica de todos os caminhos — nao e oraculo de nada. */
@@ -941,8 +943,91 @@ const INSTANCE_CHECKED_EVENTS: ReadonlySet<string> = new Set([
   'MESSAGES_UPSERT',
   'MESSAGES_EDITED',
   'MESSAGES_DELETE',
+  'MESSAGES_UPDATE',
+  'PRESENCE_UPDATE',
   'CONNECTION_UPDATE',
 ]);
+
+/**
+ * Ack do Evolution v2 (`renderStatus.ts`) -> tique (D-225 item 3). Chega como
+ * texto ou como o numero do enum do Baileys. `PENDING` fica de fora: e o
+ * estado de antes do servidor, nunca sobe nada.
+ */
+const EVOLUTION_ACK_STATUS: Readonly<Record<string, MessageStatus>> = {
+  ERROR: 'failed',
+  '0': 'failed',
+  SERVER_ACK: 'sent',
+  '2': 'sent',
+  DELIVERY_ACK: 'delivered',
+  '3': 'delivered',
+  READ: 'read',
+  '4': 'read',
+  PLAYED: 'read',
+  '5': 'read',
+};
+
+export interface EvolutionAck {
+  externalId: string;
+  status: MessageStatus;
+}
+
+/**
+ * `data` do `MESSAGES_UPDATE` (`{ keyId, remoteJid, fromMe, status }`; aceita
+ * tambem `key.id`). `null` = sem efeito: ack de mensagem do PACIENTE
+ * (`fromMe: false`), status do WhatsApp (`status@broadcast`), status
+ * desconhecido ou `PENDING`.
+ */
+export function evolutionAckOf(data: unknown): EvolutionAck | null {
+  const record = asRecord(data);
+  if (!record) return null;
+  const key = asRecord(record.key);
+  if ((record.fromMe ?? key?.fromMe) === false) return null;
+  const remoteJid = asNonEmptyString(record.remoteJid) ?? asNonEmptyString(key?.remoteJid);
+  if (remoteJid === 'status@broadcast') return null;
+  const externalId = asNonEmptyString(record.keyId) ?? asNonEmptyString(key?.id);
+  const raw = record.status;
+  const code = typeof raw === 'number' ? String(raw) : typeof raw === 'string' ? raw.toUpperCase() : null;
+  const status = code !== null ? EVOLUTION_ACK_STATUS[code] : undefined;
+  return externalId && status ? { externalId, status } : null;
+}
+
+export interface EvolutionPresence {
+  phone: string;
+  presence: PatientPresence;
+  lastSeenAt: string | null;
+}
+
+const BAILEYS_PRESENCE: Readonly<Record<string, PatientPresence>> = {
+  composing: 'typing',
+  recording: 'recording',
+  available: 'online',
+  paused: 'online',
+  unavailable: 'offline',
+};
+
+/**
+ * `data` do `PRESENCE_UPDATE` — o payload cru do Baileys:
+ * `{ id: '<jid>', presences: { '<jid>': { lastKnownPresence, lastSeen? } } }`
+ * (D-226 item 2). So `@s.whatsapp.net`: grupo e `@lid` nao dao telefone.
+ * `lastSeen` vem em segundos; so vale com `offline`.
+ */
+export function evolutionPresenceOf(data: unknown): EvolutionPresence | null {
+  const record = asRecord(data);
+  const jid = record ? asNonEmptyString(record.id) : null;
+  if (!record || !jid || !jid.endsWith('@s.whatsapp.net')) return null;
+  const presences = asRecord(record.presences);
+  const entry = asRecord(presences?.[jid]) ?? asRecord(Object.values(presences ?? {})[0]);
+  const raw = entry ? asNonEmptyString(entry.lastKnownPresence) : null;
+  const presence = raw ? BAILEYS_PRESENCE[raw] : undefined;
+  const phone = phoneFromJid(jid);
+  if (!presence || !phone) return null;
+  const lastSeen = entry?.lastSeen;
+  const lastSeenAt =
+    presence === 'offline' && typeof lastSeen === 'number' && Number.isFinite(lastSeen) && lastSeen > 0
+      ? new Date(lastSeen * 1000).toISOString()
+      : null;
+  return { phone, presence, lastSeenAt };
+}
 
 function instanceClaimMatches(body: Record<string, unknown> | null, tenantId: string): boolean {
   const instanceClaim = body ? asNonEmptyString(body.instance) : null;
@@ -1095,6 +1180,25 @@ export function evolutionInbound(
             reason: err instanceof Error ? err.message : String(err),
           });
         }
+      }
+    } else if (event === 'MESSAGES_UPDATE') {
+      // Tique (D-225). O gateway pode mandar um lote (array) ou um item.
+      const data: unknown = body?.data;
+      const items: unknown[] = Array.isArray(data) ? data : [data];
+      for (const item of items) {
+        const ack = evolutionAckOf(item);
+        if (ack) await services.messages.applyExternalStatus(tenantId, ack.externalId, ack.status);
+      }
+    } else if (event === 'PRESENCE_UPDATE') {
+      // Presenca (D-226): so WS, nada gravado.
+      const presence = evolutionPresenceOf(body?.data);
+      if (presence) {
+        await services.messages.emitPatientPresence(
+          tenantId,
+          presence.phone,
+          presence.presence,
+          presence.lastSeenAt,
+        );
       }
     } else if (event === 'CONNECTION_UPDATE') {
       await applyEvolutionConnectionUpdate(db, tenantId, body?.data, wsHub);

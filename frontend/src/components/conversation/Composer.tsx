@@ -76,6 +76,11 @@ export interface ComposerProps {
   replyTo?: { authorName: string; preview: string } | null;
   /** × da faixa ou `Esc` no campo. */
   onCancelReply?: () => void;
+  /**
+   * A pessoa digitou algo (texto não vazio) — a cada tecla. Quem monta a tela
+   * decide o ritmo do "digitando…" para o paciente (D-227); o Composer só avisa.
+   */
+  onTyping?: () => void;
 }
 
 /**
@@ -115,6 +120,7 @@ export function Composer({
   initialValue,
   replyTo,
   onCancelReply,
+  onTyping,
 }: ComposerProps) {
   const [value, setValue] = useState(initialValue ?? '');
   // `false` enquanto a pessoa não abriu o menu nesta digitação — é o que faz
@@ -171,6 +177,7 @@ export function Composer({
   function handleChange(next: string): void {
     setValue(next);
     setActiveIndex(0);
+    if (next.trim().length > 0) onTyping?.();
     // Abre só quando a `/` é o texto INTEIRO — ou seja, campo vazio antes dela.
     if (next === '/') setMacroMenuOpen(true);
     // Apagou a barra: o comando acabou, e digitar `/` de novo recomeça.

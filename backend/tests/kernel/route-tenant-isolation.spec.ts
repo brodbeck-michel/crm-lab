@@ -106,6 +106,9 @@ function fakeEvolutionClient(): EvolutionClient {
     async sendReaction() {
       return undefined;
     },
+    async sendPresence() {
+      return undefined;
+    },
   };
 }
 
@@ -262,6 +265,24 @@ const LAB_ROUTES: readonly LabRoute[] = [
     name: 'DELETE /conversations/:id/messages/:messageId/reaction',
     method: 'delete',
     path: (l) => `/api/v1/conversations/${l.conversation.id}/messages/${l.message.id}/reaction`,
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 204,
+  },
+  {
+    // D-227: a sonda e mensagem do paciente — do proprio tenant, `CONFLICT` (nao e do atendimento).
+    name: 'POST /conversations/:id/messages/:messageId/retry',
+    method: 'post',
+    path: (l) => `/api/v1/conversations/${l.conversation.id}/messages/${l.message.id}/retry`,
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 409,
+  },
+  {
+    name: 'POST /conversations/:id/presence',
+    method: 'post',
+    path: (l) => `/api/v1/conversations/${l.conversation.id}/presence`,
+    body: () => ({ presence: 'paused' }),
     actor: 'attendant',
     addressable: true,
     ownStatus: 204,
@@ -985,7 +1006,9 @@ describe('inventario de rotas de laboratorio', () => {
     // CRMLAB-58/D-200..D-202 soma 4: `POST /proposals/:id/send|resend` e
     // `PATCH /proposals/:id/conversation|responsible`.
     // CRMLAB-66/D-222 soma 2: `PUT|DELETE /conversations/:id/messages/:messageId/reaction`.
-    expect(LAB_ROUTES).toHaveLength(76);
+    // CRMLAB-67/D-227 soma 2: `POST /conversations/:id/messages/:messageId/retry` e
+    // `POST /conversations/:id/presence`.
+    expect(LAB_ROUTES).toHaveLength(78);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

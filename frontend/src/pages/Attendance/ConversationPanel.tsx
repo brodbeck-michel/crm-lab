@@ -18,7 +18,9 @@ import {
   quotedLabel,
 } from '@/components/conversation';
 import type { MessageBubbleProps, RecordedAudio } from '@/components/conversation';
+import { presenceLabel } from './presence-label';
 import { scrollToMessage } from './scroll-to-message';
+import { usePatientPresence } from './usePatientPresence';
 import { useConversationScroll } from './useConversationScroll';
 
 /**
@@ -77,7 +79,18 @@ export interface ConversationPanelProps {
   unreadAtOpen: number;
   /** Mensagem pronta ao chegar aqui por "Enviar orçamento" (ver `Composer.initialValue`). */
   draftMessage?: string;
+  /** "Tentar de novo" de mensagem que falhou (D-227). Sem handler, o botão some. */
+  onRetryMessage?: (messageId: string) => void;
+  /**
+   * Presença da atendente para o paciente (D-226/D-227): `paused` ao abrir a
+   * conversa (assina a presença dele), `composing` enquanto ela digita — no
+   * máximo 1 a cada `COMPOSING_INTERVAL_MS`.
+   */
+  onPresence?: (presence: 'paused' | 'composing') => void;
 }
+
+/** Ritmo do "digitando…" enviado ao paciente (D-227) — casa com o `delay` do backend. */
+export const COMPOSING_INTERVAL_MS = 4_000;
 
 /**
  * A lista encolheu ou cresceu porque o Composer mudou de altura (CRMLAB-49) →
@@ -260,6 +273,8 @@ export function ConversationPanel({
   onLoadOlder,
   unreadAtOpen,
   draftMessage,
+  onRetryMessage,
+  onPresence,
 }: ConversationPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const dividerRef = useRef<HTMLDivElement>(null);
@@ -291,7 +306,29 @@ export function ConversationPanel({
   const quotedId = replyTo?.id;
   const clearReply = (): void => setReply(null);
 
+  // Presença (D-226/D-227): assina ao abrir; "digitando…" com ritmo próprio.
+  const presence = usePatientPresence(conversationId);
+  const canSignalPresence = conversation?.status === 'active' && onPresence !== undefined;
+  const lastComposingRef = useRef(0);
+  useEffect(() => {
+    lastComposingRef.current = 0;
+    if (conversationId !== null && canSignalPresence) onPresence?.('paused');
+    // Só ao TROCAR de conversa — `onPresence` muda de identidade a cada render,
+    // por isso fica fora da lista de dependências.
+  }, [conversationId, canSignalPresence]);
+  function handleTyping(): void {
+    if (!canSignalPresence) return;
+    const now = Date.now();
+    if (now - lastComposingRef.current < COMPOSING_INTERVAL_MS) return;
+    lastComposingRef.current = now;
+    onPresence?.('composing');
+  }
+
   const bubbleActions: BubbleActions = {
+    onRetry:
+      onRetryMessage && conversation?.status === 'active'
+        ? (message) => onRetryMessage(message.id)
+        : undefined,
     onReply:
       conversation?.status === 'active' && conversationId !== null
         ? (message) => setReply({ conversationId, message })
@@ -350,6 +387,7 @@ export function ConversationPanel({
   }
 
   const closed = conversation.status !== 'active';
+  const presenceText = presenceLabel(presence, new Date());
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-bg">
@@ -358,8 +396,16 @@ export function ConversationPanel({
           <span className="truncate font-body text-label font-semibold text-text">
             {conversation.patientName ?? conversation.patientPhone}
           </span>
-          <span className="truncate font-body text-caption text-neutral-600">
-            {conversation.patientPhone}
+          {/* Presença do paciente no lugar do telefone enquanto houver (D-226). */}
+          <span
+            data-testid="patient-presence"
+            aria-live="polite"
+            className={cn(
+              'truncate font-body text-caption',
+              presenceText && presence?.presence !== 'offline' ? 'text-accent2-700' : 'text-neutral-600',
+            )}
+          >
+            {presenceText ?? conversation.patientPhone}
           </span>
         </div>
 
@@ -511,6 +557,7 @@ export function ConversationPanel({
             : null
         }
         onCancelReply={clearReply}
+        onTyping={handleTyping}
         sending={sending}
         disabled={closed}
         quickReplies={quickReplies}
@@ -525,7 +572,7 @@ export function ConversationPanel({
  * Cada bolha vai numa linha com `data-anchor-id` — é nela que a rolagem se
  * ancora (D-238). O `data-message-id` do balão é do `MessageBubble`.
  */
-type BubbleActions = Pick<MessageBubbleProps, 'onReply' | 'onReact' | 'onQuoteClick'>;
+type BubbleActions = Pick<MessageBubbleProps, 'onReply' | 'onReact' | 'onQuoteClick' | 'onRetry'>;
 
 function renderRows(
   messages: Message[],

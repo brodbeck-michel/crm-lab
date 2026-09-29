@@ -897,6 +897,14 @@ enxerga devolve `NOT_FOUND`.
 `MESSAGE_SEND_FAILED` (502, canal externo falhou após os retries), `FORBIDDEN` (403,
 `platform_operator`)
 
+**`status` da mensagem do atendimento (CRMLAB-67, D-225):** `pending | sent | delivered | read |
+failed` — o tique do balão. No canal `whatsapp` a mensagem nasce `pending` (🕓, o WS
+`conversation.new_message` sai antes do envio) e a resposta `201` já volta `sent` (o gateway
+devolveu o id); o ack do celular sobe para `delivered` (✓✓) e `read` (✓✓ azul) pelo webhook, com
+o WS `message.status_updated`. **Nunca rebaixa** (um `delivered` atrasado não apaga o `read`);
+`failed` só a partir de `pending`/`sent`. Canal `direct`/`web` nasce `sent`. Mensagem do paciente:
+`delivered` e, aberta a conversa, `read` (inalterado).
+
 ### POST /conversations/:id/attachments
 Enviar um anexo (Onda 8 §4.3) — foto, PDF ou áudio para o paciente.
 
@@ -979,6 +987,42 @@ externo (canal `direct`/`web`, envio que falhou) reage só no CRM. Emite
 outra conversa ou de outro tenant, mensagem apagada), `CONVERSATION_ARCHIVED` (409, atendimento
 encerrado), `MESSAGE_SEND_FAILED` (502), `FORBIDDEN` (403, `platform_operator`). Mensagem de
 sistema também é `NOT_FOUND` — não existe no WhatsApp do paciente.
+
+### POST /conversations/:id/messages/:messageId/retry (CRMLAB-67, D-227)
+"Tentar de novo" de uma mensagem que falhou. Reenvia **a mesma** mensagem (mesmo `id`, nenhuma
+linha nova): ela volta a `pending` (WS `message.status_updated`), sai pelo canal com a citação
+original, e termina `sent` ou de novo `failed`. Anexo relê o arquivo guardado
+(`attachmentUrl` = `/api/v1/media/:id`).
+
+**Request:** sem corpo.
+
+**Response (200):** a `Message` (objeto cru, D-070) com `status: "sent"`.
+
+**Erros:** `NOT_FOUND` (404 — conversa fora do recorte, mensagem de outra conversa ou de outro
+tenant), `CONFLICT` (409 — a mensagem não é do atendimento, não está `failed` ou o atendimento
+está encerrado), `MESSAGE_SEND_FAILED` (502 — falhou de novo; a linha continua `failed`; também
+quando o arquivo do anexo sumiu do disco), `VALIDATION_ERROR` (400, id não-uuid), `FORBIDDEN`
+(403, `platform_operator`)
+
+### POST /conversations/:id/presence (CRMLAB-67, D-226/D-227)
+Presença da atendente para o WhatsApp do paciente.
+
+**Request:**
+```json
+{ "presence": "paused" }
+```
+- `presence` ∈ `paused | composing`. `paused`: a tela manda ao **abrir** a conversa — assina a
+  presença do paciente (sem isso o WhatsApp não avisa "digitando…"/"online") sem mostrar nada a
+  ele. `composing`: enquanto a atendente digita, no máximo 1 a cada 4 s — o paciente vê
+  "digitando…" por 4 s.
+
+**Response:** `204 No Content`, **na hora** — o gateway é chamado em segundo plano, uma
+tentativa, erro só em log. Só age no canal `whatsapp` em `connection_mode: "qr"` (Evolution
+`POST /chat/sendPresence/:instance`); Cloud API, `direct`/`web` e conversa encerrada → `204` sem
+efeito.
+
+**Erros:** `NOT_FOUND` (404 — conversa fora do recorte ou de outro tenant), `VALIDATION_ERROR`
+(400), `FORBIDDEN` (403, `platform_operator`)
 
 ### POST /conversations/:id/read
 Marcar a conversa como lida sem carregar o histórico. Idempotente.
@@ -1259,7 +1303,8 @@ responder):
 
 **Citação, reação, edição e apagamento (CRMLAB-66, D-220..D-223).** Eventos assinados:
 `EVOLUTION_WEBHOOK_EVENTS` (`lib/evolution-client.ts`) = `MESSAGES_UPSERT`, `MESSAGES_EDITED`,
-`MESSAGES_DELETE`, `CONNECTION_UPDATE`, `QRCODE_UPDATED`. Instância criada antes disso recebe a
+`MESSAGES_DELETE`, `MESSAGES_UPDATE`, `PRESENCE_UPDATE` (os dois do CRMLAB-67),
+`CONNECTION_UPDATE`, `QRCODE_UPDATED`. Instância criada antes disso recebe a
 lista nova sozinha: o backend reaplica `/webhook/set` em todo laboratório `qr` **ao subir** e ao
 conectar (D-223). Todos passam pela mesma checagem de `instance` do `MESSAGES_UPSERT`.
 
@@ -1271,6 +1316,8 @@ conectar (D-223). Todos passam pela mesma checagem de `instance` do `MESSAGES_UP
 | `messages.upsert` com `message.protocolMessage: { type: "MESSAGE_EDIT" \| 14, key: { id }, editedMessage: {...} }` (ou `message.editedMessage.message.protocolMessage`) | edição: texto novo em `content`, anterior em `message_edits` |
 | `messages.edited` com `data` = o `protocolMessage` (`{ key, type, editedMessage }`) | idem — REVOKE que chegue por aqui também apaga |
 | `messages.delete` com `data` = a `key` achatada (`{ remoteJid, fromMe, id, status: "DELETED" }`) ou `{ key: {...} }` | marca `deleted_at` |
+| `messages.update` com `data = { keyId, remoteJid, fromMe: true, status }` — `status` texto (`ERROR`, `PENDING`, `SERVER_ACK`, `DELIVERY_ACK`, `READ`, `PLAYED`) ou número 0..5 (CRMLAB-67, D-225) | tique da mensagem `external_message_id = keyId`: `ERROR` → `failed`, `SERVER_ACK` → `sent`, `DELIVERY_ACK` → `delivered`, `READ`/`PLAYED` → `read`; `PENDING` ignorado. **Nunca rebaixa**; mudou → WS `message.status_updated`. `fromMe: false`, `status@broadcast` e status desconhecido: sem efeito |
+| `presence.update` com `data = { id: "<jid>", presences: { "<jid>": { lastKnownPresence, lastSeen? } } }` (CRMLAB-67, D-226) | **nada no banco**: WS `conversation.presence` para a conversa do telefone (`composing` → `typing`, `recording` → `recording`, `available`/`paused` → `online`, `unavailable` → `offline`; `lastSeen` em segundos → `lastSeenAt` ISO). Sem conversa, grupo ou `@lid`: sem efeito. Fora do anti-replay (o corpo se repete) |
 
 Apagar e editar: **nunca `DELETE`**; `deleted_by`/`edited_by` = o lado de quem mandou a original
 (no WhatsApp só o autor apaga ou edita); mensagem de sistema nunca é afetada; editar mensagem já

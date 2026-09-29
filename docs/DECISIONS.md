@@ -4458,7 +4458,7 @@ estendida, evita três regex brigando e mantém o texto do paciente longe do HTM
    de paciente parado no `localStorage`, então vale a leitura mais restritiva (AGENTS.md,
    "Resolução de Conflitos"). Recarregar a página não é sair: o rascunho fica.
 5. **Emoji:** lista estática versionada no repo (`components/conversation/emoji-data.ts`,
-   ~380 emojis em 8 categorias no padrão do WhatsApp, cada um com nome e palavras-chave em
+   ~550 emojis em 8 categorias no padrão do WhatsApp, cada um com nome e palavras-chave em
    pt-BR), **sem dependência nova**. `emoji-mart` com os dados traz centenas de KB ao bundle e
    nomes em inglês (a busca em pt-BR teria de ser traduzida do mesmo jeito). Busca sem acento e
    sem caixa, por nome e palavras-chave; aba **Recentes** (até 24, `localStorage`

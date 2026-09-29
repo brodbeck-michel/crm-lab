@@ -263,7 +263,7 @@ Anatomia (padrão WhatsApp):
   palavras-chave), **abas de categoria** (Recentes · Smileys e pessoas · Animais e natureza ·
   Comidas e bebidas · Atividades · Viagens e lugares · Objetos · Símbolos · Bandeiras) e
   **Recentes** (até 24, `localStorage`, só aparece quando há algum). Lista estática
-  versionada (`emoji-data.ts`, ~380), **sem dependência** — `emoji-mart` pesa centenas de KB
+  versionada (`emoji-data.ts`, ~550), **sem dependência** — `emoji-mart` pesa centenas de KB
   e fala inglês.
 - Insere **na posição do cursor**, não no fim do texto.
 - Cada emoji é um `<button>` com `aria-label` (nome em pt-BR), navegável por

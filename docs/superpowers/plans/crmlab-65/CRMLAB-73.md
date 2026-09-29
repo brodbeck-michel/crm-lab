@@ -41,3 +41,31 @@ main v1.24.0). Faixa: D-242…D-243 · sem migração · só frontend.
   `Composer.format-draft.spec.tsx`) 56 ✓.
 - `ConversationItem`: "Rascunho: …" (menos selecionada), encerrada apaga (efeito). Spec novo
   `ConversationItem.draft.spec.tsx` 4 ✓ (+ 17 do spec antigo ✓).
+
+## Etapa 4 — emoji ✅
+- `emoji-data.ts` (549 emojis, 8 categorias, nome + palavras-chave pt-BR, `searchEmojis` sem
+  acento/caixa, todas as palavras). `EmojiPicker` refeito: busca focada ao abrir (Enter pega o
+  1º), abas (`role="tab"`), Recentes (até 24, `crm-lab.emoji-recent`, try/catch), "Nenhum emoji
+  encontrado". `EMOJIS` continua exportado (agora = todos). Spec novo `EmojiPicker.spec.tsx` 9 ✓.
+
+## Etapa 5 — verificação ✅ (29/09/2026)
+- `tsc --noEmit -p frontend/tsconfig.wt.json`: limpo. `eslint` nos 18 arquivos mexidos: limpo.
+- vitest (`--maxWorkers=3`): `components/conversation`, `pages/Attendance`, `stores`, `lib`,
+  `no-hardcoded-tokens`, `pages/InternalChat` → 38 arquivos, 925/925 ✓.
+- Shared/backend não mexidos (sem typecheck deles).
+- Não rodado: E2E (precisa da stack). Atenção na integração: rascunho agora persiste em
+  `localStorage`; um E2E que digita sem enviar e reabre a mesma conversa no mesmo contexto vai
+  ver o texto de volta (comportamento novo, esperado).
+
+## Fora de escopo (registrado em D-242)
+- Prévia de link (card com imagem/título): exige backend buscar URL externa.
+- Telefone e e-mail clicáveis (opcionais no card): não feitos.
+- Atalho para monoespaçado no Composer: o card não pede.
+
+## Arquivos compartilhados com 70/64
+- `MessageBubble.tsx`: só o import (`WhatsAppText` no lugar de `splitBold`) e o miolo do `<p>`
+  do texto.
+- `ConversationPanel.tsx`: uma linha (`draftId={conversation.id}` no `<Composer>`).
+- `components/conversation/index.ts`: uma linha (`export { WhatsAppText }`), ao lado do
+  `EmojiPicker`.
+- `docs/DECISIONS.md` (D-242/D-243 antes do template) e `docs/frontend/COMPONENTS.md`.

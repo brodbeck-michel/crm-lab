@@ -6,6 +6,7 @@ import type {
   CreateAttachmentRequest,
   ListConversationsQuery,
   ListPatientsQuery,
+  MessageSearchHit,
 } from '@crm-lab/shared';
 import { api, isApiError, queryKeys, queryScopes, staleTimes } from '@/api';
 import { useQuickReplyList } from '@/api/quick-replies';
@@ -20,6 +21,7 @@ import type { ConversationScope } from './ConversationList';
 import { ConversationPanel } from './ConversationPanel';
 import { EnableNotificationsBanner } from './EnableNotificationsBanner';
 import { PatientContext } from './PatientContext';
+import { isSearchableTerm } from '@/lib/search-snippet';
 import { conversationDetailOptions, flattenMessages, useMarkAsRead } from './queries';
 
 /**
@@ -38,6 +40,20 @@ import { conversationDetailOptions, flattenMessages, useMarkAsRead } from './que
 const PATIENT_SEARCH_MIN = 2;
 /** A coluna tem 336px: mais que isto vira rolagem sem ajudar a achar ninguém. */
 const PATIENT_RESULT_LIMIT = 5;
+/** Resultados do bloco "Mensagens" (D-228): a primeira página basta para achar. */
+const MESSAGE_RESULT_LIMIT = 20;
+
+/**
+ * Trocar de janela na MESMA conversa (busca → `around`, ↓ → ponta) mantém a
+ * anterior na tela até a nova chegar; de outra conversa, nada (D-230 item 4).
+ */
+function sameConversationPlaceholder<T>(
+  previous: T | undefined,
+  previousQuery: { queryKey: readonly unknown[] } | undefined,
+  conversationId: string | null,
+): T | undefined {
+  return previousQuery?.queryKey[1] === conversationId ? previous : undefined;
+}
 
 export function Attendance() {
   const navigate = useNavigate();
@@ -58,6 +74,12 @@ export function Attendance() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   /** `unreadCount` da lista no clique — o GET do detalhe zera o contador (D-239). */
   const [unreadAtOpen, setUnreadAtOpen] = useState(0);
+  /** Conversa aberta numa mensagem (busca, D-230). Presa à conversa. */
+  const [around, setAround] = useState<{ conversationId: string; messageId: string } | null>(
+    null,
+  );
+  const aroundId =
+    around !== null && around.conversationId === selectedId ? around.messageId : undefined;
 
   const showClosed = scope === 'closed';
   const searchFilter = useMemo(
@@ -72,7 +94,13 @@ export function Attendance() {
    * chips da fila seria mentir sobre quem está esperando.
    */
   const filters = useMemo<ListConversationsQuery>(
-    () => ({ status: 'active', scope: showClosed ? 'all' : scope, ...searchFilter }),
+    () => ({
+      status: 'active',
+      scope: showClosed || scope === 'unread' ? 'all' : scope,
+      // "Não lidas" (D-229): recorte de listagem como o escopo.
+      ...(scope === 'unread' ? { unread: true } : {}),
+      ...searchFilter,
+    }),
     [scope, showClosed, searchFilter],
   );
 
@@ -119,10 +147,38 @@ export function Attendance() {
     staleTime: staleTimes.patients,
   });
 
-  const detailQuery = useInfiniteQuery({
-    ...conversationDetailOptions(selectedId ?? ''),
-    enabled: selectedId !== null,
+  /**
+   * Busca nas mensagens (D-228): a mesma digitação, com 2+ letras ou dígitos
+   * (o mínimo que o servidor aceita). O servidor recorta por papel e tenant.
+   */
+  const messageTerm = isSearchableTerm(patientTerm) ? patientTerm : '';
+  const messageSearchQuery = useMemo(
+    () => ({ q: messageTerm, limit: MESSAGE_RESULT_LIMIT }),
+    [messageTerm],
+  );
+  const messagesQuery = useQuery({
+    queryKey: queryKeys.messageSearch(messageSearchQuery),
+    queryFn: () => api.conversations.searchMessages(messageSearchQuery),
+    enabled: messageTerm.length > 0,
+    staleTime: staleTimes.conversations,
   });
+
+  const detailQuery = useInfiniteQuery({
+    ...conversationDetailOptions(selectedId ?? '', aroundId),
+    enabled: selectedId !== null,
+    placeholderData: (previous, previousQuery) =>
+      sameConversationPlaceholder(previous, previousQuery, selectedId),
+  });
+
+  /**
+   * A janela que está NA TELA: durante o placeholder continua a anterior — a
+   * rolagem só trata como abertura quando a nova chega (D-230 item 5).
+   */
+  const shownViewRef = useRef<string | null>(null);
+  if (!detailQuery.isPlaceholderData && detailQuery.data) {
+    shownViewRef.current = `${selectedId ?? ''}:${aroundId ?? ''}`;
+  }
+  const viewKey = shownViewRef.current ?? undefined;
 
   const proposalsFilters = useMemo(() => ({ conversationId: selectedId ?? '' }), [selectedId]);
 
@@ -140,23 +196,53 @@ export function Attendance() {
    * Página anterior (D-238): uma de cada vez e nunca durante um refetch — o
    * `fetchNextPage` do TanStack cancelaria a busca em voo e pediria de novo.
    */
-  const { hasNextPage, isFetching, fetchNextPage } = detailQuery;
+  const { hasNextPage, hasPreviousPage, isFetching, fetchNextPage, fetchPreviousPage } =
+    detailQuery;
   const loadOlder = useCallback(() => {
     if (hasNextPage && !isFetching) void fetchNextPage();
   }, [hasNextPage, isFetching, fetchNextPage]);
+  /** Mais novas de uma janela no meio da conversa (D-230) — mesma regra, para baixo. */
+  const loadNewer = useCallback(() => {
+    if (hasPreviousPage && !isFetching) void fetchPreviousPage();
+  }, [hasPreviousPage, isFetching, fetchPreviousPage]);
 
   /** Lido ANTES de abrir: é o N da faixa de não lidas (D-239). */
   const listedConversations = shownList.data?.conversations;
 
-  /** Abrir a conversa É marcar como lida (ver `queries.ts`). */
+  /**
+   * Abrir a conversa É marcar como lida (ver `queries.ts`). Com `messageId`
+   * (resultado de busca, D-230) abre na janela em volta dela, sem faixa de não
+   * lidas — o GET é o mesmo, então também marca como lida.
+   */
   const handleSelect = useCallback(
-    (id: string) => {
-      setUnreadAtOpen(listedConversations?.find((item) => item.id === id)?.unreadCount ?? 0);
+    (id: string, messageId?: string) => {
+      setUnreadAtOpen(
+        messageId ? 0 : (listedConversations?.find((item) => item.id === id)?.unreadCount ?? 0),
+      );
+      setAround(messageId ? { conversationId: id, messageId } : null);
       setSelectedId(id);
-      void markAsRead(id).catch(handleApiError);
+      void markAsRead(id, messageId).catch(handleApiError);
     },
     [markAsRead, handleApiError, listedConversations],
   );
+
+  const openMessageHit = useCallback(
+    (hit: MessageSearchHit) => handleSelect(hit.conversationId, hit.messageId),
+    [handleSelect],
+  );
+
+  /**
+   * "Marcar como não lida" (D-229). A conversa ABERTA fecha antes do POST:
+   * aberta, o próximo refetch do detalhe zeraria o contador na hora.
+   */
+  const markUnread = useMutation({
+    mutationFn: (id: string) => api.conversations.markUnread(id),
+    onMutate: (id) => {
+      if (id === selectedId) setSelectedId(null);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryScopes.conversations }),
+    onError: handleApiError,
+  });
 
   /**
    * Deep link de "Enviar orçamento" (`ProposalModal`): `/attendance
@@ -360,6 +446,12 @@ export function Attendance() {
             isError={shownList.isError}
             onRetry={() => void shownList.refetch()}
             onTogglePin={(id, pinned) => togglePin.mutate({ id, pinned })}
+            onMarkUnread={(id) => markUnread.mutate(id)}
+            messageTerm={messageTerm}
+            messageHits={messagesQuery.data?.results ?? []}
+            messagesLoading={messagesQuery.isPending}
+            messagesError={messagesQuery.isError}
+            onOpenMessage={openMessageHit}
             searchTerm={patientTerm.length >= PATIENT_SEARCH_MIN ? patientTerm : ''}
             patients={patientsQuery.data?.patients ?? []}
             patientsLoading={patientsQuery.isPending}
@@ -419,6 +511,15 @@ export function Attendance() {
             onLoadOlder={loadOlder}
             unreadAtOpen={unreadAtOpen}
             draftMessage={selectedId === initialConversationId ? initialDraft : undefined}
+            viewKey={viewKey}
+            focusMessageId={aroundId ?? null}
+            hasNewerMessages={hasPreviousPage}
+            loadingNewer={detailQuery.isFetchingPreviousPage}
+            onLoadNewer={loadNewer}
+            onJumpToLatest={() => setAround(null)}
+            onOpenAround={(messageId) =>
+              selectedId && setAround({ conversationId: selectedId, messageId })
+            }
           />
         }
         context={

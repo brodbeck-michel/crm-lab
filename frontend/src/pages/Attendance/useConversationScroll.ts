@@ -1,6 +1,7 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import type { Message } from '@crm-lab/shared';
+import { scrollToMessage } from './scroll-to-message';
 
 /**
  * Rolagem da conversa no padrão WhatsApp Web — CRMLAB-71, D-238/D-239.
@@ -13,6 +14,10 @@ import type { Message } from '@crm-lab/shared';
  *   os olhos fica no mesmo lugar. A âncora é a primeira linha visível
  *   (`data-anchor-id`) e a distância dela ao topo da área rolável.
  * - Perto do topo, com histórico a carregar: pede a página anterior.
+ * - Janela no meio da conversa (CRMLAB-68, D-230): abre centrada em
+ *   `focusMessageId`, com destaque; perto do fim, com mais novas a carregar,
+ *   pede a próxima página — e o que chega embaixo NÃO é mensagem nova (a tela
+ *   fica parada, o contador do ↓ não sobe).
  *
  * A lista precisa de `position: relative` (o `offsetTop` das linhas é medido
  * a partir dela) e de `overflow-anchor: none` (senão o navegador compensa o
@@ -40,6 +45,13 @@ export interface ConversationScrollOptions {
   /** Ainda há histórico E nada está sendo buscado agora (D-238 item 4). */
   canLoadOlder: boolean;
   onLoadOlder: () => void;
+  /** Mensagem onde a conversa abre (busca, D-230). Ausente = faixa de não lidas ou fim. */
+  focusMessageId?: string | null;
+  /** Há mensagens mais novas que a última carregada (`cursors.after`, D-230). */
+  hasNewer?: boolean;
+  /** Há mais novas E nada está sendo buscado agora. */
+  canLoadNewer?: boolean;
+  onLoadNewer?: () => void;
 }
 
 export interface ConversationScroll {
@@ -75,6 +87,10 @@ export function useConversationScroll({
   dividerRef,
   canLoadOlder,
   onLoadOlder,
+  focusMessageId = null,
+  hasNewer = false,
+  canLoadNewer = false,
+  onLoadNewer,
 }: ConversationScrollOptions): ConversationScroll {
   const [showJumpButton, setShowJumpButton] = useState(false);
   const [newCount, setNewCount] = useState(0);
@@ -85,8 +101,12 @@ export function useConversationScroll({
   const conversationRef = useRef<string | null>(null);
   const stickRef = useRef(false);
   // Lidos no handler de rolagem sem recriá-lo a cada render.
-  const loadRef = useRef({ canLoadOlder, onLoadOlder });
-  loadRef.current = { canLoadOlder, onLoadOlder };
+  const loadRef = useRef({ canLoadOlder, onLoadOlder, canLoadNewer, onLoadNewer });
+  loadRef.current = { canLoadOlder, onLoadOlder, canLoadNewer, onLoadNewer };
+  /** A renderização anterior ainda tinha mais novas por carregar (D-230). */
+  const detachedRef = useRef(false);
+  const focusRef = useRef(focusMessageId);
+  focusRef.current = focusMessageId;
 
   const syncPosition = useCallback((element: HTMLElement) => {
     const atBottom = distanceFromBottom(element) <= NEAR_BOTTOM_PX;
@@ -102,13 +122,18 @@ export function useConversationScroll({
 
     const lastId = messages.at(-1)?.id ?? null;
     const opened = conversationRef.current !== conversationId || lastIdRef.current === null;
-    const appended = !opened && lastId !== lastIdRef.current;
+    const lastChanged = !opened && lastId !== lastIdRef.current;
+    // Mais novas pedidas pela rolagem (janela no meio) não são mensagem nova.
+    const appended = lastChanged && !detachedRef.current;
 
     if (opened) {
       const divider = dividerRef.current;
-      element.scrollTop = divider
-        ? Math.max(0, divider.offsetTop - DIVIDER_OFFSET_PX)
-        : element.scrollHeight;
+      const focus = focusRef.current;
+      if (!(focus && scrollToMessage(element, focus, 'auto'))) {
+        element.scrollTop = divider
+          ? Math.max(0, divider.offsetTop - DIVIDER_OFFSET_PX)
+          : element.scrollHeight;
+      }
       setNewCount(0);
     } else if (appended && (atBottomRef.current || stickRef.current)) {
       element.scrollTop = element.scrollHeight;
@@ -125,6 +150,7 @@ export function useConversationScroll({
     }
 
     if (appended) stickRef.current = false;
+    detachedRef.current = hasNewer;
     lastIdRef.current = lastId;
     conversationRef.current = conversationId;
 
@@ -132,14 +158,16 @@ export function useConversationScroll({
     atBottomRef.current = atBottom;
     setShowJumpButton(!atBottom);
     anchorRef.current = readAnchor(element);
-  }, [scrollRef, dividerRef, messages, conversationId]);
+  }, [scrollRef, dividerRef, messages, conversationId, hasNewer]);
 
   const onScroll = useCallback(() => {
     const element = scrollRef.current;
     if (!element) return;
     syncPosition(element);
-    const { canLoadOlder: can, onLoadOlder: load } = loadRef.current;
+    const { canLoadOlder: can, onLoadOlder: load, canLoadNewer: canNewer, onLoadNewer: loadNewer } =
+      loadRef.current;
     if (can && element.scrollTop <= NEAR_TOP_PX) load();
+    if (canNewer && loadNewer && distanceFromBottom(element) <= NEAR_TOP_PX) loadNewer();
   }, [scrollRef, syncPosition]);
 
   const jumpToBottom = useCallback(

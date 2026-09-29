@@ -18,6 +18,7 @@ import {
   quotedLabel,
 } from '@/components/conversation';
 import type { MessageBubbleProps, RecordedAudio } from '@/components/conversation';
+import { ConversationSearch } from './ConversationSearch';
 import { scrollToMessage } from './scroll-to-message';
 import { useConversationScroll } from './useConversationScroll';
 
@@ -77,6 +78,22 @@ export interface ConversationPanelProps {
   unreadAtOpen: number;
   /** Mensagem pronta ao chegar aqui por "Enviar orçamento" (ver `Composer.initialValue`). */
   draftMessage?: string;
+  /**
+   * Janela carregada (CRMLAB-68, D-230): muda quando a conversa reabre em volta
+   * de uma mensagem ou volta para a ponta — a rolagem trata como abertura.
+   * Ausente = o id da conversa.
+   */
+  viewKey?: string;
+  /** Mensagem onde a janela abre (busca): rola até ela e acende o destaque. */
+  focusMessageId?: string | null;
+  /** Há mensagens mais novas que a última carregada (`cursors.after`). */
+  hasNewerMessages?: boolean;
+  loadingNewer?: boolean;
+  onLoadNewer?: () => void;
+  /** Volta para a ponta da conversa (sem `around`). */
+  onJumpToLatest?: () => void;
+  /** A mensagem não está carregada: reabre a conversa em volta dela. Sem handler, sem lupa. */
+  onOpenAround?: (messageId: string) => void;
 }
 
 /**
@@ -260,6 +277,13 @@ export function ConversationPanel({
   onLoadOlder,
   unreadAtOpen,
   draftMessage,
+  viewKey,
+  focusMessageId = null,
+  hasNewerMessages = false,
+  loadingNewer = false,
+  onLoadNewer,
+  onJumpToLatest,
+  onOpenAround,
 }: ConversationPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const dividerRef = useRef<HTMLDivElement>(null);
@@ -278,11 +302,33 @@ export function ConversationPanel({
   const scroll = useConversationScroll({
     scrollRef,
     messages,
-    conversationId,
+    conversationId: conversationId === null ? null : (viewKey ?? conversationId),
     dividerRef,
     canLoadOlder: hasOlderMessages && !loadingOlder,
     onLoadOlder,
+    focusMessageId,
+    hasNewer: hasNewerMessages,
+    canLoadNewer: hasNewerMessages && !loadingNewer,
+    onLoadNewer,
   });
+
+  // Busca dentro da conversa (D-228): presa à conversa — trocar de conversa fecha.
+  const [searchOpenFor, setSearchOpenFor] = useState<string | null>(null);
+  const searchOpen = searchOpenFor !== null && searchOpenFor === conversationId;
+
+  /** Ir até a mensagem: carregada, só rola; senão, reabre em volta dela (D-230). */
+  function goToMessage(messageId: string): void {
+    if (scrollToMessage(scrollRef.current, messageId)) return;
+    // A faixa de não lidas é da abertura: voltar à ponta depois não rola até ela.
+    if (conversationId !== null) setMark({ conversationId, messageId: null, count: 0 });
+    onOpenAround?.(messageId);
+  }
+
+  /** ↓: com mais novas fora da tela, volta para a ponta; senão, desce. */
+  function jumpToLatest(behavior?: ScrollBehavior): void {
+    if (hasNewerMessages && onJumpToLatest) onJumpToLatest();
+    else scroll.jumpToBottom(behavior);
+  }
   useBottomAnchor(scrollRef, !isError && !isLoading && conversation !== null);
 
   // Respondendo a (CRMLAB-66): presa à conversa — trocar de conversa esquece.
@@ -309,7 +355,7 @@ export function ConversationPanel({
   function beforeReply(): void {
     if (conversationId !== null) setMark({ conversationId, messageId: null, count: 0 });
     scroll.stickOnNextMessage();
-    scroll.jumpToBottom('auto');
+    jumpToLatest('auto');
   }
 
   if (isError) {
@@ -364,6 +410,33 @@ export function ConversationPanel({
         </div>
 
         <div className="flex flex-[0_0_auto] items-center gap-sm">
+          {onOpenAround && (
+            <button
+              type="button"
+              onClick={() => setSearchOpenFor(searchOpen ? null : conversation.id)}
+              aria-label="Buscar nesta conversa"
+              aria-pressed={searchOpen}
+              title="Buscar nesta conversa"
+              className={cn(
+                'flex h-[28px] w-[28px] flex-[0_0_28px] cursor-pointer items-center justify-center',
+                'rounded-pill border-none bg-transparent text-neutral-700 hover:bg-neutral-200',
+              )}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <circle cx="7" cy="7" r="4.5" />
+                <path d="M10.5 10.5 L14 14" strokeLinecap="round" />
+              </svg>
+            </button>
+          )}
           <TransferMenu
             assignees={assignees}
             assignedTo={conversation.assignedTo}
@@ -412,6 +485,14 @@ export function ConversationPanel({
         </div>
       </header>
 
+      {searchOpen && (
+        <ConversationSearch
+          conversationId={conversation.id}
+          onGoTo={goToMessage}
+          onClose={() => setSearchOpenFor(null)}
+        />
+      )}
+
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div
           ref={scrollRef}
@@ -442,10 +523,10 @@ export function ConversationPanel({
           </p>
         )}
 
-        {scroll.showJumpButton && (
+        {(scroll.showJumpButton || hasNewerMessages) && (
           <button
             type="button"
-            onClick={() => scroll.jumpToBottom()}
+            onClick={() => jumpToLatest()}
             aria-label={
               scroll.newCount > 0
                 ? `Ir para a última mensagem (${scroll.newCount} ${scroll.newCount === 1 ? 'nova' : 'novas'})`

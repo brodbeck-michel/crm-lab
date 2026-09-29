@@ -26,8 +26,17 @@ Faixas: decisões D-228…D-230 · migração 043.
       `cursor.spec`/`list.spec`/`assign.spec` ajustados (`counts.unread`, `cursors.after`).
       `tests/conversations` 104 ✓; `tests/messages` + inventário + migrator + `tests/db` 299 ✓.
 
+- [x] Frontend: `lib/search-snippet.ts`; `SearchSnippet`, `MessageResults`, `ConversationSearch`
+      (novos); chip "Não lidas", bloco "Mensagens", menu "⋯"/clique direito no item; `queries.ts`
+      (`MessagePageParam`, `getPreviousPageParam`, chave com `{ around }`); rolagem com foco na
+      mensagem e carga das mais novas sem descer; ↓ volta à ponta; linha de base do aviso
+      (`useNewMessageAlerts`) usa `conversation.lastMessageAt`. Typecheck verde; specs antigos
+      de Atendimento/ConversationItem/hooks/tokens 628 ✓.
+
 ### Próximo passo exato
-3. Frontend: `lib/search-snippet.ts`, queries/scroll/panel/lista/item/busca + specs.
+1. Specs de frontend: search-snippet, ConversationItem (menu), Atendimento (chip, bloco
+   Mensagens → around, não lida fecha o painel), ConversationSearch (↑↓), rolagem (página de
+   mais novas não conta como nova), aviso (não lida não avisa; linha de base com around).
 
 ## Critérios de aceite (do card)
 - [ ] Palavra só dentro de uma mensagem acha a conversa e mostra o trecho.

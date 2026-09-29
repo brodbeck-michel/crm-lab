@@ -20,22 +20,43 @@ import { api, queryKeys, queryScopes, staleTimes } from '@/api';
 /** Mensagens carregadas por vez (`GET /conversations/:id?messageLimit=`). */
 export const MESSAGE_PAGE_SIZE = 50;
 
-export function conversationDetailOptions(id: string) {
+/**
+ * Cursor de uma página (D-237/D-230). `null` = a página mais recente; `around`
+ * só na PRIMEIRA página de uma conversa aberta numa mensagem (busca).
+ */
+export type MessagePageParam = { before: string } | { after: string } | { around: string } | null;
+
+/**
+ * Aberta numa mensagem (`around`, D-230), a chave ganha um 4º elemento — e
+ * continua sob o prefixo `['conversation', id]` que o WS invalida.
+ */
+export function conversationDetailKey(id: string, around?: string) {
+  return around
+    ? ([...queryKeys.conversation(id), 'messages', { around }] as const)
+    : ([...queryKeys.conversation(id), 'messages'] as const);
+}
+
+export function conversationDetailOptions(id: string, around?: string) {
   return {
-    queryKey: [...queryKeys.conversation(id), 'messages'] as const,
-    queryFn: ({ pageParam }: { pageParam: string | null }) =>
-      api.conversations.get(id, {
-        messageLimit: MESSAGE_PAGE_SIZE,
-        ...(pageParam !== null ? { before: pageParam } : {}),
-      }),
-    initialPageParam: null as string | null,
+    queryKey: conversationDetailKey(id, around),
+    queryFn: ({ pageParam }: { pageParam: MessagePageParam }) =>
+      api.conversations.get(id, { messageLimit: MESSAGE_PAGE_SIZE, ...(pageParam ?? {}) }),
+    initialPageParam: (around ? { around } : null) as MessagePageParam,
     /** "Próxima" é a mais antiga; `null` = começo da conversa, nada a pedir. */
-    getNextPageParam: (last: GetConversationResponse): string | null => last.cursors.before,
+    getNextPageParam: (last: GetConversationResponse): MessagePageParam =>
+      last.cursors.before !== null ? { before: last.cursors.before } : null,
+    /** "Anterior" é a mais NOVA (D-230); a página da ponta volta `after: null`. */
+    getPreviousPageParam: (first: GetConversationResponse): MessagePageParam =>
+      first.cursors.after !== null ? { after: first.cursors.after } : null,
     staleTime: staleTimes.conversations,
   };
 }
 
-/** Páginas → lista em ordem crescente (cada página já vem crescente). */
+/**
+ * Páginas → lista em ordem crescente (cada página já vem crescente). A
+ * primeira página é a mais nova: `fetchPreviousPage` põe as mais novas na
+ * frente, `fetchNextPage` as mais antigas no fim.
+ */
 export function flattenMessages(data: { pages: GetConversationResponse[] } | undefined): Message[] {
   if (!data) return [];
   return [...data.pages].reverse().flatMap((page) => page.messages);
@@ -48,17 +69,18 @@ export function flattenMessages(data: { pages: GetConversationResponse[] } | und
  * contador no servidor (API_CONTRACTS.md §2 mostra `unreadCount: 0` e
  * `status: "read"` na resposta do detalhe, com a mesma conversa listada com
  * `unreadCount: 3`). Então abrir a conversa É marcar como lida; o que falta é
- * refazer a listagem para o badge e as contagens sumirem.
+ * refazer a listagem para o badge e as contagens sumirem. Aberta numa
+ * mensagem (`around`), usa as MESMAS opções da tela — continua um GET só.
  *
  * Ordem importa: busca o detalhe PRIMEIRO (servidor marca), invalida a lista
  * DEPOIS — invalidar antes traria de volta o contador antigo.
  */
-export function useMarkAsRead(): (conversationId: string) => Promise<void> {
+export function useMarkAsRead(): (conversationId: string, around?: string) => Promise<void> {
   const queryClient = useQueryClient();
 
   return useCallback(
-    async (conversationId: string) => {
-      await queryClient.fetchInfiniteQuery(conversationDetailOptions(conversationId));
+    async (conversationId: string, around?: string) => {
+      await queryClient.fetchInfiniteQuery(conversationDetailOptions(conversationId, around));
       await queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
     },
     [queryClient],

@@ -42,15 +42,29 @@ Faixas: decisões D-234…D-236 · migração 045.
 ## Decisões escritas
 D-234, D-235, D-236.
 
-## Perguntas em aberto (para o Michel)
-1. **"Conversar" com número que já tem conversa:** hoje abre a Nova conversa com o telefone
-   preenchido e pede a primeira mensagem (o servidor reaproveita a conversa existente). Deveria
-   abrir a conversa existente direto, sem obrigar a mandar mensagem?
-2. **Vídeo só `video/mp4`** na allow-list (CRMLAB-31). Vídeo `.mov` do iPhone (`video/quicktime`)
-   é recusado no envio; `3gp` recebido vira documento. Liberar mais formatos?
-3. Bolinha azul de "áudio não ouvido" ficou fora (opcional no card; pediria estado por usuário).
+## Respostas do Michel (29/09) — implementadas
+1. **"Conversar" abre direto a conversa existente**, sem mensagem: rota nova
+   `POST /conversations/whatsapp/open` (API_CONTRACTS §2, D-236 item 7), mesmo casamento de
+   telefone do `findOrCreateByPhone` (D-176), recortado por tenant; sem conversa → 404 e a tela
+   cai na Nova conversa com o telefone. **Encerrada reabre atribuída a quem clicou** — precedente:
+   `POST /conversations` e `POST /conversations/whatsapp` já reabrem número encerrado assim
+   (D-174). De outra atendente → 409 + toast; fila livre abre sem mudar de dona. Inventário de
+   isolamento 81 → 82; teste de outro laboratório → 404 em `tests/conversations/open-whatsapp.spec.ts`.
+2. **Mais formatos de vídeo:** `video/quicktime`, `video/3gpp`, `video/webm` na allow-list (envio e
+   recebimento, 15 MiB, sniff por categoria `video/*`); recebido vira `video`. **Envio:** só
+   MP4/3GP saem como `mediatype: 'video'`; `.mov`/WebM saem como **documento** (o gateway não
+   converte vídeo e o WhatsApp só garante MP4/3GP) — D-234 item 8. O balão avisa e oferece
+   "Baixar vídeo" quando o navegador não toca o formato.
+3. **Bolinha de "áudio não ouvido": fora, por decisão do Michel.**
+
+Specs desta rodada: backend 7 arquivos / 283 verdes (open-whatsapp, start-whatsapp, attachments,
+evolution-crmlab70, evolution-webhook-media, evolution-client, route-tenant-isolation); frontend
+`components/conversation` + NewConversation + tokens 13/711 e `pages/Attendance` + `api` 20/163
+verdes. tsc shared/back/front verde; eslint limpo.
 
 ## Para validar na hml
+- `.mov` enviado chega ao paciente como documento; conferir. Conferir também se o Chrome da
+  atendente toca o `.mov` recebido (senão aparece o "Baixar vídeo").
 - Payloads montados da forma do proto do Baileys (sem captura real): conferir `jpegThumbnail`
   (base64 ou Buffer serializado — os dois são aceitos), `seconds`, `pageCount` e vCard do
   contato. Se algo não bater, o vídeo/contato ainda entra (sem miniatura / como texto antigo).
@@ -63,8 +77,10 @@ D-234, D-235, D-236.
   link, classe da figurinha no `cn(...)`, **o `<p>` do texto ficou dentro de
   `{showsMessageText(message) && (...)}`** (reindentado — encosta no que o 73 mexe) e o despacho
   por tipo logo depois do áudio. O bloco da imagem/lightbox (64) não foi tocado.
-- `AudioMessage.tsx`, `NewConversationModal.tsx`, `PatientTimeline.tsx`.
-- Backend: `message.repository.ts` (COLUMNS/FROM/`toMessage`/INSERT), `webhook.routes.ts`,
+- `AudioMessage.tsx`, `NewConversationModal.tsx`, `PatientTimeline.tsx`, `api/conversations.ts`.
+- Backend: `conversation.routes.ts` + `conversation.service.ts` (rota `/whatsapp/open`),
+  `evolution-client.ts` (`evolutionMediaType`), `route-tenant-isolation.spec.ts` (82 rotas),
+  `message.repository.ts` (COLUMNS/FROM/`toMessage`/INSERT), `webhook.routes.ts`,
   `message.service.ts`, `patient.repository.ts`; `shared/types/conversation.types.ts`,
   `media.types.ts`; specs de shape `messages.spec.ts`/`list.spec.ts`.
 - Docs: fim do `DECISIONS.md` (D-234..D-236), SCHEMA §4 + lista de migrações, API_CONTRACTS §2,

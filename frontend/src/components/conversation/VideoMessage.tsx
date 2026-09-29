@@ -22,6 +22,7 @@ export interface VideoMessageProps {
  */
 export function VideoMessage({ url, media }: VideoMessageProps) {
   const [requested, setRequested] = useState(false);
+  const [playbackFailed, setPlaybackFailed] = useState(false);
   const isProtected = isProtectedMediaUrl(url);
   const { objectUrl, isLoading, isError } = useAuthenticatedMedia(
     requested && isProtected ? url : null,
@@ -29,9 +30,22 @@ export function VideoMessage({ url, media }: VideoMessageProps) {
   const src = isProtected ? objectUrl : url;
   const duration = media?.durationSec ?? null;
 
+  if (requested && src && playbackFailed) {
+    // `.mov`/HEVC no Chrome, por exemplo (D-234 item 8): avisa e deixa baixar.
+    return (
+      <span className="flex flex-col gap-xs self-start text-caption text-neutral-600">
+        Este navegador não reproduz o formato deste vídeo.
+        <a href={src} download={media?.fileName ?? 'video'} className="font-semibold text-accent-700 underline">
+          Baixar vídeo
+        </a>
+      </span>
+    );
+  }
+
   if (requested && src) {
     return (
       <video
+        onError={() => setPlaybackFailed(true)}
         data-testid="video-player"
         src={src}
         controls

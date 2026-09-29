@@ -1,25 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   CreateAttachmentRequest,
   ListConversationsQuery,
   ListPatientsQuery,
 } from '@crm-lab/shared';
-import { api, queryKeys, queryScopes, staleTimes } from '@/api';
+import { api, isApiError, queryKeys, queryScopes, staleTimes } from '@/api';
 import { useQuickReplyList } from '@/api/quick-replies';
 import { useEffectiveFunnelRules } from '@/api/funnel-rules';
 import { useToast } from '@/components/ui';
 import { InboxLayout } from '@/components/layout';
 import type { RecordedAudio } from '@/components/conversation';
 import { useApiErrorHandler } from '@/hooks';
-import { useAuthStore, useUIStore, selectUser } from '@/stores';
+import { useAuthStore, useMessageAlertsStore, useUIStore, selectUser } from '@/stores';
 import { ConversationList } from './ConversationList';
 import type { ConversationScope } from './ConversationList';
 import { ConversationPanel } from './ConversationPanel';
+import { EnableNotificationsBanner } from './EnableNotificationsBanner';
 import { PatientContext } from './PatientContext';
-import { MESSAGE_PAGE_SIZE, conversationDetailOptions, useMarkAsRead } from './queries';
+import { conversationDetailOptions, flattenMessages, useMarkAsRead } from './queries';
 
 /**
  * Atendimento (`/attendance`) — TELA PRINCIPAL (PAGES.md §2).
@@ -55,7 +56,8 @@ export function Attendance() {
   const [scope, setScope] = useState<ConversationScope>('mine');
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [messageLimit, setMessageLimit] = useState(MESSAGE_PAGE_SIZE);
+  /** `unreadCount` da lista no clique — o GET do detalhe zera o contador (D-239). */
+  const [unreadAtOpen, setUnreadAtOpen] = useState(0);
 
   const showClosed = scope === 'closed';
   const searchFilter = useMemo(
@@ -117,8 +119,8 @@ export function Attendance() {
     staleTime: staleTimes.patients,
   });
 
-  const detailQuery = useQuery({
-    ...conversationDetailOptions(selectedId ?? '', messageLimit),
+  const detailQuery = useInfiniteQuery({
+    ...conversationDetailOptions(selectedId ?? ''),
     enabled: selectedId !== null,
   });
 
@@ -130,18 +132,30 @@ export function Attendance() {
     enabled: selectedId !== null,
   });
 
-  const conversation = detailQuery.data?.conversation ?? null;
-  const messages = detailQuery.data?.messages ?? [];
-  const loadedAll = (detailQuery.data?.pagination.total ?? 0) <= messages.length;
+  // A primeira página é a mais recente: é dela que vem a conversa atualizada.
+  const conversation = detailQuery.data?.pages[0]?.conversation ?? null;
+  const messages = useMemo(() => flattenMessages(detailQuery.data), [detailQuery.data]);
+
+  /**
+   * Página anterior (D-238): uma de cada vez e nunca durante um refetch — o
+   * `fetchNextPage` do TanStack cancelaria a busca em voo e pediria de novo.
+   */
+  const { hasNextPage, isFetching, fetchNextPage } = detailQuery;
+  const loadOlder = useCallback(() => {
+    if (hasNextPage && !isFetching) void fetchNextPage();
+  }, [hasNextPage, isFetching, fetchNextPage]);
+
+  /** Lido ANTES de abrir: é o N da faixa de não lidas (D-239). */
+  const listedConversations = shownList.data?.conversations;
 
   /** Abrir a conversa É marcar como lida (ver `queries.ts`). */
   const handleSelect = useCallback(
     (id: string) => {
+      setUnreadAtOpen(listedConversations?.find((item) => item.id === id)?.unreadCount ?? 0);
       setSelectedId(id);
-      setMessageLimit(MESSAGE_PAGE_SIZE);
       void markAsRead(id).catch(handleApiError);
     },
-    [markAsRead, handleApiError],
+    [markAsRead, handleApiError, listedConversations],
   );
 
   /**
@@ -152,11 +166,22 @@ export function Attendance() {
    */
   const initialConversationId = searchParams.get('conversationId');
   const initialDraft = searchParams.get('draft') ?? undefined;
+  // CRMLAB-72 (D-240): clicar na notificação navega para cá com
+  // `?conversationId=` — inclusive já estando nesta tela. Por isso relê a cada
+  // NAVEGAÇÃO (`location.key`), não só no mount; o clique na fila não navega,
+  // então continua mandando em `selectedId`. O projeto não tem
+  // eslint-plugin-react-hooks configurado (ver eslint.config.js).
+  const location = useLocation();
   useEffect(() => {
     if (initialConversationId) handleSelect(initialConversationId);
-    // Só no mount — o projeto não tem eslint-plugin-react-hooks configurado
-    // (ver eslint.config.js), então não há regra de deps para desligar aqui.
-  }, []);
+  }, [location.key]);
+
+  // CRMLAB-72 (D-241 item 3): a conversa aberta não gera aviso com a aba em foco.
+  const setOpenConversationId = useMessageAlertsStore((s) => s.setOpenConversationId);
+  useEffect(() => {
+    setOpenConversationId(selectedId);
+    return () => setOpenConversationId(null);
+  }, [selectedId, setOpenConversationId]);
 
   const invalidateConversation = useCallback(async () => {
     if (!selectedId) return;
@@ -167,14 +192,33 @@ export function Attendance() {
   }, [queryClient, selectedId]);
 
   const sendMessage = useMutation({
-    mutationFn: (content: string) =>
-      api.conversations.sendMessage(selectedId as string, { content, messageType: 'text' }),
+    mutationFn: ({ content, quotedMessageId }: { content: string; quotedMessageId?: string }) =>
+      api.conversations.sendMessage(selectedId as string, {
+        content,
+        messageType: 'text',
+        ...(quotedMessageId ? { quotedMessageId } : {}),
+      }),
+    onSuccess: invalidateConversation,
+    onError: handleApiError,
+  });
+
+  /**
+   * Reação do laboratório (CRMLAB-66, D-222). Só invalida: o WS
+   * `conversation.message_updated` faz o mesmo nas outras abas.
+   */
+  const react = useMutation({
+    mutationFn: async ({ messageId, emoji }: { messageId: string; emoji: string | null }) => {
+      if (emoji === null) await api.conversations.removeReaction(selectedId as string, messageId);
+      else await api.conversations.setReaction(selectedId as string, messageId, { emoji });
+    },
     onSuccess: invalidateConversation,
     onError: handleApiError,
   });
 
   /** Anexo (Onda 8 §4.3) — o clipe abre o seletor de arquivo do SO. */
   const fileInputRef = useRef<HTMLInputElement>(null);
+  /** Citação escolhida quando o clipe foi clicado (CRMLAB-66) — o arquivo chega depois. */
+  const pendingQuoteRef = useRef<{ conversationId: string; quotedMessageId: string } | null>(null);
   /**
    * `conversationId` vem de quem chama, lido ANTES de ler o arquivo: entre o
    * clique e o POST há o `FileReader`, e trocar de conversa nessa janela
@@ -204,13 +248,18 @@ export function Attendance() {
     const file = event.target.files?.[0];
     event.target.value = '';
     const conversationId = selectedId;
+    const pending = pendingQuoteRef.current;
+    pendingQuoteRef.current = null;
     if (!file || !conversationId) return;
+    const quotedMessageId =
+      pending?.conversationId === conversationId ? pending.quotedMessageId : undefined;
     const contentBase64 = await readFileAsBase64(file);
     sendAttachment.mutate({
       conversationId,
       fileName: file.name,
       mimeType: file.type || 'application/octet-stream',
       contentBase64,
+      ...(quotedMessageId ? { quotedMessageId } : {}),
     });
   }
 
@@ -219,7 +268,7 @@ export function Attendance() {
    * `mutateAsync` para o Composer saber se foi — falhou, a prévia fica e o
    * erro já saiu pelo `handleApiError` do `onError`.
    */
-  async function handleSendAudio(audio: RecordedAudio): Promise<void> {
+  async function handleSendAudio(audio: RecordedAudio, quotedMessageId?: string): Promise<void> {
     const conversationId = selectedId;
     if (!conversationId) return;
     const contentBase64 = await readFileAsBase64(audio.blob);
@@ -228,6 +277,7 @@ export function Attendance() {
       fileName: audio.fileName,
       mimeType: audio.mimeType,
       contentBase64,
+      ...(quotedMessageId ? { quotedMessageId } : {}),
     });
   }
 
@@ -323,7 +373,23 @@ export function Attendance() {
             isLoading={selectedId !== null && detailQuery.isPending}
             isError={detailQuery.isError}
             onRetry={() => void detailQuery.refetch()}
-            onSend={(content) => sendMessage.mutate(content)}
+            onSend={(content, quotedMessageId) =>
+              sendMessage
+                .mutateAsync({ content, ...(quotedMessageId ? { quotedMessageId } : {}) })
+                .catch((error: unknown) => {
+                  // MESSAGE_SEND_FAILED: a mensagem FOI gravada (como falha) e já está
+                  // na conversa. Devolver o texto ao campo convidaria a mandar de novo
+                  // e duplicar (CRMLAB-63). Só volta quando nada foi gravado.
+                  if (isApiError(error) && error.code === 'MESSAGE_SEND_FAILED') return;
+                  throw error;
+                })
+            }
+            onReact={(messageId, emoji) => react.mutate({ messageId, emoji })}
+            onQuoteUnavailable={() =>
+              toast('A mensagem original não está carregada — role para cima para vê-la.', {
+                tone: 'attention',
+              })
+            }
             sending={sendMessage.isPending}
             assignees={assigneesQuery.data?.assignees ?? []}
             onAssign={(userId) => assign.mutate(userId)}
@@ -340,12 +406,18 @@ export function Attendance() {
             }
             onToggleContext={toggleContextPanel}
             onClose={() => setSelectedId(null)}
-            onAttach={() => fileInputRef.current?.click()}
+            onAttach={(quotedMessageId) => {
+              pendingQuoteRef.current =
+                quotedMessageId && selectedId ? { conversationId: selectedId, quotedMessageId } : null;
+              fileInputRef.current?.click();
+            }}
             onSendAudio={handleSendAudio}
             quickReplies={quickRepliesQuery.data?.quickReplies ?? []}
             contextOpen={contextOpen}
-            hasOlderMessages={!loadedAll}
-            onLoadOlder={() => setMessageLimit((limit) => limit + MESSAGE_PAGE_SIZE)}
+            hasOlderMessages={hasNextPage}
+            loadingOlder={detailQuery.isFetchingNextPage}
+            onLoadOlder={loadOlder}
+            unreadAtOpen={unreadAtOpen}
             draftMessage={selectedId === initialConversationId ? initialDraft : undefined}
           />
         }
@@ -358,6 +430,7 @@ export function Attendance() {
             onOpenProposal={(id) => openModal({ kind: 'proposal', id })}
           />
         }
+        listBanner={<EnableNotificationsBanner />}
       />
     </>
   );

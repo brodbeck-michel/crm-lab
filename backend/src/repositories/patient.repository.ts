@@ -1006,7 +1006,9 @@ function timelineCte(params: Params, patientParam: string, visibleTo: string | n
              WHEN m.sender_type = 'patient' THEN vc.patient_name
              ELSE NULL
            END,
-           m.message_type::text, left(m.content, 160),
+           -- Apagada pelo remetente: preview vazio, como a midia (D-220).
+           m.message_type::text,
+           CASE WHEN m.deleted_at IS NULL THEN left(m.content, 160) ELSE '' END,
            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
       FROM messages m
       JOIN vc ON vc.id = m.conversation_id

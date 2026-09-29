@@ -107,6 +107,18 @@ describe('ws — evento invalida a query certa', () => {
     expect(keysPassed()).toEqual([queryScopes.conversations, queryKeys.conversation('c-1')]);
   });
 
+  // CRMLAB-66/D-223: reação, edição ou apagamento refaz a conversa como mensagem nova.
+  it('conversation.message_updated → ["conversations"] + ["conversation", id]', () => {
+    const client = build();
+    client.connect();
+    socket(0).emitMessage({
+      event: 'conversation.message_updated',
+      data: { conversationId: 'c-9', messageId: 'm-9' },
+    });
+
+    expect(keysPassed()).toEqual([queryScopes.conversations, queryKeys.conversation('c-9')]);
+  });
+
   // CRMLAB-57/D-196: cartão nascido do orçamento do Bitlab entra no Kanban sem recarregar.
   it('proposal.created → ["proposals"]', () => {
     const client = build();

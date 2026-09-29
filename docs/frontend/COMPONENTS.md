@@ -97,6 +97,39 @@ Anatomia (padrão WhatsApp):
   `dangerouslySetInnerHTML`. A prévia da lista (`ConversationItem`) mostra o texto cru
 - `useAuthenticatedMedia` devolve também o `fileName` (do `Content-Disposition` de
   `GET /media/:id`), repassado ao `ImageLightbox` — é o nome com que a imagem é salva (CRMLAB-26)
+- **Menu da mensagem (CRMLAB-66, padrão WhatsApp Web):** passar o mouse (ou focar) mostra uma
+  setinha no canto de cima do balão; ela abre o menu **Responder · Reagir · Copiar**. Reagir abre
+  a barra rápida `QUICK_REACTIONS` (👍 ❤️ 😂 😮 😢 🙏, `shared/`); clicar no emoji que já é o do
+  laboratório remove. Copiar põe `content` na área de transferência. Encaminhar: fora desta
+  história. Props opcionais: `onReply`, `onReact(emoji | null)`, `onQuoteClick(messageId)` — sem
+  handler, a ação some (nada de botão morto). Balão de sistema não tem menu
+- **Bloco citado** em cima do texto: autor + trecho (ou "📷 Foto", "🎤 Áudio", "📄 Documento"
+  quando a citada é mídia sem texto; "Mensagem apagada"/"Mensagem original indisponível"). Clicar
+  chama `onQuoteClick(quoted.id)`
+- **Reações**: pílula pequena embaixo do balão com o emoji de cada lado
+- **Apagada** (`deletedAt`): o balão mostra só "🚫 Mensagem apagada" em itálico, sem menu, sem
+  mídia. **Editada** (`editedAt`): rótulo "Editada" na linha da hora
+- `data-message-id` no balão: é por ele que o painel rola até a original
+  (`scrollToMessage`, `pages/Attendance/scroll-to-message.ts`) e a destaca por um instante
+  (`data-highlighted`). Original fora do que está carregado: toast "A mensagem original não está
+  carregada"
+
+### DateSeparator (CRMLAB-71, D-239)
+```tsx
+<DateSeparator date={message.createdAt} now={new Date()} />
+```
+- Pílula centralizada entre mensagens de dias diferentes, no fuso do navegador (o fio é ISO UTC)
+- Rótulo por `dateSeparatorLabel(date, now)` (exportada, fonte única): "Hoje", "Ontem", dia da
+  semana por extenso de 2 a 6 dias atrás ("Segunda-feira"), `dd/mm/aaaa` a partir de 7 dias e
+  para data futura. Conta por **dia de calendário** local: 23h59 e 00h01 são dias diferentes
+- `isSameLocalDay(a, b)` (exportada) decide onde entra um separador
+- `role="separator"` com o rótulo como nome acessível; mesma família visual da bolha de sistema
+  (`rounded-pill`, texto `caption`), mas neutra — é marcação de tempo, não evento
+- `now` é injetável para teste determinístico (mesma ideia do `ConversationItem`)
+- Quem usa: `ConversationPanel` (Atendimento). A faixa "N mensagens não lidas" e o botão ↓ com
+  contador são **locais da tela** (`pages/Attendance/`), não primitivos — ver PAGES.md §2. A
+  lista marca cada linha com `data-anchor-id` (o id da mensagem), que é onde a rolagem se ancora
+  ao carregar histórico (D-238); o `data-message-id` do balão é do `MessageBubble`
 
 ### AudioMessage (CRMLAB-2)
 ```tsx
@@ -112,6 +145,13 @@ Anatomia (padrão WhatsApp):
 ### Composer
 - Input pílula + botão anexo + botão emoji + botão microfone + botão enviar (primary)
 - Enter envia, Shift+Enter quebra linha
+- **O cursor fica no campo depois de enviar (CRMLAB-63).** Com `sending`, só o Enter e o botão
+  travam; o textarea segue habilitado (campo desabilitado perde o foco e o navegador não devolve),
+  então dá para ir escrevendo a próxima. O textarea só desabilita com `disabled` (arquivada, sem
+  permissão). `onSend` pode devolver `Promise`: se rejeitar, o texto volta para o campo, com o foco,
+  a não ser que a pessoa já tenha começado outra mensagem. O aviso do erro é de quem chama.
+  No Atendimento, `MESSAGE_SEND_FAILED` NÃO rejeita para o Composer: a mensagem já foi gravada
+  como falha e aparece na conversa; devolver o texto convidaria a reenviar e duplicar
 - **Ctrl+B / Cmd+B** (CRMLAB-51, D-183): envolve a seleção em asteriscos (`*seleção*`, que a
   bolha e o WhatsApp mostram em negrito) e mantém o texto selecionado; sem seleção, insere `**`
   com o cursor no meio
@@ -126,6 +166,10 @@ Anatomia (padrão WhatsApp):
 - O campo cresce **para cima**: a lista de mensagens encolhe e mantém a borda de
   baixo parada (a última mensagem visível continua visível), e os botões ficam
   alinhados embaixo (`items-end`).
+- **Respondendo a (CRMLAB-66):** com `replyTo` (`{ authorName, preview }`), uma faixa em cima do
+  campo mostra "Respondendo a *Maria*: trecho…" com × (`onCancelReply`); `Esc` no campo também
+  cancela. Quem monta a tela guarda a mensagem escolhida e manda `quotedMessageId` no envio; a
+  faixa some depois de enviar
 
 #### Recado de voz (CRMLAB-24, D-181)
 - Botão de **microfone** (`aria-label="Gravar áudio"`) ao lado do anexo e do emoji. Só aparece
@@ -241,6 +285,9 @@ Anatomia (padrão WhatsApp):
 - Ícones: `lucide-react`, 19px, `strokeWidth={1.7}` (`NavGlyph.tsx`, mapa `NavIcon → LucideIcon`)
 - Rodapé: avatar + nome do usuário é um botão; clique abre menu com [Sair] (`useLogout`,
   `POST /auth/logout` — API_CONTRACTS.md §1). Fecha ao clicar fora, `Esc` ou depois de sair
+- Menu do usuário, acima de [Sair] (CRMLAB-72, D-241): dois `menuitemcheckbox` —
+  "Som de mensagem nova" e "Notificações do navegador" — com ✓ quando ligados. Clicar alterna a
+  preferência (`useMessageAlertsStore`, `localStorage`) sem fechar o menu
 - Rodapé: nome, "Cargo · vX.Y.Z" (cargo = `role` traduzido em pt-BR, CRMLAB-44) — só a versão
   quando recolhido. `__APP_VERSION__` injetada em build-time pelo Vite a partir do `package.json`
   da raiz do monorepo (`frontend/vite.config.ts`), sem chamada de rede
@@ -249,8 +296,29 @@ Anatomia (padrão WhatsApp):
   D-117)
 
 ### InboxLayout
-- 3 colunas: 336px fixo | flex 1 min 440px | 316px recolhível
+- 3 colunas: 336px fixo | flex 1 min 440px | 316px recolhível (começa fechada, `contextPanelOpen:
+  false` — CRMLAB-74)
 - Estreito: overflow-x na linha (não colapsar colunas)
+- `listBanner?: ReactNode` (CRMLAB-72): faixa opcional no topo da coluna 1, acima da lista, fora
+  da rolagem dela. O Atendimento usa para o `EnableNotificationsBanner`
+
+### AppShell
+- Sidebar + `<Outlet/>` + modais globais. Monta `useNewMessageAlerts()` (CRMLAB-72, D-241): o
+  aviso de mensagem nova vale em qualquer tela do laboratório. `PlatformShell` não monta
+
+### EnableNotificationsBanner (`pages/Attendance/`, local da tela — CRMLAB-72)
+- Aviso discreto no topo da fila: texto `text-caption` `text-neutral-700` + `Button` `secondary`
+  `sm` "Ativar notificações", fundo `bg-accent-100`, padding `px-md py-sm`, borda inferior
+  `border-neutral-300`
+- Só renderiza com `Notification` disponível, `permission === 'default'` e a preferência de
+  notificação ligada. O clique chama `Notification.requestPermission()`; qualquer resposta
+  esconde o aviso
+
+### useNewMessageAlerts (`hooks/`, CRMLAB-72, D-240/D-241)
+- Título "(N) <título>", notificação sem prévia, som e a regra `isInMyQueue`. Funções puras
+  exportadas para teste: `isInMyQueue`, `detectNewMessages`, `alertBody`, `countUnreadInQueue`,
+  `titleWithCount`. Estado auxiliar em `stores/message-alerts.store.ts` (preferências +
+  conversa aberta); som em `lib/notification-sound.ts`
 
 ### BudgetLayout
 - 2 colunas: flex 1 min 520px | 372px fixo; total em rodapé fixo
@@ -587,8 +655,9 @@ tela passa tudo por props (o dado vem do TanStack Query).
 |------------|-----------|-------|
 | `ConversationItem` | `<ConversationItem conversation selected? onClick?(id) now? />` | `now` é injetável só para tornar "aguardando N min" determinístico em teste |
 | `MessageBubble` | `<MessageBubble type message maxWidth? showMeta? />` | `type` ∈ `received \| sent \| system` — os únicos 3 · `*texto*` em negrito (D-183) |
+| `DateSeparator` | `<DateSeparator date now? />` | Pílula de dia (CRMLAB-71, D-239) · `dateSeparatorLabel` e `isSameLocalDay` exportadas |
 | `AudioMessage` | `<AudioMessage url />` | `<audio controls>` nativo com blob autenticado · download sempre disponível |
-| `Composer` | `<Composer onSend(content) onAttach? onSendAudio?(audio) disabled? sending? placeholder? quickReplies? />` | Enter envia · Shift+Enter quebra linha · Ctrl/Cmd+B envolve a seleção em `*` · emoji insere no cursor · `/` no campo vazio abre as macros · microfone grava recado de voz (clique/clique, 5 min, D-181) |
+| `Composer` | `<Composer onSend(content) → void | Promise onAttach? onSendAudio?(audio) disabled? sending? placeholder? quickReplies? />` | Enter envia · Shift+Enter quebra linha · Ctrl/Cmd+B envolve a seleção em `*` · emoji insere no cursor · `/` no campo vazio abre as macros · microfone grava recado de voz (clique/clique, 5 min, D-181) |
 | `EmojiPicker` | `<EmojiPicker onPick(emoji) disabled? />` | Grade fixa de 48, sem biblioteca · `Esc` fecha e devolve o foco |
 | `QuickReplyMenu` | `<QuickReplyMenu items filter onPick(reply) onClose() />` | Aberto pela `/` no campo vazio · ↑↓ navega, Enter escolhe, Esc fecha |
 

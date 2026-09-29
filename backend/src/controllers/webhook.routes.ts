@@ -342,6 +342,10 @@ export function whatsappStatus(services: WebhookServices, cache: CacheService): 
 // (`findOrCreateByPhone` -> `createFromPatient`, dedupe por `externalId`):
 //   MESSAGES_UPSERT    -> mensagem do paciente; `fromMe` -> resposta enviada
 //                         pelo celular do laboratorio, ou eco do CRM (D-173)
+//   MESSAGES_UPSERT com reactionMessage/protocolMessage -> reacao, apagamento ou
+//                         edicao de mensagem que ja existe (CRMLAB-66)
+//   MESSAGES_EDITED    -> `protocolMessage` de edicao (e REVOKE) — CRMLAB-66
+//   MESSAGES_DELETE    -> "apagar para todos": esconde, nunca apaga (D-220)
 //   CONNECTION_UPDATE  -> estado do canal (conectado/desconectado), SEM mensagem
 //   QRCODE_UPDATED     -> sem efeito (o QR e servido por polling em
 //                         GET /settings/channels/whatsapp/qr, nao pelo webhook)
@@ -455,6 +459,8 @@ interface EvolutionInboundMessage {
   externalId: string | null;
   /** Enviada pelo proprio numero do laboratorio (celular ou eco do CRM, D-173). */
   fromMe: boolean;
+  /** `contextInfo.stanzaId` — resposta citando (CRMLAB-66, D-221). */
+  quotedExternalId: string | null;
 }
 
 /**
@@ -606,7 +612,9 @@ export type DiscardReason =
   | 'tipo_nao_suportado'
   | 'sem_texto_nem_midia'
   | 'midia_recusada'
-  | 'erro_no_processamento';
+  | 'erro_no_processamento'
+  /** Reacao/edicao/apagamento de mensagem que nao esta no CRM (CRMLAB-66). */
+  | 'mensagem_alvo_desconhecida';
 
 export type EvolutionInboundResult =
   | { ok: true; message: EvolutionInboundMessage }
@@ -646,8 +654,157 @@ function evolutionInboundOf(data: unknown): EvolutionInboundResult {
       name: phone.fromMe ? null : asNonEmptyString(record.pushName),
       externalId: key ? asNonEmptyString(key.id) : null,
       fromMe: phone.fromMe,
+      quotedExternalId: quotedExternalIdOf(record, message),
     },
   };
+}
+
+/**
+ * `stanzaId` da mensagem citada (D-221 item 5). O Evolution v2 sobe o
+ * `contextInfo` para o topo do `data`; o Baileys cru deixa dentro da
+ * submensagem (`extendedTextMessage.contextInfo`, `imageMessage.contextInfo`…).
+ * Aceita os dois.
+ */
+function quotedExternalIdOf(
+  record: Record<string, unknown>,
+  message: Record<string, unknown> | null,
+): string | null {
+  const top = asNonEmptyString(asRecord(record.contextInfo)?.stanzaId);
+  if (top) return top;
+  if (!message) return null;
+  for (const value of Object.values(message)) {
+    const stanzaId = asNonEmptyString(asRecord(asRecord(value)?.contextInfo)?.stanzaId);
+    if (stanzaId) return stanzaId;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// CRMLAB-66 — acoes sobre mensagem que JA existe: reacao, apagamento, edicao
+// ---------------------------------------------------------------------------
+
+export type EvolutionMessageAction =
+  | { kind: 'reaction'; targetExternalId: string; fromMe: boolean; emoji: string }
+  | { kind: 'revoke'; targetExternalId: string }
+  | { kind: 'edit'; targetExternalId: string; newContent: string };
+
+/** `REVOKE` e `MESSAGE_EDIT` do `proto.Message.ProtocolMessage.Type` — nome ou numero. */
+function protocolTypeOf(value: unknown): 'revoke' | 'edit' | null {
+  if (value === 'REVOKE' || value === 0) return 'revoke';
+  if (value === 'MESSAGE_EDIT' || value === 14) return 'edit';
+  return null;
+}
+
+/** Texto de uma submensagem: `conversation`, `extendedTextMessage.text` ou legenda. */
+function textOf(message: Record<string, unknown> | null): string | null {
+  if (!message) return null;
+  return (
+    asNonEmptyString(message.conversation) ??
+    asNonEmptyString(asRecord(message.extendedTextMessage)?.text) ??
+    mediaCaption(message)
+  );
+}
+
+/**
+ * `protocolMessage` -> acao. E o `data` do `MESSAGES_EDITED` e o que vem dentro
+ * do `message` de um upsert. `key.id` aponta para a mensagem ORIGINAL.
+ */
+function protocolActionOf(protocol: Record<string, unknown> | null): EvolutionMessageAction | null {
+  if (!protocol) return null;
+  const targetExternalId = asNonEmptyString(asRecord(protocol.key)?.id);
+  const type = protocolTypeOf(protocol.type);
+  if (!targetExternalId || !type) return null;
+  if (type === 'revoke') return { kind: 'revoke', targetExternalId };
+  const newContent = textOf(asRecord(protocol.editedMessage));
+  return newContent ? { kind: 'edit', targetExternalId, newContent } : null;
+}
+
+function isGroupJid(jid: unknown): boolean {
+  return typeof jid === 'string' && jid.endsWith('@g.us');
+}
+
+/**
+ * `data` de um `MESSAGES_UPSERT` que NAO e mensagem nova: reacao
+ * (`reactionMessage`) ou `protocolMessage` (apagar/editar — direto ou dentro de
+ * `editedMessage.message`). `null` = mensagem comum, segue o caminho de sempre.
+ * Grupo e ignorado, como na mensagem comum.
+ */
+export function evolutionUpsertActionOf(data: unknown): EvolutionMessageAction | null {
+  const record = asRecord(data);
+  if (!record) return null;
+  const key = asRecord(record.key);
+  if (isGroupJid(key?.remoteJid)) return null;
+  const message = asRecord(record.message);
+  if (!message) return null;
+
+  const reaction = asRecord(message.reactionMessage);
+  if (reaction) {
+    const targetExternalId = asNonEmptyString(asRecord(reaction.key)?.id);
+    if (!targetExternalId) return null;
+    return {
+      kind: 'reaction',
+      targetExternalId,
+      // Quem REAGIU e o autor desta mensagem (`key` de fora), nao o da reagida.
+      fromMe: key?.fromMe === true,
+      // `''` (ou ausente) = reacao removida.
+      emoji: typeof reaction.text === 'string' ? reaction.text : '',
+    };
+  }
+
+  const protocol =
+    asRecord(message.protocolMessage) ??
+    asRecord(asRecord(asRecord(message.editedMessage)?.message)?.protocolMessage);
+  return protocolActionOf(protocol);
+}
+
+/** `data` do `MESSAGES_EDITED`: o proprio `protocolMessage` (ou um upsert que o embrulha). */
+export function evolutionEditedActionOf(data: unknown): EvolutionMessageAction | null {
+  const record = asRecord(data);
+  if (!record) return null;
+  if (isGroupJid(asRecord(record.key)?.remoteJid)) return null;
+  return protocolActionOf(record) ?? evolutionUpsertActionOf(record);
+}
+
+/**
+ * `data` do `MESSAGES_DELETE`: a `key` achatada (`{ remoteJid, fromMe, id,
+ * status: 'DELETED' }`) — ou `{ key: {...} }`, tolerado.
+ */
+export function evolutionDeleteActionOf(data: unknown): EvolutionMessageAction | null {
+  const record = asRecord(data);
+  if (!record) return null;
+  const key = asRecord(record.key) ?? record;
+  if (isGroupJid(key.remoteJid)) return null;
+  const targetExternalId = asNonEmptyString(key.id);
+  return targetExternalId ? { kind: 'revoke', targetExternalId } : null;
+}
+
+async function applyEvolutionAction(
+  services: WebhookServices,
+  tenantId: string,
+  action: EvolutionMessageAction,
+): Promise<void> {
+  try {
+    const outcome =
+      action.kind === 'reaction'
+        ? await services.messages.applyInboundReaction(tenantId, action)
+        : action.kind === 'revoke'
+          ? await services.messages.applySenderDelete(tenantId, action.targetExternalId)
+          : await services.messages.applySenderEdit(tenantId, action.targetExternalId, action.newContent);
+    if (outcome === 'alvo_desconhecido') {
+      logger.warn('evolution.inbound_discarded', {
+        tenantId,
+        reason: 'mensagem_alvo_desconhecida' satisfies DiscardReason,
+        messageType: action.kind,
+      });
+    }
+  } catch (err) {
+    logger.error('evolution.inbound_message_rejected', {
+      tenantId,
+      externalId: action.targetExternalId,
+      discardReason: 'erro_no_processamento' satisfies DiscardReason,
+      reason: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 /**
@@ -776,6 +933,17 @@ async function applyEvolutionConnectionUpdate(
  * MESMO corpo (`body`, nunca so `body.data`), porque o campo `instance` vive
  * no nivel do envelope, nao dentro de `data`.
  */
+/**
+ * Eventos que ESCREVEM no banco e por isso exigem `instance` certo (I4). Os de
+ * mensagem do CRMLAB-66 entram aqui pelo mesmo motivo do `MESSAGES_UPSERT`.
+ */
+const INSTANCE_CHECKED_EVENTS: ReadonlySet<string> = new Set([
+  'MESSAGES_UPSERT',
+  'MESSAGES_EDITED',
+  'MESSAGES_DELETE',
+  'CONNECTION_UPDATE',
+]);
+
 function instanceClaimMatches(body: Record<string, unknown> | null, tenantId: string): boolean {
   const instanceClaim = body ? asNonEmptyString(body.instance) : null;
   return instanceClaim === evolutionInstanceName(tenantId);
@@ -824,12 +992,13 @@ async function ingestEvolutionMessage(
       ? services.messages.createFromPhone(
           tenantId,
           conversation.id,
-          { ...dto, externalId: inbound.externalId },
+          { ...dto, externalId: inbound.externalId, quotedExternalId: inbound.quotedExternalId },
           { echoChecked: true },
         )
       : services.messages.createFromPatient(tenantId, conversation.id, {
           ...dto,
           externalId: inbound.externalId,
+          quotedExternalId: inbound.quotedExternalId,
         });
 
   if (!inbound.media) {
@@ -884,16 +1053,24 @@ export function evolutionInbound(
     const body = asRecord(req.body);
     const event = normalizeEvolutionEvent(body ? asNonEmptyString(body.event) : null);
 
-    if (
-      (event === 'MESSAGES_UPSERT' || event === 'CONNECTION_UPDATE') &&
-      !instanceClaimMatches(body, tenantId)
-    ) {
+    if (event !== null && INSTANCE_CHECKED_EVENTS.has(event) && !instanceClaimMatches(body, tenantId)) {
       logger.warn('evolution.webhook_instance_mismatch', { tenantId, event });
       acknowledge(res);
       return;
     }
 
-    if (event === 'MESSAGES_UPSERT') {
+    const upsertAction = event === 'MESSAGES_UPSERT' ? evolutionUpsertActionOf(body?.data) : null;
+
+    if (upsertAction) {
+      // Reacao/apagar/editar embrulhados num upsert (CRMLAB-66): nao e mensagem nova.
+      await applyEvolutionAction(services, tenantId, upsertAction);
+    } else if (event === 'MESSAGES_EDITED' || event === 'MESSAGES_DELETE') {
+      const action =
+        event === 'MESSAGES_EDITED'
+          ? evolutionEditedActionOf(body?.data)
+          : evolutionDeleteActionOf(body?.data);
+      if (action) await applyEvolutionAction(services, tenantId, action);
+    } else if (event === 'MESSAGES_UPSERT') {
       const parsed = evolutionInboundOf(body?.data);
       if (!parsed.ok) {
         // Este log e a UNICA prova de que a mensagem existiu. Sem ele (o

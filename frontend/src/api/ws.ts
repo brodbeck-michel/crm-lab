@@ -110,6 +110,9 @@ export function applyWsEvent(
   const name: WsEventName = event.event;
 
   switch (name) {
+    // CRMLAB-66/D-223: reação, edição ou apagamento — mesma invalidação, sem
+    // contar como mensagem nova (o aviso do CRMLAB-72 escuta só `new_message`).
+    case 'conversation.message_updated':
     case 'conversation.new_message': {
       const data = event.data as { conversationId: string };
       void queryClient.invalidateQueries({ queryKey: queryScopes.conversations });

@@ -303,6 +303,7 @@ describe('GET /conversations/:id', () => {
 
     expect(Object.keys(response.body).sort()).toEqual([
       'conversation',
+      'cursors',
       'messages',
       'pagination',
     ]);
@@ -316,8 +317,14 @@ describe('GET /conversations/:id', () => {
       'content',
       'conversationId',
       'createdAt',
+      // CRMLAB-66 (D-220/D-221/D-222)
+      'deletedAt',
+      'editedAt',
       'id',
       'messageType',
+      'quoted',
+      'quotedMessageId',
+      'reactions',
       'readAt',
       'senderId',
       'senderName',

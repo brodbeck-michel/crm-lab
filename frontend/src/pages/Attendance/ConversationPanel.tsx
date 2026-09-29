@@ -1,15 +1,25 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { RefObject } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { ReactNode, RefObject } from 'react';
+import { QUOTED_PREVIEW_MAX } from '@crm-lab/shared';
 import type {
   ConversationAssignee,
   ConversationDetail,
   Message,
   QuickReply,
 } from '@crm-lab/shared';
-import { Button, cn } from '@/components/ui';
+import { Badge, Button, cn } from '@/components/ui';
 import { EmptyState } from '@/components/shared';
-import { Composer, MessageBubble, bubbleTypeFor } from '@/components/conversation';
-import type { RecordedAudio } from '@/components/conversation';
+import {
+  Composer,
+  DateSeparator,
+  MessageBubble,
+  bubbleTypeFor,
+  isSameLocalDay,
+  quotedLabel,
+} from '@/components/conversation';
+import type { MessageBubbleProps, RecordedAudio } from '@/components/conversation';
+import { scrollToMessage } from './scroll-to-message';
+import { useConversationScroll } from './useConversationScroll';
 
 /**
  * Coluna 2 do inbox — PAGES.md §2.
@@ -17,8 +27,9 @@ import type { RecordedAudio } from '@/components/conversation';
  * Header (nome, telefone, ações) · bolhas · composer.
  * A área das bolhas é BRANCA (CRMLAB-25) — só ela; header e composer seguem no
  * fundo do tema, o que também marca onde a conversa começa e termina.
- * Rolagem: mensagem nova rola para o fim; carregar histórico antigo mantém a
- * posição de leitura (ver `useMessageScroll`).
+ * Leitura padrão WhatsApp Web (CRMLAB-71, D-238/D-239): separador de data,
+ * faixa "N mensagens não lidas", botão ↓ com contador e histórico que carrega
+ * sozinho perto do topo — a rolagem mora em `useConversationScroll`.
  */
 
 export interface ConversationPanelProps {
@@ -27,7 +38,8 @@ export interface ConversationPanelProps {
   isLoading: boolean;
   isError: boolean;
   onRetry: () => void;
-  onSend: (content: string) => void;
+  /** `quotedMessageId` = respondendo citando (CRMLAB-66, D-221). */
+  onSend: (content: string, quotedMessageId?: string) => void | Promise<unknown>;
   sending: boolean;
   /** Quem pode receber a conversa — `GET /conversations/assignees`. */
   assignees: ConversationAssignee[];
@@ -42,51 +54,29 @@ export interface ConversationPanelProps {
   onToggleContext: () => void;
   /** Fecha a conversa aberta, voltando ao estado "nenhuma selecionada" (padrão WhatsApp Web). */
   onClose: () => void;
-  /** Anexo no composer. */
-  onAttach: () => void;
+  /** Anexo no composer. `quotedMessageId` = o anexo sai citando (CRMLAB-66). */
+  onAttach: (quotedMessageId?: string) => void;
   /** Recado de voz gravado no composer (CRMLAB-24) — ver `Composer.onSendAudio`. */
-  onSendAudio?: (audio: RecordedAudio) => Promise<unknown>;
+  onSendAudio?: (audio: RecordedAudio, quotedMessageId?: string) => Promise<unknown>;
+  /** Reação do laboratório (D-222); `null` tira. Sem handler, "Reagir" some do menu. */
+  onReact?: (messageId: string, emoji: string | null) => void;
+  /** A citada não está no que foi carregado — quem monta a tela avisa (toast). */
+  onQuoteUnavailable?: () => void;
   /** Macros do laboratório — a `/` do composer (Onda 8 §3.4). */
   quickReplies: QuickReply[];
   contextOpen: boolean;
-  /** Ainda há mensagens anteriores no servidor. */
+  /** Ainda há mensagens anteriores no servidor (`cursors.before` não nulo). */
   hasOlderMessages: boolean;
+  /** Página anterior sendo buscada — mostra o indicador e segura novo pedido. */
+  loadingOlder: boolean;
   onLoadOlder: () => void;
+  /**
+   * `unreadCount` da LISTA no clique que abriu a conversa (D-239): o GET do
+   * detalhe já zerou o contador quando o painel lê a conversa.
+   */
+  unreadAtOpen: number;
   /** Mensagem pronta ao chegar aqui por "Enviar orçamento" (ver `Composer.initialValue`). */
   draftMessage?: string;
-}
-
-/**
- * Mensagem nova (o ÚLTIMO id mudou) → rola para o fim.
- * Histórico antigo (o último id continua o mesmo e a altura cresceu) → soma a
- * diferença ao `scrollTop`, mantendo sob os olhos a mesma mensagem.
- */
-function useMessageScroll(
-  ref: RefObject<HTMLDivElement>,
-  messages: Message[],
-  conversationId: string | null,
-): void {
-  const lastIdRef = useRef<string | null>(null);
-  const heightRef = useRef(0);
-  const conversationRef = useRef<string | null>(null);
-
-  useLayoutEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-
-    const lastId = messages.at(-1)?.id ?? null;
-    const switchedConversation = conversationRef.current !== conversationId;
-
-    if (switchedConversation || lastId !== lastIdRef.current) {
-      element.scrollTop = element.scrollHeight;
-    } else if (element.scrollHeight > heightRef.current) {
-      element.scrollTop += element.scrollHeight - heightRef.current;
-    }
-
-    lastIdRef.current = lastId;
-    heightRef.current = element.scrollHeight;
-    conversationRef.current = conversationId;
-  }, [ref, messages, conversationId]);
 }
 
 /**
@@ -113,6 +103,34 @@ function useBottomAnchor(ref: RefObject<HTMLDivElement>, mounted: boolean): void
     observer.observe(element);
     return () => observer.disconnect();
   }, [ref, mounted]);
+}
+
+/**
+ * Faixa de não lidas (D-239): presa à N-ésima mensagem do PACIENTE contando do
+ * fim (só elas somam em `unread_count`). N maior que o carregado: antes da
+ * primeira mensagem carregada, com o N verdadeiro.
+ */
+interface UnreadMark {
+  conversationId: string;
+  /** `null` = sem faixa (nada não lido, ou a atendente já respondeu). */
+  messageId: string | null;
+  count: number;
+}
+
+function unreadMarkFor(conversationId: string, messages: Message[], count: number): UnreadMark {
+  if (count <= 0) return { conversationId, messageId: null, count: 0 };
+  let seen = 0;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const candidate = messages[index];
+    if (candidate?.senderType !== 'patient') continue;
+    seen += 1;
+    if (seen === count) return { conversationId, messageId: candidate.id, count };
+  }
+  return { conversationId, messageId: messages[0]?.id ?? null, count };
+}
+
+function unreadLabel(count: number): string {
+  return count === 1 ? '1 mensagem não lida' : `${count} mensagens não lidas`;
 }
 
 /**
@@ -233,15 +251,66 @@ export function ConversationPanel({
   onClose,
   onAttach,
   onSendAudio,
+  onReact,
+  onQuoteUnavailable,
   quickReplies,
   contextOpen,
   hasOlderMessages,
+  loadingOlder,
   onLoadOlder,
+  unreadAtOpen,
   draftMessage,
 }: ConversationPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  useMessageScroll(scrollRef, messages, conversation?.id ?? null);
+  const dividerRef = useRef<HTMLDivElement>(null);
+  const conversationId = conversation?.id ?? null;
+
+  // Calculada UMA vez por conversa aberta, na primeira leitura com mensagens:
+  // mensagem nova não desloca a faixa. `setState` no render é o padrão do
+  // React para estado derivado — o commit já sai com a faixa, e a rolagem de
+  // abertura acha o `dividerRef`.
+  const [mark, setMark] = useState<UnreadMark | null>(null);
+  if (conversationId !== null && messages.length > 0 && mark?.conversationId !== conversationId) {
+    setMark(unreadMarkFor(conversationId, messages, unreadAtOpen));
+  }
+  const unread = mark?.conversationId === conversationId ? mark : null;
+
+  const scroll = useConversationScroll({
+    scrollRef,
+    messages,
+    conversationId,
+    dividerRef,
+    canLoadOlder: hasOlderMessages && !loadingOlder,
+    onLoadOlder,
+  });
   useBottomAnchor(scrollRef, !isError && !isLoading && conversation !== null);
+
+  // Respondendo a (CRMLAB-66): presa à conversa — trocar de conversa esquece.
+  const [reply, setReply] = useState<{ conversationId: string; message: Message } | null>(null);
+  const replyTo = reply && reply.conversationId === conversationId ? reply.message : null;
+  const quotedId = replyTo?.id;
+  const clearReply = (): void => setReply(null);
+
+  const bubbleActions: BubbleActions = {
+    onReply:
+      conversation?.status === 'active' && conversationId !== null
+        ? (message) => setReply({ conversationId, message })
+        : undefined,
+    onReact:
+      onReact && conversation?.status === 'active'
+        ? (message, emoji) => onReact(message.id, emoji)
+        : undefined,
+    onQuoteClick: (messageId) => {
+      if (!scrollToMessage(scrollRef.current, messageId)) onQuoteUnavailable?.();
+    },
+  };
+
+  /** A atendente respondeu: a faixa sai e a resposta aparece no fim (D-239). */
+  function beforeReply(): void {
+    if (conversationId !== null) setMark({ conversationId, messageId: null, count: 0 });
+    scroll.stickOnNextMessage();
+    scroll.jumpToBottom('auto');
+  }
 
   if (isError) {
     return (
@@ -343,32 +412,58 @@ export function ConversationPanel({
         </div>
       </header>
 
-      <div
-        ref={scrollRef}
-        data-testid="message-scroll"
-        className="flex min-h-0 flex-1 flex-col gap-sm overflow-y-auto bg-chat-bg px-lg py-lg"
-      >
-        {hasOlderMessages && (
-          <div className="flex flex-[0_0_auto] justify-center pb-sm">
-            <Button variant="secondary" size="sm" onClick={onLoadOlder}>
-              Carregar mensagens anteriores
-            </Button>
-          </div>
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div
+          ref={scrollRef}
+          data-testid="message-scroll"
+          onScroll={scroll.onScroll}
+          className="relative flex min-h-0 flex-1 flex-col gap-sm overflow-y-auto bg-chat-bg px-lg py-lg [overflow-anchor:none]"
+        >
+          {messages.length === 0 ? (
+            <EmptyState
+              message="Nenhuma mensagem ainda"
+              hint="Escreva a primeira mensagem para começar o atendimento."
+            />
+          ) : (
+            renderRows(messages, unread, dividerRef, bubbleActions)
+          )}
+        </div>
+
+        {/* Fora da área rolável: dentro dela, o indicador empurraria as mensagens
+            e a tela pularia justamente enquanto o histórico carrega (D-238). */}
+        {loadingOlder && (
+          <p
+            role="status"
+            className="pointer-events-none absolute left-0 right-0 top-sm m-0 flex justify-center"
+          >
+            <span className="rounded-pill bg-surface px-md py-xs font-body text-caption text-neutral-600 shadow-sm">
+              Carregando mensagens anteriores…
+            </span>
+          </p>
         )}
 
-        {messages.length === 0 ? (
-          <EmptyState
-            message="Nenhuma mensagem ainda"
-            hint="Escreva a primeira mensagem para começar o atendimento."
-          />
-        ) : (
-          messages.map((message) => (
-            <MessageBubble
-              key={message.id}
-              type={bubbleTypeFor(message.senderType)}
-              message={message}
-            />
-          ))
+        {scroll.showJumpButton && (
+          <button
+            type="button"
+            onClick={() => scroll.jumpToBottom()}
+            aria-label={
+              scroll.newCount > 0
+                ? `Ir para a última mensagem (${scroll.newCount} ${scroll.newCount === 1 ? 'nova' : 'novas'})`
+                : 'Ir para a última mensagem'
+            }
+            className={cn(
+              'absolute bottom-md right-lg flex h-[40px] w-[40px] cursor-pointer items-center justify-center',
+              'rounded-pill border border-neutral-200 bg-surface font-body text-label text-neutral-700 shadow-md',
+              'hover:bg-neutral-100',
+            )}
+          >
+            ↓
+            {scroll.newCount > 0 && (
+              <span className="absolute -right-xs -top-xs">
+                <Badge count={scroll.newCount} />
+              </span>
+            )}
+          </button>
         )}
       </div>
 
@@ -376,9 +471,46 @@ export function ConversationPanel({
           e solta o microfone — o recado feito para um paciente não vai para outro. */}
       <Composer
         key={conversation.id}
-        onSend={onSend}
-        onAttach={onAttach}
-        onSendAudio={onSendAudio}
+        onSend={(content) => {
+          beforeReply();
+          const result = onSend(content, quotedId);
+          clearReply();
+          return result;
+        }}
+        onAttach={() => {
+          beforeReply();
+          onAttach(quotedId);
+          clearReply();
+        }}
+        onSendAudio={
+          onSendAudio
+            ? async (audio) => {
+                beforeReply();
+                const sent = await onSendAudio(audio, quotedId);
+                clearReply();
+                return sent;
+              }
+            : undefined
+        }
+        replyTo={
+          replyTo
+            ? {
+                authorName:
+                  replyTo.senderType === 'patient'
+                    ? (replyTo.senderName ?? conversation.patientName ?? 'Paciente')
+                    : (replyTo.senderName ?? 'Você'),
+                preview: quotedLabel({
+                  id: replyTo.id,
+                  senderType: replyTo.senderType,
+                  senderName: replyTo.senderName,
+                  preview: replyTo.content.slice(0, QUOTED_PREVIEW_MAX),
+                  messageType: replyTo.messageType,
+                  deleted: false,
+                }),
+              }
+            : null
+        }
+        onCancelReply={clearReply}
         sending={sending}
         disabled={closed}
         quickReplies={quickReplies}
@@ -386,4 +518,51 @@ export function ConversationPanel({
       />
     </div>
   );
+}
+
+/**
+ * Linhas da conversa: separador de dia (D-239), faixa de não lidas e a bolha.
+ * Cada bolha vai numa linha com `data-anchor-id` — é nela que a rolagem se
+ * ancora (D-238). O `data-message-id` do balão é do `MessageBubble`.
+ */
+type BubbleActions = Pick<MessageBubbleProps, 'onReply' | 'onReact' | 'onQuoteClick'>;
+
+function renderRows(
+  messages: Message[],
+  unread: UnreadMark | null,
+  dividerRef: RefObject<HTMLDivElement>,
+  actions: BubbleActions,
+): ReactNode[] {
+  const now = new Date();
+  const nodes: ReactNode[] = [];
+  let previous: Message | undefined;
+
+  for (const message of messages) {
+    const day = new Date(message.createdAt);
+    if (!previous || !isSameLocalDay(new Date(previous.createdAt), day)) {
+      nodes.push(<DateSeparator key={`day-${message.id}`} date={message.createdAt} now={now} />);
+    }
+    if (unread?.messageId === message.id) {
+      nodes.push(
+        <div
+          key={`unread-${message.id}`}
+          ref={dividerRef}
+          data-testid="unread-divider"
+          className="-mx-lg flex flex-[0_0_auto] justify-center bg-accent-100 py-xs"
+        >
+          <span className="font-body text-caption font-semibold text-accent-800">
+            {unreadLabel(unread.count)}
+          </span>
+        </div>,
+      );
+    }
+    nodes.push(
+      <div key={message.id} data-anchor-id={message.id} className="flex min-w-0 flex-col">
+        <MessageBubble type={bubbleTypeFor(message.senderType)} message={message} {...actions} />
+      </div>,
+    );
+    previous = message;
+  }
+
+  return nodes;
 }

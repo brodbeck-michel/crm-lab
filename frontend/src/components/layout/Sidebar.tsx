@@ -1,12 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { PanelLeftClose, PanelLeftOpen, ChevronRight, LogOut } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, ChevronRight, LogOut, Check } from 'lucide-react';
 import type { UserRole } from '@crm-lab/shared';
 import { cn, Badge } from '@/components/ui';
 import { Avatar } from '@/components/shared';
 import { initials } from '@/lib/format';
-import { useAuthStore, useUIStore, useSidebarGroupsStore, selectRole, selectUser } from '@/stores';
+import {
+  useAuthStore,
+  useMessageAlertsStore,
+  useUIStore,
+  useSidebarGroupsStore,
+  selectRole,
+  selectUser,
+} from '@/stores';
 import { useLogout } from '@/hooks';
 import { sidebarSectionsFor, type AppRoute } from '@/routes/route-config';
 import { internalChatApi, operationApi, queryKeys, staleTimes } from '@/api';
@@ -110,6 +117,20 @@ export function Sidebar() {
   });
   const internalChatUnreadCount =
     channelsQuery.data?.channels.reduce((total, channel) => total + channel.unreadCount, 0) ?? 0;
+
+  // CRMLAB-72 (D-241 item 8): preferências do aviso de mensagem nova.
+  const soundEnabled = useMessageAlertsStore((s) => s.soundEnabled);
+  const notificationsEnabled = useMessageAlertsStore((s) => s.notificationsEnabled);
+  const setSoundEnabled = useMessageAlertsStore((s) => s.setSoundEnabled);
+  const setNotificationsEnabled = useMessageAlertsStore((s) => s.setNotificationsEnabled);
+  const alertPrefs = [
+    { label: 'Som de mensagem nova', checked: soundEnabled, toggle: () => setSoundEnabled(!soundEnabled) },
+    {
+      label: 'Notificações do navegador',
+      checked: notificationsEnabled,
+      toggle: () => setNotificationsEnabled(!notificationsEnabled),
+    },
+  ];
 
   const navigate = useNavigate();
   const logout = useLogout();
@@ -321,11 +342,27 @@ export function Sidebar() {
             <div
               role="menu"
               className={cn(
-                'absolute bottom-full z-50 mb-xs w-[180px] rounded-md border border-neutral-200',
+                'absolute bottom-full z-50 mb-xs w-[240px] rounded-md border border-neutral-200',
                 'bg-surface py-xs shadow-md',
                 collapsed ? 'left-0' : 'left-xs right-xs w-auto',
               )}
             >
+              {role !== 'platform_operator' &&
+                alertPrefs.map((pref) => (
+                  <button
+                    key={pref.label}
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={pref.checked}
+                    onClick={pref.toggle}
+                    className="flex w-full cursor-pointer items-center gap-sm border-none bg-transparent px-md py-xs text-left font-body text-label text-text hover:bg-accent-100"
+                  >
+                    <span className="inline-flex w-[16px] shrink-0 justify-center" aria-hidden="true">
+                      {pref.checked && <Check size={16} strokeWidth={1.7} />}
+                    </span>
+                    {pref.label}
+                  </button>
+                ))}
               <button
                 type="button"
                 role="menuitem"

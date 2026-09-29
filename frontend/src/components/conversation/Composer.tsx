@@ -37,8 +37,12 @@ import type { RecordedAudio } from './useVoiceRecorder';
  */
 
 export interface ComposerProps {
-  /** Recebe o texto já aparado. Não é chamado com string vazia. */
-  onSend: (content: string) => void;
+  /**
+   * Recebe o texto já aparado. Não é chamado com string vazia. O campo limpa na
+   * hora; devolvendo uma Promise que rejeita, o texto volta para o campo (se a
+   * pessoa não começou outra mensagem) — quem avisa do erro é quem chama (CRMLAB-63).
+   */
+  onSend: (content: string) => void | Promise<unknown>;
   /** Anexo — sem handler, o botão não aparece (nada de botão morto). */
   onAttach?: () => void;
   /**
@@ -64,6 +68,14 @@ export interface ComposerProps {
    * da chamada.
    */
   quickReplies?: readonly QuickReply[];
+  /**
+   * Respondendo a (CRMLAB-66): a faixa "Respondendo a *autor*: trecho…" em cima
+   * do campo. Quem monta a tela guarda a mensagem escolhida e decide o
+   * `quotedMessageId` do envio; o Composer só mostra e avisa o cancelamento.
+   */
+  replyTo?: { authorName: string; preview: string } | null;
+  /** × da faixa ou `Esc` no campo. */
+  onCancelReply?: () => void;
 }
 
 /**
@@ -101,6 +113,8 @@ export function Composer({
   placeholder = 'Escreva uma mensagem',
   quickReplies,
   initialValue,
+  replyTo,
+  onCancelReply,
 }: ComposerProps) {
   const [value, setValue] = useState(initialValue ?? '');
   // `false` enquanto a pessoa não abriu o menu nesta digitação — é o que faz
@@ -166,9 +180,13 @@ export function Composer({
   function submit(): void {
     const content = value.trim();
     if (!content || blocked) return;
-    onSend(content);
+    const result = onSend(content);
     setValue('');
     fieldRef.current?.focus();
+    result?.catch(() => {
+      setValue((current) => (current === '' ? content : current));
+      fieldRef.current?.focus();
+    });
   }
 
   /**
@@ -240,6 +258,12 @@ export function Composer({
       }
     }
 
+    if (event.key === 'Escape' && replyTo && onCancelReply) {
+      event.preventDefault();
+      onCancelReply();
+      return;
+    }
+
     // Shift+Enter cai no comportamento padrão do textarea: quebra de linha.
     if (event.key !== 'Enter' || event.shiftKey) return;
     event.preventDefault();
@@ -251,6 +275,27 @@ export function Composer({
       data-testid="composer"
       className="flex flex-col gap-xs border-t border-neutral-300 bg-bg px-lg py-md"
     >
+      {replyTo && (
+        <div
+          data-testid="reply-banner"
+          className="flex items-center gap-sm rounded-sm border-0 border-l-4 border-solid border-accent bg-neutral-100 px-sm py-xs"
+        >
+          <p className="m-0 min-w-0 flex-1 truncate font-body text-caption text-neutral-700">
+            Respondendo a <em className="font-semibold not-italic text-accent-800">{replyTo.authorName}</em>
+            : {replyTo.preview}
+          </p>
+          {onCancelReply && (
+            <button
+              type="button"
+              onClick={onCancelReply}
+              aria-label="Cancelar resposta"
+              className="cursor-pointer rounded-pill border-none bg-transparent px-xs font-body text-label text-neutral-700 hover:bg-neutral-200"
+            >
+              ×
+            </button>
+          )}
+        </div>
+      )}
       {recorder.error && (
         <p role="alert" className="m-0 font-body text-caption text-accent-700">
           {recorder.error}
@@ -304,7 +349,10 @@ export function Composer({
                 ref={fieldRef}
                 rows={1}
                 value={value}
-                disabled={blocked}
+                // `disabled`, não `blocked` (CRMLAB-63): campo desabilitado perde o
+                // foco e o navegador não devolve. Durante o envio só o Enter e o
+                // botão travam (`submit`), e dá para ir escrevendo a próxima.
+                disabled={disabled}
                 onChange={(event) => handleChange(event.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder={placeholder}

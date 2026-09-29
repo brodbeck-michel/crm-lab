@@ -297,6 +297,25 @@ CREATE INDEX idx_messages_created_at ON messages(created_at);
 CREATE INDEX idx_messages_status ON messages(status);
 ```
 
+**Colunas da migração 040 (CRMLAB-66, D-220/D-221):**
+
+```sql
+ALTER TABLE messages
+  ADD COLUMN quoted_external_id VARCHAR(255),  -- stanzaId do WhatsApp / id externo da citada
+  ADD COLUMN quoted_message_id UUID REFERENCES messages(id) ON DELETE SET NULL,
+  ADD COLUMN edited_at TIMESTAMPTZ,            -- remetente editou (texto novo em content)
+  ADD COLUMN deleted_at TIMESTAMPTZ,           -- remetente apagou "para todos": ESCONDIDA
+  ADD COLUMN deleted_by VARCHAR(20)            -- 'patient' | 'agent' (lado da original)
+    CHECK (deleted_by IS NULL OR deleted_by IN ('patient', 'agent'));
+CREATE INDEX idx_messages_quoted_message_id ON messages(quoted_message_id);
+```
+
+- **`deleted_at` esconde, não apaga** (D-220): `content`, `attachment_url` e o arquivo de
+  `message_media` ficam intactos; quem esconde é a leitura da API. Nenhum código faz `DELETE`
+  por causa de apagamento do remetente.
+- A citação é resolvida **na leitura**: `quoted_message_id` quando a original já estava no
+  CRM, senão `(tenant_id, external_message_id) = quoted_external_id` na mesma conversa (D-221).
+
 ### 5. `proposals`
 Orçamentos/Propostas.
 
@@ -1784,6 +1803,54 @@ CREATE TABLE tenant_holidays (
 
 ---
 
+### 33. `message_reactions` (migração 040 — CRMLAB-66, D-222)
+Reação com emoji a uma mensagem. **Uma por lado** (paciente / laboratório), não uma por usuário:
+para o paciente o laboratório é um número só.
+
+```sql
+CREATE TABLE message_reactions (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id    UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  message_id   UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  reactor_type VARCHAR(20) NOT NULL CHECK (reactor_type IN ('patient', 'agent')),
+  user_id      UUID REFERENCES users(id) ON DELETE SET NULL, -- atendente que reagiu pelo CRM
+  emoji        VARCHAR(32) NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, message_id, reactor_type)
+);
+CREATE INDEX idx_message_reactions_message_id ON message_reactions(message_id);
+CREATE INDEX idx_message_reactions_user_id ON message_reactions(user_id);
+-- ENABLE ROW LEVEL SECURITY + policy message_reactions_tenant_isolation (mesmo arquivo)
+```
+
+- Reação removida (emoji vazio no WhatsApp, `DELETE` na API) **sai da tabela** — reação não é
+  conteúdo de mensagem, a regra de D-220 não se aplica.
+
+### 34. `message_edits` (migração 040 — CRMLAB-66, D-220)
+Versões anteriores de uma mensagem editada pelo remetente. Uma linha por edição, nunca
+sobrescrita.
+
+```sql
+CREATE TABLE message_edits (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id        UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  message_id       UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  previous_content TEXT NOT NULL,   -- o texto ANTES desta edição
+  edited_by        VARCHAR(20) NOT NULL CHECK (edited_by IN ('patient', 'agent')),
+  edited_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_message_edits_message_id ON message_edits(message_id);
+-- ENABLE ROW LEVEL SECURITY + policy message_edits_tenant_isolation (mesmo arquivo)
+```
+
+- Não tem rota de leitura: consultar a versão anterior é coisa de auditoria, pelo banco
+  (tela de auditoria fora de escopo do CRMLAB-66).
+- Migração **única** (colunas + tabelas + policies), como 026/027: sem backfill, as tabelas
+  nascem vazias.
+
+---
+
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
 
 O isolamento multitenant não é convenção: é imposto pelo banco. O backend conecta com o papel
@@ -1937,6 +2004,8 @@ Nenhum outro caminho de código deve usar `withoutTenant()`.
 | `funnel_rules` | ✅ | migração `027` (tabela + policy no mesmo arquivo) |
 | `conversation_reengagements` | ✅ | migração `031_reengagement.sql` (tabela + policy no mesmo arquivo), `rls-reengagement.spec.ts` |
 | `tenant_holidays` | ✅ | idem |
+| `message_reactions` | ✅ | migração `040_message_quote_reactions_edits.sql` (tabela + policy no mesmo arquivo — CRMLAB-66) |
+| `message_edits` | ✅ | idem |
 
 As **4 tabelas da migração 003** entram sob RLS na `004_rls_onda6.sql`, as **3 tabelas da
 migração 005** entram na `006_rls_onda7.sql`, e as **4 tabelas novas da migração 012**
@@ -2035,7 +2104,8 @@ migrations/
 ├── 027_funnel_rules.sql          # funnel_rules + policy — Regras do funil (CRMLAB-56, D-190)
 ├── 028_bitlab_origin.sql         # proposals.origin, conversa/autor nulláveis só na origem bitlab (CRMLAB-57, D-195/D-196)
 ├── 030_funnel_timer.sql          # proposal_status_history.automation + stale_alerted_at — motor de tempo (CRMLAB-59, D-207/D-208)
-└── 031_reengagement.sql          # messages.automation + conversation_reengagements + tenant_holidays (CRMLAB-62, D-211/D-213)
+├── 031_reengagement.sql          # messages.automation + conversation_reengagements + tenant_holidays (CRMLAB-62, D-211/D-213)
+└── 040_message_quote_reactions_edits.sql # citação/edição/apagamento em messages + message_reactions + message_edits (CRMLAB-66, D-220..D-222)
 ```
 
 A 007 e a 008 são arquivos ÚNICOS (tabela + policy), diferente dos pares 003/004 e 005/006: a

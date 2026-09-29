@@ -94,7 +94,9 @@ export function mediaMetadataOf(
 }
 
 function coordinate(value: unknown, limit: number): number | null {
-  return typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= limit ? value : null;
+  return typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= limit
+    ? value
+    : null;
 }
 
 /**
@@ -128,7 +130,9 @@ function vcardValues(vcard: string, property: string): { params: string; value: 
   const out: { params: string; value: string }[] = [];
   // Linhas dobradas (RFC 6350 §3.2) nao aparecem no que o WhatsApp gera; ignorar.
   for (const line of vcard.split(/\r?\n/)) {
-    const match = new RegExp(`^(?:item\\d+\\.)?${property}([;][^:]*)?:(.*)$`, 'i').exec(line.trim());
+    const match = new RegExp(`^(?:item\\d+\\.)?${property}([;][^:]*)?:(.*)$`, 'i').exec(
+      line.trim(),
+    );
     if (match) out.push({ params: match[1] ?? '', value: (match[2] ?? '').trim() });
   }
   return out;
@@ -184,5 +188,7 @@ export function contactsOf(message: Record<string, unknown>): MessageContact[] {
 export function contactsFallbackText(contacts: MessageContact[]): string {
   const [first] = contacts;
   if (!first) return '👤 Contato';
-  return contacts.length > 1 ? `👤 ${first.name} e mais ${contacts.length - 1}` : `👤 ${first.name}`;
+  return contacts.length > 1
+    ? `👤 ${first.name} e mais ${contacts.length - 1}`
+    : `👤 ${first.name}`;
 }

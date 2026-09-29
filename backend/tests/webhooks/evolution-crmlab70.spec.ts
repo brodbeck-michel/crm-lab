@@ -255,7 +255,11 @@ describe('localização (D-235 item 4)', () => {
 
   it('liveLocationMessage usa a caption como nome', async () => {
     await upsert({
-      liveLocationMessage: { degreesLatitude: -27.6, degreesLongitude: -48.5, caption: 'Estou aqui' },
+      liveLocationMessage: {
+        degreesLatitude: -27.6,
+        degreesLongitude: -48.5,
+        caption: 'Estou aqui',
+      },
     });
     const message = await lastMessage();
     expect(message.messageType).toBe('location');
@@ -273,7 +277,9 @@ describe('localização (D-235 item 4)', () => {
   });
 
   it('sem coordenada válida continua a linha de texto antiga', async () => {
-    await upsert({ locationMessage: { degreesLatitude: 200, degreesLongitude: 'x', name: 'Casa' } });
+    await upsert({
+      locationMessage: { degreesLatitude: 200, degreesLongitude: 'x', name: 'Casa' },
+    });
     const message = await lastMessage();
     expect(message.messageType).toBe('text');
     expect(message.location).toBeNull();
@@ -310,7 +316,10 @@ describe('contato (D-235 item 5)', () => {
       contactsArrayMessage: {
         displayName: '2 contatos',
         contacts: [
-          { displayName: 'Ana', vcard: 'BEGIN:VCARD\nFN:Ana\nTEL;type=CELL:(48) 99999-1234\nEND:VCARD' },
+          {
+            displayName: 'Ana',
+            vcard: 'BEGIN:VCARD\nFN:Ana\nTEL;type=CELL:(48) 99999-1234\nEND:VCARD',
+          },
           { displayName: 'Bruno', vcard: 'BEGIN:VCARD\nFN:Bruno\nEND:VCARD' },
         ],
       },

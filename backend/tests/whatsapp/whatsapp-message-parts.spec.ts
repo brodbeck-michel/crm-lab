@@ -26,7 +26,9 @@ describe('jpegThumbnailOf', () => {
 
   it('recusa o que não é JPEG, grande demais ou lixo', () => {
     expect(jpegThumbnailOf(Buffer.from('GIF89a').toString('base64'))).toBeNull();
-    expect(jpegThumbnailOf(Buffer.concat([JPEG, Buffer.alloc(MAX_THUMBNAIL_BYTES)]).toString('base64'))).toBeNull();
+    expect(
+      jpegThumbnailOf(Buffer.concat([JPEG, Buffer.alloc(MAX_THUMBNAIL_BYTES)]).toString('base64')),
+    ).toBeNull();
     expect(jpegThumbnailOf('"><script>')).toBeNull();
     expect(jpegThumbnailOf({ data: [255, 999] })).toBeNull();
     expect(jpegThumbnailOf(42)).toBeNull();
@@ -50,16 +52,24 @@ describe('mediaMetadataOf', () => {
 describe('locationOf', () => {
   it('fixa: nome e endereço; em tempo real: caption vira nome', () => {
     expect(
-      locationOf({ locationMessage: { degreesLatitude: -1.5, degreesLongitude: 2, name: ' Lab ', address: '' } }),
+      locationOf({
+        locationMessage: { degreesLatitude: -1.5, degreesLongitude: 2, name: ' Lab ', address: '' },
+      }),
     ).toEqual({ latitude: -1.5, longitude: 2, name: 'Lab', address: null });
     expect(
-      locationOf({ liveLocationMessage: { degreesLatitude: 0, degreesLongitude: 0, caption: 'aqui' } }),
+      locationOf({
+        liveLocationMessage: { degreesLatitude: 0, degreesLongitude: 0, caption: 'aqui' },
+      }),
     ).toEqual({ latitude: 0, longitude: 0, name: 'aqui', address: null });
   });
 
   it('coordenada fora da faixa ou não numérica → null', () => {
-    expect(locationOf({ locationMessage: { degreesLatitude: 91, degreesLongitude: 0 } })).toBeNull();
-    expect(locationOf({ locationMessage: { degreesLatitude: 0, degreesLongitude: '1' } })).toBeNull();
+    expect(
+      locationOf({ locationMessage: { degreesLatitude: 91, degreesLongitude: 0 } }),
+    ).toBeNull();
+    expect(
+      locationOf({ locationMessage: { degreesLatitude: 0, degreesLongitude: '1' } }),
+    ).toBeNull();
     expect(locationOf({ conversation: 'oi' })).toBeNull();
   });
 });
@@ -82,8 +92,12 @@ describe('contactsOf', () => {
     expect(contactsOf({ contactMessage: { vcard: 'BEGIN:VCARD\nFN:Carla\nEND:VCARD' } })).toEqual([
       { name: 'Carla', phone: null },
     ]);
-    const many = Array.from({ length: MAX_SHARED_CONTACTS + 5 }, (_, i) => ({ displayName: `C${i}` }));
-    expect(contactsOf({ contactsArrayMessage: { contacts: many } })).toHaveLength(MAX_SHARED_CONTACTS);
+    const many = Array.from({ length: MAX_SHARED_CONTACTS + 5 }, (_, i) => ({
+      displayName: `C${i}`,
+    }));
+    expect(contactsOf({ contactsArrayMessage: { contacts: many } })).toHaveLength(
+      MAX_SHARED_CONTACTS,
+    );
     expect(contactsOf({ contactMessage: {} })).toEqual([]);
   });
 

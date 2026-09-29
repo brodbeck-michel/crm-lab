@@ -8,29 +8,20 @@ import type {
   SenderType,
 } from '@crm-lab/shared';
 import { cn } from '@/components/ui';
-import { fetchAuthenticatedBlob, resolveMediaUrl } from '@/api';
 import { useAuthenticatedMedia } from '@/hooks';
 import { DateDisplay, ImageLightbox } from '@/components/shared';
 import { splitBold } from '@/lib/whatsapp-format';
 import { AudioMessage } from './AudioMessage';
+import { ContactCard } from './ContactCard';
+import { DocumentCard } from './DocumentCard';
+import { LocationCard } from './LocationCard';
+import { isProtectedMediaUrl } from './media-url';
+import { showsMessageText } from './message-content';
+import { StickerMessage } from './StickerMessage';
+import { VideoMessage } from './VideoMessage';
 
-/**
- * So a mídia servida pelo NOSSO backend (`/api/v1/media/:id`) exige o fetch
- * autenticado. Um `attachmentUrl` ABSOLUTO de outro host (a URL da Meta que o
- * webhook grava, ou o que vier num `POST /messages`) tem que ir como link/img
- * cru: passar pelo `fetchAuthenticatedBlob` mandava o Bearer do usuário para
- * um terceiro e o CORS ainda bloqueava a resposta — o anexo que antes abria
- * virou "Não foi possível carregar" (revisão do PR #43).
- */
-export function isProtectedMediaUrl(url: string): boolean {
-  if (!/^https?:\/\//i.test(url)) return url.startsWith('/api/');
-  try {
-    const target = new URL(url);
-    return target.origin === window.location.origin && target.pathname.startsWith('/api/');
-  } catch {
-    return false;
-  }
-}
+// Mudou para `./media-url` no CRMLAB-70 (os componentes por tipo usam a mesma regra).
+export { isProtectedMediaUrl };
 
 /**
  * MessageBubble — COMPONENTS.md (`conversation/`) + DESIGN_TOKENS.md
@@ -126,6 +117,11 @@ const MEDIA_LABEL: Partial<Record<MessageType, string>> = {
   audio: '🎤 Áudio',
   pdf: '📄 Documento',
   doc: '📄 Documento',
+  // CRMLAB-70 (D-236)
+  video: '🎥 Vídeo',
+  sticker: 'Figurinha',
+  location: '📍 Localização',
+  contact: '👤 Contato',
 };
 
 /** Texto do bloco citado (D-221): trecho, rótulo de mídia ou o aviso de indisponível. */
@@ -339,7 +335,10 @@ export function MessageBubble({
   const hasAttachment = Boolean(attachmentUrl);
   const isImage = message.messageType === 'image' && hasAttachment;
   const isAudio = message.messageType === 'audio' && hasAttachment;
-  const isDoc = !isImage && !isAudio && hasAttachment;
+  // CRMLAB-70 (D-236): um componente por tipo; o balão só despacha.
+  const isVideo = message.messageType === 'video' && hasAttachment;
+  const isSticker = message.messageType === 'sticker' && hasAttachment;
+  const isDoc = !isImage && !isAudio && !isVideo && !isSticker && hasAttachment;
   const isProtected = attachmentUrl ? isProtectedMediaUrl(attachmentUrl) : false;
   const [lightboxOpen, setLightboxOpen] = useState(false);
 
@@ -353,37 +352,6 @@ export function MessageBubble({
     isLoading: imageLoading,
   } = useAuthenticatedMedia(isImage && isProtected ? attachmentUrl : null);
   const imageUrl = isImage && !isProtected ? attachmentUrl : fetchedImageUrl;
-
-  // PDF/doc: o blob só é buscado NO CLIQUE (revisão do PR #43). Buscar na
-  // montagem baixava até 15 MiB por mensagem só para desenhar um link — uma
-  // conversa com 30 anexos disparava 30 GETs autenticados ao abrir, e de novo
-  // a cada troca de conversa. PDF abre em nova aba (o blob carrega o
-  // `Content-Type` certo); qualquer outro anexo força download.
-  const [docState, setDocState] = useState<'idle' | 'loading' | 'error'>('idle');
-  const openDoc = async (): Promise<void> => {
-    if (!attachmentUrl || docState === 'loading') return;
-    setDocState('loading');
-    try {
-      const { blob, fileName } = await fetchAuthenticatedBlob(resolveMediaUrl(attachmentUrl));
-      const objectUrl = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = objectUrl;
-      if (message.messageType === 'pdf') {
-        anchor.target = '_blank';
-        anchor.rel = 'noreferrer';
-      } else {
-        anchor.download = fileName ?? 'anexo';
-      }
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      // Revoga depois que o navegador já abriu/baixou; imediato quebra o download.
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
-      setDocState('idle');
-    } catch {
-      setDocState('error');
-    }
-  };
 
   if (isDeleted) {
     return (
@@ -425,6 +393,8 @@ export function MessageBubble({
         'group relative flex min-w-0 flex-col gap-xs font-body text-text transition-shadow',
         'data-[highlighted=true]:ring-2 data-[highlighted=true]:ring-accent',
         SHELL[type],
+        // Figurinha sem balão (D-236 item 5): some o fundo e a borda, fica o lado.
+        isSticker && 'border-transparent bg-transparent px-0 py-0',
       )}
     >
       {!isSystem && (
@@ -438,12 +408,14 @@ export function MessageBubble({
 
       {message.quoted && <QuotedBlock quoted={message.quoted} onClick={onQuoteClick} />}
 
-      <p className="m-0 whitespace-pre-wrap break-words">
-        {/* `*texto*` em negrito (D-183): nós React, nunca HTML — sem XSS. */}
-        {splitBold(message.content).map((segment, index) =>
-          segment.bold ? <strong key={index}>{segment.text}</strong> : segment.text,
-        )}
-      </p>
+      {showsMessageText(message) && (
+        <p className="m-0 whitespace-pre-wrap break-words">
+          {/* `*texto*` em negrito (D-183): nós React, nunca HTML — sem XSS. */}
+          {splitBold(message.content).map((segment, index) =>
+            segment.bold ? <strong key={index}>{segment.text}</strong> : segment.text,
+          )}
+        </p>
+      )}
 
       {isImage &&
         (imageUrl ? (
@@ -471,37 +443,25 @@ export function MessageBubble({
           </span>
         ))}
 
-      {isAudio && message.attachmentUrl && <AudioMessage url={message.attachmentUrl} />}
+      {isAudio && message.attachmentUrl && (
+        <AudioMessage url={message.attachmentUrl} durationSec={message.media?.durationSec} />
+      )}
 
-      {isDoc &&
-        attachmentUrl &&
-        (!isProtected ? (
-          // Anexo hospedado fora do nosso backend: link cru, sem token.
-          <a
-            href={attachmentUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="text-caption font-semibold text-accent-700 underline"
-          >
-            {message.messageType === 'pdf' ? 'Abrir' : 'Baixar'} anexo ({message.messageType})
-          </a>
-        ) : (
-          <>
-            <button
-              type="button"
-              onClick={() => void openDoc()}
-              disabled={docState === 'loading'}
-              className="cursor-pointer self-start border-none bg-transparent p-0 text-left text-caption font-semibold text-accent-700 underline disabled:cursor-progress"
-            >
-              {docState === 'loading'
-                ? 'Carregando anexo…'
-                : `${message.messageType === 'pdf' ? 'Abrir' : 'Baixar'} anexo (${message.messageType})`}
-            </button>
-            {docState === 'error' && (
-              <span className="text-caption text-neutral-600">Não foi possível carregar o anexo</span>
-            )}
-          </>
-        ))}
+      {isVideo && attachmentUrl && <VideoMessage url={attachmentUrl} media={message.media} />}
+
+      {isSticker && attachmentUrl && <StickerMessage url={attachmentUrl} />}
+
+      {message.messageType === 'location' && message.location && (
+        <LocationCard location={message.location} />
+      )}
+
+      {message.messageType === 'contact' && message.contacts && message.contacts.length > 0 && (
+        <ContactCard contacts={message.contacts} />
+      )}
+
+      {isDoc && attachmentUrl && (
+        <DocumentCard url={attachmentUrl} messageType={message.messageType} media={message.media} />
+      )}
 
       {showMeta && !isSystem && (
         <span

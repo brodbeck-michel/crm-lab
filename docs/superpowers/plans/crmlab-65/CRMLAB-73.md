@@ -23,3 +23,10 @@ main v1.24.0). Faixa: D-242…D-243 · sem migração · só frontend.
 - Sair do sistema apaga todos os rascunhos do navegador (leitura restritiva, D-243 item 4c).
   Confirmar com o Michel se prefere manter entre sessões (só escopados por usuário).
 - Prazo de 7 dias para descartar rascunho esquecido (D-243 item 4b): valor escolhido, confirmar.
+
+## Etapa 2 — parser e bolha ✅
+- `parseWhatsApp` + `plainText` em `lib/whatsapp-format.ts` (sai `splitBold`); `WhatsAppText`
+  novo; `MessageBubble` troca só o miolo do `<p>` do texto (import + 2 linhas).
+- Bug achado pelo teste: a crase de fechamento de ```` ``` ```` casava com a do `` `código` ``
+  seguinte. Correção: cada passada de literais procura no texto com os anteriores mascarados.
+- Specs: `whatsapp-format.spec.ts` 37 ✓, `WhatsAppText.spec.tsx` 4 ✓, MessageBubble (3 arquivos) 43 ✓.

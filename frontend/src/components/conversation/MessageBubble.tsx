@@ -11,8 +11,8 @@ import { cn } from '@/components/ui';
 import { fetchAuthenticatedBlob, resolveMediaUrl } from '@/api';
 import { useAuthenticatedMedia } from '@/hooks';
 import { DateDisplay, ImageLightbox } from '@/components/shared';
-import { splitBold } from '@/lib/whatsapp-format';
 import { AudioMessage } from './AudioMessage';
+import { WhatsAppText } from './WhatsAppText';
 
 /**
  * So a mídia servida pelo NOSSO backend (`/api/v1/media/:id`) exige o fetch
@@ -439,10 +439,8 @@ export function MessageBubble({
       {message.quoted && <QuotedBlock quoted={message.quoted} onClick={onQuoteClick} />}
 
       <p className="m-0 whitespace-pre-wrap break-words">
-        {/* `*texto*` em negrito (D-183): nós React, nunca HTML — sem XSS. */}
-        {splitBold(message.content).map((segment, index) =>
-          segment.bold ? <strong key={index}>{segment.text}</strong> : segment.text,
-        )}
+        {/* Formatação do WhatsApp e links (D-183, D-242): nós React, nunca HTML — sem XSS. */}
+        <WhatsAppText text={message.content} />
       </p>
 
       {isImage &&

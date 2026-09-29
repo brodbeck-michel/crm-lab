@@ -51,11 +51,19 @@ interface MessageRow {
 }
 
 const MESSAGE_TYPES: MessageType[] = ['text', 'image', 'audio', 'pdf', 'doc'];
-const MESSAGE_STATUSES: MessageStatus[] = ['sent', 'delivered', 'read', 'failed'];
+const MESSAGE_STATUSES: MessageStatus[] = ['pending', 'sent', 'delivered', 'read', 'failed'];
 const SENDER_TYPES: SenderType[] = ['patient', 'agent', 'system'];
 
 function toMessageType(value: string | null): MessageType {
   return MESSAGE_TYPES.includes(value as MessageType) ? (value as MessageType) : 'text';
+}
+
+/**
+ * Posicao na escada de D-225 em SQL. `failed` e desconhecido ficam em 99:
+ * nunca "sobem" para nada. Espelha `MESSAGE_STATUS_RANK` (`shared/`).
+ */
+function statusRankSql(expr: string): string {
+  return `(CASE ${expr} WHEN 'pending' THEN 0 WHEN 'sent' THEN 1 WHEN 'delivered' THEN 2 WHEN 'read' THEN 3 ELSE 99 END)`;
 }
 
 function toMessageStatus(value: string | null): MessageStatus {
@@ -471,7 +479,7 @@ export class MessageRepository {
 
   /**
    * Envio do CRM EM VOO nesta conversa (D-173): mensagem de atendente, com
-   * autor, ainda `sent` e sem id externo — gravada antes do envio e esperando
+   * autor, ainda `pending` (D-225; `sent` cobre linha anterior) e sem id externo — gravada antes do envio e esperando
    * o gateway responder. E o que diz ao webhook `fromMe` que um `key.id`
    * desconhecido pode ser o eco de um envio que ainda nao gravou o id.
    *
@@ -486,7 +494,7 @@ export class MessageRepository {
          WHERE conversation_id = $1
            AND sender_type = 'agent'
            AND (sender_id IS NOT NULL OR automation IS NOT NULL)
-           AND status = 'sent'
+           AND status IN ('pending', 'sent')
            AND external_message_id IS NULL
            AND created_at > NOW() - INTERVAL '60 seconds'
          LIMIT 1`,
@@ -498,7 +506,11 @@ export class MessageRepository {
 
   /**
    * Status vindo do callback do canal, que so conhece o id externo.
-   * `null` quando o id externo nao pertence a este tenant.
+   * `null` quando o id externo nao pertence a este tenant OU quando o status
+   * nao sobe (D-225): a escada `pending < sent < delivered < read` so anda para
+   * frente, `failed` so entra a partir de `pending`/`sent`, e de `failed` nada
+   * sai por aqui. A guarda mora no `WHERE` para valer sob reentrega concorrente
+   * — mesma regra de `canAdvanceMessageStatus` (`shared/`).
    */
   async setStatusByExternalId(
     tenantId: string,
@@ -511,6 +523,10 @@ export class MessageRepository {
          SET status = $1::text,
              read_at = CASE WHEN $1::text = 'read' THEN COALESCE(read_at, NOW()) ELSE read_at END
          WHERE external_message_id = $2
+           AND CASE
+                 WHEN $1::text = 'failed' THEN status IN ('pending', 'sent')
+                 ELSE ${statusRankSql('$1::text')} > ${statusRankSql('status')}
+               END
          RETURNING id`,
         [status, externalMessageId],
       );

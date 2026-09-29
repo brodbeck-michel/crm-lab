@@ -109,6 +109,9 @@ function fakeEvolutionClient(): EvolutionClient & {
     async sendReaction(_instanceName, _phone, _target, _emoji, apikey: string) {
       lastSendApikey = apikey;
     },
+    async sendPresence() {
+      return undefined;
+    },
   };
 }
 
@@ -137,6 +140,7 @@ function missingInstanceClient(): EvolutionClient {
     sendText: async () => ({ externalId: 'x' }),
     sendMedia: async () => ({ externalId: 'x' }),
     sendReaction: async () => undefined,
+    sendPresence: async () => undefined,
   };
 }
 
@@ -152,6 +156,7 @@ function brokenGatewayClient(): EvolutionClient {
     sendText: async () => ({ externalId: 'x' }),
     sendMedia: async () => ({ externalId: 'x' }),
     sendReaction: async () => undefined,
+    sendPresence: async () => undefined,
   };
 }
 

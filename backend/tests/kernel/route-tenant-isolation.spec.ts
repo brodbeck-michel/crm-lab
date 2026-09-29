@@ -106,6 +106,9 @@ function fakeEvolutionClient(): EvolutionClient {
     async sendReaction() {
       return undefined;
     },
+    async sendPresence() {
+      return undefined;
+    },
   };
 }
 

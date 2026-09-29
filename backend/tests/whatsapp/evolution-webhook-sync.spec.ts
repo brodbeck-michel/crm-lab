@@ -28,6 +28,7 @@ function fakeClient(options: { missing?: Set<string>; broken?: Set<string> } = {
     sendText: unused,
     sendMedia: unused,
     sendReaction: unused,
+    sendPresence: unused,
     async setWebhook(instanceName, webhook) {
       if (options.missing?.has(instanceName)) {
         throw new Error(`Evolution API respondeu 404: The "${instanceName}" instance does not exist`);

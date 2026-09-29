@@ -322,6 +322,36 @@ export interface WhatsAppDriver {
     target: ReactionTarget,
     emoji: string,
   ): Promise<void>;
+  /**
+   * Presenca da atendente para o paciente (D-226/D-227). OPCIONAL: so o
+   * Evolution tem; driver sem suporte faz `WhatsAppService.sendPresence` virar
+   * no-op (a Cloud API nao tem presenca).
+   */
+  sendPresence?(
+    credentials: WhatsAppCredentials,
+    phone: string,
+    presence: OutboundPresence,
+    delayMs: number,
+  ): Promise<void>;
+}
+
+/** O que a atendente manda ao paciente: `paused` so assina, `composing` = digitando (D-226). */
+export type OutboundPresence = 'paused' | 'composing';
+
+/**
+ * Quanto o gateway segura cada presenca (D-227). `composing` dura o intervalo
+ * do debounce da tela (4 s); `paused` so precisa do `presenceSubscribe` que a
+ * rota faz antes.
+ */
+export const PRESENCE_DELAY_MS: Record<OutboundPresence, number> = {
+  paused: 200,
+  composing: 4_000,
+};
+
+export interface MockSentPresence {
+  tenantId: string;
+  phone: string;
+  presence: OutboundPresence;
 }
 
 export interface MockSentMessage {
@@ -350,6 +380,7 @@ export class MockWhatsAppDriver implements WhatsAppDriver {
   readonly name = 'mock';
   readonly sent: MockSentMessage[] = [];
   readonly reactions: MockSentReaction[] = [];
+  readonly presences: MockSentPresence[] = [];
 
   async send(
     credentials: WhatsAppCredentials,
@@ -404,9 +435,18 @@ export class MockWhatsAppDriver implements WhatsAppDriver {
     });
   }
 
+  async sendPresence(
+    credentials: WhatsAppCredentials,
+    phone: string,
+    presence: OutboundPresence,
+  ): Promise<void> {
+    this.presences.push({ tenantId: credentials.tenantId, phone, presence });
+  }
+
   clear(): void {
     this.sent.length = 0;
     this.reactions.length = 0;
+    this.presences.length = 0;
   }
 }
 
@@ -577,6 +617,24 @@ export class EvolutionWhatsAppDriver implements WhatsAppDriver {
       phone,
       target,
       emoji,
+      credentials.qrInstanceApiKey,
+    );
+  }
+
+  async sendPresence(
+    credentials: WhatsAppCredentials,
+    phone: string,
+    presence: OutboundPresence,
+    delayMs: number,
+  ): Promise<void> {
+    if (!credentials.qrInstanceApiKey) {
+      throw new EvolutionCredentialError(credentials.tenantId);
+    }
+    await this.client.sendPresence(
+      evolutionInstanceName(credentials.tenantId),
+      phone,
+      presence,
+      delayMs,
       credentials.qrInstanceApiKey,
     );
   }
@@ -865,6 +923,18 @@ export class WhatsAppService {
       () => sendReaction(credentials, phone, target, emoji),
       { attempts: this.attempts },
     );
+  }
+
+  /**
+   * Presenca da atendente (D-226/D-227). Best-effort: UMA tentativa, sem fila
+   * (repetir "digitando" atrasado nao serve para nada). Driver sem presenca
+   * (Cloud API) = no-op. Quem chama nao espera nem trata o erro.
+   */
+  async sendPresence(tenantId: string, phone: string, presence: OutboundPresence): Promise<void> {
+    const credentials = await this.sendableCredentials(tenantId);
+    const driver = this.driverFor(credentials);
+    if (!driver.sendPresence) return;
+    await driver.sendPresence(credentials, phone, presence, PRESENCE_DELAY_MS[presence]);
   }
 
   /**

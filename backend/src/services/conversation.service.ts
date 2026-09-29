@@ -66,6 +66,8 @@ import type {
   ListConversationsResponse,
   Message,
   PaginationMeta,
+  SearchMessagesQuery,
+  SearchMessagesResponse,
   StartWhatsAppConversationRequest,
   StartWhatsAppConversationResponse,
   UpdateConversationRequest,
@@ -77,6 +79,7 @@ import { BusinessError, isBusinessError, notFound } from '../http/errors.js';
 import type { AuditService } from './audit.service.js';
 import { claimFreeConversation } from './conversation-claim.js';
 import type { MessageService } from './message.service.js';
+import { toSearchTsQuery } from '../repositories/message.repository.js';
 import {
   isConversationSortBy,
   phoneDigits,
@@ -98,6 +101,9 @@ export const MAX_LIMIT = 100;
 export const MAX_PAGE = 10_000;
 /** Teto da lista de `GET /conversations/assignees` — equipe de laboratorio. */
 export const MAX_ASSIGNEES = 200;
+/** Busca nas mensagens (D-228): padrao e teto de `limit`. */
+export const DEFAULT_SEARCH_LIMIT = 20;
+export const MAX_SEARCH_LIMIT = 100;
 export const DEFAULT_SORT_BY: ConversationSortBy = 'lastMessageAt';
 export const DEFAULT_ORDER: SortOrder = 'desc';
 
@@ -142,6 +148,7 @@ export function toCriteria(
     visibleTo: isSupervisor(ctx) ? null : ctx.userId,
     userId: ctx.userId,
     scope: filters.scope ?? 'all',
+    ...(filters.unread === true ? { unread: true } : {}),
     ...(filters.status !== undefined ? { status: filters.status } : {}),
     ...(search !== undefined && search.length > 0 ? { search } : {}),
     page: clampInt(filters.page, DEFAULT_PAGE, 1, MAX_PAGE),
@@ -563,6 +570,41 @@ export class ConversationService {
       throw notFound({ resource: 'conversation', id });
     }
     await this.repository.markAsRead(ctx.tenantId, id);
+  }
+
+  /**
+   * "Marcar como nao lida" (D-229). Mesmo recorte do `markAsRead`: conversa
+   * invisivel e 404. Sem audit e sem WS — preferencia de tela, como o pin.
+   */
+  async markAsUnread(ctx: TenantContext, id: string): Promise<void> {
+    await this.getById(ctx, id);
+    await this.repository.markAsUnread(ctx.tenantId, id);
+  }
+
+  /**
+   * Busca pelo conteudo das mensagens (D-228) — todas as conversas visiveis
+   * ou, com `conversationId`, so aquela (invisivel = 404). O recorte e o da
+   * fila: o mesmo `visibleTo` de `toCriteria`.
+   */
+  async searchMessages(
+    ctx: TenantContext,
+    query: SearchMessagesQuery,
+    conversationId?: string,
+  ): Promise<SearchMessagesResponse> {
+    if (conversationId !== undefined) await this.getById(ctx, conversationId);
+    const page = clampInt(query.page, DEFAULT_PAGE, 1, MAX_PAGE);
+    const limit = clampInt(query.limit, DEFAULT_SEARCH_LIMIT, 1, MAX_SEARCH_LIMIT);
+    const tsQuery = toSearchTsQuery(query.q);
+    if (tsQuery === null) {
+      return { results: [], pagination: { page, limit, total: 0, totalPages: 0 } };
+    }
+    return this.messages.search(ctx.tenantId, {
+      tsQuery,
+      visibleTo: isSupervisor(ctx) ? null : ctx.userId,
+      ...(conversationId !== undefined ? { conversationId } : {}),
+      page,
+      limit,
+    });
   }
 
   // -------------------------------------------------------------------------

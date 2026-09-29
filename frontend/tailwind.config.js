@@ -22,6 +22,7 @@ export default {
           'received-border': 'var(--color-chat-received-border)',
           sent: 'var(--color-chat-sent)',
           'sent-border': 'var(--color-chat-sent-border)',
+          'tick-read': 'var(--color-chat-tick-read)',
         },
         accent: {
           DEFAULT: 'var(--color-accent)',

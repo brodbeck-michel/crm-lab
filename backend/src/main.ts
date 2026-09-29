@@ -13,6 +13,7 @@ import { deleteExpiredOrRevoked } from './repositories/refresh-token.repository.
 import { deleteExpiredOrUsed as deleteExpiredResetTokens } from './repositories/password-reset-token.repository.js';
 import { createLisSyncServiceFromDeps } from './controllers/lis-sync.routes.js';
 import { createFunnelTimerService } from './services/funnel-timer.service.js';
+import { syncEvolutionWebhooks } from './services/channel-settings.service.js';
 import { createMessageService } from './services/message.service.js';
 import { createReengagementService } from './services/reengagement.service.js';
 
@@ -156,6 +157,14 @@ async function bootstrap(): Promise<void> {
     }, env.FUNNEL_TIMER_INTERVAL_MS);
     funnelTimerInterval.unref();
   }
+
+  // =========================================================================
+  // Webhook do Evolution reaplicado em toda instancia QR (CRMLAB-66, D-223)
+  // =========================================================================
+  // Todo deploy recria o container, entao todo deploy reaplica a lista
+  // `EVOLUTION_WEBHOOK_EVENTS`: instancia criada antes de um evento novo passa a
+  // recebe-lo sem script manual. Nunca lanca (ver a funcao).
+  void syncEvolutionWebhooks({ db });
 
   // =========================================================================
   // Rede de seguranca do processo (CRMLAB-30, D-138)

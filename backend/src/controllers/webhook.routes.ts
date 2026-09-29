@@ -36,7 +36,7 @@
  * caminho deste arquivo grava com `withoutTenant()`.
  */
 import { createHash } from 'node:crypto';
-import type { MessageType } from '@crm-lab/shared';
+import type { MessageStatus, MessageType, PatientPresence } from '@crm-lab/shared';
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { env } from '../config/env.js';
 import type { DbClient } from '../db/types.js';
@@ -159,7 +159,9 @@ export async function isReplay(
 export function replayExempt(req: Request): boolean {
   const body = asRecord(req.body);
   const event = normalizeEvolutionEvent(body ? asNonEmptyString(body.event) : null);
-  return event === 'CONNECTION_UPDATE';
+  // `PRESENCE_UPDATE` (D-226 item 6): um `composing` repete o corpo byte a byte
+  // e seria descartado como replay; e efemero e nao grava nada.
+  return event === 'CONNECTION_UPDATE' || event === 'PRESENCE_UPDATE';
 }
 
 /** Resposta unica de todos os caminhos — nao e oraculo de nada. */
@@ -342,6 +344,10 @@ export function whatsappStatus(services: WebhookServices, cache: CacheService): 
 // (`findOrCreateByPhone` -> `createFromPatient`, dedupe por `externalId`):
 //   MESSAGES_UPSERT    -> mensagem do paciente; `fromMe` -> resposta enviada
 //                         pelo celular do laboratorio, ou eco do CRM (D-173)
+//   MESSAGES_UPSERT com reactionMessage/protocolMessage -> reacao, apagamento ou
+//                         edicao de mensagem que ja existe (CRMLAB-66)
+//   MESSAGES_EDITED    -> `protocolMessage` de edicao (e REVOKE) — CRMLAB-66
+//   MESSAGES_DELETE    -> "apagar para todos": esconde, nunca apaga (D-220)
 //   CONNECTION_UPDATE  -> estado do canal (conectado/desconectado), SEM mensagem
 //   QRCODE_UPDATED     -> sem efeito (o QR e servido por polling em
 //                         GET /settings/channels/whatsapp/qr, nao pelo webhook)
@@ -455,6 +461,8 @@ interface EvolutionInboundMessage {
   externalId: string | null;
   /** Enviada pelo proprio numero do laboratorio (celular ou eco do CRM, D-173). */
   fromMe: boolean;
+  /** `contextInfo.stanzaId` — resposta citando (CRMLAB-66, D-221). */
+  quotedExternalId: string | null;
 }
 
 /**
@@ -606,7 +614,9 @@ export type DiscardReason =
   | 'tipo_nao_suportado'
   | 'sem_texto_nem_midia'
   | 'midia_recusada'
-  | 'erro_no_processamento';
+  | 'erro_no_processamento'
+  /** Reacao/edicao/apagamento de mensagem que nao esta no CRM (CRMLAB-66). */
+  | 'mensagem_alvo_desconhecida';
 
 export type EvolutionInboundResult =
   | { ok: true; message: EvolutionInboundMessage }
@@ -646,8 +656,157 @@ function evolutionInboundOf(data: unknown): EvolutionInboundResult {
       name: phone.fromMe ? null : asNonEmptyString(record.pushName),
       externalId: key ? asNonEmptyString(key.id) : null,
       fromMe: phone.fromMe,
+      quotedExternalId: quotedExternalIdOf(record, message),
     },
   };
+}
+
+/**
+ * `stanzaId` da mensagem citada (D-221 item 5). O Evolution v2 sobe o
+ * `contextInfo` para o topo do `data`; o Baileys cru deixa dentro da
+ * submensagem (`extendedTextMessage.contextInfo`, `imageMessage.contextInfo`…).
+ * Aceita os dois.
+ */
+function quotedExternalIdOf(
+  record: Record<string, unknown>,
+  message: Record<string, unknown> | null,
+): string | null {
+  const top = asNonEmptyString(asRecord(record.contextInfo)?.stanzaId);
+  if (top) return top;
+  if (!message) return null;
+  for (const value of Object.values(message)) {
+    const stanzaId = asNonEmptyString(asRecord(asRecord(value)?.contextInfo)?.stanzaId);
+    if (stanzaId) return stanzaId;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// CRMLAB-66 — acoes sobre mensagem que JA existe: reacao, apagamento, edicao
+// ---------------------------------------------------------------------------
+
+export type EvolutionMessageAction =
+  | { kind: 'reaction'; targetExternalId: string; fromMe: boolean; emoji: string }
+  | { kind: 'revoke'; targetExternalId: string }
+  | { kind: 'edit'; targetExternalId: string; newContent: string };
+
+/** `REVOKE` e `MESSAGE_EDIT` do `proto.Message.ProtocolMessage.Type` — nome ou numero. */
+function protocolTypeOf(value: unknown): 'revoke' | 'edit' | null {
+  if (value === 'REVOKE' || value === 0) return 'revoke';
+  if (value === 'MESSAGE_EDIT' || value === 14) return 'edit';
+  return null;
+}
+
+/** Texto de uma submensagem: `conversation`, `extendedTextMessage.text` ou legenda. */
+function textOf(message: Record<string, unknown> | null): string | null {
+  if (!message) return null;
+  return (
+    asNonEmptyString(message.conversation) ??
+    asNonEmptyString(asRecord(message.extendedTextMessage)?.text) ??
+    mediaCaption(message)
+  );
+}
+
+/**
+ * `protocolMessage` -> acao. E o `data` do `MESSAGES_EDITED` e o que vem dentro
+ * do `message` de um upsert. `key.id` aponta para a mensagem ORIGINAL.
+ */
+function protocolActionOf(protocol: Record<string, unknown> | null): EvolutionMessageAction | null {
+  if (!protocol) return null;
+  const targetExternalId = asNonEmptyString(asRecord(protocol.key)?.id);
+  const type = protocolTypeOf(protocol.type);
+  if (!targetExternalId || !type) return null;
+  if (type === 'revoke') return { kind: 'revoke', targetExternalId };
+  const newContent = textOf(asRecord(protocol.editedMessage));
+  return newContent ? { kind: 'edit', targetExternalId, newContent } : null;
+}
+
+function isGroupJid(jid: unknown): boolean {
+  return typeof jid === 'string' && jid.endsWith('@g.us');
+}
+
+/**
+ * `data` de um `MESSAGES_UPSERT` que NAO e mensagem nova: reacao
+ * (`reactionMessage`) ou `protocolMessage` (apagar/editar — direto ou dentro de
+ * `editedMessage.message`). `null` = mensagem comum, segue o caminho de sempre.
+ * Grupo e ignorado, como na mensagem comum.
+ */
+export function evolutionUpsertActionOf(data: unknown): EvolutionMessageAction | null {
+  const record = asRecord(data);
+  if (!record) return null;
+  const key = asRecord(record.key);
+  if (isGroupJid(key?.remoteJid)) return null;
+  const message = asRecord(record.message);
+  if (!message) return null;
+
+  const reaction = asRecord(message.reactionMessage);
+  if (reaction) {
+    const targetExternalId = asNonEmptyString(asRecord(reaction.key)?.id);
+    if (!targetExternalId) return null;
+    return {
+      kind: 'reaction',
+      targetExternalId,
+      // Quem REAGIU e o autor desta mensagem (`key` de fora), nao o da reagida.
+      fromMe: key?.fromMe === true,
+      // `''` (ou ausente) = reacao removida.
+      emoji: typeof reaction.text === 'string' ? reaction.text : '',
+    };
+  }
+
+  const protocol =
+    asRecord(message.protocolMessage) ??
+    asRecord(asRecord(asRecord(message.editedMessage)?.message)?.protocolMessage);
+  return protocolActionOf(protocol);
+}
+
+/** `data` do `MESSAGES_EDITED`: o proprio `protocolMessage` (ou um upsert que o embrulha). */
+export function evolutionEditedActionOf(data: unknown): EvolutionMessageAction | null {
+  const record = asRecord(data);
+  if (!record) return null;
+  if (isGroupJid(asRecord(record.key)?.remoteJid)) return null;
+  return protocolActionOf(record) ?? evolutionUpsertActionOf(record);
+}
+
+/**
+ * `data` do `MESSAGES_DELETE`: a `key` achatada (`{ remoteJid, fromMe, id,
+ * status: 'DELETED' }`) — ou `{ key: {...} }`, tolerado.
+ */
+export function evolutionDeleteActionOf(data: unknown): EvolutionMessageAction | null {
+  const record = asRecord(data);
+  if (!record) return null;
+  const key = asRecord(record.key) ?? record;
+  if (isGroupJid(key.remoteJid)) return null;
+  const targetExternalId = asNonEmptyString(key.id);
+  return targetExternalId ? { kind: 'revoke', targetExternalId } : null;
+}
+
+async function applyEvolutionAction(
+  services: WebhookServices,
+  tenantId: string,
+  action: EvolutionMessageAction,
+): Promise<void> {
+  try {
+    const outcome =
+      action.kind === 'reaction'
+        ? await services.messages.applyInboundReaction(tenantId, action)
+        : action.kind === 'revoke'
+          ? await services.messages.applySenderDelete(tenantId, action.targetExternalId)
+          : await services.messages.applySenderEdit(tenantId, action.targetExternalId, action.newContent);
+    if (outcome === 'alvo_desconhecido') {
+      logger.warn('evolution.inbound_discarded', {
+        tenantId,
+        reason: 'mensagem_alvo_desconhecida' satisfies DiscardReason,
+        messageType: action.kind,
+      });
+    }
+  } catch (err) {
+    logger.error('evolution.inbound_message_rejected', {
+      tenantId,
+      externalId: action.targetExternalId,
+      discardReason: 'erro_no_processamento' satisfies DiscardReason,
+      reason: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 /**
@@ -776,6 +935,100 @@ async function applyEvolutionConnectionUpdate(
  * MESMO corpo (`body`, nunca so `body.data`), porque o campo `instance` vive
  * no nivel do envelope, nao dentro de `data`.
  */
+/**
+ * Eventos que ESCREVEM no banco e por isso exigem `instance` certo (I4). Os de
+ * mensagem do CRMLAB-66 entram aqui pelo mesmo motivo do `MESSAGES_UPSERT`.
+ */
+const INSTANCE_CHECKED_EVENTS: ReadonlySet<string> = new Set([
+  'MESSAGES_UPSERT',
+  'MESSAGES_EDITED',
+  'MESSAGES_DELETE',
+  'MESSAGES_UPDATE',
+  'PRESENCE_UPDATE',
+  'CONNECTION_UPDATE',
+]);
+
+/**
+ * Ack do Evolution v2 (`renderStatus.ts`) -> tique (D-225 item 3). Chega como
+ * texto ou como o numero do enum do Baileys. `PENDING` fica de fora: e o
+ * estado de antes do servidor, nunca sobe nada.
+ */
+const EVOLUTION_ACK_STATUS: Readonly<Record<string, MessageStatus>> = {
+  ERROR: 'failed',
+  '0': 'failed',
+  SERVER_ACK: 'sent',
+  '2': 'sent',
+  DELIVERY_ACK: 'delivered',
+  '3': 'delivered',
+  READ: 'read',
+  '4': 'read',
+  PLAYED: 'read',
+  '5': 'read',
+};
+
+export interface EvolutionAck {
+  externalId: string;
+  status: MessageStatus;
+}
+
+/**
+ * `data` do `MESSAGES_UPDATE` (`{ keyId, remoteJid, fromMe, status }`; aceita
+ * tambem `key.id`). `null` = sem efeito: ack de mensagem do PACIENTE
+ * (`fromMe: false`), status do WhatsApp (`status@broadcast`), status
+ * desconhecido ou `PENDING`.
+ */
+export function evolutionAckOf(data: unknown): EvolutionAck | null {
+  const record = asRecord(data);
+  if (!record) return null;
+  const key = asRecord(record.key);
+  if ((record.fromMe ?? key?.fromMe) === false) return null;
+  const remoteJid = asNonEmptyString(record.remoteJid) ?? asNonEmptyString(key?.remoteJid);
+  if (remoteJid === 'status@broadcast') return null;
+  const externalId = asNonEmptyString(record.keyId) ?? asNonEmptyString(key?.id);
+  const raw = record.status;
+  const code = typeof raw === 'number' ? String(raw) : typeof raw === 'string' ? raw.toUpperCase() : null;
+  const status = code !== null ? EVOLUTION_ACK_STATUS[code] : undefined;
+  return externalId && status ? { externalId, status } : null;
+}
+
+export interface EvolutionPresence {
+  phone: string;
+  presence: PatientPresence;
+  lastSeenAt: string | null;
+}
+
+const BAILEYS_PRESENCE: Readonly<Record<string, PatientPresence>> = {
+  composing: 'typing',
+  recording: 'recording',
+  available: 'online',
+  paused: 'online',
+  unavailable: 'offline',
+};
+
+/**
+ * `data` do `PRESENCE_UPDATE` — o payload cru do Baileys:
+ * `{ id: '<jid>', presences: { '<jid>': { lastKnownPresence, lastSeen? } } }`
+ * (D-226 item 2). So `@s.whatsapp.net`: grupo e `@lid` nao dao telefone.
+ * `lastSeen` vem em segundos; so vale com `offline`.
+ */
+export function evolutionPresenceOf(data: unknown): EvolutionPresence | null {
+  const record = asRecord(data);
+  const jid = record ? asNonEmptyString(record.id) : null;
+  if (!record || !jid || !jid.endsWith('@s.whatsapp.net')) return null;
+  const presences = asRecord(record.presences);
+  const entry = asRecord(presences?.[jid]) ?? asRecord(Object.values(presences ?? {})[0]);
+  const raw = entry ? asNonEmptyString(entry.lastKnownPresence) : null;
+  const presence = raw ? BAILEYS_PRESENCE[raw] : undefined;
+  const phone = phoneFromJid(jid);
+  if (!presence || !phone) return null;
+  const lastSeen = entry?.lastSeen;
+  const lastSeenAt =
+    presence === 'offline' && typeof lastSeen === 'number' && Number.isFinite(lastSeen) && lastSeen > 0
+      ? new Date(lastSeen * 1000).toISOString()
+      : null;
+  return { phone, presence, lastSeenAt };
+}
+
 function instanceClaimMatches(body: Record<string, unknown> | null, tenantId: string): boolean {
   const instanceClaim = body ? asNonEmptyString(body.instance) : null;
   return instanceClaim === evolutionInstanceName(tenantId);
@@ -824,12 +1077,13 @@ async function ingestEvolutionMessage(
       ? services.messages.createFromPhone(
           tenantId,
           conversation.id,
-          { ...dto, externalId: inbound.externalId },
+          { ...dto, externalId: inbound.externalId, quotedExternalId: inbound.quotedExternalId },
           { echoChecked: true },
         )
       : services.messages.createFromPatient(tenantId, conversation.id, {
           ...dto,
           externalId: inbound.externalId,
+          quotedExternalId: inbound.quotedExternalId,
         });
 
   if (!inbound.media) {
@@ -884,16 +1138,24 @@ export function evolutionInbound(
     const body = asRecord(req.body);
     const event = normalizeEvolutionEvent(body ? asNonEmptyString(body.event) : null);
 
-    if (
-      (event === 'MESSAGES_UPSERT' || event === 'CONNECTION_UPDATE') &&
-      !instanceClaimMatches(body, tenantId)
-    ) {
+    if (event !== null && INSTANCE_CHECKED_EVENTS.has(event) && !instanceClaimMatches(body, tenantId)) {
       logger.warn('evolution.webhook_instance_mismatch', { tenantId, event });
       acknowledge(res);
       return;
     }
 
-    if (event === 'MESSAGES_UPSERT') {
+    const upsertAction = event === 'MESSAGES_UPSERT' ? evolutionUpsertActionOf(body?.data) : null;
+
+    if (upsertAction) {
+      // Reacao/apagar/editar embrulhados num upsert (CRMLAB-66): nao e mensagem nova.
+      await applyEvolutionAction(services, tenantId, upsertAction);
+    } else if (event === 'MESSAGES_EDITED' || event === 'MESSAGES_DELETE') {
+      const action =
+        event === 'MESSAGES_EDITED'
+          ? evolutionEditedActionOf(body?.data)
+          : evolutionDeleteActionOf(body?.data);
+      if (action) await applyEvolutionAction(services, tenantId, action);
+    } else if (event === 'MESSAGES_UPSERT') {
       const parsed = evolutionInboundOf(body?.data);
       if (!parsed.ok) {
         // Este log e a UNICA prova de que a mensagem existiu. Sem ele (o
@@ -918,6 +1180,25 @@ export function evolutionInbound(
             reason: err instanceof Error ? err.message : String(err),
           });
         }
+      }
+    } else if (event === 'MESSAGES_UPDATE') {
+      // Tique (D-225). O gateway pode mandar um lote (array) ou um item.
+      const data: unknown = body?.data;
+      const items: unknown[] = Array.isArray(data) ? data : [data];
+      for (const item of items) {
+        const ack = evolutionAckOf(item);
+        if (ack) await services.messages.applyExternalStatus(tenantId, ack.externalId, ack.status);
+      }
+    } else if (event === 'PRESENCE_UPDATE') {
+      // Presenca (D-226): so WS, nada gravado.
+      const presence = evolutionPresenceOf(body?.data);
+      if (presence) {
+        await services.messages.emitPatientPresence(
+          tenantId,
+          presence.phone,
+          presence.presence,
+          presence.lastSeenAt,
+        );
       }
     } else if (event === 'CONNECTION_UPDATE') {
       await applyEvolutionConnectionUpdate(db, tenantId, body?.data, wsHub);

@@ -206,7 +206,8 @@ describe('1º reingajamento', () => {
     const { conversation } = await silence(brt('2026-09-28T10:00'));
     await service.runForTenant(tenant.id, brt('2026-09-28T11:00'));
     const page = await new MessageRepository(db).listByConversation(tenant.id, conversation.id, { page: 1, limit: 50 });
-    const last = page.rows[page.rows.length - 1];
+    expect(page).not.toBeNull();
+    const last = page!.rows[page!.rows.length - 1];
     expect(last).toEqual(expect.objectContaining({ senderType: 'agent', senderId: null, senderName: 'Mensagem automática' }));
   });
 

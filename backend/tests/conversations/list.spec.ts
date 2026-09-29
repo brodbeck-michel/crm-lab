@@ -47,7 +47,7 @@ describe('GET /conversations', () => {
 
     expect(Object.keys(response.body).sort()).toEqual(['conversations', 'counts', 'pagination']);
     expect(response.body.pagination).toEqual({ page: 1, limit: 20, total: 1, totalPages: 1 });
-    expect(response.body.counts).toEqual({ mine: 1, unassigned: 0 });
+    expect(response.body.counts).toEqual({ mine: 1, unassigned: 0, unread: 0 });
 
     const item = response.body.conversations[0];
     expect(Object.keys(item).sort()).toEqual([
@@ -104,7 +104,7 @@ describe('GET /conversations', () => {
     const response = await app.agent.get('/api/v1/conversations').set(app.auth(gestor)).expect(200);
     expect(response.body.pagination.total).toBe(3);
     // O gestor nao "possui" nenhuma: o chip "Minhas" reflete isso.
-    expect(response.body.counts).toEqual({ mine: 0, unassigned: 1 });
+    expect(response.body.counts).toEqual({ mine: 0, unassigned: 1, unread: 0 });
   });
 
   it('counts.mine e counts.unassigned batem com a listagem filtrada por escopo', async () => {
@@ -117,7 +117,7 @@ describe('GET /conversations', () => {
     await createConversation({ tenantId: tenant.id, assignedTo: null });
 
     const todas = await app.agent.get('/api/v1/conversations').set(app.auth(ana)).expect(200);
-    expect(todas.body.counts).toEqual({ mine: 2, unassigned: 3 });
+    expect(todas.body.counts).toEqual({ mine: 2, unassigned: 3, unread: 0 });
 
     const minhas = await app.agent
       .get('/api/v1/conversations?scope=mine')
@@ -126,7 +126,7 @@ describe('GET /conversations', () => {
     expect(minhas.body.conversations).toHaveLength(minhas.body.counts.mine);
     expect(minhas.body.pagination.total).toBe(2);
     // O chip nao clicado continua mostrando o proprio numero.
-    expect(minhas.body.counts).toEqual({ mine: 2, unassigned: 3 });
+    expect(minhas.body.counts).toEqual({ mine: 2, unassigned: 3, unread: 0 });
 
     const livres = await app.agent
       .get('/api/v1/conversations?scope=unassigned')
@@ -239,7 +239,7 @@ describe('GET /conversations — isolamento multitenant (bloqueante)', () => {
       .set(app.auth(gestorAlfa))
       .expect(200);
     expect(porNome.body.conversations).toEqual([]);
-    expect(porNome.body.counts).toEqual({ mine: 0, unassigned: 0 });
+    expect(porNome.body.counts).toEqual({ mine: 0, unassigned: 0, unread: 0 });
 
     const porTelefone = await app.agent
       .get('/api/v1/conversations?search=987654321')
@@ -303,6 +303,7 @@ describe('GET /conversations/:id', () => {
 
     expect(Object.keys(response.body).sort()).toEqual([
       'conversation',
+      'cursors',
       'messages',
       'pagination',
     ]);
@@ -316,8 +317,14 @@ describe('GET /conversations/:id', () => {
       'content',
       'conversationId',
       'createdAt',
+      // CRMLAB-66 (D-220/D-221/D-222)
+      'deletedAt',
+      'editedAt',
       'id',
       'messageType',
+      'quoted',
+      'quotedMessageId',
+      'reactions',
       'readAt',
       'senderId',
       'senderName',

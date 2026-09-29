@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { cn } from '@/components/ui';
+import { useNewMessageAlerts } from '@/hooks/useNewMessageAlerts';
 import { applyTheme } from '@/lib/theme';
 import { useAuthStore, useUIStore } from '@/stores';
 import { PLATFORM_THEME } from '@/routes/platform-theme';
@@ -35,8 +36,13 @@ function GlobalModals() {
  *
  * A área de conteúdo é `min-w-0`: sem isso, uma tabela larga dentro dela
  * empurraria a sidebar (bug clássico de flex).
+ *
+ * Aviso de mensagem nova (CRMLAB-72, D-241 item 5): montado AQUI, e não só no
+ * Atendimento, para avisar em qualquer tela do laboratório — como o WhatsApp
+ * Web, que avisa enquanto a aba estiver aberta.
  */
 export function AppShell() {
+  useNewMessageAlerts();
   return (
     <div className="flex min-h-screen w-full bg-bg font-body text-body text-text">
       <Sidebar />

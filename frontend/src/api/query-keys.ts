@@ -17,6 +17,7 @@ import type {
   OperationOverviewQuery,
   PaginationQuery,
   PendingLisBudgetsSummaryQuery,
+  SearchMessagesQuery,
   SalesSummaryQuery,
 } from '@crm-lab/shared';
 import type { ExecutiveReportQuery } from './reports';
@@ -41,6 +42,13 @@ export const queryKeys = {
   conversations: (filters?: ListConversationsQuery) => ['conversations', filters ?? {}] as const,
   /** ['conversation', id] */
   conversation: (id: string) => ['conversation', id] as const,
+  /**
+   * ['message-search', params] — busca nas mensagens (D-228), global ou de uma
+   * conversa. Escopo próprio de propósito: o WS invalida `conversations` e
+   * `conversation` a cada mensagem, e a busca não precisa refazer a cada uma.
+   */
+  messageSearch: (params: SearchMessagesQuery & { conversationId?: string }) =>
+    ['message-search', params] as const,
 
   /** ['patients', filters] — busca de pacientes (`GET /patients`, §2c) */
   patients: (filters?: ListPatientsQuery) => ['patients', filters ?? {}] as const,

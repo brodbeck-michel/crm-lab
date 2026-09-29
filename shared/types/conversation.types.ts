@@ -247,6 +247,16 @@ export interface StartWhatsAppConversationResponse {
 }
 
 /**
+ * `POST /conversations/whatsapp/open` (CRMLAB-70, D-236) — "Conversar" do
+ * cartao de contato: abre a conversa que JA existe com o numero, sem enviar
+ * nada. Numero sem conversa -> 404 (a tela cai na Nova conversa). Resposta:
+ * `ConversationDetail` cru.
+ */
+export interface OpenWhatsAppConversationRequest {
+  phone: string;
+}
+
+/**
  * Telefone brasileiro digitado -> E.164 (`+55` + DDD + numero), ou `null`
  * quando nao e um numero BR valido (D-175). Fonte unica: o formulario do front
  * e o zod do backend chamam ESTA funcao, entao "valido na tela" e "valido na

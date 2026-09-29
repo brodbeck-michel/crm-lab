@@ -191,16 +191,19 @@ Anatomia (padrão WhatsApp):
 ```
 - **VideoMessage:** miniatura (`media.thumbnail`, JPEG em `data:` — a CSP já libera `img-src data:`;
   sem miniatura, fundo neutro) com ▶ e a duração. O arquivo só é baixado **no clique** e toca ali
-  mesmo (`<video controls autoplay>`) — nunca no `ImageLightbox`
+  mesmo (`<video controls autoplay>`) — nunca no `ImageLightbox`. Formato que o navegador não toca
+  (`.mov`/HEVC no Chrome): aviso + "Baixar vídeo"
 - **DocumentCard:** ícone pelo tipo (PDF, Word, Excel, PowerPoint, texto/CSV, genérico), nome,
   tamanho (`formatBytes`) e "N páginas" no PDF quando vier. Clique abre (PDF) ou baixa — o blob
   autenticado só é buscado no clique (revisão do PR #43)
 - **StickerMessage:** 120×120 `object-contain`, sem lightbox
 - **LocationCard:** 📍 nome/endereço + "Abrir no mapa" (Google Maps `?api=1&query=lat,lng`, nova
   aba). Sem mapa estático (CSP, CRMLAB-32)
-- **ContactCard:** nome + telefone por contato; "Conversar" abre `NewConversationModal`
-  (`pages/Attendance/`) com `initialPhone` e, ao iniciar, navega para
-  `/attendance?conversationId=`. Sem telefone, sem botão
+- **ContactCard:** nome + telefone por contato; "Conversar" chama
+  `POST /conversations/whatsapp/open`: conversa existente abre direto (navega para
+  `/attendance?conversationId=`, encerrada reabre para quem clicou); `404` abre
+  `NewConversationModal` (`pages/Attendance/`) com `initialPhone`; `409` (de outra atendente) vira
+  toast com o nome. Telefone fora do padrão BR vai direto ao modal. Sem telefone, sem botão
 
 ### Composer
 - Input pílula + botão anexo + botão emoji + botão microfone + botão enviar (primary)

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
@@ -15,6 +15,7 @@ import type * as ApiModule from '@/api';
  */
 const fetchAuthenticatedBlobMock = vi.fn();
 const startWhatsAppMock = vi.fn();
+const openWhatsAppMock = vi.fn();
 vi.mock('@/api', async (importOriginal) => {
   const actual = await importOriginal<typeof ApiModule>();
   return {
@@ -22,7 +23,11 @@ vi.mock('@/api', async (importOriginal) => {
     fetchAuthenticatedBlob: fetchAuthenticatedBlobMock,
     api: {
       ...actual.api,
-      conversations: { ...actual.api.conversations, startWhatsApp: startWhatsAppMock },
+      conversations: {
+        ...actual.api.conversations,
+        startWhatsApp: startWhatsAppMock,
+        openWhatsApp: openWhatsAppMock,
+      },
     },
   };
 });
@@ -34,10 +39,12 @@ const { documentKindLabel } = await import('./DocumentCard');
 const { googleMapsUrl } = await import('./LocationCard');
 const { formatContactPhone } = await import('./ContactCard');
 const { ToastProvider } = await import('@/components/ui');
+const { ApiError } = await import('@/api');
 
 beforeEach(() => {
   fetchAuthenticatedBlobMock.mockReset();
   startWhatsAppMock.mockReset();
+  openWhatsAppMock.mockReset();
   URL.createObjectURL = vi.fn(() => 'blob:mock');
   URL.revokeObjectURL = vi.fn();
 });
@@ -142,6 +149,28 @@ describe('vídeo (D-236 item 2)', () => {
     const play = screen.getByRole('button', { name: 'Reproduzir vídeo' });
     expect(play.querySelector('img')).toBeNull();
     expect(screen.getByText('Veja como coletar')).toBeInTheDocument();
+  });
+
+  it('formato que o navegador não toca (.mov no Chrome): aviso + baixar', async () => {
+    const user = userEvent.setup();
+    fetchAuthenticatedBlobMock.mockResolvedValue({
+      blob: new Blob(['mov'], { type: 'video/quicktime' }),
+      fileName: 'IMG_0001.MOV',
+    });
+    render(
+      <MessageBubble
+        type="received"
+        message={message({
+          messageType: 'video',
+          attachmentUrl: '/api/v1/media/vid-mov',
+          media: media({ fileName: 'IMG_0001.MOV', mimeType: 'video/quicktime' }),
+        })}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: 'Reproduzir vídeo' }));
+    fireEvent.error(await screen.findByTestId('video-player'));
+    expect(screen.getByText(/não reproduz o formato deste vídeo/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Baixar vídeo' })).toHaveAttribute('download', 'IMG_0001.MOV');
   });
 
   it('erro ao baixar o vídeo avisa em vez de player quebrado', async () => {
@@ -335,37 +364,59 @@ describe('localização (D-236 item 6)', () => {
 });
 
 describe('contato (D-236 item 7)', () => {
-  it('mostra nome e telefone; "Conversar" abre a Nova conversa com o número e navega', async () => {
-    const user = userEvent.setup();
-    startWhatsAppMock.mockResolvedValue({
-      conversation: { id: 'c-novo' },
-      message: message({ id: 'm-novo', conversationId: 'c-novo' }),
-    });
-    render(
-      withProviders(
-        <MessageBubble
-          type="received"
-          message={message({
-            messageType: 'contact',
-            content: '👤 Dr. Silva e mais 1',
-            contacts: [
-              { name: 'Dr. Silva', phone: '+5548988887777' },
-              { name: 'Sem Número', phone: null },
-            ],
-          })}
-        />,
-      ),
+  function contactBubble() {
+    return withProviders(
+      <MessageBubble
+        type="received"
+        message={message({
+          messageType: 'contact',
+          content: '👤 Dr. Silva e mais 1',
+          contacts: [
+            { name: 'Dr. Silva', phone: '+5548988887777' },
+            { name: 'Sem Número', phone: null },
+          ],
+        })}
+      />,
     );
+  }
 
+  it('mostra nome e telefone; só quem tem telefone ganha "Conversar"', () => {
+    render(contactBubble());
     const card = screen.getByTestId('contact-card');
     expect(card).toHaveTextContent('Dr. Silva');
     expect(card).toHaveTextContent('(48) 98888-7777');
     expect(card).toHaveTextContent('Sem telefone');
-    // Só quem tem telefone ganha o botão.
     expect(screen.getAllByRole('button', { name: /^Conversar com/ })).toHaveLength(1);
+  });
+
+  it('número que já tem conversa abre direto, sem modal e sem mensagem', async () => {
+    const user = userEvent.setup();
+    openWhatsAppMock.mockResolvedValue({ id: 'c-existente' });
+    render(contactBubble());
 
     await user.click(screen.getByRole('button', { name: 'Conversar com Dr. Silva' }));
-    expect(screen.getByLabelText('Telefone (WhatsApp)')).toHaveValue('+5548988887777');
+
+    await waitFor(() =>
+      expect(screen.getByTestId('location')).toHaveTextContent(
+        '/attendance?conversationId=c-existente',
+      ),
+    );
+    expect(openWhatsAppMock).toHaveBeenCalledWith({ phone: '+5548988887777' });
+    expect(startWhatsAppMock).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Telefone (WhatsApp)')).not.toBeInTheDocument();
+  });
+
+  it('número sem conversa (404) cai na Nova conversa com o telefone preenchido', async () => {
+    const user = userEvent.setup();
+    openWhatsAppMock.mockRejectedValue(new ApiError('NOT_FOUND', 'nao encontrada', 404));
+    startWhatsAppMock.mockResolvedValue({
+      conversation: { id: 'c-novo' },
+      message: message({ id: 'm-novo', conversationId: 'c-novo' }),
+    });
+    render(contactBubble());
+
+    await user.click(screen.getByRole('button', { name: 'Conversar com Dr. Silva' }));
+    expect(await screen.findByLabelText('Telefone (WhatsApp)')).toHaveValue('+5548988887777');
     await user.type(screen.getByLabelText('Mensagem'), 'Olá, doutor!');
     await user.click(screen.getByRole('button', { name: 'Enviar' }));
 
@@ -378,6 +429,25 @@ describe('contato (D-236 item 7)', () => {
     await waitFor(() =>
       expect(screen.getByTestId('location')).toHaveTextContent('/attendance?conversationId=c-novo'),
     );
+  });
+
+  it('conversa de outra atendente (409): avisa com o nome e não navega', async () => {
+    const user = userEvent.setup();
+    openWhatsAppMock.mockRejectedValue(
+      new ApiError('CONVERSATION_ALREADY_ASSIGNED', 'ja atribuida', 409, {
+        assignedTo: 'u-2',
+        assignedToName: 'Bia',
+      }),
+    );
+    render(contactBubble());
+
+    await user.click(screen.getByRole('button', { name: 'Conversar com Dr. Silva' }));
+    expect(
+      await screen.findByText('Este número já está em atendimento com Bia.'),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('location')).toHaveTextContent('/attendance');
+    expect(screen.getByTestId('location')).not.toHaveTextContent('conversationId');
+    expect(screen.queryByLabelText('Telefone (WhatsApp)')).not.toBeInTheDocument();
   });
 
   it('formatContactPhone', () => {

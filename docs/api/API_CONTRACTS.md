@@ -773,6 +773,33 @@ credencial ou desligado: a conversa **fica criada** e a mensagem gravada como `f
 `POST /conversations/:id/messages`; `conversationId` existe para a tela abrir a conversa mesmo
 assim), `FORBIDDEN` (403, `platform_operator`).
 
+### POST /conversations/whatsapp/open (CRMLAB-70, D-236)
+Botão **"Conversar"** do cartão de contato compartilhado: **abre a conversa que já existe** com o
+número, **sem enviar mensagem**. Número sem conversa → `404`, e a tela cai na Nova conversa
+(`POST /conversations/whatsapp`, com o telefone preenchido).
+
+**Request** (`OpenWhatsAppConversationRequest`): `{ "phone": "+5548988887777" }` — mesma validação
+de `phone` do `POST /conversations/whatsapp` (`normalizeBrazilianPhone`, máx. 20).
+
+**Comportamento:**
+- Acha pelo **mesmo** casamento de telefone de `findOrCreateByPhone` (dígitos, com e sem o nono
+  dígito — D-176), **só neste laboratório** (RLS). **Não cria** conversa nem paciente.
+- Conversa **encerrada** → reabre atribuída a quem clicou, com "Atendimento reaberto por <nome>"
+  e audit `update_conversation_status` — o mesmo que `POST /conversations` e
+  `POST /conversations/whatsapp` já fazem com número encerrado (D-174).
+- Conversa **ativa de outro atendente** (fora do recorte de quem pede) →
+  `CONVERSATION_ALREADY_ASSIGNED` (409), como na Nova conversa. Fila livre e a própria abrem
+  **sem mudar de dona** (não há resposta, então o D-215 não se aplica).
+- Não muda o canal da conversa (`direct`/`web`/`sms` continuam; quem troca é o envio).
+
+**Response (200):** `ConversationDetail` (objeto cru, o mesmo shape de `GET /conversations/:id`
+sem as mensagens).
+
+**Erros:** `VALIDATION_ERROR` (400 — `details.fields.phone`), `NOT_FOUND` (404,
+`resource: "conversation"` — o número não tem conversa neste laboratório),
+`CONVERSATION_ALREADY_ASSIGNED` (409, `details: { assignedTo, assignedToName }`), `FORBIDDEN`
+(403, `platform_operator`).
+
 ### GET /conversations/:id
 Detalhes de uma conversa + histórico de mensagens.
 
@@ -1065,8 +1092,11 @@ resto → `doc`) — o cliente não escolhe.
 recado de voz — e não por `/message/sendMedia`. O request e a resposta deste endpoint não mudam.
 
 **Vídeo (CRMLAB-69, D-231):** `video/*` sai no `/message/sendMedia` com `mediatype: "video"`
-(antes ia como `document`). Desde o CRMLAB-70 (D-234) o `messageType` gravado é `video`; a
-allow-list continua aceitando só `video/mp4` como vídeo, com o teto de 15 MiB.
+(antes ia como `document`). Desde o CRMLAB-70 (D-234) o `messageType` gravado é `video`. A
+allow-list aceita `video/mp4`, `video/quicktime` (.mov do iPhone), `video/3gpp` e `video/webm`,
+com o mesmo teto de 15 MiB. **Só MP4 e 3GP saem como `mediatype: "video"`**; `.mov` e WebM saem
+como `document` (o gateway não converte vídeo e o WhatsApp do paciente não garante tocar esses
+contêineres — D-234 item 8). No CRM os quatro ficam `video`.
 
 **Response (201):** o mesmo shape de `POST /conversations/:id/messages`, com
 `attachmentUrl` apontando para `GET /media/:id` (nunca uma URL pública):

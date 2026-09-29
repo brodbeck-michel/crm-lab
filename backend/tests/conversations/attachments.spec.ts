@@ -122,6 +122,27 @@ describe('POST /conversations/:id/attachments', () => {
     });
   });
 
+  it('.mov do iPhone (video/quicktime) é aceito e vira mensagem de vídeo (CRMLAB-70, D-234 item 8)', async () => {
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Ana' });
+    const conversation = await createConversation({ tenantId: tenant.id, assignedTo: ana.id });
+    // Cabeçalho `ftyp qt  ` de QuickTime: o sniff reconhece como vídeo.
+    const mov = Buffer.concat([
+      Buffer.from([0x00, 0x00, 0x00, 0x14]),
+      Buffer.from('ftypqt  '),
+      Buffer.from([0x00, 0x00, 0x00, 0x00]),
+      Buffer.from('qt  '),
+      Buffer.alloc(64),
+    ]);
+    const created = await app.agent
+      .post(`/api/v1/conversations/${conversation.id}/attachments`)
+      .set(app.auth(ana))
+      .send({ fileName: 'IMG_0001.MOV', mimeType: 'video/quicktime', contentBase64: mov.toString('base64') })
+      .expect(201);
+    expect(created.body.messageType).toBe('video');
+    expect(created.body.media?.mimeType).toBe('video/quicktime');
+  });
+
   it('arquivo acima do teto é MEDIA_TOO_LARGE e não grava mensagem', async () => {
     const tenant = await createTenant();
     const ana = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Ana' });

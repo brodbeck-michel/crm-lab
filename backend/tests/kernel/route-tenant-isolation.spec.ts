@@ -230,6 +230,16 @@ const LAB_ROUTES: readonly LabRoute[] = [
     actor: 'attendant',
     addressable: false,
   },
+  // CRMLAB-70 (D-236): acha por telefone — o isolamento por tenant tem teste proprio em
+  // `tests/conversations/open-whatsapp.spec.ts` (numero de outro laboratorio -> 404).
+  {
+    name: 'POST /conversations/whatsapp/open',
+    method: 'post',
+    path: () => '/api/v1/conversations/whatsapp/open',
+    body: () => ({ phone: '(48) 98888-6666' }),
+    actor: 'attendant',
+    addressable: false,
+  },
   { name: 'GET /conversations/assignees', method: 'get', path: () => '/api/v1/conversations/assignees', actor: 'attendant', addressable: false },
   // CRMLAB-68 (D-228): o `q` vai no caminho — sem ele a rota responde 400, nao 404.
   { name: 'GET /conversations/search/messages', method: 'get', path: () => '/api/v1/conversations/search/messages?q=sonda', actor: 'attendant', addressable: false },
@@ -990,7 +1000,7 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 79 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 82 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
@@ -1013,8 +1023,8 @@ describe('inventario de rotas de laboratorio', () => {
     // CRMLAB-67/D-227 soma 2: `POST /conversations/:id/messages/:messageId/retry` e
     // `POST /conversations/:id/presence`. CRMLAB-68/D-228/D-229 soma 3:
     // `GET /conversations/search/messages`, `GET /conversations/:id/messages` (busca) e
-    // `POST /conversations/:id/unread`.
-    expect(LAB_ROUTES).toHaveLength(81);
+    // `POST /conversations/:id/unread`. CRMLAB-70/D-236 soma 1: `POST /conversations/whatsapp/open`.
+    expect(LAB_ROUTES).toHaveLength(82);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

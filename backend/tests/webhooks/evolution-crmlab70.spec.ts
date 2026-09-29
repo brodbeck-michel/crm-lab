@@ -168,9 +168,22 @@ describe('mídia com metadados (D-235 itens 1–3)', () => {
     expect(message.media?.thumbnail).toBeNull();
   });
 
+  it.each([
+    ['video/3gpp', '3GP de celular antigo'],
+    ['video/quicktime', '.mov do iPhone'],
+    ['video/webm', 'WebM'],
+  ])('%s (%s) vira video (D-234 item 8)', async (mimetype) => {
+    await upsert({
+      videoMessage: { mimetype, base64: Buffer.from('conteudo de video').toString('base64') },
+    });
+    const message = await lastMessage();
+    expect(message.messageType).toBe('video');
+    expect(message.media?.mimeType).toBe(mimetype);
+  });
+
   it('vídeo com MIME fora da allow-list continua doc (tipo sai do MIME gravado)', async () => {
     await upsert({
-      videoMessage: { mimetype: 'video/3gpp', base64: Buffer.from('3gp').toString('base64') },
+      videoMessage: { mimetype: 'video/x-msvideo', base64: Buffer.from('avi').toString('base64') },
     });
     const message = await lastMessage();
     expect(message.messageType).toBe('doc');

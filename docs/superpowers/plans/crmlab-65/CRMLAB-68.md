@@ -14,10 +14,14 @@ Faixas: decisões D-228…D-230 · migração 043.
       chaves; COMPONENTS (`ConversationItem.onMarkUnread`, `ConversationSearch`,
       `MessageResults`, `lib/search-snippet.ts`); tipos em `shared/types/conversation.types.ts`.
 
+- [x] Migração 043 (`crm_unaccent` + `idx_messages_content_search` parcial).
+- [x] Backend: `MessageRepository.search`/`toSearchTsQuery`/`after`/`around`/`hasNewer`,
+      `ConversationRepository.markAsUnread` + `unread` na lista + `counts.unread`,
+      `ConversationService.searchMessages`/`markAsUnread`, `MessageService.search`, rotas
+      `GET /search/messages`, `GET /:id/messages`, `POST /:id/unread`. Typecheck verde.
+
 ### Próximo passo exato
-1. Migração `backend/migrations/043_message_search.sql`.
-2. Backend: repositório (`search`, `after`/`around`, `markAsUnread`, `unread` na lista) →
-   services → rotas → inventário `route-tenant-isolation.spec.ts` (+3 rotas) → specs.
+1. Inventário `route-tenant-isolation.spec.ts` (+3 rotas) → specs de backend.
 3. Frontend: `lib/search-snippet.ts`, queries/scroll/panel/lista/item/busca + specs.
 
 ## Critérios de aceite (do card)

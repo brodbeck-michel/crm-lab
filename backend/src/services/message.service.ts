@@ -56,6 +56,7 @@ import type {
   MessageStatus,
   MessageType,
   MessageCursors,
+  MessageSearchHit,
   PaginationMeta,
 } from '@crm-lab/shared';
 import type { ApiModuleDeps } from '../http/api-module.js';
@@ -63,7 +64,11 @@ import { BusinessError, notFound } from '../http/errors.js';
 import { logger } from '../lib/logger.js';
 import type { WsHub } from '../lib/ws-hub.js';
 import { ConversationRepository } from '../repositories/conversation.repository.js';
-import { MessageRepository, type MessageRef } from '../repositories/message.repository.js';
+import {
+  MessageRepository,
+  type MessageRef,
+  type MessageSearchCriteria,
+} from '../repositories/message.repository.js';
 import { isUniqueViolation } from '../repositories/quick-reply.repository.js';
 import { createAuditService, type AuditService } from './audit.service.js';
 import {
@@ -105,8 +110,12 @@ export const MAX_MESSAGE_LIMIT = 100;
 export interface MessagePagination {
   page?: number;
   limit?: number;
-  /** Cursor (D-237) — excludente com `page` (o controller valida). */
+  /** Cursor (D-237) — excludente com `page`, `after` e `around` (o controller valida). */
   before?: string;
+  /** Cursor (D-230): as mais novas que a mensagem. */
+  after?: string;
+  /** Cursor (D-230): a janela em volta da mensagem. */
+  around?: string;
 }
 
 export interface ListMessagesResult {
@@ -195,16 +204,24 @@ export class MessageService {
     const exists = await this.conversations.exists(tenantId, conversationId);
     if (!exists) throw notFound({ resource: 'conversation', id: conversationId });
 
-    // Com cursor, `page` nao se aplica: volta 1 (D-237 item 5).
+    // Com cursor, `page` nao se aplica: volta 1 (D-237 item 5). Um cursor so:
+    // o controller ja recusou dois juntos (D-230 item 1).
+    const cursor = page.before ?? page.after ?? page.around;
     const criteria = {
-      page: page.before !== undefined ? DEFAULT_MESSAGE_PAGE : clampPage(page.page),
+      page: cursor !== undefined ? DEFAULT_MESSAGE_PAGE : clampPage(page.page),
       limit: clampLimit(page.limit),
-      ...(page.before !== undefined ? { before: page.before } : {}),
+      ...(page.before !== undefined
+        ? { before: page.before }
+        : page.after !== undefined
+          ? { after: page.after }
+          : page.around !== undefined
+            ? { around: page.around }
+            : {}),
     };
     const result = await this.messages.listByConversation(tenantId, conversationId, criteria);
     // Cursor de outra conversa/tenant ou inexistente: 404, nunca lista vazia —
     // a tela leria "fim do historico" (D-237 item 3).
-    if (!result) throw notFound({ resource: 'message', id: page.before });
+    if (!result) throw notFound({ resource: 'message', id: cursor });
 
     return {
       messages: result.rows,
@@ -216,7 +233,27 @@ export class MessageService {
       },
       cursors: {
         before: result.hasOlder ? (result.rows[0]?.id ?? null) : null,
-        after: null,
+        after: result.hasNewer ? (result.rows.at(-1)?.id ?? null) : null,
+      },
+    };
+  }
+
+  /**
+   * Busca pelo conteudo (D-228). O recorte por papel (`visibleTo`) chega pronto
+   * do `ConversationService`, que e quem sabe quem esta perguntando.
+   */
+  async search(
+    tenantId: string,
+    criteria: MessageSearchCriteria,
+  ): Promise<{ results: MessageSearchHit[]; pagination: PaginationMeta }> {
+    const found = await this.messages.search(tenantId, criteria);
+    return {
+      results: found.rows,
+      pagination: {
+        page: criteria.page,
+        limit: criteria.limit,
+        total: found.total,
+        totalPages: found.total === 0 ? 0 : Math.ceil(found.total / criteria.limit),
       },
     };
   }

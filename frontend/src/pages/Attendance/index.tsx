@@ -215,6 +215,25 @@ export function Attendance() {
     onError: handleApiError,
   });
 
+  /**
+   * "Tentar de novo" (CRMLAB-67, D-227): reenvia a mesma mensagem. Falhou de
+   * novo → `handleApiError` avisa; nos dois casos a conversa é refeita.
+   */
+  const retryMessage = useMutation({
+    mutationFn: (messageId: string) => api.conversations.retryMessage(selectedId as string, messageId),
+    onSettled: invalidateConversation,
+    onError: handleApiError,
+  });
+
+  /** Presença da atendente (D-226/D-227): best-effort, erro não incomoda ninguém. */
+  const sendPresence = useCallback(
+    (presence: 'paused' | 'composing') => {
+      if (!selectedId) return;
+      api.conversations.sendPresence(selectedId, { presence }).catch(() => undefined);
+    },
+    [selectedId],
+  );
+
   /** Anexo (Onda 8 §4.3) — o clipe abre o seletor de arquivo do SO. */
   const fileInputRef = useRef<HTMLInputElement>(null);
   /** Citação escolhida quando o clipe foi clicado (CRMLAB-66) — o arquivo chega depois. */
@@ -385,6 +404,8 @@ export function Attendance() {
                 })
             }
             onReact={(messageId, emoji) => react.mutate({ messageId, emoji })}
+            onRetryMessage={(messageId) => retryMessage.mutate(messageId)}
+            onPresence={sendPresence}
             onQuoteUnavailable={() =>
               toast('A mensagem original não está carregada — role para cima para vê-la.', {
                 tone: 'attention',

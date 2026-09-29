@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { QUICK_REACTIONS } from '@crm-lab/shared';
-import type { Message, MessageType, QuotedMessageSummary, SenderType } from '@crm-lab/shared';
+import type {
+  Message,
+  MessageStatus,
+  MessageType,
+  QuotedMessageSummary,
+  SenderType,
+} from '@crm-lab/shared';
 import { cn } from '@/components/ui';
 import { fetchAuthenticatedBlob, resolveMediaUrl } from '@/api';
 import { useAuthenticatedMedia } from '@/hooks';
@@ -82,6 +88,36 @@ export interface MessageBubbleProps {
   onReact?: (message: Message, emoji: string | null) => void;
   /** Clique no bloco citado — o painel rola até a original (D-221). */
   onQuoteClick?: (quotedMessageId: string) => void;
+  /** "Tentar de novo" de mensagem `failed` (D-227). Sem handler, o botão some. */
+  onRetry?: (message: Message) => void;
+}
+
+/** Tique por status (D-225) — glifo, nome acessível e cor (só tokens). */
+const STATUS_TICK: Record<MessageStatus, { glyph: string; label: string; className: string }> = {
+  pending: { glyph: '🕓', label: 'Enviando', className: 'text-neutral-600' },
+  sent: { glyph: '✓', label: 'Enviada', className: 'text-neutral-600' },
+  delivered: { glyph: '✓✓', label: 'Entregue', className: 'text-neutral-600' },
+  read: { glyph: '✓✓', label: 'Lida', className: 'text-chat-tick-read' },
+  failed: { glyph: '⚠', label: 'Falhou', className: 'text-accent-700' },
+};
+
+/** O tique da linha da hora — só no balão da atendente (padrão WhatsApp). */
+export function MessageStatusTick({ status }: { status: MessageStatus }) {
+  // Status fora do contrato (fixture antiga, versão nova do servidor): sem tique.
+  const tick = (STATUS_TICK as Partial<typeof STATUS_TICK>)[status];
+  if (!tick) return null;
+  return (
+    <span
+      data-testid="message-status"
+      data-status={status}
+      role="img"
+      aria-label={tick.label}
+      title={tick.label}
+      className={cn('font-semibold tracking-normal', tick.className)}
+    >
+      {tick.glyph}
+    </span>
+  );
 }
 
 /** Rótulo do bloco citado quando a citada é mídia sem texto. */
@@ -294,6 +330,7 @@ export function MessageBubble({
   onReply,
   onReact,
   onQuoteClick,
+  onRetry,
 }: MessageBubbleProps) {
   const isSystem = type === 'system';
   // Apagada pelo remetente (D-220): a API já mandou sem conteúdo; o balão só avisa.
@@ -474,6 +511,26 @@ export function MessageBubble({
           {message.senderName && <span className="truncate">{message.senderName}</span>}
           {message.editedAt && <span data-testid="message-edited">Editada</span>}
           <DateDisplay value={message.createdAt} variant="absolute" />
+          {type === 'sent' && <MessageStatusTick status={message.status} />}
+        </span>
+      )}
+
+      {type === 'sent' && message.status === 'failed' && (
+        <span
+          role="alert"
+          data-testid="message-failed"
+          className="flex flex-wrap items-baseline gap-sm text-caption text-accent-700"
+        >
+          Não foi possível enviar
+          {onRetry && (
+            <button
+              type="button"
+              onClick={() => onRetry(message)}
+              className="font-semibold underline underline-offset-2 hover:text-accent-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            >
+              Tentar de novo
+            </button>
+          )}
         </span>
       )}
 

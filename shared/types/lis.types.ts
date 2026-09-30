@@ -74,7 +74,8 @@ export interface LisIntegrationSettings {
    */
   lastFullScanOn: string | null;
   running: boolean;
-  intervalMinutes: number;
+  /** Intervalo do agendador em segundos (`LIS_SYNC_INTERVAL_MS / 1000`, D-249). `0` = agendador desligado. */
+  intervalSeconds: number;
 }
 
 /**

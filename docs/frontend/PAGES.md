@@ -1270,8 +1270,10 @@ rótulo "Integração LIS", `requiredRoles: MANAGER_PLUS`. Fonte: `GET/PATCH
 /settings/lis-integration` e `POST /settings/lis-integration/sync` (API_CONTRACTS.md §10.3).
 
 - **Cartão "Situação"**, no topo: um `Chip` + texto.
-  - `positive` "Sincronizando a cada {intervalMinutes} min · última às HH:MM", quando `enabled` e
-    `lastError` nulo;
+  - `positive` "Sincronizando a cada {intervalo} · última às HH:MM", quando `enabled` e
+    `lastError` nulo. `intervalSeconds` vira "30 s", ou "N min" quando é minuto cheio (D-249);
+    com `intervalSeconds: 0` (agendador desligado, hml) o chip diz "Ligada · só pelo
+    "Sincronizar agora"";
   - `attention` com o `lastError` em destaque, quando há erro;
   - `inactive` "Desligada", quando `!enabled`.
   Abaixo, "Última sincronização com sucesso: DD/MM HH:MM" e "Dados atualizados até: DD/MM

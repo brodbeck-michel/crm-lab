@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-29 (CRMLAB-75 — responder assume a conversa da fila livre, branch `feature/CRMLAB-75-auto-atribuir-ao-responder`)
+**Última atualização:** 2026-09-30 (CRMLAB-79 — sincronização do LIS a cada 30 s, branch `feature/CRMLAB-79-sync-lis-30s`)
 
 ---
 
@@ -3001,3 +3001,17 @@ Branch `feature/CRMLAB-75-auto-atribuir-ao-responder` (de `main`). Decisão D-21
 - **Testes:** novo `backend/tests/messages/auto-assign.spec.ts` (10 casos, com a corrida), caso
   novo em `proposals/send-from-card.spec.ts`, `start-whatsapp.spec.ts` ajustado; `Composer.spec` e
   `Attendance.spec` com os casos do 409.
+
+### 🚧 CRMLAB-79 — sincronização do LIS a cada 30 s (2026-09-30, aguardando validação)
+
+Branch `feature/CRMLAB-79-sync-lis-30s` (de `main`). Decisão D-249.
+
+- **Intervalo:** `LIS_SYNC_INTERVAL_MS` padrão 30000 (era 120000, D-199).
+- **Rodada sem mudança vazia de verdade:** em `incremental`, marca que não andou descarta a linha
+  repetida da marca. Não grava `lis_imports`, não reprocessa, log `debug`.
+- **Contrato:** `intervalMinutes` → `intervalSeconds`. A tela mostra "a cada 30 s"; com `0`
+  (hml), "Ligada · só pelo "Sincronizar agora"".
+- **Testes:** caso novo em `backend/tests/lis/lis-sync.spec.ts` (marca repetida × marca que anda);
+  `LisIntegration.spec.tsx` (30 s, 2 min, 0).
+- **Pendente:** hml (lá o `.env` fixa `0`); prod não fixa a variável e pega os 30 s. Pedir ao Bitlab um
+  webhook de orçamento criado/alterado (tempo real de verdade).

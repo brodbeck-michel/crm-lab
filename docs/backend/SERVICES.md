@@ -1385,9 +1385,14 @@ ao agendador):
 8. Libera a trava num `finally`.
 
 **Regras:**
-- **Intervalo padrão de 2 min** (`LIS_SYNC_INTERVAL_MS=120000`, D-199). O tique é ignorado
-  inteiro enquanto o anterior ainda roda (`tickInProgress`), além da trava por tenant.
+- **Intervalo padrão de 30 s** (`LIS_SYNC_INTERVAL_MS=30000`, D-249; era 2 min na D-199). O tique
+  é ignorado inteiro enquanto o anterior ainda roda (`tickInProgress`), além da trava por tenant.
   `lis_sync.completed` sai em `info` só quando a rodada recebeu orçamentos; rodada vazia é `debug`.
+- **Marca que não andou = rodada vazia (D-249):** a janela incremental começa **na** marca
+  (inclusiva) e o Bitlab devolve de novo a linha da própria marca. Em `incremental`, se a
+  `marcaDagua` da resposta é igual à gravada, as linhas são descartadas: sem `lis_imports`, sem
+  reprocessar, `received: 0`. Linha gravada pelo Bitlab no mesmo segundo da marca depois da
+  consulta anterior fica para a releitura diária de 90 dias (D-189).
 - `runScheduledTick` roda os tenants **em série**, não em paralelo: é um por laboratório, e
   série não compete com as requisições da tela pelo pool.
 - O tique nunca lança: cada tenant tem o próprio `try/catch`. Um laboratório com erro não impede

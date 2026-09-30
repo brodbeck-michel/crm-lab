@@ -4643,3 +4643,15 @@ bloco citado), `AudioMessage.tsx`, `NewConversationModal.tsx` (`initialPhone`); 
 `POST /conversations/whatsapp/open` (`conversation.routes.ts`, `ConversationService.openWhatsApp`,
 `OpenWhatsAppConversationRequest`, inventário de isolamento 81 → 82); COMPONENTS.md,
 API_CONTRACTS §2.
+
+### D-247: Exames da venda avulsa vêm do catálogo, mas `sales.exams` continua texto (CRMLAB-77)
+**Decisão:** o campo "Exames" do formulário de `/sales` vira um seletor do catálogo (busca por
+nome/sinônimo/código, agrupado por categoria, chips removíveis — PAGES.md §17). O que se grava
+continua sendo `sales.exams` em texto, com os nomes separados por `, `. O valor da venda continua
+digitado pela atendente (total da venda, sem preço por exame).
+**Motivo:** é o formato que o FluxoLab e a carga do Supabase (D-179) já gravaram — as 980 vendas
+migradas e as novas ficam iguais na tabela, sem migração nem mudança de contrato. Guardar os
+`exam_id` (tabela filha) só compensa quando o valor passar a ser a soma dos preços do catálogo,
+que é o passo seguinte combinado com o Michel; até lá, o texto basta para a comissão.
+**Impacto:** `frontend/src/components/sales/ExamPicker.tsx` (novo), `pages/Sales.tsx`;
+PAGES.md §17. Sem backend, sem migração.

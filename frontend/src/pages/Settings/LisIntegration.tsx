@@ -201,10 +201,6 @@ function SyncStatus({ settings }: { settings: LisIntegrationSettings }) {
       <p className="font-body text-caption text-neutral-600">
         Dados atualizados até: {settings.watermark ? formatWatermark(settings.watermark) : 'Nunca'}
       </p>
-      <p className="font-body text-caption text-neutral-600">
-        Última releitura dos 90 dias (pega os estornos, de madrugada):{' '}
-        {settings.lastFullScanOn ? formatIsoDay(settings.lastFullScanOn) : 'Nunca'}
-      </p>
     </section>
   );
 }

@@ -1,5 +1,6 @@
 /**
- * Extrato de pagamentos do LIS e releitura diaria (CRMLAB-53, D-188/D-189).
+ * Extrato de pagamentos do LIS (CRMLAB-53, D-188) e tique sempre incremental
+ * (CRMLAB-80, D-250 — substitui a releitura diaria da D-189).
  *
  * Os casos com numero de orcamento sao os reais que o Bitlab explicou em
  * 28/09/2026 (estorno), com os valores e IDs da consulta feita pela VPS.
@@ -208,7 +209,7 @@ describe('recebido = soma dos pagamentos ativos (D-188)', () => {
   });
 });
 
-describe('releitura diaria (D-189)', () => {
+describe('tique sempre incremental, sem releitura diaria (CRMLAB-80, D-250)', () => {
   class RecordingBitlab implements BitlabClient {
     calls: BitlabBudgetsQuery[] = [];
     watermark = '2026-09-28 10:00:00';
@@ -226,18 +227,21 @@ describe('releitura diaria (D-189)', () => {
   let bitlab: RecordingBitlab;
   let clock: Date;
 
-  beforeEach(async () => {
+  beforeEach(() => {
     resetLisSyncLocksForTest();
     process.env.CHANNEL_SECRET_KEY = 'chave-de-teste-com-mais-de-32-caracteres-000';
     bitlab = new RecordingBitlab();
+  });
+
+  async function configure(watermark: string | null): Promise<void> {
     await db.withoutTenant((tx) =>
       tx.query(
         `INSERT INTO lis_sync_settings (tenant_id, enabled, api_key, watermark)
-         VALUES ($1, true, $2, '2026-09-28 09:00:00')`,
-        [tenant.id, encryptSecret('chave')],
+         VALUES ($1, true, $2, $3)`,
+        [tenant.id, encryptSecret('chave'), watermark],
       ),
     );
-  });
+  }
 
   function service() {
     return createLisSyncServiceFromDeps(
@@ -248,7 +252,7 @@ describe('releitura diaria (D-189)', () => {
 
   async function settings() {
     const result = await db.withoutTenant((tx) =>
-      tx.query<{ watermark: string; last_full_scan_on: string | null }>(
+      tx.query<{ watermark: string | null; last_full_scan_on: string | null }>(
         `SELECT watermark, to_char(last_full_scan_on, 'YYYY-MM-DD') AS last_full_scan_on
            FROM lis_sync_settings WHERE tenant_id = $1`,
         [tenant.id],
@@ -257,41 +261,37 @@ describe('releitura diaria (D-189)', () => {
     return result.rows[0];
   }
 
-  it('antes das 03:00 e incremental; depois, uma releitura de 90 dias por dia', async () => {
+  it('com marca d agua, nenhum tique le 90 dias — nem depois das 03:00, nem no dia seguinte', async () => {
+    await configure('2026-09-28 09:00:00');
+
     clock = new Date('2026-09-28T05:30:00Z'); // 02:30 em Brasilia
     await service().runScheduledTick();
     expect(bitlab.calls.at(-1)?.dataInicio).toBe('2026-09-28 09:00:00');
 
-    clock = new Date('2026-09-28T06:10:00Z'); // 03:10
-    await service().runScheduledTick();
-    expect(bitlab.calls.at(-1)?.dataInicio).toBe('2026-06-30 00:00:00');
-    expect((await settings())?.last_full_scan_on).toBe('2026-09-28');
-
-    clock = new Date('2026-09-28T06:12:00Z'); // proximo tique, mesmo dia
+    clock = new Date('2026-09-28T06:10:00Z'); // 03:10 — antes era a releitura (D-189)
     await service().runScheduledTick();
     expect(bitlab.calls.at(-1)?.dataInicio).toBe('2026-09-28 10:00:00');
-  });
 
-  it('a releitura nao recua a marca', async () => {
-    bitlab.watermark = '2026-07-01 08:00:00';
-    clock = new Date('2026-09-28T06:10:00Z');
+    bitlab.watermark = '2026-09-29 04:00:00';
+    clock = new Date('2026-09-29T07:00:00Z'); // 04:00 do dia seguinte
     await service().runScheduledTick();
-    expect((await settings())?.watermark).toBe('2026-09-28 09:00:00');
+    expect(bitlab.calls.at(-1)?.dataInicio).toBe('2026-09-28 10:00:00');
+
+    expect(bitlab.calls.map((c) => c.dataInicio)).not.toContain('2026-06-30 00:00:00');
+    // A coluna fica no banco, mas nao e mais gravada (D-250 item 2).
+    expect((await settings())?.last_full_scan_on).toBeNull();
   });
 
-  it('releitura com erro nao grava o dia: o proximo tique tenta de novo', async () => {
-    const failing: BitlabClient = {
-      fetchBudgetsPage: () => Promise.reject(new Error('rede')),
-    };
-    clock = new Date('2026-09-28T06:10:00Z');
-    await createLisSyncServiceFromDeps(
-      { db, cache: createCache(), wsHub: noopWsHub },
-      { bitlab: failing, now: () => clock },
-    ).runScheduledTick();
-    expect((await settings())?.last_full_scan_on).toBeNull();
+  it('sem marca d agua (primeira carga), a janela e de `initialDays`; depois segue a marca', async () => {
+    await configure(null);
 
-    clock = new Date('2026-09-28T06:12:00Z');
+    clock = new Date('2026-09-28T13:00:00Z'); // 10:00 em Brasilia
     await service().runScheduledTick();
     expect(bitlab.calls.at(-1)?.dataInicio).toBe('2026-06-30 00:00:00');
+    expect((await settings())?.watermark).toBe('2026-09-28 10:00:00');
+
+    clock = new Date('2026-09-28T13:01:00Z');
+    await service().runScheduledTick();
+    expect(bitlab.calls.at(-1)?.dataInicio).toBe('2026-09-28 10:00:00');
   });
 });

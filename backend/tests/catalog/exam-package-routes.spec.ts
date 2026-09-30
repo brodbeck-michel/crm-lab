@@ -93,7 +93,7 @@ describe('/api/v1/exam-packages', () => {
       expect(pkg.items).toHaveLength(2);
     });
 
-    it('atendente nao cria: FORBIDDEN com details.requiredRoles', async () => {
+    it('atendente cria (CRMLAB-78, D-248)', async () => {
       const tenant = await createTenant();
       const attendant = await createUser({ tenantId: tenant.id, role: 'attendant' });
       const exam = await createExam({ tenantId: tenant.id });
@@ -102,10 +102,23 @@ describe('/api/v1/exam-packages', () => {
         .post('/api/v1/exam-packages')
         .set(app.auth(attendant))
         .send({ name: 'Combo', examIds: [exam.id], discountPercent: 0 })
+        .expect(201);
+
+      expect((response.body as ExamPackage).name).toBe('Combo');
+    });
+
+    it('operador da plataforma nao cria: FORBIDDEN', async () => {
+      const tenant = await createTenant();
+      const operador = await createUser({ tenantId: tenant.id, role: 'platform_operator' });
+      const exam = await createExam({ tenantId: tenant.id });
+
+      const response = await app.agent
+        .post('/api/v1/exam-packages')
+        .set(app.auth(operador))
+        .send({ name: 'Combo', examIds: [exam.id], discountPercent: 0 })
         .expect(403);
 
       expect(response.body.error.code).toBe('FORBIDDEN');
-      expect(response.body.error.details.requiredRoles).toEqual(['manager', 'admin']);
     });
 
     it('examIds vazio -> VALIDATION_ERROR', async () => {
@@ -340,7 +353,7 @@ describe('/api/v1/exam-packages', () => {
       expect(foundAfter?.priceSource).toBe('insurance');
     });
 
-    it('PUT /exam-packages/:id/prices exige manager/admin', async () => {
+    it('PUT /exam-packages/:id/prices — atendente grava (CRMLAB-78, D-248)', async () => {
       const tenant = await createTenant();
       const attendant = await createUser({ tenantId: tenant.id, role: 'attendant' });
       const admin = await createUser({ tenantId: tenant.id, role: 'admin' });
@@ -355,9 +368,9 @@ describe('/api/v1/exam-packages', () => {
         .put(`/api/v1/exam-packages/${(created.body as ExamPackage).id}/prices`)
         .set(app.auth(attendant))
         .send({ prices: [] })
-        .expect(403);
+        .expect(200);
 
-      expect(response.body.error.code).toBe('FORBIDDEN');
+      expect(response.body).toEqual({ prices: [] });
     });
   });
 });

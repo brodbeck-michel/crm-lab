@@ -37,6 +37,7 @@ import {
   type SortOrder,
 } from '../repositories/exam-package.repository.js';
 import type { AuditService } from './audit.service.js';
+import { CATALOG_WRITE_ROLES } from './exam-catalog.service.js';
 
 export const EXAM_PACKAGE_CACHE_TTL_SECONDS = 3600;
 
@@ -100,11 +101,9 @@ function isSortable(value: string): boolean {
   return ['name', 'discountPercent', 'createdAt', 'updatedAt'].includes(value);
 }
 
-const MANAGER_ROLES = ['manager', 'admin'] as const;
-
 function assertCanWrite(ctx: TenantContext): void {
-  if (ctx.role !== 'manager' && ctx.role !== 'admin') {
-    throw new BusinessError('FORBIDDEN', { requiredRoles: [...MANAGER_ROLES] });
+  if (!(CATALOG_WRITE_ROLES as readonly string[]).includes(ctx.role)) {
+    throw new BusinessError('FORBIDDEN', { requiredRoles: [...CATALOG_WRITE_ROLES] });
   }
 }
 

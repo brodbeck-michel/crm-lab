@@ -255,10 +255,27 @@ describe('ExamCatalogService', () => {
       expect(a.id).not.toBe(b.id);
     });
 
-    it('atendente nao escreve, nem chamando o service direto', async () => {
+    it('atendente cria e edita (CRMLAB-78, D-248)', async () => {
       const tenant = await createTenant();
       const exam = await createExam({ tenantId: tenant.id });
       const ctx = contextOf(tenant.id, 'attendant');
+
+      const created = await service.create(ctx, {
+        name: 'X',
+        code: 'X',
+        pricePrivate: 1,
+        priceInsurance: 1,
+      });
+      expect(created.code).toBe('X');
+
+      const updated = await service.update(ctx, exam.id, { pricePrivate: 1, isActive: false });
+      expect(updated.isActive).toBe(false);
+    });
+
+    it('operador da plataforma nao escreve, nem chamando o service direto', async () => {
+      const tenant = await createTenant();
+      const exam = await createExam({ tenantId: tenant.id });
+      const ctx = contextOf(tenant.id, 'platform_operator');
 
       await expect(
         service.create(ctx, { name: 'X', code: 'X', pricePrivate: 1, priceInsurance: 1 }),

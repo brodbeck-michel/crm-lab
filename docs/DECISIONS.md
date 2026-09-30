@@ -4655,3 +4655,19 @@ migradas e as novas ficam iguais na tabela, sem migração nem mudança de contr
 que é o passo seguinte combinado com o Michel; até lá, o texto basta para a comissão.
 **Impacto:** `frontend/src/components/sales/ExamPicker.tsx` (novo), `pages/Sales.tsx`;
 PAGES.md §17. Sem backend, sem migração.
+
+### D-248: Atendente cadastra, edita, inativa e precifica o catálogo (CRMLAB-78)
+**Decisão:** a escrita do catálogo passa a aceitar **atendente, gestor e admin**
+(`CATALOG_WRITE_ROLES` em `exam-catalog.service.ts`, usado nas rotas e nos services de exame e
+pacote): `POST/PATCH /exams`, `PUT /exams/:id/prices`, `POST/PATCH /exam-packages` e
+`PUT /exam-packages/:id/prices`. Inativar é o `PATCH { isActive: false }` de sempre. Não existe
+exclusão de exame nem de pacote, então não há o que bloquear. A **importação por CSV continua só
+admin** (D-177). O operador da plataforma segue recusado (`denyPlatformOperator` + service).
+**Motivo:** pedido do Michel (30/09): quem mantém o catálogo no dia a dia do laboratório é a
+atendente. No mesmo card ele conferiu na hml que Propostas e Vendas já recortam por atendente
+(D-042, D-112) e decidiu **manter a fila comum do Bitlab** (D-195 item 6): a atendente assume o
+cartão ao enviar o orçamento. O envio que "não andou" na hml foi o `MESSAGE_SEND_FAILED` do
+gateway desligado (D-201, tudo ou nada), e não um defeito.
+**Impacto:** `exam.routes.ts`, `exam-package.routes.ts`, `exam-catalog.service.ts`,
+`exam-package.service.ts`, `pages/Catalog.tsx` (`canEdit`); specs de `tests/catalog`,
+`Catalog.spec.tsx`, `e2e/workflows/flow-7-catalog.spec.ts`; API_CONTRACTS §4/§4b, PAGES.md §7.

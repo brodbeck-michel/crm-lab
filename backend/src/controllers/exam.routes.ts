@@ -33,7 +33,12 @@ import { denyPlatformOperator, requireAuth, requireRoles } from '../http/middlew
 import { validate, validated } from '../http/middleware/validate.js';
 import { ExamRepository } from '../repositories/exam.repository.js';
 import { createAuditService } from '../services/audit.service.js';
-import { ExamCatalogService, MAX_LIMIT, type ExamFilters } from '../services/exam-catalog.service.js';
+import {
+  CATALOG_WRITE_ROLES,
+  ExamCatalogService,
+  MAX_LIMIT,
+  type ExamFilters,
+} from '../services/exam-catalog.service.js';
 
 /** `?active=true` chega como string; no JSON de teste pode chegar como boolean. */
 const booleanish = z
@@ -268,13 +273,14 @@ export function examModule(deps: ApiModuleDeps): ApiModule {
   // `denyPlatformOperator()` ANTES de `requireRoles`: a recusa ao operador da
   // plataforma e explicita (PAGES.md §11), nao um efeito colateral da lista de
   // papeis — que pode mudar.
-  // `requireRoles` ANTES do `validate`: atendente recebe FORBIDDEN com
+  // Escrita do catalogo: atendente, gestor e admin (CRMLAB-78, D-248).
+  // `requireRoles` ANTES do `validate`: papel fora da lista recebe FORBIDDEN com
   // `details.requiredRoles`, e nao um VALIDATION_ERROR que vazaria o shape.
   router.post(
     '/',
     requireAuth(),
     denyPlatformOperator(),
-    requireRoles('manager', 'admin'),
+    requireRoles(...CATALOG_WRITE_ROLES),
     validate(createExamSchema, 'body'),
     createExam(service),
   );
@@ -283,7 +289,7 @@ export function examModule(deps: ApiModuleDeps): ApiModule {
     '/:id',
     requireAuth(),
     denyPlatformOperator(),
-    requireRoles('manager', 'admin'),
+    requireRoles(...CATALOG_WRITE_ROLES),
     validate(examIdParamSchema, 'params'),
     validate(updateExamSchema, 'body'),
     updateExam(service),
@@ -322,7 +328,7 @@ export function examModule(deps: ApiModuleDeps): ApiModule {
     '/:id/prices',
     requireAuth(),
     denyPlatformOperator(),
-    requireRoles('manager', 'admin'),
+    requireRoles(...CATALOG_WRITE_ROLES),
     validate(examIdParamSchema, 'params'),
     validate(examPricesBodySchema, 'body'),
     upsertExamPrices(service),

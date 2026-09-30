@@ -124,3 +124,21 @@ Mesmo comando **sem** `--dry-run`. Depois:
    `/opt/crm-lab` — **primeiro com `--dry-run`**, conferir, depois sem.
 4. Reexecute para provar a idempotência e confira `/sales` em `https://vitrocrm.cloud`.
 5. Apague os CSVs da VPS: `rm -r /opt/crm-lab/import /opt/crm-lab-homolog/import`.
+
+---
+
+## 2. Ligar a integração só para a gestão (sem Propostas) — CRMLAB-76
+
+Use quando a gestora for usar Resultados e Busca Ativa antes de as atendentes começarem no
+funil (D-246).
+
+1. **Regras → Origem das propostas:** desligue **"Nascer do orçamento do Bitlab"** e deixe
+   **"Criar proposta manualmente no CRM"** ligada. Salve.
+2. **Configurações → Integração LIS:** informe a chave e ligue a sincronia.
+3. Depois de 1 ou 2 ciclos (1–2 min), confira:
+   - Resultados e Busca Ativa com dados do LIS;
+   - Propostas sem cartão novo;
+   - resumo da última sincronia com **0 propostas criadas**.
+4. **Quando as atendentes forem começar:** religue "Nascer do orçamento do Bitlab". Só entram
+   orçamentos emitidos a partir desse dia. Se a regra já tiver rodado ligada antes nesse
+   tenant, confira `tenant_settings.bitlab_proposals_since` e ajuste a data antes de religar.

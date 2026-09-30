@@ -247,6 +247,14 @@ partir da data de ativação (`tenant_settings.bitlab_proposals_since`) e sem pr
 proposta de origem `bitlab` em `novo_contato` ("Novo orçamento"), sem conversa. Histórico
 anterior à ativação nunca vira cartão.
 
+**Integração só para a gestão (CRMLAB-76, D-246):** para usar Resultados, Busca Ativa e
+indicadores sem começar o funil, deixe a sincronia do LIS ligada e **desligue** "Nascer do
+orçamento do Bitlab", mantendo "Criar proposta manualmente no CRM" ligada (ao menos uma origem é obrigatória). A
+sincronia continua gravando os dados do LIS, não cria cartão e **não grava**
+`bitlab_proposals_since`. Ao religar a regra, a data de ativação passa a ser esse dia: nada do
+período desligado vira cartão. A conciliação (D-119/D-204) continua movendo cartões que **já
+existem**; com o funil vazio, não tem efeito.
+
 ### Motivo de Perda (Obrigatório)
 
 **Regra:** Ao passar para "perdido", motivo é obrigatório — é o padrão da trava

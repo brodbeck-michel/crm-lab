@@ -28,6 +28,7 @@ import { denyPlatformOperator, requireAuth, requireRoles } from '../http/middlew
 import { validate, validated } from '../http/middleware/validate.js';
 import { ExamPackageRepository } from '../repositories/exam-package.repository.js';
 import { createAuditService } from '../services/audit.service.js';
+import { CATALOG_WRITE_ROLES } from '../services/exam-catalog.service.js';
 import {
   ExamPackageService,
   MAX_LIMIT,
@@ -177,7 +178,7 @@ export function examPackageModule(deps: ApiModuleDeps): ApiModule {
     '/',
     requireAuth(),
     denyPlatformOperator(),
-    requireRoles('manager', 'admin'),
+    requireRoles(...CATALOG_WRITE_ROLES),
     validate(createExamPackageSchema, 'body'),
     createExamPackage(service),
   );
@@ -186,7 +187,7 @@ export function examPackageModule(deps: ApiModuleDeps): ApiModule {
     '/:id',
     requireAuth(),
     denyPlatformOperator(),
-    requireRoles('manager', 'admin'),
+    requireRoles(...CATALOG_WRITE_ROLES),
     validate(examPackageIdParamSchema, 'params'),
     validate(updateExamPackageSchema, 'body'),
     updateExamPackage(service),
@@ -204,7 +205,7 @@ export function examPackageModule(deps: ApiModuleDeps): ApiModule {
     '/:id/prices',
     requireAuth(),
     denyPlatformOperator(),
-    requireRoles('manager', 'admin'),
+    requireRoles(...CATALOG_WRITE_ROLES),
     validate(examPackageIdParamSchema, 'params'),
     validate(examPackagePricesBodySchema, 'body'),
     upsertExamPackagePrices(service),

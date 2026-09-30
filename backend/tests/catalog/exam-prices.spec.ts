@@ -252,7 +252,7 @@ describe('preco por convenio', () => {
     );
   });
 
-  it('atendente nao grava preco -> FORBIDDEN, mas pode listar', async () => {
+  it('atendente grava e lista preco (CRMLAB-78, D-248); operador da plataforma nao grava', async () => {
     const tenant = await createTenant();
     const exam = await examService.create(contextOf(tenant.id), {
       name: 'Glicose',
@@ -263,6 +263,9 @@ describe('preco por convenio', () => {
 
     await expect(
       examService.upsertPrices(contextOf(tenant.id, 'attendant'), exam.id, { prices: [] }),
+    ).resolves.toEqual([]);
+    await expect(
+      examService.upsertPrices(contextOf(tenant.id, 'platform_operator'), exam.id, { prices: [] }),
     ).rejects.toSatisfy((err: unknown) => isBusinessError(err) && err.code === 'FORBIDDEN');
 
     await expect(examService.listPrices(contextOf(tenant.id, 'attendant'), exam.id)).resolves.toEqual([]);

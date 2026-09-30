@@ -115,13 +115,20 @@ describe('ExamPackageService', () => {
       ).rejects.toSatisfy((err: unknown) => isBusinessError(err) && err.code === 'VALIDATION_ERROR');
     });
 
-    it('atendente nao cria: FORBIDDEN', async () => {
+    it('atendente cria (CRMLAB-78, D-248); operador da plataforma nao', async () => {
       const tenant = await createTenant();
       const exam = await createExam({ tenantId: tenant.id });
 
+      const created = await service.create(contextOf(tenant.id, 'attendant'), {
+        name: 'Pacote X',
+        examIds: [exam.id],
+        discountPercent: 0,
+      });
+      expect(created.name).toBe('Pacote X');
+
       await expect(
-        service.create(contextOf(tenant.id, 'attendant'), {
-          name: 'Pacote X',
+        service.create(contextOf(tenant.id, 'platform_operator'), {
+          name: 'Pacote Y',
           examIds: [exam.id],
           discountPercent: 0,
         }),

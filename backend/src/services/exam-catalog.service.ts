@@ -155,18 +155,22 @@ function isSortable(value: string): boolean {
   ].includes(value);
 }
 
-const MANAGER_ROLES = ['manager', 'admin'] as const;
+/**
+ * Quem cadastra, edita, inativa e precifica o catalogo: atendente, gestor e
+ * admin (CRMLAB-78, D-248). O operador da plataforma fica de fora.
+ */
+export const CATALOG_WRITE_ROLES = ['attendant', 'manager', 'admin'] as const;
 
 /** "A UI esconde, o servidor recusa" — a rota ja barra, o service confere de novo. */
 function assertCanWrite(ctx: TenantContext): void {
-  if (ctx.role !== 'manager' && ctx.role !== 'admin') {
-    throw new BusinessError('FORBIDDEN', { requiredRoles: [...MANAGER_ROLES] });
+  if (!(CATALOG_WRITE_ROLES as readonly string[]).includes(ctx.role)) {
+    throw new BusinessError('FORBIDDEN', { requiredRoles: [...CATALOG_WRITE_ROLES] });
   }
 }
 
 /**
  * Importacao por CSV e SO admin (D-177) — diferente de create/update, que
- * aceitam gestor. A rota ja barra; o service confere de novo.
+ * aceitam gestor e atendente (D-248). A rota ja barra; o service confere de novo.
  */
 function assertAdmin(ctx: TenantContext): void {
   if (ctx.role !== 'admin') {

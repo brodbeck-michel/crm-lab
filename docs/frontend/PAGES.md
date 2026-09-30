@@ -581,10 +581,11 @@ nunca "sem permissão" (não vazar existência).
 ### Aba Exames
 - Tabela: nome, código, preparo, **TUSS, material**, prazo, preço particular, preço convênio, status
 - Regras de tabela: container com min-width + overflow-x, cabeçalho 11px caixa alta, valores à direita
-- Atendente: somente leitura. Gestor/Admin: criar/editar (modal, botão "+ Novo Exame")
+- Atendente, gestor e admin: criar/editar/inativar (modal, botão "+ Novo Exame") — CRMLAB-78,
+  D-248. Importar CSV continua só admin. Não existe excluir: inativar é `isActive: false`.
 - **Paginação** (`Pagination`, 20 por página) com a página na URL (`?page=2`),
   mesma regra de `/proposals`. Buscar volta para a página 1.
-- Dados: `GET /exams`, `POST/PATCH /exams` (gestor+)
+- Dados: `GET /exams`, `POST/PATCH /exams` (atendente+)
 - **Modal do exame (Onda 7 — D-081/D-082):** além dos campos anteriores, código TUSS
   (tabela 22 TISS/ANS), código AMB legado e material de coleta — os três `null` quando não
   confirmados, nunca inventados; sinônimos como chips removíveis (`exam_synonyms`, substituídos
@@ -593,7 +594,7 @@ nunca "sem permissão" (não vazar existência).
   convênio ativo, em branco = "sem preço específico — orçamento cai no particular"
   (`priceSource: "private"`). Só existe em edição — não há `examId` para consultar em criação.
 - Dados da aba de preços: `GET /exams/:id/prices` (todos os papéis) ·
-  `PUT /exams/:id/prices` (gestor+) — semântica de PUT: convênio ausente do corpo tem o preço
+  `PUT /exams/:id/prices` (atendente+) — semântica de PUT: convênio ausente do corpo tem o preço
   **removido**, não preservado.
 - **Importar CSV (CRMLAB-23, D-177/D-178 — só admin):** botão "Importar CSV" ao lado de
   "+ Novo Exame", visível só para admin na aba Exames. Abre `ExamImportModal`:
@@ -611,9 +612,9 @@ nunca "sem permissão" (não vazar existência).
 ### Aba Pacotes (`PackageTable`, CRMLAB-10, D-130)
 - Tabela: nome, exames incluídos (nomes separados por vírgula), desconto %, preço particular
   (`pricePrivate`, sempre calculado — soma dos exames menos o desconto), status
-- Mesma paginação/busca/alçada da aba Exames — atendente só leitura, gestor/admin
-  cria/edita (botão "+ Novo Pacote")
-- Dados: `GET /exam-packages`, `POST/PATCH /exam-packages` (gestor+)
+- Mesma paginação/busca/alçada da aba Exames — atendente, gestor e admin criam/editam
+  (botão "+ Novo Pacote"), D-248
+- Dados: `GET /exam-packages`, `POST/PATCH /exam-packages` (atendente+)
 - **Modal do pacote (`PackageModal`):** nome, desconto % e um seletor de exames (busca +
   checkbox, até 100 exames ativos por vez — teto do contrato). Mostra uma prévia do preço
   particular (`calculatePackagePrivatePrice`, `@crm-lab/shared`) enquanto o usuário monta o
@@ -628,7 +629,7 @@ nunca "sem permissão" (não vazar existência).
   Em **modo edição**, segunda aba "Preços por convênio" (`PackagePricesTab`) — mesmo mecanismo
   de `ExamPricesTab`, aplicado a `exam_package_prices`.
 - Dados da aba de preços: `GET /exam-packages/:id/prices` (todos os papéis) ·
-  `PUT /exam-packages/:id/prices` (gestor+) — mesma semântica de PUT do §4.
+  `PUT /exam-packages/:id/prices` (atendente+) — mesma semântica de PUT do §4.
 
 ---
 

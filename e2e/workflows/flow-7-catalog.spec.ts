@@ -2,14 +2,14 @@
  * Fluxo 7: Catálogo de Exames — PAGES.md §7, API_CONTRACTS.md §4.
  *
  * O que este spec prova:
- *  - atendente LE o catalogo, mas nao ve acao de criar/editar;
+ *  - atendente le o catalogo e tambem ve as acoes de criar/editar (CRMLAB-78, D-248);
  *  - gestor cria e edita exame pela tela;
  *  - **desativar e `PATCH { isActive: false }`** — nao existe `DELETE /exams/:id`
  *    (pedido do Agent-API-Catalog em STATUS.md). O spec confere as duas metades:
  *    o PATCH funciona E o DELETE nao existe;
  *  - o exame desativado some do catalogo do orçamento (`?active=true`), mas a
  *    proposta historica que o referencia continua intacta;
- *  - a API recusa o atendente em POST/PATCH, mesmo sem passar pela tela.
+ *  - a API aceita o atendente em POST/PATCH e recusa a importacao por CSV (so admin, D-177).
  */
 import { test, expect, type APIRequestContext } from '@playwright/test';
 import type { Exam, ListExamsResponse } from '@crm-lab/shared';
@@ -51,8 +51,8 @@ async function createExamViaApi(
   return (await response.json()) as Exam;
 }
 
-test.describe('Fluxo 7: Catálogo (atendente le)', () => {
-  test('atendente ve os exames do seu laboratorio, sem acao de escrita', async ({ page }) => {
+test.describe('Fluxo 7: Catálogo (atendente)', () => {
+  test('atendente ve os exames do seu laboratorio e as acoes de escrita', async ({ page }) => {
     await loginAs(page, E2E_USERS.alfaAttendant);
     await gotoScreen(page, CATALOG_PATH, HEADING);
 
@@ -60,9 +60,10 @@ test.describe('Fluxo 7: Catálogo (atendente le)', () => {
     await expect(page.getByRole('cell', { name: E2E_EXAMS.hemograma.name })).toBeVisible();
     await expect(page.getByRole('cell', { name: E2E_EXAMS.hemograma.code })).toBeVisible();
 
-    // "A UI esconde": sem botao de criar, sem botao de editar.
-    await expect(page.getByRole('button', { name: /Novo Exame/ })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Editar' })).toHaveCount(0);
+    // CRMLAB-78 (D-248): a atendente cria e edita; importar CSV continua so admin.
+    await expect(page.getByRole('button', { name: /Novo Exame/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Editar' }).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Importar CSV' })).toHaveCount(0);
   });
 
   test('a busca filtra por nome e por codigo, sem caixa nem acento', async ({ page }) => {
@@ -87,30 +88,27 @@ test.describe('Fluxo 7: Catálogo (atendente le)', () => {
     expect(parseMoney(texto)).toBeGreaterThan(0);
   });
 
-  test('a API recusa escrita do atendente', async ({ request }) => {
+  test('a API aceita criar e editar do atendente, mas recusa importar CSV', async ({ request }) => {
     const token = await apiLogin(request, E2E_USERS.alfaAttendant);
 
-    const criacao = await request.post(`${API_URL}/exams`, {
-      headers: authHeaders(token),
-      data: { name: 'Exame Proibido', code: uniqueCode(), pricePrivate: 1, priceInsurance: 1 },
-    });
-    expect(criacao.status()).toBe(403);
-    expect(((await criacao.json()) as ApiErrorEnvelope).error.code).toBe('FORBIDDEN');
+    // Exame proprio do teste: o seed nao muda, outros specs dependem do preco dele.
+    const exame = await createExamViaApi(token, request);
 
-    const edicao = await request.patch(`${API_URL}/exams/${E2E_EXAMS.hemograma.id}`, {
+    const edicao = await request.patch(`${API_URL}/exams/${exame.id}`, {
       headers: authHeaders(token),
-      data: { pricePrivate: 0.01 },
+      data: { pricePrivate: 12.5, isActive: false },
     });
-    expect(edicao.status()).toBe(403);
+    expect(edicao.status()).toBe(200);
+    const editado = (await edicao.json()) as Exam;
+    expect(editado.pricePrivate).toBe(12.5);
+    expect(editado.isActive).toBe(false);
 
-    // O preco do seed continua intacto.
-    const lista = await request.get(`${API_URL}/exams?search=${E2E_EXAMS.hemograma.code}`, {
+    const importacao = await request.post(`${API_URL}/exams/import/preview`, {
       headers: authHeaders(token),
+      data: { fileName: 'catalogo.csv', contentBase64: 'YQ==' },
     });
-    const exams = ((await lista.json()) as ListExamsResponse).exams;
-    expect(exams.find((e) => e.id === E2E_EXAMS.hemograma.id)?.pricePrivate).toBe(
-      E2E_EXAMS.hemograma.pricePrivate,
-    );
+    expect(importacao.status()).toBe(403);
+    expect(((await importacao.json()) as ApiErrorEnvelope).error.code).toBe('FORBIDDEN');
   });
 });
 

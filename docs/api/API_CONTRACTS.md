@@ -2953,7 +2953,7 @@ código no banco, sobre o catálogo inteiro — nunca sobre as linhas já carreg
 combinação que torna todo exame ativo alcançável na tela de orçamento; antes dela a tela pedia uma
 página só e o resto do catálogo era invisível.
 
-### POST /exams (manager/admin apenas)
+### POST /exams (attendant/manager/admin — CRMLAB-78, D-248)
 Criar novo exame no catálogo.
 
 **Request:**
@@ -2993,7 +2993,7 @@ grava `null`. `synonyms` é gravado na tabela filha `exam_synonyms` na mesma tra
 }
 ```
 
-### PATCH /exams/:id (manager/admin apenas)
+### PATCH /exams/:id (attendant/manager/admin — CRMLAB-78, D-248)
 Atualizar exame.
 
 **Request:**
@@ -3039,7 +3039,7 @@ simplesmente não aparece (é o caso que cai em `priceSource: "private"` no orç
 
 **Erros:** `NOT_FOUND` (exame inexistente ou de outro tenant)
 
-### PUT /exams/:id/prices (manager/admin apenas)
+### PUT /exams/:id/prices (attendant/manager/admin — CRMLAB-78, D-248)
 Upsert em lote. **Semântica de PUT — estado completo**: linha ausente do corpo é **removida**.
 Auditado (`update_exam_prices`).
 
@@ -3232,7 +3232,7 @@ Listar pacotes do laboratório. Qualquer papel autenticado do tenant.
 `"private"` no fallback) — mesmo mecanismo do §4, mas a tabela de override é do PACOTE
 (`exam_package_prices`), não a soma dos overrides de cada exame.
 
-### POST /exam-packages (manager/admin apenas)
+### POST /exam-packages (attendant/manager/admin — CRMLAB-78, D-248)
 Criar novo pacote.
 
 **Request:**
@@ -3250,7 +3250,7 @@ Criar novo pacote.
 
 **Response (201):** mesmo shape de um item de `GET /exam-packages` (sem `?insuranceId=`).
 
-### PATCH /exam-packages/:id (manager/admin apenas)
+### PATCH /exam-packages/:id (attendant/manager/admin — CRMLAB-78, D-248)
 Atualizar pacote. Todos os campos opcionais (PATCH parcial); `examIds`, quando presente,
 **substitui o conjunto inteiro** de exames incluídos (semântica de PUT sobre a coleção filha,
 igual a `synonyms` no §4).
@@ -3275,7 +3275,7 @@ Preço do pacote por convênio (todos os cadastrados para ele). Qualquer papel a
 { "prices": [{ "insuranceId": "8f2a1c4b-6d39-4f70-9a12-5c8e3b7d1f06", "price": 99.90 }] }
 ```
 
-### PUT /exam-packages/:id/prices (manager/admin apenas)
+### PUT /exam-packages/:id/prices (attendant/manager/admin — CRMLAB-78, D-248)
 Upsert em lote — **semântica de PUT**: linha ausente do corpo é removida. Mesmo contrato do
 `PUT /exams/:id/prices` (§4), aplicado a `exam_package_prices`.
 

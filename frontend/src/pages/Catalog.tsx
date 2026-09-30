@@ -73,7 +73,11 @@ export default function Catalog() {
   });
   const packages = packagesData?.packages ?? [];
 
-  const canEdit = user?.role !== 'attendant';
+  /**
+   * Atendente, gestor e admin cadastram, editam, inativam e precificam exames e
+   * pacotes (CRMLAB-78, D-248). O operador da plataforma nem chega a esta tela.
+   */
+  const canEdit = user?.role !== undefined && user.role !== 'platform_operator';
   /** Importar CSV é só admin (D-177) — o servidor recusa os demais; aqui só esconde. */
   const canImport = user?.role === 'admin';
 

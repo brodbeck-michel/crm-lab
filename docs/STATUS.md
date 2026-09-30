@@ -2966,7 +2966,7 @@ Branch `feature/CRMLAB-53-extrato-pagamentos-lis`. Decisões D-188/D-189, migra�
   não decide mais pagamento; por chunk, `upsertPayments` + `recomputePaidValues`. Recebido = soma
   dos ativos da API (ou, só planilha, de todos), teto em `requisition_value`; `paid_on` = último
   pagamento considerado, de qualquer valor (D-204 intacta). Estorno depois de `ganho` não reabre.
-- **Releitura diária (D-189):** o estorno não volta na janela incremental; o primeiro tique
+- **Releitura diária (D-189) — ⚠️ removida pela D-250 (CRMLAB-80, 30/09/2026):** o estorno não volta na janela incremental; o primeiro tique
   depois das 03:00 (Brasília) relê 90 dias. `lis_sync_settings.last_full_scan_on`, marca que não
   recua, "Sincronizar agora" incremental; a tela de integração mostra a última releitura.
 - **Planilha como plano B:** Regras → "Carga do LIS" (`lisSource.spreadsheetImport`, padrão
@@ -3015,3 +3015,17 @@ Branch `feature/CRMLAB-79-sync-lis-30s` (de `main`). Decisão D-249.
   `LisIntegration.spec.tsx` (30 s, 2 min, 0).
 - **Pendente:** hml (lá o `.env` fixa `0`); prod não fixa a variável e pega os 30 s. Pedir ao Bitlab um
   webhook de orçamento criado/alterado (tempo real de verdade).
+
+### 🚧 CRMLAB-80 — sem releitura diária de 90 dias na sincronização do LIS (2026-09-30, aguardando validação)
+
+Branch `feature/CRMLAB-80-sem-releitura-diaria` (de `main`). Decisão D-250 (substitui os itens 1–3
+da D-189; a planilha como plano B continua).
+
+- **Backend:** o tique (`auto`) é sempre `incremental`; sai `FULL_SCAN_HOUR`. Sem marca d'água a
+  janela continua em `LIS_SYNC_INITIAL_DAYS`. `last_full_scan_on` não é mais lida nem gravada
+  (coluna mantida, sem migração).
+- **Contrato:** `lastFullScanOn` sai de `LisIntegrationSettings` (API_CONTRACTS §10.3).
+- **Tela:** Integração LIS sem "Última releitura dos 90 dias".
+- **Testes:** `backend/tests/lis/lis-payments.spec.ts` (tique incremental depois das 03:00 e no dia
+  seguinte; sem marca → `initialDays`); `LisIntegration.spec.tsx`.
+- **Pendente:** validação em hml; card futuro para a migração que remove `last_full_scan_on`.

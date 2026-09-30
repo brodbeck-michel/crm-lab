@@ -697,9 +697,10 @@ pagamento** (o mesmo orçamento repete em várias linhas).
 | `DATA_ESTORNO` | `reversedAt` | mesma conversão (D-187) |
 | `FORMA_PAGAMENTO` / `BANDEIRA_CARTAO` | `paymentMethod` / `cardBrand` | crus. Só guardados (sem tela ainda) |
 
-**O filtro `tipoData=alteracao` olha só emissão e `Data_Pagamento`, nunca `DATA_ESTORNO`**
-(conferido pela VPS em 28/09/2026). Um pagamento estornado depois da leitura **não volta** na
-consulta incremental. Por isso a sincronização relê os últimos 90 dias uma vez por dia (D-189,
+**O filtro `tipoData=alteracao` considera a `DATA_ESTORNO` desde 30/09/2026** (resposta do
+Bitlab, validada em hml no mesmo dia com o OR66760): um pagamento estornado depois da leitura
+**volta** na consulta incremental, na janela do estorno. Por isso a sincronização é sempre
+incremental, sem releitura diária (D-250, que substitui a releitura de 90 dias da D-189;
 SERVICES.md §24).
 
 ### 11.11 Extrato de pagamentos e recebido (CRMLAB-53, D-188/D-189)

@@ -4644,6 +4644,25 @@ bloco citado), `AudioMessage.tsx`, `NewConversationModal.tsx` (`initialPhone`); 
 `OpenWhatsAppConversationRequest`, inventário de isolamento 81 → 82); COMPONENTS.md,
 API_CONTRACTS §2.
 
+### D-246: Integração só para a gestão usa a regra "Nascer do orçamento do Bitlab" — sem campo novo (CRMLAB-76)
+**Contexto:** o Lab Santé vai usar a gestão (Resultados, Busca Ativa, indicadores) antes de as
+atendentes começarem no funil. Ligar a sincronia não pode encher Propostas de cartões que
+ninguém vai trabalhar, senão a base começa suja.
+**Decisão:** não criar campos novos por destino nas Regras. O cenário é atendido pelo que já
+existe:
+1. Sincronia do LIS **ligada** → os dados que alimentam a gestão continuam chegando.
+2. `origin.fromBitlab` **desligada** e `origin.manualInCrm` ligada → `isBitlabOriginEnabled`
+   corta `createBitlabProposals` antes de `ensureSince`: nenhum cartão nasce e a marca
+   `tenant_settings.bitlab_proposals_since` não é gravada.
+3. Ao religar, `ensureSince` grava a data do dia: orçamentos do período desligado não viram
+   cartão. **Exceção:** se a regra já rodou ligada antes no tenant, a marca antiga vale (é
+   `COALESCE`); nesse caso, mover a data no banco antes de religar.
+4. A conciliação (`lis-reconcile.service.ts`) não olha essa regra e segue movendo cartões que já
+   existem. Com o funil vazio não faz diferença; se virar problema, abrir card próprio.
+**Motivo:** testado na hml em 30/09/2026 pelo Michel: com a regra desligada, a sincronia rodou e
+Propostas ficou vazia. Resolve sem código novo.
+**Impacto:** só documentação (BUSINESS_RULES "Nascer do orçamento", MIGRACAO_SANTE §2).
+
 ### D-247: Exames da venda avulsa vêm do catálogo, mas `sales.exams` continua texto (CRMLAB-77)
 **Decisão:** o campo "Exames" do formulário de `/sales` vira um seletor do catálogo (busca por
 nome/sinônimo/código, agrupado por categoria, chips removíveis — PAGES.md §17). O que se grava

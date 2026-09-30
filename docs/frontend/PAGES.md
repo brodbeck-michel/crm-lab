@@ -1201,8 +1201,15 @@ Lançamento de vendas avulsas de exame/check-up e o cálculo de comissão. Fonte
   servidor a partir dos percentuais de `/settings/commissions` (§19) — a tela nunca multiplica
   percentual localmente.
 - **Lançar venda** (formulário/modal): data (não futura), código (opcional), valor (`> 0`),
-  exames (texto livre, opcional), tipo (`exames | check-up`). Sucesso invalida a lista e o
-  resumo.
+  exames (opcional), tipo (`exames | check-up`). Sucesso invalida a lista e o resumo.
+  - **Exames** é um seletor do catálogo do laboratório (D-247), não texto livre: o gatilho mostra
+    "Selecione exames…" ou "N exame(s) selecionado(s)"; ao abrir, busca por nome, sinônimo ou
+    código (`GET /exams?active=true&search=…`, a mesma busca server-side do catálogo) e lista os
+    exames **agrupados por categoria**, com os sinônimos embaixo do nome e o código à direita.
+    Clicar marca/desmarca. Os escolhidos aparecem como chips removíveis abaixo do campo.
+  - O **valor** continua digitado: é o valor total da venda, sem preço por exame.
+  - O que vai para `exams` no `POST /sales` é o texto com os **nomes** dos escolhidos separados
+    por `, ` (contrato inalterado).
 - **Apagar:** confirmação simples ("apagar esta venda?") — é `DELETE` real, sem histórico
   dependente (§11); atendente só vê o botão nas próprias linhas, gestor/admin em todas.
 - **Filtros:** período (`soldOn`), tipo, e atendente (só para gestor/admin).

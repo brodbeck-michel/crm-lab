@@ -9,6 +9,7 @@ import { useAuthStore } from '@/stores/auth.store';
 import Sales from './Sales';
 import * as attendantsApi from '@/api/attendants';
 import * as salesApi from '@/api/sales';
+import * as examsApi from '@/api/exams';
 
 vi.mock('@/api/attendants', async () => {
   const actual = await vi.importActual('@/api/attendants');
@@ -25,6 +26,31 @@ vi.mock('@/api/sales', async () => {
     useDeleteSale: vi.fn(),
   };
 });
+
+vi.mock('@/api/exams', async () => {
+  const actual = await vi.importActual('@/api/exams');
+  return { ...actual, useExamListInfinite: vi.fn() };
+});
+
+const useExamListInfinite = vi.mocked(examsApi.useExamListInfinite);
+const catalogPage = {
+  data: {
+    pages: [
+      {
+        exams: [
+          { id: 'e-1', name: 'Ácido Úrico', code: 'BIO009', category: 'Bioquímica', synonyms: [] },
+          { id: 'e-2', name: 'Creatinina', code: 'BIO020', category: 'Bioquímica', synonyms: [] },
+        ],
+        pagination: { page: 1, limit: 100, total: 2, totalPages: 1 },
+      },
+    ],
+    pageParams: [1],
+  },
+  isLoading: false,
+  hasNextPage: false,
+  isFetchingNextPage: false,
+  fetchNextPage: vi.fn(),
+} as unknown as ReturnType<typeof examsApi.useExamListInfinite>;
 
 const useAttendantList = vi.mocked(attendantsApi.useAttendantList);
 const useSaleList = vi.mocked(salesApi.useSaleList);
@@ -107,6 +133,7 @@ describe('Sales (/sales)', () => {
     useSalesSummary.mockReturnValue(querySuccess(summary));
     useCreateSale.mockReturnValue(mutationIdle(mockCreate));
     useDeleteSale.mockReturnValue(mutationIdle(mockDelete));
+    useExamListInfinite.mockReturnValue(catalogPage);
   });
 
   afterEach(() => {
@@ -148,6 +175,24 @@ describe('Sales (/sales)', () => {
 
     expect(mockCreate).toHaveBeenCalledTimes(1);
     expect(mockCreate.mock.calls[0]?.[0]).toMatchObject({ value: 150, kind: 'exams' });
+  });
+
+  it('grava os exames escolhidos no catálogo como texto com os nomes (D-247)', async () => {
+    const user = userEvent.setup();
+    signIn('attendant');
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /lançar venda/i }));
+    await user.type(screen.getByLabelText('Valor'), '60');
+    await user.click(screen.getByRole('button', { name: /selecione exames/i }));
+    await user.click(screen.getByRole('option', { name: /Ácido Úrico/ }));
+    await user.click(screen.getByRole('option', { name: /Creatinina/ }));
+    await user.click(screen.getByRole('button', { name: /^lançar$/i }));
+
+    expect(mockCreate.mock.calls[0]?.[0]).toMatchObject({
+      value: 60,
+      exams: 'Ácido Úrico, Creatinina',
+    });
   });
 
   it('apaga uma venda após confirmação', async () => {

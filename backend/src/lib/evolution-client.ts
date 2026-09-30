@@ -20,6 +20,7 @@
  * `CHANNEL_QR_UNAVAILABLE`/`MESSAGE_SEND_FAILED` e o SERVICE, uma camada acima
  * (mesma divisao de `HttpWhatsAppDriver` em `whatsapp.service.ts`).
  */
+import { isWhatsAppPlayableVideo } from '@crm-lab/shared';
 import { env } from '../config/env.js';
 import { withGatewayTimeout } from './fetch-timeout.js';
 
@@ -234,14 +235,16 @@ export interface EvolutionClient {
 }
 
 /**
- * `image/jpeg` -> `'image'`. `audio/*` -> `'audio'`. `video/*` -> `'video'`
- * (CRMLAB-69, D-231: antes saía como documento). Resto -> `'document'`
- * (contrato do `/message/sendMedia`).
+ * `image/jpeg` -> `'image'`. `audio/*` -> `'audio'`. MP4/3GP -> `'video'`
+ * (CRMLAB-69, D-231: antes saía como documento). `.mov`/WebM -> `'document'`
+ * (CRMLAB-70, D-234 item 8: o gateway não converte vídeo e o WhatsApp do
+ * paciente não garante tocar esses contêineres — o arquivo chega inteiro).
+ * Resto -> `'document'` (contrato do `/message/sendMedia`).
  */
 function evolutionMediaType(mimeType: string): 'image' | 'audio' | 'video' | 'document' {
   if (mimeType.startsWith('image/')) return 'image';
   if (mimeType.startsWith('audio/')) return 'audio';
-  if (mimeType.startsWith('video/')) return 'video';
+  if (isWhatsAppPlayableVideo(mimeType)) return 'video';
   return 'document';
 }
 

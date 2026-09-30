@@ -53,7 +53,14 @@ import { logger } from '../lib/logger.js';
 import * as channelSettingsRepo from '../repositories/channel-settings.repository.js';
 import { ConversationRepository } from '../repositories/conversation.repository.js';
 import { MediaRepository } from '../repositories/media.repository.js';
-import { MessageRepository } from '../repositories/message.repository.js';
+import { MessageRepository, type MessageMetadata } from '../repositories/message.repository.js';
+import {
+  contactsFallbackText,
+  contactsOf,
+  locationFallbackText,
+  locationOf,
+  mediaMetadataOf,
+} from '../lib/whatsapp-message-parts.js';
 import { createAuditService } from '../services/audit.service.js';
 import { ConversationService } from '../services/conversation.service.js';
 import { MediaService, messageTypeFromMime } from '../services/media.service.js';
@@ -451,6 +458,8 @@ interface EvolutionInboundMedia {
   mimeType: string;
   fileName: string;
   base64: string;
+  /** Submensagem de origem — `stickerMessage` vira `sticker` (D-235 item 2). */
+  key: (typeof MEDIA_MESSAGE_KEYS)[number];
 }
 
 interface EvolutionInboundMessage {
@@ -463,6 +472,10 @@ interface EvolutionInboundMessage {
   fromMe: boolean;
   /** `contextInfo.stanzaId` — resposta citando (CRMLAB-66, D-221). */
   quotedExternalId: string | null;
+  /** Sem midia: `location`/`contact` estruturados, ou `text` (D-235). */
+  messageType: 'text' | 'location' | 'contact';
+  /** Duracao, paginas, miniatura, localizacao, contatos (D-234). */
+  metadata: MessageMetadata | null;
 }
 
 /**
@@ -471,12 +484,8 @@ interface EvolutionInboundMessage {
  * de paciente era DESCARTADO em silencio — o pior desfecho possivel, porque o
  * atendente nunca fica sabendo que recebeu algo.
  *
- * Nenhum tipo novo em `MessageType` (`shared/types/conversation.types.ts`):
- * `messageTypeFromMime` ja mapeia `video/*` para `doc`, entao o video chega
- * como anexo em vez de sumir. Anexo generico e pior que um player dedicado,
- * mas e MUITO melhor que perda silenciosa, e nao espalha mudanca de contrato
- * pelo frontend inteiro. Trocar por um `video` de verdade e evolucao proxima,
- * nao pre-requisito para parar a perda.
+ * Desde o CRMLAB-70 (D-235) o video gravado como `video/*` vira `video` e a
+ * figurinha com arquivo de imagem vira `sticker` — ver `ingestEvolutionMessage`.
  */
 const MEDIA_MESSAGE_KEYS = [
   'imageMessage',
@@ -491,14 +500,16 @@ const DEFAULT_MEDIA_NAME: Record<(typeof MEDIA_MESSAGE_KEYS)[number], string> = 
   audioMessage: 'audio',
   documentMessage: 'documento',
   videoMessage: 'video',
-  stickerMessage: 'figurinha',
+  // Vira o `content` da figurinha (D-234 item 5) — ela nunca tem nome nem legenda.
+  stickerMessage: 'Figurinha',
 };
 
 /**
  * Tipos SEM arquivo que viravam descarte silencioso: localizacao e contato
- * compartilhado. Nao tem midia nem texto proprio, entao caiam no
- * `!text && !media` e sumiam. Agora viram uma linha de texto legivel — o
- * atendente ve que o paciente mandou o endereco, mesmo sem mapa na tela.
+ * compartilhado. Desde o CRMLAB-70 (D-235) viram `location`/`contact`
+ * estruturados (`structuredNonMediaOf`); esta linha de texto sobra para o que
+ * nao da para estruturar (localizacao sem coordenada valida, contato sem nome)
+ * — o atendente ainda ve que o paciente mandou algo.
  */
 function describeNonMedia(message: Record<string, unknown>): string | null {
   const location = asRecord(message.locationMessage) ?? asRecord(message.liveLocationMessage);
@@ -525,6 +536,30 @@ function describeNonMedia(message: Record<string, unknown>): string | null {
   return null;
 }
 
+/** Localizacao/contato estruturados (D-235 itens 4 e 5), ou `null`. */
+function structuredNonMediaOf(
+  message: Record<string, unknown>,
+): { messageType: 'location' | 'contact'; text: string; metadata: MessageMetadata } | null {
+  const location = locationOf(message);
+  if (location) {
+    return { messageType: 'location', text: locationFallbackText(location), metadata: { location } };
+  }
+  const contacts = contactsOf(message);
+  if (contacts.length > 0) {
+    return { messageType: 'contact', text: contactsFallbackText(contacts), metadata: { contacts } };
+  }
+  return null;
+}
+
+/** Duracao/paginas/miniatura da submensagem que trouxe o arquivo (D-235). */
+function inboundMediaMetadata(
+  message: Record<string, unknown> | null,
+  media: EvolutionInboundMedia | null,
+): MessageMetadata | null {
+  const submessage = media && message ? asRecord(message[media.key]) : null;
+  return submessage && media ? mediaMetadataOf(media.key, submessage) : null;
+}
+
 /**
  * `message.imageMessage`/`audioMessage`/`documentMessage`, com o base64
  * habilitado no webhook (`base64: true`, `evolution-client.ts`). O CAMPO exato
@@ -547,7 +582,7 @@ function evolutionInboundMediaOf(
     if (!base64) continue;
     const mimeType = asNonEmptyString(media.mimetype) ?? 'application/octet-stream';
     const fileName = asNonEmptyString(media.fileName) ?? DEFAULT_MEDIA_NAME[key];
-    return { mimeType, fileName, base64 };
+    return { mimeType, fileName, base64, key };
   }
   return null;
 }
@@ -632,9 +667,11 @@ function evolutionInboundOf(data: unknown): EvolutionInboundResult {
 
   const message = asRecord(record.message);
   const media = evolutionInboundMediaOf(message);
+  const structured = !media && message ? structuredNonMediaOf(message) : null;
   const text =
     (message && asNonEmptyString(message.conversation)) ??
     (message && asNonEmptyString(asRecord(message.extendedTextMessage)?.text)) ??
+    structured?.text ??
     (message && describeNonMedia(message)) ??
     mediaCaption(message);
   if (!text && !media) {
@@ -657,6 +694,8 @@ function evolutionInboundOf(data: unknown): EvolutionInboundResult {
       externalId: key ? asNonEmptyString(key.id) : null,
       fromMe: phone.fromMe,
       quotedExternalId: quotedExternalIdOf(record, message),
+      messageType: structured?.messageType ?? 'text',
+      metadata: structured?.metadata ?? inboundMediaMetadata(message, media),
     },
   };
 }
@@ -1077,17 +1116,23 @@ async function ingestEvolutionMessage(
       ? services.messages.createFromPhone(
           tenantId,
           conversation.id,
-          { ...dto, externalId: inbound.externalId, quotedExternalId: inbound.quotedExternalId },
+          {
+            ...dto,
+            externalId: inbound.externalId,
+            quotedExternalId: inbound.quotedExternalId,
+            metadata: inbound.metadata,
+          },
           { echoChecked: true },
         )
       : services.messages.createFromPatient(tenantId, conversation.id, {
           ...dto,
           externalId: inbound.externalId,
           quotedExternalId: inbound.quotedExternalId,
+          metadata: inbound.metadata,
         });
 
   if (!inbound.media) {
-    await create({ content: inbound.text, messageType: 'text', attachmentUrl: null });
+    await create({ content: inbound.text, messageType: inbound.messageType, attachmentUrl: null });
     return;
   }
 
@@ -1111,9 +1156,12 @@ async function ingestEvolutionMessage(
   // `application/octet-stream` — o `messageType` precisa refletir o que foi
   // REALMENTE gravado e servido, senao a bolha tenta abrir como imagem/pdf um
   // anexo generico.
+  // Figurinha com arquivo de imagem e tipo proprio (D-235 item 2): fora do
+  // lightbox e da navegacao de imagens. Rebaixada, segue o MIME como tudo.
+  const byMime = messageTypeFromMime(stored.mimeType);
   const message = await create({
     content: inbound.text,
-    messageType: messageTypeFromMime(stored.mimeType),
+    messageType: inbound.media.key === 'stickerMessage' && byMime === 'image' ? 'sticker' : byMime,
     attachmentUrl: `/api/v1/media/${stored.id}`,
   });
   // `null` = reentrega concorrente de `fromMe` que perdeu a corrida: a midia

@@ -12,8 +12,12 @@
  * divergir (BUSINESS_RULES §5 — um numero, uma origem).
  */
 import {
+  MESSAGE_TYPES,
   QUOTED_PREVIEW_MAX,
   type Message,
+  type MessageContact,
+  type MessageLocation,
+  type MessageMediaInfo,
   type MessageSearchHit,
   type MessageReaction,
   type MessageStatus,
@@ -49,13 +53,29 @@ interface MessageRow {
   q_message_type: string | null;
   q_deleted_at: Date | string | null;
   reactions: unknown;
+  // CRMLAB-70 (D-234)
+  metadata: unknown;
+  mm_file_name: string | null;
+  mm_byte_size: number | string | null;
+  mm_mime_type: string | null;
 }
 
-const MESSAGE_TYPES: MessageType[] = ['text', 'image', 'audio', 'pdf', 'doc'];
+/**
+ * `messages.metadata` (migracao 045, D-234): o que o WhatsApp manda junto e o
+ * arquivo nao tem. Nome/tamanho/MIME do arquivo NAO moram aqui (`message_media`).
+ */
+export interface MessageMetadata {
+  durationSec?: number | null;
+  pageCount?: number | null;
+  /** JPEG em base64, sem `data:`. */
+  thumbnail?: string | null;
+  location?: MessageLocation | null;
+  contacts?: MessageContact[] | null;
+}
 const MESSAGE_STATUSES: MessageStatus[] = ['pending', 'sent', 'delivered', 'read', 'failed'];
 const SENDER_TYPES: SenderType[] = ['patient', 'agent', 'system'];
 
-function toMessageType(value: string | null): MessageType {
+export function toMessageType(value: string | null): MessageType {
   return MESSAGE_TYPES.includes(value as MessageType) ? (value as MessageType) : 'text';
 }
 
@@ -127,7 +147,18 @@ const COLUMNS = `m.id, m.conversation_id, m.sender_type, m.sender_id, m.content,
            FROM message_reactions r
            LEFT JOIN users ru ON ru.id = r.user_id
           WHERE r.message_id = m.id
-       ), '[]'::json) AS reactions`;
+       ), '[]'::json) AS reactions,
+       m.metadata, mm.file_name AS mm_file_name, mm.byte_size AS mm_byte_size,
+       mm.mime_type AS mm_mime_type`;
+
+/**
+ * Arquivo da mensagem (D-234 item 2) pela id que esta em `attachment_url` —
+ * nao por `message_media.message_id`, que so e preenchido DEPOIS do INSERT e
+ * do evento de WS. O `CASE` garante que o cast para uuid so roda quando a URL
+ * e nossa (`/api/v1/media/<uuid>`); URL externa nao casa nada.
+ */
+const MEDIA_ID_SQL = `(CASE WHEN m.attachment_url ~ '^/api/v1/media/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                            THEN substring(m.attachment_url from 15)::uuid END)`;
 
 /**
  * A citada (D-221) e resolvida NA LEITURA: pela id interna quando a original ja
@@ -150,7 +181,8 @@ const FROM = `FROM messages m
                    AND m.quoted_external_id IS NOT NULL
                    AND q.external_message_id = m.quoted_external_id))
         LIMIT 1
-     ) q ON TRUE`;
+     ) q ON TRUE
+     LEFT JOIN message_media mm ON mm.id = ${MEDIA_ID_SQL}`;
 
 function toReactions(value: unknown): MessageReaction[] {
   const list: unknown = typeof value === 'string' ? safeParse(value) : value;
@@ -197,6 +229,55 @@ function toQuoted(row: MessageRow): QuotedMessageSummary | null {
   };
 }
 
+function finiteOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+/** `metadata` (JSONB) -> forma conhecida; qualquer coisa estranha vira ausente. */
+export function toMetadata(value: unknown): MessageMetadata {
+  const raw: unknown = typeof value === 'string' ? safeParse(value) : value;
+  if (typeof raw !== 'object' || raw === null) return {};
+  const r = raw as Record<string, unknown>;
+  const loc = typeof r.location === 'object' && r.location !== null ? (r.location as Record<string, unknown>) : null;
+  const latitude = loc ? finiteOrNull(loc.latitude) : null;
+  const longitude = loc ? finiteOrNull(loc.longitude) : null;
+  const contacts: MessageContact[] = [];
+  if (Array.isArray(r.contacts)) {
+    for (const item of r.contacts) {
+      if (typeof item !== 'object' || item === null) continue;
+      const c = item as Record<string, unknown>;
+      const name = stringOrNull(c.name);
+      if (name) contacts.push({ name, phone: stringOrNull(c.phone) });
+    }
+  }
+  return {
+    durationSec: finiteOrNull(r.durationSec),
+    pageCount: finiteOrNull(r.pageCount),
+    thumbnail: stringOrNull(r.thumbnail),
+    location:
+      latitude !== null && longitude !== null
+        ? { latitude, longitude, name: stringOrNull(loc?.name), address: stringOrNull(loc?.address) }
+        : null,
+    contacts,
+  };
+}
+
+function toMedia(row: MessageRow, meta: MessageMetadata): MessageMediaInfo | null {
+  if (!row.mm_file_name) return null;
+  return {
+    fileName: row.mm_file_name,
+    fileSize: toNumber(row.mm_byte_size, 0),
+    mimeType: row.mm_mime_type ?? 'application/octet-stream',
+    durationSec: meta.durationSec ?? null,
+    pageCount: meta.pageCount ?? null,
+    thumbnail: meta.thumbnail ?? null,
+  };
+}
+
 /**
  * Linha -> `Message`. Mensagem APAGADA pelo remetente (D-220) sai sem o
  * conteudo: `content` vazio, sem anexo, sem citacao e sem reacoes. A linha e a
@@ -206,6 +287,7 @@ function toQuoted(row: MessageRow): QuotedMessageSummary | null {
 export function toMessage(row: MessageRow): Message {
   const deletedAt = toIsoOrNull(row.deleted_at);
   const hidden = deletedAt !== null;
+  const meta = hidden ? {} : toMetadata(row.metadata);
   return {
     id: row.id,
     conversationId: row.conversation_id,
@@ -223,6 +305,10 @@ export function toMessage(row: MessageRow): Message {
     reactions: hidden ? [] : toReactions(row.reactions),
     editedAt: toIsoOrNull(row.edited_at),
     deletedAt,
+    // D-234: apagada sai sem arquivo, sem cartao e sem contatos, como o anexo.
+    media: hidden ? null : toMedia(row, meta),
+    location: meta.location ?? null,
+    contacts: meta.contacts ?? [],
   };
 }
 
@@ -274,6 +360,8 @@ export interface MessageInsert {
   quotedExternalId?: string | null;
   /** So o reingajamento (D-211 item 5); `null`/ausente para todo o resto. */
   automation?: 'reengagement' | null;
+  /** Duracao, paginas, miniatura, localizacao, contatos (D-234). */
+  metadata?: MessageMetadata | null;
 }
 
 export interface MessagePage {
@@ -522,14 +610,14 @@ export class MessageRepository {
         `INSERT INTO messages
            (tenant_id, conversation_id, sender_type, sender_id, content, message_type,
             attachment_url, status, external_message_id, quoted_external_id, quoted_message_id,
-            automation)
+            automation, metadata)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text,
                  COALESCE($11::uuid, (SELECT q.id FROM messages q
                                        WHERE $10::text IS NOT NULL
                                          AND q.conversation_id = $2
                                          AND q.external_message_id = $10::text
                                        LIMIT 1)),
-                 $12)
+                 $12, $13::jsonb)
          RETURNING id`,
         [
           tenantId,
@@ -544,6 +632,7 @@ export class MessageRepository {
           data.quotedExternalId ?? null,
           data.quotedMessageId ?? null,
           data.automation ?? null,
+          data.metadata ? JSON.stringify(data.metadata) : null,
         ],
       );
       const id = inserted.rows[0]?.id;

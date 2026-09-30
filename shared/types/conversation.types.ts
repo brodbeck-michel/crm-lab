@@ -8,7 +8,61 @@ import type { UserRole } from './auth.types.js';
 export type ConversationStatus = 'active' | 'closed';
 export type ConversationChannel = 'whatsapp' | 'sms' | 'web' | 'direct';
 export type SenderType = 'patient' | 'agent' | 'system';
-export type MessageType = 'text' | 'image' | 'audio' | 'pdf' | 'doc';
+/** `video`, `sticker`, `location` e `contact` entraram no CRMLAB-70 (D-234). */
+export type MessageType =
+  | 'text'
+  | 'image'
+  | 'audio'
+  | 'pdf'
+  | 'doc'
+  | 'video'
+  | 'sticker'
+  | 'location'
+  | 'contact';
+
+/** Lista canonica — valor fora dela, na leitura, vira `text`. */
+export const MESSAGE_TYPES: readonly MessageType[] = [
+  'text',
+  'image',
+  'audio',
+  'pdf',
+  'doc',
+  'video',
+  'sticker',
+  'location',
+  'contact',
+] as const;
+
+/**
+ * Fatos do arquivo e do que o WhatsApp mandou junto (D-234). Nome, tamanho e
+ * MIME vem de `message_media`; o resto de `messages.metadata`.
+ */
+export interface MessageMediaInfo {
+  fileName: string;
+  /** Bytes. */
+  fileSize: number;
+  mimeType: string;
+  /** Video e audio. */
+  durationSec: number | null;
+  /** PDF, quando o WhatsApp informa. */
+  pageCount: number | null;
+  /** Miniatura JPEG do video em base64 (sem o prefixo `data:`). */
+  thumbnail: string | null;
+}
+
+/** Localizacao compartilhada (D-235 item 4). */
+export interface MessageLocation {
+  latitude: number;
+  longitude: number;
+  name: string | null;
+  address: string | null;
+}
+
+/** Cartao de contato compartilhado (D-235 item 5). `phone` em `+<digitos>`. */
+export interface MessageContact {
+  name: string;
+  phone: string | null;
+}
 /**
  * `pending` = enviando (relogio), antes de o gateway devolver o id (D-225).
  * Ordem que nunca rebaixa: pending < sent < delivered < read; `failed` so a
@@ -149,6 +203,16 @@ export interface Message {
   editedAt?: IsoDateTime | null;
   /** O remetente apagou "para todos": a tela mostra "Mensagem apagada" (D-220). */
   deletedAt?: IsoDateTime | null;
+  /*
+   * CRMLAB-70 (D-234): opcionais no tipo, o backend sempre manda. Apagada =
+   * `null`/`null`/`[]`.
+   */
+  /** `null` sem anexo, com URL externa ou anexo apagado/anonimizado. */
+  media?: MessageMediaInfo | null;
+  /** So em `messageType: 'location'`. */
+  location?: MessageLocation | null;
+  /** So em `messageType: 'contact'`. */
+  contacts?: MessageContact[];
 }
 
 /**
@@ -180,6 +244,16 @@ export interface StartWhatsAppConversationRequest {
 export interface StartWhatsAppConversationResponse {
   conversation: ConversationDetail;
   message: Message;
+}
+
+/**
+ * `POST /conversations/whatsapp/open` (CRMLAB-70, D-236) — "Conversar" do
+ * cartao de contato: abre a conversa que JA existe com o numero, sem enviar
+ * nada. Numero sem conversa -> 404 (a tela cai na Nova conversa). Resposta:
+ * `ConversationDetail` cru.
+ */
+export interface OpenWhatsAppConversationRequest {
+  phone: string;
 }
 
 /**

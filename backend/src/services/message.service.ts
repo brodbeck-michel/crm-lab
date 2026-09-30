@@ -56,7 +56,6 @@ import type {
   Message,
   MessageStatus,
   PatientPresence,
-  MessageType,
   MessageCursors,
   MessageSearchHit,
   PaginationMeta,
@@ -68,9 +67,11 @@ import type { WsHub } from '../lib/ws-hub.js';
 import { ConversationRepository } from '../repositories/conversation.repository.js';
 import {
   MessageRepository,
+  type MessageMetadata,
   type MessageRef,
   type MessageSearchCriteria,
 } from '../repositories/message.repository.js';
+import { messageTypeFromMime } from './media.service.js';
 import { isUniqueViolation } from '../repositories/quick-reply.repository.js';
 import { createAuditService, type AuditService } from './audit.service.js';
 import { claimFreeConversation } from './conversation-claim.js';
@@ -82,13 +83,6 @@ import {
   type WhatsAppService,
 } from './whatsapp.service.js';
 
-/** `image/jpeg` -> `'image'`; `audio/*` -> `'audio'`; `application/pdf` -> `'pdf'`; resto -> `'doc'`. */
-function messageTypeFromMime(mimeType: string): MessageType {
-  if (mimeType.startsWith('image/')) return 'image';
-  if (mimeType.startsWith('audio/')) return 'audio';
-  if (mimeType === 'application/pdf') return 'pdf';
-  return 'doc';
-}
 
 /** Anexo do atendente — o mesmo DTO que `MediaService.storeOutbound` produziu. */
 export interface OutboundAttachmentInput {
@@ -140,6 +134,8 @@ export interface InboundMessageInput {
   patientName?: string | null;
   /** `contextInfo.stanzaId` — a mensagem que o remetente citou (D-221). */
   quotedExternalId?: string | null;
+  /** Duracao, paginas, miniatura, localizacao, contatos (D-234/D-235). */
+  metadata?: MessageMetadata | null;
 }
 
 function clampPage(value: number | undefined): number {
@@ -459,6 +455,7 @@ export class MessageService {
         status: 'delivered',
         externalMessageId: dto.externalId ?? null,
         quotedExternalId: dto.quotedExternalId ?? null,
+        metadata: dto.metadata ?? null,
       });
 
     let message: Message;
@@ -522,6 +519,7 @@ export class MessageService {
         status: 'sent',
         externalMessageId: externalId,
         quotedExternalId: dto.quotedExternalId ?? null,
+        metadata: dto.metadata ?? null,
       });
       this.emitNewMessage(tenantId, conversationId, message.id);
       return message;

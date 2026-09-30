@@ -1,70 +1,52 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, cn } from '@/components/ui';
+import { ALL_EMOJIS, EMOJI_CATEGORIES, searchEmojis } from './emoji-data';
+import type { Emoji, EmojiCategoryId } from './emoji-data';
 
 /**
- * Seletor de emoji do Composer — COMPONENTS.md (`conversation/`), Onda 8 §2.2.
+ * Seletor de emoji do Composer — COMPONENTS.md (`conversation/`), Onda 8 §2.2,
+ * refeito no CRMLAB-73 (D-243): busca em pt-BR, categorias e recentes.
  *
- * rangel: grade fixa, sem dependência. Um seletor completo com busca por nome
- * custa centenas de KB para um caso que não pede busca. Se a busca virar
- * necessidade real, a biblioteca entra AQUI dentro — o resto da tela não sabe
- * a diferença.
+ * Lista estática versionada (`emoji-data.ts`), sem dependência: `emoji-mart`
+ * pesa centenas de KB e fala inglês. Quem insere no cursor é o Composer
+ * (`onPick`); abrir a busca não perde o cursor, porque o textarea guarda a
+ * última seleção mesmo sem foco.
  *
  * Cada emoji é um `<button>` com `aria-label` em pt-BR: leitor de tela sem o
  * rótulo anuncia o codepoint, que não ajuda ninguém. `Esc` fecha e devolve o
  * foco a quem abriu (o `Composer` passa `onClose`).
  */
 
-/** Os 48 do dia a dia de um atendimento de laboratório. */
-export const EMOJIS: ReadonlyArray<{ char: string; label: string }> = [
-  { char: '😀', label: 'sorriso' },
-  { char: '😁', label: 'sorriso animado' },
-  { char: '😊', label: 'sorriso tímido' },
-  { char: '🙂', label: 'sorriso leve' },
-  { char: '😉', label: 'piscadinha' },
-  { char: '😅', label: 'sorriso sem graça' },
-  { char: '😂', label: 'chorando de rir' },
-  { char: '🥰', label: 'apaixonado' },
-  { char: '😍', label: 'olhos de coração' },
-  { char: '🤗', label: 'abraço' },
-  { char: '🤔', label: 'pensando' },
-  { char: '😐', label: 'sem expressão' },
-  { char: '😴', label: 'dormindo' },
-  { char: '😷', label: 'máscara' },
-  { char: '🤒', label: 'doente' },
-  { char: '🤕', label: 'machucado' },
-  { char: '😢', label: 'triste' },
-  { char: '😭', label: 'chorando' },
-  { char: '😌', label: 'aliviado' },
-  { char: '😳', label: 'surpreso' },
-  { char: '🙏', label: 'obrigado' },
-  { char: '👍', label: 'joinha' },
-  { char: '👎', label: 'não curti' },
-  { char: '👏', label: 'palmas' },
-  { char: '🙌', label: 'comemorando' },
-  { char: '🤝', label: 'aperto de mãos' },
-  { char: '💪', label: 'força' },
-  { char: '✌️', label: 'paz e amor' },
-  { char: '👋', label: 'aceno' },
-  { char: '❤️', label: 'coração' },
-  { char: '💚', label: 'coração verde' },
-  { char: '✨', label: 'brilho' },
-  { char: '⭐', label: 'estrela' },
-  { char: '🎉', label: 'festa' },
-  { char: '✅', label: 'confirmado' },
-  { char: '❌', label: 'erro' },
-  { char: '⚠️', label: 'atenção' },
-  { char: '❗', label: 'exclamação' },
-  { char: '❓', label: 'interrogação' },
-  { char: '📅', label: 'calendário' },
-  { char: '⏰', label: 'horário' },
-  { char: '📍', label: 'endereço' },
-  { char: '📞', label: 'telefone' },
-  { char: '📄', label: 'documento' },
-  { char: '💳', label: 'pagamento' },
-  { char: '💰', label: 'dinheiro' },
-  { char: '🩺', label: 'estetoscópio' },
-  { char: '🧪', label: 'exame' },
-];
+/** Todos os emojis do seletor (compatível com a exportação antiga). */
+export const EMOJIS: readonly Emoji[] = ALL_EMOJIS;
+
+export const RECENT_EMOJIS_KEY = 'crm-lab.emoji-recent';
+export const MAX_RECENT_EMOJIS = 24;
+
+const BY_CHAR = new Map(ALL_EMOJIS.map((emoji) => [emoji.char, emoji]));
+
+/** Recentes do navegador; storage indisponível ou lixo → lista vazia. */
+export function readRecentEmojis(): Emoji[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(RECENT_EMOJIS_KEY) ?? '[]');
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((char) => (typeof char === 'string' ? BY_CHAR.get(char) : undefined))
+      .filter((emoji): emoji is Emoji => emoji !== undefined);
+  } catch {
+    return [];
+  }
+}
+
+function rememberEmoji(char: string): void {
+  try {
+    const current = readRecentEmojis().map((emoji) => emoji.char);
+    const next = [char, ...current.filter((item) => item !== char)].slice(0, MAX_RECENT_EMOJIS);
+    localStorage.setItem(RECENT_EMOJIS_KEY, JSON.stringify(next));
+  } catch {
+    // Sem storage: os recentes só não persistem.
+  }
+}
 
 export interface EmojiPickerProps {
   /** Recebe o caractere escolhido. O popover fecha sozinho depois. */
@@ -73,6 +55,8 @@ export interface EmojiPickerProps {
   onClose?: () => void;
   disabled?: boolean;
 }
+
+type TabId = 'recent' | EmojiCategoryId;
 
 /** Carinha em SVG inline — mesmo padrão do clipe de papel do Composer. */
 function EmojiIcon() {
@@ -98,11 +82,32 @@ function EmojiIcon() {
 
 export function EmojiPicker({ onPick, onClose, disabled = false }: EmojiPickerProps) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [recent, setRecent] = useState<Emoji[]>([]);
+  const [tab, setTab] = useState<TabId>('smileys');
   const ref = useRef<HTMLDivElement>(null);
+
+  function toggle(): void {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    const saved = readRecentEmojis();
+    setRecent(saved);
+    setTab(saved.length > 0 ? 'recent' : 'smileys');
+    setQuery('');
+    setOpen(true);
+  }
 
   function close(): void {
     setOpen(false);
     onClose?.();
+  }
+
+  function pick(emoji: Emoji): void {
+    rememberEmoji(emoji.char);
+    onPick(emoji.char);
+    close();
   }
 
   useEffect(() => {
@@ -123,12 +128,29 @@ export function EmojiPicker({ onPick, onClose, disabled = false }: EmojiPickerPr
     };
   }, [open, onClose]);
 
+  const searching = query.trim().length > 0;
+  const results = useMemo(() => (searching ? searchEmojis(query) : []), [searching, query]);
+  const category = EMOJI_CATEGORIES.find((item) => item.id === tab);
+  const visible = searching ? results : tab === 'recent' ? recent : (category?.emojis ?? []);
+  const gridLabel = searching
+    ? 'Resultados da busca'
+    : tab === 'recent'
+      ? 'Recentes'
+      : (category?.label ?? '');
+
+  const tabClass = (active: boolean) =>
+    cn(
+      'flex-1 cursor-pointer rounded-sm border-none bg-transparent px-0 py-xs font-body text-label leading-none',
+      'hover:bg-accent-100',
+      active && 'bg-accent-100 shadow-sm',
+    );
+
   return (
     <div ref={ref} className="relative flex-[0_0_auto]">
       <Button
         variant="secondary"
         size="sm"
-        onClick={() => setOpen((value) => !value)}
+        onClick={toggle}
         disabled={disabled}
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -139,28 +161,92 @@ export function EmojiPicker({ onPick, onClose, disabled = false }: EmojiPickerPr
 
       {open && (
         <div
+          role="dialog"
+          aria-label="Emojis"
           className={cn(
-            'absolute bottom-full left-0 z-50 mb-xs w-[264px] rounded-md border',
+            'absolute bottom-full left-0 z-50 mb-xs flex w-[320px] flex-col gap-sm rounded-md border',
             'border-neutral-200 bg-surface p-sm shadow-md',
           )}
         >
-          <div className="grid grid-cols-8 gap-xs">
-            {EMOJIS.map((emoji, index) => (
-              <button
-                // O mesmo caractere pode repetir com rótulos diferentes.
-                key={`${emoji.char}-${index}`}
-                type="button"
-                aria-label={emoji.label}
-                onClick={() => {
-                  onPick(emoji.char);
-                  close();
-                }}
-                className="cursor-pointer rounded-sm border-none bg-transparent p-xs text-label leading-none hover:bg-accent-100"
-              >
-                {emoji.char}
-              </button>
-            ))}
-          </div>
+          <input
+            type="search"
+            value={query}
+            // O cursor do textarea não se perde: ele guarda a última seleção.
+            autoFocus
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && results[0]) {
+                event.preventDefault();
+                pick(results[0]);
+              }
+            }}
+            placeholder="Buscar emoji"
+            aria-label="Buscar emoji"
+            className={cn(
+              'w-full rounded-pill border border-neutral-300 bg-bg px-md py-xs font-body text-label text-text',
+              'outline-none placeholder:text-neutral-600 focus:border-accent',
+            )}
+          />
+
+          {!searching && (
+            <div role="tablist" aria-label="Categorias de emoji" className="flex gap-xs">
+              {recent.length > 0 && (
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={tab === 'recent'}
+                  aria-label="Recentes"
+                  title="Recentes"
+                  onClick={() => setTab('recent')}
+                  className={tabClass(tab === 'recent')}
+                >
+                  🕘
+                </button>
+              )}
+              {EMOJI_CATEGORIES.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={tab === item.id}
+                  aria-label={item.label}
+                  title={item.label}
+                  onClick={() => setTab(item.id)}
+                  className={tabClass(tab === item.id)}
+                >
+                  {item.icon}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <p className="m-0 font-body text-caption text-neutral-600">{gridLabel}</p>
+
+          {visible.length === 0 ? (
+            <p className="m-0 py-md text-center font-body text-caption text-neutral-600">
+              Nenhum emoji encontrado
+            </p>
+          ) : (
+            <div
+              role="group"
+              aria-label={gridLabel}
+              className="grid max-h-[216px] grid-cols-8 gap-xs overflow-y-auto"
+            >
+              {visible.map((emoji, index) => (
+                <button
+                  // O mesmo caractere pode repetir com rótulos diferentes.
+                  key={`${emoji.char}-${index}`}
+                  type="button"
+                  aria-label={emoji.label}
+                  title={emoji.label}
+                  onClick={() => pick(emoji)}
+                  className="cursor-pointer rounded-sm border-none bg-transparent p-xs text-label leading-none hover:bg-accent-100"
+                >
+                  {emoji.char}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

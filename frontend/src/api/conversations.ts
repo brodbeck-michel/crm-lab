@@ -8,7 +8,9 @@ import type {
   ListAssigneesResponse,
   ListConversationsQuery,
   ListConversationsResponse,
+  ConversationDetail,
   Message,
+  OpenWhatsAppConversationRequest,
   SendPresenceRequest,
   SearchMessagesQuery,
   SearchMessagesResponse,
@@ -37,6 +39,10 @@ export const conversationsApi = {
   /** "Nova conversa" (CRMLAB-50, D-175): cria/reaproveita a conversa do número e envia. */
   startWhatsApp: (body: StartWhatsAppConversationRequest) =>
     http.post<StartWhatsAppConversationResponse>('/conversations/whatsapp', body),
+
+  /** "Conversar" do cartão de contato (CRMLAB-70, D-236): abre a existente; 404 = não há. */
+  openWhatsApp: (body: OpenWhatsAppConversationRequest) =>
+    http.post<ConversationDetail>('/conversations/whatsapp/open', body),
 
   sendMessage: (id: string, body: CreateMessageRequest) =>
     http.post<Message>(`/conversations/${id}/messages`, body),

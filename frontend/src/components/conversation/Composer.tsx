@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ClipboardEvent, KeyboardEvent } from 'react';
 import type { QuickReply } from '@crm-lab/shared';
 import { Button, cn } from '@/components/ui';
+import { readConversationDraft, saveConversationDraft } from '@/stores';
 import { DOCUMENT_ACCEPT, MEDIA_ACCEPT, filesFromDataTransfer } from './attachment-draft';
 import { EmojiPicker } from './EmojiPicker';
 import { QuickReplyMenu, filterQuickReplies, quickReplyOptionId } from './QuickReplyMenu';
@@ -84,6 +85,12 @@ export interface ComposerProps {
   replyTo?: { authorName: string; preview: string } | null;
   /** × da faixa ou `Esc` no campo. */
   onCancelReply?: () => void;
+  /**
+   * Rascunho por conversa (CRMLAB-73, D-243): o id da conversa. O campo começa
+   * com `initialValue` (o `?draft=` vence) ou com o rascunho salvo, e cada
+   * mudança grava — campo vazio remove. Sem `draftId`, nada é guardado.
+   */
+  draftId?: string;
   /**
    * A pessoa digitou algo (texto não vazio) — a cada tecla. Quem monta a tela
    * decide o ritmo do "digitando…" para o paciente (D-227); o Composer só avisa.
@@ -241,8 +248,11 @@ export function Composer({
   replyTo,
   onCancelReply,
   onTyping,
+  draftId,
 }: ComposerProps) {
-  const [value, setValue] = useState(initialValue ?? '');
+  const [value, setValue] = useState(
+    () => initialValue ?? (draftId ? readConversationDraft(draftId) : null) ?? '',
+  );
   // `false` enquanto a pessoa não abriu o menu nesta digitação — é o que faz
   // `Esc` deixar a `/` no campo sem o menu voltar a abrir sozinho.
   const [macroMenuOpen, setMacroMenuOpen] = useState(false);
@@ -273,6 +283,17 @@ export function Composer({
     setMultiline(field.scrollHeight > singleLine);
     // `recording`: o campo sai da tela durante a gravação e volta sem altura.
   }, [value, recording]);
+
+  // Voltou para a conversa com rascunho: o cursor fica no FIM do texto (D-243).
+  useLayoutEffect(() => {
+    const field = fieldRef.current;
+    if (field && field.value.length > 0) field.setSelectionRange(field.value.length, field.value.length);
+  }, []);
+
+  // Rascunho: toda mudança do texto grava (emoji, macro, envio que volta a '').
+  useEffect(() => {
+    if (draftId) saveConversationDraft(draftId, value);
+  }, [draftId, value]);
 
   /** O texto é um comando de macro enquanto for `/` + o que se digita depois. */
   const macroFilter = value.startsWith('/') ? value.slice(1) : null;
@@ -338,15 +359,16 @@ export function Composer({
   /**
    * Ctrl+B / Cmd+B (CRMLAB-51, D-183): envolve a seleção em `*` — o negrito do
    * WhatsApp — e mantém o texto selecionado; sem seleção, `**` com o cursor no meio.
+   * Ctrl+I (`_`) e Ctrl+Shift+X (`~`) fazem o mesmo (CRMLAB-73, D-242).
    */
-  function wrapBold(): void {
+  function wrapSelection(marker: '*' | '_' | '~'): void {
     const field = fieldRef.current;
     let start = field?.selectionStart ?? value.length;
     let end = field?.selectionEnd ?? value.length;
     // Duplo clique no Windows seleciona "palavra " — `*palavra *` não formataria.
     while (start < end && /\s/.test(value.charAt(start))) start++;
     while (end > start && /\s/.test(value.charAt(end - 1))) end--;
-    setValue(`${value.slice(0, start)}*${value.slice(start, end)}*${value.slice(end)}`);
+    setValue(`${value.slice(0, start)}${marker}${value.slice(start, end)}${marker}${value.slice(end)}`);
     requestAnimationFrame(() => fieldRef.current?.setSelectionRange(start + 1, end + 1));
   }
 
@@ -364,10 +386,16 @@ export function Composer({
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
     // `!altKey`: AltGr no Windows chega como Ctrl+Alt e digita caractere em alguns teclados.
-    if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'b') {
-      event.preventDefault();
-      wrapBold();
-      return;
+    if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+      const key = event.key.toLowerCase();
+      // Ctrl+X SEM Shift é recortar — só Ctrl+Shift+X vira tachado.
+      const marker =
+        key === 'b' ? '*' : key === 'i' ? '_' : key === 'x' && event.shiftKey ? '~' : null;
+      if (marker) {
+        event.preventDefault();
+        wrapSelection(marker);
+        return;
+      }
     }
     if (macroOpen) {
       // Com o menu aberto, estas teclas pertencem a ELE. Enter escolhendo a

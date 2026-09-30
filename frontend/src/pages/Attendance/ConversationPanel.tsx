@@ -31,6 +31,8 @@ import { ConversationSearch } from './ConversationSearch';
 import { scrollToMessage } from './scroll-to-message';
 import { usePatientPresence } from './usePatientPresence';
 import { useConversationScroll } from './useConversationScroll';
+import { useConversationImages } from './useConversationImages';
+import { ConversationImageViewer } from './ConversationImageViewer';
 
 /**
  * Coluna 2 do inbox — PAGES.md §2.
@@ -367,6 +369,17 @@ export function ConversationPanel({
   const quotedId = replyTo?.id;
   const clearReply = (): void => setReply(null);
 
+  // Lightbox (CRMLAB-64, D-244): um só, do painel, ancorado no ID da mensagem
+  // aberta e preso à conversa — trocar de conversa fecha.
+  const images = useConversationImages(messages);
+  const [openImage, setOpenImage] = useState<{ conversationId: string; messageId: string } | null>(
+    null,
+  );
+  const openImageId = openImage?.conversationId === conversationId ? openImage.messageId : null;
+  const showImage = (messageId: string): void => {
+    if (conversationId !== null) setOpenImage({ conversationId, messageId });
+  };
+
   // Presença (D-226/D-227): assina ao abrir; "digitando…" com ritmo próprio.
   const presence = usePatientPresence(conversationId);
   const canSignalPresence = conversation?.status === 'active' && onPresence !== undefined;
@@ -401,6 +414,7 @@ export function ConversationPanel({
     onQuoteClick: (messageId) => {
       if (!scrollToMessage(scrollRef.current, messageId)) onQuoteUnavailable?.();
     },
+    onOpenImage: (message) => showImage(message.id),
   };
 
   // Prévia de anexos (CRMLAB-69, D-232): presa à conversa em que abriu —
@@ -731,6 +745,7 @@ export function ConversationPanel({
           disabled={closed}
           quickReplies={quickReplies}
           initialValue={draftMessage}
+          draftId={conversation.id}
         />
 
         {dragging && !drafts && (
@@ -757,6 +772,14 @@ export function ConversationPanel({
           />
         )}
       </div>
+
+      <ConversationImageViewer
+        images={images}
+        openId={openImageId}
+        patientName={conversation.patientName}
+        onChange={showImage}
+        onClose={() => setOpenImage(null)}
+      />
     </div>
   );
 }
@@ -766,7 +789,10 @@ export function ConversationPanel({
  * Cada bolha vai numa linha com `data-anchor-id` — é nela que a rolagem se
  * ancora (D-238). O `data-message-id` do balão é do `MessageBubble`.
  */
-type BubbleActions = Pick<MessageBubbleProps, 'onReply' | 'onReact' | 'onQuoteClick' | 'onRetry'>;
+type BubbleActions = Pick<
+  MessageBubbleProps,
+  'onReply' | 'onReact' | 'onQuoteClick' | 'onRetry' | 'onOpenImage'
+>;
 
 function renderRows(
   messages: Message[],

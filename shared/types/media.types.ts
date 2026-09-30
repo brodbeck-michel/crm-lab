@@ -53,6 +53,10 @@ export const ALLOWED_MEDIA_MIME_TYPES = [
   // Recado de voz gravado no Chrome/Edge (`MediaRecorder`, CRMLAB-24, D-182).
   'audio/webm',
   'video/mp4',
+  // CRMLAB-70 (D-234 item 8): vídeo do iPhone (.mov), 3GP de celular antigo e WebM.
+  'video/quicktime',
+  'video/3gpp',
+  'video/webm',
   'application/pdf',
   'application/msword',
   'application/vnd.ms-excel',
@@ -64,6 +68,18 @@ export const ALLOWED_MEDIA_MIME_TYPES = [
 ] as const;
 
 export type AllowedMediaMimeType = (typeof ALLOWED_MEDIA_MIME_TYPES)[number];
+
+/**
+ * Vídeos que o WhatsApp do paciente reproduz como vídeo (CRMLAB-70, D-234
+ * item 8). O gateway não converte vídeo (só áudio, D-182): `.mov` e WebM saem
+ * como DOCUMENTO — o arquivo chega inteiro, em vez de um vídeo que talvez não
+ * toque. No CRM a mensagem continua `video`.
+ */
+export const WHATSAPP_VIDEO_MIME_TYPES = ['video/mp4', 'video/3gpp'] as const;
+
+export function isWhatsAppPlayableVideo(mimeType: string): boolean {
+  return (WHATSAPP_VIDEO_MIME_TYPES as readonly string[]).includes(normalizeMediaMimeType(mimeType));
+}
 
 /** Tudo que não está na allow-list (ou diverge do magic-byte) vira isto. */
 export const FALLBACK_MEDIA_MIME_TYPE = 'application/octet-stream';
@@ -82,6 +98,9 @@ const MEDIA_MIME_ALIASES: Readonly<Record<string, AllowedMediaMimeType>> = {
   'image/heif': 'image/heic',
   'audio/mp3': 'audio/mpeg',
   'audio/opus': 'audio/ogg',
+  // CRMLAB-70: `.mov` e 3GP com os rótulos que navegador/gateway usam.
+  'video/mov': 'video/quicktime',
+  'video/3gp': 'video/3gpp',
 };
 
 /**
@@ -106,12 +125,14 @@ export function isAllowedMediaMimeType(mimeType: string): mimeType is AllowedMed
  * cópia — a revisão do PR #43 achou cinco mapeamentos MIME→categoria
  * divergentes espalhados pelo backend.
  */
-export type MediaCategory = 'image' | 'audio' | 'pdf' | 'other';
+export type MediaCategory = 'image' | 'audio' | 'video' | 'pdf' | 'other';
 
 export function mediaCategoryOf(mimeType: string): MediaCategory {
   const mime = normalizeMediaMimeType(mimeType);
   if (mime.startsWith('image/')) return 'image';
   if (mime.startsWith('audio/')) return 'audio';
+  // CRMLAB-70 (D-234): video ganhou tipo proprio e passa pelo sniff de magic bytes.
+  if (mime.startsWith('video/')) return 'video';
   if (mime === 'application/pdf') return 'pdf';
   return 'other';
 }

@@ -28,6 +28,7 @@ export type { AttachmentDraft } from './attachment-draft';
 export type { ComposerProps } from './Composer';
 export type { RecordedAudio } from './useVoiceRecorder';
 export { EmojiPicker, EMOJIS } from './EmojiPicker';
+export { WhatsAppText } from './WhatsAppText';
 export type { EmojiPickerProps } from './EmojiPicker';
 export { QuickReplyMenu, filterQuickReplies, quickReplyOptionId } from './QuickReplyMenu';
 export type { QuickReplyMenuProps } from './QuickReplyMenu';

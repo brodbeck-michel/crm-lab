@@ -773,6 +773,33 @@ credencial ou desligado: a conversa **fica criada** e a mensagem gravada como `f
 `POST /conversations/:id/messages`; `conversationId` existe para a tela abrir a conversa mesmo
 assim), `FORBIDDEN` (403, `platform_operator`).
 
+### POST /conversations/whatsapp/open (CRMLAB-70, D-236)
+Botão **"Conversar"** do cartão de contato compartilhado: **abre a conversa que já existe** com o
+número, **sem enviar mensagem**. Número sem conversa → `404`, e a tela cai na Nova conversa
+(`POST /conversations/whatsapp`, com o telefone preenchido).
+
+**Request** (`OpenWhatsAppConversationRequest`): `{ "phone": "+5548988887777" }` — mesma validação
+de `phone` do `POST /conversations/whatsapp` (`normalizeBrazilianPhone`, máx. 20).
+
+**Comportamento:**
+- Acha pelo **mesmo** casamento de telefone de `findOrCreateByPhone` (dígitos, com e sem o nono
+  dígito — D-176), **só neste laboratório** (RLS). **Não cria** conversa nem paciente.
+- Conversa **encerrada** → reabre atribuída a quem clicou, com "Atendimento reaberto por <nome>"
+  e audit `update_conversation_status` — o mesmo que `POST /conversations` e
+  `POST /conversations/whatsapp` já fazem com número encerrado (D-174).
+- Conversa **ativa de outro atendente** (fora do recorte de quem pede) →
+  `CONVERSATION_ALREADY_ASSIGNED` (409), como na Nova conversa. Fila livre e a própria abrem
+  **sem mudar de dona** (não há resposta, então o D-215 não se aplica).
+- Não muda o canal da conversa (`direct`/`web`/`sms` continuam; quem troca é o envio).
+
+**Response (200):** `ConversationDetail` (objeto cru, o mesmo shape de `GET /conversations/:id`
+sem as mensagens).
+
+**Erros:** `VALIDATION_ERROR` (400 — `details.fields.phone`), `NOT_FOUND` (404,
+`resource: "conversation"` — o número não tem conversa neste laboratório),
+`CONVERSATION_ALREADY_ASSIGNED` (409, `details: { assignedTo, assignedToName }`), `FORBIDDEN`
+(403, `platform_operator`).
+
 ### GET /conversations/:id
 Detalhes de uma conversa + histórico de mensagens.
 
@@ -922,6 +949,39 @@ traz também:
   escondido** (D-220): `content: ""`, `attachmentUrl: null`, `quoted: null`, `reactions: []`. A
   linha e a mídia continuam no banco.
 
+**Tipos de mensagem e metadados (CRMLAB-70, D-234).** `messageType` ∈ `text | image | audio |
+pdf | doc | video | sticker | location | contact` (`MESSAGE_TYPES`). Todo `Message` traz também
+(campos **opcionais** no tipo; o backend sempre manda):
+
+```json
+{
+  "media": {
+    "fileName": "exame.pdf",
+    "fileSize": 184320,
+    "mimeType": "application/pdf",
+    "durationSec": null,
+    "pageCount": 3,
+    "thumbnail": null
+  },
+  "location": null,
+  "contacts": []
+}
+```
+
+- `media` (`MessageMediaInfo | null`): nome, tamanho em bytes e MIME **do arquivo gravado**
+  (`message_media`), mais o que o WhatsApp mandou junto: `durationSec` (vídeo/áudio), `pageCount`
+  (PDF) e `thumbnail` (miniatura JPEG do vídeo em base64, sem o prefixo `data:`). `null` sem
+  anexo, com anexo de URL externa ou apagado/anonimizado.
+- `location` (`MessageLocation | null`, só em `messageType: "location"`):
+  `{ "latitude": -28.48, "longitude": -49.01, "name": "Laboratório", "address": "Rua X, 10" }`
+  (`name`/`address` anuláveis).
+- `contacts` (`MessageContact[]`, só em `messageType: "contact"`): `[{ "name": "Ana", "phone":
+  "+5548999991234" }]` — `phone` anulável (vCard sem telefone).
+- `content` continua sendo o **texto de fallback** (busca, prévia da lista, citação):
+  `📍 <nome>`, `👤 <nome>`, `Figurinha`, ou a legenda/nome do arquivo. Mensagem apagada (D-220):
+  `media: null`, `location: null`, `contacts: []`.
+- Mensagens gravadas antes do CRMLAB-70 como `[Localizacao] …`/`[Contato] …` continuam `text`.
+
 **Erros:** `NOT_FOUND` (404 — inexistente, de outro tenant **ou de outro atendente**;
 nunca 403), `FORBIDDEN` (403, `platform_operator`), `VALIDATION_ERROR` (400, `:id` não-uuid)
 
@@ -1022,8 +1082,8 @@ médico.
 O recorte por papel é aplicado **antes** de gravar: conversa que o usuário não
 enxerga devolve `NOT_FOUND`. Conversa sem dona é assumida por quem envia antes de gravar a
 mídia (D-215, mesma regra e mesmo 409 de `POST /conversations/:id/messages`). `messageType` é derivado do `mimeType`
-(`image/* → image`, `audio/* → audio`, `application/pdf → pdf`, resto →
-`doc`) — o cliente não escolhe.
+(`image/* → image`, `audio/* → audio`, `video/* → video` (CRMLAB-70), `application/pdf → pdf`,
+resto → `doc`) — o cliente não escolhe.
 
 **Áudio (CRMLAB-24, D-182):** o recado gravado no compositor usa este mesmo endpoint
 (`fileName` `recado-de-voz.<ogg|webm|m4a>`, `mimeType` o do `MediaRecorder`, ex.
@@ -1032,8 +1092,11 @@ mídia (D-215, mesma regra e mesmo 409 de `POST /conversations/:id/messages`). `
 recado de voz — e não por `/message/sendMedia`. O request e a resposta deste endpoint não mudam.
 
 **Vídeo (CRMLAB-69, D-231):** `video/*` sai no `/message/sendMedia` com `mediatype: "video"`
-(antes ia como `document`). O `messageType` gravado continua `doc` até o CRMLAB-70 criar o tipo
-`video`.
+(antes ia como `document`). Desde o CRMLAB-70 (D-234) o `messageType` gravado é `video`. A
+allow-list aceita `video/mp4`, `video/quicktime` (.mov do iPhone), `video/3gpp` e `video/webm`,
+com o mesmo teto de 15 MiB. **Só MP4 e 3GP saem como `mediatype: "video"`**; `.mov` e WebM saem
+como `document` (o gateway não converte vídeo e o WhatsApp do paciente não garante tocar esses
+contêineres — D-234 item 8). No CRM os quatro ficam `video`.
 
 **Response (201):** o mesmo shape de `POST /conversations/:id/messages`, com
 `attachmentUrl` apontando para `GET /media/:id` (nunca uma URL pública):
@@ -1361,12 +1424,14 @@ responder):
   `videoMessage`/`stickerMessage` são reconhecidos ao lado de
   `conversation`/`extendedTextMessage` (o webhook é registrado com
   `base64: true`). Vídeo e figurinha entraram na auditoria de 2026-09-17 — antes eram
-  descartados em silêncio. Ambos chegam pelo `messageType` derivado do mime
-  (`video/*` → `doc`): anexo genérico é pior que um player dedicado, mas incomparavelmente
-  melhor que perda silenciosa, e não espalha mudança de contrato pelo frontend.
-  **Sem arquivo:** `locationMessage`/`liveLocationMessage`/`contactMessage`/
-  `contactsArrayMessage` viram uma linha de texto descritiva (`[Localizacao] …`,
-  `[Contato] …`) em vez de sumir.
+  descartados em silêncio. **Desde o CRMLAB-70 (D-235):** vídeo gravado como `video/*` vira
+  `messageType: "video"` (`seconds` → `media.durationSec`, `jpegThumbnail` → `media.thumbnail`);
+  figurinha com arquivo de imagem vira `"sticker"`; áudio leva `durationSec` e PDF `pageCount`.
+  **Sem arquivo:** `locationMessage`/`liveLocationMessage` viram `messageType: "location"` com
+  `location` estruturado (sem coordenada válida: a linha de texto `[Localizacao] …` de antes);
+  `contactMessage`/`contactsArrayMessage` viram `"contact"` com `contacts` (nome do
+  `displayName`/`FN:`, telefone do `waid=` ou do `TEL` do vCard, até 10). `content` = texto de
+  fallback (`📍 …`, `👤 …`).
   Arquivo acima do teto (15 MiB) é recusado com log — a mensagem não é
   criada, mas o evento continua respondendo `200 {received:true}` do mesmo jeito. **Risco
   aceito:** o campo exato onde o gateway v2.3.7 grava o base64 não foi confirmado contra um

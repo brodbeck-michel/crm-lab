@@ -4671,3 +4671,40 @@ gateway desligado (D-201, tudo ou nada), e não um defeito.
 **Impacto:** `exam.routes.ts`, `exam-package.routes.ts`, `exam-catalog.service.ts`,
 `exam-package.service.ts`, `pages/Catalog.tsx` (`canEdit`); specs de `tests/catalog`,
 `Catalog.spec.tsx`, `e2e/workflows/flow-7-catalog.spec.ts`; API_CONTRACTS §4/§4b, PAGES.md §7.
+
+## 2026-09-30 — Sincronização do LIS mais perto do tempo real
+
+### D-249: Sincronização do LIS a cada 30 s, e marca que não andou é rodada vazia (CRMLAB-79)
+**Contexto:** a sincronia de prod foi religada em 30/09/2026 e os números bateram com o app antigo.
+A meta é o orçamento do Bitlab chegar ao CRM mais perto do tempo real que os 2 min da D-199.
+Medido em prod em 30/09:
+- uma rodada incremental leva **~5 s**, quase todos esperando o Bitlab. O banco gasta ~0,04 s;
+- os laboratórios rodam **em série** (SERVICES §24), então um tique dura ~5 s × laboratórios com
+  sincronia ligada;
+- **toda rodada voltava com ≥ 1 linha**, mesmo sem mudança: `dataInicio` = marca d'água
+  (inclusiva), e o Bitlab devolve de novo a linha da própria marca. Cada tique gravava uma linha
+  em `lis_imports`, reprocessava o orçamento e logava `info` (~720/dia por laboratório com 2 min).
+**Decisão:**
+1. **`LIS_SYNC_INTERVAL_MS` padrão = 30000 (30 s)** em `env.ts`, `.env.example` e
+   `docker-compose.prod.yml`. Emenda a D-199. Não baixar mais: a rodada já leva ~5 s por
+   laboratório, e com mais laboratórios o `tickInProgress` passaria a pular tiques. O intervalo
+   real viraria "o tempo da rodada", com chamadas contínuas ao Bitlab.
+2. **Marca que não andou = rodada vazia:** em `incremental`, se a `marcaDagua` da resposta é igual
+   à gravada, as linhas recebidas são descartadas antes da ingestão: sem `lis_imports`, sem
+   reprocessar, `received: 0`, log `debug`. Linha que o Bitlab grave no mesmo segundo da marca
+   depois da consulta anterior fica para a releitura diária de 90 dias (D-189). `full` nunca
+   descarta.
+3. **Contrato em segundos:** `LisIntegrationSettings.intervalMinutes` vira `intervalSeconds`
+   (API_CONTRACTS §10.3). Com minutos arredondados, 30 s apareceria como "a cada 1 min". A tela
+   escreve "30 s", ou "N min" quando é minuto cheio. Com `0` (hml) ela diz "Ligada · só pelo
+   "Sincronizar agora"", em vez de "a cada 0 min".
+4. **Tempo real de verdade** não vem de encurtar o polling. Vem de o Bitlab **avisar** o CRM
+   (webhook de orçamento criado/alterado), e a API de Orçamentos não tem isso. Fica como pedido
+   ao Bitlab. Com webhook, o polling vira rede de segurança.
+**Motivo:** o cartão de "Novo orçamento" e a Busca Ativa valem mais quanto antes aparecem. O custo
+do polling mais curto cai quase todo no Bitlab (~2.880 chamadas/dia por laboratório) e no volume
+de `lis_imports`/log, que o item 2 zera nas rodadas sem mudança. O banco e a VPS quase não sentem.
+**Impacto:** `config/env.ts`, `docker-compose.prod.yml`, `backend/.env.example`,
+`lis-sync.service.ts`, `shared/types/lis.types.ts`, `LisIntegration.tsx`; SERVICES §24, PAGES §20,
+API_CONTRACTS §10.3, DEPLOYMENT, ENVIRONMENTS. **Deploy:** se o `.env` da VPS fixar
+`LIS_SYNC_INTERVAL_MS=120000`, trocar para `30000` (ou remover a linha).

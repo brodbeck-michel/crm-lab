@@ -4975,7 +4975,7 @@ Configuração e disparo da sincronização dos orçamentos pela API de Orçamen
   "lastError": null,
   "lastFullScanOn": "2026-09-25",
   "running": false,
-  "intervalMinutes": 2
+  "intervalSeconds": 30
 }
 ```
 - Sem linha em `lis_sync_settings`: `enabled: false`, `apiKeySet: false`, `apiKeyMasked: null` e
@@ -4984,7 +4984,8 @@ Configuração e disparo da sincronização dos orçamentos pela API de Orçamen
   chave de acesso. A sincronização foi desligada."`). Nunca traz a chave nem o corpo cru da
   resposta. Volta a `null` na primeira rodada bem-sucedida.
 - `running`: há uma rodada em andamento agora (trava em memória, D-185 item 5).
-- `intervalMinutes`: de `LIS_SYNC_INTERVAL_MS`, só para a tela dizer "a cada N minutos".
+- `intervalSeconds` (D-249, substitui `intervalMinutes`): `LIS_SYNC_INTERVAL_MS / 1000`, só para a
+  tela dizer "a cada 30 s" / "a cada 2 min". `0` = agendador desligado neste servidor (hml).
 - `lastFullScanOn` (CRMLAB-53, D-189): dia (`YYYY-MM-DD`, Brasília) da última releitura dos últimos
   90 dias que terminou sem erro — é ela que pega os estornos. `null` = nunca. A releitura roda no
   primeiro tique depois das 03:00; "Sincronizar agora" continua incremental.

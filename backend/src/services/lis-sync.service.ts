@@ -56,7 +56,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const running = new Set<string>();
 
 /**
- * Um tique por vez (D-199): com o agendador a cada 2 min, uma rodada lenta
+ * Um tique por vez (D-199): com o agendador a cada 30 s (D-249), uma rodada lenta
  * (varios laboratorios, Bitlab devagar) nao pode empilhar o proximo tique.
  */
 let tickInProgress = false;
@@ -112,7 +112,7 @@ function maxWatermark(a: string | null, b: string | null): string | null {
 export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
   const repo = new LisSyncSettingsRepository(deps.db);
   const now = deps.now ?? (() => new Date());
-  const intervalMinutes = Math.round(deps.intervalMs / 60_000);
+  const intervalSeconds = Math.round(deps.intervalMs / 1000);
 
   function present(tenantId: string, view: LisSyncSettingsView): LisIntegrationSettings {
     return {
@@ -125,7 +125,7 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
       lastError: view.lastError,
       lastFullScanOn: view.lastFullScanOn,
       running: running.has(tenantId),
-      intervalMinutes,
+      intervalSeconds,
     };
   }
 
@@ -223,6 +223,19 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
         };
       }
 
+      // A janela incremental comeca NA marca (inclusiva): o Bitlab devolve de
+      // novo a linha da propria marca. Marca que nao andou = nada novo desde a
+      // rodada anterior, entao a rodada e vazia (D-249). Linha gravada no mesmo
+      // segundo da marca depois da consulta anterior fica para a releitura
+      // diaria de 90 dias (D-189).
+      if (
+        mode === 'incremental' &&
+        started.watermark !== null &&
+        fetched.watermark === started.watermark
+      ) {
+        fetched = { rows: [], watermark: started.watermark };
+      }
+
       let importId: string | null = null;
       let rowsAccepted = 0;
       let proposalsWon = 0;
@@ -262,7 +275,7 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
           ? { watermark: fetched.watermark, fullScanOn: saoPauloDateTime(now()).slice(0, 10) }
           : { watermark: fetched.watermark };
       const view = await repo.finishRun(tenantId, { success, error: null });
-      // A cada 2 min (D-199): rodada vazia e `debug`, senao o log vira ruido.
+      // A cada 30 s (D-249): rodada vazia e `debug`, senao o log vira ruido.
       const completed = { tenantId, mode, received: fetched.rows.length, importId, proposalsCreated };
       if (fetched.rows.length > 0 || mode === 'full') logger.info('lis_sync.completed', completed);
       else logger.debug('lis_sync.completed', completed);

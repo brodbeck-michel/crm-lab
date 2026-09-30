@@ -168,11 +168,11 @@ const envSchema = z
      */
     BITLAB_API_BASE_URL: z.string().url().default('https://integracoes.bitlab.net.br/webhook'),
     /**
-     * Intervalo do agendador: 2 min (CRMLAB-57, D-199). `0` desliga o agendador
+     * Intervalo do agendador: 30 s (CRMLAB-79, D-249; era 2 min na D-199). `0` desliga o agendador
      * (hml, testes); "Sincronizar agora" continua.
      */
     LIS_SYNC_INTERVAL_MS: z.preprocess((v) => {
-      if (v === undefined || v === null || v === '') return 2 * 60 * 1000;
+      if (v === undefined || v === null || v === '') return 30 * 1000;
       const n = Number(v);
       return Number.isFinite(n) ? n : v;
     }, z.number().int().min(0)),

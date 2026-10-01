@@ -36,7 +36,8 @@ export interface DataTableProps<T> {
 
 /**
  * Tabela do design system.
- * Cabeçalho 11px caixa alta · régua neutral-300 · linhas neutral-200 · SEM zebra.
+ * Cartão accent 6% (`neutral-100`) · cabeçalho 11px caixa alta sobre `surface` (12%) ·
+ * régua neutral-300 · linhas neutral-200 · hover accent-100 · SEM zebra (D-250).
  * Container com min-width + overflow-x: coluna nunca colapsa.
  */
 export function DataTable<T>({
@@ -52,13 +53,13 @@ export function DataTable<T>({
   }
 
   return (
-    <div className="w-full overflow-x-auto rounded-lg bg-neutral-100 shadow-sm">
+    <div className="w-full overflow-x-auto rounded-lg border border-neutral-200 bg-neutral-100 shadow-sm">
       <table
         style={{ minWidth }}
         className="w-full border-collapse font-body text-body text-text"
       >
         <thead>
-          <tr className="border-b border-neutral-300">
+          <tr className="border-b border-neutral-300 bg-surface">
             {columns.map((column) => (
               <th
                 key={column.key}

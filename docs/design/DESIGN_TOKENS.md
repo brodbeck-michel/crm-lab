@@ -6,6 +6,32 @@ Tokens de cor, tipografia, espaçamento e componentes para manter a consistênci
 
 ## Cores (CSS Variables)
 
+### Fundo branco e tema só no conteúdo (D-250)
+
+Desde o CRMLAB-82 o tenant controla **só 2 cores**: `--color-accent` e `--color-accent-2`.
+Fundo e texto são **fixos e iguais para todos** (`--color-bg: #ffffff`, `--color-text: #1a1a1a`);
+`--color-surface` deixou de ser cor base e é derivada do accent. O `bg`/`surface`/`text` que os
+presets e os temas salvos ainda carregam (contrato inalterado) é **ignorado na tela** —
+`applyTheme()` não os escreve. A cor do tema aparece só no conteúdo, em tons do accent
+misturados com branco:
+
+| Papel | Token | Mistura |
+|---|---|---|
+| Fundo da página | `--color-bg` | `#ffffff` fixo |
+| Cartão, tabela, linhas | `--color-neutral-100` | accent 6% |
+| Menu lateral, cabeçalho de tabela | `--color-surface` | accent 12% |
+| Divisória de linha | `--color-neutral-200` | accent 12% |
+| Hover / linha selecionada | `--color-accent-100` | accent 20% |
+| Bordas (cartão, campo) | `--color-neutral-300` | accent 22% |
+| Borda forte / barra de rolagem | `--color-neutral-400` | accent 36% |
+| Campo de busca / inputs | `--color-bg` + borda `neutral-300` | branco |
+| Item ativo do menu | `--color-bg` + texto `accent-700` + barra `accent-500` | — |
+| Botões, links, destaques | `--color-accent` / `accent-700` (link) | cheio |
+| Texto secundário | `--color-neutral-600` | cinza: 35% branco + texto |
+
+Os hex de `bg`/`surface` abaixo ficam como registro dos presets (o backend ainda os devolve),
+mas **não pintam mais nada**.
+
 ### 5 Temas Pré-definidos
 
 #### Tema 1: Terracota & Sálvia (Padrão)
@@ -69,8 +95,8 @@ Cada cor base gera automaticamente 9 tons (100-900):
 
 ```css
 :root {
-  /* Acento: Tons de 100 a 900 */
-  --color-accent-100: color-mix(in oklab, var(--color-accent) 12%, var(--color-bg));
+  /* Acento: Tons de 100 a 900 (--color-bg é branco fixo, D-250) */
+  --color-accent-100: color-mix(in oklab, var(--color-accent) 20%, var(--color-bg)); /* hover/seleção */
   --color-accent-200: color-mix(in oklab, var(--color-accent) 26%, var(--color-bg));
   --color-accent-300: color-mix(in oklab, var(--color-accent) 40%, var(--color-bg));
   --color-accent-400: color-mix(in oklab, var(--color-accent) 54%, var(--color-bg));
@@ -80,21 +106,41 @@ Cada cor base gera automaticamente 9 tons (100-900):
   --color-accent-800: color-mix(in oklab, var(--color-accent) 56%, var(--color-text));
   --color-accent-900: color-mix(in oklab, var(--color-accent) 28%, var(--color-text));
   
-  /* Similar para --color-accent-2 e --color-neutral */
+  /* --color-accent-2: mesmas proporções */
+
+  /* Neutros (D-250): 100–400 são tons do ACCENT (preenchimento e borda);
+     500–900 são cinza puro (texto), escuros o bastante para AA. */
+  --color-surface:     color-mix(in oklab, var(--color-accent) 12%, var(--color-bg));
+  --color-neutral-100: color-mix(in oklab, var(--color-accent) 6%,  var(--color-bg));
+  --color-neutral-200: color-mix(in oklab, var(--color-accent) 12%, var(--color-bg));
+  --color-neutral-300: color-mix(in oklab, var(--color-accent) 22%, var(--color-bg));
+  --color-neutral-400: color-mix(in oklab, var(--color-accent) 36%, var(--color-bg));
+  --color-neutral-500: color-mix(in oklab, var(--color-text) 41%, var(--color-bg));
+  --color-neutral-600: color-mix(in oklab, var(--color-bg) 35%, var(--color-text));
+  --color-neutral-700: color-mix(in oklab, var(--color-bg) 26%, var(--color-text));
+  --color-neutral-800: color-mix(in oklab, var(--color-bg) 18%, var(--color-text));
+  --color-neutral-900: color-mix(in oklab, var(--color-bg) 10%, var(--color-text));
 }
 ```
+
+**Contraste (WCAG AA ≥ 4,5:1)** nos 5 presets, pior caso: texto principal sobre o hover 20%
+≥ 12,8; `neutral-600` sobre o hover 20% ≥ 4,57 (sobre cartão 6% ≥ 5,69, cabeçalho 12% ≥ 5,19);
+`accent-700` sobre branco ≥ 5,97; `accent-800` sobre `accent-200` ≥ 5,69. Detalhe por preset em
+D-250.
 
 ### Papéis de Cor
 
 | Token | Uso | Exemplo |
 |-------|-----|---------|
-| `--color-bg` | Fundo da aplicação | Body, container principal |
-| `--color-surface` | Superfície tingida de 2º nível | Trilho lateral, cartões resumo |
-| `--color-neutral-100` | Cartão elevado | Cartões de lista, tabelas |
+| `--color-bg` | Fundo da aplicação — BRANCO fixo (D-250) | Body, container principal, inputs, item ativo do menu |
+| `--color-surface` | Tom do tema 12% (derivado do accent) | Trilho lateral, cabeçalho de tabela, colunas do pipeline |
+| `--color-neutral-100` | Cartão — tom do tema 6% | Cartões de lista, tabelas, cartões de Configurações |
+| `--color-accent-100` | Hover / seleção — tom do tema 20% | Linha sob o mouse, item selecionado |
 | `--color-text` | Texto principal | Títulos, corpo |
 | `--color-accent` | Ação e atenção | Botão primário, filtro ativo |
 | `--color-accent-2` | Estado positivo/âmbito interno | Não lidas, ganho, chat interno |
-| `--color-neutral-300` | Bordas e divisores | Linhas de tabela |
+| `--color-neutral-200` | Divisória de linha — tom do tema 12% | Linhas de tabela |
+| `--color-neutral-300` | Bordas — tom do tema 22% | Borda de cartão e de campo, régua do cabeçalho |
 | `--color-neutral-600` | Texto secundário | Legendas, placeholder |
 | `--color-chat-bg` | Papel da conversa — BRANCO literal | Área de mensagens do atendimento |
 | `--color-chat-received` / `-border` | Bolha do paciente sobre o papel | `MessageBubble type="received"` |
@@ -562,9 +608,14 @@ button.secondary:hover {
 
 ### Selecionado
 ```css
-.menu-item.active {
-  background: var(--color-accent-200);
+.menu-item.active {            /* D-250: branco sobre o menu tingido */
+  background: var(--color-bg);
+  color: var(--color-accent-700);
   box-shadow: var(--shadow-sm);
+}
+
+tr.selected, tr:hover {        /* linha selecionada / sob o mouse */
+  background: var(--color-accent-100);
 }
 
 .conversation-item.selected {
@@ -611,7 +662,7 @@ button:active {
 aside.sidebar {
   width: 272px;           /* Expandido */
   /* width: 64px; */      /* Recolhido (D-128) */
-  background: var(--color-surface);
+  background: var(--color-surface);   /* tom do tema 12% sobre a página branca (D-250) */
   padding: 26px 16px;
   display: flex;
   flex-direction: column;

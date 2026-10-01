@@ -48,7 +48,7 @@ export function ReengagementSection({ draft, canEdit, fieldErrors, set }: Reenga
     <section
       id="reingajamento"
       aria-labelledby="reingajamento-titulo"
-      className="space-y-md rounded-lg border border-neutral-200 bg-surface p-lg"
+      className="space-y-md rounded-lg border border-neutral-200 bg-neutral-100 p-lg"
     >
       <div className="space-y-xs">
         <h2 id="reingajamento-titulo" className="font-heading text-section text-text">
@@ -68,7 +68,7 @@ export function ReengagementSection({ draft, canEdit, fieldErrors, set }: Reenga
       {onCloudApi && (
         <p
           role="status"
-          className="rounded-md bg-neutral-100 p-md font-body text-caption text-neutral-700"
+          className="rounded-md border border-neutral-200 bg-bg p-md font-body text-caption text-neutral-700"
         >
           Inativo para este canal: o WhatsApp está conectado pela API oficial da Meta. As regras
           ficam salvas e voltam a valer se o canal for conectado por QR Code.

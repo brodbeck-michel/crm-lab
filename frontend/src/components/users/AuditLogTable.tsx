@@ -38,7 +38,7 @@ export default function AuditLogTable({ entries, pagination, onPageChange }: Aud
       <div className="overflow-x-auto border border-neutral-200 rounded-md bg-neutral-100">
         <table className="w-full">
           <thead>
-            <tr className="border-b border-neutral-300">
+            <tr className="border-b border-neutral-300 bg-surface">
               <th className="px-lg py-md text-left text-micro font-semibold uppercase text-neutral-600">Data/Hora</th>
               <th className="px-lg py-md text-left text-micro font-semibold uppercase text-neutral-600">Usuário</th>
               <th className="px-lg py-md text-left text-micro font-semibold uppercase text-neutral-600">Ação</th>

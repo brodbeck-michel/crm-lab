@@ -85,7 +85,7 @@ function Section({
     <section
       id={id}
       aria-labelledby={`${id}-titulo`}
-      className="space-y-md rounded-lg border border-neutral-200 bg-surface p-lg"
+      className="space-y-md rounded-lg border border-neutral-200 bg-neutral-100 p-lg"
     >
       <div className="space-y-xs">
         <h2 id={`${id}-titulo`} className="font-heading text-section text-text">
@@ -439,7 +439,7 @@ export default function Rules() {
             </span>
             <p
               data-testid="preview-mensagem"
-              className="whitespace-pre-wrap rounded-md bg-neutral-100 p-md font-body text-body text-text"
+              className="whitespace-pre-wrap rounded-md border border-neutral-200 bg-bg p-md font-body text-body text-text"
             >
               {renderSendMessageTemplate(draft.sendMessage.template, PREVIEW_VALUES)}
             </p>

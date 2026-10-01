@@ -4727,3 +4727,58 @@ de `lis_imports`/log, que o item 2 zera nas rodadas sem mudança. O banco e a VP
 `lis-sync.service.ts`, `shared/types/lis.types.ts`, `LisIntegration.tsx`; SERVICES §24, PAGES §20,
 API_CONTRACTS §10.3, DEPLOYMENT, ENVIRONMENTS. **Deploy:** se o `.env` da VPS fixar
 `LIS_SYNC_INTERVAL_MS=120000`, trocar para `30000` (ou remover a linha).
+
+### D-250: Fundo branco fixo e o tema só nos elementos de conteúdo (CRMLAB-82)
+**Contexto:** com o tema aplicado, fundo da página, menu e cartões eram todos da mesma família
+(`--color-bg`/`--color-surface` do preset: tudo bege no Terracota, tudo verde no Verde
+Esterilizado). Nada se destacava. O editor de tema ainda mandava `bg`/`surface`/`text` de cada
+preset, e as rampas `accent-100..400` e `neutral-*` misturavam com esse fundo tingido.
+**Decisão:**
+1. **`--color-bg` = `#ffffff`, `--color-text` = `#1a1a1a`, fixos em `tokens.css`, iguais para
+   todo tenant.** `--color-surface` deixa de ser cor base e vira derivada:
+   `mix(accent 12%, branco)`. `applyTheme()`/`applyThemeColors()` escrevem SÓ `--color-accent` e
+   `--color-accent-2` (e removem do `<html>` um `--color-bg/-surface/-text` que tenha sobrado).
+   Emenda a D-005: o tema do tenant passa a ter **2 cores** + raio + fonte (+ nome e logo).
+2. **Tons do tema = accent misturado com branco**, em papéis fixos (maquete aprovada):
+   | Papel | Token | Mistura |
+   |---|---|---|
+   | Cartão, tabela, linhas | `--color-neutral-100` | accent 6% |
+   | Menu lateral, cabeçalho de tabela | `--color-surface` | accent 12% |
+   | Divisória de linha | `--color-neutral-200` | accent 12% |
+   | Hover / seleção | `--color-accent-100` (e `--color-accent-2-100`) | accent 20% (era 12%) |
+   | Bordas (cartão, campo) | `--color-neutral-300` | accent 22% |
+   | Borda forte / barra de rolagem | `--color-neutral-400` | accent 36% |
+   Campo de busca/inputs ficam brancos (`bg-bg`) com borda `neutral-300`. Botões, links e
+   destaques seguem com o accent cheio. Item ativo do menu: fundo branco (`bg-bg`), texto
+   `accent-700` e a barra de 3px `accent-500`. Os chips de status mantêm as rampas
+   semânticas (`accent2-*` positivo, `accent-*` atenção).
+3. **Texto neutro é cinza puro (texto escuro sobre branco), um degrau mais escuro** para fechar
+   WCAG AA sobre os tons acima: `neutral-600` = 35% branco (era 47% do fundo), `neutral-700` = 26%,
+   `neutral-800` = 18%, `neutral-900` = 10%. `neutral-500` (ícone/seta) fica 59% branco.
+4. **Editor simplificado:** a tela de Personalização oferece só cor principal, cor secundária,
+   fonte, cantos, nome exibido e logo (URL). Fundo, superfície e cor do texto saíram do editor;
+   aplicar um preset envia só `accent` + `accent2`.
+5. **Compatibilidade sem migração:** o contrato não muda. `Theme` continua com `bg`/`surface`/
+   `text`, `UpdateThemeRequest` continua aceitando os três (opcionais), o backend continua
+   gravando e devolvendo o que está no banco, e os presets de `GET /themes/presets` seguem com
+   as 5 cores. O frontend apenas **ignora** `bg`/`surface`/`text` na tela. Tema salvo antes
+   continua valendo pelo accent/accent2/raio/fonte. O console da plataforma (`PLATFORM_THEME`)
+   segue o mesmo modelo: as 3 cores dele ficam no objeto, mas não são aplicadas.
+**Contraste (WCAG AA, texto normal ≥ 4,5:1), pior caso por preset — texto principal sobre hover
+20% / `neutral-600` sobre hover 20% / `accent-700` (link, item ativo) sobre branco:**
+Terracota 13,9 / 4,9 / 6,0 · Azul Jaleco 13,1 / 4,7 / 8,0 · Verde Esterilizado 13,3 / 4,8 / 7,6 ·
+Hemograma 12,8 / 4,6 / 9,0 · Lilás Diagnóstico 12,8 / 4,6 / 9,2 (plataforma 12,6 / 4,5 / 9,7).
+`accent-800` sobre `accent-200` (chip de atenção) ≥ 5,7 em todos. Fica abaixo de 4,5 só o que
+não mudou nesta decisão: texto branco sobre o accent cheio do Terracota (3,6 — botão primário) e
+sobre o `accent-2` dos presets (3,2–4,9 — selo/badge), que dependem da cor escolhida pelo cliente.
+**Motivo:** fundo neutro faz o conteúdo (menu, cartões, tabelas) se destacar e deixa a página
+igual entre laboratórios; tingir só o conteúdo, sempre a partir do accent, mantém a identidade
+do tenant sem que ele precise acertar 5 cores que combinem. Ignorar os campos em vez de apagar
+evita migração e mantém o contrato da API intacto.
+**Impacto:** `frontend/src/styles/tokens.css`, `lib/theme.ts`, `pages/Settings/Theme.tsx`,
+`components/theme/{ThemePreview,ColorPicker}.tsx`, `components/layout/Sidebar.tsx`,
+`components/shared/DataTable.tsx`, cartões de Configurações/Respostas rápidas
+(`bg-surface` → `bg-neutral-100`); DESIGN_TOKENS (Cores, Papéis, Estados, Sidebar), PAGES §9
+Personalização e "Aplicação do Tema"; `e2e/workflows/flow-5-theme.spec.ts`. A conversa do
+Atendimento (`--color-chat-*`) não foi tocada aqui: `--color-chat-received` mistura com
+`--color-surface`, que agora é o tom de 12% do accent.

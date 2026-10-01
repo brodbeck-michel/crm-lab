@@ -435,6 +435,9 @@ Salvar personalização. PATCH parcial: campo não enviado permanece.
 - `brandName` máx. 255, `logoUrl` máx. 500 — ambos anuláveis. Enviar `null` **apaga**
   o valor; omitir o campo o preserva (essa é a diferença entre `null` e ausente)
 - Corpo vazio (`{}`) ou campo desconhecido → `VALIDATION_ERROR` (o schema é `strict`)
+- `bg`, `surface` e `text` continuam **aceitos, gravados e devolvidos** (contrato inalterado),
+  mas desde a D-250 o frontend os **ignora**: fundo branco e texto escuro são fixos na tela, e a
+  Personalização não os envia mais. Nenhuma migração: temas antigos seguem válidos
 
 **Response (200):** `{ "theme": { ... } }` — o tema salvo. Gera audit log `update_theme`.
 

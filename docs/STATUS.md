@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-30 (CRMLAB-79 — sincronização do LIS a cada 30 s, branch `feature/CRMLAB-79-sync-lis-30s`)
+**Última atualização:** 2026-10-01 (CRMLAB-82 — fundo branco e tema só no conteúdo, branch `feature/CRMLAB-82-fundo-branco-tema`)
 
 ---
 
@@ -3015,3 +3015,22 @@ Branch `feature/CRMLAB-79-sync-lis-30s` (de `main`). Decisão D-249.
   `LisIntegration.spec.tsx` (30 s, 2 min, 0).
 - **Pendente:** hml (lá o `.env` fixa `0`); prod não fixa a variável e pega os 30 s. Pedir ao Bitlab um
   webhook de orçamento criado/alterado (tempo real de verdade).
+
+### 🚧 CRMLAB-82 — fundo branco e cor do tema só no conteúdo (2026-10-01, aguardando validação)
+
+Branch `feature/CRMLAB-82-fundo-branco-tema` (de `main` v1.27.0). Decisão D-250.
+
+- **Tokens:** `--color-bg` branco e `--color-text` escuro fixos para todo tenant; `--color-surface`
+  (menu, cabeçalho de tabela) = accent 12%; `neutral-100` (cartão) 6%, `neutral-200` (divisória)
+  12%, `accent-100` (hover/seleção) 20%, `neutral-300` (borda) 22%, `neutral-400` 36%. Texto neutro
+  (`neutral-600..900`) cinza mais escuro para AA. `applyTheme` escreve só accent/accent2.
+- **Telas:** Sidebar com item ativo branco + texto `accent-700`; `DataTable`/`UserTable`/
+  `AuditLogTable` com cabeçalho tingido; cartões de Configurações e Respostas rápidas no tom 6%.
+- **Personalização:** só cor principal, secundária, fonte, cantos, nome e logo; preset envia só
+  accent + accent2; prévia em miniatura com o visual novo.
+- **Compatibilidade:** contrato da API inalterado; `bg`/`surface`/`text` salvos são ignorados na
+  tela, sem migração.
+- **Testes:** `lib/theme.spec.ts`, `Theme.spec.tsx`, `Sidebar.spec.tsx` ajustados; e2e
+  `flow-5-theme.spec.ts` ajustado (não rodado aqui).
+- **Pendente:** validação visual nos temas; integração com o CRMLAB-81 (a conversa do Atendimento
+  usa `--color-surface` em `--color-chat-received`, que agora é o tom 12% do accent).

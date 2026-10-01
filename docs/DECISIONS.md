@@ -4766,7 +4766,7 @@ preset, e as rampas `accent-100..400` e `neutral-*` misturavam com esse fundo ti
    segue o mesmo modelo: as 3 cores dele ficam no objeto, mas não são aplicadas.
 **Contraste (WCAG AA, texto normal ≥ 4,5:1), pior caso por preset — texto principal sobre hover
 20% / `neutral-600` sobre hover 20% / `accent-700` (link, item ativo) sobre branco:**
-Terracota 13,9 / 4,9 / 6,0 · Azul Jaleco 13,1 / 4,7 / 8,0 · Verde Esterilizado 13,3 / 4,8 / 7,6 ·
+Terracota 13,9 / 5,0 / 6,0 · Azul Jaleco 13,1 / 4,7 / 8,0 · Verde Esterilizado 13,3 / 4,7 / 7,6 ·
 Hemograma 12,8 / 4,6 / 9,0 · Lilás Diagnóstico 12,8 / 4,6 / 9,2 (plataforma 12,6 / 4,5 / 9,7).
 `accent-800` sobre `accent-200` (chip de atenção) ≥ 5,7 em todos. Fica abaixo de 4,5 só o que
 não mudou nesta decisão: texto branco sobre o accent cheio do Terracota (3,6 — botão primário) e

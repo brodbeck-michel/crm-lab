@@ -96,10 +96,7 @@ Cada cor base gera automaticamente 9 tons (100-900):
 | `--color-accent-2` | Estado positivo/âmbito interno | Não lidas, ganho, chat interno |
 | `--color-neutral-300` | Bordas e divisores | Linhas de tabela |
 | `--color-neutral-600` | Texto secundário | Legendas, placeholder |
-| `--color-chat-bg` | Papel da conversa — BRANCO literal | Área de mensagens do atendimento |
-| `--color-chat-received` / `-border` | Bolha do paciente sobre o papel | `MessageBubble type="received"` |
-| `--color-chat-sent` / `-border` | Bolha da atendente sobre o papel | `MessageBubble type="sent"` |
-| `--color-chat-tick-read` | Tique ✓✓ de "lida" — o azul do WhatsApp, LITERAL (não acompanha o tema, como o papel branco; CRMLAB-67) | `MessageBubble` `status: read` |
+| `--color-chat-*` | Tela de Atendimento, visual WhatsApp Web (CRMLAB-81, D-251). Tabela completa em "Bolhas de Mensagem" | Coluna de conversas, cabeçalho, Composer, balões |
 
 ### Uso de Rampas
 
@@ -492,41 +489,86 @@ textarea {
 
 ### Bolhas de Mensagem
 
-A área de mensagens é a ÚNICA superfície branca do app (CRMLAB-25). Sobre o bege
-do tema, recebida (`--color-surface`) e enviada (`--color-accent-200`, que mistura
-com `--color-bg`) ficavam quase iguais ao fundo e entre si. O papel branco não
-acompanha o tema do tenant — é fixo; as bolhas continuam tingidas pelas cores
-base, mas misturadas com BRANCO, senão sumiriam no papel.
+Tela de Atendimento com visual de **WhatsApp Web** (CRMLAB-81, D-251; substitui o "papel
+branco" do CRMLAB-25). O app é white-label: **nenhuma cor de destaque fixa** — todo tom da
+conversa sai de `--color-accent` misturado com **branco** ou com o neutro literal `#f4f3ef`.
+De propósito os tokens de conversa **não usam** `--color-bg`, `--color-surface` nem
+`--color-text`: o resto do app os redefine (CRMLAB-82) e a conversa tem de ficar estável e
+legível em qualquer tema. Os literais (`#ffffff`, `#f4f3ef`, `#1a1a1a`, `#53bdeb`) moram SÓ
+em `tokens.css`; componente usa as classes `*-chat-*` do Tailwind.
+
+| Token | Valor | Uso |
+|-------|-------|-----|
+| `--color-chat-panel` | `#ffffff` | Fundo da coluna de conversas, do cabeçalho do contato e do Composer |
+| `--color-chat-line` | `mix(accent 12%, white)` | Divisória fina: entre itens da lista, sob o cabeçalho, sobre o Composer, borda do campo de digitação |
+| `--color-chat-selected` | `mix(accent 20%, white)` | Conversa selecionada na lista |
+| `--color-chat-hover` | `mix(accent 10%, white)` | Hover do item da lista (mais suave que o selecionado) |
+| `--color-chat-avatar` | `mix(accent 20%, white)` | Fundo do avatar do item da lista |
+| `--color-chat-avatar-text` | `mix(accent 70%, #1a1a1a)` | Iniciais do avatar — o acento escurecido para passar AA |
+| `--color-chat-bg` | `mix(accent 4%, #f4f3ef)` | Fundo da área de mensagens: neutro claro puxado ao tema |
+| `--color-chat-received` | `#ffffff` | Balão do contato |
+| `--color-chat-sent` | `mix(accent 22%, white)` | Balão da atendente |
+| `--color-chat-text` | `#1a1a1a` | Texto dentro do balão |
+| `--color-chat-meta` | `mix(#1a1a1a 70%, white)` ≈ `#565656` | Hora, autor, "Editada", tique ✓/✓✓ não lido, "Mensagem apagada" |
+| `--color-chat-quote` / `-hover` | `mix(#1a1a1a 6% / 11%, transparent)` | Bloco citado no balão e faixa "Respondendo a" do Composer (véu que funciona sobre branco e sobre o acento) |
+| `--color-chat-tick-read` | `#53bdeb` | Tique ✓✓ de "lida" — o azul do WhatsApp, LITERAL (CRMLAB-67, D-225) |
+
+Todas as misturas são `color-mix(in oklab, …)`. Sombra do balão: `--shadow-sm` (sem borda —
+como no WhatsApp, quem separa o balão do fundo é a cor + a sombra).
+
+**Contraste (WCAG 2.x, calculado com a mistura oklab real)** — texto `#1a1a1a` e meta sobre o
+balão enviado, nos 5 presets de `THEME_PRESETS`:
+
+| Preset (accent) | Balão enviado | Texto × enviado | Meta × enviado | Iniciais × avatar |
+|-----------------|---------------|-----------------|----------------|-------------------|
+| Terracota `#c67139` | `#f5e0d4` | 13,6:1 | 5,8:1 | 4,8:1 |
+| Azul Jaleco `#2f6f9f` | `#d1deea` | 12,8:1 | 5,4:1 | 6,0:1 |
+| Verde `#2f7d5f` | `#d2e2da` | 12,9:1 | 5,5:1 | 5,8:1 |
+| Hemograma `#a63a3a` | `#efd3d1` | 12,4:1 | 5,2:1 | 6,6:1 |
+| Lilás `#6a4f9c` | `#dcd7ea` | 12,4:1 | 5,2:1 | 6,7:1 |
+
+Tudo ≥ 4,5:1 (AA para texto normal). Pior caso teórico de acento livre (preto puro): o balão
+enviado vira `#b7b7b7` e o texto ainda dá 8,7:1 — o texto do balão passa AA com **qualquer**
+acento, porque 22% de acento sobre branco nunca escurece o bastante. Sobre o balão recebido
+(branco) o texto dá 17,4:1 e a meta 7,4:1. Ressalva: o tique "lida" `#53bdeb` fica ~1,5:1 sobre
+o balão enviado (igual ao WhatsApp); o estado não depende só da cor — tem `aria-label` "Lida" e
+o glifo ✓✓.
+
+**Enviada × recebida de relance, não só pela posição:** enviada é tingida no acento e tem o
+canto **superior direito** reto; recebida é branca com o canto **superior esquerdo** reto.
 
 ```css
-/* Papel da conversa */
-.message-scroll {
-  background: var(--color-chat-bg); /* #fff literal — não acompanha o tema */
-}
+/* Área de mensagens */
+.message-scroll { background: var(--color-chat-bg); }
 
-/* Recebida (paciente) */
+/* Recebida (contato) — à esquerda, canto superior esquerdo reto */
 .message-bubble.received {
   background: var(--color-chat-received);
-  border: 1px solid var(--color-chat-received-border);
-  border-radius: var(--radius-md) var(--radius-md) var(--radius-md) var(--radius-sm);
+  color: var(--color-chat-text);
+  border-radius: 0 var(--radius-md) var(--radius-md) var(--radius-md);
+  box-shadow: var(--shadow-sm);
   padding: 11px 15px;
   font-size: 13.5px;
   align-self: flex-start;
-  max-width: 78%;
+  max-width: 78%; /* 62% no inbox, PAGES.md §2 */
 }
 
-/* Enviada (atendente) */
+/* Enviada (atendente) — à direita, canto superior direito reto */
 .message-bubble.sent {
   background: var(--color-chat-sent);
-  border: 1px solid var(--color-chat-sent-border);
-  border-radius: var(--radius-md) var(--radius-md) var(--radius-sm) var(--radius-md);
+  color: var(--color-chat-text);
+  border-radius: var(--radius-md) 0 var(--radius-md) var(--radius-md);
+  box-shadow: var(--shadow-sm);
   padding: 11px 15px;
   font-size: 13.5px;
   align-self: flex-end;
   max-width: 78%;
 }
 
-/* Evento do sistema */
+/* Hora + status: canto inferior direito do balão */
+.message-bubble .meta { align-self: flex-end; color: var(--color-chat-meta); }
+
+/* Evento do sistema (inalterado) */
 .message-bubble.system {
   background: var(--color-accent-2-100);
   border: 1px solid var(--color-accent-2-300);
@@ -567,9 +609,12 @@ button.secondary:hover {
   box-shadow: var(--shadow-sm);
 }
 
+/* Lista de conversas do Atendimento (CRMLAB-81, D-251) */
 .conversation-item.selected {
-  background: var(--color-neutral-100);
-  box-shadow: var(--shadow-sm);
+  background: var(--color-chat-selected);
+}
+.conversation-item:hover {
+  background: var(--color-chat-hover);
 }
 ```
 

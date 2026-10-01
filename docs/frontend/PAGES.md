@@ -189,10 +189,15 @@ Duas leituras registradas aqui porque o doc original não as fixava:
   fecha. O blob do balão é reaproveitado e as vizinhas são pré-carregadas; o que ainda não chegou
   mostra "Carregando imagem…". Chegar na primeira carregada não busca histórico (fica para outro
   card). Figurinha ainda chega como `image` e entra na lista até o tipo `sticker` do CRMLAB-70
-- **Fundo branco (CRMLAB-25):** só a área rolável das mensagens é branca (`--color-chat-bg`);
-  header e composer seguem no fundo do tema, o que também marca onde a conversa começa e
-  termina. Sobre o papel branco, bolha do paciente e bolha da atendente se separam por lado E
-  por cor (`--color-chat-received` / `--color-chat-sent`)
+- **Visual WhatsApp Web (CRMLAB-81, D-251; substitui o "fundo branco" do CRMLAB-25):** coluna de
+  conversas, cabeçalho do contato e Composer em **branco** (`--color-chat-panel`), com
+  divisórias finas no tom do tema (`--color-chat-line`). A área rolável das mensagens fica num
+  neutro claro puxado ao tema (`--color-chat-bg`, `mix(accent 4%, #f4f3ef)`), para os balões
+  saltarem: recebida branca à esquerda, enviada no acento clareado à direita (detalhe em
+  COMPONENTS.md › MessageBubble e DESIGN_TOKENS.md › Bolhas). Na lista, a conversa selecionada
+  fica em `--color-chat-selected`, o hover em `--color-chat-hover` e o avatar em
+  `--color-chat-avatar`. Tudo deriva de `--color-accent` (white-label), nada de
+  `--color-bg/surface/text`
 - Composer: input pílula + anexos + **emoji** + enviar. O emoji entra na posição do cursor
   (Onda 8 §2.2), grade fixa de 48, sem dependência nova
 - **Responder assume (CRMLAB-75, D-215):** enviar numa conversa de "Não atribuídas" a torna da

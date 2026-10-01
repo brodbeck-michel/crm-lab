@@ -98,13 +98,13 @@ describe('ConversationItem', () => {
     expect(screen.queryByTestId('conversation-waiting')).not.toBeInTheDocument();
   });
 
-  it('selecionado: fundo neutral-100 + shadow-sm', () => {
+  it('selecionado: fundo no tom claro do acento (D-251)', () => {
     render(<ConversationItem conversation={conversation()} selected now={NOW} />);
     const item = screen.getByTestId('conversation-item');
 
     expect(item).toHaveAttribute('data-selected', 'true');
-    expect(item.className).toContain('bg-neutral-100');
-    expect(item.className).toContain('shadow-sm');
+    expect(item.className).toContain('bg-chat-selected');
+    expect(item.className).not.toContain('hover:bg-chat-hover');
   });
 
   it('sem nome de paciente, cai no telefone', () => {

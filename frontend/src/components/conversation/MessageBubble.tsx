@@ -27,15 +27,12 @@ export { isProtectedMediaUrl };
  * MessageBubble — COMPONENTS.md (`conversation/`) + DESIGN_TOKENS.md
  * ("Bolhas de mensagem").
  *
- * TRÊS tipos, nunca um quarto. O canto "apontado" (`--radius-sm`) marca a
- * origem: bolha recebida aponta para baixo-esquerda, enviada para
- * baixo-direita, evento de sistema é pílula centrada.
- *
- * Cor (CRMLAB-25): recebida usa `--color-chat-received` (o tom do tema
- * clareado), enviada `--color-chat-sent` (o acento clareado) — as duas sobre o
- * papel BRANCO da conversa. Antes eram `surface` e `accent-200`, ambas
- * misturadas com `--color-bg`: sobre o bege do tema as duas bolhas e o fundo
- * viravam a mesma coisa e não dava para saber quem falou.
+ * TRÊS tipos, nunca um quarto. Visual WhatsApp Web (CRMLAB-81, D-251): o canto
+ * RETO marca a origem — recebida (branca, `--color-chat-received`) tem o canto
+ * superior esquerdo reto, enviada (acento clareado, `--color-chat-sent`) o
+ * superior direito; evento de sistema é pílula centrada. Sem borda: cor +
+ * sombra destacam o balão do fundo neutro `--color-chat-bg`. Hora e status
+ * ficam no canto inferior direito. Nenhum tom depende de bg/surface/text.
  *
  * Largura máxima: 62% no inbox. DESIGN_TOKENS.md publica 78% na regra geral e
  * PAGES.md §2 fixa 62% no inbox — vale o 62% aqui (fonte mais específica,
@@ -90,9 +87,9 @@ export interface MessageBubbleProps {
 
 /** Tique por status (D-225) — glifo, nome acessível e cor (só tokens). */
 const STATUS_TICK: Record<MessageStatus, { glyph: string; label: string; className: string }> = {
-  pending: { glyph: '🕓', label: 'Enviando', className: 'text-neutral-600' },
-  sent: { glyph: '✓', label: 'Enviada', className: 'text-neutral-600' },
-  delivered: { glyph: '✓✓', label: 'Entregue', className: 'text-neutral-600' },
+  pending: { glyph: '🕓', label: 'Enviando', className: 'text-chat-meta' },
+  sent: { glyph: '✓', label: 'Enviada', className: 'text-chat-meta' },
+  delivered: { glyph: '✓✓', label: 'Entregue', className: 'text-chat-meta' },
   read: { glyph: '✓✓', label: 'Lida', className: 'text-chat-tick-read' },
   failed: { glyph: '⚠', label: 'Falhou', className: 'text-accent-700' },
 };
@@ -152,19 +149,19 @@ function QuotedBlock({
       {quoted.id !== null && (
         <span className="truncate text-caption font-semibold text-accent-800">{author}</span>
       )}
-      <span className="line-clamp-2 break-words text-caption text-neutral-700">
+      <span className="line-clamp-2 break-words text-caption text-chat-meta">
         {quotedLabel(quoted)}
       </span>
     </>
   );
   const shell =
-    'flex min-w-0 flex-col gap-xs rounded-sm border-0 border-l-4 border-solid border-accent bg-neutral-100 px-sm py-xs text-left font-body';
+    'flex min-w-0 flex-col gap-xs rounded-sm border-0 border-l-4 border-solid border-accent bg-chat-quote px-sm py-xs text-left font-body';
   return clickable && quoted.id ? (
     <button
       type="button"
       data-testid="quoted-block"
       onClick={() => onClick?.(quoted.id as string)}
-      className={cn(shell, 'cursor-pointer hover:bg-neutral-200')}
+      className={cn(shell, 'cursor-pointer hover:bg-chat-quote-hover')}
       aria-label="Ir para a mensagem citada"
     >
       {body}
@@ -228,7 +225,7 @@ function MessageMenu({
         onClick={() => setOpen((value) => (value === 'closed' ? 'menu' : 'closed'))}
         className={cn(
           'flex cursor-pointer items-center justify-center rounded-pill border-none bg-transparent px-xs',
-          'font-body text-caption text-neutral-600 hover:bg-neutral-200',
+          'font-body text-caption text-chat-meta hover:bg-chat-quote',
           'opacity-0 focus:opacity-100 group-hover:opacity-100',
           open !== 'closed' && 'opacity-100',
         )}
@@ -313,10 +310,10 @@ function MessageMenu({
 
 const SHELL: Record<MessageBubbleType, string> = {
   received:
-    'self-start bg-chat-received border border-chat-received-border rounded-md rounded-bl-sm ' +
+    'self-start bg-chat-received text-chat-text rounded-md rounded-tl-none shadow-sm ' +
     'px-[15px] py-[11px] text-label',
   sent:
-    'self-end bg-chat-sent border border-chat-sent-border rounded-md rounded-br-sm ' +
+    'self-end bg-chat-sent text-chat-text rounded-md rounded-tr-none shadow-sm ' +
     'px-[15px] py-[11px] text-label',
   system:
     'self-center bg-accent2-100 border border-accent2-300 rounded-pill px-[14px] py-[5px] ' +
@@ -363,16 +360,16 @@ export function MessageBubble({
         data-deleted="true"
         style={{ maxWidth: isSystem ? undefined : maxWidth }}
         className={cn(
-          'flex min-w-0 flex-col gap-xs font-body text-text transition-shadow',
+          'flex min-w-0 flex-col gap-xs font-body transition-shadow',
           'data-[highlighted=true]:ring-2 data-[highlighted=true]:ring-accent',
           SHELL[type],
         )}
       >
-        <p className="m-0 italic text-neutral-600">🚫 Mensagem apagada</p>
+        <p className="m-0 italic text-chat-meta">🚫 Mensagem apagada</p>
         {showMeta && !isSystem && (
           <span
             data-testid="message-meta"
-            className="flex items-baseline gap-sm text-micro tracking-normal text-neutral-600"
+            className="flex items-baseline gap-sm self-end text-micro tracking-normal text-chat-meta"
           >
             {message.senderName && <span className="truncate">{message.senderName}</span>}
             <DateDisplay value={message.createdAt} variant="absolute" />
@@ -391,11 +388,11 @@ export function MessageBubble({
       data-message-id={message.id}
       style={{ maxWidth: isSystem ? undefined : maxWidth }}
       className={cn(
-        'group relative flex min-w-0 flex-col gap-xs font-body text-text transition-shadow',
+        'group relative flex min-w-0 flex-col gap-xs font-body transition-shadow',
         'data-[highlighted=true]:ring-2 data-[highlighted=true]:ring-accent',
         SHELL[type],
-        // Figurinha sem balão (D-236 item 5): some o fundo e a borda, fica o lado.
-        isSticker && 'border-transparent bg-transparent px-0 py-0',
+        // Figurinha sem balão (D-236 item 5): some o fundo e a sombra, fica o lado.
+        isSticker && 'bg-transparent shadow-none px-0 py-0',
       )}
     >
       {!isSystem && (
@@ -438,7 +435,7 @@ export function MessageBubble({
             />
           )
         ) : (
-          <span className="text-caption text-neutral-600">
+          <span className="text-caption text-chat-meta">
             {imageLoading ? 'Carregando imagem…' : 'Não foi possível carregar a imagem'}
           </span>
         ))}
@@ -466,7 +463,7 @@ export function MessageBubble({
       {showMeta && !isSystem && (
         <span
           data-testid="message-meta"
-          className="flex items-baseline gap-sm text-micro tracking-normal text-neutral-600"
+          className="flex items-baseline gap-sm self-end text-micro tracking-normal text-chat-meta"
         >
           {message.senderName && <span className="truncate">{message.senderName}</span>}
           {message.editedAt && <span data-testid="message-edited">Editada</span>}
@@ -499,7 +496,7 @@ export function MessageBubble({
           data-testid="message-reactions"
           aria-label={`Reações: ${reactions.map((reaction) => reaction.emoji).join(' ')}`}
           className={cn(
-            'flex gap-xs self-start rounded-pill border border-neutral-200 bg-surface px-sm text-caption shadow-sm',
+            'flex gap-xs self-start rounded-pill border border-chat-line bg-chat-received px-sm text-caption shadow-sm',
             type === 'sent' && 'self-end',
           )}
         >

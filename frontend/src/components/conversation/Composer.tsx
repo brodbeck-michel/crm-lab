@@ -440,12 +440,12 @@ export function Composer({
   return (
     <div
       data-testid="composer"
-      className="flex flex-col gap-xs border-t border-neutral-300 bg-bg px-lg py-md"
+      className="flex flex-col gap-xs border-t border-chat-line bg-chat-panel px-lg py-md"
     >
       {replyTo && (
         <div
           data-testid="reply-banner"
-          className="flex items-center gap-sm rounded-sm border-0 border-l-4 border-solid border-accent bg-neutral-100 px-sm py-xs"
+          className="flex items-center gap-sm rounded-sm border-0 border-l-4 border-solid border-accent bg-chat-quote px-sm py-xs"
         >
           <p className="m-0 min-w-0 flex-1 truncate font-body text-caption text-neutral-700">
             Respondendo a <em className="font-semibold not-italic text-accent-800">{replyTo.authorName}</em>
@@ -524,7 +524,7 @@ export function Composer({
                   macroOpen && activeMacro ? quickReplyOptionId(activeMacro.id) : undefined
                 }
                 className={cn(
-                  'min-h-[36px] w-full min-w-0 flex-1 resize-none border border-neutral-300 bg-bg',
+                  'min-h-[36px] w-full min-w-0 flex-1 resize-none border border-chat-line bg-chat-bg',
                   multiline ? 'rounded-md' : 'rounded-pill',
                   'px-lg py-[9px] font-body text-label text-text outline-none',
                   'placeholder:text-neutral-600 focus:border-accent disabled:cursor-not-allowed disabled:opacity-60',

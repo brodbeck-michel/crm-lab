@@ -62,16 +62,16 @@ describe('MessageBubble', () => {
     }
   });
 
-  it('recebida encosta à esquerda com o canto apontado embaixo-esquerda', () => {
+  it('recebida encosta à esquerda com o canto superior esquerdo reto (D-251)', () => {
     render(<MessageBubble type="received" message={message()} />);
     const bubble = screen.getByTestId('message-bubble');
 
     expect(bubble).toHaveAttribute('data-type', 'received');
     expect(bubble.className).toContain('self-start');
-    expect(bubble.className).toContain('rounded-bl-sm');
+    expect(bubble.className).toContain('rounded-tl-none');
   });
 
-  it('enviada encosta à direita com o canto apontado embaixo-direita', () => {
+  it('enviada encosta à direita com o canto superior direito reto (D-251)', () => {
     render(
       <MessageBubble
         type="sent"
@@ -82,7 +82,7 @@ describe('MessageBubble', () => {
 
     expect(bubble).toHaveAttribute('data-type', 'sent');
     expect(bubble.className).toContain('self-end');
-    expect(bubble.className).toContain('rounded-br-sm');
+    expect(bubble.className).toContain('rounded-tr-none');
   });
 
   it('evento de sistema é pílula centrada, sem meta e sem largura máxima', () => {

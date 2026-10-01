@@ -4743,7 +4743,7 @@ escuro —, então tudo que a conversa derivasse de `--color-bg`, `--color-surfa
    bg/surface/text. Os literais moram só no bloco de conversa de `tokens.css`.
 2. **Coluna de conversas, cabeçalho e Composer brancos** (`--color-chat-panel`), divisórias
    `mix(accent 12%, white)` (`--color-chat-line`). Selecionada `mix(accent 20%, white)`, hover
-   10%, avatar com fundo 20% e iniciais `mix(accent 70%, #1a1a1a)`. A iniciais saem do acento
+   10%, avatar com fundo 20% e iniciais `mix(accent 70%, #1a1a1a)`. As iniciais saem do acento
    **escurecido**, não do acento puro: o terracota puro sobre o próprio tom claro dá 2,9:1.
 3. **Fundo da conversa neutro** `mix(accent 4%, #f4f3ef)` (`--color-chat-bg`, era `#fff`).
 4. **Balões:** recebida branca à esquerda, canto superior esquerdo reto. Enviada

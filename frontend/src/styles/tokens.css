@@ -81,21 +81,37 @@
     --color-backdrop: rgba(0, 0, 0, 0.45);
 
     /* ---------------------------------------------------------------
-     * Conversa do atendimento (CRMLAB-25). A tela de mensagens é a
-     * única superfície BRANCA do app: sobre o bege do tema, bolha
-     * recebida e bolha enviada ficavam quase iguais. O branco é
-     * literal de propósito — não acompanha o tema do tenant, é o papel
-     * onde as duas bolhas precisam se destacar.
-     * As bolhas continuam tingidas pelo tema, mas misturadas com
-     * branco (e não com --color-bg), senão desapareceriam no papel.
+     * Conversa do atendimento (CRMLAB-25 → CRMLAB-81, D-251).
+     * Visual WhatsApp Web, white-label: NENHUMA cor de destaque fixa —
+     * todo tom sai de --color-accent misturado com branco ou com o
+     * neutro literal #f4f3ef. De propósito NÃO usa --color-bg,
+     * --color-surface nem --color-text (o resto do app os redefine,
+     * CRMLAB-82): a conversa fica estável qualquer que seja o tema.
+     * Contraste (WCAG AA) calculado nos 5 presets — DESIGN_TOKENS.md.
      * --------------------------------------------------------------- */
-    --color-chat-bg: #ffffff;
-    --color-chat-received: color-mix(in oklab, var(--color-surface) 62%, white);
-    --color-chat-received-border: color-mix(in oklab, var(--color-surface) 92%, var(--color-text));
-    --color-chat-sent: color-mix(in oklab, var(--color-accent) 18%, white);
-    --color-chat-sent-border: color-mix(in oklab, var(--color-accent) 42%, white);
-    /* Tique "lida" (CRMLAB-67, D-225): o azul do WhatsApp, LITERAL como o
-     * papel branco — é convenção que o usuário já conhece, não cor do tema. */
+    /* Papel: coluna de conversas, cabeçalho e Composer. */
+    --color-chat-panel: #ffffff;
+    /* Divisória fina no tom do tema (itens, cabeçalho, Composer). */
+    --color-chat-line: color-mix(in oklab, var(--color-accent) 12%, white);
+    /* Conversa da lista: selecionada e hover (mais suave). */
+    --color-chat-selected: color-mix(in oklab, var(--color-accent) 20%, white);
+    --color-chat-hover: color-mix(in oklab, var(--color-accent) 10%, white);
+    /* Avatar: fundo claro do acento, iniciais no acento escurecido (AA). */
+    --color-chat-avatar: color-mix(in oklab, var(--color-accent) 20%, white);
+    --color-chat-avatar-text: color-mix(in oklab, var(--color-accent) 70%, #1a1a1a);
+    /* Fundo da conversa: neutro claro puxado ao tema, para os balões saltarem. */
+    --color-chat-bg: color-mix(in oklab, var(--color-accent) 4%, #f4f3ef);
+    /* Balões: recebida branca, enviada no acento clareado. */
+    --color-chat-received: #ffffff;
+    --color-chat-sent: color-mix(in oklab, var(--color-accent) 22%, white);
+    /* Texto e meta (hora/autor/tique) dentro do balão. */
+    --color-chat-text: #1a1a1a;
+    --color-chat-meta: color-mix(in oklab, #1a1a1a 70%, white);
+    /* Bloco citado / faixa "Respondendo a": véu escuro que funciona sobre os dois balões. */
+    --color-chat-quote: color-mix(in oklab, #1a1a1a 6%, transparent);
+    --color-chat-quote-hover: color-mix(in oklab, #1a1a1a 11%, transparent);
+    /* Tique "lida" (CRMLAB-67, D-225): o azul do WhatsApp, LITERAL — é
+     * convenção que o usuário já conhece, não cor do tema. */
     --color-chat-tick-read: #53bdeb;
 
     /* --------------------------------------------------------------- */

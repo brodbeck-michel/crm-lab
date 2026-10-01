@@ -17,7 +17,9 @@ import { clearConversationDraft, useConversationDraft } from '@/stores';
  *    `formatDurationSeconds` (a mesma escala do resto do app): minuto cru
  *    virava "aguardando 57871 min" — ilegivel, e quem le a fila precisa
  *    decidir prioridade de relance, nao fazer divisao mental;
- *  - selecionado: fundo neutral-100 + shadow-sm.
+ *  - visual WhatsApp Web (CRMLAB-81, D-251): selecionado em
+ *    `--color-chat-selected`, hover `--color-chat-hover`, divisória
+ *    `--color-chat-line` entre itens, avatar em `--color-chat-avatar`.
  *
  * Nenhuma busca de dado aqui dentro: recebe `conversation` pronto do
  * TanStack Query.
@@ -149,7 +151,7 @@ export function ConversationItem({
   return (
     <div
       ref={menuRef}
-      className="relative"
+      className="relative border-0 border-b border-solid border-chat-line"
       onContextMenu={
         canMarkUnread
           ? (event) => {
@@ -169,11 +171,11 @@ export function ConversationItem({
           'flex w-full cursor-pointer items-start gap-md rounded-md border-none py-md text-left',
           // Espaço à direita reservado para o alfinete, que fica por cima.
           hasControls ? 'pl-lg pr-xl' : 'px-lg',
-          'font-body transition-colors hover:bg-accent-100',
-          selected ? 'bg-neutral-100 shadow-sm' : 'bg-transparent',
+          'font-body transition-colors',
+          selected ? 'bg-chat-selected' : 'bg-transparent hover:bg-chat-hover',
         )}
       >
-        <Avatar name={displayName} size={36} />
+        <Avatar name={displayName} size={36} className="bg-chat-avatar text-chat-avatar-text" />
 
         <span className="flex min-w-0 flex-1 flex-col gap-xs">
           <span className="flex items-baseline gap-sm">

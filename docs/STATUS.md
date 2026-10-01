@@ -3034,3 +3034,23 @@ Branch `feature/CRMLAB-82-fundo-branco-tema` (de `main` v1.27.0). Decisão D-250
   `flow-5-theme.spec.ts` ajustado (não rodado aqui).
 - **Pendente:** validação visual nos temas; integração com o CRMLAB-81 (a conversa do Atendimento
   usa `--color-surface` em `--color-chat-received`, que agora é o tom 12% do accent).
+
+### 🚧 CRMLAB-81 — Atendimento no visual WhatsApp Web (2026-10-01, aguardando validação)
+
+Branch `feature/CRMLAB-81-atendimento-whatsapp` (de `main` v1.27.0). Decisão D-251. Só visual.
+
+- **Tokens:** bloco `--color-chat-*` de `tokens.css` reescrito. Tons só de `--color-accent` com
+  branco ou `#f4f3ef`, nada de `--color-bg/surface/text`. Novos: `panel`, `line`, `selected`,
+  `hover`, `avatar`, `avatar-text`, `text`, `meta`, `quote`, `quote-hover`. Mudam: `bg` (neutro
+  claro, era `#fff`) e `received` (`#fff`). Saem: `received-border` e `sent-border`.
+- **Tela:** coluna de conversas, cabeçalho e Composer brancos. A conversa fica num neutro claro.
+  Recebida é branca à esquerda (canto superior esquerdo reto). Enviada fica no acento 22% à
+  direita (canto superior direito reto). Sem borda, sombra leve, hora e status embaixo à direita.
+  `Avatar` ganhou `className` opcional.
+- **Contraste:** texto × balão enviado ≥ 12,4:1 e meta ≥ 5,2:1 nos 5 presets (tabela em
+  DESIGN_TOKENS.md › Bolhas).
+- **Testes:** specs de `components/conversation` e `pages/Attendance` (+ Avatar, InboxLayout,
+  no-hardcoded-tokens) verdes; typecheck do frontend verde.
+- **Pedido ao CRMLAB-82 (dono do `InboxLayout`):** a borda entre a coluna de conversas e a
+  conversa (`border-r border-neutral-300` da seção `inbox-list`) ainda não está no tom do tema.
+  Para fechar o visual, trocar por `border-chat-line` só no Atendimento.

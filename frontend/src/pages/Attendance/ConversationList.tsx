@@ -106,8 +106,9 @@ export function ConversationList({
   }, []);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-col gap-md border-b border-neutral-300 px-lg py-lg">
+    // Coluna branca, visual WhatsApp Web (CRMLAB-81, D-251).
+    <div className="flex min-h-0 flex-1 flex-col bg-chat-panel">
+      <div className="flex flex-col gap-md border-b border-chat-line px-lg py-lg">
         <div className="flex items-center justify-between gap-sm">
           <h2 className="font-heading text-body font-semibold text-text">Conversas</h2>
           <Tooltip content="Nova conversa (Ctrl+Alt+N)" placement="bottom">

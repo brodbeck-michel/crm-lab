@@ -533,8 +533,9 @@ export function ConversationPanel({
   const presenceText = presenceLabel(presence, new Date());
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-bg">
-      <header className="flex items-center gap-md border-b border-neutral-300 px-lg py-md">
+    // Cabeçalho e Composer brancos, conversa no neutro do tema (CRMLAB-81, D-251).
+    <div className="flex min-h-0 flex-1 flex-col bg-chat-panel">
+      <header className="flex items-center gap-md border-b border-chat-line px-lg py-md">
         <div className="flex min-w-0 flex-1 flex-col">
           <span className="truncate font-body text-label font-semibold text-text">
             {conversation.patientName ?? conversation.patientPhone}

@@ -42,7 +42,7 @@ describe('MessageBubble — tiques (D-225)', () => {
     const { rerender } = render(<MessageBubble type="sent" message={message('read')} />);
     expect(screen.getByTestId('message-status').className).toContain('text-chat-tick-read');
     rerender(<MessageBubble type="sent" message={message('delivered')} />);
-    expect(screen.getByTestId('message-status').className).toContain('text-neutral-600');
+    expect(screen.getByTestId('message-status').className).toContain('text-chat-meta');
   });
 
   it('mensagem do paciente não tem tique', () => {

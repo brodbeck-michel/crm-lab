@@ -4782,3 +4782,39 @@ evita migração e mantém o contrato da API intacto.
 Personalização e "Aplicação do Tema"; `e2e/workflows/flow-5-theme.spec.ts`. A conversa do
 Atendimento (`--color-chat-*`) não foi tocada aqui: `--color-chat-received` mistura com
 `--color-surface`, que agora é o tom de 12% do accent.
+
+## 2026-10-01 — Tela de Atendimento com visual de WhatsApp Web
+
+### D-251: Conversa do atendimento no visual do WhatsApp Web, tons só do acento (CRMLAB-81)
+**Contexto:** o "papel branco" do CRMLAB-25 resolveu a bolha que sumia no bege, mas a tela ainda
+não tinha cara de WhatsApp: a coluna de conversas e o Composer seguiam no fundo do tema, a
+recebida era um tom do `--color-surface` e as duas bolhas tinham borda e canto apontado
+embaixo. Ao mesmo tempo o CRMLAB-82 (D-250) muda o resto do app — fundo branco e texto fixo
+escuro —, então tudo que a conversa derivasse de `--color-bg`, `--color-surface` ou
+`--color-text` mudaria por tabela.
+**Decisão:**
+1. **Tons só de `--color-accent`** misturado com branco ou com o neutro literal `#f4f3ef`, em
+   `color-mix(in oklab, …)`. Texto do balão `#1a1a1a` literal. Nenhum `--color-chat-*` usa
+   bg/surface/text. Os literais moram só no bloco de conversa de `tokens.css`.
+2. **Coluna de conversas, cabeçalho e Composer brancos** (`--color-chat-panel`), divisórias
+   `mix(accent 12%, white)` (`--color-chat-line`). Selecionada `mix(accent 20%, white)`, hover
+   10%, avatar com fundo 20% e iniciais `mix(accent 70%, #1a1a1a)`. As iniciais saem do acento
+   **escurecido**, não do acento puro: o terracota puro sobre o próprio tom claro dá 2,9:1.
+3. **Fundo da conversa neutro** `mix(accent 4%, #f4f3ef)` (`--color-chat-bg`, era `#fff`).
+4. **Balões:** recebida branca à esquerda, canto superior esquerdo reto. Enviada
+   `mix(accent 22%, white)` à direita, canto superior direito reto. Sem borda, sombra
+   `--shadow-sm`. Hora/autor/status no canto inferior direito, em `mix(#1a1a1a 70%, white)`.
+   Saem `--color-chat-received-border` e `--color-chat-sent-border`.
+5. **Contraste** (WCAG, mistura oklab calculada; tabela em DESIGN_TOKENS.md): texto × enviada
+   12,4–13,6:1 e meta × enviada 5,2–5,8:1 nos 5 presets. Com acento preto puro (pior caso de
+   acento livre), o texto ainda dá 8,7:1. O tique "lida" `#53bdeb` fica em ~1,5:1, igual ao
+   WhatsApp. O estado não depende só da cor: tem o glifo ✓✓ e o `aria-label`.
+6. **Só visual.** Comportamento, DOM e testids dos balões não mudam (citação, reação, apagada,
+   anexos, figurinha sem balão, falha com "Tentar de novo").
+**Motivo:** a equipe usa WhatsApp o dia todo. Sem cor fixa, a tela fica igual em qualquer
+tenant. Cor + canto reto separam quem falou sem depender só do lado.
+**Impacto:** `styles/tokens.css` (bloco da conversa), `tailwind.config.js` (`colors.chat`),
+`MessageBubble.tsx`, `ConversationItem.tsx`, `Composer.tsx`, `ConversationList.tsx`,
+`ConversationPanel.tsx`, `shared/Avatar.tsx` (`className` opcional); specs de `MessageBubble`
+e `ConversationItem`. DESIGN_TOKENS.md › Bolhas, COMPONENTS.md, PAGES.md §2. A borda entre a
+coluna de conversas e a conversa é do `InboxLayout` (CRMLAB-82) e segue em `neutral-300`.

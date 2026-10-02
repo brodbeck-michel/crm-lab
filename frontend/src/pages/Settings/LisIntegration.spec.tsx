@@ -108,7 +108,7 @@ describe('LisIntegration (/settings/lis-integration)', () => {
 
     expect(screen.getByText('Sincronizando a cada 30 s')).toBeInTheDocument();
     expect(screen.getByText(/Dados atualizados até: 25\/09\/2026 13:30/)).toBeInTheDocument();
-    // Sem releitura diaria de 90 dias (CRMLAB-80, D-250).
+    // Sem releitura diaria de 90 dias (CRMLAB-80, D-253).
     expect(screen.queryByText(/releitura/i)).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Sincronizar agora' }));

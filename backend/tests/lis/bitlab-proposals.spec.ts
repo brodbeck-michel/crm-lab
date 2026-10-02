@@ -356,7 +356,7 @@ describe('sem avalanche de historico (D-196 item 2)', () => {
   });
 });
 
-describe('pre-cadastro e a excecao a D-119 (D-197)', () => {
+describe('pre-cadastro (D-197, D-252)', () => {
   const REQ = { requisitionNumber: '001-0001234', requisitionValue: 150.5 };
 
   it('orcamento que ja chega com requisicao nasce em "Novo orcamento" com o selo, sem virar ganho', async () => {
@@ -396,7 +396,7 @@ describe('pre-cadastro e a excecao a D-119 (D-197)', () => {
     expect(body.lisReconciledAt).toBeNull();
   });
 
-  it('proposta de origem crm em novo_contato continua indo a ganho (D-119 intacta)', async () => {
+  it('proposta de origem crm em novo_contato com requisicao nao anda, como o cartao (D-252)', async () => {
     await setSince(tenantA, SINCE);
     const conversation = await createConversation({ tenantId: tenantA.id, db });
     const manual = await createProposal({
@@ -412,7 +412,7 @@ describe('pre-cadastro e a excecao a D-119 (D-197)', () => {
       .set(app.auth(attendantA))
       .send({ lisBudgetNumber: '7004' });
     await ingest(tenantA, [row('7004', REQ)]);
-    expect((await detail(attendantA, manual.id)).status).toBe('ganho');
+    expect((await detail(attendantA, manual.id)).status).toBe('novo_contato');
   });
 });
 

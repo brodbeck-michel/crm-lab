@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-30 (CRMLAB-79 — sincronização do LIS a cada 30 s, branch `feature/CRMLAB-79-sync-lis-30s`)
+**Última atualização:** 2026-10-01 (CRMLAB-82 — fundo branco e tema só no conteúdo, branch `feature/CRMLAB-82-fundo-branco-tema`)
 
 ---
 
@@ -2927,6 +2927,18 @@ Branch `feature/CRMLAB-59-motor-tempo` (de `integ/onda-funil`). Decisões D-205.
   no processo/teste ou parser de tipo no driver) é um card de Kernel.
 
 
+### ✅ CRMLAB-60 (item 3) — transição de sistema única para LIS e motor de tempo (2026-09-28)
+
+Branch `feature/CRMLAB-60-unifica-transicao-sistema`. Decisão D-210. Só refatoração: nenhum
+comportamento muda.
+
+- `applyTimerTransition` (motor de tempo, D-208) virou uma chamada a `applySystemTransition`, que
+  ganhou `from`, `guard` (conferência sob o `FOR UPDATE`), `reasonLost`, `automation`, `at` e
+  `auditExtra`; `SystemTransitionSource` ganhou `rule`. O motor anuncia pelo mesmo
+  `announceSystemTransitions` do LIS.
+- Testes: `tests/proposals` (163) e `tests/lis` (222) verdes, typecheck e lint do backend limpos.
+- O resto do card entrou na mesma branch em 02/10 (entrada abaixo).
+
 ### ✅ CRMLAB-62 — reingajamento da conversa + feriados (2026-09-28)
 
 Branch `feature/CRMLAB-62-reingajamento` (de `main` v1.23.0). Decisões D-211..D-214, migração
@@ -2966,7 +2978,7 @@ Branch `feature/CRMLAB-53-extrato-pagamentos-lis`. Decisões D-188/D-189, migra�
   não decide mais pagamento; por chunk, `upsertPayments` + `recomputePaidValues`. Recebido = soma
   dos ativos da API (ou, só planilha, de todos), teto em `requisition_value`; `paid_on` = último
   pagamento considerado, de qualquer valor (D-204 intacta). Estorno depois de `ganho` não reabre.
-- **Releitura diária (D-189) — ⚠️ removida pela D-250 (CRMLAB-80, 30/09/2026):** o estorno não volta na janela incremental; o primeiro tique
+- **Releitura diária (D-189) — ⚠️ removida pela D-253 (CRMLAB-80, 30/09/2026):** o estorno não volta na janela incremental; o primeiro tique
   depois das 03:00 (Brasília) relê 90 dias. `lis_sync_settings.last_full_scan_on`, marca que não
   recua, "Sincronizar agora" incremental; a tela de integração mostra a última releitura.
 - **Planilha como plano B:** Regras → "Carga do LIS" (`lisSource.spreadsheetImport`, padrão
@@ -3016,9 +3028,64 @@ Branch `feature/CRMLAB-79-sync-lis-30s` (de `main`). Decisão D-249.
 - **Pendente:** hml (lá o `.env` fixa `0`); prod não fixa a variável e pega os 30 s. Pedir ao Bitlab um
   webhook de orçamento criado/alterado (tempo real de verdade).
 
+### 🚧 CRMLAB-82 — fundo branco e cor do tema só no conteúdo (2026-10-01, aguardando validação)
+
+Branch `feature/CRMLAB-82-fundo-branco-tema` (de `main` v1.27.0). Decisão D-250.
+
+- **Tokens:** `--color-bg` branco e `--color-text` escuro fixos para todo tenant; `--color-surface`
+  (menu, cabeçalho de tabela) = accent 12%; `neutral-100` (cartão) 6%, `neutral-200` (divisória)
+  12%, `accent-100` (hover/seleção) 20%, `neutral-300` (borda) 22%, `neutral-400` 36%. Texto neutro
+  (`neutral-600..900`) cinza mais escuro para AA. `applyTheme` escreve só accent/accent2.
+- **Telas:** Sidebar com item ativo branco + texto `accent-700`; `DataTable`/`UserTable`/
+  `AuditLogTable` com cabeçalho tingido; cartões de Configurações e Respostas rápidas no tom 6%.
+- **Personalização:** só cor principal, secundária, fonte, cantos, nome e logo; preset envia só
+  accent + accent2; prévia em miniatura com o visual novo.
+- **Compatibilidade:** contrato da API inalterado; `bg`/`surface`/`text` salvos são ignorados na
+  tela, sem migração.
+- **Testes:** `lib/theme.spec.ts`, `Theme.spec.tsx`, `Sidebar.spec.tsx` ajustados; e2e
+  `flow-5-theme.spec.ts` ajustado (não rodado aqui).
+- **Pendente:** validação visual nos temas; integração com o CRMLAB-81 (a conversa do Atendimento
+  usa `--color-surface` em `--color-chat-received`, que agora é o tom 12% do accent).
+
+### 🚧 CRMLAB-81 — Atendimento no visual WhatsApp Web (2026-10-01, aguardando validação)
+
+Branch `feature/CRMLAB-81-atendimento-whatsapp` (de `main` v1.27.0). Decisão D-251. Só visual.
+
+- **Tokens:** bloco `--color-chat-*` de `tokens.css` reescrito. Tons só de `--color-accent` com
+  branco ou `#f4f3ef`, nada de `--color-bg/surface/text`. Novos: `panel`, `line`, `selected`,
+  `hover`, `avatar`, `avatar-text`, `text`, `meta`, `quote`, `quote-hover`. Mudam: `bg` (neutro
+  claro, era `#fff`) e `received` (`#fff`). Saem: `received-border` e `sent-border`.
+- **Tela:** coluna de conversas, cabeçalho e Composer brancos. A conversa fica num neutro claro.
+  Recebida é branca à esquerda (canto superior esquerdo reto). Enviada fica no acento 22% à
+  direita (canto superior direito reto). Sem borda, sombra leve, hora e status embaixo à direita.
+  `Avatar` ganhou `className` opcional.
+- **Contraste:** texto × balão enviado ≥ 12,4:1 e meta ≥ 5,2:1 nos 5 presets (tabela em
+  DESIGN_TOKENS.md › Bolhas).
+- **Testes:** specs de `components/conversation` e `pages/Attendance` (+ Avatar, InboxLayout,
+  no-hardcoded-tokens) verdes; typecheck do frontend verde.
+- **Pedido ao CRMLAB-82 (dono do `InboxLayout`):** a borda entre a coluna de conversas e a
+  conversa (`border-r border-neutral-300` da seção `inbox-list`) ainda não está no tom do tema.
+  Para fechar o visual, trocar por `border-chat-line` só no Atendimento.
+
+### ✅ CRMLAB-60 — régua de fatos do LIS para todas as origens (2026-10-02)
+
+Branch `feature/CRMLAB-60-unifica-transicao-sistema` (com merge da `main` v1.28.0). Decisão D-252,
+que substitui D-119 itens 4–6 e D-204. Junto com o item 3 (D-210) num PR único.
+
+- A origem `crm` passa a seguir a régua do cartão `bitlab` (decisão do Michel): pagamento no LIS
+  → `ganho` de qualquer estágio aberto; requisição em `orcamento_enviado`/`follow_up` →
+  `negociacao`; requisição em `novo_contato` só dá o selo "Pré-cadastro feito". Tudo pelas
+  regras liga/desliga. Sai `markWonFromLis`.
+- O Ganho já usa o `paid_on` derivado do extrato do CRMLAB-53 (`recomputePaidValues` antes da
+  conciliação). Testes cobrem pagamento sem requisição, requisição sem pagamento e regras
+  desligadas na origem `crm`.
+- `perdido` que recebe pagamento (não só requisição) também audita `lis_reconcile_conflict`; a
+  proposta mostra "Conflito com o LIS" no modal.
+- Analytics sem código novo: `realized.wonFromLis` segue por `lis_reconciled_at`.
+
 ### 🚧 CRMLAB-80 — sem releitura diária de 90 dias na sincronização do LIS (2026-09-30, aguardando validação)
 
-Branch `feature/CRMLAB-80-sem-releitura-diaria` (de `main`). Decisão D-250 (substitui os itens 1–3
+Branch `feature/CRMLAB-80-sem-releitura-diaria` (com merge da `main` v1.29.0). Decisão D-253 (substitui os itens 1–3
 da D-189; a planilha como plano B continua).
 
 - **Backend:** o tique (`auto`) é sempre `incremental`; sai `FULL_SCAN_HOUR`. Sem marca d'água a

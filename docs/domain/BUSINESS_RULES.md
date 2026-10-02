@@ -219,23 +219,21 @@ funcionamento (fora dele, fica para a abertura; sem nenhum dia configurado = sem
 hora de sair cai em feriado, **descarta**, não empurra. Mais de 2 h atrasado → descarta também.
 API oficial da Meta não entra na rotina. A mensagem aparece como "Mensagem automática".
 
-### Exceção única: `ganho` pela conciliação com o LIS (CRMLAB-52, D-119)
-A matriz acima vale para **pessoas**. Quando o orçamento do LIS vinculado à proposta
-(`lis_budget_number`) aparece **com requisição**, a proposta vai para `ganho` a partir de
-**qualquer** estágio não terminal, inclusive `novo_contato`. Quem fecha é o sistema
-(`changedBy: null`, audit `source: "lis"`). É o único caminho que não passa por
-`isTransitionAllowed`, e ele mora só em `ProposalService.markWonFromLis`. `perdido` **nunca**
-reabre por esse caminho: o conflito é auditado (`lis_reconcile_conflict`) e o gestor decide.
-
-**Exceção da exceção (CRMLAB-57, D-197):** proposta de origem `bitlab` **em `novo_contato`**
-com requisição **não** vai a `ganho`: a requisição só é espelhada e vira o selo "Pré-cadastro
-feito". Requisição no balcão é pré-cadastro, não aceite de uma proposta que o CRM enviou.
-
-**Régua do cartão do Bitlab (CRMLAB-60 parcial, D-204 — emenda as duas acima, provisória até
-o CRMLAB-53):** na origem `bitlab`, requisição **não** fecha mais como ganho. Pagamento no LIS
-(`paid_on`, qualquer valor) em qualquer estágio aberto, inclusive `novo_contato` → `ganho`;
-requisição em `orcamento_enviado`/`follow_up` → `negociacao`. Cada uma só com a regra
-correspondente ligada nas Regras. `perdido` não reabre. A origem `crm` continua com a D-119.
+### Exceção: régua de fatos do LIS (CRMLAB-60, D-252 — substitui D-119 item 4 e D-204)
+A matriz acima vale para **pessoas**. O orçamento do LIS vinculado à proposta
+(`lis_budget_number`) move a proposta pelo sistema, **em qualquer origem** (`crm` ou `bitlab`),
+cada fato só com a regra correspondente ligada nas Regras:
+- **Pagamento** (`lis_budgets.paid_on`, derivado do extrato de pagamentos, D-188; qualquer valor)
+  em **qualquer** estágio não terminal, inclusive `novo_contato` → `ganho` (audit
+  `source: "lis_payment"`, selo "Conciliado"). Regra "Pagamento → Ganho".
+- **Requisição** em `orcamento_enviado`/`follow_up` → `negociacao` (audit
+  `source: "lis_requisition"`). Regra "Requisição → Negociação". Em `novo_contato` a requisição só
+  é espelhada e vira o selo "Pré-cadastro feito" (D-197); em `negociacao` a proposta fica onde
+  está. **Requisição sozinha nunca leva a `ganho`.**
+Quem move é o sistema (`changedBy: null`), fora de `isTransitionAllowed`, sempre por
+`applySystemTransition`. `perdido` **nunca** reabre por esse caminho: requisição ou pagamento
+novo numa proposta perdida é auditado (`lis_reconcile_conflict`), a proposta mostra o aviso
+"Conflito com o LIS" e a atendente decide.
 
 **Enviar pelo cartão (CRMLAB-58, D-200):** o cartão `bitlab` em `novo_contato` enviado com
 requisição (pré-cadastro) vai direto a `negociacao` se a regra "Requisição → Negociação" estiver
@@ -700,7 +698,7 @@ pagamento** (o mesmo orçamento repete em várias linhas).
 **O filtro `tipoData=alteracao` considera a `DATA_ESTORNO` desde 30/09/2026** (resposta do
 Bitlab, validada em hml no mesmo dia com o OR66760): um pagamento estornado depois da leitura
 **volta** na consulta incremental, na janela do estorno. Por isso a sincronização é sempre
-incremental, sem releitura diária (D-250, que substitui a releitura de 90 dias da D-189;
+incremental, sem releitura diária (D-253, que substitui a releitura de 90 dias da D-189;
 SERVICES.md §24).
 
 ### 11.11 Extrato de pagamentos e recebido (CRMLAB-53, D-188/D-189)

@@ -65,7 +65,7 @@ export function InboxLayout({
         data-testid="inbox-list"
         aria-label={listLabel}
         style={{ flex: `0 0 ${INBOX_LIST_WIDTH}px`, width: INBOX_LIST_WIDTH }}
-        className="flex min-h-0 flex-col overflow-y-auto border-r border-neutral-300 bg-surface"
+        className="flex min-h-0 flex-col overflow-y-auto border-r border-chat-line bg-chat-panel"
       >
         {listBanner}
         {list}

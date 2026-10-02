@@ -79,7 +79,7 @@ export interface LisSyncSettingsPatch {
 export interface LisSyncRunOutcome {
   /**
    * `null` = rodada sem sucesso: nao mexe em `last_success_at`/`watermark`.
-   * `last_full_scan_on` nao e mais gravada (D-250).
+   * `last_full_scan_on` nao e mais gravada (D-253).
    */
   success: { watermark: string | null } | null;
   error: string | null;

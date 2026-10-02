@@ -435,6 +435,9 @@ Salvar personalização. PATCH parcial: campo não enviado permanece.
 - `brandName` máx. 255, `logoUrl` máx. 500 — ambos anuláveis. Enviar `null` **apaga**
   o valor; omitir o campo o preserva (essa é a diferença entre `null` e ausente)
 - Corpo vazio (`{}`) ou campo desconhecido → `VALIDATION_ERROR` (o schema é `strict`)
+- `bg`, `surface` e `text` continuam **aceitos, gravados e devolvidos** (contrato inalterado),
+  mas desde a D-250 o frontend os **ignora**: fundo branco e texto escuro são fixos na tela, e a
+  Personalização não os envia mais. Nenhuma migração: temas antigos seguem válidos
 
 **Response (200):** `{ "theme": { ... } }` — o tema salvo. Gera audit log `update_theme`.
 
@@ -2416,9 +2419,10 @@ limpa `lis_budget_number`, `lis_requisition_number`, `lis_paid_value`, `lis_paid
 status resultante da conciliação.
 
 Gera audit log `update_proposal_lis_reference` (`oldValues`/`newValues`: `lisBudgetNumber`). Se
-a conciliação levou a proposta a `ganho`, gera **também** o `update_proposal_status` com
-`newValues.source: "lis"`, o histórico, a mensagem de sistema e o WS `proposal.status_changed`,
-iguais aos da importação (D-119 item 4).
+a conciliação moveu a proposta (pagamento → `ganho`, requisição → `negociacao`, D-252), gera
+**também** o `update_proposal_status` com `newValues.source: "lis_payment"` ou
+`"lis_requisition"`, o histórico, a mensagem de sistema e o WS `proposal.status_changed`, iguais
+aos da importação.
 
 **Absorção do cartão automático (CRMLAB-57, D-198):** se o número já pertence a uma proposta
 de origem `bitlab` em `novo_contato`, nunca enviada (`sentAt: null`) e sem conversa, essa
@@ -4985,7 +4989,7 @@ Configuração e disparo da sincronização dos orçamentos pela API de Orçamen
 - `running`: há uma rodada em andamento agora (trava em memória, D-185 item 5).
 - `intervalSeconds` (D-249, substitui `intervalMinutes`): `LIS_SYNC_INTERVAL_MS / 1000`, só para a
   tela dizer "a cada 30 s" / "a cada 2 min". `0` = agendador desligado neste servidor (hml).
-- `lastFullScanOn` **saiu** (CRMLAB-80, D-250): sem releitura diária de 90 dias, não há o que
+- `lastFullScanOn` **saiu** (CRMLAB-80, D-253): sem releitura diária de 90 dias, não há o que
   mostrar. A coluna `last_full_scan_on` fica no banco, sem uso.
 
 #### PATCH /settings/lis-integration (admin)

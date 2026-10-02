@@ -10,11 +10,11 @@ import {
   SEQUENTIAL_TRANSITIONS,
   type UpdateFunnelRulesRequest,
 } from '@crm-lab/shared';
-import type { DbClient } from '../../src/db/types.js';
+import type { DbClient, DbTx } from '../../src/db/types.js';
 import { isBusinessError } from '../../src/http/errors.js';
 import { createAuditService } from '../../src/services/audit.service.js';
 import { createFunnelRulesService } from '../../src/services/funnel-rules.service.js';
-import { markWonFromLis } from '../../src/services/proposal.service.js';
+import { applySystemTransition } from '../../src/services/proposal.service.js';
 import { getTestDb, resetDatabase } from '../helpers/test-db.js';
 import {
   createConversation,
@@ -68,6 +68,16 @@ describe('Regras do funil no ProposalService', () => {
     manager = await createUser({ tenantId: tenant.id, role: 'manager' });
     attendant = await createUser({ tenantId: tenant.id, role: 'attendant' });
   });
+
+  /** O que a conciliacao faz quando acha pagamento no LIS (D-252 item 1). */
+  function wonFromLisPayment(tx: DbTx, proposalId: string) {
+    return applySystemTransition(tx, tenant.id, proposalId, {
+      to: 'ganho',
+      source: 'lis_payment',
+      systemMessage: null,
+      lisReconciled: true,
+    });
+  }
 
   async function setRules(patch: UpdateFunnelRulesRequest): Promise<void> {
     const service = createFunnelRulesService({ db, audit: createAuditService(db) });
@@ -208,7 +218,7 @@ describe('Regras do funil no ProposalService', () => {
         status: 'orcamento_enviado',
         totalPrice: 10,
       });
-      await db.withTenant(tenant.id, (tx) => markWonFromLis(tx, tenant.id, proposal.id));
+      await db.withTenant(tenant.id, (tx) => wonFromLisPayment(tx, proposal.id));
 
       const error = await errorOf(
         h.proposals.updateStatus(ctxOf(admin), proposal.id, 'follow_up'),
@@ -250,11 +260,11 @@ describe('Regras do funil no ProposalService', () => {
       expect(won.status).toBe('ganho');
     });
 
-    it('conciliacao LIS ignora a trava: novo_contato vai direto a ganho (D-119)', async () => {
+    it('conciliacao LIS ignora a trava: novo_contato vai direto a ganho (D-252)', async () => {
       await setRules({ manualMoves: { skipStages: false } });
       const proposal = await createProposal({ tenantId: tenant.id, createdBy: manager.id });
-      const won = await db.withTenant(tenant.id, (tx) => markWonFromLis(tx, tenant.id, proposal.id));
-      expect(won).toMatchObject({ from: 'novo_contato', to: 'ganho', source: 'lis' });
+      const won = await db.withTenant(tenant.id, (tx) => wonFromLisPayment(tx, proposal.id));
+      expect(won).toMatchObject({ from: 'novo_contato', to: 'ganho', source: 'lis_payment' });
     });
   });
 

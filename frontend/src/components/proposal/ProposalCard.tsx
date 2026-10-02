@@ -47,8 +47,8 @@ export default function ProposalCard({
 
   // CRMLAB-57 (D-195/D-197, PAGES.md §5): cartão que nasceu do orçamento do Bitlab.
   const fromBitlab = proposal.origin === 'bitlab';
-  const preRegistered =
-    fromBitlab && proposal.status === 'novo_contato' && proposal.lisRequisitionNumber !== null;
+  // D-252: o selo vale para qualquer origem — requisição em novo_contato não move a proposta.
+  const preRegistered = proposal.status === 'novo_contato' && proposal.lisRequisitionNumber !== null;
 
   // CRMLAB-59/D-207: a mesma função do motor decide o selo.
   const clock = now ?? new Date();

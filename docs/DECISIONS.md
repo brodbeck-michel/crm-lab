@@ -2960,6 +2960,9 @@ Chrome e o `mp4` do Safari e que o paciente ouve no Android e no iPhone.
 ## 2026-09-25 — Conciliação com o LIS pela API do Bitlab (CRMLAB-52)
 
 ### D-119: Conciliação LIS ↔ propostas — nº do orçamento na proposta, requisição fecha como `ganho`
+> **Itens 4, 5 e 6 substituídos pela D-252 (CRMLAB-60, 02/10/2026):** requisição não fecha mais
+> como `ganho` em nenhuma origem. Os demais itens (vínculo, formato, momentos, idempotência,
+> purge, `realized`) continuam valendo.
 **Decisão:** o vínculo entre uma proposta do CRM e um orçamento do LIS é o **número do orçamento
 do LIS** (`lis_budget_number`), digitado pela atendente na proposta. A API do Bitlab não tem campo
 livre de referência (confirmado no manual de 25/09/2026), então o vínculo nasce do lado do CRM.
@@ -3148,7 +3151,7 @@ com segundos), `lis-spreadsheet.ts` (`paidAt` com hora; `consolidateLisRows`),
 BUSINESS_RULES §11.1/§11.2/§11.10, SCHEMA §26 + tabela nova, SERVICES §19/§24.1.
 
 ### D-189: Releitura diária de 90 dias pega o estorno; a planilha vira plano B, ligada por regra (CRMLAB-53)
-> **Itens 1, 2 (releitura diária) e 3 substituídos pela D-250 (CRMLAB-80, 30/09/2026).** Os itens 4 e 5 (planilha como plano B) continuam valendo.
+> **Itens 1, 2 (releitura diária) e 3 substituídos pela D-253 (CRMLAB-80, 30/09/2026).** Os itens 4 e 5 (planilha como plano B) continuam valendo.
 
 **Decisão:**
 1. **O estorno não volta na consulta incremental.** A consulta pela VPS (28/09/2026) mostrou que
@@ -3579,6 +3582,8 @@ busca). O paciente que está sendo atendido agora está nelas; para os outros ex
 **Impacto:** `shared/types/name-similarity.ts` (novo); frontend `SendProposalPanel`; PAGES §6.
 
 ### D-204: Régua de fatos do LIS para o cartão do Bitlab — requisição leva a Negociação, pagamento leva a Ganho (CRMLAB-60 parcial; emenda D-119 e D-197)
+> **Substituída pela D-252 (02/10/2026):** a régua deixou de ser provisória e passou a valer para
+> todas as origens. O item 5 (`applySystemTransition`) continua valendo.
 **Decisão:** na conciliação (D-119 item 4), a proposta de origem **`bitlab`** deixa de ir a
 `ganho` pela requisição e passa a seguir as duas regras de automação das Regras (CRMLAB-56). A
 origem **`crm` continua exatamente com a D-119** (requisição em qualquer estágio aberto →
@@ -3762,6 +3767,30 @@ tela") e é a que o card descreve. Um marco de ativação esconderia do laborat�
 considera parados.
 **Impacto:** `funnel-timer.service.ts`; SERVICES §27; relatório do card (pergunta ao Michel sobre o
 primeiro tique em produção).
+
+## 2026-09-28 — Transição de sistema única (CRMLAB-60, item 3)
+
+### D-210: O motor de tempo usa a mesma transição de sistema do LIS
+**Decisão:** `applyTimerTransition` (D-208) deixa de ter `UPDATE`/histórico/audit próprios e passa
+a ser uma chamada a `applySystemTransition` (D-204 item 5), que ganha as opções que o motor usava:
+1. `from`: só transita se o estágio atual (lido sob `FOR UPDATE`) for esse;
+2. `guard(locked)`: conferência extra sob o lock, com `status`, `conversationId`, `lisPaidOn` e
+   `lisRequisitionNumber` da linha travada — o motor confere ali os fatos (D-206) e a linha de
+   entrada no estágio; `false` = nada feito;
+3. `reasonLost` (gravado só quando `to` é `perdido`, e repetido em `newValues.reasonLost`),
+   `automation` (histórico, D-208 item 2), `at` (instante do histórico e do `closed_at`; ausente =
+   `NOW()` do banco) e `auditExtra` (campos a mais em `newValues`, ex. `rule`/`days`/`dayCounting`).
+4. `SystemTransitionSource` ganha `rule`. `applyTimerTransition` devolve `SystemTransition | null`
+   (antes `boolean`) e o motor anuncia pelo mesmo `announceSystemTransitions` do LIS (WS
+   `proposal.status_changed` + invalidação do cache de analytics, depois do commit).
+5. O `UPDATE` passa a ser condicionado ao estágio lido sob o lock (`status = from`) em vez de
+   "não terminal": sob `FOR UPDATE` dá no mesmo, e é a forma que o motor já usava.
+Nenhum comportamento muda: mesmo histórico, mesma mensagem, mesmo audit, mesmos eventos.
+**Motivo:** o comentário do CRMLAB-60 pedia a unificação; duas cópias da mesma gravação
+(histórico + mensagem + audit + WS/cache) divergiriam na próxima mudança de regra.
+**Impacto:** `proposal.service.ts` (`applySystemTransition`, `LockedProposal`,
+`recordTransitionInTx` repassa `automation`/`changedAt`), `funnel-timer.service.ts`; SERVICES §4
+e §27.
 
 ### D-220: Mensagem apagada ou editada pelo remetente é escondida, nunca apagada (CRMLAB-66)
 **Decisão (Michel, 28/09/2026):** quando o paciente (ou o celular do laboratório) apaga "para
@@ -4025,7 +4054,6 @@ PAGES.md §2 e a tabela de chaves do Atendimento.
 ficam como constantes no hook.
 **Impacto:** `components/conversation/DateSeparator.tsx`, `pages/Attendance/*`; COMPONENTS.md
 (`DateSeparator`), PAGES.md §2.
-<!-- D-210 é do CRMLAB-60 (branch feature/CRMLAB-60-unifica-transicao-sistema, ainda fora da main). -->
 
 ### D-211: Reingajamento da conversa roda no motor de tempo, com uma linha por disparo
 **Decisão:** quando a atendente fala por último e o paciente para de responder, o sistema manda
@@ -4714,7 +4742,7 @@ Medido em prod em 30/09:
    à gravada, as linhas recebidas são descartadas antes da ingestão: sem `lis_imports`, sem
    reprocessar, `received: 0`, log `debug`. Linha que o Bitlab grave no mesmo segundo da marca
    depois da consulta anterior fica para a releitura diária de 90 dias (D-189). `full` nunca
-   descarta. *(Emendado pela D-250 item 3: sem releitura diária, essa linha entra na próxima
+   descarta. *(Emendado pela D-253 item 3: sem releitura diária, essa linha entra na próxima
    rodada em que a marca andar.)*
 3. **Contrato em segundos:** `LisIntegrationSettings.intervalMinutes` vira `intervalSeconds`
    (API_CONTRACTS §10.3). Com minutos arredondados, 30 s apareceria como "a cada 1 min". A tela
@@ -4731,9 +4759,145 @@ de `lis_imports`/log, que o item 2 zera nas rodadas sem mudança. O banco e a VP
 API_CONTRACTS §10.3, DEPLOYMENT, ENVIRONMENTS. **Deploy:** se o `.env` da VPS fixar
 `LIS_SYNC_INTERVAL_MS=120000`, trocar para `30000` (ou remover a linha).
 
+### D-250: Fundo branco fixo e o tema só nos elementos de conteúdo (CRMLAB-82)
+**Contexto:** com o tema aplicado, fundo da página, menu e cartões eram todos da mesma família
+(`--color-bg`/`--color-surface` do preset: tudo bege no Terracota, tudo verde no Verde
+Esterilizado). Nada se destacava. O editor de tema ainda mandava `bg`/`surface`/`text` de cada
+preset, e as rampas `accent-100..400` e `neutral-*` misturavam com esse fundo tingido.
+**Decisão:**
+1. **`--color-bg` = `#ffffff`, `--color-text` = `#1a1a1a`, fixos em `tokens.css`, iguais para
+   todo tenant.** `--color-surface` deixa de ser cor base e vira derivada:
+   `mix(accent 12%, branco)`. `applyTheme()`/`applyThemeColors()` escrevem SÓ `--color-accent` e
+   `--color-accent-2` (e removem do `<html>` um `--color-bg/-surface/-text` que tenha sobrado).
+   Emenda a D-005: o tema do tenant passa a ter **2 cores** + raio + fonte (+ nome e logo).
+2. **Tons do tema = accent misturado com branco**, em papéis fixos (maquete aprovada):
+   | Papel | Token | Mistura |
+   |---|---|---|
+   | Cartão, tabela, linhas | `--color-neutral-100` | accent 6% |
+   | Menu lateral, cabeçalho de tabela | `--color-surface` | accent 12% |
+   | Divisória de linha | `--color-neutral-200` | accent 12% |
+   | Hover / seleção | `--color-accent-100` (e `--color-accent-2-100`) | accent 20% (era 12%) |
+   | Bordas (cartão, campo) | `--color-neutral-300` | accent 22% |
+   | Borda forte / barra de rolagem | `--color-neutral-400` | accent 36% |
+   Campo de busca/inputs ficam brancos (`bg-bg`) com borda `neutral-300`. Botões, links e
+   destaques seguem com o accent cheio. Item ativo do menu: fundo branco (`bg-bg`), texto
+   `accent-700` e a barra de 3px `accent-500`. Os chips de status mantêm as rampas
+   semânticas (`accent2-*` positivo, `accent-*` atenção).
+3. **Texto neutro é cinza puro (texto escuro sobre branco), um degrau mais escuro** para fechar
+   WCAG AA sobre os tons acima: `neutral-600` = 35% branco (era 47% do fundo), `neutral-700` = 26%,
+   `neutral-800` = 18%, `neutral-900` = 10%. `neutral-500` (ícone/seta) fica 59% branco.
+4. **Editor simplificado:** a tela de Personalização oferece só cor principal, cor secundária,
+   fonte, cantos, nome exibido e logo (URL). Fundo, superfície e cor do texto saíram do editor;
+   aplicar um preset envia só `accent` + `accent2`.
+5. **Compatibilidade sem migração:** o contrato não muda. `Theme` continua com `bg`/`surface`/
+   `text`, `UpdateThemeRequest` continua aceitando os três (opcionais), o backend continua
+   gravando e devolvendo o que está no banco, e os presets de `GET /themes/presets` seguem com
+   as 5 cores. O frontend apenas **ignora** `bg`/`surface`/`text` na tela. Tema salvo antes
+   continua valendo pelo accent/accent2/raio/fonte. O console da plataforma (`PLATFORM_THEME`)
+   segue o mesmo modelo: as 3 cores dele ficam no objeto, mas não são aplicadas.
+**Contraste (WCAG AA, texto normal ≥ 4,5:1), pior caso por preset — texto principal sobre hover
+20% / `neutral-600` sobre hover 20% / `accent-700` (link, item ativo) sobre branco:**
+Terracota 13,9 / 5,0 / 6,0 · Azul Jaleco 13,1 / 4,7 / 8,0 · Verde Esterilizado 13,3 / 4,7 / 7,6 ·
+Hemograma 12,8 / 4,6 / 9,0 · Lilás Diagnóstico 12,8 / 4,6 / 9,2 (plataforma 12,6 / 4,5 / 9,7).
+`accent-800` sobre `accent-200` (chip de atenção) ≥ 5,7 em todos. Fica abaixo de 4,5 só o que
+não mudou nesta decisão: texto branco sobre o accent cheio do Terracota (3,6 — botão primário) e
+sobre o `accent-2` dos presets (3,2–4,9 — selo/badge), que dependem da cor escolhida pelo cliente.
+**Motivo:** fundo neutro faz o conteúdo (menu, cartões, tabelas) se destacar e deixa a página
+igual entre laboratórios; tingir só o conteúdo, sempre a partir do accent, mantém a identidade
+do tenant sem que ele precise acertar 5 cores que combinem. Ignorar os campos em vez de apagar
+evita migração e mantém o contrato da API intacto.
+**Impacto:** `frontend/src/styles/tokens.css`, `lib/theme.ts`, `pages/Settings/Theme.tsx`,
+`components/theme/{ThemePreview,ColorPicker}.tsx`, `components/layout/Sidebar.tsx`,
+`components/shared/DataTable.tsx`, cartões de Configurações/Respostas rápidas
+(`bg-surface` → `bg-neutral-100`); DESIGN_TOKENS (Cores, Papéis, Estados, Sidebar), PAGES §9
+Personalização e "Aplicação do Tema"; `e2e/workflows/flow-5-theme.spec.ts`. A conversa do
+Atendimento (`--color-chat-*`) não foi tocada aqui: `--color-chat-received` mistura com
+`--color-surface`, que agora é o tom de 12% do accent.
+
+## 2026-10-01 — Tela de Atendimento com visual de WhatsApp Web
+
+### D-251: Conversa do atendimento no visual do WhatsApp Web, tons só do acento (CRMLAB-81)
+**Contexto:** o "papel branco" do CRMLAB-25 resolveu a bolha que sumia no bege, mas a tela ainda
+não tinha cara de WhatsApp: a coluna de conversas e o Composer seguiam no fundo do tema, a
+recebida era um tom do `--color-surface` e as duas bolhas tinham borda e canto apontado
+embaixo. Ao mesmo tempo o CRMLAB-82 (D-250) muda o resto do app — fundo branco e texto fixo
+escuro —, então tudo que a conversa derivasse de `--color-bg`, `--color-surface` ou
+`--color-text` mudaria por tabela.
+**Decisão:**
+1. **Tons só de `--color-accent`** misturado com branco ou com o neutro literal `#f4f3ef`, em
+   `color-mix(in oklab, …)`. Texto do balão `#1a1a1a` literal. Nenhum `--color-chat-*` usa
+   bg/surface/text. Os literais moram só no bloco de conversa de `tokens.css`.
+2. **Coluna de conversas, cabeçalho e Composer brancos** (`--color-chat-panel`), divisórias
+   `mix(accent 12%, white)` (`--color-chat-line`). Selecionada `mix(accent 20%, white)`, hover
+   10%, avatar com fundo 20% e iniciais `mix(accent 70%, #1a1a1a)`. As iniciais saem do acento
+   **escurecido**, não do acento puro: o terracota puro sobre o próprio tom claro dá 2,9:1.
+3. **Fundo da conversa neutro** `mix(accent 4%, #f4f3ef)` (`--color-chat-bg`, era `#fff`).
+4. **Balões:** recebida branca à esquerda, canto superior esquerdo reto. Enviada
+   `mix(accent 22%, white)` à direita, canto superior direito reto. Sem borda, sombra
+   `--shadow-sm`. Hora/autor/status no canto inferior direito, em `mix(#1a1a1a 70%, white)`.
+   Saem `--color-chat-received-border` e `--color-chat-sent-border`.
+5. **Contraste** (WCAG, mistura oklab calculada; tabela em DESIGN_TOKENS.md): texto × enviada
+   12,4–13,6:1 e meta × enviada 5,2–5,8:1 nos 5 presets. Com acento preto puro (pior caso de
+   acento livre), o texto ainda dá 8,7:1. O tique "lida" `#53bdeb` fica em ~1,5:1, igual ao
+   WhatsApp. O estado não depende só da cor: tem o glifo ✓✓ e o `aria-label`.
+6. **Só visual.** Comportamento, DOM e testids dos balões não mudam (citação, reação, apagada,
+   anexos, figurinha sem balão, falha com "Tentar de novo").
+**Motivo:** a equipe usa WhatsApp o dia todo. Sem cor fixa, a tela fica igual em qualquer
+tenant. Cor + canto reto separam quem falou sem depender só do lado.
+**Impacto:** `styles/tokens.css` (bloco da conversa), `tailwind.config.js` (`colors.chat`),
+`MessageBubble.tsx`, `ConversationItem.tsx`, `Composer.tsx`, `ConversationList.tsx`,
+`ConversationPanel.tsx`, `shared/Avatar.tsx` (`className` opcional); specs de `MessageBubble`
+e `ConversationItem`. DESIGN_TOKENS.md › Bolhas, COMPONENTS.md, PAGES.md §2. A borda entre a
+coluna de conversas e a conversa é do `InboxLayout` (CRMLAB-82) e segue em `neutral-300`.
+
+## 2026-10-02 — Régua de fatos do LIS para todas as origens (CRMLAB-60)
+
+### D-252: Pagamento leva a Ganho e requisição leva a Negociação, em qualquer origem (substitui D-119 itens 4–6 e D-204)
+**Decisão (Michel, 02/10/2026):** a régua da D-204 deixa de ser provisória e passa a valer
+também para a proposta de origem **`crm`**. Na conciliação (`LisReconcileService`), qualquer
+proposta não terminal vinculada a um orçamento do LIS segue:
+1. **Pagamento → Ganho** (`automation.paymentToWon`): `lis_budgets.paid_on` preenchido, com
+   **qualquer valor**, em **qualquer estágio não terminal**, inclusive `novo_contato` → `ganho`,
+   com `lis_reconciled_at` (selo "Conciliado", não reabre). Audit `source: "lis_payment"`.
+   `paid_on` já é o derivado do extrato de pagamentos do CRMLAB-53 (`recomputePaidValues` roda
+   antes da conciliação no mesmo chunk, D-188 item 4), então o Ganho se apoia no valor/data
+   corrigidos. Era o pré-requisito que deixava a D-204 provisória.
+2. **Requisição → Negociação** (`automation.requisitionToNegotiation`): requisição em
+   `orcamento_enviado`/`follow_up` → `negociacao`, audit `source: "lis_requisition"`. Em
+   `novo_contato` só o selo "Pré-cadastro feito" (D-197, agora também para a origem `crm`); em
+   `negociacao` fica. **Requisição sozinha nunca leva a `ganho`.** Requisição e pagamento juntos:
+   vence o pagamento.
+3. **Regras desligadas não movem nada**, em nenhuma origem. A origem `crm` perde o "requisição
+   fecha como ganho sem olhar as Regras" da D-119.
+4. **`perdido` não reabre.** Requisição **ou data de pagamento** nova numa proposta perdida grava
+   o espelho e um audit `lis_reconcile_conflict` com `newValues: { lisBudgetNumber,
+   lisRequisitionNumber, lisPaidOn }`, uma vez por fato. A proposta mostra o aviso "Conflito com
+   o LIS" (`LisReferenceSection`, PAGES §6) e a atendente decide (reabrir segue a regra
+   "Reabrir", D-192).
+5. `markWonFromLis` sai; a conciliação chama só `applySystemTransition` (D-204 item 5).
+   `SystemTransitionSource` perde `lis`: audits antigos podem ter esse valor, nenhum código grava
+   mais.
+6. **Analytics sem mudança de código:** `realized.wonFromLis` conta `ganho` com
+   `lis_reconciled_at`, que agora só nasce de pagamento; `paidCount`/`paidValue` já eram por
+   `lis_paid_on`. O funil passa a contar a proposta `crm` com requisição e sem pagamento em
+   `negociacao`, não em `ganho`.
+7. **Não é retroativo:** propostas já fechadas pela D-119 continuam `ganho`. A régua só age
+   em proposta aberta, quando o orçamento volta numa ingestão ou o número é digitado (D-119 item 3).
+**Limitação conhecida (herdada da D-197):** a proposta `crm` com pré-cadastro (requisição em
+`novo_contato`) que a atendente move à mão para `orcamento_enviado` não vai a `negociacao` na
+hora: só quando o orçamento mudar de novo no Bitlab, e normalmente o pagamento já leva a `ganho`.
+O cartão `bitlab` não tem esse buraco porque o envio pelo cartão já decide (`bitlabSendTarget`,
+D-200 item 5).
+**Motivo:** pré-cadastro não é venda fechada: só é Ganho quando o paciente veio fazer o exame. A
+D-119 inflava a conversão da origem `crm` do mesmo jeito que a D-204 corrigiu para o `bitlab`.
+**Impacto:** `lis-reconcile.service.ts` (`applyLisFactsRule`, conflito de pagamento),
+`proposal.service.ts` (sai `markWonFromLis`, `SystemTransitionSource`); frontend
+`ProposalCard.tsx` (selo para qualquer origem), `LisReferenceSection.tsx` (selo `crm`, aviso de
+conflito, toasts); BUSINESS_RULES §3, WORKFLOWS §4, SERVICES §4/§25, API_CONTRACTS §3, PAGES §5/§6.
+
 ## 2026-09-30 — Estorno volta na consulta incremental do Bitlab
 
-### D-250: Sem releitura diária de 90 dias — o tique da sincronização do LIS é sempre incremental (CRMLAB-80)
+### D-253: Sem releitura diária de 90 dias — o tique da sincronização do LIS é sempre incremental (CRMLAB-80)
 **Contexto:** a D-189 criou a releitura diária dos últimos 90 dias (primeiro tique depois das 03:00
 de Brasília) porque o filtro `tipoData=alteracao` do Bitlab não considerava a `DATA_ESTORNO`. Em
 30/09/2026 o Bitlab respondeu por e-mail que passou a considerar. Validado no mesmo dia (consulta só

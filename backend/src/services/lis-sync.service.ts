@@ -41,7 +41,7 @@ export const MAX_PAGES = 200;
 
 /**
  * `incremental` le a partir da marca (sem marca, dos ultimos `initialDays` dias);
- * `full` rele os ultimos `initialDays` dias. Nenhum tique automatico usa `full` (D-250).
+ * `full` rele os ultimos `initialDays` dias. Nenhum tique automatico usa `full` (D-253).
  */
 export type LisSyncMode = 'incremental' | 'full';
 
@@ -137,7 +137,7 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
 
   /**
    * O estorno volta na consulta incremental desde 30/09/2026 (o Bitlab passou a
-   * considerar a `DATA_ESTORNO` no `alteracao`): o tique e sempre incremental (D-250).
+   * considerar a `DATA_ESTORNO` no `alteracao`): o tique e sempre incremental (D-253).
    */
   function modeFor(requested: LisSyncMode | 'auto'): LisSyncMode {
     return requested === 'auto' ? 'incremental' : requested;
@@ -221,7 +221,7 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
       // A janela incremental comeca NA marca (inclusiva): o Bitlab devolve de
       // novo a linha da propria marca. Marca que nao andou = nada novo desde a
       // rodada anterior, entao a rodada e vazia (D-249). Linha gravada no mesmo
-      // segundo da marca depois da consulta anterior nao e relida (D-250 item 3).
+      // segundo da marca depois da consulta anterior nao e relida (D-253 item 3).
       if (
         mode === 'incremental' &&
         started.watermark !== null &&
@@ -328,7 +328,7 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
       if (running.has(ctx.tenantId)) {
         throw new BusinessError('CONFLICT', { reason: 'lis_sync_running' });
       }
-      // "Sincronizar agora" e sempre incremental (D-189 item 2, D-250).
+      // "Sincronizar agora" e sempre incremental (D-189 item 2, D-253).
       const summary = await runForTenant(ctx.tenantId, ctx.userId, 'incremental');
       if (!summary) {
         throw new BusinessError('CONFLICT', { reason: 'lis_sync_not_configured' });

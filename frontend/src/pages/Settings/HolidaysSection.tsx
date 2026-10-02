@@ -83,7 +83,7 @@ export function HolidaysSection({ canEdit, now = new Date() }: { canEdit: boolea
     <section
       id="feriados"
       aria-labelledby="feriados-titulo"
-      className="space-y-md rounded-lg border border-neutral-200 bg-surface p-lg"
+      className="space-y-md rounded-lg border border-neutral-200 bg-neutral-100 p-lg"
     >
       <div className="space-y-xs">
         <h2 id="feriados-titulo" className="font-heading text-section text-text">

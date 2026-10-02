@@ -64,11 +64,13 @@ frontend/src/components/
 <ConversationItem conversation={c} selected onClick />
 ```
 Anatomia (padrão WhatsApp):
-- Avatar 36px com iniciais (flex: 0 0 36px — nunca comprime)
+- Avatar 36px com iniciais (flex: 0 0 36px — nunca comprime); na lista do Atendimento, fundo
+  `--color-chat-avatar` e iniciais `--color-chat-avatar-text` (CRMLAB-81, D-251)
 - Nome (13.5px/600) + hora à direita (sálvia-700 se não lidas, cinza se lido)
 - Prévia truncada 1 linha (elipse) + Badge contagem
 - Chips de status + "aguardando N min" (accent-700)
-- Selecionado: fundo neutral-100 + shadow-sm
+- Selecionado: fundo `--color-chat-selected` (acento 20% com branco); hover `--color-chat-hover`
+  (10%); divisória `--color-chat-line` entre itens (CRMLAB-81, D-251)
 - `onMarkUnread?(id)` (CRMLAB-68, D-229): clique direito ou botão "⋯" abrem o menu
   (`role="menu"`) com "Marcar como não lida", só quando `unreadCount === 0`. Sem handler, nem
   botão nem menu
@@ -91,10 +93,13 @@ Anatomia (padrão WhatsApp):
 ```
 - 3 tipos, NUNCA mais. Canto "apontado" (radius-sm) marca a origem
 - Largura máx. 62% no inbox
-- Cor (CRMLAB-25): recebida `--color-chat-received`, enviada `--color-chat-sent`, as duas com
-  borda de 1px do par `-border` e sobre o papel BRANCO da conversa. Lado + cor: bate o olho e
-  se sabe quem falou. As antigas `surface` / `accent-200` misturavam com `--color-bg` e, sobre o
-  bege do tema, fundo e as duas bolhas viravam a mesma coisa
+- Visual WhatsApp Web (CRMLAB-81, D-251; substitui o "papel branco" do CRMLAB-25): recebida é
+  balão **branco** (`--color-chat-received`) à esquerda com o canto **superior esquerdo** reto;
+  enviada é balão no acento clareado (`--color-chat-sent`) à direita com o canto **superior
+  direito** reto. Sem borda, sombra `--shadow-sm`, texto `--color-chat-text`. Hora, autor,
+  "Editada" e tique ficam no canto **inferior direito** (`--color-chat-meta`). Cor + canto reto:
+  enviada × recebida se distinguem de relance, não só pelo lado. Bloco citado em
+  `--color-chat-quote`. Nenhum token da conversa depende de `--color-bg/surface/text`
 - Anexo `messageType: 'image'` (CRMLAB-15): thumbnail (`rounded-md`, máx. 300px de altura) no lugar
   do link "Anexo (tipo)". Clique chama `onOpenImage(message)` (CRMLAB-64, D-244): o balão **não**
   tem lightbox próprio — quem abre, navega entre as fotos e fecha é o `ConversationPanel`. Sem
@@ -433,7 +438,10 @@ Anatomia (padrão WhatsApp):
 ### Avatar
 ```tsx
 <Avatar name="Marina Alves" size={36} />  // iniciais, fundo accent-2-200
+<Avatar name="Marina Alves" className="bg-chat-avatar text-chat-avatar-text" />  // tom sobreposto
 ```
+- `className` opcional (CRMLAB-81) sobrepõe fundo/cor das iniciais — a lista do Atendimento usa
+  os tokens `--color-chat-avatar*`
 - SEMPRE flex: 0 0 <size> — nunca comprimido
 
 ### EmptyState

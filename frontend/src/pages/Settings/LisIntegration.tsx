@@ -184,7 +184,7 @@ function SyncStatus({ settings }: { settings: LisIntegrationSettings }) {
   }
 
   return (
-    <section className="flex flex-col gap-xs rounded-lg border border-neutral-200 bg-surface p-lg" aria-label="Situação da sincronização">
+    <section className="flex flex-col gap-xs rounded-lg border border-neutral-200 bg-neutral-100 p-lg" aria-label="Situação da sincronização">
       <div className="flex flex-wrap items-center gap-sm">
         {chip}
         {last && <span className="font-body text-caption text-neutral-600">última às {last}</span>}

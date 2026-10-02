@@ -1,6 +1,6 @@
 /**
  * Extrato de pagamentos do LIS (CRMLAB-53, D-188) e tique sempre incremental
- * (CRMLAB-80, D-250 — substitui a releitura diaria da D-189).
+ * (CRMLAB-80, D-253 — substitui a releitura diaria da D-189).
  *
  * Os casos com numero de orcamento sao os reais que o Bitlab explicou em
  * 28/09/2026 (estorno), com os valores e IDs da consulta feita pela VPS.
@@ -209,7 +209,7 @@ describe('recebido = soma dos pagamentos ativos (D-188)', () => {
   });
 });
 
-describe('tique sempre incremental, sem releitura diaria (CRMLAB-80, D-250)', () => {
+describe('tique sempre incremental, sem releitura diaria (CRMLAB-80, D-253)', () => {
   class RecordingBitlab implements BitlabClient {
     calls: BitlabBudgetsQuery[] = [];
     watermark = '2026-09-28 10:00:00';
@@ -278,7 +278,7 @@ describe('tique sempre incremental, sem releitura diaria (CRMLAB-80, D-250)', ()
     expect(bitlab.calls.at(-1)?.dataInicio).toBe('2026-09-28 10:00:00');
 
     expect(bitlab.calls.map((c) => c.dataInicio)).not.toContain('2026-06-30 00:00:00');
-    // A coluna fica no banco, mas nao e mais gravada (D-250 item 2).
+    // A coluna fica no banco, mas nao e mais gravada (D-253 item 2).
     expect((await settings())?.last_full_scan_on).toBeNull();
   });
 

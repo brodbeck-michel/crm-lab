@@ -2960,6 +2960,9 @@ Chrome e o `mp4` do Safari e que o paciente ouve no Android e no iPhone.
 ## 2026-09-25 — Conciliação com o LIS pela API do Bitlab (CRMLAB-52)
 
 ### D-119: Conciliação LIS ↔ propostas — nº do orçamento na proposta, requisição fecha como `ganho`
+> **Itens 4, 5 e 6 substituídos pela D-252 (CRMLAB-60, 02/10/2026):** requisição não fecha mais
+> como `ganho` em nenhuma origem. Os demais itens (vínculo, formato, momentos, idempotência,
+> purge, `realized`) continuam valendo.
 **Decisão:** o vínculo entre uma proposta do CRM e um orçamento do LIS é o **número do orçamento
 do LIS** (`lis_budget_number`), digitado pela atendente na proposta. A API do Bitlab não tem campo
 livre de referência (confirmado no manual de 25/09/2026), então o vínculo nasce do lado do CRM.
@@ -3577,6 +3580,8 @@ busca). O paciente que está sendo atendido agora está nelas; para os outros ex
 **Impacto:** `shared/types/name-similarity.ts` (novo); frontend `SendProposalPanel`; PAGES §6.
 
 ### D-204: Régua de fatos do LIS para o cartão do Bitlab — requisição leva a Negociação, pagamento leva a Ganho (CRMLAB-60 parcial; emenda D-119 e D-197)
+> **Substituída pela D-252 (02/10/2026):** a régua deixou de ser provisória e passou a valer para
+> todas as origens. O item 5 (`applySystemTransition`) continua valendo.
 **Decisão:** na conciliação (D-119 item 4), a proposta de origem **`bitlab`** deixa de ir a
 `ganho` pela requisição e passa a seguir as duas regras de automação das Regras (CRMLAB-56). A
 origem **`crm` continua exatamente com a D-119** (requisição em qualquer estágio aberto →
@@ -4841,3 +4846,48 @@ tenant. Cor + canto reto separam quem falou sem depender só do lado.
 `ConversationPanel.tsx`, `shared/Avatar.tsx` (`className` opcional); specs de `MessageBubble`
 e `ConversationItem`. DESIGN_TOKENS.md › Bolhas, COMPONENTS.md, PAGES.md §2. A borda entre a
 coluna de conversas e a conversa é do `InboxLayout` (CRMLAB-82) e segue em `neutral-300`.
+
+## 2026-10-02 — Régua de fatos do LIS para todas as origens (CRMLAB-60)
+
+### D-252: Pagamento leva a Ganho e requisição leva a Negociação, em qualquer origem (substitui D-119 itens 4–6 e D-204)
+**Decisão (Michel, 02/10/2026):** a régua da D-204 deixa de ser provisória e passa a valer
+também para a proposta de origem **`crm`**. Na conciliação (`LisReconcileService`), qualquer
+proposta não terminal vinculada a um orçamento do LIS segue:
+1. **Pagamento → Ganho** (`automation.paymentToWon`): `lis_budgets.paid_on` preenchido, com
+   **qualquer valor**, em **qualquer estágio não terminal**, inclusive `novo_contato` → `ganho`,
+   com `lis_reconciled_at` (selo "Conciliado", não reabre). Audit `source: "lis_payment"`.
+   `paid_on` já é o derivado do extrato de pagamentos do CRMLAB-53 (`recomputePaidValues` roda
+   antes da conciliação no mesmo chunk, D-188 item 4), então o Ganho se apoia no valor/data
+   corrigidos. Era o pré-requisito que deixava a D-204 provisória.
+2. **Requisição → Negociação** (`automation.requisitionToNegotiation`): requisição em
+   `orcamento_enviado`/`follow_up` → `negociacao`, audit `source: "lis_requisition"`. Em
+   `novo_contato` só o selo "Pré-cadastro feito" (D-197, agora também para a origem `crm`); em
+   `negociacao` fica. **Requisição sozinha nunca leva a `ganho`.** Requisição e pagamento juntos:
+   vence o pagamento.
+3. **Regras desligadas não movem nada**, em nenhuma origem. A origem `crm` perde o "requisição
+   fecha como ganho sem olhar as Regras" da D-119.
+4. **`perdido` não reabre.** Requisição **ou data de pagamento** nova numa proposta perdida grava
+   o espelho e um audit `lis_reconcile_conflict` com `newValues: { lisBudgetNumber,
+   lisRequisitionNumber, lisPaidOn }`, uma vez por fato. A proposta mostra o aviso "Conflito com
+   o LIS" (`LisReferenceSection`, PAGES §6) e a atendente decide (reabrir segue a regra
+   "Reabrir", D-192).
+5. `markWonFromLis` sai; a conciliação chama só `applySystemTransition` (D-204 item 5).
+   `SystemTransitionSource` perde `lis`: audits antigos podem ter esse valor, nenhum código grava
+   mais.
+6. **Analytics sem mudança de código:** `realized.wonFromLis` conta `ganho` com
+   `lis_reconciled_at`, que agora só nasce de pagamento; `paidCount`/`paidValue` já eram por
+   `lis_paid_on`. O funil passa a contar a proposta `crm` com requisição e sem pagamento em
+   `negociacao`, não em `ganho`.
+7. **Não é retroativo:** propostas já fechadas pela D-119 continuam `ganho`. A régua só age
+   em proposta aberta, quando o orçamento volta numa ingestão ou o número é digitado (D-119 item 3).
+**Limitação conhecida (herdada da D-197):** a proposta `crm` com pré-cadastro (requisição em
+`novo_contato`) que a atendente move à mão para `orcamento_enviado` não vai a `negociacao` na
+hora: só quando o orçamento mudar de novo no Bitlab, e normalmente o pagamento já leva a `ganho`.
+O cartão `bitlab` não tem esse buraco porque o envio pelo cartão já decide (`bitlabSendTarget`,
+D-200 item 5).
+**Motivo:** pré-cadastro não é venda fechada: só é Ganho quando o paciente veio fazer o exame. A
+D-119 inflava a conversão da origem `crm` do mesmo jeito que a D-204 corrigiu para o `bitlab`.
+**Impacto:** `lis-reconcile.service.ts` (`applyLisFactsRule`, conflito de pagamento),
+`proposal.service.ts` (sai `markWonFromLis`, `SystemTransitionSource`); frontend
+`ProposalCard.tsx` (selo para qualquer origem), `LisReferenceSection.tsx` (selo `crm`, aviso de
+conflito, toasts); BUSINESS_RULES §3, WORKFLOWS §4, SERVICES §4/§25, API_CONTRACTS §3, PAGES §5/§6.

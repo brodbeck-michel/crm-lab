@@ -105,15 +105,51 @@ describe('LisReferenceSection', () => {
     expect(screen.getByRole('alert').textContent).toMatch(/já está vinculado à proposta/);
   });
 
-  it('resposta em ganho avisa que o LIS já tinha convertido', () => {
+  it('resposta em ganho avisa que o LIS já tinha o pagamento (D-252)', () => {
     mutate.mockImplementation((_vars: Vars, callbacks: Callbacks) => {
       callbacks.onSuccess?.(buildProposal({ status: 'ganho', lisBudgetNumber: '1234' }));
     });
     renderSection(buildProposal());
     typeAndSave('1234');
     expect(
-      screen.getByText('Orçamento já convertido no LIS — proposta marcada como ganha'),
+      screen.getByText('Pagamento já registrado no LIS — proposta marcada como ganha'),
     ).toBeTruthy();
+  });
+
+  it('resposta em negociação avisa que o LIS já tinha a requisição (D-252)', () => {
+    mutate.mockImplementation((_vars: Vars, callbacks: Callbacks) => {
+      callbacks.onSuccess?.(buildProposal({ status: 'negociacao', lisBudgetNumber: '1234' }));
+    });
+    renderSection(buildProposal({ status: 'orcamento_enviado' }));
+    typeAndSave('1234');
+    expect(screen.getByText('Requisição já aberta no LIS — proposta em negociação')).toBeTruthy();
+  });
+
+  it('pré-cadastro: requisição em "Novo orçamento" mostra o selo (D-252)', () => {
+    renderSection(
+      buildProposal({ status: 'novo_contato', lisBudgetNumber: '1234', lisRequisitionNumber: '001-1' }),
+    );
+    expect(screen.getByText('Pré-cadastro feito')).toBeTruthy();
+  });
+
+  it('perdida com pagamento no LIS mostra o conflito (D-252 item 4)', () => {
+    renderSection(
+      buildProposal({
+        status: 'perdido',
+        lisBudgetNumber: '1234',
+        lisPaidValue: 80,
+        lisPaidOn: '2026-09-23',
+      }),
+    );
+    expect(screen.getByText('Conflito com o LIS')).toBeTruthy();
+    expect(screen.getByText(/O LIS tem pagamento para este orçamento/)).toBeTruthy();
+  });
+
+  it('aberta com requisição não mostra conflito', () => {
+    renderSection(
+      buildProposal({ status: 'negociacao', lisBudgetNumber: '1234', lisRequisitionNumber: '001-1' }),
+    );
+    expect(screen.queryByText('Conflito com o LIS')).toBeNull();
   });
 
   it('proposta ganha: só leitura, com selo e pagamento', () => {

@@ -311,12 +311,13 @@ async function recordTransitionInTx(
 
 /**
  * Quem pediu a transicao de sistema, gravado em `audit_logs.new_values.source`:
- * - `lis`: requisicao no LIS fechando proposta de origem `crm` (D-119);
- * - `lis_payment`: pagamento no LIS fechando cartao `bitlab` (D-204 item 1);
- * - `lis_requisition`: requisicao no LIS levando cartao `bitlab` a negociacao (D-204 item 2);
+ * - `lis_payment`: pagamento no LIS fechando a proposta (D-252 item 1);
+ * - `lis_requisition`: requisicao no LIS levando a proposta a negociacao (D-252 item 2);
  * - `rule`: prazo das Regras vencido, motor de tempo (CRMLAB-59, D-208).
+ * Audits anteriores a D-252 podem ter `lis` (requisicao fechando proposta de
+ * origem `crm`, D-119); nenhum codigo grava mais esse valor.
  */
-export type SystemTransitionSource = 'lis' | 'lis_payment' | 'lis_requisition' | 'rule';
+export type SystemTransitionSource = 'lis_payment' | 'lis_requisition' | 'rule';
 
 /** Uma transicao que o SISTEMA fez — o que `announceSystemTransitions` anuncia. */
 export interface SystemTransition {
@@ -336,7 +337,7 @@ export interface LockedProposal {
 
 /**
  * Transicao de estagio feita pelo SISTEMA, nao por uma pessoa (D-204 item 5,
- * generaliza o antigo `markWonFromLis` da D-119; D-210 junta aqui a do motor
+ * substitui o antigo `markWonFromLis` da D-119; D-210 junta aqui a do motor
  * de tempo, D-208). Nao passa por `checkTransition`: vai de qualquer estagio
  * nao terminal para `to`. Roda na transacao de quem chama (conciliacao, motor
  * de tempo) e grava ali: historico com `changedBy: null` (e `automation`, se
@@ -439,24 +440,6 @@ export async function applySystemTransition(
     },
   });
   return { proposalId, from, to: input.to, source: input.source };
-}
-
-/**
- * `ganho` pela requisicao no LIS (CRMLAB-52, D-119 item 4) — hoje so para a
- * origem `crm` (a `bitlab` segue a D-204). Vai de qualquer estagio nao
- * terminal, inclusive `novo_contato` e com aprovacao `pending`. `null` = nada feito.
- */
-export async function markWonFromLis(
-  tx: DbTx,
-  tenantId: string,
-  proposalId: string,
-): Promise<SystemTransition | null> {
-  return applySystemTransition(tx, tenantId, proposalId, {
-    to: 'ganho',
-    source: 'lis',
-    systemMessage: `Proposta #${proposalRef(proposalId)} ganha — orçamento convertido em requisição no LIS 🎉`,
-    lisReconciled: true,
-  });
 }
 
 /**

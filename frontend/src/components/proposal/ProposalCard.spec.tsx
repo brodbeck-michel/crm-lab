@@ -91,6 +91,15 @@ describe('ProposalCard de origem Bitlab', () => {
     expect(screen.queryByText('Conciliado')).not.toBeInTheDocument();
   });
 
+  it('proposta de origem crm com requisição em "Novo orçamento" também mostra o selo (D-252)', () => {
+    render(
+      <ProposalCard
+        proposal={bitlabProposal({ origin: 'crm', lisRequisitionNumber: '001-0001234' })}
+      />,
+    );
+    expect(screen.getByText('Pré-cadastro feito')).toBeInTheDocument();
+  });
+
   it('fora de "Novo orçamento" o selo de pré-cadastro some', () => {
     render(
       <ProposalCard

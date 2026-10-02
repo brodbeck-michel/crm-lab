@@ -276,29 +276,63 @@ describe('pagamento -> ganho (cartao bitlab)', () => {
   });
 });
 
-describe('origem crm: D-119 intacta', () => {
-  it('requisicao fecha como ganho mesmo com as regras de automacao desligadas', async () => {
-    await setRules({
-      automation: { requisitionToNegotiation: { enabled: false }, paymentToWon: { enabled: false } },
-    });
+describe('origem crm: mesma regua (D-252, substitui a D-119)', () => {
+  /** Proposta do CRM vinculada pelo nº digitado (PATCH lis-reference). */
+  async function manual(number: string, status: string): Promise<{ id: string }> {
     const conversation = await createConversation({ tenantId: tenant.id, db });
-    const manual = await createProposal({
+    const proposal = await createProposal({
       tenantId: tenant.id,
       conversationId: conversation.id,
       createdBy: attendant.id,
-      status: 'orcamento_enviado',
+      status,
       approvalStatus: 'approved',
       totalPrice: 100,
       db,
     });
     await app.agent
-      .patch(`/api/v1/proposals/${manual.id}/lis-reference`)
+      .patch(`/api/v1/proposals/${proposal.id}/lis-reference`)
       .set(app.auth(attendant))
-      .send({ lisBudgetNumber: '3001' })
+      .send({ lisBudgetNumber: number })
       .expect(200);
+    return { id: proposal.id };
+  }
+
+  it('requisicao em orcamento_enviado leva a negociacao, nao a ganho', async () => {
+    const { id } = await manual('3001', 'orcamento_enviado');
     const result = await ingest([row('3001', REQ)]);
+    expect(result.proposalsWon).toBe(0);
+    const body = await detail(id);
+    expect(body.status).toBe('negociacao');
+    expect(body.lisReconciledAt).toBeNull();
+    expect((await statusAudits(id)).at(-1)?.new_values).toEqual({
+      status: 'negociacao',
+      source: 'lis_requisition',
+    });
+  });
+
+  it('requisicao em novo_contato nao move', async () => {
+    const { id } = await manual('3002', 'novo_contato');
+    await ingest([row('3002', REQ)]);
+    expect(await detail(id)).toMatchObject({ status: 'novo_contato', lisRequisitionNumber: '001-0001' });
+  });
+
+  it('pagamento leva a ganho de qualquer estagio aberto', async () => {
+    const { id } = await manual('3003', 'novo_contato');
+    const result = await ingest([row('3003', PAID)]);
     expect(result.proposalsWon).toBe(1);
-    expect((await detail(manual.id)).status).toBe('ganho');
-    expect((await statusAudits(manual.id)).at(-1)?.new_values).toEqual({ status: 'ganho', source: 'lis' });
+    const body = await detail(id);
+    expect(body.status).toBe('ganho');
+    expect(body.lisReconciledAt).not.toBeNull();
+    expect((await statusAudits(id)).at(-1)?.new_values).toEqual({ status: 'ganho', source: 'lis_payment' });
+  });
+
+  it('regras desligadas: requisicao e pagamento nao movem', async () => {
+    await setRules({
+      automation: { requisitionToNegotiation: { enabled: false }, paymentToWon: { enabled: false } },
+    });
+    const { id } = await manual('3004', 'orcamento_enviado');
+    const result = await ingest([row('3004', { ...REQ, ...PAID })]);
+    expect(result.proposalsWon).toBe(0);
+    expect(await detail(id)).toMatchObject({ status: 'orcamento_enviado', lisPaidOn: '2026-09-22' });
   });
 });

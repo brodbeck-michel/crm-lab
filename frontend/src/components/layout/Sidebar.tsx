@@ -34,8 +34,9 @@ import { NavGlyph } from './NavGlyph';
  * `sidebarRoutesFor` (fonte que o guard de rota usa), só que organizadas em
  * soltos + grupos.
  *
- * Item ativo: fundo `accent-100` translúcido + barra de 3px à esquerda
- * (`accent-500`) — único destaque do trilho. Grupos (accordion, CRMLAB-4):
+ * Trilho no tom claro do tema (`bg-surface` = accent 12%, D-250). Item ativo:
+ * fundo BRANCO (`bg-bg`) + texto `accent-700` + barra de 3px à esquerda
+ * (`accent-500`) — único destaque do trilho. Hover: `accent-100` (20%). Grupos (accordion, CRMLAB-4):
  * abertos por padrão, estado por grupo persistido em localStorage por
  * usuário (`sidebar-groups.store`); grupo sem nenhum item visível para o
  * perfil não aparece. Cabeçalho de grupo com ícone + label + chevron que
@@ -198,7 +199,7 @@ export function Sidebar() {
           aria-label={collapsed ? 'Expandir menu' : 'Recolher menu'}
           aria-expanded={!collapsed}
           style={{ flex: '0 0 30px' }}
-          className="flex h-[30px] w-[30px] cursor-pointer items-center justify-center rounded-md border-none bg-transparent text-neutral-600 hover:bg-neutral-100"
+          className="flex h-[30px] w-[30px] cursor-pointer items-center justify-center rounded-md border-none bg-transparent text-neutral-600 hover:bg-accent-100"
         >
           {collapsed ? (
             <PanelLeftOpen size={18} strokeWidth={1.7} aria-hidden="true" />
@@ -234,7 +235,8 @@ export function Sidebar() {
           const groupUnreadCount = group.items.some((route) => route.path === '/internal-chat')
             ? internalChatUnreadCount
             : 0;
-          const showActiveBg = open || (collapsed && hasActiveChild);
+          // Recolhido com o item ativo dentro: o ícone do grupo faz o papel do item ativo.
+          const showActiveBg = collapsed && hasActiveChild;
           const groupId = `sidebar-group-${group.id}`;
           return (
             <div key={group.id}>
@@ -254,7 +256,7 @@ export function Sidebar() {
                 className={cn(
                   'flex w-full items-center gap-sm rounded-lg px-xs py-xs text-left',
                   'font-body text-label font-bold text-text',
-                  showActiveBg ? 'bg-accent-100' : 'hover:bg-neutral-100',
+                  showActiveBg ? 'bg-bg text-accent-700' : 'hover:bg-accent-100',
                   'focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-500 focus-visible:outline-offset-2',
                 )}
               >
@@ -412,9 +414,8 @@ interface SidebarNavItemProps {
 
 /**
  * Um item de navegação (link), solto ou dentro de um grupo. Ativo: fundo
- * `accent-100` translúcido + barra de 3px à esquerda (`accent-500`) — único
- * destaque preenchido do trilho (a faixa de grupo nunca compete com essa
- * cor). Recolhido: contador vira um dot de 8px sobre o ícone (CRMLAB-44).
+ * branco + texto `accent-700` + barra de 3px à esquerda (`accent-500`) — único
+ * destaque preenchido do trilho (D-250). Recolhido: contador vira um dot de 8px sobre o ícone (CRMLAB-44).
  */
 function SidebarNavItem({
   route,
@@ -447,11 +448,11 @@ function SidebarNavItem({
           'focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-500 focus-visible:outline-offset-2',
           isActive
             ? cn(
-                'bg-accent-100 font-semibold text-text',
+                'bg-bg font-semibold text-accent-700 shadow-sm',
                 "before:absolute before:inset-y-[9px] before:left-0 before:w-[3px] before:content-['']",
                 'before:rounded-r-sm before:bg-accent-500',
               )
-            : 'text-text hover:bg-neutral-100',
+            : 'text-text hover:bg-accent-100',
         )
       }
     >

@@ -189,10 +189,15 @@ Duas leituras registradas aqui porque o doc original não as fixava:
   fecha. O blob do balão é reaproveitado e as vizinhas são pré-carregadas; o que ainda não chegou
   mostra "Carregando imagem…". Chegar na primeira carregada não busca histórico (fica para outro
   card). Figurinha ainda chega como `image` e entra na lista até o tipo `sticker` do CRMLAB-70
-- **Fundo branco (CRMLAB-25):** só a área rolável das mensagens é branca (`--color-chat-bg`);
-  header e composer seguem no fundo do tema, o que também marca onde a conversa começa e
-  termina. Sobre o papel branco, bolha do paciente e bolha da atendente se separam por lado E
-  por cor (`--color-chat-received` / `--color-chat-sent`)
+- **Visual WhatsApp Web (CRMLAB-81, D-251; substitui o "fundo branco" do CRMLAB-25):** coluna de
+  conversas, cabeçalho do contato e Composer em **branco** (`--color-chat-panel`), com
+  divisórias finas no tom do tema (`--color-chat-line`). A área rolável das mensagens fica num
+  neutro claro puxado ao tema (`--color-chat-bg`, `mix(accent 4%, #f4f3ef)`), para os balões
+  saltarem: recebida branca à esquerda, enviada no acento clareado à direita (detalhe em
+  COMPONENTS.md › MessageBubble e DESIGN_TOKENS.md › Bolhas). Na lista, a conversa selecionada
+  fica em `--color-chat-selected`, o hover em `--color-chat-hover` e o avatar em
+  `--color-chat-avatar`. Tudo deriva de `--color-accent` (white-label), nada de
+  `--color-bg/surface/text`
 - Composer: input pílula + anexos + **emoji** + enviar. O emoji entra na posição do cursor
   (Onda 8 §2.2), grade fixa de 48, sem dependência nova
 - **Responder assume (CRMLAB-75, D-215):** enviar numa conversa de "Não atribuídas" a torna da
@@ -816,10 +821,18 @@ gestor).
   envio, desmembrada em CRMLAB-39
 
 ### Personalização (`/settings/theme`) — admin
-- 5 temas prontos (cartões com amostras) + tema livre (5 color pickers)
-- Cantos (reto/suave/redondo), fonte, nome exibido, logo
-- **Preview em tempo real:** aplica CSS vars localmente antes de salvar
-- Salvar → `PATCH /themes/current`
+O cliente escolhe **só** cor principal, cor secundária, fonte, cantos, nome exibido e logo
+(D-250). Fundo, superfície e cor do texto **não** aparecem: a página é sempre branca e o texto
+sempre escuro; a cor do tema vai para menu, cartões, tabelas e botões.
+- 5 temas prontos (cartões com as 2 amostras) → `PATCH /themes/current { accent, accent2 }`
+- Cor personalizada: 2 seletores (`Cor principal` / `Cor secundária`, cada um com campo hex
+  `#rrggbb`); hex válido salva na hora só a cor mexida
+- Fonte (Playfair/Figtree/Sistema) e Cantos (Reto/Suave/Redondo): `SegmentedControl`, salva na hora
+- Nome exibido + endereço do logo (URL, usado nos PDFs): botão "Salvar nome e logo"; vazio → `null`
+- **Preview:** tela em miniatura (página branca, menu tingido com item ativo branco, cartão com
+  tabela, busca, botões, chips de status). Lê os tokens CSS, que `applyTheme` troca ao salvar
+- Temas salvos antes da D-250 continuam valendo pelo accent/accent2/fonte/cantos; o
+  `bg`/`surface`/`text` guardados são ignorados (sem migração)
 
 ---
 
@@ -1402,14 +1415,19 @@ applyTheme(theme: Theme) {
   const root = document.documentElement;
   root.style.setProperty('--color-accent', theme.accent);
   root.style.setProperty('--color-accent-2', theme.accent2);
-  root.style.setProperty('--color-bg', theme.bg);
-  root.style.setProperty('--color-surface', theme.surface);
-  root.style.setProperty('--color-text', theme.text);
-  // Rampas 100-900 derivadas via color-mix já definidas no CSS estático
+  // D-250: bg/surface/text do tema são IGNORADOS — fundo branco e texto escuro
+  // fixos em tokens.css; um valor inline que tenha sobrado é removido.
+  root.style.removeProperty('--color-bg');
+  root.style.removeProperty('--color-surface');
+  root.style.removeProperty('--color-text');
+  // Rampas e tons do tema derivados via color-mix já definidos no CSS estático
   root.dataset.radius = theme.radiusId; // reto | suave | redondo
   root.dataset.font = theme.fontId;
 }
 ```
+
+O console da plataforma (`PLATFORM_THEME`, §11) passa pelo mesmo `applyTheme`: só o accent e o
+accent2 dele valem, sobre o mesmo fundo branco.
 
 ---
 

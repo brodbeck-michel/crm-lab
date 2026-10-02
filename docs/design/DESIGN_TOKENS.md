@@ -6,6 +6,32 @@ Tokens de cor, tipografia, espaçamento e componentes para manter a consistênci
 
 ## Cores (CSS Variables)
 
+### Fundo branco e tema só no conteúdo (D-250)
+
+Desde o CRMLAB-82 o tenant controla **só 2 cores**: `--color-accent` e `--color-accent-2`.
+Fundo e texto são **fixos e iguais para todos** (`--color-bg: #ffffff`, `--color-text: #1a1a1a`);
+`--color-surface` deixou de ser cor base e é derivada do accent. O `bg`/`surface`/`text` que os
+presets e os temas salvos ainda carregam (contrato inalterado) é **ignorado na tela** —
+`applyTheme()` não os escreve. A cor do tema aparece só no conteúdo, em tons do accent
+misturados com branco:
+
+| Papel | Token | Mistura |
+|---|---|---|
+| Fundo da página | `--color-bg` | `#ffffff` fixo |
+| Cartão, tabela, linhas | `--color-neutral-100` | accent 6% |
+| Menu lateral, cabeçalho de tabela | `--color-surface` | accent 12% |
+| Divisória de linha | `--color-neutral-200` | accent 12% |
+| Hover / linha selecionada | `--color-accent-100` | accent 20% |
+| Bordas (cartão, campo) | `--color-neutral-300` | accent 22% |
+| Borda forte / barra de rolagem | `--color-neutral-400` | accent 36% |
+| Campo de busca / inputs | `--color-bg` + borda `neutral-300` | branco |
+| Item ativo do menu | `--color-bg` + texto `accent-700` + barra `accent-500` | — |
+| Botões, links, destaques | `--color-accent` / `accent-700` (link) | cheio |
+| Texto secundário | `--color-neutral-600` | cinza: 35% branco + texto |
+
+Os hex de `bg`/`surface` abaixo ficam como registro dos presets (o backend ainda os devolve),
+mas **não pintam mais nada**.
+
 ### 5 Temas Pré-definidos
 
 #### Tema 1: Terracota & Sálvia (Padrão)
@@ -69,8 +95,8 @@ Cada cor base gera automaticamente 9 tons (100-900):
 
 ```css
 :root {
-  /* Acento: Tons de 100 a 900 */
-  --color-accent-100: color-mix(in oklab, var(--color-accent) 12%, var(--color-bg));
+  /* Acento: Tons de 100 a 900 (--color-bg é branco fixo, D-250) */
+  --color-accent-100: color-mix(in oklab, var(--color-accent) 20%, var(--color-bg)); /* hover/seleção */
   --color-accent-200: color-mix(in oklab, var(--color-accent) 26%, var(--color-bg));
   --color-accent-300: color-mix(in oklab, var(--color-accent) 40%, var(--color-bg));
   --color-accent-400: color-mix(in oklab, var(--color-accent) 54%, var(--color-bg));
@@ -80,26 +106,43 @@ Cada cor base gera automaticamente 9 tons (100-900):
   --color-accent-800: color-mix(in oklab, var(--color-accent) 56%, var(--color-text));
   --color-accent-900: color-mix(in oklab, var(--color-accent) 28%, var(--color-text));
   
-  /* Similar para --color-accent-2 e --color-neutral */
+  /* --color-accent-2: mesmas proporções */
+
+  /* Neutros (D-250): 100–400 são tons do ACCENT (preenchimento e borda);
+     500–900 são cinza puro (texto), escuros o bastante para AA. */
+  --color-surface:     color-mix(in oklab, var(--color-accent) 12%, var(--color-bg));
+  --color-neutral-100: color-mix(in oklab, var(--color-accent) 6%,  var(--color-bg));
+  --color-neutral-200: color-mix(in oklab, var(--color-accent) 12%, var(--color-bg));
+  --color-neutral-300: color-mix(in oklab, var(--color-accent) 22%, var(--color-bg));
+  --color-neutral-400: color-mix(in oklab, var(--color-accent) 36%, var(--color-bg));
+  --color-neutral-500: color-mix(in oklab, var(--color-text) 41%, var(--color-bg));
+  --color-neutral-600: color-mix(in oklab, var(--color-bg) 35%, var(--color-text));
+  --color-neutral-700: color-mix(in oklab, var(--color-bg) 26%, var(--color-text));
+  --color-neutral-800: color-mix(in oklab, var(--color-bg) 18%, var(--color-text));
+  --color-neutral-900: color-mix(in oklab, var(--color-bg) 10%, var(--color-text));
 }
 ```
+
+**Contraste (WCAG AA ≥ 4,5:1)** nos 5 presets, pior caso: texto principal sobre o hover 20%
+≥ 12,8; `neutral-600` sobre o hover 20% ≥ 4,57 (sobre cartão 6% ≥ 5,69, cabeçalho 12% ≥ 5,19);
+`accent-700` sobre branco ≥ 5,97; `accent-800` sobre `accent-200` ≥ 5,69. Detalhe por preset em
+D-250.
 
 ### Papéis de Cor
 
 | Token | Uso | Exemplo |
 |-------|-----|---------|
-| `--color-bg` | Fundo da aplicação | Body, container principal |
-| `--color-surface` | Superfície tingida de 2º nível | Trilho lateral, cartões resumo |
-| `--color-neutral-100` | Cartão elevado | Cartões de lista, tabelas |
+| `--color-bg` | Fundo da aplicação — BRANCO fixo (D-250) | Body, container principal, inputs, item ativo do menu |
+| `--color-surface` | Tom do tema 12% (derivado do accent) | Trilho lateral, cabeçalho de tabela, colunas do pipeline |
+| `--color-neutral-100` | Cartão — tom do tema 6% | Cartões de lista, tabelas, cartões de Configurações |
+| `--color-accent-100` | Hover / seleção — tom do tema 20% | Linha sob o mouse, item selecionado |
 | `--color-text` | Texto principal | Títulos, corpo |
 | `--color-accent` | Ação e atenção | Botão primário, filtro ativo |
 | `--color-accent-2` | Estado positivo/âmbito interno | Não lidas, ganho, chat interno |
-| `--color-neutral-300` | Bordas e divisores | Linhas de tabela |
+| `--color-neutral-200` | Divisória de linha — tom do tema 12% | Linhas de tabela |
+| `--color-neutral-300` | Bordas — tom do tema 22% | Borda de cartão e de campo, régua do cabeçalho |
 | `--color-neutral-600` | Texto secundário | Legendas, placeholder |
-| `--color-chat-bg` | Papel da conversa — BRANCO literal | Área de mensagens do atendimento |
-| `--color-chat-received` / `-border` | Bolha do paciente sobre o papel | `MessageBubble type="received"` |
-| `--color-chat-sent` / `-border` | Bolha da atendente sobre o papel | `MessageBubble type="sent"` |
-| `--color-chat-tick-read` | Tique ✓✓ de "lida" — o azul do WhatsApp, LITERAL (não acompanha o tema, como o papel branco; CRMLAB-67) | `MessageBubble` `status: read` |
+| `--color-chat-*` | Tela de Atendimento, visual WhatsApp Web (CRMLAB-81, D-251). Tabela completa em "Bolhas de Mensagem" | Coluna de conversas, cabeçalho, Composer, balões |
 
 ### Uso de Rampas
 
@@ -492,41 +535,86 @@ textarea {
 
 ### Bolhas de Mensagem
 
-A área de mensagens é a ÚNICA superfície branca do app (CRMLAB-25). Sobre o bege
-do tema, recebida (`--color-surface`) e enviada (`--color-accent-200`, que mistura
-com `--color-bg`) ficavam quase iguais ao fundo e entre si. O papel branco não
-acompanha o tema do tenant — é fixo; as bolhas continuam tingidas pelas cores
-base, mas misturadas com BRANCO, senão sumiriam no papel.
+Tela de Atendimento com visual de **WhatsApp Web** (CRMLAB-81, D-251; substitui o "papel
+branco" do CRMLAB-25). O app é white-label: **nenhuma cor de destaque fixa** — todo tom da
+conversa sai de `--color-accent` misturado com **branco** ou com o neutro literal `#f4f3ef`.
+De propósito os tokens de conversa **não usam** `--color-bg`, `--color-surface` nem
+`--color-text`: o resto do app os redefine (CRMLAB-82) e a conversa tem de ficar estável e
+legível em qualquer tema. Os literais (`#ffffff`, `#f4f3ef`, `#1a1a1a`, `#53bdeb`) moram SÓ
+em `tokens.css`; componente usa as classes `*-chat-*` do Tailwind.
+
+| Token | Valor | Uso |
+|-------|-------|-----|
+| `--color-chat-panel` | `#ffffff` | Fundo da coluna de conversas, do cabeçalho do contato e do Composer |
+| `--color-chat-line` | `mix(accent 12%, white)` | Divisória fina: entre itens da lista, sob o cabeçalho, sobre o Composer, borda do campo de digitação |
+| `--color-chat-selected` | `mix(accent 20%, white)` | Conversa selecionada na lista |
+| `--color-chat-hover` | `mix(accent 10%, white)` | Hover do item da lista (mais suave que o selecionado) |
+| `--color-chat-avatar` | `mix(accent 20%, white)` | Fundo do avatar do item da lista |
+| `--color-chat-avatar-text` | `mix(accent 70%, #1a1a1a)` | Iniciais do avatar — o acento escurecido para passar AA |
+| `--color-chat-bg` | `mix(accent 4%, #f4f3ef)` | Fundo da área de mensagens: neutro claro puxado ao tema |
+| `--color-chat-received` | `#ffffff` | Balão do contato |
+| `--color-chat-sent` | `mix(accent 22%, white)` | Balão da atendente |
+| `--color-chat-text` | `#1a1a1a` | Texto dentro do balão |
+| `--color-chat-meta` | `mix(#1a1a1a 70%, white)` ≈ `#565656` | Hora, autor, "Editada", tique ✓/✓✓ não lido, "Mensagem apagada" |
+| `--color-chat-quote` / `-hover` | `mix(#1a1a1a 6% / 11%, transparent)` | Bloco citado no balão e faixa "Respondendo a" do Composer (véu que funciona sobre branco e sobre o acento) |
+| `--color-chat-tick-read` | `#53bdeb` | Tique ✓✓ de "lida" — o azul do WhatsApp, LITERAL (CRMLAB-67, D-225) |
+
+Todas as misturas são `color-mix(in oklab, …)`. Sombra do balão: `--shadow-sm` (sem borda —
+como no WhatsApp, quem separa o balão do fundo é a cor + a sombra).
+
+**Contraste (WCAG 2.x, calculado com a mistura oklab real)** — texto `#1a1a1a` e meta sobre o
+balão enviado, nos 5 presets de `THEME_PRESETS`:
+
+| Preset (accent) | Balão enviado | Texto × enviado | Meta × enviado | Iniciais × avatar |
+|-----------------|---------------|-----------------|----------------|-------------------|
+| Terracota `#c67139` | `#f5e0d4` | 13,6:1 | 5,8:1 | 4,8:1 |
+| Azul Jaleco `#2f6f9f` | `#d1deea` | 12,8:1 | 5,4:1 | 6,0:1 |
+| Verde `#2f7d5f` | `#d2e2da` | 12,9:1 | 5,5:1 | 5,8:1 |
+| Hemograma `#a63a3a` | `#efd3d1` | 12,4:1 | 5,2:1 | 6,6:1 |
+| Lilás `#6a4f9c` | `#dcd7ea` | 12,4:1 | 5,2:1 | 6,7:1 |
+
+Tudo ≥ 4,5:1 (AA para texto normal). Pior caso teórico de acento livre (preto puro): o balão
+enviado vira `#b7b7b7` e o texto ainda dá 8,7:1 — o texto do balão passa AA com **qualquer**
+acento, porque 22% de acento sobre branco nunca escurece o bastante. Sobre o balão recebido
+(branco) o texto dá 17,4:1 e a meta 7,4:1. Ressalva: o tique "lida" `#53bdeb` fica ~1,5:1 sobre
+o balão enviado (igual ao WhatsApp); o estado não depende só da cor — tem `aria-label` "Lida" e
+o glifo ✓✓.
+
+**Enviada × recebida de relance, não só pela posição:** enviada é tingida no acento e tem o
+canto **superior direito** reto; recebida é branca com o canto **superior esquerdo** reto.
 
 ```css
-/* Papel da conversa */
-.message-scroll {
-  background: var(--color-chat-bg); /* #fff literal — não acompanha o tema */
-}
+/* Área de mensagens */
+.message-scroll { background: var(--color-chat-bg); }
 
-/* Recebida (paciente) */
+/* Recebida (contato) — à esquerda, canto superior esquerdo reto */
 .message-bubble.received {
   background: var(--color-chat-received);
-  border: 1px solid var(--color-chat-received-border);
-  border-radius: var(--radius-md) var(--radius-md) var(--radius-md) var(--radius-sm);
+  color: var(--color-chat-text);
+  border-radius: 0 var(--radius-md) var(--radius-md) var(--radius-md);
+  box-shadow: var(--shadow-sm);
   padding: 11px 15px;
   font-size: 13.5px;
   align-self: flex-start;
-  max-width: 78%;
+  max-width: 78%; /* 62% no inbox, PAGES.md §2 */
 }
 
-/* Enviada (atendente) */
+/* Enviada (atendente) — à direita, canto superior direito reto */
 .message-bubble.sent {
   background: var(--color-chat-sent);
-  border: 1px solid var(--color-chat-sent-border);
-  border-radius: var(--radius-md) var(--radius-md) var(--radius-sm) var(--radius-md);
+  color: var(--color-chat-text);
+  border-radius: var(--radius-md) 0 var(--radius-md) var(--radius-md);
+  box-shadow: var(--shadow-sm);
   padding: 11px 15px;
   font-size: 13.5px;
   align-self: flex-end;
   max-width: 78%;
 }
 
-/* Evento do sistema */
+/* Hora + status: canto inferior direito do balão */
+.message-bubble .meta { align-self: flex-end; color: var(--color-chat-meta); }
+
+/* Evento do sistema (inalterado) */
 .message-bubble.system {
   background: var(--color-accent-2-100);
   border: 1px solid var(--color-accent-2-300);
@@ -562,14 +650,23 @@ button.secondary:hover {
 
 ### Selecionado
 ```css
-.menu-item.active {
-  background: var(--color-accent-200);
+.menu-item.active {            /* D-250: branco sobre o menu tingido */
+  background: var(--color-bg);
+  color: var(--color-accent-700);
   box-shadow: var(--shadow-sm);
 }
 
+tr.selected, tr:hover {        /* linha selecionada / sob o mouse */
+  background: var(--color-accent-100);
+}
+
+
+/* Lista de conversas do Atendimento (CRMLAB-81, D-251) */
 .conversation-item.selected {
-  background: var(--color-neutral-100);
-  box-shadow: var(--shadow-sm);
+  background: var(--color-chat-selected);
+}
+.conversation-item:hover {
+  background: var(--color-chat-hover);
 }
 ```
 
@@ -611,7 +708,7 @@ button:active {
 aside.sidebar {
   width: 272px;           /* Expandido */
   /* width: 64px; */      /* Recolhido (D-128) */
-  background: var(--color-surface);
+  background: var(--color-surface);   /* tom do tema 12% sobre a página branca (D-250) */
   padding: 26px 16px;
   display: flex;
   flex-direction: column;

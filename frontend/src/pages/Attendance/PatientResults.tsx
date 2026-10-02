@@ -32,7 +32,7 @@ export function PatientResults({ term, patients, isLoading, isError }: PatientRe
   return (
     <section
       aria-label="Pacientes encontrados"
-      className="flex flex-col gap-xs border-t border-neutral-300 px-sm py-sm"
+      className="flex flex-col gap-xs border-t border-chat-line px-sm py-sm"
     >
       <h2 className="m-0 px-sm font-heading text-micro font-semibold uppercase text-neutral-600">
         Pacientes

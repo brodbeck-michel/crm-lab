@@ -65,7 +65,7 @@ export default function Commissions() {
     <section
       id="comissoes"
       aria-labelledby="comissoes-titulo"
-      className="space-y-md rounded-lg border border-neutral-200 bg-surface p-lg"
+      className="space-y-md rounded-lg border border-neutral-200 bg-neutral-100 p-lg"
     >
       <div className="space-y-xs">
         <h2 id="comissoes-titulo" className="font-heading text-section text-text">

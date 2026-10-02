@@ -3,8 +3,9 @@
  * + contrato de derivação de `Design System CRM.dc.html` (seção 03).
  *
  * REGRA (CLAUDE.md §5): nenhum componente declara hex, nome de fonte ou raio em px.
- * O ThemeService entrega SÓ as 5 cores base + radiusId + fontId (D-005);
- * as 27 variações nascem aqui, via color-mix(in oklab, ...).
+ * O ThemeService entrega as cores do tenant + radiusId + fontId (D-005); a tela
+ * usa SÓ accent e accent2 — fundo e texto são fixos aqui (D-250). As variações
+ * nascem aqui, via color-mix(in oklab, ...).
  */
 
 @tailwind base;
@@ -14,20 +15,29 @@
 @layer base {
   :root {
     /* ---------------------------------------------------------------
-     * 5 cores base — Tema 1: Terracota & Sálvia (padrão).
-     * applyTheme() reescreve exatamente estas 5 em document.documentElement.
+     * Cores do tenant — Tema 1: Terracota & Sálvia (padrão).
+     * applyTheme() reescreve SÓ estas 2 em document.documentElement (D-250).
      * --------------------------------------------------------------- */
     --color-accent: #c67139;
     --color-accent-2: #7a8a5e;
-    --color-bg: #f5ead8;
-    --color-surface: #ebddc5;
-    --color-text: #1a1a1a;
 
     /* ---------------------------------------------------------------
-     * Rampa do acento — mix(accent, 12–54%, bg) para preenchimentos,
-     * 500 = base, mix(accent, 84–28%, text) para pressionado e texto.
+     * Fundo e texto FIXOS, iguais para todo tenant (D-250). O `bg`/`text`
+     * gravados no tema do tenant são ignorados na tela. A cor do tema
+     * aparece só no conteúdo (menu, cartões, tabelas), em tons do accent
+     * misturados com branco.
      * --------------------------------------------------------------- */
-    --color-accent-100: color-mix(in oklab, var(--color-accent) 12%, var(--color-bg));
+    --color-bg: #ffffff;
+    --color-text: #1a1a1a;
+    /* Menu lateral e cabeçalho de tabela — accent 12%. */
+    --color-surface: color-mix(in oklab, var(--color-accent) 12%, var(--color-bg));
+
+    /* ---------------------------------------------------------------
+     * Rampa do acento — mix(accent, 20–54%, bg) para preenchimentos,
+     * 500 = base, mix(accent, 84–28%, text) para pressionado e texto.
+     * 100 = hover/seleção (20%, D-250).
+     * --------------------------------------------------------------- */
+    --color-accent-100: color-mix(in oklab, var(--color-accent) 20%, var(--color-bg));
     --color-accent-200: color-mix(in oklab, var(--color-accent) 26%, var(--color-bg));
     --color-accent-300: color-mix(in oklab, var(--color-accent) 40%, var(--color-bg));
     --color-accent-400: color-mix(in oklab, var(--color-accent) 54%, var(--color-bg));
@@ -38,7 +48,7 @@
     --color-accent-900: color-mix(in oklab, var(--color-accent) 28%, var(--color-text));
 
     /* Rampa do acento 2 — mesmas proporções do acento (ver COMPONENTS.md). */
-    --color-accent-2-100: color-mix(in oklab, var(--color-accent-2) 12%, var(--color-bg));
+    --color-accent-2-100: color-mix(in oklab, var(--color-accent-2) 20%, var(--color-bg));
     --color-accent-2-200: color-mix(in oklab, var(--color-accent-2) 26%, var(--color-bg));
     --color-accent-2-300: color-mix(in oklab, var(--color-accent-2) 40%, var(--color-bg));
     --color-accent-2-400: color-mix(in oklab, var(--color-accent-2) 54%, var(--color-bg));
@@ -49,41 +59,59 @@
     --color-accent-2-900: color-mix(in oklab, var(--color-accent-2) 28%, var(--color-text));
 
     /* ---------------------------------------------------------------
-     * Neutros: NÃO são um cinza fixo. A base sai de --color-text sobre
-     * --color-bg, então o cinza acompanha o tema do tenant.
-     * neutral-100 = mix(bg, 86%, white) — cartão elevado sem virar branco puro.
-     * neutral-200…900 = mix(bg, 94–12%, text) — bordas, divisores, texto 2º nível.
+     * Neutros (D-250) em duas metades:
+     * 100–400 = PREENCHIMENTOS e BORDAS no tom do tema (accent sobre branco):
+     *   100 cartão/tabela 6% · 200 divisória de linha 12% ·
+     *   300 borda 22% · 400 borda forte/rolagem 36%.
+     * 500–900 = TEXTO, cinza puro (texto sobre branco), escuro o bastante
+     *   para WCAG AA sobre os tons acima (neutral-600 ≥ 4,5:1 no hover 20%).
      * --------------------------------------------------------------- */
     --color-neutral: color-mix(in oklab, var(--color-text) 41%, var(--color-bg));
-    --color-neutral-100: color-mix(in oklab, var(--color-bg) 86%, white);
-    --color-neutral-200: color-mix(in oklab, var(--color-bg) 94%, var(--color-text));
-    --color-neutral-300: color-mix(in oklab, var(--color-bg) 82%, var(--color-text));
-    --color-neutral-400: color-mix(in oklab, var(--color-bg) 71%, var(--color-text));
+    --color-neutral-100: color-mix(in oklab, var(--color-accent) 6%, var(--color-bg));
+    --color-neutral-200: color-mix(in oklab, var(--color-accent) 12%, var(--color-bg));
+    --color-neutral-300: color-mix(in oklab, var(--color-accent) 22%, var(--color-bg));
+    --color-neutral-400: color-mix(in oklab, var(--color-accent) 36%, var(--color-bg));
     --color-neutral-500: var(--color-neutral);
-    --color-neutral-600: color-mix(in oklab, var(--color-bg) 47%, var(--color-text));
-    --color-neutral-700: color-mix(in oklab, var(--color-bg) 35%, var(--color-text));
-    --color-neutral-800: color-mix(in oklab, var(--color-bg) 24%, var(--color-text));
-    --color-neutral-900: color-mix(in oklab, var(--color-bg) 12%, var(--color-text));
+    --color-neutral-600: color-mix(in oklab, var(--color-bg) 35%, var(--color-text));
+    --color-neutral-700: color-mix(in oklab, var(--color-bg) 26%, var(--color-text));
+    --color-neutral-800: color-mix(in oklab, var(--color-bg) 18%, var(--color-text));
+    --color-neutral-900: color-mix(in oklab, var(--color-bg) 10%, var(--color-text));
 
     /* Backdrop do modal — escuro translúcido, independente do tema. */
     --color-backdrop: rgba(0, 0, 0, 0.45);
 
     /* ---------------------------------------------------------------
-     * Conversa do atendimento (CRMLAB-25). A tela de mensagens é a
-     * única superfície BRANCA do app: sobre o bege do tema, bolha
-     * recebida e bolha enviada ficavam quase iguais. O branco é
-     * literal de propósito — não acompanha o tema do tenant, é o papel
-     * onde as duas bolhas precisam se destacar.
-     * As bolhas continuam tingidas pelo tema, mas misturadas com
-     * branco (e não com --color-bg), senão desapareceriam no papel.
+     * Conversa do atendimento (CRMLAB-25 → CRMLAB-81, D-251).
+     * Visual WhatsApp Web, white-label: NENHUMA cor de destaque fixa —
+     * todo tom sai de --color-accent misturado com branco ou com o
+     * neutro literal #f4f3ef. De propósito NÃO usa --color-bg,
+     * --color-surface nem --color-text (o resto do app os redefine,
+     * CRMLAB-82): a conversa fica estável qualquer que seja o tema.
+     * Contraste (WCAG AA) calculado nos 5 presets — DESIGN_TOKENS.md.
      * --------------------------------------------------------------- */
-    --color-chat-bg: #ffffff;
-    --color-chat-received: color-mix(in oklab, var(--color-surface) 62%, white);
-    --color-chat-received-border: color-mix(in oklab, var(--color-surface) 92%, var(--color-text));
-    --color-chat-sent: color-mix(in oklab, var(--color-accent) 18%, white);
-    --color-chat-sent-border: color-mix(in oklab, var(--color-accent) 42%, white);
-    /* Tique "lida" (CRMLAB-67, D-225): o azul do WhatsApp, LITERAL como o
-     * papel branco — é convenção que o usuário já conhece, não cor do tema. */
+    /* Papel: coluna de conversas, cabeçalho e Composer. */
+    --color-chat-panel: #ffffff;
+    /* Divisória fina no tom do tema (itens, cabeçalho, Composer). */
+    --color-chat-line: color-mix(in oklab, var(--color-accent) 12%, white);
+    /* Conversa da lista: selecionada e hover (mais suave). */
+    --color-chat-selected: color-mix(in oklab, var(--color-accent) 20%, white);
+    --color-chat-hover: color-mix(in oklab, var(--color-accent) 10%, white);
+    /* Avatar: fundo claro do acento, iniciais no acento escurecido (AA). */
+    --color-chat-avatar: color-mix(in oklab, var(--color-accent) 20%, white);
+    --color-chat-avatar-text: color-mix(in oklab, var(--color-accent) 70%, #1a1a1a);
+    /* Fundo da conversa: neutro claro puxado ao tema, para os balões saltarem. */
+    --color-chat-bg: color-mix(in oklab, var(--color-accent) 4%, #f4f3ef);
+    /* Balões: recebida branca, enviada no acento clareado. */
+    --color-chat-received: #ffffff;
+    --color-chat-sent: color-mix(in oklab, var(--color-accent) 22%, white);
+    /* Texto e meta (hora/autor/tique) dentro do balão. */
+    --color-chat-text: #1a1a1a;
+    --color-chat-meta: color-mix(in oklab, #1a1a1a 70%, white);
+    /* Bloco citado / faixa "Respondendo a": véu escuro que funciona sobre os dois balões. */
+    --color-chat-quote: color-mix(in oklab, #1a1a1a 6%, transparent);
+    --color-chat-quote-hover: color-mix(in oklab, #1a1a1a 11%, transparent);
+    /* Tique "lida" (CRMLAB-67, D-225): o azul do WhatsApp, LITERAL — é
+     * convenção que o usuário já conhece, não cor do tema. */
     --color-chat-tick-read: #53bdeb;
 
     /* --------------------------------------------------------------- */

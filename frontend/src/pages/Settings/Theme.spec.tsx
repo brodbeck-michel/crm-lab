@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -67,6 +67,8 @@ const mockPresets = [
   },
 ];
 
+const mutate = vi.fn();
+
 vi.mock('@/api/themes', () => ({
   useThemeCurrent: vi.fn(() => ({
     data: mockTheme,
@@ -79,7 +81,7 @@ vi.mock('@/api/themes', () => ({
     error: null,
   })),
   useUpdateTheme: vi.fn(() => ({
-    mutate: vi.fn(),
+    mutate,
     isPending: false,
   })),
 }));
@@ -87,6 +89,7 @@ vi.mock('@/api/themes', () => ({
 describe('ThemeSettings', () => {
   beforeEach(() => {
     queryClient.clear();
+    mutate.mockClear();
     useAuthStore.setState({
       user: {
         id: 'user1',
@@ -155,5 +158,55 @@ describe('ThemeSettings', () => {
     );
 
     expect(screen.getByText(/Preview/i)).toBeInTheDocument();
+  });
+
+  function renderPage() {
+    render(
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter>
+          <ThemeSettings />
+        </BrowserRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it('aplicar um preset envia só accent e accent2 — fundo/superfície/texto são fixos (D-250)', () => {
+    renderPage();
+    fireEvent.click(screen.getByRole('button', { name: /Jaleco Azul/ }));
+    expect(mutate).toHaveBeenCalledWith({ accent: '#2f6f9f', accent2: '#4f9d8b' });
+  });
+
+  it('oferece cor principal e secundária, e nenhum campo de fundo, superfície ou texto', () => {
+    renderPage();
+    expect(screen.getByLabelText('Cor principal (hex)')).toHaveValue('#c67139');
+    expect(screen.getByLabelText('Cor secundária (hex)')).toHaveValue('#7a8a5e');
+    expect(screen.queryByLabelText(/fundo/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/superf/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/cor do texto/i)).not.toBeInTheDocument();
+  });
+
+  it('cor secundária em hex válido salva só o accent2', () => {
+    renderPage();
+    fireEvent.change(screen.getByLabelText('Cor secundária (hex)'), {
+      target: { value: '#123456' },
+    });
+    expect(mutate).toHaveBeenCalledWith({ accent2: '#123456' });
+  });
+
+  it('fonte e cantos salvam direto pelo seletor', () => {
+    renderPage();
+    fireEvent.click(screen.getByRole('tab', { name: 'Sistema' }));
+    expect(mutate).toHaveBeenCalledWith({ fontId: 'system' });
+    fireEvent.click(screen.getByRole('tab', { name: 'Redondo' }));
+    expect(mutate).toHaveBeenCalledWith({ radiusId: 'redondo' });
+  });
+
+  it('nome e logo salvam juntos pelo botão; vazio vira null', () => {
+    renderPage();
+    const save = screen.getByRole('button', { name: 'Salvar nome e logo' });
+    expect(save).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Nome exibido'), { target: { value: '  Lab Vida  ' } });
+    fireEvent.click(save);
+    expect(mutate).toHaveBeenCalledWith({ brandName: 'Lab Vida', logoUrl: null });
   });
 });

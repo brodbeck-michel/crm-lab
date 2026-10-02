@@ -435,6 +435,9 @@ Salvar personalização. PATCH parcial: campo não enviado permanece.
 - `brandName` máx. 255, `logoUrl` máx. 500 — ambos anuláveis. Enviar `null` **apaga**
   o valor; omitir o campo o preserva (essa é a diferença entre `null` e ausente)
 - Corpo vazio (`{}`) ou campo desconhecido → `VALIDATION_ERROR` (o schema é `strict`)
+- `bg`, `surface` e `text` continuam **aceitos, gravados e devolvidos** (contrato inalterado),
+  mas desde a D-250 o frontend os **ignora**: fundo branco e texto escuro são fixos na tela, e a
+  Personalização não os envia mais. Nenhuma migração: temas antigos seguem válidos
 
 **Response (200):** `{ "theme": { ... } }` — o tema salvo. Gera audit log `update_theme`.
 
@@ -544,6 +547,7 @@ laboratório. `platform_operator` recebe `FORBIDDEN` (PAGES.md §11).
 ```
 ?status=active|closed          # D-174: `archived` não existe mais
 ?scope=mine|unassigned|all        # default: all — os chips da coluna 1
+?unread=true                      # só com não lidas (`unreadCount > 0`) — CRMLAB-68, D-229
 ?page=1&limit=20                  # limit máx. 100
 ?search=joão                      # máx. 120 caracteres
 ?sortBy=lastMessageAt|createdAt|unreadCount|patientName&order=desc
@@ -581,7 +585,7 @@ telefone quando sobram **3 dígitos ou mais**.
     "total": 150,
     "totalPages": 8
   },
-  "counts": { "mine": 12, "unassigned": 7 }
+  "counts": { "mine": 12, "unassigned": 7, "unread": 4 }
 }
 ```
 
@@ -596,10 +600,18 @@ visibilidade, status e busca — nunca de contador mantido à parte (BUSINESS_RU
 Por isso eles **não** mudam quando `?scope=` muda: o chip não clicado continua
 mostrando o próprio número, e `pagination.total` é que acompanha o escopo.
 
+**Não lidas (CRMLAB-68, D-229).** `?unread=true` é recorte de listagem como o `scope`: filtra
+`unreadCount > 0`, entra em `pagination.total` e **não** nos `counts`. `counts.unread` (chip
+"Não lidas N") sai do mesmo `COUNT(*) FILTER` dos outros dois — conversas com `unreadCount > 0`
+no recorte de visibilidade/status/busca. Campo **opcional** no tipo (acrescentado no CRMLAB-68);
+o backend sempre manda. `unread` aceita `true`/`false`; `false` = sem filtro.
+
 Cada item traz `assignedToName` e `lastMessagePreview` já resolvidos (o frontend não
 faz request extra por conversa). Shape completo: `Conversation` em
 `shared/types/conversation.types.ts`. Anuláveis: `patientId`, `patientName`, `assignedTo`,
 `assignedToName`, `lastMessagePreview`, `lastMessageAt`.
+`lastMessagePreview` de mensagem **apagada** pelo remetente vem `""` (D-220) — a prévia
+nunca devolve o conteúdo escondido.
 
 `patientId` é o **id do cadastro** (`patients.id`, D-059) — a porta de entrada da Ficha do
 Paciente (`/patients/:id`, PAGES.md §3). Campo **opcional acrescentado em D-079**: backward
@@ -610,7 +622,63 @@ da migração 003 que ainda não passou por `findOrCreateByPhone` (D-072) — e 
 para navegar, não para exibir.
 
 **Erros:** `FORBIDDEN` (403, `platform_operator`), `VALIDATION_ERROR` (400, query fora
-do enum — `scope`, `status`, `sortBy`, `order`, `limit` > 100)
+do enum — `scope`, `status`, `sortBy`, `order`, `unread`, `limit` > 100)
+
+### GET /conversations/search/messages (CRMLAB-68, D-228)
+Busca pelo **conteúdo** das mensagens em todas as conversas que o usuário pode ver — o bloco
+"Mensagens" da busca do inbox (PAGES.md §2).
+
+**Query Params:**
+```
+?q=glicose            # obrigatório; 2 a 120 caracteres depois do trim
+?page=1&limit=20      # limit máx. 100
+```
+
+**Como casa:** ignora maiúscula e acento ("orcamento" acha "orçamento", "glicose" acha
+"Glicose"); cada palavra do termo casa por **prefixo** ("hemog" acha "hemograma") e **todas** as
+palavras precisam estar na mensagem. Full-text `portuguese` sobre `crm_unaccent(content)`, com
+índice GIN (migração 043).
+
+**Nunca aparece:** mensagem apagada pelo remetente (D-220), evento de sistema, outro laboratório
+e — para atendente — conversa de outra atendente (o recorte da fila: as dela + as livres;
+gestor/admin veem todas). Conversa encerrada aparece.
+
+**Response (200):**
+```json
+{
+  "results": [
+    {
+      "messageId": "uuid",
+      "conversationId": "uuid",
+      "patientName": "João Santos",
+      "patientPhone": "+5511987654321",
+      "senderType": "patient",
+      "senderName": "João Santos",
+      "messageType": "text",
+      "content": "Preciso fazer o exame de glicose em jejum?",
+      "createdAt": "2024-08-23T14:25:00Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 20, "total": 1, "totalPages": 1 }
+}
+```
+
+Ordem: da mensagem mais nova para a mais antiga. `content` vem **inteiro**: o trecho e o
+destaque são montados pela tela (D-228 item 6). Shape: `MessageSearchHit`.
+
+**Erros:** `VALIDATION_ERROR` (400 — `q` ausente, curto ou acima de 120; `limit` > 100),
+`FORBIDDEN` (403, `platform_operator`)
+
+### GET /conversations/:id/messages (CRMLAB-68, D-228)
+A mesma busca, **dentro de uma conversa** — a lupa do cabeçalho (PAGES.md §2).
+
+**Query Params:** `?q=` (obrigatório, como acima) `&page=1&limit=20` (máx. 100).
+
+**Response (200):** o mesmo `{ results: MessageSearchHit[], pagination }`, só com mensagens desta
+conversa, da mais nova para a mais antiga.
+
+**Erros:** `NOT_FOUND` (404 — inexistente, de outro tenant ou fora do recorte do usuário),
+`VALIDATION_ERROR` (400, `:id` não-uuid ou `q` inválido), `FORBIDDEN` (403, `platform_operator`)
 
 ### POST /conversations
 Criar um atendimento que **não veio do WhatsApp** — ligação, balcão, formulário do site.
@@ -684,8 +752,8 @@ mensagem pelo canal WhatsApp do laboratório, pelo **mesmo** `MessageService.cre
   de `patients` na mesma transação, **sem nome** — igual ao número desconhecido que escreve pela
   primeira vez sem nome de perfil (o nome entra depois, pelo perfil do WhatsApp ou pela Ficha).
 - Conversa existente **ativa de outro atendente** → `CONVERSATION_ALREADY_ASSIGNED` (409), a
-  mesma regra de `POST /conversations`. Conversa da **fila livre** é usada como está (enviar
-  não assume — assumir é `PATCH /conversations/:id`).
+  mesma regra de `POST /conversations`. Conversa da **fila livre** é reaproveitada e, como toda
+  resposta de atendente, **passa a ser de quem enviou** (CRMLAB-75, D-215 — antes ficava livre).
 - Conversa existente **encerrada** → reabre atribuída a quem enviou, com "Atendimento reaberto
   por <nome>" (D-174), e então envia.
 - Conversa existente de outro canal (`direct`/`web`/`sms`, atendimento manual) → passa a
@@ -708,6 +776,33 @@ credencial ou desligado: a conversa **fica criada** e a mensagem gravada como `f
 `POST /conversations/:id/messages`; `conversationId` existe para a tela abrir a conversa mesmo
 assim), `FORBIDDEN` (403, `platform_operator`).
 
+### POST /conversations/whatsapp/open (CRMLAB-70, D-236)
+Botão **"Conversar"** do cartão de contato compartilhado: **abre a conversa que já existe** com o
+número, **sem enviar mensagem**. Número sem conversa → `404`, e a tela cai na Nova conversa
+(`POST /conversations/whatsapp`, com o telefone preenchido).
+
+**Request** (`OpenWhatsAppConversationRequest`): `{ "phone": "+5548988887777" }` — mesma validação
+de `phone` do `POST /conversations/whatsapp` (`normalizeBrazilianPhone`, máx. 20).
+
+**Comportamento:**
+- Acha pelo **mesmo** casamento de telefone de `findOrCreateByPhone` (dígitos, com e sem o nono
+  dígito — D-176), **só neste laboratório** (RLS). **Não cria** conversa nem paciente.
+- Conversa **encerrada** → reabre atribuída a quem clicou, com "Atendimento reaberto por <nome>"
+  e audit `update_conversation_status` — o mesmo que `POST /conversations` e
+  `POST /conversations/whatsapp` já fazem com número encerrado (D-174).
+- Conversa **ativa de outro atendente** (fora do recorte de quem pede) →
+  `CONVERSATION_ALREADY_ASSIGNED` (409), como na Nova conversa. Fila livre e a própria abrem
+  **sem mudar de dona** (não há resposta, então o D-215 não se aplica).
+- Não muda o canal da conversa (`direct`/`web`/`sms` continuam; quem troca é o envio).
+
+**Response (200):** `ConversationDetail` (objeto cru, o mesmo shape de `GET /conversations/:id`
+sem as mensagens).
+
+**Erros:** `VALIDATION_ERROR` (400 — `details.fields.phone`), `NOT_FOUND` (404,
+`resource: "conversation"` — o número não tem conversa neste laboratório),
+`CONVERSATION_ALREADY_ASSIGNED` (409, `details: { assignedTo, assignedToName }`), `FORBIDDEN`
+(403, `platform_operator`).
+
 ### GET /conversations/:id
 Detalhes de uma conversa + histórico de mensagens.
 
@@ -725,11 +820,38 @@ Mensagens vêm em ordem cronológica **crescente**; `page=1` é a página mais r
 **Query Params:**
 ```
 ?messageLimit=50&page=1
+?messageLimit=50&before=<messageId>      (cursor — D-237, CRMLAB-71)
+?messageLimit=50&after=<messageId>       (mais novas — D-230, CRMLAB-68)
+?messageLimit=50&around=<messageId>      (janela em volta — D-230, CRMLAB-68)
 ```
 
 `messageLimit` é o nome do contrato; `limit` é aceito como alias tolerante e vale o
 mesmo (`messageLimit` ganha quando os dois vêm). Valor acima de 100 é recusado com
 `VALIDATION_ERROR` — não é silenciosamente reduzido.
+
+**Cursor (`before`, D-237).** `before=<messageId>` devolve as `messageLimit` mensagens
+imediatamente **anteriores** àquela, na ordem `(createdAt, id)`. É o jeito de carregar
+histórico: a tela de Atendimento pede a primeira página sem cursor e depois repete
+`before=cursors.before` até ele voltar `null`.
+- `cursors.before`: id da mensagem mais antiga da página quando **ainda há** histórico
+  anterior; `null` quando a página chegou ao começo da conversa (não há o que pedir).
+- `cursors.after` (D-230): id da mensagem mais **nova** da página quando **ainda há** mensagens
+  mais novas que ela; `null` quando a página chega à última mensagem da conversa (a página mais
+  recente é sempre `null`; uma página `before` sempre traz o id).
+- **`after=<messageId>`**: as `messageLimit` mensagens imediatamente **posteriores** àquela, em
+  ordem crescente. É como a tela desce de uma janela antiga até o fim, repetindo
+  `after=cursors.after` até ele voltar `null`.
+- **`around=<messageId>`**: a janela em volta da mensagem — até `floor(messageLimit/2)` mais
+  novas que ela, e o restante com ela e as anteriores (perto do fim, a janela completa com
+  histórico). É como "Ir até a mensagem" da busca abre a conversa. Também marca como lida.
+- `before`, `after`, `around` e `page` são **excludentes** entre si: dois juntos →
+  `VALIDATION_ERROR` (400). Cursor que não é uuid → `VALIDATION_ERROR`. Cursor que não é
+  mensagem **desta** conversa (outra conversa, outro tenant, inexistente) → `NOT_FOUND` (404,
+  `details.resource: "message"`).
+- `pagination` segue com os quatro campos: `total`/`totalPages` são da conversa inteira; com
+  qualquer cursor, `page` volta `1`.
+- `cursors` vem também sem `before` (paginação por `page`): na primeira página é o ponto de
+  partida do cursor.
 
 **Response (200):**
 ```json
@@ -780,6 +902,10 @@ mesmo (`messageLimit` ganha quando os dois vêm). Valor acima de 100 é recusado
     "limit": 50,
     "total": 120,
     "totalPages": 3
+  },
+  "cursors": {
+    "before": "uuid-da-mensagem-mais-antiga-desta-pagina",
+    "after": null
   }
 }
 ```
@@ -788,6 +914,76 @@ mesmo (`messageLimit` ganha quando os dois vêm). Valor acima de 100 é recusado
 `customFields`) — inclui `patientId`, que é de onde a coluna 3 do inbox tira o link para a
 ficha (D-079); `messages[]` é `Message`, com `senderName`, `attachmentUrl` e `readAt`
 anuláveis. `pagination` é o `PaginationMeta` padrão — os quatro campos, sempre.
+`cursors` é `MessageCursors` (`before`/`after`, ambos `string | null` — D-237).
+
+**Citação, reações, edição e apagamento (CRMLAB-66, D-220/D-221/D-222).** Todo `Message`
+(aqui, no `POST /messages`, no `/attachments` e em qualquer resposta que devolva mensagem)
+traz também:
+
+```json
+{
+  "quotedMessageId": "uuid | null",
+  "quoted": {
+    "id": "uuid | null",
+    "senderType": "patient",
+    "senderName": "João Santos",
+    "preview": "Olá, quanto custa um hemograma?",
+    "messageType": "text",
+    "deleted": false
+  },
+  "reactions": [
+    { "emoji": "👍", "reactorType": "patient", "userId": null, "userName": null, "reactedAt": "2024-08-23T14:31:00Z" }
+  ],
+  "editedAt": null,
+  "deletedAt": null
+}
+```
+
+- `quotedMessageId`: a mensagem citada, quando ela está no CRM. `quoted` é o **resumo** para a
+  faixa do balão (`null` = não é resposta). `quoted.id` `null` = a original não está no CRM
+  (anterior à conversa) — `preview` vem `''`. `quoted.deleted: true` = a original foi apagada:
+  `preview` vem `''`. `preview` tem até 160 caracteres.
+- `reactions`: no máximo **uma por lado** (`reactorType` `patient` | `agent`, D-222). `userId`/
+  `userName` = atendente que reagiu pelo CRM; `null` para o paciente e para reação feita no
+  celular do laboratório. Ordem: `patient` antes de `agent`.
+- `editedAt`: preenchido quando o remetente editou no WhatsApp; `content` já é o texto novo. A
+  versão anterior fica no banco (`message_edits`), **não** na API.
+- `deletedAt`: preenchido quando o remetente apagou "para todos". **A API não devolve o conteúdo
+  escondido** (D-220): `content: ""`, `attachmentUrl: null`, `quoted: null`, `reactions: []`. A
+  linha e a mídia continuam no banco.
+
+**Tipos de mensagem e metadados (CRMLAB-70, D-234).** `messageType` ∈ `text | image | audio |
+pdf | doc | video | sticker | location | contact` (`MESSAGE_TYPES`). Todo `Message` traz também
+(campos **opcionais** no tipo; o backend sempre manda):
+
+```json
+{
+  "media": {
+    "fileName": "exame.pdf",
+    "fileSize": 184320,
+    "mimeType": "application/pdf",
+    "durationSec": null,
+    "pageCount": 3,
+    "thumbnail": null
+  },
+  "location": null,
+  "contacts": []
+}
+```
+
+- `media` (`MessageMediaInfo | null`): nome, tamanho em bytes e MIME **do arquivo gravado**
+  (`message_media`), mais o que o WhatsApp mandou junto: `durationSec` (vídeo/áudio), `pageCount`
+  (PDF) e `thumbnail` (miniatura JPEG do vídeo em base64, sem o prefixo `data:`). `null` sem
+  anexo, com anexo de URL externa ou apagado/anonimizado.
+- `location` (`MessageLocation | null`, só em `messageType: "location"`):
+  `{ "latitude": -28.48, "longitude": -49.01, "name": "Laboratório", "address": "Rua X, 10" }`
+  (`name`/`address` anuláveis).
+- `contacts` (`MessageContact[]`, só em `messageType: "contact"`): `[{ "name": "Ana", "phone":
+  "+5548999991234" }]` — `phone` anulável (vCard sem telefone).
+- `content` continua sendo o **texto de fallback** (busca, prévia da lista, citação):
+  `📍 <nome>`, `👤 <nome>`, `Figurinha`, ou a legenda/nome do arquivo. Mensagem apagada (D-220):
+  `media: null`, `location: null`, `contacts: []`.
+- Mensagens gravadas antes do CRMLAB-70 como `[Localizacao] …`/`[Contato] …` continuam `text`.
 
 **Erros:** `NOT_FOUND` (404 — inexistente, de outro tenant **ou de outro atendente**;
 nunca 403), `FORBIDDEN` (403, `platform_operator`), `VALIDATION_ERROR` (400, `:id` não-uuid)
@@ -807,9 +1003,22 @@ Enviar mensagem em uma conversa.
 - `content`: 1..4000 caracteres (trim aplicado)
 - `messageType` (opcional, default `text`) ∈ `text | image | audio | pdf | doc`
 - `attachmentUrl` (opcional, anulável): máx. 500 caracteres
+- `quotedMessageId` (opcional, anulável, uuid — CRMLAB-66, D-221): **responder citando**. Tem de
+  ser uma mensagem **desta** conversa e não apagada; de outra conversa, de outro tenant,
+  inexistente ou apagada → `NOT_FOUND` (`resource: "message"`). No WhatsApp a mensagem sai citada
+  (Evolution `quoted`, Cloud API `context.message_id`); se a original não tem id externo, sai sem
+  a citação para o canal e continua citada no CRM.
 
 O recorte por papel é aplicado **antes** de escrever: conversa que o usuário não
 enxerga devolve `NOT_FOUND`.
+
+**Responder assume a conversa (CRMLAB-75, D-215):** conversa **sem dona** (`assignedTo: null`)
+passa a ser de quem enviou ANTES de a mensagem ser gravada — o mesmo claim atômico de
+`PATCH /conversations/:id` (`assignedTo`), com o mesmo audit `assign_conversation`. Quem perde a
+corrida recebe `CONVERSATION_ALREADY_ASSIGNED` (409, `details: { assignedTo, assignedToName }`) e a
+mensagem **não** é gravada nem enviada ao paciente. Conversa já atribuída (à própria pessoa ou a
+outra) não muda de dona. Vale também para `POST /conversations/:id/attachments` e para o envio
+pelo cartão (`POST /proposals/:id/send`, `POST /proposals/:id/resend`), que usam o mesmo caminho.
 
 **Response (201):**
 ```json
@@ -829,8 +1038,17 @@ enxerga devolve `NOT_FOUND`.
 ```
 
 **Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404), `CONVERSATION_ARCHIVED` (409),
-`MESSAGE_SEND_FAILED` (502, canal externo falhou após os retries), `FORBIDDEN` (403,
-`platform_operator`)
+`CONVERSATION_ALREADY_ASSIGNED` (409, conversa da fila livre assumida por outra pessoa no mesmo
+instante — D-215), `MESSAGE_SEND_FAILED` (502, canal externo falhou após os retries), `FORBIDDEN`
+(403, `platform_operator`)
+
+**`status` da mensagem do atendimento (CRMLAB-67, D-225):** `pending | sent | delivered | read |
+failed` — o tique do balão. No canal `whatsapp` a mensagem nasce `pending` (🕓, o WS
+`conversation.new_message` sai antes do envio) e a resposta `201` já volta `sent` (o gateway
+devolveu o id); o ack do celular sobe para `delivered` (✓✓) e `read` (✓✓ azul) pelo webhook, com
+o WS `message.status_updated`. **Nunca rebaixa** (um `delivered` atrasado não apaga o `read`);
+`failed` só a partir de `pending`/`sent`. Canal `direct`/`web` nasce `sent`. Mensagem do paciente:
+`delivered` e, aberta a conversa, `read` (inalterado).
 
 ### POST /conversations/:id/attachments
 Enviar um anexo (Onda 8 §4.3) — foto, PDF ou áudio para o paciente.
@@ -845,7 +1063,8 @@ médico.
 {
   "fileName": "pedido-medico.jpg",
   "mimeType": "image/jpeg",
-  "contentBase64": "/9j/4AAQSkZJRg..."
+  "contentBase64": "/9j/4AAQSkZJRg...",
+  "caption": "Pedido do Dr. Silva"
 }
 ```
 
@@ -854,17 +1073,33 @@ médico.
 - `mimeType`: 1..127 caracteres
 - `contentBase64`: obrigatório, decodificado e checado contra o teto de
   tamanho (15 MiB por arquivo)
+- `quotedMessageId` (opcional, anulável, uuid): mesma regra de `POST /messages` (CRMLAB-66,
+  D-221) — o anexo sai citando a mensagem
+- `caption` (opcional, anulável, 0..1024 caracteres — CRMLAB-69, D-231): **legenda**. Aparada;
+  vazia = sem legenda. Imagem, vídeo e documento levam a legenda ao WhatsApp e a mensagem gravada
+  tem `content` = legenda (sem legenda, `content` = `fileName`, como antes). **Áudio não tem
+  legenda**: o campo é ignorado (não vai ao gateway nem ao `content`)
+- Vários arquivos = um POST por arquivo, em sequência (D-233). O `quotedMessageId` vai só no
+  primeiro
 
 O recorte por papel é aplicado **antes** de gravar: conversa que o usuário não
-enxerga devolve `NOT_FOUND`. `messageType` é derivado do `mimeType`
-(`image/* → image`, `audio/* → audio`, `application/pdf → pdf`, resto →
-`doc`) — o cliente não escolhe.
+enxerga devolve `NOT_FOUND`. Conversa sem dona é assumida por quem envia antes de gravar a
+mídia (D-215, mesma regra e mesmo 409 de `POST /conversations/:id/messages`). `messageType` é derivado do `mimeType`
+(`image/* → image`, `audio/* → audio`, `video/* → video` (CRMLAB-70), `application/pdf → pdf`,
+resto → `doc`) — o cliente não escolhe.
 
 **Áudio (CRMLAB-24, D-182):** o recado gravado no compositor usa este mesmo endpoint
 (`fileName` `recado-de-voz.<ogg|webm|m4a>`, `mimeType` o do `MediaRecorder`, ex.
 `audio/webm;codecs=opus`). No canal WhatsApp/Evolution, **todo** anexo `audio/*` sai por
 `POST /message/sendWhatsAppAudio/:instance` — o gateway converte para `ogg/opus` e entrega como
 recado de voz — e não por `/message/sendMedia`. O request e a resposta deste endpoint não mudam.
+
+**Vídeo (CRMLAB-69, D-231):** `video/*` sai no `/message/sendMedia` com `mediatype: "video"`
+(antes ia como `document`). Desde o CRMLAB-70 (D-234) o `messageType` gravado é `video`. A
+allow-list aceita `video/mp4`, `video/quicktime` (.mov do iPhone), `video/3gpp` e `video/webm`,
+com o mesmo teto de 15 MiB. **Só MP4 e 3GP saem como `mediatype: "video"`**; `.mov` e WebM saem
+como `document` (o gateway não converte vídeo e o WhatsApp do paciente não garante tocar esses
+contêineres — D-234 item 8). No CRM os quatro ficam `video`.
 
 **Response (201):** o mesmo shape de `POST /conversations/:id/messages`, com
 `attachmentUrl` apontando para `GET /media/:id` (nunca uma URL pública):
@@ -876,7 +1111,7 @@ recado de voz — e não por `/message/sendMedia`. O request e a resposta deste 
   "senderType": "agent",
   "senderId": "uuid",
   "senderName": "Maria Souza",
-  "content": "pedido-medico.jpg",
+  "content": "Pedido do Dr. Silva",
   "messageType": "image",
   "attachmentUrl": "/api/v1/media/uuid",
   "status": "sent",
@@ -890,8 +1125,81 @@ recado de voz — e não por `/message/sendMedia`. O request e a resposta deste 
 externo falhou após os retries — a WhatsApp Cloud API `cloud_api` ainda não envia
 mídia, só o gateway Evolution `qr`), `FORBIDDEN` (403, `platform_operator`)
 
+### PUT /conversations/:id/messages/:messageId/reaction · DELETE (CRMLAB-66, D-222)
+Reagir a uma mensagem com um emoji (a barra rápida da tela: 👍 ❤️ 😂 😮 😢 🙏). A reação é
+**do laboratório** (um lado só): uma nova substitui a anterior, `DELETE` remove.
+
+**Request (PUT):**
+```json
+{ "emoji": "👍" }
+```
+- `emoji`: 1..32 bytes (trim aplicado)
+
+**Response:** `PUT` → `200` com a `Message` atualizada (objeto cru, D-070). `DELETE` → `204`
+(idempotente: sem reação, continua `204`).
+
+No WhatsApp a reação sai **antes** de gravar (Evolution `POST /message/sendReaction`, Cloud API
+`type: "reaction"`); falhou após os retries → `MESSAGE_SEND_FAILED` e nada muda. Mensagem sem id
+externo (canal `direct`/`web`, envio que falhou) reage só no CRM. Emite
+`conversation.message_updated`.
+
+**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404 — conversa fora do recorte, mensagem de
+outra conversa ou de outro tenant, mensagem apagada), `CONVERSATION_ARCHIVED` (409, atendimento
+encerrado), `MESSAGE_SEND_FAILED` (502), `FORBIDDEN` (403, `platform_operator`). Mensagem de
+sistema também é `NOT_FOUND` — não existe no WhatsApp do paciente.
+
+### POST /conversations/:id/messages/:messageId/retry (CRMLAB-67, D-227)
+"Tentar de novo" de uma mensagem que falhou. Reenvia **a mesma** mensagem (mesmo `id`, nenhuma
+linha nova): ela volta a `pending` (WS `message.status_updated`), sai pelo canal com a citação
+original, e termina `sent` ou de novo `failed`. Anexo relê o arquivo guardado
+(`attachmentUrl` = `/api/v1/media/:id`).
+
+**Request:** sem corpo.
+
+**Response (200):** a `Message` (objeto cru, D-070) com `status: "sent"`.
+
+**Erros:** `NOT_FOUND` (404 — conversa fora do recorte, mensagem de outra conversa ou de outro
+tenant), `CONFLICT` (409 — a mensagem não é do atendimento, não está `failed` ou o atendimento
+está encerrado), `MESSAGE_SEND_FAILED` (502 — falhou de novo; a linha continua `failed`; também
+quando o arquivo do anexo sumiu do disco), `VALIDATION_ERROR` (400, id não-uuid), `FORBIDDEN`
+(403, `platform_operator`)
+
+### POST /conversations/:id/presence (CRMLAB-67, D-226/D-227)
+Presença da atendente para o WhatsApp do paciente.
+
+**Request:**
+```json
+{ "presence": "paused" }
+```
+- `presence` ∈ `paused | composing`. `paused`: a tela manda ao **abrir** a conversa — assina a
+  presença do paciente (sem isso o WhatsApp não avisa "digitando…"/"online") sem mostrar nada a
+  ele. `composing`: enquanto a atendente digita, no máximo 1 a cada 4 s — o paciente vê
+  "digitando…" por 4 s.
+
+**Response:** `204 No Content`, **na hora** — o gateway é chamado em segundo plano, uma
+tentativa, erro só em log. Só age no canal `whatsapp` em `connection_mode: "qr"` (Evolution
+`POST /chat/sendPresence/:instance`); Cloud API, `direct`/`web` e conversa encerrada → `204` sem
+efeito.
+
+**Erros:** `NOT_FOUND` (404 — conversa fora do recorte ou de outro tenant), `VALIDATION_ERROR`
+(400), `FORBIDDEN` (403, `platform_operator`)
+
 ### POST /conversations/:id/read
 Marcar a conversa como lida sem carregar o histórico. Idempotente.
+
+**Response:** `204 No Content`
+
+**Erros:** `NOT_FOUND` (404 — inexistente, de outro tenant ou fora do recorte do
+usuário), `VALIDATION_ERROR` (400, `:id` não-uuid), `FORBIDDEN` (403, `platform_operator`)
+
+### POST /conversations/:id/unread (CRMLAB-68, D-229)
+"Marcar como não lida", padrão WhatsApp Web. Sem corpo. Idempotente.
+
+Grava `unreadCount = max(unreadCount, 1)`: a conversa volta com a bolinha e só zera ao ser
+aberta de novo (`GET /conversations/:id`) ou por `POST /read`. O contador é **por conversa**
+(o mesmo que a fila já mostra), então vale para quem mais vê a conversa. **Não** muda
+`lastMessageAt` nem o status das mensagens, **não** emite WebSocket (o aviso de mensagem nova
+não dispara) e **não** gera audit log.
 
 **Response:** `204 No Content`
 
@@ -1119,12 +1427,14 @@ responder):
   `videoMessage`/`stickerMessage` são reconhecidos ao lado de
   `conversation`/`extendedTextMessage` (o webhook é registrado com
   `base64: true`). Vídeo e figurinha entraram na auditoria de 2026-09-17 — antes eram
-  descartados em silêncio. Ambos chegam pelo `messageType` derivado do mime
-  (`video/*` → `doc`): anexo genérico é pior que um player dedicado, mas incomparavelmente
-  melhor que perda silenciosa, e não espalha mudança de contrato pelo frontend.
-  **Sem arquivo:** `locationMessage`/`liveLocationMessage`/`contactMessage`/
-  `contactsArrayMessage` viram uma linha de texto descritiva (`[Localizacao] …`,
-  `[Contato] …`) em vez de sumir.
+  descartados em silêncio. **Desde o CRMLAB-70 (D-235):** vídeo gravado como `video/*` vira
+  `messageType: "video"` (`seconds` → `media.durationSec`, `jpegThumbnail` → `media.thumbnail`);
+  figurinha com arquivo de imagem vira `"sticker"`; áudio leva `durationSec` e PDF `pageCount`.
+  **Sem arquivo:** `locationMessage`/`liveLocationMessage` viram `messageType: "location"` com
+  `location` estruturado (sem coordenada válida: a linha de texto `[Localizacao] …` de antes);
+  `contactMessage`/`contactsArrayMessage` viram `"contact"` com `contacts` (nome do
+  `displayName`/`FN:`, telefone do `waid=` ou do `TEL` do vCard, até 10). `content` = texto de
+  fallback (`📍 …`, `👤 …`).
   Arquivo acima do teto (15 MiB) é recusado com log — a mensagem não é
   criada, mas o evento continua respondendo `200 {received:true}` do mesmo jeito. **Risco
   aceito:** o campo exato onde o gateway v2.3.7 grava o base64 não foi confirmado contra um
@@ -1136,7 +1446,7 @@ responder):
   | Situação | Efeito |
   |---|---|
   | `key.id` já existe em `messages` | eco do CRM ou reentrega — nada gravado, nada emitido |
-  | `key.id` desconhecido, com envio do CRM **em voo** na conversa (atendente, `status: sent`, sem `externalId`, < 60 s) | espera até 8 s o envio gravar o `externalId`; apareceu → eco, descarta |
+  | `key.id` desconhecido, com envio do CRM **em voo** na conversa (atendente ou mensagem automática, `status: sent`, sem `externalId`, < 60 s) | espera até 8 s o envio gravar o `externalId`; apareceu → eco, descarta |
   | `key.id` desconhecido, sem envio em voo | mensagem do celular: `MessageService.createFromPhone` |
 
   A mensagem do celular volta em `GET /conversations/:id/messages` como
@@ -1147,6 +1457,11 @@ responder):
   parser das recebidas. **Rede de segurança:** se o envio do CRM demorar mais que a espera, a
   cópia do celular é apagada quando o envio grava o mesmo `externalId` (conflito no índice da
   019), e `conversation.new_message` é reemitido — a duplicata nunca fica.
+
+  **Mensagem automática (reingajamento, CRMLAB-62 — D-211 item 5):** o que o sistema manda
+  sozinho volta como `senderType: "agent"`, `senderId: null`, `senderName: "Mensagem automática"`
+  (coluna `messages.automation = 'reengagement'`). Mesmo lado das enviadas pelo CRM; não é
+  cópia do celular e nunca é apagada pela rede de segurança acima.
 - `CONNECTION_UPDATE` com `state: "open"` → grava `connected_at`, `phone_number` (informado
   pelo gateway), `connection_mode: "qr"`, `is_active: true` em `tenant_channels`.
 - `CONNECTION_UPDATE` com `state: "close"` (inclusive `loggedOut`, que é como o gateway informa
@@ -1161,6 +1476,31 @@ responder):
 - `QRCODE_UPDATED` → grava o QR vigente no cache (`evolution:qr:<tenantId>`, TTL 70s), que é
   de onde `GET /settings/channels/whatsapp/qr` passa a ler. **Este evento é obrigatório na
   assinatura do webhook** (`evolution-client.ts`): sem ele o polling não tem fonte de QR.
+
+**Citação, reação, edição e apagamento (CRMLAB-66, D-220..D-223).** Eventos assinados:
+`EVOLUTION_WEBHOOK_EVENTS` (`lib/evolution-client.ts`) = `MESSAGES_UPSERT`, `MESSAGES_EDITED`,
+`MESSAGES_DELETE`, `MESSAGES_UPDATE`, `PRESENCE_UPDATE` (os dois do CRMLAB-67),
+`CONNECTION_UPDATE`, `QRCODE_UPDATED`. Instância criada antes disso recebe a
+lista nova sozinha: o backend reaplica `/webhook/set` em todo laboratório `qr` **ao subir** e ao
+conectar (D-223). Todos passam pela mesma checagem de `instance` do `MESSAGES_UPSERT`.
+
+| Payload (forma do Evolution v2) | Efeito |
+|---|---|
+| `messages.upsert` com `data.contextInfo.stanzaId` (ou `message.<tipo>.contextInfo.stanzaId`) | mensagem gravada com `quoted_external_id` = `stanzaId` — a tela mostra a citação |
+| `messages.upsert` com `messageType: "reactionMessage"`, `message.reactionMessage: { key: { id }, text: "👍" }` | reação do lado de quem mandou (`key.fromMe` false = paciente, true = laboratório) na mensagem `reactionMessage.key.id`; `text: ""` remove. Mensagem alvo desconhecida → descarte `mensagem_alvo_desconhecida` |
+| `messages.upsert` com `message.protocolMessage: { type: "REVOKE" \| 0, key: { id } }` | marca `deleted_at` na mensagem `key.id` (D-220) |
+| `messages.upsert` com `message.protocolMessage: { type: "MESSAGE_EDIT" \| 14, key: { id }, editedMessage: {...} }` (ou `message.editedMessage.message.protocolMessage`) | edição: texto novo em `content`, anterior em `message_edits` |
+| `messages.edited` com `data` = o `protocolMessage` (`{ key, type, editedMessage }`) | idem — REVOKE que chegue por aqui também apaga |
+| `messages.delete` com `data` = a `key` achatada (`{ remoteJid, fromMe, id, status: "DELETED" }`) ou `{ key: {...} }` | marca `deleted_at` |
+| `messages.update` com `data = { keyId, remoteJid, fromMe: true, status }` — `status` texto (`ERROR`, `PENDING`, `SERVER_ACK`, `DELIVERY_ACK`, `READ`, `PLAYED`) ou número 0..5 (CRMLAB-67, D-225) | tique da mensagem `external_message_id = keyId`: `ERROR` → `failed`, `SERVER_ACK` → `sent`, `DELIVERY_ACK` → `delivered`, `READ`/`PLAYED` → `read`; `PENDING` ignorado. **Nunca rebaixa**; mudou → WS `message.status_updated`. `fromMe: false`, `status@broadcast` e status desconhecido: sem efeito |
+| `presence.update` com `data = { id: "<jid>", presences: { "<jid>": { lastKnownPresence, lastSeen? } } }` (CRMLAB-67, D-226) | **nada no banco**: WS `conversation.presence` para a conversa do telefone (`composing` → `typing`, `recording` → `recording`, `available`/`paused` → `online`, `unavailable` → `offline`; `lastSeen` em segundos → `lastSeenAt` ISO). Sem conversa, grupo ou `@lid`: sem efeito. Fora do anti-replay (o corpo se repete) |
+
+Apagar e editar: **nunca `DELETE`**; `deleted_by`/`edited_by` = o lado de quem mandou a original
+(no WhatsApp só o autor apaga ou edita); mensagem de sistema nunca é afetada; editar mensagem já
+apagada é ignorado; edição com o mesmo texto é no-op. Os dois gravam audit log
+(`message_deleted_by_sender`/`message_edited_by_sender`, sem o texto) e os três (reação, edição,
+apagamento) emitem `conversation.message_updated`. Alvo desconhecido → descarte contável
+(`mensagem_alvo_desconhecida`).
 
 **Idempotente:** mesma disciplina do webhook Meta — reentrega da mesma mensagem
 (`externalId`/`key.id`) não duplica linha nem evento. Desde a migração **019** a garantia é
@@ -1195,6 +1535,7 @@ descarte correto —, mas todos precisam ser contáveis, senão não há como di
 | `sem_texto_nem_midia` | `message` vazio | não |
 | `midia_recusada` | arquivo acima do teto | esperado, mas o paciente não é avisado |
 | `erro_no_processamento` | exceção ao gravar | **sim** |
+| `mensagem_alvo_desconhecida` | reação, edição ou apagamento de uma mensagem que não está no CRM (anterior à conversa) — CRMLAB-66 | não |
 
 ---
 
@@ -1441,6 +1782,7 @@ Histórico de interações: mensagens, propostas e mudanças de estágio em **um
 - `preview` é o `content` da mensagem **truncado em 160 caracteres** pelo backend, sem
   reticências adicionadas — a tela decide como indicar o corte. Anexo sem texto vira string
   vazia; `messageType` diz o que era.
+  Mensagem apagada pelo remetente (CRMLAB-66, D-220) também vem com `preview` vazio.
 - **Mesmo recorte de visibilidade da ficha:** entram só mensagens/aberturas de conversas
   visíveis ao solicitante e propostas visíveis por D-042. Sem isso a timeline seria um caminho
   lateral para o atendente ler a conversa de outro atendente.
@@ -2614,7 +2956,7 @@ código no banco, sobre o catálogo inteiro — nunca sobre as linhas já carreg
 combinação que torna todo exame ativo alcançável na tela de orçamento; antes dela a tela pedia uma
 página só e o resto do catálogo era invisível.
 
-### POST /exams (manager/admin apenas)
+### POST /exams (attendant/manager/admin — CRMLAB-78, D-248)
 Criar novo exame no catálogo.
 
 **Request:**
@@ -2654,7 +2996,7 @@ grava `null`. `synonyms` é gravado na tabela filha `exam_synonyms` na mesma tra
 }
 ```
 
-### PATCH /exams/:id (manager/admin apenas)
+### PATCH /exams/:id (attendant/manager/admin — CRMLAB-78, D-248)
 Atualizar exame.
 
 **Request:**
@@ -2700,7 +3042,7 @@ simplesmente não aparece (é o caso que cai em `priceSource: "private"` no orç
 
 **Erros:** `NOT_FOUND` (exame inexistente ou de outro tenant)
 
-### PUT /exams/:id/prices (manager/admin apenas)
+### PUT /exams/:id/prices (attendant/manager/admin — CRMLAB-78, D-248)
 Upsert em lote. **Semântica de PUT — estado completo**: linha ausente do corpo é **removida**.
 Auditado (`update_exam_prices`).
 
@@ -2893,7 +3235,7 @@ Listar pacotes do laboratório. Qualquer papel autenticado do tenant.
 `"private"` no fallback) — mesmo mecanismo do §4, mas a tabela de override é do PACOTE
 (`exam_package_prices`), não a soma dos overrides de cada exame.
 
-### POST /exam-packages (manager/admin apenas)
+### POST /exam-packages (attendant/manager/admin — CRMLAB-78, D-248)
 Criar novo pacote.
 
 **Request:**
@@ -2911,7 +3253,7 @@ Criar novo pacote.
 
 **Response (201):** mesmo shape de um item de `GET /exam-packages` (sem `?insuranceId=`).
 
-### PATCH /exam-packages/:id (manager/admin apenas)
+### PATCH /exam-packages/:id (attendant/manager/admin — CRMLAB-78, D-248)
 Atualizar pacote. Todos os campos opcionais (PATCH parcial); `examIds`, quando presente,
 **substitui o conjunto inteiro** de exames incluídos (semântica de PUT sobre a coleção filha,
 igual a `synonyms` no §4).
@@ -2936,7 +3278,7 @@ Preço do pacote por convênio (todos os cadastrados para ele). Qualquer papel a
 { "prices": [{ "insuranceId": "8f2a1c4b-6d39-4f70-9a12-5c8e3b7d1f06", "price": 99.90 }] }
 ```
 
-### PUT /exam-packages/:id/prices (manager/admin apenas)
+### PUT /exam-packages/:id/prices (attendant/manager/admin — CRMLAB-78, D-248)
 Upsert em lote — **semântica de PUT**: linha ausente do corpo é removida. Mesmo contrato do
 `PUT /exams/:id/prices` (§4), aplicado a `exam_package_prices`.
 
@@ -3764,6 +4106,21 @@ completo com os padrões aplicados. Nenhum outro código lê `funnel_rules` dire
   },
   "sendMessage": {
     "template": "Olá, {paciente}! Segue o orçamento nº {numero_orcamento} ({convenio}), no valor de {valor}."
+  },
+  "reengagement": {
+    "first": {
+      "enabled": false,
+      "hours": 1,
+      "message": "Olá! Passando para saber se ficou alguma dúvida sobre o que conversamos. Seguimos à disposição para ajudar."
+    },
+    "second": {
+      "enabled": false,
+      "hours": 24,
+      "message": "Olá! Como não tivemos retorno, vamos deixar o atendimento em aberto. Quando quiser, é só responder esta mensagem."
+    }
+  },
+  "lisSource": {
+    "spreadsheetImport": { "enabled": false }
   }
 }
 ```
@@ -3781,6 +4138,9 @@ completo com os padrões aplicados. Nenhum outro código lê `funnel_rules` dire
 | `automation.dayCounting` | `calendar` (corridos) ou `business` (úteis) | CRMLAB-59 |
 | `manualMoves.*` | Travas de movimentação manual (D-192), via `checkTransition` | este card (back e front) |
 | `sendMessage.template` | Modelo do WhatsApp; render por `renderSendMessageTemplate` | CRMLAB-58 |
+| `reengagement.first` | Paciente sem responder há `hours` depois da última mensagem da atendente → manda `message` (D-211) | CRMLAB-62 |
+| `reengagement.second` | `hours` depois do envio do 1º, se continuar sem resposta → manda `message`. Só com o 1º ligado | CRMLAB-62 |
+| `lisSource.spreadsheetImport` | Importar a planilha do LIS (plano B; a carga principal é a API do Bitlab). Padrão **`false`**. `false` → `POST /lis-imports` = `SPREADSHEET_IMPORT_DISABLED` e o botão "Importar" some em Resultados (D-189) | CRMLAB-53 |
 
 `checkTransition`, `canTransition`, `allowedTargets`, `buildAllowedTransitions`, `canReopen`,
 `SEQUENTIAL_TRANSITIONS`, `REOPEN_TARGETS`, `findUnknownTemplateVariables` e
@@ -3807,7 +4167,11 @@ Validação (`VALIDATION_ERROR`, `details.fields` pelo caminho do campo):
 - `origin`: ao menos uma das duas ligada depois do merge → `fields.origin`;
 - `sendMessage.template`: string `1..1000` depois do `trim`, só com as variáveis
   `{paciente}`, `{numero_orcamento}`, `{valor}`, `{convenio}` → senão
-  `fields["sendMessage.template"]` citando as desconhecidas.
+  `fields["sendMessage.template"]` citando as desconhecidas;
+- `reengagement.*.message`: string `1..1000` depois do `trim`, texto fixo (sem variáveis) →
+  `fields["reengagement.first.message"]` / `["reengagement.second.message"]`;
+- `reengagement.second.enabled: true` com o 1º desligado (depois do merge) →
+  `fields["reengagement.second.enabled"] = "Ligue o 1º reingajamento antes do 2º"` (D-211 item 4).
 
 **Response (200):** o objeto completo depois da escrita (mesmo shape do `GET`), cru.
 
@@ -3816,6 +4180,52 @@ Gera audit log `update_funnel_rules` (`entityType: "funnel_rules"`, `entityId` =
 frente (D-190 item 6).
 
 **Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
+
+---
+
+## 6d. Holidays (Feriados — CRMLAB-62)
+
+Feriados que o reingajamento respeita (D-213). Os **nacionais** são calculados por ano em
+`shared/types/reengagement.types.ts` (`nationalHolidays`) e **não são gravados**: fixos (1/1,
+21/4, 1/5, 7/9, 12/10, 2/11, 15/11, 20/11, 25/12) e móveis pela Páscoa (Carnaval segunda e terça,
+Sexta-feira Santa, Corpus Christi). Os do **laboratório** ficam em `tenant_holidays`
+(SCHEMA.md §34). Shapes: `Holiday`, `HolidaysResponse`, `CreateHolidayRequest`.
+
+**Papéis:** `GET` todo perfil de laboratório; `POST`/`DELETE` **manager/admin**
+(`attendant` → `403 FORBIDDEN`, `details.requiredRoles: ["manager","admin"]`). `platform_operator` → `403`.
+
+### GET /settings/holidays?year=AAAA
+`year` opcional (padrão: ano corrente), inteiro `2000..2100` → senão `VALIDATION_ERROR` em
+`fields.year`.
+
+**Response (200):**
+```json
+{
+  "year": 2026,
+  "national": [
+    { "id": null, "date": "2026-01-01", "description": "Confraternização Universal", "source": "national" }
+  ],
+  "custom": [
+    { "id": "8b1d…", "date": "2026-03-19", "description": "São José", "source": "custom" }
+  ]
+}
+```
+As duas listas em ordem de data. `custom` só traz os do ano pedido e do próprio laboratório.
+
+### POST /settings/holidays (manager/admin)
+**Request:** `{ "date": "2026-03-19", "description": "São José" }`
+- `date`: `YYYY-MM-DD` de um dia que existe, ano `2000..2100` → senão `fields.date`;
+- `description`: `1..100` depois do `trim` → senão `fields.description`;
+- data já cadastrada no laboratório → `409 CONFLICT` (`details.fields.date`).
+
+**Response (201):** o `Holiday` criado (`source: "custom"`). Audit `create_holiday`
+(`entityType: "holiday"`).
+
+### DELETE /settings/holidays/:id (manager/admin)
+`:id` UUID (senão `VALIDATION_ERROR`). **204** sem corpo. Inexistente ou de outro laboratório →
+`404 NOT_FOUND`. Audit `delete_holiday` com `oldValues: { date, description }`.
+
+**Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403), `NOT_FOUND` (404), `CONFLICT` (409)
 
 ---
 
@@ -4269,7 +4679,13 @@ Gera audit log `import_lis_spreadsheet` (`entityType: "lis_import"`) e invalida 
 **Erros:** `VALIDATION_ERROR` (400) com `details.reason` ∈ `pdf_disguised | missing_column |
 empty` (arquivo é PDF renomeado; falta a coluna `ORCAMENTO`; planilha sem nenhuma linha de
 dado), `MEDIA_TOO_LARGE` (413, acima de 10 MiB), `FORBIDDEN` (403,
-`details.requiredRoles: ["manager","admin"]`)
+`details.requiredRoles: ["manager","admin"]`), `SPREADSHEET_IMPORT_DISABLED` (409, a regra
+`lisSource.spreadsheetImport` está desligada — o padrão; checado antes de ler o arquivo, nada é
+gravado. CRMLAB-53, D-189).
+
+Desde a D-188 cada linha com `VALOR_PAGO` vira um pagamento no extrato (`lis_budget_payments`) e o
+recebido do orçamento é a soma deles com teto na requisição (BUSINESS_RULES.md §11.11). A coluna
+`DATA_PAGAMENTO` é lida com a hora, quando a célula tem.
 
 #### GET /lis-imports
 Histórico de importações e purges do tenant.
@@ -4560,8 +4976,9 @@ Configuração e disparo da sincronização dos orçamentos pela API de Orçamen
   "lastRunAt": "2026-09-25T14:00:00.000Z",
   "lastSuccessAt": "2026-09-25T14:00:00.000Z",
   "lastError": null,
+  "lastFullScanOn": "2026-09-25",
   "running": false,
-  "intervalMinutes": 2
+  "intervalSeconds": 30
 }
 ```
 - Sem linha em `lis_sync_settings`: `enabled: false`, `apiKeySet: false`, `apiKeyMasked: null` e
@@ -4570,7 +4987,11 @@ Configuração e disparo da sincronização dos orçamentos pela API de Orçamen
   chave de acesso. A sincronização foi desligada."`). Nunca traz a chave nem o corpo cru da
   resposta. Volta a `null` na primeira rodada bem-sucedida.
 - `running`: há uma rodada em andamento agora (trava em memória, D-185 item 5).
-- `intervalMinutes`: de `LIS_SYNC_INTERVAL_MS`, só para a tela dizer "a cada N minutos".
+- `intervalSeconds` (D-249, substitui `intervalMinutes`): `LIS_SYNC_INTERVAL_MS / 1000`, só para a
+  tela dizer "a cada 30 s" / "a cada 2 min". `0` = agendador desligado neste servidor (hml).
+- `lastFullScanOn` (CRMLAB-53, D-189): dia (`YYYY-MM-DD`, Brasília) da última releitura dos últimos
+  90 dias que terminou sem erro — é ela que pega os estornos. `null` = nunca. A releitura roda no
+  primeiro tique depois das 03:00; "Sincronizar agora" continua incremental.
 
 #### PATCH /settings/lis-integration (admin)
 

@@ -98,13 +98,13 @@ describe('ConversationItem', () => {
     expect(screen.queryByTestId('conversation-waiting')).not.toBeInTheDocument();
   });
 
-  it('selecionado: fundo neutral-100 + shadow-sm', () => {
+  it('selecionado: fundo no tom claro do acento (D-251)', () => {
     render(<ConversationItem conversation={conversation()} selected now={NOW} />);
     const item = screen.getByTestId('conversation-item');
 
     expect(item).toHaveAttribute('data-selected', 'true');
-    expect(item.className).toContain('bg-neutral-100');
-    expect(item.className).toContain('shadow-sm');
+    expect(item.className).toContain('bg-chat-selected');
+    expect(item.className).not.toContain('hover:bg-chat-hover');
   });
 
   it('sem nome de paciente, cai no telefone', () => {
@@ -162,5 +162,47 @@ describe('ConversationItem — fixar (Onda 8 §2.3)', () => {
 
     await user.click(screen.getByRole('button', { name: 'Fixar conversa com Marina Alves' }));
     expect(onClick).not.toHaveBeenCalled();
+  });
+});
+
+describe('ConversationItem — "Marcar como não lida" (CRMLAB-68, D-229)', () => {
+  it('o botão "⋯" abre o menu e a opção chama onMarkUnread', async () => {
+    const user = userEvent.setup();
+    const onMarkUnread = vi.fn();
+    render(
+      <ConversationItem
+        conversation={conversation({ unreadCount: 0 })}
+        now={NOW}
+        onMarkUnread={onMarkUnread}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: 'Mais opções da conversa com Marina Alves' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Marcar como não lida' }));
+    expect(onMarkUnread).toHaveBeenCalledWith('c-1');
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('clique direito também abre o menu; Esc fecha', async () => {
+    const user = userEvent.setup();
+    render(
+      <ConversationItem conversation={conversation({ unreadCount: 0 })} onMarkUnread={vi.fn()} />,
+    );
+    await user.pointer({ keys: '[MouseRight]', target: screen.getByTestId('conversation-item') });
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('com não lidas (ou sem handler) não há botão nem menu', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <ConversationItem conversation={conversation({ unreadCount: 2 })} onMarkUnread={vi.fn()} />,
+    );
+    expect(screen.queryByRole('button', { name: /Mais opções/ })).not.toBeInTheDocument();
+    await user.pointer({ keys: '[MouseRight]', target: screen.getByTestId('conversation-item') });
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+
+    rerender(<ConversationItem conversation={conversation({ unreadCount: 0 })} />);
+    expect(screen.queryByRole('button', { name: /Mais opções/ })).not.toBeInTheDocument();
   });
 });

@@ -174,6 +174,10 @@ describe('useUIStore', () => {
     expect(useUIStore.getState().activeModal).toBeNull();
   });
 
+  it('painel de contexto do inbox começa fechado (CRMLAB-74)', () => {
+    expect(useUIStore.getInitialState().contextPanelOpen).toBe(false);
+  });
+
   it('alterna o painel de contexto do inbox', () => {
     useUIStore.setState({ contextPanelOpen: true });
     useUIStore.getState().toggleContextPanel();

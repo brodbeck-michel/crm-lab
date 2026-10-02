@@ -54,7 +54,7 @@ export default function QuickReplies() {
           {quickReplies.map((reply) => (
             <li
               key={reply.id}
-              className="flex items-start gap-md rounded-md border border-neutral-200 bg-surface p-md"
+              className="flex items-start gap-md rounded-md border border-neutral-200 bg-neutral-100 p-md"
             >
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-baseline gap-sm">
@@ -133,7 +133,7 @@ export default function QuickReplies() {
 
 function EmptyState() {
   return (
-    <div className="rounded-md border border-neutral-200 bg-surface p-lg">
+    <div className="rounded-md border border-neutral-200 bg-neutral-100 p-lg">
       <p className="font-body text-body text-text">Nenhuma resposta rápida ainda</p>
       <p className="mt-xs font-body text-caption text-neutral-600">
         Respostas rápidas são textos prontos para as perguntas de sempre. Depois de criar uma, no

@@ -21,14 +21,30 @@ describe('applyTheme', () => {
     document.documentElement.removeAttribute('data-font');
   });
 
-  it('escreve as 5 cores base no elemento raiz', () => {
+  it('escreve só accent e accent2 no elemento raiz', () => {
     applyTheme(theme);
     const root = document.documentElement;
     expect(root.style.getPropertyValue('--color-accent')).toBe('#2f6f9f');
     expect(root.style.getPropertyValue('--color-accent-2')).toBe('#4f9d8b');
-    expect(root.style.getPropertyValue('--color-bg')).toBe('#eef3f7');
-    expect(root.style.getPropertyValue('--color-surface')).toBe('#dbe6ef');
-    expect(root.style.getPropertyValue('--color-text')).toBe('#1a1a1a');
+  });
+
+  it('ignora bg/surface/text do tema salvo — fundo e texto são fixos no CSS (D-250)', () => {
+    applyTheme(theme);
+    const root = document.documentElement;
+    expect(root.style.getPropertyValue('--color-bg')).toBe('');
+    expect(root.style.getPropertyValue('--color-surface')).toBe('');
+    expect(root.style.getPropertyValue('--color-text')).toBe('');
+  });
+
+  it('remove um --color-bg/-surface/-text inline que tenha sobrado', () => {
+    const root = document.documentElement;
+    root.style.setProperty('--color-bg', '#f5ead8');
+    root.style.setProperty('--color-surface', '#ebddc5');
+    root.style.setProperty('--color-text', '#222222');
+    applyTheme(theme);
+    expect(root.style.getPropertyValue('--color-bg')).toBe('');
+    expect(root.style.getPropertyValue('--color-surface')).toBe('');
+    expect(root.style.getPropertyValue('--color-text')).toBe('');
   });
 
   it('escreve os data-attributes de raio e fonte', () => {

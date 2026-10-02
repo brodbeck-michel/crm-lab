@@ -27,14 +27,20 @@ export interface NewConversationModalProps {
   onClose: () => void;
   /** Conversa criada ou reaproveitada — a tela a abre e seleciona. */
   onStarted: (conversationId: string) => void;
+  /** Telefone já preenchido — "Conversar" do cartão de contato (CRMLAB-70, D-236). */
+  initialPhone?: string;
 }
 
-export function NewConversationModal({ onClose, onStarted }: NewConversationModalProps) {
+export function NewConversationModal({
+  onClose,
+  onStarted,
+  initialPhone,
+}: NewConversationModalProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const handleApiError = useApiErrorHandler();
 
-  const [phone, setPhone] = useState('');
+  const [phone, setPhone] = useState(initialPhone ?? '');
   const [content, setContent] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [phoneTouched, setPhoneTouched] = useState(false);
@@ -135,7 +141,7 @@ export function NewConversationModal({ onClose, onStarted }: NewConversationModa
           type="tel"
           inputMode="tel"
           autoComplete="off"
-          autoFocus
+          autoFocus={!initialPhone}
           placeholder="(48) 99999-1234"
           value={phone}
           maxLength={20}
@@ -151,6 +157,7 @@ export function NewConversationModal({ onClose, onStarted }: NewConversationModa
         />
         <TextArea
           label="Mensagem"
+          autoFocus={Boolean(initialPhone)}
           rows={4}
           maxLength={MAX_CONTENT}
           placeholder="Olá! Aqui é do laboratório…"

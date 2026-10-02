@@ -3,13 +3,20 @@
  *
  *   GET   /api/v1/conversations             lista + counts dos chips
  *   GET   /api/v1/conversations/assignees   quem pode receber conversa (menu Transferir)
+ *   GET   /api/v1/conversations/search/messages  busca pelo conteudo (D-228)
+ *   GET   /api/v1/conversations/:id/messages?q=  busca dentro da conversa (D-228)
  *   POST  /api/v1/conversations             atendimento manual (201)
  *   POST  /api/v1/conversations/whatsapp    "Nova conversa": cria/reaproveita e envia (201)
  *   GET   /api/v1/conversations/:id         conversa + mensagens (marca como lida)
  *   POST  /api/v1/conversations/:id/messages  envia mensagem (201)
  *   PATCH /api/v1/conversations/:id         status / assignedTo / tags
  *   POST  /api/v1/conversations/:id/attachments  anexo (base64 em JSON, 201)
+ *   PUT   /api/v1/conversations/:id/messages/:messageId/reaction  reage (200, D-222)
+ *   DELETE /api/v1/conversations/:id/messages/:messageId/reaction remove a reacao (204)
+ *   POST  /api/v1/conversations/:id/messages/:messageId/retry  reenvia a que falhou (200, D-227)
+ *   POST  /api/v1/conversations/:id/presence  "digitando"/assinatura de presenca (204, D-226)
  *   POST  /api/v1/conversations/:id/read    zera o contador de nao lidas (204)
+ *   POST  /api/v1/conversations/:id/unread  marca como nao lida (204, D-229)
  *   POST  /api/v1/conversations/:id/pin     fixa a conversa para o usuario (204)
  *   DELETE /api/v1/conversations/:id/pin    desafixa (204)
  *
@@ -25,27 +32,38 @@ import { z } from 'zod';
 import type {
   CreateAttachmentRequest,
   CreateConversationRequest,
+  ConversationDetail,
   CreateConversationResponse,
   GetConversationResponse,
   ListAssigneesResponse,
   ListConversationsQuery,
   ListConversationsResponse,
   Message,
+  OpenWhatsAppConversationRequest,
+  SendPresenceRequest,
+  SearchMessagesQuery,
+  SearchMessagesResponse,
+  SetMessageReactionRequest,
   StartWhatsAppConversationRequest,
   StartWhatsAppConversationResponse,
   UpdateConversationRequest,
   UpdateConversationResponse,
 } from '@crm-lab/shared';
-import { normalizeBrazilianPhone } from '@crm-lab/shared';
+import { MAX_CAPTION_LENGTH, normalizeBrazilianPhone } from '@crm-lab/shared';
 import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
 import { getContext } from '../http/context.js';
 import { denyPlatformOperator, requireAuth } from '../http/middleware/auth.js';
 import { validate, validated } from '../http/middleware/validate.js';
+import { notFound } from '../http/errors.js';
 import { ConversationRepository, phoneDigits } from '../repositories/conversation.repository.js';
 import { MediaRepository } from '../repositories/media.repository.js';
 import { MessageRepository } from '../repositories/message.repository.js';
 import { createAuditService } from '../services/audit.service.js';
-import { ConversationService, MAX_LIMIT } from '../services/conversation.service.js';
+import {
+  ConversationService,
+  MAX_LIMIT,
+  MAX_SEARCH_LIMIT,
+} from '../services/conversation.service.js';
 import { MediaService } from '../services/media.service.js';
 import { MAX_MESSAGE_LIMIT, MessageService } from '../services/message.service.js';
 import { createWhatsAppService, type WhatsAppService } from '../services/whatsapp.service.js';
@@ -53,6 +71,11 @@ import { createWhatsAppService, type WhatsAppService } from '../services/whatsap
 export const listConversationsQuerySchema = z.object({
   status: z.enum(['active', 'closed']).optional(),
   scope: z.enum(['mine', 'unassigned', 'all']).optional(),
+  /** "Nao lidas" (D-229). Query string: `true`/`false`; `false` = sem filtro. */
+  unread: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((value) => (value === 'true' ? true : undefined)),
   search: z
     .string()
     .max(120)
@@ -67,11 +90,46 @@ export const listConversationsQuerySchema = z.object({
   order: z.enum(['asc', 'desc']).optional(),
 });
 
-/** `?messageLimit=50&page=1` — o nome vem do contrato (API_CONTRACTS.md §2). */
-export const getConversationQuerySchema = z.object({
-  messageLimit: z.coerce.number().int().min(1).max(MAX_MESSAGE_LIMIT).optional(),
-  limit: z.coerce.number().int().min(1).max(MAX_MESSAGE_LIMIT).optional(),
+/**
+ * `?messageLimit=50&page=1` ou `?messageLimit=50&before=<messageId>` — o nome
+ * vem do contrato (API_CONTRACTS.md §2). `before` e o cursor (D-237) e nao
+ * convive com `page`: os dois juntos seriam duas ideias de "qual pagina".
+ */
+export const getConversationQuerySchema = z
+  .object({
+    messageLimit: z.coerce.number().int().min(1).max(MAX_MESSAGE_LIMIT).optional(),
+    limit: z.coerce.number().int().min(1).max(MAX_MESSAGE_LIMIT).optional(),
+    page: z.coerce.number().int().min(1).optional(),
+    before: z.string().uuid().optional(),
+    after: z.string().uuid().optional(),
+    around: z.string().uuid().optional(),
+  })
+  .refine(
+    (query) =>
+      [query.before, query.after, query.around, query.page].filter((v) => v !== undefined)
+        .length <= 1,
+    {
+      // D-230 item 1: cada um e uma ideia diferente de "qual janela".
+      message: '`before`, `after`, `around` e `page` sao excludentes',
+      path: ['before'],
+    },
+  );
+
+/**
+ * `?q=` da busca nas mensagens (D-228): 2 a 120 caracteres, com pelo menos 2
+ * letras ou digitos — pontuacao sozinha nao e termo.
+ */
+export const searchMessagesQuerySchema = z.object({
+  q: z
+    .string()
+    .trim()
+    .min(2)
+    .max(120)
+    .refine((value) => (value.match(/[\p{L}\p{N}]/gu)?.length ?? 0) >= 2, {
+      message: 'Informe ao menos 2 letras ou numeros',
+    }),
   page: z.coerce.number().int().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(MAX_SEARCH_LIMIT).optional(),
 });
 
 /**
@@ -113,10 +171,29 @@ export const startWhatsAppConversationSchema = z.object({
   content: z.string().trim().min(1).max(4000),
 });
 
+/** `POST /conversations/whatsapp/open` (CRMLAB-70, D-236) — o `phone` do schema acima. */
+export const openWhatsAppConversationSchema = startWhatsAppConversationSchema.pick({ phone: true });
+
 export const createMessageSchema = z.object({
   content: z.string().trim().min(1).max(4000),
   messageType: z.enum(['text', 'image', 'audio', 'pdf', 'doc']).optional(),
   attachmentUrl: z.string().max(500).nullish(),
+  /** Responder citando (CRMLAB-66, D-221). */
+  quotedMessageId: z.string().uuid().nullish(),
+});
+
+/** Emoji de 1..32 BYTES (a coluna e VARCHAR(32) e um emoji composto passa de 1 char) — D-222. */
+export const setReactionSchema = z.object({
+  emoji: z
+    .string()
+    .trim()
+    .min(1)
+    .refine((value) => Buffer.byteLength(value, 'utf8') <= 32, 'Emoji acima de 32 bytes'),
+});
+
+export const messageParamsSchema = z.object({
+  id: z.string().uuid(),
+  messageId: z.string().uuid(),
 });
 
 export const updateConversationSchema = z
@@ -132,6 +209,9 @@ export const updateConversationSchema = z
 
 export const conversationIdParamSchema = z.object({ id: z.string().uuid() });
 
+/** `POST /:id/presence` (D-226/D-227). */
+export const sendPresenceSchema = z.object({ presence: z.enum(['paused', 'composing']) });
+
 /**
  * Base64 em JSON, nao multipart (spec Onda 8 §4.3): Express 4 nao faz
  * multipart sozinho, e o Evolution ja resolve mídia em base64 nos dois
@@ -141,6 +221,9 @@ export const createAttachmentSchema = z.object({
   fileName: z.string().trim().min(1).max(255),
   mimeType: z.string().trim().min(1).max(127),
   contentBase64: z.string().min(1),
+  quotedMessageId: z.string().uuid().nullish(),
+  // Legenda (CRMLAB-69, D-231): aparada; vazia = sem legenda.
+  caption: z.string().trim().max(MAX_CAPTION_LENGTH).nullish(),
 });
 
 type CreateMessageBody = z.infer<typeof createMessageSchema>;
@@ -226,12 +309,16 @@ export function getConversation(services: ConversationServices): RequestHandler 
     const page = await services.messages.listByConversation(ctx.tenantId, id, {
       ...(query.page !== undefined ? { page: query.page } : {}),
       ...(messageLimit !== undefined ? { limit: messageLimit } : {}),
+      ...(query.before !== undefined ? { before: query.before } : {}),
+      ...(query.after !== undefined ? { after: query.after } : {}),
+      ...(query.around !== undefined ? { around: query.around } : {}),
     });
 
     const body: GetConversationResponse = {
       conversation,
       messages: page.messages,
       pagination: page.pagination,
+      cursors: page.cursors,
     };
     res.status(200).json(body);
   });
@@ -255,6 +342,15 @@ export function startWhatsAppConversation(service: ConversationService): Request
   });
 }
 
+export function openWhatsAppConversation(service: ConversationService): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const dto = validated<OpenWhatsAppConversationRequest>(req, 'body');
+    const body: ConversationDetail = await service.openWhatsApp(ctx, dto);
+    res.status(200).json(body);
+  });
+}
+
 export function createMessage(services: ConversationServices): RequestHandler {
   return handle(async (req, res) => {
     const ctx = getContext(req);
@@ -268,6 +364,7 @@ export function createMessage(services: ConversationServices): RequestHandler {
       content: dto.content,
       ...(dto.messageType !== undefined ? { messageType: dto.messageType } : {}),
       ...(dto.attachmentUrl !== undefined ? { attachmentUrl: dto.attachmentUrl } : {}),
+      ...(dto.quotedMessageId ? { quotedMessageId: dto.quotedMessageId } : {}),
     });
     res.status(201).json(message);
   });
@@ -287,6 +384,9 @@ export function createAttachment(services: ConversationServices): RequestHandler
 
     // Recorte por papel antes de gravar: 404 para conversa que nao e visivel.
     await services.conversations.getById(ctx, id);
+    // Responder assume a fila livre (D-215) — antes da midia: quem perde a
+    // corrida recebe o 409 sem deixar arquivo gravado.
+    await services.messages.claimForAgent(ctx.tenantId, id, ctx.userId);
 
     const stored = await services.media.storeOutbound(ctx.tenantId, dto);
     // `stored.mimeType` (nao `dto.mimeType`): allow-list/sniff (CRMLAB-31)
@@ -297,10 +397,71 @@ export function createAttachment(services: ConversationServices): RequestHandler
       mimeType: stored.mimeType,
       attachmentUrl: `/api/v1/media/${stored.id}`,
       buffer: stored.buffer,
+      quotedMessageId: dto.quotedMessageId ?? null,
+      caption: dto.caption || null,
     });
     await services.media.attachToMessage(ctx.tenantId, stored.id, message.id);
 
     res.status(201).json(message);
+  });
+}
+
+/**
+ * `PUT|DELETE /:id/messages/:messageId/reaction` (CRMLAB-66, D-222). Recorte
+ * por papel antes: conversa invisivel e `NOT_FOUND`, como nas outras escritas.
+ */
+export function setMessageReaction(
+  services: ConversationServices,
+  mode: 'set' | 'remove',
+): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const { id, messageId } = validated<{ id: string; messageId: string }>(req, 'params');
+    await services.conversations.getById(ctx, id);
+
+    if (mode === 'remove') {
+      await services.messages.setAgentReaction(ctx.tenantId, id, messageId, ctx.userId, null);
+      res.status(204).end();
+      return;
+    }
+    const { emoji } = validated<SetMessageReactionRequest>(req, 'body');
+    const message = await services.messages.setAgentReaction(
+      ctx.tenantId,
+      id,
+      messageId,
+      ctx.userId,
+      emoji,
+    );
+    if (!message) throw notFound({ resource: 'message', id: messageId });
+    res.status(200).json(message);
+  });
+}
+
+/**
+ * `POST /:id/messages/:messageId/retry` (D-227). Recorte por papel antes,
+ * como nas outras escritas.
+ */
+export function retryMessage(services: ConversationServices): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const { id, messageId } = validated<{ id: string; messageId: string }>(req, 'params');
+    await services.conversations.getById(ctx, id);
+    const message: Message = await services.messages.retryFailed(ctx.tenantId, id, messageId, (mediaId) =>
+      services.media.read(ctx.tenantId, mediaId),
+    );
+    res.status(200).json(message);
+  });
+}
+
+/** `POST /:id/presence` (D-226/D-227): 204 na hora — o gateway e chamado em segundo plano. */
+export function sendPresence(services: ConversationServices): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const { id } = validated<{ id: string }>(req, 'params');
+    const { presence } = validated<SendPresenceRequest>(req, 'body');
+    await services.conversations.getById(ctx, id);
+    await services.messages.sendAgentPresence(ctx.tenantId, id, presence);
+    res.status(204).end();
   });
 }
 
@@ -330,6 +491,25 @@ export function setConversationPinned(
   return handle(async (req, res) => {
     const { id } = validated<{ id: string }>(req, 'params');
     await service.setPinned(getContext(req), id, pinned);
+    res.status(204).end();
+  });
+}
+
+/** `GET /search/messages` e `GET /:id/messages?q=` (D-228) — o mesmo handler. */
+export function searchMessages(service: ConversationService, inConversation: boolean): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const query = validated<SearchMessagesQuery>(req, 'query');
+    const id = inConversation ? validated<{ id: string }>(req, 'params').id : undefined;
+    const body: SearchMessagesResponse = await service.searchMessages(ctx, query, id);
+    res.status(200).json(body);
+  });
+}
+
+export function markConversationAsUnread(service: ConversationService): RequestHandler {
+  return handle(async (req, res) => {
+    const { id } = validated<{ id: string }>(req, 'params');
+    await service.markAsUnread(getContext(req), id);
     res.status(204).end();
   });
 }
@@ -387,9 +567,33 @@ function buildConversationModule(
     startWhatsAppConversation(services.conversations),
   );
 
+  // CRMLAB-70 (D-236): "Conversar" do cartao de contato — abre a existente, sem enviar.
+  router.post(
+    '/whatsapp/open',
+    ...guards,
+    validate(openWhatsAppConversationSchema, 'body'),
+    openWhatsAppConversation(services.conversations),
+  );
+
   // ANTES de `/:id`: registrada depois, o validador de uuid rejeitaria
   // "assignees" com 400 antes de este handler existir para o Express.
   router.get('/assignees', ...guards, listAssignees(services.conversations));
+
+  // ANTES de `/:id/messages` pelo mesmo motivo: "search" nao e uuid.
+  router.get(
+    '/search/messages',
+    ...guards,
+    validate(searchMessagesQuerySchema, 'query'),
+    searchMessages(services.conversations, false),
+  );
+
+  router.get(
+    '/:id/messages',
+    ...guards,
+    validate(conversationIdParamSchema, 'params'),
+    validate(searchMessagesQuerySchema, 'query'),
+    searchMessages(services.conversations, true),
+  );
 
   router.get(
     '/:id',
@@ -437,11 +641,48 @@ function buildConversationModule(
     setConversationPinned(services.conversations, false),
   );
 
+  router.put(
+    '/:id/messages/:messageId/reaction',
+    ...guards,
+    validate(messageParamsSchema, 'params'),
+    validate(setReactionSchema, 'body'),
+    setMessageReaction(services, 'set'),
+  );
+
+  router.delete(
+    '/:id/messages/:messageId/reaction',
+    ...guards,
+    validate(messageParamsSchema, 'params'),
+    setMessageReaction(services, 'remove'),
+  );
+
+  router.post(
+    '/:id/messages/:messageId/retry',
+    ...guards,
+    validate(messageParamsSchema, 'params'),
+    retryMessage(services),
+  );
+
+  router.post(
+    '/:id/presence',
+    ...guards,
+    validate(conversationIdParamSchema, 'params'),
+    validate(sendPresenceSchema, 'body'),
+    sendPresence(services),
+  );
+
   router.post(
     '/:id/read',
     ...guards,
     validate(conversationIdParamSchema, 'params'),
     markConversationAsRead(services.conversations),
+  );
+
+  router.post(
+    '/:id/unread',
+    ...guards,
+    validate(conversationIdParamSchema, 'params'),
+    markConversationAsUnread(services.conversations),
   );
 
   return { basePath: '/conversations', router, requiresAuth: true };

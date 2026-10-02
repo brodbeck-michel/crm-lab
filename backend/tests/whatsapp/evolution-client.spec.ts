@@ -7,6 +7,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   createEvolutionClient,
+  EVOLUTION_WEBHOOK_EVENTS,
   isInstanceNotFound,
   isSessionClosed,
 } from '../../src/lib/evolution-client.js';
@@ -121,6 +122,17 @@ describe('EvolutionClient', () => {
         res.end(JSON.stringify({ key: { id: 'EVO123' } }));
         return;
       }
+      // CRMLAB-66: reacao e reaplicacao do webhook.
+      if (
+        req.method === 'POST' &&
+        (req.url === '/message/sendReaction/tenant-abc' ||
+          req.url === '/webhook/set/tenant-abc' ||
+          req.url === '/chat/sendPresence/tenant-abc')
+      ) {
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ key: { id: 'EVOREACT' } }));
+        return;
+      }
       if (req.method === 'POST' && req.url === '/instance/create/erro') {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ message: 'gateway indisponivel' }));
@@ -156,7 +168,18 @@ describe('EvolutionClient', () => {
     expect(webhook.headers).toEqual({ 'x-evolution-webhook-token': 'segredo' });
     // `QRCODE_UPDATED` e o que permite servir o QR pelo cache em vez de chamar
     // `/instance/connect` a cada polling — ver `getWhatsAppQr`.
-    expect(webhook.events).toEqual(['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED']);
+    // A lista e UMA constante (D-223); editar/apagar entraram no CRMLAB-66,
+    // ack e presenca no CRMLAB-67 (D-225/D-226).
+    expect(webhook.events).toEqual([...EVOLUTION_WEBHOOK_EVENTS]);
+    expect(webhook.events).toEqual([
+      'MESSAGES_UPSERT',
+      'MESSAGES_EDITED',
+      'MESSAGES_DELETE',
+      'MESSAGES_UPDATE',
+      'PRESENCE_UPDATE',
+      'CONNECTION_UPDATE',
+      'QRCODE_UPDATED',
+    ]);
   });
 
   it('createInstance numa instancia que JA existe (403) adota a existente e reaplica o webhook', async () => {
@@ -265,6 +288,145 @@ describe('EvolutionClient', () => {
     expect(lastUrl).toBe('/message/sendWhatsAppAudio/tenant-abc');
     expect(lastBody).toEqual({ number: '5511987654321', audio: 'YXVkaW8=' });
     expect(lastApikeyHeader).toBe('apikey-da-instancia');
+  });
+
+  // --- CRMLAB-69 (D-231) -------------------------------------------------
+  it('sendMedia com legenda manda `caption` no corpo; sem legenda não manda', async () => {
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    await client.sendMedia(
+      'tenant-abc',
+      '5511987654321',
+      { base64: 'cGRm', mimeType: 'application/pdf', fileName: 'pedido.pdf', caption: 'Seu pedido' },
+      'apikey-da-instancia',
+    );
+    expect(lastBody).toMatchObject({ mediatype: 'document', caption: 'Seu pedido' });
+
+    await client.sendMedia(
+      'tenant-abc',
+      '5511987654321',
+      { base64: 'aW1n', mimeType: 'image/jpeg', fileName: 'foto.jpg', caption: null },
+      'apikey-da-instancia',
+    );
+    expect(lastBody).not.toHaveProperty('caption');
+  });
+
+  it('sendMedia de vídeo sai como `video`, não como documento', async () => {
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    await client.sendMedia(
+      'tenant-abc',
+      '5511987654321',
+      { base64: 'dmlk', mimeType: 'video/mp4', fileName: 'exame.mp4', caption: 'Olha' },
+      'apikey-da-instancia',
+    );
+    expect(lastUrl).toBe('/message/sendMedia/tenant-abc');
+    expect(lastBody).toMatchObject({ mediatype: 'video', mimetype: 'video/mp4', caption: 'Olha' });
+  });
+
+  it('3GP sai como `video`; .mov e WebM saem como documento (CRMLAB-70, D-234 item 8)', async () => {
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    const send = async (mimeType: string, fileName: string) => {
+      await client.sendMedia(
+        'tenant-abc',
+        '5511987654321',
+        { base64: 'dmlk', mimeType, fileName, caption: null },
+        'apikey-da-instancia',
+      );
+      return lastBody;
+    };
+    expect(await send('video/3gpp', 'a.3gp')).toMatchObject({ mediatype: 'video' });
+    expect(await send('video/quicktime', 'IMG_0001.MOV')).toMatchObject({
+      mediatype: 'document',
+      mimetype: 'video/quicktime',
+      fileName: 'IMG_0001.MOV',
+    });
+    expect(await send('video/webm', 'tela.webm')).toMatchObject({ mediatype: 'document' });
+  });
+
+  it('sendMedia de áudio nunca manda legenda (WhatsApp não tem)', async () => {
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    await client.sendMedia(
+      'tenant-abc',
+      '5511987654321',
+      { base64: 'YXVkaW8=', mimeType: 'audio/webm', fileName: 'recado.webm', caption: 'não vai' },
+      'apikey-da-instancia',
+    );
+    expect(lastUrl).toBe('/message/sendWhatsAppAudio/tenant-abc');
+    expect(lastBody).toEqual({ number: '5511987654321', audio: 'YXVkaW8=' });
+  });
+
+  // --- CRMLAB-66 (D-221/D-222/D-223) -------------------------------------
+  it('sendText com citacao manda `quoted` no formato do Evolution v2', async () => {
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    await client.sendText('tenant-abc', '+55 (11) 98765-4321', 'Sim, pode vir', 'apikey-da-instancia', {
+      externalId: '3EB0ORIGINAL',
+      fromMe: false,
+      content: 'Posso ir amanha?',
+    });
+    expect(lastUrl).toBe('/message/sendText/tenant-abc');
+    expect(lastBody).toEqual({
+      number: '+55 (11) 98765-4321',
+      text: 'Sim, pode vir',
+      quoted: {
+        key: { id: '3EB0ORIGINAL', remoteJid: '5511987654321@s.whatsapp.net', fromMe: false },
+        message: { conversation: 'Posso ir amanha?' },
+      },
+    });
+  });
+
+  it('sendText sem citacao nao manda `quoted`', async () => {
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    await client.sendText('tenant-abc', '5511987654321', 'Oi', 'apikey-da-instancia');
+    expect(lastBody).toEqual({ number: '5511987654321', text: 'Oi' });
+  });
+
+  it('sendMedia com citacao manda `quoted` junto do arquivo', async () => {
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    await client.sendMedia(
+      'tenant-abc',
+      '5511987654321',
+      { base64: 'aW1n', mimeType: 'image/jpeg', fileName: 'foto.jpg' },
+      'apikey-da-instancia',
+      { externalId: 'ORIG', fromMe: true, content: 'segue o pedido' },
+    );
+    expect(lastBody).toMatchObject({
+      mediatype: 'image',
+      quoted: { key: { id: 'ORIG', fromMe: true }, message: { conversation: 'segue o pedido' } },
+    });
+  });
+
+  it('sendReaction vai por /message/sendReaction com a key da reagida e a apikey da instancia', async () => {
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    await client.sendReaction(
+      'tenant-abc',
+      '5511987654321',
+      { externalId: '3EB0ALVO', fromMe: false },
+      '👍',
+      'apikey-da-instancia',
+    );
+    expect(lastUrl).toBe('/message/sendReaction/tenant-abc');
+    expect(lastBody).toEqual({
+      key: { id: '3EB0ALVO', remoteJid: '5511987654321@s.whatsapp.net', fromMe: false },
+      reaction: '👍',
+    });
+    expect(lastApikeyHeader).toBe('apikey-da-instancia');
+  });
+
+  it('sendPresence vai por /chat/sendPresence com number, presence, delay e a apikey da instancia (D-226)', async () => {
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    await client.sendPresence('tenant-abc', '5511987654321', 'composing', 4000, 'apikey-da-instancia');
+    expect(lastUrl).toBe('/chat/sendPresence/tenant-abc');
+    expect(lastBody).toEqual({ number: '5511987654321', presence: 'composing', delay: 4000 });
+    expect(lastApikeyHeader).toBe('apikey-da-instancia');
+  });
+
+  it('setWebhook reaplica url, token e a lista UNICA de eventos (D-223)', async () => {
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    await client.setWebhook('tenant-abc', { url: 'https://crm.local/w', token: 't' });
+    expect(lastUrl).toBe('/webhook/set/tenant-abc');
+    const webhook = lastBody.webhook as Record<string, unknown>;
+    expect(webhook).toMatchObject({ enabled: true, url: 'https://crm.local/w' });
+    expect(webhook.events).toEqual([...EVOLUTION_WEBHOOK_EVENTS]);
+    expect(lastApikeyHeader).toBe('admin-key');
   });
 
   it('resposta HTTP nao-2xx lanca Error com o corpo anexado (nao BusinessError)', async () => {

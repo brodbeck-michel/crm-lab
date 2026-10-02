@@ -103,6 +103,15 @@ function fakeEvolutionClient(): EvolutionClient & {
       lastSendApikey = apikey;
       return { externalId: `evo-media-${instanceName}-${Date.now()}` };
     },
+    async setWebhook() {
+      return undefined;
+    },
+    async sendReaction(_instanceName, _phone, _target, _emoji, apikey: string) {
+      lastSendApikey = apikey;
+    },
+    async sendPresence() {
+      return undefined;
+    },
   };
 }
 
@@ -127,8 +136,11 @@ function missingInstanceClient(): EvolutionClient {
     getQr: notFound,
     getStatus: notFound,
     logout: notFound,
+    setWebhook: notFound,
     sendText: async () => ({ externalId: 'x' }),
     sendMedia: async () => ({ externalId: 'x' }),
+    sendReaction: async () => undefined,
+    sendPresence: async () => undefined,
   };
 }
 
@@ -140,8 +152,11 @@ function brokenGatewayClient(): EvolutionClient {
     getQr: boom,
     getStatus: boom,
     logout: boom,
+    setWebhook: boom,
     sendText: async () => ({ externalId: 'x' }),
     sendMedia: async () => ({ externalId: 'x' }),
+    sendReaction: async () => undefined,
+    sendPresence: async () => undefined,
   };
 }
 

@@ -30,6 +30,11 @@ export interface InboxLayoutProps {
   conversation: ReactNode;
   /** Coluna 3 — contexto do paciente (316px, recolhível). */
   context?: ReactNode;
+  /**
+   * Faixa opcional no topo da coluna 1, fora da rolagem da lista (CRMLAB-72:
+   * aviso "Ativar notificações" do Atendimento).
+   */
+  listBanner?: ReactNode;
   /** Sobrepõe o `contextPanelOpen` do `useUIStore` (útil em teste/preview). */
   contextOpen?: boolean;
   className?: string;
@@ -45,6 +50,7 @@ export function InboxLayout({
   conversation,
   context,
   contextOpen,
+  listBanner,
   className,
 }: InboxLayoutProps) {
   const storeOpen = useUIStore((state) => state.contextPanelOpen);
@@ -59,8 +65,9 @@ export function InboxLayout({
         data-testid="inbox-list"
         aria-label={listLabel}
         style={{ flex: `0 0 ${INBOX_LIST_WIDTH}px`, width: INBOX_LIST_WIDTH }}
-        className="flex min-h-0 flex-col overflow-y-auto border-r border-neutral-300 bg-surface"
+        className="flex min-h-0 flex-col overflow-y-auto border-r border-chat-line bg-chat-panel"
       >
+        {listBanner}
         {list}
       </section>
 

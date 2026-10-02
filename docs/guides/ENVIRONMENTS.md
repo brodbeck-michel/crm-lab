@@ -82,7 +82,7 @@ Mesmo `docker-compose.prod.yml`, mesma VPS, **nada compartilhado**:
 | Código | só `origin/main` | qualquer branch/tag/sha (`--ref`) |
 | Selo na tela | nenhum | pílula **HOMOLOGACAO** no pé da sidebar |
 | WhatsApp (Evolution) | ligado, número real | `EVOLUTION_API_KEY` vazia + canais desativados no banco |
-| Sincronização LIS (Bitlab, CRMLAB-52) | chave de produção colada pelo admin; agendador a cada 2 min (D-199) | `LIS_SYNC_INTERVAL_MS=0` + `lis_sync_settings` desligada e sem chave no banco. O Bitlab não tem sandbox da API de Orçamentos |
+| Sincronização LIS (Bitlab, CRMLAB-52) | chave de produção colada pelo admin; agendador a cada 30 s (D-249) | `LIS_SYNC_INTERVAL_MS=0` + `lis_sync_settings` desligada e sem chave no banco. O Bitlab não tem sandbox da API de Orçamentos |
 | Motor de tempo do funil (CRMLAB-59) | ligado, a cada 5 min (`FUNNEL_TIMER_INTERVAL_MS`, D-205) | ligado por padrão (mexe só no banco da hml); `FUNNEL_TIMER_INTERVAL_MS=0` desliga. Com o dump de prod restaurado, os cartões vencidos andam no primeiro tique (D-209) |
 | Proposta nasce do orçamento (CRMLAB-57) | a partir de `tenant_settings.bitlab_proposals_since` (primeira ingestão com a regra ligada) | o dump de prod traz a marca junto; sem marca, a primeira ingestão da hml grava o dia dela. Em nenhum dos dois o histórico de `lis_budgets` vira cartão (D-196) |
 | Backup automático | sim, `crm-lab-backup.timer` 03:12 UTC | não — é descartável por definição |

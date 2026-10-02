@@ -39,6 +39,12 @@ export const PAGE_SIZE = 500;
 /** Teto de paginas por rodada (D-185 item 2): protege de um `temProxima` que nunca vira false. */
 export const MAX_PAGES = 200;
 
+/** Hora (Brasília) a partir da qual o tique do dia faz a releitura completa (D-189 item 2). */
+export const FULL_SCAN_HOUR = 3;
+
+/** `incremental` le a partir da marca; `full` rele os ultimos `initialDays` dias (D-189). */
+export type LisSyncMode = 'incremental' | 'full';
+
 const MANAGER_ROLES = ['manager', 'admin'] as const;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -50,7 +56,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const running = new Set<string>();
 
 /**
- * Um tique por vez (D-199): com o agendador a cada 2 min, uma rodada lenta
+ * Um tique por vez (D-199): com o agendador a cada 30 s (D-249), uma rodada lenta
  * (varios laboratorios, Bitlab devagar) nao pode empilhar o proximo tique.
  */
 let tickInProgress = false;
@@ -106,7 +112,7 @@ function maxWatermark(a: string | null, b: string | null): string | null {
 export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
   const repo = new LisSyncSettingsRepository(deps.db);
   const now = deps.now ?? (() => new Date());
-  const intervalMinutes = Math.round(deps.intervalMs / 60_000);
+  const intervalSeconds = Math.round(deps.intervalMs / 1000);
 
   function present(tenantId: string, view: LisSyncSettingsView): LisIntegrationSettings {
     return {
@@ -117,16 +123,29 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
       lastRunAt: view.lastRunAt,
       lastSuccessAt: view.lastSuccessAt,
       lastError: view.lastError,
+      lastFullScanOn: view.lastFullScanOn,
       running: running.has(tenantId),
-      intervalMinutes,
+      intervalSeconds,
     };
   }
 
-  function windowStart(watermark: string | null): string {
-    const fromMark = watermark ? watermarkToBitlabDateTime(watermark) : null;
+  function windowStart(watermark: string | null, mode: LisSyncMode): string {
+    const fromMark = mode === 'incremental' && watermark ? watermarkToBitlabDateTime(watermark) : null;
     if (fromMark) return fromMark;
     const start = new Date(now().getTime() - deps.initialDays * DAY_MS);
     return `${saoPauloDateTime(start).slice(0, 10)} 00:00:00`;
+  }
+
+  /**
+   * O estorno nao volta na consulta incremental (D-189 item 1): o primeiro
+   * tique depois das 03:00 de Brasilia rele os ultimos `initialDays` dias.
+   */
+  function modeFor(lastFullScanOn: string | null, requested: LisSyncMode | 'auto'): LisSyncMode {
+    if (requested !== 'auto') return requested;
+    const clock = saoPauloDateTime(now());
+    const today = clock.slice(0, 10);
+    const hour = Number(clock.slice(11, 13));
+    return hour >= FULL_SCAN_HOUR && (lastFullScanOn === null || lastFullScanOn < today) ? 'full' : 'incremental';
   }
 
   /** Chama o Bitlab ate a ultima pagina. Lanca `BitlabError`. */
@@ -134,8 +153,9 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
     tenantId: string,
     apiKey: string,
     watermark: string | null,
+    mode: LisSyncMode,
   ): Promise<{ rows: LisSpreadsheetRow[]; watermark: string | null }> {
-    const dataInicio = windowStart(watermark);
+    const dataInicio = windowStart(watermark, mode);
     const dataFim = saoPauloDateTime(now());
     const rows: LisSpreadsheetRow[] = [];
     let highest: string | null = null;
@@ -163,15 +183,20 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
     return { rows, watermark: highest };
   }
 
-  async function runForTenant(tenantId: string, triggeredBy: string | null): Promise<RunSummary | null> {
+  async function runForTenant(
+    tenantId: string,
+    triggeredBy: string | null,
+    requestedMode: LisSyncMode | 'auto',
+  ): Promise<RunSummary | null> {
     running.add(tenantId);
     try {
       const started = await repo.startRun(tenantId);
       if (!started) return null;
+      const mode = modeFor(started.lastFullScanOn, requestedMode);
 
       let fetched: { rows: LisSpreadsheetRow[]; watermark: string | null };
       try {
-        fetched = await fetchAll(tenantId, started.apiKey, started.watermark);
+        fetched = await fetchAll(tenantId, started.apiKey, started.watermark, mode);
       } catch (error) {
         const kind: LisSyncErrorKind = isBitlabError(error) ? error.kind : 'unavailable';
         const message = isBitlabError(error) ? error.userMessage : BITLAB_ERROR_MESSAGES.unavailable;
@@ -196,6 +221,19 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
           error: { kind, message },
           view,
         };
+      }
+
+      // A janela incremental comeca NA marca (inclusiva): o Bitlab devolve de
+      // novo a linha da propria marca. Marca que nao andou = nada novo desde a
+      // rodada anterior, entao a rodada e vazia (D-249). Linha gravada no mesmo
+      // segundo da marca depois da consulta anterior fica para a releitura
+      // diaria de 90 dias (D-189).
+      if (
+        mode === 'incremental' &&
+        started.watermark !== null &&
+        fetched.watermark === started.watermark
+      ) {
+        fetched = { rows: [], watermark: started.watermark };
       }
 
       let importId: string | null = null;
@@ -232,10 +270,14 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
         }
       }
 
-      const view = await repo.finishRun(tenantId, { success: { watermark: fetched.watermark }, error: null });
-      // A cada 2 min (D-199): rodada vazia e `debug`, senao o log vira ruido.
-      const completed = { tenantId, received: fetched.rows.length, importId, proposalsCreated };
-      if (fetched.rows.length > 0) logger.info('lis_sync.completed', completed);
+      const success =
+        mode === 'full'
+          ? { watermark: fetched.watermark, fullScanOn: saoPauloDateTime(now()).slice(0, 10) }
+          : { watermark: fetched.watermark };
+      const view = await repo.finishRun(tenantId, { success, error: null });
+      // A cada 30 s (D-249): rodada vazia e `debug`, senao o log vira ruido.
+      const completed = { tenantId, mode, received: fetched.rows.length, importId, proposalsCreated };
+      if (fetched.rows.length > 0 || mode === 'full') logger.info('lis_sync.completed', completed);
       else logger.debug('lis_sync.completed', completed);
       return {
         status: 'completed',
@@ -296,7 +338,8 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
       if (running.has(ctx.tenantId)) {
         throw new BusinessError('CONFLICT', { reason: 'lis_sync_running' });
       }
-      const summary = await runForTenant(ctx.tenantId, ctx.userId);
+      // "Sincronizar agora" e sempre incremental (D-189 item 2).
+      const summary = await runForTenant(ctx.tenantId, ctx.userId, 'incremental');
       if (!summary) {
         throw new BusinessError('CONFLICT', { reason: 'lis_sync_not_configured' });
       }
@@ -329,7 +372,7 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
         for (const tenantId of tenantIds) {
           if (running.has(tenantId)) continue;
           try {
-            await runForTenant(tenantId, null);
+            await runForTenant(tenantId, null, 'auto');
           } catch (error) {
             logger.warn('lis_sync.tenant_failed', {
               tenantId,

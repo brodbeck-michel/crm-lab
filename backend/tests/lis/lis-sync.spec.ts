@@ -260,6 +260,28 @@ describe('POST /settings/lis-integration/sync', () => {
     expect((history.body as ListLisImportsResponse).imports).toHaveLength(0);
   });
 
+  it('marca que nao andou e rodada vazia: a linha repetida da marca nao grava historico (D-249)', async () => {
+    await configure(adminA, { apiKey: KEY, enabled: true });
+    bitlab.script = [page([row('1')], '2026-09-25 10:00:00')];
+    await sync(adminA);
+
+    // O Bitlab devolve de novo a linha da propria marca (janela inclusiva).
+    bitlab.script = [page([row('1')], '2026-09-25 10:00:00')];
+    const repeated = await sync(adminA);
+
+    expect(bitlab.calls[1]?.query.dataInicio).toBe('2026-09-25 10:00:00');
+    expect(repeated).toMatchObject({ status: 'completed', received: 0, importId: null, watermark: '2026-09-25 10:00:00' });
+    expect(repeated.settings.lastSuccessAt).not.toBeNull();
+    const history = await app.agent.get('/api/v1/lis-imports').set(app.auth(adminA));
+    expect((history.body as ListLisImportsResponse).imports).toHaveLength(1);
+
+    // Marca que andou volta a gravar, inclusive a linha da marca antiga que veio junto.
+    bitlab.script = [page([row('1'), row('2')], '2026-09-25 10:00:30')];
+    const moved = await sync(adminA);
+    expect(moved).toMatchObject({ status: 'completed', received: 2, watermark: '2026-09-25 10:00:30' });
+    expect((await budgetsOf(tenantA.id)).map((b) => b.number)).toEqual(['1', '2']);
+  });
+
   it('pagina com falha nao grava nada e nao anda a marca', async () => {
     await configure(adminA, { apiKey: KEY, enabled: true });
     bitlab.script = [page([row('1')], '2026-09-25 10:00:00')];

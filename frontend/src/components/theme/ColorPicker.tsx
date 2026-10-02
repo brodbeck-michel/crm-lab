@@ -2,69 +2,57 @@ import { useEffect, useState } from 'react';
 import { Input } from '@/components/ui';
 
 interface ColorPickerProps {
+  /** Nome da cor ("Cor principal", "Cor secundária") — rotula os dois campos. */
+  label: string;
   color: string;
   onChange: (color: string) => void;
   isPending?: boolean;
 }
 
-export default function ColorPicker({ color, onChange, isPending }: ColorPickerProps) {
+const HEX_PATTERN = /^#[0-9A-Fa-f]{6}$/;
+
+/**
+ * Seletor de UMA cor do tema: o seletor nativo + o campo hex `#rrggbb`.
+ * Só chama `onChange` com hex completo e válido — o backend valida o mesmo
+ * formato (SERVICES.md §8).
+ */
+export default function ColorPicker({ label, color, onChange, isPending }: ColorPickerProps) {
   const [localColor, setLocalColor] = useState(color);
 
   useEffect(() => {
     setLocalColor(color);
   }, [color]);
 
-  const handleColorChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newColor = e.target.value;
     setLocalColor(newColor);
-    onChange(newColor);
-  };
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newColor = e.target.value;
-    const hexPattern = /^#[0-9A-Fa-f]{6}$/;
-
-    // Validate hex color (6 digits)
-    if (hexPattern.test(newColor)) {
-      setLocalColor(newColor);
-      onChange(newColor);
-    } else if (!newColor.startsWith('#')) {
-      // Allow partial input while typing
-      setLocalColor(newColor);
-    } else {
-      setLocalColor(newColor);
-    }
+    if (HEX_PATTERN.test(newColor)) onChange(newColor);
   };
 
   return (
-    <div className="space-y-md">
-      <div className="flex items-center gap-md">
-        <div className="flex-1">
+    <div className="flex flex-col gap-sm">
+      <span className="font-body text-label font-semibold text-text">{label}</span>
+      <div className="flex items-end gap-md">
+        <div className="w-24 flex-shrink-0">
           <Input
             type="color"
-            value={localColor}
-            onChange={handleColorChange}
+            aria-label={label}
+            value={HEX_PATTERN.test(localColor) ? localColor : color}
+            onChange={handleChange}
             disabled={isPending}
           />
         </div>
-        <div
-          className="w-12 h-12 rounded-md border-2 border-neutral-300 flex-shrink-0"
-          style={{ backgroundColor: localColor }}
-        />
-      </div>
-
-      <div>
-        <Input
-          type="text"
-          value={localColor}
-          onChange={handleInputChange}
-          placeholder="ex: rrggbb"
-          disabled={isPending}
-          label="Valor Hex"
-        />
-        <p className="text-caption text-neutral-600 mt-xs">
-          Formato: rrggbb (6 dígitos hexadecimais)
-        </p>
+        <div className="flex-1">
+          <Input
+            type="text"
+            value={localColor}
+            onChange={handleChange}
+            placeholder="#rrggbb"
+            disabled={isPending}
+            label={`${label} (hex)`}
+            hint="Formato: #rrggbb (6 dígitos hexadecimais)"
+          />
+        </div>
       </div>
     </div>
   );

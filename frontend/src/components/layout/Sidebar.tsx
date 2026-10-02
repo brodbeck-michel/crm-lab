@@ -1,12 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { PanelLeftClose, PanelLeftOpen, ChevronRight, LogOut } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, ChevronRight, LogOut, Check } from 'lucide-react';
 import type { UserRole } from '@crm-lab/shared';
 import { cn, Badge } from '@/components/ui';
 import { Avatar } from '@/components/shared';
 import { initials } from '@/lib/format';
-import { useAuthStore, useUIStore, useSidebarGroupsStore, selectRole, selectUser } from '@/stores';
+import {
+  useAuthStore,
+  useMessageAlertsStore,
+  useUIStore,
+  useSidebarGroupsStore,
+  selectRole,
+  selectUser,
+} from '@/stores';
 import { useLogout } from '@/hooks';
 import { sidebarSectionsFor, type AppRoute } from '@/routes/route-config';
 import { internalChatApi, operationApi, queryKeys, staleTimes } from '@/api';
@@ -27,8 +34,9 @@ import { NavGlyph } from './NavGlyph';
  * `sidebarRoutesFor` (fonte que o guard de rota usa), só que organizadas em
  * soltos + grupos.
  *
- * Item ativo: fundo `accent-100` translúcido + barra de 3px à esquerda
- * (`accent-500`) — único destaque do trilho. Grupos (accordion, CRMLAB-4):
+ * Trilho no tom claro do tema (`bg-surface` = accent 12%, D-250). Item ativo:
+ * fundo BRANCO (`bg-bg`) + texto `accent-700` + barra de 3px à esquerda
+ * (`accent-500`) — único destaque do trilho. Hover: `accent-100` (20%). Grupos (accordion, CRMLAB-4):
  * abertos por padrão, estado por grupo persistido em localStorage por
  * usuário (`sidebar-groups.store`); grupo sem nenhum item visível para o
  * perfil não aparece. Cabeçalho de grupo com ícone + label + chevron que
@@ -111,6 +119,20 @@ export function Sidebar() {
   const internalChatUnreadCount =
     channelsQuery.data?.channels.reduce((total, channel) => total + channel.unreadCount, 0) ?? 0;
 
+  // CRMLAB-72 (D-241 item 8): preferências do aviso de mensagem nova.
+  const soundEnabled = useMessageAlertsStore((s) => s.soundEnabled);
+  const notificationsEnabled = useMessageAlertsStore((s) => s.notificationsEnabled);
+  const setSoundEnabled = useMessageAlertsStore((s) => s.setSoundEnabled);
+  const setNotificationsEnabled = useMessageAlertsStore((s) => s.setNotificationsEnabled);
+  const alertPrefs = [
+    { label: 'Som de mensagem nova', checked: soundEnabled, toggle: () => setSoundEnabled(!soundEnabled) },
+    {
+      label: 'Notificações do navegador',
+      checked: notificationsEnabled,
+      toggle: () => setNotificationsEnabled(!notificationsEnabled),
+    },
+  ];
+
   const navigate = useNavigate();
   const logout = useLogout();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -177,7 +199,7 @@ export function Sidebar() {
           aria-label={collapsed ? 'Expandir menu' : 'Recolher menu'}
           aria-expanded={!collapsed}
           style={{ flex: '0 0 30px' }}
-          className="flex h-[30px] w-[30px] cursor-pointer items-center justify-center rounded-md border-none bg-transparent text-neutral-600 hover:bg-neutral-100"
+          className="flex h-[30px] w-[30px] cursor-pointer items-center justify-center rounded-md border-none bg-transparent text-neutral-600 hover:bg-accent-100"
         >
           {collapsed ? (
             <PanelLeftOpen size={18} strokeWidth={1.7} aria-hidden="true" />
@@ -213,7 +235,8 @@ export function Sidebar() {
           const groupUnreadCount = group.items.some((route) => route.path === '/internal-chat')
             ? internalChatUnreadCount
             : 0;
-          const showActiveBg = open || (collapsed && hasActiveChild);
+          // Recolhido com o item ativo dentro: o ícone do grupo faz o papel do item ativo.
+          const showActiveBg = collapsed && hasActiveChild;
           const groupId = `sidebar-group-${group.id}`;
           return (
             <div key={group.id}>
@@ -233,7 +256,7 @@ export function Sidebar() {
                 className={cn(
                   'flex w-full items-center gap-sm rounded-lg px-xs py-xs text-left',
                   'font-body text-label font-bold text-text',
-                  showActiveBg ? 'bg-accent-100' : 'hover:bg-neutral-100',
+                  showActiveBg ? 'bg-bg text-accent-700' : 'hover:bg-accent-100',
                   'focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-500 focus-visible:outline-offset-2',
                 )}
               >
@@ -321,11 +344,27 @@ export function Sidebar() {
             <div
               role="menu"
               className={cn(
-                'absolute bottom-full z-50 mb-xs w-[180px] rounded-md border border-neutral-200',
+                'absolute bottom-full z-50 mb-xs w-[240px] rounded-md border border-neutral-200',
                 'bg-surface py-xs shadow-md',
                 collapsed ? 'left-0' : 'left-xs right-xs w-auto',
               )}
             >
+              {role !== 'platform_operator' &&
+                alertPrefs.map((pref) => (
+                  <button
+                    key={pref.label}
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={pref.checked}
+                    onClick={pref.toggle}
+                    className="flex w-full cursor-pointer items-center gap-sm border-none bg-transparent px-md py-xs text-left font-body text-label text-text hover:bg-accent-100"
+                  >
+                    <span className="inline-flex w-[16px] shrink-0 justify-center" aria-hidden="true">
+                      {pref.checked && <Check size={16} strokeWidth={1.7} />}
+                    </span>
+                    {pref.label}
+                  </button>
+                ))}
               <button
                 type="button"
                 role="menuitem"
@@ -375,9 +414,8 @@ interface SidebarNavItemProps {
 
 /**
  * Um item de navegação (link), solto ou dentro de um grupo. Ativo: fundo
- * `accent-100` translúcido + barra de 3px à esquerda (`accent-500`) — único
- * destaque preenchido do trilho (a faixa de grupo nunca compete com essa
- * cor). Recolhido: contador vira um dot de 8px sobre o ícone (CRMLAB-44).
+ * branco + texto `accent-700` + barra de 3px à esquerda (`accent-500`) — único
+ * destaque preenchido do trilho (D-250). Recolhido: contador vira um dot de 8px sobre o ícone (CRMLAB-44).
  */
 function SidebarNavItem({
   route,
@@ -410,11 +448,11 @@ function SidebarNavItem({
           'focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-500 focus-visible:outline-offset-2',
           isActive
             ? cn(
-                'bg-accent-100 font-semibold text-text',
+                'bg-bg font-semibold text-accent-700 shadow-sm',
                 "before:absolute before:inset-y-[9px] before:left-0 before:w-[3px] before:content-['']",
                 'before:rounded-r-sm before:bg-accent-500',
               )
-            : 'text-text hover:bg-neutral-100',
+            : 'text-text hover:bg-accent-100',
         )
       }
     >

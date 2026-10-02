@@ -38,11 +38,20 @@ describe('POST /conversations/:id/messages', () => {
 
     expect(Object.keys(response.body).sort()).toEqual([
       'attachmentUrl',
+      'contacts', // CRMLAB-70 (D-234)
       'content',
       'conversationId',
       'createdAt',
+      // CRMLAB-66 (D-220/D-221/D-222)
+      'deletedAt',
+      'editedAt',
       'id',
+      'location', // CRMLAB-70
+      'media', // CRMLAB-70
       'messageType',
+      'quoted',
+      'quotedMessageId',
+      'reactions',
       'readAt',
       'senderId',
       'senderName',

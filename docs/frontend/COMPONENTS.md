@@ -9,7 +9,7 @@ Inventário COMPLETO de componentes reutilizáveis. Regra do design system: **n�
 ```
 frontend/src/components/
 ├── ui/            # Primitivos (Button, Chip, Input, ...)
-├── conversation/  # ConversationItem, MessageBubble, AudioMessage, Composer
+├── conversation/  # ConversationItem, MessageBubble, WhatsAppText, AudioMessage, Composer, AttachmentPreview
 ├── proposal/      # ProposalCard, ProposalModal, StageColumn
 ├── layout/        # Sidebar, InboxLayout, PageHeader
 └── shared/        # Avatar, EmptyState, DataTable, Modal
@@ -64,11 +64,28 @@ frontend/src/components/
 <ConversationItem conversation={c} selected onClick />
 ```
 Anatomia (padrão WhatsApp):
-- Avatar 36px com iniciais (flex: 0 0 36px — nunca comprime)
+- Avatar 36px com iniciais (flex: 0 0 36px — nunca comprime); na lista do Atendimento, fundo
+  `--color-chat-avatar` e iniciais `--color-chat-avatar-text` (CRMLAB-81, D-251)
 - Nome (13.5px/600) + hora à direita (sálvia-700 se não lidas, cinza se lido)
 - Prévia truncada 1 linha (elipse) + Badge contagem
 - Chips de status + "aguardando N min" (accent-700)
-- Selecionado: fundo neutral-100 + shadow-sm
+- Selecionado: fundo `--color-chat-selected` (acento 20% com branco); hover `--color-chat-hover`
+  (10%); divisória `--color-chat-line` entre itens (CRMLAB-81, D-251)
+- `onMarkUnread?(id)` (CRMLAB-68, D-229): clique direito ou botão "⋯" abrem o menu
+  (`role="menu"`) com "Marcar como não lida", só quando `unreadCount === 0`. Sem handler, nem
+  botão nem menu
+- **Rascunho (CRMLAB-73, D-243):** com rascunho guardado para a conversa (`useConversationDraft`,
+  `stores/drafts.store.ts`), a prévia mostra **"Rascunho:"** (em destaque) + o texto, no lugar da
+  última mensagem — menos na conversa selecionada. Conversa encerrada na lista apaga o rascunho
+
+### ConversationSearch · MessageResults (`pages/Attendance/`, locais da tela — CRMLAB-68)
+- `ConversationSearch`: barra da busca dentro da conversa (campo, "N de M", ↑ ↓, fechar) + lista
+  de resultados. Recebe os `MessageSearchHit` prontos e devolve o id escolhido (`onGoTo`)
+- `MessageResults`: o bloco "Mensagens" da busca da coluna 1 (mesma forma de `PatientResults`)
+- `SearchSnippet` (`content`, `term`): o trecho com o destaque, usado pelos dois
+- O trecho e o destaque vêm de `lib/search-snippet.ts` (`searchSnippet`, `highlightParts`,
+  `isSearchableTerm`): comparação sem acento e sem caixa; o destaque é `<mark>` com tokens, nunca
+  HTML vindo da API
 
 ### MessageBubble
 ```tsx
@@ -76,14 +93,23 @@ Anatomia (padrão WhatsApp):
 ```
 - 3 tipos, NUNCA mais. Canto "apontado" (radius-sm) marca a origem
 - Largura máx. 62% no inbox
-- Cor (CRMLAB-25): recebida `--color-chat-received`, enviada `--color-chat-sent`, as duas com
-  borda de 1px do par `-border` e sobre o papel BRANCO da conversa. Lado + cor: bate o olho e
-  se sabe quem falou. As antigas `surface` / `accent-200` misturavam com `--color-bg` e, sobre o
-  bege do tema, fundo e as duas bolhas viravam a mesma coisa
+- Visual WhatsApp Web (CRMLAB-81, D-251; substitui o "papel branco" do CRMLAB-25): recebida é
+  balão **branco** (`--color-chat-received`) à esquerda com o canto **superior esquerdo** reto;
+  enviada é balão no acento clareado (`--color-chat-sent`) à direita com o canto **superior
+  direito** reto. Sem borda, sombra `--shadow-sm`, texto `--color-chat-text`. Hora, autor,
+  "Editada" e tique ficam no canto **inferior direito** (`--color-chat-meta`). Cor + canto reto:
+  enviada × recebida se distinguem de relance, não só pelo lado. Bloco citado em
+  `--color-chat-quote`. Nenhum token da conversa depende de `--color-bg/surface/text`
 - Anexo `messageType: 'image'` (CRMLAB-15): thumbnail (`rounded-md`, máx. 300px de altura) no lugar
-  do link "Anexo (tipo)". Clique abre `ImageLightbox` em tela cheia — padrão WhatsApp Web
+  do link "Anexo (tipo)". Clique chama `onOpenImage(message)` (CRMLAB-64, D-244): o balão **não**
+  tem lightbox próprio — quem abre, navega entre as fotos e fecha é o `ConversationPanel`. Sem
+  handler, a thumbnail não é clicável
 - Anexo `messageType: 'audio'` (CRMLAB-2): `AudioMessage` na própria bolha no lugar do link.
-  Os demais `messageType` continuam com o link genérico
+- **Um componente por tipo (CRMLAB-70, D-236)** — o balão só despacha: `video` → `VideoMessage`,
+  `pdf`/`doc` → `DocumentCard`, `sticker` → `StickerMessage` (balão sem fundo nem borda),
+  `location` → `LocationCard`, `contact` → `ContactCard`. O texto do balão some quando é só o
+  fallback (figurinha, localização, contato, e mídia cujo `content` é o próprio `media.fileName`).
+  Bloco citado ganha "🎥 Vídeo", "Figurinha", "📍 Localização" e "👤 Contato"
 - `GET /media/:id` exige `Authorization` (requireAuth) — um `<img src>`/`<audio src>` cru nunca
   manda esse header. A mídia vem por `useAuthenticatedMedia` (`hooks/`), que chama
   `fetchAuthenticatedBlob` (`api/client.ts`) e usa `URL.createObjectURL` como `src`. Enquanto
@@ -95,13 +121,64 @@ Anatomia (padrão WhatsApp):
   linha, `**` vazio e `2 * 3 * 4` não formatam, e o asterisco precisa estar na borda da palavra
   (`2*3*4` fica como está). Renderiza como nós React (`<strong>`), nunca
   `dangerouslySetInnerHTML`. A prévia da lista (`ConversationItem`) mostra o texto cru
+- **Formatação completa e links (CRMLAB-73, D-242):** o texto passa por `WhatsAppText`
+  (`parseWhatsApp` de `lib/whatsapp-format.ts`): `*negrito*`, `_itálico_`, `~tachado~` (mesma
+  regra de borda do negrito, aninhando símbolos diferentes), ```` ```monoespaçado``` ```` e
+  `` `código` `` (literais, `font-mono`), linha com `> ` (citação), `- `/`* ` (lista com •) e
+  `1. ` (numerada). `http(s)://…` e `www.…` viram link em nova aba
+  (`rel="noopener noreferrer"`); o `_`/`~` dentro da URL não formata. Sem prévia de link.
+  HTML/`<script>` do paciente aparece como texto
 - `useAuthenticatedMedia` devolve também o `fileName` (do `Content-Disposition` de
-  `GET /media/:id`), repassado ao `ImageLightbox` — é o nome com que a imagem é salva (CRMLAB-26)
+  `GET /media/:id`), repassado ao `ImageLightbox` — é o nome com que a imagem é salva (CRMLAB-26).
+  O blob é **compartilhado por URL** entre quem está usando (D-245): o lightbox aberto a partir do
+  balão reaproveita o que o balão já baixou
+- **Menu da mensagem (CRMLAB-66, padrão WhatsApp Web):** passar o mouse (ou focar) mostra uma
+  setinha no canto de cima do balão; ela abre o menu **Responder · Reagir · Copiar**. Reagir abre
+  a barra rápida `QUICK_REACTIONS` (👍 ❤️ 😂 😮 😢 🙏, `shared/`); clicar no emoji que já é o do
+  laboratório remove. Copiar põe `content` na área de transferência. Encaminhar: fora desta
+  história. Props opcionais: `onReply`, `onReact(emoji | null)`, `onQuoteClick(messageId)` — sem
+  handler, a ação some (nada de botão morto). Balão de sistema não tem menu
+- **Bloco citado** em cima do texto: autor + trecho (ou "📷 Foto", "🎤 Áudio", "📄 Documento"
+  quando a citada é mídia sem texto; "Mensagem apagada"/"Mensagem original indisponível"). Clicar
+  chama `onQuoteClick(quoted.id)`
+- **Reações**: pílula pequena embaixo do balão com o emoji de cada lado
+- **Apagada** (`deletedAt`): o balão mostra só "🚫 Mensagem apagada" em itálico, sem menu, sem
+  mídia. **Editada** (`editedAt`): rótulo "Editada" na linha da hora
+- **Tiques (CRMLAB-67, D-225):** só no balão `sent`, na linha da hora, pelo `status`: 🕓
+  `pending` (enviando), ✓ `sent`, ✓✓ `delivered` (cinza, `text-neutral-600`), ✓✓ `read`
+  (`--color-chat-tick-read`, o azul do WhatsApp — literal como o branco do papel), ⚠
+  `failed` (`text-accent-700`, a cor de erro do app) com "Não foi possível enviar" e o botão
+  **Tentar de novo** (`onRetry(message)`; sem handler, o botão some). `aria-label` diz o estado
+  ("Enviando", "Enviada", "Entregue", "Lida", "Falhou"); `data-testid="message-status"` +
+  `data-status`
+- `data-message-id` no balão: é por ele que o painel rola até a original
+  (`scrollToMessage`, `pages/Attendance/scroll-to-message.ts`) e a destaca por um instante
+  (`data-highlighted`). Original fora do que está carregado: toast "A mensagem original não está
+  carregada"
+
+### DateSeparator (CRMLAB-71, D-239)
+```tsx
+<DateSeparator date={message.createdAt} now={new Date()} />
+```
+- Pílula centralizada entre mensagens de dias diferentes, no fuso do navegador (o fio é ISO UTC)
+- Rótulo por `dateSeparatorLabel(date, now)` (exportada, fonte única): "Hoje", "Ontem", dia da
+  semana por extenso de 2 a 6 dias atrás ("Segunda-feira"), `dd/mm/aaaa` a partir de 7 dias e
+  para data futura. Conta por **dia de calendário** local: 23h59 e 00h01 são dias diferentes
+- `isSameLocalDay(a, b)` (exportada) decide onde entra um separador
+- `role="separator"` com o rótulo como nome acessível; mesma família visual da bolha de sistema
+  (`rounded-pill`, texto `caption`), mas neutra — é marcação de tempo, não evento
+- `now` é injetável para teste determinístico (mesma ideia do `ConversationItem`)
+- Quem usa: `ConversationPanel` (Atendimento). A faixa "N mensagens não lidas" e o botão ↓ com
+  contador são **locais da tela** (`pages/Attendance/`), não primitivos — ver PAGES.md §2. A
+  lista marca cada linha com `data-anchor-id` (o id da mensagem), que é onde a rolagem se ancora
+  ao carregar histórico (D-238); o `data-message-id` do balão é do `MessageBubble`
 
 ### AudioMessage (CRMLAB-2)
 ```tsx
-<AudioMessage url={message.attachmentUrl} />
+<AudioMessage url={message.attachmentUrl} durationSec={message.media?.durationSec} />
 ```
+- **Velocidade (CRMLAB-70, D-236):** botão `1x → 1,5x → 2x → 1x` ao lado do player
+  (`playbackRate`, só daquele áudio). `durationSec` (opcional) aparece antes de o áudio carregar
 - Player de áudio dentro da bolha: `<audio controls>` NATIVO — play/pause, barra com tempo
   decorrido/total, seek e teclado de graça. Player desenhado à mão só entra se o visual virar
   exigência real (mesma lógica do `EmojiPicker` sem biblioteca)
@@ -109,12 +186,50 @@ Anatomia (padrão WhatsApp):
 - Link "Baixar áudio" sempre visível: o Evolution entrega ogg/opus, que o Safari não toca. Se o
   `<audio>` dispara `error`, o player dá lugar a um aviso e o download fica como plano B
 
+### VideoMessage · DocumentCard · StickerMessage · LocationCard · ContactCard (CRMLAB-70, D-236)
+```tsx
+<VideoMessage url={message.attachmentUrl} media={message.media} />
+<DocumentCard url={message.attachmentUrl} messageType={message.messageType} media={message.media} />
+<StickerMessage url={message.attachmentUrl} />
+<LocationCard location={message.location} />
+<ContactCard contacts={message.contacts} />
+```
+- **VideoMessage:** miniatura (`media.thumbnail`, JPEG em `data:` — a CSP já libera `img-src data:`;
+  sem miniatura, fundo neutro) com ▶ e a duração. O arquivo só é baixado **no clique** e toca ali
+  mesmo (`<video controls autoplay>`) — nunca no `ImageLightbox`. Formato que o navegador não toca
+  (`.mov`/HEVC no Chrome): aviso + "Baixar vídeo"
+- **DocumentCard:** ícone pelo tipo (PDF, Word, Excel, PowerPoint, texto/CSV, genérico), nome,
+  tamanho (`formatBytes`) e "N páginas" no PDF quando vier. Clique abre (PDF) ou baixa — o blob
+  autenticado só é buscado no clique (revisão do PR #43)
+- **StickerMessage:** 120×120 `object-contain`, sem lightbox
+- **LocationCard:** 📍 nome/endereço + "Abrir no mapa" (Google Maps `?api=1&query=lat,lng`, nova
+  aba). Sem mapa estático (CSP, CRMLAB-32)
+- **ContactCard:** nome + telefone por contato; "Conversar" chama
+  `POST /conversations/whatsapp/open`: conversa existente abre direto (navega para
+  `/attendance?conversationId=`, encerrada reabre para quem clicou); `404` abre
+  `NewConversationModal` (`pages/Attendance/`) com `initialPhone`; `409` (de outra atendente) vira
+  toast com o nome. Telefone fora do padrão BR vai direto ao modal. Sem telefone, sem botão
+
 ### Composer
 - Input pílula + botão anexo + botão emoji + botão microfone + botão enviar (primary)
 - Enter envia, Shift+Enter quebra linha
+- **O cursor fica no campo depois de enviar (CRMLAB-63).** Com `sending`, só o Enter e o botão
+  travam; o textarea segue habilitado (campo desabilitado perde o foco e o navegador não devolve),
+  então dá para ir escrevendo a próxima. O textarea só desabilita com `disabled` (arquivada, sem
+  permissão). `onSend` pode devolver `Promise`: se rejeitar, o texto volta para o campo, com o foco,
+  a não ser que a pessoa já tenha começado outra mensagem. O aviso do erro é de quem chama.
+  No Atendimento, `MESSAGE_SEND_FAILED` NÃO rejeita para o Composer: a mensagem já foi gravada
+  como falha e aparece na conversa; devolver o texto convidaria a reenviar e duplicar. Já o
+  `CONVERSATION_ALREADY_ASSIGNED` (409) rejeita: é assim que a tela devolve o rascunho quando
+  outra pessoa assumiu a conversa no mesmo instante (CRMLAB-75, D-215)
 - **Ctrl+B / Cmd+B** (CRMLAB-51, D-183): envolve a seleção em asteriscos (`*seleção*`, que a
   bolha e o WhatsApp mostram em negrito) e mantém o texto selecionado; sem seleção, insere `**`
-  com o cursor no meio
+  com o cursor no meio. **Ctrl+I** (`_itálico_`) e **Ctrl+Shift+X** (`~tachado~`) fazem o mesmo
+  com o seu símbolo (CRMLAB-73, D-242). Ctrl+X sem Shift continua sendo recortar
+- **Rascunho por conversa (CRMLAB-73, D-243):** `draftId` (opcional) liga o campo à store
+  `stores/drafts.store.ts`. O campo começa com `initialValue` (o `?draft=` vence) ou o rascunho
+  salvo, com o cursor no fim; cada mudança grava, campo vazio (enviou/apagou) remove. Sem
+  `draftId` (chat interno), nada é guardado
 - **Cresce com o texto** (CRMLAB-49, padrão WhatsApp Web): começa com uma linha e
   ganha altura a cada quebra (por tamanho ou Shift+Enter) até **150px** (~6 linhas);
   dali em diante trava e rola por dentro. Apagar ou enviar faz o campo voltar a
@@ -126,6 +241,16 @@ Anatomia (padrão WhatsApp):
 - O campo cresce **para cima**: a lista de mensagens encolhe e mantém a borda de
   baixo parada (a última mensagem visível continua visível), e os botões ficam
   alinhados embaixo (`items-end`).
+- **Respondendo a (CRMLAB-66):** com `replyTo` (`{ authorName, preview }`), uma faixa em cima do
+  campo mostra "Respondendo a *Maria*: trecho…" com × (`onCancelReply`); `Esc` no campo também
+  cancela. Quem monta a tela guarda a mensagem escolhida e manda `quotedMessageId` no envio; a
+  faixa some depois de enviar
+- **Clipe com menu (CRMLAB-69, D-232):** `onPickFiles(files: File[])` — o clipe
+  (`aria-label="Anexar arquivo"`) abre um menu com **"Fotos e vídeos"** (`accept="image/*,video/*"`)
+  e **"Documento"** (`accept` = `ALLOWED_MEDIA_MIME_TYPES`); os dois com `multiple`. `onAttachClick`
+  (opcional) avisa o clique no clipe — a tela usa para tirar a faixa de não lidas. **Ctrl+V** no
+  campo com arquivo na área de transferência entrega os arquivos por `onPickFiles` e não cola nada;
+  com só texto, cola normal. Sem `onPickFiles`, nem clipe nem colar arquivo (nada de botão morto)
 
 #### Recado de voz (CRMLAB-24, D-181)
 - Botão de **microfone** (`aria-label="Gravar áudio"`) ao lado do anexo e do emoji. Só aparece
@@ -153,11 +278,32 @@ Anatomia (padrão WhatsApp):
 - Implementação: hook `useVoiceRecorder` (máquina de estados + `MediaRecorder`) e a barra
   `VoiceRecorder`, ambos em `components/conversation/`, usados só pelo Composer.
 
-#### Emoji (Onda 8 §2.2)
-- Popover com grade de ~48 emojis de uso comum em atendimento; **sem
-  dependência** — um seletor com busca por nome custa centenas de KB para um
-  caso que não pede busca. Se a busca virar necessidade real, entra biblioteca,
-  e o popover já está isolado num componente (`EmojiPicker`).
+### AttachmentPreview (CRMLAB-69, D-232/D-233)
+```tsx
+<AttachmentPreview items={drafts} onCaptionChange={(id, caption) => …} onRemove={(id) => …}
+  onAdd={(files) => …} onSend={() => …} onClose={() => …} />
+```
+- Prévia de anexos **antes de enviar**, padrão WhatsApp Web. Cobre a área da conversa (quem monta
+  posiciona; o componente ocupa 100% do pai) sem desmontar a lista de mensagens.
+- `items: AttachmentDraft[]` (`{ id, file, caption, error }`, montados por
+  `createAttachmentDraft(file)` de `attachment-draft.ts`, que valida contra a allow-list e
+  `MAX_MEDIA_BYTES` de `shared/`). `error` preenchido = aviso no arquivo ("Tipo de arquivo não
+  permitido", "Arquivo acima de 15 MB", "Arquivo vazio") e ele não sobe.
+- Arquivo selecionado em destaque: imagem grande (object URL) ou ícone + nome + tamanho. Campo
+  **"Adicionar legenda"** (uma por arquivo; Enter envia, Shift+Enter quebra linha). Faixa de
+  miniaturas (clique seleciona, × remove) e **+** para adicionar mais (mesmo `accept` do
+  "Documento"). **Enviar** (desligado sem nenhum arquivo válido) e **×** que descarta tudo. **Esc**
+  fecha. Remover o último arquivo fecha.
+- Object URL criado por miniatura/destaque e revogado ao desmontar (remover, fechar, enviar).
+- Componente burro: não chama API, não conhece conversa nem citação.
+
+#### Emoji (Onda 8 §2.2, refeito no CRMLAB-73 / D-243)
+- Popover com **busca** (campo "Buscar emoji", pt-BR, sem acento e sem caixa, por nome e
+  palavras-chave), **abas de categoria** (Recentes · Smileys e pessoas · Animais e natureza ·
+  Comidas e bebidas · Atividades · Viagens e lugares · Objetos · Símbolos · Bandeiras) e
+  **Recentes** (até 24, `localStorage`, só aparece quando há algum). Lista estática
+  versionada (`emoji-data.ts`, ~550), **sem dependência** — `emoji-mart` pesa centenas de KB
+  e fala inglês.
 - Insere **na posição do cursor**, não no fim do texto.
 - Cada emoji é um `<button>` com `aria-label` (nome em pt-BR), navegável por
   teclado; `Esc` fecha e devolve o foco ao campo.
@@ -241,6 +387,9 @@ Anatomia (padrão WhatsApp):
 - Ícones: `lucide-react`, 19px, `strokeWidth={1.7}` (`NavGlyph.tsx`, mapa `NavIcon → LucideIcon`)
 - Rodapé: avatar + nome do usuário é um botão; clique abre menu com [Sair] (`useLogout`,
   `POST /auth/logout` — API_CONTRACTS.md §1). Fecha ao clicar fora, `Esc` ou depois de sair
+- Menu do usuário, acima de [Sair] (CRMLAB-72, D-241): dois `menuitemcheckbox` —
+  "Som de mensagem nova" e "Notificações do navegador" — com ✓ quando ligados. Clicar alterna a
+  preferência (`useMessageAlertsStore`, `localStorage`) sem fechar o menu
 - Rodapé: nome, "Cargo · vX.Y.Z" (cargo = `role` traduzido em pt-BR, CRMLAB-44) — só a versão
   quando recolhido. `__APP_VERSION__` injetada em build-time pelo Vite a partir do `package.json`
   da raiz do monorepo (`frontend/vite.config.ts`), sem chamada de rede
@@ -249,8 +398,29 @@ Anatomia (padrão WhatsApp):
   D-117)
 
 ### InboxLayout
-- 3 colunas: 336px fixo | flex 1 min 440px | 316px recolhível
+- 3 colunas: 336px fixo | flex 1 min 440px | 316px recolhível (começa fechada, `contextPanelOpen:
+  false` — CRMLAB-74)
 - Estreito: overflow-x na linha (não colapsar colunas)
+- `listBanner?: ReactNode` (CRMLAB-72): faixa opcional no topo da coluna 1, acima da lista, fora
+  da rolagem dela. O Atendimento usa para o `EnableNotificationsBanner`
+
+### AppShell
+- Sidebar + `<Outlet/>` + modais globais. Monta `useNewMessageAlerts()` (CRMLAB-72, D-241): o
+  aviso de mensagem nova vale em qualquer tela do laboratório. `PlatformShell` não monta
+
+### EnableNotificationsBanner (`pages/Attendance/`, local da tela — CRMLAB-72)
+- Aviso discreto no topo da fila: texto `text-caption` `text-neutral-700` + `Button` `secondary`
+  `sm` "Ativar notificações", fundo `bg-accent-100`, padding `px-md py-sm`, borda inferior
+  `border-neutral-300`
+- Só renderiza com `Notification` disponível, `permission === 'default'` e a preferência de
+  notificação ligada. O clique chama `Notification.requestPermission()`; qualquer resposta
+  esconde o aviso
+
+### useNewMessageAlerts (`hooks/`, CRMLAB-72, D-240/D-241)
+- Título "(N) <título>", notificação sem prévia, som e a regra `isInMyQueue`. Funções puras
+  exportadas para teste: `isInMyQueue`, `detectNewMessages`, `alertBody`, `countUnreadInQueue`,
+  `titleWithCount`. Estado auxiliar em `stores/message-alerts.store.ts` (preferências +
+  conversa aberta); som em `lib/notification-sound.ts`
 
 ### BudgetLayout
 - 2 colunas: flex 1 min 520px | 372px fixo; total em rodapé fixo
@@ -268,7 +438,10 @@ Anatomia (padrão WhatsApp):
 ### Avatar
 ```tsx
 <Avatar name="Marina Alves" size={36} />  // iniciais, fundo accent-2-200
+<Avatar name="Marina Alves" className="bg-chat-avatar text-chat-avatar-text" />  // tom sobreposto
 ```
+- `className` opcional (CRMLAB-81) sobrepõe fundo/cor das iniciais — a lista do Atendimento usa
+  os tokens `--color-chat-avatar*`
 - SEMPRE flex: 0 0 <size> — nunca comprimido
 
 ### EmptyState
@@ -299,10 +472,27 @@ Anatomia (padrão WhatsApp):
 - Backdrop translúcido escuro, cartão radius-lg + shadow-lg, máx 720px
 - Rolagem interna; fecha por × e clique-fora (stopPropagation no cartão)
 
-### ImageLightbox (CRMLAB-15, zoom em CRMLAB-21)
+### ImageLightbox (CRMLAB-15, zoom em CRMLAB-21, setas em CRMLAB-64)
 ```tsx
-<ImageLightbox src={url | null} fileName="foto.jpg" onClose={() => {}} />
+<ImageLightbox
+  src={url | null} fileName="foto.jpg" onClose={() => {}}
+  // opcionais (CRMLAB-64, D-244):
+  open={true} loading={false} error={false}
+  title="Maria Silva · 27/09/2026 14:32" caption="Pedido do Dr. Silva"
+  onPrev={() => {}} onNext={() => {}} preload={['blob:…']}
+/>
 ```
+- **Setas (CRMLAB-64, D-244):** `onPrev`/`onNext` desenham as setas nas laterais ("Imagem
+  anterior" / "Próxima imagem") e ligam ← → no teclado (`preventDefault`). Sem o handler, a seta
+  daquele lado some — é assim que o chamador diz "primeira", "última" ou "imagem só" (não dá a
+  volta). Clicar na seta não fecha o lightbox
+- **Cabeçalho** `title` no canto superior esquerdo (quem mandou · quando) e **legenda** `caption`
+  embaixo da imagem; ambos opcionais, texto cru (sem HTML)
+- **Carregando:** `open` mantém o lightbox aberto sem `src` — com `loading` mostra "Carregando
+  imagem…" no lugar da imagem, com `error` "Não foi possível carregar a imagem"; setas, cabeçalho e
+  × continuam. Sem `open`, vale o de sempre: `src={null}` não renderiza nada
+- `preload`: URLs das vizinhas, em `<img>` escondidos (a troca fica instantânea)
+- O ↓ baixa sempre a imagem **da tela**, com o `fileName` dela
 - Visualização de imagem em tela cheia — referência WhatsApp Web. Mais leve que `Modal`: mesmo
   backdrop (`bg-backdrop`), mas sem cartão/título/foco preso — só a imagem (`rounded-lg`,
   `shadow-lg`, `max-h-[86vh]`) sobre o fundo
@@ -586,10 +776,13 @@ tela passa tudo por props (o dado vem do TanStack Query).
 | Componente | Assinatura | Notas |
 |------------|-----------|-------|
 | `ConversationItem` | `<ConversationItem conversation selected? onClick?(id) now? />` | `now` é injetável só para tornar "aguardando N min" determinístico em teste |
-| `MessageBubble` | `<MessageBubble type message maxWidth? showMeta? />` | `type` ∈ `received \| sent \| system` — os únicos 3 · `*texto*` em negrito (D-183) |
-| `AudioMessage` | `<AudioMessage url />` | `<audio controls>` nativo com blob autenticado · download sempre disponível |
-| `Composer` | `<Composer onSend(content) onAttach? onSendAudio?(audio) disabled? sending? placeholder? quickReplies? />` | Enter envia · Shift+Enter quebra linha · Ctrl/Cmd+B envolve a seleção em `*` · emoji insere no cursor · `/` no campo vazio abre as macros · microfone grava recado de voz (clique/clique, 5 min, D-181) |
-| `EmojiPicker` | `<EmojiPicker onPick(emoji) disabled? />` | Grade fixa de 48, sem biblioteca · `Esc` fecha e devolve o foco |
+| `MessageBubble` | `<MessageBubble type message maxWidth? showMeta? onRetry? onOpenImage? />` | `type` ∈ `received \| sent \| system` — os únicos 3 · formatação do WhatsApp e links (D-183, D-242) · tiques e "Tentar de novo" (D-225/D-227) · imagem abre o lightbox da conversa (D-244) |
+| `DateSeparator` | `<DateSeparator date now? />` | Pílula de dia (CRMLAB-71, D-239) · `dateSeparatorLabel` e `isSameLocalDay` exportadas |
+| `AudioMessage` | `<AudioMessage url durationSec? />` | `<audio controls>` nativo com blob autenticado · velocidade 1x/1,5x/2x (D-236) · download sempre disponível |
+| `VideoMessage` · `DocumentCard` · `StickerMessage` · `LocationCard` · `ContactCard` | ver acima | Um por tipo de mensagem (CRMLAB-70, D-236) |
+| `Composer` | `<Composer onSend(content) → void | Promise onPickFiles?(files) onAttachClick? onSendAudio?(audio) disabled? sending? placeholder? quickReplies? draftId? />` | Enter envia · Shift+Enter quebra linha · Ctrl/Cmd+B envolve a seleção em `*`, Ctrl+I em `_`, Ctrl+Shift+X em `~` (D-242) · rascunho por `draftId` (D-243) · emoji insere no cursor · `/` no campo vazio abre as macros · microfone grava recado de voz (clique/clique, 5 min, D-181) |
+| `EmojiPicker` | `<EmojiPicker onPick(emoji) disabled? />` | Busca pt-BR, categorias e recentes sobre lista estática (D-243), sem biblioteca · `Esc` fecha e devolve o foco |
+| `WhatsAppText` | `<WhatsAppText text />` | Formatação do WhatsApp + links como nós React (D-242) · usado pela `MessageBubble` |
 | `QuickReplyMenu` | `<QuickReplyMenu items filter onPick(reply) onClose() />` | Aberto pela `/` no campo vazio · ↑↓ navega, Enter escolhe, Esc fecha |
 
 Exportações auxiliares (fonte única, para não duplicar regra em tela):

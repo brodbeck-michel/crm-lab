@@ -3102,6 +3102,86 @@ rodada anterior volta na seguinte, o que é inofensivo porque o upsert é idempo
 **Impacto:** `bitlab-client.ts` (`parseBitlabDateTime`, `bitlabDateToIsoDate`,
 `watermarkToBitlabDateTime`), SERVICES.md §24.1, BUSINESS_RULES.md §11.10.
 
+### D-188: Recebido do LIS = soma dos pagamentos ativos, a partir de um extrato por `ID_PAGAMENTO` (CRMLAB-53)
+*(Número reservado em 25/09/2026; decisão escrita em 28/09/2026, depois da resposta do Bitlab.)*
+**Decisão:**
+1. **Extrato de pagamentos:** tabela nova `lis_budget_payments` (migração 032, RLS por tenant),
+   uma linha por pagamento: `budget_number`, `requisition_number`, `payment_key`, `source`
+   (`api` | `planilha`), `paid_at` (`TIMESTAMP` sem fuso, com segundos, relógio de Brasília,
+   D-187), `paid_value`, `status` (`ativo` | `estornado`), `reversed_at`, `payment_method`,
+   `card_brand`, `import_id`, `updated_at`. Chave única `(tenant_id, budget_number, payment_key)`.
+2. **Chave do pagamento:** na API é o `ID_PAGAMENTO`. Na planilha, que não tem ID nem situação,
+   é `planilha:<paid_at>:<valor>`.
+3. **Gravação:** `ON CONFLICT ... DO UPDATE` de situação, data do estorno, forma e bandeira. O
+   pagamento muda de `ATIVO` para `ESTORNADO` **na mesma linha**; rodar a mesma carga duas vezes
+   não muda nada. A linha nunca é apagada pela carga (o LIS não apaga: o mecanismo é o estorno).
+   Linha da API sem `ID_PAGAMENTO` (orçamento sem pagamento) não gera extrato.
+4. **Valor derivado** em `lis_budgets`, recalculado no mesmo chunk, para os orçamentos do chunk:
+   - Se o orçamento tem **algum pagamento da API**: `paid_value = LEAST(SUM(ativos da API),
+     requisition_value)`. Os da planilha desse orçamento são ignorados (a API manda, e somar os
+     dois contaria o mesmo pagamento duas vezes).
+   - Senão, se tem pagamentos **só da planilha**: `LEAST(SUM(todos), requisition_value)` (a
+     planilha não diz quem foi estornado; o teto é a proteção).
+   - `paid_on` = data do último pagamento considerado, **de qualquer valor** (a régua de fatos da
+     D-204 conta pagamento de R$ 0 como pagamento, e isso não muda); nenhum considerado (só
+     estornados) → `paid_value = 0`, `paid_on = NULL`.
+   - Orçamento **sem nenhuma linha no extrato** (carga anterior ao card) fica como está.
+   - `requisition_value` nulo → sem teto.
+5. **`consolidateLisRows`** deixa de decidir pagamento: só consolida os campos do orçamento (maior
+   total vence, §11.1). O `upsertBudget` deixa de gravar `paid_value`/`paid_on`.
+6. **Relatórios:** continuam lendo `lis_budgets.paid_value`/`paid_on`. O `DISTINCT ON
+   (requisition_number)` da §11.2 **fica**, porque ele resolve outra coisa: dois orçamentos com a
+   mesma requisição.
+7. **Estorno depois de `ganho`:** a proposta **não reabre** (D-192 item 2); `lis_paid_value` e
+   `lis_paid_on` são atualizados pela conciliação (D-119 item 6), e Resultados/comissão refletem o
+   valor novo.
+**Motivo:** o Bitlab confirmou em 28/09/2026 que a API devolve um movimento por linha, que linha
+zerada, valor repetido e soma acima da requisição são **estornos**, e que a linha estornada continua
+saindo. Ele incluiu na v1 `ID_PAGAMENTO`, `SITUACAO_PAGAMENTO` (`ATIVO`/`ESTORNADO`), `DATA_ESTORNO`,
+`FORMA_PAGAMENTO` e `BANDEIRA_CARTAO`, que a consulta pela VPS confirmou já estarem em produção
+(1.198 pagamentos, `ID_PAGAMENTO` único). Os casos 66760 (528,26), 68905 (783,55), 68785 (837,47) e
+66210 (676,24) fecham com a soma dos ativos. A regra antiga ("a última linha sobrescreve") zerava
+orçamentos pagos (68281) e deixava R$ 17 mil de fora.
+**Impacto:** migração 032; `bitlab-client.ts` (schema e `toLisRow` com os campos novos, `paidAt`
+com segundos), `lis-spreadsheet.ts` (`paidAt` com hora; `consolidateLisRows`),
+`lis-import.repository.ts` (`upsertPayments`, `recomputePaidValues`), `lis-import.service.ts`;
+BUSINESS_RULES §11.1/§11.2/§11.10, SCHEMA §26 + tabela nova, SERVICES §19/§24.1.
+
+### D-189: Releitura diária de 90 dias pega o estorno; a planilha vira plano B, ligada por regra (CRMLAB-53)
+**Decisão:**
+1. **O estorno não volta na consulta incremental.** A consulta pela VPS (28/09/2026) mostrou que
+   `tipoData=alteracao` filtra só por emissão/`Data_Pagamento`: nos 5 estornos testados, a linha
+   não voltou na janela da `DATA_ESTORNO`. O maior intervalo observado entre pagamento e estorno
+   foi de 15 dias.
+2. **Duas marchas na mesma sincronização:**
+   - **incremental**, a cada tique (2 min, D-199), como hoje, a partir da `marcaDagua`;
+   - **releitura completa**, uma vez por dia, no primeiro tique depois das **03:00 de Brasília**:
+     janela dos últimos `LIS_SYNC_INITIAL_DAYS` (90) dias. Grava pelo mesmo `ingestRows`, e os
+     estornos corrigem a situação pelo `ID_PAGAMENTO` (D-188 item 3).
+   - A releitura **não recua a marca**: a marca gravada é a maior entre a atual e a recebida.
+   - Controle em `lis_sync_settings.last_full_scan_on` (`DATE`, Brasília): só é gravado quando a
+     releitura termina sem erro; se falhar, o próximo tique tenta de novo.
+   - "Sincronizar agora" continua incremental.
+3. **Estorno com mais de 90 dias** não é pego. Aceito: o maior intervalo visto foi de 15 dias, e
+   o laboratório fecha comissão mensalmente. O pedido ao Bitlab para a `DATA_ESTORNO` contar no
+   filtro `alteracao` fica registrado no card; se ele atender, a releitura continua como rede de
+   segurança.
+4. **Planilha como plano B:** nova seção nas Regras (D-190), `lisSource.spreadsheetImport`
+   (`enabled: boolean`), **desligada por padrão**. Desligada: o botão "Importar planilha" some em
+   Resultados e `POST /lis-imports` devolve `SPREADSHEET_IMPORT_DISABLED` (mesmo padrão de
+   `MANUAL_PROPOSAL_DISABLED`, D-193). Ligada: a importação funciona como hoje, com a regra da
+   planilha da D-188 item 4. Limpar a base (`purge`, admin) não depende da flag.
+5. **Emenda à D-191:** este padrão **não** reproduz o comportamento anterior (a planilha estava
+   sempre disponível). É intencional: o Michel decidiu em 28/09/2026 que a API é a carga principal.
+**Motivo:** sem a releitura, um pagamento lido como ativo e estornado depois ficaria ativo para
+sempre, e o recebido e a comissão ficariam acima do real. A consulta completa de 01/05 até hoje
+tem 4 páginas, então reler 90 dias por dia custa pouco. A planilha não tem situação por pagamento,
+então só serve de reserva para o caso de a API ficar fora do ar.
+**Impacto:** migração 032 (`last_full_scan_on`); `lis-sync.service.ts` (modo da rodada,
+`windowStart`); `shared/types/funnel-rules.types.ts` + `funnel-rules.service.ts` (seção nova);
+`lis-import.service.ts` (trava); `errors.ts`/`api.types.ts` (`SPREADSHEET_IMPORT_DISABLED`);
+frontend `Settings/Rules.tsx` e `Results.tsx`; SERVICES §24/§26, API_CONTRACTS §6c/§10.1.
+
 ## 2026-09-26 — Página de Regras do funil (CRMLAB-56)
 
 ### D-190: Regras do funil por laboratório, numa linha JSONB própria, com um ponto único de leitura
@@ -3705,6 +3785,766 @@ Nenhum comportamento muda: mesmo histórico, mesma mensagem, mesmo audit, mesmos
 `recordTransitionInTx` repassa `automation`/`changedAt`), `funnel-timer.service.ts`; SERVICES §4
 e §27.
 
+### D-220: Mensagem apagada ou editada pelo remetente é escondida, nunca apagada (CRMLAB-66)
+**Decisão (Michel, 28/09/2026):** quando o paciente (ou o celular do laboratório) apaga "para
+todos" ou edita uma mensagem no WhatsApp, o CRM **não apaga nada**:
+1. **Apagada:** a linha de `messages` e o arquivo de `message_media` continuam como estavam.
+   Grava `deleted_at` e `deleted_by` (`patient` | `agent` — o lado de quem mandou a original; no
+   WhatsApp só o autor apaga para todos). Nenhum `DELETE` físico.
+2. **A API não devolve o conteúdo escondido** para a tela: com `deletedAt` preenchido, `content`
+   vem `''`, `attachmentUrl` `null`, `quoted` `null` e `reactions` `[]`. A prévia da lista de
+   conversas e a timeline do paciente também mostram `''` para a mensagem apagada. A tela desenha
+   "🚫 Mensagem apagada".
+3. **Editada:** o texto novo substitui `messages.content` e `edited_at` é gravado; a versão
+   ANTERIOR vai para `message_edits` (uma linha por edição, nunca sobrescrita). A tela mostra o
+   texto novo + "Editada".
+4. **Os dois geram audit log** (`message_deleted_by_sender`, `message_edited_by_sender`,
+   `entityType: 'message'`, `userId: null`). O registro **não carrega o texto**: só `externalId`,
+   quem, quando e o id da versão guardada. Motivo: a anonimização LGPD (D-063/D-075) reescreve os
+   valores do audit log do paciente, mas não o texto das mensagens (limitação declarada); copiar o
+   texto para o audit criaria uma terceira cópia fora do alcance dela.
+5. **Quem vê o original:** só quem faz auditoria, por consulta ao banco (`messages.content` da
+   apagada, `message_edits.previous_content`). Tela de auditoria: fora de escopo. O export LGPD
+   (`GET /patients/:id/export`, admin) continua trazendo o conteúdo — é dado do titular e a rota é
+   de admin.
+6. Mensagem apagada não pode ser citada nem receber reação pelo CRM (`NOT_FOUND`, igual a
+   inexistente). Edição de mensagem já apagada é ignorada.
+**Motivo:** auditoria. Em laboratório, o que o paciente disse (pedido, reclamação, resultado
+enviado) pode precisar ser consultado depois; apagar do banco porque ele apagou no celular
+destruiria a prova.
+**Impacto:** migração 040; `message.repository.ts` (`toMessage`, `markDeletedByExternalId`,
+`applyEdit`); prévia em `conversation.repository.ts` e timeline em `patient.repository.ts`;
+webhook Evolution; API_CONTRACTS §2/§2b, SCHEMA §4/§33/§34; MessageBubble.
+
+### D-221: Citação guarda o id externo e o id interno, e resolve na leitura (CRMLAB-66)
+**Decisão:**
+1. `messages.quoted_external_id` guarda o `stanzaId` que veio do WhatsApp (ou o id externo da
+   original, no envio do CRM); `messages.quoted_message_id` guarda a original quando ela já está no
+   CRM. A leitura resolve pela id interna e, sem ela, pelo `(tenant, external_message_id)` —
+   original que chegou depois da resposta (fora de ordem) aparece sem backfill.
+2. Citação só vale **dentro da mesma conversa**. `quotedMessageId` de outra conversa, de outro
+   tenant ou de mensagem apagada → `NOT_FOUND` (nunca `FORBIDDEN`, regra 8).
+3. `Message.quoted` é um RESUMO (`id`, `senderType`, `senderName`, `preview` de até 160
+   caracteres, `messageType`, `deleted`), não a mensagem inteira. Original ausente do CRM (anterior
+   à conversa): `id: null`, `preview: ''` — a tela diz "Mensagem original indisponível".
+4. Envio: Evolution recebe `quoted: { key: { id, remoteJid, fromMe }, message: { conversation } }`
+   em `sendText`/`sendMedia` (o `message` evita depender do cache do gateway); a Cloud API da Meta
+   recebe `context.message_id`. Original sem id externo (canal `direct`, envio que falhou): a
+   mensagem sai sem citação para o WhatsApp e continua citada no CRM.
+5. A leitura do `stanzaId` aceita `data.contextInfo` (o Evolution v2 sobe o `contextInfo` para o
+   topo do `data`) e `message.<tipo>.contextInfo` (forma crua do Baileys).
+**Motivo:** o `stanzaId` é a única ligação que o WhatsApp manda; guardar só a id interna perderia
+a citação de mensagem que ainda não chegou.
+**Impacto:** migração 040; `message.repository.ts`, `message.service.ts`, drivers do
+`whatsapp.service.ts`, `evolution-client.ts`; API_CONTRACTS §2; MessageBubble, Composer.
+
+### D-222: Reação é uma por LADO (paciente / laboratório), não uma por usuário (CRMLAB-66)
+**Decisão:**
+1. `message_reactions` tem no máximo **uma linha por `(mensagem, reactor_type)`**, com
+   `reactor_type` ∈ `patient` | `agent`. `user_id` diz qual atendente reagiu pelo CRM (informativo;
+   `NULL` quando veio do celular do laboratório).
+2. Reação nova do mesmo lado **substitui** a anterior; emoji vazio **remove** (a linha sai — reação
+   não é conteúdo de mensagem, D-220 não se aplica).
+3. Pelo CRM a reação sai para o WhatsApp **antes** de gravar (fila com 3 tentativas); falhou →
+   `MESSAGE_SEND_FAILED` e nada gravado. Mensagem sem id externo (canal `direct`) grava só no CRM.
+4. O eco `fromMe` da reação feita pelo CRM volta pelo webhook: mesmo emoji preserva o `user_id`
+   gravado; emoji diferente (reagiu pelo celular) grava com `user_id` nulo.
+5. Barra rápida da tela: 👍 ❤️ 😂 😮 😢 🙏 (`QUICK_REACTIONS` em `shared/`). A API aceita qualquer
+   emoji de até 32 bytes.
+**Motivo:** para o paciente, o laboratório é UM número. Duas atendentes reagindo com emojis
+diferentes apareceriam no celular dele como uma só (a última). Guardar duas linhas faria o CRM
+mostrar algo que o paciente não vê.
+**Impacto:** migração 040; `message.repository.ts`, `message.service.ts`, rota
+`PUT|DELETE /conversations/:id/messages/:messageId/reaction`; API_CONTRACTS §2; MessageBubble.
+
+### D-223: Eventos do webhook do Evolution numa constante única, reaplicados sozinhos (CRMLAB-66)
+**Decisão:**
+1. `EVOLUTION_WEBHOOK_EVENTS` (`lib/evolution-client.ts`) é a **única** lista de eventos
+   assinados: `MESSAGES_UPSERT`, `MESSAGES_EDITED`, `MESSAGES_DELETE`, `CONNECTION_UPDATE`,
+   `QRCODE_UPDATED`. Criar instância e `/webhook/set` usam a mesma constante. Card que precisar
+   de evento novo (ex.: CRMLAB-67 com `MESSAGES_UPDATE`/`PRESENCE_UPDATE`) só acrescenta aqui.
+2. **Instância já criada se corrige sozinha, sem script e sem ninguém entrar na VPS:**
+   - **ao subir o backend** (`main.ts` → `syncEvolutionWebhooks`): para cada laboratório com canal
+     WhatsApp em `connection_mode = 'qr'`, reenvia `/webhook/set` com a lista vigente.
+     Best-effort: instância ausente no gateway é ignorada, erro vira log `warn` e não derruba o
+     boot. Todo deploy recria o container, então todo deploy reaplica;
+   - **ao conectar** (`connectWhatsAppQr`): `createInstance` já reaplica o webhook quando a
+     instância existe (`already in use`).
+3. Lida fora do contexto de tenant: só `tenant_id` de `tenant_channels` (mesma exceção de D-205
+   item 6); o resto roda por laboratório.
+4. WebSocket: `conversation.message_updated { conversationId, messageId }` avisa reação, edição e
+   apagamento. Evento separado de `conversation.new_message` de propósito — quem conta mensagem
+   nova (aviso, som, badge) não pode disparar por uma reação.
+**Motivo:** a lista estava escrita dentro de `webhookBody` e a instância criada antes do deploy
+nunca receberia os eventos novos. Reaplicar no boot é idempotente e barato (1 POST por
+laboratório conectado).
+**Impacto:** `evolution-client.ts`, `channel-settings.service.ts`, `main.ts`; webhook Evolution;
+`shared/types/websocket.types.ts`; FRONTEND_BACKEND "Real-time"; API_CONTRACTS §2b; SERVICES §16.
+
+## 2026-09-28 — Aviso de mensagem nova (CRMLAB-72)
+
+### D-240: A notificação do navegador NUNCA mostra o conteúdo da mensagem (CRMLAB-72)
+**Decisão:** a `Notification` de mensagem nova leva **só** o nome do paciente no título
+(`patientName`; sem nome, o telefone que a fila já mostra) e, no `body`, **"Nova mensagem"** ou
+**"N novas mensagens"**. Nunca o texto, nunca a legenda, nunca a mídia (`icon`/`image` não
+recebem anexo). **Não existe opção para ligar a prévia**, nem por usuário, nem por laboratório.
+O `body` é montado por uma função pura (`alertBody(count)`) que só recebe um número, e um teste
+automatizado garante que o `body` não contém `message.content` nem `lastMessagePreview`.
+`tag = conversationId`: a notificação nova da mesma conversa substitui a anterior em vez de
+empilhar. Clicar traz a aba para a frente (`window.focus()`) e abre a conversa
+(`/attendance?conversationId=…`).
+**Motivo:** decidido pelo Michel em 28/09/2026. Mensagem de laboratório é dado de saúde
+(resultado, exame, sintoma). A notificação aparece na tela bloqueada, na central de
+notificações do sistema e para quem passa perto do computador; a LGPD trata dado de saúde como
+sensível. Saber *quem* escreveu basta para a atendente decidir voltar à aba.
+**Impacto:** `frontend/src/hooks/useNewMessageAlerts.ts` e o spec; PAGES.md §2 ("Aviso de
+mensagem nova"). Se um dia pedirem prévia, é decisão nova, não flag.
+
+### D-241: Quem é avisado, onde o aviso vive e de onde sai o contador do título (CRMLAB-72)
+**Decisão:**
+1. **Quem é avisado = a fila da atendente:** conversa **atribuída a ela** ou **sem dona**
+   (`assignedTo === userId || assignedTo === null`) — o mesmo recorte de visibilidade do
+   `ConversationRepository.list` para atendente (`c.assigned_to = $me OR c.assigned_to IS NULL`)
+   e o mesmo par dos chips "Minhas"/"Não atribuídas". Para **gestor e admin**, que enxergam todas
+   as conversas, o aviso usa o **mesmo recorte da fila** (dele + sem dona), não a visibilidade
+   total: conversa de outra atendente não toca para ninguém além dela (interpretação mais
+   restritiva do card, "Conversa de outra atendente não toca"). A regra mora em uma função só
+   (`isInMyQueue`) e é a mesma para aviso e contador.
+2. **Só mensagem do paciente avisa.** O sinal é o `unreadCount` da conversa **subir** junto com o
+   `lastMessageAt` — e o servidor só incrementa `unread_count` em `createFromPatient`
+   (`message.service.ts`). Mensagem de agente (`fromMe`) e evento de sistema não sobem o
+   contador, então não avisam, sem campo novo no payload WS (que continua só com ids). Conversa
+   que aparece na lista pela primeira vez só avisa se o `lastMessageAt` dela for mais novo que o
+   da lista anterior (conversa nova ou reaberta pelo paciente); conversa que chega por
+   transferência, com mensagens antigas, não avisa. A primeira carga é linha de base: não avisa.
+3. **Conversa aberta:** é a que o Atendimento publica (`useMessageAlertsStore.openConversationId`).
+   Abrir a conversa zera o `unreadCount` no servidor (`GET /conversations/:id`), então para ela o
+   sinal é o **detalhe**: mensagem `senderType: 'patient'` mais nova que a última vista. Com a aba
+   em foco, a conversa aberta não gera nada (nem som).
+4. **Foco:** "aba em foco" = `document.visibilityState === 'visible' && document.hasFocus()`.
+   Notificação só **sem foco**. Som sem foco, ou com foco quando a mensagem é de **outra** conversa.
+5. **Onde vive:** o hook é montado no `AppShell` (todas as telas do laboratório, não só
+   `/attendance`), como o WhatsApp Web, que avisa em qualquer lugar enquanto a aba está aberta. O
+   Console da Plataforma (`PlatformShell`) não monta. O pedido de permissão **não** sai no
+   carregamento: um aviso discreto "Ativar notificações" no topo da fila do Atendimento pede com um
+   clique, e some com a permissão concedida, negada, ou com a notificação desligada na preferência.
+6. **Contador do título "(N) <título>":** N = conversas da fila (regra do item 1) com
+   `unreadCount > 0`, derivado da query `GET /conversations?status=active&scope=all&
+   sortBy=unreadCount&order=desc&limit=100` (a chave vem de `queryKeys.conversations`, então o
+   mesmo evento WS `conversation.new_message` que invalida a fila invalida esta, e ler uma conversa
+   também). É **uma** query a mais por aba, a mesma do aviso: a fila do Atendimento é paginada e
+   filtrada por chip (e não existe fora de `/attendance`), então não serve de fonte para um número
+   que vale em qualquer tela. Ordenar por não lidas faz os 100 primeiros conterem todas as não lidas
+   em qualquer operação realista; acima de 100 conversas não lidas o número satura em 100.
+   Zerado, o título volta ao original.
+7. **Som:** tom sintético curto gerado por WebAudio (`OscillatorNode`, ~180 ms), sem arquivo de
+   terceiros e sem download. Não depende de `media-src` (a CSP em `nginx/security-headers.conf`
+   já tem `media-src 'self' blob:` e segue sem mudança).
+8. **Preferências** (som, notificação) por navegador, em `localStorage`
+   (`crm-lab.alerts.sound`, `crm-lab.alerts.notifications`, padrão ligado), com `try/catch`:
+   armazenamento bloqueado só faz a preferência não persistir. Ficam no menu do usuário (rodapé
+   da Sidebar).
+9. **Permissão negada ou API ausente:** nada quebra; título e som seguem funcionando.
+**Motivo:** o card pede que o aviso siga a regra da fila e que agente/`fromMe` não avise; o
+`unreadCount` já é exatamente "mensagem de paciente ainda não lida", então reaproveitá-lo evita
+um segundo critério no cliente e mudança no contrato WS (que CRMLAB-66 e CRMLAB-71 estão
+mexendo em paralelo).
+**Limitações declaradas:** (a) várias abas abertas tocam o som em cada uma (a notificação se
+sobrepõe pela `tag`); (b) conversa aberta com a aba escondida é marcada lida no servidor pelo
+refetch do detalhe, comportamento anterior a este card.
+**Impacto:** `frontend/src/hooks/useNewMessageAlerts.ts`, `stores/message-alerts.store.ts`,
+`lib/notification-sound.ts`, `pages/Attendance/EnableNotificationsBanner.tsx`,
+`pages/Attendance/index.tsx` (publica a conversa aberta, reabre por `?conversationId=` a cada
+navegação, banner), `components/layout/{AppShell,InboxLayout,Sidebar}.tsx`; PAGES.md §2,
+COMPONENTS.md (`layout/`).
+
+## 2026-09-28 — Leitura da conversa estilo WhatsApp Web (CRMLAB-71)
+
+### D-237: Histórico da conversa paginado por cursor (`before=<messageId>`), com a ordem `(created_at, id)`
+**Decisão:** `GET /conversations/:id` aceita `?before=<messageId>`: devolve as `messageLimit`
+mensagens **imediatamente anteriores** à mensagem indicada, na ordem `(created_at, id)` — a mesma
+do `ORDER BY` de sempre, com o `id` desempatando mensagens do mesmo instante. A resposta ganha
+`cursors: { before, after }`:
+1. `cursors.before` é o id da mensagem mais antiga da página **quando ainda existe histórico
+   anterior**; `null` quando a página chegou ao começo da conversa. É o valor que o cliente manda
+   no próximo `before` — fim do histórico é `null`, e o cliente para de pedir.
+2. `cursors.after` fica **sempre `null` neste card**. Existe no shape para o CRMLAB-68
+   ("carregar ao redor de uma mensagem", `around=<messageId>`), que vai abrir uma janela no meio
+   da conversa e precisar do cursor para as mensagens mais novas. `around` e `after` **não** são
+   aceitos como parâmetro hoje.
+3. `before` e `page` são excludentes: os dois juntos → `VALIDATION_ERROR`. `before` que não é
+   mensagem **desta** conversa (outra conversa, outro tenant, id inexistente) → `NOT_FOUND`
+   (`resource: "message"`), nunca uma lista vazia que a tela confundiria com "fim do histórico".
+4. `page`/`messageLimit` continuam funcionando como antes (compatibilidade: e2e e qualquer
+   cliente antigo). Sem `before` e sem `page`, a resposta é a página mais recente — e já traz
+   `cursors.before`, então a primeira página é o ponto de partida do cursor.
+5. `pagination` continua com os quatro campos (D-070): `total`/`totalPages` são da conversa
+   inteira; com `before`, `page` volta `1` — é campo da navegação por página, que o cursor não usa.
+6. Sem migração nova: o índice `idx_messages_conversation_created (conversation_id, created_at
+   DESC)` da 001 já serve o `WHERE conversation_id = $1 AND (created_at, id) < (...)`. O número 046
+   reservado para o card fica sem uso.
+**Motivo:** o botão antigo aumentava o `LIMIT` de 50 em 50 e rebuscava a conversa inteira a cada
+clique — e passava de 100, o máximo do contrato, na terceira página (400). O cursor vai no fio
+como **id da mensagem**, não como o par `createdAt,id` em texto: `created_at` é `TIMESTAMP` com
+microssegundos e o `createdAt` do fio é ISO com milissegundos, então um cursor montado pelo cliente
+a partir do `createdAt` pularia mensagens gravadas no mesmo milissegundo. Com o id, o par exato é
+lido no banco (`SELECT created_at, id FROM messages WHERE id = $2 AND conversation_id = $1`), e o
+formato é o mesmo que o `around=<messageId>` do CRMLAB-68 vai usar.
+**Impacto:** backend (`conversation.routes.ts`, `message.service.ts`, `message.repository.ts`),
+`shared/types/conversation.types.ts` (`GetConversationQuery`, `MessageCursors`,
+`GetConversationResponse.cursors`), API_CONTRACTS §2, SERVICES §3.
+
+### D-238: Tela de Atendimento carrega o histórico com `useInfiniteQuery` e rolagem, sem botão
+**Decisão:**
+1. O detalhe da conversa vira uma `useInfiniteQuery` com a chave
+   `[...queryKeys.conversation(id), 'messages']` (continua sob o prefixo que o WS
+   `conversation.new_message` invalida). `pageParam` é o `before` (D-237); a primeira página não
+   manda cursor; `getNextPageParam` devolve `cursors.before` — "próxima página" é **mais antiga**.
+   A tela junta as páginas de trás para frente, cada uma já em ordem crescente.
+2. `useMarkAsRead` chama `fetchInfiniteQuery` com as **mesmas** opções: abrir a conversa continua
+   sendo um GET só.
+3. Invalidação (mensagem nova pelo WS, envio, transferência) refaz **todas** as páginas carregadas,
+   em sequência, e o TanStack v5 recalcula cada cursor a partir da página que acabou de voltar —
+   não fica buraco entre páginas. Efeito colateral aceito: com várias páginas abertas, cada
+   mensagem nova custa uma requisição por página, e a mensagem mais antiga carregada pode sair do
+   topo (a janela anda junto com a conversa). A rolagem se ancora numa mensagem visível
+   (`data-anchor-id` na linha), então nem o carregamento de cima nem essa saída fazem a tela pular.
+4. O botão "Carregar mensagens anteriores" sai. Chegou a menos de 200px do topo e existe
+   `cursors.before`, a tela pede a página anterior — **uma de cada vez** (nada sai enquanto a query
+   está buscando) e **nenhuma** quando o cursor é `null` (começo da conversa). Enquanto carrega,
+   um "Carregando mensagens anteriores…" pequeno sobre o topo da lista — **fora** da área
+   rolável, senão o próprio indicador empurraria as mensagens.
+5. A âncora nativa do navegador (`overflow-anchor`) fica desligada na lista: a tela faz a
+   compensação sozinha, e as duas juntas somariam o deslocamento duas vezes.
+**Motivo:** é o comportamento do WhatsApp Web que o card pede, e o cursor evita rebuscar o que já
+está na tela. Refazer todas as páginas é o que o TanStack já faz; buscar só o que chegou depois
+exigiria o `after` (D-237 item 2), que é escopo do CRMLAB-68.
+**Impacto:** `pages/Attendance/{queries.ts,index.tsx,ConversationPanel.tsx,useConversationScroll.ts}`;
+PAGES.md §2 e a tabela de chaves do Atendimento.
+
+### D-239: Leitura da conversa — separador de data, faixa de não lidas e botão ↓
+**Decisão:**
+1. **Separador de data** (`DateSeparator`) entre mensagens de dias diferentes, **no fuso do
+   navegador** (o fio é ISO UTC): "Hoje", "Ontem", o dia da semana por extenso ("Segunda-feira")
+   de 2 a 6 dias atrás, e `dd/mm/aaaa` a partir de 7 dias (7 dias atrás é o mesmo dia da semana
+   de hoje, então o nome seria ambíguo) e para qualquer data futura. A conta é por **dia de
+   calendário** local, não por 24h: 23h59 e 00h01 são dias diferentes. A pílula fixa no topo
+   durante a rolagem (opcional no card) **não** entrou.
+2. **Faixa "N mensagens não lidas"** ("1 mensagem não lida" no singular). N é o `unreadCount` da
+   **lista** no momento do clique — o `GET` do detalhe zera o contador (D-035) antes de a tela ler.
+   A faixa vai antes da N-ésima mensagem **do paciente** contando do fim (só mensagem de paciente
+   soma no contador, D-035/§5), fica presa àquela mensagem (mensagem nova não a desloca) e a
+   conversa abre rolada nela, não no fim. Se N passa das mensagens de paciente carregadas, a faixa
+   vai antes da primeira mensagem carregada, com o N verdadeiro. Some ao trocar ou fechar a
+   conversa e quando a atendente envia (texto, anexo ou áudio). Abrir por link direto
+   (`?conversationId=`) antes de a lista carregar não mostra faixa: não há contador para ler.
+3. **Botão ↓** aparece quando a lista está a mais de 80px do fim. Clique: rolagem suave até a
+   última mensagem e o contador zera. Mensagem nova com a atendente longe do fim **não** move a
+   tela e soma no contador (`Badge`, a mesma pílula de não lidas da fila), que zera ao chegar no
+   fim por qualquer caminho. Perto do fim, mensagem nova continua descendo sozinha. Quem envia
+   vai para o fim na hora, esteja onde estiver — como no WhatsApp Web.
+**Motivo:** são as regras do card; os limites (80px do fim, 200px do topo) são de interface e
+ficam como constantes no hook.
+**Impacto:** `components/conversation/DateSeparator.tsx`, `pages/Attendance/*`; COMPONENTS.md
+(`DateSeparator`), PAGES.md §2.
+
+### D-211: Reingajamento da conversa roda no motor de tempo, com uma linha por disparo
+**Decisão:** quando a atendente fala por último e o paciente para de responder, o sistema manda
+sozinho uma mensagem (CRMLAB-62). Regras em `FunnelRules.reengagement` (página de Regras, §6c):
+`first` e `second`, cada um com `enabled`, `hours` (1..720) e `message` (1..1000, texto fixo).
+1. **Onde roda:** dentro do tique do `FunnelTimerService` (D-205), no fim de cada laboratório,
+   pelo `ReengagementService` (SERVICES §28). O tique passa a incluir laboratórios com o 1º ligado,
+   mesmo sem proposta aberta. Falha do reingajamento não desfaz o que o funil fez.
+2. **Silêncio e âncora:** a âncora é a última mensagem de pessoa do laboratório na conversa
+   (`sender_type = 'agent'` e `automation` nulo: CRM **ou celular**, D-173). Há silêncio quando
+   não existe mensagem do paciente depois dela e a conversa está `active`. A mensagem automática
+   **nunca vira âncora**: não há loop. Resposta do paciente seguida de nova mensagem da atendente
+   abre um silêncio novo.
+3. **Uma linha por disparo** em `conversation_reengagements` (migração 031), com
+   `UNIQUE (anchor_message_id, step)`: `sent` | `discarded` (+ motivo) | `failed`. A linha `sent`
+   é gravada **antes** do envio, sob `FOR UPDATE` na conversa e com a reconferência do silêncio;
+   tique concorrente cai no `ON CONFLICT DO NOTHING`. Se o processo cair entre a linha e o envio,
+   o paciente fica sem a mensagem, nunca com duas. Falha do canal: mensagem `failed`, decisão
+   `failed`, **sem nova tentativa**.
+4. **O 2º** conta a partir do envio do 1º (`decided_at` da linha `sent`) e só existe depois de um
+   1º **enviado**; o 1º descartado ou com falha encerra o silêncio. Não há terceiro. O `PATCH`
+   recusa ligar o 2º com o 1º desligado; a tela desliga o 2º junto com o 1º.
+5. **Na conversa:** `MessageService.createAutomated` grava `agent` sem autor com
+   `messages.automation = 'reengagement'`, emite `conversation.new_message` e envia pelo mesmo
+   caminho do Composer. A API devolve `senderName: "Mensagem automática"`. A mensagem entra no
+   "envio em voo" do eco (D-173) e nunca é apagada como cópia do celular.
+6. **Padrões:** os dois desligados (quem já usa não passa a mandar nada), 1º em 1 h, 2º em 24 h,
+   textos profissionais editáveis.
+**Motivo:** o Michel pediu que o motor de tempo fosse reaproveitado e que o reingajamento
+dispare uma vez por silêncio. Gravar a decisão (e não só a mensagem) é o que permite o descarte
+de feriado ser definitivo e o 2º contar do envio real do 1º.
+**Impacto:** migração 031; `shared/types/funnel-rules.types.ts`, `reengagement.types.ts` (novo);
+`reengagement.service.ts`, `reengagement.repository.ts` (novos), `funnel-timer.service.ts`,
+`message.service.ts`, `message.repository.ts`, `funnel-rules.service.ts`, `main.ts`; SCHEMA §4/§33,
+API_CONTRACTS §2/§6c, SERVICES §27/§28, BUSINESS_RULES §3, PAGES §21.
+
+### D-212: Quando o reingajamento sai — horário de funcionamento, feriado e atraso máximo
+**Decisão:** a hora de sair é calculada a cada tique, com a regra vigente (como D-209):
+1. **Horário:** o de `tenant_settings.business_hours` (tela de Canais, o mesmo da resposta de
+   fora do horário). Ele é **do laboratório**, não de cada canal. Sem nenhum dia com faixa =
+   **sempre aberto** (decisão do Michel, 28/09/2026).
+2. **Prazo vencido fora do horário** → sai na **próxima abertura** (`nextOpening`, só dia da
+   semana e faixa, no fuso IANA do horário). As horas contam em tempo corrido; o horário decide
+   só **quando** sai.
+3. **Feriado não mantém** (Michel, 28/09/2026): se a data local da hora de sair é feriado
+   (nacional ou do laboratório, D-213), o disparo é **descartado** (`holiday`), sem empurrar para
+   depois. Vale também para o canal sempre aberto.
+4. **Atraso máximo de 2 h** (`REENGAGEMENT_STALE_GRACE_MS`): se o tique que enviaria roda mais de
+   2 h depois da hora de sair, descarta (`stale`). Cobre sistema fora do ar, regra recém-ligada e
+   canal que voltou da API oficial para QR — em vez de mandar "ainda está aí?" horas ou dias
+   depois.
+5. **Janela de busca:** o motor só olha silêncios com âncora posterior a
+   `agora − (horas do 1º + do 2º) − 8 dias` (`REENGAGEMENT_LOOKBACK_DAYS`). Ligar a regra não
+   dispara para conversas paradas há semanas: as da janela viram `stale` uma vez, as de fora
+   são ignoradas.
+6. Na hora de enviar, reconfere: conversa ainda ativa, mesma âncora, paciente sem responder.
+**Motivo:** o card pede "respeitar o horário" e "feriado não mantém". O atraso máximo e a janela
+evitam o disparo em massa ao ligar a regra e a mensagem fora de contexto depois de uma queda.
+**Impacto:** `shared/types/reengagement.types.ts` (`nextOpening`, `planReengagement`),
+`channel-settings.service.ts` (`readBusinessHours`), `reengagement.service.ts`; SERVICES §28.
+
+### D-213: Feriados — nacionais calculados no código, os do laboratório cadastrados nas Regras
+**Decisão:** (opção "b" do Michel, 28/09/2026)
+1. **Nacionais prontos**, calculados por ano em `shared/` (`nationalHolidays`), **não gravados**:
+   fixos 1/1, 21/4, 1/5, 7/9, 12/10, 2/11, 15/11, 20/11, 25/12; móveis pela Páscoa (algoritmo
+   gregoriano): **segunda e terça de Carnaval**, Sexta-feira Santa, Corpus Christi. Carnaval e
+   Corpus Christi são ponto facultativo, mas entram como feriado (Michel, 28/09/2026).
+2. **Do laboratório** em `tenant_holidays` (migração 031, `UNIQUE (tenant_id, holiday_date)`),
+   com `GET/POST/DELETE /settings/holidays` (§6d): `GET` todo perfil; incluir e remover
+   manager/admin, com audit. Data repetida → `CONFLICT`.
+3. **Por ora o feriado só vale para o reingajamento.** O motor de tempo do funil continua sem
+   descontar feriados nos dias úteis (D-205 item 3); usar a lista lá é outro card.
+**Motivo:** o produto não tinha calendário de feriados (D-205). Nacionais no código dispensam
+cadastro e manutenção; os municipais variam por cidade e ficam com o laboratório.
+**Impacto:** migração 031; `shared/types/reengagement.types.ts`; `holiday.service.ts`,
+`holiday.repository.ts`, `holiday.routes.ts` (novos), `http/modules.ts`; frontend
+`api/holidays.ts`, `Settings/HolidaysSection.tsx`; SCHEMA §34, API_CONTRACTS §6d, SERVICES §29,
+PAGES §21.
+
+### D-214: Reingajamento só para WhatsApp conectado por QR Code
+**Decisão:** o reingajamento só considera o laboratório cujo canal `whatsapp` está **ativo e em
+`connection_mode = 'qr'`** (Evolution). Na API oficial da Meta (`cloud_api`) nenhuma conversa
+entra na rotina, com a regra ligada ou não (Michel, 28/09/2026). A página de Regras avisa
+"Inativo para este canal" quando o gestor/admin vê o WhatsApp em `cloud_api`.
+**Motivo:** na API oficial, texto livre só sai até 24 h depois da última mensagem do paciente;
+fora disso a Meta exige template aprovado (pago), que o CRM não tem. Em vez de meio suporte, a
+regra fica fora. Template aprovado, se o laboratório migrar, é outro card.
+**Impacto:** `reengagement.repository.ts` (`isQrWhatsAppActive`), `ReengagementSection.tsx`.
+
+### D-215: Responder conversa da fila livre assume a conversa (CRMLAB-75)
+**Decisão:** mensagem de atendente (texto, resposta rápida, anexo, recado de voz e o orçamento
+enviado/reenviado pelo cartão) numa conversa **sem dona** atribui a conversa a **quem enviou**,
+antes de gravar a mensagem. O claim é o mesmo do botão "Assumir" — `claimIfUnassigned`
+(`UPDATE ... WHERE assigned_to IS NULL`), extraído para `services/conversation-claim.ts` e usado
+por `ConversationService.assign` e por `MessageService` — com o mesmo audit `assign_conversation`
+(sem mensagem de sistema, como o botão na fila livre). Quem perde a corrida recebe
+`CONVERSATION_ALREADY_ASSIGNED` (409, `details: { assignedTo, assignedToName }`) e **nada é
+gravado nem enviado** ao paciente; no anexo o claim roda antes de gravar a mídia. Conversa já da
+própria pessoa: nada muda. Conversa de outra pessoa: **não** transfere (gestor/admin continuam
+podendo escrever nela, como antes). `createAutomated` (reingajamento), `createSystemEvent` e
+`createFromPhone` (eco do celular) nunca atribuem. **Substitui** a linha de D-175 "conversa da
+fila livre é usada como está (enviar não assume)" do botão "Nova conversa": ele envia por
+`createFromAgent` e agora também assume (confirmado pelo Michel em 29/09/2026). O frontend, no 409, avisa "Conversa já
+assumida por Fulana" e devolve o texto ao Composer.
+**Motivo:** a atendente respondia pela fila e esquecia de clicar em "Assumir": a conversa ficava
+sem dona, sumia do "Minhas", outra atendente pegava no meio e os relatórios por atendente não a
+contavam (Michel, CRMLAB-75). Nenhum evento WS novo: o `conversation.new_message` que o envio já
+emite invalida as listas de todas as telas, e a conversa troca de chip sozinha.
+**Impacto:** `conversation-claim.ts` (novo), `conversation.service.ts` (`assign` usa o helper),
+`message.service.ts` (`claimForAgent`, chamado por `createFromAgent`/`createAttachmentFromAgent`),
+`conversation.routes.ts` (anexo: claim antes de gravar a mídia), `Composer.tsx` (`onSend` pode
+devolver Promise; rejeitou → texto volta), `Attendance/index.tsx` (409 no envio).
+
+## 2026-09-29 — Tiques de entrega e presença do paciente (CRMLAB-67)
+
+### D-225: Status da mensagem do atendimento — `pending`, ordem que nunca rebaixa e ack do Evolution (CRMLAB-67)
+**Decisão:**
+1. `MessageStatus` ganha **`pending`** (o relógio 🕓, "enviando"): `pending | sent | delivered |
+   read | failed`. A mensagem do atendimento (`createFromAgent`, `createAttachmentFromAgent`,
+   `createAutomated`) que vai sair pelo canal `whatsapp` nasce `pending`; o id externo devolvido
+   pelo gateway (`confirmSent`) passa a `sent`; esgotado o retry, `failed`. Canal sem gateway
+   (`direct`/`web`) continua nascendo `sent`. Sem migração: `messages.status` é `VARCHAR(50)` sem
+   CHECK (migração 001) — a faixa 042 fica sem uso.
+2. **Nunca rebaixa.** Ordem `pending < sent < delivered < read`. Callback de status (webhook
+   Evolution **e** a rota Cloud API `/whatsapp/:tenant/status`) só grava se o novo status for
+   **maior** que o atual; `failed` só entra a partir de `pending`/`sent` (mensagem entregue ou
+   lida não "falha" depois). A regra mora no `UPDATE` (`setStatusByExternalId`), não no service,
+   para valer nos dois caminhos e sob reentrega concorrente. Mudou → emite
+   `message.status_updated`; não mudou → nada.
+3. **Ack do Evolution v2** (`MESSAGES_UPDATE`, `data = { keyId, remoteJid, fromMe, status }`),
+   texto ou número: `ERROR`/0 → `failed`; `PENDING`/1 → ignorado; `SERVER_ACK`/2 → `sent`;
+   `DELIVERY_ACK`/3 → `delivered`; `READ`/4 e `PLAYED`/5 (áudio ouvido) → `read`. Ignorados:
+   `fromMe: false` (ack de mensagem do paciente não mexe no status dela), `status@broadcast`,
+   status desconhecido. O alvo é achado por `keyId` = `external_message_id`, então `@lid` não
+   atrapalha.
+4. **Paciente com a confirmação de leitura desligada:** o WhatsApp não manda `READ`, e a
+   mensagem fica em ✓✓ cinza — o mesmo que o WhatsApp mostra. Nada a tratar.
+5. `hasPendingOutbound` (D-173) procura `status IN ('pending', 'sent')` sem id externo: `pending`
+   é o envio em voo de agora; `sent` sem id cobre linha gravada antes deste card.
+6. WebSocket `message.status_updated { conversationId, messageId, status }`: o frontend invalida
+   **só** `['conversation', id]` — a lista de conversas não muda por causa de um tique, e o aviso
+   de mensagem nova (D-240/D-241) não escuta este evento.
+**Motivo:** a mensagem nascia `sent` antes de o gateway responder e o WS saía antes do envio — a
+tela mostraria ✓ para algo que ainda não saiu. O ack do Evolution não era assinado, e o callback
+da Cloud API sobrescrevia às cegas (um `delivered` atrasado apagava o `read`).
+**Impacto:** `shared/types/conversation.types.ts`, `websocket.types.ts`; `message.service.ts`,
+`message.repository.ts`, `webhook.routes.ts`, `evolution-client.ts`; `ws.ts`; API_CONTRACTS §2 e
+§2b; FRONTEND_BACKEND "Real-time"; SERVICES §3/§16.
+
+### D-226: Presença do paciente é efêmera — webhook → WS, nada no banco (CRMLAB-67)
+**Decisão:**
+1. `PRESENCE_UPDATE` entra em `EVOLUTION_WEBHOOK_EVENTS` (junto com `MESSAGES_UPDATE`) e é
+   reaplicado sozinho em instância antiga pelo `syncEvolutionWebhooks` do boot (D-223).
+2. Payload do Baileys repassado pelo gateway: `data = { id: '<jid>', presences: { '<jid>':
+   { lastKnownPresence, lastSeen? } } }`. Mapa: `composing` → `typing`, `recording` →
+   `recording`, `available` e `paused` → `online`, `unavailable` → `offline`. `lastSeen`
+   (segundos) vira `lastSeenAt` ISO UTC; ausente = `null` (o paciente esconde o "visto por
+   último" — a tela não mostra nada).
+3. Só `@s.whatsapp.net`: o telefone acha a conversa **sem criar** (`findByPhone`); grupo, `@lid` e
+   número sem conversa são ignorados. Emite `conversation.presence { conversationId, presence,
+   lastSeenAt }` na room do tenant (nunca em outra). **Nada é gravado.**
+4. Exceção declarada à regra "evento é notificação, payload só com ids": não há o que refazer
+   por fetch. O frontend guarda a presença num store em memória (`presence.store.ts`) com
+   validade: `typing`/`recording` 10 s (o "digitando…" some sozinho se o `paused` se perder);
+   `online` 5 min; `offline` até o próximo evento. Nada em `localStorage`.
+5. **Assinatura:** o WhatsApp só manda presença de quem foi "assinado" (`presenceSubscribe`). O
+   Evolution v2 não expõe essa rota; a única é `POST /chat/sendPresence/{instance}`
+   (`{ number, presence, delay }`), que assina antes de mandar. Ao abrir a conversa, a tela chama
+   `POST /conversations/:id/presence { presence: 'paused' }` — assina sem mostrar nada ao
+   paciente.
+6. Presença sai do fluxo de replay (`replayExempt`): o corpo de um `composing` repete idêntico e
+   seria descartado como replay; é efêmera e idempotente. `MESSAGES_UPDATE` também é idempotente
+   pela regra de não rebaixar, e fica no anti-replay normal. Os dois passam pela checagem de
+   `instance` (`INSTANCE_CHECKED_EVENTS`).
+7. "Digitando…" na lista de conversas (opcional no card): **fora** deste card.
+**Motivo:** presença muda várias vezes por minuto e só vale no instante; gravar seria custo sem
+leitor e dado pessoal a mais para LGPD.
+**Impacto:** `evolution-client.ts` (`sendPresence`), `whatsapp.service.ts`, `webhook.routes.ts`,
+`conversation.routes.ts`; `shared/types/websocket.types.ts`, `conversation.types.ts`; frontend
+`stores/presence.store.ts`, `api/ws.ts`, `ConversationPanel`; API_CONTRACTS §2/§2b;
+FRONTEND_BACKEND "Real-time"; PAGES §2.
+
+### D-227: O paciente vê "digitando…" da atendente; "Tentar de novo" reenvia a mesma mensagem (CRMLAB-67)
+**Decisão:**
+1. **Sim, o paciente vê a atendente digitando** (decisão pedida no card): enquanto ela digita no
+   Composer, a tela chama `POST /conversations/:id/presence { presence: 'composing' }` no máximo
+   uma vez a cada 4 s; o backend manda `sendPresence composing` com `delay` de 4 s (o gateway
+   manda `paused` sozinho no fim). Só canal `whatsapp` em `connection_mode = 'qr'`; na Cloud API
+   (sem presença) e em `direct`/`web` a rota responde `204` sem fazer nada.
+2. `POST /conversations/:id/presence` é **best-effort**: responde `204` na hora e chama o gateway
+   em segundo plano, uma tentativa, sem fila; erro vira log `warn`. Conversa fora do recorte →
+   `NOT_FOUND`, como toda rota de conversa.
+3. **"Tentar de novo"**: `POST /conversations/:id/messages/:messageId/retry` reenvia a **mesma**
+   linha (mesmo id, nada duplicado): volta a `pending`, emite `message.status_updated`, envia e
+   termina em `sent` (200 com a `Message`) ou de novo `failed` (`MESSAGE_SEND_FAILED`, 502). Só
+   mensagem do atendimento (`senderType: agent`) em `failed`, em conversa `active` → senão
+   `CONFLICT` (409); de outra conversa/tenant → `NOT_FOUND`. Citação original vai junto. Anexo
+   relê o arquivo guardado (`attachmentUrl` = `/api/v1/media/:id`); arquivo sumido do disco →
+   continua `failed` com `MESSAGE_SEND_FAILED`.
+**Motivo:** é o padrão do WhatsApp Web que o card pede, e sem ele a atendente não sabe se o
+paciente vai receber resposta; retry sem duplicar evita duas bolhas iguais no celular do paciente
+quando o primeiro envio só pareceu falhar.
+**Impacto:** `conversation.routes.ts`, `message.service.ts`, `whatsapp.service.ts`; inventário
+`route-tenant-isolation.spec.ts` (+2 rotas); frontend `api/conversations.ts`, `Composer`,
+`MessageBubble`, `Attendance/index.tsx`; API_CONTRACTS §2; COMPONENTS; PAGES §2.
+## 2026-09-28 — Anexos com prévia e legenda (CRMLAB-69)
+
+### D-231: Legenda (`caption`) no envio de anexo; vídeo sai como `video` para o gateway (CRMLAB-69)
+**Decisão:**
+1. `POST /conversations/:id/attachments` aceita `caption` (opcional, anulável, até **1024**
+   caracteres — o teto de legenda do WhatsApp). Aparado; vazio depois de aparar = sem legenda.
+2. **A mensagem gravada leva a legenda em `content`**, igual à entrada (o webhook já grava
+   `caption ?? fileName`). Sem legenda, `content` continua sendo o nome do arquivo.
+3. **Imagem, vídeo e documento** mandam a legenda ao Evolution (`caption` no corpo de
+   `/message/sendMedia`). **Áudio não tem legenda** no WhatsApp (sai por `sendWhatsAppAudio`,
+   D-182): a legenda é **descartada** — não vai ao gateway e não vira `content` (senão a atendente
+   veria no CRM um texto que o paciente nunca recebeu). A Cloud API da Meta segue sem enviar mídia.
+4. **Vídeo:** `video/*` passa a sair como `mediatype: 'video'` no `/message/sendMedia` (antes ia
+   como `document`, e o paciente recebia um arquivo em vez de um vídeo). **Só o envio muda:** o
+   `MessageType` continua `doc` para vídeo e a bolha continua a mesma — tipo `video` na tela e no
+   banco é do CRMLAB-70 [E]. A allow-list não muda (`video/mp4` é o único vídeo aceito).
+**Motivo:** o card pede legenda como no WhatsApp Web; gravar a legenda em `content` deixa a bolha,
+a prévia da lista e a timeline do paciente iguais para mensagem de entrada e de saída.
+**Impacto:** `shared/types/media.types.ts` (`CreateAttachmentRequest.caption`),
+`conversation.routes.ts` (zod), `message.service.ts`, `whatsapp.service.ts` (`OutboundMedia.caption`),
+`evolution-client.ts` (`sendMedia`, `evolutionMediaType`); API_CONTRACTS §2 (attachments).
+
+### D-232: Prévia de anexos — entradas, validação no cliente e o que ela cobre (CRMLAB-69)
+**Decisão:**
+1. **Entradas:** o clipe abre um menu com **"Fotos e vídeos"** (`accept="image/*,video/*"`) e
+   **"Documento"** (`accept` = a allow-list `ALLOWED_MEDIA_MIME_TYPES` inteira, sem lista nova).
+   Os dois aceitam **vários arquivos**. **Ctrl+V** no campo da mensagem com arquivo na área de
+   transferência (print de tela) abre a prévia e não cola nada; só texto cola normal.
+   **Arrastar** arquivo sobre a conversa mostra "Solte o arquivo aqui"; soltar abre a prévia.
+   Arrastar texto não mostra a área.
+2. **Validação no cliente, antes de subir**, com as MESMAS regras do backend (D-169): MIME
+   normalizado fora da allow-list → "Tipo de arquivo não permitido"; acima de
+   `MAX_MEDIA_BYTES` (15 MiB, agora exportado de `shared/` para os dois lados usarem o mesmo
+   número) → "Arquivo acima de 15 MB"; vazio → "Arquivo vazio". O arquivo inválido **fica na
+   prévia com o aviso** (a pessoa vê por que não vai) e **não sobe**. Enviar manda só os válidos;
+   sem nenhum válido, Enviar fica desligado. O backend continua validando (regra de ouro: o
+   cliente é só UX).
+3. **A prévia cobre a área da conversa** (lista + compositor) por cima, **sem desmontar** a lista:
+   rolagem, faixa de não lidas e rascunho do compositor ficam como estavam ao fechar. Mostra o
+   arquivo selecionado grande (imagem) ou ícone + nome + tamanho (resto), o campo
+   **"Adicionar legenda"** (uma legenda por arquivo; Enter envia, Shift+Enter quebra linha), a
+   faixa de miniaturas com remover (×) e **+** para adicionar mais, **Enviar** e **×** que
+   descarta tudo. **Esc** fecha a prévia primeiro; a faixa "Respondendo a…" continua.
+4. **Object URL** de imagem é criado por quem desenha a miniatura e **revogado** ao remover o
+   arquivo, fechar ou enviar a prévia, e ao desmontar a tela.
+5. A prévia é **da conversa em que foi aberta**: trocar de conversa descarta.
+**Motivo:** é o fluxo do WhatsApp Web que o card pede. Validar antes evita subir 15 MiB em base64
+para ouvir um 400/413 depois.
+**Impacto:** `components/conversation/{Composer,AttachmentPreview,attachment-draft}.ts(x)`,
+`pages/Attendance/ConversationPanel.tsx`, `shared/types/media.types.ts` (`MAX_MEDIA_BYTES`);
+COMPONENTS.md (Composer, AttachmentPreview), PAGES.md §2.
+
+### D-233: Vários anexos saem em sequência, um POST por arquivo; só o primeiro cita (CRMLAB-69)
+**Decisão:**
+1. **Um `POST /attachments` por arquivo, em sequência, na ordem da faixa** — o próximo só sai
+   quando o anterior respondeu. Nada de endpoint em lote: o contrato do anexo não muda além da
+   `caption`, e a ordem de chegada no celular do paciente é a ordem da faixa.
+2. **Erro é por arquivo:** falhou um, aparece um aviso com o nome dele e os seguintes continuam
+   saindo. Falha depois de gravar (gateway fora) já vira a bolha `failed` do servidor, como
+   hoje; falha antes (rede, 4xx) é o aviso.
+3. **A prévia fecha ao clicar Enviar** (como no WhatsApp): cada mensagem aparece na conversa
+   quando o servidor a grava (WS `conversation.new_message`), antes de o gateway confirmar. O
+   relógio "enviando" na bolha é do status de entrega (CRMLAB-67 [B]); este card não cria status
+   novo.
+4. **Resposta citando com vários arquivos: só o PRIMEIRO arquivo enviado leva o
+   `quotedMessageId`**, como no WhatsApp; os outros saem sem citação. A faixa "Respondendo a…"
+   sai quando a prévia é enviada (e fica se a prévia for descartada).
+5. A conversa de destino é lida **no clique em Enviar**, antes de ler qualquer arquivo (mesma
+   regra de D-181 item 7): trocar de conversa durante o envio não muda o destino dos que faltam.
+6. A faixa de não lidas (D-239) sai ao clicar no clipe e ao enviar, como antes.
+**Motivo:** sequência simples mantém a ordem e isola a falha de um arquivo; citar só o primeiro é
+o que o paciente vê no WhatsApp quando a atendente responde com um álbum.
+**Impacto:** `pages/Attendance/index.tsx` (`handleSendAttachments`), `ConversationPanel.tsx`;
+PAGES.md §2.
+## 2026-09-29 — Busca nas mensagens, "Não lidas" e ir até a mensagem (CRMLAB-68)
+
+### D-228: Busca pelo conteúdo das mensagens — função própria sem acento e GIN parcial
+**Decisão:**
+1. **Sem extensão `unaccent`.** A migração 043 cria a função `crm_unaccent(text)` (`LANGUAGE sql
+   IMMUTABLE`, `translate()` das vogais acentuadas, `ç` e `ñ`, maiúsculas e minúsculas). Funciona
+   no PGlite dos testes e no Postgres de prod/hml sem superusuário, e por ser `IMMUTABLE` pode
+   entrar em índice. Maiúscula/minúscula quem resolve é o `to_tsvector`.
+2. **Índice:** `idx_messages_content_search` — GIN em
+   `to_tsvector('portuguese', crm_unaccent(content))`, **parcial** `WHERE deleted_at IS NULL`. A
+   consulta repete a expressão e o predicado **caractere a caractere** (constante
+   `MESSAGE_SEARCH_EXPRESSION` no repositório), senão o índice não é usado.
+3. **Consulta:** o termo vira palavras (só letras e dígitos; o resto separa), cada uma com `:*`
+   (prefixo: "hemog" acha "hemograma"), unidas por `&` (todas precisam estar na mensagem),
+   passadas por `crm_unaccent` e `to_tsquery('portuguese', …)`. Termo com menos de 2 caracteres
+   úteis → `VALIDATION_ERROR`. Termo só de palavras vazias ("de", "a") não acha nada.
+4. **O que nunca aparece:** mensagem **apagada** pelo remetente (`deleted_at`, D-220 — nem o
+   trecho), evento de sistema (`sender_type = 'system'`), mensagem de outro laboratório (RLS) e,
+   para atendente, conversa de outra atendente — o recorte é o **mesmo da fila**
+   (`assigned_to = eu OR assigned_to IS NULL`; gestor/admin veem todas). Conversa encerrada
+   entra (o recorte não olha status). Mensagem editada é achada pelo texto **novo**.
+5. **Rotas:** `GET /conversations/search/messages?q=` (todas as conversas visíveis) e
+   `GET /conversations/:id/messages?q=` (uma conversa; invisível → `NOT_FOUND`). As duas
+   devolvem `{ results: MessageSearchHit[], pagination }`, da mais nova para a mais antiga
+   (`created_at DESC, id DESC`); `limit` padrão 20, máximo 100.
+6. **Trecho e destaque são do frontend:** a API devolve o `content` inteiro, e a tela recorta o
+   trecho em volta da primeira ocorrência e destaca o termo comparando **sem acento e sem
+   caixa** (função pura). `ts_headline` ficou de fora: devolve HTML (a tela nunca usa
+   `dangerouslySetInnerHTML`) e não destaca "orçamento" quando a pessoa digitou "orcamento".
+**Motivo:** o card pede ignorar acento e responder rápido com volume de produção. A extensão
+`unaccent` exige `CREATE EXTENSION` (superusuário no Postgres gerenciado) e não existe no PGlite;
+a função própria cobre o português, que é o que o laboratório escreve. O índice parcial não
+guarda as apagadas, que nunca podem ser achadas.
+**Impacto:** migração 043; `message.repository.ts` (`search`), `message.service.ts`,
+`conversation.routes.ts`; `shared/types/conversation.types.ts` (`MessageSearchHit`,
+`SearchMessagesQuery`, `SearchMessagesResponse`); API_CONTRACTS §2, SCHEMA §4, SERVICES §3.
+
+### D-229: "Não lidas" continua por conversa; marcar como não lida é `unread_count ≥ 1`
+**Decisão:**
+1. O contador **continua por conversa** (`conversations.unread_count`), como sempre foi: não
+   existe contador por atendente. Marcar como não lida vale para quem mais vê a conversa (a
+   colega da fila livre, a gestora) — é o mesmo número que a fila já mostra.
+2. `POST /conversations/:id/unread` (204, idempotente) grava
+   `unread_count = GREATEST(unread_count, 1)`: a conversa sem não lidas volta com 1; a que já tinha
+   fica como está. **Não** mexe em `last_message_at`, **não** mexe no status das mensagens e **não**
+   emite WebSocket. Recorte igual ao do `POST /read`: invisível → `NOT_FOUND`. Sem audit log
+   (preferência de tela, como o pin). Abrir a conversa zera de novo (o `GET /:id` de sempre).
+3. Como o `lastMessageAt` não muda, o aviso de mensagem nova (D-241 item 2) **não** dispara: ele
+   exige o contador subir **junto** com o `lastMessageAt`. O título da aba passa a contar a
+   conversa, como no WhatsApp Web.
+4. **Listagem:** `GET /conversations?unread=true` filtra `unread_count > 0`, e `counts.unread`
+   sai do mesmo `COUNT(*) FILTER` dos outros chips. `unread` é recorte de listagem como o
+   `scope`: entra no `total`, **não** nos `counts` (o chip não clicado mantém o número).
+5. **Tela:** ~~chip "Não lidas N"~~ — **retirado na validação (Michel, 29/09/2026):** com o número
+   de não lidas no item e no título da aba, o chip repetia a informação; ficam Minhas / Não
+   atribuídas / Encerradas. A API mantém `?unread=true`/`counts.unread` (baratos, testados). No item da lista, clique direito
+   ou o botão "⋯" abre o menu com "Marcar como não lida" (só aparece com `unreadCount === 0`).
+   Marcar a conversa **aberta** fecha o painel — senão o próximo refetch do detalhe zeraria o
+   contador na hora.
+**Motivo:** o card pede seguir o que já existe e registrar. Contador por atendente exigiria tabela
+nova, mudaria o significado do número que a fila, os chips e o título da aba já usam, e a
+maioria das conversas tem uma atendente só.
+**Impacto:** `conversation.repository.ts` (`list`, `markAsUnread`), `conversation.service.ts`,
+`conversation.routes.ts`; `shared/types/conversation.types.ts` (`ListConversationsQuery.unread`,
+`counts.unread`); frontend `ConversationList.tsx`, `ConversationItem.tsx`, `index.tsx`;
+API_CONTRACTS §2, PAGES §2, COMPONENTS.
+
+### D-230: Ir até a mensagem — `around` e `after` no mesmo cursor do CRMLAB-71
+**Decisão:**
+1. `GET /conversations/:id` aceita `around=<messageId>` (a janela em volta da mensagem: até
+   `floor(messageLimit/2)` mais novas que ela, e o resto com ela e as anteriores — perto do fim da
+   conversa a janela completa com histórico) e `after=<messageId>` (as `messageLimit` mensagens
+   **imediatamente posteriores**, em ordem crescente). `before`, `after`, `around` e `page` são
+   **excludentes** entre si → `VALIDATION_ERROR`. Mensagem que não é desta conversa (outra
+   conversa, outro tenant, inexistente) → `NOT_FOUND` (`resource: "message"`), igual ao `before`.
+2. `cursors.after` deixa de ser sempre `null` (fecha o D-237 item 2): é o id da mensagem **mais
+   nova** da página quando **existem** mensagens mais novas que ela; `null` quando a página chega à
+   última mensagem. Vale para todo modo: página mais recente → `null`; página `before` → id da
+   mais nova (sempre há mais novas); `after`/`around` → conforme o caso.
+3. Abrir com `around` também marca a conversa como lida (é o `GET /:id` de sempre).
+4. **Frontend:** o `pageParam` da query infinita vira `{ before } | { after } | { around } | null`
+   e `getPreviousPageParam` lê `cursors.after` da primeira página. Aberta por `around`, a chave
+   ganha um 4º elemento — `[...queryKeys.conversation(id), 'messages', { around }]` —, continua
+   sob o prefixo que o WS invalida, e o `useMarkAsRead(id, around)` usa as mesmas opções (abrir
+   continua sendo um GET só). Trocar de janela na mesma conversa mantém a anterior na tela
+   (`placeholderData` só da mesma conversa) até a nova chegar.
+5. **Rolagem:** abrir numa mensagem rola até ela (centro da tela) e acende o destaque; a faixa de
+   não lidas não aparece (`unreadAtOpen = 0`). Perto do fim com `cursors.after`, a tela pede as
+   mais novas — página carregada embaixo **não** é mensagem nova: a tela fica parada e o contador
+   do ↓ não sobe. O botão ↓ com mais novas ainda não carregadas volta para a chave da ponta (sem
+   `around`) e desce ao fim; enviar mensagem faz o mesmo.
+6. **Busca dentro da conversa:** lupa no cabeçalho abre a barra com o campo, "N de M" e ↑ ↓
+   (↑ = ocorrência mais antiga, ↓ = mais nova; Enter = ↑), e a lista de resultados (data +
+   trecho). Clicar ou navegar: se a mensagem já está carregada, só rola (`scrollToMessage`);
+   senão, reabre a conversa com `around`. A busca da lista ganha o bloco **Mensagens** (nome do
+   paciente, data e trecho com destaque) e o clique abre a conversa com `around`.
+**Motivo:** "abrir na mensagem certa, mesmo antiga" sem baixar a conversa inteira. Reaproveitar o
+cursor por id do CRMLAB-71 mantém um formato só e a mesma leitura do par `(created_at, id)` no
+banco (nunca do `createdAt` do fio).
+**Impacto:** `message.repository.ts`, `message.service.ts`, `conversation.routes.ts`;
+`shared/types/conversation.types.ts` (`GetConversationQuery`, `MessageCursors`); frontend
+`queries.ts`, `index.tsx`, `ConversationPanel.tsx`, `useConversationScroll.ts`,
+`scroll-to-message.ts`, `ConversationSearch.tsx` e `MessageResults.tsx` (novos),
+`lib/search-snippet.ts` (novo), `hooks/useNewMessageAlerts.ts` (linha de base do detalhe);
+API_CONTRACTS §2, PAGES §2, COMPONENTS.
+
+### D-244: Setas no lightbox da conversa — a lista sai do que já está carregado (CRMLAB-64)
+**Decisão:**
+1. **O estado do lightbox mora no `ConversationPanel`**, não no `MessageBubble`. O balão só avisa
+   `onOpenImage(message)`; o painel guarda **o id da mensagem aberta** (preso à conversa: trocar de
+   conversa fecha) e renderiza um `ImageLightbox` só, por `ConversationImageViewer`.
+2. **A lista de imagens** (`conversationImages`, `pages/Attendance/useConversationImages.ts`) sai
+   das mensagens que o painel já recebe — as páginas do `useInfiniteQuery` já no cache, achatadas
+   por `flattenMessages` —, filtradas por `messageType === 'image'`, com `attachmentUrl` e **sem
+   `deletedAt`** (apagada fica escondida, D-220). Ordem cronológica por `(createdAt, id)` e **sem
+   repetir id** (uma página refeita pelo WS ou uma janela `around` do D-230 que encosta noutra não
+   duplica foto). Esquerda = mais antiga, direita = mais nova. **Só o carregado:** chegou na
+   primeira imagem carregada, a seta some — carregar histórico pela seta fica para outro card.
+3. **Âncora pelo id, nunca pelo índice.** O índice é recalculado a cada render a partir do id
+   aberto: mensagem nova chegando pelo WebSocket (ou página antiga carregada pela rolagem) muda a
+   lista, mas o lightbox continua na mesma foto e só as setas se ajustam. Se a mensagem aberta
+   **sair** da lista (apagada pelo remetente enquanto estava aberta), o lightbox fecha.
+4. **Navegação:** setas nas laterais (`aria-label` "Imagem anterior"/"Próxima imagem"), ← → no
+   teclado, Esc fecha. **Não dá a volta**: na primeira some a da esquerda, na última a da direita;
+   com uma imagem só, nenhuma seta. Trocar de imagem zera zoom e arrasto (efeito no `src`, que já
+   existia no CRMLAB-21). Com o lightbox aberto, ← → são dele (`preventDefault`): a tela cobre
+   tudo, então o cursor do Composer que ficou com o foco não anda junto.
+5. **Cabeçalho** "remetente · dd/mm/aaaa hh:mm" (`formatDateTime`). Remetente: `senderName`; sem
+   ele, o nome do paciente (ou "Paciente") para mensagem recebida e "Você" para a enviada — o
+   mesmo fallback do "respondendo a" do Composer. **Legenda** embaixo da imagem: o `content`
+   aparado, **exceto** quando é só o nome do arquivo (a API grava `content = fileName` quando não
+   houve legenda — CRMLAB-69/D-231 e webhook) ou o marcador `[image]`/`[imagem]` da Cloud API.
+6. **Figurinhas:** hoje chegam como `image` (o Evolution manda `image/webp`) e **não há como
+   distinguir** no frontend; entram na navegação. O CRMLAB-70 cria o tipo `sticker`: como a lista
+   filtra por `messageType === 'image'`, a figurinha sai da navegação sozinha quando os dois
+   estiverem integrados — sem mudança neste código.
+**Motivo:** padrão WhatsApp Web; ancorar pelo id é o que impede o pulo quando a lista cresce
+dos dois lados (mensagem nova embaixo, histórico em cima).
+**Impacto:** frontend `MessageBubble.tsx` (trecho da imagem: `onOpenImage`),
+`ImageLightbox.tsx` (setas, teclas, cabeçalho, legenda, carregando), `ConversationPanel.tsx`,
+`pages/Attendance/useConversationImages.ts` e `ConversationImageViewer.tsx` (novos);
+COMPONENTS, PAGES §2.
+
+### D-245: Blob de mídia autenticada compartilhado entre quem usa a mesma URL (CRMLAB-64)
+**Decisão:** `useAuthenticatedMedia` passa a guardar os blobs num cache **do módulo**, por URL e
+com **contagem de referências**: o primeiro que pede busca; os outros que pedem a mesma URL
+enquanto ela está em uso recebem o mesmo `object URL` na hora (sem novo `GET /media/:id`). Quando
+o último solta, o `object URL` é revogado e a entrada sai — a regra "nada preso na memória" do
+hook continua. Erro não fica em cache (a próxima montagem tenta de novo). A assinatura do hook
+não muda.
+O lightbox usa isso para: (a) **reaproveitar o blob que o balão já baixou** — a foto abre
+instantânea; se o balão ainda não terminou (ou a URL não está em uso), mostra "Carregando
+imagem…" no lugar da imagem; (b) **pré-carregar as vizinhas** (anterior e próxima) pedindo as
+duas URLs ao mesmo hook enquanto o lightbox está aberto — e, para imagem de fora do nosso backend,
+um `<img>` escondido.
+**Motivo:** o card pede não baixar de novo. Passar o `object URL` do balão ao painel por callback
+quebraria quando o balão desmontasse (revoga o blob) e não serve para as vizinhas.
+**Impacto:** `frontend/src/hooks/useAuthenticatedMedia.ts` (+ spec); `AudioMessage` e o balão
+ganham o reaproveitamento de graça. COMPONENTS (`MessageBubble`, `ImageLightbox`).
+
+### D-242: Formatação do WhatsApp na bolha — parser único, links clicáveis, só nós React (CRMLAB-73)
+**Decisão:** estende a D-183 (que continua valendo para o `*negrito*`).
+1. `parseWhatsApp(text)` (`frontend/src/lib/whatsapp-format.ts`) devolve uma árvore
+   (`WhatsAppLine[]` de `WhatsAppNode`) e `WhatsAppText` (`components/conversation/`) a desenha
+   com nós React. **Nunca** `dangerouslySetInnerHTML`: `<script>` e qualquer HTML do paciente
+   aparecem como texto. É só exibição: o `content` guardado e enviado continua com os símbolos.
+   `splitBold` sai (o único uso era a bolha).
+2. **Ênfase:** `*negrito*`, `_itálico_`, `~tachado~`, com a mesma regra da D-183 para os três:
+   abertura não seguida de espaço, fechamento não precedido de espaço, não atravessa quebra de
+   linha, o trecho não contém o mesmo símbolo e o símbolo fica na **borda da palavra** (colado por
+   fora a letra/dígito ou ao mesmo símbolo não formata: `snake_case_var`, `2*3*4`, `a~b~c`).
+   Símbolos **diferentes** aninham (`_*x*_`, `*_x_*`, `~*x*~`). Sobreposição (`_a *b_ c*`) fica
+   com o que abriu primeiro; o outro símbolo sobra como texto.
+3. **Literais** (nada de ênfase dentro): ```` ```monoespaçado``` ```` (pode atravessar linhas;
+   `<code>` com `font-mono`) e `` `código` `` (uma linha). Links também são literais: o `_` e o
+   `~` de `https://site.com/a_b~c` não viram itálico/tachado.
+4. **Links:** `http://…`, `https://…` e `www.…` (até o primeiro espaço; pontuação final
+   `.,;:!?'"*_~` e `)` sem par ficam fora do link). Viram `<a target="_blank"
+   rel="noopener noreferrer">`; `www.` ganha `https://` no `href`. Só esses dois esquemas existem,
+   então `javascript:` nunca vira link. Telefone e e-mail **não** viram link nesta história
+   (opcionais no card). **Prévia de link** (card com imagem/título) fica **fora**: exigiria o
+   backend buscar URL externa.
+5. **Linha:** `> ` no começo = citação (barra à esquerda); `- ` ou `* ` = item de lista (vira
+   `•`); `1. ` = item numerado (o número fica, com recuo). O resto da linha formata normal.
+6. A prévia da lista (`ConversationItem`) continua crua (D-183 item 5).
+**Motivo:** o card pede o padrão do WhatsApp Web; um parser só, com a regra de borda da D-183
+estendida, evita três regex brigando e mantém o texto do paciente longe do HTML.
+**Impacto:** `lib/whatsapp-format.ts`, `components/conversation/WhatsAppText.tsx` (novo),
+`MessageBubble.tsx` (só o trecho do texto), `Composer.tsx` (atalhos Ctrl+I e Ctrl+Shift+X),
+`COMPONENTS.md`.
+
+### D-243: Rascunho por conversa no navegador e seletor de emoji com lista estática (CRMLAB-73)
+**Decisão:**
+1. **Rascunho:** store Zustand `stores/drafts.store.ts` persistida em `localStorage`
+   (`crm-lab.drafts`) por um `StateStorage` com try/catch (modo privado, cota cheia: o rascunho
+   só não persiste, a tela não quebra). Chave `userId:conversationId` — no computador
+   compartilhado da recepção, uma atendente não vê o rascunho da outra. Nada no backend.
+2. O `Composer` recebe `draftId` (o `ConversationPanel` passa `conversation.id`; o chat interno
+   não passa e não guarda nada). Semeia o campo com `initialValue` (o `?draft=` do link profundo
+   vence) ou o rascunho salvo, com o cursor no fim; cada mudança grava; campo vazio (enviou ou
+   apagou) remove. Envio que falha devolve o texto ao campo e, com ele, o rascunho.
+3. **Lista:** a conversa com rascunho mostra **"Rascunho: …"** no lugar da última mensagem, exceto
+   a conversa aberta (é ela que está sendo digitada).
+4. **Limpeza:** (a) a conversa aparece na lista como encerrada → o rascunho some; (b) rascunho
+   sem mexer há **5 dias** (valor do Michel, 29/09) é descartado ao carregar a página (conversa que nunca mais apareceu na
+   lista); (c) **sair do sistema apaga todos os rascunhos** do navegador — é texto de atendimento
+   de paciente parado no `localStorage`, então vale a leitura mais restritiva (AGENTS.md,
+   "Resolução de Conflitos"). Recarregar a página não é sair: o rascunho fica.
+5. **Emoji:** lista estática versionada no repo (`components/conversation/emoji-data.ts`,
+   ~550 emojis em 8 categorias no padrão do WhatsApp, cada um com nome e palavras-chave em
+   pt-BR), **sem dependência nova**. `emoji-mart` com os dados traz centenas de KB ao bundle e
+   nomes em inglês (a busca em pt-BR teria de ser traduzida do mesmo jeito). Busca sem acento e
+   sem caixa, por nome e palavras-chave; aba **Recentes** (até 24, `localStorage`
+   `crm-lab.emoji-recent`, com try/catch) aparece quando há algum. Continua inserindo no cursor.
+**Motivo:** o texto digitado se perdia ao trocar de conversa (`key={conversation.id}` remonta o
+Composer). O seletor de 48 sem busca não achava emoji fora do dia a dia.
+**Impacto:** `stores/drafts.store.ts` (novo), `Composer.tsx`, `ConversationPanel.tsx` (uma prop),
+`ConversationItem.tsx`, `EmojiPicker.tsx`, `emoji-data.ts` (novo), `COMPONENTS.md`.
+
 ## Template para novas decisões
 
 ```
@@ -3713,3 +4553,291 @@ e §27.
 **Motivo:** Por quê.
 **Impacto:** Domínios afetados + o que muda na prática.
 ```
+
+### D-234: Tipos `video`, `sticker`, `location`, `contact` e onde moram os metadados (CRMLAB-70)
+**Decisão:**
+1. `MessageType` ganha **`video`, `sticker`, `location` e `contact`** (`messages.message_type` é
+   `VARCHAR(50)` sem CHECK: o tipo não pede migração). Lista canônica em `MESSAGE_TYPES`
+   (`shared/`); valor desconhecido na leitura continua virando `text`.
+2. **Fato do ARQUIVO vem de `message_media`, não é copiado.** `media.fileName`, `media.fileSize`
+   e `media.mimeType` saem de `message_media` (`file_name`, `byte_size`, `mime_type`), achada
+   pelo id que está em `messages.attachment_url` (`/api/v1/media/<uuid>` → PK). Pelo id da URL, e
+   não por `message_media.message_id`, porque o `message_id` só é preenchido **depois** do INSERT
+   da mensagem e do evento de WS (§23) — a leitura disparada pelo WS acharia o arquivo sem dono.
+   Ganho de graça: **documento antigo também mostra nome e tamanho**, sem backfill. URL externa
+   (Meta) ou anexo apagado/anonimizado → `media: null`.
+3. **Fato da MENSAGEM vai em `messages.metadata JSONB`** (migração 045, anulável, sem backfill):
+   o que o WhatsApp manda junto e o arquivo não tem — `durationSec` (vídeo/áudio), `pageCount`
+   (PDF), `thumbnail` (miniatura JPEG do vídeo, base64), `location` e `contacts`. Tabela nova
+   seria cerimônia: é 1:1 com a mensagem, lido sempre junto e nunca filtrado.
+4. **Na API** (`Message`, campos **opcionais** no tipo, o backend sempre manda): `media`
+   (`MessageMediaInfo | null`: `fileName`, `fileSize`, `mimeType`, `durationSec`, `pageCount`,
+   `thumbnail`), `location` (`MessageLocation | null`: `latitude`, `longitude`, `name`,
+   `address`) e `contacts` (`MessageContact[]`: `name`, `phone`). Mensagem apagada (D-220) sai
+   com os três vazios, como o anexo.
+5. **`content` continua sendo o texto de fallback** — é ele que a busca (D-228), a prévia da lista,
+   a citação e a timeline do paciente leem. Localização: `📍 <nome ou endereço>` (sem nome:
+   `📍 Localização`); contato: `👤 <nome>` (vários: `👤 <primeiro> e mais N`); figurinha:
+   `Figurinha`; vídeo/documento/áudio: legenda ou nome do arquivo, como antes.
+6. **Mensagens antigas não migram:** o `[Localizacao] …`/`[Contato] …` gravado como `text` segue
+   aparecendo como texto.
+7. **LGPD (emenda a D-075):** a anonimização do paciente zera `metadata` junto com
+   `attachment_url` — miniatura de vídeo, coordenada e contato compartilhado são dado pessoal
+   do mesmo jeito que o arquivo. O texto de fallback em `content` fica, como todo texto (D-063).
+8. **Formatos de vídeo (decisão do Michel, 29/09):** a allow-list (CRMLAB-31) ganha
+   `video/quicktime` (.mov do iPhone), `video/3gpp` e `video/webm`, no envio e no recebimento,
+   com o mesmo teto de 15 MiB; vídeo passa pelo sniff de magic bytes por **categoria** (`video/*`),
+   então `.mov`, 3GP e MP4 se reconhecem entre si. Recebido, qualquer um deles vira `video`.
+   **Envio:** o gateway não converte vídeo (só áudio, D-182) e o WhatsApp do paciente só garante
+   tocar MP4/3GP. Por isso **só `video/mp4` e `video/3gpp` saem como `mediatype: 'video'`**;
+   `.mov` e WebM saem como **documento** com o nome original (`WHATSAPP_VIDEO_MIME_TYPES`,
+   `shared/`) — o paciente recebe o arquivo inteiro em vez de um vídeo que talvez não abra. No CRM
+   a mensagem continua `video`. **Risco:** o paciente vê "documento .mov" em vez do player; o
+   navegador da atendente pode não tocar `.mov`/HEVC (o balão avisa e oferece o download). A
+   conferir na hml.
+**Motivo:** o card pede nome/tamanho no documento e cartões estruturados para localização e
+contato. Guardar o nome/tamanho de novo em `metadata` duplicaria o que `message_media` já tem (e
+deixaria de fora os documentos antigos); uma coluna JSONB resolve o resto sem tabela nova.
+**Impacto:** migração 045; `shared/types/conversation.types.ts`, `media.types.ts`
+(`mediaCategoryOf` ganha `video`); `message.repository.ts` (COLUMNS/FROM/`toMessage`, INSERT),
+`patient.repository.ts` (anonimização); SCHEMA §4, API_CONTRACTS §2.
+
+### D-235: Webhook do Evolution grava vídeo, figurinha, localização e contato estruturados (CRMLAB-70)
+**Decisão:**
+1. **Vídeo:** `videoMessage` com arquivo gravado como `video/*` vira `messageType: 'video'` (o
+   tipo sai do MIME **gravado**, D-169: rebaixado para `application/octet-stream` continua `doc`).
+   `seconds` → `durationSec`; `jpegThumbnail` → `thumbnail` quando é um JPEG de verdade (magic
+   `FF D8 FF`) de até **48 KiB** — o gateway pode mandar base64, `{type:'Buffer',data}` ou o
+   objeto de índices de um `Uint8Array`, e os três são aceitos. `gifPlayback` segue como vídeo.
+2. **Figurinha:** `stickerMessage` com arquivo de imagem vira `messageType: 'sticker'` (tipo
+   próprio: fica fora do lightbox e da navegação de imagens do CRMLAB-64). MIME fora de imagem
+   continua pelo mapeamento do MIME.
+3. **Áudio:** `seconds` → `durationSec`. **Documento:** `pageCount` → `pageCount`.
+4. **Localização** (`locationMessage`, `liveLocationMessage`): vira `messageType: 'location'`
+   **sem arquivo**, com `metadata.location` (`degreesLatitude`/`degreesLongitude`, `name`,
+   `address`; da localização em tempo real vale o ponto recebido e a `caption` vira o nome).
+   Sem coordenada numérica válida (lat −90..90, lng −180..180) continua a linha de texto de antes.
+5. **Contato** (`contactMessage`, `contactsArrayMessage`): vira `messageType: 'contact'` com
+   `metadata.contacts` — nome = `displayName` (ou o `FN:` do vCard) e telefone do vCard: o
+   `waid=` do `TEL` quando vier (é o número do WhatsApp, vira `+<dígitos>`); senão o `TEL`:
+   com `+` vira `+<dígitos>`, sem `+` passa por `normalizeBrazilianPhone` e, não sendo número BR,
+   ficam os dígitos crus; sem telefone, `phone: null`. Até **10** contatos por mensagem.
+6. **Mídia recusada** (tamanho, D-169) continua sem criar mensagem, como antes.
+**Motivo:** o card pede cartões e player; guardar estruturado no webhook é o único momento em
+que o dado existe (o WhatsApp não reenvia).
+**Impacto:** `webhook.routes.ts` (`evolutionInboundOf`, `ingestEvolutionMessage`),
+`media.service.ts` (`messageTypeFromMime` com `video`), `message.service.ts` (`metadata` no
+create do paciente e do celular); API_CONTRACTS §Evolution; fixtures dos specs.
+
+### D-236: Balão por tipo — vídeo toca no balão, áudio com velocidade, cartões, "Conversar" (CRMLAB-70)
+**Decisão:**
+1. **Um componente por tipo** (`VideoMessage`, `DocumentCard`, `StickerMessage`, `LocationCard`,
+   `ContactCard`, em `components/conversation/`); o `MessageBubble` só despacha pelo tipo.
+2. **Vídeo toca no próprio balão** (não no lightbox — o CRMLAB-64 navega só por `image`): a
+   miniatura (`thumbnail`, ou um fundo neutro quando não veio — vídeo enviado pelo CRM) com ▶ e a
+   duração; o arquivo (até 15 MiB) só é baixado **no clique**, como o documento (revisão do PR
+   #43), e aí vira `<video controls autoplay>` ali mesmo. Navegador que não toca o formato
+   (`.mov`/HEVC no Chrome) mostra o aviso e o link de download.
+3. **Áudio:** continua no `<audio>` nativo (barra clicável e tempo total de graça) e ganha o botão
+   de velocidade **1x → 1,5x → 2x → 1x**, que vale só para aquele áudio. A duração do metadado
+   aparece antes de carregar. Bolinha de "não ouvido": **fora, por decisão do Michel (29/09)**.
+4. **Documento:** cartão com ícone pelo tipo (PDF, Word, Excel, PowerPoint, planilha/texto,
+   genérico), nome, tamanho e, no PDF, páginas quando vierem. O clique abre/baixa como antes.
+5. **Figurinha:** 120×120 (`object-contain`), **sem balão** (fundo e borda transparentes), sem
+   lightbox; hora, menu e reações continuam.
+6. **Localização:** cartão com nome/endereço e **"Abrir no mapa"** →
+   `https://www.google.com/maps/search/?api=1&query=<lat>,<lng>` em outra aba. **Sem mapa
+   estático**: pediria liberar um host externo em `img-src` (CSP, CRMLAB-32).
+7. **Contato:** cartão com nome e telefone; **"Conversar"** (decisão do Michel, 29/09) **abre
+   direto a conversa que já existe** com o número — `POST /conversations/whatsapp/open`, sem
+   mensagem — e navega para `/attendance?conversationId=`. Só quando o número não tem conversa
+   (`404`) abre a Nova conversa (CRMLAB-50) com o telefone preenchido. Conversa **encerrada**
+   reabre atribuída a quem clicou (o mesmo de `POST /conversations` e da Nova conversa com
+   número encerrado, D-174); **de outra atendente** → 409 e toast com o nome, sem abrir; fila
+   livre abre sem mudar de dona. Telefone fora do padrão BR vai direto para o modal (que mostra o
+   erro). Sem telefone no vCard, sem botão.
+8. **Texto do balão:** some quando é só o fallback — figurinha, localização, contato, e mídia
+   cujo `content` é igual a `media.fileName` (sem legenda). A legenda continua no lugar de hoje
+   (o texto do balão é do CRMLAB-73, em paralelo). Mensagem antiga `[Localizacao] …` (tipo `text`) aparece como texto.
+**Motivo:** paridade com o WhatsApp Web sem mexer no lightbox (64) nem no parser de texto (73),
+que andam em paralelo.
+**Impacto:** `components/conversation/*` (novos), `MessageBubble.tsx` (despacho + rótulos do
+bloco citado), `AudioMessage.tsx`, `NewConversationModal.tsx` (`initialPhone`); rota
+`POST /conversations/whatsapp/open` (`conversation.routes.ts`, `ConversationService.openWhatsApp`,
+`OpenWhatsAppConversationRequest`, inventário de isolamento 81 → 82); COMPONENTS.md,
+API_CONTRACTS §2.
+
+### D-246: Integração só para a gestão usa a regra "Nascer do orçamento do Bitlab" — sem campo novo (CRMLAB-76)
+**Contexto:** o Lab Santé vai usar a gestão (Resultados, Busca Ativa, indicadores) antes de as
+atendentes começarem no funil. Ligar a sincronia não pode encher Propostas de cartões que
+ninguém vai trabalhar, senão a base começa suja.
+**Decisão:** não criar campos novos por destino nas Regras. O cenário é atendido pelo que já
+existe:
+1. Sincronia do LIS **ligada** → os dados que alimentam a gestão continuam chegando.
+2. `origin.fromBitlab` **desligada** e `origin.manualInCrm` ligada → `isBitlabOriginEnabled`
+   corta `createBitlabProposals` antes de `ensureSince`: nenhum cartão nasce e a marca
+   `tenant_settings.bitlab_proposals_since` não é gravada.
+3. Ao religar, `ensureSince` grava a data do dia: orçamentos do período desligado não viram
+   cartão. **Exceção:** se a regra já rodou ligada antes no tenant, a marca antiga vale (é
+   `COALESCE`); nesse caso, mover a data no banco antes de religar.
+4. A conciliação (`lis-reconcile.service.ts`) não olha essa regra e segue movendo cartões que já
+   existem. Com o funil vazio não faz diferença; se virar problema, abrir card próprio.
+**Motivo:** testado na hml em 30/09/2026 pelo Michel: com a regra desligada, a sincronia rodou e
+Propostas ficou vazia. Resolve sem código novo.
+**Impacto:** só documentação (BUSINESS_RULES "Nascer do orçamento", MIGRACAO_SANTE §2).
+
+### D-247: Exames da venda avulsa vêm do catálogo, mas `sales.exams` continua texto (CRMLAB-77)
+**Decisão:** o campo "Exames" do formulário de `/sales` vira um seletor do catálogo (busca por
+nome/sinônimo/código, agrupado por categoria, chips removíveis — PAGES.md §17). O que se grava
+continua sendo `sales.exams` em texto, com os nomes separados por `, `. O valor da venda continua
+digitado pela atendente (total da venda, sem preço por exame).
+**Motivo:** é o formato que o FluxoLab e a carga do Supabase (D-179) já gravaram — as 980 vendas
+migradas e as novas ficam iguais na tabela, sem migração nem mudança de contrato. Guardar os
+`exam_id` (tabela filha) só compensa quando o valor passar a ser a soma dos preços do catálogo,
+que é o passo seguinte combinado com o Michel; até lá, o texto basta para a comissão.
+**Impacto:** `frontend/src/components/sales/ExamPicker.tsx` (novo), `pages/Sales.tsx`;
+PAGES.md §17. Sem backend, sem migração.
+
+### D-248: Atendente cadastra, edita, inativa e precifica o catálogo (CRMLAB-78)
+**Decisão:** a escrita do catálogo passa a aceitar **atendente, gestor e admin**
+(`CATALOG_WRITE_ROLES` em `exam-catalog.service.ts`, usado nas rotas e nos services de exame e
+pacote): `POST/PATCH /exams`, `PUT /exams/:id/prices`, `POST/PATCH /exam-packages` e
+`PUT /exam-packages/:id/prices`. Inativar é o `PATCH { isActive: false }` de sempre. Não existe
+exclusão de exame nem de pacote, então não há o que bloquear. A **importação por CSV continua só
+admin** (D-177). O operador da plataforma segue recusado (`denyPlatformOperator` + service).
+**Motivo:** pedido do Michel (30/09): quem mantém o catálogo no dia a dia do laboratório é a
+atendente. No mesmo card ele conferiu na hml que Propostas e Vendas já recortam por atendente
+(D-042, D-112) e decidiu **manter a fila comum do Bitlab** (D-195 item 6): a atendente assume o
+cartão ao enviar o orçamento. O envio que "não andou" na hml foi o `MESSAGE_SEND_FAILED` do
+gateway desligado (D-201, tudo ou nada), e não um defeito.
+**Impacto:** `exam.routes.ts`, `exam-package.routes.ts`, `exam-catalog.service.ts`,
+`exam-package.service.ts`, `pages/Catalog.tsx` (`canEdit`); specs de `tests/catalog`,
+`Catalog.spec.tsx`, `e2e/workflows/flow-7-catalog.spec.ts`; API_CONTRACTS §4/§4b, PAGES.md §7.
+
+## 2026-09-30 — Sincronização do LIS mais perto do tempo real
+
+### D-249: Sincronização do LIS a cada 30 s, e marca que não andou é rodada vazia (CRMLAB-79)
+**Contexto:** a sincronia de prod foi religada em 30/09/2026 e os números bateram com o app antigo.
+A meta é o orçamento do Bitlab chegar ao CRM mais perto do tempo real que os 2 min da D-199.
+Medido em prod em 30/09:
+- uma rodada incremental leva **~5 s**, quase todos esperando o Bitlab. O banco gasta ~0,04 s;
+- os laboratórios rodam **em série** (SERVICES §24), então um tique dura ~5 s × laboratórios com
+  sincronia ligada;
+- **toda rodada voltava com ≥ 1 linha**, mesmo sem mudança: `dataInicio` = marca d'água
+  (inclusiva), e o Bitlab devolve de novo a linha da própria marca. Cada tique gravava uma linha
+  em `lis_imports`, reprocessava o orçamento e logava `info` (~720/dia por laboratório com 2 min).
+**Decisão:**
+1. **`LIS_SYNC_INTERVAL_MS` padrão = 30000 (30 s)** em `env.ts`, `.env.example` e
+   `docker-compose.prod.yml`. Emenda a D-199. Não baixar mais: a rodada já leva ~5 s por
+   laboratório, e com mais laboratórios o `tickInProgress` passaria a pular tiques. O intervalo
+   real viraria "o tempo da rodada", com chamadas contínuas ao Bitlab.
+2. **Marca que não andou = rodada vazia:** em `incremental`, se a `marcaDagua` da resposta é igual
+   à gravada, as linhas recebidas são descartadas antes da ingestão: sem `lis_imports`, sem
+   reprocessar, `received: 0`, log `debug`. Linha que o Bitlab grave no mesmo segundo da marca
+   depois da consulta anterior fica para a releitura diária de 90 dias (D-189). `full` nunca
+   descarta.
+3. **Contrato em segundos:** `LisIntegrationSettings.intervalMinutes` vira `intervalSeconds`
+   (API_CONTRACTS §10.3). Com minutos arredondados, 30 s apareceria como "a cada 1 min". A tela
+   escreve "30 s", ou "N min" quando é minuto cheio. Com `0` (hml) ela diz "Ligada · só pelo
+   "Sincronizar agora"", em vez de "a cada 0 min".
+4. **Tempo real de verdade** não vem de encurtar o polling. Vem de o Bitlab **avisar** o CRM
+   (webhook de orçamento criado/alterado), e a API de Orçamentos não tem isso. Fica como pedido
+   ao Bitlab. Com webhook, o polling vira rede de segurança.
+**Motivo:** o cartão de "Novo orçamento" e a Busca Ativa valem mais quanto antes aparecem. O custo
+do polling mais curto cai quase todo no Bitlab (~2.880 chamadas/dia por laboratório) e no volume
+de `lis_imports`/log, que o item 2 zera nas rodadas sem mudança. O banco e a VPS quase não sentem.
+**Impacto:** `config/env.ts`, `docker-compose.prod.yml`, `backend/.env.example`,
+`lis-sync.service.ts`, `shared/types/lis.types.ts`, `LisIntegration.tsx`; SERVICES §24, PAGES §20,
+API_CONTRACTS §10.3, DEPLOYMENT, ENVIRONMENTS. **Deploy:** se o `.env` da VPS fixar
+`LIS_SYNC_INTERVAL_MS=120000`, trocar para `30000` (ou remover a linha).
+
+### D-250: Fundo branco fixo e o tema só nos elementos de conteúdo (CRMLAB-82)
+**Contexto:** com o tema aplicado, fundo da página, menu e cartões eram todos da mesma família
+(`--color-bg`/`--color-surface` do preset: tudo bege no Terracota, tudo verde no Verde
+Esterilizado). Nada se destacava. O editor de tema ainda mandava `bg`/`surface`/`text` de cada
+preset, e as rampas `accent-100..400` e `neutral-*` misturavam com esse fundo tingido.
+**Decisão:**
+1. **`--color-bg` = `#ffffff`, `--color-text` = `#1a1a1a`, fixos em `tokens.css`, iguais para
+   todo tenant.** `--color-surface` deixa de ser cor base e vira derivada:
+   `mix(accent 12%, branco)`. `applyTheme()`/`applyThemeColors()` escrevem SÓ `--color-accent` e
+   `--color-accent-2` (e removem do `<html>` um `--color-bg/-surface/-text` que tenha sobrado).
+   Emenda a D-005: o tema do tenant passa a ter **2 cores** + raio + fonte (+ nome e logo).
+2. **Tons do tema = accent misturado com branco**, em papéis fixos (maquete aprovada):
+   | Papel | Token | Mistura |
+   |---|---|---|
+   | Cartão, tabela, linhas | `--color-neutral-100` | accent 6% |
+   | Menu lateral, cabeçalho de tabela | `--color-surface` | accent 12% |
+   | Divisória de linha | `--color-neutral-200` | accent 12% |
+   | Hover / seleção | `--color-accent-100` (e `--color-accent-2-100`) | accent 20% (era 12%) |
+   | Bordas (cartão, campo) | `--color-neutral-300` | accent 22% |
+   | Borda forte / barra de rolagem | `--color-neutral-400` | accent 36% |
+   Campo de busca/inputs ficam brancos (`bg-bg`) com borda `neutral-300`. Botões, links e
+   destaques seguem com o accent cheio. Item ativo do menu: fundo branco (`bg-bg`), texto
+   `accent-700` e a barra de 3px `accent-500`. Os chips de status mantêm as rampas
+   semânticas (`accent2-*` positivo, `accent-*` atenção).
+3. **Texto neutro é cinza puro (texto escuro sobre branco), um degrau mais escuro** para fechar
+   WCAG AA sobre os tons acima: `neutral-600` = 35% branco (era 47% do fundo), `neutral-700` = 26%,
+   `neutral-800` = 18%, `neutral-900` = 10%. `neutral-500` (ícone/seta) fica 59% branco.
+4. **Editor simplificado:** a tela de Personalização oferece só cor principal, cor secundária,
+   fonte, cantos, nome exibido e logo (URL). Fundo, superfície e cor do texto saíram do editor;
+   aplicar um preset envia só `accent` + `accent2`.
+5. **Compatibilidade sem migração:** o contrato não muda. `Theme` continua com `bg`/`surface`/
+   `text`, `UpdateThemeRequest` continua aceitando os três (opcionais), o backend continua
+   gravando e devolvendo o que está no banco, e os presets de `GET /themes/presets` seguem com
+   as 5 cores. O frontend apenas **ignora** `bg`/`surface`/`text` na tela. Tema salvo antes
+   continua valendo pelo accent/accent2/raio/fonte. O console da plataforma (`PLATFORM_THEME`)
+   segue o mesmo modelo: as 3 cores dele ficam no objeto, mas não são aplicadas.
+**Contraste (WCAG AA, texto normal ≥ 4,5:1), pior caso por preset — texto principal sobre hover
+20% / `neutral-600` sobre hover 20% / `accent-700` (link, item ativo) sobre branco:**
+Terracota 13,9 / 5,0 / 6,0 · Azul Jaleco 13,1 / 4,7 / 8,0 · Verde Esterilizado 13,3 / 4,7 / 7,6 ·
+Hemograma 12,8 / 4,6 / 9,0 · Lilás Diagnóstico 12,8 / 4,6 / 9,2 (plataforma 12,6 / 4,5 / 9,7).
+`accent-800` sobre `accent-200` (chip de atenção) ≥ 5,7 em todos. Fica abaixo de 4,5 só o que
+não mudou nesta decisão: texto branco sobre o accent cheio do Terracota (3,6 — botão primário) e
+sobre o `accent-2` dos presets (3,2–4,9 — selo/badge), que dependem da cor escolhida pelo cliente.
+**Motivo:** fundo neutro faz o conteúdo (menu, cartões, tabelas) se destacar e deixa a página
+igual entre laboratórios; tingir só o conteúdo, sempre a partir do accent, mantém a identidade
+do tenant sem que ele precise acertar 5 cores que combinem. Ignorar os campos em vez de apagar
+evita migração e mantém o contrato da API intacto.
+**Impacto:** `frontend/src/styles/tokens.css`, `lib/theme.ts`, `pages/Settings/Theme.tsx`,
+`components/theme/{ThemePreview,ColorPicker}.tsx`, `components/layout/Sidebar.tsx`,
+`components/shared/DataTable.tsx`, cartões de Configurações/Respostas rápidas
+(`bg-surface` → `bg-neutral-100`); DESIGN_TOKENS (Cores, Papéis, Estados, Sidebar), PAGES §9
+Personalização e "Aplicação do Tema"; `e2e/workflows/flow-5-theme.spec.ts`. A conversa do
+Atendimento (`--color-chat-*`) não foi tocada aqui: `--color-chat-received` mistura com
+`--color-surface`, que agora é o tom de 12% do accent.
+
+## 2026-10-01 — Tela de Atendimento com visual de WhatsApp Web
+
+### D-251: Conversa do atendimento no visual do WhatsApp Web, tons só do acento (CRMLAB-81)
+**Contexto:** o "papel branco" do CRMLAB-25 resolveu a bolha que sumia no bege, mas a tela ainda
+não tinha cara de WhatsApp: a coluna de conversas e o Composer seguiam no fundo do tema, a
+recebida era um tom do `--color-surface` e as duas bolhas tinham borda e canto apontado
+embaixo. Ao mesmo tempo o CRMLAB-82 (D-250) muda o resto do app — fundo branco e texto fixo
+escuro —, então tudo que a conversa derivasse de `--color-bg`, `--color-surface` ou
+`--color-text` mudaria por tabela.
+**Decisão:**
+1. **Tons só de `--color-accent`** misturado com branco ou com o neutro literal `#f4f3ef`, em
+   `color-mix(in oklab, …)`. Texto do balão `#1a1a1a` literal. Nenhum `--color-chat-*` usa
+   bg/surface/text. Os literais moram só no bloco de conversa de `tokens.css`.
+2. **Coluna de conversas, cabeçalho e Composer brancos** (`--color-chat-panel`), divisórias
+   `mix(accent 12%, white)` (`--color-chat-line`). Selecionada `mix(accent 20%, white)`, hover
+   10%, avatar com fundo 20% e iniciais `mix(accent 70%, #1a1a1a)`. As iniciais saem do acento
+   **escurecido**, não do acento puro: o terracota puro sobre o próprio tom claro dá 2,9:1.
+3. **Fundo da conversa neutro** `mix(accent 4%, #f4f3ef)` (`--color-chat-bg`, era `#fff`).
+4. **Balões:** recebida branca à esquerda, canto superior esquerdo reto. Enviada
+   `mix(accent 22%, white)` à direita, canto superior direito reto. Sem borda, sombra
+   `--shadow-sm`. Hora/autor/status no canto inferior direito, em `mix(#1a1a1a 70%, white)`.
+   Saem `--color-chat-received-border` e `--color-chat-sent-border`.
+5. **Contraste** (WCAG, mistura oklab calculada; tabela em DESIGN_TOKENS.md): texto × enviada
+   12,4–13,6:1 e meta × enviada 5,2–5,8:1 nos 5 presets. Com acento preto puro (pior caso de
+   acento livre), o texto ainda dá 8,7:1. O tique "lida" `#53bdeb` fica em ~1,5:1, igual ao
+   WhatsApp. O estado não depende só da cor: tem o glifo ✓✓ e o `aria-label`.
+6. **Só visual.** Comportamento, DOM e testids dos balões não mudam (citação, reação, apagada,
+   anexos, figurinha sem balão, falha com "Tentar de novo").
+**Motivo:** a equipe usa WhatsApp o dia todo. Sem cor fixa, a tela fica igual em qualquer
+tenant. Cor + canto reto separam quem falou sem depender só do lado.
+**Impacto:** `styles/tokens.css` (bloco da conversa), `tailwind.config.js` (`colors.chat`),
+`MessageBubble.tsx`, `ConversationItem.tsx`, `Composer.tsx`, `ConversationList.tsx`,
+`ConversationPanel.tsx`, `shared/Avatar.tsx` (`className` opcional); specs de `MessageBubble`
+e `ConversationItem`. DESIGN_TOKENS.md › Bolhas, COMPONENTS.md, PAGES.md §2. A borda entre a
+coluna de conversas e a conversa é do `InboxLayout` (CRMLAB-82) e segue em `neutral-300`.

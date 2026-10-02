@@ -75,7 +75,7 @@ interface SectionProps {
 
 function Section({ title, description, children }: SectionProps) {
   return (
-    <section className="flex flex-col gap-md rounded-lg border border-neutral-200 bg-surface p-lg">
+    <section className="flex flex-col gap-md rounded-lg border border-neutral-200 bg-neutral-100 p-lg">
       <div className="flex flex-col gap-xs">
         <h2 className="m-0 font-heading text-section text-text">{title}</h2>
         {description && (

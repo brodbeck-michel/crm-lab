@@ -65,7 +65,7 @@ function writeSidebarCollapsed(value: boolean): void {
 export interface UIState {
   /** Sidebar 264px (false) ou 76px (true). Persiste em localStorage à parte. */
   sidebarCollapsed: boolean;
-  /** Terceira coluna do inbox (316px) visível. */
+  /** Terceira coluna do inbox (316px) visível. Começa `false` (CRMLAB-74). */
   contextPanelOpen: boolean;
   activeModal: ActiveModal;
   lisFilters: LisFilters;
@@ -83,7 +83,8 @@ export const useUIStore = create<UIState>()(
   persist(
     (set) => ({
       sidebarCollapsed: readSidebarCollapsed(),
-      contextPanelOpen: true,
+      // Começa fechado (CRMLAB-74): a conversa ganha a largura; o botão [Contexto] abre.
+      contextPanelOpen: false,
       activeModal: null,
       lisFilters: defaultLisFilters(),
 

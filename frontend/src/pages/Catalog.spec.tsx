@@ -158,17 +158,12 @@ describe('Catalog', () => {
     expect(screen.getByText(/Código/i)).toBeInTheDocument();
   });
 
-  it('shows create button for non-attendant roles', () => {
-    signIn('manager');
+  /** CRMLAB-78 (D-248): a atendente também cadastra e edita o catálogo. */
+  it.each(['attendant', 'manager', 'admin'] as const)('mostra "Novo exame" para %s', (role) => {
+    signIn(role);
     renderPage();
 
     expect(screen.getByRole('button', { name: /novo exame/i })).toBeInTheDocument();
-  });
-
-  it('does not show create button for attendant role', () => {
-    renderPage();
-
-    expect(screen.queryByRole('button', { name: /novo exame/i })).not.toBeInTheDocument();
   });
 
   /** CRMLAB-23 (D-177): importar CSV é só admin — a tela só esconde, o servidor recusa. */
@@ -337,13 +332,13 @@ describe('Catalog', () => {
       expect(screen.getByRole('button', { name: /novo pacote/i })).toBeInTheDocument();
     });
 
-    it('atendente não vê botão de criar pacote', async () => {
+    it('atendente vê o botão de criar pacote (CRMLAB-78, D-248)', async () => {
       const user = userEvent.setup({ delay: null });
       renderPage();
 
       await user.click(screen.getByRole('tab', { name: 'Pacotes' }));
 
-      expect(screen.queryByRole('button', { name: /novo pacote/i })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /novo pacote/i })).toBeInTheDocument();
     });
   });
 });

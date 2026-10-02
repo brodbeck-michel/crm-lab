@@ -31,8 +31,9 @@ const OFF: LisIntegrationSettings = {
   lastRunAt: null,
   lastSuccessAt: null,
   lastError: null,
+  lastFullScanOn: null,
   running: false,
-  intervalMinutes: 30,
+  intervalSeconds: 30,
 };
 
 const ON: LisIntegrationSettings = {
@@ -106,11 +107,24 @@ describe('LisIntegration (/settings/lis-integration)', () => {
     useLisIntegration.mockReturnValue(querySuccess(ON));
     renderPage();
 
-    expect(screen.getByText('Sincronizando a cada 30 min')).toBeInTheDocument();
+    expect(screen.getByText('Sincronizando a cada 30 s')).toBeInTheDocument();
     expect(screen.getByText(/Dados atualizados até: 25\/09\/2026 13:30/)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Sincronizar agora' }));
     expect(mockSync).toHaveBeenCalled();
+  });
+
+  it('intervalo em minuto cheio aparece em min; 0 (agendador desligado) nao promete intervalo', () => {
+    signIn('manager');
+    useLisIntegration.mockReturnValue(querySuccess({ ...ON, intervalSeconds: 120 }));
+    const { unmount } = renderPage();
+    expect(screen.getByText('Sincronizando a cada 2 min')).toBeInTheDocument();
+    unmount();
+
+    useLisIntegration.mockReturnValue(querySuccess({ ...ON, intervalSeconds: 0 }));
+    renderPage();
+    expect(screen.getByText('Ligada · só pelo "Sincronizar agora"')).toBeInTheDocument();
+    expect(screen.queryByText(/Sincronizando a cada/)).not.toBeInTheDocument();
   });
 
   it('gestor nao ve o campo de chave e nao mexe no interruptor', () => {

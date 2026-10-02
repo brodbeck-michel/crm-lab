@@ -1,8 +1,9 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Conversation } from '@crm-lab/shared';
 import { Badge, Chip, cn } from '@/components/ui';
 import { Avatar, DateDisplay } from '@/components/shared';
 import { formatDurationSeconds } from '@/lib/format';
+import { clearConversationDraft, useConversationDraft } from '@/stores';
 
 /**
  * ConversationItem — COMPONENTS.md (`conversation/`), anatomia padrão WhatsApp.
@@ -16,7 +17,9 @@ import { formatDurationSeconds } from '@/lib/format';
  *    `formatDurationSeconds` (a mesma escala do resto do app): minuto cru
  *    virava "aguardando 57871 min" — ilegivel, e quem le a fila precisa
  *    decidir prioridade de relance, nao fazer divisao mental;
- *  - selecionado: fundo neutral-100 + shadow-sm.
+ *  - visual WhatsApp Web (CRMLAB-81, D-251): selecionado em
+ *    `--color-chat-selected`, hover `--color-chat-hover`, divisória
+ *    `--color-chat-line` entre itens, avatar em `--color-chat-avatar`.
  *
  * Nenhuma busca de dado aqui dentro: recebe `conversation` pronto do
  * TanStack Query.
@@ -33,6 +36,35 @@ export interface ConversationItemProps {
    * não aparece (nada de botão morto, mesma regra do `onAttach` do Composer).
    */
   onTogglePin?: (id: string, pinned: boolean) => void;
+  /**
+   * "Marcar como não lida" (CRMLAB-68, D-229): clique direito ou "⋯" abrem o
+   * menu. Só existe com `unreadCount === 0` — sem handler, nem botão nem menu.
+   */
+  onMarkUnread?: (id: string) => void;
+}
+
+/**
+ * Menu do item — mesmo padrão do "Transferir" (clique fora + Esc,
+ * `role="menu"`), sem biblioteca de popover para um item.
+ */
+function useDismiss(open: boolean, close: () => void) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: MouseEvent) {
+      if (!ref.current?.contains(event.target as Node)) close();
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') close();
+    }
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open, close]);
+  return ref;
 }
 
 /**
@@ -75,6 +107,7 @@ export function ConversationItem({
   onClick,
   now,
   onTogglePin,
+  onMarkUnread,
 }: ConversationItemProps) {
   const {
     id,
@@ -91,17 +124,43 @@ export function ConversationItem({
   const displayName = patientName ?? patientPhone;
   const hasUnread = unreadCount > 0;
 
+  // Rascunho (CRMLAB-73, D-243): aparece no lugar da prévia, menos na conversa
+  // aberta (é ela que está sendo digitada). Encerrada não guarda rascunho.
+  const savedDraft = useConversationDraft(id);
+  const closed = status !== 'active';
+  const draft = !selected && !closed ? savedDraft : null;
+  useEffect(() => {
+    if (closed && savedDraft !== null) clearConversationDraft(id);
+  }, [closed, savedDraft, id]);
+
   // Estado derivado: useMemo, nunca useEffect (CONVENTIONS.md).
   const waiting = useMemo(
     () => (hasUnread ? minutesWaiting(lastMessageAt, now ?? new Date()) : null),
     [hasUnread, lastMessageAt, now],
   );
 
+  const canMarkUnread = onMarkUnread !== undefined && !hasUnread;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const closeMenu = useMemo(() => () => setMenuOpen(false), []);
+  const menuRef = useDismiss(menuOpen, closeMenu);
+  const hasControls = onTogglePin !== undefined || canMarkUnread;
+
   const visibleTags = tags.slice(0, MAX_TAG_CHIPS);
   const hiddenTags = tags.length - visibleTags.length;
 
   return (
-    <div className="relative">
+    <div
+      ref={menuRef}
+      className="relative border-0 border-b border-solid border-chat-line"
+      onContextMenu={
+        canMarkUnread
+          ? (event) => {
+              event.preventDefault();
+              setMenuOpen(true);
+            }
+          : undefined
+      }
+    >
       <button
         type="button"
         data-testid="conversation-item"
@@ -111,12 +170,12 @@ export function ConversationItem({
         className={cn(
           'flex w-full cursor-pointer items-start gap-md rounded-md border-none py-md text-left',
           // Espaço à direita reservado para o alfinete, que fica por cima.
-          onTogglePin ? 'pl-lg pr-xl' : 'px-lg',
-          'font-body transition-colors hover:bg-accent-100',
-          selected ? 'bg-neutral-100 shadow-sm' : 'bg-transparent',
+          hasControls ? 'pl-lg pr-xl' : 'px-lg',
+          'font-body transition-colors',
+          selected ? 'bg-chat-selected' : 'bg-transparent hover:bg-chat-hover',
         )}
       >
-        <Avatar name={displayName} size={36} />
+        <Avatar name={displayName} size={36} className="bg-chat-avatar text-chat-avatar-text" />
 
         <span className="flex min-w-0 flex-1 flex-col gap-xs">
           <span className="flex items-baseline gap-sm">
@@ -142,7 +201,16 @@ export function ConversationItem({
               data-testid="conversation-preview"
               className="min-w-0 flex-1 truncate text-caption text-neutral-700"
             >
-              {lastMessagePreview ?? 'Sem mensagens ainda'}
+              {draft !== null ? (
+                <>
+                  <span data-testid="conversation-draft" className="font-semibold text-accent2-700">
+                    Rascunho:
+                  </span>{' '}
+                  {draft}
+                </>
+              ) : (
+                (lastMessagePreview ?? 'Sem mensagens ainda')
+              )}
             </span>
             <Badge count={unreadCount} label={`${unreadCount} mensagens não lidas`} />
           </span>
@@ -171,24 +239,59 @@ export function ConversationItem({
         </span>
       </button>
 
-      {onTogglePin && (
-        <button
-          type="button"
-          onClick={() => onTogglePin(id, !pinned)}
-          aria-pressed={pinned}
-          // O nome do paciente entra no rótulo porque a lista tem um destes
-          // por conversa: "Fixar conversa" repetido 20 vezes não diz a um
-          // leitor de tela QUAL conversa o botão fixa.
-          aria-label={`${pinned ? 'Desafixar' : 'Fixar'} conversa com ${displayName}`}
-          title={pinned ? 'Desafixar conversa' : 'Fixar conversa'}
-          className={cn(
-            'absolute right-sm top-1/2 -translate-y-1/2 cursor-pointer rounded-sm border-none',
-            'bg-transparent p-xs hover:bg-accent-100',
-            pinned ? 'text-accent-700' : 'text-neutral-600',
+      {hasControls && (
+        <div className="absolute right-sm top-1/2 flex -translate-y-1/2 flex-col items-center gap-xs">
+          {onTogglePin && (
+            <button
+              type="button"
+              onClick={() => onTogglePin(id, !pinned)}
+              aria-pressed={pinned}
+              // O nome do paciente entra no rótulo porque a lista tem um destes
+              // por conversa: "Fixar conversa" repetido 20 vezes não diz a um
+              // leitor de tela QUAL conversa o botão fixa.
+              aria-label={`${pinned ? 'Desafixar' : 'Fixar'} conversa com ${displayName}`}
+              title={pinned ? 'Desafixar conversa' : 'Fixar conversa'}
+              className={cn(
+                'cursor-pointer rounded-sm border-none bg-transparent p-xs hover:bg-accent-100',
+                pinned ? 'text-accent-700' : 'text-neutral-600',
+              )}
+            >
+              <PinIcon filled={pinned} />
+            </button>
           )}
+          {canMarkUnread && (
+            <button
+              type="button"
+              onClick={() => setMenuOpen((value) => !value)}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              aria-label={`Mais opções da conversa com ${displayName}`}
+              title="Mais opções"
+              className="cursor-pointer rounded-sm border-none bg-transparent px-xs font-body text-caption leading-none text-neutral-600 hover:bg-accent-100"
+            >
+              ⋯
+            </button>
+          )}
+        </div>
+      )}
+
+      {canMarkUnread && menuOpen && (
+        <div
+          role="menu"
+          className="absolute right-sm top-full z-50 w-[200px] rounded-md border border-neutral-200 bg-surface py-xs shadow-md"
         >
-          <PinIcon filled={pinned} />
-        </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setMenuOpen(false);
+              onMarkUnread?.(id);
+            }}
+            className="w-full cursor-pointer border-none bg-transparent px-md py-xs text-left font-body text-label text-text hover:bg-accent-100"
+          >
+            Marcar como não lida
+          </button>
+        </div>
       )}
     </div>
   );

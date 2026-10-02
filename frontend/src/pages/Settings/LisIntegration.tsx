@@ -161,6 +161,11 @@ function formatWatermark(value: string): string {
   return `${formatIsoDay(value)} ${value.slice(11, 16)}`;
 }
 
+/** `intervalSeconds` -> "30 s" / "2 min" (D-249). */
+function formatSyncInterval(seconds: number): string {
+  return seconds >= 60 && seconds % 60 === 0 ? `${seconds / 60} min` : `${seconds} s`;
+}
+
 function SyncStatus({ settings }: { settings: LisIntegrationSettings }) {
   const last = settings.lastRunAt ? formatDateTime(settings.lastRunAt) : null;
 
@@ -170,11 +175,16 @@ function SyncStatus({ settings }: { settings: LisIntegrationSettings }) {
   } else if (settings.lastError) {
     chip = <Chip tone="attention">Com erro</Chip>;
   } else {
-    chip = <Chip tone="positive">Sincronizando a cada {settings.intervalMinutes} min</Chip>;
+    chip =
+      settings.intervalSeconds > 0 ? (
+        <Chip tone="positive">Sincronizando a cada {formatSyncInterval(settings.intervalSeconds)}</Chip>
+      ) : (
+        <Chip tone="positive">Ligada · só pelo "Sincronizar agora"</Chip>
+      );
   }
 
   return (
-    <section className="flex flex-col gap-xs rounded-lg border border-neutral-200 bg-surface p-lg" aria-label="Situação da sincronização">
+    <section className="flex flex-col gap-xs rounded-lg border border-neutral-200 bg-neutral-100 p-lg" aria-label="Situação da sincronização">
       <div className="flex flex-wrap items-center gap-sm">
         {chip}
         {last && <span className="font-body text-caption text-neutral-600">última às {last}</span>}
@@ -190,6 +200,10 @@ function SyncStatus({ settings }: { settings: LisIntegrationSettings }) {
       </p>
       <p className="font-body text-caption text-neutral-600">
         Dados atualizados até: {settings.watermark ? formatWatermark(settings.watermark) : 'Nunca'}
+      </p>
+      <p className="font-body text-caption text-neutral-600">
+        Última releitura dos 90 dias (pega os estornos, de madrugada):{' '}
+        {settings.lastFullScanOn ? formatIsoDay(settings.lastFullScanOn) : 'Nunca'}
       </p>
     </section>
   );

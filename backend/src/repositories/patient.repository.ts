@@ -50,6 +50,7 @@ import type {
   ProposalStatus,
   SenderType,
 } from '@crm-lab/shared';
+import { MESSAGE_TYPES } from '@crm-lab/shared';
 import type { DbClient, DbTx } from '../db/types.js';
 import { eraseEntityValues } from './audit.repository.js';
 import { toNumber } from './row-mappers.js';
@@ -181,7 +182,6 @@ function toDetail(row: PatientDetailRow): PatientDetail {
 
 const CHANNELS: ConversationChannel[] = ['whatsapp', 'sms', 'web', 'direct'];
 const SENDER_TYPES: SenderType[] = ['patient', 'agent', 'system'];
-const MESSAGE_TYPES: MessageType[] = ['text', 'image', 'audio', 'pdf', 'doc'];
 const PROPOSAL_STATUSES: ProposalStatus[] = [
   'novo_contato',
   'orcamento_enviado',
@@ -716,12 +716,14 @@ export class PatientRepository {
         conversationsAffected = conversations.rows.length;
 
         // Anexo do titular: a URL aponta para o arquivo (foto, PDF de exame).
+        // `metadata` (D-234 item 7) sai junto: miniatura de video, coordenada e
+        // contato compartilhado sao dado pessoal como o arquivo.
         // O TEXTO da mensagem continua intacto — essa e a limitacao declarada
         // em D-063; o arquivo nunca esteve coberto por ela.
         await tx.query(
           `UPDATE messages
-              SET attachment_url = NULL
-            WHERE attachment_url IS NOT NULL
+              SET attachment_url = NULL, metadata = NULL
+            WHERE (attachment_url IS NOT NULL OR metadata IS NOT NULL)
               AND conversation_id IN (SELECT id FROM conversations WHERE patient_id = $1)`,
           [id],
         );
@@ -1006,7 +1008,9 @@ function timelineCte(params: Params, patientParam: string, visibleTo: string | n
              WHEN m.sender_type = 'patient' THEN vc.patient_name
              ELSE NULL
            END,
-           m.message_type::text, left(m.content, 160),
+           -- Apagada pelo remetente: preview vazio, como a midia (D-220).
+           m.message_type::text,
+           CASE WHEN m.deleted_at IS NULL THEN left(m.content, 160) ELSE '' END,
            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
       FROM messages m
       JOIN vc ON vc.id = m.conversation_id

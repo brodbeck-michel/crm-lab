@@ -20,6 +20,7 @@
  * `CHANNEL_QR_UNAVAILABLE`/`MESSAGE_SEND_FAILED` e o SERVICE, uma camada acima
  * (mesma divisao de `HttpWhatsAppDriver` em `whatsapp.service.ts`).
  */
+import { isWhatsAppPlayableVideo } from '@crm-lab/shared';
 import { env } from '../config/env.js';
 import { withGatewayTimeout } from './fetch-timeout.js';
 
@@ -96,11 +97,64 @@ export interface EvolutionSendResult {
   externalId: string;
 }
 
+/**
+ * Mensagem citada no envio (CRMLAB-66, D-221). Vira o `quoted` do
+ * `/message/sendText`/`sendMedia`: `key.id` e o id externo da original;
+ * `fromMe` diz de que lado ela esta; `content` vai em `message.conversation` para
+ * o gateway nao depender do proprio cache para montar a citacao.
+ */
+export interface EvolutionQuotedRef {
+  externalId: string;
+  fromMe: boolean;
+  content: string;
+}
+
+/** Alvo de uma reacao (D-222) — `key` da mensagem reagida. */
+export interface EvolutionReactionTarget {
+  externalId: string;
+  fromMe: boolean;
+}
+
+/**
+ * Eventos que o CRM assina no webhook do Evolution (D-223). UNICA lista:
+ * `/instance/create` e `/webhook/set` usam esta constante, e o boot reaplica em
+ * toda instancia ja criada (`syncEvolutionWebhooks`). Card que precisar de
+ * evento novo SO acrescenta aqui.
+ *
+ * - `MESSAGES_UPSERT`: mensagem nova (inclusive `reactionMessage` e citacao).
+ * - `MESSAGES_EDITED`: o gateway manda aqui o `protocolMessage` (edicao e, pelo
+ *   mesmo desvio, o REVOKE) — ele NAO sai no upsert.
+ * - `MESSAGES_DELETE`: "apagar para todos" (`messages.update` com
+ *   `message: null`), `data` = a `key` achatada.
+ * - `MESSAGES_UPDATE`: ack do envio (`SERVER_ACK`/`DELIVERY_ACK`/`READ`...) — o
+ *   tique da mensagem (CRMLAB-67, D-225).
+ * - `PRESENCE_UPDATE`: "digitando…"/"online" do paciente, so WS (D-226).
+ * - `QRCODE_UPDATED` entrou na auditoria de 2026-09-17. Sem ele, a unica forma
+ *   de obter o QR era `GET /instance/connect`, que NAO e uma leitura: cada
+ *   chamada instancia uma conexao Baileys nova (169 sockets em 3 minutos e o
+ *   WhatsApp invalidando a sessao). Recebendo o QR por webhook, o polling le
+ *   do cache e nao toca no gateway.
+ */
+export const EVOLUTION_WEBHOOK_EVENTS = [
+  'MESSAGES_UPSERT',
+  'MESSAGES_EDITED',
+  'MESSAGES_DELETE',
+  'MESSAGES_UPDATE',
+  'PRESENCE_UPDATE',
+  'CONNECTION_UPDATE',
+  'QRCODE_UPDATED',
+] as const;
+
+/** Presenca que o CRM manda ao paciente (D-226/D-227). */
+export type EvolutionOutboundPresence = 'paused' | 'composing';
+
 /** Mídia a enviar — base64 (o mesmo formato em que o gateway devolve mídia recebida). */
 export interface EvolutionMediaPayload {
   base64: string;
   mimeType: string;
   fileName: string;
+  /** Legenda (CRMLAB-69, D-231): vai em imagem/vídeo/documento; áudio não tem. */
+  caption?: string | null;
 }
 
 /**
@@ -122,6 +176,11 @@ export interface EvolutionClient {
   getStatus(instanceName: string): Promise<EvolutionStatusResult>;
   logout(instanceName: string): Promise<void>;
   /**
+   * Reaplica o webhook (url, token e `EVOLUTION_WEBHOOK_EVENTS`) numa instancia
+   * que ja existe (D-223). Idempotente.
+   */
+  setWebhook(instanceName: string, webhook: EvolutionWebhookConfig): Promise<void>;
+  /**
    * `apikey` e a chave DA INSTANCIA (a mesma que `createInstance` devolveu e
    * `ChannelSettingsService` cifra em `tenant_channels.api_token`, D-076) —
    * NAO a `adminApiKey` deste cliente. Fix do Important 6 da revisao da
@@ -135,6 +194,7 @@ export interface EvolutionClient {
     phone: string,
     text: string,
     apikey: string,
+    quoted?: EvolutionQuotedRef,
   ): Promise<EvolutionSendResult>;
   /**
    * Mesma disciplina de privilegio minimo do `sendText` — `apikey` da instancia.
@@ -146,20 +206,52 @@ export interface EvolutionClient {
     phone: string,
     media: EvolutionMediaPayload,
     apikey: string,
+    quoted?: EvolutionQuotedRef,
   ): Promise<EvolutionSendResult>;
+  /**
+   * `POST /message/sendReaction` (D-222). `emoji: ''` remove a reacao. Mesma
+   * disciplina de privilegio minimo: `apikey` da instancia.
+   */
+  sendReaction(
+    instanceName: string,
+    phone: string,
+    target: EvolutionReactionTarget,
+    emoji: string,
+    apikey: string,
+  ): Promise<void>;
+  /**
+   * `POST /chat/sendPresence/{instance}` (D-226). O Evolution v2 nao tem
+   * `presenceSubscribe`: esta rota assina a presenca do numero antes de mandar
+   * a nossa, e SEGURA a resposta por `delayMs` (depois manda `paused`). Mesma
+   * disciplina de privilegio minimo: `apikey` da instancia.
+   */
+  sendPresence(
+    instanceName: string,
+    phone: string,
+    presence: EvolutionOutboundPresence,
+    delayMs: number,
+    apikey: string,
+  ): Promise<void>;
 }
 
-/** `image/jpeg` -> `'image'`. `audio/*` -> `'audio'`. Resto -> `'document'` (contrato do `/message/sendMedia`). */
-function evolutionMediaType(mimeType: string): 'image' | 'audio' | 'document' {
+/**
+ * `image/jpeg` -> `'image'`. `audio/*` -> `'audio'`. MP4/3GP -> `'video'`
+ * (CRMLAB-69, D-231: antes saía como documento). `.mov`/WebM -> `'document'`
+ * (CRMLAB-70, D-234 item 8: o gateway não converte vídeo e o WhatsApp do
+ * paciente não garante tocar esses contêineres — o arquivo chega inteiro).
+ * Resto -> `'document'` (contrato do `/message/sendMedia`).
+ */
+function evolutionMediaType(mimeType: string): 'image' | 'audio' | 'video' | 'document' {
   if (mimeType.startsWith('image/')) return 'image';
   if (mimeType.startsWith('audio/')) return 'audio';
+  if (isWhatsAppPlayableVideo(mimeType)) return 'video';
   return 'document';
 }
 
 /**
  * Corpo do webhook aceito tanto por `/instance/create` quanto por
- * `/webhook/set`. So os dois eventos que o CRM trata (`webhook.routes.ts`):
- * mensagem que entra e mudanca de estado da conexao.
+ * `/webhook/set`. Eventos: `EVOLUTION_WEBHOOK_EVENTS` (D-223) — nunca uma
+ * lista escrita aqui.
  */
 function webhookBody(webhook: EvolutionWebhookConfig): Record<string, unknown> {
   return {
@@ -167,13 +259,20 @@ function webhookBody(webhook: EvolutionWebhookConfig): Record<string, unknown> {
     byEvents: false,
     base64: true,
     headers: { 'x-evolution-webhook-token': webhook.token },
-    // `QRCODE_UPDATED` entrou na auditoria de 2026-09-17. Sem ele, a unica
-    // forma de obter o QR era `GET /instance/connect`, que NAO e uma leitura:
-    // cada chamada instancia uma conexao Baileys nova. Com o modal dando
-    // polling de 2 em 2 segundos, isso rendeu 169 sockets em 3 minutos e
-    // terminou com o WhatsApp invalidando a sessao (401). Recebendo o QR por
-    // webhook, o polling le do cache e nao toca no gateway.
-    events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
+    events: [...EVOLUTION_WEBHOOK_EVENTS],
+  };
+}
+
+/** `"+55 (48) 99999-8888"` -> `"5548999998888@s.whatsapp.net"` — o `remoteJid` do chat. */
+export function evolutionChatJid(phone: string): string {
+  return `${phone.replace(/\D/g, '')}@s.whatsapp.net`;
+}
+
+/** `quoted` no formato do `quotedOptionsSchema` do Evolution v2 (D-221). */
+function quotedBody(phone: string, quoted: EvolutionQuotedRef): Record<string, unknown> {
+  return {
+    key: { id: quoted.externalId, remoteJid: evolutionChatJid(phone), fromMe: quoted.fromMe },
+    message: { conversation: quoted.content },
   };
 }
 
@@ -321,6 +420,8 @@ export function createEvolutionClient(
   }
 
   return {
+    setWebhook,
+
     async createInstance(
       instanceName: string,
       webhook?: EvolutionWebhookConfig,
@@ -402,10 +503,18 @@ export function createEvolutionClient(
       phone: string,
       text: string,
       apikey: string,
+      quoted?: EvolutionQuotedRef,
     ): Promise<EvolutionSendResult> {
       const body = await request(
         `/message/sendText/${encodeURIComponent(instanceName)}`,
-        { method: 'POST', body: JSON.stringify({ number: phone, text }) },
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            number: phone,
+            text,
+            ...(quoted ? { quoted: quotedBody(phone, quoted) } : {}),
+          }),
+        },
         apikey,
       );
       const record = isRecord(body) ? body : {};
@@ -422,6 +531,7 @@ export function createEvolutionClient(
       phone: string,
       media: EvolutionMediaPayload,
       apikey: string,
+      quoted?: EvolutionQuotedRef,
     ): Promise<EvolutionSendResult> {
       const mediatype = evolutionMediaType(media.mimeType);
       // Audio vai como RECADO DE VOZ (CRMLAB-24, D-182): `sendWhatsAppAudio`
@@ -429,9 +539,10 @@ export function createEvolutionClient(
       // ogg/opus e entrega como PTT. `sendMedia` repassaria o webm do Chrome /
       // mp4 do Safari como esta — formato que o WhatsApp do paciente nao toca.
       // Sem `encoding`: o default do gateway ja e converter.
+      const quotedPart = quoted ? { quoted: quotedBody(phone, quoted) } : {};
       const [route, payload] =
         mediatype === 'audio'
-          ? (['sendWhatsAppAudio', { number: phone, audio: media.base64 }] as const)
+          ? (['sendWhatsAppAudio', { number: phone, audio: media.base64, ...quotedPart }] as const)
           : ([
               'sendMedia',
               {
@@ -440,6 +551,8 @@ export function createEvolutionClient(
                 mimetype: media.mimeType,
                 fileName: media.fileName,
                 media: media.base64,
+                ...(media.caption ? { caption: media.caption } : {}),
+                ...quotedPart,
               },
             ] as const);
       const body = await request(
@@ -456,6 +569,40 @@ export function createEvolutionClient(
         throw new Error(`Evolution API nao devolveu id da mensagem em /message/${route}`);
       }
       return { externalId };
+    },
+
+    async sendReaction(
+      instanceName: string,
+      phone: string,
+      target: EvolutionReactionTarget,
+      emoji: string,
+      apikey: string,
+    ): Promise<void> {
+      await request(
+        `/message/sendReaction/${encodeURIComponent(instanceName)}`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            key: { id: target.externalId, remoteJid: evolutionChatJid(phone), fromMe: target.fromMe },
+            reaction: emoji,
+          }),
+        },
+        apikey,
+      );
+    },
+
+    async sendPresence(
+      instanceName: string,
+      phone: string,
+      presence: EvolutionOutboundPresence,
+      delayMs: number,
+      apikey: string,
+    ): Promise<void> {
+      await request(
+        `/chat/sendPresence/${encodeURIComponent(instanceName)}`,
+        { method: 'POST', body: JSON.stringify({ number: phone, presence, delay: delayMs }) },
+        apikey,
+      );
     },
   };
 }

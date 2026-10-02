@@ -15,13 +15,22 @@ export default {
         text: 'var(--color-text)',
         ink: 'var(--color-text)',
         backdrop: 'var(--color-backdrop)',
-        // Conversa do atendimento (CRMLAB-25) — papel branco + bolhas tingidas.
+        // Conversa do atendimento (CRMLAB-25 → CRMLAB-81, D-251) — visual WhatsApp Web.
         chat: {
+          panel: 'var(--color-chat-panel)',
+          line: 'var(--color-chat-line)',
+          selected: 'var(--color-chat-selected)',
+          hover: 'var(--color-chat-hover)',
+          avatar: 'var(--color-chat-avatar)',
+          'avatar-text': 'var(--color-chat-avatar-text)',
           bg: 'var(--color-chat-bg)',
           received: 'var(--color-chat-received)',
-          'received-border': 'var(--color-chat-received-border)',
           sent: 'var(--color-chat-sent)',
-          'sent-border': 'var(--color-chat-sent-border)',
+          text: 'var(--color-chat-text)',
+          meta: 'var(--color-chat-meta)',
+          quote: 'var(--color-chat-quote)',
+          'quote-hover': 'var(--color-chat-quote-hover)',
+          'tick-read': 'var(--color-chat-tick-read)',
         },
         accent: {
           DEFAULT: 'var(--color-accent)',

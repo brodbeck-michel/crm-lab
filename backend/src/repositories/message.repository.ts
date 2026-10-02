@@ -11,7 +11,21 @@
  * `last_message_at` acontecem na MESMA transacao: contador e mensagem nao podem
  * divergir (BUSINESS_RULES §5 — um numero, uma origem).
  */
-import type { Message, MessageStatus, MessageType, SenderType } from '@crm-lab/shared';
+import {
+  MESSAGE_TYPES,
+  QUOTED_PREVIEW_MAX,
+  type Message,
+  type MessageContact,
+  type MessageLocation,
+  type MessageMediaInfo,
+  type MessageSearchHit,
+  type MessageReaction,
+  type MessageStatus,
+  type MessageType,
+  type QuotedMessageSummary,
+  type ReactorType,
+  type SenderType,
+} from '@crm-lab/shared';
 import type { DbClient, DbTx } from '../db/types.js';
 import { toIso, toIsoOrNull, toNumber } from './row-mappers.js';
 
@@ -27,14 +41,50 @@ interface MessageRow {
   status: string | null;
   read_at: Date | string | null;
   created_at: Date | string;
+  // CRMLAB-66 (D-220/D-221/D-222)
+  quoted_message_id: string | null;
+  quoted_external_id: string | null;
+  edited_at: Date | string | null;
+  deleted_at: Date | string | null;
+  q_id: string | null;
+  q_sender_type: string | null;
+  q_sender_name: string | null;
+  q_preview: string | null;
+  q_message_type: string | null;
+  q_deleted_at: Date | string | null;
+  reactions: unknown;
+  // CRMLAB-70 (D-234)
+  metadata: unknown;
+  mm_file_name: string | null;
+  mm_byte_size: number | string | null;
+  mm_mime_type: string | null;
 }
 
-const MESSAGE_TYPES: MessageType[] = ['text', 'image', 'audio', 'pdf', 'doc'];
-const MESSAGE_STATUSES: MessageStatus[] = ['sent', 'delivered', 'read', 'failed'];
+/**
+ * `messages.metadata` (migracao 045, D-234): o que o WhatsApp manda junto e o
+ * arquivo nao tem. Nome/tamanho/MIME do arquivo NAO moram aqui (`message_media`).
+ */
+export interface MessageMetadata {
+  durationSec?: number | null;
+  pageCount?: number | null;
+  /** JPEG em base64, sem `data:`. */
+  thumbnail?: string | null;
+  location?: MessageLocation | null;
+  contacts?: MessageContact[] | null;
+}
+const MESSAGE_STATUSES: MessageStatus[] = ['pending', 'sent', 'delivered', 'read', 'failed'];
 const SENDER_TYPES: SenderType[] = ['patient', 'agent', 'system'];
 
-function toMessageType(value: string | null): MessageType {
+export function toMessageType(value: string | null): MessageType {
   return MESSAGE_TYPES.includes(value as MessageType) ? (value as MessageType) : 'text';
+}
+
+/**
+ * Posicao na escada de D-225 em SQL. `failed` e desconhecido ficam em 99:
+ * nunca "sobem" para nada. Espelha `MESSAGE_STATUS_RANK` (`shared/`).
+ */
+function statusRankSql(expr: string): string {
+  return `(CASE ${expr} WHEN 'pending' THEN 0 WHEN 'sent' THEN 1 WHEN 'delivered' THEN 2 WHEN 'read' THEN 3 ELSE 99 END)`;
 }
 
 function toMessageStatus(value: string | null): MessageStatus {
@@ -56,32 +106,242 @@ function toSenderType(value: string): SenderType {
  */
 export const PHONE_SENDER_NAME = 'Enviada pelo celular';
 
+/**
+ * Agente sem autor COM `automation` e a mensagem que o sistema mandou sozinho
+ * ao paciente (reingajamento, CRMLAB-62 — D-211 item 5).
+ */
+export const AUTOMATED_SENDER_NAME = 'Mensagem automática';
+
+/** ISO-UTC montado no banco (D-021/D-078), para a data dentro do JSON das reacoes. */
+const ISO_UTC = `'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'`;
+
+/**
+ * Autor de uma mensagem a partir de `<alias>.sender_type`/`sender_id`. O mesmo
+ * CASE serve a mensagem e a citada (D-221) — nao duplique a regra.
+ */
+function senderNameSql(alias: string, userAlias: string): string {
+  return `CASE
+         WHEN ${alias}.sender_type = 'agent' AND ${alias}.automation IS NOT NULL THEN '${AUTOMATED_SENDER_NAME}'
+         WHEN ${alias}.sender_type = 'agent' AND ${alias}.sender_id IS NULL THEN '${PHONE_SENDER_NAME}'
+         WHEN ${alias}.sender_type = 'agent' THEN ${userAlias}.name
+         WHEN ${alias}.sender_type = 'patient' THEN c.patient_name
+         ELSE NULL
+       END`;
+}
+
 const COLUMNS = `m.id, m.conversation_id, m.sender_type, m.sender_id, m.content,
        m.message_type, m.attachment_url, m.status, m.read_at, m.created_at,
-       CASE
-         WHEN m.sender_type = 'agent' AND m.sender_id IS NULL THEN '${PHONE_SENDER_NAME}'
-         WHEN m.sender_type = 'agent' THEN u.name
-         WHEN m.sender_type = 'patient' THEN c.patient_name
-         ELSE NULL
-       END AS sender_name`;
+       ${senderNameSql('m', 'u')} AS sender_name,
+       m.quoted_message_id, m.quoted_external_id, m.edited_at, m.deleted_at,
+       q.id AS q_id, q.sender_type AS q_sender_type, q.sender_name AS q_sender_name,
+       left(q.content, ${QUOTED_PREVIEW_MAX}) AS q_preview, q.message_type AS q_message_type,
+       q.deleted_at AS q_deleted_at,
+       COALESCE((
+         SELECT json_agg(json_build_object(
+                  'emoji', r.emoji,
+                  'reactorType', r.reactor_type,
+                  'userId', r.user_id,
+                  'userName', ru.name,
+                  'reactedAt', to_char(r.updated_at AT TIME ZONE 'UTC', ${ISO_UTC}))
+                ORDER BY r.reactor_type DESC)
+           FROM message_reactions r
+           LEFT JOIN users ru ON ru.id = r.user_id
+          WHERE r.message_id = m.id
+       ), '[]'::json) AS reactions,
+       m.metadata, mm.file_name AS mm_file_name, mm.byte_size AS mm_byte_size,
+       mm.mime_type AS mm_mime_type`;
 
+/**
+ * Arquivo da mensagem (D-234 item 2) pela id que esta em `attachment_url` —
+ * nao por `message_media.message_id`, que so e preenchido DEPOIS do INSERT e
+ * do evento de WS. O `CASE` garante que o cast para uuid so roda quando a URL
+ * e nossa (`/api/v1/media/<uuid>`); URL externa nao casa nada.
+ */
+const MEDIA_ID_SQL = `(CASE WHEN m.attachment_url ~ '^/api/v1/media/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                            THEN substring(m.attachment_url from 15)::uuid END)`;
+
+/**
+ * A citada (D-221) e resolvida NA LEITURA: pela id interna quando a original ja
+ * estava no CRM ao gravar, senao pelo `stanzaId` na mesma conversa — assim a
+ * original que chega depois da resposta aparece sem backfill. `LATERAL` + `LIMIT
+ * 1` porque o `external_message_id` e unico por tenant (019), e o RLS ja
+ * recorta o tenant.
+ */
 const FROM = `FROM messages m
      LEFT JOIN users u ON u.id = m.sender_id
-     LEFT JOIN conversations c ON c.id = m.conversation_id`;
+     LEFT JOIN conversations c ON c.id = m.conversation_id
+     LEFT JOIN LATERAL (
+       SELECT q.id, q.sender_type, q.content, q.message_type, q.deleted_at,
+              ${senderNameSql('q', 'qu')} AS sender_name
+         FROM messages q
+         LEFT JOIN users qu ON qu.id = q.sender_id
+        WHERE q.conversation_id = m.conversation_id
+          AND (q.id = m.quoted_message_id
+               OR (m.quoted_message_id IS NULL
+                   AND m.quoted_external_id IS NOT NULL
+                   AND q.external_message_id = m.quoted_external_id))
+        LIMIT 1
+     ) q ON TRUE
+     LEFT JOIN message_media mm ON mm.id = ${MEDIA_ID_SQL}`;
 
+function toReactions(value: unknown): MessageReaction[] {
+  const list: unknown = typeof value === 'string' ? safeParse(value) : value;
+  if (!Array.isArray(list)) return [];
+  const out: MessageReaction[] = [];
+  for (const item of list) {
+    if (typeof item !== 'object' || item === null) continue;
+    const r = item as Record<string, unknown>;
+    if (typeof r.emoji !== 'string') continue;
+    out.push({
+      emoji: r.emoji,
+      reactorType: r.reactorType === 'agent' ? 'agent' : 'patient',
+      userId: typeof r.userId === 'string' ? r.userId : null,
+      userName: typeof r.userName === 'string' ? r.userName : null,
+      reactedAt: toIso(r.reactedAt),
+    });
+  }
+  return out;
+}
+
+function safeParse(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function toQuoted(row: MessageRow): QuotedMessageSummary | null {
+  if (!row.quoted_message_id && !row.quoted_external_id) return null;
+  if (!row.q_id) {
+    // A original nao esta no CRM (anterior a conversa) — D-221 item 3.
+    return { id: null, senderType: null, senderName: null, preview: '', messageType: null, deleted: false };
+  }
+  const deleted = row.q_deleted_at !== null;
+  return {
+    id: row.q_id,
+    senderType: row.q_sender_type ? toSenderType(row.q_sender_type) : null,
+    senderName: row.q_sender_name,
+    // Citada apagada tambem nao vaza o conteudo escondido (D-220).
+    preview: deleted ? '' : (row.q_preview ?? ''),
+    messageType: row.q_message_type ? toMessageType(row.q_message_type) : null,
+    deleted,
+  };
+}
+
+function finiteOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+/** `metadata` (JSONB) -> forma conhecida; qualquer coisa estranha vira ausente. */
+export function toMetadata(value: unknown): MessageMetadata {
+  const raw: unknown = typeof value === 'string' ? safeParse(value) : value;
+  if (typeof raw !== 'object' || raw === null) return {};
+  const r = raw as Record<string, unknown>;
+  const loc = typeof r.location === 'object' && r.location !== null ? (r.location as Record<string, unknown>) : null;
+  const latitude = loc ? finiteOrNull(loc.latitude) : null;
+  const longitude = loc ? finiteOrNull(loc.longitude) : null;
+  const contacts: MessageContact[] = [];
+  if (Array.isArray(r.contacts)) {
+    for (const item of r.contacts) {
+      if (typeof item !== 'object' || item === null) continue;
+      const c = item as Record<string, unknown>;
+      const name = stringOrNull(c.name);
+      if (name) contacts.push({ name, phone: stringOrNull(c.phone) });
+    }
+  }
+  return {
+    durationSec: finiteOrNull(r.durationSec),
+    pageCount: finiteOrNull(r.pageCount),
+    thumbnail: stringOrNull(r.thumbnail),
+    location:
+      latitude !== null && longitude !== null
+        ? { latitude, longitude, name: stringOrNull(loc?.name), address: stringOrNull(loc?.address) }
+        : null,
+    contacts,
+  };
+}
+
+function toMedia(row: MessageRow, meta: MessageMetadata): MessageMediaInfo | null {
+  if (!row.mm_file_name) return null;
+  return {
+    fileName: row.mm_file_name,
+    fileSize: toNumber(row.mm_byte_size, 0),
+    mimeType: row.mm_mime_type ?? 'application/octet-stream',
+    durationSec: meta.durationSec ?? null,
+    pageCount: meta.pageCount ?? null,
+    thumbnail: meta.thumbnail ?? null,
+  };
+}
+
+/**
+ * Linha -> `Message`. Mensagem APAGADA pelo remetente (D-220) sai sem o
+ * conteudo: `content` vazio, sem anexo, sem citacao e sem reacoes. A linha e a
+ * midia continuam no banco — quem esconde e ESTA funcao, o unico caminho de
+ * `messages` ate a API.
+ */
 export function toMessage(row: MessageRow): Message {
+  const deletedAt = toIsoOrNull(row.deleted_at);
+  const hidden = deletedAt !== null;
+  const meta = hidden ? {} : toMetadata(row.metadata);
   return {
     id: row.id,
     conversationId: row.conversation_id,
     senderType: toSenderType(row.sender_type),
     senderId: row.sender_id,
     senderName: row.sender_name,
-    content: row.content,
+    content: hidden ? '' : row.content,
     messageType: toMessageType(row.message_type),
-    attachmentUrl: row.attachment_url,
+    attachmentUrl: hidden ? null : row.attachment_url,
     status: toMessageStatus(row.status),
     readAt: toIsoOrNull(row.read_at),
     createdAt: toIso(row.created_at),
+    quotedMessageId: hidden ? null : (row.quoted_message_id ?? row.q_id),
+    quoted: hidden ? null : toQuoted(row),
+    reactions: hidden ? [] : toReactions(row.reactions),
+    editedAt: toIsoOrNull(row.edited_at),
+    deletedAt,
+    // D-234: apagada sai sem arquivo, sem cartao e sem contatos, como o anexo.
+    media: hidden ? null : toMedia(row, meta),
+    location: meta.location ?? null,
+    contacts: meta.contacts ?? [],
+  };
+}
+
+/**
+ * O que o service precisa saber de uma mensagem para citar, reagir, apagar ou
+ * editar (CRMLAB-66) — inclusive o id externo, que `Message` nao expoe.
+ */
+export interface MessageRef {
+  id: string;
+  conversationId: string;
+  senderType: SenderType;
+  externalMessageId: string | null;
+  content: string;
+  deleted: boolean;
+}
+
+const REF_COLUMNS = `id, conversation_id, sender_type, external_message_id, content, deleted_at`;
+
+function toRef(row: {
+  id: string;
+  conversation_id: string;
+  sender_type: string;
+  external_message_id: string | null;
+  content: string;
+  deleted_at: unknown;
+}): MessageRef {
+  return {
+    id: row.id,
+    conversationId: row.conversation_id,
+    senderType: toSenderType(row.sender_type),
+    externalMessageId: row.external_message_id,
+    content: row.content,
+    deleted: row.deleted_at !== null && row.deleted_at !== undefined,
   };
 }
 
@@ -94,16 +354,83 @@ export interface MessageInsert {
   attachmentUrl?: string | null;
   status?: MessageStatus;
   externalMessageId?: string | null;
+  /** Citada (D-221) — id interna, quando conhecida. */
+  quotedMessageId?: string | null;
+  /** `stanzaId` do webhook / id externo da citada. Sem `quotedMessageId`, resolve pela conversa. */
+  quotedExternalId?: string | null;
+  /** So o reingajamento (D-211 item 5); `null`/ausente para todo o resto. */
+  automation?: 'reengagement' | null;
+  /** Duracao, paginas, miniatura, localizacao, contatos (D-234). */
+  metadata?: MessageMetadata | null;
 }
 
 export interface MessagePage {
   rows: Message[];
   total: number;
+  /** Ainda ha mensagens anteriores a mais antiga de `rows` (D-237). */
+  hasOlder: boolean;
+  /** Ainda ha mensagens mais novas que a mais nova de `rows` (D-230). */
+  hasNewer: boolean;
 }
 
 export interface ListMessagesCriteria {
   page: number;
   limit: number;
+  /** Cursor (D-237): id da mensagem; a pagina sao as `limit` anteriores a ela. */
+  before?: string;
+  /** Cursor (D-230): as `limit` imediatamente posteriores a ela. */
+  after?: string;
+  /** Cursor (D-230): a janela em volta dela. */
+  around?: string;
+}
+
+/**
+ * A expressao indexada por `idx_messages_content_search` (migracao 043, D-228).
+ * Indice por expressao so e usado quando a query repete a expressao — e, por
+ * ser parcial, tambem o predicado `m.deleted_at IS NULL`. Nao reescreva a mao.
+ */
+export const MESSAGE_SEARCH_EXPRESSION = `to_tsvector('portuguese', crm_unaccent(m.content))`;
+
+/**
+ * Termo digitado -> `tsquery` (D-228 item 3): palavras (so letras e digitos),
+ * cada uma por prefixo (`:*`), todas obrigatorias (`&`). Nenhum caractere de
+ * sintaxe do `to_tsquery` sobrevive. `null` = nada buscavel.
+ */
+export function toSearchTsQuery(term: string): string | null {
+  const words = term
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((word) => word.length > 0)
+    .slice(0, 12);
+  return words.length > 0 ? words.map((word) => `${word}:*`).join(' & ') : null;
+}
+
+export interface MessageSearchCriteria {
+  /** Saida de `toSearchTsQuery`. */
+  tsQuery: string;
+  /** `null` = todas as conversas (gestor/admin); id = as do atendente + a fila livre. */
+  visibleTo: string | null;
+  /** So esta conversa (busca dentro da conversa). */
+  conversationId?: string;
+  page: number;
+  limit: number;
+}
+
+export interface MessageSearchPage {
+  rows: MessageSearchHit[];
+  total: number;
+}
+
+interface SearchRow {
+  id: string;
+  conversation_id: string;
+  patient_name: string | null;
+  patient_phone: string;
+  sender_type: string;
+  sender_name: string | null;
+  message_type: string | null;
+  content: string;
+  created_at: Date | string;
 }
 
 export class MessageRepository {
@@ -113,12 +440,20 @@ export class MessageRepository {
    * Uma pagina do historico. A pagina 1 traz as mensagens MAIS RECENTES (e o
    * que a tela de Atendimento abre), mas as linhas voltam em ordem cronologica
    * crescente — o frontend renderiza de cima para baixo sem reordenar.
+   *
+   * Com `before` (D-237) a pagina sao as `limit` mensagens anteriores a
+   * mensagem-cursor, na ordem `(created_at, id)`. O par do cursor e lido NO
+   * BANCO pelo id: `created_at` tem microssegundos e o `createdAt` do fio so
+   * milissegundos — um par vindo do cliente pularia mensagens do mesmo ms.
+   * Cursor que nao e mensagem desta conversa -> `null` (o service vira 404).
+   *
+   * Busca `limit + 1` linhas: a sobra so diz se ainda ha historico anterior.
    */
   async listByConversation(
     tenantId: string,
     conversationId: string,
     criteria: ListMessagesCriteria,
-  ): Promise<MessagePage> {
+  ): Promise<MessagePage | null> {
     return this.db.withTenant(tenantId, async (tx) => {
       const counted = await tx.query<{ total: number | string }>(
         'SELECT COUNT(*)::int AS total FROM messages WHERE conversation_id = $1',
@@ -126,16 +461,135 @@ export class MessageRepository {
       );
       const total = toNumber(counted.rows[0]?.total, 0);
 
-      const offset = (criteria.page - 1) * criteria.limit;
-      const paged = await tx.query<MessageRow>(
-        `SELECT ${COLUMNS} ${FROM}
-         WHERE m.conversation_id = $1
-         ORDER BY m.created_at DESC, m.id DESC
-         LIMIT $2 OFFSET $3`,
-        [conversationId, criteria.limit, offset],
-      );
+      const cursorId = criteria.before ?? criteria.after ?? criteria.around;
+      if (cursorId !== undefined) {
+        const cursor = await tx.query<{ id: string }>(
+          'SELECT id FROM messages WHERE id = $1 AND conversation_id = $2',
+          [cursorId, conversationId],
+        );
+        if (cursor.rows.length === 0) return null;
+      }
 
-      return { rows: paged.rows.map(toMessage).reverse(), total };
+      // O par `(created_at, id)` do cursor e lido NO BANCO pelo id (D-237).
+      const cursorPair = `(SELECT b.created_at, b.id FROM messages b WHERE b.id = $2)`;
+      const older = (limit: number, inclusive: boolean) =>
+        tx.query<MessageRow>(
+          `SELECT ${COLUMNS} ${FROM}
+           WHERE m.conversation_id = $1 AND (m.created_at, m.id) ${inclusive ? '<=' : '<'} ${cursorPair}
+           ORDER BY m.created_at DESC, m.id DESC
+           LIMIT $3`,
+          [conversationId, cursorId, limit + 1],
+        );
+      const newer = (limit: number) =>
+        tx.query<MessageRow>(
+          `SELECT ${COLUMNS} ${FROM}
+           WHERE m.conversation_id = $1 AND (m.created_at, m.id) > ${cursorPair}
+           ORDER BY m.created_at ASC, m.id ASC
+           LIMIT $3`,
+          [conversationId, cursorId, limit + 1],
+        );
+
+      if (criteria.after !== undefined) {
+        const found = await newer(criteria.limit);
+        const rows = found.rows.slice(0, criteria.limit).map(toMessage);
+        // A propria mensagem-cursor e mais antiga que a pagina.
+        return { rows, total, hasOlder: true, hasNewer: found.rows.length > criteria.limit };
+      }
+
+      if (criteria.around !== undefined) {
+        // Ate metade mais novas; o resto (ela inclusa) com as anteriores (D-230 item 1).
+        const newerLimit = Math.floor(criteria.limit / 2);
+        const after = await newer(newerLimit);
+        const newerRows = after.rows.slice(0, newerLimit);
+        const olderLimit = criteria.limit - newerRows.length;
+        const before = await older(olderLimit, true);
+        const olderRows = before.rows.slice(0, olderLimit).reverse();
+        return {
+          rows: [...olderRows, ...newerRows].map(toMessage),
+          total,
+          hasOlder: before.rows.length > olderLimit,
+          hasNewer: after.rows.length > newerLimit,
+        };
+      }
+
+      let paged: { rows: MessageRow[] };
+      let hasNewer: boolean;
+      if (criteria.before !== undefined) {
+        paged = await older(criteria.limit, false);
+        // A propria mensagem-cursor e mais nova que a pagina.
+        hasNewer = true;
+      } else {
+        const offset = (criteria.page - 1) * criteria.limit;
+        paged = await tx.query<MessageRow>(
+          `SELECT ${COLUMNS} ${FROM}
+           WHERE m.conversation_id = $1
+           ORDER BY m.created_at DESC, m.id DESC
+           LIMIT $2 OFFSET $3`,
+          [conversationId, criteria.limit + 1, offset],
+        );
+        hasNewer = offset > 0 && total > 0;
+      }
+
+      const hasOlder = paged.rows.length > criteria.limit;
+      const rows = paged.rows.slice(0, criteria.limit).map(toMessage).reverse();
+      return { rows, total, hasOlder, hasNewer };
+    });
+  }
+
+  /**
+   * Busca pelo conteudo (D-228). Nunca devolve apagada (o predicado do indice
+   * parcial), evento de sistema, nem conversa fora do recorte do atendente —
+   * o MESMO recorte da fila (`ConversationRepository.list`). O RLS recorta o
+   * tenant. Mais nova primeiro.
+   */
+  async search(tenantId: string, criteria: MessageSearchCriteria): Promise<MessageSearchPage> {
+    const params: unknown[] = [criteria.tsQuery];
+    const where = [
+      'm.deleted_at IS NULL',
+      `${MESSAGE_SEARCH_EXPRESSION} @@ to_tsquery('portuguese', crm_unaccent($1::text))`,
+      "m.sender_type <> 'system'",
+    ];
+    if (criteria.visibleTo !== null) {
+      params.push(criteria.visibleTo);
+      where.push(`(c.assigned_to = $${params.length} OR c.assigned_to IS NULL)`);
+    }
+    if (criteria.conversationId !== undefined) {
+      params.push(criteria.conversationId);
+      where.push(`m.conversation_id = $${params.length}`);
+    }
+    const from = `FROM messages m
+       JOIN conversations c ON c.id = m.conversation_id
+       LEFT JOIN users u ON u.id = m.sender_id
+       WHERE ${where.join(' AND ')}`;
+
+    return this.db.withTenant(tenantId, async (tx) => {
+      const counted = await tx.query<{ total: number | string }>(
+        `SELECT COUNT(*)::int AS total ${from}`,
+        params,
+      );
+      const offset = (criteria.page - 1) * criteria.limit;
+      const found = await tx.query<SearchRow>(
+        `SELECT m.id, m.conversation_id, c.patient_name, c.patient_phone, m.sender_type,
+                ${senderNameSql('m', 'u')} AS sender_name, m.message_type, m.content, m.created_at
+         ${from}
+         ORDER BY m.created_at DESC, m.id DESC
+         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        [...params, criteria.limit, offset],
+      );
+      return {
+        total: toNumber(counted.rows[0]?.total, 0),
+        rows: found.rows.map((row) => ({
+          messageId: row.id,
+          conversationId: row.conversation_id,
+          patientName: row.patient_name,
+          patientPhone: row.patient_phone,
+          senderType: toSenderType(row.sender_type),
+          senderName: row.sender_name,
+          messageType: toMessageType(row.message_type),
+          content: row.content,
+          createdAt: toIso(row.created_at),
+        })),
+      };
     });
   }
 
@@ -155,8 +609,15 @@ export class MessageRepository {
       const inserted = await tx.query<{ id: string }>(
         `INSERT INTO messages
            (tenant_id, conversation_id, sender_type, sender_id, content, message_type,
-            attachment_url, status, external_message_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            attachment_url, status, external_message_id, quoted_external_id, quoted_message_id,
+            automation, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text,
+                 COALESCE($11::uuid, (SELECT q.id FROM messages q
+                                       WHERE $10::text IS NOT NULL
+                                         AND q.conversation_id = $2
+                                         AND q.external_message_id = $10::text
+                                       LIMIT 1)),
+                 $12, $13::jsonb)
          RETURNING id`,
         [
           tenantId,
@@ -168,6 +629,10 @@ export class MessageRepository {
           data.attachmentUrl ?? null,
           data.status ?? 'sent',
           data.externalMessageId ?? null,
+          data.quotedExternalId ?? null,
+          data.quotedMessageId ?? null,
+          data.automation ?? null,
+          data.metadata ? JSON.stringify(data.metadata) : null,
         ],
       );
       const id = inserted.rows[0]?.id;
@@ -234,6 +699,7 @@ export class MessageRepository {
          WHERE external_message_id = $1
            AND sender_type = 'agent'
            AND sender_id IS NULL
+           AND automation IS NULL
            AND id <> $2
          RETURNING id`,
         [externalMessageId, id],
@@ -255,7 +721,7 @@ export class MessageRepository {
 
   /**
    * Envio do CRM EM VOO nesta conversa (D-173): mensagem de atendente, com
-   * autor, ainda `sent` e sem id externo — gravada antes do envio e esperando
+   * autor, ainda `pending` (D-225; `sent` cobre linha anterior) e sem id externo — gravada antes do envio e esperando
    * o gateway responder. E o que diz ao webhook `fromMe` que um `key.id`
    * desconhecido pode ser o eco de um envio que ainda nao gravou o id.
    *
@@ -269,8 +735,8 @@ export class MessageRepository {
         `SELECT id FROM messages
          WHERE conversation_id = $1
            AND sender_type = 'agent'
-           AND sender_id IS NOT NULL
-           AND status = 'sent'
+           AND (sender_id IS NOT NULL OR automation IS NOT NULL)
+           AND status IN ('pending', 'sent')
            AND external_message_id IS NULL
            AND created_at > NOW() - INTERVAL '60 seconds'
          LIMIT 1`,
@@ -282,7 +748,11 @@ export class MessageRepository {
 
   /**
    * Status vindo do callback do canal, que so conhece o id externo.
-   * `null` quando o id externo nao pertence a este tenant.
+   * `null` quando o id externo nao pertence a este tenant OU quando o status
+   * nao sobe (D-225): a escada `pending < sent < delivered < read` so anda para
+   * frente, `failed` so entra a partir de `pending`/`sent`, e de `failed` nada
+   * sai por aqui. A guarda mora no `WHERE` para valer sob reentrega concorrente
+   * — mesma regra de `canAdvanceMessageStatus` (`shared/`).
    */
   async setStatusByExternalId(
     tenantId: string,
@@ -295,11 +765,158 @@ export class MessageRepository {
          SET status = $1::text,
              read_at = CASE WHEN $1::text = 'read' THEN COALESCE(read_at, NOW()) ELSE read_at END
          WHERE external_message_id = $2
+           AND CASE
+                 WHEN $1::text = 'failed' THEN status IN ('pending', 'sent')
+                 ELSE ${statusRankSql('$1::text')} > ${statusRankSql('status')}
+               END
          RETURNING id`,
         [status, externalMessageId],
       );
       const changedId = updated.rows[0]?.id;
       return changedId ? selectOne(tx, changedId) : null;
+    });
+  }
+
+  /** Referencia por id interna (citar/reagir pela API). `null` = inexistente ou de outro tenant. */
+  async findRef(tenantId: string, id: string): Promise<MessageRef | null> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const found = await tx.query<Parameters<typeof toRef>[0]>(
+        `SELECT ${REF_COLUMNS} FROM messages WHERE id = $1`,
+        [id],
+      );
+      const row = found.rows[0];
+      return row ? toRef(row) : null;
+    });
+  }
+
+  /** Referencia pelo id externo (reacao/edicao/apagamento que chega pelo webhook). */
+  async findRefByExternalId(tenantId: string, externalMessageId: string): Promise<MessageRef | null> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const found = await tx.query<Parameters<typeof toRef>[0]>(
+        `SELECT ${REF_COLUMNS} FROM messages WHERE external_message_id = $1 LIMIT 1`,
+        [externalMessageId],
+      );
+      const row = found.rows[0];
+      return row ? toRef(row) : null;
+    });
+  }
+
+  /** `true` quando o lado ja tem reacao nesta mensagem (D-222). */
+  async hasReaction(tenantId: string, messageId: string, reactorType: ReactorType): Promise<boolean> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const found = await tx.query<{ id: string }>(
+        'SELECT id FROM message_reactions WHERE message_id = $1 AND reactor_type = $2',
+        [messageId, reactorType],
+      );
+      return found.rows.length > 0;
+    });
+  }
+
+  /**
+   * Grava/substitui a reacao do lado (D-222). `keepUserOnSameEmoji` e o eco
+   * `fromMe` da reacao feita pelo CRM: mesmo emoji preserva quem reagiu; emoji
+   * diferente (reagiu pelo celular) grava o `userId` informado (nulo).
+   */
+  async upsertReaction(
+    tenantId: string,
+    input: {
+      messageId: string;
+      reactorType: ReactorType;
+      userId: string | null;
+      emoji: string;
+      keepUserOnSameEmoji?: boolean;
+    },
+  ): Promise<void> {
+    await this.db.withTenant(tenantId, (tx) =>
+      tx.query(
+        `INSERT INTO message_reactions (tenant_id, message_id, reactor_type, user_id, emoji)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (tenant_id, message_id, reactor_type)
+         DO UPDATE SET
+           user_id = CASE
+             WHEN $6::boolean AND message_reactions.emoji = EXCLUDED.emoji
+               THEN message_reactions.user_id
+             ELSE EXCLUDED.user_id
+           END,
+           emoji = EXCLUDED.emoji,
+           updated_at = now()`,
+        [
+          tenantId,
+          input.messageId,
+          input.reactorType,
+          input.userId,
+          input.emoji,
+          input.keepUserOnSameEmoji === true,
+        ],
+      ),
+    );
+  }
+
+  /** Remove a reacao do lado. `true` = havia reacao. Reacao nao e conteudo (D-222). */
+  async deleteReaction(tenantId: string, messageId: string, reactorType: ReactorType): Promise<boolean> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const removed = await tx.query<{ id: string }>(
+        'DELETE FROM message_reactions WHERE message_id = $1 AND reactor_type = $2 RETURNING id',
+        [messageId, reactorType],
+      );
+      return removed.rows.length > 0;
+    });
+  }
+
+  /**
+   * Apagada pelo remetente (D-220): ESCONDE, nunca apaga. `null` = ja estava
+   * apagada (reentrega) — nada muda. Devolve o instante gravado.
+   */
+  async markDeleted(
+    tenantId: string,
+    id: string,
+    deletedBy: 'patient' | 'agent',
+  ): Promise<string | null> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const updated = await tx.query<{ deleted_at: unknown }>(
+        `UPDATE messages
+            SET deleted_at = now(), deleted_by = $2
+          WHERE id = $1 AND deleted_at IS NULL
+          RETURNING deleted_at`,
+        [id, deletedBy],
+      );
+      const row = updated.rows[0];
+      return row ? toIsoOrNull(row.deleted_at) : null;
+    });
+  }
+
+  /**
+   * Editada pelo remetente (D-220): guarda a versao ANTERIOR em `message_edits`
+   * e troca o texto, na mesma transacao. `null` = nada a fazer (apagada, ou o
+   * texto e o mesmo — reentrega).
+   */
+  async applyEdit(
+    tenantId: string,
+    id: string,
+    newContent: string,
+    editedBy: 'patient' | 'agent',
+  ): Promise<{ editId: string; editedAt: string | null } | null> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const current = await tx.query<{ content: string; deleted_at: unknown }>(
+        'SELECT content, deleted_at FROM messages WHERE id = $1 FOR UPDATE',
+        [id],
+      );
+      const row = current.rows[0];
+      if (!row || (row.deleted_at !== null && row.deleted_at !== undefined)) return null;
+      if (row.content === newContent) return null;
+
+      const edit = await tx.query<{ id: string }>(
+        `INSERT INTO message_edits (tenant_id, message_id, previous_content, edited_by)
+         VALUES ($1, $2, $3, $4) RETURNING id`,
+        [tenantId, id, row.content, editedBy],
+      );
+      const updated = await tx.query<{ edited_at: unknown }>(
+        'UPDATE messages SET content = $2, edited_at = now() WHERE id = $1 RETURNING edited_at',
+        [id, newContent],
+      );
+      const editId = edit.rows[0]?.id;
+      if (!editId) throw new Error('INSERT em message_edits nao retornou linha');
+      return { editId, editedAt: toIsoOrNull(updated.rows[0]?.edited_at) };
     });
   }
 

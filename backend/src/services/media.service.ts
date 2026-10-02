@@ -8,6 +8,7 @@
 import { fileTypeFromBuffer } from 'file-type';
 import {
   FALLBACK_MEDIA_MIME_TYPE,
+  MAX_MEDIA_BYTES,
   isAllowedMediaMimeType,
   mediaCategoryOf,
   normalizeMediaMimeType,
@@ -18,9 +19,17 @@ import { readMediaFile, writeMediaFile } from '../lib/media-storage.js';
 import { logger } from '../lib/logger.js';
 import type { MediaRepository } from '../repositories/media.repository.js';
 
-/** 15 MiB — recado de voz e foto de pedido medico cabem folgados; base64 ja infla ~33%. */
-export const MAX_MEDIA_BYTES = 15 * 1024 * 1024;
+/**
+ * 15 MiB — recado de voz e foto de pedido medico cabem folgados; base64 ja infla ~33%.
+ * Mora em `shared/` desde o CRMLAB-69 (D-232); reexportado para os specs.
+ */
+export { MAX_MEDIA_BYTES };
 
+/**
+ * `image/*` -> `image`, `audio/*` -> `audio`, `video/*` -> `video` (CRMLAB-70),
+ * PDF -> `pdf`, resto -> `doc`. Fonte unica: webhook (MIME gravado) e anexo do
+ * atendente usam esta.
+ */
 export function messageTypeFromMime(mimeType: string): MessageType {
   const category = mediaCategoryOf(mimeType);
   if (category === 'other') return 'doc';

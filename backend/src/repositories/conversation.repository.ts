@@ -26,7 +26,8 @@
  * `counts.mine` e `counts.unassigned` sao os numeros dos chips de filtro da
  * tela de Atendimento. Eles saem de `COUNT(*) FILTER (...)` sobre exatamente o
  * mesmo `WHERE` da listagem — nunca de contador mantido a parte. Assim e
- * impossivel o chip dizer "Minhas 5" e a lista mostrar 4.
+ * impossivel o chip dizer "Minhas 5" e a lista mostrar 4. `counts.unread`
+ * (chip "Nao lidas", D-229) sai do mesmo SELECT.
  */
 import type {
   Conversation,
@@ -116,7 +117,8 @@ const LIST_COLUMNS = `c.id, c.patient_id, c.patient_name, c.patient_phone, c.pat
 const LIST_FROM = `FROM conversations c
      LEFT JOIN users u ON u.id = c.assigned_to
      LEFT JOIN LATERAL (
-       SELECT m.content
+       -- Apagada pelo remetente: a previa nao devolve o conteudo escondido (D-220).
+       SELECT CASE WHEN m.deleted_at IS NULL THEN m.content ELSE '' END AS content
        FROM messages m
        WHERE m.conversation_id = c.id
        ORDER BY m.created_at DESC, m.id DESC
@@ -199,6 +201,8 @@ export interface ConversationListCriteria {
   /** Usuario logado — origem de `counts.mine`. */
   userId: string;
   scope: 'mine' | 'unassigned' | 'all';
+  /** So `unread_count > 0` (D-229) — recorte de listagem como o `scope`, fora dos counts. */
+  unread?: boolean;
   status?: ConversationStatus;
   search?: string;
   page: number;
@@ -210,7 +214,7 @@ export interface ConversationListCriteria {
 export interface ConversationPage {
   rows: Conversation[];
   total: number;
-  counts: { mine: number; unassigned: number };
+  counts: { mine: number; unassigned: number; unread: number };
 }
 
 export interface ConversationInsert {
@@ -230,6 +234,7 @@ interface CountRow {
   total: number | string;
   mine: number | string;
   unassigned: number | string;
+  unread: number | string;
 }
 
 export class ConversationRepository {
@@ -281,12 +286,19 @@ export class ConversationRepository {
     } else if (criteria.scope === 'unassigned') {
       where.push('c.assigned_to IS NULL');
     }
-    const scopeCondition =
+    const scopeConditions = [
       criteria.scope === 'mine'
         ? `c.assigned_to = ${me}`
         : criteria.scope === 'unassigned'
           ? 'c.assigned_to IS NULL'
-          : 'TRUE';
+          : 'TRUE',
+    ];
+    // "Nao lidas" (D-229) e recorte como o escopo: listagem + `total`, nunca os counts.
+    if (criteria.unread === true) {
+      where.push('c.unread_count > 0');
+      scopeConditions.push('c.unread_count > 0');
+    }
+    const scopeCondition = scopeConditions.join(' AND ');
 
     const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
 
@@ -299,7 +311,8 @@ export class ConversationRepository {
       const counted = await tx.query<CountRow>(
         `SELECT COUNT(*) FILTER (WHERE ${scopeCondition})::int AS total,
                 COUNT(*) FILTER (WHERE c.assigned_to = ${me})::int AS mine,
-                COUNT(*) FILTER (WHERE c.assigned_to IS NULL)::int AS unassigned
+                COUNT(*) FILTER (WHERE c.assigned_to IS NULL)::int AS unassigned,
+                COUNT(*) FILTER (WHERE c.unread_count > 0)::int AS unread
          FROM conversations c ${countsWhereSql}`,
         countsParams,
       );
@@ -326,6 +339,7 @@ export class ConversationRepository {
         counts: {
           mine: toNumber(counts?.mine, 0),
           unassigned: toNumber(counts?.unassigned, 0),
+          unread: toNumber(counts?.unread, 0),
         },
       };
     });
@@ -579,6 +593,21 @@ export class ConversationRepository {
       );
       return marked.rows.length;
     });
+  }
+
+  /**
+   * "Marcar como nao lida" (D-229): a conversa volta com pelo menos 1 e so zera
+   * ao ser aberta de novo. NAO mexe em `last_message_at` — e isso que impede o
+   * aviso de mensagem nova (D-241 item 2) de disparar — nem nas mensagens.
+   */
+  async markAsUnread(tenantId: string, id: string): Promise<void> {
+    await this.db.withTenant(tenantId, (tx) =>
+      tx.query(
+        `UPDATE conversations SET unread_count = GREATEST(unread_count, 1), updated_at = NOW()
+         WHERE id = $1`,
+        [id],
+      ),
+    );
   }
 
   /** Existe neste tenant? Usado onde so o id importa. */

@@ -6,7 +6,9 @@
  *      `attachmentUrl` aponta para `GET /media/:id` (que devolve os bytes);
  *   2. arquivo acima do teto e `MEDIA_TOO_LARGE`, sem gravar mensagem nenhuma;
  *   3. conversa de outro tenant é 404 e não grava mídia nenhuma;
- *   4. mídia de outro tenant é 404 no `GET /media/:id` (RLS).
+ *   4. mídia de outro tenant é 404 no `GET /media/:id` (RLS);
+ *   5. legenda (CRMLAB-69, D-231) vira o `content`; áudio descarta; acima de
+ *      1024 caracteres é 400.
  */
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { conversationModule } from '../../src/controllers/conversation.routes.js';
@@ -90,6 +92,57 @@ describe('POST /conversations/:id/attachments', () => {
     expect(media.headers['content-disposition']).toMatch(/^inline/);
   });
 
+  it('video/mp4 vira mensagem de vídeo com nome e tamanho do arquivo (CRMLAB-70, D-234)', async () => {
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Ana' });
+    const conversation = await createConversation({ tenantId: tenant.id, assignedTo: ana.id });
+    // Cabeçalho `ftyp` de MP4 de verdade: passa pelo sniff de magic bytes (categoria video).
+    const mp4 = Buffer.concat([
+      Buffer.from([0x00, 0x00, 0x00, 0x18]),
+      Buffer.from('ftypmp42'),
+      Buffer.from([0x00, 0x00, 0x00, 0x00]),
+      Buffer.from('mp42isom'),
+      Buffer.alloc(64),
+    ]);
+
+    const created = await app.agent
+      .post(`/api/v1/conversations/${conversation.id}/attachments`)
+      .set(app.auth(ana))
+      .send({ fileName: 'resultado.mp4', mimeType: 'video/mp4', contentBase64: mp4.toString('base64') })
+      .expect(201);
+
+    expect(created.body.messageType).toBe('video');
+    expect(created.body.media).toEqual({
+      fileName: 'resultado.mp4',
+      fileSize: mp4.length,
+      mimeType: 'video/mp4',
+      durationSec: null,
+      pageCount: null,
+      thumbnail: null,
+    });
+  });
+
+  it('.mov do iPhone (video/quicktime) é aceito e vira mensagem de vídeo (CRMLAB-70, D-234 item 8)', async () => {
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Ana' });
+    const conversation = await createConversation({ tenantId: tenant.id, assignedTo: ana.id });
+    // Cabeçalho `ftyp qt  ` de QuickTime: o sniff reconhece como vídeo.
+    const mov = Buffer.concat([
+      Buffer.from([0x00, 0x00, 0x00, 0x14]),
+      Buffer.from('ftypqt  '),
+      Buffer.from([0x00, 0x00, 0x00, 0x00]),
+      Buffer.from('qt  '),
+      Buffer.alloc(64),
+    ]);
+    const created = await app.agent
+      .post(`/api/v1/conversations/${conversation.id}/attachments`)
+      .set(app.auth(ana))
+      .send({ fileName: 'IMG_0001.MOV', mimeType: 'video/quicktime', contentBase64: mov.toString('base64') })
+      .expect(201);
+    expect(created.body.messageType).toBe('video');
+    expect(created.body.media?.mimeType).toBe('video/quicktime');
+  });
+
   it('arquivo acima do teto é MEDIA_TOO_LARGE e não grava mensagem', async () => {
     const tenant = await createTenant();
     const ana = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Ana' });
@@ -144,5 +197,71 @@ describe('POST /conversations/:id/attachments', () => {
     const mediaId = created.body.attachmentUrl.split('/').pop();
 
     await app.agent.get(`/api/v1/media/${mediaId}`).set(app.auth(ana)).expect(404);
+  });
+  describe('legenda (CRMLAB-69, D-231)', () => {
+    async function setup() {
+      const tenant = await createTenant();
+      const ana = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Ana' });
+      const conversation = await createConversation({ tenantId: tenant.id, assignedTo: ana.id });
+      return { ana, conversation };
+    }
+    const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex').toString('base64');
+
+    it('a legenda aparada vira o content da mensagem', async () => {
+      const { ana, conversation } = await setup();
+      const created = await app.agent
+        .post(`/api/v1/conversations/${conversation.id}/attachments`)
+        .set(app.auth(ana))
+        .send({ fileName: 'print.png', mimeType: 'image/png', contentBase64: png, caption: '  Seu pedido  ' })
+        .expect(201);
+      expect(created.body.content).toBe('Seu pedido');
+    });
+
+    it('legenda vazia ou só espaço = sem legenda: content continua o nome do arquivo', async () => {
+      const { ana, conversation } = await setup();
+      const created = await app.agent
+        .post(`/api/v1/conversations/${conversation.id}/attachments`)
+        .set(app.auth(ana))
+        .send({ fileName: 'print.png', mimeType: 'image/png', contentBase64: png, caption: '   ' })
+        .expect(201);
+      expect(created.body.content).toBe('print.png');
+    });
+
+    it('áudio descarta a legenda (o WhatsApp não mostra legenda em áudio)', async () => {
+      const { ana, conversation } = await setup();
+      const created = await app.agent
+        .post(`/api/v1/conversations/${conversation.id}/attachments`)
+        .set(app.auth(ana))
+        .send({
+          fileName: 'recado.webm',
+          mimeType: 'audio/webm;codecs=opus',
+          contentBase64: Buffer.concat([
+            Buffer.from(
+              '1a45dfa39f4286810142f7810142f2810442f381084282847765626d42878104428581021853806701ffffffffffffff',
+              'hex',
+            ),
+            Buffer.alloc(64),
+          ]).toString('base64'),
+          caption: 'não chega no paciente',
+        })
+        .expect(201);
+      expect(created.body.messageType).toBe('audio');
+      expect(created.body.content).toBe('recado.webm');
+    });
+
+    it('legenda acima de 1024 caracteres é 400 e não grava nada', async () => {
+      const { ana, conversation } = await setup();
+      await app.agent
+        .post(`/api/v1/conversations/${conversation.id}/attachments`)
+        .set(app.auth(ana))
+        .send({ fileName: 'print.png', mimeType: 'image/png', contentBase64: png, caption: 'a'.repeat(1025) })
+        .expect(400);
+
+      const db = await getTestDb();
+      const rows = await db.withoutTenant((tx) =>
+        tx.query<{ total: number }>('SELECT COUNT(*)::int AS total FROM message_media'),
+      );
+      expect(rows.rows[0]?.total).toBe(0);
+    });
   });
 });

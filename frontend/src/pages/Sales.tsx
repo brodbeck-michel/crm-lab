@@ -5,8 +5,10 @@ import { useCreateSale, useDeleteSale, useSaleList, useSalesSummary } from '@/ap
 import { isApiError } from '@/api/client';
 import { useAuthStore } from '@/stores/auth.store';
 import { PageContainer, PageHeader } from '@/components/layout';
-import { Button, Input, Select, TextArea, useToast } from '@/components/ui';
+import { Button, Input, Select, useToast } from '@/components/ui';
 import { DataTable, MoneyDisplay, Modal, Pagination } from '@/components/shared';
+import { ExamPicker } from '@/components/sales/ExamPicker';
+import type { PickedExam } from '@/components/sales/ExamPicker';
 import type { DataTableColumn } from '@/components/shared';
 import { KpiCard } from '@/components/lis/KpiCard';
 import { PeriodFilter, defaultPeriod } from '@/components/lis/PeriodFilter';
@@ -179,7 +181,7 @@ function SaleForm({ canPickAttendant, attendants, onClose }: SaleFormProps) {
     soldOn: new Date().toISOString().slice(0, 10),
     code: '',
     value: '',
-    exams: '',
+    exams: [] as PickedExam[],
     kind: 'exams' as SaleKind,
   });
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -193,7 +195,8 @@ function SaleForm({ canPickAttendant, attendants, onClose }: SaleFormProps) {
       soldOn: form.soldOn,
       code: form.code || undefined,
       value: Number(form.value),
-      exams: form.exams || undefined,
+      // D-247: grava os nomes do catálogo como texto, no formato das vendas migradas.
+      exams: form.exams.length > 0 ? form.exams.map((exam) => exam.name).join(', ') : undefined,
       kind: form.kind,
     };
 
@@ -277,10 +280,9 @@ function SaleForm({ canPickAttendant, attendants, onClose }: SaleFormProps) {
           error={fieldErrors.value}
           required
         />
-        <TextArea
-          label="Exames"
+        <ExamPicker
           value={form.exams}
-          onChange={(e) => setForm({ ...form, exams: e.target.value })}
+          onChange={(exams) => setForm({ ...form, exams })}
           error={fieldErrors.exams}
         />
       </form>

@@ -68,6 +68,7 @@ import {
   type EvolutionClient,
   type EvolutionWebhookConfig,
 } from '../lib/evolution-client.js';
+import { logger } from '../lib/logger.js';
 import * as channelSettingsRepo from '../repositories/channel-settings.repository.js';
 import type { AuditService } from './audit.service.js';
 
@@ -594,6 +595,14 @@ function toSettings(row: channelSettingsRepo.SettingsRow | null): {
   };
 }
 
+/**
+ * Horario de funcionamento do laboratorio (padrao sem linha = sem nenhum dia),
+ * na transacao de quem chama. O reingajamento le por aqui (CRMLAB-62, D-212).
+ */
+export async function readBusinessHours(tx: DbTx, tenantId: string): Promise<BusinessHours> {
+  return toSettings(await channelSettingsRepo.findSettings(tx, tenantId)).businessHours;
+}
+
 /** Leitura completa da tela dentro de uma transacao ja aberta. */
 async function readAll(tx: DbTx, tenantId: string): Promise<ChannelSettingsResponse> {
   const channels = await channelSettingsRepo.listChannels(tx, tenantId);
@@ -757,20 +766,6 @@ export function createChannelSettingsService(
       throw new BusinessError('CHANNEL_QR_UNAVAILABLE');
     }
     return evolutionClient;
-  }
-
-  /**
-   * Para onde o gateway posta os eventos deste tenant. `undefined` quando
-   * `EVOLUTION_WEBHOOK_BASE_URL` nao esta configurada: a instancia e criada
-   * mesmo assim (o QR pareia), so nao recebe mensagem — mesma escolha
-   * "opcional, nunca crash" do resto do bloco.
-   */
-  function evolutionWebhookOf(tenantId: string): EvolutionWebhookConfig | undefined {
-    const base = (process.env.EVOLUTION_WEBHOOK_BASE_URL ?? env.EVOLUTION_WEBHOOK_BASE_URL ?? '')
-      .replace(/\/+$/, '');
-    const token = process.env.EVOLUTION_WEBHOOK_TOKEN ?? env.EVOLUTION_WEBHOOK_TOKEN;
-    if (base.length === 0 || !token) return undefined;
-    return { url: `${base}/api/v1/webhooks/evolution/${tenantId}`, token };
   }
 
   /**
@@ -985,4 +980,88 @@ export function createChannelSettingsService(
     getWhatsAppStatus,
     disconnectWhatsApp,
   };
+}
+
+/**
+ * Para onde o gateway posta os eventos deste tenant. `undefined` quando
+ * `EVOLUTION_WEBHOOK_BASE_URL` nao esta configurada: a instancia e criada
+ * mesmo assim (o QR pareia), so nao recebe mensagem — mesma escolha
+ * "opcional, nunca crash" do resto do bloco.
+ */
+export function evolutionWebhookOf(tenantId: string): EvolutionWebhookConfig | undefined {
+  const base = (process.env.EVOLUTION_WEBHOOK_BASE_URL ?? env.EVOLUTION_WEBHOOK_BASE_URL ?? '')
+    .replace(/\/+$/, '');
+  const token = process.env.EVOLUTION_WEBHOOK_TOKEN ?? env.EVOLUTION_WEBHOOK_TOKEN;
+  if (base.length === 0 || !token) return undefined;
+  return { url: `${base}/api/v1/webhooks/evolution/${tenantId}`, token };
+}
+
+export interface EvolutionWebhookSyncResult {
+  /** Instancias que receberam o `/webhook/set`. */
+  updated: number;
+  /** Instancia ausente no gateway — nada a reconfigurar. */
+  missing: number;
+  failed: number;
+}
+
+/**
+ * Reaplica `EVOLUTION_WEBHOOK_EVENTS` em toda instancia `qr` ja criada
+ * (CRMLAB-66, D-223). Roda no boot (`main.ts`): todo deploy recria o container,
+ * entao todo deploy reaplica — instancia antiga passa a receber evento novo sem
+ * script e sem ninguem entrar na VPS.
+ *
+ * NUNCA lanca: gateway fora do ar ou instancia com problema viram log e
+ * contagem; o boot segue. Sem cliente Evolution ou sem URL/token de webhook,
+ * nao ha o que fazer (mesma regra "opcional, nunca crash" do bloco QR).
+ *
+ * Fora do contexto de tenant so se le `tenant_id` (mesma excecao de D-205
+ * item 6); nenhum segredo, nenhum dado de laboratorio.
+ */
+export async function syncEvolutionWebhooks(deps: {
+  db: DbClient;
+  evolutionClient?: EvolutionClient;
+}): Promise<EvolutionWebhookSyncResult> {
+  const result: EvolutionWebhookSyncResult = { updated: 0, missing: 0, failed: 0 };
+  const client = deps.evolutionClient ?? createDefaultEvolutionClient();
+  if (!client) return result;
+
+  let tenantIds: string[];
+  try {
+    tenantIds = await deps.db.withoutTenant(async (tx) => {
+      const rows = await tx.query<{ tenant_id: string }>(
+        `SELECT tc.tenant_id
+           FROM tenant_channels tc
+           JOIN tenants t ON t.id = tc.tenant_id AND t.is_active = TRUE AND t.deleted_at IS NULL
+          WHERE tc.channel = 'whatsapp' AND tc.connection_mode = 'qr'
+          ORDER BY tc.tenant_id`,
+      );
+      return rows.rows.map((row) => row.tenant_id);
+    });
+  } catch (error) {
+    logger.warn('evolution.webhook_sync_failed', {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return result;
+  }
+
+  for (const tenantId of tenantIds) {
+    const webhook = evolutionWebhookOf(tenantId);
+    if (!webhook) return result;
+    try {
+      await client.setWebhook(evolutionInstanceName(tenantId), webhook);
+      result.updated += 1;
+    } catch (error) {
+      if (isInstanceNotFound(error)) {
+        result.missing += 1;
+        continue;
+      }
+      result.failed += 1;
+      logger.warn('evolution.webhook_sync_tenant_failed', {
+        tenantId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  logger.info('evolution.webhook_sync', { ...result });
+  return result;
 }

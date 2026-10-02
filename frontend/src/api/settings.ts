@@ -1,5 +1,7 @@
 import type { ChannelSettingsResponse, UpdateChannelSettingsRequest } from '@crm-lab/shared';
+import { useQuery } from '@tanstack/react-query';
 import { http } from './client';
+import { queryKeys } from './query-keys';
 
 /**
  * `GET /settings/channels` · `PATCH /settings/channels`
@@ -23,3 +25,17 @@ export const settingsApi = {
   updateChannels: (body: UpdateChannelSettingsRequest) =>
     http.patch<ChannelSettingsResponse>('/settings/channels', body),
 };
+
+/**
+ * Leitura da tela de Canais para quem só CONSULTA (a seção de reingajamento
+ * das Regras quer saber se o WhatsApp está na API oficial). Só gestor/admin
+ * leem: passe `enabled: false` para os outros perfis.
+ */
+export function useChannelSettings(options: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: queryKeys.channelSettings(),
+    queryFn: () => settingsApi.channels(),
+    enabled: options.enabled ?? true,
+    staleTime: 60_000,
+  });
+}

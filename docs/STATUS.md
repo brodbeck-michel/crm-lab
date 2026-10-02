@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-09-26 (Epic CRMLAB-55 — CRMLAB-56/57/58/59 + CRMLAB-60 parcial integrados em `integ/onda-funil`; v1.22.0 em PRODUÇÃO)
+**Última atualização:** 2026-10-01 (CRMLAB-82 — fundo branco e tema só no conteúdo, branch `feature/CRMLAB-82-fundo-branco-tema`)
 
 ---
 
@@ -2939,3 +2939,131 @@ comportamento muda.
 - Testes: `tests/proposals` (163) e `tests/lis` (222) verdes, typecheck e lint do backend limpos.
 - **Continua pendente no CRMLAB-60:** Ganho pelo extrato de pagamentos corrigido (depende do
   CRMLAB-53) e a decisão sobre a origem `crm` migrar para a régua nova.
+
+### ✅ CRMLAB-62 — reingajamento da conversa + feriados (2026-09-28)
+
+Branch `feature/CRMLAB-62-reingajamento` (de `main` v1.23.0). Decisões D-211..D-214, migração
+`031_reengagement.sql`. D-210 é do CRMLAB-60 (branch própria, ainda fora da main).
+
+- **Reingajamento (D-211):** `ReengagementService` (SERVICES §28) roda no tique do motor de tempo.
+  Conversa ativa de WhatsApp em que a última mensagem de pessoa do laboratório (CRM ou celular)
+  ficou sem resposta do paciente por X h recebe o texto do 1º; o 2º (opcional) sai Y h depois do
+  envio do 1º. No máximo dois por silêncio; uma linha por disparo em `conversation_reengagements`
+  com `UNIQUE (anchor_message_id, step)`, gravada antes do envio. Na conversa: "Mensagem
+  automática" (`messages.automation = 'reengagement'`). Regras em `FunnelRules.reengagement`,
+  padrão desligado, 1 h / 24 h.
+- **Quando sai (D-212):** horário de funcionamento do laboratório (sem dia configurado = sempre
+  aberto); fora do horário, na próxima abertura; feriado → descarta; mais de 2 h atrasado →
+  descarta (`stale`); janela de busca de 8 dias além dos prazos — ligar a regra não dispara em
+  massa para conversas antigas.
+- **Feriados (D-213):** nacionais calculados em `shared/` (com Carnaval seg/ter e Corpus Christi);
+  os do laboratório em `tenant_holidays`, `GET/POST/DELETE /settings/holidays` (§6d). Por ora só
+  o reingajamento usa; os dias úteis do funil seguem sem feriados.
+- **Só QR (D-214):** canal na API oficial da Meta não entra na rotina.
+- **Tela:** página de Regras ganhou "Reingajamento da conversa" (no formulário) e "Feriados"
+  (salva na hora).
+- **Testes:** `tests/reengagement/` (funções puras + integração com PGlite), `settings/holidays`,
+  `db/rls-reengagement`, casos novos em `settings/funnel-rules` e `Rules.spec.tsx`.
+
+### 🚧 CRMLAB-53 — extrato de pagamentos do LIS e releitura diária (2026-09-28, aguardando validação)
+
+Branch `feature/CRMLAB-53-extrato-pagamentos-lis`. Decisões D-188/D-189, migração
+`032_lis_budget_payments.sql`. Spec: `docs/superpowers/specs/2026-09-28-crmlab-53-extrato-pagamentos-design.md`.
+
+- **Por quê:** a API de Orçamentos devolve uma linha por pagamento, e a última que chegava
+  sobrescrevia `paid_value` (podia zerar orçamento pago). O Bitlab confirmou em 28/09 que linha
+  zerada, valor repetido e soma acima da requisição são **estornos** e incluiu na v1
+  `ID_PAGAMENTO`, `SITUACAO_PAGAMENTO`, `DATA_ESTORNO`, `FORMA_PAGAMENTO` e `BANDEIRA_CARTAO`.
+- **Extrato (D-188):** `lis_budget_payments` (SCHEMA §26a), chave `(tenant_id, budget_number,
+  payment_key)` com `ID_PAGAMENTO` (planilha: `planilha:<paid_at>:<valor>`). `consolidateLisRows`
+  não decide mais pagamento; por chunk, `upsertPayments` + `recomputePaidValues`. Recebido = soma
+  dos ativos da API (ou, só planilha, de todos), teto em `requisition_value`; `paid_on` = último
+  pagamento considerado, de qualquer valor (D-204 intacta). Estorno depois de `ganho` não reabre.
+- **Releitura diária (D-189):** o estorno não volta na janela incremental; o primeiro tique
+  depois das 03:00 (Brasília) relê 90 dias. `lis_sync_settings.last_full_scan_on`, marca que não
+  recua, "Sincronizar agora" incremental; a tela de integração mostra a última releitura.
+- **Planilha como plano B:** Regras → "Carga do LIS" (`lisSource.spreadsheetImport`, padrão
+  desligado). Desligada: `POST /lis-imports` = `SPREADSHEET_IMPORT_DISABLED` (409) e o botão
+  "Importar" some em Resultados.
+- **Testes:** novo `backend/tests/lis/lis-payments.spec.ts` (casos reais 66760, 66210, 68905,
+  68281, 68785, idempotência, planilha × API, carga antiga, releitura das 03:00); ajustados
+  `bitlab-client`, `lis-spreadsheet`, `lis-import-idempotency`, `lis-reconcile`,
+  `bitlab-funnel-rule` (estorno depois de ganho); front `Results.spec`, `Rules.spec`,
+  `LisIntegration.spec`; e2e `flow-17` liga a planilha antes de importar.
+- **Pendente:** deploy em hml, zerar `watermark`/`last_full_scan_on` do Santé e recarregar 90 dias;
+  conferir 66760/68905/68785/66210/68281 e validar Resultados e comissão com o gestor do
+  laboratório; pedir ao Bitlab que `DATA_ESTORNO` conte no filtro `alteracao`; em prod (com
+  confirmação, bump + tag), religar a sincronização **só depois** do deploy. Estorno com mais de 90
+  dias fica de fora (declarado na D-189).
+
+### 🚧 CRMLAB-75 — responder conversa da fila livre assume a conversa (2026-09-29, em desenvolvimento)
+
+Branch `feature/CRMLAB-75-auto-atribuir-ao-responder` (de `main`). Decisão D-215.
+
+- **Backend:** `services/conversation-claim.ts` (`claimFreeConversation`) é o único claim da fila
+  livre — `ConversationService.assign` e `MessageService` usam o mesmo. `createFromAgent` /
+  `createAttachmentFromAgent` assumem a conversa sem dona para quem envia ANTES do INSERT, com o
+  audit `assign_conversation`; quem perde a corrida recebe `CONVERSATION_ALREADY_ASSIGNED` e nada
+  é gravado nem enviado. A rota de anexo chama `claimForAgent` antes de gravar a mídia. O envio
+  e o reenvio pelo cartão herdam (mesmo `createFromAgent`). Automática, sistema, paciente e eco do
+  celular não atribuem; conversa já atribuída não muda de dona.
+- **"Nova conversa" (D-175 emendada):** na fila livre, enviar agora também assume.
+- **Frontend:** `Composer.onSend` pode devolver `Promise` (rejeitou → texto volta); na tela de
+  Atendimento o 409 vira "Conversa já assumida por {nome}." e o rascunho volta. Outras falhas
+  (ex.: 502) não devolvem o texto.
+- **Testes:** novo `backend/tests/messages/auto-assign.spec.ts` (10 casos, com a corrida), caso
+  novo em `proposals/send-from-card.spec.ts`, `start-whatsapp.spec.ts` ajustado; `Composer.spec` e
+  `Attendance.spec` com os casos do 409.
+
+### 🚧 CRMLAB-79 — sincronização do LIS a cada 30 s (2026-09-30, aguardando validação)
+
+Branch `feature/CRMLAB-79-sync-lis-30s` (de `main`). Decisão D-249.
+
+- **Intervalo:** `LIS_SYNC_INTERVAL_MS` padrão 30000 (era 120000, D-199).
+- **Rodada sem mudança vazia de verdade:** em `incremental`, marca que não andou descarta a linha
+  repetida da marca. Não grava `lis_imports`, não reprocessa, log `debug`.
+- **Contrato:** `intervalMinutes` → `intervalSeconds`. A tela mostra "a cada 30 s"; com `0`
+  (hml), "Ligada · só pelo "Sincronizar agora"".
+- **Testes:** caso novo em `backend/tests/lis/lis-sync.spec.ts` (marca repetida × marca que anda);
+  `LisIntegration.spec.tsx` (30 s, 2 min, 0).
+- **Pendente:** hml (lá o `.env` fixa `0`); prod não fixa a variável e pega os 30 s. Pedir ao Bitlab um
+  webhook de orçamento criado/alterado (tempo real de verdade).
+
+### 🚧 CRMLAB-82 — fundo branco e cor do tema só no conteúdo (2026-10-01, aguardando validação)
+
+Branch `feature/CRMLAB-82-fundo-branco-tema` (de `main` v1.27.0). Decisão D-250.
+
+- **Tokens:** `--color-bg` branco e `--color-text` escuro fixos para todo tenant; `--color-surface`
+  (menu, cabeçalho de tabela) = accent 12%; `neutral-100` (cartão) 6%, `neutral-200` (divisória)
+  12%, `accent-100` (hover/seleção) 20%, `neutral-300` (borda) 22%, `neutral-400` 36%. Texto neutro
+  (`neutral-600..900`) cinza mais escuro para AA. `applyTheme` escreve só accent/accent2.
+- **Telas:** Sidebar com item ativo branco + texto `accent-700`; `DataTable`/`UserTable`/
+  `AuditLogTable` com cabeçalho tingido; cartões de Configurações e Respostas rápidas no tom 6%.
+- **Personalização:** só cor principal, secundária, fonte, cantos, nome e logo; preset envia só
+  accent + accent2; prévia em miniatura com o visual novo.
+- **Compatibilidade:** contrato da API inalterado; `bg`/`surface`/`text` salvos são ignorados na
+  tela, sem migração.
+- **Testes:** `lib/theme.spec.ts`, `Theme.spec.tsx`, `Sidebar.spec.tsx` ajustados; e2e
+  `flow-5-theme.spec.ts` ajustado (não rodado aqui).
+- **Pendente:** validação visual nos temas; integração com o CRMLAB-81 (a conversa do Atendimento
+  usa `--color-surface` em `--color-chat-received`, que agora é o tom 12% do accent).
+
+### 🚧 CRMLAB-81 — Atendimento no visual WhatsApp Web (2026-10-01, aguardando validação)
+
+Branch `feature/CRMLAB-81-atendimento-whatsapp` (de `main` v1.27.0). Decisão D-251. Só visual.
+
+- **Tokens:** bloco `--color-chat-*` de `tokens.css` reescrito. Tons só de `--color-accent` com
+  branco ou `#f4f3ef`, nada de `--color-bg/surface/text`. Novos: `panel`, `line`, `selected`,
+  `hover`, `avatar`, `avatar-text`, `text`, `meta`, `quote`, `quote-hover`. Mudam: `bg` (neutro
+  claro, era `#fff`) e `received` (`#fff`). Saem: `received-border` e `sent-border`.
+- **Tela:** coluna de conversas, cabeçalho e Composer brancos. A conversa fica num neutro claro.
+  Recebida é branca à esquerda (canto superior esquerdo reto). Enviada fica no acento 22% à
+  direita (canto superior direito reto). Sem borda, sombra leve, hora e status embaixo à direita.
+  `Avatar` ganhou `className` opcional.
+- **Contraste:** texto × balão enviado ≥ 12,4:1 e meta ≥ 5,2:1 nos 5 presets (tabela em
+  DESIGN_TOKENS.md › Bolhas).
+- **Testes:** specs de `components/conversation` e `pages/Attendance` (+ Avatar, InboxLayout,
+  no-hardcoded-tokens) verdes; typecheck do frontend verde.
+- **Pedido ao CRMLAB-82 (dono do `InboxLayout`):** a borda entre a coluna de conversas e a
+  conversa (`border-r border-neutral-300` da seção `inbox-list`) ainda não está no tom do tema.
+  Para fechar o visual, trocar por `border-chat-line` só no Atendimento.

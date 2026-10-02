@@ -12,6 +12,10 @@
  * Cada tenant tem seu proprio preset semeado, entao o teste usa o preset do
  * OUTRO tenant como alvo (uma cor real do catalogo, sem inventar hex) e
  * restaura o tema original no fim para nao contaminar as outras suites.
+ *
+ * D-250 (CRMLAB-82): o editor so troca accent, accent2, fonte, cantos, nome e
+ * logo. Fundo e texto sao fixos (branco / escuro) — o `bg`/`surface`/`text`
+ * salvos sao ignorados na tela, e o teste confere isso tambem.
  */
 import { test, expect } from '@playwright/test';
 import type { Theme } from '@crm-lab/shared';
@@ -47,12 +51,16 @@ test.describe('Fluxo 5: Personalização', () => {
     const token = await apiLogin(request, E2E_USERS.alfaAdmin);
     await request.patch(`${API_URL}/themes/current`, {
       headers: authHeaders(token),
+      // A API continua aceitando bg/surface/text (contrato inalterado, D-250);
+      // o teste de "ignorados na tela" grava valores coloridos neles.
       data: {
         accent: saved.accent,
         accent2: saved.accent2,
         bg: saved.bg,
         surface: saved.surface,
         text: saved.text,
+        fontId: saved.fontId,
+        radiusId: saved.radiusId,
       },
     });
     saved = null;
@@ -89,10 +97,14 @@ test.describe('Fluxo 5: Personalização', () => {
     // A previa passa a mostrar o novo acento — sem reload.
     await expect(preview.getByText(TARGET.accent, { exact: false })).toBeVisible();
 
-    // Persistiu no servidor.
+    // Persistiu no servidor. O preset so manda accent + accent2 (D-250):
+    // fundo/superficie/texto guardados nao mudam.
     const token = await apiLogin(request, E2E_USERS.alfaAdmin);
     const salvo = await fetchCurrentTheme(request, token);
     expect(salvo.accent.toLowerCase()).toBe(TARGET.accent.toLowerCase());
+    expect(salvo.bg).toBe(saved?.bg);
+    expect(salvo.surface).toBe(saved?.surface);
+    expect(salvo.text).toBe(saved?.text);
 
     // E continua la depois do reload da tela.
     await page.reload();
@@ -119,12 +131,54 @@ test.describe('Fluxo 5: Personalização', () => {
     expect(await currentAccent(page)).toBe(TARGET.accent.toLowerCase());
   });
 
+  test('fundo branco e texto escuro fixos — bg/surface/text salvos sao ignorados (D-250)', async ({
+    page,
+    request,
+  }) => {
+    // Grava de proposito um fundo/texto colorido pela API (contrato inalterado).
+    const token = await apiLogin(request, E2E_USERS.alfaAdmin);
+    await request.patch(`${API_URL}/themes/current`, {
+      headers: authHeaders(token),
+      data: { bg: TARGET.accent, surface: TARGET.accent, text: TARGET.accent },
+    });
+
+    await loginAs(page, E2E_USERS.alfaAdmin);
+    await gotoScreen(page, THEME_PATH, HEADING);
+
+    const cores = await page.evaluate(() => ({
+      inlineBg: document.documentElement.style.getPropertyValue('--color-bg'),
+      body: getComputedStyle(document.body).backgroundColor,
+      text: getComputedStyle(document.body).color,
+    }));
+    expect(cores.inlineBg).toBe('');
+    expect(cores.body).toBe('rgb(255, 255, 255)');
+    expect(cores.text).toBe('rgb(26, 26, 26)');
+
+    // E o editor nao oferece mais esses campos.
+    await expect(page.getByLabel(/fundo/i)).toHaveCount(0);
+    await expect(page.getByLabel(/superf/i)).toHaveCount(0);
+    await expect(page.getByLabel(/cor do texto/i)).toHaveCount(0);
+  });
+
+  test('cor secundaria pelo campo hex tambem e salva', async ({ page, request }) => {
+    await loginAs(page, E2E_USERS.alfaAdmin);
+    await gotoScreen(page, THEME_PATH, HEADING);
+
+    await page.getByLabel('Cor secundária (hex)').fill(TARGET.accent);
+
+    await expect(async () => {
+      const token = await apiLogin(request, E2E_USERS.alfaAdmin);
+      const salvo = await fetchCurrentTheme(request, token);
+      expect(salvo.accent2.toLowerCase()).toBe(TARGET.accent.toLowerCase());
+    }).toPass();
+  });
+
   test('cor personalizada pelo campo hex tambem e salva', async ({ page, request }) => {
     await loginAs(page, E2E_USERS.alfaAdmin);
     await gotoScreen(page, THEME_PATH, HEADING);
 
     // O campo aceita `#rrggbb`; o backend valida o mesmo formato.
-    await page.getByLabel('Valor Hex').fill(TARGET.accent);
+    await page.getByLabel('Cor principal (hex)').fill(TARGET.accent);
 
     await expect(async () => {
       const token = await apiLogin(request, E2E_USERS.alfaAdmin);

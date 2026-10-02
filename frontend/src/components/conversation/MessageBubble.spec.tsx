@@ -62,16 +62,16 @@ describe('MessageBubble', () => {
     }
   });
 
-  it('recebida encosta à esquerda com o canto apontado embaixo-esquerda', () => {
+  it('recebida encosta à esquerda com o canto superior esquerdo reto (D-251)', () => {
     render(<MessageBubble type="received" message={message()} />);
     const bubble = screen.getByTestId('message-bubble');
 
     expect(bubble).toHaveAttribute('data-type', 'received');
     expect(bubble.className).toContain('self-start');
-    expect(bubble.className).toContain('rounded-bl-sm');
+    expect(bubble.className).toContain('rounded-tl-none');
   });
 
-  it('enviada encosta à direita com o canto apontado embaixo-direita', () => {
+  it('enviada encosta à direita com o canto superior direito reto (D-251)', () => {
     render(
       <MessageBubble
         type="sent"
@@ -82,7 +82,7 @@ describe('MessageBubble', () => {
 
     expect(bubble).toHaveAttribute('data-type', 'sent');
     expect(bubble.className).toContain('self-end');
-    expect(bubble.className).toContain('rounded-br-sm');
+    expect(bubble.className).toContain('rounded-tr-none');
   });
 
   it('evento de sistema é pílula centrada, sem meta e sem largura máxima', () => {
@@ -214,8 +214,32 @@ describe('MessageBubble', () => {
     expect(screen.getByRole('button', { name: /Baixar anexo/ })).toBeEnabled();
   });
 
-  it('anexo de imagem busca o blob autenticado e mostra thumbnail; clique abre o lightbox (CRMLAB-15)', async () => {
+  it('anexo de imagem busca o blob autenticado e mostra thumbnail; clique pede ao painel para abrir (CRMLAB-15/64)', async () => {
     const user = userEvent.setup();
+    URL.createObjectURL = vi.fn(() => 'blob:mock-image');
+    URL.revokeObjectURL = vi.fn();
+    fetchAuthenticatedBlobMock.mockResolvedValue({
+      blob: new Blob(['fake'], { type: 'image/jpeg' }),
+      fileName: 'pedido medico.jpg',
+    });
+    const onOpenImage = vi.fn();
+    const imageMessage = message({ messageType: 'image', attachmentUrl: '/api/v1/media/img-1' });
+
+    render(<MessageBubble type="received" message={imageMessage} onOpenImage={onOpenImage} />);
+
+    expect(screen.queryByRole('link', { name: /Anexo/ })).not.toBeInTheDocument();
+    expect(String(fetchAuthenticatedBlobMock.mock.calls[0]?.[0])).toContain('/api/v1/media/img-1');
+
+    const thumbnail = await screen.findByRole('img', { name: 'Anexo enviado na conversa' });
+    expect(thumbnail).toHaveAttribute('src', 'blob:mock-image');
+
+    // O lightbox é do painel (D-244): o balão só avisa qual imagem abrir.
+    await user.click(thumbnail);
+    expect(onOpenImage).toHaveBeenCalledWith(imageMessage);
+    expect(screen.queryByTestId('image-lightbox-backdrop')).not.toBeInTheDocument();
+  });
+
+  it('sem onOpenImage a thumbnail não é clicável', async () => {
     URL.createObjectURL = vi.fn(() => 'blob:mock-image');
     URL.revokeObjectURL = vi.fn();
     fetchAuthenticatedBlobMock.mockResolvedValue({
@@ -226,28 +250,12 @@ describe('MessageBubble', () => {
     render(
       <MessageBubble
         type="received"
-        message={message({ messageType: 'image', attachmentUrl: '/api/v1/media/img-1' })}
+        message={message({ messageType: 'image', attachmentUrl: '/api/v1/media/img-9' })}
       />,
     );
 
-    expect(screen.queryByRole('link', { name: /Anexo/ })).not.toBeInTheDocument();
-    expect(String(fetchAuthenticatedBlobMock.mock.calls[0]?.[0])).toContain('/api/v1/media/img-1');
-
-    const thumbnail = await screen.findByRole('img', { name: 'Anexo enviado na conversa' });
-    expect(thumbnail).toHaveAttribute('src', 'blob:mock-image');
-
-    await user.click(thumbnail);
-    expect(screen.getByTestId('image-lightbox-backdrop')).toBeInTheDocument();
-
-    // O ↓ salva com o nome que veio no Content-Disposition (CRMLAB-26) — sem
-    // isso o arquivo cairia em Downloads como o uuid do blob, sem extensão.
-    expect(screen.getByRole('link', { name: 'Baixar imagem' })).toHaveAttribute(
-      'download',
-      'pedido medico.jpg',
-    );
-
-    await user.click(screen.getByRole('button', { name: 'Fechar' }));
-    expect(screen.queryByTestId('image-lightbox-backdrop')).not.toBeInTheDocument();
+    await screen.findByRole('img', { name: 'Anexo enviado na conversa' });
+    expect(screen.queryByRole('button', { name: 'Anexo enviado na conversa' })).not.toBeInTheDocument();
   });
 
   it('imagem hospedada FORA do nosso backend vai direto no <img>, sem token', () => {

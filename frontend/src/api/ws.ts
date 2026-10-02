@@ -8,6 +8,7 @@ import {
 } from '@crm-lab/shared';
 import { refreshAccessToken as refreshAccessTokenDefault } from './client';
 import { queryKeys, queryScopes } from './query-keys';
+import { usePresenceStore } from '@/stores/presence.store';
 
 /**
  * Cliente WebSocket (docs/contracts/FRONTEND_BACKEND.md — "Real-time").
@@ -100,7 +101,8 @@ export type WsToastTone = 'positive' | 'attention';
 
 /**
  * Mapa evento → invalidação. É a tabela de FRONTEND_BACKEND.md, literal.
- * Sempre `invalidateQueries`, nunca `setQueryData`.
+ * Sempre `invalidateQueries`, nunca `setQueryData`. Única exceção:
+ * `conversation.presence` (D-226), que vai para `usePresenceStore`.
  */
 export function applyWsEvent(
   queryClient: QueryClient,
@@ -110,10 +112,29 @@ export function applyWsEvent(
   const name: WsEventName = event.event;
 
   switch (name) {
+    // CRMLAB-66/D-223: reação, edição ou apagamento — mesma invalidação, sem
+    // contar como mensagem nova (o aviso do CRMLAB-72 escuta só `new_message`).
+    case 'conversation.message_updated':
     case 'conversation.new_message': {
       const data = event.data as { conversationId: string };
       void queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
       void queryClient.invalidateQueries({ queryKey: queryKeys.conversation(data.conversationId) });
+      return;
+    }
+
+    // CRMLAB-67/D-225: tique subiu. Só a conversa — a lista não muda por um tique
+    // e o aviso de mensagem nova (CRMLAB-72) não escuta este evento.
+    case 'message.status_updated': {
+      const data = event.data as WsEventPayloads['message.status_updated'];
+      void queryClient.invalidateQueries({ queryKey: queryKeys.conversation(data.conversationId) });
+      return;
+    }
+
+    // CRMLAB-67/D-226: presença do paciente. Exceção declarada ao "sempre
+    // invalidate": não existe no servidor, então vai direto para o store.
+    case 'conversation.presence': {
+      const data = event.data as WsEventPayloads['conversation.presence'];
+      usePresenceStore.getState().setPresence(data.conversationId, data.presence, data.lastSeenAt);
       return;
     }
 

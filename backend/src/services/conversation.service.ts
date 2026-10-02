@@ -66,6 +66,9 @@ import type {
   ListConversationsResponse,
   Message,
   PaginationMeta,
+  SearchMessagesQuery,
+  SearchMessagesResponse,
+  OpenWhatsAppConversationRequest,
   StartWhatsAppConversationRequest,
   StartWhatsAppConversationResponse,
   UpdateConversationRequest,
@@ -75,7 +78,9 @@ import type { DbClient } from '../db/types.js';
 import type { TenantContext } from '../http/context.js';
 import { BusinessError, isBusinessError, notFound } from '../http/errors.js';
 import type { AuditService } from './audit.service.js';
+import { claimFreeConversation } from './conversation-claim.js';
 import type { MessageService } from './message.service.js';
+import { toSearchTsQuery } from '../repositories/message.repository.js';
 import {
   isConversationSortBy,
   phoneDigits,
@@ -97,6 +102,9 @@ export const MAX_LIMIT = 100;
 export const MAX_PAGE = 10_000;
 /** Teto da lista de `GET /conversations/assignees` — equipe de laboratorio. */
 export const MAX_ASSIGNEES = 200;
+/** Busca nas mensagens (D-228): padrao e teto de `limit`. */
+export const DEFAULT_SEARCH_LIMIT = 20;
+export const MAX_SEARCH_LIMIT = 100;
 export const DEFAULT_SORT_BY: ConversationSortBy = 'lastMessageAt';
 export const DEFAULT_ORDER: SortOrder = 'desc';
 
@@ -141,6 +149,7 @@ export function toCriteria(
     visibleTo: isSupervisor(ctx) ? null : ctx.userId,
     userId: ctx.userId,
     scope: filters.scope ?? 'all',
+    ...(filters.unread === true ? { unread: true } : {}),
     ...(filters.status !== undefined ? { status: filters.status } : {}),
     ...(search !== undefined && search.length > 0 ? { search } : {}),
     page: clampInt(filters.page, DEFAULT_PAGE, 1, MAX_PAGE),
@@ -294,6 +303,42 @@ export class ConversationService {
   }
 
   /**
+   * "Conversar" do cartao de contato (`POST /conversations/whatsapp/open`,
+   * CRMLAB-70, D-236 item 7): abre a conversa que JA existe com o numero, sem
+   * enviar nada e sem criar. Mesmo casamento de telefone do
+   * `findOrCreateByPhone` (D-176), recortado pelo tenant (RLS).
+   *
+   * Encerrada reabre para quem pediu — o que `createManual` e `startWhatsApp`
+   * ja fazem com numero encerrado (D-174). De outra atendente: o mesmo 409 da
+   * Nova conversa. Fila livre abre sem mudar de dona (nao ha resposta, D-215).
+   */
+  async openWhatsApp(
+    ctx: TenantContext,
+    dto: OpenWhatsAppConversationRequest,
+  ): Promise<ConversationDetail> {
+    const phone = normalizeBrazilianPhone(dto.phone);
+    if (phone === null) {
+      throw new BusinessError('VALIDATION_ERROR', {
+        fields: { phone: 'Telefone invalido: informe DDD + numero' },
+      });
+    }
+    const found = await this.repository.findByPhone(ctx.tenantId, phone);
+    if (!found) throw notFound({ resource: 'conversation' });
+
+    let conversation = found;
+    if (conversation.status === 'closed') {
+      conversation = await this.reopenManually(ctx, conversation);
+    }
+    if (!this.canSee(ctx, conversation)) {
+      throw new BusinessError('CONVERSATION_ALREADY_ASSIGNED', {
+        assignedTo: conversation.assignedTo,
+        assignedToName: conversation.assignedToName,
+      });
+    }
+    return conversation;
+  }
+
+  /**
    * Botao "Nova conversa" (`POST /conversations/whatsapp`, CRMLAB-50, D-175):
    * a PRIMEIRA mensagem de WhatsApp para um numero.
    *
@@ -424,13 +469,15 @@ export class ConversationService {
 
     // --- fila livre: a corrida e decidida pelo banco -------------------------
     if (current.assignedTo === null) {
-      const claimed = await this.repository.claimIfUnassigned(ctx.tenantId, id, target.id);
-      if (claimed) {
-        await this.recordAssignment(ctx, current, claimed);
-        return claimed;
-      }
-      // Perdeu a corrida: alguem atribuiu entre o SELECT e o UPDATE.
-      throw await this.alreadyAssigned(ctx.tenantId, id);
+      // Mesmo claim de quem assume respondendo (CRMLAB-75, D-215).
+      const { conversation, claimed } = await claimFreeConversation(
+        this.repository,
+        ctx.tenantId,
+        id,
+        target.id,
+      );
+      if (claimed) await this.recordAssignment(ctx, current, conversation);
+      return conversation;
     }
 
     // --- transferencia (WORKFLOWS §5) ----------------------------------------
@@ -562,6 +609,41 @@ export class ConversationService {
     await this.repository.markAsRead(ctx.tenantId, id);
   }
 
+  /**
+   * "Marcar como nao lida" (D-229). Mesmo recorte do `markAsRead`: conversa
+   * invisivel e 404. Sem audit e sem WS — preferencia de tela, como o pin.
+   */
+  async markAsUnread(ctx: TenantContext, id: string): Promise<void> {
+    await this.getById(ctx, id);
+    await this.repository.markAsUnread(ctx.tenantId, id);
+  }
+
+  /**
+   * Busca pelo conteudo das mensagens (D-228) — todas as conversas visiveis
+   * ou, com `conversationId`, so aquela (invisivel = 404). O recorte e o da
+   * fila: o mesmo `visibleTo` de `toCriteria`.
+   */
+  async searchMessages(
+    ctx: TenantContext,
+    query: SearchMessagesQuery,
+    conversationId?: string,
+  ): Promise<SearchMessagesResponse> {
+    if (conversationId !== undefined) await this.getById(ctx, conversationId);
+    const page = clampInt(query.page, DEFAULT_PAGE, 1, MAX_PAGE);
+    const limit = clampInt(query.limit, DEFAULT_SEARCH_LIMIT, 1, MAX_SEARCH_LIMIT);
+    const tsQuery = toSearchTsQuery(query.q);
+    if (tsQuery === null) {
+      return { results: [], pagination: { page, limit, total: 0, totalPages: 0 } };
+    }
+    return this.messages.search(ctx.tenantId, {
+      tsQuery,
+      visibleTo: isSupervisor(ctx) ? null : ctx.userId,
+      ...(conversationId !== undefined ? { conversationId } : {}),
+      page,
+      limit,
+    });
+  }
+
   // -------------------------------------------------------------------------
   // internos
   // -------------------------------------------------------------------------
@@ -625,15 +707,6 @@ export class ConversationService {
       });
     }
     return { id: user.id, name: user.name };
-  }
-
-  /** Le quem ganhou a corrida para montar `details` do 409. */
-  private async alreadyAssigned(tenantId: string, id: string): Promise<BusinessError> {
-    const winner = await this.repository.findById(tenantId, id);
-    return new BusinessError('CONVERSATION_ALREADY_ASSIGNED', {
-      assignedTo: winner?.assignedTo ?? null,
-      assignedToName: winner?.assignedToName ?? null,
-    });
   }
 
   private async recordAssignment(

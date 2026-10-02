@@ -207,6 +207,18 @@ mover (D-207). Prazo mudado vale no próximo tique, inclusive para os cartões q
 prazo novo (D-209). Quem move é o sistema: `changedBy: null`, histórico com `automation`, audit
 `source: "rule"` (D-208).
 
+### Reingajamento da conversa (CRMLAB-62, D-211..D-214)
+Não mexe em proposta: é uma mensagem ao paciente, no mesmo tique do motor. Com a regra ligada
+(padrão **desligada**), conversa **ativa** de WhatsApp **por QR Code** em que a última mensagem de
+pessoa do laboratório (CRM ou celular) ficou sem resposta do paciente por X horas (padrão 1 h)
+recebe o texto do 1º reingajamento; o 2º (opcional, só com o 1º ligado) sai Y horas depois do
+envio do 1º, se continuar sem resposta. **No máximo dois por silêncio**; resposta do paciente
+seguida de nova mensagem da atendente abre um silêncio novo. Respeita o horário de
+funcionamento (fora dele, fica para a abertura; sem nenhum dia configurado = sempre aberto) e
+**feriados** (nacionais, com Carnaval e Corpus Christi, e os cadastrados pelo laboratório): se a
+hora de sair cai em feriado, **descarta**, não empurra. Mais de 2 h atrasado → descarta também.
+API oficial da Meta não entra na rotina. A mensagem aparece como "Mensagem automática".
+
 ### Exceção única: `ganho` pela conciliação com o LIS (CRMLAB-52, D-119)
 A matriz acima vale para **pessoas**. Quando o orçamento do LIS vinculado à proposta
 (`lis_budget_number`) aparece **com requisição**, a proposta vai para `ganho` a partir de
@@ -234,6 +246,14 @@ Quem envia vira a responsável (`created_by`).
 partir da data de ativação (`tenant_settings.bitlab_proposals_since`) e sem proposta vira uma
 proposta de origem `bitlab` em `novo_contato` ("Novo orçamento"), sem conversa. Histórico
 anterior à ativação nunca vira cartão.
+
+**Integração só para a gestão (CRMLAB-76, D-246):** para usar Resultados, Busca Ativa e
+indicadores sem começar o funil, deixe a sincronia do LIS ligada e **desligue** "Nascer do
+orçamento do Bitlab", mantendo "Criar proposta manualmente no CRM" ligada (ao menos uma origem é obrigatória). A
+sincronia continua gravando os dados do LIS, não cria cartão e **não grava**
+`bitlab_proposals_since`. Ao religar a regra, a data de ativação passa a ser esse dia: nada do
+período desligado vira cartão. A conciliação (D-119/D-204) continua movendo cartões que **já
+existem**; com o funil vazio, não tem efeito.
 
 ### Motivo de Perda (Obrigatório)
 
@@ -535,6 +555,12 @@ paciente, atendente), mas `requisition_number` cai para a outra linha se a vence
 `paid_value`/`paid_on`/`requisition_value` vêm de **qual das duas linhas tiver o maior
 `paid_value`** — nunca descartados junto com a perdedora do total.
 
+**Substituída pela D-188 (CRMLAB-53) na parte do pagamento:** `consolidateLisRows` continua
+mesclando `requisition_number` e ficando com o **maior** `requisition_value`, mas **não decide
+mais o pagamento**. Cada linha com `Valor_Pago` é um pagamento, e todos vão para o extrato
+(`lis_budget_payments`, §11.11). O upsert de `lis_budgets` não grava `paid_value`/`paid_on`, que
+passam a ser derivados do extrato.
+
 ### 11.2 Dedupe por requisição (KPI de pagamento)
 A mesma `REQUISICAO` pode aparecer em mais de uma linha de `lis_budgets` (o LIS atualiza o valor
 pago em cima de um orçamento já existente, gerando uma nova linha ou uma linha atualizada) — para
@@ -544,6 +570,11 @@ qualquer KPI de pagamento, **a linha de maior `paid_value` vence**, via
 do dedupe de **escrita** de 11.1 (a linha de `lis_budgets` em si) — as duas regras coexistem
 porque perguntam coisas diferentes: "qual é o orçamento" vs. "quanto foi pago por aquela
 requisição".
+
+**Depois da D-188 (CRMLAB-53):** o `DISTINCT ON` **continua**. Ele não escolhe mais entre
+pagamentos (isso agora é a soma do extrato, §11.11): escolhe entre **orçamentos diferentes com a
+mesma requisição**, cada um com o seu `paid_value` já derivado. Sem ele, dois orçamentos da mesma
+requisição contariam o mesmo recebido duas vezes.
 
 ### 11.3 Convênio principal
 De `insurance_1`/`insurance_2`/`insurance_3` (com `value_1..3` correspondentes), o convênio
@@ -652,8 +683,44 @@ planilha produz (`LisSpreadsheetRow`) e segue §11.1–§11.6 sem diferença:
 
 A regra do maior total (§11.1) continua valendo entre as fontes: um orçamento que veio primeiro
 pela planilha e depois pela API (ou o contrário) é a mesma linha `(tenant_id, number)`. A API
-traz o pagamento no mesmo orçamento, com o mesmo total, então o `>=` do upsert deixa o pagamento
-entrar.
+traz o pagamento no mesmo orçamento, com o mesmo total. Desde a D-188 o pagamento não passa pelo
+upsert do orçamento: vai para o extrato (§11.11).
+
+**Campos do pagamento (v1, aditivos, CRMLAB-53, D-188):** a API devolve **uma linha por
+pagamento** (o mesmo orçamento repete em várias linhas).
+
+| Campo da API | Campo interno | Conversão |
+|---|---|---|
+| `Data_Pagamento` | `paidAt` | `YYYY-MM-DD HH:mm:ss` com os segundos (D-187); `paid_on` segue sendo o dia |
+| `ID_PAGAMENTO` | `paymentId` → `payment_key` | `String(n)`. Único por pagamento. Ausente = linha sem pagamento |
+| `SITUACAO_PAGAMENTO` | `paymentStatus` | `ESTORNADO` → `estornado`; qualquer outro valor → `ativo` |
+| `DATA_ESTORNO` | `reversedAt` | mesma conversão (D-187) |
+| `FORMA_PAGAMENTO` / `BANDEIRA_CARTAO` | `paymentMethod` / `cardBrand` | crus. Só guardados (sem tela ainda) |
+
+**O filtro `tipoData=alteracao` olha só emissão e `Data_Pagamento`, nunca `DATA_ESTORNO`**
+(conferido pela VPS em 28/09/2026). Um pagamento estornado depois da leitura **não volta** na
+consulta incremental. Por isso a sincronização relê os últimos 90 dias uma vez por dia (D-189,
+SERVICES.md §24).
+
+### 11.11 Extrato de pagamentos e recebido (CRMLAB-53, D-188/D-189)
+- **Extrato:** `lis_budget_payments` (SCHEMA.md §26a), uma linha por pagamento, chave
+  `(tenant_id, budget_number, payment_key)`. `payment_key` = `ID_PAGAMENTO`; na planilha, que não
+  tem ID, `planilha:<paidAt>:<valor com 2 casas>`. Rodar a mesma carga duas vezes não soma nada. O
+  estorno **atualiza a mesma linha** (`ativo` → `estornado`); valor e data não mudam depois de
+  gravados, e a carga nunca apaga pagamento.
+- **Origem:** o que chega pela sincronização é `api`; pela planilha, `planilha`.
+- **Recebido** (`lis_budgets.paid_value`), recalculado no mesmo chunk da gravação:
+  - orçamento com **algum pagamento da API** → soma dos pagamentos **ativos da API** (os da
+    planilha desse orçamento são ignorados, para não contar o mesmo pagamento duas vezes);
+  - só pagamentos da **planilha** → soma de todos (a planilha não diz o que foi estornado);
+  - **teto** em `requisition_value` quando ele é > 0.
+- **`paid_on`** = dia do último pagamento considerado, **de qualquer valor** (a régua de fatos da
+  D-204 conta pagamento de R$ 0 como pagamento). Só estornos → `paid_value = 0`, `paid_on = NULL`.
+- Orçamento **sem nenhuma linha no extrato** (carga anterior ao card) não é tocado.
+- **Estorno depois de `ganho`:** a proposta não reabre (D-192 item 2); `lis_paid_value`/
+  `lis_paid_on` são atualizados pela conciliação (D-119 item 6).
+- **Planilha é plano B:** só importa com `lisSource.spreadsheetImport.enabled` ligado nas Regras
+  (padrão desligado, D-189 item 4).
 
 ---
 

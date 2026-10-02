@@ -63,6 +63,11 @@ const MESSAGE_TYPE_LABEL: Readonly<Record<MessageType, string>> = {
   audio: 'Áudio',
   pdf: 'PDF',
   doc: 'Documento',
+  // CRMLAB-70 (D-234)
+  video: 'Vídeo',
+  sticker: 'Figurinha',
+  location: 'Localização',
+  contact: 'Contato',
 };
 
 function isKind(value: string): value is PatientTimelineKind {

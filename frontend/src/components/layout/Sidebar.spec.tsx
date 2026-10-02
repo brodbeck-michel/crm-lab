@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthTenant, AuthUser, Channel, UserRole } from '@crm-lab/shared';
-import { useAuthStore, useUIStore, useSidebarGroupsStore } from '@/stores';
+import { useAuthStore, useMessageAlertsStore, useUIStore, useSidebarGroupsStore } from '@/stores';
 import { Sidebar } from './Sidebar';
 
 // Sidebar busca `pendingDecisions.total` para o sino de "Decisões" (PAGES.md §12).
@@ -35,7 +35,7 @@ vi.mock('@/api/internal-chat', () => ({
 
 /**
  * Sidebar — COMPONENTS.md (`layout/`), variante "Trilho flutuante" (CRMLAB-44):
- * 264/76px · ícone `flex: 0 0 38px` · hover neutral-100 · ativo accent-100 + barra de 3px.
+ * 264/76px · ícone `flex: 0 0 38px` · hover accent-100 · ativo branco + texto accent-700 + barra de 3px (D-250).
  * Conteúdo do trilho muda por perfil; a ESTRUTURA não.
  */
 
@@ -169,19 +169,20 @@ describe('Sidebar — conteúdo por perfil (a estrutura é a mesma)', () => {
 });
 
 describe('Sidebar — item ativo', () => {
-  it('marca o item da rota atual com fundo translúcido + barra de 3px à esquerda', () => {
+  it('marca o item da rota atual com fundo branco, texto no accent + barra de 3px à esquerda', () => {
     login('admin');
     renderSidebar('/catalog');
 
     const active = screen.getByRole('link', { name: /Cadastro de Exames/ });
     expect(active).toHaveAttribute('aria-current', 'page');
-    expect(active.className).toContain('bg-accent-100');
+    expect(active.className).toContain('bg-bg');
+    expect(active.className).toContain('text-accent-700');
     expect(active.className).toContain("before:content-['']");
     expect(active.className).toContain('before:bg-accent-500');
 
     const inactive = screen.getByRole('link', { name: /Propostas/ });
     expect(inactive).not.toHaveAttribute('aria-current');
-    expect(inactive.className).toContain('hover:bg-neutral-100');
+    expect(inactive.className).toContain('hover:bg-accent-100');
   });
 });
 
@@ -348,5 +349,38 @@ describe('Sidebar — recolhe sozinha no inbox do atendente', () => {
     renderSidebar('/proposals');
 
     expect(screen.getByTestId('sidebar')).toHaveStyle({ width: '264px' });
+  });
+});
+
+describe('Sidebar — preferências do aviso de mensagem nova (CRMLAB-72, D-241)', () => {
+  it('alterna som e notificação no menu do usuário e grava no localStorage', async () => {
+    useMessageAlertsStore.setState({ soundEnabled: true, notificationsEnabled: true });
+    login('attendant');
+    renderSidebar();
+
+    await userEvent.click(screen.getByRole('button', { name: /Marina Alves/ }));
+    const sound = screen.getByRole('menuitemcheckbox', { name: 'Som de mensagem nova' });
+    const notifications = screen.getByRole('menuitemcheckbox', {
+      name: 'Notificações do navegador',
+    });
+    expect(sound).toHaveAttribute('aria-checked', 'true');
+    expect(notifications).toHaveAttribute('aria-checked', 'true');
+
+    await userEvent.click(sound);
+    await userEvent.click(notifications);
+
+    expect(sound).toHaveAttribute('aria-checked', 'false');
+    expect(notifications).toHaveAttribute('aria-checked', 'false');
+    expect(localStorage.getItem('crm-lab.alerts.sound')).toBe('false');
+    expect(localStorage.getItem('crm-lab.alerts.notifications')).toBe('false');
+  });
+
+  it('operador da plataforma não vê as preferências (não recebe conversa)', async () => {
+    login('platform_operator');
+    renderSidebar('/platform/tenants');
+
+    await userEvent.click(screen.getByRole('button', { name: /Marina Alves/ }));
+    expect(screen.queryByRole('menuitemcheckbox')).not.toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Sair' })).toBeInTheDocument();
   });
 });

@@ -116,7 +116,19 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 - Chip **"Encerradas"** (CRMLAB-48, D-174), sem número: lista `?status=closed` (o atendente vê só
   as dele, pelo recorte do servidor). Ligado, os números de "Minhas"/"Não atribuídas" continuam os
   das **ativas** — vêm da mesma query da fila, que segue rodando. Clicar de novo volta à fila
+- **Sem chip "Não lidas"** (CRMLAB-68, D-229 item 5): o Michel preferiu só Minhas / Não
+  atribuídas / Encerradas — o número de não lidas no item e no título da aba já avisam. A API
+  mantém `?unread=true` e `counts.unread`
 - Busca (pílula): paciente, telefone ou exame
+- **Busca nas mensagens (CRMLAB-68, D-228):** com 2+ caracteres a coluna também consulta
+  `GET /conversations/search/messages?q=&limit=20` e mostra o bloco **"Mensagens"** (entre a fila
+  e "Pacientes"): nome do paciente, data e o trecho com o termo em destaque (sem acento e sem
+  caixa). Clicar abre a conversa **rolada até a mensagem**, com destaque, carregando a janela em
+  volta dela (`around`, D-230) — mesmo que seja antiga. Mensagem apagada nunca aparece
+- **Marcar como não lida (D-229):** clique direito no item ou o botão "⋯" abre o menu com
+  "Marcar como não lida" (só com `unreadCount === 0`) → `POST /conversations/:id/unread`. A
+  conversa volta com a bolinha e só zera quando for aberta de novo. Se era a conversa aberta, o
+  painel fecha
 - **A mesma busca também procura PACIENTE** (D-079): com 2+ caracteres a coluna consulta
   `GET /patients?search=&limit=5` e mostra um bloco "Pacientes" abaixo da fila; cada linha leva
   a `/patients/:id`. Sem termo digitado o bloco não existe. É o consumidor de `GET /patients`
@@ -129,7 +141,27 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 - Dados: `GET /conversations` + WS `conversation.new_message` (refetch)
 
 ### Coluna 2 — Conversa
-- Header: nome, telefone, botões [Transferir ▾] [Novo Orçamento] [Encerrar] [Contexto] [× Fechar]
+- Header: nome, telefone, botões [🔍 Buscar] [Transferir ▾] [Novo Orçamento] [Encerrar] [Contexto] [× Fechar]
+- **Presença do paciente (CRMLAB-67, D-226):** abaixo do nome, no lugar do telefone enquanto
+  houver: "digitando…", "gravando áudio…", "online" ou "visto por último hoje às 14:32" /
+  "ontem às 14:32" / "dd/mm às 14:32" (sem `lastSeenAt` — paciente esconde — mostra só o telefone).
+  Vem do WS `conversation.presence` via `usePresenceStore`; "digitando…" some sozinho em 10 s.
+  Ao abrir a conversa a tela chama `POST /conversations/:id/presence { presence: 'paused' }`
+  (assina a presença); enquanto a atendente digita, `composing` no máximo a cada 4 s (D-227)
+- **Tiques e "Tentar de novo" (D-225/D-227):** balão enviado mostra 🕓/✓/✓✓/✓✓ azul/⚠; o botão
+  chama `POST /conversations/:id/messages/:messageId/retry`. O tique muda sozinho pelo WS
+  `message.status_updated`
+- **Busca dentro da conversa (CRMLAB-68, D-228/D-230):** a lupa abre uma barra abaixo do
+  cabeçalho (`ConversationSearch`) com o campo, "N de M" e as setas ↑ (ocorrência mais antiga) e
+  ↓ (mais nova); Enter = ↑, Esc fecha. Abaixo, a lista dos resultados (data + trecho com
+  destaque). Clicar num resultado ou navegar pelas setas rola até a mensagem e acende o
+  destaque; se ela ainda não está carregada, a conversa reabre na janela em volta dela
+  (`around`). `GET /conversations/:id/messages?q=&limit=100`
+- **Janela no meio da conversa (D-230):** aberta por uma busca, a conversa mostra só a janela em
+  volta da mensagem. Perto do fim ela carrega as mais novas (`after=cursors.after`) sem descer
+  sozinha; o botão ↓ fica visível e, com mais novas ainda não carregadas, volta para o fim da
+  conversa. Enviar também volta para o fim. A faixa de não lidas não aparece quando a conversa
+  é aberta por busca
 - **[Encerrar]** (CRMLAB-48, D-174): `PATCH /conversations/:id { status: 'closed' }`. Substitui o
   antigo [Arquivar]. Habilitado só para a **dona**, gestor e admin (o backend valida de novo) e
   só em conversa `active`. Sucesso: toast "Atendimento encerrado.", limpa a seleção e invalida a
@@ -147,16 +179,96 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 - Bolhas: recebida / enviada / evento de sistema (3 tipos, máx. 62% largura). Anexo de imagem
   (CRMLAB-15) renderiza como thumbnail; clique abre `ImageLightbox` em tela cheia (com ↓ que
   salva a imagem em Downloads, CRMLAB-26) — ver COMPONENTS.md `conversation/` e `shared/`
-- **Fundo branco (CRMLAB-25):** só a área rolável das mensagens é branca (`--color-chat-bg`);
-  header e composer seguem no fundo do tema, o que também marca onde a conversa começa e
-  termina. Sobre o papel branco, bolha do paciente e bolha da atendente se separam por lado E
-  por cor (`--color-chat-received` / `--color-chat-sent`)
+- **Setas entre as imagens (CRMLAB-64, D-244/D-245):** o lightbox é **um só, do painel**
+  (`ConversationImageViewer`); o balão só pede para abrir. A lista são as imagens (`image`, não
+  apagadas) **já carregadas** na conversa, em ordem cronológica e sem repetir — esquerda = mais
+  antiga. ← → navegam, Esc fecha, sem dar a volta, nenhuma seta com uma imagem só; a troca zera
+  o zoom. No topo "remetente · dd/mm/aaaa hh:mm", embaixo a legenda (quando o `content` não é só
+  o nome do arquivo). O ↓ baixa a da tela. O lightbox guarda o **id** da mensagem aberta:
+  mensagem nova pelo WebSocket ou histórico carregado não fecha nem pula; se a aberta for apagada,
+  fecha. O blob do balão é reaproveitado e as vizinhas são pré-carregadas; o que ainda não chegou
+  mostra "Carregando imagem…". Chegar na primeira carregada não busca histórico (fica para outro
+  card). Figurinha ainda chega como `image` e entra na lista até o tipo `sticker` do CRMLAB-70
+- **Visual WhatsApp Web (CRMLAB-81, D-251; substitui o "fundo branco" do CRMLAB-25):** coluna de
+  conversas, cabeçalho do contato e Composer em **branco** (`--color-chat-panel`), com
+  divisórias finas no tom do tema (`--color-chat-line`). A área rolável das mensagens fica num
+  neutro claro puxado ao tema (`--color-chat-bg`, `mix(accent 4%, #f4f3ef)`), para os balões
+  saltarem: recebida branca à esquerda, enviada no acento clareado à direita (detalhe em
+  COMPONENTS.md › MessageBubble e DESIGN_TOKENS.md › Bolhas). Na lista, a conversa selecionada
+  fica em `--color-chat-selected`, o hover em `--color-chat-hover` e o avatar em
+  `--color-chat-avatar`. Tudo deriva de `--color-accent` (white-label), nada de
+  `--color-bg/surface/text`
 - Composer: input pílula + anexos + **emoji** + enviar. O emoji entra na posição do cursor
   (Onda 8 §2.2), grade fixa de 48, sem dependência nova
-- Dados: `GET /conversations/:id`, `POST /conversations/:id/messages`
+- **Responder assume (CRMLAB-75, D-215):** enviar numa conversa de "Não atribuídas" a torna da
+  pessoa (o backend faz o claim); a lista troca de chip pelo `conversation.new_message`, sem
+  clique em "Assumir". Se outra pessoa assumiu no mesmo instante, o envio volta
+  `CONVERSATION_ALREADY_ASSIGNED` (409): toast "Conversa já assumida por {assignedToName}", o
+  texto volta ao Composer (o recado de voz fica na prévia) e a lista/conversa são reconsultadas
+- **Anexos com prévia (CRMLAB-69, D-231..D-233)** — padrão WhatsApp Web:
+  - Entradas: clipe → menu **"Fotos e vídeos"** / **"Documento"** (vários arquivos), **Ctrl+V** de
+    print no campo da mensagem, e **arrastar** arquivo sobre a conversa (área "Solte o arquivo
+    aqui"). Nenhuma delas envia na hora: todas abrem a prévia (`AttachmentPreview`)
+  - A prévia cobre lista + composer **sem desmontá-los** (rolagem, faixa e rascunho ficam). Uma
+    legenda por arquivo, miniaturas com remover e +, **Enviar** e **×**. **Esc** fecha a prévia e
+    mantém "Respondendo a…". Trocar de conversa descarta a prévia
+  - Tipo fora da allow-list, acima de 15 MB ou vazio: aviso no próprio arquivo, e ele não sobe
+  - Enviar fecha a prévia e sobe **um arquivo por vez, na ordem** (`POST /conversations/:id/attachments`
+    com `caption`); falha de um vira toast com o nome do arquivo e os outros seguem. Com resposta
+    aberta, **só o primeiro** leva `quotedMessageId`. A conversa de destino é a do clique em Enviar
+  - A faixa de não lidas sai ao clicar no clipe e ao enviar (D-239)
+  - Vídeo sai para o WhatsApp como vídeo; a bolha de vídeo é do CRMLAB-70
+- **Leitura padrão WhatsApp Web (CRMLAB-71, D-238/D-239):**
+  - **Separador de data** (`DateSeparator`) entre mensagens de dias diferentes, no fuso do
+    navegador: "Hoje", "Ontem", dia da semana por extenso de 2 a 6 dias atrás, `dd/mm/aaaa`
+    daí para trás. Dia de calendário, não 24h (23h59 e 00h01 caem em dias diferentes)
+  - **Faixa "N mensagens não lidas"** antes da primeira não lida, com N lido da **lista** no
+    clique (o GET do detalhe zera o contador). A conversa abre **rolada na faixa**, não no fim.
+    A faixa some ao trocar/fechar a conversa ou quando a atendente envia
+  - **Botão ↓** (`aria-label="Ir para a última mensagem"`) no canto de baixo da lista quando ela
+    está longe do fim. Mensagem nova com a atendente lendo mais acima **não move a tela** e soma
+    num contador (`Badge`) no botão; clicar desce suave ao fim e zera. Perto do fim, mensagem nova
+    desce sozinha; quem envia vai ao fim na hora
+  - **Histórico sem botão:** chegar perto do topo carrega a página anterior sozinho
+    (`GET /conversations/:id?before=<messageId>`, D-237), com "Carregando mensagens
+    anteriores…" pequeno no topo, e a mensagem que estava na tela continua no lugar. No começo da
+    conversa (`cursors.before: null`) nada mais é pedido. O antigo "Carregar mensagens
+    anteriores" deixou de existir
+- Dados: `GET /conversations/:id` (paginado por cursor, `useInfiniteQuery`),
+  `POST /conversations/:id/messages`, `POST /conversations/:id/attachments`
 - Ao abrir: `markAsRead`
 
+### Aviso de mensagem nova (CRMLAB-72, D-240/D-241) — padrão WhatsApp Web
+Vale em **todas as telas do laboratório** (hook `useNewMessageAlerts`, montado no `AppShell`),
+não só aqui. O Console da Plataforma não avisa.
+- **Quem é avisado:** conversa da fila da pessoa logada — atribuída a ela ou sem dona
+  (`isInMyQueue`, o mesmo recorte do servidor para atendente). Conversa de outra atendente não
+  avisa ninguém além dela, nem gestor. Só mensagem de **paciente** avisa (o sinal é o
+  `unreadCount` subir); mensagem da equipe e evento de sistema não
+- **Título da aba:** `"(N) <título>"`, N = conversas da fila com não lidas; zerou, volta ao
+  título original. Acompanha a leitura (abrir a conversa invalida a query)
+- **Notificação do navegador**, só com a aba **sem foco**: título = nome do paciente (sem nome,
+  o telefone); corpo = **"Nova mensagem"** ou **"N novas mensagens"**. **Nunca o texto nem a
+  mídia** (D-240, sem opção de ligar prévia). `tag` = id da conversa (a nova substitui a
+  anterior). Clicar traz a aba para a frente e abre a conversa (`/attendance?conversationId=…`,
+  lido a cada navegação, não só no mount)
+- **Som** (tom sintético WebAudio, ~180 ms): aba sem foco, ou mensagem de **outra** conversa que
+  não a aberta. Conversa aberta com a aba em foco: nada
+- **Permissão:** nunca pedida no carregamento. Com `Notification.permission === 'default'` e a
+  notificação ligada na preferência, o topo da coluna 1 mostra um aviso discreto
+  (`EnableNotificationsBanner`): "Receba um aviso quando chegar mensagem com a aba em segundo
+  plano." + botão **[Ativar notificações]**, que chama `Notification.requestPermission()`. Some
+  com a permissão concedida ou negada. Negada ou navegador sem a API: título e som seguem
+  funcionando, nada quebra
+- **Preferências** (por navegador, `localStorage`): no menu do usuário (rodapé da Sidebar),
+  "Som de mensagem nova" e "Notificações do navegador", ligados por padrão
+- Dados: `GET /conversations?status=active&scope=all&sortBy=unreadCount&order=desc&limit=100`
+  (uma query por aba, invalidada pelo mesmo WS `conversation.new_message`) + o detalhe da
+  conversa aberta, que o Atendimento já carrega
+
 ### Coluna 3 — Contexto do paciente (recolhível)
+- **Começa fechada (CRMLAB-74).** Só abre pelo botão [Contexto] do header. Aberta, continua
+  aberta ao trocar de conversa até recarregar a página (não persiste — D-117).
 - Cadastro resumido, propostas da conversa (cartões clicáveis → modal), tags
 - **Link "Ver ficha completa" → `/patients/:id`**, a porta de entrada da Ficha (§3). Usa
   `conversation.patientId` (D-079), que vem em `GET /conversations/:id`. Conversa anterior ao
@@ -474,10 +586,11 @@ nunca "sem permissão" (não vazar existência).
 ### Aba Exames
 - Tabela: nome, código, preparo, **TUSS, material**, prazo, preço particular, preço convênio, status
 - Regras de tabela: container com min-width + overflow-x, cabeçalho 11px caixa alta, valores à direita
-- Atendente: somente leitura. Gestor/Admin: criar/editar (modal, botão "+ Novo Exame")
+- Atendente, gestor e admin: criar/editar/inativar (modal, botão "+ Novo Exame") — CRMLAB-78,
+  D-248. Importar CSV continua só admin. Não existe excluir: inativar é `isActive: false`.
 - **Paginação** (`Pagination`, 20 por página) com a página na URL (`?page=2`),
   mesma regra de `/proposals`. Buscar volta para a página 1.
-- Dados: `GET /exams`, `POST/PATCH /exams` (gestor+)
+- Dados: `GET /exams`, `POST/PATCH /exams` (atendente+)
 - **Modal do exame (Onda 7 — D-081/D-082):** além dos campos anteriores, código TUSS
   (tabela 22 TISS/ANS), código AMB legado e material de coleta — os três `null` quando não
   confirmados, nunca inventados; sinônimos como chips removíveis (`exam_synonyms`, substituídos
@@ -486,7 +599,7 @@ nunca "sem permissão" (não vazar existência).
   convênio ativo, em branco = "sem preço específico — orçamento cai no particular"
   (`priceSource: "private"`). Só existe em edição — não há `examId` para consultar em criação.
 - Dados da aba de preços: `GET /exams/:id/prices` (todos os papéis) ·
-  `PUT /exams/:id/prices` (gestor+) — semântica de PUT: convênio ausente do corpo tem o preço
+  `PUT /exams/:id/prices` (atendente+) — semântica de PUT: convênio ausente do corpo tem o preço
   **removido**, não preservado.
 - **Importar CSV (CRMLAB-23, D-177/D-178 — só admin):** botão "Importar CSV" ao lado de
   "+ Novo Exame", visível só para admin na aba Exames. Abre `ExamImportModal`:
@@ -504,9 +617,9 @@ nunca "sem permissão" (não vazar existência).
 ### Aba Pacotes (`PackageTable`, CRMLAB-10, D-130)
 - Tabela: nome, exames incluídos (nomes separados por vírgula), desconto %, preço particular
   (`pricePrivate`, sempre calculado — soma dos exames menos o desconto), status
-- Mesma paginação/busca/alçada da aba Exames — atendente só leitura, gestor/admin
-  cria/edita (botão "+ Novo Pacote")
-- Dados: `GET /exam-packages`, `POST/PATCH /exam-packages` (gestor+)
+- Mesma paginação/busca/alçada da aba Exames — atendente, gestor e admin criam/editam
+  (botão "+ Novo Pacote"), D-248
+- Dados: `GET /exam-packages`, `POST/PATCH /exam-packages` (atendente+)
 - **Modal do pacote (`PackageModal`):** nome, desconto % e um seletor de exames (busca +
   checkbox, até 100 exames ativos por vez — teto do contrato). Mostra uma prévia do preço
   particular (`calculatePackagePrivatePrice`, `@crm-lab/shared`) enquanto o usuário monta o
@@ -521,7 +634,7 @@ nunca "sem permissão" (não vazar existência).
   Em **modo edição**, segunda aba "Preços por convênio" (`PackagePricesTab`) — mesmo mecanismo
   de `ExamPricesTab`, aplicado a `exam_package_prices`.
 - Dados da aba de preços: `GET /exam-packages/:id/prices` (todos os papéis) ·
-  `PUT /exam-packages/:id/prices` (gestor+) — mesma semântica de PUT do §4.
+  `PUT /exam-packages/:id/prices` (atendente+) — mesma semântica de PUT do §4.
 
 ---
 
@@ -708,10 +821,18 @@ gestor).
   envio, desmembrada em CRMLAB-39
 
 ### Personalização (`/settings/theme`) — admin
-- 5 temas prontos (cartões com amostras) + tema livre (5 color pickers)
-- Cantos (reto/suave/redondo), fonte, nome exibido, logo
-- **Preview em tempo real:** aplica CSS vars localmente antes de salvar
-- Salvar → `PATCH /themes/current`
+O cliente escolhe **só** cor principal, cor secundária, fonte, cantos, nome exibido e logo
+(D-250). Fundo, superfície e cor do texto **não** aparecem: a página é sempre branca e o texto
+sempre escuro; a cor do tema vai para menu, cartões, tabelas e botões.
+- 5 temas prontos (cartões com as 2 amostras) → `PATCH /themes/current { accent, accent2 }`
+- Cor personalizada: 2 seletores (`Cor principal` / `Cor secundária`, cada um com campo hex
+  `#rrggbb`); hex válido salva na hora só a cor mexida
+- Fonte (Playfair/Figtree/Sistema) e Cantos (Reto/Suave/Redondo): `SegmentedControl`, salva na hora
+- Nome exibido + endereço do logo (URL, usado nos PDFs): botão "Salvar nome e logo"; vazio → `null`
+- **Preview:** tela em miniatura (página branca, menu tingido com item ativo branco, cartão com
+  tabela, busca, botões, chips de status). Lê os tokens CSS, que `applyTheme` troca ao salvar
+- Temas salvos antes da D-250 continuam valendo pelo accent/accent2/fonte/cantos; o
+  `bg`/`surface`/`text` guardados são ignorados (sem migração)
 
 ---
 
@@ -1094,8 +1215,15 @@ Lançamento de vendas avulsas de exame/check-up e o cálculo de comissão. Fonte
   servidor a partir dos percentuais de `/settings/commissions` (§19) — a tela nunca multiplica
   percentual localmente.
 - **Lançar venda** (formulário/modal): data (não futura), código (opcional), valor (`> 0`),
-  exames (texto livre, opcional), tipo (`exames | check-up`). Sucesso invalida a lista e o
-  resumo.
+  exames (opcional), tipo (`exames | check-up`). Sucesso invalida a lista e o resumo.
+  - **Exames** é um seletor do catálogo do laboratório (D-247), não texto livre: o gatilho mostra
+    "Selecione exames…" ou "N exame(s) selecionado(s)"; ao abrir, busca por nome, sinônimo ou
+    código (`GET /exams?active=true&search=…`, a mesma busca server-side do catálogo) e lista os
+    exames **agrupados por categoria**, com os sinônimos embaixo do nome e o código à direita.
+    Clicar marca/desmarca. Os escolhidos aparecem como chips removíveis abaixo do campo.
+  - O **valor** continua digitado: é o valor total da venda, sem preço por exame.
+  - O que vai para `exams` no `POST /sales` é o texto com os **nomes** dos escolhidos separados
+    por `, ` (contrato inalterado).
 - **Apagar:** confirmação simples ("apagar esta venda?") — é `DELETE` real, sem histórico
   dependente (§11); atendente só vê o botão nas próprias linhas, gestor/admin em todas.
 - **Filtros:** período (`soldOn`), tipo, e atendente (só para gestor/admin).
@@ -1155,8 +1283,10 @@ rótulo "Integração LIS", `requiredRoles: MANAGER_PLUS`. Fonte: `GET/PATCH
 /settings/lis-integration` e `POST /settings/lis-integration/sync` (API_CONTRACTS.md §10.3).
 
 - **Cartão "Situação"**, no topo: um `Chip` + texto.
-  - `positive` "Sincronizando a cada {intervalMinutes} min · última às HH:MM", quando `enabled` e
-    `lastError` nulo;
+  - `positive` "Sincronizando a cada {intervalo} · última às HH:MM", quando `enabled` e
+    `lastError` nulo. `intervalSeconds` vira "30 s", ou "N min" quando é minuto cheio (D-249);
+    com `intervalSeconds: 0` (agendador desligado, hml) o chip diz "Ligada · só pelo
+    "Sincronizar agora"";
   - `attention` com o `lastError` em destaque, quando há erro;
   - `inactive` "Desligada", quando `!enabled`.
   Abaixo, "Última sincronização com sucesso: DD/MM HH:MM" e "Dados atualizados até: DD/MM
@@ -1213,6 +1343,23 @@ seu próprio [Salvar] (endpoint e permissão diferentes).
 6. **Comissões** (`id="comissoes"`) — o formulário que era de `/settings/commissions` (§19), sem
    mudança de regra. Só gestor/admin veem a seção; só admin edita.
 
+**Desde o CRMLAB-62 (D-211..D-214)**, duas seções a mais (componentes
+`Settings/ReengagementSection.tsx` e `Settings/HolidaysSection.tsx`):
+
+- **Reingajamento da conversa** (`id="reingajamento"`, depois da "Mensagem de envio") — faz
+  parte do formulário das Regras (salva no mesmo [Salvar regras], chave `reengagement`). Para o
+  1º e o 2º: `Toggle`, `Input` de horas ("Horas sem resposta" / "Horas depois do 1º") e
+  `TextArea` "Mensagem", desabilitados com o disparo desligado. O 2º fica travado ("Ligue o 1º
+  reingajamento para usar o 2º") com o 1º desligado, e desligar o 1º desliga o 2º junto. Texto
+  vazio bloqueia salvar. Nota: vale só para conversa aberta e WhatsApp por QR Code, respeita o
+  horário de funcionamento (link para Canais) e não envia em feriado. Gestor/admin leem os
+  canais (`useChannelSettings`): WhatsApp na API oficial → aviso "Inativo para este canal".
+- **Feriados** (`id="feriados"`, fora do formulário, antes de Comissões) — fonte
+  `GET/POST/DELETE /settings/holidays` (§6d), salvo na hora. Seletor de ano (‹ 2026 ›), lista
+  "Do laboratório" (com [Remover] para gestor/admin) e lista "Nacionais" (só leitura, Carnaval e
+  Corpus Christi incluídos). Gestor/admin incluem com `Input` de data + descrição e [Incluir
+  feriado]; data repetida volta como erro no campo. Atendente só vê.
+
 **Quem edita:** gestor e admin editam as seções 1–4. A **atendente vê tudo desabilitado**, sem
 [Salvar regras], e não vê a seção 6. Erro de campo (`details.fields`) aparece no campo pelo
 caminho (`automation.sentToFollowUp.days`); chave que a tela não conhece vira toast geral.
@@ -1268,14 +1415,19 @@ applyTheme(theme: Theme) {
   const root = document.documentElement;
   root.style.setProperty('--color-accent', theme.accent);
   root.style.setProperty('--color-accent-2', theme.accent2);
-  root.style.setProperty('--color-bg', theme.bg);
-  root.style.setProperty('--color-surface', theme.surface);
-  root.style.setProperty('--color-text', theme.text);
-  // Rampas 100-900 derivadas via color-mix já definidas no CSS estático
+  // D-250: bg/surface/text do tema são IGNORADOS — fundo branco e texto escuro
+  // fixos em tokens.css; um valor inline que tenha sobrado é removido.
+  root.style.removeProperty('--color-bg');
+  root.style.removeProperty('--color-surface');
+  root.style.removeProperty('--color-text');
+  // Rampas e tons do tema derivados via color-mix já definidos no CSS estático
   root.dataset.radius = theme.radiusId; // reto | suave | redondo
   root.dataset.font = theme.fontId;
 }
 ```
+
+O console da plataforma (`PLATFORM_THEME`, §11) passa pelo mesmo `applyTheme`: só o accent e o
+accent2 dele valem, sobre o mesmo fundo branco.
 
 ---
 
@@ -1413,13 +1565,17 @@ Constantes exportadas: `GENERIC_CREDENTIALS_ERROR`, `SYSTEM_ERROR`,
 | Dado | Chave | staleTime |
 |------|-------|-----------|
 | lista | `queryKeys.conversations(filters)` | `staleTimes.conversations` (10s) |
-| detalhe | `[...queryKeys.conversation(id), messageLimit]` | idem |
+| detalhe (infinita, D-238) | `[...queryKeys.conversation(id), 'messages']` | idem |
+| detalhe aberto numa mensagem (D-230) | `[...queryKeys.conversation(id), 'messages', { around }]` | idem |
+| busca nas mensagens (D-228) | `queryKeys.messageSearch({ q, conversationId? })` | idem |
 | propostas da conversa | `queryKeys.proposals({ conversationId })` | padrão |
 
-A chave do detalhe leva o `messageLimit` no fim para que "carregar mensagens
-anteriores" não precise de um segundo cache. Continua derivada de
-`query-keys.ts` e continua sendo invalidada pelo evento WS
-`conversation.new_message`, que invalida o **prefixo** `['conversation', id]`.
+O detalhe é uma `useInfiniteQuery` (D-238): cada página é uma resposta de
+`GET /conversations/:id`, a primeira sem cursor e as seguintes com
+`before=cursors.before` (mais antigas). Continua derivada de `query-keys.ts` e
+continua sendo invalidada pelo evento WS `conversation.new_message`, que invalida
+o **prefixo** `['conversation', id]` — o TanStack refaz as páginas carregadas
+recalculando os cursores.
 
 **Decisões registradas (o doc não fixava):**
 
@@ -1443,6 +1599,5 @@ anteriores" não precise de um segundo cache. Continua derivada de
    'proposal', id })`; o Modal da Proposta (§6) é de outro agente — falta só
    montá-lo na árvore.
 
-**Pendência conhecida:** paginação de histórico usa `limit` crescente
-(`+50` por clique), não `page`. Uma lista infinita de verdade entra quando o
-`MessageService` existir e o volume real aparecer.
+~~**Pendência conhecida:** paginação de histórico usa `limit` crescente.~~
+Resolvida no CRMLAB-71: cursor `before` (D-237) + rolagem infinita (D-238).

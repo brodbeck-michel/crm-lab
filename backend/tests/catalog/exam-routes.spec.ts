@@ -232,7 +232,7 @@ describe('/api/v1/exams', () => {
       expect(exam.isActive).toBe(true);
     });
 
-    it('atendente nao cria: FORBIDDEN com details.requiredRoles', async () => {
+    it('atendente cria (CRMLAB-78, D-248)', async () => {
       const tenant = await createTenant();
       const attendant = await createUser({ tenantId: tenant.id, role: 'attendant' });
 
@@ -240,10 +240,22 @@ describe('/api/v1/exams', () => {
         .post('/api/v1/exams')
         .set(app.auth(attendant))
         .send(payload)
+        .expect(201);
+
+      expect((response.body as Exam).code).toBe('NE');
+    });
+
+    it('operador da plataforma nao cria: FORBIDDEN', async () => {
+      const tenant = await createTenant();
+      const operador = await createUser({ tenantId: tenant.id, role: 'platform_operator' });
+
+      const response = await app.agent
+        .post('/api/v1/exams')
+        .set(app.auth(operador))
+        .send(payload)
         .expect(403);
 
       expect(response.body.error.code).toBe('FORBIDDEN');
-      expect(response.body.error.details.requiredRoles).toEqual(['manager', 'admin']);
     });
 
     it('code duplicado no mesmo tenant -> CONFLICT (409), nao 500', async () => {
@@ -375,7 +387,7 @@ describe('/api/v1/exams', () => {
       expect((response.body as Exam).priceInsurance).toBe(90);
     });
 
-    it('atendente nao edita: FORBIDDEN com details.requiredRoles', async () => {
+    it('atendente edita e inativa (CRMLAB-78, D-248)', async () => {
       const tenant = await createTenant();
       const attendant = await createUser({ tenantId: tenant.id, role: 'attendant' });
       const exam = await createExam({ tenantId: tenant.id });
@@ -383,11 +395,11 @@ describe('/api/v1/exams', () => {
       const response = await app.agent
         .patch(`/api/v1/exams/${exam.id}`)
         .set(app.auth(attendant))
-        .send({ pricePrivate: 1 })
-        .expect(403);
+        .send({ pricePrivate: 1, isActive: false })
+        .expect(200);
 
-      expect(response.body.error.code).toBe('FORBIDDEN');
-      expect(response.body.error.details.requiredRoles).toEqual(['manager', 'admin']);
+      expect((response.body as Exam).pricePrivate).toBe(1);
+      expect((response.body as Exam).isActive).toBe(false);
     });
 
     it('desativa em vez de deletar — a linha continua no banco', async () => {
@@ -683,7 +695,7 @@ describe('/api/v1/exams', () => {
       expect(response.body).toEqual({ prices: [{ insuranceId: insurance.id, price: 33.5 }] });
     });
 
-    it('PUT /exams/:id/prices exige manager/admin — atendente recebe FORBIDDEN', async () => {
+    it('PUT /exams/:id/prices — atendente grava preco por convenio (CRMLAB-78, D-248)', async () => {
       const tenant = await createTenant();
       const attendant = await createUser({ tenantId: tenant.id, role: 'attendant' });
       const exam = await createExam({ tenantId: tenant.id });
@@ -692,9 +704,9 @@ describe('/api/v1/exams', () => {
         .put(`/api/v1/exams/${exam.id}/prices`)
         .set(app.auth(attendant))
         .send({ prices: [] })
-        .expect(403);
+        .expect(200);
 
-      expect(response.body.error.code).toBe('FORBIDDEN');
+      expect(response.body).toEqual({ prices: [] });
     });
 
     it('PUT /exams/:id/prices de exame de outro tenant -> NOT_FOUND', async () => {

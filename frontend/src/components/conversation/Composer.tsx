@@ -1,7 +1,9 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { ClipboardEvent, KeyboardEvent } from 'react';
 import type { QuickReply } from '@crm-lab/shared';
 import { Button, cn } from '@/components/ui';
+import { readConversationDraft, saveConversationDraft } from '@/stores';
+import { DOCUMENT_ACCEPT, MEDIA_ACCEPT, filesFromDataTransfer } from './attachment-draft';
 import { EmojiPicker } from './EmojiPicker';
 import { QuickReplyMenu, filterQuickReplies, quickReplyOptionId } from './QuickReplyMenu';
 import { MicIcon, VoiceRecorder } from './VoiceRecorder';
@@ -37,10 +39,21 @@ import type { RecordedAudio } from './useVoiceRecorder';
  */
 
 export interface ComposerProps {
-  /** Recebe o texto já aparado. Não é chamado com string vazia. */
-  onSend: (content: string) => void;
-  /** Anexo — sem handler, o botão não aparece (nada de botão morto). */
-  onAttach?: () => void;
+  /**
+   * Recebe o texto já aparado. Não é chamado com string vazia. O campo limpa na
+   * hora; devolvendo uma Promise que rejeita, o texto volta para o campo (se a
+   * pessoa não começou outra mensagem) — quem avisa do erro é quem chama (CRMLAB-63).
+   * É assim que o 409 de conversa já assumida devolve o rascunho (CRMLAB-75, D-215).
+   */
+  onSend: (content: string) => void | Promise<unknown>;
+  /**
+   * Arquivos escolhidos no clipe ("Fotos e vídeos" / "Documento", vários) ou
+   * colados com Ctrl+V (CRMLAB-69, D-232). Sem handler, nem clipe nem colar
+   * arquivo (nada de botão morto). Quem monta a tela abre a prévia.
+   */
+  onPickFiles?: (files: File[]) => void;
+  /** Clique no clipe (a tela tira a faixa de não lidas, D-239). */
+  onAttachClick?: () => void;
   /**
    * Recado de voz gravado (D-181) — sem handler, o microfone não aparece.
    * Resolveu: o gravador volta ao normal. Rejeitou: a prévia fica para tentar
@@ -64,6 +77,25 @@ export interface ComposerProps {
    * da chamada.
    */
   quickReplies?: readonly QuickReply[];
+  /**
+   * Respondendo a (CRMLAB-66): a faixa "Respondendo a *autor*: trecho…" em cima
+   * do campo. Quem monta a tela guarda a mensagem escolhida e decide o
+   * `quotedMessageId` do envio; o Composer só mostra e avisa o cancelamento.
+   */
+  replyTo?: { authorName: string; preview: string } | null;
+  /** × da faixa ou `Esc` no campo. */
+  onCancelReply?: () => void;
+  /**
+   * Rascunho por conversa (CRMLAB-73, D-243): o id da conversa. O campo começa
+   * com `initialValue` (o `?draft=` vence) ou com o rascunho salvo, e cada
+   * mudança grava — campo vazio remove. Sem `draftId`, nada é guardado.
+   */
+  draftId?: string;
+  /**
+   * A pessoa digitou algo (texto não vazio) — a cada tecla. Quem monta a tela
+   * decide o ritmo do "digitando…" para o paciente (D-227); o Composer só avisa.
+   */
+  onTyping?: () => void;
 }
 
 /**
@@ -92,17 +124,135 @@ function AttachIcon() {
   );
 }
 
+/**
+ * Clipe com menu (CRMLAB-69, D-232): "Fotos e vídeos" e "Documento", os dois
+ * com `multiple`. Mesmo padrão de menu do `TransferMenu` (clique fora + Esc).
+ */
+function AttachMenu({
+  onPickFiles,
+  onOpen,
+  disabled,
+}: {
+  onPickFiles: (files: File[]) => void;
+  onOpen?: () => void;
+  disabled: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const mediaInputRef = useRef<HTMLInputElement>(null);
+  const documentInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: MouseEvent) {
+      if (!ref.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function onKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      setOpen(false);
+      ref.current?.querySelector('button')?.focus();
+    }
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  function pick(input: HTMLInputElement | null): void {
+    setOpen(false);
+    input?.click();
+  }
+
+  function handleChange(input: HTMLInputElement): void {
+    const files = Array.from(input.files ?? []);
+    input.value = '';
+    if (files.length > 0) onPickFiles(files);
+  }
+
+  const itemClass =
+    'w-full cursor-pointer border-none bg-transparent px-md py-xs text-left font-body text-label text-text hover:bg-accent-100';
+
+  return (
+    <div ref={ref} className="relative">
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => {
+          if (!open) onOpen?.();
+          setOpen((value) => !value);
+        }}
+        disabled={disabled}
+        aria-label="Anexar arquivo"
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        <AttachIcon />
+      </Button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute bottom-full left-0 z-50 mb-xs w-[180px] rounded-md border border-neutral-200 bg-surface py-xs shadow-md"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className={itemClass}
+            onClick={() => pick(mediaInputRef.current)}
+          >
+            Fotos e vídeos
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={itemClass}
+            onClick={() => pick(documentInputRef.current)}
+          >
+            Documento
+          </button>
+        </div>
+      )}
+      <input
+        ref={mediaInputRef}
+        type="file"
+        multiple
+        hidden
+        accept={MEDIA_ACCEPT}
+        data-testid="attach-media-input"
+        onChange={(event) => handleChange(event.target)}
+      />
+      <input
+        ref={documentInputRef}
+        type="file"
+        multiple
+        hidden
+        accept={DOCUMENT_ACCEPT}
+        data-testid="attach-document-input"
+        onChange={(event) => handleChange(event.target)}
+      />
+    </div>
+  );
+}
+
 export function Composer({
   onSend,
-  onAttach,
+  onPickFiles,
+  onAttachClick,
   onSendAudio,
   disabled = false,
   sending = false,
   placeholder = 'Escreva uma mensagem',
   quickReplies,
   initialValue,
+  replyTo,
+  onCancelReply,
+  onTyping,
+  draftId,
 }: ComposerProps) {
-  const [value, setValue] = useState(initialValue ?? '');
+  const [value, setValue] = useState(
+    () => initialValue ?? (draftId ? readConversationDraft(draftId) : null) ?? '',
+  );
   // `false` enquanto a pessoa não abriu o menu nesta digitação — é o que faz
   // `Esc` deixar a `/` no campo sem o menu voltar a abrir sozinho.
   const [macroMenuOpen, setMacroMenuOpen] = useState(false);
@@ -134,6 +284,17 @@ export function Composer({
     // `recording`: o campo sai da tela durante a gravação e volta sem altura.
   }, [value, recording]);
 
+  // Voltou para a conversa com rascunho: o cursor fica no FIM do texto (D-243).
+  useLayoutEffect(() => {
+    const field = fieldRef.current;
+    if (field && field.value.length > 0) field.setSelectionRange(field.value.length, field.value.length);
+  }, []);
+
+  // Rascunho: toda mudança do texto grava (emoji, macro, envio que volta a '').
+  useEffect(() => {
+    if (draftId) saveConversationDraft(draftId, value);
+  }, [draftId, value]);
+
   /** O texto é um comando de macro enquanto for `/` + o que se digita depois. */
   const macroFilter = value.startsWith('/') ? value.slice(1) : null;
   const macroMatches = useMemo(
@@ -157,6 +318,7 @@ export function Composer({
   function handleChange(next: string): void {
     setValue(next);
     setActiveIndex(0);
+    if (next.trim().length > 0) onTyping?.();
     // Abre só quando a `/` é o texto INTEIRO — ou seja, campo vazio antes dela.
     if (next === '/') setMacroMenuOpen(true);
     // Apagou a barra: o comando acabou, e digitar `/` de novo recomeça.
@@ -166,9 +328,13 @@ export function Composer({
   function submit(): void {
     const content = value.trim();
     if (!content || blocked) return;
-    onSend(content);
+    const result = onSend(content);
     setValue('');
     fieldRef.current?.focus();
+    result?.catch(() => {
+      setValue((current) => (current === '' ? content : current));
+      fieldRef.current?.focus();
+    });
   }
 
   /**
@@ -193,24 +359,43 @@ export function Composer({
   /**
    * Ctrl+B / Cmd+B (CRMLAB-51, D-183): envolve a seleção em `*` — o negrito do
    * WhatsApp — e mantém o texto selecionado; sem seleção, `**` com o cursor no meio.
+   * Ctrl+I (`_`) e Ctrl+Shift+X (`~`) fazem o mesmo (CRMLAB-73, D-242).
    */
-  function wrapBold(): void {
+  function wrapSelection(marker: '*' | '_' | '~'): void {
     const field = fieldRef.current;
     let start = field?.selectionStart ?? value.length;
     let end = field?.selectionEnd ?? value.length;
     // Duplo clique no Windows seleciona "palavra " — `*palavra *` não formataria.
     while (start < end && /\s/.test(value.charAt(start))) start++;
     while (end > start && /\s/.test(value.charAt(end - 1))) end--;
-    setValue(`${value.slice(0, start)}*${value.slice(start, end)}*${value.slice(end)}`);
+    setValue(`${value.slice(0, start)}${marker}${value.slice(start, end)}${marker}${value.slice(end)}`);
     requestAnimationFrame(() => fieldRef.current?.setSelectionRange(start + 1, end + 1));
+  }
+
+  /**
+   * Ctrl+V com arquivo (print de tela) abre a prévia e não cola nada; só texto
+   * cola normal (CRMLAB-69, D-232).
+   */
+  function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>): void {
+    if (!onPickFiles) return;
+    const files = filesFromDataTransfer(event.clipboardData);
+    if (files.length === 0) return;
+    event.preventDefault();
+    onPickFiles(files);
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
     // `!altKey`: AltGr no Windows chega como Ctrl+Alt e digita caractere em alguns teclados.
-    if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'b') {
-      event.preventDefault();
-      wrapBold();
-      return;
+    if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+      const key = event.key.toLowerCase();
+      // Ctrl+X SEM Shift é recortar — só Ctrl+Shift+X vira tachado.
+      const marker =
+        key === 'b' ? '*' : key === 'i' ? '_' : key === 'x' && event.shiftKey ? '~' : null;
+      if (marker) {
+        event.preventDefault();
+        wrapSelection(marker);
+        return;
+      }
     }
     if (macroOpen) {
       // Com o menu aberto, estas teclas pertencem a ELE. Enter escolhendo a
@@ -240,6 +425,12 @@ export function Composer({
       }
     }
 
+    if (event.key === 'Escape' && replyTo && onCancelReply) {
+      event.preventDefault();
+      onCancelReply();
+      return;
+    }
+
     // Shift+Enter cai no comportamento padrão do textarea: quebra de linha.
     if (event.key !== 'Enter' || event.shiftKey) return;
     event.preventDefault();
@@ -249,24 +440,37 @@ export function Composer({
   return (
     <div
       data-testid="composer"
-      className="flex flex-col gap-xs border-t border-neutral-300 bg-bg px-lg py-md"
+      className="flex flex-col gap-xs border-t border-chat-line bg-chat-panel px-lg py-md"
     >
+      {replyTo && (
+        <div
+          data-testid="reply-banner"
+          className="flex items-center gap-sm rounded-sm border-0 border-l-4 border-solid border-accent bg-chat-quote px-sm py-xs"
+        >
+          <p className="m-0 min-w-0 flex-1 truncate font-body text-caption text-neutral-700">
+            Respondendo a <em className="font-semibold not-italic text-accent-800">{replyTo.authorName}</em>
+            : {replyTo.preview}
+          </p>
+          {onCancelReply && (
+            <button
+              type="button"
+              onClick={onCancelReply}
+              aria-label="Cancelar resposta"
+              className="cursor-pointer rounded-pill border-none bg-transparent px-xs font-body text-label text-neutral-700 hover:bg-neutral-200"
+            >
+              ×
+            </button>
+          )}
+        </div>
+      )}
       {recorder.error && (
         <p role="alert" className="m-0 font-body text-caption text-accent-700">
           {recorder.error}
         </p>
       )}
       <div className="flex items-end gap-sm">
-        {onAttach && !recording && (
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={onAttach}
-            disabled={blocked}
-            aria-label="Anexar arquivo"
-          >
-            <AttachIcon />
-          </Button>
+        {onPickFiles && !recording && (
+          <AttachMenu onPickFiles={onPickFiles} onOpen={onAttachClick} disabled={blocked} />
         )}
 
         {recording && onSendAudio ? (
@@ -304,9 +508,13 @@ export function Composer({
                 ref={fieldRef}
                 rows={1}
                 value={value}
-                disabled={blocked}
+                // `disabled`, não `blocked` (CRMLAB-63): campo desabilitado perde o
+                // foco e o navegador não devolve. Durante o envio só o Enter e o
+                // botão travam (`submit`), e dá para ir escrevendo a próxima.
+                disabled={disabled}
                 onChange={(event) => handleChange(event.target.value)}
                 onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
                 placeholder={placeholder}
                 aria-label="Mensagem"
                 role={macroOpen ? 'combobox' : undefined}
@@ -316,7 +524,7 @@ export function Composer({
                   macroOpen && activeMacro ? quickReplyOptionId(activeMacro.id) : undefined
                 }
                 className={cn(
-                  'min-h-[36px] w-full min-w-0 flex-1 resize-none border border-neutral-300 bg-bg',
+                  'min-h-[36px] w-full min-w-0 flex-1 resize-none border border-chat-line bg-chat-bg',
                   multiline ? 'rounded-md' : 'rounded-pill',
                   'px-lg py-[9px] font-body text-label text-text outline-none',
                   'placeholder:text-neutral-600 focus:border-accent disabled:cursor-not-allowed disabled:opacity-60',

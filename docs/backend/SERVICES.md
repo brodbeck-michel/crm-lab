@@ -62,6 +62,7 @@ interface ConversationService {
   // D-174: so dona/gestor/admin; 'closed' grava evento de sistema. Reabertura manual: createManual.
   updateStatus(tenantId: string, id: string, status: 'active' | 'closed'): Promise<Conversation>;
   markAsRead(tenantId: string, id: string, userId: string): Promise<void>;
+  markAsUnread(ctx: TenantContext, id: string): Promise<void>; // CRMLAB-68, D-229
 }
 ```
 
@@ -110,6 +111,11 @@ Devolve `{ conversation, message }`, com a conversa relida depois do envio.
 - `markAsRead` zera `unread_count` e marca mensagens. `GET /conversations/:id` chama-o
   (PAGES.md §2 "Ao abrir: markAsRead"); `POST /conversations/:id/read` é o caminho
   explícito
+- `markAsUnread` (D-229) grava `unread_count = GREATEST(unread_count, 1)` com o mesmo recorte
+  do `markAsRead` (invisível → `NOT_FOUND`). Não mexe em `last_message_at`, não emite WS, sem
+  audit. `list` aceita `unread: true` (recorte como o `scope`) e devolve `counts.unread`
+- `searchMessages(ctx, query)` e `searchInConversation(ctx, id, query)` (D-228) resolvem o
+  recorte por papel (`visibleTo` igual ao da listagem) e delegam a `MessageService.search`
 - **`findOrCreateByPhone` cria ou reaproveita o paciente e grava `conversations.patient_id`
   na mesma transação (D-072).** A ligação mora no *repositório*, sobre a `DbTx` já aberta —
   chamar `PatientService` daqui abriria um segundo `withTenant` e travaria (D-008, uma
@@ -125,11 +131,17 @@ Devolve `{ conversation, message }`, com a conversa relida depois do envio.
 
 ```typescript
 interface MessageService {
-  listByConversation(tenantId: string, conversationId: string, page: Pagination): Promise<Paginated<Message>>;
+  listByConversation(tenantId: string, conversationId: string, page: Pagination & { before?: string; after?: string; around?: string }): Promise<Paginated<Message> & { cursors: MessageCursors }>; // cursor D-237, after/around D-230
+  search(tenantId: string, criteria: { term: string; visibleTo: string | null; conversationId?: string; page: number; limit: number }): Promise<Paginated<MessageSearchHit>>; // D-228
   createFromAgent(tenantId: string, conversationId: string, senderId: string, dto: CreateMessageDTO): Promise<Message>;
   createFromPatient(tenantId: string, conversationId: string, dto: InboundMessageDTO): Promise<Message>; // via webhook
   createFromPhone(tenantId: string, conversationId: string, dto: InboundMessageDTO): Promise<Message | null>; // fromMe via webhook (D-173); null = eco do CRM
   createSystemEvent(tenantId: string, conversationId: string, content: string): Promise<Message>;
+  // CRMLAB-66 (D-220..D-222)
+  setAgentReaction(tenantId: string, conversationId: string, messageId: string, userId: string, emoji: string | null): Promise<Message | null>;
+  applyInboundReaction(tenantId: string, input: { targetExternalId: string; fromMe: boolean; emoji: string }): Promise<boolean>;
+  applySenderDelete(tenantId: string, targetExternalId: string): Promise<boolean>;
+  applySenderEdit(tenantId: string, targetExternalId: string, newContent: string): Promise<boolean>;
 }
 ```
 
@@ -140,6 +152,22 @@ interface que ProposalService/ApprovalService consomem. Instanciação:
 `InboundMessageInput` (`content`, `messageType?`, `attachmentUrl?`, `externalId?`).
 
 **Regras:**
+- `createFromAgent` / `createAttachmentFromAgent` em conversa **sem dona** assumem a conversa
+  para `senderId` ANTES do INSERT (CRMLAB-75, D-215) — `claimForAgent`, sobre o mesmo
+  `claimFreeConversation` (`services/conversation-claim.ts`) que `ConversationService.assign` usa
+  na fila livre, com o mesmo audit `assign_conversation`. Perdeu a corrida →
+  `CONVERSATION_ALREADY_ASSIGNED` e nada é gravado nem enviado. Conversa já atribuída não muda
+  de dona. `createAutomated`, `createSystemEvent`, `createFromPatient` e `createFromPhone` não
+  atribuem. A rota de anexo chama `claimForAgent` antes de gravar a mídia (sem arquivo órfão)
+- `listByConversation` com `before` (D-237): as `limit` mensagens anteriores à mensagem
+  `before`, na ordem `(created_at, id)`, lida no banco pelo id (nunca por um `createdAt` vindo
+  do cliente — o fio tem milissegundos, a coluna tem microssegundos). `before` que não é desta
+  conversa → `NOT_FOUND` (`resource: 'message'`). Busca `limit + 1` linhas para saber se ainda
+  há histórico: `cursors.before` é o id da mais antiga devolvida, ou `null` no começo da conversa
+- `after`/`around` (D-230): mesmo cursor por id, lido no banco. `cursors.after` é o id da mais
+  nova devolvida quando existem mais novas, `null` na ponta da conversa
+- `search` (D-228): full-text `portuguese` sobre `crm_unaccent(content)` com a expressão e o
+  predicado do índice parcial da 043; sem apagadas, sem sistema; mais nova primeiro
 - `createFromAgent` → chama WhatsAppService.send() → atualiza `status` conforme callback.
   A mensagem é persistida ANTES do envio: falha de canal deixa a linha com
   `status: 'failed'` e devolve `MESSAGE_SEND_FAILED` (502) — a bolha não some da tela
@@ -162,6 +190,26 @@ interface que ProposalService/ApprovalService consomem. Instanciação:
 - `setStatus` com `externalId` que já é de uma cópia do celular (envio mais lento que a espera)
   apaga a cópia e grava o id na mensagem do CRM, na mesma transação; o service reemite
   `conversation.new_message`
+- **Citação (D-221):** `createFromAgent`/`createAttachmentFromAgent` aceitam `quotedMessageId`
+  (mesma conversa, não apagada — senão `NOT_FOUND`) e repassam ao driver `{ externalId, fromMe,
+  content }` da original; `createFromPatient`/`createFromPhone` aceitam `quotedExternalId`
+  (`stanzaId` do webhook)
+- **Reação (D-222):** `setAgentReaction` envia pelo canal ANTES de gravar; `emoji: null` remove.
+  `applyInboundReaction` é o webhook (`fromMe` decide o lado). Os dois emitem
+  `conversation.message_updated`
+- **Apagada/editada pelo remetente (D-220):** `applySenderDelete` grava `deleted_at` (nunca
+  `DELETE`), `applySenderEdit` guarda a versão anterior em `message_edits`. Os dois gravam audit log
+  sem o texto e emitem `conversation.message_updated`. `false` = alvo desconhecido/no-op
+- **Tiques (CRMLAB-67, D-225):** mensagem do atendimento no canal `whatsapp` nasce `pending`;
+  `confirmSent` → `sent`; falha → `failed`. `applyExternalStatus` (webhook Evolution
+  `MESSAGES_UPDATE` e callback Cloud API) só sobe na ordem `pending < sent < delivered < read`
+  (`failed` só de `pending`/`sent`) — a guarda está no `UPDATE` de `setStatusByExternalId` — e
+  emite `message.status_updated` quando mudou
+- **Reenvio (D-227):** `retryFailed(tenantId, conversationId, messageId)` reenvia a mesma linha
+  (`failed` → `pending` → `sent`/`failed`), com a citação original; anexo relê a mídia por
+  `MediaService.read`. Não é do atendimento, não está `failed` ou conversa encerrada → `CONFLICT`
+- **Presença (D-226/D-227):** `sendAgentPresence` (best-effort, sem fila, sem esperar) e
+  `emitPatientPresence` (webhook `PRESENCE_UPDATE` → WS `conversation.presence`, nada gravado)
 
 ---
 
@@ -782,6 +830,18 @@ export function createInsuranceService(deps: { db: DbClient; audit: AuditService
 
 ## 16. Extensões para conexão WhatsApp por QR (Onda 7 — Bloco B)
 
+> **CRMLAB-66 (D-223):** a lista de eventos do webhook é `EVOLUTION_WEBHOOK_EVENTS`
+> (`lib/evolution-client.ts`), usada por `createInstance` e `setWebhook`. `syncEvolutionWebhooks`
+> (`channel-settings.service.ts`), chamado no boot pelo `main.ts`, reaplica a lista em toda
+> instância `qr` — instância antiga passa a receber evento novo sem script manual.
+> `EvolutionClient` ganhou `setWebhook` e `sendReaction`; `sendText`/`sendMedia` aceitam `quoted`.
+>
+> **CRMLAB-67 (D-225..D-227):** a lista ganhou `MESSAGES_UPDATE` (ack → tique) e
+> `PRESENCE_UPDATE` (presença do paciente, só WS). `EvolutionClient.sendPresence(instance, phone,
+> presence, delay, apikey)` → `POST /chat/sendPresence/{instance}` (o Evolution v2 não tem
+> `presenceSubscribe`; esta rota assina antes de mandar). `WhatsAppDriver.sendPresence` é
+> opcional — só o driver Evolution implementa.
+
 **Responsabilidade:** conectar o WhatsApp do próprio laboratório via QR code (Evolution API),
 sem depender da API oficial da Meta. Estende `WhatsAppService` (§11) e `ChannelSettingsService`
 (§13); nenhuma tabela nova além das colunas de `tenant_channels` (SCHEMA.md §15).
@@ -1120,6 +1180,18 @@ chama (`import`) é este service.
   ordem importa: a proposta criada já entra na conciliação do mesmo chunk, que grava
   `lis_budgets.proposal_id` e espelha a requisição (selo). O total vai para
   `lis_imports.proposals_created`; os ids, para `announceBitlabProposals` depois do commit.
+- **Extrato de pagamentos (CRMLAB-53, D-188):** `consolidateLisRows` não decide mais o pagamento;
+  junta os pagamentos de todas as linhas do orçamento em `payments` (`paymentOf`, sem repetir
+  chave). Por chunk, na mesma transação: `upsertBudget` (sem `paid_value`/`paid_on`) →
+  `upsertPayments(tx, tenantId, importId, source, number, payments)` em `lis_budget_payments`
+  (SCHEMA.md §26a; `source` = `api` para `kind: 'sync'`, `planilha` para `kind: 'import'`) →
+  `recomputePaidValues(tx, tenantId, numbers)` → `createBitlabProposals` → `reconcileBudgets`. A
+  proposta e a conciliação leem o recebido já recalculado (regra em BUSINESS_RULES.md §11.11).
+  `purge` apaga também o extrato do tenant.
+- **Planilha é plano B (D-189 item 4):** `import` lê as Regras (`readFunnelRules`, §26) antes do
+  parser; com `lisSource.spreadsheetImport.enabled = false` (padrão) lança
+  `SPREADSHEET_IMPORT_DISABLED` (409) e nada é gravado. `ingestRows` não tem a trava: a
+  sincronização usa o mesmo caminho.
 
 ---
 
@@ -1147,7 +1219,9 @@ consumidor):**
 - **`req`** — `DISTINCT ON (requisition_number) ... ORDER BY requisition_number, paid_value
   DESC`: dedupe por requisição, maior `paid_value` vence (BUSINESS_RULES.md §11) — a mesma
   requisição pode aparecer em duas linhas de `lis_budgets` (reimportação com pagamento
-  atualizado), e só a de maior valor pago conta.
+  atualizado), e só a de maior valor pago conta. Desde a D-188 (CRMLAB-53) o `paid_value` de cada
+  linha já é a soma dos pagamentos ativos do extrato; o `DISTINCT ON` só escolhe entre orçamentos
+  diferentes da mesma requisição (BUSINESS_RULES.md §11.2).
 - **`paid`** — sobre `req`, janela de **pagamento**: `paid_on` dentro do período pedido e
   `paid_value > 0`.
 
@@ -1313,9 +1387,14 @@ ao agendador):
 8. Libera a trava num `finally`.
 
 **Regras:**
-- **Intervalo padrão de 2 min** (`LIS_SYNC_INTERVAL_MS=120000`, D-199). O tique é ignorado
-  inteiro enquanto o anterior ainda roda (`tickInProgress`), além da trava por tenant.
+- **Intervalo padrão de 30 s** (`LIS_SYNC_INTERVAL_MS=30000`, D-249; era 2 min na D-199). O tique
+  é ignorado inteiro enquanto o anterior ainda roda (`tickInProgress`), além da trava por tenant.
   `lis_sync.completed` sai em `info` só quando a rodada recebeu orçamentos; rodada vazia é `debug`.
+- **Marca que não andou = rodada vazia (D-249):** a janela incremental começa **na** marca
+  (inclusiva) e o Bitlab devolve de novo a linha da própria marca. Em `incremental`, se a
+  `marcaDagua` da resposta é igual à gravada, as linhas são descartadas: sem `lis_imports`, sem
+  reprocessar, `received: 0`. Linha gravada pelo Bitlab no mesmo segundo da marca depois da
+  consulta anterior fica para a releitura diária de 90 dias (D-189).
 - `runScheduledTick` roda os tenants **em série**, não em paralelo: é um por laboratório, e
   série não compete com as requisições da tela pelo pool.
 - O tique nunca lança: cada tenant tem o próprio `try/catch`. Um laboratório com erro não impede
@@ -1323,6 +1402,17 @@ ao agendador):
 - A chave nunca é logada, nunca vai para `last_error` e nunca aparece numa mensagem de erro
   (inclusive `error.cause`).
 - Auditoria: `update_lis_integration` (com `"[REDACTED]"`) e `run_lis_sync` (só no `runNow`).
+- **Duas marchas (CRMLAB-53, D-189):** `runForTenant(tenantId, triggeredBy, mode)` com `mode`
+  `incremental` | `full` | `auto` (só o agendador passa `auto`). O estorno não volta na janela
+  incremental (BUSINESS_RULES.md §11.10), então:
+  - `auto` vira `full` quando o relógio de Brasília passou de `FULL_SCAN_HOUR` (**03:00**) e
+    `last_full_scan_on` é `NULL` ou anterior a hoje; senão, `incremental`;
+  - `full` ignora a marca: `dataInicio` = hoje − `LIS_SYNC_INITIAL_DAYS` (90) às 00:00:00. Grava
+    pelo mesmo `ingestRows`, e o estorno atualiza a situação pelo `ID_PAGAMENTO` (§19);
+  - sucesso em `full` grava `last_full_scan_on = hoje`; falha não grava, e o próximo tique tenta
+    de novo;
+  - a marca **nunca recua**: `finishRun` guarda a maior entre a gravada e a recebida;
+  - **"Sincronizar agora" é sempre `incremental`**. A rodada `full` sai em `info` mesmo vazia.
 
 ### 24.1 Contrato assumido da API de Orçamentos do Bitlab (`backend/src/lib/bitlab-client.ts`)
 
@@ -1350,6 +1440,14 @@ emendar aqui o que divergir, como foi feito com a sandbox em 18/09.
 `ID_CPF`, `CONVENIO1..3` (string \| null), `VL_TOTAL1..3` (number \| null), `MEDIA_CONVENIO`,
 `QTD_EXAMES`, `USUÁRIO`, `REQUISICAO` (string \| null, `posto-requisição`), `CONVENIO_REQUISICAO`,
 `VALOR_REQUISICAO`, `Valor_Pago`, `Data_Pagamento` (data/hora \| null), `CONTA_NULO` (0 \| 1).
+
+**Pagamento (aditivos na v1, conferido 28/09/2026, CRMLAB-53):** a resposta traz **uma linha por
+pagamento**. `ID_PAGAMENTO` (number, único), `SITUACAO_PAGAMENTO` (`ATIVO` \| `ESTORNADO`),
+`DATA_ESTORNO` (data/hora \| null), `FORMA_PAGAMENTO` (`Dinheiro`, `Cartão Crédito`, `Cartão
+Débito`, `PIX`, `Boleto`…), `BANDEIRA_CARTAO` (string \| null). Linha de orçamento sem pagamento
+vem com todos eles `null`. A linha estornada **continua saindo**, com `ESTORNADO`; o filtro
+`alteracao` **não** considera `DATA_ESTORNO` (5 casos testados em 28/09). Todos opcionais no
+schema: a falta deles não quebra a rodada, e a linha cai na chave da planilha (D-188 item 2).
 
 **Tolerância na borda** (lições da sandbox de 18/09, `Avaliacao_APIs_Bitlab_2026-09-18.md`):
 - Envelope validado com zod. Os campos que usamos são obrigatórios no schema, os desconhecidos
@@ -1476,6 +1574,10 @@ export interface FunnelRulesService {
 - Quem consome: `ProposalService.create` (`origin.manualInCrm`, D-193) e
   `ProposalService.updateStatus` (`manualMoves` via `checkTransition`, D-192), lendo com
   `readFunnelRules` na mesma transação. Os cards CRMLAB-57..60 leem pelo mesmo ponto.
+- **Seção `lisSource` (CRMLAB-53, D-189 item 4):** `lisSource.spreadsheetImport.enabled`, padrão
+  `false` (emenda à D-191: a API é a carga principal). Folha booleana comum, sem validação
+  própria. Quem consome: `LisImportService.import` (§19), que recusa com
+  `SPREADSHEET_IMPORT_DISABLED`.
 
 ---
 
@@ -1496,7 +1598,9 @@ export interface FunnelTimerService {
   runForTenant(tenantId: string): Promise<FunnelTimerTenantResult>;
 }
 export function createFunnelTimerService(deps: {
-  db: DbClient; wsHub: WsHub; cache: CacheService; now?: () => Date;
+  db: DbClient; wsHub: WsHub; cache: CacheService;
+  reengagement?: ReengagementService; // CRMLAB-62: roda no fim de cada laboratório (§28)
+  now?: () => Date;
 }): FunnelTimerService;
 
 /** A transição de sistema do motor, na transação de quem chama (D-208, D-210). `null` = nada mudou. */
@@ -1514,8 +1618,8 @@ export function resetFunnelTimerLocksForTest(): void;
 
 **Tique** (D-205):
 1. `tickInProgress` no módulo: tique sobreposto é ignorado.
-2. `withoutTenant()` → só os `tenant_id` de tenants ativos com proposta aberta (exceção de RLS
-   declarada em SCHEMA.md).
+2. `withoutTenant()` → só os `tenant_id` de tenants ativos com proposta aberta **ou com o
+   reingajamento ligado** em `funnel_rules` (exceção de RLS declarada em SCHEMA.md; CRMLAB-62).
 3. Por laboratório, em série: `readFunnelRules` (`withTenant`); para cada regra de prazo
    **ligada** e cujo passo está na matriz vigente (`buildAllowedTransitions`, D-206 item 3),
    seleciona até `FUNNEL_TIMER_BATCH` cartões do estágio de origem cuja entrada no estágio (última
@@ -1529,9 +1633,11 @@ export function resetFunnelTimerLocksForTest(): void;
    `stale_alerted_at` (condicionado a ainda estar nulo e o cartão ainda em `novo_contato`) e resolve
    os destinatários (responsável ativo; senão gestores e admins ativos). Depois do commit:
    `emitToUser` `proposal.stale_alert` para cada um.
-5. Erro num laboratório → `warn` `funnel_timer.tenant_failed`, segue para o próximo. Log `info`
-   `funnel_timer.completed` com `{ tenantId, moved, alerted }` quando houve algo; `debug`
-   `funnel_timer.tick_empty` quando nada aconteceu.
+5. Reingajamento (§28), se injetado: `reengagement.runForTenant(tenantId, agora)`. Falha dele →
+   `warn` `reengagement.tenant_failed`, sem desfazer o que o funil fez.
+6. Erro num laboratório → `warn` `funnel_timer.tenant_failed`, segue para o próximo. Log `info`
+   `funnel_timer.completed` com `{ tenantId, moved, alerted, reengaged }` quando houve algo;
+   `debug` `funnel_timer.tick_empty` quando nada aconteceu.
 
 **`applyTimerTransition`** (D-208, D-210): chama `applySystemTransition` com `from: step.from`,
 `source: "rule"`, `reasonLost: "silencio"`, `automation`, `at: now`, `auditExtra` com a regra e um
@@ -1540,6 +1646,63 @@ mais o de origem, se a última linha do histórico para o estágio não é mais 
 um fato apareceu. `UPDATE` do estágio (`perdido`: `reason_lost = 'silencio'`, `closed_at`),
 histórico com `changed_by NULL` e `automation`, mensagem de sistema se houver conversa, audit
 `update_proposal_status` com `userId: null` e `newValues.source: "rule"`.
+
+---
+
+## 28. ReengagementService — reingajamento da conversa (CRMLAB-62 — D-211..D-214)
+
+**Responsabilidade:** mandar sozinho a mensagem de reingajamento quando a atendente falou por
+último e o paciente parou de responder. Sem rota: roda **dentro do tique do motor de tempo** (§27).
+
+```typescript
+// backend/src/services/reengagement.service.ts
+export const REENGAGEMENT_BATCH = 200; // silêncios por laboratório, por tique
+
+export interface ReengagementService {
+  runForTenant(tenantId: string, at: Date): Promise<{ sent: number; discarded: number; failed: number }>;
+}
+export function createReengagementService(deps: {
+  db: DbClient;
+  sender: { createAutomated(tenantId: string, conversationId: string, content: string): Promise<Message> };
+}): ReengagementService;
+```
+
+`planReengagement`, `nextOpening`, `nationalHolidays`, `isHoliday`, `localDateOf`,
+`REENGAGEMENT_STALE_GRACE_MS` e `REENGAGEMENT_LOOKBACK_DAYS` estão em
+`shared/types/reengagement.types.ts` (funções puras).
+
+**Por laboratório** (D-211/D-212):
+1. `readFunnelRules`: 1º desligado → nada. Canal WhatsApp que não está ativo **em `qr`** → nada
+   (D-214). Lê o horário de funcionamento (`readBusinessHours`, de `tenant_settings`).
+2. `selectSilences`: conversas `active` de WhatsApp cuja âncora (última `agent` com
+   `automation` nulo) é posterior a `agora − (horas do 1º + do 2º) − 8 dias`, sem mensagem do
+   paciente depois dela e sem o 2º decidido. Até `REENGAGEMENT_BATCH`, da mais antiga.
+3. Feriados do laboratório no intervalo (`holiday.repository.listDates`).
+4. Para cada silêncio, `planReengagement` → `none` | `wait` | `discard` | `send`.
+5. **Descarte** (`holiday`/`stale`): grava a decisão `discarded` com o motivo; `info`
+   `reengagement.discarded`.
+6. **Envio:** numa transação, `lockSilence` (conversa `FOR UPDATE`, ainda ativa, mesma âncora,
+   sem resposta do paciente) e, no 2º, o 1º ainda `sent`; grava a decisão `sent` (reserva,
+   `ON CONFLICT DO NOTHING`). Depois do commit, `MessageService.createAutomated`: mensagem
+   `agent` sem autor com `automation = 'reengagement'`, `conversation.new_message`, envio pelo
+   canal. Sucesso: `message_id` na decisão, `info` `reengagement.sent`. Falha do canal: mensagem
+   `failed`, decisão `failed`, `warn` `reengagement.failed`. Não há nova tentativa.
+
+## 29. HolidayService — feriados (CRMLAB-62 — D-213)
+
+**Responsabilidade:** `GET/POST/DELETE /settings/holidays` (API_CONTRACTS.md §6d). Dono de
+`tenant_holidays` (SCHEMA.md §34). O `GET` junta `nationalHolidays(year)` (calculados) e os do
+laboratório no ano. `POST`/`DELETE` só manager/admin, com audit `create_holiday`/`delete_holiday`.
+
+```typescript
+// backend/src/services/holiday.service.ts
+export interface HolidayService {
+  list(ctx: TenantContext, year: number): Promise<HolidaysResponse>;
+  create(ctx: TenantContext, dto: unknown): Promise<Holiday>;      // CONFLICT em data repetida
+  remove(ctx: TenantContext, id: string): Promise<void>;           // NOT_FOUND se não é do tenant
+}
+export function parseYear(raw: unknown, now?: Date): number;       // VALIDATION_ERROR fora de 2000..2100
+```
 
 ---
 

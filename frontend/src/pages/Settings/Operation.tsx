@@ -63,7 +63,7 @@ interface TileProps {
 
 function Tile({ label, value, hint }: TileProps) {
   return (
-    <div className="flex flex-col gap-xs rounded-lg border border-neutral-200 bg-surface p-md">
+    <div className="flex flex-col gap-xs rounded-lg border border-neutral-200 bg-neutral-100 p-md">
       <span className="font-body text-caption text-neutral-600">{label}</span>
       <span className="font-heading text-metric text-text tabular-nums">{value}</span>
       {hint && <span className="font-body text-caption text-neutral-600">{hint}</span>}
@@ -397,7 +397,7 @@ export function PendingDecisionCard({ item, onOpen }: PendingDecisionCardProps) 
       type="button"
       onClick={onOpen}
       aria-label={`Abrir proposta de ${item.patientName ?? 'paciente sem nome'}`}
-      className="flex w-full flex-col gap-sm rounded-lg border border-neutral-200 bg-surface p-md text-left transition-colors hover:border-accent"
+      className="flex w-full flex-col gap-sm rounded-lg border border-neutral-200 bg-neutral-100 p-md text-left transition-colors hover:border-accent"
     >
       <div className="flex flex-wrap items-center justify-between gap-sm">
         <span className="font-semibold text-text">{item.patientName ?? 'Sem nome'}</span>

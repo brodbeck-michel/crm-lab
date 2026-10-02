@@ -2419,9 +2419,10 @@ limpa `lis_budget_number`, `lis_requisition_number`, `lis_paid_value`, `lis_paid
 status resultante da conciliação.
 
 Gera audit log `update_proposal_lis_reference` (`oldValues`/`newValues`: `lisBudgetNumber`). Se
-a conciliação levou a proposta a `ganho`, gera **também** o `update_proposal_status` com
-`newValues.source: "lis"`, o histórico, a mensagem de sistema e o WS `proposal.status_changed`,
-iguais aos da importação (D-119 item 4).
+a conciliação moveu a proposta (pagamento → `ganho`, requisição → `negociacao`, D-252), gera
+**também** o `update_proposal_status` com `newValues.source: "lis_payment"` ou
+`"lis_requisition"`, o histórico, a mensagem de sistema e o WS `proposal.status_changed`, iguais
+aos da importação.
 
 **Absorção do cartão automático (CRMLAB-57, D-198):** se o número já pertence a uma proposta
 de origem `bitlab` em `novo_contato`, nunca enviada (`sentAt: null`) e sem conversa, essa

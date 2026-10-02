@@ -2,13 +2,13 @@
  * LisReconcileService — SERVICES.md §25 (CRMLAB-52, D-119).
  *
  * Casa `lis_budgets` com `proposals` pelo numero do orcamento do LIS e aplica
- * as regras de D-119. Nao tem rota: e chamado por
+ * a regua de fatos (D-252, substitui D-119 item 4 e D-204). Nao tem rota: e chamado por
  * `ProposalService.setLisReference` e pelo hook por chunk de
  * `LisImportService.ingestRows`, SEMPRE dentro da transacao de quem chama
  * (`db.withTenant` nao aninha).
  *
- * Origem `crm`: D-119 (requisicao -> `ganho`). Origem `bitlab`: D-204
- * (pagamento -> `ganho`, requisicao -> `negociacao`, pelas Regras).
+ * Qualquer origem (`crm` ou `bitlab`): pagamento -> `ganho`, requisicao ->
+ * `negociacao`, cada uma pela regra das Regras (D-252).
  *
  * Devolve as transicoes de sistema feitas (`SystemTransition`). Quem chama
  * anuncia com `announceLisWins` DEPOIS do commit: um WS emitido dentro da
@@ -24,7 +24,6 @@ import { readFunnelRules } from './funnel-rules.service.js';
 import {
   announceSystemTransitions,
   applySystemTransition,
-  markWonFromLis,
   proposalRef,
   type SystemTransition,
 } from './proposal.service.js';
@@ -53,12 +52,12 @@ function moneyOrNull(value: unknown): number | null {
 }
 
 /**
- * Regua do cartao `bitlab` (D-204, CRMLAB-60 parcial — provisoria ate o
- * CRMLAB-53): pagamento -> `ganho` de qualquer estagio aberto; requisicao em
- * `orcamento_enviado`/`follow_up` -> `negociacao`. Cada uma so com a regra das
- * Regras ligada. Requisicao sozinha nunca leva a `ganho`.
+ * Regua de fatos do LIS (D-252, CRMLAB-60), para qualquer origem: pagamento
+ * (`paid_on` derivado do extrato, D-188) -> `ganho` de qualquer estagio aberto;
+ * requisicao em `orcamento_enviado`/`follow_up` -> `negociacao`. Cada uma so
+ * com a regra das Regras ligada. Requisicao sozinha nunca leva a `ganho`.
  */
-async function applyBitlabRule(
+async function applyLisFactsRule(
   tx: DbTx,
   tenantId: string,
   row: ReconcileRow,
@@ -93,7 +92,7 @@ async function reconcileRows(
   rows: ReconcileRow[],
 ): Promise<SystemTransition[]> {
   const transitions: SystemTransition[] = [];
-  // Lidas uma vez por chamada, e so se houver cartao `bitlab` (D-190 item 2).
+  // Lidas uma vez por chamada, e so se houver proposta aberta (D-190 item 2).
   let rules: FunnelRules | null = null;
   for (const row of rows) {
     const requisition = row.requisition_number;
@@ -106,20 +105,23 @@ async function reconcileRows(
       ]);
     }
 
-    // `perdido` nao reabre (item 5). O conflito e auditado uma vez so: quando a
-    // requisicao ainda nao estava espelhada na proposta.
-    if (
-      requisition !== null &&
-      row.status === 'perdido' &&
-      row.lis_requisition_number !== requisition
-    ) {
+    // `perdido` nao reabre (D-252 item 4). O conflito e auditado uma vez por
+    // fato: quando a requisicao ou a data de pagamento ainda nao estava
+    // espelhada na proposta.
+    const newRequisition = requisition !== null && row.lis_requisition_number !== requisition;
+    const newPayment = row.paid_on !== null && row.lis_paid_on !== row.paid_on;
+    if (row.status === 'perdido' && (newRequisition || newPayment)) {
       await auditRepo.insert(tx, {
         tenantId,
         userId: null,
         action: 'lis_reconcile_conflict',
         entityType: 'proposal',
         entityId: row.proposal_id,
-        newValues: { lisBudgetNumber: row.lis_budget_number, lisRequisitionNumber: requisition },
+        newValues: {
+          lisBudgetNumber: row.lis_budget_number,
+          lisRequisitionNumber: requisition,
+          lisPaidOn: row.paid_on,
+        },
       });
     }
 
@@ -155,15 +157,8 @@ async function reconcileRows(
     }
 
     if (!open) continue;
-    let transition: SystemTransition | null = null;
-    if (bitlab) {
-      // D-204 (emenda D-119/D-197): pagamento e requisicao, pelas Regras.
-      rules ??= await readFunnelRules(tx, tenantId);
-      transition = await applyBitlabRule(tx, tenantId, row, rules);
-    } else if (requisition !== null) {
-      // Origem `crm`: D-119 intacta — requisicao fecha como ganho.
-      transition = await markWonFromLis(tx, tenantId, row.proposal_id);
-    }
+    rules ??= await readFunnelRules(tx, tenantId);
+    const transition = await applyLisFactsRule(tx, tenantId, row, rules);
     if (transition) transitions.push(transition);
   }
   return transitions;

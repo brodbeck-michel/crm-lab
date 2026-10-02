@@ -2927,6 +2927,18 @@ Branch `feature/CRMLAB-59-motor-tempo` (de `integ/onda-funil`). Decisões D-205.
   no processo/teste ou parser de tipo no driver) é um card de Kernel.
 
 
+### ✅ CRMLAB-60 (item 3) — transição de sistema única para LIS e motor de tempo (2026-09-28)
+
+Branch `feature/CRMLAB-60-unifica-transicao-sistema`. Decisão D-210. Só refatoração: nenhum
+comportamento muda.
+
+- `applyTimerTransition` (motor de tempo, D-208) virou uma chamada a `applySystemTransition`, que
+  ganhou `from`, `guard` (conferência sob o `FOR UPDATE`), `reasonLost`, `automation`, `at` e
+  `auditExtra`; `SystemTransitionSource` ganhou `rule`. O motor anuncia pelo mesmo
+  `announceSystemTransitions` do LIS.
+- Testes: `tests/proposals` (163) e `tests/lis` (222) verdes, typecheck e lint do backend limpos.
+- O resto do card entrou na mesma branch em 02/10 (entrada abaixo).
+
 ### ✅ CRMLAB-62 — reingajamento da conversa + feriados (2026-09-28)
 
 Branch `feature/CRMLAB-62-reingajamento` (de `main` v1.23.0). Decisões D-211..D-214, migração
@@ -3054,3 +3066,19 @@ Branch `feature/CRMLAB-81-atendimento-whatsapp` (de `main` v1.27.0). Decisão D-
 - **Pedido ao CRMLAB-82 (dono do `InboxLayout`):** a borda entre a coluna de conversas e a
   conversa (`border-r border-neutral-300` da seção `inbox-list`) ainda não está no tom do tema.
   Para fechar o visual, trocar por `border-chat-line` só no Atendimento.
+
+### ✅ CRMLAB-60 — régua de fatos do LIS para todas as origens (2026-10-02)
+
+Branch `feature/CRMLAB-60-unifica-transicao-sistema` (com merge da `main` v1.28.0). Decisão D-252,
+que substitui D-119 itens 4–6 e D-204. Junto com o item 3 (D-210) num PR único.
+
+- A origem `crm` passa a seguir a régua do cartão `bitlab` (decisão do Michel): pagamento no LIS
+  → `ganho` de qualquer estágio aberto; requisição em `orcamento_enviado`/`follow_up` →
+  `negociacao`; requisição em `novo_contato` só dá o selo "Pré-cadastro feito". Tudo pelas
+  regras liga/desliga. Sai `markWonFromLis`.
+- O Ganho já usa o `paid_on` derivado do extrato do CRMLAB-53 (`recomputePaidValues` antes da
+  conciliação). Testes cobrem pagamento sem requisição, requisição sem pagamento e regras
+  desligadas na origem `crm`.
+- `perdido` que recebe pagamento (não só requisição) também audita `lis_reconcile_conflict`; a
+  proposta mostra "Conflito com o LIS" no modal.
+- Analytics sem código novo: `realized.wonFromLis` segue por `lis_reconciled_at`.

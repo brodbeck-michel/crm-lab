@@ -217,7 +217,7 @@ describe('PATCH /proposals/:id/lis-reference', () => {
     expect((await link(managerA, proposal.id, '1')).status).toBe(200);
   });
 
-  it('orcamento ja importado com requisicao: vai a ganho na propria chamada', async () => {
+  it('orcamento ja importado com pagamento: vai a ganho na propria chamada', async () => {
     await ingest(tenantA, [row('1234', PAID)]);
     const proposal = await proposalOf(attendantA, 'novo_contato');
 
@@ -236,26 +236,27 @@ describe('PATCH /proposals/:id/lis-reference', () => {
     expect(statusAudit[0]).toMatchObject({
       user_id: null,
       old_values: { status: 'novo_contato' },
-      new_values: { status: 'ganho', source: 'lis' },
+      new_values: { status: 'ganho', source: 'lis_payment' },
     });
     expect((await historyOf(proposal.id)).at(-1)).toEqual({ status: 'ganho', changed_by: null });
   });
 
   it('null desfaz o vinculo e limpa o espelho e o proposal_id do orcamento', async () => {
-    await ingest(tenantA, [row('1234', { paidValue: 50, paidOn: '2026-09-22' })]);
+    // So requisicao: com pagamento a proposta iria a ganho e o vinculo travaria (D-252 item 1).
+    await ingest(tenantA, [row('1234', { requisitionNumber: '001-1', requisitionValue: 100 })]);
     const proposal = await proposalOf(attendantA);
-    expect(((await link(attendantA, proposal.id, '1234')).body as ProposalDetail).lisPaidValue).toBe(50);
+    expect(((await link(attendantA, proposal.id, '1234')).body as ProposalDetail).lisRequisitionNumber).toBe('001-1');
     expect(await budgetLink(tenantA, '1234')).toBe(proposal.id);
 
     const res = await link(attendantA, proposal.id, null);
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ lisBudgetNumber: null, lisPaidValue: null, lisPaidOn: null });
+    expect(res.body).toMatchObject({ lisBudgetNumber: null, lisRequisitionNumber: null, lisPaidValue: null, lisPaidOn: null });
     expect(await budgetLink(tenantA, '1234')).toBeNull();
   });
 });
 
 describe('conciliacao pela importacao/sincronizacao (ingestRows)', () => {
-  it('requisicao nova leva a ganho, conta em proposalsWon e emite WS depois', async () => {
+  it('pagamento novo leva a ganho, conta em proposalsWon e emite WS depois', async () => {
     const proposal = await proposalOf(attendantA, 'negociacao');
     await link(attendantA, proposal.id, '1234');
 
@@ -309,15 +310,44 @@ describe('conciliacao pela importacao/sincronizacao (ingestRows)', () => {
     expect(after.lisReconciledAt).toBeNull();
     const conflicts = await auditOf(proposal.id, 'lis_reconcile_conflict');
     expect(conflicts).toHaveLength(1);
-    expect(conflicts[0]?.new_values).toEqual({ lisBudgetNumber: '1234', lisRequisitionNumber: '001-0009876' });
+    expect(conflicts[0]?.new_values).toEqual({
+      lisBudgetNumber: '1234',
+      lisRequisitionNumber: '001-0009876',
+      lisPaidOn: '2026-09-22',
+    });
   });
 
-  it('pagamento sem requisicao grava valor e data, sem mudar o estagio', async () => {
+  it('perdido que recebe so o pagamento tambem audita o conflito (D-252 item 4)', async () => {
+    const proposal = await proposalOf(attendantA, 'perdido', { reasonLost: 'preco' });
+    await link(attendantA, proposal.id, '1234');
+    await ingest(tenantA, [row('1234', { paidValue: 80, paidOn: '2026-09-23' })]);
+    await ingest(tenantA, [row('1234', { paidValue: 80, paidOn: '2026-09-23' })]);
+
+    expect((await detail(attendantA, proposal.id)).status).toBe('perdido');
+    const conflicts = await auditOf(proposal.id, 'lis_reconcile_conflict');
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0]?.new_values).toEqual({
+      lisBudgetNumber: '1234',
+      lisRequisitionNumber: null,
+      lisPaidOn: '2026-09-23',
+    });
+  });
+
+  it('pagamento sem requisicao tambem leva a ganho e grava valor e data (D-252 item 1)', async () => {
     const proposal = await proposalOf(attendantA);
     await link(attendantA, proposal.id, '1234');
     await ingest(tenantA, [row('1234', { paidValue: 80, paidOn: '2026-09-23' })]);
     const after = await detail(attendantA, proposal.id);
-    expect(after).toMatchObject({ status: 'orcamento_enviado', lisPaidValue: 80, lisPaidOn: '2026-09-23' });
+    expect(after).toMatchObject({ status: 'ganho', lisPaidValue: 80, lisPaidOn: '2026-09-23' });
+  });
+
+  it('requisicao sem pagamento leva a negociacao, sem contar como ganho (D-252 item 2)', async () => {
+    const proposal = await proposalOf(attendantA, 'follow_up');
+    await link(attendantA, proposal.id, '1234');
+    const result = await ingest(tenantA, [row('1234', { requisitionNumber: '001-1', requisitionValue: 100 })]);
+    expect(result.proposalsWon).toBe(0);
+    const after = await detail(attendantA, proposal.id);
+    expect(after).toMatchObject({ status: 'negociacao', lisReconciledAt: null, lisRequisitionNumber: '001-1' });
   });
 
   it('orcamento do tenant B com o mesmo numero nao concilia proposta do tenant A', async () => {
@@ -375,7 +405,8 @@ describe('GET /analytics/conversion -> realized', () => {
     const range = `?startDate=${today}&endDate=${today}`;
     const asManager = await app.agent.get(`/api/v1/analytics/conversion${range}`).set(app.auth(managerA));
     expect(asManager.status).toBe(200);
-    expect((asManager.body as FunnelReport).realized).toEqual({ wonFromLis: 1, paidCount: 2, paidValue: 190 });
+    // Pagamento sem requisicao tambem e ganho (D-252 item 1): as duas contam.
+    expect((asManager.body as FunnelReport).realized).toEqual({ wonFromLis: 2, paidCount: 2, paidValue: 190 });
 
     const asAttendant = await app.agent.get(`/api/v1/analytics/conversion${range}`).set(app.auth(attendantA));
     expect((asAttendant.body as FunnelReport).realized).toEqual({ wonFromLis: 1, paidCount: 1, paidValue: 150 });

@@ -9,9 +9,9 @@ import { Button, Chip, Input, Tooltip, useToast } from '@/components/ui';
 
 /**
  * Nº do orçamento no LIS (PAGES.md §6, CRMLAB-52, D-119). O vínculo é o que
- * permite a conciliação: quando esse orçamento aparece com requisição no
- * Bitlab, a proposta vai para `ganho` sozinha. Em `ganho` o campo é só leitura
- * (o backend recusa com PROPOSAL_ALREADY_CLOSED).
+ * permite a conciliação (D-252): pagamento no Bitlab leva a proposta a `ganho`,
+ * requisição leva a `negociacao`, cada um pela regra das Regras. Em `ganho` o
+ * campo é só leitura (o backend recusa com PROPOSAL_ALREADY_CLOSED).
  */
 export default function LisReferenceSection({ proposal }: { proposal: ProposalDetail }) {
   const update = useUpdateProposalLisReference();
@@ -22,6 +22,10 @@ export default function LisReferenceSection({ proposal }: { proposal: ProposalDe
 
   // Na origem `bitlab` o número é a identidade do cartão (CRMLAB-57, D-195 item 7).
   const readOnly = proposal.status === 'ganho' || proposal.origin === 'bitlab';
+  // D-252 item 4: perdida não reabre sozinha; a atendente decide o que fazer.
+  const lisAfterLoss =
+    proposal.status === 'perdido' &&
+    (proposal.lisRequisitionNumber !== null || proposal.lisPaidOn !== null);
 
   const startEdit = () => {
     setValue(proposal.lisBudgetNumber ?? '');
@@ -38,9 +42,11 @@ export default function LisReferenceSection({ proposal }: { proposal: ProposalDe
         onSuccess: (detail) => {
           setEditing(false);
           if (detail.status === 'ganho' && proposal.status !== 'ganho') {
-            toast('Orçamento já convertido no LIS — proposta marcada como ganha', {
+            toast('Pagamento já registrado no LIS — proposta marcada como ganha', {
               tone: 'positive',
             });
+          } else if (detail.status === 'negociacao' && proposal.status !== 'negociacao') {
+            toast('Requisição já aberta no LIS — proposta em negociação', { tone: 'positive' });
           }
         },
         onError: (err) => {
@@ -83,6 +89,10 @@ export default function LisReferenceSection({ proposal }: { proposal: ProposalDe
               Informar
             </Button>
           ))}
+        {/* D-252: o cartão do Bitlab mostra o selo no bloco do orçamento (ProposalModal). */}
+        {proposal.origin === 'crm' &&
+          proposal.status === 'novo_contato' &&
+          proposal.lisRequisitionNumber !== null && <Chip tone="positive">Pré-cadastro feito</Chip>}
         {proposal.lisReconciledAt && (
           <Tooltip content={`Requisição Nº ${proposal.lisRequisitionNumber ?? '—'} no LIS`}>
             <Chip tone="positive">Conciliado</Chip>
@@ -110,6 +120,16 @@ export default function LisReferenceSection({ proposal }: { proposal: ProposalDe
           <Button variant="primary" size="sm" loading={update.isPending} onClick={save}>
             Salvar
           </Button>
+        </div>
+      )}
+
+      {lisAfterLoss && (
+        <div className="flex items-center gap-xs">
+          <Chip tone="attention">Conflito com o LIS</Chip>
+          <span className="text-caption text-neutral-600">
+            O LIS tem {proposal.lisPaidOn !== null ? 'pagamento' : 'requisição'} para este orçamento,
+            mas a proposta está perdida e não reabre sozinha.
+          </span>
         </div>
       )}
 

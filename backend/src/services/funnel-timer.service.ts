@@ -13,7 +13,7 @@
  * Fato vence tempo (D-206): cartao com pagamento nunca e movido aqui; com
  * requisicao, nao vai de `orcamento_enviado`/`follow_up` para `follow_up`/
  * `perdido`. A condicao e conferida de novo sob `FOR UPDATE` em
- * `applyTimerTransition`, o que torna a ordem com a regua de fatos irrelevante
+ * `applyTimerTransition` (a `applySystemTransition` com `guard`, D-210), o que torna a ordem com a regua de fatos irrelevante
  * para a consistencia.
  *
  * Uma transacao por cartao: um cartao problematico nao desfaz os outros, e o
@@ -35,11 +35,13 @@ import type { DbClient, DbTx } from '../db/types.js';
 import type { CacheService } from '../lib/cache.js';
 import { logger } from '../lib/logger.js';
 import type { WsHub } from '../lib/ws-hub.js';
-import * as auditRepo from '../repositories/audit.repository.js';
-import * as repo from '../repositories/proposal.repository.js';
-import { cachePrefix as analyticsCachePrefix } from './analytics.service.js';
 import { readFunnelRules } from './funnel-rules.service.js';
-import { proposalRef } from './proposal.service.js';
+import {
+  announceSystemTransitions,
+  applySystemTransition,
+  proposalRef,
+  type SystemTransition,
+} from './proposal.service.js';
 import type { ReengagementService } from './reengagement.service.js';
 
 /** Teto por regra, por laboratorio, por tique (D-205 item 7). */
@@ -99,11 +101,12 @@ function systemMessageFor(proposalId: string, step: TimerStep, automation: Stage
 }
 
 /**
- * A transicao de sistema do motor (D-208), na transacao de quem chama.
- * Devolve `false` (e nao grava nada) quando o cartao nao esta mais na
- * condicao lida: saiu do estagio, reentrou nele (outra linha de entrada) ou
- * ganhou um fato. WS e invalidacao de analytics ficam com quem chama, depois
- * do commit.
+ * A transicao do motor (D-208), na transacao de quem chama: a
+ * `applySystemTransition` com as travas do tique (D-210). Devolve `null` (e
+ * nao grava nada) quando o cartao nao esta mais na condicao lida: saiu do
+ * estagio, reentrou nele (outra linha de entrada) ou ganhou um fato. WS e
+ * invalidacao de analytics ficam com quem chama, depois do commit
+ * (`announceSystemTransitions`).
  */
 export async function applyTimerTransition(
   tx: DbTx,
@@ -116,77 +119,29 @@ export async function applyTimerTransition(
     enteredHistoryId: string;
     now: Date;
   },
-): Promise<boolean> {
+): Promise<SystemTransition | null> {
   const { tenantId, proposalId, step, automation, now } = input;
-  const current = await tx.query<{
-    status: string;
-    conversation_id: string | null;
-    lis_paid_on: unknown;
-    lis_requisition_number: string | null;
-  }>(
-    `SELECT status, conversation_id, lis_paid_on, lis_requisition_number
-       FROM proposals WHERE id = $1 AND tenant_id = $2 FOR UPDATE`,
-    [proposalId, tenantId],
-  );
-  const before = current.rows[0];
-  if (!before || before.status !== step.from) return false;
-  if (before.lis_paid_on !== null) return false;
-  if (factsBlock(step).requisition && before.lis_requisition_number !== null) return false;
-
-  const entry = await tx.query<{ id: string }>(
-    `SELECT id FROM proposal_status_history
-      WHERE proposal_id = $1 AND status = $2
-      ORDER BY changed_at DESC, id DESC LIMIT 1`,
-    [proposalId, step.from],
-  );
-  if (entry.rows[0]?.id !== input.enteredHistoryId) return false;
-
-  const nowIso = now.toISOString();
-  const lost = step.to === 'perdido';
-  const updated = await tx.query<{ id: string }>(
-    `UPDATE proposals
-        SET status = $3,
-            reason_lost = CASE WHEN $4::boolean THEN 'silencio' ELSE reason_lost END,
-            closed_at = CASE WHEN $4::boolean THEN $5::timestamp ELSE closed_at END,
-            updated_at = NOW()
-      WHERE id = $1 AND tenant_id = $2 AND status = $6
-      RETURNING id`,
-    [proposalId, tenantId, step.to, lost, nowIso, step.from],
-  );
-  if (updated.rows.length === 0) return false;
-
-  await repo.insertHistory(tx, {
-    tenantId,
-    proposalId,
-    status: step.to,
-    changedBy: null,
+  return applySystemTransition(tx, tenantId, proposalId, {
+    to: step.to,
+    from: step.from,
+    source: 'rule',
+    systemMessage: systemMessageFor(proposalId, step, automation),
+    reasonLost: 'silencio',
     automation,
-    changedAt: now,
-  });
-  if (before.conversation_id !== null) {
-    await repo.insertSystemMessage(tx, {
-      tenantId,
-      conversationId: before.conversation_id,
-      content: systemMessageFor(proposalId, step, automation),
-    });
-  }
-  await auditRepo.insert(tx, {
-    tenantId,
-    userId: null,
-    action: 'update_proposal_status',
-    entityType: 'proposal',
-    entityId: proposalId,
-    oldValues: { status: step.from },
-    newValues: {
-      status: step.to,
-      source: 'rule',
-      rule: automation.rule,
-      days: automation.days,
-      dayCounting: automation.dayCounting,
-      ...(lost ? { reasonLost: 'silencio' } : {}),
+    at: now,
+    auditExtra: { rule: automation.rule, days: automation.days, dayCounting: automation.dayCounting },
+    guard: async (locked) => {
+      if (locked.lisPaidOn !== null) return false;
+      if (factsBlock(step).requisition && locked.lisRequisitionNumber !== null) return false;
+      const entry = await tx.query<{ id: string }>(
+        `SELECT id FROM proposal_status_history
+          WHERE proposal_id = $1 AND status = $2
+          ORDER BY changed_at DESC, id DESC LIMIT 1`,
+        [proposalId, step.from],
+      );
+      return entry.rows[0]?.id === input.enteredHistoryId;
     },
   });
-  return true;
 }
 
 interface CandidateRow {
@@ -244,19 +199,8 @@ async function alertRecipients(tx: DbTx, tenantId: string, createdBy: string | n
 }
 
 export function createFunnelTimerService(deps: FunnelTimerServiceDeps): FunnelTimerService {
-  const { db, wsHub, cache } = deps;
+  const { db, wsHub } = deps;
   const now = deps.now ?? (() => new Date());
-
-  async function invalidateAnalytics(tenantId: string): Promise<void> {
-    try {
-      await cache.delByPrefix(analyticsCachePrefix(tenantId));
-    } catch (err) {
-      logger.warn('analytics.cache_invalidation_failed', {
-        tenantId,
-        detail: err instanceof Error ? err.message : 'erro desconhecido',
-      });
-    }
-  }
 
   async function runStep(
     tenantId: string,
@@ -286,7 +230,7 @@ export function createFunnelTimerService(deps: FunnelTimerServiceDeps): FunnelTi
       // O prazo e monotono na entrada: com a lista em ordem crescente, o
       // primeiro que nao venceu encerra a regra neste tique.
       if (!isDelayElapsed(new Date(candidate.entered_at), at, rule.days, automation.dayCounting)) break;
-      const done = await db.withTenant(tenantId, (tx) =>
+      const transition = await db.withTenant(tenantId, (tx) =>
         applyTimerTransition(tx, {
           tenantId,
           proposalId: candidate.id,
@@ -296,13 +240,9 @@ export function createFunnelTimerService(deps: FunnelTimerServiceDeps): FunnelTi
           now: at,
         }),
       );
-      if (!done) continue;
+      if (transition === null) continue;
       moved += 1;
-      wsHub.emitToTenant(tenantId, 'proposal.status_changed', {
-        proposalId: candidate.id,
-        status: step.to,
-      });
-      await invalidateAnalytics(tenantId);
+      await announceSystemTransitions(deps, tenantId, [transition]);
     }
     return moved;
   }

@@ -232,12 +232,14 @@ interface ProposalService {
   resendFromCard(ctx: TenantContext, id: string, message: string): Promise<Message>;
   relinkConversation(ctx: TenantContext, id: string, conversationId: string): Promise<ProposalDetail>;
   setResponsible(ctx: TenantContext, id: string, userId: string): Promise<ProposalDetail>;
-  // applySystemTransition(tx, tenantId, proposalId, { to, source, systemMessage, lisReconciled? })
-  //   : Promise<SystemTransition | null> — transição de SISTEMA (D-204 item 5), e
-  // announceSystemTransitions(deps, tenantId, transitions) depois do commit.
-  // markWonFromLis(tx, tenantId, proposalId): Promise<SystemTransition | null> — função exportada de
-  // proposal.service.ts, não método: roda na transação de quem chama (LisReconcileService, §25)
-  // e não precisa das deps do service.
+  // applySystemTransition(tx, tenantId, proposalId, { to, source, systemMessage, lisReconciled?,
+  //   from?, guard?, reasonLost?, automation?, at?, auditExtra? })
+  //   : Promise<SystemTransition | null> — transição de SISTEMA (D-204 item 5; LIS, D-252, e
+  //   motor de tempo, D-210), e
+  // announceSystemTransitions(deps, tenantId, transitions) depois do commit. Funções exportadas
+  // de proposal.service.ts, não métodos: rodam na transação de quem chama (LisReconcileService,
+  // §25; motor de tempo, §27) e não precisam das deps do service. O antigo `markWonFromLis`
+  // (D-119) saiu na D-252.
 }
 ```
 
@@ -254,8 +256,10 @@ interface ProposalService {
 - `ganho`/`perdido` setam `closedAt`; só saem dali se a regra "Reabrir" deixar (limpa `closedAt`
   e `reasonLost`; ganho conciliado pelo LIS nunca reabre)
 - Toda mutação → AuditService
-- **`markWonFromLis` (D-119 item 4)** é a única transição que ignora `ALLOWED_TRANSITIONS`: vai
-  de **qualquer** estágio não terminal para `ganho`, porque quem fechou foi o LIS. Ela e o
+- **Transição de sistema (`applySystemTransition`; LIS pela D-252, antes `markWonFromLis` da
+  D-119 item 4)** é a única que ignora `ALLOWED_TRANSITIONS`: vai de **qualquer** estágio não
+  terminal para o destino, porque quem moveu foi o LIS (ou o motor de tempo). O texto abaixo é o
+  histórico da D-119. Ela e o
   `updateStatus` compartilham um `transitionInTx(tx, …)` extraído do `updateStatus`: histórico,
   `closedAt`, mensagem de sistema ("Orçamento convertido em requisição no LIS"), invalidação de
   analytics, audit `update_proposal_status` com `newValues.source: "lis"` e `userId: null`, e WS
@@ -1483,28 +1487,24 @@ reconcileProposal(tx: DbTx, tenantId: string, proposalId: string): Promise<Syste
 announceLisWins(deps: { wsHub; cache }, tenantId: string, transitions: readonly SystemTransition[]): Promise<void>;
 ```
 
-**Regras** (D-119):
+**Regras** (D-119, régua da D-252):
 - Junção: `proposals.lis_budget_number = lis_budgets.number`, mesmo `tenant_id`. Grava
   `lis_budgets.proposal_id` e espelha em `proposals` os campos `lis_requisition_number`,
   `lis_paid_value` e `lis_paid_on`, **só quando algum mudou** (`IS DISTINCT FROM`).
-- `requisition_number` preenchido + proposta não terminal → `ProposalService.markWonFromLis`, e
-  grava `lis_reconciled_at`.
-- `requisition_number` preenchido + proposta `perdido` → audit `lis_reconcile_conflict`
-  (`entityType: "proposal"`, `newValues: { lisBudgetNumber, lisRequisitionNumber }`), uma vez
-  só: não repete se `lis_requisition_number` já era o mesmo.
-- Sem requisição: só espelha pagamento/valor, se houver. Status não muda.
-- As emissões de WS de `markWonFromLis` são acumuladas (os ids devolvidos) e disparadas por quem
-  chama com `announceLisWins` **depois do commit**, para não anunciar um `ganho` que um rollback
-  desfaria. O audit `update_proposal_status`/`lis_reconcile_conflict` entra **na** transação
-  (`auditRepo.insert`), porque `db.withTenant` não aninha e ele tem que sumir junto num rollback.
-- **Origem `bitlab` — régua da D-204 (CRMLAB-60 parcial, emenda D-119/D-197):** a proposta
-  `bitlab` **não** chama `markWonFromLis`. Lê as Regras (uma vez por chamada) e usa
-  `applySystemTransition`: `paid_on` preenchido (qualquer valor) em qualquer estágio aberto →
+- **Régua de fatos (D-252, qualquer origem):** proposta não terminal → lê as Regras (uma vez por
+  chamada) e usa `applySystemTransition`: `paid_on` preenchido (qualquer valor; derivado do
+  extrato por `recomputePaidValues` antes da conciliação, D-188) em qualquer estágio aberto →
   `ganho` (`source: "lis_payment"`, grava `lis_reconciled_at`), se `paymentToWon` ligada; senão,
   requisição em `orcamento_enviado`/`follow_up` → `negociacao` (`source: "lis_requisition"`), se
   `requisitionToNegotiation` ligada. Em `novo_contato` a requisição continua só espelhada (selo
-  "Pré-cadastro feito", D-197). `proposalsWon` conta só as que foram a `ganho`. Provisória até o
-  CRMLAB-53.
+  "Pré-cadastro feito", D-197). `proposalsWon` conta só as que foram a `ganho`.
+- Proposta `perdido` com requisição **ou** data de pagamento nova → audit
+  `lis_reconcile_conflict` (`entityType: "proposal"`, `newValues: { lisBudgetNumber,
+  lisRequisitionNumber, lisPaidOn }`), uma vez por fato: não repete se o espelho já era o mesmo.
+- As transições são acumuladas (`SystemTransition[]`) e anunciadas por quem
+  chama com `announceLisWins` **depois do commit**, para não anunciar um `ganho` que um rollback
+  desfaria. O audit `update_proposal_status`/`lis_reconcile_conflict` entra **na** transação
+  (`auditRepo.insert`), porque `db.withTenant` não aninha e ele tem que sumir junto num rollback.
 - **Valor do Bitlab (D-195 item 2):** proposta `bitlab` não terminal tem `total_price` e
   `insurance_id` regravados a partir de `lis_budgets.total_value`/`insurance_id` quando mudaram.
 
@@ -1601,11 +1601,11 @@ export function createFunnelTimerService(deps: {
   now?: () => Date;
 }): FunnelTimerService;
 
-/** A transição de sistema do motor, na transação de quem chama (D-208). `false` = nada mudou. */
+/** A transição de sistema do motor, na transação de quem chama (D-208, D-210). `null` = nada mudou. */
 export function applyTimerTransition(tx: DbTx, input: {
   tenantId: string; proposalId: string; step: TimerStep; automation: StageAutomation;
   enteredHistoryId: string; now: Date;
-}): Promise<boolean>;
+}): Promise<SystemTransition | null>;
 
 /** Só para teste. */
 export function resetFunnelTimerLocksForTest(): void;
@@ -1624,8 +1624,8 @@ export function resetFunnelTimerLocksForTest(): void;
    linha do histórico com o estágio atual) é anterior a `agora − dias × 24 h`, sem os fatos que a
    regra exclui (D-206 item 1), do mais antigo para o mais novo; confere o prazo exato
    (`isDelayElapsed`, corridos ou úteis) e aplica `applyTimerTransition` em **uma transação por
-   cartão**. Depois de cada commit: WS `proposal.status_changed` + invalidação do cache de
-   analytics.
+   cartão**. Depois de cada commit: `announceSystemTransitions` (WS `proposal.status_changed` +
+   invalidação do cache de analytics).
 4. Alerta (D-207): cartões em `novo_contato` sem pagamento, com a linha de entrada sem
    `stale_alerted_at` e entrada há N horas ou mais. Numa transação por cartão, grava
    `stale_alerted_at` (condicionado a ainda estar nulo e o cartão ainda em `novo_contato`) e resolve
@@ -1637,7 +1637,9 @@ export function resetFunnelTimerLocksForTest(): void;
    `funnel_timer.completed` com `{ tenantId, moved, alerted, reengaged }` quando houve algo;
    `debug` `funnel_timer.tick_empty` quando nada aconteceu.
 
-**`applyTimerTransition`** (D-208): `SELECT ... FOR UPDATE`; recusa (`false`) se o estágio não é
+**`applyTimerTransition`** (D-208, D-210): chama `applySystemTransition` com `from: step.from`,
+`source: "rule"`, `reasonLost: "silencio"`, `automation`, `at: now`, `auditExtra` com a regra e um
+`guard` que confere, sob o `FOR UPDATE` dela, os fatos e a linha de entrada. Recusa (`null`) se o estágio não é
 mais o de origem, se a última linha do histórico para o estágio não é mais `enteredHistoryId` ou se
 um fato apareceu. `UPDATE` do estágio (`perdido`: `reason_lost = 'silencio'`, `closed_at`),
 histórico com `changed_by NULL` e `automation`, mensagem de sistema se houver conversa, audit

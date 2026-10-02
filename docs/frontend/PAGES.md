@@ -473,7 +473,8 @@ nunca "sem permissão" (não vazar existência).
   `DD/MM/AAAA`). Selo **"Pré-cadastro feito"** (`Chip tone="positive"`) quando
   `lisRequisitionNumber` não é `null` e o estágio é `novo_contato` (D-197). Sem conversa
   (`conversationId === null`): aviso "Sem conversa vinculada" em `text-caption`. O selo
-  "Conciliado" continua o mesmo.
+  "Conciliado" continua o mesmo. Desde a D-252 o selo "Pré-cadastro feito" vale também para a
+  proposta de origem `crm` (mesma condição).
 - **Selo "Parado há N h" (CRMLAB-59, D-207):** cartão em `novo_contato` com a regra
   "Novo orçamento parado" ligada e `stageEnteredAt` há N horas ou mais leva o
   `Chip tone="attention"` "Parado há {N} h" (N = horas inteiras desde a entrada na coluna).
@@ -546,7 +547,15 @@ nunca "sem permissão" (não vazar existência).
   campo é só leitura. Salvar com o campo vazio envia `null` (desvincular), com confirmação
   "Desvincular do orçamento do LIS?". `CONFLICT lis_budget_number_taken` → mensagem no campo:
   "Este orçamento já está vinculado à proposta #N". Se a resposta voltar com `status: "ganho"`,
-  toast "Orçamento já convertido no LIS — proposta marcada como ganha".
+  toast "Pagamento já registrado no LIS — proposta marcada como ganha"; com
+  `status: "negociacao"` (vinda de outro estágio), "Requisição já aberta no LIS — proposta em
+  negociação" (D-252).
+- **Pré-cadastro e conflito (D-252):** na origem `crm`, selo "Pré-cadastro feito"
+  (`Chip tone="positive"`) ao lado do número quando o estágio é `novo_contato` e há
+  `lisRequisitionNumber` (na origem `bitlab` o selo fica no bloco "Orçamento do Bitlab"). Em
+  `perdido` com `lisRequisitionNumber` ou `lisPaidOn`: `Chip tone="attention"` "Conflito com o
+  LIS" + "O LIS tem pagamento|requisição para este orçamento, mas a proposta está perdida e não
+  reabre sozinha." (`text-caption`).
 - **Selo "Conciliado"** (`Chip tone="positive"`) ao lado do status quando `lisReconciledAt` não é
   `null`, com tooltip "Requisição Nº {lisRequisitionNumber} no LIS". Quando há `lisPaidValue`,
   uma linha "Pago no LIS: R$ X em DD/MM/AAAA" (`MoneyDisplay`/`DateDisplay`). O mesmo selo, sem

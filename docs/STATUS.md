@@ -3137,3 +3137,23 @@ Branch `feature/CRMLAB-86-cadastro-medicos` (de `main` v1.29.0). Primeiro card d
   dos 4 workspaces verde. A suíte completa roda na branch de integração.
 - **Pendente:** validação na hml; a migração 047 roda no deploy. Agenda, check-in/out e linha do
   tempo ficam para os próximos cards do épico.
+
+### 🚧 CRMLAB-87 — agenda de visitas a médicos (2026-10-03, aguardando validação)
+
+Branch `feature/CRMLAB-87-agenda-visitas` (de `main` com o CRMLAB-86). Segundo card do épico
+CRMLAB-85 (Visitação Médica). Decisão D-256.
+
+- **Banco:** migração `048_doctor_visits.sql`, tabelas `doctor_visits` (médico, responsável,
+  data/hora, tipo, pauta, status, motivo) e `doctor_visit_reschedules` (histórico de datas), as
+  duas com policy de tenant no mesmo arquivo, `CHECK` de motivo obrigatório ao encerrar.
+- **API:** `GET|POST /visits`, `GET|PATCH /visits/:id`, `POST /visits/:id/reschedule|cancel|not-received`,
+  para todo papel de laboratório. Listagem por período (≤ 62 dias) com filtros; reagendar grava o
+  histórico; cancelar/não recebeu exigem motivo; visita encerrada → `409 VISIT_ALREADY_CLOSED`.
+  Audit em criar, editar, reagendar, cancelar e não recebeu.
+- **Tela:** "Agenda" (`/visitation/agenda`) no grupo Visitação Médica. Semana (grade de horas,
+  clicar no horário agenda) e Lista; anterior/próxima/hoje; filtros de responsável, médico e
+  status; modal da visita com histórico e ações. No celular abre em Lista.
+- **Testes:** `backend/tests/visits/visits.spec.ts` (25), `route-tenant-isolation.spec.ts` (95
+  rotas), `pages/Visitation/Agenda.spec.tsx` (8), `route-config.spec.ts` (ajustado).
+- **Pendente:** validação na hml; a migração 048 roda no deploy. `realizada` (check-in/out, relato
+  e anexos) é o card [C]; linha do tempo do médico, o card [D].

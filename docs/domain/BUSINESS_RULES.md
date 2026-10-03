@@ -773,6 +773,30 @@ agenda de visitas que vem depois.
 
 ---
 
+## 13. Visitação Médica — agenda de visitas (CRMLAB-87, D-256)
+
+Segundo card do épico CRMLAB-85. A equipe agenda visitas aos médicos do cadastro (§12).
+
+- **Quem mexe:** todos os usuários do laboratório veem e mexem em **todas** as visitas, de
+  qualquer responsável. Não há perfil novo.
+- **A visita:** médico **ativo** do cadastro, responsável (usuário **ativo** do laboratório,
+  qualquer papel), data/hora prevista, tipo (presencial, online, telefone, evento) e
+  objetivo/pauta (opcional). Data no passado pode (lançar depois).
+- **Status:** `agendada → realizada | cancelada | nao_recebeu`. `realizada` vem do check-in/out
+  (próximo card); por enquanto a visita só sai de `agendada` cancelando ou marcando "médico não
+  recebeu".
+- **Reagendar** muda a data/hora da **mesma** visita e registra no histórico (data antiga, nova,
+  motivo opcional, quem e quando). Não existe status "reagendada".
+- **Cancelar e "médico não recebeu" exigem motivo.**
+- **Visita encerrada** (cancelada, não recebeu) não edita, não reagenda e não muda de status
+  (`409 VISIT_ALREADY_CLOSED`).
+- **Médico ou responsável inativado depois** não trava a visita: ela continua editável; a checagem
+  só roda quando o médico/responsável **muda**.
+- **Auditoria:** `create_visit`, `update_visit` (só o que mudou), `reschedule_visit`,
+  `cancel_visit`, `visit_not_received` — `entityType: "visit"`.
+
+---
+
 ## Resumo: Checklist de Implementação
 
 Antes de commitar, verifique:

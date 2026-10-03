@@ -104,13 +104,14 @@ interface ConversationRow {
   created_at: Date | string;
   /** So a LISTAGEM traz (o pin depende de QUEM pediu) — ver `list`. */
   pinned?: boolean | null;
-  awaiting_reply_since: Date | string | null;
+  /** Ja em ISO UTC (`to_char`, como o reingajamento): nao depende do fuso do processo. */
+  awaiting_reply_since: string | null;
 }
 
 const LIST_COLUMNS = `c.id, c.patient_id, c.patient_name, c.patient_phone, c.patient_email, c.assigned_to,
        u.name AS assigned_to_name, c.channel, c.status, c.unread_count, c.last_message_at,
        c.tags, c.custom_fields, c.created_at, lm.content AS last_message_preview,
-       aw.created_at AS awaiting_reply_since`;
+       to_char(aw.created_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS awaiting_reply_since`;
 
 /**
  * Alerta de tempo de resposta (CRMLAB-84, D-254): a PRIMEIRA mensagem do
@@ -216,7 +217,7 @@ export function toConversation(row: ConversationRow): Conversation {
     // quem perguntou; o detalhe nao tem consumidor para o campo (Onda 8 §2.3).
     pinned: row.pinned === true,
     createdAt: toIso(row.created_at),
-    awaitingReplySince: toIsoOrNull(row.awaiting_reply_since),
+    awaitingReplySince: row.awaiting_reply_since,
   };
 }
 

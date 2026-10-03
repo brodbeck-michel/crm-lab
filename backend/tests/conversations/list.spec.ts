@@ -53,6 +53,7 @@ describe('GET /conversations', () => {
     expect(Object.keys(item).sort()).toEqual([
       'assignedTo',
       'assignedToName',
+      'awaitingReplySince',
       'channel',
       'createdAt',
       'id',

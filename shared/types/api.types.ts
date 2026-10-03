@@ -75,6 +75,8 @@ export type ApiErrorCode =
   // Visitação Médica (CRMLAB-86, D-255)
   /** CRM + UF já usados por outro médico do laboratório (ativo ou inativo). */
   | 'DOCTOR_CRM_ALREADY_EXISTS'
+  /** Editar, reagendar ou encerrar visita que já não está `agendada` (CRMLAB-87, D-256). */
+  | 'VISIT_ALREADY_CLOSED'
   // Sistema
   | 'RATE_LIMIT_EXCEEDED'
   | 'SERVICE_UNAVAILABLE'

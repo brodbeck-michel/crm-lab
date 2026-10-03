@@ -1674,7 +1674,7 @@ CREATE TABLE lis_sync_settings (
   last_run_at TIMESTAMP NULL,            -- início da última rodada (com ou sem sucesso)
   last_success_at TIMESTAMP NULL,
   last_error TEXT NULL,                  -- NULL depois de uma rodada bem-sucedida
-  last_full_scan_on DATE NULL,           -- dia (Brasília) da última releitura de 90 dias ok (migração 032, D-189)
+  last_full_scan_on DATE NULL,           -- SEM USO desde a D-253 (era a releitura de 90 dias, migração 032, D-189)
   updated_by UUID NULL,                  -- último admin que mudou `enabled`/`api_key`
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW(),
@@ -1712,9 +1712,9 @@ CREATE POLICY lis_sync_settings_tenant_isolation ON lis_sync_settings
   tabela nasce vazia. O `ALTER` de `lis_imports.kind` (§25) vai no mesmo arquivo.
 - `listEnabledTenantIds()` é a única leitura fora do contexto de tenant (D-186) e só projeta
   `tenant_id`.
-- **`last_full_scan_on`** (migração 032, D-189): só é gravado quando a releitura completa termina
-  sem erro. `NULL` ou dia anterior + passou das 03:00 de Brasília = o próximo tique relê os últimos
-  90 dias. A `watermark` **nunca recua** na gravação (a releitura pode devolver marca menor).
+- **`last_full_scan_on`** (migração 032, D-189): **sem uso desde a D-253 (CRMLAB-80)** — a
+  releitura diária de 90 dias saiu, e a coluna não é mais lida nem gravada. Fica no banco até uma
+  migração própria removê-la. A `watermark` **nunca recua** na gravação.
 
 ### Colunas novas em `proposals`, `tenant_settings` e `lis_imports` (migração 028 — CRMLAB-57, D-195/D-196)
 

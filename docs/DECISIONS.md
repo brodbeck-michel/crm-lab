@@ -3151,6 +3151,8 @@ com segundos), `lis-spreadsheet.ts` (`paidAt` com hora; `consolidateLisRows`),
 BUSINESS_RULES §11.1/§11.2/§11.10, SCHEMA §26 + tabela nova, SERVICES §19/§24.1.
 
 ### D-189: Releitura diária de 90 dias pega o estorno; a planilha vira plano B, ligada por regra (CRMLAB-53)
+> **Itens 1, 2 (releitura diária) e 3 substituídos pela D-253 (CRMLAB-80, 30/09/2026).** Os itens 4 e 5 (planilha como plano B) continuam valendo.
+
 **Decisão:**
 1. **O estorno não volta na consulta incremental.** A consulta pela VPS (28/09/2026) mostrou que
    `tipoData=alteracao` filtra só por emissão/`Data_Pagamento`: nos 5 estornos testados, a linha
@@ -4740,7 +4742,8 @@ Medido em prod em 30/09:
    à gravada, as linhas recebidas são descartadas antes da ingestão: sem `lis_imports`, sem
    reprocessar, `received: 0`, log `debug`. Linha que o Bitlab grave no mesmo segundo da marca
    depois da consulta anterior fica para a releitura diária de 90 dias (D-189). `full` nunca
-   descarta.
+   descarta. *(Emendado pela D-253 item 3: sem releitura diária, essa linha entra na próxima
+   rodada em que a marca andar.)*
 3. **Contrato em segundos:** `LisIntegrationSettings.intervalMinutes` vira `intervalSeconds`
    (API_CONTRACTS §10.3). Com minutos arredondados, 30 s apareceria como "a cada 1 min". A tela
    escreve "30 s", ou "N min" quando é minuto cheio. Com `0` (hml) ela diz "Ligada · só pelo
@@ -4891,6 +4894,40 @@ D-119 inflava a conversão da origem `crm` do mesmo jeito que a D-204 corrigiu p
 `proposal.service.ts` (sai `markWonFromLis`, `SystemTransitionSource`); frontend
 `ProposalCard.tsx` (selo para qualquer origem), `LisReferenceSection.tsx` (selo `crm`, aviso de
 conflito, toasts); BUSINESS_RULES §3, WORKFLOWS §4, SERVICES §4/§25, API_CONTRACTS §3, PAGES §5/§6.
+
+## 2026-09-30 — Estorno volta na consulta incremental do Bitlab
+
+### D-253: Sem releitura diária de 90 dias — o tique da sincronização do LIS é sempre incremental (CRMLAB-80)
+**Contexto:** a D-189 criou a releitura diária dos últimos 90 dias (primeiro tique depois das 03:00
+de Brasília) porque o filtro `tipoData=alteracao` do Bitlab não considerava a `DATA_ESTORNO`. Em
+30/09/2026 o Bitlab respondeu por e-mail que passou a considerar. Validado no mesmo dia (consulta só
+de leitura, hml, tenant `teste`), OR66760 / req. 01-205053: na janela `alteracao` 30/06/2026
+12:00–23:59 voltam as 4 linhas — `ID_PAGAMENTO` 68642/68643 (pagas 07:44) como `ESTORNADO` com
+`DATA_ESTORNO` 16:39:04/05, e 68675/68676 (16:39) como `ATIVO`, `marcaDagua` 16:39:44; na janela
+00:00–11:59 o OR66760 não aparece mais (a linha estornada sai na janela do estorno). Para o
+incremental (marca d'água → `dataInicio`) isso basta. Decisão do Michel em 30/09.
+**Decisão:**
+1. **Substitui os itens 1, 2 (releitura) e 3 da D-189.** `runForTenant` com `auto` (agendador) é
+   sempre `incremental`. Sai `FULL_SCAN_HOUR`. Sem marca d'água (primeira carga) a janela
+   incremental já começa em hoje − `LIS_SYNC_INITIAL_DAYS` às 00:00:00, como antes. O modo `full`
+   continua no service, mas nenhuma rota nem o agendador o disparam hoje. "Sincronizar agora"
+   continua incremental. A marca continua sem recuar em `finishRun`.
+2. **`lis_sync_settings.last_full_scan_on` fica sem uso:** não é mais lida nem gravada, e
+   `lastFullScanOn` sai de `LisIntegrationSettings` (API_CONTRACTS §10.3) e da tela Integração LIS.
+   **A coluna fica no banco** — a migração destrutiva que a remove fica para depois (card próprio).
+3. **Emenda à D-249 item 2:** a linha gravada pelo Bitlab no mesmo segundo da marca, depois da
+   consulta anterior, não depende mais da releitura: a janela começa **na** marca (inclusiva),
+   então ela volta — e entra pelo `ingestRows` idempotente — na primeira rodada em que a marca
+   andar.
+4. Os itens 4 e 5 da D-189 (planilha como plano B, desligada por padrão) continuam valendo.
+**Motivo:** a releitura existia só para pegar o estorno. Com o Bitlab considerando a
+`DATA_ESTORNO`, ela vira uma leitura de 90 dias por dia sem função, e ainda pegava estorno com no
+máximo 90 dias; o incremental pega qualquer estorno.
+**Impacto:** `lis-sync.service.ts` (`modeFor`, fim da rodada), `lis-sync-settings.repository.ts`
+(view, `startRun`, `finishRun`), `shared/types/lis.types.ts`, `Settings/LisIntegration.tsx`;
+testes `backend/tests/lis/lis-payments.spec.ts` e `LisIntegration.spec.tsx`; SERVICES §24,
+BUSINESS_RULES §11.10, API_CONTRACTS §10.3, SCHEMA §`lis_sync_settings`, STATUS. **Deploy:** sem
+migração e sem variável nova.
 
 ## 2026-10-02 — Alerta de tempo de resposta na lista de conversas (CRMLAB-84)
 

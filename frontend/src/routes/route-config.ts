@@ -38,7 +38,8 @@ export type NavIcon =
   | 'account'
   | 'megaphone'
   | 'visitation'
-  | 'doctors';
+  | 'doctors'
+  | 'agenda';
 
 /** Papéis de tenant. `platform_operator` NÃO entra — o console é isolado (PAGES.md §11). */
 export const TENANT_ROLES: readonly UserRole[] = ['attendant', 'manager', 'admin'] as const;
@@ -63,7 +64,7 @@ export interface NavGroup {
  */
 export const NAV_GROUPS: readonly NavGroup[] = [
   { id: 'comunicacao', label: 'Comunicação', icon: 'megaphone' },
-  // CRMLAB-85/86 (D-255): épico próprio, com Médicos agora e a Agenda depois.
+  // CRMLAB-85/86/87 (D-255, D-256): épico próprio — Agenda e Médicos.
   { id: 'visitacao', label: 'Visitação Médica', icon: 'visitation' },
   { id: 'gestao', label: 'Gestão', icon: 'analytics' },
   { id: 'configuracoes', label: 'Configurações', icon: 'operation' },
@@ -136,6 +137,15 @@ export const APP_ROUTES: readonly AppRoute[] = [
     inSidebar: true,
     icon: 'quick-replies',
     group: 'comunicacao',
+  },
+  {
+    // CRMLAB-87 (D-256): agenda de visitas — todos os papéis do laboratório veem e mexem em todas.
+    path: '/visitation/agenda',
+    label: 'Agenda',
+    requiredRoles: TENANT_ROLES,
+    inSidebar: true,
+    icon: 'agenda',
+    group: 'visitacao',
   },
   {
     // CRMLAB-86 (D-255): todos os papéis do laboratório veem e editam.

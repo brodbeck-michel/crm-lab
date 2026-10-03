@@ -163,7 +163,7 @@ export default function ResponseTimeSection({ startDate, endDate }: ResponseTime
           label="1ª resposta (mediana)"
           value={summary.firstResponse.medianMinutes ?? undefined}
           variant="minutes"
-          caption={`${formatCount(summary.firstResponse.answered)} atendimentos abertos`}
+          caption={`${formatCount(summary.firstResponse.answered)} ${summary.firstResponse.answered === 1 ? 'atendimento aberto' : 'atendimentos abertos'}`}
         />
         <MetricTile label="Respondidos" value={summary.answered} variant="number" caption="blocos de mensagens" />
         <MetricTile

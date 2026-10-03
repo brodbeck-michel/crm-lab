@@ -27,38 +27,50 @@ export default function Analytics() {
 
   return (
     <div className="p-lg space-y-xl">
-      <h1 className="font-heading text-display">Conversão</h1>
+      <h1 className="font-heading text-display">
+        {showResponseTime ? 'Tempo de resposta' : 'Conversão'}
+      </h1>
 
-      {canSeeTeam && (
-        <div className="max-w-[420px]">
-          <SegmentedControl<AnalyticsTab>
-            aria-label="Relatório"
-            value={tab}
-            onChange={setTab}
-            options={[
-              { value: 'conversion', label: 'Conversão' },
-              { value: 'response-time', label: 'Tempo de resposta' },
-            ]}
-          />
+      {/* Barra única: abas à esquerda, período à direita (vale para as duas abas). */}
+      <div className="flex flex-wrap items-center justify-between gap-md border-b border-neutral-200 pb-lg">
+        {canSeeTeam ? (
+          <div className="w-full max-w-[340px] rounded-pill bg-neutral-100">
+            <SegmentedControl<AnalyticsTab>
+              aria-label="Relatório"
+              value={tab}
+              onChange={setTab}
+              options={[
+                { value: 'conversion', label: 'Conversão' },
+                { value: 'response-time', label: 'Tempo de resposta' },
+              ]}
+            />
+          </div>
+        ) : (
+          <span />
+        )}
+
+        <div className="flex flex-wrap items-center gap-sm">
+          <span className="font-body text-caption font-semibold text-neutral-700">Período</span>
+          <div className="w-[170px]">
+            <Input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              placeholder="Data inicial"
+              aria-label="Data inicial"
+            />
+          </div>
+          <span className="font-body text-caption text-neutral-600">até</span>
+          <div className="w-[170px]">
+            <Input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              placeholder="Data final"
+              aria-label="Data final"
+            />
+          </div>
         </div>
-      )}
-
-      {/* Period Filters */}
-      <div className="flex gap-lg flex-wrap">
-        <Input
-          type="date"
-          value={startDate}
-          onChange={(e) => setStartDate(e.target.value)}
-          placeholder="Data inicial"
-          aria-label="Data inicial"
-        />
-        <Input
-          type="date"
-          value={endDate}
-          onChange={(e) => setEndDate(e.target.value)}
-          placeholder="Data final"
-          aria-label="Data final"
-        />
       </div>
 
       {showResponseTime ? (

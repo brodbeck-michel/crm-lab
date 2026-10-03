@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Clock } from 'lucide-react';
 import type { Conversation } from '@crm-lab/shared';
 import { Badge, Chip, cn } from '@/components/ui';
 import { Avatar, DateDisplay } from '@/components/shared';
@@ -17,6 +18,10 @@ import { clearConversationDraft, useConversationDraft } from '@/stores';
  *    `formatDurationSeconds` (a mesma escala do resto do app): minuto cru
  *    virava "aguardando 57871 min" — ilegivel, e quem le a fila precisa
  *    decidir prioridade de relance, nao fazer divisao mental;
+ *  - alerta de tempo de resposta (CRMLAB-84, D-254): com
+ *    `responseAlertMinutes`, faixa vermelha à esquerda, fundo
+ *    `--color-chat-alert-bg` (fora da selecionada) e relógio com "há 23 min"
+ *    no lugar do "aguardando" — o cálculo (minutos ÚTEIS) é da lista;
  *  - visual WhatsApp Web (CRMLAB-81, D-251): selecionado em
  *    `--color-chat-selected`, hover `--color-chat-hover`, divisória
  *    `--color-chat-line` entre itens, avatar em `--color-chat-avatar`.
@@ -41,6 +46,12 @@ export interface ConversationItemProps {
    * menu. Só existe com `unreadCount === 0` — sem handler, nem botão nem menu.
    */
   onMarkUnread?: (id: string) => void;
+  /**
+   * Minutos úteis de espera quando a conversa está em alerta de tempo de
+   * resposta (CRMLAB-84, D-254); `null`/ausente = fora do alerta. Quem calcula
+   * é a lista (`responseAlertMinutes` de `@crm-lab/shared`).
+   */
+  responseAlertMinutes?: number | null;
 }
 
 /**
@@ -108,6 +119,7 @@ export function ConversationItem({
   now,
   onTogglePin,
   onMarkUnread,
+  responseAlertMinutes = null,
 }: ConversationItemProps) {
   const {
     id,
@@ -138,6 +150,9 @@ export function ConversationItem({
     () => (hasUnread ? minutesWaiting(lastMessageAt, now ?? new Date()) : null),
     [hasUnread, lastMessageAt, now],
   );
+  const alerting = responseAlertMinutes !== null;
+  // Em alerta, o relógio vermelho substitui o "aguardando": dois tempos no item confundem.
+  const showWaiting = waiting !== null && !alerting;
 
   const canMarkUnread = onMarkUnread !== undefined && !hasUnread;
   const [menuOpen, setMenuOpen] = useState(false);
@@ -165,6 +180,7 @@ export function ConversationItem({
         type="button"
         data-testid="conversation-item"
         data-selected={selected ? 'true' : 'false'}
+        data-response-alert={alerting ? 'true' : 'false'}
         aria-current={selected ? 'true' : undefined}
         onClick={() => onClick?.(id)}
         className={cn(
@@ -172,7 +188,13 @@ export function ConversationItem({
           // Espaço à direita reservado para o alfinete, que fica por cima.
           hasControls ? 'pl-lg pr-xl' : 'px-lg',
           'font-body transition-colors',
-          selected ? 'bg-chat-selected' : 'bg-transparent hover:bg-chat-hover',
+          selected
+            ? 'bg-chat-selected'
+            : alerting
+              ? 'bg-chat-alert-bg hover:bg-chat-hover'
+              : 'bg-transparent hover:bg-chat-hover',
+          // Faixa à esquerda por sombra interna: não empurra o conteúdo como uma borda.
+          alerting && 'shadow-[inset_3px_0_0_0_var(--color-chat-alert)]',
         )}
       >
         <Avatar name={displayName} size={36} className="bg-chat-avatar text-chat-avatar-text" />
@@ -215,7 +237,7 @@ export function ConversationItem({
             <Badge count={unreadCount} label={`${unreadCount} mensagens não lidas`} />
           </span>
 
-          {(visibleTags.length > 0 || waiting !== null || status !== 'active') && (
+          {(visibleTags.length > 0 || showWaiting || alerting || status !== 'active') && (
             <span className="flex items-center gap-sm overflow-x-auto">
               {status !== 'active' && (
                 <Chip tone="inactive">Encerrada</Chip>
@@ -226,7 +248,18 @@ export function ConversationItem({
                 </Chip>
               ))}
               {hiddenTags > 0 && <Chip tone="inactive">{`+${hiddenTags}`}</Chip>}
-              {waiting !== null && (
+              {responseAlertMinutes !== null && (
+                <span
+                  data-testid="conversation-response-alert"
+                  title="Paciente aguardando resposta (tempo em horário de atendimento)"
+                  className="flex flex-[0_0_auto] items-center gap-xs whitespace-nowrap text-micro font-bold tracking-normal text-chat-alert"
+                >
+                  <Clock size={12} aria-hidden="true" />
+                  <span className="sr-only">Aguardando resposta</span>
+                  {`há ${formatDurationSeconds(responseAlertMinutes * 60)}`}
+                </span>
+              )}
+              {showWaiting && (
                 <span
                   data-testid="conversation-waiting"
                   className="flex-[0_0_auto] whitespace-nowrap text-micro font-semibold tracking-normal text-accent-700"

@@ -1,22 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type {
-  CreateAttachmentRequest,
-  ListConversationsQuery,
-  ListPatientsQuery,
-  MessageSearchHit,
+import {
+  DEFAULT_FUNNEL_RULES,
+  type CreateAttachmentRequest,
+  type ListConversationsQuery,
+  type ListPatientsQuery,
+  type MessageSearchHit,
 } from '@crm-lab/shared';
 import { api, isApiError, queryKeys, queryScopes, staleTimes } from '@/api';
 import { useQuickReplyList } from '@/api/quick-replies';
 import { useEffectiveFunnelRules } from '@/api/funnel-rules';
+import { useBusinessCalendar } from '@/api/holidays';
 import { useToast } from '@/components/ui';
 import { InboxLayout } from '@/components/layout';
 import type { RecordedAudio } from '@/components/conversation';
 import { useApiErrorHandler } from '@/hooks';
 import { useAuthStore, useMessageAlertsStore, useUIStore, selectUser } from '@/stores';
 import { ConversationList } from './ConversationList';
-import type { ConversationScope } from './ConversationList';
+import type { ConversationResponseAlert, ConversationScope } from './ConversationList';
 import { ConversationPanel } from './ConversationPanel';
 import { EnableNotificationsBanner } from './EnableNotificationsBanner';
 import { PatientContext } from './PatientContext';
@@ -64,8 +66,22 @@ function sameConversationPlaceholder<T>(
 
 export function Attendance() {
   const navigate = useNavigate();
+  const funnelRules = useEffectiveFunnelRules();
   // D-193: "Novo Orçamento" some quando as Regras desligam a criação manual.
-  const manualProposals = useEffectiveFunnelRules().origin.manualInCrm;
+  const manualProposals = funnelRules.origin.manualInCrm;
+  // Alerta de tempo de resposta (CRMLAB-84, D-254). Backend anterior ao card
+  // não manda a seção: vale o padrão (desligado).
+  const responseAlertRule = funnelRules.responseAlert ?? DEFAULT_FUNNEL_RULES.responseAlert;
+  const calendarQuery = useBusinessCalendar({ enabled: responseAlertRule.enabled });
+  const responseAlert = useMemo<ConversationResponseAlert>(() => {
+    const data = calendarQuery.data;
+    return {
+      rule: responseAlertRule,
+      calendar: data
+        ? { businessHours: data.businessHours, customHolidays: new Set(data.customHolidays) }
+        : null,
+    };
+  }, [responseAlertRule, calendarQuery.data]);
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -512,6 +528,7 @@ export function Attendance() {
             onRetry={() => void shownList.refetch()}
             onTogglePin={(id, pinned) => togglePin.mutate({ id, pinned })}
             onMarkUnread={(id) => markUnread.mutate(id)}
+            responseAlert={responseAlert}
             messageTerm={messageTerm}
             messageHits={messagesQuery.data?.results ?? []}
             messagesLoading={messagesQuery.isPending}

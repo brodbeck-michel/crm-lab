@@ -3116,3 +3116,24 @@ Branch `feature/CRMLAB-84-alerta-sem-resposta` (de `main` v1.29.0). Decisão D-2
   `settings/funnel-rules` e `conversations/list`; frontend `lib/response-alert`,
   `ConversationItem.response-alert`, `ConversationList.response-alert` e casos novos em
   `Rules.spec.tsx`.
+
+### 🚧 CRMLAB-86 — cadastro de médicos solicitantes (2026-10-02, aguardando validação)
+
+Branch `feature/CRMLAB-86-cadastro-medicos` (de `main` v1.29.0). Primeiro card do épico CRMLAB-85
+(Visitação Médica). Decisão D-255.
+
+- **Banco:** migração `047_doctors.sql` (o 046 está reservado para outro card), tabela `doctors` +
+  policy de tenant no mesmo arquivo, índice único parcial `(tenant_id, crm, crm_uf) WHERE crm IS
+  NOT NULL`, índices de FK, trigger de `updated_at`.
+- **API:** `GET|POST /doctors`, `GET|PATCH /doctors/:id`, `POST /doctors/:id/inactivate|reactivate`,
+  para todo papel de laboratório. CRM só dígitos, UF obrigatória com CRM (27 UFs), duplicidade →
+  `409 DOCTOR_CRM_ALREADY_EXISTS`, responsável = usuário ativo do mesmo laboratório. Audit em criar,
+  editar, inativar e reativar. `proposals.requesting_doctor` não muda.
+- **Tela:** grupo "Visitação Médica" na Sidebar → "Médicos" (`/visitation/doctors`). Busca por nome
+  ou CRM, filtro de responsável, Ativos/Inativos/Todos, modal de criar/editar, inativar/reativar.
+  Tabela no desktop, cartões no celular.
+- **Testes:** `backend/tests/doctors/doctors.spec.ts` (30), `route-tenant-isolation.spec.ts` (88
+  rotas, 203 casos), `pages/Visitation/Doctors.spec.tsx` (9), `route-config.spec.ts` (+1). Typecheck
+  dos 4 workspaces verde. A suíte completa roda na branch de integração.
+- **Pendente:** validação na hml; a migração 047 roda no deploy. Agenda, check-in/out e linha do
+  tempo ficam para os próximos cards do épico.

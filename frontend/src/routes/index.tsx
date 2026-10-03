@@ -26,6 +26,7 @@ import Results from '@/pages/Results';
 import Reconciliation from '@/pages/Reconciliation';
 import ActiveSearch from '@/pages/ActiveSearch';
 import Sales from '@/pages/Sales';
+import Doctors from '@/pages/Visitation/Doctors';
 import PlatformTenants from '@/pages/Platform/Tenants';
 import PlatformTenantDetail from '@/pages/Platform/TenantDetail';
 import PlatformBilling from '@/pages/Platform/Billing';
@@ -74,6 +75,7 @@ export const appRoutes: RouteObject[] = [
               { path: 'internal-chat', element: <InternalChat /> },
               { path: 'quick-replies', element: <QuickReplies /> },
               { path: 'sales', element: <Sales /> },
+              { path: 'visitation/doctors', element: <Doctors /> },
               { path: 'settings/account', element: <AccountSettings /> },
               { path: 'settings/rules', element: <RulesSettings /> },
             ],

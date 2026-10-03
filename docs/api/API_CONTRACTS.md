@@ -5317,6 +5317,119 @@ Gera audit log `update_attendant`.
 
 ---
 
+## 13. Doctors (Médicos solicitantes — Visitação Médica, CRMLAB-86)
+
+Tela `/visitation/doctors` (PAGES.md §22). Módulo `/doctors`; shapes em
+`shared/types/doctor.types.ts`; tabela `doctors` (SCHEMA.md §35). Regras em BUSINESS_RULES §12 e
+D-255. Base do épico CRMLAB-85: a agenda de visitas vai referenciar `Doctor.id`.
+
+**Papéis:** as **6 rotas** valem para **todos os papéis do tenant** (sem `requireRoles`, D-255
+item 3). `platform_operator` → `403` (`denyPlatformOperator()`). Entram no inventário de
+isolamento (`route-tenant-isolation.spec.ts`): médico de outro tenant → `404 NOT_FOUND`.
+
+Não existe `DELETE`: inativar é `POST /doctors/:id/inactivate`.
+
+**Objeto `Doctor`** (o mesmo em todas as respostas):
+```json
+{
+  "id": "5b0c8a2e-3f41-4d7a-9c61-2e8f4a7b1d90",
+  "name": "Dra. Júlia Costa",
+  "crm": "12345",
+  "crmUf": "SC",
+  "specialty": "Ginecologia",
+  "clinic": "Clínica Vida",
+  "address": "Rua Lauro Müller, 100 — Tubarão",
+  "phone": "(48) 99999-0000",
+  "email": "julia@clinicavida.com.br",
+  "contactName": "Marta (secretária)",
+  "visitPreference": "Terças à tarde",
+  "notes": null,
+  "responsible": { "id": "7c3d5f92-1a48-4c60-8e21-9b5d7a3f2c11", "name": "Ana Lima" },
+  "isActive": true,
+  "createdAt": "2026-10-02T13:00:00.000Z",
+  "updatedAt": "2026-10-02T13:00:00.000Z"
+}
+```
+`crm` só com dígitos; `crmUf` sempre preenchida quando há `crm`. `responsible: null` = sem
+responsável.
+
+### GET /doctors
+
+**Query Params:**
+```
+?search=julia             // nome sem caixa nem acento OU CRM pelos dígitos do termo ("12.345" acha 12345)
+?active=true              // omitido = ativos e inativos (a tela abre em "Ativos")
+?responsibleId=<uuid>     // só a carteira desse usuário
+?page=1&limit=20          // default page=1, limit=20, máximo 100
+?sortBy=name&order=asc    // sortBy: name|createdAt|updatedAt (default name asc)
+```
+
+**Response (200):** `{ "doctors": [Doctor], "pagination": { "page", "limit", "total", "totalPages" } }`
+
+**Erros:** `VALIDATION_ERROR` (400, `responsibleId` não-uuid etc.)
+
+### GET /doctors/:id
+**Response (200):** o `Doctor`, cru. **Erros:** `NOT_FOUND` (404 — inexistente ou de outro tenant),
+`VALIDATION_ERROR` (400, `:id` não-uuid)
+
+### POST /doctors
+**Request:** só `name` é obrigatório.
+```json
+{
+  "name": "Dra. Júlia Costa",
+  "crm": "CRM 12.345",
+  "crmUf": "sc",
+  "specialty": "Ginecologia",
+  "clinic": "Clínica Vida",
+  "address": "Rua Lauro Müller, 100 — Tubarão",
+  "phone": "(48) 99999-0000",
+  "email": "julia@clinicavida.com.br",
+  "contactName": "Marta (secretária)",
+  "visitPreference": "Terças à tarde",
+  "notes": null,
+  "responsibleId": "7c3d5f92-1a48-4c60-8e21-9b5d7a3f2c11"
+}
+```
+- Texto com espaço em volta é aparado; vazio ou `null` vira `null`.
+- `crm` → só dígitos (até 10); `crmUf` → maiúscula, uma das 27 UFs. **`crm` sem `crmUf` →
+  `VALIDATION_ERROR`** (`details.fields.crmUf`).
+- `email`, quando preenchido, tem de ser e-mail.
+- `responsibleId`: usuário **ativo** do **mesmo** laboratório, qualquer papel de tenant; senão
+  `VALIDATION_ERROR` (`details.fields.responsibleId`).
+- Campo fora da lista (ex.: `isActive`) → `VALIDATION_ERROR` (schema estrito).
+
+**Response (201):** o `Doctor`, cru. Gera audit log `create_doctor` (`newValues` com todos os
+campos; responsável como `responsibleId`).
+
+**Erros:** `VALIDATION_ERROR` (400, `details.fields`), **`DOCTOR_CRM_ALREADY_EXISTS`** (409 — (CRM,
+UF) já usado por outro médico do laboratório, ativo ou inativo; `details: { crm, crmUf,
+existingDoctor: { id, name, isActive } }`), `FORBIDDEN` (403, `platform_operator`)
+
+### PATCH /doctors/:id
+Parcial: mesmos campos e validações do `POST`, todos opcionais. `null` (ou `""`) limpa o campo;
+`crm: null` limpa o CRM (a UF pode ir junto). O par CRM/UF é validado **depois** de juntar com o
+que já está gravado: `{ "crm": "999" }` vale se o médico já tem UF. O responsável só é revalidado
+quando **muda** — um médico cujo responsável foi desativado continua editável. `isActive` **não**
+passa aqui (→ `VALIDATION_ERROR`).
+
+**Response (200):** o `Doctor` atualizado. Gera audit log `update_doctor` só com os campos que
+mudaram (`oldValues`/`newValues`); PATCH sem mudança real não gera audit.
+
+**Erros:** `NOT_FOUND` (404), `VALIDATION_ERROR` (400), `DOCTOR_CRM_ALREADY_EXISTS` (409),
+`FORBIDDEN` (403, `platform_operator`)
+
+### POST /doctors/:id/inactivate · POST /doctors/:id/reactivate
+Sem corpo. **Idempotentes:** médico já no estado pedido devolve `200` com o mesmo estado e não
+grava segundo audit.
+
+**Response (200):** o `Doctor` atualizado. Audit log `inactivate_doctor` / `reactivate_doctor`
+(`oldValues: { isActive }`, `newValues: { isActive }`).
+
+**Erros:** `NOT_FOUND` (404), `VALIDATION_ERROR` (400, `:id` não-uuid), `FORBIDDEN` (403,
+`platform_operator`)
+
+---
+
 ## Error Responses
 
 Todos os erros seguem este formato:

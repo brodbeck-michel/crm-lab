@@ -70,10 +70,10 @@ describe('route-config — domínio LIS (Onda 10)', () => {
 });
 
 describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, revisado em D-129)', () => {
-  it('admin vê todos os grupos, na ordem Comunicação → Gestão → Configurações', () => {
+  it('admin vê todos os grupos, na ordem Comunicação → Visitação Médica → Gestão → Configurações', () => {
     const { groups } = sidebarSectionsFor('admin');
 
-    expect(groups.map((g) => g.id)).toEqual(['comunicacao', 'gestao', 'configuracoes']);
+    expect(groups.map((g) => g.id)).toEqual(['comunicacao', 'visitacao', 'gestao', 'configuracoes']);
     expect(groups.map((g) => g.label)).toEqual(NAV_GROUPS.map((g) => g.label));
   });
 
@@ -119,7 +119,7 @@ describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, revisado em D-129)'
   it('atendente vê Gestão só com Conversão e Configurações com Cadastro de Exames + Regras + Minha Conta (únicos itens TENANT_ROLES dos grupos)', () => {
     const { groups } = sidebarSectionsFor('attendant');
 
-    expect(groups.map((g) => g.id)).toEqual(['comunicacao', 'gestao', 'configuracoes']);
+    expect(groups.map((g) => g.id)).toEqual(['comunicacao', 'visitacao', 'gestao', 'configuracoes']);
     expect(groups.find((g) => g.id === 'gestao')?.items.map((r) => r.label)).toEqual(['Conversão']);
     expect(groups.find((g) => g.id === 'configuracoes')?.items.map((r) => r.label)).toEqual([
       'Cadastro de Exames',
@@ -128,6 +128,15 @@ describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, revisado em D-129)'
       // CRMLAB-35: trocar a propria senha nao e privilegio de admin.
       'Minha Conta',
     ]);
+  });
+
+  it('grupo Visitação Médica tem Médicos (/visitation/doctors) para todo papel do laboratório (CRMLAB-86, D-255)', () => {
+    for (const role of ['attendant', 'manager', 'admin'] as const) {
+      const visitacao = sidebarSectionsFor(role).groups.find((g) => g.id === 'visitacao');
+      expect(visitacao?.label).toBe('Visitação Médica');
+      expect(visitacao?.items.map((r) => [r.label, r.path])).toEqual([['Médicos', '/visitation/doctors']]);
+    }
+    expect(sidebarRoutesFor('platform_operator').map((r) => r.path)).not.toContain('/visitation/doctors');
   });
 
   it('operador da plataforma não vê nenhum grupo — só os itens soltos do console', () => {

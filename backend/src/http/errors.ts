@@ -100,6 +100,12 @@ export const ERROR_CATALOG = {
     message: 'Seu login nao esta vinculado a um atendente cadastrado',
   },
 
+  // --- Visitação Médica (CRMLAB-86, D-255) ---
+  DOCTOR_CRM_ALREADY_EXISTS: {
+    statusCode: 409,
+    message: 'Ja existe um medico com este CRM e UF neste laboratorio',
+  },
+
   // --- Sistema ---
   RATE_LIMIT_EXCEEDED: { statusCode: 429, message: 'Limite de requisicoes excedido' },
   SERVICE_UNAVAILABLE: {

@@ -1770,8 +1770,8 @@ Lê `users` (só `id, name, role, is_active` do próprio tenant) para validar o 
 
 ## 31. VisitService — agenda de visitas (CRMLAB-87 — D-256)
 
-**Responsabilidade:** as 7 rotas de `/visits` (API_CONTRACTS.md §14). Dono de `doctor_visits` e
-`doctor_visit_reschedules` (SCHEMA.md §36). Todo papel de tenant escreve; o operador da plataforma
+**Responsabilidade:** as 13 rotas de `/visits` (API_CONTRACTS.md §14). Dono de `doctor_visits`,
+`doctor_visit_reschedules` (SCHEMA.md §36) e `doctor_visit_attachments` (§37). Todo papel de tenant escreve; o operador da plataforma
 fica na rota. Valida médico (ativo, do tenant) e responsável (usuário ativo do tenant, papel de
 tenant) só quando mudam; só a visita `agendada` edita, reagenda ou encerra (`VISIT_ALREADY_CLOSED`;
 a guarda vai também no `WHERE` do repositório, e uma escrita que perde a corrida relê para
@@ -1788,6 +1788,27 @@ export interface VisitService {
   reschedule(ctx: TenantContext, id: string, dto: RescheduleVisitRequest): Promise<VisitDetail>;
   close(ctx: TenantContext, id: string, status: VisitClosingStatus, dto: CloseVisitRequest): Promise<VisitDetail>;
 }
+```
+
+**Registro da visita (CRMLAB-88 — D-258).** Mais 6 rotas (13 no total) e a tabela
+`doctor_visit_attachments` (SCHEMA.md §37). Check-in/out repetidos são idempotentes (200 sem
+audit); check-out sem check-in → `VISIT_NOT_CHECKED_IN`; reagendar depois do check-in →
+`VISIT_ALREADY_CHECKED_IN`. Relato, próximo passo e anexos valem em `agendada` e `realizada`
+(`isVisitRecordEditable`). O anexo aceita só imagem/PDF (`isVisitAttachmentMimeType`) e passa
+pelo mesmo sniff de `MediaService` (`resolveStoredMimeType`); se o sniff rebaixar, é
+`VALIDATION_ERROR`. O arquivo vai para o disco pelo `lib/media-storage.ts` (id da linha como
+nome), depois do `INSERT`; se a escrita no disco falhar, a linha é apagada. Excluir apaga a linha e
+depois o arquivo (arquivo ausente não é erro). Audit `check_in_visit`, `check_out_visit`,
+`update_visit_report` (só o diff), `add_visit_attachment`, `delete_visit_attachment`.
+
+```typescript
+// continuação de VisitService
+  checkIn(ctx: TenantContext, id: string): Promise<VisitDetail>;                                 // VISIT_ALREADY_CLOSED
+  checkOut(ctx: TenantContext, id: string): Promise<VisitDetail>;                                // VISIT_NOT_CHECKED_IN
+  updateReport(ctx: TenantContext, id: string, dto: UpdateVisitReportRequest): Promise<VisitDetail>;
+  addAttachment(ctx: TenantContext, id: string, dto: CreateVisitAttachmentRequest): Promise<VisitAttachment>; // MEDIA_TOO_LARGE
+  readAttachment(ctx: TenantContext, id: string, attachmentId: string): Promise<VisitAttachmentFile>;        // NOT_FOUND
+  deleteAttachment(ctx: TenantContext, id: string, attachmentId: string): Promise<void>;
 ```
 
 Lê `doctors` e `users` (só o do próprio tenant, com `tenant_id` explícito além do RLS) para validar

@@ -5490,7 +5490,7 @@ Tela `/visitation/agenda` (PAGES.md §23). Módulo `/visits`; shapes em
 `shared/types/visit.types.ts`; tabelas `doctor_visits` e `doctor_visit_reschedules` (SCHEMA.md §36).
 Regras em BUSINESS_RULES §13 e D-256.
 
-**Papéis:** as **7 rotas** valem para **todos os papéis do tenant** (resposta 2A do épico: todos
+**Papéis:** as **13 rotas** (7 da D-256 + 6 do registro, D-258) valem para **todos os papéis do tenant** (resposta 2A do épico: todos
 veem e mexem em todas as visitas). `platform_operator` → `403`. Entram no inventário de isolamento
 (`route-tenant-isolation.spec.ts`): visita de outro tenant → `404 NOT_FOUND`.
 
@@ -5580,7 +5580,8 @@ data/hora é no-op (200, sem histórico nem audit).
 **Response (200):** `VisitDetail` com a linha nova em `reschedules`. Audit `reschedule_visit`
 (`oldValues: { scheduledAt }`, `newValues: { scheduledAt, reason }`).
 
-**Erros:** `VISIT_ALREADY_CLOSED` (409), `NOT_FOUND`, `VALIDATION_ERROR`
+**Erros:** `VISIT_ALREADY_CLOSED` (409), `VISIT_ALREADY_CHECKED_IN` (409, já teve check-in — CRMLAB-88),
+`NOT_FOUND`, `VALIDATION_ERROR`
 
 ### POST /visits/:id/cancel · POST /visits/:id/not-received
 ```json
@@ -5594,6 +5595,116 @@ idempotente (200, sem novo audit, motivo original mantido); o outro encerramento
 (`oldValues: { status }`, `newValues: { status, reason }`).
 
 **Erros:** `VISIT_ALREADY_CLOSED` (409), `NOT_FOUND`, `VALIDATION_ERROR` (400, sem motivo)
+
+### Registro da visita — check-in/out, relato, próximo passo e anexos (CRMLAB-88, D-258)
+
+Mais **6 rotas** no mesmo módulo (13 no total), com o mesmo acesso das outras: todo papel do tenant,
+`platform_operator` → `403`, outro tenant → `404`. Os campos novos de `Visit` e `VisitDetail`
+**sempre** vêm na resposta (inclusive em `GET /visits` e nas rotas da D-256):
+
+```typescript
+interface Visit {
+  // ...campos da D-256...
+  checkInAt: string | null;                           // "Cheguei" — hora do servidor (UTC)
+  checkInBy: { id: string; name: string } | null;
+  checkOutAt: string | null;                          // "Saí" — a visita vira `realizada`
+  checkOutBy: { id: string; name: string } | null;
+  nextVisitDate: string | null;                       // próximo passo: data de retorno 'YYYY-MM-DD'
+  attachmentCount: number;
+}
+
+interface VisitDetail extends Visit {
+  reschedules: VisitReschedule[];
+  report: {                                           // relato; cada campo até 4000, vazio vira null
+    presented: string | null;                         // o que foi apresentado
+    doctorFeedback: string | null;                    // feedback do médico
+    objections: string | null;                        // objeções
+  };
+  attachments: Array<{                                // mais antigo primeiro
+    id: string; fileName: string; mimeType: string; byteSize: number;
+    uploadedBy: { id: string; name: string } | null; createdAt: string;
+  }>;
+}
+```
+
+A **duração** não vai no fio: o cliente calcula de `checkInAt`/`checkOutAt` com
+`visitDurationMinutes` (`shared/types/visit.types.ts`), que arredonda para minuto inteiro.
+
+**Em que status cada ação vale:**
+
+| Ação | `agendada` | `realizada` | `cancelada` / `nao_recebeu` |
+|---|---|---|---|
+| check-in | sim (repetir → 200 sem mudar) | 200 sem mudar | 409 `VISIT_ALREADY_CLOSED` |
+| check-out | exige check-in (`409 VISIT_NOT_CHECKED_IN`) | 200 sem mudar | 409 `VISIT_ALREADY_CLOSED` |
+| relato, próximo passo, anexar, excluir anexo | sim | sim | 409 `VISIT_ALREADY_CLOSED` |
+| baixar anexo | sim | sim | sim |
+
+Depois do check-in a visita **não reagenda** (`POST /visits/:id/reschedule` → `409
+VISIT_ALREADY_CHECKED_IN`), mas ainda pode ser editada (`PATCH /visits/:id`), cancelada ou marcada
+como "médico não recebeu" (cheguei e o médico não atendeu). O check-in fica gravado.
+
+### POST /visits/:id/check-in
+Sem corpo (`{}` ou vazio; campo desconhecido → 400). Grava `checkInAt = now()` e `checkInBy`.
+A visita continua `agendada`. Data prevista no futuro ou no passado não importa: vale a hora real.
+
+**Response (200):** `VisitDetail`. Audit `check_in_visit` (`newValues: { checkInAt }`), só na
+primeira vez.
+
+**Erros:** `VISIT_ALREADY_CLOSED` (409), `NOT_FOUND`, `VALIDATION_ERROR`
+
+### POST /visits/:id/check-out
+Sem corpo. Grava `checkOutAt = now()` e `checkOutBy`, e a visita vira **`realizada`**
+(`statusChangedAt`/`statusChangedBy` = o check-out; `statusReason` fica `null`).
+
+**Response (200):** `VisitDetail`. Audit `check_out_visit`
+(`oldValues: { status }`, `newValues: { status: "realizada", checkOutAt, durationMinutes }`), só na
+primeira vez.
+
+**Erros:** `VISIT_NOT_CHECKED_IN` (409, sem check-in), `VISIT_ALREADY_CLOSED` (409), `NOT_FOUND`
+
+### PATCH /visits/:id/report
+Parcial: `presented?`, `doctorFeedback?`, `objections?` (até 4000; `null` ou só espaço limpa) e
+`nextVisitDate?` (`'YYYY-MM-DD'` válida ou `null`). Campo desconhecido → 400. Sem mudança real →
+200 sem audit. O próximo passo é **só a data**: a tela usa para abrir uma visita nova já preenchida
+(médico, responsável e tipo desta), e nada é criado sozinho.
+
+**Response (200):** `VisitDetail`. Audit `update_visit_report` (só o diff).
+
+**Erros:** `VISIT_ALREADY_CLOSED` (409), `NOT_FOUND`, `VALIDATION_ERROR`
+
+### POST /visits/:id/attachments
+```json
+{ "fileName": "folder-checkup.pdf", "mimeType": "application/pdf", "contentBase64": "JVBERi0x..." }
+```
+Base64 em JSON, como `POST /conversations/:id/attachments` (§2d). Só **imagem e PDF** da
+allow-list de mídia (`isVisitAttachmentMimeType`: `image/jpeg|png|webp|gif|heic` e
+`application/pdf`), com o mesmo sniff de assinatura do CRMLAB-31: arquivo cujo conteúdo não bate
+com o tipo declarado → 400 (aqui não há rebaixamento para `octet-stream`; quem anexou está na
+tela). Teto de **15 MiB** (`MAX_MEDIA_BYTES`) e **20 anexos por visita**
+(`VISIT_ATTACHMENTS_MAX`). `fileName` 1–255.
+
+**Response (201):** o anexo (`VisitDetail['attachments'][number]`). Audit `add_visit_attachment`
+(`newValues: { attachmentId, fileName, mimeType, byteSize }`).
+
+**Erros:** `MEDIA_TOO_LARGE` (413, vazio ou acima de 15 MiB), `VALIDATION_ERROR` (400 —
+`fields.mimeType` fora de imagem/PDF ou conteúdo divergente; `fields.attachments` no 21º anexo),
+`VISIT_ALREADY_CLOSED` (409), `NOT_FOUND`
+
+### GET /visits/:id/attachments/:attachmentId
+Os bytes do arquivo, com os mesmos cabeçalhos de `GET /media/:id`: `Content-Type` passado de novo
+pela allow-list, `X-Content-Type-Options: nosniff` e `Content-Disposition` `inline` para imagem e
+`attachment` para PDF, com `filename` percentual-codificado. Vale em qualquer status.
+
+**Erros:** `NOT_FOUND` (404 — visita ou anexo inexistente, de outro tenant, anexo de **outra**
+visita, ou arquivo fora do disco)
+
+### DELETE /visits/:id/attachments/:attachmentId
+Qualquer usuário do laboratório exclui (resposta 7 do épico). Apaga a linha e o arquivo.
+
+**Response:** `204`. Audit `delete_visit_attachment` (`oldValues: { attachmentId, fileName,
+mimeType, byteSize }`).
+
+**Erros:** `VISIT_ALREADY_CLOSED` (409), `NOT_FOUND`
 
 ---
 

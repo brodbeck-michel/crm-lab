@@ -1483,6 +1483,27 @@ navegador; o fio é ISO UTC).
   obrigatório (a tela barra vazio antes de enviar). `VISIT_ALREADY_CLOSED` → toast "A visita já
   foi encerrada por outra pessoa." e a agenda recarrega.
 
+**Registro da visita (CRMLAB-88, D-258)** — tudo no mesmo `Modal` "Visita", pensado para o celular:
+
+- **Check-in/out com um toque:** bloco "Registro" no topo, com um botão primário de largura total
+  no celular. Antes do check-in: [Cheguei]. Depois: "Em visita desde 14:05" + [Saí]. Realizada:
+  "Check-in 14:05 · Check-out 14:50 · Duração 45 min" (`visitDurationMinutes`, `formatMinutes`).
+  Cancelada/não recebeu com check-in feito mostra só o check-in. `VISIT_NOT_CHECKED_IN` /
+  `VISIT_ALREADY_CLOSED` → toast e a visita recarrega.
+- **Depois do check-in** o botão [Reagendar] some (a API recusaria com `VISIT_ALREADY_CHECKED_IN`).
+- **Relato** (com a visita `agendada` ou `realizada`): três `TextArea` ("O que foi apresentado",
+  "Feedback do médico", "Objeções") + `Input` de data "Data de retorno" + [Salvar relato]
+  (`PATCH /visits/:id/report`, só os campos que mudaram). Cancelada/não recebeu: só leitura, e a
+  seção some se estiver vazia.
+- **Próximo passo:** com "Data de retorno" gravada, [Agendar retorno] abre "Nova visita" com o
+  médico, o responsável e o tipo desta visita, e a data de retorno às 09:00. Nada é criado até
+  o usuário confirmar.
+- **Anexos:** lista (nome, tamanho, quem anexou) com [Baixar] e [Excluir] (`window.confirm`).
+  Baixar busca com o token (`fetchAuthenticatedBlob`): PDF abre em nova aba, imagem baixa com o
+  nome original. [Anexar arquivo] abre o seletor com `accept="image/*,application/pdf"`; a tela
+  barra antes de enviar o que não é imagem/PDF da allow-list (`isVisitAttachmentMimeType`) ou passa
+  de 15 MiB, e esconde o botão no 20º anexo. Cancelada/não recebeu: só [Baixar].
+
 ---
 
 ## Estado Global (Zustand + TanStack Query)

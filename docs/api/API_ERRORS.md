@@ -160,6 +160,12 @@ Sem código novo além do acima: `/insurances` e `/exams/:id/prices` reusam o ca
 `VALIDATION_ERROR` (`details.fields`, ver API_CONTRACTS.md §4/§8) e `FORBIDDEN`
 (`details.requiredRoles`).
 
+## Visitação Médica (CRMLAB-86, D-255)
+
+| Código | HTTP | Quando |
+|--------|------|--------|
+| `DOCTOR_CRM_ALREADY_EXISTS` | 409 | `POST /doctors` ou `PATCH /doctors/:id` com CRM + UF já usados por outro médico do laboratório, **ativo ou inativo** (índice único parcial `uq_doctors_tenant_crm`). `details: { crm, crmUf, existingDoctor: { id, name, isActive } }` — a tela diz quem é e, se estiver inativo, que o caminho é reativar. Código próprio (e não `CONFLICT`) para o formulário marcar o campo CRM sem olhar a mensagem |
+
 ## Sistema
 
 | Código | HTTP | Quando |

@@ -47,6 +47,7 @@ import { executiveReportModule } from '../controllers/executive-report.routes.js
 import { lisSyncModule } from '../controllers/lis-sync.routes.js';
 import { funnelRulesModule } from '../controllers/funnel-rules.routes.js';
 import { holidayModule } from '../controllers/holiday.routes.js';
+import { doctorModule } from '../controllers/doctor.routes.js';
 
 export const apiModuleFactories: ApiModuleFactory[] = [
   examModule, // GET/POST/PATCH /exams — API_CONTRACTS.md §4
@@ -76,5 +77,6 @@ export const apiModuleFactories: ApiModuleFactory[] = [
   lisSyncModule, // GET|PATCH /settings/lis-integration, POST /settings/lis-integration/sync — API_CONTRACTS.md §10.3 (CRMLAB-52)
   funnelRulesModule, // GET|PATCH /settings/funnel-rules — API_CONTRACTS.md §6c (CRMLAB-56)
   holidayModule, // GET|POST /settings/holidays, DELETE /settings/holidays/:id — API_CONTRACTS.md §6d (CRMLAB-62)
+  doctorModule, // GET|POST /doctors, GET|PATCH /doctors/:id, POST /doctors/:id/inactivate|reactivate — API_CONTRACTS.md §13 (CRMLAB-86)
   // <- agentes de API: adicione o factory do seu modulo aqui
 ];

@@ -72,6 +72,9 @@ export type ApiErrorCode =
   | 'MEDIA_TOO_LARGE'
   // Vendas — domínio LIS (Onda 9)
   | 'SALE_ATTENDANT_NOT_LINKED'
+  // Visitação Médica (CRMLAB-86, D-255)
+  /** CRM + UF já usados por outro médico do laboratório (ativo ou inativo). */
+  | 'DOCTOR_CRM_ALREADY_EXISTS'
   // Sistema
   | 'RATE_LIMIT_EXCEEDED'
   | 'SERVICE_UNAVAILABLE'

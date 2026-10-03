@@ -15,6 +15,7 @@ import type {
   ListPendingLisBudgetsQuery,
   ListProposalsQuery,
   ListSalesQuery,
+  ListVisitsQuery,
   OperationOverviewQuery,
   PaginationQuery,
   PendingLisBudgetsSummaryQuery,
@@ -184,6 +185,10 @@ export const queryKeys = {
 
   /** ['doctors', filters] — `/visitation/doctors` (§22, CRMLAB-86) */
   doctors: (filters?: ListDoctorsQuery) => ['doctors', filters ?? {}] as const,
+  /** ['visits', filters] — `/visitation/agenda` (§23, CRMLAB-87) */
+  visits: (filters: ListVisitsQuery) => ['visits', filters] as const,
+  /** ['visits', 'detail', id] — visita aberta no modal da Agenda (CRMLAB-87) */
+  visit: (id: string) => ['visits', 'detail', id] as const,
 } as const;
 
 /** Prefixos usados para invalidar um escopo inteiro (todas as variações de filtro). */
@@ -219,6 +224,7 @@ export const queryScopes = {
   sales: ['sales'] as const,
   attendants: ['attendants'] as const,
   doctors: ['doctors'] as const,
+  visits: ['visits'] as const,
 } as const;
 
 /**

@@ -26,6 +26,7 @@ import {
   Scale,
   MapPinned,
   Stethoscope,
+  CalendarDays,
   type LucideIcon,
 } from 'lucide-react';
 import type { NavIcon } from '@/routes/route-config';
@@ -62,6 +63,7 @@ const ICONS: Record<NavIcon, LucideIcon> = {
   megaphone: Megaphone,
   visitation: MapPinned,
   doctors: Stethoscope,
+  agenda: CalendarDays,
 };
 
 export interface NavGlyphProps {

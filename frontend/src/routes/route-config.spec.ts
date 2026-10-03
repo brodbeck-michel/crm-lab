@@ -130,13 +130,17 @@ describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, revisado em D-129)'
     ]);
   });
 
-  it('grupo Visitação Médica tem Médicos (/visitation/doctors) para todo papel do laboratório (CRMLAB-86, D-255)', () => {
+  it('grupo Visitação Médica tem Agenda e Médicos para todo papel do laboratório (CRMLAB-86/87, D-255/D-256)', () => {
     for (const role of ['attendant', 'manager', 'admin'] as const) {
       const visitacao = sidebarSectionsFor(role).groups.find((g) => g.id === 'visitacao');
       expect(visitacao?.label).toBe('Visitação Médica');
-      expect(visitacao?.items.map((r) => [r.label, r.path])).toEqual([['Médicos', '/visitation/doctors']]);
+      expect(visitacao?.items.map((r) => [r.label, r.path])).toEqual([
+        ['Agenda', '/visitation/agenda'],
+        ['Médicos', '/visitation/doctors'],
+      ]);
     }
     expect(sidebarRoutesFor('platform_operator').map((r) => r.path)).not.toContain('/visitation/doctors');
+    expect(sidebarRoutesFor('platform_operator').map((r) => r.path)).not.toContain('/visitation/agenda');
   });
 
   it('operador da plataforma não vê nenhum grupo — só os itens soltos do console', () => {

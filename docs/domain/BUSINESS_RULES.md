@@ -239,6 +239,23 @@ para **todas** as atendentes que já a veem, a partir de X minutos de espera.
 - Chip **"Aguardando resposta N"**: conta e filtra **a página carregada** da lista (não o banco
   inteiro), e combina com "Minhas"/"Não atribuídas".
 
+### Relatório de tempo de resposta (CRMLAB-83, D-257)
+Aba **"Tempo de resposta"** do Analytics, para **gestor e admin**. Mede a mesma espera do alerta
+acima, já encerrada, por período (até **93 dias**, datas no fuso do expediente).
+- **Bloco** = mensagens seguidas do paciente. A espera vai da **primeira** mensagem do bloco até a
+  próxima **resposta humana** (`agent` sem `automation`, CRM ou celular). Automática e de sistema
+  não respondem nem encerram a espera.
+- **Minutos úteis:** só o expediente, sem feriados (nacionais e do laboratório) — a mesma conta do
+  alerta. Paciente às 20:00, resposta às 08:07 do dia útil seguinte = **7 min**.
+- **Quem respondeu leva o tempo** (`sender_id`), não a dona da conversa. Resposta pelo celular do
+  laboratório aparece numa linha à parte, **"Celular"**.
+- **Encerrar sem responder** fecha o bloco **sem resposta** (ex.: o "obrigado" antes de encerrar).
+  Sem resposta não tem atendente: aparece só no total, como "aguardando" ou "encerrado".
+- **Primeira resposta** = blocos que abrem o atendimento: primeiro da conversa ou primeiro depois
+  de um encerramento.
+- Indicadores: média, mediana, faixas **até 5 / 5–15 / 15–60 / mais de 1 h**, ranking por
+  atendente (mediana menor primeiro) + total do laboratório, mediana por dia. Exporta Excel.
+
 ### Exceção: régua de fatos do LIS (CRMLAB-60, D-252 — substitui D-119 item 4 e D-204)
 A matriz acima vale para **pessoas**. O orçamento do LIS vinculado à proposta
 (`lis_budget_number`) move a proposta pelo sistema, **em qualquer origem** (`crm` ou `bitlab`),

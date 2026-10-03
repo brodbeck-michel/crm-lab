@@ -349,6 +349,20 @@ CREATE INDEX idx_messages_human_reply
   predicado literalmente. A âncora do reingajamento (§33) usa o mesmo recorte.
 - Sem coluna nova, sem backfill, sem policy (`messages` já está sob RLS).
 
+**Mensagens do paciente por período — migração 049 (CRMLAB-83, D-257):**
+
+```sql
+CREATE INDEX idx_messages_patient_tenant_created
+  ON messages (tenant_id, created_at)
+  WHERE sender_type = 'patient';
+```
+
+- O relatório de tempo de resposta (`GET /analytics/response-time`) começa pelas conversas com
+  mensagem do paciente no período (até 93 dias). Sem ele, o planner escolheria entre o índice só
+  de `tenant_id` e o só de `created_at`. A consulta (`convs` em `response-time.repository.ts`)
+  repete o predicado literalmente. O 048 ficou reservado para o CRMLAB-87.
+- Sem coluna nova, sem backfill, sem policy.
+
 **Metadados da mensagem — migração 045 (CRMLAB-70, D-234):**
 
 ```sql
@@ -2147,6 +2161,11 @@ CREATE INDEX idx_messages_human_reply
   ON messages (conversation_id, created_at DESC)
   WHERE sender_type = 'agent' AND automation IS NULL;
 
+-- Mensagens do paciente por laboratório e período (tempo de resposta — migração 049, D-257)
+CREATE INDEX idx_messages_patient_tenant_created
+  ON messages (tenant_id, created_at)
+  WHERE sender_type = 'patient';
+
 -- Search (busca pelo conteúdo das mensagens — migração 043, D-228)
 CREATE INDEX idx_messages_content_search
   ON messages USING GIN (to_tsvector('portuguese', crm_unaccent(content)))
@@ -2213,7 +2232,8 @@ migrations/
 ├── 040_message_quote_reactions_edits.sql # citação/edição/apagamento em messages + message_reactions + message_edits (CRMLAB-66, D-220..D-222)
 ├── 043_message_search.sql        # crm_unaccent() + GIN parcial de busca em messages.content (CRMLAB-68, D-228)
 ├── 045_message_metadata.sql      # messages.metadata JSONB — vídeo, PDF, localização, contato (CRMLAB-70, D-234)
-└── 047_doctors.sql               # doctors + índice único parcial (tenant, crm, uf) + policy (CRMLAB-86, D-255)
+├── 047_doctors.sql               # doctors + índice único parcial (tenant, crm, uf) + policy (CRMLAB-86, D-255)
+└── 049_messages_patient_period_index.sql # índice parcial (tenant, created_at) das mensagens do paciente (CRMLAB-83, D-257)
 ```
 
 A 007 e a 008 são arquivos ÚNICOS (tabela + policy), diferente dos pares 003/004 e 005/006: a

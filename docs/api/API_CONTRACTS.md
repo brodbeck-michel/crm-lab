@@ -3433,6 +3433,60 @@ Desempenho por atendente — **gestor/admin apenas** (atendente → `403 FORBIDD
 ```
 Usuário sem movimento no período aparece zerado, não some da tabela.
 
+### GET /analytics/response-time
+Tempo de resposta do WhatsApp (CRMLAB-83, **D-257**) — **gestor/admin apenas** (atendente →
+`403 FORBIDDEN` com `details.requiredRoles: ["manager","admin"]`). Tipos em
+`shared/types/response-time.types.ts`. **Sem cache** no servidor.
+
+**Query Params:** `startDate`, `endDate` (`YYYY-MM-DD`, **datas locais do fuso do expediente**).
+Ausentes → últimos 30 dias. Período maior que **93 dias** (`RESPONSE_TIME_MAX_PERIOD_DAYS`) ou
+invertido → `400 VALIDATION_ERROR` em `details.fields.endDate`.
+
+**Regra da medida:** um BLOCO é uma sequência de mensagens do paciente; a espera vai da PRIMEIRA
+do bloco até a próxima resposta humana (`sender_type = 'agent'`, `automation` nulo — CRM ou
+celular). Automática e de sistema não contam. O encerramento ("Atendimento encerrado por X") fecha
+o bloco sem resposta. Os minutos são **úteis** (expediente de `business_hours`, sem feriados),
+com 1 casa decimal. O bloco é do dia local em que começou.
+
+**Response (200):**
+```json
+{
+  "period": { "startDate": "2026-09-01", "endDate": "2026-09-30" },
+  "timezone": "America/Sao_Paulo",
+  "total": {
+    "answered": 3, "averageMinutes": 11, "medianMinutes": 10,
+    "buckets": { "upTo5": 1, "upTo15": 1, "upTo60": 1, "over60": 0 },
+    "firstResponse": { "answered": 2, "averageMinutes": 15, "medianMinutes": 15 },
+    "unanswered": { "waiting": 2, "closed": 1, "conversations": 3 },
+    "daily": [
+      { "date": "2026-09-01", "answered": 3, "averageMinutes": 11, "medianMinutes": 10, "unanswered": 3 }
+    ]
+  },
+  "responders": [
+    {
+      "responderId": "uuid", "name": "Ana", "kind": "user",
+      "answered": 2, "averageMinutes": 6.5, "medianMinutes": 6.5,
+      "buckets": { "upTo5": 1, "upTo15": 1, "upTo60": 0, "over60": 0 },
+      "firstResponse": { "answered": 1, "averageMinutes": 10, "medianMinutes": 10 },
+      "daily": [{ "date": "2026-09-01", "answered": 2, "averageMinutes": 6.5, "medianMinutes": 6.5 }]
+    },
+    {
+      "responderId": "phone", "name": "Celular", "kind": "phone",
+      "answered": 1, "averageMinutes": 20, "medianMinutes": 20,
+      "buckets": { "upTo5": 0, "upTo15": 0, "upTo60": 1, "over60": 0 },
+      "firstResponse": { "answered": 1, "averageMinutes": 20, "medianMinutes": 20 },
+      "daily": [{ "date": "2026-09-01", "answered": 1, "averageMinutes": 20, "medianMinutes": 20 }]
+    }
+  ]
+}
+```
+- `answered` = blocos respondidos; sem nenhum, média e mediana são `null`.
+- Faixas inclusivas em minutos inteiros: `upTo5` 0–5, `upTo15` 6–15, `upTo60` 16–60, `over60` 61+.
+- `firstResponse` = só os blocos que abrem o atendimento (1º da conversa ou 1º depois de encerrar).
+- `responders`: quem respondeu (mediana menor primeiro). A resposta do celular é a linha
+  `responderId: "phone"`, `name: "Celular"`. Bloco sem resposta só entra em `total.unanswered`.
+- `daily`: todos os dias do período, em ordem, inclusive os zerados.
+
 ---
 
 ## 5b. Platform Console (`platform_operator` apenas)

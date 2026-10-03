@@ -674,6 +674,17 @@ nunca "sem permissão" (não vazar existência).
   soma com a receita do CRM, porque as duas respondem perguntas diferentes (janela de pagamento
   × fechamento). Com tudo zerado mostra "—" e a dica "Informe o nº do orçamento do LIS nas
   propostas".
+- **Aba "Tempo de resposta" (CRMLAB-83, D-257) — gestor/admin.** `SegmentedControl`
+  "Conversão | Tempo de resposta" logo abaixo do título (a atendente não vê o controle). O
+  período do topo vale para as duas abas; acima de 93 dias a aba avisa e não busca. Dados:
+  `GET /analytics/response-time` (`ResponseTimeSection`). Mostra: seletor **Atendente** ("Todo o
+  laboratório" ou uma linha do ranking, filtro local sem novo fetch), cartões **Mediana**,
+  **Média**, **1ª resposta (mediana)**, **Respondidos** e **Sem resposta** (só no recorte do
+  laboratório: "N aguardando · M encerrados · K conversas"), **Distribuição** nas 4 faixas com
+  barra e percentual, **Mediana por dia** (barras; dia sem resposta fica sem barra) e a tabela
+  **Ranking por atendente** com a linha "Celular" e "Total do laboratório". Minutos em
+  `formatMinutes` ("6,5 min", "1h30"). Botão **Exportar Excel** (`response-time-report.ts`): abas
+  Ranking, Por dia (recorte escolhido) e Sem resposta.
 
 ---
 

@@ -429,7 +429,8 @@ describe('isolamento multitenant', () => {
       .send(visitBody({ doctorId: doctorB, responsibleId: attendantB.id }))
       .expect(201);
     await createOk(attendantA);
-    for (const query of [{}, { doctorId: doctorB }, { responsibleId: attendantB.id }]) {
+    const queries: Array<Record<string, string>> = [{}, { doctorId: doctorB }, { responsibleId: attendantB.id }];
+    for (const query of queries) {
       const res = await list(attendantA, query);
       expect(JSON.stringify(res.body)).not.toContain('Dr. Confidencial Beta');
     }

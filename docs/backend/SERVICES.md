@@ -1704,6 +1704,36 @@ export function parseYear(raw: unknown, now?: Date): number;       // VALIDATION
 
 ---
 
+## 30. DoctorService — médicos solicitantes (CRMLAB-86 — D-255)
+
+**Responsabilidade:** as 6 rotas de `/doctors` (API_CONTRACTS.md §13). Dono de `doctors`
+(SCHEMA.md §35), base do épico Visitação Médica (CRMLAB-85). Todo papel de tenant escreve; o
+operador da plataforma fica na rota. Normaliza CRM (só dígitos) e UF (maiúscula, 27 UFs) com os
+helpers de `shared/types/doctor.types.ts`, valida o **par** depois de juntar com o que está gravado
+(PATCH), confere duplicidade de (CRM, UF) antes de gravar e converte a corrida do índice único
+(`uq_doctors_tenant_crm`) no mesmo `DOCTOR_CRM_ALREADY_EXISTS`. O responsável pela carteira é
+lido de `users` filtrando pelo `tenant_id` do contexto (além do RLS) e só é revalidado quando muda.
+Audit `create_doctor`/`update_doctor`/`inactivate_doctor`/`reactivate_doctor` (`update` só com o
+diff; inativar/reativar idempotentes, sem audit repetido).
+
+```typescript
+// backend/src/services/doctor.service.ts
+export interface DoctorService {
+  list(ctx: TenantContext, query: ListDoctorsQuery): Promise<ListDoctorsResponse>;
+  getById(ctx: TenantContext, id: string): Promise<Doctor>;                         // NOT_FOUND
+  create(ctx: TenantContext, dto: CreateDoctorRequest): Promise<Doctor>;           // DOCTOR_CRM_ALREADY_EXISTS, VALIDATION_ERROR
+  update(ctx: TenantContext, id: string, dto: UpdateDoctorRequest): Promise<Doctor>;
+  inactivate(ctx: TenantContext, id: string): Promise<Doctor>;                     // idempotente
+  reactivate(ctx: TenantContext, id: string): Promise<Doctor>;                     // idempotente
+}
+```
+
+Lê `users` (só `id, name, role, is_active` do próprio tenant) para validar o responsável e para o
+`LEFT JOIN` do nome — leitura de apoio, sem escrever em tabela de outro domínio, mesmo padrão de
+`ProposalRepository.findTenantUser`.
+
+---
+
 ## Convenções Transversais
 
 - Todo método recebe `tenantId` ou `TenantContext` como primeiro parâmetro — NUNCA lê de variável global

@@ -4891,3 +4891,47 @@ D-119 inflava a conversão da origem `crm` do mesmo jeito que a D-204 corrigiu p
 `proposal.service.ts` (sai `markWonFromLis`, `SystemTransitionSource`); frontend
 `ProposalCard.tsx` (selo para qualquer origem), `LisReferenceSection.tsx` (selo `crm`, aviso de
 conflito, toasts); BUSINESS_RULES §3, WORKFLOWS §4, SERVICES §4/§25, API_CONTRACTS §3, PAGES §5/§6.
+
+## 2026-10-02 — Cadastro de médicos solicitantes (CRMLAB-86, épico CRMLAB-85 Visitação Médica)
+
+### D-255: Médico solicitante vira cadastro do laboratório, com CRM opcional e único por (tenant, CRM, UF)
+**Decisão (Michel, 02/10/2026; itens 7–9 decididos na implementação):**
+1. **Tabela `doctors`** (migração 047, SCHEMA.md §35), isolada por tenant com a policy padrão no
+   mesmo arquivo. Só o **nome** é obrigatório. Os demais campos do card são opcionais: CRM + UF,
+   especialidade, clínica/consultório, endereço, telefone/WhatsApp, e-mail, secretária/contato,
+   melhor dia e horário para visita (texto livre) e observações.
+2. **CRM opcional, mas único quando preenchido:** índice único parcial
+   `(tenant_id, crm, crm_uf) WHERE crm IS NOT NULL`. CRM vira só dígitos (até 10). Com CRM, a UF é
+   obrigatória e tem de ser uma das 27, em maiúscula. A duplicidade conta médico **inativo**: o
+   caminho é reativar. Erro próprio `409 DOCTOR_CRM_ALREADY_EXISTS` com `details.existingDoctor`
+   (`id`, `name`, `isActive`), para a tela dizer quem já usa o número.
+3. **Sem perfil novo:** todo papel de laboratório (atendente, gestor, admin) vê, cadastra, edita
+   e inativa. O operador da plataforma fica de fora, como em toda rota de laboratório.
+4. **Inativar em vez de apagar.** `POST /doctors/:id/inactivate|reactivate`, idempotentes; sem
+   `DELETE`. A agenda de visitas vai referenciar o médico.
+5. **Responsável pela carteira:** opcional, FK para `users`. Tem de ser usuário **ativo** do
+   **mesmo** laboratório, de qualquer papel. Senão `VALIDATION_ERROR` em `responsibleId`.
+6. **A proposta não muda:** `proposals.requesting_doctor` continua texto livre.
+7. **Audit log** `create_doctor`, `update_doctor` (só o diff), `inactivate_doctor`,
+   `reactivate_doctor`, todos com `entityType: "doctor"`.
+8. **Normalização em `shared/`:** `normalizeCrm`, `normalizeUf`, `isBrazilUf` e `BRAZIL_UFS`
+   ficam em `shared/types/doctor.types.ts`. O formulário e o servidor usam as mesmas funções. O
+   schema zod fica na rota, como em todo módulo (o `shared/` não depende de zod). O par CRM/UF é
+   validado no service, porque no PATCH depende do que já está gravado.
+9. **O responsável só é revalidado quando muda.** Se ele for desativado depois, o médico continua
+   editável sem trocar a carteira. A tela mostra "Nome (inativo)" no seletor. A lista de
+   responsáveis vem de `GET /conversations/assignees` (ativos, qualquer papel), porque
+   `GET /users` é só do admin.
+**Menu:** grupo novo **"Visitação Médica"** na Sidebar, entre Comunicação e Gestão, com "Médicos"
+(`/visitation/doctors`). A Agenda (`/visitation/agenda`) entra no mesmo grupo depois.
+**Motivo:** a visitação médica precisa de uma carteira de médicos por laboratório antes da agenda,
+do check-in/out e da linha do tempo. CRM único evita dois cadastros do mesmo médico. Ser opcional
+deixa cadastrar quem ainda não tem o número à mão.
+**Impacto:** `backend/migrations/047_doctors.sql`; `doctor.repository.ts`, `doctor.service.ts`,
+`doctor.routes.ts`, `http/modules.ts`, `http/errors.ts`; `shared/types/doctor.types.ts`,
+`api.types.ts` (`DOCTOR_CRM_ALREADY_EXISTS`); frontend `api/doctors.ts`, `query-keys.ts`,
+`route-config.ts` (grupo `visitacao`), `NavGlyph.tsx`, `routes/index.tsx`,
+`pages/Visitation/Doctors.tsx`; testes `tests/doctors/doctors.spec.ts`, inventário de
+`route-tenant-isolation.spec.ts` (82 → 88 rotas), `Doctors.spec.tsx`, `route-config.spec.ts`.
+SCHEMA §35, API_CONTRACTS §13, API_ERRORS, SERVICES §30, BUSINESS_RULES §12, PAGES §22,
+COMPONENTS (ordem dos grupos).

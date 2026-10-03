@@ -23,6 +23,7 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 /reconciliation               → Conferência (LIS)         (gestor+)
 /active-search                → Busca Ativa (LIS)         (gestor+)
 /sales                        → Vendas                    (atendente vê só as próprias)
+/visitation/doctors           → Médicos (Visitação Médica) (todos os papéis de tenant — CRMLAB-86)
 /settings/channels            → Canais & Equipe          (admin; gestor lê)
 /settings/operation           → Gestão da Operação        (gestor+)
 /settings/insurances          → Convênios                 (gestor+)
@@ -42,7 +43,8 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 ### Papéis por rota (implementado em `src/routes/route-config.ts`)
 
 **Grupos do trilho (accordion, CRMLAB-4; revisado em D-129):** itens sem grupo ficam soltos no
-topo; os grupos aparecem depois, na ordem Comunicação → Gestão → Configurações. "Gestão" funde os
+topo; os grupos aparecem depois, na ordem Comunicação → Visitação Médica → Gestão → Configurações
+("Visitação Médica" entrou no CRMLAB-86, D-255, e vai receber a Agenda). "Gestão" funde os
 antigos grupos "Comercial" e "LIS / Operação Laboratorial" (D-129: usuário achou os dois grupos
 redundantes na validação de D-128). "Cadastro de Exames" (rota `/catalog`) saiu de lá e passou a
 `/catalog` → Configurações. Grupo sem nenhum item visível para o perfil não aparece. Abertos por
@@ -66,6 +68,7 @@ padrão; estado por grupo persiste em localStorage por usuário.
 | `/reconciliation` | manager · admin | sim | Gestão |
 | `/active-search` | manager · admin | sim | Gestão |
 | `/sales` | attendant · manager · admin | sim | solto |
+| `/visitation/doctors` (rótulo "Médicos", CRMLAB-86) | attendant · manager · admin | sim | Visitação Médica |
 | `/settings/channels` | manager · admin | sim | Configurações |
 | `/settings/operation` | manager · admin | sim | Gestão |
 | `/settings/insurances` | manager · admin | sim | Configurações |
@@ -1381,6 +1384,40 @@ caminho (`automation.sentToFollowUp.days`); chave que a tela não conhece vira t
   arrastar do kanban só oferecem o que `checkTransition` aceita para quem está logado; proposta
   fechada ganha "Reabrir em…" quando a regra deixa; o formulário de perda aceita confirmar sem
   motivo quando o motivo não é exigido.
+
+---
+
+## Visitação Médica (épico CRMLAB-85)
+
+### 22. Médicos (`/visitation/doctors`) — todos os papéis de tenant (CRMLAB-86, D-255)
+
+Cadastro de médicos solicitantes. Grupo **"Visitação Médica"** da Sidebar (ícone `MapPinned`),
+item "Médicos" (ícone `Stethoscope`), `requiredRoles: TENANT_ROLES`. Fonte: `/doctors`
+(API_CONTRACTS.md §13); responsáveis de `GET /conversations/assignees` (usuários ativos do
+laboratório, qualquer papel — `GET /users` é admin-only). A Agenda (`/visitation/agenda`) entra no
+mesmo grupo num card seguinte. Arquivo `pages/Visitation/Doctors.tsx`.
+
+- **Topo:** `PageHeader` "Médicos" + [+ Novo médico] (todo papel vê o botão).
+- **Filtros** (empilham no celular): `SearchInput` "Buscar por nome ou CRM" (debounce, vai em
+  `?search=`); `Select` "Todos os responsáveis" + usuários ativos (`?responsibleId=`);
+  `SegmentedControl` Ativos | Inativos | Todos (abre em **Ativos**). Mudar filtro volta à página 1.
+- **Lista:** a partir de `md`, `DataTable` com Nome (+ especialidade embaixo), CRM (`12345/SC`),
+  Clínica, Telefone, Responsável, Status (`Chip` Ativo/Inativo) e Ações ([Editar] [Inativar] ou
+  [Reativar]). Abaixo de `md`, **cartões** com as mesmas informações e os mesmos botões (a tabela
+  rolaria na horizontal e esconderia as ações). `Pagination` de 20 em 20. Vazio: "Nenhum médico
+  encontrado".
+- **Formulário** (`Modal` "Novo médico"/"Editar médico", grade de 2 colunas que vira 1 no
+  celular): Nome*, CRM (só números), UF do CRM (`Select` com as 27 UFs), Especialidade,
+  Clínica/consultório, Endereço, Telefone/WhatsApp, E-mail, Secretária/contato, Melhor dia e
+  horário para visita, Responsável pela carteira ("Sem responsável" + ativos; o responsável atual
+  desativado aparece como "Nome (inativo)" para não trocar a carteira sozinho), Observações.
+  Antes de enviar, a tela barra nome vazio e CRM sem UF. Vazio vai como `null`.
+- **Erros:** `DOCTOR_CRM_ALREADY_EXISTS` marca o campo CRM com "CRM já cadastrado para {nome}." —
+  ou, se o existente está inativo, "…(inativo). Reative o cadastro em vez de criar outro." — e o
+  modal fica aberto. `VALIDATION_ERROR` com `details.fields` marca o campo; o resto vai para o
+  toast genérico (`useApiErrorHandler`).
+- **Inativar/Reativar:** sem confirmação (é reversível); toast "Médico inativado"/"Médico
+  reativado" e a lista recarrega.
 
 ---
 

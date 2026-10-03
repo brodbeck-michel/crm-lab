@@ -1883,6 +1883,51 @@ CREATE INDEX idx_message_edits_message_id ON message_edits(message_id);
 - Migração **única** (colunas + tabelas + policies), como 026/027: sem backfill, as tabelas
   nascem vazias.
 
+### 35. `doctors` (migração 047 — CRMLAB-86, D-255)
+Médicos solicitantes do laboratório — base do épico **Visitação Médica** (CRMLAB-85). Os próximos
+cards (agenda de visitas, check-in/out, linha do tempo) vão referenciar `doctors.id`.
+**Não** se liga à proposta: `proposals.requesting_doctor` (§6, migração 017) continua texto livre.
+
+```sql
+CREATE TABLE doctors (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id           UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  name                VARCHAR(255) NOT NULL,
+  crm                 VARCHAR(10),          -- só dígitos (normalizado no service); opcional
+  crm_uf              CHAR(2),              -- UF do conselho, maiúscula; obrigatória se há CRM
+  specialty           VARCHAR(120),
+  clinic              VARCHAR(255),         -- clínica/consultório
+  address             VARCHAR(500),
+  phone               VARCHAR(30),          -- telefone/WhatsApp, como digitado
+  email               VARCHAR(255),
+  contact_name        VARCHAR(255),         -- secretária/contato
+  visit_preference    VARCHAR(255),         -- melhor dia e horário para visita (texto livre)
+  notes               TEXT,
+  responsible_user_id UUID REFERENCES users(id) ON DELETE SET NULL, -- responsável pela carteira
+  is_active           BOOLEAN NOT NULL DEFAULT TRUE,
+  created_by          UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),  -- trigger trg_doctors_updated_at
+  CHECK (crm IS NULL OR crm ~ '^[0-9]{1,10}$'),
+  CHECK (crm_uf IS NULL OR crm_uf ~ '^[A-Z]{2}$'),
+  CHECK (crm IS NULL OR crm_uf IS NOT NULL)
+);
+CREATE UNIQUE INDEX uq_doctors_tenant_crm ON doctors(tenant_id, crm, crm_uf) WHERE crm IS NOT NULL;
+CREATE INDEX idx_doctors_tenant_id ON doctors(tenant_id);
+CREATE INDEX idx_doctors_responsible_user_id ON doctors(responsible_user_id);
+CREATE INDEX idx_doctors_created_by ON doctors(created_by);
+-- ENABLE ROW LEVEL SECURITY + policy doctors_tenant_isolation (mesmo arquivo)
+```
+
+- **CRM opcional, único quando preenchido:** o índice parcial deixa vários médicos sem CRM e
+  barra o mesmo (CRM, UF) duas vezes no laboratório — **inclusive contra médico inativo** (o
+  caminho é reativar). Mesmo CRM em outra UF ou em outro tenant é permitido.
+- **`responsible_user_id`** é de um usuário do **mesmo** tenant (o service confere: ativo, papel
+  de tenant). Desativar o usuário não limpa a carteira; apagá-lo (raro) vira `NULL`.
+- **Sem DELETE:** inativar (`is_active = FALSE`) — a agenda vai referenciar o médico.
+- Migração **única** (tabela + policy), como 026/027: sem backfill. O 046 ficou reservado para
+  outro card; o runner aplica por nome e não exige numeração contínua.
+
 ---
 
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
@@ -2040,6 +2085,7 @@ Nenhum outro caminho de código deve usar `withoutTenant()`.
 | `tenant_holidays` | ✅ | idem |
 | `message_reactions` | ✅ | migração `040_message_quote_reactions_edits.sql` (tabela + policy no mesmo arquivo — CRMLAB-66) |
 | `message_edits` | ✅ | idem |
+| `doctors` | ✅ | migração `047_doctors.sql` (tabela + policy no mesmo arquivo — CRMLAB-86), testado em `tests/doctors/doctors.spec.ts` |
 
 As **4 tabelas da migração 003** entram sob RLS na `004_rls_onda6.sql`, as **3 tabelas da
 migração 005** entram na `006_rls_onda7.sql`, e as **4 tabelas novas da migração 012**
@@ -2146,7 +2192,8 @@ migrations/
 ├── 031_reengagement.sql          # messages.automation + conversation_reengagements + tenant_holidays (CRMLAB-62, D-211/D-213)
 ├── 040_message_quote_reactions_edits.sql # citação/edição/apagamento em messages + message_reactions + message_edits (CRMLAB-66, D-220..D-222)
 ├── 043_message_search.sql        # crm_unaccent() + GIN parcial de busca em messages.content (CRMLAB-68, D-228)
-└── 045_message_metadata.sql      # messages.metadata JSONB — vídeo, PDF, localização, contato (CRMLAB-70, D-234)
+├── 045_message_metadata.sql      # messages.metadata JSONB — vídeo, PDF, localização, contato (CRMLAB-70, D-234)
+└── 047_doctors.sql               # doctors + índice único parcial (tenant, crm, uf) + policy (CRMLAB-86, D-255)
 ```
 
 A 007 e a 008 são arquivos ÚNICOS (tabela + policy), diferente dos pares 003/004 e 005/006: a

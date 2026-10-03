@@ -68,11 +68,6 @@ export interface LisIntegrationSettings {
   lastSuccessAt: IsoDateTime | null;
   /** Mensagem em português pronta para a tela. `null` depois de uma rodada ok. */
   lastError: string | null;
-  /**
-   * Dia (`YYYY-MM-DD`, Brasília) da última releitura completa dos últimos 90
-   * dias que terminou sem erro — é ela que pega os estornos (CRMLAB-53, D-189).
-   */
-  lastFullScanOn: string | null;
   running: boolean;
   /** Intervalo do agendador em segundos (`LIS_SYNC_INTERVAL_MS / 1000`, D-249). `0` = agendador desligado. */
   intervalSeconds: number;

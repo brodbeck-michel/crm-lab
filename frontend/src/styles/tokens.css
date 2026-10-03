@@ -113,6 +113,12 @@
     /* Tique "lida" (CRMLAB-67, D-225): o azul do WhatsApp, LITERAL — é
      * convenção que o usuário já conhece, não cor do tema. */
     --color-chat-tick-read: #53bdeb;
+    /* Alerta de tempo de resposta (CRMLAB-84, D-254): vermelho LITERAL — é
+     * sinal de "atrasado", não cor do tema (acento vermelho não pode
+     * confundir). Texto/ícone/faixa no vermelho (5,6:1 no branco, 5,0:1 no
+     * fundo do alerta); fundo do item no vermelho a 8% com branco. */
+    --color-chat-alert: #c62828;
+    --color-chat-alert-bg: color-mix(in oklab, #c62828 8%, white);
 
     /* --------------------------------------------------------------- */
     /* Tipografia                                                       */

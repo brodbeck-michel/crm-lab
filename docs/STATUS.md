@@ -2978,7 +2978,7 @@ Branch `feature/CRMLAB-53-extrato-pagamentos-lis`. Decisões D-188/D-189, migra�
   não decide mais pagamento; por chunk, `upsertPayments` + `recomputePaidValues`. Recebido = soma
   dos ativos da API (ou, só planilha, de todos), teto em `requisition_value`; `paid_on` = último
   pagamento considerado, de qualquer valor (D-204 intacta). Estorno depois de `ganho` não reabre.
-- **Releitura diária (D-189):** o estorno não volta na janela incremental; o primeiro tique
+- **Releitura diária (D-189) — ⚠️ removida pela D-253 (CRMLAB-80, 30/09/2026):** o estorno não volta na janela incremental; o primeiro tique
   depois das 03:00 (Brasília) relê 90 dias. `lis_sync_settings.last_full_scan_on`, marca que não
   recua, "Sincronizar agora" incremental; a tela de integração mostra a última releitura.
 - **Planilha como plano B:** Regras → "Carga do LIS" (`lisSource.spreadsheetImport`, padrão
@@ -3082,6 +3082,40 @@ que substitui D-119 itens 4–6 e D-204. Junto com o item 3 (D-210) num PR únic
 - `perdido` que recebe pagamento (não só requisição) também audita `lis_reconcile_conflict`; a
   proposta mostra "Conflito com o LIS" no modal.
 - Analytics sem código novo: `realized.wonFromLis` segue por `lis_reconciled_at`.
+
+### 🚧 CRMLAB-80 — sem releitura diária de 90 dias na sincronização do LIS (2026-09-30, aguardando validação)
+
+Branch `feature/CRMLAB-80-sem-releitura-diaria` (com merge da `main` v1.29.0). Decisão D-253 (substitui os itens 1–3
+da D-189; a planilha como plano B continua).
+
+- **Backend:** o tique (`auto`) é sempre `incremental`; sai `FULL_SCAN_HOUR`. Sem marca d'água a
+  janela continua em `LIS_SYNC_INITIAL_DAYS`. `last_full_scan_on` não é mais lida nem gravada
+  (coluna mantida, sem migração).
+- **Contrato:** `lastFullScanOn` sai de `LisIntegrationSettings` (API_CONTRACTS §10.3).
+- **Tela:** Integração LIS sem "Última releitura dos 90 dias".
+- **Testes:** `backend/tests/lis/lis-payments.spec.ts` (tique incremental depois das 03:00 e no dia
+  seguinte; sem marca → `initialDays`); `LisIntegration.spec.tsx`.
+- **Pendente:** validação em hml; card futuro para a migração que remove `last_full_scan_on`.
+
+### 🚧 CRMLAB-84 — alerta de tempo de resposta na lista de conversas (2026-10-02, aguardando validação)
+
+Branch `feature/CRMLAB-84-alerta-sem-resposta` (de `main` v1.29.0). Decisão D-254, migração
+`046_messages_human_reply_index.sql` (só índice parcial).
+
+- **Regra:** Regras → "Alerta de tempo de resposta", logo depois do reingajamento:
+  liga/desliga + "Minutos sem resposta" (1 a 1440). Padrão desligado, 15 min. Chave
+  `responseAlert` no `PATCH /settings/funnel-rules`.
+- **Backend:** `Conversation.awaitingReplySince` na lista e no detalhe (primeira mensagem do
+  paciente depois da última resposta humana; automática/sistema não contam; encerrada = `null`).
+  Endpoint novo `GET /settings/business-calendar` (todo perfil): expediente + feriados cadastrados
+  dos últimos 14 dias até amanhã.
+- **Tela:** minutos **úteis** calculados no navegador (`responseAlertMinutes`, `@crm-lab/shared`),
+  relógio a cada 30 s. Item em alerta: fundo vermelho claro, faixa à esquerda e "há N min". Chip
+  "Aguardando resposta N" conta e filtra a página carregada.
+- **Testes:** backend `conversations/awaiting-reply`, `settings/business-calendar`, casos novos em
+  `settings/funnel-rules` e `conversations/list`; frontend `lib/response-alert`,
+  `ConversationItem.response-alert`, `ConversationList.response-alert` e casos novos em
+  `Rules.spec.tsx`.
 
 ### 🚧 CRMLAB-86 — cadastro de médicos solicitantes (2026-10-02, aguardando validação)
 

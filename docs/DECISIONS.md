@@ -3151,6 +3151,8 @@ com segundos), `lis-spreadsheet.ts` (`paidAt` com hora; `consolidateLisRows`),
 BUSINESS_RULES §11.1/§11.2/§11.10, SCHEMA §26 + tabela nova, SERVICES §19/§24.1.
 
 ### D-189: Releitura diária de 90 dias pega o estorno; a planilha vira plano B, ligada por regra (CRMLAB-53)
+> **Itens 1, 2 (releitura diária) e 3 substituídos pela D-253 (CRMLAB-80, 30/09/2026).** Os itens 4 e 5 (planilha como plano B) continuam valendo.
+
 **Decisão:**
 1. **O estorno não volta na consulta incremental.** A consulta pela VPS (28/09/2026) mostrou que
    `tipoData=alteracao` filtra só por emissão/`Data_Pagamento`: nos 5 estornos testados, a linha
@@ -4740,7 +4742,8 @@ Medido em prod em 30/09:
    à gravada, as linhas recebidas são descartadas antes da ingestão: sem `lis_imports`, sem
    reprocessar, `received: 0`, log `debug`. Linha que o Bitlab grave no mesmo segundo da marca
    depois da consulta anterior fica para a releitura diária de 90 dias (D-189). `full` nunca
-   descarta.
+   descarta. *(Emendado pela D-253 item 3: sem releitura diária, essa linha entra na próxima
+   rodada em que a marca andar.)*
 3. **Contrato em segundos:** `LisIntegrationSettings.intervalMinutes` vira `intervalSeconds`
    (API_CONTRACTS §10.3). Com minutos arredondados, 30 s apareceria como "a cada 1 min". A tela
    escreve "30 s", ou "N min" quando é minuto cheio. Com `0` (hml) ela diz "Ligada · só pelo
@@ -4891,6 +4894,91 @@ D-119 inflava a conversão da origem `crm` do mesmo jeito que a D-204 corrigiu p
 `proposal.service.ts` (sai `markWonFromLis`, `SystemTransitionSource`); frontend
 `ProposalCard.tsx` (selo para qualquer origem), `LisReferenceSection.tsx` (selo `crm`, aviso de
 conflito, toasts); BUSINESS_RULES §3, WORKFLOWS §4, SERVICES §4/§25, API_CONTRACTS §3, PAGES §5/§6.
+
+## 2026-09-30 — Estorno volta na consulta incremental do Bitlab
+
+### D-253: Sem releitura diária de 90 dias — o tique da sincronização do LIS é sempre incremental (CRMLAB-80)
+**Contexto:** a D-189 criou a releitura diária dos últimos 90 dias (primeiro tique depois das 03:00
+de Brasília) porque o filtro `tipoData=alteracao` do Bitlab não considerava a `DATA_ESTORNO`. Em
+30/09/2026 o Bitlab respondeu por e-mail que passou a considerar. Validado no mesmo dia (consulta só
+de leitura, hml, tenant `teste`), OR66760 / req. 01-205053: na janela `alteracao` 30/06/2026
+12:00–23:59 voltam as 4 linhas — `ID_PAGAMENTO` 68642/68643 (pagas 07:44) como `ESTORNADO` com
+`DATA_ESTORNO` 16:39:04/05, e 68675/68676 (16:39) como `ATIVO`, `marcaDagua` 16:39:44; na janela
+00:00–11:59 o OR66760 não aparece mais (a linha estornada sai na janela do estorno). Para o
+incremental (marca d'água → `dataInicio`) isso basta. Decisão do Michel em 30/09.
+**Decisão:**
+1. **Substitui os itens 1, 2 (releitura) e 3 da D-189.** `runForTenant` com `auto` (agendador) é
+   sempre `incremental`. Sai `FULL_SCAN_HOUR`. Sem marca d'água (primeira carga) a janela
+   incremental já começa em hoje − `LIS_SYNC_INITIAL_DAYS` às 00:00:00, como antes. O modo `full`
+   continua no service, mas nenhuma rota nem o agendador o disparam hoje. "Sincronizar agora"
+   continua incremental. A marca continua sem recuar em `finishRun`.
+2. **`lis_sync_settings.last_full_scan_on` fica sem uso:** não é mais lida nem gravada, e
+   `lastFullScanOn` sai de `LisIntegrationSettings` (API_CONTRACTS §10.3) e da tela Integração LIS.
+   **A coluna fica no banco** — a migração destrutiva que a remove fica para depois (card próprio).
+3. **Emenda à D-249 item 2:** a linha gravada pelo Bitlab no mesmo segundo da marca, depois da
+   consulta anterior, não depende mais da releitura: a janela começa **na** marca (inclusiva),
+   então ela volta — e entra pelo `ingestRows` idempotente — na primeira rodada em que a marca
+   andar.
+4. Os itens 4 e 5 da D-189 (planilha como plano B, desligada por padrão) continuam valendo.
+**Motivo:** a releitura existia só para pegar o estorno. Com o Bitlab considerando a
+`DATA_ESTORNO`, ela vira uma leitura de 90 dias por dia sem função, e ainda pegava estorno com no
+máximo 90 dias; o incremental pega qualquer estorno.
+**Impacto:** `lis-sync.service.ts` (`modeFor`, fim da rodada), `lis-sync-settings.repository.ts`
+(view, `startRun`, `finishRun`), `shared/types/lis.types.ts`, `Settings/LisIntegration.tsx`;
+testes `backend/tests/lis/lis-payments.spec.ts` e `LisIntegration.spec.tsx`; SERVICES §24,
+BUSINESS_RULES §11.10, API_CONTRACTS §10.3, SCHEMA §`lis_sync_settings`, STATUS. **Deploy:** sem
+migração e sem variável nova.
+
+## 2026-10-02 — Alerta de tempo de resposta na lista de conversas (CRMLAB-84)
+
+### D-254: Destacar o paciente que espera a atendente há X minutos úteis (só visual)
+**Decisão (Michel, 02/10/2026):** o inverso do reingajamento (D-211). Nada é enviado: a lista do
+Atendimento destaca em vermelho a conversa cujo paciente espera resposta.
+1. **Regra** em `FunnelRules.responseAlert = { enabled, minutes }`, na página de Regras logo depois
+   do reingajamento, salva pelo mesmo `PATCH /settings/funnel-rules`. Padrão **desligado** com
+   15 min (laboratório que já usa não vê nada mudar); `minutes` inteiro de **1 a 1440**.
+2. **Resposta da atendente** = mensagem `agent` com `automation` nulo, do CRM ou do celular — a
+   mesma âncora do reingajamento (SCHEMA §33). Automática e de sistema **não** tiram do alerta.
+3. **Início da espera: a PRIMEIRA mensagem do paciente depois da última resposta humana**
+   (sem resposta nenhuma: a primeira do paciente). É o tempo real de espera: quem mandou três
+   mensagens seguidas espera desde a primeira; usar a mais recente "zeraria" o relógio a cada
+   insistência do paciente. A lista e o detalhe trazem `Conversation.awaitingReplySince`
+   (opcional no tipo, o backend sempre manda), por `LEFT JOIN LATERAL` com o índice parcial
+   `idx_messages_human_reply` (migração 046). `lastMessage.senderType` não bastava: a última
+   mensagem pode ser automática ou de sistema depois da do paciente.
+4. **Só horário comercial:** expediente de `tenant_settings.business_hours` (sem nenhum dia = sempre
+   aberto, D-212 item 1), descontando feriados nacionais e de `tenant_holidays`. O relógio é do
+   navegador, então o expediente e os feriados descem por um contrato novo e leve,
+   `GET /settings/business-calendar` (API §6e), que **todo perfil** lê — a atendente não lê
+   `/settings/channels`. Vêm só os feriados cadastrados de hoje − 14 dias a amanhã
+   (`BUSINESS_CALENDAR_LOOKBACK_DAYS`); os nacionais o navegador calcula. Espera mais antiga que
+   14 dias conta só os últimos 14 — já passa de qualquer limite (1440 min úteis cabem em 14 dias
+   com 4 h de expediente por dia útil) e mantém o tique barato.
+5. **Cálculo puro em `shared/`** (`businessMinutesBetween`, `responseAlertMinutes`,
+   `response-alert.types.ts`), para o backend poder usar depois. `zonedToUtc` passou a ser
+   exportada de `reengagement.types.ts`. Entra em alerta com `minutos úteis >= minutes`.
+6. **Tela:** um nível só. Item com fundo `--color-chat-alert-bg`, faixa vermelha à esquerda e
+   relógio com "há 23 min" (no lugar do "aguardando N"), recalculado a cada 30 s no relógio local,
+   sem refazer a busca; some quando a atendente responde (o WS refaz a lista). Vermelho
+   **literal** (`#c62828`, tokens novos `--color-chat-alert`/`-alert-bg`): "atrasado" não pode
+   depender do acento do tema (um tema vermelho apagaria o sinal). Todas as atendentes veem, em
+   todas as conversas que já veem.
+7. **Chip "Aguardando resposta N"** com contagem **no cliente**, sobre a página carregada (decisão
+   do Michel; conversa fora da página não entra). Filtro independente, combina com "Minhas"/"Não
+   atribuídas"; some com a regra desligada e na lista de encerradas.
+8. **Fora:** conversa encerrada (`status = 'closed'`) — a conversa não tem estágio próprio; o
+   "terminal" dela é o encerramento (D-174); som e notificação (já existem para mensagem nova,
+   D-240/D-241).
+**Motivo:** a equipe precisa ver de relance quem está esperando há mais tempo; o reingajamento
+cobre o silêncio do paciente, este card cobre o da atendente.
+**Impacto:** `shared/types/response-alert.types.ts` (novo), `funnel-rules.types.ts`,
+`conversation.types.ts`, `reengagement.types.ts`; backend `conversation.repository.ts`,
+`funnel-rules.service.ts`, `holiday.service.ts` (`calendar`), `holiday.routes.ts`
+(`businessCalendarModule`), `http/modules.ts`, migração `046_messages_human_reply_index.sql`;
+frontend `ConversationItem.tsx`, `Attendance/ConversationList.tsx`, `Attendance/index.tsx`,
+`api/holidays.ts` (`useBusinessCalendar`), `api/query-keys.ts`, `Settings/ResponseAlertSection.tsx`,
+`Settings/Rules.tsx`, `styles/tokens.css`, `tailwind.config.js`. BUSINESS_RULES, SERVICES §2/§26/§29,
+API_CONTRACTS §2/§6c/§6e, PAGES §2/§21, COMPONENTS, DESIGN_TOKENS, SCHEMA §4.
 
 ## 2026-10-02 — Cadastro de médicos solicitantes (CRMLAB-86, épico CRMLAB-85 Visitação Médica)
 

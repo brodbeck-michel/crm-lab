@@ -39,7 +39,7 @@ type UpdateBody = z.infer<typeof updateLisIntegrationSchema>;
 
 export interface LisSyncModuleOverrides {
   bitlab?: BitlabClient;
-  /** Relogio (so teste): decide a releitura diaria das 03:00 (D-189). */
+  /** Relogio (so teste): fixa a janela da rodada (`initialDays`, D-253). */
   now?: () => Date;
 }
 

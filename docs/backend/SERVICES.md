@@ -74,6 +74,12 @@ agindo recebem `TenantContext` no lugar de `tenantId` — `list(ctx, filters)`,
 continua recebendo só `tenantId`: quem chama é o webhook, sem usuário logado.
 Ver "Convenções Transversais" — o contexto é sempre o primeiro parâmetro.
 
+**`awaitingReplySince` (CRMLAB-84, D-254):** a lista e o detalhe trazem a hora da primeira
+mensagem do paciente depois da última resposta humana (`agent` com `automation` nulo), por um
+`LEFT JOIN LATERAL` (`AWAITING_REPLY_LATERAL` em `conversation.repository.ts`) que acha a última
+resposta pelo índice parcial `idx_messages_human_reply` (migração 046). Conversa encerrada:
+`null`. Sai já em ISO UTC (`to_char`), como as datas do reingajamento.
+
 `createManual(ctx, dto)` é o `POST /conversations` (atendimento fora do WhatsApp,
 API_CONTRACTS.md §2). Passa pelo mesmo `findOrCreateByPhone` — o canal vem do DTO e
 `assignedTo` nasce com `ctx.userId`, em vez da fila livre. O telefone digitado é
@@ -1396,7 +1402,7 @@ ao agendador):
   (inclusiva) e o Bitlab devolve de novo a linha da própria marca. Em `incremental`, se a
   `marcaDagua` da resposta é igual à gravada, as linhas são descartadas: sem `lis_imports`, sem
   reprocessar, `received: 0`. Linha gravada pelo Bitlab no mesmo segundo da marca depois da
-  consulta anterior fica para a releitura diária de 90 dias (D-189).
+  consulta anterior volta na primeira rodada em que a marca andar (a janela é inclusiva, D-253).
 - `runScheduledTick` roda os tenants **em série**, não em paralelo: é um por laboratório, e
   série não compete com as requisições da tela pelo pool.
 - O tique nunca lança: cada tenant tem o próprio `try/catch`. Um laboratório com erro não impede
@@ -1404,17 +1410,17 @@ ao agendador):
 - A chave nunca é logada, nunca vai para `last_error` e nunca aparece numa mensagem de erro
   (inclusive `error.cause`).
 - Auditoria: `update_lis_integration` (com `"[REDACTED]"`) e `run_lis_sync` (só no `runNow`).
-- **Duas marchas (CRMLAB-53, D-189):** `runForTenant(tenantId, triggeredBy, mode)` com `mode`
-  `incremental` | `full` | `auto` (só o agendador passa `auto`). O estorno não volta na janela
-  incremental (BUSINESS_RULES.md §11.10), então:
-  - `auto` vira `full` quando o relógio de Brasília passou de `FULL_SCAN_HOUR` (**03:00**) e
-    `last_full_scan_on` é `NULL` ou anterior a hoje; senão, `incremental`;
-  - `full` ignora a marca: `dataInicio` = hoje − `LIS_SYNC_INITIAL_DAYS` (90) às 00:00:00. Grava
-    pelo mesmo `ingestRows`, e o estorno atualiza a situação pelo `ID_PAGAMENTO` (§19);
-  - sucesso em `full` grava `last_full_scan_on = hoje`; falha não grava, e o próximo tique tenta
-    de novo;
+- **Tique sempre incremental (CRMLAB-80, D-253 — substitui a releitura diária da D-189):**
+  `runForTenant(tenantId, triggeredBy, mode)` com `mode` `incremental` | `full` | `auto` (só o
+  agendador passa `auto`). O estorno volta na janela incremental (BUSINESS_RULES.md §11.10), então:
+  - `auto` é **sempre** `incremental`. Não há releitura de madrugada;
+  - `incremental` sem marca d'água (primeira carga): `dataInicio` = hoje − `LIS_SYNC_INITIAL_DAYS`
+    (90) às 00:00:00. Com marca: a partir da marca;
+  - `full` (ignora a marca, janela de `initialDays`) continua no service, mas nada o dispara hoje;
+  - o estorno atualiza a situação pelo `ID_PAGAMENTO` (§19) no mesmo `ingestRows`;
   - a marca **nunca recua**: `finishRun` guarda a maior entre a gravada e a recebida;
-  - **"Sincronizar agora" é sempre `incremental`**. A rodada `full` sai em `info` mesmo vazia.
+  - `lis_sync_settings.last_full_scan_on` não é mais lida nem gravada (coluna mantida, D-253 item 2);
+  - **"Sincronizar agora" é sempre `incremental`**.
 
 ### 24.1 Contrato assumido da API de Orçamentos do Bitlab (`backend/src/lib/bitlab-client.ts`)
 
@@ -1572,6 +1578,11 @@ export interface FunnelRulesService {
 - Quem consome: `ProposalService.create` (`origin.manualInCrm`, D-193) e
   `ProposalService.updateStatus` (`manualMoves` via `checkTransition`, D-192), lendo com
   `readFunnelRules` na mesma transação. Os cards CRMLAB-57..60 leem pelo mesmo ponto.
+- **Seção `responseAlert` (CRMLAB-84, D-254):** `{ enabled, minutes }`, padrão
+  `{ enabled: false, minutes: 15 }`. `minutes` inteiro de `RESPONSE_ALERT_MINUTES_MIN` (1) a
+  `RESPONSE_ALERT_MINUTES_MAX` (1440); fora disso, `VALIDATION_ERROR` em
+  `responseAlert.minutes`. O backend só guarda: quem calcula é a lista de conversas, no navegador
+  (`responseAlertMinutes`, `shared/types/response-alert.types.ts`).
 - **Seção `lisSource` (CRMLAB-53, D-189 item 4):** `lisSource.spreadsheetImport.enabled`, padrão
   `false` (emenda à D-191: a API é a carga principal). Folha booleana comum, sem validação
   própria. Quem consome: `LisImportService.import` (§19), que recusa com
@@ -1701,6 +1712,12 @@ export interface HolidayService {
 }
 export function parseYear(raw: unknown, now?: Date): number;       // VALIDATION_ERROR fora de 2000..2100
 ```
+
+**`calendar(ctx, now?)` (CRMLAB-84, D-254)** — `GET /settings/business-calendar` (§6e), todo
+perfil de laboratório: `readBusinessHours` (§ChannelSettings) + `listDates` dos feriados
+cadastrados de `hoje − BUSINESS_CALENDAR_LOOKBACK_DAYS` (14) a `amanhã`, em datas locais do
+laboratório. Os nacionais não vão: o navegador calcula com `nationalHolidays`. Existe porque a
+atendente não lê `/settings/channels` e precisa do expediente para o alerta de tempo de resposta.
 
 ---
 

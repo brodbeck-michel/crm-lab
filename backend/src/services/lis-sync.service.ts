@@ -39,10 +39,10 @@ export const PAGE_SIZE = 500;
 /** Teto de paginas por rodada (D-185 item 2): protege de um `temProxima` que nunca vira false. */
 export const MAX_PAGES = 200;
 
-/** Hora (Brasília) a partir da qual o tique do dia faz a releitura completa (D-189 item 2). */
-export const FULL_SCAN_HOUR = 3;
-
-/** `incremental` le a partir da marca; `full` rele os ultimos `initialDays` dias (D-189). */
+/**
+ * `incremental` le a partir da marca (sem marca, dos ultimos `initialDays` dias);
+ * `full` rele os ultimos `initialDays` dias. Nenhum tique automatico usa `full` (D-253).
+ */
 export type LisSyncMode = 'incremental' | 'full';
 
 const MANAGER_ROLES = ['manager', 'admin'] as const;
@@ -123,7 +123,6 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
       lastRunAt: view.lastRunAt,
       lastSuccessAt: view.lastSuccessAt,
       lastError: view.lastError,
-      lastFullScanOn: view.lastFullScanOn,
       running: running.has(tenantId),
       intervalSeconds,
     };
@@ -137,15 +136,11 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
   }
 
   /**
-   * O estorno nao volta na consulta incremental (D-189 item 1): o primeiro
-   * tique depois das 03:00 de Brasilia rele os ultimos `initialDays` dias.
+   * O estorno volta na consulta incremental desde 30/09/2026 (o Bitlab passou a
+   * considerar a `DATA_ESTORNO` no `alteracao`): o tique e sempre incremental (D-253).
    */
-  function modeFor(lastFullScanOn: string | null, requested: LisSyncMode | 'auto'): LisSyncMode {
-    if (requested !== 'auto') return requested;
-    const clock = saoPauloDateTime(now());
-    const today = clock.slice(0, 10);
-    const hour = Number(clock.slice(11, 13));
-    return hour >= FULL_SCAN_HOUR && (lastFullScanOn === null || lastFullScanOn < today) ? 'full' : 'incremental';
+  function modeFor(requested: LisSyncMode | 'auto'): LisSyncMode {
+    return requested === 'auto' ? 'incremental' : requested;
   }
 
   /** Chama o Bitlab ate a ultima pagina. Lanca `BitlabError`. */
@@ -192,7 +187,7 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
     try {
       const started = await repo.startRun(tenantId);
       if (!started) return null;
-      const mode = modeFor(started.lastFullScanOn, requestedMode);
+      const mode = modeFor(requestedMode);
 
       let fetched: { rows: LisSpreadsheetRow[]; watermark: string | null };
       try {
@@ -226,8 +221,7 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
       // A janela incremental comeca NA marca (inclusiva): o Bitlab devolve de
       // novo a linha da propria marca. Marca que nao andou = nada novo desde a
       // rodada anterior, entao a rodada e vazia (D-249). Linha gravada no mesmo
-      // segundo da marca depois da consulta anterior fica para a releitura
-      // diaria de 90 dias (D-189).
+      // segundo da marca depois da consulta anterior nao e relida (D-253 item 3).
       if (
         mode === 'incremental' &&
         started.watermark !== null &&
@@ -270,11 +264,7 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
         }
       }
 
-      const success =
-        mode === 'full'
-          ? { watermark: fetched.watermark, fullScanOn: saoPauloDateTime(now()).slice(0, 10) }
-          : { watermark: fetched.watermark };
-      const view = await repo.finishRun(tenantId, { success, error: null });
+      const view = await repo.finishRun(tenantId, { success: { watermark: fetched.watermark }, error: null });
       // A cada 30 s (D-249): rodada vazia e `debug`, senao o log vira ruido.
       const completed = { tenantId, mode, received: fetched.rows.length, importId, proposalsCreated };
       if (fetched.rows.length > 0 || mode === 'full') logger.info('lis_sync.completed', completed);
@@ -338,7 +328,7 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
       if (running.has(ctx.tenantId)) {
         throw new BusinessError('CONFLICT', { reason: 'lis_sync_running' });
       }
-      // "Sincronizar agora" e sempre incremental (D-189 item 2).
+      // "Sincronizar agora" e sempre incremental (D-189 item 2, D-253).
       const summary = await runForTenant(ctx.tenantId, ctx.userId, 'incremental');
       if (!summary) {
         throw new BusinessError('CONFLICT', { reason: 'lis_sync_not_configured' });

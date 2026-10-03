@@ -22,7 +22,6 @@ export interface LisSyncSettingsView {
   lastRunAt: string | null;
   lastSuccessAt: string | null;
   lastError: string | null;
-  lastFullScanOn: string | null;
 }
 
 interface SettingsRow {
@@ -32,7 +31,6 @@ interface SettingsRow {
   last_run_at: Date | string | null;
   last_success_at: Date | string | null;
   last_error: string | null;
-  last_full_scan_on: string | null;
 }
 
 const DEFAULT_VIEW: LisSyncSettingsView = {
@@ -42,7 +40,6 @@ const DEFAULT_VIEW: LisSyncSettingsView = {
   lastRunAt: null,
   lastSuccessAt: null,
   lastError: null,
-  lastFullScanOn: null,
 };
 
 function maskApiKey(stored: string | null): string | null {
@@ -59,14 +56,12 @@ function toView(row: SettingsRow): LisSyncSettingsView {
     lastRunAt: toIsoOrNull(row.last_run_at),
     lastSuccessAt: toIsoOrNull(row.last_success_at),
     lastError: row.last_error,
-    lastFullScanOn: row.last_full_scan_on,
   };
 }
 
 async function selectView(tx: DbTx, tenantId: string): Promise<LisSyncSettingsView> {
   const result = await tx.query<SettingsRow>(
-    `SELECT enabled, api_key, watermark, last_run_at, last_success_at, last_error,
-            to_char(last_full_scan_on, 'YYYY-MM-DD') AS last_full_scan_on
+    `SELECT enabled, api_key, watermark, last_run_at, last_success_at, last_error
        FROM lis_sync_settings
       WHERE tenant_id = $1`,
     [tenantId],
@@ -84,9 +79,9 @@ export interface LisSyncSettingsPatch {
 export interface LisSyncRunOutcome {
   /**
    * `null` = rodada sem sucesso: nao mexe em `last_success_at`/`watermark`.
-   * `fullScanOn`: dia da releitura completa que terminou agora (D-189).
+   * `last_full_scan_on` nao e mais gravada (D-253).
    */
-  success: { watermark: string | null; fullScanOn?: string } | null;
+  success: { watermark: string | null } | null;
   error: string | null;
   /** `true` so na chave recusada (D-185 item 6). */
   disable?: boolean;
@@ -142,40 +137,35 @@ export class LisSyncSettingsRepository {
    */
   async startRun(
     tenantId: string,
-  ): Promise<{ apiKey: string; watermark: string | null; lastFullScanOn: string | null } | null> {
+  ): Promise<{ apiKey: string; watermark: string | null } | null> {
     return this.db.withTenant(tenantId, async (tx) => {
-      const result = await tx.query<{
-        api_key: string | null;
-        watermark: string | null;
-        last_full_scan_on: string | null;
-      }>(
+      const result = await tx.query<{ api_key: string | null; watermark: string | null }>(
         `UPDATE lis_sync_settings
             SET last_run_at = NOW()
           WHERE tenant_id = $1 AND enabled AND api_key IS NOT NULL
-          RETURNING api_key, watermark, to_char(last_full_scan_on, 'YYYY-MM-DD') AS last_full_scan_on`,
+          RETURNING api_key, watermark`,
         [tenantId],
       );
       const row = result.rows[0];
       const apiKey = decryptSecret(row?.api_key ?? null);
       if (!row || !apiKey) return null;
-      return { apiKey, watermark: row.watermark, lastFullScanOn: row.last_full_scan_on };
+      return { apiKey, watermark: row.watermark };
     });
   }
 
   async finishRun(tenantId: string, outcome: LisSyncRunOutcome): Promise<LisSyncSettingsView> {
     return this.db.withTenant(tenantId, async (tx) => {
       if (outcome.success) {
-        // A marca nunca recua (D-189 item 2): a releitura de 90 dias pode
-        // devolver uma marca menor que a gravada. Forma canonica compara por texto (D-187).
+        // A marca nunca recua (D-189 item 2): uma rodada `full` pode devolver
+        // uma marca menor que a gravada. Forma canonica compara por texto (D-187).
         await tx.query(
           `UPDATE lis_sync_settings
               SET last_success_at = NOW(),
                   last_error = NULL,
                   watermark = CASE WHEN $2::text IS NULL OR (watermark IS NOT NULL AND watermark > $2::text)
-                                   THEN watermark ELSE $2::text END,
-                  last_full_scan_on = COALESCE($3::date, last_full_scan_on)
+                                   THEN watermark ELSE $2::text END
             WHERE tenant_id = $1`,
-          [tenantId, outcome.success.watermark, outcome.success.fullScanOn ?? null],
+          [tenantId, outcome.success.watermark],
         );
       } else {
         await tx.query(

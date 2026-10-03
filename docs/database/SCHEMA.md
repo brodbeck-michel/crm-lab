@@ -334,6 +334,21 @@ CREATE INDEX idx_messages_content_search
   predicado diferente = índice não usado.
 - Sem coluna nova e sem backfill: o índice é construído sobre as linhas que já existem.
 
+**Última resposta humana — migração 046 (CRMLAB-84, D-254):**
+
+```sql
+CREATE INDEX idx_messages_human_reply
+  ON messages (conversation_id, created_at DESC)
+  WHERE sender_type = 'agent' AND automation IS NULL;
+```
+
+- A lista de conversas calcula `awaitingReplySince` (primeira mensagem do paciente depois da
+  última resposta de pessoa do laboratório). Achar essa última resposta por conversa no índice
+  geral obrigaria a pular paciente, automática e sistema; o parcial só tem respostas humanas, e a
+  última é a primeira entrada da conversa. A consulta (`AWAITING_REPLY_LATERAL`) repete o
+  predicado literalmente. A âncora do reingajamento (§33) usa o mesmo recorte.
+- Sem coluna nova, sem backfill, sem policy (`messages` já está sob RLS).
+
 **Metadados da mensagem — migração 045 (CRMLAB-70, D-234):**
 
 ```sql
@@ -1659,7 +1674,7 @@ CREATE TABLE lis_sync_settings (
   last_run_at TIMESTAMP NULL,            -- início da última rodada (com ou sem sucesso)
   last_success_at TIMESTAMP NULL,
   last_error TEXT NULL,                  -- NULL depois de uma rodada bem-sucedida
-  last_full_scan_on DATE NULL,           -- dia (Brasília) da última releitura de 90 dias ok (migração 032, D-189)
+  last_full_scan_on DATE NULL,           -- SEM USO desde a D-253 (era a releitura de 90 dias, migração 032, D-189)
   updated_by UUID NULL,                  -- último admin que mudou `enabled`/`api_key`
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW(),
@@ -1697,9 +1712,9 @@ CREATE POLICY lis_sync_settings_tenant_isolation ON lis_sync_settings
   tabela nasce vazia. O `ALTER` de `lis_imports.kind` (§25) vai no mesmo arquivo.
 - `listEnabledTenantIds()` é a única leitura fora do contexto de tenant (D-186) e só projeta
   `tenant_id`.
-- **`last_full_scan_on`** (migração 032, D-189): só é gravado quando a releitura completa termina
-  sem erro. `NULL` ou dia anterior + passou das 03:00 de Brasília = o próximo tique relê os últimos
-  90 dias. A `watermark` **nunca recua** na gravação (a releitura pode devolver marca menor).
+- **`last_full_scan_on`** (migração 032, D-189): **sem uso desde a D-253 (CRMLAB-80)** — a
+  releitura diária de 90 dias saiu, e a coluna não é mais lida nem gravada. Fica no banco até uma
+  migração própria removê-la. A `watermark` **nunca recua** na gravação.
 
 ### Colunas novas em `proposals`, `tenant_settings` e `lis_imports` (migração 028 — CRMLAB-57, D-195/D-196)
 
@@ -2126,6 +2141,11 @@ CREATE INDEX idx_proposals_conversation_id ON proposals(conversation_id); -- já
 -- Search (busca por nome de paciente)
 CREATE INDEX idx_conversations_patient_name
   ON conversations USING GIN (to_tsvector('portuguese', COALESCE(patient_name, '')));
+
+-- Última resposta humana por conversa (alerta de tempo de resposta — migração 046, D-254)
+CREATE INDEX idx_messages_human_reply
+  ON messages (conversation_id, created_at DESC)
+  WHERE sender_type = 'agent' AND automation IS NULL;
 
 -- Search (busca pelo conteúdo das mensagens — migração 043, D-228)
 CREATE INDEX idx_messages_content_search

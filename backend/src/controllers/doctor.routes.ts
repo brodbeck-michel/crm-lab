@@ -69,7 +69,8 @@ export const listDoctorsQuerySchema = z.object({
 
 const doctorFields = {
   crm: optionalText(20),
-  crmUf: optionalText(2),
+  // Folga para espaco em volta (" sc"): o service normaliza e valida contra as 27 UFs.
+  crmUf: optionalText(10),
   specialty: optionalText(120),
   clinic: optionalText(255),
   address: optionalText(500),

@@ -31,6 +31,8 @@ export default {
           quote: 'var(--color-chat-quote)',
           'quote-hover': 'var(--color-chat-quote-hover)',
           'tick-read': 'var(--color-chat-tick-read)',
+          alert: 'var(--color-chat-alert)',
+          'alert-bg': 'var(--color-chat-alert-bg)',
         },
         accent: {
           DEFAULT: 'var(--color-accent)',

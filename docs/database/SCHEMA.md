@@ -334,6 +334,21 @@ CREATE INDEX idx_messages_content_search
   predicado diferente = índice não usado.
 - Sem coluna nova e sem backfill: o índice é construído sobre as linhas que já existem.
 
+**Última resposta humana — migração 046 (CRMLAB-84, D-254):**
+
+```sql
+CREATE INDEX idx_messages_human_reply
+  ON messages (conversation_id, created_at DESC)
+  WHERE sender_type = 'agent' AND automation IS NULL;
+```
+
+- A lista de conversas calcula `awaitingReplySince` (primeira mensagem do paciente depois da
+  última resposta de pessoa do laboratório). Achar essa última resposta por conversa no índice
+  geral obrigaria a pular paciente, automática e sistema; o parcial só tem respostas humanas, e a
+  última é a primeira entrada da conversa. A consulta (`AWAITING_REPLY_LATERAL`) repete o
+  predicado literalmente. A âncora do reingajamento (§33) usa o mesmo recorte.
+- Sem coluna nova, sem backfill, sem policy (`messages` já está sob RLS).
+
 **Metadados da mensagem — migração 045 (CRMLAB-70, D-234):**
 
 ```sql
@@ -2080,6 +2095,11 @@ CREATE INDEX idx_proposals_conversation_id ON proposals(conversation_id); -- já
 -- Search (busca por nome de paciente)
 CREATE INDEX idx_conversations_patient_name
   ON conversations USING GIN (to_tsvector('portuguese', COALESCE(patient_name, '')));
+
+-- Última resposta humana por conversa (alerta de tempo de resposta — migração 046, D-254)
+CREATE INDEX idx_messages_human_reply
+  ON messages (conversation_id, created_at DESC)
+  WHERE sender_type = 'agent' AND automation IS NULL;
 
 -- Search (busca pelo conteúdo das mensagens — migração 043, D-228)
 CREATE INDEX idx_messages_content_search

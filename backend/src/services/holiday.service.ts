@@ -4,10 +4,18 @@
  *
  * O `GET` devolve os nacionais do ano (calculados em `shared/`, so leitura)
  * junto com os cadastrados. Incluir e remover: gestor e admin, com audit.
+ *
+ * `calendar` (CRMLAB-84, D-254) e o `GET /settings/business-calendar`: o
+ * horario de funcionamento + os feriados cadastrados da janela do alerta de
+ * tempo de resposta, para o navegador contar minutos uteis. Todo perfil de
+ * laboratorio le — a atendente nao le `/settings/channels`.
  */
 import {
+  BUSINESS_CALENDAR_LOOKBACK_DAYS,
   HOLIDAY_DESCRIPTION_MAX,
+  localDateOf,
   nationalHolidays,
+  type BusinessCalendarResponse,
   type CreateHolidayRequest,
   type Holiday,
   type HolidaysResponse,
@@ -17,10 +25,12 @@ import type { TenantContext } from '../http/context.js';
 import { BusinessError, notFound } from '../http/errors.js';
 import * as repo from '../repositories/holiday.repository.js';
 import type { AuditService } from './audit.service.js';
+import { readBusinessHours } from './channel-settings.service.js';
 
 const TENANT_ROLES = ['attendant', 'manager', 'admin'] as const;
 const WRITE_ROLES = ['manager', 'admin'] as const;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
 const MIN_YEAR = 2000;
 const MAX_YEAR = 2100;
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -70,6 +80,7 @@ export interface HolidayService {
   list(ctx: TenantContext, year: number): Promise<HolidaysResponse>;
   create(ctx: TenantContext, dto: unknown): Promise<Holiday>;
   remove(ctx: TenantContext, id: string): Promise<void>;
+  calendar(ctx: TenantContext, now?: Date): Promise<BusinessCalendarResponse>;
 }
 
 export interface HolidayServiceDeps {
@@ -114,6 +125,20 @@ export function createHolidayService(deps: HolidayServiceDeps): HolidayService {
         entityType: 'holiday',
         entityId: id,
         oldValues: { date: removed.date, description: removed.description },
+      });
+    },
+
+    async calendar(ctx, now = new Date()) {
+      assertRole(ctx, TENANT_ROLES);
+      return db.withTenant(ctx.tenantId, async (tx) => {
+        const businessHours = await readBusinessHours(tx, ctx.tenantId);
+        // Janela em datas LOCAIS do laboratorio: a do relogio do alerta + amanha
+        // (a aba aberta atravessa a meia-noite sem recarregar o calendario).
+        const tz = businessHours.timezone;
+        const from = localDateOf(new Date(now.getTime() - BUSINESS_CALENDAR_LOOKBACK_DAYS * DAY_MS), tz);
+        const to = localDateOf(new Date(now.getTime() + DAY_MS), tz);
+        const dates = await repo.listDates(tx, ctx.tenantId, from, to);
+        return { businessHours, customHolidays: [...dates].sort(), from, to };
       });
     },
   };

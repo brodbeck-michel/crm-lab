@@ -7,6 +7,10 @@
  *   DELETE /settings/holidays/:id         manager/admin
  *
  * A validacao do corpo mora no service, como em `funnel-rules.routes.ts`.
+ *
+ * `businessCalendarModule` (CRMLAB-84, D-254 — API_CONTRACTS.md §6e):
+ *
+ *   GET    /settings/business-calendar    attendant/manager/admin
  */
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { z } from 'zod';
@@ -60,4 +64,21 @@ export function holidayModule(deps: ApiModuleDeps): ApiModule {
   );
 
   return { basePath: '/settings/holidays', router, requiresAuth: true };
+}
+
+export function businessCalendarModule(deps: ApiModuleDeps): ApiModule {
+  const service = createHolidayService({ db: deps.db, audit: createAuditService(deps.db) });
+
+  const router = Router();
+  router.use(requireAuth(), denyPlatformOperator());
+
+  router.get(
+    '/',
+    requireRoles('attendant', 'manager', 'admin'),
+    handle(async (req, res) => {
+      res.status(200).json(await service.calendar(getContext(req)));
+    }),
+  );
+
+  return { basePath: '/settings/business-calendar', router, requiresAuth: true };
 }

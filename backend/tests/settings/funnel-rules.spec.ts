@@ -147,6 +147,47 @@ describe('PATCH /settings/funnel-rules', () => {
     expect(Object.keys(fields).sort()).toEqual(['reengagement.first.hours', 'reengagement.first.message']);
   });
 
+  it('alerta de tempo de resposta: padrao desligado com 15 min; liga e grava (CRMLAB-84)', async () => {
+    expect(DEFAULT_FUNNEL_RULES.responseAlert).toEqual({ enabled: false, minutes: 15 });
+    const res = await app.agent
+      .patch(BASE)
+      .set(app.auth(managerA))
+      .send({ responseAlert: { enabled: true, minutes: 30 } });
+    expect(res.status).toBe(200);
+    expect((res.body as FunnelRules).responseAlert).toEqual({ enabled: true, minutes: 30 });
+    const read = await app.agent.get(BASE).set(app.auth(attendantA));
+    expect((read.body as FunnelRules).responseAlert).toEqual({ enabled: true, minutes: 30 });
+  });
+
+  it('alerta de tempo de resposta: minutos inteiros de 1 a 1440 (CRMLAB-84)', async () => {
+    for (const minutes of [0, 1441, 2.5, '15']) {
+      const res = await app.agent
+        .patch(BASE)
+        .set(app.auth(managerA))
+        .send({ responseAlert: { minutes } });
+      expect(res.status).toBe(400);
+      expect((res.body as ApiErrorBody).error.details?.fields).toEqual({
+        'responseAlert.minutes': 'Informe um número inteiro de 1 a 1440',
+      });
+    }
+    for (const minutes of [1, 1440]) {
+      const res = await app.agent
+        .patch(BASE)
+        .set(app.auth(managerA))
+        .send({ responseAlert: { minutes } });
+      expect(res.status).toBe(200);
+      expect((res.body as FunnelRules).responseAlert.minutes).toBe(minutes);
+    }
+  });
+
+  it('alerta de tempo de resposta: atendente nao edita (CRMLAB-84)', async () => {
+    const res = await app.agent
+      .patch(BASE)
+      .set(app.auth(attendantA))
+      .send({ responseAlert: { enabled: true } });
+    expect(res.status).toBe(403);
+  });
+
   it('admin tambem edita', async () => {
     const res = await app.agent
       .patch(BASE)

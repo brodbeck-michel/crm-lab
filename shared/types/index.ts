@@ -21,3 +21,4 @@ export * from './funnel-rules.types.js';
 export * from './name-similarity.js';
 export * from './funnel-timer.types.js';
 export * from './reengagement.types.js';
+export * from './response-alert.types.js';

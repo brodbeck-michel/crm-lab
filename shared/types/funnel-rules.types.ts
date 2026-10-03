@@ -118,6 +118,19 @@ export interface ReengagementRules {
 }
 
 /**
+ * Seção 5b — alerta de tempo de resposta (CRMLAB-84, D-254). O inverso do
+ * reingajamento: destaca na lista de conversas o paciente que espera a
+ * atendente há `minutes` minutos ÚTEIS (expediente e feriados, como o
+ * reingajamento). Só visual — não envia nada. Quem calcula é a lista, no
+ * navegador (`responseAlertMinutes`, `response-alert.types.ts`).
+ */
+export interface ResponseAlertRules {
+  enabled: boolean;
+  /** Inteiro 1..1440 (`RESPONSE_ALERT_MINUTES_MIN`/`_MAX`). */
+  minutes: number;
+}
+
+/**
  * Seção 6 — de onde vêm os orçamentos do LIS (CRMLAB-53, D-189 item 4). A carga
  * principal é a API do Bitlab; a planilha é plano B. Desligada: o botão
  * "Importar planilha" some e `POST /lis-imports` devolve
@@ -134,6 +147,7 @@ export interface FunnelRules {
   manualMoves: ManualMoveRules;
   sendMessage: SendMessageRules;
   reengagement: ReengagementRules;
+  responseAlert: ResponseAlertRules;
   lisSource: LisSourceRules;
 }
 
@@ -197,6 +211,8 @@ export const DEFAULT_FUNNEL_RULES: FunnelRules = {
     first: { enabled: false, hours: 1, message: DEFAULT_REENGAGEMENT_FIRST_MESSAGE },
     second: { enabled: false, hours: 24, message: DEFAULT_REENGAGEMENT_SECOND_MESSAGE },
   },
+  // Desligado: o destaque vermelho só aparece quando o laboratório liga (D-254).
+  responseAlert: { enabled: false, minutes: 15 },
   // Emenda à D-191 (D-189 item 5): a planilha nasce DESLIGADA — a API é a carga principal.
   lisSource: { spreadsheetImport: { enabled: false } },
 };

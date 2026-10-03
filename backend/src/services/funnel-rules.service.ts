@@ -11,6 +11,8 @@ import {
   DAY_COUNTINGS,
   DEFAULT_FUNNEL_RULES,
   REENGAGEMENT_MESSAGE_MAX,
+  RESPONSE_ALERT_MINUTES_MAX,
+  RESPONSE_ALERT_MINUTES_MIN,
   RULE_ACTOR_ROLES,
   SEND_MESSAGE_TEMPLATE_MAX,
   findUnknownTemplateVariables,
@@ -60,6 +62,11 @@ function leafError(path: string, template: unknown, value: unknown): string | nu
       return isIntIn(value, 1, 365) ? null : 'Informe um número inteiro de 1 a 365';
     if (key === 'hours')
       return isIntIn(value, 1, 720) ? null : 'Informe um número inteiro de 1 a 720';
+    // Alerta de tempo de resposta (CRMLAB-84, D-254).
+    if (key === 'minutes')
+      return isIntIn(value, RESPONSE_ALERT_MINUTES_MIN, RESPONSE_ALERT_MINUTES_MAX)
+        ? null
+        : `Informe um número inteiro de ${RESPONSE_ALERT_MINUTES_MIN} a ${RESPONSE_ALERT_MINUTES_MAX}`;
     return 'Campo desconhecido';
   }
   if (Array.isArray(template)) {

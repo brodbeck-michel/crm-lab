@@ -104,11 +104,43 @@ interface ConversationRow {
   created_at: Date | string;
   /** So a LISTAGEM traz (o pin depende de QUEM pediu) — ver `list`. */
   pinned?: boolean | null;
+  awaiting_reply_since: Date | string | null;
 }
 
 const LIST_COLUMNS = `c.id, c.patient_id, c.patient_name, c.patient_phone, c.patient_email, c.assigned_to,
        u.name AS assigned_to_name, c.channel, c.status, c.unread_count, c.last_message_at,
-       c.tags, c.custom_fields, c.created_at, lm.content AS last_message_preview`;
+       c.tags, c.custom_fields, c.created_at, lm.content AS last_message_preview,
+       aw.created_at AS awaiting_reply_since`;
+
+/**
+ * Alerta de tempo de resposta (CRMLAB-84, D-254): a PRIMEIRA mensagem do
+ * paciente depois da ultima resposta de pessoa do laboratorio — e ai que a
+ * espera comeca. A resposta e `sender_type = 'agent'` com `automation` nulo
+ * (CRM ou celular, a ancora do reingajamento): mensagem automatica e de
+ * sistema NAO tiram do alerta. Sem resposta nenhuma ainda, vale a primeira
+ * mensagem do paciente. Conversa encerrada nao espera ninguem (`NULL`).
+ *
+ * O predicado da subconsulta repete o do indice parcial
+ * `idx_messages_human_reply` (migracao 046) literalmente — so assim o planner
+ * acha a ultima resposta na primeira entrada do indice.
+ */
+const AWAITING_REPLY_LATERAL = `LEFT JOIN LATERAL (
+       SELECT p.created_at
+       FROM messages p
+       WHERE c.status = 'active'
+         AND p.conversation_id = c.id
+         AND p.sender_type = 'patient'
+         AND p.created_at > COALESCE((
+               SELECT h.created_at
+               FROM messages h
+               WHERE h.conversation_id = c.id
+                 AND h.sender_type = 'agent' AND h.automation IS NULL
+               ORDER BY h.created_at DESC
+               LIMIT 1
+             ), '-infinity'::timestamp)
+       ORDER BY p.created_at ASC, p.id ASC
+       LIMIT 1
+     ) aw ON TRUE`;
 
 /**
  * `LEFT JOIN LATERAL` traz a ultima mensagem em UMA passada. Sem isso a lista
@@ -123,7 +155,8 @@ const LIST_FROM = `FROM conversations c
        WHERE m.conversation_id = c.id
        ORDER BY m.created_at DESC, m.id DESC
        LIMIT 1
-     ) lm ON TRUE`;
+     ) lm ON TRUE
+     ${AWAITING_REPLY_LATERAL}`;
 
 function safeJson(value: string): unknown {
   try {
@@ -183,6 +216,7 @@ export function toConversation(row: ConversationRow): Conversation {
     // quem perguntou; o detalhe nao tem consumidor para o campo (Onda 8 §2.3).
     pinned: row.pinned === true,
     createdAt: toIso(row.created_at),
+    awaitingReplySince: toIsoOrNull(row.awaiting_reply_since),
   };
 }
 

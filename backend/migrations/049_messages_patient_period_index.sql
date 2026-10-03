@@ -9,11 +9,10 @@
 -- histórico de um laboratório).
 --
 -- ÍNDICE PARCIAL: só as mensagens do paciente entram (é delas que o relatório
--- parte). A consulta (`PATIENT_MESSAGES_IN_PERIOD` em
--- `response-time.repository.ts`) repete o predicado literalmente — diferente
--- disso, o planner não usa o índice. Os passos seguintes (última resposta
--- humana antes, próxima resposta depois) usam o `idx_messages_human_reply` da
--- 046.
+-- parte: quais conversas tiveram paciente escrevendo no período). A consulta
+-- (CTE `convs` em `response-time.repository.ts`) repete o predicado
+-- literalmente — diferente disso, o planner não usa o índice. A sequência de
+-- cada conversa vem depois pelo índice de `conversation_id`.
 --
 -- Sem coluna nova, sem policy: `messages` já está sob RLS (002). O número 048
 -- ficou reservado para o CRMLAB-87.

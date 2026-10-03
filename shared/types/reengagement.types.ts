@@ -108,11 +108,19 @@ export function nationalHolidays(year: number): Holiday[] {
   return out.sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : 0));
 }
 
+/** Datas nacionais por ano, calculadas uma vez (o relatório de tempo de resposta, CRMLAB-83, pergunta milhares de vezes). */
+const nationalDatesByYear = new Map<number, ReadonlySet<IsoDate>>();
+
 /** `true` se `date` é feriado nacional ou está em `customDates`. */
 export function isHoliday(date: IsoDate, customDates: ReadonlySet<IsoDate>): boolean {
   if (customDates.has(date)) return true;
   const year = Number(date.slice(0, 4));
-  return nationalHolidays(year).some((h) => h.date === date);
+  let national = nationalDatesByYear.get(year);
+  if (!national) {
+    national = new Set(nationalHolidays(year).map((h) => h.date));
+    nationalDatesByYear.set(year, national);
+  }
+  return national.has(date);
 }
 
 // ---------------------------------------------------------------------------
@@ -181,7 +189,23 @@ export function localDateOf(instant: Date, timezone: string): IsoDate {
  * Instante UTC da hora de parede `hh:mm` do dia local `year-month-day` em `timezone`.
  * Exportada para os minutos úteis do alerta de tempo de resposta (CRMLAB-84).
  */
+const zonedCache = new Map<string, number>();
+/** Teto do cache de `zonedToUtc`: cada chave é um (dia, hora, fuso); passou disso, recomeça. */
+const ZONED_CACHE_MAX = 20_000;
+
 export function zonedToUtc(year: number, month: number, day: number, hhmm: string, timezone: string): Date {
+  // Puro e caro (Intl): o relatório de tempo de resposta (CRMLAB-83) repete os
+  // mesmos dias para milhares de blocos. Devolve sempre um `Date` novo.
+  const key = `${year}-${month}-${day} ${hhmm} ${timezone}`;
+  const hit = zonedCache.get(key);
+  if (hit !== undefined) return new Date(hit);
+  const value = zonedToUtcUncached(year, month, day, hhmm, timezone);
+  if (zonedCache.size >= ZONED_CACHE_MAX) zonedCache.clear();
+  zonedCache.set(key, value.getTime());
+  return value;
+}
+
+function zonedToUtcUncached(year: number, month: number, day: number, hhmm: string, timezone: string): Date {
   const [hh, mm] = hhmm.split(':').map(Number);
   const wall = Date.UTC(year, month - 1, day, hh ?? 0, mm ?? 0);
   // Duas passadas acertam a diferença do fuso mesmo perto de uma troca de horário.

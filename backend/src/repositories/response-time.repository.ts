@@ -8,27 +8,32 @@
  * feriados nao cabem em SQL sem duplicar a regra.
  *
  * As tres fronteiras, na ordem de uma conversa:
- *   - RESPOSTA HUMANA: `sender_type = 'agent'` e `automation` nulo (CRM ou
- *     celular) — a ancora do reingajamento e do alerta. Automatica e de
- *     sistema nao respondem nem encerram a espera.
- *   - ENCERRAMENTO: a mensagem de sistema "Atendimento encerrado por X"
+ *   - RESPOSTA HUMANA (`R`): `sender_type = 'agent'` e `automation` nulo (CRM
+ *     ou celular) — a ancora do reingajamento e do alerta. Automatica e de
+ *     sistema nao respondem nem encerram a espera: nem entram na sequencia.
+ *   - ENCERRAMENTO (`C`): a mensagem de sistema "Atendimento encerrado por X"
  *     (D-174 item 2). Fecha o bloco SEM resposta: sem isso, o "obrigado" do
  *     paciente antes de encerrar ganharia como resposta a da proxima conversa,
  *     semanas depois.
- *   - INICIO DO BLOCO: mensagem do paciente sem outra do paciente entre ela e a
- *     ultima fronteira (resposta ou encerramento). E a PRIMEIRA do bloco que
- *     conta, como no `awaitingReplySince`.
+ *   - INICIO DO BLOCO: mensagem do paciente (`P`) cuja anterior na sequencia
+ *     nao e do paciente. E a PRIMEIRA do bloco que conta, como no
+ *     `awaitingReplySince`.
  *
- * O bloco "abre o atendimento" (`opens`, primeira resposta) quando nao ha
- * resposta humana antes dele (conversa nova) ou quando a ultima fronteira e um
- * encerramento (conversa que voltou).
+ * O bloco "abre o atendimento" (`opens`, primeira resposta) quando nao ha nada
+ * antes dele (conversa nova) ou quando o anterior e um encerramento (conversa
+ * que voltou).
  *
- * Performance: `patient_msgs` usa o indice parcial
- * `idx_messages_patient_tenant_created` (049) — o predicado e repetido
- * LITERALMENTE. A ultima resposta antes e a proxima depois saem do
- * `idx_messages_human_reply` (046), tambem com o predicado literal. O resto
- * sao faixas curtas do `idx_messages_conversation_created`, entre uma
- * fronteira e o bloco.
+ * COMO: uma passada so, com janela. As conversas sao as que tem mensagem do
+ * paciente no periodo; delas vem a sequencia P/R/C inteira (o bloco pode ter
+ * comecado antes e a resposta vir depois do periodo). `grp` conta as fronteiras
+ * ate a linha: o bloco de `grp = n` termina na fronteira de `grp = n + 1`.
+ * Uma versao anterior, com LATERAL/NOT EXISTS por mensagem, ficava quadratica
+ * quando o planner nao acertava o indice — a janela e linear no numero de
+ * mensagens das conversas tocadas (um sort + um hash join).
+ *
+ * Performance: `convs` usa o indice parcial `idx_messages_patient_tenant_created`
+ * (049) — o predicado e repetido LITERALMENTE; a sequencia sai de
+ * `idx_messages_conversation_id`.
  */
 import type { DbTx } from '../db/types.js';
 
@@ -63,69 +68,54 @@ export async function listBlocks(
   endUtc: string,
 ): Promise<ResponseBlockRow[]> {
   const result = await tx.query<ResponseBlockRow>(
-    `WITH patient_msgs AS (
-       SELECT m.id, m.conversation_id, m.created_at
+    `WITH convs AS (
+       SELECT DISTINCT m.conversation_id
          FROM messages m
         WHERE m.tenant_id = $1 AND m.sender_type = 'patient'
           AND m.created_at >= $2::timestamp AND m.created_at < $3::timestamp
      ),
+     seq AS (
+       SELECT m.conversation_id, m.id, m.created_at, m.sender_id,
+              CASE WHEN m.sender_type = 'patient' THEN 'P'
+                   WHEN m.sender_type = 'agent' THEN 'R'
+                   ELSE 'C' END AS kind
+         FROM messages m
+         JOIN convs v ON v.conversation_id = m.conversation_id
+        WHERE m.tenant_id = $1
+          AND (m.sender_type = 'patient'
+               OR (m.sender_type = 'agent' AND m.automation IS NULL)
+               OR (m.sender_type = 'system' AND m.content LIKE ${CLOSED_EVENT}))
+     ),
+     marked AS (
+       SELECT s.*,
+              LAG(s.kind) OVER w AS prev_kind,
+              COUNT(*) FILTER (WHERE s.kind <> 'P') OVER (w ROWS UNBOUNDED PRECEDING) AS grp
+         FROM seq s
+       WINDOW w AS (PARTITION BY s.conversation_id ORDER BY s.created_at, s.id)
+     ),
      blocks AS (
-       SELECT p.conversation_id, p.created_at,
-              (lr.created_at IS NULL OR lc.created_at IS NOT NULL) AS opens
-         FROM patient_msgs p
-         LEFT JOIN LATERAL (
-           SELECT h.created_at FROM messages h
-            WHERE h.conversation_id = p.conversation_id
-              AND h.sender_type = 'agent' AND h.automation IS NULL
-              AND h.created_at < p.created_at
-            ORDER BY h.created_at DESC
-            LIMIT 1
-         ) lr ON TRUE
-         LEFT JOIN LATERAL (
-           SELECT s.created_at FROM messages s
-            WHERE s.conversation_id = p.conversation_id
-              AND s.sender_type = 'system' AND s.content LIKE ${CLOSED_EVENT}
-              AND s.created_at < p.created_at
-              AND (lr.created_at IS NULL OR s.created_at > lr.created_at)
-            ORDER BY s.created_at DESC
-            LIMIT 1
-         ) lc ON TRUE
-        WHERE NOT EXISTS (
-          SELECT 1 FROM messages q
-           WHERE q.conversation_id = p.conversation_id
-             AND q.sender_type = 'patient'
-             AND q.created_at <= p.created_at
-             AND (q.created_at, q.id) < (p.created_at, p.id)
-             AND q.created_at > COALESCE(GREATEST(lr.created_at, lc.created_at), '-infinity'::timestamp)
-        )
+       SELECT conversation_id, created_at, grp,
+              (prev_kind IS NULL OR prev_kind = 'C') AS opens
+         FROM marked
+        WHERE kind = 'P' AND (prev_kind IS NULL OR prev_kind <> 'P')
+          AND created_at >= $2::timestamp AND created_at < $3::timestamp
+     ),
+     ends AS (
+       SELECT conversation_id, grp, kind, created_at, sender_id
+         FROM marked
+        WHERE kind <> 'P'
      )
      SELECT b.conversation_id,
             to_char(b.created_at, ${ISO_UTC}) AS waiting_since,
             b.opens,
-            to_char(r.created_at, ${ISO_UTC}) AS replied_at,
-            r.sender_id AS responder_id,
-            u.name AS responder_name,
-            (
-              EXISTS (
-                SELECT 1 FROM messages s
-                 WHERE s.conversation_id = b.conversation_id
-                   AND s.sender_type = 'system' AND s.content LIKE ${CLOSED_EVENT}
-                   AND s.created_at > b.created_at
-                   AND (r.created_at IS NULL OR s.created_at < r.created_at)
-              )
-              OR (r.created_at IS NULL AND c.status = 'closed')
-            ) AS closed_unanswered
+            CASE WHEN e.kind = 'R' THEN to_char(e.created_at, ${ISO_UTC}) END AS replied_at,
+            CASE WHEN e.kind = 'R' THEN e.sender_id END AS responder_id,
+            CASE WHEN e.kind = 'R' THEN u.name END AS responder_name,
+            (e.kind = 'C' OR (e.kind IS NULL AND c.status = 'closed')) AS closed_unanswered
        FROM blocks b
        JOIN conversations c ON c.id = b.conversation_id AND c.tenant_id = $1
-       LEFT JOIN LATERAL (
-         SELECT n.created_at, n.sender_id FROM messages n
-          WHERE n.conversation_id = b.conversation_id
-            AND n.sender_type = 'agent' AND n.automation IS NULL
-            AND n.created_at > b.created_at
-          ORDER BY n.created_at ASC
-          LIMIT 1
-       ) r ON TRUE
-       LEFT JOIN users u ON u.id = r.sender_id AND u.tenant_id = $1
+       LEFT JOIN ends e ON e.conversation_id = b.conversation_id AND e.grp = b.grp + 1
+       LEFT JOIN users u ON u.id = e.sender_id AND u.tenant_id = $1
       ORDER BY b.created_at ASC`,
     [tenantId, startUtc, endUtc],
   );

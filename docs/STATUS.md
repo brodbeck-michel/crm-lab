@@ -3157,3 +3157,24 @@ CRMLAB-85 (Visitação Médica). Decisão D-256.
   rotas), `pages/Visitation/Agenda.spec.tsx` (8), `route-config.spec.ts` (ajustado).
 - **Pendente:** validação na hml; a migração 048 roda no deploy. `realizada` (check-in/out, relato
   e anexos) é o card [C]; linha do tempo do médico, o card [D].
+
+### 🚧 CRMLAB-83 — relatório de tempo de resposta no WhatsApp (2026-10-03, aguardando validação)
+
+Branch `feature/CRMLAB-83-relatorio-tempo-resposta` (de `main` v1.30.0). Decisão D-257, migração
+`049_messages_patient_period_index.sql` (só índice parcial; o 048 é do CRMLAB-87).
+
+- **Backend:** `GET /analytics/response-time` (gestor/admin, até 93 dias). Bloco = mensagens
+  seguidas do paciente, da primeira até a próxima resposta humana; automática e sistema não
+  contam; encerrar fecha o bloco sem resposta. Minutos úteis com o `businessMinutesBetween` do
+  alerta (expediente + feriados). Atribuído a quem respondeu; celular = linha "Celular".
+  Média, mediana, faixas, 1ª resposta, sem resposta (aguardando/encerrado), dia a dia.
+- **Tela:** aba "Tempo de resposta" em `/analytics` (gestor/admin), com o período do topo,
+  filtro de atendente, cartões, distribuição, mediana por dia, ranking + total e "Exportar Excel".
+- **Desempenho:** uma query com função de janela. Postgres 16 com 2,9 mi de mensagens (252 mil
+  blocos num laboratório): 3,5 s para 93 dias, 1,3 s para 31 dias. Cache em `zonedToUtc` e
+  `isHoliday` (puros).
+- **Testes:** backend `analytics/response-time.spec.ts` (13), `route-tenant-isolation.spec.ts`
+  (89 rotas); frontend `ResponseTimeSection.spec.tsx` (5), casos novos em `Analytics.spec.tsx` e
+  `format.spec.ts`.
+- **Pendente:** validação na hml; a migração 049 roda no deploy.
+

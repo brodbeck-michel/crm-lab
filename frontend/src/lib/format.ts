@@ -181,6 +181,22 @@ export function formatDurationSeconds(totalSeconds: number): string {
   return hours === 0 ? `${days}d` : `${days}d ${hours}h`;
 }
 
+const MINUTES_DECIMAL = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 });
+
+/**
+ * MINUTOS ÚTEIS (com até 1 casa) → texto curto, para o relatório de tempo de
+ * resposta (CRMLAB-83, D-257). `null` = sem resposta no recorte → "—".
+ * < 60 → "6,5 min" · ≥ 60 → "1h30" (minutos inteiros; hora cheia sai "2h").
+ */
+export function formatMinutes(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return '—';
+  if (value < 60) return `${MINUTES_DECIMAL.format(Math.max(0, value))} min`;
+  const total = Math.floor(value);
+  const hours = Math.floor(total / 60);
+  const minutes = total % 60;
+  return minutes === 0 ? `${hours}h` : `${hours}h${String(minutes).padStart(2, '0')}`;
+}
+
 /**
  * Percentual pt-BR. `formatPercent(0.384)` → `38%`; com `fractionDigits: 1` → `38,4%`.
  * Recebe a FRAÇÃO (0–1), não o número já multiplicado.

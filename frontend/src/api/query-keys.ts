@@ -19,6 +19,7 @@ import type {
   OperationOverviewQuery,
   PaginationQuery,
   PendingLisBudgetsSummaryQuery,
+  ResponseTimeQuery,
   SearchMessagesQuery,
   SalesSummaryQuery,
 } from '@crm-lab/shared';
@@ -98,6 +99,9 @@ export const queryKeys = {
   analytics: (period?: AnalyticsQuery) => ['analytics', period ?? {}] as const,
   /** ['analytics', 'pipeline'] — snapshot atual, sem período */
   analyticsPipeline: () => ['analytics', 'pipeline'] as const,
+  /** ['analytics', 'response-time', period] — CRMLAB-83 (D-257) */
+  analyticsResponseTime: (period?: ResponseTimeQuery) =>
+    ['analytics', 'response-time', period ?? {}] as const,
 
   /** ['theme'] */
   theme: () => ['theme'] as const,

@@ -3,6 +3,7 @@ import {
   formatCount,
   formatDateTime,
   formatIsoDay,
+  formatMinutes,
   formatMoney,
   formatPercent,
   formatRelativeDate,
@@ -164,5 +165,20 @@ describe('initials', () => {
   it('string vazia devolve vazio', () => {
     expect(initials('')).toBe('');
     expect(initials('   ')).toBe('');
+  });
+});
+
+describe('formatMinutes (CRMLAB-83)', () => {
+  it('abaixo de 1 h: minutos com até 1 casa, vírgula pt-BR', () => {
+    expect(formatMinutes(6.5)).toBe('6,5 min');
+    expect(formatMinutes(0)).toBe('0 min');
+    expect(formatMinutes(59)).toBe('59 min');
+  });
+
+  it('a partir de 1 h: "1h30"; hora cheia "2h"; null vira travessão', () => {
+    expect(formatMinutes(90)).toBe('1h30');
+    expect(formatMinutes(120)).toBe('2h');
+    expect(formatMinutes(61.5)).toBe('1h01');
+    expect(formatMinutes(null)).toBe('—');
   });
 });

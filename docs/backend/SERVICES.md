@@ -529,6 +529,23 @@ interface AnalyticsService {
 - Cache Redis 5 min por (tenantId, período)
 - Atendente vê apenas métricas próprias (conversão "parcial")
 
+**Tempo de resposta (CRMLAB-83, D-257)** — `ResponseTimeService` (`response-time.service.ts`),
+no mesmo módulo de rotas (`GET /analytics/response-time`), gestor/admin:
+
+```typescript
+interface ResponseTimeService {
+  getReport(ctx: TenantContext, query: ResponseTimeQuery): Promise<ResponseTimeReport>;
+}
+```
+- Valida o período com o `resolvePeriod` do Analytics e limita a 93 dias. As datas viram
+  instantes UTC pela meia-noite **local** do fuso de `business_hours`.
+- `response-time.repository.ts` (`listBlocks`) devolve um bloco por linha: uma query com função
+  de janela sobre a sequência paciente / resposta humana / encerramento das conversas com
+  mensagem do paciente no período (o bloco pode ter começado antes; a resposta pode vir depois).
+- Minutos úteis em TS com `businessMinutesBetween` (o mesmo do alerta, D-254), com os feriados
+  cadastrados do início do período até a resposta mais tardia. Agrega por quem respondeu
+  (`sender_id`; nulo = "Celular"), mais o total e o dia a dia. Sem cache no servidor.
+
 ---
 
 ## 10. AuditService

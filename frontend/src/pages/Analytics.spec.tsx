@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router-dom';
-import type { FunnelReport, PipelineSnapshot } from '@crm-lab/shared';
+import type { FunnelReport, PipelineSnapshot, ResponseTimeReport } from '@crm-lab/shared';
+import userEvent from '@testing-library/user-event';
+import { ToastProvider } from '@/components/ui';
 import type * as ApiClientModule from '@/api/client';
 import { useAuthStore } from '@/stores/auth.store';
 import { DEFAULT_THEME } from '@/lib/theme';
@@ -99,6 +101,10 @@ vi.mock('@/components/analytics/RevenueChart', () => ({
   default: () => <div data-testid="revenue-chart">Receita Acumulada</div>,
 }));
 
+vi.mock('@/components/analytics/ResponseTimeDailyChart', () => ({
+  default: () => <div data-testid="response-time-chart">Mediana por dia</div>,
+}));
+
 vi.mock('@/components/analytics/LossReasonsChart', () => ({
   default: () => <div data-testid="loss-reasons-chart">Motivos de Perda</div>,
 }));
@@ -116,9 +122,11 @@ let queryClient: QueryClient;
 function renderPage() {
   return render(
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <Analytics />
-      </BrowserRouter>
+      <ToastProvider>
+        <BrowserRouter>
+          <Analytics />
+        </BrowserRouter>
+      </ToastProvider>
     </QueryClientProvider>,
   );
 }
@@ -255,5 +263,39 @@ describe('Analytics', () => {
     await waitFor(() => {
       expect(screen.getByTestId('loss-reasons-chart')).toBeInTheDocument();
     });
+  });
+
+  // CRMLAB-83 (D-257): a aba de tempo de resposta é de gestor/admin.
+  it('atendente não vê a aba "Tempo de resposta"', async () => {
+    renderPage();
+    await screen.findByText('Receita');
+    expect(screen.queryByRole('tab', { name: 'Tempo de resposta' })).not.toBeInTheDocument();
+  });
+
+  it('gestor troca para "Tempo de resposta" e vê a seção com o período do topo', async () => {
+    const report: ResponseTimeReport = {
+      period: { startDate: '2026-09-01', endDate: '2026-09-30' },
+      timezone: 'America/Sao_Paulo',
+      total: {
+        answered: 0,
+        averageMinutes: null,
+        medianMinutes: null,
+        buckets: { upTo5: 0, upTo15: 0, upTo60: 0, over60: 0 },
+        firstResponse: { answered: 0, averageMinutes: null, medianMinutes: null },
+        unanswered: { waiting: 0, closed: 0, conversations: 0 },
+        daily: [],
+      },
+      responders: [],
+    };
+    responses.set('/analytics/response-time', report);
+    useAuthStore.setState({
+      user: { id: 'g1', email: 'gestor@lab.com', role: 'manager', name: 'Gestora', discountLimit: 30 },
+    });
+
+    renderPage();
+    await userEvent.click(await screen.findByRole('tab', { name: 'Tempo de resposta' }));
+
+    expect(await screen.findByRole('heading', { name: 'Tempo de resposta no WhatsApp' })).toBeInTheDocument();
+    expect(screen.queryByText('Receita')).not.toBeInTheDocument();
   });
 });

@@ -1,5 +1,5 @@
 import { MoneyDisplay } from '@/components/shared/MoneyDisplay';
-import { formatCount } from '@/lib/format';
+import { formatCount, formatMinutes } from '@/lib/format';
 
 /**
  * `value` da variante `percent` já vem em PONTOS percentuais do contrato
@@ -15,7 +15,8 @@ const PERCENT = new Intl.NumberFormat('pt-BR', {
 interface MetricTileProps {
   label: string;
   value?: number;
-  variant?: 'money' | 'percent' | 'number';
+  /** `minutes`: minutos úteis do tempo de resposta (CRMLAB-83) — "6,5 min", "1h30". */
+  variant?: 'money' | 'percent' | 'number' | 'minutes';
   /** Linha de apoio abaixo do valor (legenda da métrica). */
   caption?: string;
 }
@@ -31,6 +32,8 @@ export default function MetricTile({ label, value, variant = 'number', caption }
         return <MoneyDisplay value={value} emphasis />;
       case 'percent':
         return <span className="font-heading text-section">{PERCENT.format(value)}%</span>;
+      case 'minutes':
+        return <span className="font-heading text-section">{formatMinutes(value)}</span>;
       case 'number':
       default:
         return <span className="font-heading text-section">{formatCount(value)}</span>;

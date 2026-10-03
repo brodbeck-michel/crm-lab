@@ -5,36 +5,92 @@ import ConversionChart from '@/components/analytics/ConversionChart';
 import RevenueChart from '@/components/analytics/RevenueChart';
 import LossReasonsChart from '@/components/analytics/LossReasonsChart';
 import { Input } from '@/components/ui/Input';
-import { Chip } from '@/components/ui';
+import { Chip, SegmentedControl } from '@/components/ui';
 import { MoneyDisplay } from '@/components/shared';
+import ResponseTimeSection from '@/components/analytics/ResponseTimeSection';
+import { useAuthStore } from '@/stores/auth.store';
 
+type AnalyticsTab = 'conversion' | 'response-time';
+
+/**
+ * `/analytics` (PAGES.md §8). O período fica no topo e vale para as duas abas.
+ * A aba "Tempo de resposta" (CRMLAB-83, D-257) é de gestor e admin — o mesmo
+ * recorte de `GET /analytics/team`; a atendente continua vendo só a Conversão.
+ */
 export default function Analytics() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [tab, setTab] = useState<AnalyticsTab>('conversion');
+  const role = useAuthStore((state) => state.user?.role);
+  const canSeeTeam = role === 'manager' || role === 'admin';
+  const showResponseTime = canSeeTeam && tab === 'response-time';
 
+  return (
+    <div className="p-lg space-y-xl">
+      <h1 className="font-heading text-display">
+        {showResponseTime ? 'Tempo de resposta' : 'Conversão'}
+      </h1>
+
+      {/* Barra única: abas à esquerda, período à direita (vale para as duas abas). */}
+      <div className="flex flex-wrap items-center justify-between gap-md border-b border-neutral-200 pb-lg">
+        {canSeeTeam ? (
+          <div className="w-full max-w-[340px] rounded-pill bg-neutral-100">
+            <SegmentedControl<AnalyticsTab>
+              aria-label="Relatório"
+              value={tab}
+              onChange={setTab}
+              options={[
+                { value: 'conversion', label: 'Conversão' },
+                { value: 'response-time', label: 'Tempo de resposta' },
+              ]}
+            />
+          </div>
+        ) : (
+          <span />
+        )}
+
+        <div className="flex flex-wrap items-center gap-sm">
+          <span className="font-body text-caption font-semibold text-neutral-700">Período</span>
+          <div className="w-[170px]">
+            <Input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              placeholder="Data inicial"
+              aria-label="Data inicial"
+            />
+          </div>
+          <span className="font-body text-caption text-neutral-600">até</span>
+          <div className="w-[170px]">
+            <Input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              placeholder="Data final"
+              aria-label="Data final"
+            />
+          </div>
+        </div>
+      </div>
+
+      {showResponseTime ? (
+        <ResponseTimeSection startDate={startDate} endDate={endDate} />
+      ) : (
+        <ConversionSection startDate={startDate} endDate={endDate} />
+      )}
+    </div>
+  );
+}
+
+function ConversionSection({ startDate, endDate }: { startDate: string; endDate: string }) {
   const { data: conversion, isLoading } = useAnalyticsConversion({
     // `IsoDate` é `string` em @crm-lab/shared — nenhum cast é necessário.
     startDate: startDate === '' ? undefined : startDate,
     endDate: endDate === '' ? undefined : endDate,
   });
 
-  if (isLoading) {
-    return (
-      <div className="p-lg space-y-xl">
-        <h1 className="font-heading text-display">Conversão</h1>
-        <div>Carregando dados...</div>
-      </div>
-    );
-  }
-
-  if (!conversion) {
-    return (
-      <div className="p-lg space-y-xl">
-        <h1 className="font-heading text-display">Conversão</h1>
-        <div>Nenhum dado disponível</div>
-      </div>
-    );
-  }
+  if (isLoading) return <div>Carregando dados...</div>;
+  if (!conversion) return <div>Nenhum dado disponível</div>;
 
   // Prepare funnel data for chart
   const funnelData = [
@@ -65,9 +121,7 @@ export default function Analytics() {
     conversion.realized.paidCount > 0 || conversion.realized.wonFromLis > 0;
 
   return (
-    <div className="p-lg space-y-xl">
-      <h1 className="font-heading text-display">Conversão</h1>
-
+    <div className="space-y-xl">
       {/*
         Atendente recebe `partial: true` do backend e só as próprias métricas
         (docs/frontend/PAGES.md §8 · pedido do Agent-API-Analytics em
@@ -82,24 +136,6 @@ export default function Analytics() {
           </span>
         </div>
       )}
-
-      {/* Period Filters */}
-      <div className="flex gap-lg flex-wrap">
-        <Input
-          type="date"
-          value={startDate}
-          onChange={(e) => setStartDate(e.target.value)}
-          placeholder="Data inicial"
-          aria-label="Data inicial"
-        />
-        <Input
-          type="date"
-          value={endDate}
-          onChange={(e) => setEndDate(e.target.value)}
-          placeholder="Data final"
-          aria-label="Data final"
-        />
-      </div>
 
       {/* Metric Tiles Grid */}
       <div className="grid grid-cols-5 gap-lg">

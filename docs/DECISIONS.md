@@ -5071,3 +5071,60 @@ tempo do médico (cards [C] e [D]).
 `pages/Visitation/agenda-dates.ts`; testes `tests/visits/visits.spec.ts`, inventário de
 `route-tenant-isolation.spec.ts` (88 → 95 rotas), `Agenda.spec.tsx`, `route-config.spec.ts`.
 SCHEMA §36, API_CONTRACTS §14, API_ERRORS, SERVICES §31, BUSINESS_RULES §13, PAGES §23.
+
+## 2026-10-03 — Relatório de tempo de resposta no WhatsApp (CRMLAB-83)
+
+### D-257: Tempo de resposta por bloco do paciente, em minutos úteis, atribuído a quem respondeu
+**Decisão (Michel, 03/10/2026; itens 5–10 decididos na implementação):**
+1. **Só horário comercial:** conta só os minutos dentro de `tenant_settings.business_hours`
+   (`readBusinessHours`, sem nenhum dia = sempre aberto, D-212 item 1), descontando feriados
+   nacionais e de `tenant_holidays`. É o mesmo `businessMinutesBetween` do alerta (D-254), rodando
+   no backend.
+2. **Atribuição a quem respondeu** (`messages.sender_id`), não à dona da conversa. Resposta pelo
+   celular do laboratório (`agent` sem `sender_id`, D-173) vira a linha **"Celular"**
+   (`responderId: "phone"`).
+3. **Resposta = mensagem humana:** `sender_type = 'agent'` e `automation` nulo, do CRM ou do
+   celular — a âncora da D-211/D-254. Automática e de sistema **não** respondem nem encerram a
+   espera.
+4. **Exportação Excel** no cliente (`xlsx`), como a de comissões (D-123): mesmo relatório da tela,
+   sem segundo fetch. Abas "Ranking" (com TOTAL), "Por dia" (do recorte escolhido) e "Sem resposta".
+5. **Bloco:** mensagens seguidas do paciente. A espera começa na **primeira** do bloco (como o
+   `awaitingReplySince`) e termina na próxima resposta humana. Cada bloco é uma medida.
+6. **Encerrar fecha o bloco sem resposta:** a mensagem de sistema "Atendimento encerrado por X"
+   (D-174) é fronteira. Sem isso, o "obrigado" que o paciente manda antes de a atendente encerrar
+   ganharia como resposta a da próxima conversa, semanas depois. Bloco sem resposta não tem
+   atendente: entra só no total, separado em **aguardando** e **encerrado sem resposta**, mais o
+   número de conversas com algum bloco sem resposta. Conversa encerrada antes da D-174 (sem o
+   evento) conta como encerrada pelo status.
+7. **Primeira resposta** = blocos que **abrem** o atendimento: o primeiro da conversa ou o primeiro
+   depois de um encerramento (conversa que voltou). Reabrir pela atendente e já escrever não abre:
+   quem começou foi o laboratório.
+8. **Período em datas locais** do fuso do expediente, de até **93 dias**
+   (`RESPONSE_TIME_MAX_PERIOD_DAYS`; acima → `VALIDATION_ERROR` em `endDate`). Padrão: os últimos
+   30 dias, como o resto do Analytics. O bloco pertence ao dia em que **começou**; a resposta pode
+   vir depois do fim do período. Bloco começado antes do período não entra, mesmo que o paciente
+   continue escrevendo dentro dele.
+9. **Números:** média e mediana com 1 casa (mediana de quantidade par = média dos dois do meio);
+   faixas inclusivas em minutos inteiros: até 5, 6–15, 16–60, acima de 60. Ranking pela mediana
+   (menor primeiro), desempate por quantidade respondida.
+10. **Quem vê:** gestor e admin, como `GET /analytics/team`. A tela é uma aba nova
+    ("Tempo de resposta") de `/analytics`, que a atendente não vê. O filtro de atendente é local:
+    o relatório já traz cada linha completa, com o dia a dia.
+**Como calcula:** uma query só, com função de janela sobre a sequência P/R/C (paciente, resposta
+humana, encerramento) das conversas com mensagem do paciente no período; os minutos úteis são
+aplicados em TS. Índice parcial novo `idx_messages_patient_tenant_created` (migração 049). Medido
+num Postgres 16 com 2,9 milhões de mensagens (36 mil conversas por laboratório em 92 dias, 252 mil
+blocos): 3,5 s para 93 dias e 1,3 s para 31 dias, só a query. `zonedToUtc` e `isHoliday` ganharam
+cache (puros), o que corta ~3× o tempo em TS. Sem cache no servidor: há blocos "aguardando", que
+mudam a cada resposta.
+**Motivo:** o gestor quer ver quanto as atendentes demoram para responder no WhatsApp, com a mesma
+régua do alerta (D-254), para o número da tela e o vermelho da lista contarem a mesma história.
+**Impacto:** `backend/migrations/049_messages_patient_period_index.sql`;
+`shared/types/response-time.types.ts` (novo), `reengagement.types.ts` (cache);
+`response-time.repository.ts`, `response-time.service.ts` (novos), `analytics.routes.ts`;
+frontend `api/analytics.ts`, `api/query-keys.ts`, `lib/format.ts` (`formatMinutes`),
+`lib/excel/response-time-report.ts`, `components/analytics/ResponseTimeSection.tsx`,
+`ResponseTimeDailyChart.tsx`, `MetricTile.tsx` (variante `minutes`), `pages/Analytics.tsx`;
+testes `tests/analytics/response-time.spec.ts`, inventário de `route-tenant-isolation.spec.ts`
+(88 → 89 rotas), `ResponseTimeSection.spec.tsx`, `Analytics.spec.tsx`, `format.spec.ts`.
+SCHEMA §4, API_CONTRACTS §5, SERVICES §9, BUSINESS_RULES §3, PAGES §8.

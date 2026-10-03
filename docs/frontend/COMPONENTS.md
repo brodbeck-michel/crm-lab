@@ -77,6 +77,11 @@ Anatomia (padrão WhatsApp):
 - **Rascunho (CRMLAB-73, D-243):** com rascunho guardado para a conversa (`useConversationDraft`,
   `stores/drafts.store.ts`), a prévia mostra **"Rascunho:"** (em destaque) + o texto, no lugar da
   última mensagem — menos na conversa selecionada. Conversa encerrada na lista apaga o rascunho
+- **Alerta de tempo de resposta (CRMLAB-84, D-254):** `responseAlertMinutes?: number | null`
+  (minutos úteis, calculados pela lista). Com valor: `data-response-alert="true"`, fundo
+  `--color-chat-alert-bg` (a selecionada mantém `--color-chat-selected`), faixa à esquerda por
+  sombra interna em `--color-chat-alert` (não empurra o conteúdo) e relógio + "há N min"
+  (`formatDurationSeconds`) em `--color-chat-alert`, no lugar do "aguardando N min"
 
 ### ConversationSearch · MessageResults (`pages/Attendance/`, locais da tela — CRMLAB-68)
 - `ConversationSearch`: barra da busca dentro da conversa (campo, "N de M", ↑ ↓, fechar) + lista

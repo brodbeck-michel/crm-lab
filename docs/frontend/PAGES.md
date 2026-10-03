@@ -116,6 +116,17 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 - Chip **"Encerradas"** (CRMLAB-48, D-174), sem número: lista `?status=closed` (o atendente vê só
   as dele, pelo recorte do servidor). Ligado, os números de "Minhas"/"Não atribuídas" continuam os
   das **ativas** — vêm da mesma query da fila, que segue rodando. Clicar de novo volta à fila
+- **Alerta de tempo de resposta (CRMLAB-84, D-254)** — só com `responseAlert.enabled` nas Regras.
+  A tela lê `GET /settings/business-calendar` (§6e da API; todo perfil) e, a cada 30 s no relógio
+  local, calcula para cada conversa ativa os minutos **úteis** desde `awaitingReplySince`
+  (`responseAlertMinutes`, `@crm-lab/shared`: expediente, sem feriados). A partir de
+  `responseAlert.minutes`, o item fica com fundo `--color-chat-alert-bg`, faixa vermelha à esquerda
+  (`--color-chat-alert`) e um relógio com **"há 23 min"** no lugar do "aguardando N". Some quando a
+  atendente responde (o WS refaz a lista). Encerradas nunca. Todas as atendentes veem
+- Chip **"Aguardando resposta N"** (D-254), depois de "Encerradas", só com a regra ligada e fora
+  da lista de encerradas: conta e filtra **no cliente** a página carregada (exceção consciente ao
+  "counts do servidor"; conversa fora da página não entra). Combina com "Minhas"/"Não atribuídas";
+  clicar de novo desliga. Filtro ligado e ninguém esperando → "Ninguém aguardando resposta"
 - **Sem chip "Não lidas"** (CRMLAB-68, D-229 item 5): o Michel preferiu só Minhas / Não
   atribuídas / Encerradas — o número de não lidas no item e no título da aba já avisam. A API
   mantém `?unread=true` e `counts.unread`
@@ -1363,6 +1374,12 @@ seu próprio [Salvar] (endpoint e permissão diferentes).
   vazio bloqueia salvar. Nota: vale só para conversa aberta e WhatsApp por QR Code, respeita o
   horário de funcionamento (link para Canais) e não envia em feriado. Gestor/admin leem os
   canais (`useChannelSettings`): WhatsApp na API oficial → aviso "Inativo para este canal".
+- **Alerta de tempo de resposta** (`id="alerta-resposta"`, logo depois do reingajamento,
+  CRMLAB-84, D-254, `Settings/ResponseAlertSection.tsx`) — no formulário (chave `responseAlert`).
+  `Toggle` "Destacar paciente sem resposta há X minutos" e `Input` "Minutos sem resposta"
+  (1 a 1440, desabilitado com a regra desligada). Fora da faixa: "Informe um número inteiro de 1 a
+  1440" e [Salvar regras] travado. Nota: só destaca, conta só no horário de funcionamento (link
+  para Canais) e não conta feriado; automática não é resposta; encerrada não entra.
 - **Feriados** (`id="feriados"`, fora do formulário, antes de Comissões) — fonte
   `GET/POST/DELETE /settings/holidays` (§6d), salvo na hora. Seletor de ano (‹ 2026 ›), lista
   "Do laboratório" (com [Remover] para gestor/admin) e lista "Nacionais" (só leitura, Carnaval e

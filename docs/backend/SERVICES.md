@@ -74,6 +74,12 @@ agindo recebem `TenantContext` no lugar de `tenantId` — `list(ctx, filters)`,
 continua recebendo só `tenantId`: quem chama é o webhook, sem usuário logado.
 Ver "Convenções Transversais" — o contexto é sempre o primeiro parâmetro.
 
+**`awaitingReplySince` (CRMLAB-84, D-254):** a lista e o detalhe trazem a hora da primeira
+mensagem do paciente depois da última resposta humana (`agent` com `automation` nulo), por um
+`LEFT JOIN LATERAL` (`AWAITING_REPLY_LATERAL` em `conversation.repository.ts`) que acha a última
+resposta pelo índice parcial `idx_messages_human_reply` (migração 046). Conversa encerrada:
+`null`. Sai já em ISO UTC (`to_char`), como as datas do reingajamento.
+
 `createManual(ctx, dto)` é o `POST /conversations` (atendimento fora do WhatsApp,
 API_CONTRACTS.md §2). Passa pelo mesmo `findOrCreateByPhone` — o canal vem do DTO e
 `assignedTo` nasce com `ctx.userId`, em vez da fila livre. O telefone digitado é
@@ -1572,6 +1578,11 @@ export interface FunnelRulesService {
 - Quem consome: `ProposalService.create` (`origin.manualInCrm`, D-193) e
   `ProposalService.updateStatus` (`manualMoves` via `checkTransition`, D-192), lendo com
   `readFunnelRules` na mesma transação. Os cards CRMLAB-57..60 leem pelo mesmo ponto.
+- **Seção `responseAlert` (CRMLAB-84, D-254):** `{ enabled, minutes }`, padrão
+  `{ enabled: false, minutes: 15 }`. `minutes` inteiro de `RESPONSE_ALERT_MINUTES_MIN` (1) a
+  `RESPONSE_ALERT_MINUTES_MAX` (1440); fora disso, `VALIDATION_ERROR` em
+  `responseAlert.minutes`. O backend só guarda: quem calcula é a lista de conversas, no navegador
+  (`responseAlertMinutes`, `shared/types/response-alert.types.ts`).
 - **Seção `lisSource` (CRMLAB-53, D-189 item 4):** `lisSource.spreadsheetImport.enabled`, padrão
   `false` (emenda à D-191: a API é a carga principal). Folha booleana comum, sem validação
   própria. Quem consome: `LisImportService.import` (§19), que recusa com
@@ -1701,6 +1712,12 @@ export interface HolidayService {
 }
 export function parseYear(raw: unknown, now?: Date): number;       // VALIDATION_ERROR fora de 2000..2100
 ```
+
+**`calendar(ctx, now?)` (CRMLAB-84, D-254)** — `GET /settings/business-calendar` (§6e), todo
+perfil de laboratório: `readBusinessHours` (§ChannelSettings) + `listDates` dos feriados
+cadastrados de `hoje − BUSINESS_CALENDAR_LOOKBACK_DAYS` (14) a `amanhã`, em datas locais do
+laboratório. Os nacionais não vão: o navegador calcula com `nationalHolidays`. Existe porque a
+atendente não lê `/settings/channels` e precisa do expediente para o alerta de tempo de resposta.
 
 ---
 

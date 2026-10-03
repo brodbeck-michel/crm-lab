@@ -219,6 +219,26 @@ funcionamento (fora dele, fica para a abertura; sem nenhum dia configurado = sem
 hora de sair cai em feriado, **descarta**, não empurra. Mais de 2 h atrasado → descarta também.
 API oficial da Meta não entra na rotina. A mensagem aparece como "Mensagem automática".
 
+### Alerta de tempo de resposta (CRMLAB-84, D-254)
+O inverso do reingajamento, e **só visual**: nada é enviado ao paciente. Com a regra ligada
+(padrão **desligada**, 15 min, faixa **1 a 1440**), a conversa **ativa** em que o paciente
+escreveu e a atendente ainda não respondeu fica destacada em vermelho na lista do Atendimento,
+para **todas** as atendentes que já a veem, a partir de X minutos de espera.
+- **Resposta da atendente** = mensagem `agent` com `automation` nulo, pelo CRM ou pelo celular
+  (a mesma âncora do reingajamento). Mensagem **automática** e de **sistema** NÃO tiram do
+  alerta.
+- **A espera começa na primeira mensagem do paciente depois da última resposta** (sem resposta
+  nenhuma ainda: a primeira mensagem do paciente). Paciente que manda três mensagens seguidas
+  espera desde a primeira.
+- **Só conta o horário comercial:** o expediente de `tenant_settings.business_hours` (sem
+  nenhum dia configurado = sempre aberto) e **sem feriados** (nacionais e os do laboratório),
+  como o reingajamento. Escreveu às 17:55 com o laboratório fechando às 18:00: às 08:05 do dia
+  útil seguinte são 10 min.
+- **Encerrada não entra.** Um nível só (vermelho). O destaque atualiza sozinho (relógio local a
+  cada 30 s) e some quando a atendente responde (a lista é refeita pelo WebSocket).
+- Chip **"Aguardando resposta N"**: conta e filtra **a página carregada** da lista (não o banco
+  inteiro), e combina com "Minhas"/"Não atribuídas".
+
 ### Exceção: régua de fatos do LIS (CRMLAB-60, D-252 — substitui D-119 item 4 e D-204)
 A matriz acima vale para **pessoas**. O orçamento do LIS vinculado à proposta
 (`lis_budget_number`) move a proposta pelo sistema, **em qualquer origem** (`crm` ou `bitlab`),

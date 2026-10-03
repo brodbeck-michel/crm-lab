@@ -132,6 +132,15 @@ export interface Conversation {
    */
   pinned: boolean;
   createdAt: IsoDateTime;
+  /**
+   * Alerta de tempo de resposta (CRMLAB-84, D-254): hora da PRIMEIRA mensagem
+   * do paciente depois da última resposta de pessoa do laboratório
+   * (`sender_type = 'agent'` e `automation` nulo — CRM ou celular). `null` =
+   * ninguém esperando (a atendente falou por último, ou só houve mensagem
+   * automática/de sistema sem paciente antes) ou conversa encerrada.
+   * Opcional no tipo (AGENTS.md); o backend sempre preenche.
+   */
+  awaitingReplySince?: IsoDateTime | null;
 }
 
 /** Conversa aberta, com cadastro do paciente (coluna 3 do inbox). */

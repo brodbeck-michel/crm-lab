@@ -347,6 +347,50 @@ describe('Regras (/settings/rules)', () => {
     });
   });
 
+  describe('alerta de tempo de resposta (CRMLAB-84)', () => {
+    it('padrão: desligado, 15 min, campo travado até ligar', () => {
+      signIn('manager');
+      renderPage();
+      const box = section(/alerta de tempo de resposta/i);
+      expect(within(box).getByRole('switch', { name: /sem resposta há x minutos/i })).not.toBeChecked();
+      expect(within(box).getByLabelText('Minutos sem resposta')).toHaveValue(15);
+      expect(within(box).getByLabelText('Minutos sem resposta')).toBeDisabled();
+    });
+
+    it('ligar com 30 min salva só o que mudou', async () => {
+      const user = userEvent.setup();
+      signIn('manager');
+      renderPage();
+      const box = section(/alerta de tempo de resposta/i);
+      await user.click(within(box).getByRole('switch', { name: /sem resposta há x minutos/i }));
+      const minutes = within(box).getByLabelText('Minutos sem resposta');
+      await user.clear(minutes);
+      await user.type(minutes, '30');
+      await user.click(screen.getByRole('button', { name: 'Salvar regras' }));
+      expect(mutate.mock.calls[0]?.[0]).toEqual({ responseAlert: { enabled: true, minutes: 30 } });
+    });
+
+    it('fora de 1 a 1440 avisa no campo e bloqueia salvar', async () => {
+      const user = userEvent.setup();
+      signIn('manager');
+      renderPage({ ...DEFAULT_FUNNEL_RULES, responseAlert: { enabled: true, minutes: 15 } });
+      const box = section(/alerta de tempo de resposta/i);
+      const minutes = within(box).getByLabelText('Minutos sem resposta');
+      await user.clear(minutes);
+      await user.type(minutes, '1441');
+      expect(within(box).getByText('Informe um número inteiro de 1 a 1440')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Salvar regras' })).toBeDisabled();
+    });
+
+    it('atendente vê desabilitado', () => {
+      signIn('attendant');
+      renderPage({ ...DEFAULT_FUNNEL_RULES, responseAlert: { enabled: true, minutes: 20 } });
+      const box = section(/alerta de tempo de resposta/i);
+      expect(within(box).getByRole('switch', { name: /sem resposta há x minutos/i })).toBeDisabled();
+      expect(within(box).getByLabelText('Minutos sem resposta')).toBeDisabled();
+    });
+  });
+
   describe('feriados (CRMLAB-62)', () => {
     it('mostra os nacionais do ano e os do laboratório', () => {
       useHolidays.mockReturnValue(

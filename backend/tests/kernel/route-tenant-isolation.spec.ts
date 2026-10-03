@@ -32,6 +32,7 @@ import type {
   ListUsersResponse,
   OperationOverviewResponse,
   PipelineSnapshot,
+  ResponseTimeReport,
   TeamReport,
 } from '@crm-lab/shared';
 import { analyticsModule } from '../../src/controllers/analytics.routes.js';
@@ -753,6 +754,7 @@ const LAB_ROUTES: readonly LabRoute[] = [
   { name: 'GET /analytics/conversion', method: 'get', path: () => '/api/v1/analytics/conversion', actor: 'manager', addressable: false },
   { name: 'GET /analytics/pipeline', method: 'get', path: () => '/api/v1/analytics/pipeline', actor: 'manager', addressable: false },
   { name: 'GET /analytics/team', method: 'get', path: () => '/api/v1/analytics/team', actor: 'manager', addressable: false },
+  { name: 'GET /analytics/response-time', method: 'get', path: () => '/api/v1/analytics/response-time', actor: 'manager', addressable: false },
 
   // --- chat interno ---
   { name: 'GET /internal-chat/channels', method: 'get', path: () => '/api/v1/internal-chat/channels', actor: 'attendant', addressable: false },
@@ -1058,7 +1060,7 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 88 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 89 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
@@ -1084,7 +1086,8 @@ describe('inventario de rotas de laboratorio', () => {
     // `POST /conversations/:id/unread`. CRMLAB-70/D-236 soma 1: `POST /conversations/whatsapp/open`.
     // CRMLAB-86/D-255 soma 6: `GET|POST /doctors`, `GET|PATCH /doctors/:id` e
     // `POST /doctors/:id/inactivate|reactivate`.
-    expect(LAB_ROUTES).toHaveLength(88);
+    // CRMLAB-83/D-257 soma 1: `GET /analytics/response-time`.
+    expect(LAB_ROUTES).toHaveLength(89);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)
@@ -1373,6 +1376,25 @@ describe('listagens e relatorios do tenant A', () => {
     const equipe = time.body as TeamReport;
     expect(equipe.members.map((m) => m.userId)).not.toContain(beta.attendant.id);
     expect(equipe.totals.revenue).not.toBe(BETA_SECRETS.revenue);
+
+    // CRMLAB-83 (D-257): quem respondeu no Beta nao entra no ranking do Alfa.
+    await db.withoutTenant((tx) =>
+      tx.query(
+        `INSERT INTO messages (tenant_id, conversation_id, sender_type, sender_id, content, status)
+         VALUES ($1, $2, 'agent', $3, 'resposta beta', 'sent')`,
+        [beta.tenant.id, beta.conversation.id, beta.attendant.id],
+      ),
+    );
+    const resposta = await app.agent.get('/api/v1/analytics/response-time').set(headers).expect(200);
+    const tempos = resposta.body as ResponseTimeReport;
+    expect(tempos.responders.map((r) => r.responderId)).not.toContain(beta.attendant.id);
+    expect(JSON.stringify(tempos)).not.toContain(BETA_SECRETS.user);
+    // Controle positivo: no proprio Beta a resposta aparece.
+    const doBeta = await app.agent
+      .get('/api/v1/analytics/response-time')
+      .set(app.auth(beta.manager))
+      .expect(200);
+    expect((doBeta.body as ResponseTimeReport).responders.map((r) => r.responderId)).toContain(beta.attendant.id);
   });
 
   it('GET /themes/current devolve o tema do proprio tenant apos o admin de A trocar a cor', async () => {

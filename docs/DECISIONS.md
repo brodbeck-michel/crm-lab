@@ -4928,3 +4928,54 @@ máximo 90 dias; o incremental pega qualquer estorno.
 testes `backend/tests/lis/lis-payments.spec.ts` e `LisIntegration.spec.tsx`; SERVICES §24,
 BUSINESS_RULES §11.10, API_CONTRACTS §10.3, SCHEMA §`lis_sync_settings`, STATUS. **Deploy:** sem
 migração e sem variável nova.
+
+## 2026-10-02 — Alerta de tempo de resposta na lista de conversas (CRMLAB-84)
+
+### D-254: Destacar o paciente que espera a atendente há X minutos úteis (só visual)
+**Decisão (Michel, 02/10/2026):** o inverso do reingajamento (D-211). Nada é enviado: a lista do
+Atendimento destaca em vermelho a conversa cujo paciente espera resposta.
+1. **Regra** em `FunnelRules.responseAlert = { enabled, minutes }`, na página de Regras logo depois
+   do reingajamento, salva pelo mesmo `PATCH /settings/funnel-rules`. Padrão **desligado** com
+   15 min (laboratório que já usa não vê nada mudar); `minutes` inteiro de **1 a 1440**.
+2. **Resposta da atendente** = mensagem `agent` com `automation` nulo, do CRM ou do celular — a
+   mesma âncora do reingajamento (SCHEMA §33). Automática e de sistema **não** tiram do alerta.
+3. **Início da espera: a PRIMEIRA mensagem do paciente depois da última resposta humana**
+   (sem resposta nenhuma: a primeira do paciente). É o tempo real de espera: quem mandou três
+   mensagens seguidas espera desde a primeira; usar a mais recente "zeraria" o relógio a cada
+   insistência do paciente. A lista e o detalhe trazem `Conversation.awaitingReplySince`
+   (opcional no tipo, o backend sempre manda), por `LEFT JOIN LATERAL` com o índice parcial
+   `idx_messages_human_reply` (migração 046). `lastMessage.senderType` não bastava: a última
+   mensagem pode ser automática ou de sistema depois da do paciente.
+4. **Só horário comercial:** expediente de `tenant_settings.business_hours` (sem nenhum dia = sempre
+   aberto, D-212 item 1), descontando feriados nacionais e de `tenant_holidays`. O relógio é do
+   navegador, então o expediente e os feriados descem por um contrato novo e leve,
+   `GET /settings/business-calendar` (API §6e), que **todo perfil** lê — a atendente não lê
+   `/settings/channels`. Vêm só os feriados cadastrados de hoje − 14 dias a amanhã
+   (`BUSINESS_CALENDAR_LOOKBACK_DAYS`); os nacionais o navegador calcula. Espera mais antiga que
+   14 dias conta só os últimos 14 — já passa de qualquer limite (1440 min úteis cabem em 14 dias
+   com 4 h de expediente por dia útil) e mantém o tique barato.
+5. **Cálculo puro em `shared/`** (`businessMinutesBetween`, `responseAlertMinutes`,
+   `response-alert.types.ts`), para o backend poder usar depois. `zonedToUtc` passou a ser
+   exportada de `reengagement.types.ts`. Entra em alerta com `minutos úteis >= minutes`.
+6. **Tela:** um nível só. Item com fundo `--color-chat-alert-bg`, faixa vermelha à esquerda e
+   relógio com "há 23 min" (no lugar do "aguardando N"), recalculado a cada 30 s no relógio local,
+   sem refazer a busca; some quando a atendente responde (o WS refaz a lista). Vermelho
+   **literal** (`#c62828`, tokens novos `--color-chat-alert`/`-alert-bg`): "atrasado" não pode
+   depender do acento do tema (um tema vermelho apagaria o sinal). Todas as atendentes veem, em
+   todas as conversas que já veem.
+7. **Chip "Aguardando resposta N"** com contagem **no cliente**, sobre a página carregada (decisão
+   do Michel; conversa fora da página não entra). Filtro independente, combina com "Minhas"/"Não
+   atribuídas"; some com a regra desligada e na lista de encerradas.
+8. **Fora:** conversa encerrada (`status = 'closed'`) — a conversa não tem estágio próprio; o
+   "terminal" dela é o encerramento (D-174); som e notificação (já existem para mensagem nova,
+   D-240/D-241).
+**Motivo:** a equipe precisa ver de relance quem está esperando há mais tempo; o reingajamento
+cobre o silêncio do paciente, este card cobre o da atendente.
+**Impacto:** `shared/types/response-alert.types.ts` (novo), `funnel-rules.types.ts`,
+`conversation.types.ts`, `reengagement.types.ts`; backend `conversation.repository.ts`,
+`funnel-rules.service.ts`, `holiday.service.ts` (`calendar`), `holiday.routes.ts`
+(`businessCalendarModule`), `http/modules.ts`, migração `046_messages_human_reply_index.sql`;
+frontend `ConversationItem.tsx`, `Attendance/ConversationList.tsx`, `Attendance/index.tsx`,
+`api/holidays.ts` (`useBusinessCalendar`), `api/query-keys.ts`, `Settings/ResponseAlertSection.tsx`,
+`Settings/Rules.tsx`, `styles/tokens.css`, `tailwind.config.js`. BUSINESS_RULES, SERVICES §2/§26/§29,
+API_CONTRACTS §2/§6c/§6e, PAGES §2/§21, COMPONENTS, DESIGN_TOKENS, SCHEMA §4.

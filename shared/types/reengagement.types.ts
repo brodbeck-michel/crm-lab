@@ -177,8 +177,11 @@ export function localDateOf(instant: Date, timezone: string): IsoDate {
   return isoDate(p.year, p.month, p.day);
 }
 
-/** Instante UTC da hora de parede `hh:mm` do dia local `year-month-day` em `timezone`. */
-function zonedToUtc(year: number, month: number, day: number, hhmm: string, timezone: string): Date {
+/**
+ * Instante UTC da hora de parede `hh:mm` do dia local `year-month-day` em `timezone`.
+ * Exportada para os minutos úteis do alerta de tempo de resposta (CRMLAB-84).
+ */
+export function zonedToUtc(year: number, month: number, day: number, hhmm: string, timezone: string): Date {
   const [hh, mm] = hhmm.split(':').map(Number);
   const wall = Date.UTC(year, month - 1, day, hh ?? 0, mm ?? 0);
   // Duas passadas acertam a diferença do fuso mesmo perto de uma troca de horário.

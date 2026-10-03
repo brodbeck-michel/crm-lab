@@ -178,6 +178,8 @@ export const queryKeys = {
 
   /** ['settings', 'holidays', year] — `/settings/holidays` (§21, CRMLAB-62) */
   holidays: (year: number) => ['settings', 'holidays', year] as const,
+  /** ['settings', 'business-calendar'] — `/settings/business-calendar` (§6e, CRMLAB-84) */
+  businessCalendar: () => ['settings', 'business-calendar'] as const,
 } as const;
 
 /** Prefixos usados para invalidar um escopo inteiro (todas as variações de filtro). */

@@ -576,7 +576,8 @@ telefone quando sobram **3 dígitos ou mais**.
       "lastMessageAt": "2024-08-23T14:30:00Z",
       "tags": ["orçamento", "hemograma"],
       "pinned": true,
-      "createdAt": "2024-08-20T10:00:00Z"
+      "createdAt": "2024-08-20T10:00:00Z",
+      "awaitingReplySince": "2024-08-23T14:22:00.000Z"
     }
   ],
   "pagination": {
@@ -612,6 +613,15 @@ faz request extra por conversa). Shape completo: `Conversation` em
 `assignedToName`, `lastMessagePreview`, `lastMessageAt`.
 `lastMessagePreview` de mensagem **apagada** pelo remetente vem `""` (D-220) — a prévia
 nunca devolve o conteúdo escondido.
+
+**`awaitingReplySince` (CRMLAB-84, D-254)** — hora da **primeira** mensagem do paciente depois
+da última resposta de pessoa do laboratório (`senderType: "agent"` sem `automation` — CRM ou
+celular). Sem resposta nenhuma ainda: a primeira mensagem do paciente. `null` quando a atendente
+falou por último, quando só há mensagem automática/de sistema ou quando a conversa está
+encerrada. Mensagem automática e de sistema **não** zeram a espera. Vem também no detalhe
+(`GET /conversations/:id`). É a base do alerta de tempo de resposta: o navegador conta os minutos
+**úteis** desde ela (`responseAlertMinutes`, §6c/§6e). Campo **opcional** no tipo; o backend
+sempre manda.
 
 `patientId` é o **id do cadastro** (`patients.id`, D-059) — a porta de entrada da Ficha do
 Paciente (`/patients/:id`, PAGES.md §3). Campo **opcional acrescentado em D-079**: backward
@@ -4120,6 +4130,7 @@ completo com os padrões aplicados. Nenhum outro código lê `funnel_rules` dire
       "message": "Olá! Como não tivemos retorno, vamos deixar o atendimento em aberto. Quando quiser, é só responder esta mensagem."
     }
   },
+  "responseAlert": { "enabled": false, "minutes": 15 },
   "lisSource": {
     "spreadsheetImport": { "enabled": false }
   }
@@ -4141,6 +4152,7 @@ completo com os padrões aplicados. Nenhum outro código lê `funnel_rules` dire
 | `sendMessage.template` | Modelo do WhatsApp; render por `renderSendMessageTemplate` | CRMLAB-58 |
 | `reengagement.first` | Paciente sem responder há `hours` depois da última mensagem da atendente → manda `message` (D-211) | CRMLAB-62 |
 | `reengagement.second` | `hours` depois do envio do 1º, se continuar sem resposta → manda `message`. Só com o 1º ligado | CRMLAB-62 |
+| `responseAlert` | Destaca na lista do Atendimento a conversa ativa cujo paciente espera resposta há `minutes` minutos **úteis** ou mais (D-254). Só visual. Padrão desligado, 15 min | CRMLAB-84 (navegador) |
 | `lisSource.spreadsheetImport` | Importar a planilha do LIS (plano B; a carga principal é a API do Bitlab). Padrão **`false`**. `false` → `POST /lis-imports` = `SPREADSHEET_IMPORT_DISABLED` e o botão "Importar" some em Resultados (D-189) | CRMLAB-53 |
 
 `checkTransition`, `canTransition`, `allowedTargets`, `buildAllowedTransitions`, `canReopen`,
@@ -4163,7 +4175,8 @@ Parcial em qualquer nível: campo ausente preserva; listas (`roles`) são trocad
 
 Validação (`VALIDATION_ERROR`, `details.fields` pelo caminho do campo):
 - corpo vazio (`{}`) → `fields._root`; campo desconhecido em qualquer nível → `Campo desconhecido`;
-- booleanos são `boolean`; `days` inteiro `1..365`; `hours` inteiro `1..720`;
+- booleanos são `boolean`; `days` inteiro `1..365`; `hours` inteiro `1..720`; `minutes`
+  (`responseAlert.minutes`) inteiro `1..1440`;
 - `dayCounting` ∈ `calendar | business`; `roles` ⊆ `["attendant","manager"]`, sem repetição;
 - `origin`: ao menos uma das duas ligada depois do merge → `fields.origin`;
 - `sendMessage.template`: string `1..1000` depois do `trim`, só com as variáveis
@@ -4227,6 +4240,43 @@ As duas listas em ordem de data. `custom` só traz os do ano pedido e do própri
 `404 NOT_FOUND`. Audit `delete_holiday` com `oldValues: { date, description }`.
 
 **Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403), `NOT_FOUND` (404), `CONFLICT` (409)
+
+---
+
+## 6e. Business calendar (Calendário útil — CRMLAB-84)
+
+O que o navegador precisa para contar **minutos úteis** no alerta de tempo de resposta (D-254):
+o horário de funcionamento e os feriados cadastrados. Existe à parte porque a atendente não lê
+`/settings/channels` (manager/admin). Shape: `BusinessCalendarResponse` em
+`shared/types/response-alert.types.ts`.
+
+**Papéis:** todo perfil de laboratório (`attendant`/`manager`/`admin`). `platform_operator` → `403`.
+
+### GET /settings/business-calendar
+
+**Response (200):**
+```json
+{
+  "businessHours": {
+    "timezone": "America/Sao_Paulo",
+    "days": { "mon": { "start": "08:00", "end": "18:00" }, "sat": null }
+  },
+  "customHolidays": ["2026-09-24"],
+  "from": "2026-09-18",
+  "to": "2026-10-03"
+}
+```
+- `businessHours`: o mesmo de `GET /settings/channels` (sem linha = `days: {}`, sempre aberto).
+- `customHolidays`: datas cadastradas em `tenant_holidays` de `from` a `to` (inclusive), em ordem.
+  `from` = hoje − `BUSINESS_CALENDAR_LOOKBACK_DAYS` (14); `to` = amanhã, em datas locais do
+  laboratório. Os **nacionais não vêm**: o navegador usa `nationalHolidays`.
+- Cálculo no cliente: `businessMinutesBetween(from, to, hours, customHolidays)` e
+  `responseAlertMinutes(conversation, rule, calendar, now)` (puras, `@crm-lab/shared`). Espera
+  mais antiga que 14 dias conta só os últimos 14.
+
+O front invalida esta consulta quando um feriado é incluído ou removido.
+
+**Erros:** `FORBIDDEN` (403)
 
 ---
 

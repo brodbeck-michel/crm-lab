@@ -20,11 +20,13 @@ import { formatMoney } from '@/lib/format';
 import Commissions from './Commissions';
 import { HolidaysSection } from './HolidaysSection';
 import { ReengagementSection, reengagementBlocked } from './ReengagementSection';
+import { ResponseAlertSection, responseAlertBlocked } from './ResponseAlertSection';
 
 /**
  * Regras (`/settings/rules`) — PAGES.md §21, CRMLAB-56 (D-190..D-194).
  *
- * Seções 1–4 e o reingajamento (CRMLAB-62) são um formulário só, salvo em
+ * Seções 1–4, o reingajamento (CRMLAB-62) e o alerta de tempo de resposta
+ * (CRMLAB-84) são um formulário só, salvo em
  * `PATCH /settings/funnel-rules` com SÓ o que mudou. A seção de desconto
  * aparece com "Criar pelo CRM" ligado (valor salvo). Feriados e comissão têm
  * endpoint e permissão próprios, fora do formulário. Atendente vê tudo
@@ -180,7 +182,8 @@ export default function Rules() {
     noOrigin ||
     unknownVariables.length > 0 ||
     draft.sendMessage.template.trim() === '' ||
-    reengagementBlocked(draft.reengagement);
+    reengagementBlocked(draft.reengagement) ||
+    responseAlertBlocked(draft.responseAlert);
 
   function handleSave(event: React.FormEvent) {
     event.preventDefault();
@@ -447,6 +450,13 @@ export default function Rules() {
         </Section>
 
         <ReengagementSection
+          draft={draft}
+          canEdit={canEdit}
+          fieldErrors={fieldErrors}
+          set={set}
+        />
+
+        <ResponseAlertSection
           draft={draft}
           canEdit={canEdit}
           fieldErrors={fieldErrors}

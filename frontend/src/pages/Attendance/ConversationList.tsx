@@ -1,6 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { MessageSquarePlus } from 'lucide-react';
-import type { Conversation, MessageSearchHit, PatientListItem } from '@crm-lab/shared';
+import {
+  responseAlertMinutes,
+  type Conversation,
+  type MessageSearchHit,
+  type PatientListItem,
+  type ResponseAlertCalendar,
+  type ResponseAlertRules,
+} from '@crm-lab/shared';
 import { Button, Chip, SearchInput, Tooltip, cn } from '@/components/ui';
 import { EmptyState } from '@/components/shared';
 import { ConversationItem } from '@/components/conversation';
@@ -20,6 +27,13 @@ import { PatientResults } from './PatientResults';
  * e os pacientes (`GET /patients`, §2c — "a tela chega aqui pela busca do
  * inbox"). Sem termo digitado o bloco de pacientes não existe.
  *
+ * Alerta de tempo de resposta (CRMLAB-84, D-254): com a regra ligada e o
+ * calendário útil carregado, cada item ganha os minutos ÚTEIS de espera
+ * (`responseAlertMinutes`), recalculados num relógio local a cada
+ * `RESPONSE_ALERT_TICK_MS` — sem refazer a busca. O chip "Aguardando resposta"
+ * conta e filtra NO CLIENTE, sobre a página carregada (decisão do Michel:
+ * conversa fora da página não entra); combina com "Minhas"/"Não atribuídas".
+ *
  * No topo, o "+" de **Nova conversa** (CRMLAB-50, D-175), padrão WhatsApp Web,
  * também no atalho Ctrl+Alt+N. O modal cuida do envio; aqui só se abre e, no
  * fim, a conversa criada/reaproveitada é selecionada pelo mesmo `onSelect` do
@@ -33,6 +47,27 @@ import { PatientResults } from './PatientResults';
  * "Não lidas" (D-229 item 5, retirado a pedido do Michel): a API mantém `?unread=true`.
  */
 export type ConversationScope = 'mine' | 'unassigned' | 'all' | 'closed';
+
+/** Relógio do alerta de tempo de resposta (D-254). */
+export const RESPONSE_ALERT_TICK_MS = 30_000;
+
+/** Regra + calendário do alerta. `calendar: null` = ainda carregando: nada acende. */
+export interface ConversationResponseAlert {
+  rule: ResponseAlertRules;
+  calendar: ResponseAlertCalendar | null;
+}
+
+/** `Date` que anda sozinho a cada `intervalMs` enquanto `enabled`. */
+function useTickingNow(enabled: boolean, intervalMs: number): Date {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    if (!enabled) return;
+    setNow(new Date());
+    const timer = setInterval(() => setNow(new Date()), intervalMs);
+    return () => clearInterval(timer);
+  }, [enabled, intervalMs]);
+  return now;
+}
 
 export interface ConversationListProps {
   conversations: Conversation[];
@@ -61,6 +96,10 @@ export interface ConversationListProps {
   onOpenMessage?: (hit: MessageSearchHit) => void;
   /** "Marcar como não lida" no menu do item (D-229). */
   onMarkUnread?: (id: string) => void;
+  /** Alerta de tempo de resposta (D-254). Ausente ou regra desligada = sem destaque nem chip. */
+  responseAlert?: ConversationResponseAlert;
+  /** Injetável para teste determinístico do alerta; sem ele, relógio local. */
+  now?: Date;
 }
 
 export function ConversationList({
@@ -85,6 +124,8 @@ export function ConversationList({
   messagesError = false,
   onOpenMessage,
   onMarkUnread,
+  responseAlert,
+  now: fixedNow,
 }: ConversationListProps) {
   const showMessages = messageTerm.length > 0 && onOpenMessage !== undefined;
   /** Clicar no chip ligado desliga o filtro (volta a ver tudo). */
@@ -92,6 +133,35 @@ export function ConversationList({
     onScopeChange(scope === next ? 'all' : next);
 
   const [newConversationOpen, setNewConversationOpen] = useState(false);
+
+  // Alerta de tempo de resposta (D-254). Encerradas nunca entram (o cálculo já
+  // devolve `null`), então o chip some na lista de encerradas.
+  const alertActive =
+    responseAlert !== undefined &&
+    responseAlert.rule.enabled &&
+    responseAlert.calendar !== null &&
+    scope !== 'closed';
+  const tickingNow = useTickingNow(alertActive && fixedNow === undefined, RESPONSE_ALERT_TICK_MS);
+  const now = fixedNow ?? tickingNow;
+  const alertMinutes = useMemo(() => {
+    const out = new Map<string, number>();
+    if (!alertActive || !responseAlert?.calendar) return out;
+    for (const conversation of conversations) {
+      const minutes = responseAlertMinutes(
+        conversation,
+        responseAlert.rule,
+        responseAlert.calendar,
+        now,
+      );
+      if (minutes !== null) out.set(conversation.id, minutes);
+    }
+    return out;
+  }, [alertActive, responseAlert, conversations, now]);
+  const [awaitingOnly, setAwaitingOnly] = useState(false);
+  const filterAwaiting = alertActive && awaitingOnly;
+  const shown = filterAwaiting
+    ? conversations.filter((conversation) => alertMinutes.has(conversation.id))
+    : conversations;
 
   /** Ctrl+Alt+N abre a Nova conversa de qualquer ponto da tela. */
   useEffect(() => {
@@ -161,6 +231,16 @@ export function ConversationList({
           >
             Encerradas
           </Chip>
+          {alertActive && (
+            <Chip
+              tone={filterAwaiting ? 'attention' : 'inactive'}
+              selected={filterAwaiting}
+              onClick={() => setAwaitingOnly((value) => !value)}
+              title={`Pacientes esperando resposta há ${responseAlert?.rule.minutes ?? 0} min ou mais (horário de atendimento) — nesta lista`}
+            >
+              {`Aguardando resposta ${alertMinutes.size}`}
+            </Chip>
+          )}
         </div>
 
         <SearchInput
@@ -190,22 +270,26 @@ export function ConversationList({
         )}
 
         {/* Buscando, a falta de conversa por nome não é "vazio" se houver mensagem achada. */}
-        {!isLoading && !isError && conversations.length === 0 && showMessages && (
+        {!isLoading && !isError && shown.length === 0 && showMessages && (
           <p className="m-0 px-sm py-sm text-caption text-neutral-600">
             Nenhuma conversa com esse nome ou telefone.
           </p>
         )}
 
-        {!isLoading && !isError && conversations.length === 0 && !showMessages && (
+        {!isLoading && !isError && shown.length === 0 && !showMessages && (
           <EmptyState
-            message="Nenhuma conversa por aqui"
-            hint="Ajuste os filtros ou aguarde a próxima mensagem."
+            message={filterAwaiting ? 'Ninguém aguardando resposta' : 'Nenhuma conversa por aqui'}
+            hint={
+              filterAwaiting
+                ? 'Todos os pacientes desta lista foram respondidos a tempo.'
+                : 'Ajuste os filtros ou aguarde a próxima mensagem.'
+            }
           />
         )}
 
         {!isLoading &&
           !isError &&
-          conversations.map((conversation) => (
+          shown.map((conversation) => (
             <ConversationItem
               key={conversation.id}
               conversation={conversation}
@@ -213,6 +297,7 @@ export function ConversationList({
               onClick={onSelect}
               onTogglePin={onTogglePin}
               onMarkUnread={onMarkUnread}
+              responseAlertMinutes={alertMinutes.get(conversation.id) ?? null}
             />
           ))}
 

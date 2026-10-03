@@ -558,6 +558,8 @@ em `tokens.css`; componente usa as classes `*-chat-*` do Tailwind.
 | `--color-chat-meta` | `mix(#1a1a1a 70%, white)` ≈ `#565656` | Hora, autor, "Editada", tique ✓/✓✓ não lido, "Mensagem apagada" |
 | `--color-chat-quote` / `-hover` | `mix(#1a1a1a 6% / 11%, transparent)` | Bloco citado no balão e faixa "Respondendo a" do Composer (véu que funciona sobre branco e sobre o acento) |
 | `--color-chat-tick-read` | `#53bdeb` | Tique ✓✓ de "lida" — o azul do WhatsApp, LITERAL (CRMLAB-67, D-225) |
+| `--color-chat-alert` | `#c62828` | Alerta de tempo de resposta (CRMLAB-84, D-254): faixa à esquerda, relógio e "há N min" no item da lista. Vermelho LITERAL — "atrasado" não pode depender do acento do tema. 5,6:1 no branco |
+| `--color-chat-alert-bg` | `mix(#c62828 8%, white)` | Fundo do item em alerta (fora da selecionada, que segue `--color-chat-selected`). O texto do alerta fica em ~5,0:1 sobre ele |
 
 Todas as misturas são `color-mix(in oklab, …)`. Sombra do balão: `--shadow-sm` (sem borda —
 como no WhatsApp, quem separa o balão do fundo é a cor + a sombra).

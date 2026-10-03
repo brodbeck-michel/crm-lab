@@ -40,7 +40,7 @@ function handle(fn: (req: Request, res: Response) => Promise<void>): RequestHand
  * MIME não reconhecido) força `attachment`: o navegador baixa, nunca tenta
  * renderizar no mesmo origin da SPA.
  */
-function dispositionFor(mimeType: string): 'inline' | 'attachment' {
+export function dispositionFor(mimeType: string): 'inline' | 'attachment' {
   const category = mediaCategoryOf(mimeType);
   return category === 'image' || category === 'audio' ? 'inline' : 'attachment';
 }

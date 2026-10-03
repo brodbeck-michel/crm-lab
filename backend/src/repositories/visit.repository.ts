@@ -1,6 +1,6 @@
 /**
  * Acesso a dados de `doctor_visits` e `doctor_visit_reschedules` (SCHEMA.md
- * §36 — CRMLAB-87, D-256). SEM regra de negocio (CONVENTIONS.md "Backend"):
+ * §36 — CRMLAB-87, D-256) e `doctor_visit_attachments` (§37 — CRMLAB-88, D-258). SEM regra de negocio (CONVENTIONS.md "Backend"):
  * quem pode mudar o que, o motivo obrigatorio e o audit sao do `VisitService`.
  *
  * Todo metodo abre `db.withTenant(tenantId, ...)` — camada 3 do isolamento
@@ -8,6 +8,7 @@
  */
 import type {
   Visit,
+  VisitAttachment,
   VisitDetail,
   VisitPerson,
   VisitReschedule,
@@ -23,13 +24,23 @@ const COLUMNS = `v.id, v.doctor_id, d.name AS doctor_name, d.crm AS doctor_crm, 
   v.scheduled_at, v.type, v.agenda, v.status, v.status_reason, v.status_changed_at,
   v.status_changed_by, su.name AS status_changed_by_name,
   v.created_by, cu.name AS created_by_name, v.created_at, v.updated_at,
-  (SELECT COUNT(*)::int FROM doctor_visit_reschedules r WHERE r.visit_id = v.id) AS reschedule_count`;
+  (SELECT COUNT(*)::int FROM doctor_visit_reschedules r WHERE r.visit_id = v.id) AS reschedule_count,
+  v.check_in_at, v.check_in_by, ciu.name AS check_in_by_name,
+  v.check_out_at, v.check_out_by, cou.name AS check_out_by_name,
+  to_char(v.next_visit_date, 'YYYY-MM-DD') AS next_visit_date,
+  v.report_presented, v.report_feedback, v.report_objections,
+  (SELECT COUNT(*)::int FROM doctor_visit_attachments a WHERE a.visit_id = v.id) AS attachment_count`;
 
 const FROM = `FROM doctor_visits v
   JOIN doctors d ON d.id = v.doctor_id
   LEFT JOIN users ru ON ru.id = v.responsible_user_id
   LEFT JOIN users su ON su.id = v.status_changed_by
-  LEFT JOIN users cu ON cu.id = v.created_by`;
+  LEFT JOIN users cu ON cu.id = v.created_by
+  LEFT JOIN users ciu ON ciu.id = v.check_in_by
+  LEFT JOIN users cou ON cou.id = v.check_out_by`;
+
+/** Status em que relato, proximo passo e anexos mudam (D-258 item 6). */
+const RECORD_EDITABLE = `('agendada', 'realizada')`;
 
 interface VisitRow {
   id: string;
@@ -54,6 +65,28 @@ interface VisitRow {
   created_at: Date | string;
   updated_at: Date | string;
   reschedule_count: number | string;
+  check_in_at: Date | string | null;
+  check_in_by: string | null;
+  check_in_by_name: string | null;
+  check_out_at: Date | string | null;
+  check_out_by: string | null;
+  check_out_by_name: string | null;
+  /** `to_char` no SQL: `DATE` cru voltaria no fuso da maquina (D-078). */
+  next_visit_date: string | null;
+  report_presented: string | null;
+  report_feedback: string | null;
+  report_objections: string | null;
+  attachment_count: number | string;
+}
+
+interface AttachmentRow {
+  id: string;
+  file_name: string;
+  mime_type: string;
+  byte_size: number | string;
+  uploaded_by: string | null;
+  uploaded_by_name: string | null;
+  created_at: Date | string;
 }
 
 interface RescheduleRow {
@@ -73,6 +106,10 @@ function isoDateTime(value: Date | string): string {
 
 function person(id: string | null, name: string | null): VisitPerson | null {
   return id !== null ? { id, name: name ?? '' } : null;
+}
+
+function isoOrNull(value: Date | string | null): string | null {
+  return value !== null ? isoDateTime(value) : null;
 }
 
 export function toVisit(row: VisitRow): Visit {
@@ -98,6 +135,23 @@ export function toVisit(row: VisitRow): Visit {
     createdBy: person(row.created_by, row.created_by_name),
     createdAt: isoDateTime(row.created_at),
     updatedAt: isoDateTime(row.updated_at),
+    checkInAt: isoOrNull(row.check_in_at),
+    checkInBy: person(row.check_in_by, row.check_in_by_name),
+    checkOutAt: isoOrNull(row.check_out_at),
+    checkOutBy: person(row.check_out_by, row.check_out_by_name),
+    nextVisitDate: row.next_visit_date,
+    attachmentCount: Number(row.attachment_count),
+  };
+}
+
+function toAttachment(row: AttachmentRow): VisitAttachment {
+  return {
+    id: row.id,
+    fileName: row.file_name,
+    mimeType: row.mime_type,
+    byteSize: Number(row.byte_size),
+    uploadedBy: person(row.uploaded_by, row.uploaded_by_name),
+    createdAt: isoDateTime(row.created_at),
   };
 }
 
@@ -139,6 +193,38 @@ const PATCH_COLUMNS: Record<keyof VisitPatch, string> = {
   type: 'type',
   agenda: 'agenda',
 };
+
+/** Campos do relato + proximo passo (CRMLAB-88). */
+export interface VisitReportPatch {
+  presented?: string | null;
+  doctorFeedback?: string | null;
+  objections?: string | null;
+  nextVisitDate?: string | null;
+}
+
+const REPORT_COLUMNS: Record<keyof VisitReportPatch, string> = {
+  presented: 'report_presented',
+  doctorFeedback: 'report_feedback',
+  objections: 'report_objections',
+  nextVisitDate: 'next_visit_date',
+};
+
+export interface AttachmentInsert {
+  mimeType: string;
+  fileName: string;
+  byteSize: number;
+}
+
+/**
+ * Resultado de `insertAttachment`. A guarda de status e do teto roda na
+ * MESMA transacao do INSERT, com a visita travada (`FOR UPDATE`), para dois
+ * uploads simultaneos nao passarem juntos do teto.
+ */
+export type AttachmentInsertResult =
+  | { kind: 'ok'; attachment: VisitAttachment }
+  | { kind: 'missing' }
+  | { kind: 'not_editable' }
+  | { kind: 'full' };
 
 /** Medico do tenant, para validar a escolha na visita. */
 export interface TenantDoctorRef {
@@ -282,9 +368,10 @@ export class VisitRepository {
     reason: string | null,
   ): Promise<VisitDetail | null> {
     return this.db.withTenant(tenantId, async (tx) => {
+      // Depois do check-in a data nao muda mais (D-258 item 4).
       const result = await tx.query<{ id: string }>(
         `UPDATE doctor_visits SET scheduled_at = $1::timestamptz
-         WHERE id = $2 AND status = 'agendada'
+         WHERE id = $2 AND status = 'agendada' AND check_in_at IS NULL
          RETURNING id`,
         [newScheduledAt.toISOString(), id],
       );
@@ -318,6 +405,140 @@ export class VisitRepository {
       return result.rows[0] ? selectDetail(tx, id) : null;
     });
   }
+
+  /** Check-in de visita `agendada` ainda sem check-in. `null` = a guarda falhou. */
+  async checkIn(tenantId: string, id: string, userId: string | null): Promise<VisitDetail | null> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const result = await tx.query<{ id: string }>(
+        `UPDATE doctor_visits SET check_in_at = now(), check_in_by = $1
+          WHERE id = $2 AND status = 'agendada' AND check_in_at IS NULL
+          RETURNING id`,
+        [userId, id],
+      );
+      return result.rows[0] ? selectDetail(tx, id) : null;
+    });
+  }
+
+  /**
+   * Check-out: `agendada` com check-in -> `realizada`, no mesmo UPDATE.
+   * `null` = a guarda falhou (sem check-in, encerrada ou inexistente).
+   */
+  async checkOut(tenantId: string, id: string, userId: string | null): Promise<VisitDetail | null> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const result = await tx.query<{ id: string }>(
+        `UPDATE doctor_visits
+            SET check_out_at = GREATEST(now(), check_in_at), check_out_by = $1,
+                status = 'realizada', status_changed_at = GREATEST(now(), check_in_at), status_changed_by = $1
+          WHERE id = $2 AND status = 'agendada' AND check_in_at IS NOT NULL AND check_out_at IS NULL
+          RETURNING id`,
+        [userId, id],
+      );
+      return result.rows[0] ? selectDetail(tx, id) : null;
+    });
+  }
+
+  /** Relato/proximo passo de visita `agendada` ou `realizada`. `null` = a guarda falhou. */
+  async updateReport(tenantId: string, id: string, patch: VisitReportPatch): Promise<VisitDetail | null> {
+    const assignments: string[] = [];
+    const params: unknown[] = [];
+    for (const key of Object.keys(REPORT_COLUMNS) as Array<keyof VisitReportPatch>) {
+      const value = patch[key];
+      if (value === undefined) continue;
+      params.push(value);
+      const cast = key === 'nextVisitDate' ? '::date' : '';
+      assignments.push(`${REPORT_COLUMNS[key]} = $${params.length}${cast}`);
+    }
+
+    return this.db.withTenant(tenantId, async (tx) => {
+      if (assignments.length === 0) return selectDetail(tx, id);
+      params.push(id);
+      const result = await tx.query<{ id: string }>(
+        `UPDATE doctor_visits SET ${assignments.join(', ')}
+          WHERE id = $${params.length} AND status IN ${RECORD_EDITABLE}
+          RETURNING id`,
+        params,
+      );
+      return result.rows[0] ? selectDetail(tx, id) : null;
+    });
+  }
+
+  async insertAttachment(
+    tenantId: string,
+    visitId: string,
+    uploadedBy: string | null,
+    data: AttachmentInsert,
+    maxPerVisit: number,
+  ): Promise<AttachmentInsertResult> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const visit = await tx.query<{ status: VisitStatus }>(
+        'SELECT status FROM doctor_visits WHERE id = $1 FOR UPDATE',
+        [visitId],
+      );
+      const status = visit.rows[0]?.status;
+      if (!status) return { kind: 'missing' };
+      if (status !== 'agendada' && status !== 'realizada') return { kind: 'not_editable' };
+
+      const count = await tx.query<{ total: number | string }>(
+        'SELECT COUNT(*)::int AS total FROM doctor_visit_attachments WHERE visit_id = $1',
+        [visitId],
+      );
+      if (Number(count.rows[0]?.total ?? 0) >= maxPerVisit) return { kind: 'full' };
+
+      const inserted = await tx.query<{ id: string }>(
+        `INSERT INTO doctor_visit_attachments (tenant_id, visit_id, mime_type, file_name, byte_size, uploaded_by)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id`,
+        [tenantId, visitId, data.mimeType, data.fileName, data.byteSize, uploadedBy],
+      );
+      const id = inserted.rows[0]?.id;
+      const attachment = id ? await selectAttachment(tx, visitId, id) : null;
+      if (!attachment) throw new Error('INSERT em doctor_visit_attachments nao retornou linha');
+      return { kind: 'ok', attachment };
+    });
+  }
+
+  /** Anexo DESTA visita (anexo de outra visita = inexistente). */
+  async findAttachment(tenantId: string, visitId: string, attachmentId: string): Promise<VisitAttachment | null> {
+    return this.db.withTenant(tenantId, (tx) => selectAttachment(tx, visitId, attachmentId));
+  }
+
+  /**
+   * Apaga o anexo se a visita ainda aceita mudanca no registro. `null` = a
+   * guarda falhou (anexo inexistente/de outra visita, ou visita encerrada).
+   */
+  async deleteAttachment(tenantId: string, visitId: string, attachmentId: string): Promise<VisitAttachment | null> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const current = await selectAttachment(tx, visitId, attachmentId);
+      if (!current) return null;
+      const result = await tx.query<{ id: string }>(
+        `DELETE FROM doctor_visit_attachments a
+          USING doctor_visits v
+          WHERE a.id = $1 AND a.visit_id = $2 AND v.id = a.visit_id AND v.status IN ${RECORD_EDITABLE}
+          RETURNING a.id`,
+        [attachmentId, visitId],
+      );
+      return result.rows[0] ? current : null;
+    });
+  }
+
+  /** Desfaz o INSERT quando a gravacao do arquivo em disco falha. */
+  async removeAttachmentRow(tenantId: string, attachmentId: string): Promise<void> {
+    await this.db.withTenant(tenantId, (tx) =>
+      tx.query('DELETE FROM doctor_visit_attachments WHERE id = $1', [attachmentId]),
+    );
+  }
+}
+
+async function selectAttachment(tx: DbTx, visitId: string, attachmentId: string): Promise<VisitAttachment | null> {
+  const result = await tx.query<AttachmentRow>(
+    `SELECT a.id, a.file_name, a.mime_type, a.byte_size, a.uploaded_by, u.name AS uploaded_by_name, a.created_at
+       FROM doctor_visit_attachments a
+       LEFT JOIN users u ON u.id = a.uploaded_by
+      WHERE a.id = $1 AND a.visit_id = $2`,
+    [attachmentId, visitId],
+  );
+  const row = result.rows[0];
+  return row ? toAttachment(row) : null;
 }
 
 async function selectDetail(tx: DbTx, id: string): Promise<VisitDetail | null> {
@@ -333,5 +554,22 @@ async function selectDetail(tx: DbTx, id: string): Promise<VisitDetail | null> {
       ORDER BY r.changed_at ASC, r.id ASC`,
     [id],
   );
-  return { ...toVisit(row), reschedules: history.rows.map(toReschedule) };
+  const attachments = await tx.query<AttachmentRow>(
+    `SELECT a.id, a.file_name, a.mime_type, a.byte_size, a.uploaded_by, u.name AS uploaded_by_name, a.created_at
+       FROM doctor_visit_attachments a
+       LEFT JOIN users u ON u.id = a.uploaded_by
+      WHERE a.visit_id = $1
+      ORDER BY a.created_at ASC, a.id ASC`,
+    [id],
+  );
+  return {
+    ...toVisit(row),
+    reschedules: history.rows.map(toReschedule),
+    report: {
+      presented: row.report_presented,
+      doctorFeedback: row.report_feedback,
+      objections: row.report_objections,
+    },
+    attachments: attachments.rows.map(toAttachment),
+  };
 }

@@ -110,6 +110,15 @@ export const ERROR_CATALOG = {
     statusCode: 409,
     message: 'A visita ja foi encerrada e nao pode mais ser alterada',
   },
+  // CRMLAB-88 (D-258): check-out exige check-in; depois do check-in nao reagenda.
+  VISIT_NOT_CHECKED_IN: {
+    statusCode: 409,
+    message: 'Faca o check-in antes do check-out',
+  },
+  VISIT_ALREADY_CHECKED_IN: {
+    statusCode: 409,
+    message: 'A visita ja teve check-in e nao pode mais ser reagendada',
+  },
 
   // --- Sistema ---
   RATE_LIMIT_EXCEEDED: { statusCode: 429, message: 'Limite de requisicoes excedido' },

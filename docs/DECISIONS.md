@@ -5179,5 +5179,5 @@ visita aconteceu, quanto durou e o que o médico disse, antes da linha do tempo 
 `api.types.ts` (`VISIT_NOT_CHECKED_IN`, `VISIT_ALREADY_CHECKED_IN`); frontend `api/visits.ts`,
 `pages/Visitation/Agenda.tsx`, `pages/Visitation/VisitRecord.tsx` (novo); testes
 `tests/visits/visit-record.spec.ts`, inventário de `route-tenant-isolation.spec.ts` (96 → 102
-rotas), `VisitRecord.spec.tsx`, `visit.types.spec.ts`. SCHEMA §37, API_CONTRACTS §14,
+rotas), `VisitRecord.spec.tsx`, `tests/visits/visit-types.spec.ts`. SCHEMA §37, API_CONTRACTS §14,
 API_ERRORS, SERVICES §31, BUSINESS_RULES §14, PAGES §23.

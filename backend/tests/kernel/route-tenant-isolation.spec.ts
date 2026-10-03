@@ -174,6 +174,10 @@ interface Lab {
   doctor: { id: string };
   /** Visita agendada ao medico (CRMLAB-87, D-256). */
   visit: { id: string };
+  /** Visita com check-in feito — alvo legitimo do check-out (CRMLAB-88, D-258). */
+  checkedInVisit: { id: string };
+  /** Anexo (PDF) de `visit`, com o arquivo no disco (CRMLAB-88). */
+  visitAttachment: { id: string };
   /** Mídia de mensagem (Onda 8 §4). */
   media: { id: string };
   /** Mensagem do paciente na `conversation` — alvo de reação (CRMLAB-66). */
@@ -628,6 +632,64 @@ const LAB_ROUTES: readonly LabRoute[] = [
     ownStatus: 200,
   },
 
+  // --- registro da visita (CRMLAB-88, D-258): todo papel de laboratorio escreve ---
+  {
+    name: 'POST /visits/:id/check-in',
+    method: 'post',
+    path: (l) => `/api/v1/visits/${l.visit.id}/check-in`,
+    body: () => ({}),
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    name: 'POST /visits/:id/check-out',
+    method: 'post',
+    path: (l) => `/api/v1/visits/${l.checkedInVisit.id}/check-out`,
+    body: () => ({}),
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    name: 'PATCH /visits/:id/report',
+    method: 'patch',
+    path: (l) => `/api/v1/visits/${l.visit.id}/report`,
+    body: () => ({ presented: 'Sonda' }),
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    name: 'POST /visits/:id/attachments',
+    method: 'post',
+    path: (l) => `/api/v1/visits/${l.visit.id}/attachments`,
+    body: () => ({
+      fileName: 'sonda.pdf',
+      mimeType: 'application/pdf',
+      contentBase64: Buffer.from('%PDF-1.4 sonda').toString('base64'),
+    }),
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 201,
+  },
+  {
+    name: 'GET /visits/:id/attachments/:attachmentId',
+    method: 'get',
+    path: (l) => `/api/v1/visits/${l.visit.id}/attachments/${l.visitAttachment.id}`,
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    name: 'DELETE /visits/:id/attachments/:attachmentId',
+    method: 'delete',
+    path: (l) => `/api/v1/visits/${l.visit.id}/attachments/${l.visitAttachment.id}`,
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 204,
+  },
+
   // --- respostas rapidas (Onda 8 §3) ---
   { name: 'GET /quick-replies', method: 'get', path: () => '/api/v1/quick-replies', actor: 'attendant', addressable: false },
   {
@@ -1011,6 +1073,25 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
   );
   const visit = { id: visitRow.rows[0]?.id as string };
 
+  const checkedInRow = await db.withoutTenant((tx) =>
+    tx.query<{ id: string }>(
+      `INSERT INTO doctor_visits (tenant_id, doctor_id, responsible_user_id, scheduled_at, type, check_in_at, check_in_by)
+       VALUES ($1, $2, $3, '2026-10-06T15:00:00Z', 'presencial', now(), $3) RETURNING id`,
+      [tenant.id, doctor.id, attendant.id],
+    ),
+  );
+  const checkedInVisit = { id: checkedInRow.rows[0]?.id as string };
+
+  const visitAttachmentRow = await db.withoutTenant((tx) =>
+    tx.query<{ id: string }>(
+      `INSERT INTO doctor_visit_attachments (tenant_id, visit_id, mime_type, file_name, byte_size)
+       VALUES ($1, $2, 'application/pdf', 'sonda.pdf', 14) RETURNING id`,
+      [tenant.id, visit.id],
+    ),
+  );
+  const visitAttachment = { id: visitAttachmentRow.rows[0]?.id as string };
+  await writeMediaFile(visitAttachment.id, Buffer.from('%PDF-1.4 sonda'));
+
   const mediaRow = await db.withoutTenant((tx) =>
     tx.query<{ id: string }>(
       `INSERT INTO message_media (tenant_id, mime_type, file_name, byte_size)
@@ -1058,6 +1139,8 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     quickReply,
     doctor,
     visit,
+    checkedInVisit,
+    visitAttachment,
     media,
     message,
   };
@@ -1141,7 +1224,7 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 96 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 102 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
@@ -1170,7 +1253,9 @@ describe('inventario de rotas de laboratorio', () => {
     // CRMLAB-87/D-256 soma 7: `GET|POST /visits`, `GET|PATCH /visits/:id` e
     // `POST /visits/:id/reschedule|cancel|not-received`.
     // CRMLAB-83/D-257 soma 1: `GET /analytics/response-time`.
-    expect(LAB_ROUTES).toHaveLength(96);
+    // CRMLAB-88/D-258 soma 6: `POST /visits/:id/check-in|check-out|attachments`,
+    // `PATCH /visits/:id/report` e `GET|DELETE /visits/:id/attachments/:attachmentId`.
+    expect(LAB_ROUTES).toHaveLength(102);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)
@@ -1538,6 +1623,10 @@ describe('platform_operator nas rotas de laboratorio', () => {
 describe('token', () => {
   it('toda rota de laboratorio exige token', async () => {
     for (const route of LAB_ROUTES) {
+      // Sem token o limitador conta por IP (100/min): com mais de 100 rotas a
+      // 101a chamada levava 429. Este caso prova autenticacao, nao o limite,
+      // entao zera o contador antes de cada chamada (CRMLAB-88: 102 rotas).
+      await app.cache.close();
       const request = app.agent[route.method](route.path(alfa));
       const response = await (route.body ? request.send(route.body(alfa)) : request);
       expect({ route: route.name, status: response.status }).toMatchObject({

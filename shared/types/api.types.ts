@@ -77,6 +77,10 @@ export type ApiErrorCode =
   | 'DOCTOR_CRM_ALREADY_EXISTS'
   /** Editar, reagendar ou encerrar visita que já não está `agendada` (CRMLAB-87, D-256). */
   | 'VISIT_ALREADY_CLOSED'
+  /** Check-out sem check-in (CRMLAB-88, D-258). */
+  | 'VISIT_NOT_CHECKED_IN'
+  /** Reagendar visita que já teve check-in (CRMLAB-88, D-258). */
+  | 'VISIT_ALREADY_CHECKED_IN'
   // Sistema
   | 'RATE_LIMIT_EXCEEDED'
   | 'SERVICE_UNAVAILABLE'

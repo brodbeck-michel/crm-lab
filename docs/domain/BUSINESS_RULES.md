@@ -743,6 +743,36 @@ SERVICES.md §24).
 
 ---
 
+## 12. Visitação Médica — cadastro de médicos (CRMLAB-86, D-255)
+
+Primeiro card do épico CRMLAB-85. O médico solicitante vira cadastro do laboratório, base da
+agenda de visitas que vem depois.
+
+- **Quem mexe:** todos os usuários do laboratório (atendente, gestor, admin) veem, cadastram,
+  editam e inativam. Não há perfil novo. O operador da plataforma não entra (PAGES.md §11).
+- **Obrigatório:** só o **nome**. O resto é opcional: CRM + UF, especialidade, clínica/consultório,
+  endereço, telefone/WhatsApp, e-mail, secretária/contato, melhor dia e horário para visita (texto
+  livre), observações e responsável pela carteira.
+- **CRM:** guardado só com dígitos (`"CRM 12.345"` → `12345`, até 10 dígitos). **Com CRM, a UF é
+  obrigatória** e tem de ser uma das 27 (maiúscula). Normalização única em
+  `shared/types/doctor.types.ts` (`normalizeCrm`, `normalizeUf`, `BRAZIL_UFS`): tela e servidor usam
+  a mesma.
+- **Unicidade:** quando preenchido, **(laboratório, CRM, UF) é único**, contando médico ativo e
+  inativo. Duplicidade → `409 DOCTOR_CRM_ALREADY_EXISTS` com o médico que já usa o número (a tela
+  diz o nome e, se estiver inativo, manda reativar). Mesmo CRM em outra UF ou em outro laboratório
+  pode. Vários médicos sem CRM podem.
+- **Responsável pela carteira:** usuário **ativo** do **mesmo** laboratório, qualquer papel. Usuário
+  de outro laboratório, inativo ou inexistente → `VALIDATION_ERROR` em `responsibleId`. Se o
+  responsável for desativado depois, a carteira fica como está e o médico continua editável; a
+  checagem só roda quando o responsável **muda**.
+- **Inativar, nunca apagar.** Inativar/reativar é idempotente (repetir não grava outro audit).
+- **Auditoria:** `create_doctor`, `update_doctor` (só os campos que mudaram, com antes e depois),
+  `inactivate_doctor`, `reactivate_doctor` — `entityType: "doctor"`.
+- **Proposta não muda:** `proposals.requestingDoctor` continua texto livre. Ligar a proposta ao
+  cadastro fica para outro card, se for pedido.
+
+---
+
 ## Resumo: Checklist de Implementação
 
 Antes de commitar, verifique:

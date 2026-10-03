@@ -368,8 +368,9 @@ Anatomia (padrão WhatsApp):
   `rounded-md` filho de grupo
 - Conteúdo do trilho muda por perfil — a ESTRUTURA não
 - Itens agrupados em accordion (CRMLAB-4): itens soltos primeiro, um único divisor
-  (`<hr>` neutral-300), depois os grupos, na ordem Comunicação → Gestão →
-  Configurações (D-129: "Comercial" + "LIS / Operação Laboratorial" fundidos em "Gestão")
+  (`<hr>` neutral-300), depois os grupos, na ordem Comunicação → Visitação Médica → Gestão →
+  Configurações (D-129: "Comercial" + "LIS / Operação Laboratorial" fundidos em "Gestão";
+  "Visitação Médica" desde o CRMLAB-86, D-255)
   (`sidebarSectionsFor(role)`, route-config.ts). Grupo
   sem nenhum item visível para o perfil não aparece. Abertos por padrão; estado por grupo
   persistido em localStorage por usuário (`sidebar-groups.store.ts`)

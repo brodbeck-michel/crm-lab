@@ -38,6 +38,7 @@ import { analyticsModule } from '../../src/controllers/analytics.routes.js';
 import { auditModule } from '../../src/controllers/audit.routes.js';
 import { makeChannelSettingsModule } from '../../src/controllers/channel-settings.routes.js';
 import { conversationModule } from '../../src/controllers/conversation.routes.js';
+import { doctorModule } from '../../src/controllers/doctor.routes.js';
 import { examModule } from '../../src/controllers/exam.routes.js';
 import { funnelRulesModule } from '../../src/controllers/funnel-rules.routes.js';
 import { insuranceModule } from '../../src/controllers/insurance.routes.js';
@@ -118,6 +119,7 @@ const LAB_MODULES = [
   auditModule,
   makeChannelSettingsModule({ evolutionClient: fakeEvolutionClient() }),
   conversationModule,
+  doctorModule,
   examModule,
   funnelRulesModule,
   insuranceModule,
@@ -165,6 +167,8 @@ interface Lab {
   insurance: { id: string; name: string };
   /** Resposta rapida do laboratorio (Onda 8 §3). */
   quickReply: { id: string; content: string };
+  /** Medico solicitante (CRMLAB-86, D-255). */
+  doctor: { id: string };
   /** Mídia de mensagem (Onda 8 §4). */
   media: { id: string };
   /** Mensagem do paciente na `conversation` — alvo de reação (CRMLAB-66). */
@@ -509,6 +513,50 @@ const LAB_ROUTES: readonly LabRoute[] = [
     ownStatus: 200,
   },
 
+  // --- medicos solicitantes (CRMLAB-86, D-255): todo papel de laboratorio escreve ---
+  { name: 'GET /doctors', method: 'get', path: () => '/api/v1/doctors', actor: 'attendant', addressable: false },
+  {
+    name: 'POST /doctors',
+    method: 'post',
+    path: () => '/api/v1/doctors',
+    body: () => ({ name: 'Dr. Sonda', crm: '99999', crmUf: 'SC' }),
+    actor: 'attendant',
+    addressable: false,
+  },
+  {
+    name: 'GET /doctors/:id',
+    method: 'get',
+    path: (l) => `/api/v1/doctors/${l.doctor.id}`,
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    name: 'PATCH /doctors/:id',
+    method: 'patch',
+    path: (l) => `/api/v1/doctors/${l.doctor.id}`,
+    body: () => ({ specialty: 'Sonda' }),
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    name: 'POST /doctors/:id/inactivate',
+    method: 'post',
+    path: (l) => `/api/v1/doctors/${l.doctor.id}/inactivate`,
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    name: 'POST /doctors/:id/reactivate',
+    method: 'post',
+    path: (l) => `/api/v1/doctors/${l.doctor.id}/reactivate`,
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 200,
+  },
+
   // --- respostas rapidas (Onda 8 §3) ---
   { name: 'GET /quick-replies', method: 'get', path: () => '/api/v1/quick-replies', actor: 'attendant', addressable: false },
   {
@@ -762,6 +810,7 @@ const BETA_SECRETS = {
   revenue: 4321.99,
   insurance: 'Convênio Confidencial Beta',
   quickReply: 'Macro Confidencial Beta',
+  doctor: 'Dr. Confidencial Beta',
 } as const;
 
 async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
@@ -872,6 +921,14 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     content: secret ? BETA_SECRETS.quickReply : `Coleta ${prefix}`,
   };
 
+  const doctorRow = await db.withoutTenant((tx) =>
+    tx.query<{ id: string }>(
+      `INSERT INTO doctors (tenant_id, name, crm, crm_uf) VALUES ($1, $2, '12345', 'SC') RETURNING id`,
+      [tenant.id, secret ? BETA_SECRETS.doctor : `Dr. ${prefix}`],
+    ),
+  );
+  const doctor = { id: doctorRow.rows[0]?.id as string };
+
   const mediaRow = await db.withoutTenant((tx) =>
     tx.query<{ id: string }>(
       `INSERT INTO message_media (tenant_id, mime_type, file_name, byte_size)
@@ -917,6 +974,7 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     channel,
     insurance,
     quickReply,
+    doctor,
     media,
     message,
   };
@@ -1000,7 +1058,7 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 82 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 88 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
@@ -1024,7 +1082,9 @@ describe('inventario de rotas de laboratorio', () => {
     // `POST /conversations/:id/presence`. CRMLAB-68/D-228/D-229 soma 3:
     // `GET /conversations/search/messages`, `GET /conversations/:id/messages` (busca) e
     // `POST /conversations/:id/unread`. CRMLAB-70/D-236 soma 1: `POST /conversations/whatsapp/open`.
-    expect(LAB_ROUTES).toHaveLength(82);
+    // CRMLAB-86/D-255 soma 6: `GET|POST /doctors`, `GET|PATCH /doctors/:id` e
+    // `POST /doctors/:id/inactivate|reactivate`.
+    expect(LAB_ROUTES).toHaveLength(88);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)
@@ -1064,6 +1124,7 @@ describe('recurso do tenant B enderecado por um usuario do tenant A', () => {
       expect(serialized).not.toContain(String(BETA_SECRETS.revenue));
       expect(serialized).not.toContain(BETA_SECRETS.insurance);
       expect(serialized).not.toContain(BETA_SECRETS.quickReply);
+      expect(serialized).not.toContain(BETA_SECRETS.doctor);
     });
   }
 
@@ -1162,6 +1223,7 @@ describe('listagens e relatorios do tenant A', () => {
         BETA_SECRETS.user,
         BETA_SECRETS.insurance,
         BETA_SECRETS.quickReply,
+        BETA_SECRETS.doctor,
       ]) {
         expect({ route: route.name, leaked: serialized.includes(secret) }).toMatchObject({
           route: route.name,

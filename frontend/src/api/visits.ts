@@ -1,13 +1,16 @@
 import type {
   CloseVisitRequest,
+  CreateVisitAttachmentRequest,
   CreateVisitRequest,
   ListVisitsQuery,
   ListVisitsResponse,
   RescheduleVisitRequest,
+  UpdateVisitReportRequest,
   UpdateVisitRequest,
+  VisitAttachment,
   VisitDetail,
 } from '@crm-lab/shared';
-import { http } from './client';
+import { apiBaseUrl, fetchAuthenticatedBlob, http, resolveMediaUrl } from './client';
 import type { QueryParams } from './client';
 
 /**
@@ -33,4 +36,22 @@ export const visitsApi = {
 
   notReceived: (id: string, body: CloseVisitRequest) =>
     http.post<VisitDetail>(`/visits/${id}/not-received`, body),
+
+  // Registro da visita (CRMLAB-88, D-258).
+  checkIn: (id: string) => http.post<VisitDetail>(`/visits/${id}/check-in`, {}),
+
+  checkOut: (id: string) => http.post<VisitDetail>(`/visits/${id}/check-out`, {}),
+
+  updateReport: (id: string, body: UpdateVisitReportRequest) =>
+    http.patch<VisitDetail>(`/visits/${id}/report`, body),
+
+  addAttachment: (id: string, body: CreateVisitAttachmentRequest) =>
+    http.post<VisitAttachment>(`/visits/${id}/attachments`, body),
+
+  deleteAttachment: (id: string, attachmentId: string) =>
+    http.delete<void>(`/visits/${id}/attachments/${attachmentId}`),
+
+  /** Bytes do anexo com o token (a rota exige `Authorization`). */
+  downloadAttachment: (id: string, attachmentId: string) =>
+    fetchAuthenticatedBlob(resolveMediaUrl(`${apiBaseUrl()}/visits/${id}/attachments/${attachmentId}`)),
 };

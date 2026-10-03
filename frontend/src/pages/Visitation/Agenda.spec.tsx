@@ -84,6 +84,14 @@ function visit(overrides: Partial<VisitDetail> = {}): VisitDetail {
     createdAt: '2026-10-01T10:00:00.000Z',
     updatedAt: '2026-10-01T10:00:00.000Z',
     reschedules: [],
+    checkInAt: null,
+    checkInBy: null,
+    checkOutAt: null,
+    checkOutBy: null,
+    nextVisitDate: null,
+    attachmentCount: 0,
+    report: { presented: null, doctorFeedback: null, objections: null },
+    attachments: [],
     ...overrides,
   };
 }

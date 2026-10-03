@@ -1768,6 +1768,33 @@ Lê `users` (só `id, name, role, is_active` do próprio tenant) para validar o 
 
 ---
 
+## 31. VisitService — agenda de visitas (CRMLAB-87 — D-256)
+
+**Responsabilidade:** as 7 rotas de `/visits` (API_CONTRACTS.md §14). Dono de `doctor_visits` e
+`doctor_visit_reschedules` (SCHEMA.md §36). Todo papel de tenant escreve; o operador da plataforma
+fica na rota. Valida médico (ativo, do tenant) e responsável (usuário ativo do tenant, papel de
+tenant) só quando mudam; só a visita `agendada` edita, reagenda ou encerra (`VISIT_ALREADY_CLOSED`;
+a guarda vai também no `WHERE` do repositório, e uma escrita que perde a corrida relê para
+responder 404 ou 409). Reagendar grava o histórico na mesma transação. Audit `create_visit`,
+`update_visit` (só o diff), `reschedule_visit`, `cancel_visit`, `visit_not_received`.
+
+```typescript
+// backend/src/services/visit.service.ts
+export interface VisitService {
+  list(ctx: TenantContext, query: ListVisitsQuery): Promise<ListVisitsResponse>;          // período ≤ 62 dias, até 500
+  getById(ctx: TenantContext, id: string): Promise<VisitDetail>;                           // NOT_FOUND
+  create(ctx: TenantContext, dto: CreateVisitRequest): Promise<VisitDetail>;               // VALIDATION_ERROR
+  update(ctx: TenantContext, id: string, dto: UpdateVisitRequest): Promise<VisitDetail>;   // VISIT_ALREADY_CLOSED
+  reschedule(ctx: TenantContext, id: string, dto: RescheduleVisitRequest): Promise<VisitDetail>;
+  close(ctx: TenantContext, id: string, status: VisitClosingStatus, dto: CloseVisitRequest): Promise<VisitDetail>;
+}
+```
+
+Lê `doctors` e `users` (só o do próprio tenant, com `tenant_id` explícito além do RLS) para validar
+e para os nomes no `JOIN` — leitura de apoio, sem escrever em tabela de outro domínio.
+
+---
+
 ## Convenções Transversais
 
 - Todo método recebe `tenantId` ou `TenantContext` como primeiro parâmetro — NUNCA lê de variável global

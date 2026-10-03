@@ -5484,6 +5484,119 @@ grava segundo audit.
 
 ---
 
+## 14. Visits (Agenda de visitas — Visitação Médica, CRMLAB-87)
+
+Tela `/visitation/agenda` (PAGES.md §23). Módulo `/visits`; shapes em
+`shared/types/visit.types.ts`; tabelas `doctor_visits` e `doctor_visit_reschedules` (SCHEMA.md §36).
+Regras em BUSINESS_RULES §13 e D-256.
+
+**Papéis:** as **7 rotas** valem para **todos os papéis do tenant** (resposta 2A do épico: todos
+veem e mexem em todas as visitas). `platform_operator` → `403`. Entram no inventário de isolamento
+(`route-tenant-isolation.spec.ts`): visita de outro tenant → `404 NOT_FOUND`.
+
+Não existe `DELETE`: visita se cancela. Datas sempre ISO 8601 **com fuso** (`Z` ou `-03:00`).
+
+```typescript
+type VisitType = 'presencial' | 'online' | 'telefone' | 'evento';
+type VisitStatus = 'agendada' | 'realizada' | 'cancelada' | 'nao_recebeu';
+
+interface Visit {
+  id: string;
+  doctor: { id: string; name: string; crm: string | null; crmUf: string | null;
+            specialty: string | null; isActive: boolean };
+  responsible: { id: string; name: string } | null;   // null só se o usuário foi apagado
+  scheduledAt: string;                                // ISO UTC — reagendar muda este campo
+  type: VisitType;
+  agenda: string | null;                              // objetivo/pauta
+  status: VisitStatus;
+  statusReason: string | null;                        // motivo de cancelada / nao_recebeu
+  statusChangedAt: string | null;
+  statusChangedBy: { id: string; name: string } | null;
+  rescheduleCount: number;
+  createdBy: { id: string; name: string } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface VisitDetail extends Visit {
+  reschedules: Array<{                                // mais antigo primeiro
+    id: string; previousScheduledAt: string; newScheduledAt: string;
+    reason: string | null; changedBy: { id: string; name: string } | null; changedAt: string;
+  }>;
+}
+```
+
+### GET /visits
+**Query:** `from`, `to` (**obrigatórios**, período `[from, to)`, `to > from`, no máximo **62 dias**);
+`doctorId?`, `responsibleId?`, `status?` (um dos 4).
+
+**Response (200):**
+```json
+{ "visits": [ /* Visit, por scheduledAt crescente */ ], "truncated": false }
+```
+Sem paginação: até **500** visitas; acima disso vêm as 500 primeiras e `truncated: true`.
+
+**Erros:** `VALIDATION_ERROR` (400 — período ausente, invertido ou maior que 62 dias; filtro
+inválido), `FORBIDDEN` (403, `platform_operator`)
+
+### GET /visits/:id
+**Response (200):** `VisitDetail`. **Erros:** `NOT_FOUND` (404, inexistente ou de outro tenant),
+`VALIDATION_ERROR` (400, `:id` não-uuid)
+
+### POST /visits
+```json
+{
+  "doctorId": "uuid",
+  "responsibleId": "uuid",
+  "scheduledAt": "2026-10-06T10:00:00-03:00",
+  "type": "presencial",
+  "agenda": "Apresentar o painel de check-up"
+}
+```
+`agenda` opcional (até 2000; vazio vira `null`). Nasce `agendada`. Data no passado é aceita.
+
+**Response (201):** `VisitDetail`. Audit `create_visit`.
+
+**Erros:** `VALIDATION_ERROR` (400 — campo ausente, tipo fora da lista, campo desconhecido,
+data sem fuso; `fields.doctorId` para médico inexistente/inativo/de outro tenant;
+`fields.responsibleId` para usuário inexistente/inativo/de outro tenant)
+
+### PATCH /visits/:id
+Parcial: `doctorId?`, `responsibleId?`, `type?`, `agenda?` (`null` limpa). **A data não muda
+aqui** (`scheduledAt` → 400; use `/reschedule`). Médico e responsável só são revalidados quando
+mudam. Sem mudança real → 200 sem audit.
+
+**Response (200):** `VisitDetail`. Audit `update_visit` (só o diff).
+
+**Erros:** `VISIT_ALREADY_CLOSED` (409, visita não `agendada`), `NOT_FOUND`, `VALIDATION_ERROR`
+
+### POST /visits/:id/reschedule
+```json
+{ "scheduledAt": "2026-10-08T14:30:00-03:00", "reason": "Médico pediu outro dia" }
+```
+Muda a data da **mesma** visita e grava o histórico. `reason` opcional (até 500). A mesma
+data/hora é no-op (200, sem histórico nem audit).
+
+**Response (200):** `VisitDetail` com a linha nova em `reschedules`. Audit `reschedule_visit`
+(`oldValues: { scheduledAt }`, `newValues: { scheduledAt, reason }`).
+
+**Erros:** `VISIT_ALREADY_CLOSED` (409), `NOT_FOUND`, `VALIDATION_ERROR`
+
+### POST /visits/:id/cancel · POST /visits/:id/not-received
+```json
+{ "reason": "Médico de férias" }
+```
+`reason` **obrigatório** (1–500, só espaço não vale). `agendada` → `cancelada` / `nao_recebeu`,
+gravando `statusReason`, `statusChangedAt` e `statusChangedBy`. Repetir o **mesmo** encerramento é
+idempotente (200, sem novo audit, motivo original mantido); o outro encerramento → 409.
+
+**Response (200):** `VisitDetail`. Audit `cancel_visit` / `visit_not_received`
+(`oldValues: { status }`, `newValues: { status, reason }`).
+
+**Erros:** `VISIT_ALREADY_CLOSED` (409), `NOT_FOUND`, `VALIDATION_ERROR` (400, sem motivo)
+
+---
+
 ## Error Responses
 
 Todos os erros seguem este formato:

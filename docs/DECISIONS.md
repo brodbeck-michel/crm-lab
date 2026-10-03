@@ -5024,6 +5024,54 @@ deixa cadastrar quem ainda não tem o número à mão.
 SCHEMA §35, API_CONTRACTS §13, API_ERRORS, SERVICES §30, BUSINESS_RULES §12, PAGES §22,
 COMPONENTS (ordem dos grupos).
 
+## 2026-10-03 — Agenda de visitas a médicos (CRMLAB-87, épico CRMLAB-85 Visitação Médica)
+
+### D-256: Visita agendada a médico, com reagendamento na mesma visita e motivo obrigatório ao encerrar
+**Decisão (Michel no épico, 02/10/2026; itens 2, 3, 6, 7 e 8 decididos na implementação e
+avisados no card):**
+1. **Tabelas `doctor_visits` e `doctor_visit_reschedules`** (migração 048, SCHEMA.md §36), as duas
+   isoladas por tenant com a policy padrão no mesmo arquivo. A visita tem médico (do cadastro da
+   D-255), responsável (qualquer usuário ativo do laboratório), data/hora prevista, tipo
+   (`presencial | online | telefone | evento`) e objetivo/pauta.
+2. **Status `agendada → realizada | cancelada | nao_recebeu`.** Neste card a visita só sai de
+   `agendada` por **cancelar** ou **"médico não recebeu"**. `realizada` nasce do check-in/out
+   (card [C]); nenhuma rota deste card grava `realizada`.
+3. **Visita encerrada é somente leitura.** Editar, reagendar ou encerrar visita que não está
+   `agendada` → `409 VISIT_ALREADY_CLOSED` (`details.status`). Repetir o **mesmo** encerramento é
+   idempotente (200, sem novo audit, motivo original mantido). As escritas levam
+   `AND status = 'agendada'` no `WHERE`, então uma corrida com cancelar não edita visita encerrada.
+4. **Reagendar = mudar a data/hora da MESMA visita** (resposta 6A) e gravar uma linha no histórico
+   (data antiga, data nova, motivo opcional, quem, quando). Não existe status "reagendada". A
+   mesma data/hora é no-op (200, sem histórico nem audit). A data não muda pelo `PATCH`.
+5. **Motivo obrigatório** ao cancelar e em "médico não recebeu" (aprovado pelo Michel em 02/10),
+   até 500 caracteres. O banco também recusa (`CHECK`).
+6. **Médico ativo e responsável ativo do mesmo laboratório**, validados **só quando mudam** (como
+   a D-255 item 9). Uma visita cujo médico foi inativado depois continua editável sem trocar o
+   médico. Senão `VALIDATION_ERROR` em `doctorId` / `responsibleId`.
+7. **Data no passado é aceita** (lançar uma visita que já aconteceu). Horário sempre com fuso no
+   fio (`Z` ou `-03:00`); sem fuso → 400.
+8. **Listagem por período, sem paginação:** `GET /visits?from&to` (`[from, to)`, no máximo 62 dias),
+   com filtros de médico, responsável e status, em ordem de data. Teto de 500 visitas por resposta
+   (`truncated: true` acima disso). A agenda pede sempre uma semana.
+9. **Todos veem e mexem em todas as visitas** (resposta 2A). Sem perfil novo; o operador da
+   plataforma fica de fora.
+10. **Audit log** `create_visit`, `update_visit` (só o diff), `reschedule_visit`, `cancel_visit`,
+    `visit_not_received`, todos com `entityType: "visit"`.
+**Tela:** item "Agenda" (`/visitation/agenda`) no grupo Visitação Médica, antes de "Médicos".
+Visão **Semana** (grade 07h–20h × seg–dom no fuso do navegador; clicar no horário agenda) e
+**Lista** (a mesma semana, agrupada por dia). No celular a Lista abre por padrão. O seletor de
+médico traz os 100 primeiros ativos por nome (teto de `GET /doctors`); laboratório com mais que
+isso vai precisar de busca no seletor num card seguinte.
+**Motivo:** a equipe precisa planejar as visitas da semana antes do check-in/out e da linha do
+tempo do médico (cards [C] e [D]).
+**Impacto:** `backend/migrations/048_doctor_visits.sql`; `visit.repository.ts`, `visit.service.ts`,
+`visit.routes.ts`, `http/modules.ts`, `http/errors.ts`; `shared/types/visit.types.ts`,
+`api.types.ts` (`VISIT_ALREADY_CLOSED`); frontend `api/visits.ts`, `query-keys.ts`,
+`route-config.ts`, `NavGlyph.tsx`, `routes/index.tsx`, `pages/Visitation/Agenda.tsx`,
+`pages/Visitation/agenda-dates.ts`; testes `tests/visits/visits.spec.ts`, inventário de
+`route-tenant-isolation.spec.ts` (88 → 95 rotas), `Agenda.spec.tsx`, `route-config.spec.ts`.
+SCHEMA §36, API_CONTRACTS §14, API_ERRORS, SERVICES §31, BUSINESS_RULES §13, PAGES §23.
+
 ## 2026-10-03 — Relatório de tempo de resposta no WhatsApp (CRMLAB-83)
 
 ### D-257: Tempo de resposta por bloco do paciente, em minutos úteis, atribuído a quem respondeu

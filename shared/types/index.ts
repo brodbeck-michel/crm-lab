@@ -9,6 +9,7 @@ export * from './exam.types.js';
 export * from './exam-package.types.js';
 export * from './insurance.types.js';
 export * from './doctor.types.js';
+export * from './visit.types.js';
 export * from './proposal.types.js';
 export * from './analytics.types.js';
 export * from './internal-chat.types.js';

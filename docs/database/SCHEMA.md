@@ -1957,6 +1957,62 @@ CREATE INDEX idx_doctors_created_by ON doctors(created_by);
 - Migração **única** (tabela + policy), como 026/027: sem backfill. O 046 ficou reservado para
   outro card; o runner aplica por nome e não exige numeração contínua.
 
+### 36. `doctor_visits` e `doctor_visit_reschedules` (migração 048 — CRMLAB-87, D-256)
+Agenda de visitas a médicos solicitantes (card [B] do épico CRMLAB-85). Reagendar muda
+`scheduled_at` da **mesma** visita e grava uma linha em `doctor_visit_reschedules`: não há status
+"reagendada".
+
+```sql
+CREATE TABLE doctor_visits (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id           UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  doctor_id           UUID NOT NULL REFERENCES doctors(id),          -- médico não se apaga (D-255)
+  responsible_user_id UUID REFERENCES users(id) ON DELETE SET NULL,  -- quem visita; obrigatório na API
+  scheduled_at        TIMESTAMPTZ NOT NULL,                          -- data/hora prevista
+  type                VARCHAR(20) NOT NULL,                          -- presencial|online|telefone|evento
+  agenda              TEXT,                                          -- objetivo/pauta
+  status              VARCHAR(20) NOT NULL DEFAULT 'agendada',       -- agendada|realizada|cancelada|nao_recebeu
+  status_reason       VARCHAR(500),                                  -- motivo de cancelada / nao_recebeu
+  status_changed_at   TIMESTAMPTZ,
+  status_changed_by   UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_by          UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),            -- trigger trg_doctor_visits_updated_at
+  CHECK (type IN ('presencial', 'online', 'telefone', 'evento')),
+  CHECK (status IN ('agendada', 'realizada', 'cancelada', 'nao_recebeu')),
+  CHECK (status NOT IN ('cancelada', 'nao_recebeu') OR length(trim(status_reason)) > 0)
+);
+CREATE INDEX idx_doctor_visits_tenant_scheduled ON doctor_visits(tenant_id, scheduled_at);
+CREATE INDEX idx_doctor_visits_doctor_id ON doctor_visits(doctor_id);
+CREATE INDEX idx_doctor_visits_responsible_user_id ON doctor_visits(responsible_user_id);
+CREATE INDEX idx_doctor_visits_status_changed_by ON doctor_visits(status_changed_by);
+CREATE INDEX idx_doctor_visits_created_by ON doctor_visits(created_by);
+
+CREATE TABLE doctor_visit_reschedules (               -- histórico de datas, append-only
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id             UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  visit_id              UUID NOT NULL REFERENCES doctor_visits(id) ON DELETE CASCADE,
+  previous_scheduled_at TIMESTAMPTZ NOT NULL,
+  new_scheduled_at      TIMESTAMPTZ NOT NULL,
+  reason                VARCHAR(500),                -- opcional
+  changed_by            UUID REFERENCES users(id) ON DELETE SET NULL,
+  changed_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_doctor_visit_reschedules_tenant_id ON doctor_visit_reschedules(tenant_id);
+CREATE INDEX idx_doctor_visit_reschedules_visit_id ON doctor_visit_reschedules(visit_id, changed_at);
+CREATE INDEX idx_doctor_visit_reschedules_changed_by ON doctor_visit_reschedules(changed_by);
+-- ENABLE ROW LEVEL SECURITY + policy <tabela>_tenant_isolation nas duas (mesmo arquivo)
+```
+
+- **Só a visita `agendada` muda:** as escritas do service levam `AND status = 'agendada'` no
+  `WHERE`. `realizada` vem do check-in/out (card [C]); a 048 já aceita o valor.
+- **Motivo obrigatório** ao encerrar como `cancelada` ou `nao_recebeu`, também no banco (`CHECK`).
+- **`responsible_user_id`** é de usuário ativo do **mesmo** tenant (o service confere). A coluna
+  aceita `NULL` só para o `ON DELETE SET NULL` (usuário apagado, raro).
+- **`doctor_id` sem `ON DELETE`** (NO ACTION): médico não se apaga (D-255 item 4). O `CASCADE` do
+  tenant continua funcionando, porque NO ACTION só confere no fim do comando.
+- Migração **única** (tabelas + policies), como 047: sem backfill.
+
 ---
 
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
@@ -2115,6 +2171,8 @@ Nenhum outro caminho de código deve usar `withoutTenant()`.
 | `message_reactions` | ✅ | migração `040_message_quote_reactions_edits.sql` (tabela + policy no mesmo arquivo — CRMLAB-66) |
 | `message_edits` | ✅ | idem |
 | `doctors` | ✅ | migração `047_doctors.sql` (tabela + policy no mesmo arquivo — CRMLAB-86), testado em `tests/doctors/doctors.spec.ts` |
+| `doctor_visits` | ✅ | migração `048_doctor_visits.sql` (tabela + policy no mesmo arquivo — CRMLAB-87), testado em `tests/visits/visits.spec.ts` |
+| `doctor_visit_reschedules` | ✅ | migração `048_doctor_visits.sql` (CRMLAB-87), testado em `tests/visits/visits.spec.ts` |
 
 As **4 tabelas da migração 003** entram sob RLS na `004_rls_onda6.sql`, as **3 tabelas da
 migração 005** entram na `006_rls_onda7.sql`, e as **4 tabelas novas da migração 012**
@@ -2233,6 +2291,7 @@ migrations/
 ├── 043_message_search.sql        # crm_unaccent() + GIN parcial de busca em messages.content (CRMLAB-68, D-228)
 ├── 045_message_metadata.sql      # messages.metadata JSONB — vídeo, PDF, localização, contato (CRMLAB-70, D-234)
 ├── 047_doctors.sql               # doctors + índice único parcial (tenant, crm, uf) + policy (CRMLAB-86, D-255)
+├── 048_doctor_visits.sql         # doctor_visits + doctor_visit_reschedules + policies (CRMLAB-87, D-256)
 └── 049_messages_patient_period_index.sql # índice parcial (tenant, created_at) das mensagens do paciente (CRMLAB-83, D-257)
 ```
 

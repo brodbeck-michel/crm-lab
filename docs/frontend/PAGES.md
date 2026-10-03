@@ -23,6 +23,7 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 /reconciliation               → Conferência (LIS)         (gestor+)
 /active-search                → Busca Ativa (LIS)         (gestor+)
 /sales                        → Vendas                    (atendente vê só as próprias)
+/visitation/agenda            → Agenda (Visitação Médica)  (todos os papéis de tenant — CRMLAB-87)
 /visitation/doctors           → Médicos (Visitação Médica) (todos os papéis de tenant — CRMLAB-86)
 /settings/channels            → Canais & Equipe          (admin; gestor lê)
 /settings/operation           → Gestão da Operação        (gestor+)
@@ -68,6 +69,7 @@ padrão; estado por grupo persiste em localStorage por usuário.
 | `/reconciliation` | manager · admin | sim | Gestão |
 | `/active-search` | manager · admin | sim | Gestão |
 | `/sales` | attendant · manager · admin | sim | solto |
+| `/visitation/agenda` (rótulo "Agenda", CRMLAB-87) | attendant · manager · admin | sim | Visitação Médica |
 | `/visitation/doctors` (rótulo "Médicos", CRMLAB-86) | attendant · manager · admin | sim | Visitação Médica |
 | `/settings/channels` | manager · admin | sim | Configurações |
 | `/settings/operation` | manager · admin | sim | Gestão |
@@ -1422,8 +1424,8 @@ caminho (`automation.sentToFollowUp.days`); chave que a tela não conhece vira t
 Cadastro de médicos solicitantes. Grupo **"Visitação Médica"** da Sidebar (ícone `MapPinned`),
 item "Médicos" (ícone `Stethoscope`), `requiredRoles: TENANT_ROLES`. Fonte: `/doctors`
 (API_CONTRACTS.md §13); responsáveis de `GET /conversations/assignees` (usuários ativos do
-laboratório, qualquer papel — `GET /users` é admin-only). A Agenda (`/visitation/agenda`) entra no
-mesmo grupo num card seguinte. Arquivo `pages/Visitation/Doctors.tsx`.
+laboratório, qualquer papel — `GET /users` é admin-only). A Agenda (`/visitation/agenda`, §23,
+CRMLAB-87) vem antes no mesmo grupo. Arquivo `pages/Visitation/Doctors.tsx`.
 
 - **Topo:** `PageHeader` "Médicos" + [+ Novo médico] (todo papel vê o botão).
 - **Filtros** (empilham no celular): `SearchInput` "Buscar por nome ou CRM" (debounce, vai em
@@ -1446,6 +1448,40 @@ mesmo grupo num card seguinte. Arquivo `pages/Visitation/Doctors.tsx`.
   toast genérico (`useApiErrorHandler`).
 - **Inativar/Reativar:** sem confirmação (é reversível); toast "Médico inativado"/"Médico
   reativado" e a lista recarrega.
+
+---
+
+### 23. Agenda de visitas (`/visitation/agenda`) — todos os papéis de tenant (CRMLAB-87, D-256)
+
+Item **"Agenda"** (ícone `CalendarDays`) do grupo "Visitação Médica", antes de "Médicos";
+`requiredRoles: TENANT_ROLES`. Fonte: `/visits` (API_CONTRACTS.md §14); médicos de
+`GET /doctors?active=true&limit=100&sortBy=name`; responsáveis de `GET /conversations/assignees`.
+Arquivos `pages/Visitation/Agenda.tsx` e `pages/Visitation/agenda-dates.ts` (datas no fuso do
+navegador; o fio é ISO UTC).
+
+- **Topo:** `PageHeader` "Agenda de visitas" + [+ Nova visita] (hoje às 9h se a semana é a atual;
+  senão a segunda às 9h).
+- **Navegação:** [‹ Anterior] [Hoje] [Próxima ›] + rótulo da semana ("05 – 11 de out. de 2026").
+  A semana vai de segunda 00:00 a segunda 00:00 (local) e é o `from`/`to` do `GET /visits`.
+  `SegmentedControl` Semana | Lista. **No celular (< `md`) abre em Lista**; no desktop, em Semana.
+- **Filtros** (3 `Select`, empilham no celular): responsável, médico e status → `responsibleId`,
+  `doctorId`, `status` na query.
+- **Semana:** grade 07h–20h × seg–dom (rola na horizontal no celular). Visita antes das 07h cai
+  na linha das 07h; depois das 20h, na das 20h. Cartão por visita (hora, médico, responsável),
+  riscado quando encerrada. **Clicar na célula** abre "Nova visita" com aquele dia e hora; o "+" da
+  célula faz o mesmo pelo teclado. Clicar no cartão abre a visita. Hoje com fundo `accent-100`.
+- **Lista:** a mesma semana, por dia ("terça-feira, 06 de outubro"), uma linha por visita (hora,
+  médico, tipo · responsável · pauta, `Chip` do status). Vazio: "Nenhuma visita nesta semana".
+- **Nova/Editar visita** (`Modal`): Médico*, Responsável* (abre com o usuário logado), Tipo,
+  Data* e Hora* (só ao criar), Objetivo/pauta. Médico/responsável inativo da visita aparece como
+  "Nome (inativo)". `VALIDATION_ERROR` com `fields` marca o campo.
+- **Visita aberta** (`Modal` "Visita"): médico (CRM, especialidade), `Chip` do status, data/hora,
+  tipo, responsável, quem agendou, pauta, motivo do encerramento (com quem e quando) e o
+  **histórico de datas**. Enquanto `agendada`: [Médico não recebeu] [Cancelar visita] [Reagendar]
+  [Editar]. Encerrada: só leitura.
+- **Reagendar:** nova data e hora + motivo opcional. **Cancelar / Médico não recebeu:** motivo
+  obrigatório (a tela barra vazio antes de enviar). `VISIT_ALREADY_CLOSED` → toast "A visita já
+  foi encerrada por outra pessoa." e a agenda recarrega.
 
 ---
 

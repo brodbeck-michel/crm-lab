@@ -165,6 +165,7 @@ Sem código novo além do acima: `/insurances` e `/exams/:id/prices` reusam o ca
 | Código | HTTP | Quando |
 |--------|------|--------|
 | `DOCTOR_CRM_ALREADY_EXISTS` | 409 | `POST /doctors` ou `PATCH /doctors/:id` com CRM + UF já usados por outro médico do laboratório, **ativo ou inativo** (índice único parcial `uq_doctors_tenant_crm`). `details: { crm, crmUf, existingDoctor: { id, name, isActive } }` — a tela diz quem é e, se estiver inativo, que o caminho é reativar. Código próprio (e não `CONFLICT`) para o formulário marcar o campo CRM sem olhar a mensagem |
+| `VISIT_ALREADY_CLOSED` | 409 | `PATCH /visits/:id`, `POST /visits/:id/reschedule`, `/cancel` ou `/not-received` em visita que não está mais `agendada` (CRMLAB-87, D-256). `details: { status }` — o status atual. Repetir o **mesmo** encerramento não dá erro (idempotente) |
 
 ## Sistema
 

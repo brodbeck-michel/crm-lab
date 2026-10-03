@@ -105,6 +105,11 @@ export const ERROR_CATALOG = {
     statusCode: 409,
     message: 'Ja existe um medico com este CRM e UF neste laboratorio',
   },
+  // CRMLAB-87 (D-256): so a visita `agendada` edita, reagenda ou encerra.
+  VISIT_ALREADY_CLOSED: {
+    statusCode: 409,
+    message: 'A visita ja foi encerrada e nao pode mais ser alterada',
+  },
 
   // --- Sistema ---
   RATE_LIMIT_EXCEEDED: { statusCode: 429, message: 'Limite de requisicoes excedido' },

@@ -4,6 +4,7 @@ import type {
   ListAttendantsQuery,
   ListAuditQuery,
   ListConversationsQuery,
+  ListDoctorsQuery,
   ListExamsQuery,
   ListExamPackagesQuery,
   ListInsurancesQuery,
@@ -178,6 +179,9 @@ export const queryKeys = {
 
   /** ['settings', 'holidays', year] — `/settings/holidays` (§21, CRMLAB-62) */
   holidays: (year: number) => ['settings', 'holidays', year] as const,
+
+  /** ['doctors', filters] — `/visitation/doctors` (§22, CRMLAB-86) */
+  doctors: (filters?: ListDoctorsQuery) => ['doctors', filters ?? {}] as const,
 } as const;
 
 /** Prefixos usados para invalidar um escopo inteiro (todas as variações de filtro). */
@@ -212,6 +216,7 @@ export const queryScopes = {
   reportsExecutive: ['reports'] as const,
   sales: ['sales'] as const,
   attendants: ['attendants'] as const,
+  doctors: ['doctors'] as const,
 } as const;
 
 /**

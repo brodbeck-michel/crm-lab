@@ -36,7 +36,9 @@ export type NavIcon =
   | 'tenants'
   | 'billing'
   | 'account'
-  | 'megaphone';
+  | 'megaphone'
+  | 'visitation'
+  | 'doctors';
 
 /** Papéis de tenant. `platform_operator` NÃO entra — o console é isolado (PAGES.md §11). */
 export const TENANT_ROLES: readonly UserRole[] = ['attendant', 'manager', 'admin'] as const;
@@ -44,8 +46,8 @@ export const MANAGER_PLUS: readonly UserRole[] = ['manager', 'admin'] as const;
 export const ADMIN_ONLY: readonly UserRole[] = ['admin'] as const;
 export const PLATFORM_ONLY: readonly UserRole[] = ['platform_operator'] as const;
 
-/** Grupos (accordion) do trilho da Sidebar — CRMLAB-4/D-129. */
-export type NavGroupId = 'comunicacao' | 'gestao' | 'configuracoes';
+/** Grupos (accordion) do trilho da Sidebar — CRMLAB-4/D-129; `visitacao` desde CRMLAB-86 (D-255). */
+export type NavGroupId = 'comunicacao' | 'visitacao' | 'gestao' | 'configuracoes';
 
 export interface NavGroup {
   id: NavGroupId;
@@ -61,6 +63,8 @@ export interface NavGroup {
  */
 export const NAV_GROUPS: readonly NavGroup[] = [
   { id: 'comunicacao', label: 'Comunicação', icon: 'megaphone' },
+  // CRMLAB-85/86 (D-255): épico próprio, com Médicos agora e a Agenda depois.
+  { id: 'visitacao', label: 'Visitação Médica', icon: 'visitation' },
   { id: 'gestao', label: 'Gestão', icon: 'analytics' },
   { id: 'configuracoes', label: 'Configurações', icon: 'operation' },
 ] as const;
@@ -132,6 +136,15 @@ export const APP_ROUTES: readonly AppRoute[] = [
     inSidebar: true,
     icon: 'quick-replies',
     group: 'comunicacao',
+  },
+  {
+    // CRMLAB-86 (D-255): todos os papéis do laboratório veem e editam.
+    path: '/visitation/doctors',
+    label: 'Médicos',
+    requiredRoles: TENANT_ROLES,
+    inSidebar: true,
+    icon: 'doctors',
+    group: 'visitacao',
   },
   {
     path: '/sales',

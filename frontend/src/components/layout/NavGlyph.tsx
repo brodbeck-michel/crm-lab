@@ -24,6 +24,8 @@ import {
   Megaphone,
   RefreshCw,
   Scale,
+  MapPinned,
+  Stethoscope,
   type LucideIcon,
 } from 'lucide-react';
 import type { NavIcon } from '@/routes/route-config';
@@ -58,6 +60,8 @@ const ICONS: Record<NavIcon, LucideIcon> = {
   billing: Receipt,
   account: CircleUserRound,
   megaphone: Megaphone,
+  visitation: MapPinned,
+  doctors: Stethoscope,
 };
 
 export interface NavGlyphProps {

@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import { initials } from '@/lib/format';
 import { cn } from '@/components/ui/cn';
 
@@ -11,6 +12,8 @@ export interface AvatarProps {
    * `bg-chat-avatar text-chat-avatar-text`. Sem ele, accent-2-200/800.
    */
   className?: string;
+  /** Cor calculada em runtime (avatar do responsável na Agenda, CRMLAB-92). */
+  style?: CSSProperties;
 }
 
 /**
@@ -19,12 +22,18 @@ export interface AvatarProps {
  * SEMPRE `flex: 0 0 <size>` — em container apertado o avatar não pode ser
  * comprimido em elipse (regra de largura 2 de COMPONENTS.md).
  */
-export function Avatar({ name, size = 36, className }: AvatarProps) {
+export function Avatar({ name, size = 36, className, style }: AvatarProps) {
   return (
     <span
       title={name}
       aria-hidden="true"
-      style={{ width: size, height: size, flex: `0 0 ${size}px`, fontSize: Math.round(size * 0.36) }}
+      style={{
+        width: size,
+        height: size,
+        flex: `0 0 ${size}px`,
+        fontSize: Math.round(size * 0.36),
+        ...style,
+      }}
       className={cn(
         'inline-flex items-center justify-center rounded-pill',
         'font-body font-bold uppercase leading-none',

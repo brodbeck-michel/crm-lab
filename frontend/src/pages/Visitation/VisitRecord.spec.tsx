@@ -118,7 +118,7 @@ function renderPage() {
   );
 }
 
-/** Celular: a Lista abre por padrão — é onde a visitadora toca. */
+/** Celular: a visão por dia (CRMLAB-92) — é onde a visitadora toca. */
 function mockMobile() {
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,
@@ -137,7 +137,9 @@ function mockMobile() {
 }
 
 async function openVisit(user: ReturnType<typeof userEvent.setup>) {
-  const list = within(await screen.findByTestId('agenda-list'));
+  // A visita é de terça (06/10); a tela abre no dia de hoje (quarta).
+  await user.click(await screen.findByRole('tab', { name: /Terça, 06 de out\., com visitas/ }));
+  const list = within(await screen.findByTestId('agenda-day-list'));
   await user.click(list.getByText('Dra. Júlia Costa'));
   return within(await screen.findByRole('dialog', { name: 'Visita' }));
 }

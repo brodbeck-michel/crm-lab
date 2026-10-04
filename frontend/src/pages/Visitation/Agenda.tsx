@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import {
   isVisitOpen,
-  VISIT_STATUSES,
   VISIT_STATUS_LABELS,
   VISIT_TYPES,
   VISIT_TYPE_LABELS,
@@ -20,30 +19,37 @@ import { isApiError } from '@/api/client';
 import { mapFieldErrors } from '@/api/error-handler';
 import { queryKeys, queryScopes } from '@/api/query-keys';
 import { useApiErrorHandler, useCurrentUser } from '@/hooks';
-import { PageContainer, PageHeader } from '@/components/layout';
+import { PageHeader } from '@/components/layout';
 import { EmptyState, Modal } from '@/components/shared';
-import { Button, Chip, Input, SegmentedControl, Select, TextArea, cn, useToast } from '@/components/ui';
-import type { ChipTone } from '@/components/ui';
+import { Button, Input, Select, TextArea, cn, useToast } from '@/components/ui';
 import {
-  FIRST_HOUR,
-  LAST_HOUR,
+  WEEK_DAYS,
   addDays,
   formatDateTime,
-  formatDayMonth,
-  formatFullDay,
-  formatHour,
-  formatTime,
-  formatWeekday,
   fromDateTimeInputs,
-  gridHour,
   sameDay,
   startOfWeek,
   toDateInput,
   toTimeInput,
   weekDays,
   weekLabel,
-  WEEK_DAYS,
 } from './agenda-dates';
+import {
+  AgendaButton,
+  PersonAvatar,
+  STATUS_ORDER,
+  STATUS_SHORT_LABELS,
+  STATUS_STYLES,
+  StatusBadge,
+  StatusDot,
+  firstName,
+  useMediaQuery,
+  useNow,
+} from './agenda-ui';
+import { AgendaWeek } from './AgendaWeek';
+import { AgendaList } from './AgendaList';
+import { AgendaRail, countByStatus, type RailAction } from './AgendaRail';
+import { AgendaMobile } from './AgendaMobile';
 import {
   VisitAttachmentsSection,
   VisitCheckSection,
@@ -58,54 +64,81 @@ const VIEW_OPTIONS: Array<{ value: View; label: string }> = [
   { value: 'list', label: 'Lista' },
 ];
 
-const STATUS_TONES: Record<VisitStatus, ChipTone> = {
-  agendada: 'attention',
-  realizada: 'positive',
-  cancelada: 'inactive',
-  nao_recebeu: 'inactive',
-};
-
-const HOURS = Array.from({ length: LAST_HOUR - FIRST_HOUR + 1 }, (_, i) => FIRST_HOUR + i);
-
-/** No celular a lista é a visão padrão (abaixo do `md` do Tailwind). */
-function initialView(): View {
-  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return 'week';
-  return window.matchMedia('(max-width: 767px)').matches ? 'list' : 'week';
-}
-
-function StatusChip({ status }: { status: VisitStatus }) {
-  return <Chip tone={STATUS_TONES[status]}>{VISIT_STATUS_LABELS[status]}</Chip>;
-}
+/** Responsáveis como chips até este número; acima, um seletor. */
+const MAX_RESPONSIBLE_CHIPS = 6;
 
 /**
- * Abertura do modal: visita existente ou nova (com horário sugerido pela grade
- * ou, no "Agendar retorno" do CRMLAB-88, médico/responsável/tipo da visita anterior).
+ * Abertura de modal: visita completa, nova visita (com horário sugerido pela
+ * grade ou, no "Agendar retorno" do CRMLAB-88, médico/responsável/tipo da
+ * anterior) ou uma ação do painel lateral (reagendar/cancelar/não recebeu).
  */
 type ModalState =
   | { kind: 'visit'; id: string }
   | { kind: 'new'; at: Date; prefill?: Omit<ReturnVisitPrefill, 'at'> }
+  | { kind: 'action'; id: string; action: RailAction }
   | null;
+
+/** Filtros da tela — todos aplicados no cliente sobre a semana inteira (D-262). */
+interface Filters {
+  responsibleId: string;
+  doctorId: string;
+  /** Chips de status desligados. Vazio = todos ligados. */
+  hidden: VisitStatus[];
+}
+
+const NO_FILTERS: Filters = { responsibleId: '', doctorId: '', hidden: [] };
+
+function applyFilters(visits: Visit[], filters: Filters): Visit[] {
+  return visits.filter(
+    (visit) =>
+      (!filters.responsibleId || visit.responsible?.id === filters.responsibleId) &&
+      (!filters.doctorId || visit.doctor.id === filters.doctorId) &&
+      !filters.hidden.includes(visit.status),
+  );
+}
+
+function activeFilterCount(filters: Filters): number {
+  return (
+    (filters.responsibleId ? 1 : 0) +
+    (filters.doctorId ? 1 : 0) +
+    (filters.hidden.length > 0 ? 1 : 0)
+  );
+}
+
+function weekRange(weekStart: Date): ListVisitsQuery {
+  return { from: weekStart.toISOString(), to: addDays(weekStart, WEEK_DAYS).toISOString() };
+}
 
 /**
  * Agenda de visitas — `/visitation/agenda` (PAGES.md §23 · API_CONTRACTS.md
- * §14 · CRMLAB-87, D-256). Visão semana (grade de horas × dias, clicar no
- * horário agenda) e lista (dias da semana em ordem). As duas mostram a MESMA
- * semana, com os mesmos filtros. Todo papel do laboratório vê e mexe em todas.
+ * §14 · CRMLAB-87, D-256 · repaginada no CRMLAB-92, D-262). Desktop: grade
+ * semanal ou lista + coluna de resumo (≥ 1280px). Celular: um dia por vez.
+ * A semana vem inteira do `GET /visits`; filtros e contagens saem dela.
+ * Todo papel do laboratório vê e mexe em todas.
  */
 export default function Agenda() {
-  const [view, setView] = useState<View>(initialView);
+  const isMobile = useMediaQuery('(max-width: 767px)');
+  const isWide = useMediaQuery('(min-width: 1280px)');
+  const now = useNow();
+  const [view, setView] = useState<View>('week');
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
-  const [responsibleId, setResponsibleId] = useState('');
-  const [doctorId, setDoctorId] = useState('');
-  const [status, setStatus] = useState<VisitStatus | ''>('');
+  const [selectedDay, setSelectedDay] = useState(() => new Date());
+  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+
   // `?visit=<id>` abre a visita direto — é o "Abrir visita" da ficha do médico (CRMLAB-89).
+  // Com a coluna de resumo, a visita é selecionada nela; sem, abre o modal.
   const [searchParams, setSearchParams] = useSearchParams();
   const linkedVisitId = searchParams.get('visit');
-  const [modal, setModal] = useState<ModalState>(() => (linkedVisitId ? { kind: 'visit', id: linkedVisitId } : null));
+  const [selectedId, setSelectedId] = useState<string | null>(() =>
+    isWide && !isMobile ? linkedVisitId : null,
+  );
+  const [modal, setModal] = useState<ModalState>(() =>
+    linkedVisitId && !(isWide && !isMobile) ? { kind: 'visit', id: linkedVisitId } : null,
+  );
+  const [followLinked, setFollowLinked] = useState(Boolean(linkedVisitId));
 
-  /** Fechar a visita que veio pelo link também limpa o `?visit=`, para o voltar/recarregar não reabrir. */
-  function closeModal() {
-    setModal(null);
+  function clearLink() {
     if (searchParams.has('visit')) {
       const next = new URLSearchParams(searchParams);
       next.delete('visit');
@@ -113,20 +146,42 @@ export default function Agenda() {
     }
   }
 
-  const filters = useMemo<ListVisitsQuery>(
-    () => ({
-      from: weekStart.toISOString(),
-      to: addDays(weekStart, WEEK_DAYS).toISOString(),
-      ...(responsibleId ? { responsibleId } : {}),
-      ...(doctorId ? { doctorId } : {}),
-      ...(status ? { status } : {}),
-    }),
-    [weekStart, responsibleId, doctorId, status],
-  );
+  /** Fechar a visita que veio pelo link também limpa o `?visit=`, para o voltar/recarregar não reabrir. */
+  function closeModal() {
+    setModal(null);
+    clearLink();
+  }
 
+  function closeDetail() {
+    setSelectedId(null);
+    clearLink();
+  }
+
+  function goToWeek(start: Date) {
+    setWeekStart(start);
+    setSelectedId(null);
+    setFollowLinked(false);
+    setSelectedDay(sameDay(startOfWeek(now), start) ? now : start);
+  }
+
+  const range = useMemo(() => weekRange(weekStart), [weekStart]);
   const visitsQuery = useQuery({
-    queryKey: queryKeys.visits(filters),
-    queryFn: () => visitsApi.list(filters),
+    queryKey: queryKeys.visits(range),
+    queryFn: () => visitsApi.list(range),
+  });
+  const weekVisits = useMemo(() => visitsQuery.data?.visits ?? [], [visitsQuery.data]);
+
+  // "Hoje" no painel: se a semana na tela não é a atual, busca o dia à parte.
+  const todayInWeek = sameDay(startOfWeek(now), weekStart);
+  const todayKey = toDateInput(now); // muda só na virada do dia
+  const todayRange = useMemo<ListVisitsQuery>(() => {
+    const start = new Date(`${todayKey}T00:00:00`);
+    return { from: start.toISOString(), to: addDays(start, 1).toISOString() };
+  }, [todayKey]);
+  const todayQuery = useQuery({
+    queryKey: queryKeys.visits(todayRange),
+    queryFn: () => visitsApi.list(todayRange),
+    enabled: isWide && !isMobile && !todayInWeek,
   });
 
   // Usuários ativos do laboratório, qualquer papel (`GET /users` é admin-only).
@@ -143,92 +198,73 @@ export default function Agenda() {
   });
   const doctors = doctorsQuery.data?.doctors ?? [];
 
-  const visits = visitsQuery.data?.visits ?? [];
+  const visible = useMemo(() => applyFilters(weekVisits, filters), [weekVisits, filters]);
+  const todayVisits = useMemo(
+    () =>
+      applyFilters(
+        todayInWeek
+          ? weekVisits.filter((visit) => sameDay(new Date(visit.scheduledAt), now))
+          : (todayQuery.data?.visits ?? []),
+        filters,
+      ),
+    [todayInWeek, weekVisits, todayQuery.data, filters, now],
+  );
+  const counts = useMemo(() => countByStatus(weekVisits), [weekVisits]);
+
+  // Visita selecionada: da semana, de "Hoje" ou (link de outra semana) buscada à parte.
+  const listed = selectedId
+    ? (weekVisits.find((v) => v.id === selectedId) ??
+      todayQuery.data?.visits.find((v) => v.id === selectedId) ??
+      null)
+    : null;
+  const selectedQuery = useQuery({
+    queryKey: queryKeys.visit(selectedId ?? ''),
+    queryFn: () => visitsApi.get(selectedId ?? ''),
+    enabled: Boolean(selectedId) && !listed,
+  });
+  const selected: Visit | null = listed ?? (selectedId ? (selectedQuery.data ?? null) : null);
+
+  // O link de uma visita de outra semana leva a grade até ela (uma vez).
+  if (followLinked && selected && selectedId === linkedVisitId) {
+    const start = startOfWeek(new Date(selected.scheduledAt));
+    setFollowLinked(false);
+    if (!sameDay(start, weekStart)) {
+      setWeekStart(start);
+      setSelectedDay(new Date(selected.scheduledAt));
+    }
+  }
+
+  function openVisit(visit: Visit) {
+    if (isWide && !isMobile) {
+      setSelectedId(visit.id);
+      const start = startOfWeek(new Date(visit.scheduledAt));
+      if (!sameDay(start, weekStart)) {
+        setWeekStart(start);
+        setSelectedDay(new Date(visit.scheduledAt));
+      }
+    } else {
+      setModal({ kind: 'visit', id: visit.id });
+    }
+  }
+
+  const newVisit = () => setModal({ kind: 'new', at: defaultNewVisitTime(weekStart) });
   const days = weekDays(weekStart);
-  const today = new Date();
-  const hasFilters = Boolean(responsibleId || doctorId || status);
+  const emptyState: 'none' | 'week' | 'filtered' =
+    weekVisits.length === 0 ? 'week' : visible.length === 0 ? 'filtered' : 'none';
 
-  return (
-    <PageContainer>
-      <PageHeader
-        title="Agenda de visitas"
-        description="Visitas da equipe aos médicos solicitantes."
-        actions={
-          <Button variant="primary" onClick={() => setModal({ kind: 'new', at: defaultNewVisitTime(weekStart) })}>
-            + Nova visita
-          </Button>
-        }
-      />
+  const filterBar = (
+    <FilterBar
+      filters={filters}
+      counts={counts}
+      assignees={assignees}
+      doctors={doctors}
+      onChange={setFilters}
+      stacked={isMobile}
+    />
+  );
 
-      <div className="flex flex-col gap-md md:flex-row md:flex-wrap md:items-center md:justify-between">
-        <div className="flex flex-wrap items-center gap-sm">
-          <Button variant="secondary" size="sm" onClick={() => setWeekStart(addDays(weekStart, -WEEK_DAYS))}>
-            ‹ Anterior
-          </Button>
-          <Button variant="secondary" size="sm" onClick={() => setWeekStart(startOfWeek(new Date()))}>
-            Hoje
-          </Button>
-          <Button variant="secondary" size="sm" onClick={() => setWeekStart(addDays(weekStart, WEEK_DAYS))}>
-            Próxima ›
-          </Button>
-          <span className="font-heading text-label font-semibold text-text" data-testid="week-label">
-            {weekLabel(weekStart)}
-          </span>
-        </div>
-        <SegmentedControl aria-label="Visão da agenda" options={VIEW_OPTIONS} value={view} onChange={setView} />
-      </div>
-
-      <div className="grid grid-cols-1 gap-md md:grid-cols-3">
-        <Select
-          aria-label="Filtrar por responsável"
-          value={responsibleId}
-          onChange={(event) => setResponsibleId(event.target.value)}
-          options={[{ value: '', label: 'Todos os responsáveis' }, ...assignees.map((a) => ({ value: a.id, label: a.name }))]}
-        />
-        <Select
-          aria-label="Filtrar por médico"
-          value={doctorId}
-          onChange={(event) => setDoctorId(event.target.value)}
-          options={[{ value: '', label: 'Todos os médicos' }, ...doctors.map((d) => ({ value: d.id, label: d.name }))]}
-        />
-        <Select
-          aria-label="Filtrar por status"
-          value={status}
-          onChange={(event) => setStatus(event.target.value as VisitStatus | '')}
-          options={[
-            { value: '', label: 'Todos os status' },
-            ...VISIT_STATUSES.map((s) => ({ value: s, label: VISIT_STATUS_LABELS[s] })),
-          ]}
-        />
-      </div>
-
-      {visitsQuery.data?.truncated && (
-        <p className="text-caption text-neutral-600">
-          A semana tem visitas demais para mostrar todas. Use os filtros para refinar.
-        </p>
-      )}
-
-      {visitsQuery.isLoading ? (
-        <p className="font-body text-body text-neutral-600">Carregando visitas...</p>
-      ) : visitsQuery.isError ? (
-        <EmptyState message="Não foi possível carregar as visitas" hint="Verifique a conexão e tente novamente." />
-      ) : view === 'week' ? (
-        <WeekGrid
-          days={days}
-          today={today}
-          visits={visits}
-          onOpen={(visit) => setModal({ kind: 'visit', id: visit.id })}
-          onSlot={(at) => setModal({ kind: 'new', at })}
-        />
-      ) : visits.length === 0 ? (
-        <EmptyState
-          message="Nenhuma visita nesta semana"
-          hint={hasFilters ? 'Ajuste os filtros.' : 'Use "+ Nova visita" para agendar.'}
-        />
-      ) : (
-        <VisitList days={days} visits={visits} onOpen={(visit) => setModal({ kind: 'visit', id: visit.id })} />
-      )}
-
+  const modals = (
+    <>
       {modal?.kind === 'new' && (
         <VisitFormModal
           initialAt={modal.at}
@@ -248,7 +284,135 @@ export default function Agenda() {
           onScheduleReturn={({ at, ...prefill }) => setModal({ kind: 'new', at, prefill })}
         />
       )}
-    </PageContainer>
+      {modal?.kind === 'action' && (
+        <VisitActionById id={modal.id} action={modal.action} onClose={() => setModal(null)} />
+      )}
+      {filtersOpen && (
+        <Modal open onClose={() => setFiltersOpen(false)} title="Filtros">
+          <div className="flex flex-col gap-lg">
+            {filterBar}
+            <div className="flex justify-between gap-md">
+              <Button variant="secondary" onClick={() => setFilters(NO_FILTERS)}>
+                Limpar filtros
+              </Button>
+              <Button variant="primary" onClick={() => setFiltersOpen(false)}>
+                Ver visitas
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+
+  if (isMobile) {
+    return (
+      <>
+        <AgendaMobile
+          weekStart={weekStart}
+          days={days}
+          now={now}
+          selectedDay={days.some((day) => sameDay(day, selectedDay)) ? selectedDay : weekStart}
+          visits={visible}
+          activeFilters={activeFilterCount(filters)}
+          onSelectDay={setSelectedDay}
+          onPrevWeek={() => goToWeek(addDays(weekStart, -WEEK_DAYS))}
+          onNextWeek={() => goToWeek(addDays(weekStart, WEEK_DAYS))}
+          onOpenFilters={() => setFiltersOpen(true)}
+          onNew={newVisit}
+          onOpen={(visit) => setModal({ kind: 'visit', id: visit.id })}
+        />
+        {modals}
+      </>
+    );
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 md:h-screen">
+      <div className="flex min-w-0 flex-1 flex-col gap-lg px-[28px] py-xl">
+        <PageHeader
+          title="Agenda de visitas"
+          description="Visitas da equipe aos médicos solicitantes."
+          size="compact"
+          className="items-end"
+          actions={
+            <AgendaButton variant="primary" className="px-[18px]" onClick={newVisit}>
+              + Nova visita
+            </AgendaButton>
+          }
+        />
+
+        <div className="flex flex-wrap items-center justify-between gap-md">
+          <div className="flex flex-wrap items-center gap-md">
+            <PeriodNav
+              onPrev={() => goToWeek(addDays(weekStart, -WEEK_DAYS))}
+              onToday={() => goToWeek(startOfWeek(new Date()))}
+              onNext={() => goToWeek(addDays(weekStart, WEEK_DAYS))}
+            />
+            <span
+              className="text-[18px] font-semibold tabular-nums text-agenda-ink"
+              data-testid="week-label"
+            >
+              {weekLabel(weekStart)}
+            </span>
+          </div>
+          <ViewSwitch value={view} onChange={setView} />
+        </div>
+
+        {filterBar}
+
+        {visitsQuery.data?.truncated && (
+          <p className="text-caption text-agenda-muted">
+            A semana tem visitas demais para mostrar todas. Use os filtros para refinar.
+          </p>
+        )}
+
+        {visitsQuery.isLoading ? (
+          <AgendaSkeleton />
+        ) : visitsQuery.isError ? (
+          <EmptyState
+            message="Não foi possível carregar as visitas"
+            hint="Verifique a conexão e tente novamente."
+          />
+        ) : view === 'week' ? (
+          <AgendaWeek
+            days={days}
+            now={now}
+            visits={visible}
+            selectedId={selectedId}
+            emptyState={emptyState}
+            onOpen={openVisit}
+            onSlot={(at) => setModal({ kind: 'new', at })}
+            onClearFilters={() => setFilters(NO_FILTERS)}
+          />
+        ) : visible.length === 0 ? (
+          <EmptyCard state={emptyState} onClearFilters={() => setFilters(NO_FILTERS)} />
+        ) : (
+          <AgendaList
+            days={days}
+            now={now}
+            visits={visible}
+            selectedId={selectedId}
+            onOpen={openVisit}
+          />
+        )}
+      </div>
+
+      {isWide && (
+        <AgendaRail
+          weekVisits={weekVisits}
+          todayVisits={todayVisits}
+          today={now}
+          selected={selected}
+          onSelect={openVisit}
+          onCloseDetail={closeDetail}
+          onOpenFull={(visit) => setModal({ kind: 'visit', id: visit.id })}
+          onAction={(visit, action) => setModal({ kind: 'action', id: visit.id, action })}
+          onScheduleReturn={({ at, ...prefill }) => setModal({ kind: 'new', at, prefill })}
+        />
+      )}
+      {modals}
+    </div>
   );
 }
 
@@ -259,148 +423,296 @@ function defaultNewVisitTime(weekStart: Date): Date {
   return new Date(base.getFullYear(), base.getMonth(), base.getDate(), 9, 0);
 }
 
-interface WeekGridProps {
-  days: Date[];
-  today: Date;
-  visits: Visit[];
-  onOpen: (visit: Visit) => void;
-  onSlot: (at: Date) => void;
+function PeriodNav({
+  onPrev,
+  onToday,
+  onNext,
+}: {
+  onPrev: () => void;
+  onToday: () => void;
+  onNext: () => void;
+}) {
+  const item =
+    'inline-flex items-center justify-center text-agenda-ink-2 hover:bg-agenda-press focus-visible:relative focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent';
+  return (
+    <div
+      className="inline-flex overflow-hidden rounded-md border border-agenda-line-control bg-bg"
+      role="group"
+      aria-label="Período"
+    >
+      <button
+        type="button"
+        aria-label="Semana anterior"
+        onClick={onPrev}
+        className={cn(item, 'px-md py-sm text-[16px]')}
+      >
+        ‹
+      </button>
+      <button
+        type="button"
+        onClick={onToday}
+        className={cn(
+          item,
+          'border-x border-agenda-line-control px-[14px] py-sm text-body font-semibold text-agenda-ink',
+        )}
+      >
+        Hoje
+      </button>
+      <button
+        type="button"
+        aria-label="Próxima semana"
+        onClick={onNext}
+        className={cn(item, 'px-md py-sm text-[16px]')}
+      >
+        ›
+      </button>
+    </div>
+  );
 }
 
-/**
- * Grade horas × dias. A célula toda agenda naquele horário (clique do mouse);
- * o botão "+" da célula faz o mesmo pelo teclado. O cartão da visita abre a
- * visita e não propaga o clique para a célula.
- */
-function WeekGrid({ days, today, visits, onOpen, onSlot }: WeekGridProps) {
+function ViewSwitch({ value, onChange }: { value: View; onChange: (view: View) => void }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-neutral-200 bg-surface" data-testid="agenda-week">
-      <div className="grid min-w-[56rem] grid-cols-[4rem_repeat(7,minmax(0,1fr))]">
-        <div className="border-b border-neutral-200" />
-        {days.map((day) => (
-          <div
-            key={day.toISOString()}
+    <div
+      role="tablist"
+      aria-label="Visão da agenda"
+      className="inline-flex gap-[2px] rounded-md bg-agenda-seg p-[3px]"
+    >
+      {VIEW_OPTIONS.map((option) => {
+        const active = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(option.value)}
             className={cn(
-              'border-b border-l border-neutral-200 p-sm text-center',
-              sameDay(day, today) && 'bg-accent-100',
+              'rounded-sm px-[14px] py-[6px] text-body font-semibold transition-colors',
+              'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+              active
+                ? 'bg-bg text-agenda-ink shadow-[0_1px_2px_rgba(0,0,0,.1)]'
+                : 'text-agenda-muted hover:text-agenda-ink',
             )}
           >
-            <div className="text-micro uppercase text-neutral-600">{formatWeekday(day)}</div>
-            <div className="font-heading text-label font-semibold text-text">{formatDayMonth(day)}</div>
-          </div>
-        ))}
-
-        {HOURS.map((hour) => (
-          <HourRow key={hour} hour={hour} days={days} visits={visits} onOpen={onOpen} onSlot={onSlot} />
-        ))}
-      </div>
+            {option.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
 
-function HourRow({
-  hour,
-  days,
-  visits,
-  onOpen,
-  onSlot,
-}: { hour: number } & Pick<WeekGridProps, 'days' | 'visits' | 'onOpen' | 'onSlot'>) {
-  return (
-    <>
-      <div className="border-b border-neutral-200 p-xs text-right text-caption tabular-nums text-neutral-600">
-        {formatHour(hour)}
-      </div>
-      {days.map((day) => {
-        const at = new Date(day.getFullYear(), day.getMonth(), day.getDate(), hour, 0);
-        const inSlot = visits.filter((visit) => {
-          const date = new Date(visit.scheduledAt);
-          return sameDay(date, day) && gridHour(date) === hour;
-        });
-        const slotLabel = `Agendar visita em ${formatWeekday(day)} ${formatDayMonth(day)} às ${formatHour(hour)}`;
-        return (
-          <div
-            key={day.toISOString()}
-            className="group relative flex min-h-[3.5rem] cursor-pointer flex-col gap-xs border-b border-l border-neutral-200 p-xs hover:bg-neutral-100"
-            onClick={() => onSlot(at)}
-          >
-            {inSlot.map((visit) => (
-              <VisitCard key={visit.id} visit={visit} onOpen={onOpen} />
-            ))}
-            <button
-              type="button"
-              aria-label={slotLabel}
-              className="absolute right-xs top-xs rounded-sm px-xs text-caption text-neutral-600 opacity-0 focus:opacity-100 group-hover:opacity-100"
-              onClick={(event) => {
-                event.stopPropagation();
-                onSlot(at);
-              }}
-            >
-              +
-            </button>
-          </div>
-        );
-      })}
-    </>
-  );
+interface FilterBarProps {
+  filters: Filters;
+  counts: Record<VisitStatus, number>;
+  assignees: Person[];
+  doctors: Person[];
+  onChange: (filters: Filters) => void;
+  /** No celular (dentro do modal de filtros): um grupo por linha. */
+  stacked: boolean;
 }
 
-function VisitCard({ visit, onOpen }: { visit: Visit; onOpen: (visit: Visit) => void }) {
-  const closed = !isVisitOpen(visit.status);
+/** Chips de status (filtro + legenda + contagem da semana), responsável e médico. */
+function FilterBar({ filters, counts, assignees, doctors, onChange, stacked }: FilterBarProps) {
+  const divider = !stacked && (
+    <span aria-hidden="true" className="h-5 w-px bg-agenda-line-control" />
+  );
+  const label = (text: string) => (
+    <span className="text-[11px] font-bold uppercase tracking-[0.06em] text-agenda-muted">
+      {text}
+    </span>
+  );
+  const group = cn('flex flex-wrap items-center gap-sm', stacked && 'flex-col items-start');
+
   return (
-    <button
-      type="button"
-      onClick={(event) => {
-        event.stopPropagation();
-        onOpen(visit);
-      }}
+    <div
       className={cn(
-        'w-full rounded-md border border-accent-200 bg-accent-100 p-xs text-left text-caption shadow-sm',
-        'hover:border-accent',
-        closed && 'border-neutral-200 bg-neutral-100 text-neutral-600 line-through',
+        'flex flex-wrap items-center gap-sm',
+        stacked && 'flex-col items-stretch gap-lg',
       )}
-      aria-label={`${formatTime(visit.scheduledAt)} ${visit.doctor.name} — ${VISIT_STATUS_LABELS[visit.status]}`}
+      data-testid="agenda-filters"
     >
-      <div className="font-semibold tabular-nums">{formatTime(visit.scheduledAt)}</div>
-      <div className="truncate">{visit.doctor.name}</div>
-      {visit.responsible && <div className="truncate text-neutral-600">{visit.responsible.name}</div>}
-    </button>
+      <div className={group} role="group" aria-label="Status">
+        {label('Status')}
+        <div className="flex flex-wrap gap-sm">
+          {STATUS_ORDER.map((status) => {
+            const on = !filters.hidden.includes(status);
+            return (
+              <button
+                key={status}
+                type="button"
+                aria-pressed={on}
+                title={VISIT_STATUS_LABELS[status]}
+                onClick={() =>
+                  onChange({
+                    ...filters,
+                    hidden: on
+                      ? [...filters.hidden, status]
+                      : filters.hidden.filter((s) => s !== status),
+                  })
+                }
+                className={cn(
+                  'inline-flex items-center gap-[6px] rounded-pill border px-[10px] py-[5px] text-body transition-opacity',
+                  'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+                  on
+                    ? cn('border-transparent', STATUS_STYLES[status].bg, STATUS_STYLES[status].ink)
+                    : 'border-agenda-line-control bg-bg text-agenda-ink opacity-50',
+                )}
+              >
+                <StatusDot status={status} size={8} />
+                {STATUS_SHORT_LABELS[status]}
+                <span className="font-semibold tabular-nums">{counts[status]}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {divider}
+      <div className={group}>
+        {label('Responsável')}
+        {assignees.length <= MAX_RESPONSIBLE_CHIPS ? (
+          <div className="flex flex-wrap gap-sm" role="group" aria-label="Filtrar por responsável">
+            {assignees.map((person) => {
+              const on = filters.responsibleId === person.id;
+              return (
+                <button
+                  key={person.id}
+                  type="button"
+                  aria-pressed={on}
+                  title={person.name}
+                  onClick={() => onChange({ ...filters, responsibleId: on ? '' : person.id })}
+                  className={cn(
+                    'inline-flex items-center gap-[6px] rounded-pill border bg-bg py-[3px] pl-[3px] pr-[10px] text-body text-agenda-ink transition-opacity',
+                    'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+                    on ? 'border-agenda-ink' : 'border-agenda-line-control',
+                    filters.responsibleId && !on && 'opacity-50',
+                  )}
+                >
+                  <PersonAvatar person={person} size={22} />
+                  {firstName(person.name)}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <PillSelect
+            label="Filtrar por responsável"
+            prefix="Responsável"
+            value={filters.responsibleId}
+            options={assignees}
+            onChange={(responsibleId) => onChange({ ...filters, responsibleId })}
+          />
+        )}
+      </div>
+      {divider}
+      <div className={group}>
+        {stacked && label('Médico')}
+        <PillSelect
+          label="Filtrar por médico"
+          prefix="Médico"
+          value={filters.doctorId}
+          options={doctors}
+          onChange={(doctorId) => onChange({ ...filters, doctorId })}
+        />
+      </div>
+    </div>
   );
 }
 
-function VisitList({ days, visits, onOpen }: { days: Date[]; visits: Visit[]; onOpen: (visit: Visit) => void }) {
+function PillSelect({
+  label,
+  prefix,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  prefix: string;
+  value: string;
+  options: Person[];
+  onChange: (value: string) => void;
+}) {
   return (
-    <div className="flex flex-col gap-lg" data-testid="agenda-list">
-      {days.map((day) => {
-        const ofDay = visits.filter((visit) => sameDay(new Date(visit.scheduledAt), day));
-        if (ofDay.length === 0) return null;
-        return (
-          <section key={day.toISOString()} className="flex flex-col gap-sm">
-            <h2 className="font-heading text-label font-semibold capitalize text-text">{formatFullDay(day)}</h2>
-            <ul className="flex flex-col gap-sm">
-              {ofDay.map((visit) => (
-                <li key={visit.id}>
-                  <button
-                    type="button"
-                    onClick={() => onOpen(visit)}
-                    className="flex w-full flex-col gap-xs rounded-lg border border-neutral-200 bg-surface p-md text-left shadow-sm hover:border-accent md:flex-row md:items-center md:gap-lg"
-                  >
-                    <span className="font-semibold tabular-nums text-text md:w-16">{formatTime(visit.scheduledAt)}</span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-semibold text-text">{visit.doctor.name}</span>
-                      <span className="block truncate text-caption text-neutral-600">
-                        {[VISIT_TYPE_LABELS[visit.type], visit.responsible?.name, visit.agenda].filter(Boolean).join(' · ')}
-                      </span>
-                    </span>
-                    <StatusChip status={visit.status} />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
-        );
-      })}
+    <select
+      aria-label={label}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      className={cn(
+        'max-w-[260px] cursor-pointer truncate rounded-pill border bg-bg px-md py-[5px] text-body text-agenda-ink',
+        'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+        value ? 'border-agenda-ink' : 'border-agenda-line-control',
+      )}
+    >
+      <option value="">{prefix}: Todos</option>
+      {options.map((option) => (
+        <option key={option.id} value={option.id}>
+          {option.name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function EmptyCard({
+  state,
+  onClearFilters,
+}: {
+  state: 'none' | 'week' | 'filtered';
+  onClearFilters: () => void;
+}) {
+  return (
+    <div className="flex flex-1 items-start justify-center rounded-lg border border-agenda-line bg-bg p-xl">
+      <div className="flex flex-col items-center gap-xs text-center">
+        <p className="text-[14px] font-semibold text-agenda-ink">
+          {state === 'filtered'
+            ? 'Nenhuma visita com esses filtros'
+            : 'Nenhuma visita nesta semana'}
+        </p>
+        {state === 'filtered' ? (
+          <button
+            type="button"
+            className="text-body font-semibold text-accent-700 hover:underline"
+            onClick={onClearFilters}
+          >
+            Limpar filtros
+          </button>
+        ) : (
+          <p className="text-body text-agenda-muted">Use “+ Nova visita” para agendar.</p>
+        )}
+      </div>
     </div>
   );
+}
+
+function AgendaSkeleton() {
+  return (
+    <div
+      className="flex flex-1 flex-col gap-md rounded-lg border border-agenda-line bg-bg p-lg"
+      aria-busy="true"
+      aria-label="Carregando visitas"
+      data-testid="agenda-skeleton"
+    >
+      <div className="h-8 animate-pulse rounded-md bg-agenda-seg" />
+      {Array.from({ length: 6 }, (_, i) => (
+        <div key={i} className="h-12 animate-pulse rounded-md bg-agenda-alt" />
+      ))}
+    </div>
+  );
+}
+
+/** Ação vinda do painel lateral: carrega a visita e abre o formulário da ação. */
+function VisitActionById({
+  id,
+  action,
+  onClose,
+}: {
+  id: string;
+  action: RailAction;
+  onClose: () => void;
+}) {
+  const visitQuery = useQuery({ queryKey: queryKeys.visit(id), queryFn: () => visitsApi.get(id) });
+  if (!visitQuery.data) return null;
+  return <VisitActionModal visit={visitQuery.data} action={action} onClose={onClose} />;
 }
 
 type Person = { id: string; name: string };
@@ -447,7 +759,15 @@ interface VisitFormModalProps {
 }
 
 /** Criar (com data/hora) ou editar (médico, responsável, tipo, pauta — a data muda por "Reagendar"). */
-function VisitFormModal({ visit, initialAt, prefill, assignees, doctors, onClose, onSaved }: VisitFormModalProps) {
+function VisitFormModal({
+  visit,
+  initialAt,
+  prefill,
+  assignees,
+  doctors,
+  onClose,
+  onSaved,
+}: VisitFormModalProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const user = useCurrentUser();
@@ -458,7 +778,8 @@ function VisitFormModal({ visit, initialAt, prefill, assignees, doctors, onClose
   const [doctorId, setDoctorId] = useState(visit?.doctor.id ?? prefill?.doctor.id ?? '');
   const [responsibleId, setResponsibleId] = useState(() => {
     if (visit) return visit.responsible?.id ?? '';
-    if (prefill?.responsibleId && assignees.some((a) => a.id === prefill.responsibleId)) return prefill.responsibleId;
+    if (prefill?.responsibleId && assignees.some((a) => a.id === prefill.responsibleId))
+      return prefill.responsibleId;
     return assignees.some((a) => a.id === user?.id) ? (user?.id ?? '') : '';
   });
   const [day, setDay] = useState(toDateInput(at));
@@ -498,7 +819,8 @@ function VisitFormModal({ visit, initialAt, prefill, assignees, doctors, onClose
     const errors: Record<string, string> = {};
     if (!doctorId) errors.doctorId = 'Escolha o médico';
     if (!isEdit && !responsibleId) errors.responsibleId = 'Escolha o responsável';
-    if (!isEdit && fromDateTimeInputs(day, time) === null) errors.scheduledAt = 'Informe data e hora';
+    if (!isEdit && fromDateTimeInputs(day, time) === null)
+      errors.scheduledAt = 'Informe data e hora';
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
       return;
@@ -562,7 +884,12 @@ function VisitFormModal({ visit, initialAt, prefill, assignees, doctors, onClose
               onChange={(e) => setDay(e.target.value)}
               error={fieldErrors.scheduledAt}
             />
-            <Input label="Hora" type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+            <Input
+              label="Hora"
+              type="time"
+              value={time}
+              onChange={(e) => setTime(e.target.value)}
+            />
           </>
         )}
         <div className="md:col-span-2">
@@ -648,19 +975,24 @@ function VisitModal({ id, assignees, doctors, onClose, onScheduleReturn }: Visit
       }
     >
       {!visit ? (
-        <p className="text-body text-neutral-600">{visitQuery.isError ? 'Não foi possível carregar a visita.' : 'Carregando...'}</p>
+        <p className="text-body text-neutral-600">
+          {visitQuery.isError ? 'Não foi possível carregar a visita.' : 'Carregando...'}
+        </p>
       ) : (
         <div className="flex flex-col gap-lg">
           <div className="flex flex-wrap items-start justify-between gap-md">
             <div className="min-w-0">
               <div className="font-heading text-section text-text">{visit.doctor.name}</div>
               <div className="text-caption text-neutral-600">
-                {[visit.doctor.crm ? `CRM ${visit.doctor.crm}/${visit.doctor.crmUf ?? ''}` : null, visit.doctor.specialty]
+                {[
+                  visit.doctor.crm ? `CRM ${visit.doctor.crm}/${visit.doctor.crmUf ?? ''}` : null,
+                  visit.doctor.specialty,
+                ]
                   .filter(Boolean)
                   .join(' · ')}
               </div>
             </div>
-            <StatusChip status={visit.status} />
+            <StatusBadge status={visit.status} />
           </div>
 
           <VisitCheckSection visit={visit} />
@@ -688,13 +1020,22 @@ function VisitModal({ id, assignees, doctors, onClose, onScheduleReturn }: Visit
           </dl>
 
           {/* `key`: o formulário do relato recomeça quando a visita muda no servidor. */}
-          <VisitReportSection key={visit.updatedAt} visit={visit} onScheduleReturn={onScheduleReturn} />
+          <VisitReportSection
+            key={visit.updatedAt}
+            visit={visit}
+            onScheduleReturn={onScheduleReturn}
+          />
           <VisitAttachmentsSection visit={visit} />
 
           {visit.reschedules.length > 0 && (
             <section className="flex flex-col gap-sm">
-              <h3 className="font-heading text-label font-semibold text-text">Histórico de datas</h3>
-              <ul className="flex flex-col gap-xs text-caption text-text" data-testid="visit-reschedules">
+              <h3 className="font-heading text-label font-semibold text-text">
+                Histórico de datas
+              </h3>
+              <ul
+                className="flex flex-col gap-xs text-caption text-text"
+                data-testid="visit-reschedules"
+              >
                 {visit.reschedules.map((r) => (
                   <li key={r.id}>
                     {formatDateTime(r.previousScheduledAt)} → {formatDateTime(r.newScheduledAt)}
@@ -724,7 +1065,15 @@ function Field({ label, value }: { label: string; value: string }) {
 }
 
 /** Reagendar (nova data/hora + motivo opcional) ou encerrar (motivo obrigatório). */
-function VisitActionModal({ visit, action, onClose }: { visit: VisitDetail; action: VisitAction; onClose: () => void }) {
+function VisitActionModal({
+  visit,
+  action,
+  onClose,
+}: {
+  visit: VisitDetail;
+  action: VisitAction;
+  onClose: () => void;
+}) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { fieldErrors, setFieldErrors, onError } = useFieldErrors();
@@ -747,7 +1096,9 @@ function VisitActionModal({ visit, action, onClose }: { visit: VisitDetail; acti
         : visitsApi.notReceived(visit.id, { reason: trimmed });
     },
     onSuccess: (updated) => {
-      toast(action === 'reschedule' ? 'Visita reagendada' : VISIT_STATUS_LABELS[updated.status], { tone: 'positive' });
+      toast(action === 'reschedule' ? 'Visita reagendada' : VISIT_STATUS_LABELS[updated.status], {
+        tone: 'positive',
+      });
       queryClient.setQueryData(queryKeys.visit(visit.id), updated);
       invalidateVisits(queryClient);
       onClose();
@@ -805,7 +1156,12 @@ function VisitActionModal({ visit, action, onClose }: { visit: VisitDetail; acti
               onChange={(e) => setDay(e.target.value)}
               error={fieldErrors.scheduledAt}
             />
-            <Input label="Nova hora" type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+            <Input
+              label="Nova hora"
+              type="time"
+              value={time}
+              onChange={(e) => setTime(e.target.value)}
+            />
           </>
         )}
         <div className="md:col-span-2">

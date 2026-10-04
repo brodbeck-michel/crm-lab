@@ -27,7 +27,11 @@ export function weekDays(weekStart: Date): Date[] {
 }
 
 export function sameDay(a: Date, b: Date): boolean {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
 }
 
 /** Linha da grade para o horário (presa entre `FIRST_HOUR` e `LAST_HOUR`). */
@@ -58,7 +62,12 @@ export function fromDateTimeInputs(day: string, time: string): string | null {
 
 const dayMonth = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short' });
 const weekday = new Intl.DateTimeFormat('pt-BR', { weekday: 'short' });
-const fullDay = new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
+const fullDay = new Intl.DateTimeFormat('pt-BR', {
+  weekday: 'long',
+  day: '2-digit',
+  month: 'long',
+});
+const weekdayLong = new Intl.DateTimeFormat('pt-BR', { weekday: 'long' });
 const time = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' });
 const dateTime = new Intl.DateTimeFormat('pt-BR', {
   day: '2-digit',
@@ -68,12 +77,43 @@ const dateTime = new Intl.DateTimeFormat('pt-BR', {
   minute: '2-digit',
 });
 
-/** "05 – 11 de out. de 2026" (ou cruzando mês: "29 de set. – 05 de out. de 2026"). */
+const MONTHS = [
+  'jan.',
+  'fev.',
+  'mar.',
+  'abr.',
+  'mai.',
+  'jun.',
+  'jul.',
+  'ago.',
+  'set.',
+  'out.',
+  'nov.',
+  'dez.',
+];
+
+/** "05 – 11 de out. 2026" (ou cruzando mês: "28 set. – 04 out. 2026"). */
 export function weekLabel(weekStart: Date): string {
   const end = addDays(weekStart, WEEK_DAYS - 1);
-  const year = end.getFullYear();
-  const startLabel = weekStart.getMonth() === end.getMonth() ? pad(weekStart.getDate()) : dayMonth.format(weekStart);
-  return `${startLabel} – ${dayMonth.format(end)} de ${year}`;
+  const endLabel = `${pad(end.getDate())} ${MONTHS[end.getMonth()]} ${end.getFullYear()}`;
+  if (weekStart.getMonth() === end.getMonth())
+    return `${pad(weekStart.getDate())} – ${pad(end.getDate())} de ${MONTHS[end.getMonth()]} ${end.getFullYear()}`;
+  return `${pad(weekStart.getDate())} ${MONTHS[weekStart.getMonth()]} – ${endLabel}`;
+}
+
+/** "Quinta, 01 de out." — cabeçalho de dia da lista, do painel e do celular. */
+export function formatDayLabel(date: Date): string {
+  const name = weekdayLong.format(date).replace('-feira', '');
+  return `${name.charAt(0).toUpperCase()}${name.slice(1)}, ${pad(date.getDate())} de ${MONTHS[date.getMonth()]}`;
+}
+
+/** "out." / "set. – out." — meses da semana (cabeçalho do celular). */
+export function weekMonths(weekStart: Date): string {
+  const end = addDays(weekStart, WEEK_DAYS - 1);
+  const first = MONTHS[weekStart.getMonth()] ?? '';
+  return weekStart.getMonth() === end.getMonth()
+    ? `${first} ${end.getFullYear()}`
+    : `${first} – ${MONTHS[end.getMonth()]} ${end.getFullYear()}`;
 }
 
 export function formatWeekday(date: Date): string {
@@ -98,4 +138,9 @@ export function formatDateTime(iso: string): string {
 
 export function formatHour(hour: number): string {
   return `${pad(hour)}:00`;
+}
+
+/** Minutos desde a meia-noite (local) — posição vertical na grade. */
+export function minutesOfDay(date: Date): number {
+  return date.getHours() * 60 + date.getMinutes();
 }

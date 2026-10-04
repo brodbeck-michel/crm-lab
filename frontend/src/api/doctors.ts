@@ -1,6 +1,11 @@
 import type {
+  CreateDoctorInteractionRequest,
   CreateDoctorRequest,
   Doctor,
+  DoctorInteraction,
+  DoctorTimelineQuery,
+  DoctorTimelineResponse,
+  UpdateDoctorInteractionRequest,
   ListDoctorsQuery,
   ListDoctorsResponse,
   UpdateDoctorRequest,
@@ -25,4 +30,17 @@ export const doctorsApi = {
   inactivate: (id: string) => http.post<Doctor>(`/doctors/${id}/inactivate`),
 
   reactivate: (id: string) => http.post<Doctor>(`/doctors/${id}/reactivate`),
+
+  // Linha do tempo do médico (CRMLAB-89, D-261).
+  timeline: (id: string, query: DoctorTimelineQuery = {}) =>
+    http.get<DoctorTimelineResponse>(`/doctors/${id}/timeline`, query as QueryParams),
+
+  createInteraction: (id: string, body: CreateDoctorInteractionRequest) =>
+    http.post<DoctorInteraction>(`/doctors/${id}/interactions`, body),
+
+  updateInteraction: (id: string, interactionId: string, body: UpdateDoctorInteractionRequest) =>
+    http.patch<DoctorInteraction>(`/doctors/${id}/interactions/${interactionId}`, body),
+
+  deleteInteraction: (id: string, interactionId: string) =>
+    http.delete<void>(`/doctors/${id}/interactions/${interactionId}`),
 };

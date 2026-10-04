@@ -156,6 +156,8 @@ export const APP_ROUTES: readonly AppRoute[] = [
     icon: 'doctors',
     group: 'visitacao',
   },
+  // CRMLAB-89 (D-261): ficha do médico com a linha do tempo — aberta pela lista, fora da Sidebar.
+  { path: '/visitation/doctors/:id', label: 'Ficha do Médico', requiredRoles: TENANT_ROLES, inSidebar: false },
   {
     path: '/sales',
     label: 'Vendas',

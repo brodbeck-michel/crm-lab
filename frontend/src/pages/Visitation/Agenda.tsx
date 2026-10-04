@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import {
   isVisitOpen,
   VISIT_STATUSES,
@@ -97,7 +98,20 @@ export default function Agenda() {
   const [responsibleId, setResponsibleId] = useState('');
   const [doctorId, setDoctorId] = useState('');
   const [status, setStatus] = useState<VisitStatus | ''>('');
-  const [modal, setModal] = useState<ModalState>(null);
+  // `?visit=<id>` abre a visita direto — é o "Abrir visita" da ficha do médico (CRMLAB-89).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const linkedVisitId = searchParams.get('visit');
+  const [modal, setModal] = useState<ModalState>(() => (linkedVisitId ? { kind: 'visit', id: linkedVisitId } : null));
+
+  /** Fechar a visita que veio pelo link também limpa o `?visit=`, para o voltar/recarregar não reabrir. */
+  function closeModal() {
+    setModal(null);
+    if (searchParams.has('visit')) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('visit');
+      setSearchParams(next, { replace: true });
+    }
+  }
 
   const filters = useMemo<ListVisitsQuery>(
     () => ({
@@ -221,8 +235,8 @@ export default function Agenda() {
           prefill={modal.prefill}
           assignees={assignees}
           doctors={doctors}
-          onClose={() => setModal(null)}
-          onSaved={() => setModal(null)}
+          onClose={closeModal}
+          onSaved={closeModal}
         />
       )}
       {modal?.kind === 'visit' && (
@@ -230,7 +244,7 @@ export default function Agenda() {
           id={modal.id}
           assignees={assignees}
           doctors={doctors}
-          onClose={() => setModal(null)}
+          onClose={closeModal}
           onScheduleReturn={({ at, ...prefill }) => setModal({ kind: 'new', at, prefill })}
         />
       )}

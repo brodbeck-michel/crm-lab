@@ -1,6 +1,6 @@
 {
   "name": "crm-lab",
-  "version": "1.33.0",
+  "version": "1.34.0",
   "private": true,
   "description": "CRM SaaS para Laboratorios de Analises Clinicas",
   "workspaces": [

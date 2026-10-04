@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-10-04 (CRMLAB-89 — linha do tempo do médico, branch `feature/CRMLAB-89-linha-do-tempo-medico`; fecha o épico CRMLAB-85)
+**Última atualização:** 2026-10-04 (CRMLAB-92 — Agenda de visitas repaginada, branch `feature/CRMLAB-92-agenda-design-system`, empilhada no CRMLAB-89)
 
 ---
 
@@ -3244,6 +3244,20 @@ CRMLAB-91).
 registro da visita (88) e linha do tempo (89). Ficam fora, para cards futuros se forem pedidos, os
 itens de "pesquisa de mercado" (resultado da visita em pedidos, classificação ABC, alerta de médico
 esquecido, roteiro do dia, materiais, metas) e a ligação do médico da proposta com o cadastro.
+
+### 🚧 CRMLAB-92 — Agenda de visitas repaginada pelo design system (2026-10-04, em desenvolvimento)
+
+Branch `feature/CRMLAB-92-agenda-design-system`, **empilhada na do CRMLAB-89** (PR #98): os dois
+sobem juntos para produção numa tag nova. Decisão D-262.
+
+- **Tela:** grade semanal legível (linhas e dias separados em qualquer tema, hoje e linha do agora,
+  blocos na cor do status, lanes para visitas próximas), lista em colunas, coluna de resumo
+  (≥ 1280px) com resumo da semana, "Hoje" e detalhe com as ações do estado, e visão por dia no
+  celular. Filtros (chips de status com contagem, responsável, médico) aplicados na tela.
+- **Backend:** `VisitDoctor.clinic` (Local da agenda), sem migração.
+- **Testes:** `Agenda.spec.tsx` (13), `VisitRecord.spec.tsx` (abre pela visão por dia),
+  `agenda-ui.spec.tsx` (novo, 5), `tests/visits/visits.spec.ts` (27); guardas de token verdes.
+- **Pendente:** validação na hml; subir em produção junto com o CRMLAB-89.
 
 ### 🚧 CRMLAB-91 — cor própria para cada estágio do pipeline (2026-10-04, aguardando validação)
 

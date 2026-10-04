@@ -5599,7 +5599,9 @@ type VisitStatus = 'agendada' | 'realizada' | 'cancelada' | 'nao_recebeu';
 interface Visit {
   id: string;
   doctor: { id: string; name: string; crm: string | null; crmUf: string | null;
-            specialty: string | null; isActive: boolean };
+            specialty: string | null;
+            clinic: string | null;                    // "Local" da agenda (CRMLAB-92)
+            isActive: boolean };
   responsible: { id: string; name: string } | null;   // null só se o usuário foi apagado
   scheduledAt: string;                                // ISO UTC — reagendar muda este campo
   type: VisitType;

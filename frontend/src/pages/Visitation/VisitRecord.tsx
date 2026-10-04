@@ -7,6 +7,7 @@ import {
   visitDurationMinutes,
   VISIT_ATTACHMENTS_MAX,
   type UpdateVisitReportRequest,
+  type Visit,
   type VisitDetail,
   type VisitType,
 } from '@crm-lab/shared';
@@ -74,13 +75,14 @@ function useStateConflictHandler(visitId: string) {
 }
 
 /** "Cheguei" → "Saí" com um toque; depois, os horários e a duração. */
-export function VisitCheckSection({ visit }: { visit: VisitDetail }) {
+/** "Cheguei" e "Saí" — também usados pelo painel lateral da Agenda (CRMLAB-92). */
+export function useVisitCheck(visitId: string) {
   const { toast } = useToast();
   const cache = useVisitCache();
-  const onError = useStateConflictHandler(visit.id);
+  const onError = useStateConflictHandler(visitId);
 
   const checkIn = useMutation({
-    mutationFn: () => visitsApi.checkIn(visit.id),
+    mutationFn: () => visitsApi.checkIn(visitId),
     onSuccess: (updated) => {
       toast('Check-in registrado', { tone: 'positive' });
       cache.store(updated);
@@ -88,13 +90,18 @@ export function VisitCheckSection({ visit }: { visit: VisitDetail }) {
     onError,
   });
   const checkOut = useMutation({
-    mutationFn: () => visitsApi.checkOut(visit.id),
+    mutationFn: () => visitsApi.checkOut(visitId),
     onSuccess: (updated) => {
       toast('Visita realizada', { tone: 'positive' });
       cache.store(updated);
     },
     onError,
   });
+  return { checkIn, checkOut };
+}
+
+export function VisitCheckSection({ visit }: { visit: VisitDetail }) {
+  const { checkIn, checkOut } = useVisitCheck(visit.id);
 
   const open = visit.status === 'agendada';
   // Cancelada/não recebeu sem check-in: não há o que mostrar.
@@ -102,7 +109,10 @@ export function VisitCheckSection({ visit }: { visit: VisitDetail }) {
 
   const duration = visitDurationMinutes(visit);
   return (
-    <section className="flex flex-col gap-sm rounded-lg border border-neutral-200 bg-surface p-md" data-testid="visit-check">
+    <section
+      className="flex flex-col gap-sm rounded-lg border border-neutral-200 bg-surface p-md"
+      data-testid="visit-check"
+    >
       <h3 className="font-heading text-label font-semibold text-text">Registro</h3>
       {open && visit.checkInAt === null && (
         <div className="flex flex-col md:flex-row">
@@ -114,10 +124,17 @@ export function VisitCheckSection({ visit }: { visit: VisitDetail }) {
       {open && visit.checkInAt !== null && (
         <div className="flex flex-col gap-sm md:flex-row md:items-center md:justify-between">
           <span className="text-body text-text">
-            Em visita desde <span className="font-semibold tabular-nums">{formatTime(visit.checkInAt)}</span>
-            {visit.checkInBy ? <span className="text-neutral-600"> · {visit.checkInBy.name}</span> : null}
+            Em visita desde{' '}
+            <span className="font-semibold tabular-nums">{formatTime(visit.checkInAt)}</span>
+            {visit.checkInBy ? (
+              <span className="text-neutral-600"> · {visit.checkInBy.name}</span>
+            ) : null}
           </span>
-          <Button variant="confirmation" onClick={() => checkOut.mutate()} loading={checkOut.isPending}>
+          <Button
+            variant="confirmation"
+            onClick={() => checkOut.mutate()}
+            loading={checkOut.isPending}
+          >
             Saí
           </Button>
         </div>
@@ -198,7 +215,10 @@ export function VisitReportSection({ visit, onScheduleReturn }: VisitReportSecti
           <ReadOnly label="O que foi apresentado" value={visit.report.presented} />
           <ReadOnly label="Feedback do médico" value={visit.report.doctorFeedback} />
           <ReadOnly label="Objeções" value={visit.report.objections} />
-          <ReadOnly label="Data de retorno" value={visit.nextVisitDate ? formatIsoDate(visit.nextVisitDate) : null} />
+          <ReadOnly
+            label="Data de retorno"
+            value={visit.nextVisitDate ? formatIsoDate(visit.nextVisitDate) : null}
+          />
         </dl>
       </section>
     );
@@ -209,14 +229,24 @@ export function VisitReportSection({ visit, onScheduleReturn }: VisitReportSecti
   return (
     <section className="flex flex-col gap-md" data-testid="visit-report">
       <h3 className="font-heading text-label font-semibold text-text">Relato</h3>
-      <TextArea label="O que foi apresentado" value={presented} onChange={(e) => setPresented(e.target.value)} rows={2} />
+      <TextArea
+        label="O que foi apresentado"
+        value={presented}
+        onChange={(e) => setPresented(e.target.value)}
+        rows={2}
+      />
       <TextArea
         label="Feedback do médico"
         value={doctorFeedback}
         onChange={(e) => setDoctorFeedback(e.target.value)}
         rows={2}
       />
-      <TextArea label="Objeções" value={objections} onChange={(e) => setObjections(e.target.value)} rows={2} />
+      <TextArea
+        label="Objeções"
+        value={objections}
+        onChange={(e) => setObjections(e.target.value)}
+        rows={2}
+      />
       <div className="flex flex-col gap-sm md:flex-row md:items-end">
         <div className="md:w-1/2">
           <Input
@@ -237,7 +267,12 @@ export function VisitReportSection({ visit, onScheduleReturn }: VisitReportSecti
         )}
       </div>
       <div className="flex justify-end">
-        <Button variant="primary" onClick={() => save.mutate(pending)} loading={save.isPending} disabled={!dirty}>
+        <Button
+          variant="primary"
+          onClick={() => save.mutate(pending)}
+          loading={save.isPending}
+          disabled={!dirty}
+        >
           Salvar relato
         </Button>
       </div>
@@ -246,7 +281,7 @@ export function VisitReportSection({ visit, onScheduleReturn }: VisitReportSecti
 }
 
 /** Data de retorno `'YYYY-MM-DD'` às 09:00 locais, com médico, responsável e tipo desta visita. */
-export function returnPrefill(visit: VisitDetail, isoDate: string): ReturnVisitPrefill {
+export function returnPrefill(visit: Visit, isoDate: string): ReturnVisitPrefill {
   const [year, month, day] = isoDate.split('-').map(Number);
   return {
     doctor: { id: visit.doctor.id, name: visit.doctor.name, isActive: visit.doctor.isActive },
@@ -388,7 +423,9 @@ export function VisitAttachmentsSection({ visit }: { visit: VisitDetail }) {
         )}
       </div>
       {visit.attachments.length === 0 ? (
-        <p className="text-caption text-neutral-600">Nenhum anexo. Imagem ou PDF, até {formatBytes(MAX_MEDIA_BYTES)}.</p>
+        <p className="text-caption text-neutral-600">
+          Nenhum anexo. Imagem ou PDF, até {formatBytes(MAX_MEDIA_BYTES)}.
+        </p>
       ) : (
         <ul className="flex flex-col gap-xs">
           {visit.attachments.map((attachment) => (
@@ -397,9 +434,15 @@ export function VisitAttachmentsSection({ visit }: { visit: VisitDetail }) {
               className="flex flex-col gap-xs rounded-md border border-neutral-200 p-sm md:flex-row md:items-center md:justify-between"
             >
               <span className="min-w-0">
-                <span className="block truncate text-body font-semibold text-text">{attachment.fileName}</span>
+                <span className="block truncate text-body font-semibold text-text">
+                  {attachment.fileName}
+                </span>
                 <span className="block text-caption text-neutral-600">
-                  {[formatBytes(attachment.byteSize), attachment.uploadedBy?.name, formatDateTime(attachment.createdAt)]
+                  {[
+                    formatBytes(attachment.byteSize),
+                    attachment.uploadedBy?.name,
+                    formatDateTime(attachment.createdAt),
+                  ]
                     .filter(Boolean)
                     .join(' · ')}
                 </span>
@@ -433,7 +476,9 @@ export function VisitAttachmentsSection({ visit }: { visit: VisitDetail }) {
         </ul>
       )}
       {editable && full && (
-        <p className="text-caption text-neutral-600">Limite de {VISIT_ATTACHMENTS_MAX} anexos por visita.</p>
+        <p className="text-caption text-neutral-600">
+          Limite de {VISIT_ATTACHMENTS_MAX} anexos por visita.
+        </p>
       )}
     </section>
   );

@@ -1479,33 +1479,63 @@ TENANT_ROLES`. Fonte: `GET /doctors/:id` e a linha do tempo de `GET /doctors/:id
 
 ---
 
-### 23. Agenda de visitas (`/visitation/agenda`) — todos os papéis de tenant (CRMLAB-87, D-256)
+### 23. Agenda de visitas (`/visitation/agenda`) — todos os papéis de tenant (CRMLAB-87, D-256 · repaginada no CRMLAB-92, D-262)
 
 Item **"Agenda"** (ícone `CalendarDays`) do grupo "Visitação Médica", antes de "Médicos";
 `requiredRoles: TENANT_ROLES`. Fonte: `/visits` (API_CONTRACTS.md §14); médicos de
 `GET /doctors?active=true&limit=100&sortBy=name`; responsáveis de `GET /conversations/assignees`.
-Arquivos `pages/Visitation/Agenda.tsx` e `pages/Visitation/agenda-dates.ts` (datas no fuso do
-navegador; o fio é ISO UTC).
+Arquivos em `pages/Visitation/`: `Agenda.tsx` (página, filtros e modais), `AgendaWeek.tsx`
+(grade), `AgendaList.tsx`, `AgendaRail.tsx` (coluna de resumo), `AgendaMobile.tsx`,
+`agenda-ui.tsx` (cores de status, selo, avatar, lanes) e `agenda-dates.ts` (datas no fuso do
+navegador; o fio é ISO UTC). Cores: `--color-agenda-*` e `--color-visit-*` (DESIGN_TOKENS.md).
 
-- **`?visit=<id>`** abre a visita direto no `Modal` (é o [Abrir visita] da ficha do médico,
-  CRMLAB-89). Fechar limpa o parâmetro, para recarregar a página não reabrir.
-- **Topo:** `PageHeader` "Agenda de visitas" + [+ Nova visita] (hoje às 9h se a semana é a atual;
-  senão a segunda às 9h).
-- **Navegação:** [‹ Anterior] [Hoje] [Próxima ›] + rótulo da semana ("05 – 11 de out. de 2026").
-  A semana vai de segunda 00:00 a segunda 00:00 (local) e é o `from`/`to` do `GET /visits`.
-  `SegmentedControl` Semana | Lista. **No celular (< `md`) abre em Lista**; no desktop, em Semana.
-- **Filtros** (3 `Select`, empilham no celular): responsável, médico e status → `responsibleId`,
-  `doctorId`, `status` na query.
-- **Semana:** grade 07h–20h × seg–dom (rola na horizontal no celular). Visita antes das 07h cai
-  na linha das 07h; depois das 20h, na das 20h. Cartão por visita (hora, médico, responsável),
-  riscado quando encerrada. **Clicar na célula** abre "Nova visita" com aquele dia e hora; o "+" da
-  célula faz o mesmo pelo teclado. Clicar no cartão abre a visita. Hoje com fundo `accent-100`.
-- **Lista:** a mesma semana, por dia ("terça-feira, 06 de outubro"), uma linha por visita (hora,
-  médico, tipo · responsável · pauta, `Chip` do status). Vazio: "Nenhuma visita nesta semana".
+Tela **full-bleed** (sem `PageContainer`): conteúdo à esquerda e, a partir de **1280px**, a
+**coluna de resumo** de 280px à direita. Abaixo de 1280px a coluna some e clicar numa visita abre o
+`Modal` "Visita". Abaixo de `md` (768px) a tela vira a **visão por dia** do celular.
+
+- **Dados:** a semana (segunda 00:00 a segunda 00:00, local) vem **inteira** do `GET /visits`
+  (`from`/`to` só). Filtros e contagens são feitos **na tela** sobre ela (D-262 item 4).
+- **`?visit=<id>`** (o [Abrir visita] da ficha do médico, CRMLAB-89): com a coluna de resumo, a
+  visita é selecionada nela e a grade vai para a semana da visita; sem a coluna, abre o `Modal`.
+  Fechar limpa o parâmetro.
+- **Topo:** `PageHeader` compacto "Agenda de visitas" + [+ Nova visita] (hoje às 9h se a semana é
+  a atual; senão a segunda às 9h).
+- **Toolbar:** grupo unido [‹] [Hoje] [›] (`aria-label` "Semana anterior"/"Próxima semana") +
+  período ("05 – 11 de out. 2026" / "28 set. – 04 out. 2026"); à direita, o seletor Semana | Lista.
+- **Filtros:** chips de status (são filtro e legenda: ponto + rótulo + contagem da semana inteira;
+  todos ligados; clicar desliga), chips de responsável (avatar + primeiro nome, seleção única; com
+  mais de 6 usuários vira seletor) e o seletor "Médico: Todos".
+- **Semana:** grade 07h–20h × seg–dom, 1 hora = 64px, rótulo da hora na linha. Cabeçalho do dia
+  fixo ao rolar (número em círculo, dia da semana, "3 visitas"/"sem visitas"); sáb/dom com fundo
+  levemente cinza; **hoje** com o número no círculo da cor do tema, coluna tingida e a **linha do
+  agora** (vermelha, atualiza a cada minuto). A visita não tem duração prevista: o **bloco ocupa
+  1 hora** a partir do início (horário · médico · avatar + especialidade), na cor do status;
+  cancelada e "não recebeu" com o nome riscado. Visitas a menos de 1 h uma da outra viram **lanes**
+  que recuam 28% (sem dividir a coluna). Clicar no vazio abre "Nova visita" na hora ou meia hora
+  clicada; o "+" escondido de cada hora faz o mesmo pelo teclado. Semana vazia: cartão "Nenhuma
+  visita nesta semana" sobre a grade (com filtros: "Nenhuma visita com esses filtros" + [Limpar
+  filtros]). Carregando: esqueleto.
+- **Lista:** a mesma semana; cabeçalho do dia fixo ("Quinta, 01 de out." + contagem); linha em
+  colunas Horário · Médico (+ especialidade) · Local (clínica do médico ou, sem ela, o tipo da
+  visita) · Responsável (avatar + nome) · selo do status.
+- **Coluna de resumo (≥ 1280px):** "Resumo da semana" (total + barra de distribuição por status,
+  sem filtros) e, embaixo, **"Hoje"** (as visitas de hoje com os filtros; se a semana na tela não é
+  a atual, o dia é buscado à parte) ou, com uma visita selecionada, **"Detalhes da visita"**:
+  quando, horário (com check-in/out: "Cheguei 09:05 · Saí 09:50 (45 min)"), tipo, local,
+  responsável, motivo. Ações pelo estado: agendada sem check-in → [Cheguei] [Reagendar]
+  [Cancelar]; com check-in → [Saí] [Cancelar]; realizada → [Registrar relato] e [Agendar retorno]
+  (se houver data de retorno); sempre "Abrir visita completa" e, se aberta, "Médico não recebeu".
+  Não existe "marcar como realizada": realizada só nasce do [Saí] (D-258). Reagendar, cancelar e
+  "não recebeu" abrem o `Modal` da ação (motivo/nova data). Fechar ou trocar de semana volta para
+  "Hoje".
+- **Celular (< `md`):** cabeçalho "Agenda" + mês(es), botão de filtros (abre `Modal` com os mesmos
+  filtros e um contador dos ativos) e [+]; faixa da semana com ‹ › e os 7 dias (ponto = tem
+  visita; hoje tingido; o selecionado na cor do tema); título do dia + contagem; lista do dia em
+  cartões na cor do status. Tocar abre o `Modal` "Visita".
 - **Nova/Editar visita** (`Modal`): Médico*, Responsável* (abre com o usuário logado), Tipo,
   Data* e Hora* (só ao criar), Objetivo/pauta. Médico/responsável inativo da visita aparece como
   "Nome (inativo)". `VALIDATION_ERROR` com `fields` marca o campo.
-- **Visita aberta** (`Modal` "Visita"): médico (CRM, especialidade), `Chip` do status, data/hora,
+- **Visita aberta** (`Modal` "Visita"): médico (CRM, especialidade), selo do status, data/hora,
   tipo, responsável, quem agendou, pauta, motivo do encerramento (com quem e quando) e o
   **histórico de datas**. Enquanto `agendada`: [Médico não recebeu] [Cancelar visita] [Reagendar]
   [Editar]. Encerrada: só leitura.

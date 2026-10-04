@@ -49,7 +49,7 @@ const NOW = new Date(2026, 9, 7, 10, 0);
 function visit(overrides: Partial<VisitDetail> = {}): VisitDetail {
   return {
     id: 'v-1',
-    doctor: { id: 'doc-1', name: 'Dra. Júlia Costa', crm: '12345', crmUf: 'SC', specialty: 'Ginecologia', isActive: true },
+    doctor: { id: 'doc-1', name: 'Dra. Júlia Costa', crm: '12345', crmUf: 'SC', specialty: 'Ginecologia', clinic: null, isActive: true },
     responsible: { id: 'u-ana', name: 'Ana Gestora' },
     scheduledAt: new Date(2026, 9, 6, 9, 30).toISOString(),
     type: 'online',
@@ -118,7 +118,7 @@ function renderPage() {
   );
 }
 
-/** Celular: a Lista abre por padrão — é onde a visitadora toca. */
+/** Celular: a visão por dia (CRMLAB-92) — é onde a visitadora toca. */
 function mockMobile() {
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,
@@ -137,7 +137,9 @@ function mockMobile() {
 }
 
 async function openVisit(user: ReturnType<typeof userEvent.setup>) {
-  const list = within(await screen.findByTestId('agenda-list'));
+  // A visita é de terça (06/10); a tela abre no dia de hoje (quarta).
+  await user.click(await screen.findByRole('tab', { name: /Terça, 06 de out\., com visitas/ }));
+  const list = within(await screen.findByTestId('agenda-day-list'));
   await user.click(list.getByText('Dra. Júlia Costa'));
   return within(await screen.findByRole('dialog', { name: 'Visita' }));
 }

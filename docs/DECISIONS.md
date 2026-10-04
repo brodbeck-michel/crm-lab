@@ -5271,3 +5271,37 @@ cada médico (visitas e contatos), com autor e data, como o painel "Atividades" 
 inventário de `route-tenant-isolation.spec.ts` (102 → 106 rotas), `DoctorProfile.spec.tsx`,
 `Agenda.spec.tsx`, `Doctors.spec.tsx`. SCHEMA §38, API_CONTRACTS §13, SERVICES §32,
 BUSINESS_RULES §15, PAGES §22b e §23.
+
+### D-262: Agenda de visitas repaginada pelo design system, ajustada às regras da visita
+**Decisão (Michel, 04/10/2026: design system "Agenda de Visitas" enviado e ajustes A1–A14 do
+CRMLAB-92 aprovados):**
+1. **Status são os 4 do sistema** (agendada, realizada, cancelada, "médico não recebeu"). O
+   "Confirmada" do documento não existe e não foi criado; "não recebeu" ganhou o âmbar.
+2. **Bloco de 1 hora fixa.** A visita só tem a hora prevista (`scheduledAt`), sem fim nem duração.
+   A densidade por duração do documento não se aplica; a duração real aparece no detalhe depois
+   do check-in/out. Duração prevista é outro card.
+3. **Sem "Marcar como realizada".** Realizada só nasce do [Saí] (D-258). O painel mostra as ações
+   do estado: [Cheguei] → [Saí], [Reagendar] (só antes do check-in), [Cancelar] e "Médico não
+   recebeu" (com motivo, no `Modal` da ação).
+4. **Filtros na tela.** A semana vem inteira do `GET /visits` e os filtros (status em
+   multisseleção, responsável, médico) e as contagens saem dela. A API filtra um status só, e as
+   contagens dos chips precisam da semana toda. O teto de 500 e o aviso `truncated` continuam.
+5. **"Local" = clínica do cadastro do médico.** `VisitDoctor` ganhou `clinic` (sem migração: já
+   existe em `doctors`). Sem clínica, mostra o tipo da visita.
+6. **Cores:** a marca continua sendo o accent do tenant; os neutros e as cores de status são
+   literais (`--color-agenda-*`, `--color-visit-*`), porque os `neutral-*` tingidos apagavam a
+   grade. Avatares fora dos matizes de status.
+7. **Coluna de resumo só a partir de 1280px.** Abaixo disso o clique abre o `Modal` "Visita" que já
+   existia (check-in/out, relato, anexos, histórico), que também é o detalhe do celular. O celular
+   ganhou a visão por dia no lugar da Lista.
+8. **`?visit=<id>`** (CRMLAB-89) seleciona a visita na coluna e leva a grade até a semana dela;
+   sem a coluna, abre o `Modal` como antes.
+**Motivo:** a grade antiga sumia no tema do tenant (linhas `neutral-200` sobre `surface` tingido),
+sem cor por status nem separação entre dias e horas. O design system pedido pelo Michel resolve a
+leitura; os ajustes mantêm as regras de D-256/D-258.
+**Impacto:** `frontend/src/pages/Visitation/` (`Agenda.tsx` reescrito; `AgendaWeek.tsx`,
+`AgendaList.tsx`, `AgendaRail.tsx`, `AgendaMobile.tsx`, `agenda-ui.tsx` novos; `agenda-dates.ts`;
+`VisitRecord.tsx` exporta `useVisitCheck`); `styles/tokens.css`, `tailwind.config.js`,
+`components/shared/Avatar.tsx` (`style`); `shared/types/visit.types.ts` (`VisitDoctor.clinic`),
+`backend/src/repositories/visit.repository.ts`; testes `Agenda.spec.tsx`, `VisitRecord.spec.tsx`,
+`agenda-ui.spec.tsx` (novo), `tests/visits/visits.spec.ts`. PAGES §23, DESIGN_TOKENS, API_CONTRACTS §14.

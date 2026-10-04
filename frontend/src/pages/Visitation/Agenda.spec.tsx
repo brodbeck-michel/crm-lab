@@ -70,7 +70,15 @@ const julia: Doctor = {
 function visit(overrides: Partial<VisitDetail> = {}): VisitDetail {
   return {
     id: 'v-1',
-    doctor: { id: 'doc-1', name: 'Dra. Júlia Costa', crm: '12345', crmUf: 'SC', specialty: 'Ginecologia', isActive: true },
+    doctor: {
+      id: 'doc-1',
+      name: 'Dra. Júlia Costa',
+      crm: '12345',
+      crmUf: 'SC',
+      specialty: 'Ginecologia',
+      clinic: null,
+      isActive: true,
+    },
     responsible: { id: 'u-bia', name: 'Bia Atendente' },
     scheduledAt: new Date(2026, 9, 6, 9, 30).toISOString(),
     type: 'presencial',
@@ -115,20 +123,25 @@ function renderPage(path = '/visitation/agenda') {
   );
 }
 
-function mockMatchMedia(matches: boolean) {
+/** Largura da tela: as media queries da página (`max-width`/`min-width`) respondem a ela. */
+function mockViewport(width: number) {
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,
     writable: true,
-    value: vi.fn().mockImplementation((query: string) => ({
-      matches,
-      media: query,
-      onchange: null,
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    })),
+    value: vi.fn().mockImplementation((query: string) => {
+      const max = /max-width:\s*(\d+)px/.exec(query);
+      const min = /min-width:\s*(\d+)px/.exec(query);
+      return {
+        matches: (!max || width <= Number(max[1])) && (!min || width >= Number(min[1])),
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      };
+    }),
   });
 }
 
@@ -137,7 +150,8 @@ describe('Agenda (/visitation/agenda)', () => {
     vi.clearAllMocks();
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(NOW);
-    mockMatchMedia(false);
+    // Tablet/notebook: grade sem a coluna de resumo — clicar abre o modal.
+    mockViewport(1024);
     listMock.mockResolvedValue(listResponse());
     getMock.mockResolvedValue(visit());
     vi.mocked(doctorsApi.list).mockResolvedValue({
@@ -151,7 +165,13 @@ describe('Agenda (/visitation/agenda)', () => {
       ],
     });
     useAuthStore.setState({
-      user: { id: 'u-bia', email: 'bia@lab.test', name: 'Bia Atendente', role: 'attendant', discountLimit: 5 },
+      user: {
+        id: 'u-bia',
+        email: 'bia@lab.test',
+        name: 'Bia Atendente',
+        role: 'attendant',
+        discountLimit: 5,
+      },
     });
   });
 
@@ -162,10 +182,15 @@ describe('Agenda (/visitation/agenda)', () => {
   it('abre na semana atual (segunda a segunda) com a visita na grade', async () => {
     renderPage();
     await waitFor(() => expect(listMock).toHaveBeenCalled());
-    expect(listMock).toHaveBeenLastCalledWith({ from: MONDAY.toISOString(), to: NEXT_MONDAY.toISOString() });
+    expect(listMock).toHaveBeenLastCalledWith({
+      from: MONDAY.toISOString(),
+      to: NEXT_MONDAY.toISOString(),
+    });
 
     const week = within(await screen.findByTestId('agenda-week'));
-    expect(await week.findByRole('button', { name: /09:30 Dra\. Júlia Costa — Agendada/ })).toBeInTheDocument();
+    expect(
+      await week.findByRole('button', { name: /09:30 Dra\. Júlia Costa — Agendada/ }),
+    ).toBeInTheDocument();
     expect(screen.getByTestId('week-label')).toHaveTextContent(/05 – 11 de out/);
   });
 
@@ -174,15 +199,15 @@ describe('Agenda (/visitation/agenda)', () => {
     renderPage();
     await waitFor(() => expect(listMock).toHaveBeenCalled());
 
-    await user.click(screen.getByRole('button', { name: 'Próxima ›' }));
+    await user.click(screen.getByRole('button', { name: 'Próxima semana' }));
     await waitFor(() =>
       expect(listMock).toHaveBeenLastCalledWith({
         from: NEXT_MONDAY.toISOString(),
         to: new Date(2026, 9, 19).toISOString(),
       }),
     );
-    await user.click(screen.getByRole('button', { name: '‹ Anterior' }));
-    await user.click(screen.getByRole('button', { name: '‹ Anterior' }));
+    await user.click(screen.getByRole('button', { name: 'Semana anterior' }));
+    await user.click(screen.getByRole('button', { name: 'Semana anterior' }));
     await waitFor(() =>
       expect(listMock).toHaveBeenLastCalledWith({
         from: new Date(2026, 8, 28).toISOString(),
@@ -191,38 +216,83 @@ describe('Agenda (/visitation/agenda)', () => {
     );
     await user.click(screen.getByRole('button', { name: 'Hoje' }));
     await waitFor(() =>
-      expect(listMock).toHaveBeenLastCalledWith({ from: MONDAY.toISOString(), to: NEXT_MONDAY.toISOString() }),
-    );
-  });
-
-  it('filtros de responsável, médico e status chegam ao GET /visits', async () => {
-    const user = userEvent.setup({ delay: null });
-    renderPage();
-    await waitFor(() => expect(screen.getByRole('option', { name: 'Ana Gestora' })).toBeInTheDocument());
-    await waitFor(() => expect(screen.getAllByRole('option', { name: 'Dra. Júlia Costa' }).length).toBeGreaterThan(0));
-
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Filtrar por responsável' }), 'u-ana');
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Filtrar por médico' }), 'doc-1');
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Filtrar por status' }), 'cancelada');
-    await waitFor(() =>
       expect(listMock).toHaveBeenLastCalledWith({
         from: MONDAY.toISOString(),
         to: NEXT_MONDAY.toISOString(),
-        responsibleId: 'u-ana',
-        doctorId: 'doc-1',
-        status: 'cancelada',
       }),
     );
   });
 
-  it('no celular a lista é a visão padrão, agrupada por dia', async () => {
-    mockMatchMedia(true);
+  it('filtros valem na tela (a semana vem inteira) e os chips contam a semana toda', async () => {
+    const user = userEvent.setup({ delay: null });
+    const paulo = visit({
+      id: 'v-2',
+      doctor: {
+        id: 'doc-2',
+        name: 'Dr. Paulo Lima',
+        crm: null,
+        crmUf: null,
+        specialty: null,
+        clinic: null,
+        isActive: true,
+      },
+      responsible: { id: 'u-ana', name: 'Ana Gestora' },
+      scheduledAt: new Date(2026, 9, 8, 15, 0).toISOString(),
+      status: 'cancelada',
+      statusReason: 'Férias',
+    });
+    listMock.mockResolvedValue(listResponse([visit(), paulo]));
     renderPage();
-    const list = within(await screen.findByTestId('agenda-list'));
-    expect(list.getByText(/terça-feira, 06 de outubro/i)).toBeInTheDocument();
-    expect(list.getByText('Dra. Júlia Costa')).toBeInTheDocument();
-    expect(list.getByText(/Presencial · Bia Atendente/)).toBeInTheDocument();
+    const week = within(await screen.findByTestId('agenda-week'));
+    await week.findByRole('button', { name: /Dr\. Paulo Lima — Cancelada/ });
+
+    const filters = within(screen.getByTestId('agenda-filters'));
+    expect(filters.getByRole('button', { name: /^Agendada\s*1$/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    await user.click(filters.getByRole('button', { name: /^Cancelada\s*1$/ }));
+    expect(week.queryByRole('button', { name: /Dr\. Paulo Lima/ })).not.toBeInTheDocument();
+    expect(filters.getByRole('button', { name: /^Cancelada\s*1$/ })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+
+    await user.click(filters.getByRole('button', { name: /^Cancelada\s*1$/ }));
+    await user.click(await filters.findByRole('button', { name: 'Bia' }));
+    expect(week.queryByRole('button', { name: /Dr\. Paulo Lima/ })).not.toBeInTheDocument();
+    expect(week.getByRole('button', { name: /Dra\. Júlia Costa/ })).toBeInTheDocument();
+
+    await user.click(filters.getByRole('button', { name: 'Bia' }));
+    await waitFor(() =>
+      expect(screen.getAllByRole('option', { name: 'Dra. Júlia Costa' }).length).toBeGreaterThan(0),
+    );
+    await user.selectOptions(
+      filters.getByRole('combobox', { name: 'Filtrar por médico' }),
+      'doc-1',
+    );
+    expect(week.queryByRole('button', { name: /Dr\. Paulo Lima/ })).not.toBeInTheDocument();
+
+    // Nenhum filtro vai ao servidor: a semana é buscada inteira.
+    expect(listMock).toHaveBeenLastCalledWith({
+      from: MONDAY.toISOString(),
+      to: NEXT_MONDAY.toISOString(),
+    });
+  });
+
+  it('no celular a tela mostra um dia por vez, começando por hoje', async () => {
+    const user = userEvent.setup({ delay: null });
+    mockViewport(390);
+    renderPage();
+    await screen.findByTestId('agenda-mobile');
     expect(screen.queryByTestId('agenda-week')).not.toBeInTheDocument();
+    expect(await screen.findByText('Nenhuma visita neste dia.')).toBeInTheDocument();
+
+    await user.click(await screen.findByRole('tab', { name: /Terça, 06 de out\., com visitas/ }));
+    const day = within(await screen.findByTestId('agenda-day-list'));
+    expect(day.getByText('Dra. Júlia Costa')).toBeInTheDocument();
+    expect(day.getByText('Ginecologia · Presencial')).toBeInTheDocument();
+    expect(day.getByText('Bia Atendente')).toBeInTheDocument();
   });
 
   it('clicar no horário da grade abre "Nova visita" naquele horário e agenda com o usuário como responsável', async () => {
@@ -231,7 +301,9 @@ describe('Agenda (/visitation/agenda)', () => {
     renderPage();
     await screen.findByTestId('agenda-week');
 
-    await user.click(screen.getByRole('button', { name: 'Agendar visita em qui 08 de out. às 14:00' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Agendar visita em Quinta, 08 de out. às 14:00' }),
+    );
     const dialog = within(await screen.findByRole('dialog', { name: 'Nova visita' }));
     expect(dialog.getByLabelText('Data')).toHaveValue('2026-10-08');
     expect(dialog.getByLabelText('Hora')).toHaveValue('14:00');
@@ -279,7 +351,9 @@ describe('Agenda (/visitation/agenda)', () => {
 
     await user.click(await screen.findByRole('button', { name: /09:30 Dra\. Júlia Costa/ }));
     const dialog = within(await screen.findByRole('dialog', { name: 'Visita' }));
-    expect(await dialog.findByTestId('visit-reschedules')).toHaveTextContent(/Ana Gestora.*Médico pediu/);
+    expect(await dialog.findByTestId('visit-reschedules')).toHaveTextContent(
+      /Ana Gestora.*Médico pediu/,
+    );
 
     await user.click(dialog.getByRole('button', { name: 'Reagendar' }));
     const form = within(await screen.findByRole('dialog', { name: 'Reagendar visita' }));
@@ -341,5 +415,80 @@ describe('Agenda (/visitation/agenda)', () => {
     const dialog = within(await screen.findByRole('dialog', { name: 'Visita' }));
     expect(await dialog.findByText('Apresentar o painel de check-up')).toBeInTheDocument();
     expect(getMock).toHaveBeenCalledWith('v-9');
+  });
+
+  describe('com a coluna de resumo (tela larga)', () => {
+    beforeEach(() => mockViewport(1440));
+
+    it('resumo da semana e "Hoje"; clicar abre o detalhe com as ações da visita agendada', async () => {
+      const user = userEvent.setup({ delay: null });
+      const today = visit({ id: 'v-2', scheduledAt: new Date(2026, 9, 7, 14, 0).toISOString() });
+      listMock.mockResolvedValue(listResponse([visit(), today]));
+      getMock.mockResolvedValue(today);
+      cancelMock.mockResolvedValue(
+        visit({ id: 'v-2', status: 'cancelada', statusReason: 'Agenda' }),
+      );
+      renderPage();
+
+      const rail = within(await screen.findByTestId('agenda-rail'));
+      expect(await within(rail.getByTestId('week-summary')).findByText('2')).toBeInTheDocument();
+      const todayPanel = within(rail.getByTestId('today-panel'));
+      await user.click(await todayPanel.findByRole('button', { name: /14:00.*Dra\. Júlia Costa/ }));
+
+      const detail = within(await rail.findByTestId('visit-detail-panel'));
+      expect(detail.getByRole('button', { name: 'Cheguei' })).toBeInTheDocument();
+      expect(detail.getByRole('button', { name: 'Reagendar' })).toBeInTheDocument();
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+      await user.click(detail.getByRole('button', { name: 'Cancelar' }));
+      const form = within(await screen.findByRole('dialog', { name: 'Cancelar visita' }));
+      await user.type(form.getByLabelText('Motivo'), 'Agenda');
+      await user.click(form.getByRole('button', { name: 'Confirmar' }));
+      await waitFor(() => expect(cancelMock).toHaveBeenCalledWith('v-2', { reason: 'Agenda' }));
+
+      await user.click(detail.getByRole('button', { name: 'Fechar detalhes' }));
+      expect(await rail.findByTestId('today-panel')).toBeInTheDocument();
+    });
+
+    it('visita realizada não tem "Cheguei" nem cancelar — só o relato', async () => {
+      const user = userEvent.setup({ delay: null });
+      const done = visit({
+        status: 'realizada',
+        checkInAt: new Date(2026, 9, 6, 9, 35).toISOString(),
+        checkOutAt: new Date(2026, 9, 6, 10, 20).toISOString(),
+      });
+      listMock.mockResolvedValue(listResponse([done]));
+      getMock.mockResolvedValue(done);
+      renderPage();
+
+      await user.click(
+        await screen.findByRole('button', { name: /09:30 Dra\. Júlia Costa — Realizada/ }),
+      );
+      const detail = within(await screen.findByTestId('visit-detail-panel'));
+      expect(await detail.findByText(/Cheguei 09:35 · Saí 10:20/)).toBeInTheDocument();
+      expect(detail.queryByRole('button', { name: 'Cheguei' })).not.toBeInTheDocument();
+      expect(detail.queryByRole('button', { name: 'Cancelar' })).not.toBeInTheDocument();
+      await user.click(detail.getByRole('button', { name: 'Registrar relato' }));
+      expect(await screen.findByRole('dialog', { name: 'Visita' })).toBeInTheDocument();
+    });
+
+    it('?visit=<id> seleciona a visita no painel, sem modal', async () => {
+      getMock.mockResolvedValue(visit({ id: 'v-9' }));
+      listMock.mockResolvedValue(listResponse([visit({ id: 'v-9' })]));
+      renderPage('/visitation/agenda?visit=v-9');
+
+      const detail = within(await screen.findByTestId('visit-detail-panel'));
+      expect(detail.getByText('Dra. Júlia Costa')).toBeInTheDocument();
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('semana vazia avisa sobre a grade', async () => {
+      listMock.mockResolvedValue(listResponse([]));
+      renderPage();
+      expect(await screen.findByText('Nenhuma visita nesta semana')).toBeInTheDocument();
+      expect(
+        within(screen.getByTestId('agenda-rail')).getByText('Sem visitas hoje.'),
+      ).toBeInTheDocument();
+    });
   });
 });

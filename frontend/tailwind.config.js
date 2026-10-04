@@ -15,6 +15,38 @@ export default {
         text: 'var(--color-text)',
         ink: 'var(--color-text)',
         backdrop: 'var(--color-backdrop)',
+        // Agenda de visitas (CRMLAB-92, D-262): `border-agenda-line`, `bg-visit-agendada-bg`…
+        agenda: {
+          ink: 'var(--color-agenda-ink)',
+          'ink-2': 'var(--color-agenda-ink-2)',
+          muted: 'var(--color-agenda-muted)',
+          'muted-2': 'var(--color-agenda-muted-2)',
+          alt: 'var(--color-agenda-alt)',
+          rail: 'var(--color-agenda-rail)',
+          weekend: 'var(--color-agenda-weekend)',
+          hover: 'var(--color-agenda-hover)',
+          press: 'var(--color-agenda-press)',
+          seg: 'var(--color-agenda-seg)',
+          selected: 'var(--color-agenda-selected)',
+          line: 'var(--color-agenda-line)',
+          'line-soft': 'var(--color-agenda-line-soft)',
+          'line-control': 'var(--color-agenda-line-control)',
+          'line-hover': 'var(--color-agenda-line-hover)',
+          now: 'var(--color-agenda-now)',
+          danger: 'var(--color-agenda-danger)',
+          'brand-tint': 'var(--color-agenda-brand-tint)',
+          'brand-col': 'var(--color-agenda-brand-col)',
+        },
+        ...Object.fromEntries(
+          ['agendada', 'realizada', 'nao-recebeu', 'cancelada'].map((status) => [
+            `visit-${status}`,
+            {
+              bg: `var(--color-visit-${status}-bg)`,
+              ink: `var(--color-visit-${status}-ink)`,
+              dot: `var(--color-visit-${status}-dot)`,
+            },
+          ]),
+        ),
         // Estágios do pipeline (CRMLAB-91, D-260): `bg-stage-ganho-tint`, `text-stage-ganho-ink`…
         'stage-novo': {
           DEFAULT: 'var(--color-stage-novo)',

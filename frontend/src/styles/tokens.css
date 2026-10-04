@@ -155,6 +155,46 @@
     --color-stage-perdido-soft: color-mix(in oklab, var(--color-stage-perdido) 20%, white);
     --color-stage-perdido-ink: color-mix(in oklab, var(--color-stage-perdido) 70%, #1a1a1a);
 
+    /* ---------------------------------------------------------------
+     * Agenda de visitas (CRMLAB-92, D-262). Neutros LITERAIS, iguais
+     * para todo tenant: os neutral-* e o surface saem tingidos do accent,
+     * e era isso que apagava as linhas da grade. A marca continua vindo
+     * do accent do tenant (só os tons claros são misturados aqui).
+     * --------------------------------------------------------------- */
+    --color-agenda-ink: #1c2620;
+    --color-agenda-ink-2: #3a4740;
+    --color-agenda-muted: #6b7a71;
+    --color-agenda-muted-2: #7a8880;
+    --color-agenda-alt: #fafbfa;
+    --color-agenda-rail: #fcfdfc;
+    --color-agenda-weekend: #fbfcfb;
+    --color-agenda-hover: #f7f9f8;
+    --color-agenda-press: #f3f6f4;
+    --color-agenda-seg: #f0f3f1;
+    --color-agenda-selected: #f0f5f2;
+    --color-agenda-line: #e3e9e5;
+    --color-agenda-line-soft: #edf1ee;
+    --color-agenda-line-control: #dce3df;
+    --color-agenda-line-hover: #b9ccc1;
+    --color-agenda-now: #d2453b;
+    --color-agenda-danger: #b23a31;
+    --color-agenda-brand-tint: color-mix(in oklab, var(--color-accent) 9%, white);
+    --color-agenda-brand-col: color-mix(in oklab, var(--color-accent) 4%, white);
+
+    /* Status da visita: fundo / texto (≥ 4,5:1 sobre o fundo) / ponto. */
+    --color-visit-agendada-bg: oklch(0.95 0.03 250);
+    --color-visit-agendada-ink: oklch(0.36 0.09 250);
+    --color-visit-agendada-dot: oklch(0.6 0.13 250);
+    --color-visit-realizada-bg: #eef1ef;
+    --color-visit-realizada-ink: #4f5b54;
+    --color-visit-realizada-dot: #9aa59f;
+    --color-visit-nao-recebeu-bg: oklch(0.95 0.045 75);
+    --color-visit-nao-recebeu-ink: oklch(0.42 0.09 75);
+    --color-visit-nao-recebeu-dot: oklch(0.68 0.14 75);
+    --color-visit-cancelada-bg: oklch(0.96 0.025 25);
+    --color-visit-cancelada-ink: oklch(0.45 0.12 25);
+    --color-visit-cancelada-dot: oklch(0.62 0.16 25);
+
     /* --------------------------------------------------------------- */
     /* Tipografia                                                       */
     /* --------------------------------------------------------------- */

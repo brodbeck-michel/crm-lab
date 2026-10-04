@@ -19,7 +19,7 @@ import type { DbClient, DbTx } from '../db/types.js';
 
 /** `LEFT JOIN users` para os nomes; o medico e obrigatorio (JOIN). */
 const COLUMNS = `v.id, v.doctor_id, d.name AS doctor_name, d.crm AS doctor_crm, d.crm_uf AS doctor_crm_uf,
-  d.specialty AS doctor_specialty, d.is_active AS doctor_is_active,
+  d.specialty AS doctor_specialty, d.clinic AS doctor_clinic, d.is_active AS doctor_is_active,
   v.responsible_user_id, ru.name AS responsible_name,
   v.scheduled_at, v.type, v.agenda, v.status, v.status_reason, v.status_changed_at,
   v.status_changed_by, su.name AS status_changed_by_name,
@@ -49,6 +49,7 @@ interface VisitRow {
   doctor_crm: string | null;
   doctor_crm_uf: string | null;
   doctor_specialty: string | null;
+  doctor_clinic: string | null;
   doctor_is_active: boolean;
   responsible_user_id: string | null;
   responsible_name: string | null;
@@ -121,6 +122,7 @@ export function toVisit(row: VisitRow): Visit {
       crm: row.doctor_crm,
       crmUf: row.doctor_crm_uf,
       specialty: row.doctor_specialty,
+      clinic: row.doctor_clinic,
       isActive: row.doctor_is_active,
     },
     responsible: person(row.responsible_user_id, row.responsible_name),

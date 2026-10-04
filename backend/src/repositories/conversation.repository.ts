@@ -121,9 +121,16 @@ const LIST_COLUMNS = `c.id, c.patient_id, c.patient_name, c.patient_phone, c.pat
  * sistema NAO tiram do alerta. Sem resposta nenhuma ainda, vale a primeira
  * mensagem do paciente. Conversa encerrada nao espera ninguem (`NULL`).
  *
- * O predicado da subconsulta repete o do indice parcial
- * `idx_messages_human_reply` (migracao 046) literalmente — so assim o planner
- * acha a ultima resposta na primeira entrada do indice.
+ * Encerrar tambem zera a espera (CRMLAB-90, D-259): a fronteira e a MAIS
+ * RECENTE entre a ultima resposta humana e o ultimo evento "Atendimento
+ * encerrado por X" (D-174) — a mesma fronteira `C` do relatorio de tempo de
+ * resposta (D-257, `response-time.repository.ts`). Sem isso, o "obrigado" de
+ * antes do encerramento faria a conversa reaberta nascer vermelha.
+ * `GREATEST` ignora `NULL`; sem nenhuma das duas, `-infinity`.
+ *
+ * Cada subconsulta repete LITERALMENTE o predicado do seu indice parcial —
+ * `idx_messages_human_reply` (046) e `idx_messages_closed_event` (051) — so
+ * assim o planner acha a ultima entrada na primeira posicao do indice.
  */
 const AWAITING_REPLY_LATERAL = `LEFT JOIN LATERAL (
        SELECT p.created_at
@@ -131,14 +138,21 @@ const AWAITING_REPLY_LATERAL = `LEFT JOIN LATERAL (
        WHERE c.status = 'active'
          AND p.conversation_id = c.id
          AND p.sender_type = 'patient'
-         AND p.created_at > COALESCE((
+         AND p.created_at > COALESCE(GREATEST((
                SELECT h.created_at
                FROM messages h
                WHERE h.conversation_id = c.id
                  AND h.sender_type = 'agent' AND h.automation IS NULL
                ORDER BY h.created_at DESC
                LIMIT 1
-             ), '-infinity'::timestamp)
+             ), (
+               SELECT e.created_at
+               FROM messages e
+               WHERE e.conversation_id = c.id
+                 AND e.sender_type = 'system' AND e.content LIKE 'Atendimento encerrado%'
+               ORDER BY e.created_at DESC
+               LIMIT 1
+             )), '-infinity'::timestamp)
        ORDER BY p.created_at ASC, p.id ASC
        LIMIT 1
      ) aw ON TRUE`;

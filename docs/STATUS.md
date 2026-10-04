@@ -3158,6 +3158,19 @@ CRMLAB-85 (Visitação Médica). Decisão D-256.
 - **Pendente:** validação na hml; a migração 048 roda no deploy. `realizada` (check-in/out, relato
   e anexos) é o card [C]; linha do tempo do médico, o card [D].
 
+### 🚧 CRMLAB-90 — alerta de paciente sem resposta: encerrar zera a espera (2026-10-04, em desenvolvimento)
+
+Branch `feature/CRMLAB-90-alerta-encerramento` (de `main` v1.31.0). Decisão D-259 (emenda à
+D-254, alinhando com a D-257), migração `051_messages_closed_event_index.sql` (só índice parcial;
+o 050 é do CRMLAB-88).
+
+- **Backend:** `awaitingReplySince` conta da primeira mensagem do paciente depois da mais recente
+  entre a última resposta humana e o último "Atendimento encerrado por X". Conversa reaberta só
+  entra em alerta pelas mensagens novas. Nada muda na tela.
+- **Testes:** `tests/conversations/awaiting-reply.spec.ts` (12, 5 novos — 3 falham sem a correção).
+- **Pendente:** suíte inteira verde num ambiente com acesso a `cdn.sheetjs.com` (o `xlsx` do
+  frontend não baixou na rotina) e validação na hml; a migração 051 roda no deploy.
+
 ### 🚧 CRMLAB-83 — relatório de tempo de resposta no WhatsApp (2026-10-03, aguardando validação)
 
 Branch `feature/CRMLAB-83-relatorio-tempo-resposta` (de `main` v1.30.0). Decisão D-257, migração
@@ -3178,3 +3191,27 @@ Branch `feature/CRMLAB-83-relatorio-tempo-resposta` (de `main` v1.30.0). Decisã
   `format.spec.ts`.
 - **Pendente:** validação na hml; a migração 049 roda no deploy.
 
+
+### 🚧 CRMLAB-88 — registro da visita: check-in/out, relato, anexos e próximo passo (2026-10-03, aguardando validação)
+
+Branch `feature/CRMLAB-88-checkin-relato-anexos` (de `main` v1.31.0). Terceiro card do épico
+CRMLAB-85 (Visitação Médica). Decisão D-258, migração `050_doctor_visit_record.sql`.
+
+- **Banco:** colunas `check_in_at/_by`, `check_out_at/_by`, `report_presented|feedback|objections`
+  e `next_visit_date` em `doctor_visits`, com `CHECK` (check-out depois do check-in; `realizada`
+  exige check-out). Tabela `doctor_visit_attachments` com policy de tenant no mesmo arquivo.
+- **API:** `POST /visits/:id/check-in|check-out`, `PATCH /visits/:id/report`,
+  `POST /visits/:id/attachments`, `GET|DELETE /visits/:id/attachments/:attachmentId`, para todo papel
+  de laboratório. Check-out marca `realizada`; check-in/out repetidos são idempotentes; check-out sem
+  check-in → `409 VISIT_NOT_CHECKED_IN`; reagendar depois do check-in → `409 VISIT_ALREADY_CHECKED_IN`.
+  Anexo só imagem/PDF (allow-list + sniff do CRMLAB-31, 15 MiB, 20 por visita), arquivo em
+  `MEDIA_DIR`. Audit em check-in, check-out, relato, anexar e excluir.
+- **Tela:** no modal "Visita" da Agenda, bloco "Registro" com [Cheguei] → [Saí] (largura total no
+  celular) e a duração; relato (3 textos) + data de retorno + [Agendar retorno] (abre "Nova visita"
+  pré-preenchida, sem criar); anexos com [Anexar arquivo], [Baixar] e [Excluir].
+- **Testes:** backend `visits/visit-record.spec.ts` (21), `visits/visit-types.spec.ts` (6),
+  `route-tenant-isolation.spec.ts` (102 rotas; o caso "exige token" agora zera o limitador por IP,
+  que estourava na 101ª rota); frontend `pages/Visitation/VisitRecord.spec.tsx` (7) e o fixture de
+  `Agenda.spec.tsx`.
+- **Pendente:** validação na hml; a migração 050 roda no deploy. Linha do tempo do médico é o card
+  [D].

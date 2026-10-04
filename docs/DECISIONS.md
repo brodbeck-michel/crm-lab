@@ -5128,3 +5128,85 @@ frontend `api/analytics.ts`, `api/query-keys.ts`, `lib/format.ts` (`formatMinute
 testes `tests/analytics/response-time.spec.ts`, inventário de `route-tenant-isolation.spec.ts`
 (88 → 89 rotas), `ResponseTimeSection.spec.tsx`, `Analytics.spec.tsx`, `format.spec.ts`.
 SCHEMA §4, API_CONTRACTS §5, SERVICES §9, BUSINESS_RULES §3, PAGES §8.
+
+## 2026-10-03 — Registro da visita: check-in/out, relato, anexos e próximo passo (CRMLAB-88, épico CRMLAB-85 Visitação Médica)
+
+### D-258: Check-out marca a visita como realizada; relato, retorno e anexos na própria visita
+**Decisão (Michel no épico e no card, 02–03/10/2026; itens 3, 4, 6, 7 e 9 decididos na
+implementação e avisados no card):**
+1. **Check-in ("Cheguei") e check-out ("Saí")** gravam a hora **do servidor** e quem tocou
+   (`check_in_at/_by`, `check_out_at/_by` em `doctor_visits`, migração 050, SCHEMA §37). **Sem GPS**
+   (resposta 4A). A duração não vai no fio: `visitDurationMinutes` em `shared/` calcula dos dois.
+2. **O check-out marca `realizada`** (D-256 item 2 deixou o status para cá), no mesmo `UPDATE`,
+   com `status_changed_at/_by`. Check-out sem check-in → `409 VISIT_NOT_CHECKED_IN`. Check-in em
+   `cancelada`/`nao_recebeu` → `409 VISIT_ALREADY_CLOSED`. O banco também garante: `realizada`
+   exige `check_out_at`, e o check-out exige check-in e não vem antes dele (`CHECK`).
+3. **Repetir é idempotente:** o segundo check-in ou check-out devolve 200 com a hora original e sem
+   novo audit. O toque duplo no celular, ou dois aparelhos, não sobrescreve a hora real.
+4. **Depois do check-in a visita não reagenda** (`409 VISIT_ALREADY_CHECKED_IN`): a data prevista
+   passa a ser histórico do que aconteceu. Ainda dá para **editar, cancelar ou marcar "médico não
+   recebeu"** (cheguei e o médico não atendeu). O check-in continua gravado.
+5. **Relato** em três textos opcionais (o que foi apresentado, feedback do médico, objeções; até
+   4000 cada) e **próximo passo** como uma data (`next_visit_date DATE`), por
+   `PATCH /visits/:id/report`. O retorno só **sugere**: a tela abre "Nova visita" já preenchida, e
+   nada é criado sozinho.
+6. **Relato, próximo passo e anexos valem em `agendada` e `realizada`** (`isVisitRecordEditable`).
+   O relato costuma ser escrito depois do "Saí", então a regra "encerrada é só leitura" da D-256
+   item 3 continua valendo só para `cancelada`/`nao_recebeu`. Baixar anexo vale em qualquer status.
+7. **Anexos** em tabela própria (`doctor_visit_attachments`), com o arquivo no mesmo volume da mídia
+   (`MEDIA_DIR`, `lib/media-storage.ts`, id da linha como nome). Só **imagem e PDF** da allow-list
+   do CRMLAB-31 (`isVisitAttachmentMimeType`), o mesmo sniff de `resolveStoredMimeType` e o mesmo
+   teto de 15 MiB (`MAX_MEDIA_BYTES`). Na saída, rebaixar para `octet-stream` em silêncio esconderia
+   o erro de quem está na tela, então conteúdo divergente é `VALIDATION_ERROR`, como no anexo da
+   atendente (revisão do PR #43). O download repete os cabeçalhos de `GET /media/:id`
+   (`servedMimeType`, `nosniff`, `inline` só para imagem). No máximo **20 por visita**
+   (`VISIT_ATTACHMENTS_MAX`), para uma visita não virar depósito de arquivos.
+8. **Qualquer usuário do laboratório exclui anexo** (resposta 7). Excluir apaga a linha e o arquivo
+   (arquivo já ausente não é erro), e o audit guarda nome, tipo e tamanho.
+9. **Rotas próprias, não o `PATCH /visits/:id`:** check-in/out, relato e anexos têm regras de status
+   diferentes da edição (que só vale em `agendada`). Seis rotas novas, todas no inventário de
+   isolamento (96 → 102). O anexo criado volta cru (201, D-070); o resto devolve `VisitDetail`.
+10. **Audit log** `check_in_visit`, `check_out_visit`, `update_visit_report` (só o diff),
+    `add_visit_attachment`, `delete_visit_attachment`, todos com `entityType: "visit"` (resposta 9).
+**Tela:** no `Modal` "Visita" da Agenda, o bloco "Registro" com um botão primário de largura total
+no celular ([Cheguei] → [Saí]), a duração, o relato com a data de retorno e [Agendar retorno], e os
+anexos ([Anexar arquivo], [Baixar], [Excluir]). PAGES §23.
+**Motivo:** a visitadora registra a visita na rua, pelo celular, e o gestor precisa saber se a
+visita aconteceu, quanto durou e o que o médico disse, antes da linha do tempo do médico (card [D]).
+**Impacto:** `backend/migrations/050_doctor_visit_record.sql`; `visit.repository.ts`,
+`visit.service.ts`, `visit.routes.ts`, `media.routes.ts` (`dispositionFor` exportada),
+`lib/media-storage.ts` (`deleteMediaFile`), `http/errors.ts`; `shared/types/visit.types.ts`,
+`api.types.ts` (`VISIT_NOT_CHECKED_IN`, `VISIT_ALREADY_CHECKED_IN`); frontend `api/visits.ts`,
+`pages/Visitation/Agenda.tsx`, `pages/Visitation/VisitRecord.tsx` (novo); testes
+`tests/visits/visit-record.spec.ts`, inventário de `route-tenant-isolation.spec.ts` (96 → 102
+rotas), `VisitRecord.spec.tsx`, `tests/visits/visit-types.spec.ts`. SCHEMA §37, API_CONTRACTS §14,
+API_ERRORS, SERVICES §31, BUSINESS_RULES §14, PAGES §23.
+
+## 2026-10-04 — Alerta de paciente sem resposta: encerrar zera a espera (CRMLAB-90)
+
+### D-259: O encerramento também é fronteira do alerta (emenda à D-254, alinhando com a D-257)
+**Decisão (Michel, 03/10/2026, no card; itens 3–4 decididos na implementação):**
+1. **Emenda ao item 3 da D-254:** a espera do alerta (`Conversation.awaitingReplySince`) começa
+   na primeira mensagem do paciente depois da **mais recente** entre (a) a última resposta humana
+   (`agent` com `automation` nulo) e (b) o último **encerramento** — a mensagem de sistema
+   "Atendimento encerrado por X" (D-174 item 2). É exatamente a fronteira `C` do relatório de tempo
+   de resposta (D-257 item 6), com o mesmo critério de texto (`content LIKE 'Atendimento
+   encerrado%'`). Sem isso, o "obrigado" que o paciente manda antes de a atendente encerrar fazia a
+   conversa reaberta dias depois já nascer vermelha, com a espera contada desde o "obrigado".
+2. **Continua igual:** automática e sistema **que não seja encerramento** não tiram do alerta; a
+   resposta humana tira; conversa encerrada não espera (`null`).
+3. **Fallback da conversa encerrada antes da D-174** (sem o evento): no relatório ele vale só
+   quando a conversa **está** `closed` (`e.kind IS NULL AND c.status = 'closed'`). O alerta já
+   devolve `null` para toda conversa encerrada, então o comportamento é o mesmo sem regra extra.
+   Conversa encerrada antes da D-174 e **reaberta** não tem como ser reconhecida (não há registro
+   do encerramento) — nem no relatório, nem aqui.
+4. **Índice:** a 046 continua servindo para a última resposta humana. O último encerramento por
+   conversa sai de um índice parcial novo, `idx_messages_closed_event` (migração **051**), com o
+   predicado repetido literalmente na consulta — sem ele, achar o encerramento varreria a conversa
+   inteira pelo índice geral. A fronteira é o `GREATEST` das duas subconsultas (cada uma na
+   primeira entrada do próprio índice; `GREATEST` ignora `NULL`).
+**Motivo:** o número do relatório e o vermelho da lista precisam contar a mesma história (D-257).
+**Impacto:** `backend/migrations/051_messages_closed_event_index.sql`;
+`conversation.repository.ts` (`AWAITING_REPLY_LATERAL`); teste
+`tests/conversations/awaiting-reply.spec.ts`. SCHEMA §4, API_CONTRACTS §2, SERVICES §2,
+BUSINESS_RULES (alerta de tempo de resposta).

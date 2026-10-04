@@ -349,6 +349,20 @@ CREATE INDEX idx_messages_human_reply
   predicado literalmente. A âncora do reingajamento (§33) usa o mesmo recorte.
 - Sem coluna nova, sem backfill, sem policy (`messages` já está sob RLS).
 
+**Último encerramento — migração 051 (CRMLAB-90, D-259):**
+
+```sql
+CREATE INDEX idx_messages_closed_event
+  ON messages (conversation_id, created_at DESC)
+  WHERE sender_type = 'system' AND content LIKE 'Atendimento encerrado%';
+```
+
+- Desde a D-259 o encerramento (a mensagem de sistema "Atendimento encerrado por X", D-174) também
+  é fronteira do `awaitingReplySince`, como no relatório de tempo de resposta (D-257). O parcial só
+  tem os eventos de encerramento, e o último é a primeira entrada da conversa. A consulta
+  (`AWAITING_REPLY_LATERAL`) repete o predicado literalmente.
+- Sem coluna nova, sem backfill, sem policy (`messages` já está sob RLS).
+
 **Mensagens do paciente por período — migração 049 (CRMLAB-83, D-257):**
 
 ```sql
@@ -2005,13 +2019,59 @@ CREATE INDEX idx_doctor_visit_reschedules_changed_by ON doctor_visit_reschedules
 ```
 
 - **Só a visita `agendada` muda:** as escritas do service levam `AND status = 'agendada'` no
-  `WHERE`. `realizada` vem do check-in/out (card [C]); a 048 já aceita o valor.
+  `WHERE`. `realizada` vem do check-out (CRMLAB-88, §37); a 048 já aceita o valor.
 - **Motivo obrigatório** ao encerrar como `cancelada` ou `nao_recebeu`, também no banco (`CHECK`).
 - **`responsible_user_id`** é de usuário ativo do **mesmo** tenant (o service confere). A coluna
   aceita `NULL` só para o `ON DELETE SET NULL` (usuário apagado, raro).
 - **`doctor_id` sem `ON DELETE`** (NO ACTION): médico não se apaga (D-255 item 4). O `CASCADE` do
   tenant continua funcionando, porque NO ACTION só confere no fim do comando.
 - Migração **única** (tabelas + policies), como 047: sem backfill.
+
+### 37. Registro da visita: colunas em `doctor_visits` e `doctor_visit_attachments` (migração 050 — CRMLAB-88, D-258)
+Check-in/out, relato e próximo passo moram na própria visita; os anexos numa tabela nova.
+
+```sql
+ALTER TABLE doctor_visits
+  ADD COLUMN check_in_at       TIMESTAMPTZ,                               -- "Cheguei" (hora do servidor)
+  ADD COLUMN check_in_by       UUID REFERENCES users(id) ON DELETE SET NULL,
+  ADD COLUMN check_out_at      TIMESTAMPTZ,                               -- "Saí" → status realizada
+  ADD COLUMN check_out_by      UUID REFERENCES users(id) ON DELETE SET NULL,
+  ADD COLUMN report_presented  TEXT,                                      -- o que foi apresentado
+  ADD COLUMN report_feedback   TEXT,                                      -- feedback do médico
+  ADD COLUMN report_objections TEXT,                                      -- objeções
+  ADD COLUMN next_visit_date   DATE,                                      -- próximo passo (data de retorno)
+  ADD CONSTRAINT doctor_visits_check_out_after_in
+    CHECK (check_out_at IS NULL OR (check_in_at IS NOT NULL AND check_out_at >= check_in_at)),
+  ADD CONSTRAINT doctor_visits_realizada_has_check_out
+    CHECK (status <> 'realizada' OR check_out_at IS NOT NULL);
+CREATE INDEX idx_doctor_visits_check_in_by ON doctor_visits(check_in_by);
+CREATE INDEX idx_doctor_visits_check_out_by ON doctor_visits(check_out_by);
+
+CREATE TABLE doctor_visit_attachments (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),   -- também o nome do arquivo em MEDIA_DIR
+  tenant_id   UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  visit_id    UUID NOT NULL REFERENCES doctor_visits(id) ON DELETE CASCADE,
+  mime_type   VARCHAR(100) NOT NULL,                        -- já passado pela allow-list + sniff
+  file_name   VARCHAR(255) NOT NULL,                        -- nome original; nunca vira caminho
+  byte_size   INTEGER NOT NULL CHECK (byte_size > 0),
+  uploaded_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_doctor_visit_attachments_tenant_id ON doctor_visit_attachments(tenant_id);
+CREATE INDEX idx_doctor_visit_attachments_visit_id ON doctor_visit_attachments(visit_id, created_at);
+CREATE INDEX idx_doctor_visit_attachments_uploaded_by ON doctor_visit_attachments(uploaded_by);
+-- ENABLE ROW LEVEL SECURITY + policy doctor_visit_attachments_tenant_isolation (mesmo arquivo)
+```
+
+- **`realizada` só com check-out**, também no banco. O check-out grava `status = 'realizada'`,
+  `status_changed_at`/`_by` e `check_out_*` no mesmo `UPDATE`, guardado por
+  `status = 'agendada' AND check_in_at IS NOT NULL`.
+- **Reagendar** passa a ter também `AND check_in_at IS NULL` no `WHERE`.
+- **O arquivo** do anexo fica no mesmo volume da mídia de mensagens (`MEDIA_DIR`,
+  `lib/media-storage.ts`), com o **id da linha** como nome. Excluir apaga a linha e o arquivo. Os
+  ids são `gen_random_uuid()`, então não colidem com os de `message_media`.
+- Migração **única** (colunas + tabela + policy), sem backfill: as visitas que já existem ficam
+  com tudo `NULL` e nenhuma é `realizada` (a 048 não tinha rota que gravasse esse status).
 
 ---
 
@@ -2223,6 +2283,11 @@ CREATE INDEX idx_messages_human_reply
 CREATE INDEX idx_messages_patient_tenant_created
   ON messages (tenant_id, created_at)
   WHERE sender_type = 'patient';
+
+-- Último encerramento por conversa (alerta de tempo de resposta — migração 051, D-259)
+CREATE INDEX idx_messages_closed_event
+  ON messages (conversation_id, created_at DESC)
+  WHERE sender_type = 'system' AND content LIKE 'Atendimento encerrado%';
 
 -- Search (busca pelo conteúdo das mensagens — migração 043, D-228)
 CREATE INDEX idx_messages_content_search

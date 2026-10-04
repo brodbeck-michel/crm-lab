@@ -14,19 +14,41 @@
  *  - cancelar e "medico nao recebeu" exigem motivo;
  *  - so a visita `agendada` edita, reagenda ou encerra; senao
  *    `VISIT_ALREADY_CLOSED` (409). Repetir o MESMO encerramento e idempotente;
- *  - `realizada` nao nasce aqui: vem do check-in/out (card [C]);
+ *  - `realizada` nasce do check-out (CRMLAB-88, D-258);
  *  - audit log em criar, editar, reagendar, cancelar e nao recebeu.
+ *
+ * Registro da visita (CRMLAB-88, D-258):
+ *  - check-in/out gravam a hora do servidor; repetir e idempotente (200 sem
+ *    audit, hora original mantida). Check-out sem check-in ->
+ *    `VISIT_NOT_CHECKED_IN`; depois do check-in nao reagenda ->
+ *    `VISIT_ALREADY_CHECKED_IN`;
+ *  - relato, proximo passo e anexos valem em `agendada` e `realizada`;
+ *  - anexo: so imagem/PDF da allow-list, mesmo sniff e teto de `MediaService`,
+ *    no maximo `VISIT_ATTACHMENTS_MAX` por visita;
+ *  - audit em check-in, check-out, relato, anexar e excluir.
  */
 import {
+  FALLBACK_MEDIA_MIME_TYPE,
+  isIsoDate,
+  isVisitAttachmentMimeType,
   isVisitOpen,
+  isVisitRecordEditable,
+  MAX_MEDIA_BYTES,
+  normalizeMediaMimeType,
+  visitDurationMinutes,
+  VISIT_ATTACHMENTS_MAX,
   VISIT_LIST_MAX_DAYS,
   VISIT_LIST_MAX_RESULTS,
   type CloseVisitRequest,
+  type CreateVisitAttachmentRequest,
   type CreateVisitRequest,
   type ListVisitsQuery,
   type ListVisitsResponse,
   type RescheduleVisitRequest,
+  type UpdateVisitReportRequest,
   type UpdateVisitRequest,
+  type VisitAttachment,
+  type VisitCheckedInDetails,
   type VisitClosedDetails,
   type VisitClosingStatus,
   type VisitDetail,
@@ -34,8 +56,15 @@ import {
 import type { DbClient } from '../db/types.js';
 import type { TenantContext } from '../http/context.js';
 import { BusinessError, notFound } from '../http/errors.js';
-import { VisitRepository, type VisitPatch } from '../repositories/visit.repository.js';
+import { deleteMediaFile, readMediaFile, writeMediaFile } from '../lib/media-storage.js';
+import { logger } from '../lib/logger.js';
+import {
+  VisitRepository,
+  type VisitPatch,
+  type VisitReportPatch,
+} from '../repositories/visit.repository.js';
 import type { AuditService } from './audit.service.js';
+import { resolveStoredMimeType } from './media.service.js';
 
 /** Quem pode ser responsavel pela visita: qualquer papel de laboratorio. */
 const RESPONSIBLE_ROLES = ['attendant', 'manager', 'admin'];
@@ -49,6 +78,19 @@ export interface VisitService {
   update(ctx: TenantContext, id: string, dto: UpdateVisitRequest): Promise<VisitDetail>;
   reschedule(ctx: TenantContext, id: string, dto: RescheduleVisitRequest): Promise<VisitDetail>;
   close(ctx: TenantContext, id: string, status: VisitClosingStatus, dto: CloseVisitRequest): Promise<VisitDetail>;
+  checkIn(ctx: TenantContext, id: string): Promise<VisitDetail>;
+  checkOut(ctx: TenantContext, id: string): Promise<VisitDetail>;
+  updateReport(ctx: TenantContext, id: string, dto: UpdateVisitReportRequest): Promise<VisitDetail>;
+  addAttachment(ctx: TenantContext, id: string, dto: CreateVisitAttachmentRequest): Promise<VisitAttachment>;
+  readAttachment(ctx: TenantContext, id: string, attachmentId: string): Promise<VisitAttachmentFile>;
+  deleteAttachment(ctx: TenantContext, id: string, attachmentId: string): Promise<void>;
+}
+
+/** Bytes de um anexo para o download. */
+export interface VisitAttachmentFile {
+  buffer: Buffer;
+  mimeType: string;
+  fileName: string;
 }
 
 export interface VisitServiceDeps {
@@ -63,6 +105,16 @@ function invalid(fields: Record<string, string>): BusinessError {
 function closedError(visit: VisitDetail): BusinessError {
   const details: VisitClosedDetails = { status: visit.status };
   return new BusinessError('VISIT_ALREADY_CLOSED', { ...details });
+}
+
+function checkedInError(checkInAt: string): BusinessError {
+  const details: VisitCheckedInDetails = { checkInAt };
+  return new BusinessError('VISIT_ALREADY_CHECKED_IN', { ...details });
+}
+
+function notCheckedInError(visit: VisitDetail): BusinessError {
+  const details: VisitClosedDetails = { status: visit.status };
+  return new BusinessError('VISIT_NOT_CHECKED_IN', { ...details });
 }
 
 /** Texto opcional: `undefined` fica `undefined` (PATCH nao mexe); vazio/`null` vira `null`. */
@@ -124,6 +176,13 @@ export function createVisitService(deps: VisitServiceDeps): VisitService {
   async function lostRace(ctx: TenantContext, id: string): Promise<BusinessError> {
     const visit = await repository.findById(ctx.tenantId, id);
     return visit ? closedError(visit) : notFound({ resource: 'visit', id });
+  }
+
+  /** Relato/anexo so com a visita `agendada` ou `realizada` (D-258 item 6). */
+  async function loadEditableRecord(ctx: TenantContext, id: string): Promise<VisitDetail> {
+    const visit = await load(ctx, id);
+    if (!isVisitRecordEditable(visit.status)) throw closedError(visit);
+    return visit;
   }
 
   return {
@@ -227,13 +286,19 @@ export function createVisitService(deps: VisitServiceDeps): VisitService {
       const current = await load(ctx, id);
       if (!isVisitOpen(current.status)) throw closedError(current);
 
+      if (current.checkInAt !== null) throw checkedInError(current.checkInAt);
+
       const previous = new Date(current.scheduledAt);
       // Mesma data/hora: nada a registrar (repetir o clique nao suja o historico).
       if (previous.getTime() === scheduledAt.getTime()) return current;
 
       const reason = cleanText(dto.reason) ?? null;
       const updated = await repository.reschedule(ctx.tenantId, id, ctx.userId, previous, scheduledAt, reason);
-      if (!updated) throw await lostRace(ctx, id);
+      if (!updated) {
+        const latest = await repository.findById(ctx.tenantId, id);
+        if (latest && isVisitOpen(latest.status) && latest.checkInAt !== null) throw checkedInError(latest.checkInAt);
+        throw latest ? closedError(latest) : notFound({ resource: 'visit', id });
+      }
 
       await audit.record(ctx, {
         action: 'reschedule_visit',
@@ -273,6 +338,205 @@ export function createVisitService(deps: VisitServiceDeps): VisitService {
         newValues: { status, reason },
       });
       return updated;
+    },
+
+    /**
+     * "Cheguei". Repetir devolve a visita como esta (hora original, sem novo
+     * audit) — inclusive na `realizada`, que sempre tem check-in.
+     */
+    async checkIn(ctx: TenantContext, id: string): Promise<VisitDetail> {
+      const current = await load(ctx, id);
+      if (current.checkInAt !== null && isVisitRecordEditable(current.status)) return current;
+      if (!isVisitOpen(current.status)) throw closedError(current);
+
+      const updated = await repository.checkIn(ctx.tenantId, id, ctx.userId);
+      if (!updated) {
+        // Corrida: outro aparelho fez o check-in (idempotente) ou encerrou.
+        const latest = await load(ctx, id);
+        if (latest.checkInAt !== null && isVisitRecordEditable(latest.status)) return latest;
+        throw closedError(latest);
+      }
+
+      await audit.record(ctx, {
+        action: 'check_in_visit',
+        entityType: 'visit',
+        entityId: id,
+        newValues: { checkInAt: updated.checkInAt },
+      });
+      return updated;
+    },
+
+    /** "Saí": `agendada` com check-in -> `realizada`. Repetir devolve 200 sem audit. */
+    async checkOut(ctx: TenantContext, id: string): Promise<VisitDetail> {
+      const current = await load(ctx, id);
+      if (current.status === 'realizada') return current;
+      if (!isVisitOpen(current.status)) throw closedError(current);
+      if (current.checkInAt === null) throw notCheckedInError(current);
+
+      const updated = await repository.checkOut(ctx.tenantId, id, ctx.userId);
+      if (!updated) {
+        const latest = await load(ctx, id);
+        if (latest.status === 'realizada') return latest;
+        throw isVisitOpen(latest.status) ? notCheckedInError(latest) : closedError(latest);
+      }
+
+      await audit.record(ctx, {
+        action: 'check_out_visit',
+        entityType: 'visit',
+        entityId: id,
+        oldValues: { status: current.status },
+        newValues: {
+          status: updated.status,
+          checkOutAt: updated.checkOutAt,
+          durationMinutes: visitDurationMinutes(updated),
+        },
+      });
+      return updated;
+    },
+
+    /** Relato + proximo passo (parcial). So o que mudou vai para o banco e o audit. */
+    async updateReport(ctx: TenantContext, id: string, dto: UpdateVisitReportRequest): Promise<VisitDetail> {
+      if (dto.nextVisitDate !== undefined && dto.nextVisitDate !== null && !isIsoDate(dto.nextVisitDate)) {
+        throw invalid({ nextVisitDate: 'Data inválida (use AAAA-MM-DD)' });
+      }
+      const current = await loadEditableRecord(ctx, id);
+
+      const before: Record<keyof VisitReportPatch, string | null> = {
+        presented: current.report.presented,
+        doctorFeedback: current.report.doctorFeedback,
+        objections: current.report.objections,
+        nextVisitDate: current.nextVisitDate,
+      };
+      const wanted: VisitReportPatch = {
+        presented: cleanText(dto.presented),
+        doctorFeedback: cleanText(dto.doctorFeedback),
+        objections: cleanText(dto.objections),
+        nextVisitDate: dto.nextVisitDate,
+      };
+
+      const patch: VisitReportPatch = {};
+      const oldValues: Record<string, unknown> = {};
+      const newValues: Record<string, unknown> = {};
+      for (const key of Object.keys(before) as Array<keyof VisitReportPatch>) {
+        const value = wanted[key];
+        if (value === undefined || value === before[key]) continue;
+        patch[key] = value;
+        oldValues[key] = before[key];
+        newValues[key] = value;
+      }
+      if (Object.keys(patch).length === 0) return current;
+
+      const updated = await repository.updateReport(ctx.tenantId, id, patch);
+      if (!updated) throw await lostRace(ctx, id);
+
+      await audit.record(ctx, {
+        action: 'update_visit_report',
+        entityType: 'visit',
+        entityId: id,
+        oldValues,
+        newValues,
+      });
+      return updated;
+    },
+
+    /**
+     * Anexo de imagem/PDF. Ordem: valida (tipo, tamanho, conteudo) -> grava a
+     * linha (com a guarda de status e do teto na mesma transacao) -> grava o
+     * arquivo. Se o disco falhar, a linha sai: nada de anexo sem arquivo.
+     */
+    async addAttachment(ctx: TenantContext, id: string, dto: CreateVisitAttachmentRequest): Promise<VisitAttachment> {
+      if (!isVisitAttachmentMimeType(dto.mimeType)) {
+        throw invalid({ mimeType: `Só imagem ou PDF (${normalizeMediaMimeType(dto.mimeType)})` });
+      }
+      const current = await loadEditableRecord(ctx, id);
+      if (current.attachments.length >= VISIT_ATTACHMENTS_MAX) {
+        throw invalid({ attachments: `No máximo ${VISIT_ATTACHMENTS_MAX} anexos por visita` });
+      }
+
+      const buffer = Buffer.from(dto.contentBase64, 'base64');
+      if (buffer.byteLength === 0 || buffer.byteLength > MAX_MEDIA_BYTES) {
+        throw new BusinessError('MEDIA_TOO_LARGE', { byteSize: buffer.byteLength, max: MAX_MEDIA_BYTES });
+      }
+      // Mesmo sniff do anexo da conversa (CRMLAB-31). Aqui rebaixar em silencio
+      // esconderia o erro de quem esta na tela: conteudo divergente e 400.
+      const mimeType = await resolveStoredMimeType(dto.mimeType, buffer);
+      if (mimeType === FALLBACK_MEDIA_MIME_TYPE) {
+        throw invalid({ mimeType: 'O conteúdo do arquivo não corresponde ao tipo informado' });
+      }
+
+      const fileName = dto.fileName.trim();
+      const result = await repository.insertAttachment(
+        ctx.tenantId,
+        id,
+        ctx.userId,
+        { mimeType, fileName, byteSize: buffer.byteLength },
+        VISIT_ATTACHMENTS_MAX,
+      );
+      if (result.kind === 'missing') throw notFound({ resource: 'visit', id });
+      if (result.kind === 'not_editable') throw await lostRace(ctx, id);
+      if (result.kind === 'full') {
+        throw invalid({ attachments: `No máximo ${VISIT_ATTACHMENTS_MAX} anexos por visita` });
+      }
+
+      const attachment = result.attachment;
+      try {
+        await writeMediaFile(attachment.id, buffer);
+      } catch (error) {
+        await repository.removeAttachmentRow(ctx.tenantId, attachment.id);
+        throw error;
+      }
+
+      await audit.record(ctx, {
+        action: 'add_visit_attachment',
+        entityType: 'visit',
+        entityId: id,
+        newValues: {
+          attachmentId: attachment.id,
+          fileName: attachment.fileName,
+          mimeType: attachment.mimeType,
+          byteSize: attachment.byteSize,
+        },
+      });
+      return attachment;
+    },
+
+    /**
+     * Download em qualquer status. Anexo de outra visita, de outro tenant ou
+     * com o arquivo fora do disco -> `NOT_FOUND` (como `GET /media/:id`).
+     */
+    async readAttachment(ctx: TenantContext, id: string, attachmentId: string): Promise<VisitAttachmentFile> {
+      const attachment = await repository.findAttachment(ctx.tenantId, id, attachmentId);
+      if (!attachment) throw notFound({ resource: 'visit_attachment', id: attachmentId });
+      const buffer = await readMediaFile(attachment.id);
+      if (!buffer) {
+        logger.warn('visit.attachment_file_missing', { tenantId: ctx.tenantId, visitId: id, attachmentId });
+        throw notFound({ resource: 'visit_attachment', id: attachmentId });
+      }
+      return { buffer, mimeType: attachment.mimeType, fileName: attachment.fileName };
+    },
+
+    /** Qualquer usuario do laboratorio exclui (resposta 7 do epico). */
+    async deleteAttachment(ctx: TenantContext, id: string, attachmentId: string): Promise<void> {
+      await loadEditableRecord(ctx, id);
+      const removed = await repository.deleteAttachment(ctx.tenantId, id, attachmentId);
+      if (!removed) {
+        const exists = await repository.findAttachment(ctx.tenantId, id, attachmentId);
+        if (!exists) throw notFound({ resource: 'visit_attachment', id: attachmentId });
+        throw await lostRace(ctx, id);
+      }
+      await deleteMediaFile(removed.id);
+
+      await audit.record(ctx, {
+        action: 'delete_visit_attachment',
+        entityType: 'visit',
+        entityId: id,
+        oldValues: {
+          attachmentId: removed.id,
+          fileName: removed.fileName,
+          mimeType: removed.mimeType,
+          byteSize: removed.byteSize,
+        },
+      });
     },
   };
 }

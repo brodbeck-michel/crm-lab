@@ -3,12 +3,14 @@
  * nesta onda (decisao do lead, 2026-09-05). Trocar por S3 depois e substituir
  * SO ESTE ARQUIVO: nada mais no dominio conhece o caminho em disco.
  *
- * O arquivo tem o nome do `id` da linha de `message_media` — NUNCA o nome que
+ * O arquivo tem o nome do `id` da linha de `message_media` (ou de
+ * `doctor_visit_attachments`, CRMLAB-88 — os dois sao `gen_random_uuid()`, nao
+ * colidem) — NUNCA o nome que
  * o usuario mandou (`fileName`), que e travessia de diretorio pronta
  * (`../../etc/passwd`). `path.join` + um id de UUID valido (gerado pelo
  * proprio Postgres, nunca aceito de fora) fecha essa porta na origem.
  */
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
 
@@ -33,6 +35,19 @@ export async function readMediaFile(id: string): Promise<Buffer | null> {
     return await readFile(mediaFilePath(id));
   } catch (error) {
     if (isNotFound(error)) return null;
+    throw error;
+  }
+}
+
+/**
+ * Apaga o arquivo (anexo de visita excluido, CRMLAB-88). Arquivo ja ausente
+ * nao e erro: o resultado que se queria — o arquivo fora do disco — ja vale.
+ */
+export async function deleteMediaFile(id: string): Promise<void> {
+  try {
+    await unlink(mediaFilePath(id));
+  } catch (error) {
+    if (isNotFound(error)) return;
     throw error;
   }
 }

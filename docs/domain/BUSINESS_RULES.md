@@ -226,10 +226,13 @@ escreveu e a atendente ainda não respondeu fica destacada em vermelho na lista 
 para **todas** as atendentes que já a veem, a partir de X minutos de espera.
 - **Resposta da atendente** = mensagem `agent` com `automation` nulo, pelo CRM ou pelo celular
   (a mesma âncora do reingajamento). Mensagem **automática** e de **sistema** NÃO tiram do
-  alerta.
+  alerta — exceto o encerramento (item abaixo).
 - **A espera começa na primeira mensagem do paciente depois da última resposta** (sem resposta
   nenhuma ainda: a primeira mensagem do paciente). Paciente que manda três mensagens seguidas
   espera desde a primeira.
+- **Encerrar o atendimento também zera a espera** (D-259), como no relatório de tempo de
+  resposta: paciente que mandou "obrigado", teve o atendimento encerrado e voltou dias depois
+  espera só desde a mensagem nova, não desde o "obrigado".
 - **Só conta o horário comercial:** o expediente de `tenant_settings.business_hours` (sem
   nenhum dia configurado = sempre aberto) e **sem feriados** (nacionais e os do laboratório),
   como o reingajamento. Escreveu às 17:55 com o laboratório fechando às 18:00: às 08:05 do dia
@@ -799,8 +802,8 @@ Segundo card do épico CRMLAB-85. A equipe agenda visitas aos médicos do cadast
 - **A visita:** médico **ativo** do cadastro, responsável (usuário **ativo** do laboratório,
   qualquer papel), data/hora prevista, tipo (presencial, online, telefone, evento) e
   objetivo/pauta (opcional). Data no passado pode (lançar depois).
-- **Status:** `agendada → realizada | cancelada | nao_recebeu`. `realizada` vem do check-in/out
-  (próximo card); por enquanto a visita só sai de `agendada` cancelando ou marcando "médico não
+- **Status:** `agendada → realizada | cancelada | nao_recebeu`. `realizada` vem do check-out
+  (§14, CRMLAB-88); fora isso a visita só sai de `agendada` cancelando ou marcando "médico não
   recebeu".
 - **Reagendar** muda a data/hora da **mesma** visita e registra no histórico (data antiga, nova,
   motivo opcional, quem e quando). Não existe status "reagendada".
@@ -811,6 +814,30 @@ Segundo card do épico CRMLAB-85. A equipe agenda visitas aos médicos do cadast
   só roda quando o médico/responsável **muda**.
 - **Auditoria:** `create_visit`, `update_visit` (só o que mudou), `reschedule_visit`,
   `cancel_visit`, `visit_not_received` — `entityType: "visit"`.
+
+---
+
+## 14. Visitação Médica — registro da visita (CRMLAB-88, D-258)
+
+Terceiro card do épico CRMLAB-85. Registra o que aconteceu na visita da agenda (§13).
+
+- **"Cheguei" (check-in) e "Saí" (check-out)** gravam a hora real do servidor e quem tocou. A
+  visita mostra a **duração** (minutos entre os dois). **Sem GPS** (resposta 4A do épico).
+- **O check-out marca a visita como `realizada`.** Check-out exige check-in antes. Não há check-in
+  em visita cancelada ou "médico não recebeu".
+- **Toque duplo não estraga nada:** repetir o check-in ou o check-out mantém a hora original.
+- **Depois do check-in a visita não reagenda** (a data prevista vira histórico do que aconteceu).
+  Ainda dá para cancelar ou marcar "médico não recebeu": cheguei e o médico não atendeu.
+- **Relato:** o que foi apresentado, feedback do médico e objeções (três textos opcionais).
+- **Próximo passo:** uma data de retorno. Ela só **sugere** a próxima visita: o botão "Agendar
+  retorno" abre uma visita nova já preenchida, e nada é criado sozinho.
+- **Anexos:** imagem e PDF, até 15 MiB cada e 20 por visita, com os mesmos cuidados de mídia do
+  CRMLAB-31 (allow-list, conferência do conteúdo, `nosniff`, `Content-Disposition`). **Qualquer
+  usuário** do laboratório anexa, baixa e **exclui**.
+- **Relato, próximo passo e anexos** podem ser editados com a visita `agendada` ou `realizada`.
+  Visita cancelada ou "não recebeu" fica só para leitura (os anexos ainda baixam).
+- **Auditoria:** `check_in_visit`, `check_out_visit`, `update_visit_report` (só o que mudou),
+  `add_visit_attachment`, `delete_visit_attachment` — `entityType: "visit"`.
 
 ---
 

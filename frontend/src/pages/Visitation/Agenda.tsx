@@ -43,6 +43,12 @@ import {
   weekLabel,
   WEEK_DAYS,
 } from './agenda-dates';
+import {
+  VisitAttachmentsSection,
+  VisitCheckSection,
+  VisitReportSection,
+  type ReturnVisitPrefill,
+} from './VisitRecord';
 
 type View = 'week' | 'list';
 
@@ -70,8 +76,14 @@ function StatusChip({ status }: { status: VisitStatus }) {
   return <Chip tone={STATUS_TONES[status]}>{VISIT_STATUS_LABELS[status]}</Chip>;
 }
 
-/** Abertura do modal: visita existente ou nova (com horário sugerido pela grade). */
-type ModalState = { kind: 'visit'; id: string } | { kind: 'new'; at: Date } | null;
+/**
+ * Abertura do modal: visita existente ou nova (com horário sugerido pela grade
+ * ou, no "Agendar retorno" do CRMLAB-88, médico/responsável/tipo da visita anterior).
+ */
+type ModalState =
+  | { kind: 'visit'; id: string }
+  | { kind: 'new'; at: Date; prefill?: Omit<ReturnVisitPrefill, 'at'> }
+  | null;
 
 /**
  * Agenda de visitas — `/visitation/agenda` (PAGES.md §23 · API_CONTRACTS.md
@@ -206,6 +218,7 @@ export default function Agenda() {
       {modal?.kind === 'new' && (
         <VisitFormModal
           initialAt={modal.at}
+          prefill={modal.prefill}
           assignees={assignees}
           doctors={doctors}
           onClose={() => setModal(null)}
@@ -213,7 +226,13 @@ export default function Agenda() {
         />
       )}
       {modal?.kind === 'visit' && (
-        <VisitModal id={modal.id} assignees={assignees} doctors={doctors} onClose={() => setModal(null)} />
+        <VisitModal
+          id={modal.id}
+          assignees={assignees}
+          doctors={doctors}
+          onClose={() => setModal(null)}
+          onScheduleReturn={({ at, ...prefill }) => setModal({ kind: 'new', at, prefill })}
+        />
       )}
     </PageContainer>
   );
@@ -376,7 +395,7 @@ type Person = { id: string; name: string };
 function withCurrent(options: Person[], current: Person | null | undefined, suffix: string) {
   const list = options.map((o) => ({ value: o.id, label: o.name }));
   if (current && !options.some((o) => o.id === current.id)) {
-    list.push({ value: current.id, label: `${current.name} ${suffix}` });
+    list.push({ value: current.id, label: `${current.name} ${suffix}`.trim() });
   }
   return list;
 }
@@ -405,6 +424,8 @@ interface VisitFormModalProps {
   /** Ausente = nova visita. */
   visit?: VisitDetail;
   initialAt?: Date;
+  /** "Agendar retorno" (CRMLAB-88): só pré-preenche; nada é criado sem confirmar. */
+  prefill?: Omit<ReturnVisitPrefill, 'at'>;
   assignees: Person[];
   doctors: Person[];
   onClose: () => void;
@@ -412,7 +433,7 @@ interface VisitFormModalProps {
 }
 
 /** Criar (com data/hora) ou editar (médico, responsável, tipo, pauta — a data muda por "Reagendar"). */
-function VisitFormModal({ visit, initialAt, assignees, doctors, onClose, onSaved }: VisitFormModalProps) {
+function VisitFormModal({ visit, initialAt, prefill, assignees, doctors, onClose, onSaved }: VisitFormModalProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const user = useCurrentUser();
@@ -420,13 +441,15 @@ function VisitFormModal({ visit, initialAt, assignees, doctors, onClose, onSaved
   const isEdit = visit !== undefined;
   const at = initialAt ?? new Date();
 
-  const [doctorId, setDoctorId] = useState(visit?.doctor.id ?? '');
-  const [responsibleId, setResponsibleId] = useState(
-    visit ? (visit.responsible?.id ?? '') : assignees.some((a) => a.id === user?.id) ? (user?.id ?? '') : '',
-  );
+  const [doctorId, setDoctorId] = useState(visit?.doctor.id ?? prefill?.doctor.id ?? '');
+  const [responsibleId, setResponsibleId] = useState(() => {
+    if (visit) return visit.responsible?.id ?? '';
+    if (prefill?.responsibleId && assignees.some((a) => a.id === prefill.responsibleId)) return prefill.responsibleId;
+    return assignees.some((a) => a.id === user?.id) ? (user?.id ?? '') : '';
+  });
   const [day, setDay] = useState(toDateInput(at));
   const [time, setTime] = useState(toTimeInput(at));
-  const [type, setType] = useState<VisitType>(visit?.type ?? 'presencial');
+  const [type, setType] = useState<VisitType>(visit?.type ?? prefill?.type ?? 'presencial');
   const [agenda, setAgenda] = useState(visit?.agenda ?? '');
 
   const save = useMutation({
@@ -473,7 +496,7 @@ function VisitFormModal({ visit, initialAt, assignees, doctors, onClose, onSaved
     <Modal
       open
       onClose={onClose}
-      title={isEdit ? 'Editar visita' : 'Nova visita'}
+      title={isEdit ? 'Editar visita' : prefill ? 'Agendar retorno' : 'Nova visita'}
       footer={
         <div className="ml-auto flex gap-md">
           <Button variant="secondary" onClick={onClose}>
@@ -492,7 +515,12 @@ function VisitFormModal({ visit, initialAt, assignees, doctors, onClose, onSaved
             value={doctorId}
             onChange={(e) => setDoctorId(e.target.value)}
             placeholder="Selecione o médico"
-            options={withCurrent(doctors, visit?.doctor, '(inativo)')}
+            options={withCurrent(
+              doctors,
+              visit?.doctor ?? prefill?.doctor,
+              // No retorno o médico pode só estar fora dos 100 do seletor.
+              visit || prefill?.doctor.isActive === false ? '(inativo)' : '',
+            )}
             error={fieldErrors.doctorId}
           />
         </div>
@@ -550,10 +578,14 @@ interface VisitModalProps {
   assignees: Person[];
   doctors: Person[];
   onClose: () => void;
+  onScheduleReturn: (prefill: ReturnVisitPrefill) => void;
 }
 
-/** Visita aberta: detalhe + histórico de datas; ações só enquanto `agendada`. */
-function VisitModal({ id, assignees, doctors, onClose }: VisitModalProps) {
+/**
+ * Visita aberta: registro (check-in/out, CRMLAB-88), detalhe, relato, anexos e
+ * histórico de datas; editar/reagendar/encerrar só enquanto `agendada`.
+ */
+function VisitModal({ id, assignees, doctors, onClose, onScheduleReturn }: VisitModalProps) {
   const [mode, setMode] = useState<'view' | 'edit' | VisitAction>('view');
   const visitQuery = useQuery({ queryKey: queryKeys.visit(id), queryFn: () => visitsApi.get(id) });
   const visit = visitQuery.data;
@@ -588,9 +620,12 @@ function VisitModal({ id, assignees, doctors, onClose }: VisitModalProps) {
             <Button variant="secondary" onClick={() => setMode('cancel')}>
               Cancelar visita
             </Button>
-            <Button variant="secondary" onClick={() => setMode('reschedule')}>
-              Reagendar
-            </Button>
+            {/* Depois do check-in a data não muda mais (D-258 item 4). */}
+            {visit?.checkInAt === null && (
+              <Button variant="secondary" onClick={() => setMode('reschedule')}>
+                Reagendar
+              </Button>
+            )}
             <Button variant="primary" onClick={() => setMode('edit')}>
               Editar
             </Button>
@@ -614,6 +649,8 @@ function VisitModal({ id, assignees, doctors, onClose }: VisitModalProps) {
             <StatusChip status={visit.status} />
           </div>
 
+          <VisitCheckSection visit={visit} />
+
           <dl className="grid grid-cols-1 gap-md text-body md:grid-cols-2">
             <Field label="Data/hora prevista" value={formatDateTime(visit.scheduledAt)} />
             <Field label="Tipo" value={VISIT_TYPE_LABELS[visit.type]} />
@@ -635,6 +672,10 @@ function VisitModal({ id, assignees, doctors, onClose }: VisitModalProps) {
               </div>
             )}
           </dl>
+
+          {/* `key`: o formulário do relato recomeça quando a visita muda no servidor. */}
+          <VisitReportSection key={visit.updatedAt} visit={visit} onScheduleReturn={onScheduleReturn} />
+          <VisitAttachmentsSection visit={visit} />
 
           {visit.reschedules.length > 0 && (
             <section className="flex flex-col gap-sm">

@@ -120,6 +120,41 @@
     --color-chat-alert: #c62828;
     --color-chat-alert-bg: color-mix(in oklab, #c62828 8%, white);
 
+    /* ---------------------------------------------------------------
+     * Estágios do pipeline (CRMLAB-91, D-260): um matiz LITERAL por
+     * estágio, igual para todo tenant — é identidade do funil, não cor do
+     * tema (como o alerta do chat). Frios no começo do funil, âmbar na
+     * negociação, verde no ganho, vermelho no perdido. Cada um deriva:
+     *   -tint  7% com branco  → fundo da coluna
+     *   -soft 20% com branco  → fundo de selo/contagem
+     *   -ink  70% com o texto → texto sobre tint/soft (≥ 4,5:1 em todos)
+     * O matiz cheio só pinta faixa/ponto/borda (≥ 3:1 no branco).
+     * --------------------------------------------------------------- */
+    --color-stage-novo: #3b6fb6; /* azul — Novo orçamento */
+    --color-stage-novo-tint: color-mix(in oklab, var(--color-stage-novo) 7%, white);
+    --color-stage-novo-soft: color-mix(in oklab, var(--color-stage-novo) 20%, white);
+    --color-stage-novo-ink: color-mix(in oklab, var(--color-stage-novo) 70%, #1a1a1a);
+    --color-stage-enviado: #6c5bb8; /* violeta — Orçamento enviado */
+    --color-stage-enviado-tint: color-mix(in oklab, var(--color-stage-enviado) 7%, white);
+    --color-stage-enviado-soft: color-mix(in oklab, var(--color-stage-enviado) 20%, white);
+    --color-stage-enviado-ink: color-mix(in oklab, var(--color-stage-enviado) 70%, #1a1a1a);
+    --color-stage-followup: #1f8a99; /* petróleo — Follow-up */
+    --color-stage-followup-tint: color-mix(in oklab, var(--color-stage-followup) 7%, white);
+    --color-stage-followup-soft: color-mix(in oklab, var(--color-stage-followup) 20%, white);
+    --color-stage-followup-ink: color-mix(in oklab, var(--color-stage-followup) 70%, #1a1a1a);
+    --color-stage-negociacao: #c47d12; /* âmbar — Negociação */
+    --color-stage-negociacao-tint: color-mix(in oklab, var(--color-stage-negociacao) 7%, white);
+    --color-stage-negociacao-soft: color-mix(in oklab, var(--color-stage-negociacao) 20%, white);
+    --color-stage-negociacao-ink: color-mix(in oklab, var(--color-stage-negociacao) 70%, #1a1a1a);
+    --color-stage-ganho: #2e8b57; /* verde — Ganho */
+    --color-stage-ganho-tint: color-mix(in oklab, var(--color-stage-ganho) 7%, white);
+    --color-stage-ganho-soft: color-mix(in oklab, var(--color-stage-ganho) 20%, white);
+    --color-stage-ganho-ink: color-mix(in oklab, var(--color-stage-ganho) 70%, #1a1a1a);
+    --color-stage-perdido: #c2453d; /* vermelho — Perdido */
+    --color-stage-perdido-tint: color-mix(in oklab, var(--color-stage-perdido) 7%, white);
+    --color-stage-perdido-soft: color-mix(in oklab, var(--color-stage-perdido) 20%, white);
+    --color-stage-perdido-ink: color-mix(in oklab, var(--color-stage-perdido) 70%, #1a1a1a);
+
     /* --------------------------------------------------------------- */
     /* Tipografia                                                       */
     /* --------------------------------------------------------------- */

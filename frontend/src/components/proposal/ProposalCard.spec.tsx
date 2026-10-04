@@ -163,4 +163,13 @@ describe('ProposalCard — Novo orçamento parado', () => {
     rerender(<ProposalCard proposal={bitlabProposal({ stageEnteredAt: entered })} now={later} />);
     expect(screen.queryByText(/Parado há/)).not.toBeInTheDocument();
   });
+
+  // CRMLAB-91/D-260: o cartão carrega a cor do seu estágio (borda + selo).
+  it('pinta borda e selo com a cor do estágio', () => {
+    render(<ProposalCard proposal={buildProposal({ status: 'perdido' })} />);
+    expect(screen.getByRole('button')).toHaveClass('border-l-stage-perdido');
+    const badge = screen.getByText('Perdido');
+    expect(badge).toHaveAttribute('data-stage', 'perdido');
+    expect(badge).toHaveClass('bg-stage-perdido-soft', 'text-stage-perdido-ink');
+  });
 });

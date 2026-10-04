@@ -232,6 +232,34 @@ acima, sem token novo: eixo/legenda `--color-neutral-600`, grade e borda de tool
 Não existem `--color-text-secondary`, `--color-border`, `--color-success` nem
 `--color-warning`: são sinônimos inventados de tokens que já existem.
 
+### Cores dos estágios do pipeline (`--color-stage-*`, CRMLAB-91, D-260)
+
+Única família de cor **fixa por significado** fora do chat: cada estágio do funil tem um matiz
+literal, igual para todo tenant (o tema não mexe). Serve para a gestora bater o olho no kanban e
+saber em que estágio está cada proposta.
+
+| Estágio | Token | Matiz |
+|---|---|---|
+| Novo orçamento | `--color-stage-novo` | azul `#3b6fb6` |
+| Orçamento enviado | `--color-stage-enviado` | violeta `#6c5bb8` |
+| Follow-up | `--color-stage-followup` | petróleo `#1f8a99` |
+| Negociação | `--color-stage-negociacao` | âmbar `#c47d12` |
+| Ganho | `--color-stage-ganho` | verde `#2e8b57` |
+| Perdido | `--color-stage-perdido` | vermelho `#c2453d` |
+
+Cada um deriva três degraus (Tailwind: `stage-<k>`, `stage-<k>-tint|soft|ink`):
+
+| Degrau | Mistura | Uso |
+|---|---|---|
+| `-tint` | 7% com branco | Fundo da coluna do kanban |
+| `-soft` | 20% com branco | Pílula de contagem e selo de estágio do cartão |
+| `-ink` | 70% com `#1a1a1a` | Texto sobre `tint`/`soft` (≥ 4,5:1 nos seis; o pior é âmbar sobre `soft`, 4,6:1) |
+| (cheio) | — | Só faixa, ponto e borda — nunca texto (≥ 3:1 no branco) |
+
+O mapa estágio → classes mora em `frontend/src/components/proposal/stageTone.ts`; componente não
+monta `bg-stage-${x}` (o Tailwind não geraria a classe). Cor nunca é a única pista: o nome do
+estágio continua escrito na coluna e no selo.
+
 ### Aplicação em CSS
 
 ```css

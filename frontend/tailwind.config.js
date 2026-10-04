@@ -15,6 +15,43 @@ export default {
         text: 'var(--color-text)',
         ink: 'var(--color-text)',
         backdrop: 'var(--color-backdrop)',
+        // Estágios do pipeline (CRMLAB-91, D-260): `bg-stage-ganho-tint`, `text-stage-ganho-ink`…
+        'stage-novo': {
+          DEFAULT: 'var(--color-stage-novo)',
+          tint: 'var(--color-stage-novo-tint)',
+          soft: 'var(--color-stage-novo-soft)',
+          ink: 'var(--color-stage-novo-ink)',
+        },
+        'stage-enviado': {
+          DEFAULT: 'var(--color-stage-enviado)',
+          tint: 'var(--color-stage-enviado-tint)',
+          soft: 'var(--color-stage-enviado-soft)',
+          ink: 'var(--color-stage-enviado-ink)',
+        },
+        'stage-followup': {
+          DEFAULT: 'var(--color-stage-followup)',
+          tint: 'var(--color-stage-followup-tint)',
+          soft: 'var(--color-stage-followup-soft)',
+          ink: 'var(--color-stage-followup-ink)',
+        },
+        'stage-negociacao': {
+          DEFAULT: 'var(--color-stage-negociacao)',
+          tint: 'var(--color-stage-negociacao-tint)',
+          soft: 'var(--color-stage-negociacao-soft)',
+          ink: 'var(--color-stage-negociacao-ink)',
+        },
+        'stage-ganho': {
+          DEFAULT: 'var(--color-stage-ganho)',
+          tint: 'var(--color-stage-ganho-tint)',
+          soft: 'var(--color-stage-ganho-soft)',
+          ink: 'var(--color-stage-ganho-ink)',
+        },
+        'stage-perdido': {
+          DEFAULT: 'var(--color-stage-perdido)',
+          tint: 'var(--color-stage-perdido-tint)',
+          soft: 'var(--color-stage-perdido-soft)',
+          ink: 'var(--color-stage-perdido-ink)',
+        },
         // Conversa do atendimento (CRMLAB-25 → CRMLAB-81, D-251) — visual WhatsApp Web.
         chat: {
           panel: 'var(--color-chat-panel)',

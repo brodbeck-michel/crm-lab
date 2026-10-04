@@ -260,6 +260,36 @@ O mapa estágio → classes mora em `frontend/src/components/proposal/stageTone.
 monta `bg-stage-${x}` (o Tailwind não geraria a classe). Cor nunca é a única pista: o nome do
 estágio continua escrito na coluna e no selo.
 
+### Agenda de visitas (`--color-agenda-*`, `--color-visit-*`, CRMLAB-92, D-262)
+
+**Neutros literais da Agenda**, iguais para todo tenant. Os `neutral-*` e o `surface` saem
+tingidos do accent, e era isso que apagava as linhas da grade antiga. Tailwind: `agenda-<k>`.
+
+| Token | Valor | Uso |
+|---|---|---|
+| `ink` / `ink-2` | `#1c2620` / `#3a4740` | Texto principal / de botão secundário |
+| `muted` / `muted-2` | `#6b7a71` / `#7a8880` | Texto secundário / eixo de horas e contagens |
+| `alt` · `rail` · `weekend` | `#fafbfa` · `#fcfdfc` · `#fbfcfb` | Cabeçalhos · coluna de resumo · sáb/dom |
+| `hover` · `press` · `seg` · `selected` | `#f7f9f8` · `#f3f6f4` · `#f0f3f1` · `#f0f5f2` | Estados de linha e controle |
+| `line` · `line-soft` · `line-control` · `line-hover` | `#e3e9e5` · `#edf1ee` · `#dce3df` · `#b9ccc1` | Bordas, linhas de hora, controles |
+| `now` · `danger` | `#d2453b` · `#b23a31` | Linha do agora · botão "Cancelar" |
+| `brand-tint` · `brand-col` | accent 9% / 4% com branco | Cabeçalho e coluna de hoje |
+
+**Status da visita** — trio fundo / texto / ponto (`visit-<status>-bg|ink|dot`, com
+`nao-recebeu` no nome do token). Mesma luminosidade e croma, só o matiz muda:
+
+| Status | Fundo | Texto | Ponto |
+|---|---|---|---|
+| Agendada | `oklch(0.95 0.03 250)` | `oklch(0.36 0.09 250)` | `oklch(0.6 0.13 250)` |
+| Realizada | `#eef1ef` | `#4f5b54` | `#9aa59f` |
+| Médico não recebeu | `oklch(0.95 0.045 75)` | `oklch(0.42 0.09 75)` | `oklch(0.68 0.14 75)` |
+| Cancelada | `oklch(0.96 0.025 25)` | `oklch(0.45 0.12 25)` | `oklch(0.62 0.16 25)` |
+
+O mapa status → classes mora em `pages/Visitation/agenda-ui.tsx` (`STATUS_STYLES`). Status nunca
+só por cor: rótulo no chip/selo/lista e nome riscado no bloco (cancelada e não recebeu). Avatar do
+responsável: `oklch(0.55 0.11 H)` com H por hash do id em 200/300/340/110/180 (fora dos matizes
+de status).
+
 ### Aplicação em CSS
 
 ```css

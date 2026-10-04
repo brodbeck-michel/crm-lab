@@ -121,7 +121,7 @@ export function PersonAvatar({
     <Avatar
       name={person.name}
       size={size}
-      className="text-white"
+      className="text-bg"
       style={{ backgroundColor: `oklch(0.55 0.11 ${avatarHue(person.id)})` }}
     />
   );

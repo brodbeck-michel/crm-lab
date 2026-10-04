@@ -59,7 +59,7 @@ export function AgendaWeek({
       className="relative flex min-h-0 flex-1 flex-col overflow-auto rounded-lg border border-agenda-line bg-bg"
       data-testid="agenda-week"
     >
-      <div className="min-w-[56rem]">
+      <div className="min-w-[48rem]">
         <div
           className={cn(
             'sticky top-0 z-20 grid border-b border-agenda-line bg-agenda-alt',
@@ -78,15 +78,19 @@ export function AgendaWeek({
         </div>
 
         <div className={cn('relative grid', COLUMNS)} style={{ height: GRID_HEIGHT }}>
-          <div aria-hidden="true">
-            {HOURS.map((hour) => (
-              <div
+          {/* Rótulo da hora na própria linha (a visita das 08:30 fica a meio caminho). */}
+          <div aria-hidden="true" className="relative">
+            {HOURS.map((hour, index) => (
+              <span
                 key={hour}
-                className="flex items-center justify-end pr-sm text-[11px] tabular-nums text-agenda-muted-2"
-                style={{ height: HOUR_PX }}
+                className={cn(
+                  'absolute right-sm text-[11px] tabular-nums leading-none text-agenda-muted-2',
+                  index > 0 && '-translate-y-1/2',
+                )}
+                style={{ top: index === 0 ? 4 : index * HOUR_PX }}
               >
                 {formatHour(hour)}
-              </div>
+              </span>
             ))}
           </div>
           {days.map((day) => (

@@ -616,9 +616,12 @@ nunca devolve o conteúdo escondido.
 
 **`awaitingReplySince` (CRMLAB-84, D-254)** — hora da **primeira** mensagem do paciente depois
 da última resposta de pessoa do laboratório (`senderType: "agent"` sem `automation` — CRM ou
-celular). Sem resposta nenhuma ainda: a primeira mensagem do paciente. `null` quando a atendente
-falou por último, quando só há mensagem automática/de sistema ou quando a conversa está
-encerrada. Mensagem automática e de sistema **não** zeram a espera. Vem também no detalhe
+celular) **ou do último encerramento** ("Atendimento encerrado por X"), o que for mais recente
+(D-259, a mesma fronteira do relatório de tempo de resposta, §5). Sem resposta nem encerramento
+ainda: a primeira mensagem do paciente. `null` quando a atendente falou por último, quando nada
+do paciente veio depois do último encerramento, quando só há mensagem automática/de sistema ou
+quando a conversa está encerrada. Mensagem automática e de sistema (exceto o encerramento)
+**não** zeram a espera. Vem também no detalhe
 (`GET /conversations/:id`). É a base do alerta de tempo de resposta: o navegador conta os minutos
 **úteis** desde ela (`responseAlertMinutes`, §6c/§6e). Campo **opcional** no tipo; o backend
 sempre manda.

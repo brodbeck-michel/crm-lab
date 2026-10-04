@@ -226,10 +226,13 @@ escreveu e a atendente ainda não respondeu fica destacada em vermelho na lista 
 para **todas** as atendentes que já a veem, a partir de X minutos de espera.
 - **Resposta da atendente** = mensagem `agent` com `automation` nulo, pelo CRM ou pelo celular
   (a mesma âncora do reingajamento). Mensagem **automática** e de **sistema** NÃO tiram do
-  alerta.
+  alerta — exceto o encerramento (item abaixo).
 - **A espera começa na primeira mensagem do paciente depois da última resposta** (sem resposta
   nenhuma ainda: a primeira mensagem do paciente). Paciente que manda três mensagens seguidas
   espera desde a primeira.
+- **Encerrar o atendimento também zera a espera** (D-259), como no relatório de tempo de
+  resposta: paciente que mandou "obrigado", teve o atendimento encerrado e voltou dias depois
+  espera só desde a mensagem nova, não desde o "obrigado".
 - **Só conta o horário comercial:** o expediente de `tenant_settings.business_hours` (sem
   nenhum dia configurado = sempre aberto) e **sem feriados** (nacionais e os do laboratório),
   como o reingajamento. Escreveu às 17:55 com o laboratório fechando às 18:00: às 08:05 do dia

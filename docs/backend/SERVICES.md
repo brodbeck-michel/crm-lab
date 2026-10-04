@@ -75,10 +75,12 @@ continua recebendo só `tenantId`: quem chama é o webhook, sem usuário logado.
 Ver "Convenções Transversais" — o contexto é sempre o primeiro parâmetro.
 
 **`awaitingReplySince` (CRMLAB-84, D-254):** a lista e o detalhe trazem a hora da primeira
-mensagem do paciente depois da última resposta humana (`agent` com `automation` nulo), por um
-`LEFT JOIN LATERAL` (`AWAITING_REPLY_LATERAL` em `conversation.repository.ts`) que acha a última
-resposta pelo índice parcial `idx_messages_human_reply` (migração 046). Conversa encerrada:
-`null`. Sai já em ISO UTC (`to_char`), como as datas do reingajamento.
+mensagem do paciente depois da **mais recente** entre a última resposta humana (`agent` com
+`automation` nulo) e o último encerramento ("Atendimento encerrado por X", D-259 — a fronteira do
+relatório da D-257), por um `LEFT JOIN LATERAL` (`AWAITING_REPLY_LATERAL` em
+`conversation.repository.ts`) que acha a última resposta pelo índice parcial
+`idx_messages_human_reply` (migração 046) e o último encerramento por `idx_messages_closed_event`
+(migração 051). Conversa encerrada: `null`. Sai já em ISO UTC (`to_char`), como as datas do reingajamento.
 
 `createManual(ctx, dto)` é o `POST /conversations` (atendimento fora do WhatsApp,
 API_CONTRACTS.md §2). Passa pelo mesmo `findOrCreateByPhone` — o canal vem do DTO e

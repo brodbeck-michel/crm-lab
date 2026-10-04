@@ -349,6 +349,20 @@ CREATE INDEX idx_messages_human_reply
   predicado literalmente. A âncora do reingajamento (§33) usa o mesmo recorte.
 - Sem coluna nova, sem backfill, sem policy (`messages` já está sob RLS).
 
+**Último encerramento — migração 051 (CRMLAB-90, D-259):**
+
+```sql
+CREATE INDEX idx_messages_closed_event
+  ON messages (conversation_id, created_at DESC)
+  WHERE sender_type = 'system' AND content LIKE 'Atendimento encerrado%';
+```
+
+- Desde a D-259 o encerramento (a mensagem de sistema "Atendimento encerrado por X", D-174) também
+  é fronteira do `awaitingReplySince`, como no relatório de tempo de resposta (D-257). O parcial só
+  tem os eventos de encerramento, e o último é a primeira entrada da conversa. A consulta
+  (`AWAITING_REPLY_LATERAL`) repete o predicado literalmente.
+- Sem coluna nova, sem backfill, sem policy (`messages` já está sob RLS).
+
 **Mensagens do paciente por período — migração 049 (CRMLAB-83, D-257):**
 
 ```sql
@@ -2223,6 +2237,11 @@ CREATE INDEX idx_messages_human_reply
 CREATE INDEX idx_messages_patient_tenant_created
   ON messages (tenant_id, created_at)
   WHERE sender_type = 'patient';
+
+-- Último encerramento por conversa (alerta de tempo de resposta — migração 051, D-259)
+CREATE INDEX idx_messages_closed_event
+  ON messages (conversation_id, created_at DESC)
+  WHERE sender_type = 'system' AND content LIKE 'Atendimento encerrado%';
 
 -- Search (busca pelo conteúdo das mensagens — migração 043, D-228)
 CREATE INDEX idx_messages_content_search

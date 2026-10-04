@@ -3158,6 +3158,19 @@ CRMLAB-85 (Visitação Médica). Decisão D-256.
 - **Pendente:** validação na hml; a migração 048 roda no deploy. `realizada` (check-in/out, relato
   e anexos) é o card [C]; linha do tempo do médico, o card [D].
 
+### 🚧 CRMLAB-90 — alerta de paciente sem resposta: encerrar zera a espera (2026-10-04, em desenvolvimento)
+
+Branch `feature/CRMLAB-90-alerta-encerramento` (de `main` v1.31.0). Decisão D-259 (emenda à
+D-254, alinhando com a D-257), migração `051_messages_closed_event_index.sql` (só índice parcial;
+o 050 é do CRMLAB-88).
+
+- **Backend:** `awaitingReplySince` conta da primeira mensagem do paciente depois da mais recente
+  entre a última resposta humana e o último "Atendimento encerrado por X". Conversa reaberta só
+  entra em alerta pelas mensagens novas. Nada muda na tela.
+- **Testes:** `tests/conversations/awaiting-reply.spec.ts` (12, 5 novos — 3 falham sem a correção).
+- **Pendente:** suíte inteira verde num ambiente com acesso a `cdn.sheetjs.com` (o `xlsx` do
+  frontend não baixou na rotina) e validação na hml; a migração 051 roda no deploy.
+
 ### 🚧 CRMLAB-83 — relatório de tempo de resposta no WhatsApp (2026-10-03, aguardando validação)
 
 Branch `feature/CRMLAB-83-relatorio-tempo-resposta` (de `main` v1.30.0). Decisão D-257, migração

@@ -5128,3 +5128,32 @@ frontend `api/analytics.ts`, `api/query-keys.ts`, `lib/format.ts` (`formatMinute
 testes `tests/analytics/response-time.spec.ts`, inventário de `route-tenant-isolation.spec.ts`
 (88 → 89 rotas), `ResponseTimeSection.spec.tsx`, `Analytics.spec.tsx`, `format.spec.ts`.
 SCHEMA §4, API_CONTRACTS §5, SERVICES §9, BUSINESS_RULES §3, PAGES §8.
+
+## 2026-10-04 — Alerta de paciente sem resposta: encerrar zera a espera (CRMLAB-90)
+
+### D-259: O encerramento também é fronteira do alerta (emenda à D-254, alinhando com a D-257)
+**Decisão (Michel, 03/10/2026, no card; itens 3–4 decididos na implementação):**
+1. **Emenda ao item 3 da D-254:** a espera do alerta (`Conversation.awaitingReplySince`) começa
+   na primeira mensagem do paciente depois da **mais recente** entre (a) a última resposta humana
+   (`agent` com `automation` nulo) e (b) o último **encerramento** — a mensagem de sistema
+   "Atendimento encerrado por X" (D-174 item 2). É exatamente a fronteira `C` do relatório de tempo
+   de resposta (D-257 item 6), com o mesmo critério de texto (`content LIKE 'Atendimento
+   encerrado%'`). Sem isso, o "obrigado" que o paciente manda antes de a atendente encerrar fazia a
+   conversa reaberta dias depois já nascer vermelha, com a espera contada desde o "obrigado".
+2. **Continua igual:** automática e sistema **que não seja encerramento** não tiram do alerta; a
+   resposta humana tira; conversa encerrada não espera (`null`).
+3. **Fallback da conversa encerrada antes da D-174** (sem o evento): no relatório ele vale só
+   quando a conversa **está** `closed` (`e.kind IS NULL AND c.status = 'closed'`). O alerta já
+   devolve `null` para toda conversa encerrada, então o comportamento é o mesmo sem regra extra.
+   Conversa encerrada antes da D-174 e **reaberta** não tem como ser reconhecida (não há registro
+   do encerramento) — nem no relatório, nem aqui.
+4. **Índice:** a 046 continua servindo para a última resposta humana. O último encerramento por
+   conversa sai de um índice parcial novo, `idx_messages_closed_event` (migração **051**), com o
+   predicado repetido literalmente na consulta — sem ele, achar o encerramento varreria a conversa
+   inteira pelo índice geral. A fronteira é o `GREATEST` das duas subconsultas (cada uma na
+   primeira entrada do próprio índice; `GREATEST` ignora `NULL`).
+**Motivo:** o número do relatório e o vermelho da lista precisam contar a mesma história (D-257).
+**Impacto:** `backend/migrations/051_messages_closed_event_index.sql`;
+`conversation.repository.ts` (`AWAITING_REPLY_LATERAL`); teste
+`tests/conversations/awaiting-reply.spec.ts`. SCHEMA §4, API_CONTRACTS §2, SERVICES §2,
+BUSINESS_RULES (alerta de tempo de resposta).

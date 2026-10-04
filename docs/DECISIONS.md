@@ -5210,3 +5210,47 @@ API_ERRORS, SERVICES §31, BUSINESS_RULES §14, PAGES §23.
 `conversation.repository.ts` (`AWAITING_REPLY_LATERAL`); teste
 `tests/conversations/awaiting-reply.spec.ts`. SCHEMA §4, API_CONTRACTS §2, SERVICES §2,
 BUSINESS_RULES (alerta de tempo de resposta).
+
+## 2026-10-04 — Linha do tempo do médico (CRMLAB-89, épico CRMLAB-85 Visitação Médica)
+
+### D-261: Ficha do médico com a linha do tempo de visitas e registros lançados à mão
+**Decisão (Michel no épico, 02/10/2026, e no resumo aprovado em 04/10/2026; itens 3, 4, 6 e 7
+decididos na implementação):**
+1. **Ficha própria** em `/visitation/doctors/:id`, aberta pelo nome na lista de Médicos (antes só
+   havia o modal de edição). Os dados do cadastro ficam no topo, com [Editar] reaproveitando o
+   `DoctorModal`, e a linha do tempo embaixo.
+2. **O que entra na linha do tempo** (resposta 8): as **visitas** do médico, em qualquer status, e
+   os **registros manuais** (ligação, e-mail, WhatsApp) da tabela nova `doctor_interactions`
+   (migração 052, SCHEMA §38). As duas fontes se juntam **na leitura** (`UNION ALL`), sem copiar
+   visita. As conversas do WhatsApp do CRM **não** entram: não existe ligação conversa ↔ médico.
+3. **Posição da visita = check-in**, ou a data prevista se não houve check-in. É o que aconteceu;
+   uma visita agendada no futuro aparece no topo como "Agendada".
+4. **Paginação por cursor**, não por página: `(sort_at, id)` do último item, opaco
+   (`base64url`). Um registro lançado enquanto alguém lê não desloca a página seguinte, que é o
+   defeito do `OFFSET`. O `sort_at` é truncado em milissegundos, a precisão do ISO que volta no
+   cursor. A tela usa [Carregar mais] (`useInfiniteQuery`).
+5. **Excluir apaga a linha de verdade.** Não fica "excluído" na linha do tempo; o rastro (tipo,
+   data, descrição, quem apagou) fica no audit `delete_doctor_interaction` (resposta 9). Decisão
+   avisada no resumo aprovado.
+6. **Data do registro até 5 min no futuro** (`DOCTOR_INTERACTION_FUTURE_TOLERANCE_MS`): é um
+   registro do que já aconteceu, e a folga cobre o relógio do celular. Descrição obrigatória,
+   aparada, até 2000.
+7. **Médico inativo também recebe registro.** Diferente da visita nova (D-256 exige médico ativo):
+   a linha do tempo é histórico, e o contato com um médico inativo aconteceu do mesmo jeito.
+8. **Todo papel do laboratório** vê, lança, edita e exclui qualquer registro (resposta 2A). O
+   registro guarda quem lançou e quem editou por último.
+9. **Rotas no `doctorModule`**, em `/doctors/:id/...`: `GET timeline`, `POST interactions`,
+   `PATCH|DELETE interactions/:interactionId`. Registro de **outro médico** no caminho → 404, como
+   o de outro tenant. Quatro rotas novas no inventário de isolamento (102 → 106).
+10. **[Abrir visita]** leva a `/visitation/agenda?visit=<id>`, e a Agenda abre o `Modal` "Visita"
+    direto. Fechar limpa o parâmetro.
+**Motivo:** fecha o MVP do épico CRMLAB-85: o gestor vê numa tela só tudo o que a equipe fez com
+cada médico (visitas e contatos), com autor e data, como o painel "Atividades" da referência.
+**Impacto:** `backend/migrations/052_doctor_interactions.sql`; `doctor-interaction.repository.ts`,
+`doctor-interaction.service.ts` (novos), `doctor.routes.ts`; `shared/types/doctor-timeline.types.ts`
+(novo); frontend `api/doctors.ts`, `api/query-keys.ts`, `pages/Visitation/DoctorProfile.tsx`
+(novo), `Doctors.tsx` (link e `DoctorModal` exportado), `Agenda.tsx` (`?visit=`),
+`routes/route-config.ts`, `routes/index.tsx`; testes `tests/doctors/doctor-timeline.spec.ts`,
+inventário de `route-tenant-isolation.spec.ts` (102 → 106 rotas), `DoctorProfile.spec.tsx`,
+`Agenda.spec.tsx`, `Doctors.spec.tsx`. SCHEMA §38, API_CONTRACTS §13, SERVICES §32,
+BUSINESS_RULES §15, PAGES §22b e §23.

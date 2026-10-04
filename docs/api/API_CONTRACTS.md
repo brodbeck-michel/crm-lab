@@ -5485,6 +5485,99 @@ grava segundo audit.
 **Erros:** `NOT_FOUND` (404), `VALIDATION_ERROR` (400, `:id` não-uuid), `FORBIDDEN` (403,
 `platform_operator`)
 
+### Linha do tempo do médico (CRMLAB-89, D-261)
+
+Tela `/visitation/doctors/:id` (PAGES.md §22b). Shapes em `shared/types/doctor-timeline.types.ts`;
+tabela `doctor_interactions` (SCHEMA.md §38); service `DoctorInteractionService` (SERVICES.md §32).
+**Mais 4 rotas**, todas para **todos os papéis do tenant** e no inventário de isolamento (102 → 106).
+Médico de outro tenant, inexistente, ou registro de **outro médico** no caminho → `404 NOT_FOUND`.
+
+**Objeto `DoctorInteraction`** (registro lançado à mão):
+```json
+{
+  "id": "1f6c2a90-8b7d-4e3a-9c15-6d2e8f0a4b71",
+  "doctorId": "5b0c8a2e-3f41-4d7a-9c61-2e8f4a7b1d90",
+  "type": "ligacao",
+  "occurredAt": "2026-10-03T17:30:00.000Z",
+  "description": "Confirmou a visita de terça",
+  "createdBy": { "id": "7c3d5f92-1a48-4c60-8e21-9b5d7a3f2c11", "name": "Ana Lima" },
+  "updatedBy": null,
+  "createdAt": "2026-10-03T17:32:10.000Z",
+  "updatedAt": "2026-10-03T17:32:10.000Z"
+}
+```
+`type`: `ligacao` · `email` · `whatsapp`. `updatedBy: null` = nunca editado.
+
+#### GET /doctors/:id/timeline
+
+**Query Params:** `?limit=20` (default 20, máximo 50) · `?cursor=<nextCursor da página anterior>`
+
+**Response (200):**
+```json
+{
+  "items": [
+    {
+      "kind": "visit",
+      "id": "a3e1…",
+      "occurredAt": "2026-10-06T13:20:00.000Z",
+      "status": "realizada",
+      "type": "presencial",
+      "scheduledAt": "2026-10-06T13:00:00.000Z",
+      "checkInAt": "2026-10-06T13:20:00.000Z",
+      "checkOutAt": "2026-10-06T13:55:00.000Z",
+      "responsible": { "id": "7c3d…", "name": "Ana Lima" },
+      "statusReason": null,
+      "reportExcerpt": "Apresentei o painel de tireoide…",
+      "attachmentCount": 2
+    },
+    { "kind": "interaction", "...": "DoctorInteraction" }
+  ],
+  "nextCursor": "MjAyNi0xMC0wM1QxNzozMDowMC4wMDBafDFmNmMy…"
+}
+```
+- Junta as **visitas do médico** (qualquer status) e os **registros manuais**, do mais novo para o
+  mais antigo, com o `id` como desempate. **Não** traz conversas do WhatsApp do CRM (resposta 8 do
+  épico).
+- A posição da visita (`occurredAt`) é o **check-in**, ou a data prevista se não houve check-in.
+  Visita agendada no futuro aparece no topo.
+- `reportExcerpt`: o primeiro campo preenchido do relato (apresentado → feedback → objeções),
+  cortado em 280 caracteres com `…`. `null` sem relato. A visita inteira abre em `GET /visits/:id`.
+- `nextCursor: null` = acabou. O cursor é opaco; mexido → `VALIDATION_ERROR`.
+
+**Erros:** `NOT_FOUND` (404), `VALIDATION_ERROR` (400 — `limit` fora de 1..50, cursor inválido)
+
+#### POST /doctors/:id/interactions
+
+**Request:**
+```json
+{ "type": "ligacao", "occurredAt": "2026-10-03T14:30:00-03:00", "description": "Confirmou a visita de terça" }
+```
+- Os três são obrigatórios; campo a mais → `VALIDATION_ERROR` (schema estrito).
+- `occurredAt` ISO 8601 com fuso; volta em UTC. **Não pode passar de 5 min no futuro**
+  (`details.fields.occurredAt`).
+- `description` aparada; vazia ou acima de 2000 → `VALIDATION_ERROR` (`details.fields.description`).
+- Médico **inativo** também recebe registro (D-261 item 4).
+
+**Response (201):** o `DoctorInteraction`, cru. Audit `create_doctor_interaction`
+(`entityType: "doctor_interaction"`, `newValues: { doctorId, type, occurredAt, description }`).
+
+**Erros:** `NOT_FOUND` (404), `VALIDATION_ERROR` (400), `FORBIDDEN` (403, `platform_operator`)
+
+#### PATCH /doctors/:id/interactions/:interactionId
+
+Parcial: `type`, `occurredAt`, `description`, com as mesmas regras do `POST`. Grava `updatedBy`.
+**Response (200):** o `DoctorInteraction` atualizado. Audit `update_doctor_interaction` só com o
+que mudou; PATCH sem mudança real devolve 200 sem audit.
+
+**Erros:** `NOT_FOUND` (404), `VALIDATION_ERROR` (400), `FORBIDDEN` (403)
+
+#### DELETE /doctors/:id/interactions/:interactionId
+
+Apaga o registro de verdade (não há "excluído" na linha do tempo). **Response (204).** Audit
+`delete_doctor_interaction` com `oldValues` do registro apagado. Repetir → `404`.
+
+**Erros:** `NOT_FOUND` (404), `FORBIDDEN` (403)
+
 ---
 
 ## 14. Visits (Agenda de visitas — Visitação Médica, CRMLAB-87)

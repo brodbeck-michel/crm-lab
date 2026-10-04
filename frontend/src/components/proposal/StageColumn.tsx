@@ -9,6 +9,7 @@ import {
 import ProposalCard, { DRAG_STATUS_PREFIX } from './ProposalCard';
 import { MoneyDisplay } from '@/components/shared/MoneyDisplay';
 import { cn } from '@/components/ui';
+import { STAGE_TONES } from './stageTone';
 
 interface StageColumnProps {
   status: ProposalStatus;
@@ -60,6 +61,7 @@ export default function StageColumn({
 }: StageColumnProps) {
   const total = proposals.reduce((sum, p) => sum + (p.totalPrice || 0), 0);
   const [over, setOver] = useState(false);
+  const tone = STAGE_TONES[status];
 
   const accepts = (event: React.DragEvent) => {
     if (onDropProposal === undefined) return false;
@@ -84,15 +86,22 @@ export default function StageColumn({
         event.preventDefault();
         onDropProposal?.(proposal, status);
       }}
+      data-stage={status}
       className={cn(
-        'min-w-0 bg-surface rounded-lg p-md flex flex-col transition-colors',
-        over && 'bg-accent-100 ring-2 ring-accent',
+        // CRMLAB-91/D-260: faixa no topo + fundo tingido na cor do estágio.
+        'min-w-0 rounded-lg border-0 border-t-4 border-solid p-md flex flex-col transition-colors',
+        tone.column,
+        // O realce de drop é a cor do TEMA, não a do estágio: "solte aqui" ≠ "que estágio é".
+        over && 'ring-2 ring-accent ring-offset-2',
       )}
     >
       <div className="flex items-center justify-between gap-xs mb-md">
-        <h3 className="font-semibold text-label truncate">{PROPOSAL_STATUS_LABELS[status]}</h3>
+        <h3 className={cn('flex items-center gap-xs font-semibold text-label min-w-0', tone.title)}>
+          <span aria-hidden className={cn('size-2 rounded-pill flex-shrink-0', tone.dot)} />
+          <span className="truncate">{PROPOSAL_STATUS_LABELS[status]}</span>
+        </h3>
         <div className="flex gap-sm items-center flex-shrink-0">
-          <span className="bg-neutral-200 rounded-pill px-md py-xs text-caption font-semibold">
+          <span className={cn('rounded-pill px-md py-xs text-caption font-semibold', tone.badge)}>
             {proposals.length}
           </span>
           <MoneyDisplay value={total} variant="compact" />

@@ -143,10 +143,16 @@ describe('guardas de acesso', () => {
 });
 
 describe('POST /visits', () => {
+  it('devolve a clínica do cadastro do médico (o "Local" da agenda, CRMLAB-92)', async () => {
+    await db.withoutTenant((tx) => tx.query('UPDATE doctors SET clinic = $1 WHERE id = $2', ['Clínica Vida', doctorA]));
+    const visit = await createOk(attendantA);
+    expect(visit.doctor.clinic).toBe('Clínica Vida');
+  });
+
   it('201 com a visita agendada, médico, responsável e quem criou', async () => {
     const visit = await createOk(attendantA, { agenda: '  Apresentar o painel  ' });
     expect(visit).toMatchObject({
-      doctor: { id: doctorA, name: 'Dra. Júlia Costa', isActive: true },
+      doctor: { id: doctorA, name: 'Dra. Júlia Costa', clinic: null, isActive: true },
       responsible: { id: attendantA.id, name: 'Atendente Bia' },
       scheduledAt: '2026-10-06T13:00:00.000Z',
       type: 'presencial',

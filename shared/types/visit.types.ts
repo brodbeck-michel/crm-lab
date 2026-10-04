@@ -117,6 +117,8 @@ export interface VisitDoctor {
   crm: string | null;
   crmUf: string | null;
   specialty: string | null;
+  /** Clínica/consultório do cadastro — é o "Local" da agenda (CRMLAB-92). */
+  clinic: string | null;
   isActive: boolean;
 }
 

@@ -178,6 +178,8 @@ interface Lab {
   checkedInVisit: { id: string };
   /** Anexo (PDF) de `visit`, com o arquivo no disco (CRMLAB-88). */
   visitAttachment: { id: string };
+  /** Registro manual (ligacao) na linha do tempo de `doctor` (CRMLAB-89, D-261). */
+  doctorInteraction: { id: string };
   /** Mídia de mensagem (Onda 8 §4). */
   media: { id: string };
   /** Mensagem do paciente na `conversation` — alvo de reação (CRMLAB-66). */
@@ -564,6 +566,41 @@ const LAB_ROUTES: readonly LabRoute[] = [
     actor: 'attendant',
     addressable: true,
     ownStatus: 200,
+  },
+  // --- linha do tempo do medico (CRMLAB-89, D-261): todo papel de laboratorio escreve ---
+  {
+    name: 'GET /doctors/:id/timeline',
+    method: 'get',
+    path: (l) => `/api/v1/doctors/${l.doctor.id}/timeline`,
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    name: 'POST /doctors/:id/interactions',
+    method: 'post',
+    path: (l) => `/api/v1/doctors/${l.doctor.id}/interactions`,
+    body: () => ({ type: 'ligacao', occurredAt: '2026-10-01T12:00:00.000Z', description: 'Sonda de isolamento' }),
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 201,
+  },
+  {
+    name: 'PATCH /doctors/:id/interactions/:interactionId',
+    method: 'patch',
+    path: (l) => `/api/v1/doctors/${l.doctor.id}/interactions/${l.doctorInteraction.id}`,
+    body: () => ({ description: 'Sonda de isolamento' }),
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    name: 'DELETE /doctors/:id/interactions/:interactionId',
+    method: 'delete',
+    path: (l) => `/api/v1/doctors/${l.doctor.id}/interactions/${l.doctorInteraction.id}`,
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 204,
   },
 
   // --- agenda de visitas (CRMLAB-87, D-256): todo papel de laboratorio escreve ---
@@ -1064,6 +1101,15 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
   );
   const doctor = { id: doctorRow.rows[0]?.id as string };
 
+  const doctorInteractionRow = await db.withoutTenant((tx) =>
+    tx.query<{ id: string }>(
+      `INSERT INTO doctor_interactions (tenant_id, doctor_id, type, occurred_at, description, created_by)
+       VALUES ($1, $2, 'ligacao', '2026-10-01T12:00:00Z', $3, $4) RETURNING id`,
+      [tenant.id, doctor.id, secret ? BETA_SECRETS.doctor : `Ligacao ${prefix}`, attendant.id],
+    ),
+  );
+  const doctorInteraction = { id: doctorInteractionRow.rows[0]?.id as string };
+
   const visitRow = await db.withoutTenant((tx) =>
     tx.query<{ id: string }>(
       `INSERT INTO doctor_visits (tenant_id, doctor_id, responsible_user_id, scheduled_at, type, agenda)
@@ -1141,6 +1187,7 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     visit,
     checkedInVisit,
     visitAttachment,
+    doctorInteraction,
     media,
     message,
   };
@@ -1224,7 +1271,7 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 102 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 106 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
@@ -1255,7 +1302,9 @@ describe('inventario de rotas de laboratorio', () => {
     // CRMLAB-83/D-257 soma 1: `GET /analytics/response-time`.
     // CRMLAB-88/D-258 soma 6: `POST /visits/:id/check-in|check-out|attachments`,
     // `PATCH /visits/:id/report` e `GET|DELETE /visits/:id/attachments/:attachmentId`.
-    expect(LAB_ROUTES).toHaveLength(102);
+    // CRMLAB-89/D-261 soma 4: `GET /doctors/:id/timeline`, `POST /doctors/:id/interactions` e
+    // `PATCH|DELETE /doctors/:id/interactions/:interactionId`.
+    expect(LAB_ROUTES).toHaveLength(106);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)
@@ -1625,7 +1674,7 @@ describe('token', () => {
     for (const route of LAB_ROUTES) {
       // Sem token o limitador conta por IP (100/min): com mais de 100 rotas a
       // 101a chamada levava 429. Este caso prova autenticacao, nao o limite,
-      // entao zera o contador antes de cada chamada (CRMLAB-88: 102 rotas).
+      // entao zera o contador antes de cada chamada (CRMLAB-89: 106 rotas).
       await app.cache.close();
       const request = app.agent[route.method](route.path(alfa));
       const response = await (route.body ? request.send(route.body(alfa)) : request);

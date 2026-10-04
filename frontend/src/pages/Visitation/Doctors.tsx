@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import {
   BRAZIL_UFS,
   normalizeCrm,
@@ -30,7 +31,7 @@ const STATUS_OPTIONS: Array<{ value: StatusFilter; label: string }> = [
 ];
 
 /** `12345/SC`, ou `—` sem CRM. */
-function crmLabel(doctor: Pick<Doctor, 'crm' | 'crmUf'>): string {
+export function crmLabel(doctor: Pick<Doctor, 'crm' | 'crmUf'>): string {
   return doctor.crm ? `${doctor.crm}/${doctor.crmUf ?? ''}` : '—';
 }
 
@@ -127,7 +128,9 @@ export default function Doctors() {
       minWidth: 220,
       render: (doctor) => (
         <div className="min-w-0">
-          <div className="truncate font-semibold text-text">{doctor.name}</div>
+          <Link to={`/visitation/doctors/${doctor.id}`} className="block truncate font-semibold text-text hover:underline">
+            {doctor.name}
+          </Link>
           {doctor.specialty && <div className="truncate text-caption text-neutral-600">{doctor.specialty}</div>}
         </div>
       ),
@@ -230,7 +233,9 @@ export default function Doctors() {
               >
                 <div className="flex items-start justify-between gap-md">
                   <div className="min-w-0">
-                    <div className="font-semibold text-text">{doctor.name}</div>
+                    <Link to={`/visitation/doctors/${doctor.id}`} className="font-semibold text-text hover:underline">
+                      {doctor.name}
+                    </Link>
                     <div className="text-caption text-neutral-600">
                       {[doctor.crm ? `CRM ${crmLabel(doctor)}` : null, doctor.specialty].filter(Boolean).join(' · ') ||
                         'Sem CRM'}
@@ -261,7 +266,7 @@ export default function Doctors() {
   );
 }
 
-interface DoctorModalProps {
+export interface DoctorModalProps {
   doctor?: Doctor;
   assignees: Array<{ id: string; name: string }>;
   onClose: () => void;
@@ -308,7 +313,8 @@ function crmConflictMessage(details: Record<string, unknown> | undefined): strin
     : `CRM já cadastrado para ${existing.name} (inativo). Reative o cadastro em vez de criar outro.`;
 }
 
-function DoctorModal({ doctor, assignees, onClose }: DoctorModalProps) {
+/** Cadastro/edição do médico — também aberto pela ficha (`DoctorProfile`, CRMLAB-89). */
+export function DoctorModal({ doctor, assignees, onClose }: DoctorModalProps) {
   const queryClient = useQueryClient();
   const handleApiError = useApiErrorHandler();
   const { toast } = useToast();

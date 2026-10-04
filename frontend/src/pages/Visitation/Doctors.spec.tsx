@@ -103,6 +103,8 @@ describe('Doctors (/visitation/doctors)', () => {
     const cards = within(screen.getByTestId('doctors-cards'));
     expect(cards.getByText('Dra. Júlia Costa')).toBeInTheDocument();
     expect(cards.getByText('CRM 12345/SC · Ginecologia')).toBeInTheDocument();
+    // O nome abre a ficha do médico (CRMLAB-89).
+    expect(table().getByRole('link', { name: 'Dra. Júlia Costa' })).toHaveAttribute('href', '/visitation/doctors/doc-1');
   });
 
   it('abre mostrando só ativos, página 1', async () => {

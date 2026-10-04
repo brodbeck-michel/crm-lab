@@ -1448,6 +1448,34 @@ CRMLAB-87) vem antes no mesmo grupo. Arquivo `pages/Visitation/Doctors.tsx`.
   toast genérico (`useApiErrorHandler`).
 - **Inativar/Reativar:** sem confirmação (é reversível); toast "Médico inativado"/"Médico
   reativado" e a lista recarrega.
+- **O nome do médico** (na tabela e no cartão) é link para a ficha (§22b, CRMLAB-89).
+
+---
+
+### 22b. Ficha do médico (`/visitation/doctors/:id`) — todos os papéis de tenant (CRMLAB-89, D-261)
+
+Aberta pelo nome na lista de Médicos; fora da Sidebar (`inSidebar: false`), `requiredRoles:
+TENANT_ROLES`. Fonte: `GET /doctors/:id` e a linha do tempo de `GET /doctors/:id/timeline`
+(API_CONTRACTS.md §13). Arquivo `pages/Visitation/DoctorProfile.tsx`.
+
+- **Topo:** `PageHeader` com o nome, "CRM 12345/SC · Especialidade" embaixo, breadcrumb
+  Médicos › Ficha do médico, `Chip` "Inativo" quando for o caso e [Editar] (abre o mesmo `Modal`
+  da lista, `DoctorModal`).
+- **Dados:** cartão com clínica, endereço, telefone, e-mail, secretária, melhor dia e horário,
+  responsável (grade de 3 → 2 → 1 coluna) e as observações embaixo. Campo vazio mostra "—".
+- **Linha do tempo:** título "Linha do tempo" + [+ Registrar interação]. Um cartão por item, do mais
+  novo para o mais antigo, e [Carregar mais] enquanto o servidor devolver `nextCursor` (as páginas
+  se acumulam; `useInfiniteQuery`).
+  - **Visita:** "Visita" + `Chip` do status + data/hora; "Presencial · com Ana · 35 min · 2 anexos";
+    motivo (cancelada/não recebeu); o trecho do relato; link **[Abrir visita]** →
+    `/visitation/agenda?visit=<id>`, que abre o `Modal` "Visita" direto (§23).
+  - **Registro manual:** tipo (Ligação/E-mail/WhatsApp) + data/hora, a descrição, "Registrado por
+    X · editado por Y", e [Editar] [Excluir]. Excluir pede confirmação (`window.confirm`).
+  - Vazio: "Nenhuma interação ainda".
+- **Registrar/editar interação** (`Modal`): Tipo, Data e Hora (abrem com agora; no editar, com o
+  registro) e Descrição*. A tela barra descrição vazia; `VALIDATION_ERROR` com `fields` (ex.: data
+  no futuro) marca o campo.
+- **Médico de outro laboratório ou inexistente:** "Médico não encontrado" (nunca "sem permissão").
 
 ---
 
@@ -1459,6 +1487,8 @@ Item **"Agenda"** (ícone `CalendarDays`) do grupo "Visitação Médica", antes 
 Arquivos `pages/Visitation/Agenda.tsx` e `pages/Visitation/agenda-dates.ts` (datas no fuso do
 navegador; o fio é ISO UTC).
 
+- **`?visit=<id>`** abre a visita direto no `Modal` (é o [Abrir visita] da ficha do médico,
+  CRMLAB-89). Fechar limpa o parâmetro, para recarregar a página não reabrir.
 - **Topo:** `PageHeader` "Agenda de visitas" + [+ Nova visita] (hoje às 9h se a semana é a atual;
   senão a segunda às 9h).
 - **Navegação:** [‹ Anterior] [Hoje] [Próxima ›] + rótulo da semana ("05 – 11 de out. de 2026").

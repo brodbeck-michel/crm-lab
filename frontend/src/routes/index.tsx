@@ -27,6 +27,7 @@ import Reconciliation from '@/pages/Reconciliation';
 import ActiveSearch from '@/pages/ActiveSearch';
 import Sales from '@/pages/Sales';
 import Doctors from '@/pages/Visitation/Doctors';
+import DoctorProfile from '@/pages/Visitation/DoctorProfile';
 import Agenda from '@/pages/Visitation/Agenda';
 import PlatformTenants from '@/pages/Platform/Tenants';
 import PlatformTenantDetail from '@/pages/Platform/TenantDetail';
@@ -78,6 +79,7 @@ export const appRoutes: RouteObject[] = [
               { path: 'sales', element: <Sales /> },
               { path: 'visitation/agenda', element: <Agenda /> },
               { path: 'visitation/doctors', element: <Doctors /> },
+              { path: 'visitation/doctors/:id', element: <DoctorProfile /> },
               { path: 'settings/account', element: <AccountSettings /> },
               { path: 'settings/rules', element: <RulesSettings /> },
             ],

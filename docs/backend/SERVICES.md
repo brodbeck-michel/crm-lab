@@ -1818,6 +1818,36 @@ e para os nomes no `JOIN` — leitura de apoio, sem escrever em tabela de outro 
 
 ---
 
+## 32. DoctorInteractionService — linha do tempo do médico (CRMLAB-89 — D-261)
+
+**Responsabilidade:** as 4 rotas de linha do tempo em `/doctors/:id` (API_CONTRACTS.md §13,
+"Linha do tempo do médico"). Dono de `doctor_interactions` (SCHEMA.md §38). Monta a linha do tempo
+juntando, na leitura, as visitas do médico (`doctor_visits`, do `VisitService`) com os registros
+manuais, do mais novo para o mais antigo, por **cursor** (`base64url("<ISO>|<id>")` do último item;
+lê `limit + 1` para saber se há próxima página). O trecho do relato (`reportExcerpt`) é cortado
+aqui, não no SQL. Registro manual: todo papel de tenant lança, edita e exclui; `occurredAt` até
+5 min no futuro (`DOCTOR_INTERACTION_FUTURE_TOLERANCE_MS`, relógio injetável no teste); descrição
+aparada, 1..2000. Médico do tenant (ativo **ou** inativo) é conferido antes; registro de outro
+médico no caminho → `NOT_FOUND` (o `WHERE` do repositório leva `doctor_id`). Audit
+`create_doctor_interaction`, `update_doctor_interaction` (só o diff; sem mudança real, sem audit)
+e `delete_doctor_interaction` (`oldValues` do que foi apagado), com `entityType: "doctor_interaction"`.
+
+```typescript
+// backend/src/services/doctor-interaction.service.ts
+export interface DoctorInteractionService {
+  timeline(ctx: TenantContext, doctorId: string, query: DoctorTimelineQuery): Promise<DoctorTimelineResponse>; // NOT_FOUND, VALIDATION_ERROR (cursor)
+  create(ctx: TenantContext, doctorId: string, dto: CreateDoctorInteractionRequest): Promise<DoctorInteraction>;
+  update(ctx: TenantContext, doctorId: string, id: string, dto: UpdateDoctorInteractionRequest): Promise<DoctorInteraction>;
+  delete(ctx: TenantContext, doctorId: string, id: string): Promise<void>;
+}
+```
+
+Lê `doctors` (pelo `DoctorRepository`), `doctor_visits`, `doctor_visit_attachments` (contagem) e
+`users` (nomes) — leitura de apoio, sem escrever em tabela de outro domínio. As rotas moram no
+mesmo `doctorModule` (`doctor.routes.ts`).
+
+---
+
 ## Convenções Transversais
 
 - Todo método recebe `tenantId` ou `TenantContext` como primeiro parâmetro — NUNCA lê de variável global

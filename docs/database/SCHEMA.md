@@ -2073,6 +2073,38 @@ CREATE INDEX idx_doctor_visit_attachments_uploaded_by ON doctor_visit_attachment
 - Migração **única** (colunas + tabela + policy), sem backfill: as visitas que já existem ficam
   com tudo `NULL` e nenhuma é `realizada` (a 048 não tinha rota que gravasse esse status).
 
+### 38. `doctor_interactions` (migração 052 — CRMLAB-89, D-261)
+Registros de interação lançados à mão na ficha do médico (ligação, e-mail, WhatsApp). A linha do
+tempo do médico junta esta tabela com `doctor_visits` **na leitura** (`UNION ALL`); nada é copiado.
+
+```sql
+CREATE TABLE doctor_interactions (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id   UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  doctor_id   UUID NOT NULL REFERENCES doctors(id),             -- médico não se apaga (inativa)
+  type        VARCHAR(20) NOT NULL CHECK (type IN ('ligacao', 'email', 'whatsapp')),
+  occurred_at TIMESTAMPTZ NOT NULL,                              -- quando aconteceu (informado)
+  description TEXT NOT NULL CHECK (length(trim(description)) > 0),
+  created_by  UUID REFERENCES users(id) ON DELETE SET NULL,
+  updated_by  UUID REFERENCES users(id) ON DELETE SET NULL,      -- NULL = nunca editado
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()                 -- trigger set_updated_at
+);
+CREATE INDEX idx_doctor_interactions_doctor_occurred ON doctor_interactions(doctor_id, occurred_at DESC);
+CREATE INDEX idx_doctor_interactions_tenant_id ON doctor_interactions(tenant_id);
+CREATE INDEX idx_doctor_interactions_created_by ON doctor_interactions(created_by);
+CREATE INDEX idx_doctor_interactions_updated_by ON doctor_interactions(updated_by);
+-- ENABLE ROW LEVEL SECURITY + policy doctor_interactions_tenant_isolation (mesmo arquivo)
+```
+
+- **Excluir apaga a linha.** O rastro (tipo, data, descrição) fica no audit
+  `delete_doctor_interaction`.
+- **Ordem da linha do tempo:** `(sort_at DESC, id DESC)`, com `sort_at` truncado em
+  milissegundos. É a precisão do ISO que volta no cursor; sem o corte, o microssegundo do
+  Postgres repetiria o item na página seguinte. Na visita, `sort_at = COALESCE(check_in_at,
+  scheduled_at)`.
+- Migração **única** (tabela + policy), sem backfill.
+
 ---
 
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`

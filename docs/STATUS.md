@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-10-01 (CRMLAB-82 — fundo branco e tema só no conteúdo, branch `feature/CRMLAB-82-fundo-branco-tema`)
+**Última atualização:** 2026-10-04 (CRMLAB-89 — linha do tempo do médico, branch `feature/CRMLAB-89-linha-do-tempo-medico`; fecha o épico CRMLAB-85)
 
 ---
 
@@ -3216,6 +3216,35 @@ CRMLAB-85 (Visitação Médica). Decisão D-258, migração `050_doctor_visit_re
 - **Pendente:** validação na hml; a migração 050 roda no deploy. Linha do tempo do médico é o card
   [D].
 
+### 🚧 CRMLAB-89 — linha do tempo do médico (2026-10-04, validado na hml — FALTA SUBIR EM PRODUÇÃO) — fecha o épico CRMLAB-85
+
+Branch `feature/CRMLAB-89-linha-do-tempo-medico` (de `main` v1.32.0, atualizada com a v1.33.0), PR #98. Quarto e último card do épico
+CRMLAB-85 (Visitação Médica). Decisão D-261, migração `052_doctor_interactions.sql` (a D-260 é do
+CRMLAB-91).
+
+- **Banco:** tabela `doctor_interactions` (tipo ligação/e-mail/WhatsApp, data/hora, descrição,
+  quem lançou e quem editou) com policy de tenant no mesmo arquivo.
+- **API:** `GET /doctors/:id/timeline` (visitas + registros manuais, do mais novo para o mais
+  antigo, por cursor), `POST /doctors/:id/interactions`, `PATCH|DELETE
+  /doctors/:id/interactions/:interactionId`, para todo papel de laboratório. Data até 5 min no
+  futuro; excluir apaga a linha; audit em criar, editar e excluir.
+- **Tela:** ficha do médico (`/visitation/doctors/:id`), aberta pelo nome na lista: dados do
+  cadastro + [Editar], linha do tempo com [Carregar mais], [+ Registrar interação], editar/excluir
+  o registro e [Abrir visita] → `/visitation/agenda?visit=<id>` (a Agenda abre a visita direto).
+- **Testes:** backend `doctors/doctor-timeline.spec.ts` (16), `route-tenant-isolation.spec.ts`
+  (106 rotas); frontend `pages/Visitation/DoctorProfile.spec.tsx` (10), casos novos em
+  `Agenda.spec.tsx` (`?visit=`) e `Doctors.spec.tsx` (link do nome).
+- **Validação:** aprovada pelo Michel na hml em 04/10/2026 (`hml-8952b7f`, junto com o CRMLAB-91).
+- **⚠️ Pendente — entra no PRÓXIMO deploy de produção:** o PR #98 **não** está na v1.33.0 (que
+  levou o CRMLAB-91). O Michel vai fazer mais ajustes na página de Visitação e subir tudo junto,
+  numa tag nova. Quem fizer o próximo deploy em produção tem de incluir este PR (e a migração 052,
+  que roda no deploy).
+
+**Épico CRMLAB-85 (Visitação Médica) — MVP completo:** cadastro de médicos (86), agenda (87),
+registro da visita (88) e linha do tempo (89). Ficam fora, para cards futuros se forem pedidos, os
+itens de "pesquisa de mercado" (resultado da visita em pedidos, classificação ABC, alerta de médico
+esquecido, roteiro do dia, materiais, metas) e a ligação do médico da proposta com o cadastro.
+
 ### 🚧 CRMLAB-91 — cor própria para cada estágio do pipeline (2026-10-04, aguardando validação)
 
 Branch `feature/CRMLAB-91-cores-estagios` (de `main` v1.32.0). Decisão D-260. Só visual.
@@ -3227,4 +3256,3 @@ Branch `feature/CRMLAB-91-cores-estagios` (de `main` v1.32.0). Decisão D-260. S
 - **Testes:** `StageColumn.spec.tsx` (novo, 7) e caso novo em `ProposalCard.spec.tsx`; `src/components/proposal`,
   `src/pages` e as guardas de token (`tailwind-theme-classes`, `no-hardcoded-tokens`) verdes.
 - **Pendente:** validação visual da gestora.
-

@@ -8,6 +8,13 @@
  *   POST  /api/v1/doctors/:id/inactivate   inativa (idempotente)
  *   POST  /api/v1/doctors/:id/reactivate   reativa (idempotente)
  *
+ * Linha do tempo do medico (CRMLAB-89, D-261):
+ *
+ *   GET    /api/v1/doctors/:id/timeline                         visitas + registros manuais
+ *   POST   /api/v1/doctors/:id/interactions                     lanca registro manual
+ *   PATCH  /api/v1/doctors/:id/interactions/:interactionId      edita (parcial)
+ *   DELETE /api/v1/doctors/:id/interactions/:interactionId      exclui
+ *
  * TODAS para qualquer papel de laboratorio (D-255 item 3: sem perfil novo).
  * NAO existe DELETE: a agenda de visitas (CRMLAB-85) vai referenciar o medico.
  *
@@ -16,12 +23,29 @@
  */
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { z } from 'zod';
-import type { Doctor, ListDoctorsQuery, ListDoctorsResponse, UpdateDoctorRequest } from '@crm-lab/shared';
+import {
+  DOCTOR_INTERACTION_DESCRIPTION_MAX_LENGTH,
+  DOCTOR_INTERACTION_TYPES,
+  DOCTOR_TIMELINE_MAX_LIMIT,
+  type CreateDoctorInteractionRequest,
+  type Doctor,
+  type DoctorInteraction,
+  type DoctorTimelineQuery,
+  type DoctorTimelineResponse,
+  type ListDoctorsQuery,
+  type ListDoctorsResponse,
+  type UpdateDoctorInteractionRequest,
+  type UpdateDoctorRequest,
+} from '@crm-lab/shared';
 import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
 import { getContext } from '../http/context.js';
 import { denyPlatformOperator, requireAuth } from '../http/middleware/auth.js';
 import { validate, validated } from '../http/middleware/validate.js';
 import { createAuditService } from '../services/audit.service.js';
+import {
+  createDoctorInteractionService,
+  type DoctorInteractionService,
+} from '../services/doctor-interaction.service.js';
 import { createDoctorService, MAX_LIMIT, type DoctorService } from '../services/doctor.service.js';
 
 /** `?active=true` chega como string; no JSON de teste pode chegar como boolean. */
@@ -93,11 +117,39 @@ export const updateDoctorSchema = z
 
 export const doctorIdParamSchema = z.object({ id: z.string().uuid() });
 
+// --- linha do tempo (CRMLAB-89, D-261) ---
+
+export const doctorTimelineQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(DOCTOR_TIMELINE_MAX_LIMIT).optional(),
+  // Opaco (base64url); o service decodifica e recusa o que nao reconhece.
+  cursor: z.string().min(1).max(200).optional(),
+});
+
+/** A regra de "nao no futuro" e o trim da descricao sao do service. */
+const interactionFields = {
+  type: z.enum(DOCTOR_INTERACTION_TYPES),
+  occurredAt: z.string().datetime({ offset: true }),
+  // Folga para espaco em volta: o service corta e confere o teto de novo.
+  description: z.string().max(DOCTOR_INTERACTION_DESCRIPTION_MAX_LENGTH + 100),
+};
+
+export const createDoctorInteractionSchema = z.object(interactionFields).strict();
+export const updateDoctorInteractionSchema = z.object(interactionFields).partial().strict();
+
+export const doctorInteractionParamsSchema = z.object({
+  id: z.string().uuid(),
+  interactionId: z.string().uuid(),
+});
+
 type CreateDoctorBody = z.infer<typeof createDoctorSchema>;
 
 /** Monta service a partir das dependencias do kernel. */
 export function createDoctorServiceFromDeps(deps: ApiModuleDeps): DoctorService {
   return createDoctorService({ db: deps.db, audit: createAuditService(deps.db) });
+}
+
+export function createDoctorInteractionServiceFromDeps(deps: ApiModuleDeps): DoctorInteractionService {
+  return createDoctorInteractionService({ db: deps.db, audit: createAuditService(deps.db) });
 }
 
 /** `Promise` rejeitada em handler async precisa chegar no error-handler. */
@@ -149,8 +201,44 @@ export function setDoctorActive(service: DoctorService, isActive: boolean): Requ
   });
 }
 
+export function getDoctorTimeline(service: DoctorInteractionService): RequestHandler {
+  return handle(async (req, res) => {
+    const { id } = validated<{ id: string }>(req, 'params');
+    const query = validated<DoctorTimelineQuery>(req, 'query');
+    const body: DoctorTimelineResponse = await service.timeline(getContext(req), id, query);
+    res.status(200).json(body);
+  });
+}
+
+export function createDoctorInteraction(service: DoctorInteractionService): RequestHandler {
+  return handle(async (req, res) => {
+    const { id } = validated<{ id: string }>(req, 'params');
+    const dto = validated<CreateDoctorInteractionRequest>(req, 'body');
+    const body: DoctorInteraction = await service.create(getContext(req), id, dto);
+    res.status(201).json(body);
+  });
+}
+
+export function updateDoctorInteraction(service: DoctorInteractionService): RequestHandler {
+  return handle(async (req, res) => {
+    const { id, interactionId } = validated<{ id: string; interactionId: string }>(req, 'params');
+    const dto = validated<UpdateDoctorInteractionRequest>(req, 'body');
+    const body: DoctorInteraction = await service.update(getContext(req), id, interactionId, dto);
+    res.status(200).json(body);
+  });
+}
+
+export function deleteDoctorInteraction(service: DoctorInteractionService): RequestHandler {
+  return handle(async (req, res) => {
+    const { id, interactionId } = validated<{ id: string; interactionId: string }>(req, 'params');
+    await service.delete(getContext(req), id, interactionId);
+    res.status(204).end();
+  });
+}
+
 export function doctorModule(deps: ApiModuleDeps): ApiModule {
   const service = createDoctorServiceFromDeps(deps);
+  const interactions = createDoctorInteractionServiceFromDeps(deps);
   const router = Router();
   // Sem `requireRoles`: todo papel de laboratorio escreve (D-255 item 3). O
   // operador da plataforma fica de fora explicitamente (PAGES.md §11).
@@ -163,6 +251,25 @@ export function doctorModule(deps: ApiModuleDeps): ApiModule {
   router.patch('/:id', ...guards, idParam, validate(updateDoctorSchema, 'body'), updateDoctor(service));
   router.post('/:id/inactivate', ...guards, idParam, setDoctorActive(service, false));
   router.post('/:id/reactivate', ...guards, idParam, setDoctorActive(service, true));
+
+  // Linha do tempo (CRMLAB-89, D-261): todo papel de laboratorio le e lanca.
+  const interactionParams = validate(doctorInteractionParamsSchema, 'params');
+  router.get('/:id/timeline', ...guards, idParam, validate(doctorTimelineQuerySchema, 'query'), getDoctorTimeline(interactions));
+  router.post(
+    '/:id/interactions',
+    ...guards,
+    idParam,
+    validate(createDoctorInteractionSchema, 'body'),
+    createDoctorInteraction(interactions),
+  );
+  router.patch(
+    '/:id/interactions/:interactionId',
+    ...guards,
+    interactionParams,
+    validate(updateDoctorInteractionSchema, 'body'),
+    updateDoctorInteraction(interactions),
+  );
+  router.delete('/:id/interactions/:interactionId', ...guards, interactionParams, deleteDoctorInteraction(interactions));
 
   return { basePath: '/doctors', router, requiresAuth: true };
 }

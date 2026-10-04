@@ -100,14 +100,14 @@ function listResponse(visits: VisitDetail[] = [visit()]): ListVisitsResponse {
   return { visits, truncated: false };
 }
 
-function renderPage() {
+function renderPage(path = '/visitation/agenda') {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
       <ToastProvider>
-        <MemoryRouter>
+        <MemoryRouter initialEntries={[path]}>
           <Agenda />
         </MemoryRouter>
       </ToastProvider>
@@ -332,5 +332,14 @@ describe('Agenda (/visitation/agenda)', () => {
     expect(dialog.queryByRole('button', { name: 'Editar' })).not.toBeInTheDocument();
     expect(dialog.queryByRole('button', { name: 'Reagendar' })).not.toBeInTheDocument();
     expect(dialog.queryByRole('button', { name: 'Cancelar visita' })).not.toBeInTheDocument();
+  });
+
+  it('?visit=<id> (o "Abrir visita" da ficha do médico) abre a visita direto', async () => {
+    getMock.mockResolvedValue(visit({ id: 'v-9' }));
+    renderPage('/visitation/agenda?visit=v-9');
+
+    const dialog = within(await screen.findByRole('dialog', { name: 'Visita' }));
+    expect(await dialog.findByText('Apresentar o painel de check-up')).toBeInTheDocument();
+    expect(getMock).toHaveBeenCalledWith('v-9');
   });
 });

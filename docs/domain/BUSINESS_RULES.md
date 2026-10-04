@@ -841,6 +841,27 @@ Terceiro card do épico CRMLAB-85. Registra o que aconteceu na visita da agenda 
 
 ---
 
+## 15. Visitação Médica — linha do tempo do médico (CRMLAB-89, D-261)
+
+Quarto e último card do épico CRMLAB-85. A ficha do médico mostra o histórico de todas as
+interações com ele, com autor e data.
+
+- **O que entra:** as **visitas** do médico (qualquer status, inclusive as agendadas no futuro) e
+  os **registros lançados à mão**: ligação, e-mail ou WhatsApp, com data/hora, autor e descrição.
+  **Não** puxa as conversas do WhatsApp do CRM: não existe ligação conversa ↔ médico (resposta 8).
+- **Ordem:** do mais novo para o mais antigo, carregando mais sob demanda. A visita entra pela hora
+  do check-in (o que aconteceu) ou, sem check-in, pela data prevista.
+- **Quem mexe:** todos os usuários do laboratório veem, lançam, editam e excluem qualquer
+  registro (resposta 2A). Médico inativo também recebe registro: o contato aconteceu.
+- **Registro manual:** tipo, data/hora e descrição são obrigatórios. A data **não pode ficar no
+  futuro** (folga de 5 min para o relógio do celular). Descrição até 2000 caracteres.
+- **Excluir apaga de verdade:** o registro some da linha do tempo; o que foi apagado fica no audit
+  log.
+- **Auditoria:** `create_doctor_interaction`, `update_doctor_interaction` (só o que mudou),
+  `delete_doctor_interaction` — `entityType: "doctor_interaction"` (resposta 9).
+
+---
+
 ## Resumo: Checklist de Implementação
 
 Antes de commitar, verifique:

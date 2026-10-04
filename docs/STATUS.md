@@ -3240,3 +3240,15 @@ CRMLAB-91).
 registro da visita (88) e linha do tempo (89). Ficam fora, para cards futuros se forem pedidos, os
 itens de "pesquisa de mercado" (resultado da visita em pedidos, classificação ABC, alerta de médico
 esquecido, roteiro do dia, materiais, metas) e a ligação do médico da proposta com o cadastro.
+
+### 🚧 CRMLAB-91 — cor própria para cada estágio do pipeline (2026-10-04, aguardando validação)
+
+Branch `feature/CRMLAB-91-cores-estagios` (de `main` v1.32.0). Decisão D-260. Só visual.
+
+- **Tokens:** `--color-stage-{novo,enviado,followup,negociacao,ganho,perdido}` + `-tint` (7%),
+  `-soft` (20%), `-ink` (70% com o texto). Contraste conferido por script (AA em todos).
+- **Tela:** coluna tingida com faixa no topo, ponto e título na cor do estágio, contagem em pílula
+  colorida; cartão branco com borda esquerda na cor; selo do estágio na cor (lista e paciente também).
+- **Testes:** `StageColumn.spec.tsx` (novo, 7) e caso novo em `ProposalCard.spec.tsx`; `src/components/proposal`,
+  `src/pages` e as guardas de token (`tailwind-theme-classes`, `no-hardcoded-tokens`) verdes.
+- **Pendente:** validação visual da gestora.

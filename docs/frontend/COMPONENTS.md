@@ -334,7 +334,8 @@ Anatomia (padrão WhatsApp):
 ```
 - Nome (13.5/700) + #id à direita (11px cinza)
 - Nota/motivo (12px), valor (heading 16px, nowrap), dias à direita
-- Chip de status (regras de tom do Chip)
+- Selo de estágio na cor do estágio (`STAGE_TONES[status].badge`, D-260) — não usa os tons do Chip
+- Fundo branco (`bg-bg`) + borda esquerda de 4px na cor do estágio (`cardEdge`), também na lista
 - Valor SEMPRE derivado de items + desconto — nunca prop separada digitada
 
 ### ProposalModal
@@ -345,7 +346,10 @@ Anatomia (padrão WhatsApp):
 ```tsx
 <StageColumn stage="novo_contato" proposals={[]} />
 ```
-- Header: nome + contagem + soma derivada
+- Header: ponto colorido + nome (texto `-ink` do estágio) + contagem (pílula `-soft`) + soma derivada
+- Cor do estágio (CRMLAB-91, D-260): fundo `-tint` + faixa de 4px no topo no matiz cheio, via
+  `STAGE_TONES` de `proposal/stageTone.ts`; `data-stage` no contêiner
+- Realce de drop: `ring-2 ring-accent ring-offset-2` (cor do tema, não do estágio)
 - Lista de ProposalCard; hover em cartão: shadow-md
 
 ---

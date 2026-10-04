@@ -5210,3 +5210,20 @@ API_ERRORS, SERVICES §31, BUSINESS_RULES §14, PAGES §23.
 `conversation.repository.ts` (`AWAITING_REPLY_LATERAL`); teste
 `tests/conversations/awaiting-reply.spec.ts`. SCHEMA §4, API_CONTRACTS §2, SERVICES §2,
 BUSINESS_RULES (alerta de tempo de resposta).
+
+### D-260: Cada estágio do pipeline tem cor própria, fixa para todo tenant
+**Decisão (Michel, 04/10/2026, no card CRMLAB-91 — a gestora achou o kanban "tudo muito parecido"):**
+1. Seis matizes **literais** `--color-stage-*` (azul, violeta, petróleo, âmbar, verde, vermelho, na
+   ordem do funil), iguais para todo tenant. Exceção consciente à D-250 ("só accent/accent-2"), no
+   mesmo espírito do alerta do chat (D-254): é significado, não marca do laboratório. Ganho verde e
+   perdido vermelho são convenção que ninguém precisa aprender.
+2. Aplicação sutil: coluna com fundo 7% + faixa de 4px no topo; título com ponto e texto `-ink`;
+   contagem em pílula `-soft`; cartão branco com borda esquerda na cor; o selo de estágio do cartão
+   troca o `Chip` (que deixava os quatro estágios abertos iguais, em cinza) por uma pílula na cor do
+   estágio — inclusive na visão em lista e nas propostas do paciente, que reusam o cartão.
+3. Texto sempre no degrau `-ink` (≥ 4,5:1); matiz cheio só em elemento não textual. O realce de drop
+   continua na cor do tema (`ring-accent`), para "solte aqui" não se confundir com "que estágio é".
+**Motivo:** reconhecer o estágio de longe, sem ler o título; continuar legível e sem brigar com o tema.
+**Impacto:** `tokens.css`, `tailwind.config.js`, `proposal/stageTone.ts` (novo), `StageColumn.tsx`,
+`ProposalCard.tsx`; testes `StageColumn.spec.tsx` (novo) e `ProposalCard.spec.tsx`. DESIGN_TOKENS
+("Cores dos estágios do pipeline"), COMPONENTS (ProposalCard, StageColumn).

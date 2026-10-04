@@ -10,6 +10,8 @@ import {
 import { Chip } from '@/components/ui/Chip';
 import { MoneyDisplay } from '@/components/shared/MoneyDisplay';
 import { formatIsoDay } from '@/lib/format';
+import { cn } from '@/components/ui';
+import { STAGE_TONES } from './stageTone';
 
 /** Prefixo do tipo que carrega o estagio de origem (ver `onDragStart`). */
 export const DRAG_STATUS_PREFIX = 'application/x-crm-proposal-status-';
@@ -34,12 +36,7 @@ export default function ProposalCard({
 }: ProposalCardProps) {
   const openModal = useUIStore((s) => s.openModal);
 
-  const statusTone =
-    proposal.status === 'ganho'
-      ? ('positive' as const)
-      : proposal.status === 'perdido'
-        ? ('attention' as const)
-        : ('inactive' as const);
+  const tone = STAGE_TONES[proposal.status];
 
   const daysOpen = Math.floor(
     (Date.now() - new Date(proposal.createdAt).getTime()) / (1000 * 60 * 60 * 24)
@@ -74,7 +71,12 @@ export default function ProposalCard({
         event.dataTransfer.effectAllowed = 'move';
       }}
       onClick={() => openModal({ kind: 'proposal', id: proposal.id })}
-      className="w-full text-left bg-neutral-100 p-md rounded-md shadow-sm hover:shadow-md transition-shadow border border-neutral-200"
+      className={cn(
+        // CRMLAB-91/D-260: cartão branco sobre a coluna tingida, borda esquerda na cor do estágio.
+        'w-full text-left bg-bg p-md rounded-md shadow-sm hover:shadow-md transition-shadow',
+        'border border-solid border-neutral-200 border-l-4',
+        tone.cardEdge,
+      )}
     >
       <div className="flex items-start justify-between gap-sm mb-sm">
         <div className="flex-1 min-w-0">
@@ -104,7 +106,16 @@ export default function ProposalCard({
 
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-xs flex-wrap">
-          <Chip tone={statusTone}>{PROPOSAL_STATUS_LABELS[proposal.status]}</Chip>
+          {/* Selo do estágio na mesma cor da coluna (CRMLAB-91/D-260) — vale também na lista. */}
+          <span
+            data-stage={proposal.status}
+            className={cn(
+              'inline-flex items-center rounded-pill px-[11px] py-[3px] text-caption font-semibold whitespace-nowrap',
+              tone.badge,
+            )}
+          >
+            {PROPOSAL_STATUS_LABELS[proposal.status]}
+          </span>
           {/* CRMLAB-52/D-119: o LIS confirmou a requisição (PAGES.md §5). */}
           {proposal.lisReconciledAt && <Chip tone="positive">Conciliado</Chip>}
           {/* CRMLAB-57/D-197: requisição já existe, cartão ainda em "Novo orçamento". */}

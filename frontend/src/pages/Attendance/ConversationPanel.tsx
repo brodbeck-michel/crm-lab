@@ -64,6 +64,16 @@ export interface ConversationPanelProps {
   onCloseAttendance: () => void;
   /** Dona, gestor ou admin — o backend valida de novo; aqui é só UX. */
   canCloseAttendance: boolean;
+  /**
+   * Participantes (CRMLAB-93, D-263). Sem `currentUserId`, o menu some. Adicionar e remover:
+   * dona, gestor ou admin (`canManageParticipants`); a participante só sai.
+   */
+  currentUserId?: string;
+  canManageParticipants?: boolean;
+  onAddParticipant?: (userId: string) => void;
+  onRemoveParticipant?: (userId: string) => void;
+  /** Participante que não é dona nem gestor/admin não transfere (o backend recusaria). */
+  canTransfer?: boolean;
   onToggleContext: () => void;
   /** Fecha a conversa aberta, voltando ao estado "nenhuma selecionada" (padrão WhatsApp Web). */
   onClose: () => void;
@@ -281,6 +291,153 @@ function TransferMenu({
   );
 }
 
+/**
+ * Menu "Participantes" (CRMLAB-93, D-263): quem está na conversa além da dona,
+ * com remover (dona, gestor ou admin), "Sair da conversa" para a própria
+ * participante e a lista de colegas para chamar. Mesmo padrão do `TransferMenu`.
+ */
+function ParticipantsMenu({
+  conversation,
+  assignees,
+  currentUserId,
+  canManage,
+  onAdd,
+  onRemove,
+}: {
+  conversation: ConversationDetail;
+  assignees: ConversationAssignee[];
+  currentUserId: string;
+  canManage: boolean;
+  onAdd: (userId: string) => void;
+  onRemove: (userId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: MouseEvent) {
+      if (!ref.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      setOpen(false);
+      ref.current?.querySelector('button')?.focus();
+    }
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  const participants = conversation.participants ?? [];
+  const isParticipant = participants.some((p) => p.id === currentUserId);
+  // Fila livre e encerrada não aceitam participante (D-263 item 2).
+  const canAdd =
+    canManage && conversation.status === 'active' && conversation.assignedTo !== null;
+  if (!canManage && !isParticipant) return null;
+
+  const candidates = canAdd
+    ? assignees.filter(
+        (a) => a.id !== conversation.assignedTo && !participants.some((p) => p.id === a.id),
+      )
+    : [];
+
+  function act(fn: () => void): void {
+    setOpen(false);
+    fn();
+  }
+
+  const itemClass =
+    'w-full cursor-pointer border-none bg-transparent px-md py-xs text-left font-body text-label text-text hover:bg-accent-100';
+
+  return (
+    <div ref={ref} className="relative">
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => setOpen((value) => !value)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        {participants.length > 0 ? `Participantes (${participants.length})` : 'Participantes'}
+      </Button>
+
+      {open && (
+        <div
+          role="menu"
+          aria-label="Participantes da conversa"
+          className={cn(
+            'absolute right-0 top-full z-50 mt-xs max-h-[320px] w-[240px] overflow-y-auto',
+            'rounded-md border border-neutral-200 bg-surface py-xs shadow-md',
+          )}
+        >
+          {participants.length === 0 && (
+            <p className="px-md py-xs font-body text-caption text-neutral-600">
+              Ninguém além da responsável.
+            </p>
+          )}
+          {participants.map((p) => (
+            <div key={p.id} className="flex items-center gap-sm px-md py-xs">
+              <span className="min-w-0 flex-1 truncate font-body text-label text-text">
+                {p.name}
+              </span>
+              {p.id === currentUserId ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => act(() => onRemove(p.id))}
+                  className="cursor-pointer border-none bg-transparent font-body text-caption text-accent-700 hover:underline"
+                >
+                  Sair da conversa
+                </button>
+              ) : (
+                canManage && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    aria-label={`Remover ${p.name}`}
+                    onClick={() => act(() => onRemove(p.id))}
+                    className="cursor-pointer border-none bg-transparent font-body text-caption text-neutral-700 hover:underline"
+                  >
+                    Remover
+                  </button>
+                )
+              )}
+            </div>
+          ))}
+
+          {canAdd && (
+            <div className="border-t border-neutral-200 pt-xs">
+              <p className="px-md py-xs font-body text-caption text-neutral-600">
+                Adicionar participante
+              </p>
+              {candidates.length === 0 && (
+                <p className="px-md py-xs font-body text-caption text-neutral-600">
+                  Ninguém mais para adicionar.
+                </p>
+              )}
+              {candidates.map((a) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => act(() => onAdd(a.id))}
+                  className={itemClass}
+                >
+                  {a.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ConversationPanel({
   conversation,
   messages,
@@ -294,6 +451,11 @@ export function ConversationPanel({
   onNewBudget,
   onCloseAttendance,
   canCloseAttendance,
+  currentUserId,
+  canManageParticipants = false,
+  onAddParticipant,
+  onRemoveParticipant,
+  canTransfer = true,
   onToggleContext,
   onClose,
   onSendAttachments,
@@ -530,6 +692,8 @@ export function ConversationPanel({
   }
 
   const closed = conversation.status !== 'active';
+  // Com participante, não encerra: transfere para ela antes (D-263 item 3).
+  const hasParticipants = (conversation.participants?.length ?? 0) > 0;
   const presenceText = presenceLabel(presence, new Date());
 
   return (
@@ -581,11 +745,23 @@ export function ConversationPanel({
               </svg>
             </button>
           )}
-          <TransferMenu
-            assignees={assignees}
-            assignedTo={conversation.assignedTo}
-            onAssign={onAssign}
-          />
+          {currentUserId && onAddParticipant && onRemoveParticipant && (
+            <ParticipantsMenu
+              conversation={conversation}
+              assignees={assignees}
+              currentUserId={currentUserId}
+              canManage={canManageParticipants}
+              onAdd={onAddParticipant}
+              onRemove={onRemoveParticipant}
+            />
+          )}
+          {canTransfer && (
+            <TransferMenu
+              assignees={assignees}
+              assignedTo={conversation.assignedTo}
+              onAssign={onAssign}
+            />
+          )}
           {onNewBudget && (
             <Button size="sm" onClick={onNewBudget}>
               Novo Orçamento
@@ -595,13 +771,15 @@ export function ConversationPanel({
             variant="destructive"
             size="sm"
             onClick={onCloseAttendance}
-            disabled={closed || !canCloseAttendance}
+            disabled={closed || !canCloseAttendance || hasParticipants}
             title={
               closed
                 ? 'Atendimento já encerrado'
-                : canCloseAttendance
-                  ? 'Encerrar o atendimento — sai da fila até o paciente escrever de novo'
-                  : 'Só a responsável pela conversa, gestor ou admin encerram'
+                : !canCloseAttendance
+                  ? 'Só a responsável pela conversa, gestor ou admin encerram'
+                  : hasParticipants
+                    ? 'Transfira para a participante antes de encerrar'
+                    : 'Encerrar o atendimento — sai da fila até o paciente escrever de novo'
             }
           >
             Encerrar

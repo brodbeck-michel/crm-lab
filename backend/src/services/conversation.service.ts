@@ -658,16 +658,16 @@ export class ConversationService {
   /**
    * `DELETE /conversations/:id/participants/:userId` (D-263). Com o proprio id,
    * a participante SAI; remover outra pessoa e da dona, gestor ou admin.
-   * Quem nao participa: 404.
+   * Quem nao participa: no-op (idempotente, como desafixar).
    */
   async removeParticipant(ctx: TenantContext, id: string, userId: string): Promise<void> {
     const current = await this.getById(ctx, id);
-    const participant = current.participants?.find((p) => p.id === userId);
-    if (!participant) throw notFound({ resource: 'participant', id: userId });
     const leaving = userId === ctx.userId;
     if (!leaving && !isSupervisor(ctx) && current.assignedTo !== ctx.userId) {
       throw new BusinessError('FORBIDDEN', { requiredRoles: [...SUPERVISOR_ROLES] });
     }
+    const participant = current.participants?.find((p) => p.id === userId);
+    if (!participant) return;
 
     const removed = await this.repository.removeParticipant(ctx.tenantId, id, userId);
     if (!removed) return;

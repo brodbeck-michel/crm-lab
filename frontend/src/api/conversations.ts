@@ -1,4 +1,5 @@
 import type {
+  AddConversationParticipantRequest,
   CreateAttachmentRequest,
   CreateConversationRequest,
   CreateConversationResponse,
@@ -76,6 +77,14 @@ export const conversationsApi = {
   /** Atribuir a si mesmo / a outro atendente — `PATCH /conversations/:id`. */
   assign: (id: string, assignedTo: string | null) =>
     http.patch<UpdateConversationResponse>(`/conversations/${id}`, { assignedTo }),
+
+  /** Chamar uma colega para dentro da conversa (CRMLAB-93, D-263). */
+  addParticipant: (id: string, body: AddConversationParticipantRequest) =>
+    http.post<ConversationDetail>(`/conversations/${id}/participants`, body),
+
+  /** Remover participante — com o próprio id, sair da conversa (D-263). 204. */
+  removeParticipant: (id: string, userId: string) =>
+    http.delete<void>(`/conversations/${id}/participants/${userId}`),
 
   /** Fixar/desafixar para o usuário logado — o pin é pessoal (Onda 8 §2.3). */
   setPinned: (id: string, pinned: boolean) =>

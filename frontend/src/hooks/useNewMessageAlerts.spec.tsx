@@ -35,7 +35,9 @@ const {
   ALERTS_QUERY,
   useNewMessageAlerts,
   detectNewMessages,
+  ADDED_ALERT_BODY,
   baselineOf,
+  detectAddedAsParticipant,
   alertBody,
   titleWithCount,
   isInMyQueue,
@@ -224,6 +226,27 @@ describe('regra pura (D-241)', () => {
       null,
     );
     expect(alerts.map((a) => a.conversationId)).toEqual(['c-new']);
+  });
+
+  it('participante (D-263): a conversa entra na fila e a entrada avisa uma vez', () => {
+    const daColega = { assignedTo: 'u-2', participants: [{ id: 'u-1', name: 'Ana' }] };
+    expect(isInMyQueue(daColega, 'u-1')).toBe(true);
+    expect(isInMyQueue({ assignedTo: 'u-2', participants: [] }, 'u-1')).toBe(false);
+
+    const before = baselineOf(
+      [conversation({ id: 'c-1', assignedTo: 'u-2', participants: [] })],
+      undefined,
+      'u-1',
+    );
+    const now = [
+      conversation({ id: 'c-1', assignedTo: 'u-2', participants: [{ id: 'u-1', name: 'Ana' }] }),
+    ];
+    const alerts = detectAddedAsParticipant(before, now, 'u-1');
+    expect(alerts).toEqual([
+      { conversationId: 'c-1', title: 'Marina Alves', count: 1, body: ADDED_ALERT_BODY },
+    ]);
+    // Já participava na carga anterior: não avisa de novo.
+    expect(detectAddedAsParticipant(baselineOf(now, before, 'u-1'), now, 'u-1')).toEqual([]);
   });
 
   it('body é só a contagem', () => {

@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-10-04 (CRMLAB-92 — Agenda de visitas repaginada, branch `feature/CRMLAB-92-agenda-design-system`, empilhada no CRMLAB-89)
+**Última atualização:** 2026-10-06 (CRMLAB-93 — participantes da conversa, branch `feature/CRMLAB-93-participantes-conversa`)
 
 ---
 
@@ -3244,6 +3244,23 @@ CRMLAB-91).
 registro da visita (88) e linha do tempo (89). Ficam fora, para cards futuros se forem pedidos, os
 itens de "pesquisa de mercado" (resultado da visita em pedidos, classificação ABC, alerta de médico
 esquecido, roteiro do dia, materiais, metas) e a ligação do médico da proposta com o cadastro.
+
+### 🚧 CRMLAB-93 — participantes da conversa (2026-10-06, aguardando validação)
+
+Branch `feature/CRMLAB-93-participantes-conversa` (de `main` v1.34.0). Decisão D-263, migração 053.
+
+- **Backend:** `conversation_participants` + `messages.attributed_to`; `POST /conversations/:id/participants`
+  e `DELETE /conversations/:id/participants/:userId`; participante enxerga lista, detalhe, busca,
+  envio e orçamento pelo cartão; `scope=participating` e `counts.participating`; encerrar/devolver
+  para a fila com participante → `CONFLICT has_participants`; transferir para a participante tira
+  ela da lista; mensagem de participante sai com `*Nome*`; tempo de resposta conta para a dona.
+- **Tela:** menu "Participantes" no cabeçalho (adicionar, remover, sair), chip "Participando",
+  Encerrar travado com participante, aviso "Você foi adicionada à conversa" e a conversa na fila
+  do aviso (D-241).
+- **Testes:** `tests/conversations/participants.spec.ts` (novo, 12), `response-time.spec.ts` (+1),
+  inventário de `route-tenant-isolation.spec.ts` (106 → 108 rotas), counts nos specs de lista;
+  `ConversationPanel.spec.tsx` (+3), `useNewMessageAlerts.spec.tsx` (+1).
+- **Pendente:** validação na hml.
 
 ### 🚧 CRMLAB-92 — Agenda de visitas repaginada pelo design system (2026-10-04, em desenvolvimento)
 

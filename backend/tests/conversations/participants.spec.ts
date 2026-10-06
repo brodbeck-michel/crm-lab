@@ -238,11 +238,11 @@ describe('participantes da conversa (D-263)', () => {
       .delete(`/api/v1/conversations/${conversation.id}/participants/${carla.id}`)
       .set(app.auth(ana))
       .expect(204);
-    // Quem nao participa: 404.
+    // Quem nao participa: no-op, sem evento.
     await app.agent
       .delete(`/api/v1/conversations/${conversation.id}/participants/${carla.id}`)
       .set(app.auth(ana))
-      .expect(404);
+      .expect(204);
 
     expect(await participantIds(db, conversation.id)).toEqual([]);
     expect(await systemTexts(db, conversation.id)).toEqual([

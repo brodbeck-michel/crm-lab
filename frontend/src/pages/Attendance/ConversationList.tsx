@@ -45,8 +45,9 @@ import { PatientResults } from './PatientResults';
  * `ListConversationsQuery` sobre as ATIVAS (`all` = nenhum chip ligado);
  * `closed` é a lista das encerradas (D-174), `?status=closed`. Sem chip
  * "Não lidas" (D-229 item 5, retirado a pedido do Michel): a API mantém `?unread=true`.
+ * `participating` (D-263): conversas em que a pessoa logada participa sem ser dona.
  */
-export type ConversationScope = 'mine' | 'unassigned' | 'all' | 'closed';
+export type ConversationScope = 'mine' | 'unassigned' | 'participating' | 'all' | 'closed';
 
 /** Relógio do alerta de tempo de resposta (D-254). */
 export const RESPONSE_ALERT_TICK_MS = 30_000;
@@ -71,7 +72,9 @@ function useTickingNow(enabled: boolean, intervalMs: number): Date {
 
 export interface ConversationListProps {
   conversations: Conversation[];
-  counts: { mine: number; unassigned: number; unread?: number } | undefined;
+  counts:
+    | { mine: number; unassigned: number; unread?: number; participating?: number }
+    | undefined;
   scope: ConversationScope;
   onScopeChange: (scope: ConversationScope) => void;
   onSearch: (term: string) => void;
@@ -222,6 +225,17 @@ export function ConversationList({
           >
             {`Não atribuídas ${counts?.unassigned ?? 0}`}
           </Chip>
+          {/* Só aparece para quem participa de alguma conversa (D-263). */}
+          {((counts?.participating ?? 0) > 0 || scope === 'participating') && (
+            <Chip
+              tone={scope === 'participating' ? 'attention' : 'inactive'}
+              selected={scope === 'participating'}
+              onClick={() => toggle('participating')}
+              title="Conversas de colegas em que você foi adicionada como participante"
+            >
+              {`Participando ${counts?.participating ?? 0}`}
+            </Chip>
+          )}
           {/* Sem número: o chip existe para ACHAR uma encerrada, não para medir fila. */}
           <Chip
             tone={scope === 'closed' ? 'attention' : 'inactive'}

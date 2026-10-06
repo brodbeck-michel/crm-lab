@@ -41,16 +41,31 @@ export const ALERTS_QUERY: ListConversationsQuery = {
 };
 
 /**
- * A fila da pessoa logada (D-241 item 1): atribuída a ela ou sem dona — o
- * recorte do `ConversationRepository.list` para atendente e o par dos chips
- * "Minhas"/"Não atribuídas". Gestor/admin usam o MESMO recorte para o aviso.
+ * A fila da pessoa logada (D-241 item 1): atribuída a ela, sem dona ou em que
+ * ela participa (CRMLAB-93, D-263 item 4) — o recorte do
+ * `ConversationRepository.list` para atendente. Gestor/admin usam o MESMO
+ * recorte para o aviso.
  */
 export function isInMyQueue(
-  conversation: Pick<Conversation, 'assignedTo'>,
+  conversation: Pick<Conversation, 'assignedTo' | 'participants'>,
   userId: string,
 ): boolean {
-  return conversation.assignedTo === null || conversation.assignedTo === userId;
+  return (
+    conversation.assignedTo === null ||
+    conversation.assignedTo === userId ||
+    isParticipantOf(conversation, userId)
+  );
 }
+
+function isParticipantOf(
+  conversation: Pick<Conversation, 'participants'>,
+  userId: string,
+): boolean {
+  return conversation.participants?.some((p) => p.id === userId) ?? false;
+}
+
+/** Corpo da notificação de quem foi chamada para a conversa (D-263 item 4). */
+export const ADDED_ALERT_BODY = 'Você foi adicionada à conversa';
 
 /** Quantas conversas da fila têm mensagem não lida. */
 export function countUnreadInQueue(conversations: Conversation[], userId: string): number {
@@ -77,6 +92,8 @@ export interface NewMessageAlert {
   /** Nome do paciente; sem nome, o telefone que a fila já mostra. */
   title: string;
   count: number;
+  /** Corpo fixo no lugar da contagem — "Você foi adicionada à conversa" (D-263). */
+  body?: string;
 }
 
 interface KnownConversation {
@@ -89,21 +106,43 @@ export interface AlertsBaseline {
   known: Map<string, KnownConversation>;
   /** Maior `lastMessageAt` da carga anterior (relógio do servidor). */
   watermark: string | null;
+  /** Conversas em que a pessoa já participava na carga anterior (D-263). */
+  participating?: Set<string>;
 }
 
 export function baselineOf(
   conversations: Conversation[],
   previous?: AlertsBaseline,
+  userId?: string,
 ): AlertsBaseline {
   const known = new Map(previous?.known);
   let watermark = previous?.watermark ?? null;
+  // A lista é a fonte inteira de participação: quem saiu some daqui.
+  const participating = new Set<string>();
   for (const c of conversations) {
+    if (userId !== undefined && isParticipantOf(c, userId)) participating.add(c.id);
     known.set(c.id, { unreadCount: c.unreadCount, lastMessageAt: c.lastMessageAt });
     if (c.lastMessageAt !== null && (watermark === null || c.lastMessageAt > watermark)) {
       watermark = c.lastMessageAt;
     }
   }
-  return { known, watermark };
+  return { known, watermark, participating };
+}
+
+/**
+ * Conversas em que a pessoa passou a participar desde a carga anterior (D-263
+ * item 4). Primeira carga é linha de base: quem foi adicionada com a tela
+ * fechada encontra a conversa no chip "Participando", sem aviso atrasado.
+ */
+export function detectAddedAsParticipant(
+  previous: AlertsBaseline,
+  conversations: Conversation[],
+  userId: string,
+): NewMessageAlert[] {
+  const before = previous.participating ?? new Set<string>();
+  return conversations
+    .filter((c) => isParticipantOf(c, userId) && !before.has(c.id))
+    .map((c) => ({ conversationId: c.id, title: titleOf(c), count: 1, body: ADDED_ALERT_BODY }));
 }
 
 function titleOf(c: Pick<Conversation, 'patientName' | 'patientPhone'>): string {
@@ -203,7 +242,7 @@ export function useNewMessageAlerts(): void {
         // D-240: title = nome; body = contagem. Nada de conteúdo, ícone de
         // anexo ou `image`.
         const notification = new Notification(alert.title, {
-          body: alertBody(alert.count),
+          body: alert.body ?? alertBody(alert.count),
           tag: alert.conversationId,
         });
         notification.onclick = () => {
@@ -239,10 +278,16 @@ export function useNewMessageAlerts(): void {
     const data = listQuery.data;
     if (!data || userId === null) return;
     const previous = baselineRef.current;
-    baselineRef.current = baselineOf(data.conversations, previous ?? undefined);
+    baselineRef.current = baselineOf(data.conversations, previous ?? undefined, userId);
     if (!previous) return; // primeira carga = linha de base
     const openId = useMessageAlertsStore.getState().openConversationId;
-    fireRef.current(detectNewMessages(previous, data.conversations, userId, openId), false);
+    fireRef.current(
+      [
+        ...detectAddedAsParticipant(previous, data.conversations, userId),
+        ...detectNewMessages(previous, data.conversations, userId, openId),
+      ],
+      false,
+    );
   }, [listQuery.data, userId]);
 
   // Conversa aberta: mensagem de paciente mais nova que a última vista no detalhe.

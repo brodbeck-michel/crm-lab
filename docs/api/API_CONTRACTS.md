@@ -1353,7 +1353,7 @@ Remove a participante — ou, com o próprio id, **sai da conversa**.
 
 - Remover outra pessoa: dona, gestor ou admin (`FORBIDDEN` para os outros). Sair: a própria
   participante.
-- Quem não participa → `NOT_FOUND`.
+- Quem não participa: no-op (204), como desafixar. Conversa invisível → `NOT_FOUND`.
 - Gera "A removeu B da conversa" ou "B saiu da conversa" e audit
   `remove_conversation_participant`. A atendente removida deixa de ver a conversa (404).
 

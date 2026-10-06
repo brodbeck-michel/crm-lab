@@ -862,6 +862,22 @@ interações com ele, com autor e data.
 
 ---
 
+## 16. Participantes da conversa (CRMLAB-93, D-263)
+
+- A conversa tem **uma dona** (`assigned_to`) e **zero ou mais participantes**. Participante vê e
+  responde a conversa sem virar dona; responder não transfere.
+- Adicionar e remover: dona, gestor ou admin. A participante pode sair sozinha. Conversa da fila
+  livre ou encerrada não aceita participante.
+- **Com participante, não se encerra nem se devolve para a fila**: a dona transfere para a
+  participante, que vira a dona e sai da lista. A antiga dona sai da conversa.
+- Mensagem de participante chega ao paciente com `*Nome*` na primeira linha (não em áudio e
+  figurinha); no CRM a bolha fica sem o prefixo.
+- No tempo de resposta (D-257), a resposta de participante conta para a dona do momento
+  (`messages.attributed_to`).
+- Entrada, remoção e saída geram mensagem de sistema e audit log.
+
+---
+
 ## Resumo: Checklist de Implementação
 
 Antes de commitar, verifique:

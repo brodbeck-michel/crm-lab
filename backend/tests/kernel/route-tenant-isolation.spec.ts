@@ -262,6 +262,24 @@ const LAB_ROUTES: readonly LabRoute[] = [
   { name: 'GET /conversations/:id', method: 'get', path: (l) => `/api/v1/conversations/${l.conversation.id}`, actor: 'attendant', addressable: true, ownStatus: 200 },
   { name: 'POST /conversations/:id/pin', method: 'post', path: (l) => `/api/v1/conversations/${l.conversation.id}/pin`, actor: 'attendant', addressable: true, ownStatus: 204 },
   { name: 'DELETE /conversations/:id/pin', method: 'delete', path: (l) => `/api/v1/conversations/${l.conversation.id}/pin`, actor: 'attendant', addressable: true, ownStatus: 204 },
+  // CRMLAB-93 (D-263): a dona chama a gestora; remover quem nao participa e no-op (204).
+  {
+    name: 'POST /conversations/:id/participants',
+    method: 'post',
+    path: (l) => `/api/v1/conversations/${l.conversation.id}/participants`,
+    body: (l) => ({ userId: l.manager.id }),
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    name: 'DELETE /conversations/:id/participants/:userId',
+    method: 'delete',
+    path: (l) => `/api/v1/conversations/${l.conversation.id}/participants/${l.manager.id}`,
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 204,
+  },
   {
     name: 'PATCH /conversations/:id',
     method: 'patch',
@@ -1304,7 +1322,9 @@ describe('inventario de rotas de laboratorio', () => {
     // `PATCH /visits/:id/report` e `GET|DELETE /visits/:id/attachments/:attachmentId`.
     // CRMLAB-89/D-261 soma 4: `GET /doctors/:id/timeline`, `POST /doctors/:id/interactions` e
     // `PATCH|DELETE /doctors/:id/interactions/:interactionId`.
-    expect(LAB_ROUTES).toHaveLength(106);
+    // CRMLAB-93/D-263 soma 2: `POST /conversations/:id/participants` e
+    // `DELETE /conversations/:id/participants/:userId`.
+    expect(LAB_ROUTES).toHaveLength(108);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

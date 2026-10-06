@@ -5305,3 +5305,54 @@ leitura; os ajustes mantêm as regras de D-256/D-258.
 `components/shared/Avatar.tsx` (`style`); `shared/types/visit.types.ts` (`VisitDoctor.clinic`),
 `backend/src/repositories/visit.repository.ts`; testes `Agenda.spec.tsx`, `VisitRecord.spec.tsx`,
 `agenda-ui.spec.tsx` (novo), `tests/visits/visits.spec.ts`. PAGES §23, DESIGN_TOKENS, API_CONTRACTS §14.
+
+## 2026-10-06 — Participantes da conversa (CRMLAB-93)
+
+### D-263: Participante na conversa — chamar uma colega sem transferir o atendimento
+**Decisão (Michel, 05–06/10/2026, respostas 1A, 2A, 4A, 5A e a regra nova do item 3; itens 8 e 9
+decididos na implementação):**
+1. **Participante** é um usuário ativo do laboratório chamado para dentro de uma conversa
+   (`conversation_participants`). A dona continua sendo `conversations.assigned_to`. A
+   participante **vê** a conversa (lista, detalhe, busca, envio, orçamento pelo cartão) mesmo sendo
+   atendente, e a conversa aparece no chip **"Participando"** (`scope=participating`). Responder
+   **não transfere** (como a D-215).
+2. **Quem adiciona e quem remove:** a dona, gestor ou admin (`FORBIDDEN` para os outros). A
+   **participante pode sair sozinha** ("Sair da conversa"). Conversa da **fila livre não aceita
+   participante** (`CONFLICT`, `reason: "unassigned"`): alguém assume antes. A dona e quem já
+   participa não entram de novo (no-op). Conversa encerrada não aceita (`reason: "closed"`).
+3. **Encerrar exige transferir antes.** Enquanto houver participante, **ninguém encerra** a
+   conversa (`CONFLICT`, `reason: "has_participants"`): a dona transfere para a participante, que
+   vira a responsável dali em diante e **sai da lista** de participantes. A antiga dona **sai da
+   conversa** (não vira participante). As outras participantes continuam. Sem participante, o
+   encerrar é o da D-174.
+4. **Aviso para quem foi adicionada:** som + notificação do navegador "Você foi adicionada à
+   conversa" (título = nome do paciente, sem conteúdo — D-240). Daí em diante, enquanto for
+   participante, a conversa entra na fila do aviso da D-241: mensagens novas do paciente avisam
+   e contam no "(N)" do título.
+5. **Nome em negrito no WhatsApp:** mensagem de participante sai para o paciente com
+   `*Nome do cadastro*` na primeira linha e o texto embaixo — texto, resposta rápida, legenda de
+   imagem/documento (sem legenda, a legenda vira só o nome) e o orçamento pelo cartão. Áudio,
+   recado de voz e figurinha saem sem nome. **A bolha do CRM guarda o texto sem o prefixo** (a
+   bolha já mostra quem enviou). Mensagem da dona, e de gestor que responde sem ser participante,
+   segue como hoje.
+6. **Tempo de resposta (D-257):** resposta de participante conta para a **dona no momento da
+   resposta**, gravada em `messages.attributed_to`. Transferência posterior não muda o relatório.
+   Gestor que responde sem ser participante continua contando para ele mesmo (D-257 item 2).
+7. **Rastro:** mensagem de sistema "A adicionou B à conversa", "A removeu B da conversa" e
+   "B saiu da conversa", e audit log `add_conversation_participant` /
+   `remove_conversation_participant`.
+8. **Devolver para a fila** com participante também é recusado (`reason: "has_participants"`),
+   pelo mesmo motivo do item 2: fila livre não tem participante.
+9. **Transferir para quem não é participante** mantém as participantes; quem participava e vira
+   dona sai da lista. A participante (que não é dona) não transfere, como hoje.
+**Motivo:** a atendente precisa chamar a gestora (desconto, dúvida, reclamação) sem perder a posse
+do atendimento. Gestor já enxergava tudo, mas não ficava sabendo que foi chamado, e atendente não
+via a conversa da colega.
+**Impacto:** migração `053_conversation_participants.sql`; `shared/types/conversation.types.ts`
+(`ConversationParticipant`, `Conversation.participants`, `scope=participating`,
+`counts.participating`); `conversation.repository.ts`, `conversation.service.ts`,
+`conversation.routes.ts` (3 rotas), `message.service.ts`, `message.repository.ts`,
+`proposal.service.ts`, `response-time.repository.ts`; frontend `api/conversations.ts`,
+`ConversationPanel.tsx` (menu "Participantes"), `ConversationList.tsx` (chip),
+`pages/Attendance/index.tsx`, `hooks/useNewMessageAlerts.ts`. SCHEMA §39, API_CONTRACTS §2,
+BUSINESS_RULES §16.

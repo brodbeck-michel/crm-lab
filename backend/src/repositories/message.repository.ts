@@ -362,6 +362,11 @@ export interface MessageInsert {
   automation?: 'reengagement' | null;
   /** Duracao, paginas, miniatura, localizacao, contatos (D-234). */
   metadata?: MessageMetadata | null;
+  /**
+   * Resposta de PARTICIPANTE (D-263 item 6): a dona da conversa naquele instante,
+   * para o tempo de resposta (D-257). `null`/ausente para todo o resto.
+   */
+  attributedTo?: string | null;
 }
 
 export interface MessagePage {
@@ -550,8 +555,14 @@ export class MessageRepository {
       "m.sender_type <> 'system'",
     ];
     if (criteria.visibleTo !== null) {
+      // Mesmo recorte da lista: as proprias, as livres e as em que participa (D-263).
       params.push(criteria.visibleTo);
-      where.push(`(c.assigned_to = $${params.length} OR c.assigned_to IS NULL)`);
+      const visible = `$${params.length}`;
+      where.push(
+        `(c.assigned_to = ${visible} OR c.assigned_to IS NULL OR EXISTS (
+            SELECT 1 FROM conversation_participants vp
+            WHERE vp.conversation_id = c.id AND vp.user_id = ${visible}))`,
+      );
     }
     if (criteria.conversationId !== undefined) {
       params.push(criteria.conversationId);
@@ -604,20 +615,31 @@ export class MessageRepository {
    * - `unread_count` so incrementa para mensagem do PACIENTE: o que o atendente
    *   escreve nao pode aparecer como "nao lida" para ele mesmo.
    */
+  /** A mensagem foi resposta de participante (D-263)? O reenvio repete o `*Nome*`. */
+  async isParticipantReply(tenantId: string, id: string): Promise<boolean> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const found = await tx.query<{ id: string }>(
+        'SELECT id FROM messages WHERE id = $1 AND attributed_to IS NOT NULL',
+        [id],
+      );
+      return found.rows.length > 0;
+    });
+  }
+
   async insert(tenantId: string, data: MessageInsert): Promise<Message> {
     return this.db.withTenant(tenantId, async (tx) => {
       const inserted = await tx.query<{ id: string }>(
         `INSERT INTO messages
            (tenant_id, conversation_id, sender_type, sender_id, content, message_type,
             attachment_url, status, external_message_id, quoted_external_id, quoted_message_id,
-            automation, metadata)
+            automation, metadata, attributed_to)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text,
                  COALESCE($11::uuid, (SELECT q.id FROM messages q
                                        WHERE $10::text IS NOT NULL
                                          AND q.conversation_id = $2
                                          AND q.external_message_id = $10::text
                                        LIMIT 1)),
-                 $12, $13::jsonb)
+                 $12, $13::jsonb, $14::uuid)
          RETURNING id`,
         [
           tenantId,
@@ -633,6 +655,7 @@ export class MessageRepository {
           data.quotedMessageId ?? null,
           data.automation ?? null,
           data.metadata ? JSON.stringify(data.metadata) : null,
+          data.attributedTo ?? null,
         ],
       );
       const id = inserted.rows[0]?.id;

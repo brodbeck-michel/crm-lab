@@ -141,6 +141,22 @@ export interface Conversation {
    * Opcional no tipo (AGENTS.md); o backend sempre preenche.
    */
   awaitingReplySince?: IsoDateTime | null;
+  /**
+   * Colegas chamadas para dentro da conversa sem virar donas (CRMLAB-93, D-263), em ordem de
+   * entrada. A dona nunca está aqui. Opcional no tipo (AGENTS.md); o backend sempre preenche.
+   */
+  participants?: ConversationParticipant[];
+}
+
+/** Participante da conversa (D-263) — só id e nome, como `ConversationAssignee`. */
+export interface ConversationParticipant {
+  id: string;
+  name: string;
+}
+
+/** `POST /conversations/:id/participants` (D-263). */
+export interface AddConversationParticipantRequest {
+  userId: string;
 }
 
 /** Conversa aberta, com cadastro do paciente (coluna 3 do inbox). */
@@ -291,8 +307,11 @@ export function normalizeBrazilianPhone(input: string): string | null {
 
 export interface ListConversationsQuery extends PaginationQuery {
   status?: ConversationStatus;
-  /** 'mine' = atribuidas ao usuario logado; 'unassigned' = fila livre. */
-  scope?: 'mine' | 'unassigned' | 'all';
+  /**
+   * 'mine' = atribuidas ao usuario logado; 'unassigned' = fila livre; 'participating' = em que
+   * o usuario logado participa (D-263).
+   */
+  scope?: 'mine' | 'unassigned' | 'participating' | 'all';
   search?: string;
   /** So conversas com `unreadCount > 0` (CRMLAB-68, D-229) — recorte como o `scope`. */
   unread?: boolean;
@@ -303,9 +322,10 @@ export interface ListConversationsResponse {
   pagination: PaginationMeta;
   /**
    * Contagens dos chips de filtro — derivadas, nunca contadores separados.
-   * `unread` (chip "Nao lidas", D-229) e opcional no tipo; o backend sempre manda.
+   * `unread` (chip "Nao lidas", D-229) e `participating` (chip "Participando", D-263) sao
+   * opcionais no tipo; o backend sempre manda.
    */
-  counts: { mine: number; unassigned: number; unread?: number };
+  counts: { mine: number; unassigned: number; unread?: number; participating?: number };
 }
 
 /**

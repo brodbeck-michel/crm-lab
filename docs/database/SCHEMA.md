@@ -2105,6 +2105,33 @@ CREATE INDEX idx_doctor_interactions_updated_by ON doctor_interactions(updated_b
   scheduled_at)`.
 - Migração **única** (tabela + policy), sem backfill.
 
+### 39. `conversation_participants` e `messages.attributed_to` (migração 053 — CRMLAB-93, D-263)
+Participantes da conversa: colegas chamadas para dentro do atendimento sem virar donas.
+
+```sql
+CREATE TABLE conversation_participants (
+  tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  added_by        UUID REFERENCES users(id) ON DELETE SET NULL,
+  added_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (conversation_id, user_id)
+);
+CREATE INDEX idx_conversation_participants_user ON conversation_participants (tenant_id, user_id);
+CREATE INDEX idx_conversation_participants_added_by ON conversation_participants (added_by);
+-- RLS: conversation_participants_tenant_isolation (mesma forma da 007)
+
+ALTER TABLE messages ADD COLUMN attributed_to UUID REFERENCES users(id) ON DELETE SET NULL;
+CREATE INDEX idx_messages_attributed_to ON messages (attributed_to) WHERE attributed_to IS NOT NULL;
+```
+
+- A dona **nunca** está em `conversation_participants`: virar dona (transferência) apaga a linha
+  dela na mesma operação.
+- `attributed_to` = dona da conversa no instante em que uma **participante** respondeu (D-263
+  item 6). `NULL` em todo o resto; o relatório de tempo de resposta lê
+  `COALESCE(attributed_to, sender_id)`.
+- Migração **única** (tabela + policy), sem backfill.
+
 ---
 
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`

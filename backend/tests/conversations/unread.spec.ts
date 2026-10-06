@@ -115,7 +115,7 @@ describe('POST /conversations/:id/unread e ?unread=true (D-229)', () => {
 
     const todas = await app.agent.get('/api/v1/conversations').set(app.auth(ana)).expect(200);
     const all = todas.body as ListConversationsResponse;
-    expect(all.counts).toEqual({ mine: 2, unassigned: 1, unread: 2 });
+    expect(all.counts).toEqual({ mine: 2, unassigned: 1, unread: 2, participating: 0 });
     expect(all.pagination.total).toBe(3);
 
     const filtrada = await app.agent

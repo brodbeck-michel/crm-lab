@@ -1254,8 +1254,8 @@ export class ProposalService {
   }
 
   /**
-   * Conversa que QUEM CHAMA enxerga (D-200 item 3): atendente, as dela e a
-   * fila livre; gestor/admin, todas. De outro tenant (RLS) ou fora da
+   * Conversa que QUEM CHAMA enxerga (D-200 item 3): atendente, as dela, a
+   * fila livre e as em que participa (D-263); gestor/admin, todas. De outro tenant (RLS) ou fora da
    * visibilidade -> `NOT_FOUND`, nunca `FORBIDDEN`.
    */
   private async loadVisibleConversation(
@@ -1268,7 +1268,8 @@ export class ProposalService {
       conversation !== null &&
       (isSupervisor(ctx) ||
         conversation.assignedTo === null ||
-        conversation.assignedTo === ctx.userId);
+        conversation.assignedTo === ctx.userId ||
+        conversation.participantIds.includes(ctx.userId));
     if (!conversation || !visible) {
       throw notFound({ resource: 'conversation', id: conversationId });
     }

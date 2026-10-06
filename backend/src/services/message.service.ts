@@ -138,6 +138,31 @@ export interface InboundMessageInput {
   metadata?: MessageMetadata | null;
 }
 
+/**
+ * Resposta de PARTICIPANTE (CRMLAB-93, D-263): quem envia participa da conversa
+ * e nao e a dona. Devolve o nome que vai em negrito para o paciente e a dona do
+ * momento, que leva o tempo de resposta (D-257). `null` = mensagem comum (dona,
+ * fila livre, gestor que nao foi adicionado).
+ */
+export function participantReplyOf(
+  conversation: Conversation,
+  senderId: string,
+): { name: string; ownerId: string } | null {
+  if (conversation.assignedTo === null || conversation.assignedTo === senderId) return null;
+  const participant = conversation.participants?.find((p) => p.id === senderId);
+  return participant ? { name: participant.name, ownerId: conversation.assignedTo } : null;
+}
+
+/**
+ * `*Nome*` na primeira linha, padrao de negrito do WhatsApp (D-263 item 5). So
+ * o que vai para o canal: a bolha do CRM guarda o texto sem o prefixo. Asterisco
+ * no nome quebraria o negrito e sai.
+ */
+export function withSenderName(name: string, text: string | null): string {
+  const bold = `*${name.replace(/\*/g, '').trim()}*`;
+  return text ? `${bold}\n${text}` : bold;
+}
+
 function clampPage(value: number | undefined): number {
   const n = Number(value ?? DEFAULT_MESSAGE_PAGE);
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : DEFAULT_MESSAGE_PAGE;
@@ -281,6 +306,7 @@ export class MessageService {
     const quote = await this.resolveQuote(tenantId, conversationId, dto.quotedMessageId);
     // Antes do INSERT: quem perde a corrida nao grava nem envia nada (D-215).
     await this.claimIfFree(tenantId, conversation, senderId);
+    const participant = participantReplyOf(conversation, senderId);
 
     const message = await this.messages.insert(tenantId, {
       conversationId,
@@ -292,6 +318,7 @@ export class MessageService {
       status: this.initialStatus(conversation.channel),
       quotedMessageId: quote?.id ?? null,
       quotedExternalId: quote?.externalMessageId ?? null,
+      attributedTo: participant?.ownerId ?? null,
     });
     this.emitNewMessage(tenantId, conversationId, message.id);
 
@@ -302,7 +329,7 @@ export class MessageService {
       const { externalId } = await this.whatsapp.send(
         tenantId,
         conversation.patientPhone,
-        dto.content,
+        participant ? withSenderName(participant.name, dto.content) : dto.content,
         sendOptionsFor(quote),
       );
       return await this.confirmSent(tenantId, conversationId, message, externalId);
@@ -340,6 +367,10 @@ export class MessageService {
     // mostraria um texto que o paciente nunca recebeu.
     const caption = messageType === 'audio' ? null : dto.caption || null;
     await this.claimIfFree(tenantId, conversation, senderId);
+    const participant = participantReplyOf(conversation, senderId);
+    // D-263 item 5: o nome vai na legenda (sem legenda, so o nome). Áudio não tem.
+    const sentCaption =
+      participant && messageType !== 'audio' ? withSenderName(participant.name, caption) : caption;
 
     const message = await this.messages.insert(tenantId, {
       conversationId,
@@ -351,6 +382,7 @@ export class MessageService {
       status: this.initialStatus(conversation.channel),
       quotedMessageId: quote?.id ?? null,
       quotedExternalId: quote?.externalMessageId ?? null,
+      attributedTo: participant?.ownerId ?? null,
     });
     this.emitNewMessage(tenantId, conversationId, message.id);
 
@@ -360,7 +392,12 @@ export class MessageService {
       const { externalId } = await this.whatsapp.sendMedia(
         tenantId,
         conversation.patientPhone,
-        { buffer: dto.buffer, mimeType: dto.mimeType, fileName: dto.fileName, caption },
+        {
+          buffer: dto.buffer,
+          mimeType: dto.mimeType,
+          fileName: dto.fileName,
+          caption: sentCaption,
+        },
         sendOptionsFor(quote),
       );
       return await this.confirmSent(tenantId, conversationId, message, externalId);
@@ -647,10 +684,16 @@ export class MessageService {
           sendOptionsFor(quote),
         ));
       } else {
+        // Resposta de participante sai de novo com o nome (D-263 item 5).
+        const named =
+          message.senderName !== null &&
+          (await this.messages.isParticipantReply(tenantId, messageId));
         ({ externalId } = await whatsapp.send(
           tenantId,
           conversation.patientPhone,
-          message.content,
+          named && message.senderName !== null
+            ? withSenderName(message.senderName, message.content)
+            : message.content,
           sendOptionsFor(quote),
         ));
       }

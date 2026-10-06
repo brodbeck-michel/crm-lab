@@ -33,6 +33,7 @@ import type {
   Conversation,
   ConversationChannel,
   ConversationDetail,
+  ConversationParticipant,
   ConversationStatus,
 } from '@crm-lab/shared';
 import type { DbClient, DbTx } from '../db/types.js';
@@ -106,12 +107,34 @@ interface ConversationRow {
   pinned?: boolean | null;
   /** Ja em ISO UTC (`to_char`, como o reingajamento): nao depende do fuso do processo. */
   awaiting_reply_since: string | null;
+  /** `json_agg` de `{ id, name }` (D-263); string no PGlite, objeto no `pg`. */
+  participants: unknown;
+}
+
+/**
+ * Participantes da conversa (CRMLAB-93, D-263), em ordem de entrada. Subconsulta
+ * por linha: a lista tem no maximo 100 conversas e a PK `(conversation_id,
+ * user_id)` acha as linhas de cada uma.
+ */
+const PARTICIPANTS_COLUMN = `COALESCE((
+         SELECT json_agg(json_build_object('id', pu.id, 'name', pu.name)
+                         ORDER BY cp.added_at, cp.user_id)
+         FROM conversation_participants cp
+         JOIN users pu ON pu.id = cp.user_id
+         WHERE cp.conversation_id = c.id
+       ), '[]'::json) AS participants`;
+
+/** `c` tem `userParam` como participante (D-263). */
+function participatesSql(userParam: string): string {
+  return `EXISTS (SELECT 1 FROM conversation_participants vp
+                  WHERE vp.conversation_id = c.id AND vp.user_id = ${userParam})`;
 }
 
 const LIST_COLUMNS = `c.id, c.patient_id, c.patient_name, c.patient_phone, c.patient_email, c.assigned_to,
        u.name AS assigned_to_name, c.channel, c.status, c.unread_count, c.last_message_at,
        c.tags, c.custom_fields, c.created_at, lm.content AS last_message_preview,
-       to_char(aw.created_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS awaiting_reply_since`;
+       to_char(aw.created_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS awaiting_reply_since,
+       ${PARTICIPANTS_COLUMN}`;
 
 /**
  * Alerta de tempo de resposta (CRMLAB-84, D-254): a PRIMEIRA mensagem do
@@ -201,6 +224,18 @@ function toStringRecord(value: unknown): Record<string, string> {
 const CHANNELS: ConversationChannel[] = ['whatsapp', 'sms', 'web', 'direct'];
 const STATUSES: ConversationStatus[] = ['active', 'closed'];
 
+function toParticipants(value: unknown): ConversationParticipant[] {
+  const parsed = typeof value === 'string' ? safeJson(value) : value;
+  if (!Array.isArray(parsed)) return [];
+  const out: ConversationParticipant[] = [];
+  for (const item of parsed as unknown[]) {
+    if (typeof item !== 'object' || item === null) continue;
+    const { id, name } = item as Record<string, unknown>;
+    if (typeof id === 'string' && typeof name === 'string') out.push({ id, name });
+  }
+  return out;
+}
+
 function toChannel(value: string | null): ConversationChannel {
   return CHANNELS.includes(value as ConversationChannel)
     ? (value as ConversationChannel)
@@ -232,6 +267,7 @@ export function toConversation(row: ConversationRow): Conversation {
     pinned: row.pinned === true,
     createdAt: toIso(row.created_at),
     awaitingReplySince: row.awaiting_reply_since,
+    participants: toParticipants(row.participants),
   };
 }
 
@@ -245,11 +281,11 @@ export function toConversationDetail(row: ConversationRow): ConversationDetail {
 
 /** Recorte de visibilidade + filtros. O service traduz papel -> `visibleTo`. */
 export interface ConversationListCriteria {
-  /** `null` = ve todas (gestor/admin). String = so as proprias + as livres. */
+  /** `null` = ve todas (gestor/admin). String = as proprias + as livres + as em que participa. */
   visibleTo: string | null;
   /** Usuario logado — origem de `counts.mine`. */
   userId: string;
-  scope: 'mine' | 'unassigned' | 'all';
+  scope: 'mine' | 'unassigned' | 'participating' | 'all';
   /** So `unread_count > 0` (D-229) — recorte de listagem como o `scope`, fora dos counts. */
   unread?: boolean;
   status?: ConversationStatus;
@@ -263,7 +299,7 @@ export interface ConversationListCriteria {
 export interface ConversationPage {
   rows: Conversation[];
   total: number;
-  counts: { mine: number; unassigned: number; unread: number };
+  counts: { mine: number; unassigned: number; unread: number; participating: number };
 }
 
 export interface ConversationInsert {
@@ -284,6 +320,7 @@ interface CountRow {
   mine: number | string;
   unassigned: number | string;
   unread: number | string;
+  participating: number | string;
 }
 
 export class ConversationRepository {
@@ -299,10 +336,14 @@ export class ConversationRepository {
     const params: unknown[] = [];
     const where: string[] = [];
 
-    // Visibilidade por papel: atendente ve as proprias + a fila livre.
+    // Visibilidade por papel: atendente ve as proprias + a fila livre + as em
+    // que participa (D-263).
     if (criteria.visibleTo !== null) {
       params.push(criteria.visibleTo);
-      where.push(`(c.assigned_to = $${params.length} OR c.assigned_to IS NULL)`);
+      const visible = `$${params.length}`;
+      where.push(
+        `(c.assigned_to = ${visible} OR c.assigned_to IS NULL OR ${participatesSql(visible)})`,
+      );
     }
     if (criteria.status !== undefined) {
       params.push(criteria.status);
@@ -334,13 +375,18 @@ export class ConversationRepository {
       where.push(`c.assigned_to = $${params.length}`);
     } else if (criteria.scope === 'unassigned') {
       where.push('c.assigned_to IS NULL');
+    } else if (criteria.scope === 'participating') {
+      params.push(criteria.userId);
+      where.push(participatesSql(`$${params.length}`));
     }
     const scopeConditions = [
       criteria.scope === 'mine'
         ? `c.assigned_to = ${me}`
         : criteria.scope === 'unassigned'
           ? 'c.assigned_to IS NULL'
-          : 'TRUE',
+          : criteria.scope === 'participating'
+            ? participatesSql(me)
+            : 'TRUE',
     ];
     // "Nao lidas" (D-229) e recorte como o escopo: listagem + `total`, nunca os counts.
     if (criteria.unread === true) {
@@ -361,7 +407,8 @@ export class ConversationRepository {
         `SELECT COUNT(*) FILTER (WHERE ${scopeCondition})::int AS total,
                 COUNT(*) FILTER (WHERE c.assigned_to = ${me})::int AS mine,
                 COUNT(*) FILTER (WHERE c.assigned_to IS NULL)::int AS unassigned,
-                COUNT(*) FILTER (WHERE c.unread_count > 0)::int AS unread
+                COUNT(*) FILTER (WHERE c.unread_count > 0)::int AS unread,
+                COUNT(*) FILTER (WHERE ${participatesSql(me)})::int AS participating
          FROM conversations c ${countsWhereSql}`,
         countsParams,
       );
@@ -389,6 +436,7 @@ export class ConversationRepository {
           mine: toNumber(counts?.mine, 0),
           unassigned: toNumber(counts?.unassigned, 0),
           unread: toNumber(counts?.unread, 0),
+          participating: toNumber(counts?.participating, 0),
         },
       };
     });
@@ -526,7 +574,50 @@ export class ConversationRepository {
         [userId, id],
       );
       const changedId = updated.rows[0]?.id;
-      return changedId ? selectDetail(tx, changedId) : null;
+      if (!changedId) return null;
+      // A participante que vira dona sai da lista (D-263 item 3): a dona nunca
+      // e participante. Na mesma transacao, para a lista nunca mostrar as duas.
+      if (userId !== null) {
+        await tx.query(
+          'DELETE FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
+          [changedId, userId],
+        );
+      }
+      return selectDetail(tx, changedId);
+    });
+  }
+
+  /**
+   * Adiciona participante (D-263). Idempotente pela PK: `false` = ja estava.
+   * O service ja autorizou e ja recusou a dona.
+   */
+  async addParticipant(
+    tenantId: string,
+    id: string,
+    userId: string,
+    addedBy: string,
+  ): Promise<boolean> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const inserted = await tx.query<{ user_id: string }>(
+        `INSERT INTO conversation_participants (tenant_id, conversation_id, user_id, added_by)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (conversation_id, user_id) DO NOTHING
+         RETURNING user_id`,
+        [tenantId, id, userId, addedBy],
+      );
+      return inserted.rows.length > 0;
+    });
+  }
+
+  /** Remove participante (D-263). `false` = nao participava. */
+  async removeParticipant(tenantId: string, id: string, userId: string): Promise<boolean> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const deleted = await tx.query<{ user_id: string }>(
+        `DELETE FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2
+         RETURNING user_id`,
+        [id, userId],
+      );
+      return deleted.rows.length > 0;
     });
   }
 

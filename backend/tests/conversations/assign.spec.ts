@@ -272,7 +272,7 @@ describe('PATCH /conversations/:id — status e tags', () => {
       .set(app.auth(ana))
       .expect(200);
     expect(fila.body.conversations).toHaveLength(0);
-    expect(fila.body.counts).toEqual({ mine: 0, unassigned: 0, unread: 0 });
+    expect(fila.body.counts).toEqual({ mine: 0, unassigned: 0, unread: 0, participating: 0 });
 
     const detalhe = await app.agent
       .get(`/api/v1/conversations/${conversation.id}`)

@@ -30,6 +30,7 @@
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { z } from 'zod';
 import type {
+  AddConversationParticipantRequest,
   CreateAttachmentRequest,
   CreateConversationRequest,
   ConversationDetail,
@@ -70,7 +71,7 @@ import { createWhatsAppService, type WhatsAppService } from '../services/whatsap
 
 export const listConversationsQuerySchema = z.object({
   status: z.enum(['active', 'closed']).optional(),
-  scope: z.enum(['mine', 'unassigned', 'all']).optional(),
+  scope: z.enum(['mine', 'unassigned', 'participating', 'all']).optional(),
   /** "Nao lidas" (D-229). Query string: `true`/`false`; `false` = sem filtro. */
   unread: z
     .enum(['true', 'false'])
@@ -194,6 +195,15 @@ export const setReactionSchema = z.object({
 export const messageParamsSchema = z.object({
   id: z.string().uuid(),
   messageId: z.string().uuid(),
+});
+
+/** `POST /:id/participants` (D-263). */
+export const addParticipantSchema = z.object({ userId: z.string().uuid() });
+
+/** `DELETE /:id/participants/:userId` (D-263). */
+export const participantParamsSchema = z.object({
+  id: z.string().uuid(),
+  userId: z.string().uuid(),
 });
 
 export const updateConversationSchema = z
@@ -483,6 +493,25 @@ export function updateConversation(service: ConversationService): RequestHandler
   });
 }
 
+/** `POST /:id/participants` (CRMLAB-93, D-263). */
+export function addParticipant(service: ConversationService): RequestHandler {
+  return handle(async (req, res) => {
+    const { id } = validated<{ id: string }>(req, 'params');
+    const { userId } = validated<AddConversationParticipantRequest>(req, 'body');
+    const body: ConversationDetail = await service.addParticipant(getContext(req), id, userId);
+    res.status(200).json(body);
+  });
+}
+
+/** `DELETE /:id/participants/:userId` (D-263) — o proprio id = sair da conversa. */
+export function removeParticipant(service: ConversationService): RequestHandler {
+  return handle(async (req, res) => {
+    const { id, userId } = validated<{ id: string; userId: string }>(req, 'params');
+    await service.removeParticipant(getContext(req), id, userId);
+    res.status(204).end();
+  });
+}
+
 /** `POST /:id/pin` e `DELETE /:id/pin` — o mesmo handler, dois verbos. */
 export function setConversationPinned(
   service: ConversationService,
@@ -625,6 +654,21 @@ function buildConversationModule(
     validate(conversationIdParamSchema, 'params'),
     validate(createAttachmentSchema, 'body'),
     createAttachment(services),
+  );
+
+  router.post(
+    '/:id/participants',
+    ...guards,
+    validate(conversationIdParamSchema, 'params'),
+    validate(addParticipantSchema, 'body'),
+    addParticipant(services.conversations),
+  );
+
+  router.delete(
+    '/:id/participants/:userId',
+    ...guards,
+    validate(participantParamsSchema, 'params'),
+    removeParticipant(services.conversations),
   );
 
   router.post(

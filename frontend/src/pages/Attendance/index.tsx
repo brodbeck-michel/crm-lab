@@ -465,12 +465,59 @@ export function Attendance() {
     onError: handleApiError,
   });
 
+  /**
+   * Com participante, encerrar e devolver para a fila voltam `CONFLICT`
+   * `has_participants` (D-263 itens 3 e 8): o caminho é transferir para ela.
+   */
+  const handleParticipantConflict = useCallback(
+    (error: unknown) => {
+      if (
+        isApiError(error) &&
+        error.code === 'CONFLICT' &&
+        error.details?.reason === 'has_participants'
+      ) {
+        toast('Transfira a conversa para a participante antes.', { tone: 'attention' });
+        void invalidateConversation();
+        return;
+      }
+      handleApiError(error);
+    },
+    [handleApiError, invalidateConversation, toast],
+  );
+
   const closeAttendance = useMutation({
     mutationFn: () => api.conversations.close(selectedId as string),
     onSuccess: async () => {
       toast('Atendimento encerrado.', { tone: 'positive' });
       setSelectedId(null);
       await queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
+    },
+    onError: handleParticipantConflict,
+  });
+
+  /** Participantes (CRMLAB-93, D-263): chamar uma colega, remover e sair. */
+  const addParticipant = useMutation({
+    mutationFn: (userId: string) =>
+      api.conversations.addParticipant(selectedId as string, { userId }),
+    onSuccess: async (_data, userId) => {
+      const name = assigneesQuery.data?.assignees.find((a) => a.id === userId)?.name;
+      toast(`${name ?? 'A colega'} foi adicionada à conversa.`, { tone: 'positive' });
+      await invalidateConversation();
+    },
+    onError: handleApiError,
+  });
+
+  const removeParticipant = useMutation({
+    mutationFn: (userId: string) => api.conversations.removeParticipant(selectedId as string, userId),
+    onSuccess: async (_data, userId) => {
+      if (userId === currentUser?.id) {
+        toast('Você saiu da conversa.', { tone: 'positive' });
+        // Atendente que sai deixa de ver a conversa: fecha antes do refetch dar 404.
+        if (currentUser.role === 'attendant') setSelectedId(null);
+        await queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
+        return;
+      }
+      await invalidateConversation();
     },
     onError: handleApiError,
   });
@@ -496,6 +543,7 @@ export function Attendance() {
 
   const assign = useMutation({
     mutationFn: (userId: string | null) => api.conversations.assign(selectedId as string, userId),
+    onError: handleParticipantConflict,
     onSuccess: async (_data, userId) => {
       const name = assigneesQuery.data?.assignees.find((a) => a.id === userId)?.name;
       toast(
@@ -508,8 +556,10 @@ export function Attendance() {
       );
       await invalidateConversation();
     },
-    onError: handleApiError,
   });
+
+  const isSupervisor = currentUser?.role === 'manager' || currentUser?.role === 'admin';
+  const isOwner = conversation !== null && conversation.assignedTo === currentUser?.id;
 
   return (
     <>
@@ -575,10 +625,16 @@ export function Attendance() {
                 : undefined
             }
             onCloseAttendance={() => closeAttendance.mutate()}
-            canCloseAttendance={
-              currentUser?.role === 'manager' ||
-              currentUser?.role === 'admin' ||
-              (conversation !== null && conversation.assignedTo === currentUser?.id)
+            canCloseAttendance={isSupervisor || isOwner}
+            currentUserId={currentUser?.id}
+            canManageParticipants={isSupervisor || isOwner}
+            onAddParticipant={(userId) => addParticipant.mutate(userId)}
+            onRemoveParticipant={(userId) => removeParticipant.mutate(userId)}
+            canTransfer={
+              isSupervisor ||
+              isOwner ||
+              conversation === null ||
+              conversation.assignedTo === null
             }
             onToggleContext={toggleContextPanel}
             onClose={() => setSelectedId(null)}

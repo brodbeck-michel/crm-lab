@@ -210,3 +210,67 @@ describe('ConversationPanel — menu de transferência', () => {
     expect(screen.queryByRole('menuitem', { name: 'Devolver para a fila' })).not.toBeInTheDocument();
   });
 });
+
+describe('ConversationPanel — participantes (CRMLAB-93, D-263)', () => {
+  function withParticipants(overrides: Partial<ConversationPanelProps> = {}): ConversationPanelProps {
+    return {
+      ...props([]),
+      conversation: { ...CONVERSATION, participants: [{ id: 'u-2', name: 'Bruno' }] },
+      assignees: [
+        { id: 'u-1', name: 'Marina', role: 'attendant' },
+        { id: 'u-2', name: 'Bruno', role: 'manager' },
+        { id: 'u-3', name: 'Carla', role: 'attendant' },
+      ],
+      currentUserId: 'u-1',
+      canManageParticipants: true,
+      onAddParticipant: vi.fn(),
+      onRemoveParticipant: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  it('dona: lista quem participa, adiciona quem falta e o Encerrar trava', async () => {
+    const user = userEvent.setup();
+    const p = withParticipants();
+    render(<ConversationPanel {...p} />);
+
+    const close = screen.getByRole('button', { name: 'Encerrar' });
+    expect(close).toBeDisabled();
+    expect(close).toHaveAttribute('title', 'Transfira para a participante antes de encerrar');
+
+    await user.click(screen.getByRole('button', { name: 'Participantes (1)' }));
+    expect(screen.getByText('Bruno')).toBeInTheDocument();
+    // A dona e quem já participa não aparecem para adicionar.
+    expect(screen.queryByRole('menuitem', { name: 'Marina' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('menuitem', { name: 'Carla' }));
+    expect(p.onAddParticipant).toHaveBeenCalledWith('u-3');
+
+    await user.click(screen.getByRole('button', { name: 'Participantes (1)' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Remover Bruno' }));
+    expect(p.onRemoveParticipant).toHaveBeenCalledWith('u-2');
+  });
+
+  it('participante atendente: só "Sair da conversa", sem Transferir', async () => {
+    const user = userEvent.setup();
+    const p = withParticipants({
+      conversation: { ...CONVERSATION, participants: [{ id: 'u-3', name: 'Carla' }] },
+      currentUserId: 'u-3',
+      canManageParticipants: false,
+      canTransfer: false,
+      canCloseAttendance: false,
+    });
+    render(<ConversationPanel {...p} />);
+
+    expect(screen.queryByRole('button', { name: 'Transferir' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Participantes (1)' }));
+    expect(screen.queryByText('Adicionar participante')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('menuitem', { name: 'Sair da conversa' }));
+    expect(p.onRemoveParticipant).toHaveBeenCalledWith('u-3');
+  });
+
+  it('sem participante, o Encerrar volta a funcionar', () => {
+    render(<ConversationPanel {...withParticipants({ conversation: CONVERSATION })} />);
+    expect(screen.getByRole('button', { name: 'Encerrar' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Participantes' })).toBeInTheDocument();
+  });
+});

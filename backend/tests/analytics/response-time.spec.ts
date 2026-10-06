@@ -38,6 +38,8 @@ interface Line {
   at: string;
   by?: UserRecord;
   content?: string;
+  /** Resposta de participante (D-263): a dona do momento. */
+  attributedTo?: UserRecord;
 }
 
 let db: DbClient;
@@ -75,8 +77,8 @@ async function talk(lines: Line[], opts: { tenant?: string; status?: 'active' | 
       const senderType = line.who === 'patient' ? 'patient' : line.who === 'system' ? 'system' : 'agent';
       await tx.query(
         `INSERT INTO messages (id, tenant_id, conversation_id, sender_type, sender_id, content,
-                               message_type, status, automation, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, 'text', 'delivered', $7, $8::timestamp)`,
+                               message_type, status, automation, created_at, attributed_to)
+         VALUES ($1, $2, $3, $4, $5, $6, 'text', 'delivered', $7, $8::timestamp, $9)`,
         [
           randomUUID(),
           tid,
@@ -86,6 +88,7 @@ async function talk(lines: Line[], opts: { tenant?: string; status?: 'active' | 
           line.content ?? 'oi',
           line.who === 'automation' ? 'reengagement' : null,
           line.at,
+          line.attributedTo?.id ?? null,
         ],
       );
     }
@@ -182,6 +185,17 @@ describe('GET /analytics/response-time', () => {
     ]);
     expect(r.responders[1]?.responderId).toBe('phone');
     expect(r.total).toMatchObject({ answered: 2, medianMinutes: 11 });
+  });
+
+  it('resposta de participante conta para a dona do momento (D-263 item 6)', async () => {
+    await talk([
+      { who: 'patient', at: '2026-09-15 12:00:00' },
+      // A gestora participante respondeu na conversa da Ana.
+      { who: 'agent', by: manager, attributedTo: ana, at: '2026-09-15 12:04:00' },
+    ]);
+
+    const r = await report();
+    expect(r.responders.map((x) => [x.name, x.medianMinutes])).toEqual([['Ana', 4]]);
   });
 
   it('fora do expediente: conta só a partir da abertura', async () => {

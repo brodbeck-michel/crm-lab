@@ -55,6 +55,15 @@
  * Reabre sozinha: paciente escreveu (`MessageService.createFromPatient`, fila
  * livre) ou atendimento manual no mesmo telefone (`createManual`, para quem
  * cadastrou).
+ *
+ * ============================================================================
+ * PARTICIPANTES (D-263)
+ * ============================================================================
+ * Colega chamada para dentro da conversa sem virar dona. Ela VE a conversa
+ * (`canSee`) mesmo sendo atendente, e responder nao transfere. Adicionar e
+ * remover: dona, gestor ou admin; a participante sai sozinha. Enquanto houver
+ * participante, a conversa nao encerra nem volta para a fila: a dona transfere
+ * para a participante, que vira dona e sai da lista (`setAssignee`).
  */
 import type {
   Conversation,
@@ -128,6 +137,21 @@ const SUPERVISOR_ROLES = ['manager', 'admin'] as const;
 
 function isSupervisor(ctx: TenantContext): boolean {
   return ctx.role === 'manager' || ctx.role === 'admin';
+}
+
+/** `userId` participa da conversa (D-263)? */
+export function isParticipant(conversation: Conversation, userId: string): boolean {
+  return conversation.participants?.some((p) => p.id === userId) ?? false;
+}
+
+/**
+ * Encerrar e devolver para a fila exigem conversa sem participante (D-263
+ * itens 3 e 8): a dona transfere para a participante antes.
+ */
+function assertNoParticipants(conversation: Conversation): void {
+  if ((conversation.participants?.length ?? 0) > 0) {
+    throw new BusinessError('CONFLICT', { reason: 'has_participants' });
+  }
 }
 
 function clampInt(value: number | undefined, fallback: number, min: number, max: number): number {
@@ -451,6 +475,8 @@ export class ConversationService {
     // --- devolver para a fila -------------------------------------------------
     if (target === null) {
       this.assertCanReassign(ctx, current);
+      // Fila livre nao tem participante (D-263 item 8).
+      assertNoParticipants(current);
       const released = await this.repository.setAssignee(ctx.tenantId, id, null);
       if (!released) throw notFound({ resource: 'conversation', id });
       await this.recordAssignment(ctx, current, released);
@@ -536,6 +562,8 @@ export class ConversationService {
       throw new BusinessError('FORBIDDEN', { requiredRoles: [...SUPERVISOR_ROLES] });
     }
     if (current.status === status) return current;
+    // Com participante, nao encerra: a dona transfere para ela antes (D-263 item 3).
+    if (status === 'closed') assertNoParticipants(current);
 
     const updated = await this.repository.setStatus(ctx.tenantId, id, status);
     if (!updated) throw notFound({ resource: 'conversation', id });
@@ -585,6 +613,75 @@ export class ConversationService {
     if (patch.tags !== undefined) current = await this.updateTags(ctx, id, patch.tags);
     if (patch.assignedTo !== undefined) current = await this.assign(ctx, id, patch.assignedTo);
     return current ?? (await this.getById(ctx, id));
+  }
+
+  /**
+   * `POST /conversations/:id/participants` (D-263). So a dona, gestor ou
+   * admin; fila livre e encerrada recusam. A dona ou quem ja participa: no-op.
+   */
+  async addParticipant(
+    ctx: TenantContext,
+    id: string,
+    userId: string,
+  ): Promise<ConversationDetail> {
+    const current = await this.getById(ctx, id);
+    if (!isSupervisor(ctx) && current.assignedTo !== ctx.userId) {
+      throw new BusinessError('FORBIDDEN', { requiredRoles: [...SUPERVISOR_ROLES] });
+    }
+    if (current.status !== 'active') {
+      throw new BusinessError('CONFLICT', { reason: 'closed' });
+    }
+    if (current.assignedTo === null) {
+      throw new BusinessError('CONFLICT', { reason: 'unassigned' });
+    }
+    const target = await this.requireTenantUser(ctx.tenantId, userId, 'userId');
+    if (target.id === current.assignedTo) return current;
+
+    const added = await this.repository.addParticipant(ctx.tenantId, id, target.id, ctx.userId);
+    if (!added) return current;
+
+    await this.audit.record(ctx, {
+      action: 'add_conversation_participant',
+      entityType: 'conversation',
+      entityId: id,
+      newValues: { participantId: target.id },
+    });
+    const actor = await this.userName(ctx);
+    await this.messages.createSystemEvent(
+      ctx.tenantId,
+      id,
+      `${actor} adicionou ${target.name} à conversa`,
+    );
+    return (await this.repository.findById(ctx.tenantId, id)) ?? current;
+  }
+
+  /**
+   * `DELETE /conversations/:id/participants/:userId` (D-263). Com o proprio id,
+   * a participante SAI; remover outra pessoa e da dona, gestor ou admin.
+   * Quem nao participa: 404.
+   */
+  async removeParticipant(ctx: TenantContext, id: string, userId: string): Promise<void> {
+    const current = await this.getById(ctx, id);
+    const participant = current.participants?.find((p) => p.id === userId);
+    if (!participant) throw notFound({ resource: 'participant', id: userId });
+    const leaving = userId === ctx.userId;
+    if (!leaving && !isSupervisor(ctx) && current.assignedTo !== ctx.userId) {
+      throw new BusinessError('FORBIDDEN', { requiredRoles: [...SUPERVISOR_ROLES] });
+    }
+
+    const removed = await this.repository.removeParticipant(ctx.tenantId, id, userId);
+    if (!removed) return;
+
+    await this.audit.record(ctx, {
+      action: 'remove_conversation_participant',
+      entityType: 'conversation',
+      entityId: id,
+      oldValues: { participantId: userId },
+    });
+    const text = leaving
+      ? `${participant.name} saiu da conversa`
+      : `${await this.userName(ctx)} removeu ${participant.name} da conversa`;
+    await this.messages.createSystemEvent(ctx.tenantId, id, text);
   }
 
   /**
@@ -678,10 +775,14 @@ export class ConversationService {
     return user?.name ?? 'um atendente';
   }
 
-  /** Atendente ve as proprias + as livres; gestor/admin veem todas. */
+  /** Atendente ve as proprias, as livres e as em que participa (D-263); gestor/admin, todas. */
   private canSee(ctx: TenantContext, conversation: Conversation): boolean {
     if (isSupervisor(ctx)) return true;
-    return conversation.assignedTo === null || conversation.assignedTo === ctx.userId;
+    return (
+      conversation.assignedTo === null ||
+      conversation.assignedTo === ctx.userId ||
+      isParticipant(conversation, ctx.userId)
+    );
   }
 
   /** So o dono atual, gestor ou admin reatribuem uma conversa ja atribuida. */
@@ -699,11 +800,12 @@ export class ConversationService {
   private async requireTenantUser(
     tenantId: string,
     userId: string,
+    field: 'assignedTo' | 'userId' = 'assignedTo',
   ): Promise<{ id: string; name: string }> {
     const user = await this.db.withTenant(tenantId, (tx) => userRepo.findById(tx, userId));
-    if (!user || !user.isActive) {
+    if (!user || !user.isActive || user.role === 'platform_operator') {
       throw new BusinessError('VALIDATION_ERROR', {
-        fields: { assignedTo: 'Usuario inexistente ou inativo neste laboratorio' },
+        fields: { [field]: 'Usuario inexistente ou inativo neste laboratorio' },
       });
     }
     return { id: user.id, name: user.name };

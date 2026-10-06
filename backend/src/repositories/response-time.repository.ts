@@ -75,7 +75,9 @@ export async function listBlocks(
           AND m.created_at >= $2::timestamp AND m.created_at < $3::timestamp
      ),
      seq AS (
-       SELECT m.conversation_id, m.id, m.created_at, m.sender_id,
+       -- Resposta de participante conta para a dona do momento (D-263 item 6).
+       SELECT m.conversation_id, m.id, m.created_at,
+              COALESCE(m.attributed_to, m.sender_id) AS sender_id,
               CASE WHEN m.sender_type = 'patient' THEN 'P'
                    WHEN m.sender_type = 'agent' THEN 'R'
                    ELSE 'C' END AS kind

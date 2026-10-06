@@ -241,6 +241,8 @@ export interface ConversationRef {
   status: string;
   /** Dona da conversa; `null` = fila livre. Decide a visibilidade no envio pelo cartao (D-200 item 3). */
   assignedTo: string | null;
+  /** Participantes (D-263): tambem enxergam a conversa no envio pelo cartao. */
+  participantIds: string[];
 }
 
 /**
@@ -263,9 +265,12 @@ export async function findConversation(
     patient_phone: string;
     status: string;
     assigned_to: string | null;
+    participant_ids: string[] | null;
   }>(
-    `SELECT id, patient_name, patient_phone, status, assigned_to
-       FROM conversations WHERE id = $1`,
+    `SELECT c.id, c.patient_name, c.patient_phone, c.status, c.assigned_to,
+            ARRAY(SELECT cp.user_id::text FROM conversation_participants cp
+                   WHERE cp.conversation_id = c.id) AS participant_ids
+       FROM conversations c WHERE c.id = $1`,
     [conversationId],
   );
   const row = result.rows[0];
@@ -276,6 +281,7 @@ export async function findConversation(
     patientPhone: row.patient_phone,
     status: row.status,
     assignedTo: row.assigned_to,
+    participantIds: row.participant_ids ?? [],
   };
 }
 

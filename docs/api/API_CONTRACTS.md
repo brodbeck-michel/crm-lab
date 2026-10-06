@@ -546,7 +546,7 @@ laboratório. `platform_operator` recebe `FORBIDDEN` (PAGES.md §11).
 **Query Params:**
 ```
 ?status=active|closed          # D-174: `archived` não existe mais
-?scope=mine|unassigned|all        # default: all — os chips da coluna 1
+?scope=mine|unassigned|participating|all  # default: all — os chips da coluna 1
 ?unread=true                      # só com não lidas (`unreadCount > 0`) — CRMLAB-68, D-229
 ?page=1&limit=20                  # limit máx. 100
 ?search=joão                      # máx. 120 caracteres
@@ -577,7 +577,8 @@ telefone quando sobram **3 dígitos ou mais**.
       "tags": ["orçamento", "hemograma"],
       "pinned": true,
       "createdAt": "2024-08-20T10:00:00Z",
-      "awaitingReplySince": "2024-08-23T14:22:00.000Z"
+      "awaitingReplySince": "2024-08-23T14:22:00.000Z",
+      "participants": [{ "id": "uuid", "name": "Gestora Ana" }]
     }
   ],
   "pagination": {
@@ -586,7 +587,7 @@ telefone quando sobram **3 dígitos ou mais**.
     "total": 150,
     "totalPages": 8
   },
-  "counts": { "mine": 12, "unassigned": 7, "unread": 4 }
+  "counts": { "mine": 12, "unassigned": 7, "unread": 4, "participating": 1 }
 }
 ```
 
@@ -600,6 +601,11 @@ MESMO `SELECT` da listagem (`COUNT(*) FILTER (...)`), com os mesmos filtros de
 visibilidade, status e busca — nunca de contador mantido à parte (BUSINESS_RULES §5).
 Por isso eles **não** mudam quando `?scope=` muda: o chip não clicado continua
 mostrando o próprio número, e `pagination.total` é que acompanha o escopo.
+
+**Participantes (CRMLAB-93, D-263).** Atendente também vê as conversas em que **participa**.
+`participants` (`{ id, name }[]`, em ordem de entrada; vazio = ninguém) vem na lista e no detalhe.
+`?scope=participating` = conversas em que o usuário logado participa; `counts.participating` é o
+número do chip "Participando", do mesmo `SELECT` dos outros counts.
 
 **Não lidas (CRMLAB-68, D-229).** `?unread=true` é recorte de listagem como o `scope`: filtra
 `unreadCount > 0`, entra em `pagination.total` e **não** nos `counts`. `counts.unread` (chip
@@ -1319,7 +1325,37 @@ Mudança de status gera audit log `update_conversation_status`; atribuição ger
 
 **Erros:** `VALIDATION_ERROR` (400, inclusive `status: "archived"`), `NOT_FOUND` (404),
 `CONVERSATION_ALREADY_ASSIGNED` (409), `FORBIDDEN` (403 — `platform_operator`, ou mudança de
-`status` por quem não é dona/gestor/admin)
+`status` por quem não é dona/gestor/admin), `CONFLICT` (409, `reason: "has_participants"` —
+encerrar ou devolver para a fila com participante, D-263 itens 3 e 8)
+
+**Participantes (CRMLAB-93, D-263).** Encerrar (`status: "closed"`) e devolver para a fila
+(`assignedTo: null`) são recusados enquanto a conversa tiver participante (`CONFLICT`,
+`details: { reason: "has_participants" }`) — inclusive para gestor/admin. Transferir para uma
+participante a torna dona e a tira de `participants`; as outras ficam.
+
+### POST /conversations/:id/participants (CRMLAB-93, D-263)
+Chama uma colega para dentro da conversa sem transferir.
+
+**Request:** `{ "userId": "uuid" }`
+
+**Response (200):** `ConversationDetail` com `participants` atualizado.
+
+- Só a **dona**, gestor ou admin → senão `FORBIDDEN` (403). Conversa invisível → `NOT_FOUND`.
+- `userId` precisa ser usuário **ativo** do laboratório → senão `VALIDATION_ERROR`.
+- Fila livre → `CONFLICT` `reason: "unassigned"`; encerrada → `CONFLICT` `reason: "closed"`.
+- A dona ou quem já participa: no-op (200, sem evento).
+- Gera "A adicionou B à conversa" (mensagem de sistema) e audit `add_conversation_participant`.
+
+### DELETE /conversations/:id/participants/:userId (CRMLAB-93, D-263)
+Remove a participante — ou, com o próprio id, **sai da conversa**.
+
+**Response:** `204`.
+
+- Remover outra pessoa: dona, gestor ou admin (`FORBIDDEN` para os outros). Sair: a própria
+  participante.
+- Quem não participa → `NOT_FOUND`.
+- Gera "A removeu B da conversa" ou "B saiu da conversa" e audit
+  `remove_conversation_participant`. A atendente removida deixa de ver a conversa (404).
 
 ---
 

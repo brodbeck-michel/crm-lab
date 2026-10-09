@@ -1711,7 +1711,9 @@ export function createReengagementService(deps: {
    `reengagement.discarded`.
 6. **Envio:** numa transação, `lockSilence` (conversa `FOR UPDATE`, ainda ativa, mesma âncora,
    sem resposta do paciente) e, no 2º, o 1º ainda `sent`; grava a decisão `sent` (reserva,
-   `ON CONFLICT DO NOTHING`). Depois do commit, `MessageService.createAutomated`: mensagem
+   `ON CONFLICT DO NOTHING`). O texto é `renderReengagementMessage(message, firstNameOf(nome))`
+   (D-266): `nome` é `patients.name` da ficha vinculada, senão `conversations.patient_name`,
+   lido no `selectSilences`. Depois do commit, `MessageService.createAutomated`: mensagem
    `agent` sem autor com `automation = 'reengagement'`, `conversation.new_message`, envio pelo
    canal. Sucesso: `message_id` na decisão, `info` `reengagement.sent`. Falha do canal: mensagem
    `failed`, decisão `failed`, `warn` `reengagement.failed`. Não há nova tentativa.

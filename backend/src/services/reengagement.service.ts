@@ -13,8 +13,10 @@
  */
 import {
   REENGAGEMENT_LOOKBACK_DAYS,
+  firstNameOf,
   localDateOf,
   planReengagement,
+  renderReengagementMessage,
   type Message,
   type ReengagementAction,
   type ReengagementStep,
@@ -191,7 +193,11 @@ export function createReengagementService(deps: ReengagementServiceDeps): Reenga
         continue;
       }
       if (action.kind !== 'send') continue;
-      const content = context.rules[action.step].message;
+      // D-266: `{paciente}` vira o primeiro nome; sem nome, some sem sobra.
+      const content = renderReengagementMessage(
+        context.rules[action.step].message,
+        firstNameOf(silence.patient_name),
+      );
       const outcome = await send(tenantId, silence.conversation_id, silence.anchor_id, action.step, content, at);
       if (outcome === 'sent') result.sent += 1;
       if (outcome === 'failed') result.failed += 1;

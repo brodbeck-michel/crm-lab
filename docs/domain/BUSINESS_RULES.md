@@ -218,6 +218,9 @@ funcionamento (fora dele, fica para a abertura; sem nenhum dia configurado = sem
 **feriados** (nacionais, com Carnaval e Corpus Christi, e os cadastrados pelo laboratório): se a
 hora de sair cai em feriado, **descarta**, não empurra. Mais de 2 h atrasado → descarta também.
 API oficial da Meta não entra na rotina. A mensagem aparece como "Mensagem automática".
+O texto aceita `{paciente}` (D-266): vira o **primeiro nome** do paciente (ficha vinculada, senão
+o nome do contato), com capitalização normal; sem nome, a variável some junto com o espaço ou a
+vírgula antes dela ("Olá, {paciente}." → "Olá."). Nenhuma outra variável é aceita.
 
 ### Alerta de tempo de resposta (CRMLAB-84, D-254)
 O inverso do reingajamento, e **só visual**: nada é enviado ao paciente. Com a regra ligada

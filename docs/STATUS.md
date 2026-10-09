@@ -3245,6 +3245,20 @@ registro da visita (88) e linha do tempo (89). Ficam fora, para cards futuros se
 itens de "pesquisa de mercado" (resultado da visita em pedidos, classificação ABC, alerta de médico
 esquecido, roteiro do dia, materiais, metas) e a ligação do médico da proposta com o cadastro.
 
+### 🚧 CRMLAB-96 — `{paciente}` no reingajamento (2026-10-09, aguardando validação)
+
+Branch `feature/CRMLAB-96-nome-no-reingajamento` (de `main` v1.35.0). Decisão D-266, sem migração.
+
+- **Shared:** `REENGAGEMENT_MESSAGE_VARIABLES`, `findUnknownReengagementVariables`, `firstNameOf`,
+  `renderReengagementMessage`, `hasReengagementTextBesidesVariables` (`reengagement.types.ts`).
+- **Backend:** `selectSilences` traz o nome (ficha vinculada, senão contato); o envio renderiza
+  `{paciente}` com o primeiro nome ou some sem sobra; `PATCH` recusa outra variável e mensagem só
+  com a variável (só a mensagem enviada no patch; a leitura não reprova o gravado).
+- **Tela:** botão `{paciente}`, pré-visualização com "Maria Souza" e erro que bloqueia salvar.
+- **Testes:** `reengagement-message.spec.ts` (novo, puro), `reengagement.spec.ts` (+4),
+  `funnel-rules.spec.ts` (+3), `Rules.spec.tsx` (+3).
+- **Pendente:** validação na hml.
+
 ### 🚧 CRMLAB-93 — participantes da conversa (2026-10-06, aguardando validação)
 
 Branch `feature/CRMLAB-93-participantes-conversa` (de `main` v1.34.0). Decisão D-263, migração 053.

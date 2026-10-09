@@ -99,7 +99,7 @@ describe('GET /analytics/conversion', () => {
     // Dinheiro no fio e numero decimal, nunca "R$ 4.000,00" (D-018).
     expect(typeof res.body.revenue).toBe('number');
     expect(typeof res.body.topPerformers[0].revenue).toBe('number');
-    expect(Object.keys(res.body.lossReasons)).toHaveLength(5);
+    expect(Object.keys(res.body.lossReasons)).toHaveLength(6);
   });
 
   it('atendente recebe partial:true e apenas as proprias metricas', async () => {

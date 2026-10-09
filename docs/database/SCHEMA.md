@@ -1825,6 +1825,9 @@ CREATE INDEX idx_funnel_rules_updated_by ON funnel_rules(updated_by);
 - **Validação no service, não no banco:** o JSON é um contrato do TypeScript; o `PATCH` recusa o
   que não cabe antes de gravar (API_CONTRACTS.md §6c).
 - Migração **única** (tabela + policy), como 026: sem backfill, a tabela nasce vazia.
+- **Formato antigo de `sendMessage` (D-265):** linha com `rules.sendMessage.template` (texto) é
+  lida como `templates: [{ name: "Padrão", text }]`; o JSON só muda no próximo `PATCH` que alterar
+  algo. Sem migração de dado.
 
 ### 33. `conversation_reengagements` (migração 031 — CRMLAB-62, D-211)
 Uma linha por disparo de reingajamento decidido: o que aconteceu com o 1º e o 2º de cada

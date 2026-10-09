@@ -98,10 +98,20 @@ export interface ManualMoveRules {
   moveOthersCards: boolean;
 }
 
-/** Seção 4 — mensagem de envio do orçamento pelo WhatsApp (CRMLAB-58 usa). */
-export interface SendMessageRules {
+/** Um modelo da mensagem de envio (CRMLAB-95, D-265). */
+export interface SendMessageTemplate {
+  /** 1..40 caracteres, único na lista (sem diferenciar maiúsculas). */
+  name: string;
   /** 1..1000 caracteres, só com as variáveis de `SEND_MESSAGE_VARIABLES`. */
-  template: string;
+  text: string;
+}
+
+/**
+ * Seção 4 — mensagem de envio do orçamento pelo WhatsApp (CRMLAB-58 usa).
+ * Desde o CRMLAB-95 (D-265), de 1 a 5 modelos; **o primeiro é o padrão**.
+ */
+export interface SendMessageRules {
+  templates: SendMessageTemplate[];
 }
 
 /** Um disparo de reingajamento (CRMLAB-62, D-211). */
@@ -169,10 +179,22 @@ type DeepPartial<T> = {
 };
 
 /**
- * `PATCH /settings/funnel-rules` — parcial em qualquer nível; campo ausente
- * preserva. Listas (`roles`) são trocadas inteiras.
+ * `sendMessage` no `PATCH` (D-265): `templates` é trocada inteira. `template`
+ * é o formato antigo, ainda aceito: troca só o texto do primeiro modelo.
  */
-export type UpdateFunnelRulesRequest = DeepPartial<FunnelRules>;
+export interface UpdateSendMessageRules {
+  templates?: SendMessageTemplate[];
+  /** @deprecated Formato anterior ao CRMLAB-95. Use `templates`. */
+  template?: string;
+}
+
+/**
+ * `PATCH /settings/funnel-rules` — parcial em qualquer nível; campo ausente
+ * preserva. Listas (`roles`, `sendMessage.templates`) são trocadas inteiras.
+ */
+export type UpdateFunnelRulesRequest = Omit<DeepPartial<FunnelRules>, 'sendMessage'> & {
+  sendMessage?: UpdateSendMessageRules;
+};
 
 export const SEND_MESSAGE_VARIABLES = [
   'paciente',
@@ -187,6 +209,14 @@ export const SEND_MESSAGE_TEMPLATE_MAX = 1000;
 
 export const DEFAULT_SEND_MESSAGE_TEMPLATE =
   'Olá, {paciente}! Segue o orçamento nº {numero_orcamento} ({convenio}), no valor de {valor}.';
+
+/** Quantos modelos de mensagem de envio o laboratório pode ter (D-265). */
+export const SEND_MESSAGE_TEMPLATES_MAX = 5;
+
+export const SEND_MESSAGE_TEMPLATE_NAME_MAX = 40;
+
+/** Nome do modelo que vem do formato antigo (um `template` só) e do padrão. */
+export const DEFAULT_SEND_MESSAGE_TEMPLATE_NAME = 'Padrão';
 
 export const REENGAGEMENT_MESSAGE_MAX = 1000;
 
@@ -214,7 +244,9 @@ export const DEFAULT_FUNNEL_RULES: FunnelRules = {
     requireLossReason: true,
     moveOthersCards: true,
   },
-  sendMessage: { template: DEFAULT_SEND_MESSAGE_TEMPLATE },
+  sendMessage: {
+    templates: [{ name: DEFAULT_SEND_MESSAGE_TEMPLATE_NAME, text: DEFAULT_SEND_MESSAGE_TEMPLATE }],
+  },
   // Desligado: laboratório que já usa não passa a mandar nada sozinho (D-211).
   reengagement: {
     first: { enabled: false, hours: 1, message: DEFAULT_REENGAGEMENT_FIRST_MESSAGE },
@@ -364,6 +396,83 @@ export function findUnknownTemplateVariables(template: string): string[] {
     if (!(SEND_MESSAGE_VARIABLES as readonly string[]).includes(name)) unknown.add(name);
   }
   return [...unknown];
+}
+
+/**
+ * Erro do texto de um modelo (`trim`, 1..1000, só variáveis conhecidas), ou
+ * `null` se vale. Também é a regra do `sendMessage.template` antigo.
+ */
+export function sendMessageTextError(value: unknown): string | null {
+  if (typeof value !== 'string') return 'Deve ser um texto';
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > SEND_MESSAGE_TEMPLATE_MAX) {
+    return `O modelo deve ter de 1 a ${SEND_MESSAGE_TEMPLATE_MAX} caracteres`;
+  }
+  const unknown = findUnknownTemplateVariables(trimmed);
+  if (unknown.length > 0) {
+    return `Variável desconhecida: ${unknown.map((name) => `{${name}}`).join(', ')}`;
+  }
+  return null;
+}
+
+export interface SendMessageTemplatesValidation {
+  /** A lista com `trim` em nome e texto, ou `null` se há erro. */
+  templates: SendMessageTemplate[] | null;
+  /**
+   * Erros pelo caminho relativo a `sendMessage`: `templates` (a lista) ou
+   * `templates.<i>.name` / `.text` / `.<chave desconhecida>`.
+   */
+  errors: Record<string, string>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Valida a lista de modelos (D-265): 1..5 itens `{ name, text }`, nome 1..40
+ * único sem diferenciar maiúsculas, texto pela `sendMessageTextError`. A mesma
+ * no `PATCH`, na leitura do JSON gravado e na tela das Regras.
+ */
+export function validateSendMessageTemplates(value: unknown): SendMessageTemplatesValidation {
+  const errors: Record<string, string> = {};
+  if (!Array.isArray(value)) {
+    return { templates: null, errors: { templates: 'Deve ser uma lista de modelos' } };
+  }
+  if (value.length === 0 || value.length > SEND_MESSAGE_TEMPLATES_MAX) {
+    return {
+      templates: null,
+      errors: { templates: `Tenha de 1 a ${SEND_MESSAGE_TEMPLATES_MAX} modelos` },
+    };
+  }
+  const seen = new Set<string>();
+  const out: SendMessageTemplate[] = [];
+  value.forEach((item: unknown, index) => {
+    const base = `templates.${index}`;
+    if (!isRecord(item)) {
+      errors[base] = 'Deve ser um objeto com nome e texto';
+      return;
+    }
+    for (const key of Object.keys(item)) {
+      if (key !== 'name' && key !== 'text') errors[`${base}.${key}`] = 'Campo desconhecido';
+    }
+    const name = typeof item.name === 'string' ? item.name.trim() : null;
+    if (name === null) {
+      errors[`${base}.name`] = 'Deve ser um texto';
+    } else if (name.length === 0 || name.length > SEND_MESSAGE_TEMPLATE_NAME_MAX) {
+      errors[`${base}.name`] = `O nome deve ter de 1 a ${SEND_MESSAGE_TEMPLATE_NAME_MAX} caracteres`;
+    } else {
+      const key = name.toLocaleLowerCase('pt-BR');
+      if (seen.has(key)) errors[`${base}.name`] = 'Já existe um modelo com este nome';
+      seen.add(key);
+    }
+    const textError = sendMessageTextError(item.text);
+    if (textError !== null) errors[`${base}.text`] = textError;
+    if (name !== null && typeof item.text === 'string') {
+      out.push({ name, text: item.text.trim() });
+    }
+  });
+  return Object.keys(errors).length > 0 ? { templates: null, errors } : { templates: out, errors };
 }
 
 /**

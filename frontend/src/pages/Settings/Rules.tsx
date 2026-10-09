@@ -2,12 +2,8 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   DEFAULT_DISCOUNT_LIMIT,
-  SEND_MESSAGE_TEMPLATE_MAX,
-  SEND_MESSAGE_VARIABLES,
   STALE_NEW_BUDGET_MINUTES_MAX,
   STALE_NEW_BUDGET_MINUTES_MIN,
-  findUnknownTemplateVariables,
-  renderSendMessageTemplate,
   type DelayRule,
   type FunnelAutomationRules,
   type FunnelRules,
@@ -18,12 +14,12 @@ import {
 import { useFunnelRules, useUpdateFunnelRules } from '@/api/funnel-rules';
 import { useAuthStore } from '@/stores/auth.store';
 import { PageContainer, PageHeader } from '@/components/layout';
-import { Button, Input, SegmentedControl, TextArea, Toggle, useToast } from '@/components/ui';
-import { formatMoney } from '@/lib/format';
+import { Button, Input, SegmentedControl, Toggle, useToast } from '@/components/ui';
 import Commissions from './Commissions';
 import { HolidaysSection } from './HolidaysSection';
 import { ReengagementSection, reengagementBlocked } from './ReengagementSection';
 import { ResponseAlertSection, responseAlertBlocked } from './ResponseAlertSection';
+import { SendMessageSection, sendMessageBlocked } from './SendMessageSection';
 
 /**
  * Regras (`/settings/rules`) — PAGES.md §21, CRMLAB-56 (D-190..D-194).
@@ -54,13 +50,6 @@ function diffRules(base: unknown, draft: unknown): unknown {
   }
   return JSON.stringify(base) === JSON.stringify(draft) ? undefined : draft;
 }
-
-const PREVIEW_VALUES = {
-  paciente: 'Maria Souza',
-  numero_orcamento: '70034',
-  valor: formatMoney(179.8),
-  convenio: 'Particular',
-} as const;
 
 const ROLE_LABELS: Record<RuleActorRole, string> = {
   attendant: 'Atendente',
@@ -228,17 +217,10 @@ export default function Rules() {
     value: FunnelAutomationRules[K],
   ) => set((next) => void (next.automation[key] = value));
 
-  const unknownVariables = findUnknownTemplateVariables(draft.sendMessage.template);
-  const templateError =
-    fieldErrors['sendMessage.template'] ??
-    (unknownVariables.length > 0
-      ? `Variável desconhecida: ${unknownVariables.map((name) => `{${name}}`).join(', ')}`
-      : undefined);
   const noOrigin = !draft.origin.fromBitlab && !draft.origin.manualInCrm;
   const blocked =
     noOrigin ||
-    unknownVariables.length > 0 ||
-    draft.sendMessage.template.trim() === '' ||
+    sendMessageBlocked(draft.sendMessage) ||
     reengagementBlocked(draft.reengagement) ||
     responseAlertBlocked(draft.responseAlert);
 
@@ -452,55 +434,12 @@ export default function Rules() {
           </div>
         </Section>
 
-        <Section
-          id="mensagem"
-          title="Mensagem de envio"
-          description="Texto do WhatsApp ao enviar o orçamento. Use as variáveis abaixo."
-        >
-          <TextArea
-            label="Modelo da mensagem"
-            rows={4}
-            maxLength={SEND_MESSAGE_TEMPLATE_MAX}
-            value={draft.sendMessage.template}
-            disabled={!canEdit}
-            error={templateError}
-            onChange={(e) => {
-              const template = e.target.value;
-              set((next) => void (next.sendMessage.template = template));
-            }}
-          />
-          {canEdit && (
-            <div className="flex flex-wrap gap-sm">
-              {SEND_MESSAGE_VARIABLES.map((name) => (
-                <Button
-                  key={name}
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() =>
-                    set(
-                      (next) =>
-                        void (next.sendMessage.template = `${next.sendMessage.template}{${name}}`),
-                    )
-                  }
-                >
-                  {`{${name}}`}
-                </Button>
-              ))}
-            </div>
-          )}
-          <div className="space-y-xs">
-            <span className="font-body text-caption font-semibold text-neutral-700">
-              Pré-visualização
-            </span>
-            <p
-              data-testid="preview-mensagem"
-              className="whitespace-pre-wrap rounded-md border border-neutral-200 bg-bg p-md font-body text-body text-text"
-            >
-              {renderSendMessageTemplate(draft.sendMessage.template, PREVIEW_VALUES)}
-            </p>
-          </div>
-        </Section>
+        <SendMessageSection
+          draft={draft}
+          canEdit={canEdit}
+          fieldErrors={fieldErrors}
+          set={set}
+        />
 
         <ReengagementSection
           draft={draft}

@@ -2501,7 +2501,7 @@ responsável, admin sempre, gestor se `moveOthersCards`. `platform_operator` →
 ```
 - `conversationId`: conversa **ativa** que quem envia enxerga (atendente: as dela e a fila livre).
 - `message`: `string` 1..4000 depois do `trim`. É o texto que a tela montou pelo modelo das Regras
-  (`sendMessage.template`, §6c) e a atendente revisou; o servidor não remonta.
+  (um dos `sendMessage.templates`, §6c — D-265) e a atendente revisou; o servidor não remonta.
 
 **Comportamento (D-201):** reserva o cartão (trava de linha + `send_claim_id`), envia pelo mesmo
 caminho de `POST /conversations/:id/messages` e, com o envio aceito, grava numa transação:
@@ -4215,7 +4215,12 @@ completo com os padrões aplicados. Nenhum outro código lê `funnel_rules` dire
     "moveOthersCards": true
   },
   "sendMessage": {
-    "template": "Olá, {paciente}! Segue o orçamento nº {numero_orcamento} ({convenio}), no valor de {valor}."
+    "templates": [
+      {
+        "name": "Padrão",
+        "text": "Olá, {paciente}! Segue o orçamento nº {numero_orcamento} ({convenio}), no valor de {valor}."
+      }
+    ]
   },
   "reengagement": {
     "first": {
@@ -4248,22 +4253,23 @@ completo com os padrões aplicados. Nenhum outro código lê `funnel_rules` dire
 | `automation.staleNewBudgetAlert` | Alerta de `novo_contato` parado há `minutes` (corridos) sem envio. Linha antiga com `hours` é lida como `hours × 60` (D-267) | CRMLAB-59/97 |
 | `automation.dayCounting` | `calendar` (corridos) ou `business` (úteis) | CRMLAB-59 |
 | `manualMoves.*` | Travas de movimentação manual (D-192), via `checkTransition` | este card (back e front) |
-| `sendMessage.template` | Modelo do WhatsApp; render por `renderSendMessageTemplate` | CRMLAB-58 |
+| `sendMessage.templates` | Modelos do WhatsApp (1..5, cada um com `name` e `text`); **o primeiro é o padrão**. Render por `renderSendMessageTemplate`. Linha gravada no formato antigo (`sendMessage.template`) é lida como `[{ "name": "Padrão", "text": <template> }]`, sem migração (D-265) | CRMLAB-58, CRMLAB-95 |
 | `reengagement.first` | Paciente sem responder há `hours` depois da última mensagem da atendente → manda `message` (D-211); `{paciente}` vira o primeiro nome, ou some sem nome (D-266) | CRMLAB-62/96 |
 | `reengagement.second` | `hours` depois do envio do 1º, se continuar sem resposta → manda `message`. Só com o 1º ligado | CRMLAB-62 |
 | `responseAlert` | Destaca na lista do Atendimento a conversa ativa cujo paciente espera resposta há `minutes` minutos **úteis** ou mais (D-254). Só visual. Padrão desligado, 15 min | CRMLAB-84 (navegador) |
 | `lisSource.spreadsheetImport` | Importar a planilha do LIS (plano B; a carga principal é a API do Bitlab). Padrão **`false`**. `false` → `POST /lis-imports` = `SPREADSHEET_IMPORT_DISABLED` e o botão "Importar" some em Resultados (D-189) | CRMLAB-53 |
 
 `checkTransition`, `canTransition`, `allowedTargets`, `buildAllowedTransitions`, `canReopen`,
-`SEQUENTIAL_TRANSITIONS`, `REOPEN_TARGETS`, `findUnknownTemplateVariables` e
-`renderSendMessageTemplate` são exportados de `@crm-lab/shared`. Do reingajamento (D-266):
-`REENGAGEMENT_MESSAGE_VARIABLES`, `findUnknownReengagementVariables`, `firstNameOf` e
-`renderReengagementMessage`.
+`SEQUENTIAL_TRANSITIONS`, `REOPEN_TARGETS`, `findUnknownTemplateVariables`,
+`validateSendMessageTemplates` e `renderSendMessageTemplate` são exportados de `@crm-lab/shared`.
+Do reingajamento (D-266): `REENGAGEMENT_MESSAGE_VARIABLES`, `findUnknownReengagementVariables`,
+`firstNameOf` e `renderReengagementMessage`.
 
 **Erros:** `FORBIDDEN` (403, `platform_operator`)
 
 ### PATCH /settings/funnel-rules (manager/admin)
-Parcial em qualquer nível: campo ausente preserva; listas (`roles`) são trocadas inteiras.
+Parcial em qualquer nível: campo ausente preserva; listas (`roles`, `sendMessage.templates`) são
+trocadas inteiras.
 
 **Request:**
 ```json
@@ -4281,9 +4287,16 @@ Validação (`VALIDATION_ERROR`, `details.fields` pelo caminho do campo):
   `5..43200` (D-267 — `hours` nessa regra é `Campo desconhecido`);
 - `dayCounting` ∈ `calendar | business`; `roles` ⊆ `["attendant","manager"]`, sem repetição;
 - `origin`: ao menos uma das duas ligada depois do merge → `fields.origin`;
-- `sendMessage.template`: string `1..1000` depois do `trim`, só com as variáveis
-  `{paciente}`, `{numero_orcamento}`, `{valor}`, `{convenio}` → senão
-  `fields["sendMessage.template"]` citando as desconhecidas;
+- `sendMessage.templates` (D-265): lista de `1..5` objetos `{ name, text }` →
+  senão `fields["sendMessage.templates"]`. Por item: `name` string `1..40` depois do `trim`, única
+  na lista sem diferenciar maiúsculas (o repetido leva o erro) → `fields["sendMessage.templates.<i>.name"]`;
+  `text` string `1..1000` depois do `trim`, só com as variáveis `{paciente}`,
+  `{numero_orcamento}`, `{valor}`, `{convenio}` → `fields["sendMessage.templates.<i>.text"]`
+  citando as desconhecidas; chave a mais no item → `fields["sendMessage.templates.<i>.<chave>"]`
+  = `Campo desconhecido`. Nome e texto gravados com `trim`;
+- `sendMessage.template` (**formato antigo, ainda aceito** — D-265 item 4): troca só o `text`
+  do primeiro modelo (o padrão), mesmas regras do `text` acima, erro em
+  `fields["sendMessage.template"]`. Junto com `templates` → `fields["sendMessage.template"]`;
 - `reengagement.*.message`: string `1..1000` depois do `trim`, só com a variável `{paciente}`
   (`REENGAGEMENT_MESSAGE_VARIABLES`, D-266) e com texto além dela →
   `fields["reengagement.first.message"]` / `["reengagement.second.message"]` citando a

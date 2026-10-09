@@ -5356,3 +5356,59 @@ via a conversa da colega.
 `ConversationPanel.tsx` (menu "Participantes"), `ConversationList.tsx` (chip),
 `pages/Attendance/index.tsx`, `hooks/useNewMessageAlerts.ts`. SCHEMA §39, API_CONTRACTS §2,
 BUSINESS_RULES §16.
+
+## 2026-10-09 — Mensagem fora do horário e boas-vindas (CRMLAB-94)
+
+### D-264: Resposta automática fora do horário (e boas-vindas) disparada pela mensagem do paciente
+**Contexto:** Configurações → Canais grava `autoMessages.offHours` e `autoMessages.greeting` em
+`tenant_settings` desde a Onda 6 (D-065), mas **nenhum serviço enviava** — conferido em
+09/10/2026: só `channel-settings.service.ts`/`.repository.ts` e os seeds tocavam nas colunas.
+**Decisão (implementação; regras de negócio do card CRMLAB-94, padrões conservadores onde o card
+não disse):**
+1. **Gatilho:** a mensagem **nova** do paciente. `MessageService.createFromPatient`, depois do
+   INSERT que deu certo (reentrega deduplicada não dispara), chama
+   `AutoReplyService.afterPatientMessage` **sem `await`** (fire-and-forget, mesmo padrão do
+   e-mail do `AuthService`, D-172). O serviço **nunca lança**: qualquer erro vira `warn`
+   `auto_reply.failed`. Assim o processamento da mensagem recebida e o `200` do webhook não
+   dependem do envio. **Por que não o tique do motor de tempo (D-211):** a resposta tem de sair
+   na hora, e o tique roda a cada `FUNNEL_TIMER_INTERVAL_MS` (e pode estar desligado); o gatilho
+   já existe e não exige varrer conversas.
+2. **Laboratório fechado** = há horário configurado (`tenant_settings.business_hours`) **e** o
+   instante da mensagem está fora da faixa do dia **ou** cai em feriado (nacional, com Carnaval e
+   Corpus Christi, ou de `tenant_holidays`) — a mesma régua do reingajamento (`nextOpening`,
+   `isHoliday`, `localDateOf`; D-212/D-213). **Sem nenhum dia configurado = sempre aberto**
+   (D-212 item 1), **inclusive em feriado** — padrão conservador: sem expediente cadastrado o CRM
+   não presume que o laboratório fecha.
+3. **Período fechado = o instante da reabertura** (`offHoursReopening` em `shared/`): o primeiro
+   instante `>=` a mensagem em que o laboratório está aberto e não é feriado. Todas as mensagens
+   da mesma noite (ou do fim de semana, ou do feriado emendado) têm a mesma reabertura → **uma
+   resposta por período por conversa**. A busca vai até 31 dias; não achou reabertura → não envia.
+4. **Trava no banco:** tabela `conversation_auto_replies` (migração 054), uma linha por resposta
+   decidida, gravada **antes** do envio (reserva, como D-211 item 3). Índices únicos parciais:
+   `(conversation_id, reopens_at)` para `offhours` e `(conversation_id)` para `greeting`. Webhooks
+   concorrentes caem no `ON CONFLICT DO NOTHING`; se o processo cair entre a linha e o envio, o
+   paciente fica sem a mensagem, nunca com duas. Falha do canal: linha `failed`, mensagem
+   `failed`, `warn` `auto_reply.failed`. **Não há nova tentativa.**
+5. **Só canal que envia:** WhatsApp ativo **em `qr`** (D-214, `isQrWhatsAppActive`) e conversa
+   `active` de `whatsapp`. API oficial da Meta não entra (mesma condição do reingajamento).
+6. **Marcada como automática:** `messages.automation = 'offhours' | 'greeting'` (CHECK ampliado
+   na 054), `sender_id` nulo, "Mensagem automática" na tela — pelo mesmo
+   `MessageService.createAutomated` do reingajamento, que passou a receber o tipo. Não assume a
+   conversa, não é resposta da atendente no alerta (D-254) nem no relatório de tempo de resposta
+   (D-257) e não vira âncora do reingajamento: todos filtram `automation IS NULL`.
+7. **Boas-vindas (`greeting`) entra junto**, porque é o mesmo gatilho e a mesma trava: sai
+   quando a mensagem do paciente é a **primeira mensagem da conversa** (nenhuma outra, de
+   qualquer lado, antes dela) e o laboratório está **aberto**. Uma vez por conversa, para sempre
+   — a conversa é única por telefone, então é o primeiro contato daquele número com o
+   laboratório; conversas que já existiam nunca recebem. **Fechado, sai só a de fora do
+   horário** (padrão conservador: no máximo uma mensagem automática por mensagem do paciente);
+   a boas-vindas não fica para depois.
+8. Texto e liga/desliga lidos **no momento da mensagem**; `enabled` com texto vazio não envia.
+**Motivo:** a configuração existia na tela e não fazia nada — o laboratório achava que o paciente
+da noite estava sendo avisado.
+**Impacto:** migração `054_conversation_auto_replies.sql`; `shared/types/auto-reply.types.ts`
+(`offHoursReopening`, `AutoReplyKind`); `backend/src/services/auto-reply.service.ts` (novo),
+`repositories/auto-reply.repository.ts` (novo), `message.service.ts` (`createAutomated` com tipo,
+gancho em `createFromPatient`), `message.repository.ts`, `channel-settings.service.ts`
+(`readAutoReplySettings`), `controllers/webhook.routes.ts` (liga o gancho). SCHEMA §4 e §40,
+SERVICES §28 e §33, BUSINESS_RULES §3, API_CONTRACTS §6 (nota em `autoMessages`).

@@ -4006,6 +4006,10 @@ Validações:
   `enabled: true` com `message` nulo ou vazio → `VALIDATION_ERROR` com
   `details.fields["autoMessages.greeting.message"]` — mensagem automática ligada e vazia
   enviaria uma bolha em branco ao paciente. `message`: 1..1000 caracteres
+  **Quem envia (D-264):** `offHours` responde a mensagem do paciente que chega com o laboratório
+  fechado (fora de `businessHours` ou em feriado), uma vez por período fechado por conversa;
+  `greeting` responde a primeira mensagem de uma conversa nova com o laboratório aberto. Só
+  WhatsApp por QR Code. Sem nenhum dia em `businessHours`, `offHours` nunca dispara.
 - `businessHours`: `timezone` é IANA válido; dia ∈ `mon..sun`; `start`/`end` no formato `HH:MM`
   (24h) com `start < end` → senão `VALIDATION_ERROR`. **É substituição, não merge**: o objeto
   enviado vira o novo `businessHours` inteiro (dia omitido = fechado). Merge por dia deixaria

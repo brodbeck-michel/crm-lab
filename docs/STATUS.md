@@ -3287,6 +3287,20 @@ Branch `feature/CRMLAB-96-nome-no-reingajamento` (de `main` v1.35.0). Decisão D
   `funnel-rules.spec.ts` (+3), `Rules.spec.tsx` (+3).
 - **Pendente:** validação na hml.
 
+### 🚧 CRMLAB-97 — alerta de "Novo orçamento" parado em minutos (2026-10-09, aguardando validação)
+
+Branch `feature/CRMLAB-97-alerta-orcamento-minutos` (de `main` v1.35.0). Decisão D-267, sem migração.
+
+- **Contrato:** `staleNewBudgetAlert` = `{ enabled, minutes }` (5..43200, padrão 240);
+  `HoursRule` → `StaleNewBudgetAlertRule`; linha gravada com `hours` é lida como `hours × 60`
+  (Santé: 1 h → 60 min); `PATCH` com `hours` → `Campo desconhecido`. WS `proposal.stale_alert`
+  ganha `minutes`.
+- **Motor:** tique de 5 min (D-205) = resolução mínima; contagem continua corrida.
+- **Tela:** campo "Minutos" com a dica em horas; selo "Parado há N min" abaixo de 1 h; toast idem.
+- **Testes:** `funnel-rules.spec.ts` (+3), `funnel-timer.spec.ts` (+2), `funnel-timer-clock.spec.ts`
+  (+2); `ProposalCard.spec.tsx` (+1), `ws.spec.ts` (+1), `Rules.spec.tsx` (+1), `Proposals.spec.tsx`.
+- **Pendente:** validação na hml (conferir a linha do Santé lida como 60 min).
+
 ### 🚧 CRMLAB-93 — participantes da conversa (2026-10-06, aguardando validação)
 
 Branch `feature/CRMLAB-93-participantes-conversa` (de `main` v1.34.0). Decisão D-263, migração 053.

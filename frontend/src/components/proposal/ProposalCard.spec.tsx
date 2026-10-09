@@ -117,7 +117,7 @@ describe('ProposalCard de origem Bitlab', () => {
 
 // CRMLAB-59/D-207 — PAGES.md §5: selo "Parado há N h" calculado com a mesma função do motor.
 describe('ProposalCard — Novo orçamento parado', () => {
-  const rule = { enabled: true, hours: 4 };
+  const rule = { enabled: true, minutes: 240 };
   const entered = '2026-09-21T13:00:00.000Z';
 
   it('mostra "Parado há N h" em "Novo orçamento" depois de N horas', () => {
@@ -129,6 +129,17 @@ describe('ProposalCard — Novo orçamento parado', () => {
       />,
     );
     expect(screen.getByText('Parado há 5 h')).toBeInTheDocument();
+  });
+
+  it('regra em minutos: "Parado há N min" abaixo de 1 h (CRMLAB-97, D-267)', () => {
+    render(
+      <ProposalCard
+        proposal={bitlabProposal({ stageEnteredAt: entered })}
+        staleAlert={{ enabled: true, minutes: 15 }}
+        now={new Date('2026-09-21T13:22:30.000Z')}
+      />,
+    );
+    expect(screen.getByText('Parado há 22 min')).toBeInTheDocument();
   });
 
   it('antes do prazo, com a regra desligada, fora da coluna ou sem a regra: sem selo', () => {

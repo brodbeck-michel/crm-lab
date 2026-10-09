@@ -48,7 +48,8 @@ vi.mock('@crm-lab/shared', async (importOriginal) => {
   };
 });
 
-const HOUR = 60 * 60 * 1000;
+const MINUTE = 60 * 1000;
+const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 /** Segunda-feira 21/09/2026, 10:00 em Brasilia. */
 const MONDAY_10H = new Date('2026-09-21T13:00:00.000Z');
@@ -426,7 +427,7 @@ describe('alerta de "Novo orçamento" parado (D-207)', () => {
     expect((await statusOf(id)).status).toBe('novo_contato');
     const alerts = ws.eventsFor(tenantA.id, 'proposal.stale_alert');
     expect(alerts).toEqual([
-      expect.objectContaining({ userId: attendantA.id, data: { proposalId: id, hours: 5 } }),
+      expect.objectContaining({ userId: attendantA.id, data: { proposalId: id, minutes: 300, hours: 5 } }),
     ]);
   });
 
@@ -458,7 +459,7 @@ describe('alerta de "Novo orçamento" parado (D-207)', () => {
     expect(recipients).toEqual([adminA.id, managerA.id].sort());
     expect(recipients).not.toContain(inactiveManager.id);
     expect(recipients).not.toContain(otherAttendantA.id);
-    expect(ws.eventsFor(tenantA.id, 'proposal.stale_alert')[0]?.data).toEqual({ proposalId: id, hours: 4 });
+    expect(ws.eventsFor(tenantA.id, 'proposal.stale_alert')[0]?.data).toEqual({ proposalId: id, minutes: 240, hours: 4 });
   });
 
   it('desligado ou com pagamento não alerta', async () => {
@@ -470,6 +471,36 @@ describe('alerta de "Novo orçamento" parado (D-207)', () => {
     await card({ status: 'novo_contato', enteredAt: MONDAY_10H });
     expect((await timer.runForTenant(tenantA.id)).alerted).toBe(0);
     expect(ws.eventsFor(tenantA.id, 'proposal.stale_alert')).toHaveLength(0);
+  });
+
+  it('em minutos: 15 min alerta no tique depois do prazo (CRMLAB-97, D-267)', async () => {
+    await setRules(adminA, { automation: { staleNewBudgetAlert: { enabled: true, minutes: 15 } } });
+    const id = await card({ status: 'novo_contato', enteredAt: MONDAY_10H, createdBy: attendantA.id });
+
+    clock = new Date(MONDAY_10H.getTime() + 14 * MINUTE);
+    expect((await timer.runForTenant(tenantA.id)).alerted).toBe(0);
+    clock = new Date(MONDAY_10H.getTime() + 17 * MINUTE);
+    expect((await timer.runForTenant(tenantA.id)).alerted).toBe(1);
+    expect(ws.eventsFor(tenantA.id, 'proposal.stale_alert')[0]?.data).toEqual({
+      proposalId: id,
+      minutes: 17,
+      hours: 0,
+    });
+  });
+
+  it('linha antiga gravada em horas vale como hours x 60 (D-267 item 1)', async () => {
+    await db.withoutTenant((tx) =>
+      tx.query(
+        `INSERT INTO funnel_rules (tenant_id, rules) VALUES ($1, $2::jsonb)
+         ON CONFLICT (tenant_id) DO UPDATE SET rules = $2::jsonb`,
+        [tenantA.id, JSON.stringify({ automation: { staleNewBudgetAlert: { enabled: true, hours: 1 } } })],
+      ),
+    );
+    await card({ status: 'novo_contato', enteredAt: MONDAY_10H, createdBy: attendantA.id });
+    clock = new Date(MONDAY_10H.getTime() + 59 * MINUTE);
+    expect((await timer.runForTenant(tenantA.id)).alerted).toBe(0);
+    clock = new Date(MONDAY_10H.getTime() + 60 * MINUTE);
+    expect((await timer.runForTenant(tenantA.id)).alerted).toBe(1);
   });
 });
 

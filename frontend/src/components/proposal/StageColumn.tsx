@@ -2,7 +2,7 @@ import { useState } from 'react';
 import {
   PROPOSAL_STATUS_LABELS,
   isTransitionAllowed,
-  type HoursRule,
+  type StaleNewBudgetAlertRule,
   type Proposal,
   type ProposalStatus,
 } from '@crm-lab/shared';
@@ -22,7 +22,7 @@ interface StageColumnProps {
    */
   accepts?: (origin: ProposalStatus, target: ProposalStatus) => boolean;
   /** Regra "Novo orçamento parado" (CRMLAB-59, D-207), repassada ao cartão para o selo. */
-  staleAlert?: HoursRule;
+  staleAlert?: StaleNewBudgetAlertRule;
 }
 
 /**

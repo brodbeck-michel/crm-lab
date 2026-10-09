@@ -16,6 +16,8 @@ import {
   RULE_ACTOR_ROLES,
   SEND_MESSAGE_TEMPLATE_MAX,
   findUnknownReengagementVariables,
+  STALE_NEW_BUDGET_MINUTES_MAX,
+  STALE_NEW_BUDGET_MINUTES_MIN,
   findUnknownTemplateVariables,
   hasReengagementTextBesidesVariables,
   type FunnelRules,
@@ -64,6 +66,11 @@ function leafError(path: string, template: unknown, value: unknown): string | nu
       return isIntIn(value, 1, 365) ? null : 'Informe um número inteiro de 1 a 365';
     if (key === 'hours')
       return isIntIn(value, 1, 720) ? null : 'Informe um número inteiro de 1 a 720';
+    // Alerta de "Novo orçamento" parado em minutos (CRMLAB-97, D-267).
+    if (path === 'automation.staleNewBudgetAlert.minutes')
+      return isIntIn(value, STALE_NEW_BUDGET_MINUTES_MIN, STALE_NEW_BUDGET_MINUTES_MAX)
+        ? null
+        : `Informe um número inteiro de ${STALE_NEW_BUDGET_MINUTES_MIN} a ${STALE_NEW_BUDGET_MINUTES_MAX}`;
     // Alerta de tempo de resposta (CRMLAB-84, D-254).
     if (key === 'minutes')
       return isIntIn(value, RESPONSE_ALERT_MINUTES_MIN, RESPONSE_ALERT_MINUTES_MAX)
@@ -125,8 +132,29 @@ function mergeStored(template: unknown, stored: unknown, path: string): unknown 
   return Array.isArray(stored) ? [...stored] : stored;
 }
 
+/**
+ * D-267 item 1: `staleNewBudgetAlert` gravado em horas (`{ hours }`, antes do
+ * CRMLAB-97) vira `{ minutes: hours × 60 }` — sem isto o merge descartaria a
+ * chave e o laboratório cairia no padrão. `minutes` válido gravado vence;
+ * `hours` fora de 1..720 não é convertido (cai no padrão, como sempre).
+ */
+function upgradeStoredRules(stored: unknown): unknown {
+  if (!isPlainObject(stored) || !isPlainObject(stored.automation)) return stored;
+  const alert = stored.automation.staleNewBudgetAlert;
+  if (!isPlainObject(alert) || !isIntIn(alert.hours, 1, 720)) return stored;
+  if (isIntIn(alert.minutes, STALE_NEW_BUDGET_MINUTES_MIN, STALE_NEW_BUDGET_MINUTES_MAX)) return stored;
+  const { hours, ...rest } = alert;
+  return {
+    ...stored,
+    automation: {
+      ...stored.automation,
+      staleNewBudgetAlert: { ...rest, minutes: (hours as number) * 60 },
+    },
+  };
+}
+
 export function mergeWithDefaults(stored: unknown): FunnelRules {
-  return mergeStored(DEFAULT_FUNNEL_RULES, stored, '') as FunnelRules;
+  return mergeStored(DEFAULT_FUNNEL_RULES, upgradeStoredRules(stored), '') as FunnelRules;
 }
 
 /** PONTO UNICO DE LEITURA (D-190 item 2). Dentro da transacao de quem chama. */

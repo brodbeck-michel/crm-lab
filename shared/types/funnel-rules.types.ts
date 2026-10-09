@@ -47,11 +47,20 @@ export interface DelayRule {
   days: number;
 }
 
-export interface HoursRule {
+/**
+ * Alerta de "Novo orçamento" parado (D-207, em minutos desde a D-267). Linha
+ * antiga gravada com `hours` é lida como `hours × 60` em `readFunnelRules`.
+ */
+export interface StaleNewBudgetAlertRule {
   enabled: boolean;
-  /** Inteiro 1..720. */
-  hours: number;
+  /** Inteiro `STALE_NEW_BUDGET_MINUTES_MIN..MAX` (5..43200), minutos corridos. */
+  minutes: number;
 }
+
+/** 5 min = resolução do tique do motor de tempo (D-205/D-267). */
+export const STALE_NEW_BUDGET_MINUTES_MIN = 5;
+/** 30 dias. */
+export const STALE_NEW_BUDGET_MINUTES_MAX = 43200;
 
 /** Seção 2 — automação do funil. Só guardada neste card (quem executa: CRMLAB-59/60). */
 export interface FunnelAutomationRules {
@@ -65,8 +74,8 @@ export interface FunnelAutomationRules {
   negotiationToFollowUp: DelayRule;
   /** `follow_up` há Z dias → `perdido` com motivo `silencio`. */
   followUpToLost: DelayRule;
-  /** Alerta de "Novo orçamento" parado há N horas sem envio. */
-  staleNewBudgetAlert: HoursRule;
+  /** Alerta de "Novo orçamento" parado há N minutos sem envio (D-267). */
+  staleNewBudgetAlert: StaleNewBudgetAlertRule;
   /** Contagem dos prazos em dias: corridos ou úteis. */
   dayCounting: DayCounting;
 }
@@ -196,7 +205,7 @@ export const DEFAULT_FUNNEL_RULES: FunnelRules = {
     sentToFollowUp: { enabled: true, days: 3 },
     negotiationToFollowUp: { enabled: true, days: 7 },
     followUpToLost: { enabled: false, days: 15 },
-    staleNewBudgetAlert: { enabled: true, hours: 4 },
+    staleNewBudgetAlert: { enabled: true, minutes: 240 },
     dayCounting: 'calendar',
   },
   manualMoves: {

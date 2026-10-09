@@ -4205,7 +4205,7 @@ completo com os padrões aplicados. Nenhum outro código lê `funnel_rules` dire
     "sentToFollowUp": { "enabled": true, "days": 3 },
     "negotiationToFollowUp": { "enabled": true, "days": 7 },
     "followUpToLost": { "enabled": false, "days": 15 },
-    "staleNewBudgetAlert": { "enabled": true, "hours": 4 },
+    "staleNewBudgetAlert": { "enabled": true, "minutes": 240 },
     "dayCounting": "calendar"
   },
   "manualMoves": {
@@ -4245,7 +4245,7 @@ completo com os padrões aplicados. Nenhum outro código lê `funnel_rules` dire
 | `automation.sentToFollowUp` | `orcamento_enviado` há `days` → `follow_up` | CRMLAB-59 |
 | `automation.negotiationToFollowUp` | `negociacao` sem pagamento há `days` → `follow_up` | CRMLAB-59 |
 | `automation.followUpToLost` | `follow_up` há `days` → `perdido` (`silencio`) | CRMLAB-59 |
-| `automation.staleNewBudgetAlert` | Alerta de `novo_contato` parado há `hours` sem envio | CRMLAB-59 |
+| `automation.staleNewBudgetAlert` | Alerta de `novo_contato` parado há `minutes` (corridos) sem envio. Linha antiga com `hours` é lida como `hours × 60` (D-267) | CRMLAB-59/97 |
 | `automation.dayCounting` | `calendar` (corridos) ou `business` (úteis) | CRMLAB-59 |
 | `manualMoves.*` | Travas de movimentação manual (D-192), via `checkTransition` | este card (back e front) |
 | `sendMessage.template` | Modelo do WhatsApp; render por `renderSendMessageTemplate` | CRMLAB-58 |
@@ -4277,7 +4277,8 @@ Parcial em qualquer nível: campo ausente preserva; listas (`roles`) são trocad
 Validação (`VALIDATION_ERROR`, `details.fields` pelo caminho do campo):
 - corpo vazio (`{}`) → `fields._root`; campo desconhecido em qualquer nível → `Campo desconhecido`;
 - booleanos são `boolean`; `days` inteiro `1..365`; `hours` inteiro `1..720`; `minutes`
-  (`responseAlert.minutes`) inteiro `1..1440`;
+  (`responseAlert.minutes`) inteiro `1..1440`; `automation.staleNewBudgetAlert.minutes` inteiro
+  `5..43200` (D-267 — `hours` nessa regra é `Campo desconhecido`);
 - `dayCounting` ∈ `calendar | business`; `roles` ⊆ `["attendant","manager"]`, sem repetição;
 - `origin`: ao menos uma das duas ligada depois do merge → `fields.origin`;
 - `sendMessage.template`: string `1..1000` depois do `trim`, só com as variáveis

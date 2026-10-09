@@ -1657,10 +1657,10 @@ export function resetFunnelTimerLocksForTest(): void;
    cartão**. Depois de cada commit: `announceSystemTransitions` (WS `proposal.status_changed` +
    invalidação do cache de analytics).
 4. Alerta (D-207): cartões em `novo_contato` sem pagamento, com a linha de entrada sem
-   `stale_alerted_at` e entrada há N horas ou mais. Numa transação por cartão, grava
+   `stale_alerted_at` e entrada há N **minutos** ou mais (D-267). Numa transação por cartão, grava
    `stale_alerted_at` (condicionado a ainda estar nulo e o cartão ainda em `novo_contato`) e resolve
    os destinatários (responsável ativo; senão gestores e admins ativos). Depois do commit:
-   `emitToUser` `proposal.stale_alert` para cada um.
+   `emitToUser` `proposal.stale_alert` (`{ proposalId, minutes, hours }`) para cada um.
 5. Reingajamento (§28), se injetado: `reengagement.runForTenant(tenantId, agora)`. Falha dele →
    `warn` `reengagement.tenant_failed`, sem desfazer o que o funil fez.
 6. Erro num laboratório → `warn` `funnel_timer.tenant_failed`, segue para o próximo. Log `info`

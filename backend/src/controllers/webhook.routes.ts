@@ -62,6 +62,7 @@ import {
   mediaMetadataOf,
 } from '../lib/whatsapp-message-parts.js';
 import { createAuditService } from '../services/audit.service.js';
+import { createAutoReplyService } from '../services/auto-reply.service.js';
 import { ConversationService } from '../services/conversation.service.js';
 import { MediaService, messageTypeFromMime } from '../services/media.service.js';
 import { MessageService } from '../services/message.service.js';
@@ -196,6 +197,8 @@ export function createWebhookServices(
     wsHub: deps.wsHub,
     whatsapp,
     audit,
+    // Fora do horario / boas-vindas (D-264): so o webhook grava mensagem do paciente.
+    autoReply: createAutoReplyService({ db: deps.db }),
   });
   const conversations = new ConversationService({
     db: deps.db,

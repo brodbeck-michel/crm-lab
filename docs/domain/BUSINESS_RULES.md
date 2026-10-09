@@ -305,7 +305,7 @@ async updateStatus(id: string, { status, reasonLost }: UpdateStatusDTO) {
     throw new BadRequestException('Motivo de perda é obrigatório');
   }
   
-  if (!['preco', 'silencio', 'exame_indisponivel', 'prazo', 'outro'].includes(reasonLost)) {
+  if (!['preco', 'silencio', 'exame_indisponivel', 'prazo', 'horario_atendimento', 'outro'].includes(reasonLost)) {
     throw new BadRequestException('Motivo inválido');
   }
 }

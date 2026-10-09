@@ -10,7 +10,14 @@ export type ProposalStatus =
   | 'ganho'
   | 'perdido';
 
-export type LossReason = 'preco' | 'silencio' | 'exame_indisponivel' | 'prazo' | 'outro';
+/** Motivos de perda. `horario_atendimento` entrou no CRMLAB-98 (D-268); `outro` fica por último. */
+export type LossReason =
+  | 'preco'
+  | 'silencio'
+  | 'exame_indisponivel'
+  | 'prazo'
+  | 'horario_atendimento'
+  | 'outro';
 
 export type ApprovalStatus = 'none' | 'pending' | 'approved' | 'rejected';
 
@@ -37,6 +44,7 @@ export const LOSS_REASONS: readonly LossReason[] = [
   'silencio',
   'exame_indisponivel',
   'prazo',
+  'horario_atendimento',
   'outro',
 ] as const;
 
@@ -111,6 +119,7 @@ export const LOSS_REASON_LABELS: Readonly<Record<LossReason, string>> = {
   silencio: 'Silêncio',
   exame_indisponivel: 'Exame indisponível',
   prazo: 'Prazo',
+  horario_atendimento: 'Horário de atendimento',
   outro: 'Outro',
 };
 

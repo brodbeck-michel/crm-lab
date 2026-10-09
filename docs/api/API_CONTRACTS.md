@@ -2427,7 +2427,8 @@ Encerrar proposta como perdida.
 }
 ```
 
-**Valores para `reasonLost`:** `preco`, `silencio`, `exame_indisponivel`, `prazo`, `outro`
+**Valores para `reasonLost`:** `preco`, `silencio`, `exame_indisponivel`, `prazo`,
+`horario_atendimento` ("Horário de atendimento", D-268), `outro`
 
 **Response (200):**
 ```json
@@ -3395,6 +3396,7 @@ Sem datas: últimos 30 dias terminando hoje (UTC). Formato inválido, data inexi
     "silencio": 15,
     "exame_indisponivel": 10,
     "prazo": 5,
+    "horario_atendimento": 3,
     "outro": 0
   },
   "revenue": 90000,
@@ -3412,7 +3414,7 @@ período. `paidCount`/`paidValue` contam as propostas com `lis_paid_on` no perí
 **pagamento**, BUSINESS_RULES.md §11.7). Sempre presente, com zeros quando não houve nada. Segue
 o mesmo recorte de `partial`: a atendente vê só as próprias propostas.
 
-`lossReasons` traz **sempre as 5 chaves** de `LOSS_REASONS`, com `0` onde não houve perda —
+`lossReasons` traz **sempre as 6 chaves** de `LOSS_REASONS` (D-268), com `0` onde não houve perda —
 o gráfico do frontend não pode ficar com buracos. `conversionRate` = ganhos / total criadas
 no período, em pontos percentuais. `averageTicket` = `revenue / count(ganhas)`, e é `0` (não
 `NaN`) quando não houve ganho.

@@ -259,7 +259,7 @@ describe('getConversionFunnel — os numeros fecham', () => {
     expect(report.funnel.conversionRate).toBe(0);
   });
 
-  it('lossReasons traz as 5 chaves, com zero onde nao houve perda', async () => {
+  it('lossReasons traz as 6 chaves (D-268), com zero onde nao houve perda', async () => {
     const scenario = await seedScenario();
     const report = await service().getConversionFunnel(scenario.managerCtx, PERIOD);
 
@@ -268,10 +268,11 @@ describe('getConversionFunnel — os numeros fecham', () => {
       silencio: 1,
       exame_indisponivel: 0,
       prazo: 0,
+      horario_atendimento: 0,
       outro: 0,
     });
-    // O grafico do frontend depende disso: 5 fatias, nenhuma faltando.
-    expect(Object.keys(report.lossReasons)).toHaveLength(5);
+    // O grafico do frontend depende disso: 6 fatias, nenhuma faltando.
+    expect(Object.keys(report.lossReasons)).toHaveLength(6);
     // E a soma fecha com o estagio perdido do funil.
     const soma = Object.values(report.lossReasons).reduce((a, b) => a + b, 0);
     expect(soma).toBe(report.funnel.perdido);
@@ -350,6 +351,7 @@ describe('escopo dentro do tenant', () => {
       silencio: 0,
       exame_indisponivel: 0,
       prazo: 0,
+      horario_atendimento: 0,
       outro: 0,
     });
     expect(report.topPerformers).toEqual([

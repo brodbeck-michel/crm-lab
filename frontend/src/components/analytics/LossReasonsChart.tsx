@@ -1,4 +1,5 @@
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { LOSS_REASONS, LOSS_REASON_LABELS, type LossReason } from '@crm-lab/shared';
 import { formatCount } from '@/lib/format';
 import {
   CHART_ACCENT_COLOR,
@@ -55,14 +56,14 @@ export default function LossReasonsChart({ data = [] }: LossReasonsChartProps) {
   );
 }
 
+/**
+ * Rótulo pt-BR do motivo (D-268): vem de `LOSS_REASON_LABELS`, fonte única em
+ * `@crm-lab/shared`. Chave desconhecida (não deveria chegar) aparece crua.
+ */
 function formatReasonLabel(reason: string): string {
-  const labels: Record<string, string> = {
-    preco_alto: 'Preço Alto',
-    concorrencia: 'Concorrência',
-    paciente_cancelou: 'Paciente Cancelou',
-    sem_interesse: 'Sem Interesse',
-    falta_resultado: 'Falta Resultado',
-    mudou_de_ideia: 'Mudou de Ideia',
-  };
-  return labels[reason] || reason;
+  return isLossReason(reason) ? LOSS_REASON_LABELS[reason] : reason;
+}
+
+function isLossReason(value: string): value is LossReason {
+  return (LOSS_REASONS as readonly string[]).includes(value);
 }

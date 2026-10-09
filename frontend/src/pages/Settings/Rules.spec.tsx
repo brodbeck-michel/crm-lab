@@ -127,14 +127,15 @@ describe('Regras (/settings/rules)', () => {
     }
   });
 
-  it('mostra os padrões: prazos 3/7/15 dias, 4 h, follow-up → perdido desligado', () => {
+  it('mostra os padrões: prazos 3/7/15 dias, 240 min, follow-up → perdido desligado', () => {
     signIn('manager');
     renderPage();
 
     const automacao = section(/automação do funil/i);
     const dias = within(automacao).getAllByLabelText('Dias');
     expect(dias.map((input) => (input as HTMLInputElement).value)).toEqual(['3', '7', '15']);
-    expect(within(automacao).getByLabelText('Horas')).toHaveValue(4);
+    expect(within(automacao).getByLabelText('Minutos')).toHaveValue(240);
+    expect(within(automacao).getByTestId('dica-minutos')).toHaveTextContent('240 min = 4 h');
     expect(within(automacao).getByRole('switch', { name: /follow-up há z dias/i })).toHaveAttribute(
       'aria-checked',
       'false',
@@ -272,6 +273,21 @@ describe('Regras (/settings/rules)', () => {
 
     expect(await screen.findByText('Fora da faixa')).toBeInTheDocument();
   });
+  it('alerta de "Novo orçamento" parado em minutos: 15 salva só o que mudou (CRMLAB-97, D-267)', async () => {
+    const user = userEvent.setup();
+    signIn('manager');
+    renderPage();
+    const automacao = section(/automação do funil/i);
+    const minutes = within(automacao).getByLabelText('Minutos');
+    await user.clear(minutes);
+    await user.type(minutes, '15');
+    expect(within(automacao).getByTestId('dica-minutos')).toHaveTextContent('Conferido a cada 5 minutos.');
+    await user.click(screen.getByRole('button', { name: 'Salvar regras' }));
+    expect(mutate.mock.calls[0]?.[0]).toEqual({
+      automation: { staleNewBudgetAlert: { minutes: 15 } },
+    });
+  });
+
   describe('reingajamento (CRMLAB-62)', () => {
     it('padrão: 1º e 2º desligados, 1 h e 24 h, 2º travado sem o 1º', () => {
       signIn('manager');

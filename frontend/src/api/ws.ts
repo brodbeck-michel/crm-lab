@@ -2,6 +2,7 @@ import type { QueryClient } from '@tanstack/react-query';
 import {
   WS_CLOSE_TOO_MANY_SOCKETS,
   WS_CLOSE_UNAUTHORIZED,
+  formatStaleDuration,
   type WsEvent,
   type WsEventName,
   type WsEventPayloads,
@@ -186,7 +187,7 @@ export function applyWsEvent(
     case 'proposal.stale_alert': {
       const data = event.data as WsEventPayloads['proposal.stale_alert'];
       toast?.(
-        `Um cartão está parado em "Novo orçamento" há ${data.hours} h sem envio.`,
+        `Um cartão está parado em "Novo orçamento" há ${formatStaleDuration(data.minutes)} sem envio.`,
         'attention',
       );
       void queryClient.invalidateQueries({ queryKey: queryScopes.proposals });

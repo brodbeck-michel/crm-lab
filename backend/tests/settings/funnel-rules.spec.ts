@@ -224,7 +224,7 @@ describe('PATCH /settings/funnel-rules', () => {
         extra: 1,
         automation: {
           sentToFollowUp: { days: 0, cor: 'azul' },
-          staleNewBudgetAlert: { hours: 1.5 },
+          staleNewBudgetAlert: { minutes: 1.5 },
           dayCounting: 'lunar',
           paymentToWon: { enabled: 'sim' },
         },
@@ -237,7 +237,7 @@ describe('PATCH /settings/funnel-rules', () => {
         'extra',
         'automation.sentToFollowUp.days',
         'automation.sentToFollowUp.cor',
-        'automation.staleNewBudgetAlert.hours',
+        'automation.staleNewBudgetAlert.minutes',
         'automation.dayCounting',
         'automation.paymentToWon.enabled',
         'manualMoves.reopenClosed.roles',
@@ -360,6 +360,63 @@ describe('readFunnelRules (ponto unico de leitura)', () => {
     expect(rules.automation.dayCounting).toBe('business');
     expect(rules.manualMoves).toEqual(DEFAULT_FUNNEL_RULES.manualMoves);
     expect(rules).not.toHaveProperty('obsoleto');
+  });
+
+  it('alerta parado gravado em horas vira minutos na leitura (CRMLAB-97, D-267 item 1)', () => {
+    const stale = (stored: unknown) => mergeWithDefaults({ automation: { staleNewBudgetAlert: stored } }).automation.staleNewBudgetAlert;
+    // Santé em prod: `hours: 1` -> 60 min, sem migração.
+    expect(stale({ enabled: true, hours: 1 })).toEqual({ enabled: true, minutes: 60 });
+    expect(stale({ enabled: false, hours: 4 })).toEqual({ enabled: false, minutes: 240 });
+    // `minutes` válido gravado vence; `hours` inválido cai no padrão.
+    expect(stale({ enabled: true, minutes: 30, hours: 2 })).toEqual({ enabled: true, minutes: 30 });
+    expect(stale({ enabled: true, hours: 0 })).toEqual({ enabled: true, minutes: 240 });
+    expect(stale({ enabled: true, hours: 721 })).toEqual({ enabled: true, minutes: 240 });
+  });
+
+  it('alerta parado: PATCH em minutos 5..43200; hours e campo desconhecido (D-267)', async () => {
+    const ok = await app.agent
+      .patch(BASE)
+      .set(app.auth(managerA))
+      .send({ automation: { staleNewBudgetAlert: { minutes: 15 } } });
+    expect(ok.status).toBe(200);
+    expect((ok.body as FunnelRules).automation.staleNewBudgetAlert).toEqual({ enabled: true, minutes: 15 });
+
+    for (const minutes of [4, 43201, 15.5, '15']) {
+      const res = await app.agent
+        .patch(BASE)
+        .set(app.auth(managerA))
+        .send({ automation: { staleNewBudgetAlert: { minutes } } });
+      expect(res.status).toBe(400);
+      expect((res.body as ApiErrorBody).error.details?.fields).toEqual({
+        'automation.staleNewBudgetAlert.minutes': 'Informe um número inteiro de 5 a 43200',
+      });
+    }
+
+    const legacy = await app.agent
+      .patch(BASE)
+      .set(app.auth(managerA))
+      .send({ automation: { staleNewBudgetAlert: { hours: 2 } } });
+    expect(legacy.status).toBe(400);
+    expect((legacy.body as ApiErrorBody).error.details?.fields).toEqual({
+      'automation.staleNewBudgetAlert.hours': 'Campo desconhecido',
+    });
+  });
+
+  it('alerta parado: linha antiga em horas e regravada em minutos no proximo PATCH (D-267)', async () => {
+    await db.withoutTenant((tx) =>
+      tx.query('INSERT INTO funnel_rules (tenant_id, rules) VALUES ($1, $2::jsonb)', [
+        tenantA.id,
+        JSON.stringify({ automation: { staleNewBudgetAlert: { enabled: true, hours: 1 } } }),
+      ]),
+    );
+    const read = await app.agent.get(BASE).set(app.auth(attendantA));
+    expect((read.body as FunnelRules).automation.staleNewBudgetAlert).toEqual({ enabled: true, minutes: 60 });
+
+    await app.agent.patch(BASE).set(app.auth(managerA)).send({ origin: { manualInCrm: false } }).expect(200);
+    const stored = await db.withoutTenant((tx) =>
+      tx.query<{ rules: FunnelRules }>('SELECT rules FROM funnel_rules WHERE tenant_id = $1', [tenantA.id]),
+    );
+    expect(stored.rows[0]?.rules.automation.staleNewBudgetAlert).toEqual({ enabled: true, minutes: 60 });
   });
 
   it('nao devolve referencia mutavel dos padroes', () => {

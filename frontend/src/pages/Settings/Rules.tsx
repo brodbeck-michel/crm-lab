@@ -4,12 +4,15 @@ import {
   DEFAULT_DISCOUNT_LIMIT,
   SEND_MESSAGE_TEMPLATE_MAX,
   SEND_MESSAGE_VARIABLES,
+  STALE_NEW_BUDGET_MINUTES_MAX,
+  STALE_NEW_BUDGET_MINUTES_MIN,
   findUnknownTemplateVariables,
   renderSendMessageTemplate,
   type DelayRule,
   type FunnelAutomationRules,
   type FunnelRules,
   type RuleActorRole,
+  type StaleNewBudgetAlertRule,
   type UpdateFunnelRulesRequest,
 } from '@crm-lab/shared';
 import { useFunnelRules, useUpdateFunnelRules } from '@/api/funnel-rules';
@@ -98,6 +101,60 @@ function Section({
       {children}
     </section>
   );
+}
+
+/**
+ * Prazo do alerta de "Novo orçamento" parado, em minutos (CRMLAB-97, D-267),
+ * com a dica do equivalente em horas. Conferido a cada tique de 5 min.
+ */
+function StaleMinutesInput({
+  rule,
+  disabled,
+  error,
+  onChange,
+}: {
+  rule: StaleNewBudgetAlertRule;
+  disabled: boolean;
+  error: string | undefined;
+  onChange: (minutes: number) => void;
+}) {
+  const { minutes } = rule;
+  const outOfRange =
+    minutes < STALE_NEW_BUDGET_MINUTES_MIN || minutes > STALE_NEW_BUDGET_MINUTES_MAX;
+  const hint = outOfRange
+    ? `De ${STALE_NEW_BUDGET_MINUTES_MIN} a ${STALE_NEW_BUDGET_MINUTES_MAX} minutos.`
+    : minutes >= 60
+      ? `${minutes} min = ${formatHoursHint(minutes)}`
+      : 'Conferido a cada 5 minutos.';
+  return (
+    <div className="flex flex-col gap-xs">
+      <div className="w-32">
+        <Input
+          type="number"
+          aria-label="Minutos"
+          value={String(minutes)}
+          min={STALE_NEW_BUDGET_MINUTES_MIN}
+          max={STALE_NEW_BUDGET_MINUTES_MAX}
+          disabled={disabled}
+          error={error}
+          onChange={(e) => {
+            const parsed = Number.parseInt(e.target.value, 10);
+            onChange(Number.isFinite(parsed) ? parsed : 0);
+          }}
+        />
+      </div>
+      <span data-testid="dica-minutos" className="font-body text-caption text-neutral-600">
+        {hint}
+      </span>
+    </div>
+  );
+}
+
+/** "4 h", "1 h 30 min" — dica do campo em minutos. */
+function formatHoursHint(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0 ? `${h} h` : `${h} h ${rest} min`;
 }
 
 function FieldError({ message }: { message: string | undefined }) {
@@ -201,35 +258,24 @@ export default function Rules() {
     });
   }
 
-  const delayInput = (
-    key: DelayKey | 'staleNewBudgetAlert',
-    rule: DelayRule | { enabled: boolean; hours: number },
-  ) => {
-    const unit = 'days' in rule ? 'days' : 'hours';
-    const path = `automation.${key}.${unit}`;
-    const value = 'days' in rule ? rule.days : rule.hours;
-    return (
-      <div className="w-32">
-        <Input
-          type="number"
-          aria-label={unit === 'days' ? 'Dias' : 'Horas'}
-          value={String(value)}
-          min={1}
-          max={unit === 'days' ? 365 : 720}
-          disabled={!canEdit || !rule.enabled}
-          error={fieldErrors[path]}
-          onChange={(e) => {
-            const parsed = Number.parseInt(e.target.value, 10);
-            const n = Number.isFinite(parsed) ? parsed : 0;
-            set((next) => {
-              const target = next.automation[key] as unknown as Json;
-              target[unit] = n;
-            });
-          }}
-        />
-      </div>
-    );
-  };
+  const delayInput = (key: DelayKey, rule: DelayRule) => (
+    <div className="w-32">
+      <Input
+        type="number"
+        aria-label="Dias"
+        value={String(rule.days)}
+        min={1}
+        max={365}
+        disabled={!canEdit || !rule.enabled}
+        error={fieldErrors[`automation.${key}.days`]}
+        onChange={(e) => {
+          const parsed = Number.parseInt(e.target.value, 10);
+          const days = Number.isFinite(parsed) ? parsed : 0;
+          set((next) => void (next.automation[key].days = days));
+        }}
+      />
+    </div>
+  );
 
   return (
     <PageContainer>
@@ -297,7 +343,7 @@ export default function Rules() {
             ))}
             <div className="flex flex-wrap items-center gap-md">
               <Toggle
-                label='Alerta de "Novo orçamento" parado há N horas sem envio'
+                label='Alerta de "Novo orçamento" parado há N minutos sem envio'
                 checked={draft.automation.staleNewBudgetAlert.enabled}
                 disabled={!canEdit}
                 onChange={(enabled) =>
@@ -307,7 +353,14 @@ export default function Rules() {
                   })
                 }
               />
-              {delayInput('staleNewBudgetAlert', draft.automation.staleNewBudgetAlert)}
+              <StaleMinutesInput
+                rule={draft.automation.staleNewBudgetAlert}
+                disabled={!canEdit || !draft.automation.staleNewBudgetAlert.enabled}
+                error={fieldErrors['automation.staleNewBudgetAlert.minutes']}
+                onChange={(minutes) =>
+                  set((next) => void (next.automation.staleNewBudgetAlert.minutes = minutes))
+                }
+              />
             </div>
             <div className="flex flex-col gap-xs">
               <span className="font-body text-caption font-semibold text-neutral-700">

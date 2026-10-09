@@ -5356,3 +5356,35 @@ via a conversa da colega.
 `ConversationPanel.tsx` (menu "Participantes"), `ConversationList.tsx` (chip),
 `pages/Attendance/index.tsx`, `hooks/useNewMessageAlerts.ts`. SCHEMA §39, API_CONTRACTS §2,
 BUSINESS_RULES §16.
+
+### D-267: Alerta de "Novo orçamento" parado em minutos (emenda à D-207)
+**Decisão (Michel, CRMLAB-97, 09/10/2026; itens 2 a 6 decididos na implementação, pelo padrão
+mais conservador):** `automation.staleNewBudgetAlert` passa de `{ enabled, hours }` (1..720) para
+**`{ enabled, minutes }`**, inteiro **5..43200** (5 min a 30 dias,
+`STALE_NEW_BUDGET_MINUTES_MIN`/`_MAX`). Padrão: ligado, **240 min** (as mesmas 4 h de antes).
+1. **Linha antiga sem migração:** `funnel_rules` gravado com `hours` (o Santé em prod tem
+   `hours: 1`) é lido como `minutes = hours × 60` (60 min) — conversão explícita em
+   `readFunnelRules`, antes do merge com os padrões (sem ela o merge descartaria a chave e o
+   laboratório cairia em 240 min). `hours` inválido (fora de 1..720) segue a regra de sempre: cai
+   no padrão. Com `minutes` válido gravado, `minutes` vence. A linha só é reescrita no próximo
+   `PATCH` (que grava o objeto inteiro, já em minutos).
+2. **`PATCH` não aceita mais `hours`** nessa regra: `fields["automation.staleNewBudgetAlert.hours"]
+   = "Campo desconhecido"`, como qualquer chave fora do contrato. Aba antiga aberta durante o
+   deploy recebe o erro e recarrega; nada é gravado errado. Não há outro cliente da API.
+3. **Resolução do tique:** o motor de tempo roda a cada **5 min** (`FUNNEL_TIMER_INTERVAL_MS`,
+   D-205) — por isso o mínimo é 5. O alerta sai no primeiro tique depois do prazo, até ~5 min
+   depois dele. O selo do cartão é calculado no navegador e aparece na hora exata.
+4. **Contagem:** continua em tempo **corrido** (D-207), qualquer `dayCounting` — sem expediente
+   nem feriado.
+5. **Selo e toast:** "Parado há **N min**" abaixo de 1 h; "Parado há **N h**" (horas inteiras) de
+   1 h em diante (`formatStaleDuration`). O WS `proposal.stale_alert` passa a levar
+   `{ proposalId, minutes, hours }` — `minutes` novo, `hours` (inteiras) mantido; o toast usa
+   `minutes`.
+6. **Tela:** um campo só, em **minutos**, com a dica do equivalente em horas ("240 min = 4 h").
+**Motivo:** o laboratório quer ser avisado em menos de uma hora (15–30 min) quando o paciente
+espera o orçamento.
+**Impacto:** `shared/types/funnel-rules.types.ts` (`StaleNewBudgetAlertRule` no lugar de
+`HoursRule`), `funnel-timer.types.ts` (`isStaleNewBudget` em minutos, `minutesSince`,
+`formatStaleDuration`), `websocket.types.ts`; `funnel-rules.service.ts`, `funnel-timer.service.ts`;
+`ProposalCard.tsx`, `StageColumn.tsx`, `api/ws.ts`, `Settings/Rules.tsx`. API_CONTRACTS §6c,
+SERVICES §27, BUSINESS_RULES §3, PAGES §5/§21. Sem migração.

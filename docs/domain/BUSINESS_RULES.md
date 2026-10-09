@@ -201,7 +201,8 @@ estágio atual** (última linha do histórico com esse estágio): qualquer mudan
 Dias corridos (múltiplos de 24 h) ou úteis (seg–sex, Brasília; **sem feriados**). **Fato vence
 tempo:** cartão com pagamento não é movido pelo motor, e cartão com requisição não vai para
 `follow_up`/`perdido` a partir de `orcamento_enviado`/`follow_up` (D-206). O passo precisa estar
-na matriz vigente; terminais nunca se movem. "Novo orçamento" parado há N horas (corridas) só
+na matriz vigente; terminais nunca se movem. "Novo orçamento" parado há N minutos (corridos, de
+5 min a 30 dias, conferidos a cada tique de 5 min — D-267) só
 **alerta** o responsável (ou gestores/admins, se não houver), uma vez por entrada na coluna, sem
 mover (D-207). Prazo mudado vale no próximo tique, inclusive para os cartões que já passaram do
 prazo novo (D-209). Quem move é o sistema: `changedBy: null`, histórico com `automation`, audit

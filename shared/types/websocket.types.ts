@@ -57,7 +57,8 @@ export interface WsEventPayloads {
    * Cartão parado em "Novo orçamento" há `hours` h (CRMLAB-59, D-207). Só para o
    * responsável — ou, sem responsável, gestores e admins —, uma vez por entrada.
    */
-  'proposal.stale_alert': { proposalId: string; hours: number };
+  /** D-267: `minutes` desde a entrada; `hours` (inteiras) mantido por compatibilidade. */
+  'proposal.stale_alert': { proposalId: string; minutes: number; hours: number };
 }
 
 export interface WsEvent<E extends WsEventName = WsEventName> {

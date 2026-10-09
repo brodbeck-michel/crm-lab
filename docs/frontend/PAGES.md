@@ -492,8 +492,9 @@ nunca "sem permissão" (não vazar existência).
   "Conciliado" continua o mesmo. Desde a D-252 o selo "Pré-cadastro feito" vale também para a
   proposta de origem `crm` (mesma condição).
 - **Selo "Parado há N h" (CRMLAB-59, D-207):** cartão em `novo_contato` com a regra
-  "Novo orçamento parado" ligada e `stageEnteredAt` há N horas ou mais leva o
-  `Chip tone="attention"` "Parado há {N} h" (N = horas inteiras desde a entrada na coluna).
+  "Novo orçamento parado" ligada e `stageEnteredAt` há N minutos ou mais (D-267) leva o
+  `Chip tone="attention"` "Parado há {N} min" abaixo de 1 h e "Parado há {N} h" (horas inteiras)
+  depois (`formatStaleDuration`).
   Calculado no front com `isStaleNewBudget` (`@crm-lab/shared`), a mesma função do motor; o
   pipeline passa `automation.staleNewBudgetAlert` das Regras (`useEffectiveFunnelRules`) para
   `StageColumn` → `ProposalCard`. O alerta em si chega pelo WS `proposal.stale_alert` como toast.
@@ -1362,7 +1363,7 @@ seu próprio [Salvar] (endpoint e permissão diferentes).
    desabilitado quando a automação está desligada): Requisição → Negociação; Pagamento → Ganho;
    Orçamento enviado há **X dias** → Follow-up; Negociação sem pagamento há **Y dias** →
    Follow-up; Follow-up há **Z dias** → Perdido (motivo "Silêncio"); Alerta de "Novo orçamento"
-   parado há **N horas**. Mais o `SegmentedControl` "Contar em dias corridos | dias úteis". Nota
+   parado há **N minutos** (`Input` "Minutos", 5..43200, com a dica "= N h" — D-267). Mais o `SegmentedControl` "Contar em dias corridos | dias úteis". Nota
    no cartão (desde o CRMLAB-59, D-205): "Os prazos contam desde que o cartão entrou no estágio e
    são conferidos a cada poucos minutos. Dias úteis: segunda a sexta, sem descontar feriados."
 3. **Movimentação manual (travas)** — `Toggle` "Reabrir Ganho/Perdido" + caixas "Atendente" /

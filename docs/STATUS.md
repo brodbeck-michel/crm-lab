@@ -3245,6 +3245,25 @@ registro da visita (88) e linha do tempo (89). Ficam fora, para cards futuros se
 itens de "pesquisa de mercado" (resultado da visita em pedidos, classificação ABC, alerta de médico
 esquecido, roteiro do dia, materiais, metas) e a ligação do médico da proposta com o cadastro.
 
+### 🚧 CRMLAB-95 — modelos da mensagem de envio (2026-10-09, aguardando validação)
+
+Branch `feature/CRMLAB-95-modelos-mensagem-envio` (de `main` v1.35.0). Decisão D-265, sem migração.
+
+- **Contrato:** `sendMessage = { templates: [{ name, text }] }`, 1..5 modelos, nome 1..40 único
+  (sem diferenciar maiúsculas), o primeiro é o padrão. `validateSendMessageTemplates` em `shared/`
+  (mesma regra no PATCH, na leitura e na tela). Linha gravada no formato antigo (`template`) é lida
+  como `[{ name: "Padrão", text }]` sem regravar; `sendMessage.template` ainda aceito no PATCH
+  (troca o texto do padrão).
+- **Tela:** Regras → Mensagem de envio com um cartão por modelo (nome, texto, variáveis,
+  pré-visualização, Tornar padrão / Subir / Descer / Remover, Adicionar modelo) —
+  `Settings/SendMessageSection.tsx`. `SendProposalPanel` com `Select` "Modelo da mensagem" quando
+  há 2+; texto editado pede confirmação antes de trocar.
+- **Fora do card (D-265 itens 7 e 8):** `{prazo_entrega}` (cartão do Bitlab não tem itens) e
+  parcelas (sem regra de parcelamento definida).
+- **Testes:** `tests/settings/funnel-rules-send-templates.spec.ts` (novo, 15), `funnel-rules.spec.ts`
+  ajustado; `Rules.spec.tsx` (+4), `SendProposalPanel.spec.tsx` (+4).
+- **Pendente:** validação na hml (o Santé deve ver o texto atual como modelo "Padrão").
+
 ### 🚧 CRMLAB-93 — participantes da conversa (2026-10-06, aguardando validação)
 
 Branch `feature/CRMLAB-93-participantes-conversa` (de `main` v1.34.0). Decisão D-263, migração 053.

@@ -330,7 +330,7 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
             proposal={proposal}
             mode={panel}
             insuranceName={insuranceName}
-            template={funnelRules.sendMessage.template}
+            templates={funnelRules.sendMessage.templates}
             target={bitlabSendTarget(proposal.lisRequisitionNumber, funnelRules.automation)}
             onDone={() => setPanel(null)}
             onCancel={() => setPanel(null)}

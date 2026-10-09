@@ -1,8 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { Conversation, ListConversationsResponse, ProposalDetail } from '@crm-lab/shared';
-import { DEFAULT_SEND_MESSAGE_TEMPLATE } from '@crm-lab/shared';
+import type {
+  Conversation,
+  ListConversationsResponse,
+  ProposalDetail,
+  SendMessageTemplate,
+} from '@crm-lab/shared';
+import { DEFAULT_FUNNEL_RULES } from '@crm-lab/shared';
 import { ApiError } from '@/api';
 import { conversationsApi } from '@/api/conversations';
 import * as proposalsApi from '@/api/proposals';
@@ -74,7 +79,11 @@ beforeEach(() => {
   );
 });
 
-function renderPanel(mode: 'send' | 'resend' | 'relink' = 'send', proposal = PROPOSAL) {
+function renderPanel(
+  mode: 'send' | 'resend' | 'relink' = 'send',
+  proposal = PROPOSAL,
+  templates: readonly SendMessageTemplate[] = DEFAULT_FUNNEL_RULES.sendMessage.templates,
+) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const onDone = vi.fn();
   render(
@@ -83,7 +92,7 @@ function renderPanel(mode: 'send' | 'resend' | 'relink' = 'send', proposal = PRO
         proposal={proposal}
         mode={mode}
         insuranceName="Particular"
-        template={DEFAULT_SEND_MESSAGE_TEMPLATE}
+        templates={templates}
         target="orcamento_enviado"
         onDone={onDone}
         onCancel={() => {}}
@@ -216,6 +225,61 @@ describe('SendProposalPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Trocar conversa' }));
     expect(relinkMutate).toHaveBeenCalledWith(
       { proposalId: 'prop-1', body: { conversationId: 'c-02' } },
+      expect.anything(),
+    );
+  });
+});
+
+describe('SendProposalPanel — modelos da mensagem (CRMLAB-95, D-265)', () => {
+  const TWO: SendMessageTemplate[] = [
+    { name: 'A prazo', text: 'Total {valor}, em até ___ vezes. Código {numero_orcamento}.' },
+    { name: 'À vista', text: 'Total {valor} à vista. Código {numero_orcamento}.' },
+  ];
+
+  it('um modelo só: sem seletor', () => {
+    renderPanel('resend');
+    expect(screen.queryByLabelText('Modelo da mensagem')).not.toBeInTheDocument();
+  });
+
+  it('com 2+ modelos abre no padrão e trocar sem editar re-renderiza direto', () => {
+    const confirm = vi.spyOn(window, 'confirm');
+    renderPanel('resend', PROPOSAL, TWO);
+    const select = screen.getByLabelText('Modelo da mensagem') as HTMLSelectElement;
+    expect(select.value).toBe('0');
+    const message = screen.getByLabelText('Mensagem') as HTMLTextAreaElement;
+    expect(message.value).toMatch(/^Total R\$\s1\.234,50, em até ___ vezes\. Código 5001\.$/);
+
+    fireEvent.change(select, { target: { value: '1' } });
+    expect(confirm).not.toHaveBeenCalled();
+    expect(message.value).toMatch(/^Total R\$\s1\.234,50 à vista\. Código 5001\.$/);
+    confirm.mockRestore();
+  });
+
+  it('texto editado: pergunta antes de sobrescrever; cancelar mantém modelo e texto', () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    renderPanel('resend', PROPOSAL, TWO);
+    const select = screen.getByLabelText('Modelo da mensagem') as HTMLSelectElement;
+    const message = screen.getByLabelText('Mensagem') as HTMLTextAreaElement;
+    fireEvent.change(message, { target: { value: 'Total R$ 1.234,50, em até 3 vezes.' } });
+
+    fireEvent.change(select, { target: { value: '1' } });
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(select.value).toBe('0');
+    expect(message.value).toBe('Total R$ 1.234,50, em até 3 vezes.');
+
+    confirm.mockReturnValue(true);
+    fireEvent.change(select, { target: { value: '1' } });
+    expect(select.value).toBe('1');
+    expect(message.value).toMatch(/à vista/);
+    confirm.mockRestore();
+  });
+
+  it('o texto do modelo escolhido é o que vai no reenvio', () => {
+    renderPanel('resend', PROPOSAL, TWO);
+    fireEvent.change(screen.getByLabelText('Modelo da mensagem'), { target: { value: '1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Reenviar' }));
+    expect(resendMutate).toHaveBeenCalledWith(
+      { proposalId: 'prop-1', body: { message: expect.stringMatching(/à vista/) } },
       expect.anything(),
     );
   });

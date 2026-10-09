@@ -222,7 +222,9 @@ describe('Regras (/settings/rules)', () => {
       'Olá, Maria Souza! Segue o orçamento nº 70034 (Particular), no valor de R$ 179,80.',
     );
 
-    const modelo = screen.getByLabelText('Modelo da mensagem');
+    const modelo = within(screen.getByRole('group', { name: 'Modelo 1' })).getByLabelText(
+      'Texto do modelo',
+    );
     await user.clear(modelo);
     // `{` é tecla especial do user-event: `{{` digita uma chave literal.
     await user.type(modelo, 'Oi {{nome}');
@@ -233,10 +235,110 @@ describe('Regras (/settings/rules)', () => {
   it('botão de variável insere no fim do modelo', async () => {
     const user = userEvent.setup();
     signIn('manager');
-    renderPage({ ...DEFAULT_FUNNEL_RULES, sendMessage: { template: 'Total: ' } });
+    renderPage({
+      ...DEFAULT_FUNNEL_RULES,
+      sendMessage: { templates: [{ name: 'Padrão', text: 'Total: ' }] },
+    });
 
-    await user.click(screen.getByRole('button', { name: '{valor}' }));
-    expect(screen.getByLabelText('Modelo da mensagem')).toHaveValue('Total: {valor}');
+    const card = within(screen.getByRole('group', { name: 'Modelo 1' }));
+    await user.click(card.getByRole('button', { name: '{valor}' }));
+    expect(card.getByLabelText('Texto do modelo')).toHaveValue('Total: {valor}');
+  });
+
+  describe('modelos da mensagem de envio (CRMLAB-95, D-265)', () => {
+    const TWO: FunnelRules = {
+      ...DEFAULT_FUNNEL_RULES,
+      sendMessage: {
+        templates: [
+          { name: 'A prazo', text: 'Total {valor} em até ___ vezes' },
+          { name: 'À vista', text: 'Total {valor} à vista' },
+        ],
+      },
+    };
+
+    it('adiciona um modelo e salva a lista inteira', async () => {
+      const user = userEvent.setup();
+      signIn('manager');
+      renderPage();
+
+      await user.click(screen.getByRole('button', { name: 'Adicionar modelo' }));
+      const novo = within(screen.getByRole('group', { name: 'Modelo 2' }));
+      expect(novo.getByLabelText('Nome do modelo')).toHaveValue('Modelo 2');
+      await user.clear(novo.getByLabelText('Nome do modelo'));
+      await user.type(novo.getByLabelText('Nome do modelo'), 'À vista');
+      await user.click(screen.getByRole('button', { name: 'Salvar regras' }));
+
+      expect(mutate.mock.calls[0]?.[0]).toEqual({
+        sendMessage: {
+          templates: [
+            DEFAULT_FUNNEL_RULES.sendMessage.templates[0],
+            { name: 'À vista', text: DEFAULT_FUNNEL_RULES.sendMessage.templates[0]?.text },
+          ],
+        },
+      });
+    });
+
+    it('tornar padrão move para o topo; o chip "Padrão" acompanha', async () => {
+      const user = userEvent.setup();
+      signIn('manager');
+      renderPage(TWO);
+
+      const segundo = within(screen.getByRole('group', { name: 'Modelo 2' }));
+      expect(segundo.queryByText('Padrão')).not.toBeInTheDocument();
+      await user.click(segundo.getByRole('button', { name: 'Tornar padrão' }));
+
+      const primeiro = within(screen.getByRole('group', { name: 'Modelo 1' }));
+      expect(primeiro.getByLabelText('Nome do modelo')).toHaveValue('À vista');
+      expect(primeiro.getByText('Padrão')).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Salvar regras' }));
+      expect(mutate.mock.calls[0]?.[0]).toEqual({
+        sendMessage: {
+          templates: [TWO.sendMessage.templates[1], TWO.sendMessage.templates[0]],
+        },
+      });
+    });
+
+    it('descer, remover e o limite de 5', async () => {
+      const user = userEvent.setup();
+      signIn('manager');
+      renderPage(TWO);
+
+      await user.click(
+        within(screen.getByRole('group', { name: 'Modelo 1' })).getByRole('button', {
+          name: 'Descer',
+        }),
+      );
+      expect(
+        within(screen.getByRole('group', { name: 'Modelo 1' })).getByLabelText('Nome do modelo'),
+      ).toHaveValue('À vista');
+
+      await user.click(
+        within(screen.getByRole('group', { name: 'Modelo 2' })).getByRole('button', {
+          name: 'Remover',
+        }),
+      );
+      expect(screen.queryByRole('group', { name: 'Modelo 2' })).not.toBeInTheDocument();
+      // Com um modelo só, não há o que remover.
+      expect(screen.queryByRole('button', { name: 'Remover' })).not.toBeInTheDocument();
+
+      for (let i = 0; i < 4; i += 1) {
+        await user.click(screen.getByRole('button', { name: 'Adicionar modelo' }));
+      }
+      expect(screen.getAllByRole('group', { name: /^Modelo \d$/ })).toHaveLength(5);
+      expect(screen.queryByRole('button', { name: 'Adicionar modelo' })).not.toBeInTheDocument();
+    });
+
+    it('nome repetido bloqueia o salvar', async () => {
+      const user = userEvent.setup();
+      signIn('manager');
+      renderPage(TWO);
+
+      const segundo = within(screen.getByRole('group', { name: 'Modelo 2' }));
+      await user.clear(segundo.getByLabelText('Nome do modelo'));
+      await user.type(segundo.getByLabelText('Nome do modelo'), 'a prazo');
+      expect(segundo.getByText('Já existe um modelo com este nome')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Salvar regras' })).toBeDisabled();
+    });
   });
 
   it('"Criar pelo CRM" desligado (salvo) esconde Descontos e aprovação', () => {
@@ -253,7 +355,9 @@ describe('Regras (/settings/rules)', () => {
     renderPage();
 
     expect(screen.getByRole('switch', { name: /pular etapas/i })).toBeDisabled();
-    expect(screen.getByLabelText('Modelo da mensagem')).toBeDisabled();
+    expect(screen.getByLabelText('Texto do modelo')).toBeDisabled();
+    expect(screen.getByLabelText('Nome do modelo')).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Adicionar modelo' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Salvar regras' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: /comissões/i })).not.toBeInTheDocument();
     expect(useCommissionSettings).not.toHaveBeenCalled();

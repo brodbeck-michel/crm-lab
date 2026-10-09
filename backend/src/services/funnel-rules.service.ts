@@ -13,10 +13,12 @@ import {
   REENGAGEMENT_MESSAGE_MAX,
   RESPONSE_ALERT_MINUTES_MAX,
   RESPONSE_ALERT_MINUTES_MIN,
+  DEFAULT_SEND_MESSAGE_TEMPLATE_NAME,
   RULE_ACTOR_ROLES,
-  SEND_MESSAGE_TEMPLATE_MAX,
-  findUnknownTemplateVariables,
+  sendMessageTextError,
+  validateSendMessageTemplates,
   type FunnelRules,
+  type SendMessageTemplate,
   type UpdateFunnelRulesRequest,
 } from '@crm-lab/shared';
 import type { DbClient, DbTx } from '../db/types.js';
@@ -29,6 +31,9 @@ const TENANT_ROLES = ['attendant', 'manager', 'admin'] as const;
 const WRITE_ROLES = ['manager', 'admin'] as const;
 
 type Json = Record<string, unknown>;
+
+/** Lista de modelos da mensagem de envio (D-265): validada inteira, fora do merge folha a folha. */
+const SEND_TEMPLATES_PATH = 'sendMessage.templates';
 
 function isPlainObject(value: unknown): value is Json {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -84,18 +89,6 @@ function leafError(path: string, template: unknown, value: unknown): string | nu
       ? null
       : 'Use "calendar" (dias corridos) ou "business" (dias úteis)';
   }
-  if (path === 'sendMessage.template') {
-    if (typeof value !== 'string') return 'Deve ser um texto';
-    const trimmed = value.trim();
-    if (trimmed.length === 0 || trimmed.length > SEND_MESSAGE_TEMPLATE_MAX) {
-      return `O modelo deve ter de 1 a ${SEND_MESSAGE_TEMPLATE_MAX} caracteres`;
-    }
-    const unknown = findUnknownTemplateVariables(trimmed);
-    if (unknown.length > 0) {
-      return `Variável desconhecida: ${unknown.map((name) => `{${name}}`).join(', ')}`;
-    }
-    return null;
-  }
   if (path === 'reengagement.first.message' || path === 'reengagement.second.message') {
     if (typeof value !== 'string') return 'Deve ser um texto';
     const length = value.trim().length;
@@ -107,8 +100,62 @@ function leafError(path: string, template: unknown, value: unknown): string | nu
   return 'Campo desconhecido';
 }
 
+// ---------------------------------------------------------------------------
+// Mensagem de envio com varios modelos (CRMLAB-95, D-265)
+// ---------------------------------------------------------------------------
+
+function cloneTemplates(list: readonly SendMessageTemplate[]): SendMessageTemplate[] {
+  return list.map(({ name, text }) => ({ name, text }));
+}
+
+/**
+ * Formato anterior ao CRMLAB-95 (`{ template }`) lido como lista de um modelo
+ * "Padrao" (D-265 item 2). So quando `templates` nao vale e `template` vale
+ * pelas regras antigas; senao devolve `stored` como veio (e o merge decide).
+ */
+function upgradeStoredSendMessage(stored: unknown): unknown {
+  if (!isPlainObject(stored)) return stored;
+  if (validateSendMessageTemplates(stored.templates).templates !== null) return stored;
+  if (sendMessageTextError(stored.template) !== null) return stored;
+  const text = (stored.template as string).trim();
+  return { templates: [{ name: DEFAULT_SEND_MESSAGE_TEMPLATE_NAME, text }] };
+}
+
+/**
+ * `sendMessage.template` no PATCH (formato antigo, D-265 item 4): vira
+ * `templates` com o texto do 1º modelo trocado. Erro no proprio caminho.
+ */
+function upgradeSendMessagePatch(
+  current: FunnelRules['sendMessage'],
+  patch: Json,
+  errors: Record<string, string>,
+): Json | null {
+  if (!('template' in patch)) return patch;
+  const path = 'sendMessage.template';
+  if ('templates' in patch) {
+    errors[path] = 'Envie só "templates" (o campo "template" é do formato antigo)';
+    return null;
+  }
+  const error = sendMessageTextError(patch.template);
+  if (error !== null) {
+    errors[path] = error;
+    return null;
+  }
+  const templates = cloneTemplates(current.templates);
+  const first = templates[0];
+  if (first) first.text = (patch.template as string).trim();
+  const rest: Json = { ...patch, templates };
+  delete rest.template;
+  return rest;
+}
+
 /** Sobrepoe `stored` aos padroes, chave por chave; o que nao vale fica com o padrao. */
 function mergeStored(template: unknown, stored: unknown, path: string): unknown {
+  if (path === 'sendMessage') stored = upgradeStoredSendMessage(stored);
+  if (path === SEND_TEMPLATES_PATH) {
+    const valid = validateSendMessageTemplates(stored).templates;
+    return cloneTemplates(valid ?? (template as SendMessageTemplate[]));
+  }
   if (isPlainObject(template)) {
     const source = isPlainObject(stored) ? stored : {};
     const out: Json = {};
@@ -142,19 +189,31 @@ function applyPatch(
   path: string,
   errors: Record<string, string>,
 ): unknown {
+  if (path === SEND_TEMPLATES_PATH) {
+    const result = validateSendMessageTemplates(patch);
+    for (const [key, message] of Object.entries(result.errors)) {
+      errors[`sendMessage.${key}`] = message;
+    }
+    return result.templates ?? current;
+  }
   if (isPlainObject(template)) {
     if (!isPlainObject(patch)) {
       errors[path === '' ? '_root' : path] = 'Deve ser um objeto';
       return current;
     }
+    const fields =
+      path === 'sendMessage'
+        ? upgradeSendMessagePatch(current as FunnelRules['sendMessage'], patch, errors)
+        : patch;
+    if (fields === null) return current;
     const out: Json = { ...(current as Json) };
-    for (const key of Object.keys(patch)) {
+    for (const key of Object.keys(fields)) {
       const childPath = joinPath(path, key);
       if (!(key in template)) {
         errors[childPath] = 'Campo desconhecido';
         continue;
       }
-      out[key] = applyPatch(template[key], (current as Json)[key], patch[key], childPath, errors);
+      out[key] = applyPatch(template[key], (current as Json)[key], fields[key], childPath, errors);
     }
     return out;
   }

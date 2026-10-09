@@ -301,7 +301,10 @@ describe('PATCH /settings/funnel-rules', () => {
       .set(app.auth(managerA))
       .send({ sendMessage: { template: '  Olá {paciente}, total {valor}  ' } });
     expect(ok.status).toBe(200);
-    expect((ok.body as FunnelRules).sendMessage.template).toBe('Olá {paciente}, total {valor}');
+    // Formato antigo (D-265 item 4): troca o texto do modelo padrao.
+    expect((ok.body as FunnelRules).sendMessage.templates).toEqual([
+      { name: 'Padrão', text: 'Olá {paciente}, total {valor}' },
+    ]);
   });
 
   it('erro de validacao nao grava nada', async () => {

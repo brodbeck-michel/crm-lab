@@ -591,6 +591,10 @@ nunca "sem permissão" (não vazar existência).
     `SearchInput`), com as **sugeridas** em cima (chip "Sugerida", `nameSimilarity` > 0) e a
     mensagem do modelo das Regras num `TextArea` editável. "Enviar" só liga depois de clicar
     numa conversa. Erro do envio aparece no painel (`role="alert"`) e ele fica aberto.
+    **Desde o CRMLAB-95 (D-265 item 5):** com 2+ modelos nas Regras, um `Select` "Modelo da
+    mensagem" acima do texto, aberto no padrão (o primeiro). Trocar re-renderiza a mensagem; se a
+    atendente já tinha editado o texto, `window.confirm` antes de sobrescrever (cancelar mantém
+    modelo e texto). Vale também no [Reenviar mensagem].
   - **Depois do envio (D-202):** linha "Conversa: {nome} · {telefone}"; para a dona, gestor ou
     admin, com o cartão aberto, [Trocar conversa] (o mesmo painel, só a lista) e, em
     `orcamento_enviado`/`follow_up`/`negociacao`, [Reenviar mensagem] nas ações (o painel, só a
@@ -1368,10 +1372,14 @@ seu próprio [Salvar] (endpoint e permissão diferentes).
 3. **Movimentação manual (travas)** — `Toggle` "Reabrir Ganho/Perdido" + caixas "Atendente" /
    "Gestor" (o admin sempre pode, dito no texto); `Toggle` "Pular etapas"; `Toggle` "Exigir
    motivo ao marcar Perdido"; `Toggle` "Gestor pode mover card de outra atendente".
-4. **Mensagem de envio** — `TextArea` do modelo, os botões de variável (`{paciente}`,
-   `{numero_orcamento}`, `{valor}`, `{convenio}`) que inserem no fim do texto, erro em tempo real
-   para variável desconhecida (`findUnknownTemplateVariables`) e a **pré-visualização** com dados
-   de exemplo, pela mesma `renderSendMessageTemplate` que o envio vai usar.
+4. **Mensagem de envio** (`Settings/SendMessageSection.tsx` desde o CRMLAB-95, D-265) — um
+   cartão por modelo, de 1 a 5: `Input` "Nome do modelo", `TextArea` do texto, os botões de
+   variável (`{paciente}`, `{numero_orcamento}`, `{valor}`, `{convenio}`) que inserem no fim do
+   texto, erro em tempo real (`validateSendMessageTemplates`: tamanho, nome repetido, variável
+   desconhecida) e a **pré-visualização** com dados de exemplo, pela mesma
+   `renderSendMessageTemplate` que o envio vai usar. O primeiro leva o chip "Padrão"; os outros têm
+   [Tornar padrão] (move para o topo). [Subir]/[Descer] reordenam, [Remover] some com um modelo
+   só, [Adicionar modelo] some com 5. Salva junto com o formulário (a lista vai inteira no diff).
 5. **Descontos e aprovação** — **só aparece com "Criar pelo CRM" ligado** (o valor salvo). Texto da
    regra (dentro da alçada aprova sozinha; acima vai para o gestor) e os limites padrão por perfil
    (`DEFAULT_DISCOUNT_LIMIT`). O limite de cada pessoa se edita em Usuários & Permissões — link

@@ -5356,3 +5356,62 @@ via a conversa da colega.
 `ConversationPanel.tsx` (menu "Participantes"), `ConversationList.tsx` (chip),
 `pages/Attendance/index.tsx`, `hooks/useNewMessageAlerts.ts`. SCHEMA §39, API_CONTRACTS §2,
 BUSINESS_RULES §16.
+
+### D-265: Mensagem de envio com mais de um modelo, cada um com nome (CRMLAB-95)
+**Decisão (card CRMLAB-95, 09/10/2026; itens 4, 5, 7 e 8 decididos na implementação, pelo padrão
+mais conservador):** o Lab Santé manda o orçamento com dois textos ("A prazo" e "À vista"); a
+seção "Mensagem de envio" das Regras deixa de ter um modelo só.
+1. **Shape:** `sendMessage = { templates: SendMessageTemplate[] }`, com
+   `SendMessageTemplate = { name, text }`. De **1 a 5** modelos (`SEND_MESSAGE_TEMPLATES_MAX`);
+   `name` com 1..40 caracteres depois do `trim` (`SEND_MESSAGE_TEMPLATE_NAME_MAX`); `text` com
+   1..1000 (`SEND_MESSAGE_TEMPLATE_MAX`, igual ao antigo) e só com as variáveis de
+   `SEND_MESSAGE_VARIABLES`; **nomes únicos** sem diferenciar maiúsculas de minúsculas. **O
+   primeiro da lista é o padrão** — é o que o painel de envio abre. Não há `id`: a posição é a
+   identidade, e "tornar padrão" é mover para o topo. A validação mora em `shared/`
+   (`validateSendMessageTemplates`), a mesma no `PATCH`, na leitura e na tela.
+2. **Formato antigo sem migração de dado:** a linha gravada com `sendMessage.template` (o Santé tem
+   o texto "a prazo" com `{valor}`, `{numero_orcamento}` e `___`) é lida por `readFunnelRules` como
+   uma lista de um modelo, `[{ name: "Padrão", text: <o template gravado> }]`. A conversão é
+   explícita (não cai no padrão): só acontece quando `templates` não vale e `template` é um texto
+   válido pelas regras antigas. `template` inválido continua caindo no padrão, como qualquer chave
+   com valor errado. A linha só passa para o formato novo no primeiro `PATCH` que mudar alguma
+   coisa (o upsert grava o objeto inteiro); até lá o JSON antigo fica como está, e o `oldValues`
+   do audit desse primeiro `PATCH` já sai no formato novo (é o lido).
+3. **`PATCH`:** `sendMessage.templates` é **lista trocada inteira**, como `roles`. Erros pelo
+   caminho: `sendMessage.templates` (não é lista, vazia, mais de 5),
+   `sendMessage.templates.<i>.name` / `.text` (tamanho, variável desconhecida, nome repetido —
+   no segundo nome igual), `sendMessage.templates.<i>.<chave>` = "Campo desconhecido".
+   Variável desconhecida continua recusada.
+4. **`sendMessage.template` (formato antigo) continua aceito no `PATCH`**, para a aba aberta numa
+   versão anterior da tela não perder o "Salvar" depois do deploy: troca **só o texto do primeiro
+   modelo** (o padrão), mantendo o nome e os demais. Mesmas regras de antes, erro em
+   `fields["sendMessage.template"]`. Mandar `template` e `templates` juntos → erro em
+   `sendMessage.template`. A resposta é sempre o formato novo.
+5. **Painel de envio (`SendProposalPanel`):** com 2+ modelos aparece o `Select` "Modelo da
+   mensagem", aberto no padrão; com 1 modelo, nada muda na tela. Trocar de modelo re-renderiza a
+   mensagem, que continua editável. **Se a atendente já editou o texto** (ele difere do render do
+   modelo atual), a tela **pergunta antes de sobrescrever** ("Trocar o modelo? O texto que você
+   editou será substituído."); cancelando, o modelo e o texto ficam como estavam. Sem edição, troca
+   direto.
+6. **Regras → Mensagem de envio:** um cartão por modelo (nome, texto, botões de variável e a
+   pré-visualização que já existia), com "Tornar padrão", "Subir", "Descer" e "Remover" (remover
+   some com um modelo só) e "Adicionar modelo" (some com 5). O novo nasce com nome
+   "Modelo N" livre e o texto do padrão vigente (`DEFAULT_SEND_MESSAGE_TEMPLATE`).
+7. **`{prazo_entrega}` não foi criada.** O catálogo tem prazo por exame (`exam_catalog
+   .turnaround_hours`, SCHEMA §7), mas o painel de envio só serve o cartão do Bitlab, que **não
+   tem itens** (D-195 item 2): não há de onde tirar "o maior prazo entre os itens". Fica como
+   texto fixo (`___`) que a atendente completa na mensagem editável. Evolução possível: prazo
+   vindo do orçamento do Bitlab, se a API passar a mandar os exames.
+8. **Parcelas não viraram variável.** "Crédito em até ___ vezes sem juros de R$ ___" depende de
+   regra de parcelamento (número de parcelas por faixa de valor, valor mínimo da parcela) que o
+   laboratório não definiu. Fica como texto que a atendente completa. Evolução possível: regra de
+   parcelamento nas Regras + variáveis `{parcelas}` e `{valor_parcela}` calculadas do total.
+9. **Auditoria:** a mesma `update_funnel_rules` (objeto inteiro antes × depois), só quando muda.
+**Motivo:** o laboratório tem mais de um texto de envio conforme a forma de pagamento; com um modelo
+só, a atendente reescrevia a mensagem toda vez. Ler o formato antigo como lista de um evita
+migração de JSON e mantém o texto do Santé intacto.
+**Impacto:** `shared/types/funnel-rules.types.ts` (`SendMessageTemplate`, `SendMessageRules`,
+`UpdateSendMessageRules`, `validateSendMessageTemplates`, constantes); `funnel-rules.service.ts`
+(leitura e `PATCH`); frontend `Settings/SendMessageSection.tsx` (novo), `Settings/Rules.tsx`,
+`proposal/SendProposalPanel.tsx`, `proposal/ProposalModal.tsx`. API_CONTRACTS §6c/§3, PAGES §6/§21,
+SCHEMA §32. Sem migração.

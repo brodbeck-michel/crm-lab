@@ -492,8 +492,9 @@ nunca "sem permissão" (não vazar existência).
   "Conciliado" continua o mesmo. Desde a D-252 o selo "Pré-cadastro feito" vale também para a
   proposta de origem `crm` (mesma condição).
 - **Selo "Parado há N h" (CRMLAB-59, D-207):** cartão em `novo_contato` com a regra
-  "Novo orçamento parado" ligada e `stageEnteredAt` há N horas ou mais leva o
-  `Chip tone="attention"` "Parado há {N} h" (N = horas inteiras desde a entrada na coluna).
+  "Novo orçamento parado" ligada e `stageEnteredAt` há N minutos ou mais (D-267) leva o
+  `Chip tone="attention"` "Parado há {N} min" abaixo de 1 h e "Parado há {N} h" (horas inteiras)
+  depois (`formatStaleDuration`).
   Calculado no front com `isStaleNewBudget` (`@crm-lab/shared`), a mesma função do motor; o
   pipeline passa `automation.staleNewBudgetAlert` das Regras (`useEffectiveFunnelRules`) para
   `StageColumn` → `ProposalCard`. O alerta em si chega pelo WS `proposal.stale_alert` como toast.
@@ -591,6 +592,10 @@ nunca "sem permissão" (não vazar existência).
     `SearchInput`), com as **sugeridas** em cima (chip "Sugerida", `nameSimilarity` > 0) e a
     mensagem do modelo das Regras num `TextArea` editável. "Enviar" só liga depois de clicar
     numa conversa. Erro do envio aparece no painel (`role="alert"`) e ele fica aberto.
+    **Desde o CRMLAB-95 (D-265 item 5):** com 2+ modelos nas Regras, um `Select` "Modelo da
+    mensagem" acima do texto, aberto no padrão (o primeiro). Trocar re-renderiza a mensagem; se a
+    atendente já tinha editado o texto, `window.confirm` antes de sobrescrever (cancelar mantém
+    modelo e texto). Vale também no [Reenviar mensagem].
   - **Depois do envio (D-202):** linha "Conversa: {nome} · {telefone}"; para a dona, gestor ou
     admin, com o cartão aberto, [Trocar conversa] (o mesmo painel, só a lista) e, em
     `orcamento_enviado`/`follow_up`/`negociacao`, [Reenviar mensagem] nas ações (o painel, só a
@@ -1362,16 +1367,20 @@ seu próprio [Salvar] (endpoint e permissão diferentes).
    desabilitado quando a automação está desligada): Requisição → Negociação; Pagamento → Ganho;
    Orçamento enviado há **X dias** → Follow-up; Negociação sem pagamento há **Y dias** →
    Follow-up; Follow-up há **Z dias** → Perdido (motivo "Silêncio"); Alerta de "Novo orçamento"
-   parado há **N horas**. Mais o `SegmentedControl` "Contar em dias corridos | dias úteis". Nota
+   parado há **N minutos** (`Input` "Minutos", 5..43200, com a dica "= N h" — D-267). Mais o `SegmentedControl` "Contar em dias corridos | dias úteis". Nota
    no cartão (desde o CRMLAB-59, D-205): "Os prazos contam desde que o cartão entrou no estágio e
    são conferidos a cada poucos minutos. Dias úteis: segunda a sexta, sem descontar feriados."
 3. **Movimentação manual (travas)** — `Toggle` "Reabrir Ganho/Perdido" + caixas "Atendente" /
    "Gestor" (o admin sempre pode, dito no texto); `Toggle` "Pular etapas"; `Toggle` "Exigir
    motivo ao marcar Perdido"; `Toggle` "Gestor pode mover card de outra atendente".
-4. **Mensagem de envio** — `TextArea` do modelo, os botões de variável (`{paciente}`,
-   `{numero_orcamento}`, `{valor}`, `{convenio}`) que inserem no fim do texto, erro em tempo real
-   para variável desconhecida (`findUnknownTemplateVariables`) e a **pré-visualização** com dados
-   de exemplo, pela mesma `renderSendMessageTemplate` que o envio vai usar.
+4. **Mensagem de envio** (`Settings/SendMessageSection.tsx` desde o CRMLAB-95, D-265) — um
+   cartão por modelo, de 1 a 5: `Input` "Nome do modelo", `TextArea` do texto, os botões de
+   variável (`{paciente}`, `{numero_orcamento}`, `{valor}`, `{convenio}`) que inserem no fim do
+   texto, erro em tempo real (`validateSendMessageTemplates`: tamanho, nome repetido, variável
+   desconhecida) e a **pré-visualização** com dados de exemplo, pela mesma
+   `renderSendMessageTemplate` que o envio vai usar. O primeiro leva o chip "Padrão"; os outros têm
+   [Tornar padrão] (move para o topo). [Subir]/[Descer] reordenam, [Remover] some com um modelo
+   só, [Adicionar modelo] some com 5. Salva junto com o formulário (a lista vai inteira no diff).
 5. **Descontos e aprovação** — **só aparece com "Criar pelo CRM" ligado** (o valor salvo). Texto da
    regra (dentro da alçada aprova sozinha; acima vai para o gestor) e os limites padrão por perfil
    (`DEFAULT_DISCOUNT_LIMIT`). O limite de cada pessoa se edita em Usuários & Permissões — link
@@ -1387,7 +1396,9 @@ seu próprio [Salvar] (endpoint e permissão diferentes).
   1º e o 2º: `Toggle`, `Input` de horas ("Horas sem resposta" / "Horas depois do 1º") e
   `TextArea` "Mensagem", desabilitados com o disparo desligado. O 2º fica travado ("Ligue o 1º
   reingajamento para usar o 2º") com o 1º desligado, e desligar o 1º desliga o 2º junto. Texto
-  vazio bloqueia salvar. Nota: vale só para conversa aberta e WhatsApp por QR Code, respeita o
+  vazio bloqueia salvar. Cada mensagem tem o botão `{paciente}` (insere a variável), a
+  **pré-visualização** com o nome de exemplo "Maria Souza" (→ "Maria") e erro, que também bloqueia
+  salvar, para variável desconhecida ou mensagem só com a variável (D-266). Nota: vale só para conversa aberta e WhatsApp por QR Code, respeita o
   horário de funcionamento (link para Canais) e não envia em feriado. Gestor/admin leem os
   canais (`useChannelSettings`): WhatsApp na API oficial → aviso "Inativo para este canal".
 - **Alerta de tempo de resposta** (`id="alerta-resposta"`, logo depois do reingajamento,

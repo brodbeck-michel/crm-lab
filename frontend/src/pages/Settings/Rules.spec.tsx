@@ -127,14 +127,15 @@ describe('Regras (/settings/rules)', () => {
     }
   });
 
-  it('mostra os padrões: prazos 3/7/15 dias, 4 h, follow-up → perdido desligado', () => {
+  it('mostra os padrões: prazos 3/7/15 dias, 240 min, follow-up → perdido desligado', () => {
     signIn('manager');
     renderPage();
 
     const automacao = section(/automação do funil/i);
     const dias = within(automacao).getAllByLabelText('Dias');
     expect(dias.map((input) => (input as HTMLInputElement).value)).toEqual(['3', '7', '15']);
-    expect(within(automacao).getByLabelText('Horas')).toHaveValue(4);
+    expect(within(automacao).getByLabelText('Minutos')).toHaveValue(240);
+    expect(within(automacao).getByTestId('dica-minutos')).toHaveTextContent('240 min = 4 h');
     expect(within(automacao).getByRole('switch', { name: /follow-up há z dias/i })).toHaveAttribute(
       'aria-checked',
       'false',
@@ -222,7 +223,9 @@ describe('Regras (/settings/rules)', () => {
       'Olá, Maria Souza! Segue o orçamento nº 70034 (Particular), no valor de R$ 179,80.',
     );
 
-    const modelo = screen.getByLabelText('Modelo da mensagem');
+    const modelo = within(screen.getByRole('group', { name: 'Modelo 1' })).getByLabelText(
+      'Texto do modelo',
+    );
     await user.clear(modelo);
     // `{` é tecla especial do user-event: `{{` digita uma chave literal.
     await user.type(modelo, 'Oi {{nome}');
@@ -233,10 +236,110 @@ describe('Regras (/settings/rules)', () => {
   it('botão de variável insere no fim do modelo', async () => {
     const user = userEvent.setup();
     signIn('manager');
-    renderPage({ ...DEFAULT_FUNNEL_RULES, sendMessage: { template: 'Total: ' } });
+    renderPage({
+      ...DEFAULT_FUNNEL_RULES,
+      sendMessage: { templates: [{ name: 'Padrão', text: 'Total: ' }] },
+    });
 
-    await user.click(screen.getByRole('button', { name: '{valor}' }));
-    expect(screen.getByLabelText('Modelo da mensagem')).toHaveValue('Total: {valor}');
+    const card = within(screen.getByRole('group', { name: 'Modelo 1' }));
+    await user.click(card.getByRole('button', { name: '{valor}' }));
+    expect(card.getByLabelText('Texto do modelo')).toHaveValue('Total: {valor}');
+  });
+
+  describe('modelos da mensagem de envio (CRMLAB-95, D-265)', () => {
+    const TWO: FunnelRules = {
+      ...DEFAULT_FUNNEL_RULES,
+      sendMessage: {
+        templates: [
+          { name: 'A prazo', text: 'Total {valor} em até ___ vezes' },
+          { name: 'À vista', text: 'Total {valor} à vista' },
+        ],
+      },
+    };
+
+    it('adiciona um modelo e salva a lista inteira', async () => {
+      const user = userEvent.setup();
+      signIn('manager');
+      renderPage();
+
+      await user.click(screen.getByRole('button', { name: 'Adicionar modelo' }));
+      const novo = within(screen.getByRole('group', { name: 'Modelo 2' }));
+      expect(novo.getByLabelText('Nome do modelo')).toHaveValue('Modelo 2');
+      await user.clear(novo.getByLabelText('Nome do modelo'));
+      await user.type(novo.getByLabelText('Nome do modelo'), 'À vista');
+      await user.click(screen.getByRole('button', { name: 'Salvar regras' }));
+
+      expect(mutate.mock.calls[0]?.[0]).toEqual({
+        sendMessage: {
+          templates: [
+            DEFAULT_FUNNEL_RULES.sendMessage.templates[0],
+            { name: 'À vista', text: DEFAULT_FUNNEL_RULES.sendMessage.templates[0]?.text },
+          ],
+        },
+      });
+    });
+
+    it('tornar padrão move para o topo; o chip "Padrão" acompanha', async () => {
+      const user = userEvent.setup();
+      signIn('manager');
+      renderPage(TWO);
+
+      const segundo = within(screen.getByRole('group', { name: 'Modelo 2' }));
+      expect(segundo.queryByText('Padrão')).not.toBeInTheDocument();
+      await user.click(segundo.getByRole('button', { name: 'Tornar padrão' }));
+
+      const primeiro = within(screen.getByRole('group', { name: 'Modelo 1' }));
+      expect(primeiro.getByLabelText('Nome do modelo')).toHaveValue('À vista');
+      expect(primeiro.getByText('Padrão')).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Salvar regras' }));
+      expect(mutate.mock.calls[0]?.[0]).toEqual({
+        sendMessage: {
+          templates: [TWO.sendMessage.templates[1], TWO.sendMessage.templates[0]],
+        },
+      });
+    });
+
+    it('descer, remover e o limite de 5', async () => {
+      const user = userEvent.setup();
+      signIn('manager');
+      renderPage(TWO);
+
+      await user.click(
+        within(screen.getByRole('group', { name: 'Modelo 1' })).getByRole('button', {
+          name: 'Descer',
+        }),
+      );
+      expect(
+        within(screen.getByRole('group', { name: 'Modelo 1' })).getByLabelText('Nome do modelo'),
+      ).toHaveValue('À vista');
+
+      await user.click(
+        within(screen.getByRole('group', { name: 'Modelo 2' })).getByRole('button', {
+          name: 'Remover',
+        }),
+      );
+      expect(screen.queryByRole('group', { name: 'Modelo 2' })).not.toBeInTheDocument();
+      // Com um modelo só, não há o que remover.
+      expect(screen.queryByRole('button', { name: 'Remover' })).not.toBeInTheDocument();
+
+      for (let i = 0; i < 4; i += 1) {
+        await user.click(screen.getByRole('button', { name: 'Adicionar modelo' }));
+      }
+      expect(screen.getAllByRole('group', { name: /^Modelo \d$/ })).toHaveLength(5);
+      expect(screen.queryByRole('button', { name: 'Adicionar modelo' })).not.toBeInTheDocument();
+    });
+
+    it('nome repetido bloqueia o salvar', async () => {
+      const user = userEvent.setup();
+      signIn('manager');
+      renderPage(TWO);
+
+      const segundo = within(screen.getByRole('group', { name: 'Modelo 2' }));
+      await user.clear(segundo.getByLabelText('Nome do modelo'));
+      await user.type(segundo.getByLabelText('Nome do modelo'), 'a prazo');
+      expect(segundo.getByText('Já existe um modelo com este nome')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Salvar regras' })).toBeDisabled();
+    });
   });
 
   it('"Criar pelo CRM" desligado (salvo) esconde Descontos e aprovação', () => {
@@ -253,7 +356,9 @@ describe('Regras (/settings/rules)', () => {
     renderPage();
 
     expect(screen.getByRole('switch', { name: /pular etapas/i })).toBeDisabled();
-    expect(screen.getByLabelText('Modelo da mensagem')).toBeDisabled();
+    expect(screen.getByLabelText('Texto do modelo')).toBeDisabled();
+    expect(screen.getByLabelText('Nome do modelo')).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Adicionar modelo' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Salvar regras' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: /comissões/i })).not.toBeInTheDocument();
     expect(useCommissionSettings).not.toHaveBeenCalled();
@@ -272,6 +377,21 @@ describe('Regras (/settings/rules)', () => {
 
     expect(await screen.findByText('Fora da faixa')).toBeInTheDocument();
   });
+  it('alerta de "Novo orçamento" parado em minutos: 15 salva só o que mudou (CRMLAB-97, D-267)', async () => {
+    const user = userEvent.setup();
+    signIn('manager');
+    renderPage();
+    const automacao = section(/automação do funil/i);
+    const minutes = within(automacao).getByLabelText('Minutos');
+    await user.clear(minutes);
+    await user.type(minutes, '15');
+    expect(within(automacao).getByTestId('dica-minutos')).toHaveTextContent('Conferido a cada 5 minutos.');
+    await user.click(screen.getByRole('button', { name: 'Salvar regras' }));
+    expect(mutate.mock.calls[0]?.[0]).toEqual({
+      automation: { staleNewBudgetAlert: { minutes: 15 } },
+    });
+  });
+
   describe('reingajamento (CRMLAB-62)', () => {
     it('padrão: 1º e 2º desligados, 1 h e 24 h, 2º travado sem o 1º', () => {
       signIn('manager');
@@ -326,6 +446,46 @@ describe('Regras (/settings/rules)', () => {
       const box = section(/reingajamento da conversa/i);
       await user.click(within(box).getByRole('switch', { name: /1º reingajamento/i }));
       await user.clear(within(box).getAllByLabelText('Mensagem')[0]!);
+      expect(screen.getByRole('button', { name: 'Salvar regras' })).toBeDisabled();
+    });
+
+    it('{paciente}: botão insere, prévia mostra o primeiro nome e salva (CRMLAB-96, D-266)', async () => {
+      const user = userEvent.setup();
+      signIn('manager');
+      renderPage();
+      const box = section(/reingajamento da conversa/i);
+      await user.click(within(box).getByRole('switch', { name: /1º reingajamento/i }));
+      const message = within(box).getAllByLabelText('Mensagem')[0]!;
+      await user.clear(message);
+      await user.type(message, 'Olá, ');
+      await user.click(within(box).getAllByRole('button', { name: '{paciente}' })[0]!);
+      expect(message).toHaveValue('Olá, {paciente}');
+      expect(within(box).getByTestId('preview-reingajamento-first')).toHaveTextContent('Olá, Maria');
+      await user.click(screen.getByRole('button', { name: 'Salvar regras' }));
+      expect(mutate.mock.calls[0]?.[0]).toEqual({
+        reengagement: { first: { enabled: true, message: 'Olá, {paciente}' } },
+      });
+    });
+
+    it('mensagem antiga sem variável: prévia igual ao texto', () => {
+      signIn('manager');
+      renderPage();
+      expect(screen.getByTestId('preview-reingajamento-second')).toHaveTextContent(
+        DEFAULT_FUNNEL_RULES.reengagement.second.message,
+      );
+    });
+
+    it('variável desconhecida mostra erro e bloqueia salvar (D-266)', async () => {
+      const user = userEvent.setup();
+      signIn('manager');
+      renderPage();
+      const box = section(/reingajamento da conversa/i);
+      await user.click(within(box).getByRole('switch', { name: /1º reingajamento/i }));
+      const message = within(box).getAllByLabelText('Mensagem')[0]!;
+      await user.clear(message);
+      // `{` é tecla especial no user-event: `{{` digita uma chave.
+      await user.type(message, 'Oi {{nome}');
+      expect(within(box).getByText('Variável desconhecida: {nome}')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Salvar regras' })).toBeDisabled();
     });
 

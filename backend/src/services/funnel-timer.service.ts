@@ -24,6 +24,7 @@ import {
   buildAllowedTransitions,
   describeStageAutomation,
   hoursSince,
+  minutesSince,
   isDelayElapsed,
   isStaleNewBudget,
   PROPOSAL_STATUS_LABELS,
@@ -47,7 +48,8 @@ import type { ReengagementService } from './reengagement.service.js';
 /** Teto por regra, por laboratorio, por tique (D-205 item 7). */
 export const FUNNEL_TIMER_BATCH = 200;
 
-const HOUR_MS = 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 
 /** Um tique por vez (D-205 item 5): tique lento nao empilha o seguinte. */
@@ -250,7 +252,7 @@ export function createFunnelTimerService(deps: FunnelTimerServiceDeps): FunnelTi
   async function runStaleAlert(tenantId: string, rules: FunnelRules, at: Date): Promise<number> {
     const rule = rules.automation.staleNewBudgetAlert;
     if (!rule.enabled) return 0;
-    const cutoff = new Date(at.getTime() - rule.hours * HOUR_MS);
+    const cutoff = new Date(at.getTime() - rule.minutes * MINUTE_MS);
     const candidates = await db.withTenant(tenantId, (tx) =>
       selectCandidates(
         tx,
@@ -279,14 +281,20 @@ export function createFunnelTimerService(deps: FunnelTimerServiceDeps): FunnelTi
       });
       if (recipients === null) continue;
       alerted += 1;
-      const hours = hoursSince(new Date(candidate.entered_at), at);
+      const enteredAt = new Date(candidate.entered_at);
+      const minutes = minutesSince(enteredAt, at);
+      const hours = hoursSince(enteredAt, at);
       for (const userId of recipients) {
-        wsHub.emitToUser(tenantId, userId, 'proposal.stale_alert', { proposalId: candidate.id, hours });
+        wsHub.emitToUser(tenantId, userId, 'proposal.stale_alert', {
+          proposalId: candidate.id,
+          minutes,
+          hours,
+        });
       }
       logger.info('funnel_timer.stale_alert', {
         tenantId,
         proposalId: candidate.id,
-        hours,
+        minutes,
         recipients: recipients.length,
       });
     }

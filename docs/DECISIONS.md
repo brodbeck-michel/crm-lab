@@ -5356,3 +5356,201 @@ via a conversa da colega.
 `ConversationPanel.tsx` (menu "Participantes"), `ConversationList.tsx` (chip),
 `pages/Attendance/index.tsx`, `hooks/useNewMessageAlerts.ts`. SCHEMA §39, API_CONTRACTS §2,
 BUSINESS_RULES §16.
+
+## 2026-10-09 — Mensagem fora do horário e boas-vindas (CRMLAB-94)
+
+### D-264: Resposta automática fora do horário (e boas-vindas) disparada pela mensagem do paciente
+**Contexto:** Configurações → Canais grava `autoMessages.offHours` e `autoMessages.greeting` em
+`tenant_settings` desde a Onda 6 (D-065), mas **nenhum serviço enviava** — conferido em
+09/10/2026: só `channel-settings.service.ts`/`.repository.ts` e os seeds tocavam nas colunas.
+**Decisão (implementação; regras de negócio do card CRMLAB-94, padrões conservadores onde o card
+não disse):**
+1. **Gatilho:** a mensagem **nova** do paciente. `MessageService.createFromPatient`, depois do
+   INSERT que deu certo (reentrega deduplicada não dispara), chama
+   `AutoReplyService.afterPatientMessage` **sem `await`** (fire-and-forget, mesmo padrão do
+   e-mail do `AuthService`, D-172). O serviço **nunca lança**: qualquer erro vira `warn`
+   `auto_reply.failed`. Assim o processamento da mensagem recebida e o `200` do webhook não
+   dependem do envio. **Por que não o tique do motor de tempo (D-211):** a resposta tem de sair
+   na hora, e o tique roda a cada `FUNNEL_TIMER_INTERVAL_MS` (e pode estar desligado); o gatilho
+   já existe e não exige varrer conversas.
+2. **Laboratório fechado** = há horário configurado (`tenant_settings.business_hours`) **e** o
+   instante da mensagem está fora da faixa do dia **ou** cai em feriado (nacional, com Carnaval e
+   Corpus Christi, ou de `tenant_holidays`) — a mesma régua do reingajamento (`nextOpening`,
+   `isHoliday`, `localDateOf`; D-212/D-213). **Sem nenhum dia configurado = sempre aberto**
+   (D-212 item 1), **inclusive em feriado** — padrão conservador: sem expediente cadastrado o CRM
+   não presume que o laboratório fecha.
+3. **Período fechado = o instante da reabertura** (`offHoursReopening` em `shared/`): o primeiro
+   instante `>=` a mensagem em que o laboratório está aberto e não é feriado. Todas as mensagens
+   da mesma noite (ou do fim de semana, ou do feriado emendado) têm a mesma reabertura → **uma
+   resposta por período por conversa**. A busca vai até 31 dias; não achou reabertura → não envia.
+4. **Trava no banco:** tabela `conversation_auto_replies` (migração 054), uma linha por resposta
+   decidida, gravada **antes** do envio (reserva, como D-211 item 3). Índices únicos parciais:
+   `(conversation_id, reopens_at)` para `offhours` e `(conversation_id)` para `greeting`. Webhooks
+   concorrentes caem no `ON CONFLICT DO NOTHING`; se o processo cair entre a linha e o envio, o
+   paciente fica sem a mensagem, nunca com duas. Falha do canal: linha `failed`, mensagem
+   `failed`, `warn` `auto_reply.failed`. **Não há nova tentativa.**
+5. **Só canal que envia:** WhatsApp ativo **em `qr`** (D-214, `isQrWhatsAppActive`) e conversa
+   `active` de `whatsapp`. API oficial da Meta não entra (mesma condição do reingajamento).
+6. **Marcada como automática:** `messages.automation = 'offhours' | 'greeting'` (CHECK ampliado
+   na 054), `sender_id` nulo, "Mensagem automática" na tela — pelo mesmo
+   `MessageService.createAutomated` do reingajamento, que passou a receber o tipo. Não assume a
+   conversa, não é resposta da atendente no alerta (D-254) nem no relatório de tempo de resposta
+   (D-257) e não vira âncora do reingajamento: todos filtram `automation IS NULL`.
+7. **Boas-vindas (`greeting`) entra junto**, porque é o mesmo gatilho e a mesma trava: sai
+   quando a mensagem do paciente é a **primeira mensagem da conversa** (nenhuma outra, de
+   qualquer lado, antes dela) e o laboratório está **aberto**. Uma vez por conversa, para sempre
+   — a conversa é única por telefone, então é o primeiro contato daquele número com o
+   laboratório; conversas que já existiam nunca recebem. **Fechado, sai só a de fora do
+   horário** (padrão conservador: no máximo uma mensagem automática por mensagem do paciente);
+   a boas-vindas não fica para depois.
+8. Texto e liga/desliga lidos **no momento da mensagem**; `enabled` com texto vazio não envia.
+**Motivo:** a configuração existia na tela e não fazia nada — o laboratório achava que o paciente
+da noite estava sendo avisado.
+**Impacto:** migração `054_conversation_auto_replies.sql`; `shared/types/auto-reply.types.ts`
+(`offHoursReopening`, `AutoReplyKind`); `backend/src/services/auto-reply.service.ts` (novo),
+`repositories/auto-reply.repository.ts` (novo), `message.service.ts` (`createAutomated` com tipo,
+gancho em `createFromPatient`), `message.repository.ts`, `channel-settings.service.ts`
+(`readAutoReplySettings`), `controllers/webhook.routes.ts` (liga o gancho). SCHEMA §4 e §40,
+SERVICES §28 e §33, BUSINESS_RULES §3, API_CONTRACTS §6 (nota em `autoMessages`).
+
+### D-268: Motivo de perda "Horário de atendimento"
+**Decisão (Michel, CRMLAB-98, 09/10/2026):** `LossReason` ganha o sexto valor
+`horario_atendimento`, rótulo **"Horário de atendimento"** — o paciente desistiu porque o horário
+do laboratório não atendia. Entra **antes de `outro`** em `LOSS_REASONS` (ordem do seletor do
+modal de Perdido e das barras do gráfico de motivos da Conversão). `outro` continua o último.
+1. **Sem migração:** `proposals.reason_lost` é `VARCHAR(255)` sem `CHECK` (migração 001); a lista
+   válida mora só em `LOSS_REASONS` (`@crm-lab/shared`), lida pelo `z.enum` da rota e por
+   `ProposalService` (`INVALID_LOSS_REASON` traz `allowed` com os 6).
+2. **Relatório:** `GET /analytics/conversion` passa a trazer **6 chaves** em `lossReasons`, sempre,
+   zero onde não houve perda. Perdas antigas não mudam de motivo.
+3. **Gráfico "Motivos de Perda":** passa a ler `LOSS_REASON_LABELS` (antes tinha um mapa próprio
+   com chaves que não existem no contrato e exibia a chave crua — `exame_indisponivel`). Corrigido
+   no mesmo card porque o motivo novo apareceria como `horario_atendimento`.
+4. **Resultados/PDF/Excel:** não exibem motivo de perda — nada a mudar.
+**Motivo:** o Santé registrava essas perdas como "Outro" e perdia a leitura do motivo.
+**Impacto:** `shared/types/proposal.types.ts`; `LossReasonsChart.tsx`; seed dev (uma das 8
+perdas troca `preco` por `horario_atendimento`, cobrindo os 6 motivos); API_CONTRACTS §4/§8,
+BUSINESS_RULES §3, CONVENTIONS, SCHEMA §Seed; specs de analytics (back, front e e2e).
+
+### D-266: Reingajamento aceita `{paciente}` — o primeiro nome, ou nada
+**Decisão (Michel, CRMLAB-96, 09/10/2026; itens 4 e 5 decididos na implementação, pelo padrão
+mais conservador):** as duas mensagens do reingajamento (`reengagement.first/second.message`,
+D-211) deixam de ser texto fixo e aceitam **uma** variável, `{paciente}`
+(`REENGAGEMENT_MESSAGE_VARIABLES = ['paciente']`, lista própria — não é a do `sendMessage`).
+1. **Valor:** o **primeiro nome** do paciente, com capitalização normal ("MARIA DA SILVA" →
+   "Maria", "ana-luísa" → "Ana-Luísa"). Vem da ficha do paciente vinculada à conversa
+   (`patients.name`); sem ficha ou ficha sem nome, do nome do contato da conversa
+   (`conversations.patient_name`). Primeiro nome = a primeira sequência de letras do nome (emoji,
+   `~` e pontuação do nome do WhatsApp ficam de fora). Lido no tique que envia.
+2. **Sem nome** (nenhum dos dois, só símbolos, paciente anonimizado — D-063): a variável **some
+   sem deixar sobra**. Espaços e vírgulas logo antes dela vão junto ("Olá {paciente}! 😊" →
+   "Olá! 😊"; "Olá, {paciente}." → "Olá."); no começo de linha, vão a vírgula e os espaços logo
+   depois ("{paciente}, tudo bem?" → "tudo bem?").
+3. **Mensagem sem variável sai igual** — o render só toca em `{paciente}`. Função pura
+   `renderReengagementMessage(message, firstName)` em `shared/types/reengagement.types.ts`,
+   com `firstNameOf(fullName)` e `findUnknownReengagementVariables(message)`.
+4. **Validação só no `PATCH`**, e só da mensagem enviada no patch: outra variável `{x}` →
+   `VALIDATION_ERROR` em `fields["reengagement.<step>.message"]` ("Variável desconhecida: {x}"),
+   e mensagem que **só tem** a variável (sem nome ficaria vazia) também é recusada. A **leitura**
+   (`readFunnelRules`) não reprova o que já está gravado: uma mensagem antiga com `{` `}` literal
+   era texto fixo válido e não volta ao padrão em silêncio; no envio, `{x}` desconhecido sai como
+   está.
+5. **Tela:** botão `{paciente}` que insere a variável e **prévia** de cada mensagem com o nome de
+   exemplo "Maria Souza" (→ "Maria"); variável desconhecida aparece como erro e bloqueia salvar.
+**Motivo:** o Santé quer a mensagem automática com o nome do paciente, como a de envio do
+orçamento; sem nome, a frase precisa continuar natural.
+**Impacto:** `shared/types/reengagement.types.ts`; `reengagement.repository.ts`
+(`selectSilences` traz o nome), `reengagement.service.ts`, `funnel-rules.service.ts`;
+`ReengagementSection.tsx`. API_CONTRACTS §6c, SERVICES §28, BUSINESS_RULES §3, PAGES §21. Sem
+migração.
+
+### D-267: Alerta de "Novo orçamento" parado em minutos (emenda à D-207)
+**Decisão (Michel, CRMLAB-97, 09/10/2026; itens 2 a 6 decididos na implementação, pelo padrão
+mais conservador):** `automation.staleNewBudgetAlert` passa de `{ enabled, hours }` (1..720) para
+**`{ enabled, minutes }`**, inteiro **5..43200** (5 min a 30 dias,
+`STALE_NEW_BUDGET_MINUTES_MIN`/`_MAX`). Padrão: ligado, **240 min** (as mesmas 4 h de antes).
+1. **Linha antiga sem migração:** `funnel_rules` gravado com `hours` (o Santé em prod tem
+   `hours: 1`) é lido como `minutes = hours × 60` (60 min) — conversão explícita em
+   `readFunnelRules`, antes do merge com os padrões (sem ela o merge descartaria a chave e o
+   laboratório cairia em 240 min). `hours` inválido (fora de 1..720) segue a regra de sempre: cai
+   no padrão. Com `minutes` válido gravado, `minutes` vence. A linha só é reescrita no próximo
+   `PATCH` (que grava o objeto inteiro, já em minutos).
+2. **`PATCH` não aceita mais `hours`** nessa regra: `fields["automation.staleNewBudgetAlert.hours"]
+   = "Campo desconhecido"`, como qualquer chave fora do contrato. Aba antiga aberta durante o
+   deploy recebe o erro e recarrega; nada é gravado errado. Não há outro cliente da API.
+3. **Resolução do tique:** o motor de tempo roda a cada **5 min** (`FUNNEL_TIMER_INTERVAL_MS`,
+   D-205) — por isso o mínimo é 5. O alerta sai no primeiro tique depois do prazo, até ~5 min
+   depois dele. O selo do cartão é calculado no navegador e aparece na hora exata.
+4. **Contagem:** continua em tempo **corrido** (D-207), qualquer `dayCounting` — sem expediente
+   nem feriado.
+5. **Selo e toast:** "Parado há **N min**" abaixo de 1 h; "Parado há **N h**" (horas inteiras) de
+   1 h em diante (`formatStaleDuration`). O WS `proposal.stale_alert` passa a levar
+   `{ proposalId, minutes, hours }` — `minutes` novo, `hours` (inteiras) mantido; o toast usa
+   `minutes`.
+6. **Tela:** um campo só, em **minutos**, com a dica do equivalente em horas ("240 min = 4 h").
+**Motivo:** o laboratório quer ser avisado em menos de uma hora (15–30 min) quando o paciente
+espera o orçamento.
+**Impacto:** `shared/types/funnel-rules.types.ts` (`StaleNewBudgetAlertRule` no lugar de
+`HoursRule`), `funnel-timer.types.ts` (`isStaleNewBudget` em minutos, `minutesSince`,
+`formatStaleDuration`), `websocket.types.ts`; `funnel-rules.service.ts`, `funnel-timer.service.ts`;
+`ProposalCard.tsx`, `StageColumn.tsx`, `api/ws.ts`, `Settings/Rules.tsx`. API_CONTRACTS §6c,
+SERVICES §27, BUSINESS_RULES §3, PAGES §5/§21. Sem migração.
+
+### D-265: Mensagem de envio com mais de um modelo, cada um com nome (CRMLAB-95)
+**Decisão (card CRMLAB-95, 09/10/2026; itens 4, 5, 7 e 8 decididos na implementação, pelo padrão
+mais conservador):** o Lab Santé manda o orçamento com dois textos ("A prazo" e "À vista"); a
+seção "Mensagem de envio" das Regras deixa de ter um modelo só.
+1. **Shape:** `sendMessage = { templates: SendMessageTemplate[] }`, com
+   `SendMessageTemplate = { name, text }`. De **1 a 5** modelos (`SEND_MESSAGE_TEMPLATES_MAX`);
+   `name` com 1..40 caracteres depois do `trim` (`SEND_MESSAGE_TEMPLATE_NAME_MAX`); `text` com
+   1..1000 (`SEND_MESSAGE_TEMPLATE_MAX`, igual ao antigo) e só com as variáveis de
+   `SEND_MESSAGE_VARIABLES`; **nomes únicos** sem diferenciar maiúsculas de minúsculas. **O
+   primeiro da lista é o padrão** — é o que o painel de envio abre. Não há `id`: a posição é a
+   identidade, e "tornar padrão" é mover para o topo. A validação mora em `shared/`
+   (`validateSendMessageTemplates`), a mesma no `PATCH`, na leitura e na tela.
+2. **Formato antigo sem migração de dado:** a linha gravada com `sendMessage.template` (o Santé tem
+   o texto "a prazo" com `{valor}`, `{numero_orcamento}` e `___`) é lida por `readFunnelRules` como
+   uma lista de um modelo, `[{ name: "Padrão", text: <o template gravado> }]`. A conversão é
+   explícita (não cai no padrão): só acontece quando `templates` não vale e `template` é um texto
+   válido pelas regras antigas. `template` inválido continua caindo no padrão, como qualquer chave
+   com valor errado. A linha só passa para o formato novo no primeiro `PATCH` que mudar alguma
+   coisa (o upsert grava o objeto inteiro); até lá o JSON antigo fica como está, e o `oldValues`
+   do audit desse primeiro `PATCH` já sai no formato novo (é o lido).
+3. **`PATCH`:** `sendMessage.templates` é **lista trocada inteira**, como `roles`. Erros pelo
+   caminho: `sendMessage.templates` (não é lista, vazia, mais de 5),
+   `sendMessage.templates.<i>.name` / `.text` (tamanho, variável desconhecida, nome repetido —
+   no segundo nome igual), `sendMessage.templates.<i>.<chave>` = "Campo desconhecido".
+   Variável desconhecida continua recusada.
+4. **`sendMessage.template` (formato antigo) continua aceito no `PATCH`**, para a aba aberta numa
+   versão anterior da tela não perder o "Salvar" depois do deploy: troca **só o texto do primeiro
+   modelo** (o padrão), mantendo o nome e os demais. Mesmas regras de antes, erro em
+   `fields["sendMessage.template"]`. Mandar `template` e `templates` juntos → erro em
+   `sendMessage.template`. A resposta é sempre o formato novo.
+5. **Painel de envio (`SendProposalPanel`):** com 2+ modelos aparece o `Select` "Modelo da
+   mensagem", aberto no padrão; com 1 modelo, nada muda na tela. Trocar de modelo re-renderiza a
+   mensagem, que continua editável. **Se a atendente já editou o texto** (ele difere do render do
+   modelo atual), a tela **pergunta antes de sobrescrever** ("Trocar o modelo? O texto que você
+   editou será substituído."); cancelando, o modelo e o texto ficam como estavam. Sem edição, troca
+   direto.
+6. **Regras → Mensagem de envio:** um cartão por modelo (nome, texto, botões de variável e a
+   pré-visualização que já existia), com "Tornar padrão", "Subir", "Descer" e "Remover" (remover
+   some com um modelo só) e "Adicionar modelo" (some com 5). O novo nasce com nome
+   "Modelo N" livre e o texto do padrão vigente (`DEFAULT_SEND_MESSAGE_TEMPLATE`).
+7. **`{prazo_entrega}` não foi criada.** O catálogo tem prazo por exame (`exam_catalog
+   .turnaround_hours`, SCHEMA §7), mas o painel de envio só serve o cartão do Bitlab, que **não
+   tem itens** (D-195 item 2): não há de onde tirar "o maior prazo entre os itens". Fica como
+   texto fixo (`___`) que a atendente completa na mensagem editável. Evolução possível: prazo
+   vindo do orçamento do Bitlab, se a API passar a mandar os exames.
+8. **Parcelas não viraram variável.** "Crédito em até ___ vezes sem juros de R$ ___" depende de
+   regra de parcelamento (número de parcelas por faixa de valor, valor mínimo da parcela) que o
+   laboratório não definiu. Fica como texto que a atendente completa. Evolução possível: regra de
+   parcelamento nas Regras + variáveis `{parcelas}` e `{valor_parcela}` calculadas do total.
+9. **Auditoria:** a mesma `update_funnel_rules` (objeto inteiro antes × depois), só quando muda.
+**Motivo:** o laboratório tem mais de um texto de envio conforme a forma de pagamento; com um modelo
+só, a atendente reescrevia a mensagem toda vez. Ler o formato antigo como lista de um evita
+migração de JSON e mantém o texto do Santé intacto.
+**Impacto:** `shared/types/funnel-rules.types.ts` (`SendMessageTemplate`, `SendMessageRules`,
+`UpdateSendMessageRules`, `validateSendMessageTemplates`, constantes); `funnel-rules.service.ts`
+(leitura e `PATCH`); frontend `Settings/SendMessageSection.tsx` (novo), `Settings/Rules.tsx`,
+`proposal/SendProposalPanel.tsx`, `proposal/ProposalModal.tsx`. API_CONTRACTS §6c/§3, PAGES §6/§21,
+SCHEMA §32. Sem migração.

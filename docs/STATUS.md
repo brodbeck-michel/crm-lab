@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-10-06 (CRMLAB-93 — participantes da conversa, branch `feature/CRMLAB-93-participantes-conversa`)
+**Última atualização:** 2026-10-09 (CRMLAB-94 — mensagem fora do horário e boas-vindas, branch `feature/CRMLAB-94-mensagem-fora-do-horario`)
 
 ---
 
@@ -3244,6 +3244,81 @@ CRMLAB-91).
 registro da visita (88) e linha do tempo (89). Ficam fora, para cards futuros se forem pedidos, os
 itens de "pesquisa de mercado" (resultado da visita em pedidos, classificação ABC, alerta de médico
 esquecido, roteiro do dia, materiais, metas) e a ligação do médico da proposta com o cadastro.
+
+### 🚧 CRMLAB-94 — mensagem fora do horário e boas-vindas (2026-10-09, aguardando validação)
+
+Branch `feature/CRMLAB-94-mensagem-fora-do-horario` (de `main` v1.35.0). Decisão D-264, migração 054.
+
+- **Antes:** Configurações → Canais gravava `offHours`/`greeting` (D-065), mas nenhum serviço enviava.
+- **Backend:** `AutoReplyService` (novo) chamado sem `await` por `MessageService.createFromPatient`
+  a cada mensagem nova do paciente (só no webhook). Laboratório fechado (fora de `business_hours`
+  ou feriado nacional/do laboratório, régua do reingajamento) → `offhours_message` **uma vez por
+  período fechado por conversa** (`offHoursReopening` em `shared/`); primeira mensagem da conversa
+  com o laboratório aberto → `greeting_message`, uma vez. Trava em `conversation_auto_replies`
+  (índices únicos parciais). Só WhatsApp por QR. Mensagem com `automation = 'offhours' | 'greeting'`
+  — não conta como resposta (alerta, relatório, âncora do reingajamento). Falha: `failed` + log,
+  sem reenvio.
+- **Testes:** `tests/auto-reply/auto-reply.spec.ts` (novo, 26) e `tests/db/rls-auto-replies.spec.ts`
+  (novo, 4); reengajamento, webhooks, whatsapp, channel-settings, holidays, kernel e conversations verdes.
+- **Pendente:** validação na hml (WhatsApp QR com horário configurado, mensagem à noite).
+
+### 🚧 CRMLAB-98 — motivo de perda "Horário de atendimento" (2026-10-09, aguardando validação)
+
+Branch `feature/CRMLAB-98-motivo-perda-horario` (de `main` v1.35.0). Decisão D-268, sem migração.
+
+- **Contrato:** `LossReason`/`LOSS_REASONS`/`LOSS_REASON_LABELS` ganham `horario_atendimento`
+  ("Horário de atendimento"), antes de `outro`; `lossReasons` do `/analytics/conversion` com 6 chaves.
+- **Tela:** modal de Perdido lista o motivo novo; gráfico "Motivos de Perda" da Conversão passa a
+  usar `LOSS_REASON_LABELS` (antes mostrava a chave crua).
+- **Testes:** `proposal-routes.spec.ts` (+1), `analytics-service.spec.ts` e `seed-dev.spec.ts`
+  (6 motivos), `LostReasonForm.spec.tsx` (+1), `Analytics.spec.tsx`, e2e `flow-4-analytics`.
+
+### 🚧 CRMLAB-96 — `{paciente}` no reingajamento (2026-10-09, aguardando validação)
+
+Branch `feature/CRMLAB-96-nome-no-reingajamento` (de `main` v1.35.0). Decisão D-266, sem migração.
+
+- **Shared:** `REENGAGEMENT_MESSAGE_VARIABLES`, `findUnknownReengagementVariables`, `firstNameOf`,
+  `renderReengagementMessage`, `hasReengagementTextBesidesVariables` (`reengagement.types.ts`).
+- **Backend:** `selectSilences` traz o nome (ficha vinculada, senão contato); o envio renderiza
+  `{paciente}` com o primeiro nome ou some sem sobra; `PATCH` recusa outra variável e mensagem só
+  com a variável (só a mensagem enviada no patch; a leitura não reprova o gravado).
+- **Tela:** botão `{paciente}`, pré-visualização com "Maria Souza" e erro que bloqueia salvar.
+- **Testes:** `reengagement-message.spec.ts` (novo, puro), `reengagement.spec.ts` (+4),
+  `funnel-rules.spec.ts` (+3), `Rules.spec.tsx` (+3).
+- **Pendente:** validação na hml.
+
+### 🚧 CRMLAB-97 — alerta de "Novo orçamento" parado em minutos (2026-10-09, aguardando validação)
+
+Branch `feature/CRMLAB-97-alerta-orcamento-minutos` (de `main` v1.35.0). Decisão D-267, sem migração.
+
+- **Contrato:** `staleNewBudgetAlert` = `{ enabled, minutes }` (5..43200, padrão 240);
+  `HoursRule` → `StaleNewBudgetAlertRule`; linha gravada com `hours` é lida como `hours × 60`
+  (Santé: 1 h → 60 min); `PATCH` com `hours` → `Campo desconhecido`. WS `proposal.stale_alert`
+  ganha `minutes`.
+- **Motor:** tique de 5 min (D-205) = resolução mínima; contagem continua corrida.
+- **Tela:** campo "Minutos" com a dica em horas; selo "Parado há N min" abaixo de 1 h; toast idem.
+- **Testes:** `funnel-rules.spec.ts` (+3), `funnel-timer.spec.ts` (+2), `funnel-timer-clock.spec.ts`
+  (+2); `ProposalCard.spec.tsx` (+1), `ws.spec.ts` (+1), `Rules.spec.tsx` (+1), `Proposals.spec.tsx`.
+- **Pendente:** validação na hml (conferir a linha do Santé lida como 60 min).
+
+### 🚧 CRMLAB-95 — modelos da mensagem de envio (2026-10-09, aguardando validação)
+
+Branch `feature/CRMLAB-95-modelos-mensagem-envio` (de `main` v1.35.0). Decisão D-265, sem migração.
+
+- **Contrato:** `sendMessage = { templates: [{ name, text }] }`, 1..5 modelos, nome 1..40 único
+  (sem diferenciar maiúsculas), o primeiro é o padrão. `validateSendMessageTemplates` em `shared/`
+  (mesma regra no PATCH, na leitura e na tela). Linha gravada no formato antigo (`template`) é lida
+  como `[{ name: "Padrão", text }]` sem regravar; `sendMessage.template` ainda aceito no PATCH
+  (troca o texto do padrão).
+- **Tela:** Regras → Mensagem de envio com um cartão por modelo (nome, texto, variáveis,
+  pré-visualização, Tornar padrão / Subir / Descer / Remover, Adicionar modelo) —
+  `Settings/SendMessageSection.tsx`. `SendProposalPanel` com `Select` "Modelo da mensagem" quando
+  há 2+; texto editado pede confirmação antes de trocar.
+- **Fora do card (D-265 itens 7 e 8):** `{prazo_entrega}` (cartão do Bitlab não tem itens) e
+  parcelas (sem regra de parcelamento definida).
+- **Testes:** `tests/settings/funnel-rules-send-templates.spec.ts` (novo, 15), `funnel-rules.spec.ts`
+  ajustado; `Rules.spec.tsx` (+4), `SendProposalPanel.spec.tsx` (+4).
+- **Pendente:** validação na hml (o Santé deve ver o texto atual como modelo "Padrão").
 
 ### 🚧 CRMLAB-93 — participantes da conversa (2026-10-06, aguardando validação)
 

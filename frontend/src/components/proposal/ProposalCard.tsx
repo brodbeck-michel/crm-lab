@@ -1,10 +1,11 @@
 import { useUIStore } from '@/stores/ui.store';
 import {
-  type HoursRule,
+  type StaleNewBudgetAlertRule,
   type Proposal,
   PROPOSAL_STATUS_LABELS,
   formatProposalNumber,
-  hoursSince,
+  formatStaleDuration,
+  minutesSince,
   isStaleNewBudget,
 } from '@crm-lab/shared';
 import { Chip } from '@/components/ui/Chip';
@@ -24,7 +25,7 @@ interface ProposalCardProps {
    * Regra "Novo orçamento parado" das Regras (CRMLAB-59, D-207). Sem ela, nada
    * de selo. `now` so existe para teste.
    */
-  staleAlert?: HoursRule;
+  staleAlert?: StaleNewBudgetAlertRule;
   now?: Date;
 }
 
@@ -52,8 +53,11 @@ export default function ProposalCard({
   const stale =
     staleAlert !== undefined &&
     isStaleNewBudget(proposal.status, proposal.stageEnteredAt, staleAlert, clock);
-  const staleHours =
-    stale && proposal.stageEnteredAt ? hoursSince(new Date(proposal.stageEnteredAt), clock) : 0;
+  // D-267: "N min" abaixo de 1 h, "N h" depois.
+  const staleFor =
+    stale && proposal.stageEnteredAt
+      ? formatStaleDuration(minutesSince(new Date(proposal.stageEnteredAt), clock))
+      : '';
 
   return (
     <button
@@ -121,7 +125,7 @@ export default function ProposalCard({
           {/* CRMLAB-57/D-197: requisição já existe, cartão ainda em "Novo orçamento". */}
           {preRegistered && <Chip tone="positive">Pré-cadastro feito</Chip>}
           {/* CRMLAB-59/D-207: "Novo orçamento" parado há N horas sem envio. */}
-          {stale && <Chip tone="attention">Parado há {staleHours} h</Chip>}
+          {stale && <Chip tone="attention">Parado há {staleFor}</Chip>}
         </div>
         {proposal.approvalStatus === 'pending' && (
           <span className="text-caption text-accent-700 font-semibold">Aguardando aprovação</span>

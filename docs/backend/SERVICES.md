@@ -1657,10 +1657,10 @@ export function resetFunnelTimerLocksForTest(): void;
    cartão**. Depois de cada commit: `announceSystemTransitions` (WS `proposal.status_changed` +
    invalidação do cache de analytics).
 4. Alerta (D-207): cartões em `novo_contato` sem pagamento, com a linha de entrada sem
-   `stale_alerted_at` e entrada há N horas ou mais. Numa transação por cartão, grava
+   `stale_alerted_at` e entrada há N **minutos** ou mais (D-267). Numa transação por cartão, grava
    `stale_alerted_at` (condicionado a ainda estar nulo e o cartão ainda em `novo_contato`) e resolve
    os destinatários (responsável ativo; senão gestores e admins ativos). Depois do commit:
-   `emitToUser` `proposal.stale_alert` para cada um.
+   `emitToUser` `proposal.stale_alert` (`{ proposalId, minutes, hours }`) para cada um.
 5. Reingajamento (§28), se injetado: `reengagement.runForTenant(tenantId, agora)`. Falha dele →
    `warn` `reengagement.tenant_failed`, sem desfazer o que o funil fez.
 6. Erro num laboratório → `warn` `funnel_timer.tenant_failed`, segue para o próximo. Log `info`
@@ -1691,7 +1691,7 @@ export interface ReengagementService {
 }
 export function createReengagementService(deps: {
   db: DbClient;
-  sender: { createAutomated(tenantId: string, conversationId: string, content: string): Promise<Message> };
+  sender: AutomatedSender; // createAutomated(tenantId, conversationId, content, automation) — D-264
 }): ReengagementService;
 ```
 
@@ -1711,8 +1711,11 @@ export function createReengagementService(deps: {
    `reengagement.discarded`.
 6. **Envio:** numa transação, `lockSilence` (conversa `FOR UPDATE`, ainda ativa, mesma âncora,
    sem resposta do paciente) e, no 2º, o 1º ainda `sent`; grava a decisão `sent` (reserva,
-   `ON CONFLICT DO NOTHING`). Depois do commit, `MessageService.createAutomated`: mensagem
-   `agent` sem autor com `automation = 'reengagement'`, `conversation.new_message`, envio pelo
+   `ON CONFLICT DO NOTHING`). O texto é `renderReengagementMessage(message, firstNameOf(nome))`
+   (D-266): `nome` é `patients.name` da ficha vinculada, senão `conversations.patient_name`,
+   lido no `selectSilences`. Depois do commit, `MessageService.createAutomated`: mensagem
+   `agent` sem autor com `automation = 'reengagement'` (o mesmo método serve a `offhours` e
+   `greeting`, §33), `conversation.new_message`, envio pelo
    canal. Sucesso: `message_id` na decisão, `info` `reengagement.sent`. Falha do canal: mensagem
    `failed`, decisão `failed`, `warn` `reengagement.failed`. Não há nova tentativa.
 
@@ -1847,6 +1850,48 @@ Lê `doctors` (pelo `DoctorRepository`), `doctor_visits`, `doctor_visit_attachme
 mesmo `doctorModule` (`doctor.routes.ts`).
 
 ---
+
+## 33. AutoReplyService — fora do horário e boas-vindas (CRMLAB-94 — D-264)
+
+**Responsabilidade:** responder sozinho ao paciente com `tenant_settings.offhours_message`
+quando ele escreve com o laboratório fechado, e com `greeting_message` no primeiro contato. Sem
+rota e sem tique: é chamado por `MessageService.createFromPatient`, depois do INSERT de uma
+mensagem **nova** do paciente, **sem `await`** (fire-and-forget, D-264 item 1).
+
+```typescript
+// backend/src/services/auto-reply.service.ts
+export interface AutoReplyResult {
+  kind: AutoReplyKind;            // 'offhours' | 'greeting'
+  outcome: 'sent' | 'failed';
+}
+export interface AutoReplyService {
+  /** Nunca lança. `null` = nada a enviar (aberto, desligado, canal sem envio, já respondido). */
+  afterPatientMessage(
+    tenantId: string,
+    conversationId: string,
+    message: { id: string; createdAt: string },
+    sender: AutomatedSender,
+  ): Promise<AutoReplyResult | null>;
+}
+export function createAutoReplyService(deps: { db: DbClient }): AutoReplyService;
+```
+
+`offHoursReopening(at, hours, customHolidays)` está em `shared/types/auto-reply.types.ts`
+(função pura, sobre `nextOpening`/`isHoliday`/`localDateOf` do reingajamento): `null` = aberto.
+
+**Passos** (numa transação, sob RLS):
+1. `readAutoReplySettings` (mensagens + horário, de `tenant_settings`). As duas desligadas → nada.
+2. WhatsApp ativo **em `qr`** (`isQrWhatsAppActive`, D-214) → senão nada.
+3. Feriados do laboratório da data da mensagem até +31 dias; `offHoursReopening`.
+4. Fechado e `offHours` ligada com texto → `offhours` com `reopens_at` = reabertura. Aberto,
+   `greeting` ligada com texto e nenhuma mensagem anterior na conversa → `greeting`. Fechado
+   nunca manda `greeting`.
+5. **Reserva:** `INSERT ... SELECT` em `conversation_auto_replies` só se a conversa é `active` de
+   `whatsapp`, `ON CONFLICT DO NOTHING` (índices únicos parciais, SCHEMA §40). Sem linha → nada.
+6. Depois do commit, `MessageService.createAutomated(..., kind)`: mensagem `agent` sem autor com
+   `automation = kind`, `conversation.new_message`, envio pelo canal. Sucesso: `message_id` na
+   linha, `info` `auto_reply.sent`. Falha: linha `failed`, mensagem `failed`, `warn`
+   `auto_reply.failed`. Sem nova tentativa.
 
 ## Convenções Transversais
 

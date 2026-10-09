@@ -201,7 +201,8 @@ estágio atual** (última linha do histórico com esse estágio): qualquer mudan
 Dias corridos (múltiplos de 24 h) ou úteis (seg–sex, Brasília; **sem feriados**). **Fato vence
 tempo:** cartão com pagamento não é movido pelo motor, e cartão com requisição não vai para
 `follow_up`/`perdido` a partir de `orcamento_enviado`/`follow_up` (D-206). O passo precisa estar
-na matriz vigente; terminais nunca se movem. "Novo orçamento" parado há N horas (corridas) só
+na matriz vigente; terminais nunca se movem. "Novo orçamento" parado há N minutos (corridos, de
+5 min a 30 dias, conferidos a cada tique de 5 min — D-267) só
 **alerta** o responsável (ou gestores/admins, se não houver), uma vez por entrada na coluna, sem
 mover (D-207). Prazo mudado vale no próximo tique, inclusive para os cartões que já passaram do
 prazo novo (D-209). Quem move é o sistema: `changedBy: null`, histórico com `automation`, audit
@@ -218,6 +219,21 @@ funcionamento (fora dele, fica para a abertura; sem nenhum dia configurado = sem
 **feriados** (nacionais, com Carnaval e Corpus Christi, e os cadastrados pelo laboratório): se a
 hora de sair cai em feriado, **descarta**, não empurra. Mais de 2 h atrasado → descarta também.
 API oficial da Meta não entra na rotina. A mensagem aparece como "Mensagem automática".
+O texto aceita `{paciente}` (D-266): vira o **primeiro nome** do paciente (ficha vinculada, senão
+o nome do contato), com capitalização normal; sem nome, a variável some junto com o espaço ou a
+vírgula antes dela ("Olá, {paciente}." → "Olá."). Nenhuma outra variável é aceita.
+
+### Mensagem fora do horário e boas-vindas (CRMLAB-94, D-264)
+Configuradas em Configurações → Canais. Só WhatsApp **por QR Code**, conversa ativa.
+- **Fora do horário:** o paciente escreveu com o laboratório fechado (fora do expediente de
+  `business_hours` ou em feriado nacional/do laboratório) → recebe o texto configurado **uma vez
+  por período fechado** (cinco mensagens na mesma noite = uma resposta; o fim de semana inteiro é
+  um período). Sem nenhum dia configurado = sempre aberto, nunca envia.
+- **Boas-vindas:** primeira mensagem de uma conversa nova (primeiro contato do número), com o
+  laboratório aberto → uma vez. Fechado, sai só a de fora do horário.
+- Aparecem como "Mensagem automática" e **não contam como resposta da atendente** (alerta,
+  relatório de tempo de resposta, âncora do reingajamento). Falha no envio fica registrada e não
+  é reenviada.
 
 ### Alerta de tempo de resposta (CRMLAB-84, D-254)
 O inverso do reingajamento, e **só visual**: nada é enviado ao paciente. Com a regra ligada
@@ -305,7 +321,7 @@ async updateStatus(id: string, { status, reasonLost }: UpdateStatusDTO) {
     throw new BadRequestException('Motivo de perda é obrigatório');
   }
   
-  if (!['preco', 'silencio', 'exame_indisponivel', 'prazo', 'outro'].includes(reasonLost)) {
+  if (!['preco', 'silencio', 'exame_indisponivel', 'prazo', 'horario_atendimento', 'outro'].includes(reasonLost)) {
     throw new BadRequestException('Motivo inválido');
   }
 }

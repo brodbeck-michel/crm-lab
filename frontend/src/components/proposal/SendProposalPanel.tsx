@@ -1,6 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { Conversation, ListConversationsQuery, ProposalDetail } from '@crm-lab/shared';
+import type {
+  Conversation,
+  ListConversationsQuery,
+  ProposalDetail,
+  SendMessageTemplate,
+} from '@crm-lab/shared';
 import {
   PROPOSAL_STATUS_LABELS,
   SEND_PROPOSAL_MESSAGE_MAX,
@@ -16,12 +21,13 @@ import {
   useUpdateProposalConversation,
 } from '@/api/proposals';
 import { formatMoney } from '@/lib/format';
-import { Button, Chip, SearchInput, TextArea, cn } from '@/components/ui';
+import { Button, Chip, SearchInput, Select, TextArea, cn } from '@/components/ui';
 
 /**
  * Painel do cartão do Bitlab (CRMLAB-58, D-200..D-203, PAGES.md §6):
  * - `send`: confere os dados do Bitlab, escolhe a conversa (sugestão por nome
- *   no topo, busca livre), revisa a mensagem do modelo das Regras e envia;
+ *   no topo, busca livre), revisa a mensagem do modelo das Regras e envia
+ *   (com 2+ modelos, escolhe qual — D-265 item 5);
  * - `resend`: só a mensagem, pela conversa já vinculada;
  * - `relink`: só a conversa, sem enviar nada.
  * Nunca vincula sozinho: o botão só liga depois que a atendente clica numa conversa.
@@ -33,8 +39,8 @@ interface SendProposalPanelProps {
   mode: SendPanelMode;
   /** Nome do convênio, ou "Particular" (`{convenio}` do modelo). */
   insuranceName: string;
-  /** `sendMessage.template` das Regras. */
-  template: string;
+  /** `sendMessage.templates` das Regras; o primeiro é o padrão (D-265). */
+  templates: readonly SendMessageTemplate[];
   /** Para onde o envio leva o cartão (`bitlabSendTarget`). */
   target?: ProposalDetail['status'];
   onDone: () => void;
@@ -68,21 +74,36 @@ export default function SendProposalPanel({
   proposal,
   mode,
   insuranceName,
-  template,
+  templates,
   target,
   onDone,
   onCancel,
 }: SendProposalPanelProps) {
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [message, setMessage] = useState(() =>
-    renderSendMessageTemplate(template, {
+  const renderTemplate = (index: number): string =>
+    renderSendMessageTemplate(templates[index]?.text ?? '', {
       paciente: proposal.patientName ?? '',
       numero_orcamento: proposal.lisBudgetNumber ?? '',
       valor: formatMoney(proposal.totalPrice),
       convenio: insuranceName,
-    }),
-  );
+    });
+  const [templateIndex, setTemplateIndex] = useState(0);
+  const [message, setMessage] = useState(() => renderTemplate(0));
+
+  /**
+   * Troca de modelo (D-265 item 5): sem edição, troca direto; com o texto
+   * editado, pergunta antes de sobrescrever (cancelar mantém tudo).
+   */
+  const changeTemplate = (index: number) => {
+    if (index === templateIndex) return;
+    const edited = message !== renderTemplate(templateIndex);
+    if (edited && !window.confirm('Trocar o modelo? O texto que você editou será substituído.')) {
+      return;
+    }
+    setTemplateIndex(index);
+    setMessage(renderTemplate(index));
+  };
   const [error, setError] = useState<string | null>(null);
 
   const send = useSendProposal();
@@ -219,6 +240,15 @@ export default function SendProposalPanel({
             </ul>
           )}
         </div>
+      )}
+
+      {writeMessage && templates.length > 1 && (
+        <Select
+          label="Modelo da mensagem"
+          value={String(templateIndex)}
+          options={templates.map((t, index) => ({ value: String(index), label: t.name }))}
+          onChange={(e) => changeTemplate(Number(e.target.value))}
+        />
       )}
 
       {writeMessage && (

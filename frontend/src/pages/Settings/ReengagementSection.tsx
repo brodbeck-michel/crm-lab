@@ -1,11 +1,16 @@
 import { Link } from 'react-router-dom';
 import {
   REENGAGEMENT_MESSAGE_MAX,
+  REENGAGEMENT_MESSAGE_VARIABLES,
+  findUnknownReengagementVariables,
+  firstNameOf,
+  hasReengagementTextBesidesVariables,
+  renderReengagementMessage,
   type FunnelRules,
   type ReengagementStep,
 } from '@crm-lab/shared';
 import { useChannelSettings } from '@/api/settings';
-import { Input, TextArea, Toggle } from '@/components/ui';
+import { Button, Input, TextArea, Toggle } from '@/components/ui';
 
 /**
  * Seção "Reingajamento da conversa" da página de Regras (PAGES.md §21,
@@ -25,6 +30,20 @@ const STEPS: ReadonlyArray<{ step: ReengagementStep; label: string; hoursLabel: 
     hoursLabel: 'Horas depois do 1º',
   },
 ];
+
+/** Nome de exemplo da pré-visualização (D-266) — o mesmo da mensagem de envio. */
+const PREVIEW_FIRST_NAME = firstNameOf('Maria Souza');
+
+/** Erro da mensagem na tela, o mesmo que o `PATCH` devolveria (D-266). */
+function messageError(message: string): string | undefined {
+  if (message.trim() === '') return 'Escreva a mensagem.';
+  const unknown = findUnknownReengagementVariables(message);
+  if (unknown.length > 0) {
+    return `Variável desconhecida: ${unknown.map((name) => `{${name}}`).join(', ')}`;
+  }
+  if (!hasReengagementTextBesidesVariables(message)) return 'Escreva um texto além de {paciente}';
+  return undefined;
+}
 
 export interface ReengagementSectionProps {
   draft: FunnelRules;
@@ -123,15 +142,47 @@ export function ReengagementSection({ draft, canEdit, fieldErrors, set }: Reenga
                   maxLength={REENGAGEMENT_MESSAGE_MAX}
                   value={rule.message}
                   disabled={inputsDisabled}
-                  error={
-                    fieldErrors[`reengagement.${step}.message`] ??
-                    (rule.message.trim() === '' ? 'Escreva a mensagem.' : undefined)
-                  }
+                  error={fieldErrors[`reengagement.${step}.message`] ?? messageError(rule.message)}
                   onChange={(e) => {
                     const message = e.target.value;
                     set((next) => void (next.reengagement[step].message = message));
                   }}
                 />
+                {canEdit && (
+                  <div className="flex flex-wrap gap-sm">
+                    {REENGAGEMENT_MESSAGE_VARIABLES.map((name) => (
+                      <Button
+                        key={name}
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        disabled={inputsDisabled}
+                        onClick={() =>
+                          set(
+                            (next) =>
+                              void (next.reengagement[step].message = `${next.reengagement[step].message}{${name}}`),
+                          )
+                        }
+                      >
+                        {`{${name}}`}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+                <div className="space-y-xs">
+                  <span className="font-body text-caption font-semibold text-neutral-700">
+                    Pré-visualização
+                  </span>
+                  <p
+                    data-testid={`preview-reingajamento-${step}`}
+                    className="whitespace-pre-wrap rounded-md border border-neutral-200 bg-bg p-md font-body text-body text-text"
+                  >
+                    {renderReengagementMessage(rule.message, PREVIEW_FIRST_NAME)}
+                  </p>
+                  <span className="font-body text-caption text-neutral-600">
+                    {'{paciente}'} vira o primeiro nome do paciente; sem nome, some da frase.
+                  </span>
+                </div>
               </div>
             </div>
           );
@@ -150,10 +201,10 @@ function FieldMessage({ message }: { message: string | undefined }) {
   );
 }
 
-/** Algo na seção impede salvar? (texto vazio, horas fora da faixa) */
+/** Algo na seção impede salvar? (texto vazio ou inválido — D-266 —, horas fora da faixa) */
 export function reengagementBlocked(rules: FunnelRules['reengagement']): boolean {
   return (['first', 'second'] as const).some((step) => {
     const rule = rules[step];
-    return rule.message.trim() === '' || rule.hours < 1 || rule.hours > 720;
+    return messageError(rule.message) !== undefined || rule.hours < 1 || rule.hours > 720;
   });
 }

@@ -263,7 +263,7 @@ function emptyFunnelCounts(): Record<ProposalStatus, number> {
   >;
 }
 
-/** As 5 chaves de LOSS_REASONS, sempre. Zero onde nao houve perda. */
+/** As 6 chaves de LOSS_REASONS (D-268), sempre. Zero onde nao houve perda. */
 function emptyLossReasons(): Record<LossReason, number> {
   return Object.fromEntries(LOSS_REASONS.map((r) => [r, 0])) as Record<LossReason, number>;
 }

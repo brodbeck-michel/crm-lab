@@ -6,7 +6,9 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_FUNNEL_RULES,
   describeStageAutomation,
+  formatStaleDuration,
   hoursSince,
+  minutesSince,
   isDelayElapsed,
   isStaleNewBudget,
   timerDeadline,
@@ -46,7 +48,7 @@ describe('timerDeadline', () => {
 });
 
 describe('isStaleNewBudget / hoursSince', () => {
-  const rule = DEFAULT_FUNNEL_RULES.automation.staleNewBudgetAlert; // 4 h, ligado
+  const rule = DEFAULT_FUNNEL_RULES.automation.staleNewBudgetAlert; // 240 min, ligado
   const entered = '2026-09-21T13:00:00.000Z';
 
   it('só em novo_contato, só com a regra ligada, a partir de N horas corridas', () => {
@@ -59,6 +61,20 @@ describe('isStaleNewBudget / hoursSince', () => {
 
   it('hoursSince arredonda para baixo', () => {
     expect(hoursSince(new Date(entered), new Date('2026-09-21T17:59:00.000Z'))).toBe(4);
+  });
+
+  it('em minutos: 15 min vence aos 15 min corridos (CRMLAB-97, D-267)', () => {
+    const quarter = { enabled: true, minutes: 15 };
+    expect(isStaleNewBudget('novo_contato', entered, quarter, new Date('2026-09-21T13:14:59.000Z'))).toBe(false);
+    expect(isStaleNewBudget('novo_contato', entered, quarter, new Date('2026-09-21T13:15:00.000Z'))).toBe(true);
+  });
+
+  it('minutesSince arredonda para baixo; formatStaleDuration troca min por h a partir de 1 h', () => {
+    expect(minutesSince(new Date(entered), new Date('2026-09-21T13:17:59.000Z'))).toBe(17);
+    expect(formatStaleDuration(0)).toBe('0 min');
+    expect(formatStaleDuration(59)).toBe('59 min');
+    expect(formatStaleDuration(60)).toBe('1 h');
+    expect(formatStaleDuration(299)).toBe('4 h');
   });
 });
 

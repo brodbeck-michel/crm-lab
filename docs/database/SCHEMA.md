@@ -285,7 +285,8 @@ CREATE TABLE messages (
   external_message_id VARCHAR(255), -- ID da API externa (WhatsApp, etc)
   read_at TIMESTAMP,
   created_at TIMESTAMP DEFAULT NOW(),
-  automation VARCHAR(20) NULL,     -- migração 031: 'reengagement' = o sistema mandou sozinho (D-211)
+  automation VARCHAR(20) NULL,     -- migração 031: 'reengagement' = o sistema mandou sozinho (D-211);
+                                   -- migração 054: também 'offhours' | 'greeting' (D-264)
   
   FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
@@ -1824,6 +1825,9 @@ CREATE INDEX idx_funnel_rules_updated_by ON funnel_rules(updated_by);
 - **Validação no service, não no banco:** o JSON é um contrato do TypeScript; o `PATCH` recusa o
   que não cabe antes de gravar (API_CONTRACTS.md §6c).
 - Migração **única** (tabela + policy), como 026: sem backfill, a tabela nasce vazia.
+- **Formato antigo de `sendMessage` (D-265):** linha com `rules.sendMessage.template` (texto) é
+  lida como `templates: [{ name: "Padrão", text }]`; o JSON só muda no próximo `PATCH` que alterar
+  algo. Sem migração de dado.
 
 ### 33. `conversation_reengagements` (migração 031 — CRMLAB-62, D-211)
 Uma linha por disparo de reingajamento decidido: o que aconteceu com o 1º e o 2º de cada
@@ -2134,6 +2138,50 @@ CREATE INDEX idx_messages_attributed_to ON messages (attributed_to) WHERE attrib
 
 ---
 
+### 40. `conversation_auto_replies` (migração 054 — CRMLAB-94, D-264)
+Uma linha por resposta automática decidida ao paciente: fora do horário (`offhours`) e
+boas-vindas (`greeting`). Dono: `AutoReplyService` (SERVICES.md §33).
+
+```sql
+ALTER TABLE messages DROP CONSTRAINT messages_automation_check;
+ALTER TABLE messages ADD CONSTRAINT messages_automation_check
+  CHECK (automation IS NULL OR automation IN ('reengagement', 'offhours', 'greeting'));
+
+CREATE TABLE conversation_auto_replies (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL,
+  conversation_id UUID NOT NULL,
+  kind VARCHAR(20) NOT NULL,          -- 'offhours' | 'greeting'
+  reopens_at TIMESTAMP NULL,          -- só 'offhours': reabertura do laboratório (UTC) = o período fechado
+  trigger_message_id UUID NULL,       -- a mensagem do paciente que disparou
+  outcome VARCHAR(20) NOT NULL,       -- 'sent' | 'failed'
+  message_id UUID NULL,               -- a mensagem automática
+  decided_at TIMESTAMP NOT NULL DEFAULT NOW(),
+
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+  FOREIGN KEY (trigger_message_id) REFERENCES messages(id) ON DELETE SET NULL,
+  FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE SET NULL,
+  CONSTRAINT conversation_auto_replies_kind_check CHECK (kind IN ('offhours', 'greeting')),
+  CONSTRAINT conversation_auto_replies_outcome_check CHECK (outcome IN ('sent', 'failed')),
+  CONSTRAINT conversation_auto_replies_period_check CHECK ((kind = 'offhours') = (reopens_at IS NOT NULL))
+);
+CREATE UNIQUE INDEX conversation_auto_replies_offhours_once
+  ON conversation_auto_replies (conversation_id, reopens_at) WHERE kind = 'offhours';
+CREATE UNIQUE INDEX conversation_auto_replies_greeting_once
+  ON conversation_auto_replies (conversation_id) WHERE kind = 'greeting';
+-- índices em tenant_id, trigger_message_id, message_id;
+-- ENABLE ROW LEVEL SECURITY + policy conversation_auto_replies_tenant_isolation
+```
+
+- **Os índices únicos parciais são a trava contra mandar duas vezes**: um `offhours` por
+  conversa por período fechado (identificado pela reabertura) e um `greeting` por conversa. A
+  linha nasce `sent` ANTES do envio (reserva) e vira `failed` se o canal recusar; webhook
+  concorrente cai no `ON CONFLICT DO NOTHING`.
+- Migração **única** (CHECK + tabela + policy), sem backfill.
+
+---
+
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
 
 O isolamento multitenant não é convenção: é imposto pelo banco. O backend conecta com o papel
@@ -2416,7 +2464,8 @@ migrations/
 ├── 045_message_metadata.sql      # messages.metadata JSONB — vídeo, PDF, localização, contato (CRMLAB-70, D-234)
 ├── 047_doctors.sql               # doctors + índice único parcial (tenant, crm, uf) + policy (CRMLAB-86, D-255)
 ├── 048_doctor_visits.sql         # doctor_visits + doctor_visit_reschedules + policies (CRMLAB-87, D-256)
-└── 049_messages_patient_period_index.sql # índice parcial (tenant, created_at) das mensagens do paciente (CRMLAB-83, D-257)
+├── 049_messages_patient_period_index.sql # índice parcial (tenant, created_at) das mensagens do paciente (CRMLAB-83, D-257)
+└── 054_conversation_auto_replies.sql # messages.automation offhours/greeting + conversation_auto_replies + policy (CRMLAB-94, D-264)
 ```
 
 A 007 e a 008 são arquivos ÚNICOS (tabela + policy), diferente dos pares 003/004 e 005/006: a
@@ -2515,7 +2564,7 @@ limites de `DEFAULT_DISCOUNT_LIMIT` de `@crm-lab/shared`:
   Um caminho ilegal derruba o seed na hora.
 - Uma proposta com `approval_status = 'pending'` e **25% de desconto** criada
   por atendente de alçada 15%, mais uma `rejected`.
-- `perdido` com `reason_lost` cobrindo os **5 motivos**; `ganho` com `closed_at`
+- `perdido` com `reason_lost` cobrindo os **6 motivos** (D-268); `ganho` com `closed_at`
   distribuído nas últimas semanas (série temporal da curva de receita).
 - **Audit logs** de `create_proposal`, `update_proposal_status`,
   `approve_discount` e `reject_discount`.

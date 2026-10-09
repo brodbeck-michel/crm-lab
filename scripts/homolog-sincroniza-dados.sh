@@ -148,7 +148,10 @@ docker run --rm \
   -v "${PROJETO_PROD}_media-data:/p:ro" \
   -v "${PROJETO_HML}_media-data:/h" \
   alpine sh -c 'cp -a /p/* /h/ 2>/dev/null; ls /h | wc -l' \
-  | xargs -I{} info "{} arquivos de midia em homologacao"
+  | while read -r n; do info "$n arquivos de midia em homologacao"; done
+# Nao use `xargs info`: o xargs nao enxerga a funcao `info` do script e chama o
+# /usr/bin/info do texinfo, que falha — com `set -e` o script morria AQUI, antes
+# de desativar canais e a chave do Bitlab (09/10/2026, CRMLAB-94).
 
 # ---------------------------------------------------------------------------
 # 5. Neutralizar o que pode VAZAR PARA FORA de homologacao

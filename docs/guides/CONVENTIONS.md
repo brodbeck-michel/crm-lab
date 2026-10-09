@@ -50,7 +50,8 @@ export type ProposalStatus =
   | 'novo_contato' | 'orcamento_enviado' | 'follow_up'
   | 'negociacao' | 'ganho' | 'perdido';
 
-export type LossReason = 'preco' | 'silencio' | 'exame_indisponivel' | 'prazo' | 'outro';
+export type LossReason =
+  | 'preco' | 'silencio' | 'exame_indisponivel' | 'prazo' | 'horario_atendimento' | 'outro';
 
 export interface Paginated<T> {
   data: T[];

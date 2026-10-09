@@ -67,6 +67,7 @@ import type { WsHub } from '../lib/ws-hub.js';
 import { ConversationRepository } from '../repositories/conversation.repository.js';
 import {
   MessageRepository,
+  type MessageAutomation,
   type MessageMetadata,
   type MessageRef,
   type MessageSearchCriteria,
@@ -74,6 +75,7 @@ import {
 import { messageTypeFromMime } from './media.service.js';
 import { isUniqueViolation } from '../repositories/quick-reply.repository.js';
 import { createAuditService, type AuditService } from './audit.service.js';
+import type { AutoReplyService } from './auto-reply.service.js';
 import { claimFreeConversation } from './conversation-claim.js';
 import {
   createWhatsAppService,
@@ -205,6 +207,11 @@ export interface MessageServiceDeps {
    * responder (D-215). Ausente => sem audit (testes de unidade).
    */
   audit?: AuditService;
+  /**
+   * Resposta fora do horario / boas-vindas (D-264), chamada sem `await` depois
+   * de cada mensagem NOVA do paciente. Ausente => nada e respondido sozinho.
+   */
+  autoReply?: AutoReplyService;
 }
 
 export class MessageService {
@@ -214,6 +221,7 @@ export class MessageService {
   private readonly whatsapp: WhatsAppService | undefined;
   private readonly echoWait: EchoWaitOptions;
   private readonly audit: AuditService | undefined;
+  private readonly autoReply: AutoReplyService | undefined;
 
   constructor(deps: MessageServiceDeps) {
     this.messages = deps.messages;
@@ -222,6 +230,7 @@ export class MessageService {
     this.whatsapp = deps.whatsapp;
     this.echoWait = { ...DEFAULT_ECHO_WAIT, ...deps.echoWait };
     this.audit = deps.audit;
+    this.autoReply = deps.autoReply;
   }
 
   async listByConversation(
@@ -511,6 +520,9 @@ export class MessageService {
       return known;
     }
     this.emitNewMessage(tenantId, conversationId, message.id);
+    // Fire-and-forget (D-264 item 1): o servico nunca lanca, e o envio nao
+    // pode segurar o webhook nem derrubar a mensagem ja gravada.
+    if (this.autoReply) void this.autoReply.afterPatientMessage(tenantId, conversationId, message, this);
     return message;
   }
 
@@ -758,12 +770,18 @@ export class MessageService {
 
   /**
    * Mensagem que o SISTEMA manda sozinho ao paciente — reingajamento
-   * (CRMLAB-62, D-211 item 5). Mesmo caminho de `createFromAgent` (grava,
-   * notifica, so entao tenta o canal), sem autor e com `automation`: a tela
-   * mostra "Mensagem automatica". Falha do canal: `status = 'failed'` e
-   * `MESSAGE_SEND_FAILED`, como no Composer.
+   * (CRMLAB-62, D-211 item 5), fora do horario e boas-vindas (CRMLAB-94,
+   * D-264). Mesmo caminho de `createFromAgent` (grava, notifica, so entao
+   * tenta o canal), sem autor e com `automation`: a tela mostra "Mensagem
+   * automatica". Falha do canal: `status = 'failed'` e `MESSAGE_SEND_FAILED`,
+   * como no Composer.
    */
-  async createAutomated(tenantId: string, conversationId: string, content: string): Promise<Message> {
+  async createAutomated(
+    tenantId: string,
+    conversationId: string,
+    content: string,
+    automation: MessageAutomation = 'reengagement',
+  ): Promise<Message> {
     const conversation = await this.conversations.findById(tenantId, conversationId);
     if (!conversation) throw notFound({ resource: 'conversation', id: conversationId });
     if (conversation.status !== 'active') {
@@ -777,7 +795,7 @@ export class MessageService {
       content,
       messageType: 'text',
       status: this.initialStatus(conversation.channel),
-      automation: 'reengagement',
+      automation,
     });
     this.emitNewMessage(tenantId, conversationId, message.id);
 
@@ -792,7 +810,7 @@ export class MessageService {
         tenantId,
         conversationId,
         messageId: message.id,
-        automation: 'reengagement',
+        automation,
         reason: err instanceof Error ? err.message : String(err),
       });
       throw new BusinessError('MESSAGE_SEND_FAILED', { messageId: message.id });

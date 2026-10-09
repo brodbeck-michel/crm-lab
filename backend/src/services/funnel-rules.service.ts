@@ -13,10 +13,16 @@ import {
   REENGAGEMENT_MESSAGE_MAX,
   RESPONSE_ALERT_MINUTES_MAX,
   RESPONSE_ALERT_MINUTES_MIN,
+  DEFAULT_SEND_MESSAGE_TEMPLATE_NAME,
   RULE_ACTOR_ROLES,
-  SEND_MESSAGE_TEMPLATE_MAX,
-  findUnknownTemplateVariables,
+  findUnknownReengagementVariables,
+  STALE_NEW_BUDGET_MINUTES_MAX,
+  STALE_NEW_BUDGET_MINUTES_MIN,
+  hasReengagementTextBesidesVariables,
+  sendMessageTextError,
+  validateSendMessageTemplates,
   type FunnelRules,
+  type SendMessageTemplate,
   type UpdateFunnelRulesRequest,
 } from '@crm-lab/shared';
 import type { DbClient, DbTx } from '../db/types.js';
@@ -29,6 +35,9 @@ const TENANT_ROLES = ['attendant', 'manager', 'admin'] as const;
 const WRITE_ROLES = ['manager', 'admin'] as const;
 
 type Json = Record<string, unknown>;
+
+/** Lista de modelos da mensagem de envio (D-265): validada inteira, fora do merge folha a folha. */
+const SEND_TEMPLATES_PATH = 'sendMessage.templates';
 
 function isPlainObject(value: unknown): value is Json {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -62,6 +71,11 @@ function leafError(path: string, template: unknown, value: unknown): string | nu
       return isIntIn(value, 1, 365) ? null : 'Informe um número inteiro de 1 a 365';
     if (key === 'hours')
       return isIntIn(value, 1, 720) ? null : 'Informe um número inteiro de 1 a 720';
+    // Alerta de "Novo orçamento" parado em minutos (CRMLAB-97, D-267).
+    if (path === 'automation.staleNewBudgetAlert.minutes')
+      return isIntIn(value, STALE_NEW_BUDGET_MINUTES_MIN, STALE_NEW_BUDGET_MINUTES_MAX)
+        ? null
+        : `Informe um número inteiro de ${STALE_NEW_BUDGET_MINUTES_MIN} a ${STALE_NEW_BUDGET_MINUTES_MAX}`;
     // Alerta de tempo de resposta (CRMLAB-84, D-254).
     if (key === 'minutes')
       return isIntIn(value, RESPONSE_ALERT_MINUTES_MIN, RESPONSE_ALERT_MINUTES_MAX)
@@ -84,18 +98,6 @@ function leafError(path: string, template: unknown, value: unknown): string | nu
       ? null
       : 'Use "calendar" (dias corridos) ou "business" (dias úteis)';
   }
-  if (path === 'sendMessage.template') {
-    if (typeof value !== 'string') return 'Deve ser um texto';
-    const trimmed = value.trim();
-    if (trimmed.length === 0 || trimmed.length > SEND_MESSAGE_TEMPLATE_MAX) {
-      return `O modelo deve ter de 1 a ${SEND_MESSAGE_TEMPLATE_MAX} caracteres`;
-    }
-    const unknown = findUnknownTemplateVariables(trimmed);
-    if (unknown.length > 0) {
-      return `Variável desconhecida: ${unknown.map((name) => `{${name}}`).join(', ')}`;
-    }
-    return null;
-  }
   if (path === 'reengagement.first.message' || path === 'reengagement.second.message') {
     if (typeof value !== 'string') return 'Deve ser um texto';
     const length = value.trim().length;
@@ -107,8 +109,62 @@ function leafError(path: string, template: unknown, value: unknown): string | nu
   return 'Campo desconhecido';
 }
 
+// ---------------------------------------------------------------------------
+// Mensagem de envio com varios modelos (CRMLAB-95, D-265)
+// ---------------------------------------------------------------------------
+
+function cloneTemplates(list: readonly SendMessageTemplate[]): SendMessageTemplate[] {
+  return list.map(({ name, text }) => ({ name, text }));
+}
+
+/**
+ * Formato anterior ao CRMLAB-95 (`{ template }`) lido como lista de um modelo
+ * "Padrao" (D-265 item 2). So quando `templates` nao vale e `template` vale
+ * pelas regras antigas; senao devolve `stored` como veio (e o merge decide).
+ */
+function upgradeStoredSendMessage(stored: unknown): unknown {
+  if (!isPlainObject(stored)) return stored;
+  if (validateSendMessageTemplates(stored.templates).templates !== null) return stored;
+  if (sendMessageTextError(stored.template) !== null) return stored;
+  const text = (stored.template as string).trim();
+  return { templates: [{ name: DEFAULT_SEND_MESSAGE_TEMPLATE_NAME, text }] };
+}
+
+/**
+ * `sendMessage.template` no PATCH (formato antigo, D-265 item 4): vira
+ * `templates` com o texto do 1º modelo trocado. Erro no proprio caminho.
+ */
+function upgradeSendMessagePatch(
+  current: FunnelRules['sendMessage'],
+  patch: Json,
+  errors: Record<string, string>,
+): Json | null {
+  if (!('template' in patch)) return patch;
+  const path = 'sendMessage.template';
+  if ('templates' in patch) {
+    errors[path] = 'Envie só "templates" (o campo "template" é do formato antigo)';
+    return null;
+  }
+  const error = sendMessageTextError(patch.template);
+  if (error !== null) {
+    errors[path] = error;
+    return null;
+  }
+  const templates = cloneTemplates(current.templates);
+  const first = templates[0];
+  if (first) first.text = (patch.template as string).trim();
+  const rest: Json = { ...patch, templates };
+  delete rest.template;
+  return rest;
+}
+
 /** Sobrepoe `stored` aos padroes, chave por chave; o que nao vale fica com o padrao. */
 function mergeStored(template: unknown, stored: unknown, path: string): unknown {
+  if (path === 'sendMessage') stored = upgradeStoredSendMessage(stored);
+  if (path === SEND_TEMPLATES_PATH) {
+    const valid = validateSendMessageTemplates(stored).templates;
+    return cloneTemplates(valid ?? (template as SendMessageTemplate[]));
+  }
   if (isPlainObject(template)) {
     const source = isPlainObject(stored) ? stored : {};
     const out: Json = {};
@@ -123,8 +179,29 @@ function mergeStored(template: unknown, stored: unknown, path: string): unknown 
   return Array.isArray(stored) ? [...stored] : stored;
 }
 
+/**
+ * D-267 item 1: `staleNewBudgetAlert` gravado em horas (`{ hours }`, antes do
+ * CRMLAB-97) vira `{ minutes: hours × 60 }` — sem isto o merge descartaria a
+ * chave e o laboratório cairia no padrão. `minutes` válido gravado vence;
+ * `hours` fora de 1..720 não é convertido (cai no padrão, como sempre).
+ */
+function upgradeStoredRules(stored: unknown): unknown {
+  if (!isPlainObject(stored) || !isPlainObject(stored.automation)) return stored;
+  const alert = stored.automation.staleNewBudgetAlert;
+  if (!isPlainObject(alert) || !isIntIn(alert.hours, 1, 720)) return stored;
+  if (isIntIn(alert.minutes, STALE_NEW_BUDGET_MINUTES_MIN, STALE_NEW_BUDGET_MINUTES_MAX)) return stored;
+  const { hours, ...rest } = alert;
+  return {
+    ...stored,
+    automation: {
+      ...stored.automation,
+      staleNewBudgetAlert: { ...rest, minutes: (hours as number) * 60 },
+    },
+  };
+}
+
 export function mergeWithDefaults(stored: unknown): FunnelRules {
-  return mergeStored(DEFAULT_FUNNEL_RULES, stored, '') as FunnelRules;
+  return mergeStored(DEFAULT_FUNNEL_RULES, upgradeStoredRules(stored), '') as FunnelRules;
 }
 
 /** PONTO UNICO DE LEITURA (D-190 item 2). Dentro da transacao de quem chama. */
@@ -142,19 +219,31 @@ function applyPatch(
   path: string,
   errors: Record<string, string>,
 ): unknown {
+  if (path === SEND_TEMPLATES_PATH) {
+    const result = validateSendMessageTemplates(patch);
+    for (const [key, message] of Object.entries(result.errors)) {
+      errors[`sendMessage.${key}`] = message;
+    }
+    return result.templates ?? current;
+  }
   if (isPlainObject(template)) {
     if (!isPlainObject(patch)) {
       errors[path === '' ? '_root' : path] = 'Deve ser um objeto';
       return current;
     }
+    const fields =
+      path === 'sendMessage'
+        ? upgradeSendMessagePatch(current as FunnelRules['sendMessage'], patch, errors)
+        : patch;
+    if (fields === null) return current;
     const out: Json = { ...(current as Json) };
-    for (const key of Object.keys(patch)) {
+    for (const key of Object.keys(fields)) {
       const childPath = joinPath(path, key);
       if (!(key in template)) {
         errors[childPath] = 'Campo desconhecido';
         continue;
       }
-      out[key] = applyPatch(template[key], (current as Json)[key], patch[key], childPath, errors);
+      out[key] = applyPatch(template[key], (current as Json)[key], fields[key], childPath, errors);
     }
     return out;
   }
@@ -165,6 +254,12 @@ function applyPatch(
   }
   if (typeof patch === 'string') return patch.trim();
   return Array.isArray(patch) ? [...patch] : patch;
+}
+
+function patchHasReengagementMessage(patch: unknown, step: 'first' | 'second'): boolean {
+  if (!isPlainObject(patch) || !isPlainObject(patch.reengagement)) return false;
+  const rule = patch.reengagement[step];
+  return isPlainObject(rule) && 'message' in rule;
 }
 
 export interface FunnelRulesService {
@@ -217,6 +312,18 @@ export function createFunnelRulesService(deps: FunnelRulesServiceDeps): FunnelRu
         !next.reengagement.first.enabled
       ) {
         errors['reengagement.second.enabled'] = 'Ligue o 1º reingajamento antes do 2º';
+      }
+      // D-266 item 4: só a mensagem que veio no patch (o gravado não é reprovado).
+      for (const step of ['first', 'second'] as const) {
+        const path = `reengagement.${step}.message`;
+        if (path in errors || !patchHasReengagementMessage(raw, step)) continue;
+        const message = next.reengagement[step].message;
+        const unknown = findUnknownReengagementVariables(message);
+        if (unknown.length > 0) {
+          errors[path] = `Variável desconhecida: ${unknown.map((name) => `{${name}}`).join(', ')}`;
+        } else if (!hasReengagementTextBesidesVariables(message)) {
+          errors[path] = 'Escreva um texto além de {paciente}';
+        }
       }
       if (Object.keys(errors).length > 0) {
         throw new BusinessError('VALIDATION_ERROR', { fields: errors });

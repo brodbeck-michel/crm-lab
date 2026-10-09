@@ -438,7 +438,7 @@ describe('proposal.stale_alert', () => {
 
     applyWsEvent(
       queryClient,
-      { event: 'proposal.stale_alert', data: { proposalId: 'p-1', hours: 5 } } as WsEvent,
+      { event: 'proposal.stale_alert', data: { proposalId: 'p-1', minutes: 300, hours: 5 } } as WsEvent,
       toast,
     );
 
@@ -446,5 +446,15 @@ describe('proposal.stale_alert', () => {
     expect(toast.mock.calls[0]?.[0]).toMatch(/parado em "Novo orçamento" há 5 h/);
     expect(toast.mock.calls[0]?.[1]).toBe('attention');
     expect(invalidate).toHaveBeenCalledWith({ queryKey: queryScopes.proposals });
+  });
+
+  it('abaixo de 1 h fala em minutos (CRMLAB-97, D-267)', () => {
+    const toast = vi.fn();
+    applyWsEvent(
+      queryClient,
+      { event: 'proposal.stale_alert', data: { proposalId: 'p-1', minutes: 17, hours: 0 } } as WsEvent,
+      toast,
+    );
+    expect(toast.mock.calls[0]?.[0]).toMatch(/parado em "Novo orçamento" há 17 min/);
   });
 });

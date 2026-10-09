@@ -527,6 +527,22 @@ describe('/api/v1/proposals', () => {
         .expect(200);
       expect((detail.body as ProposalDetail).closedAt).not.toBeNull();
     });
+
+    it('aceita o motivo horario_atendimento (CRMLAB-98, D-268)', async () => {
+      const c = await cenario();
+      const proposal = await createProposal({
+        tenantId: c.tenantId,
+        createdBy: c.attendant.id,
+      });
+
+      const response = await app.agent
+        .patch(`/api/v1/proposals/${proposal.id}/status`)
+        .set(app.auth(c.attendant))
+        .send({ status: 'perdido', reasonLost: 'horario_atendimento' })
+        .expect(200);
+
+      expect((response.body as { reasonLost: string }).reasonLost).toBe('horario_atendimento');
+    });
   });
 
   describe('PATCH /proposals/:id/discount', () => {

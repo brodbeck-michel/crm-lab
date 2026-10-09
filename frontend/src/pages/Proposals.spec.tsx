@@ -364,7 +364,7 @@ describe('Proposals', () => {
       ...DEFAULT_FUNNEL_RULES,
       automation: {
         ...DEFAULT_FUNNEL_RULES.automation,
-        staleNewBudgetAlert: { enabled: true, hours: 8 },
+        staleNewBudgetAlert: { enabled: true, minutes: 480 },
       },
     });
     renderPage();

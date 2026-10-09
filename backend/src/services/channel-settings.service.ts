@@ -603,6 +603,18 @@ export async function readBusinessHours(tx: DbTx, tenantId: string): Promise<Bus
   return toSettings(await channelSettingsRepo.findSettings(tx, tenantId)).businessHours;
 }
 
+/**
+ * Mensagens automaticas + horario, na transacao de quem chama. A resposta fora
+ * do horario e as boas-vindas leem por aqui (CRMLAB-94, D-264).
+ */
+export async function readAutoReplySettings(
+  tx: DbTx,
+  tenantId: string,
+): Promise<{ autoMessages: AutoMessagesSettings; businessHours: BusinessHours }> {
+  const { autoMessages, businessHours } = toSettings(await channelSettingsRepo.findSettings(tx, tenantId));
+  return { autoMessages, businessHours };
+}
+
 /** Leitura completa da tela dentro de uma transacao ja aberta. */
 async function readAll(tx: DbTx, tenantId: string): Promise<ChannelSettingsResponse> {
   const channels = await channelSettingsRepo.listChannels(tx, tenantId);

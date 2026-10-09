@@ -8,7 +8,7 @@
  * Relógio de referência: Brasília, UTC−3 fixo (sem horário de verão desde
  * 2019), a mesma referência do Bitlab (D-187). Feriados ficam fora (D-205).
  */
-import type { DayCounting, HoursRule } from './funnel-rules.types.js';
+import type { DayCounting, StaleNewBudgetAlertRule } from './funnel-rules.types.js';
 import type { IsoDateTime } from './api.types.js';
 import type { ProposalStatus } from './proposal.types.js';
 
@@ -39,7 +39,8 @@ export interface StageAutomation {
   dayCounting: DayCounting;
 }
 
-const HOUR_MS = 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 /** Brasília = UTC−3. */
 const SAO_PAULO_OFFSET_MS = -3 * HOUR_MS;
@@ -93,22 +94,35 @@ export function hoursSince(enteredAt: Date, now: Date): number {
   return Math.max(0, Math.floor((now.getTime() - enteredAt.getTime()) / HOUR_MS));
 }
 
+/** Minutos INTEIROS desde `enteredAt` (corridos, D-267). */
+export function minutesSince(enteredAt: Date, now: Date): number {
+  return Math.max(0, Math.floor((now.getTime() - enteredAt.getTime()) / MINUTE_MS));
+}
+
 /**
- * Cartão de "Novo orçamento" parado (D-207): regra ligada, estágio
- * `novo_contato` e há `rule.hours` horas corridas ou mais na coluna. O motor
- * usa para alertar; o front, para o selo "Parado há N h".
+ * Duração do selo/toast de cartão parado (D-267): `"N min"` abaixo de 1 h,
+ * `"N h"` (horas inteiras) daí em diante.
+ */
+export function formatStaleDuration(minutes: number): string {
+  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h`;
+}
+
+/**
+ * Cartão de "Novo orçamento" parado (D-207/D-267): regra ligada, estágio
+ * `novo_contato` e há `rule.minutes` minutos corridos ou mais na coluna. O
+ * motor usa para alertar; o front, para o selo "Parado há N min/h".
  */
 export function isStaleNewBudget(
   status: ProposalStatus,
   stageEnteredAt: IsoDateTime | null | undefined,
-  rule: HoursRule,
+  rule: StaleNewBudgetAlertRule,
   now: Date,
 ): boolean {
   if (!rule.enabled || status !== 'novo_contato') return false;
   if (stageEnteredAt === null || stageEnteredAt === undefined) return false;
   const entered = new Date(stageEnteredAt);
   if (Number.isNaN(entered.getTime())) return false;
-  return now.getTime() - entered.getTime() >= rule.hours * HOUR_MS;
+  return now.getTime() - entered.getTime() >= rule.minutes * MINUTE_MS;
 }
 
 function daysLabel(days: number, counting: DayCounting): string {

@@ -28,6 +28,8 @@ export interface SilenceRow {
   anchor_at: string;
   first_outcome: ReengagementOutcome | null;
   first_at: string | null;
+  /** Nome para `{paciente}` (D-266): o da ficha vinculada, senão o do contato. */
+  patient_name: string | null;
 }
 
 const ANCHOR_LATERAL = `JOIN LATERAL (
@@ -58,9 +60,11 @@ export async function selectSilences(
     `SELECT c.id AS conversation_id, a.id AS anchor_id,
             to_char(a.created_at, ${ISO_UTC}) AS anchor_at,
             f.outcome AS first_outcome,
-            to_char(f.decided_at, ${ISO_UTC}) AS first_at
+            to_char(f.decided_at, ${ISO_UTC}) AS first_at,
+            COALESCE(NULLIF(btrim(pt.name), ''), NULLIF(btrim(c.patient_name), '')) AS patient_name
        FROM conversations c
        ${ANCHOR_LATERAL}
+       LEFT JOIN patients pt ON pt.id = c.patient_id AND pt.tenant_id = c.tenant_id
        LEFT JOIN conversation_reengagements f ON f.anchor_message_id = a.id AND f.step = 'first'
       WHERE c.tenant_id = $1 AND c.status = 'active' AND c.channel = 'whatsapp'
         AND c.last_message_at >= $2::timestamp

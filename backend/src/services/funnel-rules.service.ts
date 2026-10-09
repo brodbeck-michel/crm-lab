@@ -15,7 +15,9 @@ import {
   RESPONSE_ALERT_MINUTES_MIN,
   RULE_ACTOR_ROLES,
   SEND_MESSAGE_TEMPLATE_MAX,
+  findUnknownReengagementVariables,
   findUnknownTemplateVariables,
+  hasReengagementTextBesidesVariables,
   type FunnelRules,
   type UpdateFunnelRulesRequest,
 } from '@crm-lab/shared';
@@ -167,6 +169,12 @@ function applyPatch(
   return Array.isArray(patch) ? [...patch] : patch;
 }
 
+function patchHasReengagementMessage(patch: unknown, step: 'first' | 'second'): boolean {
+  if (!isPlainObject(patch) || !isPlainObject(patch.reengagement)) return false;
+  const rule = patch.reengagement[step];
+  return isPlainObject(rule) && 'message' in rule;
+}
+
 export interface FunnelRulesService {
   /** Todo perfil de laboratorio. Padroes quando nao ha linha. */
   get(ctx: TenantContext): Promise<FunnelRules>;
@@ -217,6 +225,18 @@ export function createFunnelRulesService(deps: FunnelRulesServiceDeps): FunnelRu
         !next.reengagement.first.enabled
       ) {
         errors['reengagement.second.enabled'] = 'Ligue o 1º reingajamento antes do 2º';
+      }
+      // D-266 item 4: só a mensagem que veio no patch (o gravado não é reprovado).
+      for (const step of ['first', 'second'] as const) {
+        const path = `reengagement.${step}.message`;
+        if (path in errors || !patchHasReengagementMessage(raw, step)) continue;
+        const message = next.reengagement[step].message;
+        const unknown = findUnknownReengagementVariables(message);
+        if (unknown.length > 0) {
+          errors[path] = `Variável desconhecida: ${unknown.map((name) => `{${name}}`).join(', ')}`;
+        } else if (!hasReengagementTextBesidesVariables(message)) {
+          errors[path] = 'Escreva um texto além de {paciente}';
+        }
       }
       if (Object.keys(errors).length > 0) {
         throw new BusinessError('VALIDATION_ERROR', { fields: errors });

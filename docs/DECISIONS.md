@@ -5431,3 +5431,35 @@ modal de Perdido e das barras do gráfico de motivos da Conversão). `outro` con
 **Impacto:** `shared/types/proposal.types.ts`; `LossReasonsChart.tsx`; seed dev (uma das 8
 perdas troca `preco` por `horario_atendimento`, cobrindo os 6 motivos); API_CONTRACTS §4/§8,
 BUSINESS_RULES §3, CONVENTIONS, SCHEMA §Seed; specs de analytics (back, front e e2e).
+
+### D-266: Reingajamento aceita `{paciente}` — o primeiro nome, ou nada
+**Decisão (Michel, CRMLAB-96, 09/10/2026; itens 4 e 5 decididos na implementação, pelo padrão
+mais conservador):** as duas mensagens do reingajamento (`reengagement.first/second.message`,
+D-211) deixam de ser texto fixo e aceitam **uma** variável, `{paciente}`
+(`REENGAGEMENT_MESSAGE_VARIABLES = ['paciente']`, lista própria — não é a do `sendMessage`).
+1. **Valor:** o **primeiro nome** do paciente, com capitalização normal ("MARIA DA SILVA" →
+   "Maria", "ana-luísa" → "Ana-Luísa"). Vem da ficha do paciente vinculada à conversa
+   (`patients.name`); sem ficha ou ficha sem nome, do nome do contato da conversa
+   (`conversations.patient_name`). Primeiro nome = a primeira sequência de letras do nome (emoji,
+   `~` e pontuação do nome do WhatsApp ficam de fora). Lido no tique que envia.
+2. **Sem nome** (nenhum dos dois, só símbolos, paciente anonimizado — D-063): a variável **some
+   sem deixar sobra**. Espaços e vírgulas logo antes dela vão junto ("Olá {paciente}! 😊" →
+   "Olá! 😊"; "Olá, {paciente}." → "Olá."); no começo de linha, vão a vírgula e os espaços logo
+   depois ("{paciente}, tudo bem?" → "tudo bem?").
+3. **Mensagem sem variável sai igual** — o render só toca em `{paciente}`. Função pura
+   `renderReengagementMessage(message, firstName)` em `shared/types/reengagement.types.ts`,
+   com `firstNameOf(fullName)` e `findUnknownReengagementVariables(message)`.
+4. **Validação só no `PATCH`**, e só da mensagem enviada no patch: outra variável `{x}` →
+   `VALIDATION_ERROR` em `fields["reengagement.<step>.message"]` ("Variável desconhecida: {x}"),
+   e mensagem que **só tem** a variável (sem nome ficaria vazia) também é recusada. A **leitura**
+   (`readFunnelRules`) não reprova o que já está gravado: uma mensagem antiga com `{` `}` literal
+   era texto fixo válido e não volta ao padrão em silêncio; no envio, `{x}` desconhecido sai como
+   está.
+5. **Tela:** botão `{paciente}` que insere a variável e **prévia** de cada mensagem com o nome de
+   exemplo "Maria Souza" (→ "Maria"); variável desconhecida aparece como erro e bloqueia salvar.
+**Motivo:** o Santé quer a mensagem automática com o nome do paciente, como a de envio do
+orçamento; sem nome, a frase precisa continuar natural.
+**Impacto:** `shared/types/reengagement.types.ts`; `reengagement.repository.ts`
+(`selectSilences` traz o nome), `reengagement.service.ts`, `funnel-rules.service.ts`;
+`ReengagementSection.tsx`. API_CONTRACTS §6c, SERVICES §28, BUSINESS_RULES §3, PAGES §21. Sem
+migração.

@@ -326,3 +326,59 @@ export function planReengagement(
   const due = new Date(state.first.decidedAt.getTime() + rules.second.hours * HOUR_MS);
   return decideStep('second', due, now, hours, customHolidays);
 }
+
+// ---------------------------------------------------------------------------
+// Variável `{paciente}` na mensagem (CRMLAB-96, D-266)
+// ---------------------------------------------------------------------------
+
+/** Únicas variáveis aceitas nas mensagens do reingajamento. Lista própria (não a do envio). */
+export const REENGAGEMENT_MESSAGE_VARIABLES = ['paciente'] as const;
+
+export type ReengagementMessageVariable = (typeof REENGAGEMENT_MESSAGE_VARIABLES)[number];
+
+const REENGAGEMENT_VARIABLE = /\{([^{}]*)\}/g;
+
+/** Variáveis `{x}` da mensagem que não estão em `REENGAGEMENT_MESSAGE_VARIABLES`, sem repetição. */
+export function findUnknownReengagementVariables(message: string): string[] {
+  const unknown = new Set<string>();
+  for (const match of message.matchAll(REENGAGEMENT_VARIABLE)) {
+    const name = match[1] ?? '';
+    if (!(REENGAGEMENT_MESSAGE_VARIABLES as readonly string[]).includes(name)) unknown.add(name);
+  }
+  return [...unknown];
+}
+
+/**
+ * Primeiro nome com capitalização normal ("MARIA DA SILVA" → "Maria",
+ * "ana-luísa" → "Ana-Luísa"). Primeiro nome = a primeira sequência de letras:
+ * emoji, `~` e pontuação do nome do WhatsApp ficam de fora. Sem letra → `null`.
+ */
+export function firstNameOf(fullName: string | null | undefined): string | null {
+  const match = (fullName ?? '').match(/\p{L}[\p{L}\p{M}'’-]*/u);
+  if (!match) return null;
+  const word = match[0].replace(/['’-]+$/u, '').toLocaleLowerCase('pt-BR');
+  return word
+    .split('-')
+    .map((part) => part.charAt(0).toLocaleUpperCase('pt-BR') + part.slice(1))
+    .join('-');
+}
+
+/**
+ * Troca `{paciente}` pelo primeiro nome. Sem nome, a variável some sem deixar
+ * sobra (D-266 item 2): leva junto espaços e vírgulas logo antes dela; no
+ * começo de linha, a vírgula e os espaços logo depois. Mensagem sem a
+ * variável sai igual; `{x}` desconhecido fica como está.
+ */
+export function renderReengagementMessage(message: string, firstName: string | null): string {
+  if (firstName !== null && firstName !== '') {
+    return message.replace(/\{paciente\}/g, firstName);
+  }
+  return message
+    .replace(/^[ \t]*\{paciente\}[ \t]*,?[ \t]*/gm, '')
+    .replace(/[ \t,]*\{paciente\}/g, '');
+}
+
+/** A mensagem tem texto além das variáveis? (sem nome, não pode sair vazia) */
+export function hasReengagementTextBesidesVariables(message: string): boolean {
+  return renderReengagementMessage(message, null).trim().length > 0;
+}

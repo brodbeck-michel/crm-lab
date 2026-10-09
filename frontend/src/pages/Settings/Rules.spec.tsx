@@ -329,6 +329,46 @@ describe('Regras (/settings/rules)', () => {
       expect(screen.getByRole('button', { name: 'Salvar regras' })).toBeDisabled();
     });
 
+    it('{paciente}: botão insere, prévia mostra o primeiro nome e salva (CRMLAB-96, D-266)', async () => {
+      const user = userEvent.setup();
+      signIn('manager');
+      renderPage();
+      const box = section(/reingajamento da conversa/i);
+      await user.click(within(box).getByRole('switch', { name: /1º reingajamento/i }));
+      const message = within(box).getAllByLabelText('Mensagem')[0]!;
+      await user.clear(message);
+      await user.type(message, 'Olá, ');
+      await user.click(within(box).getAllByRole('button', { name: '{paciente}' })[0]!);
+      expect(message).toHaveValue('Olá, {paciente}');
+      expect(within(box).getByTestId('preview-reingajamento-first')).toHaveTextContent('Olá, Maria');
+      await user.click(screen.getByRole('button', { name: 'Salvar regras' }));
+      expect(mutate.mock.calls[0]?.[0]).toEqual({
+        reengagement: { first: { enabled: true, message: 'Olá, {paciente}' } },
+      });
+    });
+
+    it('mensagem antiga sem variável: prévia igual ao texto', () => {
+      signIn('manager');
+      renderPage();
+      expect(screen.getByTestId('preview-reingajamento-second')).toHaveTextContent(
+        DEFAULT_FUNNEL_RULES.reengagement.second.message,
+      );
+    });
+
+    it('variável desconhecida mostra erro e bloqueia salvar (D-266)', async () => {
+      const user = userEvent.setup();
+      signIn('manager');
+      renderPage();
+      const box = section(/reingajamento da conversa/i);
+      await user.click(within(box).getByRole('switch', { name: /1º reingajamento/i }));
+      const message = within(box).getAllByLabelText('Mensagem')[0]!;
+      await user.clear(message);
+      // `{` é tecla especial no user-event: `{{` digita uma chave.
+      await user.type(message, 'Oi {{nome}');
+      expect(within(box).getByText('Variável desconhecida: {nome}')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Salvar regras' })).toBeDisabled();
+    });
+
     it('canal na API oficial: avisa que está inativo', () => {
       useChannelSettings.mockReturnValue(querySuccess(channelsWith('cloud_api')));
       signIn('manager');

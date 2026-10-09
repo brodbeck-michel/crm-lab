@@ -4249,14 +4249,16 @@ completo com os padrões aplicados. Nenhum outro código lê `funnel_rules` dire
 | `automation.dayCounting` | `calendar` (corridos) ou `business` (úteis) | CRMLAB-59 |
 | `manualMoves.*` | Travas de movimentação manual (D-192), via `checkTransition` | este card (back e front) |
 | `sendMessage.template` | Modelo do WhatsApp; render por `renderSendMessageTemplate` | CRMLAB-58 |
-| `reengagement.first` | Paciente sem responder há `hours` depois da última mensagem da atendente → manda `message` (D-211) | CRMLAB-62 |
+| `reengagement.first` | Paciente sem responder há `hours` depois da última mensagem da atendente → manda `message` (D-211); `{paciente}` vira o primeiro nome, ou some sem nome (D-266) | CRMLAB-62/96 |
 | `reengagement.second` | `hours` depois do envio do 1º, se continuar sem resposta → manda `message`. Só com o 1º ligado | CRMLAB-62 |
 | `responseAlert` | Destaca na lista do Atendimento a conversa ativa cujo paciente espera resposta há `minutes` minutos **úteis** ou mais (D-254). Só visual. Padrão desligado, 15 min | CRMLAB-84 (navegador) |
 | `lisSource.spreadsheetImport` | Importar a planilha do LIS (plano B; a carga principal é a API do Bitlab). Padrão **`false`**. `false` → `POST /lis-imports` = `SPREADSHEET_IMPORT_DISABLED` e o botão "Importar" some em Resultados (D-189) | CRMLAB-53 |
 
 `checkTransition`, `canTransition`, `allowedTargets`, `buildAllowedTransitions`, `canReopen`,
 `SEQUENTIAL_TRANSITIONS`, `REOPEN_TARGETS`, `findUnknownTemplateVariables` e
-`renderSendMessageTemplate` são exportados de `@crm-lab/shared`.
+`renderSendMessageTemplate` são exportados de `@crm-lab/shared`. Do reingajamento (D-266):
+`REENGAGEMENT_MESSAGE_VARIABLES`, `findUnknownReengagementVariables`, `firstNameOf` e
+`renderReengagementMessage`.
 
 **Erros:** `FORBIDDEN` (403, `platform_operator`)
 
@@ -4281,8 +4283,11 @@ Validação (`VALIDATION_ERROR`, `details.fields` pelo caminho do campo):
 - `sendMessage.template`: string `1..1000` depois do `trim`, só com as variáveis
   `{paciente}`, `{numero_orcamento}`, `{valor}`, `{convenio}` → senão
   `fields["sendMessage.template"]` citando as desconhecidas;
-- `reengagement.*.message`: string `1..1000` depois do `trim`, texto fixo (sem variáveis) →
-  `fields["reengagement.first.message"]` / `["reengagement.second.message"]`;
+- `reengagement.*.message`: string `1..1000` depois do `trim`, só com a variável `{paciente}`
+  (`REENGAGEMENT_MESSAGE_VARIABLES`, D-266) e com texto além dela →
+  `fields["reengagement.first.message"]` / `["reengagement.second.message"]` citando a
+  desconhecida. A checagem de variável vale só para a mensagem enviada no patch; o que já está
+  gravado não é reprovado na leitura;
 - `reengagement.second.enabled: true` com o 1º desligado (depois do merge) →
   `fields["reengagement.second.enabled"] = "Ligue o 1º reingajamento antes do 2º"` (D-211 item 4).
 

@@ -1387,7 +1387,9 @@ seu próprio [Salvar] (endpoint e permissão diferentes).
   1º e o 2º: `Toggle`, `Input` de horas ("Horas sem resposta" / "Horas depois do 1º") e
   `TextArea` "Mensagem", desabilitados com o disparo desligado. O 2º fica travado ("Ligue o 1º
   reingajamento para usar o 2º") com o 1º desligado, e desligar o 1º desliga o 2º junto. Texto
-  vazio bloqueia salvar. Nota: vale só para conversa aberta e WhatsApp por QR Code, respeita o
+  vazio bloqueia salvar. Cada mensagem tem o botão `{paciente}` (insere a variável), a
+  **pré-visualização** com o nome de exemplo "Maria Souza" (→ "Maria") e erro, que também bloqueia
+  salvar, para variável desconhecida ou mensagem só com a variável (D-266). Nota: vale só para conversa aberta e WhatsApp por QR Code, respeita o
   horário de funcionamento (link para Canais) e não envia em feriado. Gestor/admin leem os
   canais (`useChannelSettings`): WhatsApp na API oficial → aviso "Inativo para este canal".
 - **Alerta de tempo de resposta** (`id="alerta-resposta"`, logo depois do reingajamento,

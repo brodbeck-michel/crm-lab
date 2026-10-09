@@ -103,7 +103,7 @@ export interface ReengagementStepRule {
    * No 2º: horas desde o envio do 1º.
    */
   hours: number;
-  /** 1..1000 caracteres, texto fixo (sem variáveis). */
+  /** 1..1000 caracteres; aceita só `{paciente}` (D-266, `REENGAGEMENT_MESSAGE_VARIABLES`). */
   message: string;
 }
 

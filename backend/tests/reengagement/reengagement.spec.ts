@@ -421,3 +421,59 @@ describe('dentro do motor de tempo (D-211 item 1)', () => {
     expect((await timer.runTick()).tenants).toEqual([]);
   });
 });
+
+describe('variavel {paciente} na mensagem (CRMLAB-96, D-266)', () => {
+  async function setContactName(conversationId: string, name: string | null): Promise<void> {
+    await db.withoutTenant((tx) =>
+      tx.query('UPDATE conversations SET patient_name = $2 WHERE id = $1', [conversationId, name]),
+    );
+  }
+
+  async function linkPatient(conversationId: string, name: string | null): Promise<void> {
+    await db.withoutTenant(async (tx) => {
+      const patient = await tx.query<{ id: string }>(
+        `INSERT INTO patients (tenant_id, phone, name) VALUES ($1, $2, $3) RETURNING id`,
+        [tenant.id, `+55489${String(Date.now()).slice(-8)}`, name],
+      );
+      await tx.query('UPDATE conversations SET patient_id = $2 WHERE id = $1', [
+        conversationId,
+        patient.rows[0]?.id,
+      ]);
+    });
+  }
+
+  beforeEach(async () => {
+    await setRules({ reengagement: { first: { message: 'Olá, {paciente}! Ficou alguma dúvida?' } } });
+  });
+
+  it('usa o primeiro nome da ficha vinculada, com capitalizacao normal', async () => {
+    const { conversation } = await silence(brt('2026-09-28T10:00'));
+    await setContactName(conversation.id, 'Contato do WhatsApp');
+    await linkPatient(conversation.id, 'MARIA DA SILVA');
+    await service.runForTenant(tenant.id, brt('2026-09-28T11:00'));
+    expect(sent.map((s) => s.text)).toEqual(['Olá, Maria! Ficou alguma dúvida?']);
+    expect((await automatedMessages(conversation.id))[0]?.content).toBe('Olá, Maria! Ficou alguma dúvida?');
+  });
+
+  it('sem ficha (ou ficha sem nome), usa o nome do contato da conversa', async () => {
+    const { conversation } = await silence(brt('2026-09-28T10:00'));
+    await setContactName(conversation.id, 'joão pedro');
+    await linkPatient(conversation.id, null);
+    await service.runForTenant(tenant.id, brt('2026-09-28T11:00'));
+    expect(sent.map((s) => s.text)).toEqual(['Olá, João! Ficou alguma dúvida?']);
+  });
+
+  it('sem nome nenhum, a variavel some sem deixar sobra', async () => {
+    const { conversation } = await silence(brt('2026-09-28T10:00'));
+    await setContactName(conversation.id, null);
+    await service.runForTenant(tenant.id, brt('2026-09-28T11:00'));
+    expect(sent.map((s) => s.text)).toEqual(['Olá! Ficou alguma dúvida?']);
+  });
+
+  it('mensagem sem variavel sai igual', async () => {
+    await setRules({ reengagement: { first: { message: 'Oi! Tudo certo por aí?' } } });
+    await silence(brt('2026-09-28T10:00'));
+    await service.runForTenant(tenant.id, brt('2026-09-28T11:00'));
+    expect(sent.map((s) => s.text)).toEqual(['Oi! Tudo certo por aí?']);
+  });
+});

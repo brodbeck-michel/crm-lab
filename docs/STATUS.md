@@ -3272,6 +3272,19 @@ Branch `feature/CRMLAB-98-motivo-perda-horario` (de `main` v1.35.0). Decisão D-
   usar `LOSS_REASON_LABELS` (antes mostrava a chave crua).
 - **Testes:** `proposal-routes.spec.ts` (+1), `analytics-service.spec.ts` e `seed-dev.spec.ts`
   (6 motivos), `LostReasonForm.spec.tsx` (+1), `Analytics.spec.tsx`, e2e `flow-4-analytics`.
+
+### 🚧 CRMLAB-96 — `{paciente}` no reingajamento (2026-10-09, aguardando validação)
+
+Branch `feature/CRMLAB-96-nome-no-reingajamento` (de `main` v1.35.0). Decisão D-266, sem migração.
+
+- **Shared:** `REENGAGEMENT_MESSAGE_VARIABLES`, `findUnknownReengagementVariables`, `firstNameOf`,
+  `renderReengagementMessage`, `hasReengagementTextBesidesVariables` (`reengagement.types.ts`).
+- **Backend:** `selectSilences` traz o nome (ficha vinculada, senão contato); o envio renderiza
+  `{paciente}` com o primeiro nome ou some sem sobra; `PATCH` recusa outra variável e mensagem só
+  com a variável (só a mensagem enviada no patch; a leitura não reprova o gravado).
+- **Tela:** botão `{paciente}`, pré-visualização com "Maria Souza" e erro que bloqueia salvar.
+- **Testes:** `reengagement-message.spec.ts` (novo, puro), `reengagement.spec.ts` (+4),
+  `funnel-rules.spec.ts` (+3), `Rules.spec.tsx` (+3).
 - **Pendente:** validação na hml.
 
 ### 🚧 CRMLAB-93 — participantes da conversa (2026-10-06, aguardando validação)

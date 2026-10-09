@@ -147,6 +147,46 @@ describe('PATCH /settings/funnel-rules', () => {
     expect(Object.keys(fields).sort()).toEqual(['reengagement.first.hours', 'reengagement.first.message']);
   });
 
+  it('reingajamento: aceita {paciente} nas duas mensagens (D-266)', async () => {
+    const res = await app.agent
+      .patch(BASE)
+      .set(app.auth(managerA))
+      .send({
+        reengagement: {
+          first: { message: 'Olá, {paciente}! Ficou alguma dúvida?' },
+          second: { message: '{paciente}, seguimos à disposição.' },
+        },
+      });
+    expect(res.status).toBe(200);
+    const body = res.body as FunnelRules;
+    expect(body.reengagement.first.message).toBe('Olá, {paciente}! Ficou alguma dúvida?');
+    expect(body.reengagement.second.message).toBe('{paciente}, seguimos à disposição.');
+  });
+
+  it('reingajamento: outra variavel e mensagem so com a variavel sao recusadas (D-266)', async () => {
+    const res = await app.agent
+      .patch(BASE)
+      .set(app.auth(managerA))
+      .send({
+        reengagement: {
+          first: { message: 'Olá {nome}, o orçamento de {valor} segue válido' },
+          second: { message: ' {paciente} ' },
+        },
+      });
+    expect(res.status).toBe(400);
+    expect((res.body as ApiErrorBody).error.details?.fields).toEqual({
+      'reengagement.first.message': 'Variável desconhecida: {nome}, {valor}',
+      'reengagement.second.message': 'Escreva um texto além de {paciente}',
+    });
+  });
+
+  it('reingajamento: texto gravado com chaves literais nao volta ao padrao na leitura (D-266 item 4)', () => {
+    const stored = {
+      reengagement: { first: { enabled: true, hours: 2, message: 'Oi {cliente}' } },
+    };
+    expect(mergeWithDefaults(stored).reengagement.first.message).toBe('Oi {cliente}');
+  });
+
   it('alerta de tempo de resposta: padrao desligado com 15 min; liga e grava (CRMLAB-84)', async () => {
     expect(DEFAULT_FUNNEL_RULES.responseAlert).toEqual({ enabled: false, minutes: 15 });
     const res = await app.agent

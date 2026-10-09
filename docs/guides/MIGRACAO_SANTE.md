@@ -142,3 +142,57 @@ funil (D-246).
 4. **Quando as atendentes forem começar:** religue "Nascer do orçamento do Bitlab". Só entram
    orçamentos emitidos a partir desse dia. Se a regra já tiver rodado ligada antes nesse
    tenant, confira `tenant_settings.bitlab_proposals_since` e ajuste a data antes de religar.
+
+---
+
+## 3. Regras respondidas pela gestora — virada de outubro/2026
+
+Fonte: Google Doc "CRM Lab — Funcionalidades e Regras do Lab Santé", respondido pela gestora
+até 09/10/2026. Aplicado em **produção** (`lab-sante`) em 09/10/2026, com backup antes, em
+transação SQL e com audit log (`user_agent = 'script: regras do Santé (doc da gestora, 09/10/2026)'`).
+Prod ainda sem uso; a virada é na semana de 12/10.
+
+### 3.1 Respostas e o que ficou configurado
+
+| # | Pergunta | Resposta da gestora | No CRM (prod) |
+|---|---|---|---|
+| 1.1 / 1.3 | Orçamento do Bitlab vira cartão; a partir de quando | Sim; dia da virada | **Desligado até a virada** (§2 item 4). `bitlab_proposals_since` está NULL: a data grava sozinha no 1º ciclo |
+| 1.2 | Criar orçamento no CRM | Sim | Ligado (já estava) |
+| 2.1 / 2.2 | Requisição → Negociação; pagamento → Ganho | Sim | Ligados (padrão) |
+| 2.3 / 2.4 | Enviado → Follow-up; Negociação → Follow-up | 3 / 7 dias | Padrão |
+| 2.5 | Follow-up → Perdido sozinho | Sim, 15 dias | **Ligado, 15 dias** |
+| 2.6 | Alerta de orçamento novo parado | **15 min** | **1 hora**: a regra só aceita horas (1..720). Ver §3.2 |
+| 2.7 | Contagem dos prazos | Corridos | Padrão |
+| 3.1 | Reabrir Ganho/Perdido | Todas | **Ligado para atendente e gestora** (admin sempre pode) |
+| 3.2 / 3.3 / 3.5 | Pular etapas; motivo obrigatório; gestora move card alheio | Sim | Padrão |
+| 3.4 | Motivo de perda novo | "Horário de atendimento" | Enum fixo. Ver §3.2 |
+| 4.1 | Mensagem do orçamento | Duas: "a prazo" e "AV" | Modelo "a prazo" com `{valor}`, `{numero_orcamento}` e `___` no prazo e nas parcelas; a atendente completa no painel de envio (a mensagem é editável). Ver §3.2 |
+| 4.2 | 1º lembrete | Sim, 5 h, texto dela | **Ligado, 5 h, texto dela**, sem o "(nome)": o reingajamento não aceita variáveis. Ver §3.2 |
+| 4.3 | 2º lembrete | Não | Desligado |
+| 5.1 | Horário | Seg–sex 7h–17h30; sáb/dom fechado | **Gravado** em `business_hours`. O texto dela virou a **mensagem fora do horário** (ligada), mas hoje nada envia essa mensagem. Ver §3.2 |
+| 5.2 | Feriados municipais | Nenhum além dos nacionais | Só os nacionais (automáticos) |
+| 5.3 | Conversa em vermelho | 15 min | **Ligado, 15 min** |
+| 6.1 | Alçada da atendente | **20%** | **20%** nas 8 atendentes ativas |
+| 6.2 | Alçada da gestora | 30% | Não há usuária `manager`; a gestora é admin |
+| 6.3 / 6.4 | Comissão exames / check-up | **2%** / 1,5% | 2,00 / 1,50 |
+| 7.1 / 7.2 / 7.3 | Número; quem lê o QR; QR ou API Meta | Informados no doc; **QR Code** | Conectar no dia |
+| 8.1 / 8.2 | Vendas só no CRM; conferência | Dia da virada; gestora | Carga final na véspera (D0) |
+| 10.1 / 10.2 | Visitação médica | Não usa; não definido | Nada a fazer |
+| Usuários | Tabela | Nomes e perfis | Os 9 já existem em prod, com o vínculo de atendente do Bitlab feito |
+
+### 3.2 O que dependeu de desenvolvimento
+
+1. Alerta de orçamento parado em **minutos** (2.6).
+2. Motivo de perda **"Horário de atendimento"** (3.4).
+3. **Duas mensagens de orçamento** ("a prazo" e "à vista") com prazo de entrega e parcelas (4.1).
+4. **Nome do paciente** no lembrete (4.2).
+5. **Envio da mensagem fora do horário** (5.1): configurável em Configurações → Canais desde a
+   migração 003, mas nenhum serviço a envia.
+
+### 3.3 Checklist do dia da virada
+
+1. Última carga das vendas do app antigo (§1) e conferência com a gestora.
+2. Regras → ligar **"Nascer do orçamento do Bitlab"** (§2 item 4).
+3. Conectar o WhatsApp pelo QR Code com quem estiver com o celular (doc, 7.2).
+4. Conferir em Regras e Canais o que os cards da §3.2 trouxeram (unidade do alerta, as duas
+   mensagens, o nome no lembrete) e ajustar ao que a gestora pediu.

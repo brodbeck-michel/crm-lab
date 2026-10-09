@@ -108,9 +108,13 @@ export const PHONE_SENDER_NAME = 'Enviada pelo celular';
 
 /**
  * Agente sem autor COM `automation` e a mensagem que o sistema mandou sozinho
- * ao paciente (reingajamento, CRMLAB-62 — D-211 item 5).
+ * ao paciente (reingajamento, CRMLAB-62 — D-211 item 5; fora do horario e
+ * boas-vindas, CRMLAB-94 — D-264).
  */
 export const AUTOMATED_SENDER_NAME = 'Mensagem automática';
+
+/** O que o sistema mandou sozinho: reingajamento (D-211), fora do horario e boas-vindas (D-264). */
+export type MessageAutomation = 'reengagement' | 'offhours' | 'greeting';
 
 /** ISO-UTC montado no banco (D-021/D-078), para a data dentro do JSON das reacoes. */
 const ISO_UTC = `'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'`;
@@ -358,8 +362,8 @@ export interface MessageInsert {
   quotedMessageId?: string | null;
   /** `stanzaId` do webhook / id externo da citada. Sem `quotedMessageId`, resolve pela conversa. */
   quotedExternalId?: string | null;
-  /** So o reingajamento (D-211 item 5); `null`/ausente para todo o resto. */
-  automation?: 'reengagement' | null;
+  /** Mensagem automatica (D-211 item 5, D-264); `null`/ausente para todo o resto. */
+  automation?: MessageAutomation | null;
   /** Duracao, paginas, miniatura, localizacao, contatos (D-234). */
   metadata?: MessageMetadata | null;
   /**

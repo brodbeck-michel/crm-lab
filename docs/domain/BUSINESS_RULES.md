@@ -219,6 +219,18 @@ funcionamento (fora dele, fica para a abertura; sem nenhum dia configurado = sem
 hora de sair cai em feriado, **descarta**, não empurra. Mais de 2 h atrasado → descarta também.
 API oficial da Meta não entra na rotina. A mensagem aparece como "Mensagem automática".
 
+### Mensagem fora do horário e boas-vindas (CRMLAB-94, D-264)
+Configuradas em Configurações → Canais. Só WhatsApp **por QR Code**, conversa ativa.
+- **Fora do horário:** o paciente escreveu com o laboratório fechado (fora do expediente de
+  `business_hours` ou em feriado nacional/do laboratório) → recebe o texto configurado **uma vez
+  por período fechado** (cinco mensagens na mesma noite = uma resposta; o fim de semana inteiro é
+  um período). Sem nenhum dia configurado = sempre aberto, nunca envia.
+- **Boas-vindas:** primeira mensagem de uma conversa nova (primeiro contato do número), com o
+  laboratório aberto → uma vez. Fechado, sai só a de fora do horário.
+- Aparecem como "Mensagem automática" e **não contam como resposta da atendente** (alerta,
+  relatório de tempo de resposta, âncora do reingajamento). Falha no envio fica registrada e não
+  é reenviada.
+
 ### Alerta de tempo de resposta (CRMLAB-84, D-254)
 O inverso do reingajamento, e **só visual**: nada é enviado ao paciente. Com a regra ligada
 (padrão **desligada**, 15 min, faixa **1 a 1440**), a conversa **ativa** em que o paciente

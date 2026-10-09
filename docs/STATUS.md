@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-10-06 (CRMLAB-93 — participantes da conversa, branch `feature/CRMLAB-93-participantes-conversa`)
+**Última atualização:** 2026-10-09 (CRMLAB-94 — mensagem fora do horário e boas-vindas, branch `feature/CRMLAB-94-mensagem-fora-do-horario`)
 
 ---
 
@@ -3244,6 +3244,23 @@ CRMLAB-91).
 registro da visita (88) e linha do tempo (89). Ficam fora, para cards futuros se forem pedidos, os
 itens de "pesquisa de mercado" (resultado da visita em pedidos, classificação ABC, alerta de médico
 esquecido, roteiro do dia, materiais, metas) e a ligação do médico da proposta com o cadastro.
+
+### 🚧 CRMLAB-94 — mensagem fora do horário e boas-vindas (2026-10-09, aguardando validação)
+
+Branch `feature/CRMLAB-94-mensagem-fora-do-horario` (de `main` v1.35.0). Decisão D-264, migração 054.
+
+- **Antes:** Configurações → Canais gravava `offHours`/`greeting` (D-065), mas nenhum serviço enviava.
+- **Backend:** `AutoReplyService` (novo) chamado sem `await` por `MessageService.createFromPatient`
+  a cada mensagem nova do paciente (só no webhook). Laboratório fechado (fora de `business_hours`
+  ou feriado nacional/do laboratório, régua do reingajamento) → `offhours_message` **uma vez por
+  período fechado por conversa** (`offHoursReopening` em `shared/`); primeira mensagem da conversa
+  com o laboratório aberto → `greeting_message`, uma vez. Trava em `conversation_auto_replies`
+  (índices únicos parciais). Só WhatsApp por QR. Mensagem com `automation = 'offhours' | 'greeting'`
+  — não conta como resposta (alerta, relatório, âncora do reingajamento). Falha: `failed` + log,
+  sem reenvio.
+- **Testes:** `tests/auto-reply/auto-reply.spec.ts` (novo, 26) e `tests/db/rls-auto-replies.spec.ts`
+  (novo, 4); reengajamento, webhooks, whatsapp, channel-settings, holidays, kernel e conversations verdes.
+- **Pendente:** validação na hml (WhatsApp QR com horário configurado, mensagem à noite).
 
 ### 🚧 CRMLAB-98 — motivo de perda "Horário de atendimento" (2026-10-09, aguardando validação)
 

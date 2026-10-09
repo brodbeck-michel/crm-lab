@@ -2515,7 +2515,7 @@ limites de `DEFAULT_DISCOUNT_LIMIT` de `@crm-lab/shared`:
   Um caminho ilegal derruba o seed na hora.
 - Uma proposta com `approval_status = 'pending'` e **25% de desconto** criada
   por atendente de alçada 15%, mais uma `rejected`.
-- `perdido` com `reason_lost` cobrindo os **5 motivos**; `ganho` com `closed_at`
+- `perdido` com `reason_lost` cobrindo os **6 motivos** (D-268); `ganho` com `closed_at`
   distribuído nas últimas semanas (série temporal da curva de receita).
 - **Audit logs** de `create_proposal`, `update_proposal_status`,
   `approve_discount` e `reject_discount`.

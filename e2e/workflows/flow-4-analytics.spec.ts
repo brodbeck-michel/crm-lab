@@ -6,7 +6,7 @@
  *  - atendente recebe a versao PARCIAL (`partial: true`) e a tela avisa;
  *  - `GET /analytics/team` e gestor/admin — atendente leva 403;
  *  - dinheiro no fio e NUMERO (`179.8`), nunca `"R$ 179,80"` (D-018);
- *  - `lossReasons` traz sempre as 5 chaves e `byStatus` os 6 estagios.
+ *  - `lossReasons` traz sempre as 6 chaves e `byStatus` os 6 estagios.
  *
  * As duas janelas de tempo (D-020) tambem aparecem aqui: o funil conta
  * propostas CRIADAS no periodo, a receita conta propostas GANHAS (`closedAt`).
@@ -40,6 +40,7 @@ const LOSS_REASONS = [
   'silencio',
   'exame_indisponivel',
   'prazo',
+  'horario_atendimento',
   'outro',
 ] as const satisfies readonly LossReason[];
 
@@ -169,7 +170,7 @@ test.describe('Fluxo 4: shape do contrato', () => {
       expect(typeof performer.revenue).toBe('number');
     }
 
-    // As 5 chaves de LOSS_REASONS sempre vem, com zero quando nao houve perda.
+    // As 6 chaves de LOSS_REASONS sempre vem, com zero quando nao houve perda.
     for (const reason of LOSS_REASONS) {
       expect(conversion.lossReasons).toHaveProperty(reason);
       expect(typeof conversion.lossReasons[reason]).toBe('number');

@@ -12,7 +12,7 @@
  *     segundo `ALLOWED_TRANSITIONS`.
  *   - uma proposta `pending` acima da alcada do atendente + o post em
  *     `#aprovacoes` que a acompanha.
- *   - `perdido` distribuido nos 5 motivos (grafico da tela de Conversao).
+ *   - `perdido` distribuido nos 6 motivos (grafico da tela de Conversao).
  *   - `ganho` com `closed_at` espalhado nas ultimas semanas (curva de receita).
  *   - conversas nao atribuidas e com `unread_count > 0` (chips do inbox).
  *   - `created_at` espalhado no tempo — datas relativas fazem sentido.
@@ -181,7 +181,7 @@ const LOSS_SEQUENCE: readonly LossReason[] = [
   'exame_indisponivel',
   'silencio',
   'outro',
-  'preco',
+  'horario_atendimento',
 ];
 
 /** Distribuicao pelos 6 estagios — nenhuma coluna do Pipeline fica vazia. */

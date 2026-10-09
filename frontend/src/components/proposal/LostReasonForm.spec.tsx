@@ -24,4 +24,20 @@ describe('LostReasonForm — regra "Exigir motivo" (CRMLAB-56, D-192)', () => {
     await user.click(screen.getByRole('button', { name: 'Confirmar' }));
     expect(onSubmit).toHaveBeenCalledWith(undefined);
   });
+
+  it('oferece "Horário de atendimento" antes de "Outro" (CRMLAB-98, D-268)', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(<LostReasonForm onSubmit={onSubmit} />);
+
+    const select = screen.getByLabelText('Motivo da Perda');
+    const labels = Array.from(select.querySelectorAll('option'))
+      .map((o) => o.textContent)
+      .filter((t) => t !== '' && t !== null);
+    expect(labels.slice(-2)).toEqual(['Horário de atendimento', 'Outro']);
+
+    await user.selectOptions(select, 'horario_atendimento');
+    await user.click(screen.getByRole('button', { name: 'Confirmar' }));
+    expect(onSubmit).toHaveBeenCalledWith('horario_atendimento');
+  });
 });

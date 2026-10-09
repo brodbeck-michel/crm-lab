@@ -5356,3 +5356,22 @@ via a conversa da colega.
 `ConversationPanel.tsx` (menu "Participantes"), `ConversationList.tsx` (chip),
 `pages/Attendance/index.tsx`, `hooks/useNewMessageAlerts.ts`. SCHEMA §39, API_CONTRACTS §2,
 BUSINESS_RULES §16.
+
+### D-268: Motivo de perda "Horário de atendimento"
+**Decisão (Michel, CRMLAB-98, 09/10/2026):** `LossReason` ganha o sexto valor
+`horario_atendimento`, rótulo **"Horário de atendimento"** — o paciente desistiu porque o horário
+do laboratório não atendia. Entra **antes de `outro`** em `LOSS_REASONS` (ordem do seletor do
+modal de Perdido e das barras do gráfico de motivos da Conversão). `outro` continua o último.
+1. **Sem migração:** `proposals.reason_lost` é `VARCHAR(255)` sem `CHECK` (migração 001); a lista
+   válida mora só em `LOSS_REASONS` (`@crm-lab/shared`), lida pelo `z.enum` da rota e por
+   `ProposalService` (`INVALID_LOSS_REASON` traz `allowed` com os 6).
+2. **Relatório:** `GET /analytics/conversion` passa a trazer **6 chaves** em `lossReasons`, sempre,
+   zero onde não houve perda. Perdas antigas não mudam de motivo.
+3. **Gráfico "Motivos de Perda":** passa a ler `LOSS_REASON_LABELS` (antes tinha um mapa próprio
+   com chaves que não existem no contrato e exibia a chave crua — `exame_indisponivel`). Corrigido
+   no mesmo card porque o motivo novo apareceria como `horario_atendimento`.
+4. **Resultados/PDF/Excel:** não exibem motivo de perda — nada a mudar.
+**Motivo:** o Santé registrava essas perdas como "Outro" e perdia a leitura do motivo.
+**Impacto:** `shared/types/proposal.types.ts`; `LossReasonsChart.tsx`; seed dev (uma das 8
+perdas troca `preco` por `horario_atendimento`, cobrindo os 6 motivos); API_CONTRACTS §4/§8,
+BUSINESS_RULES §3, CONVENTIONS, SCHEMA §Seed; specs de analytics (back, front e e2e).

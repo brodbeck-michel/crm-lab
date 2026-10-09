@@ -3245,6 +3245,18 @@ registro da visita (88) e linha do tempo (89). Ficam fora, para cards futuros se
 itens de "pesquisa de mercado" (resultado da visita em pedidos, classificação ABC, alerta de médico
 esquecido, roteiro do dia, materiais, metas) e a ligação do médico da proposta com o cadastro.
 
+### 🚧 CRMLAB-98 — motivo de perda "Horário de atendimento" (2026-10-09, aguardando validação)
+
+Branch `feature/CRMLAB-98-motivo-perda-horario` (de `main` v1.35.0). Decisão D-268, sem migração.
+
+- **Contrato:** `LossReason`/`LOSS_REASONS`/`LOSS_REASON_LABELS` ganham `horario_atendimento`
+  ("Horário de atendimento"), antes de `outro`; `lossReasons` do `/analytics/conversion` com 6 chaves.
+- **Tela:** modal de Perdido lista o motivo novo; gráfico "Motivos de Perda" da Conversão passa a
+  usar `LOSS_REASON_LABELS` (antes mostrava a chave crua).
+- **Testes:** `proposal-routes.spec.ts` (+1), `analytics-service.spec.ts` e `seed-dev.spec.ts`
+  (6 motivos), `LostReasonForm.spec.tsx` (+1), `Analytics.spec.tsx`, e2e `flow-4-analytics`.
+- **Pendente:** validação na hml.
+
 ### 🚧 CRMLAB-93 — participantes da conversa (2026-10-06, aguardando validação)
 
 Branch `feature/CRMLAB-93-participantes-conversa` (de `main` v1.34.0). Decisão D-263, migração 053.

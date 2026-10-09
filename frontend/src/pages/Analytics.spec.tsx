@@ -64,7 +64,7 @@ function conversionReport(overrides: Partial<FunnelReport> = {}): FunnelReport {
     // Chaves de `LossReason` — as inventadas do mock antigo (`preco_alto`,
     // `concorrencia`, `paciente_cancelou`) NAO existem no contrato; o `as any`
     // e que as deixava passar.
-    lossReasons: { preco: 5, silencio: 3, exame_indisponivel: 2, prazo: 1, outro: 0 },
+    lossReasons: { preco: 5, silencio: 3, exame_indisponivel: 2, prazo: 1, horario_atendimento: 0, outro: 0 },
     revenue: 30000,
     averageTicket: 1000,
     topPerformers: [{ userId: 'user1', name: 'João', conversions: 10, revenue: 10000 }],
@@ -212,7 +212,7 @@ describe('Analytics', () => {
           perdido: 1,
           conversionRate: 25,
         },
-        lossReasons: { preco: 1, silencio: 0, exame_indisponivel: 0, prazo: 0, outro: 0 },
+        lossReasons: { preco: 1, silencio: 0, exame_indisponivel: 0, prazo: 0, horario_atendimento: 0, outro: 0 },
         revenue: 1000,
         topPerformers: [],
         partial: true,

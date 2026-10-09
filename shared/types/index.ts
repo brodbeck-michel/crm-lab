@@ -26,3 +26,4 @@ export * from './funnel-timer.types.js';
 export * from './reengagement.types.js';
 export * from './response-alert.types.js';
 export * from './response-time.types.js';
+export * from './auto-reply.types.js';

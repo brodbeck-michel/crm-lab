@@ -103,6 +103,11 @@ registra() {
       alerta_log "ainda ruim (sem repetir alerta): $chave"
     else
       alerta_envia critical "$titulo" "$detalhe"
+      # Nao chegou a ninguem: sem marca, a proxima rodada tenta de novo.
+      if [[ "${ALERTA_FALHOU:-0}" == 1 ]]; then
+        alerta_log "alerta de $chave nao entregue: nova tentativa na proxima rodada"
+        return 0
+      fi
       if ! printf '%s\n' "$detalhe" > "$marca" 2>/dev/null; then
         registra_avisa_estado_quebrado "$marca"
       fi
@@ -112,6 +117,10 @@ registra() {
 
   if [[ -f "$marca" ]]; then
     alerta_envia info "$titulo_volta" "$detalhe"
+    if [[ "${ALERTA_FALHOU:-0}" == 1 ]]; then
+      alerta_log "aviso de volta de $chave nao entregue: nova tentativa na proxima rodada"
+      return 0
+    fi
     if ! rm -f "$marca" 2>/dev/null; then
       registra_avisa_estado_quebrado "$marca"
     fi
@@ -308,17 +317,17 @@ SQL
 fi
 
 # A instancia que ENVIA os alertas. Enquanto nao for pareada (`inexistente`),
-# nao ha o que vigiar; depois, se cair, o aviso sai pelo CallMeBot.
+# nao ha o que vigiar; depois, se cair, o aviso sai pelo Telegram.
 instancia_alertas="${ALERT_EVOLUTION_INSTANCE:-alertas}"
 if [[ -n "${ALERT_WHATSAPP_TO:-}" ]]; then
   estado="$(evo_estado "$instancia_alertas")"
   if [[ "$estado" == inexistente ]]; then
-    alerta_log "instancia '$instancia_alertas' ainda nao existe: alertas saem pelo CallMeBot"
+    alerta_log "instancia '$instancia_alertas' ainda nao existe: alertas saem pelo Telegram"
   else
     vigia_sessao "whatsapp-alertas" "$([[ "$estado" == open ]] && echo sim || echo nao)" \
       "Numero de alertas desconectado [$COMPOSE_PROJECT_NAME]" \
       "Numero de alertas restabelecido [$COMPOSE_PROJECT_NAME]" \
-      "Instancia '$instancia_alertas' do Evolution: $estado. Enquanto isso os alertas saem pelo CallMeBot. Parear de novo: scripts/whatsapp-alertas.sh parear"
+      "Instancia '$instancia_alertas' do Evolution: $estado. Enquanto isso os alertas saem pelo Telegram. Parear de novo: scripts/whatsapp-alertas.sh parear"
   fi
 fi
 

@@ -147,23 +147,30 @@ sudo -u deploy /opt/crm-lab/scripts/monitora-saude.sh   # rodada manual
 ## 4. Notificador: WhatsApp e webhook
 
 `scripts/lib/alerta.sh` é a biblioteca de envio. Desde o CRMLAB-99 (D-269) o
-destino principal é o **WhatsApp do Michel**; o webhook genérico continua
-opcional. Todo alerta do monitor e a falha do backup saem pelos dois.
+destino principal é o **WhatsApp do Michel**, com o **Telegram** de reserva; o
+webhook genérico continua opcional. Todo alerta do monitor e a falha do backup
+saem por esse caminho.
 
-O WhatsApp tem **dois caminhos, em sequência**:
+São **dois caminhos, em sequência**:
 
 1. **Instância própria do Evolution** (`alertas`): um número só de alertas,
    nunca o de um laboratório, sem webhook (o que responderem nele não entra no
    CRM).
-2. **CallMeBot**, se o primeiro falhar (Evolution fora, instância não pareada
-   ou desconectada). Mora fora da VPS, então avisa até que o Evolution caiu.
+2. **Bot do Telegram**, se o primeiro falhar (Evolution fora, instância não
+   pareada ou desconectada). Mora fora da VPS, então avisa até que o Evolution
+   caiu. O CallMeBot (WhatsApp grátis) foi a primeira escolha, mas estava sem
+   vagas em 18/10/2026.
+
+Alerta que não chegou a ninguém **não é dado por entregue**: o monitor tenta
+de novo na rodada seguinte, inclusive o aviso de volta.
 
 | Variável | Papel |
 |---|---|
 | `ALERT_WHATSAPP_TO` | Número que **recebe** (com DDI). Vazio = sem WhatsApp. |
 | `ALERT_EVOLUTION_INSTANCE` | Instância que **envia**. Default `alertas`. |
 | `ALERT_EVOLUTION_URL` | Base do Evolution. Default: IP do container `evolution` do projeto (o serviço não publica porta). |
-| `ALERT_CALLMEBOT_APIKEY` | Chave do CallMeBot para o número que recebe. |
+| `ALERT_TELEGRAM_BOT_TOKEN` | Token do bot (dado pelo @BotFather). |
+| `ALERT_TELEGRAM_CHAT_ID` | Conversa que recebe (`scripts/whatsapp-alertas.sh telegram-chat-id`). |
 | `ALERT_WEBHOOK_URL` | Destino do `POST`. **Vazia = o alerta vai só para o journal** (e isso não é erro). |
 | `ALERT_WEBHOOK_TOKEN` | Vira `Authorization: Bearer <token>`, quando o destino exige. |
 | `ALERT_SOURCE` | Rótulo da origem no payload. Default: hostname. |
@@ -176,7 +183,8 @@ repositório** (a URL costuma carregar o token nela mesma):
 # /etc/crm-lab/monitor.env
 ALERT_WHATSAPP_TO=5548988281057
 ALERT_EVOLUTION_INSTANCE=alertas
-ALERT_CALLMEBOT_APIKEY=<chave recebida do CallMeBot>
+ALERT_TELEGRAM_BOT_TOKEN=<token do @BotFather>
+ALERT_TELEGRAM_CHAT_ID=<id da conversa>
 ALERT_SOURCE=crm-lab-prod
 # opcional
 ALERT_WEBHOOK_URL=https://<destino>/hook/crm-lab
@@ -213,7 +221,7 @@ já foi visto dizendo `open` com o celular deslogado, e o webhook pode não vir.
 - O alerta sai depois de **2 min seguidos** fora (o WhatsApp se reconecta
   sozinho em quedas curtas) e não se repete; na volta sai
   **"WhatsApp restabelecido"**.
-- O número de alertas também é vigiado: se cair, o aviso sai pelo CallMeBot.
+- O número de alertas também é vigiado: se cair, o aviso sai pelo Telegram.
   Enquanto a instância não existir, a verificação dele fica inativa.
 
 **Quando chegar "WhatsApp desconectado — <laboratório>":**
@@ -231,10 +239,11 @@ Na tela do CRM, todo mundo logado no tenant já recebe o aviso na hora da queda
 
 ### 4.2 Ligando o WhatsApp
 
-**CallMeBot (uma vez, pelo celular que recebe):** seguir as instruções de
-<https://www.callmebot.com/blog/free-api-whatsapp-messages/> — adicionar o
-contato do bot e mandar a frase de autorização. A chave chega por WhatsApp e
-vai em `ALERT_CALLMEBOT_APIKEY`.
+**Telegram (uma vez):** no Telegram, falar com o **@BotFather**, mandar
+`/newbot`, escolher nome e usuário do bot; o token que ele devolve vai em
+`ALERT_TELEGRAM_BOT_TOKEN`. Depois abrir o bot criado e mandar `/start`, e na
+VPS rodar `scripts/whatsapp-alertas.sh telegram-chat-id` para obter o
+`ALERT_TELEGRAM_CHAT_ID`.
 
 **Número de alertas (quando houver chip):** na VPS, como `deploy`, em
 `/opt/crm-lab`:
@@ -304,7 +313,7 @@ diário.
 
 | Pendência | De quem |
 |---|---|
-| Chip do número de alertas (instância `alertas`) e chave do CallMeBot | Michel |
+| Chip do número de alertas (instância `alertas`) e bot do Telegram | Michel |
 | Conta no serviço de uptime externo (cobre "a VPS sumiu") | Michel |
 | Linha de `alerta_heartbeat` no `backup-postgres.sh` | Agent-Infra-28 (CRMLAB-28) |
 | `healthcheck:` do serviço `backend` no `docker-compose.prod.yml`, apontando para `/health/live` | Agent-Infra (o compose não é do CRMLAB-29) |

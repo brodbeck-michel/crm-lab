@@ -15,10 +15,13 @@
 #   scripts/whatsapp-alertas.sh estado
 #   scripts/whatsapp-alertas.sh testar
 #       Manda um alerta de teste pelo mesmo caminho do monitor e diz por onde
-#       saiu (instancia do Evolution ou CallMeBot).
+#       saiu (instancia do Evolution ou Telegram).
+#   scripts/whatsapp-alertas.sh telegram-chat-id
+#       Depois de mandar /start para o bot, mostra o chat_id a pôr em
+#       ALERT_TELEGRAM_CHAT_ID.
 #
 # Le o `.env` do ambiente (EVOLUTION_API_KEY, COMPOSE_PROJECT_NAME) e o
-# `/etc/crm-lab/monitor.env` (ALERT_WHATSAPP_TO, ALERT_CALLMEBOT_APIKEY...).
+# `/etc/crm-lab/monitor.env` (ALERT_WHATSAPP_TO, ALERT_TELEGRAM_*...).
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,11 +38,16 @@ for arquivo in "$PROJECT_DIR/.env" /etc/crm-lab/monitor.env; do
   fi
 done
 
-: "${EVOLUTION_API_KEY:?EVOLUTION_API_KEY nao definida (rode de dentro do diretorio do ambiente)}"
 INSTANCIA="${ALERT_EVOLUTION_INSTANCE:-alertas}"
-URL="$(alerta_evolution_url)" || {
-  echo "Evolution nao encontrado (COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-<vazio>})" >&2
-  exit 1
+
+# So `parear` e `estado` precisam do Evolution; `testar` tem que funcionar
+# justamente quando ele esta fora (o reserva e o Telegram).
+exige_evolution() {
+  : "${EVOLUTION_API_KEY:?EVOLUTION_API_KEY nao definida (rode de dentro do diretorio do ambiente)}"
+  URL="$(alerta_evolution_url)" || {
+    echo "Evolution nao encontrado (COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-<vazio>})" >&2
+    exit 1
+  }
 }
 
 evo() {
@@ -50,6 +58,7 @@ evo() {
 
 case "${1:-}" in
   parear)
+    exige_evolution
     numero="$(printf '%s' "${2:-}" | tr -cd '0-9')"
     # 403 "already in use" = ja existe; segue para o connect.
     evo POST /instance/create \
@@ -74,20 +83,35 @@ if not r.get("pairingCode") and not b64:
 PY
     ;;
   estado)
+    exige_evolution
     evo GET "/instance/connectionState/$INSTANCIA"
     echo
     ;;
   testar)
-    [[ -n "${ALERT_WHATSAPP_TO:-}" ]] || { echo 'ALERT_WHATSAPP_TO nao definida em /etc/crm-lab/monitor.env' >&2; exit 1; }
-    if alerta_whatsapp "$(alerta_texto info 'Teste de alerta do CRM Lab' 'Se chegou, o caminho de alerta esta funcionando.')"; then
+    alerta_tem_destino || { echo 'nenhum destino em /etc/crm-lab/monitor.env' >&2; exit 1; }
+    if alerta_mensagem "$(alerta_texto info 'Teste de alerta do CRM Lab' 'Se chegou, o caminho de alerta esta funcionando.')"; then
       echo 'Entregue (o log acima diz por qual caminho).'
     else
       echo 'NAO entregue por nenhum caminho (ver log acima).' >&2
       exit 1
     fi
     ;;
+  telegram-chat-id)
+    : "${ALERT_TELEGRAM_BOT_TOKEN:?ALERT_TELEGRAM_BOT_TOKEN nao definida em /etc/crm-lab/monitor.env}"
+    curl -fsS --max-time 20 "https://api.telegram.org/bot${ALERT_TELEGRAM_BOT_TOKEN}/getUpdates" | python3 -c '
+import json, sys
+vistos = {}
+for u in json.load(sys.stdin).get("result", []):
+    chat = (u.get("message") or {}).get("chat") or {}
+    if chat.get("id"):
+        vistos[chat["id"]] = chat.get("first_name") or chat.get("title") or ""
+if not vistos:
+    print("Nenhuma conversa ainda: mande /start para o bot e rode de novo.")
+for chat_id, nome in vistos.items():
+    print(f"ALERT_TELEGRAM_CHAT_ID={chat_id}   # {nome}")'
+    ;;
   *)
-    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n "2,23p" "$0" | sed 's/^# \{0,1\}//'
     exit 2
     ;;
 esac

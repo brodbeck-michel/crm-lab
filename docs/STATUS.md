@@ -3370,8 +3370,8 @@ Branch `feature/CRMLAB-99-alerta-sessao-whatsapp` (de `main` v1.36.0). Decisão 
 - **Monitor:** `monitora-saude.sh` de 1 em 1 minuto, com a verificação da sessão por QR de cada tenant
   (CRM `connected_at` + Evolution `connectionState`), carência de 120 s e "WhatsApp restabelecido" na volta.
 - **Envio:** `lib/alerta.sh` manda todo alerta por WhatsApp para `ALERT_WHATSAPP_TO`: instância `alertas`
-  do Evolution e, se falhar, CallMeBot. `scripts/whatsapp-alertas.sh` pareia, consulta e testa o número.
-- **Testes:** cenários com `docker`/`curl` simulados (carência, alerta único, volta, falha da instância → CallMeBot,
-  CallMeBot recusando, sem destino) e rodada real só leitura contra prod e homolog na VPS em 18/10.
-- **Pendente:** chave do CallMeBot, chip do número de alertas, instalar o timer e o `monitor.env` na VPS
+  do Evolution e, se falhar, bot do Telegram; alerta não entregue é tentado de novo na rodada seguinte. `scripts/whatsapp-alertas.sh` pareia, consulta e testa o número.
+- **Testes:** cenários com `docker`/`curl` simulados (carência, alerta único, volta, falha da instância → Telegram,
+  os dois falhando e nova tentativa, só Telegram, sem destino) e rodada real só leitura contra prod e homolog na VPS em 18/10.
+- **Pendente:** bot do Telegram (token + chat_id), chip do número de alertas, instalar o timer e o `monitor.env` na VPS
   (até hoje o monitor não estava instalado em prod).

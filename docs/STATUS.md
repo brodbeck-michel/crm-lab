@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-10-09 (CRMLAB-94 — mensagem fora do horário e boas-vindas, branch `feature/CRMLAB-94-mensagem-fora-do-horario`)
+**Última atualização:** 2026-10-18 (CRMLAB-99 — alerta de sessão do WhatsApp por WhatsApp, branch `feature/CRMLAB-99-alerta-sessao-whatsapp`)
 
 ---
 
@@ -3362,3 +3362,16 @@ Branch `feature/CRMLAB-91-cores-estagios` (de `main` v1.32.0). Decisão D-260. S
 - **Testes:** `StageColumn.spec.tsx` (novo, 7) e caso novo em `ProposalCard.spec.tsx`; `src/components/proposal`,
   `src/pages` e as guardas de token (`tailwind-theme-classes`, `no-hardcoded-tokens`) verdes.
 - **Pendente:** validação visual da gestora.
+
+### 🚧 CRMLAB-99 — alerta de sessão do WhatsApp (2026-10-18, aguardando validação)
+
+Branch `feature/CRMLAB-99-alerta-sessao-whatsapp` (de `main` v1.36.0). Decisão D-269, sem migração, só infra.
+
+- **Monitor:** `monitora-saude.sh` de 1 em 1 minuto, com a verificação da sessão por QR de cada tenant
+  (CRM `connected_at` + Evolution `connectionState`), carência de 120 s e "WhatsApp restabelecido" na volta.
+- **Envio:** `lib/alerta.sh` manda todo alerta por WhatsApp para `ALERT_WHATSAPP_TO`: instância `alertas`
+  do Evolution e, se falhar, bot do Telegram; alerta não entregue é tentado de novo na rodada seguinte. `scripts/whatsapp-alertas.sh` pareia, consulta e testa o número.
+- **Testes:** cenários com `docker`/`curl` simulados (carência, alerta único, volta, falha da instância → Telegram,
+  os dois falhando e nova tentativa, só Telegram, sem destino) e rodada real só leitura contra prod e homolog na VPS em 18/10.
+- **Pendente:** bot do Telegram (token + chat_id), chip do número de alertas, instalar o timer e o `monitor.env` na VPS
+  (até hoje o monitor não estava instalado em prod).

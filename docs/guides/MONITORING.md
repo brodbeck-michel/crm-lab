@@ -81,7 +81,7 @@ Até 19/09/2026 era ele que o `deploy.sh` consultava — o deploy declarava
 
 ## 3. Varredura local: `scripts/monitora-saude.sh`
 
-Roda no host por systemd timer, de 5 em 5 minutos
+Roda no host por systemd timer, de 1 em 1 minuto (era 5 até o CRMLAB-99)
 (`scripts/systemd/crm-lab-monitor.{service,timer}`). Só lê: não reinicia
 container, não apaga arquivo, não sobe nada.
 
@@ -94,6 +94,7 @@ container, não apaga arquivo, não sobe nada.
 | 5 | Disco da raiz | `CRM_DISCO_LIMITE`, default **80%** |
 | 6 | Reboot pendente (`/var/run/reboot-required`) | — |
 | 7 | Heartbeat do backup velho demais | `CRM_BACKUP_MAX_HORAS`, default **26 h** |
+| 8 | Sessão do WhatsApp por QR de cada tenant e do número de alertas (§4.1) | `CRM_WHATSAPP_CARENCIA_SEG`, default **120 s** |
 
 **Verificações 2 e 3 filtram por `COMPOSE_PROJECT_NAME`.** Prod e homolog
 rodam na MESMA VPS como dois projetos Compose separados (`crm-lab-prod` /
@@ -110,7 +111,7 @@ ambiente sem precisar investigar.
 
 Cada verificação tem **estado em disco** (`STATE_DIR`, default
 `/var/lib/crm-lab-monitor`): o alerta sai na borda (ok → ruim) e um
-"RECUPERADO" sai na volta. Sem isso, uma varredura de 5 em 5 minutos manda 288
+"RECUPERADO" sai na volta. Sem isso, uma varredura de 1 em 1 minuto manda 1.440
 mensagens por dia da mesma coisa, e alerta que sempre toca é alerta que
 ninguém lê. Se `STATE_DIR` ficar inacessível (diretório ausente, permissão
 errada), o script **não aborta** — continua checando saúde — mas registra um
@@ -143,15 +144,33 @@ sudo -u deploy /opt/crm-lab/scripts/monitora-saude.sh   # rodada manual
 
 ---
 
-## 4. Notificador: plugável por variável de ambiente
+## 4. Notificador: WhatsApp e webhook
 
-`scripts/lib/alerta.sh` é a biblioteca de envio. O canal pedido pelo Michel é
-**WhatsApp**, mas o número ainda não foi passado; por isso o destino é um
-**webhook genérico**. Quando o número chegar, o que muda é o valor de uma
-variável — não o código.
+`scripts/lib/alerta.sh` é a biblioteca de envio. Desde o CRMLAB-99 (D-269) o
+destino principal é o **WhatsApp do Michel**, com o **Telegram** de reserva; o
+webhook genérico continua opcional. Todo alerta do monitor e a falha do backup
+saem por esse caminho.
+
+São **dois caminhos, em sequência**:
+
+1. **Instância própria do Evolution** (`alertas`): um número só de alertas,
+   nunca o de um laboratório, sem webhook (o que responderem nele não entra no
+   CRM).
+2. **Bot do Telegram**, se o primeiro falhar (Evolution fora, instância não
+   pareada ou desconectada). Mora fora da VPS, então avisa até que o Evolution
+   caiu. O CallMeBot (WhatsApp grátis) foi a primeira escolha, mas estava sem
+   vagas em 18/10/2026.
+
+Alerta que não chegou a ninguém **não é dado por entregue**: o monitor tenta
+de novo na rodada seguinte, inclusive o aviso de volta.
 
 | Variável | Papel |
 |---|---|
+| `ALERT_WHATSAPP_TO` | Número que **recebe** (com DDI). Vazio = sem WhatsApp. |
+| `ALERT_EVOLUTION_INSTANCE` | Instância que **envia**. Default `alertas`. |
+| `ALERT_EVOLUTION_URL` | Base do Evolution. Default: IP do container `evolution` do projeto (o serviço não publica porta). |
+| `ALERT_TELEGRAM_BOT_TOKEN` | Token do bot (dado pelo @BotFather). |
+| `ALERT_TELEGRAM_CHAT_ID` | Conversa que recebe (`scripts/whatsapp-alertas.sh telegram-chat-id`). |
 | `ALERT_WEBHOOK_URL` | Destino do `POST`. **Vazia = o alerta vai só para o journal** (e isso não é erro). |
 | `ALERT_WEBHOOK_TOKEN` | Vira `Authorization: Bearer <token>`, quando o destino exige. |
 | `ALERT_SOURCE` | Rótulo da origem no payload. Default: hostname. |
@@ -162,10 +181,18 @@ repositório** (a URL costuma carregar o token nela mesma):
 
 ```bash
 # /etc/crm-lab/monitor.env
+ALERT_WHATSAPP_TO=5548988281057
+ALERT_EVOLUTION_INSTANCE=alertas
+ALERT_TELEGRAM_BOT_TOKEN=<token do @BotFather>
+ALERT_TELEGRAM_CHAT_ID=<id da conversa>
+ALERT_SOURCE=crm-lab-prod
+# opcional
 ALERT_WEBHOOK_URL=https://<destino>/hook/crm-lab
 ALERT_WEBHOOK_TOKEN=<se o destino exigir>
-ALERT_SOURCE=crm-lab-prod
 ```
+
+`EVOLUTION_API_KEY` e `COMPOSE_PROJECT_NAME` vêm do `.env` do ambiente, que o
+monitor já lê. O `crm-lab-backup-alerta@.service` também carrega este arquivo.
 
 Payload entregue (JSON):
 
@@ -182,7 +209,55 @@ Payload entregue (JSON):
 não pode virar backup falhado porque o webhook estava fora do ar; o log local
 continua sendo a fonte da verdade.
 
-### Ligando o WhatsApp quando o número chegar
+### 4.1 Sessão do WhatsApp
+
+"Conectado" exige os **dois** sinais: `tenant_channels.connected_at`
+preenchido (o webhook `CONNECTION_UPDATE` zera quando cai) **e**
+`/instance/connectionState` do Evolution em `open`. Um só não basta: o v2.3.7
+já foi visto dizendo `open` com o celular deslogado, e o webhook pode não vir.
+
+- Vigiados: canais `qr` com `is_active` (já conectaram alguma vez). Um
+  "Desconectar" pela tela também gera **um** alerta, de propósito.
+- O alerta sai depois de **2 min seguidos** fora (o WhatsApp se reconecta
+  sozinho em quedas curtas) e não se repete; na volta sai
+  **"WhatsApp restabelecido"**.
+- O número de alertas também é vigiado: se cair, o aviso sai pelo Telegram.
+  Enquanto a instância não existir, a verificação dele fica inativa.
+
+**Quando chegar "WhatsApp desconectado — <laboratório>":**
+
+1. Avisar quem está com o celular do número (no Santé: Thaisy ou Tainá).
+2. Celular com internet e o WhatsApp aberto; esperar 1 minuto — se a queda
+   foi de rede, a sessão volta sozinha e chega "WhatsApp restabelecido".
+3. Se não voltar: a admin abre **Configurações › Canais › WhatsApp** e lê o
+   QR Code de novo (Aparelhos conectados › Conectar aparelho).
+4. Se o celular mostrar que o número foi **banido**, nada disso resolve: é o
+   plano B combinado com o laboratório (outro número ou a API oficial).
+
+Na tela do CRM, todo mundo logado no tenant já recebe o aviso na hora da queda
+(toast do `channel.connection_changed`, D-184).
+
+### 4.2 Ligando o WhatsApp
+
+**Telegram (uma vez):** no Telegram, falar com o **@BotFather**, mandar
+`/newbot`, escolher nome e usuário do bot; o token que ele devolve vai em
+`ALERT_TELEGRAM_BOT_TOKEN`. Depois abrir o bot criado e mandar `/start`, e na
+VPS rodar `scripts/whatsapp-alertas.sh telegram-chat-id` para obter o
+`ALERT_TELEGRAM_CHAT_ID`.
+
+**Número de alertas (quando houver chip):** na VPS, como `deploy`, em
+`/opt/crm-lab`:
+
+```bash
+scripts/whatsapp-alertas.sh parear 55489XXXXXXXX   # mostra o código de pareamento
+# no celular do chip: Aparelhos conectados > Conectar com número de telefone
+scripts/whatsapp-alertas.sh estado                 # "state":"open"
+scripts/whatsapp-alertas.sh testar                 # manda um teste e diz por onde saiu
+```
+
+Sem o número, `parear` salva o QR em `/tmp/alertas-qr.png` (expira em ~40 s).
+
+### Outros caminhos (histórico do CRMLAB-29)
 
 Três caminhos, em ordem de esforço:
 
@@ -238,7 +313,7 @@ diário.
 
 | Pendência | De quem |
 |---|---|
-| Número de WhatsApp / destino final do `ALERT_WEBHOOK_URL` | Michel |
+| Chip do número de alertas (instância `alertas`) e bot do Telegram | Michel |
 | Conta no serviço de uptime externo (cobre "a VPS sumiu") | Michel |
 | Linha de `alerta_heartbeat` no `backup-postgres.sh` | Agent-Infra-28 (CRMLAB-28) |
 | `healthcheck:` do serviço `backend` no `docker-compose.prod.yml`, apontando para `/health/live` | Agent-Infra (o compose não é do CRMLAB-29) |

@@ -5554,3 +5554,23 @@ migração de JSON e mantém o texto do Santé intacto.
 (leitura e `PATCH`); frontend `Settings/SendMessageSection.tsx` (novo), `Settings/Rules.tsx`,
 `proposal/SendProposalPanel.tsx`, `proposal/ProposalModal.tsx`. API_CONTRACTS §6c/§3, PAGES §6/§21,
 SCHEMA §32. Sem migração.
+
+### D-269: Alerta de sessão do WhatsApp pelo monitor da VPS, entregue por WhatsApp em dois caminhos (CRMLAB-99)
+**Decisão:** a queda da sessão do WhatsApp por QR é vigiada pelo `monitora-saude.sh` (agora de 1 em 1
+minuto), não pelo backend. "Conectado" exige `tenant_channels.connected_at` preenchido **e**
+`/instance/connectionState` em `open`; o alerta sai depois de 120 s seguidos fora
+(`CRM_WHATSAPP_CARENCIA_SEG`) e a volta manda "WhatsApp restabelecido". O alerta (este e todos os
+outros do monitor e do backup) vai por WhatsApp para `ALERT_WHATSAPP_TO`: primeiro por uma instância
+própria do Evolution (`alertas`, número só de alertas, sem webhook), e, se ela falhar, por um bot do
+Telegram. Alerta não entregue não é marcado como enviado: a próxima rodada tenta de novo.
+**Motivo:** uma API de WhatsApp "de reserva" no mesmo número não protege contra o risco real (sessão
+derrubada ou número banido), então a defesa é saber em minutos e reler o QR. O monitor fora do backend
+continua avisando com o backend fora; os dois sinais cobrem o `open` mentiroso do v2.3.7 e o webhook que
+não chega. O reserva existe porque alerta que depende só do Evolution não avisa que o Evolution caiu;
+o CallMeBot (WhatsApp grátis) foi a primeira escolha, mas estava sem vagas em 18/10/2026, e o Telegram
+tem API oficial, sem fila.
+Alertar pelo evento do webhook no backend foi descartado: com a carência de 2 min, a varredura já cobre,
+e seria um segundo emissor para o mesmo fato.
+**Impacto:** infra. `scripts/lib/alerta.sh` (WhatsApp), `scripts/monitora-saude.sh` (verificação 8),
+`scripts/whatsapp-alertas.sh` (parear/estado/testar), timer de 1 min, `monitor.env` no alerta do backup.
+Ver `docs/guides/MONITORING.md` §4.

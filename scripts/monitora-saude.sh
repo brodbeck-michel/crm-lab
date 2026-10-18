@@ -323,6 +323,11 @@ if [[ -n "${ALERT_WHATSAPP_TO:-}" ]]; then
   estado="$(evo_estado "$instancia_alertas")"
   if [[ "$estado" == inexistente ]]; then
     alerta_log "instancia '$instancia_alertas' ainda nao existe: alertas saem pelo Telegram"
+  elif [[ "$estado" == sem-resposta ]]; then
+    # Sem resposta do gateway nao diz nada sobre ESTE numero: o Evolution fora
+    # ja aparece nos containers e no WhatsApp de cada tenant. Alertar aqui seria
+    # afirmar "numero de alertas desconectado" sem saber.
+    alerta_log "Evolution nao respondeu: estado da instancia '$instancia_alertas' desconhecido"
   else
     vigia_sessao "whatsapp-alertas" "$([[ "$estado" == open ]] && echo sim || echo nao)" \
       "Numero de alertas desconectado [$COMPOSE_PROJECT_NAME]" \

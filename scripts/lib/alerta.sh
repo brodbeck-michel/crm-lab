@@ -6,13 +6,25 @@
 #   scripts/monitora-saude.sh   (saude dos containers, disco, reboot, backup)
 #   scripts/backup-postgres.sh  (heartbeat no fim — ver "Heartbeat" abaixo)
 #
-# O canal final pedido pelo Michel e WhatsApp, mas o numero ainda nao foi
-# passado. Por isso o destino e um WEBHOOK GENERICO por variavel de ambiente:
-# o que muda quando o numero chegar e o valor de `ALERT_WEBHOOK_URL` (para um
-# fluxo do Evolution, n8n, ntfy, Slack, Healthchecks.io, o que for), nao o
-# codigo destes scripts.
+# Dois destinos, independentes (CRMLAB-29 o webhook; CRMLAB-99 o WhatsApp):
+#
+#   WhatsApp (D-269): o alerta vira texto e vai para `ALERT_WHATSAPP_TO` por
+#   DOIS caminhos em sequencia — primeiro a instancia propria do Evolution
+#   (`ALERT_EVOLUTION_INSTANCE`, um numero so de alertas, NUNCA o de um
+#   laboratorio); se ela falhar (gateway fora, instancia nao pareada), o
+#   CallMeBot, que mora fora da VPS. Alerta que depende so do que quebrou nao
+#   chega: o Evolution sozinho nao avisaria que o Evolution caiu.
+#
+#   Webhook generico: `ALERT_WEBHOOK_URL` (n8n, ntfy, Healthchecks.io...).
 #
 # Configuracao (todas opcionais — sem nenhuma, o alerta vai so para o log):
+#   ALERT_WHATSAPP_TO        numero que RECEBE (so digitos, com DDI: 5548...).
+#   ALERT_EVOLUTION_INSTANCE instancia do Evolution que ENVIA. Default: alertas.
+#   ALERT_EVOLUTION_URL      base do Evolution. Default: IP do container
+#                            `evolution` do projeto `COMPOSE_PROJECT_NAME`
+#                            (o servico nao publica porta no host).
+#   EVOLUTION_API_KEY        chave administrativa do gateway (vem do `.env`).
+#   ALERT_CALLMEBOT_APIKEY   chave do CallMeBot para `ALERT_WHATSAPP_TO`.
 #   ALERT_WEBHOOK_URL    destino do POST. VAZIO = so loga (nao e erro).
 #   ALERT_WEBHOOK_TOKEN  se definido, vira `Authorization: Bearer <token>`.
 #   ALERT_SOURCE         rotulo da origem no payload. Default: hostname.
@@ -42,6 +54,80 @@ print(json.dumps({
 }, ensure_ascii=False))'
 }
 
+# alerta_tem_destino — 0 se algum destino (WhatsApp ou webhook) esta configurado.
+alerta_tem_destino() {
+  [[ -n "${ALERT_WHATSAPP_TO:-}" || -n "${ALERT_WEBHOOK_URL:-}" ]]
+}
+
+# alerta_evolution_url — base HTTP do Evolution, ou nada (retorno 1).
+alerta_evolution_url() {
+  if [[ -n "${ALERT_EVOLUTION_URL:-}" ]]; then
+    printf '%s' "${ALERT_EVOLUTION_URL%/}"
+    return 0
+  fi
+  [[ -n "${COMPOSE_PROJECT_NAME:-}" ]] || return 1
+  local id ip
+  id="$(docker ps --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+    --filter label=com.docker.compose.service=evolution --format '{{.ID}}' 2>/dev/null | head -n1 || true)"
+  [[ -n "$id" ]] || return 1
+  ip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "$id" 2>/dev/null \
+    | awk '{print $1}' || true)"
+  [[ -n "$ip" ]] || return 1
+  printf 'http://%s:8080' "$ip"
+}
+
+# alerta_texto <severidade> <titulo> <detalhe> — mensagem legivel no celular.
+alerta_texto() {
+  local icone
+  case "$1" in
+    critical) icone='🔴' ;;
+    info) icone='🟢' ;;
+    *) icone='🟡' ;;
+  esac
+  printf '%s *%s*\n%s\n\n%s · %s' "$icone" "$2" "${3:-}" \
+    "${ALERT_SOURCE:-$(hostname)}" "$(TZ=America/Sao_Paulo date '+%d/%m %H:%M')"
+}
+
+# alerta_whatsapp <texto> — 0 se algum dos dois caminhos entregou.
+alerta_whatsapp() {
+  local texto="$1" numero url corpo
+  numero="$(printf '%s' "${ALERT_WHATSAPP_TO:-}" | tr -cd '0-9')"
+  [[ -n "$numero" ]] || return 1
+
+  local instancia="${ALERT_EVOLUTION_INSTANCE:-alertas}"
+  if [[ -n "${EVOLUTION_API_KEY:-}" ]] && url="$(alerta_evolution_url)"; then
+    corpo="$(ALERTA_NUM="$numero" ALERTA_TXT="$texto" python3 -c '
+import json, os
+print(json.dumps({"number": os.environ["ALERTA_NUM"], "text": os.environ["ALERTA_TXT"]}, ensure_ascii=False))')"
+    if curl -fsS --max-time "${ALERT_TIMEOUT:-10}" -X POST \
+        -H 'Content-Type: application/json' -H "apikey: ${EVOLUTION_API_KEY}" \
+        --data "$corpo" "$url/message/sendText/$instancia" >/dev/null 2>&1; then
+      alerta_log "WhatsApp entregue pela instancia '$instancia' do Evolution"
+      return 0
+    fi
+    alerta_log "envio pela instancia '$instancia' do Evolution falhou; tentando o CallMeBot"
+  else
+    alerta_log 'Evolution indisponivel para alerta (sem EVOLUTION_API_KEY ou sem container); tentando o CallMeBot'
+  fi
+
+  [[ -n "${ALERT_CALLMEBOT_APIKEY:-}" ]] || {
+    alerta_log 'ALERT_CALLMEBOT_APIKEY nao configurada: sem caminho reserva para o WhatsApp'
+    return 1
+  }
+  # O CallMeBot responde 200 tambem quando recusa (chave errada, numero nao
+  # ativado) — o corpo e que diz. Por isso o texto de erro conta como falha.
+  local resposta
+  if resposta="$(curl -fsS --max-time "${ALERT_TIMEOUT:-10}" -G 'https://api.callmebot.com/whatsapp.php' \
+        --data-urlencode "phone=+$numero" --data-urlencode "text=$texto" \
+        --data-urlencode "apikey=${ALERT_CALLMEBOT_APIKEY}" 2>/dev/null)" \
+      && ! grep -qiE 'error|invalid|not allowed' <<<"$resposta"; then
+    alerta_log 'WhatsApp entregue pelo CallMeBot'
+    return 0
+  fi
+  alerta_log "CallMeBot falhou: $(head -c 200 <<<"${resposta:-sem resposta}" | tr '\n' ' ')"
+  return 1
+}
+
 # alerta_envia <severidade: critical|warning|info> <titulo> [detalhe]
 #
 # Severidade `info` e usada para "recuperado": o criterio de aceite do card
@@ -50,10 +136,17 @@ alerta_envia() {
   local severidade="$1" titulo="$2" detalhe="${3:-}"
   alerta_log "[$severidade] $titulo${detalhe:+ — $detalhe}"
 
-  [[ -n "${ALERT_WEBHOOK_URL:-}" ]] || {
-    alerta_log 'ALERT_WEBHOOK_URL nao configurada: alerta ficou so no log'
+  alerta_tem_destino || {
+    alerta_log 'nenhum destino configurado (ALERT_WHATSAPP_TO / ALERT_WEBHOOK_URL): alerta ficou so no log'
     return 0
   }
+
+  if [[ -n "${ALERT_WHATSAPP_TO:-}" ]]; then
+    alerta_whatsapp "$(alerta_texto "$severidade" "$titulo" "$detalhe")" \
+      || alerta_log 'FALHA ao entregar o alerta no WhatsApp (o alerta acima vale pelo log)'
+  fi
+
+  [[ -n "${ALERT_WEBHOOK_URL:-}" ]] || return 0
 
   local -a cabecalhos=(-H 'Content-Type: application/json')
   [[ -n "${ALERT_WEBHOOK_TOKEN:-}" ]] \

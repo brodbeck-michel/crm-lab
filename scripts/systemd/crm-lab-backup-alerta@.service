@@ -12,6 +12,9 @@ User=deploy
 # (revisao do PR #24). `systemd-journal` e o grupo padrao com leitura.
 SupplementaryGroups=systemd-journal
 WorkingDirectory=/opt/crm-lab
+# Mesmo destino do monitor (WhatsApp/webhook, CRMLAB-99): sem isto a falha do
+# backup so chegaria a quem configurasse o `.env`, e o resto dos alertas nao.
+EnvironmentFile=-/etc/crm-lab/monitor.env
 # %i chega como o nome da unidade que falhou (`OnFailure=...@%n.service`), para
 # que o alerta diga O QUE falhou e o script leia o journal certo.
 ExecStart=/opt/crm-lab/scripts/backup-alerta.sh %i

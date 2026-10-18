@@ -73,9 +73,9 @@ logger -t crm-lab-backup -p user.err "backup falhou (${UNIDADE})" || true
 if [[ -n "${BACKUP_ALERT_CMD:-}" ]]; then
   printf '%s\n' "$mensagem" | sh -c "$BACKUP_ALERT_CMD" || \
     logger -t crm-lab-backup -p user.err "BACKUP_ALERT_CMD tambem falhou" || true
-elif [[ -n "${ALERT_WEBHOOK_URL:-}" ]]; then
-  # `alerta_envia` (lib/alerta.sh): mesmo payload, mesma URL e mesmo token do
-  # monitor. Nunca lanca — falha do webhook vira log, nao saida != 0.
+elif alerta_tem_destino; then
+  # `alerta_envia` (lib/alerta.sh): mesmos destinos do monitor (WhatsApp e/ou
+  # webhook). Nunca lanca — falha de entrega vira log, nao saida != 0.
   alerta_envia critical "BACKUP FALHOU em $(hostname) — ${UNIDADE}" "$mensagem" || true
 else
   printf '%s\n' "$mensagem" >&2

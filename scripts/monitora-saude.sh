@@ -3,7 +3,8 @@
 # Saude da VPS e dos containers do CRM Lab (CRMLAB-29).
 #
 # Roda no HOST, via systemd timer (`scripts/systemd/crm-lab-monitor.timer`),
-# de 5 em 5 minutos. So LE: nao reinicia container, nao apaga arquivo, nao
+# de 1 em 1 minuto (era 5 ate o CRMLAB-99: a queda do WhatsApp tem que avisar
+# em ~2 min). So LE: nao reinicia container, nao apaga arquivo, nao
 # sobe nada. Diagnostico e acao sao coisas separadas de proposito — um script
 # que "conserta sozinho" de madrugada e um script que esconde o problema.
 #
@@ -16,9 +17,12 @@
 #   4. disco acima de `CRM_DISCO_LIMITE`% (default 80)
 #   5. reboot pendente (`/var/run/reboot-required`)
 #   6. heartbeat do backup mais velho que `CRM_BACKUP_MAX_HORAS` (default 26)
+#   7. sessao do WhatsApp por QR de cada tenant (CRMLAB-99, D-269): alerta
+#      depois de `CRM_WHATSAPP_CARENCIA_SEG` (default 120) desconectada e avisa
+#      "restabelecido" na volta. Tambem vigia a instancia que ENVIA os alertas.
 #
 # Cada verificacao tem ESTADO em disco: alerta quando muda para ruim, e avisa
-# "recuperado" quando volta. Sem isso, um monitor de 5 em 5 minutos manda 288
+# "recuperado" quando volta. Sem isso, um monitor de 1 em 1 minuto manda 1.440
 # mensagens por dia da mesma coisa e vira ruido que ninguem le.
 #
 # Configuracao:
@@ -86,9 +90,12 @@ fi
 # ---------------------------------------------------------------------------
 # Maquina de estado: alerta na BORDA (ok -> ruim) e na volta (ruim -> ok).
 # ---------------------------------------------------------------------------
-# registra <chave> <ok|ruim> <titulo> [detalhe]
+# registra <chave> <ok|ruim> <titulo> [detalhe] [titulo da volta]
+#
+# O titulo da volta e opcional: sem ele vira "RECUPERADO: <titulo>", que le mal
+# quando o titulo ja descreve o problema ("RECUPERADO: WhatsApp desconectado").
 registra() {
-  local chave="$1" estado="$2" titulo="$3" detalhe="${4:-}"
+  local chave="$1" estado="$2" titulo="$3" detalhe="${4:-}" titulo_volta="${5:-RECUPERADO: $3}"
   local marca="$STATE_DIR/alerta-$chave"
 
   if [[ "$estado" == 'ruim' ]]; then
@@ -104,7 +111,7 @@ registra() {
   fi
 
   if [[ -f "$marca" ]]; then
-    alerta_envia info "RECUPERADO: $titulo" "$detalhe"
+    alerta_envia info "$titulo_volta" "$detalhe"
     if ! rm -f "$marca" 2>/dev/null; then
       registra_avisa_estado_quebrado "$marca"
     fi
@@ -117,8 +124,8 @@ registra() {
 # ficou sem permissao (rebuild de VPS, limpeza, passo de instalacao pulado)
 # — o monitor deve continuar checando saude mesmo sem conseguir persistir
 # estado. Mas engolir o erro em silencio e pior: SEM marca em disco, toda
-# rodada de 5 em 5 minutos vira uma transicao "ok->ruim" nova, e o webhook
-# `critical` dispara 288x/dia — exatamente o spam que o STATE_DIR existe para
+# rodada de 1 em 1 minuto vira uma transicao "ok->ruim" nova, e o webhook
+# `critical` dispara 1.440x/dia — exatamente o spam que o STATE_DIR existe para
 # evitar, sem nenhuma pista no journal do motivo. Por isso isto vai para o
 # log do sistema com prioridade alta, nao so para o stderr do `alerta_log`.
 registra_avisa_estado_quebrado() {
@@ -217,6 +224,102 @@ if [[ -f "$marca_backup" ]]; then
   fi
 else
   alerta_log "heartbeat do backup ainda nao existe ($marca_backup) — verificacao inativa"
+fi
+
+# ---------------------------------------------------------------------------
+# 7. Sessao do WhatsApp por QR (CRMLAB-99, D-269)
+#
+# "Conectado" exige os DOIS sinais:
+#   - o CRM (`tenant_channels.connected_at`), que o webhook `CONNECTION_UPDATE`
+#     zera quando a sessao cai;
+#   - o proprio Evolution (`/instance/connectionState`), que pega o webhook que
+#     nunca chegou.
+# Nenhum dos dois sozinho basta: o v2.3.7 ja foi visto dizendo `open` depois de
+# o celular deslogar (ver `isSessionClosed` em backend/src/lib/evolution-client.ts),
+# e o webhook pode simplesmente nao vir.
+#
+# Vigiados: canais `qr` com `is_active` (o canal ja conectou alguma vez). Um
+# "Desconectar" pela tela tambem zera `connected_at` e gera UM alerta — de
+# proposito: saber que o laboratorio ficou sem WhatsApp vale o aviso.
+#
+# Carencia: o WhatsApp reconecta sozinho em quedas curtas. O alerta so sai
+# depois de `CARENCIA` segundos seguidos fora; antes disso, nada.
+# ---------------------------------------------------------------------------
+CARENCIA="${CRM_WHATSAPP_CARENCIA_SEG:-120}"
+
+# evo_estado <instancia> — `open`, `close`, `connecting`..., `inexistente` (404)
+# ou `sem-resposta` (gateway fora / sem chave).
+evo_estado() {
+  local url resposta codigo
+  [[ -n "${EVOLUTION_API_KEY:-}" ]] && url="$(alerta_evolution_url)" || { echo sem-resposta; return 0; }
+  resposta="$(curl -sS --max-time 10 -w '\n%{http_code}' -H "apikey: ${EVOLUTION_API_KEY}" \
+    "$url/instance/connectionState/$1" 2>/dev/null || true)"
+  codigo="${resposta##*$'\n'}"
+  case "$codigo" in
+    200) python3 -c 'import json,sys; print((json.load(sys.stdin).get("instance") or {}).get("state") or "desconhecido")' \
+           <<<"${resposta%$'\n'*}" 2>/dev/null || echo desconhecido ;;
+    404) echo inexistente ;;
+    *) echo sem-resposta ;;
+  esac
+}
+
+# vigia_sessao <chave> <conectado: sim|nao> <titulo> <titulo da volta> <detalhe>
+vigia_sessao() {
+  local chave="$1" conectado="$2" titulo="$3" titulo_volta="$4" detalhe="$5"
+  local desde="$STATE_DIR/desde-$chave"
+  if [[ "$conectado" == sim ]]; then
+    rm -f "$desde" 2>/dev/null || true
+    registra "$chave" ok "$titulo" 'Sessao conectada de novo.' "$titulo_volta"
+    return 0
+  fi
+  [[ -f "$desde" ]] || date +%s > "$desde" 2>/dev/null || true
+  local inicio fora
+  inicio="$(cat "$desde" 2>/dev/null || date +%s)"
+  fora=$(( $(date +%s) - inicio ))
+  if (( fora >= CARENCIA )); then
+    registra "$chave" ruim "$titulo" "$detalhe (fora ha $(( fora / 60 )) min)"
+  else
+    alerta_log "$chave fora ha ${fora}s (carencia ${CARENCIA}s): ainda sem alerta"
+  fi
+}
+
+pg="$(docker ps --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+  --filter label=com.docker.compose.service=postgres --format '{{.ID}}' 2>/dev/null | head -n1 || true)"
+if [[ -z "$pg" ]]; then
+  alerta_log 'postgres fora: verificacao do WhatsApp pulada (os itens 1-4 ja avisam)'
+else
+  # tenant_id <TAB> nome <TAB> t|f (connected_at preenchido)
+  canais="$(docker exec -i "$pg" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -AtqF "	" -v ON_ERROR_STOP=1' 2>/dev/null <<'SQL' || true
+SELECT t.id, t.name, (c.connected_at IS NOT NULL)
+  FROM tenant_channels c JOIN tenants t ON t.id = c.tenant_id
+ WHERE c.channel = 'whatsapp' AND c.connection_mode = 'qr' AND c.is_active
+ ORDER BY t.name;
+SQL
+)"
+  while IFS=$'\t' read -r tenant_id nome crm_ok; do
+    [[ -n "$tenant_id" ]] || continue
+    estado="$(evo_estado "tenant-$tenant_id")"
+    if [[ "$crm_ok" == t && "$estado" == open ]]; then conectado=sim; else conectado=nao; fi
+    vigia_sessao "whatsapp-$tenant_id" "$conectado" \
+      "WhatsApp desconectado — $nome [$COMPOSE_PROJECT_NAME]" \
+      "WhatsApp restabelecido — $nome [$COMPOSE_PROJECT_NAME]" \
+      "Evolution: $estado; CRM: $([[ "$crm_ok" == t ]] && echo conectado || echo desconectado). Reconectar em Configuracoes > Canais lendo o QR Code."
+  done <<<"$canais"
+fi
+
+# A instancia que ENVIA os alertas. Enquanto nao for pareada (`inexistente`),
+# nao ha o que vigiar; depois, se cair, o aviso sai pelo CallMeBot.
+instancia_alertas="${ALERT_EVOLUTION_INSTANCE:-alertas}"
+if [[ -n "${ALERT_WHATSAPP_TO:-}" ]]; then
+  estado="$(evo_estado "$instancia_alertas")"
+  if [[ "$estado" == inexistente ]]; then
+    alerta_log "instancia '$instancia_alertas' ainda nao existe: alertas saem pelo CallMeBot"
+  else
+    vigia_sessao "whatsapp-alertas" "$([[ "$estado" == open ]] && echo sim || echo nao)" \
+      "Numero de alertas desconectado [$COMPOSE_PROJECT_NAME]" \
+      "Numero de alertas restabelecido [$COMPOSE_PROJECT_NAME]" \
+      "Instancia '$instancia_alertas' do Evolution: $estado. Enquanto isso os alertas saem pelo CallMeBot. Parear de novo: scripts/whatsapp-alertas.sh parear"
+  fi
 fi
 
 alerta_log 'varredura concluida'

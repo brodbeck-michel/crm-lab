@@ -105,6 +105,7 @@ mais de alguns minutos, reconectando na hora quando ela volta a ficar visível.
 | `approval.requested` | `{ proposalId }` | badge em #aprovacoes + invalidate pendentes |
 | `approval.decided` | `{ proposalId, decision }` | toast + invalidate `['proposal', id]` |
 | `proposal.stale_alert` | `{ proposalId, hours }` | só para o responsável do cartão (ou, sem responsável, gestores/admins): cartão parado em "Novo orçamento" há `hours` h (CRMLAB-59, D-207), uma vez por entrada na coluna — toast de atenção + invalidate `['proposals']` |
+| `proposal.reminder_due` | `{ proposalId, reminderId, dueDate }` | só para a responsável (ou, sem responsável ativa, gestores/admins): o lembrete de contato venceu (CRMLAB-102, D-272), uma vez por lembrete — toast de atenção + invalidate `['proposals']` e `['proposal', id]` |
 
 **Regra:** eventos WS são NOTIFICAÇÃO, não transporte de dados — o cliente refaz fetch (invalidateQueries). Payloads carregam só IDs. Única exceção: `conversation.presence` (D-226), porque presença não existe no banco. Ao reconectar, invalidar queries ativas (pode ter perdido eventos).
 

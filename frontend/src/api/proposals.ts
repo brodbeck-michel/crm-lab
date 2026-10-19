@@ -7,6 +7,8 @@ import type {
   ProposalDetail,
   RejectProposalRequest,
   ResendProposalMessageRequest,
+  ResolveProposalReminderRequest,
+  ScheduleProposalReminderRequest,
   SendProposalRequest,
   UpdateProposalConversationRequest,
   UpdateProposalResponsibleRequest,
@@ -83,6 +85,14 @@ export const proposalsApi = {
   /** CRMLAB-58/D-202 — responsável (visibilidade e comissão). */
   updateResponsible: (id: string, body: UpdateProposalResponsibleRequest) =>
     http.patch<ProposalDetail>(`/proposals/${id}/responsible`, body),
+
+  /** CRMLAB-102/D-272 — cria o lembrete manual ou reagenda o aberto. */
+  scheduleReminder: (id: string, body: ScheduleProposalReminderRequest) =>
+    http.put<ProposalDetail>(`/proposals/${id}/reminder`, body),
+
+  /** CRMLAB-102/D-272 — desfecho: ganho/perdido pelo fluxo de estágio, ou reagendar. */
+  resolveReminder: (id: string, body: ResolveProposalReminderRequest) =>
+    http.post<ProposalDetail>(`/proposals/${id}/reminder/resolve`, body),
 
   /** gestor/admin — alçada validada no servidor. */
   approve: (id: string) => http.patch<ApproveProposalResponse>(`/proposals/${id}/approve`),
@@ -261,4 +271,13 @@ export function useUpdateProposalConversation() {
 
 export function useUpdateProposalResponsible() {
   return useCardMutation(proposalsApi.updateResponsible);
+}
+
+/** CRMLAB-102 (D-272) — devolvem o detalhe; ganho/perdido mudam funil e receita. */
+export function useScheduleProposalReminder() {
+  return useCardMutation(proposalsApi.scheduleReminder);
+}
+
+export function useResolveProposalReminder() {
+  return useCardMutation(proposalsApi.resolveReminder);
 }

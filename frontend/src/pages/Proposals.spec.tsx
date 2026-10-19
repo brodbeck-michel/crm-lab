@@ -269,6 +269,17 @@ describe('Proposals', () => {
     );
   });
 
+  // CRMLAB-102/D-272: "Com lembrete" = só os cartões com o selo (`?reminder=due`).
+  it('o filtro "Com lembrete" vai para o servidor como `reminder=due` e volta ao desligar', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const toggle = screen.getByRole('switch', { name: 'Com lembrete' });
+    await user.click(toggle);
+    expect(useProposalList.mock.calls.at(-1)?.[0]?.reminder).toBe('due');
+    await user.click(toggle);
+    expect(useProposalList.mock.calls.at(-1)?.[0]?.reminder).toBeUndefined();
+  });
+
   it('arrastar o card para um estágio permitido dispara a transição', () => {
     renderPage();
 

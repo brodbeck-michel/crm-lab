@@ -208,6 +208,18 @@ mover (D-207). Prazo mudado vale no próximo tique, inclusive para os cartões q
 prazo novo (D-209). Quem move é o sistema: `changedBy: null`, histórico com `automation`, audit
 `source: "rule"` (D-208).
 
+### Lembrete de proposta parada (CRMLAB-102, D-272)
+Proposta **aberta** pode ter **um** lembrete de contato aberto. Ele nasce de dois jeitos: pela
+regra "Lembrete de proposta parada há N dias" (padrão **desligada**, 15 dias), contados desde a
+**criação** da proposta, **uma vez por proposta**; ou à mão, no modal ("Agendar lembrete", dia +
+observação opcional — com um aberto, reagenda esse). Vencido (dia ≤ hoje, Brasília) mostra o
+selo "Lembrete", entra no filtro "Com lembrete" e avisa a responsável uma vez. Só fecha com
+**desfecho**: Ganho ou Perdido (o fluxo de estágio de sempre, com as travas e o motivo das
+Regras) ou Reagendar contato (data futura obrigatória, observação opcional). Se a proposta fechar por
+qualquer outro caminho, o lembrete se encerra sozinho como **automático**. Com a perda por
+silêncio ligada, os dias do lembrete têm de ser menores que os da perda. Cria e resolve: a
+responsável, gestor ou admin. Tudo auditado.
+
 ### Reingajamento da conversa (CRMLAB-62, D-211..D-214)
 Não mexe em proposta: é uma mensagem ao paciente, no mesmo tique do motor. Com a regra ligada
 (padrão **desligada**), conversa **ativa** de WhatsApp **por QR Code** em que a última mensagem de

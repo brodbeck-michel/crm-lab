@@ -1675,6 +1675,8 @@ export function resetFunnelTimerLocksForTest(): void;
    `stale_alerted_at` (condicionado a ainda estar nulo e o cartão ainda em `novo_contato`) e resolve
    os destinatários (responsável ativo; senão gestores e admins ativos). Depois do commit:
    `emitToUser` `proposal.stale_alert` (`{ proposalId, minutes, hours }`) para cada um.
+4b. Lembrete de proposta parada (CRMLAB-102, D-272, §34): `runReminders(tenantId, rules, agora)` —
+   cria os automáticos (regra ligada) e avisa os vencidos (sempre). Uma transação por lembrete.
 5. Reingajamento (§28), se injetado: `reengagement.runForTenant(tenantId, agora)`. Falha dele →
    `warn` `reengagement.tenant_failed`, sem desfazer o que o funil fez.
 6. Erro num laboratório → `warn` `funnel_timer.tenant_failed`, segue para o próximo. Log `info`
@@ -1906,6 +1908,38 @@ export function createAutoReplyService(deps: { db: DbClient }): AutoReplyService
    `automation = kind`, `conversation.new_message`, envio pelo canal. Sucesso: `message_id` na
    linha, `info` `auto_reply.sent`. Falha: linha `failed`, mensagem `failed`, `warn`
    `auto_reply.failed`. Sem nova tentativa.
+
+## 34. ProposalReminderService — lembrete de proposta parada (CRMLAB-102 — D-272)
+
+`backend/src/services/proposal-reminder.service.ts` + `repositories/proposal-reminder.repository.ts`.
+Dono de `proposal_reminders` (SCHEMA §42).
+
+- **`schedule(ctx, proposalId, { dueDate, note })`** (`PUT /proposals/:id/reminder`): carrega a
+  proposta com `loadVisibleProposal` (outro tenant / fora da visibilidade → `NOT_FOUND`), exige
+  aberta (`PROPOSAL_ALREADY_CLOSED`) e `isCardOwner || gestor/admin` (`FORBIDDEN`
+  `not_owner`, defesa extra), valida o dia (hoje..hoje+365, Brasília) e a nota (≤ 500). Sem aberto:
+  `INSERT` `origin = 'manual'` + audit `create_proposal_reminder`. Com aberto: `UPDATE` de
+  `due_date`, `note`, `alerted_at = NULL` + audit `update_proposal_reminder`. WS `proposal.updated`.
+- **`resolve(ctx, proposalId, dto)`** (`POST /proposals/:id/reminder/resolve`): exige lembrete
+  aberto (`CONFLICT no_open_reminder`). `won`/`lost` → `ProposalService.updateStatus(ctx, id,
+  'ganho'|'perdido', reasonLost, { reminderOutcome })` — o lembrete fecha **dentro** da transação
+  do estágio (ver `recordTransitionInTx` abaixo) com o desfecho e quem resolveu, e o audit
+  `resolve_proposal_reminder` sai ali. `rescheduled` → numa transação, fecha o aberto
+  (`outcome = 'rescheduled'`, `outcome_note`) e cria o novo (`manual`, `note` = observação, opcional);
+  audit `resolve_proposal_reminder` + `create_proposal_reminder`. Devolve `ProposalDetail`.
+- **Encerramento junto com a proposta** (`closeOpenReminderInTx`, chamado por
+  `recordTransitionInTx` do `ProposalService` quando o destino é terminal): fecha o aberto com
+  `auto_closed` (ou o `reminderOutcome` passado pelo `resolve`) + audit, na mesma transação.
+  Cobre `updateStatus`, `applySystemTransition` (motor de tempo e régua do LIS).
+- **Motor** (`runReminders` no `FunnelTimerService`, §27 passo 4b): (1) com
+  `automation.staleProposalReminder` ligada, seleciona até `FUNNEL_TIMER_BATCH` propostas abertas
+  com `created_at ≤ agora − days × 24 h`, sem lembrete aberto e sem automático anterior, confere
+  `timerDeadline(created_at, days, dayCounting)` e insere `origin = 'auto'`, `due_date` = hoje
+  (`ON CONFLICT DO NOTHING`) + audit `create_proposal_reminder` (`userId NULL`); (2) sempre,
+  seleciona os abertos com `due_date ≤ hoje` e `alerted_at IS NULL` de proposta aberta, grava
+  `alerted_at` (condicionado a ainda nulo) e, depois do commit, `emitToUser`
+  `proposal.reminder_due` para a responsável ativa ou, sem ela, gestores/admins ativos. O
+  resultado do tenant ganha `reminded` (avisos) e `remindersCreated`.
 
 ## Convenções Transversais
 

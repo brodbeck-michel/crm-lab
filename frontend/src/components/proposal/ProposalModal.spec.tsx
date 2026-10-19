@@ -103,6 +103,9 @@ function mockProposalDetail(proposal: ProposalDetail) {
   vi.mocked(proposalsApi.useResendProposal).mockReturnValue(mutationIdle());
   vi.mocked(proposalsApi.useUpdateProposalConversation).mockReturnValue(mutationIdle());
   vi.mocked(proposalsApi.useUpdateProposalResponsible).mockReturnValue(mutationIdle());
+  // CRMLAB-102: painel do lembrete de contato.
+  vi.mocked(proposalsApi.useScheduleProposalReminder).mockReturnValue(mutationIdle());
+  vi.mocked(proposalsApi.useResolveProposalReminder).mockReturnValue(mutationIdle());
 }
 
 function mockInsurances(insurances: Insurance[]) {
@@ -512,3 +515,63 @@ describe('ProposalModal', () => {
     });
   });
 });
+
+// CRMLAB-102/D-272 — o painel do lembrete convive com o resto do modal.
+describe('ProposalModal — lembrete de contato', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockInsurances([]);
+  });
+
+  it('dona com a proposta aberta vê "Agendar lembrete"', () => {
+    useAuthStore.setState({
+      user: { id: 'user-1', email: 'maria@lab.test', name: 'Maria', role: 'attendant', discountLimit: 5 },
+    });
+    mockProposalDetail(buildProposal({ status: 'follow_up' }));
+    renderModal();
+    expect(screen.getByRole('region', { name: 'Lembrete de contato' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Agendar lembrete' })).toBeInTheDocument();
+  });
+
+  it('proposta fechada sem lembretes não mostra o painel', () => {
+    useAuthStore.setState({
+      user: { id: 'user-1', email: 'maria@lab.test', name: 'Maria', role: 'attendant', discountLimit: 5 },
+    });
+    mockProposalDetail(buildProposal({ status: 'ganho', closedAt: '2026-08-25T10:00:00Z', reminders: [] }));
+    renderModal();
+    expect(screen.queryByRole('region', { name: 'Lembrete de contato' })).not.toBeInTheDocument();
+  });
+
+  it('proposta fechada com lembrete antigo mostra só o histórico, sem ações', () => {
+    useAuthStore.setState({
+      user: { id: 'user-1', email: 'maria@lab.test', name: 'Maria', role: 'attendant', discountLimit: 5 },
+    });
+    mockProposalDetail(
+      buildProposal({
+        status: 'ganho',
+        closedAt: '2026-08-25T10:00:00Z',
+        reminder: null,
+        reminders: [
+          {
+            id: 'rem-1',
+            origin: 'auto',
+            dueDate: '2026-08-24',
+            note: null,
+            createdBy: null,
+            createdByName: null,
+            createdAt: '2026-08-24T10:00:00.000Z',
+            resolvedAt: '2026-08-25T10:00:00.000Z',
+            resolvedBy: null,
+            resolvedByName: null,
+            outcome: 'auto_closed',
+            outcomeNote: null,
+          },
+        ],
+      }),
+    );
+    renderModal();
+    expect(screen.getByText(/Encerrado automaticamente/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Agendar lembrete' })).not.toBeInTheDocument();
+  });
+});
+

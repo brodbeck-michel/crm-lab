@@ -5638,3 +5638,95 @@ mídia do atendimento mantém uma regra só de tipo/tamanho e de nome em disco.
 `InternalMessage.attachment`, `CreateInternalAttachmentRequest`); `internal-chat.repository.ts`,
 `internal-chat.service.ts`, `internal-chat.routes.ts`; frontend `api/internal-chat.ts`,
 `pages/InternalChat/{index,MessagePanel,InternalMessageItem}.tsx`. Rotas de laboratório: 108 → 110.
+
+### D-272: Lembrete de contato para proposta parada, com desfecho obrigatório (CRMLAB-102)
+**Decisão:** a proposta aberta ganha um **lembrete de contato** (tabela `proposal_reminders`,
+migração 056), que só se fecha com um desfecho.
+1. **Regra automática** em Configurações → Regras → Automação: `automation.staleProposalReminder
+   { enabled, days }` — "Lembrete de proposta parada há N dias". **Nasce DESLIGADA, 15 dias**
+   (decisão do usuário em 19/10/2026): ligada por padrão, o primeiro tique depois do deploy daria
+   lembrete de uma vez para todas as propostas abertas antigas de produção. A gestora liga quando
+   quiser. O padrão mora num lugar só, `DEFAULT_STALE_PROPOSAL_REMINDER` em
+   `shared/types/funnel-rules.types.ts`. O lembrete **manual** funciona sempre, com a regra
+   ligada ou não.
+2. **"Parada" conta desde a criação** (`proposals.created_at`), não por estágio nem por
+   mensagem, com a contagem dos prazos das Regras (`dayCounting`, corridos ou úteis, como o
+   motor — `timerDeadline`). O motor de tempo (tique de 5 min, `FunnelTimerService`) cria o
+   lembrete automático **uma vez por proposta**: só se ela está aberta (fora de
+   `TERMINAL_STATUSES`), **nunca teve lembrete automático** e **não tem lembrete aberto** (um
+   manual aberto já cobre o contato). O índice único parcial `(proposal_id) WHERE origin =
+   'auto'` é a trava. O automático nasce com `due_date` = hoje (Brasília), então já vence.
+   Até `FUNNEL_TIMER_BATCH` (200) por tique por laboratório, das mais antigas para as novas.
+3. **Manual:** "Agendar lembrete" no modal, com dia (`YYYY-MM-DD`, de hoje até hoje + 365) e
+   observação opcional (até 500 caracteres). **No máximo um lembrete aberto por proposta**
+   (índice único parcial `(proposal_id) WHERE resolved_at IS NULL`): agendar com um já aberto
+   **reagenda esse mesmo** (troca dia e observação, zera o aviso) — não é desfecho. Endpoint
+   `PUT /proposals/:id/reminder`.
+4. **Vencido** = aberto e `dueDate ≤ hoje` no dia de Brasília (UTC−3 fixo, a mesma referência
+   do motor, D-205). Função pura `isReminderDue` em `shared/types/proposal-reminder.types.ts`,
+   usada pelo motor (aviso), pela listagem (`?reminder=due`) e pela tela (selo): divergir é
+   impossível por construção. "Hoje" é sempre calculado no Node (`saoPauloToday`) e passado ao
+   SQL, nunca pelo fuso do banco.
+5. **Onde aparece:** selo "Lembrete" no cartão (kanban e lista) quando vencido; filtro "Com
+   lembrete" nas Propostas = `?reminder=due` (os cartões com o selo — a lista de quem precisa
+   ser contatado hoje); o contrato aceita também `?reminder=open` (todo lembrete aberto, vencido
+   ou não), sem uso na tela por enquanto. **Aviso por WS** `proposal.reminder_due`
+   (`emitToUser`), **uma vez por lembrete** quando vence (`alerted_at`), para a responsável
+   ativa; sem responsável ativa, gestores e admins ativos — os mesmos destinatários do alerta de
+   "Novo orçamento" parado (D-207 item 2). Reagendar gera lembrete novo (ou zera o aviso do
+   aberto), então o aviso volta na nova data.
+6. **Desfecho** (`POST /proposals/:id/reminder/resolve`), obrigatório para fechar:
+   - `won` → **Ganho** pelo `ProposalService.updateStatus` de sempre (matriz vigente, travas das
+     Regras, `canActOnCard`, aprovação, histórico, mensagem de sistema, audit, WS). Não há
+     caminho paralelo: o que a tela recusaria no "Ganho" comum, o lembrete também recusa.
+   - `lost` → **Perdido** pelo mesmo `updateStatus`, com `reasonLost` (exigido se "Exigir motivo
+     ao marcar Perdido" estiver ligado; `LOSS_REASON_REQUIRED` senão).
+   - `rescheduled` → **Reagendar contato**: nova data **futura** (> hoje, até hoje + 365),
+     obrigatória, e **observação opcional** (até 500; decisão do usuário em 19/10/2026 — só a
+     data é obrigatória). O lembrete atual fecha com `outcome = 'rescheduled'` e `outcome_note`
+     = observação (ou `NULL`), e nasce outro aberto (`origin = 'manual'`) nessa data com a mesma
+     observação como `note`.
+   Sem lembrete aberto → `409 CONFLICT` (`details.reason: "no_open_reminder"`).
+7. **Encerramento automático:** toda transição para `ganho`/`perdido` passa por
+   `recordTransitionInTx` (manual, motor de tempo, régua de fatos do LIS). Ali, na MESMA
+   transação, o lembrete aberto se fecha com `outcome = 'auto_closed'` e `resolved_by NULL` —
+   exceto quando a transição veio do próprio painel do lembrete, que grava `won`/`lost` e quem
+   resolveu. "Outra pessoa mudou o estágio pelo pipeline" também é `auto_closed`: o desfecho
+   não foi dado no lembrete. Reabrir a proposta (regra de reabertura) não reabre o lembrete;
+   o automático não volta (item 2: uma vez por proposta).
+8. **Convivência com "Follow-up há N dias → Perdido":** com as duas ligadas, os dias do
+   lembrete têm de ser **menores** que os da perda — senão `VALIDATION_ERROR` com
+   `details.fields["automation.staleProposalReminder.days"]` com o teto explícito: "Use até
+   {perda − 1} dias: a perda automática está em {perda}" (ex.: o Santé tem a perda ligada em 15
+   dias em prod, conferido em 19/10/2026 → "Use até 14 dias: a perda automática está em 15").
+   Mesma função no back e na tela (`staleReminderVsLossError`). Validado sobre o objeto **depois do merge**, em qualquer
+   `PATCH`: um laboratório com a perda ligada em ≤ 15 dias que ligar o lembrete vê o erro no
+   campo e ajusta. Com uma das duas desligada, nada é conferido. Os relógios são diferentes
+   (criação × entrada no follow-up): a regra é de bom senso — lembrar antes de perder —, não
+   uma garantia de que o lembrete sempre vença antes.
+9. **Quem cria e resolve:** quem enxerga o cartão e pode agir sobre ele — a responsável (ou o
+   cartão do Bitlab sem responsável, fila comum, `isCardOwner`), gestor e admin. Atendente em
+   cartão de outra → `NOT_FOUND` (já não o enxerga, D-042). Proposta fechada →
+   `PROPOSAL_ALREADY_CLOSED`. No Ganho/Perdido, a trava "Gestor pode mover card de outra
+   atendente" continua valendo, porque passa por `updateStatus`.
+10. **Registro:** a tabela guarda o ciclo inteiro (quem criou, quando, desfecho, quem, quando,
+    observação) e é exposta em `ProposalDetail.reminders` (histórico no modal); o
+    `proposal_status_history` continua só de estágio. Audit (`entityType: "proposal"`,
+    `entityId` = proposta): `create_proposal_reminder` (manual ou automático, `userId NULL` no
+    automático), `update_proposal_reminder` (reagendar o aberto pelo "Agendar"),
+    `resolve_proposal_reminder` (`outcome`, e `userId NULL` no `auto_closed`). Tenant: RLS na
+    tabela (migração única, tabela + policy), toda leitura dentro de `withTenant`.
+11. **Fora deste card:** relatório por atendente (CRMLAB-103). O atalho "Enviar mensagem" do
+    painel de desfecho é o botão do cabeçalho do modal (CRMLAB-100, D-270, outra branch): o
+    painel do lembrete fica no corpo do modal e não mexe no cabeçalho.
+**Motivo:** proposta aberta sem contato é venda esquecida; o lembrete só sai da tela com um
+desfecho, o que força a atendente a registrar o que aconteceu. Reaproveitar `updateStatus` e
+`recordTransitionInTx` garante que nenhuma regra do funil seja furada e que o lembrete nunca
+fique aberto numa proposta fechada.
+**Impacto:** migração 056 (`proposal_reminders`); `shared/types/proposal-reminder.types.ts`
+(novo), `funnel-rules.types.ts`, `proposal.types.ts`, `websocket.types.ts`; backend
+`proposal-reminder.repository.ts` e `proposal-reminder.service.ts` (novos),
+`proposal.service.ts`, `proposal.repository.ts`, `funnel-timer.service.ts`,
+`funnel-rules.service.ts`, `proposal.routes.ts`; frontend `ProposalCard`, `ProposalModal`,
+`ReminderPanel` (novo), `ProposalsFilters`, `Settings/Rules.tsx`, `api/ws.ts`. API_CONTRACTS
+§3/§6c, FRONTEND_BACKEND (WS), SCHEMA §42, SERVICES §34, PAGES §5/§6/§21, BUSINESS_RULES §3.

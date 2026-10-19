@@ -20,6 +20,7 @@ import {
   STALE_NEW_BUDGET_MINUTES_MIN,
   hasReengagementTextBesidesVariables,
   sendMessageTextError,
+  staleReminderVsLossError,
   validateSendMessageTemplates,
   type FunnelRules,
   type SendMessageTemplate,
@@ -312,6 +313,12 @@ export function createFunnelRulesService(deps: FunnelRulesServiceDeps): FunnelRu
         !next.reengagement.first.enabled
       ) {
         errors['reengagement.second.enabled'] = 'Ligue o 1º reingajamento antes do 2º';
+      }
+      // D-272 item 8: lembrete antes da perda por silencio, com as duas ligadas.
+      const reminderPath = 'automation.staleProposalReminder.days';
+      if (!(reminderPath in errors) && !('automation.followUpToLost.days' in errors)) {
+        const reminderError = staleReminderVsLossError(next.automation);
+        if (reminderError !== null) errors[reminderPath] = reminderError;
       }
       // D-266 item 4: só a mensagem que veio no patch (o gravado não é reprovado).
       for (const step of ['first', 'second'] as const) {

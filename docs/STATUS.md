@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-10-18 (CRMLAB-99 — alerta de sessão do WhatsApp por WhatsApp, branch `feature/CRMLAB-99-alerta-sessao-whatsapp`)
+**Última atualização:** 2026-10-19 (CRMLAB-101 — anexo de arquivo no chat interno, branch `feature/CRMLAB-101-anexo-chat-interno`)
 
 ---
 
@@ -3375,3 +3375,17 @@ Branch `feature/CRMLAB-99-alerta-sessao-whatsapp` (de `main` v1.36.0). Decisão 
   os dois falhando e nova tentativa, só Telegram, sem destino) e rodada real só leitura contra prod e homolog na VPS em 18/10.
 - **Pendente:** bot do Telegram (token + chat_id), chip do número de alertas, instalar o timer e o `monitor.env` na VPS
   (até hoje o monitor não estava instalado em prod).
+
+### 🚧 CRMLAB-101 — anexo de arquivo no chat interno (2026-10-19, aguardando validação)
+
+Branch `feature/CRMLAB-101-anexo-chat-interno` (de `main` v1.36.1). Decisão D-271, migração 055.
+
+- **Backend:** `POST /internal-chat/channels/:id/attachments` (base64, texto opcional, um anexo por
+  mensagem) e `GET /internal-chat/channels/:id/attachments/:attachmentId`; tabela
+  `internal_message_attachments` com RLS; mensagem, linha e arquivo em disco na mesma transação.
+  Mesmos limites do atendimento (`ALLOWED_MEDIA_MIME_TYPES`, 15 MiB); conteúdo divergente do tipo → 400.
+- **Acesso:** quem vê o canal anexa e baixa; DM alheia e outro tenant → 404. WS segue só com ids (D-271 item 6).
+- **Front:** clipe do `Composer` + `AttachmentPreview` do atendimento (colar/arrastar também);
+  imagem em miniatura com `ImageLightbox`; demais tipos em `DocumentCard`, baixando com o nome original.
+- **Testes:** 9 novos de back (`attachments.spec.ts`), isolamento de rotas 273/273 (inventário 108 → 110),
+  3 novos de front; typecheck de todos os workspaces verde. Suíte completa roda na integração com 100/102.

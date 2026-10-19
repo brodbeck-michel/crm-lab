@@ -458,3 +458,22 @@ describe('proposal.stale_alert', () => {
     expect(toast.mock.calls[0]?.[0]).toMatch(/parado em "Novo orçamento" há 17 min/);
   });
 });
+
+// CRMLAB-102/D-272: lembrete de contato vencido — toast de atenção + pipeline e modal atualizados.
+describe('proposal.reminder_due', () => {
+  it('avisa com tom de atenção e invalida a lista e a proposta', () => {
+    const toast = vi.fn();
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    applyWsEvent(
+      queryClient,
+      {
+        event: 'proposal.reminder_due',
+        data: { proposalId: 'p-7', reminderId: 'r-1', dueDate: '2026-10-19' },
+      } as WsEvent,
+      toast,
+    );
+    expect(toast).toHaveBeenCalledWith('Um lembrete de contato de proposta venceu hoje.', 'attention');
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryScopes.proposals });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.proposal('p-7') });
+  });
+});

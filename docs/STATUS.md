@@ -3375,3 +3375,26 @@ Branch `feature/CRMLAB-99-alerta-sessao-whatsapp` (de `main` v1.36.0). Decisão 
   os dois falhando e nova tentativa, só Telegram, sem destino) e rodada real só leitura contra prod e homolog na VPS em 18/10.
 - **Pendente:** bot do Telegram (token + chat_id), chip do número de alertas, instalar o timer e o `monitor.env` na VPS
   (até hoje o monitor não estava instalado em prod).
+
+### 🚧 CRMLAB-102 — lembrete de contato para proposta parada (2026-10-19, aguardando validação)
+
+Branch `feature/CRMLAB-102-lembrete-proposta-parada` (de `main` v1.36.1). Decisão D-272, migração 056.
+
+- **Regra:** "Lembrete de contato para proposta aberta há N dias desde a criação" em Regras →
+  Automação (`automation.staleProposalReminder`), **nasce desligada, 15 dias**
+  (`DEFAULT_STALE_PROPOSAL_REMINDER`). Uma vez por proposta, pelo motor de tempo. Com a perda por
+  silêncio ligada, o lembrete precisa de menos dias ("Use até 14 dias: a perda automática está em 15").
+- **Manual:** "Agendar lembrete" no modal (dia + observação opcional); com um aberto, reagenda o mesmo.
+- **Desfecho:** Ganho/Perdido pelo `updateStatus` de sempre (travas e motivo das Regras), ou Reagendar
+  contato (data futura; observação opcional). Proposta fechada por outro caminho encerra o lembrete
+  como `auto_closed`.
+- **Tela:** selo "Lembrete" no cartão quando vencido, filtro "Com lembrete" (`?reminder=due`),
+  `ReminderPanel` no modal, toast do WS `proposal.reminder_due` (uma vez por lembrete).
+- **Backend:** `proposal_reminders` + RLS; `PUT /proposals/:id/reminder`,
+  `POST /proposals/:id/reminder/resolve`; audit `create|update|resolve_proposal_reminder`.
+- **Testes:** `tests/proposals/proposal-reminders.spec.ts` (novo, 25), `tests/db/rls-proposal-reminders.spec.ts`
+  (novo, 4), inventário de `route-tenant-isolation.spec.ts` (108 → 110 rotas), `proposal-routes.spec.ts`
+  e `funnel-timer.spec.ts` ajustados; front `ReminderPanel.spec.tsx` (novo, 9), `ProposalCard` (+3),
+  `ProposalModal` (+3), `Proposals` (+1), `Rules` (+2), `ws` (+1).
+- **Pendente:** validação na hml. Atalho "Enviar mensagem" é o botão do cabeçalho do CRMLAB-100 (outra
+  branch). No Santé a perda está ligada em 15 dias: ao ligar o lembrete, usar até 14.

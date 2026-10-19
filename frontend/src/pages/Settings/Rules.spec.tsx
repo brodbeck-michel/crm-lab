@@ -392,6 +392,53 @@ describe('Regras (/settings/rules)', () => {
     });
   });
 
+  describe('lembrete de proposta parada (CRMLAB-102, D-272)', () => {
+    it('nasce desligado com 15 dias; ligar envia só a regra', async () => {
+      const user = userEvent.setup();
+      signIn('manager');
+      renderPage();
+      const automacao = section(/automação do funil/i);
+      const toggle = within(automacao).getByRole('switch', { name: /lembrete de contato/i });
+      expect(toggle).toHaveAttribute('aria-checked', 'false');
+      expect(within(automacao).getByLabelText('Dias do lembrete')).toHaveValue(15);
+      expect(within(automacao).getByLabelText('Dias do lembrete')).toBeDisabled();
+      await user.click(toggle);
+      await user.click(screen.getByRole('button', { name: 'Salvar regras' }));
+      expect(mutate.mock.calls[0]?.[0]).toEqual({
+        automation: { staleProposalReminder: { enabled: true } },
+      });
+    });
+
+    it('com a perda ligada em 15 dias, 15 no lembrete bloqueia e diz o teto', async () => {
+      const user = userEvent.setup();
+      signIn('manager');
+      renderPage({
+        ...DEFAULT_FUNNEL_RULES,
+        automation: {
+          ...DEFAULT_FUNNEL_RULES.automation,
+          followUpToLost: { enabled: true, days: 15 },
+        },
+      });
+      const automacao = section(/automação do funil/i);
+      await user.click(within(automacao).getByRole('switch', { name: /lembrete de contato/i }));
+      expect(
+        within(automacao).getByText('Use até 14 dias: a perda automática está em 15'),
+      ).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Salvar regras' })).toBeDisabled();
+
+      const dias = within(automacao).getByLabelText('Dias do lembrete');
+      await user.clear(dias);
+      await user.type(dias, '14');
+      expect(
+        within(automacao).queryByText('Use até 14 dias: a perda automática está em 15'),
+      ).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Salvar regras' }));
+      expect(mutate.mock.calls[0]?.[0]).toEqual({
+        automation: { staleProposalReminder: { enabled: true, days: 14 } },
+      });
+    });
+  });
+
   describe('reingajamento (CRMLAB-62)', () => {
     it('padrão: 1º e 2º desligados, 1 h e 24 h, 2º travado sem o 1º', () => {
       signIn('manager');

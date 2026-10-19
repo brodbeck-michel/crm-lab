@@ -184,3 +184,42 @@ describe('ProposalCard — Novo orçamento parado', () => {
     expect(badge).toHaveClass('bg-stage-perdido-soft', 'text-stage-perdido-ink');
   });
 });
+
+// CRMLAB-102/D-272 — selo "Lembrete" com o lembrete aberto vencido (dia de Brasília).
+describe('ProposalCard — lembrete de contato', () => {
+  const reminder = {
+    id: 'rem-1',
+    origin: 'manual' as const,
+    dueDate: '2026-10-19',
+    note: null,
+    createdBy: 'user-1',
+    createdByName: 'Ana',
+    createdAt: '2026-10-10T10:00:00.000Z',
+  };
+
+  it('vencido (hoje em Brasília) mostra o selo', () => {
+    render(
+      <ProposalCard
+        proposal={buildProposal({ status: 'follow_up', closedAt: null, reminder })}
+        now={new Date('2026-10-19T12:00:00.000Z')}
+      />,
+    );
+    expect(screen.getByText('Lembrete')).toBeInTheDocument();
+  });
+
+  it('no dia seguinte em UTC mas ainda véspera em Brasília, não mostra', () => {
+    render(
+      <ProposalCard
+        proposal={buildProposal({ status: 'follow_up', closedAt: null, reminder })}
+        now={new Date('2026-10-19T02:00:00.000Z')}
+      />,
+    );
+    expect(screen.queryByText('Lembrete')).not.toBeInTheDocument();
+  });
+
+  it('sem lembrete aberto, sem selo', () => {
+    render(<ProposalCard proposal={buildProposal({ status: 'follow_up', reminder: null })} />);
+    expect(screen.queryByText('Lembrete')).not.toBeInTheDocument();
+  });
+});
+

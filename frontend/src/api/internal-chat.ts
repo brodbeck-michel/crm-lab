@@ -1,6 +1,7 @@
 import type {
   Channel,
   CreateDirectChannelRequest,
+  CreateInternalAttachmentRequest,
   ListChannelsResponse,
   ListChatDirectoryResponse,
   ListInternalMessagesResponse,
@@ -25,8 +26,7 @@ export const internalChatApi = {
    * `messages` abaixo NÃO marca como lido de propósito (ler página antiga do
    * histórico não é ter visto a mensagem nova).
    */
-  markRead: (channelId: string) =>
-    http.post<void>(`/internal-chat/channels/${channelId}/read`),
+  markRead: (channelId: string) => http.post<void>(`/internal-chat/channels/${channelId}/read`),
 
   messages: (channelId: string, query: PaginationQuery = {}) =>
     http.get<ListInternalMessagesResponse>(
@@ -36,6 +36,13 @@ export const internalChatApi = {
 
   send: (channelId: string, body: SendInternalMessageRequest) =>
     http.post<InternalMessage>(`/internal-chat/channels/${channelId}/messages`, body),
+
+  /**
+   * `POST /internal-chat/channels/:id/attachments` (CRMLAB-101, D-271) — um arquivo
+   * por mensagem, base64 em JSON; `content` é a legenda (opcional).
+   */
+  sendAttachment: (channelId: string, body: CreateInternalAttachmentRequest) =>
+    http.post<InternalMessage>(`/internal-chat/channels/${channelId}/attachments`, body),
 
   /** Diretório de quem dá para abrir DM (D-101) — exclui o próprio usuário e inativos. */
   directory: () => http.get<ListChatDirectoryResponse>('/internal-chat/users'),

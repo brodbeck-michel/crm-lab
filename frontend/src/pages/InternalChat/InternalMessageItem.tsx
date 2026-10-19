@@ -1,9 +1,13 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { InternalMessage, UserRole } from '@crm-lab/shared';
+import { mediaCategoryOf } from '@crm-lab/shared';
+import type { InternalMessage, InternalMessageAttachment, UserRole } from '@crm-lab/shared';
 import { api, queryKeys } from '@/api';
 import { cn } from '@/components/ui';
-import { DateDisplay } from '@/components/shared';
+import { DateDisplay, ImageLightbox } from '@/components/shared';
 import { INBOX_BUBBLE_MAX_WIDTH } from '@/components/conversation';
+import { DocumentCard } from '@/components/conversation/DocumentCard';
+import { useAuthenticatedMedia } from '@/hooks';
 import ProposalCard from '@/components/proposal/ProposalCard';
 import { ApprovalActions } from './ApprovalActions';
 
@@ -34,7 +38,8 @@ type BubbleKind = 'received' | 'sent' | 'system';
 const SHELL: Record<BubbleKind, string> = {
   received: 'self-start bg-surface rounded-md rounded-bl-sm px-[15px] py-[11px]',
   sent: 'self-end bg-accent-200 rounded-md rounded-br-sm px-[15px] py-[11px]',
-  system: 'self-center w-full bg-accent2-100 border border-accent2-300 rounded-md px-[15px] py-[11px]',
+  system:
+    'self-center w-full bg-accent2-100 border border-accent2-300 rounded-md px-[15px] py-[11px]',
 };
 
 /** Só gestor/admin decide (SERVICES.md §6). A UI esconde, o servidor recusa. */
@@ -82,6 +87,75 @@ function AttachedProposal({
   );
 }
 
+/**
+ * Anexo da mensagem (CRMLAB-101, D-271). Imagem: miniatura buscada com token
+ * (`GET .../attachments/:id` exige Authorization — `<img src>` cru daria 401),
+ * clique abre o `ImageLightbox`. Qualquer outro tipo: `DocumentCard` com
+ * `messageType="doc"`, que sempre BAIXA com o nome original (inclusive PDF).
+ */
+function MessageAttachment({
+  attachment,
+  title,
+}: {
+  attachment: InternalMessageAttachment;
+  title: string;
+}) {
+  const isImage = mediaCategoryOf(attachment.mimeType) === 'image';
+  const media = useAuthenticatedMedia(isImage ? attachment.url : null);
+  const [open, setOpen] = useState(false);
+
+  if (!isImage) {
+    return (
+      <DocumentCard
+        url={attachment.url}
+        messageType="doc"
+        media={{
+          fileName: attachment.fileName,
+          fileSize: attachment.byteSize,
+          mimeType: attachment.mimeType,
+          durationSec: null,
+          pageCount: null,
+          thumbnail: null,
+        }}
+      />
+    );
+  }
+
+  if (!media.objectUrl) {
+    return (
+      <span className="text-caption text-neutral-600">
+        {media.isLoading ? 'Carregando imagem…' : 'Não foi possível carregar a imagem'}
+      </span>
+    );
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-label={`Ampliar imagem ${attachment.fileName}`}
+        className="cursor-pointer self-start rounded-md border-none bg-transparent p-0"
+      >
+        <img
+          src={media.objectUrl}
+          alt={attachment.fileName}
+          data-testid="internal-attachment-thumbnail"
+          className="max-h-[300px] max-w-full rounded-md object-cover"
+        />
+      </button>
+      {open && (
+        <ImageLightbox
+          src={media.objectUrl}
+          fileName={attachment.fileName}
+          title={title}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
 export function InternalMessageItem({
   message,
   currentUserId,
@@ -101,7 +175,13 @@ export function InternalMessageItem({
       style={{ maxWidth: kind === 'system' ? undefined : INBOX_BUBBLE_MAX_WIDTH }}
       className={cn('flex min-w-0 flex-col gap-xs font-body text-label text-text', SHELL[kind])}
     >
-      <p className="m-0 whitespace-pre-wrap break-words">{message.content}</p>
+      {message.content !== '' && (
+        <p className="m-0 whitespace-pre-wrap break-words">{message.content}</p>
+      )}
+
+      {message.attachment && (
+        <MessageAttachment attachment={message.attachment} title={message.senderName} />
+      )}
 
       {message.attachedProposalId !== null && (
         <AttachedProposal

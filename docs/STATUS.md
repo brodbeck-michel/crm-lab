@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-10-18 (CRMLAB-99 — alerta de sessão do WhatsApp por WhatsApp, branch `feature/CRMLAB-99-alerta-sessao-whatsapp`)
+**Última atualização:** 2026-10-19 (CRMLAB-100 — botão "Enviar mensagem" no modal da proposta, branch `feature/CRMLAB-100-botao-enviar-mensagem`)
 
 ---
 
@@ -3375,3 +3375,13 @@ Branch `feature/CRMLAB-99-alerta-sessao-whatsapp` (de `main` v1.36.0). Decisão 
   os dois falhando e nova tentativa, só Telegram, sem destino) e rodada real só leitura contra prod e homolog na VPS em 18/10.
 - **Pendente:** bot do Telegram (token + chat_id), chip do número de alertas, instalar o timer e o `monitor.env` na VPS
   (até hoje o monitor não estava instalado em prod).
+
+### 🚧 CRMLAB-100 — botão "Enviar mensagem" no modal da proposta (2026-10-19, aguardando validação)
+
+Branch `feature/CRMLAB-100-botao-enviar-mensagem` (de `main` v1.36.1). Decisão D-270, sem migração, só frontend.
+
+- **Botão:** "Enviar mensagem" ao lado do número, em todo estágio; com conversa fecha o modal e abre
+  `/attendance?conversationId=` sem rascunho e sem mudar o estágio; sem conversa, desabilitado com a dica.
+- **Fora do escopo:** "sem conversa, abrir pelo telefone" — sem conversa a proposta não tem telefone (D-270 item 2).
+- **Testes:** 4 novos em `ProposalModal.spec.tsx`; typecheck de todos os workspaces e suíte do front
+  (1811/1812 na rodada cheia; o 1 que caiu, `NewConversation.spec.tsx`, passa 9/9 isolado, duas vezes).

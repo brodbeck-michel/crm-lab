@@ -5574,3 +5574,23 @@ e seria um segundo emissor para o mesmo fato.
 **Impacto:** infra. `scripts/lib/alerta.sh` (WhatsApp), `scripts/monitora-saude.sh` (verificação 8),
 `scripts/whatsapp-alertas.sh` (parear/estado/testar), timer de 1 min, `monitor.env` no alerta do backup.
 Ver `docs/guides/MONITORING.md` §4.
+
+### D-270: Botão "Enviar mensagem" no modal da proposta leva à conversa vinculada (CRMLAB-100)
+**Decisão:** o modal da proposta ganha, ao lado do número, o botão **"Enviar mensagem"**, em
+**qualquer estágio** (inclusive `ganho`/`perdido`), para qualquer pessoa que abre o cartão.
+1. **Com `conversationId`:** fecha o modal e navega para `/attendance?conversationId=<id>` — o mesmo
+   deep link do "Enviar orçamento" e da notificação (D-240), **sem `draft`** e **sem mudar o
+   estágio**. A visibilidade da conversa é a de sempre: quem não enxerga a conversa recebe o erro
+   do Atendimento, como num link de notificação.
+2. **Sem `conversationId`:** botão **desabilitado**, com a dica "Proposta sem conversa vinculada".
+   Não há telefone para procurar a conversa: `ProposalDetail.patientPhone` vem da própria conversa
+   (`''` sem ela) e o orçamento do Bitlab não traz telefone (`lis_budgets`). O vínculo continua
+   pelo "Enviar orçamento" do cartão do Bitlab (D-200/D-203).
+3. Abre **dentro do CRM**, não `wa.me`: a conversa fica no histórico e entra na métrica de tempo de
+   resposta (D-257). Decisão do Michel, 19/10/2026.
+**Motivo:** a atendente abria o cartão e precisava procurar a conversa na fila para falar com o
+paciente; o único atalho era o "Enviar orçamento"/"Reenviar mensagem", que só existe em alguns
+estágios e já leva mensagem pronta. O item "sem conversa, abrir pelo telefone" do card ficou fora
+porque, sem conversa, a proposta não tem telefone.
+**Impacto:** só frontend — `proposal/ProposalModal.tsx` (+ spec). PAGES §6. Sem endpoint, tipo ou
+migração.

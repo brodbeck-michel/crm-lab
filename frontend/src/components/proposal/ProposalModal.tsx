@@ -167,15 +167,38 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
     );
   };
 
+  /**
+   * CRMLAB-100 (D-270): só abre a conversa, sem rascunho e sem mudar o
+   * estágio. Sem conversa não há telefone para procurar (`patientPhone` vem
+   * dela), então o botão fica desabilitado.
+   */
+  const handleOpenConversation = () => {
+    if (proposal.conversationId === null) return;
+    const conversationId = proposal.conversationId;
+    onClose();
+    navigate(`/attendance?conversationId=${conversationId}`);
+  };
+
   return (
     <Modal open onClose={onClose} title={proposal.patientName || 'Proposta'}>
       <div className="space-y-xl">
         <div className="space-y-lg">
-          <div className="flex items-center gap-sm">
-            <p className="text-caption text-neutral-600">
-              {formatProposalNumber(proposal.proposalNumber)}
-            </p>
-            {fromBitlab && <Chip tone="inactive">Bitlab</Chip>}
+          <div className="flex items-center justify-between gap-sm">
+            <div className="flex items-center gap-sm">
+              <p className="text-caption text-neutral-600">
+                {formatProposalNumber(proposal.proposalNumber)}
+              </p>
+              {fromBitlab && <Chip tone="inactive">Bitlab</Chip>}
+            </div>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleOpenConversation}
+              disabled={!hasConversation}
+              title={hasConversation ? undefined : 'Proposta sem conversa vinculada'}
+            >
+              Enviar mensagem
+            </Button>
           </div>
 
           {fromBitlab && (

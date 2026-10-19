@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import type {
   Insurance,
   ListInsurancesResponse,
@@ -353,6 +353,62 @@ describe('ProposalModal', () => {
     renderModal();
 
     expect(screen.queryByText('Médico solicitante')).not.toBeInTheDocument();
+  });
+
+  // CRMLAB-100 (D-270, PAGES.md §6): atalho para a conversa do paciente.
+  describe('Enviar mensagem', () => {
+    function LocationProbe() {
+      const location = useLocation();
+      return <p data-testid="location">{`${location.pathname}${location.search}`}</p>;
+    }
+
+    function renderWithProbe(onClose = vi.fn()) {
+      render(
+        <QueryClientProvider client={queryClient}>
+          <ToastProvider>
+            <MemoryRouter initialEntries={['/proposals']}>
+              <ProposalModal proposalId="prop-1" onClose={onClose} />
+              <LocationProbe />
+            </MemoryRouter>
+          </ToastProvider>
+        </QueryClientProvider>,
+      );
+      return onClose;
+    }
+
+    it('com conversa: fecha o modal e abre a conversa no Atendimento, sem rascunho e sem mudar o estágio', () => {
+      mockProposalDetail(buildProposal({ status: 'follow_up', conversationId: 'conv-9' }));
+      const mutate = vi.fn();
+      vi.mocked(proposalsApi.useUpdateProposalStatus).mockReturnValue(mutationIdle(mutate));
+      const onClose = renderWithProbe();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Enviar mensagem' }));
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId('location')).toHaveTextContent('/attendance?conversationId=conv-9');
+      expect(screen.getByTestId('location')).not.toHaveTextContent('draft');
+      expect(mutate).not.toHaveBeenCalled();
+    });
+
+    it.each(['ganho', 'perdido'] as const)('aparece também em proposta fechada (%s)', (status) => {
+      mockProposalDetail(buildProposal({ status }));
+      renderModal();
+      expect(screen.getByRole('button', { name: 'Enviar mensagem' })).toBeEnabled();
+    });
+
+    it('sem conversa vinculada: desabilitado, com a dica', () => {
+      mockProposalDetail(
+        buildProposal({ origin: 'bitlab', conversationId: null, patientPhone: '', status: 'novo_contato' }),
+      );
+      const onClose = renderWithProbe();
+
+      const button = screen.getByRole('button', { name: 'Enviar mensagem' });
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute('title', 'Proposta sem conversa vinculada');
+      fireEvent.click(button);
+      expect(onClose).not.toHaveBeenCalled();
+      expect(screen.getByTestId('location')).toHaveTextContent('/proposals');
+    });
   });
 
   // CRMLAB-57 (D-195, PAGES.md §6): proposta que nasceu do orçamento do Bitlab.

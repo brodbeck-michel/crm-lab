@@ -547,6 +547,10 @@ nunca "sem permissão" (não vazar existência).
   histórico de estágios (linha movida pelo motor de tempo — `history[].automation` preenchido —
   mostra "movido pela regra: {describeStageAutomation}", ex.: "movido pela regra: Enviado há 3
   dias", no lugar de "por {pessoa}"; CRMLAB-59, D-208), ações
+- **Enviar mensagem (CRMLAB-100, D-270):** botão secundário "Enviar mensagem" à direita do número
+  da proposta, em todo estágio. Com conversa vinculada fecha o modal e abre
+  `/attendance?conversationId=<id>` (sem rascunho, sem mudar estágio); sem conversa fica
+  desabilitado com a dica "Proposta sem conversa vinculada"
 - Ações (uma linha): [Mudar estágio ▾] à esquerda, [Marcar como ganho] (accent-2) à direita, [Marcar como perdido] fantasma ao fim
 - "Perdido" abre sub-form com motivo OBRIGATÓRIO (select: preço, silêncio, exame indisponível, prazo, outro)
 - **Editar (CRMLAB-12, D-134):** botão "Editar" some quando `status` não está em

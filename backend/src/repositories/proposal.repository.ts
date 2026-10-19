@@ -21,6 +21,10 @@ import type {
   Proposal,
   ProposalDetail,
   ProposalItem,
+  ProposalReminder,
+  ProposalReminderEntry,
+  ProposalReminderFilter,
+  ProposalReminderOrigin,
   ProposalStageHistoryEntry,
   ProposalStatus,
 } from '@crm-lab/shared';
@@ -77,6 +81,17 @@ export interface ProposalRow {
    * UTC, D-078). Opcional: so o SELECT canonico traz.
    */
   stage_entered_at?: string | null;
+  /**
+   * Lembrete ABERTO (CRMLAB-102, D-272) — LEFT JOIN, no maximo um por proposta
+   * (indice unico parcial). `reminder_id` nulo = sem lembrete aberto.
+   */
+  reminder_id?: string | null;
+  reminder_origin?: string | null;
+  reminder_due_date?: string | null;
+  reminder_note?: string | null;
+  reminder_created_by?: string | null;
+  reminder_created_by_name?: string | null;
+  reminder_created_at?: string | null;
 }
 
 interface ProposalItemRow {
@@ -130,7 +145,8 @@ function safeJson(text: string): unknown {
 const FROM_PROPOSAL = `
     FROM proposals p
     LEFT JOIN conversations c ON c.id = p.conversation_id
-    LEFT JOIN lis_budgets lb ON lb.tenant_id = p.tenant_id AND lb.number = p.lis_budget_number`;
+    LEFT JOIN lis_budgets lb ON lb.tenant_id = p.tenant_id AND lb.number = p.lis_budget_number
+    LEFT JOIN proposal_reminders pr ON pr.proposal_id = p.id AND pr.resolved_at IS NULL`;
 
 /** Nome do paciente: o da conversa; sem conversa, o do orcamento do LIS. */
 const PATIENT_NAME = 'CASE WHEN c.id IS NULL THEN lb.patient_name ELSE c.patient_name END';
@@ -152,10 +168,28 @@ const SELECT_PROPOSAL = `
          to_char(lb.issued_on, 'YYYY-MM-DD') AS lis_issued_on, lb.attendant_name AS lis_attendant_name,
          (SELECT to_char(MAX(h.changed_at), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
             FROM proposal_status_history h
-           WHERE h.proposal_id = p.id AND h.status = p.status) AS stage_entered_at
+           WHERE h.proposal_id = p.id AND h.status = p.status) AS stage_entered_at,
+         pr.id AS reminder_id, pr.origin AS reminder_origin,
+         to_char(pr.due_date, 'YYYY-MM-DD') AS reminder_due_date, pr.note AS reminder_note,
+         pr.created_by AS reminder_created_by, pru.name AS reminder_created_by_name,
+         to_char(pr.created_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS reminder_created_at
     ${FROM_PROPOSAL}
+    LEFT JOIN users pru ON pru.id = pr.created_by
     LEFT JOIN users u ON u.id = p.created_by
     LEFT JOIN users a ON a.id = p.approved_by`;
+
+function mapOpenReminder(row: ProposalRow): ProposalReminder | null {
+  if (!row.reminder_id) return null;
+  return {
+    id: row.reminder_id,
+    origin: row.reminder_origin as ProposalReminderOrigin,
+    dueDate: row.reminder_due_date ?? '',
+    note: row.reminder_note ?? null,
+    createdBy: row.reminder_created_by ?? null,
+    createdByName: row.reminder_created_by_name ?? null,
+    createdAt: row.reminder_created_at ?? '',
+  };
+}
 
 /** Linha -> `Proposal` (shape de listagem/pipeline de `@crm-lab/shared`). */
 export function mapProposal(row: ProposalRow): Proposal {
@@ -182,6 +216,7 @@ export function mapProposal(row: ProposalRow): Proposal {
     lisIssuedOn: row.lis_issued_on,
     lisAttendantName: row.lis_attendant_name,
     stageEnteredAt: row.stage_entered_at ?? null,
+    reminder: mapOpenReminder(row),
   };
 }
 
@@ -211,7 +246,11 @@ export function mapDetail(
   row: ProposalRow,
   items: ProposalItem[],
   history: ProposalStageHistoryEntry[],
-  extra: { subtotal: number; rejectionReason: string | null },
+  extra: {
+    subtotal: number;
+    rejectionReason: string | null;
+    reminders: ProposalReminderEntry[];
+  },
 ): ProposalDetail {
   return {
     ...mapProposal(row),
@@ -227,6 +266,7 @@ export function mapDetail(
     requestingDoctor: row.requesting_doctor,
     lisPaidValue: row.lis_paid_value === null ? null : toNumber(row.lis_paid_value),
     lisPaidOn: row.lis_paid_on,
+    reminders: extra.reminders,
   };
 }
 
@@ -730,6 +770,11 @@ export interface ProposalListCriteria {
   endDate?: string;
   /** Nome do paciente, case-insensitive. */
   search?: string;
+  /**
+   * Lembrete aberto (D-272): `open` = qualquer; `due` = vencido em `today`
+   * (dia de Brasilia, calculado pelo service — nunca pelo fuso do banco).
+   */
+  reminder?: { filter: ProposalReminderFilter; today: string };
   page: number;
   limit: number;
   sortBy: ProposalSortBy;
@@ -785,6 +830,14 @@ export async function list(tx: DbTx, criteria: ProposalListCriteria): Promise<Pr
     // crescer a ponto do seq scan doer, o upgrade e um indice trigram (pg_trgm).
     params.push(`%${criteria.search.trim()}%`);
     where.push(`${PATIENT_NAME} ILIKE $${params.length}`);
+  }
+
+  if (criteria.reminder !== undefined) {
+    where.push('pr.id IS NOT NULL');
+    if (criteria.reminder.filter === 'due') {
+      params.push(criteria.reminder.today);
+      where.push(`pr.due_date <= $${params.length}::date`);
+    }
   }
 
   const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';

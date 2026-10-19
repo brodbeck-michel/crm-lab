@@ -17,7 +17,8 @@ export type WsEventName =
   | 'approval.decided'
   | 'internal_chat.new_message'
   | 'channel.connection_changed'
-  | 'proposal.stale_alert';
+  | 'proposal.stale_alert'
+  | 'proposal.reminder_due';
 
 export interface WsEventPayloads {
   'conversation.new_message': { conversationId: string; messageId: string };
@@ -59,6 +60,8 @@ export interface WsEventPayloads {
    */
   /** D-267: `minutes` desde a entrada; `hours` (inteiras) mantido por compatibilidade. */
   'proposal.stale_alert': { proposalId: string; minutes: number; hours: number };
+  /** Lembrete de contato venceu (CRMLAB-102, D-272). Uma vez por lembrete, só para quem cuida do cartão. */
+  'proposal.reminder_due': { proposalId: string; reminderId: string; dueDate: string };
 }
 
 export interface WsEvent<E extends WsEventName = WsEventName> {

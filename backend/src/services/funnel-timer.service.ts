@@ -28,6 +28,8 @@ import {
   isDelayElapsed,
   isStaleNewBudget,
   PROPOSAL_STATUS_LABELS,
+  saoPauloToday,
+  timerDeadline,
   type FunnelRules,
   type StageAutomation,
   type TimerStep,
@@ -36,6 +38,8 @@ import type { DbClient, DbTx } from '../db/types.js';
 import type { CacheService } from '../lib/cache.js';
 import { logger } from '../lib/logger.js';
 import type { WsHub } from '../lib/ws-hub.js';
+import * as auditRepo from '../repositories/audit.repository.js';
+import * as reminderRepo from '../repositories/proposal-reminder.repository.js';
 import { readFunnelRules } from './funnel-rules.service.js';
 import {
   announceSystemTransitions,
@@ -61,6 +65,10 @@ export interface FunnelTimerTenantResult {
   alerted: number;
   /** Reingajamentos enviados neste tique (CRMLAB-62, D-211). */
   reengaged: number;
+  /** Lembretes automaticos criados neste tique (CRMLAB-102, D-272). */
+  remindersCreated: number;
+  /** Lembretes vencidos avisados por WS neste tique (D-272). */
+  reminded: number;
 }
 
 export interface FunnelTimerTickResult {
@@ -301,6 +309,92 @@ export function createFunnelTimerService(deps: FunnelTimerServiceDeps): FunnelTi
     return alerted;
   }
 
+  /**
+   * Lembrete de proposta parada (CRMLAB-102, D-272, SERVICES.md §34): cria os
+   * automaticos (regra ligada) e avisa os vencidos (sempre — o manual vale com
+   * a regra desligada). Uma transacao por lembrete.
+   */
+  async function runReminders(
+    tenantId: string,
+    rules: FunnelRules,
+    at: Date,
+  ): Promise<{ created: number; reminded: number }> {
+    const today = saoPauloToday(at);
+    let created = 0;
+    const rule = rules.automation.staleProposalReminder;
+    if (rule.enabled) {
+      // Dia util nunca vence antes do corrido: `days × 24 h` e condicao necessaria.
+      const cutoff = new Date(at.getTime() - rule.days * DAY_MS);
+      const candidates = await db.withTenant(tenantId, (tx) =>
+        reminderRepo.selectAutoCandidates(tx, tenantId, cutoff, FUNNEL_TIMER_BATCH),
+      );
+      for (const candidate of candidates) {
+        const deadline = timerDeadline(
+          new Date(candidate.createdAt),
+          rule.days,
+          rules.automation.dayCounting,
+        );
+        // Monotono na criacao: o primeiro que nao venceu encerra a lista.
+        if (at.getTime() < deadline.getTime()) break;
+        const inserted = await db.withTenant(tenantId, async (tx) => {
+          const reminderId = await reminderRepo.insert(tx, {
+            tenantId,
+            proposalId: candidate.id,
+            origin: 'auto',
+            dueDate: today,
+            note: null,
+            createdBy: null,
+            createdAt: at,
+          });
+          if (reminderId === null) return false;
+          await auditRepo.insert(tx, {
+            tenantId,
+            userId: null,
+            action: 'create_proposal_reminder',
+            entityType: 'proposal',
+            entityId: candidate.id,
+            oldValues: null,
+            newValues: {
+              reminderId,
+              origin: 'auto',
+              dueDate: today,
+              days: rule.days,
+              dayCounting: rules.automation.dayCounting,
+            },
+          });
+          return true;
+        });
+        if (inserted) created += 1;
+      }
+    }
+
+    const due = await db.withTenant(tenantId, (tx) =>
+      reminderRepo.selectDueUnalerted(tx, tenantId, today, FUNNEL_TIMER_BATCH),
+    );
+    let reminded = 0;
+    for (const reminder of due) {
+      const recipients = await db.withTenant(tenantId, async (tx) => {
+        if (!(await reminderRepo.markAlerted(tx, reminder.id, at))) return null;
+        return alertRecipients(tx, tenantId, reminder.createdBy);
+      });
+      if (recipients === null) continue;
+      reminded += 1;
+      for (const userId of recipients) {
+        wsHub.emitToUser(tenantId, userId, 'proposal.reminder_due', {
+          proposalId: reminder.proposalId,
+          reminderId: reminder.id,
+          dueDate: reminder.dueDate,
+        });
+      }
+      logger.info('funnel_timer.reminder_due', {
+        tenantId,
+        proposalId: reminder.proposalId,
+        recipients: recipients.length,
+      });
+    }
+    return { created, reminded };
+  }
+
   async function runForTenant(tenantId: string): Promise<FunnelTimerTenantResult> {
     const at = now();
     const rules = await db.withTenant(tenantId, (tx) => readFunnelRules(tx, tenantId));
@@ -309,6 +403,7 @@ export function createFunnelTimerService(deps: FunnelTimerServiceDeps): FunnelTi
       moved += await runStep(tenantId, rules, step, at);
     }
     const alerted = await runStaleAlert(tenantId, rules, at);
+    const reminders = await runReminders(tenantId, rules, at);
     let reengaged = 0;
     if (deps.reengagement) {
       // Falha do reingajamento nao desfaz nem esconde o que o funil ja fez.
@@ -321,7 +416,14 @@ export function createFunnelTimerService(deps: FunnelTimerServiceDeps): FunnelTi
         });
       }
     }
-    return { tenantId, moved, alerted, reengaged };
+    return {
+      tenantId,
+      moved,
+      alerted,
+      reengaged,
+      remindersCreated: reminders.created,
+      reminded: reminders.reminded,
+    };
   }
 
   /**
@@ -369,7 +471,13 @@ export function createFunnelTimerService(deps: FunnelTimerServiceDeps): FunnelTi
           try {
             const result = await runForTenant(tenantId);
             results.push(result);
-            if (result.moved > 0 || result.alerted > 0 || result.reengaged > 0) {
+            if (
+              result.moved > 0 ||
+              result.alerted > 0 ||
+              result.reengaged > 0 ||
+              result.remindersCreated > 0 ||
+              result.reminded > 0
+            ) {
               logger.info('funnel_timer.completed', { ...result });
             }
           } catch (error) {
@@ -379,7 +487,16 @@ export function createFunnelTimerService(deps: FunnelTimerServiceDeps): FunnelTi
             });
           }
         }
-        if (results.every((r) => r.moved === 0 && r.alerted === 0 && r.reengaged === 0)) {
+        if (
+          results.every(
+            (r) =>
+              r.moved === 0 &&
+              r.alerted === 0 &&
+              r.reengaged === 0 &&
+              r.remindersCreated === 0 &&
+              r.reminded === 0,
+          )
+        ) {
           logger.debug('funnel_timer.tick_empty', { tenants: tenantIds.length });
         }
         return { skipped: false, tenants: results };

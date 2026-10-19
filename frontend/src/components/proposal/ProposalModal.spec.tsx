@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import type {
   Insurance,
   ListInsurancesResponse,
@@ -103,6 +103,9 @@ function mockProposalDetail(proposal: ProposalDetail) {
   vi.mocked(proposalsApi.useResendProposal).mockReturnValue(mutationIdle());
   vi.mocked(proposalsApi.useUpdateProposalConversation).mockReturnValue(mutationIdle());
   vi.mocked(proposalsApi.useUpdateProposalResponsible).mockReturnValue(mutationIdle());
+  // CRMLAB-102: painel do lembrete de contato.
+  vi.mocked(proposalsApi.useScheduleProposalReminder).mockReturnValue(mutationIdle());
+  vi.mocked(proposalsApi.useResolveProposalReminder).mockReturnValue(mutationIdle());
 }
 
 function mockInsurances(insurances: Insurance[]) {
@@ -355,6 +358,62 @@ describe('ProposalModal', () => {
     expect(screen.queryByText('Médico solicitante')).not.toBeInTheDocument();
   });
 
+  // CRMLAB-100 (D-270, PAGES.md §6): atalho para a conversa do paciente.
+  describe('Enviar mensagem', () => {
+    function LocationProbe() {
+      const location = useLocation();
+      return <p data-testid="location">{`${location.pathname}${location.search}`}</p>;
+    }
+
+    function renderWithProbe(onClose = vi.fn()) {
+      render(
+        <QueryClientProvider client={queryClient}>
+          <ToastProvider>
+            <MemoryRouter initialEntries={['/proposals']}>
+              <ProposalModal proposalId="prop-1" onClose={onClose} />
+              <LocationProbe />
+            </MemoryRouter>
+          </ToastProvider>
+        </QueryClientProvider>,
+      );
+      return onClose;
+    }
+
+    it('com conversa: fecha o modal e abre a conversa no Atendimento, sem rascunho e sem mudar o estágio', () => {
+      mockProposalDetail(buildProposal({ status: 'follow_up', conversationId: 'conv-9' }));
+      const mutate = vi.fn();
+      vi.mocked(proposalsApi.useUpdateProposalStatus).mockReturnValue(mutationIdle(mutate));
+      const onClose = renderWithProbe();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Enviar mensagem' }));
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId('location')).toHaveTextContent('/attendance?conversationId=conv-9');
+      expect(screen.getByTestId('location')).not.toHaveTextContent('draft');
+      expect(mutate).not.toHaveBeenCalled();
+    });
+
+    it.each(['ganho', 'perdido'] as const)('aparece também em proposta fechada (%s)', (status) => {
+      mockProposalDetail(buildProposal({ status }));
+      renderModal();
+      expect(screen.getByRole('button', { name: 'Enviar mensagem' })).toBeEnabled();
+    });
+
+    it('sem conversa vinculada: desabilitado, com a dica', () => {
+      mockProposalDetail(
+        buildProposal({ origin: 'bitlab', conversationId: null, patientPhone: '', status: 'novo_contato' }),
+      );
+      const onClose = renderWithProbe();
+
+      const button = screen.getByRole('button', { name: 'Enviar mensagem' });
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute('title', 'Proposta sem conversa vinculada');
+      fireEvent.click(button);
+      expect(onClose).not.toHaveBeenCalled();
+      expect(screen.getByTestId('location')).toHaveTextContent('/proposals');
+    });
+  });
+
   // CRMLAB-57 (D-195, PAGES.md §6): proposta que nasceu do orçamento do Bitlab.
   describe('origem Bitlab', () => {
     const bitlab = (overrides: Partial<ProposalDetail> = {}) =>
@@ -456,3 +515,63 @@ describe('ProposalModal', () => {
     });
   });
 });
+
+// CRMLAB-102/D-272 — o painel do lembrete convive com o resto do modal.
+describe('ProposalModal — lembrete de contato', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockInsurances([]);
+  });
+
+  it('dona com a proposta aberta vê "Agendar lembrete"', () => {
+    useAuthStore.setState({
+      user: { id: 'user-1', email: 'maria@lab.test', name: 'Maria', role: 'attendant', discountLimit: 5 },
+    });
+    mockProposalDetail(buildProposal({ status: 'follow_up' }));
+    renderModal();
+    expect(screen.getByRole('region', { name: 'Lembrete de contato' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Agendar lembrete' })).toBeInTheDocument();
+  });
+
+  it('proposta fechada sem lembretes não mostra o painel', () => {
+    useAuthStore.setState({
+      user: { id: 'user-1', email: 'maria@lab.test', name: 'Maria', role: 'attendant', discountLimit: 5 },
+    });
+    mockProposalDetail(buildProposal({ status: 'ganho', closedAt: '2026-08-25T10:00:00Z', reminders: [] }));
+    renderModal();
+    expect(screen.queryByRole('region', { name: 'Lembrete de contato' })).not.toBeInTheDocument();
+  });
+
+  it('proposta fechada com lembrete antigo mostra só o histórico, sem ações', () => {
+    useAuthStore.setState({
+      user: { id: 'user-1', email: 'maria@lab.test', name: 'Maria', role: 'attendant', discountLimit: 5 },
+    });
+    mockProposalDetail(
+      buildProposal({
+        status: 'ganho',
+        closedAt: '2026-08-25T10:00:00Z',
+        reminder: null,
+        reminders: [
+          {
+            id: 'rem-1',
+            origin: 'auto',
+            dueDate: '2026-08-24',
+            note: null,
+            createdBy: null,
+            createdByName: null,
+            createdAt: '2026-08-24T10:00:00.000Z',
+            resolvedAt: '2026-08-25T10:00:00.000Z',
+            resolvedBy: null,
+            resolvedByName: null,
+            outcome: 'auto_closed',
+            outcomeNote: null,
+          },
+        ],
+      }),
+    );
+    renderModal();
+    expect(screen.getByText(/Encerrado automaticamente/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Agendar lembrete' })).not.toBeInTheDocument();
+  });
+});
+

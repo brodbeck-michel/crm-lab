@@ -18,6 +18,7 @@
  * varrida pelos tres invariantes de uma vez.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { saoPauloToday } from '@crm-lab/shared';
 import type {
   ApiErrorBody,
   Channel,
@@ -184,6 +185,8 @@ interface Lab {
   media: { id: string };
   /** Mensagem do paciente na `conversation` — alvo de reação (CRMLAB-66). */
   message: { id: string };
+  /** Anexo (PDF) de uma mensagem em `channel`, com o arquivo no disco (CRMLAB-101). */
+  internalAttachment: { id: string };
 }
 
 interface LabRoute {
@@ -437,6 +440,25 @@ const LAB_ROUTES: readonly LabRoute[] = [
     actor: 'admin',
     addressable: true,
     ownStatus: 200,
+  },
+  {
+    name: 'PUT /proposals/:id/reminder',
+    method: 'put',
+    path: (l) => `/api/v1/proposals/${l.openProposal.id}/reminder`,
+    body: () => ({ dueDate: saoPauloToday(new Date()), note: 'sonda' }),
+    actor: 'admin',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    // Sem lembrete aberto no proprio tenant: `CONFLICT no_open_reminder` (D-272).
+    name: 'POST /proposals/:id/reminder/resolve',
+    method: 'post',
+    path: (l) => `/api/v1/proposals/${l.openProposal.id}/reminder/resolve`,
+    body: () => ({ outcome: 'won' }),
+    actor: 'admin',
+    addressable: true,
+    ownStatus: 409,
   },
   {
     // Aprovar/rejeitar exige `approvalStatus: 'pending'` e um decisor que nao
@@ -970,6 +992,28 @@ const LAB_ROUTES: readonly LabRoute[] = [
     addressable: true,
     ownStatus: 201,
   },
+  // CRMLAB-101/D-271: anexo de arquivo no canal.
+  {
+    name: 'POST /internal-chat/channels/:id/attachments',
+    method: 'post',
+    path: (l) => `/api/v1/internal-chat/channels/${l.channel.id}/attachments`,
+    body: () => ({
+      fileName: 'sonda.pdf',
+      mimeType: 'application/pdf',
+      contentBase64: Buffer.from('%PDF-1.4 sonda').toString('base64'),
+    }),
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 201,
+  },
+  {
+    name: 'GET /internal-chat/channels/:id/attachments/:attachmentId',
+    method: 'get',
+    path: (l) => `/api/v1/internal-chat/channels/${l.channel.id}/attachments/${l.internalAttachment.id}`,
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 200,
+  },
   // D-101: DM — diretorio de usuarios e get-or-create do canal.
   { name: 'GET /internal-chat/users', method: 'get', path: () => '/api/v1/internal-chat/users', actor: 'attendant', addressable: false },
   {
@@ -1185,6 +1229,22 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
   const channel = list[0];
   if (!channel) throw new Error(`Nenhum canal interno criado para ${prefix}`);
 
+  // Anexo do chat interno (CRMLAB-101): mensagem + linha + arquivo no disco.
+  const internalAttachmentRow = await db.withoutTenant(async (tx) => {
+    const msg = await tx.query<{ id: string }>(
+      `INSERT INTO internal_messages (tenant_id, channel_id, sender_id, content)
+       VALUES ($1, $2, $3, '') RETURNING id`,
+      [tenant.id, channel.id, attendant.id],
+    );
+    return tx.query<{ id: string }>(
+      `INSERT INTO internal_message_attachments (tenant_id, message_id, mime_type, file_name, byte_size)
+       VALUES ($1, $2, 'application/pdf', 'sonda.pdf', 14) RETURNING id`,
+      [tenant.id, msg.rows[0]?.id],
+    );
+  });
+  const internalAttachment = { id: internalAttachmentRow.rows[0]?.id as string };
+  await writeMediaFile(internalAttachment.id, Buffer.from('%PDF-1.4 sonda'));
+
   return {
     tenant,
     admin,
@@ -1208,6 +1268,7 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     doctorInteraction,
     media,
     message,
+    internalAttachment,
   };
 }
 
@@ -1324,7 +1385,11 @@ describe('inventario de rotas de laboratorio', () => {
     // `PATCH|DELETE /doctors/:id/interactions/:interactionId`.
     // CRMLAB-93/D-263 soma 2: `POST /conversations/:id/participants` e
     // `DELETE /conversations/:id/participants/:userId`.
-    expect(LAB_ROUTES).toHaveLength(108);
+    // CRMLAB-101/D-271 soma 2: `POST /internal-chat/channels/:id/attachments` e
+    // `GET /internal-chat/channels/:id/attachments/:attachmentId`.
+    // CRMLAB-102/D-272 soma 2: `PUT /proposals/:id/reminder` e
+    // `POST /proposals/:id/reminder/resolve`.
+    expect(LAB_ROUTES).toHaveLength(112);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

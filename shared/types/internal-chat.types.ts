@@ -48,6 +48,11 @@ export interface InternalMessage {
   content: string;
   /** Proposta anexada renderiza como ProposalCard clicavel. */
   attachedProposalId: string | null;
+  /**
+   * Arquivo anexado (CRMLAB-101, D-271) — no maximo um por mensagem. O backend
+   * sempre manda (`null` sem anexo); opcional so para fixtures antigas.
+   */
+  attachment?: InternalMessageAttachment | null;
   isSystem: boolean;
   createdAt: IsoDateTime;
 }
@@ -76,4 +81,28 @@ export interface ListInternalMessagesResponse {
 export interface SendInternalMessageRequest {
   content: string;
   attachedProposalId?: string | null;
+}
+
+/** Arquivo de uma mensagem do chat interno (CRMLAB-101, D-271, API_CONTRACTS §3b). */
+export interface InternalMessageAttachment {
+  id: string;
+  /** Nome original — so metadado; em disco o arquivo tem o nome do `id`. */
+  fileName: string;
+  mimeType: string;
+  byteSize: number;
+  /** `/api/v1/internal-chat/channels/:channelId/attachments/:id` — exige Authorization. */
+  url: string;
+}
+
+/**
+ * `POST /internal-chat/channels/:id/attachments` (D-271) — base64 em JSON, como
+ * `CreateAttachmentRequest` do atendimento. Tipo e teto: `ALLOWED_MEDIA_MIME_TYPES`
+ * e `MAX_MEDIA_BYTES` (`media.types.ts`), os mesmos do atendimento.
+ */
+export interface CreateInternalAttachmentRequest {
+  fileName: string;
+  mimeType: string;
+  contentBase64: string;
+  /** Texto da mensagem (opcional, ate 4000 caracteres). */
+  content?: string | null;
 }

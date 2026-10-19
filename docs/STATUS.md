@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-10-18 (CRMLAB-99 — alerta de sessão do WhatsApp por WhatsApp, branch `feature/CRMLAB-99-alerta-sessao-whatsapp`)
+**Última atualização:** 2026-10-19 (integração CRMLAB-100/101/102 — branch `integ/onda-100-102`)
 
 ---
 
@@ -3375,3 +3375,50 @@ Branch `feature/CRMLAB-99-alerta-sessao-whatsapp` (de `main` v1.36.0). Decisão 
   os dois falhando e nova tentativa, só Telegram, sem destino) e rodada real só leitura contra prod e homolog na VPS em 18/10.
 - **Pendente:** bot do Telegram (token + chat_id), chip do número de alertas, instalar o timer e o `monitor.env` na VPS
   (até hoje o monitor não estava instalado em prod).
+
+### 🚧 CRMLAB-100 — botão "Enviar mensagem" no modal da proposta (2026-10-19, aguardando validação)
+
+Branch `feature/CRMLAB-100-botao-enviar-mensagem` (de `main` v1.36.1). Decisão D-270, sem migração, só frontend.
+
+- **Botão:** "Enviar mensagem" ao lado do número, em todo estágio; com conversa fecha o modal e abre
+  `/attendance?conversationId=` sem rascunho e sem mudar o estágio; sem conversa, desabilitado com a dica.
+- **Fora do escopo:** "sem conversa, abrir pelo telefone" — sem conversa a proposta não tem telefone (D-270 item 2).
+- **Testes:** 4 novos em `ProposalModal.spec.tsx`; typecheck de todos os workspaces e suíte do front
+  (1811/1812 na rodada cheia; o 1 que caiu, `NewConversation.spec.tsx`, passa 9/9 isolado, duas vezes).
+
+### 🚧 CRMLAB-101 — anexo de arquivo no chat interno (2026-10-19, aguardando validação)
+
+Branch `feature/CRMLAB-101-anexo-chat-interno` (de `main` v1.36.1). Decisão D-271, migração 055.
+
+- **Backend:** `POST /internal-chat/channels/:id/attachments` (base64, texto opcional, um anexo por
+  mensagem) e `GET /internal-chat/channels/:id/attachments/:attachmentId`; tabela
+  `internal_message_attachments` com RLS; mensagem, linha e arquivo em disco na mesma transação.
+  Mesmos limites do atendimento (`ALLOWED_MEDIA_MIME_TYPES`, 15 MiB); conteúdo divergente do tipo → 400.
+- **Acesso:** quem vê o canal anexa e baixa; DM alheia e outro tenant → 404. WS segue só com ids (D-271 item 6).
+- **Front:** clipe do `Composer` + `AttachmentPreview` do atendimento (colar/arrastar também);
+  imagem em miniatura com `ImageLightbox`; demais tipos em `DocumentCard`, baixando com o nome original.
+- **Testes:** 9 novos de back (`attachments.spec.ts`), isolamento de rotas 273/273 (inventário 108 → 110),
+  3 novos de front; typecheck de todos os workspaces verde. Suíte completa roda na integração com 100/102.
+
+### 🚧 CRMLAB-102 — lembrete de contato para proposta parada (2026-10-19, aguardando validação)
+
+Branch `feature/CRMLAB-102-lembrete-proposta-parada` (de `main` v1.36.1). Decisão D-272, migração 056.
+
+- **Regra:** "Lembrete de contato para proposta aberta há N dias desde a criação" em Regras →
+  Automação (`automation.staleProposalReminder`), **nasce desligada, 15 dias**
+  (`DEFAULT_STALE_PROPOSAL_REMINDER`). Uma vez por proposta, pelo motor de tempo. Com a perda por
+  silêncio ligada, o lembrete precisa de menos dias ("Use até 14 dias: a perda automática está em 15").
+- **Manual:** "Agendar lembrete" no modal (dia + observação opcional); com um aberto, reagenda o mesmo.
+- **Desfecho:** Ganho/Perdido pelo `updateStatus` de sempre (travas e motivo das Regras), ou Reagendar
+  contato (data futura; observação opcional). Proposta fechada por outro caminho encerra o lembrete
+  como `auto_closed`.
+- **Tela:** selo "Lembrete" no cartão quando vencido, filtro "Com lembrete" (`?reminder=due`),
+  `ReminderPanel` no modal, toast do WS `proposal.reminder_due` (uma vez por lembrete).
+- **Backend:** `proposal_reminders` + RLS; `PUT /proposals/:id/reminder`,
+  `POST /proposals/:id/reminder/resolve`; audit `create|update|resolve_proposal_reminder`.
+- **Testes:** `tests/proposals/proposal-reminders.spec.ts` (novo, 25), `tests/db/rls-proposal-reminders.spec.ts`
+  (novo, 4), inventário de `route-tenant-isolation.spec.ts` (108 → 110 rotas), `proposal-routes.spec.ts`
+  e `funnel-timer.spec.ts` ajustados; front `ReminderPanel.spec.tsx` (novo, 9), `ProposalCard` (+3),
+  `ProposalModal` (+3), `Proposals` (+1), `Rules` (+2), `ws` (+1).
+- **Pendente:** validação na hml. Atalho "Enviar mensagem" é o botão do cabeçalho do CRMLAB-100 (outra
+  branch). No Santé a perda está ligada em 15 dias: ao ligar o lembrete, usar até 14.

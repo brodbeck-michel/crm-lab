@@ -7,6 +7,7 @@ import {
   formatStaleDuration,
   minutesSince,
   isStaleNewBudget,
+  isReminderDue,
 } from '@crm-lab/shared';
 import { Chip } from '@/components/ui/Chip';
 import { MoneyDisplay } from '@/components/shared/MoneyDisplay';
@@ -53,6 +54,8 @@ export default function ProposalCard({
   const stale =
     staleAlert !== undefined &&
     isStaleNewBudget(proposal.status, proposal.stageEnteredAt, staleAlert, clock);
+  // CRMLAB-102/D-272: lembrete aberto e vencido — a mesma função do motor e do filtro.
+  const reminderDue = isReminderDue(proposal.reminder, clock);
   // D-267: "N min" abaixo de 1 h, "N h" depois.
   const staleFor =
     stale && proposal.stageEnteredAt
@@ -126,6 +129,8 @@ export default function ProposalCard({
           {preRegistered && <Chip tone="positive">Pré-cadastro feito</Chip>}
           {/* CRMLAB-59/D-207: "Novo orçamento" parado há N horas sem envio. */}
           {stale && <Chip tone="attention">Parado há {staleFor}</Chip>}
+          {/* CRMLAB-102/D-272: lembrete de contato vencido (dia de Brasília). */}
+          {reminderDue && <Chip tone="attention">Lembrete</Chip>}
         </div>
         {proposal.approvalStatus === 'pending' && (
           <span className="text-caption text-accent-700 font-semibold">Aguardando aprovação</span>

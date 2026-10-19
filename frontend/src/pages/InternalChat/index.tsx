@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, queryKeys } from '@/api';
+import { api, isApiError, queryKeys } from '@/api';
 import { InboxLayout } from '@/components/layout';
+import { useToast } from '@/components/ui';
 import { useApiErrorHandler } from '@/hooks';
 import { useAuthStore, selectUser } from '@/stores';
 import { ChannelList } from './ChannelList';
@@ -28,9 +29,27 @@ import { internalMessagesOptions, useMarkChannelRead } from './queries';
  * em `api/ws.ts` — a tela não faz patch manual de cache nem escuta o socket.
  */
 
+/** Erros de sessão: o `handleApiError` manda para o login — não adianta seguir enviando. */
+const SESSION_ERRORS: ReadonlySet<string> = new Set([
+  'TOKEN_EXPIRED',
+  'TOKEN_INVALID',
+  'REFRESH_TOKEN_INVALID',
+  'UNAUTHORIZED',
+]);
+
+function readFileAsBase64(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '');
+    reader.readAsDataURL(file);
+  });
+}
+
 export function InternalChat() {
   const queryClient = useQueryClient();
   const handleApiError = useApiErrorHandler();
+  const { toast } = useToast();
   const currentUser = useAuthStore(selectUser);
   const markChannelRead = useMarkChannelRead();
 
@@ -48,10 +67,7 @@ export function InternalChat() {
     queryKey: queryKeys.internalChatDirectory(),
     queryFn: () => api.internalChat.directory(),
   });
-  const directoryUsers = useMemo(
-    () => directoryQuery.data?.users ?? [],
-    [directoryQuery.data],
-  );
+  const directoryUsers = useMemo(() => directoryQuery.data?.users ?? [], [directoryQuery.data]);
 
   /**
    * Clicar num usuário abre (ou cria, na primeira vez) a DM — get-or-create
@@ -109,8 +125,7 @@ export function InternalChat() {
   const selectedChannel = channels.find((channel) => channel.id === selectedId) ?? null;
 
   const sendMessage = useMutation({
-    mutationFn: (content: string) =>
-      api.internalChat.send(selectedId as string, { content }),
+    mutationFn: (content: string) => api.internalChat.send(selectedId as string, { content }),
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({
@@ -121,6 +136,44 @@ export function InternalChat() {
     },
     onError: handleApiError,
   });
+
+  /**
+   * Anexos da prévia (CRMLAB-101, D-271): um POST por arquivo, EM SEQUÊNCIA, com a
+   * legenda como `content` — mesmo fluxo do atendimento (D-233). Canal lido no
+   * clique; erro é por arquivo (avisa com o nome e segue), menos sessão caída.
+   */
+  const [sendingFiles, setSendingFiles] = useState(false);
+  async function handleSendAttachments(items: { file: File; caption: string }[]): Promise<void> {
+    const channelId = selectedId;
+    if (!channelId) return;
+    setSendingFiles(true);
+    try {
+      for (const { file, caption } of items) {
+        try {
+          const contentBase64 = await readFileAsBase64(file);
+          await api.internalChat.sendAttachment(channelId, {
+            fileName: file.name,
+            mimeType: file.type || 'application/octet-stream',
+            contentBase64,
+            ...(caption ? { content: caption } : {}),
+          });
+        } catch (error: unknown) {
+          if (isApiError(error) && SESSION_ERRORS.has(error.code)) {
+            handleApiError(error);
+            break;
+          }
+          const reason = error instanceof Error ? error.message : 'erro inesperado';
+          toast(`Não foi possível enviar "${file.name}": ${reason}`, { tone: 'attention' });
+        }
+      }
+    } finally {
+      setSendingFiles(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.internalMessages(channelId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.internalChannels() }),
+      ]);
+    }
+  }
 
   return (
     <InboxLayout
@@ -152,7 +205,8 @@ export function InternalChat() {
           isError={messagesQuery.isError}
           onRetry={() => void messagesQuery.refetch()}
           onSend={(content) => sendMessage.mutateAsync(content)}
-          sending={sendMessage.isPending}
+          sending={sendMessage.isPending || sendingFiles}
+          onSendAttachments={handleSendAttachments}
           currentUserId={currentUser?.id ?? null}
           currentUserRole={currentUser?.role ?? null}
           hasOlderMessages={messagesQuery.data?.hasOlder ?? false}

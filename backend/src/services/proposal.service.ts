@@ -39,6 +39,7 @@ import {
   RESEND_PROPOSAL_STATUSES,
   bitlabSendTarget,
   canActOnCard,
+  saoPauloToday,
   type ApprovalStatus,
   type CreateMessageRequest,
   type CreateProposalItemInput,
@@ -70,6 +71,7 @@ import type { InsuranceRepository } from '../repositories/insurance.repository.j
 import * as auditRepo from '../repositories/audit.repository.js';
 import { isUniqueViolation } from '../repositories/exam-package.repository.js';
 import * as repo from '../repositories/proposal.repository.js';
+import * as reminderRepo from '../repositories/proposal-reminder.repository.js';
 import { reconcileProposal } from './lis-reconcile.service.js';
 import { readFunnelRules } from './funnel-rules.service.js';
 import type { ProposalRow } from '../repositories/proposal.repository.js';
@@ -99,6 +101,8 @@ export interface ProposalFilters {
   endDate?: string;
   /** Nome do paciente, case-insensitive (pipeline busca por aqui). */
   search?: string;
+  /** `due` | `open` — lembrete de contato aberto (CRMLAB-102, D-272). Validado na rota. */
+  reminder?: 'due' | 'open';
   page?: number;
   limit?: number;
   sortBy?: string;
@@ -273,6 +277,56 @@ function parseStatuses(raw: string | undefined): ProposalStatus[] | undefined {
 }
 
 /**
+ * Desfecho do lembrete quando a transicao veio do PROPRIO painel do lembrete
+ * (`POST /proposals/:id/reminder/resolve`, D-272 item 6). Ausente = o
+ * lembrete aberto fecha como `auto_closed` (item 7).
+ */
+export interface ReminderResolution {
+  outcome: 'won' | 'lost';
+  userId: string;
+  ip: string | null;
+}
+
+/**
+ * Fecha o lembrete aberto da proposta que acabou de ir para um estagio
+ * terminal (D-272 item 7), na transacao da transicao, com audit
+ * `resolve_proposal_reminder`. Sem lembrete aberto: nada.
+ */
+export async function closeOpenReminderInTx(
+  tx: DbTx,
+  input: {
+    tenantId: string;
+    proposalId: string;
+    status: ProposalStatus;
+    resolution?: ReminderResolution;
+    at?: Date;
+  },
+): Promise<void> {
+  const open = await reminderRepo.findOpenForUpdate(tx, input.proposalId);
+  if (!open) return;
+  const outcome = input.resolution?.outcome ?? 'auto_closed';
+  const resolvedBy = input.resolution?.userId ?? null;
+  const closed = await reminderRepo.resolve(tx, {
+    id: open.id,
+    outcome,
+    resolvedBy,
+    outcomeNote: null,
+    ...(input.at ? { at: input.at } : {}),
+  });
+  if (!closed) return;
+  await auditRepo.insert(tx, {
+    tenantId: input.tenantId,
+    userId: resolvedBy,
+    action: 'resolve_proposal_reminder',
+    entityType: 'proposal',
+    entityId: input.proposalId,
+    oldValues: { reminderId: open.id, dueDate: open.dueDate },
+    newValues: { reminderId: open.id, outcome, status: input.status },
+    ...(input.resolution ? { ipAddress: input.resolution.ip } : {}),
+  });
+}
+
+/**
  * O que toda transicao aceita grava na mesma transacao, venha de uma pessoa
  * (`updateStatus`) ou do sistema (`applySystemTransition`): a linha do historico e a
  * mensagem de sistema na conversa (WORKFLOWS §2 passo 6 e §4).
@@ -290,8 +344,21 @@ async function recordTransitionInTx(
     /** Motor de tempo (D-208): a regra que moveu e o instante injetado. */
     automation?: StageAutomation;
     changedAt?: Date;
+    /** Transicao pedida pelo painel do lembrete (D-272). */
+    reminderResolution?: ReminderResolution;
   },
 ): Promise<void> {
+  // Lembrete aberto nao sobrevive a proposta fechada (D-272 item 7): manual,
+  // motor de tempo e regua do LIS passam todos por aqui.
+  if (isTerminal(input.status)) {
+    await closeOpenReminderInTx(tx, {
+      tenantId: input.tenantId,
+      proposalId: input.proposalId,
+      status: input.status,
+      ...(input.reminderResolution ? { resolution: input.reminderResolution } : {}),
+      ...(input.changedAt ? { at: input.changedAt } : {}),
+    });
+  }
   await repo.insertHistory(tx, {
     tenantId: input.tenantId,
     proposalId: input.proposalId,
@@ -715,6 +782,9 @@ export class ProposalService {
         ...(filters.startDate !== undefined ? { startDate: filters.startDate } : {}),
         ...(filters.endDate !== undefined ? { endDate: filters.endDate } : {}),
         ...(filters.search !== undefined ? { search: filters.search } : {}),
+        ...(filters.reminder !== undefined
+          ? { reminder: { filter: filters.reminder, today: saoPauloToday(new Date()) } }
+          : {}),
         page,
         limit,
         sortBy,
@@ -740,6 +810,8 @@ export class ProposalService {
     id: string,
     status: ProposalStatus,
     reasonLost?: string,
+    /** O painel do lembrete (D-272 item 6) marca o desfecho `won`/`lost`. */
+    options: { viaReminder?: boolean } = {},
   ): Promise<Proposal> {
     const { db, audit, wsHub } = this.deps;
 
@@ -827,6 +899,15 @@ export class ProposalService {
         conversationId: row.conversation_id,
         status,
         changedBy: ctx.userId,
+        ...(options.viaReminder && (status === 'ganho' || status === 'perdido')
+          ? {
+              reminderResolution: {
+                outcome: status === 'ganho' ? ('won' as const) : ('lost' as const),
+                userId: ctx.userId,
+                ip: ctx.ip,
+              },
+            }
+          : {}),
         systemMessage:
           status === 'orcamento_enviado'
             ? `Orçamento #${ref} enviado — ${formatMoney(Number(updated.total_price))}`
@@ -1568,9 +1649,11 @@ export async function loadDetail(tx: DbTx, id: string): Promise<ProposalDetail> 
   const items = await repo.findItems(tx, id);
   const history = await repo.findHistory(tx, id);
   const rejectionReason = await repo.findRejectionReason(tx, id);
+  const reminders = await reminderRepo.findAll(tx, id);
   return repo.mapDetail(row, items, history, {
     subtotal: calculateSubtotal(items),
     rejectionReason,
+    reminders,
   });
 }
 

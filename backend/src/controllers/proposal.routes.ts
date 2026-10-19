@@ -14,6 +14,8 @@
  *   POST  /api/v1/proposals/:id/resend    "Reenviar mensagem" pela conversa vinculada (D-202)
  *   PATCH /api/v1/proposals/:id/conversation  troca a conversa vinculada (D-202)
  *   PATCH /api/v1/proposals/:id/responsible   edita o responsavel (D-202)
+ *   PUT   /api/v1/proposals/:id/reminder      agenda/reagenda o lembrete de contato (CRMLAB-102, D-272)
+ *   POST  /api/v1/proposals/:id/reminder/resolve  desfecho do lembrete: ganho, perdido ou reagendar (D-272)
  *   PATCH /api/v1/proposals/:id/approve   manager/admin
  *   PATCH /api/v1/proposals/:id/reject    manager/admin (motivo obrigatorio)
  *
@@ -28,12 +30,15 @@ import { Router, type Request, type RequestHandler, type Response } from 'expres
 import { z } from 'zod';
 import {
   LOSS_REASONS,
+  PROPOSAL_REMINDER_FILTERS,
   PROPOSAL_STATUSES,
   SEND_PROPOSAL_MESSAGE_MAX,
   type CreateProposalResponse,
   type Message,
   type ListProposalsResponse,
   type ProposalDetail,
+  type LossReason,
+  type ResolveProposalReminderRequest,
   type UpdateProposalItemsResponse,
 } from '@crm-lab/shared';
 import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
@@ -48,6 +53,10 @@ import { createInternalChatService } from '../services/internal-chat.service.js'
 import { ApprovalService } from '../services/approval.service.js';
 import { createMessageService } from '../services/message.service.js';
 import { MAX_LIMIT, ProposalService, type ProposalFilters } from '../services/proposal.service.js';
+import {
+  createProposalReminderService,
+  type ProposalReminderService,
+} from '../services/proposal-reminder.service.js';
 import type { WhatsAppService } from '../services/whatsapp.service.js';
 
 const statusEnum = z.enum(
@@ -66,6 +75,8 @@ export const listProposalsQuerySchema = z.object({
   endDate: z.string().min(4).max(40).optional(),
   /** `?search=` — nome do paciente, case-insensitive. */
   search: z.string().min(1).max(100).optional(),
+  /** `?reminder=due|open` — lembrete de contato aberto (CRMLAB-102, D-272). */
+  reminder: z.enum(PROPOSAL_REMINDER_FILTERS as unknown as [string, ...string[]]).optional(),
   page: z.coerce.number().int().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(MAX_LIMIT).optional(),
   sortBy: z.enum(['createdAt', 'updatedAt', 'totalPrice', 'status']).optional(),
@@ -147,6 +158,29 @@ export const updateConversationSchema = z.object({ conversationId: z.string().uu
 
 export const updateResponsibleSchema = z.object({ userId: z.string().uuid() }).strict();
 
+/**
+ * CRMLAB-102 (D-272). Forma e faixa do dia e tamanho da nota sao checados no
+ * service (dependem de "hoje" em Brasilia) — aqui so o tipo e um teto bruto.
+ */
+export const scheduleReminderSchema = z
+  .object({
+    dueDate: z.string().max(20),
+    note: z.string().max(2000).nullable().optional(),
+  })
+  .strict();
+
+export const resolveReminderSchema = z.discriminatedUnion('outcome', [
+  z.object({ outcome: z.literal('won') }).strict(),
+  z.object({ outcome: z.literal('lost'), reasonLost: lossReasonEnum.optional() }).strict(),
+  z
+    .object({
+      outcome: z.literal('rescheduled'),
+      dueDate: z.string().max(20),
+      note: z.string().max(2000).nullable().optional(),
+    })
+    .strict(),
+]);
+
 export const rejectSchema = z.object({ reason: z.string().min(1).max(500) }).strict();
 
 export const proposalIdParamSchema = z.object({ id: z.string().uuid() });
@@ -161,6 +195,8 @@ type SendProposalBody = z.infer<typeof sendProposalSchema>;
 type ResendProposalBody = z.infer<typeof resendProposalSchema>;
 type UpdateConversationBody = z.infer<typeof updateConversationSchema>;
 type UpdateResponsibleBody = z.infer<typeof updateResponsibleSchema>;
+type ScheduleReminderBody = z.infer<typeof scheduleReminderSchema>;
+type ResolveReminderBody = z.infer<typeof resolveReminderSchema>;
 
 /** `Promise` rejeitada em handler async precisa chegar ao error-handler. */
 function handle(fn: (req: Request, res: Response) => Promise<void>): RequestHandler {
@@ -172,6 +208,8 @@ function handle(fn: (req: Request, res: Response) => Promise<void>): RequestHand
 export interface ProposalModuleServices {
   proposals: ProposalService;
   approvals: ApprovalService;
+  /** Lembrete de contato (CRMLAB-102, D-272). */
+  reminders: ProposalReminderService;
 }
 
 /**
@@ -211,7 +249,8 @@ export function createProposalServices(
     // Envio pelo cartao (CRMLAB-58): o MESMO caminho do Composer do atendimento.
     messages: createMessageService(deps, overrides.whatsapp ? { whatsapp: overrides.whatsapp } : {}),
   });
-  return { proposals, approvals };
+  const reminders = createProposalReminderService({ db: deps.db, wsHub: deps.wsHub, proposals });
+  return { proposals, approvals, reminders };
 }
 
 export function listProposals(service: ProposalService): RequestHandler {
@@ -342,6 +381,44 @@ export function updateProposalResponsible(service: ProposalService): RequestHand
     const { id } = validated<{ id: string }>(req, 'params');
     const dto = validated<UpdateResponsibleBody>(req, 'body');
     const detail: ProposalDetail = await service.setResponsible(ctx, id, dto.userId);
+    res.status(200).json(detail);
+  });
+}
+
+export function scheduleProposalReminder(service: ProposalReminderService): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const { id } = validated<{ id: string }>(req, 'params');
+    const dto = validated<ScheduleReminderBody>(req, 'body');
+    const detail: ProposalDetail = await service.schedule(ctx, id, {
+      dueDate: dto.dueDate,
+      ...(dto.note !== undefined ? { note: dto.note } : {}),
+    });
+    res.status(200).json(detail);
+  });
+}
+
+function toResolveRequest(dto: ResolveReminderBody): ResolveProposalReminderRequest {
+  switch (dto.outcome) {
+    case 'won':
+      return { outcome: 'won' };
+    case 'lost':
+      return dto.reasonLost !== undefined
+        ? { outcome: 'lost', reasonLost: dto.reasonLost as LossReason }
+        : { outcome: 'lost' };
+    case 'rescheduled':
+      return dto.note !== undefined
+        ? { outcome: 'rescheduled', dueDate: dto.dueDate, note: dto.note }
+        : { outcome: 'rescheduled', dueDate: dto.dueDate };
+  }
+}
+
+export function resolveProposalReminder(service: ProposalReminderService): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const { id } = validated<{ id: string }>(req, 'params');
+    const dto = validated<ResolveReminderBody>(req, 'body');
+    const detail: ProposalDetail = await service.resolve(ctx, id, toResolveRequest(dto));
     res.status(200).json(detail);
   });
 }
@@ -486,6 +563,24 @@ function buildProposalModule(deps: ApiModuleDeps, overrides: ProposalModuleOverr
     validate(proposalIdParamSchema, 'params'),
     validate(updateResponsibleSchema, 'body'),
     updateProposalResponsible(services.proposals),
+  );
+
+  router.put(
+    '/:id/reminder',
+    requireAuth(),
+    denyPlatformOperator(),
+    validate(proposalIdParamSchema, 'params'),
+    validate(scheduleReminderSchema, 'body'),
+    scheduleProposalReminder(services.reminders),
+  );
+
+  router.post(
+    '/:id/reminder/resolve',
+    requireAuth(),
+    denyPlatformOperator(),
+    validate(proposalIdParamSchema, 'params'),
+    validate(resolveReminderSchema, 'body'),
+    resolveProposalReminder(services.reminders),
   );
 
   // `denyPlatformOperator()` ANTES de `requireRoles`: o operador da plataforma

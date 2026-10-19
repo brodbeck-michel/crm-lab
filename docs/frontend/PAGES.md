@@ -498,6 +498,12 @@ nunca "sem permissão" (não vazar existência).
   Calculado no front com `isStaleNewBudget` (`@crm-lab/shared`), a mesma função do motor; o
   pipeline passa `automation.staleNewBudgetAlert` das Regras (`useEffectiveFunnelRules`) para
   `StageColumn` → `ProposalCard`. O alerta em si chega pelo WS `proposal.stale_alert` como toast.
+- **Selo "Lembrete" (CRMLAB-102, D-272):** cartão com lembrete de contato aberto e vencido
+  (`isReminderDue(proposal.reminder, agora)`, dia de Brasília) leva o `Chip tone="attention"`
+  "Lembrete". O aviso chega pelo WS `proposal.reminder_due` como toast. Clicar no cartão abre o
+  modal, onde fica o painel do desfecho.
+- **Filtro "Com lembrete" (D-272):** `Toggle` nos filtros que envia `?reminder=due` — só os
+  cartões com o selo.
 - Todo cartão clicável → Modal da Proposta
 - **Arrastar o cartão** entre colunas move o estágio (HTML5 drag-and-drop nativo, sem
   biblioteca). A proposta viaja no `dataTransfer` como JSON **e o estágio de origem viaja
@@ -547,6 +553,22 @@ nunca "sem permissão" (não vazar existência).
   histórico de estágios (linha movida pelo motor de tempo — `history[].automation` preenchido —
   mostra "movido pela regra: {describeStageAutomation}", ex.: "movido pela regra: Enviado há 3
   dias", no lugar de "por {pessoa}"; CRMLAB-59, D-208), ações
+- **Enviar mensagem (CRMLAB-100, D-270):** botão secundário "Enviar mensagem" à direita do número
+  da proposta, em todo estágio. Com conversa vinculada fecha o modal e abre
+  `/attendance?conversationId=<id>` (sem rascunho, sem mudar estágio); sem conversa fica
+  desabilitado com a dica "Proposta sem conversa vinculada"
+- **Lembrete de contato (CRMLAB-102, D-272, `ReminderPanel`):** bloco "Lembrete de contato" logo
+  antes do histórico, só com a proposta aberta e para quem pode (responsável/fila comum, gestor,
+  admin). Sem lembrete aberto: [Agendar lembrete] abre `Input type="date"` (de hoje em diante) +
+  `TextArea` "Observação (opcional)" → `PUT /proposals/:id/reminder`. Com lembrete aberto: o dia,
+  a observação, a origem ("automático" quando veio da regra) e o chip "Vencido" quando vence;
+  [Reagendar] (o mesmo formulário, troca o dia) e, vencido ou não, [Registrar desfecho], que abre
+  três opções: **Ganho** (confirma e chama o desfecho `won`), **Perdido** (o `LostReasonForm` de
+  sempre, com a regra "Exigir motivo") e **Reagendar contato** (data futura obrigatória,
+  observação opcional). Erro do servidor aparece no próprio painel. Os lembretes já fechados aparecem
+  numa lista curta ("Ganho", "Perdido", "Reagendado", "Encerrado automaticamente", com quem e
+  quando). O botão "Enviar mensagem" do cabeçalho do modal (CRMLAB-100) é o atalho para falar
+  com o paciente — o painel não mexe no cabeçalho.
 - Ações (uma linha): [Mudar estágio ▾] à esquerda, [Marcar como ganho] (accent-2) à direita, [Marcar como perdido] fantasma ao fim
 - "Perdido" abre sub-form com motivo OBRIGATÓRIO (select: preço, silêncio, exame indisponível, prazo, outro)
 - **Editar (CRMLAB-12, D-134):** botão "Editar" some quando `status` não está em
@@ -701,6 +723,17 @@ nunca "sem permissão" (não vazar existência).
 - Mensagem pode anexar proposta → renderiza `ProposalCard` clicável → modal
 - Canal `#aprovacoes`: pedidos de aprovação com botões [Aprovar] [Rejeitar] (gestor+)
 - Dados: `GET /internal-chat/*` + WS
+
+### Anexar arquivo (CRMLAB-101, D-271)
+
+- O clipe do `Composer` (o mesmo do atendimento: "Fotos e vídeos" e "Documento") abre a
+  `AttachmentPreview`; colar arquivo no campo e soltar arquivo sobre as mensagens também abrem.
+  Mesma validação de tipo e tamanho do atendimento (`attachment-draft.ts`, números de `shared/`)
+- Enviar faz um `POST /internal-chat/channels/:id/attachments` por arquivo, em sequência, com a
+  legenda de cada um como `content`. Erro é por arquivo: avisa com o nome e segue
+- Na mensagem: imagem vira miniatura (busca autenticada) que abre no `ImageLightbox`; qualquer
+  outro tipo vira `DocumentCard` (ícone do tipo, nome, tamanho) e baixa com o nome original
+- Os outros membros veem pelo `internal_chat.new_message` de sempre (a lista recarrega)
 
 ### Buscar usuário (D-101) — iniciar conversa direta
 
@@ -1367,7 +1400,10 @@ seu próprio [Salvar] (endpoint e permissão diferentes).
    desabilitado quando a automação está desligada): Requisição → Negociação; Pagamento → Ganho;
    Orçamento enviado há **X dias** → Follow-up; Negociação sem pagamento há **Y dias** →
    Follow-up; Follow-up há **Z dias** → Perdido (motivo "Silêncio"); Alerta de "Novo orçamento"
-   parado há **N minutos** (`Input` "Minutos", 5..43200, com a dica "= N h" — D-267). Mais o `SegmentedControl` "Contar em dias corridos | dias úteis". Nota
+   parado há **N minutos** (`Input` "Minutos", 5..43200, com a dica "= N h" — D-267); Lembrete
+   de proposta parada há **N dias** desde a criação (CRMLAB-102, D-272, padrão desligado, 15),
+   com o erro "Use até {N − 1} dias: a perda automática está em {N}" quando as duas estão ligadas e o lembrete
+   não é menor (bloqueia [Salvar regras]; o servidor também recusa). Mais o `SegmentedControl` "Contar em dias corridos | dias úteis". Nota
    no cartão (desde o CRMLAB-59, D-205): "Os prazos contam desde que o cartão entrou no estágio e
    são conferidos a cada poucos minutos. Dias úteis: segunda a sexta, sem descontar feriados."
 3. **Movimentação manual (travas)** — `Toggle` "Reabrir Ganho/Perdido" + caixas "Atendente" /

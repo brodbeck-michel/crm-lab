@@ -5574,3 +5574,159 @@ e seria um segundo emissor para o mesmo fato.
 **Impacto:** infra. `scripts/lib/alerta.sh` (WhatsApp), `scripts/monitora-saude.sh` (verificação 8),
 `scripts/whatsapp-alertas.sh` (parear/estado/testar), timer de 1 min, `monitor.env` no alerta do backup.
 Ver `docs/guides/MONITORING.md` §4.
+
+### D-270: Botão "Enviar mensagem" no modal da proposta leva à conversa vinculada (CRMLAB-100)
+**Decisão:** o modal da proposta ganha, ao lado do número, o botão **"Enviar mensagem"**, em
+**qualquer estágio** (inclusive `ganho`/`perdido`), para qualquer pessoa que abre o cartão.
+1. **Com `conversationId`:** fecha o modal e navega para `/attendance?conversationId=<id>` — o mesmo
+   deep link do "Enviar orçamento" e da notificação (D-240), **sem `draft`** e **sem mudar o
+   estágio**. A visibilidade da conversa é a de sempre: quem não enxerga a conversa recebe o erro
+   do Atendimento, como num link de notificação.
+2. **Sem `conversationId`:** botão **desabilitado**, com a dica "Proposta sem conversa vinculada".
+   Não há telefone para procurar a conversa: `ProposalDetail.patientPhone` vem da própria conversa
+   (`''` sem ela) e o orçamento do Bitlab não traz telefone (`lis_budgets`). O vínculo continua
+   pelo "Enviar orçamento" do cartão do Bitlab (D-200/D-203).
+3. Abre **dentro do CRM**, não `wa.me`: a conversa fica no histórico e entra na métrica de tempo de
+   resposta (D-257). Decisão do Michel, 19/10/2026.
+**Motivo:** a atendente abria o cartão e precisava procurar a conversa na fila para falar com o
+paciente; o único atalho era o "Enviar orçamento"/"Reenviar mensagem", que só existe em alguns
+estágios e já leva mensagem pronta. O item "sem conversa, abrir pelo telefone" do card ficou fora
+porque, sem conversa, a proposta não tem telefone.
+**Impacto:** só frontend — `proposal/ProposalModal.tsx` (+ spec). PAGES §6. Sem endpoint, tipo ou
+migração.
+
+### D-271: Anexo de arquivo no chat interno — tabela própria, um anexo por mensagem, mesmas regras de mídia do atendimento (CRMLAB-101)
+**Decisão:**
+1. **Rotas novas:** `POST /internal-chat/channels/:id/attachments` (base64 em JSON, como
+   `POST /conversations/:id/attachments` e `POST /visits/:id/attachments`; texto opcional em
+   `content`) devolve `201` com o `InternalMessage` criado; `GET
+   /internal-chat/channels/:id/attachments/:attachmentId` serve o arquivo. API_CONTRACTS §3b.
+2. **Tabela própria `internal_message_attachments`** (migração 055, SCHEMA §41), com `tenant_id` +
+   policy de RLS no mesmo arquivo. `message_id` é `NOT NULL` e `UNIQUE`: **um anexo por mensagem**,
+   como no atendimento. A mensagem e a linha do anexo nascem na MESMA transação, e o arquivo vai
+   para o disco ainda dentro dela — se o disco falhar, nada é gravado (sem a compensação
+   "apaga a linha" da visita nem o `message_id` nulo de `message_media`).
+3. **Nome em disco = `id` da linha** (`gen_random_uuid()` do Postgres), via `lib/media-storage.ts`.
+   O nome enviado fica só em `file_name` e volta no `Content-Disposition` do download.
+4. **Mesmos limites do atendimento, sem constante nova:** allow-list `ALLOWED_MEDIA_MIME_TYPES`
+   (fora dela → `VALIDATION_ERROR`, como `assertOutboundMimeAllowed`), teto `MAX_MEDIA_BYTES`
+   (15 MiB; vazio ou acima → `MEDIA_TOO_LARGE` 413) e o sniff de magic bytes
+   `resolveStoredMimeType`. Diferença técnica, a mais conservadora: conteúdo que **diverge** do
+   tipo declarado é recusado com `VALIDATION_ERROR` (como na visita, CRMLAB-88), em vez de
+   rebaixado em silêncio para `application/octet-stream` — quem está na tela fica sabendo.
+5. **Acesso = ver o canal.** Upload e download passam por `findChannelById` com o usuário do
+   contexto: canal comum é de todo o laboratório; DM só dos dois participantes (D-101). Canal de
+   outro tenant, DM alheia, anexo de outro canal ou arquivo ausente do disco → `NOT_FOUND`, nunca
+   `FORBIDDEN`. Download com os cabeçalhos de `GET /media/:id` (`servedMimeType`,
+   `dispositionFor`, `nosniff`, nome original).
+6. **WebSocket continua "só ids".** `internal_chat.new_message` sai depois do commit com
+   `{ channelId, messageId }`, e a tela já invalida a lista de mensagens do canal: o refetch traz a
+   mensagem COM `attachment`, e os outros membros veem sem recarregar. Pôr o anexo (nome do
+   arquivo) no payload vazaria: o evento vai para a sala do tenant inteiro, inclusive para quem não
+   é participante de uma DM.
+7. **Sem auditoria.** Mensagem do chat interno não gera audit log (SERVICES §7) e anexo do
+   atendimento também não; o anexo da visita audita porque altera um registro da visita, não é
+   o caso aqui.
+8. **Front:** o clipe do `Composer` (já existente) e a `AttachmentPreview` do atendimento
+   (CRMLAB-69) são reaproveitados; cada arquivo da prévia vira um POST, em sequência, com a sua
+   legenda como `content`. Colar e arrastar arquivo vêm junto (o `Composer` já trata colar; a área
+   de soltar repete a do atendimento). Imagem aparece como miniatura e abre no `ImageLightbox`;
+   qualquer outro tipo vira `DocumentCard`, que baixa com o nome original.
+**Motivo:** a equipe troca pedido médico, comprovante e planilha pelo chat interno; reaproveitar a
+mídia do atendimento mantém uma regra só de tipo/tamanho e de nome em disco.
+**Impacto:** migração 055; `shared/types/internal-chat.types.ts` (`InternalMessageAttachment`,
+`InternalMessage.attachment`, `CreateInternalAttachmentRequest`); `internal-chat.repository.ts`,
+`internal-chat.service.ts`, `internal-chat.routes.ts`; frontend `api/internal-chat.ts`,
+`pages/InternalChat/{index,MessagePanel,InternalMessageItem}.tsx`. Rotas de laboratório: 108 → 110.
+
+### D-272: Lembrete de contato para proposta parada, com desfecho obrigatório (CRMLAB-102)
+**Decisão:** a proposta aberta ganha um **lembrete de contato** (tabela `proposal_reminders`,
+migração 056), que só se fecha com um desfecho.
+1. **Regra automática** em Configurações → Regras → Automação: `automation.staleProposalReminder
+   { enabled, days }` — "Lembrete de proposta parada há N dias". **Nasce DESLIGADA, 15 dias**
+   (decisão do usuário em 19/10/2026): ligada por padrão, o primeiro tique depois do deploy daria
+   lembrete de uma vez para todas as propostas abertas antigas de produção. A gestora liga quando
+   quiser. O padrão mora num lugar só, `DEFAULT_STALE_PROPOSAL_REMINDER` em
+   `shared/types/funnel-rules.types.ts`. O lembrete **manual** funciona sempre, com a regra
+   ligada ou não.
+2. **"Parada" conta desde a criação** (`proposals.created_at`), não por estágio nem por
+   mensagem, com a contagem dos prazos das Regras (`dayCounting`, corridos ou úteis, como o
+   motor — `timerDeadline`). O motor de tempo (tique de 5 min, `FunnelTimerService`) cria o
+   lembrete automático **uma vez por proposta**: só se ela está aberta (fora de
+   `TERMINAL_STATUSES`), **nunca teve lembrete automático** e **não tem lembrete aberto** (um
+   manual aberto já cobre o contato). O índice único parcial `(proposal_id) WHERE origin =
+   'auto'` é a trava. O automático nasce com `due_date` = hoje (Brasília), então já vence.
+   Até `FUNNEL_TIMER_BATCH` (200) por tique por laboratório, das mais antigas para as novas.
+3. **Manual:** "Agendar lembrete" no modal, com dia (`YYYY-MM-DD`, de hoje até hoje + 365) e
+   observação opcional (até 500 caracteres). **No máximo um lembrete aberto por proposta**
+   (índice único parcial `(proposal_id) WHERE resolved_at IS NULL`): agendar com um já aberto
+   **reagenda esse mesmo** (troca dia e observação, zera o aviso) — não é desfecho. Endpoint
+   `PUT /proposals/:id/reminder`.
+4. **Vencido** = aberto e `dueDate ≤ hoje` no dia de Brasília (UTC−3 fixo, a mesma referência
+   do motor, D-205). Função pura `isReminderDue` em `shared/types/proposal-reminder.types.ts`,
+   usada pelo motor (aviso), pela listagem (`?reminder=due`) e pela tela (selo): divergir é
+   impossível por construção. "Hoje" é sempre calculado no Node (`saoPauloToday`) e passado ao
+   SQL, nunca pelo fuso do banco.
+5. **Onde aparece:** selo "Lembrete" no cartão (kanban e lista) quando vencido; filtro "Com
+   lembrete" nas Propostas = `?reminder=due` (os cartões com o selo — a lista de quem precisa
+   ser contatado hoje); o contrato aceita também `?reminder=open` (todo lembrete aberto, vencido
+   ou não), sem uso na tela por enquanto. **Aviso por WS** `proposal.reminder_due`
+   (`emitToUser`), **uma vez por lembrete** quando vence (`alerted_at`), para a responsável
+   ativa; sem responsável ativa, gestores e admins ativos — os mesmos destinatários do alerta de
+   "Novo orçamento" parado (D-207 item 2). Reagendar gera lembrete novo (ou zera o aviso do
+   aberto), então o aviso volta na nova data.
+6. **Desfecho** (`POST /proposals/:id/reminder/resolve`), obrigatório para fechar:
+   - `won` → **Ganho** pelo `ProposalService.updateStatus` de sempre (matriz vigente, travas das
+     Regras, `canActOnCard`, aprovação, histórico, mensagem de sistema, audit, WS). Não há
+     caminho paralelo: o que a tela recusaria no "Ganho" comum, o lembrete também recusa.
+   - `lost` → **Perdido** pelo mesmo `updateStatus`, com `reasonLost` (exigido se "Exigir motivo
+     ao marcar Perdido" estiver ligado; `LOSS_REASON_REQUIRED` senão).
+   - `rescheduled` → **Reagendar contato**: nova data **futura** (> hoje, até hoje + 365),
+     obrigatória, e **observação opcional** (até 500; decisão do usuário em 19/10/2026 — só a
+     data é obrigatória). O lembrete atual fecha com `outcome = 'rescheduled'` e `outcome_note`
+     = observação (ou `NULL`), e nasce outro aberto (`origin = 'manual'`) nessa data com a mesma
+     observação como `note`.
+   Sem lembrete aberto → `409 CONFLICT` (`details.reason: "no_open_reminder"`).
+7. **Encerramento automático:** toda transição para `ganho`/`perdido` passa por
+   `recordTransitionInTx` (manual, motor de tempo, régua de fatos do LIS). Ali, na MESMA
+   transação, o lembrete aberto se fecha com `outcome = 'auto_closed'` e `resolved_by NULL` —
+   exceto quando a transição veio do próprio painel do lembrete, que grava `won`/`lost` e quem
+   resolveu. "Outra pessoa mudou o estágio pelo pipeline" também é `auto_closed`: o desfecho
+   não foi dado no lembrete. Reabrir a proposta (regra de reabertura) não reabre o lembrete;
+   o automático não volta (item 2: uma vez por proposta).
+8. **Convivência com "Follow-up há N dias → Perdido":** com as duas ligadas, os dias do
+   lembrete têm de ser **menores** que os da perda — senão `VALIDATION_ERROR` com
+   `details.fields["automation.staleProposalReminder.days"]` com o teto explícito: "Use até
+   {perda − 1} dias: a perda automática está em {perda}" (ex.: o Santé tem a perda ligada em 15
+   dias em prod, conferido em 19/10/2026 → "Use até 14 dias: a perda automática está em 15").
+   Mesma função no back e na tela (`staleReminderVsLossError`). Validado sobre o objeto **depois do merge**, em qualquer
+   `PATCH`: um laboratório com a perda ligada em ≤ 15 dias que ligar o lembrete vê o erro no
+   campo e ajusta. Com uma das duas desligada, nada é conferido. Os relógios são diferentes
+   (criação × entrada no follow-up): a regra é de bom senso — lembrar antes de perder —, não
+   uma garantia de que o lembrete sempre vença antes.
+9. **Quem cria e resolve:** quem enxerga o cartão e pode agir sobre ele — a responsável (ou o
+   cartão do Bitlab sem responsável, fila comum, `isCardOwner`), gestor e admin. Atendente em
+   cartão de outra → `NOT_FOUND` (já não o enxerga, D-042). Proposta fechada →
+   `PROPOSAL_ALREADY_CLOSED`. No Ganho/Perdido, a trava "Gestor pode mover card de outra
+   atendente" continua valendo, porque passa por `updateStatus`.
+10. **Registro:** a tabela guarda o ciclo inteiro (quem criou, quando, desfecho, quem, quando,
+    observação) e é exposta em `ProposalDetail.reminders` (histórico no modal); o
+    `proposal_status_history` continua só de estágio. Audit (`entityType: "proposal"`,
+    `entityId` = proposta): `create_proposal_reminder` (manual ou automático, `userId NULL` no
+    automático), `update_proposal_reminder` (reagendar o aberto pelo "Agendar"),
+    `resolve_proposal_reminder` (`outcome`, e `userId NULL` no `auto_closed`). Tenant: RLS na
+    tabela (migração única, tabela + policy), toda leitura dentro de `withTenant`.
+11. **Fora deste card:** relatório por atendente (CRMLAB-103). O atalho "Enviar mensagem" do
+    painel de desfecho é o botão do cabeçalho do modal (CRMLAB-100, D-270, outra branch): o
+    painel do lembrete fica no corpo do modal e não mexe no cabeçalho.
+**Motivo:** proposta aberta sem contato é venda esquecida; o lembrete só sai da tela com um
+desfecho, o que força a atendente a registrar o que aconteceu. Reaproveitar `updateStatus` e
+`recordTransitionInTx` garante que nenhuma regra do funil seja furada e que o lembrete nunca
+fique aberto numa proposta fechada.
+**Impacto:** migração 056 (`proposal_reminders`); `shared/types/proposal-reminder.types.ts`
+(novo), `funnel-rules.types.ts`, `proposal.types.ts`, `websocket.types.ts`; backend
+`proposal-reminder.repository.ts` e `proposal-reminder.service.ts` (novos),
+`proposal.service.ts`, `proposal.repository.ts`, `funnel-timer.service.ts`,
+`funnel-rules.service.ts`, `proposal.routes.ts`; frontend `ProposalCard`, `ProposalModal`,
+`ReminderPanel` (novo), `ProposalsFilters`, `Settings/Rules.tsx`, `api/ws.ts`. API_CONTRACTS
+§3/§6c, FRONTEND_BACKEND (WS), SCHEMA §42, SERVICES §34, PAGES §5/§6/§21, BUSINESS_RULES §3.

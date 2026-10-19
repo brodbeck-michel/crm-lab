@@ -16,17 +16,23 @@
  * (WORKFLOWS §7). Como o onboarding ainda nao existe como servico, este service
  * os cria sob demanda de forma idempotente — ver D-043.
  */
-import type {
-  Channel,
-  ChatDirectoryUser,
-  InternalMessage,
-  ListInternalMessagesResponse,
-  PaginationMeta,
+import {
+  FALLBACK_MEDIA_MIME_TYPE,
+  MAX_MEDIA_BYTES,
+  type Channel,
+  type ChatDirectoryUser,
+  type CreateInternalAttachmentRequest,
+  type InternalMessage,
+  type ListInternalMessagesResponse,
+  type PaginationMeta,
 } from '@crm-lab/shared';
 import type { DbClient, DbTx } from '../db/types.js';
 import type { TenantContext } from '../http/context.js';
 import type { WsHub } from '../lib/ws-hub.js';
 import { BusinessError, notFound } from '../http/errors.js';
+import { logger } from '../lib/logger.js';
+import { readMediaFile, writeMediaFile } from '../lib/media-storage.js';
+import { assertOutboundMimeAllowed, resolveStoredMimeType } from './media.service.js';
 import * as chatRepo from '../repositories/internal-chat.repository.js';
 import { DEFAULT_CHANNELS } from '../repositories/internal-chat.repository.js';
 
@@ -207,6 +213,103 @@ export class InternalChatService {
       messageId: message.id,
     });
     return message;
+  }
+
+  /**
+   * Mensagem com UM arquivo (CRMLAB-101, D-271). Tipo, tamanho e magic bytes
+   * sao conferidos ANTES da transacao, com as regras do anexo do atendimento.
+   * Dentro dela: acesso ao canal (DM alheia = NOT_FOUND) -> mensagem -> linha
+   * do anexo -> arquivo em disco com o `id` da linha. Se o disco falhar, a
+   * transacao desfaz tudo: nada de mensagem com anexo sem arquivo.
+   */
+  async sendAttachment(
+    ctx: TenantContext,
+    channelId: string,
+    dto: CreateInternalAttachmentRequest,
+  ): Promise<InternalMessage> {
+    assertLabMember(ctx);
+    const content = (dto.content ?? '').trim();
+    if (content.length > MAX_CONTENT_LENGTH) {
+      throw new BusinessError('VALIDATION_ERROR', {
+        fields: { content: 'Conteudo ate 4000 caracteres' },
+      });
+    }
+    assertOutboundMimeAllowed(dto.mimeType);
+    const buffer = Buffer.from(dto.contentBase64, 'base64');
+    if (buffer.byteLength === 0 || buffer.byteLength > MAX_MEDIA_BYTES) {
+      throw new BusinessError('MEDIA_TOO_LARGE', { byteSize: buffer.byteLength, max: MAX_MEDIA_BYTES });
+    }
+    // Divergente do tipo declarado e recusado (como na visita, CRMLAB-88), nao
+    // rebaixado em silencio: quem esta na tela fica sabendo (D-271 item 4).
+    const mimeType = await resolveStoredMimeType(dto.mimeType, buffer);
+    if (mimeType === FALLBACK_MEDIA_MIME_TYPE) {
+      throw new BusinessError('VALIDATION_ERROR', {
+        fields: { mimeType: 'O conteúdo do arquivo não corresponde ao tipo informado' },
+      });
+    }
+    const fileName = dto.fileName.trim();
+
+    const message = await this.db.withTenant(ctx.tenantId, async (tx) => {
+      const channel = await chatRepo.findChannelById(tx, channelId, ctx.userId);
+      if (!channel) throw notFound({ resource: 'channel', id: channelId });
+
+      const inserted = await chatRepo.insertMessage(tx, {
+        tenantId: ctx.tenantId,
+        channelId,
+        senderId: ctx.userId,
+        content,
+        attachedProposalId: null,
+        isSystem: false,
+      });
+      const attachmentId = await chatRepo.insertAttachment(tx, {
+        tenantId: ctx.tenantId,
+        messageId: inserted.id,
+        mimeType,
+        fileName,
+        byteSize: buffer.byteLength,
+      });
+      await writeMediaFile(attachmentId, buffer);
+      const withAttachment = await chatRepo.findMessageById(tx, inserted.id);
+      if (!withAttachment) throw new Error('Mensagem interna recem-inserida nao encontrada');
+      return withAttachment;
+    });
+
+    // Depois do commit e so com ids (D-271 item 6): o evento vai para o tenant
+    // inteiro, e o nome do arquivo de uma DM nao pode chegar a quem nao participa.
+    this.wsHub.emitToTenant(ctx.tenantId, 'internal_chat.new_message', {
+      channelId,
+      messageId: message.id,
+    });
+    return message;
+  }
+
+  /**
+   * Download (D-271). Canal invisivel para o usuario (outro tenant, DM alheia),
+   * anexo de outro canal ou arquivo fora do disco -> `NOT_FOUND`, nunca 403.
+   */
+  async readAttachment(
+    ctx: TenantContext,
+    channelId: string,
+    attachmentId: string,
+  ): Promise<{ buffer: Buffer; mimeType: string; fileName: string }> {
+    assertLabMember(ctx);
+    const attachment = await this.db.withTenant(ctx.tenantId, async (tx) => {
+      const channel = await chatRepo.findChannelById(tx, channelId, ctx.userId);
+      if (!channel) throw notFound({ resource: 'channel', id: channelId });
+      return chatRepo.findAttachment(tx, channelId, attachmentId);
+    });
+    if (!attachment) throw notFound({ resource: 'internal_message_attachment', id: attachmentId });
+
+    const buffer = await readMediaFile(attachment.id);
+    if (!buffer) {
+      logger.warn('internal_chat.attachment_file_missing', {
+        tenantId: ctx.tenantId,
+        channelId,
+        attachmentId,
+      });
+      throw notFound({ resource: 'internal_message_attachment', id: attachmentId });
+    }
+    return { buffer, mimeType: attachment.mimeType, fileName: attachment.fileName };
   }
 
   /** Diretorio de quem da para abrir DM — exclui o proprio usuario e inativos (D-101). */

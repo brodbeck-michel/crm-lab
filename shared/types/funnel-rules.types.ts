@@ -76,6 +76,11 @@ export interface FunnelAutomationRules {
   followUpToLost: DelayRule;
   /** Alerta de "Novo orçamento" parado há N minutos sem envio (D-267). */
   staleNewBudgetAlert: StaleNewBudgetAlertRule;
+  /**
+   * Lembrete de contato para proposta aberta há `days` desde a CRIAÇÃO
+   * (CRMLAB-102, D-272). Uma vez por proposta. Padrão desligado.
+   */
+  staleProposalReminder: DelayRule;
   /** Contagem dos prazos em dias: corridos ou úteis. */
   dayCounting: DayCounting;
 }
@@ -226,6 +231,14 @@ export const DEFAULT_REENGAGEMENT_FIRST_MESSAGE =
 export const DEFAULT_REENGAGEMENT_SECOND_MESSAGE =
   'Olá! Como não tivemos retorno, vamos deixar o atendimento em aberto. Quando quiser, é só responder esta mensagem.';
 
+/**
+ * Padrão da regra "Lembrete de proposta parada" (D-272). DESLIGADA por decisão
+ * do usuário (19/10/2026): ligada, o primeiro tique depois do deploy daria
+ * lembrete a todas as propostas abertas antigas de uma vez. Trocar aqui troca
+ * o padrão do back e do front.
+ */
+export const DEFAULT_STALE_PROPOSAL_REMINDER: DelayRule = { enabled: false, days: 15 };
+
 /** Padrões (D-191). Ver o comentário do topo do arquivo. */
 export const DEFAULT_FUNNEL_RULES: FunnelRules = {
   origin: { fromBitlab: true, manualInCrm: true },
@@ -236,6 +249,7 @@ export const DEFAULT_FUNNEL_RULES: FunnelRules = {
     negotiationToFollowUp: { enabled: true, days: 7 },
     followUpToLost: { enabled: false, days: 15 },
     staleNewBudgetAlert: { enabled: true, minutes: 240 },
+    staleProposalReminder: { ...DEFAULT_STALE_PROPOSAL_REMINDER },
     dayCounting: 'calendar',
   },
   manualMoves: {
@@ -508,4 +522,25 @@ export function bitlabSendTarget(
   return lisRequisitionNumber !== null && automation.requisitionToNegotiation.enabled
     ? 'negociacao'
     : 'orcamento_enviado';
+}
+
+// ---------------------------------------------------------------------------
+// Lembrete de proposta parada x perda por silêncio (CRMLAB-102, D-272 item 8)
+// ---------------------------------------------------------------------------
+
+/**
+ * Com o lembrete e a perda por silêncio ligados, o lembrete precisa de MENOS
+ * dias que a perda. Erro (para `automation.staleProposalReminder.days`) ou
+ * `null`. A mesma no `PATCH` e na tela das Regras.
+ */
+export function staleReminderVsLossError(
+  automation: Pick<FunnelAutomationRules, 'staleProposalReminder' | 'followUpToLost'>,
+): string | null {
+  const reminder = automation.staleProposalReminder;
+  const loss = automation.followUpToLost;
+  if (!reminder.enabled || !loss.enabled) return null;
+  if (reminder.days < loss.days) return null;
+  return loss.days > 1
+    ? `Use até ${loss.days - 1} dias: a perda automática está em ${loss.days}`
+    : 'A perda automática está em 1 dia: aumente o prazo dela para usar o lembrete';
 }

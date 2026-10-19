@@ -1,5 +1,10 @@
 import type { IsoDate, IsoDateTime, PaginationMeta, PaginationQuery } from './api.types.js';
 import type { StageAutomation } from './funnel-timer.types.js';
+import type {
+  ProposalReminder,
+  ProposalReminderEntry,
+  ProposalReminderFilter,
+} from './proposal-reminder.types.js';
 
 /** Os 6 estagios. BUSINESS_RULES.md §3. */
 export type ProposalStatus =
@@ -193,6 +198,11 @@ export interface Proposal {
    * Opcional no tipo (campo novo), sempre presente na resposta; `null` sem linha.
    */
   stageEnteredAt?: IsoDateTime | null;
+  /**
+   * Lembrete de contato ABERTO (CRMLAB-102, D-272), ou `null`. Opcional no
+   * tipo (campo novo), sempre presente na resposta. Vencido = `isReminderDue`.
+   */
+  reminder?: ProposalReminder | null;
 }
 
 export interface ProposalStageHistoryEntry {
@@ -232,6 +242,11 @@ export interface ProposalDetail extends Proposal {
   lisPaidValue: number | null;
   /** `YYYY-MM-DD` (D-110). */
   lisPaidOn: IsoDate | null;
+  /**
+   * Todos os lembretes da proposta, do mais antigo para o mais novo
+   * (CRMLAB-102, D-272). Opcional no tipo, sempre presente na resposta.
+   */
+  reminders?: ProposalReminderEntry[];
 }
 
 export interface CreateProposalItemInput {
@@ -354,6 +369,11 @@ export interface ListProposalsQuery extends PaginationQuery {
   endDate?: string;
   /** Busca por nome do paciente (`conversations.patient_name`), case-insensitive. */
   search?: string;
+  /**
+   * Lembrete de contato (CRMLAB-102, D-272): `due` = aberto e vencido (o filtro
+   * "Com lembrete"); `open` = qualquer lembrete aberto.
+   */
+  reminder?: ProposalReminderFilter;
 }
 
 export interface ListProposalsResponse {

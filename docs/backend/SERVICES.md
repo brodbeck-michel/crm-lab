@@ -457,6 +457,12 @@ interface InternalChatService {
 
   /** D-101: get-or-create idempotente da DM com otherUserId. Mesmo par → mesmo canal sempre. */
   getOrCreateDirectChannel(ctx: TenantContext, otherUserId: string): Promise<Channel>;
+
+  /** CRMLAB-101 (D-271): mensagem com um arquivo (texto opcional). */
+  sendAttachment(ctx: TenantContext, channelId: string, dto: CreateInternalAttachmentRequest): Promise<InternalMessage>;
+
+  /** CRMLAB-101 (D-271): bytes + nome original + MIME, só para quem vê o canal. */
+  readAttachment(ctx: TenantContext, channelId: string, attachmentId: string): Promise<{ buffer: Buffer; mimeType: string; fileName: string }>;
 }
 ```
 
@@ -492,6 +498,14 @@ interface InternalChatService {
 - `listMessages` **não** marca o canal como lido: ler página antiga do histórico não é ter
   visto a mensagem nova. É a diferença deliberada para `GET /conversations/:id` (D-035), onde
   a página 1 é literalmente o fim da conversa
+- **Anexo (CRMLAB-101, D-271):** `sendAttachment` valida tipo (`ALLOWED_MEDIA_MIME_TYPES` →
+  `VALIDATION_ERROR`), tamanho (`MAX_MEDIA_BYTES` → `MEDIA_TOO_LARGE`) e magic bytes
+  (`resolveStoredMimeType`; divergente → `VALIDATION_ERROR`) ANTES de abrir a transação; dentro
+  dela confere o canal (`findChannelById` com o usuário — DM alheia é `NOT_FOUND`), insere a
+  mensagem, insere `internal_message_attachments` e grava o arquivo em disco com o `id` da linha
+  (falha de disco desfaz tudo). Emite `internal_chat.new_message` (só ids) depois do commit.
+  `readAttachment` exige o mesmo acesso ao canal e que o anexo seja de uma mensagem DESTE canal;
+  arquivo fora do disco → `NOT_FOUND` com log. Sem audit log (mensagem do chat não é auditada)
 
 ---
 

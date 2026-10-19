@@ -5574,3 +5574,47 @@ e seria um segundo emissor para o mesmo fato.
 **Impacto:** infra. `scripts/lib/alerta.sh` (WhatsApp), `scripts/monitora-saude.sh` (verificação 8),
 `scripts/whatsapp-alertas.sh` (parear/estado/testar), timer de 1 min, `monitor.env` no alerta do backup.
 Ver `docs/guides/MONITORING.md` §4.
+
+### D-271: Anexo de arquivo no chat interno — tabela própria, um anexo por mensagem, mesmas regras de mídia do atendimento (CRMLAB-101)
+**Decisão:**
+1. **Rotas novas:** `POST /internal-chat/channels/:id/attachments` (base64 em JSON, como
+   `POST /conversations/:id/attachments` e `POST /visits/:id/attachments`; texto opcional em
+   `content`) devolve `201` com o `InternalMessage` criado; `GET
+   /internal-chat/channels/:id/attachments/:attachmentId` serve o arquivo. API_CONTRACTS §3b.
+2. **Tabela própria `internal_message_attachments`** (migração 055, SCHEMA §41), com `tenant_id` +
+   policy de RLS no mesmo arquivo. `message_id` é `NOT NULL` e `UNIQUE`: **um anexo por mensagem**,
+   como no atendimento. A mensagem e a linha do anexo nascem na MESMA transação, e o arquivo vai
+   para o disco ainda dentro dela — se o disco falhar, nada é gravado (sem a compensação
+   "apaga a linha" da visita nem o `message_id` nulo de `message_media`).
+3. **Nome em disco = `id` da linha** (`gen_random_uuid()` do Postgres), via `lib/media-storage.ts`.
+   O nome enviado fica só em `file_name` e volta no `Content-Disposition` do download.
+4. **Mesmos limites do atendimento, sem constante nova:** allow-list `ALLOWED_MEDIA_MIME_TYPES`
+   (fora dela → `VALIDATION_ERROR`, como `assertOutboundMimeAllowed`), teto `MAX_MEDIA_BYTES`
+   (15 MiB; vazio ou acima → `MEDIA_TOO_LARGE` 413) e o sniff de magic bytes
+   `resolveStoredMimeType`. Diferença técnica, a mais conservadora: conteúdo que **diverge** do
+   tipo declarado é recusado com `VALIDATION_ERROR` (como na visita, CRMLAB-88), em vez de
+   rebaixado em silêncio para `application/octet-stream` — quem está na tela fica sabendo.
+5. **Acesso = ver o canal.** Upload e download passam por `findChannelById` com o usuário do
+   contexto: canal comum é de todo o laboratório; DM só dos dois participantes (D-101). Canal de
+   outro tenant, DM alheia, anexo de outro canal ou arquivo ausente do disco → `NOT_FOUND`, nunca
+   `FORBIDDEN`. Download com os cabeçalhos de `GET /media/:id` (`servedMimeType`,
+   `dispositionFor`, `nosniff`, nome original).
+6. **WebSocket continua "só ids".** `internal_chat.new_message` sai depois do commit com
+   `{ channelId, messageId }`, e a tela já invalida a lista de mensagens do canal: o refetch traz a
+   mensagem COM `attachment`, e os outros membros veem sem recarregar. Pôr o anexo (nome do
+   arquivo) no payload vazaria: o evento vai para a sala do tenant inteiro, inclusive para quem não
+   é participante de uma DM.
+7. **Sem auditoria.** Mensagem do chat interno não gera audit log (SERVICES §7) e anexo do
+   atendimento também não; o anexo da visita audita porque altera um registro da visita, não é
+   o caso aqui.
+8. **Front:** o clipe do `Composer` (já existente) e a `AttachmentPreview` do atendimento
+   (CRMLAB-69) são reaproveitados; cada arquivo da prévia vira um POST, em sequência, com a sua
+   legenda como `content`. Colar e arrastar arquivo vêm junto (o `Composer` já trata colar; a área
+   de soltar repete a do atendimento). Imagem aparece como miniatura e abre no `ImageLightbox`;
+   qualquer outro tipo vira `DocumentCard`, que baixa com o nome original.
+**Motivo:** a equipe troca pedido médico, comprovante e planilha pelo chat interno; reaproveitar a
+mídia do atendimento mantém uma regra só de tipo/tamanho e de nome em disco.
+**Impacto:** migração 055; `shared/types/internal-chat.types.ts` (`InternalMessageAttachment`,
+`InternalMessage.attachment`, `CreateInternalAttachmentRequest`); `internal-chat.repository.ts`,
+`internal-chat.service.ts`, `internal-chat.routes.ts`; frontend `api/internal-chat.ts`,
+`pages/InternalChat/{index,MessagePanel,InternalMessageItem}.tsx`. Rotas de laboratório: 108 → 110.

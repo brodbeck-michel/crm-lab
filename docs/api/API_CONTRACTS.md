@@ -2805,6 +2805,7 @@ listagem.
       "senderName": "Sistema",
       "content": "@gestor Pedido de aprovação de desconto: João Santos - R$ 150,00 (25% — acima da alçada de 15%)",
       "attachedProposalId": "uuid",
+      "attachment": null,
       "isSystem": true,
       "createdAt": "2026-08-23T14:40:00.000Z"
     }
@@ -2812,6 +2813,19 @@ listagem.
   "pagination": { "page": 1, "limit": 50, "total": 1, "totalPages": 1 }
 }
 ```
+
+`attachment` (CRMLAB-101, D-271) é o arquivo anexado à mensagem, ou `null`. No máximo um por
+mensagem:
+```json
+{
+  "id": "uuid",
+  "fileName": "pedido medico.pdf",
+  "mimeType": "application/pdf",
+  "byteSize": 182044,
+  "url": "/api/v1/internal-chat/channels/{channelId}/attachments/{id}"
+}
+```
+`url` é relativa à API e exige `Authorization` (a tela busca com `fetchAuthenticatedBlob`).
 
 Ordenação fixa `created_at ASC, id ASC` **dentro da página** — não há `sortBy` nem `order`
 aqui. O que a paginação escolhe é qual fatia do histórico a página cobre (a mais recente
@@ -2843,6 +2857,57 @@ Mensagem de usuário nasce com `isSystem: false` e `senderId`/`senderName` do au
 **Erros:** `VALIDATION_ERROR` (400 — `content` vazio ou > 4000, `attachedProposalId`
 não-uuid, campo desconhecido), `NOT_FOUND` (404 — canal ou proposta anexada de outro
 tenant), `FORBIDDEN` (403, `platform_operator`)
+
+### POST /internal-chat/channels/:id/attachments
+
+Anexa um arquivo ao canal (CRMLAB-101, D-271). Base64 em JSON, como
+`POST /conversations/:id/attachments` — Express 4 não faz multipart.
+
+**Request:**
+```json
+{
+  "fileName": "pedido medico.pdf",
+  "mimeType": "application/pdf",
+  "contentBase64": "JVBERi0xLjQK...",
+  "content": "Pedido do paciente da sala 2"
+}
+```
+
+- `fileName`: 1..255 caracteres, aparado. Guardado só como metadado — o arquivo em disco tem o
+  nome do `id` da linha (UUID do Postgres), nunca o enviado
+- `mimeType`: precisa estar em `ALLOWED_MEDIA_MIME_TYPES` (`shared/types/media.types.ts`, a
+  mesma allow-list do atendimento). Conteúdo cujo magic byte **diverge** do tipo declarado é
+  recusado (`VALIDATION_ERROR`)
+- `contentBase64`: o arquivo; 1 byte a `MAX_MEDIA_BYTES` (15 MiB) depois de decodificado
+- `content` (opcional): texto da mensagem, até 4000 caracteres, aparado; ausente/vazio = só o
+  arquivo (a mensagem nasce com `content: ""`)
+
+Um anexo por mensagem: vários arquivos são vários POSTs.
+
+**Response (201):** o `InternalMessage` criado, sem envelope, com `attachment` preenchido.
+Emite `internal_chat.new_message` (`{ channelId, messageId }`, só ids) depois do commit; quem
+está no canal recarrega a lista e recebe a mensagem já com o anexo.
+
+**Erros:**
+- `VALIDATION_ERROR` (400 — `:id` não-uuid, campo ausente/desconhecido, tipo fora da allow-list,
+  conteúdo divergente do tipo, `content` > 4000)
+- `MEDIA_TOO_LARGE` (413 — arquivo vazio ou acima de 15 MiB; nada é gravado)
+- `NOT_FOUND` (404 — canal inexistente, **de outro tenant** ou DM da qual o usuário não participa)
+- `FORBIDDEN` (403, `platform_operator`)
+
+### GET /internal-chat/channels/:id/attachments/:attachmentId
+
+Baixa o arquivo (CRMLAB-101, D-271). Só para quem vê o canal: canal comum é de todo o
+laboratório; DM, só dos dois participantes.
+
+**Response (200):** os bytes, com os mesmos cabeçalhos de `GET /media/:id`: `Content-Type` pela
+allow-list (fora dela, `application/octet-stream`), `X-Content-Type-Options: nosniff` e
+`Content-Disposition` `inline` para imagem/áudio e `attachment` para o resto, sempre com
+`filename` = nome original (percent-encoded).
+
+**Erros:** `NOT_FOUND` (404 — canal inexistente/de outro tenant/DM alheia, anexo de outro canal,
+ou arquivo ausente do disco), `VALIDATION_ERROR` (400, ids não-uuid), `FORBIDDEN` (403,
+`platform_operator`)
 
 ### GET /internal-chat/users
 

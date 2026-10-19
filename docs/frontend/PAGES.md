@@ -702,6 +702,17 @@ nunca "sem permissão" (não vazar existência).
 - Canal `#aprovacoes`: pedidos de aprovação com botões [Aprovar] [Rejeitar] (gestor+)
 - Dados: `GET /internal-chat/*` + WS
 
+### Anexar arquivo (CRMLAB-101, D-271)
+
+- O clipe do `Composer` (o mesmo do atendimento: "Fotos e vídeos" e "Documento") abre a
+  `AttachmentPreview`; colar arquivo no campo e soltar arquivo sobre as mensagens também abrem.
+  Mesma validação de tipo e tamanho do atendimento (`attachment-draft.ts`, números de `shared/`)
+- Enviar faz um `POST /internal-chat/channels/:id/attachments` por arquivo, em sequência, com a
+  legenda de cada um como `content`. Erro é por arquivo: avisa com o nome e segue
+- Na mensagem: imagem vira miniatura (busca autenticada) que abre no `ImageLightbox`; qualquer
+  outro tipo vira `DocumentCard` (ícone do tipo, nome, tamanho) e baixa com o nome original
+- Os outros membros veem pelo `internal_chat.new_message` de sempre (a lista recarrega)
+
 ### Buscar usuário (D-101) — iniciar conversa direta
 
 No topo da coluna esquerda, ACIMA dos grupos "Canais" e "Mensagens diretas", um campo de

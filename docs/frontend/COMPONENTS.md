@@ -283,6 +283,10 @@ Anatomia (padrão WhatsApp):
 - Implementação: hook `useVoiceRecorder` (máquina de estados + `MediaRecorder`) e a barra
   `VoiceRecorder`, ambos em `components/conversation/`, usados só pelo Composer.
 
+- **Também no chat interno (CRMLAB-101, D-271):** `MessagePanel` abre a mesma prévia pelo clipe,
+  colar ou soltar arquivo; `InternalMessageItem` desenha o anexo com `DocumentCard`
+  (`messageType="doc"`: sempre baixa, com o nome original) ou miniatura + `ImageLightbox`.
+
 ### AttachmentPreview (CRMLAB-69, D-232/D-233)
 ```tsx
 <AttachmentPreview items={drafts} onCaptionChange={(id, caption) => …} onRemove={(id) => …}

@@ -2182,6 +2182,44 @@ CREATE UNIQUE INDEX conversation_auto_replies_greeting_once
 
 ---
 
+### 41. `proposal_reminders` (migração 056 — CRMLAB-102, D-272)
+Lembrete de contato da proposta parada. Uma linha por ciclo: nasce aberta e só fecha com um
+desfecho. Dono: `ProposalReminderService` (SERVICES.md §34).
+
+```sql
+CREATE TABLE proposal_reminders (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  proposal_id UUID NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
+  origin VARCHAR(10) NOT NULL,          -- 'auto' | 'manual'
+  due_date DATE NOT NULL,               -- dia de Brasília
+  note VARCHAR(500) NULL,
+  created_by UUID NULL REFERENCES users(id) ON DELETE SET NULL,  -- NULL no automático
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  alerted_at TIMESTAMP NULL,            -- aviso WS já saiu (uma vez por lembrete)
+  resolved_at TIMESTAMP NULL,
+  resolved_by UUID NULL REFERENCES users(id) ON DELETE SET NULL, -- NULL no auto_closed
+  outcome VARCHAR(20) NULL,             -- 'won' | 'lost' | 'rescheduled' | 'auto_closed'
+  outcome_note VARCHAR(500) NULL,
+  CHECK (origin IN ('auto', 'manual')),
+  CHECK (outcome IS NULL OR outcome IN ('won', 'lost', 'rescheduled', 'auto_closed')),
+  CHECK ((resolved_at IS NULL) = (outcome IS NULL))
+);
+CREATE UNIQUE INDEX proposal_reminders_one_open ON proposal_reminders (proposal_id) WHERE resolved_at IS NULL;
+CREATE UNIQUE INDEX proposal_reminders_auto_once ON proposal_reminders (proposal_id) WHERE origin = 'auto';
+CREATE INDEX idx_proposal_reminders_open_due ON proposal_reminders (tenant_id, due_date) WHERE resolved_at IS NULL;
+-- índices de FK (D-146) em created_by e resolved_by;
+-- ENABLE ROW LEVEL SECURITY + policy proposal_reminders_tenant_isolation
+```
+
+- **Os dois índices únicos parciais são as travas**: no máximo um lembrete aberto por proposta, e
+  um automático por proposta na vida inteira (o motor insere com `ON CONFLICT DO NOTHING`).
+- Reagendar pelo desfecho fecha a linha (`rescheduled`) e cria outra; reagendar pelo "Agendar
+  lembrete" com um aberto só troca `due_date`/`note` e zera `alerted_at`.
+- Migração **única** (tabela + policy), sem backfill.
+
+---
+
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
 
 O isolamento multitenant não é convenção: é imposto pelo banco. O backend conecta com o papel
@@ -2340,6 +2378,7 @@ Nenhum outro caminho de código deve usar `withoutTenant()`.
 | `doctors` | ✅ | migração `047_doctors.sql` (tabela + policy no mesmo arquivo — CRMLAB-86), testado em `tests/doctors/doctors.spec.ts` |
 | `doctor_visits` | ✅ | migração `048_doctor_visits.sql` (tabela + policy no mesmo arquivo — CRMLAB-87), testado em `tests/visits/visits.spec.ts` |
 | `doctor_visit_reschedules` | ✅ | migração `048_doctor_visits.sql` (CRMLAB-87), testado em `tests/visits/visits.spec.ts` |
+| `proposal_reminders` | ✅ | migração `056_proposal_reminders.sql` (tabela + policy no mesmo arquivo — CRMLAB-102), `tests/db/rls-proposal-reminders.spec.ts` |
 
 As **4 tabelas da migração 003** entram sob RLS na `004_rls_onda6.sql`, as **3 tabelas da
 migração 005** entram na `006_rls_onda7.sql`, e as **4 tabelas novas da migração 012**
@@ -2465,7 +2504,8 @@ migrations/
 ├── 047_doctors.sql               # doctors + índice único parcial (tenant, crm, uf) + policy (CRMLAB-86, D-255)
 ├── 048_doctor_visits.sql         # doctor_visits + doctor_visit_reschedules + policies (CRMLAB-87, D-256)
 ├── 049_messages_patient_period_index.sql # índice parcial (tenant, created_at) das mensagens do paciente (CRMLAB-83, D-257)
-└── 054_conversation_auto_replies.sql # messages.automation offhours/greeting + conversation_auto_replies + policy (CRMLAB-94, D-264)
+├── 054_conversation_auto_replies.sql # messages.automation offhours/greeting + conversation_auto_replies + policy (CRMLAB-94, D-264)
+└── 056_proposal_reminders.sql    # proposal_reminders + policy — lembrete de proposta parada (CRMLAB-102, D-272)
 ```
 
 A 007 e a 008 são arquivos ÚNICOS (tabela + policy), diferente dos pares 003/004 e 005/006: a

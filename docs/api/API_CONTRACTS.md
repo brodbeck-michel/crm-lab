@@ -2094,7 +2094,12 @@ Listar propostas com filtros.
 ?createdBy=uuid
 ?startDate=2026-08-01&endDate=2026-08-31  // filtra por createdAt
 ?search=maria                             // nome do paciente, máx. 100 caracteres
+?reminder=due                             // due|open — lembrete de contato (CRMLAB-102, D-272)
 ```
+
+**`?reminder=` (CRMLAB-102, D-272):** `due` = só as propostas com lembrete **aberto e vencido**
+(`dueDate` ≤ hoje no dia de Brasília — `isReminderDue`; é o filtro "Com lembrete" da tela);
+`open` = com qualquer lembrete aberto. Outro valor → `VALIDATION_ERROR`.
 
 **`?search=`** casa trecho do nome do paciente (`conversations.patient_name`, `ILIKE %termo%`,
 case-insensitive) — é a busca do Pipeline (PAGES.md §5). Diferente de `/conversations`, aqui
@@ -2166,6 +2171,22 @@ uma conversa) ou `"bitlab"` (nasceu sozinha do orçamento do LIS, em `novo_conta
   tenant (fila comum). Com responsável, vale D-042.
 - `?search=` casa também o nome do paciente do orçamento do LIS.
 
+**`reminder` (CRMLAB-102, D-272)** — opcional no tipo, sempre presente na resposta: o lembrete de
+contato **aberto** da proposta, ou `null`. Shape `ProposalReminder`
+(`shared/types/proposal-reminder.types.ts`):
+```json
+"reminder": {
+  "id": "uuid",
+  "origin": "manual",            // "auto" (regra das Regras) | "manual"
+  "dueDate": "2026-10-25",       // dia (Brasília), YYYY-MM-DD
+  "note": "ligar dia 25",        // ou null
+  "createdBy": "uuid",           // null no automático
+  "createdByName": "Ana",        // null no automático
+  "createdAt": "2026-10-19T13:00:00.000Z"
+}
+```
+Vencido = `isReminderDue(reminder, agora)` — o selo "Lembrete" do cartão.
+
 **`stageEnteredAt` (CRMLAB-59, D-207)** — opcional no tipo, sempre presente na resposta: quando a
 proposta entrou no estágio atual (a última linha de `history` com esse estágio), ISO 8601 UTC;
 `null` se não houver linha. É o relógio do motor de tempo (D-205) e do selo "Parado há N h".
@@ -2177,6 +2198,12 @@ proposta entrou no estágio atual (a última linha de `history` com esse estági
 
 ### GET /proposals/:id
 Detalhes completos de uma proposta.
+
+**`reminders` (CRMLAB-102, D-272)** — opcional no tipo, sempre presente: todos os lembretes da
+proposta, do mais antigo para o mais novo (`ProposalReminderEntry` = `ProposalReminder` +
+`resolvedAt`, `resolvedBy`, `resolvedByName`, `outcome` — `won | lost | rescheduled |
+auto_closed` ou `null` no aberto — e `outcomeNote`). `auto_closed` = a proposta fechou por outro
+caminho (motor, LIS, mudança de estágio fora do lembrete).
 
 **Response (200):**
 ```json
@@ -2565,6 +2592,49 @@ fechado, e só para **outra atendente ativa**.
 
 **Erros:** `VALIDATION_ERROR` (`details.fields.userId`), `NOT_FOUND`, `FORBIDDEN`
 (`details.reason: "not_owner"` ou `"closed"`).
+
+### PUT /proposals/:id/reminder (CRMLAB-102, D-272)
+"Agendar lembrete" no modal. Cria o lembrete manual ou, se já houver um aberto, **reagenda esse
+mesmo** (no máximo um aberto por proposta). Funciona com a regra automática ligada ou não.
+
+**Request:** `{ "dueDate": "2026-10-25", "note": "ligar dia 25" }` — `dueDate` `YYYY-MM-DD`, de
+hoje (Brasília) até hoje + 365; `note` opcional, `null`/vazio = sem observação, até 500
+caracteres depois do `trim`.
+
+**Quem:** a responsável (ou qualquer atendente no cartão Bitlab sem responsável), gestor e admin.
+Proposta fechada → `PROPOSAL_ALREADY_CLOSED`.
+
+**Response (200):** o `ProposalDetail` atualizado. Audit `create_proposal_reminder` (novo) ou
+`update_proposal_reminder` (reagendado; `oldValues/newValues: { dueDate, note }`), WS
+`proposal.updated`.
+
+**Erros:** `VALIDATION_ERROR` (`details.fields.dueDate` / `.note`), `NOT_FOUND`,
+`PROPOSAL_ALREADY_CLOSED`.
+
+### POST /proposals/:id/reminder/resolve (CRMLAB-102, D-272)
+Desfecho obrigatório do lembrete aberto.
+
+**Request** (um dos três):
+```json
+{ "outcome": "won" }
+{ "outcome": "lost", "reasonLost": "preco" }
+{ "outcome": "rescheduled", "dueDate": "2026-11-05", "note": "pediu retorno em novembro" }
+```
+- `won` / `lost` passam pelo **mesmo** `updateStatus` de `PATCH /proposals/:id/status`: matriz
+  vigente, travas das Regras, motivo (`reasonLost` exigido se "Exigir motivo" estiver ligado),
+  aprovação pendente, histórico, mensagem de sistema, audit `update_proposal_status`, WS. Os mesmos
+  erros (`INVALID_STATUS_TRANSITION`, `FORBIDDEN`, `LOSS_REASON_REQUIRED`, …). O lembrete fecha na
+  mesma transação com `outcome` `won`/`lost`.
+- `rescheduled`: `dueDate` **futura** (> hoje, até hoje + 365) e `note` obrigatória (1..500). O
+  lembrete fecha com `outcome: "rescheduled"` e nasce outro aberto nessa data.
+
+**Response (200):** o `ProposalDetail` atualizado. Audit `resolve_proposal_reminder`
+(`newValues: { reminderId, outcome, … }`), WS `proposal.updated` (e `proposal.status_changed` no
+ganho/perdido).
+
+**Erros:** `VALIDATION_ERROR` (`details.fields.outcome|dueDate|note|reasonLost`), `NOT_FOUND`,
+`PROPOSAL_ALREADY_CLOSED`, `CONFLICT` (`details.reason: "no_open_reminder"`), e os de
+`PATCH /proposals/:id/status`.
 
 ### PATCH /proposals/:id/discount
 Atualizar desconto (se aprovação pendente).
@@ -4206,6 +4276,7 @@ completo com os padrões aplicados. Nenhum outro código lê `funnel_rules` dire
     "negotiationToFollowUp": { "enabled": true, "days": 7 },
     "followUpToLost": { "enabled": false, "days": 15 },
     "staleNewBudgetAlert": { "enabled": true, "minutes": 240 },
+    "staleProposalReminder": { "enabled": false, "days": 15 },
     "dayCounting": "calendar"
   },
   "manualMoves": {
@@ -4251,6 +4322,7 @@ completo com os padrões aplicados. Nenhum outro código lê `funnel_rules` dire
 | `automation.negotiationToFollowUp` | `negociacao` sem pagamento há `days` → `follow_up` | CRMLAB-59 |
 | `automation.followUpToLost` | `follow_up` há `days` → `perdido` (`silencio`) | CRMLAB-59 |
 | `automation.staleNewBudgetAlert` | Alerta de `novo_contato` parado há `minutes` (corridos) sem envio. Linha antiga com `hours` é lida como `hours × 60` (D-267) | CRMLAB-59/97 |
+| `automation.staleProposalReminder` | Proposta aberta há `days` desde a **criação** ganha um lembrete de contato automático, uma vez por proposta (D-272). Padrão **desligado**, 15 dias (`DEFAULT_STALE_PROPOSAL_REMINDER`) | CRMLAB-102 |
 | `automation.dayCounting` | `calendar` (corridos) ou `business` (úteis) | CRMLAB-59 |
 | `manualMoves.*` | Travas de movimentação manual (D-192), via `checkTransition` | este card (back e front) |
 | `sendMessage.templates` | Modelos do WhatsApp (1..5, cada um com `name` e `text`); **o primeiro é o padrão**. Render por `renderSendMessageTemplate`. Linha gravada no formato antigo (`sendMessage.template`) é lida como `[{ "name": "Padrão", "text": <template> }]`, sem migração (D-265) | CRMLAB-58, CRMLAB-95 |
@@ -4303,7 +4375,10 @@ Validação (`VALIDATION_ERROR`, `details.fields` pelo caminho do campo):
   desconhecida. A checagem de variável vale só para a mensagem enviada no patch; o que já está
   gravado não é reprovado na leitura;
 - `reengagement.second.enabled: true` com o 1º desligado (depois do merge) →
-  `fields["reengagement.second.enabled"] = "Ligue o 1º reingajamento antes do 2º"` (D-211 item 4).
+  `fields["reengagement.second.enabled"] = "Ligue o 1º reingajamento antes do 2º"` (D-211 item 4);
+- `automation.staleProposalReminder` e `automation.followUpToLost` ligadas (depois do merge) com
+  `staleProposalReminder.days` ≥ `followUpToLost.days` →
+  `fields["automation.staleProposalReminder.days"]` (D-272 item 8, `staleReminderVsLossError`).
 
 **Response (200):** o objeto completo depois da escrita (mesmo shape do `GET`), cru.
 

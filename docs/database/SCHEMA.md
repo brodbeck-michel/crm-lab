@@ -2180,6 +2180,35 @@ CREATE UNIQUE INDEX conversation_auto_replies_greeting_once
   concorrente cai no `ON CONFLICT DO NOTHING`.
 - Migração **única** (CHECK + tabela + policy), sem backfill.
 
+### 41. `internal_message_attachments` (migração 055 — CRMLAB-101, D-271)
+Arquivo anexado a uma mensagem do chat interno. Dono: `InternalChatService` (SERVICES.md §7).
+
+```sql
+CREATE TABLE internal_message_attachments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),   -- também o nome do arquivo em disco
+  tenant_id UUID NOT NULL,
+  message_id UUID NOT NULL,
+  mime_type VARCHAR(127) NOT NULL,                 -- já passado pela allow-list + sniff
+  file_name VARCHAR(255) NOT NULL,                 -- nome original, só metadado
+  byte_size INTEGER NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (message_id) REFERENCES internal_messages(id) ON DELETE CASCADE,
+  CONSTRAINT internal_message_attachments_one_per_message UNIQUE (message_id),
+  CHECK (byte_size > 0)
+);
+CREATE INDEX idx_internal_message_attachments_tenant_id ON internal_message_attachments(tenant_id);
+-- ENABLE ROW LEVEL SECURITY + policy internal_message_attachments_tenant_isolation (mesmo arquivo)
+```
+
+- **Um anexo por mensagem** (`UNIQUE (message_id)`), como no atendimento. A mensagem e esta
+  linha nascem na mesma transação, por isso `message_id` é `NOT NULL` (diferente de
+  `message_media`, §22, em que o arquivo nasce antes da mensagem).
+- O arquivo em disco (`MEDIA_DIR`, `lib/media-storage.ts`) tem o nome do `id` — nunca o
+  `file_name` enviado.
+- Migração **única** (tabela + policy), sem backfill.
+
 ---
 
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
@@ -2316,6 +2345,7 @@ Nenhum outro caminho de código deve usar `withoutTenant()`.
 | `audit_logs` | ✅ | |
 | `internal_channels` | ✅ | |
 | `internal_messages` | ✅ | |
+| `internal_message_attachments` | ✅ | migração `055` (CRMLAB-101) |
 | `refresh_tokens` | ✅ | |
 | `patients` | ✅ | migração `004_rls_onda6.sql` |
 | `tenant_channels` | ✅ | idem — e o segredo nunca sai do repositório (projeção explícita) |
@@ -2465,7 +2495,8 @@ migrations/
 ├── 047_doctors.sql               # doctors + índice único parcial (tenant, crm, uf) + policy (CRMLAB-86, D-255)
 ├── 048_doctor_visits.sql         # doctor_visits + doctor_visit_reschedules + policies (CRMLAB-87, D-256)
 ├── 049_messages_patient_period_index.sql # índice parcial (tenant, created_at) das mensagens do paciente (CRMLAB-83, D-257)
-└── 054_conversation_auto_replies.sql # messages.automation offhours/greeting + conversation_auto_replies + policy (CRMLAB-94, D-264)
+├── 054_conversation_auto_replies.sql # messages.automation offhours/greeting + conversation_auto_replies + policy (CRMLAB-94, D-264)
+└── 055_internal_message_attachments.sql # internal_message_attachments + policy — anexo do chat interno (CRMLAB-101, D-271)
 ```
 
 A 007 e a 008 são arquivos ÚNICOS (tabela + policy), diferente dos pares 003/004 e 005/006: a

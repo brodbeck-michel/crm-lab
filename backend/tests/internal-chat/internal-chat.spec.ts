@@ -32,6 +32,7 @@ const CHANNEL_KEYS = [
 ];
 const MESSAGE_KEYS = [
   'attachedProposalId',
+  'attachment',
   'channelId',
   'content',
   'createdAt',

@@ -7,6 +7,8 @@
  *   POST /api/v1/internal-chat/channels/:id/messages
  *   GET  /api/v1/internal-chat/users                  diretorio de DM (D-101)
  *   POST /api/v1/internal-chat/dms                     get-or-create DM (200, D-101)
+ *   POST /api/v1/internal-chat/channels/:id/attachments                 anexo (base64, 201, D-271)
+ *   GET  /api/v1/internal-chat/channels/:id/attachments/:attachmentId   baixa (D-271)
  *
  * `denyPlatformOperator()` em todas: o console de plataforma tem chat PROPRIO e
  * nao acessa canais de laboratorio (PAGES.md §11). O service recusa de novo.
@@ -15,6 +17,7 @@ import { Router, type Request, type RequestHandler, type Response } from 'expres
 import { z } from 'zod';
 import type {
   Channel,
+  CreateInternalAttachmentRequest,
   InternalMessage,
   ListChannelsResponse,
   ListChatDirectoryResponse,
@@ -30,6 +33,7 @@ import {
   createInternalChatService,
 } from '../services/internal-chat.service.js';
 import type { InternalChatService } from '../services/internal-chat.service.js';
+import { dispositionFor, servedMimeType } from './media.routes.js';
 
 export const channelIdParamSchema = z.object({ id: z.string().uuid() });
 
@@ -50,6 +54,24 @@ type SendMessageBody = z.infer<typeof sendMessageSchema>;
 export const createDirectChannelSchema = z.object({ userId: z.string().uuid() }).strict();
 
 type CreateDirectChannelBody = z.infer<typeof createDirectChannelSchema>;
+
+export const attachmentParamSchema = z.object({
+  id: z.string().uuid(),
+  attachmentId: z.string().uuid(),
+});
+
+/**
+ * Base64 em JSON, como `POST /conversations/:id/attachments` (D-271). Tipo,
+ * teto e magic bytes ficam no service — o zod so garante formato.
+ */
+export const createAttachmentSchema = z
+  .object({
+    fileName: z.string().trim().min(1).max(255),
+    mimeType: z.string().trim().min(1).max(127),
+    contentBase64: z.string().min(1),
+    content: z.string().max(MAX_CONTENT_LENGTH).nullish(),
+  })
+  .strict();
 
 function handle(fn: (req: Request, res: Response) => Promise<void>): RequestHandler {
   return (req, res, next) => {
@@ -96,6 +118,33 @@ export function sendMessage(service: InternalChatService): RequestHandler {
       attachedProposalId: dto.attachedProposalId ?? null,
     });
     res.status(201).json(message);
+  });
+}
+
+export function sendAttachment(service: InternalChatService): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const { id } = validated<{ id: string }>(req, 'params');
+    const dto = validated<CreateInternalAttachmentRequest>(req, 'body');
+    const message: InternalMessage = await service.sendAttachment(ctx, id, dto);
+    res.status(201).json(message);
+  });
+}
+
+/** Mesmos cabecalhos de `GET /media/:id` (CRMLAB-31): allow-list, nosniff, disposition. */
+export function getAttachment(service: InternalChatService): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const { id, attachmentId } = validated<{ id: string; attachmentId: string }>(req, 'params');
+    const file = await service.readAttachment(ctx, id, attachmentId);
+    const mimeType = servedMimeType(file.mimeType);
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader(
+      'Content-Disposition',
+      `${dispositionFor(mimeType)}; filename="${encodeURIComponent(file.fileName)}"`,
+    );
+    res.status(200).send(file.buffer);
   });
 }
 
@@ -148,6 +197,23 @@ export function internalChatModule(deps: ApiModuleDeps): ApiModule {
     validate(channelIdParamSchema, 'params'),
     validate(sendMessageSchema, 'body'),
     sendMessage(service),
+  );
+
+  router.post(
+    '/channels/:id/attachments',
+    requireAuth(),
+    denyPlatformOperator(),
+    validate(channelIdParamSchema, 'params'),
+    validate(createAttachmentSchema, 'body'),
+    sendAttachment(service),
+  );
+
+  router.get(
+    '/channels/:id/attachments/:attachmentId',
+    requireAuth(),
+    denyPlatformOperator(),
+    validate(attachmentParamSchema, 'params'),
+    getAttachment(service),
   );
 
   router.get('/users', requireAuth(), denyPlatformOperator(), listDirectory(service));

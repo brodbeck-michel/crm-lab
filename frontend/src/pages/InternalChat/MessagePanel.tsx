@@ -1,9 +1,16 @@
-import { useLayoutEffect, useRef } from 'react';
-import type { ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
+import type { DragEvent, ReactNode } from 'react';
 import type { Channel, InternalMessage, UserRole } from '@crm-lab/shared';
 import { Button } from '@/components/ui';
 import { EmptyState } from '@/components/shared';
-import { Composer } from '@/components/conversation';
+import {
+  AttachmentPreview,
+  Composer,
+  createAttachmentDraft,
+  dragHasFiles,
+  filesFromDataTransfer,
+} from '@/components/conversation';
+import type { AttachmentDraft } from '@/components/conversation';
 import { InternalMessageItem } from './InternalMessageItem';
 
 /**
@@ -24,6 +31,11 @@ export interface MessagePanelProps {
   /** Ainda há mensagens anteriores no servidor. */
   hasOlderMessages: boolean;
   onLoadOlder: () => void;
+  /**
+   * Arquivos da prévia, já sem os inválidos (CRMLAB-101, D-271). Sem handler,
+   * nem clipe, nem colar, nem soltar arquivo.
+   */
+  onSendAttachments?: (items: { file: File; caption: string }[]) => void | Promise<unknown>;
 }
 
 /** Chave do canal em que o sistema posta os pedidos (WORKFLOWS.md §3 e §6). */
@@ -45,8 +57,74 @@ export function MessagePanel({
   currentUserRole,
   hasOlderMessages,
   onLoadOlder,
+  onSendAttachments,
 }: MessagePanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const channelId = channel?.id ?? null;
+
+  // Prévia de anexos (D-271, mesmo componente do atendimento, D-232): presa ao
+  // canal em que abriu — trocar de canal descarta.
+  const [preview, setPreview] = useState<{ channelId: string; items: AttachmentDraft[] } | null>(
+    null,
+  );
+  const drafts = preview && preview.channelId === channelId ? preview.items : null;
+  const closePreview = (): void => setPreview(null);
+
+  function openPreview(files: File[]): void {
+    if (channelId === null || files.length === 0) return;
+    const added = files.map(createAttachmentDraft);
+    setPreview((current) => ({
+      channelId,
+      items: current && current.channelId === channelId ? [...current.items, ...added] : added,
+    }));
+  }
+
+  function updateDrafts(update: (items: AttachmentDraft[]) => AttachmentDraft[]): void {
+    setPreview((current) => (current ? { ...current, items: update(current.items) } : current));
+  }
+
+  function sendPreview(): void {
+    const valid = (drafts ?? []).filter((item) => item.error === null);
+    if (valid.length === 0 || !onSendAttachments) return;
+    void onSendAttachments(
+      valid.map((item) => ({ file: item.file, caption: item.caption.trim() })),
+    );
+    closePreview();
+  }
+
+  // Soltar arquivo (bônus do card): contador porque cada filho dispara enter/leave.
+  const dragDepth = useRef(0);
+  const [dragging, setDragging] = useState(false);
+  const acceptsFiles = Boolean(onSendAttachments);
+
+  function handleDragEnter(event: DragEvent<HTMLDivElement>): void {
+    if (!acceptsFiles || !dragHasFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    dragDepth.current += 1;
+    setDragging(true);
+  }
+
+  function handleDragOver(event: DragEvent<HTMLDivElement>): void {
+    if (!acceptsFiles || !dragHasFiles(event.dataTransfer)) return;
+    event.preventDefault();
+  }
+
+  function handleDragLeave(event: DragEvent<HTMLDivElement>): void {
+    if (!dragging) return;
+    event.preventDefault();
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragging(false);
+  }
+
+  function handleDrop(event: DragEvent<HTMLDivElement>): void {
+    dragDepth.current = 0;
+    setDragging(false);
+    if (!acceptsFiles) return;
+    const files = filesFromDataTransfer(event.dataTransfer);
+    if (files.length === 0) return;
+    event.preventDefault();
+    openPreview(files);
+  }
 
   /** Mensagem nova rola para o fim. */
   const lastId = messages.at(-1)?.id ?? null;
@@ -112,37 +190,77 @@ export function MessagePanel({
       </header>
 
       <div
-        ref={scrollRef}
-        data-testid="internal-message-scroll"
-        className="flex min-h-0 flex-1 flex-col gap-sm overflow-y-auto px-lg py-lg"
+        data-testid="internal-drop-area"
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className="relative flex min-h-0 flex-1 flex-col"
       >
-        {hasOlderMessages && (
-          <div className="flex flex-[0_0_auto] justify-center pb-sm">
-            <Button variant="secondary" size="sm" onClick={onLoadOlder}>
-              Carregar mensagens anteriores
-            </Button>
+        <div
+          ref={scrollRef}
+          data-testid="internal-message-scroll"
+          className="flex min-h-0 flex-1 flex-col gap-sm overflow-y-auto px-lg py-lg"
+        >
+          {hasOlderMessages && (
+            <div className="flex flex-[0_0_auto] justify-center pb-sm">
+              <Button variant="secondary" size="sm" onClick={onLoadOlder}>
+                Carregar mensagens anteriores
+              </Button>
+            </div>
+          )}
+
+          {messages.length === 0 ? (
+            <EmptyState
+              message="Nenhuma mensagem ainda"
+              hint="Escreva a primeira mensagem deste canal."
+            />
+          ) : (
+            messages.map((message) => (
+              <InternalMessageItem
+                key={message.id}
+                message={message}
+                currentUserId={currentUserId}
+                currentUserRole={currentUserRole}
+                isApprovalsChannel={isApprovalsChannel}
+              />
+            ))
+          )}
+        </div>
+
+        {dragging && !drafts && (
+          <div
+            data-testid="drop-zone"
+            className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-bg p-lg"
+          >
+            <span className="flex h-full w-full items-center justify-center rounded-md border-2 border-dashed border-accent font-body text-label font-semibold text-accent-800">
+              Solte o arquivo aqui
+            </span>
           </div>
         )}
 
-        {messages.length === 0 ? (
-          <EmptyState
-            message="Nenhuma mensagem ainda"
-            hint="Escreva a primeira mensagem deste canal."
+        {drafts && (
+          <AttachmentPreview
+            items={drafts}
+            onCaptionChange={(id, caption) =>
+              updateDrafts((items) =>
+                items.map((item) => (item.id === id ? { ...item, caption } : item)),
+              )
+            }
+            onRemove={(id) => updateDrafts((items) => items.filter((item) => item.id !== id))}
+            onAdd={openPreview}
+            onSend={sendPreview}
+            onClose={closePreview}
           />
-        ) : (
-          messages.map((message) => (
-            <InternalMessageItem
-              key={message.id}
-              message={message}
-              currentUserId={currentUserId}
-              currentUserRole={currentUserRole}
-              isApprovalsChannel={isApprovalsChannel}
-            />
-          ))
         )}
       </div>
 
-      <Composer onSend={onSend} sending={sending} placeholder="Escreva para a equipe" />
+      <Composer
+        onSend={onSend}
+        sending={sending}
+        placeholder="Escreva para a equipe"
+        {...(onSendAttachments ? { onPickFiles: openPreview } : {})}
+      />
     </div>
   );
 }

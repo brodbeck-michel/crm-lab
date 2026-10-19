@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-10-19 (CRMLAB-100 — botão "Enviar mensagem" no modal da proposta, branch `feature/CRMLAB-100-botao-enviar-mensagem`)
+**Última atualização:** 2026-10-19 (integração CRMLAB-100/101/102 — branch `integ/onda-100-102`)
 
 ---
 
@@ -3385,3 +3385,16 @@ Branch `feature/CRMLAB-100-botao-enviar-mensagem` (de `main` v1.36.1). Decisão 
 - **Fora do escopo:** "sem conversa, abrir pelo telefone" — sem conversa a proposta não tem telefone (D-270 item 2).
 - **Testes:** 4 novos em `ProposalModal.spec.tsx`; typecheck de todos os workspaces e suíte do front
   (1811/1812 na rodada cheia; o 1 que caiu, `NewConversation.spec.tsx`, passa 9/9 isolado, duas vezes).
+### 🚧 CRMLAB-101 — anexo de arquivo no chat interno (2026-10-19, aguardando validação)
+
+Branch `feature/CRMLAB-101-anexo-chat-interno` (de `main` v1.36.1). Decisão D-271, migração 055.
+
+- **Backend:** `POST /internal-chat/channels/:id/attachments` (base64, texto opcional, um anexo por
+  mensagem) e `GET /internal-chat/channels/:id/attachments/:attachmentId`; tabela
+  `internal_message_attachments` com RLS; mensagem, linha e arquivo em disco na mesma transação.
+  Mesmos limites do atendimento (`ALLOWED_MEDIA_MIME_TYPES`, 15 MiB); conteúdo divergente do tipo → 400.
+- **Acesso:** quem vê o canal anexa e baixa; DM alheia e outro tenant → 404. WS segue só com ids (D-271 item 6).
+- **Front:** clipe do `Composer` + `AttachmentPreview` do atendimento (colar/arrastar também);
+  imagem em miniatura com `ImageLightbox`; demais tipos em `DocumentCard`, baixando com o nome original.
+- **Testes:** 9 novos de back (`attachments.spec.ts`), isolamento de rotas 273/273 (inventário 108 → 110),
+  3 novos de front; typecheck de todos os workspaces verde. Suíte completa roda na integração com 100/102.

@@ -1,5 +1,5 @@
 import { Input } from '@/components/ui/Input';
-import { SearchInput } from '@/components/ui';
+import { SearchInput, Toggle } from '@/components/ui';
 import type { ListProposalsQuery } from '@crm-lab/shared';
 
 interface ProposalsFiltersProps {
@@ -46,6 +46,14 @@ export default function ProposalsFilters({ filters, onChange }: ProposalsFilters
           placeholder="ID do atendente"
           value={filters.createdBy || ''}
           onChange={(e) => onChange({ ...filters, createdBy: e.target.value })}
+        />
+      </div>
+      {/* CRMLAB-102/D-272: só os cartões com o selo "Lembrete" (vencido). */}
+      <div className="flex h-full items-center pb-xs">
+        <Toggle
+          label="Com lembrete"
+          checked={filters.reminder === 'due'}
+          onChange={(checked) => onChange({ ...filters, reminder: checked ? 'due' : undefined })}
         />
       </div>
     </div>

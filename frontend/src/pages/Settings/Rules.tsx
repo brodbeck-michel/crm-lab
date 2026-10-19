@@ -4,6 +4,7 @@ import {
   DEFAULT_DISCOUNT_LIMIT,
   STALE_NEW_BUDGET_MINUTES_MAX,
   STALE_NEW_BUDGET_MINUTES_MIN,
+  staleReminderVsLossError,
   type DelayRule,
   type FunnelAutomationRules,
   type FunnelRules,
@@ -56,9 +57,13 @@ const ROLE_LABELS: Record<RuleActorRole, string> = {
   manager: 'Gestor',
 };
 
-type DelayKey = 'sentToFollowUp' | 'negotiationToFollowUp' | 'followUpToLost';
+type DelayKey =
+  | 'sentToFollowUp'
+  | 'negotiationToFollowUp'
+  | 'followUpToLost'
+  | 'staleProposalReminder';
 
-const DELAY_RULES: ReadonlyArray<{ key: DelayKey; label: string }> = [
+const DELAY_RULES: ReadonlyArray<{ key: Exclude<DelayKey, 'staleProposalReminder'>; label: string }> = [
   { key: 'sentToFollowUp', label: 'Orçamento enviado há X dias → Follow-up' },
   { key: 'negotiationToFollowUp', label: 'Negociação sem pagamento há Y dias → Follow-up' },
   { key: 'followUpToLost', label: 'Follow-up há Z dias → Perdido (motivo "Silêncio")' },
@@ -218,11 +223,14 @@ export default function Rules() {
   ) => set((next) => void (next.automation[key] = value));
 
   const noOrigin = !draft.origin.fromBitlab && !draft.origin.manualInCrm;
+  // CRMLAB-102/D-272 item 8: a mesma função do servidor, com o teto de dias na mensagem.
+  const reminderVsLoss = staleReminderVsLossError(draft.automation);
   const blocked =
     noOrigin ||
     sendMessageBlocked(draft.sendMessage) ||
     reengagementBlocked(draft.reengagement) ||
-    responseAlertBlocked(draft.responseAlert);
+    responseAlertBlocked(draft.responseAlert) ||
+    reminderVsLoss !== null;
 
   function handleSave(event: React.FormEvent) {
     event.preventDefault();
@@ -240,16 +248,16 @@ export default function Rules() {
     });
   }
 
-  const delayInput = (key: DelayKey, rule: DelayRule) => (
+  const delayInput = (key: DelayKey, rule: DelayRule, localError?: string) => (
     <div className="w-32">
       <Input
         type="number"
-        aria-label="Dias"
+        aria-label={key === 'staleProposalReminder' ? 'Dias do lembrete' : 'Dias'}
         value={String(rule.days)}
         min={1}
         max={365}
         disabled={!canEdit || !rule.enabled}
-        error={fieldErrors[`automation.${key}.days`]}
+        error={localError ?? fieldErrors[`automation.${key}.days`]}
         onChange={(e) => {
           const parsed = Number.parseInt(e.target.value, 10);
           const days = Number.isFinite(parsed) ? parsed : 0;
@@ -343,6 +351,25 @@ export default function Rules() {
                   set((next) => void (next.automation.staleNewBudgetAlert.minutes = minutes))
                 }
               />
+            </div>
+            {/* CRMLAB-102/D-272: conta desde a criação da proposta, uma vez por proposta. */}
+            <div className="flex flex-wrap items-center gap-md">
+              <Toggle
+                label="Lembrete de contato para proposta aberta há N dias desde a criação"
+                checked={draft.automation.staleProposalReminder.enabled}
+                disabled={!canEdit}
+                onChange={(enabled) =>
+                  setAutomation('staleProposalReminder', {
+                    ...draft.automation.staleProposalReminder,
+                    enabled,
+                  })
+                }
+              />
+              {delayInput(
+                'staleProposalReminder',
+                draft.automation.staleProposalReminder,
+                reminderVsLoss ?? undefined,
+              )}
             </div>
             <div className="flex flex-col gap-xs">
               <span className="font-body text-caption font-semibold text-neutral-700">

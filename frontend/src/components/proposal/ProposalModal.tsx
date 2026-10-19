@@ -27,6 +27,7 @@ import LostReasonForm from './LostReasonForm';
 import LisReferenceSection from './LisReferenceSection';
 import ResponsibleField from './ResponsibleField';
 import SendProposalPanel, { type SendPanelMode } from './SendProposalPanel';
+import ReminderPanel from './ReminderPanel';
 
 interface ProposalModalProps {
   proposalId: string;
@@ -320,6 +321,21 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
 
           {proposal.approvalStatus === 'pending' && (
             <ApprovalAlert />
+          )}
+
+          {/* CRMLAB-102/D-272: lembrete de contato — só aberta e para quem cuida do cartão. */}
+          {!closed && !isEditing && (actor.isOwner || supervisor) && (
+            <ReminderPanel
+              proposal={proposal}
+              requireLossReason={funnelRules.manualMoves.requireLossReason}
+            />
+          )}
+          {closed && (proposal.reminders ?? []).length > 0 && (
+            <ReminderPanel
+              proposal={proposal}
+              requireLossReason={funnelRules.manualMoves.requireLossReason}
+              readOnly
+            />
           )}
 
           <StageHistory history={proposal.history} />

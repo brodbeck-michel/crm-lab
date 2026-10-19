@@ -194,6 +194,15 @@ export function applyWsEvent(
       return;
     }
 
+    // CRMLAB-102/D-272: lembrete de contato venceu — uma vez por lembrete, só para quem cuida.
+    case 'proposal.reminder_due': {
+      const data = event.data as WsEventPayloads['proposal.reminder_due'];
+      toast?.('Um lembrete de contato de proposta venceu hoje.', 'attention');
+      void queryClient.invalidateQueries({ queryKey: queryScopes.proposals });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.proposal(data.proposalId) });
+      return;
+    }
+
     case 'internal_chat.new_message': {
       const data = event.data as { channelId: string };
       void queryClient.invalidateQueries({ queryKey: queryKeys.internalChannels() });

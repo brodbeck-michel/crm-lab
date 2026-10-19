@@ -3385,6 +3385,7 @@ Branch `feature/CRMLAB-100-botao-enviar-mensagem` (de `main` v1.36.1). Decisão 
 - **Fora do escopo:** "sem conversa, abrir pelo telefone" — sem conversa a proposta não tem telefone (D-270 item 2).
 - **Testes:** 4 novos em `ProposalModal.spec.tsx`; typecheck de todos os workspaces e suíte do front
   (1811/1812 na rodada cheia; o 1 que caiu, `NewConversation.spec.tsx`, passa 9/9 isolado, duas vezes).
+
 ### 🚧 CRMLAB-101 — anexo de arquivo no chat interno (2026-10-19, aguardando validação)
 
 Branch `feature/CRMLAB-101-anexo-chat-interno` (de `main` v1.36.1). Decisão D-271, migração 055.

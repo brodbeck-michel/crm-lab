@@ -5594,6 +5594,7 @@ estágios e já leva mensagem pronta. O item "sem conversa, abrir pelo telefone"
 porque, sem conversa, a proposta não tem telefone.
 **Impacto:** só frontend — `proposal/ProposalModal.tsx` (+ spec). PAGES §6. Sem endpoint, tipo ou
 migração.
+
 ### D-271: Anexo de arquivo no chat interno — tabela própria, um anexo por mensagem, mesmas regras de mídia do atendimento (CRMLAB-101)
 **Decisão:**
 1. **Rotas novas:** `POST /internal-chat/channels/:id/attachments` (base64 em JSON, como

@@ -18,6 +18,7 @@
  * varrida pelos tres invariantes de uma vez.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { saoPauloToday } from '@crm-lab/shared';
 import type {
   ApiErrorBody,
   Channel,
@@ -437,6 +438,25 @@ const LAB_ROUTES: readonly LabRoute[] = [
     actor: 'admin',
     addressable: true,
     ownStatus: 200,
+  },
+  {
+    name: 'PUT /proposals/:id/reminder',
+    method: 'put',
+    path: (l) => `/api/v1/proposals/${l.openProposal.id}/reminder`,
+    body: () => ({ dueDate: saoPauloToday(new Date()), note: 'sonda' }),
+    actor: 'admin',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    // Sem lembrete aberto no proprio tenant: `CONFLICT no_open_reminder` (D-272).
+    name: 'POST /proposals/:id/reminder/resolve',
+    method: 'post',
+    path: (l) => `/api/v1/proposals/${l.openProposal.id}/reminder/resolve`,
+    body: () => ({ outcome: 'won' }),
+    actor: 'admin',
+    addressable: true,
+    ownStatus: 409,
   },
   {
     // Aprovar/rejeitar exige `approvalStatus: 'pending'` e um decisor que nao
@@ -1324,7 +1344,9 @@ describe('inventario de rotas de laboratorio', () => {
     // `PATCH|DELETE /doctors/:id/interactions/:interactionId`.
     // CRMLAB-93/D-263 soma 2: `POST /conversations/:id/participants` e
     // `DELETE /conversations/:id/participants/:userId`.
-    expect(LAB_ROUTES).toHaveLength(108);
+    // CRMLAB-102/D-272 soma 2: `PUT /proposals/:id/reminder` e
+    // `POST /proposals/:id/reminder/resolve`.
+    expect(LAB_ROUTES).toHaveLength(110);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

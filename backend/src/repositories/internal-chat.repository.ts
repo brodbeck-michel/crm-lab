@@ -5,7 +5,13 @@
  * (`db.withTenant`) e do service. Chat interno e dado de laboratorio — nenhum
  * caminho aqui usa `withoutTenant()`.
  */
-import type { Channel, ChatDirectoryUser, InternalMessage, UserRole } from '@crm-lab/shared';
+import type {
+  Channel,
+  ChatDirectoryUser,
+  InternalMessage,
+  InternalMessageAttachment,
+  UserRole,
+} from '@crm-lab/shared';
 import type { DbTx } from '../db/types.js';
 import { toIso, toIsoOrNull } from './row-mappers.js';
 
@@ -40,6 +46,11 @@ interface MessageRow {
   attached_proposal_id: string | null;
   is_system: boolean;
   created_at: unknown;
+  /** LEFT JOIN em `internal_message_attachments` (CRMLAB-101) — nulos sem anexo. */
+  attachment_id: string | null;
+  attachment_file_name: string | null;
+  attachment_mime_type: string | null;
+  attachment_byte_size: number | string | null;
 }
 
 /**
@@ -103,9 +114,29 @@ export function mapMessage(row: MessageRow): InternalMessage {
     senderName: row.is_system ? 'Sistema' : (row.sender_name ?? 'Usuario removido'),
     content: row.content,
     attachedProposalId: row.attached_proposal_id,
+    attachment: row.attachment_id
+      ? attachmentOf(row.channel_id, {
+          id: row.attachment_id,
+          fileName: row.attachment_file_name ?? '',
+          mimeType: row.attachment_mime_type ?? '',
+          byteSize: Number(row.attachment_byte_size ?? 0),
+        })
+      : null,
     isSystem: row.is_system,
     createdAt: toIso(row.created_at),
   };
+}
+
+/** URL de download (D-271) — derivada, nunca gravada. */
+export function attachmentUrl(channelId: string, attachmentId: string): string {
+  return `/api/v1/internal-chat/channels/${channelId}/attachments/${attachmentId}`;
+}
+
+function attachmentOf(
+  channelId: string,
+  data: Omit<InternalMessageAttachment, 'url'>,
+): InternalMessageAttachment {
+  return { ...data, url: attachmentUrl(channelId, data.id) };
 }
 
 /**
@@ -348,9 +379,12 @@ export async function findMessageById(tx: DbTx, id: string): Promise<InternalMes
 
 const SELECT_MESSAGE = `
   SELECT m.id, m.channel_id, m.sender_id, u.name AS sender_name, m.content,
-         m.attached_proposal_id, m.is_system, m.created_at
+         m.attached_proposal_id, m.is_system, m.created_at,
+         a.id AS attachment_id, a.file_name AS attachment_file_name,
+         a.mime_type AS attachment_mime_type, a.byte_size AS attachment_byte_size
     FROM internal_messages m
-    LEFT JOIN users u ON u.id = m.sender_id`;
+    LEFT JOIN users u ON u.id = m.sender_id
+    LEFT JOIN internal_message_attachments a ON a.message_id = m.id`;
 
 export interface MessagePage {
   rows: InternalMessage[];
@@ -392,4 +426,44 @@ export async function listMessages(
     [channelId, limit, offset],
   );
   return { rows: result.rows.map(mapMessage), total };
+}
+
+/**
+ * Linha do anexo (CRMLAB-101, D-271). Chamado na MESMA transacao que inseriu a
+ * mensagem; o `id` devolvido e o nome do arquivo em disco.
+ */
+export async function insertAttachment(
+  tx: DbTx,
+  input: { tenantId: string; messageId: string; mimeType: string; fileName: string; byteSize: number },
+): Promise<string> {
+  const inserted = await tx.query<{ id: string }>(
+    `INSERT INTO internal_message_attachments (tenant_id, message_id, mime_type, file_name, byte_size)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING id`,
+    [input.tenantId, input.messageId, input.mimeType, input.fileName, input.byteSize],
+  );
+  const id = inserted.rows[0]?.id;
+  if (!id) throw new Error('INSERT em internal_message_attachments nao retornou linha');
+  return id;
+}
+
+/**
+ * Anexo de uma mensagem DESTE canal (D-271). Anexo de outro canal devolve
+ * `null` — quem chama ja conferiu o acesso ao canal, e este filtro impede
+ * baixar o anexo de uma DM alheia trocando so o `:id` da URL.
+ */
+export async function findAttachment(
+  tx: DbTx,
+  channelId: string,
+  attachmentId: string,
+): Promise<{ id: string; mimeType: string; fileName: string } | null> {
+  const result = await tx.query<{ id: string; mime_type: string; file_name: string }>(
+    `SELECT a.id, a.mime_type, a.file_name
+       FROM internal_message_attachments a
+       JOIN internal_messages m ON m.id = a.message_id
+      WHERE a.id = $1 AND m.channel_id = $2`,
+    [attachmentId, channelId],
+  );
+  const row = result.rows[0];
+  return row ? { id: row.id, mimeType: row.mime_type, fileName: row.file_name } : null;
 }

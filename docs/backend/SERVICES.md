@@ -1911,7 +1911,7 @@ Dono de `proposal_reminders` (SCHEMA §41).
   'ganho'|'perdido', reasonLost, { reminderOutcome })` — o lembrete fecha **dentro** da transação
   do estágio (ver `recordTransitionInTx` abaixo) com o desfecho e quem resolveu, e o audit
   `resolve_proposal_reminder` sai ali. `rescheduled` → numa transação, fecha o aberto
-  (`outcome = 'rescheduled'`, `outcome_note`) e cria o novo (`manual`, `note` = observação);
+  (`outcome = 'rescheduled'`, `outcome_note`) e cria o novo (`manual`, `note` = observação, opcional);
   audit `resolve_proposal_reminder` + `create_proposal_reminder`. Devolve `ProposalDetail`.
 - **Encerramento junto com a proposta** (`closeOpenReminderInTx`, chamado por
   `recordTransitionInTx` do `ProposalService` quando o destino é terminal): fecha o aberto com

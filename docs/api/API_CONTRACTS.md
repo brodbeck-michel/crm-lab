@@ -2618,14 +2618,15 @@ Desfecho obrigatório do lembrete aberto.
 ```json
 { "outcome": "won" }
 { "outcome": "lost", "reasonLost": "preco" }
-{ "outcome": "rescheduled", "dueDate": "2026-11-05", "note": "pediu retorno em novembro" }
+{ "outcome": "rescheduled", "dueDate": "2026-11-05", "note": "pediu retorno em novembro" }  // note opcional
 ```
 - `won` / `lost` passam pelo **mesmo** `updateStatus` de `PATCH /proposals/:id/status`: matriz
   vigente, travas das Regras, motivo (`reasonLost` exigido se "Exigir motivo" estiver ligado),
   aprovação pendente, histórico, mensagem de sistema, audit `update_proposal_status`, WS. Os mesmos
   erros (`INVALID_STATUS_TRANSITION`, `FORBIDDEN`, `LOSS_REASON_REQUIRED`, …). O lembrete fecha na
   mesma transação com `outcome` `won`/`lost`.
-- `rescheduled`: `dueDate` **futura** (> hoje, até hoje + 365) e `note` obrigatória (1..500). O
+- `rescheduled`: `dueDate` **futura** (> hoje, até hoje + 365), obrigatória; `note` opcional
+  (até 500 depois do `trim`; vazio = `null`). O
   lembrete fecha com `outcome: "rescheduled"` e nasce outro aberto nessa data.
 
 **Response (200):** o `ProposalDetail` atualizado. Audit `resolve_proposal_reminder`

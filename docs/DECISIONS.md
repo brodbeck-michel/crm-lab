@@ -5617,10 +5617,11 @@ migração 056), que só se fecha com um desfecho.
      caminho paralelo: o que a tela recusaria no "Ganho" comum, o lembrete também recusa.
    - `lost` → **Perdido** pelo mesmo `updateStatus`, com `reasonLost` (exigido se "Exigir motivo
      ao marcar Perdido" estiver ligado; `LOSS_REASON_REQUIRED` senão).
-   - `rescheduled` → **Reagendar contato**: nova data **futura** (> hoje, até hoje + 365) e
-     **observação obrigatória** (1..500) — o desfecho tem que dizer o que houve no contato. O
-     lembrete atual fecha com `outcome = 'rescheduled'` e `outcome_note` = observação, e nasce
-     outro aberto (`origin = 'manual'`) nessa data com a mesma observação como `note`.
+   - `rescheduled` → **Reagendar contato**: nova data **futura** (> hoje, até hoje + 365),
+     obrigatória, e **observação opcional** (até 500; decisão do usuário em 19/10/2026 — só a
+     data é obrigatória). O lembrete atual fecha com `outcome = 'rescheduled'` e `outcome_note`
+     = observação (ou `NULL`), e nasce outro aberto (`origin = 'manual'`) nessa data com a mesma
+     observação como `note`.
    Sem lembrete aberto → `409 CONFLICT` (`details.reason: "no_open_reminder"`).
 7. **Encerramento automático:** toda transição para `ganho`/`perdido` passa por
    `recordTransitionInTx` (manual, motor de tempo, régua de fatos do LIS). Ali, na MESMA
@@ -5631,8 +5632,10 @@ migração 056), que só se fecha com um desfecho.
    o automático não volta (item 2: uma vez por proposta).
 8. **Convivência com "Follow-up há N dias → Perdido":** com as duas ligadas, os dias do
    lembrete têm de ser **menores** que os da perda — senão `VALIDATION_ERROR` com
-   `details.fields["automation.staleProposalReminder.days"]`. Mesma função no back e na tela
-   (`staleReminderVsLossError`). Validado sobre o objeto **depois do merge**, em qualquer
+   `details.fields["automation.staleProposalReminder.days"]` com o teto explícito: "Use até
+   {perda − 1} dias: a perda automática está em {perda}" (ex.: o Santé tem a perda ligada em 15
+   dias em prod, conferido em 19/10/2026 → "Use até 14 dias: a perda automática está em 15").
+   Mesma função no back e na tela (`staleReminderVsLossError`). Validado sobre o objeto **depois do merge**, em qualquer
    `PATCH`: um laboratório com a perda ligada em ≤ 15 dias que ligar o lembrete vê o erro no
    campo e ajusta. Com uma das duas desligada, nada é conferido. Os relógios são diferentes
    (criação × entrada no follow-up): a regra é de bom senso — lembrar antes de perder —, não

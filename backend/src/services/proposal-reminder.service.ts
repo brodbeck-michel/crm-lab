@@ -167,8 +167,7 @@ export class ProposalReminderService {
       const dateError = dueDateError(dto.dueDate, today, false);
       if (dateError !== null) fields.dueDate = dateError;
       rescheduleNote = normalizeNote(dto.note);
-      if (rescheduleNote === null) fields.note = 'Conte o que aconteceu no contato';
-      else if (noteTooLong(rescheduleNote)) {
+      if (noteTooLong(rescheduleNote)) {
         fields.note = `A observação deve ter até ${PROPOSAL_REMINDER_NOTE_MAX} caracteres`;
       }
     }

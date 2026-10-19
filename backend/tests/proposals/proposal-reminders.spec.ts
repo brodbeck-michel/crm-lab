@@ -215,8 +215,8 @@ describe('lembrete automatico (motor de tempo)', () => {
     await h.reminders.schedule(ctx(attendantA), future, { dueDate: addDaysToIsoDate(today(), 2) });
     const result = await timer.runForTenant(tenantA.id);
     expect(result.reminded).toBe(1);
-    expect(ws.eventsFor(tenantA.id, 'proposal.reminder_due').map((e) => e.data.proposalId)).toEqual([
-      due,
+    expect(ws.eventsFor(tenantA.id, 'proposal.reminder_due')).toEqual([
+      expect.objectContaining({ data: expect.objectContaining({ proposalId: due }) }),
     ]);
   });
 
@@ -368,7 +368,7 @@ describe('desfecho', () => {
     expect(detail.status).toBe('perdido');
   });
 
-  it('Reagendar: data futura e observacao obrigatorias; fecha o atual e abre outro', async () => {
+  it('Reagendar: so a data futura e obrigatoria; fecha o atual e abre outro', async () => {
     const id = await withReminder('follow_up');
     await expect(
       h.reminders.resolve(ctx(attendantA), id, { outcome: 'rescheduled', dueDate: today(), note: 'x' }),
@@ -377,7 +377,7 @@ describe('desfecho', () => {
       h.reminders.resolve(ctx(attendantA), id, {
         outcome: 'rescheduled',
         dueDate: addDaysToIsoDate(today(), 7),
-        note: '   ',
+        note: 'x'.repeat(501),
       }),
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR', details: { fields: { note: expect.any(String) } } });
 
@@ -482,5 +482,44 @@ describe('Regras: lembrete x perda por silencio', () => {
       automation: { staleProposalReminder: { enabled: true, days: 30 } },
     });
     expect(saved.automation.staleProposalReminder.days).toBe(30);
+  });
+});
+
+describe('reagendar sem observacao', () => {
+  it('observacao e opcional: fecha como rescheduled sem nota e abre o novo sem nota', async () => {
+    const id = await proposal('follow_up');
+    await h.reminders.schedule(ctx(attendantA), id, { dueDate: today(), note: 'antiga' });
+    const next = addDaysToIsoDate(today(), 3);
+    const detail = await h.reminders.resolve(ctx(attendantA), id, {
+      outcome: 'rescheduled',
+      dueDate: next,
+      note: '   ',
+    });
+    expect(detail.reminder).toMatchObject({ dueDate: next, note: null });
+    const rows = await remindersOf(id);
+    expect(rows[0]).toMatchObject({ outcome: 'rescheduled', outcome_note: null });
+    const semNota = await h.reminders.resolve(ctx(attendantA), id, {
+      outcome: 'rescheduled',
+      dueDate: addDaysToIsoDate(today(), 4),
+    });
+    expect(semNota.reminder?.note).toBeNull();
+  });
+
+  it('mensagem da validacao diz o teto de dias', async () => {
+    const service = createFunnelRulesService({ db, audit: createAuditService(db) });
+    await expect(
+      service.update(ctx(adminA), {
+        automation: {
+          staleProposalReminder: { enabled: true, days: 20 },
+          followUpToLost: { enabled: true, days: 15 },
+        },
+      }),
+    ).rejects.toMatchObject({
+      details: {
+        fields: {
+          'automation.staleProposalReminder.days': 'Use até 14 dias: a perda automática está em 15',
+        },
+      },
+    });
   });
 });

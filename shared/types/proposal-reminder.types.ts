@@ -81,7 +81,8 @@ export interface ScheduleProposalReminderRequest {
 export type ResolveProposalReminderRequest =
   | { outcome: 'won' }
   | { outcome: 'lost'; reasonLost?: LossReason }
-  | { outcome: 'rescheduled'; dueDate: IsoDate; note: string };
+  /** Só a data é obrigatória; `note` vazia/`null` = sem observação (D-272 item 6). */
+  | { outcome: 'rescheduled'; dueDate: IsoDate; note?: string | null };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Brasília = UTC−3. */

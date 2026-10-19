@@ -539,7 +539,8 @@ export function staleReminderVsLossError(
   const reminder = automation.staleProposalReminder;
   const loss = automation.followUpToLost;
   if (!reminder.enabled || !loss.enabled) return null;
-  return reminder.days < loss.days
-    ? null
-    : `Use menos dias que a perda por silêncio (${loss.days} dias)`;
+  if (reminder.days < loss.days) return null;
+  return loss.days > 1
+    ? `Use até ${loss.days - 1} dias: a perda automática está em ${loss.days}`
+    : 'A perda automática está em 1 dia: aumente o prazo dela para usar o lembrete';
 }

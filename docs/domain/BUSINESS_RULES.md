@@ -215,7 +215,7 @@ regra "Lembrete de proposta parada há N dias" (padrão **desligada**, 15 dias),
 observação opcional — com um aberto, reagenda esse). Vencido (dia ≤ hoje, Brasília) mostra o
 selo "Lembrete", entra no filtro "Com lembrete" e avisa a responsável uma vez. Só fecha com
 **desfecho**: Ganho ou Perdido (o fluxo de estágio de sempre, com as travas e o motivo das
-Regras) ou Reagendar contato (data futura + observação obrigatórias). Se a proposta fechar por
+Regras) ou Reagendar contato (data futura obrigatória, observação opcional). Se a proposta fechar por
 qualquer outro caminho, o lembrete se encerra sozinho como **automático**. Com a perda por
 silêncio ligada, os dias do lembrete têm de ser menores que os da perda. Cria e resolve: a
 responsável, gestor ou admin. Tudo auditado.

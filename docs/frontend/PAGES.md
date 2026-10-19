@@ -560,8 +560,8 @@ nunca "sem permissão" (não vazar existência).
   a observação, a origem ("automático" quando veio da regra) e o chip "Vencido" quando vence;
   [Reagendar] (o mesmo formulário, troca o dia) e, vencido ou não, [Registrar desfecho], que abre
   três opções: **Ganho** (confirma e chama o desfecho `won`), **Perdido** (o `LostReasonForm` de
-  sempre, com a regra "Exigir motivo") e **Reagendar contato** (data futura + observação
-  obrigatórias). Erro do servidor aparece no próprio painel. Os lembretes já fechados aparecem
+  sempre, com a regra "Exigir motivo") e **Reagendar contato** (data futura obrigatória,
+  observação opcional). Erro do servidor aparece no próprio painel. Os lembretes já fechados aparecem
   numa lista curta ("Ganho", "Perdido", "Reagendado", "Encerrado automaticamente", com quem e
   quando). O botão "Enviar mensagem" do cabeçalho do modal (CRMLAB-100) é o atalho para falar
   com o paciente — o painel não mexe no cabeçalho.
@@ -1387,7 +1387,7 @@ seu próprio [Salvar] (endpoint e permissão diferentes).
    Follow-up; Follow-up há **Z dias** → Perdido (motivo "Silêncio"); Alerta de "Novo orçamento"
    parado há **N minutos** (`Input` "Minutos", 5..43200, com a dica "= N h" — D-267); Lembrete
    de proposta parada há **N dias** desde a criação (CRMLAB-102, D-272, padrão desligado, 15),
-   com o erro "Use menos dias que a perda por silêncio" quando as duas estão ligadas e o lembrete
+   com o erro "Use até {N − 1} dias: a perda automática está em {N}" quando as duas estão ligadas e o lembrete
    não é menor (bloqueia [Salvar regras]; o servidor também recusa). Mais o `SegmentedControl` "Contar em dias corridos | dias úteis". Nota
    no cartão (desde o CRMLAB-59, D-205): "Os prazos contam desde que o cartão entrou no estágio e
    são conferidos a cada poucos minutos. Dias úteis: segunda a sexta, sem descontar feriados."

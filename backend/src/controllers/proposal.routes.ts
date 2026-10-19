@@ -176,7 +176,7 @@ export const resolveReminderSchema = z.discriminatedUnion('outcome', [
     .object({
       outcome: z.literal('rescheduled'),
       dueDate: z.string().max(20),
-      note: z.string().max(2000),
+      note: z.string().max(2000).nullable().optional(),
     })
     .strict(),
 ]);
@@ -407,7 +407,9 @@ function toResolveRequest(dto: ResolveReminderBody): ResolveProposalReminderRequ
         ? { outcome: 'lost', reasonLost: dto.reasonLost as LossReason }
         : { outcome: 'lost' };
     case 'rescheduled':
-      return { outcome: 'rescheduled', dueDate: dto.dueDate, note: dto.note };
+      return dto.note !== undefined
+        ? { outcome: 'rescheduled', dueDate: dto.dueDate, note: dto.note }
+        : { outcome: 'rescheduled', dueDate: dto.dueDate };
   }
 }
 

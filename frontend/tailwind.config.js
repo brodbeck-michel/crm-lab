@@ -47,6 +47,13 @@ export default {
             },
           ]),
         ),
+        // Perigo genérico (CRMLAB-107, D-274): `bg-danger-soft`, `text-danger-ink`…
+        danger: {
+          DEFAULT: 'var(--color-danger)',
+          soft: 'var(--color-danger-soft)',
+          'soft-hover': 'var(--color-danger-soft-hover)',
+          ink: 'var(--color-danger-ink)',
+        },
         // Estágios do pipeline (CRMLAB-91, D-260): `bg-stage-ganho-tint`, `text-stage-ganho-ink`…
         'stage-novo': {
           DEFAULT: 'var(--color-stage-novo)',

@@ -5730,3 +5730,22 @@ fique aberto numa proposta fechada.
 `funnel-rules.service.ts`, `proposal.routes.ts`; frontend `ProposalCard`, `ProposalModal`,
 `ReminderPanel` (novo), `ProposalsFilters`, `Settings/Rules.tsx`, `api/ws.ts`. API_CONTRACTS
 §3/§6c, FRONTEND_BACKEND (WS), SCHEMA §42, SERVICES §34, PAGES §5/§6/§21, BUSINESS_RULES §3.
+
+### D-274: Token genérico de perigo e botão "Encerrar" com fundo vermelho suave (CRMLAB-107)
+**Decisão:** o botão "Encerrar" do cabeçalho da conversa no Atendimento passa a ter fundo vermelho
+fraquinho, para se diferenciar dos botões vizinhos.
+1. **Token genérico:** `--color-danger` (`#b23a31`, literal, igual para todo tenant) com
+   `-soft` (10% com branco), `-soft-hover` (18%) e `-ink` (80% com `#1a1a1a`; 6,6:1 sobre o
+   `soft`, 5,8:1 sobre o hover). Exposto no Tailwind como `danger.*`. Vermelho fixo porque o
+   acento do tema pode ser vermelho (mesmo motivo de D-254/D-260).
+2. **Agenda:** `--color-agenda-danger` passa a ser `var(--color-danger)` — mesmo valor, sem
+   mudança visual; o vermelho de perigo fica num lugar só.
+3. **Variante nova `dangerSoft` no `Button`**, usada só no "Encerrar". A `destructive`
+   (fantasma accent-700) **não muda**: os demais botões de remoção continuam como estão.
+4. Sem tema escuro no produto, então sem variação para ele.
+**Motivo:** "Encerrar" tira a conversa da fila e ficava com o mesmo peso visual de "Novo
+Orçamento"/painel lateral; um tom suave destaca sem parecer alerta.
+**Impacto:** só frontend — `styles/tokens.css`, `tailwind.config.js`, `ui/Button.tsx` (+ spec),
+`pages/Attendance/ConversationPanel.tsx` (+ spec). DESIGN_TOKENS (Perigo genérico, Botões),
+COMPONENTS (Button).
+

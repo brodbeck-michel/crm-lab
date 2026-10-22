@@ -61,6 +61,14 @@ describe('Button', () => {
     expect(button).toHaveClass('bg-transparent');
   });
 
+  it('dangerSoft tem fundo vermelho suave e texto vermelho escuro (CRMLAB-107)', () => {
+    render(<Button variant="dangerSoft">Encerrar</Button>);
+    const button = screen.getByRole('button');
+    expect(button).toHaveAttribute('data-variant', 'dangerSoft');
+    expect(button).toHaveClass('bg-danger-soft', 'text-danger-ink', 'hover:bg-danger-soft-hover');
+    expect(button).not.toHaveClass('bg-transparent');
+  });
+
   it('é sempre pílula e tem 36px de altura mínima em md', () => {
     render(<Button>Ok</Button>);
     const button = screen.getByRole('button');

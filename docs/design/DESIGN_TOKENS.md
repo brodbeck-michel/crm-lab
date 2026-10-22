@@ -426,6 +426,22 @@ espaçamento — a escala não as cobre.
 
 ---
 
+### Perigo genérico (`--color-danger*`, CRMLAB-107, D-274)
+
+Vermelho **literal**, igual para todo tenant: sinaliza ação que encerra ou descarta, e não pode
+depender do acento do tema (um tema de acento vermelho não distinguiria). É o mesmo matiz do
+vermelho da agenda — `--color-agenda-danger` agora é `var(--color-danger)`, sem mudança visual.
+
+| Token | Valor | Uso |
+|---|---|---|
+| `--color-danger` | `#b23a31` | Vermelho cheio (6,0:1 no branco) |
+| `--color-danger-soft` | `mix(danger 10%, white)` | Fundo suave do botão `dangerSoft` |
+| `--color-danger-soft-hover` | `mix(danger 18%, white)` | Hover/pressionado do fundo suave |
+| `--color-danger-ink` | `mix(danger 80%, #1a1a1a)` | Texto sobre `soft` (6,6:1) e `soft-hover` (5,8:1) |
+
+Tailwind: `danger`, `danger-soft`, `danger-soft-hover`, `danger-ink` (`bg-danger-soft`,
+`text-danger-ink`…). O produto não tem tema escuro, então não há variação.
+
 ## Componentes
 
 ### Botões
@@ -490,6 +506,20 @@ button.destructive {
 
 button.destructive:hover {
   background: var(--color-accent-100);
+}
+
+/* Perigo suave (CRMLAB-107, D-274) — só o "Encerrar" do atendimento */
+button.dangerSoft {
+  background: var(--color-danger-soft);
+  color: var(--color-danger-ink);
+  border: none;
+  border-radius: 999px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button.dangerSoft:hover {
+  background: var(--color-danger-soft-hover);
 }
 ```
 

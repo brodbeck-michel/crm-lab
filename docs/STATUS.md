@@ -3422,3 +3422,14 @@ Branch `feature/CRMLAB-102-lembrete-proposta-parada` (de `main` v1.36.1). Decis�
   `ProposalModal` (+3), `Proposals` (+1), `Rules` (+2), `ws` (+1).
 - **Pendente:** validação na hml. Atalho "Enviar mensagem" é o botão do cabeçalho do CRMLAB-100 (outra
   branch). No Santé a perda está ligada em 15 dias: ao ligar o lembrete, usar até 14.
+
+### 🚧 CRMLAB-107 — botão "Encerrar" com fundo vermelho suave (2026-10-22, aguardando validação)
+
+Branch `feature/CRMLAB-107-botao-encerrar-vermelho-suave` (de `main` v1.37.0). Decisão D-274, só frontend.
+
+- **Tokens:** `--color-danger` + `-soft`/`-soft-hover`/`-ink` (Tailwind `danger.*`); `--color-agenda-danger`
+  passa a derivar dele, mesmo valor.
+- **Button:** variante nova `dangerSoft`, usada só no "Encerrar" do `ConversationPanel`; `destructive` intacta.
+- **Testes:** `Button.spec.tsx` (+1), `ConversationPanel.spec.tsx` (+1); guardas de token
+  (`tailwind-theme-classes`, `no-hardcoded-tokens`) e specs da agenda verdes; typecheck do front e eslint verdes.
+

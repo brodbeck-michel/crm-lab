@@ -3453,3 +3453,15 @@ Branch `feature/CRMLAB-110-busca-lista-usuarios` (de `main` v1.37.0). Ajuste de 
   nome; o próprio usuário já vem excluído pelo backend), digitar filtra, fecha com Esc/blur; altura
   máxima com rolagem. `SearchInput` não mudou (foco/blur escutados no contêiner).
 - **Testes:** +3 em `InternalChat.spec.tsx` (foco lista e digitar filtra; clique abre a DM; Esc/blur fecham).
+
+### 🚧 CRMLAB-109 — áudio e "fechar" no chat interno (2026-10-22, aguardando validação)
+
+Branch `feature/CRMLAB-109-chat-interno-audio-fechar` (de `main` v1.37.0). Sem decisão nova, sem migração.
+
+- **Front:** microfone do `Composer` ligado no chat interno (envio pelo mesmo `POST .../attachments`);
+  anexo de áudio renderiza `AudioMessage`; × "Fechar conversa" no cabeçalho limpa a seleção e mostra
+  o estado vazio — a auto-seleção do primeiro canal ficou só na primeira carga.
+- **Imagem:** já existia (CRMLAB-101) — clipe, colar e arrastar seguem cobertos pelos testes de antes.
+- **Backend:** sem mudança de código; teste novo prova ogg/opus e webm/opus aceitos e gravados como áudio.
+- **Testes:** +3 front em `InternalChat.attachments.spec.tsx`, +1 back em `tests/internal-chat/attachments.spec.ts`.
+

@@ -735,6 +735,17 @@ nunca "sem permissão" (não vazar existência).
   outro tipo vira `DocumentCard` (ícone do tipo, nome, tamanho) e baixa com o nome original
 - Os outros membros veem pelo `internal_chat.new_message` de sempre (a lista recarrega)
 
+### Recado de voz e fechar conversa (CRMLAB-109)
+
+- Microfone do `Composer` (o mesmo do atendimento: `useVoiceRecorder`, ogg/opus → webm/opus →
+  mp4, até 5 min). Enviar faz o MESMO `POST /internal-chat/channels/:id/attachments` do clipe,
+  sem legenda; falhou, a prévia do gravador fica para tentar de novo
+- Na mensagem, anexo de áudio toca no `AudioMessage` (player nativo + velocidade, busca
+  autenticada pelo `url` do anexo) em vez do `DocumentCard`
+- × "Fechar conversa" no cabeçalho, igual ao do atendimento: só tira a seleção (o chat interno
+  não tem conversa encerrada) e mostra o estado vazio "Selecione um canal". A abertura automática
+  do primeiro canal vale só na primeira carga — depois de fechar, nada reabre sozinho
+
 ### Buscar usuário (D-101) — iniciar conversa direta
 
 No topo da coluna esquerda, ACIMA dos grupos "Canais" e "Mensagens diretas", um campo de

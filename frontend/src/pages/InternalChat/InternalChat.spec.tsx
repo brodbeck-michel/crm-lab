@@ -296,6 +296,71 @@ describe('Chat Interno', () => {
     expect(await screen.findByText('Nenhum usuário encontrado')).toBeInTheDocument();
   });
 
+  describe('lista de usuários ao focar a busca (CRMLAB-110)', () => {
+    const TWO_USERS: ChatDirectoryUser[] = [
+      { id: 'u-bruno', name: 'Bruno Costa', role: 'manager' },
+      { id: MARINA_ID, name: 'Marina Alves', role: 'attendant' },
+    ];
+
+    it('focar o campo vazio lista todos os usuários e digitar filtra', async () => {
+      directoryMock.mockResolvedValue({ users: TWO_USERS });
+      const user = userEvent.setup({ delay: null });
+      renderScreen();
+
+      const search = await screen.findByRole('searchbox', { name: /Buscar usuário/ });
+      await waitFor(() => expect(search).not.toBeDisabled());
+      expect(screen.queryByTestId('user-search-result')).not.toBeInTheDocument();
+
+      await user.click(search);
+      const all = await screen.findAllByTestId('user-search-result');
+      expect(all.map((item) => item.textContent)).toEqual([
+        expect.stringContaining('Bruno Costa'),
+        expect.stringContaining('Marina Alves'),
+      ]);
+
+      await user.type(search, 'mari');
+      await waitFor(() => expect(screen.getAllByTestId('user-search-result')).toHaveLength(1));
+      expect(screen.getByTestId('user-search-result')).toHaveTextContent('Marina Alves');
+    });
+
+    it('clicar num usuário da lista aberta pelo foco abre a DM', async () => {
+      const user = userEvent.setup({ delay: null });
+      renderScreen();
+
+      const search = await screen.findByRole('searchbox', { name: /Buscar usuário/ });
+      await waitFor(() => expect(search).not.toBeDisabled());
+      await user.click(search);
+      await user.click(await screen.findByTestId('user-search-result'));
+
+      await waitFor(() => {
+        expect(startDirectChannelMock).toHaveBeenCalledWith({ userId: MARINA_ID });
+      });
+      expect(screen.queryByTestId('user-search-result')).not.toBeInTheDocument();
+    });
+
+    it('fecha a lista com Esc e ao perder o foco', async () => {
+      const user = userEvent.setup({ delay: null });
+      renderScreen();
+
+      const search = await screen.findByRole('searchbox', { name: /Buscar usuário/ });
+      await waitFor(() => expect(search).not.toBeDisabled());
+
+      await user.click(search);
+      expect(await screen.findByTestId('user-search-result')).toBeInTheDocument();
+      await user.keyboard('{Escape}');
+      expect(screen.queryByTestId('user-search-result')).not.toBeInTheDocument();
+
+      await user.click(document.body);
+      await user.click(search);
+      expect(await screen.findByTestId('user-search-result')).toBeInTheDocument();
+      await user.click(document.body);
+      await waitFor(() => {
+        expect(screen.queryByTestId('user-search-result')).not.toBeInTheDocument();
+      });
+      expect(startDirectChannelMock).not.toHaveBeenCalled();
+    });
+  });
+
   it('mostra o vazio do canal sem deixar área em branco', async () => {
     messagesMock.mockResolvedValue(messagesResponse([]));
     renderScreen();

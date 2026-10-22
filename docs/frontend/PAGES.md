@@ -741,8 +741,11 @@ No topo da coluna esquerda, ACIMA dos grupos "Canais" e "Mensagens diretas", um 
 busca (`SearchInput`, debounce de 300ms) filtra em memória a lista de `GET
 /internal-chat/users` (exclui o próprio usuário e inativos, sem paginação — carregada
 inteira uma vez). A barra lateral **não** lista usuários permanentemente — só canais e
-DMs já abertas; a lista de resultados da busca aparece embaixo do campo apenas enquanto
-o usuário digita, e some ao selecionar um nome ou limpar o campo.
+DMs já abertas. A lista de resultados aparece embaixo do campo **ao focar/clicar nele**
+(CRMLAB-110): com o campo vazio mostra TODOS os usuários (ordem por nome, a do backend),
+e digitar filtra. Fecha ao selecionar um nome, ao perder o foco ou com Esc; lista longa
+rola dentro de uma altura máxima. O item usa `onMouseDown` + `preventDefault` para o
+blur do campo não engolir o clique.
 
 Clicar num resultado chama `POST /internal-chat/dms { userId }` (get-or-create
 idempotente — clicar de novo num usuário com quem já existe DM só abre a conversa

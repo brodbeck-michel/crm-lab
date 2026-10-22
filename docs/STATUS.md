@@ -3445,3 +3445,11 @@ Branch `feature/CRMLAB-107-botao-encerrar-vermelho-suave` (de `main` v1.37.0). D
 - **Testes:** `Button.spec.tsx` (+1), `ConversationPanel.spec.tsx` (+1); guardas de token
   (`tailwind-theme-classes`, `no-hardcoded-tokens`) e specs da agenda verdes; typecheck do front e eslint verdes.
 
+### 🚧 CRMLAB-110 — lista de usuários ao focar a busca do chat interno (2026-10-22, aguardando validação)
+
+Branch `feature/CRMLAB-110-busca-lista-usuarios` (de `main` v1.37.0). Ajuste de UX, sem decisão nova, só frontend.
+
+- **Front:** `UserSearch` abre a lista com todos os usuários ao focar o campo (vazio = todos, por
+  nome; o próprio usuário já vem excluído pelo backend), digitar filtra, fecha com Esc/blur; altura
+  máxima com rolagem. `SearchInput` não mudou (foco/blur escutados no contêiner).
+- **Testes:** +3 em `InternalChat.spec.tsx` (foco lista e digitar filtra; clique abre a DM; Esc/blur fecham).

@@ -318,11 +318,14 @@ Anatomia (padrão WhatsApp):
   teclado; `Esc` fecha e devolve o foco ao campo.
 
 #### Respostas rápidas (Onda 8 §3.4)
-- `/` **com o campo vazio** abre o `QuickReplyMenu` sobre o Composer; digitar
-  filtra por atalho. Escolher **substitui** o texto pelo `content` da macro.
+- `/` **como primeiro caractere da linha do cursor** (campo vazio ou logo depois
+  de uma quebra de linha — CRMLAB-106) abre o `QuickReplyMenu` sobre o Composer;
+  digitar filtra por atalho, usando só o `/xxx` dessa linha. Escolher **substitui
+  só esse `/xxx`** pelo `content` da macro: o texto antes e depois fica, e o
+  cursor vai para o fim da resposta inserida.
 - Setas ↑/↓ navegam, `Enter` escolhe, `Esc` fecha. `aria-activedescendant`
   aponta o item ativo — o foco continua no campo, que é onde a pessoa digita.
-- Só dispara com o campo vazio: em qualquer `/` atrapalharia quem escreve
+- Só dispara no começo da linha: em qualquer `/` atrapalharia quem escreve
   "km/h", "24/48h" ou uma URL. Sem macro que case, o menu fecha e a `/` fica
   como texto normal.
 - O Composer não busca nada: recebe a lista por prop (`quickReplies`). Quem
@@ -794,10 +797,10 @@ tela passa tudo por props (o dado vem do TanStack Query).
 | `DateSeparator` | `<DateSeparator date now? />` | Pílula de dia (CRMLAB-71, D-239) · `dateSeparatorLabel` e `isSameLocalDay` exportadas |
 | `AudioMessage` | `<AudioMessage url durationSec? />` | `<audio controls>` nativo com blob autenticado · velocidade 1x/1,5x/2x (D-236) · download sempre disponível |
 | `VideoMessage` · `DocumentCard` · `StickerMessage` · `LocationCard` · `ContactCard` | ver acima | Um por tipo de mensagem (CRMLAB-70, D-236) |
-| `Composer` | `<Composer onSend(content) → void | Promise onPickFiles?(files) onAttachClick? onSendAudio?(audio) disabled? sending? placeholder? quickReplies? draftId? />` | Enter envia · Shift+Enter quebra linha · Ctrl/Cmd+B envolve a seleção em `*`, Ctrl+I em `_`, Ctrl+Shift+X em `~` (D-242) · rascunho por `draftId` (D-243) · emoji insere no cursor · `/` no campo vazio abre as macros · microfone grava recado de voz (clique/clique, 5 min, D-181) |
+| `Composer` | `<Composer onSend(content) → void | Promise onPickFiles?(files) onAttachClick? onSendAudio?(audio) disabled? sending? placeholder? quickReplies? draftId? />` | Enter envia · Shift+Enter quebra linha · Ctrl/Cmd+B envolve a seleção em `*`, Ctrl+I em `_`, Ctrl+Shift+X em `~` (D-242) · rascunho por `draftId` (D-243) · emoji insere no cursor · `/` no começo da linha abre as macros (CRMLAB-106) · microfone grava recado de voz (clique/clique, 5 min, D-181) |
 | `EmojiPicker` | `<EmojiPicker onPick(emoji) disabled? />` | Busca pt-BR, categorias e recentes sobre lista estática (D-243), sem biblioteca · `Esc` fecha e devolve o foco |
 | `WhatsAppText` | `<WhatsAppText text />` | Formatação do WhatsApp + links como nós React (D-242) · usado pela `MessageBubble` |
-| `QuickReplyMenu` | `<QuickReplyMenu items filter onPick(reply) onClose() />` | Aberto pela `/` no campo vazio · ↑↓ navega, Enter escolhe, Esc fecha |
+| `QuickReplyMenu` | `<QuickReplyMenu items filter onPick(reply) onClose() />` | Aberto pela `/` no começo da linha · ↑↓ navega, Enter escolhe, Esc fecha |
 
 Exportações auxiliares (fonte única, para não duplicar regra em tela):
 

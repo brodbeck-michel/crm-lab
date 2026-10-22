@@ -3422,3 +3422,16 @@ Branch `feature/CRMLAB-102-lembrete-proposta-parada` (de `main` v1.36.1). Decis�
   `ProposalModal` (+3), `Proposals` (+1), `Rules` (+2), `ws` (+1).
 - **Pendente:** validação na hml. Atalho "Enviar mensagem" é o botão do cabeçalho do CRMLAB-100 (outra
   branch). No Santé a perda está ligada em 15 dias: ao ligar o lembrete, usar até 14.
+
+### 🚧 CRMLAB-106 — "/" das respostas rápidas depois de quebra de linha (2026-10-22, aguardando validação)
+
+Branch `feature/CRMLAB-106-barra-respostas-rapidas-linha` (de `main` v1.37.0). Só frontend, sem decisão nova.
+
+- **Bug:** com texto e uma quebra de linha no campo, digitar `/` não abria o menu — o Composer só
+  reconhecia o comando quando a `/` era o texto inteiro.
+- **Correção (`Composer.tsx`):** o comando é lido na linha do cursor (`/` como primeiro caractere da
+  linha); o filtro usa só o `/xxx` dessa linha; escolher troca só o `/xxx`, preserva o resto e põe o
+  cursor no fim da resposta. `/` no meio da linha (km/h, 24/48h) segue texto comum. Vale também para o
+  chat interno (mesmo Composer).
+- **Testes:** 5 novos em `Composer.spec.tsx` (34/34); typecheck do front e eslint verdes.
+

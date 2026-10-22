@@ -5,7 +5,7 @@ import type { InternalMessage, InternalMessageAttachment, UserRole } from '@crm-
 import { api, queryKeys } from '@/api';
 import { cn } from '@/components/ui';
 import { DateDisplay, ImageLightbox } from '@/components/shared';
-import { INBOX_BUBBLE_MAX_WIDTH } from '@/components/conversation';
+import { AudioMessage, INBOX_BUBBLE_MAX_WIDTH } from '@/components/conversation';
 import { DocumentCard } from '@/components/conversation/DocumentCard';
 import { useAuthenticatedMedia } from '@/hooks';
 import ProposalCard from '@/components/proposal/ProposalCard';
@@ -90,7 +90,8 @@ function AttachedProposal({
 /**
  * Anexo da mensagem (CRMLAB-101, D-271). Imagem: miniatura buscada com token
  * (`GET .../attachments/:id` exige Authorization — `<img src>` cru daria 401),
- * clique abre o `ImageLightbox`. Qualquer outro tipo: `DocumentCard` com
+ * clique abre o `ImageLightbox`. Áudio (CRMLAB-109): `AudioMessage` do
+ * atendimento, que também busca com token. Qualquer outro tipo: `DocumentCard` com
  * `messageType="doc"`, que sempre BAIXA com o nome original (inclusive PDF).
  */
 function MessageAttachment({
@@ -100,9 +101,12 @@ function MessageAttachment({
   attachment: InternalMessageAttachment;
   title: string;
 }) {
-  const isImage = mediaCategoryOf(attachment.mimeType) === 'image';
+  const category = mediaCategoryOf(attachment.mimeType);
+  const isImage = category === 'image';
   const media = useAuthenticatedMedia(isImage ? attachment.url : null);
   const [open, setOpen] = useState(false);
+
+  if (category === 'audio') return <AudioMessage url={attachment.url} />;
 
   if (!isImage) {
     return (

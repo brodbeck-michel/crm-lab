@@ -3422,3 +3422,15 @@ Branch `feature/CRMLAB-102-lembrete-proposta-parada` (de `main` v1.36.1). Decis�
   `ProposalModal` (+3), `Proposals` (+1), `Rules` (+2), `ws` (+1).
 - **Pendente:** validação na hml. Atalho "Enviar mensagem" é o botão do cabeçalho do CRMLAB-100 (outra
   branch). No Santé a perda está ligada em 15 dias: ao ligar o lembrete, usar até 14.
+
+### 🚧 CRMLAB-109 — áudio e "fechar" no chat interno (2026-10-22, aguardando validação)
+
+Branch `feature/CRMLAB-109-chat-interno-audio-fechar` (de `main` v1.37.0). Sem decisão nova, sem migração.
+
+- **Front:** microfone do `Composer` ligado no chat interno (envio pelo mesmo `POST .../attachments`);
+  anexo de áudio renderiza `AudioMessage`; × "Fechar conversa" no cabeçalho limpa a seleção e mostra
+  o estado vazio — a auto-seleção do primeiro canal ficou só na primeira carga.
+- **Imagem:** já existia (CRMLAB-101) — clipe, colar e arrastar seguem cobertos pelos testes de antes.
+- **Backend:** sem mudança de código; teste novo prova ogg/opus e webm/opus aceitos e gravados como áudio.
+- **Testes:** +3 front em `InternalChat.attachments.spec.tsx`, +1 back em `tests/internal-chat/attachments.spec.ts`.
+

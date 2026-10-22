@@ -166,6 +166,40 @@ describe('anexo no chat interno (CRMLAB-101)', () => {
     expect((created.body as InternalMessage).attachment?.mimeType).toBe('image/png');
   });
 
+  it('recado de voz do navegador (ogg/opus e webm/opus) é aceito e gravado como áudio (CRMLAB-109)', async () => {
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });
+    const geral = await geralOf(ana);
+    // Página Ogg com cabeçalho Opus no offset 28 — o que o Firefox grava.
+    const ogg = Buffer.concat([
+      Buffer.from('OggS'),
+      Buffer.from([0x00, 0x02]),
+      Buffer.alloc(22),
+      Buffer.from('OpusHead'),
+      Buffer.alloc(64),
+    ]);
+    // Cabeçalho EBML de WebM — o que o Chrome grava (o `file-type` lê como vídeo).
+    const webm = Buffer.concat([
+      Buffer.from(
+        '1a45dfa39f4286810142f7810142f2810442f381084282847765626d42878104428581021853806701ffffffffffffff',
+        'hex',
+      ),
+      Buffer.alloc(64),
+    ]);
+
+    for (const [mimeType, buffer, stored] of [
+      ['audio/ogg;codecs=opus', ogg, 'audio/ogg'],
+      ['audio/webm;codecs=opus', webm, 'audio/webm'],
+    ] as const) {
+      const created = await upload(ana, geral.id, {
+        fileName: `recado-de-voz.${stored.split('/')[1] ?? 'bin'}`,
+        mimeType,
+        contentBase64: buffer.toString('base64'),
+      }).expect(201);
+      expect((created.body as InternalMessage).attachment?.mimeType).toBe(stored);
+    }
+  });
+
   it('tipo fora da allow-list é 400 e não grava nada', async () => {
     const tenant = await createTenant();
     const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });

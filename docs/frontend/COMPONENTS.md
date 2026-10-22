@@ -21,12 +21,14 @@ frontend/src/components/
 
 ### Button
 ```tsx
-<Button variant="primary | secondary | confirmation | destructive"
+<Button variant="primary | secondary | confirmation | destructive | dangerSoft"
         size="md | sm" disabled? loading? onClick>
 ```
 - primary: fundo accent, texto bg, pílula. Um por área.
 - confirmation: accent-2 — RESERVADO a concluir/positivo (ganho, aprovar)
 - destructive: fantasma accent-700 (perda, remoção)
+- dangerSoft: fundo `danger-soft`, texto `danger-ink`, hover `danger-soft-hover` (CRMLAB-107,
+  D-274) — RESERVADO ao "Encerrar" do atendimento; não substitui o `destructive`
 - Todos: border-radius 999px, altura mín. 36px, focus-visible outline accent
 
 ### Chip

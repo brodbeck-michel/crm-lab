@@ -3435,3 +3435,13 @@ Branch `feature/CRMLAB-106-barra-respostas-rapidas-linha` (de `main` v1.37.0). S
   chat interno (mesmo Composer).
 - **Testes:** 5 novos em `Composer.spec.tsx` (34/34); typecheck do front e eslint verdes.
 
+### 🚧 CRMLAB-107 — botão "Encerrar" com fundo vermelho suave (2026-10-22, aguardando validação)
+
+Branch `feature/CRMLAB-107-botao-encerrar-vermelho-suave` (de `main` v1.37.0). Decisão D-274, só frontend.
+
+- **Tokens:** `--color-danger` + `-soft`/`-soft-hover`/`-ink` (Tailwind `danger.*`); `--color-agenda-danger`
+  passa a derivar dele, mesmo valor.
+- **Button:** variante nova `dangerSoft`, usada só no "Encerrar" do `ConversationPanel`; `destructive` intacta.
+- **Testes:** `Button.spec.tsx` (+1), `ConversationPanel.spec.tsx` (+1); guardas de token
+  (`tailwind-theme-classes`, `no-hardcoded-tokens`) e specs da agenda verdes; typecheck do front e eslint verdes.
+

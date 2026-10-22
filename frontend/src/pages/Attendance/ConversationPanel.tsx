@@ -768,7 +768,7 @@ export function ConversationPanel({
             </Button>
           )}
           <Button
-            variant="destructive"
+            variant="dangerSoft"
             size="sm"
             onClick={onCloseAttendance}
             disabled={closed || !canCloseAttendance || hasParticipants}

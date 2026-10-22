@@ -1,7 +1,7 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import { cn } from './cn';
 
-export type ButtonVariant = 'primary' | 'secondary' | 'confirmation' | 'destructive';
+export type ButtonVariant = 'primary' | 'secondary' | 'confirmation' | 'destructive' | 'dangerSoft';
 export type ButtonSize = 'md' | 'sm';
 
 export interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className'> {
@@ -14,6 +14,8 @@ export interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement
    *   de "isto fechou bem" em todo o produto, e usá-lo fora disso quebra a
    *   leitura de estado nas telas de pipeline e aprovação.
    * - `destructive`: fantasma accent-700. Perda e remoção.
+   * - `dangerSoft`: fundo vermelho suave, texto vermelho escuro (CRMLAB-107,
+   *   D-274). Só para encerrar o atendimento — destacar sem gritar.
    */
   variant?: ButtonVariant;
   /** `md` (36px, padrão) ou `sm` (32px, densidade alta em barras de filtro). */
@@ -36,6 +38,8 @@ const VARIANTS: Record<ButtonVariant, string> = {
     'bg-accent2 text-bg border-transparent hover:bg-accent2-700 active:bg-accent2-700',
   destructive:
     'bg-transparent text-accent-700 border-transparent hover:bg-accent-100 active:bg-accent-200',
+  dangerSoft:
+    'bg-danger-soft text-danger-ink border-transparent hover:bg-danger-soft-hover active:bg-danger-soft-hover',
 };
 
 const SIZES: Record<ButtonSize, string> = {

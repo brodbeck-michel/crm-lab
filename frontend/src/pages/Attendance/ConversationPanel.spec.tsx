@@ -155,6 +155,14 @@ describe('ConversationPanel — rolagem e ações', () => {
     expect(onCloseAttendance).toHaveBeenCalledTimes(1);
   });
 
+  it('CRMLAB-107: Encerrar usa o fundo vermelho suave (dangerSoft, D-274)', () => {
+    render(<ConversationPanel {...props([message('m-1')])} />);
+    expect(screen.getByRole('button', { name: 'Encerrar' })).toHaveAttribute(
+      'data-variant',
+      'dangerSoft',
+    );
+  });
+
   it('histórico carrega pela rolagem: o botão "Carregar mensagens anteriores" não existe mais (D-238)', () => {
     render(<ConversationPanel {...props([message('m-1')])} hasOlderMessages />);
     expect(

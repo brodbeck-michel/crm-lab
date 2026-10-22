@@ -121,6 +121,20 @@
     --color-chat-alert-bg: color-mix(in oklab, #c62828 8%, white);
 
     /* ---------------------------------------------------------------
+     * Perigo genérico (CRMLAB-107, D-274): vermelho LITERAL, igual para
+     * todo tenant — sinaliza ação que encerra/descarta, não é cor do tema.
+     * Mesmo matiz do vermelho da agenda (que agora deriva daqui).
+     *   -soft       10% com branco  → fundo suave (botão `dangerSoft`)
+     *   -soft-hover 18% com branco  → hover/pressionado do fundo suave
+     *   -ink        80% com o texto → texto sobre soft (6,6:1) e hover (5,8:1)
+     * O vermelho cheio dá 6,0:1 no branco.
+     * --------------------------------------------------------------- */
+    --color-danger: #b23a31;
+    --color-danger-soft: color-mix(in oklab, var(--color-danger) 10%, white);
+    --color-danger-soft-hover: color-mix(in oklab, var(--color-danger) 18%, white);
+    --color-danger-ink: color-mix(in oklab, var(--color-danger) 80%, #1a1a1a);
+
+    /* ---------------------------------------------------------------
      * Estágios do pipeline (CRMLAB-91, D-260): um matiz LITERAL por
      * estágio, igual para todo tenant — é identidade do funil, não cor do
      * tema (como o alerta do chat). Frios no começo do funil, âmbar na
@@ -177,7 +191,7 @@
     --color-agenda-line-control: #dce3df;
     --color-agenda-line-hover: #b9ccc1;
     --color-agenda-now: #d2453b;
-    --color-agenda-danger: #b23a31;
+    --color-agenda-danger: var(--color-danger);
     --color-agenda-brand-tint: color-mix(in oklab, var(--color-accent) 9%, white);
     --color-agenda-brand-col: color-mix(in oklab, var(--color-accent) 4%, white);
 

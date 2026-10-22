@@ -256,6 +256,9 @@ export function Composer({
   // `false` enquanto a pessoa não abriu o menu nesta digitação — é o que faz
   // `Esc` deixar a `/` no campo sem o menu voltar a abrir sozinho.
   const [macroMenuOpen, setMacroMenuOpen] = useState(false);
+  // Posição do cursor: o comando `/atalho` é lido na LINHA onde ele está (CRMLAB-106).
+  // Começa no fim porque o rascunho restaurado deixa o cursor lá (D-243).
+  const [caret, setCaret] = useState(() => value.length);
   const [activeIndex, setActiveIndex] = useState(0);
   const [multiline, setMultiline] = useState(false);
   const fieldRef = useRef<HTMLTextAreaElement>(null);
@@ -295,8 +298,14 @@ export function Composer({
     if (draftId) saveConversationDraft(draftId, value);
   }, [draftId, value]);
 
-  /** O texto é um comando de macro enquanto for `/` + o que se digita depois. */
-  const macroFilter = value.startsWith('/') ? value.slice(1) : null;
+  /**
+   * A linha do cursor é um comando de macro enquanto começar com `/` — o filtro
+   * é o que se digitou entre a `/` e o cursor (CRMLAB-106). Antes valia só para
+   * o texto inteiro, e uma `/` depois de Shift+Enter não abria o menu.
+   */
+  const lineStart = value.lastIndexOf('\n', caret - 1) + 1;
+  const caretLine = value.slice(lineStart, caret);
+  const macroFilter = caretLine.startsWith('/') ? caretLine.slice(1) : null;
   const macroMatches = useMemo(
     () =>
       macroMenuOpen && macroFilter !== null
@@ -307,22 +316,34 @@ export function Composer({
   const macroOpen = macroMatches.length > 0;
   const activeMacro = macroMatches[Math.min(activeIndex, macroMatches.length - 1)];
 
-  /** Escolher SUBSTITUI o texto: o comando `/atalho` não faz parte da resposta. */
+  /**
+   * Escolher SUBSTITUI só o comando `/atalho` da linha do cursor — ele não faz
+   * parte da resposta; o texto antes e depois fica, e o cursor vai para o fim
+   * da resposta inserida (CRMLAB-106).
+   */
   function pickMacro(reply: QuickReply): void {
-    setValue(reply.content);
+    const next = value.slice(0, lineStart) + reply.content + value.slice(caret);
+    const end = lineStart + reply.content.length;
+    setValue(next);
+    setCaret(end);
     setMacroMenuOpen(false);
     setActiveIndex(0);
     fieldRef.current?.focus();
+    // Mesmo motivo do emoji: o texto novo só chega ao DOM no próximo frame.
+    requestAnimationFrame(() => fieldRef.current?.setSelectionRange(end, end));
   }
 
-  function handleChange(next: string): void {
+  function handleChange(next: string, nextCaret: number): void {
     setValue(next);
+    setCaret(nextCaret);
     setActiveIndex(0);
     if (next.trim().length > 0) onTyping?.();
-    // Abre só quando a `/` é o texto INTEIRO — ou seja, campo vazio antes dela.
-    if (next === '/') setMacroMenuOpen(true);
+    const nextLine = next.slice(next.lastIndexOf('\n', nextCaret - 1) + 1, nextCaret);
+    // Abre só quando a `/` é o PRIMEIRO caractere da linha do cursor (campo vazio
+    // ou logo depois de uma quebra de linha). "km/h" e "24/48h" seguem texto comum.
+    if (nextLine === '/') setMacroMenuOpen(true);
     // Apagou a barra: o comando acabou, e digitar `/` de novo recomeça.
-    else if (!next.startsWith('/')) setMacroMenuOpen(false);
+    else if (!nextLine.startsWith('/')) setMacroMenuOpen(false);
   }
 
   function submit(): void {
@@ -512,7 +533,11 @@ export function Composer({
                 // foco e o navegador não devolve. Durante o envio só o Enter e o
                 // botão travam (`submit`), e dá para ir escrevendo a próxima.
                 disabled={disabled}
-                onChange={(event) => handleChange(event.target.value)}
+                onChange={(event) =>
+                  handleChange(event.target.value, event.target.selectionStart ?? event.target.value.length)
+                }
+                // Clique/setas movem o cursor sem mudar o texto: a linha do comando muda junto.
+                onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
                 placeholder={placeholder}

@@ -1001,11 +1001,12 @@ Configuração: quem usa isso é quem atende.
 
 ### Uso no Composer (§2)
 
-Digitar `/` **com o campo vazio** abre a lista sobre o Composer, filtrando por atalho
-conforme se digita. Escolher **substitui** o texto pelo `content`. Setas navegam, `Enter`
-escolhe, `Esc` fecha.
+Digitar `/` **no começo de uma linha** (campo vazio ou depois de Shift+Enter — CRMLAB-106)
+abre a lista sobre o Composer, filtrando pelo `/xxx` daquela linha conforme se digita.
+Escolher **substitui só o `/xxx`** pelo `content`, mantendo o resto do texto, e o cursor
+fica no fim da resposta. Setas navegam, `Enter` escolhe, `Esc` fecha.
 
-A restrição "campo vazio" é deliberada: disparar em qualquer `/` atrapalharia quem escreve
+A restrição "começo da linha" é deliberada: disparar em qualquer `/` atrapalharia quem escreve
 "km/h", "24/48h" ou uma URL. Sem macro que case com o filtro, o menu fecha sozinho e a
 `/` fica no campo como texto normal — o atalho nunca sequestra o que a pessoa quis digitar.
 

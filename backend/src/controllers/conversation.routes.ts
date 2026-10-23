@@ -34,6 +34,7 @@ import type {
   CreateAttachmentRequest,
   CreateConversationRequest,
   ConversationDetail,
+  ConversationUnreadCountResponse,
   CreateConversationResponse,
   GetConversationResponse,
   ListAssigneesResponse,
@@ -296,6 +297,13 @@ export function listAssignees(service: ConversationService): RequestHandler {
     const body: ListAssigneesResponse = {
       assignees: await service.listAssignees(getContext(req)),
     };
+    res.status(200).json(body);
+  });
+}
+
+export function unreadCount(service: ConversationService): RequestHandler {
+  return handle(async (req, res) => {
+    const body: ConversationUnreadCountResponse = await service.unreadCount(getContext(req));
     res.status(200).json(body);
   });
 }
@@ -607,6 +615,8 @@ function buildConversationModule(
   // ANTES de `/:id`: registrada depois, o validador de uuid rejeitaria
   // "assignees" com 400 antes de este handler existir para o Express.
   router.get('/assignees', ...guards, listAssignees(services.conversations));
+  // CRMLAB-112 (D-277): contador da barra lateral. Tambem antes de `/:id`.
+  router.get('/unread-count', ...guards, unreadCount(services.conversations));
 
   // ANTES de `/:id/messages` pelo mesmo motivo: "search" nao e uuid.
   router.get(

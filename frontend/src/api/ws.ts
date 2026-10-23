@@ -119,7 +119,14 @@ export function applyWsEvent(
     case 'conversation.new_message': {
       const data = event.data as { conversationId: string };
       void queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.conversation(data.conversationId) });
+      // Conversa ABERTA: o refetch do detalhe zera `unread_count` no servidor
+      // (GET = markAsRead); o contador da barra lateral (D-277) e refeito
+      // DEPOIS dele, senao mostraria "1" enquanto a atendente le a mensagem.
+      void queryClient
+        .invalidateQueries({ queryKey: queryKeys.conversation(data.conversationId) })
+        .then(() =>
+          queryClient.invalidateQueries({ queryKey: queryKeys.conversationUnreadCount() }),
+        );
       return;
     }
 

@@ -442,6 +442,28 @@ export class ConversationRepository {
     });
   }
 
+  /**
+   * Contador da barra lateral (CRMLAB-112, D-277): soma de `unread_count` das
+   * conversas ATIVAS no recorte de visibilidade. Mesma clausula da listagem
+   * (`visibleTo` null = todas), sem paginar nem trazer linhas.
+   */
+  async countUnreadMessages(tenantId: string, visibleTo: string | null): Promise<number> {
+    const params: unknown[] = [];
+    const where = [`c.status = 'active'`, 'c.unread_count > 0'];
+    if (visibleTo !== null) {
+      params.push(visibleTo);
+      where.push(`(c.assigned_to = $1 OR c.assigned_to IS NULL OR ${participatesSql('$1')})`);
+    }
+    return this.db.withTenant(tenantId, async (tx) => {
+      const result = await tx.query<{ total: number | string | null }>(
+        `SELECT COALESCE(SUM(c.unread_count), 0)::int AS total
+         FROM conversations c WHERE ${where.join(' AND ')}`,
+        params,
+      );
+      return toNumber(result.rows[0]?.total, 0);
+    });
+  }
+
   /** `null` quando o id nao existe NESTE tenant — o service converte em 404. */
   async findById(tenantId: string, id: string): Promise<ConversationDetail | null> {
     return this.db.withTenant(tenantId, (tx) => selectDetail(tx, id));

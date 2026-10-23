@@ -414,6 +414,15 @@ export interface ListAssigneesResponse {
   assignees: ConversationAssignee[];
 }
 
+/**
+ * `GET /conversations/unread-count` (CRMLAB-112, D-277) — numero do item
+ * "Atendimento" da barra lateral: soma das mensagens nao lidas das conversas
+ * ATIVAS no recorte de visibilidade de quem pede.
+ */
+export interface ConversationUnreadCountResponse {
+  unreadMessages: number;
+}
+
 export interface UpdateConversationRequest {
   status?: ConversationStatus;
   assignedTo?: string | null;

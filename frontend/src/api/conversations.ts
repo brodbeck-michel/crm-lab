@@ -6,6 +6,7 @@ import type {
   CreateMessageRequest,
   GetConversationQuery,
   GetConversationResponse,
+  ConversationUnreadCountResponse,
   ListAssigneesResponse,
   ListConversationsQuery,
   ListConversationsResponse,
@@ -73,6 +74,9 @@ export const conversationsApi = {
 
   /** Quem pode receber conversa — a lista do menu "Transferir". */
   assignees: () => http.get<ListAssigneesResponse>('/conversations/assignees'),
+
+  /** Contador do item "Atendimento" da barra lateral (CRMLAB-112, D-277). */
+  unreadCount: () => http.get<ConversationUnreadCountResponse>('/conversations/unread-count'),
 
   /** Atribuir a si mesmo / a outro atendente — `PATCH /conversations/:id`. */
   assign: (id: string, assignedTo: string | null) =>

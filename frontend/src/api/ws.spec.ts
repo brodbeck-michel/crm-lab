@@ -107,6 +107,26 @@ describe('ws — evento invalida a query certa', () => {
     expect(keysPassed()).toEqual([queryScopes.conversations, queryKeys.conversation('c-1')]);
   });
 
+  // CRMLAB-112/D-277: o contador da barra lateral e refeito DEPOIS do detalhe
+  // (que zera a conversa aberta no servidor), alem de ja cair no escopo `conversations`.
+  it('conversation.new_message → refaz o contador de nao lidas depois do detalhe', async () => {
+    const client = build();
+    client.connect();
+    socket(0).emitMessage({
+      event: 'conversation.new_message',
+      data: { conversationId: 'c-1', messageId: 'm-1' },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(keysPassed()).toEqual([
+      queryScopes.conversations,
+      queryKeys.conversation('c-1'),
+      queryKeys.conversationUnreadCount(),
+    ]);
+    expect(queryKeys.conversationUnreadCount()[0]).toBe(queryScopes.conversations[0]);
+  });
+
   // CRMLAB-66/D-223: reação, edição ou apagamento refaz a conversa como mensagem nova.
   it('conversation.message_updated → ["conversations"] + ["conversation", id]', () => {
     const client = build();

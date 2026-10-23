@@ -73,6 +73,7 @@ import type {
   ConversationStatus,
   ListConversationsQuery,
   ListConversationsResponse,
+  ConversationUnreadCountResponse,
   Message,
   PaginationMeta,
   SearchMessagesQuery,
@@ -224,6 +225,18 @@ export class ConversationService {
       pagination: paginationOf(criteria, page.total),
       counts: page.counts,
     };
+  }
+
+  /**
+   * Mensagens nao lidas das conversas ativas que o usuario enxerga — o numero
+   * do item "Atendimento" da barra lateral (CRMLAB-112, D-277).
+   */
+  async unreadCount(ctx: TenantContext): Promise<ConversationUnreadCountResponse> {
+    const unreadMessages = await this.repository.countUnreadMessages(
+      ctx.tenantId,
+      isSupervisor(ctx) ? null : ctx.userId,
+    );
+    return { unreadMessages };
   }
 
   /**

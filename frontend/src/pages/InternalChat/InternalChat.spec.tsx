@@ -285,6 +285,26 @@ describe('Chat Interno', () => {
     });
   });
 
+  it('DM criada agora pela busca fica aberta, sem voltar para o primeiro canal', async () => {
+    // Primeira conversa com a Marina: a DM ainda não está na lista de canais e só
+    // aparece quando a lista recarrega depois do get-or-create.
+    channelsMock
+      .mockResolvedValueOnce({ channels: [GERAL, APROVACOES] })
+      .mockResolvedValue(CHANNELS);
+    const user = userEvent.setup({ delay: null });
+    renderScreen();
+
+    const search = await screen.findByRole('searchbox', { name: /Buscar usuário/ });
+    await waitFor(() => expect(search).not.toBeDisabled());
+    await user.type(search, 'mari');
+    await user.click(await screen.findByTestId('user-search-result'));
+
+    await waitFor(() => {
+      expect(messagesMock).toHaveBeenLastCalledWith(DM.id, expect.anything());
+    });
+    expect(messagesMock).not.toHaveBeenLastCalledWith(GERAL.id, expect.anything());
+  });
+
   it('busca sem resultado mostra aviso, sem lançar erro', async () => {
     const user = userEvent.setup({ delay: null });
     renderScreen();

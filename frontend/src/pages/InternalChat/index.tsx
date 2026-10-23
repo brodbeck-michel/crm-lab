@@ -77,9 +77,11 @@ export function InternalChat() {
   const startDm = useMutation({
     mutationFn: (userId: string) => api.internalChat.startDirectChannel({ userId }),
     onSuccess: async (channel) => {
+      // Recarrega a lista ANTES de selecionar: DM recém-criada ainda não está nela,
+      // e o efeito de auto-seleção trocaria a escolha pelo primeiro canal.
+      await queryClient.invalidateQueries({ queryKey: queryKeys.internalChannels() });
       setSelectedId(channel.id);
       setPageCount(1);
-      await queryClient.invalidateQueries({ queryKey: queryKeys.internalChannels() });
     },
     onError: handleApiError,
   });

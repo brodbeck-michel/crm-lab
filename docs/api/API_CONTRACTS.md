@@ -1254,6 +1254,24 @@ para transferir.
 
 **Erros:** `FORBIDDEN` (403, `platform_operator`), `UNAUTHORIZED` (401)
 
+### GET /conversations/unread-count
+Número do item "Atendimento" da barra lateral (CRMLAB-112, D-277). Qualquer papel de tenant.
+
+Soma de `unread_count` — **mensagens** não lidas, não conversas — das conversas com
+`status = 'active'` no **mesmo recorte de visibilidade** da listagem: atendente = as próprias +
+a fila livre + as em que participa (D-263); gestor/admin = todas do tenant. Encerradas nunca
+contam. Uma query agregada, sem paginar nem trazer linhas.
+
+**Response (200):**
+```json
+{ "unreadMessages": 12 }
+```
+
+Não há evento WS próprio: o cliente refaz a contagem quando invalida o escopo `conversations`
+(`conversation.new_message`, abrir a conversa = marcar como lida, transferir, encerrar).
+
+**Erros:** `FORBIDDEN` (403, `platform_operator`), `UNAUTHORIZED` (401)
+
 ### POST /conversations/:id/pin · DELETE /conversations/:id/pin
 Fixar / desafixar a conversa no topo da **sua** lista (Onda 8 §2.3). Qualquer papel de
 tenant. O pin é **pessoal**: não altera nada que as colegas vejam.

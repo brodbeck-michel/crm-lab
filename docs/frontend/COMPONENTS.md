@@ -396,8 +396,12 @@ Anatomia (padrão WhatsApp):
   Grupo "Comunicação" fechado com esse total > 0: o mesmo `Badge` aparece no cabeçalho do grupo,
   substituindo o ponto 6px de "item ativo dentro" enquanto houver não lida (o ponto volta a
   aparecer sozinho se o total zerar mas ainda houver item ativo dentro)
-- **Recolhido** (CRMLAB-44): qualquer `Badge` de contagem vira um dot de 8px (`bg-accent2`,
-  borda 2px `border-surface`) sobre o ícone, no lugar do número
+- Item "Atendimento" (CRMLAB-112, D-277): `Badge` com `GET /conversations/unread-count`
+  (`queryKeys.conversationUnreadCount()`, dentro do escopo `conversations`)
+- **Recolhido** (D-277, substitui o dot de 8px do CRMLAB-44): o `Badge` continua com o número
+  ("99+") no canto do ícone (`CornerBadge`, anel 2px `ring-surface`); o grupo recolhido mostra a
+  soma das não lidas de mensagem dos seus itens. O nome acessível do link/cabeçalho passa a
+  incluir o contador ("Atendimento — 3 mensagens não lidas")
 - Ícones: `lucide-react`, 19px, `strokeWidth={1.7}` (`NavGlyph.tsx`, mapa `NavIcon → LucideIcon`)
 - Rodapé: avatar + nome do usuário é um botão; clique abre menu com [Sair] (`useLogout`,
   `POST /auth/logout` — API_CONTRACTS.md §1). Fecha ao clicar fora, `Esc` ou depois de sair

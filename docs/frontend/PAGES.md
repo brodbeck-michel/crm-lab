@@ -782,6 +782,13 @@ mesmo total) aparece no cabeçalho do grupo, no lugar do ponto de "item ativo de
 some ao abrir o grupo, ao entrar num canal (unread zera) ou ao chegar a zero. Sem som e sem
 notificação push do navegador — só esse indicador visual dentro do próprio CRM.
 
+**CRMLAB-112 (D-277):** o item **"Atendimento"** ganha o mesmo contador, com a soma das
+mensagens não lidas das conversas ativas que o usuário enxerga (`GET /conversations/unread-count`).
+Com a barra **recolhida** os dois contadores continuam com o **número** ("99+" acima de 99) no
+canto do ícone — o do Chat Interno no ícone do grupo "Comunicação" — em vez do ponto de 8px.
+Atualizam em qualquer tela pelo WS (`conversation.new_message` / `internal_chat.new_message`)
+e baixam quando a atendente lê.
+
 ### Paginação do histórico (D-069)
 
 `page=1` é a página das mensagens **mais recentes**, com os itens em ordem cronológica

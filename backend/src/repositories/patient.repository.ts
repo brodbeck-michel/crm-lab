@@ -35,6 +35,9 @@
  * atribuida a ele ou na fila livre; e os contadores/timeline usam EXATAMENTE o
  * mesmo recorte — senao a ficha viraria caminho lateral para ler a conversa de
  * outro atendente.
+ * Leitura da ficha (detalhe + timeline) soma as conversas ENCERRADAS de todas
+ * (`closedConversations`, D-273) — que o atendimento ja abre para qualquer
+ * atendente. Listagem/busca de pacientes e edicao seguem o recorte acima.
  *
  * Nenhum metodo devolve `SELECT *` ao service: projecao explicita, sempre.
  */
@@ -215,6 +218,12 @@ function toProposalStatus(value: string | null): ProposalStatus {
 export interface PatientVisibility {
   /** `null` = gestor/admin (ve tudo). String = atendente (id do usuario). */
   visibleTo: string | null;
+  /**
+   * Leitura da ficha (D-273): conta tambem as conversas ENCERRADAS de outras
+   * atendentes — as mesmas que ela ja abre no atendimento. So detalhe e
+   * timeline ligam isto; a listagem/busca de pacientes e a edicao, nao.
+   */
+  closedConversations?: boolean;
 }
 
 export interface PatientListCriteria extends PatientVisibility {
@@ -373,7 +382,7 @@ export class PatientRepository {
    */
   async list(tenantId: string, criteria: PatientListCriteria): Promise<PatientPage> {
     const params = new Params();
-    const conversationsCte = conversationAggregate(params, criteria.visibleTo);
+    const conversationsCte = conversationAggregate(params, criteria);
     const where: string[] = [];
 
     // Atendente so enxerga paciente com ao menos uma conversa visivel a ele.
@@ -506,7 +515,7 @@ export class PatientRepository {
   ): Promise<PatientTimelinePage> {
     const params = new Params();
     const patientParam = params.add(id);
-    const cte = timelineCte(params, patientParam, criteria.visibleTo);
+    const cte = timelineCte(params, patientParam, criteria);
 
     const where: string[] = [];
     if (criteria.kind !== undefined) where.push(`e.kind = ${params.add(criteria.kind)}`);
@@ -904,15 +913,21 @@ export async function upsertPatientByPhone(
  * `lastInteractionAt`, `conversationCount` e o proprio teste de visibilidade —
  * assim e impossivel o contador dizer 4 e a listagem enxergar 2.
  */
-function conversationAggregate(params: Params, visibleTo: string | null): string {
-  const visibility =
-    visibleTo === null
-      ? ''
-      : `AND (c.assigned_to = ${params.add(visibleTo)} OR c.assigned_to IS NULL)`;
+function conversationAggregate(params: Params, visibility: PatientVisibility): string {
   return `SELECT MAX(c.last_message_at) AS last_interaction_at,
                  COUNT(*)::int AS conversation_count
             FROM conversations c
-           WHERE c.patient_id = p.id ${visibility}`;
+           WHERE c.patient_id = p.id ${conversationVisibility(params, visibility)}`;
+}
+
+/**
+ * Conversas que a atendente enxerga: as dela e a fila livre (D-060) e, na
+ * leitura da ficha, as encerradas de todas (D-273). Gestor/admin: sem filtro.
+ */
+function conversationVisibility(params: Params, visibility: PatientVisibility): string {
+  if (visibility.visibleTo === null) return '';
+  const closed = visibility.closedConversations === true ? "c.status = 'closed' OR " : '';
+  return `AND (${closed}c.assigned_to = ${params.add(visibility.visibleTo)} OR c.assigned_to IS NULL)`;
 }
 
 /** Propostas visiveis do paciente (D-042: atendente so ve as que criou). */
@@ -931,7 +946,7 @@ async function selectDetail(
 ): Promise<PatientDetail | null> {
   const params = new Params();
   const idParam = params.add(id);
-  const conversations = conversationAggregate(params, visibility.visibleTo);
+  const conversations = conversationAggregate(params, visibility);
   const proposals = proposalAggregate(params, visibility.visibleTo);
   const visible = visibility.visibleTo !== null ? 'AND ci.conversation_count > 0' : '';
 
@@ -957,18 +972,16 @@ async function selectDetail(
  * 50 mensagens inteiras para cortar em memoria e trazer o que nao se usa
  * (SERVICES.md §12).
  */
-function timelineCte(params: Params, patientParam: string, visibleTo: string | null): string {
-  const conversationVisibility =
-    visibleTo === null
-      ? ''
-      : `AND (c.assigned_to = ${params.add(visibleTo)} OR c.assigned_to IS NULL)`;
+function timelineCte(params: Params, patientParam: string, visibility: PatientVisibility): string {
+  const { visibleTo } = visibility;
+  const conversationsVisible = conversationVisibility(params, visibility);
   const proposalVisibility =
     visibleTo === null ? '' : `AND pr.created_by = ${params.add(visibleTo)}`;
 
   return `WITH vc AS (
     SELECT c.id, c.channel, c.created_at, c.patient_name
       FROM conversations c
-     WHERE c.patient_id = ${patientParam} ${conversationVisibility}
+     WHERE c.patient_id = ${patientParam} ${conversationsVisible}
   ), vp AS (
     SELECT pr.id, pr.status, pr.discount_percent, pr.total_price, pr.created_at, pr.created_by
       FROM proposals pr

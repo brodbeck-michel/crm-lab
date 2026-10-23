@@ -682,6 +682,10 @@ da transação da conversa — ver a regra de nascimento abaixo.
   `FORBIDDEN`. O recorte vale para `list`, `getById`, `update` e `timeline`, **e também para os
   contadores e as entradas da timeline** — senão a ficha viraria um caminho lateral para ler a
   conversa de outro atendente.
+- **Leitura pela encerrada (D-273):** `getById` e `timeline` usam `readVisibilityOf(ctx)` —
+  `visibilityOf` + `closedConversations: true`, que soma as conversas encerradas de qualquer
+  atendente (as que o atendimento já abre para todas). `list` e as escritas (`update`,
+  `inactivate`, `reactivate`, via `getForWrite`) seguem `visibilityOf`.
 - `conversationCount`, `proposalCount` e `lastInteractionAt` são **derivados na query**, nunca
   colunas (BUSINESS_RULES §5).
 - `update` não toca em `conversations.patient_name/phone/email`: são o registro do que o canal

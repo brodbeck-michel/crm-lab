@@ -91,9 +91,9 @@ describe('POST /conversations/:id/messages', () => {
     expect(app.wsHub.eventsFor(beta.id)).toHaveLength(0);
   });
 
-  it('conversa encerrada -> CONVERSATION_ARCHIVED (409) e nada e gravado', async () => {
+  it('D-273: conversa encerrada reabre para quem envia e a mensagem sai (antes: 409)', async () => {
     const tenant = await createTenant();
-    const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Ana' });
     const conversation = await createConversation({
       tenantId: tenant.id,
       assignedTo: ana.id,
@@ -104,12 +104,14 @@ describe('POST /conversations/:id/messages', () => {
       .post(`/api/v1/conversations/${conversation.id}/messages`)
       .set(app.auth(ana))
       .send({ content: 'Ainda da tempo?' })
-      .expect(409);
+      .expect(201);
 
-    expect(response.body.error.code).toBe('CONVERSATION_ARCHIVED');
-    expect(response.body.error.statusCode).toBe(409);
-    expect(await countMessages(tenant.id)).toBe(0);
-    expect(app.wsHub.eventsFor(tenant.id)).toHaveLength(0);
+    expect(response.body.content).toBe('Ainda da tempo?');
+    const row = await readConversationRow(conversation.id);
+    expect(row?.status).toBe('active');
+    expect(row?.assigned_to).toBe(ana.id);
+    // Evento "reaberto" + a mensagem dela.
+    expect(await countMessages(tenant.id)).toBe(2);
   });
 
   it('conteudo vazio -> VALIDATION_ERROR', async () => {

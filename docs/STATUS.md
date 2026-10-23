@@ -3465,3 +3465,17 @@ Branch `feature/CRMLAB-109-chat-interno-audio-fechar` (de `main` v1.37.0). Sem d
 - **Backend:** sem mudança de código; teste novo prova ogg/opus e webm/opus aceitos e gravados como áudio.
 - **Testes:** +3 front em `InternalChat.attachments.spec.tsx`, +1 back em `tests/internal-chat/attachments.spec.ts`.
 
+### 🚧 CRMLAB-108 — encerradas visíveis para todas; responder reabre para quem enviou (2026-10-22, aguardando validação)
+
+Branch `feature/CRMLAB-108-encerradas-para-todas` (de `main` v1.37.0). Decisão D-273, sem migração.
+
+- **Regra:** toda atendente lista e abre as encerradas de todas (detalhe, mensagens, mídia, busca);
+  ativa de outra continua 404. Responder (texto ou anexo) uma encerrada reabre atribuída a quem enviou.
+- **Backend:** `canSee` libera `closed`; `canWork` é o recorte antigo (tags, 409 de atribuição);
+  `openForReply` nas rotas de mensagem e anexo; lista com `status=closed` sem recorte por dona,
+  `counts.unread` com o recorte antigo; busca de mensagens inclui encerradas.
+- **Front:** Composer liberado em encerrada com o aviso "Ao enviar, a conversa será reaberta e passará para você."
+- **Testes:** `tests/conversations/closed-visibility.spec.ts` (novo, 7), `message-search.spec.ts` e
+  `messages/messages.spec.ts` ajustados; front `Attendance.spec.tsx` (+1), `ConversationPanel.spec.tsx` (ajustado).
+- **Pendente:** validação na hml.
+

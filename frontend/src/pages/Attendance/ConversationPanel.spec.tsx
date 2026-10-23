@@ -127,7 +127,7 @@ describe('ConversationPanel — rolagem e ações', () => {
     expect(screen.getByLabelText('Mensagem')).toHaveValue('');
   });
 
-  it('conversa encerrada bloqueia composer e o botão Encerrar', () => {
+  it('D-273: conversa encerrada deixa responder (com aviso) e bloqueia o botão Encerrar', () => {
     render(
       <ConversationPanel
         {...props([message('m-1')])}
@@ -135,7 +135,10 @@ describe('ConversationPanel — rolagem e ações', () => {
       />,
     );
 
-    expect(screen.getByLabelText('Mensagem')).toBeDisabled();
+    expect(screen.getByLabelText('Mensagem')).toBeEnabled();
+    expect(screen.getByTestId('composer-notice')).toHaveTextContent(
+      'Ao enviar, a conversa será reaberta e passará para você.',
+    );
     expect(screen.getByRole('button', { name: 'Encerrar' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Arquivar' })).not.toBeInTheDocument();
   });
@@ -144,6 +147,7 @@ describe('ConversationPanel — rolagem e ações', () => {
     render(<ConversationPanel {...props([message('m-1')])} canCloseAttendance={false} />);
     expect(screen.getByRole('button', { name: 'Encerrar' })).toBeDisabled();
     expect(screen.getByLabelText('Mensagem')).toBeEnabled();
+    expect(screen.queryByTestId('composer-notice')).not.toBeInTheDocument();
   });
 
   it('D-174: Encerrar chama onCloseAttendance', async () => {

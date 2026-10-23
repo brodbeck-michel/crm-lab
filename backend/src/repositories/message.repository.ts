@@ -548,7 +548,7 @@ export class MessageRepository {
   /**
    * Busca pelo conteudo (D-228). Nunca devolve apagada (o predicado do indice
    * parcial), evento de sistema, nem conversa fora do recorte do atendente —
-   * o MESMO recorte da fila (`ConversationRepository.list`). O RLS recorta o
+   * o MESMO recorte de `ConversationService.canSee` (encerradas de todas, D-273). O RLS recorta o
    * tenant. Mais nova primeiro.
    */
   async search(tenantId: string, criteria: MessageSearchCriteria): Promise<MessageSearchPage> {
@@ -559,11 +559,12 @@ export class MessageRepository {
       "m.sender_type <> 'system'",
     ];
     if (criteria.visibleTo !== null) {
-      // Mesmo recorte da lista: as proprias, as livres e as em que participa (D-263).
+      // Mesmo recorte do detalhe: as proprias, as livres, as em que participa
+      // (D-263) e qualquer encerrada do laboratorio (D-273).
       params.push(criteria.visibleTo);
       const visible = `$${params.length}`;
       where.push(
-        `(c.assigned_to = ${visible} OR c.assigned_to IS NULL OR EXISTS (
+        `(c.status = 'closed' OR c.assigned_to = ${visible} OR c.assigned_to IS NULL OR EXISTS (
             SELECT 1 FROM conversation_participants vp
             WHERE vp.conversation_id = c.id AND vp.user_id = ${visible}))`,
       );

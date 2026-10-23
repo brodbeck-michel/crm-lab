@@ -66,8 +66,13 @@ export interface ComposerProps {
    * a pessoa digita depois, sem virar componente controlado.
    */
   initialValue?: string;
-  /** Conversa arquivada / sem permissão de escrita. */
+  /** Sem permissão de escrita. */
   disabled?: boolean;
+  /**
+   * Aviso acima do campo, sem bloquear o envio — ex.: conversa encerrada, que
+   * reabre e passa para quem enviar (D-273).
+   */
+  notice?: string;
   /** Envio em voo: bloqueia o botão e mostra o indicador. */
   sending?: boolean;
   placeholder?: string;
@@ -243,6 +248,7 @@ export function Composer({
   disabled = false,
   sending = false,
   placeholder = 'Escreva uma mensagem',
+  notice,
   quickReplies,
   initialValue,
   replyTo,
@@ -483,6 +489,11 @@ export function Composer({
             </button>
           )}
         </div>
+      )}
+      {notice && (
+        <p data-testid="composer-notice" className="m-0 font-body text-caption text-neutral-700">
+          {notice}
+        </p>
       )}
       {recorder.error && (
         <p role="alert" className="m-0 font-body text-caption text-accent-700">

@@ -540,8 +540,11 @@ aparece (RLS).
 Listar conversas do usuário.
 
 **Recorte por papel (não é filtro opcional):** atendente recebe apenas as conversas
-atribuídas a ele **mais** a fila não atribuída; gestor e admin recebem todas as do
-laboratório. `platform_operator` recebe `FORBIDDEN` (PAGES.md §11).
+atribuídas a ele **mais** a fila não atribuída (e as em que participa, D-263); gestor e admin
+recebem todas as do laboratório. **Exceção (CRMLAB-108, D-273):** com `?status=closed` a
+atendente recebe as encerradas de **todas** do laboratório — só com esse filtro; sem `status`,
+a lista segue sem as encerradas alheias. Nesse caso `counts.unread` continua contando só o
+recorte dela (encerrada alheia não soma). `platform_operator` recebe `FORBIDDEN` (PAGES.md §11).
 
 **Query Params:**
 ```
@@ -831,7 +834,8 @@ o exemplo abaixo mostra `unreadCount: 0` enquanto a mesma conversa aparece na li
 com `3`. Quem precisa do efeito sem carregar o histórico usa
 `POST /conversations/:id/read`. O `markAsRead` roda **antes** da leitura e aplica o
 recorte por papel: conversa fora do escopo do usuário devolve `404` sem ter tocado em
-nada.
+nada. Conversa **encerrada** está no escopo de qualquer atendente (D-273): detalhe, mensagens,
+mídia e a busca abaixo abrem normalmente; a **ativa** de outra atendente continua `404`.
 
 Mensagens vêm em ordem cronológica **crescente**; `page=1` é a página mais recente.
 `messageLimit` default 50, máx. 100.
@@ -1031,6 +1035,13 @@ Enviar mensagem em uma conversa.
 O recorte por papel é aplicado **antes** de escrever: conversa que o usuário não
 enxerga devolve `NOT_FOUND`.
 
+**Responder conversa encerrada reabre (CRMLAB-108, D-273):** conversa `closed` — de qualquer
+dona, inclusive de quem envia — volta para `active` **atribuída a quem enviou**, com o audit
+`update_conversation_status` e a mensagem de sistema "Atendimento reaberto por <nome>", e só
+então a mensagem é gravada e enviada. Antes do D-273 isso era `CONVERSATION_ARCHIVED` (409).
+Se o paciente ou outra atendente reabrir no mesmo instante e a conversa ficar com outra pessoa,
+`CONVERSATION_ALREADY_ASSIGNED` (409) e nada sai.
+
 **Responder assume a conversa (CRMLAB-75, D-215):** conversa **sem dona** (`assignedTo: null`)
 passa a ser de quem enviou ANTES de a mensagem ser gravada — o mesmo claim atômico de
 `PATCH /conversations/:id` (`assignedTo`), com o mesmo audit `assign_conversation`. Quem perde a
@@ -1056,9 +1067,9 @@ pelo cartão (`POST /proposals/:id/send`, `POST /proposals/:id/resend`), que usa
 }
 ```
 
-**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404), `CONVERSATION_ARCHIVED` (409),
+**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404),
 `CONVERSATION_ALREADY_ASSIGNED` (409, conversa da fila livre assumida por outra pessoa no mesmo
-instante — D-215), `MESSAGE_SEND_FAILED` (502, canal externo falhou após os retries), `FORBIDDEN`
+instante — D-215 — ou encerrada reaberta por outra pessoa no mesmo instante — D-273), `MESSAGE_SEND_FAILED` (502, canal externo falhou após os retries), `FORBIDDEN`
 (403, `platform_operator`)
 
 **`status` da mensagem do atendimento (CRMLAB-67, D-225):** `pending | sent | delivered | read |
@@ -1103,7 +1114,8 @@ médico.
 
 O recorte por papel é aplicado **antes** de gravar: conversa que o usuário não
 enxerga devolve `NOT_FOUND`. Conversa sem dona é assumida por quem envia antes de gravar a
-mídia (D-215, mesma regra e mesmo 409 de `POST /conversations/:id/messages`). `messageType` é derivado do `mimeType`
+mídia (D-215, mesma regra e mesmo 409 de `POST /conversations/:id/messages`). Conversa
+encerrada reabre para quem envia antes de gravar a mídia (D-273, mesma regra da mensagem). `messageType` é derivado do `mimeType`
 (`image/* → image`, `audio/* → audio`, `video/* → video` (CRMLAB-70), `application/pdf → pdf`,
 resto → `doc`) — o cliente não escolhe.
 
@@ -1139,8 +1151,8 @@ contêineres — D-234 item 8). No CRM os quatro ficam `video`.
 }
 ```
 
-**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404), `CONVERSATION_ARCHIVED` (409),
-`MEDIA_TOO_LARGE` (413, acima do teto de 15 MiB), `MESSAGE_SEND_FAILED` (502, canal
+**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404), `CONVERSATION_ALREADY_ASSIGNED` (409,
+D-215/D-273), `MEDIA_TOO_LARGE` (413, acima do teto de 15 MiB), `MESSAGE_SEND_FAILED` (502, canal
 externo falhou após os retries — a WhatsApp Cloud API `cloud_api` ainda não envia
 mídia, só o gateway Evolution `qr`), `FORBIDDEN` (403, `platform_operator`)
 
@@ -1288,8 +1300,11 @@ Atualizar conversa (status, tags, assigned_to).
 `status` ∈ `active | closed` (D-174):
 
 - **encerrar** (`closed`) e **reativar** (`active`): só a **dona**, gestor ou admin. Atendente
-  que não é dona — inclusive em conversa da fila livre — recebe `FORBIDDEN` (403). Conversa de
-  outra atendente continua `NOT_FOUND` (recorte por papel vem antes)
+  que não é dona — inclusive em conversa da fila livre — recebe `FORBIDDEN` (403). Conversa
+  **ativa** de outra atendente continua `NOT_FOUND` (recorte por papel vem antes); a
+  **encerrada** de outra atendente é visível (D-273) e responde `FORBIDDEN` — para reabri-la, a
+  atendente responde (`POST /conversations/:id/messages`). `tags` em encerrada alheia: também
+  `FORBIDDEN`
 - encerrar **mantém** `assignedTo`, gera a mensagem de sistema "Atendimento encerrado por
   <nome>" e o audit log `update_conversation_status`. A conversa sai da fila (`?status=active`)
   e dos counts dos chips

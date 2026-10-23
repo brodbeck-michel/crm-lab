@@ -906,6 +906,22 @@ interações com ele, com autor e data.
 
 ---
 
+## 17. Encerradas visíveis para todas (CRMLAB-108, D-273)
+
+- Toda atendente vê **todas as conversas encerradas** do laboratório: na lista "Encerradas" e ao
+  abrir a conversa (histórico, mídia, busca de mensagens). Conversa **não encerrada** de outra
+  atendente continua invisível (404). Gestor e admin veem tudo, como antes. Outro laboratório,
+  nunca.
+- **Responder uma encerrada reabre**: a conversa volta a `active` e a dona passa a ser **quem
+  enviou** — de quem quer que fosse, inclusive dela mesma. Fica registrado "Atendimento reaberto
+  por <nome>" e o audit `update_conversation_status`.
+- Fora responder, a encerrada alheia é só leitura: encerrar/reativar e etiquetar seguem com a
+  dona, gestor ou admin; participante continua não entrando em encerrada (§16).
+- Os números dos chips da fila (Minhas, Não atribuídas, Participando, não lidas) não contam
+  encerradas alheias.
+
+---
+
 ## Resumo: Checklist de Implementação
 
 Antes de commitar, verifique:

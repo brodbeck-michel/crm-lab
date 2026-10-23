@@ -368,7 +368,8 @@ export function createMessage(services: ConversationServices): RequestHandler {
     const dto = validated<CreateMessageBody>(req, 'body');
 
     // Recorte por papel antes de escrever: 404 para conversa que nao e visivel.
-    await services.conversations.getById(ctx, id);
+    // Encerrada reabre para quem envia (D-273).
+    await services.conversations.openForReply(ctx, id);
 
     const message: Message = await services.messages.createFromAgent(ctx.tenantId, id, ctx.userId, {
       content: dto.content,
@@ -393,7 +394,8 @@ export function createAttachment(services: ConversationServices): RequestHandler
     const dto = validated<CreateAttachmentRequest>(req, 'body');
 
     // Recorte por papel antes de gravar: 404 para conversa que nao e visivel.
-    await services.conversations.getById(ctx, id);
+    // Encerrada reabre para quem envia (D-273).
+    await services.conversations.openForReply(ctx, id);
     // Responder assume a fila livre (D-215) — antes da midia: quem perde a
     // corrida recebe o 409 sem deixar arquivo gravado.
     await services.messages.claimForAgent(ctx.tenantId, id, ctx.userId);

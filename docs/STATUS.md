@@ -3479,3 +3479,13 @@ Branch `feature/CRMLAB-108-encerradas-para-todas` (de `main` v1.37.0). Decisão 
   `messages/messages.spec.ts` ajustados; front `Attendance.spec.tsx` (+1), `ConversationPanel.spec.tsx` (ajustado).
 - **Pendente:** validação na hml.
 
+### 🚧 CRMLAB-112 — contador de não lidas na barra lateral (2026-10-22, aguardando validação)
+
+Branch `feature/CRMLAB-112-contador-nao-lidas-sidebar` (de `main` v1.37.0). Decisão D-277, sem migração.
+
+- **Backend:** `GET /conversations/unread-count` (mensagens não lidas das conversas ativas que o
+  usuário enxerga; gestor/admin: todas do tenant).
+- **Front:** número ("99+") nos itens Atendimento e Chat interno, expandida e recolhida (no canto
+  do ícone, no lugar do ponto); refeito pelo WS e ao ler.
+- **Testes:** `tests/conversations/unread-count.spec.ts` (novo, 4), inventário de rotas 112 → 113,
+  `Sidebar.spec.tsx` (+6, 1 reescrito), `ws.spec.ts` (+1). Suíte completa roda na integração.

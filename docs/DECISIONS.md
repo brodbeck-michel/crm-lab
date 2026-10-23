@@ -5798,3 +5798,29 @@ Orçamento"/painel lateral; um tom suave destaca sem parecer alerta.
 `pages/Attendance/ConversationPanel.tsx` (+ spec). DESIGN_TOKENS (Perigo genérico, Botões),
 COMPONENTS (Button).
 
+### D-277: Contador de não lidas do Atendimento e do Chat interno na barra lateral, também recolhida (CRMLAB-112)
+**Decisão:**
+1. **Atendimento:** novo `GET /conversations/unread-count` → `{ unreadMessages }`, soma de
+   `unread_count` (mensagens, como o número do WhatsApp) das conversas **ativas** no recorte de
+   visibilidade da listagem — atendente: próprias + fila livre + as em que participa (D-263);
+   gestor/admin: todas do tenant. Encerradas não contam. `counts.unread` da listagem não serve:
+   conta **conversas** com não lida e inclui encerradas quando não há filtro de status; e
+   `overview.workload` é da tela de Operação (gestão), não da atendente.
+2. **Chat interno:** continua a soma de `Channel.unreadCount` (D-130/D-132), sem mudança.
+3. **Recolhida:** o número continua visível no canto do ícone (mesmo `Badge`, "99+"), no lugar
+   do ponto de 8px do CRMLAB-44; o cabeçalho de grupo recolhido soma as não lidas de mensagem dos
+   seus itens (hoje só "Comunicação" → Chat interno; "Decisões" continua fora do grupo).
+4. **Cor:** o `Badge` existente (`bg-accent2`), o mesmo das não lidas da lista de conversas. O
+   design system não tem token verde/"sucesso"; não foi criado — fica para o dono do produto
+   decidir se quer o verde do WhatsApp (seria token novo em DESIGN_TOKENS.md).
+5. **Tempo real:** a chave `['conversations', 'unread-count']` fica no escopo `conversations`, já
+   invalidado pelo WS `conversation.new_message` e por "abrir = ler" (`useMarkAsRead`). No WS, a
+   contagem é refeita de novo **depois** do refetch do detalhe da conversa, porque é o GET do
+   detalhe que zera a conversa aberta — sem isso a barra mostraria "1" enquanto a atendente lê.
+**Motivo:** pedido do dono do produto — a atendente na tela de Atendimento (barra recolhida
+sozinha) não via mensagem nova do chat interno, e vice-versa.
+**Impacto:** `shared/types/conversation.types.ts` (`ConversationUnreadCountResponse`); backend
+`conversation.repository.ts` (`countUnreadMessages`), `conversation.service.ts` (`unreadCount`),
+`conversation.routes.ts`; inventário de `route-tenant-isolation.spec.ts` (112 → 113). Frontend
+`Sidebar.tsx`, `api/conversations.ts`, `api/query-keys.ts`, `api/ws.ts`. API_CONTRACTS §2,
+PAGES §9, COMPONENTS (Sidebar). Sem migração.

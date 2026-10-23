@@ -16,7 +16,7 @@ import {
 } from '@/stores';
 import { useLogout } from '@/hooks';
 import { sidebarSectionsFor, type AppRoute } from '@/routes/route-config';
-import { internalChatApi, operationApi, queryKeys, staleTimes } from '@/api';
+import { conversationsApi, internalChatApi, operationApi, queryKeys, staleTimes } from '@/api';
 import { NavGlyph } from './NavGlyph';
 
 /**
@@ -118,6 +118,31 @@ export function Sidebar() {
   });
   const internalChatUnreadCount =
     channelsQuery.data?.channels.reduce((total, channel) => total + channel.unreadCount, 0) ?? 0;
+
+  // Contador de "Atendimento" (CRMLAB-112, D-277): mensagens não lidas das
+  // conversas ativas que o usuário enxerga. A chave fica no escopo
+  // `conversations`, então o WS `conversation.new_message` e o "abrir = ler"
+  // (`useMarkAsRead`) já a invalidam — sem polling.
+  const hasAttendanceRoute =
+    ungrouped.some((route) => route.path === '/attendance') ||
+    groups.some((group) => group.items.some((route) => route.path === '/attendance'));
+  const attendanceUnreadQuery = useQuery({
+    queryKey: queryKeys.conversationUnreadCount(),
+    queryFn: () => conversationsApi.unreadCount(),
+    enabled: hasAttendanceRoute,
+    staleTime: staleTimes.conversations,
+  });
+  const attendanceUnreadCount = attendanceUnreadQuery.data?.unreadMessages ?? 0;
+
+  // Contadores por item. Só os de mensagem (não "Decisões") sobem para o grupo (D-130).
+  const unreadByPath: Record<string, number> = {
+    '/attendance': attendanceUnreadCount,
+    '/internal-chat': internalChatUnreadCount,
+  };
+  const countsByPath: Record<string, number> = {
+    ...unreadByPath,
+    '/decisions': pendingDecisionsCount,
+  };
 
   // CRMLAB-72 (D-241 item 8): preferências do aviso de mensagem nova.
   const soundEnabled = useMessageAlertsStore((s) => s.soundEnabled);
@@ -221,8 +246,7 @@ export function Sidebar() {
             key={route.path}
             route={route}
             collapsed={collapsed}
-            pendingDecisionsCount={pendingDecisionsCount}
-            internalChatUnreadCount={internalChatUnreadCount}
+            countsByPath={countsByPath}
           />
         ))}
 
@@ -231,10 +255,12 @@ export function Sidebar() {
         {groups.map((group) => {
           const open = openGroupsByUser[userId]?.[group.id] ?? true;
           const hasActiveChild = group.items.some((route) => route.path === pathname);
-          // D-130: só o grupo que contém "Chat Interno" herda o total de não lidas.
-          const groupUnreadCount = group.items.some((route) => route.path === '/internal-chat')
-            ? internalChatUnreadCount
-            : 0;
+          // D-130/D-277: o grupo herda a soma das não lidas (mensagens) dos itens dele.
+          const groupUnreadCount = group.items.reduce(
+            (total, route) => total + (unreadByPath[route.path] ?? 0),
+            0,
+          );
+          const groupBadgeLabel = `${groupUnreadCount} mensagens não lidas em ${group.label}`;
           // Recolhido com o item ativo dentro: o ícone do grupo faz o papel do item ativo.
           const showActiveBg = collapsed && hasActiveChild;
           const groupId = `sidebar-group-${group.id}`;
@@ -251,6 +277,9 @@ export function Sidebar() {
                   }
                 }}
                 title={collapsed ? group.label : undefined}
+                aria-label={
+                  collapsed && groupUnreadCount > 0 ? `${group.label} — ${groupBadgeLabel}` : undefined
+                }
                 aria-expanded={open}
                 aria-controls={groupId}
                 className={cn(
@@ -266,9 +295,7 @@ export function Sidebar() {
                   aria-hidden="true"
                 >
                   <NavGlyph name={group.icon} />
-                  {collapsed && groupUnreadCount > 0 && (
-                    <span className="absolute right-0 top-0 h-[8px] w-[8px] rounded-pill border-2 border-surface bg-accent2" />
-                  )}
+                  {collapsed && <CornerBadge count={groupUnreadCount} />}
                 </span>
                 {!collapsed && <span className="min-w-0 flex-1 truncate">{group.label}</span>}
                 {!collapsed && (
@@ -281,10 +308,7 @@ export function Sidebar() {
                   </span>
                 )}
                 {!collapsed && !open && groupUnreadCount > 0 && (
-                  <Badge
-                    count={groupUnreadCount}
-                    label={`${groupUnreadCount} mensagens não lidas em ${group.label}`}
-                  />
+                  <Badge count={groupUnreadCount} label={groupBadgeLabel} />
                 )}
                 {!collapsed && !open && groupUnreadCount <= 0 && hasActiveChild && (
                   <span
@@ -303,8 +327,7 @@ export function Sidebar() {
                       key={route.path}
                       route={route}
                       collapsed={collapsed}
-                      pendingDecisionsCount={pendingDecisionsCount}
-                      internalChatUnreadCount={internalChatUnreadCount}
+                      countsByPath={countsByPath}
                       child
                     />
                   ))}
@@ -405,9 +428,11 @@ export function Sidebar() {
 interface SidebarNavItemProps {
   route: AppRoute;
   collapsed: boolean;
-  pendingDecisionsCount: number;
-  /** Soma de `Channel.unreadCount` do Chat Interno (D-130). */
-  internalChatUnreadCount: number;
+  /**
+   * Contador por rota: `/decisions` (pendências), `/internal-chat` (soma de
+   * `Channel.unreadCount`, D-130) e `/attendance` (D-277). Ausente = sem contador.
+   */
+  countsByPath: Record<string, number>;
   /** Item filho de um grupo (raio menor: `rounded-md` × `rounded-lg`). */
   child?: boolean;
 }
@@ -415,25 +440,20 @@ interface SidebarNavItemProps {
 /**
  * Um item de navegação (link), solto ou dentro de um grupo. Ativo: fundo
  * branco + texto `accent-700` + barra de 3px à esquerda (`accent-500`) — único
- * destaque preenchido do trilho (D-250). Recolhido: contador vira um dot de 8px sobre o ícone (CRMLAB-44).
+ * destaque preenchido do trilho (D-250). Recolhido: o contador continua com o
+ * número, no canto do ícone (CornerBadge, D-277 — antes era um ponto de 8px).
  */
 function SidebarNavItem({
   route,
   collapsed,
-  pendingDecisionsCount,
-  internalChatUnreadCount,
+  countsByPath,
   child = false,
 }: SidebarNavItemProps) {
-  const count =
-    route.path === '/decisions'
-      ? pendingDecisionsCount
-      : route.path === '/internal-chat'
-        ? internalChatUnreadCount
-        : 0;
+  const count = countsByPath[route.path] ?? 0;
   const badgeLabel =
     route.path === '/decisions'
       ? `${count} decisão(ões) pendente(s)`
-      : route.path === '/internal-chat'
+      : route.path === '/internal-chat' || route.path === '/attendance'
         ? `${count} mensagens não lidas`
         : undefined;
 
@@ -441,6 +461,8 @@ function SidebarNavItem({
     <NavLink
       to={route.path}
       title={collapsed ? route.label : undefined}
+      // Recolhido o rótulo some e o ícone é aria-hidden: o nome acessível leva o contador.
+      aria-label={collapsed && count > 0 ? `${route.label} — ${badgeLabel ?? count}` : undefined}
       className={({ isActive }) =>
         cn(
           'relative flex items-center gap-sm px-xs py-xs font-body text-label no-underline transition-colors',
@@ -462,15 +484,28 @@ function SidebarNavItem({
         aria-hidden="true"
       >
         {route.icon && <NavGlyph name={route.icon} />}
-        {collapsed && count > 0 && (
-          <span
-            aria-hidden="true"
-            className="absolute right-0 top-0 h-[8px] w-[8px] rounded-pill border-2 border-surface bg-accent2"
-          />
-        )}
+        {collapsed && <CornerBadge count={count} />}
       </span>
       {!collapsed && <span className="min-w-0 flex-1 truncate">{route.label}</span>}
       {!collapsed && count > 0 && <Badge count={count} label={badgeLabel} />}
     </NavLink>
+  );
+}
+
+/**
+ * Contador no canto do ícone com o trilho recolhido (CRMLAB-112, D-277): o
+ * mesmo `Badge` do modo expandido (número, "99+"), com um anel na cor do
+ * trilho para destacar do ícone. Sai da caixa de 38px só alguns px, dentro do
+ * padding do link — a `nav` tem `overflow-y-auto` e cortaria o que passasse dele.
+ */
+function CornerBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span
+      data-testid="sidebar-corner-badge"
+      className="absolute right-[-4px] top-[-2px] flex rounded-pill ring-2 ring-surface"
+    >
+      <Badge count={count} />
+    </span>
   );
 }

@@ -2596,6 +2596,10 @@ direção; `from_me` sai de `DiscardReason`), `backend/src/services/message.serv
 `docs/api/API_CONTRACTS.md` §6.1, `docs/backend/SERVICES.md` §3/§16. Sem migração.
 
 ### D-174: Encerrar atendimento substitui Arquivar; paciente que volta a escrever reabre na fila livre (CRMLAB-48)
+> **Revisada pela D-273 (CRMLAB-108):** conversa **encerrada** passa a ser visível para todas as
+> atendentes (o `NOT_FOUND` do item 1 vale só para a conversa **ativa** de outra atendente), e o
+> item 6 deixa de valer para mensagem/anexo do atendente: responder encerrada reabre para quem
+> enviou.
 **Decisão:** a conversa passa a ter **dois** status, `active | closed`. `archived` deixa de
 existir: a migração 025 converte as arquivadas em `closed` e troca a coluna por um `CHECK`.
 Decisões do PO (24/09/2026):
@@ -5730,3 +5734,48 @@ fique aberto numa proposta fechada.
 `funnel-rules.service.ts`, `proposal.routes.ts`; frontend `ProposalCard`, `ProposalModal`,
 `ReminderPanel` (novo), `ProposalsFilters`, `Settings/Rules.tsx`, `api/ws.ts`. API_CONTRACTS
 §3/§6c, FRONTEND_BACKEND (WS), SCHEMA §42, SERVICES §34, PAGES §5/§6/§21, BUSINESS_RULES §3.
+
+### D-273: Encerradas visíveis para todas; responder encerrada reabre para quem enviou (CRMLAB-108)
+**Decisão:** revisa a D-174 (itens 1 e 6) e estende o recorte da D-263. Regras aprovadas pelo
+dono do produto em 22/10/2026:
+1. **Toda atendente vê todas as conversas encerradas** (`status = 'closed'`) do laboratório: na
+   lista `GET /conversations?status=closed` (chip "Encerradas") e ao abrir a conversa (detalhe,
+   mensagens, mídia, busca de mensagens dentro dela e na busca geral). No backend, o
+   `ConversationService.canSee` libera `closed` para qualquer papel do tenant; o recorte antigo
+   virou `canWork` (própria, livre ou participante — D-263; gestor/admin, tudo).
+2. **Só com o filtro `status=closed`** a listagem dispensa o recorte por dona. Sem `status`, a
+   lista da atendente continua sem as encerradas alheias, e `counts.unread` do pedido de
+   encerradas mantém o recorte antigo — encerrada alheia não soma em badge nenhum. `mine`,
+   `unassigned` e `participating` já implicavam o recorte.
+3. **Responder encerrada reabre para quem enviou:** `POST /conversations/:id/messages` e
+   `POST /conversations/:id/attachments` chamam `ConversationService.openForReply` no lugar de
+   `getById`. Encerrada (de qualquer dona, inclusive de quem envia) volta a `active` com
+   `assigned_to` = remetente, pelo mesmo `reopenManually` do atendimento manual (D-174 item 4):
+   `UPDATE ... WHERE status = 'closed'` (trava de corrida), audit `update_conversation_status`
+   com dona antiga e nova, e a mensagem de sistema "Atendimento reaberto por <nome>" antes da
+   mensagem. Vale também para gestor/admin (a regra é "quem mandou"). Perdeu a corrida e a
+   conversa ficou com outra pessoa: `CONVERSATION_ALREADY_ASSIGNED` (409, D-215) e nada sai.
+   O envio segue o caminho de sempre (`createFromAgent`/`createAttachmentFromAgent`), com as
+   mesmas regras de canal.
+4. **Fora responder, a encerrada alheia é só leitura:** encerrar/reativar continua da dona,
+   gestor ou admin (`FORBIDDEN` em vez de 404, já que agora ela é visível); `tags` também
+   `FORBIDDEN`; participante continua recusado em encerrada (D-263 item 2). Reação, retry,
+   mensagem automática e envio de orçamento em encerrada seguem com `CONVERSATION_ARCHIVED`
+   (409) — não são "mandar mensagem" da atendente.
+5. **Conversa não encerrada de outra atendente continua `NOT_FOUND`.** Isolamento entre
+   tenants intocado (RLS). Não existe status `archived` desde a D-174 (só `active | closed`):
+   o nome `CONVERSATION_ARCHIVED` é legado.
+6. **Tela:** o Composer de conversa encerrada deixa de ficar travado e mostra o aviso "Ao
+   enviar, a conversa será reaberta e passará para você." Depois do envio as listas são
+   refeitas pela invalidação de sempre: a conversa sai de Encerradas e entra em "Minhas".
+**Motivo:** a equipe atende o mesmo paciente em turnos; a encerrada de uma colega era
+invisível, e quem pegava o retorno não via o histórico nem conseguia responder sem pedir à
+gestora. Reabrir com quem respondeu segue a lógica da D-174 item 4 e da D-215: quem escreve
+assume.
+**Impacto:** `conversation.service.ts` (`canSee`/`canWork`, `openForReply`, `updateTags`),
+`conversation.repository.ts` (`list`: recorte e `counts.unread`), `message.repository.ts`
+(`search`), `conversation.routes.ts` (mensagem e anexo); frontend `Composer.tsx` (`notice`),
+`ConversationPanel.tsx`. Docs: BUSINESS_RULES §17, API_CONTRACTS §2, API_ERRORS, SERVICES §2/§3,
+WORKFLOWS §5, PAGES §2. Testes: `tests/conversations/closed-visibility.spec.ts` (novo),
+`message-search.spec.ts`, `messages/messages.spec.ts`; front `Attendance.spec.tsx`,
+`ConversationPanel.spec.tsx`. Sem migração.

@@ -56,7 +56,9 @@ interface AuthService {
 ```typescript
 interface ConversationService {
   list(tenantId: string, filters: ConversationFilters): Promise<Paginated<Conversation>>;
-  getById(tenantId: string, id: string): Promise<ConversationDetail>;
+  getById(tenantId: string, id: string): Promise<ConversationDetail>; // encerrada: visivel a todas (D-273)
+  // D-273: recorte das rotas de envio; encerrada reabre atribuida a quem envia (reopenManually).
+  openForReply(ctx: TenantContext, id: string): Promise<ConversationDetail>;
   findOrCreateByPhone(tenantId: string, phone: string): Promise<Conversation>;
   assign(tenantId: string, id: string, userId: string | null): Promise<Conversation>;
   // D-174: so dona/gestor/admin; 'closed' grava evento de sistema. Reabertura manual: createManual.
@@ -182,7 +184,10 @@ interface que ProposalService/ApprovalService consomem. Instanciação:
 - Toda criação emite `conversation.new_message` no WebSocket (room = tenantId)
 - `createSystemEvent` usado por: orçamento enviado, transferência, proposta ganha.
   Funciona em conversa encerrada (o fato aconteceu) e NÃO incrementa `unread_count`
-- Enviar mensagem de agente em conversa encerrada → `CONVERSATION_ARCHIVED` (409, nome mantido — D-174)
+- Enviar mensagem/anexo de agente em conversa encerrada: a rota chama
+  `ConversationService.openForReply` antes, que reabre para quem envia (D-273). O guarda
+  `CONVERSATION_ARCHIVED` (409, nome mantido — D-174) continua no `MessageService` para quem
+  chega sem reabrir (reação, automática, orçamento)
 - `createFromPatient` em conversa `closed` REABRE antes de gravar (D-174): `active`, sem dona,
   evento "Atendimento reaberto pelo paciente". `createFromPhone` (`fromMe`) não reabre
 - `createFromPatient` incrementa `unread_count`, sobe `last_message_at` (mesma

@@ -181,9 +181,12 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 - **[Encerrar]** (CRMLAB-48, D-174): `PATCH /conversations/:id { status: 'closed' }`. Substitui o
   antigo [Arquivar]. Habilitado só para a **dona**, gestor e admin (o backend valida de novo) e
   só em conversa `active`. Sucesso: toast "Atendimento encerrado.", limpa a seleção e invalida a
-  lista — a conversa some de "Minhas"/"Não atribuídas" e os counts acompanham. Conversa
-  encerrada aberta pelo chip "Encerradas" mostra o composer travado; ela volta para a fila
-  sozinha quando o paciente escreve (na "Não atribuídas", sem dona)
+  lista — a conversa some de "Minhas"/"Não atribuídas" e os counts acompanham. O chip
+  "Encerradas" lista as encerradas de **todas** as atendentes (D-273). Conversa encerrada
+  aberta por ele mostra o composer **liberado** com o aviso "Ao enviar, a conversa será reaberta
+  e passará para você."; enviar reabre para quem enviou e as listas são refeitas (ela sai de
+  Encerradas e entra em "Minhas"). Ela também volta para a fila sozinha quando o paciente
+  escreve (na "Não atribuídas", sem dona)
 - **[Transferir ▾] abre menu** (Onda 8 §2.1) com as colegas que podem receber
   (`GET /conversations/assignees`) e "Devolver para a fila". O rótulo é "Atribuir" enquanto a
   conversa está livre. Quem já é dona não aparece na lista. Os dois caminhos são o mesmo

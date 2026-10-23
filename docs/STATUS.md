@@ -3422,3 +3422,18 @@ Branch `feature/CRMLAB-102-lembrete-proposta-parada` (de `main` v1.36.1). Decis�
   `ProposalModal` (+3), `Proposals` (+1), `Rules` (+2), `ws` (+1).
 - **Pendente:** validação na hml. Atalho "Enviar mensagem" é o botão do cabeçalho do CRMLAB-100 (outra
   branch). No Santé a perda está ligada em 15 dias: ao ligar o lembrete, usar até 14.
+
+### 🚧 CRMLAB-108 — encerradas visíveis para todas; responder reabre para quem enviou (2026-10-22, aguardando validação)
+
+Branch `feature/CRMLAB-108-encerradas-para-todas` (de `main` v1.37.0). Decisão D-273, sem migração.
+
+- **Regra:** toda atendente lista e abre as encerradas de todas (detalhe, mensagens, mídia, busca);
+  ativa de outra continua 404. Responder (texto ou anexo) uma encerrada reabre atribuída a quem enviou.
+- **Backend:** `canSee` libera `closed`; `canWork` é o recorte antigo (tags, 409 de atribuição);
+  `openForReply` nas rotas de mensagem e anexo; lista com `status=closed` sem recorte por dona,
+  `counts.unread` com o recorte antigo; busca de mensagens inclui encerradas.
+- **Front:** Composer liberado em encerrada com o aviso "Ao enviar, a conversa será reaberta e passará para você."
+- **Testes:** `tests/conversations/closed-visibility.spec.ts` (novo, 7), `message-search.spec.ts` e
+  `messages/messages.spec.ts` ajustados; front `Attendance.spec.tsx` (+1), `ConversationPanel.spec.tsx` (ajustado).
+- **Pendente:** validação na hml.
+

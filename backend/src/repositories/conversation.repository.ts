@@ -130,6 +130,11 @@ function participatesSql(userParam: string): string {
                   WHERE vp.conversation_id = c.id AND vp.user_id = ${userParam})`;
 }
 
+/** Recorte da atendente nas nao encerradas: propria, livre ou participa (D-263). */
+function ownedSql(userParam: string): string {
+  return `(c.assigned_to = ${userParam} OR c.assigned_to IS NULL OR ${participatesSql(userParam)})`;
+}
+
 const LIST_COLUMNS = `c.id, c.patient_id, c.patient_name, c.patient_phone, c.patient_email, c.assigned_to,
        u.name AS assigned_to_name, c.channel, c.status, c.unread_count, c.last_message_at,
        c.tags, c.custom_fields, c.created_at, lm.content AS last_message_preview,
@@ -281,7 +286,10 @@ export function toConversationDetail(row: ConversationRow): ConversationDetail {
 
 /** Recorte de visibilidade + filtros. O service traduz papel -> `visibleTo`. */
 export interface ConversationListCriteria {
-  /** `null` = ve todas (gestor/admin). String = as proprias + as livres + as em que participa. */
+  /**
+   * `null` = ve todas (gestor/admin). String = as proprias + as livres + as em
+   * que participa — e, com `status: 'closed'`, todas as encerradas (D-273).
+   */
   visibleTo: string | null;
   /** Usuario logado — origem de `counts.mine`. */
   userId: string;
@@ -337,13 +345,14 @@ export class ConversationRepository {
     const where: string[] = [];
 
     // Visibilidade por papel: atendente ve as proprias + a fila livre + as em
-    // que participa (D-263).
-    if (criteria.visibleTo !== null) {
+    // que participa (D-263). Pedindo `status = closed`, ve as encerradas de
+    // TODAS (D-273) — so nesse filtro: sem status, a lista continua sem as
+    // encerradas alheias. O recorte antigo segue valendo no count de nao lidas
+    // (encerrada alheia nao entra no badge) — ver `unreadSql` abaixo.
+    const allClosed = criteria.visibleTo !== null && criteria.status === 'closed';
+    if (criteria.visibleTo !== null && !allClosed) {
       params.push(criteria.visibleTo);
-      const visible = `$${params.length}`;
-      where.push(
-        `(c.assigned_to = ${visible} OR c.assigned_to IS NULL OR ${participatesSql(visible)})`,
-      );
+      where.push(ownedSql(`$${params.length}`));
     }
     if (criteria.status !== undefined) {
       params.push(criteria.status);
@@ -367,6 +376,8 @@ export class ConversationRepository {
     const countsWhereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
     const countsParams = [...params, criteria.userId];
     const me = `$${countsParams.length}`;
+    // `visibleTo` e o proprio `userId` quando nao e nulo: `me` serve de recorte.
+    const unreadSql = allClosed ? `c.unread_count > 0 AND ${ownedSql(me)}` : 'c.unread_count > 0';
 
     // O escopo entra so na listagem (e, como FILTER, no `total`): o chip nao
     // clicado precisa continuar mostrando o proprio numero.
@@ -407,7 +418,7 @@ export class ConversationRepository {
         `SELECT COUNT(*) FILTER (WHERE ${scopeCondition})::int AS total,
                 COUNT(*) FILTER (WHERE c.assigned_to = ${me})::int AS mine,
                 COUNT(*) FILTER (WHERE c.assigned_to IS NULL)::int AS unassigned,
-                COUNT(*) FILTER (WHERE c.unread_count > 0)::int AS unread,
+                COUNT(*) FILTER (WHERE ${unreadSql})::int AS unread,
                 COUNT(*) FILTER (WHERE ${participatesSql(me)})::int AS participating
          FROM conversations c ${countsWhereSql}`,
         countsParams,

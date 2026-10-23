@@ -178,7 +178,8 @@ describe('GET /conversations/search/messages (D-228)', () => {
         .sort();
 
     expect(await ids(ana)).toEqual([conversation.id, livre.id, encerrada.id].sort());
-    expect(await ids(bia)).toEqual([daBia.id, livre.id].sort());
+    // D-273: a encerrada da Ana aparece para a Bia — encerradas sao de todas.
+    expect(await ids(bia)).toEqual([daBia.id, livre.id, encerrada.id].sort());
     expect(await ids(gestor)).toEqual([conversation.id, daBia.id, livre.id, encerrada.id].sort());
     expect(await ids(gestorOutro)).toEqual([outraConversa.id]);
   });

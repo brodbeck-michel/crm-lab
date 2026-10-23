@@ -68,15 +68,23 @@ test.describe('CRMLAB-48 — encerrar atendimento', () => {
     expect((await fetchConversation(request, token, conversa.id)).status).toBe('closed');
     await expect(item).toHaveCount(0);
 
-    // Chip "Encerradas" encontra a conversa, com o composer travado.
+    // Chip "Encerradas" encontra a conversa; o composer fica livre, avisando que
+    // enviar reabre a conversa para quem enviou (D-273).
     await page.getByRole('button', { name: 'Encerradas' }).click();
     await expect(item).toBeVisible();
     await item.click();
-    // Na bolha, nao na previa da lista — a frase aparece nas duas.
+    // Na bolha, nao na previa da lista — a frase aparece nas duas. `last()`: numa
+    // nova tentativa do teste o mesmo telefone ja traz um encerramento anterior.
     await expect(
-      page.getByTestId('message-bubble').filter({ hasText: `Atendimento encerrado por ${ana.name}` }),
+      page
+        .getByTestId('message-bubble')
+        .filter({ hasText: `Atendimento encerrado por ${ana.name}` })
+        .last(),
     ).toBeVisible();
-    await expect(page.getByLabel('Mensagem', { exact: true })).toBeDisabled();
+    await expect(page.getByLabel('Mensagem', { exact: true })).toBeEnabled();
+    await expect(page.getByTestId('composer-notice')).toHaveText(
+      'Ao enviar, a conversa será reaberta e passará para você.',
+    );
     await expect(page.getByRole('button', { name: 'Encerrar' })).toBeDisabled();
 
     // Atendimento manual no mesmo telefone reabre para quem cadastrou (D-174).

@@ -39,7 +39,7 @@ describe('D-273: ficha do paciente pela conversa encerrada de outra atendente', 
     const soAtiva = await createPatient({ tenantId: tenant.id, name: 'Paciente Ativa' });
     const ativa = await createConversation({ tenantId: tenant.id, assignedTo: bia.id });
     await linkConversation(ativa.id, soAtiva.id);
-    return { tenant, ana, viaEncerrada, soAtiva };
+    return { tenant, ana, bia, viaEncerrada, soAtiva };
   }
 
   it('abre detalhe e timeline (200); a conversa encerrada conta na ficha', async () => {
@@ -57,6 +57,21 @@ describe('D-273: ficha do paciente pela conversa encerrada de outra atendente', 
       .set(app.auth(ana))
       .expect(200);
     expect(timeline.body.entries.length).toBeGreaterThan(0);
+  });
+
+  it('canEdit: false para quem so le pela encerrada alheia; true para a dona e a gestora', async () => {
+    const { tenant, ana, bia, viaEncerrada } = await scenario();
+    const gestora = await createUser({ tenantId: tenant.id, role: 'manager' });
+
+    const leitura = await app.agent.get(`${BASE}/${viaEncerrada.id}`).set(app.auth(ana)).expect(200);
+    expect(leitura.body.canEdit).toBe(false);
+    const dona = await app.agent.get(`${BASE}/${viaEncerrada.id}`).set(app.auth(bia)).expect(200);
+    expect(dona.body.canEdit).toBe(true);
+    const gestor = await app.agent
+      .get(`${BASE}/${viaEncerrada.id}`)
+      .set(app.auth(gestora))
+      .expect(200);
+    expect(gestor.body.canEdit).toBe(true);
   });
 
   it('paciente sem conversa visivel para ela (so ativa de outra) continua 404', async () => {

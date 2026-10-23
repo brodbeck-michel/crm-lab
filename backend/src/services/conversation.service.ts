@@ -618,9 +618,7 @@ export class ConversationService {
       throw notFound({ resource: 'conversation', id });
     }
     // Encerrada de outra pessoa: visivel (D-273), mas etiquetar e de quem atende.
-    if (!this.canWork(ctx, current)) {
-      throw new BusinessError('FORBIDDEN', { requiredRoles: [...SUPERVISOR_ROLES] });
-    }
+    this.assertCanWork(ctx, current);
     const updated = await this.repository.setTags(ctx.tenantId, id, tags);
     if (!updated) throw notFound({ resource: 'conversation', id });
     return updated;
@@ -722,7 +720,7 @@ export class ConversationService {
    * pin e preferencia de tela, nao ato sobre o atendimento.
    */
   async setPinned(ctx: TenantContext, id: string, pinned: boolean): Promise<void> {
-    await this.getById(ctx, id);
+    this.assertCanWork(ctx, await this.getById(ctx, id));
     if (pinned) await this.repository.pin(ctx.tenantId, id, ctx.userId);
     else await this.repository.unpin(ctx.tenantId, id, ctx.userId);
   }
@@ -733,6 +731,10 @@ export class ConversationService {
     if (!current || !this.canSee(ctx, current)) {
       throw notFound({ resource: 'conversation', id });
     }
+    // Quem so LE a encerrada alheia (D-273) nao mexe no estado de leitura da
+    // dona — nem apaga o "marcar como nao lida" dela (D-229). No-op: o GET do
+    // detalhe chama isto e precisa seguir abrindo.
+    if (!this.canWork(ctx, current)) return;
     await this.repository.markAsRead(ctx.tenantId, id);
   }
 
@@ -741,7 +743,7 @@ export class ConversationService {
    * invisivel e 404. Sem audit e sem WS — preferencia de tela, como o pin.
    */
   async markAsUnread(ctx: TenantContext, id: string): Promise<void> {
-    await this.getById(ctx, id);
+    this.assertCanWork(ctx, await this.getById(ctx, id));
     await this.repository.markAsUnread(ctx.tenantId, id);
   }
 
@@ -825,6 +827,16 @@ export class ConversationService {
       conversation.assignedTo === ctx.userId ||
       isParticipant(conversation, ctx.userId)
     );
+  }
+
+  /**
+   * Encerrada alheia e so leitura (D-273): tags, pin e "marcar como nao lida"
+   * recusam com 403 — ela ja e visivel, entao 404 seria mentira.
+   */
+  private assertCanWork(ctx: TenantContext, conversation: Conversation): void {
+    if (!this.canWork(ctx, conversation)) {
+      throw new BusinessError('FORBIDDEN', { requiredRoles: [...SUPERVISOR_ROLES] });
+    }
   }
 
   /** So o dono atual, gestor ou admin reatribuem uma conversa ja atribuida. */

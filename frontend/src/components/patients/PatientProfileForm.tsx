@@ -140,6 +140,9 @@ export function PatientProfileForm({ patient }: PatientProfileFormProps) {
   const [saved, setSaved] = useState(false);
 
   const anonymized = patient.anonymizedAt !== null;
+  // Ficha aberta só pela conversa encerrada de outra atendente (D-273): leitura.
+  const readOnly = !patient.canEdit;
+  const locked = anonymized || readOnly;
 
   // O cadastro pode mudar sob os pés do formulário (anonimização em outra aba,
   // invalidação por WebSocket). `updatedAt` é o carimbo dessa mudança.
@@ -247,11 +250,21 @@ export function PatientProfileForm({ patient }: PatientProfileFormProps) {
         </p>
       )}
 
+      {readOnly && !anonymized && (
+        <p
+          role="status"
+          data-testid="patient-read-only"
+          className="m-0 rounded-md bg-neutral-100 px-md py-sm font-body text-caption text-neutral-700"
+        >
+          Somente leitura: você vê esta ficha por um atendimento encerrado de outra pessoa.
+        </p>
+      )}
+
       <form
         className="flex flex-col gap-md"
         onSubmit={(event) => {
           event.preventDefault();
-          if (!dirty || anonymized) return;
+          if (!dirty || locked) return;
           save.mutate(patch);
         }}
       >
@@ -259,7 +272,7 @@ export function PatientProfileForm({ patient }: PatientProfileFormProps) {
           <Input
             label="Nome"
             value={form.name}
-            disabled={anonymized}
+            disabled={locked}
             error={fieldErrors.name}
             onChange={(event) => setField('name', event.target.value)}
           />
@@ -268,7 +281,7 @@ export function PatientProfileForm({ patient }: PatientProfileFormProps) {
           <Input
             label="Telefone"
             value={form.phone}
-            disabled={anonymized}
+            disabled={locked}
             error={fieldErrors.phone}
             hint="É o número que identifica o paciente quando ele escreve. Um número já usado por outro cadastro é recusado."
             onChange={(event) => setField('phone', event.target.value)}
@@ -278,7 +291,7 @@ export function PatientProfileForm({ patient }: PatientProfileFormProps) {
             label="E-mail"
             type="email"
             value={form.email}
-            disabled={anonymized}
+            disabled={locked}
             error={fieldErrors.email}
             onChange={(event) => setField('email', event.target.value)}
           />
@@ -287,7 +300,7 @@ export function PatientProfileForm({ patient }: PatientProfileFormProps) {
             label="Data de nascimento"
             type="date"
             value={form.birthDate}
-            disabled={anonymized}
+            disabled={locked}
             error={fieldErrors.birthDate}
             onChange={(event) => setField('birthDate', event.target.value)}
           />
@@ -295,7 +308,7 @@ export function PatientProfileForm({ patient }: PatientProfileFormProps) {
           <Input
             label="CPF"
             value={form.document}
-            disabled={anonymized}
+            disabled={locked}
             error={fieldErrors.document}
             hint="Com ou sem pontuação — o servidor normaliza para 11 dígitos."
             onChange={(event) => setField('document', event.target.value)}
@@ -306,7 +319,7 @@ export function PatientProfileForm({ patient }: PatientProfileFormProps) {
           label="Anotações internas"
           rows={4}
           value={form.notes}
-          disabled={anonymized}
+          disabled={locked}
           error={fieldErrors.notes}
           hint="Visível apenas para a equipe do laboratório — nunca é enviado ao paciente."
           onChange={(event) => setField('notes', event.target.value)}
@@ -324,7 +337,7 @@ export function PatientProfileForm({ patient }: PatientProfileFormProps) {
               {form.tags.map((tag) => (
                 <Chip key={tag} tone="positive">
                   <span>{tag}</span>
-                  {!anonymized && (
+                  {!locked && (
                     <button
                       type="button"
                       aria-label={`Remover etiqueta ${tag}`}
@@ -339,7 +352,7 @@ export function PatientProfileForm({ patient }: PatientProfileFormProps) {
             </div>
           )}
 
-          {!anonymized && (
+          {!locked && (
             <div className="flex items-end gap-sm">
               <div className="min-w-[200px] flex-1">
                 <Input
@@ -379,7 +392,7 @@ export function PatientProfileForm({ patient }: PatientProfileFormProps) {
                   <Input
                     aria-label={`Nome do campo ${index + 1}`}
                     value={row.key}
-                    disabled={anonymized}
+                    disabled={locked}
                     onChange={(event) => setCustomField(index, 'key', event.target.value)}
                   />
                 </div>
@@ -387,11 +400,11 @@ export function PatientProfileForm({ patient }: PatientProfileFormProps) {
                   <Input
                     aria-label={`Valor do campo ${index + 1}`}
                     value={row.value}
-                    disabled={anonymized}
+                    disabled={locked}
                     onChange={(event) => setCustomField(index, 'value', event.target.value)}
                   />
                 </div>
-                {!anonymized && (
+                {!locked && (
                   <Button variant="destructive" size="sm" onClick={() => removeCustomField(index)}>
                     Remover
                   </Button>
@@ -400,7 +413,7 @@ export function PatientProfileForm({ patient }: PatientProfileFormProps) {
             ))
           )}
 
-          {!anonymized && (
+          {!locked && (
             <div>
               <Button
                 variant="secondary"
@@ -430,7 +443,7 @@ export function PatientProfileForm({ patient }: PatientProfileFormProps) {
           </p>
         )}
 
-        {!anonymized && (
+        {!locked && (
           <div className="flex flex-wrap items-center gap-sm">
             <Button type="submit" variant="primary" disabled={!dirty} loading={save.isPending}>
               Salvar cadastro

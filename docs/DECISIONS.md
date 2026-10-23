@@ -5779,6 +5779,22 @@ dono do produto em 22/10/2026:
    b. **Busca geral de mensagens** incluindo encerradas de outras: mantida.
    c. **Orçamento pelo cartão em encerrada:** mantém `CONVERSATION_ARCHIVED` (409).
    d. **Gestor/admin que responde encerrada vira dono:** confirmado.
+8. **Ajustes da revisão de regressão (22/10/2026):**
+   a. **Ficha só leitura:** `PatientDetail.canEdit` (recorte de escrita, o mesmo de
+      `getForWrite`; gestor/admin sempre `true`). Com `false`, a ficha abre em modo leitura:
+      campos desabilitados, sem [Salvar cadastro] e sem a seção de inativar/reativar.
+   b. **`?status=closed&unread=true`:** a lista e o `total` usam o mesmo recorte do
+      `counts.unread` (só as dela/livres/participando) — chip e lista não divergem e
+      encerrada alheia não entra em "não lidas".
+   c. **Quem só lê a encerrada alheia não mexe em estado dela:** o `GET /conversations/:id`
+      não marca como lida (`markAsRead` vira no-op para quem não tem `canWork`), e
+      `POST/DELETE /:id/pin`, `POST /:id/unread` e `PATCH { tags }` respondem `FORBIDDEN` (403).
+   d. **Validar antes de reabrir:** as rotas de mensagem e anexo validam a citação
+      (`MessageService.assertQuotable`) e o arquivo (`MediaService.prepareOutbound`: allow-list,
+      base64, teto, sniff — sem gravar) ANTES de `openForReply`. Recusa não deixa a conversa
+      reaberta com outra dona. Reabertura e gravação não ficam na mesma transação (cada
+      repositório abre a sua, D-008); a garantia é a ordem. Falha do canal depois da reabertura
+      deixa a mensagem gravada como `failed` — a conversa reaberta tem a mensagem dela.
 **Motivo:** a equipe atende o mesmo paciente em turnos; a encerrada de uma colega era
 invisível, e quem pegava o retorno não via o histórico nem conseguia responder sem pedir à
 gestora. Reabrir com quem respondeu segue a lógica da D-174 item 4 e da D-215: quem escreve

@@ -544,7 +544,7 @@ atribuídas a ele **mais** a fila não atribuída (e as em que participa, D-263)
 recebem todas as do laboratório. **Exceção (CRMLAB-108, D-273):** com `?status=closed` a
 atendente recebe as encerradas de **todas** do laboratório — só com esse filtro; sem `status`,
 a lista segue sem as encerradas alheias. Nesse caso `counts.unread` continua contando só o
-recorte dela (encerrada alheia não soma). `platform_operator` recebe `FORBIDDEN` (PAGES.md §11).
+recorte dela (encerrada alheia não soma), e `?unread=true` usa esse mesmo recorte na lista. `platform_operator` recebe `FORBIDDEN` (PAGES.md §11).
 
 **Query Params:**
 ```
@@ -835,7 +835,9 @@ com `3`. Quem precisa do efeito sem carregar o histórico usa
 `POST /conversations/:id/read`. O `markAsRead` roda **antes** da leitura e aplica o
 recorte por papel: conversa fora do escopo do usuário devolve `404` sem ter tocado em
 nada. Conversa **encerrada** está no escopo de qualquer atendente (D-273): detalhe, mensagens,
-mídia e a busca abaixo abrem normalmente; a **ativa** de outra atendente continua `404`.
+mídia e a busca abaixo abrem normalmente; a **ativa** de outra atendente continua `404`. Quem
+só lê a encerrada alheia (não é dona, participante nem gestor/admin) **não** a marca como lida,
+e pin, "marcar como não lida" e `tags` respondem `FORBIDDEN` (403).
 
 Mensagens vêm em ordem cronológica **crescente**; `page=1` é a página mais recente.
 `messageLimit` default 50, máx. 100.
@@ -1040,7 +1042,8 @@ dona, inclusive de quem envia — volta para `active` **atribuída a quem enviou
 `update_conversation_status` e a mensagem de sistema "Atendimento reaberto por <nome>", e só
 então a mensagem é gravada e enviada. Antes do D-273 isso era `CONVERSATION_ARCHIVED` (409).
 Se o paciente ou outra atendente reabrir no mesmo instante e a conversa ficar com outra pessoa,
-`CONVERSATION_ALREADY_ASSIGNED` (409) e nada sai.
+`CONVERSATION_ALREADY_ASSIGNED` (409) e nada sai. A citação (`quotedMessageId`) é validada
+**antes** de reabrir: citação inválida responde `404` e a encerrada fica como estava.
 
 **Responder assume a conversa (CRMLAB-75, D-215):** conversa **sem dona** (`assignedTo: null`)
 passa a ser de quem enviou ANTES de a mensagem ser gravada — o mesmo claim atômico de
@@ -1115,7 +1118,9 @@ médico.
 O recorte por papel é aplicado **antes** de gravar: conversa que o usuário não
 enxerga devolve `NOT_FOUND`. Conversa sem dona é assumida por quem envia antes de gravar a
 mídia (D-215, mesma regra e mesmo 409 de `POST /conversations/:id/messages`). Conversa
-encerrada reabre para quem envia antes de gravar a mídia (D-273, mesma regra da mensagem). `messageType` é derivado do `mimeType`
+encerrada reabre para quem envia antes de gravar a mídia (D-273, mesma regra da mensagem) —
+mas só **depois** de validar o arquivo (tipo, tamanho, conteúdo) e a citação: anexo recusado
+não reabre nem troca a dona. `messageType` é derivado do `mimeType`
 (`image/* → image`, `audio/* → audio`, `video/* → video` (CRMLAB-70), `application/pdf → pdf`,
 resto → `doc`) — o cliente não escolhe.
 
@@ -1622,7 +1627,9 @@ ficha: contadores e timeline só contam o que o solicitante já podia ver por ou
 também abrem para a atendente o paciente com conversa **encerrada** de qualquer atendente (a
 mesma que ela já lê no atendimento), e essas conversas entram nos contadores e na timeline.
 `GET /patients` (lista/busca) e as escritas (`PATCH`, inativar, reativar) seguem o recorte de
-antes: por esse caminho só, a lista não traz o paciente e editar responde `404`.
+antes: por esse caminho só, a lista não traz o paciente e editar responde `404`. O detalhe
+traz `canEdit: boolean` — `false` exatamente nesse caso (a tela abre só leitura); gestor e admin,
+sempre `true`.
 
 **Não existe `POST /patients`.** O paciente nasce do canal: `findOrCreateByPhone` resolve ou
 cria a linha pelo telefone dentro do tenant (`UNIQUE (tenant_id, phone)`) quando a conversa

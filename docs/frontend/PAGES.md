@@ -348,6 +348,10 @@ enxerga quem já veria por uma conversa). `platform_operator` não acessa (§11)
   endpoint novo) e navega para `/attendance?conversationId=<id>`, o mesmo deep-link de "Enviar
   orçamento". `409 CONVERSATION_ALREADY_ASSIGNED` (telefone com conversa de outro atendente) vira
   toast com o nome de quem está atendendo — não navega.
+- **Modo leitura (D-273):** `canEdit: false` no detalhe (atendente que só enxerga o paciente por
+  uma conversa encerrada de outra pessoa) desabilita os campos do cadastro, esconde [Salvar
+  cadastro] e a seção de status (inativar/reativar) e mostra "Somente leitura: você vê esta ficha
+  por um atendimento encerrado de outra pessoa."
 
 **Três chamadas, três blocos** — a ficha NÃO vem em um payload só (D-060). Cada bloco tem seu
 ciclo de atualização e sua paginação:

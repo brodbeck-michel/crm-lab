@@ -920,8 +920,11 @@ interações com ele, com autor e data.
 - Os números dos chips da fila (Minhas, Não atribuídas, Participando, não lidas) não contam
   encerradas alheias.
 - **Ficha do paciente:** quem lê a encerrada abre também a ficha do paciente dela (detalhe e
-  linha do tempo, contando essa conversa). A lista/busca de pacientes não passa a mostrá-lo por
-  isso, e editar/inativar a ficha segue com o recorte de antes.
+  linha do tempo, contando essa conversa), em **modo leitura**. A lista/busca de pacientes não
+  passa a mostrá-lo por isso, e editar/inativar a ficha segue com o recorte de antes.
+- Só ler a encerrada alheia não a marca como lida para a dona; fixar e "marcar como não lida"
+  também são de quem atende.
+- Anexo ou citação recusados não reabrem a conversa: a validação vem antes da reabertura.
 - Busca geral de mensagens inclui as encerradas de todas. Enviar orçamento pelo cartão numa
   encerrada continua recusado (409). Gestor/admin que responde uma encerrada vira a dona.
 

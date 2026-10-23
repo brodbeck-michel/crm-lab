@@ -151,7 +151,8 @@ export function PatientProfile() {
 
       <PatientProfileForm patient={patient} />
 
-      <PatientInactivationSection patient={patient} />
+      {/* Leitura pela encerrada alheia (D-273): inativar/reativar responderia 404. */}
+      {patient.canEdit && <PatientInactivationSection patient={patient} />}
 
       <PatientTimeline patientId={patient.id} />
 

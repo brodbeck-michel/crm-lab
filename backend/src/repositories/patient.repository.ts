@@ -124,6 +124,7 @@ interface PatientListRow extends PatientRow {
 interface PatientDetailRow extends PatientListRow {
   conversation_count: number | string | null;
   proposal_count: number | string | null;
+  can_edit: boolean | null;
 }
 
 function safeJson(value: string): unknown {
@@ -180,6 +181,7 @@ function toDetail(row: PatientDetailRow): PatientDetail {
     conversationCount: toNumber(row.conversation_count, 0),
     proposalCount: toNumber(row.proposal_count, 0),
     lastInteractionAt: row.last_interaction_at,
+    canEdit: row.can_edit === true,
   };
 }
 
@@ -949,11 +951,18 @@ async function selectDetail(
   const conversations = conversationAggregate(params, visibility);
   const proposals = proposalAggregate(params, visibility.visibleTo);
   const visible = visibility.visibleTo !== null ? 'AND ci.conversation_count > 0' : '';
+  // `canEdit` (D-273): o recorte de ESCRITA, sem as encerradas alheias — o
+  // mesmo de `PatientService.getForWrite`. Gestor/admin: sempre.
+  const canEdit =
+    visibility.visibleTo === null
+      ? 'TRUE'
+      : `EXISTS (SELECT 1 FROM conversations c WHERE c.patient_id = p.id
+                 ${conversationVisibility(params, { visibleTo: visibility.visibleTo })})`;
 
   const result = await tx.query<PatientDetailRow>(
     `SELECT ${PATIENT_COLUMNS},
             ${isoUtc('ci.last_interaction_at')} AS last_interaction_at,
-            ci.conversation_count, pc.proposal_count
+            ci.conversation_count, pc.proposal_count, ${canEdit} AS can_edit
        FROM patients p
        LEFT JOIN LATERAL (${conversations}) ci ON TRUE
        LEFT JOIN LATERAL (${proposals}) pc ON TRUE

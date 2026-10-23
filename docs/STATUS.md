@@ -3437,5 +3437,8 @@ Branch `feature/CRMLAB-108-encerradas-para-todas` (de `main` v1.37.0). Decisão 
   `messages/messages.spec.ts` ajustados; front `Attendance.spec.tsx` (+1), `ConversationPanel.spec.tsx` (ajustado).
 - **Ficha do paciente (resposta do PO):** detalhe e timeline abrem pelo paciente de encerrada alheia;
   lista/busca de pacientes e edição seguem o recorte do D-060. `tests/patients/patients-closed-conversation.spec.ts` (novo, 4).
+- **Revisão de regressão:** ficha só leitura (`canEdit`), `status=closed&unread=true` com o recorte do
+  count, leitura de encerrada alheia não marca como lida e pin/não lida dão 403, validação de anexo e
+  citação antes de reabrir (D-273 item 8).
 - **Pendente:** validação na hml.
 

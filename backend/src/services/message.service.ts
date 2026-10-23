@@ -423,6 +423,18 @@ export class MessageService {
   }
 
   /**
+   * Valida a citacao sem gravar nada (`NOT_FOUND` se invalida). A rota de
+   * mensagem roda isto ANTES de reabrir uma encerrada (D-273).
+   */
+  async assertQuotable(
+    tenantId: string,
+    conversationId: string,
+    quotedMessageId: string | null | undefined,
+  ): Promise<void> {
+    await this.resolveQuote(tenantId, conversationId, quotedMessageId);
+  }
+
+  /**
    * Responder assume a conversa (CRMLAB-75, D-215): conversa da fila livre
    * passa a ser de quem vai escrever nela. A rota de anexo chama isto ANTES de
    * gravar a midia — perdeu a corrida, nao sobra arquivo orfao em disco.

@@ -685,7 +685,10 @@ da transação da conversa — ver a regra de nascimento abaixo.
 - **Leitura pela encerrada (D-273):** `getById` e `timeline` usam `readVisibilityOf(ctx)` —
   `visibilityOf` + `closedConversations: true`, que soma as conversas encerradas de qualquer
   atendente (as que o atendimento já abre para todas). `list` e as escritas (`update`,
-  `inactivate`, `reactivate`, via `getForWrite`) seguem `visibilityOf`.
+  `inactivate`, `reactivate`, via `getForWrite`) seguem `visibilityOf`. O detalhe traz
+  `canEdit` calculado na query com esse recorte de escrita.
+- `MediaService.prepareOutbound` valida o anexo de saída sem gravar; `storePrepared` grava.
+  `storeOutbound` = os dois (D-273: a rota de anexo valida antes de reabrir a encerrada).
 - `conversationCount`, `proposalCount` e `lastInteractionAt` são **derivados na query**, nunca
   colunas (BUSINESS_RULES §5).
 - `update` não toca em `conversations.patient_name/phone/email`: são o registro do que o canal

@@ -376,7 +376,10 @@ export function createMessage(services: ConversationServices): RequestHandler {
     const dto = validated<CreateMessageBody>(req, 'body');
 
     // Recorte por papel antes de escrever: 404 para conversa que nao e visivel.
-    // Encerrada reabre para quem envia (D-273).
+    // Tudo que pode recusar vem ANTES de reabrir a encerrada para quem envia
+    // (D-273) — o corpo ja passou pelo zod; falta a citacao.
+    await services.conversations.getById(ctx, id);
+    await services.messages.assertQuotable(ctx.tenantId, id, dto.quotedMessageId);
     await services.conversations.openForReply(ctx, id);
 
     const message: Message = await services.messages.createFromAgent(ctx.tenantId, id, ctx.userId, {
@@ -402,13 +405,18 @@ export function createAttachment(services: ConversationServices): RequestHandler
     const dto = validated<CreateAttachmentRequest>(req, 'body');
 
     // Recorte por papel antes de gravar: 404 para conversa que nao e visivel.
-    // Encerrada reabre para quem envia (D-273).
+    await services.conversations.getById(ctx, id);
+    // Validacoes do arquivo e da citacao SEM gravar, antes de reabrir a
+    // encerrada para quem envia (D-273): recusa aqui nao deixa a conversa
+    // reaberta e com outra dona sem mensagem.
+    const prepared = await services.media.prepareOutbound(dto);
+    await services.messages.assertQuotable(ctx.tenantId, id, dto.quotedMessageId);
     await services.conversations.openForReply(ctx, id);
     // Responder assume a fila livre (D-215) — antes da midia: quem perde a
     // corrida recebe o 409 sem deixar arquivo gravado.
     await services.messages.claimForAgent(ctx.tenantId, id, ctx.userId);
 
-    const stored = await services.media.storeOutbound(ctx.tenantId, dto);
+    const stored = await services.media.storePrepared(ctx.tenantId, dto.fileName, prepared);
     // `stored.mimeType` (nao `dto.mimeType`): allow-list/sniff (CRMLAB-31)
     // podem rebaixar o MIME declarado — mensagem e envio pro canal externo
     // usam o que foi REALMENTE gravado.

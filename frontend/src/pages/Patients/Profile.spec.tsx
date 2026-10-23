@@ -71,6 +71,7 @@ const patient: PatientDetail = {
   conversationCount: 4,
   proposalCount: 2,
   lastInteractionAt: '2026-08-23T14:30:00.000Z',
+  canEdit: true,
   createdAt: '2026-06-02T10:00:00.000Z',
   updatedAt: '2026-08-20T09:15:00.000Z',
 };
@@ -378,6 +379,19 @@ describe('Ficha do Paciente', () => {
     expect(await screen.findByText(/Cadastro anonimizado a pedido do titular/)).toBeInTheDocument();
     expect(screen.getByLabelText('Nome')).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Salvar cadastro' })).not.toBeInTheDocument();
+  });
+
+  it('D-273: ficha aberta pela encerrada alheia (canEdit false) fica só leitura, sem salvar nem inativar', async () => {
+    signIn('attendant');
+    getMock.mockResolvedValue({ ...patient, canEdit: false });
+
+    renderPage();
+
+    expect(await screen.findByTestId('patient-read-only')).toBeInTheDocument();
+    expect(screen.getByLabelText('Nome')).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Salvar cadastro' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Inativar paciente' })).not.toBeInTheDocument();
+    expect(updateMock).not.toHaveBeenCalled();
   });
 
   /* ── Bloco 2: timeline ──────────────────────────────────────────────── */

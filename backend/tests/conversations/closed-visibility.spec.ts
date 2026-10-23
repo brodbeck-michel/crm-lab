@@ -201,4 +201,65 @@ describe('D-273: encerradas para todas', () => {
       .expect(403);
     expect((await readConversationRow(encerradaDaBia.id))?.status).toBe('closed');
   });
+  it('?status=closed&unread=true: lista e total seguem o count (encerrada alheia fora)', async () => {
+    const { ana, encerradaDaBia } = await scenario();
+    await setUnreadCount(encerradaDaBia.id, 2);
+
+    const res = await app.agent
+      .get('/api/v1/conversations?status=closed&unread=true')
+      .set(app.auth(ana))
+      .expect(200);
+    expect(res.body.conversations).toHaveLength(0);
+    expect(res.body.pagination.total).toBe(0);
+    expect(res.body.counts.unread).toBe(0);
+  });
+
+  it('so ler a encerrada alheia nao mexe na leitura da dona; pin e nao lida -> FORBIDDEN', async () => {
+    const { ana, encerradaDaBia } = await scenario();
+    await setUnreadCount(encerradaDaBia.id, 1);
+
+    await app.agent.get(`/api/v1/conversations/${encerradaDaBia.id}`).set(app.auth(ana)).expect(200);
+    expect((await readConversationRow(encerradaDaBia.id))?.unread_count).toBe(1);
+
+    const pin = await app.agent
+      .post(`/api/v1/conversations/${encerradaDaBia.id}/pin`)
+      .set(app.auth(ana))
+      .expect(403);
+    expect(pin.body.error.code).toBe('FORBIDDEN');
+    await app.agent
+      .post(`/api/v1/conversations/${encerradaDaBia.id}/unread`)
+      .set(app.auth(ana))
+      .expect(403);
+  });
+
+  it('anexo recusado (MIME proibido) numa encerrada alheia nao reabre nem troca a dona', async () => {
+    const { ana, bia, encerradaDaBia } = await scenario();
+
+    const res = await app.agent
+      .post(`/api/v1/conversations/${encerradaDaBia.id}/attachments`)
+      .set(app.auth(ana))
+      .send({
+        fileName: 'virus.exe',
+        mimeType: 'application/x-msdownload',
+        contentBase64: Buffer.from('MZ').toString('base64'),
+      })
+      .expect(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+
+    const row = await readConversationRow(encerradaDaBia.id);
+    expect(row?.status).toBe('closed');
+    expect(row?.assigned_to).toBe(bia.id);
+  });
+
+  it('citacao invalida numa encerrada alheia: 404 e a conversa continua encerrada', async () => {
+    const { ana, bia, encerradaDaBia } = await scenario();
+    await app.agent
+      .post(`/api/v1/conversations/${encerradaDaBia.id}/messages`)
+      .set(app.auth(ana))
+      .send({ content: 'oi', quotedMessageId: '00000000-0000-4000-8000-000000000000' })
+      .expect(404);
+    const row = await readConversationRow(encerradaDaBia.id);
+    expect(row?.status).toBe('closed');
+    expect(row?.assigned_to).toBe(bia.id);
+  });
 });

@@ -146,14 +146,37 @@ export class MediaService {
     tenantId: string,
     dto: { fileName: string; mimeType: string; contentBase64: string },
   ): Promise<StoredMedia> {
+    return this.storePrepared(tenantId, dto.fileName, await this.prepareOutbound(dto));
+  }
+
+  /**
+   * Todas as validacoes da saida (allow-list, base64, teto, sniff) SEM gravar
+   * nada. A rota de anexo roda isto ANTES de reabrir uma conversa encerrada
+   * (D-273): arquivo recusado nao pode deixar a conversa reaberta e com outra
+   * dona sem mensagem nenhuma.
+   */
+  async prepareOutbound(dto: {
+    mimeType: string;
+    contentBase64: string;
+  }): Promise<{ buffer: Buffer; mimeType: string }> {
     assertOutboundMimeAllowed(dto.mimeType);
     const buffer = decodeBase64(dto.contentBase64);
     assertWithinLimit(buffer);
     const mimeType = await resolveStoredMimeType(dto.mimeType, buffer);
+    return { buffer, mimeType };
+  }
+
+  /** Grava o que `prepareOutbound` ja validou. */
+  async storePrepared(
+    tenantId: string,
+    fileName: string,
+    prepared: { buffer: Buffer; mimeType: string },
+  ): Promise<StoredMedia> {
+    const { buffer, mimeType } = prepared;
     const id = await this.repository.insert(tenantId, {
       messageId: null,
       mimeType,
-      fileName: dto.fileName,
+      fileName,
       byteSize: buffer.byteLength,
     });
     await writeMediaFile(id, buffer);

@@ -400,9 +400,16 @@ export class ConversationRepository {
             : 'TRUE',
     ];
     // "Nao lidas" (D-229) e recorte como o escopo: listagem + `total`, nunca os counts.
+    // Nas encerradas de todas (D-273), o mesmo recorte do count `unread`: chip e
+    // lista nao divergem e encerrada alheia nao entra em "nao lidas".
     if (criteria.unread === true) {
-      where.push('c.unread_count > 0');
-      scopeConditions.push('c.unread_count > 0');
+      if (allClosed) {
+        params.push(criteria.userId);
+        where.push(`c.unread_count > 0 AND ${ownedSql(`$${params.length}`)}`);
+      } else {
+        where.push('c.unread_count > 0');
+      }
+      scopeConditions.push(unreadSql);
     }
     const scopeCondition = scopeConditions.join(' AND ');
 

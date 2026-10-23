@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { DragEvent, ReactNode } from 'react';
 import type { Channel, InternalMessage, UserRole } from '@crm-lab/shared';
-import { Button } from '@/components/ui';
+import { Button, cn } from '@/components/ui';
 import { EmptyState } from '@/components/shared';
 import {
   AttachmentPreview,
@@ -10,7 +10,7 @@ import {
   dragHasFiles,
   filesFromDataTransfer,
 } from '@/components/conversation';
-import type { AttachmentDraft } from '@/components/conversation';
+import type { AttachmentDraft, RecordedAudio } from '@/components/conversation';
 import { InternalMessageItem } from './InternalMessageItem';
 
 /**
@@ -36,6 +36,10 @@ export interface MessagePanelProps {
    * nem clipe, nem colar, nem soltar arquivo.
    */
   onSendAttachments?: (items: { file: File; caption: string }[]) => void | Promise<unknown>;
+  /** Recado de voz (CRMLAB-109). Sem handler, o microfone do Composer não aparece. */
+  onSendAudio?: (audio: RecordedAudio) => Promise<unknown>;
+  /** × do cabeçalho (CRMLAB-109): tira a seleção, como o "Fechar conversa" do atendimento. */
+  onClose?: () => void;
 }
 
 /** Chave do canal em que o sistema posta os pedidos (WORKFLOWS.md §3 e §6). */
@@ -58,6 +62,8 @@ export function MessagePanel({
   hasOlderMessages,
   onLoadOlder,
   onSendAttachments,
+  onSendAudio,
+  onClose,
 }: MessagePanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const channelId = channel?.id ?? null;
@@ -187,6 +193,19 @@ export function MessagePanel({
                 : 'Canal da equipe'}
           </span>
         </div>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Fechar conversa"
+            className={cn(
+              'flex h-[28px] w-[28px] flex-[0_0_28px] cursor-pointer items-center justify-center',
+              'rounded-pill border-none bg-transparent font-body text-neutral-700 hover:bg-neutral-200',
+            )}
+          >
+            ×
+          </button>
+        )}
       </header>
 
       <div
@@ -260,6 +279,7 @@ export function MessagePanel({
         sending={sending}
         placeholder="Escreva para a equipe"
         {...(onSendAttachments ? { onPickFiles: openPreview } : {})}
+        {...(onSendAudio ? { onSendAudio } : {})}
       />
     </div>
   );

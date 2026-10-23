@@ -40,6 +40,12 @@ import type { ExecutiveReportQuery } from './reports';
 export const queryKeys = {
   /** ['conversations', 'assignees'] — quem pode receber conversa. */
   conversationAssignees: () => ['conversations', 'assignees'] as const,
+  /**
+   * ['conversations', 'unread-count'] — numero do item "Atendimento" da barra
+   * lateral (D-277). Dentro do escopo `conversations`: toda invalidacao da
+   * listagem (WS `new_message`, abrir conversa, transferir, encerrar) o leva junto.
+   */
+  conversationUnreadCount: () => ['conversations', 'unread-count'] as const,
 
   /** ['conversations', filters] */
   conversations: (filters?: ListConversationsQuery) => ['conversations', filters ?? {}] as const,

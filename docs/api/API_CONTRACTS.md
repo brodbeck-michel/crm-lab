@@ -540,8 +540,11 @@ aparece (RLS).
 Listar conversas do usuário.
 
 **Recorte por papel (não é filtro opcional):** atendente recebe apenas as conversas
-atribuídas a ele **mais** a fila não atribuída; gestor e admin recebem todas as do
-laboratório. `platform_operator` recebe `FORBIDDEN` (PAGES.md §11).
+atribuídas a ele **mais** a fila não atribuída (e as em que participa, D-263); gestor e admin
+recebem todas as do laboratório. **Exceção (CRMLAB-108, D-273):** com `?status=closed` a
+atendente recebe as encerradas de **todas** do laboratório — só com esse filtro; sem `status`,
+a lista segue sem as encerradas alheias. Nesse caso `counts.unread` continua contando só o
+recorte dela (encerrada alheia não soma), e `?unread=true` usa esse mesmo recorte na lista. `platform_operator` recebe `FORBIDDEN` (PAGES.md §11).
 
 **Query Params:**
 ```
@@ -831,7 +834,10 @@ o exemplo abaixo mostra `unreadCount: 0` enquanto a mesma conversa aparece na li
 com `3`. Quem precisa do efeito sem carregar o histórico usa
 `POST /conversations/:id/read`. O `markAsRead` roda **antes** da leitura e aplica o
 recorte por papel: conversa fora do escopo do usuário devolve `404` sem ter tocado em
-nada.
+nada. Conversa **encerrada** está no escopo de qualquer atendente (D-273): detalhe, mensagens,
+mídia e a busca abaixo abrem normalmente; a **ativa** de outra atendente continua `404`. Quem
+só lê a encerrada alheia (não é dona, participante nem gestor/admin) **não** a marca como lida,
+e pin, "marcar como não lida" e `tags` respondem `FORBIDDEN` (403).
 
 Mensagens vêm em ordem cronológica **crescente**; `page=1` é a página mais recente.
 `messageLimit` default 50, máx. 100.
@@ -1031,6 +1037,14 @@ Enviar mensagem em uma conversa.
 O recorte por papel é aplicado **antes** de escrever: conversa que o usuário não
 enxerga devolve `NOT_FOUND`.
 
+**Responder conversa encerrada reabre (CRMLAB-108, D-273):** conversa `closed` — de qualquer
+dona, inclusive de quem envia — volta para `active` **atribuída a quem enviou**, com o audit
+`update_conversation_status` e a mensagem de sistema "Atendimento reaberto por <nome>", e só
+então a mensagem é gravada e enviada. Antes do D-273 isso era `CONVERSATION_ARCHIVED` (409).
+Se o paciente ou outra atendente reabrir no mesmo instante e a conversa ficar com outra pessoa,
+`CONVERSATION_ALREADY_ASSIGNED` (409) e nada sai. A citação (`quotedMessageId`) é validada
+**antes** de reabrir: citação inválida responde `404` e a encerrada fica como estava.
+
 **Responder assume a conversa (CRMLAB-75, D-215):** conversa **sem dona** (`assignedTo: null`)
 passa a ser de quem enviou ANTES de a mensagem ser gravada — o mesmo claim atômico de
 `PATCH /conversations/:id` (`assignedTo`), com o mesmo audit `assign_conversation`. Quem perde a
@@ -1056,9 +1070,9 @@ pelo cartão (`POST /proposals/:id/send`, `POST /proposals/:id/resend`), que usa
 }
 ```
 
-**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404), `CONVERSATION_ARCHIVED` (409),
+**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404),
 `CONVERSATION_ALREADY_ASSIGNED` (409, conversa da fila livre assumida por outra pessoa no mesmo
-instante — D-215), `MESSAGE_SEND_FAILED` (502, canal externo falhou após os retries), `FORBIDDEN`
+instante — D-215 — ou encerrada reaberta por outra pessoa no mesmo instante — D-273), `MESSAGE_SEND_FAILED` (502, canal externo falhou após os retries), `FORBIDDEN`
 (403, `platform_operator`)
 
 **`status` da mensagem do atendimento (CRMLAB-67, D-225):** `pending | sent | delivered | read |
@@ -1103,7 +1117,10 @@ médico.
 
 O recorte por papel é aplicado **antes** de gravar: conversa que o usuário não
 enxerga devolve `NOT_FOUND`. Conversa sem dona é assumida por quem envia antes de gravar a
-mídia (D-215, mesma regra e mesmo 409 de `POST /conversations/:id/messages`). `messageType` é derivado do `mimeType`
+mídia (D-215, mesma regra e mesmo 409 de `POST /conversations/:id/messages`). Conversa
+encerrada reabre para quem envia antes de gravar a mídia (D-273, mesma regra da mensagem) —
+mas só **depois** de validar o arquivo (tipo, tamanho, conteúdo) e a citação: anexo recusado
+não reabre nem troca a dona. `messageType` é derivado do `mimeType`
 (`image/* → image`, `audio/* → audio`, `video/* → video` (CRMLAB-70), `application/pdf → pdf`,
 resto → `doc`) — o cliente não escolhe.
 
@@ -1139,8 +1156,8 @@ contêineres — D-234 item 8). No CRM os quatro ficam `video`.
 }
 ```
 
-**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404), `CONVERSATION_ARCHIVED` (409),
-`MEDIA_TOO_LARGE` (413, acima do teto de 15 MiB), `MESSAGE_SEND_FAILED` (502, canal
+**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404), `CONVERSATION_ALREADY_ASSIGNED` (409,
+D-215/D-273), `MEDIA_TOO_LARGE` (413, acima do teto de 15 MiB), `MESSAGE_SEND_FAILED` (502, canal
 externo falhou após os retries — a WhatsApp Cloud API `cloud_api` ainda não envia
 mídia, só o gateway Evolution `qr`), `FORBIDDEN` (403, `platform_operator`)
 
@@ -1254,6 +1271,24 @@ para transferir.
 
 **Erros:** `FORBIDDEN` (403, `platform_operator`), `UNAUTHORIZED` (401)
 
+### GET /conversations/unread-count
+Número do item "Atendimento" da barra lateral (CRMLAB-112, D-277). Qualquer papel de tenant.
+
+Soma de `unread_count` — **mensagens** não lidas, não conversas — das conversas com
+`status = 'active'` no **mesmo recorte de visibilidade** da listagem: atendente = as próprias +
+a fila livre + as em que participa (D-263); gestor/admin = todas do tenant. Encerradas nunca
+contam. Uma query agregada, sem paginar nem trazer linhas.
+
+**Response (200):**
+```json
+{ "unreadMessages": 12 }
+```
+
+Não há evento WS próprio: o cliente refaz a contagem quando invalida o escopo `conversations`
+(`conversation.new_message`, abrir a conversa = marcar como lida, transferir, encerrar).
+
+**Erros:** `FORBIDDEN` (403, `platform_operator`), `UNAUTHORIZED` (401)
+
 ### POST /conversations/:id/pin · DELETE /conversations/:id/pin
 Fixar / desafixar a conversa no topo da **sua** lista (Onda 8 §2.3). Qualquer papel de
 tenant. O pin é **pessoal**: não altera nada que as colegas vejam.
@@ -1288,8 +1323,11 @@ Atualizar conversa (status, tags, assigned_to).
 `status` ∈ `active | closed` (D-174):
 
 - **encerrar** (`closed`) e **reativar** (`active`): só a **dona**, gestor ou admin. Atendente
-  que não é dona — inclusive em conversa da fila livre — recebe `FORBIDDEN` (403). Conversa de
-  outra atendente continua `NOT_FOUND` (recorte por papel vem antes)
+  que não é dona — inclusive em conversa da fila livre — recebe `FORBIDDEN` (403). Conversa
+  **ativa** de outra atendente continua `NOT_FOUND` (recorte por papel vem antes); a
+  **encerrada** de outra atendente é visível (D-273) e responde `FORBIDDEN` — para reabri-la, a
+  atendente responde (`POST /conversations/:id/messages`). `tags` em encerrada alheia: também
+  `FORBIDDEN`
 - encerrar **mantém** `assignedTo`, gera a mensagem de sistema "Atendimento encerrado por
   <nome>" e o audit log `update_conversation_status`. A conversa sai da fila (`?status=active`)
   e dos counts dos chips
@@ -1603,6 +1641,13 @@ pacientes que têm **ao menos uma conversa visível para ele** — atribuída a 
 atribuída. Gestor e admin veem todos os do laboratório. Paciente fora da visibilidade responde
 `404 NOT_FOUND`, nunca `403` (CLAUDE.md regra 8) — e o mesmo recorte se aplica **dentro** da
 ficha: contadores e timeline só contam o que o solicitante já podia ver por outro caminho.
+**Leitura pela encerrada (CRMLAB-108, D-273):** `GET /patients/:id` e `GET /patients/:id/timeline`
+também abrem para a atendente o paciente com conversa **encerrada** de qualquer atendente (a
+mesma que ela já lê no atendimento), e essas conversas entram nos contadores e na timeline.
+`GET /patients` (lista/busca) e as escritas (`PATCH`, inativar, reativar) seguem o recorte de
+antes: por esse caminho só, a lista não traz o paciente e editar responde `404`. O detalhe
+traz `canEdit: boolean` — `false` exatamente nesse caso (a tela abre só leitura); gestor e admin,
+sempre `true`.
 
 **Não existe `POST /patients`.** O paciente nasce do canal: `findOrCreateByPhone` resolve ou
 cria a linha pelo telefone dentro do tenant (`UNIQUE (tenant_id, phone)`) quando a conversa

@@ -1,10 +1,11 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthTenant, AuthUser, Channel, UserRole } from '@crm-lab/shared';
 import { useAuthStore, useMessageAlertsStore, useUIStore, useSidebarGroupsStore } from '@/stores';
+import { queryKeys, queryScopes } from '@/api/query-keys';
 import { Sidebar } from './Sidebar';
 
 // Sidebar busca `pendingDecisions.total` para o sino de "Decisões" (PAGES.md §12).
@@ -31,6 +32,12 @@ function fakeChannel(overrides: Partial<Channel> & Pick<Channel, 'id' | 'unreadC
 }
 vi.mock('@/api/internal-chat', () => ({
   internalChatApi: { channels: () => mockChannels() },
+}));
+
+// Contador de "Atendimento" (CRMLAB-112, D-277). Default: zero, nada aparece.
+const mockUnreadCount = vi.fn(() => Promise.resolve({ unreadMessages: 0 }));
+vi.mock('@/api/conversations', () => ({
+  conversationsApi: { unreadCount: () => mockUnreadCount() },
 }));
 
 /**
@@ -72,8 +79,7 @@ function login(role: UserRole): void {
   });
 }
 
-function renderSidebar(path = '/proposals') {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function renderSidebar(path = '/proposals', queryClient = newQueryClient()) {
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[path]}>
@@ -83,7 +89,12 @@ function renderSidebar(path = '/proposals') {
   );
 }
 
+function newQueryClient(): QueryClient {
+  return new QueryClient({ defaultOptions: { queries: { retry: false } } });
+}
+
 beforeEach(() => {
+  mockUnreadCount.mockReset().mockResolvedValue({ unreadMessages: 0 });
   localStorage.clear();
   useUIStore.setState({ sidebarCollapsed: false, contextPanelOpen: true, activeModal: null });
   useSidebarGroupsStore.setState({ openByUser: {} });
@@ -272,7 +283,7 @@ describe('Sidebar — badge de não lidas do Chat Interno (D-130, CRMLAB-8)', ()
     expect(item).not.toHaveTextContent(/[0-9]/);
   });
 
-  it('recolhida, o badge do grupo "Comunicação" vira um dot no ícone do cabeçalho (CRMLAB-44)', async () => {
+  it('recolhida, o cabeçalho do grupo "Comunicação" mostra o NÚMERO no canto do ícone (D-277)', async () => {
     mockChannels.mockResolvedValue({
       channels: [fakeChannel({ id: 'c-1', name: '#aprovacoes', unreadCount: 4 })],
     });
@@ -280,10 +291,99 @@ describe('Sidebar — badge de não lidas do Chat Interno (D-130, CRMLAB-8)', ()
     useUIStore.setState({ sidebarCollapsed: true });
     renderSidebar();
 
-    const header = await screen.findByRole('button', { name: 'Comunicação' });
+    const header = await screen.findByRole('button', {
+      name: 'Comunicação — 4 mensagens não lidas em Comunicação',
+    });
+    const corner = within(header).getByTestId('sidebar-corner-badge');
+    expect(corner).toHaveTextContent('4');
+    expect(corner.querySelector('.bg-accent2')).not.toBeNull();
+  });
+});
+
+describe('Sidebar — contador de não lidas do Atendimento (CRMLAB-112, D-277)', () => {
+  it('expandida, mostra o número no item "Atendimento"', async () => {
+    mockUnreadCount.mockResolvedValue({ unreadMessages: 7 });
+    login('attendant');
+    renderSidebar();
+
+    const item = screen.getByRole('link', { name: /Atendimento/ });
+    await waitFor(() => expect(item).toHaveTextContent('7'));
+    expect(within(item).getByLabelText('7 mensagens não lidas')).toBeInTheDocument();
+  });
+
+  it('recolhida, o número fica no canto do ícone dos dois itens — não um ponto', async () => {
+    mockUnreadCount.mockResolvedValue({ unreadMessages: 3 });
+    mockChannels.mockResolvedValue({
+      channels: [fakeChannel({ id: 'c-1', name: '#geral', unreadCount: 2 })],
+    });
+    login('attendant');
+    renderSidebar('/attendance'); // atendente no inbox: recolhe sozinha
+
+    const atendimento = await screen.findByRole('link', {
+      name: 'Atendimento — 3 mensagens não lidas',
+    });
+    expect(within(atendimento).getByTestId('sidebar-corner-badge')).toHaveTextContent('3');
+    // Chat Interno fica no grupo "Comunicação": recolhida, o número sobe para o cabeçalho.
+    const comunicacao = await screen.findByRole('button', {
+      name: 'Comunicação — 2 mensagens não lidas em Comunicação',
+    });
+    expect(within(comunicacao).getByTestId('sidebar-corner-badge')).toHaveTextContent('2');
+  });
+
+  it('acima de 99 mostra "99+", expandida e recolhida', async () => {
+    mockUnreadCount.mockResolvedValue({ unreadMessages: 150 });
+    login('admin');
+    renderSidebar();
+
+    const item = screen.getByRole('link', { name: /Atendimento/ });
+    await waitFor(() => expect(item).toHaveTextContent('99+'));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Recolher menu' }));
+    const collapsed = screen.getByRole('link', { name: 'Atendimento — 150 mensagens não lidas' });
+    expect(within(collapsed).getByTestId('sidebar-corner-badge')).toHaveTextContent('99+');
+  });
+
+  it('zero não mostra nada, nem recolhida', async () => {
+    login('attendant');
+    useUIStore.setState({ sidebarCollapsed: true });
+    renderSidebar();
+
+    await waitFor(() => expect(mockUnreadCount).toHaveBeenCalled());
+    expect(screen.queryByTestId('sidebar-corner-badge')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Atendimento' })).toBeInTheDocument();
+  });
+
+  it('refaz a contagem quando o escopo `conversations` é invalidado (WS new_message / abrir = ler)', async () => {
+    mockUnreadCount.mockResolvedValue({ unreadMessages: 1 });
+    login('attendant');
+    const queryClient = newQueryClient();
+    renderSidebar('/proposals', queryClient);
+
+    const item = screen.getByRole('link', { name: /Atendimento/ });
+    await waitFor(() => expect(item).toHaveTextContent('1'));
+
+    mockUnreadCount.mockResolvedValue({ unreadMessages: 0 });
+    await queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
+    await waitFor(() => expect(item).not.toHaveTextContent(/[0-9]/));
+
+    mockUnreadCount.mockResolvedValue({ unreadMessages: 4 });
+    await queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
+    await waitFor(() => expect(item).toHaveTextContent('4'));
+  });
+
+  it('Chat Interno: refaz a soma quando `internal_chat.new_message` invalida os canais', async () => {
+    login('attendant');
+    const queryClient = newQueryClient();
+    renderSidebar('/proposals', queryClient);
+    const item = await screen.findByRole('link', { name: /Chat Interno/ });
     await waitFor(() => expect(mockChannels).toHaveBeenCalled());
-    await waitFor(() => expect(header.querySelector('.bg-accent2')).not.toBeNull());
-    expect(header).not.toHaveTextContent('4');
+    expect(item).not.toHaveTextContent(/[0-9]/);
+
+    mockChannels.mockResolvedValue({
+      channels: [fakeChannel({ id: 'c-1', name: '#geral', unreadCount: 5 })],
+    });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.internalChannels() });
+    await waitFor(() => expect(item).toHaveTextContent('5'));
   });
 });
 

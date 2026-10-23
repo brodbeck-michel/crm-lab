@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, isApiError, queryKeys } from '@/api';
 import { InboxLayout } from '@/components/layout';
+import type { RecordedAudio } from '@/components/conversation';
 import { useToast } from '@/components/ui';
 import { useApiErrorHandler } from '@/hooks';
 import { useAuthStore, selectUser } from '@/stores';
@@ -77,16 +78,26 @@ export function InternalChat() {
   const startDm = useMutation({
     mutationFn: (userId: string) => api.internalChat.startDirectChannel({ userId }),
     onSuccess: async (channel) => {
+      // Recarrega a lista ANTES de selecionar: DM recém-criada ainda não está nela,
+      // e o efeito de auto-seleção trocaria a escolha pelo primeiro canal.
+      await queryClient.invalidateQueries({ queryKey: queryKeys.internalChannels() });
       setSelectedId(channel.id);
       setPageCount(1);
-      await queryClient.invalidateQueries({ queryKey: queryKeys.internalChannels() });
     },
     onError: handleApiError,
   });
 
-  /** Sem canal escolhido, abre o primeiro da lista (normalmente `#geral`). */
+  /**
+   * Na PRIMEIRA carga, sem canal escolhido, abre o primeiro da lista. Depois
+   * disso, `selectedId === null` é escolha de quem fechou pelo × (CRMLAB-109):
+   * fica o estado vazio, sem reselecionar. Canal aberto que sumiu da lista
+   * continua caindo no primeiro.
+   */
+  const autoSelected = useRef(false);
   useEffect(() => {
     if (channels.length === 0) return;
+    if (selectedId === null && autoSelected.current) return;
+    autoSelected.current = true;
     const stillExists = channels.some((channel) => channel.id === selectedId);
     if (!stillExists) {
       setSelectedId(channels[0]?.id ?? null);
@@ -175,6 +186,31 @@ export function InternalChat() {
     }
   }
 
+  /**
+   * Recado de voz (CRMLAB-109): o MESMO `POST .../attachments` do clipe, como o
+   * atendimento faz (D-181). Rejeitar mantém a prévia no Composer para tentar de
+   * novo; o aviso sai pelo `handleApiError`.
+   */
+  async function handleSendAudio(audio: RecordedAudio): Promise<void> {
+    const channelId = selectedId;
+    if (!channelId) return;
+    try {
+      const contentBase64 = await readFileAsBase64(audio.blob);
+      await api.internalChat.sendAttachment(channelId, {
+        fileName: audio.fileName,
+        mimeType: audio.mimeType,
+        contentBase64,
+      });
+    } catch (error: unknown) {
+      handleApiError(error);
+      throw error;
+    }
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.internalMessages(channelId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.internalChannels() }),
+    ]);
+  }
+
   return (
     <InboxLayout
       contextOpen={false}
@@ -207,6 +243,8 @@ export function InternalChat() {
           onSend={(content) => sendMessage.mutateAsync(content)}
           sending={sendMessage.isPending || sendingFiles}
           onSendAttachments={handleSendAttachments}
+          onSendAudio={handleSendAudio}
+          onClose={() => setSelectedId(null)}
           currentUserId={currentUser?.id ?? null}
           currentUserRole={currentUser?.role ?? null}
           hasOlderMessages={messagesQuery.data?.hasOlder ?? false}

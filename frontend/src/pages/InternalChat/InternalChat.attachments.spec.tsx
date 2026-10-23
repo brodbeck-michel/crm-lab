@@ -209,3 +209,91 @@ describe('Chat Interno — anexo de arquivo (CRMLAB-101)', () => {
     }
   });
 });
+
+/** `MediaRecorder`/`getUserMedia` falsos — mesmo molde do `Attendance.spec.tsx` (CRMLAB-24). */
+function installVoiceFakes(): void {
+  const stream = { getTracks: () => [{ stop: vi.fn() }] };
+  class FakeRecorder {
+    static isTypeSupported = (type: string) => type === 'audio/webm;codecs=opus';
+    state = 'inactive';
+    mimeType = 'audio/webm;codecs=opus';
+    ondataavailable: ((event: { data: Blob }) => void) | null = null;
+    onstop: (() => void) | null = null;
+    start() {
+      this.state = 'recording';
+    }
+    stop() {
+      this.state = 'inactive';
+      this.ondataavailable?.({ data: new Blob(['voz'], { type: this.mimeType }) });
+      this.onstop?.();
+    }
+  }
+  vi.stubGlobal('MediaRecorder', FakeRecorder);
+  Object.defineProperty(navigator, 'mediaDevices', {
+    value: { getUserMedia: vi.fn().mockResolvedValue(stream) },
+    configurable: true,
+  });
+}
+
+describe('Chat Interno — áudio e fechar (CRMLAB-109)', () => {
+  it('recado de voz gravado sai pelo MESMO POST de anexo, com MIME de áudio', async () => {
+    installVoiceFakes();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-22T12:00:00Z'));
+    try {
+      renderScreen();
+      await screen.findByText('Nenhuma mensagem ainda');
+      const composer = screen.getByTestId('composer');
+      await userEvent.click(within(composer).getByRole('button', { name: 'Gravar áudio' }));
+      await within(composer).findByText('Gravando');
+      vi.setSystemTime(new Date('2026-10-22T12:00:05Z'));
+      await userEvent.click(within(composer).getByRole('button', { name: 'Parar' }));
+      await userEvent.click(within(composer).getByRole('button', { name: 'Enviar' }));
+
+      await waitFor(() => {
+        expect(sendAttachmentMock).toHaveBeenCalledWith(GERAL.id, {
+          fileName: 'recado-de-voz.webm',
+          mimeType: 'audio/webm;codecs=opus',
+          contentBase64: btoa('voz'),
+        });
+      });
+      await waitFor(() =>
+        expect(within(composer).queryByTestId('voice-recorder')).not.toBeInTheDocument(),
+      );
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('mensagem com áudio toca no player da bolha, não vira cartão de documento', async () => {
+    const audio = attachment({ id: 'aud-1', fileName: 'recado-de-voz.ogg', mimeType: 'audio/ogg' });
+    messagesMock.mockResolvedValue(messagesResponse([message({ attachment: audio })]));
+    fetchAuthenticatedBlobMock.mockResolvedValue({
+      blob: new Blob(['voz'], { type: 'audio/ogg' }),
+      fileName: 'recado-de-voz.ogg',
+    });
+    renderScreen();
+
+    const player = await screen.findByTestId('audio-message-player');
+    expect(player).toHaveAttribute('src', 'blob:anexo');
+    expect(fetchAuthenticatedBlobMock).toHaveBeenCalledWith(expect.stringContaining(audio.url));
+    expect(screen.queryByTestId('document-card')).not.toBeInTheDocument();
+  });
+
+  it('o × fecha a conversa e mostra o estado vazio, sem reabrir o primeiro canal', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    await screen.findByText('Nenhuma mensagem ainda');
+
+    await user.click(screen.getByRole('button', { name: 'Fechar conversa' }));
+
+    expect(await screen.findByText('Selecione um canal')).toBeInTheDocument();
+    expect(screen.queryByTestId('composer')).not.toBeInTheDocument();
+    expect(messagesMock).toHaveBeenCalledTimes(1);
+
+    // Clicar no canal reabre normalmente.
+    await user.click(screen.getByRole('button', { name: /#geral/ }));
+    expect(await screen.findByText('Nenhuma mensagem ainda')).toBeInTheDocument();
+  });
+});

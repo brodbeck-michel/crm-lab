@@ -225,6 +225,64 @@ describe('Composer — respostas rápidas (Onda 8 §3.4)', () => {
 
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
   });
+
+  describe('na segunda linha (CRMLAB-106)', () => {
+    async function typeSecondLine(text: string) {
+      const user = userEvent.setup();
+      render(<Composer onSend={vi.fn()} quickReplies={MACROS} />);
+      const field = screen.getByLabelText('Mensagem') as HTMLTextAreaElement;
+      await user.type(field, 'Olá, Maria!');
+      await user.keyboard('{Shift>}{Enter}{/Shift}');
+      await user.type(field, text);
+      return { user, field };
+    }
+
+    it('"/" logo depois da quebra de linha abre o menu', async () => {
+      await typeSecondLine('/');
+
+      expect(screen.getByRole('option', { name: /coleta/i })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: /jejum/i })).toBeInTheDocument();
+    });
+
+    it('o filtro usa só o "/xxx" da linha do cursor', async () => {
+      await typeSecondLine('/jej');
+
+      expect(screen.getByRole('option', { name: /jejum/i })).toBeInTheDocument();
+      expect(screen.queryByRole('option', { name: /coleta/i })).not.toBeInTheDocument();
+    });
+
+    it('escolher substitui só o comando e preserva a primeira linha', async () => {
+      const { user, field } = await typeSecondLine('/jej');
+
+      await user.keyboard('{Enter}');
+
+      expect(field).toHaveValue('Olá, Maria!\nPara glicemia, jejum de 8 horas.');
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+      await waitFor(() => expect(field.selectionStart).toBe(field.value.length));
+    });
+
+    it('"/" no meio da segunda linha continua texto comum', async () => {
+      const { field } = await typeSecondLine('a 60 km/h');
+
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+      expect(field).toHaveValue('Olá, Maria!\na 60 km/h');
+    });
+
+    it('com o cursor no meio do texto, a resposta entra no lugar do comando', async () => {
+      const user = userEvent.setup();
+      render(<Composer onSend={vi.fn()} quickReplies={MACROS} />);
+      const field = screen.getByLabelText('Mensagem') as HTMLTextAreaElement;
+      await user.type(field, 'Olá!');
+      await user.keyboard('{Shift>}{Enter}{/Shift}');
+      await user.type(field, 'Abraço');
+      // cursor de volta ao começo da segunda linha
+      field.setSelectionRange(5, 5);
+      await user.type(field, '/col', { initialSelectionStart: 5, initialSelectionEnd: 5 });
+      await user.click(screen.getByRole('option', { name: /coleta/i }));
+
+      expect(field).toHaveValue('Olá!\nColeta de segunda a sexta, das 6h30 às 11h.Abraço');
+    });
+  });
 });
 
 /**

@@ -56,7 +56,9 @@ interface AuthService {
 ```typescript
 interface ConversationService {
   list(tenantId: string, filters: ConversationFilters): Promise<Paginated<Conversation>>;
-  getById(tenantId: string, id: string): Promise<ConversationDetail>;
+  getById(tenantId: string, id: string): Promise<ConversationDetail>; // encerrada: visivel a todas (D-273)
+  // D-273: recorte das rotas de envio; encerrada reabre atribuida a quem envia (reopenManually).
+  openForReply(ctx: TenantContext, id: string): Promise<ConversationDetail>;
   findOrCreateByPhone(tenantId: string, phone: string): Promise<Conversation>;
   assign(tenantId: string, id: string, userId: string | null): Promise<Conversation>;
   // D-174: so dona/gestor/admin; 'closed' grava evento de sistema. Reabertura manual: createManual.
@@ -182,7 +184,10 @@ interface que ProposalService/ApprovalService consomem. Instanciação:
 - Toda criação emite `conversation.new_message` no WebSocket (room = tenantId)
 - `createSystemEvent` usado por: orçamento enviado, transferência, proposta ganha.
   Funciona em conversa encerrada (o fato aconteceu) e NÃO incrementa `unread_count`
-- Enviar mensagem de agente em conversa encerrada → `CONVERSATION_ARCHIVED` (409, nome mantido — D-174)
+- Enviar mensagem/anexo de agente em conversa encerrada: a rota chama
+  `ConversationService.openForReply` antes, que reabre para quem envia (D-273). O guarda
+  `CONVERSATION_ARCHIVED` (409, nome mantido — D-174) continua no `MessageService` para quem
+  chega sem reabrir (reação, automática, orçamento)
 - `createFromPatient` em conversa `closed` REABRE antes de gravar (D-174): `active`, sem dona,
   evento "Atendimento reaberto pelo paciente". `createFromPhone` (`fromMe`) não reabre
 - `createFromPatient` incrementa `unread_count`, sobe `last_message_at` (mesma
@@ -677,6 +682,13 @@ da transação da conversa — ver a regra de nascimento abaixo.
   `FORBIDDEN`. O recorte vale para `list`, `getById`, `update` e `timeline`, **e também para os
   contadores e as entradas da timeline** — senão a ficha viraria um caminho lateral para ler a
   conversa de outro atendente.
+- **Leitura pela encerrada (D-273):** `getById` e `timeline` usam `readVisibilityOf(ctx)` —
+  `visibilityOf` + `closedConversations: true`, que soma as conversas encerradas de qualquer
+  atendente (as que o atendimento já abre para todas). `list` e as escritas (`update`,
+  `inactivate`, `reactivate`, via `getForWrite`) seguem `visibilityOf`. O detalhe traz
+  `canEdit` calculado na query com esse recorte de escrita.
+- `MediaService.prepareOutbound` valida o anexo de saída sem gravar; `storePrepared` grava.
+  `storeOutbound` = os dois (D-273: a rota de anexo valida antes de reabrir a encerrada).
 - `conversationCount`, `proposalCount` e `lastInteractionAt` são **derivados na query**, nunca
   colunas (BUSINESS_RULES §5).
 - `update` não toca em `conversations.patient_name/phone/email`: são o registro do que o canal

@@ -256,6 +256,8 @@ Nova conversa → sistema busca atendente online com menos conversas ativas → 
    → aparece em "Não atribuídas" com "Atendimento reaberto pelo paciente"
 4. Atendimento manual (POST /conversations) no mesmo telefone → reabre atribuída a quem cadastrou
 5. Mensagem enviada pelo celular do laboratório (fromMe) NÃO reabre
+6. Atendente responde uma encerrada (de qualquer dona, aberta pelo chip "Encerradas") →
+   reabre atribuída a quem enviou, "Atendimento reaberto por <nome>", e a mensagem sai (D-273)
 ```
 
 **Conflito de atribuição simultânea:**

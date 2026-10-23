@@ -181,9 +181,12 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 - **[Encerrar]** (CRMLAB-48, D-174): `PATCH /conversations/:id { status: 'closed' }`. Substitui o
   antigo [Arquivar]. Habilitado só para a **dona**, gestor e admin (o backend valida de novo) e
   só em conversa `active`. Sucesso: toast "Atendimento encerrado.", limpa a seleção e invalida a
-  lista — a conversa some de "Minhas"/"Não atribuídas" e os counts acompanham. Conversa
-  encerrada aberta pelo chip "Encerradas" mostra o composer travado; ela volta para a fila
-  sozinha quando o paciente escreve (na "Não atribuídas", sem dona)
+  lista — a conversa some de "Minhas"/"Não atribuídas" e os counts acompanham. O chip
+  "Encerradas" lista as encerradas de **todas** as atendentes (D-273). Conversa encerrada
+  aberta por ele mostra o composer **liberado** com o aviso "Ao enviar, a conversa será reaberta
+  e passará para você."; enviar reabre para quem enviou e as listas são refeitas (ela sai de
+  Encerradas e entra em "Minhas"). Ela também volta para a fila sozinha quando o paciente
+  escreve (na "Não atribuídas", sem dona)
 - **[Transferir ▾] abre menu** (Onda 8 §2.1) com as colegas que podem receber
   (`GET /conversations/assignees`) e "Devolver para a fila". O rótulo é "Atribuir" enquanto a
   conversa está livre. Quem já é dona não aparece na lista. Os dois caminhos são o mesmo
@@ -345,6 +348,10 @@ enxerga quem já veria por uma conversa). `platform_operator` não acessa (§11)
   endpoint novo) e navega para `/attendance?conversationId=<id>`, o mesmo deep-link de "Enviar
   orçamento". `409 CONVERSATION_ALREADY_ASSIGNED` (telefone com conversa de outro atendente) vira
   toast com o nome de quem está atendendo — não navega.
+- **Modo leitura (D-273):** `canEdit: false` no detalhe (atendente que só enxerga o paciente por
+  uma conversa encerrada de outra pessoa) desabilita os campos do cadastro, esconde [Salvar
+  cadastro] e a seção de status (inativar/reativar) e mostra "Somente leitura: você vê esta ficha
+  por um atendimento encerrado de outra pessoa."
 
 **Três chamadas, três blocos** — a ficha NÃO vem em um payload só (D-060). Cada bloco tem seu
 ciclo de atualização e sua paginação:
@@ -735,14 +742,28 @@ nunca "sem permissão" (não vazar existência).
   outro tipo vira `DocumentCard` (ícone do tipo, nome, tamanho) e baixa com o nome original
 - Os outros membros veem pelo `internal_chat.new_message` de sempre (a lista recarrega)
 
+### Recado de voz e fechar conversa (CRMLAB-109)
+
+- Microfone do `Composer` (o mesmo do atendimento: `useVoiceRecorder`, ogg/opus → webm/opus →
+  mp4, até 5 min). Enviar faz o MESMO `POST /internal-chat/channels/:id/attachments` do clipe,
+  sem legenda; falhou, a prévia do gravador fica para tentar de novo
+- Na mensagem, anexo de áudio toca no `AudioMessage` (player nativo + velocidade, busca
+  autenticada pelo `url` do anexo) em vez do `DocumentCard`
+- × "Fechar conversa" no cabeçalho, igual ao do atendimento: só tira a seleção (o chat interno
+  não tem conversa encerrada) e mostra o estado vazio "Selecione um canal". A abertura automática
+  do primeiro canal vale só na primeira carga — depois de fechar, nada reabre sozinho
+
 ### Buscar usuário (D-101) — iniciar conversa direta
 
 No topo da coluna esquerda, ACIMA dos grupos "Canais" e "Mensagens diretas", um campo de
 busca (`SearchInput`, debounce de 300ms) filtra em memória a lista de `GET
 /internal-chat/users` (exclui o próprio usuário e inativos, sem paginação — carregada
 inteira uma vez). A barra lateral **não** lista usuários permanentemente — só canais e
-DMs já abertas; a lista de resultados da busca aparece embaixo do campo apenas enquanto
-o usuário digita, e some ao selecionar um nome ou limpar o campo.
+DMs já abertas. A lista de resultados aparece embaixo do campo **ao focar/clicar nele**
+(CRMLAB-110): com o campo vazio mostra TODOS os usuários (ordem por nome, a do backend),
+e digitar filtra. Fecha ao selecionar um nome, ao perder o foco ou com Esc; lista longa
+rola dentro de uma altura máxima. O item usa `onMouseDown` + `preventDefault` para o
+blur do campo não engolir o clique.
 
 Clicar num resultado chama `POST /internal-chat/dms { userId }` (get-or-create
 idempotente — clicar de novo num usuário com quem já existe DM só abre a conversa
@@ -781,6 +802,13 @@ tela usa, cache compartilhado via `queryKeys.internalChannels()` — sem endpoin
 mesmo total) aparece no cabeçalho do grupo, no lugar do ponto de "item ativo dentro" (D-128);
 some ao abrir o grupo, ao entrar num canal (unread zera) ou ao chegar a zero. Sem som e sem
 notificação push do navegador — só esse indicador visual dentro do próprio CRM.
+
+**CRMLAB-112 (D-277):** o item **"Atendimento"** ganha o mesmo contador, com a soma das
+mensagens não lidas das conversas ativas que o usuário enxerga (`GET /conversations/unread-count`).
+Com a barra **recolhida** os dois contadores continuam com o **número** ("99+" acima de 99) no
+canto do ícone — o do Chat Interno no ícone do grupo "Comunicação" — em vez do ponto de 8px.
+Atualizam em qualquer tela pelo WS (`conversation.new_message` / `internal_chat.new_message`)
+e baixam quando a atendente lê.
 
 ### Paginação do histórico (D-069)
 
@@ -1001,11 +1029,12 @@ Configuração: quem usa isso é quem atende.
 
 ### Uso no Composer (§2)
 
-Digitar `/` **com o campo vazio** abre a lista sobre o Composer, filtrando por atalho
-conforme se digita. Escolher **substitui** o texto pelo `content`. Setas navegam, `Enter`
-escolhe, `Esc` fecha.
+Digitar `/` **no começo de uma linha** (campo vazio ou depois de Shift+Enter — CRMLAB-106)
+abre a lista sobre o Composer, filtrando pelo `/xxx` daquela linha conforme se digita.
+Escolher **substitui só o `/xxx`** pelo `content`, mantendo o resto do texto, e o cursor
+fica no fim da resposta. Setas navegam, `Enter` escolhe, `Esc` fecha.
 
-A restrição "campo vazio" é deliberada: disparar em qualquer `/` atrapalharia quem escreve
+A restrição "começo da linha" é deliberada: disparar em qualquer `/` atrapalharia quem escreve
 "km/h", "24/48h" ou uma URL. Sem macro que case com o filtro, o menu fecha sozinho e a
 `/` fica no campo como texto normal — o atalho nunca sequestra o que a pessoa quis digitar.
 

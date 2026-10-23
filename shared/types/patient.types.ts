@@ -43,6 +43,12 @@ export interface PatientDetail extends Patient {
   proposalCount: number;
   /** Data da interacao mais recente visivel ao solicitante. */
   lastInteractionAt: IsoDateTime | null;
+  /**
+   * O solicitante pode editar/inativar/reativar (D-273). `false` quando ele so
+   * enxerga a ficha por uma conversa ENCERRADA de outra atendente: a tela abre
+   * em modo leitura.
+   */
+  canEdit: boolean;
 }
 
 export interface ListPatientsQuery extends PaginationQuery {

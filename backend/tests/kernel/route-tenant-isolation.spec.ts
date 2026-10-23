@@ -259,6 +259,7 @@ const LAB_ROUTES: readonly LabRoute[] = [
     addressable: false,
   },
   { name: 'GET /conversations/assignees', method: 'get', path: () => '/api/v1/conversations/assignees', actor: 'attendant', addressable: false },
+  { name: 'GET /conversations/unread-count', method: 'get', path: () => '/api/v1/conversations/unread-count', actor: 'attendant', addressable: false },
   // CRMLAB-68 (D-228): o `q` vai no caminho — sem ele a rota responde 400, nao 404.
   { name: 'GET /conversations/search/messages', method: 'get', path: () => '/api/v1/conversations/search/messages?q=sonda', actor: 'attendant', addressable: false },
   { name: 'GET /conversations/:id/messages', method: 'get', path: (l) => `/api/v1/conversations/${l.conversation.id}/messages?q=sonda`, actor: 'attendant', addressable: true, ownStatus: 200 },
@@ -1389,7 +1390,8 @@ describe('inventario de rotas de laboratorio', () => {
     // `GET /internal-chat/channels/:id/attachments/:attachmentId`.
     // CRMLAB-102/D-272 soma 2: `PUT /proposals/:id/reminder` e
     // `POST /proposals/:id/reminder/resolve`.
-    expect(LAB_ROUTES).toHaveLength(112);
+    // CRMLAB-112/D-277 soma 1: `GET /conversations/unread-count`.
+    expect(LAB_ROUTES).toHaveLength(113);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

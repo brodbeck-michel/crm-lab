@@ -3422,3 +3422,75 @@ Branch `feature/CRMLAB-102-lembrete-proposta-parada` (de `main` v1.36.1). Decis�
   `ProposalModal` (+3), `Proposals` (+1), `Rules` (+2), `ws` (+1).
 - **Pendente:** validação na hml. Atalho "Enviar mensagem" é o botão do cabeçalho do CRMLAB-100 (outra
   branch). No Santé a perda está ligada em 15 dias: ao ligar o lembrete, usar até 14.
+
+### 🚧 CRMLAB-106 — "/" das respostas rápidas depois de quebra de linha (2026-10-22, aguardando validação)
+
+Branch `feature/CRMLAB-106-barra-respostas-rapidas-linha` (de `main` v1.37.0). Só frontend, sem decisão nova.
+
+- **Bug:** com texto e uma quebra de linha no campo, digitar `/` não abria o menu — o Composer só
+  reconhecia o comando quando a `/` era o texto inteiro.
+- **Correção (`Composer.tsx`):** o comando é lido na linha do cursor (`/` como primeiro caractere da
+  linha); o filtro usa só o `/xxx` dessa linha; escolher troca só o `/xxx`, preserva o resto e põe o
+  cursor no fim da resposta. `/` no meio da linha (km/h, 24/48h) segue texto comum. Vale também para o
+  chat interno (mesmo Composer).
+- **Testes:** 5 novos em `Composer.spec.tsx` (34/34); typecheck do front e eslint verdes.
+
+### 🚧 CRMLAB-107 — botão "Encerrar" com fundo vermelho suave (2026-10-22, aguardando validação)
+
+Branch `feature/CRMLAB-107-botao-encerrar-vermelho-suave` (de `main` v1.37.0). Decisão D-274, só frontend.
+
+- **Tokens:** `--color-danger` + `-soft`/`-soft-hover`/`-ink` (Tailwind `danger.*`); `--color-agenda-danger`
+  passa a derivar dele, mesmo valor.
+- **Button:** variante nova `dangerSoft`, usada só no "Encerrar" do `ConversationPanel`; `destructive` intacta.
+- **Testes:** `Button.spec.tsx` (+1), `ConversationPanel.spec.tsx` (+1); guardas de token
+  (`tailwind-theme-classes`, `no-hardcoded-tokens`) e specs da agenda verdes; typecheck do front e eslint verdes.
+
+### 🚧 CRMLAB-110 — lista de usuários ao focar a busca do chat interno (2026-10-22, aguardando validação)
+
+Branch `feature/CRMLAB-110-busca-lista-usuarios` (de `main` v1.37.0). Ajuste de UX, sem decisão nova, só frontend.
+
+- **Front:** `UserSearch` abre a lista com todos os usuários ao focar o campo (vazio = todos, por
+  nome; o próprio usuário já vem excluído pelo backend), digitar filtra, fecha com Esc/blur; altura
+  máxima com rolagem. `SearchInput` não mudou (foco/blur escutados no contêiner).
+- **Testes:** +3 em `InternalChat.spec.tsx` (foco lista e digitar filtra; clique abre a DM; Esc/blur fecham).
+
+### 🚧 CRMLAB-109 — áudio e "fechar" no chat interno (2026-10-22, aguardando validação)
+
+Branch `feature/CRMLAB-109-chat-interno-audio-fechar` (de `main` v1.37.0). Sem decisão nova, sem migração.
+
+- **Front:** microfone do `Composer` ligado no chat interno (envio pelo mesmo `POST .../attachments`);
+  anexo de áudio renderiza `AudioMessage`; × "Fechar conversa" no cabeçalho limpa a seleção e mostra
+  o estado vazio — a auto-seleção do primeiro canal ficou só na primeira carga.
+- **Imagem:** já existia (CRMLAB-101) — clipe, colar e arrastar seguem cobertos pelos testes de antes.
+- **Backend:** sem mudança de código; teste novo prova ogg/opus e webm/opus aceitos e gravados como áudio.
+- **Testes:** +3 front em `InternalChat.attachments.spec.tsx`, +1 back em `tests/internal-chat/attachments.spec.ts`.
+
+### 🚧 CRMLAB-108 — encerradas visíveis para todas; responder reabre para quem enviou (2026-10-22, aguardando validação)
+
+Branch `feature/CRMLAB-108-encerradas-para-todas` (de `main` v1.37.0). Decisão D-273, sem migração.
+
+- **Regra:** toda atendente lista e abre as encerradas de todas (detalhe, mensagens, mídia, busca);
+  ativa de outra continua 404. Responder (texto ou anexo) uma encerrada reabre atribuída a quem enviou.
+- **Backend:** `canSee` libera `closed`; `canWork` é o recorte antigo (tags, 409 de atribuição);
+  `openForReply` nas rotas de mensagem e anexo; lista com `status=closed` sem recorte por dona,
+  `counts.unread` com o recorte antigo; busca de mensagens inclui encerradas.
+- **Front:** Composer liberado em encerrada com o aviso "Ao enviar, a conversa será reaberta e passará para você."
+- **Testes:** `tests/conversations/closed-visibility.spec.ts` (novo, 7), `message-search.spec.ts` e
+  `messages/messages.spec.ts` ajustados; front `Attendance.spec.tsx` (+1), `ConversationPanel.spec.tsx` (ajustado).
+- **Ficha do paciente (resposta do PO):** detalhe e timeline abrem pelo paciente de encerrada alheia;
+  lista/busca de pacientes e edição seguem o recorte do D-060. `tests/patients/patients-closed-conversation.spec.ts` (novo, 4).
+- **Revisão de regressão:** ficha só leitura (`canEdit`), `status=closed&unread=true` com o recorte do
+  count, leitura de encerrada alheia não marca como lida e pin/não lida dão 403, validação de anexo e
+  citação antes de reabrir (D-273 item 8).
+- **Pendente:** validação na hml.
+
+### 🚧 CRMLAB-112 — contador de não lidas na barra lateral (2026-10-22, aguardando validação)
+
+Branch `feature/CRMLAB-112-contador-nao-lidas-sidebar` (de `main` v1.37.0). Decisão D-277, sem migração.
+
+- **Backend:** `GET /conversations/unread-count` (mensagens não lidas das conversas ativas que o
+  usuário enxerga; gestor/admin: todas do tenant).
+- **Front:** número ("99+") nos itens Atendimento e Chat interno, expandida e recolhida (no canto
+  do ícone, no lugar do ponto); refeito pelo WS e ao ler.
+- **Testes:** `tests/conversations/unread-count.spec.ts` (novo, 4), inventário de rotas 112 → 113,
+  `Sidebar.spec.tsx` (+6, 1 reescrito), `ws.spec.ts` (+1). Suíte completa roda na integração.

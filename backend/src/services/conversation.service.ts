@@ -73,6 +73,7 @@ import type {
   ConversationStatus,
   ListConversationsQuery,
   ListConversationsResponse,
+  ConversationUnreadCountResponse,
   Message,
   PaginationMeta,
   SearchMessagesQuery,
@@ -227,9 +228,22 @@ export class ConversationService {
   }
 
   /**
-   * Uma conversa. Inexistente, de outro tenant OU de outro atendente => 404.
-   * Os tres casos respondem igual de proposito: a resposta nao pode diferenciar
-   * "nao existe" de "existe e nao e sua".
+   * Mensagens nao lidas das conversas ativas que o usuario enxerga — o numero
+   * do item "Atendimento" da barra lateral (CRMLAB-112, D-277).
+   */
+  async unreadCount(ctx: TenantContext): Promise<ConversationUnreadCountResponse> {
+    const unreadMessages = await this.repository.countUnreadMessages(
+      ctx.tenantId,
+      isSupervisor(ctx) ? null : ctx.userId,
+    );
+    return { unreadMessages };
+  }
+
+  /**
+   * Uma conversa. Inexistente, de outro tenant OU nao encerrada de outro
+   * atendente => 404. Os tres casos respondem igual de proposito: a resposta
+   * nao pode diferenciar "nao existe" de "existe e nao e sua". Encerrada e
+   * visivel para todas (D-273).
    */
   async getById(ctx: TenantContext, id: string): Promise<ConversationDetail> {
     const conversation = await this.repository.findById(ctx.tenantId, id);
@@ -237,6 +251,30 @@ export class ConversationService {
       throw notFound({ resource: 'conversation', id });
     }
     return conversation;
+  }
+
+  /**
+   * Recorte das rotas de ENVIO (mensagem e anexo). Igual a `getById`, mas a
+   * conversa ENCERRADA reabre antes, atribuida a quem vai enviar — de quem quer
+   * que fosse (D-273, revisa o 409 `CONVERSATION_ARCHIVED` do D-174). Mesma
+   * reabertura do atendimento manual (`reopenManually`): audit + "Atendimento
+   * reaberto por <nome>".
+   *
+   * Perdeu a corrida (o paciente ou outra atendente reabriu no mesmo instante)
+   * e a conversa ficou fora do recorte de quem envia: o 409 do D-215, como na
+   * fila livre — nada sai para o paciente.
+   */
+  async openForReply(ctx: TenantContext, id: string): Promise<ConversationDetail> {
+    const conversation = await this.getById(ctx, id);
+    if (conversation.status !== 'closed') return conversation;
+    const reopened = await this.reopenManually(ctx, conversation);
+    if (!this.canWork(ctx, reopened)) {
+      throw new BusinessError('CONVERSATION_ALREADY_ASSIGNED', {
+        assignedTo: reopened.assignedTo,
+        assignedToName: reopened.assignedToName,
+      });
+    }
+    return reopened;
   }
 
   /**
@@ -308,7 +346,7 @@ export class ConversationService {
     // devolve 404 como `getById`: aqui o 404 mandaria o atendente montar um
     // orcamento numa conversa que ele nao consegue abrir. O 409 diz de quem e —
     // a mesma informacao que a corrida de "Assumir" mostra.
-    if (!created && !this.canSee(ctx, conversation)) {
+    if (!created && !this.canWork(ctx, conversation)) {
       throw new BusinessError('CONVERSATION_ALREADY_ASSIGNED', {
         assignedTo: conversation.assignedTo,
         assignedToName: conversation.assignedToName,
@@ -353,7 +391,7 @@ export class ConversationService {
     if (conversation.status === 'closed') {
       conversation = await this.reopenManually(ctx, conversation);
     }
-    if (!this.canSee(ctx, conversation)) {
+    if (!this.canWork(ctx, conversation)) {
       throw new BusinessError('CONVERSATION_ALREADY_ASSIGNED', {
         assignedTo: conversation.assignedTo,
         assignedToName: conversation.assignedToName,
@@ -401,7 +439,7 @@ export class ConversationService {
     if (!created && conversation.status === 'closed') {
       conversation = await this.reopenManually(ctx, conversation);
     }
-    if (!created && !this.canSee(ctx, conversation)) {
+    if (!created && !this.canWork(ctx, conversation)) {
       throw new BusinessError('CONVERSATION_ALREADY_ASSIGNED', {
         assignedTo: conversation.assignedTo,
         assignedToName: conversation.assignedToName,
@@ -546,8 +584,9 @@ export class ConversationService {
 
   /**
    * Encerrar / reativar (D-174). A alcada vem DEPOIS do recorte por papel:
-   * conversa de outra atendente continua 404; o 403 so aparece em conversa que
-   * o usuario ja enxerga (a da fila livre, para atendente).
+   * conversa ativa de outra atendente continua 404; o 403 so aparece em
+   * conversa que o usuario ja enxerga (a da fila livre e, desde o D-273, a
+   * encerrada de outra pessoa — reabrir ela e responder, `openForReply`).
    */
   async updateStatus(
     ctx: TenantContext,
@@ -591,6 +630,8 @@ export class ConversationService {
     if (!current || !this.canSee(ctx, current)) {
       throw notFound({ resource: 'conversation', id });
     }
+    // Encerrada de outra pessoa: visivel (D-273), mas etiquetar e de quem atende.
+    this.assertCanWork(ctx, current);
     const updated = await this.repository.setTags(ctx.tenantId, id, tags);
     if (!updated) throw notFound({ resource: 'conversation', id });
     return updated;
@@ -692,7 +733,7 @@ export class ConversationService {
    * pin e preferencia de tela, nao ato sobre o atendimento.
    */
   async setPinned(ctx: TenantContext, id: string, pinned: boolean): Promise<void> {
-    await this.getById(ctx, id);
+    this.assertCanWork(ctx, await this.getById(ctx, id));
     if (pinned) await this.repository.pin(ctx.tenantId, id, ctx.userId);
     else await this.repository.unpin(ctx.tenantId, id, ctx.userId);
   }
@@ -703,6 +744,10 @@ export class ConversationService {
     if (!current || !this.canSee(ctx, current)) {
       throw notFound({ resource: 'conversation', id });
     }
+    // Quem so LE a encerrada alheia (D-273) nao mexe no estado de leitura da
+    // dona — nem apaga o "marcar como nao lida" dela (D-229). No-op: o GET do
+    // detalhe chama isto e precisa seguir abrindo.
+    if (!this.canWork(ctx, current)) return;
     await this.repository.markAsRead(ctx.tenantId, id);
   }
 
@@ -711,7 +756,7 @@ export class ConversationService {
    * invisivel e 404. Sem audit e sem WS — preferencia de tela, como o pin.
    */
   async markAsUnread(ctx: TenantContext, id: string): Promise<void> {
-    await this.getById(ctx, id);
+    this.assertCanWork(ctx, await this.getById(ctx, id));
     await this.repository.markAsUnread(ctx.tenantId, id);
   }
 
@@ -775,14 +820,36 @@ export class ConversationService {
     return user?.name ?? 'um atendente';
   }
 
-  /** Atendente ve as proprias, as livres e as em que participa (D-263); gestor/admin, todas. */
+  /**
+   * Leitura (D-273): toda ENCERRADA do laboratorio e visivel para qualquer
+   * atendente; as nao encerradas seguem `canWork`.
+   */
   private canSee(ctx: TenantContext, conversation: Conversation): boolean {
+    return conversation.status === 'closed' || this.canWork(ctx, conversation);
+  }
+
+  /**
+   * O recorte de antes do D-273, que continua valendo para mexer na conversa
+   * (tags, por exemplo): atendente ve as proprias, as livres e as em que
+   * participa (D-263); gestor/admin, todas.
+   */
+  private canWork(ctx: TenantContext, conversation: Conversation): boolean {
     if (isSupervisor(ctx)) return true;
     return (
       conversation.assignedTo === null ||
       conversation.assignedTo === ctx.userId ||
       isParticipant(conversation, ctx.userId)
     );
+  }
+
+  /**
+   * Encerrada alheia e so leitura (D-273): tags, pin e "marcar como nao lida"
+   * recusam com 403 — ela ja e visivel, entao 404 seria mentira.
+   */
+  private assertCanWork(ctx: TenantContext, conversation: Conversation): void {
+    if (!this.canWork(ctx, conversation)) {
+      throw new BusinessError('FORBIDDEN', { requiredRoles: [...SUPERVISOR_ROLES] });
+    }
   }
 
   /** So o dono atual, gestor ou admin reatribuem uma conversa ja atribuida. */

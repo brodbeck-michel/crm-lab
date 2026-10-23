@@ -255,6 +255,45 @@ describe('Atendimento — lista de conversas', () => {
     expect(screen.getByRole('button', { name: 'Não atribuídas 2' })).toBeInTheDocument();
   });
 
+  it('D-273: encerrada de outra pessoa abre pela aba Encerradas, avisa e deixa enviar', async () => {
+    const encerrada = conversation({
+      id: 'c-9',
+      status: 'closed',
+      assignedTo: 'u-outra',
+      assignedToName: 'Bia',
+      unreadCount: 0,
+    });
+    listMock.mockImplementation((filters: { status?: string }) =>
+      Promise.resolve(
+        filters.status === 'closed' ? listResponse([encerrada]) : listResponse([], { mine: 0, unassigned: 0 }),
+      ),
+    );
+    const detail = detailResponse([message({ conversationId: 'c-9' })]);
+    getMock.mockResolvedValue({ ...detail, conversation: { ...detail.conversation, ...encerrada } });
+    sendMessageMock.mockResolvedValue(message({ id: 'm-2', conversationId: 'c-9', senderType: 'agent' }));
+    renderScreen();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Encerradas' }));
+    await userEvent.click(await screen.findByTestId('conversation-item'));
+    const composer = await screen.findByTestId('composer');
+    expect(within(composer).getByTestId('composer-notice')).toHaveTextContent(
+      'Ao enviar, a conversa será reaberta e passará para você.',
+    );
+    const field = within(composer).getByLabelText('Mensagem');
+    expect(field).toBeEnabled();
+    await userEvent.type(field, 'Voltei!');
+    const callsBefore = listMock.mock.calls.length;
+    await userEvent.click(within(composer).getByRole('button', { name: 'Enviar' }));
+
+    await waitFor(() => {
+      expect(sendMessageMock).toHaveBeenCalledWith('c-9', { content: 'Voltei!', messageType: 'text' });
+    });
+    // As listas são refeitas: a conversa sai de Encerradas e entra nas dela.
+    await waitFor(() => {
+      expect(listMock.mock.calls.length).toBeGreaterThan(callsBefore);
+    });
+  });
+
   it('chip filtra pelo scope e o filtro desligado volta a mostrar tudo', async () => {
     listMock.mockResolvedValue(listResponse([conversation()]));
     renderScreen();

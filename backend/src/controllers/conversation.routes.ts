@@ -34,6 +34,7 @@ import type {
   CreateAttachmentRequest,
   CreateConversationRequest,
   ConversationDetail,
+  ConversationUnreadCountResponse,
   CreateConversationResponse,
   GetConversationResponse,
   ListAssigneesResponse,
@@ -300,6 +301,13 @@ export function listAssignees(service: ConversationService): RequestHandler {
   });
 }
 
+export function unreadCount(service: ConversationService): RequestHandler {
+  return handle(async (req, res) => {
+    const body: ConversationUnreadCountResponse = await service.unreadCount(getContext(req));
+    res.status(200).json(body);
+  });
+}
+
 export function getConversation(services: ConversationServices): RequestHandler {
   return handle(async (req, res) => {
     const ctx = getContext(req);
@@ -368,7 +376,11 @@ export function createMessage(services: ConversationServices): RequestHandler {
     const dto = validated<CreateMessageBody>(req, 'body');
 
     // Recorte por papel antes de escrever: 404 para conversa que nao e visivel.
+    // Tudo que pode recusar vem ANTES de reabrir a encerrada para quem envia
+    // (D-273) — o corpo ja passou pelo zod; falta a citacao.
     await services.conversations.getById(ctx, id);
+    await services.messages.assertQuotable(ctx.tenantId, id, dto.quotedMessageId);
+    await services.conversations.openForReply(ctx, id);
 
     const message: Message = await services.messages.createFromAgent(ctx.tenantId, id, ctx.userId, {
       content: dto.content,
@@ -394,11 +406,17 @@ export function createAttachment(services: ConversationServices): RequestHandler
 
     // Recorte por papel antes de gravar: 404 para conversa que nao e visivel.
     await services.conversations.getById(ctx, id);
+    // Validacoes do arquivo e da citacao SEM gravar, antes de reabrir a
+    // encerrada para quem envia (D-273): recusa aqui nao deixa a conversa
+    // reaberta e com outra dona sem mensagem.
+    const prepared = await services.media.prepareOutbound(dto);
+    await services.messages.assertQuotable(ctx.tenantId, id, dto.quotedMessageId);
+    await services.conversations.openForReply(ctx, id);
     // Responder assume a fila livre (D-215) — antes da midia: quem perde a
     // corrida recebe o 409 sem deixar arquivo gravado.
     await services.messages.claimForAgent(ctx.tenantId, id, ctx.userId);
 
-    const stored = await services.media.storeOutbound(ctx.tenantId, dto);
+    const stored = await services.media.storePrepared(ctx.tenantId, dto.fileName, prepared);
     // `stored.mimeType` (nao `dto.mimeType`): allow-list/sniff (CRMLAB-31)
     // podem rebaixar o MIME declarado — mensagem e envio pro canal externo
     // usam o que foi REALMENTE gravado.
@@ -607,6 +625,8 @@ function buildConversationModule(
   // ANTES de `/:id`: registrada depois, o validador de uuid rejeitaria
   // "assignees" com 400 antes de este handler existir para o Express.
   router.get('/assignees', ...guards, listAssignees(services.conversations));
+  // CRMLAB-112 (D-277): contador da barra lateral. Tambem antes de `/:id`.
+  router.get('/unread-count', ...guards, unreadCount(services.conversations));
 
   // ANTES de `/:id/messages` pelo mesmo motivo: "search" nao e uuid.
   router.get(

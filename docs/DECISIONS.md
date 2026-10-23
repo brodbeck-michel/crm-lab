@@ -2596,6 +2596,10 @@ direção; `from_me` sai de `DiscardReason`), `backend/src/services/message.serv
 `docs/api/API_CONTRACTS.md` §6.1, `docs/backend/SERVICES.md` §3/§16. Sem migração.
 
 ### D-174: Encerrar atendimento substitui Arquivar; paciente que volta a escrever reabre na fila livre (CRMLAB-48)
+> **Revisada pela D-273 (CRMLAB-108):** conversa **encerrada** passa a ser visível para todas as
+> atendentes (o `NOT_FOUND` do item 1 vale só para a conversa **ativa** de outra atendente), e o
+> item 6 deixa de valer para mensagem/anexo do atendente: responder encerrada reabre para quem
+> enviou.
 **Decisão:** a conversa passa a ter **dois** status, `active | closed`. `archived` deixa de
 existir: a migração 025 converte as arquivadas em `closed` e troca a coluna por um `CHECK`.
 Decisões do PO (24/09/2026):
@@ -5730,3 +5734,121 @@ fique aberto numa proposta fechada.
 `funnel-rules.service.ts`, `proposal.routes.ts`; frontend `ProposalCard`, `ProposalModal`,
 `ReminderPanel` (novo), `ProposalsFilters`, `Settings/Rules.tsx`, `api/ws.ts`. API_CONTRACTS
 §3/§6c, FRONTEND_BACKEND (WS), SCHEMA §42, SERVICES §34, PAGES §5/§6/§21, BUSINESS_RULES §3.
+
+### D-273: Encerradas visíveis para todas; responder encerrada reabre para quem enviou (CRMLAB-108)
+**Decisão:** revisa a D-174 (itens 1 e 6) e estende o recorte da D-263. Regras aprovadas pelo
+dono do produto em 22/10/2026:
+1. **Toda atendente vê todas as conversas encerradas** (`status = 'closed'`) do laboratório: na
+   lista `GET /conversations?status=closed` (chip "Encerradas") e ao abrir a conversa (detalhe,
+   mensagens, mídia, busca de mensagens dentro dela e na busca geral). No backend, o
+   `ConversationService.canSee` libera `closed` para qualquer papel do tenant; o recorte antigo
+   virou `canWork` (própria, livre ou participante — D-263; gestor/admin, tudo).
+2. **Só com o filtro `status=closed`** a listagem dispensa o recorte por dona. Sem `status`, a
+   lista da atendente continua sem as encerradas alheias, e `counts.unread` do pedido de
+   encerradas mantém o recorte antigo — encerrada alheia não soma em badge nenhum. `mine`,
+   `unassigned` e `participating` já implicavam o recorte.
+3. **Responder encerrada reabre para quem enviou:** `POST /conversations/:id/messages` e
+   `POST /conversations/:id/attachments` chamam `ConversationService.openForReply` no lugar de
+   `getById`. Encerrada (de qualquer dona, inclusive de quem envia) volta a `active` com
+   `assigned_to` = remetente, pelo mesmo `reopenManually` do atendimento manual (D-174 item 4):
+   `UPDATE ... WHERE status = 'closed'` (trava de corrida), audit `update_conversation_status`
+   com dona antiga e nova, e a mensagem de sistema "Atendimento reaberto por <nome>" antes da
+   mensagem. Vale também para gestor/admin (a regra é "quem mandou"). Perdeu a corrida e a
+   conversa ficou com outra pessoa: `CONVERSATION_ALREADY_ASSIGNED` (409, D-215) e nada sai.
+   O envio segue o caminho de sempre (`createFromAgent`/`createAttachmentFromAgent`), com as
+   mesmas regras de canal.
+4. **Fora responder, a encerrada alheia é só leitura:** encerrar/reativar continua da dona,
+   gestor ou admin (`FORBIDDEN` em vez de 404, já que agora ela é visível); `tags` também
+   `FORBIDDEN`; participante continua recusado em encerrada (D-263 item 2). Reação, retry,
+   mensagem automática e envio de orçamento em encerrada seguem com `CONVERSATION_ARCHIVED`
+   (409) — não são "mandar mensagem" da atendente.
+5. **Conversa não encerrada de outra atendente continua `NOT_FOUND`.** Isolamento entre
+   tenants intocado (RLS). Não existe status `archived` desde a D-174 (só `active | closed`):
+   o nome `CONVERSATION_ARCHIVED` é legado.
+6. **Tela:** o Composer de conversa encerrada deixa de ficar travado e mostra o aviso "Ao
+   enviar, a conversa será reaberta e passará para você." Depois do envio as listas são
+   refeitas pela invalidação de sempre: a conversa sai de Encerradas e entra em "Minhas".
+7. **Respostas do dono do produto às dúvidas da implementação (22/10/2026):**
+   a. **Ficha do paciente: liberar a leitura.** Quem lê a encerrada abre a ficha do paciente
+      dela. Recorte mais estreito que cumpre isso: `GET /patients/:id` e
+      `GET /patients/:id/timeline` somam as conversas encerradas de qualquer atendente
+      (`readVisibilityOf`, `closedConversations: true`), e elas entram nos contadores e na
+      timeline. `GET /patients` (lista/busca) **não** muda — o paciente não aparece na busca só
+      por ter encerrada alheia — e a edição (`PATCH`, inativar, reativar) segue o recorte do
+      D-060 (404 por esse caminho só). Outro tenant, 404.
+   b. **Busca geral de mensagens** incluindo encerradas de outras: mantida.
+   c. **Orçamento pelo cartão em encerrada:** mantém `CONVERSATION_ARCHIVED` (409).
+   d. **Gestor/admin que responde encerrada vira dono:** confirmado.
+8. **Ajustes da revisão de regressão (22/10/2026):**
+   a. **Ficha só leitura:** `PatientDetail.canEdit` (recorte de escrita, o mesmo de
+      `getForWrite`; gestor/admin sempre `true`). Com `false`, a ficha abre em modo leitura:
+      campos desabilitados, sem [Salvar cadastro] e sem a seção de inativar/reativar.
+   b. **`?status=closed&unread=true`:** a lista e o `total` usam o mesmo recorte do
+      `counts.unread` (só as dela/livres/participando) — chip e lista não divergem e
+      encerrada alheia não entra em "não lidas".
+   c. **Quem só lê a encerrada alheia não mexe em estado dela:** o `GET /conversations/:id`
+      não marca como lida (`markAsRead` vira no-op para quem não tem `canWork`), e
+      `POST/DELETE /:id/pin`, `POST /:id/unread` e `PATCH { tags }` respondem `FORBIDDEN` (403).
+   d. **Validar antes de reabrir:** as rotas de mensagem e anexo validam a citação
+      (`MessageService.assertQuotable`) e o arquivo (`MediaService.prepareOutbound`: allow-list,
+      base64, teto, sniff — sem gravar) ANTES de `openForReply`. Recusa não deixa a conversa
+      reaberta com outra dona. Reabertura e gravação não ficam na mesma transação (cada
+      repositório abre a sua, D-008); a garantia é a ordem. Falha do canal depois da reabertura
+      deixa a mensagem gravada como `failed` — a conversa reaberta tem a mensagem dela.
+**Motivo:** a equipe atende o mesmo paciente em turnos; a encerrada de uma colega era
+invisível, e quem pegava o retorno não via o histórico nem conseguia responder sem pedir à
+gestora. Reabrir com quem respondeu segue a lógica da D-174 item 4 e da D-215: quem escreve
+assume.
+**Impacto:** `conversation.service.ts` (`canSee`/`canWork`, `openForReply`, `updateTags`),
+`conversation.repository.ts` (`list`: recorte e `counts.unread`), `message.repository.ts`
+(`search`), `conversation.routes.ts` (mensagem e anexo); frontend `Composer.tsx` (`notice`),
+`ConversationPanel.tsx`; `patient.service.ts` (`readVisibilityOf`, `getForWrite`) e
+`patient.repository.ts` (`closedConversations`). Docs: BUSINESS_RULES §17, API_CONTRACTS §2/§2c, API_ERRORS, SERVICES §2/§3/§12,
+WORKFLOWS §5, PAGES §2. Testes: `tests/conversations/closed-visibility.spec.ts` (novo),
+`message-search.spec.ts`, `messages/messages.spec.ts`; front `Attendance.spec.tsx`,
+`ConversationPanel.spec.tsx`; `tests/patients/patients-closed-conversation.spec.ts` (novo). Sem migração.
+
+### D-274: Token genérico de perigo e botão "Encerrar" com fundo vermelho suave (CRMLAB-107)
+**Decisão:** o botão "Encerrar" do cabeçalho da conversa no Atendimento passa a ter fundo vermelho
+fraquinho, para se diferenciar dos botões vizinhos.
+1. **Token genérico:** `--color-danger` (`#b23a31`, literal, igual para todo tenant) com
+   `-soft` (10% com branco), `-soft-hover` (18%) e `-ink` (80% com `#1a1a1a`; 6,6:1 sobre o
+   `soft`, 5,8:1 sobre o hover). Exposto no Tailwind como `danger.*`. Vermelho fixo porque o
+   acento do tema pode ser vermelho (mesmo motivo de D-254/D-260).
+2. **Agenda:** `--color-agenda-danger` passa a ser `var(--color-danger)` — mesmo valor, sem
+   mudança visual; o vermelho de perigo fica num lugar só.
+3. **Variante nova `dangerSoft` no `Button`**, usada só no "Encerrar". A `destructive`
+   (fantasma accent-700) **não muda**: os demais botões de remoção continuam como estão.
+4. Sem tema escuro no produto, então sem variação para ele.
+**Motivo:** "Encerrar" tira a conversa da fila e ficava com o mesmo peso visual de "Novo
+Orçamento"/painel lateral; um tom suave destaca sem parecer alerta.
+**Impacto:** só frontend — `styles/tokens.css`, `tailwind.config.js`, `ui/Button.tsx` (+ spec),
+`pages/Attendance/ConversationPanel.tsx` (+ spec). DESIGN_TOKENS (Perigo genérico, Botões),
+COMPONENTS (Button).
+
+### D-277: Contador de não lidas do Atendimento e do Chat interno na barra lateral, também recolhida (CRMLAB-112)
+**Decisão:**
+1. **Atendimento:** novo `GET /conversations/unread-count` → `{ unreadMessages }`, soma de
+   `unread_count` (mensagens, como o número do WhatsApp) das conversas **ativas** no recorte de
+   visibilidade da listagem — atendente: próprias + fila livre + as em que participa (D-263);
+   gestor/admin: todas do tenant. Encerradas não contam. `counts.unread` da listagem não serve:
+   conta **conversas** com não lida e inclui encerradas quando não há filtro de status; e
+   `overview.workload` é da tela de Operação (gestão), não da atendente.
+2. **Chat interno:** continua a soma de `Channel.unreadCount` (D-130/D-132), sem mudança.
+3. **Recolhida:** o número continua visível no canto do ícone (mesmo `Badge`, "99+"), no lugar
+   do ponto de 8px do CRMLAB-44; o cabeçalho de grupo recolhido soma as não lidas de mensagem dos
+   seus itens (hoje só "Comunicação" → Chat interno; "Decisões" continua fora do grupo).
+4. **Cor:** o `Badge` existente (`bg-accent2`), o mesmo das não lidas da lista de conversas. O
+   design system não tem token verde/"sucesso"; não foi criado — fica para o dono do produto
+   decidir se quer o verde do WhatsApp (seria token novo em DESIGN_TOKENS.md).
+5. **Tempo real:** a chave `['conversations', 'unread-count']` fica no escopo `conversations`, já
+   invalidado pelo WS `conversation.new_message` e por "abrir = ler" (`useMarkAsRead`). No WS, a
+   contagem é refeita de novo **depois** do refetch do detalhe da conversa, porque é o GET do
+   detalhe que zera a conversa aberta — sem isso a barra mostraria "1" enquanto a atendente lê.
+**Motivo:** pedido do dono do produto — a atendente na tela de Atendimento (barra recolhida
+sozinha) não via mensagem nova do chat interno, e vice-versa.
+**Impacto:** `shared/types/conversation.types.ts` (`ConversationUnreadCountResponse`); backend
+`conversation.repository.ts` (`countUnreadMessages`), `conversation.service.ts` (`unreadCount`),
+`conversation.routes.ts`; inventário de `route-tenant-isolation.spec.ts` (112 → 113). Frontend
+`Sidebar.tsx`, `api/conversations.ts`, `api/query-keys.ts`, `api/ws.ts`. API_CONTRACTS §2,
+PAGES §9, COMPONENTS (Sidebar). Sem migração.

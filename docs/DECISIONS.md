@@ -5768,6 +5768,17 @@ dono do produto em 22/10/2026:
 6. **Tela:** o Composer de conversa encerrada deixa de ficar travado e mostra o aviso "Ao
    enviar, a conversa será reaberta e passará para você." Depois do envio as listas são
    refeitas pela invalidação de sempre: a conversa sai de Encerradas e entra em "Minhas".
+7. **Respostas do dono do produto às dúvidas da implementação (22/10/2026):**
+   a. **Ficha do paciente: liberar a leitura.** Quem lê a encerrada abre a ficha do paciente
+      dela. Recorte mais estreito que cumpre isso: `GET /patients/:id` e
+      `GET /patients/:id/timeline` somam as conversas encerradas de qualquer atendente
+      (`readVisibilityOf`, `closedConversations: true`), e elas entram nos contadores e na
+      timeline. `GET /patients` (lista/busca) **não** muda — o paciente não aparece na busca só
+      por ter encerrada alheia — e a edição (`PATCH`, inativar, reativar) segue o recorte do
+      D-060 (404 por esse caminho só). Outro tenant, 404.
+   b. **Busca geral de mensagens** incluindo encerradas de outras: mantida.
+   c. **Orçamento pelo cartão em encerrada:** mantém `CONVERSATION_ARCHIVED` (409).
+   d. **Gestor/admin que responde encerrada vira dono:** confirmado.
 **Motivo:** a equipe atende o mesmo paciente em turnos; a encerrada de uma colega era
 invisível, e quem pegava o retorno não via o histórico nem conseguia responder sem pedir à
 gestora. Reabrir com quem respondeu segue a lógica da D-174 item 4 e da D-215: quem escreve
@@ -5775,10 +5786,11 @@ assume.
 **Impacto:** `conversation.service.ts` (`canSee`/`canWork`, `openForReply`, `updateTags`),
 `conversation.repository.ts` (`list`: recorte e `counts.unread`), `message.repository.ts`
 (`search`), `conversation.routes.ts` (mensagem e anexo); frontend `Composer.tsx` (`notice`),
-`ConversationPanel.tsx`. Docs: BUSINESS_RULES §17, API_CONTRACTS §2, API_ERRORS, SERVICES §2/§3,
+`ConversationPanel.tsx`; `patient.service.ts` (`readVisibilityOf`, `getForWrite`) e
+`patient.repository.ts` (`closedConversations`). Docs: BUSINESS_RULES §17, API_CONTRACTS §2/§2c, API_ERRORS, SERVICES §2/§3/§12,
 WORKFLOWS §5, PAGES §2. Testes: `tests/conversations/closed-visibility.spec.ts` (novo),
 `message-search.spec.ts`, `messages/messages.spec.ts`; front `Attendance.spec.tsx`,
-`ConversationPanel.spec.tsx`. Sem migração.
+`ConversationPanel.spec.tsx`; `tests/patients/patients-closed-conversation.spec.ts` (novo). Sem migração.
 
 ### D-274: Token genérico de perigo e botão "Encerrar" com fundo vermelho suave (CRMLAB-107)
 **Decisão:** o botão "Encerrar" do cabeçalho da conversa no Atendimento passa a ter fundo vermelho

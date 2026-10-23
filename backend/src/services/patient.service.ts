@@ -94,6 +94,15 @@ export function visibilityOf(ctx: TenantContext): PatientVisibility {
 }
 
 /**
+ * Recorte de LEITURA da ficha (D-273): o de `visibilityOf` mais as conversas
+ * encerradas de qualquer atendente — quem le a encerrada no atendimento abre
+ * a ficha do paciente dela. Editar/inativar seguem `visibilityOf`.
+ */
+export function readVisibilityOf(ctx: TenantContext): PatientVisibility {
+  return { ...visibilityOf(ctx), closedConversations: true };
+}
+
+/**
  * Telefone digitado a mao -> o mesmo formato que o webhook grava (D-106).
  * Mesma logica de `toE164` em conversation.service.ts — sem isto o dedupe
  * criaria um segundo cadastro para o paciente que ja fala pelo WhatsApp.
@@ -135,8 +144,18 @@ export class PatientService {
     };
   }
 
-  /** Inexistente, de outro tenant OU fora da visibilidade => o MESMO 404. */
+  /**
+   * Inexistente, de outro tenant OU fora da visibilidade => o MESMO 404.
+   * Leitura: inclui o paciente de conversa encerrada de outra atendente (D-273).
+   */
   async getById(ctx: TenantContext, id: string): Promise<PatientDetail> {
+    const patient = await this.repository.findDetail(ctx.tenantId, id, readVisibilityOf(ctx));
+    if (!patient) throw notFound({ resource: 'patient', id });
+    return patient;
+  }
+
+  /** Recorte de escrita: o de antes do D-273 (so pela encerrada alheia, 404). */
+  private async getForWrite(ctx: TenantContext, id: string): Promise<PatientDetail> {
     const patient = await this.repository.findDetail(ctx.tenantId, id, visibilityOf(ctx));
     if (!patient) throw notFound({ resource: 'patient', id });
     return patient;
@@ -154,7 +173,7 @@ export class PatientService {
     id: string,
     dto: UpdatePatientRequest,
   ): Promise<PatientDetail> {
-    const current = await this.getById(ctx, id);
+    const current = await this.getForWrite(ctx, id);
     if (current.anonymizedAt !== null) {
       // Reabrir o cadastro apagado desfaria a anonimizacao (D-063).
       throw new BusinessError('CONFLICT', { reason: 'patient_anonymized' });
@@ -215,7 +234,7 @@ export class PatientService {
     await this.getById(ctx, id);
 
     const criteria: PatientTimelineCriteria = {
-      ...visibilityOf(ctx),
+      ...readVisibilityOf(ctx),
       ...(query.kind !== undefined ? { kind: query.kind } : {}),
       page: clampInt(query.page, DEFAULT_PAGE, 1, MAX_PAGE),
       limit: clampInt(query.limit, DEFAULT_TIMELINE_LIMIT, 1, MAX_TIMELINE_LIMIT),
@@ -302,7 +321,7 @@ export class PatientService {
     id: string,
     dto: InactivatePatientRequest,
   ): Promise<PatientDetail> {
-    const current = await this.getById(ctx, id);
+    const current = await this.getForWrite(ctx, id);
     if (current.anonymizedAt !== null) {
       throw new BusinessError('CONFLICT', { reason: 'patient_anonymized' });
     }
@@ -330,7 +349,7 @@ export class PatientService {
     id: string,
     dto: ReactivatePatientRequest,
   ): Promise<PatientDetail> {
-    const current = await this.getById(ctx, id);
+    const current = await this.getForWrite(ctx, id);
     if (current.anonymizedAt !== null) {
       throw new BusinessError('CONFLICT', { reason: 'patient_anonymized' });
     }

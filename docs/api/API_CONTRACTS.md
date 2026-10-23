@@ -1636,6 +1636,11 @@ pacientes que têm **ao menos uma conversa visível para ele** — atribuída a 
 atribuída. Gestor e admin veem todos os do laboratório. Paciente fora da visibilidade responde
 `404 NOT_FOUND`, nunca `403` (CLAUDE.md regra 8) — e o mesmo recorte se aplica **dentro** da
 ficha: contadores e timeline só contam o que o solicitante já podia ver por outro caminho.
+**Leitura pela encerrada (CRMLAB-108, D-273):** `GET /patients/:id` e `GET /patients/:id/timeline`
+também abrem para a atendente o paciente com conversa **encerrada** de qualquer atendente (a
+mesma que ela já lê no atendimento), e essas conversas entram nos contadores e na timeline.
+`GET /patients` (lista/busca) e as escritas (`PATCH`, inativar, reativar) seguem o recorte de
+antes: por esse caminho só, a lista não traz o paciente e editar responde `404`.
 
 **Não existe `POST /patients`.** O paciente nasce do canal: `findOrCreateByPhone` resolve ou
 cria a linha pelo telefone dentro do tenant (`UNIQUE (tenant_id, phone)`) quando a conversa

@@ -3477,6 +3477,8 @@ Branch `feature/CRMLAB-108-encerradas-para-todas` (de `main` v1.37.0). Decisão 
 - **Front:** Composer liberado em encerrada com o aviso "Ao enviar, a conversa será reaberta e passará para você."
 - **Testes:** `tests/conversations/closed-visibility.spec.ts` (novo, 7), `message-search.spec.ts` e
   `messages/messages.spec.ts` ajustados; front `Attendance.spec.tsx` (+1), `ConversationPanel.spec.tsx` (ajustado).
+- **Ficha do paciente (resposta do PO):** detalhe e timeline abrem pelo paciente de encerrada alheia;
+  lista/busca de pacientes e edição seguem o recorte do D-060. `tests/patients/patients-closed-conversation.spec.ts` (novo, 4).
 - **Pendente:** validação na hml.
 
 ### 🚧 CRMLAB-112 — contador de não lidas na barra lateral (2026-10-22, aguardando validação)

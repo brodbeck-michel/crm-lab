@@ -921,7 +921,8 @@ export function ConversationPanel({
           onCancelReply={clearReply}
           onTyping={handleTyping}
           sending={sending}
-          disabled={closed}
+          // Encerrada aceita resposta: reabre e passa para quem enviou (D-273).
+          notice={closed ? 'Ao enviar, a conversa será reaberta e passará para você.' : undefined}
           quickReplies={quickReplies}
           initialValue={draftMessage}
           draftId={conversation.id}

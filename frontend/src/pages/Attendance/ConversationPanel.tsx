@@ -110,6 +110,15 @@ export interface ConversationPanelProps {
   /** "Tentar de novo" de mensagem que falhou (D-227). Sem handler, o botão some. */
   onRetryMessage?: (messageId: string) => void;
   /**
+   * O canal deixa a autora editar/apagar (`canEditMessages` do GET, D-280).
+   * Falso (Cloud API) ou sem `currentUserId`: "Editar"/"Apagar para todos" somem.
+   */
+  canEditMessages?: boolean;
+  /** A autora edita (D-280). Promise: rejeitou, a caixa de edição fica aberta. */
+  onEditMessage?: (messageId: string, content: string) => Promise<unknown>;
+  /** A autora apaga para todos (D-280) — a confirmação é do balão. */
+  onDeleteMessage?: (messageId: string) => void;
+  /**
    * Presença da atendente para o paciente (D-226/D-227): `paused` ao abrir a
    * conversa (assina a presença dele), `composing` enquanto ela digita — no
    * máximo 1 a cada `COMPOSING_INTERVAL_MS`.
@@ -470,6 +479,9 @@ export function ConversationPanel({
   unreadAtOpen,
   draftMessage,
   onRetryMessage,
+  canEditMessages = false,
+  onEditMessage,
+  onDeleteMessage,
   onPresence,
   viewKey,
   focusMessageId = null,
@@ -577,6 +589,14 @@ export function ConversationPanel({
       if (!scrollToMessage(scrollRef.current, messageId)) onQuoteUnavailable?.();
     },
     onOpenImage: (message) => showImage(message.id),
+    // D-280: a regra por mensagem (autora, prazo) é do balão; aqui só o canal.
+    currentUserId: canEditMessages ? currentUserId : undefined,
+    onEdit:
+      canEditMessages && onEditMessage
+        ? (message, content) => onEditMessage(message.id, content)
+        : undefined,
+    onDelete:
+      canEditMessages && onDeleteMessage ? (message) => onDeleteMessage(message.id) : undefined,
   };
 
   // Prévia de anexos (CRMLAB-69, D-232): presa à conversa em que abriu —
@@ -971,7 +991,14 @@ export function ConversationPanel({
  */
 type BubbleActions = Pick<
   MessageBubbleProps,
-  'onReply' | 'onReact' | 'onQuoteClick' | 'onRetry' | 'onOpenImage'
+  | 'onReply'
+  | 'onReact'
+  | 'onQuoteClick'
+  | 'onRetry'
+  | 'onOpenImage'
+  | 'currentUserId'
+  | 'onEdit'
+  | 'onDelete'
 >;
 
 function renderRows(

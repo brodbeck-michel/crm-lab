@@ -931,9 +931,15 @@ histórico: a tela de Atendimento pede a primeira página sem cursor e depois re
   "cursors": {
     "before": "uuid-da-mensagem-mais-antiga-desta-pagina",
     "after": null
-  }
+  },
+  "canEditMessages": true
 }
 ```
+
+`canEditMessages` (CRMLAB-105, D-280): o canal desta conversa deixa a autora editar/apagar para
+todos — WhatsApp pelo gateway Evolution (`qr`) ou o mock de dev. Cloud API, canal sem gateway ou
+conversa fora do WhatsApp → `false` (a tela esconde os itens). Opcional no tipo; o backend sempre
+manda.
 
 `conversation` é `ConversationDetail` (= `Conversation` + `patientEmail` +
 `customFields`) — inclui `patientId`, que é de onde a coluna 3 do inbox tira o link para a
@@ -1183,6 +1189,39 @@ externo (canal `direct`/`web`, envio que falhou) reage só no CRM. Emite
 outra conversa ou de outro tenant, mensagem apagada), `CONVERSATION_ARCHIVED` (409, atendimento
 encerrado), `MESSAGE_SEND_FAILED` (502), `FORBIDDEN` (403, `platform_operator`). Mensagem de
 sistema também é `NOT_FOUND` — não existe no WhatsApp do paciente.
+
+### PATCH /conversations/:id/messages/:messageId · DELETE (CRMLAB-105, D-280)
+A **autora** corrige (`PATCH`) ou apaga para todos (`DELETE`) uma mensagem que ela mesma mandou
+ao paciente pelo CRM.
+
+**Request (PATCH):**
+```json
+{ "content": "O exame custa R$ 89,90" }
+```
+- `content`: 1..4000 caracteres após trim (o teto do envio); foto/vídeo: até 1024 (legenda).
+
+**Response:** `PATCH` → `200` com a `Message` atualizada (objeto cru, D-070; `editedAt`
+preenchido). Texto igual ao atual → `200` sem ir ao canal. `DELETE` → `204`.
+
+**Regras** (as mesmas da tela — `messageAuthorActionBlock` em `shared`):
+- só `senderType: agent` com `senderId` = usuário logado. Mensagem de colega, do celular
+  (`senderId` nulo, D-173), automática ou do paciente → `FORBIDDEN` (`reason: not_author`) —
+  gestor/admin também;
+- `CONFLICT` (409) com `details.reason`: `already_deleted`, `not_sent` (sem id externo: `pending`,
+  `failed` ou canal sem gateway), `not_editable` (`PATCH` em tipo que não é `text`/`image`/`video`),
+  `window_expired` (editar: 15 min — `MESSAGE_EDIT_WINDOW_MS`; apagar: 48 h —
+  `MESSAGE_DELETE_WINDOW_MS`), `channel_unsupported` (Cloud API);
+- ordem: valida → gateway (Evolution `POST /chat/updateMessage` / `DELETE
+  /chat/deleteMessageForEveryone`, uma tentativa) → só então grava. Gateway recusou/falhou →
+  `MESSAGE_SEND_FAILED` (502) e **nada muda**;
+- edição: versão anterior em `message_edits` (`edited_by: agent`), `messages.edited_at`; apagar:
+  `deleted_at` + `deleted_by: agent` — a linha e o texto ficam (D-220). Audit `edit_message`
+  (`oldValues.content`/`newValues.content`) ou `delete_message` (`oldValues.content`), com o
+  `userId` da autora. Emite `conversation.message_updated`. O eco do webhook depois é no-op.
+
+**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404 — conversa fora do recorte, mensagem de
+outra conversa ou de outro tenant), `FORBIDDEN` (403 — não é a autora; `platform_operator`),
+`CONFLICT` (409, acima), `MESSAGE_SEND_FAILED` (502).
 
 ### POST /conversations/:id/messages/:messageId/retry (CRMLAB-67, D-227)
 "Tentar de novo" de uma mensagem que falhou. Reenvia **a mesma** mensagem (mesmo `id`, nenhuma

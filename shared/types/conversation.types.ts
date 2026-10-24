@@ -384,6 +384,12 @@ export interface GetConversationResponse {
   messages: Message[];
   pagination: PaginationMeta;
   cursors: MessageCursors;
+  /**
+   * O canal desta conversa deixa a autora editar/apagar para todos (CRMLAB-105,
+   * D-280): WhatsApp pelo Evolution (QR) ou o mock de dev. Cloud API = `false`
+   * (os itens somem do menu). Opcional no tipo (AGENTS.md); o backend sempre manda.
+   */
+  canEditMessages?: boolean;
 }
 
 export interface CreateMessageRequest {
@@ -397,6 +403,64 @@ export interface CreateMessageRequest {
 /** `PUT /conversations/:id/messages/:messageId/reaction` (D-222). */
 export interface SetMessageReactionRequest {
   emoji: string;
+}
+
+/**
+ * `PATCH /conversations/:id/messages/:messageId` (CRMLAB-105, D-280): a autora
+ * corrige o texto (ou a legenda) que mandou pelo CRM. Mesmo teto do envio.
+ */
+export interface EditMessageRequest {
+  content: string;
+}
+
+/** Prazo do WhatsApp para EDITAR (D-280): 15 min depois do envio. */
+export const MESSAGE_EDIT_WINDOW_MS = 15 * 60 * 1000;
+/** Prazo para APAGAR PARA TODOS (D-280): ~2 dias no WhatsApp; o CRM usa 48 h. */
+export const MESSAGE_DELETE_WINDOW_MS = 48 * 60 * 60 * 1000;
+/**
+ * O que a autora pode editar (D-280): texto e legenda de foto/vídeo — o que o
+ * `/chat/updateMessage` do Evolution v2.3.7 aceita. Documento/áudio só apagam.
+ */
+export const EDITABLE_MESSAGE_TYPES: readonly MessageType[] = ['text', 'image', 'video'];
+
+/**
+ * Por que a autora NÃO pode editar/apagar (D-280) — `details.reason` do
+ * `FORBIDDEN`/`CONFLICT`. `null` em `messageAuthorActionBlock` = pode.
+ */
+export type MessageAuthorActionBlock =
+  | 'not_author'
+  | 'already_deleted'
+  | 'not_sent'
+  | 'not_editable'
+  | 'window_expired';
+
+/**
+ * Regra ÚNICA de editar/apagar (D-280), usada pela API (que recusa) e pela tela
+ * (que esconde o item do menu). Só a AUTORA (`senderId` = usuário logado) de
+ * mensagem do atendimento — automática e do celular têm `senderId` nulo —,
+ * ainda não apagada, já confirmada pelo canal e dentro do prazo. A API confere
+ * além disso o id externo (que a tela não recebe) e o canal.
+ */
+export function messageAuthorActionBlock(
+  message: Pick<Message, 'senderType' | 'senderId' | 'createdAt' | 'messageType' | 'status'> & {
+    deletedAt?: string | null;
+  },
+  action: 'edit' | 'delete',
+  userId: string,
+  now: number = Date.now(),
+): MessageAuthorActionBlock | null {
+  if (message.senderType !== 'agent' || message.senderId === null || message.senderId !== userId) {
+    return 'not_author';
+  }
+  if (message.deletedAt) return 'already_deleted';
+  if (message.status === 'pending' || message.status === 'failed') return 'not_sent';
+  if (action === 'edit' && !EDITABLE_MESSAGE_TYPES.includes(message.messageType)) {
+    return 'not_editable';
+  }
+  const window = action === 'edit' ? MESSAGE_EDIT_WINDOW_MS : MESSAGE_DELETE_WINDOW_MS;
+  const sentAt = Date.parse(message.createdAt);
+  if (!Number.isFinite(sentAt) || now - sentAt > window) return 'window_expired';
+  return null;
 }
 
 /**

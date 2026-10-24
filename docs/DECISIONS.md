@@ -5852,3 +5852,61 @@ sozinha) não via mensagem nova do chat interno, e vice-versa.
 `conversation.routes.ts`; inventário de `route-tenant-isolation.spec.ts` (112 → 113). Frontend
 `Sidebar.tsx`, `api/conversations.ts`, `api/query-keys.ts`, `api/ws.ts`. API_CONTRACTS §2,
 PAGES §9, COMPONENTS (Sidebar). Sem migração.
+
+### D-280: A autora edita ou apaga para todos a mensagem que mandou pelo CRM (CRMLAB-105)
+**Decisão:** a atendente corrige (texto/legenda) ou apaga para todos a mensagem que ELA mandou ao
+paciente pelo WhatsApp, pelas rotas `PATCH|DELETE /conversations/:id/messages/:messageId`.
+1. **Só a autora:** `sender_type = 'agent'` e `sender_id` = usuário logado. Gestora/admin não
+   mexem em mensagem de outra (`FORBIDDEN`, `reason: not_author`). Mensagem do celular (`sender_id`
+   nulo, D-173), automática (`automation`, também sem autor), de sistema e do paciente ficam de fora.
+2. **Prazos do WhatsApp, constante única em `shared`:** editar até 15 min
+   (`MESSAGE_EDIT_WINDOW_MS`), só `text`/`image`/`video` (`EDITABLE_MESSAGE_TYPES` — o que o
+   `/chat/updateMessage` da v2.3.7 aceita; documento e áudio só apagam); apagar até 48 h
+   (`MESSAGE_DELETE_WINDOW_MS`, o "~2 dias" do WhatsApp). Já apagada ou sem `external_message_id`
+   (pendente/falhou/canal sem gateway) não pode. A regra é UMA função (`messageAuthorActionBlock`)
+   usada pela API (recusa com `CONFLICT` + `details.reason`) e pela tela (o item some do menu).
+   O backend confere ainda o id externo e o canal (`channel_unsupported`). Status da conversa não
+   entra: corrigir digitação vale também em atendimento encerrado, dentro do prazo.
+3. **Ordem:** valida → gateway (UMA tentativa, sem fila: repetir "apagar" depois de um timeout
+   que na verdade apagou não ajuda, e a atendente está olhando a tela) → só então grava. Gateway
+   recusou/falhou → `MESSAGE_SEND_FAILED` e nada muda; a tela mostra toast "Nada foi alterado".
+4. **Nada é apagado de verdade (D-220):** edição guarda a versão anterior em `message_edits`
+   (`edited_by = 'agent'`) e sobe `edited_at`; apagar grava `deleted_at` + `deleted_by = 'agent'`.
+   `message_edits.edited_by` continua sendo o LADO (CHECK de 040) — quem editou fica no audit:
+   `edit_message` (`oldValues.content`, `newValues.content`) e `delete_message`
+   (`oldValues.content`), ambos com o `userId` da autora. Sem migração.
+5. **Eco do webhook = no-op:** o `MESSAGES_EDITED`/`MESSAGES_DELETE` que o Evolution manda depois
+   cai em `applySenderEdit`/`applySenderDelete`, idempotentes (mesmo texto / já apagada →
+   `sem_efeito`, sem audit `*_by_sender`). Resposta de participante sai com `*Nome*` (D-263); o
+   `applySenderEdit` tira esse prefixo antes de comparar, senão o eco viraria uma 2ª edição. Se o
+   eco chegar ANTES da nossa gravação, ele aplica (audit sem usuário) e o nosso passo vira no-op
+   na tabela — o audit da autora sai do mesmo jeito.
+6. **Capacidade do canal:** `WhatsAppDriver.editMessage`/`deleteMessage` são opcionais (como
+   `sendReaction`): Evolution e mock implementam, a Cloud API não. O `GET /conversations/:id`
+   devolve `canEditMessages` (o driver do tenant tem os dois e a conversa é WhatsApp); falso, os
+   itens não aparecem. O mock finge sucesso (dev/E2E).
+7. **Tela:** "Editar" e "Apagar para todos" no menu ⌄ do balão. Editar abre uma caixa no próprio
+   balão (Enter salva, Shift+Enter quebra linha, Esc cancela; vazio não salva; 4000 caracteres,
+   legenda 1024 na API). Apagar pede `confirm("Apagar para todos?")`. As colegas veem "Editada" /
+   "🚫 Mensagem apagada" pelo WS `conversation.message_updated` — a mesma UI do D-220.
+8. **Evolution v2.3.7 — rotas CONFERIDAS no dist da imagem local** (`evoapicloud/evolution-api:v2.3.7`,
+   source maps de `dist/api/routes/chat.router.js.map`): `POST /chat/updateMessage/{instance}` com
+   `updateMessageSchema` `{ number, text, key: { id, remoteJid, fromMe } }` e `DELETE
+   /chat/deleteMessageForEveryone/{instance}` com `deleteMessageSchema` `{ id, remoteJid, fromMe,
+   participant? }`. Observado no código do gateway: edita só `conversation`/`extendedTextMessage`/
+   `imageMessage`/`videoMessage` ("Message not compatible" no resto), exige a original no banco
+   do gateway e o `remoteJid` dela igual ao `number`; a checagem de 15 min do gateway está
+   invertida (nunca recusa) — por isso o prazo é do CRM. **Falta validar na hml com WhatsApp
+   real** (inclusive número com `@lid`, em que o `remoteJid` pode não bater).
+**Motivo:** pedido do PO (Michel) — a atendente erra a digitação (preço, horário) e hoje só
+consegue mandar outra mensagem corrigindo; o WhatsApp deixa editar/apagar e o CRM não refletia.
+**Impacto:** `shared/types/conversation.types.ts` (`EditMessageRequest`, prazos,
+`EDITABLE_MESSAGE_TYPES`, `messageAuthorActionBlock`, `GetConversationResponse.canEditMessages`);
+backend `lib/evolution-client.ts` (`updateMessage`, `deleteMessageForEveryone`),
+`services/whatsapp.service.ts` (drivers + `editMessage`/`deleteMessage`/`canEditMessages`),
+`services/message.service.ts` (`editByAuthor`, `deleteByAuthor`, `stripSenderName`),
+`controllers/conversation.routes.ts`; inventário de `route-tenant-isolation.spec.ts` (113 → 115).
+Frontend `api/conversations.ts`, `MessageBubble.tsx`, `ConversationPanel.tsx`,
+`pages/Attendance/index.tsx`. API_CONTRACTS §2, SERVICES §16, FRONTEND_BACKEND (WS), PAGES §2.
+Testes: `tests/messages/edit-delete.spec.ts` (novo), `evolution-client.spec.ts`; front
+`MessageBubble.crmlab105.spec.tsx` e `Attendance.edit-delete.spec.tsx` (novos). Sem migração.

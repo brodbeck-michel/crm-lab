@@ -356,6 +356,44 @@ export function Attendance() {
     onError: handleApiError,
   });
 
+  /**
+   * Editar / apagar para todos da autora (CRMLAB-105, D-280). O gateway
+   * recusou: nada mudou no CRM — o toast diz isso. Prazo vencido entre abrir
+   * o menu e clicar: aviso próprio. O WS `conversation.message_updated` leva a
+   * mudança às outras abas.
+   */
+  const handleMessageActionError = useCallback(
+    (action: 'edit' | 'delete') => (error: unknown) => {
+      const verb = action === 'edit' ? 'editar' : 'apagar';
+      if (isApiError(error) && error.code === 'MESSAGE_SEND_FAILED') {
+        toast(`Não foi possível ${verb} a mensagem no WhatsApp. Nada foi alterado.`, {
+          tone: 'attention',
+        });
+        return;
+      }
+      if (isApiError(error) && error.details?.reason === 'window_expired') {
+        toast(`O prazo do WhatsApp para ${verb} esta mensagem já passou.`, { tone: 'attention' });
+        void invalidateConversation();
+        return;
+      }
+      handleApiError(error);
+    },
+    [handleApiError, invalidateConversation, toast],
+  );
+
+  const editMessage = useMutation({
+    mutationFn: ({ messageId, content }: { messageId: string; content: string }) =>
+      api.conversations.editMessage(selectedId as string, messageId, { content }),
+    onSuccess: invalidateConversation,
+    onError: handleMessageActionError('edit'),
+  });
+
+  const deleteMessage = useMutation({
+    mutationFn: (messageId: string) => api.conversations.deleteMessage(selectedId as string, messageId),
+    onSuccess: invalidateConversation,
+    onError: handleMessageActionError('delete'),
+  });
+
   /** Presença da atendente (D-226/D-227): best-effort, erro não incomoda ninguém. */
   const sendPresence = useCallback(
     (presence: 'paused' | 'composing') => {
@@ -610,6 +648,9 @@ export function Attendance() {
             }
             onReact={(messageId, emoji) => react.mutate({ messageId, emoji })}
             onRetryMessage={(messageId) => retryMessage.mutate(messageId)}
+            canEditMessages={detailQuery.data?.pages[0]?.canEditMessages ?? false}
+            onEditMessage={(messageId, content) => editMessage.mutateAsync({ messageId, content })}
+            onDeleteMessage={(messageId) => deleteMessage.mutate(messageId)}
             onPresence={sendPresence}
             onQuoteUnavailable={() =>
               toast('A mensagem original não está carregada — role para cima para vê-la.', {

@@ -13,6 +13,8 @@
  *   POST  /api/v1/conversations/:id/attachments  anexo (base64 em JSON, 201)
  *   PUT   /api/v1/conversations/:id/messages/:messageId/reaction  reage (200, D-222)
  *   DELETE /api/v1/conversations/:id/messages/:messageId/reaction remove a reacao (204)
+ *   PATCH /api/v1/conversations/:id/messages/:messageId  a autora edita (200, D-280)
+ *   DELETE /api/v1/conversations/:id/messages/:messageId a autora apaga para todos (204, D-280)
  *   POST  /api/v1/conversations/:id/messages/:messageId/retry  reenvia a que falhou (200, D-227)
  *   POST  /api/v1/conversations/:id/presence  "digitando"/assinatura de presenca (204, D-226)
  *   POST  /api/v1/conversations/:id/read    zera o contador de nao lidas (204)
@@ -36,6 +38,7 @@ import type {
   ConversationDetail,
   ConversationUnreadCountResponse,
   CreateConversationResponse,
+  EditMessageRequest,
   GetConversationResponse,
   ListAssigneesResponse,
   ListConversationsQuery,
@@ -193,6 +196,9 @@ export const setReactionSchema = z.object({
     .refine((value) => Buffer.byteLength(value, 'utf8') <= 32, 'Emoji acima de 32 bytes'),
 });
 
+/** `PATCH /:id/messages/:messageId` (D-280): mesmo teto do envio normal. */
+export const editMessageSchema = createMessageSchema.pick({ content: true });
+
 export const messageParamsSchema = z.object({
   id: z.string().uuid(),
   messageId: z.string().uuid(),
@@ -337,6 +343,7 @@ export function getConversation(services: ConversationServices): RequestHandler 
       messages: page.messages,
       pagination: page.pagination,
       cursors: page.cursors,
+      canEditMessages: await services.messages.canEditMessages(ctx.tenantId, conversation.channel),
     };
     res.status(200).json(body);
   });
@@ -461,6 +468,37 @@ export function setMessageReaction(
       emoji,
     );
     if (!message) throw notFound({ resource: 'message', id: messageId });
+    res.status(200).json(message);
+  });
+}
+
+/**
+ * `PATCH|DELETE /:id/messages/:messageId` (CRMLAB-105, D-280): a autora edita
+ * ou apaga para todos. Recorte por papel antes, como nas outras escritas:
+ * conversa invisivel e `NOT_FOUND`.
+ */
+export function editOrDeleteMessage(
+  services: ConversationServices,
+  mode: 'edit' | 'delete',
+): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const { id, messageId } = validated<{ id: string; messageId: string }>(req, 'params');
+    await services.conversations.getById(ctx, id);
+
+    if (mode === 'delete') {
+      await services.messages.deleteByAuthor(ctx.tenantId, id, messageId, ctx.userId);
+      res.status(204).end();
+      return;
+    }
+    const { content } = validated<EditMessageRequest>(req, 'body');
+    const message: Message = await services.messages.editByAuthor(
+      ctx.tenantId,
+      id,
+      messageId,
+      ctx.userId,
+      content,
+    );
     res.status(200).json(message);
   });
 }
@@ -718,6 +756,21 @@ function buildConversationModule(
     ...guards,
     validate(messageParamsSchema, 'params'),
     setMessageReaction(services, 'remove'),
+  );
+
+  router.patch(
+    '/:id/messages/:messageId',
+    ...guards,
+    validate(messageParamsSchema, 'params'),
+    validate(editMessageSchema, 'body'),
+    editOrDeleteMessage(services, 'edit'),
+  );
+
+  router.delete(
+    '/:id/messages/:messageId',
+    ...guards,
+    validate(messageParamsSchema, 'params'),
+    editOrDeleteMessage(services, 'delete'),
   );
 
   router.post(

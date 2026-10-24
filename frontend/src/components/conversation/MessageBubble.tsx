@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { QUICK_REACTIONS } from '@crm-lab/shared';
+import { QUICK_REACTIONS, messageAuthorActionBlock } from '@crm-lab/shared';
 import type {
   Message,
   MessageStatus,
@@ -83,6 +83,15 @@ export interface MessageBubbleProps {
    * as fotos é o painel. Sem handler, a thumbnail não é clicável.
    */
   onOpenImage?: (message: Message) => void;
+  /**
+   * Editar/Apagar para todos da AUTORA (CRMLAB-105, D-280). Os itens só
+   * aparecem com `currentUserId` + handler e quando `messageAuthorActionBlock`
+   * deixa (autora, enviada pelo CRM, no prazo). `onEdit` devolve a Promise da
+   * chamada: resolveu, sai da edição; rejeitou, continua editando.
+   */
+  currentUserId?: string;
+  onEdit?: (message: Message, content: string) => Promise<unknown>;
+  onDelete?: (message: Message) => void;
 }
 
 /** Tique por status (D-225) — glifo, nome acessível e cor (só tokens). */
@@ -183,11 +192,16 @@ function MessageMenu({
   side,
   onReply,
   onReact,
+  onStartEdit,
+  onDelete,
 }: {
   message: Message;
   side: 'left' | 'right';
   onReply?: (message: Message) => void;
   onReact?: (message: Message, emoji: string | null) => void;
+  /** Já filtrados pela regra de D-280: sem handler, o item some. */
+  onStartEdit?: () => void;
+  onDelete?: (message: Message) => void;
 }) {
   const [open, setOpen] = useState<'closed' | 'menu' | 'reactions'>('closed');
   const ref = useRef<HTMLDivElement>(null);
@@ -210,7 +224,7 @@ function MessageMenu({
     };
   }, [open]);
 
-  if (!onReply && !onReact && !canCopy) return null;
+  if (!onReply && !onReact && !canCopy && !onStartEdit && !onDelete) return null;
 
   const item =
     'w-full cursor-pointer border-none bg-transparent px-md py-xs text-left font-body text-label text-text hover:bg-accent-100';
@@ -272,6 +286,32 @@ function MessageMenu({
               Copiar
             </button>
           )}
+          {onStartEdit && (
+            <button
+              type="button"
+              role="menuitem"
+              className={item}
+              onClick={() => {
+                setOpen('closed');
+                onStartEdit();
+              }}
+            >
+              Editar
+            </button>
+          )}
+          {onDelete && (
+            <button
+              type="button"
+              role="menuitem"
+              className={item}
+              onClick={() => {
+                setOpen('closed');
+                if (window.confirm('Apagar para todos?')) onDelete(message);
+              }}
+            >
+              Apagar para todos
+            </button>
+          )}
         </div>
       )}
 
@@ -308,6 +348,62 @@ function MessageMenu({
   );
 }
 
+/**
+ * Edição no próprio balão (CRMLAB-105, D-280): Enter salva, Shift+Enter quebra
+ * linha, Esc cancela. Vazio não salva; mesmo teto do envio (4000).
+ */
+function EditBox({
+  initial,
+  onSave,
+  onCancel,
+}: {
+  initial: string;
+  onSave: (content: string) => Promise<unknown>;
+  onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState(initial);
+  const [saving, setSaving] = useState(false);
+  const trimmed = draft.trim();
+
+  function save(): void {
+    if (saving || trimmed.length === 0) return;
+    if (trimmed === initial) {
+      onCancel();
+      return;
+    }
+    setSaving(true);
+    onSave(trimmed).then(onCancel, () => setSaving(false));
+  }
+
+  return (
+    <div className="flex min-w-0 flex-col gap-xs">
+      <textarea
+        aria-label="Editar mensagem"
+        autoFocus
+        value={draft}
+        maxLength={4000}
+        rows={Math.min(6, Math.max(2, draft.split('\n').length))}
+        disabled={saving}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            onCancel();
+          } else if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            save();
+          }
+        }}
+        className="w-full min-w-[220px] resize-none rounded-sm border border-neutral-200 bg-surface px-sm py-xs font-body text-label text-text focus:outline-none focus:ring-2 focus:ring-accent"
+      />
+      <span className="self-end text-micro text-chat-meta">
+        Esc para cancelar · Enter para salvar
+      </span>
+    </div>
+  );
+}
+
 const SHELL: Record<MessageBubbleType, string> = {
   received:
     'self-start bg-chat-received text-chat-text rounded-md rounded-tl-none shadow-sm ' +
@@ -330,8 +426,12 @@ export function MessageBubble({
   onQuoteClick,
   onRetry,
   onOpenImage,
+  currentUserId,
+  onEdit,
+  onDelete,
 }: MessageBubbleProps) {
   const isSystem = type === 'system';
+  const [editing, setEditing] = useState(false);
   // Apagada pelo remetente (D-220): a API já mandou sem conteúdo; o balão só avisa.
   const isDeleted = Boolean(message.deletedAt);
   const attachmentUrl = message.attachmentUrl;
@@ -380,6 +480,16 @@ export function MessageBubble({
   }
 
   const reactions = message.reactions ?? [];
+  // D-280: a regra é a mesma da API (shared). Avaliada a cada render — o menu
+  // re-renderiza ao abrir, então o item some quando o prazo passa.
+  const canEdit =
+    Boolean(onEdit && currentUserId) &&
+    messageAuthorActionBlock(message, 'edit', currentUserId ?? '') === null &&
+    // Foto/vídeo sem legenda: o `content` é o nome do arquivo, não há o que corrigir.
+    (message.messageType === 'text' || showsMessageText(message));
+  const canDelete =
+    Boolean(onDelete && currentUserId) &&
+    messageAuthorActionBlock(message, 'delete', currentUserId ?? '') === null;
 
   return (
     <div
@@ -401,12 +511,20 @@ export function MessageBubble({
           side={type === 'sent' ? 'right' : 'left'}
           onReply={onReply}
           onReact={onReact}
+          onStartEdit={canEdit && !editing ? () => setEditing(true) : undefined}
+          onDelete={canDelete ? onDelete : undefined}
         />
       )}
 
       {message.quoted && <QuotedBlock quoted={message.quoted} onClick={onQuoteClick} />}
 
-      {showsMessageText(message) && (
+      {editing && onEdit ? (
+        <EditBox
+          initial={message.content}
+          onSave={(content) => onEdit(message, content)}
+          onCancel={() => setEditing(false)}
+        />
+      ) : showsMessageText(message) && (
         <p className="m-0 whitespace-pre-wrap break-words">
           {/* Formatação do WhatsApp e links (D-183, D-242): nós React, nunca HTML — sem XSS. */}
           <WhatsAppText text={message.content} />

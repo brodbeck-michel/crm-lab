@@ -6011,3 +6011,34 @@ Frontend `api/conversations.ts`, `MessageBubble.tsx`, `ConversationPanel.tsx`,
 `pages/Attendance/index.tsx`. API_CONTRACTS §2, SERVICES §16, FRONTEND_BACKEND (WS), PAGES §2.
 Testes: `tests/messages/edit-delete.spec.ts` (novo), `evolution-client.spec.ts`; front
 `MessageBubble.crmlab105.spec.tsx` e `Attendance.edit-delete.spec.tsx` (novos). Sem migração.
+
+### D-281: Backend migra para o zod 4.6.7, com teto em todo array de entrada e mensagens padrão em pt-BR (CRMLAB-115)
+**Decisão:**
+1. **zod 3 → 4.6.7, migração real** (sem a ponte `zod/v3`). Ajustes de API: `z.ZodIssueCode.custom`
+   → `'custom'`, `z.ZodIssue` → `z.core.$ZodIssue`, `ZodTypeAny` → `z.ZodType`; os formatos
+   saíram do `z.string()` (`z.uuid()`, `z.url()`, `z.iso.datetime({ offset: true })`). `.email()`
+   encadeado com `.trim()` e `.strict()` ficam como estão (legados, mas funcionam igual).
+2. **Teto em todo array que vem de fora** — o zod 4.6.6+ confere `.max()` ANTES de iterar; array
+   sem teto continua vulnerável mesmo no v4:
+   - `prices` de `PUT /exams/:id/prices` e `PUT /exam-packages/:id/prices`: **≤ 500** (era sem teto);
+   - resposta do Bitlab: `orcamentos` **≤ 5000** (10× o `PAGE_SIZE` = 500 pedido pela sync, folga
+     para o Bitlab ignorar o tamanho de página) e `avisos` **≤ 100**; acima → erro `contract`;
+   - `customFields` do paciente (`z.record`, que não tem `.max()`): as chaves são contadas (≤ 30)
+     ANTES de o `record` validar cada uma;
+   - já tinham teto e ficam: `tags` ≤ 20 (paciente e conversa), `synonyms` ≤ 20, `examIds` ≤ 100.
+3. **Locale pt-BR global** (`z.config(z.locales.ptBR())`), no carregamento de
+   `http/middleware/validate.ts` — toda rota com schema importa esse módulo, então vale antes da
+   primeira validação, no app e nos testes. Mensagem explícita no schema continua vencendo.
+4. **Formatos mais estritos no v4, aceitos como estão:** `z.uuid()` exige UUID RFC 9562 (versão
+   1–8 e variante) — o banco gera `gen_random_uuid()` (v4) e os ids fixos dos seeds já são RFC
+   (`a0000000-0000-4000-8000-…`), então nada legítimo é recusado; ids fora do padrão (ex.
+   `1111…-1111`) agora dão `VALIDATION_ERROR` em vez de `NOT_FOUND`. `z.email()` também é mais
+   estrito (ex. recusa domínio sem TLD, `a@b`) — e-mail desse tipo nunca foi entregável.
+**Motivo:** alerta high GHSA-mrhx-c7xc-m3w5 — o parse de array acumulava um issue por elemento
+sem limite, e um corpo com um array gigante (o limite de corpo é 25 MB) esgotava a memória e
+derrubava o backend. E as mensagens padrão do zod chegavam em inglês em `details.fields`, que o
+frontend mostra ao lado do campo (ex. `PatientProfileForm`).
+**Impacto:** só backend — `package.json`/lock, `config/env.ts`, `http/middleware/validate.ts`,
+`lib/bitlab-client.ts`, 18 arquivos `controllers/*.routes.ts`; testes `tests/kernel/zod-v4.spec.ts`
+(novo), `tests/lis/bitlab-client.spec.ts` (+1). `details.fields` agora em português (API_ERRORS.md);
+chaves e envelope inalterados. Sem migração, sem mudança de contrato de sucesso.

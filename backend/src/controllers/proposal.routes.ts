@@ -67,10 +67,10 @@ const lossReasonEnum = z.enum(LOSS_REASONS as unknown as [string, ...string[]]);
 export const listProposalsQuerySchema = z.object({
   /** Lista separada por virgula: `?status=novo_contato,orcamento_enviado`. */
   status: z.string().max(200).optional(),
-  conversationId: z.string().uuid().optional(),
+  conversationId: z.uuid().optional(),
   /** `?patientId=` — propostas do paciente (D-060). */
-  patientId: z.string().uuid().optional(),
-  createdBy: z.string().uuid().optional(),
+  patientId: z.uuid().optional(),
+  createdBy: z.uuid().optional(),
   startDate: z.string().min(4).max(40).optional(),
   endDate: z.string().min(4).max(40).optional(),
   /** `?search=` — nome do paciente, case-insensitive. */
@@ -85,12 +85,12 @@ export const listProposalsQuerySchema = z.object({
 
 export const createProposalSchema = z
   .object({
-    conversationId: z.string().uuid(),
+    conversationId: z.uuid(),
     items: z
       .array(
         z
           .object({
-            examId: z.string().uuid(),
+            examId: z.uuid(),
             quantity: z.number().int().positive().max(1000),
           })
           .strict(),
@@ -100,7 +100,7 @@ export const createProposalSchema = z
     discountPercent: z.number().min(0).max(100).optional(),
     // Onda 7: convenio da proposta. Ausente/`null` = particular. Imutavel apos
     // a criacao — nao existe campo equivalente em `updateDiscountSchema`.
-    insuranceId: z.string().uuid().nullable().optional(),
+    insuranceId: z.uuid().nullable().optional(),
     // CRMLAB-9: medico solicitante, texto livre. Ausente/`null`/vazio = nao
     // informado — o `.trim()` normaliza espacos antes do `.max()`, e o
     // service ainda converte string vazia para `null` (ver
@@ -127,7 +127,7 @@ export const updateItemsSchema = z
       .array(
         z
           .object({
-            examId: z.string().uuid(),
+            examId: z.uuid(),
             quantity: z.number().int().positive().max(1000),
           })
           .strict(),
@@ -149,14 +149,14 @@ export const updateLisReferenceSchema = z
 const sendMessageText = z.string().trim().min(1).max(SEND_PROPOSAL_MESSAGE_MAX);
 
 export const sendProposalSchema = z
-  .object({ conversationId: z.string().uuid(), message: sendMessageText })
+  .object({ conversationId: z.uuid(), message: sendMessageText })
   .strict();
 
 export const resendProposalSchema = z.object({ message: sendMessageText }).strict();
 
-export const updateConversationSchema = z.object({ conversationId: z.string().uuid() }).strict();
+export const updateConversationSchema = z.object({ conversationId: z.uuid() }).strict();
 
-export const updateResponsibleSchema = z.object({ userId: z.string().uuid() }).strict();
+export const updateResponsibleSchema = z.object({ userId: z.uuid() }).strict();
 
 /**
  * CRMLAB-102 (D-272). Forma e faixa do dia e tamanho da nota sao checados no
@@ -183,7 +183,7 @@ export const resolveReminderSchema = z.discriminatedUnion('outcome', [
 
 export const rejectSchema = z.object({ reason: z.string().min(1).max(500) }).strict();
 
-export const proposalIdParamSchema = z.object({ id: z.string().uuid() });
+export const proposalIdParamSchema = z.object({ id: z.uuid() });
 
 type CreateProposalBody = z.infer<typeof createProposalSchema>;
 type UpdateStatusBody = z.infer<typeof updateStatusSchema>;

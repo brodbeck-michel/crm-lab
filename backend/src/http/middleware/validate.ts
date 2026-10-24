@@ -8,15 +8,21 @@
  *
  *   router.post('/proposals', validate(createProposalSchema, 'body'), handler);
  *   const dto = validated<CreateProposalDTO>(req, 'body');
+ *
+ * Mensagens padrao do zod em pt-BR (CRMLAB-115, D-281): o locale e configurado aqui, no carregamento
+ * do modulo, porque toda rota com schema importa `validate` — vale antes da primeira validacao, no
+ * app e nos testes. Mensagem com `message`/`error` explicito no schema continua vencendo.
  */
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
-import type { ZodTypeAny, z } from 'zod';
+import { z } from 'zod';
+
+z.config(z.locales.ptBR());
 
 export type ValidationSource = 'body' | 'query' | 'params';
 
 const parsedValues = new WeakMap<Request, Partial<Record<ValidationSource, unknown>>>();
 
-export function validate(schema: ZodTypeAny, source: ValidationSource = 'body'): RequestHandler {
+export function validate(schema: z.ZodType, source: ValidationSource = 'body'): RequestHandler {
   return (req: Request, _res: Response, next: NextFunction): void => {
     const result = schema.safeParse(req[source]);
     if (!result.success) {
@@ -47,4 +53,4 @@ export function validated<T>(req: Request, source: ValidationSource = 'body'): T
 }
 
 /** Acucar para tipar direto a partir do schema. */
-export type Infer<S extends ZodTypeAny> = z.infer<S>;
+export type Infer<S extends z.ZodType> = z.infer<S>;

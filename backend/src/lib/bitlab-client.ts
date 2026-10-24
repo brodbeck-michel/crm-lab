@@ -189,16 +189,26 @@ function paymentStatus(value: string | null): 'ativo' | 'estornado' | null {
   return value.trim().toUpperCase() === 'ESTORNADO' ? 'estornado' : 'ativo';
 }
 
+/**
+ * Tetos dos arrays da resposta (CRMLAB-115, D-281): o zod confere o tamanho ANTES de iterar, entao
+ * uma resposta anomala falha rapido em vez de acumular um issue por elemento e esgotar a memoria
+ * (GHSA-mrhx-c7xc-m3w5). A sync pede `PAGE_SIZE` = 500 por pagina (lis-sync.service); 10x isso e
+ * folga para o Bitlab ignorar o `tamanhoPagina` sem derrubar a sync normal. Acima do teto a pagina
+ * cai no mesmo caminho de resposta fora do contrato.
+ */
+const MAX_BUDGETS_PER_PAGE = 5000;
+const MAX_NOTICES = 100;
+
 const successSchema = z.object({
   sucesso: z.literal(true),
   status: z.enum(['LISTA', 'SEM_RESULTADOS']),
-  avisos: z.array(z.string()).optional().default([]),
+  avisos: z.array(z.string()).max(MAX_NOTICES).optional().default([]),
   paginacao: z.object({
     temProxima: z.boolean(),
     totalPaginas: z.number().int().nonnegative().optional(),
   }),
   marcaDagua: text,
-  orcamentos: z.array(budgetSchema),
+  orcamentos: z.array(budgetSchema).max(MAX_BUDGETS_PER_PAGE),
 });
 
 const errorSchema = z.object({

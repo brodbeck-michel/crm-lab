@@ -84,7 +84,7 @@ const optionalEmail = z
 export const listDoctorsQuerySchema = z.object({
   search: optionalFilter(120),
   active: booleanish.optional(),
-  responsibleId: z.string().uuid().optional(),
+  responsibleId: z.uuid().optional(),
   page: z.coerce.number().int().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(MAX_LIMIT).optional(),
   sortBy: z.enum(['name', 'createdAt', 'updatedAt']).optional(),
@@ -103,7 +103,7 @@ const doctorFields = {
   contactName: optionalText(255),
   visitPreference: optionalText(255),
   notes: optionalText(2000),
-  responsibleId: z.string().uuid().nullable().optional(),
+  responsibleId: z.uuid().nullable().optional(),
 };
 
 export const createDoctorSchema = z
@@ -115,7 +115,7 @@ export const updateDoctorSchema = z
   .object({ name: z.string().trim().min(1).max(255).optional(), ...doctorFields })
   .strict();
 
-export const doctorIdParamSchema = z.object({ id: z.string().uuid() });
+export const doctorIdParamSchema = z.object({ id: z.uuid() });
 
 // --- linha do tempo (CRMLAB-89, D-261) ---
 
@@ -128,7 +128,7 @@ export const doctorTimelineQuerySchema = z.object({
 /** A regra de "nao no futuro" e o trim da descricao sao do service. */
 const interactionFields = {
   type: z.enum(DOCTOR_INTERACTION_TYPES),
-  occurredAt: z.string().datetime({ offset: true }),
+  occurredAt: z.iso.datetime({ offset: true }),
   // Folga para espaco em volta: o service corta e confere o teto de novo.
   description: z.string().max(DOCTOR_INTERACTION_DESCRIPTION_MAX_LENGTH + 100),
 };
@@ -137,8 +137,8 @@ export const createDoctorInteractionSchema = z.object(interactionFields).strict(
 export const updateDoctorInteractionSchema = z.object(interactionFields).partial().strict();
 
 export const doctorInteractionParamsSchema = z.object({
-  id: z.string().uuid(),
-  interactionId: z.string().uuid(),
+  id: z.uuid(),
+  interactionId: z.uuid(),
 });
 
 type CreateDoctorBody = z.infer<typeof createDoctorSchema>;

@@ -342,6 +342,19 @@ describe('BitlabClient.fetchBudgetsPage', () => {
 
     expect((await failure(client(fakeFetch(200, '<html>')).fetchBudgetsPage('k', QUERY))).kind).toBe('contract');
   });
+
+  it('array acima do teto vira contract pelo tamanho, sem iterar os itens (CRMLAB-115, D-281)', async () => {
+    // Itens invalidos de proposito: se o zod iterasse, o caminho apontaria para `orcamentos.0...`.
+    const tooMany = listResponse({ orcamentos: Array.from({ length: 5001 }, () => 'x') });
+    const error = await failure(client(fakeFetch(200, tooMany)).fetchBudgetsPage('k', QUERY));
+    expect(error.kind).toBe('contract');
+    expect(error.message).toBe('bitlab contract: schema: orcamentos');
+
+    const noisy = listResponse({ avisos: Array.from({ length: 101 }, () => 'aviso') });
+    expect((await failure(client(fakeFetch(200, noisy)).fetchBudgetsPage('k', QUERY))).message).toBe(
+      'bitlab contract: schema: avisos',
+    );
+  });
 });
 
 describe('datas do Bitlab (D-187)', () => {

@@ -25,7 +25,7 @@ import {
 import { MediaRepository } from '../repositories/media.repository.js';
 import { MediaService } from '../services/media.service.js';
 
-export const mediaIdParamSchema = z.object({ id: z.string().uuid() });
+export const mediaIdParamSchema = z.object({ id: z.uuid() });
 
 function handle(fn: (req: Request, res: Response) => Promise<void>): RequestHandler {
   return (req, res, next) => {

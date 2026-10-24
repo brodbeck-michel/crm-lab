@@ -96,7 +96,7 @@ export const listExamsQuerySchema = z.object({
     .optional(),
   order: z.enum(['asc', 'desc']).optional(),
   // Onda 7: acrescenta effectivePrice/priceSource a cada item do resultado.
-  insuranceId: z.string().uuid().optional(),
+  insuranceId: z.uuid().optional(),
 });
 
 export const createExamSchema = z.object({
@@ -131,16 +131,19 @@ export const updateExamSchema = z
   })
   .partial();
 
-export const examIdParamSchema = z.object({ id: z.string().uuid() });
+export const examIdParamSchema = z.object({ id: z.uuid() });
 
 /** Corpo de `PUT /exams/:id/prices` — upsert em lote, estado completo (Onda 7). */
 export const examPricesBodySchema = z.object({
   prices: z.array(
     z.object({
-      insuranceId: z.string().uuid(),
+      insuranceId: z.uuid(),
       price: money,
     }),
-  ),
+  )
+  // CRMLAB-115 (D-281): teto ANTES de iterar — sem ele um array gigante acumula um issue por
+  // elemento e esgota a memoria (GHSA-mrhx-c7xc-m3w5). 500 convenios por exame e folga ampla.
+  .max(500),
 });
 
 /**

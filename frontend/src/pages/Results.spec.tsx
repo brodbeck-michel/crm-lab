@@ -71,7 +71,14 @@ const useCommissionSettings = vi.mocked(commissionApi.useCommissionSettings);
 
 const summary: LisBudgetsSummary = {
   period: { startDate: '2026-08-01', endDate: '2026-08-31' },
-  issued: { count: 225, totalValue: 90996, averageTicket: 404.4 },
+  issued: {
+    count: 225,
+    totalValue: 90996,
+    averageTicket: 404.4,
+    netValue: 90996,
+    discountValue: 0,
+    netAverageTicket: 404.4,
+  },
   requisition: { count: 75, totalValue: 20117 },
   paid: { count: 92, totalValue: 26163.45, averageTicket: 284.4, conversionQty: 40.9 },
   byAttendant: [
@@ -89,7 +96,14 @@ const summary: LisBudgetsSummary = {
 
 const previousSummary: LisBudgetsSummary = {
   ...summary,
-  issued: { count: 200, totalValue: 80000, averageTicket: 400 },
+  issued: {
+    count: 200,
+    totalValue: 80000,
+    averageTicket: 400,
+    netValue: 80000,
+    discountValue: 0,
+    netAverageTicket: 400,
+  },
 };
 
 const filters: LisBudgetsFilters = {
@@ -104,8 +118,20 @@ const executiveReport: ExecutiveReport = {
   requisition: summary.requisition,
   paid: summary.paid,
   monthlySeries: [
-    { month: '2026-07', issuedValue: 81000, requisitionValue: 19000, paidValue: 24000 },
-    { month: '2026-08', issuedValue: 90996, requisitionValue: 20117, paidValue: 26163 },
+    {
+      month: '2026-07',
+      issuedValue: 81000,
+      issuedNetValue: 81000,
+      requisitionValue: 19000,
+      paidValue: 24000,
+    },
+    {
+      month: '2026-08',
+      issuedValue: 90996,
+      issuedNetValue: 90996,
+      requisitionValue: 20117,
+      paidValue: 26163,
+    },
   ],
   byAttendant: summary.byAttendant,
   byInsurance: summary.byInsurance,
@@ -209,6 +235,30 @@ describe('Results (/results)', () => {
     expect(screen.getByText('Atendentes')).toBeInTheDocument();
   });
 
+  it('com desconto, o Total Orçado é o LÍQUIDO e a legenda traz bruto e desconto (D-278)', async () => {
+    useLisBudgetsSummary.mockImplementation(() =>
+      querySuccess<LisBudgetsSummary>({
+        ...summary,
+        issued: {
+          count: 225,
+          totalValue: 90996,
+          averageTicket: 404.43,
+          netValue: 88000,
+          discountValue: 2996,
+          netAverageTicket: 391.11,
+        },
+      }),
+    );
+    signIn('manager');
+    renderPage();
+
+    expect(await screen.findByText('Total Orçado')).toBeInTheDocument();
+    expect(screen.getByText(/88\.000,00/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/225 orçamentos · bruto R\$\s90\.996,00, desconto R\$\s2\.996,00/),
+    ).toBeInTheDocument();
+  });
+
   it('a variação (delta) do Total Orçado compara com o período anterior', async () => {
     signIn('manager');
     renderPage();
@@ -267,7 +317,14 @@ describe('Results (/results)', () => {
     useLisBudgetsSummary.mockImplementation(() =>
       querySuccess({
         ...summary,
-        issued: { count: 0, totalValue: 0, averageTicket: 0 },
+        issued: {
+          count: 0,
+          totalValue: 0,
+          averageTicket: 0,
+          netValue: 0,
+          discountValue: 0,
+          netAverageTicket: 0,
+        },
       }),
     );
     signIn('manager');
@@ -284,7 +341,14 @@ describe('Results (/results)', () => {
     useLisBudgetsSummary.mockReturnValue(
       querySuccess<LisBudgetsSummary>({
         ...summary,
-        issued: { count: 0, totalValue: 0, averageTicket: 0 },
+        issued: {
+          count: 0,
+          totalValue: 0,
+          averageTicket: 0,
+          netValue: 0,
+          discountValue: 0,
+          netAverageTicket: 0,
+        },
       }),
     );
     signIn('manager');

@@ -1,11 +1,45 @@
 import { useState } from 'react';
-import type { ProposalDetail } from '@crm-lab/shared';
+import type { LisBudgetValues, ProposalDetail } from '@crm-lab/shared';
 import { formatProposalNumber } from '@crm-lab/shared';
 import { ApiError } from '@/api/client';
 import { useUpdateProposalLisReference } from '@/api/proposals';
-import { formatIsoDay } from '@/lib/format';
+import { formatIsoDay, formatPercent } from '@/lib/format';
 import { MoneyDisplay } from '@/components/shared';
 import { Button, Chip, Input, Tooltip, useToast } from '@/components/ui';
+
+/**
+ * Valores do orçamento do LIS no convênio principal (CRMLAB-114, D-278). Sem
+ * desconto nem acréscimo, uma linha só com o valor; com eles, bruto, desconto
+ * (R$ e %), acréscimo e o valor a pagar. O percentual é só informativo — o
+ * Bitlab às vezes manda 0 com desconto em reais — e some quando não ajuda.
+ */
+function LisBudgetValuesLine({ values }: { values: LisBudgetValues }) {
+  if (values.discountValue === 0 && values.surchargeValue === 0) {
+    return (
+      <p className="text-caption text-neutral-600">
+        Valor no LIS: <MoneyDisplay value={values.netValue} />
+      </p>
+    );
+  }
+  const percent = values.discountPercent;
+  return (
+    <p className="text-caption text-neutral-600">
+      Valor no LIS: bruto <MoneyDisplay value={values.grossValue} />
+      {values.discountValue !== 0 && (
+        <>
+          {' · '}desconto <MoneyDisplay value={values.discountValue} />
+          {percent !== null && percent > 0 && <> ({formatPercent(percent / 100, Number.isInteger(percent) ? 0 : 2)})</>}
+        </>
+      )}
+      {values.surchargeValue !== 0 && (
+        <>
+          {' · '}acréscimo <MoneyDisplay value={values.surchargeValue} />
+        </>
+      )}
+      {' · '}a pagar <MoneyDisplay value={values.netValue} />
+    </p>
+  );
+}
 
 /**
  * Nº do orçamento no LIS (PAGES.md §6, CRMLAB-52, D-119). O vínculo é o que
@@ -99,6 +133,10 @@ export default function LisReferenceSection({ proposal }: { proposal: ProposalDe
           </Tooltip>
         )}
       </div>
+
+      {!editing && proposal.lisBudgetValues && (
+        <LisBudgetValuesLine values={proposal.lisBudgetValues} />
+      )}
 
       {editing && (
         <div className="flex items-end gap-sm">

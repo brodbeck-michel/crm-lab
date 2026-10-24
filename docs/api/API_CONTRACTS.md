@@ -2268,6 +2268,13 @@ caminho (motor, LIS, mudança de estágio fora do lembrete).
   "lisRequisitionNumber": "001-0009876",
   "lisPaidValue": 100.00,
   "lisPaidOn": "2026-09-28",
+  "lisBudgetValues": {
+    "grossValue": 200.00,
+    "discountValue": 20.00,
+    "discountPercent": 10,
+    "surchargeValue": 5.00,
+    "netValue": 185.00
+  },
   "items": [
     {
       "id": "uuid",
@@ -2336,6 +2343,14 @@ listagem e no detalhe (o selo "Conciliado" aparece nos dois). `lisRequisitionNum
 existir vínculo. Só o `lisBudgetNumber` é escrito pela API (`PATCH .../lis-reference`), os
 demais vêm da conciliação. `lisReconciledAt` preenchido significa "o LIS confirmou a requisição
 e foi isso que fechou a proposta".
+
+**`lisBudgetValues` (CRMLAB-114, D-278) — só no detalhe:** bruto (`grossValue` =
+`lis_budgets.total_value`), desconto em R$ (`discountValue`), percentual (`discountPercent`, só
+informativo, `null` quando não veio), acréscimo (`surchargeValue`) e valor a pagar (`netValue` =
+`lis_budgets.net_value` = bruto − desconto + acréscimo), todos do **convênio principal**. `null`
+sem vínculo ou com o orçamento ainda não importado. Orçamento sem os campos de desconto
+(planilha, API antiga): desconto e acréscimo `0`, percentual `null`, `netValue = grossValue`.
+Opcional no tipo, sempre presente na resposta.
 
 **Sobre "aparecer no PDF/exportação" (escopo do card CRMLAB-9):** nesta onda **não existe**
 nenhuma geração de PDF/exportação da proposta em si (os únicos PDFs do sistema hoje são
@@ -3986,7 +4001,10 @@ Sem datas: últimos 30 dias terminando hoje. Formato inválido, data inexistente
   "issued": {
     "count": 210,
     "totalValue": 158000,
-    "averageTicket": 752.38
+    "averageTicket": 752.38,
+    "netValue": 151000,
+    "discountValue": 7000,
+    "netAverageTicket": 719.05
   },
   "requisition": {
     "count": 178,
@@ -3999,7 +4017,7 @@ Sem datas: últimos 30 dias terminando hoje. Formato inválido, data inexistente
     "conversionQty": 78.57
   },
   "monthlySeries": [
-    { "month": "2026-08", "issuedValue": 158000, "requisitionValue": 132000, "paidValue": 121000 }
+    { "month": "2026-08", "issuedValue": 158000, "issuedNetValue": 151000, "requisitionValue": 132000, "paidValue": 121000 }
   ],
   "byAttendant": [
     { "attendantId": "uuid", "attendantName": "Maria Souza", "issuedCount": 40, "paidCount": 32, "paidValue": 30000 }
@@ -4024,6 +4042,13 @@ Sem datas: últimos 30 dias terminando hoje. Formato inválido, data inexistente
   (BUSINESS_RULES.md §11); `0` quando `issued.count` é `0`, nunca `NaN`/`Infinity`
   (`percent()` de `analytics.service.ts`, reaproveitada).
 - `averageTicket` usa `average()` de `analytics.service.ts`: `0` quando `count` é `0`.
+- **Bruto e líquido (CRMLAB-114, D-278):** `issued.totalValue`/`averageTicket` continuam o
+  **bruto** (`SUM(total_value)`), sem mudar de número. Ao lado: `netValue` (`SUM(net_value)`, o
+  líquido do convênio principal — o número principal da tela e do PDF), `discountValue =
+  totalValue − netValue` (desconto já abatido do acréscimo) e `netAverageTicket = netValue /
+  count`. Orçamento sem os campos de desconto entra com líquido = bruto. Na série mensal,
+  `issuedValue` segue bruto e `issuedNetValue` é o líquido (o que o gráfico desenha).
+  `byInsurance.totalValue` segue bruto.
 - `monthlySeries` cobre os últimos 12 meses terminando no mês de `endDate`, **não** só o
   período pedido — é o gráfico "Evolução do faturamento" de `/results` (§14) e a série do PDF,
   que sempre mostram 12 pontos. Mês sem dado aparece com os três valores em `0`, nunca ausente.
@@ -5151,6 +5176,7 @@ Sem datas: últimos 30 dias terminando hoje (mesma regra de `resolvePeriod`, §5
       "patientName": "João Santos",
       "principalInsuranceName": "Unimed Tubarão",
       "totalValue": 452.30,
+      "netValue": 452.30,
       "insuranceId": "8f2a1c4b-6d39-4f70-9a12-5c8e3b7d1f06",
       "attendantName": "Maria Souza",
       "attendantId": "4a1b8e6c-5d72-4931-b0f8-2e7a9c1d4b55",
@@ -5165,7 +5191,8 @@ Sem datas: últimos 30 dias terminando hoje (mesma regra de `resolvePeriod`, §5
   "pagination": { "page": 1, "limit": 20, "total": 210, "totalPages": 11 }
 }
 ```
-`proposalId` é sempre `null` nesta onda (conciliação é Onda 13). Ordenado por `issuedOn DESC`
+`totalValue` é o bruto e `netValue` o líquido do convênio principal (D-278; sem os campos de
+desconto, iguais). `proposalId` é sempre `null` nesta onda (conciliação é Onda 13). Ordenado por `issuedOn DESC`
 quando `sortBy` não é enviado.
 
 **Erros:** `VALIDATION_ERROR` (400, datas/`sortBy`/`order` fora do formato), `FORBIDDEN` (403,
@@ -5186,7 +5213,10 @@ recortável por atendente/convênio para o filtro da tela.
 ```json
 {
   "period": { "startDate": "2026-08-01", "endDate": "2026-08-31" },
-  "issued": { "count": 210, "totalValue": 158000, "averageTicket": 752.38 },
+  "issued": {
+    "count": 210, "totalValue": 158000, "averageTicket": 752.38,
+    "netValue": 151000, "discountValue": 7000, "netAverageTicket": 719.05
+  },
   "requisition": { "count": 178, "totalValue": 132000 },
   "paid": { "count": 165, "totalValue": 121000, "averageTicket": 733.33, "conversionQty": 78.57 },
   "byAttendant": [
@@ -5202,7 +5232,8 @@ recortável por atendente/convênio para o filtro da tela.
 }
 ```
 Mesmas definições de `issued`/`paid`/`conversionQty` de `GET /reports/executive` (§5c) —
-`conversionQty` capado em 100%, `averageTicket` via `average()`. `byAttendant`/`byInsurance`
+`conversionQty` capado em 100%, `averageTicket` via `average()`, bruto e líquido de `issued`
+como em §5c (D-278). `byAttendant`/`byInsurance`
 recortados ao top 6 por `paidValue`, mesma regra e mesmo `MIN_ORC_RANKING` de
 BUSINESS_RULES.md §11 — inclusive o `paidValue` por convênio descrito em §5c.
 

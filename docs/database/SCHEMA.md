@@ -1376,6 +1376,31 @@ CREATE TABLE lis_budgets (
     END
   ) STORED,
 
+  -- Desconto/acréscimo/líquido por convênio (migração 057 — CRMLAB-114, D-278).
+  -- Só a API do Bitlab manda (desde 23/10/2026); a planilha deixa NULL.
+  discount_percent_1 NUMERIC(9,4),       -- PER_DESCONTO1 (só informativo)
+  discount_value_1 NUMERIC(12,2),        -- VL_DESCONTO1 (a verdade do desconto)
+  surcharge_value_1 NUMERIC(12,2),       -- VL_ACRESCIMO1
+  payable_value_1 NUMERIC(12,2),         -- VL_APAGAR1 = VL_TOTAL1 − VL_DESCONTO1 + VL_ACRESCIMO1
+  -- … idem _2 e _3 (null quando o convênio não existe)
+  -- LÍQUIDO do CONVÊNIO PRINCIPAL — mesmo CASE de total_value, trocando value_n
+  -- por COALESCE(payable_value_n, value_n): sem VL_APAGAR, líquido = bruto.
+  -- A escolha do convênio continua pelo bruto.
+  net_value NUMERIC(12,2) GENERATED ALWAYS AS (
+    CASE
+      WHEN insurance_1 IS NOT NULL AND COALESCE(value_1, 0) > 0 THEN COALESCE(payable_value_1, value_1)
+      WHEN insurance_2 IS NOT NULL AND COALESCE(value_2, 0) > 0 THEN COALESCE(payable_value_2, value_2)
+      WHEN insurance_3 IS NOT NULL AND COALESCE(value_3, 0) > 0 THEN COALESCE(payable_value_3, value_3)
+      WHEN insurance_1 IS NOT NULL THEN COALESCE(payable_value_1, value_1, 0)
+      WHEN insurance_2 IS NOT NULL THEN COALESCE(payable_value_2, value_2, 0)
+      WHEN insurance_3 IS NOT NULL THEN COALESCE(payable_value_3, value_3, 0)
+      WHEN COALESCE(value_1, 0) > 0 THEN COALESCE(payable_value_1, value_1)
+      WHEN COALESCE(value_2, 0) > 0 THEN COALESCE(payable_value_2, value_2)
+      WHEN COALESCE(value_3, 0) > 0 THEN COALESCE(payable_value_3, value_3)
+      ELSE 0
+    END
+  ) STORED,
+
   insurance_id UUID NULL,                -- convênio resolvido; NULL = particular (D-082/D-114)
   attendant_name VARCHAR(255),           -- USUÁRIO/USUARIO cru da planilha
   attendant_id UUID NULL,                -- atendente resolvido (§24)
@@ -1438,6 +1463,14 @@ CREATE TRIGGER trg_lis_budgets_updated_at
 - **`proposal_id`** nasce sempre `NULL` nesta onda — a coluna existe desde já porque `lis_budgets`
   é o lado "B" da conciliação, mas quem grava é o hook da Onda 13 (D-119); `ON DELETE SET NULL`
   para não travar a exclusão de uma proposta antiga.
+
+- **`net_value` (líquido) ao lado de `total_value` (bruto) — D-278 (CRMLAB-114, migração 057):**
+  `total_value` não muda; o líquido é coluna gerada com a mesma seleção de convênio principal
+  (espelho em TS: `principalSlot`/`netValue` de `lib/lis-spreadsheet.ts`). As 12 colunas de
+  desconto são gravadas pelo upsert da API como vieram (null inclusive); reimportar pela planilha
+  (que não tem essas colunas) **não apaga** o que a API gravou, salvo quando o bruto daquele
+  convênio mudou (aí o desconto antigo vale nada e o líquido volta ao bruto). Linhas anteriores à
+  057 ficam com líquido = bruto até a sync reenviar o orçamento (rodada completa — D-278 item 8).
 
 - **`paid_value`/`paid_on` são derivados desde a D-188 (CRMLAB-53):** o upsert do orçamento não
   os grava mais; `recomputePaidValues` os recalcula a partir de `lis_budget_payments` (§26a) no
@@ -1765,8 +1798,8 @@ ALTER TABLE lis_imports ADD COLUMN proposals_created INT NULL;
   sozinha do orçamento do LIS, D-196). **Só** a origem `bitlab` pode ter `conversation_id` e
   `created_by` nulos; o CHECK mantém o invariante antigo para `crm`. Na origem `bitlab`:
   `lis_budget_number` sempre preenchido (é a identidade dela), sem `proposal_items`,
-  `discount_percent = 0`, `approval_status = 'none'`, e **`total_price` = `lis_budgets.total_value`**
-  (D-195 item 2, regravado pela conciliação enquanto não terminal). Nome do paciente, data de
+  `discount_percent = 0`, `approval_status = 'none'`, e **`total_price` = `lis_budgets.net_value`**
+  (D-195 item 2 — o LÍQUIDO desde a D-278 item 3; regravado pela conciliação enquanto não terminal). Nome do paciente, data de
   emissão e atendente **não** são copiados: vêm por JOIN com `lis_budgets` no SELECT canônico do
   repositório.
 - **`tenant_settings.bitlab_proposals_since`**: dia de Brasília a partir do qual orçamento emitido

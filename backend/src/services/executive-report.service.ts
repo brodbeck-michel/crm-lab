@@ -9,7 +9,7 @@ import { BusinessError } from '../http/errors.js';
 import { findById as findTenant } from '../repositories/tenant.repository.js';
 import * as lisAnalyticsRepo from '../repositories/lis-analytics.repository.js';
 import { average, percent, resolvePeriod, toMoney, type DateRange } from './analytics.service.js';
-import { MIN_ORC_RANKING } from './lis-analytics.service.js';
+import { MIN_ORC_RANKING, toIssuedTotals } from './lis-analytics.service.js';
 import type { ThemeService } from './theme.service.js';
 
 const MANAGER_ROLES = ['manager', 'admin'] as const;
@@ -66,11 +66,7 @@ export function createExecutiveReportService(
 
       return {
         period: { startDate: period.startDate, endDate: period.endDate },
-        issued: {
-          count: data.issued.count,
-          totalValue: toMoney(data.issued.totalValue),
-          averageTicket: average(data.issued.totalValue, data.issued.count),
-        },
+        issued: toIssuedTotals(data.issued),
         requisition: {
           count: data.requisition.count,
           totalValue: toMoney(data.requisition.totalValue),

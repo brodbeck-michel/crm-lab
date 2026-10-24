@@ -622,3 +622,115 @@ describe('numero digitado numa proposta do CRM absorve o cartao automatico (D-19
     expect(await proposalsOf(tenantA)).toHaveLength(2);
   });
 });
+
+describe('desconto e liquido do Bitlab (CRMLAB-114, D-278)', () => {
+  async function budgetOf(tenant: TenantRecord, number: string) {
+    const result = await db.withoutTenant((tx) =>
+      tx.query<{ total_value: string; net_value: string; discount_value_1: string | null }>(
+        `SELECT total_value, net_value, discount_value_1
+           FROM lis_budgets WHERE tenant_id = $1 AND number = $2`,
+        [tenant.id, number],
+      ),
+    );
+    const found = result.rows[0];
+    if (!found) throw new Error(`orcamento ${number} nao gravado`);
+    return {
+      total: Number(found.total_value),
+      net: Number(found.net_value),
+      discount1: found.discount_value_1 === null ? null : Number(found.discount_value_1),
+    };
+  }
+
+  it('proposta nasce com o LIQUIDO; detalhe mostra bruto, desconto, percentual, acrescimo e a pagar', async () => {
+    await setSince(tenantA, SINCE);
+    const gross = 200;
+    const discount = 20;
+    const surcharge = 5;
+    const payable = gross - discount + surcharge;
+    await ingest(tenantA, [
+      row('6001', {
+        value1: gross,
+        discountPercent1: 10,
+        discountValue1: discount,
+        surchargeValue1: surcharge,
+        payableValue1: payable,
+      }),
+    ]);
+
+    const budget = await budgetOf(tenantA, '6001');
+    expect(budget.total).toBe(200);
+    expect(budget.net).toBe(185);
+    expect(budget.total - discount + surcharge).toBe(budget.net);
+
+    const [created] = await proposalsOf(tenantA);
+    const body = await detail(managerA, created!.id);
+    expect(body.totalPrice).toBe(185);
+    expect(body.lisBudgetValues).toEqual({
+      grossValue: 200,
+      discountValue: 20,
+      discountPercent: 10,
+      surchargeValue: 5,
+      netValue: 185,
+    });
+  });
+
+  it('sem os campos (planilha, API antiga): liquido = bruto e desconto/acrescimo zerados', async () => {
+    await setSince(tenantA, SINCE);
+    await ingest(tenantA, [row('6002')]);
+
+    const [created] = await proposalsOf(tenantA);
+    const body = await detail(managerA, created!.id);
+    expect(body.totalPrice).toBe(150.5);
+    expect(body.lisBudgetValues).toEqual({
+      grossValue: 150.5,
+      discountValue: 0,
+      discountPercent: null,
+      surchargeValue: 0,
+      netValue: 150.5,
+    });
+  });
+
+  it('convenio principal e o 2o: liquido e desconto vem do 2o, nao do 1o', async () => {
+    await setSince(tenantA, SINCE);
+    await ingest(tenantA, [
+      row('6003', {
+        insurance1: 'PARTICULAR',
+        value1: 0,
+        payableValue1: 0,
+        discountValue1: 0,
+        insurance2: 'UNIMED',
+        value2: 300,
+        discountPercent2: 0, // percentual informativo pode vir 0 (orc. 71197)
+        discountValue2: 30,
+        surchargeValue2: 0,
+        payableValue2: 270,
+      }),
+    ]);
+
+    const budget = await budgetOf(tenantA, '6003');
+    expect(budget.total).toBe(300);
+    expect(budget.net).toBe(270);
+
+    const [created] = await proposalsOf(tenantA);
+    const body = await detail(managerA, created!.id);
+    expect(body.totalPrice).toBe(270);
+    expect(body.lisBudgetValues).toMatchObject({ grossValue: 300, discountValue: 30, netValue: 270 });
+  });
+
+  it('reimportar pela planilha nao apaga o desconto da API; bruto novo zera o desconto antigo', async () => {
+    await ingest(tenantA, [row('6004', { value1: 100, discountValue1: 10, payableValue1: 90 })]);
+    expect(await budgetOf(tenantA, '6004')).toEqual({ total: 100, net: 90, discount1: 10 });
+
+    // Mesma linha sem os campos (planilha): mantem o que a API gravou.
+    await ingest(tenantA, [row('6004', { value1: 100 })]);
+    expect(await budgetOf(tenantA, '6004')).toEqual({ total: 100, net: 90, discount1: 10 });
+
+    // Planilha com bruto maior: o desconto antigo nao vale mais, liquido = bruto.
+    await ingest(tenantA, [row('6004', { value1: 120 })]);
+    expect(await budgetOf(tenantA, '6004')).toEqual({ total: 120, net: 120, discount1: null });
+
+    // API de novo, com os campos: grava o que veio.
+    await ingest(tenantA, [row('6004', { value1: 120, discountValue1: 12, payableValue1: 108 })]);
+    expect(await budgetOf(tenantA, '6004')).toEqual({ total: 120, net: 108, discount1: 12 });
+  });
+});

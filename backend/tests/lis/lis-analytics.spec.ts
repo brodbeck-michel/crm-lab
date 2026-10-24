@@ -61,6 +61,8 @@ interface BudgetSeed {
   requisitionValue?: number | null;
   paidValue?: number | null;
   paidOn?: string | null;
+  /** `VL_APAGAR1` (D-278). Ausente = sem o campo, liquido = bruto. */
+  payableValue1?: number | null;
 }
 
 async function insertBudget(tenantId: string, seed: BudgetSeed): Promise<void> {
@@ -68,8 +70,9 @@ async function insertBudget(tenantId: string, seed: BudgetSeed): Promise<void> {
     tx.query(
       `INSERT INTO lis_budgets (
          tenant_id, number, issued_on, patient_name, insurance_1, value_1,
-         attendant_id, attendant_name, requisition_number, requisition_value, paid_value, paid_on, import_id
-       ) VALUES ($1, $2, $3, 'Paciente Teste', $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+         attendant_id, attendant_name, requisition_number, requisition_value, paid_value, paid_on, import_id,
+         payable_value_1
+       ) VALUES ($1, $2, $3, 'Paciente Teste', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
       [
         tenantId,
         seed.number,
@@ -83,6 +86,7 @@ async function insertBudget(tenantId: string, seed: BudgetSeed): Promise<void> {
         seed.paidValue ?? null,
         seed.paidOn ?? null,
         importId,
+        seed.payableValue1 ?? null,
       ],
     ),
   );
@@ -379,5 +383,26 @@ describe('GET /lis-budgets/filters', () => {
     const body = res.body as LisBudgetsFilters;
     expect(body.attendants).toEqual([{ id: attendantId, name: 'Maria' }]);
     expect(body.issuedOnRange).toEqual({ min: '2026-08-01', max: '2026-08-01' });
+  });
+});
+
+describe('GET /lis-budgets/summary — bruto, desconto e liquido dos emitidos (CRMLAB-114, D-278)', () => {
+  it('soma o liquido ao lado do bruto; orcamento sem VL_APAGAR entra com o bruto', async () => {
+    await insertBudget(tenantA.id, { number: 'D1', issuedOn: '2026-08-10', value1: 200, payableValue1: 180 });
+    await insertBudget(tenantA.id, { number: 'D2', issuedOn: '2026-08-11', value1: 100 });
+
+    const res = await app.agent
+      .get(`${BASE}/summary?startDate=2026-08-01&endDate=2026-08-31`)
+      .set(app.auth(managerA));
+    expect(res.status).toBe(200);
+    const body = res.body as LisBudgetsSummary;
+    expect(body.issued).toEqual({
+      count: 2,
+      totalValue: 300,
+      averageTicket: 150,
+      netValue: 280,
+      discountValue: 20,
+      netAverageTicket: 140,
+    });
   });
 });

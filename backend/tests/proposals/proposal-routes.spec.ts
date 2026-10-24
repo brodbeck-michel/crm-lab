@@ -60,6 +60,8 @@ const DETAIL_KEYS = [
   // CRMLAB-102 (D-272)
   'reminder',
   'reminders',
+  // CRMLAB-114 (D-278)
+  'lisBudgetValues',
 ].sort();
 
 describe('/api/v1/proposals', () => {

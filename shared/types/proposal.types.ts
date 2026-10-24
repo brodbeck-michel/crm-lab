@@ -1,5 +1,6 @@
 import type { IsoDate, IsoDateTime, PaginationMeta, PaginationQuery } from './api.types.js';
 import type { StageAutomation } from './funnel-timer.types.js';
+import type { LisBudgetValues } from './lis.types.js';
 import type {
   ProposalReminder,
   ProposalReminderEntry,
@@ -242,6 +243,12 @@ export interface ProposalDetail extends Proposal {
   lisPaidValue: number | null;
   /** `YYYY-MM-DD` (D-110). */
   lisPaidOn: IsoDate | null;
+  /**
+   * Bruto, desconto, acréscimo e líquido do orçamento do LIS vinculado, no
+   * convênio principal (CRMLAB-114, D-278). `null` sem vínculo ou com o
+   * orçamento ainda não importado. Opcional no tipo, sempre presente na resposta.
+   */
+  lisBudgetValues?: LisBudgetValues | null;
   /**
    * Todos os lembretes da proposta, do mais antigo para o mais novo
    * (CRMLAB-102, D-272). Opcional no tipo, sempre presente na resposta.

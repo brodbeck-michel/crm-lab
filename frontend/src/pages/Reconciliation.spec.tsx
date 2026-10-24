@@ -27,6 +27,7 @@ const budget: LisBudget = {
   patientName: 'João Santos',
   principalInsuranceName: 'Unimed Tubarão',
   totalValue: 452.3,
+  netValue: 452.3,
   insuranceId: 'i-1',
   attendantName: 'Maria Souza',
   attendantId: 'a-1',

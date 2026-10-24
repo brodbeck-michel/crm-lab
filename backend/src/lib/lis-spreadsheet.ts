@@ -58,7 +58,40 @@ export interface LisSpreadsheetRow {
   reversedAt?: string | null;
   paymentMethod?: string | null;
   cardBrand?: string | null;
+  /**
+   * Desconto/acréscimo/líquido por convênio (CRMLAB-114, D-278). Só a API tem
+   * (`PER_DESCONTO{n}`, `VL_DESCONTO{n}`, `VL_ACRESCIMO{n}`, `VL_APAGAR{n}`);
+   * na planilha ficam ausentes e o líquido cai no bruto. O percentual é só
+   * informativo — a verdade é o valor em reais.
+   */
+  discountPercent1?: number | null;
+  discountValue1?: number | null;
+  surchargeValue1?: number | null;
+  payableValue1?: number | null;
+  discountPercent2?: number | null;
+  discountValue2?: number | null;
+  surchargeValue2?: number | null;
+  payableValue2?: number | null;
+  discountPercent3?: number | null;
+  discountValue3?: number | null;
+  surchargeValue3?: number | null;
+  payableValue3?: number | null;
 }
+
+/** Campos de desconto/líquido da API (D-278) — a planilha não tem coluna para eles. */
+export type LisDiscountField =
+  | 'discountPercent1'
+  | 'discountValue1'
+  | 'surchargeValue1'
+  | 'payableValue1'
+  | 'discountPercent2'
+  | 'discountValue2'
+  | 'surchargeValue2'
+  | 'payableValue2'
+  | 'discountPercent3'
+  | 'discountValue3'
+  | 'surchargeValue3'
+  | 'payableValue3';
 
 export type LisPaymentStatus = 'ativo' | 'estornado';
 
@@ -91,7 +124,13 @@ export interface LisBudgetInput extends LisSpreadsheetRow {
 /** Colunas da planilha. Os campos do pagamento da API (D-188) não têm coluna. */
 type SheetField = Exclude<
   keyof LisSpreadsheetRow,
-  'paidAt' | 'paymentId' | 'paymentStatus' | 'reversedAt' | 'paymentMethod' | 'cardBrand'
+  | 'paidAt'
+  | 'paymentId'
+  | 'paymentStatus'
+  | 'reversedAt'
+  | 'paymentMethod'
+  | 'cardBrand'
+  | LisDiscountField
 >;
 
 const FIELD_ALIASES: Record<SheetField, string[]> = {
@@ -334,52 +373,66 @@ export async function parseLisSpreadsheet(buffer: Buffer): Promise<LisSpreadshee
   return rows;
 }
 
+/** Convênio 1, 2 ou 3 de uma linha do LIS. */
+export type LisInsuranceSlot = 1 | 2 | 3;
+
 /**
- * Convenio principal: o primeiro de c1..c3 com nome E valor > 0; se nenhum
- * tiver valor > 0, o primeiro que tem nome (BUSINESS_RULES.md §11.3).
+ * Qual dos três convênios é o PRINCIPAL (BUSINESS_RULES.md §11.3): o primeiro
+ * com nome E valor > 0; senão o primeiro com nome; senão (nenhum nome — planilha
+ * sem a coluna preenchida) o primeiro valor > 0, igual ao app de referência
+ * (`opts.find(o => o.v > 0)`). `null` = nenhum. Espelha o CASE das colunas
+ * GERADAS `principal_insurance_name`, `total_value` (014) e `net_value` (057).
  */
-export function principalInsuranceName(row: LisSpreadsheetRow): string | null {
-  const pairs: Array<[string | null, number | null]> = [
-    [row.insurance1, row.value1],
-    [row.insurance2, row.value2],
-    [row.insurance3, row.value3],
+export function principalSlot(
+  row: Pick<
+    LisSpreadsheetRow,
+    'insurance1' | 'value1' | 'insurance2' | 'value2' | 'insurance3' | 'value3'
+  >,
+): LisInsuranceSlot | null {
+  const pairs: Array<[LisInsuranceSlot, string | null, number | null]> = [
+    [1, row.insurance1, row.value1],
+    [2, row.insurance2, row.value2],
+    [3, row.insurance3, row.value3],
   ];
-  for (const [name, value] of pairs) {
-    if (name !== null && (value ?? 0) > 0) return name;
+  for (const [slot, name, value] of pairs) {
+    if (name !== null && (value ?? 0) > 0) return slot;
   }
-  for (const [name] of pairs) {
-    if (name !== null) return name;
+  for (const [slot, name] of pairs) {
+    if (name !== null) return slot;
+  }
+  for (const [slot, , value] of pairs) {
+    if ((value ?? 0) > 0) return slot;
   }
   return null;
 }
 
+/** Nome do convênio principal — `null` quando o principal não tem nome. */
+export function principalInsuranceName(row: LisSpreadsheetRow): string | null {
+  const slot = principalSlot(row);
+  return slot === null ? null : row[`insurance${slot}`];
+}
+
 /**
- * Valor do CONVÊNIO PRINCIPAL (mesma seleção de `principalInsuranceName`) —
- * espelha `lis_budgets.total_value` gerada (SCHEMA.md §26, D-124).
- * `insurance_2`/`insurance_3` são cotações ALTERNATIVAS do mesmo orçamento
- * (o mesmo exame precificado por outro convênio), não valores adicionais —
- * `value1 + value2 + value3` está ERRADO (era o bug de D-124, corrigido pela
- * migração 014 depois de comparar com o app de referência do FluxoLab).
+ * Valor BRUTO do CONVÊNIO PRINCIPAL — espelha `lis_budgets.total_value`
+ * gerada (SCHEMA.md §26, D-124). `insurance_2`/`insurance_3` são cotações
+ * ALTERNATIVAS do mesmo orçamento (o mesmo exame precificado por outro
+ * convênio), não valores adicionais — `value1 + value2 + value3` está ERRADO
+ * (era o bug de D-124, corrigido pela migração 014).
  */
 export function totalValue(row: LisSpreadsheetRow): number {
-  const pairs: Array<[string | null, number | null]> = [
-    [row.insurance1, row.value1],
-    [row.insurance2, row.value2],
-    [row.insurance3, row.value3],
-  ];
-  for (const [name, value] of pairs) {
-    if (name !== null && (value ?? 0) > 0) return value ?? 0;
-  }
-  for (const [name, value] of pairs) {
-    if (name !== null) return value ?? 0;
-  }
-  // Nenhum dos três tem nome de convênio (planilha sem essa coluna
-  // preenchida) — usa o primeiro valor > 0 mesmo sem nome, igual ao app de
-  // referência (`opts.find(o => o.v > 0)`, terceiro fallback).
-  for (const [, value] of pairs) {
-    if ((value ?? 0) > 0) return value ?? 0;
-  }
-  return 0;
+  const slot = principalSlot(row);
+  return slot === null ? 0 : (row[`value${slot}`] ?? 0);
+}
+
+/**
+ * Valor LÍQUIDO do convênio principal (CRMLAB-114, D-278) — espelha
+ * `lis_budgets.net_value` gerada (057): o `VL_APAGAR` do mesmo convênio de
+ * `totalValue`; sem ele (planilha, API antiga), o bruto.
+ */
+export function netValue(row: LisSpreadsheetRow): number {
+  const slot = principalSlot(row);
+  if (slot === null) return 0;
+  return row[`payableValue${slot}`] ?? row[`value${slot}`] ?? 0;
 }
 
 /**

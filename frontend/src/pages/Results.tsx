@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { LisImportKind } from '@crm-lab/shared';
+import type { LisImportKind, LisIssuedTotals } from '@crm-lab/shared';
 import {
   useLisBudgetsFilters,
   useLisBudgetsPendingSummary,
@@ -28,10 +28,25 @@ import type { CommissionDetailRow } from '@/lib/lis/commission-detail';
 import { generateExecutiveReportPdf } from '@/lib/pdf/executive-report';
 import { generateCommissionReportPdf } from '@/lib/pdf/commission-report';
 import { generateCommissionReportExcel } from '@/lib/excel/commission-report';
+import { formatMoney } from '@/lib/format';
 
 /** Percentual de `part` sobre `whole`, com uma casa. `whole` zerado vira "0.0". */
 function share(part: number, whole: number): string {
   return whole > 0 ? ((part / whole) * 100).toFixed(1) : '0.0';
+}
+
+/**
+ * Legenda do "Total Orçado" (CRMLAB-114, D-278): o número grande é o líquido;
+ * bruto e desconto só aparecem quando houve desconto/acréscimo no período —
+ * sem eles, a legenda fica como era.
+ */
+function issuedCaption(issued: LisIssuedTotals): string {
+  const count = `${issued.count} orçamentos`;
+  if (issued.discountValue === 0) return count;
+  const label = issued.discountValue > 0 ? 'desconto' : 'acréscimo';
+  return `${count} · bruto ${formatMoney(issued.totalValue)}, ${label} ${formatMoney(
+    Math.abs(issued.discountValue),
+  )}`;
 }
 
 /**
@@ -136,10 +151,12 @@ export default function Results() {
   }, [summary, salesSummary, commissionSettings]);
   const commissionTotals = useMemo(() => totalsOf(commissionRows), [commissionRows]);
 
+  // Líquido (D-278): o "Total Orçado" mostra o que o paciente paga, e a
+  // variação compara a mesma base.
   const deltaPct = useMemo(() => {
-    const previousTotal = previousSummary?.issued.totalValue ?? 0;
+    const previousTotal = previousSummary?.issued.netValue ?? 0;
     if (!summary || previousTotal <= 0) return undefined;
-    return ((summary.issued.totalValue - previousTotal) / previousTotal) * 100;
+    return ((summary.issued.netValue - previousTotal) / previousTotal) * 100;
   }, [summary, previousSummary]);
 
   /**
@@ -311,8 +328,8 @@ export default function Results() {
               icon="wallet"
               highlight
               label="Total Orçado"
-              value={<MoneyDisplay value={summary.issued.totalValue} emphasis size="metric" />}
-              caption={`${summary.issued.count} orçamentos`}
+              value={<MoneyDisplay value={summary.issued.netValue} emphasis size="metric" />}
+              caption={issuedCaption(summary.issued)}
               deltaPct={deltaPct}
               deltaLabel="vs. período anterior"
             />
@@ -322,7 +339,7 @@ export default function Results() {
               value={<MoneyDisplay value={summary.requisition.totalValue} emphasis size="metric" />}
               caption={`${summary.requisition.count} requisições, ${share(
                 summary.requisition.totalValue,
-                summary.issued.totalValue,
+                summary.issued.netValue,
               )}% do orçado`}
             />
             <ResultsKpiCard
@@ -331,7 +348,7 @@ export default function Results() {
               value={<MoneyDisplay value={summary.paid.totalValue} emphasis size="metric" />}
               caption={`${summary.paid.count} pagos, ${share(
                 summary.paid.totalValue,
-                summary.issued.totalValue,
+                summary.issued.netValue,
               )}% do orçado`}
               progress={summary.paid.conversionQty}
               progressLabel="Taxa de conversão"

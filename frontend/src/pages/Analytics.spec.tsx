@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router-dom';
-import type { FunnelReport, PipelineSnapshot, ResponseTimeReport } from '@crm-lab/shared';
+import type { FunnelReport, PipelineSnapshot, ProposalReminderReport, ResponseTimeReport } from '@crm-lab/shared';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui';
 import type * as ApiClientModule from '@/api/client';
@@ -270,6 +270,8 @@ describe('Analytics', () => {
     renderPage();
     await screen.findByText('Receita');
     expect(screen.queryByRole('tab', { name: 'Tempo de resposta' })).not.toBeInTheDocument();
+    // CRMLAB-103 (D-279): nem a de lembretes.
+    expect(screen.queryByRole('tab', { name: 'Lembretes' })).not.toBeInTheDocument();
   });
 
   it('gestor troca para "Tempo de resposta" e vê a seção com o período do topo', async () => {
@@ -296,6 +298,29 @@ describe('Analytics', () => {
     await userEvent.click(await screen.findByRole('tab', { name: 'Tempo de resposta' }));
 
     expect(await screen.findByRole('heading', { name: 'Tempo de resposta no WhatsApp' })).toBeInTheDocument();
+    expect(screen.queryByText('Receita')).not.toBeInTheDocument();
+  });
+
+  // CRMLAB-103 (D-279): aba de lembretes por responsável, de gestor/admin.
+  it('admin troca para "Lembretes": título e tabela por responsável', async () => {
+    const report: ProposalReminderReport = {
+      period: { startDate: '2026-09-01', endDate: '2026-09-30' },
+      timezone: 'America/Sao_Paulo',
+      today: '2026-09-20',
+      rows: [{ userId: 'u1', name: 'Ana', overdueOpen: 2, won: 1, lost: 0, rescheduled: 0, autoClosed: 0, resolved: 1 }],
+      total: { overdueOpen: 2, won: 1, lost: 0, rescheduled: 0, autoClosed: 0, resolved: 1 },
+    };
+    responses.set('/analytics/reminders', report);
+    useAuthStore.setState({
+      user: { id: 'a1', email: 'admin@lab.com', role: 'admin', name: 'Admin', discountLimit: 100 },
+    });
+
+    renderPage();
+    await userEvent.click(await screen.findByRole('tab', { name: 'Lembretes' }));
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Lembretes' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Lembretes de contato por atendente' })).toBeInTheDocument();
+    expect(screen.getByText('Ana')).toBeInTheDocument();
     expect(screen.queryByText('Receita')).not.toBeInTheDocument();
   });
 });

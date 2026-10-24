@@ -5914,3 +5914,36 @@ API_CONTRACTS (§3 detalhe, §5c, §10.2), BUSINESS_RULES §11.10/§11.12, PAGES
 `bitlab-proposals.spec.ts`, `lis-analytics.spec.ts`, `executive-report.spec.ts`,
 `proposal-routes.spec.ts`; front `Results.spec.tsx`, `LisReferenceSection.spec.tsx`,
 `Reconciliation.spec.tsx`.
+
+### D-279: Relatório de lembretes por atendente na página de Relatórios (CRMLAB-103)
+**Decisão:** terceira aba **"Lembretes"** em `/analytics`, ao lado de "Conversão" e "Tempo de
+resposta" (D-257), com o mesmo período do topo. Escopo aprovado pelo dono do produto.
+1. **Quem vê:** gestor e admin — o mesmo recorte de `GET /analytics/team` e
+   `/analytics/response-time`. Atendente não vê a aba e recebe `403 FORBIDDEN` na rota;
+   operador da plataforma também (`denyPlatformOperator`).
+2. **Endpoint:** `GET /analytics/reminders?startDate&endDate` → `ProposalReminderReport`
+   (`rows` + `total`, `today`, `timezone`, `period`). Sem cache no servidor.
+3. **Atribuição:** o lembrete conta para a **responsável pela proposta** (`proposals.created_by`,
+   o mesmo campo de `isCardOwner`), não para quem o resolveu nem para quem o criou. Proposta sem
+   responsável → linha **"Sem responsável"** (`userId: null`). Usuário ativo aparece mesmo
+   zerado; inativo só com número, com o nome normal.
+4. **Duas janelas:** **Vencidos em aberto agora** é a foto do momento — aberto e `dueDate ≤ hoje`
+   no dia de Brasília, a regra de `isReminderDue` (D-272 item 4), com o "hoje" calculado no Node
+   (`saoPauloToday`) e passado ao SQL — e **não depende do período**. **Resolvidos no período**
+   contam `resolved_at` entre as meias-noites **locais** do fuso do expediente, a convenção do
+   tempo de resposta (D-257), divididos em Ganho, Perdido, Reagendado e Encerrado automático
+   (`auto_closed`), mais o total. Sem teto de dias: é uma contagem agregada.
+5. **Tela:** tabela do design system com linha **Total do laboratório**, ordenada por mais
+   vencidos (depois mais resolvidos, depois nome); título da página "Lembretes".
+6. **Fora do escopo:** lista detalhada ao clicar na linha e exportação.
+**Motivo:** o lembrete (D-272) força o desfecho, mas a gestora não tinha onde ver quem acumula
+contato vencido nem o que cada atendente fez com os lembretes. Atribuir à responsável mostra de
+quem é a carteira; a foto dos vencidos fica fora do período porque o atraso é de hoje, não do
+mês consultado.
+**Impacto:** `shared/types/proposal-reminder.types.ts` (`ProposalReminderReport*`,
+`PROPOSAL_REMINDER_REPORT_NO_OWNER_LABEL`); backend `proposal-reminder-report.service.ts` (novo),
+`proposal-reminder.repository.ts` (`countByOwner`), `response-time.service.ts` (exporta
+`localMidnight`/`nextDay`), `analytics.routes.ts`; inventário de `route-tenant-isolation.spec.ts`
+(113 → 114). Frontend `pages/Analytics.tsx`, `components/analytics/ReminderReportSection.tsx`
+(novo), `api/analytics.ts`, `api/query-keys.ts`. API_CONTRACTS §5, SERVICES §9, PAGES §8. Sem
+migração.

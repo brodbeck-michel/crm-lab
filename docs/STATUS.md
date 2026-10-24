@@ -3511,3 +3511,14 @@ Branch `feature/CRMLAB-114-desconto-liquido-bitlab` (de `main` v1.38.0). Decisã
 - **Testes:** `tests/db/migration-057-net-value.spec.ts` (novo, 7) e specs LIS/proposta ajustados;
   front `Results.spec.tsx` (+1), `LisReferenceSection.spec.tsx` (+3). Suíte completa roda na
   integração.
+
+### 🚧 CRMLAB-103 — relatório de lembretes por atendente (2026-10-24, aguardando validação)
+
+Branch `feature/CRMLAB-103-relatorio-lembretes` (de `main` v1.38.0). Decisão D-279, sem migração.
+
+- **Backend:** `GET /analytics/reminders` (gestor/admin): por responsável pela proposta, vencidos
+  em aberto agora (dia de Brasília) e resolvidos no período por desfecho, com "Sem responsável".
+- **Front:** aba "Lembretes" em `/analytics` (gestor/admin), tabela com total, período do topo.
+- **Testes:** `tests/analytics/reminders-report.spec.ts` (novo, 9), inventário de rotas 113 → 114
+  (+ caso de isolamento), `ReminderReportSection.spec.tsx` (novo, 3), `Analytics.spec.tsx` (+1,
+  1 ampliado). Suíte completa roda na integração.

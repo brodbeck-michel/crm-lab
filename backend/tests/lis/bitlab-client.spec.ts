@@ -126,11 +126,70 @@ describe('BitlabClient.fetchBudgetsPage', () => {
         reversedAt: null,
         paymentMethod: null,
         cardBrand: null,
+        // API antiga (sem os campos de D-278): tudo null, liquido = bruto.
+        discountPercent1: null,
+        discountValue1: null,
+        surchargeValue1: null,
+        payableValue1: null,
+        discountPercent2: null,
+        discountValue2: null,
+        surchargeValue2: null,
+        payableValue2: null,
+        discountPercent3: null,
+        discountValue3: null,
+        surchargeValue3: null,
+        payableValue3: null,
       },
     ]);
     const serialized = JSON.stringify(page);
     expect(serialized).not.toContain('12345678900');
     expect(serialized).not.toContain('1980-05-10');
+  });
+
+  it('le desconto, acrescimo e valor a pagar por convenio (CRMLAB-114, D-278)', async () => {
+    const page = await client(
+      fakeFetch(
+        200,
+        listResponse({
+          orcamentos: [
+            {
+              ...BUDGET,
+              CONVENIO2: 'UNIMED',
+              VL_TOTAL2: 300,
+              // Caso real do orc. 71197: percentual 0 com desconto em reais.
+              PER_DESCONTO1: 0,
+              VL_DESCONTO1: 10.62,
+              VL_ACRESCIMO1: 0,
+              VL_APAGAR1: 239.38,
+              // String numerica tambem e aceita, como no resto do contrato.
+              PER_DESCONTO2: '5.00',
+              VL_DESCONTO2: '15.00',
+              VL_ACRESCIMO2: '2.50',
+              VL_APAGAR2: '287.50',
+              PER_DESCONTO3: null,
+              VL_DESCONTO3: null,
+              VL_ACRESCIMO3: null,
+              VL_APAGAR3: null,
+            },
+          ],
+        }),
+      ),
+    ).fetchBudgetsPage('k', QUERY);
+
+    expect(page.rows[0]).toMatchObject({
+      discountPercent1: 0,
+      discountValue1: 10.62,
+      surchargeValue1: 0,
+      payableValue1: 239.38,
+      discountPercent2: 5,
+      discountValue2: 15,
+      surchargeValue2: 2.5,
+      payableValue2: 287.5,
+      discountPercent3: null,
+      discountValue3: null,
+      surchargeValue3: null,
+      payableValue3: null,
+    });
   });
 
   it('le os campos do pagamento da v1 (CRMLAB-53, D-188): ID, situacao, estorno, forma e bandeira', async () => {

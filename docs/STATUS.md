@@ -3494,3 +3494,20 @@ Branch `feature/CRMLAB-112-contador-nao-lidas-sidebar` (de `main` v1.37.0). Deci
   do ícone, no lugar do ponto); refeito pelo WS e ao ler.
 - **Testes:** `tests/conversations/unread-count.spec.ts` (novo, 4), inventário de rotas 112 → 113,
   `Sidebar.spec.tsx` (+6, 1 reescrito), `ws.spec.ts` (+1). Suíte completa roda na integração.
+
+### 🚧 CRMLAB-114 — desconto e valor líquido do Bitlab (2026-10-24, aguardando validação)
+
+Branch `feature/CRMLAB-114-desconto-liquido-bitlab` (de `main` v1.38.0). Decisão D-278, migração 057.
+
+- **Banco:** 12 colunas de desconto/acréscimo/a pagar por convênio + `net_value` gerada (líquido do
+  convênio principal; sem os campos, = bruto). `total_value` não muda.
+- **Backend:** API do Bitlab lida e gravada; proposta do Bitlab nasce (e é mantida, enquanto
+  aberta) no líquido; `issued` com `netValue`/`discountValue`/`netAverageTicket`; série mensal com
+  `issuedNetValue`; `ProposalDetail.lisBudgetValues`.
+- **Front:** "Total Orçado" líquido com bruto/desconto na legenda; gráfico e PDF no líquido; linha
+  "Valor no LIS" no bloco do orçamento da proposta.
+- **Pendente no deploy:** rodada completa da sync (hml manual; prod com OK) para preencher os
+  orçamentos antigos.
+- **Testes:** `tests/db/migration-057-net-value.spec.ts` (novo, 7) e specs LIS/proposta ajustados;
+  front `Results.spec.tsx` (+1), `LisReferenceSection.spec.tsx` (+3). Suíte completa roda na
+  integração.

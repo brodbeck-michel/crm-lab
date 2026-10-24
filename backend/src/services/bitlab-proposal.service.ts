@@ -41,7 +41,7 @@ async function ensureSince(tx: DbTx, tenantId: string, today: string): Promise<s
 
 interface CandidateRow {
   number: string;
-  total_value: unknown;
+  net_value: unknown;
   insurance_id: string | null;
   owner_id: string | null;
 }
@@ -64,7 +64,7 @@ export async function createBitlabProposals(
 
   // Responsavel provisorio: o login ligado ao atendente do Bitlab, se ativo (D-195 item 5).
   const candidates = await tx.query<CandidateRow>(
-    `SELECT b.number, b.total_value, b.insurance_id,
+    `SELECT b.number, b.net_value, b.insurance_id,
             CASE WHEN u.is_active THEN a.user_id END AS owner_id
        FROM lis_budgets b
        LEFT JOIN attendants a ON a.id = b.attendant_id
@@ -82,7 +82,9 @@ export async function createBitlabProposals(
 
   const created: string[] = [];
   for (const row of candidates.rows) {
-    const totalPrice = toNumber(row.total_value);
+    // Nasce com o LIQUIDO do convenio principal (D-278 item 3); sem os campos
+    // de desconto, `net_value` = bruto. Proposta existente nao e recalculada.
+    const totalPrice = toNumber(row.net_value);
     const id = await insertBitlabProposal(tx, {
       tenantId,
       lisBudgetNumber: row.number,

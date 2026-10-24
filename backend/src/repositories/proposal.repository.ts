@@ -15,6 +15,7 @@
 import { TIMER_STEPS } from '@crm-lab/shared';
 import type {
   ApprovalStatus,
+  LisBudgetValues,
   LossReason,
   StageAutomation,
   ProposalOrigin,
@@ -29,6 +30,7 @@ import type {
   ProposalStatus,
 } from '@crm-lab/shared';
 import type { DbTx } from '../db/types.js';
+import { principalSlot } from '../lib/lis-spreadsheet.js';
 import { toIso, toIsoOrNull, toNumber } from './row-mappers.js';
 
 // ---------------------------------------------------------------------------
@@ -250,6 +252,8 @@ export function mapDetail(
     subtotal: number;
     rejectionReason: string | null;
     reminders: ProposalReminderEntry[];
+    /** D-278: `findLisBudgetValues`. Ausente = `null`. */
+    lisBudgetValues?: LisBudgetValues | null;
   },
 ): ProposalDetail {
   return {
@@ -267,6 +271,75 @@ export function mapDetail(
     lisPaidValue: row.lis_paid_value === null ? null : toNumber(row.lis_paid_value),
     lisPaidOn: row.lis_paid_on,
     reminders: extra.reminders,
+    lisBudgetValues: extra.lisBudgetValues ?? null,
+  };
+}
+
+interface LisBudgetValuesRow {
+  insurance_1: string | null;
+  value_1: unknown;
+  insurance_2: string | null;
+  value_2: unknown;
+  insurance_3: string | null;
+  value_3: unknown;
+  total_value: unknown;
+  net_value: unknown;
+  discount_percent_1: unknown;
+  discount_value_1: unknown;
+  surcharge_value_1: unknown;
+  discount_percent_2: unknown;
+  discount_value_2: unknown;
+  surcharge_value_2: unknown;
+  discount_percent_3: unknown;
+  discount_value_3: unknown;
+  surcharge_value_3: unknown;
+}
+
+function nullableNumber(value: unknown): number | null {
+  return value === null || value === undefined ? null : toNumber(value);
+}
+
+/**
+ * Bruto, desconto, acrescimo e liquido do orcamento do LIS vinculado, no
+ * convenio PRINCIPAL (CRMLAB-114, D-278 item 6). Bruto e liquido vem das
+ * colunas geradas (`total_value`/`net_value`); desconto, percentual e
+ * acrescimo, do mesmo convenio, escolhido por `principalSlot` (o espelho em
+ * TS do CASE da 014/057). `null` = sem vinculo ou orcamento nao importado.
+ */
+export async function findLisBudgetValues(
+  tx: DbTx,
+  tenantId: string,
+  lisBudgetNumber: string | null,
+): Promise<LisBudgetValues | null> {
+  if (lisBudgetNumber === null) return null;
+  const result = await tx.query<LisBudgetValuesRow>(
+    `SELECT insurance_1, value_1, insurance_2, value_2, insurance_3, value_3,
+            total_value, net_value,
+            discount_percent_1, discount_value_1, surcharge_value_1,
+            discount_percent_2, discount_value_2, surcharge_value_2,
+            discount_percent_3, discount_value_3, surcharge_value_3
+       FROM lis_budgets
+      WHERE tenant_id = $1 AND number = $2`,
+    [tenantId, lisBudgetNumber],
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  const slot = principalSlot({
+    insurance1: row.insurance_1,
+    value1: nullableNumber(row.value_1),
+    insurance2: row.insurance_2,
+    value2: nullableNumber(row.value_2),
+    insurance3: row.insurance_3,
+    value3: nullableNumber(row.value_3),
+  });
+  const pick = (prefix: 'discount_percent' | 'discount_value' | 'surcharge_value'): number | null =>
+    slot === null ? null : nullableNumber(row[`${prefix}_${slot}`]);
+  return {
+    grossValue: toNumber(row.total_value),
+    discountValue: pick('discount_value') ?? 0,
+    discountPercent: pick('discount_percent'),
+    surchargeValue: pick('surcharge_value') ?? 0,
+    netValue: toNumber(row.net_value),
   };
 }
 
@@ -426,7 +499,7 @@ export interface BitlabProposalInsert {
   lisBudgetNumber: string;
   /** Login do atendente do Bitlab, ou `null` (D-195 item 5). */
   createdBy: string | null;
-  /** `lis_budgets.total_value` (D-195 item 2). */
+  /** `lis_budgets.net_value` — liquido do convenio principal (D-195 item 2, D-278 item 3). */
   totalPrice: number;
   insuranceId: string | null;
 }

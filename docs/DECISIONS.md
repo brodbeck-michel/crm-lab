@@ -5852,3 +5852,65 @@ sozinha) não via mensagem nova do chat interno, e vice-versa.
 `conversation.routes.ts`; inventário de `route-tenant-isolation.spec.ts` (112 → 113). Frontend
 `Sidebar.tsx`, `api/conversations.ts`, `api/query-keys.ts`, `api/ws.ts`. API_CONTRACTS §2,
 PAGES §9, COMPONENTS (Sidebar). Sem migração.
+
+### D-278: Desconto, acréscimo e valor líquido do orçamento do Bitlab ao lado do bruto (CRMLAB-114)
+**Decisão:** desde 23/10/2026 a API de orçamentos manda, por convênio n=1,2,3, `PER_DESCONTO{n}`,
+`VL_DESCONTO{n}`, `VL_ACRESCIMO{n}` e `VL_APAGAR{n}` (= `VL_TOTAL` − `VL_DESCONTO` +
+`VL_ACRESCIMO`). O CRM passa a guardar e mostrar o líquido sem mexer no bruto.
+1. **Bruto não muda:** `lis_budgets.total_value` (gerada, convênio principal, D-124) fica como
+   está. Nenhum relatório antigo muda de número sem aviso; os campos antigos do contrato também.
+2. **Líquido = mesma regra do bruto:** migração 057 cria as 12 colunas por convênio
+   (`discount_percent_n`, `discount_value_n`, `surcharge_value_n`, `payable_value_n`, todas NULL)
+   e `net_value`, coluna **gerada** com o mesmo CASE da 014 trocando `value_n` por
+   `COALESCE(payable_value_n, value_n)`. A escolha do convênio continua pelo bruto. Sem
+   `VL_APAGAR` no convênio escolhido (planilha, API antiga, orçamento não reenviado): líquido =
+   bruto daquele convênio. Gerada para a regra morar num lugar só, como a `total_value`; o espelho
+   em TS (`principalSlot`/`netValue`, `lib/lis-spreadsheet.ts`) é comparado com a coluna caso a
+   caso em `tests/db/migration-057-net-value.spec.ts`.
+   **A verdade é `VL_DESCONTO`/`VL_APAGAR`; o percentual é só informativo** (orç. 71197 de prod:
+   `PER_DESCONTO1 = 0` com `VL_DESCONTO1 = 10,62`). `discount_percent_n` é `NUMERIC(9,4)` largo de
+   propósito: percentual estranho não derruba o upsert.
+3. **Proposta do Bitlab nasce com o líquido** (`bitlab-proposal.service.ts` lê `net_value`). A
+   conciliação, que regrava o valor da proposta `bitlab` **não terminal** a partir do orçamento
+   (D-195 item 2), passou a regravar com o líquido também — senão a proposta nascia líquida e a
+   conciliação do mesmo chunk a devolvia ao bruto. Consequência: proposta `bitlab` **aberta** cujo
+   orçamento for reenviado com desconto passa ao líquido; proposta fechada (`ganho`/`perdido`)
+   nunca é recalculada. Recebido/`paid_value`/requisição: sem mudança.
+4. **KPIs do LIS** (`GET /lis-budgets/summary`, `GET /reports/executive`): `issued` ganha
+   `netValue` (`SUM(net_value)`), `discountValue` (`totalValue − netValue`, desconto já abatido
+   do acréscimo) e `netAverageTicket`; a série mensal ganha `issuedNetValue`. Tela de Resultados:
+   "Total Orçado" mostra o líquido, com "bruto R$ X, desconto R$ Y" na legenda quando houve
+   desconto/acréscimo; variação vs. período anterior e "% do orçado" usam o líquido; o gráfico de
+   evolução desenha o líquido. PDF executivo: "Total Orçado" e "Ticket médio orçado" líquidos,
+   bruto/desconto sob "Orçamentos emitidos"; "Orçado" por convênio segue bruto (rotulado
+   "Orçado (bruto)") e `byInsurance.totalValue` não mudou. `GET /lis-budgets` ganha `netValue`.
+5. **Detalhe da proposta:** `ProposalDetail.lisBudgetValues` (bruto, desconto R$ e %, acréscimo,
+   a pagar, do convênio principal). `LisReferenceSection` mostra uma linha enxuta "Valor no LIS:
+   R$ X" sem desconto/acréscimo, e a linha completa quando há.
+6. **Planilha** (sem essas colunas) importa igual, com líquido = bruto. Reimportar pela planilha
+   não apaga o desconto gravado pela API, a não ser que o bruto daquele convênio tenha mudado (aí
+   o desconto antigo não vale mais). A API grava sempre o que mandou, null inclusive.
+7. **Sem backfill novo:** o `WHERE EXCLUDED.total_value >= lis_budgets.total_value` do upsert não
+   mudou; como o bruto é o mesmo, orçamento reenviado atualiza e ganha os campos.
+8. **Como preencher os orçamentos antigos:** pela sync incremental, quando o orçamento mudar no
+   Bitlab, e por uma **rodada completa** (`mode: 'full'`, que o admin já dispara). Na hml, rodar
+   a completa manualmente depois do deploy; em prod, junto do deploy, com OK do Michel. Até lá,
+   eles ficam com líquido = bruto (nenhum número muda).
+**Motivo:** o Bitlab passou a expor o desconto dado no balcão; o "orçado" bruto superestimava o
+que o paciente de fato paga, e o cartão do Bitlab nascia com um valor que não era o do orçamento
+entregue.
+**Impacto:** migração `057_lis_budgets_discount_net.sql`; backend `lib/bitlab-client.ts`
+(`budgetSchema`, `toLisRow`), `lib/lis-spreadsheet.ts` (campos opcionais, `principalSlot`,
+`netValue`), `repositories/lis-import.repository.ts` (`upsertBudget`),
+`repositories/lis-analytics.repository.ts`, `services/lis-analytics.service.ts`
+(`toIssuedTotals`), `services/executive-report.service.ts`, `services/bitlab-proposal.service.ts`,
+`services/lis-reconcile.service.ts`, `repositories/proposal.repository.ts`
+(`findLisBudgetValues`), `services/proposal.service.ts` (`loadDetail`). Shared: `LisBudget`,
+`LisBudgetValues`, `LisIssuedTotals`, `ExecutiveReportMonthlyPoint`, `ProposalDetail`. Frontend:
+`pages/Results.tsx`, `components/lis/MonthlySeriesChart.tsx`, `lib/pdf/executive-report.ts`,
+`components/proposal/LisReferenceSection.tsx`. Docs: SCHEMA §26, SERVICES §20/§24.1/§25/§26,
+API_CONTRACTS (§3 detalhe, §5c, §10.2), BUSINESS_RULES §11.10/§11.12, PAGES §6/§14. Testes:
+`tests/db/migration-057-net-value.spec.ts` (novo), `bitlab-client.spec.ts`,
+`bitlab-proposals.spec.ts`, `lis-analytics.spec.ts`, `executive-report.spec.ts`,
+`proposal-routes.spec.ts`; front `Results.spec.tsx`, `LisReferenceSection.spec.tsx`,
+`Reconciliation.spec.tsx`.

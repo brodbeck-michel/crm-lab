@@ -1650,10 +1650,12 @@ export async function loadDetail(tx: DbTx, id: string): Promise<ProposalDetail> 
   const history = await repo.findHistory(tx, id);
   const rejectionReason = await repo.findRejectionReason(tx, id);
   const reminders = await reminderRepo.findAll(tx, id);
+  const lisBudgetValues = await repo.findLisBudgetValues(tx, row.tenant_id, row.lis_budget_number);
   return repo.mapDetail(row, items, history, {
     subtotal: calculateSubtotal(items),
     rejectionReason,
     reminders,
+    lisBudgetValues,
   });
 }
 

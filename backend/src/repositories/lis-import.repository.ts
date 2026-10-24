@@ -12,7 +12,7 @@ import type { LisImport, LisImportKind, LisImportStatus } from '@crm-lab/shared'
 import type { DbClient, DbTx } from '../db/types.js';
 import { findAttendantIdByFoldedName } from './attendant.repository.js';
 import { toIso, toIsoOrNull } from './row-mappers.js';
-import type { LisPayment, LisSpreadsheetRow } from '../lib/lis-spreadsheet.js';
+import type { LisDiscountField, LisPayment, LisSpreadsheetRow } from '../lib/lis-spreadsheet.js';
 import { principalInsuranceName } from '../lib/lis-spreadsheet.js';
 
 // ---------------------------------------------------------------------------
@@ -231,13 +231,33 @@ export async function resolveAttendantId(
   return findAttendantIdByFoldedName(tx, tenantId, row.attendantName);
 }
 
+/** Colunas de desconto/líquido por convênio (D-278), na ordem dos parâmetros. */
+const DISCOUNT_COLUMNS: ReadonlyArray<{ column: string; slot: 1 | 2 | 3; field: LisDiscountField }> =
+  ([1, 2, 3] as const).flatMap((slot) => [
+    { column: `discount_percent_${slot}`, slot, field: `discountPercent${slot}` as LisDiscountField },
+    { column: `discount_value_${slot}`, slot, field: `discountValue${slot}` as LisDiscountField },
+    { column: `surcharge_value_${slot}`, slot, field: `surchargeValue${slot}` as LisDiscountField },
+    { column: `payable_value_${slot}`, slot, field: `payableValue${slot}` as LisDiscountField },
+  ]);
+
+/** A linha veio da API com os campos de desconto (D-278)? A planilha não os tem. */
+function hasDiscountFields(row: LisSpreadsheetRow): boolean {
+  return DISCOUNT_COLUMNS.some(({ field }) => row[field] !== undefined);
+}
+
 /**
  * Upsert em `lis_budgets` — `ON CONFLICT (tenant_id, number)` só sobrescreve
  * quando o novo total é maior ou igual (BUSINESS_RULES.md §11.1). `EXCLUDED`
- * inclui as colunas GERADAS (`total_value`) computadas para a linha proposta.
+ * inclui as colunas GERADAS (`total_value`, `net_value`) computadas para a
+ * linha proposta.
  *
  * `paid_value`/`paid_on` NÃO são gravados aqui (CRMLAB-53, D-188 item 5): são
  * derivados do extrato por `recomputePaidValues`.
+ *
+ * Desconto/líquido (D-278 item 6): a API sempre grava o que mandou (null
+ * inclusive). A planilha não tem essas colunas — reimportar por ela não apaga
+ * o que a API gravou, a não ser que o bruto daquele convênio tenha mudado (aí
+ * o desconto antigo não vale mais e o líquido volta a ser o bruto).
  */
 export async function upsertBudget(
   tx: DbTx,
@@ -247,18 +267,33 @@ export async function upsertBudget(
   insuranceId: string | null,
   attendantId: string | null,
 ): Promise<void> {
+  const fromApi = hasDiscountFields(row);
+  const discountParams = DISCOUNT_COLUMNS.map(({ field }) => row[field] ?? null);
+  const firstDiscountParam = 18;
+  const discountColumns = DISCOUNT_COLUMNS.map(({ column }) => column).join(', ');
+  const discountPlaceholders = DISCOUNT_COLUMNS.map((_, i) => `$${firstDiscountParam + i}`).join(', ');
+  const fromApiParam = `$${firstDiscountParam + DISCOUNT_COLUMNS.length}`;
+  const discountUpdates = DISCOUNT_COLUMNS.map(
+    ({ column, slot }) =>
+      `${column} = CASE WHEN ${fromApiParam}::boolean
+                          OR EXCLUDED.value_${slot} IS DISTINCT FROM lis_budgets.value_${slot}
+                        THEN EXCLUDED.${column} ELSE lis_budgets.${column} END,`,
+  ).join('\n       ');
+
   await tx.query(
     `INSERT INTO lis_budgets (
        tenant_id, number, issued_on, patient_name,
        insurance_1, value_1, insurance_2, value_2, insurance_3, value_3,
        insurance_id, attendant_name, attendant_id, insurance_average,
-       requisition_number, requisition_value, import_id
+       requisition_number, requisition_value, import_id, ${discountColumns}
      ) VALUES (
-       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
+       ${discountPlaceholders}
      )
      ON CONFLICT (tenant_id, number) DO UPDATE SET
        issued_on = EXCLUDED.issued_on,
        patient_name = EXCLUDED.patient_name,
+       ${discountUpdates}
        insurance_1 = EXCLUDED.insurance_1,
        value_1 = EXCLUDED.value_1,
        insurance_2 = EXCLUDED.insurance_2,
@@ -292,6 +327,8 @@ export async function upsertBudget(
       row.requisitionNumber,
       row.requisitionValue,
       importId,
+      ...discountParams,
+      fromApi,
     ],
   );
 }

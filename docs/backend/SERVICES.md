@@ -1268,7 +1268,10 @@ export interface LisAnalyticsService {
 **SQL em CTEs, três blocos (mesmo formato para `getSummary`, `listPending`, `getPendingSummary`
 e `ExecutiveReportService`, §22 — um único texto de query reaproveitado, não reescrito por
 consumidor):**
-- **`issued`** — janela de **emissão**: `issued_on` dentro do período pedido.
+- **`issued`** — janela de **emissão**: `issued_on` dentro do período pedido. Bruto
+  (`totalValue`/`averageTicket`, `SUM(total_value)`) e líquido (`netValue`/`netAverageTicket`,
+  `SUM(net_value)`), com `discountValue = totalValue − netValue` (D-278; montado por
+  `toIssuedTotals`, que o relatório executivo também usa).
 - **`req`** — `DISTINCT ON (requisition_number) ... ORDER BY requisition_number, paid_value
   DESC`: dedupe por requisição, maior `paid_value` vence (BUSINESS_RULES.md §11) — a mesma
   requisição pode aparecer em duas linhas de `lis_budgets` (reimportação com pagamento
@@ -1502,6 +1505,17 @@ vem com todos eles `null`. A linha estornada **continua saindo**, com `ESTORNADO
 `alteracao` **não** considera `DATA_ESTORNO` (5 casos testados em 28/09). Todos opcionais no
 schema: a falta deles não quebra a rodada, e a linha cai na chave da planilha (D-188 item 2).
 
+**Desconto e líquido (aditivos na v1, desde 23/10/2026, CRMLAB-114, D-278):** por convênio
+n=1,2,3, `PER_DESCONTO{n}` (percentual), `VL_DESCONTO{n}` (R$), `VL_ACRESCIMO{n}` (R$) e
+`VL_APAGAR{n}` (líquido = `VL_TOTAL{n}` − `VL_DESCONTO{n}` + `VL_ACRESCIMO{n}`). Chegam como
+número (conferido em prod em 23/10); convênio 2/3 inexistente vem `null`. Todos opcionais no
+schema (helper `money`): API antiga sem eles → `null`, e o líquido cai no bruto. **A verdade é
+`VL_DESCONTO`/`VL_APAGAR`; o percentual é só informativo** (orç. 71197 de prod veio com
+`PER_DESCONTO1 = 0` e `VL_DESCONTO1 = 10,62`). `toLisRow` os leva para `discountPercent{n}`/
+`discountValue{n}`/`surchargeValue{n}`/`payableValue{n}` de `LisSpreadsheetRow`, e o upsert grava
+nas colunas da migração 057 (SCHEMA.md §26). Orçamento antigo ganha os campos quando a sync o
+reenvia — incremental (quando ele muda) ou rodada completa (`mode: 'full'`).
+
 **Tolerância na borda** (lições da sandbox de 18/09, `Avaliacao_APIs_Bitlab_2026-09-18.md`):
 - Envelope validado com zod. Os campos que usamos são obrigatórios no schema, os desconhecidos
   são ignorados (`passthrough`). Falhou o schema → `contract`.
@@ -1557,7 +1571,8 @@ announceLisWins(deps: { wsHub; cache }, tenantId: string, transitions: readonly 
   desfaria. O audit `update_proposal_status`/`lis_reconcile_conflict` entra **na** transação
   (`auditRepo.insert`), porque `db.withTenant` não aninha e ele tem que sumir junto num rollback.
 - **Valor do Bitlab (D-195 item 2):** proposta `bitlab` não terminal tem `total_price` e
-  `insurance_id` regravados a partir de `lis_budgets.total_value`/`insurance_id` quando mudaram.
+  `insurance_id` regravados a partir de `lis_budgets.net_value`/`insurance_id` quando mudaram
+  (o LÍQUIDO desde a D-278 item 3 — sem os campos de desconto, igual ao bruto).
 
 ---
 
@@ -1588,7 +1603,7 @@ announceBitlabProposals(deps: { wsHub; cache }, tenantId: string, proposalIds: r
 4. Para cada um: `proposal_number` pelo `pg_advisory_xact_lock` de sempre; `INSERT ... ON
    CONFLICT (tenant_id, lis_budget_number) WHERE lis_budget_number IS NOT NULL DO NOTHING`;
    `origin: 'bitlab'`, `status: 'novo_contato'`, sem conversa, `created_by` = login do atendente
-   do Bitlab (`attendants.user_id`, usuário ativo) ou `NULL`, `total_price` = `total_value`,
+   do Bitlab (`attendants.user_id`, usuário ativo) ou `NULL`, `total_price` = `net_value` (líquido, D-278),
    `insurance_id` do orçamento, `discount_percent: 0`, `approval_status: 'none'`.
 5. Histórico `novo_contato` com `changed_by NULL`; audit `create_proposal` com `userId: null` e
    `newValues: { origin: "bitlab", lisBudgetNumber, totalPrice, status }`.

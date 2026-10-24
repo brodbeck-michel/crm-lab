@@ -24,7 +24,7 @@ import { toIso, toNumber } from './row-mappers.js';
 
 /** `issued_on`/`paid_on` são `DATE` puras (D-110) — `to_char` evita o driver devolver `Date`. */
 const BUDGET_COLUMNS = `id, number, to_char(issued_on, 'YYYY-MM-DD') AS issued_on, patient_name,
-  principal_insurance_name, total_value, insurance_id, attendant_name, attendant_id,
+  principal_insurance_name, total_value, net_value, insurance_id, attendant_name, attendant_id,
   requisition_number, requisition_value, paid_value, to_char(paid_on, 'YYYY-MM-DD') AS paid_on,
   proposal_id, created_at`;
 
@@ -35,6 +35,7 @@ interface BudgetRow {
   patient_name: string | null;
   principal_insurance_name: string | null;
   total_value: string | number;
+  net_value: string | number;
   insurance_id: string | null;
   attendant_name: string | null;
   attendant_id: string | null;
@@ -54,6 +55,7 @@ function toLisBudget(row: BudgetRow): LisBudget {
     patientName: row.patient_name,
     principalInsuranceName: row.principal_insurance_name,
     totalValue: toNumber(row.total_value),
+    netValue: toNumber(row.net_value),
     insuranceId: row.insurance_id,
     attendantName: row.attendant_name,
     attendantId: row.attendant_id,
@@ -154,10 +156,16 @@ function summaryFilterClauses(
 
 export interface IssuedTotalsRow {
   count: number;
+  /** Bruto (`SUM(total_value)`). */
   totalValue: number;
+  /** Líquido (`SUM(net_value)`, D-278). */
+  netValue: number;
 }
 
-/** Janela de EMISSÃO: `issued_on` dentro do período (BUSINESS_RULES.md §11.7). */
+/**
+ * Janela de EMISSÃO: `issued_on` dentro do período (BUSINESS_RULES.md §11.7).
+ * Bruto e líquido do convênio principal, lado a lado (D-278).
+ */
 export async function getIssuedTotals(
   tx: DbTx,
   tenantId: string,
@@ -166,13 +174,22 @@ export async function getIssuedTotals(
   const params: unknown[] = [tenantId, filters.startDate, filters.endDate];
   const extra = summaryFilterClauses(filters, params);
   const where = ['tenant_id = $1', 'issued_on BETWEEN $2 AND $3', ...extra].join(' AND ');
-  const result = await tx.query<{ count: number | string; total_value: string | number | null }>(
-    `SELECT COUNT(*)::int AS count, COALESCE(SUM(total_value), 0) AS total_value
+  const result = await tx.query<{
+    count: number | string;
+    total_value: string | number | null;
+    net_value: string | number | null;
+  }>(
+    `SELECT COUNT(*)::int AS count, COALESCE(SUM(total_value), 0) AS total_value,
+            COALESCE(SUM(net_value), 0) AS net_value
        FROM lis_budgets WHERE ${where}`,
     params,
   );
   const row = result.rows[0];
-  return { count: Number(row?.count ?? 0), totalValue: toNumber(row?.total_value) };
+  return {
+    count: Number(row?.count ?? 0),
+    totalValue: toNumber(row?.total_value),
+    netValue: toNumber(row?.net_value),
+  };
 }
 
 export interface RequisitionTotalsRow {
@@ -425,6 +442,8 @@ export async function getInsuranceAgg(
 export interface MonthlyPointRow {
   month: string;
   issuedValue: number;
+  /** Líquido orçado no mês (`SUM(net_value)`, D-278). */
+  issuedNetValue: number;
   requisitionValue: number;
   paidValue: number;
 }
@@ -437,6 +456,7 @@ export async function getMonthlySeries(
   const result = await tx.query<{
     month: string;
     issued_value: string | number | null;
+    issued_net_value: string | number | null;
     requisition_value: string | number | null;
     paid_value: string | number | null;
   }>(
@@ -445,7 +465,8 @@ export async function getMonthlySeries(
          FROM generate_series(0, 11) AS n
      ),
      issued AS (
-       SELECT to_char(issued_on, 'YYYY-MM') AS month, SUM(total_value) AS value
+       SELECT to_char(issued_on, 'YYYY-MM') AS month, SUM(total_value) AS value,
+              SUM(net_value) AS net_value
          FROM lis_budgets
         WHERE tenant_id = $1 AND issued_on IS NOT NULL
         GROUP BY 1
@@ -470,6 +491,7 @@ export async function getMonthlySeries(
      )
      SELECT months.month,
             COALESCE(issued.value, 0) AS issued_value,
+            COALESCE(issued.net_value, 0) AS issued_net_value,
             COALESCE(requisition.value, 0) AS requisition_value,
             COALESCE(paid.value, 0) AS paid_value
        FROM months
@@ -482,6 +504,7 @@ export async function getMonthlySeries(
   return result.rows.map((row) => ({
     month: row.month,
     issuedValue: toNumber(row.issued_value),
+    issuedNetValue: toNumber(row.issued_net_value),
     requisitionValue: toNumber(row.requisition_value),
     paidValue: toNumber(row.paid_value),
   }));

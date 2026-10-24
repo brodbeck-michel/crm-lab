@@ -43,7 +43,8 @@ interface ReconcileRow {
   requisition_number: string | null;
   paid_value: unknown;
   paid_on: string | null;
-  budget_total_value: unknown;
+  /** `lis_budgets.net_value` — liquido do convenio principal (D-278 item 3). */
+  budget_net_value: unknown;
   budget_insurance_id: string | null;
 }
 
@@ -144,9 +145,11 @@ async function reconcileRows(
     const bitlab = row.origin === 'bitlab';
 
     // Origem `bitlab`: o valor e o convenio sao os do orcamento (D-195 item 2),
-    // regravados enquanto a proposta nao fecha, so se mudaram.
+    // regravados enquanto a proposta nao fecha, so se mudaram. O valor e o
+    // LIQUIDO (`net_value`, D-278 item 3) — o mesmo com que a proposta nasce;
+    // sem os campos de desconto, o liquido e o proprio bruto.
     if (bitlab && open) {
-      const budgetTotal = toNumber(row.budget_total_value);
+      const budgetTotal = toNumber(row.budget_net_value);
       if (toNumber(row.total_price) !== budgetTotal || row.insurance_id !== row.budget_insurance_id) {
         await tx.query(
           `UPDATE proposals SET total_price = $2, insurance_id = $3, updated_at = NOW()
@@ -171,7 +174,7 @@ const SELECT_JOIN = `
          b.id AS budget_id, b.proposal_id AS budget_proposal_id,
          NULLIF(b.requisition_number, '') AS requisition_number,
          b.paid_value, to_char(b.paid_on, 'YYYY-MM-DD') AS paid_on,
-         b.total_value AS budget_total_value, b.insurance_id AS budget_insurance_id
+         b.net_value AS budget_net_value, b.insurance_id AS budget_insurance_id
     FROM proposals p
     JOIN lis_budgets b ON b.tenant_id = p.tenant_id AND b.number = p.lis_budget_number
    WHERE p.tenant_id = $1`;

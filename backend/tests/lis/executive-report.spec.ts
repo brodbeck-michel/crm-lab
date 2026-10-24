@@ -88,8 +88,20 @@ describe('GET /reports/executive', () => {
 
     // Orcado e requisicao seguem a EMISSAO (julho); recebido segue o PAGAMENTO
     // (agosto) — as tres series nunca sao a mesma coisa deslocada.
-    expect(july).toEqual({ month: '2026-07', issuedValue: 1000, requisitionValue: 800, paidValue: 0 });
-    expect(august).toEqual({ month: '2026-08', issuedValue: 0, requisitionValue: 0, paidValue: 600 });
+    expect(july).toEqual({
+      month: '2026-07',
+      issuedValue: 1000,
+      issuedNetValue: 1000,
+      requisitionValue: 800,
+      paidValue: 0,
+    });
+    expect(august).toEqual({
+      month: '2026-08',
+      issuedValue: 0,
+      issuedNetValue: 0,
+      requisitionValue: 0,
+      paidValue: 600,
+    });
   });
 
   it('brandName cai no nome do proprio tenant quando o tema nao foi personalizado (D-116)', async () => {

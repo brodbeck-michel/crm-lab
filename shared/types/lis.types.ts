@@ -151,7 +151,13 @@ export interface LisBudget {
   issuedOn: IsoDate | null;
   patientName: string | null;
   principalInsuranceName: string | null;
+  /** Bruto do convênio principal (`VL_TOTAL`, D-124). */
   totalValue: number;
+  /**
+   * Líquido do convênio principal (`VL_APAGAR`, CRMLAB-114, D-278). Sem os
+   * campos de desconto (planilha, API antiga), igual a `totalValue`.
+   */
+  netValue: number;
   insuranceId: string | null;
   attendantName: string | null;
   attendantId: string | null;
@@ -163,6 +169,24 @@ export interface LisBudget {
   createdAt: IsoDateTime;
 }
 
+/**
+ * Valores do orçamento do LIS no convênio principal (CRMLAB-114, D-278) —
+ * `ProposalDetail.lisBudgetValues`. Sem os campos de desconto (planilha, API
+ * antiga): desconto e acréscimo 0, percentual `null`, líquido = bruto.
+ */
+export interface LisBudgetValues {
+  /** `VL_TOTAL` (`lis_budgets.total_value`). */
+  grossValue: number;
+  /** `VL_DESCONTO` em R$ — é a verdade do desconto. */
+  discountValue: number;
+  /** `PER_DESCONTO` — só informativo (pode vir 0 com desconto em R$). `null` = não veio. */
+  discountPercent: number | null;
+  /** `VL_ACRESCIMO` em R$. */
+  surchargeValue: number;
+  /** `VL_APAGAR` (`lis_budgets.net_value`) = bruto − desconto + acréscimo. */
+  netValue: number;
+}
+
 export interface LisBudgetsPeriod {
   startDate: IsoDate;
   endDate: IsoDate;
@@ -171,8 +195,19 @@ export interface LisBudgetsPeriod {
 /** Recorte "emissão" (BUSINESS_RULES.md §11.7) — orçamentos emitidos no período. */
 export interface LisIssuedTotals {
   count: number;
+  /** Bruto (`SUM(total_value)`). Mantido como era antes do D-278. */
   totalValue: number;
+  /** Ticket médio BRUTO (`totalValue / count`). */
   averageTicket: number;
+  /**
+   * Líquido (`SUM(net_value)`, CRMLAB-114, D-278) — o número principal da tela
+   * e do relatório. Sem os campos de desconto, igual a `totalValue`.
+   */
+  netValue: number;
+  /** Desconto líquido de acréscimos: `totalValue − netValue`. */
+  discountValue: number;
+  /** Ticket médio LÍQUIDO (`netValue / count`). */
+  netAverageTicket: number;
 }
 
 /** Recorte "pagamento" — requisições pagas no período (dedupe por requisição, §11.2). */
@@ -309,8 +344,10 @@ export interface LisBudgetsFilters {
 export interface ExecutiveReportMonthlyPoint {
   /** `YYYY-MM`. */
   month: string;
-  /** Orçado no mês — janela de EMISSÃO (`SUM(total_value)`). */
+  /** Orçado BRUTO no mês — janela de EMISSÃO (`SUM(total_value)`). */
   issuedValue: number;
+  /** Orçado LÍQUIDO no mês (`SUM(net_value)`, D-278) — a série que o gráfico desenha. */
+  issuedNetValue: number;
   /**
    * Convertido em requisição no mês — janela de EMISSÃO, dedupe por requisição,
    * `SUM(requisition_value)`. Mesma definição do KPI "Em Requisição" (D-125).

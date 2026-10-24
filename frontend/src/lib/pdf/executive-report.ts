@@ -216,7 +216,7 @@ export async function generateExecutiveReportPdf(input: ExecutiveReportPdfInput)
   if (report.byInsurance.length) {
     autoTable(doc, {
       startY: y,
-      head: [['Convênio', 'Orçamentos', 'Orçado', 'Recebido', '% da receita']],
+      head: [['Convênio', 'Orçamentos', 'Orçado (bruto)', 'Recebido', '% da receita']],
       body: report.byInsurance.map((row) => [
         row.insuranceName,
         String(row.count),
@@ -258,7 +258,7 @@ export async function generateExecutiveReportPdf(input: ExecutiveReportPdfInput)
       .slice(-12)
       .map((point) => [
         monthLabel(point.month),
-        brl(point.issuedValue),
+        brl(point.issuedNetValue),
         brl(point.requisitionValue),
         brl(point.paidValue),
       ]),
@@ -428,10 +428,11 @@ function heroItems(report: ExecutiveReport, previous: LisBudgetsSummary | null |
         : undefined,
     },
     {
+      // Líquido (D-278): bruto e desconto vão nos indicadores gerais.
       label: 'Total Orçado',
-      value: brl(report.issued.totalValue),
+      value: brl(report.issued.netValue),
       variation: previous
-        ? { current: report.issued.totalValue, previous: previous.issued.totalValue, unit: 'rel' }
+        ? { current: report.issued.netValue, previous: previous.issued.netValue, unit: 'rel' }
         : undefined,
     },
     {
@@ -446,8 +447,19 @@ function heroItems(report: ExecutiveReport, previous: LisBudgetsSummary | null |
 
 function generalKpis(report: ExecutiveReport, facts: Facts): KpiItem[] {
   return [
-    { label: 'Orçamentos emitidos', value: int(report.issued.count) },
-    { label: 'Ticket médio orçado', value: brl(report.issued.averageTicket) },
+    {
+      label: 'Orçamentos emitidos',
+      value: int(report.issued.count),
+      // D-278: bruto e desconto só quando houve desconto/acréscimo no período.
+      ...(report.issued.discountValue !== 0
+        ? {
+            sub: `bruto ${brl(report.issued.totalValue)}, ${
+              report.issued.discountValue > 0 ? 'desconto' : 'acréscimo'
+            } ${brl(Math.abs(report.issued.discountValue))}`,
+          }
+        : {}),
+    },
+    { label: 'Ticket médio orçado', value: brl(report.issued.netAverageTicket) },
     {
       label: 'Em requisição',
       value: brl(report.requisition.totalValue),
@@ -519,7 +531,7 @@ function highlights(
 
 function opinionText(report: ExecutiveReport, facts: Facts, brand: string): string {
   const parts = [
-    `O período apresentou receita recebida de ${brl(report.paid.totalValue)} sobre ${int(report.issued.count)} orçamentos emitidos (${brl(report.issued.totalValue)}), com taxa de conversão de ${pctText(report.paid.conversionQty)} e ticket médio de ${brl(report.paid.averageTicket)}.`,
+    `O período apresentou receita recebida de ${brl(report.paid.totalValue)} sobre ${int(report.issued.count)} orçamentos emitidos (${brl(report.issued.netValue)} líquidos), com taxa de conversão de ${pctText(report.paid.conversionQty)} e ticket médio de ${brl(report.paid.averageTicket)}.`,
   ];
 
   if (facts.revenueDelta !== null && facts.previousPaid !== null) {

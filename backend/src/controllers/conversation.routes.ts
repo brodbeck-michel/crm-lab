@@ -102,9 +102,9 @@ export const getConversationQuerySchema = z
     messageLimit: z.coerce.number().int().min(1).max(MAX_MESSAGE_LIMIT).optional(),
     limit: z.coerce.number().int().min(1).max(MAX_MESSAGE_LIMIT).optional(),
     page: z.coerce.number().int().min(1).optional(),
-    before: z.string().uuid().optional(),
-    after: z.string().uuid().optional(),
-    around: z.string().uuid().optional(),
+    before: z.uuid().optional(),
+    after: z.uuid().optional(),
+    around: z.uuid().optional(),
   })
   .refine(
     (query) =>
@@ -181,7 +181,7 @@ export const createMessageSchema = z.object({
   messageType: z.enum(['text', 'image', 'audio', 'pdf', 'doc']).optional(),
   attachmentUrl: z.string().max(500).nullish(),
   /** Responder citando (CRMLAB-66, D-221). */
-  quotedMessageId: z.string().uuid().nullish(),
+  quotedMessageId: z.uuid().nullish(),
 });
 
 /** Emoji de 1..32 BYTES (a coluna e VARCHAR(32) e um emoji composto passa de 1 char) — D-222. */
@@ -194,23 +194,23 @@ export const setReactionSchema = z.object({
 });
 
 export const messageParamsSchema = z.object({
-  id: z.string().uuid(),
-  messageId: z.string().uuid(),
+  id: z.uuid(),
+  messageId: z.uuid(),
 });
 
 /** `POST /:id/participants` (D-263). */
-export const addParticipantSchema = z.object({ userId: z.string().uuid() });
+export const addParticipantSchema = z.object({ userId: z.uuid() });
 
 /** `DELETE /:id/participants/:userId` (D-263). */
 export const participantParamsSchema = z.object({
-  id: z.string().uuid(),
-  userId: z.string().uuid(),
+  id: z.uuid(),
+  userId: z.uuid(),
 });
 
 export const updateConversationSchema = z
   .object({
     status: z.enum(['active', 'closed']),
-    assignedTo: z.string().uuid().nullable(),
+    assignedTo: z.uuid().nullable(),
     tags: z.array(z.string().trim().min(1).max(50)).max(20),
   })
   .partial()
@@ -218,7 +218,7 @@ export const updateConversationSchema = z
     message: 'Informe ao menos um campo para atualizar',
   });
 
-export const conversationIdParamSchema = z.object({ id: z.string().uuid() });
+export const conversationIdParamSchema = z.object({ id: z.uuid() });
 
 /** `POST /:id/presence` (D-226/D-227). */
 export const sendPresenceSchema = z.object({ presence: z.enum(['paused', 'composing']) });
@@ -232,7 +232,7 @@ export const createAttachmentSchema = z.object({
   fileName: z.string().trim().min(1).max(255),
   mimeType: z.string().trim().min(1).max(127),
   contentBase64: z.string().min(1),
-  quotedMessageId: z.string().uuid().nullish(),
+  quotedMessageId: z.uuid().nullish(),
   // Legenda (CRMLAB-69, D-231): aparada; vazia = sem legenda.
   caption: z.string().trim().max(MAX_CAPTION_LENGTH).nullish(),
 });

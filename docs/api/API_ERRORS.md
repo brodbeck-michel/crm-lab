@@ -94,6 +94,27 @@ a posição no corpo da requisição:
 Quem escreve tela: mostre uma **mensagem geral** para toda chave de `fields` que a tela não
 renderiza. "Não sei onde mostrar" nunca pode virar silêncio.
 
+### Texto do motivo em `details.fields` — pt-BR (CRMLAB-115, D-281)
+
+O motivo é a mensagem do schema. Quando o schema declara uma (`'E-mail inválido'`,
+`'No maximo 30 campos personalizados'`), vale ela. Quando não declara, vem a mensagem padrão do
+zod 4 no **locale pt-BR**, configurado globalmente no backend — nunca mais em inglês:
+
+| Caso | Exemplo de motivo |
+|------|-------------------|
+| Tipo errado | `Entrada inválida: esperava um número, recebeu um texto` |
+| Texto curto/longo | `Pequeno demais: esperava que o texto tivesse >= 3 caracteres` |
+| Array acima do teto | `Grande demais: esperava que o vetor tivesse <= 500 elementos` |
+| Formato | `Formato do UUID inválido`, `Formato do endereço de e-mail inválido` |
+| Enum | `Opção inválida: esperava uma das seguintes opções: "a"\|"b"` |
+| Chave desconhecida (`.strict()`) | `Chave inválida: "extra"` — vem em `_root` (não tem caminho) |
+
+As **chaves** de `fields` não mudaram: caminho com ponto (`items.0.quantity`) e `_root` quando o
+problema é do objeto inteiro. A tela não deve comparar o texto do motivo — só exibi-lo.
+
+**Arrays de entrada têm teto** (GHSA-mrhx-c7xc-m3w5): array acima do `max` responde
+`VALIDATION_ERROR` com a chave do próprio array (`prices`), sem validar item a item.
+
 ## Propostas
 
 | Código | HTTP | Quando | details |

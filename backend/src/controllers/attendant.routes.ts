@@ -45,13 +45,13 @@ export const listAttendantsQuerySchema = z.object({
 
 export const createAttendantSchema = z.object({
   name: z.string().trim().min(1).max(255),
-  userId: z.string().uuid().nullable().optional(),
+  userId: z.uuid().nullable().optional(),
 });
 
 export const updateAttendantSchema = z
   .object({
     name: z.string().trim().min(1).max(255),
-    userId: z.string().uuid().nullable(),
+    userId: z.uuid().nullable(),
     isActive: z.boolean(),
   })
   .partial()
@@ -59,7 +59,7 @@ export const updateAttendantSchema = z
     message: 'Informe ao menos um campo',
   });
 
-export const attendantIdParamSchema = z.object({ id: z.string().uuid() });
+export const attendantIdParamSchema = z.object({ id: z.uuid() });
 
 type CreateAttendantBody = z.infer<typeof createAttendantSchema>;
 type UpdateAttendantBody = z.infer<typeof updateAttendantSchema>;

@@ -53,20 +53,20 @@ import { dispositionFor, servedMimeType } from './media.routes.js';
 import { createVisitService, type VisitService } from '../services/visit.service.js';
 
 /** ISO 8601 com fuso (`Z` ou `-03:00`): sem fuso o horario seria ambiguo. */
-const isoDateTime = z.string().datetime({ offset: true });
+const isoDateTime = z.iso.datetime({ offset: true });
 
 export const listVisitsQuerySchema = z.object({
   from: isoDateTime,
   to: isoDateTime,
-  doctorId: z.string().uuid().optional(),
-  responsibleId: z.string().uuid().optional(),
+  doctorId: z.uuid().optional(),
+  responsibleId: z.uuid().optional(),
   status: z.enum(VISIT_STATUSES).optional(),
 });
 
 export const createVisitSchema = z
   .object({
-    doctorId: z.string().uuid(),
-    responsibleId: z.string().uuid(),
+    doctorId: z.uuid(),
+    responsibleId: z.uuid(),
     scheduledAt: isoDateTime,
     type: z.enum(VISIT_TYPES),
     agenda: z.string().max(VISIT_AGENDA_MAX_LENGTH).nullable().optional(),
@@ -76,8 +76,8 @@ export const createVisitSchema = z
 /** `.strict()`: `scheduledAt`/`status` aqui seriam ignorados em silencio — melhor recusar. */
 export const updateVisitSchema = z
   .object({
-    doctorId: z.string().uuid().optional(),
-    responsibleId: z.string().uuid().optional(),
+    doctorId: z.uuid().optional(),
+    responsibleId: z.uuid().optional(),
     type: z.enum(VISIT_TYPES).optional(),
     agenda: z.string().max(VISIT_AGENDA_MAX_LENGTH).nullable().optional(),
   })
@@ -95,9 +95,9 @@ export const closeVisitSchema = z
   .object({ reason: z.string().trim().min(1, 'Informe o motivo').max(VISIT_REASON_MAX_LENGTH) })
   .strict();
 
-export const visitIdParamSchema = z.object({ id: z.string().uuid() });
+export const visitIdParamSchema = z.object({ id: z.uuid() });
 
-export const visitAttachmentParamSchema = z.object({ id: z.string().uuid(), attachmentId: z.string().uuid() });
+export const visitAttachmentParamSchema = z.object({ id: z.uuid(), attachmentId: z.uuid() });
 
 /** Check-in/out nao tem corpo; campo desconhecido e recusado. */
 export const emptyBodySchema = z.object({}).strict();

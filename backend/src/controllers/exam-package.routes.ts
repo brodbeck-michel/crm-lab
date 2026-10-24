@@ -61,33 +61,36 @@ export const listExamPackagesQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(MAX_LIMIT).optional(),
   sortBy: z.enum(['name', 'discountPercent', 'createdAt', 'updatedAt']).optional(),
   order: z.enum(['asc', 'desc']).optional(),
-  insuranceId: z.string().uuid().optional(),
+  insuranceId: z.uuid().optional(),
 });
 
 export const createExamPackageSchema = z.object({
   name: z.string().trim().min(1).max(255),
-  examIds: z.array(z.string().uuid()).min(1).max(100),
+  examIds: z.array(z.uuid()).min(1).max(100),
   discountPercent,
 });
 
 export const updateExamPackageSchema = z
   .object({
     name: z.string().trim().min(1).max(255),
-    examIds: z.array(z.string().uuid()).min(1).max(100),
+    examIds: z.array(z.uuid()).min(1).max(100),
     discountPercent,
     isActive: z.boolean(),
   })
   .partial();
 
-export const examPackageIdParamSchema = z.object({ id: z.string().uuid() });
+export const examPackageIdParamSchema = z.object({ id: z.uuid() });
 
 export const examPackagePricesBodySchema = z.object({
   prices: z.array(
     z.object({
-      insuranceId: z.string().uuid(),
+      insuranceId: z.uuid(),
       price: money,
     }),
-  ),
+  )
+  // CRMLAB-115 (D-281): teto ANTES de iterar — sem ele um array gigante acumula um issue por
+  // elemento e esgota a memoria (GHSA-mrhx-c7xc-m3w5). 500 convenios por exame e folga ampla.
+  .max(500),
 });
 
 type CreateExamPackageBody = z.infer<typeof createExamPackageSchema>;

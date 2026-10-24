@@ -166,7 +166,7 @@ const envSchema = z
      * CHAVE nao mora aqui: e por laboratorio, cifrada em `lis_sync_settings`.
      * A URL base e da instalacao — o Bitlab e um so.
      */
-    BITLAB_API_BASE_URL: z.string().url().default('https://integracoes.bitlab.net.br/webhook'),
+    BITLAB_API_BASE_URL: z.url().default('https://integracoes.bitlab.net.br/webhook'),
     /**
      * Intervalo do agendador: 30 s (CRMLAB-79, D-249; era 2 min na D-199). `0` desliga o agendador
      * (hml, testes); "Sincronizar agora" continua.
@@ -195,7 +195,7 @@ const envSchema = z
       const secret = value[key];
       if (!secret) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           path: [key],
           message: `${key} e obrigatoria em NODE_ENV=production`,
         });
@@ -203,14 +203,14 @@ const envSchema = z
       }
       if (PLACEHOLDER_SECRETS.has(secret)) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           path: [key],
           message: `${key} ainda usa o valor de exemplo — gere um segredo unico para producao`,
         });
       }
       if (secret.length < 32) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           path: [key],
           message: `${key} precisa de ao menos 32 caracteres em producao`,
         });
@@ -218,7 +218,7 @@ const envSchema = z
     }
     if (!value.DATABASE_URL) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['DATABASE_URL'],
         message: 'DATABASE_URL e obrigatoria em NODE_ENV=production',
       });
@@ -227,41 +227,41 @@ const envSchema = z
     // dump. Aviso nao resolve — quem le aviso ja tem o dump.
     if (!value.CHANNEL_SECRET_KEY) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['CHANNEL_SECRET_KEY'],
         message:
           'CHANNEL_SECRET_KEY e obrigatoria em NODE_ENV=production (cifra as credenciais de canal em repouso, D-076)',
       });
     } else if (value.CHANNEL_SECRET_KEY.length < 32) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['CHANNEL_SECRET_KEY'],
         message: 'CHANNEL_SECRET_KEY precisa de ao menos 32 caracteres em producao',
       });
     } else if (PLACEHOLDER_SECRETS.has(value.CHANNEL_SECRET_KEY)) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['CHANNEL_SECRET_KEY'],
         message: 'CHANNEL_SECRET_KEY ainda usa o valor de exemplo — gere um segredo unico',
       });
     }
     if (!value.MEDIA_DIR) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['MEDIA_DIR'],
         message: 'MEDIA_DIR e obrigatoria em NODE_ENV=production (Onda 8 §4.1)',
       });
     }
     if (!value.RESEND_API_KEY) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['RESEND_API_KEY'],
         message: 'RESEND_API_KEY e obrigatoria em NODE_ENV=production (CRMLAB-39)',
       });
     }
     if (!value.RESEND_FROM_EMAIL) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['RESEND_FROM_EMAIL'],
         message: 'RESEND_FROM_EMAIL e obrigatoria em NODE_ENV=production (CRMLAB-39)',
       });
@@ -305,7 +305,7 @@ function resolveTrustProxy(value: RawEnv): number | string[] | false {
 }
 
 export class EnvValidationError extends Error {
-  constructor(issues: z.ZodIssue[]) {
+  constructor(issues: z.core.$ZodIssue[]) {
     const lines = issues.map((i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`);
     super(`Configuracao de ambiente invalida:\n${lines.join('\n')}`);
     this.name = 'EnvValidationError';

@@ -1504,7 +1504,10 @@ schema: a falta deles não quebra a rodada, e a linha cai na chave da planilha (
 
 **Tolerância na borda** (lições da sandbox de 18/09, `Avaliacao_APIs_Bitlab_2026-09-18.md`):
 - Envelope validado com zod. Os campos que usamos são obrigatórios no schema, os desconhecidos
-  são ignorados (`passthrough`). Falhou o schema → `contract`.
+  são descartados. Falhou o schema → `contract`.
+- Tetos de array conferidos antes de iterar (CRMLAB-115, D-281): `orcamentos` ≤ 5000 (10× o
+  `PAGE_SIZE` de 500 que a sync pede) e `avisos` ≤ 100. Acima disso → `contract`, sem percorrer
+  os itens.
 - Número que chegar como string numérica (`"250.00"`) é aceito. Na sandbox, `cdRequisicao` e
   `CD_SMS` vieram como string, ao contrário do PDF.
 - Envelope dentro de array (`[{...}]`) é desembrulhado. O Bitlab disse ter corrigido isso em

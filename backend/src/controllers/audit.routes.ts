@@ -20,8 +20,8 @@ const listAuditSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
   action: z.string().trim().max(100).optional(),
   entityType: z.string().trim().max(50).optional(),
-  entityId: z.string().uuid().optional(),
-  userId: z.string().uuid().optional(),
+  entityId: z.uuid().optional(),
+  userId: z.uuid().optional(),
   order: z.enum(['asc', 'desc']).optional(),
 });
 

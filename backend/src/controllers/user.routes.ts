@@ -68,7 +68,7 @@ const updateUserSchema = z
   .strict()
   .refine((dto) => Object.keys(dto).length > 0, { message: 'Informe ao menos um campo' });
 
-const idParamSchema = z.object({ id: z.string().uuid('Identificador inválido') });
+const idParamSchema = z.object({ id: z.uuid('Identificador inválido') });
 
 /** `newPassword` mínimo aqui é só UX — a política de verdade é `checkPasswordPolicy` no service. */
 const changePasswordSchema = z

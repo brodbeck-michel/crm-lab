@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-10-19 (integração CRMLAB-100/101/102 — branch `integ/onda-100-102`)
+**Última atualização:** 2026-10-24 (CRMLAB-115 — branch `feature/CRMLAB-115-zod-4`)
 
 ---
 
@@ -3494,3 +3494,19 @@ Branch `feature/CRMLAB-112-contador-nao-lidas-sidebar` (de `main` v1.37.0). Deci
   do ícone, no lugar do ponto); refeito pelo WS e ao ler.
 - **Testes:** `tests/conversations/unread-count.spec.ts` (novo, 4), inventário de rotas 112 → 113,
   `Sidebar.spec.tsx` (+6, 1 reescrito), `ws.spec.ts` (+1). Suíte completa roda na integração.
+
+### 🚧 CRMLAB-115 — backend no zod 4.6.7 (GHSA-mrhx-c7xc-m3w5) (2026-10-24, aguardando validação)
+
+Branch `feature/CRMLAB-115-zod-4` (de `main` v1.38.0). Decisão D-281, só backend, sem migração.
+
+- **Segurança:** zod 3 → 4.6.7 fecha o alerta high (array gigante acumulava um issue por item e
+  esgotava a memória). Teto em todo array de entrada: `prices` ≤ 500 (exame e pacote, era sem teto);
+  Bitlab `orcamentos` ≤ 5000 e `avisos` ≤ 100; `customFields` conta as chaves (≤ 30) antes do `record`.
+- **Mensagens:** locale pt-BR global do zod — `details.fields` sem schema-message agora vem em
+  português (API_ERRORS.md). Chaves e envelope do `VALIDATION_ERROR` inalterados.
+- **Mais estrito no v4:** `z.uuid()` exige UUID RFC (o banco e os seeds já geram assim) e `z.email()`
+  recusa e-mail sem TLD.
+- **Testes:** `tests/kernel/zod-v4.spec.ts` (novo, 6), `bitlab-client.spec.ts` (+1). Suíte completa
+  do backend 143 arquivos / 2231 testes verdes; typecheck e eslint verdes. `npm audit` não acusa mais
+  o zod (o body-parser high segue nesta branch — corrigido em outra).
+- **Pendente:** validação na hml.

@@ -57,11 +57,11 @@ const createTenantSchema = z
   })
   .strict();
 
-const tenantIdParamsSchema = z.object({ id: z.string().uuid() });
+const tenantIdParamsSchema = z.object({ id: z.uuid() });
 
 const tenantUserParamsSchema = z.object({
-  id: z.string().uuid(),
-  userId: z.string().uuid(),
+  id: z.uuid(),
+  userId: z.uuid(),
 });
 
 /** D-102: ao menos um dos dois campos — corpo vazio e recusado pelo `.refine`. */

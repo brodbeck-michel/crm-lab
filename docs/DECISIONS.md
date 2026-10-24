@@ -5875,7 +5875,13 @@ PAGES §9, COMPONENTS (Sidebar). Sem migração.
    (D-195 item 2), passou a regravar com o líquido também — senão a proposta nascia líquida e a
    conciliação do mesmo chunk a devolvia ao bruto. Consequência: proposta `bitlab` **aberta** cujo
    orçamento for reenviado com desconto passa ao líquido; proposta fechada (`ganho`/`perdido`)
-   nunca é recalculada. Recebido/`paid_value`/requisição: sem mudança.
+   nunca é recalculada. Recebido/`paid_value`/requisição: sem mudança. Aceito pelo PO em
+   24/10/2026. Como a regravação deixa de ser rara, cada uma passa a gerar audit
+   `lis_reconcile_value` (`userId NULL`, `entityType: "proposal"`, `oldValues: { totalPrice,
+   insuranceId }`, `newValues: { totalPrice, insuranceId, lisBudgetNumber }`), só quando o valor
+   ou o convênio mudam. O cache do resumo do LIS passou à chave `lis:<tenant>:v2:summary:…`: o
+   Redis não é limpo no deploy, e o resumo antigo, sem `netValue`, mostraria "Total Orçado"
+   R$ 0,00 até o TTL (300 s) vencer.
 4. **KPIs do LIS** (`GET /lis-budgets/summary`, `GET /reports/executive`): `issued` ganha
    `netValue` (`SUM(net_value)`), `discountValue` (`totalValue − netValue`, desconto já abatido
    do acréscimo) e `netAverageTicket`; a série mensal ganha `issuedNetValue`. Tela de Resultados:

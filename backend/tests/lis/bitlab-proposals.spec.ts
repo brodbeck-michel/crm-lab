@@ -309,6 +309,19 @@ describe('ingestao cria a proposta de origem bitlab', () => {
     await ingest(tenantA, [row('5007', { value1: 250 })]);
     const [created] = await proposalsOf(tenantA);
     expect((await detail(managerA, created!.id)).totalPrice).toBe(250);
+
+    // D-278 item 3: a regravação deixa audit com o valor anterior e o novo.
+    const audits = await auditOf(created!.id, 'lis_reconcile_value');
+    expect(audits).toHaveLength(1);
+    expect(audits[0]).toMatchObject({
+      user_id: null,
+      old_values: { totalPrice: 100 },
+      new_values: { totalPrice: 250, lisBudgetNumber: '5007' },
+    });
+
+    // Reenviar o mesmo orçamento não regrava nem audita de novo.
+    await ingest(tenantA, [row('5007', { value1: 250 })]);
+    expect(await auditOf(created!.id, 'lis_reconcile_value')).toHaveLength(1);
   });
 
   it('regra desligada: nada nasce e a marca nao e gravada', async () => {

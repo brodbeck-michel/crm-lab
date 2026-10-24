@@ -156,6 +156,21 @@ async function reconcileRows(
             WHERE id = $1`,
           [row.proposal_id, budgetTotal, row.budget_insurance_id],
         );
+        // Com o líquido, a regravação deixa de ser rara (todo orçamento com
+        // desconto): fica o registro de quanto era e quanto passou a ser.
+        await auditRepo.insert(tx, {
+          tenantId,
+          userId: null,
+          action: 'lis_reconcile_value',
+          entityType: 'proposal',
+          entityId: row.proposal_id,
+          oldValues: { totalPrice: toNumber(row.total_price), insuranceId: row.insurance_id },
+          newValues: {
+            totalPrice: budgetTotal,
+            insuranceId: row.budget_insurance_id,
+            lisBudgetNumber: row.lis_budget_number,
+          },
+        });
       }
     }
 

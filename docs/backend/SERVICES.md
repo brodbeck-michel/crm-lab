@@ -1572,7 +1572,9 @@ announceLisWins(deps: { wsHub; cache }, tenantId: string, transitions: readonly 
   (`auditRepo.insert`), porque `db.withTenant` não aninha e ele tem que sumir junto num rollback.
 - **Valor do Bitlab (D-195 item 2):** proposta `bitlab` não terminal tem `total_price` e
   `insurance_id` regravados a partir de `lis_budgets.net_value`/`insurance_id` quando mudaram
-  (o LÍQUIDO desde a D-278 item 3 — sem os campos de desconto, igual ao bruto).
+  (o LÍQUIDO desde a D-278 item 3 — sem os campos de desconto, igual ao bruto). Cada
+  regravação gera audit `lis_reconcile_value` (`userId NULL`, `oldValues: { totalPrice,
+  insuranceId }`, `newValues: { totalPrice, insuranceId, lisBudgetNumber }`), na mesma transação.
 
 ---
 

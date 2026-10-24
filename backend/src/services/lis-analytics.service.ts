@@ -154,7 +154,10 @@ export function createLisAnalyticsService(deps: LisAnalyticsServiceDeps): LisAna
         ...(query.insuranceId !== undefined ? { insuranceId: query.insuranceId } : {}),
       };
 
-      const key = `${cachePrefix(ctx.tenantId)}summary:${period.startDate}:${period.endDate}:${filters.attendantId ?? '-'}:${filters.insuranceId ?? '-'}`;
+      // `v2:` desde o D-278 (campos líquidos no `issued`): o Redis não é limpo no
+      // deploy, e o resumo antigo, sem `netValue`, mostraria "Total Orçado" R$ 0,00
+      // até o TTL vencer. Ainda sob `cachePrefix`, que o import limpa.
+      const key = `${cachePrefix(ctx.tenantId)}v2:summary:${period.startDate}:${period.endDate}:${filters.attendantId ?? '-'}:${filters.insuranceId ?? '-'}`;
       return cached(key, async () => {
         const { issued, requisition, paid, byAttendant, byInsurance } = await db.withTenant(
           ctx.tenantId,

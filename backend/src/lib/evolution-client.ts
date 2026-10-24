@@ -232,6 +232,28 @@ export interface EvolutionClient {
     delayMs: number,
     apikey: string,
   ): Promise<void>;
+  /**
+   * `POST /chat/updateMessage/{instance}` (CRMLAB-105, D-280) — a autora corrige
+   * texto/legenda de mensagem NOSSA (`fromMe: true`). Rota e schema conferidos
+   * no dist da imagem v2.3.7. Mesma disciplina de privilegio minimo.
+   */
+  updateMessage(
+    instanceName: string,
+    phone: string,
+    externalId: string,
+    text: string,
+    apikey: string,
+  ): Promise<void>;
+  /**
+   * `DELETE /chat/deleteMessageForEveryone/{instance}` (CRMLAB-105, D-280) —
+   * "apagar para todos" de mensagem NOSSA. Rota e schema conferidos na v2.3.7.
+   */
+  deleteMessageForEveryone(
+    instanceName: string,
+    phone: string,
+    externalId: string,
+    apikey: string,
+  ): Promise<void>;
 }
 
 /**
@@ -601,6 +623,48 @@ export function createEvolutionClient(
       await request(
         `/chat/sendPresence/${encodeURIComponent(instanceName)}`,
         { method: 'POST', body: JSON.stringify({ number: phone, presence, delay: delayMs }) },
+        apikey,
+      );
+    },
+
+    async updateMessage(
+      instanceName: string,
+      phone: string,
+      externalId: string,
+      text: string,
+      apikey: string,
+    ): Promise<void> {
+      // `updateMessageSchema` da v2.3.7: `number`, `text` e `key` com
+      // `id`/`remoteJid`/`fromMe` obrigatorios. O gateway confere que o
+      // `remoteJid` da original bate com o `number`.
+      await request(
+        `/chat/updateMessage/${encodeURIComponent(instanceName)}`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            number: phone,
+            key: { id: externalId, remoteJid: evolutionChatJid(phone), fromMe: true },
+            text,
+          }),
+        },
+        apikey,
+      );
+    },
+
+    async deleteMessageForEveryone(
+      instanceName: string,
+      phone: string,
+      externalId: string,
+      apikey: string,
+    ): Promise<void> {
+      // `deleteMessageSchema` da v2.3.7: `id`, `remoteJid`, `fromMe` (sem
+      // `participant`, que so serve para grupo — e o CRM ignora grupo).
+      await request(
+        `/chat/deleteMessageForEveryone/${encodeURIComponent(instanceName)}`,
+        {
+          method: 'DELETE',
+          body: JSON.stringify({ id: externalId, remoteJid: evolutionChatJid(phone), fromMe: true }),
+        },
         apikey,
       );
     },

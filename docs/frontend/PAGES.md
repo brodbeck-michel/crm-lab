@@ -167,6 +167,17 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 - **Tiques e "Tentar de novo" (D-225/D-227):** balão enviado mostra 🕓/✓/✓✓/✓✓ azul/⚠; o botão
   chama `POST /conversations/:id/messages/:messageId/retry`. O tique muda sozinho pelo WS
   `message.status_updated`
+- **Editar e apagar para todos (CRMLAB-105, D-280):** no menu ⌄ do balão, **"Editar"** e
+  **"Apagar para todos"** aparecem só para a **autora** (`senderId` = usuária logada), em mensagem
+  enviada pelo CRM e já confirmada (✓), e só quando o canal deixa (`canEditMessages` do
+  `GET /conversations/:id` — Cloud API = não). Editar: texto ou legenda de foto/vídeo, até 15 min;
+  apagar: qualquer tipo, até 48 h (regra única `messageAuthorActionBlock` do shared). Fora do
+  prazo o item some. "Editar" vira uma caixa no próprio balão (Enter salva, Shift+Enter quebra
+  linha, Esc cancela; vazio não salva) → `PATCH /conversations/:id/messages/:messageId`.
+  "Apagar para todos" pede `confirm("Apagar para todos?")` → `DELETE` no mesmo caminho. Gateway
+  recusou: toast "Não foi possível editar/apagar a mensagem no WhatsApp. Nada foi alterado." (a
+  caixa de edição continua aberta). As colegas veem "Editada"/"🚫 Mensagem apagada" pelo WS
+  `conversation.message_updated`, igual ao que o paciente faz (D-220)
 - **Busca dentro da conversa (CRMLAB-68, D-228/D-230):** a lupa abre uma barra abaixo do
   cabeçalho (`ConversationSearch`) com o campo, "N de M" e as setas ↑ (ocorrência mais antiga) e
   ↓ (mais nova); Enter = ↑, Esc fecha. Abaixo, a lista dos resultados (data + trecho com

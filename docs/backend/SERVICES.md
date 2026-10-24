@@ -912,6 +912,17 @@ export function createInsuranceService(deps: { db: DbClient; audit: AuditService
 > presence, delay, apikey)` → `POST /chat/sendPresence/{instance}` (o Evolution v2 não tem
 > `presenceSubscribe`; esta rota assina antes de mandar). `WhatsAppDriver.sendPresence` é
 > opcional — só o driver Evolution implementa.
+>
+> **CRMLAB-105 (D-280):** `EvolutionClient.updateMessage(instance, phone, externalId, text, apikey)`
+> → `POST /chat/updateMessage/{instance}` `{ number, key: { id, remoteJid, fromMe: true }, text }`
+> e `EvolutionClient.deleteMessageForEveryone(instance, phone, externalId, apikey)` → `DELETE
+> /chat/deleteMessageForEveryone/{instance}` `{ id, remoteJid, fromMe: true }` (rotas e schemas
+> conferidos no dist da imagem v2.3.7). `WhatsAppDriver.editMessage`/`deleteMessage` são
+> opcionais (Evolution e mock; a Cloud API não tem) e `WhatsAppService.canEditMessages(tenantId)`
+> diz se o driver do tenant tem os dois. Uma tentativa, sem fila. No `MessageService`,
+> `editByAuthor`/`deleteByAuthor` validam (autora, prazo, id externo, canal), chamam o gateway e
+> só então gravam + audit (`edit_message`/`delete_message`, com `userId`) + WS.
+> `applySenderEdit` tira o `*Nome*` do eco de resposta de participante (D-263) antes de comparar.
 
 **Responsabilidade:** conectar o WhatsApp do próprio laboratório via QR code (Evolution API),
 sem depender da API oficial da Meta. Estende `WhatsAppService` (§11) e `ChannelSettingsService`

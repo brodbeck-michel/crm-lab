@@ -133,6 +133,20 @@ describe('EvolutionClient', () => {
         res.end(JSON.stringify({ key: { id: 'EVOREACT' } }));
         return;
       }
+      // CRMLAB-105 (D-280): editar e apagar para todos.
+      if (
+        (req.method === 'POST' && req.url === '/chat/updateMessage/tenant-abc') ||
+        (req.method === 'DELETE' && req.url === '/chat/deleteMessageForEveryone/tenant-abc')
+      ) {
+        res.writeHead(req.method === 'POST' ? 200 : 201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ key: { id: 'EVOPROTO' } }));
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/chat/updateMessage/recusa') {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ response: { message: ['Message not compatible'] } }));
+        return;
+      }
       if (req.method === 'POST' && req.url === '/instance/create/erro') {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ message: 'gateway indisponivel' }));
@@ -416,6 +430,37 @@ describe('EvolutionClient', () => {
     await client.sendPresence('tenant-abc', '5511987654321', 'composing', 4000, 'apikey-da-instancia');
     expect(lastUrl).toBe('/chat/sendPresence/tenant-abc');
     expect(lastBody).toEqual({ number: '5511987654321', presence: 'composing', delay: 4000 });
+    expect(lastApikeyHeader).toBe('apikey-da-instancia');
+  });
+
+  it('updateMessage vai por POST /chat/updateMessage com number, key fromMe e text (D-280)', async () => {
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    await client.updateMessage('tenant-abc', '5511987654321', '3EB0MINHA', 'texto novo', 'apikey-da-instancia');
+    expect(lastUrl).toBe('/chat/updateMessage/tenant-abc');
+    expect(lastBody).toEqual({
+      number: '5511987654321',
+      key: { id: '3EB0MINHA', remoteJid: '5511987654321@s.whatsapp.net', fromMe: true },
+      text: 'texto novo',
+    });
+    expect(lastApikeyHeader).toBe('apikey-da-instancia');
+  });
+
+  it('updateMessage recusado pelo gateway lanca (quem chama nao grava nada)', async () => {
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    await expect(
+      client.updateMessage('recusa', '5511987654321', '3EB0MINHA', 'x', 'apikey-da-instancia'),
+    ).rejects.toThrow(/400/);
+  });
+
+  it('deleteMessageForEveryone vai por DELETE com id, remoteJid e fromMe (D-280)', async () => {
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    await client.deleteMessageForEveryone('tenant-abc', '5511987654321', '3EB0MINHA', 'apikey-da-instancia');
+    expect(lastUrl).toBe('/chat/deleteMessageForEveryone/tenant-abc');
+    expect(lastBody).toEqual({
+      id: '3EB0MINHA',
+      remoteJid: '5511987654321@s.whatsapp.net',
+      fromMe: true,
+    });
     expect(lastApikeyHeader).toBe('apikey-da-instancia');
   });
 

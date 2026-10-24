@@ -3522,3 +3522,20 @@ Branch `feature/CRMLAB-103-relatorio-lembretes` (de `main` v1.38.0). Decisão D-
 - **Testes:** `tests/analytics/reminders-report.spec.ts` (novo, 9), inventário de rotas 113 → 114
   (+ caso de isolamento), `ReminderReportSection.spec.tsx` (novo, 3), `Analytics.spec.tsx` (+1,
   1 ampliado). Suíte completa roda na integração.
+
+### 🚧 CRMLAB-105 — editar e apagar para todos a mensagem enviada (2026-10-24, aguardando validação)
+
+Branch `feature/CRMLAB-105-editar-apagar-mensagem` (de `main` v1.38.0). Decisão D-280, sem migração.
+
+- **Backend:** `PATCH|DELETE /conversations/:id/messages/:messageId` — só a autora, editar até
+  15 min (texto/legenda), apagar até 48 h; gateway primeiro, grava depois; audit
+  `edit_message`/`delete_message` com `userId`. `canEditMessages` no `GET /conversations/:id`.
+  Evolution `POST /chat/updateMessage` e `DELETE /chat/deleteMessageForEveryone` (conferidas na
+  imagem v2.3.7).
+- **Front:** "Editar" (caixa no balão, Enter/Esc) e "Apagar para todos" (confirmação) no menu da
+  mensagem; somem fora do prazo e no canal Cloud API; toast quando o gateway recusa.
+- **Testes:** `tests/messages/edit-delete.spec.ts` (novo, 14), `evolution-client.spec.ts` (+3),
+  inventário de rotas 113 → 115; `MessageBubble.crmlab105.spec.tsx` (novo, 11),
+  `Attendance.edit-delete.spec.tsx` (novo, 3). Suíte completa roda na integração.
+- **Pendente:** validar na hml com WhatsApp real (Evolution) — editar texto, legenda de foto e
+  apagar; conferir que o paciente vê "editada"/"apagada" e que o eco do webhook não duplica.

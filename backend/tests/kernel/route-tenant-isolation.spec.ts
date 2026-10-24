@@ -114,6 +114,12 @@ function fakeEvolutionClient(): EvolutionClient {
     async sendPresence() {
       return undefined;
     },
+    async updateMessage() {
+      return undefined;
+    },
+    async deleteMessageForEveryone() {
+      return undefined;
+    },
   };
 }
 
@@ -319,6 +325,25 @@ const LAB_ROUTES: readonly LabRoute[] = [
     actor: 'attendant',
     addressable: true,
     ownStatus: 204,
+  },
+  {
+    // D-280: a sonda e mensagem do paciente — do proprio tenant, `FORBIDDEN` (so a autora edita).
+    name: 'PATCH /conversations/:id/messages/:messageId',
+    method: 'patch',
+    path: (l) => `/api/v1/conversations/${l.conversation.id}/messages/${l.message.id}`,
+    body: () => ({ content: 'sonda de isolamento' }),
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 403,
+  },
+  {
+    // D-280: idem — so a autora apaga para todos.
+    name: 'DELETE /conversations/:id/messages/:messageId',
+    method: 'delete',
+    path: (l) => `/api/v1/conversations/${l.conversation.id}/messages/${l.message.id}`,
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 403,
   },
   {
     // D-227: a sonda e mensagem do paciente — do proprio tenant, `CONFLICT` (nao e do atendimento).
@@ -1394,7 +1419,8 @@ describe('inventario de rotas de laboratorio', () => {
     // `POST /proposals/:id/reminder/resolve`.
     // CRMLAB-112/D-277 soma 1: `GET /conversations/unread-count`.
     // CRMLAB-103/D-279 soma 1: `GET /analytics/reminders`.
-    expect(LAB_ROUTES).toHaveLength(114);
+    // CRMLAB-105/D-280 soma 2: `PATCH|DELETE /conversations/:id/messages/:messageId`.
+    expect(LAB_ROUTES).toHaveLength(116);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

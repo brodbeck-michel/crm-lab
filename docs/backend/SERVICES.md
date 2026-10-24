@@ -567,6 +567,24 @@ interface ResponseTimeService {
   cadastrados do início do período até a resposta mais tardia. Agrega por quem respondeu
   (`sender_id`; nulo = "Celular"), mais o total e o dia a dia. Sem cache no servidor.
 
+**Lembretes por atendente (CRMLAB-103, D-279)** — `ProposalReminderReportService`
+(`proposal-reminder-report.service.ts`), no mesmo módulo de rotas (`GET /analytics/reminders`),
+gestor/admin (atendente → `FORBIDDEN`). SÓ LEITURA, sem cache.
+
+```typescript
+interface ProposalReminderReportService {
+  getReport(ctx: TenantContext, query: ProposalReminderReportQuery): Promise<ProposalReminderReport>;
+}
+```
+- Período por `resolvePeriod` (padrão 30 dias, invertido → `VALIDATION_ERROR`), bordas nas
+  meias-noites locais do fuso de `business_hours` (`localMidnight`/`nextDay` do tempo de
+  resposta). Sem teto de dias.
+- "Hoje" dos vencidos = `saoPauloToday(now)`, passado ao SQL (regra de `isReminderDue`).
+- `proposal-reminder.repository.ts` (`countByOwner`): uma query agrupada por
+  `proposals.created_by` com `COUNT … FILTER`, `FULL JOIN` com os usuários ativos do tenant
+  (zerados aparecem); inativo e "sem responsável" só com número. Tudo dentro de `withTenant`.
+- O service soma `resolved` e o total e ordena: mais vencidos, mais resolvidos, nome.
+
 ---
 
 ## 10. AuditService

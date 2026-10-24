@@ -3709,6 +3709,42 @@ com 1 casa decimal. O bloco é do dia local em que começou.
   `responderId: "phone"`, `name: "Celular"`. Bloco sem resposta só entra em `total.unanswered`.
 - `daily`: todos os dias do período, em ordem, inclusive os zerados.
 
+### GET /analytics/reminders
+Lembretes de contato por atendente (CRMLAB-103, **D-279**) — **gestor/admin apenas** (atendente →
+`403 FORBIDDEN` com `details.requiredRoles: ["manager","admin"]`). Tipos em
+`shared/types/proposal-reminder.types.ts` (`ProposalReminderReport`). **Sem cache** no servidor.
+
+**Query Params:** `startDate`, `endDate` (`YYYY-MM-DD`, **datas locais do fuso do expediente**, a
+mesma convenção de `/analytics/response-time`). Ausentes → últimos 30 dias. Invertido →
+`400 VALIDATION_ERROR` em `details.fields.endDate`. Sem teto de dias.
+
+**Regras:**
+- **Atribuição:** à **responsável pela proposta** (`proposals.created_by`, a de `isCardOwner`),
+  não a quem resolveu. Proposta sem responsável (cartão do Bitlab na fila comum) → linha
+  `userId: null`, `name: "Sem responsável"`.
+- `overdueOpen` = lembretes **abertos e vencidos agora** (`dueDate ≤ today`, dia de Brasília —
+  `isReminderDue`). Foto do momento: **não depende do período**.
+- `won`, `lost`, `rescheduled`, `autoClosed` = lembretes **resolvidos no período**
+  (`resolved_at`) com esse desfecho; `resolved` = a soma.
+- Linhas: todo usuário **ativo** do laboratório (zerado se não tem número); inativo e
+  "Sem responsável" só quando têm algum número. Ordem: mais vencidos, mais resolvidos, nome.
+
+**Response (200):**
+```json
+{
+  "period": { "startDate": "2026-09-01", "endDate": "2026-09-30" },
+  "timezone": "America/Sao_Paulo",
+  "today": "2026-09-20",
+  "rows": [
+    { "userId": "uuid", "name": "Ana", "overdueOpen": 3, "won": 2, "lost": 1,
+      "rescheduled": 4, "autoClosed": 0, "resolved": 7 },
+    { "userId": null, "name": "Sem responsável", "overdueOpen": 1, "won": 0, "lost": 0,
+      "rescheduled": 0, "autoClosed": 2, "resolved": 2 }
+  ],
+  "total": { "overdueOpen": 4, "won": 2, "lost": 1, "rescheduled": 4, "autoClosed": 2, "resolved": 9 }
+}
+```
+
 ---
 
 ## 5b. Platform Console (`platform_operator` apenas)

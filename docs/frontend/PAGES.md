@@ -721,6 +721,16 @@ nunca "sem permissão" (não vazar existência).
   **Ranking por atendente** com a linha "Celular" e "Total do laboratório". Minutos em
   `formatMinutes` ("6,5 min", "1h30"). Botão **Exportar Excel** (`response-time-report.ts`): abas
   Ranking, Por dia (recorte escolhido) e Sem resposta.
+- **Aba "Lembretes" (CRMLAB-103, D-279) — gestor/admin.** Terceira opção do mesmo
+  `SegmentedControl` ("Conversão | Tempo de resposta | Lembretes"); o título da página vira
+  "Lembretes". Usa o período do topo (invertido: avisa e não busca). Dados:
+  `GET /analytics/reminders` (`ReminderReportSection`). Tabela (`DataTable`) com uma linha por
+  **responsável pela proposta** (não por quem resolveu), "Sem responsável" quando houver, e
+  **Total do laboratório** no fim; colunas **Vencidos agora** (foto do momento, independe do
+  período), **Ganho**, **Perdido**, **Reagendado**, **Encerrado automático** e **Resolvidos**
+  (no período). Ordem: mais vencidos primeiro. Legenda explica as duas janelas. Estados
+  carregando / erro ("Não foi possível carregar os lembretes.") / vazio. Sem detalhe por linha
+  nem exportação.
 
 ---
 

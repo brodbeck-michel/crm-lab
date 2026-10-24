@@ -127,12 +127,12 @@ function dailyOf(dates: readonly IsoDate[], waits: readonly AnsweredWait[]): Res
 }
 
 /** Instante UTC da meia-noite local de `date` no fuso do expediente. */
-function localMidnight(date: IsoDate, timezone: string): Date {
+export function localMidnight(date: IsoDate, timezone: string): Date {
   const [y, m, d] = date.split('-').map(Number);
   return zonedToUtc(y ?? 1970, m ?? 1, d ?? 1, '00:00', timezone);
 }
 
-function nextDay(date: IsoDate): IsoDate {
+export function nextDay(date: IsoDate): IsoDate {
   return new Date(Date.parse(`${date}T00:00:00Z`) + MS_PER_DAY).toISOString().slice(0, 10);
 }
 

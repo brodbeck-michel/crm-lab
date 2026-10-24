@@ -116,3 +116,51 @@ export function isReminderDue(
   if (reminder === null || reminder === undefined) return false;
   return reminder.dueDate <= saoPauloToday(now);
 }
+
+// ---------------------------------------------------------------------------
+// Relatório de lembretes por atendente (CRMLAB-103, D-279) —
+// `GET /analytics/reminders`, API_CONTRACTS.md §5.
+// ---------------------------------------------------------------------------
+
+/** `startDate`/`endDate` em datas locais do fuso do expediente (como o tempo de resposta). */
+export interface ProposalReminderReportQuery {
+  startDate?: IsoDate;
+  endDate?: IsoDate;
+}
+
+/** Nome da linha das propostas sem responsável (`proposals.created_by` nulo, `userId: null`). */
+export const PROPOSAL_REMINDER_REPORT_NO_OWNER_LABEL = 'Sem responsável';
+
+/** Contagens de uma linha (ou do total). */
+export interface ProposalReminderReportCounts {
+  /**
+   * Abertos e vencidos AGORA (`isReminderDue`, dia de Brasília) — foto do
+   * momento, independe do período.
+   */
+  overdueOpen: number;
+  /** Resolvidos no período (`resolved_at`), por desfecho. */
+  won: number;
+  lost: number;
+  rescheduled: number;
+  autoClosed: number;
+  /** Soma dos quatro desfechos. */
+  resolved: number;
+}
+
+/** Uma linha por responsável pela proposta (`proposals.created_by`), não por quem resolveu. */
+export interface ProposalReminderReportRow extends ProposalReminderReportCounts {
+  /** `null` = propostas sem responsável (linha "Sem responsável"). */
+  userId: string | null;
+  name: string;
+}
+
+export interface ProposalReminderReport {
+  period: { startDate: IsoDate; endDate: IsoDate };
+  /** Fuso do expediente, que define as bordas do período. */
+  timezone: string;
+  /** "Hoje" de Brasília usado para os vencidos. */
+  today: IsoDate;
+  /** Mais vencidos primeiro. */
+  rows: ProposalReminderReportRow[];
+  total: ProposalReminderReportCounts;
+}

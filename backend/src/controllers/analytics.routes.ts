@@ -6,8 +6,9 @@
  * proprias metricas, com `partial: true`. Isso e decidido no service, a partir
  * do papel do token — nunca de um parametro do cliente.
  *
- * `GET /analytics/team` e `GET /analytics/response-time` (CRMLAB-83, D-257)
- * exigem `requireRoles('manager','admin')`.
+ * `GET /analytics/team`, `GET /analytics/response-time` (CRMLAB-83, D-257) e
+ * `GET /analytics/reminders` (CRMLAB-103, D-279) exigem
+ * `requireRoles('manager','admin')`.
  *
  * `denyPlatformOperator()` fecha as tres para o console da plataforma: o
  * operador nao tem caminho para dado de laboratorio (SECURITY.md "Console de
@@ -25,6 +26,7 @@ import { getContext } from '../http/context.js';
 import { denyPlatformOperator, requireAuth, requireRoles } from '../http/middleware/auth.js';
 import { validate, validated } from '../http/middleware/validate.js';
 import { createAnalyticsService, type DateRange } from '../services/analytics.service.js';
+import { createProposalReminderReportService } from '../services/proposal-reminder-report.service.js';
 import { createResponseTimeService } from '../services/response-time.service.js';
 
 const periodSchema = z.object({
@@ -39,6 +41,7 @@ const periodSchema = z.object({
 export function analyticsModule(deps: ApiModuleDeps): ApiModule {
   const analytics = createAnalyticsService({ db: deps.db, cache: deps.cache });
   const responseTime = createResponseTimeService({ db: deps.db });
+  const reminders = createProposalReminderReportService({ db: deps.db });
 
   const router = Router();
   router.use(requireAuth(), denyPlatformOperator());
@@ -84,6 +87,21 @@ export function analyticsModule(deps: ApiModuleDeps): ApiModule {
     (req: Request, res: Response, next): void => {
       const query = validated<DateRange>(req, 'query');
       responseTime
+        .getReport(getContext(req), query)
+        .then((report) => res.status(200).json(report))
+        .catch(next);
+    },
+  );
+
+  // Lembretes por responsavel (CRMLAB-103, D-279): vencidos agora + resolvidos
+  // no periodo, por desfecho.
+  router.get(
+    '/reminders',
+    requireRoles('manager', 'admin'),
+    validate(periodSchema, 'query'),
+    (req: Request, res: Response, next): void => {
+      const query = validated<DateRange>(req, 'query');
+      reminders
         .getReport(getContext(req), query)
         .then((report) => res.status(200).json(report))
         .catch(next);

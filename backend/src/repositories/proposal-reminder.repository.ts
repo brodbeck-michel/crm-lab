@@ -232,3 +232,81 @@ export async function markAlerted(tx: DbTx, id: string, at: Date): Promise<boole
   );
   return result.rows.length > 0;
 }
+
+// ---------------------------------------------------------------------------
+// Relatorio por atendente (CRMLAB-103, D-279) — `GET /analytics/reminders`
+// ---------------------------------------------------------------------------
+
+export interface ReminderReportRow {
+  /** `proposals.created_by` — a responsavel; `null` = sem responsavel. */
+  ownerId: string | null;
+  ownerName: string | null;
+  overdueOpen: number;
+  won: number;
+  lost: number;
+  rescheduled: number;
+  autoClosed: number;
+}
+
+/**
+ * Uma linha por RESPONSAVEL pela proposta (`proposals.created_by`), nao por
+ * quem resolveu. Entram: todo usuario ativo do laboratorio (zerado se nao tem
+ * numero), o inativo que tem numero e a linha `ownerId NULL` (sem
+ * responsavel) se tiver numero.
+ *
+ * - vencido em aberto: `resolved_at IS NULL AND due_date <= today` — `today`
+ *   e o dia de Brasilia calculado no Node (`saoPauloToday`), nunca no banco;
+ * - resolvido no periodo: `resolved_at` em `[startUtc, endUtc)`, bordas ja
+ *   convertidas do fuso do expediente pelo service.
+ */
+export async function countByOwner(
+  tx: DbTx,
+  tenantId: string,
+  today: string,
+  startUtc: string,
+  endUtc: string,
+): Promise<ReminderReportRow[]> {
+  const inPeriod = 'r.resolved_at >= $3::timestamp AND r.resolved_at < $4::timestamp';
+  const result = await tx.query<{
+    owner_id: string | null;
+    owner_name: string | null;
+    overdue_open: number | null;
+    won: number | null;
+    lost: number | null;
+    rescheduled: number | null;
+    auto_closed: number | null;
+  }>(
+    `WITH agg AS (
+       SELECT p.created_by AS owner_id,
+              COUNT(*) FILTER (WHERE r.resolved_at IS NULL AND r.due_date <= $2::date)::int AS overdue_open,
+              COUNT(*) FILTER (WHERE r.outcome = 'won' AND ${inPeriod})::int AS won,
+              COUNT(*) FILTER (WHERE r.outcome = 'lost' AND ${inPeriod})::int AS lost,
+              COUNT(*) FILTER (WHERE r.outcome = 'rescheduled' AND ${inPeriod})::int AS rescheduled,
+              COUNT(*) FILTER (WHERE r.outcome = 'auto_closed' AND ${inPeriod})::int AS auto_closed
+         FROM proposal_reminders r
+         JOIN proposals p ON p.id = r.proposal_id AND p.tenant_id = $1
+        WHERE r.tenant_id = $1
+        GROUP BY p.created_by
+       HAVING COUNT(*) FILTER (WHERE (r.resolved_at IS NULL AND r.due_date <= $2::date) OR ${inPeriod}) > 0
+     ),
+     active_users AS (
+       SELECT u.id FROM users u
+        WHERE u.tenant_id = $1 AND u.is_active AND u.role <> 'platform_operator'
+     )
+     SELECT COALESCE(a.owner_id, au.id) AS owner_id, u.name AS owner_name,
+            a.overdue_open, a.won, a.lost, a.rescheduled, a.auto_closed
+       FROM agg a
+       FULL JOIN active_users au ON au.id = a.owner_id
+       LEFT JOIN users u ON u.id = COALESCE(a.owner_id, au.id) AND u.tenant_id = $1`,
+    [tenantId, today, startUtc, endUtc],
+  );
+  return result.rows.map((row) => ({
+    ownerId: row.owner_id,
+    ownerName: row.owner_name,
+    overdueOpen: Number(row.overdue_open ?? 0),
+    won: Number(row.won ?? 0),
+    lost: Number(row.lost ?? 0),
+    rescheduled: Number(row.rescheduled ?? 0),
+    autoClosed: Number(row.auto_closed ?? 0),
+  }));
+}

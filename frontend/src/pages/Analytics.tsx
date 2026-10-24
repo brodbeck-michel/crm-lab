@@ -8,14 +8,22 @@ import { Input } from '@/components/ui/Input';
 import { Chip, SegmentedControl } from '@/components/ui';
 import { MoneyDisplay } from '@/components/shared';
 import ResponseTimeSection from '@/components/analytics/ResponseTimeSection';
+import ReminderReportSection from '@/components/analytics/ReminderReportSection';
 import { useAuthStore } from '@/stores/auth.store';
 
-type AnalyticsTab = 'conversion' | 'response-time';
+type AnalyticsTab = 'conversion' | 'response-time' | 'reminders';
+
+const TITLES: Record<AnalyticsTab, string> = {
+  conversion: 'Conversão',
+  'response-time': 'Tempo de resposta',
+  reminders: 'Lembretes',
+};
 
 /**
- * `/analytics` (PAGES.md §8). O período fica no topo e vale para as duas abas.
- * A aba "Tempo de resposta" (CRMLAB-83, D-257) é de gestor e admin — o mesmo
- * recorte de `GET /analytics/team`; a atendente continua vendo só a Conversão.
+ * `/analytics` (PAGES.md §8). O período fica no topo e vale para todas as abas.
+ * As abas "Tempo de resposta" (CRMLAB-83, D-257) e "Lembretes" (CRMLAB-103,
+ * D-279) são de gestor e admin — o mesmo recorte de `GET /analytics/team`; a
+ * atendente continua vendo só a Conversão.
  */
 export default function Analytics() {
   const [startDate, setStartDate] = useState('');
@@ -23,18 +31,19 @@ export default function Analytics() {
   const [tab, setTab] = useState<AnalyticsTab>('conversion');
   const role = useAuthStore((state) => state.user?.role);
   const canSeeTeam = role === 'manager' || role === 'admin';
-  const showResponseTime = canSeeTeam && tab === 'response-time';
+  // Atendente fica sempre na Conversão, mesmo que o estado diga outra aba.
+  const current: AnalyticsTab = canSeeTeam ? tab : 'conversion';
 
   return (
     <div className="p-lg space-y-xl">
       <h1 className="font-heading text-display">
-        {showResponseTime ? 'Tempo de resposta' : 'Conversão'}
+        {TITLES[current]}
       </h1>
 
-      {/* Barra única: abas à esquerda, período à direita (vale para as duas abas). */}
+      {/* Barra única: abas à esquerda, período à direita (vale para todas as abas). */}
       <div className="flex flex-wrap items-center justify-between gap-md border-b border-neutral-200 pb-lg">
         {canSeeTeam ? (
-          <div className="w-full max-w-[340px] rounded-pill bg-neutral-100">
+          <div className="w-full max-w-[460px] rounded-pill bg-neutral-100">
             <SegmentedControl<AnalyticsTab>
               aria-label="Relatório"
               value={tab}
@@ -42,6 +51,7 @@ export default function Analytics() {
               options={[
                 { value: 'conversion', label: 'Conversão' },
                 { value: 'response-time', label: 'Tempo de resposta' },
+                { value: 'reminders', label: 'Lembretes' },
               ]}
             />
           </div>
@@ -73,11 +83,9 @@ export default function Analytics() {
         </div>
       </div>
 
-      {showResponseTime ? (
-        <ResponseTimeSection startDate={startDate} endDate={endDate} />
-      ) : (
-        <ConversionSection startDate={startDate} endDate={endDate} />
-      )}
+      {current === 'response-time' && <ResponseTimeSection startDate={startDate} endDate={endDate} />}
+      {current === 'reminders' && <ReminderReportSection startDate={startDate} endDate={endDate} />}
+      {current === 'conversion' && <ConversionSection startDate={startDate} endDate={endDate} />}
     </div>
   );
 }

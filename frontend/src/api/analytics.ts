@@ -2,6 +2,8 @@ import type {
   AnalyticsQuery,
   FunnelReport,
   PipelineSnapshot,
+  ProposalReminderReport,
+  ProposalReminderReportQuery,
   ResponseTimeQuery,
   ResponseTimeReport,
 } from '@crm-lab/shared';
@@ -24,6 +26,10 @@ export const analyticsApi = {
   /** Tempo de resposta do WhatsApp (CRMLAB-83, D-257) — gestor/admin, até 93 dias. */
   responseTime: (query: ResponseTimeQuery = {}) =>
     http.get<ResponseTimeReport>('/analytics/response-time', query as QueryParams),
+
+  /** Lembretes por responsável (CRMLAB-103, D-279) — gestor/admin. */
+  reminders: (query: ProposalReminderReportQuery = {}) =>
+    http.get<ProposalReminderReport>('/analytics/reminders', query as QueryParams),
 };
 
 /* ── React Query Hooks ──────────────────────────────────────────────────── */
@@ -54,6 +60,18 @@ export function useAnalyticsResponseTime(filters: ResponseTimeQuery = {}, enable
     queryKey: queryKeys.analyticsResponseTime(filters),
     queryFn: async () => {
       return await analyticsApi.responseTime(filters);
+    },
+    staleTime: staleTimes.analytics,
+    enabled,
+  });
+}
+
+/** `enabled: false` segura a busca enquanto o período está invertido. */
+export function useAnalyticsReminders(filters: ProposalReminderReportQuery = {}, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.analyticsReminders(filters),
+    queryFn: async () => {
+      return await analyticsApi.reminders(filters);
     },
     staleTime: staleTimes.analytics,
     enabled,

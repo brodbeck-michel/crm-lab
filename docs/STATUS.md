@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-10-19 (integração CRMLAB-100/101/102 — branch `integ/onda-100-102`)
+**Última atualização:** 2026-10-24 (CRMLAB-115 — branch `feature/CRMLAB-115-zod-4`)
 
 ---
 
@@ -3494,3 +3494,64 @@ Branch `feature/CRMLAB-112-contador-nao-lidas-sidebar` (de `main` v1.37.0). Deci
   do ícone, no lugar do ponto); refeito pelo WS e ao ler.
 - **Testes:** `tests/conversations/unread-count.spec.ts` (novo, 4), inventário de rotas 112 → 113,
   `Sidebar.spec.tsx` (+6, 1 reescrito), `ws.spec.ts` (+1). Suíte completa roda na integração.
+
+### 🚧 CRMLAB-114 — desconto e valor líquido do Bitlab (2026-10-24, aguardando validação)
+
+Branch `feature/CRMLAB-114-desconto-liquido-bitlab` (de `main` v1.38.0). Decisão D-278, migração 057.
+
+- **Banco:** 12 colunas de desconto/acréscimo/a pagar por convênio + `net_value` gerada (líquido do
+  convênio principal; sem os campos, = bruto). `total_value` não muda.
+- **Backend:** API do Bitlab lida e gravada; proposta do Bitlab nasce (e é mantida, enquanto
+  aberta) no líquido; `issued` com `netValue`/`discountValue`/`netAverageTicket`; série mensal com
+  `issuedNetValue`; `ProposalDetail.lisBudgetValues`.
+- **Front:** "Total Orçado" líquido com bruto/desconto na legenda; gráfico e PDF no líquido; linha
+  "Valor no LIS" no bloco do orçamento da proposta.
+- **Pendente no deploy:** rodada completa da sync (hml manual; prod com OK) para preencher os
+  orçamentos antigos.
+- **Testes:** `tests/db/migration-057-net-value.spec.ts` (novo, 7) e specs LIS/proposta ajustados;
+  front `Results.spec.tsx` (+1), `LisReferenceSection.spec.tsx` (+3). Suíte completa roda na
+  integração.
+
+### 🚧 CRMLAB-103 — relatório de lembretes por atendente (2026-10-24, aguardando validação)
+
+Branch `feature/CRMLAB-103-relatorio-lembretes` (de `main` v1.38.0). Decisão D-279, sem migração.
+
+- **Backend:** `GET /analytics/reminders` (gestor/admin): por responsável pela proposta, vencidos
+  em aberto agora (dia de Brasília) e resolvidos no período por desfecho, com "Sem responsável".
+- **Front:** aba "Lembretes" em `/analytics` (gestor/admin), tabela com total, período do topo.
+- **Testes:** `tests/analytics/reminders-report.spec.ts` (novo, 9), inventário de rotas 113 → 114
+  (+ caso de isolamento), `ReminderReportSection.spec.tsx` (novo, 3), `Analytics.spec.tsx` (+1,
+  1 ampliado). Suíte completa roda na integração.
+
+### 🚧 CRMLAB-105 — editar e apagar para todos a mensagem enviada (2026-10-24, aguardando validação)
+
+Branch `feature/CRMLAB-105-editar-apagar-mensagem` (de `main` v1.38.0). Decisão D-280, sem migração.
+
+- **Backend:** `PATCH|DELETE /conversations/:id/messages/:messageId` — só a autora, editar até
+  15 min (texto/legenda), apagar até 48 h; gateway primeiro, grava depois; audit
+  `edit_message`/`delete_message` com `userId`. `canEditMessages` no `GET /conversations/:id`.
+  Evolution `POST /chat/updateMessage` e `DELETE /chat/deleteMessageForEveryone` (conferidas na
+  imagem v2.3.7).
+- **Front:** "Editar" (caixa no balão, Enter/Esc) e "Apagar para todos" (confirmação) no menu da
+  mensagem; somem fora do prazo e no canal Cloud API; toast quando o gateway recusa.
+- **Testes:** `tests/messages/edit-delete.spec.ts` (novo, 14), `evolution-client.spec.ts` (+3),
+  inventário de rotas 113 → 115; `MessageBubble.crmlab105.spec.tsx` (novo, 11),
+  `Attendance.edit-delete.spec.tsx` (novo, 3). Suíte completa roda na integração.
+- **Pendente:** validar na hml com WhatsApp real (Evolution) — editar texto, legenda de foto e
+  apagar; conferir que o paciente vê "editada"/"apagada" e que o eco do webhook não duplica.
+
+### 🚧 CRMLAB-115 — backend no zod 4.6.7 (GHSA-mrhx-c7xc-m3w5) (2026-10-24, aguardando validação)
+
+Branch `feature/CRMLAB-115-zod-4` (de `main` v1.38.0). Decisão D-281, só backend, sem migração.
+
+- **Segurança:** zod 3 → 4.6.7 fecha o alerta high (array gigante acumulava um issue por item e
+  esgotava a memória). Teto em todo array de entrada: `prices` ≤ 500 (exame e pacote, era sem teto);
+  Bitlab `orcamentos` ≤ 5000 e `avisos` ≤ 100; `customFields` conta as chaves (≤ 30) antes do `record`.
+- **Mensagens:** locale pt-BR global do zod — `details.fields` sem schema-message agora vem em
+  português (API_ERRORS.md). Chaves e envelope do `VALIDATION_ERROR` inalterados.
+- **Mais estrito no v4:** `z.uuid()` exige UUID RFC (o banco e os seeds já geram assim) e `z.email()`
+  recusa e-mail sem TLD.
+- **Testes:** `tests/kernel/zod-v4.spec.ts` (novo, 6), `bitlab-client.spec.ts` (+1). Suíte completa
+  do backend 143 arquivos / 2231 testes verdes; typecheck e eslint verdes. `npm audit` não acusa mais
+  o zod (o body-parser high segue nesta branch — corrigido em outra).
+- **Pendente:** validação na hml.

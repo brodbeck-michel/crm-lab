@@ -167,6 +167,17 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 - **Tiques e "Tentar de novo" (D-225/D-227):** balão enviado mostra 🕓/✓/✓✓/✓✓ azul/⚠; o botão
   chama `POST /conversations/:id/messages/:messageId/retry`. O tique muda sozinho pelo WS
   `message.status_updated`
+- **Editar e apagar para todos (CRMLAB-105, D-280):** no menu ⌄ do balão, **"Editar"** e
+  **"Apagar para todos"** aparecem só para a **autora** (`senderId` = usuária logada), em mensagem
+  enviada pelo CRM e já confirmada (✓), e só quando o canal deixa (`canEditMessages` do
+  `GET /conversations/:id` — Cloud API = não). Editar: texto ou legenda de foto/vídeo, até 15 min;
+  apagar: qualquer tipo, até 48 h (regra única `messageAuthorActionBlock` do shared). Fora do
+  prazo o item some. "Editar" vira uma caixa no próprio balão (Enter salva, Shift+Enter quebra
+  linha, Esc cancela; vazio não salva) → `PATCH /conversations/:id/messages/:messageId`.
+  "Apagar para todos" pede `confirm("Apagar para todos?")` → `DELETE` no mesmo caminho. Gateway
+  recusou: toast "Não foi possível editar/apagar a mensagem no WhatsApp. Nada foi alterado." (a
+  caixa de edição continua aberta). As colegas veem "Editada"/"🚫 Mensagem apagada" pelo WS
+  `conversation.message_updated`, igual ao que o paciente faz (D-220)
 - **Busca dentro da conversa (CRMLAB-68, D-228/D-230):** a lupa abre uma barra abaixo do
   cabeçalho (`ConversationSearch`) com o campo, "N de M" e as setas ↑ (ocorrência mais antiga) e
   ↓ (mais nova); Enter = ↑, Esc fecha. Abaixo, a lista dos resultados (data + trecho com
@@ -596,6 +607,10 @@ nunca "sem permissão" (não vazar existência).
   toast "Pagamento já registrado no LIS — proposta marcada como ganha"; com
   `status: "negociacao"` (vinda de outro estágio), "Requisição já aberta no LIS — proposta em
   negociação" (D-252).
+- **Valores do LIS (CRMLAB-114, D-278):** com `lisBudgetValues` preenchido, uma linha em
+  `text-caption` abaixo do número: sem desconto nem acréscimo, "Valor no LIS: R$ X"; com eles,
+  "Valor no LIS: bruto R$ X · desconto R$ Y (Z%) · acréscimo R$ W · a pagar R$ N" — cada parte
+  só aparece quando não é zero, e o percentual só quando veio > 0 (é informativo).
 - **Pré-cadastro e conflito (D-252):** na origem `crm`, selo "Pré-cadastro feito"
   (`Chip tone="positive"`) ao lado do número quando o estágio é `novo_contato` e há
   `lisRequisitionNumber` (na origem `bitlab` o selo fica no bloco "Orçamento do Bitlab"). Em
@@ -721,6 +736,16 @@ nunca "sem permissão" (não vazar existência).
   **Ranking por atendente** com a linha "Celular" e "Total do laboratório". Minutos em
   `formatMinutes` ("6,5 min", "1h30"). Botão **Exportar Excel** (`response-time-report.ts`): abas
   Ranking, Por dia (recorte escolhido) e Sem resposta.
+- **Aba "Lembretes" (CRMLAB-103, D-279) — gestor/admin.** Terceira opção do mesmo
+  `SegmentedControl` ("Conversão | Tempo de resposta | Lembretes"); o título da página vira
+  "Lembretes". Usa o período do topo (invertido: avisa e não busca). Dados:
+  `GET /analytics/reminders` (`ReminderReportSection`). Tabela (`DataTable`) com uma linha por
+  **responsável pela proposta** (não por quem resolveu), "Sem responsável" quando houver, e
+  **Total do laboratório** no fim; colunas **Vencidos agora** (foto do momento, independe do
+  período), **Ganho**, **Perdido**, **Reagendado**, **Encerrado automático** e **Resolvidos**
+  (no período). Ordem: mais vencidos primeiro. Legenda explica as duas janelas. Estados
+  carregando / erro ("Não foi possível carregar os lembretes.") / vazio. Sem detalhe por linha
+  nem exportação.
 
 ---
 
@@ -1129,17 +1154,21 @@ espaçada não acrescenta hierarquia quando o valor já é três vezes maior. Gr
 (`sm` / `xl`). Enquanto o resumo carrega, a tela mostra o ESQUELETO dos 4 cartões, com a altura
 final: um "Carregando..." de uma linha fazia a página saltar quando os dados chegavam.
 
-1. **Total Orçado** — `issued.totalValue` + `issued.count` ("N orçamentos"). Cartão com destaque
+1. **Total Orçado** — `issued.netValue` (LÍQUIDO, D-278) + `issued.count` ("N orçamentos"). Com
+   desconto/acréscimo no período (`issued.discountValue ≠ 0`) a legenda vira "N orçamentos · bruto
+   R$ X, desconto R$ Y" ("acréscimo" quando o líquido passa o bruto); sem eles, fica como era.
+   Cartão com destaque
    visual (fundo escuro/accent) — é o número âncora da tela. `deltaPct`: variação vs. o período
    **imediatamente anterior de mesma duração** — calculada no CLIENTE com um segundo fetch de
    `/lis-budgets/summary` para esse período anterior (mesmo convênio, sem `attendantId`); sem
-   endpoint novo. `previous.issued.totalValue === 0` → sem `deltaPct` (evita `Infinity`/`NaN`,
+   endpoint novo. Compara líquido com líquido; `previous.issued.netValue === 0` → sem `deltaPct` (evita `Infinity`/`NaN`,
    mesma disciplina de `percent()`). O `deltaPct` aparece como pílula (↑ verde / ↓ accent) com a
    legenda "vs. período anterior" — um número de variação sem a base da comparação não se lê.
 2. **Em Requisição** — `requisition.totalValue`/`.count` (D-125: orçamentos **convertidos em
    requisição** no período, pagos OU pendentes — **não é** a mesma pergunta de Busca Ativa, §16,
    que é só a fatia sem pagamento) + "N requisições, X% do orçado" =
-   `requisition.totalValue / issued.totalValue` (0 quando `issued.totalValue` é 0).
+   `requisition.totalValue / issued.netValue` (0 quando `issued.netValue` é 0; base líquida desde
+   a D-278, a mesma do cartão "Total Orçado").
 3. **Recebido** — `paid.totalValue`/`.count` + "N pagos, X% do orçado" (mesma fórmula) + barra de
    `paid.conversionQty` (já capada em 100% pelo servidor — a tela nunca reaplica o cap).
 4. **Atendentes** — `byAttendantDetail.length` (quantos atendentes tiveram orçamento no
@@ -1157,7 +1186,8 @@ para o ranking de atendentes (é o que cresce com o tamanho do time) e **5** par
 muda de tamanho com o dado).
 
 - **Evolução do faturamento:** área sobreposta com as TRÊS séries de `monthlySeries`
-  (`GET /reports/executive` §5c) — total orçado, em requisição e recebido — nos últimos 12 meses
+  (`GET /reports/executive` §5c) — total orçado (`issuedNetValue`, líquido, D-278), em requisição
+  e recebido — nos últimos 12 meses
   terminando no mês do período. Sobreposta, **nunca empilhada**: os três números já se contêm, e
   a soma deles não significa nada; o que se lê é a distância vertical entre as curvas, que é a
   perda de uma etapa do funil para a seguinte. Cores: `accent-2-800` / `accent-2` / `accent` —

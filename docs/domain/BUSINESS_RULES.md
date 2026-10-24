@@ -738,6 +738,7 @@ planilha produz (`LisSpreadsheetRow`) e segue §11.1–§11.6 sem diferença:
 | `DATA_ORÇAMENTO` | `issued_on` | `dd/mm/yyyy hh:mm:ss` (Brasília) → `YYYY-MM-DD` pelos componentes (D-187) |
 | `NM_PACIENTE` | `patient_name` | cru |
 | `CONVENIO1..3` / `VL_TOTAL1..3` | `insurance_1..3` / `value_1..3` | crus. `null` continua `null` |
+| `PER_DESCONTO1..3`, `VL_DESCONTO1..3`, `VL_ACRESCIMO1..3`, `VL_APAGAR1..3` | colunas da 057 | crus, opcionais — ver §11.12 (D-278) |
 | `MEDIA_CONVENIO` | `insurance_average` | cru |
 | `USUÁRIO` | `attendant_name` | cru (resolução §11.6) |
 | `REQUISICAO` | `requisition_number` | cru (`"001-0009876"`). `""` vira `null` |
@@ -788,6 +789,30 @@ SERVICES.md §24).
   `lis_paid_on` são atualizados pela conciliação (D-119 item 6).
 - **Planilha é plano B:** só importa com `lisSource.spreadsheetImport.enabled` ligado nas Regras
   (padrão desligado, D-189 item 4).
+
+### 11.12 Desconto e valor líquido do orçamento (CRMLAB-114, D-278)
+A API do Bitlab manda, por convênio n=1,2,3 (desde 23/10/2026; SERVICES.md §24.1):
+
+| Campo da API | Campo interno / coluna | Conversão |
+|---|---|---|
+| `PER_DESCONTO{n}` | `discountPercent{n}` / `discount_percent_n` | cru. **Só informativo** |
+| `VL_DESCONTO{n}` | `discountValue{n}` / `discount_value_n` | cru (R$). A verdade do desconto |
+| `VL_ACRESCIMO{n}` | `surchargeValue{n}` / `surcharge_value_n` | cru (R$) |
+| `VL_APAGAR{n}` | `payableValue{n}` / `payable_value_n` | cru. = `VL_TOTAL` − `VL_DESCONTO` + `VL_ACRESCIMO` |
+
+- **Bruto não muda:** `total_value` continua o `VL_TOTAL` do convênio principal (§11.3, D-124).
+- **Líquido** (`net_value`, coluna gerada): o `VL_APAGAR` do **mesmo** convênio principal; sem
+  `VL_APAGAR` naquele convênio (planilha, API antiga, orçamento ainda não reenviado), o bruto
+  dele. A escolha do convênio é sempre pelo bruto. O percentual nunca entra na conta (o orç. 71197
+  veio com `PER_DESCONTO1 = 0` e `VL_DESCONTO1 = 10,62`).
+- **Proposta do Bitlab** nasce com o líquido, e a conciliação a mantém no líquido enquanto não
+  fecha (D-195 item 2). Proposta fechada não muda.
+- **KPIs:** "Total Orçado" e o ticket médio orçado mostram o líquido como número principal, com
+  bruto e desconto ao lado (`discountValue = bruto − líquido`, já abatido o acréscimo). O bruto
+  segue no contrato com o nome de antes.
+- **Recebido, requisição e conciliação de pagamento:** sem mudança.
+- **Planilha:** não tem essas colunas; importa igual, com líquido = bruto. Reimportar pela
+  planilha não apaga o desconto gravado pela API, a não ser que o bruto daquele convênio mude.
 
 ---
 

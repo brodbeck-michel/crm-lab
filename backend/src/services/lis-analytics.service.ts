@@ -8,6 +8,7 @@ import type {
   LisBudgetsFilters,
   LisBudgetsSummary,
   LisBudgetsSummaryQuery,
+  LisIssuedTotals,
   ListLisBudgetsQuery,
   ListLisBudgetsResponse,
   ListPendingLisBudgetsQuery,
@@ -50,6 +51,24 @@ export interface LisAnalyticsService {
     query: PendingLisBudgetsSummaryQuery,
   ): Promise<PendingLisBudgetsSummary>;
   getFilters(ctx: TenantContext): Promise<LisBudgetsFilters>;
+}
+
+/**
+ * "Orçamentos emitidos" no contrato (D-278 item 4): bruto e ticket bruto como
+ * eram, mais líquido, desconto (`bruto − líquido`, já abatido o acréscimo) e
+ * ticket líquido. Usado também pelo relatório executivo.
+ */
+export function toIssuedTotals(row: lisAnalyticsRepo.IssuedTotalsRow): LisIssuedTotals {
+  const totalValue = toMoney(row.totalValue);
+  const netValue = toMoney(row.netValue);
+  return {
+    count: row.count,
+    totalValue,
+    averageTicket: average(row.totalValue, row.count),
+    netValue,
+    discountValue: toMoney(totalValue - netValue),
+    netAverageTicket: average(row.netValue, row.count),
+  };
 }
 
 export interface LisAnalyticsServiceDeps {
@@ -135,7 +154,10 @@ export function createLisAnalyticsService(deps: LisAnalyticsServiceDeps): LisAna
         ...(query.insuranceId !== undefined ? { insuranceId: query.insuranceId } : {}),
       };
 
-      const key = `${cachePrefix(ctx.tenantId)}summary:${period.startDate}:${period.endDate}:${filters.attendantId ?? '-'}:${filters.insuranceId ?? '-'}`;
+      // `v2:` desde o D-278 (campos líquidos no `issued`): o Redis não é limpo no
+      // deploy, e o resumo antigo, sem `netValue`, mostraria "Total Orçado" R$ 0,00
+      // até o TTL vencer. Ainda sob `cachePrefix`, que o import limpa.
+      const key = `${cachePrefix(ctx.tenantId)}v2:summary:${period.startDate}:${period.endDate}:${filters.attendantId ?? '-'}:${filters.insuranceId ?? '-'}`;
       return cached(key, async () => {
         const { issued, requisition, paid, byAttendant, byInsurance } = await db.withTenant(
           ctx.tenantId,
@@ -161,11 +183,7 @@ export function createLisAnalyticsService(deps: LisAnalyticsServiceDeps): LisAna
         const qualifies = issued.count >= MIN_ORC_RANKING;
         return {
           period: { startDate: period.startDate, endDate: period.endDate },
-          issued: {
-            count: issued.count,
-            totalValue: toMoney(issued.totalValue),
-            averageTicket: average(issued.totalValue, issued.count),
-          },
+          issued: toIssuedTotals(issued),
           requisition: {
             count: requisition.count,
             totalValue: toMoney(requisition.totalValue),

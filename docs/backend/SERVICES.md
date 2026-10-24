@@ -567,6 +567,24 @@ interface ResponseTimeService {
   cadastrados do início do período até a resposta mais tardia. Agrega por quem respondeu
   (`sender_id`; nulo = "Celular"), mais o total e o dia a dia. Sem cache no servidor.
 
+**Lembretes por atendente (CRMLAB-103, D-279)** — `ProposalReminderReportService`
+(`proposal-reminder-report.service.ts`), no mesmo módulo de rotas (`GET /analytics/reminders`),
+gestor/admin (atendente → `FORBIDDEN`). SÓ LEITURA, sem cache.
+
+```typescript
+interface ProposalReminderReportService {
+  getReport(ctx: TenantContext, query: ProposalReminderReportQuery): Promise<ProposalReminderReport>;
+}
+```
+- Período por `resolvePeriod` (padrão 30 dias, invertido → `VALIDATION_ERROR`), bordas nas
+  meias-noites locais do fuso de `business_hours` (`localMidnight`/`nextDay` do tempo de
+  resposta). Sem teto de dias.
+- "Hoje" dos vencidos = `saoPauloToday(now)`, passado ao SQL (regra de `isReminderDue`).
+- `proposal-reminder.repository.ts` (`countByOwner`): uma query agrupada por
+  `proposals.created_by` com `COUNT … FILTER`, `FULL JOIN` com os usuários ativos do tenant
+  (zerados aparecem); inativo e "sem responsável" só com número. Tudo dentro de `withTenant`.
+- O service soma `resolved` e o total e ordena: mais vencidos, mais resolvidos, nome.
+
 ---
 
 ## 10. AuditService
@@ -894,6 +912,17 @@ export function createInsuranceService(deps: { db: DbClient; audit: AuditService
 > presence, delay, apikey)` → `POST /chat/sendPresence/{instance}` (o Evolution v2 não tem
 > `presenceSubscribe`; esta rota assina antes de mandar). `WhatsAppDriver.sendPresence` é
 > opcional — só o driver Evolution implementa.
+>
+> **CRMLAB-105 (D-280):** `EvolutionClient.updateMessage(instance, phone, externalId, text, apikey)`
+> → `POST /chat/updateMessage/{instance}` `{ number, key: { id, remoteJid, fromMe: true }, text }`
+> e `EvolutionClient.deleteMessageForEveryone(instance, phone, externalId, apikey)` → `DELETE
+> /chat/deleteMessageForEveryone/{instance}` `{ id, remoteJid, fromMe: true }` (rotas e schemas
+> conferidos no dist da imagem v2.3.7). `WhatsAppDriver.editMessage`/`deleteMessage` são
+> opcionais (Evolution e mock; a Cloud API não tem) e `WhatsAppService.canEditMessages(tenantId)`
+> diz se o driver do tenant tem os dois. Uma tentativa, sem fila. No `MessageService`,
+> `editByAuthor`/`deleteByAuthor` validam (autora, prazo, id externo, canal), chamam o gateway e
+> só então gravam + audit (`edit_message`/`delete_message`, com `userId`) + WS.
+> `applySenderEdit` tira o `*Nome*` do eco de resposta de participante (D-263) antes de comparar.
 
 **Responsabilidade:** conectar o WhatsApp do próprio laboratório via QR code (Evolution API),
 sem depender da API oficial da Meta. Estende `WhatsAppService` (§11) e `ChannelSettingsService`
@@ -1268,7 +1297,10 @@ export interface LisAnalyticsService {
 **SQL em CTEs, três blocos (mesmo formato para `getSummary`, `listPending`, `getPendingSummary`
 e `ExecutiveReportService`, §22 — um único texto de query reaproveitado, não reescrito por
 consumidor):**
-- **`issued`** — janela de **emissão**: `issued_on` dentro do período pedido.
+- **`issued`** — janela de **emissão**: `issued_on` dentro do período pedido. Bruto
+  (`totalValue`/`averageTicket`, `SUM(total_value)`) e líquido (`netValue`/`netAverageTicket`,
+  `SUM(net_value)`), com `discountValue = totalValue − netValue` (D-278; montado por
+  `toIssuedTotals`, que o relatório executivo também usa).
 - **`req`** — `DISTINCT ON (requisition_number) ... ORDER BY requisition_number, paid_value
   DESC`: dedupe por requisição, maior `paid_value` vence (BUSINESS_RULES.md §11) — a mesma
   requisição pode aparecer em duas linhas de `lis_budgets` (reimportação com pagamento
@@ -1502,9 +1534,23 @@ vem com todos eles `null`. A linha estornada **continua saindo**, com `ESTORNADO
 `alteracao` **não** considera `DATA_ESTORNO` (5 casos testados em 28/09). Todos opcionais no
 schema: a falta deles não quebra a rodada, e a linha cai na chave da planilha (D-188 item 2).
 
+**Desconto e líquido (aditivos na v1, desde 23/10/2026, CRMLAB-114, D-278):** por convênio
+n=1,2,3, `PER_DESCONTO{n}` (percentual), `VL_DESCONTO{n}` (R$), `VL_ACRESCIMO{n}` (R$) e
+`VL_APAGAR{n}` (líquido = `VL_TOTAL{n}` − `VL_DESCONTO{n}` + `VL_ACRESCIMO{n}`). Chegam como
+número (conferido em prod em 23/10); convênio 2/3 inexistente vem `null`. Todos opcionais no
+schema (helper `money`): API antiga sem eles → `null`, e o líquido cai no bruto. **A verdade é
+`VL_DESCONTO`/`VL_APAGAR`; o percentual é só informativo** (orç. 71197 de prod veio com
+`PER_DESCONTO1 = 0` e `VL_DESCONTO1 = 10,62`). `toLisRow` os leva para `discountPercent{n}`/
+`discountValue{n}`/`surchargeValue{n}`/`payableValue{n}` de `LisSpreadsheetRow`, e o upsert grava
+nas colunas da migração 057 (SCHEMA.md §26). Orçamento antigo ganha os campos quando a sync o
+reenvia — incremental (quando ele muda) ou rodada completa (`mode: 'full'`).
+
 **Tolerância na borda** (lições da sandbox de 18/09, `Avaliacao_APIs_Bitlab_2026-09-18.md`):
 - Envelope validado com zod. Os campos que usamos são obrigatórios no schema, os desconhecidos
-  são ignorados (`passthrough`). Falhou o schema → `contract`.
+  são descartados. Falhou o schema → `contract`.
+- Tetos de array conferidos antes de iterar (CRMLAB-115, D-281): `orcamentos` ≤ 5000 (10× o
+  `PAGE_SIZE` de 500 que a sync pede) e `avisos` ≤ 100. Acima disso → `contract`, sem percorrer
+  os itens.
 - Número que chegar como string numérica (`"250.00"`) é aceito. Na sandbox, `cdRequisicao` e
   `CD_SMS` vieram como string, ao contrário do PDF.
 - Envelope dentro de array (`[{...}]`) é desembrulhado. O Bitlab disse ter corrigido isso em
@@ -1557,7 +1603,10 @@ announceLisWins(deps: { wsHub; cache }, tenantId: string, transitions: readonly 
   desfaria. O audit `update_proposal_status`/`lis_reconcile_conflict` entra **na** transação
   (`auditRepo.insert`), porque `db.withTenant` não aninha e ele tem que sumir junto num rollback.
 - **Valor do Bitlab (D-195 item 2):** proposta `bitlab` não terminal tem `total_price` e
-  `insurance_id` regravados a partir de `lis_budgets.total_value`/`insurance_id` quando mudaram.
+  `insurance_id` regravados a partir de `lis_budgets.net_value`/`insurance_id` quando mudaram
+  (o LÍQUIDO desde a D-278 item 3 — sem os campos de desconto, igual ao bruto). Cada
+  regravação gera audit `lis_reconcile_value` (`userId NULL`, `oldValues: { totalPrice,
+  insuranceId }`, `newValues: { totalPrice, insuranceId, lisBudgetNumber }`), na mesma transação.
 
 ---
 
@@ -1588,7 +1637,7 @@ announceBitlabProposals(deps: { wsHub; cache }, tenantId: string, proposalIds: r
 4. Para cada um: `proposal_number` pelo `pg_advisory_xact_lock` de sempre; `INSERT ... ON
    CONFLICT (tenant_id, lis_budget_number) WHERE lis_budget_number IS NOT NULL DO NOTHING`;
    `origin: 'bitlab'`, `status: 'novo_contato'`, sem conversa, `created_by` = login do atendente
-   do Bitlab (`attendants.user_id`, usuário ativo) ou `NULL`, `total_price` = `total_value`,
+   do Bitlab (`attendants.user_id`, usuário ativo) ou `NULL`, `total_price` = `net_value` (líquido, D-278),
    `insurance_id` do orçamento, `discount_percent: 0`, `approval_status: 'none'`.
 5. Histórico `novo_contato` com `changed_by NULL`; audit `create_proposal` com `userId: null` e
    `newValues: { origin: "bitlab", lisBudgetNumber, totalPrice, status }`.

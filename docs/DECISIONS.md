@@ -5852,3 +5852,193 @@ sozinha) não via mensagem nova do chat interno, e vice-versa.
 `conversation.routes.ts`; inventário de `route-tenant-isolation.spec.ts` (112 → 113). Frontend
 `Sidebar.tsx`, `api/conversations.ts`, `api/query-keys.ts`, `api/ws.ts`. API_CONTRACTS §2,
 PAGES §9, COMPONENTS (Sidebar). Sem migração.
+
+### D-278: Desconto, acréscimo e valor líquido do orçamento do Bitlab ao lado do bruto (CRMLAB-114)
+**Decisão:** desde 23/10/2026 a API de orçamentos manda, por convênio n=1,2,3, `PER_DESCONTO{n}`,
+`VL_DESCONTO{n}`, `VL_ACRESCIMO{n}` e `VL_APAGAR{n}` (= `VL_TOTAL` − `VL_DESCONTO` +
+`VL_ACRESCIMO`). O CRM passa a guardar e mostrar o líquido sem mexer no bruto.
+1. **Bruto não muda:** `lis_budgets.total_value` (gerada, convênio principal, D-124) fica como
+   está. Nenhum relatório antigo muda de número sem aviso; os campos antigos do contrato também.
+2. **Líquido = mesma regra do bruto:** migração 057 cria as 12 colunas por convênio
+   (`discount_percent_n`, `discount_value_n`, `surcharge_value_n`, `payable_value_n`, todas NULL)
+   e `net_value`, coluna **gerada** com o mesmo CASE da 014 trocando `value_n` por
+   `COALESCE(payable_value_n, value_n)`. A escolha do convênio continua pelo bruto. Sem
+   `VL_APAGAR` no convênio escolhido (planilha, API antiga, orçamento não reenviado): líquido =
+   bruto daquele convênio. Gerada para a regra morar num lugar só, como a `total_value`; o espelho
+   em TS (`principalSlot`/`netValue`, `lib/lis-spreadsheet.ts`) é comparado com a coluna caso a
+   caso em `tests/db/migration-057-net-value.spec.ts`.
+   **A verdade é `VL_DESCONTO`/`VL_APAGAR`; o percentual é só informativo** (orç. 71197 de prod:
+   `PER_DESCONTO1 = 0` com `VL_DESCONTO1 = 10,62`). `discount_percent_n` é `NUMERIC(9,4)` largo de
+   propósito: percentual estranho não derruba o upsert.
+3. **Proposta do Bitlab nasce com o líquido** (`bitlab-proposal.service.ts` lê `net_value`). A
+   conciliação, que regrava o valor da proposta `bitlab` **não terminal** a partir do orçamento
+   (D-195 item 2), passou a regravar com o líquido também — senão a proposta nascia líquida e a
+   conciliação do mesmo chunk a devolvia ao bruto. Consequência: proposta `bitlab` **aberta** cujo
+   orçamento for reenviado com desconto passa ao líquido; proposta fechada (`ganho`/`perdido`)
+   nunca é recalculada. Recebido/`paid_value`/requisição: sem mudança. Aceito pelo PO em
+   24/10/2026. Como a regravação deixa de ser rara, cada uma passa a gerar audit
+   `lis_reconcile_value` (`userId NULL`, `entityType: "proposal"`, `oldValues: { totalPrice,
+   insuranceId }`, `newValues: { totalPrice, insuranceId, lisBudgetNumber }`), só quando o valor
+   ou o convênio mudam. O cache do resumo do LIS passou à chave `lis:<tenant>:v2:summary:…`: o
+   Redis não é limpo no deploy, e o resumo antigo, sem `netValue`, mostraria "Total Orçado"
+   R$ 0,00 até o TTL (300 s) vencer.
+4. **KPIs do LIS** (`GET /lis-budgets/summary`, `GET /reports/executive`): `issued` ganha
+   `netValue` (`SUM(net_value)`), `discountValue` (`totalValue − netValue`, desconto já abatido
+   do acréscimo) e `netAverageTicket`; a série mensal ganha `issuedNetValue`. Tela de Resultados:
+   "Total Orçado" mostra o líquido, com "bruto R$ X, desconto R$ Y" na legenda quando houve
+   desconto/acréscimo; variação vs. período anterior e "% do orçado" usam o líquido; o gráfico de
+   evolução desenha o líquido. PDF executivo: "Total Orçado" e "Ticket médio orçado" líquidos,
+   bruto/desconto sob "Orçamentos emitidos"; "Orçado" por convênio segue bruto (rotulado
+   "Orçado (bruto)") e `byInsurance.totalValue` não mudou. `GET /lis-budgets` ganha `netValue`.
+5. **Detalhe da proposta:** `ProposalDetail.lisBudgetValues` (bruto, desconto R$ e %, acréscimo,
+   a pagar, do convênio principal). `LisReferenceSection` mostra uma linha enxuta "Valor no LIS:
+   R$ X" sem desconto/acréscimo, e a linha completa quando há.
+6. **Planilha** (sem essas colunas) importa igual, com líquido = bruto. Reimportar pela planilha
+   não apaga o desconto gravado pela API, a não ser que o bruto daquele convênio tenha mudado (aí
+   o desconto antigo não vale mais). A API grava sempre o que mandou, null inclusive.
+7. **Sem backfill novo:** o `WHERE EXCLUDED.total_value >= lis_budgets.total_value` do upsert não
+   mudou; como o bruto é o mesmo, orçamento reenviado atualiza e ganha os campos.
+8. **Como preencher os orçamentos antigos:** pela sync incremental, quando o orçamento mudar no
+   Bitlab, e por uma **rodada completa** (`mode: 'full'`, que o admin já dispara). Na hml, rodar
+   a completa manualmente depois do deploy; em prod, junto do deploy, com OK do Michel. Até lá,
+   eles ficam com líquido = bruto (nenhum número muda).
+**Motivo:** o Bitlab passou a expor o desconto dado no balcão; o "orçado" bruto superestimava o
+que o paciente de fato paga, e o cartão do Bitlab nascia com um valor que não era o do orçamento
+entregue.
+**Impacto:** migração `057_lis_budgets_discount_net.sql`; backend `lib/bitlab-client.ts`
+(`budgetSchema`, `toLisRow`), `lib/lis-spreadsheet.ts` (campos opcionais, `principalSlot`,
+`netValue`), `repositories/lis-import.repository.ts` (`upsertBudget`),
+`repositories/lis-analytics.repository.ts`, `services/lis-analytics.service.ts`
+(`toIssuedTotals`), `services/executive-report.service.ts`, `services/bitlab-proposal.service.ts`,
+`services/lis-reconcile.service.ts`, `repositories/proposal.repository.ts`
+(`findLisBudgetValues`), `services/proposal.service.ts` (`loadDetail`). Shared: `LisBudget`,
+`LisBudgetValues`, `LisIssuedTotals`, `ExecutiveReportMonthlyPoint`, `ProposalDetail`. Frontend:
+`pages/Results.tsx`, `components/lis/MonthlySeriesChart.tsx`, `lib/pdf/executive-report.ts`,
+`components/proposal/LisReferenceSection.tsx`. Docs: SCHEMA §26, SERVICES §20/§24.1/§25/§26,
+API_CONTRACTS (§3 detalhe, §5c, §10.2), BUSINESS_RULES §11.10/§11.12, PAGES §6/§14. Testes:
+`tests/db/migration-057-net-value.spec.ts` (novo), `bitlab-client.spec.ts`,
+`bitlab-proposals.spec.ts`, `lis-analytics.spec.ts`, `executive-report.spec.ts`,
+`proposal-routes.spec.ts`; front `Results.spec.tsx`, `LisReferenceSection.spec.tsx`,
+`Reconciliation.spec.tsx`.
+
+### D-279: Relatório de lembretes por atendente na página de Relatórios (CRMLAB-103)
+**Decisão:** terceira aba **"Lembretes"** em `/analytics`, ao lado de "Conversão" e "Tempo de
+resposta" (D-257), com o mesmo período do topo. Escopo aprovado pelo dono do produto.
+1. **Quem vê:** gestor e admin — o mesmo recorte de `GET /analytics/team` e
+   `/analytics/response-time`. Atendente não vê a aba e recebe `403 FORBIDDEN` na rota;
+   operador da plataforma também (`denyPlatformOperator`).
+2. **Endpoint:** `GET /analytics/reminders?startDate&endDate` → `ProposalReminderReport`
+   (`rows` + `total`, `today`, `timezone`, `period`). Sem cache no servidor.
+3. **Atribuição:** o lembrete conta para a **responsável pela proposta** (`proposals.created_by`,
+   o mesmo campo de `isCardOwner`), não para quem o resolveu nem para quem o criou. Proposta sem
+   responsável → linha **"Sem responsável"** (`userId: null`). Usuário ativo aparece mesmo
+   zerado; inativo só com número, com o nome normal.
+4. **Duas janelas:** **Vencidos em aberto agora** é a foto do momento — aberto e `dueDate ≤ hoje`
+   no dia de Brasília, a regra de `isReminderDue` (D-272 item 4), com o "hoje" calculado no Node
+   (`saoPauloToday`) e passado ao SQL — e **não depende do período**. **Resolvidos no período**
+   contam `resolved_at` entre as meias-noites **locais** do fuso do expediente, a convenção do
+   tempo de resposta (D-257), divididos em Ganho, Perdido, Reagendado e Encerrado automático
+   (`auto_closed`), mais o total. Sem teto de dias: é uma contagem agregada.
+5. **Tela:** tabela do design system com linha **Total do laboratório**, ordenada por mais
+   vencidos (depois mais resolvidos, depois nome); título da página "Lembretes".
+6. **Fora do escopo:** lista detalhada ao clicar na linha e exportação.
+**Motivo:** o lembrete (D-272) força o desfecho, mas a gestora não tinha onde ver quem acumula
+contato vencido nem o que cada atendente fez com os lembretes. Atribuir à responsável mostra de
+quem é a carteira; a foto dos vencidos fica fora do período porque o atraso é de hoje, não do
+mês consultado.
+**Impacto:** `shared/types/proposal-reminder.types.ts` (`ProposalReminderReport*`,
+`PROPOSAL_REMINDER_REPORT_NO_OWNER_LABEL`); backend `proposal-reminder-report.service.ts` (novo),
+`proposal-reminder.repository.ts` (`countByOwner`), `response-time.service.ts` (exporta
+`localMidnight`/`nextDay`), `analytics.routes.ts`; inventário de `route-tenant-isolation.spec.ts`
+(113 → 114). Frontend `pages/Analytics.tsx`, `components/analytics/ReminderReportSection.tsx`
+(novo), `api/analytics.ts`, `api/query-keys.ts`. API_CONTRACTS §5, SERVICES §9, PAGES §8. Sem
+migração.
+
+### D-280: A autora edita ou apaga para todos a mensagem que mandou pelo CRM (CRMLAB-105)
+**Decisão:** a atendente corrige (texto/legenda) ou apaga para todos a mensagem que ELA mandou ao
+paciente pelo WhatsApp, pelas rotas `PATCH|DELETE /conversations/:id/messages/:messageId`.
+1. **Só a autora:** `sender_type = 'agent'` e `sender_id` = usuário logado. Gestora/admin não
+   mexem em mensagem de outra (`FORBIDDEN`, `reason: not_author`). Mensagem do celular (`sender_id`
+   nulo, D-173), automática (`automation`, também sem autor), de sistema e do paciente ficam de fora.
+2. **Prazos do WhatsApp, constante única em `shared`:** editar até 15 min
+   (`MESSAGE_EDIT_WINDOW_MS`), só `text`/`image`/`video` (`EDITABLE_MESSAGE_TYPES` — o que o
+   `/chat/updateMessage` da v2.3.7 aceita; documento e áudio só apagam); apagar até 48 h
+   (`MESSAGE_DELETE_WINDOW_MS`, o "~2 dias" do WhatsApp). Já apagada ou sem `external_message_id`
+   (pendente/falhou/canal sem gateway) não pode. A regra é UMA função (`messageAuthorActionBlock`)
+   usada pela API (recusa com `CONFLICT` + `details.reason`) e pela tela (o item some do menu).
+   O backend confere ainda o id externo e o canal (`channel_unsupported`). Status da conversa não
+   entra: corrigir digitação vale também em atendimento encerrado, dentro do prazo.
+3. **Ordem:** valida → gateway (UMA tentativa, sem fila: repetir "apagar" depois de um timeout
+   que na verdade apagou não ajuda, e a atendente está olhando a tela) → só então grava. Gateway
+   recusou/falhou → `MESSAGE_SEND_FAILED` e nada muda; a tela mostra toast "Nada foi alterado".
+4. **Nada é apagado de verdade (D-220):** edição guarda a versão anterior em `message_edits`
+   (`edited_by = 'agent'`) e sobe `edited_at`; apagar grava `deleted_at` + `deleted_by = 'agent'`.
+   `message_edits.edited_by` continua sendo o LADO (CHECK de 040) — quem editou fica no audit:
+   `edit_message` (`oldValues.content`, `newValues.content`) e `delete_message`
+   (`oldValues.content`), ambos com o `userId` da autora. Sem migração.
+5. **Eco do webhook = no-op:** o `MESSAGES_EDITED`/`MESSAGES_DELETE` que o Evolution manda depois
+   cai em `applySenderEdit`/`applySenderDelete`, idempotentes (mesmo texto / já apagada →
+   `sem_efeito`, sem audit `*_by_sender`). Resposta de participante sai com `*Nome*` (D-263); o
+   `applySenderEdit` tira esse prefixo antes de comparar, senão o eco viraria uma 2ª edição. Se o
+   eco chegar ANTES da nossa gravação, ele aplica (audit sem usuário) e o nosso passo vira no-op
+   na tabela — o audit da autora sai do mesmo jeito.
+6. **Capacidade do canal:** `WhatsAppDriver.editMessage`/`deleteMessage` são opcionais (como
+   `sendReaction`): Evolution e mock implementam, a Cloud API não. O `GET /conversations/:id`
+   devolve `canEditMessages` (o driver do tenant tem os dois e a conversa é WhatsApp); falso, os
+   itens não aparecem. O mock finge sucesso (dev/E2E).
+7. **Tela:** "Editar" e "Apagar para todos" no menu ⌄ do balão. Editar abre uma caixa no próprio
+   balão (Enter salva, Shift+Enter quebra linha, Esc cancela; vazio não salva; 4000 caracteres,
+   legenda 1024 na API). Apagar pede `confirm("Apagar para todos?")`. As colegas veem "Editada" /
+   "🚫 Mensagem apagada" pelo WS `conversation.message_updated` — a mesma UI do D-220.
+8. **Evolution v2.3.7 — rotas CONFERIDAS no dist da imagem local** (`evoapicloud/evolution-api:v2.3.7`,
+   source maps de `dist/api/routes/chat.router.js.map`): `POST /chat/updateMessage/{instance}` com
+   `updateMessageSchema` `{ number, text, key: { id, remoteJid, fromMe } }` e `DELETE
+   /chat/deleteMessageForEveryone/{instance}` com `deleteMessageSchema` `{ id, remoteJid, fromMe,
+   participant? }`. Observado no código do gateway: edita só `conversation`/`extendedTextMessage`/
+   `imageMessage`/`videoMessage` ("Message not compatible" no resto), exige a original no banco
+   do gateway e o `remoteJid` dela igual ao `number`; a checagem de 15 min do gateway está
+   invertida (nunca recusa) — por isso o prazo é do CRM. **Falta validar na hml com WhatsApp
+   real** (inclusive número com `@lid`, em que o `remoteJid` pode não bater).
+**Motivo:** pedido do PO (Michel) — a atendente erra a digitação (preço, horário) e hoje só
+consegue mandar outra mensagem corrigindo; o WhatsApp deixa editar/apagar e o CRM não refletia.
+**Impacto:** `shared/types/conversation.types.ts` (`EditMessageRequest`, prazos,
+`EDITABLE_MESSAGE_TYPES`, `messageAuthorActionBlock`, `GetConversationResponse.canEditMessages`);
+backend `lib/evolution-client.ts` (`updateMessage`, `deleteMessageForEveryone`),
+`services/whatsapp.service.ts` (drivers + `editMessage`/`deleteMessage`/`canEditMessages`),
+`services/message.service.ts` (`editByAuthor`, `deleteByAuthor`, `stripSenderName`),
+`controllers/conversation.routes.ts`; inventário de `route-tenant-isolation.spec.ts` (113 → 115).
+Frontend `api/conversations.ts`, `MessageBubble.tsx`, `ConversationPanel.tsx`,
+`pages/Attendance/index.tsx`. API_CONTRACTS §2, SERVICES §16, FRONTEND_BACKEND (WS), PAGES §2.
+Testes: `tests/messages/edit-delete.spec.ts` (novo), `evolution-client.spec.ts`; front
+`MessageBubble.crmlab105.spec.tsx` e `Attendance.edit-delete.spec.tsx` (novos). Sem migração.
+
+### D-281: Backend migra para o zod 4.6.7, com teto em todo array de entrada e mensagens padrão em pt-BR (CRMLAB-115)
+**Decisão:**
+1. **zod 3 → 4.6.7, migração real** (sem a ponte `zod/v3`). Ajustes de API: `z.ZodIssueCode.custom`
+   → `'custom'`, `z.ZodIssue` → `z.core.$ZodIssue`, `ZodTypeAny` → `z.ZodType`; os formatos
+   saíram do `z.string()` (`z.uuid()`, `z.url()`, `z.iso.datetime({ offset: true })`). `.email()`
+   encadeado com `.trim()` e `.strict()` ficam como estão (legados, mas funcionam igual).
+2. **Teto em todo array que vem de fora** — o zod 4.6.6+ confere `.max()` ANTES de iterar; array
+   sem teto continua vulnerável mesmo no v4:
+   - `prices` de `PUT /exams/:id/prices` e `PUT /exam-packages/:id/prices`: **≤ 500** (era sem teto);
+   - resposta do Bitlab: `orcamentos` **≤ 5000** (10× o `PAGE_SIZE` = 500 pedido pela sync, folga
+     para o Bitlab ignorar o tamanho de página) e `avisos` **≤ 100**; acima → erro `contract`;
+   - `customFields` do paciente (`z.record`, que não tem `.max()`): as chaves são contadas (≤ 30)
+     ANTES de o `record` validar cada uma;
+   - já tinham teto e ficam: `tags` ≤ 20 (paciente e conversa), `synonyms` ≤ 20, `examIds` ≤ 100.
+3. **Locale pt-BR global** (`z.config(z.locales.ptBR())`), no carregamento de
+   `http/middleware/validate.ts` — toda rota com schema importa esse módulo, então vale antes da
+   primeira validação, no app e nos testes. Mensagem explícita no schema continua vencendo.
+4. **Formatos mais estritos no v4, aceitos como estão:** `z.uuid()` exige UUID RFC 9562 (versão
+   1–8 e variante) — o banco gera `gen_random_uuid()` (v4) e os ids fixos dos seeds já são RFC
+   (`a0000000-0000-4000-8000-…`), então nada legítimo é recusado; ids fora do padrão (ex.
+   `1111…-1111`) agora dão `VALIDATION_ERROR` em vez de `NOT_FOUND`. `z.email()` também é mais
+   estrito (ex. recusa domínio sem TLD, `a@b`) — e-mail desse tipo nunca foi entregável.
+**Motivo:** alerta high GHSA-mrhx-c7xc-m3w5 — o parse de array acumulava um issue por elemento
+sem limite, e um corpo com um array gigante (o limite de corpo é 25 MB) esgotava a memória e
+derrubava o backend. E as mensagens padrão do zod chegavam em inglês em `details.fields`, que o
+frontend mostra ao lado do campo (ex. `PatientProfileForm`).
+**Impacto:** só backend — `package.json`/lock, `config/env.ts`, `http/middleware/validate.ts`,
+`lib/bitlab-client.ts`, 18 arquivos `controllers/*.routes.ts`; testes `tests/kernel/zod-v4.spec.ts`
+(novo), `tests/lis/bitlab-client.spec.ts` (+1). `details.fields` agora em português (API_ERRORS.md);
+chaves e envelope inalterados. Sem migração, sem mudança de contrato de sucesso.

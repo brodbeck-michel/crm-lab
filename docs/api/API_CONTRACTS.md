@@ -931,9 +931,15 @@ histórico: a tela de Atendimento pede a primeira página sem cursor e depois re
   "cursors": {
     "before": "uuid-da-mensagem-mais-antiga-desta-pagina",
     "after": null
-  }
+  },
+  "canEditMessages": true
 }
 ```
+
+`canEditMessages` (CRMLAB-105, D-280): o canal desta conversa deixa a autora editar/apagar para
+todos — WhatsApp pelo gateway Evolution (`qr`) ou o mock de dev. Cloud API, canal sem gateway ou
+conversa fora do WhatsApp → `false` (a tela esconde os itens). Opcional no tipo; o backend sempre
+manda.
 
 `conversation` é `ConversationDetail` (= `Conversation` + `patientEmail` +
 `customFields`) — inclui `patientId`, que é de onde a coluna 3 do inbox tira o link para a
@@ -1183,6 +1189,39 @@ externo (canal `direct`/`web`, envio que falhou) reage só no CRM. Emite
 outra conversa ou de outro tenant, mensagem apagada), `CONVERSATION_ARCHIVED` (409, atendimento
 encerrado), `MESSAGE_SEND_FAILED` (502), `FORBIDDEN` (403, `platform_operator`). Mensagem de
 sistema também é `NOT_FOUND` — não existe no WhatsApp do paciente.
+
+### PATCH /conversations/:id/messages/:messageId · DELETE (CRMLAB-105, D-280)
+A **autora** corrige (`PATCH`) ou apaga para todos (`DELETE`) uma mensagem que ela mesma mandou
+ao paciente pelo CRM.
+
+**Request (PATCH):**
+```json
+{ "content": "O exame custa R$ 89,90" }
+```
+- `content`: 1..4000 caracteres após trim (o teto do envio); foto/vídeo: até 1024 (legenda).
+
+**Response:** `PATCH` → `200` com a `Message` atualizada (objeto cru, D-070; `editedAt`
+preenchido). Texto igual ao atual → `200` sem ir ao canal. `DELETE` → `204`.
+
+**Regras** (as mesmas da tela — `messageAuthorActionBlock` em `shared`):
+- só `senderType: agent` com `senderId` = usuário logado. Mensagem de colega, do celular
+  (`senderId` nulo, D-173), automática ou do paciente → `FORBIDDEN` (`reason: not_author`) —
+  gestor/admin também;
+- `CONFLICT` (409) com `details.reason`: `already_deleted`, `not_sent` (sem id externo: `pending`,
+  `failed` ou canal sem gateway), `not_editable` (`PATCH` em tipo que não é `text`/`image`/`video`),
+  `window_expired` (editar: 15 min — `MESSAGE_EDIT_WINDOW_MS`; apagar: 48 h —
+  `MESSAGE_DELETE_WINDOW_MS`), `channel_unsupported` (Cloud API);
+- ordem: valida → gateway (Evolution `POST /chat/updateMessage` / `DELETE
+  /chat/deleteMessageForEveryone`, uma tentativa) → só então grava. Gateway recusou/falhou →
+  `MESSAGE_SEND_FAILED` (502) e **nada muda**;
+- edição: versão anterior em `message_edits` (`edited_by: agent`), `messages.edited_at`; apagar:
+  `deleted_at` + `deleted_by: agent` — a linha e o texto ficam (D-220). Audit `edit_message`
+  (`oldValues.content`/`newValues.content`) ou `delete_message` (`oldValues.content`), com o
+  `userId` da autora. Emite `conversation.message_updated`. O eco do webhook depois é no-op.
+
+**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404 — conversa fora do recorte, mensagem de
+outra conversa ou de outro tenant), `FORBIDDEN` (403 — não é a autora; `platform_operator`),
+`CONFLICT` (409, acima), `MESSAGE_SEND_FAILED` (502).
 
 ### POST /conversations/:id/messages/:messageId/retry (CRMLAB-67, D-227)
 "Tentar de novo" de uma mensagem que falhou. Reenvia **a mesma** mensagem (mesmo `id`, nenhuma
@@ -2268,6 +2307,13 @@ caminho (motor, LIS, mudança de estágio fora do lembrete).
   "lisRequisitionNumber": "001-0009876",
   "lisPaidValue": 100.00,
   "lisPaidOn": "2026-09-28",
+  "lisBudgetValues": {
+    "grossValue": 200.00,
+    "discountValue": 20.00,
+    "discountPercent": 10,
+    "surchargeValue": 5.00,
+    "netValue": 185.00
+  },
   "items": [
     {
       "id": "uuid",
@@ -2336,6 +2382,14 @@ listagem e no detalhe (o selo "Conciliado" aparece nos dois). `lisRequisitionNum
 existir vínculo. Só o `lisBudgetNumber` é escrito pela API (`PATCH .../lis-reference`), os
 demais vêm da conciliação. `lisReconciledAt` preenchido significa "o LIS confirmou a requisição
 e foi isso que fechou a proposta".
+
+**`lisBudgetValues` (CRMLAB-114, D-278) — só no detalhe:** bruto (`grossValue` =
+`lis_budgets.total_value`), desconto em R$ (`discountValue`), percentual (`discountPercent`, só
+informativo, `null` quando não veio), acréscimo (`surchargeValue`) e valor a pagar (`netValue` =
+`lis_budgets.net_value` = bruto − desconto + acréscimo), todos do **convênio principal**. `null`
+sem vínculo ou com o orçamento ainda não importado. Orçamento sem os campos de desconto
+(planilha, API antiga): desconto e acréscimo `0`, percentual `null`, `netValue = grossValue`.
+Opcional no tipo, sempre presente na resposta.
 
 **Sobre "aparecer no PDF/exportação" (escopo do card CRMLAB-9):** nesta onda **não existe**
 nenhuma geração de PDF/exportação da proposta em si (os únicos PDFs do sistema hoje são
@@ -3709,6 +3763,42 @@ com 1 casa decimal. O bloco é do dia local em que começou.
   `responderId: "phone"`, `name: "Celular"`. Bloco sem resposta só entra em `total.unanswered`.
 - `daily`: todos os dias do período, em ordem, inclusive os zerados.
 
+### GET /analytics/reminders
+Lembretes de contato por atendente (CRMLAB-103, **D-279**) — **gestor/admin apenas** (atendente →
+`403 FORBIDDEN` com `details.requiredRoles: ["manager","admin"]`). Tipos em
+`shared/types/proposal-reminder.types.ts` (`ProposalReminderReport`). **Sem cache** no servidor.
+
+**Query Params:** `startDate`, `endDate` (`YYYY-MM-DD`, **datas locais do fuso do expediente**, a
+mesma convenção de `/analytics/response-time`). Ausentes → últimos 30 dias. Invertido →
+`400 VALIDATION_ERROR` em `details.fields.endDate`. Sem teto de dias.
+
+**Regras:**
+- **Atribuição:** à **responsável pela proposta** (`proposals.created_by`, a de `isCardOwner`),
+  não a quem resolveu. Proposta sem responsável (cartão do Bitlab na fila comum) → linha
+  `userId: null`, `name: "Sem responsável"`.
+- `overdueOpen` = lembretes **abertos e vencidos agora** (`dueDate ≤ today`, dia de Brasília —
+  `isReminderDue`). Foto do momento: **não depende do período**.
+- `won`, `lost`, `rescheduled`, `autoClosed` = lembretes **resolvidos no período**
+  (`resolved_at`) com esse desfecho; `resolved` = a soma.
+- Linhas: todo usuário **ativo** do laboratório (zerado se não tem número); inativo e
+  "Sem responsável" só quando têm algum número. Ordem: mais vencidos, mais resolvidos, nome.
+
+**Response (200):**
+```json
+{
+  "period": { "startDate": "2026-09-01", "endDate": "2026-09-30" },
+  "timezone": "America/Sao_Paulo",
+  "today": "2026-09-20",
+  "rows": [
+    { "userId": "uuid", "name": "Ana", "overdueOpen": 3, "won": 2, "lost": 1,
+      "rescheduled": 4, "autoClosed": 0, "resolved": 7 },
+    { "userId": null, "name": "Sem responsável", "overdueOpen": 1, "won": 0, "lost": 0,
+      "rescheduled": 0, "autoClosed": 2, "resolved": 2 }
+  ],
+  "total": { "overdueOpen": 4, "won": 2, "lost": 1, "rescheduled": 4, "autoClosed": 2, "resolved": 9 }
+}
+```
+
 ---
 
 ## 5b. Platform Console (`platform_operator` apenas)
@@ -3986,7 +4076,10 @@ Sem datas: últimos 30 dias terminando hoje. Formato inválido, data inexistente
   "issued": {
     "count": 210,
     "totalValue": 158000,
-    "averageTicket": 752.38
+    "averageTicket": 752.38,
+    "netValue": 151000,
+    "discountValue": 7000,
+    "netAverageTicket": 719.05
   },
   "requisition": {
     "count": 178,
@@ -3999,7 +4092,7 @@ Sem datas: últimos 30 dias terminando hoje. Formato inválido, data inexistente
     "conversionQty": 78.57
   },
   "monthlySeries": [
-    { "month": "2026-08", "issuedValue": 158000, "requisitionValue": 132000, "paidValue": 121000 }
+    { "month": "2026-08", "issuedValue": 158000, "issuedNetValue": 151000, "requisitionValue": 132000, "paidValue": 121000 }
   ],
   "byAttendant": [
     { "attendantId": "uuid", "attendantName": "Maria Souza", "issuedCount": 40, "paidCount": 32, "paidValue": 30000 }
@@ -4024,6 +4117,13 @@ Sem datas: últimos 30 dias terminando hoje. Formato inválido, data inexistente
   (BUSINESS_RULES.md §11); `0` quando `issued.count` é `0`, nunca `NaN`/`Infinity`
   (`percent()` de `analytics.service.ts`, reaproveitada).
 - `averageTicket` usa `average()` de `analytics.service.ts`: `0` quando `count` é `0`.
+- **Bruto e líquido (CRMLAB-114, D-278):** `issued.totalValue`/`averageTicket` continuam o
+  **bruto** (`SUM(total_value)`), sem mudar de número. Ao lado: `netValue` (`SUM(net_value)`, o
+  líquido do convênio principal — o número principal da tela e do PDF), `discountValue =
+  totalValue − netValue` (desconto já abatido do acréscimo) e `netAverageTicket = netValue /
+  count`. Orçamento sem os campos de desconto entra com líquido = bruto. Na série mensal,
+  `issuedValue` segue bruto e `issuedNetValue` é o líquido (o que o gráfico desenha).
+  `byInsurance.totalValue` segue bruto.
 - `monthlySeries` cobre os últimos 12 meses terminando no mês de `endDate`, **não** só o
   período pedido — é o gráfico "Evolução do faturamento" de `/results` (§14) e a série do PDF,
   que sempre mostram 12 pontos. Mês sem dado aparece com os três valores em `0`, nunca ausente.
@@ -5151,6 +5251,7 @@ Sem datas: últimos 30 dias terminando hoje (mesma regra de `resolvePeriod`, §5
       "patientName": "João Santos",
       "principalInsuranceName": "Unimed Tubarão",
       "totalValue": 452.30,
+      "netValue": 452.30,
       "insuranceId": "8f2a1c4b-6d39-4f70-9a12-5c8e3b7d1f06",
       "attendantName": "Maria Souza",
       "attendantId": "4a1b8e6c-5d72-4931-b0f8-2e7a9c1d4b55",
@@ -5165,7 +5266,8 @@ Sem datas: últimos 30 dias terminando hoje (mesma regra de `resolvePeriod`, §5
   "pagination": { "page": 1, "limit": 20, "total": 210, "totalPages": 11 }
 }
 ```
-`proposalId` é sempre `null` nesta onda (conciliação é Onda 13). Ordenado por `issuedOn DESC`
+`totalValue` é o bruto e `netValue` o líquido do convênio principal (D-278; sem os campos de
+desconto, iguais). `proposalId` é sempre `null` nesta onda (conciliação é Onda 13). Ordenado por `issuedOn DESC`
 quando `sortBy` não é enviado.
 
 **Erros:** `VALIDATION_ERROR` (400, datas/`sortBy`/`order` fora do formato), `FORBIDDEN` (403,
@@ -5186,7 +5288,10 @@ recortável por atendente/convênio para o filtro da tela.
 ```json
 {
   "period": { "startDate": "2026-08-01", "endDate": "2026-08-31" },
-  "issued": { "count": 210, "totalValue": 158000, "averageTicket": 752.38 },
+  "issued": {
+    "count": 210, "totalValue": 158000, "averageTicket": 752.38,
+    "netValue": 151000, "discountValue": 7000, "netAverageTicket": 719.05
+  },
   "requisition": { "count": 178, "totalValue": 132000 },
   "paid": { "count": 165, "totalValue": 121000, "averageTicket": 733.33, "conversionQty": 78.57 },
   "byAttendant": [
@@ -5202,7 +5307,8 @@ recortável por atendente/convênio para o filtro da tela.
 }
 ```
 Mesmas definições de `issued`/`paid`/`conversionQty` de `GET /reports/executive` (§5c) —
-`conversionQty` capado em 100%, `averageTicket` via `average()`. `byAttendant`/`byInsurance`
+`conversionQty` capado em 100%, `averageTicket` via `average()`, bruto e líquido de `issued`
+como em §5c (D-278). `byAttendant`/`byInsurance`
 recortados ao top 6 por `paidValue`, mesma regra e mesmo `MIN_ORC_RANKING` de
 BUSINESS_RULES.md §11 — inclusive o `paidValue` por convênio descrito em §5c.
 

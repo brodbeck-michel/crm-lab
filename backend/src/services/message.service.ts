@@ -50,6 +50,7 @@
  *   MESMA transacao do INSERT (ver `MessageRepository.insert`). Conversa
  *   encerrada REABRE antes, na fila livre (D-174).
  */
+import { MAX_CAPTION_LENGTH, messageAuthorActionBlock } from '@crm-lab/shared';
 import type {
   Conversation,
   CreateMessageRequest,
@@ -163,6 +164,14 @@ export function participantReplyOf(
 export function withSenderName(name: string, text: string | null): string {
   const bold = `*${name.replace(/\*/g, '').trim()}*`;
   return text ? `${bold}\n${text}` : bold;
+}
+
+/**
+ * Desfaz `withSenderName` (D-263 item 5): o eco de uma edicao de resposta de
+ * participante chega com `*Nome*` na primeira linha, e o CRM guarda sem.
+ */
+export function stripSenderName(text: string): string {
+  return text.replace(/^\*[^*\n]*\*(?:\n|$)/, '');
 }
 
 function clampPage(value: number | undefined): number {
@@ -1028,8 +1037,14 @@ export class MessageService {
     if (!ref) return 'alvo_desconhecido';
     if (ref.senderType === 'system') return 'sem_efeito';
     const editedBy = ref.senderType === 'patient' ? 'patient' : 'agent';
+    // Resposta de participante sai com `*Nome*` (D-263); a bolha guarda sem.
+    // Sem isto o eco da edicao feita pelo CRM (D-280) viraria uma 2a edicao.
+    const content =
+      ref.senderType === 'agent' && (await this.messages.isParticipantReply(tenantId, ref.id))
+        ? stripSenderName(newContent)
+        : newContent;
 
-    const edit = await this.messages.applyEdit(tenantId, ref.id, newContent, editedBy);
+    const edit = await this.messages.applyEdit(tenantId, ref.id, content, editedBy);
     if (!edit) return 'sem_efeito';
 
     await this.audit?.log({
@@ -1042,6 +1057,154 @@ export class MessageService {
     });
     this.emitMessageUpdated(tenantId, ref.conversationId, ref.id);
     return 'aplicado';
+  }
+
+  // -------------------------------------------------------------------------
+  // CRMLAB-105 — a autora edita / apaga para todos pelo CRM (D-280)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Edita texto/legenda de mensagem que a PROPRIA atendente mandou pelo CRM.
+   * Ordem (D-280 item 4): valida -> gateway -> so entao grava (`message_edits`
+   * + `edited_at`) + audit com o `userId` + WS. Gateway recusou: nada muda e
+   * a API responde `MESSAGE_SEND_FAILED`.
+   */
+  async editByAuthor(
+    tenantId: string,
+    conversationId: string,
+    messageId: string,
+    userId: string,
+    content: string,
+  ): Promise<Message> {
+    const target = await this.authorTarget(tenantId, conversationId, messageId, userId, 'edit');
+    const { message } = target;
+    if (message.messageType !== 'text' && content.length > MAX_CAPTION_LENGTH) {
+      throw new BusinessError('VALIDATION_ERROR', { field: 'content', max: MAX_CAPTION_LENGTH });
+    }
+    // Mesmo texto: nada a corrigir, nem vai ao canal.
+    if (content === message.content) return message;
+
+    // Resposta de participante sai de novo com o nome (D-263 item 5).
+    const named =
+      message.senderName !== null && (await this.messages.isParticipantReply(tenantId, messageId));
+    const outbound = named && message.senderName !== null ? withSenderName(message.senderName, content) : content;
+    await this.callGateway(target, messageId, 'edit', (whatsapp) =>
+      whatsapp.editMessage(tenantId, target.phone, target.externalId, outbound),
+    );
+
+    // `null` = o eco do webhook chegou antes e ja gravou (idempotente): o
+    // audit da atendente sai do mesmo jeito.
+    const edit = await this.messages.applyEdit(tenantId, messageId, content, 'agent');
+    await this.audit?.log({
+      tenantId,
+      userId,
+      action: 'edit_message',
+      entityType: 'message',
+      entityId: messageId,
+      oldValues: { content: message.content },
+      newValues: { content, editedAt: edit?.editedAt ?? null, editId: edit?.editId ?? null },
+    });
+    this.emitMessageUpdated(tenantId, conversationId, messageId);
+    return (await this.messages.findById(tenantId, messageId)) ?? message;
+  }
+
+  /**
+   * "Apagar para todos" da autora (D-280): ESCONDE (`deleted_at`,
+   * `deleted_by = 'agent'`), nunca apaga — o texto fica na linha e no audit.
+   */
+  async deleteByAuthor(
+    tenantId: string,
+    conversationId: string,
+    messageId: string,
+    userId: string,
+  ): Promise<void> {
+    const target = await this.authorTarget(tenantId, conversationId, messageId, userId, 'delete');
+    await this.callGateway(target, messageId, 'delete', (whatsapp) =>
+      whatsapp.deleteMessage(tenantId, target.phone, target.externalId),
+    );
+
+    const deletedAt = await this.messages.markDeleted(tenantId, messageId, 'agent');
+    await this.audit?.log({
+      tenantId,
+      userId,
+      action: 'delete_message',
+      entityType: 'message',
+      entityId: messageId,
+      oldValues: { content: target.message.content, deletedAt: null },
+      newValues: { deletedAt, deletedBy: 'agent' },
+    });
+    this.emitMessageUpdated(tenantId, conversationId, messageId);
+  }
+
+  /**
+   * O canal da conversa deixa a autora editar/apagar (D-280)? Vai no
+   * `GET /conversations/:id` como `canEditMessages` — a tela esconde os itens.
+   */
+  async canEditMessages(tenantId: string, channel: string): Promise<boolean> {
+    if (!this.whatsapp || channel !== 'whatsapp') return false;
+    return this.whatsapp.canEditMessages(tenantId);
+  }
+
+  /**
+   * Regras de D-280 itens 1-3 (`messageAuthorActionBlock`, a mesma da tela) +
+   * o que so o backend sabe: id externo e canal. Outra autora = `FORBIDDEN`;
+   * prazo/estado = `CONFLICT` com `details.reason`.
+   */
+  private async authorTarget(
+    tenantId: string,
+    conversationId: string,
+    messageId: string,
+    userId: string,
+    action: 'edit' | 'delete',
+  ): Promise<{
+    tenantId: string;
+    message: Message;
+    phone: string;
+    externalId: string;
+    whatsapp: WhatsAppService;
+  }> {
+    const conversation = await this.conversations.findById(tenantId, conversationId);
+    if (!conversation) throw notFound({ resource: 'conversation', id: conversationId });
+    const message = await this.messages.findById(tenantId, messageId);
+    if (!message || message.conversationId !== conversationId) {
+      throw notFound({ resource: 'message', id: messageId });
+    }
+    const block = messageAuthorActionBlock(message, action, userId);
+    if (block === 'not_author') throw new BusinessError('FORBIDDEN', { reason: block });
+    if (block) throw new BusinessError('CONFLICT', { reason: block });
+
+    const ref = await this.messages.findRef(tenantId, messageId);
+    if (!ref?.externalMessageId) throw new BusinessError('CONFLICT', { reason: 'not_sent' });
+    if (!this.whatsapp || !(await this.canEditMessages(tenantId, conversation.channel))) {
+      throw new BusinessError('CONFLICT', { reason: 'channel_unsupported' });
+    }
+    return {
+      tenantId,
+      message,
+      phone: conversation.patientPhone,
+      externalId: ref.externalMessageId,
+      whatsapp: this.whatsapp,
+    };
+  }
+
+  /** Gateway falhou/recusou => log + `MESSAGE_SEND_FAILED`, antes de gravar qualquer coisa. */
+  private async callGateway(
+    target: { tenantId: string; message: Message; whatsapp: WhatsAppService },
+    messageId: string,
+    kind: 'edit' | 'delete',
+    call: (whatsapp: WhatsAppService) => Promise<void>,
+  ): Promise<void> {
+    try {
+      await call(target.whatsapp);
+    } catch (err) {
+      logger.error(kind === 'edit' ? 'whatsapp.edit_failed' : 'whatsapp.delete_failed', {
+        tenantId: target.tenantId,
+        conversationId: target.message.conversationId,
+        messageId,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+      throw new BusinessError('MESSAGE_SEND_FAILED', { messageId });
+    }
   }
 
   /**

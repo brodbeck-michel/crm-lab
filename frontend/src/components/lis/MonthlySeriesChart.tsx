@@ -51,7 +51,8 @@ export interface MonthlySeriesChartProps {
 }
 
 const SERIES = [
-  { key: 'issuedValue', name: 'Total orçado', color: CHART_POSITIVE_DEEP_COLOR },
+  // Líquido (D-278): o mesmo número do cartão "Total Orçado".
+  { key: 'issuedNetValue', name: 'Total orçado', color: CHART_POSITIVE_DEEP_COLOR },
   { key: 'requisitionValue', name: 'Em requisição', color: CHART_POSITIVE_COLOR },
   { key: 'paidValue', name: 'Recebido', color: CHART_ACCENT_COLOR },
 ] as const;

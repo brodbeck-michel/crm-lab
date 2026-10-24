@@ -35,7 +35,7 @@ import {
 import type { InternalChatService } from '../services/internal-chat.service.js';
 import { dispositionFor, servedMimeType } from './media.routes.js';
 
-export const channelIdParamSchema = z.object({ id: z.string().uuid() });
+export const channelIdParamSchema = z.object({ id: z.uuid() });
 
 export const listMessagesQuerySchema = z.object({
   page: z.coerce.number().int().min(1).optional(),
@@ -45,19 +45,19 @@ export const listMessagesQuerySchema = z.object({
 export const sendMessageSchema = z
   .object({
     content: z.string().min(1).max(MAX_CONTENT_LENGTH),
-    attachedProposalId: z.string().uuid().nullish(),
+    attachedProposalId: z.uuid().nullish(),
   })
   .strict();
 
 type SendMessageBody = z.infer<typeof sendMessageSchema>;
 
-export const createDirectChannelSchema = z.object({ userId: z.string().uuid() }).strict();
+export const createDirectChannelSchema = z.object({ userId: z.uuid() }).strict();
 
 type CreateDirectChannelBody = z.infer<typeof createDirectChannelSchema>;
 
 export const attachmentParamSchema = z.object({
-  id: z.string().uuid(),
-  attachmentId: z.string().uuid(),
+  id: z.uuid(),
+  attachmentId: z.uuid(),
 });
 
 /**

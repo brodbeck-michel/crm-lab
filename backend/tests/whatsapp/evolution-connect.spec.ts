@@ -112,6 +112,12 @@ function fakeEvolutionClient(): EvolutionClient & {
     async sendPresence() {
       return undefined;
     },
+    async updateMessage() {
+      return undefined;
+    },
+    async deleteMessageForEveryone() {
+      return undefined;
+    },
   };
 }
 
@@ -141,6 +147,8 @@ function missingInstanceClient(): EvolutionClient {
     sendMedia: async () => ({ externalId: 'x' }),
     sendReaction: async () => undefined,
     sendPresence: async () => undefined,
+    updateMessage: async () => undefined,
+    deleteMessageForEveryone: async () => undefined,
   };
 }
 
@@ -157,6 +165,8 @@ function brokenGatewayClient(): EvolutionClient {
     sendMedia: async () => ({ externalId: 'x' }),
     sendReaction: async () => undefined,
     sendPresence: async () => undefined,
+    updateMessage: async () => undefined,
+    deleteMessageForEveryone: async () => undefined,
   };
 }
 

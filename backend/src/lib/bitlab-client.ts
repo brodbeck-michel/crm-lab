@@ -152,6 +152,20 @@ const budgetSchema = z.object({
   VL_TOTAL2: money,
   CONVENIO3: text,
   VL_TOTAL3: money,
+  // Desconto/acrescimo/liquido por convenio, desde 23/10/2026 (CRMLAB-114,
+  // D-278). Opcionais: API antiga, ou convenio 2/3 inexistente, vem null.
+  PER_DESCONTO1: money,
+  VL_DESCONTO1: money,
+  VL_ACRESCIMO1: money,
+  VL_APAGAR1: money,
+  PER_DESCONTO2: money,
+  VL_DESCONTO2: money,
+  VL_ACRESCIMO2: money,
+  VL_APAGAR2: money,
+  PER_DESCONTO3: money,
+  VL_DESCONTO3: money,
+  VL_ACRESCIMO3: money,
+  VL_APAGAR3: money,
   MEDIA_CONVENIO: money,
   USUÁRIO: text,
   REQUISICAO: text,
@@ -175,16 +189,26 @@ function paymentStatus(value: string | null): 'ativo' | 'estornado' | null {
   return value.trim().toUpperCase() === 'ESTORNADO' ? 'estornado' : 'ativo';
 }
 
+/**
+ * Tetos dos arrays da resposta (CRMLAB-115, D-281): o zod confere o tamanho ANTES de iterar, entao
+ * uma resposta anomala falha rapido em vez de acumular um issue por elemento e esgotar a memoria
+ * (GHSA-mrhx-c7xc-m3w5). A sync pede `PAGE_SIZE` = 500 por pagina (lis-sync.service); 10x isso e
+ * folga para o Bitlab ignorar o `tamanhoPagina` sem derrubar a sync normal. Acima do teto a pagina
+ * cai no mesmo caminho de resposta fora do contrato.
+ */
+const MAX_BUDGETS_PER_PAGE = 5000;
+const MAX_NOTICES = 100;
+
 const successSchema = z.object({
   sucesso: z.literal(true),
   status: z.enum(['LISTA', 'SEM_RESULTADOS']),
-  avisos: z.array(z.string()).optional().default([]),
+  avisos: z.array(z.string()).max(MAX_NOTICES).optional().default([]),
   paginacao: z.object({
     temProxima: z.boolean(),
     totalPaginas: z.number().int().nonnegative().optional(),
   }),
   marcaDagua: text,
-  orcamentos: z.array(budgetSchema),
+  orcamentos: z.array(budgetSchema).max(MAX_BUDGETS_PER_PAGE),
 });
 
 const errorSchema = z.object({
@@ -219,6 +243,18 @@ export function toLisRow(budget: BitlabBudget): LisSpreadsheetRow {
     reversedAt: parseBitlabDateTime(budget.DATA_ESTORNO),
     paymentMethod: budget.FORMA_PAGAMENTO,
     cardBrand: budget.BANDEIRA_CARTAO,
+    discountPercent1: budget.PER_DESCONTO1,
+    discountValue1: budget.VL_DESCONTO1,
+    surchargeValue1: budget.VL_ACRESCIMO1,
+    payableValue1: budget.VL_APAGAR1,
+    discountPercent2: budget.PER_DESCONTO2,
+    discountValue2: budget.VL_DESCONTO2,
+    surchargeValue2: budget.VL_ACRESCIMO2,
+    payableValue2: budget.VL_APAGAR2,
+    discountPercent3: budget.PER_DESCONTO3,
+    discountValue3: budget.VL_DESCONTO3,
+    surchargeValue3: budget.VL_ACRESCIMO3,
+    payableValue3: budget.VL_APAGAR3,
   };
 }
 

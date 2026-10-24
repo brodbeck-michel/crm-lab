@@ -33,6 +33,7 @@ import type {
   ListUsersResponse,
   OperationOverviewResponse,
   PipelineSnapshot,
+  ProposalReminderReport,
   ResponseTimeReport,
   TeamReport,
 } from '@crm-lab/shared';
@@ -111,6 +112,12 @@ function fakeEvolutionClient(): EvolutionClient {
       return undefined;
     },
     async sendPresence() {
+      return undefined;
+    },
+    async updateMessage() {
+      return undefined;
+    },
+    async deleteMessageForEveryone() {
       return undefined;
     },
   };
@@ -318,6 +325,25 @@ const LAB_ROUTES: readonly LabRoute[] = [
     actor: 'attendant',
     addressable: true,
     ownStatus: 204,
+  },
+  {
+    // D-280: a sonda e mensagem do paciente — do proprio tenant, `FORBIDDEN` (so a autora edita).
+    name: 'PATCH /conversations/:id/messages/:messageId',
+    method: 'patch',
+    path: (l) => `/api/v1/conversations/${l.conversation.id}/messages/${l.message.id}`,
+    body: () => ({ content: 'sonda de isolamento' }),
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 403,
+  },
+  {
+    // D-280: idem — so a autora apaga para todos.
+    name: 'DELETE /conversations/:id/messages/:messageId',
+    method: 'delete',
+    path: (l) => `/api/v1/conversations/${l.conversation.id}/messages/${l.message.id}`,
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 403,
   },
   {
     // D-227: a sonda e mensagem do paciente — do proprio tenant, `CONFLICT` (nao e do atendimento).
@@ -965,6 +991,7 @@ const LAB_ROUTES: readonly LabRoute[] = [
   { name: 'GET /analytics/pipeline', method: 'get', path: () => '/api/v1/analytics/pipeline', actor: 'manager', addressable: false },
   { name: 'GET /analytics/team', method: 'get', path: () => '/api/v1/analytics/team', actor: 'manager', addressable: false },
   { name: 'GET /analytics/response-time', method: 'get', path: () => '/api/v1/analytics/response-time', actor: 'manager', addressable: false },
+  { name: 'GET /analytics/reminders', method: 'get', path: () => '/api/v1/analytics/reminders', actor: 'manager', addressable: false },
 
   // --- chat interno ---
   { name: 'GET /internal-chat/channels', method: 'get', path: () => '/api/v1/internal-chat/channels', actor: 'attendant', addressable: false },
@@ -1391,7 +1418,9 @@ describe('inventario de rotas de laboratorio', () => {
     // CRMLAB-102/D-272 soma 2: `PUT /proposals/:id/reminder` e
     // `POST /proposals/:id/reminder/resolve`.
     // CRMLAB-112/D-277 soma 1: `GET /conversations/unread-count`.
-    expect(LAB_ROUTES).toHaveLength(113);
+    // CRMLAB-103/D-279 soma 1: `GET /analytics/reminders`.
+    // CRMLAB-105/D-280 soma 2: `PATCH|DELETE /conversations/:id/messages/:messageId`.
+    expect(LAB_ROUTES).toHaveLength(116);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)
@@ -1701,6 +1730,24 @@ describe('listagens e relatorios do tenant A', () => {
       .set(app.auth(beta.manager))
       .expect(200);
     expect((doBeta.body as ResponseTimeReport).responders.map((r) => r.responderId)).toContain(beta.attendant.id);
+
+    // CRMLAB-103 (D-279): lembrete vencido de proposta do Beta nao entra no Alfa.
+    await db.withoutTenant((tx) =>
+      tx.query(
+        `INSERT INTO proposal_reminders (tenant_id, proposal_id, origin, due_date)
+         VALUES ($1, $2, 'manual', DATE '2026-01-01')`,
+        [beta.tenant.id, beta.proposal.id],
+      ),
+    );
+    const lembretes = await app.agent.get('/api/v1/analytics/reminders').set(headers).expect(200);
+    const doAlfa = lembretes.body as ProposalReminderReport;
+    expect(doAlfa.rows.map((r) => r.userId)).not.toContain(beta.attendant.id);
+    expect(doAlfa.total.overdueOpen).toBe(0);
+    const lembretesBeta = await app.agent
+      .get('/api/v1/analytics/reminders')
+      .set(app.auth(beta.manager))
+      .expect(200);
+    expect((lembretesBeta.body as ProposalReminderReport).total.overdueOpen).toBe(1);
   });
 
   it('GET /themes/current devolve o tema do proprio tenant apos o admin de A trocar a cor', async () => {

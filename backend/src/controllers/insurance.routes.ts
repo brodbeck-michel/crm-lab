@@ -65,7 +65,7 @@ export const updateInsuranceSchema = z
   })
   .partial();
 
-export const insuranceIdParamSchema = z.object({ id: z.string().uuid() });
+export const insuranceIdParamSchema = z.object({ id: z.uuid() });
 
 type CreateInsuranceBody = z.infer<typeof createInsuranceSchema>;
 type UpdateInsuranceBody = z.infer<typeof updateInsuranceSchema>;

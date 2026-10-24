@@ -4,6 +4,7 @@ import type {
   CreateConversationRequest,
   CreateConversationResponse,
   CreateMessageRequest,
+  EditMessageRequest,
   GetConversationQuery,
   GetConversationResponse,
   ConversationUnreadCountResponse,
@@ -60,6 +61,14 @@ export const conversationsApi = {
   /** Tira a reação do laboratório (204, idempotente). */
   removeReaction: (id: string, messageId: string) =>
     http.delete<void>(`/conversations/${id}/messages/${messageId}/reaction`),
+
+  /** A autora corrige o texto/legenda (CRMLAB-105, D-280). */
+  editMessage: (id: string, messageId: string, body: EditMessageRequest) =>
+    http.patch<Message>(`/conversations/${id}/messages/${messageId}`, body),
+
+  /** A autora apaga para todos (CRMLAB-105, D-280). 204. */
+  deleteMessage: (id: string, messageId: string) =>
+    http.delete<void>(`/conversations/${id}/messages/${messageId}`),
 
   /** "Tentar de novo" (CRMLAB-67, D-227) — reenvia a MESMA mensagem que falhou. */
   retryMessage: (id: string, messageId: string) =>

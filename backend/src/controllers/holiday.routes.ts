@@ -21,7 +21,7 @@ import { validate, validated } from '../http/middleware/validate.js';
 import { createAuditService } from '../services/audit.service.js';
 import { createHolidayService, parseYear } from '../services/holiday.service.js';
 
-const holidayIdParamSchema = z.object({ id: z.string().uuid() });
+const holidayIdParamSchema = z.object({ id: z.uuid() });
 
 function handle(fn: (req: Request, res: Response) => Promise<void>): RequestHandler {
   return (req, res, next) => {

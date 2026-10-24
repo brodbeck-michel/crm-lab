@@ -335,6 +335,19 @@ export interface WhatsAppDriver {
     presence: OutboundPresence,
     delayMs: number,
   ): Promise<void>;
+  /**
+   * A autora corrige texto/legenda de mensagem NOSSA (CRMLAB-105, D-280).
+   * OPCIONAL, como `sendReaction`: driver sem os dois metodos (Cloud API) nao
+   * oferece editar/apagar — `WhatsAppService.canEditMessages` diz isso a tela.
+   */
+  editMessage?(
+    credentials: WhatsAppCredentials,
+    phone: string,
+    externalId: string,
+    content: string,
+  ): Promise<void>;
+  /** "Apagar para todos" de mensagem NOSSA (D-280). OPCIONAL, idem. */
+  deleteMessage?(credentials: WhatsAppCredentials, phone: string, externalId: string): Promise<void>;
 }
 
 /** O que a atendente manda ao paciente: `paused` so assina, `composing` = digitando (D-226). */
@@ -368,6 +381,15 @@ export interface MockSentMessage {
   caption?: string;
 }
 
+/** Edicao/apagamento feito pela autora (D-280) — o que o mock "mandou". */
+export interface MockMessageAction {
+  tenantId: string;
+  phone: string;
+  kind: 'edit' | 'delete';
+  externalId: string;
+  content?: string;
+}
+
 export interface MockSentReaction {
   tenantId: string;
   phone: string;
@@ -385,6 +407,7 @@ export class MockWhatsAppDriver implements WhatsAppDriver {
   readonly sent: MockSentMessage[] = [];
   readonly reactions: MockSentReaction[] = [];
   readonly presences: MockSentPresence[] = [];
+  readonly messageActions: MockMessageAction[] = [];
 
   async send(
     credentials: WhatsAppCredentials,
@@ -448,10 +471,29 @@ export class MockWhatsAppDriver implements WhatsAppDriver {
     this.presences.push({ tenantId: credentials.tenantId, phone, presence });
   }
 
+  /** Sucesso fingido (D-280): dev/E2E sem gateway enxergam editar/apagar. */
+  async editMessage(
+    credentials: WhatsAppCredentials,
+    phone: string,
+    externalId: string,
+    content: string,
+  ): Promise<void> {
+    this.messageActions.push({ tenantId: credentials.tenantId, phone, kind: 'edit', externalId, content });
+  }
+
+  async deleteMessage(
+    credentials: WhatsAppCredentials,
+    phone: string,
+    externalId: string,
+  ): Promise<void> {
+    this.messageActions.push({ tenantId: credentials.tenantId, phone, kind: 'delete', externalId });
+  }
+
   clear(): void {
     this.sent.length = 0;
     this.reactions.length = 0;
     this.presences.length = 0;
+    this.messageActions.length = 0;
   }
 }
 
@@ -640,6 +682,40 @@ export class EvolutionWhatsAppDriver implements WhatsAppDriver {
       phone,
       presence,
       delayMs,
+      credentials.qrInstanceApiKey,
+    );
+  }
+
+  async editMessage(
+    credentials: WhatsAppCredentials,
+    phone: string,
+    externalId: string,
+    content: string,
+  ): Promise<void> {
+    if (!credentials.qrInstanceApiKey) {
+      throw new EvolutionCredentialError(credentials.tenantId);
+    }
+    await this.client.updateMessage(
+      evolutionInstanceName(credentials.tenantId),
+      phone,
+      externalId,
+      content,
+      credentials.qrInstanceApiKey,
+    );
+  }
+
+  async deleteMessage(
+    credentials: WhatsAppCredentials,
+    phone: string,
+    externalId: string,
+  ): Promise<void> {
+    if (!credentials.qrInstanceApiKey) {
+      throw new EvolutionCredentialError(credentials.tenantId);
+    }
+    await this.client.deleteMessageForEveryone(
+      evolutionInstanceName(credentials.tenantId),
+      phone,
+      externalId,
       credentials.qrInstanceApiKey,
     );
   }
@@ -941,6 +1017,44 @@ export class WhatsAppService {
     const driver = this.driverFor(credentials);
     if (!driver.sendPresence) return;
     await driver.sendPresence(credentials, phone, presence, PRESENCE_DELAY_MS[presence]);
+  }
+
+  /**
+   * Editar/apagar da autora (CRMLAB-105, D-280). UMA tentativa, sem fila: a
+   * atendente esta olhando a tela, e repetir "apagar" apos um timeout que na
+   * verdade apagou nao ajuda. Falhou => lanca, e quem chama nao grava nada.
+   */
+  async editMessage(tenantId: string, phone: string, externalId: string, content: string): Promise<void> {
+    const credentials = await this.sendableCredentials(tenantId);
+    const driver = this.driverFor(credentials);
+    if (!driver.editMessage) {
+      throw new Error(`driver whatsapp "${driver.name}" nao edita mensagem`);
+    }
+    await driver.editMessage(credentials, phone, externalId, content);
+  }
+
+  /** "Apagar para todos" (D-280) — mesma disciplina de `editMessage`. */
+  async deleteMessage(tenantId: string, phone: string, externalId: string): Promise<void> {
+    const credentials = await this.sendableCredentials(tenantId);
+    const driver = this.driverFor(credentials);
+    if (!driver.deleteMessage) {
+      throw new Error(`driver whatsapp "${driver.name}" nao apaga mensagem`);
+    }
+    await driver.deleteMessage(credentials, phone, externalId);
+  }
+
+  /**
+   * O canal do tenant oferece editar/apagar (D-280)? E o que a tela usa para
+   * mostrar os itens do menu. Qualquer erro (canal sem config, gateway nao
+   * configurado) = `false`: na duvida, o item some.
+   */
+  async canEditMessages(tenantId: string): Promise<boolean> {
+    try {
+      const driver = this.driverFor(await this.credentials.forTenant(tenantId));
+      return Boolean(driver.editMessage && driver.deleteMessage);
+    } catch {
+      return false;
+    }
   }
 
   /**

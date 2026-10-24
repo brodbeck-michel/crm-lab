@@ -19,6 +19,7 @@ import type {
   OperationOverviewQuery,
   PaginationQuery,
   PendingLisBudgetsSummaryQuery,
+  ProposalReminderReportQuery,
   ResponseTimeQuery,
   SearchMessagesQuery,
   SalesSummaryQuery,
@@ -108,6 +109,9 @@ export const queryKeys = {
   /** ['analytics', 'response-time', period] — CRMLAB-83 (D-257) */
   analyticsResponseTime: (period?: ResponseTimeQuery) =>
     ['analytics', 'response-time', period ?? {}] as const,
+  /** ['analytics', 'reminders', period] — CRMLAB-103 (D-279) */
+  analyticsReminders: (period?: ProposalReminderReportQuery) =>
+    ['analytics', 'reminders', period ?? {}] as const,
 
   /** ['theme'] */
   theme: () => ['theme'] as const,

@@ -49,7 +49,7 @@ export const updateQuickReplySchema = z
   })
   .partial();
 
-export const quickReplyIdParamSchema = z.object({ id: z.string().uuid() });
+export const quickReplyIdParamSchema = z.object({ id: z.uuid() });
 
 type CreateQuickReplyBody = z.infer<typeof createQuickReplySchema>;
 type UpdateQuickReplyBody = z.infer<typeof updateQuickReplySchema>;

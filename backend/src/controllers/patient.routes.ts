@@ -109,7 +109,7 @@ export const listPatientsQuerySchema = z.object({
   includeInactive: z.coerce.boolean().optional(),
 });
 
-export const patientIdParamSchema = z.object({ id: z.string().uuid() });
+export const patientIdParamSchema = z.object({ id: z.uuid() });
 
 /**
  * `.strict()` recusa campo desconhecido. `phone` e editavel desde D-106 —
@@ -140,9 +140,15 @@ export const updatePatientSchema = z
       .nullable(),
     notes: z.string().max(4000).nullable(),
     tags: z.array(z.string().trim().min(1).max(50)).max(20),
+    // CRMLAB-115 (D-281): conta as chaves ANTES do `record` iterar — um objeto gigante com valor
+    // invalido em cada chave acumularia um issue por chave (mesma classe da GHSA-mrhx-c7xc-m3w5).
     customFields: z
-      .record(z.string().min(1).max(50), z.string().max(500))
-      .refine((value) => Object.keys(value).length <= 30, 'No maximo 30 campos personalizados'),
+      .unknown()
+      .refine(
+        (value) => typeof value !== 'object' || value === null || Object.keys(value).length <= 30,
+        'No maximo 30 campos personalizados',
+      )
+      .pipe(z.record(z.string().min(1).max(50), z.string().max(500))),
   })
   .partial()
   .strict()

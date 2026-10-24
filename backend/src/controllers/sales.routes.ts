@@ -30,14 +30,14 @@ const dateParam = z.string().regex(DATE_FORMAT, 'Data deve estar no formato YYYY
 const listSalesQuerySchema = z.object({
   startDate: dateParam.optional(),
   endDate: dateParam.optional(),
-  attendantId: z.string().uuid().optional(),
+  attendantId: z.uuid().optional(),
   kind: z.enum(['exams', 'checkup']).optional(),
   page: z.coerce.number().int().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(MAX_LIMIT).optional(),
 });
 
 const createSaleSchema = z.object({
-  attendantId: z.string().uuid().optional(),
+  attendantId: z.uuid().optional(),
   soldOn: dateParam,
   code: z.string().trim().max(50).optional(),
   value: z.number().positive(),
@@ -48,10 +48,10 @@ const createSaleSchema = z.object({
 const salesSummaryQuerySchema = z.object({
   startDate: dateParam.optional(),
   endDate: dateParam.optional(),
-  attendantId: z.string().uuid().optional(),
+  attendantId: z.uuid().optional(),
 });
 
-const saleIdParamSchema = z.object({ id: z.string().uuid() });
+const saleIdParamSchema = z.object({ id: z.uuid() });
 
 function handle(fn: (req: Request, res: Response) => Promise<void>): RequestHandler {
   return (req, res, next) => {

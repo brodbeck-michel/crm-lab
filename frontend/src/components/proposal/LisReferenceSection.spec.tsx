@@ -167,4 +167,61 @@ describe('LisReferenceSection', () => {
     expect(screen.getByText('Conciliado')).toBeTruthy();
     expect(screen.getByText(/Pago no LIS/).textContent).toMatch(/28\/09\/2026/);
   });
+
+  it('valores do LIS com desconto: bruto, desconto (R$ e %), acréscimo e a pagar (D-278)', () => {
+    renderSection(
+      buildProposal({
+        lisBudgetNumber: '1234',
+        lisBudgetValues: {
+          grossValue: 200,
+          discountValue: 20,
+          discountPercent: 10,
+          surchargeValue: 5,
+          netValue: 185,
+        },
+      }),
+    );
+    const line = screen.getByText(/Valor no LIS/).textContent ?? '';
+    expect(line).toMatch(/bruto R\$\s200,00/);
+    expect(line).toMatch(/desconto R\$\s20,00 \(10%\)/);
+    expect(line).toMatch(/acréscimo R\$\s5,00/);
+    expect(line).toMatch(/a pagar R\$\s185,00/);
+  });
+
+  it('desconto em R$ com percentual 0 (orç. 71197): mostra o desconto, sem o percentual', () => {
+    renderSection(
+      buildProposal({
+        lisBudgetNumber: '71197',
+        lisBudgetValues: {
+          grossValue: 100,
+          discountValue: 10.62,
+          discountPercent: 0,
+          surchargeValue: 0,
+          netValue: 89.38,
+        },
+      }),
+    );
+    const line = screen.getByText(/Valor no LIS/).textContent ?? '';
+    expect(line).toMatch(/desconto R\$\s10,62/);
+    expect(line).not.toMatch(/%/);
+    expect(line).not.toMatch(/acréscimo/);
+  });
+
+  it('sem desconto nem acréscimo: uma linha só com o valor', () => {
+    renderSection(
+      buildProposal({
+        lisBudgetNumber: '1234',
+        lisBudgetValues: {
+          grossValue: 150.5,
+          discountValue: 0,
+          discountPercent: null,
+          surchargeValue: 0,
+          netValue: 150.5,
+        },
+      }),
+    );
+    const line = screen.getByText(/Valor no LIS/).textContent ?? '';
+    expect(line).toMatch(/Valor no LIS: R\$\s150,50$/);
+    expect(line).not.toMatch(/bruto|desconto|a pagar/);
+  });
 });

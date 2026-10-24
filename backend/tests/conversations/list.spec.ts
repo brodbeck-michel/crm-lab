@@ -304,6 +304,7 @@ describe('GET /conversations/:id', () => {
       .expect(200);
 
     expect(Object.keys(response.body).sort()).toEqual([
+      'canEditMessages', // CRMLAB-105 (D-280)
       'conversation',
       'cursors',
       'messages',

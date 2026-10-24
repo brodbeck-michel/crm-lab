@@ -38,8 +38,8 @@ const dateParam = z.string().regex(DATE_FORMAT, 'Data deve estar no formato YYYY
 const listBudgetsQuerySchema = z.object({
   startDate: dateParam.optional(),
   endDate: dateParam.optional(),
-  attendantId: z.string().uuid().optional(),
-  insuranceId: z.string().uuid().optional(),
+  attendantId: z.uuid().optional(),
+  insuranceId: z.uuid().optional(),
   search: z.string().max(255).optional(),
   sortBy: z.enum(['issuedOn', 'number', 'totalValue']).optional(),
   order: z.enum(['asc', 'desc']).optional(),
@@ -50,19 +50,19 @@ const listBudgetsQuerySchema = z.object({
 const summaryQuerySchema = z.object({
   startDate: dateParam.optional(),
   endDate: dateParam.optional(),
-  attendantId: z.string().uuid().optional(),
-  insuranceId: z.string().uuid().optional(),
+  attendantId: z.uuid().optional(),
+  insuranceId: z.uuid().optional(),
 });
 
 const pendingQuerySchema = z.object({
-  attendantId: z.string().uuid().optional(),
+  attendantId: z.uuid().optional(),
   ageBand: z.enum(LIS_BUDGET_AGE_BANDS as [string, ...string[]]).optional(),
   page: z.coerce.number().int().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(MAX_LIMIT).optional(),
 });
 
 const pendingSummaryQuerySchema = z.object({
-  attendantId: z.string().uuid().optional(),
+  attendantId: z.uuid().optional(),
 });
 
 function handle(fn: (req: Request, res: Response) => Promise<void>): RequestHandler {

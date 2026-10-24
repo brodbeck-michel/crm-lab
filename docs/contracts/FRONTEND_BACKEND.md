@@ -96,7 +96,7 @@ mais de alguns minutos, reconectando na hora quando ela volta a ficar visível.
 | Evento | Payload | Reação do frontend |
 |--------|---------|--------------------|
 | `conversation.new_message` | `{ conversationId, messageId }` | invalidate `['conversations']` + `['conversation', id]` |
-| `conversation.message_updated` | `{ conversationId, messageId }` | reação, edição ou apagamento de uma mensagem que já existia (CRMLAB-66, D-223) — invalidate `['conversations']` + `['conversation', id]`. **Não** conta como mensagem nova (sem aviso/som/badge) |
+| `conversation.message_updated` | `{ conversationId, messageId }` | reação, edição ou apagamento de uma mensagem que já existia (CRMLAB-66, D-223; também a autora editando/apagando pelo CRM, D-280) — invalidate `['conversations']` + `['conversation', id]`. **Não** conta como mensagem nova (sem aviso/som/badge) |
 | `message.status_updated` | `{ conversationId, messageId, status }` | tique da mensagem subiu (CRMLAB-67, D-225) — invalidate **só** `['conversation', id]` (a lista não muda; não é mensagem nova) |
 | `conversation.presence` | `{ conversationId, presence, lastSeenAt }` | presença do paciente (D-226) — **exceção à regra abaixo**: nada é gravado, o valor vai no payload e o frontend guarda num store em memória (`presence.store.ts`) com validade (`typing`/`recording` 10 s, `online` 5 min); **sem** invalidate |
 | `proposal.created` | `{ proposalId }` | proposta nasceu sem ninguém clicar — hoje só a origem `bitlab`, na ingestão do orçamento (CRMLAB-57, D-196), depois do commit — invalidate `['proposals']` |

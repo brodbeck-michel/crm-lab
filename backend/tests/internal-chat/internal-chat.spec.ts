@@ -36,6 +36,8 @@ const MESSAGE_KEYS = [
   'channelId',
   'content',
   'createdAt',
+  'deletedAt',
+  'editedAt',
   'id',
   'isSystem',
   'senderId',

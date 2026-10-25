@@ -1,5 +1,6 @@
 import type { IsoDateTime, PaginationMeta } from './api.types.js';
 import type { UserRole } from './auth.types.js';
+import { MESSAGE_DELETE_WINDOW_MS, MESSAGE_EDIT_WINDOW_MS } from './conversation.types.js';
 
 export interface Channel {
   id: string;
@@ -55,6 +56,17 @@ export interface InternalMessage {
   attachment?: InternalMessageAttachment | null;
   isSystem: boolean;
   createdAt: IsoDateTime;
+  /*
+   * CRMLAB-117 (D-282): opcionais no tipo (AGENTS.md: campo novo e opcional ate
+   * os dois lados suportarem), mas o backend SEMPRE manda. Ausente = `null`.
+   */
+  /** A autora editou; `content` ja e o texto novo. A tela mostra "Editada". */
+  editedAt?: IsoDateTime | null;
+  /**
+   * A autora apagou para todos: a API manda `content: ''`, `attachment: null` e
+   * `attachedProposalId: null` — o conteudo escondido nunca sai (como D-220).
+   */
+  deletedAt?: IsoDateTime | null;
 }
 
 export interface ListChannelsResponse {
@@ -105,4 +117,50 @@ export interface CreateInternalAttachmentRequest {
   contentBase64: string;
   /** Texto da mensagem (opcional, ate 4000 caracteres). */
   content?: string | null;
+}
+
+/**
+ * `PATCH /internal-chat/channels/:id/messages/:messageId` (CRMLAB-117, D-282): a
+ * autora corrige o texto. Mesmo teto do envio (4000).
+ */
+export interface EditInternalMessageRequest {
+  content: string;
+}
+
+/**
+ * Por que a autora NAO pode editar/apagar a mensagem interna (D-282) —
+ * `details.reason` do `FORBIDDEN`/`CONFLICT`. `null` = pode.
+ */
+export type InternalMessageAuthorActionBlock =
+  | 'not_author'
+  | 'already_deleted'
+  | 'not_editable'
+  | 'window_expired';
+
+/**
+ * Regra UNICA de editar/apagar no chat interno (D-282), usada pela API (que
+ * recusa) e pela tela (que esconde o item do menu). Irma de
+ * `messageAuthorActionBlock` (D-280), com os MESMOS prazos por decisao do PO:
+ * editar ate 15 min, apagar ate 48 h. So a AUTORA (`senderId` = usuario logado);
+ * mensagem de sistema fica de fora; gestora/admin nao mexem em mensagem de
+ * colega. Mensagem com arquivo so apaga (editar vale so para texto).
+ */
+export function internalMessageAuthorActionBlock(
+  message: Pick<InternalMessage, 'senderId' | 'isSystem' | 'createdAt'> & {
+    attachment?: InternalMessageAttachment | null;
+    deletedAt?: string | null;
+  },
+  action: 'edit' | 'delete',
+  userId: string,
+  now: number = Date.now(),
+): InternalMessageAuthorActionBlock | null {
+  if (message.isSystem || message.senderId === null || message.senderId !== userId) {
+    return 'not_author';
+  }
+  if (message.deletedAt) return 'already_deleted';
+  if (action === 'edit' && message.attachment) return 'not_editable';
+  const window = action === 'edit' ? MESSAGE_EDIT_WINDOW_MS : MESSAGE_DELETE_WINDOW_MS;
+  const sentAt = Date.parse(message.createdAt);
+  if (!Number.isFinite(sentAt) || now - sentAt > window) return 'window_expired';
+  return null;
 }

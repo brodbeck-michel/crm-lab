@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-10-24 (CRMLAB-115 — branch `feature/CRMLAB-115-zod-4`)
+**Última atualização:** 2026-10-25 (CRMLAB-118 — branch `feature/CRMLAB-118-reacao-coracao-verde`)
 
 ---
 
@@ -3596,4 +3596,15 @@ da D-254), só frontend, sem migração.
   "há N min" em cada item continua igual.
 - **Testes:** `ConversationList.response-alert.spec.tsx` sem os casos do chip (destaque, feriado,
   regra desligada/encerradas e relógio local seguem cobertos).
+
+### 🚧 CRMLAB-118 — 💚 nas reações rápidas (2026-10-25, aguardando validação)
+
+Branch `feature/CRMLAB-118-reacao-coracao-verde` (de `main` v1.39.0). Sem decisão nova (ajuste do
+item 5 de D-222), sem migração, sem mudança de API.
+
+- **Front/shared:** `QUICK_REACTIONS` = 👍 ❤️ 💚 😂 😮 😢 🙏 (verde logo depois do vermelho). A barra
+  com 7 botões (~220 px) cabe em tela estreita sem mudar classes.
+- **Backend:** nada valida a lista — `setReactionSchema` aceita qualquer emoji até 32 bytes e o
+  webhook grava o `reaction.text` que vier; 💚 do paciente aparece na pílula como qualquer outro.
+- **Testes:** `MessageBubble.crmlab66.spec.tsx` (lista com 7, +1 caso da pílula com 💚).
 - **Pendente:** validação na hml.

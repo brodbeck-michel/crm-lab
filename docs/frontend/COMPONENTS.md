@@ -141,7 +141,8 @@ Anatomia (padrão WhatsApp):
   balão reaproveita o que o balão já baixou
 - **Menu da mensagem (CRMLAB-66, padrão WhatsApp Web):** passar o mouse (ou focar) mostra uma
   setinha no canto de cima do balão; ela abre o menu **Responder · Reagir · Copiar**. Reagir abre
-  a barra rápida `QUICK_REACTIONS` (👍 ❤️ 😂 😮 😢 🙏, `shared/`); clicar no emoji que já é o do
+  a barra rápida `QUICK_REACTIONS` (👍 ❤️ 💚 😂 😮 😢 🙏, `shared/`; o 💚 entrou no CRMLAB-118
+  — 7 botões, ~220 px de largura, cabe numa tela de 320 px); clicar no emoji que já é o do
   laboratório remove. Copiar põe `content` na área de transferência. Encaminhar: fora desta
   história. Props opcionais: `onReply`, `onReact(emoji | null)`, `onQuoteClick(messageId)` — sem
   handler, a ação some (nada de botão morto). Balão de sistema não tem menu

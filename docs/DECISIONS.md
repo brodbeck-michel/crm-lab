@@ -3860,8 +3860,9 @@ a citação de mensagem que ainda não chegou.
    `MESSAGE_SEND_FAILED` e nada gravado. Mensagem sem id externo (canal `direct`) grava só no CRM.
 4. O eco `fromMe` da reação feita pelo CRM volta pelo webhook: mesmo emoji preserva o `user_id`
    gravado; emoji diferente (reagiu pelo celular) grava com `user_id` nulo.
-5. Barra rápida da tela: 👍 ❤️ 😂 😮 😢 🙏 (`QUICK_REACTIONS` em `shared/`). A API aceita qualquer
-   emoji de até 32 bytes.
+5. Barra rápida da tela: 👍 ❤️ 💚 😂 😮 😢 🙏 (`QUICK_REACTIONS` em `shared/`; o 💚 entrou no
+   CRMLAB-118, logo depois do ❤️). A API aceita qualquer emoji de até 32 bytes — a lista é só a
+   barra da tela, nada no backend a valida.
 **Motivo:** para o paciente, o laboratório é UM número. Duas atendentes reagindo com emojis
 diferentes apareceriam no celular dele como uma só (a última). Guardar duas linhas faria o CRM
 mostrar algo que o paciente não vê.

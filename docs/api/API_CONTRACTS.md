@@ -1168,7 +1168,7 @@ externo falhou após os retries — a WhatsApp Cloud API `cloud_api` ainda não 
 mídia, só o gateway Evolution `qr`), `FORBIDDEN` (403, `platform_operator`)
 
 ### PUT /conversations/:id/messages/:messageId/reaction · DELETE (CRMLAB-66, D-222)
-Reagir a uma mensagem com um emoji (a barra rápida da tela: 👍 ❤️ 😂 😮 😢 🙏). A reação é
+Reagir a uma mensagem com um emoji (a barra rápida da tela: 👍 ❤️ 💚 😂 😮 😢 🙏). A reação é
 **do laboratório** (um lado só): uma nova substitui a anterior, `DELETE` remove.
 
 **Request (PUT):**

@@ -800,6 +800,7 @@ tela passa tudo por props (o dado vem do TanStack Query).
 |------------|-----------|-------|
 | `ConversationItem` | `<ConversationItem conversation selected? onClick?(id) now? />` | `now` é injetável só para tornar "aguardando N min" determinístico em teste |
 | `MessageBubble` | `<MessageBubble type message maxWidth? showMeta? onRetry? onOpenImage? />` | `type` ∈ `received \| sent \| system` — os únicos 3 · formatação do WhatsApp e links (D-183, D-242) · tiques e "Tentar de novo" (D-225/D-227) · imagem abre o lightbox da conversa (D-244) |
+| `MessageEditBox` | `<MessageEditBox initial onSave onCancel />` | caixa de edição no próprio balão (Enter salva, Shift+Enter quebra linha, Esc cancela, vazio não salva; 4000). Nasceu no `MessageBubble` (D-280) e é reusada no Chat Interno (`InternalMessageItem`, D-282) |
 | `DateSeparator` | `<DateSeparator date now? />` | Pílula de dia (CRMLAB-71, D-239) · `dateSeparatorLabel` e `isSameLocalDay` exportadas |
 | `AudioMessage` | `<AudioMessage url durationSec? />` | `<audio controls>` nativo com blob autenticado · velocidade 1x/1,5x/2x (D-236) · download sempre disponível |
 | `VideoMessage` · `DocumentCard` · `StickerMessage` · `LocationCard` · `ContactCard` | ver acima | Um por tipo de mensagem (CRMLAB-70, D-236) |

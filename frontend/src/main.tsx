@@ -1,5 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import '@/assets/fonts/noto-color-emoji/noto-color-emoji.css';
 import '@/styles/tokens.css';
 import { App } from './App';
 

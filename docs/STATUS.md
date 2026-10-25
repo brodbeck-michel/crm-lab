@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-10-24 (CRMLAB-115 — branch `feature/CRMLAB-115-zod-4`)
+**Última atualização:** 2026-10-25 (CRMLAB-111 — branch `feature/CRMLAB-111-emoji-noto`)
 
 ---
 
@@ -3555,3 +3555,17 @@ Branch `feature/CRMLAB-115-zod-4` (de `main` v1.38.0). Decisão D-281, só backe
   do backend 143 arquivos / 2231 testes verdes; typecheck e eslint verdes. `npm audit` não acusa mais
   o zod (o body-parser high segue nesta branch — corrigido em outra).
 - **Pendente:** validação na hml.
+
+### 🚧 CRMLAB-111 — emoji igual para todos com a Noto Color Emoji (2026-10-25, aguardando validação)
+
+Branch `feature/CRMLAB-111-emoji-noto` (de `main` v1.39.0). Decisão D-285, só frontend, sem migração.
+
+- **Fonte:** Noto Color Emoji (OFL) de `@fontsource/noto-color-emoji` 5.3.2, auto-hospedada em
+  `frontend/src/assets/fonts/noto-color-emoji/` (11 woff2 por `unicode-range`, 3,95 MB no total,
+  `OFL.txt`), empacotada pelo Vite com hash. Sem CDN, sem dependência nova.
+- **Token:** `--font-emoji` em toda pilha de `tokens.css`, depois das fontes de texto e antes da
+  genérica — vale para conversas, Chat interno, seletor de emoji e barra de reações.
+- **Peso por tela:** sem emoji 0 KB; conversa típica 289 KiB; seletor na aba Smileys ~2,7 MB;
+  bandeira 1,15 MB (uma vez, depois cache).
+- **Testes:** `src/styles/emoji-font.spec.ts` (novo, 4); `vite build` verde.
+- **Pendente:** validação na hml em Windows, Android e Mac (emoji recente, ex. 🫩 🪾, sem quadrado).

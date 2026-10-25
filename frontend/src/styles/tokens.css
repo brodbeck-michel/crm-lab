@@ -212,8 +212,12 @@
     /* --------------------------------------------------------------- */
     /* Tipografia                                                       */
     /* --------------------------------------------------------------- */
-    --font-heading: 'Playfair Display', 'Caprasimo', serif;
-    --font-body: 'Figtree', system-ui, sans-serif;
+    /* Emoji (D-285): Noto Color Emoji auto-hospedada, recortada por unicode-range
+       (assets/fonts/noto-color-emoji). Entra em TODA pilha depois das fontes de
+       texto e antes da genérica: texto, dígitos, # e * seguem na fonte do tema. */
+    --font-emoji: 'Noto Color Emoji';
+    --font-heading: 'Playfair Display', 'Caprasimo', var(--font-emoji), serif;
+    --font-body: 'Figtree', system-ui, var(--font-emoji), sans-serif;
 
     /* --------------------------------------------------------------- */
     /* Raio — pílula é 999px LITERAL, nunca variável (DESIGN_TOKENS.md)  */
@@ -262,18 +266,18 @@
 
   /* Remapeamento de fonte por fontId (ThemeService → dataset.font). */
   :root[data-font='figtree'] {
-    --font-heading: 'Figtree', system-ui, sans-serif;
-    --font-body: 'Figtree', system-ui, sans-serif;
+    --font-heading: 'Figtree', system-ui, var(--font-emoji), sans-serif;
+    --font-body: 'Figtree', system-ui, var(--font-emoji), sans-serif;
   }
 
   :root[data-font='playfair'] {
-    --font-heading: 'Playfair Display', 'Caprasimo', serif;
-    --font-body: 'Figtree', system-ui, sans-serif;
+    --font-heading: 'Playfair Display', 'Caprasimo', var(--font-emoji), serif;
+    --font-body: 'Figtree', system-ui, var(--font-emoji), sans-serif;
   }
 
   :root[data-font='system'] {
-    --font-heading: system-ui, sans-serif;
-    --font-body: system-ui, sans-serif;
+    --font-heading: system-ui, var(--font-emoji), sans-serif;
+    --font-body: system-ui, var(--font-emoji), sans-serif;
   }
 
   /* --------------------------------------------------------------- */

@@ -6,6 +6,7 @@ export {
   INBOX_BUBBLE_MAX_WIDTH,
   bubbleTypeFor,
   quotedLabel,
+  EditBox as MessageEditBox,
 } from './MessageBubble';
 export type { MessageBubbleProps, MessageBubbleType } from './MessageBubble';
 export { DateSeparator, dateSeparatorLabel, isSameLocalDay } from './DateSeparator';

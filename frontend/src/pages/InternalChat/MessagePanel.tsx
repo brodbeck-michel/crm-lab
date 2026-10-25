@@ -40,6 +40,9 @@ export interface MessagePanelProps {
   onSendAudio?: (audio: RecordedAudio) => Promise<unknown>;
   /** × do cabeçalho (CRMLAB-109): tira a seleção, como o "Fechar conversa" do atendimento. */
   onClose?: () => void;
+  /** Editar / Apagar para todos da autora (CRMLAB-117, D-282). Sem handler, o item some. */
+  onEditMessage?: (message: InternalMessage, content: string) => Promise<unknown>;
+  onDeleteMessage?: (message: InternalMessage) => void;
 }
 
 /** Chave do canal em que o sistema posta os pedidos (WORKFLOWS.md §3 e §6). */
@@ -64,6 +67,8 @@ export function MessagePanel({
   onSendAttachments,
   onSendAudio,
   onClose,
+  onEditMessage,
+  onDeleteMessage,
 }: MessagePanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const channelId = channel?.id ?? null;
@@ -242,6 +247,8 @@ export function MessagePanel({
                 currentUserId={currentUserId}
                 currentUserRole={currentUserRole}
                 isApprovalsChannel={isApprovalsChannel}
+                {...(onEditMessage ? { onEdit: onEditMessage } : {})}
+                {...(onDeleteMessage ? { onDelete: onDeleteMessage } : {})}
               />
             ))
           )}

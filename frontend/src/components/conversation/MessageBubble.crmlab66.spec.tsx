@@ -72,6 +72,7 @@ describe('MessageBubble — menu da mensagem', () => {
     expect(within(bar).getAllByRole('button').map((b) => b.textContent)).toEqual([
       '👍',
       '❤️',
+      '💚',
       '😂',
       '😮',
       '😢',
@@ -189,6 +190,20 @@ describe('MessageBubble — reações, apagada e editada (D-220/D-222)', () => {
       />,
     );
     expect(screen.getByTestId('message-reactions')).toHaveTextContent('😂🙏');
+  });
+
+  it('reação 💚 do paciente aparece na pílula (CRMLAB-118)', () => {
+    render(
+      <MessageBubble
+        type="received"
+        message={message({
+          reactions: [
+            { emoji: '💚', reactorType: 'patient', userId: null, userName: null, reactedAt: '2026-10-25T14:26:00Z' },
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByTestId('message-reactions')).toHaveTextContent('💚');
   });
 
   it('apagada: só "🚫 Mensagem apagada", sem menu, sem citação', () => {

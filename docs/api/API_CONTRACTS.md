@@ -2977,12 +2977,20 @@ listagem.
       "attachedProposalId": "uuid",
       "attachment": null,
       "isSystem": true,
-      "createdAt": "2026-08-23T14:40:00.000Z"
+      "createdAt": "2026-08-23T14:40:00.000Z",
+      "editedAt": null,
+      "deletedAt": null
     }
   ],
   "pagination": { "page": 1, "limit": 50, "total": 1, "totalPages": 1 }
 }
 ```
+
+`editedAt`/`deletedAt` (CRMLAB-117, D-282): a autora editou (a tela mostra "Editada";
+`content` já é o texto novo) ou apagou para todos. **Apagada:** `content: ""`, `attachment:
+null`, `attachedProposalId: null` e `editedAt: null` — o conteúdo escondido nunca sai na API
+(como D-220), e o download do anexo dela vira `NOT_FOUND`. Opcionais no tipo; o backend sempre
+manda.
 
 `attachment` (CRMLAB-101, D-271) é o arquivo anexado à mensagem, ou `null`. No máximo um por
 mensagem:
@@ -3078,6 +3086,37 @@ allow-list (fora dela, `application/octet-stream`), `X-Content-Type-Options: nos
 **Erros:** `NOT_FOUND` (404 — canal inexistente/de outro tenant/DM alheia, anexo de outro canal,
 ou arquivo ausente do disco), `VALIDATION_ERROR` (400, ids não-uuid), `FORBIDDEN` (403,
 `platform_operator`)
+
+### PATCH /internal-chat/channels/:id/messages/:messageId · DELETE (CRMLAB-117, D-282)
+A **autora** corrige (`PATCH`) ou apaga para todos (`DELETE`) a própria mensagem do chat
+interno. Sem canal externo: grava direto.
+
+**Request (PATCH):**
+```json
+{ "content": "Reunião às 15h" }
+```
+- `content`: 1..4000 caracteres após trim (o teto do envio).
+
+**Response:** `PATCH` → `200` com o `InternalMessage` atualizado (objeto cru, D-070; `editedAt`
+preenchido). Texto igual ao atual → `200` sem versão, audit nem evento. `DELETE` → `204`.
+
+**Regras** (as mesmas da tela — `internalMessageAuthorActionBlock` em `shared`):
+- só a autora (`senderId` = usuário logado). Mensagem de colega — também para gestor/admin — e
+  mensagem de sistema → `FORBIDDEN` (`reason: not_author`);
+- `CONFLICT` (409) com `details.reason`: `already_deleted`, `not_editable` (`PATCH` em mensagem
+  com arquivo — imagem, áudio e documento só apagam), `window_expired` (editar: 15 min —
+  `MESSAGE_EDIT_WINDOW_MS`; apagar: 48 h — `MESSAGE_DELETE_WINDOW_MS`, os mesmos do atendimento);
+- edição: versão anterior em `internal_message_edits` (`edited_by` = a autora),
+  `internal_messages.edited_at`; apagar: `deleted_at` — a linha, o texto e o arquivo ficam. Audit
+  `edit_internal_message` (`oldValues.content`/`newValues.content`) ou `delete_internal_message`
+  (`oldValues.content`, `oldValues.attachmentId`), com o `userId` da autora. Emite
+  `internal_chat.message_updated` (`{ channelId, messageId }`) — não é `new_message`;
+- apagada sai do `unreadCount` do canal.
+
+**Erros:** `VALIDATION_ERROR` (400 — ids não-uuid, `content` vazio/> 4000, campo desconhecido),
+`NOT_FOUND` (404 — canal inexistente, de outro tenant ou DM da qual o usuário não participa;
+mensagem de outro canal), `FORBIDDEN` (403 — não é a autora; `platform_operator`), `CONFLICT`
+(409, acima).
 
 ### GET /internal-chat/users
 

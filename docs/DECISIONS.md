@@ -6042,3 +6042,47 @@ frontend mostra ao lado do campo (ex. `PatientProfileForm`).
 `lib/bitlab-client.ts`, 18 arquivos `controllers/*.routes.ts`; testes `tests/kernel/zod-v4.spec.ts`
 (novo), `tests/lis/bitlab-client.spec.ts` (+1). `details.fields` agora em português (API_ERRORS.md);
 chaves e envelope inalterados. Sem migração, sem mudança de contrato de sucesso.
+
+### D-282: A autora edita ou apaga para todos a própria mensagem do chat interno (CRMLAB-117)
+**Decisão:** o "Editar" e o "Apagar para todos" do atendimento (D-280) chegam ao chat interno,
+pelas rotas `PATCH|DELETE /internal-chat/channels/:id/messages/:messageId`.
+1. **Só a autora:** `sender_id` = usuário logado. Gestora/admin não mexem em mensagem de colega
+   (`FORBIDDEN`, `reason: not_author`). Mensagem de sistema (`is_system`, `sender_id` nulo) fica de
+   fora (mesmo `not_author`). Canal invisível para o usuário (outro tenant, DM alheia) ou mensagem
+   de outro canal → `NOT_FOUND`.
+2. **Prazos iguais aos do atendimento** (decisão do PO em 25/10/2026, por coerência — aqui não há
+   limite técnico): editar até 15 min (`MESSAGE_EDIT_WINDOW_MS`), apagar até 48 h
+   (`MESSAGE_DELETE_WINDOW_MS`), constantes reaproveitadas de `shared`. Regra única irmã de
+   `messageAuthorActionBlock`: `internalMessageAuthorActionBlock` (API recusa com `CONFLICT` +
+   `details.reason`: `already_deleted`, `not_editable`, `window_expired`; a tela esconde o item).
+3. **Arquivo só apaga** (CRMLAB-101/109): mensagem com anexo — imagem, áudio ou documento — não
+   edita (`not_editable`), nem a legenda. Editar vale para mensagem de texto (com ou sem proposta
+   anexada; a proposta não muda).
+4. **Sem canal externo:** grava direto, numa transação com a linha travada (`FOR UPDATE`).
+5. **Nada é apagado de verdade (como D-220):** a edição guarda a versão anterior em
+   `internal_message_edits` (migração 058; `edited_by` = a autora) e sobe `edited_at`; apagar grava
+   `deleted_at`. A linha, o texto e o arquivo ficam. Audit `edit_internal_message`
+   (`oldValues.content`, `newValues.content`) e `delete_internal_message` (`oldValues.content`,
+   `oldValues.attachmentId`), com o `userId` da autora — exceção deliberada a "mensagem do chat
+   não é auditada" (SERVICES §7): mexer em mensagem que outros já leram precisa de rastro.
+6. **Apagada some:** a API devolve `content: ""`, `attachment: null`, `attachedProposalId: null`
+   (e `editedAt: null`); o download do anexo dela vira `NOT_FOUND`; ela não conta no `unreadCount`
+   do canal. Texto igual ao atual → `200` sem versão, audit nem evento.
+7. **Ao vivo:** WS novo `internal_chat.message_updated` (`{ channelId, messageId }`, só ids, para o
+   tenant — mesma regra de `new_message`, D-271 item 6). Não é mensagem nova: a tela invalida
+   canais + mensagens do canal, sem aviso.
+8. **Tela:** menu ⌄ na mensagem com "Editar" (a mesma caixa do atendimento, `MessageEditBox`:
+   Enter salva, Shift+Enter quebra linha, Esc cancela, vazio não salva) e "Apagar para todos"
+   (`confirm`). Mostra "Editada"; apagada vira "🚫 Mensagem apagada".
+**Motivo:** pedido do PO (Michel) — coerência com o atendimento: quem digita errado no chat da
+equipe hoje só consegue mandar outra mensagem corrigindo.
+**Impacto:** migração `058_internal_message_edits.sql` (SCHEMA §12 e §43);
+`shared/types/internal-chat.types.ts` (`editedAt`/`deletedAt`, `EditInternalMessageRequest`,
+`internalMessageAuthorActionBlock`) e `websocket.types.ts`; backend
+`repositories/internal-chat.repository.ts`, `services/internal-chat.service.ts` (`editByAuthor`,
+`deleteByAuthor`, audit opcional no construtor), `controllers/internal-chat.routes.ts`;
+inventário de `route-tenant-isolation.spec.ts` (116 → 118). Frontend `api/internal-chat.ts`,
+`api/ws.ts`, `InternalMessageItem.tsx`, `MessagePanel.tsx`, `pages/InternalChat/index.tsx`,
+`MessageBubble.tsx` (exporta a caixa de edição). API_CONTRACTS §3b, SERVICES §7,
+FRONTEND_BACKEND (WS), PAGES §9. Testes: `tests/internal-chat/edit-delete.spec.ts` (novo),
+`internal-chat.spec.ts`; front `InternalChat.edit-delete.spec.tsx` (novo), `ws.spec.ts`.

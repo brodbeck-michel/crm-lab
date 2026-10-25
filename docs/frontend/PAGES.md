@@ -778,6 +778,22 @@ nunca "sem permissão" (não vazar existência).
   não tem conversa encerrada) e mostra o estado vazio "Selecione um canal". A abertura automática
   do primeiro canal vale só na primeira carga — depois de fechar, nada reabre sozinho
 
+### Editar e apagar para todos (CRMLAB-117, D-282)
+
+- No menu ⌄ da mensagem (aparece ao passar o mouse), **"Editar"** e **"Apagar para todos"** só
+  para a **autora** (`senderId` = usuária logada). Gestora/admin não veem em mensagem de colega;
+  mensagem de sistema não tem menu. Regra única `internalMessageAuthorActionBlock` do shared:
+  editar só texto (mensagem com arquivo só apaga), até 15 min; apagar até 48 h. Fora do prazo o
+  item some
+- "Editar" vira a mesma caixa do atendimento no próprio balão (`MessageEditBox`: Enter salva,
+  Shift+Enter quebra linha, Esc cancela; vazio não salva) → `PATCH
+  /internal-chat/channels/:id/messages/:messageId`. "Apagar para todos" pede
+  `confirm("Apagar para todos?")` → `DELETE` no mesmo caminho. Prazo vencido entre abrir o menu e
+  clicar: toast "O prazo para editar/apagar esta mensagem já passou." e o canal recarrega
+- A mensagem mostra "Editada" junto da hora; apagada vira "🚫 Mensagem apagada", sem menu. Os
+  outros membros veem pelo WS `internal_chat.message_updated` (canais + mensagens do canal
+  recarregam); apagada sai do badge de não lidas
+
 ### Buscar usuário (D-101) — iniciar conversa direta
 
 No topo da coluna esquerda, ACIMA dos grupos "Canais" e "Mensagens diretas", um campo de

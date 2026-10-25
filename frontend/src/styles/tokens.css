@@ -216,6 +216,9 @@
        (assets/fonts/noto-color-emoji). Entra em TODA pilha depois das fontes de
        texto e antes da genérica: texto, dígitos, # e * seguem na fonte do tema. */
     --font-emoji: 'Noto Color Emoji';
+    /* Só para elemento que contém APENAS emoji (barra/pílula de reações, grade do seletor):
+       a Noto vem primeiro para ❤ ☀ ✔ não saírem monocromáticos pela fonte de texto do sistema. */
+    --font-emoji-only: var(--font-emoji), sans-serif;
     --font-heading: 'Playfair Display', 'Caprasimo', var(--font-emoji), serif;
     --font-body: 'Figtree', system-ui, var(--font-emoji), sans-serif;
 

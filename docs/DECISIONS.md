@@ -6170,6 +6170,11 @@ STATUS. Sem migração, sem mudança de contrato.
    - seletor de emoji na aba Smileys (com os ícones das abas): **~2,7 MB** (9 recortes);
    - uma bandeira (🇧🇷): **1,15 MB**.
    Baixou uma vez, fica no cache do navegador (arquivo com hash, imutável).
+5. **Elemento só de emoji usa a Noto primeiro** (revisão da integração, 25/10/2026): na pilha comum
+   a fonte de texto do sistema vem antes e pode desenhar ❤ ☀ ✔ em preto e branco (ex.: DejaVu no Linux)
+   — justo o ❤️ ao lado do 💚 na barra. Token `--font-emoji-only: var(--font-emoji), sans-serif` e
+   classe `font-emoji` (tailwind) nos botões da barra de reações, na pílula de reações do balão e na
+   grade do seletor de emoji. Texto de mensagem continua na pilha comum.
 **Motivo:** o CRM não definia fonte de emoji e cada SO desenhava com a sua (Segoe no Windows, Noto
 no Android/Linux, Apple no Mac); emoji novo demais saía quadrado ou separado. Os dados não estavam
 corrompidos. O set da Apple/WhatsApp é proprietário; a Noto é aberta e cobre o Unicode recente.

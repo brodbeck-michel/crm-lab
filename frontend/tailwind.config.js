@@ -162,6 +162,7 @@ export default {
       fontFamily: {
         heading: 'var(--font-heading)',
         body: 'var(--font-body)',
+        emoji: 'var(--font-emoji-only)',
       },
       fontSize: {
         // Escala tipográfica de DESIGN_TOKENS.md

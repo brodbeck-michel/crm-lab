@@ -188,6 +188,10 @@ recortes woff2 por `unicode-range`, `@font-face` em `noto-color-emoji.css`, lice
 `OFL.txt`), importada em `main.tsx` antes de `tokens.css` e empacotada pelo Vite com hash — sem CDN.
 Componente nunca escreve o nome da fonte: usa `font-body`/`font-heading`.
 
+Elemento que contém **só emoji** (barra e pílula de reações, grade do seletor) usa `font-emoji`
+(`--font-emoji-only: var(--font-emoji), sans-serif`): a Noto vem primeiro para ❤ ☀ ✔ não saírem
+monocromáticos pela fonte de texto do sistema.
+
 **Google Fonts Import:**
 ```html
 <link rel="preconnect" href="https://fonts.googleapis.com">

@@ -2,9 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-10-25 (CRMLAB-118 — branch `feature/CRMLAB-118-reacao-coracao-verde`)
-
-**Última atualização:** 2026-10-25 (CRMLAB-111 — branch `feature/CRMLAB-111-emoji-noto`)
+**Última atualização:** 2026-10-25 (integração `integ/onda-111-119` — CRMLAB-111, 116, 117, 118 e 119)
 
 ---
 

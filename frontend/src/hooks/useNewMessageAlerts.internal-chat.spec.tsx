@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { APPROVAL_REQUEST_POST_PREFIX } from '@crm-lab/shared';
 import type {
   Channel,
   Conversation,
@@ -44,6 +45,7 @@ const {
   useNewMessageAlerts,
   baselineOf,
   detectNewChannelMessages,
+  decidesApprovals,
   freshFromColleagues,
   channelTitle,
   countUnreadChannels,
@@ -100,6 +102,21 @@ function internalMessage(overrides: Partial<InternalMessage> = {}): InternalMess
     createdAt: T1,
     ...overrides,
   };
+}
+
+const APROVACOES = channel({ id: 'ch-aprov', key: 'aprovacoes', name: '#aprovacoes' });
+const REQUEST_POST = `${APPROVAL_REQUEST_POST_PREFIX} Juliana Prado - R$ 138,00 (25% — acima da alçada de 15%)`;
+const DECISION_POST = 'Desconto de 25% APROVADO na proposta #ABC123.';
+
+function approvalPost(content: string): InternalMessage {
+  return internalMessage({
+    channelId: APROVACOES.id,
+    senderId: null,
+    senderName: 'Sistema',
+    isSystem: true,
+    attachedProposalId: 'p-1',
+    content,
+  });
 }
 
 function messagesResponse(messages: InternalMessage[]): ListInternalMessagesResponse {
@@ -253,6 +270,19 @@ describe('regra pura (D-284)', () => {
     expect(fresh.map((m) => m.id)).toEqual(['nova']);
   });
 
+  it('com withApprovalRequests: entra só o pedido de aprovação, não a decisão', () => {
+    const posts = [
+      { ...approvalPost(REQUEST_POST), id: 'pedido' },
+      { ...approvalPost(DECISION_POST), id: 'decisao' },
+      { ...approvalPost(REQUEST_POST), id: 'sem-proposta', attachedProposalId: null },
+    ];
+    expect(freshFromColleagues(posts, ME, T0).map((m) => m.id)).toEqual([]);
+    expect(freshFromColleagues(posts, ME, T0, true).map((m) => m.id)).toEqual(['pedido']);
+    expect(decidesApprovals('manager')).toBe(true);
+    expect(decidesApprovals('admin')).toBe(true);
+    expect(decidesApprovals('attendant')).toBe(false);
+  });
+
   it('título: nome do canal ou, na DM, o da colega', () => {
     expect(channelTitle(channel())).toBe('#geral');
     expect(channelTitle(DM_CARLA)).toBe('Carla Souza');
@@ -334,13 +364,41 @@ describe('useNewMessageAlerts — chat interno', () => {
   });
 
   it('mensagem de sistema (o contador sobe, D-068): nada', async () => {
-    const aprovacoes = channel({ id: 'ch-aprov', key: 'aprovacoes', name: '#aprovacoes' });
     messagesMock.mockResolvedValue(
       messagesResponse([
-        internalMessage({ channelId: aprovacoes.id, senderId: null, isSystem: true }),
+        internalMessage({ channelId: APROVACOES.id, senderId: null, isSystem: true }),
       ]),
     );
-    await loadChannelsThen([aprovacoes], [{ ...aprovacoes, unreadCount: 1, lastMessageAt: T1 }]);
+    await loadChannelsThen([APROVACOES], [{ ...APROVACOES, unreadCount: 1, lastMessageAt: T1 }]);
+    await waitFor(() => expect(messagesMock).toHaveBeenCalled());
+    await settle();
+    expect(playSoundMock).not.toHaveBeenCalled();
+    expect(FakeNotification.instances).toHaveLength(0);
+  });
+
+  it('pedido de aprovação em #aprovacoes: gestor recebe som e notificação (D-284 item 8)', async () => {
+    login('manager');
+    messagesMock.mockResolvedValue(messagesResponse([approvalPost(REQUEST_POST)]));
+    await loadChannelsThen([APROVACOES], [{ ...APROVACOES, unreadCount: 1, lastMessageAt: T1 }]);
+    await waitFor(() => expect(FakeNotification.instances).toHaveLength(1));
+    expect(playSoundMock).toHaveBeenCalledTimes(1);
+    expect(FakeNotification.instances[0]?.title).toBe('#aprovacoes');
+    expect(FakeNotification.instances[0]?.options?.body).toBe('Nova mensagem');
+  });
+
+  it('decisão (APROVADO/REJEITADO) em #aprovacoes: nem o gestor é avisado', async () => {
+    login('admin');
+    messagesMock.mockResolvedValue(messagesResponse([approvalPost(DECISION_POST)]));
+    await loadChannelsThen([APROVACOES], [{ ...APROVACOES, unreadCount: 1, lastMessageAt: T1 }]);
+    await waitFor(() => expect(messagesMock).toHaveBeenCalled());
+    await settle();
+    expect(playSoundMock).not.toHaveBeenCalled();
+    expect(FakeNotification.instances).toHaveLength(0);
+  });
+
+  it('pedido de aprovação: atendente (não decide) não é avisada', async () => {
+    messagesMock.mockResolvedValue(messagesResponse([approvalPost(REQUEST_POST)]));
+    await loadChannelsThen([APROVACOES], [{ ...APROVACOES, unreadCount: 1, lastMessageAt: T1 }]);
     await waitFor(() => expect(messagesMock).toHaveBeenCalled());
     await settle();
     expect(playSoundMock).not.toHaveBeenCalled();

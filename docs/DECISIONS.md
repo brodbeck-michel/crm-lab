@@ -6101,7 +6101,7 @@ o Chat interno, no MESMO hook `useNewMessageAlerts` (montado no `AppShell`, qual
    canal/DM que aparece depois avisa se a última mensagem é mais nova que a maior da carga anterior.
    O servidor já não conta mensagem da própria pessoa (D-068), nem apagada (D-282).
 2. **Confirmação pela mensagem:** o `unreadCount` conta mensagem de sistema de propósito (D-068 —
-   o badge de `#aprovacoes` precisa piscar), mas o card exclui sistema do aviso. Por isso cada canal
+   o badge de `#aprovacoes` precisa piscar), mas o card exclui sistema do aviso (exceto o pedido de aprovação, item 8). Por isso cada canal
    candidato busca `GET /internal-chat/channels/:id/messages?page=1` (só leitura, sem efeito
    colateral) e só avisa se houver mensagem mais nova que a última vista que seja de colega
    (`senderId` ≠ a pessoa e não nulo), não seja de sistema (`isSystem`) e não esteja apagada
@@ -6124,6 +6124,18 @@ o Chat interno, no MESMO hook `useNewMessageAlerts` (montado no `AppShell`, qual
 7. **Não avisa:** `platform_operator`; quem não tem a rota `/internal-chat` (a query de canais só
    liga com a rota no trilho, mesmo critério da Sidebar); edição e apagamento
    (`internal_chat.message_updated` não sobe o `unreadCount`, e apagada sai dele).
+8. **Pedido de aprovação avisa quem decide (decisão do PO, 25/10/2026):** em `#aprovacoes`, para
+   gestor e admin (quem decide, SERVICES.md §6 — mesmo critério do `canDecide` da tela), o post de
+   sistema do **pedido** conta como mensagem nova: som + notificação com título `#aprovacoes` e
+   corpo "Nova mensagem" (D-240, nada do texto). As **decisões** (APROVADO/REJEITADO), que caem no
+   mesmo canal, não avisam — quem decidiu foi o próprio gestor. O pedido é reconhecido por
+   `isApprovalRequestPost` (`shared/types/internal-chat.types.ts`): sistema + proposta anexada +
+   texto começando com `APPROVAL_REQUEST_POST_PREFIX`, a constante que o `ApprovalService` usa para
+   montar o post. Atendente não é avisada do pedido. Gestor que pede aprovação da própria proposta
+   ouve o aviso do próprio pedido (raro; não vale uma busca da proposta por aviso).
+9. **Canal aberto não marca lido sozinho (decisão do PO, 25/10/2026):** segue o D-068 — o contador
+   do canal só zera no clique no canal, mesmo com ele aberto na tela. O "(N)" do título pode ficar
+   até a pessoa clicar.
 **Motivo:** pedido do PO (Michel) — mensagem da equipe passava despercebida fora da tela do chat.
 **Impacto:** só frontend, sem endpoint novo: `hooks/useNewMessageAlerts.ts`,
 `stores/message-alerts.store.ts`, `pages/InternalChat/index.tsx`. PAGES §1 (aviso) e §9,

@@ -70,6 +70,28 @@ export interface InternalMessage {
   deletedAt?: IsoDateTime | null;
 }
 
+/** Canal onde o sistema posta os pedidos de aprovacao de desconto (WORKFLOWS §3). */
+export const APPROVALS_CHANNEL_KEY = 'aprovacoes';
+
+/**
+ * Inicio do post de sistema do PEDIDO de aprovacao em `#aprovacoes` (o
+ * ApprovalService monta o texto com ele). As decisoes (APROVADO/REJEITADO) caem
+ * no mesmo canal e nao comecam assim. CRMLAB-116 (D-284 item 8): so o pedido
+ * avisa o gestor.
+ */
+export const APPROVAL_REQUEST_POST_PREFIX = '@gestor Pedido de aprovação de desconto:';
+
+/** Post de sistema que e um pedido de aprovacao (e nao uma decisao). */
+export function isApprovalRequestPost(
+  message: Pick<InternalMessage, 'isSystem' | 'attachedProposalId' | 'content'>,
+): boolean {
+  return (
+    message.isSystem &&
+    message.attachedProposalId !== null &&
+    message.content.startsWith(APPROVAL_REQUEST_POST_PREFIX)
+  );
+}
+
 export interface ListChannelsResponse {
   channels: Channel[];
 }

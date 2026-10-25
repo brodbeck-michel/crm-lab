@@ -3583,7 +3583,11 @@ frontend, sem endpoint novo.
   abre `/internal-chat?channelId=…`. Mesmas preferências do D-241. Não avisa: mensagem minha,
   de sistema, editada/apagada, canal aberto com a aba em foco, `platform_operator`.
 - **Título da aba:** contagem única — conversas do atendimento + canais/DMs com não lidas.
-- **Testes:** `useNewMessageAlerts.internal-chat.spec.tsx` (novo, 15), `InternalChat.spec.tsx`
+- **Respostas do PO (25/10, D-284 itens 8 e 9):** o **pedido** de aprovação em `#aprovacoes` avisa
+  gestor/admin (som + notificação); a decisão não avisa; atendente não é avisada. Canal aberto
+  NÃO marca lido sozinho (segue o D-068). Prefixo do pedido em `APPROVAL_REQUEST_POST_PREFIX`
+  (shared), usado pelo `ApprovalService`.
+- **Testes:** `useNewMessageAlerts.internal-chat.spec.tsx` (novo, 19), `InternalChat.spec.tsx`
   (+2), `useNewMessageAlerts.spec.tsx` (mock de canais). Suíte completa roda na integração.
 
 ### 🚧 CRMLAB-119 — sem chip "Aguardando resposta" no Atendimento (2026-10-25, aguardando validação)

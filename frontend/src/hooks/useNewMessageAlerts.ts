@@ -1,12 +1,14 @@
 import { useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
+import { APPROVALS_CHANNEL_KEY, isApprovalRequestPost } from '@crm-lab/shared';
 import type {
   Channel,
   Conversation,
   GetConversationResponse,
   InternalMessage,
   ListConversationsQuery,
+  UserRole,
 } from '@crm-lab/shared';
 import { api, queryKeys, staleTimes } from '@/api';
 import { playNewMessageSound } from '@/lib/notification-sound';
@@ -214,20 +216,30 @@ export function detectNewChannelMessages(previous: AlertsBaseline, channels: Cha
   });
 }
 
-/** Mensagens de colega (nem sistema, nem minha, nem apagada) depois de `since`. */
+/**
+ * Mensagens de colega (nem sistema, nem minha, nem apagada) depois de `since`.
+ * `withApprovalRequests` (D-284 item 8): conta também o post de sistema do PEDIDO
+ * de aprovação — só para quem decide, em `#aprovacoes`.
+ */
 export function freshFromColleagues(
   messages: InternalMessage[],
   userId: string,
   since: string | null,
+  withApprovalRequests = false,
 ): InternalMessage[] {
   return messages.filter(
     (m) =>
-      !m.isSystem &&
-      m.senderId !== null &&
-      m.senderId !== userId &&
       !m.deletedAt &&
-      (since === null || m.createdAt > since),
+      (since === null || m.createdAt > since) &&
+      (withApprovalRequests && isApprovalRequestPost(m)
+        ? true
+        : !m.isSystem && m.senderId !== null && m.senderId !== userId),
   );
+}
+
+/** Quem decide pedido de aprovação (SERVICES.md §6) — como `canDecide` da tela do chat. */
+export function decidesApprovals(role: UserRole | undefined): boolean {
+  return role === 'manager' || role === 'admin';
 }
 
 /** Pode usar o Chat interno: mesmo critério da Sidebar (`hasInternalChatRoute`). */
@@ -300,6 +312,7 @@ export function useNewMessageAlerts(): void {
 
   // D-284: a MESMA query/cache de canais da Sidebar e da tela do chat.
   const chatUserId = userId !== null && hasInternalChatRoute(user?.role) ? userId : null;
+  const chatRole = user?.role;
   const channelsQuery = useQuery({
     queryKey: queryKeys.internalChannels(),
     queryFn: () => api.internalChat.channels(),
@@ -396,11 +409,18 @@ export function useNewMessageAlerts(): void {
       // Canal aberto com a aba em foco: nem busca (D-241 item 3).
       if (fromOpen && isTabFocused()) continue;
       const since = previous.known.get(channel.id)?.lastMessageAt ?? previous.watermark;
+      // Pedido de aprovação avisa quem decide (D-284 item 8); a decisão, não.
+      const approvals = channel.key === APPROVALS_CHANNEL_KEY && decidesApprovals(chatRole);
       api.internalChat
         .messages(channel.id, { page: 1, limit: CHANNEL_ALERT_PAGE_SIZE })
         .then(({ messages }) => {
-          if (freshFromColleagues(messages, chatUserId, since).length === 0) return;
-          const count = freshFromColleagues(messages, chatUserId, channel.lastReadAt).length;
+          if (freshFromColleagues(messages, chatUserId, since, approvals).length === 0) return;
+          const count = freshFromColleagues(
+            messages,
+            chatUserId,
+            channel.lastReadAt,
+            approvals,
+          ).length;
           fireRef.current(
             [
               {
@@ -417,7 +437,7 @@ export function useNewMessageAlerts(): void {
           // Falhou a confirmação: sem aviso — o badge e o título continuam valendo.
         });
     }
-  }, [channelsQuery.data, chatUserId]);
+  }, [channelsQuery.data, chatUserId, chatRole]);
 
   // Conversa aberta: mensagem de paciente mais nova que a última vista no detalhe.
   useEffect(() => {

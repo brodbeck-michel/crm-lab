@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { InternalMessage } from '@crm-lab/shared';
 import { api, isApiError, queryKeys } from '@/api';
 import { InboxLayout } from '@/components/layout';
 import type { RecordedAudio } from '@/components/conversation';
@@ -149,6 +150,47 @@ export function InternalChat() {
   });
 
   /**
+   * Editar / apagar para todos da autora (CRMLAB-117, D-282). Prazo vencido entre
+   * abrir o menu e clicar: aviso próprio e recarrega o canal (o item some). O WS
+   * `internal_chat.message_updated` leva a mudança às outras abas e colegas.
+   */
+  const invalidateChannel = useCallback(
+    (channelId: string) =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.internalMessages(channelId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.internalChannels() }),
+      ]),
+    [queryClient],
+  );
+
+  const handleMessageActionError = useCallback(
+    (action: 'edit' | 'delete', channelId: string, error: unknown) => {
+      if (isApiError(error) && error.details?.reason === 'window_expired') {
+        const verb = action === 'edit' ? 'editar' : 'apagar';
+        toast(`O prazo para ${verb} esta mensagem já passou.`, { tone: 'attention' });
+        void invalidateChannel(channelId);
+        return;
+      }
+      handleApiError(error);
+    },
+    [handleApiError, invalidateChannel, toast],
+  );
+
+  const editMessage = useMutation({
+    mutationFn: ({ message, content }: { message: InternalMessage; content: string }) =>
+      api.internalChat.editMessage(message.channelId, message.id, { content }),
+    onSuccess: (_data, { message }) => invalidateChannel(message.channelId),
+    onError: (error, { message }) => handleMessageActionError('edit', message.channelId, error),
+  });
+
+  const deleteMessage = useMutation({
+    mutationFn: (message: InternalMessage) =>
+      api.internalChat.deleteMessage(message.channelId, message.id),
+    onSuccess: (_data, message) => invalidateChannel(message.channelId),
+    onError: (error, message) => handleMessageActionError('delete', message.channelId, error),
+  });
+
+  /**
    * Anexos da prévia (CRMLAB-101, D-271): um POST por arquivo, EM SEQUÊNCIA, com a
    * legenda como `content` — mesmo fluxo do atendimento (D-233). Canal lido no
    * clique; erro é por arquivo (avisa com o nome e segue), menos sessão caída.
@@ -245,6 +287,8 @@ export function InternalChat() {
           onSendAttachments={handleSendAttachments}
           onSendAudio={handleSendAudio}
           onClose={() => setSelectedId(null)}
+          onEditMessage={(message, content) => editMessage.mutateAsync({ message, content })}
+          onDeleteMessage={(message) => deleteMessage.mutate(message)}
           currentUserId={currentUser?.id ?? null}
           currentUserRole={currentUser?.role ?? null}
           hasOlderMessages={messagesQuery.data?.hasOlder ?? false}

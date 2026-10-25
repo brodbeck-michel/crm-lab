@@ -19,6 +19,7 @@
 import {
   FALLBACK_MEDIA_MIME_TYPE,
   MAX_MEDIA_BYTES,
+  internalMessageAuthorActionBlock,
   type Channel,
   type ChatDirectoryUser,
   type CreateInternalAttachmentRequest,
@@ -29,6 +30,7 @@ import {
 import type { DbClient, DbTx } from '../db/types.js';
 import type { TenantContext } from '../http/context.js';
 import type { WsHub } from '../lib/ws-hub.js';
+import type { AuditService } from './audit.service.js';
 import { BusinessError, notFound } from '../http/errors.js';
 import { logger } from '../lib/logger.js';
 import { readMediaFile, writeMediaFile } from '../lib/media-storage.js';
@@ -75,6 +77,8 @@ export class InternalChatService {
   constructor(
     private readonly db: DbClient,
     private readonly wsHub: WsHub,
+    /** Opcional so para quem posta como sistema (ApprovalService); a rota sempre passa. */
+    private readonly audit?: AuditService,
   ) {}
 
   /** Canais do tenant, garantindo que os padrao existam. */
@@ -312,6 +316,93 @@ export class InternalChatService {
     return { buffer, mimeType: attachment.mimeType, fileName: attachment.fileName };
   }
 
+  // -------------------------------------------------------------------------
+  // CRMLAB-117 — a autora edita / apaga para todos (D-282)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Edita o texto da PROPRIA mensagem (D-282). Sem canal externo: grava direto
+   * (versao anterior em `internal_message_edits` + `edited_at`), audit
+   * `edit_internal_message` com o `userId` e WS `internal_chat.message_updated`.
+   */
+  async editByAuthor(
+    ctx: TenantContext,
+    channelId: string,
+    messageId: string,
+    rawContent: string,
+  ): Promise<InternalMessage> {
+    assertLabMember(ctx);
+    const content = rawContent.trim();
+    if (content.length === 0 || content.length > MAX_CONTENT_LENGTH) {
+      throw new BusinessError('VALIDATION_ERROR', {
+        fields: { content: 'Conteudo obrigatorio (1..4000 caracteres)' },
+      });
+    }
+
+    const outcome = await this.db.withTenant(ctx.tenantId, async (tx) => {
+      const message = await authorTarget(tx, ctx, channelId, messageId, 'edit');
+      // Mesmo texto: nada a corrigir — sem versao, sem audit, sem evento.
+      if (content === message.content) return { message, edit: null };
+      const edit = await chatRepo.applyEdit(tx, {
+        tenantId: ctx.tenantId,
+        messageId,
+        content,
+        editedBy: ctx.userId,
+      });
+      if (!edit) throw new BusinessError('CONFLICT', { reason: 'already_deleted' });
+      const updated = await chatRepo.findMessageById(tx, messageId);
+      if (!updated) throw notFound({ resource: 'internal_message', id: messageId });
+      return { message: updated, edit, previous: message.content };
+    });
+    if (!outcome.edit) return outcome.message;
+
+    await this.audit?.record(ctx, {
+      action: 'edit_internal_message',
+      entityType: 'internal_message',
+      entityId: messageId,
+      oldValues: { content: outcome.previous },
+      newValues: { content, editedAt: outcome.edit.editedAt, editId: outcome.edit.editId },
+    });
+    this.emitMessageUpdated(ctx.tenantId, channelId, messageId);
+    return outcome.message;
+  }
+
+  /**
+   * "Apagar para todos" da autora (D-282): ESCONDE (`deleted_at`), nunca apaga —
+   * o texto e o arquivo ficam na linha; o texto vai tambem para o audit.
+   */
+  async deleteByAuthor(ctx: TenantContext, channelId: string, messageId: string): Promise<void> {
+    assertLabMember(ctx);
+    const outcome = await this.db.withTenant(ctx.tenantId, async (tx) => {
+      const message = await authorTarget(tx, ctx, channelId, messageId, 'delete');
+      const deletedAt = await chatRepo.markDeleted(tx, messageId);
+      if (!deletedAt) throw new BusinessError('CONFLICT', { reason: 'already_deleted' });
+      return { message, deletedAt };
+    });
+
+    await this.audit?.record(ctx, {
+      action: 'delete_internal_message',
+      entityType: 'internal_message',
+      entityId: messageId,
+      oldValues: {
+        content: outcome.message.content,
+        attachmentId: outcome.message.attachment?.id ?? null,
+        deletedAt: null,
+      },
+      newValues: { deletedAt: outcome.deletedAt },
+    });
+    this.emitMessageUpdated(ctx.tenantId, channelId, messageId);
+  }
+
+  /**
+   * So ids, para o tenant inteiro (mesma regra de `new_message`, D-271 item 6):
+   * quem nao ve o canal nao tem o que refazer. Nao e mensagem nova — evento
+   * proprio, sem aviso nem badge.
+   */
+  private emitMessageUpdated(tenantId: string, channelId: string, messageId: string): void {
+    this.wsHub.emitToTenant(tenantId, 'internal_chat.message_updated', { channelId, messageId });
+  }
+
   /** Diretorio de quem da para abrir DM — exclui o proprio usuario e inativos (D-101). */
   async listDirectory(ctx: TenantContext): Promise<ChatDirectoryUser[]> {
     assertLabMember(ctx);
@@ -355,6 +446,32 @@ export class InternalChatService {
   }
 }
 
+/**
+ * Regras de D-282 (`internalMessageAuthorActionBlock`, a mesma da tela) sob a
+ * trava da linha. Canal invisivel (outro tenant, DM alheia) ou mensagem de
+ * outro canal = `NOT_FOUND`; outra autora = `FORBIDDEN`; prazo/estado =
+ * `CONFLICT` com `details.reason`.
+ */
+async function authorTarget(
+  tx: DbTx,
+  ctx: TenantContext,
+  channelId: string,
+  messageId: string,
+  action: 'edit' | 'delete',
+): Promise<InternalMessage> {
+  const channel = await chatRepo.findChannelById(tx, channelId, ctx.userId);
+  if (!channel) throw notFound({ resource: 'channel', id: channelId });
+  await chatRepo.lockMessage(tx, messageId);
+  const message = await chatRepo.findMessageById(tx, messageId);
+  if (!message || message.channelId !== channelId) {
+    throw notFound({ resource: 'internal_message', id: messageId });
+  }
+  const block = internalMessageAuthorActionBlock(message, action, ctx.userId);
+  if (block === 'not_author') throw new BusinessError('FORBIDDEN', { reason: block });
+  if (block) throw new BusinessError('CONFLICT', { reason: block });
+  return message;
+}
+
 /** Idempotente: devolve o canal existente ou cria com o nome padrao. */
 export async function ensureChannel(
   tx: DbTx,
@@ -377,6 +494,10 @@ export async function ensureDefaultChannels(tx: DbTx, tenantId: string): Promise
   }
 }
 
-export function createInternalChatService(db: DbClient, wsHub: WsHub): InternalChatService {
-  return new InternalChatService(db, wsHub);
+export function createInternalChatService(
+  db: DbClient,
+  wsHub: WsHub,
+  audit?: AuditService,
+): InternalChatService {
+  return new InternalChatService(db, wsHub, audit);
 }

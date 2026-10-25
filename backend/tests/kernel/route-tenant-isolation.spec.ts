@@ -194,6 +194,8 @@ interface Lab {
   message: { id: string };
   /** Anexo (PDF) de uma mensagem em `channel`, com o arquivo no disco (CRMLAB-101). */
   internalAttachment: { id: string };
+  /** Mensagem interna da atendente que carrega `internalAttachment` (CRMLAB-117). */
+  internalMessage: { id: string };
 }
 
 interface LabRoute {
@@ -1042,6 +1044,26 @@ const LAB_ROUTES: readonly LabRoute[] = [
     addressable: true,
     ownStatus: 200,
   },
+  {
+    // D-282: a sonda e mensagem da atendente; o admin do proprio tenant nao e
+    // a autora -> `FORBIDDEN` (gestao nao mexe em mensagem de colega).
+    name: 'PATCH /internal-chat/channels/:id/messages/:messageId',
+    method: 'patch',
+    path: (l) => `/api/v1/internal-chat/channels/${l.channel.id}/messages/${l.internalMessage.id}`,
+    body: () => ({ content: 'sonda de isolamento' }),
+    actor: 'admin',
+    addressable: true,
+    ownStatus: 403,
+  },
+  {
+    // D-282: idem — so a autora apaga para todos.
+    name: 'DELETE /internal-chat/channels/:id/messages/:messageId',
+    method: 'delete',
+    path: (l) => `/api/v1/internal-chat/channels/${l.channel.id}/messages/${l.internalMessage.id}`,
+    actor: 'admin',
+    addressable: true,
+    ownStatus: 403,
+  },
   // D-101: DM — diretorio de usuarios e get-or-create do canal.
   { name: 'GET /internal-chat/users', method: 'get', path: () => '/api/v1/internal-chat/users', actor: 'attendant', addressable: false },
   {
@@ -1264,13 +1286,15 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
        VALUES ($1, $2, $3, '') RETURNING id`,
       [tenant.id, channel.id, attendant.id],
     );
-    return tx.query<{ id: string }>(
+    const att = await tx.query<{ id: string }>(
       `INSERT INTO internal_message_attachments (tenant_id, message_id, mime_type, file_name, byte_size)
        VALUES ($1, $2, 'application/pdf', 'sonda.pdf', 14) RETURNING id`,
       [tenant.id, msg.rows[0]?.id],
     );
+    return { attachmentId: att.rows[0]?.id as string, messageId: msg.rows[0]?.id as string };
   });
-  const internalAttachment = { id: internalAttachmentRow.rows[0]?.id as string };
+  const internalAttachment = { id: internalAttachmentRow.attachmentId };
+  const internalMessage = { id: internalAttachmentRow.messageId };
   await writeMediaFile(internalAttachment.id, Buffer.from('%PDF-1.4 sonda'));
 
   return {
@@ -1297,6 +1321,7 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     media,
     message,
     internalAttachment,
+    internalMessage,
   };
 }
 
@@ -1420,7 +1445,8 @@ describe('inventario de rotas de laboratorio', () => {
     // CRMLAB-112/D-277 soma 1: `GET /conversations/unread-count`.
     // CRMLAB-103/D-279 soma 1: `GET /analytics/reminders`.
     // CRMLAB-105/D-280 soma 2: `PATCH|DELETE /conversations/:id/messages/:messageId`.
-    expect(LAB_ROUTES).toHaveLength(116);
+    // CRMLAB-117/D-282 soma 2: `PATCH|DELETE /internal-chat/channels/:id/messages/:messageId`.
+    expect(LAB_ROUTES).toHaveLength(118);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

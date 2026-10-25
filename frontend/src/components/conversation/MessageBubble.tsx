@@ -350,9 +350,10 @@ function MessageMenu({
 
 /**
  * Edição no próprio balão (CRMLAB-105, D-280): Enter salva, Shift+Enter quebra
- * linha, Esc cancela. Vazio não salva; mesmo teto do envio (4000).
+ * linha, Esc cancela. Vazio não salva; mesmo teto do envio (4000). Exportada
+ * para o Chat Interno (CRMLAB-117, D-282) — mesma UX nos dois lugares.
  */
-function EditBox({
+export function EditBox({
   initial,
   onSave,
   onCancel,

@@ -51,6 +51,9 @@ interface MessageRow {
   attachment_file_name: string | null;
   attachment_mime_type: string | null;
   attachment_byte_size: number | string | null;
+  /** Migracao 058 (CRMLAB-117, D-282). */
+  edited_at: unknown;
+  deleted_at: unknown;
 }
 
 /**
@@ -106,15 +109,20 @@ async function resolveOtherUserNames(
   return new Map(result.rows.map((row) => [row.id, row.name]));
 }
 
+/**
+ * Apagada pela autora (D-282, como D-220): a linha fica, mas o conteudo, o anexo
+ * e a proposta NUNCA saem na API — a tela mostra "Mensagem apagada".
+ */
 export function mapMessage(row: MessageRow): InternalMessage {
+  const deleted = row.deleted_at !== null && row.deleted_at !== undefined;
   return {
     id: row.id,
     channelId: row.channel_id,
     senderId: row.sender_id,
     senderName: row.is_system ? 'Sistema' : (row.sender_name ?? 'Usuario removido'),
-    content: row.content,
-    attachedProposalId: row.attached_proposal_id,
-    attachment: row.attachment_id
+    content: deleted ? '' : row.content,
+    attachedProposalId: deleted ? null : row.attached_proposal_id,
+    attachment: !deleted && row.attachment_id
       ? attachmentOf(row.channel_id, {
           id: row.attachment_id,
           fileName: row.attachment_file_name ?? '',
@@ -124,6 +132,8 @@ export function mapMessage(row: MessageRow): InternalMessage {
       : null,
     isSystem: row.is_system,
     createdAt: toIso(row.created_at),
+    editedAt: deleted ? null : toIsoOrNull(row.edited_at),
+    deletedAt: toIsoOrNull(row.deleted_at),
   };
 }
 
@@ -148,6 +158,9 @@ function attachmentOf(
  * (`sender_id IS NULL`) CONTA de proposito — o pedido de aprovacao em
  * `#aprovacoes` e justamente o que precisa piscar.
  *
+ * Apagada pela autora (`deleted_at`, D-282) nao conta: quem nao leu a tempo
+ * nao fica com um badge apontando para "Mensagem apagada".
+ *
  * `IS DISTINCT FROM` (e nao `<>`) porque `sender_id` e anulavel: com `<>` a
  * comparacao viraria NULL na mensagem de sistema e ela deixaria de contar.
  *
@@ -165,6 +178,7 @@ const SELECT_CHANNEL_FOR_USER = `
          COUNT(*) FILTER (
            WHERE m.created_at > COALESCE(r.last_read_at, '-infinity'::timestamp)
              AND m.sender_id IS DISTINCT FROM $1::uuid
+             AND m.deleted_at IS NULL
          )::int AS unread_count
     FROM internal_channels ch
     LEFT JOIN channel_reads r ON r.channel_id = ch.id AND r.user_id = $1::uuid
@@ -379,7 +393,7 @@ export async function findMessageById(tx: DbTx, id: string): Promise<InternalMes
 
 const SELECT_MESSAGE = `
   SELECT m.id, m.channel_id, m.sender_id, u.name AS sender_name, m.content,
-         m.attached_proposal_id, m.is_system, m.created_at,
+         m.attached_proposal_id, m.is_system, m.created_at, m.edited_at, m.deleted_at,
          a.id AS attachment_id, a.file_name AS attachment_file_name,
          a.mime_type AS attachment_mime_type, a.byte_size AS attachment_byte_size
     FROM internal_messages m
@@ -451,6 +465,8 @@ export async function insertAttachment(
  * Anexo de uma mensagem DESTE canal (D-271). Anexo de outro canal devolve
  * `null` — quem chama ja conferiu o acesso ao canal, e este filtro impede
  * baixar o anexo de uma DM alheia trocando so o `:id` da URL.
+ * Mensagem apagada pela autora (D-282) tambem: o arquivo fica no disco, mas
+ * nao sai mais pela API.
  */
 export async function findAttachment(
   tx: DbTx,
@@ -461,9 +477,57 @@ export async function findAttachment(
     `SELECT a.id, a.mime_type, a.file_name
        FROM internal_message_attachments a
        JOIN internal_messages m ON m.id = a.message_id
-      WHERE a.id = $1 AND m.channel_id = $2`,
+      WHERE a.id = $1 AND m.channel_id = $2 AND m.deleted_at IS NULL`,
     [attachmentId, channelId],
   );
   const row = result.rows[0];
   return row ? { id: row.id, mimeType: row.mime_type, fileName: row.file_name } : null;
+}
+
+/**
+ * Trava a linha da mensagem ate o fim da transacao (D-282): editar e apagar
+ * concorrentes da mesma autora nao se cruzam (a segunda ve o estado novo).
+ */
+export async function lockMessage(tx: DbTx, id: string): Promise<void> {
+  await tx.query('SELECT id FROM internal_messages WHERE id = $1 FOR UPDATE', [id]);
+}
+
+/**
+ * Edicao da autora (D-282): guarda a versao ANTERIOR em `internal_message_edits`
+ * e troca o texto, na mesma transacao. Apagada nao edita (`null`).
+ */
+export async function applyEdit(
+  tx: DbTx,
+  input: { tenantId: string; messageId: string; content: string; editedBy: string },
+): Promise<{ editId: string; editedAt: string } | null> {
+  const edit = await tx.query<{ id: string }>(
+    `INSERT INTO internal_message_edits (tenant_id, message_id, previous_content, edited_by)
+     SELECT $1, id, content, $3 FROM internal_messages
+      WHERE id = $2 AND deleted_at IS NULL
+     RETURNING id`,
+    [input.tenantId, input.messageId, input.editedBy],
+  );
+  const editId = edit.rows[0]?.id;
+  if (!editId) return null;
+  const updated = await tx.query<{ edited_at: unknown }>(
+    `UPDATE internal_messages SET content = $2, edited_at = now()
+      WHERE id = $1 AND deleted_at IS NULL
+      RETURNING edited_at`,
+    [input.messageId, input.content],
+  );
+  const row = updated.rows[0];
+  if (!row) return null;
+  return { editId, editedAt: toIso(row.edited_at) };
+}
+
+/** "Apagar para todos" (D-282): ESCONDE, nunca apaga. `null` = ja estava apagada. */
+export async function markDeleted(tx: DbTx, messageId: string): Promise<string | null> {
+  const result = await tx.query<{ deleted_at: unknown }>(
+    `UPDATE internal_messages SET deleted_at = now()
+      WHERE id = $1 AND deleted_at IS NULL
+      RETURNING deleted_at`,
+    [messageId],
+  );
+  const row = result.rows[0];
+  return row ? toIso(row.deleted_at) : null;
 }

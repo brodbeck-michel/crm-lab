@@ -468,6 +468,12 @@ interface InternalChatService {
 
   /** CRMLAB-101 (D-271): bytes + nome original + MIME, só para quem vê o canal. */
   readAttachment(ctx: TenantContext, channelId: string, attachmentId: string): Promise<{ buffer: Buffer; mimeType: string; fileName: string }>;
+
+  /** CRMLAB-117 (D-282): a autora corrige o texto da própria mensagem. */
+  editByAuthor(ctx: TenantContext, channelId: string, messageId: string, content: string): Promise<InternalMessage>;
+
+  /** CRMLAB-117 (D-282): a autora apaga para todos (esconde, nunca apaga). */
+  deleteByAuthor(ctx: TenantContext, channelId: string, messageId: string): Promise<void>;
 }
 ```
 
@@ -511,6 +517,17 @@ interface InternalChatService {
   (falha de disco desfaz tudo). Emite `internal_chat.new_message` (só ids) depois do commit.
   `readAttachment` exige o mesmo acesso ao canal e que o anexo seja de uma mensagem DESTE canal;
   arquivo fora do disco → `NOT_FOUND` com log. Sem audit log (mensagem do chat não é auditada)
+- **Editar / apagar para todos (CRMLAB-117, D-282):** `editByAuthor`/`deleteByAuthor` conferem o
+  canal (`findChannelById` com o usuário — DM alheia é `NOT_FOUND`), travam a linha (`FOR
+  UPDATE`), exigem que a mensagem seja DESTE canal e aplicam `internalMessageAuthorActionBlock`
+  (shared, a mesma da tela): não é a autora (sistema incluído) → `FORBIDDEN` `not_author`;
+  apagada, com áudio/documento (só no editar — imagem/vídeo editam a legenda, nunca o arquivo)
+  ou fora do prazo (15 min / 48 h) → `CONFLICT` com
+  `details.reason`. Editar guarda a versão anterior em `internal_message_edits` e sobe
+  `edited_at`; apagar grava `deleted_at`. Depois do commit: audit `edit_internal_message` /
+  `delete_internal_message` (com `userId`; a exceção à regra "chat não é auditado", porque
+  mexe em mensagem já lida por outros) e WS `internal_chat.message_updated` (só ids). Apagada
+  some da API (`content: ""`, sem anexo/proposta; download `NOT_FOUND`) e do `unreadCount`
 
 ---
 

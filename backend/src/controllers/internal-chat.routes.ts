@@ -9,6 +9,8 @@
  *   POST /api/v1/internal-chat/dms                     get-or-create DM (200, D-101)
  *   POST /api/v1/internal-chat/channels/:id/attachments                 anexo (base64, 201, D-271)
  *   GET  /api/v1/internal-chat/channels/:id/attachments/:attachmentId   baixa (D-271)
+ *   PATCH  /api/v1/internal-chat/channels/:id/messages/:messageId  a autora edita (200, D-282)
+ *   DELETE /api/v1/internal-chat/channels/:id/messages/:messageId  a autora apaga para todos (204, D-282)
  *
  * `denyPlatformOperator()` em todas: o console de plataforma tem chat PROPRIO e
  * nao acessa canais de laboratorio (PAGES.md §11). O service recusa de novo.
@@ -18,6 +20,7 @@ import { z } from 'zod';
 import type {
   Channel,
   CreateInternalAttachmentRequest,
+  EditInternalMessageRequest,
   InternalMessage,
   ListChannelsResponse,
   ListChatDirectoryResponse,
@@ -33,6 +36,7 @@ import {
   createInternalChatService,
 } from '../services/internal-chat.service.js';
 import type { InternalChatService } from '../services/internal-chat.service.js';
+import { createAuditService } from '../services/audit.service.js';
 import { dispositionFor, servedMimeType } from './media.routes.js';
 
 export const channelIdParamSchema = z.object({ id: z.uuid() });
@@ -59,6 +63,16 @@ export const attachmentParamSchema = z.object({
   id: z.uuid(),
   attachmentId: z.uuid(),
 });
+
+export const messageParamSchema = z.object({
+  id: z.uuid(),
+  messageId: z.uuid(),
+});
+
+/** `PATCH .../messages/:messageId` (D-282): mesmo teto do envio. */
+export const editMessageSchema = z
+  .object({ content: z.string().min(1).max(MAX_CONTENT_LENGTH) })
+  .strict();
 
 /**
  * Base64 em JSON, como `POST /conversations/:id/attachments` (D-271). Tipo,
@@ -148,6 +162,28 @@ export function getAttachment(service: InternalChatService): RequestHandler {
   });
 }
 
+/**
+ * `PATCH|DELETE /channels/:id/messages/:messageId` (CRMLAB-117, D-282): a autora
+ * edita ou apaga para todos. Acesso ao canal e regra ficam no service.
+ */
+export function editOrDeleteMessage(
+  service: InternalChatService,
+  mode: 'edit' | 'delete',
+): RequestHandler {
+  return handle(async (req, res) => {
+    const ctx = getContext(req);
+    const { id, messageId } = validated<{ id: string; messageId: string }>(req, 'params');
+    if (mode === 'delete') {
+      await service.deleteByAuthor(ctx, id, messageId);
+      res.status(204).end();
+      return;
+    }
+    const { content } = validated<EditInternalMessageRequest>(req, 'body');
+    const message: InternalMessage = await service.editByAuthor(ctx, id, messageId, content);
+    res.status(200).json(message);
+  });
+}
+
 export function listDirectory(service: InternalChatService): RequestHandler {
   return handle(async (req, res) => {
     const ctx = getContext(req);
@@ -168,7 +204,7 @@ export function createDirectChannel(service: InternalChatService): RequestHandle
 }
 
 export function internalChatModule(deps: ApiModuleDeps): ApiModule {
-  const service = createInternalChatService(deps.db, deps.wsHub);
+  const service = createInternalChatService(deps.db, deps.wsHub, createAuditService(deps.db));
   const router = Router();
 
   router.get('/channels', requireAuth(), denyPlatformOperator(), listChannels(service));
@@ -197,6 +233,23 @@ export function internalChatModule(deps: ApiModuleDeps): ApiModule {
     validate(channelIdParamSchema, 'params'),
     validate(sendMessageSchema, 'body'),
     sendMessage(service),
+  );
+
+  router.patch(
+    '/channels/:id/messages/:messageId',
+    requireAuth(),
+    denyPlatformOperator(),
+    validate(messageParamSchema, 'params'),
+    validate(editMessageSchema, 'body'),
+    editOrDeleteMessage(service, 'edit'),
+  );
+
+  router.delete(
+    '/channels/:id/messages/:messageId',
+    requireAuth(),
+    denyPlatformOperator(),
+    validate(messageParamSchema, 'params'),
+    editOrDeleteMessage(service, 'delete'),
   );
 
   router.post(

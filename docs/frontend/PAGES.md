@@ -128,10 +128,8 @@ Duas leituras registradas aqui porque o doc original não as fixava:
   `responseAlert.minutes`, o item fica com fundo `--color-chat-alert-bg`, faixa vermelha à esquerda
   (`--color-chat-alert`) e um relógio com **"há 23 min"** no lugar do "aguardando N". Some quando a
   atendente responde (o WS refaz a lista). Encerradas nunca. Todas as atendentes veem
-- Chip **"Aguardando resposta N"** (D-254), depois de "Encerradas", só com a regra ligada e fora
-  da lista de encerradas: conta e filtra **no cliente** a página carregada (exceção consciente ao
-  "counts do servidor"; conversa fora da página não entra). Combina com "Minhas"/"Não atribuídas";
-  clicar de novo desliga. Filtro ligado e ninguém esperando → "Ninguém aguardando resposta"
+- **Sem chip "Aguardando resposta"** (CRMLAB-119, D-283, revê o item 7 da D-254): o Michel
+  preferiu deixar o alerta só no destaque vermelho de cada item; não há filtro de quem espera
 - **Sem chip "Não lidas"** (CRMLAB-68, D-229 item 5): o Michel preferiu só Minhas / Não
   atribuídas / Encerradas — o número de não lidas no item e no título da aba já avisam. A API
   mantém `?unread=true` e `counts.unread`
@@ -275,8 +273,9 @@ não só aqui. O Console da Plataforma não avisa.
   (`isInMyQueue`, o mesmo recorte do servidor para atendente). Conversa de outra atendente não
   avisa ninguém além dela, nem gestor. Só mensagem de **paciente** avisa (o sinal é o
   `unreadCount` subir); mensagem da equipe e evento de sistema não
-- **Título da aba:** `"(N) <título>"`, N = conversas da fila com não lidas; zerou, volta ao
-  título original. Acompanha a leitura (abrir a conversa invalida a query)
+- **Título da aba:** `"(N) <título>"`, N = conversas da fila com não lidas **+ canais/DMs do Chat
+  interno com não lidas** (contagem única, CRMLAB-116/D-284); zerou, volta ao título original.
+  Acompanha a leitura (abrir a conversa ou o canal invalida a query)
 - **Notificação do navegador**, só com a aba **sem foco**: título = nome do paciente (sem nome,
   o telefone); corpo = **"Nova mensagem"** ou **"N novas mensagens"**. **Nunca o texto nem a
   mídia** (D-240, sem opção de ligar prévia). `tag` = id da conversa (a nova substitui a
@@ -295,6 +294,11 @@ não só aqui. O Console da Plataforma não avisa.
 - Dados: `GET /conversations?status=active&scope=all&sortBy=unreadCount&order=desc&limit=100`
   (uma query por aba, invalidada pelo mesmo WS `conversation.new_message`) + o detalhe da
   conversa aberta, que o Atendimento já carrega
+- **Chat interno (CRMLAB-116, D-284):** mensagem de colega num canal/DM dá o mesmo aviso (som,
+  notificação, título), com as mesmas preferências. Notificação: título = nome do canal
+  (`#geral`) ou da colega na DM, corpo só a contagem; clicar abre `/internal-chat?channelId=…`.
+  Não avisa mensagem minha (nem de outra aba), de sistema, editada/apagada, nem do canal aberto
+  com a aba em foco. Detalhes em §9
 
 ### Coluna 3 — Contexto do paciente (recolhível)
 - **Começa fechada (CRMLAB-74).** Só abre pelo botão [Contexto] do header. Aberta, continua
@@ -778,6 +782,22 @@ nunca "sem permissão" (não vazar existência).
   não tem conversa encerrada) e mostra o estado vazio "Selecione um canal". A abertura automática
   do primeiro canal vale só na primeira carga — depois de fechar, nada reabre sozinho
 
+### Editar e apagar para todos (CRMLAB-117, D-282)
+
+- No menu ⌄ da mensagem (aparece ao passar o mouse), **"Editar"** e **"Apagar para todos"** só
+  para a **autora** (`senderId` = usuária logada). Gestora/admin não veem em mensagem de colega;
+  mensagem de sistema não tem menu. Regra única `internalMessageAuthorActionBlock` do shared:
+  editar texto ou legenda de imagem/vídeo (só quando há legenda; o arquivo não muda; áudio e
+  documento só apagam), até 15 min; apagar até 48 h. Fora do prazo o item some
+- "Editar" vira a mesma caixa do atendimento no próprio balão (`MessageEditBox`: Enter salva,
+  Shift+Enter quebra linha, Esc cancela; vazio não salva) → `PATCH
+  /internal-chat/channels/:id/messages/:messageId`. "Apagar para todos" pede
+  `confirm("Apagar para todos?")` → `DELETE` no mesmo caminho. Prazo vencido entre abrir o menu e
+  clicar: toast "O prazo para editar/apagar esta mensagem já passou." e o canal recarrega
+- A mensagem mostra "Editada" junto da hora; apagada vira "🚫 Mensagem apagada", sem menu. Os
+  outros membros veem pelo WS `internal_chat.message_updated` (canais + mensagens do canal
+  recarregam); apagada sai do badge de não lidas
+
 ### Buscar usuário (D-101) — iniciar conversa direta
 
 No topo da coluna esquerda, ACIMA dos grupos "Canais" e "Mensagens diretas", um campo de
@@ -825,8 +845,8 @@ O item "Chat Interno" da Sidebar (`COMPONENTS.md` — Sidebar) mostra um `Badge`
 tela usa, cache compartilhado via `queryKeys.internalChannels()` — sem endpoint novo). Se o grupo
 "Comunicação" estiver **recolhido** e esse total for maior que zero, o mesmo `Badge` (com o
 mesmo total) aparece no cabeçalho do grupo, no lugar do ponto de "item ativo dentro" (D-128);
-some ao abrir o grupo, ao entrar num canal (unread zera) ou ao chegar a zero. Sem som e sem
-notificação push do navegador — só esse indicador visual dentro do próprio CRM.
+some ao abrir o grupo, ao entrar num canal (unread zera) ou ao chegar a zero. Som e notificação
+do navegador vêm do aviso de mensagem nova (CRMLAB-116, abaixo) — o badge segue só visual.
 
 **CRMLAB-112 (D-277):** o item **"Atendimento"** ganha o mesmo contador, com a soma das
 mensagens não lidas das conversas ativas que o usuário enxerga (`GET /conversations/unread-count`).
@@ -834,6 +854,26 @@ Com a barra **recolhida** os dois contadores continuam com o **número** ("99+" 
 canto do ícone — o do Chat Interno no ícone do grupo "Comunicação" — em vez do ponto de 8px.
 Atualizam em qualquer tela pelo WS (`conversation.new_message` / `internal_chat.new_message`)
 e baixam quando a atendente lê.
+
+### Aviso de mensagem nova (CRMLAB-116, D-284)
+
+O aviso do atendimento (§1, CRMLAB-72) vale também para o chat, em qualquer tela, no mesmo hook
+`useNewMessageAlerts`:
+- **Sinal:** na lista de canais (mesma query/cache da Sidebar), o `unreadCount` subir junto com o
+  `lastMessageAt`; primeira carga é linha de base. Cada canal candidato busca a página 1 das
+  mensagens e só avisa se houver mensagem nova de **colega** — sistema (`isSystem`, ex.: pedido de
+  aprovação, que segue só no badge), a própria pessoa (inclusive de outra aba) e apagada não avisam.
+  Edição/apagamento (`internal_chat.message_updated`) não sobe o contador → nada
+- **Som:** aba sem foco ou canal diferente do aberto. **Notificação** (só aba sem foco): título =
+  nome do canal ou `otherUserName` da DM, corpo "Nova mensagem"/"N novas mensagens" — nunca o
+  texto (D-240). `tag` = `internal-chat:<id>`
+- **Canal aberto:** a tela publica `openInternalChannelId` no `message-alerts.store` (limpa ao
+  sair). Canal aberto com a aba em foco → nada
+- **Deep link:** `/internal-chat?channelId=<id>` abre o canal como um clique (marca como lido);
+  relido a cada navegação, não só no mount
+- **Título da aba:** soma única com o atendimento — 2 conversas + 1 canal não lidos = "(3)"
+- Mesmas preferências de som/notificação do menu do usuário. `platform_operator` e quem não tem a
+  rota `/internal-chat` não recebem
 
 ### Paginação do histórico (D-069)
 

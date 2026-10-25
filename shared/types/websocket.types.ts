@@ -16,6 +16,7 @@ export type WsEventName =
   | 'approval.requested'
   | 'approval.decided'
   | 'internal_chat.new_message'
+  | 'internal_chat.message_updated'
   | 'channel.connection_changed'
   | 'proposal.stale_alert'
   | 'proposal.reminder_due';
@@ -47,6 +48,11 @@ export interface WsEventPayloads {
   'approval.requested': { proposalId: string };
   'approval.decided': { proposalId: string; decision: 'approved' | 'rejected' };
   'internal_chat.new_message': { channelId: string; messageId: string };
+  /**
+   * A autora editou ou apagou para todos uma mensagem interna (CRMLAB-117, D-282).
+   * Separado de `new_message` de proposito: nao e mensagem nova (sem aviso/badge).
+   */
+  'internal_chat.message_updated': { channelId: string; messageId: string };
   /**
    * Conexao do canal externo mudou (hoje: WhatsApp por QR). `connected: false`
    * e o caso que motivou o evento — ver a nota em `docs/ARCHITECTURE.md`.

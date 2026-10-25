@@ -210,6 +210,9 @@ export function applyWsEvent(
       return;
     }
 
+    // CRMLAB-117/D-282: edição ou apagamento pela autora — mesma invalidação
+    // (apagada sai do `unreadCount`), sem contar como mensagem nova.
+    case 'internal_chat.message_updated':
     case 'internal_chat.new_message': {
       const data = event.data as { channelId: string };
       void queryClient.invalidateQueries({ queryKey: queryKeys.internalChannels() });

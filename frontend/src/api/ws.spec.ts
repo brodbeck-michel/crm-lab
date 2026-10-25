@@ -139,6 +139,21 @@ describe('ws — evento invalida a query certa', () => {
     expect(keysPassed()).toEqual([queryScopes.conversations, queryKeys.conversation('c-9')]);
   });
 
+  // CRMLAB-117/D-282: a autora editou/apagou no chat interno — canais + mensagens do canal.
+  it('internal_chat.message_updated → canais + mensagens do canal', () => {
+    const client = build();
+    client.connect();
+    socket(0).emitMessage({
+      event: 'internal_chat.message_updated',
+      data: { channelId: 'ch-3', messageId: 'm-3' },
+    });
+
+    expect(keysPassed()).toEqual([
+      queryKeys.internalChannels(),
+      queryKeys.internalMessages('ch-3'),
+    ]);
+  });
+
   // CRMLAB-57/D-196: cartão nascido do orçamento do Bitlab entra no Kanban sem recarregar.
   it('proposal.created → ["proposals"]', () => {
     const client = build();

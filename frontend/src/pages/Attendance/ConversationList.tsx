@@ -30,9 +30,9 @@ import { PatientResults } from './PatientResults';
  * Alerta de tempo de resposta (CRMLAB-84, D-254): com a regra ligada e o
  * calendário útil carregado, cada item ganha os minutos ÚTEIS de espera
  * (`responseAlertMinutes`), recalculados num relógio local a cada
- * `RESPONSE_ALERT_TICK_MS` — sem refazer a busca. O chip "Aguardando resposta"
- * conta e filtra NO CLIENTE, sobre a página carregada (decisão do Michel:
- * conversa fora da página não entra); combina com "Minhas"/"Não atribuídas".
+ * `RESPONSE_ALERT_TICK_MS` — sem refazer a busca. Sem chip "Aguardando
+ * resposta" (D-283, retirado a pedido do Michel — CRMLAB-119): o alerta fica só
+ * no relógio vermelho de cada item.
  *
  * No topo, o "+" de **Nova conversa** (CRMLAB-50, D-175), padrão WhatsApp Web,
  * também no atalho Ctrl+Alt+N. O modal cuida do envio; aqui só se abre e, no
@@ -99,7 +99,7 @@ export interface ConversationListProps {
   onOpenMessage?: (hit: MessageSearchHit) => void;
   /** "Marcar como não lida" no menu do item (D-229). */
   onMarkUnread?: (id: string) => void;
-  /** Alerta de tempo de resposta (D-254). Ausente ou regra desligada = sem destaque nem chip. */
+  /** Alerta de tempo de resposta (D-254). Ausente ou regra desligada = sem destaque. */
   responseAlert?: ConversationResponseAlert;
   /** Injetável para teste determinístico do alerta; sem ele, relógio local. */
   now?: Date;
@@ -138,7 +138,7 @@ export function ConversationList({
   const [newConversationOpen, setNewConversationOpen] = useState(false);
 
   // Alerta de tempo de resposta (D-254). Encerradas nunca entram (o cálculo já
-  // devolve `null`), então o chip some na lista de encerradas.
+  // devolve `null`); na lista de encerradas o relógio nem roda.
   const alertActive =
     responseAlert !== undefined &&
     responseAlert.rule.enabled &&
@@ -160,11 +160,6 @@ export function ConversationList({
     }
     return out;
   }, [alertActive, responseAlert, conversations, now]);
-  const [awaitingOnly, setAwaitingOnly] = useState(false);
-  const filterAwaiting = alertActive && awaitingOnly;
-  const shown = filterAwaiting
-    ? conversations.filter((conversation) => alertMinutes.has(conversation.id))
-    : conversations;
 
   /** Ctrl+Alt+N abre a Nova conversa de qualquer ponto da tela. */
   useEffect(() => {
@@ -245,16 +240,6 @@ export function ConversationList({
           >
             Encerradas
           </Chip>
-          {alertActive && (
-            <Chip
-              tone={filterAwaiting ? 'attention' : 'inactive'}
-              selected={filterAwaiting}
-              onClick={() => setAwaitingOnly((value) => !value)}
-              title={`Pacientes esperando resposta há ${responseAlert?.rule.minutes ?? 0} min ou mais (horário de atendimento) — nesta lista`}
-            >
-              {`Aguardando resposta ${alertMinutes.size}`}
-            </Chip>
-          )}
         </div>
 
         <SearchInput
@@ -284,26 +269,22 @@ export function ConversationList({
         )}
 
         {/* Buscando, a falta de conversa por nome não é "vazio" se houver mensagem achada. */}
-        {!isLoading && !isError && shown.length === 0 && showMessages && (
+        {!isLoading && !isError && conversations.length === 0 && showMessages && (
           <p className="m-0 px-sm py-sm text-caption text-neutral-600">
             Nenhuma conversa com esse nome ou telefone.
           </p>
         )}
 
-        {!isLoading && !isError && shown.length === 0 && !showMessages && (
+        {!isLoading && !isError && conversations.length === 0 && !showMessages && (
           <EmptyState
-            message={filterAwaiting ? 'Ninguém aguardando resposta' : 'Nenhuma conversa por aqui'}
-            hint={
-              filterAwaiting
-                ? 'Todos os pacientes desta lista foram respondidos a tempo.'
-                : 'Ajuste os filtros ou aguarde a próxima mensagem.'
-            }
+            message="Nenhuma conversa por aqui"
+            hint="Ajuste os filtros ou aguarde a próxima mensagem."
           />
         )}
 
         {!isLoading &&
           !isError &&
-          shown.map((conversation) => (
+          conversations.map((conversation) => (
             <ConversationItem
               key={conversation.id}
               conversation={conversation}

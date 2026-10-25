@@ -141,7 +141,8 @@ Anatomia (padrão WhatsApp):
   balão reaproveita o que o balão já baixou
 - **Menu da mensagem (CRMLAB-66, padrão WhatsApp Web):** passar o mouse (ou focar) mostra uma
   setinha no canto de cima do balão; ela abre o menu **Responder · Reagir · Copiar**. Reagir abre
-  a barra rápida `QUICK_REACTIONS` (👍 ❤️ 😂 😮 😢 🙏, `shared/`); clicar no emoji que já é o do
+  a barra rápida `QUICK_REACTIONS` (👍 ❤️ 💚 😂 😮 😢 🙏, `shared/`; o 💚 entrou no CRMLAB-118
+  — 7 botões, ~220 px de largura, cabe numa tela de 320 px); clicar no emoji que já é o do
   laboratório remove. Copiar põe `content` na área de transferência. Encaminhar: fora desta
   história. Props opcionais: `onReply`, `onReact(emoji | null)`, `onQuoteClick(messageId)` — sem
   handler, a ação some (nada de botão morto). Balão de sistema não tem menu
@@ -443,7 +444,10 @@ Anatomia (padrão WhatsApp):
 - Título "(N) <título>", notificação sem prévia, som e a regra `isInMyQueue`. Funções puras
   exportadas para teste: `isInMyQueue`, `detectNewMessages`, `alertBody`, `countUnreadInQueue`,
   `titleWithCount`. Estado auxiliar em `stores/message-alerts.store.ts` (preferências +
-  conversa aberta); som em `lib/notification-sound.ts`
+  conversa aberta + canal interno aberto); som em `lib/notification-sound.ts`
+- CRMLAB-116 (D-284): também avisa mensagem de colega no Chat interno. Funções puras
+  `detectNewChannelMessages`, `freshFromColleagues`, `channelTitle`, `countUnreadChannels`;
+  título da aba soma conversas + canais não lidos
 
 ### BudgetLayout
 - 2 colunas: flex 1 min 520px | 372px fixo; total em rodapé fixo
@@ -800,6 +804,7 @@ tela passa tudo por props (o dado vem do TanStack Query).
 |------------|-----------|-------|
 | `ConversationItem` | `<ConversationItem conversation selected? onClick?(id) now? />` | `now` é injetável só para tornar "aguardando N min" determinístico em teste |
 | `MessageBubble` | `<MessageBubble type message maxWidth? showMeta? onRetry? onOpenImage? />` | `type` ∈ `received \| sent \| system` — os únicos 3 · formatação do WhatsApp e links (D-183, D-242) · tiques e "Tentar de novo" (D-225/D-227) · imagem abre o lightbox da conversa (D-244) |
+| `MessageEditBox` | `<MessageEditBox initial onSave onCancel />` | caixa de edição no próprio balão (Enter salva, Shift+Enter quebra linha, Esc cancela, vazio não salva; 4000). Nasceu no `MessageBubble` (D-280) e é reusada no Chat Interno (`InternalMessageItem`, D-282) |
 | `DateSeparator` | `<DateSeparator date now? />` | Pílula de dia (CRMLAB-71, D-239) · `dateSeparatorLabel` e `isSameLocalDay` exportadas |
 | `AudioMessage` | `<AudioMessage url durationSec? />` | `<audio controls>` nativo com blob autenticado · velocidade 1x/1,5x/2x (D-236) · download sempre disponível |
 | `VideoMessage` · `DocumentCard` · `StickerMessage` · `LocationCard` · `ContactCard` | ver acima | Um por tipo de mensagem (CRMLAB-70, D-236) |

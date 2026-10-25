@@ -749,6 +749,8 @@ CREATE TABLE internal_messages (
   attached_proposal_id UUID,            -- renderiza como cartão no frontend
   is_system BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMP DEFAULT NOW(),
+  edited_at TIMESTAMPTZ,                -- migração 058 (CRMLAB-117, §43)
+  deleted_at TIMESTAMPTZ,               -- idem: apagada para todos, escondida
 
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
   FOREIGN KEY (channel_id) REFERENCES internal_channels(id) ON DELETE CASCADE,
@@ -2280,6 +2282,33 @@ CREATE INDEX idx_proposal_reminders_open_due ON proposal_reminders (tenant_id, d
   lembrete" com um aberto só troca `due_date`/`note` e zera `alerted_at`.
 - Migração **única** (tabela + policy), sem backfill.
 
+### 43. `internal_message_edits` e `internal_messages.edited_at/deleted_at` (migração 058 — CRMLAB-117, D-282)
+A autora edita ou apaga para todos a própria mensagem do chat interno. Dono:
+`InternalChatService` (SERVICES.md §7). Mesmo modelo de `message_edits` (§33, D-220).
+
+```sql
+ALTER TABLE internal_messages
+  ADD COLUMN edited_at TIMESTAMPTZ,      -- última edição da autora
+  ADD COLUMN deleted_at TIMESTAMPTZ;     -- "apagar para todos": esconde, nunca apaga
+
+CREATE TABLE internal_message_edits (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id        UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  message_id       UUID NOT NULL REFERENCES internal_messages(id) ON DELETE CASCADE,
+  previous_content TEXT NOT NULL,        -- o texto ANTES desta edição
+  edited_by        UUID REFERENCES users(id) ON DELETE SET NULL,
+  edited_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- índices em tenant_id, message_id e edited_by (D-146);
+-- ENABLE ROW LEVEL SECURITY + policy internal_message_edits_tenant_isolation
+```
+
+- **Apagada não é apagada** (D-282, como D-220): a linha, o `content` e o arquivo do anexo
+  ficam; a API devolve `content: ''`, sem anexo nem proposta. Nada faz `DELETE`.
+- Uma linha em `internal_message_edits` por edição; `edited_by` é sempre a autora.
+- Mensagem apagada não entra no `unread_count` do canal (§17).
+- Migração **única** (colunas + tabela + policy), sem backfill.
+
 ---
 
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
@@ -2417,6 +2446,7 @@ Nenhum outro caminho de código deve usar `withoutTenant()`.
 | `internal_channels` | ✅ | |
 | `internal_messages` | ✅ | |
 | `internal_message_attachments` | ✅ | migração `055` (CRMLAB-101) |
+| `internal_message_edits` | ✅ | migração `058` (CRMLAB-117) |
 | `refresh_tokens` | ✅ | |
 | `patients` | ✅ | migração `004_rls_onda6.sql` |
 | `tenant_channels` | ✅ | idem — e o segredo nunca sai do repositório (projeção explícita) |

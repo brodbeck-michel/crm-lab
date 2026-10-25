@@ -240,7 +240,7 @@ export function EmojiPicker({ onPick, onClose, disabled = false }: EmojiPickerPr
                   aria-label={emoji.label}
                   title={emoji.label}
                   onClick={() => pick(emoji)}
-                  className="cursor-pointer rounded-sm border-none bg-transparent p-xs text-label leading-none hover:bg-accent-100"
+                  className="cursor-pointer rounded-sm border-none bg-transparent p-xs font-emoji text-label leading-none hover:bg-accent-100"
                 >
                   {emoji.char}
                 </button>

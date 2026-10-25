@@ -2,6 +2,7 @@ import type {
   Channel,
   CreateDirectChannelRequest,
   CreateInternalAttachmentRequest,
+  EditInternalMessageRequest,
   ListChannelsResponse,
   ListChatDirectoryResponse,
   ListInternalMessagesResponse,
@@ -43,6 +44,14 @@ export const internalChatApi = {
    */
   sendAttachment: (channelId: string, body: CreateInternalAttachmentRequest) =>
     http.post<InternalMessage>(`/internal-chat/channels/${channelId}/attachments`, body),
+
+  /** A autora corrige o texto (CRMLAB-117, D-282). */
+  editMessage: (channelId: string, messageId: string, body: EditInternalMessageRequest) =>
+    http.patch<InternalMessage>(`/internal-chat/channels/${channelId}/messages/${messageId}`, body),
+
+  /** A autora apaga para todos (CRMLAB-117, D-282). 204. */
+  deleteMessage: (channelId: string, messageId: string) =>
+    http.delete<void>(`/internal-chat/channels/${channelId}/messages/${messageId}`),
 
   /** Diretório de quem dá para abrir DM (D-101) — exclui o próprio usuário e inativos. */
   directory: () => http.get<ListChatDirectoryResponse>('/internal-chat/users'),

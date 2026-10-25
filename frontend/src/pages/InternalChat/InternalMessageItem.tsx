@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { mediaCategoryOf } from '@crm-lab/shared';
+import { internalMessageAuthorActionBlock, mediaCategoryOf } from '@crm-lab/shared';
 import type { InternalMessage, InternalMessageAttachment, UserRole } from '@crm-lab/shared';
 import { api, queryKeys } from '@/api';
 import { cn } from '@/components/ui';
 import { DateDisplay, ImageLightbox } from '@/components/shared';
-import { AudioMessage, INBOX_BUBBLE_MAX_WIDTH } from '@/components/conversation';
+import { AudioMessage, INBOX_BUBBLE_MAX_WIDTH, MessageEditBox } from '@/components/conversation';
 import { DocumentCard } from '@/components/conversation/DocumentCard';
 import { useAuthenticatedMedia } from '@/hooks';
 import ProposalCard from '@/components/proposal/ProposalCard';
@@ -31,6 +31,14 @@ export interface InternalMessageItemProps {
   currentUserRole: UserRole | null;
   /** `#aprovacoes`: só lá os botões de decisão aparecem. */
   isApprovalsChannel: boolean;
+  /**
+   * Editar / Apagar para todos da AUTORA (CRMLAB-117, D-282). Os itens só
+   * aparecem com handler e quando `internalMessageAuthorActionBlock` deixa
+   * (autora, no prazo; editar: texto ou legenda de imagem/vídeo). `onEdit` devolve a Promise da
+   * chamada: resolveu, sai da edição; rejeitou, continua editando.
+   */
+  onEdit?: (message: InternalMessage, content: string) => Promise<unknown>;
+  onDelete?: (message: InternalMessage) => void;
 }
 
 type BubbleKind = 'received' | 'sent' | 'system';
@@ -160,27 +168,172 @@ function MessageAttachment({
   );
 }
 
+/**
+ * Setinha + menu da mensagem (CRMLAB-117): Editar · Apagar para todos. Mesmo
+ * padrão do `MessageMenu` do atendimento (clique-fora + Esc, sem biblioteca).
+ * Só é montado quando há pelo menos um item.
+ */
+function AuthorMenu({
+  onStartEdit,
+  onDelete,
+}: {
+  onStartEdit?: () => void;
+  onDelete?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: MouseEvent) {
+      if (!ref.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  const item =
+    'w-full cursor-pointer border-none bg-transparent px-md py-xs text-left font-body text-label text-text hover:bg-accent-100';
+
+  return (
+    <div ref={ref} className="absolute right-xs top-xs z-10">
+      <button
+        type="button"
+        aria-label="Ações da mensagem"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className={cn(
+          'flex cursor-pointer items-center justify-center rounded-pill border-none bg-transparent px-xs',
+          'font-body text-caption text-neutral-600 hover:bg-neutral-200',
+          'opacity-0 focus:opacity-100 group-hover:opacity-100',
+          open && 'opacity-100',
+        )}
+      >
+        ⌄
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-full z-50 mt-xs w-max min-w-full rounded-md border border-neutral-200 bg-surface py-xs shadow-md"
+        >
+          {onStartEdit && (
+            <button
+              type="button"
+              role="menuitem"
+              className={item}
+              onClick={() => {
+                setOpen(false);
+                onStartEdit();
+              }}
+            >
+              Editar
+            </button>
+          )}
+          {onDelete && (
+            <button
+              type="button"
+              role="menuitem"
+              className={item}
+              onClick={() => {
+                setOpen(false);
+                if (window.confirm('Apagar para todos?')) onDelete();
+              }}
+            >
+              Apagar para todos
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function InternalMessageItem({
   message,
   currentUserId,
   currentUserRole,
   isApprovalsChannel,
+  onEdit,
+  onDelete,
 }: InternalMessageItemProps) {
+  const [editing, setEditing] = useState(false);
   const kind: BubbleKind = message.isSystem
     ? 'system'
     : message.senderId !== null && message.senderId === currentUserId
       ? 'sent'
       : 'received';
+  // Apagada pela autora (D-282): a API já mandou sem conteúdo; o balão só avisa.
+  const isDeleted = Boolean(message.deletedAt);
+
+  // D-282: a regra é a mesma da API (shared). Avaliada a cada render — o item
+  // some quando o prazo passa.
+  const canEdit =
+    Boolean(onEdit && currentUserId) &&
+    internalMessageAuthorActionBlock(message, 'edit', currentUserId ?? '') === null &&
+    // Imagem/vídeo sem legenda: não há texto a corrigir (igual ao atendimento, D-280).
+    message.content !== '';
+  const canDelete =
+    Boolean(onDelete && currentUserId) &&
+    internalMessageAuthorActionBlock(message, 'delete', currentUserId ?? '') === null;
+  const hasMenu = !editing && (canEdit || canDelete);
+
+  const shell = cn(
+    'group relative flex min-w-0 flex-col gap-xs font-body text-label text-text',
+    SHELL[kind],
+  );
+  const style = { maxWidth: kind === 'system' ? undefined : INBOX_BUBBLE_MAX_WIDTH };
+  const meta = (
+    <span className="flex items-baseline gap-sm font-body text-micro text-neutral-600">
+      <span className="truncate">{message.senderName}</span>
+      <DateDisplay value={message.createdAt} variant="absolute" />
+      {!isDeleted && message.editedAt && (
+        <span data-testid="internal-message-edited">Editada</span>
+      )}
+    </span>
+  );
+
+  if (isDeleted) {
+    return (
+      <article
+        data-testid="internal-message"
+        data-kind={kind}
+        data-deleted="true"
+        style={style}
+        className={shell}
+      >
+        <p className="m-0 italic text-neutral-600">🚫 Mensagem apagada</p>
+        {meta}
+      </article>
+    );
+  }
 
   return (
-    <article
-      data-testid="internal-message"
-      data-kind={kind}
-      style={{ maxWidth: kind === 'system' ? undefined : INBOX_BUBBLE_MAX_WIDTH }}
-      className={cn('flex min-w-0 flex-col gap-xs font-body text-label text-text', SHELL[kind])}
-    >
-      {message.content !== '' && (
-        <p className="m-0 whitespace-pre-wrap break-words">{message.content}</p>
+    <article data-testid="internal-message" data-kind={kind} style={style} className={shell}>
+      {hasMenu && (
+        <AuthorMenu
+          {...(canEdit ? { onStartEdit: () => setEditing(true) } : {})}
+          {...(canDelete && onDelete ? { onDelete: () => onDelete(message) } : {})}
+        />
+      )}
+
+      {editing && onEdit ? (
+        <MessageEditBox
+          initial={message.content}
+          onSave={(content) => onEdit(message, content)}
+          onCancel={() => setEditing(false)}
+        />
+      ) : (
+        message.content !== '' && (
+          <p className="m-0 whitespace-pre-wrap break-words">{message.content}</p>
+        )
       )}
 
       {message.attachment && (
@@ -194,10 +347,7 @@ export function InternalMessageItem({
         />
       )}
 
-      <span className="flex items-baseline gap-sm font-body text-micro text-neutral-600">
-        <span className="truncate">{message.senderName}</span>
-        <DateDisplay value={message.createdAt} variant="absolute" />
-      </span>
+      {meta}
     </article>
   );
 }

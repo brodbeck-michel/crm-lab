@@ -10,6 +10,8 @@ import { create } from 'zustand';
  * - `openConversationId`: a conversa aberta no Atendimento. É a tela que
  *   publica (e limpa ao sair); o hook `useNewMessageAlerts` lê para não avisar
  *   da conversa que a atendente já está olhando.
+ * - `openInternalChannelId` (CRMLAB-116, D-284): o mesmo, para o canal/DM aberto
+ *   no Chat interno.
  */
 
 export const ALERT_SOUND_KEY = 'crm-lab.alerts.sound';
@@ -35,15 +37,18 @@ export interface MessageAlertsState {
   soundEnabled: boolean;
   notificationsEnabled: boolean;
   openConversationId: string | null;
+  openInternalChannelId: string | null;
   setSoundEnabled: (enabled: boolean) => void;
   setNotificationsEnabled: (enabled: boolean) => void;
   setOpenConversationId: (id: string | null) => void;
+  setOpenInternalChannelId: (id: string | null) => void;
 }
 
 export const useMessageAlertsStore = create<MessageAlertsState>()((set) => ({
   soundEnabled: readFlag(ALERT_SOUND_KEY),
   notificationsEnabled: readFlag(ALERT_NOTIFICATIONS_KEY),
   openConversationId: null,
+  openInternalChannelId: null,
   setSoundEnabled: (soundEnabled) => {
     writeFlag(ALERT_SOUND_KEY, soundEnabled);
     set({ soundEnabled });
@@ -53,6 +58,7 @@ export const useMessageAlertsStore = create<MessageAlertsState>()((set) => ({
     set({ notificationsEnabled });
   },
   setOpenConversationId: (openConversationId) => set({ openConversationId }),
+  setOpenInternalChannelId: (openInternalChannelId) => set({ openInternalChannelId }),
 }));
 
 /** Relê o `localStorage` — o que um reload faria (usado nos testes). */

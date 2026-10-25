@@ -16,7 +16,7 @@
  * (renderizada como cartao pelo frontend) + evento `approval.requested`.
  */
 import type { Proposal, ProposalStatus } from '@crm-lab/shared';
-import { TERMINAL_STATUSES } from '@crm-lab/shared';
+import { APPROVAL_REQUEST_POST_PREFIX, TERMINAL_STATUSES } from '@crm-lab/shared';
 import type { DbClient } from '../db/types.js';
 import type { TenantContext } from '../http/context.js';
 import type { WsHub } from '../lib/ws-hub.js';
@@ -89,9 +89,10 @@ export class ApprovalService implements ApprovalRequester {
     });
 
     // Mesmo formato do dataset de E2E (`E2E_APPROVAL_POST`), para que o spec do
-    // Playwright continue localizando o cartao pelo texto.
+    // Playwright continue localizando o cartao pelo texto. O prefixo e o que o
+    // aviso de mensagem nova do gestor reconhece (D-284 item 8).
     const content =
-      `@gestor Pedido de aprovação de desconto: ${summary.patientName} - ` +
+      `${APPROVAL_REQUEST_POST_PREFIX} ${summary.patientName} - ` +
       `${formatMoney(summary.totalPrice)} (${formatPercent(summary.discountPercent)} — ` +
       `acima da alçada de ${formatPercent(summary.creatorLimit)})`;
 

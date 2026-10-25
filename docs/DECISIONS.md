@@ -3860,8 +3860,9 @@ a citação de mensagem que ainda não chegou.
    `MESSAGE_SEND_FAILED` e nada gravado. Mensagem sem id externo (canal `direct`) grava só no CRM.
 4. O eco `fromMe` da reação feita pelo CRM volta pelo webhook: mesmo emoji preserva o `user_id`
    gravado; emoji diferente (reagiu pelo celular) grava com `user_id` nulo.
-5. Barra rápida da tela: 👍 ❤️ 😂 😮 😢 🙏 (`QUICK_REACTIONS` em `shared/`). A API aceita qualquer
-   emoji de até 32 bytes.
+5. Barra rápida da tela: 👍 ❤️ 💚 😂 😮 😢 🙏 (`QUICK_REACTIONS` em `shared/`; o 💚 entrou no
+   CRMLAB-118, logo depois do ❤️). A API aceita qualquer emoji de até 32 bytes — a lista é só a
+   barra da tela, nada no backend a valida.
 **Motivo:** para o paciente, o laboratório é UM número. Duas atendentes reagindo com emojis
 diferentes apareceriam no celular dele como uma só (a última). Guardar duas linhas faria o CRM
 mostrar algo que o paciente não vê.
@@ -4967,9 +4968,10 @@ Atendimento destaca em vermelho a conversa cujo paciente espera resposta.
    **literal** (`#c62828`, tokens novos `--color-chat-alert`/`-alert-bg`): "atrasado" não pode
    depender do acento do tema (um tema vermelho apagaria o sinal). Todas as atendentes veem, em
    todas as conversas que já veem.
-7. **Chip "Aguardando resposta N"** com contagem **no cliente**, sobre a página carregada (decisão
+7. ~~**Chip "Aguardando resposta N"** com contagem **no cliente**, sobre a página carregada (decisão
    do Michel; conversa fora da página não entra). Filtro independente, combina com "Minhas"/"Não
-   atribuídas"; some com a regra desligada e na lista de encerradas.
+   atribuídas"; some com a regra desligada e na lista de encerradas.~~ — **retirado (Michel,
+   25/10/2026, CRMLAB-119, D-283):** o alerta fica só no destaque de cada item.
 8. **Fora:** conversa encerrada (`status = 'closed'`) — a conversa não tem estágio próprio; o
    "terminal" dela é o encerramento (D-174); som e notificação (já existem para mensagem nova,
    D-240/D-241).
@@ -6042,3 +6044,164 @@ frontend mostra ao lado do campo (ex. `PatientProfileForm`).
 `lib/bitlab-client.ts`, 18 arquivos `controllers/*.routes.ts`; testes `tests/kernel/zod-v4.spec.ts`
 (novo), `tests/lis/bitlab-client.spec.ts` (+1). `details.fields` agora em português (API_ERRORS.md);
 chaves e envelope inalterados. Sem migração, sem mudança de contrato de sucesso.
+
+### D-282: A autora edita ou apaga para todos a própria mensagem do chat interno (CRMLAB-117)
+**Decisão:** o "Editar" e o "Apagar para todos" do atendimento (D-280) chegam ao chat interno,
+pelas rotas `PATCH|DELETE /internal-chat/channels/:id/messages/:messageId`.
+1. **Só a autora:** `sender_id` = usuário logado. Gestora/admin não mexem em mensagem de colega
+   (`FORBIDDEN`, `reason: not_author`). Mensagem de sistema (`is_system`, `sender_id` nulo) fica de
+   fora (mesmo `not_author`). Canal invisível para o usuário (outro tenant, DM alheia) ou mensagem
+   de outro canal → `NOT_FOUND`.
+2. **Prazos iguais aos do atendimento** (decisão do PO em 25/10/2026, por coerência — aqui não há
+   limite técnico): editar até 15 min (`MESSAGE_EDIT_WINDOW_MS`), apagar até 48 h
+   (`MESSAGE_DELETE_WINDOW_MS`), constantes reaproveitadas de `shared`. Regra única irmã de
+   `messageAuthorActionBlock`: `internalMessageAuthorActionBlock` (API recusa com `CONFLICT` +
+   `details.reason`: `already_deleted`, `not_editable`, `window_expired`; a tela esconde o item).
+3. **Legenda sim, arquivo nunca** (paridade com `EDITABLE_MESSAGE_TYPES` do D-280; ajuste do PO
+   em 25/10/2026): editar vale para mensagem de texto (com ou sem proposta anexada; a proposta não
+   muda) e para a legenda de anexo de **imagem ou vídeo** — o arquivo nunca é trocado. Áudio e
+   documento só apagam (`not_editable`). Legenda vazia não salva (como no atendimento: a API exige
+   1..4000 e a tela só oferece "Editar" em imagem/vídeo que já tem legenda).
+4. **Sem canal externo:** grava direto, numa transação com a linha travada (`FOR UPDATE`).
+5. **Nada é apagado de verdade (como D-220):** a edição guarda a versão anterior em
+   `internal_message_edits` (migração 058; `edited_by` = a autora) e sobe `edited_at`; apagar grava
+   `deleted_at`. A linha, o texto e o arquivo ficam. Audit `edit_internal_message`
+   (`oldValues.content`, `newValues.content`) e `delete_internal_message` (`oldValues.content`,
+   `oldValues.attachmentId`), com o `userId` da autora — exceção deliberada a "mensagem do chat
+   não é auditada" (SERVICES §7): mexer em mensagem que outros já leram precisa de rastro.
+6. **Apagada some:** a API devolve `content: ""`, `attachment: null`, `attachedProposalId: null`
+   (e `editedAt: null`); o download do anexo dela vira `NOT_FOUND`; ela não conta no `unreadCount`
+   do canal. Texto igual ao atual → `200` sem versão, audit nem evento.
+7. **Ao vivo:** WS novo `internal_chat.message_updated` (`{ channelId, messageId }`, só ids, para o
+   tenant — mesma regra de `new_message`, D-271 item 6). Não é mensagem nova: a tela invalida
+   canais + mensagens do canal, sem aviso.
+8. **Tela:** menu ⌄ na mensagem com "Editar" (a mesma caixa do atendimento, `MessageEditBox`:
+   Enter salva, Shift+Enter quebra linha, Esc cancela, vazio não salva) e "Apagar para todos"
+   (`confirm`); em imagem/vídeo o item aparece no balão quando há legenda. Mostra "Editada";
+   apagada vira "🚫 Mensagem apagada".
+**Motivo:** pedido do PO (Michel) — coerência com o atendimento: quem digita errado no chat da
+equipe hoje só consegue mandar outra mensagem corrigindo.
+**Impacto:** migração `058_internal_message_edits.sql` (SCHEMA §12 e §43);
+`shared/types/internal-chat.types.ts` (`editedAt`/`deletedAt`, `EditInternalMessageRequest`,
+`internalMessageAuthorActionBlock`) e `websocket.types.ts`; backend
+`repositories/internal-chat.repository.ts`, `services/internal-chat.service.ts` (`editByAuthor`,
+`deleteByAuthor`, audit opcional no construtor), `controllers/internal-chat.routes.ts`;
+inventário de `route-tenant-isolation.spec.ts` (116 → 118). Frontend `api/internal-chat.ts`,
+`api/ws.ts`, `InternalMessageItem.tsx`, `MessagePanel.tsx`, `pages/InternalChat/index.tsx`,
+`MessageBubble.tsx` (exporta a caixa de edição). API_CONTRACTS §3b, SERVICES §7,
+FRONTEND_BACKEND (WS), PAGES §9. Testes: `tests/internal-chat/edit-delete.spec.ts` (novo),
+`internal-chat.spec.ts`; front `InternalChat.edit-delete.spec.tsx` (novo), `ws.spec.ts`.
+
+### D-284: Mensagem do chat interno dá o mesmo aviso do atendimento, com contagem única na aba (CRMLAB-116)
+**Decisão:** o aviso de mensagem nova do atendimento (CRMLAB-72, D-240/D-241) passa a valer para
+o Chat interno, no MESMO hook `useNewMessageAlerts` (montado no `AppShell`, qualquer tela).
+1. **Sinal:** a lista de canais (`queryKeys.internalChannels()`, a mesma query/cache da Sidebar e
+   da tela, já invalidada pelo WS `internal_chat.new_message`) — o `unreadCount` do canal subir E o
+   `lastMessageAt` mudar, mesmo princípio de `detectNewMessages`; primeira carga = linha de base;
+   canal/DM que aparece depois avisa se a última mensagem é mais nova que a maior da carga anterior.
+   O servidor já não conta mensagem da própria pessoa (D-068), nem apagada (D-282).
+2. **Confirmação pela mensagem:** o `unreadCount` conta mensagem de sistema de propósito (D-068 —
+   o badge de `#aprovacoes` precisa piscar), mas o card exclui sistema do aviso (exceto o pedido de aprovação, item 8). Por isso cada canal
+   candidato busca `GET /internal-chat/channels/:id/messages?page=1` (só leitura, sem efeito
+   colateral) e só avisa se houver mensagem mais nova que a última vista que seja de colega
+   (`senderId` ≠ a pessoa e não nulo), não seja de sistema (`isSystem`) e não esteja apagada
+   (`deletedAt`). Mensagem minha enviada de outra aba não sobe o contador → nada.
+3. **Canal aberto:** a tela do Chat interno publica `openInternalChannelId` no
+   `message-alerts.store` (limpa ao sair). No chat interno, abrir só zera o contador no CLIQUE
+   (D-068) — mensagem que chega no canal aberto sobe o `unreadCount` normalmente, então a mesma
+   detecção pela lista serve: canal aberto com a aba em foco → nada; aba sem foco → avisa.
+4. **Som / notificação / preferências:** as mesmas do D-241 (som com a aba sem foco ou de outro
+   canal; notificação só com a aba sem foco; mesmos liga/desliga do menu do usuário, sem
+   preferência nova). Notificação: título = nome do canal (`#geral`) ou, na DM, `otherUserName`;
+   corpo = `alertBody` ("Nova mensagem"/"N novas mensagens", N = mensagens de colegas não lidas na
+   página carregada) — nunca o conteúdo (D-240). `tag` = `internal-chat:<channelId>`.
+5. **Clique na notificação:** abre `/internal-chat?channelId=<id>`. A tela lê o parâmetro a cada
+   navegação (como `?conversationId=` do atendimento) e abre o canal como um clique — inclusive
+   marcando como lido.
+6. **Título da aba — contagem única (decisão do PO, 25/10/2026):** `(N)` = conversas da fila do
+   atendimento com não lidas + canais/DMs do chat com `unreadCount > 0`. Ler o canal faz o número
+   cair.
+7. **Não avisa:** `platform_operator`; quem não tem a rota `/internal-chat` (a query de canais só
+   liga com a rota no trilho, mesmo critério da Sidebar); edição e apagamento
+   (`internal_chat.message_updated` não sobe o `unreadCount`, e apagada sai dele).
+8. **Pedido de aprovação avisa quem decide (decisão do PO, 25/10/2026):** em `#aprovacoes`, para
+   gestor e admin (quem decide, SERVICES.md §6 — mesmo critério do `canDecide` da tela), o post de
+   sistema do **pedido** conta como mensagem nova: som + notificação com título `#aprovacoes` e
+   corpo "Nova mensagem" (D-240, nada do texto). As **decisões** (APROVADO/REJEITADO), que caem no
+   mesmo canal, não avisam — quem decidiu foi o próprio gestor. O pedido é reconhecido por
+   `isApprovalRequestPost` (`shared/types/internal-chat.types.ts`): sistema + proposta anexada +
+   texto começando com `APPROVAL_REQUEST_POST_PREFIX`, a constante que o `ApprovalService` usa para
+   montar o post. Atendente não é avisada do pedido. Gestor que pede aprovação da própria proposta
+   ouve o aviso do próprio pedido (raro; não vale uma busca da proposta por aviso).
+9. **Canal aberto não marca lido sozinho (decisão do PO, 25/10/2026):** segue o D-068 — o contador
+   do canal só zera no clique no canal, mesmo com ele aberto na tela. O "(N)" do título pode ficar
+   até a pessoa clicar.
+**Motivo:** pedido do PO (Michel) — mensagem da equipe passava despercebida fora da tela do chat.
+**Impacto:** só frontend, sem endpoint novo: `hooks/useNewMessageAlerts.ts`,
+`stores/message-alerts.store.ts`, `pages/InternalChat/index.tsx`. PAGES §1 (aviso) e §9,
+COMPONENTS (useNewMessageAlerts). Testes: `useNewMessageAlerts.internal-chat.spec.tsx` (novo),
+`InternalChat.spec.tsx`. Supera a frase "sem som e sem notificação push do navegador" do D-132.
+
+## 2026-10-25 — Sem chip "Aguardando resposta" na lista de conversas (CRMLAB-119)
+
+### D-283: Chip "Aguardando resposta N" sai da lista de conversas (revê o item 7 da D-254)
+**Decisão (Michel, 25/10/2026, no card):**
+1. **Tela:** ~~chip "Aguardando resposta N"~~ — **retirado a pedido do PO:** a linha de chips do
+   Atendimento volta a ser Minhas / Não atribuídas / Participando / Encerradas. Sai junto o filtro
+   no cliente que ele ligava (`awaitingOnly`) e o vazio próprio "Ninguém aguardando resposta".
+2. **Continua igual:** o resto da D-254 (e da D-259) — `awaitingReplySince`, o cálculo dos minutos
+   úteis no navegador (`responseAlertMinutes`), o relógio local de 30 s e o destaque vermelho com
+   "há N min" em cada item. A regra nas Regras (liga/desliga + minutos) segue valendo para o
+   destaque.
+3. Mesmo padrão do chip "Não lidas" (D-229 item 5): o sinal já está no próprio item da lista.
+**Motivo:** pedido do PO; o relógio vermelho no item já mostra quem está esperando.
+**Impacto:** só frontend — `pages/Attendance/ConversationList.tsx` e
+`ConversationList.response-alert.spec.tsx` (casos do chip removidos). PAGES §2, BUSINESS_RULES,
+STATUS. Sem migração, sem mudança de contrato.
+
+### D-285: Emoji igual para todos com a Noto Color Emoji auto-hospedada, recortada por unicode-range (CRMLAB-111)
+**Decisão** (opção (a), escolhida pelo PO em 25/10/2026):
+1. Fonte **Noto Color Emoji** (Google, SIL Open Font License 1.1), Google Fonts **v47**
+   (2026-09-16), os **11 recortes woff2 em COLRv1** que a API serve ao Chrome — sem dependência nova
+   no `package.json`. Ficam em `frontend/src/assets/fonts/noto-color-emoji/` com o `@font-face`
+   (cada um com `unicode-range`) apontando para os woff2 locais e `tech(color-COLRv1)` no `src` (ver
+   item 6). Licença em `OFL.txt` ao lado da fonte (o projeto não tem pasta de licenças de
+   terceiros).
+2. **Token:** `--font-emoji: 'Noto Color Emoji'` em `tokens.css`, colocado em toda pilha
+   (`--font-heading`/`--font-body`, inclusive os remapeamentos `data-font`) **depois das fontes de
+   texto e antes da genérica**. Texto, dígitos, `#`, `*`, ©, ® e ™ seguem na fonte do tema — o
+   recorte [2] da Noto cobre esses caracteres (keycaps), mas nunca é consultado para eles.
+3. CSS importado em `main.tsx` (antes de `tokens.css`); o Vite empacota os woff2 com hash em
+   `/assets/`, que o nginx já serve com `Cache-Control: public, immutable` de 1 ano. CSP: `font-src
+   'self' data:` já cobre (mesma origem); nada de CDN.
+4. **Peso** (arquivos COLRv1): total dos 11 woff2 = **2,08 MB** (2.083.304 bytes), maior recorte =
+   bandeiras (692 KiB). O navegador só baixa o recorte de que precisa:
+   - tela sem emoji (só texto, dígitos, `#`, `*`, ©, ™): **0 KB**;
+   - conversa típica (😊 👍 ❤️ 🙏 😂 + barra de reações com 💚 😮 😢): **138 KiB** (um recorte);
+   - seletor de emoji na aba Smileys: alguns recortes, menos que os 2,08 MB do total;
+   - uma bandeira (🇧🇷): **692 KiB**.
+   Baixou uma vez, fica no cache do navegador (arquivo com hash, imutável).
+5. **Elemento só de emoji usa a Noto primeiro** (revisão da integração, 25/10/2026): na pilha comum
+   a fonte de texto do sistema vem antes e pode desenhar ❤ ☀ ✔ em preto e branco (ex.: DejaVu no Linux)
+   — justo o ❤️ ao lado do 💚 na barra. Token `--font-emoji-only: var(--font-emoji), sans-serif` e
+   classe `font-emoji` (tailwind) nos botões da barra de reações, na pílula de reações do balão e na
+   grade do seletor de emoji. Texto de mensagem continua na pilha comum.
+6. **Formato COLRv1, nunca OpenType-SVG** (validação na hml, 25/10/2026): a 1ª versão usou os woff2
+   do `@fontsource/noto-color-emoji` 5.3.2, que trazem o desenho em tabela `SVG ` com contornos
+   `glyf` vazios. Chrome e Edge não suportam OpenType-SVG: a fonte carregava e o emoji saía **em
+   branco** (barra de reações e seletor vazios). Trocados pelos recortes COLRv1 (tabelas `COLR` +
+   `CPAL`) — Chrome/Edge 98+, Firefox 107+. `tech(color-COLRv1)` no `src` faz navegador sem COLRv1
+   (Safari) descartar a fonte e usar o emoji do sistema (Apple), em vez de desenhar o vazio. O
+   `emoji-font.spec.ts` lê a tabela de cada woff2 e falha se faltar `COLR`/`CPAL` ou aparecer `SVG `.
+   Os testes de unidade (jsdom) não desenham fonte: a prova de desenho foi um print no Chromium
+   headless (fonte antiga em branco, nova colorida).
+**Motivo:** o CRM não definia fonte de emoji e cada SO desenhava com a sua (Segoe no Windows, Noto
+no Android/Linux, Apple no Mac); emoji novo demais saía quadrado ou separado. Os dados não estavam
+corrompidos. O set da Apple/WhatsApp é proprietário; a Noto é aberta e cobre o Unicode recente.
+**Limites conhecidos:** `font-mono` (código entre crases no `WhatsAppText`, ids em tabelas) usa a
+pilha mono padrão do Tailwind, sem a Noto; em Linux com DejaVu como `system-ui`, símbolos que a
+DejaVu desenha em preto e branco (ex. ☺ ♥ ✔ sem seletor) continuam monocromáticos — a Noto só
+entra para o que a fonte de texto não tem.
+**Impacto:** só frontend — `src/assets/fonts/noto-color-emoji/` (novo), `src/styles/tokens.css`,
+`src/main.tsx`; teste `src/styles/emoji-font.spec.ts` (novo). DESIGN_TOKENS.md (Tipografia).
+Sem mudança de API, sem migração.

@@ -1,13 +1,18 @@
 import { useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
+import { APPROVALS_CHANNEL_KEY, isApprovalRequestPost } from '@crm-lab/shared';
 import type {
+  Channel,
   Conversation,
   GetConversationResponse,
+  InternalMessage,
   ListConversationsQuery,
+  UserRole,
 } from '@crm-lab/shared';
 import { api, queryKeys, staleTimes } from '@/api';
 import { playNewMessageSound } from '@/lib/notification-sound';
+import { sidebarRoutesFor } from '@/routes/route-config';
 import { selectUser, useAuthStore } from '@/stores';
 import { useMessageAlertsStore } from '@/stores/message-alerts.store';
 
@@ -26,6 +31,11 @@ import { useMessageAlertsStore } from '@/stores/message-alerts.store';
  * `createFromPatient`, então mensagem da equipe e evento de sistema não avisam.
  * A conversa ABERTA é a exceção (abrir zera o contador): para ela o sinal é o
  * detalhe já carregado pelo Atendimento (D-241 item 3).
+ *
+ * CRMLAB-116 (D-284): o Chat interno dá o mesmo aviso — sinal na lista de
+ * canais (mesma query/cache da Sidebar), confirmado pela página 1 de mensagens
+ * do canal para deixar de fora sistema, a própria pessoa e apagada. O título da
+ * aba soma conversas + canais não lidos.
  */
 
 /**
@@ -110,8 +120,11 @@ export interface AlertsBaseline {
   participating?: Set<string>;
 }
 
+/** Linha que a linha de base lembra — conversa do atendimento ou canal do chat (D-284). */
+type BaselineRow = Pick<Conversation, 'id' | 'unreadCount' | 'lastMessageAt' | 'participants'>;
+
 export function baselineOf(
-  conversations: Conversation[],
+  conversations: BaselineRow[],
   previous?: AlertsBaseline,
   userId?: string,
 ): AlertsBaseline {
@@ -172,6 +185,85 @@ export function detectNewMessages(
   return alerts;
 }
 
+// ── Chat interno (CRMLAB-116, D-284) ────────────────────────────────────────
+
+/** Mensagens lidas por canal candidato para confirmar o aviso (só leitura). */
+export const CHANNEL_ALERT_PAGE_SIZE = 50;
+
+/** Canais/DMs com mensagem não lida — entram na contagem única do título. */
+export function countUnreadChannels(channels: Channel[]): number {
+  return channels.filter((c) => c.unreadCount > 0).length;
+}
+
+/** Título da notificação: nome do canal ou, na DM, o da colega (como a `ChannelList`). */
+export function channelTitle(channel: Channel): string {
+  return channel.kind === 'dm' ? (channel.otherUserName ?? channel.name) : channel.name;
+}
+
+/**
+ * Canais cujo `unreadCount` subiu junto com o `lastMessageAt` desde a carga
+ * anterior — candidatos ao aviso. O `unreadCount` inclui mensagem de sistema
+ * (D-068), por isso a confirmação vem de `freshFromColleagues`.
+ */
+export function detectNewChannelMessages(previous: AlertsBaseline, channels: Channel[]): Channel[] {
+  return channels.filter((c) => {
+    if (c.unreadCount === 0) return false;
+    const before = previous.known.get(c.id);
+    return before
+      ? c.unreadCount > before.unreadCount && c.lastMessageAt !== before.lastMessageAt
+      : c.lastMessageAt !== null &&
+          (previous.watermark === null || c.lastMessageAt > previous.watermark);
+  });
+}
+
+/**
+ * Mensagens de colega (nem sistema, nem minha, nem apagada) depois de `since`.
+ * `withApprovalRequests` (D-284 item 8): conta também o post de sistema do PEDIDO
+ * de aprovação — só para quem decide, em `#aprovacoes`.
+ */
+export function freshFromColleagues(
+  messages: InternalMessage[],
+  userId: string,
+  since: string | null,
+  withApprovalRequests = false,
+): InternalMessage[] {
+  return messages.filter(
+    (m) =>
+      !m.deletedAt &&
+      (since === null || m.createdAt > since) &&
+      (withApprovalRequests && isApprovalRequestPost(m)
+        ? true
+        : !m.isSystem && m.senderId !== null && m.senderId !== userId),
+  );
+}
+
+/** Quem decide pedido de aprovação (SERVICES.md §6) — como `canDecide` da tela do chat. */
+export function decidesApprovals(role: UserRole | undefined): boolean {
+  return role === 'manager' || role === 'admin';
+}
+
+/** Pode usar o Chat interno: mesmo critério da Sidebar (`hasInternalChatRoute`). */
+function hasInternalChatRoute(role: Parameters<typeof sidebarRoutesFor>[0]): boolean {
+  return sidebarRoutesFor(role).some((route) => route.path === '/internal-chat');
+}
+
+/** O que a notificação precisa — já sem nada do conteúdo (D-240). */
+interface FiredAlert {
+  tag: string;
+  title: string;
+  body: string;
+  href: string;
+}
+
+function conversationAlert(alert: NewMessageAlert): FiredAlert {
+  return {
+    tag: alert.conversationId,
+    title: alert.title,
+    body: alert.body ?? alertBody(alert.count),
+    href: `/attendance?conversationId=${encodeURIComponent(alert.conversationId)}`,
+  };
+}
+
 /** Aba em foco (D-241 item 4): visível E com o foco do sistema. */
 export function isTabFocused(): boolean {
   return document.visibilityState === 'visible' && document.hasFocus();
@@ -218,12 +310,22 @@ export function useNewMessageAlerts(): void {
     enabled: userId !== null,
   });
 
+  // D-284: a MESMA query/cache de canais da Sidebar e da tela do chat.
+  const chatUserId = userId !== null && hasInternalChatRoute(user?.role) ? userId : null;
+  const chatRole = user?.role;
+  const channelsQuery = useQuery({
+    queryKey: queryKeys.internalChannels(),
+    queryFn: () => api.internalChat.channels(),
+    enabled: chatUserId !== null,
+  });
+
   const baselineRef = useRef<AlertsBaseline | null>(null);
+  const channelsBaselineRef = useRef<AlertsBaseline | null>(null);
   // `navigate` muda de identidade a cada navegação; a notificação já exibida
   // precisa do atual quando for clicada.
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
-  const fireRef = useRef<(alerts: NewMessageAlert[], fromOpenConversation: boolean) => void>(
+  const fireRef = useRef<(alerts: FiredAlert[], fromOpenConversation: boolean) => void>(
     () => undefined,
   );
 
@@ -242,14 +344,12 @@ export function useNewMessageAlerts(): void {
         // D-240: title = nome; body = contagem. Nada de conteúdo, ícone de
         // anexo ou `image`.
         const notification = new Notification(alert.title, {
-          body: alert.body ?? alertBody(alert.count),
-          tag: alert.conversationId,
+          body: alert.body,
+          tag: alert.tag,
         });
         notification.onclick = () => {
           window.focus();
-          navigateRef.current(
-            `/attendance?conversationId=${encodeURIComponent(alert.conversationId)}`,
-          );
+          navigateRef.current(alert.href);
           notification.close();
         };
       } catch {
@@ -258,11 +358,17 @@ export function useNewMessageAlerts(): void {
     }
   };
 
-  // Título da aba — acompanha a lista (inclusive a leitura, que a invalida).
-  const unread =
+  // Título da aba — acompanha as listas (inclusive a leitura, que as invalida).
+  // Contagem ÚNICA (D-284): conversas da fila + canais do chat com não lidas.
+  const unreadConversations =
     userId !== null && listQuery.data
       ? countUnreadInQueue(listQuery.data.conversations, userId)
       : 0;
+  const unreadChannels =
+    chatUserId !== null && channelsQuery.data
+      ? countUnreadChannels(channelsQuery.data.channels)
+      : 0;
+  const unread = unreadConversations + unreadChannels;
   useEffect(() => {
     document.title = titleWithCount(document.title, unread);
   }, [unread]);
@@ -285,10 +391,53 @@ export function useNewMessageAlerts(): void {
       [
         ...detectAddedAsParticipant(previous, data.conversations, userId),
         ...detectNewMessages(previous, data.conversations, userId, openId),
-      ],
+      ].map(conversationAlert),
       false,
     );
   }, [listQuery.data, userId]);
+
+  // Chat interno (D-284): candidatos pela lista, confirmados pela página 1.
+  useEffect(() => {
+    const data = channelsQuery.data;
+    if (!data || chatUserId === null) return;
+    const previous = channelsBaselineRef.current;
+    channelsBaselineRef.current = baselineOf(data.channels, previous ?? undefined);
+    if (!previous) return; // primeira carga = linha de base
+    const openId = useMessageAlertsStore.getState().openInternalChannelId;
+    for (const channel of detectNewChannelMessages(previous, data.channels)) {
+      const fromOpen = channel.id === openId;
+      // Canal aberto com a aba em foco: nem busca (D-241 item 3).
+      if (fromOpen && isTabFocused()) continue;
+      const since = previous.known.get(channel.id)?.lastMessageAt ?? previous.watermark;
+      // Pedido de aprovação avisa quem decide (D-284 item 8); a decisão, não.
+      const approvals = channel.key === APPROVALS_CHANNEL_KEY && decidesApprovals(chatRole);
+      api.internalChat
+        .messages(channel.id, { page: 1, limit: CHANNEL_ALERT_PAGE_SIZE })
+        .then(({ messages }) => {
+          if (freshFromColleagues(messages, chatUserId, since, approvals).length === 0) return;
+          const count = freshFromColleagues(
+            messages,
+            chatUserId,
+            channel.lastReadAt,
+            approvals,
+          ).length;
+          fireRef.current(
+            [
+              {
+                tag: `internal-chat:${channel.id}`,
+                title: channelTitle(channel),
+                body: alertBody(count),
+                href: `/internal-chat?channelId=${encodeURIComponent(channel.id)}`,
+              },
+            ],
+            fromOpen,
+          );
+        })
+        .catch(() => {
+          // Falhou a confirmação: sem aviso — o badge e o título continuam valendo.
+        });
+    }
+  }, [channelsQuery.data, chatUserId, chatRole]);
 
   // Conversa aberta: mensagem de paciente mais nova que a última vista no detalhe.
   useEffect(() => {
@@ -324,7 +473,13 @@ export function useNewMessageAlerts(): void {
       );
       if (fresh.length === 0) return;
       fireRef.current(
-        [{ conversationId, title: titleOf(data.conversation), count: fresh.length }],
+        [
+          conversationAlert({
+            conversationId,
+            title: titleOf(data.conversation),
+            count: fresh.length,
+          }),
+        ],
         true,
       );
     });

@@ -103,6 +103,7 @@ mais de alguns minutos, reconectando na hora quando ela volta a ficar visível.
 | `proposal.status_changed` | `{ proposalId, status }` | invalidate `['proposals']` + `['proposal', id]` |
 | `proposal.updated` | `{ proposalId }` | itens/desconto/médico solicitante mudaram (CRMLAB-12, D-134) — invalidate `['proposals']` + `['proposal', id]` |
 | `approval.requested` | `{ proposalId }` | badge em #aprovacoes + invalidate pendentes |
+| `internal_chat.message_updated` | `{ channelId, messageId }` | a autora editou ou apagou para todos uma mensagem do chat interno (CRMLAB-117, D-282) — invalidate `['internal-chat', 'channels']` + `['internal-chat', 'messages', channelId]` (a mesma reação de `internal_chat.new_message`). **Não** conta como mensagem nova (sem aviso) |
 | `approval.decided` | `{ proposalId, decision }` | toast + invalidate `['proposal', id]` |
 | `proposal.stale_alert` | `{ proposalId, hours }` | só para o responsável do cartão (ou, sem responsável, gestores/admins): cartão parado em "Novo orçamento" há `hours` h (CRMLAB-59, D-207), uma vez por entrada na coluna — toast de atenção + invalidate `['proposals']` |
 | `proposal.reminder_due` | `{ proposalId, reminderId, dueDate }` | só para a responsável (ou, sem responsável ativa, gestores/admins): o lembrete de contato venceu (CRMLAB-102, D-272), uma vez por lembrete — toast de atenção + invalidate `['proposals']` e `['proposal', id]` |

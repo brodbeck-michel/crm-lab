@@ -335,7 +335,7 @@ function MessageMenu({
                 onReact(message, mine === emoji ? null : emoji);
               }}
               className={cn(
-                'cursor-pointer rounded-pill border-none bg-transparent px-xs font-body text-label hover:bg-neutral-200',
+                'cursor-pointer rounded-pill border-none bg-transparent px-xs font-emoji text-label hover:bg-neutral-200',
                 mine === emoji && 'bg-accent-100',
               )}
             >
@@ -350,9 +350,10 @@ function MessageMenu({
 
 /**
  * Edição no próprio balão (CRMLAB-105, D-280): Enter salva, Shift+Enter quebra
- * linha, Esc cancela. Vazio não salva; mesmo teto do envio (4000).
+ * linha, Esc cancela. Vazio não salva; mesmo teto do envio (4000). Exportada
+ * para o Chat Interno (CRMLAB-117, D-282) — mesma UX nos dois lugares.
  */
-function EditBox({
+export function EditBox({
   initial,
   onSave,
   onCancel,
@@ -614,7 +615,7 @@ export function MessageBubble({
           data-testid="message-reactions"
           aria-label={`Reações: ${reactions.map((reaction) => reaction.emoji).join(' ')}`}
           className={cn(
-            'flex gap-xs self-start rounded-pill border border-chat-line bg-chat-received px-sm text-caption shadow-sm',
+            'flex gap-xs self-start rounded-pill border border-chat-line bg-chat-received px-sm font-emoji text-caption shadow-sm',
             type === 'sent' && 'self-end',
           )}
         >

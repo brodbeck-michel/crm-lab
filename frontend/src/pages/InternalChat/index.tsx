@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useLocation, useSearchParams } from 'react-router-dom';
+import type { InternalMessage } from '@crm-lab/shared';
 import { api, isApiError, queryKeys } from '@/api';
 import { InboxLayout } from '@/components/layout';
 import type { RecordedAudio } from '@/components/conversation';
 import { useToast } from '@/components/ui';
 import { useApiErrorHandler } from '@/hooks';
 import { useAuthStore, selectUser } from '@/stores';
+import { useMessageAlertsStore } from '@/stores/message-alerts.store';
 import { ChannelList } from './ChannelList';
 import { MessagePanel } from './MessagePanel';
 import { UserSearch } from './UserSearch';
@@ -128,6 +131,29 @@ export function InternalChat() {
     [markChannelRead, handleApiError],
   );
 
+  /**
+   * Deep link da notificação (CRMLAB-116, D-284): `/internal-chat?channelId=…`
+   * abre o canal como um clique (marca como lido). Relê a cada NAVEGAÇÃO
+   * (`location.key`), não só no mount — o clique pode chegar com a tela já
+   * aberta, como o `?conversationId=` do Atendimento.
+   */
+  const [searchParams] = useSearchParams();
+  const linkedChannelId = searchParams.get('channelId');
+  const location = useLocation();
+  useEffect(() => {
+    if (linkedChannelId) {
+      autoSelected.current = true;
+      handleSelect(linkedChannelId);
+    }
+  }, [location.key]);
+
+  // D-284: canal aberto com a aba em foco não gera aviso.
+  const setOpenInternalChannelId = useMessageAlertsStore((s) => s.setOpenInternalChannelId);
+  useEffect(() => {
+    setOpenInternalChannelId(selectedId);
+    return () => setOpenInternalChannelId(null);
+  }, [selectedId, setOpenInternalChannelId]);
+
   const messagesQuery = useQuery({
     ...internalMessagesOptions(selectedId ?? '', pageCount),
     enabled: selectedId !== null,
@@ -146,6 +172,47 @@ export function InternalChat() {
       ]);
     },
     onError: handleApiError,
+  });
+
+  /**
+   * Editar / apagar para todos da autora (CRMLAB-117, D-282). Prazo vencido entre
+   * abrir o menu e clicar: aviso próprio e recarrega o canal (o item some). O WS
+   * `internal_chat.message_updated` leva a mudança às outras abas e colegas.
+   */
+  const invalidateChannel = useCallback(
+    (channelId: string) =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.internalMessages(channelId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.internalChannels() }),
+      ]),
+    [queryClient],
+  );
+
+  const handleMessageActionError = useCallback(
+    (action: 'edit' | 'delete', channelId: string, error: unknown) => {
+      if (isApiError(error) && error.details?.reason === 'window_expired') {
+        const verb = action === 'edit' ? 'editar' : 'apagar';
+        toast(`O prazo para ${verb} esta mensagem já passou.`, { tone: 'attention' });
+        void invalidateChannel(channelId);
+        return;
+      }
+      handleApiError(error);
+    },
+    [handleApiError, invalidateChannel, toast],
+  );
+
+  const editMessage = useMutation({
+    mutationFn: ({ message, content }: { message: InternalMessage; content: string }) =>
+      api.internalChat.editMessage(message.channelId, message.id, { content }),
+    onSuccess: (_data, { message }) => invalidateChannel(message.channelId),
+    onError: (error, { message }) => handleMessageActionError('edit', message.channelId, error),
+  });
+
+  const deleteMessage = useMutation({
+    mutationFn: (message: InternalMessage) =>
+      api.internalChat.deleteMessage(message.channelId, message.id),
+    onSuccess: (_data, message) => invalidateChannel(message.channelId),
+    onError: (error, message) => handleMessageActionError('delete', message.channelId, error),
   });
 
   /**
@@ -245,6 +312,8 @@ export function InternalChat() {
           onSendAttachments={handleSendAttachments}
           onSendAudio={handleSendAudio}
           onClose={() => setSelectedId(null)}
+          onEditMessage={(message, content) => editMessage.mutateAsync({ message, content })}
+          onDeleteMessage={(message) => deleteMessage.mutate(message)}
           currentUserId={currentUser?.id ?? null}
           currentUserRole={currentUser?.role ?? null}
           hasOlderMessages={messagesQuery.data?.hasOlder ?? false}

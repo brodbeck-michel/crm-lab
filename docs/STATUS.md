@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-10-24 (CRMLAB-115 — branch `feature/CRMLAB-115-zod-4`)
+**Última atualização:** 2026-10-25 (integração `integ/onda-111-119` — CRMLAB-111, 116, 117, 118 e 119)
 
 ---
 
@@ -3555,3 +3555,79 @@ Branch `feature/CRMLAB-115-zod-4` (de `main` v1.38.0). Decisão D-281, só backe
   do backend 143 arquivos / 2231 testes verdes; typecheck e eslint verdes. `npm audit` não acusa mais
   o zod (o body-parser high segue nesta branch — corrigido em outra).
 - **Pendente:** validação na hml.
+
+### 🚧 CRMLAB-117 — editar e apagar para todos no chat interno (2026-10-25, aguardando validação)
+
+Branch `feature/CRMLAB-117-chat-interno-editar-apagar` (de `main` v1.39.0). Decisão D-282,
+migração `058_internal_message_edits.sql`.
+
+- **Backend:** `PATCH|DELETE /internal-chat/channels/:id/messages/:messageId` — só a autora,
+  editar até 15 min (texto e legenda de imagem/vídeo; áudio/documento só apagam), apagar até 48 h; versão anterior em
+  `internal_message_edits`, `edited_at`/`deleted_at`; audit `edit_internal_message` /
+  `delete_internal_message` com `userId`; WS `internal_chat.message_updated`. Apagada some da API
+  e do `unreadCount`.
+- **Front:** menu ⌄ com "Editar" (caixa no balão, Enter/Esc) e "Apagar para todos" (confirmação);
+  "Editada" e "🚫 Mensagem apagada".
+- **Testes:** `tests/internal-chat/edit-delete.spec.ts` (novo, 18), `internal-chat.spec.ts`
+  (shape), inventário de rotas 116 → 118; `InternalChat.edit-delete.spec.tsx` (novo, 12),
+  `ws.spec.ts` (+1). Suíte completa roda na integração.
+- **Pendente:** validação na hml.
+
+### 🚧 CRMLAB-116 — aviso de mensagem nova no chat interno (2026-10-25, aguardando validação)
+
+Branch `feature/CRMLAB-116-aviso-chat-interno` (empilhada na do CRMLAB-117). Decisão D-284, só
+frontend, sem endpoint novo.
+
+- **Aviso:** mensagem de colega no Chat interno toca o som e, com a aba sem foco, mostra a
+  notificação (nome do canal ou da colega, corpo só a contagem — D-240), em qualquer tela. Clique
+  abre `/internal-chat?channelId=…`. Mesmas preferências do D-241. Não avisa: mensagem minha,
+  de sistema, editada/apagada, canal aberto com a aba em foco, `platform_operator`.
+- **Título da aba:** contagem única — conversas do atendimento + canais/DMs com não lidas.
+- **Respostas do PO (25/10, D-284 itens 8 e 9):** o **pedido** de aprovação em `#aprovacoes` avisa
+  gestor/admin (som + notificação); a decisão não avisa; atendente não é avisada. Canal aberto
+  NÃO marca lido sozinho (segue o D-068). Prefixo do pedido em `APPROVAL_REQUEST_POST_PREFIX`
+  (shared), usado pelo `ApprovalService`.
+- **Testes:** `useNewMessageAlerts.internal-chat.spec.tsx` (novo, 19), `InternalChat.spec.tsx`
+  (+2), `useNewMessageAlerts.spec.tsx` (mock de canais). Suíte completa roda na integração.
+
+### 🚧 CRMLAB-119 — sem chip "Aguardando resposta" no Atendimento (2026-10-25, aguardando validação)
+
+Branch `feature/CRMLAB-119-sem-chip-aguardando` (de `main` v1.39.0). Decisão D-283 (revê o item 7
+da D-254), só frontend, sem migração.
+
+- **Tela:** a lista de conversas perde o chip "Aguardando resposta N" e o filtro no cliente ligado
+  a ele. Ficam Minhas / Não atribuídas / Participando / Encerradas. O relógio vermelho com
+  "há N min" em cada item continua igual.
+- **Testes:** `ConversationList.response-alert.spec.tsx` sem os casos do chip (destaque, feriado,
+  regra desligada/encerradas e relógio local seguem cobertos).
+
+### 🚧 CRMLAB-118 — 💚 nas reações rápidas (2026-10-25, aguardando validação)
+
+Branch `feature/CRMLAB-118-reacao-coracao-verde` (de `main` v1.39.0). Sem decisão nova (ajuste do
+item 5 de D-222), sem migração, sem mudança de API.
+
+- **Front/shared:** `QUICK_REACTIONS` = 👍 ❤️ 💚 😂 😮 😢 🙏 (verde logo depois do vermelho). A barra
+  com 7 botões (~220 px) cabe em tela estreita sem mudar classes.
+- **Backend:** nada valida a lista — `setReactionSchema` aceita qualquer emoji até 32 bytes e o
+  webhook grava o `reaction.text` que vier; 💚 do paciente aparece na pílula como qualquer outro.
+- **Testes:** `MessageBubble.crmlab66.spec.tsx` (lista com 7, +1 caso da pílula com 💚).
+- **Pendente:** validação na hml.
+
+### 🚧 CRMLAB-111 — emoji igual para todos com a Noto Color Emoji (2026-10-25, aguardando validação)
+
+Branch `feature/CRMLAB-111-emoji-noto` (de `main` v1.39.0). Decisão D-285, só frontend, sem migração.
+
+- **Fonte:** Noto Color Emoji (OFL), Google Fonts v47 em **COLRv1**, auto-hospedada em
+  `frontend/src/assets/fonts/noto-color-emoji/` (11 woff2 por `unicode-range`, 2,08 MB no total,
+  `OFL.txt`), empacotada pelo Vite com hash. Sem CDN, sem dependência nova.
+- **Correção da validação (25/10):** a 1ª versão usava os woff2 da Fontsource, que são
+  OpenType-SVG — Chrome/Edge não desenham SVG e o emoji saiu em branco na hml (barra de reações e
+  seletor vazios). Trocados pelos COLRv1 + `tech(color-COLRv1)` no `src` (Safari, sem COLRv1, cai no
+  emoji do sistema). Conferido no Chromium headless: fonte antiga em branco, nova colorida.
+- **Token:** `--font-emoji` em toda pilha de `tokens.css`, depois das fontes de texto e antes da
+  genérica — vale para conversas, Chat interno, seletor de emoji e barra de reações.
+- **Peso por tela:** sem emoji 0 KB; conversa típica 138 KiB (um recorte); bandeira 692 KiB
+  (uma vez, depois cache).
+- **Testes:** `src/styles/emoji-font.spec.ts` (5, inclui guarda de COLR/CPAL sem `SVG ` nos woff2);
+  `vite build` verde.
+- **Pendente:** validação na hml em Windows, Android e Mac (emoji recente, ex. 🫩 🪾, sem quadrado).

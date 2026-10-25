@@ -197,7 +197,7 @@ export interface QuotedMessageSummary {
 }
 
 /** Barra rapida de reacoes da tela (D-222). A API aceita qualquer emoji. */
-export const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'] as const;
+export const QUICK_REACTIONS = ['👍', '❤️', '💚', '😂', '😮', '😢', '🙏'] as const;
 
 export interface Message {
   id: string;

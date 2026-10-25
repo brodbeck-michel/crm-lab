@@ -12,6 +12,7 @@ import type {
 import type * as ApiModule from '@/api';
 
 const listMock = vi.fn();
+const channelsMock = vi.fn();
 const playSoundMock = vi.fn();
 
 vi.mock('@/api', async (importOriginal) => {
@@ -21,6 +22,8 @@ vi.mock('@/api', async (importOriginal) => {
     api: {
       ...actual.api,
       conversations: { ...actual.api.conversations, list: listMock },
+      // CRMLAB-116: o hook também lê os canais do chat — aqui, nenhum.
+      internalChat: { ...actual.api.internalChat, channels: channelsMock },
     },
   };
 });
@@ -185,6 +188,8 @@ function login(role: UserRole = 'attendant'): void {
 
 beforeEach(() => {
   listMock.mockReset();
+  channelsMock.mockReset();
+  channelsMock.mockResolvedValue({ channels: [] });
   playSoundMock.mockReset();
   FakeNotification.permission = 'granted';
   FakeNotification.instances = [];

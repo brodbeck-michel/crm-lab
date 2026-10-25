@@ -267,8 +267,8 @@ para **todas** as atendentes que já a veem, a partir de X minutos de espera.
   útil seguinte são 10 min.
 - **Encerrada não entra.** Um nível só (vermelho). O destaque atualiza sozinho (relógio local a
   cada 30 s) e some quando a atendente responde (a lista é refeita pelo WebSocket).
-- Chip **"Aguardando resposta N"**: conta e filtra **a página carregada** da lista (não o banco
-  inteiro), e combina com "Minhas"/"Não atribuídas".
+- Sem chip/filtro "Aguardando resposta" na lista (retirado no CRMLAB-119, D-283): o alerta é só
+  o destaque do item.
 
 ### Relatório de tempo de resposta (CRMLAB-83, D-257)
 Aba **"Tempo de resposta"** do Analytics, para **gestor e admin**. Mede a mesma espera do alerta

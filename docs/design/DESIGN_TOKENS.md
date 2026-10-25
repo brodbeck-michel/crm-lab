@@ -173,10 +173,24 @@ color: var(--color-accent-600);       /* ✓ Mínimo para corpo */
 
 ```css
 :root {
-  --font-heading: 'Playfair Display', 'Caprasimo', serif;
-  --font-body: 'Figtree', system-ui, sans-serif;
+  --font-emoji: 'Noto Color Emoji';
+  --font-heading: 'Playfair Display', 'Caprasimo', var(--font-emoji), serif;
+  --font-body: 'Figtree', system-ui, var(--font-emoji), sans-serif;
 }
 ```
+
+**Emoji (D-285, CRMLAB-111):** `--font-emoji` entra em TODA pilha (inclusive as de
+`data-font='figtree' | 'playfair' | 'system'`) **depois das fontes de texto e antes da genérica**.
+Texto, dígitos, `#` e `*` continuam na fonte do tema; só o que ela não desenha (emoji) cai na Noto
+Color Emoji — igual em Windows, Android, Linux e Mac, em conversas, Chat interno, seletor de emoji e
+barra de reações. A fonte é auto-hospedada em `frontend/src/assets/fonts/noto-color-emoji/` (11
+recortes woff2 por `unicode-range`, `@font-face` em `noto-color-emoji.css`, licença OFL em
+`OFL.txt`), importada em `main.tsx` antes de `tokens.css` e empacotada pelo Vite com hash — sem CDN.
+Componente nunca escreve o nome da fonte: usa `font-body`/`font-heading`.
+
+Elemento que contém **só emoji** (barra e pílula de reações, grade do seletor) usa `font-emoji`
+(`--font-emoji-only: var(--font-emoji), sans-serif`): a Noto vem primeiro para ❤ ☀ ✔ não saírem
+monocromáticos pela fonte de texto do sistema.
 
 **Google Fonts Import:**
 ```html

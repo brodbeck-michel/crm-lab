@@ -53,6 +53,7 @@ const { ApiError } = await import('@/api');
 const { ToastProvider } = await import('@/components/ui');
 const { useAuthStore, useUIStore } = await import('@/stores');
 const { InternalChat } = await import('./index');
+const { useMessageAlertsStore } = await import('@/stores/message-alerts.store');
 
 /**
  * Chat Interno — PAGES.md §9 · WORKFLOWS.md §3 e §6.
@@ -185,14 +186,14 @@ function proposal(overrides: Partial<ProposalDetail> = {}): ProposalDetail {
 
 const CHANNELS: ListChannelsResponse = { channels: [GERAL, APROVACOES, DM] };
 
-function renderScreen() {
+function renderScreen(path = '/internal-chat') {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
       <ToastProvider>
-        <MemoryRouter initialEntries={['/internal-chat']}>
+        <MemoryRouter initialEntries={[path]}>
           <InternalChat />
         </MemoryRouter>
       </ToastProvider>
@@ -224,9 +225,7 @@ beforeEach(() => {
 
   channelsMock.mockResolvedValue(CHANNELS);
   messagesMock.mockImplementation((channelId: string) =>
-    Promise.resolve(
-      messagesResponse(channelId === APROVACOES.id ? [APPROVAL_POST] : [message()]),
-    ),
+    Promise.resolve(messagesResponse(channelId === APROVACOES.id ? [APPROVAL_POST] : [message()])),
   );
   sendMock.mockResolvedValue(message({ id: 'm-3', content: 'Combinado' }));
   markReadMock.mockResolvedValue(undefined);
@@ -463,9 +462,7 @@ describe('Chat Interno', () => {
 
     await user.click(screen.getByRole('button', { name: 'Aprovar' }));
 
-    expect(
-      await screen.findByText(/Você não pode aprovar a própria proposta/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/Você não pode aprovar a própria proposta/)).toBeInTheDocument();
     // Nada de otimismo: o botão continua lá para outra tentativa.
     expect(screen.getByRole('button', { name: 'Aprovar' })).toBeInTheDocument();
   });
@@ -651,6 +648,28 @@ describe('Chat Interno', () => {
       expect(
         screen.queryByRole('button', { name: 'Carregar mensagens anteriores' }),
       ).not.toBeInTheDocument();
+    });
+  });
+
+  describe('aviso de mensagem nova (CRMLAB-116, D-284)', () => {
+    it('?channelId= da notificação abre o canal e marca como lido', async () => {
+      renderScreen(`/internal-chat?channelId=${APROVACOES.id}`);
+
+      expect(await screen.findByRole('button', { name: /Aprovar/ })).toBeInTheDocument();
+      await waitFor(() => expect(markReadMock).toHaveBeenCalledWith(APROVACOES.id));
+      expect(screen.getByRole('button', { name: /#aprovacoes/ })).toHaveAttribute(
+        'aria-current',
+        'true',
+      );
+    });
+
+    it('publica o canal aberto no store e limpa ao sair', async () => {
+      const view = renderScreen();
+      await screen.findByText('Bom dia, equipe!');
+      expect(useMessageAlertsStore.getState().openInternalChannelId).toBe(GERAL.id);
+
+      view.unmount();
+      expect(useMessageAlertsStore.getState().openInternalChannelId).toBeNull();
     });
   });
 });

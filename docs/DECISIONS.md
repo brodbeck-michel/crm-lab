@@ -6146,3 +6146,37 @@ COMPONENTS (useNewMessageAlerts). Testes: `useNewMessageAlerts.internal-chat.spe
 **Impacto:** só frontend — `pages/Attendance/ConversationList.tsx` e
 `ConversationList.response-alert.spec.tsx` (casos do chip removidos). PAGES §2, BUSINESS_RULES,
 STATUS. Sem migração, sem mudança de contrato.
+
+### D-285: Emoji igual para todos com a Noto Color Emoji auto-hospedada, recortada por unicode-range (CRMLAB-111)
+**Decisão** (opção (a), escolhida pelo PO em 25/10/2026):
+1. Fonte **Noto Color Emoji** (Google, SIL Open Font License 1.1), vendorizada de
+   `@fontsource/noto-color-emoji` **5.3.2** (Google Fonts v47, 2026-09-16) por `npm pack` — sem
+   dependência nova no `package.json`. Ficam em `frontend/src/assets/fonts/noto-color-emoji/` os
+   **11 recortes woff2** com o `@font-face` original da Fontsource (cada um com `unicode-range`),
+   reescrito só para apontar para os woff2 locais. O `.woff` e o arquivo "emoji" inteiro (5,8 MB)
+   ficaram de fora. Licença em `OFL.txt` ao lado da fonte (o projeto não tem pasta de licenças de
+   terceiros).
+2. **Token:** `--font-emoji: 'Noto Color Emoji'` em `tokens.css`, colocado em toda pilha
+   (`--font-heading`/`--font-body`, inclusive os remapeamentos `data-font`) **depois das fontes de
+   texto e antes da genérica**. Texto, dígitos, `#`, `*`, ©, ® e ™ seguem na fonte do tema — o
+   recorte [2] da Noto cobre esses caracteres (keycaps), mas nunca é consultado para eles.
+3. CSS importado em `main.tsx` (antes de `tokens.css`); o Vite empacota os woff2 com hash em
+   `/assets/`, que o nginx já serve com `Cache-Control: public, immutable` de 1 ano. CSP: `font-src
+   'self' data:` já cobre (mesma origem); nada de CDN.
+4. **Peso** (medido no Chromium headless com o build): total dos 11 woff2 = **3,95 MB** (3.950.860
+   bytes), maior recorte = bandeiras (1,18 MB). O navegador só baixa o recorte de que precisa:
+   - tela sem emoji (só texto, dígitos, `#`, `*`, ©, ™): **0 KB**;
+   - conversa típica (😊 👍 ❤️ 🙏 😂 + barra de reações com 💚 😮 😢): **289 KiB** (um recorte);
+   - seletor de emoji na aba Smileys (com os ícones das abas): **~2,7 MB** (9 recortes);
+   - uma bandeira (🇧🇷): **1,15 MB**.
+   Baixou uma vez, fica no cache do navegador (arquivo com hash, imutável).
+**Motivo:** o CRM não definia fonte de emoji e cada SO desenhava com a sua (Segoe no Windows, Noto
+no Android/Linux, Apple no Mac); emoji novo demais saía quadrado ou separado. Os dados não estavam
+corrompidos. O set da Apple/WhatsApp é proprietário; a Noto é aberta e cobre o Unicode recente.
+**Limites conhecidos:** `font-mono` (código entre crases no `WhatsAppText`, ids em tabelas) usa a
+pilha mono padrão do Tailwind, sem a Noto; em Linux com DejaVu como `system-ui`, símbolos que a
+DejaVu desenha em preto e branco (ex. ☺ ♥ ✔ sem seletor) continuam monocromáticos — a Noto só
+entra para o que a fonte de texto não tem.
+**Impacto:** só frontend — `src/assets/fonts/noto-color-emoji/` (novo), `src/styles/tokens.css`,
+`src/main.tsx`; teste `src/styles/emoji-font.spec.ts` (novo). DESIGN_TOKENS.md (Tipografia).
+Sem mudança de API, sem migração.

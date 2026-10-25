@@ -3613,12 +3613,17 @@ item 5 de D-222), sem migração, sem mudança de API.
 
 Branch `feature/CRMLAB-111-emoji-noto` (de `main` v1.39.0). Decisão D-285, só frontend, sem migração.
 
-- **Fonte:** Noto Color Emoji (OFL) de `@fontsource/noto-color-emoji` 5.3.2, auto-hospedada em
-  `frontend/src/assets/fonts/noto-color-emoji/` (11 woff2 por `unicode-range`, 3,95 MB no total,
+- **Fonte:** Noto Color Emoji (OFL), Google Fonts v47 em **COLRv1**, auto-hospedada em
+  `frontend/src/assets/fonts/noto-color-emoji/` (11 woff2 por `unicode-range`, 2,08 MB no total,
   `OFL.txt`), empacotada pelo Vite com hash. Sem CDN, sem dependência nova.
+- **Correção da validação (25/10):** a 1ª versão usava os woff2 da Fontsource, que são
+  OpenType-SVG — Chrome/Edge não desenham SVG e o emoji saiu em branco na hml (barra de reações e
+  seletor vazios). Trocados pelos COLRv1 + `tech(color-COLRv1)` no `src` (Safari, sem COLRv1, cai no
+  emoji do sistema). Conferido no Chromium headless: fonte antiga em branco, nova colorida.
 - **Token:** `--font-emoji` em toda pilha de `tokens.css`, depois das fontes de texto e antes da
   genérica — vale para conversas, Chat interno, seletor de emoji e barra de reações.
-- **Peso por tela:** sem emoji 0 KB; conversa típica 289 KiB; seletor na aba Smileys ~2,7 MB;
-  bandeira 1,15 MB (uma vez, depois cache).
-- **Testes:** `src/styles/emoji-font.spec.ts` (novo, 4); `vite build` verde.
+- **Peso por tela:** sem emoji 0 KB; conversa típica 138 KiB (um recorte); bandeira 692 KiB
+  (uma vez, depois cache).
+- **Testes:** `src/styles/emoji-font.spec.ts` (5, inclui guarda de COLR/CPAL sem `SVG ` nos woff2);
+  `vite build` verde.
 - **Pendente:** validação na hml em Windows, Android e Mac (emoji recente, ex. 🫩 🪾, sem quadrado).

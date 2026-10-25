@@ -6149,12 +6149,11 @@ STATUS. Sem migração, sem mudança de contrato.
 
 ### D-285: Emoji igual para todos com a Noto Color Emoji auto-hospedada, recortada por unicode-range (CRMLAB-111)
 **Decisão** (opção (a), escolhida pelo PO em 25/10/2026):
-1. Fonte **Noto Color Emoji** (Google, SIL Open Font License 1.1), vendorizada de
-   `@fontsource/noto-color-emoji` **5.3.2** (Google Fonts v47, 2026-09-16) por `npm pack` — sem
-   dependência nova no `package.json`. Ficam em `frontend/src/assets/fonts/noto-color-emoji/` os
-   **11 recortes woff2** com o `@font-face` original da Fontsource (cada um com `unicode-range`),
-   reescrito só para apontar para os woff2 locais. O `.woff` e o arquivo "emoji" inteiro (5,8 MB)
-   ficaram de fora. Licença em `OFL.txt` ao lado da fonte (o projeto não tem pasta de licenças de
+1. Fonte **Noto Color Emoji** (Google, SIL Open Font License 1.1), Google Fonts **v47**
+   (2026-09-16), os **11 recortes woff2 em COLRv1** que a API serve ao Chrome — sem dependência nova
+   no `package.json`. Ficam em `frontend/src/assets/fonts/noto-color-emoji/` com o `@font-face`
+   (cada um com `unicode-range`) apontando para os woff2 locais e `tech(color-COLRv1)` no `src` (ver
+   item 6). Licença em `OFL.txt` ao lado da fonte (o projeto não tem pasta de licenças de
    terceiros).
 2. **Token:** `--font-emoji: 'Noto Color Emoji'` em `tokens.css`, colocado em toda pilha
    (`--font-heading`/`--font-body`, inclusive os remapeamentos `data-font`) **depois das fontes de
@@ -6163,18 +6162,27 @@ STATUS. Sem migração, sem mudança de contrato.
 3. CSS importado em `main.tsx` (antes de `tokens.css`); o Vite empacota os woff2 com hash em
    `/assets/`, que o nginx já serve com `Cache-Control: public, immutable` de 1 ano. CSP: `font-src
    'self' data:` já cobre (mesma origem); nada de CDN.
-4. **Peso** (medido no Chromium headless com o build): total dos 11 woff2 = **3,95 MB** (3.950.860
-   bytes), maior recorte = bandeiras (1,18 MB). O navegador só baixa o recorte de que precisa:
+4. **Peso** (arquivos COLRv1): total dos 11 woff2 = **2,08 MB** (2.083.304 bytes), maior recorte =
+   bandeiras (692 KiB). O navegador só baixa o recorte de que precisa:
    - tela sem emoji (só texto, dígitos, `#`, `*`, ©, ™): **0 KB**;
-   - conversa típica (😊 👍 ❤️ 🙏 😂 + barra de reações com 💚 😮 😢): **289 KiB** (um recorte);
-   - seletor de emoji na aba Smileys (com os ícones das abas): **~2,7 MB** (9 recortes);
-   - uma bandeira (🇧🇷): **1,15 MB**.
+   - conversa típica (😊 👍 ❤️ 🙏 😂 + barra de reações com 💚 😮 😢): **138 KiB** (um recorte);
+   - seletor de emoji na aba Smileys: alguns recortes, menos que os 2,08 MB do total;
+   - uma bandeira (🇧🇷): **692 KiB**.
    Baixou uma vez, fica no cache do navegador (arquivo com hash, imutável).
 5. **Elemento só de emoji usa a Noto primeiro** (revisão da integração, 25/10/2026): na pilha comum
    a fonte de texto do sistema vem antes e pode desenhar ❤ ☀ ✔ em preto e branco (ex.: DejaVu no Linux)
    — justo o ❤️ ao lado do 💚 na barra. Token `--font-emoji-only: var(--font-emoji), sans-serif` e
    classe `font-emoji` (tailwind) nos botões da barra de reações, na pílula de reações do balão e na
    grade do seletor de emoji. Texto de mensagem continua na pilha comum.
+6. **Formato COLRv1, nunca OpenType-SVG** (validação na hml, 25/10/2026): a 1ª versão usou os woff2
+   do `@fontsource/noto-color-emoji` 5.3.2, que trazem o desenho em tabela `SVG ` com contornos
+   `glyf` vazios. Chrome e Edge não suportam OpenType-SVG: a fonte carregava e o emoji saía **em
+   branco** (barra de reações e seletor vazios). Trocados pelos recortes COLRv1 (tabelas `COLR` +
+   `CPAL`) — Chrome/Edge 98+, Firefox 107+. `tech(color-COLRv1)` no `src` faz navegador sem COLRv1
+   (Safari) descartar a fonte e usar o emoji do sistema (Apple), em vez de desenhar o vazio. O
+   `emoji-font.spec.ts` lê a tabela de cada woff2 e falha se faltar `COLR`/`CPAL` ou aparecer `SVG `.
+   Os testes de unidade (jsdom) não desenham fonte: a prova de desenho foi um print no Chromium
+   headless (fonte antiga em branco, nova colorida).
 **Motivo:** o CRM não definia fonte de emoji e cada SO desenhava com a sua (Segoe no Windows, Noto
 no Android/Linux, Apple no Mac); emoji novo demais saía quadrado ou separado. Os dados não estavam
 corrompidos. O set da Apple/WhatsApp é proprietário; a Noto é aberta e cobre o Unicode recente.

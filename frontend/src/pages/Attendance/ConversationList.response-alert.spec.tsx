@@ -1,5 +1,4 @@
 import { act, render, screen, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -14,8 +13,8 @@ import {
 
 /**
  * Alerta de tempo de resposta na lista (CRMLAB-84, D-254): minutos ÚTEIS
- * calculados no navegador, relógio local a cada 30 s e o chip "Aguardando
- * resposta" que conta e filtra a página carregada.
+ * calculados no navegador e relógio local a cada 30 s. Sem chip "Aguardando
+ * resposta" (CRMLAB-119, D-283).
  */
 
 const HOURS: BusinessHours = {
@@ -109,14 +108,15 @@ describe('ConversationList — alerta de tempo de resposta', () => {
     vi.useRealTimers();
   });
 
-  it('destaca só quem passou do limite em minutos úteis; o chip conta', () => {
+  it('destaca só quem passou do limite em minutos úteis, sem chip na coluna', () => {
     // Quinta 10:20: Ana espera 20 min, Bia 10 min, Caio foi respondido.
     renderList({ responseAlert: alertOn(15), now: new Date(sp('2026-10-01T10:20')) });
     expect(item('Ana')).toHaveAttribute('data-response-alert', 'true');
     expect(within(item('Ana')).getByTestId('conversation-response-alert')).toHaveTextContent('há 20 min');
     expect(item('Bia')).toHaveAttribute('data-response-alert', 'false');
     expect(item('Caio')).toHaveAttribute('data-response-alert', 'false');
-    expect(screen.getByRole('button', { name: 'Aguardando resposta 1' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Aguardando resposta \d+$/ })).not.toBeInTheDocument();
+    expect(screen.getAllByTestId('conversation-item')).toHaveLength(3);
   });
 
   it('fora do expediente o relógio para; feriado do laboratório também', () => {
@@ -139,41 +139,21 @@ describe('ConversationList — alerta de tempo de resposta', () => {
     expect(item('Ana')).toHaveAttribute('data-response-alert', 'false');
   });
 
-  it('chip filtra a lista e, clicado de novo, volta a mostrar tudo', async () => {
-    const user = userEvent.setup();
-    renderList({ responseAlert: alertOn(5), now: new Date(sp('2026-10-01T10:20')) });
-    const chip = screen.getByRole('button', { name: 'Aguardando resposta 2' });
-    await user.click(chip);
-    expect(chip).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getAllByTestId('conversation-item')).toHaveLength(2);
-    expect(screen.queryByText('Caio')).not.toBeInTheDocument();
-    await user.click(chip);
-    expect(screen.getAllByTestId('conversation-item')).toHaveLength(3);
-  });
-
-  it('filtro ligado sem ninguém esperando mostra o vazio próprio', async () => {
-    const user = userEvent.setup();
-    renderList({ responseAlert: alertOn(60), now: new Date(sp('2026-10-01T10:20')) });
-    await user.click(screen.getByRole('button', { name: 'Aguardando resposta 0' }));
-    expect(screen.getByText('Ninguém aguardando resposta')).toBeInTheDocument();
-  });
-
-  it('regra desligada, calendário carregando ou lista de encerradas: sem chip nem destaque', () => {
+  it('regra desligada, calendário carregando ou lista de encerradas: sem destaque', () => {
     const now = new Date(sp('2026-10-01T10:20'));
     const { unmount } = renderList({
       responseAlert: { rule: { enabled: false, minutes: 15 }, calendar: alertOn().calendar },
       now,
     });
-    expect(screen.queryByRole('button', { name: /aguardando resposta/i })).not.toBeInTheDocument();
     expect(item('Ana')).toHaveAttribute('data-response-alert', 'false');
     unmount();
 
     const loading = renderList({ responseAlert: { rule: { enabled: true, minutes: 15 }, calendar: null }, now });
-    expect(screen.queryByRole('button', { name: /aguardando resposta/i })).not.toBeInTheDocument();
+    expect(item('Ana')).toHaveAttribute('data-response-alert', 'false');
     loading.unmount();
 
     renderList({ responseAlert: alertOn(15), now, scope: 'closed' });
-    expect(screen.queryByRole('button', { name: /aguardando resposta/i })).not.toBeInTheDocument();
+    expect(item('Ana')).toHaveAttribute('data-response-alert', 'false');
   });
 
   it('o destaque acende sozinho com o relógio local, sem recarregar', () => {
@@ -186,6 +166,5 @@ describe('ConversationList — alerta de tempo de resposta', () => {
       vi.advanceTimersByTime(RESPONSE_ALERT_TICK_MS * 2);
     });
     expect(item('Ana')).toHaveAttribute('data-response-alert', 'true');
-    expect(screen.getByRole('button', { name: 'Aguardando resposta 1' })).toBeInTheDocument();
   });
 });

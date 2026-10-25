@@ -128,10 +128,8 @@ Duas leituras registradas aqui porque o doc original não as fixava:
   `responseAlert.minutes`, o item fica com fundo `--color-chat-alert-bg`, faixa vermelha à esquerda
   (`--color-chat-alert`) e um relógio com **"há 23 min"** no lugar do "aguardando N". Some quando a
   atendente responde (o WS refaz a lista). Encerradas nunca. Todas as atendentes veem
-- Chip **"Aguardando resposta N"** (D-254), depois de "Encerradas", só com a regra ligada e fora
-  da lista de encerradas: conta e filtra **no cliente** a página carregada (exceção consciente ao
-  "counts do servidor"; conversa fora da página não entra). Combina com "Minhas"/"Não atribuídas";
-  clicar de novo desliga. Filtro ligado e ninguém esperando → "Ninguém aguardando resposta"
+- **Sem chip "Aguardando resposta"** (CRMLAB-119, D-283, revê o item 7 da D-254): o Michel
+  preferiu deixar o alerta só no destaque vermelho de cada item; não há filtro de quem espera
 - **Sem chip "Não lidas"** (CRMLAB-68, D-229 item 5): o Michel preferiu só Minhas / Não
   atribuídas / Encerradas — o número de não lidas no item e no título da aba já avisam. A API
   mantém `?unread=true` e `counts.unread`

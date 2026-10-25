@@ -3585,4 +3585,15 @@ frontend, sem endpoint novo.
 - **Título da aba:** contagem única — conversas do atendimento + canais/DMs com não lidas.
 - **Testes:** `useNewMessageAlerts.internal-chat.spec.tsx` (novo, 15), `InternalChat.spec.tsx`
   (+2), `useNewMessageAlerts.spec.tsx` (mock de canais). Suíte completa roda na integração.
+
+### 🚧 CRMLAB-119 — sem chip "Aguardando resposta" no Atendimento (2026-10-25, aguardando validação)
+
+Branch `feature/CRMLAB-119-sem-chip-aguardando` (de `main` v1.39.0). Decisão D-283 (revê o item 7
+da D-254), só frontend, sem migração.
+
+- **Tela:** a lista de conversas perde o chip "Aguardando resposta N" e o filtro no cliente ligado
+  a ele. Ficam Minhas / Não atribuídas / Participando / Encerradas. O relógio vermelho com
+  "há N min" em cada item continua igual.
+- **Testes:** `ConversationList.response-alert.spec.tsx` sem os casos do chip (destaque, feriado,
+  regra desligada/encerradas e relógio local seguem cobertos).
 - **Pendente:** validação na hml.

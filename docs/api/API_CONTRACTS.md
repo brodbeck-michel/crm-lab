@@ -3103,8 +3103,9 @@ preenchido). Texto igual ao atual → `200` sem versão, audit nem evento. `DELE
 **Regras** (as mesmas da tela — `internalMessageAuthorActionBlock` em `shared`):
 - só a autora (`senderId` = usuário logado). Mensagem de colega — também para gestor/admin — e
   mensagem de sistema → `FORBIDDEN` (`reason: not_author`);
+- `PATCH` edita o texto ou a **legenda** de anexo de imagem/vídeo — o arquivo nunca muda;
 - `CONFLICT` (409) com `details.reason`: `already_deleted`, `not_editable` (`PATCH` em mensagem
-  com arquivo — imagem, áudio e documento só apagam), `window_expired` (editar: 15 min —
+  com áudio ou documento — só apagam), `window_expired` (editar: 15 min —
   `MESSAGE_EDIT_WINDOW_MS`; apagar: 48 h — `MESSAGE_DELETE_WINDOW_MS`, os mesmos do atendimento);
 - edição: versão anterior em `internal_message_edits` (`edited_by` = a autora),
   `internal_messages.edited_at`; apagar: `deleted_at` — a linha, o texto e o arquivo ficam. Audit

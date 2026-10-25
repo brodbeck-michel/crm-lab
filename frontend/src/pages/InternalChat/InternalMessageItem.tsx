@@ -34,7 +34,7 @@ export interface InternalMessageItemProps {
   /**
    * Editar / Apagar para todos da AUTORA (CRMLAB-117, D-282). Os itens só
    * aparecem com handler e quando `internalMessageAuthorActionBlock` deixa
-   * (autora, no prazo, texto para editar). `onEdit` devolve a Promise da
+   * (autora, no prazo; editar: texto ou legenda de imagem/vídeo). `onEdit` devolve a Promise da
    * chamada: resolveu, sai da edição; rejeitou, continua editando.
    */
   onEdit?: (message: InternalMessage, content: string) => Promise<unknown>;
@@ -277,7 +277,9 @@ export function InternalMessageItem({
   // some quando o prazo passa.
   const canEdit =
     Boolean(onEdit && currentUserId) &&
-    internalMessageAuthorActionBlock(message, 'edit', currentUserId ?? '') === null;
+    internalMessageAuthorActionBlock(message, 'edit', currentUserId ?? '') === null &&
+    // Imagem/vídeo sem legenda: não há texto a corrigir (igual ao atendimento, D-280).
+    message.content !== '';
   const canDelete =
     Boolean(onDelete && currentUserId) &&
     internalMessageAuthorActionBlock(message, 'delete', currentUserId ?? '') === null;

@@ -783,8 +783,8 @@ nunca "sem permissão" (não vazar existência).
 - No menu ⌄ da mensagem (aparece ao passar o mouse), **"Editar"** e **"Apagar para todos"** só
   para a **autora** (`senderId` = usuária logada). Gestora/admin não veem em mensagem de colega;
   mensagem de sistema não tem menu. Regra única `internalMessageAuthorActionBlock` do shared:
-  editar só texto (mensagem com arquivo só apaga), até 15 min; apagar até 48 h. Fora do prazo o
-  item some
+  editar texto ou legenda de imagem/vídeo (só quando há legenda; o arquivo não muda; áudio e
+  documento só apagam), até 15 min; apagar até 48 h. Fora do prazo o item some
 - "Editar" vira a mesma caixa do atendimento no próprio balão (`MessageEditBox`: Enter salva,
   Shift+Enter quebra linha, Esc cancela; vazio não salva) → `PATCH
   /internal-chat/channels/:id/messages/:messageId`. "Apagar para todos" pede

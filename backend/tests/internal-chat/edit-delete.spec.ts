@@ -28,6 +28,9 @@ const PNG = Buffer.concat([
   Buffer.alloc(32),
 ]);
 
+/** Cabeçalho PDF real — o sniff reconhece como `application/pdf`. */
+const PDF = Buffer.from('%PDF-1.4\n%sonda do chat interno\n');
+
 /**
  * Folga de 1 dia nos recuos (mesmo motivo de `messages/edit-delete.spec.ts`):
  * `created_at` é `TIMESTAMP` sem fuso e o PGlite lê no fuso da máquina.
@@ -238,7 +241,7 @@ describe('editar / apagar para todos no chat interno (CRMLAB-117)', () => {
       await app.agent.delete(path(geral.id, message.id)).set(app.auth(ana)).expect(204);
     });
 
-    it('mensagem com arquivo não edita: 409 not_editable', async () => {
+    it('imagem: edita a legenda e o arquivo continua o mesmo', async () => {
       const { ana, geral } = await scenario();
       const created = await app.agent
         .post(`/api/v1/internal-chat/channels/${geral.id}/attachments`)
@@ -255,6 +258,33 @@ describe('editar / apagar para todos no chat interno (CRMLAB-117)', () => {
         .patch(path(geral.id, withFile.id))
         .set(app.auth(ana))
         .send({ content: 'Outra legenda' })
+        .expect(200);
+      const body = response.body as InternalMessage;
+      expect(body.content).toBe('Outra legenda');
+      expect(body.attachment).toEqual(withFile.attachment);
+      expect(await editsOf(withFile.id)).toEqual([
+        { previous_content: 'Legenda', edited_by: ana.id },
+      ]);
+      await app.agent.get(withFile.attachment?.url ?? '').set(app.auth(ana)).expect(200);
+    });
+
+    it('documento não edita: 409 not_editable', async () => {
+      const { ana, geral } = await scenario();
+      const created = await app.agent
+        .post(`/api/v1/internal-chat/channels/${geral.id}/attachments`)
+        .set(app.auth(ana))
+        .send({
+          fileName: 'pedido.pdf',
+          mimeType: 'application/pdf',
+          contentBase64: PDF.toString('base64'),
+          content: 'Pedido',
+        })
+        .expect(201);
+      const withFile = created.body as InternalMessage;
+      const response = await app.agent
+        .patch(path(geral.id, withFile.id))
+        .set(app.auth(ana))
+        .send({ content: 'Outro texto' })
         .expect(409);
       expect((response.body as ApiErrorBody).error.details).toMatchObject({
         reason: 'not_editable',

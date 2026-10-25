@@ -521,7 +521,8 @@ interface InternalChatService {
   canal (`findChannelById` com o usuário — DM alheia é `NOT_FOUND`), travam a linha (`FOR
   UPDATE`), exigem que a mensagem seja DESTE canal e aplicam `internalMessageAuthorActionBlock`
   (shared, a mesma da tela): não é a autora (sistema incluído) → `FORBIDDEN` `not_author`;
-  apagada, com arquivo (só no editar) ou fora do prazo (15 min / 48 h) → `CONFLICT` com
+  apagada, com áudio/documento (só no editar — imagem/vídeo editam a legenda, nunca o arquivo)
+  ou fora do prazo (15 min / 48 h) → `CONFLICT` com
   `details.reason`. Editar guarda a versão anterior em `internal_message_edits` e sobe
   `edited_at`; apagar grava `deleted_at`. Depois do commit: audit `edit_internal_message` /
   `delete_internal_message` (com `userId`; a exceção à regra "chat não é auditado", porque

@@ -5,10 +5,27 @@ import type { InternalMessage } from '@crm-lab/shared';
 import { MESSAGE_DELETE_WINDOW_MS, MESSAGE_EDIT_WINDOW_MS } from '@crm-lab/shared';
 import { InternalMessageItem } from './InternalMessageItem';
 
+// Miniatura de imagem: sem rede no teste — o balão fica em "Carregando imagem…".
+vi.mock('@/hooks', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  useAuthenticatedMedia: () => ({ objectUrl: null, isLoading: true }),
+}));
+
+function attachmentOf(mimeType: string, fileName: string) {
+  return {
+    id: 'a-1',
+    fileName,
+    mimeType,
+    byteSize: 10,
+    url: '/api/v1/internal-chat/channels/ch-1/attachments/a-1',
+  };
+}
+
 /**
  * Chat Interno — CRMLAB-117 (D-282): "Editar" e "Apagar para todos" só para a
  * AUTORA, dentro dos mesmos prazos do atendimento. Gestão não mexe em
- * mensagem de colega; sistema fica de fora; arquivo só apaga.
+ * mensagem de colega; sistema fica de fora; imagem/vídeo editam a legenda,
+ * áudio e documento só apagam.
  */
 
 const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
@@ -87,20 +104,40 @@ describe('InternalMessageItem — editar/apagar da autora (D-282)', () => {
     expect(screen.queryByRole('button', { name: 'Ações da mensagem' })).toBeNull();
   });
 
-  it('mensagem com arquivo só apaga', async () => {
-    renderItem(
-      mine({
-        content: '',
-        attachment: {
-          id: 'a-1',
-          fileName: 'pedido.pdf',
-          mimeType: 'application/pdf',
-          byteSize: 10,
-          url: '/api/v1/internal-chat/channels/ch-1/attachments/a-1',
-        },
-      }),
-    );
+  it('documento (mesmo com texto) só apaga', async () => {
+    renderItem(mine({ content: 'Pedido', attachment: attachmentOf('application/pdf', 'pedido.pdf') }));
     expect(await menuItems()).toEqual(['Apagar para todos']);
+  });
+
+  it('imagem com legenda edita a legenda; sem legenda só apaga', async () => {
+    const { unmount } = render(
+      <InternalMessageItem
+        message={mine({ content: 'Foto do pedido', attachment: attachmentOf('image/png', 'foto.png') })}
+        currentUserId="u-1"
+        currentUserRole="attendant"
+        isApprovalsChannel={false}
+        onEdit={vi.fn().mockResolvedValue(undefined)}
+        onDelete={vi.fn()}
+      />,
+    );
+    expect(await menuItems()).toEqual(['Editar', 'Apagar para todos']);
+    unmount();
+
+    renderItem(mine({ content: '', attachment: attachmentOf('image/png', 'foto.png') }));
+    expect(await menuItems()).toEqual(['Apagar para todos']);
+  });
+
+  it('editar a legenda mantém o arquivo no balão', async () => {
+    const { onEdit } = renderItem(
+      mine({ content: 'Foto do pedido', attachment: attachmentOf('video/mp4', 'video.mp4') }),
+    );
+    await menuItems();
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Editar' }));
+    expect(screen.getByText('video.mp4')).toBeTruthy();
+    const box = screen.getByRole('textbox', { name: 'Editar mensagem' });
+    await userEvent.clear(box);
+    await userEvent.type(box, 'Vídeo do pedido{Enter}');
+    expect(onEdit).toHaveBeenCalledWith(expect.objectContaining({ id: 'm-1' }), 'Vídeo do pedido');
   });
 
   it('editar no próprio balão: Enter salva o texto novo', async () => {

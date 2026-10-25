@@ -3562,13 +3562,13 @@ Branch `feature/CRMLAB-117-chat-interno-editar-apagar` (de `main` v1.39.0). Deci
 migração `058_internal_message_edits.sql`.
 
 - **Backend:** `PATCH|DELETE /internal-chat/channels/:id/messages/:messageId` — só a autora,
-  editar até 15 min (só texto; arquivo só apaga), apagar até 48 h; versão anterior em
+  editar até 15 min (texto e legenda de imagem/vídeo; áudio/documento só apagam), apagar até 48 h; versão anterior em
   `internal_message_edits`, `edited_at`/`deleted_at`; audit `edit_internal_message` /
   `delete_internal_message` com `userId`; WS `internal_chat.message_updated`. Apagada some da API
   e do `unreadCount`.
 - **Front:** menu ⌄ com "Editar" (caixa no balão, Enter/Esc) e "Apagar para todos" (confirmação);
   "Editada" e "🚫 Mensagem apagada".
-- **Testes:** `tests/internal-chat/edit-delete.spec.ts` (novo, 17), `internal-chat.spec.ts`
-  (shape), inventário de rotas 116 → 118; `InternalChat.edit-delete.spec.tsx` (novo, 10),
+- **Testes:** `tests/internal-chat/edit-delete.spec.ts` (novo, 18), `internal-chat.spec.ts`
+  (shape), inventário de rotas 116 → 118; `InternalChat.edit-delete.spec.tsx` (novo, 12),
   `ws.spec.ts` (+1). Suíte completa roda na integração.
 - **Pendente:** validação na hml.

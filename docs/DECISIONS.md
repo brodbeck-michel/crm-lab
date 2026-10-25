@@ -6055,9 +6055,11 @@ pelas rotas `PATCH|DELETE /internal-chat/channels/:id/messages/:messageId`.
    (`MESSAGE_DELETE_WINDOW_MS`), constantes reaproveitadas de `shared`. Regra única irmã de
    `messageAuthorActionBlock`: `internalMessageAuthorActionBlock` (API recusa com `CONFLICT` +
    `details.reason`: `already_deleted`, `not_editable`, `window_expired`; a tela esconde o item).
-3. **Arquivo só apaga** (CRMLAB-101/109): mensagem com anexo — imagem, áudio ou documento — não
-   edita (`not_editable`), nem a legenda. Editar vale para mensagem de texto (com ou sem proposta
-   anexada; a proposta não muda).
+3. **Legenda sim, arquivo nunca** (paridade com `EDITABLE_MESSAGE_TYPES` do D-280; ajuste do PO
+   em 25/10/2026): editar vale para mensagem de texto (com ou sem proposta anexada; a proposta não
+   muda) e para a legenda de anexo de **imagem ou vídeo** — o arquivo nunca é trocado. Áudio e
+   documento só apagam (`not_editable`). Legenda vazia não salva (como no atendimento: a API exige
+   1..4000 e a tela só oferece "Editar" em imagem/vídeo que já tem legenda).
 4. **Sem canal externo:** grava direto, numa transação com a linha travada (`FOR UPDATE`).
 5. **Nada é apagado de verdade (como D-220):** a edição guarda a versão anterior em
    `internal_message_edits` (migração 058; `edited_by` = a autora) e sobe `edited_at`; apagar grava
@@ -6073,7 +6075,8 @@ pelas rotas `PATCH|DELETE /internal-chat/channels/:id/messages/:messageId`.
    canais + mensagens do canal, sem aviso.
 8. **Tela:** menu ⌄ na mensagem com "Editar" (a mesma caixa do atendimento, `MessageEditBox`:
    Enter salva, Shift+Enter quebra linha, Esc cancela, vazio não salva) e "Apagar para todos"
-   (`confirm`). Mostra "Editada"; apagada vira "🚫 Mensagem apagada".
+   (`confirm`); em imagem/vídeo o item aparece no balão quando há legenda. Mostra "Editada";
+   apagada vira "🚫 Mensagem apagada".
 **Motivo:** pedido do PO (Michel) — coerência com o atendimento: quem digita errado no chat da
 equipe hoje só consegue mandar outra mensagem corrigindo.
 **Impacto:** migração `058_internal_message_edits.sql` (SCHEMA §12 e §43);

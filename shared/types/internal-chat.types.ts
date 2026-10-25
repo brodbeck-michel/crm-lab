@@ -1,6 +1,7 @@
 import type { IsoDateTime, PaginationMeta } from './api.types.js';
 import type { UserRole } from './auth.types.js';
 import { MESSAGE_DELETE_WINDOW_MS, MESSAGE_EDIT_WINDOW_MS } from './conversation.types.js';
+import { mediaCategoryOf } from './media.types.js';
 
 export interface Channel {
   id: string;
@@ -143,7 +144,9 @@ export type InternalMessageAuthorActionBlock =
  * `messageAuthorActionBlock` (D-280), com os MESMOS prazos por decisao do PO:
  * editar ate 15 min, apagar ate 48 h. So a AUTORA (`senderId` = usuario logado);
  * mensagem de sistema fica de fora; gestora/admin nao mexem em mensagem de
- * colega. Mensagem com arquivo so apaga (editar vale so para texto).
+ * colega. Editar vale para texto e para a legenda de imagem/video (paridade com
+ * `EDITABLE_MESSAGE_TYPES` do D-280) — nunca troca o arquivo; audio e documento
+ * so apagam.
  */
 export function internalMessageAuthorActionBlock(
   message: Pick<InternalMessage, 'senderId' | 'isSystem' | 'createdAt'> & {
@@ -158,7 +161,10 @@ export function internalMessageAuthorActionBlock(
     return 'not_author';
   }
   if (message.deletedAt) return 'already_deleted';
-  if (action === 'edit' && message.attachment) return 'not_editable';
+  if (action === 'edit' && message.attachment) {
+    const category = mediaCategoryOf(message.attachment.mimeType);
+    if (category !== 'image' && category !== 'video') return 'not_editable';
+  }
   const window = action === 'edit' ? MESSAGE_EDIT_WINDOW_MS : MESSAGE_DELETE_WINDOW_MS;
   const sentAt = Date.parse(message.createdAt);
   if (!Number.isFinite(sentAt) || now - sentAt > window) return 'window_expired';

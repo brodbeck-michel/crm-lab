@@ -443,7 +443,10 @@ Anatomia (padrão WhatsApp):
 - Título "(N) <título>", notificação sem prévia, som e a regra `isInMyQueue`. Funções puras
   exportadas para teste: `isInMyQueue`, `detectNewMessages`, `alertBody`, `countUnreadInQueue`,
   `titleWithCount`. Estado auxiliar em `stores/message-alerts.store.ts` (preferências +
-  conversa aberta); som em `lib/notification-sound.ts`
+  conversa aberta + canal interno aberto); som em `lib/notification-sound.ts`
+- CRMLAB-116 (D-284): também avisa mensagem de colega no Chat interno. Funções puras
+  `detectNewChannelMessages`, `freshFromColleagues`, `channelTitle`, `countUnreadChannels`;
+  título da aba soma conversas + canais não lidos
 
 ### BudgetLayout
 - 2 colunas: flex 1 min 520px | 372px fixo; total em rodapé fixo

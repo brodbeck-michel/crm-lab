@@ -6089,3 +6089,41 @@ inventário de `route-tenant-isolation.spec.ts` (116 → 118). Frontend `api/int
 `MessageBubble.tsx` (exporta a caixa de edição). API_CONTRACTS §3b, SERVICES §7,
 FRONTEND_BACKEND (WS), PAGES §9. Testes: `tests/internal-chat/edit-delete.spec.ts` (novo),
 `internal-chat.spec.ts`; front `InternalChat.edit-delete.spec.tsx` (novo), `ws.spec.ts`.
+
+### D-284: Mensagem do chat interno dá o mesmo aviso do atendimento, com contagem única na aba (CRMLAB-116)
+**Decisão:** o aviso de mensagem nova do atendimento (CRMLAB-72, D-240/D-241) passa a valer para
+o Chat interno, no MESMO hook `useNewMessageAlerts` (montado no `AppShell`, qualquer tela).
+1. **Sinal:** a lista de canais (`queryKeys.internalChannels()`, a mesma query/cache da Sidebar e
+   da tela, já invalidada pelo WS `internal_chat.new_message`) — o `unreadCount` do canal subir E o
+   `lastMessageAt` mudar, mesmo princípio de `detectNewMessages`; primeira carga = linha de base;
+   canal/DM que aparece depois avisa se a última mensagem é mais nova que a maior da carga anterior.
+   O servidor já não conta mensagem da própria pessoa (D-068), nem apagada (D-282).
+2. **Confirmação pela mensagem:** o `unreadCount` conta mensagem de sistema de propósito (D-068 —
+   o badge de `#aprovacoes` precisa piscar), mas o card exclui sistema do aviso. Por isso cada canal
+   candidato busca `GET /internal-chat/channels/:id/messages?page=1` (só leitura, sem efeito
+   colateral) e só avisa se houver mensagem mais nova que a última vista que seja de colega
+   (`senderId` ≠ a pessoa e não nulo), não seja de sistema (`isSystem`) e não esteja apagada
+   (`deletedAt`). Mensagem minha enviada de outra aba não sobe o contador → nada.
+3. **Canal aberto:** a tela do Chat interno publica `openInternalChannelId` no
+   `message-alerts.store` (limpa ao sair). No chat interno, abrir só zera o contador no CLIQUE
+   (D-068) — mensagem que chega no canal aberto sobe o `unreadCount` normalmente, então a mesma
+   detecção pela lista serve: canal aberto com a aba em foco → nada; aba sem foco → avisa.
+4. **Som / notificação / preferências:** as mesmas do D-241 (som com a aba sem foco ou de outro
+   canal; notificação só com a aba sem foco; mesmos liga/desliga do menu do usuário, sem
+   preferência nova). Notificação: título = nome do canal (`#geral`) ou, na DM, `otherUserName`;
+   corpo = `alertBody` ("Nova mensagem"/"N novas mensagens", N = mensagens de colegas não lidas na
+   página carregada) — nunca o conteúdo (D-240). `tag` = `internal-chat:<channelId>`.
+5. **Clique na notificação:** abre `/internal-chat?channelId=<id>`. A tela lê o parâmetro a cada
+   navegação (como `?conversationId=` do atendimento) e abre o canal como um clique — inclusive
+   marcando como lido.
+6. **Título da aba — contagem única (decisão do PO, 25/10/2026):** `(N)` = conversas da fila do
+   atendimento com não lidas + canais/DMs do chat com `unreadCount > 0`. Ler o canal faz o número
+   cair.
+7. **Não avisa:** `platform_operator`; quem não tem a rota `/internal-chat` (a query de canais só
+   liga com a rota no trilho, mesmo critério da Sidebar); edição e apagamento
+   (`internal_chat.message_updated` não sobe o `unreadCount`, e apagada sai dele).
+**Motivo:** pedido do PO (Michel) — mensagem da equipe passava despercebida fora da tela do chat.
+**Impacto:** só frontend, sem endpoint novo: `hooks/useNewMessageAlerts.ts`,
+`stores/message-alerts.store.ts`, `pages/InternalChat/index.tsx`. PAGES §1 (aviso) e §9,
+COMPONENTS (useNewMessageAlerts). Testes: `useNewMessageAlerts.internal-chat.spec.tsx` (novo),
+`InternalChat.spec.tsx`. Supera a frase "sem som e sem notificação push do navegador" do D-132.

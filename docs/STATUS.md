@@ -3572,3 +3572,17 @@ migração `058_internal_message_edits.sql`.
   (shape), inventário de rotas 116 → 118; `InternalChat.edit-delete.spec.tsx` (novo, 12),
   `ws.spec.ts` (+1). Suíte completa roda na integração.
 - **Pendente:** validação na hml.
+
+### 🚧 CRMLAB-116 — aviso de mensagem nova no chat interno (2026-10-25, aguardando validação)
+
+Branch `feature/CRMLAB-116-aviso-chat-interno` (empilhada na do CRMLAB-117). Decisão D-284, só
+frontend, sem endpoint novo.
+
+- **Aviso:** mensagem de colega no Chat interno toca o som e, com a aba sem foco, mostra a
+  notificação (nome do canal ou da colega, corpo só a contagem — D-240), em qualquer tela. Clique
+  abre `/internal-chat?channelId=…`. Mesmas preferências do D-241. Não avisa: mensagem minha,
+  de sistema, editada/apagada, canal aberto com a aba em foco, `platform_operator`.
+- **Título da aba:** contagem única — conversas do atendimento + canais/DMs com não lidas.
+- **Testes:** `useNewMessageAlerts.internal-chat.spec.tsx` (novo, 15), `InternalChat.spec.tsx`
+  (+2), `useNewMessageAlerts.spec.tsx` (mock de canais). Suíte completa roda na integração.
+- **Pendente:** validação na hml.

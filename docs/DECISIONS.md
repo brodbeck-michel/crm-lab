@@ -4967,9 +4967,10 @@ Atendimento destaca em vermelho a conversa cujo paciente espera resposta.
    **literal** (`#c62828`, tokens novos `--color-chat-alert`/`-alert-bg`): "atrasado" não pode
    depender do acento do tema (um tema vermelho apagaria o sinal). Todas as atendentes veem, em
    todas as conversas que já veem.
-7. **Chip "Aguardando resposta N"** com contagem **no cliente**, sobre a página carregada (decisão
+7. ~~**Chip "Aguardando resposta N"** com contagem **no cliente**, sobre a página carregada (decisão
    do Michel; conversa fora da página não entra). Filtro independente, combina com "Minhas"/"Não
-   atribuídas"; some com a regra desligada e na lista de encerradas.
+   atribuídas"; some com a regra desligada e na lista de encerradas.~~ — **retirado (Michel,
+   25/10/2026, CRMLAB-119, D-283):** o alerta fica só no destaque de cada item.
 8. **Fora:** conversa encerrada (`status = 'closed'`) — a conversa não tem estágio próprio; o
    "terminal" dela é o encerramento (D-174); som e notificação (já existem para mensagem nova,
    D-240/D-241).
@@ -6042,3 +6043,20 @@ frontend mostra ao lado do campo (ex. `PatientProfileForm`).
 `lib/bitlab-client.ts`, 18 arquivos `controllers/*.routes.ts`; testes `tests/kernel/zod-v4.spec.ts`
 (novo), `tests/lis/bitlab-client.spec.ts` (+1). `details.fields` agora em português (API_ERRORS.md);
 chaves e envelope inalterados. Sem migração, sem mudança de contrato de sucesso.
+
+## 2026-10-25 — Sem chip "Aguardando resposta" na lista de conversas (CRMLAB-119)
+
+### D-283: Chip "Aguardando resposta N" sai da lista de conversas (revê o item 7 da D-254)
+**Decisão (Michel, 25/10/2026, no card):**
+1. **Tela:** ~~chip "Aguardando resposta N"~~ — **retirado a pedido do PO:** a linha de chips do
+   Atendimento volta a ser Minhas / Não atribuídas / Participando / Encerradas. Sai junto o filtro
+   no cliente que ele ligava (`awaitingOnly`) e o vazio próprio "Ninguém aguardando resposta".
+2. **Continua igual:** o resto da D-254 (e da D-259) — `awaitingReplySince`, o cálculo dos minutos
+   úteis no navegador (`responseAlertMinutes`), o relógio local de 30 s e o destaque vermelho com
+   "há N min" em cada item. A regra nas Regras (liga/desliga + minutos) segue valendo para o
+   destaque.
+3. Mesmo padrão do chip "Não lidas" (D-229 item 5): o sinal já está no próprio item da lista.
+**Motivo:** pedido do PO; o relógio vermelho no item já mostra quem está esperando.
+**Impacto:** só frontend — `pages/Attendance/ConversationList.tsx` e
+`ConversationList.response-alert.spec.tsx` (casos do chip removidos). PAGES §2, BUSINESS_RULES,
+STATUS. Sem migração, sem mudança de contrato.

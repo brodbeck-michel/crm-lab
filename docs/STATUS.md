@@ -3555,3 +3555,15 @@ Branch `feature/CRMLAB-115-zod-4` (de `main` v1.38.0). Decisão D-281, só backe
   do backend 143 arquivos / 2231 testes verdes; typecheck e eslint verdes. `npm audit` não acusa mais
   o zod (o body-parser high segue nesta branch — corrigido em outra).
 - **Pendente:** validação na hml.
+
+### 🚧 CRMLAB-119 — sem chip "Aguardando resposta" no Atendimento (2026-10-25, aguardando validação)
+
+Branch `feature/CRMLAB-119-sem-chip-aguardando` (de `main` v1.39.0). Decisão D-283 (revê o item 7
+da D-254), só frontend, sem migração.
+
+- **Tela:** a lista de conversas perde o chip "Aguardando resposta N" e o filtro no cliente ligado
+  a ele. Ficam Minhas / Não atribuídas / Participando / Encerradas. O relógio vermelho com
+  "há N min" em cada item continua igual.
+- **Testes:** `ConversationList.response-alert.spec.tsx` sem os casos do chip (destaque, feriado,
+  regra desligada/encerradas e relógio local seguem cobertos).
+- **Pendente:** validação na hml.

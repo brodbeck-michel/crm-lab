@@ -256,6 +256,45 @@ acessa; `platform_operator` recebe `403` (o console não tem caminho para `/user
 **Erros:** `NOT_FOUND` (404 — token ainda válido de usuário já removido),
 `FORBIDDEN` (403, `platform_operator`)
 
+### GET /users/presence
+Status de todos os usuários **ativos** do laboratório (CRMLAB-120, D-286). Qualquer papel de
+laboratório; `platform_operator` recebe `403`.
+
+**Response (200):**
+```json
+{
+  "items": [
+    { "userId": "uuid", "status": "online" },
+    { "userId": "uuid", "status": "offline" }
+  ],
+  "myStatus": "busy"
+}
+```
+
+- `status` (`UserPresenceStatus`) é o **efetivo**: `offline` sem aba aberta; `away` se ela escolheu
+  Ausente ou está parada há 30 min; senão, o que ela escolheu.
+- `myStatus` (`SelectableUserPresence`) é o que **quem pergunta** escolheu (`online`, `busy` ou
+  `away`), mesmo quando o efetivo é `away` por inatividade. É o valor marcado no menu da barra lateral.
+
+Shape: `UserPresenceResponse` (`shared/types/user-presence.types.ts`).
+
+### PATCH /users/me/presence
+Troca o status escolhido e/ou avisa inatividade (CRMLAB-120, D-286).
+
+**Request:** ao menos um dos campos.
+```json
+{ "status": "busy", "idle": false }
+```
+- `status`: `online` | `busy` | `away`. `offline` **não** é aceito (só o sistema põe offline).
+  Gravado em `users.presence_status`.
+- `idle`: `true` depois de 30 min parada; `false` quando ela volta a mexer. Fica só em memória.
+
+**Response (200):** `UserPresenceResponse`, igual ao `GET /users/presence`. Emite
+`user.presence_changed { userId }` para o tenant quando o status efetivo pode ter mudado.
+
+**Erros:** `VALIDATION_ERROR` (400 — corpo vazio, campo desconhecido ou `status: "offline"`),
+`FORBIDDEN` (403, `platform_operator`)
+
 ### GET /users (admin apenas)
 Tabela da tela `/settings/users`.
 

@@ -938,6 +938,16 @@ const LAB_ROUTES: readonly LabRoute[] = [
 
   // --- usuarios & auditoria ---
   { name: 'GET /users/me', method: 'get', path: () => '/api/v1/users/me', actor: 'attendant', addressable: false },
+  // CRMLAB-120/D-286: status da equipe — o tenant vem do token, nao ha id na URL.
+  { name: 'GET /users/presence', method: 'get', path: () => '/api/v1/users/presence', actor: 'attendant', addressable: false },
+  {
+    name: 'PATCH /users/me/presence',
+    method: 'patch',
+    path: () => '/api/v1/users/me/presence',
+    body: () => ({ status: 'busy' }),
+    actor: 'attendant',
+    addressable: false,
+  },
   { name: 'GET /users', method: 'get', path: () => '/api/v1/users', actor: 'admin', addressable: false },
   {
     name: 'POST /users',
@@ -1446,7 +1456,8 @@ describe('inventario de rotas de laboratorio', () => {
     // CRMLAB-103/D-279 soma 1: `GET /analytics/reminders`.
     // CRMLAB-105/D-280 soma 2: `PATCH|DELETE /conversations/:id/messages/:messageId`.
     // CRMLAB-117/D-282 soma 2: `PATCH|DELETE /internal-chat/channels/:id/messages/:messageId`.
-    expect(LAB_ROUTES).toHaveLength(118);
+    // CRMLAB-120/D-286 soma 2: `GET /users/presence` e `PATCH /users/me/presence`.
+    expect(LAB_ROUTES).toHaveLength(120);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

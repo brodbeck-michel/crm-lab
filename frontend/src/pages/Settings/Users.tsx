@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useUserList, useAuditList } from '@/api';
+import { useUserList, useAuditList, usePresenceOf } from '@/api';
 import UserTable from '@/components/users/UserTable';
 import UserModal from '@/components/users/UserModal';
 import AuditLogTable from '@/components/users/AuditLogTable';
@@ -17,6 +17,8 @@ export default function UsersSettings() {
     limit: 20,
   });
 
+  // CRMLAB-120 (D-286): bolinha de status ao lado do nome.
+  const presenceOf = usePresenceOf();
   const { data: usersData = { users: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } }, isLoading: usersLoading } = useUserList(filters);
   const { data: auditData = { entries: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } }, isLoading: auditLoading } = useAuditList(tab === 'audit' ? filters : {});
 
@@ -75,6 +77,7 @@ export default function UsersSettings() {
                 pagination={usersData.pagination}
                 onEdit={handleEditClick}
                 onPageChange={handlePageChange}
+                presenceOf={presenceOf}
               />
             )}
           </>

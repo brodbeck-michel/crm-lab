@@ -1,5 +1,7 @@
 export { Avatar } from './Avatar';
 export type { AvatarProps } from './Avatar';
+export { PresenceDot, USER_PRESENCE_LABELS } from './PresenceDot';
+export type { PresenceDotProps } from './PresenceDot';
 export { EmptyState } from './EmptyState';
 export type { EmptyStateProps } from './EmptyState';
 export { Modal } from './Modal';

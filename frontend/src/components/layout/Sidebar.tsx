@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { PanelLeftClose, PanelLeftOpen, ChevronRight, LogOut, Check } from 'lucide-react';
-import type { UserRole } from '@crm-lab/shared';
+import { SELECTABLE_USER_PRESENCE, type UserRole } from '@crm-lab/shared';
 import { cn, Badge } from '@/components/ui';
-import { Avatar } from '@/components/shared';
+import { Avatar, PresenceDot, USER_PRESENCE_LABELS } from '@/components/shared';
 import { initials } from '@/lib/format';
 import {
   useAuthStore,
@@ -16,7 +16,15 @@ import {
 } from '@/stores';
 import { useLogout } from '@/hooks';
 import { sidebarSectionsFor, type AppRoute } from '@/routes/route-config';
-import { conversationsApi, internalChatApi, operationApi, queryKeys, staleTimes } from '@/api';
+import {
+  conversationsApi,
+  internalChatApi,
+  operationApi,
+  queryKeys,
+  staleTimes,
+  useUpdateMyPresence,
+  useUsersPresence,
+} from '@/api';
 import { NavGlyph } from './NavGlyph';
 
 /**
@@ -90,6 +98,13 @@ export function Sidebar() {
   const openGroupsByUser = useSidebarGroupsStore((state) => state.openByUser);
   const toggleGroup = useSidebarGroupsStore((state) => state.toggleGroup);
   const userId = user?.id ?? '';
+
+  // Status da atendente (CRMLAB-120, D-286): a bolinha mostra o EFETIVO (o
+  // que a equipe vê); o menu marca o ESCOLHIDO (`myStatus`).
+  const presenceQuery = useUsersPresence();
+  const updatePresence = useUpdateMyPresence();
+  const myPresence = presenceQuery.data?.items.find((item) => item.userId === userId)?.status;
+  const myChosenPresence = presenceQuery.data?.myStatus;
 
   // Sino de "Decisões" (PAGES.md §12): mesmo retrato de §10, cache compartilhado
   // com Operation.tsx e Decisions.tsx — não é uma segunda chamada.
@@ -350,7 +365,7 @@ export function Sidebar() {
             title={collapsed ? user.name : undefined}
             className="flex w-full min-w-0 items-center gap-sm rounded-md border-none bg-transparent p-0 text-left hover:bg-accent-100"
           >
-            <Avatar name={user.name} size={36} />
+            <Avatar name={user.name} size={36} presence={myPresence} />
             {!collapsed && (
               <span className="min-w-0 flex-1 truncate">
                 <span className="block truncate font-body text-label font-semibold text-text">
@@ -372,6 +387,30 @@ export function Sidebar() {
                 collapsed ? 'left-0' : 'left-xs right-xs w-auto',
               )}
             >
+              {role !== 'platform_operator' && myChosenPresence && (
+                <>
+                  <span className="block px-md pt-xs font-body text-caption text-neutral-600">
+                    Meu status
+                  </span>
+                  {SELECTABLE_USER_PRESENCE.map((status) => (
+                    <button
+                      key={status}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={myChosenPresence === status}
+                      onClick={() => updatePresence.mutate({ status })}
+                      className="flex w-full cursor-pointer items-center gap-sm border-none bg-transparent px-md py-xs text-left font-body text-label text-text hover:bg-accent-100"
+                    >
+                      <span className="inline-flex w-[16px] shrink-0 justify-center" aria-hidden="true">
+                        {myChosenPresence === status && <Check size={16} strokeWidth={1.7} />}
+                      </span>
+                      <PresenceDot status={status} />
+                      {USER_PRESENCE_LABELS[status]}
+                    </button>
+                  ))}
+                  <hr className="my-xs border-t border-neutral-200" />
+                </>
+              )}
               {role !== 'platform_operator' &&
                 alertPrefs.map((pref) => (
                   <button

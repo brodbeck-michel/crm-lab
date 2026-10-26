@@ -1,8 +1,8 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { DragEvent, ReactNode } from 'react';
-import type { Channel, InternalMessage, UserRole } from '@crm-lab/shared';
+import type { Channel, InternalMessage, UserPresenceStatus, UserRole } from '@crm-lab/shared';
 import { Button, cn } from '@/components/ui';
-import { EmptyState } from '@/components/shared';
+import { EmptyState, PresenceDot, USER_PRESENCE_LABELS } from '@/components/shared';
 import {
   AttachmentPreview,
   Composer,
@@ -43,6 +43,8 @@ export interface MessagePanelProps {
   /** Editar / Apagar para todos da autora (CRMLAB-117, D-282). Sem handler, o item some. */
   onEditMessage?: (message: InternalMessage, content: string) => Promise<unknown>;
   onDeleteMessage?: (message: InternalMessage) => void;
+  /** Status da outra pessoa da DM, no cabeçalho (CRMLAB-120, D-286). */
+  presenceOf?: (userId: string) => UserPresenceStatus | undefined;
 }
 
 /** Chave do canal em que o sistema posta os pedidos (WORKFLOWS.md §3 e §6). */
@@ -69,6 +71,7 @@ export function MessagePanel({
   onClose,
   onEditMessage,
   onDeleteMessage,
+  presenceOf,
 }: MessagePanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const channelId = channel?.id ?? null;
@@ -182,19 +185,26 @@ export function MessagePanel({
   }
 
   const isApprovalsChannel = channel.key === APPROVALS_CHANNEL_KEY;
+  const dmPresence =
+    channel.kind === 'dm' && channel.otherUserId ? presenceOf?.(channel.otherUserId) : undefined;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-bg">
       <header className="flex items-center gap-md border-b border-neutral-300 px-lg py-md">
         <div className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate font-body text-label font-semibold text-text">
-            {channel.name}
+          <span className="flex min-w-0 items-center gap-xs font-body text-label font-semibold text-text">
+            <PresenceDot status={dmPresence} />
+            <span className="truncate">
+              {channel.kind === 'dm' ? (channel.otherUserName ?? channel.name) : channel.name}
+            </span>
           </span>
           <span className="truncate font-body text-caption text-neutral-600">
             {isApprovalsChannel
               ? 'Pedidos de aprovação de desconto acima da alçada'
               : channel.kind === 'dm'
-                ? 'Mensagem direta'
+                ? dmPresence
+                  ? `Mensagem direta · ${USER_PRESENCE_LABELS[dmPresence]}`
+                  : 'Mensagem direta'
                 : 'Canal da equipe'}
           </span>
         </div>

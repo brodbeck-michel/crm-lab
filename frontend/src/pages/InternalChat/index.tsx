@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import type { InternalMessage } from '@crm-lab/shared';
-import { api, isApiError, queryKeys } from '@/api';
+import { api, isApiError, queryKeys, usePresenceOf } from '@/api';
 import { InboxLayout } from '@/components/layout';
 import type { RecordedAudio } from '@/components/conversation';
 import { useToast } from '@/components/ui';
@@ -278,6 +278,9 @@ export function InternalChat() {
     ]);
   }
 
+  // CRMLAB-120 (D-286): status da equipe na busca, nas DMs e no cabeçalho da DM.
+  const presenceOf = usePresenceOf();
+
   return (
     <InboxLayout
       contextOpen={false}
@@ -289,6 +292,7 @@ export function InternalChat() {
             onSelectUser={(userId) => startDm.mutate(userId)}
             isLoading={directoryQuery.isPending}
             isError={directoryQuery.isError}
+            presenceOf={presenceOf}
           />
           <ChannelList
             channels={channels}
@@ -297,6 +301,7 @@ export function InternalChat() {
             isLoading={channelsQuery.isPending}
             isError={channelsQuery.isError}
             onRetry={() => void channelsQuery.refetch()}
+            presenceOf={presenceOf}
           />
         </>
       }
@@ -318,6 +323,7 @@ export function InternalChat() {
           currentUserRole={currentUser?.role ?? null}
           hasOlderMessages={messagesQuery.data?.hasOlder ?? false}
           onLoadOlder={() => setPageCount((count) => count + 1)}
+          presenceOf={presenceOf}
         />
       }
     />

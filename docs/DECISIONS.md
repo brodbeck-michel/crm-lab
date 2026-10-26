@@ -6237,12 +6237,17 @@ Sem mudança de API, sem migração.
    aparece (primeiro socket), some (item 3), troca de status ou fica parada/volta.
 9. **Onde aparece:** bolinha no canto do avatar. Aparece no próprio avatar da barra lateral, onde ela
    troca o status pelo menu; na lista de usuários (`/settings/users`); e no nome da atendente
-   responsável pela conversa.
+   responsável pela conversa. Ajuste da validação (26/10): também em todo lugar onde se escolhe
+   um colega, que é onde o status ajuda a decidir. Entram os menus **Atribuir/Transferir** e
+   **Participantes** do Atendimento (quem participa e quem dá para chamar) e, no **Chat interno**,
+   a busca de usuário, as mensagens diretas da lista e o cabeçalho da DM ("Mensagem direta ·
+   Ocupado"). Ficou de fora o "Responsável" da proposta: é um `<select>` nativo, que não desenha a bolinha.
 **Limites conhecidos:** o estado em memória vale para **uma instância** do backend (o que roda hoje).
 Com mais de uma, precisaria ir para o Redis. Uma aba oculta há mais de 5 min cuja conexão caia não
 reconecta até voltar a ficar visível (pausa do cliente WS, CRMLAB-33), então a pessoa aparece offline
 nesse intervalo.
 **Impacto:** migração `059_user_presence_status.sql`; `shared/types/user-presence.types.ts` (novo) e
 `websocket.types.ts`; backend `ws-hub.ts`, `user.repository.ts`, `user.service.ts`, `user.routes.ts`;
-frontend `Avatar`, `Sidebar`, `UserTable`, `PatientContext`, `api/ws.ts`, hook de inatividade e
+frontend `Avatar`, `Sidebar`, `UserTable`, `PatientContext`, `ConversationPanel` (menus), Chat interno
+(`ChannelList`, `UserSearch`, `MessagePanel`), `api/ws.ts`, hook de inatividade e
 tokens `--color-presence-*`. Rotas novas: `GET /users/presence`, `PATCH /users/me/presence`.

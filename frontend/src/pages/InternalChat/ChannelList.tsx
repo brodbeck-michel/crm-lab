@@ -1,6 +1,6 @@
-import type { Channel } from '@crm-lab/shared';
+import type { Channel, UserPresenceStatus } from '@crm-lab/shared';
 import { Badge, Button, cn } from '@/components/ui';
-import { EmptyState } from '@/components/shared';
+import { EmptyState, PresenceDot } from '@/components/shared';
 import { formatRelativeDate } from '@/lib/format';
 
 /**
@@ -18,16 +18,22 @@ export interface ChannelListProps {
   isLoading: boolean;
   isError: boolean;
   onRetry: () => void;
+  /** Status da outra pessoa da DM (CRMLAB-120, D-286). Canal não tem bolinha. */
+  presenceOf?: (userId: string) => UserPresenceStatus | undefined;
 }
+
+type PresenceOf = ChannelListProps['presenceOf'];
 
 function ChannelButton({
   channel,
   selected,
   onSelect,
+  presenceOf,
 }: {
   channel: Channel;
   selected: boolean;
   onSelect: (channelId: string) => void;
+  presenceOf: PresenceOf;
 }) {
   return (
     <li>
@@ -42,6 +48,9 @@ function ChannelButton({
           selected ? 'bg-accent-100 font-semibold' : 'hover:bg-neutral-200',
         )}
       >
+        {channel.kind === 'dm' && channel.otherUserId && (
+          <PresenceDot status={presenceOf?.(channel.otherUserId)} />
+        )}
         <span className="min-w-0 flex-1 truncate">
           {channel.kind === 'dm' ? (channel.otherUserName ?? channel.name) : channel.name}
         </span>
@@ -66,11 +75,13 @@ function Group({
   channels,
   selectedId,
   onSelect,
+  presenceOf,
 }: {
   title: string;
   channels: Channel[];
   selectedId: string | null;
   onSelect: (channelId: string) => void;
+  presenceOf: PresenceOf;
 }) {
   if (channels.length === 0) return null;
 
@@ -86,6 +97,7 @@ function Group({
             channel={channel}
             selected={channel.id === selectedId}
             onSelect={onSelect}
+            presenceOf={presenceOf}
           />
         ))}
       </ul>
@@ -100,6 +112,7 @@ export function ChannelList({
   isLoading,
   isError,
   onRetry,
+  presenceOf,
 }: ChannelListProps) {
   if (isError) {
     return (
@@ -139,12 +152,14 @@ export function ChannelList({
         channels={channels.filter((channel) => channel.kind === 'channel')}
         selectedId={selectedId}
         onSelect={onSelect}
+        presenceOf={presenceOf}
       />
       <Group
         title="Mensagens diretas"
         channels={channels.filter((channel) => channel.kind === 'dm')}
         selectedId={selectedId}
         onSelect={onSelect}
+        presenceOf={presenceOf}
       />
     </nav>
   );

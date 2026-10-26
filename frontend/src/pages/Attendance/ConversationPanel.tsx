@@ -6,9 +6,10 @@ import type {
   ConversationDetail,
   Message,
   QuickReply,
+  UserPresenceStatus,
 } from '@crm-lab/shared';
 import { Badge, Button, cn } from '@/components/ui';
-import { EmptyState } from '@/components/shared';
+import { EmptyState, PresenceDot } from '@/components/shared';
 import {
   AttachmentPreview,
   Composer,
@@ -74,6 +75,8 @@ export interface ConversationPanelProps {
   onRemoveParticipant?: (userId: string) => void;
   /** Participante que não é dona nem gestor/admin não transfere (o backend recusaria). */
   canTransfer?: boolean;
+  /** Status da equipe nos menus Transferir e Participantes (CRMLAB-120, D-286). */
+  presenceOf?: PresenceOf;
   onToggleContext: () => void;
   /** Fecha a conversa aberta, voltando ao estado "nenhuma selecionada" (padrão WhatsApp Web). */
   onClose: () => void;
@@ -207,14 +210,18 @@ function unreadLabel(count: number): string {
  * rangel: mesmo padrão do menu do usuário na `Sidebar` (clique fora + Esc,
  * `role="menu"`), sem biblioteca de popover para dois itens.
  */
+type PresenceOf = (userId: string) => UserPresenceStatus | undefined;
+
 function TransferMenu({
   assignees,
   assignedTo,
   onAssign,
+  presenceOf,
 }: {
   assignees: ConversationAssignee[];
   assignedTo: string | null;
   onAssign: (userId: string | null) => void;
+  presenceOf?: PresenceOf;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -278,9 +285,11 @@ function TransferMenu({
               type="button"
               role="menuitem"
               onClick={() => choose(assignee.id)}
-              className="w-full cursor-pointer border-none bg-transparent px-md py-xs text-left font-body text-label text-text hover:bg-accent-100"
+              className="flex w-full cursor-pointer items-center gap-xs border-none bg-transparent px-md py-xs text-left font-body text-label text-text hover:bg-accent-100"
             >
-              {assignee.name}
+              {/* CRMLAB-120 (D-286): ver quem está disponível antes de transferir. */}
+              <PresenceDot status={presenceOf?.(assignee.id)} />
+              <span className="min-w-0 flex-1 truncate">{assignee.name}</span>
             </button>
           ))}
 
@@ -312,6 +321,7 @@ function ParticipantsMenu({
   canManage,
   onAdd,
   onRemove,
+  presenceOf,
 }: {
   conversation: ConversationDetail;
   assignees: ConversationAssignee[];
@@ -319,6 +329,7 @@ function ParticipantsMenu({
   canManage: boolean;
   onAdd: (userId: string) => void;
   onRemove: (userId: string) => void;
+  presenceOf?: PresenceOf;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -390,6 +401,7 @@ function ParticipantsMenu({
           )}
           {participants.map((p) => (
             <div key={p.id} className="flex items-center gap-sm px-md py-xs">
+              <PresenceDot status={presenceOf?.(p.id)} />
               <span className="min-w-0 flex-1 truncate font-body text-label text-text">
                 {p.name}
               </span>
@@ -434,9 +446,10 @@ function ParticipantsMenu({
                   type="button"
                   role="menuitem"
                   onClick={() => act(() => onAdd(a.id))}
-                  className={itemClass}
+                  className={cn(itemClass, 'flex items-center gap-xs')}
                 >
-                  {a.name}
+                  <PresenceDot status={presenceOf?.(a.id)} />
+                  <span className="min-w-0 flex-1 truncate">{a.name}</span>
                 </button>
               ))}
             </div>
@@ -465,6 +478,7 @@ export function ConversationPanel({
   onAddParticipant,
   onRemoveParticipant,
   canTransfer = true,
+  presenceOf,
   onToggleContext,
   onClose,
   onSendAttachments,
@@ -773,6 +787,7 @@ export function ConversationPanel({
               canManage={canManageParticipants}
               onAdd={onAddParticipant}
               onRemove={onRemoveParticipant}
+              presenceOf={presenceOf}
             />
           )}
           {canTransfer && (
@@ -780,6 +795,7 @@ export function ConversationPanel({
               assignees={assignees}
               assignedTo={conversation.assignedTo}
               onAssign={onAssign}
+              presenceOf={presenceOf}
             />
           )}
           {onNewBudget && (

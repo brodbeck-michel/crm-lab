@@ -8,7 +8,7 @@ import {
   type ListPatientsQuery,
   type MessageSearchHit,
 } from '@crm-lab/shared';
-import { api, isApiError, queryKeys, queryScopes, staleTimes } from '@/api';
+import { api, isApiError, queryKeys, queryScopes, staleTimes, usePresenceOf } from '@/api';
 import { useQuickReplyList } from '@/api/quick-replies';
 import { useEffectiveFunnelRules } from '@/api/funnel-rules';
 import { useBusinessCalendar } from '@/api/holidays';
@@ -86,6 +86,8 @@ export function Attendance() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const handleApiError = useApiErrorHandler();
+  // CRMLAB-120 (D-286): status da equipe nos menus Transferir e Participantes.
+  const presenceOf = usePresenceOf();
   const currentUser = useAuthStore(selectUser);
   const contextOpen = useUIStore((state) => state.contextPanelOpen);
   const toggleContextPanel = useUIStore((state) => state.toggleContextPanel);
@@ -630,6 +632,7 @@ export function Attendance() {
         }
         conversation={
           <ConversationPanel
+            presenceOf={presenceOf}
             conversation={conversation}
             messages={messages}
             isLoading={selectedId !== null && detailQuery.isPending}

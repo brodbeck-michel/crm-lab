@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { FocusEvent, KeyboardEvent } from 'react';
-import type { ChatDirectoryUser } from '@crm-lab/shared';
+import type { ChatDirectoryUser, UserPresenceStatus } from '@crm-lab/shared';
+import { PresenceDot } from '@/components/shared';
 import { Chip, SearchInput, cn } from '@/components/ui';
 
 /**
@@ -29,6 +30,8 @@ export interface UserSearchProps {
   onSelectUser: (userId: string) => void;
   isLoading: boolean;
   isError: boolean;
+  /** Status de cada colega (CRMLAB-120, D-286). Sem ele, sem bolinha. */
+  presenceOf?: (userId: string) => UserPresenceStatus | undefined;
 }
 
 const ROLE_LABELS: Record<string, string> = {
@@ -37,7 +40,7 @@ const ROLE_LABELS: Record<string, string> = {
   attendant: 'Atendente',
 };
 
-export function UserSearch({ users, onSelectUser, isLoading, isError }: UserSearchProps) {
+export function UserSearch({ users, onSelectUser, isLoading, isError, presenceOf }: UserSearchProps) {
   const [term, setTerm] = useState('');
   const [open, setOpen] = useState(false);
   // Remonta o `SearchInput` (não-controlado) para limpar o campo após escolher
@@ -109,6 +112,7 @@ export function UserSearch({ users, onSelectUser, isLoading, isError }: UserSear
                     'font-body text-label text-text transition-colors hover:bg-neutral-200',
                   )}
                 >
+                  <PresenceDot status={presenceOf?.(user.id)} />
                   <span className="min-w-0 flex-1 truncate">{user.name}</span>
                   <Chip>{ROLE_LABELS[user.role] ?? user.role}</Chip>
                 </button>

@@ -70,6 +70,22 @@ export interface ListPatientsResponse {
 }
 
 /**
+ * `POST /patients` (CRMLAB-121, D-287) — cadastro do contato antes da primeira
+ * mensagem. `phone` passa por `normalizeBrazilianPhone` (o mesmo da Nova
+ * conversa). Telefone ja cadastrado no laboratorio — inclusive na variante
+ * com/sem o nono digito (D-176) — nao cria outro: `409 CONFLICT` com
+ * `details.reason: "phone_already_in_use"` e `details.patientId` quando quem
+ * pediu enxerga o cadastro existente. Resposta `201`: `PatientDetail` cru.
+ */
+export interface CreatePatientRequest {
+  name: string;
+  phone: string;
+  email?: string | null;
+  /** CPF, com ou sem mascara — sai so digitos. */
+  document?: string | null;
+}
+
+/**
  * PATCH parcial: campo ausente permanece, `null` apaga.
  * `phone` e editavel desde D-106 — mas nunca apagavel (`string`, sem `| null`): e a
  * chave de deduplicacao do webhook, tem que continuar existindo. Numero ja usado por

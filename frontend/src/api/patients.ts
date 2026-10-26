@@ -1,6 +1,7 @@
 import type {
   AnonymizePatientRequest,
   AnonymizePatientResponse,
+  CreatePatientRequest,
   InactivatePatientRequest,
   ListPatientTimelineQuery,
   ListPatientTimelineResponse,
@@ -22,17 +23,18 @@ import type { QueryParams } from './client';
  * `GET /proposals?patientId=` (`proposalsApi.list`) — não existe
  * `GET /patients/:id/proposals`.
  *
- * O que NÃO existe aqui, de propósito:
- *  - `create`: o paciente nasce do canal (`findOrCreateByPhone`, D-061);
- *  - `remove`: o apagamento LGPD é `anonymize` (D-063).
+ * `create` (CRMLAB-121, D-287) cadastra o contato antes da primeira
+ * mensagem; telefone já cadastrado volta `409 CONFLICT`
+ * (`details.reason: "phone_already_in_use"`, com `patientId` quando visível).
+ * Não existe `remove`: o apagamento LGPD é `anonymize` (D-063).
  *
- * `update` é PATCH parcial: campo ausente PRESERVA, `null` APAGA. `phone`
- * não é aceito pelo servidor (D-061) e por isso não entra em
- * `UpdatePatientRequest`.
+ * `update` é PATCH parcial: campo ausente PRESERVA, `null` APAGA.
  */
 export const patientsApi = {
   list: (query: ListPatientsQuery = {}) =>
     http.get<ListPatientsResponse>('/patients', query as QueryParams),
+
+  create: (body: CreatePatientRequest) => http.post<PatientDetail>('/patients', body),
 
   get: (id: string) => http.get<PatientDetail>(`/patients/${id}`),
 

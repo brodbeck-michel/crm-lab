@@ -1727,12 +1727,17 @@ antes: por esse caminho só, a lista não traz o paciente e editar responde `404
 traz `canEdit: boolean` — `false` exatamente nesse caso (a tela abre só leitura); gestor e admin,
 sempre `true`.
 
-**Não existe `POST /patients`.** O paciente nasce do canal: `findOrCreateByPhone` resolve ou
-cria a linha pelo telefone dentro do tenant (`UNIQUE (tenant_id, phone)`) quando a conversa
-chega. Não há fluxo de UI para cadastrar paciente sem conversa, e um `POST` criaria uma segunda
-origem para a mesma entidade. `phone` **é** editável por `PATCH` desde D-106 (ver seção do
-endpoint) — o índice único continua de pé, então dois pacientes nunca dividem o mesmo telefone;
-tentar salvar um duplicado é recusado com `409 CONFLICT`, não fundido.
+**`POST /patients` existe desde o CRMLAB-121 (D-287, revisa D-061).** O paciente continua
+nascendo do canal (`findOrCreateByPhone`, quando a conversa chega), mas também pode ser
+cadastrado à mão antes da primeira mensagem. Quando esse contato escreve, o webhook o acha pelo
+telefone **com ou sem o nono dígito** (mesma regra de D-176) e a conversa nasce ligada a ele, com
+o nome do cadastro. `phone` **é** editável por `PATCH` desde D-106 (ver seção do endpoint) — o
+índice único continua de pé, então dois pacientes nunca dividem o mesmo telefone; tentar salvar
+um duplicado é recusado com `409 CONFLICT`, não fundido.
+
+**Contato sem conversa nenhuma (D-287)** é visível e editável por **toda** atendente — na lista,
+na busca e na ficha: não há conversa de ninguém para esconder. Ao ganhar a primeira conversa,
+volta ao recorte normal de D-060.
 
 **Não existe `DELETE /patients/:id`.** O caminho LGPD de apagamento é
 `POST /patients/:id/anonymize` (D-063).
@@ -1798,6 +1803,25 @@ nunca coluna materializada — BUSINESS_RULES §5. É `null` para paciente sem i
 `Chip` de status por linha.
 
 **Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403, `platform_operator`)
+
+### POST /patients
+Cadastro do contato à mão (CRMLAB-121, D-287). Qualquer papel de laboratório (mesma alçada do
+`PATCH /:id`). Shape: `CreatePatientRequest`.
+
+```json
+{ "name": "Maria Souza", "phone": "(48) 99999-1234", "email": null, "document": "529.982.247-25" }
+```
+
+- `name` obrigatório (1–255, aparado). `phone` obrigatório, validado por
+  `normalizeBrazilianPhone` (o mesmo da Nova conversa) e gravado em E.164 (`+5548999991234`).
+  `email` e `document` (CPF com DV, sai só dígitos) opcionais. Campo desconhecido → `400`.
+- **`201`** com o `PatientDetail` cru (`conversationCount: 0`, `canEdit: true`). Gera audit log
+  `create_patient`.
+- Telefone já cadastrado no laboratório — no mesmo formato **ou** na variante com/sem o nono
+  dígito → **`409 CONFLICT`** `{ reason: "phone_already_in_use", patientId? }`. `patientId` só
+  vem quando quem pediu enxerga o cadastro existente (senão o 409 abriria a ficha de outra
+  atendente). Nunca cria um segundo cadastro.
+- Telefone de **outro** laboratório não conflita (o índice é `(tenant_id, phone)`).
 
 ### GET /patients/:id
 Cadastro + contadores. **Não** embute timeline nem propostas (D-060): a timeline é paginada e

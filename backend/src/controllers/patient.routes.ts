@@ -2,6 +2,7 @@
  * Rotas da ficha do paciente — API_CONTRACTS.md §2c (D-059..D-063).
  *
  *   GET   /api/v1/patients                 busca/listagem paginada
+ *   POST  /api/v1/patients                 cadastra contato (qualquer papel, D-287)
  *   GET   /api/v1/patients/:id             cadastro + contadores
  *   PATCH /api/v1/patients/:id             edita o cadastro
  *   GET   /api/v1/patients/:id/timeline    historico de interacoes
@@ -10,8 +11,9 @@
  *   POST  /api/v1/patients/:id/inactivate  inativa o cadastro (qualquer papel, D-132)
  *   POST  /api/v1/patients/:id/reactivate  reativa o cadastro (qualquer papel, D-132)
  *
- * NAO existe `POST /patients` (o paciente nasce do canal, D-061) nem
- * `DELETE /patients/:id` (o caminho LGPD e `anonymize`, D-063).
+ * `POST /patients` existe desde o CRMLAB-121 (D-287, revisa D-061): o contato
+ * pode nascer antes da primeira mensagem. NAO existe `DELETE /patients/:id`
+ * (o caminho LGPD e `anonymize`, D-063).
  *
  * `denyPlatformOperator()` em TODAS elas. PAGES.md §11 e explicito: o console
  * da plataforma nao tem caminho para dado de paciente — "requisito, nao
@@ -22,9 +24,11 @@
  */
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { z } from 'zod';
+import { normalizeBrazilianPhone } from '@crm-lab/shared';
 import type {
   AnonymizePatientRequest,
   AnonymizePatientResponse,
+  CreatePatientRequest,
   InactivatePatientRequest,
   ListPatientTimelineQuery,
   ListPatientTimelineResponse,
@@ -110,6 +114,29 @@ export const listPatientsQuerySchema = z.object({
 });
 
 export const patientIdParamSchema = z.object({ id: z.uuid() });
+
+/**
+ * Cadastro a mao (D-287). O telefone passa pela MESMA funcao da Nova conversa
+ * (`normalizeBrazilianPhone`): o que o formulario aceita, a API aceita. CPF e
+ * e-mail sao opcionais, com as mesmas regras do PATCH.
+ */
+export const createPatientSchema = z
+  .object({
+    name: z.string().trim().min(1).max(255),
+    phone: z
+      .string()
+      .trim()
+      .max(30)
+      .refine((value) => normalizeBrazilianPhone(value) !== null, 'Telefone invalido'),
+    email: z.string().trim().email().max(255).nullable().optional(),
+    document: z
+      .string()
+      .transform(cpfDigits)
+      .refine(isValidCpf, 'CPF invalido')
+      .nullable()
+      .optional(),
+  })
+  .strict();
 
 /**
  * `.strict()` recusa campo desconhecido. `phone` e editavel desde D-106 —
@@ -203,6 +230,14 @@ export function listPatients(service: PatientService): RequestHandler {
   });
 }
 
+export function createPatient(service: PatientService): RequestHandler {
+  return handle(async (req, res) => {
+    const dto = validated<CreatePatientRequest>(req, 'body');
+    const body: PatientDetail = await service.create(getContext(req), dto);
+    res.status(201).json(body);
+  });
+}
+
 export function getPatient(service: PatientService): RequestHandler {
   return handle(async (req, res) => {
     const { id } = validated<{ id: string }>(req, 'params');
@@ -290,6 +325,9 @@ export function patientModule(deps: ApiModuleDeps): ApiModule {
   const guards = [requireAuth(), denyPlatformOperator()];
 
   router.get('/', ...guards, validate(listPatientsQuerySchema, 'query'), listPatients(service));
+
+  // Qualquer papel de laboratorio cadastra contato (D-287) — mesma alcada do PATCH.
+  router.post('/', ...guards, validate(createPatientSchema, 'body'), createPatient(service));
 
   router.get(
     '/:id',

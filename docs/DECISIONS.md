@@ -6246,3 +6246,37 @@ nesse intervalo.
 `websocket.types.ts`; backend `ws-hub.ts`, `user.repository.ts`, `user.service.ts`, `user.routes.ts`;
 frontend `Avatar`, `Sidebar`, `UserTable`, `PatientContext`, `api/ws.ts`, hook de inatividade e
 tokens `--color-presence-*`. Rotas novas: `GET /users/presence`, `PATCH /users/me/presence`.
+
+### D-287: Contato cadastrado à mão, reconhecido com ou sem o nono dígito (CRMLAB-121, revisa D-061)
+**Decisão:**
+1. Existe `POST /patients` (qualquer papel de laboratório): nome + telefone obrigatórios, CPF e
+   e-mail opcionais. Telefone por `normalizeBrazilianPhone` (E.164), como a Nova conversa. Botão
+   "Novo contato" na tela de Pacientes.
+2. Telefone já cadastrado — mesmo formato ou variante com/sem o nono dígito (D-176) — devolve
+   `409 CONFLICT` `phone_already_in_use`, nunca um segundo cadastro. `patientId` só vai no erro
+   quando quem pediu enxerga o existente.
+3. `upsertPatientByPhone` (webhook, Nova conversa, atendimento manual) procura o paciente pelo
+   telefone **e** pela variante do nono dígito antes de inserir (`phoneMatchKeys`, que passou de
+   `conversation.repository.ts` para `patient.repository.ts`). Exato primeiro. O nome do perfil
+   do WhatsApp continua só preenchendo cadastro sem nome (D-072).
+4. Conversa **nova** nasce com `patient_name` = nome do cadastro quando ele existe (antes: o
+   apelido do perfil). Assim o contato cadastrado aparece no Atendimento com o nome dado pelo
+   laboratório.
+5. Paciente **sem nenhuma conversa** é visível e editável por toda atendente (lista, busca, ficha,
+   `canEdit`). Com a primeira conversa, volta ao recorte de D-060.
+6. A Nova conversa ganha "Buscar contato" (nome, CPF ou telefone, `GET /patients?search=`), que
+   preenche o telefone. A busca fica fora do `<form>` para o Enter no telefone continuar enviando.
+7. **Sugestão do nono dígito (pedido do PO, 26/10/2026):** no Novo contato e na Nova conversa,
+   celular digitado com 8 dígitos (começando de 6 a 9) mostra "Celular sem o 9? Sugestão:
+   (48) 9XXXX-XXXX" com o botão "Usar". É sugestão, não erro: o número antigo continua aceito.
+**Motivo:** a equipe quer cadastrar a pessoa antes do primeiro contato e achar o contato pelo
+nome para mandar mensagem. Sem a variante do nono dígito no cadastro, o WhatsApp — que ainda manda
+muito celular pelo JID antigo de 12 dígitos — criaria um segundo paciente em vez de reconhecer o
+cadastrado. Sem o item 5, o contato recém-cadastrado ficaria invisível para a atendente que o
+cadastrou.
+**Impacto:** `patient.repository.ts` (`phoneMatchKeys`, `selectByPhone`, `create`, visibilidade),
+`conversation.repository.ts` (reexporta `phoneMatchKeys`; nome da conversa nova),
+`patient.service.ts`, `patient.routes.ts`, `shared/types/patient.types.ts`
+(`CreatePatientRequest`). Frontend: `Patients/NewPatientModal.tsx`, `patients/PhoneField.tsx`,
+`lib/phone-suggestion.ts`, `Attendance/ContactSearch.tsx`, `NewConversationModal.tsx`. Sem
+migração. Conversas e pacientes já duplicados pelos dois formatos continuam separados.

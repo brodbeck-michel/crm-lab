@@ -146,7 +146,7 @@ describe('isolamento multitenant', () => {
 });
 
 describe('recorte por papel na listagem e na ficha (D-060)', () => {
-  it('atendente so ve paciente com conversa dele ou na fila; gestor ve todos', async () => {
+  it('atendente so ve paciente com conversa dele, na fila ou sem conversa (D-287); gestor ve todos', async () => {
     const meu = await createPatient({ tenantId: tenantA.id, name: 'Meu', db });
     const naFila = await createPatient({ tenantId: tenantA.id, name: 'Na fila', db });
     const doOutro = await createPatient({ tenantId: tenantA.id, name: 'Do outro', db });
@@ -165,8 +165,9 @@ describe('recorte por papel na listagem e na ficha (D-060)', () => {
 
     const doAtendente = await app.agent.get(BASE).set(app.auth(attendantA)).expect(200);
     const nomes = doAtendente.body.patients.map((p: { name: string }) => p.name).sort();
-    expect(nomes).toEqual(['Meu', 'Na fila']);
-    expect(doAtendente.body.pagination.total).toBe(2);
+    // Contato sem conversa nenhuma e de todas (D-287): nao ha conversa para esconder.
+    expect(nomes).toEqual(['Meu', 'Na fila', 'Sem conversa']);
+    expect(doAtendente.body.pagination.total).toBe(3);
 
     const doGestor = await app.agent.get(BASE).set(app.auth(managerA)).expect(200);
     expect(doGestor.body.pagination.total).toBe(4);
@@ -177,7 +178,7 @@ describe('recorte por papel na listagem e na ficha (D-060)', () => {
       .set(app.auth(attendantA))
       .expect(404);
     expect(negado.body.error.code).toBe('NOT_FOUND');
-    await app.agent.get(`${BASE}/${semConversa.id}`).set(app.auth(attendantA)).expect(404);
+    await app.agent.get(`${BASE}/${semConversa.id}`).set(app.auth(attendantA)).expect(200);
     await app.agent.get(`${BASE}/${doOutro.id}`).set(app.auth(managerA)).expect(200);
   });
 

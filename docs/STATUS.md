@@ -3590,6 +3590,20 @@ frontend, sem endpoint novo.
 - **Testes:** `useNewMessageAlerts.internal-chat.spec.tsx` (novo, 19), `InternalChat.spec.tsx`
   (+2), `useNewMessageAlerts.spec.tsx` (mock de canais). Suíte completa roda na integração.
 
+### 🚧 CRMLAB-121 — cadastrar contato e achar pelo nome na Nova conversa (2026-10-26, aguardando validação)
+
+Branch `feature/CRMLAB-121-cadastro-contato` (de `main` v1.40.0). Decisão D-287 (revisa D-061),
+sem migração.
+
+- **Backend:** `POST /patients` (409 `phone_already_in_use` também na variante do nono dígito);
+  `upsertPatientByPhone` acha o cadastro com ou sem o 9; conversa nova nasce com o nome do
+  cadastro; paciente sem conversa visível para toda atendente.
+- **Tela:** botão "Novo contato" em Pacientes; "Buscar contato" na Nova conversa; sugestão do
+  nono dígito nos dois campos de telefone.
+- **Testes:** `patients-create.spec.ts` (novo), `patients.routes.spec.ts` (recorte com contato sem
+  conversa), `route-tenant-isolation.spec.ts` (+1 rota, 119); front `NewPatientModal.spec.tsx`
+  (novo), `phone-suggestion.spec.ts` (novo), `NewConversation.spec.tsx` (+3).
+
 ### 🚧 CRMLAB-119 — sem chip "Aguardando resposta" no Atendimento (2026-10-25, aguardando validação)
 
 Branch `feature/CRMLAB-119-sem-chip-aguardando` (de `main` v1.39.0). Decisão D-283 (revê o item 7

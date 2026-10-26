@@ -54,6 +54,7 @@ A seção `/patients` **não introduz código novo**: o catálogo acima já cobr
 |--------|------|--------|---------|
 | `NOT_FOUND` | 404 | Paciente inexistente, de outro tenant **ou fora da visibilidade do atendente** (D-060) | — |
 | `CONFLICT` | 409 | `PATCH /patients/:id` em paciente já anonimizado (D-063) | `{ reason: "patient_anonymized" }` |
+| `CONFLICT` | 409 | `POST /patients` com telefone já cadastrado, inclusive com/sem o nono dígito (D-287) | `{ reason: "phone_already_in_use", patientId? }` |
 | `FORBIDDEN` | 403 | `/export` e `/anonymize` pedidos por não-admin | `{ requiredRoles: ["admin"] }` |
 | `VALIDATION_ERROR` | 400 | CPF com DV inválido, `birthDate` futura, `phone` no corpo do PATCH | `{ fields }` |
 

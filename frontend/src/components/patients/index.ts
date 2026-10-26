@@ -8,3 +8,5 @@ export { PatientLgpdSection } from './PatientLgpdSection';
 export type { PatientLgpdSectionProps } from './PatientLgpdSection';
 export { PatientInactivationSection } from './PatientInactivationSection';
 export type { PatientInactivationSectionProps } from './PatientInactivationSection';
+export { PhoneField } from './PhoneField';
+export type { PhoneFieldProps } from './PhoneField';

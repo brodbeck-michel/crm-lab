@@ -512,3 +512,18 @@ describe('proposal.reminder_due', () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.proposal('p-7') });
   });
 });
+
+// CRMLAB-120/D-286: status de alguém da equipe pode ter mudado — só refaz a lista.
+describe('user.presence_changed', () => {
+  it('invalida o status da equipe, sem toast', () => {
+    const toast = vi.fn();
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    applyWsEvent(
+      queryClient,
+      { event: 'user.presence_changed', data: { userId: 'u-1' } } as WsEvent,
+      toast,
+    );
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.usersPresence() });
+    expect(toast).not.toHaveBeenCalled();
+  });
+});

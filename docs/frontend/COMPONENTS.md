@@ -470,6 +470,19 @@ Anatomia (padrão WhatsApp):
 - `className` opcional (CRMLAB-81) sobrepõe fundo/cor das iniciais — a lista do Atendimento usa
   os tokens `--color-chat-avatar*`
 - SEMPRE flex: 0 0 <size> — nunca comprimido
+- `presence` opcional (CRMLAB-120, D-286): bolinha de status no canto inferior direito
+  (`PresenceDot`, 30% do tamanho, mínimo 8px, borda `surface`). Usado no avatar da `Sidebar`
+
+### PresenceDot
+```tsx
+<PresenceDot status="busy" />        // bolinha de 10px, aria-label "Status: Ocupado"
+<PresenceDot status={undefined} />   // não desenha nada (lista carregando)
+```
+- Status da atendente (CRMLAB-120, D-286): `online` verde, `busy` vermelho, `away` amarelo,
+  `offline` cinza — tokens `--color-presence-*`. Rótulos em `USER_PRESENCE_LABELS`
+- A cor nunca é o único sinal: `role="img"` + `aria-label` + `title`
+- Ao lado do nome: lista de usuários (`UserTable`, prop `presenceOf`) e "Atendente" no contexto
+  do paciente (Atendimento). Dados: `useUsersPresence` / `usePresenceOf` (`api/users.ts`)
 
 ### EmptyState
 ```tsx

@@ -456,6 +456,21 @@ vermelho da agenda — `--color-agenda-danger` agora é `var(--color-danger)`, s
 Tailwind: `danger`, `danger-soft`, `danger-soft-hover`, `danger-ink` (`bg-danger-soft`,
 `text-danger-ink`…). O produto não tem tema escuro, então não há variação.
 
+### Status da atendente (`--color-presence-*`, CRMLAB-120, D-286)
+
+Matiz **literal**, igual para todo tenant: é convenção de status de qualquer chat, não cor do tema.
+Só pinta a bolinha (`PresenceDot`), nunca texto.
+
+| Token | Valor | Uso |
+|---|---|---|
+| `--color-presence-online` | `#2e9e5b` | Online (verde) |
+| `--color-presence-busy` | `#c62828` | Ocupado (vermelho) |
+| `--color-presence-away` | `#d99a06` | Ausente (amarelo) |
+| `--color-presence-offline` | `#8a8f98` | Offline (cinza) |
+
+Tailwind: `presence-online`, `presence-busy`, `presence-away`, `presence-offline`
+(`bg-presence-online`…).
+
 ## Componentes
 
 ### Botões

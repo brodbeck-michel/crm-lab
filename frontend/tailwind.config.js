@@ -54,6 +54,13 @@ export default {
           'soft-hover': 'var(--color-danger-soft-hover)',
           ink: 'var(--color-danger-ink)',
         },
+        // Status da atendente (CRMLAB-120, D-286): `bg-presence-online`…
+        presence: {
+          online: 'var(--color-presence-online)',
+          busy: 'var(--color-presence-busy)',
+          away: 'var(--color-presence-away)',
+          offline: 'var(--color-presence-offline)',
+        },
         // Estágios do pipeline (CRMLAB-91, D-260): `bg-stage-ganho-tint`, `text-stage-ganho-ink`…
         'stage-novo': {
           DEFAULT: 'var(--color-stage-novo)',

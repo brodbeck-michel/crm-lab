@@ -220,6 +220,12 @@ export function applyWsEvent(
       return;
     }
 
+    // CRMLAB-120/D-286: status de alguém da equipe pode ter mudado — refaz a lista.
+    case 'user.presence_changed': {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.usersPresence() });
+      return;
+    }
+
     // Auditoria de 2026-09-17: a sessao do WhatsApp caiu e quem estava
     // atendendo continuou achando que o canal respondia. A queda avisa na
     // hora; a reconexao nao precisa de toast (o card ja muda sozinho).

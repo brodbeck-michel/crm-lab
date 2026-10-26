@@ -1,6 +1,6 @@
 import { Button, Chip } from '@/components/ui';
-import { DateDisplay } from '@/components/shared';
-import type { ManagedUser, PaginationMeta } from '@crm-lab/shared';
+import { DateDisplay, PresenceDot } from '@/components/shared';
+import type { ManagedUser, PaginationMeta, UserPresenceStatus } from '@crm-lab/shared';
 
 interface UserTableProps {
   users: ManagedUser[];
@@ -8,6 +8,8 @@ interface UserTableProps {
   /** Recebe o usuário INTEIRO — o modal de edição não precisa refazer o fetch. */
   onEdit: (user: ManagedUser) => void;
   onPageChange: (page: number) => void;
+  /** Status da atendente agora (CRMLAB-120, D-286). Ausente = sem bolinha. */
+  presenceOf?: (userId: string) => UserPresenceStatus | undefined;
 }
 
 const ROLE_LABELS: Record<string, string> = {
@@ -17,7 +19,13 @@ const ROLE_LABELS: Record<string, string> = {
   platform_operator: 'Operador Plataforma',
 };
 
-export default function UserTable({ users, pagination, onEdit, onPageChange }: UserTableProps) {
+export default function UserTable({
+  users,
+  pagination,
+  onEdit,
+  onPageChange,
+  presenceOf,
+}: UserTableProps) {
   if (users.length === 0) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -46,7 +54,13 @@ export default function UserTable({ users, pagination, onEdit, onPageChange }: U
             {users.map((user) => (
               <tr key={user.id} className="border-b border-neutral-200 hover:bg-accent-100 transition-colors">
                 <td className="px-lg py-md text-body text-neutral-900">{user.email}</td>
-                <td className="px-lg py-md text-body text-neutral-900">{user.name}</td>
+                <td className="px-lg py-md text-body text-neutral-900">
+                  {/* CRMLAB-120 (D-286): status da atendente agora (inativo não tem). */}
+                  <span className="inline-flex items-center gap-xs">
+                    <PresenceDot status={presenceOf?.(user.id)} />
+                    {user.name}
+                  </span>
+                </td>
                 <td className="px-lg py-md text-body text-neutral-900">
                   {ROLE_LABELS[user.role] || user.role}
                 </td>

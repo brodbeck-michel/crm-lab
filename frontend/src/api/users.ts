@@ -5,12 +5,16 @@ import type {
   ListUsersResponse,
   ManagedUser,
   PaginationQuery,
+  UpdateMyPresenceRequest,
   UpdateUserRequest,
+  UserPresenceResponse,
+  UserPresenceStatus,
 } from '@crm-lab/shared';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { http } from './client';
 import { queryKeys, queryScopes } from './query-keys';
 import type { QueryParams } from './client';
+import { useAuthStore, selectRole } from '@/stores/auth.store';
 
 /**
  * `/users` — tela `/settings/users` (admin).
@@ -23,6 +27,12 @@ export const usersApi = {
   create: (body: CreateUserRequest) => http.post<ManagedUser>('/users', body),
 
   update: (id: string, body: UpdateUserRequest) => http.patch<ManagedUser>(`/users/${id}`, body),
+
+  /** Status da equipe (CRMLAB-120, D-286) — qualquer papel de laboratório. */
+  presence: () => http.get<UserPresenceResponse>('/users/presence'),
+
+  updateMyPresence: (body: UpdateMyPresenceRequest) =>
+    http.patch<UserPresenceResponse>('/users/me/presence', body),
 };
 
 /* ── React Query Hooks ──────────────────────────────────────────────────── */
@@ -73,6 +83,38 @@ export function useChangePassword() {
   return useMutation({
     mutationFn: async (data: ChangePasswordRequest) => {
       return http.patch<ChangePasswordResponse>('/users/me/password', data);
+    },
+  });
+}
+
+/**
+ * Status da equipe (CRMLAB-120, D-286). O WS `user.presence_changed` invalida;
+ * o operador da plataforma não tem rota de laboratório, então não pergunta.
+ */
+export function useUsersPresence() {
+  const role = useAuthStore(selectRole);
+  return useQuery({
+    queryKey: queryKeys.usersPresence(),
+    queryFn: () => usersApi.presence(),
+    enabled: role !== null && role !== 'platform_operator',
+    staleTime: 60_000,
+  });
+}
+
+/** `(userId) => status` — `undefined` enquanto carrega ou para quem não está na lista. */
+export function usePresenceOf(): (userId: string | null | undefined) => UserPresenceStatus | undefined {
+  const { data } = useUsersPresence();
+  const byId = new Map(data?.items.map((item) => [item.userId, item.status]));
+  return (userId) => (userId ? byId.get(userId) : undefined);
+}
+
+/** Troca o próprio status ou avisa inatividade — a resposta já é a lista nova. */
+export function useUpdateMyPresence() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: UpdateMyPresenceRequest) => usersApi.updateMyPresence(body),
+    onSuccess: (data) => {
+      queryClient.setQueryData(queryKeys.usersPresence(), data);
     },
   });
 }

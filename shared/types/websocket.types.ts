@@ -19,7 +19,8 @@ export type WsEventName =
   | 'internal_chat.message_updated'
   | 'channel.connection_changed'
   | 'proposal.stale_alert'
-  | 'proposal.reminder_due';
+  | 'proposal.reminder_due'
+  | 'user.presence_changed';
 
 export interface WsEventPayloads {
   'conversation.new_message': { conversationId: string; messageId: string };
@@ -68,6 +69,12 @@ export interface WsEventPayloads {
   'proposal.stale_alert': { proposalId: string; minutes: number; hours: number };
   /** Lembrete de contato venceu (CRMLAB-102, D-272). Uma vez por lembrete, só para quem cuida do cartão. */
   'proposal.reminder_due': { proposalId: string; reminderId: string; dueDate: string };
+  /**
+   * O status de uma pessoa da equipe pode ter mudado (CRMLAB-120, D-286): entrou,
+   * saiu (20 s depois da última aba), trocou o status ou ficou parada/voltou.
+   * Só o ID — o cliente refaz `GET /users/presence`.
+   */
+  'user.presence_changed': { userId: string };
 }
 
 export interface WsEvent<E extends WsEventName = WsEventName> {

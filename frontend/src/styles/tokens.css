@@ -170,6 +170,17 @@
     --color-stage-perdido-ink: color-mix(in oklab, var(--color-stage-perdido) 70%, #1a1a1a);
 
     /* ---------------------------------------------------------------
+     * Status da atendente (CRMLAB-120, D-286): bolinha no canto do avatar.
+     * Matiz LITERAL, igual para todo tenant — é convenção de status
+     * (verde/vermelho/amarelo/cinza de qualquer chat), não cor do tema.
+     * Só pinta o ponto (≥ 3:1 no branco), nunca texto.
+     * --------------------------------------------------------------- */
+    --color-presence-online: #2e9e5b;  /* verde — Online */
+    --color-presence-busy: #c62828;    /* vermelho — Ocupado */
+    --color-presence-away: #d99a06;    /* amarelo — Ausente */
+    --color-presence-offline: #8a8f98; /* cinza — Offline */
+
+    /* ---------------------------------------------------------------
      * Agenda de visitas (CRMLAB-92, D-262). Neutros LITERAIS, iguais
      * para todo tenant: os neutral-* e o surface saem tingidos do accent,
      * e era isso que apagava as linhas da grade. A marca continua vindo

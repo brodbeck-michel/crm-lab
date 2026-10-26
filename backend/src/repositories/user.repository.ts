@@ -6,7 +6,7 @@
  * `findLoginCandidatesByEmail`, usado so pelo login (o tenant ainda nao e
  * conhecido); o nome deixa isso explicito.
  */
-import type { UserRole } from '@crm-lab/shared';
+import type { SelectableUserPresence, UserRole } from '@crm-lab/shared';
 import type { DbTx } from '../db/types.js';
 import { toIso, toIsoOrNull, toNumber } from './row-mappers.js';
 
@@ -256,4 +256,33 @@ export async function updatePasswordHash(
     id,
   ]);
   return result.rowCount > 0;
+}
+
+/**
+ * Status escolhido de todos os usuarios ATIVOS do tenant (CRMLAB-120, D-286).
+ * Dentro de `withTenant`: o RLS limita ao proprio tenant.
+ */
+export async function listPresenceStatuses(
+  tx: DbTx,
+): Promise<{ id: string; presenceStatus: SelectableUserPresence }[]> {
+  const result = await tx.query<{ id: string; presence_status: string }>(
+    'SELECT id, presence_status FROM users WHERE is_active = TRUE ORDER BY name',
+  );
+  return result.rows.map((row) => ({
+    id: row.id,
+    presenceStatus: row.presence_status as SelectableUserPresence,
+  }));
+}
+
+/** Grava o status escolhido. `false` = nenhuma linha (usuario de outro tenant ou removido). */
+export async function updatePresenceStatus(
+  tx: DbTx,
+  id: string,
+  status: SelectableUserPresence,
+): Promise<boolean> {
+  const result = await tx.query('UPDATE users SET presence_status = $1 WHERE id = $2 RETURNING id', [
+    status,
+    id,
+  ]);
+  return result.rows.length > 0;
 }

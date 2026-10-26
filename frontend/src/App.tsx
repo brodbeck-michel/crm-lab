@@ -2,7 +2,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createBrowserRouter } from 'react-router-dom';
 import { ToastProvider } from '@/components/ui';
 import { queryClient } from '@/api/query-client';
-import { useAppWebSocket, useSessionBootstrap } from '@/hooks';
+import { useAppWebSocket, useIdlePresence, useSessionBootstrap } from '@/hooks';
 import { appRoutes } from '@/routes';
 import '@/stores'; // registra a ponte de sessão do client HTTP
 
@@ -17,9 +17,13 @@ import '@/stores'; // registra a ponte de sessão do client HTTP
 
 const router = createBrowserRouter(appRoutes);
 
-/** Conexão WS viva enquanto houver sessão — invalida queries ao receber evento. */
+/**
+ * Conexão WS viva enquanto houver sessão — invalida queries ao receber evento.
+ * Junto, o aviso de "parada há 30 min" do status da atendente (CRMLAB-120).
+ */
 function RealtimeBridge() {
   useAppWebSocket();
+  useIdlePresence();
   return null;
 }
 

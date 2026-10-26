@@ -7,7 +7,8 @@ import { queryKeys, staleTimes } from '@/api/query-keys';
 import { PageContainer, PageHeader } from '@/components/layout';
 import { DataTable, DateDisplay, EmptyState, Pagination } from '@/components/shared';
 import type { DataTableColumn } from '@/components/shared';
-import { Chip, SearchInput } from '@/components/ui';
+import { Button, Chip, SearchInput } from '@/components/ui';
+import { NewPatientModal } from './NewPatientModal';
 
 const PAGE_SIZE = 20;
 
@@ -29,6 +30,7 @@ export function PatientsList() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [includeInactive, setIncludeInactive] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   const filters = useMemo<ListPatientsQuery>(
     () => ({
@@ -102,7 +104,19 @@ export function PatientsList() {
       <PageHeader
         title="Pacientes"
         description="Busque um paciente por nome, CPF ou telefone."
+        actions={
+          <Button variant="primary" onClick={() => setCreating(true)}>
+            Novo contato
+          </Button>
+        }
       />
+
+      {creating && (
+        <NewPatientModal
+          onClose={() => setCreating(false)}
+          onCreated={(patient) => navigate(`/patients/${patient.id}`)}
+        />
+      )}
 
       <div className="flex flex-wrap items-center gap-md">
         <div className="max-w-md flex-1">

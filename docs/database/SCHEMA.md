@@ -211,6 +211,7 @@ CREATE TABLE users (
   discount_limit_percent INT DEFAULT 15, -- máximo desconto permitido
   is_active BOOLEAN DEFAULT TRUE,
   last_login_at TIMESTAMP,
+  presence_status VARCHAR(10) NOT NULL DEFAULT 'online', -- migração 059 (CRMLAB-120, D-286)
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW(),
   
@@ -2311,6 +2312,22 @@ CREATE TABLE internal_message_edits (
 
 ---
 
+### 44. `users.presence_status` (migração 059 — CRMLAB-120, D-286)
+Último status que a pessoa **escolheu**: `online`, `busy` (Ocupado) ou `away` (Ausente). Dono:
+`UserService` (SERVICES.md). Default `online`, sem backfill.
+
+```sql
+ALTER TABLE users
+  ADD COLUMN presence_status VARCHAR(10) NOT NULL DEFAULT 'online'
+    CHECK (presence_status IN ('online', 'busy', 'away'));
+```
+
+- `offline` **não** é gravado: sai de não haver aba aberta (memória do `WebSocketHub`).
+- Inatividade (30 min parada) também fica só em memória. O banco guarda só a escolha.
+- Sem histórico: só o valor atual.
+
+---
+
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
 
 O isolamento multitenant não é convenção: é imposto pelo banco. O backend conecta com o papel
@@ -2599,7 +2616,8 @@ migrations/
 ├── 049_messages_patient_period_index.sql # índice parcial (tenant, created_at) das mensagens do paciente (CRMLAB-83, D-257)
 ├── 054_conversation_auto_replies.sql # messages.automation offhours/greeting + conversation_auto_replies + policy (CRMLAB-94, D-264)
 ├── 055_internal_message_attachments.sql # internal_message_attachments + policy — anexo do chat interno (CRMLAB-101, D-271)
-└── 056_proposal_reminders.sql    # proposal_reminders + policy — lembrete de proposta parada (CRMLAB-102, D-272)
+├── 056_proposal_reminders.sql    # proposal_reminders + policy — lembrete de proposta parada (CRMLAB-102, D-272)
+└── 059_user_presence_status.sql  # users.presence_status — status escolhido da atendente (CRMLAB-120, D-286)
 ```
 
 A 007 e a 008 são arquivos ÚNICOS (tabela + policy), diferente dos pares 003/004 e 005/006: a

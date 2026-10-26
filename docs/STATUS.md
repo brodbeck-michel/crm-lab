@@ -3590,6 +3590,20 @@ frontend, sem endpoint novo.
 - **Testes:** `useNewMessageAlerts.internal-chat.spec.tsx` (novo, 19), `InternalChat.spec.tsx`
   (+2), `useNewMessageAlerts.spec.tsx` (mock de canais). Suíte completa roda na integração.
 
+### 🚧 CRMLAB-121 — cadastrar contato e achar pelo nome na Nova conversa (2026-10-26, aguardando validação)
+
+Branch `feature/CRMLAB-121-cadastro-contato` (de `main` v1.40.0). Decisão D-287 (revisa D-061),
+sem migração.
+
+- **Backend:** `POST /patients` (409 `phone_already_in_use` também na variante do nono dígito);
+  `upsertPatientByPhone` acha o cadastro com ou sem o 9; conversa nova nasce com o nome do
+  cadastro; paciente sem conversa visível para toda atendente.
+- **Tela:** botão "Novo contato" em Pacientes; "Buscar contato" na Nova conversa; sugestão do
+  nono dígito nos dois campos de telefone.
+- **Testes:** `patients-create.spec.ts` (novo), `patients.routes.spec.ts` (recorte com contato sem
+  conversa), `route-tenant-isolation.spec.ts` (+1 rota, 119); front `NewPatientModal.spec.tsx`
+  (novo), `phone-suggestion.spec.ts` (novo), `NewConversation.spec.tsx` (+3).
+
 ### 🚧 CRMLAB-119 — sem chip "Aguardando resposta" no Atendimento (2026-10-25, aguardando validação)
 
 Branch `feature/CRMLAB-119-sem-chip-aguardando` (de `main` v1.39.0). Decisão D-283 (revê o item 7
@@ -3631,3 +3645,22 @@ Branch `feature/CRMLAB-111-emoji-noto` (de `main` v1.39.0). Decisão D-285, só 
 - **Testes:** `src/styles/emoji-font.spec.ts` (5, inclui guarda de COLR/CPAL sem `SVG ` nos woff2);
   `vite build` verde.
 - **Pendente:** validação na hml em Windows, Android e Mac (emoji recente, ex. 🫩 🪾, sem quadrado).
+
+### 🚧 CRMLAB-120 — status da atendente: Online, Ocupado, Ausente e Offline (2026-10-26, aguardando validação)
+
+Branch `feature/CRMLAB-120-status-usuario` (de `main` v1.40.0). Decisão D-286, migração 059.
+
+- **Escolha:** a atendente troca o status pelo menu do próprio avatar na barra lateral ("Meu
+  status": Online, Ocupado, Ausente). Offline não aparece no menu, e a API recusa esse valor. Fica em
+  `users.presence_status`, então ao entrar de novo volta o último status escolhido.
+- **Offline:** quando ela fecha a última aba, o sistema espera 20 s antes de marcar offline. Assim um
+  F5 não faz o status piscar.
+- **Ausente automático:** 30 min sem mexer em nenhuma aba. Quando ela volta a mexer, retorna ao status
+  escolhido. Esse estado fica só em memória no hub WS.
+- **Onde aparece:** bolinha no avatar da barra lateral, ao lado do nome na lista de usuários e no
+  campo "Atendente" do contexto do paciente. Todo papel de laboratório vê.
+- **API:** `GET /users/presence`, `PATCH /users/me/presence`. Evento WS `user.presence_changed { userId }`.
+- **Testes:** backend `tests/users/presence.spec.ts` (11), `ws-hub.spec.ts` (+4 de presença),
+  `route-tenant-isolation` (+2 rotas = 120). Frontend `PresenceDot.spec.tsx`,
+  `useIdlePresence.spec.tsx`, `Sidebar.spec.tsx` (+3), `UserTable.spec.tsx` (+1), `ws.spec.ts` (+1).
+- **Pendente:** validação na hml.

@@ -198,6 +198,21 @@ describe('ConversationPanel — menu de transferência', () => {
     expect(onAssign).toHaveBeenCalledWith('u-2');
   });
 
+  it('mostra o status de cada colega na lista (CRMLAB-120)', async () => {
+    const user = userEvent.setup();
+    render(
+      <ConversationPanel
+        {...props([message('m-1')])}
+        presenceOf={(id) => (id === 'u-2' ? 'online' : undefined)}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Transferir' }));
+    expect(screen.getByRole('menuitem', { name: /Bruno/ })).toContainElement(
+      screen.getByRole('img', { name: 'Status: Online' }),
+    );
+  });
+
   it('devolver para a fila chama onAssign(null)', async () => {
     const user = userEvent.setup();
     const onAssign = vi.fn();
@@ -278,6 +293,22 @@ describe('ConversationPanel — participantes (CRMLAB-93, D-263)', () => {
     expect(screen.queryByText('Adicionar participante')).not.toBeInTheDocument();
     await user.click(screen.getByRole('menuitem', { name: 'Sair da conversa' }));
     expect(p.onRemoveParticipant).toHaveBeenCalledWith('u-3');
+  });
+
+  it('mostra o status de quem participa e de quem dá para chamar (CRMLAB-120)', async () => {
+    const user = userEvent.setup();
+    const status = { 'u-2': 'busy', 'u-3': 'away' } as const;
+    render(
+      <ConversationPanel
+        {...withParticipants({ presenceOf: (id) => status[id as keyof typeof status] })}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Participantes (1)' }));
+    expect(screen.getByRole('img', { name: 'Status: Ocupado' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Carla/ })).toContainElement(
+      screen.getByRole('img', { name: 'Status: Ausente' }),
+    );
   });
 
   it('sem participante, o Encerrar volta a funcionar', () => {

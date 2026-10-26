@@ -37,6 +37,31 @@ export class FakeWsHub implements WsHub {
     this.emitted.push({ tenantId, userId, event, data } as EmittedEvent);
   }
 
+  /** Presenca em memoria (CRMLAB-120): `connect()` faz o papel de abrir uma aba. */
+  private readonly presence = new Map<string, Map<string, { idle: boolean }>>();
+
+  connect(tenantId: string, userId: string): void {
+    const users = this.presence.get(tenantId) ?? new Map<string, { idle: boolean }>();
+    users.set(userId, { idle: false });
+    this.presence.set(tenantId, users);
+  }
+
+  disconnect(tenantId: string, userId: string): void {
+    this.presence.get(tenantId)?.delete(userId);
+  }
+
+  connectedUsers(tenantId: string): ReadonlyMap<string, { idle: boolean }> {
+    return new Map(this.presence.get(tenantId) ?? []);
+  }
+
+  /** Mesma semantica do hub real: ignora desconectado, emite so quando muda. */
+  setUserIdle(tenantId: string, userId: string, idle: boolean): void {
+    const entry = this.presence.get(tenantId)?.get(userId);
+    if (!entry || entry.idle === idle) return;
+    entry.idle = idle;
+    this.emitToTenant(tenantId, 'user.presence_changed', { userId });
+  }
+
   /** Todos os eventos de um tenant, opcionalmente filtrados pelo nome. */
   eventsFor(tenantId: string, event?: WsEventName): EmittedEvent[] {
     return this.emitted.filter(

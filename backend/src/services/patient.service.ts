@@ -39,6 +39,7 @@
 import type {
   AnonymizePatientRequest,
   AnonymizePatientResponse,
+  CreatePatientRequest,
   InactivatePatientRequest,
   ListPatientTimelineQuery,
   ListPatientTimelineResponse,
@@ -50,6 +51,7 @@ import type {
   ReactivatePatientRequest,
   UpdatePatientRequest,
 } from '@crm-lab/shared';
+import { normalizeBrazilianPhone } from '@crm-lab/shared';
 import type { TenantContext } from '../http/context.js';
 import { BusinessError, notFound } from '../http/errors.js';
 import {
@@ -142,6 +144,52 @@ export class PatientService {
       patients: page.rows,
       pagination: paginationOf(criteria.page, criteria.limit, page.total),
     };
+  }
+
+  /**
+   * Cadastro a mao do contato (CRMLAB-121, D-287) — qualquer papel de
+   * laboratorio. O telefone sai no formato da Nova conversa
+   * (`normalizeBrazilianPhone`, E.164), e quando o contato escrever o webhook
+   * o acha pelo `upsertPatientByPhone`, com ou sem o nono digito.
+   *
+   * Telefone ja cadastrado -> 409 `phone_already_in_use`, nunca dois cadastros
+   * (D-106). `patientId` so vai junto quando quem pediu ENXERGA o existente —
+   * senao o 409 viraria caminho lateral para a ficha de outra atendente.
+   */
+  async create(ctx: TenantContext, dto: CreatePatientRequest): Promise<PatientDetail> {
+    const phone = normalizeBrazilianPhone(dto.phone);
+    if (phone === null) {
+      throw new BusinessError('VALIDATION_ERROR', {
+        fields: { phone: 'Telefone invalido: informe DDD + numero' },
+      });
+    }
+    const result = await this.repository.create(
+      ctx.tenantId,
+      {
+        phone,
+        name: dto.name,
+        email: dto.email ?? null,
+        document: dto.document ?? null,
+      },
+      visibilityOf(ctx),
+    );
+    if (!result.patient) {
+      const visible =
+        result.existingId !== null
+          ? await this.repository.findDetail(ctx.tenantId, result.existingId, readVisibilityOf(ctx))
+          : null;
+      throw new BusinessError('CONFLICT', {
+        reason: 'phone_already_in_use',
+        ...(visible ? { patientId: visible.id } : {}),
+      });
+    }
+    await this.audit.record(ctx, {
+      action: 'create_patient',
+      entityType: 'patient',
+      entityId: result.patient.id,
+      newValues: { name: result.patient.name, phone: result.patient.phone },
+    });
+    return result.patient;
   }
 
   /**

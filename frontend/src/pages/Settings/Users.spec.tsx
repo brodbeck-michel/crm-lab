@@ -14,6 +14,7 @@ vi.mock('@/api/users', async () => {
     useUserList: vi.fn(),
     useCreateUser: vi.fn(),
     useUpdateUser: vi.fn(),
+    usePresenceOf: vi.fn(() => () => undefined),
   };
 });
 

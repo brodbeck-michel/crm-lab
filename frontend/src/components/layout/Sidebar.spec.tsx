@@ -7,6 +7,7 @@ import type { AuthTenant, AuthUser, Channel, UserRole } from '@crm-lab/shared';
 import { useAuthStore, useMessageAlertsStore, useUIStore, useSidebarGroupsStore } from '@/stores';
 import { queryKeys, queryScopes } from '@/api/query-keys';
 import { Sidebar } from './Sidebar';
+import type * as ClientModule from '@/api/client';
 
 // Sidebar busca `pendingDecisions.total` para o sino de "Decisões" (PAGES.md §12).
 // Promise que nunca resolve: os testes daqui não afirmam nada sobre o contador.
@@ -39,6 +40,24 @@ const mockUnreadCount = vi.fn(() => Promise.resolve({ unreadMessages: 0 }));
 vi.mock('@/api/conversations', () => ({
   conversationsApi: { unreadCount: () => mockUnreadCount() },
 }));
+
+// Status da atendente (CRMLAB-120, D-286). Default: Ana online, escolheu online.
+const mockPresence = vi.fn();
+const mockUpdatePresence = vi.fn();
+// `usersApi` chama `http` de dentro do módulo — o mock fica no client HTTP.
+vi.mock('@/api/client', async () => {
+  const actual = await vi.importActual<typeof ClientModule>('@/api/client');
+  return {
+    ...actual,
+    http: {
+      ...actual.http,
+      get: (url: string, ...rest: unknown[]) =>
+        url === '/users/presence' ? mockPresence() : actual.http.get(url, ...(rest as [])),
+      patch: (url: string, body: unknown) =>
+        url === '/users/me/presence' ? mockUpdatePresence(body) : actual.http.patch(url, body),
+    },
+  };
+});
 
 /**
  * Sidebar — COMPONENTS.md (`layout/`), variante "Trilho flutuante" (CRMLAB-44):
@@ -99,6 +118,11 @@ beforeEach(() => {
   useUIStore.setState({ sidebarCollapsed: false, contextPanelOpen: true, activeModal: null });
   useSidebarGroupsStore.setState({ openByUser: {} });
   mockChannels.mockReset().mockResolvedValue({ channels: [] });
+  mockPresence.mockReset().mockResolvedValue({
+    items: [{ userId: 'u-1', status: 'online' }],
+    myStatus: 'online',
+  });
+  mockUpdatePresence.mockReset();
 });
 
 describe('Sidebar — larguras', () => {
@@ -482,5 +506,50 @@ describe('Sidebar — preferências do aviso de mensagem nova (CRMLAB-72, D-241)
     await userEvent.click(screen.getByRole('button', { name: /Marina Alves/ }));
     expect(screen.queryByRole('menuitemcheckbox')).not.toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'Sair' })).toBeInTheDocument();
+  });
+});
+
+describe('Sidebar — status da atendente (CRMLAB-120, D-286)', () => {
+  it('mostra a bolinha do status efetivo no avatar', async () => {
+    mockPresence.mockResolvedValue({ items: [{ userId: 'u-1', status: 'away' }], myStatus: 'busy' });
+    login('attendant');
+    renderSidebar();
+    expect(await screen.findByRole('img', { name: 'Status: Ausente' })).toBeInTheDocument();
+  });
+
+  it('o menu marca o escolhido, não oferece Offline e troca o status', async () => {
+    mockPresence.mockResolvedValue({ items: [{ userId: 'u-1', status: 'away' }], myStatus: 'busy' });
+    mockUpdatePresence.mockResolvedValue({
+      items: [{ userId: 'u-1', status: 'online' }],
+      myStatus: 'online',
+    });
+    login('attendant');
+    renderSidebar();
+    await screen.findByRole('img', { name: 'Status: Ausente' });
+
+    await userEvent.click(screen.getByRole('button', { name: /Marina Alves/ }));
+    const radios = screen.getAllByRole('menuitemradio');
+    expect(radios.map((r) => r.textContent)).toEqual(['Online', 'Ocupado', 'Ausente']);
+    expect(screen.getByRole('menuitemradio', { name: /Ocupado/ })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+
+    await userEvent.click(screen.getByRole('menuitemradio', { name: /Online/ }));
+    expect(mockUpdatePresence).toHaveBeenCalledWith({ status: 'online' });
+    await waitFor(() =>
+      expect(screen.getByRole('menuitemradio', { name: /Online/ })).toHaveAttribute(
+        'aria-checked',
+        'true',
+      ),
+    );
+  });
+
+  it('operador da plataforma não tem status', async () => {
+    login('platform_operator');
+    renderSidebar('/platform/tenants');
+    await userEvent.click(screen.getByRole('button', { name: /Marina Alves/ }));
+    expect(screen.queryByRole('menuitemradio')).not.toBeInTheDocument();
+    expect(mockPresence).not.toHaveBeenCalled();
   });
 });

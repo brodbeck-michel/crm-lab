@@ -20,12 +20,23 @@ function tokenFor(tenantId: string, userId: string): string {
   return signRefreshToken({ userId, tenantId, role: 'attendant' });
 }
 
-/** Coletor de mensagens do socket, com espera ativa limitada. */
+/**
+ * Coletor de mensagens do socket, com espera ativa limitada.
+ *
+ * `user.presence_changed` (CRMLAB-120) sai sozinho quando OUTRO usuario do
+ * tenant conecta ou sai — fica de fora por padrao, para os testes de
+ * roteamento contarem so o que eles emitiram.
+ */
 class Collector {
   readonly received: WsEvent[] = [];
-  constructor(readonly ws: WebSocket) {
+  constructor(
+    readonly ws: WebSocket,
+    options: { includePresence?: boolean } = {},
+  ) {
     ws.on('message', (raw) => {
-      this.received.push(JSON.parse(String(raw)) as WsEvent);
+      const event = JSON.parse(String(raw)) as WsEvent;
+      if (event.event === 'user.presence_changed' && !options.includePresence) return;
+      this.received.push(event);
     });
   }
   async waitFor(count: number, timeoutMs = 2000): Promise<void> {
@@ -333,6 +344,111 @@ describe('WebSocketHub — heartbeat', () => {
     await new Promise((r) => setTimeout(r, 250)); // ~5 ciclos de 50ms
     expect(alive.readyState).toBe(WebSocket.OPEN);
     await closeAndWait(alive);
+  });
+});
+
+describe('WebSocketHub — presenca do usuario (CRMLAB-120, D-286)', () => {
+  const GRACE_MS = 150;
+  let server: http.Server;
+  let hub: WebSocketHub;
+  let baseUrl: string;
+
+  beforeAll(async () => {
+    hub = new WebSocketHub({ allowedOrigins: [ALLOWED_ORIGIN], presenceGraceMs: GRACE_MS });
+    server = http.createServer((_req, res) => res.end('ok'));
+    hub.attach(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address() as AddressInfo;
+    baseUrl = `ws://127.0.0.1:${address.port}${WS_PATH}`;
+  });
+
+  afterAll(async () => {
+    await hub.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  const presenceEvents = (c: Collector, userId: string) =>
+    c.received.filter(
+      (e) => e.event === 'user.presence_changed' && (e.data as { userId: string }).userId === userId,
+    );
+
+  it('primeira aba avisa o tenant; segunda aba do mesmo usuario nao', async () => {
+    const watcher = new Collector(await open(baseUrl, { cookie: cookieFor(TENANT_A, USER_A1) }), {
+      includePresence: true,
+    });
+    const first = await open(baseUrl, { cookie: cookieFor(TENANT_A, USER_A2) });
+    const second = await open(baseUrl, { cookie: cookieFor(TENANT_A, USER_A2) });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(presenceEvents(watcher, USER_A2)).toHaveLength(1);
+    expect(hub.connectedUsers(TENANT_A).has(USER_A2)).toBe(true);
+    expect(hub.connectedUsers(TENANT_B).has(USER_A2)).toBe(false);
+
+    await closeAndWait(first, second);
+    await new Promise((r) => setTimeout(r, GRACE_MS + 50));
+    await closeAndWait(watcher.ws);
+    await new Promise((r) => setTimeout(r, GRACE_MS + 50));
+  });
+
+  it('fechar a ultima aba so vira offline depois do prazo', async () => {
+    const watcher = new Collector(await open(baseUrl, { cookie: cookieFor(TENANT_A, USER_A1) }), {
+      includePresence: true,
+    });
+    const tab = await open(baseUrl, { cookie: cookieFor(TENANT_A, USER_A2) });
+    await new Promise((r) => setTimeout(r, 30));
+    await closeAndWait(tab);
+
+    // Ainda dentro do prazo: continua "conectado", ninguem foi avisado da saida.
+    expect(hub.connectedUsers(TENANT_A).has(USER_A2)).toBe(true);
+    expect(presenceEvents(watcher, USER_A2)).toHaveLength(1);
+
+    await new Promise((r) => setTimeout(r, GRACE_MS + 50));
+    expect(hub.connectedUsers(TENANT_A).has(USER_A2)).toBe(false);
+    expect(presenceEvents(watcher, USER_A2)).toHaveLength(2);
+
+    await closeAndWait(watcher.ws);
+    await new Promise((r) => setTimeout(r, GRACE_MS + 50));
+  });
+
+  it('F5 dentro do prazo nao avisa ninguem', async () => {
+    const watcher = new Collector(await open(baseUrl, { cookie: cookieFor(TENANT_A, USER_A1) }), {
+      includePresence: true,
+    });
+    const tab = await open(baseUrl, { cookie: cookieFor(TENANT_A, USER_A2) });
+    await new Promise((r) => setTimeout(r, 30));
+    await closeAndWait(tab);
+    const again = await open(baseUrl, { cookie: cookieFor(TENANT_A, USER_A2) });
+    await new Promise((r) => setTimeout(r, GRACE_MS + 50));
+
+    expect(presenceEvents(watcher, USER_A2)).toHaveLength(1); // so a entrada
+    expect(hub.connectedUsers(TENANT_A).has(USER_A2)).toBe(true);
+
+    await closeAndWait(again, watcher.ws);
+    await new Promise((r) => setTimeout(r, GRACE_MS + 50));
+  });
+
+  it('setUserIdle emite so quando muda e ignora quem nao esta conectado', async () => {
+    const watcher = new Collector(await open(baseUrl, { cookie: cookieFor(TENANT_A, USER_A1) }), {
+      includePresence: true,
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    const before = presenceEvents(watcher, USER_A1).length;
+
+    hub.setUserIdle(TENANT_A, USER_A1, true);
+    hub.setUserIdle(TENANT_A, USER_A1, true);
+    hub.setUserIdle(TENANT_A, USER_A2, true); // offline: ignorado
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(hub.connectedUsers(TENANT_A).get(USER_A1)).toEqual({ idle: true });
+    expect(hub.connectedUsers(TENANT_A).has(USER_A2)).toBe(false);
+    expect(presenceEvents(watcher, USER_A1)).toHaveLength(before + 1);
+
+    await closeAndWait(watcher.ws);
+    await new Promise((r) => setTimeout(r, GRACE_MS + 50));
+    // Offline zera o "parado": ao voltar, comeca ativo.
+    const back = await open(baseUrl, { cookie: cookieFor(TENANT_A, USER_A1) });
+    expect(hub.connectedUsers(TENANT_A).get(USER_A1)).toEqual({ idle: false });
+    await closeAndWait(back);
   });
 });
 

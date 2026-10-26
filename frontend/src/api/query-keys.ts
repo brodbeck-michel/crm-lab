@@ -127,6 +127,8 @@ export const queryKeys = {
   users: (filters?: PaginationQuery) => ['users', filters ?? {}] as const,
   /** ['users', 'me'] */
   currentUser: () => ['users', 'me'] as const,
+  /** ['users', 'presence'] — status da equipe (CRMLAB-120, D-286). */
+  usersPresence: () => ['users', 'presence'] as const,
 
   /** ['audit', filters] */
   audit: (filters?: ListAuditQuery) => ['audit', filters ?? {}] as const,

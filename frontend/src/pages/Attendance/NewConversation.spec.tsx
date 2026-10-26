@@ -301,4 +301,77 @@ describe('Atendimento — Nova conversa (CRMLAB-50)', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(startWhatsAppMock).not.toHaveBeenCalled();
   });
+
+  describe('busca de contato e nono dígito (CRMLAB-121)', () => {
+    const MARIA: ListPatientsResponse = {
+      patients: [
+        {
+          id: 'p-maria',
+          phone: '+5548999991234',
+          name: 'Maria Souza',
+          email: null,
+          birthDate: null,
+          document: null,
+          notes: null,
+          tags: [],
+          customFields: {},
+          anonymizedAt: null,
+          inactivatedAt: null,
+          inactivationReason: null,
+          createdAt: '2026-10-26T12:00:00Z',
+          updatedAt: '2026-10-26T12:00:00Z',
+          lastInteractionAt: null,
+        },
+      ],
+      pagination: { page: 1, limit: 6, total: 1, totalPages: 1 },
+    };
+
+    it('acha o contato pelo nome, preenche o telefone e envia para ele', async () => {
+      listPatientsMock.mockImplementation((query: { search?: string }) =>
+        Promise.resolve(query.search === 'Maria' ? MARIA : NO_PATIENTS),
+      );
+      startWhatsAppMock.mockResolvedValue({
+        conversation: { ...conversation(), patientEmail: null, customFields: {} },
+        message: message(),
+      });
+      renderScreen();
+      const dialog = await openModal();
+
+      await userEvent.type(within(dialog).getByLabelText('Buscar contato'), 'Maria');
+      await userEvent.click(await within(dialog).findByRole('button', { name: /Maria Souza/ }));
+
+      expect(within(dialog).getByLabelText('Telefone (WhatsApp)')).toHaveValue('(48) 99999-1234');
+      expect(within(dialog).getByText('Maria Souza')).toBeInTheDocument();
+
+      await userEvent.type(within(dialog).getByLabelText('Mensagem'), 'Olá, Maria!');
+      await userEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+      await waitFor(() => {
+        expect(startWhatsAppMock).toHaveBeenCalledWith({
+          phone: '+5548999991234',
+          content: 'Olá, Maria!',
+        });
+      });
+    });
+
+    it('celular com 8 dígitos ganha a sugestão com o 9, que "Usar" aplica', async () => {
+      renderScreen();
+      const dialog = await openModal();
+      const field = within(dialog).getByLabelText('Telefone (WhatsApp)');
+
+      await userEvent.type(field, '(48) 9999-1234');
+      expect(within(dialog).getByRole('status')).toHaveTextContent('(48) 99999-1234');
+
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Usar' }));
+      expect(field).toHaveValue('(48) 99999-1234');
+      expect(within(dialog).queryByRole('status')).not.toBeInTheDocument();
+    });
+
+    it('fixo (8 dígitos começando de 2 a 5) não ganha sugestão', async () => {
+      renderScreen();
+      const dialog = await openModal();
+
+      await userEvent.type(within(dialog).getByLabelText('Telefone (WhatsApp)'), '(48) 3622-1234');
+      expect(within(dialog).queryByRole('button', { name: 'Usar' })).not.toBeInTheDocument();
+    });
+  });
 });

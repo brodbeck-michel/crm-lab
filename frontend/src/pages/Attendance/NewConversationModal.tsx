@@ -3,9 +3,12 @@ import type { FormEvent } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { normalizeBrazilianPhone } from '@crm-lab/shared';
 import { api, isApiError, mapFieldErrors, queryScopes } from '@/api';
-import { Button, Input, TextArea, useToast } from '@/components/ui';
+import { PhoneField } from '@/components/patients';
+import { Button, TextArea, useToast } from '@/components/ui';
 import { Modal } from '@/components/shared';
 import { useApiErrorHandler } from '@/hooks';
+import { formatBrazilianPhone } from '@/lib/phone-suggestion';
+import { ContactSearch } from './ContactSearch';
 
 /**
  * "Nova conversa" (CRMLAB-50, D-175) — PAGES.md §2, coluna 1.
@@ -14,6 +17,10 @@ import { useApiErrorHandler } from '@/hooks';
  * validado na hora pela MESMA função do backend (`normalizeBrazilianPhone`),
  * então o que o formulário aceita a API aceita. Número que já tem conversa não
  * duplica: o servidor devolve a existente e é ela que abre.
+ *
+ * Também dá para achar o contato pelo nome (CRMLAB-121, D-287): a busca
+ * preenche o telefone, e o campo sugere o nono dígito quando o celular vem
+ * com 8.
  *
  * Canal fora do ar (`MESSAGE_SEND_FAILED`): a conversa foi criada e a mensagem
  * ficou `failed` — o modal fecha, a conversa abre mesmo assim e o toast explica.
@@ -41,6 +48,8 @@ export function NewConversationModal({
   const handleApiError = useApiErrorHandler();
 
   const [phone, setPhone] = useState(initialPhone ?? '');
+  /** Nome do contato escolhido na busca; some se o telefone for editado. */
+  const [contactName, setContactName] = useState<string | null>(null);
   const [content, setContent] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [phoneTouched, setPhoneTouched] = useState(false);
@@ -135,18 +144,32 @@ export function NewConversationModal({
         </div>
       }
     >
+      {/* A busca fica FORA do form: com um segundo campo dentro, o Enter no
+          telefone deixaria de enviar (submissão implícita só com um campo). */}
+      {!initialPhone && (
+        <div className="mb-md">
+          <ContactSearch
+            onPick={(contact) => {
+              setPhone(formatBrazilianPhone(contact.phone));
+              setContactName(contact.name);
+              setPhoneTouched(true);
+              setFormError(null);
+            }}
+          />
+        </div>
+      )}
       <form onSubmit={handleSubmit} className="flex flex-col gap-md" noValidate>
-        <Input
+        {contactName && (
+          <p className="font-body text-caption text-text">
+            Para: <strong>{contactName}</strong>
+          </p>
+        )}
+        <PhoneField
           label="Telefone (WhatsApp)"
-          type="tel"
-          inputMode="tel"
-          autoComplete="off"
-          autoFocus={!initialPhone}
-          placeholder="(48) 99999-1234"
           value={phone}
-          maxLength={20}
-          onChange={(event) => {
-            setPhone(event.target.value);
+          onChange={(value) => {
+            setPhone(value);
+            setContactName(null);
             setFormError(null);
           }}
           onBlur={() => {

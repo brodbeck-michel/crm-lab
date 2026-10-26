@@ -6205,3 +6205,83 @@ entra para o que a fonte de texto não tem.
 **Impacto:** só frontend — `src/assets/fonts/noto-color-emoji/` (novo), `src/styles/tokens.css`,
 `src/main.tsx`; teste `src/styles/emoji-font.spec.ts` (novo). DESIGN_TOKENS.md (Tipografia).
 Sem mudança de API, sem migração.
+
+## 2026-10-26 — Status da atendente: Online, Ocupado, Ausente e Offline (CRMLAB-120)
+
+### D-286: Status do usuário interno — escolhido no banco, conexão e inatividade em memória (CRMLAB-120)
+**Contexto:** a equipe quer saber quem está trabalhando agora. Escopo fechado com o Michel no card
+(26/10/2026). Não confundir com a presença do **paciente** no WhatsApp (D-226).
+**Decisão:**
+1. **Quatro status** (`UserPresenceStatus`): `online` (verde), `busy` = Ocupado (vermelho),
+   `away` = Ausente (amarelo) e `offline` (cinza). A atendente escolhe só entre os três primeiros
+   (`SelectableUserPresence`). `offline` **não é escolhível**: a API recusa com `VALIDATION_ERROR`.
+2. **O escolhido fica no banco** (`users.presence_status`, migração 059, default `online`). Ao entrar
+   de novo, volta o último que ela escolheu. Sem histórico: só o valor atual.
+3. **Offline = sem aba aberta.** O `WebSocketHub` sabe quem tem socket aberto. Quando o último socket
+   do usuário fecha, espera **20 s** (`PRESENCE_OFFLINE_GRACE_MS`) antes de dar o usuário como offline.
+   Isso evita piscar "offline" num F5 ou numa queda curta de rede. Se ela reabrir dentro do prazo,
+   ninguém fica sabendo.
+4. **Ausente automático:** depois de **30 min** sem mexer o mouse/teclado em nenhuma aba
+   (`USER_IDLE_AFTER_MS`), o frontend avisa `PATCH /users/me/presence { idle: true }`. Quando ela volta
+   a mexer, avisa `{ idle: false }` e o status volta ao escolhido. O "parado" fica **em memória** no hub
+   (não é escolha dela, não vai para o banco) e some quando ela fica offline. As abas dividem o horário
+   da última atividade pelo `localStorage`: mexer numa aba mantém as outras ativas.
+5. **Status efetivo** (o que os outros veem), calculado no backend:
+   sem socket (e fora do prazo do item 3) → `offline`; escolheu `away` → `away`; parado → `away`;
+   senão, o escolhido.
+6. **Só informativo:** nenhuma regra de distribuição, atribuição ou alçada lê o status.
+7. **Todo mundo do laboratório vê** (qualquer papel). `GET /users/presence` devolve o status efetivo
+   de todos os usuários ativos do tenant.
+8. **Realtime:** evento `user.presence_changed { userId }`, só com ID (segue a regra do WS, ao contrário
+   da D-226). O frontend invalida `['users', 'presence']` e refaz o GET. O evento sai quando a pessoa
+   aparece (primeiro socket), some (item 3), troca de status ou fica parada/volta.
+9. **Onde aparece:** bolinha no canto do avatar. Aparece no próprio avatar da barra lateral, onde ela
+   troca o status pelo menu; na lista de usuários (`/settings/users`); e no nome da atendente
+   responsável pela conversa. Ajuste da validação (26/10): também em todo lugar onde se escolhe
+   um colega, que é onde o status ajuda a decidir. Entram os menus **Atribuir/Transferir** e
+   **Participantes** do Atendimento (quem participa e quem dá para chamar) e, no **Chat interno**,
+   a busca de usuário, as mensagens diretas da lista e o cabeçalho da DM ("Mensagem direta ·
+   Ocupado"). Ficou de fora o "Responsável" da proposta: é um `<select>` nativo, que não desenha a bolinha.
+**Limites conhecidos:** o estado em memória vale para **uma instância** do backend (o que roda hoje).
+Com mais de uma, precisaria ir para o Redis. Uma aba oculta há mais de 5 min cuja conexão caia não
+reconecta até voltar a ficar visível (pausa do cliente WS, CRMLAB-33), então a pessoa aparece offline
+nesse intervalo.
+**Impacto:** migração `059_user_presence_status.sql`; `shared/types/user-presence.types.ts` (novo) e
+`websocket.types.ts`; backend `ws-hub.ts`, `user.repository.ts`, `user.service.ts`, `user.routes.ts`;
+frontend `Avatar`, `Sidebar`, `UserTable`, `PatientContext`, `ConversationPanel` (menus), Chat interno
+(`ChannelList`, `UserSearch`, `MessagePanel`), `api/ws.ts`, hook de inatividade e
+tokens `--color-presence-*`. Rotas novas: `GET /users/presence`, `PATCH /users/me/presence`.
+
+### D-287: Contato cadastrado à mão, reconhecido com ou sem o nono dígito (CRMLAB-121, revisa D-061)
+**Decisão:**
+1. Existe `POST /patients` (qualquer papel de laboratório): nome + telefone obrigatórios, CPF e
+   e-mail opcionais. Telefone por `normalizeBrazilianPhone` (E.164), como a Nova conversa. Botão
+   "Novo contato" na tela de Pacientes.
+2. Telefone já cadastrado — mesmo formato ou variante com/sem o nono dígito (D-176) — devolve
+   `409 CONFLICT` `phone_already_in_use`, nunca um segundo cadastro. `patientId` só vai no erro
+   quando quem pediu enxerga o existente.
+3. `upsertPatientByPhone` (webhook, Nova conversa, atendimento manual) procura o paciente pelo
+   telefone **e** pela variante do nono dígito antes de inserir (`phoneMatchKeys`, que passou de
+   `conversation.repository.ts` para `patient.repository.ts`). Exato primeiro. O nome do perfil
+   do WhatsApp continua só preenchendo cadastro sem nome (D-072).
+4. Conversa **nova** nasce com `patient_name` = nome do cadastro quando ele existe (antes: o
+   apelido do perfil). Assim o contato cadastrado aparece no Atendimento com o nome dado pelo
+   laboratório.
+5. Paciente **sem nenhuma conversa** é visível e editável por toda atendente (lista, busca, ficha,
+   `canEdit`). Com a primeira conversa, volta ao recorte de D-060.
+6. A Nova conversa ganha "Buscar contato" (nome, CPF ou telefone, `GET /patients?search=`), que
+   preenche o telefone. A busca fica fora do `<form>` para o Enter no telefone continuar enviando.
+7. **Sugestão do nono dígito (pedido do PO, 26/10/2026):** no Novo contato e na Nova conversa,
+   celular digitado com 8 dígitos (começando de 6 a 9) mostra "Celular sem o 9? Sugestão:
+   (48) 9XXXX-XXXX" com o botão "Usar". É sugestão, não erro: o número antigo continua aceito.
+**Motivo:** a equipe quer cadastrar a pessoa antes do primeiro contato e achar o contato pelo
+nome para mandar mensagem. Sem a variante do nono dígito no cadastro, o WhatsApp — que ainda manda
+muito celular pelo JID antigo de 12 dígitos — criaria um segundo paciente em vez de reconhecer o
+cadastrado. Sem o item 5, o contato recém-cadastrado ficaria invisível para a atendente que o
+cadastrou.
+**Impacto:** `patient.repository.ts` (`phoneMatchKeys`, `selectByPhone`, `create`, visibilidade),
+`conversation.repository.ts` (reexporta `phoneMatchKeys`; nome da conversa nova),
+`patient.service.ts`, `patient.routes.ts`, `shared/types/patient.types.ts`
+(`CreatePatientRequest`). Frontend: `Patients/NewPatientModal.tsx`, `patients/PhoneField.tsx`,
+`lib/phone-suggestion.ts`, `Attendance/ContactSearch.tsx`, `NewConversationModal.tsx`. Sem
+migração. Conversas e pacientes já duplicados pelos dois formatos continuam separados.

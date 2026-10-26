@@ -165,4 +165,18 @@ describe('UserTable', () => {
     const nextButton = screen.getByText('Próxima');
     expect(nextButton).toBeDisabled();
   });
+
+  it('mostra a bolinha de status ao lado do nome (CRMLAB-120)', () => {
+    render(
+      <UserTable
+        users={mockUsers}
+        pagination={{ page: 1, limit: 20, total: 3, totalPages: 1 }}
+        onEdit={vi.fn()}
+        onPageChange={vi.fn()}
+        presenceOf={(id) => (id === '2' ? 'busy' : undefined)}
+      />,
+    );
+    expect(screen.getAllByRole('img')).toHaveLength(1);
+    expect(screen.getByRole('img', { name: 'Status: Ocupado' })).toBeInTheDocument();
+  });
 });

@@ -1,8 +1,9 @@
 import { Link } from 'react-router-dom';
-import type { ConversationDetail, Proposal } from '@crm-lab/shared';
+import type { ConversationDetail, Proposal, UserPresenceStatus } from '@crm-lab/shared';
 import { PROPOSAL_STATUS_LABELS, TERMINAL_STATUSES } from '@crm-lab/shared';
 import { Button, Chip } from '@/components/ui';
-import { Avatar, DateDisplay, EmptyState, MoneyDisplay } from '@/components/shared';
+import { Avatar, DateDisplay, EmptyState, MoneyDisplay, PresenceDot } from '@/components/shared';
+import { usePresenceOf } from '@/api';
 
 /**
  * Coluna 3 do inbox (316px, recolhível) — PAGES.md §2.
@@ -27,11 +28,15 @@ export interface PatientContextProps {
   onOpenProposal: (proposalId: string) => void;
 }
 
-function Field({ label, value }: { label: string; value: string }) {
+function Field({ label, value, presence }: { label: string; value: string; presence?: UserPresenceStatus }) {
   return (
     <div className="flex min-w-0 flex-col">
       <span className="text-micro font-semibold uppercase text-neutral-600">{label}</span>
-      <span className="truncate text-body text-text">{value}</span>
+      <span className="flex min-w-0 items-center gap-xs text-body text-text">
+        {/* CRMLAB-120 (D-286): status da atendente responsável. */}
+        <PresenceDot status={presence} />
+        <span className="truncate">{value}</span>
+      </span>
     </div>
   );
 }
@@ -43,6 +48,7 @@ export function PatientContext({
   isError,
   onOpenProposal,
 }: PatientContextProps) {
+  const presenceOf = usePresenceOf();
   if (!conversation) {
     return <EmptyState message="Sem paciente em foco" hint="Abra uma conversa para ver o cadastro." />;
   }
@@ -78,6 +84,7 @@ export function PatientContext({
         <Field
           label="Atendente"
           value={conversation.assignedToName ?? 'Na fila (sem atendente)'}
+          presence={presenceOf(conversation.assignedTo)}
         />
         {custom.map(([key, value]) => (
           <Field key={key} label={key} value={value} />

@@ -37,7 +37,7 @@ import type {
   ConversationStatus,
 } from '@crm-lab/shared';
 import type { DbClient, DbTx } from '../db/types.js';
-import { upsertPatientByPhone } from './patient.repository.js';
+import { phoneMatchKeys, upsertPatientByPhone } from './patient.repository.js';
 import { toIso, toIsoOrNull, toNumber } from './row-mappers.js';
 
 /** Colunas ordenaveis expostas na query string -> coluna real (whitelist). */
@@ -69,23 +69,10 @@ export function phoneDigits(value: string): string {
 /** Normalizacao de telefone em SQL — precisa casar com `phoneDigits`. */
 const phoneDigitsSql = (column: string): string => `regexp_replace(${column}, '[^0-9]', '', 'g')`;
 
-/**
- * Chaves de dedupe de um telefone (D-176): os digitos e, para celular
- * brasileiro, a variante com/sem o nono digito. O WhatsApp ainda identifica
- * muitos celulares pelo JID antigo de 12 digitos (`554899991234`), enquanto o
- * atendente digita o numero atual (`5548999991234`) — sem a variante, a
- * resposta do paciente abriria uma SEGUNDA conversa. So vale quando o numero
- * local sem o 9 comeca de 6 a 9: fixo (2 a 5) nunca casa com celular.
- * A primeira chave e sempre o casamento exato.
- */
-export function phoneMatchKeys(phone: string): string[] {
-  const digits = phoneDigits(phone);
-  const withNine = /^55(\d{2})9([6-9]\d{7})$/.exec(digits);
-  if (withNine) return [digits, `55${withNine[1]}${withNine[2]}`];
-  const withoutNine = /^55(\d{2})([6-9]\d{7})$/.exec(digits);
-  if (withoutNine) return [digits, `55${withoutNine[1]}9${withoutNine[2]}`];
-  return [digits];
-}
+// `phoneMatchKeys` (D-176) mora no repositorio de pacientes desde o CRMLAB-121
+// (D-287): o cadastro de paciente casa pela MESMA regra. Reexportado aqui para
+// quem ja importava daqui.
+export { phoneMatchKeys };
 
 interface ConversationRow {
   id: string;
@@ -561,7 +548,9 @@ export class ConversationRepository {
           tenantId,
           patient.id,
           data.patientPhone,
-          data.patientName ?? null,
+          // Contato cadastrado a mao (D-287): a conversa nasce com o nome do
+          // cadastro, nao com o apelido do perfil do WhatsApp (D-072).
+          patient.name ?? data.patientName ?? null,
           data.patientEmail ?? null,
           data.channel ?? 'whatsapp',
           data.assignedTo ?? null,

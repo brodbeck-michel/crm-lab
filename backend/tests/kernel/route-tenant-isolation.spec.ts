@@ -836,6 +836,16 @@ const LAB_ROUTES: readonly LabRoute[] = [
 
   // --- pacientes (Onda 6 — D-059..D-063) ---
   { name: 'GET /patients', method: 'get', path: () => '/api/v1/patients', actor: 'admin', addressable: false },
+  // CRMLAB-121 (D-287): cadastro a mao. Telefone de outro laboratorio nao conflita — teste
+  // proprio em `tests/patients/patients-create.spec.ts`.
+  {
+    name: 'POST /patients',
+    method: 'post',
+    path: () => '/api/v1/patients',
+    body: () => ({ name: 'Sonda de isolamento', phone: '(48) 98888-7777' }),
+    actor: 'attendant',
+    addressable: false,
+  },
   { name: 'GET /patients/:id', method: 'get', path: (l) => `/api/v1/patients/${l.patient.id}`, actor: 'admin', addressable: true, ownStatus: 200 },
   {
     name: 'PATCH /patients/:id',
@@ -1446,7 +1456,7 @@ describe('inventario de rotas de laboratorio', () => {
     // CRMLAB-103/D-279 soma 1: `GET /analytics/reminders`.
     // CRMLAB-105/D-280 soma 2: `PATCH|DELETE /conversations/:id/messages/:messageId`.
     // CRMLAB-117/D-282 soma 2: `PATCH|DELETE /internal-chat/channels/:id/messages/:messageId`.
-    expect(LAB_ROUTES).toHaveLength(118);
+    expect(LAB_ROUTES).toHaveLength(119);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

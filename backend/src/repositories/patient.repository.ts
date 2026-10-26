@@ -72,6 +72,52 @@ export function phoneDigits(value: string): string {
 
 const phoneDigitsSql = (column: string): string => `regexp_replace(${column}, '[^0-9]', '', 'g')`;
 
+/**
+ * Chaves de dedupe de um telefone (D-176): os digitos e, para celular
+ * brasileiro, a variante com/sem o nono digito. O WhatsApp ainda identifica
+ * muitos celulares pelo JID antigo de 12 digitos (`554899991234`), enquanto o
+ * atendente digita o numero atual (`5548999991234`) — sem a variante, a
+ * resposta do paciente abriria uma SEGUNDA conversa. So vale quando o numero
+ * local sem o 9 comeca de 6 a 9: fixo (2 a 5) nunca casa com celular.
+ * A primeira chave e sempre o casamento exato.
+ */
+export function phoneMatchKeys(phone: string): string[] {
+  const digits = phoneDigits(phone);
+  const withNine = /^55(\d{2})9([6-9]\d{7})$/.exec(digits);
+  if (withNine) return [digits, `55${withNine[1]}${withNine[2]}`];
+  const withoutNine = /^55(\d{2})([6-9]\d{7})$/.exec(digits);
+  if (withoutNine) return [digits, `55${withoutNine[1]}9${withoutNine[2]}`];
+  return [digits];
+}
+
+/**
+ * Formatos em que um telefone pode estar gravado em `patients.phone`: E.164
+ * (`+55...`, o que o webhook e a tela gravam) e so digitos. Comparar com a
+ * lista em vez de `regexp_replace(phone)` deixa o indice unico
+ * `(tenant_id, phone)` trabalhar.
+ */
+function storedPhoneCandidates(phone: string): string[] {
+  return phoneMatchKeys(phone).flatMap((key) => [`+${key}`, key]);
+}
+
+/**
+ * Paciente do telefone, com a variante do nono digito (D-176, D-287). O
+ * casamento exato vem primeiro. Anonimizado nunca casa: o telefone dele virou
+ * `anon-<id>` (D-063).
+ */
+async function selectByPhone(tx: DbTx, phone: string): Promise<PatientRow | null> {
+  const candidates = storedPhoneCandidates(phone);
+  const placeholders = candidates.map((_, index) => `$${index + 2}`).join(', ');
+  const found = await tx.query<PatientRow>(
+    `SELECT ${PATIENT_COLUMNS} FROM patients p
+      WHERE p.phone IN (${placeholders})
+      ORDER BY (${phoneDigitsSql('p.phone')} = $1) DESC, p.created_at ASC, p.id ASC
+      LIMIT 1`,
+    [phoneDigits(phone), ...candidates],
+  );
+  return found.rows[0] ?? null;
+}
+
 /** Placeholder de anonimizacao (D-063) — preserva NOT NULL e a unicidade. */
 const ANON_PHONE_SQL = `'anon-' || substring(id::text, 1, 8)`;
 
@@ -268,6 +314,15 @@ export interface PatientUpdate {
   customFields?: Record<string, string>;
 }
 
+/** Campos de `POST /patients` (D-287), ja normalizados pelo service. */
+export interface PatientInsert {
+  /** E.164, o formato que o webhook grava (D-106). */
+  phone: string;
+  name: string;
+  email: string | null;
+  document: string | null;
+}
+
 /** Coluna real de cada campo do PATCH — whitelist: nada e interpolado do cliente. */
 const UPDATABLE_COLUMNS: Record<keyof PatientUpdate, { column: string; cast?: string }> = {
   phone: { column: 'phone' },
@@ -387,8 +442,11 @@ export class PatientRepository {
     const conversationsCte = conversationAggregate(params, criteria);
     const where: string[] = [];
 
-    // Atendente so enxerga paciente com ao menos uma conversa visivel a ele.
-    if (criteria.visibleTo !== null) where.push('ci.conversation_count > 0');
+    // Atendente so enxerga paciente com ao menos uma conversa visivel a ele —
+    // ou contato ainda sem conversa nenhuma, cadastrado a mao (D-287).
+    if (criteria.visibleTo !== null) {
+      where.push(`(ci.conversation_count > 0 OR ${WITHOUT_CONVERSATIONS_SQL})`);
+    }
 
     // Paciente inativo some da listagem por padrao (D-132) — o checkbox do
     // filtro pede `includeInactive: true` para volta-lo a aparecer.
@@ -754,6 +812,38 @@ export class PatientRepository {
   }
 
   /**
+   * Cadastro a mao (`POST /patients`, D-287). Telefone ja cadastrado — no
+   * mesmo formato ou na variante do nono digito — NAO cria outro: devolve o
+   * existente com `created: false` e o service decide o 409. A corrida entre
+   * dois cadastros do mesmo numero cai no `ON CONFLICT` e tambem devolve o
+   * existente.
+   */
+  async create(
+    tenantId: string,
+    data: PatientInsert,
+    visibility: PatientVisibility,
+  ): Promise<{ patient: PatientDetail | null; existingId: string | null }> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const existing = await selectByPhone(tx, data.phone);
+      if (existing) return { patient: null, existingId: existing.id };
+
+      const inserted = await tx.query<{ id: string }>(
+        `INSERT INTO patients (tenant_id, phone, name, email, document)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (tenant_id, phone) DO NOTHING
+         RETURNING id`,
+        [tenantId, data.phone, data.name, data.email, data.document],
+      );
+      const id = inserted.rows[0]?.id;
+      if (!id) {
+        const raced = await selectByPhone(tx, data.phone);
+        return { patient: null, existingId: raced?.id ?? null };
+      }
+      return { patient: await selectDetail(tx, id, visibility), existingId: null };
+    });
+  }
+
+  /**
    * Inativacao (D-132). Idempotente pelo proprio `WHERE inactivated_at IS
    * NULL`: chamar de novo sobre paciente ja inativo nao muda nada e devolve
    * `changed: false` — mesmo padrao de `anonymize`.
@@ -889,6 +979,21 @@ export async function upsertPatientByPhone(
   const phone = normalizeInboundPhone(rawPhone);
   const name = normalizeInboundName(rawName);
 
+  // Contato cadastrado a mao (D-287) pode estar no outro formato do celular —
+  // o WhatsApp ainda manda muito numero sem o nono digito (D-176). Achou: e
+  // ele, so ganha o nome se ainda nao tiver.
+  const existing = await selectByPhone(tx, phone);
+  if (existing) {
+    if (existing.name !== null || name === null) return toPatient(existing);
+    const named = await tx.query<PatientRow>(
+      `UPDATE patients AS p SET name = $2, updated_at = NOW()
+        WHERE p.id = $1 AND p.name IS NULL
+        RETURNING ${PATIENT_COLUMNS}`,
+      [existing.id, name],
+    );
+    return toPatient(named.rows[0] ?? existing);
+  }
+
   // O `RETURNING` devolve as colunas direto do INSERT em vez de um
   // `WITH ... SELECT FROM patients`: a parte principal de uma query com CTE
   // enxerga o snapshot ANTERIOR ao statement, entao o JOIN de volta na tabela
@@ -909,6 +1014,14 @@ export async function upsertPatientByPhone(
   if (!row) throw new Error('INSERT em patients nao retornou linha');
   return toPatient(row);
 }
+
+/**
+ * Contato cadastrado a mao que ainda nao conversou (D-287): nao ha conversa de
+ * ninguem para esconder, entao toda atendente o enxerga e edita — e o que
+ * permite achar o contato na Nova conversa antes da primeira mensagem.
+ */
+const WITHOUT_CONVERSATIONS_SQL =
+  'NOT EXISTS (SELECT 1 FROM conversations cx WHERE cx.patient_id = p.id)';
 
 /**
  * Agregado de conversas VISIVEIS de um paciente. Uma unica subconsulta serve
@@ -950,14 +1063,17 @@ async function selectDetail(
   const idParam = params.add(id);
   const conversations = conversationAggregate(params, visibility);
   const proposals = proposalAggregate(params, visibility.visibleTo);
-  const visible = visibility.visibleTo !== null ? 'AND ci.conversation_count > 0' : '';
+  const visible =
+    visibility.visibleTo !== null
+      ? `AND (ci.conversation_count > 0 OR ${WITHOUT_CONVERSATIONS_SQL})`
+      : '';
   // `canEdit` (D-273): o recorte de ESCRITA, sem as encerradas alheias — o
   // mesmo de `PatientService.getForWrite`. Gestor/admin: sempre.
   const canEdit =
     visibility.visibleTo === null
       ? 'TRUE'
-      : `EXISTS (SELECT 1 FROM conversations c WHERE c.patient_id = p.id
-                 ${conversationVisibility(params, { visibleTo: visibility.visibleTo })})`;
+      : `(${WITHOUT_CONVERSATIONS_SQL} OR EXISTS (SELECT 1 FROM conversations c WHERE c.patient_id = p.id
+                 ${conversationVisibility(params, { visibleTo: visibility.visibleTo })}))`;
 
   const result = await tx.query<PatientDetailRow>(
     `SELECT ${PATIENT_COLUMNS},

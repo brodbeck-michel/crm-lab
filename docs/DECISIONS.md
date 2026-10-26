@@ -6205,3 +6205,44 @@ entra para o que a fonte de texto não tem.
 **Impacto:** só frontend — `src/assets/fonts/noto-color-emoji/` (novo), `src/styles/tokens.css`,
 `src/main.tsx`; teste `src/styles/emoji-font.spec.ts` (novo). DESIGN_TOKENS.md (Tipografia).
 Sem mudança de API, sem migração.
+
+## 2026-10-26 — Status da atendente: Online, Ocupado, Ausente e Offline (CRMLAB-120)
+
+### D-286: Status do usuário interno — escolhido no banco, conexão e inatividade em memória (CRMLAB-120)
+**Contexto:** a equipe quer saber quem está trabalhando agora. Escopo fechado com o Michel no card
+(26/10/2026). Não confundir com a presença do **paciente** no WhatsApp (D-226).
+**Decisão:**
+1. **Quatro status** (`UserPresenceStatus`): `online` (verde), `busy` = Ocupado (vermelho),
+   `away` = Ausente (amarelo) e `offline` (cinza). A atendente escolhe só entre os três primeiros
+   (`SelectableUserPresence`). `offline` **não é escolhível**: a API recusa com `VALIDATION_ERROR`.
+2. **O escolhido fica no banco** (`users.presence_status`, migração 059, default `online`). Ao entrar
+   de novo, volta o último que ela escolheu. Sem histórico: só o valor atual.
+3. **Offline = sem aba aberta.** O `WebSocketHub` sabe quem tem socket aberto. Quando o último socket
+   do usuário fecha, espera **20 s** (`PRESENCE_OFFLINE_GRACE_MS`) antes de dar o usuário como offline.
+   Isso evita piscar "offline" num F5 ou numa queda curta de rede. Se ela reabrir dentro do prazo,
+   ninguém fica sabendo.
+4. **Ausente automático:** depois de **30 min** sem mexer o mouse/teclado em nenhuma aba
+   (`USER_IDLE_AFTER_MS`), o frontend avisa `PATCH /users/me/presence { idle: true }`. Quando ela volta
+   a mexer, avisa `{ idle: false }` e o status volta ao escolhido. O "parado" fica **em memória** no hub
+   (não é escolha dela, não vai para o banco) e some quando ela fica offline. As abas dividem o horário
+   da última atividade pelo `localStorage`: mexer numa aba mantém as outras ativas.
+5. **Status efetivo** (o que os outros veem), calculado no backend:
+   sem socket (e fora do prazo do item 3) → `offline`; escolheu `away` → `away`; parado → `away`;
+   senão, o escolhido.
+6. **Só informativo:** nenhuma regra de distribuição, atribuição ou alçada lê o status.
+7. **Todo mundo do laboratório vê** (qualquer papel). `GET /users/presence` devolve o status efetivo
+   de todos os usuários ativos do tenant.
+8. **Realtime:** evento `user.presence_changed { userId }`, só com ID (segue a regra do WS, ao contrário
+   da D-226). O frontend invalida `['users', 'presence']` e refaz o GET. O evento sai quando a pessoa
+   aparece (primeiro socket), some (item 3), troca de status ou fica parada/volta.
+9. **Onde aparece:** bolinha no canto do avatar. Aparece no próprio avatar da barra lateral, onde ela
+   troca o status pelo menu; na lista de usuários (`/settings/users`); e no nome da atendente
+   responsável pela conversa.
+**Limites conhecidos:** o estado em memória vale para **uma instância** do backend (o que roda hoje).
+Com mais de uma, precisaria ir para o Redis. Uma aba oculta há mais de 5 min cuja conexão caia não
+reconecta até voltar a ficar visível (pausa do cliente WS, CRMLAB-33), então a pessoa aparece offline
+nesse intervalo.
+**Impacto:** migração `059_user_presence_status.sql`; `shared/types/user-presence.types.ts` (novo) e
+`websocket.types.ts`; backend `ws-hub.ts`, `user.repository.ts`, `user.service.ts`, `user.routes.ts`;
+frontend `Avatar`, `Sidebar`, `UserTable`, `PatientContext`, `api/ws.ts`, hook de inatividade e
+tokens `--color-presence-*`. Rotas novas: `GET /users/presence`, `PATCH /users/me/presence`.

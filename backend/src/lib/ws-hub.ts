@@ -61,6 +61,12 @@ const MAX_SOCKETS_PER_USER = 5;
 const REVALIDATE_EVERY_SWEEPS = 10;
 
 /**
+ * Prazo entre fechar a ULTIMA aba e aparecer offline (CRMLAB-120, D-286 item 3).
+ * Um F5 ou uma queda curta de rede reconecta antes disso, e ninguem ve piscar.
+ */
+export const PRESENCE_OFFLINE_GRACE_MS = 20_000;
+
+/**
  * Interface consumida pelos services. Depende SO disto — assim os testes
  * injetam um hub falso (`tests/helpers/fake-ws.ts`) sem subir servidor.
  */
@@ -76,6 +82,16 @@ export interface WsHub {
     event: E,
     data: WsEventPayloads[E],
   ): void;
+  /**
+   * Quem esta conectado no tenant (CRMLAB-120, D-286), com o flag de parado.
+   * Conta tambem quem fechou a ultima aba ha menos de `PRESENCE_OFFLINE_GRACE_MS`.
+   */
+  connectedUsers(tenantId: string): ReadonlyMap<string, { idle: boolean }>;
+  /**
+   * Marca o usuario como parado (30 min sem mexer) ou de volta. Ignora quem nao
+   * esta conectado. Emite `user.presence_changed` quando muda.
+   */
+  setUserIdle(tenantId: string, userId: string, idle: boolean): void;
 }
 
 export interface AttachableWsHub extends WsHub {
@@ -105,6 +121,14 @@ export interface WsHubOptions {
    * Opcional: hub sem validador (testes, CLIs) segue so com a verificacao do JWT.
    */
   validateSession?: (token: string) => Promise<boolean>;
+  /** Testavel: prazo ate o offline. Producao usa `PRESENCE_OFFLINE_GRACE_MS`. */
+  presenceGraceMs?: number;
+}
+
+/** Usuario conectado (D-286). `offlineTimer` corre depois que a ultima aba fechou. */
+interface UserPresenceEntry {
+  idle: boolean;
+  offlineTimer: ReturnType<typeof setTimeout> | null;
 }
 
 interface SocketMeta {
@@ -133,6 +157,9 @@ export class WebSocketHub implements AttachableWsHub {
   /** tenantId -> sockets daquele tenant (a "room"). */
   private readonly rooms = new Map<string, Set<WebSocket>>();
   private readonly meta = new WeakMap<WebSocket, SocketMeta>();
+  /** tenantId -> userId -> presenca (CRMLAB-120, D-286). So em memoria. */
+  private readonly presence = new Map<string, Map<string, UserPresenceEntry>>();
+  private readonly presenceGraceMs: number;
   private readonly allowedOrigins: Set<string>;
   private readonly heartbeatIntervalMs: number;
   private readonly validateSession: ((token: string) => Promise<boolean>) | null;
@@ -145,6 +172,7 @@ export class WebSocketHub implements AttachableWsHub {
     this.allowedOrigins = new Set(options.allowedOrigins);
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
     this.validateSession = options.validateSession ?? null;
+    this.presenceGraceMs = options.presenceGraceMs ?? PRESENCE_OFFLINE_GRACE_MS;
   }
 
   attach(server: HttpServer): void {
@@ -300,8 +328,9 @@ export class WebSocketHub implements AttachableWsHub {
       if (current) current.isAlive = true;
     });
 
-    ws.on('close', () => this.leave(ws, meta.tenantId));
-    ws.on('error', () => this.leave(ws, meta.tenantId));
+    ws.on('close', () => this.leave(ws, meta));
+    ws.on('error', () => this.leave(ws, meta));
+    this.userConnected(meta.tenantId, meta.userId);
 
     logger.debug('ws.connected', { tenantId: meta.tenantId, userId: meta.userId });
 
@@ -319,11 +348,57 @@ export class WebSocketHub implements AttachableWsHub {
     }
   }
 
-  private leave(ws: WebSocket, tenantId: string): void {
-    const room = this.rooms.get(tenantId);
+  private leave(ws: WebSocket, meta: SocketMeta): void {
+    const room = this.rooms.get(meta.tenantId);
     if (!room) return;
     room.delete(ws);
-    if (room.size === 0) this.rooms.delete(tenantId);
+    if (room.size === 0) this.rooms.delete(meta.tenantId);
+    const stillOpen = [...room].some((s) => this.meta.get(s)?.userId === meta.userId);
+    if (!stillOpen) this.userDisconnected(meta.tenantId, meta.userId);
+  }
+
+  /** Primeira aba (ou volta dentro do prazo, sem aviso — ninguem viu sair). */
+  private userConnected(tenantId: string, userId: string): void {
+    const users = this.presence.get(tenantId) ?? new Map<string, UserPresenceEntry>();
+    this.presence.set(tenantId, users);
+    const entry = users.get(userId);
+    if (entry) {
+      if (entry.offlineTimer) clearTimeout(entry.offlineTimer);
+      entry.offlineTimer = null;
+      return;
+    }
+    users.set(userId, { idle: false, offlineTimer: null });
+    this.emitToTenant(tenantId, 'user.presence_changed', { userId });
+  }
+
+  /** Ultima aba fechou: offline so depois do prazo (D-286 item 3). */
+  private userDisconnected(tenantId: string, userId: string): void {
+    const entry = this.presence.get(tenantId)?.get(userId);
+    // `close` e `error` chamam `leave` os dois: o segundo nao reinicia o prazo.
+    if (!entry || entry.offlineTimer) return;
+    entry.offlineTimer = setTimeout(() => {
+      const users = this.presence.get(tenantId);
+      if (users?.get(userId) !== entry) return;
+      users.delete(userId);
+      if (users.size === 0) this.presence.delete(tenantId);
+      this.emitToTenant(tenantId, 'user.presence_changed', { userId });
+    }, this.presenceGraceMs);
+    entry.offlineTimer.unref?.();
+  }
+
+  connectedUsers(tenantId: string): ReadonlyMap<string, { idle: boolean }> {
+    const result = new Map<string, { idle: boolean }>();
+    for (const [userId, entry] of this.presence.get(tenantId) ?? []) {
+      result.set(userId, { idle: entry.idle });
+    }
+    return result;
+  }
+
+  setUserIdle(tenantId: string, userId: string, idle: boolean): void {
+    const entry = this.presence.get(tenantId)?.get(userId);
+    if (!entry || entry.idle === idle) return;
+    entry.idle = idle;
+    this.emitToTenant(tenantId, 'user.presence_changed', { userId });
   }
 
   private send(ws: WebSocket, message: string): void {
@@ -374,6 +449,12 @@ export class WebSocketHub implements AttachableWsHub {
     }
     this.attachedServer = null;
     this.upgradeHandler = null;
+    for (const users of this.presence.values()) {
+      for (const entry of users.values()) {
+        if (entry.offlineTimer) clearTimeout(entry.offlineTimer);
+      }
+    }
+    this.presence.clear();
     for (const room of this.rooms.values()) {
       for (const ws of room) ws.close();
     }
@@ -389,6 +470,8 @@ export class WebSocketHub implements AttachableWsHub {
 export const noopWsHub: WsHub = {
   emitToTenant: () => undefined,
   emitToUser: () => undefined,
+  connectedUsers: () => new Map(),
+  setUserIdle: () => undefined,
 };
 
 export function createWsHub(options: WsHubOptions): AttachableWsHub {

@@ -21,7 +21,13 @@
 import cookieParser from 'cookie-parser';
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
-import type { ChangePasswordRequest, CreateUserRequest, UpdateUserRequest } from '@crm-lab/shared';
+import type {
+  ChangePasswordRequest,
+  CreateUserRequest,
+  UpdateMyPresenceRequest,
+  UpdateUserRequest,
+} from '@crm-lab/shared';
+import { SELECTABLE_USER_PRESENCE } from '@crm-lab/shared';
 import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
 import { getContext } from '../http/context.js';
 import { denyPlatformOperator, requireAuth, requireRoles } from '../http/middleware/auth.js';
@@ -31,6 +37,7 @@ import { createEmailService } from '../lib/email.js';
 import { createAuditService } from '../services/audit.service.js';
 import { createAuthService } from '../services/auth.service.js';
 import { createThemeService } from '../services/theme.service.js';
+import { createUserPresenceService } from '../services/user-presence.service.js';
 import { createUserService, MIN_PASSWORD_LENGTH } from '../services/user.service.js';
 import { MIN_NEW_PASSWORD_LENGTH } from '../lib/password-policy.js';
 
@@ -68,6 +75,15 @@ const updateUserSchema = z
   .strict()
   .refine((dto) => Object.keys(dto).length > 0, { message: 'Informe ao menos um campo' });
 
+/** CRMLAB-120 (D-286): `offline` fica de fora do enum de proposito — so o sistema decide. */
+const updateMyPresenceSchema = z
+  .object({
+    status: z.enum(SELECTABLE_USER_PRESENCE).optional(),
+    idle: z.boolean().optional(),
+  })
+  .strict()
+  .refine((dto) => Object.keys(dto).length > 0, { message: 'Informe ao menos um campo' });
+
 const idParamSchema = z.object({ id: z.uuid('Identificador inválido') });
 
 /** `newPassword` mínimo aqui é só UX — a política de verdade é `checkPasswordPolicy` no service. */
@@ -89,6 +105,7 @@ export function userModule(deps: ApiModuleDeps): ApiModule {
   const theme = createThemeService({ db: deps.db, audit });
   const email = createEmailService();
   const auth = createAuthService({ db: deps.db, cache: deps.cache, audit, theme, email });
+  const presence = createUserPresenceService({ db: deps.db, wsHub: deps.wsHub });
 
   const router = Router();
   router.use(requireAuth(), denyPlatformOperator());
@@ -102,6 +119,26 @@ export function userModule(deps: ApiModuleDeps): ApiModule {
       .then((result) => res.status(200).json(result))
       .catch(next);
   });
+
+  // Status da equipe (CRMLAB-120, D-286): qualquer papel de laboratorio ve todos.
+  router.get('/presence', (req: Request, res: Response, next): void => {
+    presence
+      .list(getContext(req))
+      .then((result) => res.status(200).json(result))
+      .catch(next);
+  });
+
+  router.patch(
+    '/me/presence',
+    validate(updateMyPresenceSchema, 'body'),
+    (req: Request, res: Response, next): void => {
+      const dto = validated<UpdateMyPresenceRequest>(req, 'body');
+      presence
+        .updateMine(getContext(req), dto)
+        .then((result) => res.status(200).json(result))
+        .catch(next);
+    },
+  );
 
   router.patch(
     '/me/password',

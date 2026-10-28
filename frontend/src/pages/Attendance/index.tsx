@@ -571,7 +571,7 @@ export function Attendance() {
   const assigneesQuery = useQuery({
     queryKey: queryKeys.conversationAssignees(),
     queryFn: () => api.conversations.assignees(),
-    staleTime: staleTimes.patients,
+    staleTime: staleTimes.slowRegistry,
   });
 
   /**

@@ -57,6 +57,9 @@ export function useCreateUser() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryScopes.users });
+      // CRMLAB-122 (D-288): a lista de quem recebe conversa saiu do escopo
+      // `conversations` e não é mais refeita por mensagem do WS.
+      queryClient.invalidateQueries({ queryKey: queryKeys.conversationAssignees() });
     },
   });
 }
@@ -70,6 +73,7 @@ export function useUpdateUser() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryScopes.users });
+      queryClient.invalidateQueries({ queryKey: queryKeys.conversationAssignees() });
     },
   });
 }

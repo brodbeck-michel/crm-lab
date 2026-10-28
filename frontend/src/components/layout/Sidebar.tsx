@@ -19,6 +19,7 @@ import { sidebarSectionsFor, type AppRoute } from '@/routes/route-config';
 import {
   conversationsApi,
   internalChatApi,
+  isRealtimeConnected,
   operationApi,
   queryKeys,
   staleTimes,
@@ -116,7 +117,10 @@ export function Sidebar() {
     queryFn: () => operationApi.overview({}),
     enabled: hasDecisionsRoute,
     staleTime: staleTimes.operation,
-    refetchInterval: 60_000,
+    // CRMLAB-122 (D-288): o sino só usa `pendingDecisions`, que o WS
+    // (`approval.*`) já invalida — com o WS aberto o polling é só rede de
+    // segurança. Aba escondida não faz polling (padrão do TanStack).
+    refetchInterval: () => (isRealtimeConnected() ? 5 * 60_000 : 60_000),
   });
   const pendingDecisionsCount = overviewQuery.data?.pendingDecisions.total ?? 0;
 

@@ -39,8 +39,12 @@ import type { ExecutiveReportQuery } from './reports';
  * pega todas as listagens de proposta, com qualquer filtro.
  */
 export const queryKeys = {
-  /** ['conversations', 'assignees'] — quem pode receber conversa. */
-  conversationAssignees: () => ['conversations', 'assignees'] as const,
+  /**
+   * ['conversation-assignees'] — quem pode receber conversa. Escopo PRÓPRIO
+   * desde o CRMLAB-122 (D-288): dentro de `conversations` ele era refeito a
+   * cada mensagem do WS, e a lista de colegas não muda com mensagem.
+   */
+  conversationAssignees: () => ['conversation-assignees'] as const,
   /**
    * ['conversations', 'unread-count'] — numero do item "Atendimento" da barra
    * lateral (D-277). Dentro do escopo `conversations`: toda invalidacao da
@@ -271,4 +275,10 @@ export const staleTimes = {
    * refletir uma importação recém-feita sem exigir F5 manual.
    */
   lis: 60_000,
+  /**
+   * Cadastros que mudam raramente e sem evento WS — colegas que recebem
+   * conversa, respostas rápidas (CRMLAB-122, D-288). As mutações da própria
+   * tela invalidam; o resto aparece em até 5 min ou no F5.
+   */
+  slowRegistry: 5 * 60_000,
 } as const;

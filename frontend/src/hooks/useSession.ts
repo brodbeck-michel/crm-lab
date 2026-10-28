@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { AuthUser, LoginRequest, UserRole } from '@crm-lab/shared';
 import { api } from '@/api';
-import { refreshAccessToken } from '@/api/client';
+import { isApiError, refreshAccessToken } from '@/api/client';
 import { useAuthStore, selectIsAuthenticated, selectRole, selectUser } from '@/stores';
 import { homeFor } from '@/routes/route-config';
 
@@ -64,9 +64,17 @@ export function useSessionBootstrap(): boolean {
         finish();
         return;
       }
-      refreshAccessToken()
-        .catch(() => undefined)
-        .finally(finish);
+      refreshAccessToken().then(finish, (error: unknown) => {
+        // CRMLAB-122 (D-288): 429 no refresh NÃO termina o bootstrap — terminar
+        // sem token mandaria a atendente para `/login`. Tenta de novo: o client
+        // segura a nova tentativa até a janela do limite virar, e o App mostra
+        // o aviso de espera em vez da tela em branco.
+        if (alive && isApiError(error) && error.statusCode === 429) {
+          bootstrap();
+          return;
+        }
+        finish();
+      });
     };
 
     if (useAuthStore.persist.hasHydrated()) {

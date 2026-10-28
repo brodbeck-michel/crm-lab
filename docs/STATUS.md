@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-10-25 (integração `integ/onda-111-119` — CRMLAB-111, 116, 117, 118 e 119)
+**Última atualização:** 2026-10-28 (CRMLAB-122 — rate limit e várias abas)
 
 ---
 
@@ -3589,6 +3589,23 @@ frontend, sem endpoint novo.
   (shared), usado pelo `ApprovalService`.
 - **Testes:** `useNewMessageAlerts.internal-chat.spec.tsx` (novo, 19), `InternalChat.spec.tsx`
   (+2), `useNewMessageAlerts.spec.tsx` (mock de canais). Suíte completa roda na integração.
+
+### 🚧 CRMLAB-122 — rate limit: atendentes caindo com várias abas (2026-10-28, aguardando validação)
+
+Branch `feature/CRMLAB-122-rate-limit-polling` (de `main` v1.41.0). Decisões D-288 e D-289, só
+frontend + default do compose de prod, sem migração, sem mudança de API.
+
+- **429:** o client espera o `Retry-After`, segura a aba e repete; nunca desloga (nem no refresh
+  do bootstrap). Aviso discreto `TrafficNotice`.
+- **Tráfego:** aba escondida não refaz GET por evento WS (só a eleita mantém o aviso de mensagem
+  nova); lote de 500 ms; contador de não lidas 1× por evento; assignees fora do escopo
+  `conversations`; `staleTime` padrão 10 s; sino de Decisões 5 min com WS. Estimativa: 3 abas de
+  ~190 para ~30 req/min (tabela em D-288).
+- **Várias abas:** `lib/tab-presence.ts` (`BroadcastChannel`) — aviso "aberto em N abas" e eleição.
+- **Limite:** proposta 300/min definitivo; default do `docker-compose.prod.yml` 100 → 300 (D-289).
+- **Testes:** `client.ratelimit.spec.ts` (8), `ws.crmlab122.spec.ts` (6), `tab-presence.spec.ts`
+  (7), `TrafficNotice.spec.tsx` (4), novos; specs afetados verdes.
+- **Pendente:** validação na hml (3 abas por 10 min; 429 forçado com limite baixo).
 
 ### 🚧 CRMLAB-121 — cadastrar contato e achar pelo nome na Nova conversa (2026-10-26, aguardando validação)
 

@@ -3664,3 +3664,17 @@ Branch `feature/CRMLAB-120-status-usuario` (de `main` v1.40.0). Decisão D-286, 
   `route-tenant-isolation` (+2 rotas = 120). Frontend `PresenceDot.spec.tsx`,
   `useIdlePresence.spec.tsx`, `Sidebar.spec.tsx` (+3), `UserTable.spec.tsx` (+1), `ws.spec.ts` (+1).
 - **Pendente:** validação na hml.
+
+### 🚧 CRMLAB-124 — contato cadastrado não puxava o nome no Atendimento (2026-10-28, aguardando validação)
+
+Branch `feature/CRMLAB-124-126-contatos-nome-e-rotulo` (de `main` v1.41.0). Decisões D-292 e
+D-293, migração 060 (só dados).
+
+- **Causa:** `conversations.patient_name` era cópia gravada quando a conversa nascia e não
+  acompanhava o cadastro. **Correção:** nome do paciente propagado na escrita para todas as
+  conversas dele (PATCH, cadastro completado, `findOrCreateByPhone`); perfil do WhatsApp segue
+  sem sobrescrever o cadastrado. Migração 060 conserta os dados já gravados.
+- **Hipótese 4:** cadastrar contato com número que já existia sem nome dava 409 e perdia o nome;
+  agora completa o cadastro (D-293).
+- **Testes:** `tests/patients/patients-conversation-name.spec.ts` (novo, 7),
+  `tests/db/migration-060-patient-name-sync.spec.ts` (novo, 1).

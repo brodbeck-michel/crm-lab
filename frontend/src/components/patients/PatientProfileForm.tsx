@@ -162,6 +162,9 @@ export function PatientProfileForm({ patient }: PatientProfileFormProps) {
       setFormError(null);
       setSaved(true);
       void queryClient.invalidateQueries({ queryKey: queryScopes.patient });
+      // O nome do cadastro vai para as conversas dele no backend (D-292).
+      void queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
+      void queryClient.invalidateQueries({ queryKey: queryScopes.conversation });
     },
     onError: (error: unknown) => {
       setSaved(false);

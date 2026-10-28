@@ -174,6 +174,14 @@ export class PatientService {
       visibilityOf(ctx),
     );
     if (!result.patient) {
+      // Numero que ja chegou SEM nome (webhook/Nova conversa) e quem cadastra
+      // pode edita-lo: o cadastro completa os campos vazios em vez de perder o
+      // nome digitado num 409 (D-293). Nunca sobrescreve o que ja existe.
+      const completed =
+        result.existingId !== null
+          ? await this.completeNameless(ctx, result.existingId, dto)
+          : null;
+      if (completed) return completed;
       const visible =
         result.existingId !== null
           ? await this.repository.findDetail(ctx.tenantId, result.existingId, readVisibilityOf(ctx))
@@ -190,6 +198,25 @@ export class PatientService {
       newValues: { name: result.patient.name, phone: result.patient.phone },
     });
     return result.patient;
+  }
+
+  /**
+   * D-293: cadastro sem nome (so o telefone) e editavel por quem pede ganha
+   * nome — e e-mail/CPF quando vazios — pelo mesmo `update` do PATCH (audita
+   * `update_patient` e propaga o nome as conversas, D-292). `null` = segue o 409.
+   */
+  private async completeNameless(
+    ctx: TenantContext,
+    id: string,
+    dto: CreatePatientRequest,
+  ): Promise<PatientDetail | null> {
+    const existing = await this.repository.findDetail(ctx.tenantId, id, visibilityOf(ctx));
+    if (!existing || existing.anonymizedAt !== null) return null;
+    if (existing.name !== null && existing.name.trim() !== '') return null;
+    const fill: UpdatePatientRequest = { name: dto.name };
+    if (existing.email === null && dto.email) fill.email = dto.email;
+    if (existing.document === null && dto.document) fill.document = dto.document;
+    return this.update(ctx, id, fill);
   }
 
   /**
@@ -213,8 +240,8 @@ export class PatientService {
    * PATCH parcial. Qualquer papel de laboratorio que ENXERGUE o paciente edita
    * (a ficha e a tela de trabalho do atendente).
    *
-   * Nao toca nas colunas denormalizadas de `conversations` (D-059): elas sao o
-   * registro do que o canal informou; a ficha e o cadastro.
+   * Telefone/e-mail de `conversations` ficam como o canal informou (D-059); o
+   * nome editado chega a todas as conversas do paciente (D-292).
    */
   async update(
     ctx: TenantContext,

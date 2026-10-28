@@ -472,11 +472,12 @@ describe('PATCH /patients/:id', () => {
       .expect(404);
   });
 
-  it('nao toca nas colunas denormalizadas de conversations (D-059)', async () => {
+  it('nome vai para a conversa (D-292); telefone/e-mail da conversa ficam (D-059)', async () => {
     const patient = await createPatient({ tenantId: tenantA.id, name: 'Joao', db });
     const conversa = await createConversation({
       tenantId: tenantA.id,
       patientName: 'Joao (do canal)',
+      patientEmail: 'canal@example.com',
       db,
     });
     await linkConversation(conversa.id, patient.id, { db });
@@ -484,15 +485,19 @@ describe('PATCH /patients/:id', () => {
     await app.agent
       .patch(`${BASE}/${patient.id}`)
       .set(app.auth(adminA))
-      .send({ name: 'Joao Santos' })
+      .send({ name: 'Joao Santos', email: 'cadastro@example.com' })
       .expect(200);
 
     const row = await db.withTenant(tenantA.id, (tx) =>
-      tx.query<{ patient_name: string }>(
-        'SELECT patient_name FROM conversations WHERE id = $1',
+      tx.query<{ patient_name: string; patient_phone: string; patient_email: string }>(
+        'SELECT patient_name, patient_phone, patient_email FROM conversations WHERE id = $1',
         [conversa.id],
       ),
     );
-    expect(row.rows[0]?.patient_name).toBe('Joao (do canal)');
+    expect(row.rows[0]).toEqual({
+      patient_name: 'Joao Santos',
+      patient_phone: conversa.patientPhone,
+      patient_email: 'canal@example.com',
+    });
   });
 });

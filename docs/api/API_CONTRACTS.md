@@ -1821,6 +1821,11 @@ Cadastro do contato à mão (CRMLAB-121, D-287). Qualquer papel de laboratório 
   dígito → **`409 CONFLICT`** `{ reason: "phone_already_in_use", patientId? }`. `patientId` só
   vem quando quem pediu enxerga o cadastro existente (senão o 409 abriria a ficha de outra
   atendente). Nunca cria um segundo cadastro.
+- **Exceção (D-293, CRMLAB-124):** o cadastro existente está **sem nome** (o número chegou pelo
+  WhatsApp ou pela Nova conversa sem nome), não está anonimizado e quem pede pode editá-lo →
+  o cadastro é **completado** em vez do 409: grava o `name` e, só se estiverem vazios, `email` e
+  `document`. Resposta **`201`** com o `PatientDetail` do cadastro existente (mesmo `id`), audit
+  log `update_patient` (não `create_patient`). Nada que já estava preenchido é sobrescrito.
 - Telefone de **outro** laboratório não conflita (o índice é `(tenant_id, phone)`).
 
 ### GET /patients/:id

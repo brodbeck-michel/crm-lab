@@ -54,6 +54,8 @@ export function NewPatientModal({ onClose, onCreated }: NewPatientModalProps) {
       }),
     onSuccess: async (patient) => {
       await queryClient.invalidateQueries({ queryKey: queryScopes.patients });
+      // Numero que ja existia sem nome e completado (D-293): o nome vai as conversas.
+      void queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
       toast('Contato cadastrado.', { tone: 'positive' });
       onCreated(patient);
     },

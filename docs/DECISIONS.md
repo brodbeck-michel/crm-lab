@@ -6285,3 +6285,46 @@ cadastrou.
 (`CreatePatientRequest`). Frontend: `Patients/NewPatientModal.tsx`, `patients/PhoneField.tsx`,
 `lib/phone-suggestion.ts`, `Attendance/ContactSearch.tsx`, `NewConversationModal.tsx`. Sem
 migração. Conversas e pacientes já duplicados pelos dois formatos continuam separados.
+
+### D-292: O nome do cadastro é propagado na escrita para `conversations.patient_name` (CRMLAB-124, revisa D-059)
+**Decisão:** `conversations.patient_name` continua sendo a copia denormalizada lida por todo mundo,
+mas passa a **acompanhar** `patients.name`. A função `syncConversationNames(tx, patientId)`
+(`patient.repository.ts`) copia o nome do cadastro para todas as conversas ligadas ao paciente,
+na mesma transação, em três pontos: PATCH da ficha que mexe em `name`, cadastro completado pelo
+`POST /patients` (D-293) e `findOrCreateByPhone` ao religar conversa já existente (a próxima
+mensagem também conserta divergência antiga). Regras: (1) o nome do perfil do WhatsApp continua
+sem sobrescrever o cadastrado (D-072) — ele só preenche cadastro sem nome, e daí vai à conversa;
+(2) cadastro sem nome (`null`/vazio) **não** apaga o nome da conversa; (3) paciente anonimizado
+não propaga (a anonimização já limpa as conversas, D-075); (4) `tenant_id` casado dos dois lados
+além do RLS. Migração 060 corrige as linhas já gravadas (mesmas regras, idempotente).
+`patient_phone`/`patient_email` continuam "o que o canal informou" (D-059 vale para eles).
+**Alternativa descartada — ler via JOIN (`COALESCE(p.name, c.patient_name)`):** `patient_name` é
+lido em pelo menos dez lugares (lista/detalhe/busca de conversas com índice GIN sobre
+`c.patient_name`, payloads de WebSocket, `message.repository` como `sender_name`, timeline da
+ficha, Operação, propostas, reengajamento, notificações de aprovação). Trocar todos por JOIN
+mexeria na expressão indexada da busca (conflito direto com o CRMLAB-125) e deixaria qualquer
+leitor novo esquecido com o bug de volta. Propagar na escrita conserta todos os leitores de uma
+vez e os pontos de escrita do nome do paciente são poucos e conhecidos.
+**Motivo:** caso de prod de 28/10/2026 — Nova conversa criou paciente e conversa sem nome no
+mesmo segundo; o nome foi gravado no paciente 21 s depois (PATCH da ficha) e a conversa ficou
+vazia no Atendimento. Formato de telefone descartado como causa (mesmo tamanho dos dois lados e
+`patient_id` ligado).
+**Impacto:** `patient.repository.ts` (`syncConversationNames`, `update`),
+`conversation.repository.ts` (`findOrCreateByPhone`), `patient.service.ts`,
+migração 060, SCHEMA.md §2/§45. Frontend: salvar a ficha / cadastrar contato invalida as
+consultas de conversas. Editar o nome NÃO emite evento de WebSocket: outra aba vê na próxima
+recarga da lista (refetch periódico/foco).
+
+### D-293: `POST /patients` completa cadastro existente SEM nome em vez de 409 (CRMLAB-124, emenda D-287 item 2)
+**Decisão:** quando o telefone já existe (mesmo formato ou variante do nono dígito) num cadastro
+**sem nome**, não anonimizado e que quem pede pode editar (`visibilityOf`), o `POST /patients`
+completa esse cadastro: grava o `name` e, só se vazios, `email` e `document`, pelo mesmo
+caminho do PATCH (audit `update_patient`, propagação D-292). Resposta `201` com o
+`PatientDetail` existente (mesmo `id`). Cadastro com nome, anonimizado ou fora do recorte de
+escrita continua `409 phone_already_in_use` como antes.
+**Motivo:** hipótese 4 do card conferida — antes, cadastrar como contato um número que já tinha
+chegado sem nome (webhook sem perfil ou Nova conversa) devolvia 409 e **o nome digitado se
+perdia**; a atendente tinha que abrir a ficha e digitar de novo. Completar só o vazio não
+sobrescreve dado de ninguém, por isso é a opção conservadora.
+**Impacto:** `patient.service.ts` (`completeNameless`), API_CONTRACTS.md (POST /patients).
+Ponto para o Michel confirmar: devolver `201` (e não `200`) para um cadastro que já existia.

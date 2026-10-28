@@ -845,7 +845,11 @@ CREATE TABLE patients (
 CREATE INDEX idx_patients_tenant_id ON patients(tenant_id);
 CREATE INDEX idx_patients_document ON patients(tenant_id, document);
 CREATE INDEX idx_patients_name
-  ON patients USING GIN (to_tsvector('portuguese', COALESCE(name, '')));
+  ON patients USING GIN (to_tsvector('portuguese', COALESCE(name, '')));  -- sem uso desde 061
+
+-- Migração 061 (D-296/D-297): busca por pedaço do nome. Condicional: só se pg_trgm existir.
+CREATE INDEX idx_patients_name_trgm
+  ON patients USING GIN (lower(crm_unaccent(name)) gin_trgm_ops);
 
 CREATE TRIGGER trg_patients_updated_at
   BEFORE UPDATE ON patients
@@ -868,8 +872,13 @@ CREATE TRIGGER trg_patients_updated_at
   `?includeInactive=true`); os dados (conversas, propostas) continuam intactos. Reativar zera os
   dois campos — a justificativa da reativação vai só para `audit_logs`
   (`inactivate_patient`/`reactivate_patient`), nunca para a linha.
-- O índice GIN usa **exatamente** a mesma expressão da busca por nome
-  (`to_tsvector('portuguese', COALESCE(name, ''))`); expressão diferente = índice não usado.
+- **Busca por nome (migração 061 — D-296/D-297, CRMLAB-125).** Por pedaço: cada palavra digitada
+  vira `lower(crm_unaccent(name)) LIKE '%palavra%'`, e o índice trigram `idx_patients_name_trgm`
+  usa **exatamente** essa expressão (diferente = índice não usado). `crm_unaccent` (043) vem
+  antes do `lower` porque `lower()` de letra acentuada depende do locale. O índice só é criado
+  se a extensão `pg_trgm` puder ser criada (trusted no PG 13+, contrib do `postgres:16-alpine`;
+  no PGlite dos testes é carregada pelo `PgliteDriver`) — sem ela a busca segue correta, sem
+  índice. O índice full-text antigo `idx_patients_name` (003) ficou sem uso.
 
 **Backfill (migração 003):** uma linha por `(tenant_id, patient_phone)` distinto de
 `conversations`. `name` e `email` recebem o valor **não nulo mais recente** daquele telefone
@@ -2526,9 +2535,13 @@ CREATE INDEX idx_users_tenant_email ON users(tenant_id, email);
 CREATE INDEX idx_messages_conversation_created ON messages(conversation_id, created_at DESC);
 CREATE INDEX idx_proposals_conversation_id ON proposals(conversation_id); -- já criado na seção 5
 
--- Search (busca por nome de paciente)
+-- Search (busca por nome de paciente) — full-text, sem uso desde a 061
 CREATE INDEX idx_conversations_patient_name
   ON conversations USING GIN (to_tsvector('portuguese', COALESCE(patient_name, '')));
+
+-- Search por pedaço do nome (migração 061, D-296/D-297; condicional ao pg_trgm)
+CREATE INDEX idx_conversations_patient_name_trgm
+  ON conversations USING GIN (lower(crm_unaccent(patient_name)) gin_trgm_ops);
 
 -- Última resposta humana por conversa (alerta de tempo de resposta — migração 046, D-254)
 CREATE INDEX idx_messages_human_reply
@@ -2551,8 +2564,8 @@ CREATE INDEX idx_messages_content_search
   WHERE deleted_at IS NULL;
 ```
 
-`patient_name` é nullable; o `COALESCE` mantém a expressão indexável para toda linha (e a query de
-busca deve usar exatamente a mesma expressão para o índice ser aproveitado).
+`patient_name` é nullable; a busca (D-296) usa exatamente a expressão do índice trigram
+(`lower(crm_unaccent(patient_name))`) — nome nulo simplesmente não casa.
 
 ### Índices de foreign key (migração 021 — CRMLAB-38, D-146)
 

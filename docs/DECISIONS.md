@@ -6431,6 +6431,63 @@ validação (CRMLAB-31), e a foto da visita é justamente a que sai do celular c
 **Impacto:** `internal-chat.service.ts`, `visit.service.ts`. Sem mudança de contrato além do
 `mimeType`/`fileName` devolvidos, que já eram "o que foi gravado".
 
+### D-296: Busca por pedaço do nome, sem acento e sem caixa (CRMLAB-125)
+**Decisão:**
+1. A busca por nome deixa o full-text (`to_tsvector @@ plainto_tsquery`, que só casava palavra
+   inteira com radical) e passa a casar **pedaço**: cada palavra digitada vira
+   `lower(crm_unaccent(<nome>)) LIKE '%palavra%'`, todas obrigatórias (AND), em qualquer ordem.
+   "mar" acha "Maria" e "Marcos"; "silva maria" acha "Maria da Silva"; "jose" acha "José".
+2. `crm_unaccent` (043) **antes** do `lower` (o card sugeria o contrário): `lower()` de letra
+   acentuada depende do locale do banco; sem acento, tudo é ASCII e funciona em qualquer locale.
+   O termo é dobrado no JS (NFD sem marcas + minúscula), espelho da expressão do banco.
+3. `%`, `_` e `\` digitados são literais (escape padrão do LIKE). No máximo 6 palavras.
+   Conectivos de nome (`de`, `da`, `do`, `das`, `dos`, `e`, `d'`) saem do filtro quando há outra
+   palavra no termo ("maria de souza" acha "Maria Souza", como no full-text antigo, que os tinha
+   como stopword); sozinhos continuam valendo ("da" acha "Daniela"). O limite de 6 conta depois.
+4. Com busca, ordena por relevância antes da ordenação pedida: 0 = nome começa pela 1ª palavra;
+   1 = outra palavra do nome começa por ela; 2 = só contém (ou casou por telefone/CPF). Na lista
+   do Atendimento, abaixo das fixadas.
+5. Telefone e CPF seguem iguais (dígitos, mínimo 3), em OR com o nome.
+6. Um helper só para os dois lugares: `repositories/name-search.ts`, usado por
+   `patient.repository.ts` (Pacientes, busca de paciente do Atendimento, Nova conversa) e
+   `conversation.repository.ts` (lista do Atendimento).
+7. Frontend: busca só a partir de 2 caracteres (`lib/search-term.ts`), debounce de 300 ms (o da
+   `SearchInput`, que já existia) e o `signal` do TanStack Query cancela o pedido do termo
+   anterior (`patientsApi.list` e `conversationsApi.list` aceitam `{ signal }`).
+**Motivo:** a equipe digita o começo do nome e espera a lista ir filtrando; o full-text exigia a
+palavra inteira e ainda diferenciava acento.
+**Impacto:** `name-search.ts` (novo), `patient.repository.ts`, `conversation.repository.ts`,
+migração 061 (D-297). Frontend `Patients/List.tsx`, `Attendance/index.tsx`,
+`Attendance/ContactSearch.tsx`, `api/patients.ts`, `api/conversations.ts`, `lib/search-term.ts`.
+Docs: API_CONTRACTS §2 e §2c, SCHEMA §14 e índices, SERVICES, PAGES. Sem busca (termo vazio ou
+de 1 caractere), a ordem da lista é exatamente a de antes: a relevância só entra no `ORDER BY`
+quando há termo.
+
+### D-297: Índice trigram condicional ao pg_trgm (CRMLAB-125, migração 061)
+**Decisão:**
+1. Migração 061 cria `pg_trgm` (`CREATE EXTENSION IF NOT EXISTS`, dentro de um `DO` com
+   `EXCEPTION`) e, **só se a extensão existir**, os índices GIN `gin_trgm_ops`
+   `idx_patients_name_trgm` e `idx_conversations_patient_name_trgm` sobre a mesma expressão da
+   consulta. Se a extensão não puder ser criada, a migração passa e a busca segue correta, sem
+   índice.
+2. Prod/hml: `pg_trgm` vem no contrib do `postgres:16-alpine` e é "trusted" no PG 13+ — a role dona
+   do banco (`MIGRATE_DATABASE_URL`, D-165) cria sem superusuário.
+3. Testes: o PGlite traz `pg_trgm` como pacote à parte; o `PgliteDriver.create()` passa
+   `extensions: { pg_trgm }`, então os testes exercitam o caminho com índice
+   (`name-search.spec.ts` confere que o planner o usa).
+4. Plano esperado em tabela grande: `Bitmap Index Scan on idx_*_trgm` → `Bitmap Heap Scan`, com o
+   `tenant_id` (RLS) como filtro. Termo de 1–2 letras não gera trigrama útil (o planner tende a
+   seq scan) — por isso o mínimo de 2 caracteres no front e o volume pequeno por tenant.
+5. Os índices full-text antigos (`idx_patients_name`, `idx_conversations_patient_name`) ficam,
+   sem uso. Removê-los é uma migração futura, fora deste card.
+6. `CREATE INDEX` **sem** `CONCURRENTLY`: o runner aplica cada migração numa transação, onde
+   `CONCURRENTLY` não roda. Bloqueia escrita em `patients`/`conversations` durante a criação —
+   aceitável com o volume atual (milhares de linhas, segundos). Se as tabelas crescerem muito,
+   índice desse tipo passa a ser criado à mão com `CONCURRENTLY` fora do runner.
+**Motivo:** `LIKE '%x%'` não usa B-tree; o trigram é o índice que serve. O condicional evita
+quebrar o deploy num ambiente sem a extensão.
+**Impacto:** `061_name_search_trigram.sql`, `backend/src/db/pglite-driver.ts`, SCHEMA.md.
+
 ### D-302: Figurinha enviada pelo Atendimento sai das favoritas do laboratório, sem conversão (CRMLAB-127)
 **Decisão:**
 1. **Origem:** a atendente envia apenas figurinhas **favoritadas** pelo laboratório. Favoritar é

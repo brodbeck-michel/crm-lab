@@ -45,7 +45,10 @@ export class PgliteDriver implements DbClient {
   /** Cria a instancia (em memoria por padrao) carregando o pacote sob demanda. */
   static async create(dataDir = 'memory://'): Promise<PgliteDriver> {
     const mod = await import('@electric-sql/pglite');
-    const db = await mod.PGlite.create({ dataDir, parsers: PARSERS });
+    // `pg_trgm` (migracao 061, D-297): o indice trigram da busca por nome.
+    // No PGlite a extensao e um pacote a parte, registrado aqui.
+    const { pg_trgm } = await import('@electric-sql/pglite/contrib/pg_trgm');
+    const db = await mod.PGlite.create({ dataDir, parsers: PARSERS, extensions: { pg_trgm } });
     return new PgliteDriver(db);
   }
 

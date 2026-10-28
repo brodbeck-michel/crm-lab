@@ -83,7 +83,7 @@ export function InboxLayout({
       {open && context && (
         <aside
           data-testid="inbox-context"
-          aria-label="Contexto do paciente"
+          aria-label="Contexto do contato"
           style={{ flex: `0 0 ${INBOX_CONTEXT_WIDTH}px`, width: INBOX_CONTEXT_WIDTH }}
           className="flex min-h-0 flex-col overflow-y-auto border-l border-neutral-300 bg-surface"
         >

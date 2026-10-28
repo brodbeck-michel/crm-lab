@@ -80,7 +80,7 @@ describe('PatientsList', () => {
     renderPage();
     await screen.findByText('João Santos');
 
-    await user.type(screen.getByLabelText('Buscar paciente'), '48999991234');
+    await user.type(screen.getByLabelText('Buscar contato'), '48999991234');
 
     await waitFor(() =>
       expect(listMock).toHaveBeenLastCalledWith(
@@ -97,7 +97,7 @@ describe('PatientsList', () => {
 
     renderPage();
 
-    expect(await screen.findByText('Nenhum paciente encontrado')).toBeInTheDocument();
+    expect(await screen.findByText('Nenhum contato encontrado')).toBeInTheDocument();
   });
 
   it('mostra o estado de erro quando a busca falha', async () => {
@@ -105,7 +105,7 @@ describe('PatientsList', () => {
 
     renderPage();
 
-    expect(await screen.findByText('Não foi possível carregar os pacientes')).toBeInTheDocument();
+    expect(await screen.findByText('Não foi possível carregar os contatos')).toBeInTheDocument();
   });
 
   /* ── Filtro de inativos (D-132, CRMLAB-11) ─────────────────────────── */

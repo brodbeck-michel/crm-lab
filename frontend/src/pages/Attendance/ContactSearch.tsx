@@ -15,7 +15,7 @@ export interface ContactSearchProps {
 
 /**
  * Busca de contato da "Nova conversa" (CRMLAB-121, D-287): nome, CPF ou
- * telefone, pela MESMA busca da tela de Pacientes (`GET /patients?search=`,
+ * telefone, pela MESMA busca da tela de Contatos (`GET /patients?search=`,
  * D-060). O servidor já esconde inativo e aplica o recorte da atendente —
  * contato sem conversa aparece para todas. Anonimizado (LGPD, D-063) sai
  * aqui: não há com quem conversar.

@@ -3678,3 +3678,14 @@ D-293, migração 060 (só dados).
   agora completa o cadastro (D-293).
 - **Testes:** `tests/patients/patients-conversation-name.spec.ts` (novo, 7),
   `tests/db/migration-060-patient-name-sync.spec.ts` (novo, 1).
+
+### 🚧 CRMLAB-126 — "Pacientes" vira "Contatos" nas telas (2026-10-28, aguardando validação)
+
+Mesma branch do CRMLAB-124. Decisão D-294, sem migração nem mudança de API.
+
+- **Interface:** menu, lista, ficha, painel de contexto e busca do Atendimento, LGPD, inativação,
+  Operação e ajudas falam "contato". Termos do LIS/Bitlab, Propostas e a variável `{paciente}`
+  continuam "paciente" (lista completa no D-294).
+- **Rota:** `/contacts` e `/contacts/:id`; `/patients[/:id]` redireciona (favoritos funcionam).
+- **Testes:** 10 specs unitários atualizados; `e2e/workflows/flow-8-patient.spec.ts` com textos
+  novos e +2 testes do redirect (e2e não executado neste worktree).

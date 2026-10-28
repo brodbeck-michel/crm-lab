@@ -36,7 +36,7 @@ export const AttendancePlaceholder = () => (
 );
 
 export const PatientPlaceholder = () => (
-  <Placeholder title="Ficha do Paciente" hint="Cadastro, timeline, propostas e seção LGPD" />
+  <Placeholder title="Ficha do Contato" hint="Cadastro, timeline, propostas e seção LGPD" />
 );
 
 export const BudgetPlaceholder = () => (

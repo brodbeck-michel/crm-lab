@@ -32,7 +32,7 @@ import { formatCount, formatDurationSeconds, formatRelativeDate } from '@/lib/fo
  * apenas formata (`formatDurationSeconds`) — nunca subtrai datas para obter uma
  * espera, porque em UTC-3 a subtração no cliente erraria por horas.
  *
- * O nome do paciente na fila é link para a Ficha (`/patients/:id`) quando
+ * O nome do paciente na fila é link para a Ficha (`/contacts/:id`) quando
  * `QueueItem.patientId` existe (§7, D-079); quando é `null` vira texto puro.
  */
 
@@ -125,14 +125,14 @@ export default function OperationSettings() {
     () => [
       {
         key: 'patient',
-        header: 'Paciente',
+        header: 'Contato',
         minWidth: 200,
         render: (item) => (
           <div className="flex min-w-0 flex-col">
             {item.patientId === null ? (
               /*
                * Conversa anterior ao backfill da 003 (D-072): sem cadastro para
-               * abrir. Vira texto puro — link para `/patients/null` daria 404 e
+               * abrir. Vira texto puro — link para `/contacts/null` daria 404 e
                * botão desabilitado não explicaria nada.
                */
               <span className="truncate font-semibold text-text">
@@ -141,7 +141,7 @@ export default function OperationSettings() {
             ) : (
               <Link
                 data-testid="queue-patient-link"
-                to={`/patients/${item.patientId}`}
+                to={`/contacts/${item.patientId}`}
                 /*
                  * A linha inteira leva ao Atendimento (`onRowClick`); este link
                  * leva à ficha. Sem o `stopPropagation` os dois disparariam e a
@@ -290,7 +290,7 @@ export default function OperationSettings() {
         <>
           <Section
             title="Fila agora"
-            description="Conversas ativas sem atendente ou com mensagem do paciente ainda não lida."
+            description="Conversas ativas sem atendente ou com mensagem do contato ainda não lida."
           >
             <div className="grid grid-cols-1 gap-md sm:grid-cols-3">
               <Tile
@@ -396,7 +396,7 @@ export function PendingDecisionCard({ item, onOpen }: PendingDecisionCardProps) 
     <button
       type="button"
       onClick={onOpen}
-      aria-label={`Abrir proposta de ${item.patientName ?? 'paciente sem nome'}`}
+      aria-label={`Abrir proposta de ${item.patientName ?? 'contato sem nome'}`}
       className="flex w-full flex-col gap-sm rounded-lg border border-neutral-200 bg-neutral-100 p-md text-left transition-colors hover:border-accent"
     >
       <div className="flex flex-wrap items-center justify-between gap-sm">

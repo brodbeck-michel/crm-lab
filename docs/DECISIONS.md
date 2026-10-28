@@ -6328,3 +6328,28 @@ perdia**; a atendente tinha que abrir a ficha e digitar de novo. Completar só o
 sobrescreve dado de ninguém, por isso é a opção conservadora.
 **Impacto:** `patient.service.ts` (`completeNameless`), API_CONTRACTS.md (POST /patients).
 Ponto para o Michel confirmar: devolver `201` (e não `200`) para um cadastro que já existia.
+
+### D-294: "Pacientes" vira "Contatos" na interface, e a rota `/patients` vira `/contacts` (CRMLAB-126)
+**Decisão:** o que a equipe vê passa a chamar a pessoa de **contato**: item "Contatos" do menu,
+título e busca da lista, Ficha do contato (cabeçalho, breadcrumb, 404), seções da ficha
+(Orçamentos do contato, inativar/reativar, LGPD exportar/anonimizar, avisos do formulário),
+painel de contexto e busca do Atendimento ("Buscar contato, telefone ou exame", bloco
+"Contatos", "Mostrar/Ocultar contexto do contato"), rótulo de quem mandou mensagem quando não
+há nome ("Contato"), coluna da fila na Gestão da Operação, prévia do tema, textos de ajuda de
+Canais / Alerta de resposta / Tempo de resposta e o nome do arquivo de exportação LGPD baixado
+pela tela (`contato-<id>-<dia>.json`). A rota da tela vira **`/contacts`** e **`/contacts/:id`**
+(decisão do Michel); `/patients` e `/patients/:id` redirecionam com `replace`, preservando
+query e hash, para favoritos e links salvos. Links internos apontam para a rota nova.
+**Fica "paciente" (de propósito):** tudo do código e do contrato — tabela `patients`, rotas da API
+`/api/v1/patients`, tipos, nomes de componente/arquivo, chaves de query, `Content-Disposition`
+do backend; o que vem do laboratório/LIS/Bitlab — coluna "Paciente" de Busca ativa,
+Conciliação e PDF da busca ativa, "Paciente no Bitlab", "Nome do paciente" do atendimento LIS,
+filtros e cartões de Propostas ("Buscar paciente", "Sem paciente"); a variável `{paciente}` do
+reengajamento e da mensagem pronta (é token de template — trocar quebraria mensagens salvas) e
+os textos dessa seção, que a explicam; o aviso de dado de saúde do modal de conexão do WhatsApp;
+os nomes de fluxos/fixtures de e2e.
+**Motivo:** o cadastro (CRMLAB-121) também serve para quem ainda não é paciente (médico,
+responsável, lead); "contato" é o termo que a equipe usa no Atendimento.
+**Impacto:** frontend apenas (`routes/`, `pages/Patients`, `components/patients`,
+`pages/Attendance`, `components/conversation`, `pages/Settings`), PAGES.md, specs unitários e
+`e2e/workflows/flow-8-patient.spec.ts` (+2 testes do redirect). Sem migração, sem mudança de API.

@@ -627,7 +627,7 @@ function renderWithPatientRoute() {
         <MemoryRouter initialEntries={['/attendance']}>
           <Routes>
             <Route path="/attendance" element={<Attendance />} />
-            <Route path="/patients/:id" element={<PatientProfileStub />} />
+            <Route path="/contacts/:id" element={<PatientProfileStub />} />
           </Routes>
         </MemoryRouter>
       </ToastProvider>
@@ -644,7 +644,7 @@ describe('Atendimento — porta de entrada da Ficha do Paciente (D-079)', () => 
     await userEvent.click(await screen.findByTestId('conversation-item'));
 
     const link = await screen.findByTestId('patient-profile-link');
-    expect(link).toHaveAttribute('href', '/patients/p-1');
+    expect(link).toHaveAttribute('href', '/contacts/p-1');
 
     await userEvent.click(link);
     expect(await screen.findByTestId('ficha-do-paciente')).toHaveTextContent('ficha:p-1');
@@ -677,7 +677,7 @@ describe('Atendimento — porta de entrada da Ficha do Paciente (D-079)', () => 
 
     await screen.findByTestId('conversation-item');
     await userEvent.type(
-      screen.getByLabelText('Buscar paciente, telefone ou exame'),
+      screen.getByLabelText('Buscar contato, telefone ou exame'),
       'Carla{Enter}',
     );
 
@@ -688,7 +688,7 @@ describe('Atendimento — porta de entrada da Ficha do Paciente (D-079)', () => 
     });
 
     const result = await screen.findByTestId('patient-result');
-    expect(result).toHaveAttribute('href', '/patients/p-9');
+    expect(result).toHaveAttribute('href', '/contacts/p-9');
 
     await userEvent.click(result);
     expect(await screen.findByTestId('ficha-do-paciente')).toHaveTextContent('ficha:p-9');

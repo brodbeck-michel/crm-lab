@@ -311,7 +311,7 @@ export function validateForm(form: ChannelsForm): Record<string, string> {
     const draft = form.autoMessages[key];
     if (draft.enabled && draft.message.trim().length === 0) {
       errors[`autoMessages.${key}.message`] =
-        'Mensagem ligada precisa de texto — senão o paciente recebe uma bolha em branco.';
+        'Mensagem ligada precisa de texto — senão o contato recebe uma bolha em branco.';
     }
     if (draft.message.trim().length > 1000) {
       errors[`autoMessages.${key}.message`] = 'Máximo de 1000 caracteres.';

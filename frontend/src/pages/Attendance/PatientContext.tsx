@@ -50,7 +50,7 @@ export function PatientContext({
 }: PatientContextProps) {
   const presenceOf = usePresenceOf();
   if (!conversation) {
-    return <EmptyState message="Sem paciente em foco" hint="Abra uma conversa para ver o cadastro." />;
+    return <EmptyState message="Sem contato em foco" hint="Abra uma conversa para ver o cadastro." />;
   }
 
   const displayName = conversation.patientName ?? conversation.patientPhone;
@@ -69,7 +69,7 @@ export function PatientContext({
       {conversation.patientId !== null && (
         <Link
           data-testid="patient-profile-link"
-          to={`/patients/${conversation.patientId}`}
+          to={`/contacts/${conversation.patientId}`}
           className="rounded-md border border-neutral-300 px-md py-sm text-center text-caption font-semibold text-accent-700 no-underline transition-colors hover:border-accent"
         >
           Ver ficha completa

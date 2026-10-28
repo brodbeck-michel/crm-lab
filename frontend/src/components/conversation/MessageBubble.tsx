@@ -152,7 +152,7 @@ function QuotedBlock({
 }) {
   const clickable = Boolean(onClick && quoted.id && !quoted.deleted);
   const author =
-    quoted.senderType === 'patient' ? (quoted.senderName ?? 'Paciente') : (quoted.senderName ?? 'Você');
+    quoted.senderType === 'patient' ? (quoted.senderName ?? 'Contato') : (quoted.senderName ?? 'Você');
   const body = (
     <>
       {quoted.id !== null && (
@@ -622,7 +622,7 @@ export function MessageBubble({
           {reactions.map((reaction) => (
             <span
               key={reaction.reactorType}
-              title={reaction.reactorType === 'patient' ? 'Paciente' : (reaction.userName ?? 'Laboratório')}
+              title={reaction.reactorType === 'patient' ? 'Contato' : (reaction.userName ?? 'Laboratório')}
             >
               {reaction.emoji}
             </span>

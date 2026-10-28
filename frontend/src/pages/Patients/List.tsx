@@ -19,7 +19,7 @@ function formatDocument(document: string | null): string {
 }
 
 /**
- * Busca de Pacientes — `/patients` (PAGES.md §2a, API_CONTRACTS.md §2c).
+ * Busca de Contatos — `/contacts` (PAGES.md §2a, API_CONTRACTS.md §2c).
  *
  * Um único campo de busca casa nome, CPF e telefone (o servidor já faz o OR
  * dentro de `?search=`, D-060) — não existe filtro AND por campo no
@@ -102,8 +102,8 @@ export function PatientsList() {
   return (
     <PageContainer>
       <PageHeader
-        title="Pacientes"
-        description="Busque um paciente por nome, CPF ou telefone."
+        title="Contatos"
+        description="Busque um contato por nome, CPF ou telefone."
         actions={
           <Button variant="primary" onClick={() => setCreating(true)}>
             Novo contato
@@ -114,7 +114,7 @@ export function PatientsList() {
       {creating && (
         <NewPatientModal
           onClose={() => setCreating(false)}
-          onCreated={(patient) => navigate(`/patients/${patient.id}`)}
+          onCreated={(patient) => navigate(`/contacts/${patient.id}`)}
         />
       )}
 
@@ -122,7 +122,7 @@ export function PatientsList() {
         <div className="max-w-md flex-1">
           <SearchInput
             placeholder="Buscar por nome, CPF ou telefone"
-            aria-label="Buscar paciente"
+            aria-label="Buscar contato"
             onSearch={(term) => {
               setSearch(term);
               setPage(1);
@@ -144,10 +144,10 @@ export function PatientsList() {
       </div>
 
       {patientsQuery.isLoading ? (
-        <p className="font-body text-body text-neutral-600">Carregando pacientes...</p>
+        <p className="font-body text-body text-neutral-600">Carregando contatos...</p>
       ) : patientsQuery.isError ? (
         <EmptyState
-          message="Não foi possível carregar os pacientes"
+          message="Não foi possível carregar os contatos"
           hint="Verifique a conexão e tente novamente."
         />
       ) : (
@@ -156,11 +156,11 @@ export function PatientsList() {
             columns={columns}
             rows={patientsQuery.data?.patients ?? []}
             rowKey={(patient) => patient.id}
-            emptyMessage="Nenhum paciente encontrado"
-            onRowClick={(patient) => navigate(`/patients/${patient.id}`)}
+            emptyMessage="Nenhum contato encontrado"
+            onRowClick={(patient) => navigate(`/contacts/${patient.id}`)}
           />
 
-          {pagination && <Pagination pagination={pagination} onPageChange={setPage} itemLabel="pacientes" />}
+          {pagination && <Pagination pagination={pagination} onPageChange={setPage} itemLabel="contatos" />}
         </>
       )}
     </PageContainer>

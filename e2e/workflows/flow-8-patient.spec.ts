@@ -48,7 +48,7 @@ import {
 const CARLA = E2E_PATIENTS.carla;
 /** Outro paciente do MESMO tenant — o numero que o 409 de D-106 protege. */
 const MARCOS = E2E_PATIENTS.marcos;
-const FICHA = `/patients/${CARLA.id}`;
+const FICHA = `/contacts/${CARLA.id}`;
 
 /** Mesmo `PAGE_SIZE` de `PatientTimeline.tsx` — a tela pede 20 por pagina. */
 const TIMELINE_PAGE_SIZE = 20;
@@ -302,7 +302,7 @@ test.describe('Fluxo 8: Ficha do Paciente (orçamentos)', () => {
 
     await loginAs(page, E2E_USERS.alfaAttendant);
     await gotoScreen(page, FICHA, CARLA.name);
-    await expect(page.getByRole('heading', { name: 'Orçamentos do paciente' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Orçamentos do contato' })).toBeVisible();
 
     const cartao = proposalCard(page, proposta);
     await expect(cartao).toBeVisible();
@@ -348,7 +348,7 @@ test.describe('Fluxo 8: Ficha do Paciente (LGPD)', () => {
     const exportacao = page.waitForResponse(
       (res) => res.url().includes(`/patients/${CARLA.id}/export`) && res.status() === 200,
     );
-    await page.getByRole('button', { name: 'Exportar dados do paciente' }).click();
+    await page.getByRole('button', { name: 'Exportar dados do contato' }).click();
     const resposta = await exportacao;
 
     // O dump traz o titular — nao um objeto vazio com 200.
@@ -368,11 +368,11 @@ test.describe('Fluxo 8: Ficha do Paciente (LGPD)', () => {
     // Controle positivo: a ficha carregou inteira para o gestor.
     await expect(page.getByRole('heading', { name: 'Cadastro', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Histórico de interações' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Orçamentos do paciente' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Orçamentos do contato' })).toBeVisible();
 
     // E a secao restrita simplesmente nao existe — nem o botao dela.
     await expect(page.getByRole('heading', { name: LGPD_HEADING })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Exportar dados do paciente' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Exportar dados do contato' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Anonimizar cadastro' })).toHaveCount(0);
 
     await logout(page);
@@ -406,7 +406,7 @@ test.describe('Fluxo 8: Ficha do Paciente (LGPD)', () => {
 /**
  * A ficha alcancada pela NAVEGACAO, nao pela URL (D-079).
  *
- * Todos os testes acima entram em `/patients/:id` por `page.goto` — e foi
+ * Todos os testes acima entram em `/contacts/:id` por `page.goto` — e foi
  * exatamente isso que escondeu o defeito: a rota existia, tinha permissao
  * registrada e NENHUM link no produto inteiro. Um atendente logado nao
  * conseguia abrir a ficha de ninguem, e a suite passava.
@@ -422,7 +422,7 @@ test.describe('Fluxo 8: a ficha tem porta de entrada (D-079)', () => {
     // Abre a conversa da Carla pela lista — como um atendente faria.
     await page.getByTestId('conversation-item').filter({ hasText: CARLA.name }).first().click();
     // A coluna 3 começa fechada (CRMLAB-74): abre pelo botão [Contexto], como a atendente.
-    await page.getByRole('button', { name: 'Mostrar contexto do paciente' }).click();
+    await page.getByRole('button', { name: 'Mostrar contexto do contato' }).click();
 
     const link = page.getByTestId('patient-profile-link');
     await expect(link).toBeVisible();
@@ -441,8 +441,8 @@ test.describe('Fluxo 8: a ficha tem porta de entrada (D-079)', () => {
     const busca = page.waitForResponse(
       (res) => res.url().includes('/patients?') && res.request().method() === 'GET',
     );
-    await page.getByLabel('Buscar paciente, telefone ou exame').fill(CARLA.name);
-    await page.getByLabel('Buscar paciente, telefone ou exame').press('Enter');
+    await page.getByLabel('Buscar contato, telefone ou exame').fill(CARLA.name);
+    await page.getByLabel('Buscar contato, telefone ou exame').press('Enter');
     expect((await busca).status()).toBe(200);
 
     const resultado = page.getByTestId('patient-result').filter({ hasText: CARLA.name }).first();
@@ -451,5 +451,22 @@ test.describe('Fluxo 8: a ficha tem porta de entrada (D-079)', () => {
 
     await expect(page).toHaveURL(new RegExp(`${escapeRe(FICHA)}$`));
     await expect(pageHeading(page, CARLA.name)).toBeVisible();
+  });
+});
+
+/** CRMLAB-126 (D-294): a rota virou `/contacts`; link salvo com `/patients` continua abrindo. */
+test.describe('Fluxo 8: rota antiga da ficha redireciona (D-294)', () => {
+  test('/patients/:id abre a ficha em /contacts/:id', async ({ page }) => {
+    await loginAs(page, E2E_USERS.alfaAttendant);
+    await page.goto(`/patients/${CARLA.id}`);
+    await expect(page).toHaveURL(new RegExp(`${escapeRe(FICHA)}$`));
+    await expect(pageHeading(page, CARLA.name)).toBeVisible();
+  });
+
+  test('/patients abre a lista em /contacts', async ({ page }) => {
+    await loginAs(page, E2E_USERS.alfaAttendant);
+    await page.goto('/patients');
+    await expect(page).toHaveURL(/\/contacts$/);
+    await expect(page.getByRole('heading', { name: 'Contatos', exact: true })).toBeVisible();
   });
 });

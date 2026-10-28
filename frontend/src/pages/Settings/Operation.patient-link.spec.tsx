@@ -84,7 +84,7 @@ function renderPage() {
       <MemoryRouter initialEntries={['/settings/operation']}>
         <Routes>
           <Route path="/settings/operation" element={<OperationSettings />} />
-          <Route path="/patients/:id" element={<PatientProfileStub />} />
+          <Route path="/contacts/:id" element={<PatientProfileStub />} />
           <Route path="/attendance" element={<AttendanceStub />} />
         </Routes>
       </MemoryRouter>
@@ -116,7 +116,7 @@ describe('Gestão da Operação — link para a ficha (D-079)', () => {
     renderPage();
 
     const link = await screen.findByRole('link', { name: 'João Santos' });
-    expect(link).toHaveAttribute('href', '/patients/patient-1');
+    expect(link).toHaveAttribute('href', '/contacts/patient-1');
 
     // O clique abre a FICHA, não o Atendimento da linha (stopPropagation).
     await userEvent.click(link);

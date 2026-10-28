@@ -113,7 +113,7 @@ describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, revisado em D-129)'
   it('itens soltos (fora de qualquer grupo) ficam em `ungrouped`', () => {
     const { ungrouped } = sidebarSectionsFor('admin');
 
-    expect(ungrouped.map((r) => r.label)).toEqual(['Atendimento', 'Pacientes', 'Propostas', 'Vendas']);
+    expect(ungrouped.map((r) => r.label)).toEqual(['Atendimento', 'Contatos', 'Propostas', 'Vendas']);
   });
 
   it('atendente vê Gestão só com Conversão e Configurações com Cadastro de Exames + Regras + Minha Conta (únicos itens TENANT_ROLES dos grupos)', () => {

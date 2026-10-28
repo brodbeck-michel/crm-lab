@@ -46,7 +46,7 @@ export function PatientProposals({ patientId }: PatientProposalsProps) {
   return (
     <section aria-labelledby="patient-proposals-heading" className="flex flex-col gap-md">
       <h2 id="patient-proposals-heading" className="m-0 font-heading text-section text-text">
-        Orçamentos do paciente
+        Orçamentos do contato
       </h2>
 
       {proposalsQuery.isLoading ? (
@@ -63,7 +63,7 @@ export function PatientProposals({ patientId }: PatientProposalsProps) {
         />
       ) : proposals.length === 0 ? (
         <EmptyState
-          message="Nenhum orçamento para este paciente"
+          message="Nenhum orçamento para este contato"
           hint="Orçamentos criados a partir das conversas dele aparecem aqui."
         />
       ) : (

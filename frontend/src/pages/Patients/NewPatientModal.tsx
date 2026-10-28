@@ -152,7 +152,7 @@ export function NewPatientModal({ onClose, onCreated }: NewPatientModalProps) {
           <p role="alert" className="font-body text-caption text-accent-700">
             Este telefone já está cadastrado.{' '}
             {duplicate.patientId && (
-              <Link to={`/patients/${duplicate.patientId}`} className="font-semibold underline">
+              <Link to={`/contacts/${duplicate.patientId}`} className="font-semibold underline">
                 Abrir o contato
               </Link>
             )}

@@ -56,7 +56,7 @@ describe('imageTitle', () => {
 
   it('sem senderName: paciente pelo nome da conversa, atendente como "Você"', () => {
     expect(imageTitle(message('i-1', { senderName: null }), 'Marina')).toMatch(/^Marina · /);
-    expect(imageTitle(message('i-1', { senderName: null }), null)).toMatch(/^Paciente · /);
+    expect(imageTitle(message('i-1', { senderName: null }), null)).toMatch(/^Contato · /);
     expect(imageTitle(message('i-1', { senderName: null, senderType: 'agent' }), 'Marina')).toMatch(
       /^Você · /,
     );

@@ -2207,6 +2207,17 @@ o MIME informado de olhos fechados — `MediaService.resolveStoredMimeType` roda
 4. **A allow-list vale também na leitura**: `GET /media/:id` confere o MIME gravado contra a
    lista e serve `application/octet-stream` + `attachment` para o que estiver fora — cobre linhas
    de `message_media` gravadas antes do CRMLAB-31 (D-169).
+5. **Imagem vira JPEG ao gravar (CRMLAB-128, D-290/D-291)** — webhook de entrada, anexo da
+   atendente (`POST /conversations/:id/attachments`, e o JPEG é o que vai ao WhatsApp), anexo do
+   chat interno e da visita médica. Depois do sniff, `image/*` é reencodado em JPEG (mozjpeg
+   q82, orientação do EXIF aplicada, **sem metadados** — EXIF/GPS saem, transparência vira fundo
+   branco). `mimeType`, `fileName` (extensão `.jpg`) e tamanho gravados e devolvidos (`media`,
+   `attachment`, `VisitAttachment`) são os do JPEG. Ficam no formato original: figurinha
+   (`sticker`), GIF/WebP/PNG animado, JPEG sem orientação girada nem GPS (byte a byte), HEIC (o
+   sharp pré-compilado não decodifica HEVC) e qualquer imagem que falhe na conversão (corrompida,
+   acima de 60 MP, mais de 10 s de CPU) — essa grava o original com log
+   `media.image_convert_failed`, e o webhook segue respondendo 200. Mídia gravada antes do
+   CRMLAB-128 não é convertida.
 
 ### GET /media/:id
 Baixa o arquivo de mídia de uma mensagem (foto, PDF ou áudio).

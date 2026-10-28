@@ -1142,7 +1142,11 @@ async function ingestEvolutionMessage(
   // Mídia recusada (tamanho, §4.2 "recusa com log explicito"): a mensagem NAO
   // e criada — nao ha o que mostrar sem o arquivo, mas o webhook responde 200
   // do mesmo jeito (`acknowledge` no fim).
-  const stored = await services.media.storeInbound(tenantId, inbound.media);
+  // Figurinha fica no formato original (WebP, as vezes animada); o resto das
+  // imagens vira JPEG ao gravar (CRMLAB-128, D-290).
+  const stored = await services.media.storeInbound(tenantId, inbound.media, {
+    keepFormat: inbound.media.key === 'stickerMessage',
+  });
   if (!stored) {
     // Continua sem criar mensagem (spec Onda 8 §4.2), mas DEIXA RASTRO: antes o
     // arquivo recusado sumia junto com a mensagem e ninguem conseguia saber que

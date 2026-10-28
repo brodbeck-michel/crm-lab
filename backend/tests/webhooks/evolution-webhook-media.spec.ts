@@ -9,7 +9,8 @@
  * (`message.imageMessage.base64`) como contrato, para pegar regressao no
  * parser mesmo antes dessa verificacao.
  */
-import { rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
+import sharp from 'sharp';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { makeWebhookModule } from '../../src/controllers/webhook.routes.js';
 import { mediaModule } from '../../src/controllers/media.routes.js';
@@ -244,5 +245,101 @@ describe('POST /webhooks/evolution/:tenant — mídia de entrada (§4.2)', () =>
       .get(`/api/v1/media/${mediaId}`)
       .set('Authorization', `Bearer ${token}`)
       .expect(404);
+  });
+});
+
+/**
+ * CRMLAB-128 (D-290): imagem recebida vira JPEG ao gravar; figurinha e GIF
+ * animado ficam como chegaram; imagem quebrada nao derruba o webhook.
+ */
+describe('POST /webhooks/evolution/:tenant — imagem vira JPEG (CRMLAB-128)', () => {
+  async function receive(slug: string, tenantId: string, id: string, message: Record<string, unknown>) {
+    await app.agent
+      .post(`${WEBHOOK}/${slug}`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send({
+        event: 'MESSAGES_UPSERT',
+        instance: evolutionInstanceName(tenantId),
+        data: { key: { remoteJid: '5548999997777@s.whatsapp.net', id }, message, pushName: 'Maria' },
+      })
+      .expect(200);
+  }
+
+  async function storedMedia(tenantId: string) {
+    const db = await getTestDb();
+    const rows = await db.withoutTenant((tx) =>
+      tx.query<{ message_type: string; mime_type: string; file_name: string; byte_size: number; id: string }>(
+        `SELECT m.message_type, mm.mime_type, mm.file_name, mm.byte_size, mm.id
+           FROM messages m JOIN message_media mm ON mm.message_id = m.id
+          WHERE m.tenant_id = $1`,
+        [tenantId],
+      ),
+    );
+    return rows.rows;
+  }
+
+  async function setup(slug: string) {
+    const tenant = await createTenant({ slug });
+    slugToId.set(slug, tenant.id);
+    return tenant;
+  }
+
+  it('PNG recebido vira image/jpeg com .jpg e o tamanho do arquivo convertido', async () => {
+    const tenant = await setup('lab-jpeg-png');
+    const png = await sharp({ create: { width: 30, height: 20, channels: 4, background: 'red' } })
+      .png()
+      .toBuffer();
+    await receive('lab-jpeg-png', tenant.id, 'EVO-JPEG-1', {
+      imageMessage: { mimetype: 'image/png', fileName: 'pedido.png', base64: png.toString('base64') },
+    });
+
+    const [row] = await storedMedia(tenant.id);
+    expect(row?.message_type).toBe('image');
+    expect(row?.mime_type).toBe('image/jpeg');
+    expect(row?.file_name).toBe('pedido.jpg');
+    const onDisk = await readFile(mediaFilePath(row!.id));
+    expect(row?.byte_size).toBe(onDisk.length);
+    expect((await sharp(onDisk).metadata()).format).toBe('jpeg');
+  });
+
+  it('figurinha WebP animada fica WebP e continua sticker', async () => {
+    const tenant = await setup('lab-jpeg-sticker');
+    const frame = (c: string) => sharp({ create: { width: 8, height: 8, channels: 4, background: c } }).png().toBuffer();
+    const webp = await sharp([await frame('red'), await frame('blue')], { join: { animated: true } })
+      .webp({ delay: [100, 100] })
+      .toBuffer();
+    await receive('lab-jpeg-sticker', tenant.id, 'EVO-JPEG-2', {
+      stickerMessage: { mimetype: 'image/webp', base64: webp.toString('base64') },
+    });
+
+    const [row] = await storedMedia(tenant.id);
+    expect(row?.message_type).toBe('sticker');
+    expect(row?.mime_type).toBe('image/webp');
+    expect(row?.byte_size).toBe(webp.length);
+  });
+
+  it('figurinha WebP estática também fica WebP', async () => {
+    const tenant = await setup('lab-jpeg-sticker2');
+    const webp = await sharp({ create: { width: 8, height: 8, channels: 4, background: 'red' } }).webp().toBuffer();
+    await receive('lab-jpeg-sticker2', tenant.id, 'EVO-JPEG-3', {
+      stickerMessage: { mimetype: 'image/webp', base64: webp.toString('base64') },
+    });
+    const [row] = await storedMedia(tenant.id);
+    expect(row?.mime_type).toBe('image/webp');
+  });
+
+  it('imagem corrompida grava o original e o webhook responde 200', async () => {
+    const tenant = await setup('lab-jpeg-quebrada');
+    const png = await sharp({ create: { width: 30, height: 20, channels: 3, background: 'red' } })
+      .png()
+      .toBuffer();
+    const truncated = png.subarray(0, 60);
+    await receive('lab-jpeg-quebrada', tenant.id, 'EVO-JPEG-4', {
+      imageMessage: { mimetype: 'image/png', fileName: 'quebrada.png', base64: truncated.toString('base64') },
+    });
+    const [row] = await storedMedia(tenant.id);
+    expect(row?.mime_type).toBe('image/png');
+    expect(row?.file_name).toBe('quebrada.png');
+    expect(row?.byte_size).toBe(truncated.length);
   });
 });

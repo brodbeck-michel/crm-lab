@@ -17,6 +17,7 @@ import {
 import { BusinessError, notFound } from '../http/errors.js';
 import { readMediaFile, writeMediaFile } from '../lib/media-storage.js';
 import { logger } from '../lib/logger.js';
+import { convertImageToJpeg } from './image-to-jpeg.js';
 import type { MediaRepository } from '../repositories/media.repository.js';
 
 /**
@@ -41,6 +42,15 @@ export interface StoredMedia {
   buffer: Buffer;
   /** MIME efetivamente gravado (CRMLAB-31) — pode divergir do declarado no DTO. */
   mimeType: string;
+  /** Nome gravado — imagem convertida ganha `.jpg` (CRMLAB-128, D-290). */
+  fileName: string;
+}
+
+/** Arquivo ja validado (e imagem ja em JPEG, D-290), pronto para gravar. */
+export interface PreparedMedia {
+  buffer: Buffer;
+  mimeType: string;
+  fileName: string;
 }
 
 /**
@@ -146,33 +156,31 @@ export class MediaService {
     tenantId: string,
     dto: { fileName: string; mimeType: string; contentBase64: string },
   ): Promise<StoredMedia> {
-    return this.storePrepared(tenantId, dto.fileName, await this.prepareOutbound(dto));
+    return this.storePrepared(tenantId, await this.prepareOutbound(dto));
   }
 
   /**
    * Todas as validacoes da saida (allow-list, base64, teto, sniff) SEM gravar
    * nada. A rota de anexo roda isto ANTES de reabrir uma conversa encerrada
    * (D-273): arquivo recusado nao pode deixar a conversa reaberta e com outra
-   * dona sem mensagem nenhuma.
+   * dona sem mensagem nenhuma. Imagem sai daqui ja em JPEG (CRMLAB-128,
+   * D-290) — e o JPEG que vai para o WhatsApp do paciente.
    */
   async prepareOutbound(dto: {
+    fileName: string;
     mimeType: string;
     contentBase64: string;
-  }): Promise<{ buffer: Buffer; mimeType: string }> {
+  }): Promise<PreparedMedia> {
     assertOutboundMimeAllowed(dto.mimeType);
     const buffer = decodeBase64(dto.contentBase64);
     assertWithinLimit(buffer);
     const mimeType = await resolveStoredMimeType(dto.mimeType, buffer);
-    return { buffer, mimeType };
+    return convertImageToJpeg({ buffer, mimeType, fileName: dto.fileName });
   }
 
   /** Grava o que `prepareOutbound` ja validou. */
-  async storePrepared(
-    tenantId: string,
-    fileName: string,
-    prepared: { buffer: Buffer; mimeType: string },
-  ): Promise<StoredMedia> {
-    const { buffer, mimeType } = prepared;
+  async storePrepared(tenantId: string, prepared: PreparedMedia): Promise<StoredMedia> {
+    const { buffer, mimeType, fileName } = prepared;
     const id = await this.repository.insert(tenantId, {
       messageId: null,
       mimeType,
@@ -180,32 +188,41 @@ export class MediaService {
       byteSize: buffer.byteLength,
     });
     await writeMediaFile(id, buffer);
-    return { id, buffer, mimeType };
+    return { id, buffer, mimeType, fileName };
   }
 
   /**
    * Entrada (paciente → CRM, §4.2). NUNCA lança: um arquivo grande demais e
    * recusado com log explicito, e o webhook responde 200 do mesmo jeito —
    * quem chama trata `null` como "nao ha mídia para anexar".
+   *
+   * Imagem vira JPEG antes de gravar (CRMLAB-128, D-290); `keepFormat` (a
+   * figurinha) grava como chegou. Conversao que falha grava o original —
+   * `convertImageToJpeg` nunca lanca.
    */
   async storeInbound(
     tenantId: string,
     dto: { fileName: string; mimeType: string; base64: string },
+    options: { keepFormat?: boolean } = {},
   ): Promise<StoredMedia | null> {
-    const buffer = decodeBase64(dto.base64);
-    if (buffer.byteLength === 0 || buffer.byteLength > MAX_MEDIA_BYTES) {
-      logger.warn('media.inbound_rejected', { tenantId, byteSize: buffer.byteLength });
+    const raw = decodeBase64(dto.base64);
+    if (raw.byteLength === 0 || raw.byteLength > MAX_MEDIA_BYTES) {
+      logger.warn('media.inbound_rejected', { tenantId, byteSize: raw.byteLength });
       return null;
     }
-    const mimeType = await resolveStoredMimeType(dto.mimeType, buffer);
+    const resolvedMime = await resolveStoredMimeType(dto.mimeType, raw);
+    const { buffer, mimeType, fileName } = await convertImageToJpeg(
+      { buffer: raw, mimeType: resolvedMime, fileName: dto.fileName },
+      { keepOriginal: options.keepFormat === true },
+    );
     const id = await this.repository.insert(tenantId, {
       messageId: null,
       mimeType,
-      fileName: dto.fileName,
+      fileName,
       byteSize: buffer.byteLength,
     });
     await writeMediaFile(id, buffer);
-    return { id, buffer, mimeType };
+    return { id, buffer, mimeType, fileName };
   }
 
   async attachToMessage(tenantId: string, id: string, messageId: string): Promise<void> {

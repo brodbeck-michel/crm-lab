@@ -724,6 +724,9 @@ da transação da conversa — ver a regra de nascimento abaixo.
   `canEdit` calculado na query com esse recorte de escrita.
 - `MediaService.prepareOutbound` valida o anexo de saída sem gravar; `storePrepared` grava.
   `storeOutbound` = os dois (D-273: a rota de anexo valida antes de reabrir a encerrada).
+  Imagem sai de `prepareOutbound` já em JPEG (`convertImageToJpeg`, `image-to-jpeg.ts`,
+  CRMLAB-128/D-290); `storeInbound(tenantId, dto, { keepFormat })` faz o mesmo na entrada —
+  `keepFormat` é a figurinha. `StoredMedia.fileName` traz o nome gravado (`.jpg`).
 - `conversationCount`, `proposalCount` e `lastInteractionAt` são **derivados na query**, nunca
   colunas (BUSINESS_RULES §5).
 - `update` não toca em `conversations.patient_name/phone/email`: são o registro do que o canal

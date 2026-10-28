@@ -6343,6 +6343,15 @@ com telas que ninguém via e transformar uma recusa temporária em logout.
 `api/query-keys.ts`, `api/quick-replies.ts`, `hooks/useAppWebSocket.ts`, `lib/tab-presence.ts`,
 `components/layout/{TrafficNotice,AppShell,Sidebar}.tsx`, `pages/Attendance/index.tsx`. Sem
 mudança de API nem migração. Título "(N)" de aba escondida não eleita só atualiza ao voltar.
+**Revisão (28/10):** (a) query que ainda recebe 429 depois das 3 tentativas do client tenta de
+novo até 5 vezes (`RATE_LIMIT_QUERY_RETRIES`) em vez de virar erro na tela — cada tentativa já
+espera a janela no client; mutação continua sem retry no TanStack. (b) Carga da página com o
+refresh em 429: o bootstrap (`useSessionBootstrap`) tenta de novo em vez de terminar sem token
+(terminar = `/login`), e o App mostra `SessionWaitScreen` em vez da tela em branco. (c) A espera
+do 429 re-checa o prazo ao acordar (outro 429 pode tê-lo esticado). (d) Aba escondida: o detalhe
+da conversa aberta não é refeito, então o aviso dela passa a vir da lista (`openId` vale só com a
+aba visível) — senão a aba eleita não avisava mensagem na própria conversa aberta. (e) Criar ou
+editar usuário invalida `['conversation-assignees']`.
 
 ### D-289: `RATE_LIMIT_PER_MINUTE` definitivo — proposta 300 (CRMLAB-122)
 **Data:** 2026-10-28

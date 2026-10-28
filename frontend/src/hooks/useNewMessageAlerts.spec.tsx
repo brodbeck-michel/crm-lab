@@ -378,6 +378,19 @@ describe('useNewMessageAlerts — foco e conversa aberta', () => {
     expect(JSON.stringify(FakeNotification.instances[0])).not.toContain(SECRET);
     expect(playSoundMock).toHaveBeenCalledTimes(1);
   });
+
+  it('CRMLAB-122: conversa aberta com a aba ESCONDIDA avisa pela lista (o detalhe não é refeito)', async () => {
+    useMessageAlertsStore.setState({ openConversationId: 'c-1' });
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    await loadThen(
+      [conversation()],
+      [conversation({ unreadCount: 1, lastMessageAt: '2026-09-28T10:01:00Z' })],
+    );
+
+    await waitFor(() => expect(FakeNotification.instances).toHaveLength(1));
+    expect(FakeNotification.instances[0]?.options?.tag).toBe('c-1');
+    expect(playSoundMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('useNewMessageAlerts — conteúdo nunca vai para a notificação (D-240)', () => {

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { TrafficNotice } from './TrafficNotice';
+import { SessionWaitScreen, TrafficNotice } from './TrafficNotice';
 import { createTabPresence, type TabPresence } from '@/lib/tab-presence';
 import { http, resetApiClient } from '@/api/client';
 
@@ -80,5 +80,27 @@ describe('TrafficNotice', () => {
     });
     expect(done).toBe(true);
     expect(screen.queryByTestId('traffic-notice')).toBeNull();
+  });
+
+  it('carga da página em 429 (SessionWaitScreen): aviso em vez de tela em branco', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status: 429,
+        headers: new Headers({ 'Retry-After': '2' }),
+        text: () => Promise.resolve('{}'),
+      })),
+    );
+    const { container } = render(<SessionWaitScreen />);
+    expect(container).toBeEmptyDOMElement(); // sem 429: o branco instantâneo de sempre
+
+    void http.post('/auth/login', {}, { auth: false }).catch(() => undefined);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByTestId('session-wait')).toHaveTextContent('não precisa recarregar');
   });
 });

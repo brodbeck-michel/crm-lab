@@ -194,3 +194,40 @@ describe('client — 429 no /auth/refresh NUNCA leva ao logout', () => {
     expect(session.cleared).toBe(false);
   });
 });
+
+describe('client — revisão do CRMLAB-122', () => {
+  it('quem espera a janela respeita um prazo ESTICADO por outro 429 no meio da espera', async () => {
+    mockFetch((path, n) => {
+      if (path === '/a' && n === 1) return tooMany(2);
+      if (path === '/auth/login') return tooMany(5);
+      return response(200, {});
+    });
+
+    const a = http.get('/a'); // 429: segura a aba por 2 s
+    await vi.advanceTimersByTimeAsync(0);
+    const c = http.get('/c'); // entra na espera de 2 s
+    await vi.advanceTimersByTimeAsync(0);
+    // O login não espera (rota pública), e o 429 dele estica o prazo para 5 s.
+    await http.post('/auth/login', {}, { auth: false }).catch(() => undefined);
+
+    await vi.advanceTimersByTimeAsync(2_500);
+    expect(calls).not.toContain('/c');
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    await Promise.all([a, c]);
+    expect(calls).toContain('/c');
+  });
+
+  it('query em 429 tenta de novo em vez de virar erro na tela; outro 4xx não', async () => {
+    const { createQueryClient, RATE_LIMIT_QUERY_RETRIES } = await import('./query-client');
+    const retry = createQueryClient().getDefaultOptions().queries?.retry as (
+      n: number,
+      e: unknown,
+    ) => boolean;
+    const { ApiError: Err } = await import('./client');
+    const limited = new Err('RATE_LIMIT_EXCEEDED', 'Limite', 429);
+    expect(retry(0, limited)).toBe(true);
+    expect(retry(RATE_LIMIT_QUERY_RETRIES, limited)).toBe(false);
+    expect(retry(0, new Err('NOT_FOUND', 'x', 404))).toBe(false);
+  });
+});

@@ -72,3 +72,25 @@ export function TrafficNotice({ presence }: { presence?: TabPresence }) {
     </div>
   );
 }
+
+/**
+ * Carga da página com o `/auth/refresh` em 429 (CRMLAB-122, D-288): o App
+ * ainda não pode montar o router (os guards mandariam para `/login`), mas
+ * também não pode ficar em branco — a atendente apertaria F5 de novo e
+ * gastaria mais do balde. Fora dos 429, nada (a troca normal é instantânea).
+ */
+export function SessionWaitScreen() {
+  const rateLimited = useRateLimited();
+  if (!rateLimited) return null;
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      data-testid="session-wait"
+      className="flex min-h-screen w-full items-center justify-center bg-bg px-lg font-body text-body text-text"
+    >
+      Muitas requisições ao mesmo tempo. Aguarde alguns segundos — a tela abre sozinha, não
+      precisa recarregar.
+    </div>
+  );
+}

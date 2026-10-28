@@ -166,10 +166,18 @@ function abortError(signal: AbortSignal): unknown {
   return signal.reason ?? new DOMException('Aborted', 'AbortError');
 }
 
-/** Espera a aba sair do "segurando por 429". Respeita o `signal` de quem chamou. */
-function waitRateLimitCooldown(signal?: AbortSignal): Promise<void> {
-  const remaining = rateLimitedUntil - Date.now();
-  if (remaining <= 0) return Promise.resolve();
+/**
+ * Espera a aba sair do "segurando por 429". Respeita o `signal` de quem chamou.
+ * Se outro 429 esticou o prazo durante a espera, espera de novo — senão a
+ * requisição sairia no meio da janela nova e gastaria mais uma ficha à toa.
+ */
+async function waitRateLimitCooldown(signal?: AbortSignal): Promise<void> {
+  while (rateLimitedUntil - Date.now() > 0) {
+    await sleepUntilCooldown(rateLimitedUntil - Date.now(), signal);
+  }
+}
+
+function sleepUntilCooldown(remaining: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(abortError(signal));

@@ -15,6 +15,7 @@ import type { DbClient } from '../../src/db/types.js';
 import {
   escapeLike,
   foldName,
+  nameSearchExpression,
   nameSearchWords,
 } from '../../src/repositories/name-search.js';
 import { createConversation, createTenant, createUser } from '../helpers/factories.js';
@@ -46,6 +47,23 @@ describe('name-search (funções puras)', () => {
     expect(foldName('JOÃO Conceição')).toBe('joao conceicao');
     expect(nameSearchWords('  Mar   SÍL ')).toEqual(['mar', 'sil']);
     expect(escapeLike('50%_a\\b')).toBe('50\\%\\_a\\\\b');
+  });
+
+  it('ignora conectivos (de, da, do, das, dos, e, d\') quando há outra palavra', () => {
+    expect(nameSearchWords('Maria DE Souza')).toEqual(['maria', 'souza']);
+    expect(nameSearchWords("joao e maria d' avila dos santos")).toEqual([
+      'joao',
+      'maria',
+      'avila',
+      'santos',
+    ]);
+    // Só conectivo: continua valendo ("da" acha "Daniela").
+    expect(nameSearchWords('da')).toEqual(['da']);
+    expect(nameSearchWords('de da')).toEqual(['de', 'da']);
+  });
+
+  it('no máximo 6 palavras (contadas depois dos conectivos)', () => {
+    expect(nameSearchWords('a de b c d e f g h')).toEqual(['a', 'b', 'c', 'd', 'f', 'g']);
   });
 });
 
@@ -104,6 +122,14 @@ describe('GET /patients?search= — pedaço do nome', () => {
     expect(await names('silva maria')).toEqual(['Maria da Silva']);
     expect(await names('mar sil')).toEqual(['Maria da Silva']);
     expect(await names('maria lima')).toEqual([]);
+  });
+
+  it('"maria de souza" acha "Maria Souza" (conectivo ignorado, D-296)', async () => {
+    await createPatient({ tenantId: tenantA.id, name: 'Maria Souza', phone: '+5548999100099', db });
+    expect(await names('maria de souza')).toEqual(['Maria Souza']);
+    expect(await names('maria da silva')).toEqual(['Maria da Silva']);
+    // Sozinho, o conectivo vale como pedaço.
+    expect(await names('da')).toEqual(['Maria da Silva']);
   });
 
   it('pedaço do meio da palavra também casa ("arqu" -> Marques)', async () => {
@@ -186,16 +212,25 @@ describe('migração 061 — índice trigram', () => {
       'idx_patients_name_trgm',
     ]);
 
-    // Tabela de teste é minúscula: sem desligar o seq scan o planner (com
-    // razão) nem olha o índice. Aqui provamos que a EXPRESSÃO da consulta
-    // casa com a do índice — o plano esperado em prod é este Bitmap.
-    const plan = await db.transaction(async (tx) => {
-      await tx.exec('SET LOCAL enable_seqscan = off');
-      const res = await tx.query<{ 'QUERY PLAN': string }>(
-        `EXPLAIN SELECT id FROM patients p WHERE lower(crm_unaccent(p.name)) LIKE '%mar%'`,
-      );
-      return res.rows.map((r) => r['QUERY PLAN']).join('\n');
-    });
+    // Tabela de teste é minúscula: sem desligar seq scan E index scan o
+    // planner (com razão) prefere outro caminho. Bitmap só existe com uma
+    // condição indexável — então, se o plano cita o índice trigram, é porque
+    // a EXPRESSÃO da consulta (a mesma de `nameSearchExpression`) casa com a
+    // do índice. O plano esperado em prod é este Bitmap.
+    const explain = (sql: string): Promise<string> =>
+      db.transaction(async (tx) => {
+        await tx.exec('SET LOCAL enable_seqscan = off');
+        await tx.exec('SET LOCAL enable_indexscan = off');
+        const res = await tx.query<{ 'QUERY PLAN': string }>(`EXPLAIN ${sql}`);
+        return res.rows.map((r) => r['QUERY PLAN']).join('\n');
+      });
+    const plan = await explain(
+      `SELECT id FROM patients p WHERE ${nameSearchExpression('p.name')} LIKE '%mar%'`,
+    );
+    const convPlan = await explain(
+      `SELECT id FROM conversations c WHERE ${nameSearchExpression('c.patient_name')} LIKE '%mar%'`,
+    );
+    expect(convPlan).toContain('idx_conversations_patient_name_trgm');
     expect(plan).toContain('idx_patients_name_trgm');
   });
 });

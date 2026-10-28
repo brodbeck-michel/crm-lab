@@ -598,7 +598,8 @@ recorte dela (encerrada alheia não soma), e `?unread=true` usa esse mesmo recor
 `sortBy` default `lastMessageAt`, `order` default `desc` (qualquer valor diferente de
 `asc` cai no default). `search` casa **pedaço** do nome do paciente (D-296: cada palavra do
 termo precisa aparecer em alguma parte do nome, em qualquer ordem, sem diferenciar acento nem
-maiúscula — "mar sil" acha "Maria da Silva") **OU** o telefone: o termo é reduzido a dígitos e só
+maiúscula — "mar sil" acha "Maria da Silva"; conectivos `de/da/do/das/dos/e/d'` são ignorados
+quando há outra palavra) **OU** o telefone: o termo é reduzido a dígitos e só
 entra na busca por telefone quando sobram **3 dígitos ou mais**. Com `search`, quem tem o nome
 começando pela 1ª palavra vem antes (depois das fixadas); dentro disso vale `sortBy`.
 
@@ -1765,7 +1766,8 @@ consulta este endpoint com `limit=5` e mostra o bloco "Pacientes" abaixo da fila
 ```
 
 `search` casa **três** coisas, em OR: nome (por **pedaço**, D-296 — cada palavra em qualquer
-parte do nome, qualquer ordem, sem acento/maiúscula; quem começa pelo termo vem antes, depois
+parte do nome, qualquer ordem, sem acento/maiúscula, conectivos `de/da/do/das/dos/e/d'`
+ignorados quando há outra palavra; quem começa pelo termo vem antes, depois
 vale `sortBy`; índice trigram da migração 061, SCHEMA.md §14), telefone (o termo é reduzido a dígitos e só entra quando sobram **3
 dígitos ou mais**, igual a `/conversations`) e documento (dígitos, casamento por prefixo).
 `sortBy` default `lastInteractionAt`, `order` default `desc`; qualquer valor fora do enum →

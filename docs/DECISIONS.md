@@ -6296,6 +6296,9 @@ migração. Conversas e pacientes já duplicados pelos dois formatos continuam s
    acentuada depende do locale do banco; sem acento, tudo é ASCII e funciona em qualquer locale.
    O termo é dobrado no JS (NFD sem marcas + minúscula), espelho da expressão do banco.
 3. `%`, `_` e `\` digitados são literais (escape padrão do LIKE). No máximo 6 palavras.
+   Conectivos de nome (`de`, `da`, `do`, `das`, `dos`, `e`, `d'`) saem do filtro quando há outra
+   palavra no termo ("maria de souza" acha "Maria Souza", como no full-text antigo, que os tinha
+   como stopword); sozinhos continuam valendo ("da" acha "Daniela"). O limite de 6 conta depois.
 4. Com busca, ordena por relevância antes da ordenação pedida: 0 = nome começa pela 1ª palavra;
    1 = outra palavra do nome começa por ela; 2 = só contém (ou casou por telefone/CPF). Na lista
    do Atendimento, abaixo das fixadas.
@@ -6311,8 +6314,9 @@ palavra inteira e ainda diferenciava acento.
 **Impacto:** `name-search.ts` (novo), `patient.repository.ts`, `conversation.repository.ts`,
 migração 061 (D-297). Frontend `Patients/List.tsx`, `Attendance/index.tsx`,
 `Attendance/ContactSearch.tsx`, `api/patients.ts`, `api/conversations.ts`, `lib/search-term.ts`.
-Docs: API_CONTRACTS §2 e §2c, SCHEMA §14 e índices, SERVICES, PAGES. Efeito colateral aceito:
-"maria de souza" não acha mais "Maria Souza" (antes "de" era stopword; agora toda palavra conta).
+Docs: API_CONTRACTS §2 e §2c, SCHEMA §14 e índices, SERVICES, PAGES. Sem busca (termo vazio ou
+de 1 caractere), a ordem da lista é exatamente a de antes: a relevância só entra no `ORDER BY`
+quando há termo.
 
 ### D-297: Índice trigram condicional ao pg_trgm (CRMLAB-125, migração 061)
 **Decisão:**
@@ -6331,6 +6335,10 @@ Docs: API_CONTRACTS §2 e §2c, SCHEMA §14 e índices, SERVICES, PAGES. Efeito 
    seq scan) — por isso o mínimo de 2 caracteres no front e o volume pequeno por tenant.
 5. Os índices full-text antigos (`idx_patients_name`, `idx_conversations_patient_name`) ficam,
    sem uso. Removê-los é uma migração futura, fora deste card.
+6. `CREATE INDEX` **sem** `CONCURRENTLY`: o runner aplica cada migração numa transação, onde
+   `CONCURRENTLY` não roda. Bloqueia escrita em `patients`/`conversations` durante a criação —
+   aceitável com o volume atual (milhares de linhas, segundos). Se as tabelas crescerem muito,
+   índice desse tipo passa a ser criado à mão com `CONCURRENTLY` fora do runner.
 **Motivo:** `LIKE '%x%'` não usa B-tree; o trigram é o índice que serve. O condicional evita
 quebrar o deploy num ambiente sem a extensão.
 **Impacto:** `061_name_search_trigram.sql`, `backend/src/db/pglite-driver.ts`, SCHEMA.md.

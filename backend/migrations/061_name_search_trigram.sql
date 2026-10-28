@@ -29,6 +29,10 @@
 -- `idx_conversations_patient_name`, 001) ficam: sem uso pela busca, mas
 -- removê-los não é parte deste card (D-297).
 --
+-- SEM `CONCURRENTLY`: o runner roda cada migração numa transação, onde ele não
+-- é permitido. O índice trava escrita nas duas tabelas enquanto é criado —
+-- segundos com o volume atual (D-297 item 6).
+--
 -- Sem coluna nova, sem tabela nova, sem policy: as duas tabelas já estão sob RLS.
 -- =============================================================================
 

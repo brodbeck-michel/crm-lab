@@ -37,12 +37,21 @@ export function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (char) => `\\${char}`);
 }
 
-/** As palavras do termo, já dobradas e sem vazias. */
+/**
+ * Conectivos de nome em português (já dobrados). Com AND de todas as
+ * palavras, "maria de souza" deixaria de achar "Maria Souza" — o full-text
+ * antigo ignorava o "de" como stopword. Por isso eles saem do filtro QUANDO
+ * há outra palavra; sozinhos ("da") continuam valendo (acham "Daniela").
+ */
+const NAME_CONNECTIVES: ReadonlySet<string> = new Set(['de', 'da', 'do', 'das', 'dos', 'e', "d'"]);
+
+/** As palavras do termo, já dobradas, sem vazias e sem conectivos (se sobrar outra). */
 export function nameSearchWords(search: string): string[] {
-  return foldName(search)
+  const words = foldName(search)
     .split(/\s+/)
-    .filter((word) => word.length > 0)
-    .slice(0, MAX_NAME_SEARCH_WORDS);
+    .filter((word) => word.length > 0);
+  const meaningful = words.filter((word) => !NAME_CONNECTIVES.has(word));
+  return (meaningful.length > 0 ? meaningful : words).slice(0, MAX_NAME_SEARCH_WORDS);
 }
 
 /**

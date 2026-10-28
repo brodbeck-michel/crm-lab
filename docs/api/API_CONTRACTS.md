@@ -2242,7 +2242,14 @@ Listar propostas com filtros.
 ?startDate=2026-08-01&endDate=2026-08-31  // filtra por createdAt
 ?search=maria                             // nome do paciente, máx. 100 caracteres
 ?reminder=due                             // due|open — lembrete de contato (CRMLAB-102, D-272)
+?withoutConversation=true                 // só sem conversa vinculada (CRMLAB-129, D-298)
 ```
+
+**`?withoutConversation=true` (CRMLAB-129, D-298):** só propostas com `conversationId: null` —
+na prática, os cartões de origem `bitlab` ainda não enviados. Junto com `status=novo_contato` é a
+lista do "Vincular orçamento" do Atendimento (PAGES.md §2). Aceita `true`/`false`; `false` ou
+ausente = sem filtro; outro valor → `VALIDATION_ERROR`. O recorte por papel de D-042/D-195 continua
+por cima (atendente: a fila comum e as dela). O vínculo em si é o `POST /proposals/:id/send`.
 
 **`?reminder=` (CRMLAB-102, D-272):** `due` = só as propostas com lembrete **aberto e vencido**
 (`dueDate` ≤ hoje no dia de Brasília — `isReminderDue`; é o filtro "Com lembrete" da tela);
@@ -2252,7 +2259,9 @@ Listar propostas com filtros.
 case-insensitive) — é a busca do Pipeline (PAGES.md §5). Diferente de `/conversations`, aqui
 **não** há busca por telefone nem full-text: o campo do Kanban filtra cartão por nome. O termo
 é aparado; vazio equivale a não enviar. O recorte por papel de D-042 continua por cima —
-atendente que busca por nome segue vendo só as propostas que criou.
+atendente que busca por nome segue vendo só as propostas que criou. **Termo só de dígitos**
+(CRMLAB-129, D-298) casa também o nº do orçamento do Bitlab (`lisBudgetNumber`, igualdade exata
+depois de tirar os zeros à esquerda — `"006020"` acha `"6020"`).
 
 `pagination` é o mesmo `PaginationMeta` de toda listagem (D-009):
 `{ page, limit, total, totalPages }`. `limit` é grampeado em 100 e **`page` em 10.000**

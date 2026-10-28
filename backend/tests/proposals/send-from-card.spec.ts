@@ -679,3 +679,84 @@ describe('PATCH /proposals/:id/responsible', () => {
     expect((await setOwner(managerA, crm.id, bia.id)).status).toBe(200);
   });
 });
+
+/**
+ * "Vincular orcamento" do Atendimento (CRMLAB-129, D-298): a lista de
+ * candidatos e `GET /proposals?status=novo_contato&withoutConversation=true`,
+ * e o vinculo e o mesmo `POST /proposals/:id/send` do Pipeline.
+ */
+describe('GET /proposals?withoutConversation=true (CRMLAB-129)', () => {
+  function candidates(user: UserRecord, extra = '') {
+    return app.agent
+      .get(`/api/v1/proposals?status=novo_contato&withoutConversation=true${extra}`)
+      .set(app.auth(user));
+  }
+  const ids = (res: { body: unknown }) =>
+    (res.body as ListProposalsResponse).proposals.map((p) => p.id).sort();
+
+  it('so cartoes sem conversa; o enviado sai da lista; outro tenant nunca aparece', async () => {
+    const free = await bitlabCard(tenantA, '6001');
+    const toSend = await bitlabCard(tenantA, '6002');
+    await bitlabCard(tenantB, '6003');
+    // Proposta crm (sempre com conversa) em novo_contato nao e candidata.
+    await createProposal({
+      tenantId: tenantA.id,
+      conversationId: anaConversation.id,
+      createdBy: ana.id,
+      totalPrice: 80,
+      proposalNumber: 9001,
+      db,
+    });
+
+    const before = await candidates(ana);
+    expect(before.status).toBe(200);
+    expect(ids(before)).toEqual([free, toSend].sort());
+
+    expect((await send(ana, toSend, anaConversation.id)).status).toBe(200);
+    expect(ids(await candidates(ana))).toEqual([free]);
+    expect(ids(await candidates(adminA))).toEqual([free]);
+
+    // O enviado aparece nas propostas da conversa (painel de contexto).
+    const ofConversation = await app.agent
+      .get(`/api/v1/proposals?conversationId=${anaConversation.id}`)
+      .set(app.auth(ana));
+    expect(ids(ofConversation)).toContain(toSend);
+  });
+
+  it('atendente ve a fila comum e as dela, nunca o cartao de outra atendente', async () => {
+    const common = await bitlabCard(tenantA, '6010');
+    const biaCard = await bitlabCard(tenantA, '6011');
+    await db.withoutTenant((tx) =>
+      tx.query('UPDATE proposals SET created_by = $2 WHERE id = $1', [biaCard, bia.id]),
+    );
+    expect(ids(await candidates(ana))).toEqual([common]);
+    expect(ids(await candidates(bia))).toEqual([common, biaCard].sort());
+  });
+
+  it('busca por nome ou pelo numero do orcamento (com zeros a esquerda)', async () => {
+    const maria = await bitlabCard(tenantA, '6020');
+    const joao = await bitlabCard(tenantA, '6021', { patientName: 'JOAO PEREIRA' });
+
+    expect(ids(await candidates(ana, '&search=pereira'))).toEqual([joao]);
+    expect(ids(await candidates(ana, '&search=006020'))).toEqual([maria]);
+    expect(ids(await candidates(ana, '&search=6021'))).toEqual([joao]);
+  });
+
+  it('valor invalido -> VALIDATION_ERROR', async () => {
+    const res = await candidates(ana, '&withoutConversation=talvez');
+    expect(res.status).toBe(400);
+    expect(errorOf(res).code).toBe('VALIDATION_ERROR');
+  });
+
+  it('segunda atendente vinculando o mesmo orcamento depois: 409 e nenhuma mensagem a mais', async () => {
+    const id = await bitlabCard(tenantA, '6030');
+    const biaConversation = await createConversation({ tenantId: tenantA.id, assignedTo: bia.id, db });
+    expect((await send(ana, id, anaConversation.id)).status).toBe(200);
+
+    const late = await send(bia, id, biaConversation.id);
+    expect(late.status).toBe(409);
+    expect(errorOf(late)).toMatchObject({ code: 'PROPOSAL_ALREADY_SENT', details: { reason: 'sent' } });
+    expect(driver.sent).toHaveLength(1);
+    expect(await messagesOf(biaConversation.id)).toHaveLength(0);
+  });
+});

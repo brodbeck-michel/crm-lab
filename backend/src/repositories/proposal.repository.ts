@@ -848,6 +848,8 @@ export interface ProposalListCriteria {
    * (dia de Brasilia, calculado pelo service — nunca pelo fuso do banco).
    */
   reminder?: { filter: ProposalReminderFilter; today: string };
+  /** So `conversation_id IS NULL` — cartoes do Bitlab nao enviados (CRMLAB-129, D-298). */
+  withoutConversation?: boolean;
   page: number;
   limit: number;
   sortBy: ProposalSortBy;
@@ -870,6 +872,9 @@ export async function list(tx: DbTx, criteria: ProposalListCriteria): Promise<Pr
   if (criteria.conversationId !== undefined) {
     params.push(criteria.conversationId);
     where.push(`p.conversation_id = $${params.length}`);
+  }
+  if (criteria.withoutConversation === true) {
+    where.push('p.conversation_id IS NULL');
   }
   if (criteria.patientId !== undefined) {
     // A proposta nasce de uma conversa; o paciente mora la (D-060). O JOIN com
@@ -901,8 +906,17 @@ export async function list(tx: DbTx, criteria: ProposalListCriteria): Promise<Pr
   if (criteria.search !== undefined && criteria.search.trim() !== '') {
     // rangel: ILIKE simples resolve o volume de um laboratorio. Se a tabela
     // crescer a ponto do seq scan doer, o upgrade e um indice trigram (pg_trgm).
-    params.push(`%${criteria.search.trim()}%`);
-    where.push(`${PATIENT_NAME} ILIKE $${params.length}`);
+    const term = criteria.search.trim();
+    params.push(`%${term}%`);
+    const byName = `${PATIENT_NAME} ILIKE $${params.length}`;
+    // CRMLAB-129 (D-298): termo so de digitos casa tambem o no do orcamento do
+    // Bitlab, na forma gravada (sem zeros a esquerda, D-119 item 1).
+    if (/^\d+$/.test(term)) {
+      params.push(term.replace(/^0+(?=\d)/, ''));
+      where.push(`(${byName} OR p.lis_budget_number = $${params.length})`);
+    } else {
+      where.push(byName);
+    }
   }
 
   if (criteria.reminder !== undefined) {

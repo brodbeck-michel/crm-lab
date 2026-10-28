@@ -6285,3 +6285,54 @@ cadastrou.
 (`CreatePatientRequest`). Frontend: `Patients/NewPatientModal.tsx`, `patients/PhoneField.tsx`,
 `lib/phone-suggestion.ts`, `Attendance/ContactSearch.tsx`, `NewConversationModal.tsx`. Sem
 migração. Conversas e pacientes já duplicados pelos dois formatos continuam separados.
+
+### D-300: Confirmação de leitura do chat interno derivada de `channel_reads` — quem é membro (CRMLAB-123)
+**Decisão:**
+1. "Lida" é derivada, nunca gravada por mensagem: `GET /internal-chat/channels/:id/messages`
+   devolve `readState` (`readUpTo` + `readers`), calculado em UMA consulta por canal a partir de
+   `channel_reads.last_read_at`. A tela compara `createdAt` de cada mensagem própria com ele.
+2. **Membros de um canal comum** (`kind = 'channel'`, público no tenant) = usuários **ativos** do
+   tenant, exceto quem pergunta e `platform_operator`. Escolha conservadora: o canal é visível a
+   todo mundo do laboratório, então "todos leram" só vale quando todo mundo que pode ler leu — ✓✓
+   nunca afirma leitura que não houve. Inativo/desativado sai da conta, então não trava o ✓✓ para
+   sempre. Efeito colateral aceito: quem entra na equipe depois e nunca abriu o canal volta a
+   deixar as mensagens antigas em ✓ até abrir (ele não leu).
+3. **DM**: o membro é o outro participante, mesmo inativo (é uma conversa a dois — se ele nunca
+   abriu, não leu).
+4. Canal sem outro membro (laboratório de uma pessoa só): nunca ✓✓.
+5. Cada leitor traz `readUpTo` = `created_at` da mensagem mais recente até a sua `last_read_at`
+   (comparação no SQL, as duas colunas `TIMESTAMP`), e o canal o MENOR entre eles. A tela só compara
+   valores da mesma coluna pelo mesmo `toIso` — sem fuso/precisão no meio. Limite aceito: duas
+   mensagens no mesmo milissegundo com uma leitura entre elas sairiam iguais.
+6. O hover ("Lida por / Ainda não leram") mostra a ÚLTIMA abertura do canal ("abriu dd/mm hh:mm"),
+   não o instante exato em que leu aquela mensagem — não há horário por mensagem.
+7. Editada mantém o tique (referência é o `createdAt`); apagada não mostra tique.
+**Motivo:** o card pede ✓✓ como no WhatsApp sem custo por mensagem; `channel_reads` já existe
+(D-068) e serve tanto ao contador quanto à confirmação. A definição de membro precisava ser
+explícita porque canal comum não tem lista de membros.
+**Impacto:** `shared/types/internal-chat.types.ts` (`InternalChannelReadState`,
+`InternalChannelReader`, `internalMessageReadStatus`, `internalMessageReaders`, `channelReadUpTo`);
+`internal-chat.repository.ts` (`listChannelReaders`); `internal-chat.service.ts` (`listMessages`).
+Frontend: `InternalMessageItem` (tique + hover), `MessagePanel`, `queries.ts`; `MessageStatusTick`
+ganhou `title` opcional e passou a ser exportado de `components/conversation`. Sem migração.
+
+### D-301: ✓✓ ao vivo por `internal_chat.channel_read` e leitura com o canal aberto (CRMLAB-123)
+**Decisão:**
+1. `POST /internal-chat/channels/:id/read` diz, no mesmo `INSERT ... ON CONFLICT` (CTE com a
+   leitura anterior), se a leitura passou de alguma mensagem de OUTRA pessoa não apagada. Só então
+   emite WS `internal_chat.channel_read` `{ channelId, userId }` (só ids): DM → `emitToUser` do
+   outro participante; canal → tenant inteiro. Reabrir canal já lido não emite.
+2. O frontend reage invalidando SÓ `['internal-chat', 'messages', channelId]` (o `readState` vem
+   no mesmo GET). Sem polling, sem endpoint novo.
+3. Com o canal ABERTO pela pessoa (clique/deep link) e a aba visível, mensagem nova de outra
+   pessoa chama `POST .../read` de novo (`useMarkReadWhileOpen`); aba escondida marca ao voltar.
+   Antes, quem estava com a DM aberta só "lia" ao clicar de novo no canal — o ✓✓ de quem escreveu
+   ficaria cinza enquanto as duas conversavam. O canal auto-selecionado na entrada continua sem
+   marcar (D-068 item 1 do `handleSelect`). Efeito colateral: o badge de não lidas do canal aberto
+   também passa a zerar sozinho.
+**Motivo:** o card pede atualização na hora, sem recarregar, e o CRMLAB-122 está reduzindo
+requisições — evento só quando há o que mudar, e o refetch só das mensagens daquele canal.
+**Impacto:** `websocket.types.ts`; `internal-chat.repository.ts` (`markChannelRead` devolve
+`boolean`); `internal-chat.service.ts`; `frontend/src/api/ws.ts` (um `case`);
+`pages/InternalChat/queries.ts` (`useMarkReadWhileOpen`) e `index.tsx`. Docs:
+`API_CONTRACTS.md` §3b, `FRONTEND_BACKEND.md`, `SERVICES.md` §7, `PAGES.md` §9.

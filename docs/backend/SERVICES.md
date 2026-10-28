@@ -528,6 +528,13 @@ interface InternalChatService {
   `delete_internal_message` (com `userId`; a exceção à regra "chat não é auditado", porque
   mexe em mensagem já lida por outros) e WS `internal_chat.message_updated` (só ids). Apagada
   some da API (`content: ""`, sem anexo/proposta; download `NOT_FOUND`) e do `unreadCount`
+- **Confirmação de leitura (CRMLAB-123, D-300/D-301):** `listMessages` devolve também
+  `readState` — `listChannelReaders` (uma consulta por canal: membros × `channel_reads` × `MAX(created_at)
+  <= last_read_at` pelo índice do canal) e `channelReadUpTo` (shared, o menor entre eles). Membros:
+  DM = o outro participante; canal = ativos do tenant sem `platform_operator`. `markChannelRead`
+  devolve se a leitura passou de mensagem de outra pessoa (não apagada); só então emite
+  `internal_chat.channel_read` `{ channelId, userId }` — DM: `emitToUser` do outro; canal:
+  `emitToTenant`
 
 ---
 

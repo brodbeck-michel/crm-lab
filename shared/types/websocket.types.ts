@@ -17,6 +17,7 @@ export type WsEventName =
   | 'approval.decided'
   | 'internal_chat.new_message'
   | 'internal_chat.message_updated'
+  | 'internal_chat.channel_read'
   | 'channel.connection_changed'
   | 'proposal.stale_alert'
   | 'proposal.reminder_due'
@@ -54,6 +55,12 @@ export interface WsEventPayloads {
    * Separado de `new_message` de proposito: nao e mensagem nova (sem aviso/badge).
    */
   'internal_chat.message_updated': { channelId: string; messageId: string };
+  /**
+   * `userId` abriu o canal e passou de mensagem de outra pessoa (CRMLAB-123, D-301):
+   * o ✓✓ de quem escreveu pode ter virado. DM: so para o outro participante; canal:
+   * tenant inteiro. So ids — a tela refaz `GET .../messages` (que traz `readState`).
+   */
+  'internal_chat.channel_read': { channelId: string; userId: string };
   /**
    * Conexao do canal externo mudou (hoje: WhatsApp por QR). `connected: false`
    * e o caso que motivou o evento — ver a nota em `docs/ARCHITECTURE.md`.

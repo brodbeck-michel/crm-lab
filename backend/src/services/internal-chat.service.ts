@@ -19,6 +19,7 @@
 import {
   FALLBACK_MEDIA_MIME_TYPE,
   MAX_MEDIA_BYTES,
+  channelReadUpTo,
   internalMessageAuthorActionBlock,
   type Channel,
   type ChatDirectoryUser,
@@ -116,7 +117,17 @@ export class InternalChatService {
         total: result.total,
         totalPages: result.total === 0 ? 0 : Math.ceil(result.total / limit),
       };
-      return { messages: result.rows, pagination };
+      // CRMLAB-123 (D-300): uma consulta por canal; a tela compara os horarios.
+      const readers = await chatRepo.listChannelReaders(tx, {
+        tenantId: ctx.tenantId,
+        channel,
+        viewerUserId: ctx.userId,
+      });
+      return {
+        messages: result.rows,
+        pagination,
+        readState: { readUpTo: channelReadUpTo(readers), readers },
+      };
     });
   }
 
@@ -178,15 +189,33 @@ export class InternalChatService {
    */
   async markChannelRead(ctx: TenantContext, channelId: string): Promise<void> {
     assertLabMember(ctx);
-    await this.db.withTenant(ctx.tenantId, async (tx) => {
+    const outcome = await this.db.withTenant(ctx.tenantId, async (tx) => {
       const channel = await chatRepo.findChannelById(tx, channelId, ctx.userId);
       if (!channel) throw notFound({ resource: 'channel', id: channelId });
-      await chatRepo.markChannelRead(tx, {
+      const advanced = await chatRepo.markChannelRead(tx, {
         tenantId: ctx.tenantId,
         channelId,
         userId: ctx.userId,
       });
+      return { channel, advanced };
     });
+
+    // CRMLAB-123 (D-301): so quando a leitura passou de mensagem de outra pessoa
+    // (reabrir canal ja lido nao gera evento). DM: so o outro participante.
+    if (!outcome.advanced) return;
+    const payload = { channelId, userId: ctx.userId };
+    if (outcome.channel.kind === 'dm') {
+      if (outcome.channel.otherUserId) {
+        this.wsHub.emitToUser(
+          ctx.tenantId,
+          outcome.channel.otherUserId,
+          'internal_chat.channel_read',
+          payload,
+        );
+      }
+      return;
+    }
+    this.wsHub.emitToTenant(ctx.tenantId, 'internal_chat.channel_read', payload);
   }
 
   /**

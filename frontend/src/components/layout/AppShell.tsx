@@ -8,6 +8,7 @@ import { useAuthStore, useUIStore } from '@/stores';
 import { PLATFORM_THEME } from '@/routes/platform-theme';
 import ProposalModal from '@/components/proposal/ProposalModal';
 import { Sidebar } from './Sidebar';
+import { TrafficNotice } from './TrafficNotice';
 
 /**
  * Modais globais do tenant (proposta hoje). MORA DENTRO do `<AppShell/>`, que é
@@ -40,6 +41,8 @@ function GlobalModals() {
  * Aviso de mensagem nova (CRMLAB-72, D-241 item 5): montado AQUI, e não só no
  * Atendimento, para avisar em qualquer tela do laboratório — como o WhatsApp
  * Web, que avisa enquanto a aba estiver aberta.
+ *
+ * `TrafficNotice` (CRMLAB-122, D-288): aviso de 429 em espera / várias abas.
  */
 export function AppShell() {
   useNewMessageAlerts();
@@ -50,6 +53,7 @@ export function AppShell() {
         <Outlet />
       </main>
       <GlobalModals />
+      <TrafficNotice />
     </div>
   );
 }

@@ -3,7 +3,13 @@
  * `fetch` fora desta pasta é proibido (docs/guides/CONVENTIONS.md).
  */
 export { ApiError, isApiError, http, request, refreshAccessToken } from './client';
-export { setSessionBridge, setUnauthenticatedHandler, resetApiClient } from './client';
+export {
+  setSessionBridge,
+  setUnauthenticatedHandler,
+  resetApiClient,
+  onRateLimit,
+  rateLimitedUntilMs,
+} from './client';
 export { apiBaseUrl, buildQueryString, resolveMediaUrl, fetchAuthenticatedBlob } from './client';
 export type {
   HttpMethod,
@@ -27,7 +33,13 @@ export type {
 
 export { queryKeys, queryScopes, staleTimes } from './query-keys';
 
-export { createWsClient, applyWsEvent, parseWsEvent, wsBaseUrl } from './ws';
+export {
+  createWsClient,
+  applyWsEvent,
+  isRealtimeConnected,
+  parseWsEvent,
+  wsBaseUrl,
+} from './ws';
 export type { WsClient, WsClientOptions, WebSocketLike } from './ws';
 
 export { authApi } from './auth';

@@ -154,6 +154,18 @@ describe('ws — evento invalida a query certa', () => {
     ]);
   });
 
+  // CRMLAB-123/D-301: leitura do canal refaz só as mensagens (o ✓✓ vem no readState).
+  it('internal_chat.channel_read → só as mensagens do canal', () => {
+    const client = build();
+    client.connect();
+    socket(0).emitMessage({
+      event: 'internal_chat.channel_read',
+      data: { channelId: 'ch-4', userId: 'u-2' },
+    });
+
+    expect(keysPassed()).toEqual([queryKeys.internalMessages('ch-4')]);
+  });
+
   // CRMLAB-57/D-196: cartão nascido do orçamento do Bitlab entra no Kanban sem recarregar.
   it('proposal.created → ["proposals"]', () => {
     const client = build();

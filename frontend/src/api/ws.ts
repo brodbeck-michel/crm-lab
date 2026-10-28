@@ -220,6 +220,14 @@ export function applyWsEvent(
       return;
     }
 
+    // CRMLAB-123/D-301: alguém leu o canal — o ✓✓ das mensagens de quem escreveu
+    // pode ter virado. Só as mensagens do canal (o `readState` vem no mesmo GET).
+    case 'internal_chat.channel_read': {
+      const data = event.data as WsEventPayloads['internal_chat.channel_read'];
+      void queryClient.invalidateQueries({ queryKey: queryKeys.internalMessages(data.channelId) });
+      return;
+    }
+
     // CRMLAB-120/D-286: status de alguém da equipe pode ter mudado — refaz a lista.
     case 'user.presence_changed': {
       void queryClient.invalidateQueries({ queryKey: queryKeys.usersPresence() });

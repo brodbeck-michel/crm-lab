@@ -1,6 +1,12 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { DragEvent, ReactNode } from 'react';
-import type { Channel, InternalMessage, UserPresenceStatus, UserRole } from '@crm-lab/shared';
+import type {
+  Channel,
+  InternalChannelReadState,
+  InternalMessage,
+  UserPresenceStatus,
+  UserRole,
+} from '@crm-lab/shared';
 import { Button, cn } from '@/components/ui';
 import { EmptyState, PresenceDot, USER_PRESENCE_LABELS } from '@/components/shared';
 import {
@@ -30,6 +36,8 @@ export interface MessagePanelProps {
   currentUserRole: UserRole | null;
   /** Ainda há mensagens anteriores no servidor. */
   hasOlderMessages: boolean;
+  /** Quem já leu o canal (CRMLAB-123, D-300) — ✓/✓✓ nas mensagens próprias. */
+  readState?: InternalChannelReadState | null;
   onLoadOlder: () => void;
   /**
    * Arquivos da prévia, já sem os inválidos (CRMLAB-101, D-271). Sem handler,
@@ -65,6 +73,7 @@ export function MessagePanel({
   currentUserId,
   currentUserRole,
   hasOlderMessages,
+  readState = null,
   onLoadOlder,
   onSendAttachments,
   onSendAudio,
@@ -257,6 +266,8 @@ export function MessagePanel({
                 currentUserId={currentUserId}
                 currentUserRole={currentUserRole}
                 isApprovalsChannel={isApprovalsChannel}
+                readState={readState}
+                isDirect={channel?.kind === 'dm'}
                 {...(onEditMessage ? { onEdit: onEditMessage } : {})}
                 {...(onDeleteMessage ? { onDelete: onDeleteMessage } : {})}
               />

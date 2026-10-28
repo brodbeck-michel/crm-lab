@@ -326,8 +326,10 @@ enxerga quem já veria por uma conversa). `platform_operator` não acessa (§11)
 `DataTable` paginada.
 
 - **Busca (`SearchInput`, debounce 300ms):** um único campo, rotulado "Buscar por nome, CPF ou
-  telefone" — o servidor já casa as três coisas em OR dentro de `?search=` (nome por full-text,
-  telefone e documento por dígitos, mínimo 3 dígitos para os dois). Três campos separados exigiam
+  telefone" — o servidor já casa as três coisas em OR dentro de `?search=` (nome por pedaço, sem
+  acento — D-296; telefone e documento por dígitos, mínimo 3 dígitos para os dois). A busca só
+  vai ao servidor a partir de **2 caracteres** e o termo novo cancela o pedido do anterior
+  (`signal` do TanStack Query) — vale também para a lista do Atendimento e a Nova conversa. Três campos separados exigiam
   filtro AND por campo no backend, que o contrato não tem; um campo só já cobre o pedido de
   "achar paciente por nome, CPF ou telefone" sem inventar parâmetro novo (Regra Zero).
 - **Tabela:** colunas Nome, Telefone, CPF (formatado `000.000.000-00` quando 11 dígitos,

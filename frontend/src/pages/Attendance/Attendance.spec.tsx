@@ -248,7 +248,10 @@ describe('Atendimento — lista de conversas', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Encerradas' }));
 
     await waitFor(() => {
-      expect(listMock).toHaveBeenCalledWith(expect.objectContaining({ status: 'closed' }));
+      expect(listMock).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'closed' }),
+        expect.anything(),
+      );
     });
     expect(await screen.findByText('Encerrada')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Minhas 7' })).toBeInTheDocument();
@@ -299,16 +302,25 @@ describe('Atendimento — lista de conversas', () => {
     renderScreen();
 
     await screen.findByTestId('conversation-item');
-    expect(listMock).toHaveBeenCalledWith(expect.objectContaining({ scope: 'mine' }));
+    expect(listMock).toHaveBeenCalledWith(
+        expect.objectContaining({ scope: 'mine' }),
+        expect.anything(),
+      );
 
     await userEvent.click(screen.getByRole('button', { name: 'Não atribuídas 2' }));
     await waitFor(() => {
-      expect(listMock).toHaveBeenCalledWith(expect.objectContaining({ scope: 'unassigned' }));
+      expect(listMock).toHaveBeenCalledWith(
+        expect.objectContaining({ scope: 'unassigned' }),
+        expect.anything(),
+      );
     });
 
     await userEvent.click(screen.getByRole('button', { name: 'Não atribuídas 2' }));
     await waitFor(() => {
-      expect(listMock).toHaveBeenCalledWith(expect.objectContaining({ scope: 'all' }));
+      expect(listMock).toHaveBeenCalledWith(
+        expect.objectContaining({ scope: 'all' }),
+        expect.anything(),
+      );
     });
   });
 
@@ -684,6 +696,7 @@ describe('Atendimento — porta de entrada da Ficha do Paciente (D-079)', () => 
     await waitFor(() => {
       expect(listPatientsMock).toHaveBeenCalledWith(
         expect.objectContaining({ search: 'Carla', limit: 5 }),
+        expect.anything(),
       );
     });
 

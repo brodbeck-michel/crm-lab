@@ -8,6 +8,7 @@ import { PageContainer, PageHeader } from '@/components/layout';
 import { DataTable, DateDisplay, EmptyState, Pagination } from '@/components/shared';
 import type { DataTableColumn } from '@/components/shared';
 import { Button, Chip, SearchInput } from '@/components/ui';
+import { effectiveSearchTerm } from '@/lib/search-term';
 import { NewPatientModal } from './NewPatientModal';
 
 const PAGE_SIZE = 20;
@@ -32,19 +33,22 @@ export function PatientsList() {
   const [includeInactive, setIncludeInactive] = useState(false);
   const [creating, setCreating] = useState(false);
 
+  // Busca a partir de 2 caracteres (CRMLAB-125); 1 letra = lista sem filtro.
+  const term = effectiveSearchTerm(search);
   const filters = useMemo<ListPatientsQuery>(
     () => ({
       page,
       limit: PAGE_SIZE,
-      ...(search.trim().length > 0 ? { search: search.trim() } : {}),
+      ...(term.length > 0 ? { search: term } : {}),
       ...(includeInactive ? { includeInactive: true } : {}),
     }),
-    [page, search, includeInactive],
+    [page, term, includeInactive],
   );
 
   const patientsQuery = useQuery({
     queryKey: queryKeys.patients(filters),
-    queryFn: () => patientsApi.list(filters),
+    // `signal`: o termo novo cancela o pedido do anterior (resultado velho não volta).
+    queryFn: ({ signal }) => patientsApi.list(filters, { signal }),
     staleTime: staleTimes.patients,
   });
 

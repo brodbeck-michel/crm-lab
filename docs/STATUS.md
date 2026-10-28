@@ -3590,6 +3590,19 @@ frontend, sem endpoint novo.
 - **Testes:** `useNewMessageAlerts.internal-chat.spec.tsx` (novo, 19), `InternalChat.spec.tsx`
   (+2), `useNewMessageAlerts.spec.tsx` (mock de canais). Suíte completa roda na integração.
 
+### 🚧 CRMLAB-125 — busca por pedaço do nome, sem acento (2026-10-28, aguardando validação)
+
+Branch `feature/CRMLAB-125-busca-nome-parcial` (de `main` v1.41.0). Decisões D-296 e D-297,
+migração 061 (índice trigram condicional ao `pg_trgm`).
+
+- **Backend:** `repositories/name-search.ts` (novo) — cada palavra casa um pedaço do nome, AND,
+  qualquer ordem, sem acento/caixa, quem começa pelo termo antes. Vale para `GET /patients` e
+  `GET /conversations`. Telefone/CPF iguais. PGlite carrega `pg_trgm`.
+- **Tela:** Pacientes, lista do Atendimento e Nova conversa buscam a partir de 2 caracteres, com o
+  debounce de 300 ms e cancelando o pedido do termo anterior.
+- **Testes:** `name-search.spec.ts` (novo, 12); front `List.spec.tsx` (+2), `search-term.spec.ts`
+  (novo), `Attendance.spec.tsx` (asserções com o `signal`).
+
 ### 🚧 CRMLAB-121 — cadastrar contato e achar pelo nome na Nova conversa (2026-10-26, aguardando validação)
 
 Branch `feature/CRMLAB-121-cadastro-contato` (de `main` v1.40.0). Decisão D-287 (revisa D-061),

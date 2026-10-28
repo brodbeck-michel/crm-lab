@@ -24,12 +24,13 @@ import type {
   UpdateConversationResponse,
 } from '@crm-lab/shared';
 import { http } from './client';
-import type { QueryParams } from './client';
+import type { QueryParams, RequestOptions } from './client';
 
 /** docs/api/API_CONTRACTS.md §2 — Conversations. */
 export const conversationsApi = {
-  list: (query: ListConversationsQuery = {}) =>
-    http.get<ListConversationsResponse>('/conversations', query as QueryParams),
+  /** `options.signal`: a busca cancela o pedido do termo anterior (CRMLAB-125). */
+  list: (query: ListConversationsQuery = {}, options: Pick<RequestOptions, 'signal'> = {}) =>
+    http.get<ListConversationsResponse>('/conversations', query as QueryParams, options),
 
   /** `before` = cursor (D-237); `page` segue aceito por compatibilidade. */
   get: (id: string, query: GetConversationQuery = {}) =>

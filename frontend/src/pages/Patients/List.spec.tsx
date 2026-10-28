@@ -72,7 +72,7 @@ describe('PatientsList', () => {
     renderPage();
 
     await waitFor(() => expect(listMock).toHaveBeenCalled());
-    expect(listMock).toHaveBeenCalledWith({ page: 1, limit: 20 });
+    expect(listMock).toHaveBeenCalledWith({ page: 1, limit: 20 }, { signal: expect.any(AbortSignal) });
   });
 
   it('busca por nome, CPF ou telefone no mesmo campo (debounce da SearchInput)', async () => {
@@ -85,8 +85,63 @@ describe('PatientsList', () => {
     await waitFor(() =>
       expect(listMock).toHaveBeenLastCalledWith(
         expect.objectContaining({ page: 1, search: '48999991234' }),
+        { signal: expect.any(AbortSignal) },
       ),
     );
+  });
+
+  /* ── Busca por pedaço do nome (CRMLAB-125, D-296) ──────────────────── */
+
+  it('só busca a partir de 2 caracteres, depois do debounce', async () => {
+    const user = userEvent.setup({ delay: null });
+    renderPage();
+    await screen.findByText('João Santos');
+    const field = screen.getByLabelText('Buscar paciente');
+
+    await user.type(field, 'm');
+    // Passa do debounce de 300 ms: 1 letra não vira busca.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(listMock.mock.calls.some(([query]) => query?.search !== undefined)).toBe(false);
+
+    await user.type(field, 'a');
+    await waitFor(() =>
+      expect(listMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ search: 'ma' }),
+        { signal: expect.any(AbortSignal) },
+      ),
+    );
+  });
+
+  it('o termo novo cancela o pedido do termo anterior', async () => {
+    const user = userEvent.setup({ delay: null });
+    renderPage();
+    await screen.findByText('João Santos');
+    // O pedido de "ma" fica pendurado: só o cancelamento o encerra.
+    listMock.mockImplementation((query, options) =>
+      query?.search === 'ma'
+        ? new Promise<ListPatientsResponse>((_, reject) => {
+            options?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+          })
+        : Promise.resolve(listResponse),
+    );
+    const field = screen.getByLabelText('Buscar paciente');
+
+    await user.type(field, 'ma');
+    await waitFor(() =>
+      expect(listMock).toHaveBeenLastCalledWith(expect.objectContaining({ search: 'ma' }), {
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    const pending = listMock.mock.calls.at(-1)?.[1]?.signal;
+
+    await user.type(field, 'r');
+    await waitFor(() =>
+      expect(listMock).toHaveBeenLastCalledWith(expect.objectContaining({ search: 'mar' }), {
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    await waitFor(() => expect(pending?.aborted).toBe(true));
+    expect(await screen.findByText('João Santos')).toBeInTheDocument();
   });
 
   it('mostra o estado vazio quando não há pacientes', async () => {
@@ -114,7 +169,7 @@ describe('PatientsList', () => {
     renderPage();
 
     await screen.findByText('João Santos');
-    expect(listMock).toHaveBeenLastCalledWith({ page: 1, limit: 20 });
+    expect(listMock).toHaveBeenLastCalledWith({ page: 1, limit: 20 }, { signal: expect.any(AbortSignal) });
     expect(within(screen.getByRole('table')).getByText('Ativo')).toBeInTheDocument();
   });
 
@@ -126,7 +181,10 @@ describe('PatientsList', () => {
     await user.click(screen.getByLabelText('Mostrar inativos'));
 
     await waitFor(() =>
-      expect(listMock).toHaveBeenLastCalledWith({ page: 1, limit: 20, includeInactive: true }),
+      expect(listMock).toHaveBeenLastCalledWith(
+        { page: 1, limit: 20, includeInactive: true },
+        { signal: expect.any(AbortSignal) },
+      ),
     );
   });
 

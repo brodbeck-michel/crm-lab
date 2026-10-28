@@ -6285,3 +6285,47 @@ cadastrou.
 (`CreatePatientRequest`). Frontend: `Patients/NewPatientModal.tsx`, `patients/PhoneField.tsx`,
 `lib/phone-suggestion.ts`, `Attendance/ContactSearch.tsx`, `NewConversationModal.tsx`. Sem
 migração. Conversas e pacientes já duplicados pelos dois formatos continuam separados.
+
+### D-298: "Vincular orçamento" na conversa reaproveita o envio do cartão (CRMLAB-129)
+**Decisão:**
+1. O painel de contexto da conversa (`PatientContext`, seção Propostas) ganha o botão
+   **"Vincular orçamento"**, que abre o `LinkBudgetModal`: lista dos orçamentos do Bitlab em
+   "Novo orçamento" **sem conversa** (`GET /proposals?status=novo_contato&withoutConversation=true&limit=100`),
+   com nº, nome, valor, data de emissão e usuário do Bitlab, selo "Pré-cadastro feito" e busca
+   por nome ou nº (no servidor).
+2. Filtro novo `?withoutConversation=true` em `GET /proposals` (`conversation_id IS NULL`), com o
+   recorte por papel de sempre (atendente: fila comum e as dela). `?search=` só com dígitos passa a
+   casar também o `lisBudgetNumber` (sem zeros à esquerda) — vale também para o Pipeline.
+3. Ordem: os mais parecidos com o nome da conversa primeiro (`nameSimilarity`, a mesma nota da
+   D-203, chip "Mais parecido"); empate e nota zero na ordem do servidor (mais novo antes).
+4. Escolher abre o `SendProposalPanel` em modo `send` com a **conversa fixa** (prop
+   `conversationId`, sem lista de conversas): mensagem do modelo das Regras com a escolha de
+   modelo (A prazo / À vista, D-265) e "Enviar". O envio é o **mesmo** `POST /proposals/:id/send`
+   (D-200/D-201): vincula, manda pelo WhatsApp, move para `bitlabSendTarget` (Orçamento enviado, ou
+   Negociação com requisição) e quem envia vira dona. **Não existe "só vincular"** (decisão do
+   Michel): o vínculo é sempre o envio da mensagem.
+5. Sem polling: a lista usa a chave `['proposals', filtros]`, que os eventos WS de proposta já
+   invalidam (`proposal.created` quando entra orçamento novo). Depois do envio, a lista de
+   propostas da conversa atualiza pela invalidação da mutação.
+6. Botão só aparece com a regra "Nascer do orçamento do Bitlab" ligada (D-246) — e **some
+   enquanto as Regras carregam**, para não piscar — e com a conversa `active` (o envio exige).
+7. Corrida: já era atômica (`lockForSend` com `FOR UPDATE` + `send_claim_id`, D-201). A tela
+   traduz `PROPOSAL_ALREADY_SENT` para "O orçamento já foi enviado por outra atendente." (ou
+   "Outra atendente está enviando este orçamento agora." com `reason: in_progress`) — vale também
+   no painel do Pipeline.
+**Motivo:** a atendente não precisa sair do Atendimento para achar o cartão no Pipeline; um
+caminho só de envio mantém auditoria, régua de fatos e trava de corrida iguais.
+**Impacto:** `shared/types/proposal.types.ts` (`ListProposalsQuery.withoutConversation`),
+`proposal.routes.ts`, `proposal.service.ts`, `proposal.repository.ts`; frontend
+`components/proposal/LinkBudgetModal.tsx` (novo), `SendProposalPanel.tsx` (prop `conversationId`,
+`sendErrorMessage`, `proposal: Proposal`), `PatientContext.tsx` (botão). Sem migração.
+
+### D-299: Na lista do "Vincular orçamento", só os cartões que a pessoa pode enviar; sem exames (CRMLAB-129)
+**Decisão:**
+1. A lista esconde os cartões em que a pessoa não poderia clicar "Enviar" no Pipeline
+   (`canActOnCard`: dona ou fila comum, admin sempre, gestor só com "Mover card de outra
+   atendente"). Opção conservadora: mostrar e deixar o servidor recusar com 403 seria pior.
+2. **Exames não aparecem**: o CRM não guarda os exames do orçamento do Bitlab (`lis_budgets` só
+   tem número, paciente, convênios/valores, data e usuário). Mostrar exames exige trazer o item do
+   orçamento na sincronia + migração — fica para card próprio.
+**Ponto para o Michel confirmar:** os dois itens acima.

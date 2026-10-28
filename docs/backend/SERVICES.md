@@ -113,9 +113,11 @@ Devolve `{ conversation, message }`, com a conversa relida depois do envio.
   "Assumir" tarde demais precisa saber de quem a conversa é
 - `ListConversationsResponse.counts` (`mine` / `unassigned`) sai do MESMO `SELECT` da
   listagem, via `COUNT(*) FILTER (...)` — nunca de contador separado (BUSINESS_RULES §5)
-- Busca por nome usa `to_tsvector('portuguese', COALESCE(patient_name, ''))`, a mesma
-  expressão do índice GIN da migração 001 (expressão diferente = índice não usado);
-  por telefone, comparando só dígitos
+- Busca por nome por **pedaço** (D-296): cada palavra digitada vira
+  `lower(crm_unaccent(patient_name)) LIKE '%palavra%'` (AND, qualquer ordem, `%`/`_` escapados),
+  a mesma expressão do índice trigram da migração 061 (expressão diferente = índice não usado);
+  quem começa pelo termo vem antes. Por telefone, comparando só dígitos. Helper único:
+  `repositories/name-search.ts` (vale também para `patients.name`)
 - Transferência gera mensagem de sistema "Conversa transferida de A para B" e preserva
   o histórico (WORKFLOWS §5)
 - `markAsRead` zera `unread_count` e marca mensagens. `GET /conversations/:id` chama-o

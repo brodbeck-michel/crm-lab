@@ -6346,3 +6346,36 @@ validação (CRMLAB-31), e a foto da visita é justamente a que sai do celular c
 **Impacto:** `internal-chat.service.ts`, `visit.service.ts`. Sem mudança de contrato além do
 `mimeType`/`fileName` devolvidos, que já eram "o que foi gravado".
 
+
+### D-302: Figurinha enviada pelo Atendimento sai das favoritas do laboratório, sem conversão (CRMLAB-127)
+**Decisão:**
+1. **Origem:** a atendente envia apenas figurinhas **favoritadas** pelo laboratório. Favoritar é
+   explícito, pelo menu do balão de uma mensagem `sticker` (recebida ou enviada). Não existe pool
+   automático das figurinhas recebidas (uma figurinha pode ser a foto de um paciente, LGPD).
+2. **Guarda:** a favorita é uma **cópia** em `sticker_favorites` (por tenant, RLS, `sha256` único,
+   `animated`, `created_by`) com arquivo próprio. Não aponta para `message_media`, que cai em
+   cascata com a mensagem. Remover é permitido a gestor e a quem favoritou.
+3. **Formato:** só `image/webp` (magic bytes), 512×512 lido do cabeçalho, até 100 KB estática ou
+   500 KB animada. Fora disso, recusa ao favoritar. Sem conversão no CRM nesta versão.
+4. **Envio (QR/Evolution v2.3.7):** `POST /message/sendSticker/{instance}` com
+   `{ number, sticker: <base64>, notConvertSticker: true, quoted? }`. A flag é obrigatória: sem
+   ela o gateway roda `sharp().webp()`, que não redimensiona e, em base64, descarta a animação.
+   Rota e flag conferidas no fonte da tag 2.3.7 (`mediaSticker`, `convertToWebP`). Revisar no
+   upgrade da imagem.
+5. **Mensagem:** `messageType: 'sticker'` também na saída, sem legenda e sem o nome do
+   participante (D-263, como o áudio). Citação (D-221) vale. O balão é o `StickerMessage` (D-236
+   item 5).
+6. **Cloud API (Meta):** fora. O driver recusa com erro claro (o mesmo do `sendMedia`) e a tela
+   esconde o botão. Entra junto com o upload de mídia da Meta (`POST /{phone-number-id}/media`
+   + `type: "sticker"` com `id`).
+7. **Fora desta versão:** pacote cadastrado pelo gestor e "criar figurinha a partir de imagem"
+   (`sharp` → WebP 512×512, depende do CRMLAB-128). Se vier, grava como favorita e reaproveita o
+   envio do item 4.
+**Motivo:** o arquivo recebido já está no padrão exato do WhatsApp (WebP 512×512, ≤100/500 KB),
+então reenviá-lo cru elimina o risco de formato e mantém a animação. A curadoria explícita evita
+espalhar a imagem de um paciente para outro.
+**Impacto:** migration `sticker_favorites`; `shared/types` (tipos + tetos de bytes);
+`evolution-client.ts` (`sendSticker`); `whatsapp.service.ts` (driver: mock/Evolution/cloud_api);
+`message.service.ts` (`createStickerFromAgent`); rotas `/stickers` e
+`/conversations/:id/stickers`; `Composer` (botão + popover); `MessageBubble` (Favoritar/Remover);
+API_CONTRACTS §2d/§Evolution.

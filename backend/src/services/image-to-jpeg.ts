@@ -86,7 +86,11 @@ export async function convertImageToJpeg(
       return input;
     }
     if (meta.format === 'jpeg' && !jpegNeedsReencode(meta)) {
-      return { ...input, mimeType: JPEG_MIME_TYPE };
+      // Bytes intactos. Declarado como outra imagem (o sniff compara por
+      // categoria, entao `image/png` com conteudo JPEG passa): o MIME vira o
+      // real e o nome ganha `.jpg`, senao banco e WhatsApp diriam `.png`.
+      if (declared === JPEG_MIME_TYPE) return input;
+      return { ...input, mimeType: JPEG_MIME_TYPE, fileName: jpegFileName(input.fileName) };
     }
 
     const buffer = await sharp(input.buffer, { limitInputPixels: MAX_INPUT_PIXELS })

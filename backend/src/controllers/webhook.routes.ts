@@ -1167,7 +1167,11 @@ async function ingestEvolutionMessage(
   // lightbox e da navegacao de imagens. Rebaixada, segue o MIME como tudo.
   const byMime = messageTypeFromMime(stored.mimeType);
   const message = await create({
-    content: inbound.text,
+    // Sem legenda o `content` e o nome do arquivo, e o balao esconde o texto
+    // quando `content === media.fileName` (D-236 item 8). Imagem convertida
+    // ganhou `.jpg` (CRMLAB-128): o `content` acompanha o nome GRAVADO, senao
+    // "pedido.png" apareceria como legenda embaixo da foto.
+    content: inbound.text === inbound.media.fileName ? stored.fileName : inbound.text,
     messageType: inbound.media.key === 'stickerMessage' && byMime === 'image' ? 'sticker' : byMime,
     attachmentUrl: `/api/v1/media/${stored.id}`,
   });

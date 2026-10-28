@@ -268,8 +268,15 @@ describe('POST /webhooks/evolution/:tenant — imagem vira JPEG (CRMLAB-128)', (
   async function storedMedia(tenantId: string) {
     const db = await getTestDb();
     const rows = await db.withoutTenant((tx) =>
-      tx.query<{ message_type: string; mime_type: string; file_name: string; byte_size: number; id: string }>(
-        `SELECT m.message_type, mm.mime_type, mm.file_name, mm.byte_size, mm.id
+      tx.query<{
+        content: string;
+        message_type: string;
+        mime_type: string;
+        file_name: string;
+        byte_size: number;
+        id: string;
+      }>(
+        `SELECT m.content, m.message_type, mm.mime_type, mm.file_name, mm.byte_size, mm.id
            FROM messages m JOIN message_media mm ON mm.message_id = m.id
           WHERE m.tenant_id = $1`,
         [tenantId],
@@ -297,9 +304,30 @@ describe('POST /webhooks/evolution/:tenant — imagem vira JPEG (CRMLAB-128)', (
     expect(row?.message_type).toBe('image');
     expect(row?.mime_type).toBe('image/jpeg');
     expect(row?.file_name).toBe('pedido.jpg');
+    // Sem legenda o content e o nome gravado — o balao nao mostra "pedido.png"
+    // como legenda (D-236 item 8 compara content com media.fileName).
+    expect(row?.content).toBe('pedido.jpg');
     const onDisk = await readFile(mediaFilePath(row!.id));
     expect(row?.byte_size).toBe(onDisk.length);
     expect((await sharp(onDisk).metadata()).format).toBe('jpeg');
+  });
+
+  it('legenda do paciente fica como veio, mesmo com o nome trocado para .jpg', async () => {
+    const tenant = await setup('lab-jpeg-legenda');
+    const png = await sharp({ create: { width: 10, height: 10, channels: 3, background: 'red' } })
+      .png()
+      .toBuffer();
+    await receive('lab-jpeg-legenda', tenant.id, 'EVO-JPEG-5', {
+      imageMessage: {
+        mimetype: 'image/png',
+        fileName: 'pedido.png',
+        caption: 'segue o pedido',
+        base64: png.toString('base64'),
+      },
+    });
+    const [row] = await storedMedia(tenant.id);
+    expect(row?.file_name).toBe('pedido.jpg');
+    expect(row?.content).toBe('segue o pedido');
   });
 
   it('figurinha WebP animada fica WebP e continua sticker', async () => {
@@ -340,6 +368,7 @@ describe('POST /webhooks/evolution/:tenant — imagem vira JPEG (CRMLAB-128)', (
     const [row] = await storedMedia(tenant.id);
     expect(row?.mime_type).toBe('image/png');
     expect(row?.file_name).toBe('quebrada.png');
+    expect(row?.content).toBe('quebrada.png');
     expect(row?.byte_size).toBe(truncated.length);
   });
 });

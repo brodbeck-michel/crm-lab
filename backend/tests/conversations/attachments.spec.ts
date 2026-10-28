@@ -12,9 +12,17 @@
  */
 import sharp from 'sharp';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { conversationModule } from '../../src/controllers/conversation.routes.js';
+import { conversationModule, makeConversationModule } from '../../src/controllers/conversation.routes.js';
 import { mediaModule } from '../../src/controllers/media.routes.js';
 import { MAX_MEDIA_BYTES } from '../../src/services/media.service.js';
+import { createInMemoryQueue } from '../../src/lib/queue.js';
+import {
+  WhatsAppService,
+  type OutboundMedia,
+  type SendResult,
+  type WhatsAppDriver,
+} from '../../src/services/whatsapp.service.js';
+import { testCredentialsResolver } from '../whatsapp/fixtures.js';
 import { createConversation, createTenant, createUser } from '../helpers/factories.js';
 import { createTestApp, type TestApp } from '../helpers/test-app.js';
 import { getTestDb, resetDatabase } from '../helpers/test-db.js';
@@ -320,5 +328,59 @@ describe('POST /conversations/:id/attachments — imagem vira JPEG (CRMLAB-128)'
       file_name: 'print.jpg',
       byte_size: (media.body as Buffer).length,
     });
+  });
+});
+
+/** Driver que guarda o arquivo que iria para o WhatsApp do paciente. */
+class CapturingDriver implements WhatsAppDriver {
+  readonly name = 'capturing';
+  readonly media: OutboundMedia[] = [];
+
+  async send(): Promise<SendResult> {
+    return { externalId: 'wamid.texto' };
+  }
+
+  async sendMedia(_credentials: unknown, _phone: string, media: OutboundMedia): Promise<SendResult> {
+    this.media.push(media);
+    return { externalId: `wamid.midia.${this.media.length}` };
+  }
+}
+
+describe('POST /conversations/:id/attachments — o WhatsApp recebe o JPEG gravado (CRMLAB-128)', () => {
+  beforeEach(async () => {
+    await resetDatabase();
+  });
+
+  it('bytes, MIME e nome enviados ao canal são os do arquivo gravado', async () => {
+    const driver = new CapturingDriver();
+    const whatsapp = new WhatsAppService({
+      credentials: testCredentialsResolver(new Map()),
+      driver,
+      queue: createInMemoryQueue({ sleep: async () => {}, defaults: { backoffMs: 1 } }),
+      attempts: 1,
+    });
+    const app = await createTestApp({ modules: [makeConversationModule({ whatsapp }), mediaModule] });
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Ana' });
+    const conversation = await createConversation({ tenantId: tenant.id, assignedTo: ana.id });
+    const png = await sharp({ create: { width: 12, height: 12, channels: 4, background: 'red' } })
+      .png()
+      .toBuffer();
+
+    const created = await app.agent
+      .post(`/api/v1/conversations/${conversation.id}/attachments`)
+      .set(app.auth(ana))
+      .send({ fileName: 'print.png', mimeType: 'image/png', contentBase64: png.toString('base64') })
+      .expect(201);
+
+    expect(driver.media).toHaveLength(1);
+    const sent = driver.media[0]!;
+    expect(sent.mimeType).toBe('image/jpeg');
+    expect(sent.fileName).toBe('print.jpg');
+    const mediaId = created.body.attachmentUrl.split('/').pop();
+    const served = await app.agent.get(`/api/v1/media/${mediaId}`).set(app.auth(ana)).expect(200);
+    expect(sent.buffer.equals(served.body as Buffer)).toBe(true);
+    // Sem legenda: o content é o nome gravado (o balão não mostra "print.png").
+    expect(created.body.content).toBe('print.jpg');
   });
 });

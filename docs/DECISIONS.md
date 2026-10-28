@@ -6298,7 +6298,9 @@ migração. Conversas e pacientes já duplicados pelos dois formatos continuam s
    enviados pela atendente (5 de 555 imagens); print e foto de pedido médico não dependem de
    transparência, e fundo branco é como o papel aparece.
 4. **JPEG só é reencodado se tiver orientação ≠ 1 ou GPS** (tag 0x8825 no EXIF, ou "GPS" no XMP).
-   Fora disso fica byte a byte, inclusive o nome. Levantamento de prod em 28/10/2026
+   Fora disso fica byte a byte, inclusive o nome — exceto quando chegou declarado como outra
+   imagem (o sniff compara por categoria, então `image/png` com conteúdo JPEG passa): aí os bytes
+   ficam, mas o MIME vira `image/jpeg` e o nome ganha `.jpg`. Levantamento de prod em 28/10/2026
    (`message_media`): `image/jpeg` paciente 299 (~148 KB) e atendente 236 (~158 KB);
    `image/webp` figurinha 14 + 1; `image/png` atendente 5 (~95 KB); nenhum HEIC nem GIF;
    `doctor_visit_attachments` vazio. Quase tudo já é JPEG e o WhatsApp já tira o EXIF da foto
@@ -6318,7 +6320,9 @@ migração. Conversas e pacientes já duplicados pelos dois formatos continuam s
    CPU, HEIC) grava o **original** e loga `media.image_convert_failed`; `convertImageToJpeg`
    nunca lança, e `storeInbound` continua nunca lançando.
 8. Banco: `message_media.mime_type`, `file_name` (extensão trocada para `.jpg`) e `byte_size`
-   são os do JPEG. **Imagens já gravadas não são convertidas** (decisão do Michel, 28/10/2026).
+   são os do JPEG. Na entrada sem legenda, o `content` da mensagem (que é o nome do arquivo)
+   acompanha o nome gravado, para o balão continuar escondendo o nome (D-236 item 8, compara
+   `content` com `media.fileName`). **Imagens já gravadas não são convertidas** (decisão do Michel, 28/10/2026).
    Sem migração.
 9. Imagem Docker: o runtime é `node:22-alpine` (musl). O `package-lock.json` traz
    `@img/sharp-linuxmusl-x64` e `@img/sharp-libvips-linuxmusl-x64` (e os de glibc para o CI e o

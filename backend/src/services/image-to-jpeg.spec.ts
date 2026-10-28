@@ -79,6 +79,16 @@ describe('convertImageToJpeg', () => {
     expect(out.fileName).toBe('foto.jpeg');
   });
 
+  it('conteúdo JPEG declarado como PNG: bytes intactos, mas MIME e nome viram JPEG', async () => {
+    const jpeg = await sharp({ create: { width: 10, height: 10, channels: 3, background: 'red' } })
+      .jpeg()
+      .toBuffer();
+    const out = await convertImageToJpeg({ buffer: jpeg, mimeType: 'image/png', fileName: 'print.png' });
+    expect(out.buffer).toBe(jpeg);
+    expect(out.mimeType).toBe('image/jpeg');
+    expect(out.fileName).toBe('print.jpg');
+  });
+
   it('GIF animado e WebP animado ficam no formato original', async () => {
     const gif = await sharp(await frames(), { join: { animated: true } }).gif({ delay: [100, 100] }).toBuffer();
     const webp = await sharp(await frames(), { join: { animated: true } }).webp({ delay: [100, 100] }).toBuffer();

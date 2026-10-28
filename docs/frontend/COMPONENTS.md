@@ -352,6 +352,14 @@ Anatomia (padrão WhatsApp):
 - Ver PAGES.md §6. Composto por: ItemsList, DiscountSection, ApprovalAlert, StageHistory, ActionsRow
 - LostReasonForm: select obrigatório ao marcar perdido
 
+### SendProposalPanel · LinkBudgetModal (CRMLAB-58/129, D-200/D-298)
+- `SendProposalPanel` (modos `send`/`resend`/`relink`) é usado em duas telas: no Modal da Proposta
+  (§6, escolhe a conversa) e no `LinkBudgetModal` do Atendimento (§2), com a prop
+  `conversationId` fixa — aí a lista de conversas some. Aceita `Proposal` (não precisa do detalhe).
+  Erro `PROPOSAL_ALREADY_SENT` vira frase própria (`sendErrorMessage`).
+- `LinkBudgetModal` / `LinkBudgetButton` (`components/proposal/LinkBudgetModal.tsx`): botão e
+  modal do "Vincular orçamento"; o botão se esconde sozinho (regra D-246, conversa não ativa).
+
 ### StageColumn
 ```tsx
 <StageColumn stage="novo_contato" proposals={[]} />

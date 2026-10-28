@@ -3,7 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import type {
   Conversation,
   ListConversationsQuery,
-  ProposalDetail,
+  Proposal,
+  ProposalStatus,
   SendMessageTemplate,
 } from '@crm-lab/shared';
 import {
@@ -31,18 +32,28 @@ import { Button, Chip, SearchInput, Select, TextArea, cn } from '@/components/ui
  * - `resend`: só a mensagem, pela conversa já vinculada;
  * - `relink`: só a conversa, sem enviar nada.
  * Nunca vincula sozinho: o botão só liga depois que a atendente clica numa conversa.
+ *
+ * CRMLAB-129 (D-298): o "Vincular orçamento" do Atendimento usa o modo `send`
+ * com `conversationId` fixo — a conversa aberta. Aí a lista de conversas some
+ * e sobra conferir e enviar a mensagem.
  */
 export type SendPanelMode = 'send' | 'resend' | 'relink';
 
 interface SendProposalPanelProps {
-  proposal: ProposalDetail;
+  /** `Proposal` basta: o painel não lê nada do detalhe (o Atendimento manda o item da lista). */
+  proposal: Proposal;
   mode: SendPanelMode;
+  /**
+   * Conversa já escolhida (CRMLAB-129): sem lista de conversas, envia por ela.
+   * Só no modo `send`.
+   */
+  conversationId?: string;
   /** Nome do convênio, ou "Particular" (`{convenio}` do modelo). */
   insuranceName: string;
   /** `sendMessage.templates` das Regras; o primeiro é o padrão (D-265). */
   templates: readonly SendMessageTemplate[];
   /** Para onde o envio leva o cartão (`bitlabSendTarget`). */
-  target?: ProposalDetail['status'];
+  target?: ProposalStatus;
   onDone: () => void;
   onCancel: () => void;
 }
@@ -70,17 +81,32 @@ export function rankCandidates(
   };
 }
 
+/**
+ * Texto do erro do envio. A corrida entre duas atendentes (D-201) ganha frase
+ * própria (CRMLAB-129): a mensagem do servidor é genérica e sem acento.
+ */
+export function sendErrorMessage(err: unknown): string {
+  const error = toHandledError(err);
+  if (error.code === 'PROPOSAL_ALREADY_SENT') {
+    return error.details?.reason === 'in_progress'
+      ? 'Outra atendente está enviando este orçamento agora.'
+      : 'O orçamento já foi enviado por outra atendente.';
+  }
+  return error.message;
+}
+
 export default function SendProposalPanel({
   proposal,
   mode,
   insuranceName,
   templates,
   target,
+  conversationId: fixedConversationId,
   onDone,
   onCancel,
 }: SendProposalPanelProps) {
   const [search, setSearch] = useState('');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(fixedConversationId ?? null);
   const renderTemplate = (index: number): string =>
     renderSendMessageTemplate(templates[index]?.text ?? '', {
       paciente: proposal.patientName ?? '',
@@ -111,7 +137,7 @@ export default function SendProposalPanel({
   const relink = useUpdateProposalConversation();
   const pending = send.isPending || resend.isPending || relink.isPending;
 
-  const pickConversation = mode !== 'resend';
+  const pickConversation = mode !== 'resend' && fixedConversationId === undefined;
   const writeMessage = mode !== 'relink';
 
   const query: ListConversationsQuery = {
@@ -139,12 +165,12 @@ export default function SendProposalPanel({
   const trimmed = message.trim();
   const canSubmit =
     !pending &&
-    (!pickConversation || selectedId !== null) &&
+    (mode === 'resend' || selectedId !== null) &&
     (!writeMessage || (trimmed.length > 0 && trimmed.length <= SEND_PROPOSAL_MESSAGE_MAX));
 
   const handlers = {
     onSuccess: () => onDone(),
-    onError: (err: unknown) => setError(toHandledError(err).message),
+    onError: (err: unknown) => setError(sendErrorMessage(err)),
   };
 
   const handleSubmit = () => {

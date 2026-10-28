@@ -6285,3 +6285,79 @@ cadastrou.
 (`CreatePatientRequest`). Frontend: `Patients/NewPatientModal.tsx`, `patients/PhoneField.tsx`,
 `lib/phone-suggestion.ts`, `Attendance/ContactSearch.tsx`, `NewConversationModal.tsx`. Sem
 migração. Conversas e pacientes já duplicados pelos dois formatos continuam separados.
+
+### D-288: 429 não derruba a tela nem a sessão, e cada aba gasta só o que mostra (CRMLAB-122)
+**Data:** 2026-10-28
+**Contexto:** em prod (27/10) atendentes caíam: uma aba sozinha fazia ~70 req/min e várias abas
+passavam de 110–124/min, acima do `RATE_LIMIT_PER_MINUTE` (100, balde POR USUÁRIO). O 429 virava
+erro na tela; a atendente apertava F5; no bootstrap da página o `POST /auth/refresh` recusado
+deixava a sessão sem token e o guard mandava para `/login`. Levantamento do código: quase não há
+polling (`refetchInterval` só no sino de Decisões, na tela de Operação/Decisões — 60 s — e no QR
+de Canais durante o pareamento); o grosso vinha do WebSocket: cada `conversation.new_message`
+invalidava o escopo `conversations` inteiro — lista do Atendimento, lista do aviso, contador da
+barra lateral, **lista de colegas (assignees)** — mais o detalhe e o contador **de novo**: ~5,5
+GETs por evento, **em toda aba aberta, escondida ou não**.
+**Decisão:**
+1. **429 no client HTTP** (`api/client.ts`): o limitador recusa antes de qualquer rota, então
+   repetir é seguro para qualquer método. Espera `Retry-After` (fallback `RateLimit-Reset`, 5 s
+   sem header; teto 60 s; + até 1 s de jitter), segura TODAS as requisições da aba até lá (cada 429
+   também conta no balde) e repete — 3 tentativas por requisição, 6 no `/auth/refresh`. 429 nunca
+   limpa a sessão. Login/rotas públicas não repetem (lá é lockout). Aviso discreto
+   (`TrafficNotice`) enquanto espera.
+2. **Aba escondida não refaz GET por evento WS** (`api/ws.ts`): só marca as queries; refaz uma vez
+   ao voltar a ficar visível. Exceção: a lista do aviso de mensagem nova e os canais do chat
+   interno continuam vivos em UMA aba (a eleita, ver item 4), porque a notificação do navegador
+   existe para a aba em segundo plano.
+3. **Menos GETs por evento:** lote de 500 ms (rajada → 1 refetch por chave); contador de não lidas
+   refeito uma vez por evento (não duas); assignees fora do escopo `conversations`
+   (`['conversation-assignees']`, `staleTime` 5 min); respostas rápidas `staleTime` 5 min;
+   `staleTime` padrão 10 s no `createQueryClient` (remontar a mesma tela/componente não refaz o GET;
+   o WS invalida o que mudou); `refetchIntervalInBackground: false` explícito; o sino de Decisões
+   da Sidebar passa a 5 min com o WS conectado (60 s sem WS).
+4. **Várias abas** (`lib/tab-presence.ts`, `BroadcastChannel` `crm-lab:tabs`): conta as outras abas
+   (aviso "o CRM está aberto em N abas") e elege quem mantém o aviso vivo escondida: se alguma aba
+   do CRM está visível, nenhuma escondida refaz; se todas estão escondidas, só a mais antiga. Sem
+   `BroadcastChannel` = aba única (comportamento anterior).
+5. **Refresh entre abas:** o lock (`navigator.locks`) + carência de 10 s (D-166) cobrem o refresh
+   simultâneo. O caminho de `refresh_token_reuse_detected` que sobrava era o **F5 durante um
+   refresh em voo** (o servidor rotaciona, a página morre antes de aplicar o `Set-Cookie`, a
+   próxima carga reapresenta o token velho — depois de 10 s vira reuso e derruba a família). Ele
+   nasce do ciclo 429 → F5, que os itens 1–3 cortam; não há correção do lado do cliente para uma
+   resposta que o navegador descartou. Ver pendência em D-289.
+**Consumo estimado por aba** (a partir dos intervalos do código; premissa: Atendimento aberto, ~10
+eventos WS/min no laboratório — mensagens + tiques —, metade com a conversa aberta; ~50% de
+eventos em rajada):
+
+| Situação | Antes (req/min) | Depois (req/min) |
+|---|---|---|
+| Aba visível (Atendimento) | ~55 do WS + 1 polling + ~10 remontagens ≈ **65–70** | ~3,5 GETs/evento × 10 × 0,6 (lote) ≈ 21 + 0,2 polling + ~4 remontagens ≈ **25–30** |
+| Aba escondida, eleita (nenhuma aba visível) | ≈ 65 (igual à visível) | ~1 GET/evento × 10 × 0,6 ≈ **6** |
+| Aba escondida, não eleita | ≈ 65 | **0** (+ ~5 GETs uma vez ao voltar) |
+| 3 abas (1 visível + 2 escondidas) | **≈ 190–200** | **≈ 25–30** |
+| 5 abas | ≈ 320 | ≈ 25–30 (+ ~5 a cada troca de aba) |
+| F5 (carga de página) | ~10–12 GETs + refresh | igual (sem mudança) |
+
+**Motivo:** o limite é por usuário e protege o servidor; o problema era o cliente gastar o balde
+com telas que ninguém via e transformar uma recusa temporária em logout.
+**Impacto:** frontend apenas — `api/client.ts`, `api/ws.ts`, `api/query-client.ts`,
+`api/query-keys.ts`, `api/quick-replies.ts`, `hooks/useAppWebSocket.ts`, `lib/tab-presence.ts`,
+`components/layout/{TrafficNotice,AppShell,Sidebar}.tsx`, `pages/Attendance/index.tsx`. Sem
+mudança de API nem migração. Título "(N)" de aba escondida não eleita só atualiza ao voltar.
+
+### D-289: `RATE_LIMIT_PER_MINUTE` definitivo — proposta 300 (CRMLAB-122)
+**Data:** 2026-10-28
+**Contexto:** prod subiu de 100 para 300 em 27/10 como paliativo. Com D-288 uma atendente com 3
+abas fica em ~25–30 req/min em regime; os picos são F5 (~12 de uma vez) e troca de tela.
+**Decisão (proposta — a palavra final de prod é do Michel):**
+1. Manter **300/min por usuário** em prod como valor definitivo: ~10× o regime estimado, cobre
+   rajada de várias abas voltando a ficar visíveis ao mesmo tempo e ainda é 5 req/s — irrelevante
+   como superfície de abuso para um usuário autenticado.
+2. Default do `docker-compose.prod.yml` passa de 100 para 300 (um `.env` sem a variável não
+   volta ao valor que derrubou as atendentes). O default do código (`env.ts`, 100) fica: é o de
+   dev/testes/E2E e mexer nele muda a suíte do backend sem ganho.
+3. **Ponto de atenção:** `/auth/refresh`, `/auth/login` e requisição com access token vencido caem
+   no balde **por IP** com o mesmo limite. Atrás de NAT o laboratório inteiro divide esse balde —
+   hoje é só 1 refresh por carga de página por aba, cabe folgado em 300, mas se a equipe crescer
+   vale um limite próprio para o refresh. Não mexido aqui (backend).
+**Validação pedida (critério do card):** 3 abas por 10 min sem 429 com 300; 429 forçado
+(`RATE_LIMIT_PER_MINUTE=20` na hml) não leva ao login nem trava, recupera sozinho.

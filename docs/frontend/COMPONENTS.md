@@ -449,6 +449,15 @@ Anatomia (padrão WhatsApp):
   `detectNewChannelMessages`, `freshFromColleagues`, `channelTitle`, `countUnreadChannels`;
   título da aba soma conversas + canais não lidos
 
+### TrafficNotice (`layout/`, CRMLAB-122, D-288)
+- Pílula fixa no rodapé central (fora do fluxo — não empurra o `InboxLayout`), montada no
+  `AppShell`. Fundo `bg-accent-100`, borda `border-neutral-300`, `text-caption` `text-neutral-700`,
+  `rounded-lg`, `shadow-md`, `role="status"`
+- Mostra "Muitas requisições ao mesmo tempo… aguarde alguns segundos — a tela volta sozinha"
+  enquanto o client HTTP espera um 429 (`onRateLimit`/`rateLimitedUntilMs` de `api/client.ts`), e
+  "O CRM está aberto em N abas…" quando há outras abas (`lib/tab-presence.ts`). O aviso de abas
+  tem "Entendi", que esconde até o número de abas subir
+
 ### BudgetLayout
 - 2 colunas: flex 1 min 520px | 372px fixo; total em rodapé fixo
 

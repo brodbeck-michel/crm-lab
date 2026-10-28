@@ -57,6 +57,7 @@ import type { DbClient } from '../db/types.js';
 import type { TenantContext } from '../http/context.js';
 import { BusinessError, notFound } from '../http/errors.js';
 import { deleteMediaFile, readMediaFile, writeMediaFile } from '../lib/media-storage.js';
+import { convertImageToJpeg } from './image-to-jpeg.js';
 import { logger } from '../lib/logger.js';
 import {
   VisitRepository,
@@ -453,18 +454,22 @@ export function createVisitService(deps: VisitServiceDeps): VisitService {
         throw invalid({ attachments: `No máximo ${VISIT_ATTACHMENTS_MAX} anexos por visita` });
       }
 
-      const buffer = Buffer.from(dto.contentBase64, 'base64');
-      if (buffer.byteLength === 0 || buffer.byteLength > MAX_MEDIA_BYTES) {
-        throw new BusinessError('MEDIA_TOO_LARGE', { byteSize: buffer.byteLength, max: MAX_MEDIA_BYTES });
+      const raw = Buffer.from(dto.contentBase64, 'base64');
+      if (raw.byteLength === 0 || raw.byteLength > MAX_MEDIA_BYTES) {
+        throw new BusinessError('MEDIA_TOO_LARGE', { byteSize: raw.byteLength, max: MAX_MEDIA_BYTES });
       }
       // Mesmo sniff do anexo da conversa (CRMLAB-31). Aqui rebaixar em silencio
       // esconderia o erro de quem esta na tela: conteudo divergente e 400.
-      const mimeType = await resolveStoredMimeType(dto.mimeType, buffer);
-      if (mimeType === FALLBACK_MEDIA_MIME_TYPE) {
+      const resolvedMime = await resolveStoredMimeType(dto.mimeType, raw);
+      if (resolvedMime === FALLBACK_MEDIA_MIME_TYPE) {
         throw invalid({ mimeType: 'O conteúdo do arquivo não corresponde ao tipo informado' });
       }
-
-      const fileName = dto.fileName.trim();
+      // Imagem vira JPEG como no Atendimento (CRMLAB-128, D-291).
+      const { buffer, mimeType, fileName } = await convertImageToJpeg({
+        buffer: raw,
+        mimeType: resolvedMime,
+        fileName: dto.fileName.trim(),
+      });
       const result = await repository.insertAttachment(
         ctx.tenantId,
         id,

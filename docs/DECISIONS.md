@@ -6285,3 +6285,64 @@ cadastrou.
 (`CreatePatientRequest`). Frontend: `Patients/NewPatientModal.tsx`, `patients/PhoneField.tsx`,
 `lib/phone-suggestion.ts`, `Attendance/ContactSearch.tsx`, `NewConversationModal.tsx`. Sem
 migração. Conversas e pacientes já duplicados pelos dois formatos continuam separados.
+
+### D-290: Imagem gravada vira JPEG; figurinha, animação e HEIC ficam como chegaram (CRMLAB-128)
+**Decisão:**
+1. Imagem é convertida para JPEG **ao gravar**, com `sharp@0.35.5` (`backend/src/services/image-to-jpeg.ts`):
+   entrada do WhatsApp (`MediaService.storeInbound`) e anexo da atendente (`prepareOutbound` →
+   o JPEG é o que vai para o WhatsApp do paciente). Roda depois da allow-list e do sniff
+   (CRMLAB-31): o que foi rebaixado para `application/octet-stream` não é tocado.
+2. Parâmetros: mozjpeg qualidade 82, `.rotate()` (orientação do EXIF aplicada), **sem
+   `withMetadata`** (EXIF, GPS, XMP, IPTC e ICC saem — GPS é dado pessoal), `flatten` em branco.
+3. **PNG com transparência vira JPEG com fundo branco.** Em prod os PNG reais são prints
+   enviados pela atendente (5 de 555 imagens); print e foto de pedido médico não dependem de
+   transparência, e fundo branco é como o papel aparece.
+4. **JPEG só é reencodado se tiver orientação ≠ 1 ou GPS** (tag 0x8825 no EXIF, ou "GPS" no XMP).
+   Fora disso fica byte a byte, inclusive o nome — exceto quando chegou declarado como outra
+   imagem (o sniff compara por categoria, então `image/png` com conteúdo JPEG passa): aí os bytes
+   ficam, mas o MIME vira `image/jpeg` e o nome ganha `.jpg`. Levantamento de prod em 28/10/2026
+   (`message_media`): `image/jpeg` paciente 299 (~148 KB) e atendente 236 (~158 KB);
+   `image/webp` figurinha 14 + 1; `image/png` atendente 5 (~95 KB); nenhum HEIC nem GIF;
+   `doctor_visit_attachments` vazio. Quase tudo já é JPEG e o WhatsApp já tira o EXIF da foto
+   recebida: reencodar todas só gastaria CPU e qualidade. Outros campos de EXIF (câmera, data)
+   ficam quando não há GPS nem rotação — ponto aceito em troca do custo.
+5. Ficam no formato original: **figurinha** (`stickerMessage`, WebP, animada ou não — o webhook
+   passa `keepFormat`), **GIF/WebP animado** (`pages > 1`) e **PNG animado** (chunk `acTL`).
+   GIF e WebP estáticos viram JPEG.
+6. **HEIC não é convertido.** Testado em 28/10/2026: o libheif do sharp pré-compilado só traz AV1
+   (`sharp.format.heif.input.fileSuffix = ['.avif']`; `heif({ compression: 'hevc' })` falha com
+   "Unsupported compression"); não havia HEIC real na máquina para um teste ponta a ponta, mas
+   sem decoder HEVC a leitura falha e cai no item 7. O HEIC é gravado como hoje. Alternativas,
+   se um dia precisar: libvips compilado com libde265 na imagem (perde o binário pronto do sharp
+   e entra a questão de patente do HEVC) ou decodificar no navegador antes do envio. Em prod não
+   chegou nenhum HEIC (o WhatsApp do iPhone já manda JPEG).
+7. Falha na conversão (imagem corrompida, acima de `limitInputPixels` = 60 MP, mais de 10 s de
+   CPU, HEIC) grava o **original** e loga `media.image_convert_failed`; `convertImageToJpeg`
+   nunca lança, e `storeInbound` continua nunca lançando.
+8. Banco: `message_media.mime_type`, `file_name` (extensão trocada para `.jpg`) e `byte_size`
+   são os do JPEG. Na entrada sem legenda, o `content` da mensagem (que é o nome do arquivo)
+   acompanha o nome gravado, para o balão continuar escondendo o nome (D-236 item 8, compara
+   `content` com `media.fileName`). **Imagens já gravadas não são convertidas** (decisão do Michel, 28/10/2026).
+   Sem migração.
+9. Imagem Docker: o runtime é `node:22-alpine` (musl). O `package-lock.json` traz
+   `@img/sharp-linuxmusl-x64` e `@img/sharp-libvips-linuxmusl-x64` (e os de glibc para o CI e o
+   dev), e o `npm ci --omit=dev` do estágio `prod-deps` instala os opcionais da plataforma do
+   container — o binário certo entra na imagem sem mudar o Dockerfile.
+**Motivo:** padronizar o que fica no disco e no WhatsApp do paciente (JPEG abre em qualquer
+lugar), tirar GPS/EXIF da foto enviada pela atendente e endireitar foto girada, sem pesar no
+caminho comum, que já é JPEG.
+**Impacto:** `backend/package.json` + `package-lock.json` (`sharp`), `services/image-to-jpeg.ts`
+(novo), `media.service.ts` (`prepareOutbound` recebe `fileName`; `storePrepared(tenantId,
+prepared)`; `StoredMedia.fileName`; `storeInbound(..., { keepFormat })`), `webhook.routes.ts`,
+`conversation.routes.ts`. Docs: API_CONTRACTS §2d "Hardening de mídia" item 5, SERVICES.md.
+
+### D-291: A conversão para JPEG vale também no chat interno e na visita médica (CRMLAB-128)
+**Decisão:** o anexo de imagem do chat interno (`InternalChatService.sendAttachment`) e da visita
+médica (`addAttachment`, `doctor_visit_attachments`) passa pelo mesmo `convertImageToJpeg` de
+D-290, depois do sniff e antes de gravar a linha; `mime_type`, `file_name` e `byte_size` gravados
+são os do JPEG. Lá não há figurinha, então só as exceções de animação/HEIC/falha valem.
+**Motivo:** o card fala em "anexos de imagem"; os três caminhos gravam no mesmo volume com a mesma
+validação (CRMLAB-31), e a foto da visita é justamente a que sai do celular com GPS.
+**Impacto:** `internal-chat.service.ts`, `visit.service.ts`. Sem mudança de contrato além do
+`mimeType`/`fileName` devolvidos, que já eram "o que foi gravado".
+

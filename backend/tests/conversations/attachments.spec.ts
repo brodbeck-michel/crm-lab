@@ -10,10 +10,19 @@
  *   5. legenda (CRMLAB-69, D-231) vira o `content`; áudio descarta; acima de
  *      1024 caracteres é 400.
  */
+import sharp from 'sharp';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { conversationModule } from '../../src/controllers/conversation.routes.js';
+import { conversationModule, makeConversationModule } from '../../src/controllers/conversation.routes.js';
 import { mediaModule } from '../../src/controllers/media.routes.js';
 import { MAX_MEDIA_BYTES } from '../../src/services/media.service.js';
+import { createInMemoryQueue } from '../../src/lib/queue.js';
+import {
+  WhatsAppService,
+  type OutboundMedia,
+  type SendResult,
+  type WhatsAppDriver,
+} from '../../src/services/whatsapp.service.js';
+import { testCredentialsResolver } from '../whatsapp/fixtures.js';
 import { createConversation, createTenant, createUser } from '../helpers/factories.js';
 import { createTestApp, type TestApp } from '../helpers/test-app.js';
 import { getTestDb, resetDatabase } from '../helpers/test-db.js';
@@ -263,5 +272,115 @@ describe('POST /conversations/:id/attachments', () => {
       );
       expect(rows.rows[0]?.total).toBe(0);
     });
+  });
+});
+
+/**
+ * CRMLAB-128 (D-290): imagem anexada pela atendente sai e fica gravada em
+ * JPEG — é esse JPEG que vai para o WhatsApp do paciente.
+ */
+describe('POST /conversations/:id/attachments — imagem vira JPEG (CRMLAB-128)', () => {
+  let app: TestApp;
+
+  beforeAll(async () => {
+    app = await createTestApp({ modules: [conversationModule, mediaModule] });
+  });
+
+  beforeEach(async () => {
+    await resetDatabase();
+  });
+
+  it('print PNG é gravado como image/jpeg com nome .jpg e tamanho do JPEG', async () => {
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Ana' });
+    const conversation = await createConversation({ tenantId: tenant.id, assignedTo: ana.id });
+    const png = await sharp({
+      create: { width: 30, height: 20, channels: 4, background: { r: 0, g: 0, b: 255, alpha: 0.5 } },
+    })
+      .png()
+      .toBuffer();
+
+    const created = await app.agent
+      .post(`/api/v1/conversations/${conversation.id}/attachments`)
+      .set(app.auth(ana))
+      .send({ fileName: 'print.png', mimeType: 'image/png', contentBase64: png.toString('base64') })
+      .expect(201);
+
+    expect(created.body.messageType).toBe('image');
+    expect(created.body.media.mimeType).toBe('image/jpeg');
+    expect(created.body.media.fileName).toBe('print.jpg');
+
+    const mediaId = created.body.attachmentUrl.split('/').pop();
+    const media = await app.agent.get(`/api/v1/media/${mediaId}`).set(app.auth(ana)).expect(200);
+    expect(media.headers['content-type']).toBe('image/jpeg');
+    expect((await sharp(media.body as Buffer).metadata()).format).toBe('jpeg');
+    expect(created.body.media.fileSize).toBe((media.body as Buffer).length);
+
+    const db = await getTestDb();
+    const rows = await db.withoutTenant((tx) =>
+      tx.query<{ mime_type: string; file_name: string; byte_size: number }>(
+        'SELECT mime_type, file_name, byte_size FROM message_media WHERE id = $1',
+        [mediaId],
+      ),
+    );
+    expect(rows.rows[0]).toEqual({
+      mime_type: 'image/jpeg',
+      file_name: 'print.jpg',
+      byte_size: (media.body as Buffer).length,
+    });
+  });
+});
+
+/** Driver que guarda o arquivo que iria para o WhatsApp do paciente. */
+class CapturingDriver implements WhatsAppDriver {
+  readonly name = 'capturing';
+  readonly media: OutboundMedia[] = [];
+
+  async send(): Promise<SendResult> {
+    return { externalId: 'wamid.texto' };
+  }
+
+  async sendMedia(_credentials: unknown, _phone: string, media: OutboundMedia): Promise<SendResult> {
+    this.media.push(media);
+    return { externalId: `wamid.midia.${this.media.length}` };
+  }
+}
+
+describe('POST /conversations/:id/attachments — o WhatsApp recebe o JPEG gravado (CRMLAB-128)', () => {
+  beforeEach(async () => {
+    await resetDatabase();
+  });
+
+  it('bytes, MIME e nome enviados ao canal são os do arquivo gravado', async () => {
+    const driver = new CapturingDriver();
+    const whatsapp = new WhatsAppService({
+      credentials: testCredentialsResolver(new Map()),
+      driver,
+      queue: createInMemoryQueue({ sleep: async () => {}, defaults: { backoffMs: 1 } }),
+      attempts: 1,
+    });
+    const app = await createTestApp({ modules: [makeConversationModule({ whatsapp }), mediaModule] });
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Ana' });
+    const conversation = await createConversation({ tenantId: tenant.id, assignedTo: ana.id });
+    const png = await sharp({ create: { width: 12, height: 12, channels: 4, background: 'red' } })
+      .png()
+      .toBuffer();
+
+    const created = await app.agent
+      .post(`/api/v1/conversations/${conversation.id}/attachments`)
+      .set(app.auth(ana))
+      .send({ fileName: 'print.png', mimeType: 'image/png', contentBase64: png.toString('base64') })
+      .expect(201);
+
+    expect(driver.media).toHaveLength(1);
+    const sent = driver.media[0]!;
+    expect(sent.mimeType).toBe('image/jpeg');
+    expect(sent.fileName).toBe('print.jpg');
+    const mediaId = created.body.attachmentUrl.split('/').pop();
+    const served = await app.agent.get(`/api/v1/media/${mediaId}`).set(app.auth(ana)).expect(200);
+    expect(sent.buffer.equals(served.body as Buffer)).toBe(true);
+    // Sem legenda: o content é o nome gravado (o balão não mostra "print.png").
+    expect(created.body.content).toBe('print.jpg');
   });
 });

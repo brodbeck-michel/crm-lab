@@ -3664,3 +3664,17 @@ Branch `feature/CRMLAB-120-status-usuario` (de `main` v1.40.0). Decisão D-286, 
   `route-tenant-isolation` (+2 rotas = 120). Frontend `PresenceDot.spec.tsx`,
   `useIdlePresence.spec.tsx`, `Sidebar.spec.tsx` (+3), `UserTable.spec.tsx` (+1), `ws.spec.ts` (+1).
 - **Pendente:** validação na hml.
+
+### 🚧 CRMLAB-128 — imagens gravadas em JPEG (2026-10-28, aguardando validação)
+
+- **O que mudou:** imagem recebida pelo WhatsApp, anexada pela atendente, no chat interno ou na
+  visita médica é gravada em JPEG (sharp, mozjpeg q82, foto endireitada, sem EXIF/GPS, fundo
+  branco no lugar da transparência). Nome ganha `.jpg`; tipo e tamanho no banco são os do JPEG.
+- **Fica como está:** figurinha, GIF/WebP/PNG animado, JPEG sem rotação nem GPS, HEIC (sharp
+  pré-compilado não lê HEVC), imagem que falhar na conversão (grava o original, com log) e tudo o
+  que já estava gravado. Decisões D-290 e D-291. Sem migração.
+- **Testes:** `src/services/image-to-jpeg.spec.ts` (13), `tests/webhooks/evolution-webhook-media.spec.ts`
+  (+4), `tests/conversations/attachments.spec.ts` (+1), `tests/internal-chat/attachments.spec.ts`
+  (+1), `tests/visits/visit-record.spec.ts` (+1).
+- **Pendente:** validação na hml (print PNG pela atendente, foto de celular girada, figurinha).
+

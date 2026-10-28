@@ -3602,7 +3602,7 @@ D-299, sem migração.
   (candidatos, mais parecido primeiro, busca) → `SendProposalPanel` com a conversa fixa.
 - **Testes:** backend `send-from-card.spec.ts` (+5: filtro, recorte por papel, busca por nº,
   validação, segundo envio recusado sem mensagem); front `LinkBudgetModal.spec.tsx` (novo, 8);
-  e2e `link-budget-from-conversation.spec.ts` (escrito, não executado).
+  e2e `flow-20-link-budget-from-conversation.spec.ts` (escrito, não executado).
 - **Pendente:** exames do orçamento (D-299 item 2); validação na hml.
 
 ### 🚧 CRMLAB-121 — cadastrar contato e achar pelo nome na Nova conversa (2026-10-26, aguardando validação)

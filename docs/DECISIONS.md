@@ -6308,7 +6308,13 @@ migração. Conversas e pacientes já duplicados pelos dois formatos continuam s
    invalidam (`proposal.created` quando entra orçamento novo). Depois do envio, a lista de
    propostas da conversa atualiza pela invalidação da mutação.
 6. Botão só aparece com a regra "Nascer do orçamento do Bitlab" ligada (D-246) — e **some
-   enquanto as Regras carregam**, para não piscar — e com a conversa `active` (o envio exige).
+   enquanto as Regras carregam**, para não piscar —, com a conversa `active` (o envio exige
+   `CONVERSATION_ARCHIVED` fora disso) e com a conversa do canal `whatsapp` (revisão: em
+   `sms`/`web`/`direct` o `createFromAgent` só grava a mensagem e nada chega ao paciente; o card
+   exige que saia pelo WhatsApp). O `POST /proposals/:id/send` em si não confere o canal — o
+   Pipeline já deixava escolher qualquer conversa ativa; endurecer o backend fica para o Michel.
+   Conversa **encerrada** esconde o botão, embora responder encerrada pelo Composer a reabra
+   (D-273): o envio do cartão (D-200) nunca reabriu; igualar fica para o Michel decidir.
 7. Corrida: já era atômica (`lockForSend` com `FOR UPDATE` + `send_claim_id`, D-201). A tela
    traduz `PROPOSAL_ALREADY_SENT` para "O orçamento já foi enviado por outra atendente." (ou
    "Outra atendente está enviando este orçamento agora." com `reason: in_progress`) — vale também
@@ -6328,4 +6334,5 @@ caminho só de envio mantém auditoria, régua de fatos e trava de corrida iguai
 2. **Exames não aparecem**: o CRM não guarda os exames do orçamento do Bitlab (`lis_budgets` só
    tem número, paciente, convênios/valores, data e usuário). Mostrar exames exige trazer o item do
    orçamento na sincronia + migração — fica para card próprio.
-**Ponto para o Michel confirmar:** os dois itens acima.
+**Ponto para o Michel confirmar:** os dois itens acima, e os dois de D-298 item 6 (canal no
+backend; reabrir encerrada ao vincular).

@@ -358,7 +358,7 @@ Anatomia (padrão WhatsApp):
   `conversationId` fixa — aí a lista de conversas some. Aceita `Proposal` (não precisa do detalhe).
   Erro `PROPOSAL_ALREADY_SENT` vira frase própria (`sendErrorMessage`).
 - `LinkBudgetModal` / `LinkBudgetButton` (`components/proposal/LinkBudgetModal.tsx`): botão e
-  modal do "Vincular orçamento"; o botão se esconde sozinho (regra D-246, conversa não ativa).
+  modal do "Vincular orçamento"; o botão se esconde sozinho (regra D-246, conversa não ativa ou fora do WhatsApp).
 
 ### StageColumn
 ```tsx

@@ -129,7 +129,7 @@ describe('rankBudgets', () => {
 });
 
 describe('LinkBudgetButton', () => {
-  it('some com "Nascer do orçamento do Bitlab" desligada, com regras carregando e em conversa encerrada', () => {
+  it('some com "Nascer do orçamento do Bitlab" desligada, com regras carregando, em conversa encerrada e fora do WhatsApp', () => {
     mockRules({ ...DEFAULT_FUNNEL_RULES, origin: { fromBitlab: false, manualInCrm: true } });
     const { unmount } = renderButton();
     expect(screen.queryByRole('button', { name: 'Vincular orçamento' })).not.toBeInTheDocument();
@@ -141,7 +141,12 @@ describe('LinkBudgetButton', () => {
     second.unmount();
 
     mockRules(DEFAULT_FUNNEL_RULES);
-    renderButton({ ...CONVERSATION, status: 'closed' } as ConversationDetail);
+    const third = renderButton({ ...CONVERSATION, status: 'closed' } as ConversationDetail);
+    expect(screen.queryByRole('button', { name: 'Vincular orçamento' })).not.toBeInTheDocument();
+    third.unmount();
+
+    // Fora do WhatsApp nada sai para o paciente: o botão não aparece.
+    renderButton({ ...CONVERSATION, channel: 'direct' } as ConversationDetail);
     expect(screen.queryByRole('button', { name: 'Vincular orçamento' })).not.toBeInTheDocument();
   });
 

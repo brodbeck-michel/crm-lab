@@ -305,7 +305,7 @@ não só aqui. O Console da Plataforma não avisa.
   aberta ao trocar de conversa até recarregar a página (não persiste — D-117).
 - Cadastro resumido, propostas da conversa (cartões clicáveis → modal), tags
 - **"Vincular orçamento" (CRMLAB-129, D-298/D-299):** botão ao lado do título "Propostas", só com
-  "Nascer do orçamento do Bitlab" ligada e conversa ativa. Abre o `LinkBudgetModal`: orçamentos do
+  "Nascer do orçamento do Bitlab" ligada e conversa ativa do WhatsApp. Abre o `LinkBudgetModal`: orçamentos do
   Bitlab em "Novo orçamento" sem conversa (`GET /proposals?status=novo_contato&withoutConversation=true`)
   que a pessoa pode enviar (`canActOnCard`), com nº, nome, valor, data e usuário do Bitlab; o mais
   parecido com o nome da conversa em cima (chip "Mais parecido"); busca por nome ou nº. Escolher

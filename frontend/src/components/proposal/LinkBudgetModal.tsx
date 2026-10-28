@@ -175,13 +175,21 @@ export function LinkBudgetModal({ conversation, onClose }: LinkBudgetModalProps)
 /**
  * Botão do painel de contexto. Some quando "Nascer do orçamento do Bitlab"
  * está desligada nas Regras (D-246) — inclusive enquanto as Regras carregam,
- * para não piscar num laboratório que não usa a integração — e em conversa
- * que não está ativa (o envio exige conversa ativa).
+ * para não piscar num laboratório que não usa a integração —, em conversa
+ * que não está ativa (o envio exige conversa ativa) e em conversa que não é do
+ * WhatsApp: em `sms`/`web`/`direct` o `createFromAgent` só grava a mensagem,
+ * nada sai para o paciente, e o card exige que o orçamento saia pelo WhatsApp.
  */
 export function LinkBudgetButton({ conversation }: { conversation: ConversationDetail }) {
   const [open, setOpen] = useState(false);
   const rules = useFunnelRules().data;
-  if (rules?.origin?.fromBitlab !== true || conversation.status !== 'active') return null;
+  if (
+    rules?.origin?.fromBitlab !== true ||
+    conversation.status !== 'active' ||
+    conversation.channel !== 'whatsapp'
+  ) {
+    return null;
+  }
   return (
     <>
       <Button variant="secondary" size="sm" onClick={() => setOpen(true)}>

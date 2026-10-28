@@ -3664,3 +3664,20 @@ Branch `feature/CRMLAB-120-status-usuario` (de `main` v1.40.0). Decisão D-286, 
   `route-tenant-isolation` (+2 rotas = 120). Frontend `PresenceDot.spec.tsx`,
   `useIdlePresence.spec.tsx`, `Sidebar.spec.tsx` (+3), `UserTable.spec.tsx` (+1), `ws.spec.ts` (+1).
 - **Pendente:** validação na hml.
+
+### 🚧 CRMLAB-123 — chat interno: ✓ enviada / ✓✓ lida (2026-10-28, aguardando validação)
+
+Branch `feature/CRMLAB-123-chat-interno-leitura` (de `main` v1.41.0). Decisões D-300, D-301. Sem
+migração.
+
+- **Tique:** nas mensagens próprias, ✓ cinza (gravada) ou ✓✓ azul (lida) — o mesmo do atendimento.
+  DM: o outro abriu depois dela. Canal: todos os membros ativos do tenant leram; o hover mostra
+  "Lida por" e "Ainda não leram".
+- **API:** `GET .../messages` devolve `readState` (uma consulta por canal, de `channel_reads`).
+  `POST .../read` emite `internal_chat.channel_read { channelId, userId }` quando passou de
+  mensagem de outra pessoa (DM: só o outro; canal: tenant).
+- **Canal aberto:** mensagem nova de outra pessoa marca como lida sozinha (aba visível).
+- **Testes:** backend `tests/internal-chat/read-receipts.spec.ts` (8) + ajuste de shape em
+  `internal-chat.spec.ts`. Frontend `InternalChat.read-receipts.spec.tsx` (10), `ws.spec.ts` (+1).
+  E2E `flow-internal-chat-read-receipts.spec.ts` escrito, não executado.
+- **Pendente:** validação na hml; e2e na integração.

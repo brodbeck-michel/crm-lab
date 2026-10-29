@@ -1180,6 +1180,11 @@ resto → `doc`) — o cliente não escolhe.
 `POST /message/sendWhatsAppAudio/:instance` — o gateway converte para `ogg/opus` e entrega como
 recado de voz — e não por `/message/sendMedia`. O request e a resposta deste endpoint não mudam.
 
+**Nome do arquivo (CRMLAB-131, D-303):** o `fileName` do `/message/sendMedia` sai com a
+extensão do `mimetype` (`fileNameWithExtension`). O Evolution v2.3.7 recalcula o mimetype pelo
+nome e grava `'false'` para extensão que não conhece (`.jfif`): o WhatsApp aceita (um tique) e
+nunca entrega.
+
 **Vídeo (CRMLAB-69, D-231):** `video/*` sai no `/message/sendMedia` com `mediatype: "video"`
 (antes ia como `document`). Desde o CRMLAB-70 (D-234) o `messageType` gravado é `video`. A
 allow-list aceita `video/mp4`, `video/quicktime` (.mov do iPhone), `video/3gpp` e `video/webm`,
@@ -2243,6 +2248,10 @@ passado pelo hardening acima), `X-Content-Type-Options: nosniff`, e `Content-Dis
 - `inline; filename="..."` para `image/*` e `audio/*`;
 - `attachment; filename="..."` para tudo o mais (PDF, doc, `application/octet-stream`) — o
   navegador baixa, nunca tenta renderizar no mesmo origin da SPA.
+
+O `filename` sai sempre com a extensão do `mimeType` servido (`fileNameWithExtension`,
+CRMLAB-131, D-303): `imagem` gravada sem extensão vira `imagem.jpg`, e `.jfif` vira `.jpg`. O
+nome gravado no banco não muda.
 
 **Erros:** `NOT_FOUND` (404 — inexistente ou de outro tenant), `VALIDATION_ERROR`
 (400, `:id` não-uuid), `FORBIDDEN` (403, `platform_operator`)

@@ -372,3 +372,44 @@ describe('POST /webhooks/evolution/:tenant — imagem vira JPEG (CRMLAB-128)', (
     expect(row?.byte_size).toBe(truncated.length);
   });
 });
+
+describe('GET /media/:id — nome do download com extensão (CRMLAB-131)', () => {
+  it('JPEG recebido sem nome sai como imagem.jpg — sem extensão o Chrome no Windows salvava .jfif', async () => {
+    const tenant = await createTenant({ slug: 'lab-download-ext' });
+    slugToId.set('lab-download-ext', tenant.id);
+    const jpeg = await sharp({ create: { width: 10, height: 10, channels: 3, background: 'blue' } })
+      .jpeg()
+      .toBuffer();
+    await app.agent
+      .post(`${WEBHOOK}/lab-download-ext`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send({
+        event: 'MESSAGES_UPSERT',
+        instance: evolutionInstanceName(tenant.id),
+        data: {
+          key: { remoteJid: '5548999997777@s.whatsapp.net', id: 'EVO-DL-EXT' },
+          message: { imageMessage: { mimetype: 'image/jpeg', base64: jpeg.toString('base64') } },
+        },
+      })
+      .expect(200);
+
+    const db = await getTestDb();
+    const row = await db.withoutTenant((tx) =>
+      tx.query<{ attachment_url: string }>(`SELECT attachment_url FROM messages WHERE tenant_id = $1`, [
+        tenant.id,
+      ]),
+    );
+    const admin = await createUser({ tenantId: tenant.id, role: 'admin', name: 'Admin' });
+    const token = signAccessToken({
+      userId: admin.id,
+      tenantId: admin.tenantId,
+      role: admin.role,
+      discountLimit: admin.discountLimit,
+    });
+    const media = await app.agent
+      .get(`/api/v1/media/${row.rows[0]!.attachment_url.split('/').pop()}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(media.headers['content-disposition']).toBe('inline; filename="imagem.jpg"');
+  });
+});

@@ -57,6 +57,10 @@ const PLACEHOLDER = /^\[(?:image|imagem)\]$/i;
 export function imageCaption(message: Message, fileName: string | null): string | undefined {
   const text = message.content.trim();
   if (!text || PLACEHOLDER.test(text)) return undefined;
-  if (fileName && text === fileName.trim()) return undefined;
+  // O download sai com extensão (CRMLAB-131): `imagem` gravada antes chega como
+  // `imagem.jpg`, e o `content` antigo (`imagem`) não pode virar legenda.
+  if (fileName && (text === fileName.trim() || text === fileName.trim().replace(/\.[^.]+$/, ''))) {
+    return undefined;
+  }
   return text;
 }

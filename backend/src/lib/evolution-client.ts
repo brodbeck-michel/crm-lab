@@ -20,7 +20,7 @@
  * `CHANNEL_QR_UNAVAILABLE`/`MESSAGE_SEND_FAILED` e o SERVICE, uma camada acima
  * (mesma divisao de `HttpWhatsAppDriver` em `whatsapp.service.ts`).
  */
-import { isWhatsAppPlayableVideo } from '@crm-lab/shared';
+import { fileNameWithExtension, isWhatsAppPlayableVideo } from '@crm-lab/shared';
 import { env } from '../config/env.js';
 import { withGatewayTimeout } from './fetch-timeout.js';
 
@@ -571,7 +571,9 @@ export function createEvolutionClient(
                 number: phone,
                 mediatype,
                 mimetype: media.mimeType,
-                fileName: media.fileName,
+                // O gateway deduz o mimetype pelo nome: `.jfif` virava 'false'
+                // e a imagem ficava num tique só, sem entrega (CRMLAB-131).
+                fileName: fileNameWithExtension(media.fileName, media.mimeType),
                 media: media.base64,
                 ...(media.caption ? { caption: media.caption } : {}),
                 ...quotedPart,

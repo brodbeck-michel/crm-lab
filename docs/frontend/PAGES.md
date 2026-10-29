@@ -807,6 +807,24 @@ nunca "sem permissão" (não vazar existência).
   outros membros veem pelo WS `internal_chat.message_updated` (canais + mensagens do canal
   recarregam); apagada sai do badge de não lidas
 
+### Confirmação de leitura (CRMLAB-123, D-300/D-301)
+
+- Só nas mensagens PRÓPRIAS, ao lado da hora: ✓ cinza = gravada; ✓✓ azul = lida. Mesmo
+  `MessageStatusTick` do atendimento (CRMLAB-67, tokens `chat-meta`/`chat-tick-read`). DM: lida
+  quando o outro abriu depois dela; canal: só quando TODOS os membros leram. Mensagem dos outros e
+  apagada não levam tique; editada mantém (a referência é o `createdAt`)
+- Canal: o hover do tique mostra "Lida por: Nome (abriu dd/mm hh:mm)" e "Ainda não leram: …". O
+  horário é a ÚLTIMA abertura do canal (`lastReadAt`), não o instante exato da leitura daquela
+  mensagem — daí "abriu". DM: só "Lida"/"Enviada"
+- Vem do `readState` de `GET .../messages` (página 1); a tela compara `createdAt` com
+  `internalMessageReadStatus`/`internalMessageReaders` (shared). Atualiza pelo WS
+  `internal_chat.channel_read`, cujo payload (o "lido até" do leitor) vai para um store e é
+  somado ao `readState` (`mergeReadState`) — sem GET por evento e sem polling
+- Canal aberto PELA PESSOA (clique ou deep link) e aba visível: mensagem nova de outra pessoa
+  chama `POST .../read` de novo (`useMarkReadWhileOpen`, `queries.ts`); aba escondida marca ao
+  voltar a ficar visível. Os POSTs são agrupados em 1,5 s (uma rajada = um POST). O canal
+  auto-selecionado na entrada continua sem marcar (D-068)
+
 ### Buscar usuário (D-101) — iniciar conversa direta
 
 No topo da coluna esquerda, ACIMA dos grupos "Canais" e "Mensagens diretas", um campo de

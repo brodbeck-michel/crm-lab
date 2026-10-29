@@ -9,10 +9,11 @@ import { useToast } from '@/components/ui';
 import { useApiErrorHandler } from '@/hooks';
 import { useAuthStore, selectUser } from '@/stores';
 import { useMessageAlertsStore } from '@/stores/message-alerts.store';
+import { mergeReadState, useInternalChatReadsStore } from '@/stores/internal-chat-reads.store';
 import { ChannelList } from './ChannelList';
 import { MessagePanel } from './MessagePanel';
 import { UserSearch } from './UserSearch';
-import { internalMessagesOptions, useMarkChannelRead } from './queries';
+import { internalMessagesOptions, useMarkChannelRead, useMarkReadWhileOpen } from './queries';
 
 /**
  * Chat Interno (`/internal-chat`) — PAGES.md §9 e WORKFLOWS.md §6.
@@ -58,6 +59,8 @@ export function InternalChat() {
   const markChannelRead = useMarkChannelRead();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  /** Último canal aberto PELA PESSOA (clique/deep link) — CRMLAB-123, D-301. */
+  const [openedId, setOpenedId] = useState<string | null>(null);
   const [pageCount, setPageCount] = useState(1);
 
   const channelsQuery = useQuery({
@@ -125,6 +128,7 @@ export function InternalChat() {
   const handleSelect = useCallback(
     (id: string) => {
       setSelectedId(id);
+      setOpenedId(id);
       setPageCount(1);
       void markChannelRead(id).catch(handleApiError);
     },
@@ -160,6 +164,26 @@ export function InternalChat() {
   });
 
   const selectedChannel = channels.find((channel) => channel.id === selectedId) ?? null;
+
+  // CRMLAB-123 (D-301): o ✓✓ ao vivo vem do WS direto no store (sem GET) e é
+  // somado ao `readState` do último GET das mensagens.
+  const liveReads = useInternalChatReadsStore((state) =>
+    selectedId ? state.byChannel[selectedId] : undefined,
+  );
+  const serverReadState = messagesQuery.data?.readState ?? null;
+  const readState = useMemo(
+    () => mergeReadState(serverReadState, liveReads),
+    [serverReadState, liveReads],
+  );
+
+  // CRMLAB-123 (D-301): com o canal aberto, mensagem nova de outra pessoa já é lida.
+  useMarkReadWhileOpen(
+    selectedId !== null && selectedId === openedId ? selectedId : null,
+    messagesQuery.data?.messages,
+    currentUser?.id ?? null,
+    markChannelRead,
+    handleApiError,
+  );
 
   const sendMessage = useMutation({
     mutationFn: (content: string) => api.internalChat.send(selectedId as string, { content }),
@@ -322,6 +346,7 @@ export function InternalChat() {
           currentUserId={currentUser?.id ?? null}
           currentUserRole={currentUser?.role ?? null}
           hasOlderMessages={messagesQuery.data?.hasOlder ?? false}
+          readState={readState}
           onLoadOlder={() => setPageCount((count) => count + 1)}
           presenceOf={presenceOf}
         />

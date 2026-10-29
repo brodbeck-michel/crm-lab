@@ -19,6 +19,7 @@
 import {
   FALLBACK_MEDIA_MIME_TYPE,
   MAX_MEDIA_BYTES,
+  channelReadUpTo,
   internalMessageAuthorActionBlock,
   type Channel,
   type ChatDirectoryUser,
@@ -26,6 +27,7 @@ import {
   type InternalMessage,
   type ListInternalMessagesResponse,
   type PaginationMeta,
+  type WsEventPayloads,
 } from '@crm-lab/shared';
 import type { DbClient, DbTx } from '../db/types.js';
 import type { TenantContext } from '../http/context.js';
@@ -117,7 +119,17 @@ export class InternalChatService {
         total: result.total,
         totalPages: result.total === 0 ? 0 : Math.ceil(result.total / limit),
       };
-      return { messages: result.rows, pagination };
+      // CRMLAB-123 (D-300): uma consulta por canal; a tela compara os horarios.
+      const readers = await chatRepo.listChannelReaders(tx, {
+        tenantId: ctx.tenantId,
+        channel,
+        viewerUserId: ctx.userId,
+      });
+      return {
+        messages: result.rows,
+        pagination,
+        readState: { readUpTo: channelReadUpTo(readers), readers },
+      };
     });
   }
 
@@ -179,15 +191,40 @@ export class InternalChatService {
    */
   async markChannelRead(ctx: TenantContext, channelId: string): Promise<void> {
     assertLabMember(ctx);
-    await this.db.withTenant(ctx.tenantId, async (tx) => {
+    const outcome = await this.db.withTenant(ctx.tenantId, async (tx) => {
       const channel = await chatRepo.findChannelById(tx, channelId, ctx.userId);
       if (!channel) throw notFound({ resource: 'channel', id: channelId });
-      await chatRepo.markChannelRead(tx, {
+      const read = await chatRepo.markChannelRead(tx, {
         tenantId: ctx.tenantId,
         channelId,
         userId: ctx.userId,
       });
+      return { channel, read };
     });
+
+    // CRMLAB-123 (D-301): so quando a leitura passou de mensagem de outra pessoa
+    // (reabrir canal ja lido nao gera evento). DM: so o outro participante. O
+    // payload ja traz o "lido ate": a tela atualiza o tique sem refazer GET
+    // (o evento de canal vai para o tenant inteiro — CRMLAB-122).
+    if (!outcome.read.advanced) return;
+    const payload: WsEventPayloads['internal_chat.channel_read'] = {
+      channelId,
+      userId: ctx.userId,
+      readUpTo: outcome.read.readUpTo,
+      lastReadAt: outcome.read.lastReadAt,
+    };
+    if (outcome.channel.kind === 'dm') {
+      if (outcome.channel.otherUserId) {
+        this.wsHub.emitToUser(
+          ctx.tenantId,
+          outcome.channel.otherUserId,
+          'internal_chat.channel_read',
+          payload,
+        );
+      }
+      return;
+    }
+    this.wsHub.emitToTenant(ctx.tenantId, 'internal_chat.channel_read', payload);
   }
 
   /**

@@ -6615,6 +6615,67 @@ caminho só de envio mantém auditoria, régua de fatos e trava de corrida iguai
 **Ponto para o Michel confirmar:** os dois itens acima, e os dois de D-298 item 6 (canal no
 backend; reabrir encerrada ao vincular).
 
+### D-300: Confirmação de leitura do chat interno derivada de `channel_reads` — quem é membro (CRMLAB-123)
+**Decisão:**
+1. "Lida" é derivada, nunca gravada por mensagem: `GET /internal-chat/channels/:id/messages`
+   devolve `readState` (`readUpTo` + `readers`), calculado em UMA consulta por canal a partir de
+   `channel_reads.last_read_at`. A tela compara `createdAt` de cada mensagem própria com ele.
+2. **Membros de um canal comum** (`kind = 'channel'`, público no tenant) = usuários **ativos** do
+   tenant, exceto quem pergunta e `platform_operator`. Escolha conservadora: o canal é visível a
+   todo mundo do laboratório, então "todos leram" só vale quando todo mundo que pode ler leu — ✓✓
+   nunca afirma leitura que não houve. Inativo/desativado sai da conta, então não trava o ✓✓ para
+   sempre. Efeito colateral aceito: quem entra na equipe depois e nunca abriu o canal volta a
+   deixar as mensagens antigas em ✓ até abrir (ele não leu).
+3. **DM**: o membro é o outro participante, mesmo inativo (é uma conversa a dois — se ele nunca
+   abriu, não leu).
+4. Canal sem outro membro (laboratório de uma pessoa só): nunca ✓✓.
+5. Cada leitor traz `readUpTo` = `created_at` da mensagem mais recente até a sua `last_read_at`
+   (comparação no SQL, as duas colunas `TIMESTAMP`), e o canal o MENOR entre eles. A tela só compara
+   valores da mesma coluna pelo mesmo `toIso` — sem fuso/precisão no meio. Limite aceito: duas
+   mensagens no mesmo milissegundo com uma leitura entre elas sairiam iguais.
+6. O hover ("Lida por / Ainda não leram") mostra a ÚLTIMA abertura do canal ("abriu dd/mm hh:mm"),
+   não o instante exato em que leu aquela mensagem — não há horário por mensagem.
+7. Editada mantém o tique (referência é o `createdAt`); apagada não mostra tique.
+**Motivo:** o card pede ✓✓ como no WhatsApp sem custo por mensagem; `channel_reads` já existe
+(D-068) e serve tanto ao contador quanto à confirmação. A definição de membro precisava ser
+explícita porque canal comum não tem lista de membros.
+**Impacto:** `shared/types/internal-chat.types.ts` (`InternalChannelReadState`,
+`InternalChannelReader`, `internalMessageReadStatus`, `internalMessageReaders`, `channelReadUpTo`);
+`internal-chat.repository.ts` (`listChannelReaders`); `internal-chat.service.ts` (`listMessages`).
+Frontend: `InternalMessageItem` (tique + hover), `MessagePanel`, `queries.ts`; `MessageStatusTick`
+ganhou `title` opcional e passou a ser exportado de `components/conversation`. Sem migração.
+
+### D-301: ✓✓ ao vivo por `internal_chat.channel_read` e leitura com o canal aberto (CRMLAB-123)
+**Decisão:**
+1. `POST /internal-chat/channels/:id/read` diz, no mesmo `INSERT ... ON CONFLICT` (CTE com a
+   leitura anterior), se a leitura passou de alguma mensagem de OUTRA pessoa não apagada. Só então
+   emite WS `internal_chat.channel_read` `{ channelId, userId, readUpTo, lastReadAt }`: DM →
+   `emitToUser` do outro participante; canal → tenant inteiro. Reabrir canal já lido não emite.
+   `readUpTo`/`lastReadAt` saem do mesmo comando, com a mesma regra do `readState`.
+2. O frontend **não refaz GET** por esse evento (revisão do card, por causa do CRMLAB-122): num
+   canal o evento vai a todas as abas do laboratório a cada leitura de qualquer pessoa, e
+   invalidar `GET .../messages` em cada uma recriaria a tempestade de 429. O payload vai direto
+   para um store em memória (`stores/internal-chat-reads.store.ts`, mesma exceção da presença do
+   paciente, D-226) e a tela junta com o `readState` do último GET (`mergeReadState`, vale a
+   leitura de `lastReadAt` mais recente por leitor; leitor fora da lista do servidor é ignorado).
+   Zero requisição por evento, com a aba visível ou escondida. Sem polling, sem endpoint novo.
+3. Com o canal ABERTO pela pessoa (clique/deep link) e a aba visível, mensagem nova de outra
+   pessoa chama `POST .../read` de novo (`useMarkReadWhileOpen`); aba escondida marca ao voltar.
+   As marcações são agrupadas em 1,5 s (`MARK_READ_WHILE_OPEN_DEBOUNCE_MS`): uma rajada vira UM
+   POST por pessoa; trocar de canal/sair da tela dispara a pendente na hora. Não há laço evento →
+   POST → evento: o `channel_read` não mexe nas mensagens, e só mensagem nova de outra pessoa
+   agenda POST.
+   Antes, quem estava com a DM aberta só "lia" ao clicar de novo no canal — o ✓✓ de quem escreveu
+   ficaria cinza enquanto as duas conversavam. O canal auto-selecionado na entrada continua sem
+   marcar (D-068 item 1 do `handleSelect`). Efeito colateral: o badge de não lidas do canal aberto
+   também passa a zerar sozinho.
+**Motivo:** o card pede atualização na hora, sem recarregar, e o CRMLAB-122 está reduzindo
+requisições — evento só quando há o que mudar, e nenhum GET por evento.
+**Impacto:** `websocket.types.ts`; `internal-chat.repository.ts` (`markChannelRead` devolve
+`boolean`); `internal-chat.service.ts`; `frontend/src/api/ws.ts` (um `case`, sem invalidação); `stores/internal-chat-reads.store.ts`;
+`pages/InternalChat/queries.ts` (`useMarkReadWhileOpen`) e `index.tsx`. Docs:
+`API_CONTRACTS.md` §3b, `FRONTEND_BACKEND.md`, `SERVICES.md` §7, `PAGES.md` §9.
+
 ### D-302: Figurinha enviada pelo Atendimento sai das favoritas do laboratório, sem conversão (CRMLAB-127)
 **Decisão:**
 1. **Origem:** a atendente envia apenas figurinhas **favoritadas** pelo laboratório. Favoritar é

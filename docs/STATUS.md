@@ -3747,3 +3747,22 @@ Mesma branch do CRMLAB-124. Decisão D-294, sem migração nem mudança de API.
 - **Rota:** `/contacts` e `/contacts/:id`; `/patients[/:id]` redireciona (favoritos funcionam).
 - **Testes:** 10 specs unitários atualizados; `e2e/workflows/flow-8-patient.spec.ts` com textos
   novos e +2 testes do redirect (e2e não executado neste worktree).
+
+### 🚧 CRMLAB-123 — chat interno: ✓ enviada / ✓✓ lida (2026-10-28, aguardando validação)
+
+Branch `feature/CRMLAB-123-chat-interno-leitura` (de `main` v1.41.0). Decisões D-300, D-301. Sem
+migração.
+
+- **Tique:** nas mensagens próprias, ✓ cinza (gravada) ou ✓✓ azul (lida) — o mesmo do atendimento.
+  DM: o outro abriu depois dela. Canal: todos os membros ativos do tenant leram; o hover mostra
+  "Lida por" e "Ainda não leram".
+- **API:** `GET .../messages` devolve `readState` (uma consulta por canal, de `channel_reads`).
+  `POST .../read` emite `internal_chat.channel_read { channelId, userId, readUpTo, lastReadAt }`
+  quando passou de mensagem de outra pessoa (DM: só o outro; canal: tenant). A tela aplica o
+  payload num store, **sem GET** (revisão: o evento de canal vai ao tenant inteiro — CRMLAB-122).
+- **Canal aberto:** mensagem nova de outra pessoa marca como lida sozinha (aba visível), com os
+  POSTs agrupados em 1,5 s.
+- **Testes:** backend `tests/internal-chat/read-receipts.spec.ts` (8) + ajuste de shape em
+  `internal-chat.spec.ts`. Frontend `InternalChat.read-receipts.spec.tsx` (10), `ws.spec.ts` (+1).
+  E2E `flow-internal-chat-read-receipts.spec.ts` escrito, não executado.
+- **Pendente:** validação na hml; e2e na integração.

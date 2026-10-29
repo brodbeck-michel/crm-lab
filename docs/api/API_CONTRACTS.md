@@ -3028,7 +3028,14 @@ em `channel_reads` — **idempotente**, e chamar em canal já lido não é erro.
 
 **Response:** `204 No Content`
 
-A tela chama ao abrir o canal (mesma ergonomia de `POST /conversations/:id/read`). Diferente de
+**Confirmação de leitura (CRMLAB-123, D-301):** quando a leitura passa de pelo menos uma mensagem
+de OUTRA pessoa (não apagada), emite WS `internal_chat.channel_read` `{ channelId, userId, readUpTo, lastReadAt }` (o "lido
+até" desse leitor, mesmos campos de `readers[]` abaixo) depois do commit — DM: só para o outro participante; canal: tenant inteiro. Reabrir canal já lido não
+emite nada. O mesmo comando `INSERT ... ON CONFLICT` diz se avançou (CTE com a leitura anterior),
+sem consulta a mais.
+
+A tela chama ao abrir o canal (mesma ergonomia de `POST /conversations/:id/read`) e, com o canal
+aberto pela pessoa e a aba visível, de novo quando chega mensagem de outra pessoa (D-301). Diferente de
 conversas, `GET /internal-chat/channels/:id/messages` **não** marca como lido: ler página
 antiga do histórico não significa ter visto a mensagem nova, e o `GET` com efeito colateral de
 `/conversations` (D-035) existe porque lá a página 1 É o fim da conversa. Não gera audit log:
@@ -3077,9 +3084,36 @@ listagem.
       "deletedAt": null
     }
   ],
-  "pagination": { "page": 1, "limit": 50, "total": 1, "totalPages": 1 }
+  "pagination": { "page": 1, "limit": 50, "total": 1, "totalPages": 1 },
+  "readState": {
+    "readUpTo": "2026-08-23T14:40:00.000Z",
+    "readers": [
+      {
+        "userId": "uuid",
+        "name": "Gustavo Gestor",
+        "readUpTo": "2026-08-23T14:40:00.000Z",
+        "lastReadAt": "2026-08-23T14:52:10.000Z"
+      }
+    ]
+  }
 }
 ```
+
+`readState` (CRMLAB-123, D-300) — resposta composta (D-070): quem já leu o canal, visto por quem
+pergunta, para a tela desenhar ✓ / ✓✓ nas mensagens **próprias**. Vale para o canal inteiro (não
+só a página) e sai de UMA consulta por canal, derivada de `channel_reads` (sem tabela por
+mensagem):
+- `readers`: os OUTROS membros, por nome. DM = o outro participante (mesmo inativo). Canal =
+  usuários **ativos** do tenant, sem `platform_operator` (D-300). Cada um com `lastReadAt` (última
+  vez que abriu o canal, `null` = nunca) e `readUpTo` = `createdAt` da mensagem mais recente
+  criada até essa leitura (`null` = nunca leu/canal vazio ao ler).
+- `readUpTo`: o MENOR `readUpTo` entre os membros ("todos leram até aqui"); `null` se alguém nunca
+  leu ou não há outro membro.
+- A tela compara `message.createdAt <= readUpTo` (`internalMessageReadStatus`, shared): os dois
+  vêm da MESMA coluna (`internal_messages.created_at`, `TIMESTAMP`) pelo MESMO `toIso`, e a
+  comparação com `channel_reads.last_read_at` (também `TIMESTAMP`) acontece no SQL — sem fuso nem
+  precisão no meio.
+- Opcional no tipo (campo novo); o backend sempre manda.
 
 `editedAt`/`deletedAt` (CRMLAB-117, D-282): a autora editou (a tela mostra "Editada";
 `content` já é o texto novo) ou apagou para todos. **Apagada:** `content: ""`, `attachment:

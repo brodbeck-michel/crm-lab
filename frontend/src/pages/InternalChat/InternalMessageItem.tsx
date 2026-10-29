@@ -1,11 +1,27 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { internalMessageAuthorActionBlock, mediaCategoryOf } from '@crm-lab/shared';
-import type { InternalMessage, InternalMessageAttachment, UserRole } from '@crm-lab/shared';
+import {
+  internalMessageAuthorActionBlock,
+  internalMessageReadStatus,
+  internalMessageReaders,
+  mediaCategoryOf,
+} from '@crm-lab/shared';
+import type {
+  InternalChannelReadState,
+  InternalChannelReader,
+  InternalMessage,
+  InternalMessageAttachment,
+  UserRole,
+} from '@crm-lab/shared';
 import { api, queryKeys } from '@/api';
 import { cn } from '@/components/ui';
 import { DateDisplay, ImageLightbox } from '@/components/shared';
-import { AudioMessage, INBOX_BUBBLE_MAX_WIDTH, MessageEditBox } from '@/components/conversation';
+import {
+  AudioMessage,
+  INBOX_BUBBLE_MAX_WIDTH,
+  MessageEditBox,
+  MessageStatusTick,
+} from '@/components/conversation';
 import { DocumentCard } from '@/components/conversation/DocumentCard';
 import { useAuthenticatedMedia } from '@/hooks';
 import ProposalCard from '@/components/proposal/ProposalCard';
@@ -32,6 +48,14 @@ export interface InternalMessageItemProps {
   /** `#aprovacoes`: só lá os botões de decisão aparecem. */
   isApprovalsChannel: boolean;
   /**
+   * Quem já leu o canal (CRMLAB-123, D-300). Com ele, a mensagem PRÓPRIA mostra
+   * ✓ (gravada) ou ✓✓ azul (todos os outros membros leram) — o mesmo tique do
+   * atendimento (CRMLAB-67). Sem ele (fixture antiga), sem tique.
+   */
+  readState?: InternalChannelReadState | null;
+  /** DM: o hover diz só "Lida"/"Enviada"; canal: "Lida por" / "Ainda não leram". */
+  isDirect?: boolean;
+  /**
    * Editar / Apagar para todos da AUTORA (CRMLAB-117, D-282). Os itens só
    * aparecem com handler e quando `internalMessageAuthorActionBlock` deixa
    * (autora, no prazo; editar: texto ou legenda de imagem/vídeo). `onEdit` devolve a Promise da
@@ -42,6 +66,33 @@ export interface InternalMessageItemProps {
 }
 
 type BubbleKind = 'received' | 'sent' | 'system';
+
+const READ_AT_FORMAT: Intl.DateTimeFormatOptions = {
+  day: '2-digit',
+  month: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+};
+
+function readerLine(reader: InternalChannelReader): string {
+  // `lastReadAt` é a ÚLTIMA vez que a pessoa abriu o canal, não o instante exato
+  // em que leu esta mensagem (D-300) — daí "abriu", e não "leu", às.
+  if (!reader.lastReadAt) return reader.name;
+  const at = new Date(reader.lastReadAt).toLocaleString('pt-BR', READ_AT_FORMAT);
+  return `${reader.name} (abriu ${at})`;
+}
+
+/** Texto do hover do tique num canal (D-300): "Lida por" e "Ainda não leram". */
+export function readReceiptTitle(
+  message: Pick<InternalMessage, 'createdAt'>,
+  readState: InternalChannelReadState,
+): string {
+  const { read, unread } = internalMessageReaders(message, readState);
+  const lines: string[] = [];
+  if (read.length > 0) lines.push(`Lida por: ${read.map(readerLine).join(', ')}`);
+  if (unread.length > 0) lines.push(`Ainda não leram: ${unread.map((r) => r.name).join(', ')}`);
+  return lines.length > 0 ? lines.join('\n') : 'Enviada';
+}
 
 const SHELL: Record<BubbleKind, string> = {
   received: 'self-start bg-surface rounded-md rounded-bl-sm px-[15px] py-[11px]',
@@ -261,6 +312,8 @@ export function InternalMessageItem({
   currentUserId,
   currentUserRole,
   isApprovalsChannel,
+  readState = null,
+  isDirect = false,
   onEdit,
   onDelete,
 }: InternalMessageItemProps) {
@@ -296,6 +349,13 @@ export function InternalMessageItem({
       <DateDisplay value={message.createdAt} variant="absolute" />
       {!isDeleted && message.editedAt && (
         <span data-testid="internal-message-edited">Editada</span>
+      )}
+      {/* CRMLAB-123 (D-300): só na própria mensagem, e não na apagada. */}
+      {kind === 'sent' && !isDeleted && readState && (
+        <MessageStatusTick
+          status={internalMessageReadStatus(message, readState)}
+          {...(isDirect ? {} : { title: readReceiptTitle(message, readState) })}
+        />
       )}
     </span>
   );

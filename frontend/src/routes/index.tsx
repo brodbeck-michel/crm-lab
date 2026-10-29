@@ -53,7 +53,7 @@ import { ADMIN_ONLY, MANAGER_PLUS, PLATFORM_ONLY, TENANT_ROLES } from './route-c
  * `/patients[/:id]` → `/contacts[/:id]` (CRMLAB-126, D-294), preservando
  * query string e hash. Só o prefixo muda; o id segue igual.
  */
-function LegacyPatientsRedirect() {
+export function LegacyPatientsRedirect() {
   const { pathname, search, hash } = useLocation();
   return <Navigate to={`${pathname.replace(/^\/patients/, '/contacts')}${search}${hash}`} replace />;
 }

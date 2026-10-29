@@ -33,7 +33,8 @@ function useSendMessage(patient: PatientDetail) {
     mutationFn: () =>
       conversationsApi.create({
         patientPhone: patient.phone,
-        patientName: patient.name ?? 'Paciente',
+        // Sem nome vai `null`: um rotulo aqui viraria o nome do cadastro (CRMLAB-124).
+        patientName: patient.name,
         patientEmail: patient.email,
         channel: 'direct',
       }),
@@ -53,7 +54,7 @@ function useSendMessage(patient: PatientDetail) {
 }
 
 /**
- * Ficha do Paciente — `/patients/:id` (PAGES.md §3, API_CONTRACTS.md §2c).
+ * Ficha do Paciente — `/contacts/:id` (PAGES.md §3, API_CONTRACTS.md §2c).
  *
  * TRÊS chamadas, três blocos (D-060) — nunca um payload só:
  *   1. `GET /patients/:id`            → cadastro + contadores  (aqui)
@@ -80,7 +81,7 @@ export function PatientProfile() {
   if (patientQuery.isLoading) {
     return (
       <PageContainer>
-        <PageHeader title="Ficha do paciente" />
+        <PageHeader title="Ficha do contato" />
         <p className="m-0 font-body text-body text-neutral-600">Carregando ficha...</p>
       </PageContainer>
     );
@@ -92,9 +93,9 @@ export function PatientProfile() {
 
     return (
       <PageContainer>
-        <PageHeader title="Ficha do paciente" />
+        <PageHeader title="Ficha do contato" />
         <EmptyState
-          message={notFound ? 'Paciente não encontrado' : 'Não foi possível carregar a ficha'}
+          message={notFound ? 'Contato não encontrado' : 'Não foi possível carregar a ficha'}
           hint={
             notFound
               ? 'Confira o endereço ou volte para o atendimento.'
@@ -113,13 +114,13 @@ export function PatientProfile() {
   }
 
   const patient = patientQuery.data;
-  const title = patient.name ?? 'Paciente sem nome';
+  const title = patient.name ?? 'Contato sem nome';
 
   return (
     <PageContainer>
       <PageHeader
         title={title}
-        breadcrumb={[{ label: 'Atendimento', to: '/attendance' }, { label: 'Ficha do paciente' }]}
+        breadcrumb={[{ label: 'Atendimento', to: '/attendance' }, { label: 'Ficha do contato' }]}
         description={patient.phone}
         actions={
           <div className="flex items-center gap-sm">

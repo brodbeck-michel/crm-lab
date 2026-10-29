@@ -63,7 +63,7 @@ export default function ThemePreview({ theme }: ThemePreviewProps) {
             <span className="min-w-0 truncate font-heading text-label text-text">{brand}</span>
           </div>
           <span className="rounded-md bg-bg px-sm py-xs font-body text-caption font-semibold text-accent-700 shadow-sm">
-            Pacientes
+            Contatos
           </span>
           <span className="rounded-md bg-accent-100 px-sm py-xs font-body text-caption text-text">
             Propostas
@@ -72,10 +72,10 @@ export default function ThemePreview({ theme }: ThemePreviewProps) {
         </div>
 
         <div className="flex min-w-0 flex-1 flex-col gap-sm">
-          <Input type="search" aria-label="Busca de exemplo" placeholder="Buscar paciente" readOnly />
+          <Input type="search" aria-label="Busca de exemplo" placeholder="Buscar contato" readOnly />
           <div className="overflow-hidden rounded-lg border border-neutral-200 bg-neutral-100">
             <div className="flex justify-between border-b border-neutral-300 bg-surface px-sm py-xs font-body text-micro font-semibold uppercase text-neutral-600">
-              <span>Paciente</span>
+              <span>Contato</span>
               <span>Status</span>
             </div>
             <div className="flex items-center justify-between border-b border-neutral-200 px-sm py-xs font-body text-caption text-text">

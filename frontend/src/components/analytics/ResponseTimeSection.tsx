@@ -134,7 +134,7 @@ export default function ResponseTimeSection({ startDate, endDate }: ResponseTime
           <h2 className="font-heading text-section">Tempo de resposta no WhatsApp</h2>
           <p className="font-body text-caption text-neutral-600">
             {formatIsoDay(report.period.startDate)} a {formatIsoDay(report.period.endDate)} · minutos
-            úteis (expediente, sem feriados), da primeira mensagem do paciente até a resposta de uma
+            úteis (expediente, sem feriados), da primeira mensagem do contato até a resposta de uma
             pessoa. Mensagem automática não conta.
           </p>
         </div>

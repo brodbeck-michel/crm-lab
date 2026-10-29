@@ -50,6 +50,25 @@ describe('POST /conversations', () => {
     expect(response.body.patientId).not.toBeNull();
   });
 
+  it('CRMLAB-124: sem patientName (ficha de contato sem nome) nao inventa nome para o cadastro', async () => {
+    const tenant = await createTenant();
+    const attendant = await createUser({ tenantId: tenant.id, role: 'attendant' });
+
+    const response = await app.agent
+      .post('/api/v1/conversations')
+      .set(app.auth(attendant))
+      .send({ ...body, patientName: null })
+      .expect(201);
+
+    expect(response.body.patientName).toBeNull();
+    const ficha = await app.db.withTenant(tenant.id, (tx) =>
+      tx.query<{ name: string | null }>('SELECT name FROM patients WHERE id = $1', [
+        response.body.patientId,
+      ]),
+    );
+    expect(ficha.rows[0]?.name).toBeNull();
+  });
+
   it('recusa channel whatsapp — essa conversa so nasce pelo webhook', async () => {
     const tenant = await createTenant();
     const attendant = await createUser({ tenantId: tenant.id, role: 'attendant' });

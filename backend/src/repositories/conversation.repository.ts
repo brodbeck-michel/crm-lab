@@ -33,7 +33,11 @@ import type {
 } from '@crm-lab/shared';
 import type { DbClient, DbTx } from '../db/types.js';
 import { nameSearchRank, nameSearchWhere } from './name-search.js';
-import { phoneMatchKeys, upsertPatientByPhone } from './patient.repository.js';
+import {
+  phoneMatchKeys,
+  syncConversationNames,
+  upsertPatientByPhone,
+} from './patient.repository.js';
 import { toIso, toIsoOrNull, toNumber } from './row-mappers.js';
 
 /** Colunas ordenaveis expostas na query string -> coluna real (whitelist). */
@@ -535,6 +539,8 @@ export class ConversationRepository {
             WHERE id = $2 AND patient_id IS DISTINCT FROM $1`,
           [patient.id, found.id],
         );
+        // Conversa que ja existia antes do cadastro/edicao do nome (D-292).
+        await syncConversationNames(tx, patient.id);
         const conversation = await selectDetail(tx, found.id);
         if (!conversation) throw new Error('conversa desapareceu dentro da transacao');
         return { conversation, created: false };

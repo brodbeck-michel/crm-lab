@@ -251,7 +251,7 @@ export function ConversationItem({
               {responseAlertMinutes !== null && (
                 <span
                   data-testid="conversation-response-alert"
-                  title="Paciente aguardando resposta (tempo em horário de atendimento)"
+                  title="Contato aguardando resposta (tempo em horário de atendimento)"
                   className="flex flex-[0_0_auto] items-center gap-xs whitespace-nowrap text-micro font-bold tracking-normal text-chat-alert"
                 >
                   <Clock size={12} aria-hidden="true" />

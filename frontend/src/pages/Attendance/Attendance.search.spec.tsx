@@ -192,7 +192,7 @@ describe('Atendimento — busca nas mensagens (D-228/D-230)', () => {
     renderScreen();
 
     await user.type(
-      screen.getByRole('searchbox', { name: 'Buscar paciente, telefone ou exame' }),
+      screen.getByRole('searchbox', { name: 'Buscar contato, telefone ou exame' }),
       'orcamento',
     );
 

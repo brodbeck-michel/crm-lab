@@ -265,6 +265,12 @@ passos de AGENTS.md (criar novo → migrar dados → remover antigo): a coluna n
 por backfill na migração 003 e pelo `findOrCreateByPhone` daqui em diante; a remoção das
 denormalizadas fica para uma onda futura, quando nenhum caminho de leitura depender delas.
 
+**`patient_name` acompanha `patients.name` (D-292, CRMLAB-124).** Com o paciente ligado, o
+backend copia o nome do cadastro para todas as conversas dele na mesma transação (PATCH da
+ficha, cadastro completado, `findOrCreateByPhone`). Cadastro sem nome não apaga o nome da
+conversa; anonimizado não propaga. A migração 060 corrigiu as linhas já gravadas.
+`patient_phone`/`patient_email` continuam como o canal informou.
+
 Linha com `patient_id IS NULL` é legítima (conversa criada antes do backfill em uma réplica
 antiga): a ficha do paciente simplesmente não a lista, e o próximo webhook daquele telefone a
 religa.
@@ -2337,6 +2343,13 @@ ALTER TABLE users
 
 ---
 
+### 45. Correção de `conversations.patient_name` (migração 060 — CRMLAB-124, D-292)
+Só dados, sem DDL. Copia `patients.name` para `conversations.patient_name` onde a conversa está
+ligada a paciente do mesmo tenant, o cadastro tem nome (não vazio), não está anonimizado e os
+dois diferem. Idempotente. A consulta de conferência (antes/depois) está no cabeçalho do arquivo.
+
+---
+
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
 
 O isolamento multitenant não é convenção: é imposto pelo banco. O backend conecta com o papel
@@ -2630,7 +2643,8 @@ migrations/
 ├── 054_conversation_auto_replies.sql # messages.automation offhours/greeting + conversation_auto_replies + policy (CRMLAB-94, D-264)
 ├── 055_internal_message_attachments.sql # internal_message_attachments + policy — anexo do chat interno (CRMLAB-101, D-271)
 ├── 056_proposal_reminders.sql    # proposal_reminders + policy — lembrete de proposta parada (CRMLAB-102, D-272)
-└── 059_user_presence_status.sql  # users.presence_status — status escolhido da atendente (CRMLAB-120, D-286)
+├── 059_user_presence_status.sql  # users.presence_status — status escolhido da atendente (CRMLAB-120, D-286)
+└── 060_conversations_patient_name_sync.sql # só dados: patient_name da conversa = nome do cadastro (CRMLAB-124, D-292)
 ```
 
 A 007 e a 008 são arquivos ÚNICOS (tabela + policy), diferente dos pares 003/004 e 005/006: a

@@ -199,9 +199,9 @@ function renderPage() {
   return render(
     <QueryClientProvider client={client}>
       <ToastProvider>
-        <MemoryRouter initialEntries={[`/patients/${PATIENT_ID}`]}>
+        <MemoryRouter initialEntries={[`/contacts/${PATIENT_ID}`]}>
           <Routes>
-            <Route path="/patients/:id" element={<PatientProfile />} />
+            <Route path="/contacts/:id" element={<PatientProfile />} />
           </Routes>
         </MemoryRouter>
       </ToastProvider>
@@ -291,7 +291,7 @@ describe('Ficha do Paciente', () => {
     await user.click(screen.getByRole('button', { name: 'Salvar cadastro' }));
 
     expect(
-      await screen.findByText('Este telefone já pertence a outro paciente.'),
+      await screen.findByText('Este telefone já pertence a outro contato.'),
     ).toBeInTheDocument();
   });
 
@@ -300,7 +300,7 @@ describe('Ficha do Paciente', () => {
 
     renderPage();
 
-    expect(await screen.findByText('Paciente não encontrado')).toBeInTheDocument();
+    expect(await screen.findByText('Contato não encontrado')).toBeInTheDocument();
     expect(screen.queryByText(/permiss/i)).not.toBeInTheDocument();
   });
 
@@ -390,7 +390,7 @@ describe('Ficha do Paciente', () => {
     expect(await screen.findByTestId('patient-read-only')).toBeInTheDocument();
     expect(screen.getByLabelText('Nome')).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Salvar cadastro' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Inativar paciente' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Inativar contato' })).not.toBeInTheDocument();
     expect(updateMock).not.toHaveBeenCalled();
   });
 
@@ -405,7 +405,7 @@ describe('Ficha do Paciente', () => {
     expect(timeline.getByText('Conversa iniciada')).toBeInTheDocument();
     expect(timeline.getByText('WhatsApp')).toBeInTheDocument();
 
-    expect(timeline.getByText('Mensagem · Paciente')).toBeInTheDocument();
+    expect(timeline.getByText('Mensagem · Contato')).toBeInTheDocument();
     expect(timeline.getByText('Olá, quanto custa um hemograma?')).toBeInTheDocument();
 
     expect(timeline.getByText('Orçamento criado')).toBeInTheDocument();
@@ -451,7 +451,7 @@ describe('Ficha do Paciente', () => {
     const user = userEvent.setup();
     renderPage();
 
-    const section = within(await screen.findByLabelText('Orçamentos do paciente'));
+    const section = within(await screen.findByLabelText('Orçamentos do contato'));
     await user.click(await section.findByRole('button', { name: /João Santos/ }));
 
     expect(useUIStore.getState().activeModal).toEqual({
@@ -470,7 +470,7 @@ describe('Ficha do Paciente', () => {
 
     expect(screen.queryByText('Dados pessoais (LGPD)')).not.toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: 'Exportar dados do paciente' }),
+      screen.queryByRole('button', { name: 'Exportar dados do contato' }),
     ).not.toBeInTheDocument();
     expect(exportMock).not.toHaveBeenCalled();
     expect(anonymizeMock).not.toHaveBeenCalled();
@@ -481,7 +481,7 @@ describe('Ficha do Paciente', () => {
     renderPage();
 
     expect(await screen.findByText('Dados pessoais (LGPD)')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Exportar dados do paciente' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Exportar dados do contato' })).toBeInTheDocument();
   });
 
   it('exporta os dados do titular só quando o admin pede', async () => {
@@ -494,7 +494,7 @@ describe('Ficha do Paciente', () => {
     signIn('admin');
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Exportar dados do paciente' }));
+    await user.click(await screen.findByRole('button', { name: 'Exportar dados do contato' }));
 
     await waitFor(() => expect(exportMock).toHaveBeenCalledWith(PATIENT_ID));
     expect(createObjectURL).toHaveBeenCalled();
@@ -576,14 +576,14 @@ describe('Ficha do Paciente', () => {
     renderPage();
 
     expect(await screen.findByText('Status do cadastro')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Inativar paciente' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Inativar contato' })).toBeInTheDocument();
   });
 
   it('exige motivo antes de inativar', async () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Inativar paciente' }));
+    await user.click(await screen.findByRole('button', { name: 'Inativar contato' }));
     const dialog = within(screen.getByRole('dialog'));
     const confirm = dialog.getByRole('button', { name: 'Confirmar inativação' });
 
@@ -608,11 +608,11 @@ describe('Ficha do Paciente', () => {
 
     renderPage();
 
-    expect(await screen.findByText(/Paciente inativo desde/)).toBeInTheDocument();
+    expect(await screen.findByText(/Contato inativo desde/)).toBeInTheDocument();
     expect(screen.getByText(/Mudou de laboratorio/)).toBeInTheDocument();
     expect(screen.getByText('Inativo')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Reativar paciente' }));
+    await user.click(screen.getByRole('button', { name: 'Reativar contato' }));
     const dialog = within(screen.getByRole('dialog'));
     await user.type(dialog.getByLabelText('Justificativa da reativação'), 'Retornou ao laboratorio');
     await user.click(dialog.getByRole('button', { name: 'Confirmar reativação' }));
@@ -628,7 +628,7 @@ describe('Ficha do Paciente', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Inativar paciente' }));
+    await user.click(await screen.findByRole('button', { name: 'Inativar contato' }));
     const dialog = within(screen.getByRole('dialog'));
     await user.click(dialog.getByRole('button', { name: 'Cancelar' }));
 

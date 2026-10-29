@@ -236,15 +236,15 @@ export function ConversationList({
             tone={scope === 'closed' ? 'attention' : 'inactive'}
             selected={scope === 'closed'}
             onClick={() => toggle('closed')}
-            title="Atendimentos encerrados — voltam para a fila quando o paciente escreve"
+            title="Atendimentos encerrados — voltam para a fila quando o contato escreve"
           >
             Encerradas
           </Chip>
         </div>
 
         <SearchInput
-          placeholder="Buscar paciente, telefone ou exame"
-          aria-label="Buscar paciente, telefone ou exame"
+          placeholder="Buscar contato, telefone ou exame"
+          aria-label="Buscar contato, telefone ou exame"
           onSearch={onSearch}
         />
       </div>

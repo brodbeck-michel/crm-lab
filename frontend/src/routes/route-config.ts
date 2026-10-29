@@ -91,13 +91,13 @@ export const APP_ROUTES: readonly AppRoute[] = [
     icon: 'inbox',
   },
   {
-    path: '/patients',
-    label: 'Pacientes',
+    path: '/contacts',
+    label: 'Contatos',
     requiredRoles: TENANT_ROLES,
     inSidebar: true,
     icon: 'patients',
   },
-  { path: '/patients/:id', label: 'Ficha do Paciente', requiredRoles: TENANT_ROLES, inSidebar: false },
+  { path: '/contacts/:id', label: 'Ficha do Contato', requiredRoles: TENANT_ROLES, inSidebar: false },
   { path: '/budget/new', label: 'Novo Orçamento', requiredRoles: TENANT_ROLES, inSidebar: false },
   {
     path: '/proposals',

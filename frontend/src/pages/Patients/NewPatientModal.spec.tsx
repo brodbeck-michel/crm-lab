@@ -52,10 +52,10 @@ function renderPage() {
   return render(
     <QueryClientProvider client={client}>
       <ToastProvider>
-        <MemoryRouter initialEntries={['/patients']}>
+        <MemoryRouter initialEntries={['/contacts']}>
           <Routes>
-            <Route path="/patients" element={<PatientsList />} />
-            <Route path="/patients/:id" element={<p>Ficha aberta</p>} />
+            <Route path="/contacts" element={<PatientsList />} />
+            <Route path="/contacts/:id" element={<p>Ficha aberta</p>} />
           </Routes>
         </MemoryRouter>
       </ToastProvider>
@@ -138,7 +138,7 @@ describe('Pacientes — Novo contato (CRMLAB-121)', () => {
     );
     expect(within(dialog).getByRole('link', { name: 'Abrir o contato' })).toHaveAttribute(
       'href',
-      '/patients/p-old',
+      '/contacts/p-old',
     );
   });
 });

@@ -762,7 +762,9 @@ Criar um atendimento que **não veio do WhatsApp** — ligação, balcão, formu
 - `patientPhone`: obrigatório, 10 a 13 dígitos depois de descartar máscara. É normalizado para
   o mesmo formato que o webhook grava (`+5548999991234`) **antes** de procurar duplicata — sem
   isso o mesmo paciente ganharia uma segunda conversa por ter sido digitado sem o código do país
-- `patientName`: obrigatório, 1..255
+- `patientName`: opcional/anulável, 1..255 quando enviado. Ausente/`null` = sem nome — o cadastro
+  existente não ganha nome e o que já tem não muda (CRMLAB-124: o "Enviar mensagem" da ficha de
+  contato sem nome mandava o rótulo da tela, que virava o nome do cadastro)
 - `patientEmail`: opcional/anulável, e-mail válido, máx. 255
 - `channel` ∈ `direct | web | sms`. **`whatsapp` é recusado** com `VALIDATION_ERROR`: conversa
   desse canal nasce pelo webhook, que deduplica por `externalId`, ou por
@@ -1826,6 +1828,11 @@ Cadastro do contato à mão (CRMLAB-121, D-287). Qualquer papel de laboratório 
   dígito → **`409 CONFLICT`** `{ reason: "phone_already_in_use", patientId? }`. `patientId` só
   vem quando quem pediu enxerga o cadastro existente (senão o 409 abriria a ficha de outra
   atendente). Nunca cria um segundo cadastro.
+- **Exceção (D-293, CRMLAB-124):** o cadastro existente está **sem nome** (o número chegou pelo
+  WhatsApp ou pela Nova conversa sem nome), não está anonimizado e quem pede pode editá-lo →
+  o cadastro é **completado** em vez do 409: grava o `name` e, só se estiverem vazios, `email` e
+  `document`. Resposta **`201`** com o `PatientDetail` do cadastro existente (mesmo `id`), audit
+  log `update_patient` (não `create_patient`). Nada que já estava preenchido é sobrescrito.
 - Telefone de **outro** laboratório não conflita (o índice é `(tenant_id, phone)`).
 
 ### GET /patients/:id

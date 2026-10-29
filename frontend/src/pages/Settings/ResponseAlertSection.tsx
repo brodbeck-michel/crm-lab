@@ -43,8 +43,8 @@ export function ResponseAlertSection({ draft, canEdit, fieldErrors, set }: Respo
           Alerta de tempo de resposta
         </h2>
         <p className="font-body text-caption text-neutral-600">
-          Destaca em vermelho, na lista do Atendimento, o paciente que escreveu e está esperando a
-          atendente responder há X minutos ou mais. Só destaca: nada é enviado ao paciente. O tempo
+          Destaca em vermelho, na lista do Atendimento, o contato que escreveu e está esperando a
+          atendente responder há X minutos ou mais. Só destaca: nada é enviado ao contato. O tempo
           conta só no horário de funcionamento (
           <Link to="/settings/channels" className="text-accent-700 underline">
             Canais
@@ -56,7 +56,7 @@ export function ResponseAlertSection({ draft, canEdit, fieldErrors, set }: Respo
 
       <div className="flex flex-col gap-sm">
         <Toggle
-          label="Destacar paciente sem resposta há X minutos"
+          label="Destacar contato sem resposta há X minutos"
           checked={rule.enabled}
           disabled={!canEdit}
           onChange={(enabled) => set((next) => void (next.responseAlert.enabled = enabled))}

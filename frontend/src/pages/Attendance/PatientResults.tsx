@@ -13,7 +13,7 @@ import { Avatar, DateDisplay } from '@/components/shared';
  * O bloco só existe quando há termo de busca; sem termo, a coluna continua
  * sendo a fila de conversas e nada some.
  *
- * Cada linha leva a `/patients/:id`. A lista já vem recortada por papel pelo
+ * Cada linha leva a `/contacts/:id`. A lista já vem recortada por papel pelo
  * servidor (D-060): o atendente só recebe paciente com conversa visível a ele,
  * então o link nunca revela cadastro que ele não poderia abrir.
  */
@@ -31,28 +31,28 @@ export function PatientResults({ term, patients, isLoading, isError }: PatientRe
 
   return (
     <section
-      aria-label="Pacientes encontrados"
+      aria-label="Contatos encontrados"
       className="flex flex-col gap-xs border-t border-chat-line px-sm py-sm"
     >
       <h2 className="m-0 px-sm font-heading text-micro font-semibold uppercase text-neutral-600">
-        Pacientes
+        Contatos
       </h2>
 
       {isLoading && (
         <p role="status" className="m-0 px-sm py-sm text-caption text-neutral-600">
-          Buscando pacientes…
+          Buscando contatos…
         </p>
       )}
 
       {!isLoading && isError && (
         <p role="alert" className="m-0 px-sm py-sm text-caption text-accent-700">
-          Não foi possível buscar pacientes.
+          Não foi possível buscar contatos.
         </p>
       )}
 
       {!isLoading && !isError && patients.length === 0 && (
         <p className="m-0 px-sm py-sm text-caption text-neutral-600">
-          Nenhum paciente com esse nome, telefone ou documento.
+          Nenhum contato com esse nome, telefone ou documento.
         </p>
       )}
 
@@ -62,13 +62,13 @@ export function PatientResults({ term, patients, isLoading, isError }: PatientRe
           <Link
             key={patient.id}
             data-testid="patient-result"
-            to={`/patients/${patient.id}`}
+            to={`/contacts/${patient.id}`}
             className="flex min-w-0 items-center gap-sm rounded-md px-sm py-sm no-underline transition-colors hover:bg-neutral-100"
           >
             <Avatar name={patient.name ?? patient.phone} size={32} />
             <span className="flex min-w-0 flex-1 flex-col">
               <span className="truncate text-body font-semibold text-text">
-                {patient.name ?? 'Paciente sem nome'}
+                {patient.name ?? 'Contato sem nome'}
               </span>
               <span className="truncate text-caption text-neutral-600">
                 {patient.phone}

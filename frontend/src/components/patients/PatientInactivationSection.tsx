@@ -15,7 +15,7 @@ import { Button, TextArea } from '@/components/ui';
  * (mesma alçada do `PATCH /:id`) — não há checagem de `admin` aqui.
  *
  * Os dados do paciente continuam intactos: inativar só marca o cadastro e
- * some da listagem por padrão (checkbox "Mostrar inativos" em `/patients`).
+ * some da listagem por padrão (checkbox "Mostrar inativos" em `/contacts`).
  */
 
 export interface PatientInactivationSectionProps {
@@ -76,13 +76,13 @@ export function PatientInactivationSection({ patient }: PatientInactivationSecti
         </h2>
         {isInactive ? (
           <p className="m-0 font-body text-caption text-neutral-600">
-            Paciente inativo desde{' '}
+            Contato inativo desde{' '}
             {patient.inactivationReason ? `— motivo: "${patient.inactivationReason}"` : ''}. Some
             das listagens até ser reativado.
           </p>
         ) : (
           <p className="m-0 font-body text-caption text-neutral-600">
-            Inativar some o paciente das listagens por padrão. Orçamentos, conversas e histórico
+            Inativar some o contato das listagens por padrão. Orçamentos, conversas e histórico
             permanecem intactos.
           </p>
         )}
@@ -93,14 +93,14 @@ export function PatientInactivationSection({ patient }: PatientInactivationSecti
           variant={isInactive ? 'secondary' : 'destructive'}
           onClick={() => setConfirmOpen(true)}
         >
-          {isInactive ? 'Reativar paciente' : 'Inativar paciente'}
+          {isInactive ? 'Reativar contato' : 'Inativar contato'}
         </Button>
       </div>
 
       <Modal
         open={confirmOpen}
         onClose={closeConfirm}
-        title={isInactive ? 'Reativar cadastro do paciente' : 'Inativar cadastro do paciente'}
+        title={isInactive ? 'Reativar cadastro do contato' : 'Inativar cadastro do contato'}
         footer={
           <>
             <Button variant="secondary" onClick={closeConfirm} disabled={pending.isPending}>
@@ -120,8 +120,8 @@ export function PatientInactivationSection({ patient }: PatientInactivationSecti
         <div className="flex flex-col gap-md">
           <p className="m-0 font-body text-body text-text">
             {isInactive
-              ? `${patient.name ?? 'O paciente'} volta a aparecer nas listagens.`
-              : `${patient.name ?? 'O paciente'} deixa de aparecer nas listagens (fica acessível pelo checkbox "Mostrar inativos" ou por link direto).`}
+              ? `${patient.name ?? 'O contato'} volta a aparecer nas listagens.`
+              : `${patient.name ?? 'O contato'} deixa de aparecer nas listagens (fica acessível pelo checkbox "Mostrar inativos" ou por link direto).`}
           </p>
 
           <TextArea

@@ -6708,3 +6708,25 @@ espalhar a imagem de um paciente para outro.
 `message.service.ts` (`createStickerFromAgent`); rotas `/stickers` e
 `/conversations/:id/stickers`; `Composer` (botão + popover); `MessageBubble` (Favoritar/Remover);
 API_CONTRACTS §2d/§Evolution.
+
+### D-303: Nome de mídia sempre com a extensão do MIME no download e no envio ao WhatsApp (CRMLAB-131)
+**Contexto:** em 29/10/2026 uma imagem enviada pela Carol ficou com um tique e nunca chegou. A
+foto tinha sido baixada de outra conversa pelo ↓ do CRM. A imagem recebida é gravada como
+`imagem`, sem extensão, e o CRMLAB-128 mantém o nome quando não reencoda o JPEG. Sem extensão, o
+Chrome no Windows salva `image/jpeg` como `.jfif`. Reenviado, o Evolution recalcula o mimetype
+pelo nome, grava `mimetype: 'false'` e o WhatsApp nunca entrega. Foram 3 casos de 23 a 29/10,
+todos `.jfif`.
+**Decisão:**
+1. `fileNameWithExtension(fileName, mimeType)` em `shared/types/media.types.ts`: o nome ganha a
+   extensão canônica do MIME da allow-list. Extensão conhecida de outro tipo (e os apelidos de
+   JPEG `jfif`/`jpe`/`pjpeg`/`pjp`) é **trocada**. Extensão desconhecida é **preservada**, com a
+   certa somada no fim. MIME fora da allow-list não mexe no nome.
+2. Aplicado em dois pontos de saída: o `filename` do `Content-Disposition` de `GET /media/:id`
+   e o `fileName` do `/message/sendMedia` no `evolution-client`.
+3. O banco **não muda**: nenhuma migração, e o nome gravado continua o original. O lightbox da
+   conversa passa a tratar como "sem legenda" o `content` igual ao nome servido sem a extensão
+   (as imagens antigas têm `content = 'imagem'`).
+**Motivo:** corrigir na saída cobre também a mídia já gravada e qualquer arquivo com extensão
+estranha que a atendente anexar, sem reescrever `content`/`file_name` (D-236 item 8).
+**Impacto:** `shared/types/media.types.ts`, `media.routes.ts`, `evolution-client.ts`,
+`useConversationImages.ts`; API_CONTRACTS §2d (GET /media) e §Evolution (sendMedia).

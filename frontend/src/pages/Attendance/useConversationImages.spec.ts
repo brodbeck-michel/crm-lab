@@ -75,4 +75,8 @@ describe('imageCaption', () => {
     expect(imageCaption(message('i', { content: '' }), null)).toBeUndefined();
     expect(imageCaption(message('i', { content: '[image]' }), null)).toBeUndefined();
   });
+
+  it('imagem antiga gravada sem extensão: o download chega como imagem.jpg e não vira legenda (CRMLAB-131)', () => {
+    expect(imageCaption(message('i', { content: 'imagem' }), 'imagem.jpg')).toBeUndefined();
+  });
 });

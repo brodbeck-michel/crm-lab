@@ -288,6 +288,19 @@ describe('EvolutionClient', () => {
     expect(lastApikeyHeader).toBe('apikey-da-instancia');
   });
 
+  it('sendMedia troca .jfif por .jpg — o gateway deduz o mimetype pelo nome (CRMLAB-131)', async () => {
+    // Com `doc.jfif` o Evolution gravava `mimetype: 'false'` e o WhatsApp
+    // aceitava (um tique) mas nunca entregava.
+    const client = createEvolutionClient(baseUrl, 'admin-key');
+    await client.sendMedia(
+      'tenant-abc',
+      '5511987654321',
+      { base64: 'aW1n', mimeType: 'image/jpeg', fileName: 'doc..jfif' },
+      'apikey-da-instancia',
+    );
+    expect(lastBody).toMatchObject({ mimetype: 'image/jpeg', fileName: 'doc..jpg' });
+  });
+
   it('sendMedia de ÁUDIO vai por /message/sendWhatsAppAudio — recado de voz (CRMLAB-24, D-182)', async () => {
     // O gateway converte para ogg/opus e entrega como PTT; `sendMedia` repassaria
     // o webm do Chrome como está, e o paciente no iPhone nao ouviria.

@@ -18,6 +18,7 @@ import { denyPlatformOperator, requireAuth } from '../http/middleware/auth.js';
 import { validate, validated } from '../http/middleware/validate.js';
 import {
   FALLBACK_MEDIA_MIME_TYPE,
+  fileNameWithExtension,
   isAllowedMediaMimeType,
   mediaCategoryOf,
   normalizeMediaMimeType,
@@ -73,7 +74,9 @@ export function getMedia(service: MediaService): RequestHandler {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader(
       'Content-Disposition',
-      `${dispositionFor(mimeType)}; filename="${encodeURIComponent(media.fileName)}"`,
+      // Com extensão (CRMLAB-131): `imagem` sem extensão o Chrome no Windows
+      // salvava como `.jfif`, e esse arquivo reenviado não chegava ao paciente.
+      `${dispositionFor(mimeType)}; filename="${encodeURIComponent(fileNameWithExtension(media.fileName, mimeType))}"`,
     );
     res.status(200).send(media.buffer);
   });

@@ -136,3 +136,61 @@ export function mediaCategoryOf(mimeType: string): MediaCategory {
   if (mime === 'application/pdf') return 'pdf';
   return 'other';
 }
+
+/**
+ * Extensões de cada MIME da allow-list; a primeira é a que o nome ganha
+ * (CRMLAB-131). O Evolution ignora o `mimetype` que mandamos e recalcula pelo
+ * NOME do arquivo: `foto.jfif` (o que o Chrome no Windows grava ao baixar um
+ * JPEG sem extensão) saía como `mimetype: 'false'` e o WhatsApp nunca entregava.
+ */
+const MEDIA_EXTENSIONS: Readonly<Record<AllowedMediaMimeType, readonly string[]>> = {
+  'image/jpeg': ['jpg', 'jpeg'],
+  'image/png': ['png'],
+  'image/webp': ['webp'],
+  'image/gif': ['gif'],
+  'image/heic': ['heic', 'heif'],
+  'audio/ogg': ['ogg', 'oga', 'opus'],
+  'audio/mpeg': ['mp3'],
+  'audio/mp4': ['m4a', 'mp4'],
+  'audio/aac': ['aac'],
+  'audio/amr': ['amr'],
+  'audio/webm': ['webm'],
+  'video/mp4': ['mp4', 'm4v'],
+  'video/quicktime': ['mov'],
+  'video/3gpp': ['3gp'],
+  'video/webm': ['webm'],
+  'application/pdf': ['pdf'],
+  'application/msword': ['doc'],
+  'application/vnd.ms-excel': ['xls'],
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['docx'],
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['xlsx'],
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['pptx'],
+  'text/plain': ['txt'],
+  'text/csv': ['csv'],
+};
+
+/** Extensões que são TROCADAS (não somadas): as da tabela e os apelidos de JPEG. */
+const REPLACEABLE_EXTENSIONS: ReadonlySet<string> = new Set([
+  ...Object.values(MEDIA_EXTENSIONS).flat(),
+  'jfif',
+  'jpe',
+  'pjpeg',
+  'pjp',
+]);
+
+/**
+ * Nome com a extensão do MIME (CRMLAB-131): `imagem` → `imagem.jpg`,
+ * `doc.jfif` → `doc.jpg`, `foto.png` declarado JPEG → `foto.jpg`. Extensão
+ * desconhecida é preservada e a certa vai no fim (`pedido.v2` → `pedido.v2.pdf`).
+ * MIME fora da allow-list devolve o nome como veio.
+ */
+export function fileNameWithExtension(fileName: string, mimeType: string): string {
+  const mime = normalizeMediaMimeType(mimeType);
+  if (!isAllowedMediaMimeType(mime)) return fileName;
+  const accepted = MEDIA_EXTENSIONS[mime];
+  const match = /\.([^./\\\s]+)$/.exec(fileName);
+  const ext = match?.[1]?.toLowerCase();
+  if (ext && accepted.includes(ext)) return fileName;
+  const base = ext && REPLACEABLE_EXTENSIONS.has(ext) ? fileName.slice(0, -(ext.length + 1)) : fileName;
+  return `${base.trim() || 'arquivo'}.${accepted[0]}`;
+}

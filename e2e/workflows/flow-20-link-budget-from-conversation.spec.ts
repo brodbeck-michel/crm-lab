@@ -70,7 +70,7 @@ test.describe('Fluxo 20: vincular orçamento do Bitlab pela conversa', () => {
       .filter({ hasText: CONVERSATION.patientName })
       .first()
       .click();
-    await page.getByRole('button', { name: 'Mostrar contexto do paciente' }).click();
+    await page.getByRole('button', { name: 'Mostrar contexto do contato' }).click();
     await page.getByRole('button', { name: 'Vincular orçamento' }).click();
 
     const dialog = page.getByRole('dialog', { name: 'Vincular orçamento' });

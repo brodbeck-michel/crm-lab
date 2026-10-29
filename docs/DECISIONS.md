@@ -6320,19 +6320,29 @@ ganhou `title` opcional e passou a ser exportado de `components/conversation`. S
 **Decisão:**
 1. `POST /internal-chat/channels/:id/read` diz, no mesmo `INSERT ... ON CONFLICT` (CTE com a
    leitura anterior), se a leitura passou de alguma mensagem de OUTRA pessoa não apagada. Só então
-   emite WS `internal_chat.channel_read` `{ channelId, userId }` (só ids): DM → `emitToUser` do
-   outro participante; canal → tenant inteiro. Reabrir canal já lido não emite.
-2. O frontend reage invalidando SÓ `['internal-chat', 'messages', channelId]` (o `readState` vem
-   no mesmo GET). Sem polling, sem endpoint novo.
+   emite WS `internal_chat.channel_read` `{ channelId, userId, readUpTo, lastReadAt }`: DM →
+   `emitToUser` do outro participante; canal → tenant inteiro. Reabrir canal já lido não emite.
+   `readUpTo`/`lastReadAt` saem do mesmo comando, com a mesma regra do `readState`.
+2. O frontend **não refaz GET** por esse evento (revisão do card, por causa do CRMLAB-122): num
+   canal o evento vai a todas as abas do laboratório a cada leitura de qualquer pessoa, e
+   invalidar `GET .../messages` em cada uma recriaria a tempestade de 429. O payload vai direto
+   para um store em memória (`stores/internal-chat-reads.store.ts`, mesma exceção da presença do
+   paciente, D-226) e a tela junta com o `readState` do último GET (`mergeReadState`, vale a
+   leitura de `lastReadAt` mais recente por leitor; leitor fora da lista do servidor é ignorado).
+   Zero requisição por evento, com a aba visível ou escondida. Sem polling, sem endpoint novo.
 3. Com o canal ABERTO pela pessoa (clique/deep link) e a aba visível, mensagem nova de outra
    pessoa chama `POST .../read` de novo (`useMarkReadWhileOpen`); aba escondida marca ao voltar.
+   As marcações são agrupadas em 1,5 s (`MARK_READ_WHILE_OPEN_DEBOUNCE_MS`): uma rajada vira UM
+   POST por pessoa; trocar de canal/sair da tela dispara a pendente na hora. Não há laço evento →
+   POST → evento: o `channel_read` não mexe nas mensagens, e só mensagem nova de outra pessoa
+   agenda POST.
    Antes, quem estava com a DM aberta só "lia" ao clicar de novo no canal — o ✓✓ de quem escreveu
    ficaria cinza enquanto as duas conversavam. O canal auto-selecionado na entrada continua sem
    marcar (D-068 item 1 do `handleSelect`). Efeito colateral: o badge de não lidas do canal aberto
    também passa a zerar sozinho.
 **Motivo:** o card pede atualização na hora, sem recarregar, e o CRMLAB-122 está reduzindo
-requisições — evento só quando há o que mudar, e o refetch só das mensagens daquele canal.
+requisições — evento só quando há o que mudar, e nenhum GET por evento.
 **Impacto:** `websocket.types.ts`; `internal-chat.repository.ts` (`markChannelRead` devolve
-`boolean`); `internal-chat.service.ts`; `frontend/src/api/ws.ts` (um `case`);
+`boolean`); `internal-chat.service.ts`; `frontend/src/api/ws.ts` (um `case`, sem invalidação); `stores/internal-chat-reads.store.ts`;
 `pages/InternalChat/queries.ts` (`useMarkReadWhileOpen`) e `index.tsx`. Docs:
 `API_CONTRACTS.md` §3b, `FRONTEND_BACKEND.md`, `SERVICES.md` §7, `PAGES.md` §9.

@@ -10,6 +10,7 @@ import {
 import { refreshAccessToken as refreshAccessTokenDefault } from './client';
 import { queryKeys, queryScopes } from './query-keys';
 import { usePresenceStore } from '@/stores/presence.store';
+import { useInternalChatReadsStore } from '@/stores/internal-chat-reads.store';
 
 /**
  * Cliente WebSocket (docs/contracts/FRONTEND_BACKEND.md — "Real-time").
@@ -220,11 +221,14 @@ export function applyWsEvent(
       return;
     }
 
-    // CRMLAB-123/D-301: alguém leu o canal — o ✓✓ das mensagens de quem escreveu
-    // pode ter virado. Só as mensagens do canal (o `readState` vem no mesmo GET).
+    // CRMLAB-123/D-301: alguém leu o canal — o ✓✓ de quem escreveu pode ter
+    // virado. Exceção ao "sempre invalidate", como a presença: o payload traz o
+    // "lido até" e vai direto para o store, SEM GET. Num canal o evento vai para
+    // o tenant inteiro a cada leitura; refazer as mensagens aqui, em cada aba,
+    // traria de volta os 429 do CRMLAB-122.
     case 'internal_chat.channel_read': {
       const data = event.data as WsEventPayloads['internal_chat.channel_read'];
-      void queryClient.invalidateQueries({ queryKey: queryKeys.internalMessages(data.channelId) });
+      useInternalChatReadsStore.getState().applyRead(data);
       return;
     }
 

@@ -106,11 +106,17 @@ describe('chat interno — confirmacao de leitura (CRMLAB-123)', () => {
       expect(after.readState?.readUpTo).toBe(message.createdAt);
       expect(after.readState?.readers[0]?.lastReadAt).not.toBeNull();
 
-      // Evento so para o outro participante da DM, so ids.
+      // Evento so para o outro participante da DM. O payload traz o "lido ate"
+      // do leitor IGUAL ao do GET: a tela atualiza o tique sem refazer o GET.
       const events = app.wsHub.eventsFor(tenant.id, 'internal_chat.channel_read');
       expect(events).toHaveLength(1);
       expect(events[0]?.userId).toBe(a.id);
-      expect(events[0]?.data).toEqual({ channelId: dm.id, userId: b.id });
+      expect(events[0]?.data).toEqual({
+        channelId: dm.id,
+        userId: b.id,
+        readUpTo: message.createdAt,
+        lastReadAt: after.readState?.readers[0]?.lastReadAt,
+      });
     });
 
     it('mensagem enviada DEPOIS da leitura volta a ser ✓', async () => {

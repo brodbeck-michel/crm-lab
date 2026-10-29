@@ -3674,9 +3674,11 @@ migração.
   DM: o outro abriu depois dela. Canal: todos os membros ativos do tenant leram; o hover mostra
   "Lida por" e "Ainda não leram".
 - **API:** `GET .../messages` devolve `readState` (uma consulta por canal, de `channel_reads`).
-  `POST .../read` emite `internal_chat.channel_read { channelId, userId }` quando passou de
-  mensagem de outra pessoa (DM: só o outro; canal: tenant).
-- **Canal aberto:** mensagem nova de outra pessoa marca como lida sozinha (aba visível).
+  `POST .../read` emite `internal_chat.channel_read { channelId, userId, readUpTo, lastReadAt }`
+  quando passou de mensagem de outra pessoa (DM: só o outro; canal: tenant). A tela aplica o
+  payload num store, **sem GET** (revisão: o evento de canal vai ao tenant inteiro — CRMLAB-122).
+- **Canal aberto:** mensagem nova de outra pessoa marca como lida sozinha (aba visível), com os
+  POSTs agrupados em 1,5 s.
 - **Testes:** backend `tests/internal-chat/read-receipts.spec.ts` (8) + ajuste de shape em
   `internal-chat.spec.ts`. Frontend `InternalChat.read-receipts.spec.tsx` (10), `ws.spec.ts` (+1).
   E2E `flow-internal-chat-read-receipts.spec.ts` escrito, não executado.

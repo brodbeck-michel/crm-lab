@@ -809,10 +809,12 @@ nunca "sem permissão" (não vazar existência).
   mensagem — daí "abriu". DM: só "Lida"/"Enviada"
 - Vem do `readState` de `GET .../messages` (página 1); a tela compara `createdAt` com
   `internalMessageReadStatus`/`internalMessageReaders` (shared). Atualiza pelo WS
-  `internal_chat.channel_read`, que refaz só as mensagens do canal — sem polling
+  `internal_chat.channel_read`, cujo payload (o "lido até" do leitor) vai para um store e é
+  somado ao `readState` (`mergeReadState`) — sem GET por evento e sem polling
 - Canal aberto PELA PESSOA (clique ou deep link) e aba visível: mensagem nova de outra pessoa
   chama `POST .../read` de novo (`useMarkReadWhileOpen`, `queries.ts`); aba escondida marca ao
-  voltar a ficar visível. O canal auto-selecionado na entrada continua sem marcar (D-068)
+  voltar a ficar visível. Os POSTs são agrupados em 1,5 s (uma rajada = um POST). O canal
+  auto-selecionado na entrada continua sem marcar (D-068)
 
 ### Buscar usuário (D-101) — iniciar conversa direta
 

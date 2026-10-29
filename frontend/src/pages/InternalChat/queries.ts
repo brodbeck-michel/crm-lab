@@ -94,6 +94,13 @@ export function useMarkChannelRead(): (channelId: string) => Promise<void> {
 }
 
 /**
+ * Janela que junta as leituras automáticas do canal aberto (D-301): uma rajada
+ * de mensagens vira UM `POST .../read`, não um por mensagem — cada POST que
+ * avança gera um `internal_chat.channel_read` para o tenant inteiro.
+ */
+export const MARK_READ_WHILE_OPEN_DEBOUNCE_MS = 1500;
+
+/**
  * Canal ABERTO pela pessoa, aba visível: mensagem nova de OUTRA pessoa que chega
  * pelo WS conta como lida (CRMLAB-123, D-301) — como no WhatsApp. Sem isso o ✓✓
  * de quem escreveu só viraria quando a leitora clicasse de novo no canal.
@@ -102,7 +109,10 @@ export function useMarkChannelRead(): (channelId: string) => Promise<void> {
  * link) — o canal auto-selecionado na entrada continua sem marcar (D-068). A
  * primeira carga depois de abrir vira só a linha de base: o clique já marcou.
  * Aba escondida não marca; ao voltar a ficar visível, marca o que chegou.
- * Sem polling: só reage ao que o cache trouxe.
+ * Sem polling: só reage ao que o cache trouxe. As marcações são agrupadas em
+ * `MARK_READ_WHILE_OPEN_DEBOUNCE_MS`; trocar de canal ou sair da tela dispara
+ * na hora a que estava pendente. Sem laço: o `channel_read` que o POST gera não
+ * mexe nas mensagens (vai para o store), então não chega aqui.
  */
 export function useMarkReadWhileOpen(
   channelId: string | null,
@@ -112,6 +122,9 @@ export function useMarkReadWhileOpen(
   onError: (error: unknown) => void,
 ): void {
   const baseline = useRef<{ channelId: string; lastId: string | null } | null>(null);
+  const pending = useRef<{ channelId: string; timer: ReturnType<typeof setTimeout> } | null>(null);
+  const latestHandlers = useRef({ markRead, onError });
+  latestHandlers.current = { markRead, onError };
   const [visible, setVisible] = useState(
     () => typeof document === 'undefined' || document.visibilityState !== 'hidden',
   );
@@ -121,6 +134,18 @@ export function useMarkReadWhileOpen(
     document.addEventListener('visibilitychange', onChange);
     return () => document.removeEventListener('visibilitychange', onChange);
   }, []);
+
+  const flush = useCallback((): void => {
+    const current = pending.current;
+    if (!current) return;
+    clearTimeout(current.timer);
+    pending.current = null;
+    const { markRead: mark, onError: fail } = latestHandlers.current;
+    void mark(current.channelId).catch(fail);
+  }, []);
+
+  // Trocou de canal (ou saiu da tela): a leitura pendente sai na hora.
+  useEffect(() => flush, [channelId, flush]);
 
   useEffect(() => {
     if (channelId === null || messages === undefined) {
@@ -138,8 +163,12 @@ export function useMarkReadWhileOpen(
     const start = messages.findIndex((message) => message.id === baseline.current?.lastId);
     const arrived = messages.slice(start + 1);
     baseline.current = { channelId, lastId: latest.id };
-    if (arrived.some((message) => message.senderId !== currentUserId)) {
-      void markRead(channelId).catch(onError);
-    }
-  }, [channelId, messages, visible, currentUserId, markRead, onError]);
+    if (!arrived.some((message) => message.senderId !== currentUserId)) return;
+    if (pending.current?.channelId === channelId) return; // já agendada: a rajada vira um POST
+    flush();
+    pending.current = {
+      channelId,
+      timer: setTimeout(flush, MARK_READ_WHILE_OPEN_DEBOUNCE_MS),
+    };
+  }, [channelId, messages, visible, currentUserId, flush]);
 }

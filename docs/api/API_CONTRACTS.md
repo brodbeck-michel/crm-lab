@@ -2997,8 +2997,8 @@ em `channel_reads` — **idempotente**, e chamar em canal já lido não é erro.
 **Response:** `204 No Content`
 
 **Confirmação de leitura (CRMLAB-123, D-301):** quando a leitura passa de pelo menos uma mensagem
-de OUTRA pessoa (não apagada), emite WS `internal_chat.channel_read` `{ channelId, userId }` depois
-do commit — DM: só para o outro participante; canal: tenant inteiro. Reabrir canal já lido não
+de OUTRA pessoa (não apagada), emite WS `internal_chat.channel_read` `{ channelId, userId, readUpTo, lastReadAt }` (o "lido
+até" desse leitor, mesmos campos de `readers[]` abaixo) depois do commit — DM: só para o outro participante; canal: tenant inteiro. Reabrir canal já lido não
 emite nada. O mesmo comando `INSERT ... ON CONFLICT` diz se avançou (CTE com a leitura anterior),
 sem consulta a mais.
 

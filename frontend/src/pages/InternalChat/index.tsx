@@ -9,6 +9,7 @@ import { useToast } from '@/components/ui';
 import { useApiErrorHandler } from '@/hooks';
 import { useAuthStore, selectUser } from '@/stores';
 import { useMessageAlertsStore } from '@/stores/message-alerts.store';
+import { mergeReadState, useInternalChatReadsStore } from '@/stores/internal-chat-reads.store';
 import { ChannelList } from './ChannelList';
 import { MessagePanel } from './MessagePanel';
 import { UserSearch } from './UserSearch';
@@ -163,6 +164,17 @@ export function InternalChat() {
   });
 
   const selectedChannel = channels.find((channel) => channel.id === selectedId) ?? null;
+
+  // CRMLAB-123 (D-301): o ✓✓ ao vivo vem do WS direto no store (sem GET) e é
+  // somado ao `readState` do último GET das mensagens.
+  const liveReads = useInternalChatReadsStore((state) =>
+    selectedId ? state.byChannel[selectedId] : undefined,
+  );
+  const serverReadState = messagesQuery.data?.readState ?? null;
+  const readState = useMemo(
+    () => mergeReadState(serverReadState, liveReads),
+    [serverReadState, liveReads],
+  );
 
   // CRMLAB-123 (D-301): com o canal aberto, mensagem nova de outra pessoa já é lida.
   useMarkReadWhileOpen(
@@ -334,7 +346,7 @@ export function InternalChat() {
           currentUserId={currentUser?.id ?? null}
           currentUserRole={currentUser?.role ?? null}
           hasOlderMessages={messagesQuery.data?.hasOlder ?? false}
-          readState={messagesQuery.data?.readState ?? null}
+          readState={readState}
           onLoadOlder={() => setPageCount((count) => count + 1)}
           presenceOf={presenceOf}
         />

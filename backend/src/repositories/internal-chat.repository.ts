@@ -230,15 +230,25 @@ export async function findChannelById(
  * Idempotente por construcao: `ON CONFLICT` sem leitura previa. Nao ha
  * `SELECT` antes — duas chamadas simultaneas nao podem duplicar a linha.
  */
+export interface MarkChannelReadOutcome {
+  /** A leitura passou de mensagem de OUTRA pessoa (nao apagada) — D-301. */
+  advanced: boolean;
+  /** `created_at` da mensagem mais recente ate esta leitura (mesma regra de `listChannelReaders`). */
+  readUpTo: string | null;
+  /** O `last_read_at` gravado agora. */
+  lastReadAt: string;
+}
+
 export async function markChannelRead(
   tx: DbTx,
   input: { tenantId: string; channelId: string; userId: string },
-): Promise<boolean> {
+): Promise<MarkChannelReadOutcome> {
   // CRMLAB-123 (D-301): no MESMO comando, diz se a leitura passou de alguma
   // mensagem de OUTRA pessoa (nao apagada) — so entao o ✓✓ de alguem pode virar
-  // e vale avisar por WS. Todas as CTEs veem o mesmo snapshot: `previous` e a
-  // leitura de ANTES do upsert.
-  const result = await tx.query<{ advanced: boolean }>(
+  // e vale avisar por WS — e devolve o "lido ate" desta pessoa, que vai no
+  // payload do evento (a tela atualiza o cache sem refazer GET). Todas as CTEs
+  // veem o mesmo snapshot: `previous` e a leitura de ANTES do upsert.
+  const result = await tx.query<{ advanced: boolean; read_up_to: unknown; last_read_at: unknown }>(
     `WITH previous AS (
        SELECT last_read_at FROM channel_reads
         WHERE tenant_id = $1 AND channel_id = $2 AND user_id = $3
@@ -248,17 +258,27 @@ export async function markChannelRead(
        ON CONFLICT (channel_id, user_id) DO UPDATE SET last_read_at = NOW()
        RETURNING last_read_at
      )
-     SELECT EXISTS (
-       SELECT 1 FROM internal_messages m, upsert u
-        WHERE m.tenant_id = $1 AND m.channel_id = $2
-          AND m.sender_id IS NOT NULL AND m.sender_id <> $3
-          AND m.deleted_at IS NULL
-          AND m.created_at > COALESCE((SELECT last_read_at FROM previous), '-infinity'::timestamp)
-          AND m.created_at <= u.last_read_at
-     ) AS advanced`,
+     SELECT u.last_read_at,
+            EXISTS (
+              SELECT 1 FROM internal_messages m
+               WHERE m.tenant_id = $1 AND m.channel_id = $2
+                 AND m.sender_id IS NOT NULL AND m.sender_id <> $3
+                 AND m.deleted_at IS NULL
+                 AND m.created_at > COALESCE((SELECT last_read_at FROM previous), '-infinity'::timestamp)
+                 AND m.created_at <= u.last_read_at
+            ) AS advanced,
+            (SELECT MAX(m.created_at) FROM internal_messages m
+              WHERE m.tenant_id = $1 AND m.channel_id = $2
+                AND m.created_at <= u.last_read_at) AS read_up_to
+       FROM upsert u`,
     [input.tenantId, input.channelId, input.userId],
   );
-  return result.rows[0]?.advanced === true;
+  const row = result.rows[0];
+  return {
+    advanced: row?.advanced === true,
+    readUpTo: toIsoOrNull(row?.read_up_to),
+    lastReadAt: toIso(row?.last_read_at),
+  };
 }
 
 interface ReaderRow {
@@ -295,7 +315,8 @@ export async function listChannelReaders(
   const result = await tx.query<ReaderRow>(
     `SELECT u.id AS user_id, u.name, r.last_read_at,
             (SELECT MAX(m.created_at) FROM internal_messages m
-              WHERE m.channel_id = $2 AND m.created_at <= r.last_read_at) AS read_up_to
+              WHERE m.tenant_id = $1 AND m.channel_id = $2
+                AND m.created_at <= r.last_read_at) AS read_up_to
        FROM users u
        LEFT JOIN channel_reads r
               ON r.tenant_id = $1 AND r.channel_id = $2 AND r.user_id = u.id

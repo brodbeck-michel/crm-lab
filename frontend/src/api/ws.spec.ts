@@ -6,6 +6,7 @@ import { WS_CLOSE_TOO_MANY_SOCKETS, WS_CLOSE_UNAUTHORIZED } from '@crm-lab/share
 import { applyWsEvent, createWsClient } from './ws';
 import type { WebSocketLike, WsClientOptions } from './ws';
 import { queryKeys, queryScopes } from './query-keys';
+import { useInternalChatReadsStore } from '@/stores/internal-chat-reads.store';
 
 /**
  * Contrato do WS (FRONTEND_BACKEND.md — "Real-time"):
@@ -154,16 +155,27 @@ describe('ws — evento invalida a query certa', () => {
     ]);
   });
 
-  // CRMLAB-123/D-301: leitura do canal refaz só as mensagens (o ✓✓ vem no readState).
-  it('internal_chat.channel_read → só as mensagens do canal', () => {
+  // CRMLAB-123/D-301: leitura do canal NÃO refaz GET (vai para o tenant inteiro
+  // num canal — CRMLAB-122); o payload vai direto para o store.
+  it('internal_chat.channel_read → nenhuma invalidação, só o store', () => {
+    useInternalChatReadsStore.getState().clear();
     const client = build();
     client.connect();
     socket(0).emitMessage({
       event: 'internal_chat.channel_read',
-      data: { channelId: 'ch-4', userId: 'u-2' },
+      data: {
+        channelId: 'ch-4',
+        userId: 'u-2',
+        readUpTo: '2026-10-28T12:00:00.000Z',
+        lastReadAt: '2026-10-28T12:01:00.000Z',
+      },
     });
 
-    expect(keysPassed()).toEqual([queryKeys.internalMessages('ch-4')]);
+    expect(keysPassed()).toEqual([]);
+    expect(useInternalChatReadsStore.getState().byChannel['ch-4']?.['u-2']).toEqual({
+      readUpTo: '2026-10-28T12:00:00.000Z',
+      lastReadAt: '2026-10-28T12:01:00.000Z',
+    });
   });
 
   // CRMLAB-57/D-196: cartão nascido do orçamento do Bitlab entra no Kanban sem recarregar.

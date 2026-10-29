@@ -4,7 +4,7 @@
  * A (Ana Atendente) escreve para B (Gustavo Gestor) numa DM. Enquanto B nao
  * abre, a mensagem de A mostra ✓ cinza; B abre a DM (`POST .../read`) e o tique
  * de A vira ✓✓ azul SEM recarregar — pelo WS `internal_chat.channel_read`, que
- * refaz `GET .../messages` (o `readState` vem nele). Nenhum polling.
+ * traz o "lido até" do leitor e atualiza a tela sem GET. Nenhum polling.
  *
  * Escrito no CRMLAB-123 e NAO executado no worktree do card (regra da release
  * v1.42.0: Playwright roda so na integracao). Cada execucao manda uma mensagem

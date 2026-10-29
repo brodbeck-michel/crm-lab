@@ -58,9 +58,18 @@ export interface WsEventPayloads {
   /**
    * `userId` abriu o canal e passou de mensagem de outra pessoa (CRMLAB-123, D-301):
    * o ✓✓ de quem escreveu pode ter virado. DM: so para o outro participante; canal:
-   * tenant inteiro. So ids — a tela refaz `GET .../messages` (que traz `readState`).
+   * tenant inteiro. Traz o "lido ate" desse leitor (mesmos campos de
+   * `InternalChannelReader`): a tela atualiza o `readState` SEM refazer GET — num canal,
+   * cada leitura de qualquer pessoa chega a todas as abas do laboratorio (CRMLAB-122).
    */
-  'internal_chat.channel_read': { channelId: string; userId: string };
+  'internal_chat.channel_read': {
+    channelId: string;
+    userId: string;
+    /** `created_at` da mensagem mais recente ate esta leitura; `null` = canal vazio ao ler. */
+    readUpTo: string | null;
+    /** `channel_reads.last_read_at` gravado nesta leitura. */
+    lastReadAt: string;
+  };
   /**
    * Conexao do canal externo mudou (hoje: WhatsApp por QR). `connected: false`
    * e o caso que motivou o evento — ver a nota em `docs/ARCHITECTURE.md`.

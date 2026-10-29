@@ -533,7 +533,7 @@ interface InternalChatService {
   <= last_read_at` pelo índice do canal) e `channelReadUpTo` (shared, o menor entre eles). Membros:
   DM = o outro participante; canal = ativos do tenant sem `platform_operator`. `markChannelRead`
   devolve se a leitura passou de mensagem de outra pessoa (não apagada); só então emite
-  `internal_chat.channel_read` `{ channelId, userId }` — DM: `emitToUser` do outro; canal:
+  `internal_chat.channel_read` `{ channelId, userId, readUpTo, lastReadAt }` — DM: `emitToUser` do outro; canal:
   `emitToTenant`
 
 ---

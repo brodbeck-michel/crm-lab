@@ -304,6 +304,13 @@ não só aqui. O Console da Plataforma não avisa.
 - **Começa fechada (CRMLAB-74).** Só abre pelo botão [Contexto] do header. Aberta, continua
   aberta ao trocar de conversa até recarregar a página (não persiste — D-117).
 - Cadastro resumido, propostas da conversa (cartões clicáveis → modal), tags
+- **"Vincular orçamento" (CRMLAB-129, D-298/D-299):** botão ao lado do título "Propostas", só com
+  "Nascer do orçamento do Bitlab" ligada e conversa ativa do WhatsApp. Abre o `LinkBudgetModal`: orçamentos do
+  Bitlab em "Novo orçamento" sem conversa (`GET /proposals?status=novo_contato&withoutConversation=true`)
+  que a pessoa pode enviar (`canActOnCard`), com nº, nome, valor, data e usuário do Bitlab; o mais
+  parecido com o nome da conversa em cima (chip "Mais parecido"); busca por nome ou nº. Escolher
+  abre o `SendProposalPanel` (§6) com a conversa fixa: confere a mensagem do modelo e envia —
+  sempre pelo WhatsApp, sem opção de só vincular. A lista se atualiza pelos eventos WS de proposta.
 - **Link "Ver ficha completa" → `/patients/:id`**, a porta de entrada da Ficha (§3). Usa
   `conversation.patientId` (D-079), que vem em `GET /conversations/:id`. Conversa anterior ao
   backfill da migração 003 tem `patientId: null` e **o link não é renderizado** — nem link

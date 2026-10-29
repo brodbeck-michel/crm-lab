@@ -3620,6 +3620,21 @@ migração 061 (índice trigram condicional ao `pg_trgm`).
 - **Testes:** `name-search.spec.ts` (novo, 12); front `List.spec.tsx` (+2), `search-term.spec.ts`
   (novo), `Attendance.spec.tsx` (asserções com o `signal`).
 
+### 🚧 CRMLAB-129 — vincular orçamento do Bitlab pela conversa (2026-10-28, aguardando validação)
+
+Branch `feature/CRMLAB-129-vincular-orcamento-conversa` (de `main` v1.41.0). Decisões D-298 e
+D-299, sem migração.
+
+- **Backend:** `GET /proposals?withoutConversation=true`; `?search=` só com dígitos casa também o
+  nº do orçamento do Bitlab. O envio é o `POST /proposals/:id/send` de sempre (trava de corrida
+  já atômica, D-201).
+- **Tela:** botão "Vincular orçamento" no painel de contexto da conversa → `LinkBudgetModal`
+  (candidatos, mais parecido primeiro, busca) → `SendProposalPanel` com a conversa fixa.
+- **Testes:** backend `send-from-card.spec.ts` (+5: filtro, recorte por papel, busca por nº,
+  validação, segundo envio recusado sem mensagem); front `LinkBudgetModal.spec.tsx` (novo, 8);
+  e2e `flow-20-link-budget-from-conversation.spec.ts` (escrito, não executado).
+- **Pendente:** exames do orçamento (D-299 item 2); validação na hml.
+
 ### 🚧 CRMLAB-121 — cadastrar contato e achar pelo nome na Nova conversa (2026-10-26, aguardando validação)
 
 Branch `feature/CRMLAB-121-cadastro-contato` (de `main` v1.40.0). Decisão D-287 (revisa D-061),

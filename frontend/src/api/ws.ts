@@ -11,7 +11,6 @@ import { refreshAccessToken as refreshAccessTokenDefault } from './client';
 import { queryKeys, queryScopes } from './query-keys';
 import { usePresenceStore } from '@/stores/presence.store';
 import { getTabPresence } from '@/lib/tab-presence';
-
 import { useInternalChatReadsStore } from '@/stores/internal-chat-reads.store';
 
 /**

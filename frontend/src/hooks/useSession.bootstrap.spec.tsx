@@ -1,6 +1,7 @@
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@/api/client';
+import type * as ClientModule from '@/api/client';
 import { useAuthStore } from '@/stores';
 
 /**
@@ -9,7 +10,7 @@ import { useAuthStore } from '@/stores';
  */
 const refreshMock = vi.hoisted(() => vi.fn<() => Promise<string>>());
 vi.mock('@/api/client', async (importOriginal) => {
-  const original = await importOriginal<typeof import('@/api/client')>();
+  const original = await importOriginal<typeof ClientModule>();
   return { ...original, refreshAccessToken: refreshMock };
 });
 

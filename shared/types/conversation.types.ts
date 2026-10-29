@@ -247,7 +247,8 @@ export interface Message {
  */
 export interface CreateConversationRequest {
   patientPhone: string;
-  patientName: string;
+  /** Ausente/`null` = sem nome (CRMLAB-124): nunca mandar rotulo de tela como nome. */
+  patientName?: string | null;
   patientEmail?: string | null;
   channel: Exclude<ConversationChannel, 'whatsapp'>;
 }

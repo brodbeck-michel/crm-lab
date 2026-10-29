@@ -33,7 +33,8 @@ function useSendMessage(patient: PatientDetail) {
     mutationFn: () =>
       conversationsApi.create({
         patientPhone: patient.phone,
-        patientName: patient.name ?? 'Contato',
+        // Sem nome vai `null`: um rotulo aqui viraria o nome do cadastro (CRMLAB-124).
+        patientName: patient.name,
         patientEmail: patient.email,
         channel: 'direct',
       }),

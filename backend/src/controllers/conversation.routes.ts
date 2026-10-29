@@ -154,7 +154,9 @@ export const createConversationSchema = z.object({
       const digits = phoneDigits(value).length;
       return digits >= 10 && digits <= 13;
     }, 'Telefone invalido'),
-  patientName: z.string().trim().min(1).max(255),
+  // Anulavel (CRMLAB-124): a ficha de contato SEM nome nao inventa um rotulo
+  // ("Contato") que o upsert gravaria como nome do cadastro.
+  patientName: z.string().trim().min(1).max(255).nullish(),
   patientEmail: z.string().trim().email().max(255).nullish(),
   channel: z.enum(['sms', 'web', 'direct']),
 });

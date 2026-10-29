@@ -6312,8 +6312,16 @@ vazia no Atendimento. Formato de telefone descartado como causa (mesmo tamanho d
 **Impacto:** `patient.repository.ts` (`syncConversationNames`, `update`),
 `conversation.repository.ts` (`findOrCreateByPhone`), `patient.service.ts`,
 migração 060, SCHEMA.md §2/§45. Frontend: salvar a ficha / cadastrar contato invalida as
-consultas de conversas. Editar o nome NÃO emite evento de WebSocket: outra aba vê na próxima
-recarga da lista (refetch periódico/foco).
+consultas de conversas. Editar o nome NÃO emite evento de WebSocket: outra aba/atendente vê o
+nome novo quando a lista de conversas for invalidada de novo — na prática o próximo
+`conversation.new_message`/`message_updated` de qualquer conversa do tenant, ou ao remontar a tela
+(o QueryClient tem `refetchOnWindowFocus: false` e a lista não faz polling). Revisão: não há evento
+`conversation.updated`; criar um exigiria tipo novo, injetar o `wsHub` no `PatientService` e mexer
+no `ws.ts` que o CRMLAB-122 está mudando, e o payload com o nome iria para o tenant inteiro
+(`emitToTenant`), inclusive para quem não enxerga a conversa — ficou de fora; ponto para o Michel.
+`POST /conversations` ("Enviar mensagem" da ficha) passou a aceitar `patientName` ausente/`null`:
+antes a ficha de contato sem nome mandava o rótulo da tela ("Paciente"), que o upsert gravava como
+nome do cadastro e agora a D-292 levaria a todas as conversas.
 
 ### D-293: `POST /patients` completa cadastro existente SEM nome em vez de 409 (CRMLAB-124, emenda D-287 item 2)
 **Decisão:** quando o telefone já existe (mesmo formato ou variante do nono dígito) num cadastro

@@ -88,7 +88,14 @@ test.describe('Fluxo 20: vincular orçamento do Bitlab pela conversa', () => {
     await expect(dialog).toBeHidden();
 
     // A proposta aparece no painel de contexto desta conversa.
-    await expect(page.getByTestId('context-proposal').filter({ hasText: 'Orçamento enviado' })).toBeVisible();
+    // A conversa do seed já tem outra proposta enviada (R$ 22,00): filtra pelo valor deste orçamento.
+    await expect(
+      page
+        .getByTestId('context-proposal')
+        .filter({ hasText: 'Orçamento enviado' })
+        .filter({ hasText: 'R$ 150,50' })
+        .first(),
+    ).toBeVisible();
 
     // --- No servidor --------------------------------------------------------
     const attendantToken = await apiLogin(request, E2E_USERS.alfaAttendant);

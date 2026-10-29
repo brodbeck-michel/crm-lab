@@ -96,7 +96,7 @@ describe('InboxLayout — conteúdo', () => {
     renderLayout();
     expect(screen.getByRole('region', { name: 'Conversas' })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Conversa' })).toBeInTheDocument();
-    expect(screen.getByRole('complementary', { name: 'Contexto do paciente' })).toBeInTheDocument();
+    expect(screen.getByRole('complementary', { name: 'Contexto do contato' })).toBeInTheDocument();
     expect(screen.getByText('lista')).toBeInTheDocument();
     expect(screen.getByText('conversa')).toBeInTheDocument();
     expect(screen.getByText('contexto')).toBeInTheDocument();

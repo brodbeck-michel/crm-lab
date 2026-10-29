@@ -104,7 +104,14 @@ const STATUS_TICK: Record<MessageStatus, { glyph: string; label: string; classNa
 };
 
 /** O tique da linha da hora — só no balão da atendente (padrão WhatsApp). */
-export function MessageStatusTick({ status }: { status: MessageStatus }) {
+export function MessageStatusTick({
+  status,
+  title,
+}: {
+  status: MessageStatus;
+  /** Dica no hover; sem ela, o próprio rótulo (CRMLAB-123: "Lida por…" no chat interno). */
+  title?: string;
+}) {
   // Status fora do contrato (fixture antiga, versão nova do servidor): sem tique.
   const tick = (STATUS_TICK as Partial<typeof STATUS_TICK>)[status];
   if (!tick) return null;
@@ -114,7 +121,7 @@ export function MessageStatusTick({ status }: { status: MessageStatus }) {
       data-status={status}
       role="img"
       aria-label={tick.label}
-      title={tick.label}
+      title={title ?? tick.label}
       className={cn('font-semibold tracking-normal', tick.className)}
     >
       {tick.glyph}
@@ -152,7 +159,7 @@ function QuotedBlock({
 }) {
   const clickable = Boolean(onClick && quoted.id && !quoted.deleted);
   const author =
-    quoted.senderType === 'patient' ? (quoted.senderName ?? 'Paciente') : (quoted.senderName ?? 'Você');
+    quoted.senderType === 'patient' ? (quoted.senderName ?? 'Contato') : (quoted.senderName ?? 'Você');
   const body = (
     <>
       {quoted.id !== null && (
@@ -622,7 +629,7 @@ export function MessageBubble({
           {reactions.map((reaction) => (
             <span
               key={reaction.reactorType}
-              title={reaction.reactorType === 'patient' ? 'Paciente' : (reaction.userName ?? 'Laboratório')}
+              title={reaction.reactorType === 'patient' ? 'Contato' : (reaction.userName ?? 'Laboratório')}
             >
               {reaction.emoji}
             </span>

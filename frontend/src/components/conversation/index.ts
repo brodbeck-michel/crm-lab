@@ -7,6 +7,7 @@ export {
   bubbleTypeFor,
   quotedLabel,
   EditBox as MessageEditBox,
+  MessageStatusTick,
 } from './MessageBubble';
 export type { MessageBubbleProps, MessageBubbleType } from './MessageBubble';
 export { DateSeparator, dateSeparatorLabel, isSameLocalDay } from './DateSeparator';

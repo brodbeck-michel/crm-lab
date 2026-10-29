@@ -122,7 +122,7 @@ Fonte única: **`backend/.env.example`**. Nenhum valor real aparece neste doc.
 `NODE_ENV` · `PORT` (3000) · `LOG_LEVEL` (info) · `REDIS_URL` (sem ela, cache e
 fila usam adaptador in-memory — D-011) · `JWT_ACCESS_TTL` (900) ·
 `JWT_REFRESH_TTL` (604800) · `CORS_ORIGIN` (origem da UI) ·
-`RATE_LIMIT_PER_MINUTE` (100) · `BITLAB_API_BASE_URL` (`https://integracoes.bitlab.net.br/webhook`) ·
+`RATE_LIMIT_PER_MINUTE` (300 no compose de prod desde D-289; 100 no código, dev/testes) · `BITLAB_API_BASE_URL` (`https://integracoes.bitlab.net.br/webhook`) ·
 `LIS_SYNC_INTERVAL_MS` (30000 = 30 s desde o CRMLAB-79, D-249; era 2 min na D-199; **`0` desliga o agendador**, e "Sincronizar agora"
 continua funcionando) · `LIS_SYNC_INITIAL_DAYS` (90) — CRMLAB-52, D-185. A chave do Bitlab **não**
 é env var: é por laboratório, cifrada no banco, e colada pelo admin em Configurações → Integração

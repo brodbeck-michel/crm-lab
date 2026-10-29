@@ -1,4 +1,4 @@
-import type { QueryClient } from '@tanstack/react-query';
+import type { InvalidateQueryFilters, QueryClient, QueryKey } from '@tanstack/react-query';
 import {
   WS_CLOSE_TOO_MANY_SOCKETS,
   WS_CLOSE_UNAUTHORIZED,
@@ -10,6 +10,8 @@ import {
 import { refreshAccessToken as refreshAccessTokenDefault } from './client';
 import { queryKeys, queryScopes } from './query-keys';
 import { usePresenceStore } from '@/stores/presence.store';
+import { getTabPresence } from '@/lib/tab-presence';
+import { useInternalChatReadsStore } from '@/stores/internal-chat-reads.store';
 
 /**
  * Cliente WebSocket (docs/contracts/FRONTEND_BACKEND.md — "Real-time").
@@ -68,6 +70,46 @@ export interface WsClientOptions {
    * `maxAttempts` enquanto o usuário só trocou de aba.
    */
   visibilityHiddenPauseMs?: number;
+  /**
+   * CRMLAB-122 (D-288): junta as invalidações que chegam dentro desta janela
+   * numa só (uma rajada de 3 mensagens do paciente + os tiques vira UM refetch
+   * de cada lista, não três). `0` (padrão, usado nos testes) = imediato.
+   */
+  invalidateBatchMs?: number;
+  /**
+   * CRMLAB-122 (D-288): com a aba ESCONDIDA, evento WS só marca a query como
+   * velha (`refetchType: 'none'`) — o refetch acontece quando a aba volta a
+   * ficar visível. Exceção: as queries para as quais isto devolve `true`
+   * (o aviso de mensagem nova) continuam vivas na aba eleita por
+   * `keepsBackgroundAlive`. Padrão: nenhuma.
+   */
+  isBackgroundLive?: (queryKey: QueryKey) => boolean;
+  /** Padrão: `getTabPresence().keepsBackgroundAlive()` (lib/tab-presence). */
+  keepsBackgroundAlive?: () => boolean;
+}
+
+/**
+ * O que `applyWsEvent` precisa do QueryClient. `QueryClient` satisfaz; o
+ * cliente WS passa um invólucro que respeita aba escondida e lote (D-288).
+ */
+export interface WsQueryInvalidator {
+  invalidateQueries: (filters: InvalidateQueryFilters) => Promise<void>;
+}
+
+let realtimeConnected = false;
+
+/**
+ * `true` com o WebSocket da aba aberto. Polling de rede de segurança usa para
+ * esticar o intervalo quando o WS já traz os eventos (CRMLAB-122, D-288).
+ */
+export function isRealtimeConnected(): boolean {
+  return realtimeConnected;
+}
+
+/** Contador de não lidas da barra lateral (D-277) — refeito à parte no `new_message`. */
+function isUnreadCountKey(queryKey: QueryKey): boolean {
+  const target = queryKeys.conversationUnreadCount();
+  return queryKey.length === target.length && queryKey[0] === target[0] && queryKey[1] === target[1];
 }
 
 export interface WsClient {
@@ -106,7 +148,7 @@ export type WsToastTone = 'positive' | 'attention';
  * `conversation.presence` (D-226), que vai para `usePresenceStore`.
  */
 export function applyWsEvent(
-  queryClient: QueryClient,
+  queryClient: WsQueryInvalidator,
   event: WsEvent,
   toast?: (message: string, tone?: WsToastTone) => unknown,
 ): void {
@@ -118,7 +160,12 @@ export function applyWsEvent(
     case 'conversation.message_updated':
     case 'conversation.new_message': {
       const data = event.data as { conversationId: string };
-      void queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
+      // CRMLAB-122: o contador fica FORA desta invalidação — ele é refeito logo
+      // abaixo, depois do detalhe. Antes saía duas vezes por mensagem.
+      void queryClient.invalidateQueries({
+        queryKey: queryScopes.conversations,
+        predicate: (query) => !isUnreadCountKey(query.queryKey),
+      });
       // Conversa ABERTA: o refetch do detalhe zera `unread_count` no servidor
       // (GET = markAsRead); o contador da barra lateral (D-277) e refeito
       // DEPOIS dele, senao mostraria "1" enquanto a atendente le a mensagem.
@@ -220,6 +267,17 @@ export function applyWsEvent(
       return;
     }
 
+    // CRMLAB-123/D-301: alguém leu o canal — o ✓✓ de quem escreveu pode ter
+    // virado. Exceção ao "sempre invalidate", como a presença: o payload traz o
+    // "lido até" e vai direto para o store, SEM GET. Num canal o evento vai para
+    // o tenant inteiro a cada leitura; refazer as mensagens aqui, em cada aba,
+    // traria de volta os 429 do CRMLAB-122.
+    case 'internal_chat.channel_read': {
+      const data = event.data as WsEventPayloads['internal_chat.channel_read'];
+      useInternalChatReadsStore.getState().applyRead(data);
+      return;
+    }
+
     // CRMLAB-120/D-286: status de alguém da equipe pode ter mudado — refaz a lista.
     case 'user.presence_changed': {
       void queryClient.invalidateQueries({ queryKey: queryKeys.usersPresence() });
@@ -264,7 +322,74 @@ export function createWsClient(options: WsClientOptions): WsClient {
     visibilityHiddenPauseMs = DEFAULT_VISIBILITY_HIDDEN_PAUSE_MS,
     refreshAccessToken = refreshAccessTokenDefault,
     socketFactory = (url: string) => new WebSocket(url) as unknown as WebSocketLike,
+    invalidateBatchMs = 0,
+    isBackgroundLive = () => false,
+    keepsBackgroundAlive = () => getTabPresence().keepsBackgroundAlive(),
   } = options;
+
+  /* ── Invalidação ciente de aba escondida e em lote (CRMLAB-122, D-288) ── */
+
+  let staleWhileHidden = false;
+
+  function isHidden(): boolean {
+    return typeof document !== 'undefined' && document.visibilityState === 'hidden';
+  }
+
+  /** Sem `filters` = todas as queries (reconexão). Visível: chamada direta, sem tique extra. */
+  function invalidateNow(filters?: InvalidateQueryFilters): Promise<void> {
+    if (!isHidden()) {
+      return filters ? queryClient.invalidateQueries(filters) : queryClient.invalidateQueries();
+    }
+    return invalidateWhileHidden(filters);
+  }
+
+  async function invalidateWhileHidden(filters?: InvalidateQueryFilters): Promise<void> {
+    // Escondida: só marca. Quem está na tela é outra aba (ou ninguém) — refazer
+    // aqui gastaria o balde do usuário com uma tela que ninguém vê.
+    staleWhileHidden = true;
+    await queryClient.invalidateQueries({ ...filters, refetchType: 'none' });
+    if (!keepsBackgroundAlive()) return;
+    // `cancelRefetch: false`: o mesmo evento invalida mais de uma chave; a
+    // busca já em voo (disparada por ESTE evento) serve — não cancela e refaz.
+    await queryClient.refetchQueries(
+      {
+        type: 'active',
+        predicate: (query) => query.state.isInvalidated && isBackgroundLive(query.queryKey),
+      },
+      { cancelRefetch: false },
+    );
+  }
+
+  interface PendingInvalidation {
+    filters: InvalidateQueryFilters;
+    waiters: Array<() => void>;
+  }
+  const pending = new Map<string, PendingInvalidation>();
+  let batchTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function flushBatch(): void {
+    batchTimer = null;
+    const items = [...pending.values()];
+    pending.clear();
+    for (const item of items) {
+      void invalidateNow(item.filters)
+        .catch(() => undefined)
+        .finally(() => item.waiters.forEach((resolve) => resolve()));
+    }
+  }
+
+  const invalidator: WsQueryInvalidator = {
+    invalidateQueries(filters) {
+      if (invalidateBatchMs <= 0) return invalidateNow(filters);
+      const key = `${JSON.stringify(filters.queryKey ?? null)}${filters.predicate ? '#p' : ''}`;
+      return new Promise<void>((resolve) => {
+        const existing = pending.get(key);
+        if (existing) existing.waiters.push(resolve);
+        else pending.set(key, { filters, waiters: [resolve] });
+        if (batchTimer === null) batchTimer = setTimeout(flushBatch, invalidateBatchMs);
+      });
+    },
+  };
 
   let socket: WebSocketLike | null = null;
   let attempts = 0;
@@ -334,20 +459,23 @@ export function createWsClient(options: WsClientOptions): WsClient {
     next.onopen = () => {
       attempts = 0;
       gaveUp = false;
+      realtimeConnected = true;
       if (hasConnectedBefore) {
-        // Pode ter perdido evento durante a queda: refaz tudo que está ativo.
-        void queryClient.invalidateQueries();
+        // Pode ter perdido evento durante a queda: refaz tudo que está ativo
+        // (escondida: só marca — D-288).
+        void invalidateNow();
       }
       hasConnectedBefore = true;
     };
 
     next.onmessage = (message) => {
       const event = parseWsEvent(message.data);
-      if (event) applyWsEvent(queryClient, event, toast);
+      if (event) applyWsEvent(invalidator, event, toast);
     };
 
     next.onclose = (event) => {
       socket = null;
+      realtimeConnected = false;
       if (event?.code === WS_CLOSE_TOO_MANY_SOCKETS) {
         // Decisao do servidor (teto de sockets por usuario), nao falha: esta
         // aba e a mais antiga do usuario e foi cedida para a nova. Reconectar
@@ -380,6 +508,14 @@ export function createWsClient(options: WsClientOptions): WsClient {
       return;
     }
     hiddenSince = null;
+    if (staleWhileHidden) {
+      // D-288: a aba voltou — agora sim refaz o que ficou marcado como velho.
+      staleWhileHidden = false;
+      void queryClient.refetchQueries({
+        type: 'active',
+        predicate: (query) => query.state.isInvalidated,
+      });
+    }
     if (pausedForVisibility) {
       pausedForVisibility = false;
       clearTimer();
@@ -404,6 +540,11 @@ export function createWsClient(options: WsClientOptions): WsClient {
         document.removeEventListener('visibilitychange', onVisibilityChange);
       }
       clearTimer();
+      if (batchTimer !== null) clearTimeout(batchTimer);
+      batchTimer = null;
+      pending.clear();
+      realtimeConnected = false;
+      staleWhileHidden = false;
       attempts = 0;
       gaveUp = false;
       pausedForVisibility = false;

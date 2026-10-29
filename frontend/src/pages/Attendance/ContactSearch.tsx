@@ -4,8 +4,8 @@ import type { ListPatientsQuery, PatientListItem } from '@crm-lab/shared';
 import { api, queryKeys, staleTimes } from '@/api';
 import { SearchInput } from '@/components/ui';
 import { formatBrazilianPhone } from '@/lib/phone-suggestion';
+import { SEARCH_MIN_LENGTH } from '@/lib/search-term';
 
-const MIN_TERM = 2;
 const MAX_RESULTS = 6;
 
 export interface ContactSearchProps {
@@ -15,7 +15,7 @@ export interface ContactSearchProps {
 
 /**
  * Busca de contato da "Nova conversa" (CRMLAB-121, D-287): nome, CPF ou
- * telefone, pela MESMA busca da tela de Pacientes (`GET /patients?search=`,
+ * telefone, pela MESMA busca da tela de Contatos (`GET /patients?search=`,
  * D-060). O servidor já esconde inativo e aplica o recorte da atendente —
  * contato sem conversa aparece para todas. Anonimizado (LGPD, D-063) sai
  * aqui: não há com quem conversar.
@@ -24,12 +24,13 @@ export function ContactSearch({ onPick }: ContactSearchProps) {
   const [term, setTerm] = useState('');
   /** Remonta o campo (não controlado) para limpá-lo depois da escolha. */
   const [resetKey, setResetKey] = useState(0);
-  const enabled = term.length >= MIN_TERM;
+  const enabled = term.length >= SEARCH_MIN_LENGTH;
   const filters: ListPatientsQuery = { search: term, limit: MAX_RESULTS, sortBy: 'name', order: 'asc' };
 
   const results = useQuery({
     queryKey: queryKeys.patients(filters),
-    queryFn: () => api.patients.list(filters),
+    // `signal`: o termo novo cancela o pedido do anterior (CRMLAB-125).
+    queryFn: ({ signal }) => api.patients.list(filters, { signal }),
     staleTime: staleTimes.patients,
     enabled,
   });

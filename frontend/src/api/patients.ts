@@ -13,7 +13,7 @@ import type {
   UpdatePatientRequest,
 } from '@crm-lab/shared';
 import { http } from './client';
-import type { QueryParams } from './client';
+import type { QueryParams, RequestOptions } from './client';
 
 /**
  * `/patients` — ficha do paciente (docs/api/API_CONTRACTS.md §2c, PAGES.md §3).
@@ -31,8 +31,9 @@ import type { QueryParams } from './client';
  * `update` é PATCH parcial: campo ausente PRESERVA, `null` APAGA.
  */
 export const patientsApi = {
-  list: (query: ListPatientsQuery = {}) =>
-    http.get<ListPatientsResponse>('/patients', query as QueryParams),
+  /** `options.signal`: a busca cancela o pedido do termo anterior (CRMLAB-125). */
+  list: (query: ListPatientsQuery = {}, options: Pick<RequestOptions, 'signal'> = {}) =>
+    http.get<ListPatientsResponse>('/patients', query as QueryParams, options),
 
   create: (body: CreatePatientRequest) => http.post<PatientDetail>('/patients', body),
 

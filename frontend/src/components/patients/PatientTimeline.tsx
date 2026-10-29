@@ -52,7 +52,7 @@ const CHANNEL_LABEL: Readonly<Record<ConversationChannel, string>> = {
 };
 
 const SENDER_LABEL: Readonly<Record<SenderType, string>> = {
-  patient: 'Paciente',
+  patient: 'Contato',
   agent: 'Atendente',
   system: 'Sistema',
 };

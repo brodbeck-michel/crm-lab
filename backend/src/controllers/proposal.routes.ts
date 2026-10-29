@@ -77,6 +77,15 @@ export const listProposalsQuerySchema = z.object({
   search: z.string().min(1).max(100).optional(),
   /** `?reminder=due|open` — lembrete de contato aberto (CRMLAB-102, D-272). */
   reminder: z.enum(PROPOSAL_REMINDER_FILTERS as unknown as [string, ...string[]]).optional(),
+  /**
+   * `?withoutConversation=true` — so propostas sem conversa vinculada (os
+   * cartoes do Bitlab ainda nao enviados). E a lista do "Vincular orcamento"
+   * do Atendimento (CRMLAB-129, D-298). `false`/ausente = sem filtro.
+   */
+  withoutConversation: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .transform((v) => (typeof v === 'boolean' ? v : v === 'true'))
+    .optional(),
   page: z.coerce.number().int().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(MAX_LIMIT).optional(),
   sortBy: z.enum(['createdAt', 'updatedAt', 'totalPrice', 'status']).optional(),

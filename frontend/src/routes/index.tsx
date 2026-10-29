@@ -1,4 +1,4 @@
-import { Navigate, type RouteObject } from 'react-router-dom';
+import { Navigate, useLocation, type RouteObject } from 'react-router-dom';
 import { AppShell, PlatformShell } from '@/components/layout';
 import { NotFoundPlaceholder } from '@/pages/_placeholders';
 import { Attendance } from '@/pages/Attendance';
@@ -49,6 +49,15 @@ import { ADMIN_ONLY, MANAGER_PLUS, PLATFORM_ONLY, TENANT_ROLES } from './route-c
  * `/platform/*` usa `PlatformShell` porque tem identidade visual própria e não
  * herda o tema do tenant (PAGES.md §11).
  */
+/**
+ * `/patients[/:id]` → `/contacts[/:id]` (CRMLAB-126, D-294), preservando
+ * query string e hash. Só o prefixo muda; o id segue igual.
+ */
+export function LegacyPatientsRedirect() {
+  const { pathname, search, hash } = useLocation();
+  return <Navigate to={`${pathname.replace(/^\/patients/, '/contacts')}${search}${hash}`} replace />;
+}
+
 export const appRoutes: RouteObject[] = [
   { path: '/login', element: <Login /> },
   { path: '/forgot-password', element: <ForgotPassword /> },
@@ -68,8 +77,11 @@ export const appRoutes: RouteObject[] = [
             element: <AppShell />,
             children: [
               { path: 'attendance', element: <Attendance /> },
-              { path: 'patients', element: <PatientsList /> },
-              { path: 'patients/:id', element: <PatientProfile /> },
+              { path: 'contacts', element: <PatientsList /> },
+              { path: 'contacts/:id', element: <PatientProfile /> },
+              // Rota antiga (CRMLAB-126, D-294): favoritos e links salvos continuam abrindo.
+              { path: 'patients', element: <LegacyPatientsRedirect /> },
+              { path: 'patients/:id', element: <LegacyPatientsRedirect /> },
               { path: 'budget/new', element: <BudgetNew /> },
               { path: 'proposals', element: <Proposals /> },
               { path: 'catalog', element: <Catalog /> },

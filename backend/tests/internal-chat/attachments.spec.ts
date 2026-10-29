@@ -11,7 +11,8 @@
  *   4. acesso = ver o canal: DM alheia e outro tenant são 404 (nunca 403), no
  *      upload e no download; anexo de outro canal também é 404.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import sharp from 'sharp';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { MAX_MEDIA_BYTES } from '@crm-lab/shared';
 import type {
@@ -90,6 +91,25 @@ describe('anexo no chat interno (CRMLAB-101)', () => {
     );
     expect(rows.rows[0]?.rowsecurity).toBe(true);
     expect(rows.rows[0]?.policies).toBeGreaterThan(0);
+  });
+
+  it('imagem PNG real vira JPEG ao gravar (CRMLAB-128, D-291)', async () => {
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Ana' });
+    const geral = await geralOf(ana);
+    const png = await sharp({ create: { width: 20, height: 10, channels: 4, background: 'red' } }).png().toBuffer();
+
+    const created = await upload(ana, geral.id, {
+      fileName: 'print.png',
+      mimeType: 'image/png',
+      contentBase64: png.toString('base64'),
+    }).expect(201);
+
+    const attachment = (created.body as InternalMessage).attachment;
+    if (!attachment) throw new Error('sem anexo');
+    const onDisk = readFileSync(mediaFilePath(attachment.id));
+    expect(attachment).toMatchObject({ fileName: 'print.jpg', mimeType: 'image/jpeg', byteSize: onDisk.byteLength });
+    expect((await sharp(onDisk).metadata()).format).toBe('jpeg');
   });
 
   it('grava mensagem + anexo, arquivo com o id da linha, e o download devolve o nome original', async () => {

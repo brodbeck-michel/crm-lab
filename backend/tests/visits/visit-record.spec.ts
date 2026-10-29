@@ -7,6 +7,7 @@
  * imagem/PDF (sniff, teto, limite por visita, download com os cabecalhos de
  * midia, exclusao por qualquer usuario), isolamento multitenant e audit log.
  */
+import sharp from 'sharp';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { ApiErrorBody, ListVisitsResponse, VisitAttachment, VisitDetail } from '@crm-lab/shared';
 import { MAX_MEDIA_BYTES, VISIT_ATTACHMENTS_MAX } from '@crm-lab/shared';
@@ -328,6 +329,19 @@ describe('relato e próximo passo', () => {
 });
 
 describe('anexos', () => {
+  it('foto PNG real vira JPEG ao gravar (CRMLAB-128, D-291)', async () => {
+    const visit = await createVisit(attendantA);
+    const png = await sharp({ create: { width: 20, height: 10, channels: 4, background: 'red' } }).png().toBuffer();
+    const created = await attach(attendantA, visit.id, { fileName: 'receita.png', mimeType: 'image/png', content: png });
+    expect(created.status).toBe(201);
+    const body = created.body as VisitAttachment;
+    const onDisk = await readMediaFile(body.id);
+    expect(body.mimeType).toBe('image/jpeg');
+    expect(body.fileName).toBe('receita.jpg');
+    expect(body.byteSize).toBe(onDisk?.byteLength);
+    expect((await sharp(onDisk!).metadata()).format).toBe('jpeg');
+  });
+
   it('anexa PNG e PDF, lista no detalhe e baixa com os cabeçalhos de mídia', async () => {
     const visit = await createVisit(attendantA);
     const png = await attach(attendantA, visit.id, { fileName: 'foto consultório.png', mimeType: 'image/png', content: PNG });

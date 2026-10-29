@@ -166,7 +166,7 @@ describe('/api/v1/internal-chat', () => {
       .expect(200);
 
     const body = response.body as ListInternalMessagesResponse;
-    expect(Object.keys(body).sort()).toEqual(['messages', 'pagination']);
+    expect(Object.keys(body).sort()).toEqual(['messages', 'pagination', 'readState']);
     expect(body.pagination).toEqual({ page: 1, limit: 2, total: 3, totalPages: 2 });
     expect(body.messages.map((m) => m.content)).toEqual(['segunda', 'terceira']);
   });

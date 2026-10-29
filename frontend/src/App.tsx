@@ -4,6 +4,7 @@ import { ToastProvider } from '@/components/ui';
 import { queryClient } from '@/api/query-client';
 import { useAppWebSocket, useIdlePresence, useSessionBootstrap } from '@/hooks';
 import { appRoutes } from '@/routes';
+import { SessionWaitScreen } from '@/components/layout/TrafficNotice';
 import '@/stores'; // registra a ponte de sessão do client HTTP
 
 /**
@@ -33,8 +34,10 @@ export function App() {
   // de rota) renderizar. Sem tela de loading própria: a troca é rápida e uma
   // tela em branco por um instante é preferível a piscar `/login` para uma
   // sessão válida.
+  // CRMLAB-122 (D-288): com o refresh em 429 a espera pode levar segundos —
+  // aí sim mostra um aviso em vez do branco.
   const sessionReady = useSessionBootstrap();
-  if (!sessionReady) return null;
+  if (!sessionReady) return <SessionWaitScreen />;
 
   return (
     <QueryClientProvider client={queryClient}>

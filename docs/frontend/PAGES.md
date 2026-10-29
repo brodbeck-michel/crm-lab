@@ -10,8 +10,8 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 /login                        → Login (público)
 /                             → redirect por perfil (atendente → /attendance)
 /attendance                   → Atendimento (inbox 3 colunas)
-/patients                     → Busca de Pacientes
-/patients/:id                 → Ficha do Paciente
+/contacts                     → Busca de Contatos (antiga /patients redireciona, D-294)
+/contacts/:id                 → Ficha do Contato (antiga /patients/:id redireciona)
 /budget/new?conversationId=   → Novo Orçamento
 /proposals                    → Pipeline de Propostas
 /catalog                      → Catálogo de Exames        (rótulo no trilho: "Cadastro de Exames")
@@ -56,8 +56,8 @@ padrão; estado por grupo persiste em localStorage por usuário.
 | `/login` | — (público) | não | — |
 | `/` | qualquer sessão → redirect por perfil | não | — |
 | `/attendance` | attendant · manager · admin | sim | solto |
-| `/patients` | attendant · manager · admin | sim | solto |
-| `/patients/:id` | attendant · manager · admin | não | — |
+| `/contacts` | attendant · manager · admin | sim | solto |
+| `/contacts/:id` | attendant · manager · admin | não | — |
 | `/budget/new` | attendant · manager · admin | não | — |
 | `/proposals` | attendant · manager · admin | sim | solto |
 | `/catalog` (rótulo "Cadastro de Exames") | attendant · manager · admin | sim | Configurações |
@@ -133,10 +133,10 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 - **Sem chip "Não lidas"** (CRMLAB-68, D-229 item 5): o Michel preferiu só Minhas / Não
   atribuídas / Encerradas — o número de não lidas no item e no título da aba já avisam. A API
   mantém `?unread=true` e `counts.unread`
-- Busca (pílula): paciente, telefone ou exame
+- Busca (pílula): contato, telefone ou exame
 - **Busca nas mensagens (CRMLAB-68, D-228):** com 2+ caracteres a coluna também consulta
   `GET /conversations/search/messages?q=&limit=20` e mostra o bloco **"Mensagens"** (entre a fila
-  e "Pacientes"): nome do paciente, data e o trecho com o termo em destaque (sem acento e sem
+  e "Contatos"): nome do contato, data e o trecho com o termo em destaque (sem acento e sem
   caixa). Clicar abre a conversa **rolada até a mensagem**, com destaque, carregando a janela em
   volta dela (`around`, D-230) — mesmo que seja antiga. Mensagem apagada nunca aparece
 - **Marcar como não lida (D-229):** clique direito no item ou o botão "⋯" abre o menu com
@@ -144,8 +144,8 @@ Duas leituras registradas aqui porque o doc original não as fixava:
   conversa volta com a bolinha e só zera quando for aberta de novo. Se era a conversa aberta, o
   painel fecha
 - **A mesma busca também procura PACIENTE** (D-079): com 2+ caracteres a coluna consulta
-  `GET /patients?search=&limit=5` e mostra um bloco "Pacientes" abaixo da fila; cada linha leva
-  a `/patients/:id`. Sem termo digitado o bloco não existe. É o consumidor de `GET /patients`
+  `GET /patients?search=&limit=5` e mostra um bloco "Contatos" abaixo da fila; cada linha leva
+  a `/contacts/:id`. Sem termo digitado o bloco não existe. É o consumidor de `GET /patients`
   e a busca que API_CONTRACTS §2c chama de "a busca do inbox". A lista já vem recortada por
   papel pelo servidor (D-060): o atendente só recebe paciente que ele poderia abrir
 - `ConversationItem` (ver COMPONENTS): avatar iniciais, nome, hora (sálvia-700 se não lidas), prévia truncada 1 linha, badge contagem, chips de status
@@ -304,14 +304,21 @@ não só aqui. O Console da Plataforma não avisa.
 - **Começa fechada (CRMLAB-74).** Só abre pelo botão [Contexto] do header. Aberta, continua
   aberta ao trocar de conversa até recarregar a página (não persiste — D-117).
 - Cadastro resumido, propostas da conversa (cartões clicáveis → modal), tags
-- **Link "Ver ficha completa" → `/patients/:id`**, a porta de entrada da Ficha (§3). Usa
+- **"Vincular orçamento" (CRMLAB-129, D-298/D-299):** botão ao lado do título "Propostas", só com
+  "Nascer do orçamento do Bitlab" ligada e conversa ativa do WhatsApp. Abre o `LinkBudgetModal`: orçamentos do
+  Bitlab em "Novo orçamento" sem conversa (`GET /proposals?status=novo_contato&withoutConversation=true`)
+  que a pessoa pode enviar (`canActOnCard`), com nº, nome, valor, data e usuário do Bitlab; o mais
+  parecido com o nome da conversa em cima (chip "Mais parecido"); busca por nome ou nº. Escolher
+  abre o `SendProposalPanel` (§6) com a conversa fixa: confere a mensagem do modelo e envia —
+  sempre pelo WhatsApp, sem opção de só vincular. A lista se atualiza pelos eventos WS de proposta.
+- **Link "Ver ficha completa" → `/contacts/:id`**, a porta de entrada da Ficha (§3). Usa
   `conversation.patientId` (D-079), que vem em `GET /conversations/:id`. Conversa anterior ao
   backfill da migração 003 tem `patientId: null` e **o link não é renderizado** — nem link
   quebrado, nem botão desabilitado sem explicação
 
 ---
 
-## 2a. Busca de Pacientes (`/patients`)
+## 2a. Busca de Contatos (`/contacts`)
 
 Tela de consulta avulsa (fora do inbox): quem precisa achar um paciente sem estar numa conversa
 ativa — ex. telefone ligou perguntando de um orçamento antigo. **Não é tela nova de dado**: usa
@@ -319,20 +326,22 @@ exatamente `GET /patients` (API_CONTRACTS.md §2c), o mesmo endpoint que já ser
 "Pacientes" da busca do inbox (§2), agora com página própria, paginação completa (não só
 `limit=5`) e sem exigir estar dentro do Atendimento.
 
-**Papéis:** attendant · manager · admin (mesmo recorte de `/patients/:id`, D-060 — cada papel só
+**Papéis:** attendant · manager · admin (mesmo recorte de `/contacts/:id`, D-060 — cada papel só
 enxerga quem já veria por uma conversa). `platform_operator` não acessa (§11).
 
-**Layout:** `PageContainer` + `PageHeader` padrão (título "Pacientes"), um campo de busca e uma
+**Layout:** `PageContainer` + `PageHeader` padrão (título "Contatos"), um campo de busca e uma
 `DataTable` paginada.
 
 - **Busca (`SearchInput`, debounce 300ms):** um único campo, rotulado "Buscar por nome, CPF ou
-  telefone" — o servidor já casa as três coisas em OR dentro de `?search=` (nome por full-text,
-  telefone e documento por dígitos, mínimo 3 dígitos para os dois). Três campos separados exigiam
+  telefone" — o servidor já casa as três coisas em OR dentro de `?search=` (nome por pedaço, sem
+  acento — D-296; telefone e documento por dígitos, mínimo 3 dígitos para os dois). A busca só
+  vai ao servidor a partir de **2 caracteres** e o termo novo cancela o pedido do anterior
+  (`signal` do TanStack Query) — vale também para a lista do Atendimento e a Nova conversa. Três campos separados exigiam
   filtro AND por campo no backend, que o contrato não tem; um campo só já cobre o pedido de
   "achar paciente por nome, CPF ou telefone" sem inventar parâmetro novo (Regra Zero).
 - **Tabela:** colunas Nome, Telefone, CPF (formatado `000.000.000-00` quando 11 dígitos,
   senão o valor cru), Última interação (`DateDisplay`, `—` quando `null`), Status (`Chip`
-  "Ativo"/"Inativo", D-133). Linha clicável → `/patients/:id`.
+  "Ativo"/"Inativo", D-133). Linha clicável → `/contacts/:id`.
 - **Checkbox "Mostrar inativos" (D-133, CRMLAB-11):** desmarcado por padrão — a listagem esconde
   paciente inativo (`GET /patients` sem `includeInactive` já esconde no servidor). Marcar pede
   `?includeInactive=true` e traz ativos e inativos juntos, cada um com seu `Chip` de status.
@@ -344,7 +353,7 @@ enxerga quem já veria por uma conversa). `platform_operator` não acessa (§11)
 
 ---
 
-## 3. Ficha do Paciente (`/patients/:id`)
+## 3. Ficha do Contato (`/contacts/:id`)
 
 - Página de leitura: max-width 1180px, padding 30px 36px 48px (`PageContainer`). Tela de PAINEL,
   cujo conteúdo é uma grade de dados e não texto corrido, usa `PageContainer wide` — 1440px,
@@ -354,9 +363,9 @@ enxerga quem já veria por uma conversa). `platform_operator` não acessa (§11)
   não aparece
 - **Portas de entrada** (D-079) — a ficha não é alcançável só por URL:
   1. Atendimento, coluna 3: "Ver ficha completa" (`conversation.patientId`);
-  2. Atendimento, coluna 1: bloco "Pacientes" da busca (`GET /patients`);
+  2. Atendimento, coluna 1: bloco "Contatos" da busca (`GET /patients`);
   3. Gestão da Operação (§10): nome do paciente na fila (`QueueItem.patientId`);
-  4. Busca de Pacientes (`/patients`, §2a).
+  4. Busca de Contatos (`/contacts`, §2a).
   Em todas, `patientId: null` vira texto puro — o link só existe quando o cadastro existe
 - **Botão "Enviar mensagem"** no cabeçalho (D-107): chama `POST /conversations` com o telefone
   e nome do paciente (`channel: "direct"` — mesmo `findOrCreateByPhone` de D-059/D-089, nenhum
@@ -398,7 +407,7 @@ faz switch em `kind`, nunca em heurística de campo presente. `entry.id` é
 **Status do cadastro (D-133, CRMLAB-11):** seção `PatientInactivationSection`, visível a
 **qualquer papel** (diferente da seção LGPD, que é admin-only). Botão "Inativar paciente"/
 "Reativar paciente" abre modal exigindo motivo (1..500, obrigatório nas duas direções). Paciente
-inativo ganha `Chip` "Inativo" no cabeçalho da ficha e na coluna de status de `/patients`
+inativo ganha `Chip` "Inativo" no cabeçalho da ficha e na coluna de status de `/contacts`
 (§2a); some da listagem por padrão, volta com o checkbox "Mostrar inativos". Nada além do
 cadastro é afetado — conversas, propostas e histórico continuam intactos.
 
@@ -798,6 +807,24 @@ nunca "sem permissão" (não vazar existência).
   outros membros veem pelo WS `internal_chat.message_updated` (canais + mensagens do canal
   recarregam); apagada sai do badge de não lidas
 
+### Confirmação de leitura (CRMLAB-123, D-300/D-301)
+
+- Só nas mensagens PRÓPRIAS, ao lado da hora: ✓ cinza = gravada; ✓✓ azul = lida. Mesmo
+  `MessageStatusTick` do atendimento (CRMLAB-67, tokens `chat-meta`/`chat-tick-read`). DM: lida
+  quando o outro abriu depois dela; canal: só quando TODOS os membros leram. Mensagem dos outros e
+  apagada não levam tique; editada mantém (a referência é o `createdAt`)
+- Canal: o hover do tique mostra "Lida por: Nome (abriu dd/mm hh:mm)" e "Ainda não leram: …". O
+  horário é a ÚLTIMA abertura do canal (`lastReadAt`), não o instante exato da leitura daquela
+  mensagem — daí "abriu". DM: só "Lida"/"Enviada"
+- Vem do `readState` de `GET .../messages` (página 1); a tela compara `createdAt` com
+  `internalMessageReadStatus`/`internalMessageReaders` (shared). Atualiza pelo WS
+  `internal_chat.channel_read`, cujo payload (o "lido até" do leitor) vai para um store e é
+  somado ao `readState` (`mergeReadState`) — sem GET por evento e sem polling
+- Canal aberto PELA PESSOA (clique ou deep link) e aba visível: mensagem nova de outra pessoa
+  chama `POST .../read` de novo (`useMarkReadWhileOpen`, `queries.ts`); aba escondida marca ao
+  voltar a ficar visível. Os POSTs são agrupados em 1,5 s (uma rajada = um POST). O canal
+  auto-selecionado na entrada continua sem marcar (D-068)
+
 ### Buscar usuário (D-101) — iniciar conversa direta
 
 No topo da coluna esquerda, ACIMA dos grupos "Canais" e "Mensagens diretas", um campo de
@@ -941,7 +968,7 @@ gestor).
   chamadas separadas — a tela exibiria uma fila e uma carga de momentos diferentes
 - **Fila agora:** `queue.unassigned` (ativas sem dono) + `queue.waiting` (atribuídas com
   mensagem não lida) e `queue.items` ordenada pela maior espera. Clique na linha leva à
-  conversa; o **nome do paciente é link para a ficha** (`/patients/:id`) quando
+  conversa; o **nome do paciente é link para a ficha** (`/contacts/:id`) quando
   `QueueItem.patientId` existe, e texto puro quando é `null` (§7, D-079)
 - **Carga por atendente:** `workload[]` — conversas ativas, mensagens não lidas, propostas em
   aberto e aprovações pendentes. Quem está sem carga aparece **zerado**, não some da tabela

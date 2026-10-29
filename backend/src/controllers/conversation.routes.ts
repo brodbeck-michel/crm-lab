@@ -154,7 +154,9 @@ export const createConversationSchema = z.object({
       const digits = phoneDigits(value).length;
       return digits >= 10 && digits <= 13;
     }, 'Telefone invalido'),
-  patientName: z.string().trim().min(1).max(255),
+  // Anulavel (CRMLAB-124): a ficha de contato SEM nome nao inventa um rotulo
+  // ("Contato") que o upsert gravaria como nome do cadastro.
+  patientName: z.string().trim().min(1).max(255).nullish(),
   patientEmail: z.string().trim().email().max(255).nullish(),
   channel: z.enum(['sms', 'web', 'direct']),
 });
@@ -423,12 +425,14 @@ export function createAttachment(services: ConversationServices): RequestHandler
     // corrida recebe o 409 sem deixar arquivo gravado.
     await services.messages.claimForAgent(ctx.tenantId, id, ctx.userId);
 
-    const stored = await services.media.storePrepared(ctx.tenantId, dto.fileName, prepared);
+    const stored = await services.media.storePrepared(ctx.tenantId, prepared);
     // `stored.mimeType` (nao `dto.mimeType`): allow-list/sniff (CRMLAB-31)
     // podem rebaixar o MIME declarado — mensagem e envio pro canal externo
     // usam o que foi REALMENTE gravado.
+    // `stored.fileName` tambem: imagem convertida para JPEG ganha `.jpg`
+    // (CRMLAB-128, D-290) — e o nome que o paciente ve no WhatsApp.
     const message = await services.messages.createAttachmentFromAgent(ctx.tenantId, id, ctx.userId, {
-      fileName: dto.fileName,
+      fileName: stored.fileName,
       mimeType: stored.mimeType,
       attachmentUrl: `/api/v1/media/${stored.id}`,
       buffer: stored.buffer,

@@ -111,6 +111,85 @@ export interface ListInternalMessagesQuery {
 export interface ListInternalMessagesResponse {
   messages: InternalMessage[];
   pagination: PaginationMeta;
+  /**
+   * Quem ja leu o canal, visto por quem pergunta (CRMLAB-123, D-300). Opcional no
+   * tipo (campo novo); o backend sempre manda. Vale para a conversa inteira, nao so
+   * para a pagina: o frontend compara `createdAt` de cada mensagem SUA com ele.
+   */
+  readState?: InternalChannelReadState;
+}
+
+/**
+ * Leitura de um membro do canal (D-300). Os dois horarios vem de `channel_reads`,
+ * sem tabela por mensagem.
+ */
+export interface InternalChannelReader {
+  userId: string;
+  name: string;
+  /**
+   * `createdAt` da mensagem mais recente do canal criada ate a ultima leitura desta
+   * pessoa — a MESMA coluna e a MESMA conversao do `createdAt` das mensagens, entao a
+   * comparacao na tela nao sofre com fuso nem precisao. `null` = nunca abriu (ou abriu
+   * o canal antes da primeira mensagem).
+   */
+  readUpTo: IsoDateTime | null;
+  /** Ultima vez que abriu o canal (`channel_reads.last_read_at`). `null` = nunca. */
+  lastReadAt: IsoDateTime | null;
+}
+
+export interface InternalChannelReadState {
+  /**
+   * Menor `readUpTo` entre os membros (todos leram ate aqui). `null` quando alguem
+   * nunca leu ou nao ha outro membro. DM: o do outro participante.
+   */
+  readUpTo: IsoDateTime | null;
+  /**
+   * Os OUTROS membros (sem quem pergunta), por nome. DM: o outro participante.
+   * Canal: usuarios ATIVOS do tenant, sem `platform_operator` (D-300).
+   */
+  readers: InternalChannelReader[];
+}
+
+/** Indicador da mensagem PROPRIA no chat interno (D-300): `read` = ✓✓ azul. */
+export type InternalMessageReadStatus = 'sent' | 'read';
+
+function readUpToCovers(readUpTo: string | null, createdAt: string): boolean {
+  if (readUpTo === null) return false;
+  const limit = Date.parse(readUpTo);
+  const sentAt = Date.parse(createdAt);
+  return Number.isFinite(limit) && Number.isFinite(sentAt) && sentAt <= limit;
+}
+
+/** ✓ (gravada) ou ✓✓ azul (todos os outros membros leram), D-300. */
+export function internalMessageReadStatus(
+  message: Pick<InternalMessage, 'createdAt'>,
+  readState: Pick<InternalChannelReadState, 'readUpTo'> | null | undefined,
+): InternalMessageReadStatus {
+  return readUpToCovers(readState?.readUpTo ?? null, message.createdAt) ? 'read' : 'sent';
+}
+
+/** "Lida por" / "Ainda nao leram" de UMA mensagem, a partir do estado do canal. */
+export function internalMessageReaders(
+  message: Pick<InternalMessage, 'createdAt'>,
+  readState: Pick<InternalChannelReadState, 'readers'> | null | undefined,
+): { read: InternalChannelReader[]; unread: InternalChannelReader[] } {
+  const read: InternalChannelReader[] = [];
+  const unread: InternalChannelReader[] = [];
+  for (const reader of readState?.readers ?? []) {
+    (readUpToCovers(reader.readUpTo, message.createdAt) ? read : unread).push(reader);
+  }
+  return { read, unread };
+}
+
+/** Menor `readUpTo` entre os membros; `null` se alguem nunca leu ou nao ha membros (D-300). */
+export function channelReadUpTo(readers: Pick<InternalChannelReader, 'readUpTo'>[]): IsoDateTime | null {
+  if (readers.length === 0) return null;
+  let min: string | null = null;
+  for (const reader of readers) {
+    if (reader.readUpTo === null) return null;
+    if (min === null || Date.parse(reader.readUpTo) < Date.parse(min)) min = reader.readUpTo;
+  }
+  return min;
 }
 
 export interface SendInternalMessageRequest {

@@ -17,15 +17,11 @@
  * comparacao/ordenacao acontece DENTRO do banco, sobre a coluna crua.
  *
  * ---------------------------------------------------------------------------
- * BUSCA — a mesma expressao do indice
+ * BUSCA — pedaco do nome, sem acento e sem caixa (D-296)
  * ---------------------------------------------------------------------------
- * A migracao 003 cria
- *
- *   CREATE INDEX idx_patients_name
- *     ON patients USING GIN (to_tsvector('portuguese', COALESCE(name, '')));
- *
- * Indice por EXPRESSAO so e usado quando a query repete a expressao carater a
- * carater — dai `SEARCH_NAME_EXPRESSION` existir como constante unica.
+ * Cada palavra digitada casa um pedaco do nome (AND), via `name-search.ts`,
+ * na mesma expressao do indice trigram `idx_patients_name_trgm` (061).
+ * Telefone e CPF seguem por LIKE de digitos, em OR com o nome.
  *
  * ---------------------------------------------------------------------------
  * RECORTE POR PAPEL (D-060) — `visibleTo`
@@ -56,14 +52,15 @@ import type {
 import { MESSAGE_TYPES } from '@crm-lab/shared';
 import type { DbClient, DbTx } from '../db/types.js';
 import { eraseEntityValues } from './audit.repository.js';
+import { nameSearchRank, nameSearchWhere } from './name-search.js';
 import { toNumber } from './row-mappers.js';
 
 /** Timestamp -> ISO 8601 UTC dentro do SQL (D-021). */
 const isoUtc = (column: string): string =>
   `to_char(${column}, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
 
-/** Expressao indexada por `idx_patients_name` (migracao 003). */
-export const SEARCH_NAME_EXPRESSION = `to_tsvector('portuguese', COALESCE(p.name, ''))`;
+/** Nome do paciente na busca por pedaco (D-296) — ver `name-search.ts`. */
+const SEARCH_NAME_COLUMN = 'p.name';
 
 /** So digitos — o usuario digita "(11) 98765-4321", o banco guarda o que o canal mandou. */
 export function phoneDigits(value: string): string {
@@ -454,13 +451,13 @@ export class PatientRepository {
 
     if (criteria.search !== undefined && criteria.search.length > 0) {
       const digits = phoneDigits(criteria.search);
-      const term = `${params.add(criteria.search)}::text`;
-      const clauses = [`${SEARCH_NAME_EXPRESSION} @@ plainto_tsquery('portuguese', ${term})`];
+      const nameClause = nameSearchWhere(SEARCH_NAME_COLUMN, criteria.search, (v) => params.add(v));
+      const clauses = nameClause !== null ? [nameClause] : [];
       if (digits.length >= 3) {
         clauses.push(`${phoneDigitsSql('p.phone')} LIKE ${params.add(`%${digits}%`)}`);
         clauses.push(`p.document LIKE ${params.add(`${digits}%`)}`);
       }
-      where.push(`(${clauses.join(' OR ')})`);
+      where.push(clauses.length > 0 ? `(${clauses.join(' OR ')})` : 'FALSE');
     }
 
     const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
@@ -468,10 +465,21 @@ export class PatientRepository {
 
     const direction = criteria.order === 'asc' ? 'ASC' : 'DESC';
     const nulls = direction === 'DESC' ? 'NULLS LAST' : 'NULLS FIRST';
-    // `p.id` como desempate: sem ele a paginacao pode repetir/pular linhas.
-    const orderSql = `ORDER BY ${SORTABLE_COLUMNS[criteria.sortBy]} ${direction} ${nulls}, p.id ASC`;
-
     const listParams = params.all();
+    // Com busca, quem COMECA pelo termo vem antes de quem so o contem (D-296).
+    // Parametros do rank so na query paginada: o COUNT nao os referencia.
+    const rankParams: unknown[] = [];
+    const rank =
+      criteria.search !== undefined && criteria.search.length > 0
+        ? nameSearchRank(SEARCH_NAME_COLUMN, criteria.search, (v) => {
+            rankParams.push(v);
+            return `$${listParams.length + rankParams.length}`;
+          })
+        : null;
+    // `p.id` como desempate: sem ele a paginacao pode repetir/pular linhas.
+    const orderSql = `ORDER BY ${rank !== null ? `${rank}, ` : ''}${SORTABLE_COLUMNS[criteria.sortBy]} ${direction} ${nulls}, p.id ASC`;
+
+    const pagedParams = [...listParams, ...rankParams];
     const offset = (criteria.page - 1) * criteria.limit;
 
     return this.db.withTenant(tenantId, async (tx) => {
@@ -482,8 +490,8 @@ export class PatientRepository {
       const paged = await tx.query<PatientListRow>(
         `SELECT ${PATIENT_COLUMNS}, ${isoUtc('ci.last_interaction_at')} AS last_interaction_at
          ${from} ${orderSql}
-         LIMIT $${listParams.length + 1} OFFSET $${listParams.length + 2}`,
-        [...listParams, criteria.limit, offset],
+         LIMIT $${pagedParams.length + 1} OFFSET $${pagedParams.length + 2}`,
+        [...pagedParams, criteria.limit, offset],
       );
       return {
         rows: paged.rows.map(toListItem),
@@ -525,8 +533,8 @@ export class PatientRepository {
    * `undefined` (campo ausente) preserva; `null` apaga — a semantica do
    * contrato mora aqui, no `UPDATE ... SET` montado so com os campos enviados.
    *
-   * NAO toca em `conversations.patient_name/phone/email` (D-059): elas sao o
-   * registro do que o canal informou, nao o cadastro.
+   * `conversations.patient_phone/email` ficam como o canal informou (D-059);
+   * `conversations.patient_name` acompanha o nome do cadastro (D-292).
    */
   async update(
     tenantId: string,
@@ -559,6 +567,10 @@ export class PatientRepository {
         [...values, id],
       );
       if (updated.rows.length === 0) return null;
+      // Nome editado chega as conversas dele na mesma transacao (D-292).
+      if (Object.prototype.hasOwnProperty.call(patch, 'name')) {
+        await syncConversationNames(tx, id);
+      }
       return selectDetail(tx, id, visibility);
     });
   }
@@ -1013,6 +1025,32 @@ export async function upsertPatientByPhone(
   const row = result.rows[0];
   if (!row) throw new Error('INSERT em patients nao retornou linha');
   return toPatient(row);
+}
+
+/**
+ * Copia o nome do cadastro para `conversations.patient_name` de TODAS as
+ * conversas ligadas ao paciente (D-292), sobre a transacao ja aberta.
+ *
+ * `patient_name` e copia denormalizada (D-059) lida por lista, cabecalho,
+ * busca, WebSocket, relatorios e timeline; propagar na escrita conserta todos
+ * eles de uma vez. Cadastro sem nome NAO apaga o nome da conversa (o apelido
+ * do canal e melhor que nada) e paciente anonimizado nunca e propagado (a
+ * anonimizacao ja limpou as conversas, D-075). `tenant_id` casado dos dois
+ * lados alem do RLS.
+ */
+export async function syncConversationNames(tx: DbTx, patientId: string): Promise<void> {
+  await tx.query(
+    `UPDATE conversations c
+        SET patient_name = p.name
+       FROM patients p
+      WHERE p.id = $1
+        AND c.patient_id = p.id
+        AND c.tenant_id = p.tenant_id
+        AND p.anonymized_at IS NULL
+        AND NULLIF(btrim(p.name), '') IS NOT NULL
+        AND c.patient_name IS DISTINCT FROM p.name`,
+    [patientId],
+  );
 }
 
 /**

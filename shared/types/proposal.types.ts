@@ -381,6 +381,11 @@ export interface ListProposalsQuery extends PaginationQuery {
    * "Com lembrete"); `open` = qualquer lembrete aberto.
    */
   reminder?: ProposalReminderFilter;
+  /**
+   * `true` = so propostas sem conversa vinculada (cartoes do Bitlab ainda nao
+   * enviados). Lista do "Vincular orcamento" do Atendimento (CRMLAB-129, D-298).
+   */
+  withoutConversation?: boolean;
 }
 
 export interface ListProposalsResponse {

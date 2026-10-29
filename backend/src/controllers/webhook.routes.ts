@@ -1142,7 +1142,11 @@ async function ingestEvolutionMessage(
   // Mídia recusada (tamanho, §4.2 "recusa com log explicito"): a mensagem NAO
   // e criada — nao ha o que mostrar sem o arquivo, mas o webhook responde 200
   // do mesmo jeito (`acknowledge` no fim).
-  const stored = await services.media.storeInbound(tenantId, inbound.media);
+  // Figurinha fica no formato original (WebP, as vezes animada); o resto das
+  // imagens vira JPEG ao gravar (CRMLAB-128, D-290).
+  const stored = await services.media.storeInbound(tenantId, inbound.media, {
+    keepFormat: inbound.media.key === 'stickerMessage',
+  });
   if (!stored) {
     // Continua sem criar mensagem (spec Onda 8 §4.2), mas DEIXA RASTRO: antes o
     // arquivo recusado sumia junto com a mensagem e ninguem conseguia saber que
@@ -1163,7 +1167,11 @@ async function ingestEvolutionMessage(
   // lightbox e da navegacao de imagens. Rebaixada, segue o MIME como tudo.
   const byMime = messageTypeFromMime(stored.mimeType);
   const message = await create({
-    content: inbound.text,
+    // Sem legenda o `content` e o nome do arquivo, e o balao esconde o texto
+    // quando `content === media.fileName` (D-236 item 8). Imagem convertida
+    // ganhou `.jpg` (CRMLAB-128): o `content` acompanha o nome GRAVADO, senao
+    // "pedido.png" apareceria como legenda embaixo da foto.
+    content: inbound.text === inbound.media.fileName ? stored.fileName : inbound.text,
     messageType: inbound.media.key === 'stickerMessage' && byMime === 'image' ? 'sticker' : byMime,
     attachmentUrl: `/api/v1/media/${stored.id}`,
   });

@@ -596,9 +596,12 @@ recorte dela (encerrada alheia não soma), e `?unread=true` usa esse mesmo recor
 ```
 
 `sortBy` default `lastMessageAt`, `order` default `desc` (qualquer valor diferente de
-`asc` cai no default). `search` casa busca textual no nome do paciente (full-text
-`portuguese`) **OU** o telefone: o termo é reduzido a dígitos e só entra na busca por
-telefone quando sobram **3 dígitos ou mais**.
+`asc` cai no default). `search` casa **pedaço** do nome do paciente (D-296: cada palavra do
+termo precisa aparecer em alguma parte do nome, em qualquer ordem, sem diferenciar acento nem
+maiúscula — "mar sil" acha "Maria da Silva"; conectivos `de/da/do/das/dos/e/d'` são ignorados
+quando há outra palavra) **OU** o telefone: o termo é reduzido a dígitos e só
+entra na busca por telefone quando sobram **3 dígitos ou mais**. Com `search`, quem tem o nome
+começando pela 1ª palavra vem antes (depois das fixadas); dentro disso vale `sortBy`.
 
 **Response (200):**
 ```json
@@ -759,7 +762,9 @@ Criar um atendimento que **não veio do WhatsApp** — ligação, balcão, formu
 - `patientPhone`: obrigatório, 10 a 13 dígitos depois de descartar máscara. É normalizado para
   o mesmo formato que o webhook grava (`+5548999991234`) **antes** de procurar duplicata — sem
   isso o mesmo paciente ganharia uma segunda conversa por ter sido digitado sem o código do país
-- `patientName`: obrigatório, 1..255
+- `patientName`: opcional/anulável, 1..255 quando enviado. Ausente/`null` = sem nome — o cadastro
+  existente não ganha nome e o que já tem não muda (CRMLAB-124: o "Enviar mensagem" da ficha de
+  contato sem nome mandava o rótulo da tela, que virava o nome do cadastro)
 - `patientEmail`: opcional/anulável, e-mail válido, máx. 255
 - `channel` ∈ `direct | web | sms`. **`whatsapp` é recusado** com `VALIDATION_ERROR`: conversa
   desse canal nasce pelo webhook, que deduplica por `externalId`, ou por
@@ -1762,8 +1767,10 @@ consulta este endpoint com `limit=5` e mostra o bloco "Pacientes" abaixo da fila
 ?includeInactive=true                 (default false — esconde paciente inativo, D-133)
 ```
 
-`search` casa **três** coisas, em OR: nome (full-text `portuguese`, mesma expressão do índice
-GIN de SCHEMA.md §14), telefone (o termo é reduzido a dígitos e só entra quando sobram **3
+`search` casa **três** coisas, em OR: nome (por **pedaço**, D-296 — cada palavra em qualquer
+parte do nome, qualquer ordem, sem acento/maiúscula, conectivos `de/da/do/das/dos/e/d'`
+ignorados quando há outra palavra; quem começa pelo termo vem antes, depois
+vale `sortBy`; índice trigram da migração 061, SCHEMA.md §14), telefone (o termo é reduzido a dígitos e só entra quando sobram **3
 dígitos ou mais**, igual a `/conversations`) e documento (dígitos, casamento por prefixo).
 `sortBy` default `lastInteractionAt`, `order` default `desc`; qualquer valor fora do enum →
 `VALIDATION_ERROR`.
@@ -1821,6 +1828,11 @@ Cadastro do contato à mão (CRMLAB-121, D-287). Qualquer papel de laboratório 
   dígito → **`409 CONFLICT`** `{ reason: "phone_already_in_use", patientId? }`. `patientId` só
   vem quando quem pediu enxerga o cadastro existente (senão o 409 abriria a ficha de outra
   atendente). Nunca cria um segundo cadastro.
+- **Exceção (D-293, CRMLAB-124):** o cadastro existente está **sem nome** (o número chegou pelo
+  WhatsApp ou pela Nova conversa sem nome), não está anonimizado e quem pede pode editá-lo →
+  o cadastro é **completado** em vez do 409: grava o `name` e, só se estiverem vazios, `email` e
+  `document`. Resposta **`201`** com o `PatientDetail` do cadastro existente (mesmo `id`), audit
+  log `update_patient` (não `create_patient`). Nada que já estava preenchido é sobrescrito.
 - Telefone de **outro** laboratório não conflita (o índice é `(tenant_id, phone)`).
 
 ### GET /patients/:id
@@ -2207,6 +2219,17 @@ o MIME informado de olhos fechados — `MediaService.resolveStoredMimeType` roda
 4. **A allow-list vale também na leitura**: `GET /media/:id` confere o MIME gravado contra a
    lista e serve `application/octet-stream` + `attachment` para o que estiver fora — cobre linhas
    de `message_media` gravadas antes do CRMLAB-31 (D-169).
+5. **Imagem vira JPEG ao gravar (CRMLAB-128, D-290/D-291)** — webhook de entrada, anexo da
+   atendente (`POST /conversations/:id/attachments`, e o JPEG é o que vai ao WhatsApp), anexo do
+   chat interno e da visita médica. Depois do sniff, `image/*` é reencodado em JPEG (mozjpeg
+   q82, orientação do EXIF aplicada, **sem metadados** — EXIF/GPS saem, transparência vira fundo
+   branco). `mimeType`, `fileName` (extensão `.jpg`) e tamanho gravados e devolvidos (`media`,
+   `attachment`, `VisitAttachment`) são os do JPEG. Ficam no formato original: figurinha
+   (`sticker`), GIF/WebP/PNG animado, JPEG sem orientação girada nem GPS (byte a byte), HEIC (o
+   sharp pré-compilado não decodifica HEVC) e qualquer imagem que falhe na conversão (corrompida,
+   acima de 60 MP, mais de 10 s de CPU) — essa grava o original com log
+   `media.image_convert_failed`, e o webhook segue respondendo 200. Mídia gravada antes do
+   CRMLAB-128 não é convertida.
 
 ### GET /media/:id
 Baixa o arquivo de mídia de uma mensagem (foto, PDF ou áudio).
@@ -2242,7 +2265,14 @@ Listar propostas com filtros.
 ?startDate=2026-08-01&endDate=2026-08-31  // filtra por createdAt
 ?search=maria                             // nome do paciente, máx. 100 caracteres
 ?reminder=due                             // due|open — lembrete de contato (CRMLAB-102, D-272)
+?withoutConversation=true                 // só sem conversa vinculada (CRMLAB-129, D-298)
 ```
+
+**`?withoutConversation=true` (CRMLAB-129, D-298):** só propostas com `conversationId: null` —
+na prática, os cartões de origem `bitlab` ainda não enviados. Junto com `status=novo_contato` é a
+lista do "Vincular orçamento" do Atendimento (PAGES.md §2). Aceita `true`/`false`; `false` ou
+ausente = sem filtro; outro valor → `VALIDATION_ERROR`. O recorte por papel de D-042/D-195 continua
+por cima (atendente: a fila comum e as dela). O vínculo em si é o `POST /proposals/:id/send`.
 
 **`?reminder=` (CRMLAB-102, D-272):** `due` = só as propostas com lembrete **aberto e vencido**
 (`dueDate` ≤ hoje no dia de Brasília — `isReminderDue`; é o filtro "Com lembrete" da tela);
@@ -2252,7 +2282,9 @@ Listar propostas com filtros.
 case-insensitive) — é a busca do Pipeline (PAGES.md §5). Diferente de `/conversations`, aqui
 **não** há busca por telefone nem full-text: o campo do Kanban filtra cartão por nome. O termo
 é aparado; vazio equivale a não enviar. O recorte por papel de D-042 continua por cima —
-atendente que busca por nome segue vendo só as propostas que criou.
+atendente que busca por nome segue vendo só as propostas que criou. **Termo só de dígitos**
+(CRMLAB-129, D-298) casa também o nº do orçamento do Bitlab (`lisBudgetNumber`, igualdade exata
+depois de tirar os zeros à esquerda — `"006020"` acha `"6020"`).
 
 `pagination` é o mesmo `PaginationMeta` de toda listagem (D-009):
 `{ page, limit, total, totalPages }`. `limit` é grampeado em 100 e **`page` em 10.000**
@@ -2996,7 +3028,14 @@ em `channel_reads` — **idempotente**, e chamar em canal já lido não é erro.
 
 **Response:** `204 No Content`
 
-A tela chama ao abrir o canal (mesma ergonomia de `POST /conversations/:id/read`). Diferente de
+**Confirmação de leitura (CRMLAB-123, D-301):** quando a leitura passa de pelo menos uma mensagem
+de OUTRA pessoa (não apagada), emite WS `internal_chat.channel_read` `{ channelId, userId, readUpTo, lastReadAt }` (o "lido
+até" desse leitor, mesmos campos de `readers[]` abaixo) depois do commit — DM: só para o outro participante; canal: tenant inteiro. Reabrir canal já lido não
+emite nada. O mesmo comando `INSERT ... ON CONFLICT` diz se avançou (CTE com a leitura anterior),
+sem consulta a mais.
+
+A tela chama ao abrir o canal (mesma ergonomia de `POST /conversations/:id/read`) e, com o canal
+aberto pela pessoa e a aba visível, de novo quando chega mensagem de outra pessoa (D-301). Diferente de
 conversas, `GET /internal-chat/channels/:id/messages` **não** marca como lido: ler página
 antiga do histórico não significa ter visto a mensagem nova, e o `GET` com efeito colateral de
 `/conversations` (D-035) existe porque lá a página 1 É o fim da conversa. Não gera audit log:
@@ -3045,9 +3084,36 @@ listagem.
       "deletedAt": null
     }
   ],
-  "pagination": { "page": 1, "limit": 50, "total": 1, "totalPages": 1 }
+  "pagination": { "page": 1, "limit": 50, "total": 1, "totalPages": 1 },
+  "readState": {
+    "readUpTo": "2026-08-23T14:40:00.000Z",
+    "readers": [
+      {
+        "userId": "uuid",
+        "name": "Gustavo Gestor",
+        "readUpTo": "2026-08-23T14:40:00.000Z",
+        "lastReadAt": "2026-08-23T14:52:10.000Z"
+      }
+    ]
+  }
 }
 ```
+
+`readState` (CRMLAB-123, D-300) — resposta composta (D-070): quem já leu o canal, visto por quem
+pergunta, para a tela desenhar ✓ / ✓✓ nas mensagens **próprias**. Vale para o canal inteiro (não
+só a página) e sai de UMA consulta por canal, derivada de `channel_reads` (sem tabela por
+mensagem):
+- `readers`: os OUTROS membros, por nome. DM = o outro participante (mesmo inativo). Canal =
+  usuários **ativos** do tenant, sem `platform_operator` (D-300). Cada um com `lastReadAt` (última
+  vez que abriu o canal, `null` = nunca) e `readUpTo` = `createdAt` da mensagem mais recente
+  criada até essa leitura (`null` = nunca leu/canal vazio ao ler).
+- `readUpTo`: o MENOR `readUpTo` entre os membros ("todos leram até aqui"); `null` se alguém nunca
+  leu ou não há outro membro.
+- A tela compara `message.createdAt <= readUpTo` (`internalMessageReadStatus`, shared): os dois
+  vêm da MESMA coluna (`internal_messages.created_at`, `TIMESTAMP`) pelo MESMO `toIso`, e a
+  comparação com `channel_reads.last_read_at` (também `TIMESTAMP`) acontece no SQL — sem fuso nem
+  precisão no meio.
+- Opcional no tipo (campo novo); o backend sempre manda.
 
 `editedAt`/`deletedAt` (CRMLAB-117, D-282): a autora editou (a tela mostra "Editada";
 `content` já é o texto novo) ou apagou para todos. **Apagada:** `content: ""`, `attachment:

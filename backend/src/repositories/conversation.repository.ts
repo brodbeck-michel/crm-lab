@@ -8,17 +8,12 @@
  * laboratorio e o RLS falha fechado sem contexto de tenant.
  *
  * ---------------------------------------------------------------------------
- * BUSCA — a mesma expressao do indice
+ * BUSCA — pedaco do nome, sem acento e sem caixa (D-296)
  * ---------------------------------------------------------------------------
- * A migracao 001 cria
- *
- *   CREATE INDEX idx_conversations_patient_name
- *     ON conversations USING GIN (to_tsvector('portuguese', COALESCE(patient_name, '')));
- *
- * Indice por EXPRESSAO so e usado quando a query repete a expressao carater a
- * carater. Por isso `SEARCH_NAME_EXPRESSION` existe como constante unica: se
- * alguem escrever `to_tsvector('portuguese', patient_name)` (sem o COALESCE) a
- * busca continua correta mas passa a varrer a tabela inteira.
+ * Cada palavra digitada casa um pedaco de `patient_name` (AND), via
+ * `name-search.ts`, na mesma expressao do indice trigram
+ * `idx_conversations_patient_name_trgm` (061). Expressao diferente = a busca
+ * continua correta mas varre a tabela. Telefone segue por LIKE de digitos.
  *
  * ---------------------------------------------------------------------------
  * COUNTS — derivados da MESMA query (BUSINESS_RULES §5)
@@ -37,7 +32,12 @@ import type {
   ConversationStatus,
 } from '@crm-lab/shared';
 import type { DbClient, DbTx } from '../db/types.js';
-import { phoneMatchKeys, upsertPatientByPhone } from './patient.repository.js';
+import { nameSearchRank, nameSearchWhere } from './name-search.js';
+import {
+  phoneMatchKeys,
+  syncConversationNames,
+  upsertPatientByPhone,
+} from './patient.repository.js';
 import { toIso, toIsoOrNull, toNumber } from './row-mappers.js';
 
 /** Colunas ordenaveis expostas na query string -> coluna real (whitelist). */
@@ -55,11 +55,8 @@ export function isConversationSortBy(value: string): value is ConversationSortBy
   return Object.prototype.hasOwnProperty.call(SORTABLE_COLUMNS, value);
 }
 
-/**
- * A expressao indexada por `idx_conversations_patient_name`. Precisa casar
- * literalmente com a da migracao 001 para o GIN ser usado.
- */
-export const SEARCH_NAME_EXPRESSION = `to_tsvector('portuguese', COALESCE(c.patient_name, ''))`;
+/** Nome na busca por pedaco (D-296) — ver `name-search.ts` e a migracao 061. */
+const SEARCH_NAME_COLUMN = 'c.patient_name';
 
 /** So digitos: o usuario digita "(11) 98765-4321", o banco guarda "+5511987654321". */
 export function phoneDigits(value: string): string {
@@ -347,14 +344,16 @@ export class ConversationRepository {
     }
     if (criteria.search !== undefined && criteria.search.length > 0) {
       const digits = phoneDigits(criteria.search);
-      params.push(criteria.search);
-      const term = `$${params.length}::text`;
-      const clauses = [`${SEARCH_NAME_EXPRESSION} @@ plainto_tsquery('portuguese', ${term})`];
+      const nameClause = nameSearchWhere(SEARCH_NAME_COLUMN, criteria.search, (v) => {
+        params.push(v);
+        return `$${params.length}`;
+      });
+      const clauses = nameClause !== null ? [nameClause] : [];
       if (digits.length >= 3) {
         params.push(`%${digits}%`);
         clauses.push(`${phoneDigitsSql('c.patient_phone')} LIKE $${params.length}`);
       }
-      where.push(`(${clauses.join(' OR ')})`);
+      where.push(clauses.length > 0 ? `(${clauses.join(' OR ')})` : 'FALSE');
     }
 
     // Ate aqui `where` tem so os filtros comuns as duas queries (visibilidade,
@@ -424,14 +423,28 @@ export class ConversationRepository {
       // MESMA conversa sai `pinned: true` para uma atendente e `false` para as
       // outras. Fixadas primeiro; dentro de cada grupo vale a ordenacao pedida.
       const pinParam = `$${params.length + 1}`;
+      // Com busca, quem COMECA pelo termo vem antes de quem so o contem
+      // (D-296), abaixo das fixadas. Parametros proprios, depois do OFFSET.
+      const rankParams: unknown[] = [];
+      const rank =
+        criteria.search !== undefined && criteria.search.length > 0
+          ? nameSearchRank(SEARCH_NAME_COLUMN, criteria.search, (v) => {
+              rankParams.push(v);
+              return `$${params.length + 3 + rankParams.length}`;
+            })
+          : null;
+      const pagedOrder = orderSql.replace(
+        'ORDER BY',
+        `ORDER BY pinned DESC,${rank !== null ? ` ${rank},` : ''}`,
+      );
       const paged = await tx.query<ConversationRow>(
         `SELECT ${LIST_COLUMNS}, (pin.user_id IS NOT NULL) AS pinned
          ${LIST_FROM}
          LEFT JOIN conversation_pins pin
                 ON pin.conversation_id = c.id AND pin.user_id = ${pinParam}
-         ${whereSql} ${orderSql.replace('ORDER BY', 'ORDER BY pinned DESC,')}
+         ${whereSql} ${pagedOrder}
          LIMIT $${params.length + 2} OFFSET $${params.length + 3}`,
-        [...params, criteria.userId, criteria.limit, offset],
+        [...params, criteria.userId, criteria.limit, offset, ...rankParams],
       );
 
       return {
@@ -526,6 +539,8 @@ export class ConversationRepository {
             WHERE id = $2 AND patient_id IS DISTINCT FROM $1`,
           [patient.id, found.id],
         );
+        // Conversa que ja existia antes do cadastro/edicao do nome (D-292).
+        await syncConversationNames(tx, patient.id);
         const conversation = await selectDetail(tx, found.id);
         if (!conversation) throw new Error('conversa desapareceu dentro da transacao');
         return { conversation, created: false };

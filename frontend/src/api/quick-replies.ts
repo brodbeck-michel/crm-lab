@@ -6,7 +6,7 @@ import type {
 } from '@crm-lab/shared';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { http } from './client';
-import { queryKeys, queryScopes } from './query-keys';
+import { queryKeys, queryScopes, staleTimes } from './query-keys';
 
 /**
  * `/quick-replies` — tela `/quick-replies` e o menu `/` do Composer
@@ -40,6 +40,7 @@ export function useQuickReplyList() {
     queryFn: async () => {
       return await quickRepliesApi.list();
     },
+    staleTime: staleTimes.slowRegistry,
   });
 }
 

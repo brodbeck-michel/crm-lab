@@ -599,7 +599,7 @@ export default function ChannelsSettings() {
           {/* ── Mensagens automáticas ──────────────────────────────────── */}
           <Section
             title="Mensagens automáticas"
-            description="Enviadas ao paciente pelo canal. Mensagem ligada precisa de texto."
+            description="Enviadas ao contato pelo canal. Mensagem ligada precisa de texto."
           >
             <div className="flex flex-col gap-lg">
               {(['greeting', 'offHours'] as const).map((key) => {

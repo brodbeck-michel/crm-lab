@@ -4,6 +4,7 @@ import { PROPOSAL_STATUS_LABELS, TERMINAL_STATUSES } from '@crm-lab/shared';
 import { Button, Chip } from '@/components/ui';
 import { Avatar, DateDisplay, EmptyState, MoneyDisplay, PresenceDot } from '@/components/shared';
 import { usePresenceOf } from '@/api';
+import { LinkBudgetButton } from '@/components/proposal/LinkBudgetModal';
 
 /**
  * Coluna 3 do inbox (316px, recolhível) — PAGES.md §2.
@@ -50,7 +51,7 @@ export function PatientContext({
 }: PatientContextProps) {
   const presenceOf = usePresenceOf();
   if (!conversation) {
-    return <EmptyState message="Sem paciente em foco" hint="Abra uma conversa para ver o cadastro." />;
+    return <EmptyState message="Sem contato em foco" hint="Abra uma conversa para ver o cadastro." />;
   }
 
   const displayName = conversation.patientName ?? conversation.patientPhone;
@@ -69,7 +70,7 @@ export function PatientContext({
       {conversation.patientId !== null && (
         <Link
           data-testid="patient-profile-link"
-          to={`/patients/${conversation.patientId}`}
+          to={`/contacts/${conversation.patientId}`}
           className="rounded-md border border-neutral-300 px-md py-sm text-center text-caption font-semibold text-accent-700 no-underline transition-colors hover:border-accent"
         >
           Ver ficha completa
@@ -92,7 +93,11 @@ export function PatientContext({
       </section>
 
       <section className="flex flex-col gap-sm">
-        <h2 className="m-0 font-heading text-section text-text">Propostas</h2>
+        <div className="flex items-center justify-between gap-sm">
+          <h2 className="m-0 font-heading text-section text-text">Propostas</h2>
+          {/* CRMLAB-129 (D-298): vincular orçamento do Bitlab sem sair da conversa. */}
+          <LinkBudgetButton conversation={conversation} />
+        </div>
 
         {isLoading && (
           <p role="status" className="m-0 text-caption text-neutral-600">

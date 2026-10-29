@@ -352,6 +352,14 @@ Anatomia (padrão WhatsApp):
 - Ver PAGES.md §6. Composto por: ItemsList, DiscountSection, ApprovalAlert, StageHistory, ActionsRow
 - LostReasonForm: select obrigatório ao marcar perdido
 
+### SendProposalPanel · LinkBudgetModal (CRMLAB-58/129, D-200/D-298)
+- `SendProposalPanel` (modos `send`/`resend`/`relink`) é usado em duas telas: no Modal da Proposta
+  (§6, escolhe a conversa) e no `LinkBudgetModal` do Atendimento (§2), com a prop
+  `conversationId` fixa — aí a lista de conversas some. Aceita `Proposal` (não precisa do detalhe).
+  Erro `PROPOSAL_ALREADY_SENT` vira frase própria (`sendErrorMessage`).
+- `LinkBudgetModal` / `LinkBudgetButton` (`components/proposal/LinkBudgetModal.tsx`): botão e
+  modal do "Vincular orçamento"; o botão se esconde sozinho (regra D-246, conversa não ativa ou fora do WhatsApp).
+
 ### StageColumn
 ```tsx
 <StageColumn stage="novo_contato" proposals={[]} />
@@ -448,6 +456,15 @@ Anatomia (padrão WhatsApp):
 - CRMLAB-116 (D-284): também avisa mensagem de colega no Chat interno. Funções puras
   `detectNewChannelMessages`, `freshFromColleagues`, `channelTitle`, `countUnreadChannels`;
   título da aba soma conversas + canais não lidos
+
+### TrafficNotice (`layout/`, CRMLAB-122, D-288)
+- Pílula fixa no rodapé central (fora do fluxo — não empurra o `InboxLayout`), montada no
+  `AppShell`. Fundo `bg-accent-100`, borda `border-neutral-300`, `text-caption` `text-neutral-700`,
+  `rounded-lg`, `shadow-md`, `role="status"`
+- Mostra "Muitas requisições ao mesmo tempo… aguarde alguns segundos — a tela volta sozinha"
+  enquanto o client HTTP espera um 429 (`onRateLimit`/`rateLimitedUntilMs` de `api/client.ts`), e
+  "O CRM está aberto em N abas…" quando há outras abas (`lib/tab-presence.ts`). O aviso de abas
+  tem "Entendi", que esconde até o número de abas subir
 
 ### BudgetLayout
 - 2 colunas: flex 1 min 520px | 372px fixo; total em rodapé fixo

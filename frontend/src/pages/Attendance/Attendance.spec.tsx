@@ -248,7 +248,10 @@ describe('Atendimento — lista de conversas', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Encerradas' }));
 
     await waitFor(() => {
-      expect(listMock).toHaveBeenCalledWith(expect.objectContaining({ status: 'closed' }));
+      expect(listMock).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'closed' }),
+        expect.anything(),
+      );
     });
     expect(await screen.findByText('Encerrada')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Minhas 7' })).toBeInTheDocument();
@@ -299,16 +302,25 @@ describe('Atendimento — lista de conversas', () => {
     renderScreen();
 
     await screen.findByTestId('conversation-item');
-    expect(listMock).toHaveBeenCalledWith(expect.objectContaining({ scope: 'mine' }));
+    expect(listMock).toHaveBeenCalledWith(
+        expect.objectContaining({ scope: 'mine' }),
+        expect.anything(),
+      );
 
     await userEvent.click(screen.getByRole('button', { name: 'Não atribuídas 2' }));
     await waitFor(() => {
-      expect(listMock).toHaveBeenCalledWith(expect.objectContaining({ scope: 'unassigned' }));
+      expect(listMock).toHaveBeenCalledWith(
+        expect.objectContaining({ scope: 'unassigned' }),
+        expect.anything(),
+      );
     });
 
     await userEvent.click(screen.getByRole('button', { name: 'Não atribuídas 2' }));
     await waitFor(() => {
-      expect(listMock).toHaveBeenCalledWith(expect.objectContaining({ scope: 'all' }));
+      expect(listMock).toHaveBeenCalledWith(
+        expect.objectContaining({ scope: 'all' }),
+        expect.anything(),
+      );
     });
   });
 
@@ -627,7 +639,7 @@ function renderWithPatientRoute() {
         <MemoryRouter initialEntries={['/attendance']}>
           <Routes>
             <Route path="/attendance" element={<Attendance />} />
-            <Route path="/patients/:id" element={<PatientProfileStub />} />
+            <Route path="/contacts/:id" element={<PatientProfileStub />} />
           </Routes>
         </MemoryRouter>
       </ToastProvider>
@@ -644,7 +656,7 @@ describe('Atendimento — porta de entrada da Ficha do Paciente (D-079)', () => 
     await userEvent.click(await screen.findByTestId('conversation-item'));
 
     const link = await screen.findByTestId('patient-profile-link');
-    expect(link).toHaveAttribute('href', '/patients/p-1');
+    expect(link).toHaveAttribute('href', '/contacts/p-1');
 
     await userEvent.click(link);
     expect(await screen.findByTestId('ficha-do-paciente')).toHaveTextContent('ficha:p-1');
@@ -677,18 +689,19 @@ describe('Atendimento — porta de entrada da Ficha do Paciente (D-079)', () => 
 
     await screen.findByTestId('conversation-item');
     await userEvent.type(
-      screen.getByLabelText('Buscar paciente, telefone ou exame'),
+      screen.getByLabelText('Buscar contato, telefone ou exame'),
       'Carla{Enter}',
     );
 
     await waitFor(() => {
       expect(listPatientsMock).toHaveBeenCalledWith(
         expect.objectContaining({ search: 'Carla', limit: 5 }),
+        expect.anything(),
       );
     });
 
     const result = await screen.findByTestId('patient-result');
-    expect(result).toHaveAttribute('href', '/patients/p-9');
+    expect(result).toHaveAttribute('href', '/contacts/p-9');
 
     await userEvent.click(result);
     expect(await screen.findByTestId('ficha-do-paciente')).toHaveTextContent('ficha:p-9');

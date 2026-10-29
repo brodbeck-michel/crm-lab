@@ -23,6 +23,7 @@ import { ConversationPanel } from './ConversationPanel';
 import { EnableNotificationsBanner } from './EnableNotificationsBanner';
 import { PatientContext } from './PatientContext';
 import { isSearchableTerm } from '@/lib/search-snippet';
+import { effectiveSearchTerm } from '@/lib/search-term';
 import { conversationDetailOptions, flattenMessages, useMarkAsRead } from './queries';
 
 /**
@@ -107,9 +108,11 @@ export function Attendance() {
     around !== null && around.conversationId === selectedId ? around.messageId : undefined;
 
   const showClosed = scope === 'closed';
+  // Busca a partir de 2 caracteres (CRMLAB-125): 1 letra = lista sem filtro.
+  const listTerm = effectiveSearchTerm(search);
   const searchFilter = useMemo(
-    () => (search.trim().length > 0 ? { search: search.trim() } : {}),
-    [search],
+    () => (listTerm.length > 0 ? { search: listTerm } : {}),
+    [listTerm],
   );
 
   /**
@@ -129,7 +132,8 @@ export function Attendance() {
 
   const listQuery = useQuery({
     queryKey: queryKeys.conversations(filters),
-    queryFn: () => api.conversations.list(filters),
+    // `signal`: o termo novo cancela o pedido do anterior (CRMLAB-125).
+    queryFn: ({ signal }) => api.conversations.list(filters, { signal }),
     staleTime: staleTimes.conversations,
   });
 
@@ -140,7 +144,7 @@ export function Attendance() {
 
   const closedQuery = useQuery({
     queryKey: queryKeys.conversations(closedFilters),
-    queryFn: () => api.conversations.list(closedFilters),
+    queryFn: ({ signal }) => api.conversations.list(closedFilters, { signal }),
     staleTime: staleTimes.conversations,
     enabled: showClosed,
   });
@@ -165,7 +169,7 @@ export function Attendance() {
 
   const patientsQuery = useQuery({
     queryKey: queryKeys.patients(patientFilters),
-    queryFn: () => api.patients.list(patientFilters),
+    queryFn: ({ signal }) => api.patients.list(patientFilters, { signal }),
     enabled: patientTerm.length >= PATIENT_SEARCH_MIN,
     staleTime: staleTimes.patients,
   });
@@ -571,7 +575,7 @@ export function Attendance() {
   const assigneesQuery = useQuery({
     queryKey: queryKeys.conversationAssignees(),
     queryFn: () => api.conversations.assignees(),
-    staleTime: staleTimes.patients,
+    staleTime: staleTimes.slowRegistry,
   });
 
   /**

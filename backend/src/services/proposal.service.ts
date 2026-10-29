@@ -103,6 +103,8 @@ export interface ProposalFilters {
   search?: string;
   /** `due` | `open` — lembrete de contato aberto (CRMLAB-102, D-272). Validado na rota. */
   reminder?: 'due' | 'open';
+  /** So sem conversa vinculada (CRMLAB-129, D-298). */
+  withoutConversation?: boolean;
   page?: number;
   limit?: number;
   sortBy?: string;
@@ -785,6 +787,7 @@ export class ProposalService {
         ...(filters.reminder !== undefined
           ? { reminder: { filter: filters.reminder, today: saoPauloToday(new Date()) } }
           : {}),
+        ...(filters.withoutConversation === true ? { withoutConversation: true } : {}),
         page,
         limit,
         sortBy,

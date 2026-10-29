@@ -113,9 +113,11 @@ Devolve `{ conversation, message }`, com a conversa relida depois do envio.
   "Assumir" tarde demais precisa saber de quem a conversa é
 - `ListConversationsResponse.counts` (`mine` / `unassigned`) sai do MESMO `SELECT` da
   listagem, via `COUNT(*) FILTER (...)` — nunca de contador separado (BUSINESS_RULES §5)
-- Busca por nome usa `to_tsvector('portuguese', COALESCE(patient_name, ''))`, a mesma
-  expressão do índice GIN da migração 001 (expressão diferente = índice não usado);
-  por telefone, comparando só dígitos
+- Busca por nome por **pedaço** (D-296): cada palavra digitada vira
+  `lower(crm_unaccent(patient_name)) LIKE '%palavra%'` (AND, qualquer ordem, `%`/`_` escapados),
+  a mesma expressão do índice trigram da migração 061 (expressão diferente = índice não usado);
+  quem começa pelo termo vem antes. Por telefone, comparando só dígitos. Helper único:
+  `repositories/name-search.ts` (vale também para `patients.name`)
 - Transferência gera mensagem de sistema "Conversa transferida de A para B" e preserva
   o histórico (WORKFLOWS §5)
 - `markAsRead` zera `unread_count` e marca mensagens. `GET /conversations/:id` chama-o
@@ -528,6 +530,13 @@ interface InternalChatService {
   `delete_internal_message` (com `userId`; a exceção à regra "chat não é auditado", porque
   mexe em mensagem já lida por outros) e WS `internal_chat.message_updated` (só ids). Apagada
   some da API (`content: ""`, sem anexo/proposta; download `NOT_FOUND`) e do `unreadCount`
+- **Confirmação de leitura (CRMLAB-123, D-300/D-301):** `listMessages` devolve também
+  `readState` — `listChannelReaders` (uma consulta por canal: membros × `channel_reads` × `MAX(created_at)
+  <= last_read_at` pelo índice do canal) e `channelReadUpTo` (shared, o menor entre eles). Membros:
+  DM = o outro participante; canal = ativos do tenant sem `platform_operator`. `markChannelRead`
+  devolve se a leitura passou de mensagem de outra pessoa (não apagada); só então emite
+  `internal_chat.channel_read` `{ channelId, userId, readUpTo, lastReadAt }` — DM: `emitToUser` do outro; canal:
+  `emitToTenant`
 
 ---
 
@@ -724,6 +733,9 @@ da transação da conversa — ver a regra de nascimento abaixo.
   `canEdit` calculado na query com esse recorte de escrita.
 - `MediaService.prepareOutbound` valida o anexo de saída sem gravar; `storePrepared` grava.
   `storeOutbound` = os dois (D-273: a rota de anexo valida antes de reabrir a encerrada).
+  Imagem sai de `prepareOutbound` já em JPEG (`convertImageToJpeg`, `image-to-jpeg.ts`,
+  CRMLAB-128/D-290); `storeInbound(tenantId, dto, { keepFormat })` faz o mesmo na entrada —
+  `keepFormat` é a figurinha. `StoredMedia.fileName` traz o nome gravado (`.jpg`).
 - `conversationCount`, `proposalCount` e `lastInteractionAt` são **derivados na query**, nunca
   colunas (BUSINESS_RULES §5).
 - `update` não toca em `conversations.patient_name/phone/email`: são o registro do que o canal

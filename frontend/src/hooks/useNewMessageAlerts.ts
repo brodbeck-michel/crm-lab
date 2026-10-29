@@ -386,7 +386,14 @@ export function useNewMessageAlerts(): void {
     const previous = baselineRef.current;
     baselineRef.current = baselineOf(data.conversations, previous ?? undefined, userId);
     if (!previous) return; // primeira carga = linha de base
-    const openId = useMessageAlertsStore.getState().openConversationId;
+    // CRMLAB-122 (D-288): com a aba ESCONDIDA o detalhe da conversa aberta não é
+    // refeito (só a lista do aviso continua viva) — então o sinal dela também
+    // tem de vir da lista, senão mensagem na conversa aberta da aba eleita não
+    // avisaria nada. Visível, o detalhe cuida dela (D-241 item 3).
+    const openId =
+      document.visibilityState === 'hidden'
+        ? null
+        : useMessageAlertsStore.getState().openConversationId;
     fireRef.current(
       [
         ...detectAddedAsParticipant(previous, data.conversations, userId),

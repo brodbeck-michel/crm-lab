@@ -35,6 +35,11 @@ sem `persist` para `tokens`) — `localStorage` não guarda token nenhum.
    extra — SameSite=Strict + Path já reduzem o risco, mas um form cross-site
    não consegue setar header custom)
 7. POST /auth/logout limpa o cookie (Max-Age=0) além de revogar a família
+8. 429 RATE_LIMIT_EXCEEDED (CRMLAB-122, D-288) → o client espera `Retry-After`
+   (fallback `RateLimit-Reset`, + até 1 s de jitter), segura as outras
+   requisições da aba até lá e repete: 3 tentativas por requisição, 6 no
+   /auth/refresh. 429 NUNCA limpa a sessão — nem no refresh. Login não repete
+   (o 429 dele é lockout por IP)
 ```
 
 `RefreshRequest.refreshToken` no corpo é fallback DEPRECIADO de transição
@@ -104,10 +109,20 @@ mais de alguns minutos, reconectando na hora quando ela volta a ficar visível.
 | `proposal.updated` | `{ proposalId }` | itens/desconto/médico solicitante mudaram (CRMLAB-12, D-134) — invalidate `['proposals']` + `['proposal', id]` |
 | `approval.requested` | `{ proposalId }` | badge em #aprovacoes + invalidate pendentes |
 | `internal_chat.message_updated` | `{ channelId, messageId }` | a autora editou ou apagou para todos uma mensagem do chat interno (CRMLAB-117, D-282) — invalidate `['internal-chat', 'channels']` + `['internal-chat', 'messages', channelId]` (a mesma reação de `internal_chat.new_message`). **Não** conta como mensagem nova (sem aviso) |
+| `internal_chat.channel_read` | `{ channelId, userId, readUpTo, lastReadAt }` | `userId` leu o canal e passou de mensagem de outra pessoa (CRMLAB-123, D-301) — o ✓✓ de quem escreveu pode ter virado. DM: só para o outro participante; canal: tenant inteiro. **Nenhuma invalidação** (exceção, como `conversation.presence`): o payload vai para `useInternalChatReadsStore` e a tela junta ao `readState` do último GET (`mergeReadState`) — refazer o GET em todas as abas a cada leitura traria de volta os 429 do CRMLAB-122. Não é mensagem nova (sem aviso/badge) |
 | `approval.decided` | `{ proposalId, decision }` | toast + invalidate `['proposal', id]` |
 | `proposal.stale_alert` | `{ proposalId, hours }` | só para o responsável do cartão (ou, sem responsável, gestores/admins): cartão parado em "Novo orçamento" há `hours` h (CRMLAB-59, D-207), uma vez por entrada na coluna — toast de atenção + invalidate `['proposals']` |
 | `proposal.reminder_due` | `{ proposalId, reminderId, dueDate }` | só para a responsável (ou, sem responsável ativa, gestores/admins): o lembrete de contato venceu (CRMLAB-102, D-272), uma vez por lembrete — toast de atenção + invalidate `['proposals']` e `['proposal', id]` |
 | `user.presence_changed` | `{ userId }` | status de uma pessoa da equipe pode ter mudado (CRMLAB-120, D-286): abriu a primeira aba, ficou offline (20 s depois de fechar a última), trocou o status ou ficou parada/voltou — invalidate `['users', 'presence']`. Para o tenant inteiro |
+
+**Aba escondida e lote (CRMLAB-122, D-288):** com a aba em segundo plano o evento só MARCA as
+queries (`refetchType: 'none'`); o refetch acontece uma vez, quando a aba volta a ficar visível.
+Exceção: a lista do aviso de mensagem nova (`['conversations', ALERTS_QUERY]`) e
+`['internal-chat', 'channels']` continuam vivas na aba eleita por `lib/tab-presence.ts` (nenhuma
+aba do CRM visível → só a mais antiga). Com a aba visível, as invalidações que chegam em 500 ms
+viram uma só. Em `conversation.new_message` o contador `['conversations', 'unread-count']` fica
+fora da invalidação do escopo e é refeito uma vez, depois do detalhe. A lista de colegas
+(`['conversation-assignees']`) saiu do escopo `conversations`.
 
 **Regra:** eventos WS são NOTIFICAÇÃO, não transporte de dados — o cliente refaz fetch (invalidateQueries). Payloads carregam só IDs. Única exceção: `conversation.presence` (D-226), porque presença não existe no banco. Ao reconectar, invalidar queries ativas (pode ter perdido eventos).
 

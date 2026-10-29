@@ -19,6 +19,9 @@ export type { SidebarGroupsState } from './sidebar-groups.store';
 export { usePresenceStore, presenceFor, PRESENCE_TTL_MS } from './presence.store';
 export type { PresenceState, PresenceEntry } from './presence.store';
 
+export { useInternalChatReadsStore, mergeReadState } from './internal-chat-reads.store';
+export type { InternalChatReadsState, ChannelReadEntry } from './internal-chat-reads.store';
+
 export {
   useDraftsStore,
   useConversationDraft,

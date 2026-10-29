@@ -97,6 +97,125 @@ export function resetApiClient(): void {
   bridge = NULL_BRIDGE;
   onUnauthenticated = () => undefined;
   refreshInFlight = null;
+  rateLimitedUntil = 0;
+  rateLimitListeners.clear();
+}
+
+/* ── 429: esperar e tentar de novo (CRMLAB-122, D-288) ───────────────────── */
+
+/**
+ * O limitador do backend roda ANTES de qualquer rota (`rate-limit.ts`): um 429
+ * significa que NADA foi executado — repetir é seguro para qualquer método,
+ * inclusive o `POST /auth/refresh` (o cookie não foi consumido).
+ *
+ * Antes, o 429 virava erro na tela e, no bootstrap da página, o refresh
+ * recusado deixava a sessão sem token: o guard mandava para `/login`. A
+ * atendente apertava F5, cada carga gastava ~10 GETs e piorava o balde.
+ *
+ * Agora: o client respeita `Retry-After` (fallback `RateLimit-Reset`), segura
+ * TODAS as requisições desta aba até a janela virar (não adianta bater de novo
+ * num balde vazio — e cada 429 ainda conta no balde) e repete. Quem chamou só
+ * percebe a demora; a tela ganha um aviso discreto (`onRateLimit`).
+ */
+const RATE_LIMIT_MAX_ATTEMPTS = 3;
+/** O refresh insiste mais: desistir dele é o único caminho que leva ao login. */
+const REFRESH_RATE_LIMIT_MAX_ATTEMPTS = 6;
+const RATE_LIMIT_DEFAULT_WAIT_MS = 5_000;
+const RATE_LIMIT_MAX_WAIT_MS = 60_000;
+/** Espalha as abas para não voltarem todas no mesmo milissegundo da virada da janela. */
+const RATE_LIMIT_JITTER_MS = 1_000;
+
+let rateLimitedUntil = 0;
+const rateLimitListeners = new Set<(until: number) => void>();
+
+/** Epoch (ms) até quando esta aba está segurando requisições por 429. `0` = livre. */
+export function rateLimitedUntilMs(): number {
+  return rateLimitedUntil;
+}
+
+/** Avisa a UI de que a aba bateu no limite (e até quando vai esperar). */
+export function onRateLimit(listener: (until: number) => void): () => void {
+  rateLimitListeners.add(listener);
+  return () => {
+    rateLimitListeners.delete(listener);
+  };
+}
+
+function headerNumber(response: Response, name: string): number | null {
+  const raw = response.headers?.get?.(name);
+  if (raw === null || raw === undefined || raw === '') return null;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+/** Quanto esperar depois de um 429 — `Retry-After` > `RateLimit-Reset` > 5 s. */
+export function rateLimitWaitMs(response: Response): number {
+  const seconds = headerNumber(response, 'Retry-After') ?? headerNumber(response, 'RateLimit-Reset');
+  const base = seconds === null ? RATE_LIMIT_DEFAULT_WAIT_MS : seconds * 1000;
+  return Math.min(base, RATE_LIMIT_MAX_WAIT_MS) + Math.floor(Math.random() * RATE_LIMIT_JITTER_MS);
+}
+
+function noteRateLimited(waitMs: number): void {
+  const until = Date.now() + waitMs;
+  if (until <= rateLimitedUntil) return;
+  rateLimitedUntil = until;
+  for (const listener of rateLimitListeners) listener(until);
+}
+
+function abortError(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException('Aborted', 'AbortError');
+}
+
+/**
+ * Espera a aba sair do "segurando por 429". Respeita o `signal` de quem chamou.
+ * Se outro 429 esticou o prazo durante a espera, espera de novo — senão a
+ * requisição sairia no meio da janela nova e gastaria mais uma ficha à toa.
+ */
+async function waitRateLimitCooldown(signal?: AbortSignal): Promise<void> {
+  while (rateLimitedUntil - Date.now() > 0) {
+    await sleepUntilCooldown(rateLimitedUntil - Date.now(), signal);
+  }
+}
+
+function sleepUntilCooldown(remaining: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortError(signal));
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(abortError(signal as AbortSignal));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, remaining);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+/**
+ * `send` com a regra do 429. Login e demais rotas públicas não repetem: lá o
+ * 429 é o lockout/limite por IP fazendo o seu trabalho.
+ */
+async function sendWithRateLimit(
+  path: string,
+  options: RequestOptions,
+  token: string | null,
+  extraHeaders?: Record<string, string>,
+): Promise<Response> {
+  const isRefresh = path === '/auth/refresh';
+  const retries = options.auth !== false || isRefresh;
+  const maxAttempts = isRefresh ? REFRESH_RATE_LIMIT_MAX_ATTEMPTS : RATE_LIMIT_MAX_ATTEMPTS;
+
+  for (let attempt = 1; ; attempt += 1) {
+    if (retries) await waitRateLimitCooldown(options.signal);
+    const response = await send(path, options, token, extraHeaders);
+    if (response.status !== 429) return response;
+    noteRateLimited(rateLimitWaitMs(response));
+    if (!retries || attempt >= maxAttempts) return response;
+  }
 }
 
 export function apiBaseUrl(): string {
@@ -291,7 +410,7 @@ async function performRefresh(): Promise<string> {
   let result: RefreshResponse;
   try {
     result = await parseResponse<RefreshResponse>(
-      await send(
+      await sendWithRateLimit(
         '/auth/refresh',
         { method: 'POST', auth: false },
         null,
@@ -299,7 +418,8 @@ async function performRefresh(): Promise<string> {
       ),
     );
   } catch (error) {
-    // Só derruba a sessão em 401 do refresh. Queda de rede não desloga.
+    // Só derruba a sessão em 401 do refresh. Queda de rede não desloga, e
+    // 429 (CRMLAB-122) também não: o limite recusou ANTES de olhar o cookie.
     if (isApiError(error) && error.statusCode === 401) return failSession(error);
     throw error;
   }
@@ -317,7 +437,11 @@ function failSession(error: ApiError): never {
 /** Requisição tipada. Lança `ApiError` em qualquer 4xx/5xx. */
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const useAuth = options.auth !== false;
-  const response = await send(path, options, useAuth ? bridge.getAccessToken() : null);
+  const response = await sendWithRateLimit(
+    path,
+    options,
+    useAuth ? bridge.getAccessToken() : null,
+  );
 
   try {
     return await parseResponse<T>(response);
@@ -325,7 +449,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     if (!useAuth || !isApiError(error) || error.code !== 'TOKEN_EXPIRED') throw error;
     // Interceptor: renova (uma vez, compartilhado) e repete a original.
     const accessToken = await refreshAccessToken();
-    return parseResponse<T>(await send(path, options, accessToken));
+    return parseResponse<T>(await sendWithRateLimit(path, options, accessToken));
   }
 }
 

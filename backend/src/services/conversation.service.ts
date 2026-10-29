@@ -327,7 +327,7 @@ export class ConversationService {
   ): Promise<ConversationDetail> {
     const found = await this.repository.findOrCreateByPhone(ctx.tenantId, {
       patientPhone: toE164(dto.patientPhone),
-      patientName: dto.patientName,
+      patientName: dto.patientName ?? null,
       patientEmail: dto.patientEmail ?? null,
       channel: dto.channel,
       assignedTo: ctx.userId,

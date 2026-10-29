@@ -162,6 +162,9 @@ export function PatientProfileForm({ patient }: PatientProfileFormProps) {
       setFormError(null);
       setSaved(true);
       void queryClient.invalidateQueries({ queryKey: queryScopes.patient });
+      // O nome do cadastro vai para as conversas dele no backend (D-292).
+      void queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
+      void queryClient.invalidateQueries({ queryKey: queryScopes.conversation });
     },
     onError: (error: unknown) => {
       setSaved(false);
@@ -181,7 +184,7 @@ export function PatientProfileForm({ patient }: PatientProfileFormProps) {
           if (error.details?.reason === 'patient_anonymized') {
             setFormError('Este cadastro foi anonimizado e não pode mais ser editado.');
           } else if (error.details?.reason === 'phone_already_in_use') {
-            setFieldErrors({ phone: 'Este telefone já pertence a outro paciente.' });
+            setFieldErrors({ phone: 'Este telefone já pertence a outro contato.' });
             setFormError(null);
           } else {
             setFormError(error.message);
@@ -283,7 +286,7 @@ export function PatientProfileForm({ patient }: PatientProfileFormProps) {
             value={form.phone}
             disabled={locked}
             error={fieldErrors.phone}
-            hint="É o número que identifica o paciente quando ele escreve. Um número já usado por outro cadastro é recusado."
+            hint="É o número que identifica o contato quando ele escreve. Um número já usado por outro cadastro é recusado."
             onChange={(event) => setField('phone', event.target.value)}
           />
 
@@ -321,7 +324,7 @@ export function PatientProfileForm({ patient }: PatientProfileFormProps) {
           value={form.notes}
           disabled={locked}
           error={fieldErrors.notes}
-          hint="Visível apenas para a equipe do laboratório — nunca é enviado ao paciente."
+          hint="Visível apenas para a equipe do laboratório — nunca é enviado ao contato."
           onChange={(event) => setField('notes', event.target.value)}
         />
 

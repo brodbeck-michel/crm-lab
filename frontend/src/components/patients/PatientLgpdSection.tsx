@@ -38,7 +38,7 @@ function downloadExport(patientId: string, data: PatientExport): void {
   const href = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = href;
-  link.download = `paciente-${patientId}-${day}.json`;
+  link.download = `contato-${patientId}-${day}.json`;
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -128,7 +128,7 @@ export function PatientLgpdSection({ patient }: PatientLgpdSectionProps) {
             loading={exportData.isPending}
             onClick={() => exportData.mutate()}
           >
-            Exportar dados do paciente
+            Exportar dados do contato
           </Button>
           {exportData.isSuccess && !exportData.isPending && (
             <span role="status" className="font-body text-caption text-accent2-800">
@@ -155,7 +155,7 @@ export function PatientLgpdSection({ patient }: PatientLgpdSectionProps) {
           <ul className="m-0 flex list-disc flex-col gap-xs pl-lg font-body text-caption text-neutral-700">
             <li>Nome, e-mail, data de nascimento, CPF, anotações, etiquetas e campos são apagados.</li>
             <li>O telefone é substituído por um identificador anônimo e o nome some do inbox.</li>
-            <li>Orçamentos, mensagens e auditoria permanecem, sem o nome do paciente.</li>
+            <li>Orçamentos, mensagens e auditoria permanecem, sem o nome do contato.</li>
             <li>
               O conteúdo já escrito nas mensagens não é reescrito — se ele contiver o nome, o nome
               continua lá.
@@ -183,7 +183,7 @@ export function PatientLgpdSection({ patient }: PatientLgpdSectionProps) {
       <Modal
         open={confirmOpen}
         onClose={closeConfirm}
-        title="Anonimizar cadastro do paciente"
+        title="Anonimizar cadastro do contato"
         footer={
           <>
             <Button variant="secondary" onClick={closeConfirm} disabled={anonymize.isPending}>
@@ -203,7 +203,7 @@ export function PatientLgpdSection({ patient }: PatientLgpdSectionProps) {
         <div className="flex flex-col gap-md">
           <p className="m-0 font-body text-body text-text">
             Esta ação é <strong>irreversível</strong>. O cadastro de{' '}
-            {patient.name ?? 'paciente sem nome'} será esvaziado, o telefone {patient.phone} será
+            {patient.name ?? 'contato sem nome'} será esvaziado, o telefone {patient.phone} será
             substituído por um identificador anônimo e o nome deixará de aparecer no inbox. Os
             orçamentos e o histórico permanecem, sem o nome.
           </p>

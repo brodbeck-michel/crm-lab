@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-10-25 (integração `integ/onda-111-119` — CRMLAB-111, 116, 117, 118 e 119)
+**Última atualização:** 2026-10-28 (CRMLAB-122 — rate limit e várias abas)
 
 ---
 
@@ -3590,6 +3590,51 @@ frontend, sem endpoint novo.
 - **Testes:** `useNewMessageAlerts.internal-chat.spec.tsx` (novo, 19), `InternalChat.spec.tsx`
   (+2), `useNewMessageAlerts.spec.tsx` (mock de canais). Suíte completa roda na integração.
 
+### 🚧 CRMLAB-122 — rate limit: atendentes caindo com várias abas (2026-10-28, aguardando validação)
+
+Branch `feature/CRMLAB-122-rate-limit-polling` (de `main` v1.41.0). Decisões D-288 e D-289, só
+frontend + default do compose de prod, sem migração, sem mudança de API.
+
+- **429:** o client espera o `Retry-After`, segura a aba e repete; nunca desloga (nem no refresh
+  do bootstrap). Aviso discreto `TrafficNotice`.
+- **Tráfego:** aba escondida não refaz GET por evento WS (só a eleita mantém o aviso de mensagem
+  nova); lote de 500 ms; contador de não lidas 1× por evento; assignees fora do escopo
+  `conversations`; `staleTime` padrão 10 s; sino de Decisões 5 min com WS. Estimativa: 3 abas de
+  ~190 para ~30 req/min (tabela em D-288).
+- **Várias abas:** `lib/tab-presence.ts` (`BroadcastChannel`) — aviso "aberto em N abas" e eleição.
+- **Limite:** proposta 300/min definitivo; default do `docker-compose.prod.yml` 100 → 300 (D-289).
+- **Testes:** `client.ratelimit.spec.ts` (8), `ws.crmlab122.spec.ts` (6), `tab-presence.spec.ts`
+  (7), `TrafficNotice.spec.tsx` (4), novos; specs afetados verdes.
+- **Pendente:** validação na hml (3 abas por 10 min; 429 forçado com limite baixo).
+
+### 🚧 CRMLAB-125 — busca por pedaço do nome, sem acento (2026-10-28, aguardando validação)
+
+Branch `feature/CRMLAB-125-busca-nome-parcial` (de `main` v1.41.0). Decisões D-296 e D-297,
+migração 061 (índice trigram condicional ao `pg_trgm`).
+
+- **Backend:** `repositories/name-search.ts` (novo) — cada palavra casa um pedaço do nome, AND,
+  qualquer ordem, sem acento/caixa, quem começa pelo termo antes. Vale para `GET /patients` e
+  `GET /conversations`. Telefone/CPF iguais. PGlite carrega `pg_trgm`.
+- **Tela:** Pacientes, lista do Atendimento e Nova conversa buscam a partir de 2 caracteres, com o
+  debounce de 300 ms e cancelando o pedido do termo anterior.
+- **Testes:** `name-search.spec.ts` (novo, 12); front `List.spec.tsx` (+2), `search-term.spec.ts`
+  (novo), `Attendance.spec.tsx` (asserções com o `signal`).
+
+### 🚧 CRMLAB-129 — vincular orçamento do Bitlab pela conversa (2026-10-28, aguardando validação)
+
+Branch `feature/CRMLAB-129-vincular-orcamento-conversa` (de `main` v1.41.0). Decisões D-298 e
+D-299, sem migração.
+
+- **Backend:** `GET /proposals?withoutConversation=true`; `?search=` só com dígitos casa também o
+  nº do orçamento do Bitlab. O envio é o `POST /proposals/:id/send` de sempre (trava de corrida
+  já atômica, D-201).
+- **Tela:** botão "Vincular orçamento" no painel de contexto da conversa → `LinkBudgetModal`
+  (candidatos, mais parecido primeiro, busca) → `SendProposalPanel` com a conversa fixa.
+- **Testes:** backend `send-from-card.spec.ts` (+5: filtro, recorte por papel, busca por nº,
+  validação, segundo envio recusado sem mensagem); front `LinkBudgetModal.spec.tsx` (novo, 8);
+  e2e `flow-20-link-budget-from-conversation.spec.ts` (escrito, não executado).
+- **Pendente:** exames do orçamento (D-299 item 2); validação na hml.
+
 ### 🚧 CRMLAB-121 — cadastrar contato e achar pelo nome na Nova conversa (2026-10-26, aguardando validação)
 
 Branch `feature/CRMLAB-121-cadastro-contato` (de `main` v1.40.0). Decisão D-287 (revisa D-061),
@@ -3664,3 +3709,60 @@ Branch `feature/CRMLAB-120-status-usuario` (de `main` v1.40.0). Decisão D-286, 
   `route-tenant-isolation` (+2 rotas = 120). Frontend `PresenceDot.spec.tsx`,
   `useIdlePresence.spec.tsx`, `Sidebar.spec.tsx` (+3), `UserTable.spec.tsx` (+1), `ws.spec.ts` (+1).
 - **Pendente:** validação na hml.
+
+### 🚧 CRMLAB-128 — imagens gravadas em JPEG (2026-10-28, aguardando validação)
+
+- **O que mudou:** imagem recebida pelo WhatsApp, anexada pela atendente, no chat interno ou na
+  visita médica é gravada em JPEG (sharp, mozjpeg q82, foto endireitada, sem EXIF/GPS, fundo
+  branco no lugar da transparência). Nome ganha `.jpg`; tipo e tamanho no banco são os do JPEG.
+- **Fica como está:** figurinha, GIF/WebP/PNG animado, JPEG sem rotação nem GPS, HEIC (sharp
+  pré-compilado não lê HEVC), imagem que falhar na conversão (grava o original, com log) e tudo o
+  que já estava gravado. Decisões D-290 e D-291. Sem migração.
+- **Testes:** `src/services/image-to-jpeg.spec.ts` (13), `tests/webhooks/evolution-webhook-media.spec.ts`
+  (+4), `tests/conversations/attachments.spec.ts` (+1), `tests/internal-chat/attachments.spec.ts`
+  (+1), `tests/visits/visit-record.spec.ts` (+1).
+- **Pendente:** validação na hml (print PNG pela atendente, foto de celular girada, figurinha).
+
+### 🚧 CRMLAB-124 — contato cadastrado não puxava o nome no Atendimento (2026-10-28, aguardando validação)
+
+Branch `feature/CRMLAB-124-126-contatos-nome-e-rotulo` (de `main` v1.41.0). Decisões D-292 e
+D-293, migração 060 (só dados).
+
+- **Causa:** `conversations.patient_name` era cópia gravada quando a conversa nascia e não
+  acompanhava o cadastro. **Correção:** nome do paciente propagado na escrita para todas as
+  conversas dele (PATCH, cadastro completado, `findOrCreateByPhone`); perfil do WhatsApp segue
+  sem sobrescrever o cadastrado. Migração 060 conserta os dados já gravados.
+- **Hipótese 4:** cadastrar contato com número que já existia sem nome dava 409 e perdia o nome;
+  agora completa o cadastro (D-293).
+- **Testes:** `tests/patients/patients-conversation-name.spec.ts` (novo, 7),
+  `tests/db/migration-060-patient-name-sync.spec.ts` (novo, 1).
+
+### 🚧 CRMLAB-126 — "Pacientes" vira "Contatos" nas telas (2026-10-28, aguardando validação)
+
+Mesma branch do CRMLAB-124. Decisão D-294, sem migração nem mudança de API.
+
+- **Interface:** menu, lista, ficha, painel de contexto e busca do Atendimento, LGPD, inativação,
+  Operação e ajudas falam "contato". Termos do LIS/Bitlab, Propostas e a variável `{paciente}`
+  continuam "paciente" (lista completa no D-294).
+- **Rota:** `/contacts` e `/contacts/:id`; `/patients[/:id]` redireciona (favoritos funcionam).
+- **Testes:** 10 specs unitários atualizados; `e2e/workflows/flow-8-patient.spec.ts` com textos
+  novos e +2 testes do redirect (e2e não executado neste worktree).
+
+### 🚧 CRMLAB-123 — chat interno: ✓ enviada / ✓✓ lida (2026-10-28, aguardando validação)
+
+Branch `feature/CRMLAB-123-chat-interno-leitura` (de `main` v1.41.0). Decisões D-300, D-301. Sem
+migração.
+
+- **Tique:** nas mensagens próprias, ✓ cinza (gravada) ou ✓✓ azul (lida) — o mesmo do atendimento.
+  DM: o outro abriu depois dela. Canal: todos os membros ativos do tenant leram; o hover mostra
+  "Lida por" e "Ainda não leram".
+- **API:** `GET .../messages` devolve `readState` (uma consulta por canal, de `channel_reads`).
+  `POST .../read` emite `internal_chat.channel_read { channelId, userId, readUpTo, lastReadAt }`
+  quando passou de mensagem de outra pessoa (DM: só o outro; canal: tenant). A tela aplica o
+  payload num store, **sem GET** (revisão: o evento de canal vai ao tenant inteiro — CRMLAB-122).
+- **Canal aberto:** mensagem nova de outra pessoa marca como lida sozinha (aba visível), com os
+  POSTs agrupados em 1,5 s.
+- **Testes:** backend `tests/internal-chat/read-receipts.spec.ts` (8) + ajuste de shape em
+  `internal-chat.spec.ts`. Frontend `InternalChat.read-receipts.spec.tsx` (10), `ws.spec.ts` (+1).
+  E2E `flow-internal-chat-read-receipts.spec.ts` escrito, não executado.
+- **Pendente:** validação na hml; e2e na integração.

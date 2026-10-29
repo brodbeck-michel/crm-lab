@@ -237,7 +237,7 @@ describe('ChannelsSettings', () => {
     await user.clear(greeting);
 
     expect(screen.getByRole('button', { name: /salvar/i })).toBeDisabled();
-    expect(screen.getByText(/senão o paciente recebe uma bolha em branco/i)).toBeInTheDocument();
+    expect(screen.getByText(/senão o contato recebe uma bolha em branco/i)).toBeInTheDocument();
     expect(updateChannelsMock).not.toHaveBeenCalled();
   });
 

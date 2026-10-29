@@ -815,7 +815,7 @@ export function ConversationPanel({
                   ? 'Só a responsável pela conversa, gestor ou admin encerram'
                   : hasParticipants
                     ? 'Transfira para a participante antes de encerrar'
-                    : 'Encerrar o atendimento — sai da fila até o paciente escrever de novo'
+                    : 'Encerrar o atendimento — sai da fila até o contato escrever de novo'
             }
           >
             Encerrar
@@ -825,7 +825,7 @@ export function ConversationPanel({
             size="sm"
             onClick={onToggleContext}
             aria-pressed={contextOpen}
-            aria-label={contextOpen ? 'Ocultar contexto do paciente' : 'Mostrar contexto do paciente'}
+            aria-label={contextOpen ? 'Ocultar contexto do contato' : 'Mostrar contexto do contato'}
           >
             Contexto
           </Button>
@@ -941,7 +941,7 @@ export function ConversationPanel({
               ? {
                   authorName:
                     replyTo.senderType === 'patient'
-                      ? (replyTo.senderName ?? conversation.patientName ?? 'Paciente')
+                      ? (replyTo.senderName ?? conversation.patientName ?? 'Contato')
                       : (replyTo.senderName ?? 'Você'),
                   preview: quotedLabel({
                     id: replyTo.id,

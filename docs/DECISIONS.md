@@ -6285,3 +6285,426 @@ cadastrou.
 (`CreatePatientRequest`). Frontend: `Patients/NewPatientModal.tsx`, `patients/PhoneField.tsx`,
 `lib/phone-suggestion.ts`, `Attendance/ContactSearch.tsx`, `NewConversationModal.tsx`. Sem
 migração. Conversas e pacientes já duplicados pelos dois formatos continuam separados.
+
+### D-288: 429 não derruba a tela nem a sessão, e cada aba gasta só o que mostra (CRMLAB-122)
+**Data:** 2026-10-28
+**Contexto:** em prod (27/10) atendentes caíam: uma aba sozinha fazia ~70 req/min e várias abas
+passavam de 110–124/min, acima do `RATE_LIMIT_PER_MINUTE` (100, balde POR USUÁRIO). O 429 virava
+erro na tela; a atendente apertava F5; no bootstrap da página o `POST /auth/refresh` recusado
+deixava a sessão sem token e o guard mandava para `/login`. Levantamento do código: quase não há
+polling (`refetchInterval` só no sino de Decisões, na tela de Operação/Decisões — 60 s — e no QR
+de Canais durante o pareamento); o grosso vinha do WebSocket: cada `conversation.new_message`
+invalidava o escopo `conversations` inteiro — lista do Atendimento, lista do aviso, contador da
+barra lateral, **lista de colegas (assignees)** — mais o detalhe e o contador **de novo**: ~5,5
+GETs por evento, **em toda aba aberta, escondida ou não**.
+**Decisão:**
+1. **429 no client HTTP** (`api/client.ts`): o limitador recusa antes de qualquer rota, então
+   repetir é seguro para qualquer método. Espera `Retry-After` (fallback `RateLimit-Reset`, 5 s
+   sem header; teto 60 s; + até 1 s de jitter), segura TODAS as requisições da aba até lá (cada 429
+   também conta no balde) e repete — 3 tentativas por requisição, 6 no `/auth/refresh`. 429 nunca
+   limpa a sessão. Login/rotas públicas não repetem (lá é lockout). Aviso discreto
+   (`TrafficNotice`) enquanto espera.
+2. **Aba escondida não refaz GET por evento WS** (`api/ws.ts`): só marca as queries; refaz uma vez
+   ao voltar a ficar visível. Exceção: a lista do aviso de mensagem nova e os canais do chat
+   interno continuam vivos em UMA aba (a eleita, ver item 4), porque a notificação do navegador
+   existe para a aba em segundo plano.
+3. **Menos GETs por evento:** lote de 500 ms (rajada → 1 refetch por chave); contador de não lidas
+   refeito uma vez por evento (não duas); assignees fora do escopo `conversations`
+   (`['conversation-assignees']`, `staleTime` 5 min); respostas rápidas `staleTime` 5 min;
+   `staleTime` padrão 10 s no `createQueryClient` (remontar a mesma tela/componente não refaz o GET;
+   o WS invalida o que mudou); `refetchIntervalInBackground: false` explícito; o sino de Decisões
+   da Sidebar passa a 5 min com o WS conectado (60 s sem WS).
+4. **Várias abas** (`lib/tab-presence.ts`, `BroadcastChannel` `crm-lab:tabs`): conta as outras abas
+   (aviso "o CRM está aberto em N abas") e elege quem mantém o aviso vivo escondida: se alguma aba
+   do CRM está visível, nenhuma escondida refaz; se todas estão escondidas, só a mais antiga. Sem
+   `BroadcastChannel` = aba única (comportamento anterior).
+5. **Refresh entre abas:** o lock (`navigator.locks`) + carência de 10 s (D-166) cobrem o refresh
+   simultâneo. O caminho de `refresh_token_reuse_detected` que sobrava era o **F5 durante um
+   refresh em voo** (o servidor rotaciona, a página morre antes de aplicar o `Set-Cookie`, a
+   próxima carga reapresenta o token velho — depois de 10 s vira reuso e derruba a família). Ele
+   nasce do ciclo 429 → F5, que os itens 1–3 cortam; não há correção do lado do cliente para uma
+   resposta que o navegador descartou. Ver pendência em D-289.
+**Consumo estimado por aba** (a partir dos intervalos do código; premissa: Atendimento aberto, ~10
+eventos WS/min no laboratório — mensagens + tiques —, metade com a conversa aberta; ~50% de
+eventos em rajada):
+
+| Situação | Antes (req/min) | Depois (req/min) |
+|---|---|---|
+| Aba visível (Atendimento) | ~55 do WS + 1 polling + ~10 remontagens ≈ **65–70** | ~3,5 GETs/evento × 10 × 0,6 (lote) ≈ 21 + 0,2 polling + ~4 remontagens ≈ **25–30** |
+| Aba escondida, eleita (nenhuma aba visível) | ≈ 65 (igual à visível) | ~1 GET/evento × 10 × 0,6 ≈ **6** |
+| Aba escondida, não eleita | ≈ 65 | **0** (+ ~5 GETs uma vez ao voltar) |
+| 3 abas (1 visível + 2 escondidas) | **≈ 190–200** | **≈ 25–30** |
+| 5 abas | ≈ 320 | ≈ 25–30 (+ ~5 a cada troca de aba) |
+| F5 (carga de página) | ~10–12 GETs + refresh | igual (sem mudança) |
+
+**Motivo:** o limite é por usuário e protege o servidor; o problema era o cliente gastar o balde
+com telas que ninguém via e transformar uma recusa temporária em logout.
+**Impacto:** frontend apenas — `api/client.ts`, `api/ws.ts`, `api/query-client.ts`,
+`api/query-keys.ts`, `api/quick-replies.ts`, `hooks/useAppWebSocket.ts`, `lib/tab-presence.ts`,
+`components/layout/{TrafficNotice,AppShell,Sidebar}.tsx`, `pages/Attendance/index.tsx`. Sem
+mudança de API nem migração. Título "(N)" de aba escondida não eleita só atualiza ao voltar.
+**Revisão (28/10):** (a) query que ainda recebe 429 depois das 3 tentativas do client tenta de
+novo até 5 vezes (`RATE_LIMIT_QUERY_RETRIES`) em vez de virar erro na tela — cada tentativa já
+espera a janela no client; mutação continua sem retry no TanStack. (b) Carga da página com o
+refresh em 429: o bootstrap (`useSessionBootstrap`) tenta de novo em vez de terminar sem token
+(terminar = `/login`), e o App mostra `SessionWaitScreen` em vez da tela em branco. (c) A espera
+do 429 re-checa o prazo ao acordar (outro 429 pode tê-lo esticado). (d) Aba escondida: o detalhe
+da conversa aberta não é refeito, então o aviso dela passa a vir da lista (`openId` vale só com a
+aba visível) — senão a aba eleita não avisava mensagem na própria conversa aberta. (e) Criar ou
+editar usuário invalida `['conversation-assignees']`.
+
+### D-289: `RATE_LIMIT_PER_MINUTE` definitivo — proposta 300 (CRMLAB-122)
+**Data:** 2026-10-28
+**Contexto:** prod subiu de 100 para 300 em 27/10 como paliativo. Com D-288 uma atendente com 3
+abas fica em ~25–30 req/min em regime; os picos são F5 (~12 de uma vez) e troca de tela.
+**Decisão (proposta — a palavra final de prod é do Michel):**
+1. Manter **300/min por usuário** em prod como valor definitivo: ~10× o regime estimado, cobre
+   rajada de várias abas voltando a ficar visíveis ao mesmo tempo e ainda é 5 req/s — irrelevante
+   como superfície de abuso para um usuário autenticado.
+2. Default do `docker-compose.prod.yml` passa de 100 para 300 (um `.env` sem a variável não
+   volta ao valor que derrubou as atendentes). O default do código (`env.ts`, 100) fica: é o de
+   dev/testes/E2E e mexer nele muda a suíte do backend sem ganho.
+3. **Ponto de atenção:** `/auth/refresh`, `/auth/login` e requisição com access token vencido caem
+   no balde **por IP** com o mesmo limite. Atrás de NAT o laboratório inteiro divide esse balde —
+   hoje é só 1 refresh por carga de página por aba, cabe folgado em 300, mas se a equipe crescer
+   vale um limite próprio para o refresh. Não mexido aqui (backend).
+**Validação pedida (critério do card):** 3 abas por 10 min sem 429 com 300; 429 forçado
+(`RATE_LIMIT_PER_MINUTE=20` na hml) não leva ao login nem trava, recupera sozinho.
+
+### D-290: Imagem gravada vira JPEG; figurinha, animação e HEIC ficam como chegaram (CRMLAB-128)
+**Decisão:**
+1. Imagem é convertida para JPEG **ao gravar**, com `sharp@0.35.5` (`backend/src/services/image-to-jpeg.ts`):
+   entrada do WhatsApp (`MediaService.storeInbound`) e anexo da atendente (`prepareOutbound` →
+   o JPEG é o que vai para o WhatsApp do paciente). Roda depois da allow-list e do sniff
+   (CRMLAB-31): o que foi rebaixado para `application/octet-stream` não é tocado.
+2. Parâmetros: mozjpeg qualidade 82, `.rotate()` (orientação do EXIF aplicada), **sem
+   `withMetadata`** (EXIF, GPS, XMP, IPTC e ICC saem — GPS é dado pessoal), `flatten` em branco.
+3. **PNG com transparência vira JPEG com fundo branco.** Em prod os PNG reais são prints
+   enviados pela atendente (5 de 555 imagens); print e foto de pedido médico não dependem de
+   transparência, e fundo branco é como o papel aparece.
+4. **JPEG só é reencodado se tiver orientação ≠ 1 ou GPS** (tag 0x8825 no EXIF, ou "GPS" no XMP).
+   Fora disso fica byte a byte, inclusive o nome — exceto quando chegou declarado como outra
+   imagem (o sniff compara por categoria, então `image/png` com conteúdo JPEG passa): aí os bytes
+   ficam, mas o MIME vira `image/jpeg` e o nome ganha `.jpg`. Levantamento de prod em 28/10/2026
+   (`message_media`): `image/jpeg` paciente 299 (~148 KB) e atendente 236 (~158 KB);
+   `image/webp` figurinha 14 + 1; `image/png` atendente 5 (~95 KB); nenhum HEIC nem GIF;
+   `doctor_visit_attachments` vazio. Quase tudo já é JPEG e o WhatsApp já tira o EXIF da foto
+   recebida: reencodar todas só gastaria CPU e qualidade. Outros campos de EXIF (câmera, data)
+   ficam quando não há GPS nem rotação — ponto aceito em troca do custo.
+5. Ficam no formato original: **figurinha** (`stickerMessage`, WebP, animada ou não — o webhook
+   passa `keepFormat`), **GIF/WebP animado** (`pages > 1`) e **PNG animado** (chunk `acTL`).
+   GIF e WebP estáticos viram JPEG.
+6. **HEIC não é convertido.** Testado em 28/10/2026: o libheif do sharp pré-compilado só traz AV1
+   (`sharp.format.heif.input.fileSuffix = ['.avif']`; `heif({ compression: 'hevc' })` falha com
+   "Unsupported compression"); não havia HEIC real na máquina para um teste ponta a ponta, mas
+   sem decoder HEVC a leitura falha e cai no item 7. O HEIC é gravado como hoje. Alternativas,
+   se um dia precisar: libvips compilado com libde265 na imagem (perde o binário pronto do sharp
+   e entra a questão de patente do HEVC) ou decodificar no navegador antes do envio. Em prod não
+   chegou nenhum HEIC (o WhatsApp do iPhone já manda JPEG).
+7. Falha na conversão (imagem corrompida, acima de `limitInputPixels` = 60 MP, mais de 10 s de
+   CPU, HEIC) grava o **original** e loga `media.image_convert_failed`; `convertImageToJpeg`
+   nunca lança, e `storeInbound` continua nunca lançando.
+8. Banco: `message_media.mime_type`, `file_name` (extensão trocada para `.jpg`) e `byte_size`
+   são os do JPEG. Na entrada sem legenda, o `content` da mensagem (que é o nome do arquivo)
+   acompanha o nome gravado, para o balão continuar escondendo o nome (D-236 item 8, compara
+   `content` com `media.fileName`). **Imagens já gravadas não são convertidas** (decisão do Michel, 28/10/2026).
+   Sem migração.
+9. Imagem Docker: o runtime é `node:22-alpine` (musl). O `package-lock.json` traz
+   `@img/sharp-linuxmusl-x64` e `@img/sharp-libvips-linuxmusl-x64` (e os de glibc para o CI e o
+   dev), e o `npm ci --omit=dev` do estágio `prod-deps` instala os opcionais da plataforma do
+   container — o binário certo entra na imagem sem mudar o Dockerfile.
+**Motivo:** padronizar o que fica no disco e no WhatsApp do paciente (JPEG abre em qualquer
+lugar), tirar GPS/EXIF da foto enviada pela atendente e endireitar foto girada, sem pesar no
+caminho comum, que já é JPEG.
+**Impacto:** `backend/package.json` + `package-lock.json` (`sharp`), `services/image-to-jpeg.ts`
+(novo), `media.service.ts` (`prepareOutbound` recebe `fileName`; `storePrepared(tenantId,
+prepared)`; `StoredMedia.fileName`; `storeInbound(..., { keepFormat })`), `webhook.routes.ts`,
+`conversation.routes.ts`. Docs: API_CONTRACTS §2d "Hardening de mídia" item 5, SERVICES.md.
+
+### D-291: A conversão para JPEG vale também no chat interno e na visita médica (CRMLAB-128)
+**Decisão:** o anexo de imagem do chat interno (`InternalChatService.sendAttachment`) e da visita
+médica (`addAttachment`, `doctor_visit_attachments`) passa pelo mesmo `convertImageToJpeg` de
+D-290, depois do sniff e antes de gravar a linha; `mime_type`, `file_name` e `byte_size` gravados
+são os do JPEG. Lá não há figurinha, então só as exceções de animação/HEIC/falha valem.
+**Motivo:** o card fala em "anexos de imagem"; os três caminhos gravam no mesmo volume com a mesma
+validação (CRMLAB-31), e a foto da visita é justamente a que sai do celular com GPS.
+**Impacto:** `internal-chat.service.ts`, `visit.service.ts`. Sem mudança de contrato além do
+`mimeType`/`fileName` devolvidos, que já eram "o que foi gravado".
+
+### D-292: O nome do cadastro é propagado na escrita para `conversations.patient_name` (CRMLAB-124, revisa D-059)
+**Decisão:** `conversations.patient_name` continua sendo a copia denormalizada lida por todo mundo,
+mas passa a **acompanhar** `patients.name`. A função `syncConversationNames(tx, patientId)`
+(`patient.repository.ts`) copia o nome do cadastro para todas as conversas ligadas ao paciente,
+na mesma transação, em três pontos: PATCH da ficha que mexe em `name`, cadastro completado pelo
+`POST /patients` (D-293) e `findOrCreateByPhone` ao religar conversa já existente (a próxima
+mensagem também conserta divergência antiga). Regras: (1) o nome do perfil do WhatsApp continua
+sem sobrescrever o cadastrado (D-072) — ele só preenche cadastro sem nome, e daí vai à conversa;
+(2) cadastro sem nome (`null`/vazio) **não** apaga o nome da conversa; (3) paciente anonimizado
+não propaga (a anonimização já limpa as conversas, D-075); (4) `tenant_id` casado dos dois lados
+além do RLS. Migração 060 corrige as linhas já gravadas (mesmas regras, idempotente).
+`patient_phone`/`patient_email` continuam "o que o canal informou" (D-059 vale para eles).
+**Alternativa descartada — ler via JOIN (`COALESCE(p.name, c.patient_name)`):** `patient_name` é
+lido em pelo menos dez lugares (lista/detalhe/busca de conversas com índice GIN sobre
+`c.patient_name`, payloads de WebSocket, `message.repository` como `sender_name`, timeline da
+ficha, Operação, propostas, reengajamento, notificações de aprovação). Trocar todos por JOIN
+mexeria na expressão indexada da busca (conflito direto com o CRMLAB-125) e deixaria qualquer
+leitor novo esquecido com o bug de volta. Propagar na escrita conserta todos os leitores de uma
+vez e os pontos de escrita do nome do paciente são poucos e conhecidos.
+**Motivo:** caso de prod de 28/10/2026 — Nova conversa criou paciente e conversa sem nome no
+mesmo segundo; o nome foi gravado no paciente 21 s depois (PATCH da ficha) e a conversa ficou
+vazia no Atendimento. Formato de telefone descartado como causa (mesmo tamanho dos dois lados e
+`patient_id` ligado).
+**Impacto:** `patient.repository.ts` (`syncConversationNames`, `update`),
+`conversation.repository.ts` (`findOrCreateByPhone`), `patient.service.ts`,
+migração 060, SCHEMA.md §2/§45. Frontend: salvar a ficha / cadastrar contato invalida as
+consultas de conversas. Editar o nome NÃO emite evento de WebSocket: outra aba/atendente vê o
+nome novo quando a lista de conversas for invalidada de novo — na prática o próximo
+`conversation.new_message`/`message_updated` de qualquer conversa do tenant, ou ao remontar a tela
+(o QueryClient tem `refetchOnWindowFocus: false` e a lista não faz polling). Revisão: não há evento
+`conversation.updated`; criar um exigiria tipo novo, injetar o `wsHub` no `PatientService` e mexer
+no `ws.ts` que o CRMLAB-122 está mudando, e o payload com o nome iria para o tenant inteiro
+(`emitToTenant`), inclusive para quem não enxerga a conversa — ficou de fora; ponto para o Michel.
+`POST /conversations` ("Enviar mensagem" da ficha) passou a aceitar `patientName` ausente/`null`:
+antes a ficha de contato sem nome mandava o rótulo da tela ("Paciente"), que o upsert gravava como
+nome do cadastro e agora a D-292 levaria a todas as conversas.
+
+### D-293: `POST /patients` completa cadastro existente SEM nome em vez de 409 (CRMLAB-124, emenda D-287 item 2)
+**Decisão:** quando o telefone já existe (mesmo formato ou variante do nono dígito) num cadastro
+**sem nome**, não anonimizado e que quem pede pode editar (`visibilityOf`), o `POST /patients`
+completa esse cadastro: grava o `name` e, só se vazios, `email` e `document`, pelo mesmo
+caminho do PATCH (audit `update_patient`, propagação D-292). Resposta `201` com o
+`PatientDetail` existente (mesmo `id`). Cadastro com nome, anonimizado ou fora do recorte de
+escrita continua `409 phone_already_in_use` como antes.
+**Motivo:** hipótese 4 do card conferida — antes, cadastrar como contato um número que já tinha
+chegado sem nome (webhook sem perfil ou Nova conversa) devolvia 409 e **o nome digitado se
+perdia**; a atendente tinha que abrir a ficha e digitar de novo. Completar só o vazio não
+sobrescreve dado de ninguém, por isso é a opção conservadora.
+**Impacto:** `patient.service.ts` (`completeNameless`), API_CONTRACTS.md (POST /patients).
+Ponto para o Michel confirmar: devolver `201` (e não `200`) para um cadastro que já existia.
+
+### D-294: "Pacientes" vira "Contatos" na interface, e a rota `/patients` vira `/contacts` (CRMLAB-126)
+**Decisão:** o que a equipe vê passa a chamar a pessoa de **contato**: item "Contatos" do menu,
+título e busca da lista, Ficha do contato (cabeçalho, breadcrumb, 404), seções da ficha
+(Orçamentos do contato, inativar/reativar, LGPD exportar/anonimizar, avisos do formulário),
+painel de contexto e busca do Atendimento ("Buscar contato, telefone ou exame", bloco
+"Contatos", "Mostrar/Ocultar contexto do contato"), rótulo de quem mandou mensagem quando não
+há nome ("Contato"), coluna da fila na Gestão da Operação, prévia do tema, textos de ajuda de
+Canais / Alerta de resposta / Tempo de resposta e o nome do arquivo de exportação LGPD baixado
+pela tela (`contato-<id>-<dia>.json`). A rota da tela vira **`/contacts`** e **`/contacts/:id`**
+(decisão do Michel); `/patients` e `/patients/:id` redirecionam com `replace`, preservando
+query e hash, para favoritos e links salvos. Links internos apontam para a rota nova.
+**Fica "paciente" (de propósito):** tudo do código e do contrato — tabela `patients`, rotas da API
+`/api/v1/patients`, tipos, nomes de componente/arquivo, chaves de query, `Content-Disposition`
+do backend; o que vem do laboratório/LIS/Bitlab — coluna "Paciente" de Busca ativa,
+Conciliação e PDF da busca ativa, "Paciente no Bitlab", "Nome do paciente" do atendimento LIS,
+filtros e cartões de Propostas ("Buscar paciente", "Sem paciente"); a variável `{paciente}` do
+reengajamento e da mensagem pronta (é token de template — trocar quebraria mensagens salvas) e
+os textos dessa seção, que a explicam; o aviso de dado de saúde do modal de conexão do WhatsApp;
+os nomes de fluxos/fixtures de e2e.
+**Motivo:** o cadastro (CRMLAB-121) também serve para quem ainda não é paciente (médico,
+responsável, lead); "contato" é o termo que a equipe usa no Atendimento.
+**Impacto:** frontend apenas (`routes/`, `pages/Patients`, `components/patients`,
+`pages/Attendance`, `components/conversation`, `pages/Settings`), PAGES.md, specs unitários e
+`e2e/workflows/flow-8-patient.spec.ts` (+2 testes do redirect). Sem migração, sem mudança de API.
+
+### D-296: Busca por pedaço do nome, sem acento e sem caixa (CRMLAB-125)
+**Decisão:**
+1. A busca por nome deixa o full-text (`to_tsvector @@ plainto_tsquery`, que só casava palavra
+   inteira com radical) e passa a casar **pedaço**: cada palavra digitada vira
+   `lower(crm_unaccent(<nome>)) LIKE '%palavra%'`, todas obrigatórias (AND), em qualquer ordem.
+   "mar" acha "Maria" e "Marcos"; "silva maria" acha "Maria da Silva"; "jose" acha "José".
+2. `crm_unaccent` (043) **antes** do `lower` (o card sugeria o contrário): `lower()` de letra
+   acentuada depende do locale do banco; sem acento, tudo é ASCII e funciona em qualquer locale.
+   O termo é dobrado no JS (NFD sem marcas + minúscula), espelho da expressão do banco.
+3. `%`, `_` e `\` digitados são literais (escape padrão do LIKE). No máximo 6 palavras.
+   Conectivos de nome (`de`, `da`, `do`, `das`, `dos`, `e`, `d'`) saem do filtro quando há outra
+   palavra no termo ("maria de souza" acha "Maria Souza", como no full-text antigo, que os tinha
+   como stopword); sozinhos continuam valendo ("da" acha "Daniela"). O limite de 6 conta depois.
+4. Com busca, ordena por relevância antes da ordenação pedida: 0 = nome começa pela 1ª palavra;
+   1 = outra palavra do nome começa por ela; 2 = só contém (ou casou por telefone/CPF). Na lista
+   do Atendimento, abaixo das fixadas.
+5. Telefone e CPF seguem iguais (dígitos, mínimo 3), em OR com o nome.
+6. Um helper só para os dois lugares: `repositories/name-search.ts`, usado por
+   `patient.repository.ts` (Pacientes, busca de paciente do Atendimento, Nova conversa) e
+   `conversation.repository.ts` (lista do Atendimento).
+7. Frontend: busca só a partir de 2 caracteres (`lib/search-term.ts`), debounce de 300 ms (o da
+   `SearchInput`, que já existia) e o `signal` do TanStack Query cancela o pedido do termo
+   anterior (`patientsApi.list` e `conversationsApi.list` aceitam `{ signal }`).
+**Motivo:** a equipe digita o começo do nome e espera a lista ir filtrando; o full-text exigia a
+palavra inteira e ainda diferenciava acento.
+**Impacto:** `name-search.ts` (novo), `patient.repository.ts`, `conversation.repository.ts`,
+migração 061 (D-297). Frontend `Patients/List.tsx`, `Attendance/index.tsx`,
+`Attendance/ContactSearch.tsx`, `api/patients.ts`, `api/conversations.ts`, `lib/search-term.ts`.
+Docs: API_CONTRACTS §2 e §2c, SCHEMA §14 e índices, SERVICES, PAGES. Sem busca (termo vazio ou
+de 1 caractere), a ordem da lista é exatamente a de antes: a relevância só entra no `ORDER BY`
+quando há termo.
+
+### D-297: Índice trigram condicional ao pg_trgm (CRMLAB-125, migração 061)
+**Decisão:**
+1. Migração 061 cria `pg_trgm` (`CREATE EXTENSION IF NOT EXISTS`, dentro de um `DO` com
+   `EXCEPTION`) e, **só se a extensão existir**, os índices GIN `gin_trgm_ops`
+   `idx_patients_name_trgm` e `idx_conversations_patient_name_trgm` sobre a mesma expressão da
+   consulta. Se a extensão não puder ser criada, a migração passa e a busca segue correta, sem
+   índice.
+2. Prod/hml: `pg_trgm` vem no contrib do `postgres:16-alpine` e é "trusted" no PG 13+ — a role dona
+   do banco (`MIGRATE_DATABASE_URL`, D-165) cria sem superusuário.
+3. Testes: o PGlite traz `pg_trgm` como pacote à parte; o `PgliteDriver.create()` passa
+   `extensions: { pg_trgm }`, então os testes exercitam o caminho com índice
+   (`name-search.spec.ts` confere que o planner o usa).
+4. Plano esperado em tabela grande: `Bitmap Index Scan on idx_*_trgm` → `Bitmap Heap Scan`, com o
+   `tenant_id` (RLS) como filtro. Termo de 1–2 letras não gera trigrama útil (o planner tende a
+   seq scan) — por isso o mínimo de 2 caracteres no front e o volume pequeno por tenant.
+5. Os índices full-text antigos (`idx_patients_name`, `idx_conversations_patient_name`) ficam,
+   sem uso. Removê-los é uma migração futura, fora deste card.
+6. `CREATE INDEX` **sem** `CONCURRENTLY`: o runner aplica cada migração numa transação, onde
+   `CONCURRENTLY` não roda. Bloqueia escrita em `patients`/`conversations` durante a criação —
+   aceitável com o volume atual (milhares de linhas, segundos). Se as tabelas crescerem muito,
+   índice desse tipo passa a ser criado à mão com `CONCURRENTLY` fora do runner.
+**Motivo:** `LIKE '%x%'` não usa B-tree; o trigram é o índice que serve. O condicional evita
+quebrar o deploy num ambiente sem a extensão.
+**Impacto:** `061_name_search_trigram.sql`, `backend/src/db/pglite-driver.ts`, SCHEMA.md.
+
+### D-298: "Vincular orçamento" na conversa reaproveita o envio do cartão (CRMLAB-129)
+**Decisão:**
+1. O painel de contexto da conversa (`PatientContext`, seção Propostas) ganha o botão
+   **"Vincular orçamento"**, que abre o `LinkBudgetModal`: lista dos orçamentos do Bitlab em
+   "Novo orçamento" **sem conversa** (`GET /proposals?status=novo_contato&withoutConversation=true&limit=100`),
+   com nº, nome, valor, data de emissão e usuário do Bitlab, selo "Pré-cadastro feito" e busca
+   por nome ou nº (no servidor).
+2. Filtro novo `?withoutConversation=true` em `GET /proposals` (`conversation_id IS NULL`), com o
+   recorte por papel de sempre (atendente: fila comum e as dela). `?search=` só com dígitos passa a
+   casar também o `lisBudgetNumber` (sem zeros à esquerda) — vale também para o Pipeline.
+3. Ordem: os mais parecidos com o nome da conversa primeiro (`nameSimilarity`, a mesma nota da
+   D-203, chip "Mais parecido"); empate e nota zero na ordem do servidor (mais novo antes).
+4. Escolher abre o `SendProposalPanel` em modo `send` com a **conversa fixa** (prop
+   `conversationId`, sem lista de conversas): mensagem do modelo das Regras com a escolha de
+   modelo (A prazo / À vista, D-265) e "Enviar". O envio é o **mesmo** `POST /proposals/:id/send`
+   (D-200/D-201): vincula, manda pelo WhatsApp, move para `bitlabSendTarget` (Orçamento enviado, ou
+   Negociação com requisição) e quem envia vira dona. **Não existe "só vincular"** (decisão do
+   Michel): o vínculo é sempre o envio da mensagem.
+5. Sem polling: a lista usa a chave `['proposals', filtros]`, que os eventos WS de proposta já
+   invalidam (`proposal.created` quando entra orçamento novo). Depois do envio, a lista de
+   propostas da conversa atualiza pela invalidação da mutação.
+6. Botão só aparece com a regra "Nascer do orçamento do Bitlab" ligada (D-246) — e **some
+   enquanto as Regras carregam**, para não piscar —, com a conversa `active` (o envio exige
+   `CONVERSATION_ARCHIVED` fora disso) e com a conversa do canal `whatsapp` (revisão: em
+   `sms`/`web`/`direct` o `createFromAgent` só grava a mensagem e nada chega ao paciente; o card
+   exige que saia pelo WhatsApp). O `POST /proposals/:id/send` em si não confere o canal — o
+   Pipeline já deixava escolher qualquer conversa ativa; endurecer o backend fica para o Michel.
+   Conversa **encerrada** esconde o botão, embora responder encerrada pelo Composer a reabra
+   (D-273): o envio do cartão (D-200) nunca reabriu; igualar fica para o Michel decidir.
+7. Corrida: já era atômica (`lockForSend` com `FOR UPDATE` + `send_claim_id`, D-201). A tela
+   traduz `PROPOSAL_ALREADY_SENT` para "O orçamento já foi enviado por outra atendente." (ou
+   "Outra atendente está enviando este orçamento agora." com `reason: in_progress`) — vale também
+   no painel do Pipeline.
+**Motivo:** a atendente não precisa sair do Atendimento para achar o cartão no Pipeline; um
+caminho só de envio mantém auditoria, régua de fatos e trava de corrida iguais.
+**Impacto:** `shared/types/proposal.types.ts` (`ListProposalsQuery.withoutConversation`),
+`proposal.routes.ts`, `proposal.service.ts`, `proposal.repository.ts`; frontend
+`components/proposal/LinkBudgetModal.tsx` (novo), `SendProposalPanel.tsx` (prop `conversationId`,
+`sendErrorMessage`, `proposal: Proposal`), `PatientContext.tsx` (botão). Sem migração.
+
+### D-299: Na lista do "Vincular orçamento", só os cartões que a pessoa pode enviar; sem exames (CRMLAB-129)
+**Decisão:**
+1. A lista esconde os cartões em que a pessoa não poderia clicar "Enviar" no Pipeline
+   (`canActOnCard`: dona ou fila comum, admin sempre, gestor só com "Mover card de outra
+   atendente"). Opção conservadora: mostrar e deixar o servidor recusar com 403 seria pior.
+2. **Exames não aparecem**: o CRM não guarda os exames do orçamento do Bitlab (`lis_budgets` só
+   tem número, paciente, convênios/valores, data e usuário). Mostrar exames exige trazer o item do
+   orçamento na sincronia + migração — fica para card próprio.
+**Ponto para o Michel confirmar:** os dois itens acima, e os dois de D-298 item 6 (canal no
+backend; reabrir encerrada ao vincular).
+
+### D-300: Confirmação de leitura do chat interno derivada de `channel_reads` — quem é membro (CRMLAB-123)
+**Decisão:**
+1. "Lida" é derivada, nunca gravada por mensagem: `GET /internal-chat/channels/:id/messages`
+   devolve `readState` (`readUpTo` + `readers`), calculado em UMA consulta por canal a partir de
+   `channel_reads.last_read_at`. A tela compara `createdAt` de cada mensagem própria com ele.
+2. **Membros de um canal comum** (`kind = 'channel'`, público no tenant) = usuários **ativos** do
+   tenant, exceto quem pergunta e `platform_operator`. Escolha conservadora: o canal é visível a
+   todo mundo do laboratório, então "todos leram" só vale quando todo mundo que pode ler leu — ✓✓
+   nunca afirma leitura que não houve. Inativo/desativado sai da conta, então não trava o ✓✓ para
+   sempre. Efeito colateral aceito: quem entra na equipe depois e nunca abriu o canal volta a
+   deixar as mensagens antigas em ✓ até abrir (ele não leu).
+3. **DM**: o membro é o outro participante, mesmo inativo (é uma conversa a dois — se ele nunca
+   abriu, não leu).
+4. Canal sem outro membro (laboratório de uma pessoa só): nunca ✓✓.
+5. Cada leitor traz `readUpTo` = `created_at` da mensagem mais recente até a sua `last_read_at`
+   (comparação no SQL, as duas colunas `TIMESTAMP`), e o canal o MENOR entre eles. A tela só compara
+   valores da mesma coluna pelo mesmo `toIso` — sem fuso/precisão no meio. Limite aceito: duas
+   mensagens no mesmo milissegundo com uma leitura entre elas sairiam iguais.
+6. O hover ("Lida por / Ainda não leram") mostra a ÚLTIMA abertura do canal ("abriu dd/mm hh:mm"),
+   não o instante exato em que leu aquela mensagem — não há horário por mensagem.
+7. Editada mantém o tique (referência é o `createdAt`); apagada não mostra tique.
+**Motivo:** o card pede ✓✓ como no WhatsApp sem custo por mensagem; `channel_reads` já existe
+(D-068) e serve tanto ao contador quanto à confirmação. A definição de membro precisava ser
+explícita porque canal comum não tem lista de membros.
+**Impacto:** `shared/types/internal-chat.types.ts` (`InternalChannelReadState`,
+`InternalChannelReader`, `internalMessageReadStatus`, `internalMessageReaders`, `channelReadUpTo`);
+`internal-chat.repository.ts` (`listChannelReaders`); `internal-chat.service.ts` (`listMessages`).
+Frontend: `InternalMessageItem` (tique + hover), `MessagePanel`, `queries.ts`; `MessageStatusTick`
+ganhou `title` opcional e passou a ser exportado de `components/conversation`. Sem migração.
+
+### D-301: ✓✓ ao vivo por `internal_chat.channel_read` e leitura com o canal aberto (CRMLAB-123)
+**Decisão:**
+1. `POST /internal-chat/channels/:id/read` diz, no mesmo `INSERT ... ON CONFLICT` (CTE com a
+   leitura anterior), se a leitura passou de alguma mensagem de OUTRA pessoa não apagada. Só então
+   emite WS `internal_chat.channel_read` `{ channelId, userId, readUpTo, lastReadAt }`: DM →
+   `emitToUser` do outro participante; canal → tenant inteiro. Reabrir canal já lido não emite.
+   `readUpTo`/`lastReadAt` saem do mesmo comando, com a mesma regra do `readState`.
+2. O frontend **não refaz GET** por esse evento (revisão do card, por causa do CRMLAB-122): num
+   canal o evento vai a todas as abas do laboratório a cada leitura de qualquer pessoa, e
+   invalidar `GET .../messages` em cada uma recriaria a tempestade de 429. O payload vai direto
+   para um store em memória (`stores/internal-chat-reads.store.ts`, mesma exceção da presença do
+   paciente, D-226) e a tela junta com o `readState` do último GET (`mergeReadState`, vale a
+   leitura de `lastReadAt` mais recente por leitor; leitor fora da lista do servidor é ignorado).
+   Zero requisição por evento, com a aba visível ou escondida. Sem polling, sem endpoint novo.
+3. Com o canal ABERTO pela pessoa (clique/deep link) e a aba visível, mensagem nova de outra
+   pessoa chama `POST .../read` de novo (`useMarkReadWhileOpen`); aba escondida marca ao voltar.
+   As marcações são agrupadas em 1,5 s (`MARK_READ_WHILE_OPEN_DEBOUNCE_MS`): uma rajada vira UM
+   POST por pessoa; trocar de canal/sair da tela dispara a pendente na hora. Não há laço evento →
+   POST → evento: o `channel_read` não mexe nas mensagens, e só mensagem nova de outra pessoa
+   agenda POST.
+   Antes, quem estava com a DM aberta só "lia" ao clicar de novo no canal — o ✓✓ de quem escreveu
+   ficaria cinza enquanto as duas conversavam. O canal auto-selecionado na entrada continua sem
+   marcar (D-068 item 1 do `handleSelect`). Efeito colateral: o badge de não lidas do canal aberto
+   também passa a zerar sozinho.
+**Motivo:** o card pede atualização na hora, sem recarregar, e o CRMLAB-122 está reduzindo
+requisições — evento só quando há o que mudar, e nenhum GET por evento.
+**Impacto:** `websocket.types.ts`; `internal-chat.repository.ts` (`markChannelRead` devolve
+`boolean`); `internal-chat.service.ts`; `frontend/src/api/ws.ts` (um `case`, sem invalidação); `stores/internal-chat-reads.store.ts`;
+`pages/InternalChat/queries.ts` (`useMarkReadWhileOpen`) e `index.tsx`. Docs:
+`API_CONTRACTS.md` §3b, `FRONTEND_BACKEND.md`, `SERVICES.md` §7, `PAGES.md` §9.
+
+### D-302: Figurinha enviada pelo Atendimento sai das favoritas do laboratório, sem conversão (CRMLAB-127)
+**Decisão:**
+1. **Origem:** a atendente envia apenas figurinhas **favoritadas** pelo laboratório. Favoritar é
+   explícito, pelo menu do balão de uma mensagem `sticker` (recebida ou enviada). Não existe pool
+   automático das figurinhas recebidas (uma figurinha pode ser a foto de um paciente, LGPD).
+2. **Guarda:** a favorita é uma **cópia** em `sticker_favorites` (por tenant, RLS, `sha256` único,
+   `animated`, `created_by`) com arquivo próprio. Não aponta para `message_media`, que cai em
+   cascata com a mensagem. Remover é permitido a gestor e a quem favoritou.
+3. **Formato:** só `image/webp` (magic bytes), 512×512 lido do cabeçalho, até 100 KB estática ou
+   500 KB animada. Fora disso, recusa ao favoritar. Sem conversão no CRM nesta versão.
+4. **Envio (QR/Evolution v2.3.7):** `POST /message/sendSticker/{instance}` com
+   `{ number, sticker: <base64>, notConvertSticker: true, quoted? }`. A flag é obrigatória: sem
+   ela o gateway roda `sharp().webp()`, que não redimensiona e, em base64, descarta a animação.
+   Rota e flag conferidas no fonte da tag 2.3.7 (`mediaSticker`, `convertToWebP`). Revisar no
+   upgrade da imagem.
+5. **Mensagem:** `messageType: 'sticker'` também na saída, sem legenda e sem o nome do
+   participante (D-263, como o áudio). Citação (D-221) vale. O balão é o `StickerMessage` (D-236
+   item 5).
+6. **Cloud API (Meta):** fora. O driver recusa com erro claro (o mesmo do `sendMedia`) e a tela
+   esconde o botão. Entra junto com o upload de mídia da Meta (`POST /{phone-number-id}/media`
+   + `type: "sticker"` com `id`).
+7. **Fora desta versão:** pacote cadastrado pelo gestor e "criar figurinha a partir de imagem"
+   (`sharp` → WebP 512×512, depende do CRMLAB-128). Se vier, grava como favorita e reaproveita o
+   envio do item 4.
+**Motivo:** o arquivo recebido já está no padrão exato do WhatsApp (WebP 512×512, ≤100/500 KB),
+então reenviá-lo cru elimina o risco de formato e mantém a animação. A curadoria explícita evita
+espalhar a imagem de um paciente para outro.
+**Impacto:** migration `sticker_favorites`; `shared/types` (tipos + tetos de bytes);
+`evolution-client.ts` (`sendSticker`); `whatsapp.service.ts` (driver: mock/Evolution/cloud_api);
+`message.service.ts` (`createStickerFromAgent`); rotas `/stickers` e
+`/conversations/:id/stickers`; `Composer` (botão + popover); `MessageBubble` (Favoritar/Remover);
+API_CONTRACTS §2d/§Evolution.

@@ -96,7 +96,7 @@ describe('PatientsList', () => {
     const user = userEvent.setup({ delay: null });
     renderPage();
     await screen.findByText('João Santos');
-    const field = screen.getByLabelText('Buscar paciente');
+    const field = screen.getByLabelText('Buscar contato');
 
     await user.type(field, 'm');
     // Passa do debounce de 300 ms: 1 letra não vira busca.
@@ -124,7 +124,7 @@ describe('PatientsList', () => {
           })
         : Promise.resolve(listResponse),
     );
-    const field = screen.getByLabelText('Buscar paciente');
+    const field = screen.getByLabelText('Buscar contato');
 
     await user.type(field, 'ma');
     await waitFor(() =>

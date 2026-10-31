@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { defaultPeriod, PeriodFilter, previousPeriod } from './PeriodFilter';
+import { defaultPeriod, isPeriodInvalid, PeriodFilter, previousPeriod } from './PeriodFilter';
 
 describe('PeriodFilter', () => {
   it('defaultPeriod() cobre os últimos 30 dias terminando hoje', () => {
@@ -66,5 +66,32 @@ describe('PeriodFilter', () => {
     );
 
     expect(screen.getByRole('alert')).toHaveTextContent('Data final anterior à inicial.');
+  });
+
+  // CRMLAB-132: o input de data entrega '' enquanto a pessoa apaga/digita, e
+  // `toISOString()` de data inválida derrubava `/results` inteira.
+  it('previousPeriod() com data vazia ou incompleta não lança e devolve o período como veio', () => {
+    for (const period of [
+      { startDate: '', endDate: '2026-09-30' },
+      { startDate: '2026-09-01', endDate: '' },
+      { startDate: '202-09-01', endDate: '2026-09-30' },
+    ]) {
+      expect(() => previousPeriod(period)).not.toThrow();
+      expect(previousPeriod(period)).toEqual(period);
+    }
+  });
+
+  it('isPeriodInvalid() pega data vazia, incompleta e final antes da inicial', () => {
+    expect(isPeriodInvalid({ startDate: '2026-09-01', endDate: '2026-09-30' })).toBe(false);
+    expect(isPeriodInvalid({ startDate: '', endDate: '2026-09-30' })).toBe(true);
+    expect(isPeriodInvalid({ startDate: '2026-09-01', endDate: '' })).toBe(true);
+    expect(isPeriodInvalid({ startDate: '2026-13-45', endDate: '2026-09-30' })).toBe(true);
+    expect(isPeriodInvalid({ startDate: '2026-09-10', endDate: '2026-09-01' })).toBe(true);
+  });
+
+  it('data vazia pede as duas datas, sem round-trip ao servidor', () => {
+    render(<PeriodFilter value={{ startDate: '', endDate: '2026-09-01' }} onChange={vi.fn()} />);
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Informe as duas datas.');
   });
 });

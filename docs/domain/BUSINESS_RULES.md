@@ -767,8 +767,13 @@ pagamento** (o mesmo orçamento repete em várias linhas).
 **O filtro `tipoData=alteracao` considera a `DATA_ESTORNO` desde 30/09/2026** (resposta do
 Bitlab, validada em hml no mesmo dia com o OR66760): um pagamento estornado depois da leitura
 **volta** na consulta incremental, na janela do estorno. Por isso a sincronização é sempre
-incremental, sem releitura diária (D-253, que substitui a releitura de 90 dias da D-189;
+incremental, sem releitura de 90 dias (D-253, que substitui a releitura da D-189;
 SERVICES.md §24).
+
+**`DATA_ORÇAMENTO` é a hora em que o orçamento foi iniciado, não a hora em que foi salvo**
+(CRMLAB-133, D-304). Um orçamento salvo depois de outro mais novo chega com data anterior à marca
+d'água: por isso a janela incremental começa 3 h antes da marca e grava só orçamento ou pagamento que
+o CRM ainda não tem, e uma rede de segurança diária (primeiro tique depois das 03:00) relê ontem e hoje.
 
 ### 11.11 Extrato de pagamentos e recebido (CRMLAB-53, D-188/D-189)
 - **Extrato:** `lis_budget_payments` (SCHEMA.md §26a), uma linha por pagamento, chave

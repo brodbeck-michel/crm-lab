@@ -5628,7 +5628,8 @@ Configuração e disparo da sincronização dos orçamentos pela API de Orçamen
 - `intervalSeconds` (D-249, substitui `intervalMinutes`): `LIS_SYNC_INTERVAL_MS / 1000`, só para a
   tela dizer "a cada 30 s" / "a cada 2 min". `0` = agendador desligado neste servidor (hml).
 - `lastFullScanOn` **saiu** (CRMLAB-80, D-253): sem releitura diária de 90 dias, não há o que
-  mostrar. A coluna `last_full_scan_on` fica no banco, sem uso.
+  mostrar. A coluna `last_full_scan_on` voltou a ser gravada pela rede diária da D-304 (CRMLAB-133),
+  mas continua fora da API.
 
 #### PATCH /settings/lis-integration (admin)
 

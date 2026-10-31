@@ -124,6 +124,8 @@ describe('BitlabClient.fetchBudgetsPage', () => {
         paymentId: null,
         paymentStatus: null,
         reversedAt: null,
+        // Maior entre emissao (15/09 10:22) e pagamento (28/09 14:05) — D-304.
+        changedAt: '2026-09-28 14:05:00',
         paymentMethod: null,
         cardBrand: null,
         // API antiga (sem os campos de D-278): tudo null, liquido = bruto.

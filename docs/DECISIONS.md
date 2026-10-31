@@ -6730,3 +6730,41 @@ todos `.jfif`.
 estranha que a atendente anexar, sem reescrever `content`/`file_name` (D-236 item 8).
 **Impacto:** `shared/types/media.types.ts`, `media.routes.ts`, `evolution-client.ts`,
 `useConversationImages.ts`; API_CONTRACTS §2d (GET /media) e §Evolution (sendMedia).
+
+## 2026-10-31 — Sincronização do LIS com janela sobreposta (CRMLAB-133)
+
+### D-304: Janela incremental 3 h antes da marca, grava só o que falta, e rede diária às 03:00 (CRMLAB-133)
+**Contexto:** em 30/10/2026 as atendentes do Santé reclamaram que orçamentos não viravam cartão.
+A sincronização estava saudável (a cada 30 s, sem erro), mas a API tinha 27 orçamentos emitidos
+naquele dia e o CRM 23: faltavam 71459, 71462, 71468 e 71479. `DATA_ORÇAMENTO` é a hora em que o
+orçamento foi **iniciado**, não a hora em que foi salvo (a numeração sai fora da ordem do horário).
+Um orçamento salvo depois de outro mais novo chega ao Bitlab com data anterior à marca d'água. A
+janela começava **na** marca, então ele nunca voltava. Mesmo que voltasse, a D-249 descartava a
+resposta inteira quando a `marcaDagua` não andava, e ela não anda nesse caso: o 71480 (10:29:43) já
+tinha chegado quando o 71479 (10:28:52) apareceu. É a mesma falha que a sync completa de 25/10 achou
+(25 orçamentos). Recuperação em 31/10 recuando a marca para 25/10: +8 cartões.
+**Decisão:**
+1. **Janela sobreposta:** em `incremental` com marca, `dataInicio` = marca − 3 h
+   (`WINDOW_OVERLAP_MS`). Sem marca, e no `full`, nada muda (`initialDays`).
+2. **Grava só o que falta:** cada linha da API ganha `changedAt` = a maior entre emissão, pagamento
+   e estorno (o mesmo critério do filtro `alteracao`). Linha com `changedAt` **na marca ou depois**
+   segue a D-249 (marca que não andou = nada novo). Linha **antes** da marca entra só se o orçamento
+   não existe em `lis_budgets`, ou se o pagamento dela (`payment_key`) não está no extrato ou mudou
+   de situação. Linha sem `changedAt` (planilha, teste) conta como nova. Rodada sem nada a gravar
+   continua sem `lis_imports`. Linha atrasada gravada sai no log `lis_sync.late_rows`.
+3. **Rede de segurança diária:** o primeiro tique do **agendador** a partir das 03:00 de Brasília
+   (`CATCH_UP_HOUR`) começa em ontem 00:00, com o mesmo filtro do item 2. A data fica em
+   `lis_sync_settings.last_full_scan_on`, coluna que a D-253 deixou sem uso (**sem migração**). A
+   primeira carga (sem marca) vale como a rede do dia. "Sincronizar agora" nunca faz a rede.
+4. **Emenda à D-249 item 2 e à D-253 itens 1 e 2:** a janela não começa mais na marca, e a coluna
+   `last_full_scan_on` volta a ser gravada. A marca continua sem recuar e a releitura de 90 dias da
+   D-189 continua fora.
+**Motivo:** reler é idempotente (`lis_budgets` por número, extrato por `payment_key`, proposta do
+Bitlab por `lis_budget_number`), mas regravar 3 h de linhas a cada 30 s encheria `lis_imports` e
+reprocessaria a régua à toa. Filtrar pelo que falta mantém a rodada vazia vazia. 3 h cobrem o caso
+visto (minutos); a rede diária cobre quem deixa o orçamento aberto por mais tempo.
+**Impacto:** `bitlab-client.ts` (`changedAt`, `shiftBitlabDateTime`), `lis-spreadsheet.ts`
+(`LisSpreadsheetRow.changedAt`), `lis-sync-settings.repository.ts` (`startRun`, `finishRun`,
+`knownBudgets`), `lis-sync.service.ts`; testes `lis-sync.spec.ts`, `lis-payments.spec.ts`,
+`bitlab-client.spec.ts`; SERVICES §24, BUSINESS_RULES §11.10, SCHEMA `lis_sync_settings`,
+API_CONTRACTS §10.3. **Deploy:** sem migração e sem variável nova.

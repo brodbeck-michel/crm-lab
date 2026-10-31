@@ -59,6 +59,11 @@ export interface LisSpreadsheetRow {
   paymentMethod?: string | null;
   cardBrand?: string | null;
   /**
+   * Maior entre emissão, pagamento e estorno, `YYYY-MM-DD HH:mm:ss` (Brasília). Só a API
+   * tem: é o que separa, na janela sobreposta, a linha nova da linha já lida (D-304).
+   */
+  changedAt?: string | null;
+  /**
    * Desconto/acréscimo/líquido por convênio (CRMLAB-114, D-278). Só a API tem
    * (`PER_DESCONTO{n}`, `VL_DESCONTO{n}`, `VL_ACRESCIMO{n}`, `VL_APAGAR{n}`);
    * na planilha ficam ausentes e o líquido cai no bruto. O percentual é só
@@ -130,6 +135,7 @@ type SheetField = Exclude<
   | 'reversedAt'
   | 'paymentMethod'
   | 'cardBrand'
+  | 'changedAt'
   | LisDiscountField
 >;
 

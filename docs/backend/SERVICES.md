@@ -1504,11 +1504,17 @@ ao agendador):
 - **Intervalo padrão de 30 s** (`LIS_SYNC_INTERVAL_MS=30000`, D-249; era 2 min na D-199). O tique
   é ignorado inteiro enquanto o anterior ainda roda (`tickInProgress`), além da trava por tenant.
   `lis_sync.completed` sai em `info` só quando a rodada recebeu orçamentos; rodada vazia é `debug`.
-- **Marca que não andou = rodada vazia (D-249):** a janela incremental começa **na** marca
-  (inclusiva) e o Bitlab devolve de novo a linha da própria marca. Em `incremental`, se a
-  `marcaDagua` da resposta é igual à gravada, as linhas são descartadas: sem `lis_imports`, sem
-  reprocessar, `received: 0`. Linha gravada pelo Bitlab no mesmo segundo da marca depois da
-  consulta anterior volta na primeira rodada em que a marca andar (a janela é inclusiva, D-253).
+- **Janela sobreposta (CRMLAB-133, D-304):** com marca, a janela incremental começa **3 h antes**
+  dela (`WINDOW_OVERLAP_MS`), porque `DATA_ORÇAMENTO` é o início do orçamento e o salvo depois de
+  um mais novo chega com data anterior à marca. Cada linha da API traz `changedAt` (maior entre
+  emissão, pagamento e estorno):
+  - `changedAt` **na marca ou depois** (ou ausente): **marca que não andou = nada novo (D-249)** —
+    a linha repetida da própria marca é descartada; linha gravada no mesmo segundo da marca volta
+    quando a marca andar (D-253);
+  - `changedAt` **antes** da marca: entra só se o orçamento não existe em `lis_budgets` ou se o
+    pagamento (`payment_key`) falta no extrato ou mudou de situação
+    (`LisSyncSettingsRepository.knownBudgets`). Log `lis_sync.late_rows` quando entra alguma;
+  - nada a gravar = sem `lis_imports`, `received: 0`.
 - `runScheduledTick` roda os tenants **em série**, não em paralelo: é um por laboratório, e
   série não compete com as requisições da tela pelo pool.
 - O tique nunca lança: cada tenant tem o próprio `try/catch`. Um laboratório com erro não impede
@@ -1519,13 +1525,16 @@ ao agendador):
 - **Tique sempre incremental (CRMLAB-80, D-253 — substitui a releitura diária da D-189):**
   `runForTenant(tenantId, triggeredBy, mode)` com `mode` `incremental` | `full` | `auto` (só o
   agendador passa `auto`). O estorno volta na janela incremental (BUSINESS_RULES.md §11.10), então:
-  - `auto` é **sempre** `incremental`. Não há releitura de madrugada;
+  - `auto` é **sempre** `incremental`. Não há releitura de 90 dias;
   - `incremental` sem marca d'água (primeira carga): `dataInicio` = hoje − `LIS_SYNC_INITIAL_DAYS`
-    (90) às 00:00:00. Com marca: a partir da marca;
+    (90) às 00:00:00. Com marca: 3 h antes da marca (D-304);
+  - **rede de segurança diária (D-304):** o primeiro tique `auto` a partir das 03:00 de Brasília
+    (`CATCH_UP_HOUR`) começa em ontem 00:00, com o mesmo filtro "só o que falta", e grava a data em
+    `last_full_scan_on`. A primeira carga vale como a rede do dia;
   - `full` (ignora a marca, janela de `initialDays`) continua no service, mas nada o dispara hoje;
   - o estorno atualiza a situação pelo `ID_PAGAMENTO` (§19) no mesmo `ingestRows`;
   - a marca **nunca recua**: `finishRun` guarda a maior entre a gravada e a recebida;
-  - `lis_sync_settings.last_full_scan_on` não é mais lida nem gravada (coluna mantida, D-253 item 2);
+  - `lis_sync_settings.last_full_scan_on` guarda a data da rede diária (D-304; a D-253 tinha tirado o uso);
   - **"Sincronizar agora" é sempre `incremental`**.
 
 ### 24.1 Contrato assumido da API de Orçamentos do Bitlab (`backend/src/lib/bitlab-client.ts`)

@@ -245,7 +245,8 @@ describe('POST /settings/lis-integration/sync', () => {
     bitlab.script = [page([], null)];
     await sync(adminA);
 
-    expect(bitlab.calls[1]?.query.dataInicio).toBe('2026-09-25 10:00:00');
+    // 3 h antes da marca: pega o orcamento salvo depois de outro mais novo (D-304).
+    expect(bitlab.calls[1]?.query.dataInicio).toBe('2026-09-25 07:00:00');
   });
 
   it('rodada vazia nao grava historico de importacao', async () => {
@@ -269,7 +270,7 @@ describe('POST /settings/lis-integration/sync', () => {
     bitlab.script = [page([row('1')], '2026-09-25 10:00:00')];
     const repeated = await sync(adminA);
 
-    expect(bitlab.calls[1]?.query.dataInicio).toBe('2026-09-25 10:00:00');
+    expect(bitlab.calls[1]?.query.dataInicio).toBe('2026-09-25 07:00:00');
     expect(repeated).toMatchObject({ status: 'completed', received: 0, importId: null, watermark: '2026-09-25 10:00:00' });
     expect(repeated.settings.lastSuccessAt).not.toBeNull();
     const history = await app.agent.get('/api/v1/lis-imports').set(app.auth(adminA));
@@ -280,6 +281,116 @@ describe('POST /settings/lis-integration/sync', () => {
     const moved = await sync(adminA);
     expect(moved).toMatchObject({ status: 'completed', received: 2, watermark: '2026-09-25 10:00:30' });
     expect((await budgetsOf(tenantA.id)).map((b) => b.number)).toEqual(['1', '2']);
+  });
+
+  describe('janela sobreposta: orcamento salvo atrasado (CRMLAB-133, D-304)', () => {
+    const at = (changedAt: string) => ({ changedAt });
+
+    async function importsCount(): Promise<number> {
+      const history = await app.agent.get('/api/v1/lis-imports').set(app.auth(adminA));
+      return (history.body as ListLisImportsResponse).imports.length;
+    }
+
+    it('71479: chega depois do 71480 com data anterior a marca e entra, mesmo com a marca parada', async () => {
+      await configure(adminA, { apiKey: KEY, enabled: true });
+      bitlab.script = [
+        page(
+          [row('71478', at('2026-10-30 10:04:46')), row('71480', at('2026-10-30 10:29:43'))],
+          '2026-10-30 10:29:43',
+        ),
+      ];
+      await sync(adminA);
+
+      // O 71479 (iniciado 10:28:52) so foi salvo agora; a marca do Bitlab continua 10:29:43.
+      bitlab.script = [
+        page(
+          [
+            row('71478', at('2026-10-30 10:04:46')),
+            row('71479', at('2026-10-30 10:28:52')),
+            row('71480', at('2026-10-30 10:29:43')),
+          ],
+          '2026-10-30 10:29:43',
+        ),
+      ];
+      const second = await sync(adminA);
+
+      expect(bitlab.calls[1]?.query.dataInicio).toBe('2026-10-30 07:29:43');
+      expect(second).toMatchObject({ status: 'completed', received: 1, watermark: '2026-10-30 10:29:43' });
+      expect((await budgetsOf(tenantA.id)).map((b) => b.number)).toEqual(['71478', '71479', '71480']);
+      expect(await importsCount()).toBe(2);
+    });
+
+    it('reler a janela com tudo ja gravado e rodada vazia: nao grava historico', async () => {
+      await configure(adminA, { apiKey: KEY, enabled: true });
+      const rows = [row('1', at('2026-10-30 08:00:00')), row('2', at('2026-10-30 09:00:00'))];
+      bitlab.script = [page(rows, '2026-10-30 09:00:00')];
+      await sync(adminA);
+
+      bitlab.script = [page(rows, '2026-10-30 09:00:00')];
+      const again = await sync(adminA);
+
+      expect(again).toMatchObject({ status: 'completed', received: 0, importId: null });
+      expect(await importsCount()).toBe(1);
+    });
+
+    it('marca que andou grava so o novo; o ja conhecido de antes da marca fica de fora', async () => {
+      await configure(adminA, { apiKey: KEY, enabled: true });
+      bitlab.script = [page([row('1', at('2026-10-30 08:00:00'))], '2026-10-30 08:00:00')];
+      await sync(adminA);
+
+      bitlab.script = [
+        page([row('1', at('2026-10-30 08:00:00')), row('2', at('2026-10-30 09:00:00'))], '2026-10-30 09:00:00'),
+      ];
+      const moved = await sync(adminA);
+
+      // A linha da marca antiga (08:00) volta junto, como antes da D-304 (D-253 item 3).
+      expect(moved).toMatchObject({ received: 2, watermark: '2026-10-30 09:00:00' });
+
+      bitlab.script = [
+        page(
+          [
+            row('1', at('2026-10-30 08:00:00')),
+            row('2', at('2026-10-30 09:00:00')),
+            row('3', at('2026-10-30 09:30:00')),
+          ],
+          '2026-10-30 09:30:00',
+        ),
+      ];
+      const third = await sync(adminA);
+      // So a linha da marca anterior (09:00, inclusiva) e a nova; o 1 (08:00) e conhecido.
+      expect(third).toMatchObject({ received: 2, watermark: '2026-10-30 09:30:00' });
+    });
+
+    it('pagamento atrasado de orcamento conhecido entra; o mesmo pagamento de novo, nao', async () => {
+      await configure(adminA, { apiKey: KEY, enabled: true });
+      bitlab.script = [page([row('10', at('2026-10-30 08:00:00')), row('11', at('2026-10-30 09:00:00'))], '2026-10-30 09:00:00')];
+      await sync(adminA);
+
+      const paid = row('10', {
+        changedAt: '2026-10-30 08:30:00',
+        paidValue: 100,
+        paidOn: '2026-10-30',
+        paidAt: '2026-10-30 08:30:00',
+        paymentId: 'P-1',
+        paymentStatus: 'ativo',
+      });
+      bitlab.script = [page([paid, row('11', at('2026-10-30 09:00:00'))], '2026-10-30 09:00:00')];
+      const late = await sync(adminA);
+      expect(late).toMatchObject({ received: 1 });
+      expect(await budgetsOf(tenantA.id)).toEqual([
+        { number: '10', paid_value: 100 },
+        { number: '11', paid_value: null },
+      ]);
+
+      bitlab.script = [page([paid, row('11', at('2026-10-30 09:00:00'))], '2026-10-30 09:00:00')];
+      expect(await sync(adminA)).toMatchObject({ received: 0, importId: null });
+
+      // Estorno atrasado do mesmo pagamento: a situacao mudou, entao entra.
+      const reversed = { ...paid, paymentStatus: 'estornado' as const, reversedAt: '2026-10-30 08:50:00', changedAt: '2026-10-30 08:50:00' };
+      bitlab.script = [page([reversed, row('11', at('2026-10-30 09:00:00'))], '2026-10-30 09:00:00')];
+      expect(await sync(adminA)).toMatchObject({ received: 1 });
+      expect((await budgetsOf(tenantA.id))[0]).toEqual({ number: '10', paid_value: 0 });
+    });
   });
 
   it('pagina com falha nao grava nada e nao anda a marca', async () => {

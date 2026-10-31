@@ -23,10 +23,11 @@ import {
   BitlabError,
   isBitlabError,
   saoPauloDateTime,
+  shiftBitlabDateTime,
   watermarkToBitlabDateTime,
   type BitlabClient,
 } from '../lib/bitlab-client.js';
-import type { LisSpreadsheetRow } from '../lib/lis-spreadsheet.js';
+import { paymentOf, type LisSpreadsheetRow } from '../lib/lis-spreadsheet.js';
 import { logger } from '../lib/logger.js';
 import {
   LisSyncSettingsRepository,
@@ -44,6 +45,19 @@ export const MAX_PAGES = 200;
  * `full` rele os ultimos `initialDays` dias. Nenhum tique automatico usa `full` (D-253).
  */
 export type LisSyncMode = 'incremental' | 'full';
+
+/**
+ * Sobreposicao da janela incremental (D-304): `DATA_ORÇAMENTO` e o INICIO do orcamento, nao a
+ * hora em que ele foi salvo, entao um orcamento salvo depois de outro mais novo chega ao Bitlab
+ * com data anterior a marca. Cada rodada rele 3 h antes da marca e grava so o que falta.
+ */
+export const WINDOW_OVERLAP_MS = 3 * 60 * 60 * 1000;
+
+/**
+ * Rede de seguranca diaria (D-304): o primeiro tique do agendador a partir desta hora de Brasilia
+ * rele ontem e hoje (so o que falta), para o orcamento salvo mais de 3 h depois de iniciado.
+ */
+export const CATCH_UP_HOUR = 3;
 
 const MANAGER_ROLES = ['manager', 'admin'] as const;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -128,11 +142,63 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
     };
   }
 
-  function windowStart(watermark: string | null, mode: LisSyncMode): string {
+  /**
+   * Incremental com marca: 3 h antes da marca (D-304); na rede diaria, ontem 00:00 se for antes.
+   * Sem marca (primeira carga) ou `full`: os ultimos `initialDays` dias, como antes.
+   */
+  function windowStart(watermark: string | null, mode: LisSyncMode, catchUp: boolean): string {
     const fromMark = mode === 'incremental' && watermark ? watermarkToBitlabDateTime(watermark) : null;
-    if (fromMark) return fromMark;
+    if (fromMark) {
+      const overlapped = shiftBitlabDateTime(fromMark, -WINDOW_OVERLAP_MS);
+      if (!catchUp) return overlapped;
+      const yesterday = `${saoPauloDateTime(new Date(now().getTime() - DAY_MS)).slice(0, 10)} 00:00:00`;
+      return yesterday < overlapped ? yesterday : overlapped;
+    }
     const start = new Date(now().getTime() - deps.initialDays * DAY_MS);
     return `${saoPauloDateTime(start).slice(0, 10)} 00:00:00`;
+  }
+
+  /** Data de hoje em Brasilia se a rede diaria deve rodar nesta rodada, senao `null` (D-304). */
+  // Sem marca a janela ja e de `initialDays` (cobre ontem): a primeira carga vale como a rede do dia.
+  function catchUpDay(requested: LisSyncMode | 'auto', lastCatchUpOn: string | null): string | null {
+    if (requested !== 'auto') return null;
+    const clock = saoPauloDateTime(now());
+    const today = clock.slice(0, 10);
+    if (Number(clock.slice(11, 13)) < CATCH_UP_HOUR || lastCatchUpOn === today) return null;
+    return today;
+  }
+
+  /**
+   * Janela sobreposta (D-304): linha alterada na marca ou depois e "nova" e segue a D-249 (marca
+   * que nao andou = nada novo). Linha so de ANTES da marca ja foi lida numa rodada anterior — ou
+   * chegou atrasada: entra so se o orcamento nao existe no CRM, ou se o pagamento dela falta no
+   * extrato ou mudou de situacao (estorno). Linha sem `changedAt` (planilha, teste) conta como nova.
+   */
+  async function selectRows(
+    tenantId: string,
+    rows: LisSpreadsheetRow[],
+    watermark: string | null,
+    markMoved: boolean,
+  ): Promise<{ rows: LisSpreadsheetRow[]; late: number }> {
+    const mark = watermark ? watermarkToBitlabDateTime(watermark) : null;
+    if (mark === null) return { rows, late: 0 };
+    const fresh: LisSpreadsheetRow[] = [];
+    const older: LisSpreadsheetRow[] = [];
+    for (const r of rows) {
+      if (r.changedAt && r.changedAt < mark) older.push(r);
+      else if (markMoved) fresh.push(r);
+    }
+    if (older.length === 0) return { rows: fresh, late: 0 };
+
+    const known = await repo.knownBudgets(tenantId, [...new Set(older.map((r) => r.number.trim()))]);
+    const late = older.filter((r) => {
+      const number = r.number.trim();
+      if (!known.budgets.has(number)) return true;
+      const payment = paymentOf(r);
+      if (payment === null) return false;
+      return known.payments.get(number)?.get(payment.key) !== payment.status;
+    });
+    return { rows: [...fresh, ...late], late: late.length };
   }
 
   /**
@@ -149,8 +215,9 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
     apiKey: string,
     watermark: string | null,
     mode: LisSyncMode,
+    catchUp: boolean,
   ): Promise<{ rows: LisSpreadsheetRow[]; watermark: string | null }> {
-    const dataInicio = windowStart(watermark, mode);
+    const dataInicio = windowStart(watermark, mode, catchUp);
     const dataFim = saoPauloDateTime(now());
     const rows: LisSpreadsheetRow[] = [];
     let highest: string | null = null;
@@ -188,10 +255,11 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
       const started = await repo.startRun(tenantId);
       if (!started) return null;
       const mode = modeFor(requestedMode);
+      const catchUpOn = mode === 'incremental' ? catchUpDay(requestedMode, started.lastCatchUpOn) : null;
 
       let fetched: { rows: LisSpreadsheetRow[]; watermark: string | null };
       try {
-        fetched = await fetchAll(tenantId, started.apiKey, started.watermark, mode);
+        fetched = await fetchAll(tenantId, started.apiKey, started.watermark, mode, catchUpOn !== null);
       } catch (error) {
         const kind: LisSyncErrorKind = isBitlabError(error) ? error.kind : 'unavailable';
         const message = isBitlabError(error) ? error.userMessage : BITLAB_ERROR_MESSAGES.unavailable;
@@ -218,17 +286,19 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
         };
       }
 
-      // A janela incremental comeca NA marca (inclusiva): o Bitlab devolve de
-      // novo a linha da propria marca. Marca que nao andou = nada novo desde a
-      // rodada anterior, entao a rodada e vazia (D-249). Linha gravada no mesmo
-      // segundo da marca depois da consulta anterior nao e relida (D-253 item 3).
-      if (
-        mode === 'incremental' &&
-        started.watermark !== null &&
-        fetched.watermark === started.watermark
-      ) {
-        fetched = { rows: [], watermark: started.watermark };
+      // A janela incremental inclui a marca: o Bitlab devolve de novo a linha
+      // da propria marca. Marca que nao andou = nada novo NA marca ou depois
+      // (D-249); a linha atrasada, de antes da marca, passa pelo filtro do que
+      // falta (D-304). Linha gravada no mesmo segundo da marca depois da
+      // consulta anterior volta quando a marca andar (D-253 item 3).
+      let late = 0;
+      if (mode === 'incremental' && started.watermark !== null) {
+        const markMoved = fetched.watermark !== started.watermark;
+        const selected = await selectRows(tenantId, fetched.rows, started.watermark, markMoved);
+        late = selected.late;
+        fetched = { rows: selected.rows, watermark: markMoved ? fetched.watermark : started.watermark };
       }
+      if (late > 0) logger.info('lis_sync.late_rows', { tenantId, late, catchUp: catchUpOn !== null });
 
       let importId: string | null = null;
       let rowsAccepted = 0;
@@ -264,7 +334,10 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
         }
       }
 
-      const view = await repo.finishRun(tenantId, { success: { watermark: fetched.watermark }, error: null });
+      const view = await repo.finishRun(tenantId, {
+        success: { watermark: fetched.watermark, catchUpOn },
+        error: null,
+      });
       // A cada 30 s (D-249): rodada vazia e `debug`, senao o log vira ruido.
       const completed = { tenantId, mode, received: fetched.rows.length, importId, proposalsCreated };
       if (fetched.rows.length > 0 || mode === 'full') logger.info('lis_sync.completed', completed);

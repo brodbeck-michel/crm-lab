@@ -3766,3 +3766,19 @@ migração.
   `internal-chat.spec.ts`. Frontend `InternalChat.read-receipts.spec.tsx` (10), `ws.spec.ts` (+1).
   E2E `flow-internal-chat-read-receipts.spec.ts` escrito, não executado.
 - **Pendente:** validação na hml; e2e na integração.
+
+### 🚧 CRMLAB-133 — sync do Bitlab não perde mais o orçamento salvo atrasado (2026-10-31, aguardando validação)
+
+Branch `fix/CRMLAB-133-sync-janela-sobreposta` (de `main` v1.42.1). Decisão D-304. Sem migração e
+sem variável nova.
+
+- **Causa:** `DATA_ORÇAMENTO` é o início do orçamento. O salvo depois de outro mais novo ficava atrás
+  da marca d'água e nunca era pedido (4 de 27 em 30/10: 71459, 71462, 71468, 71479).
+- **Correção:** janela 3 h antes da marca; linha de antes da marca entra só se o orçamento ou o
+  pagamento falta no CRM (ou o pagamento mudou de situação); rede diária às 03:00 (ontem + hoje) em
+  `last_full_scan_on`.
+- **Paliativo já em prod (31/10):** marca recuada para 25/10, +8 cartões.
+- **Testes:** `lis-sync.spec.ts` (+4: o caso 71479, releitura sem gravar, marca que andou, pagamento e
+  estorno atrasados), `lis-payments.spec.ts` (rede diária reescrita), `bitlab-client.spec.ts`
+  (`changedAt`). Domínio LIS: 236 verdes.
+- **Pendente:** validação na hml.

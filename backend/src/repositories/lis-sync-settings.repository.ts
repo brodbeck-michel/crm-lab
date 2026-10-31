@@ -79,9 +79,10 @@ export interface LisSyncSettingsPatch {
 export interface LisSyncRunOutcome {
   /**
    * `null` = rodada sem sucesso: nao mexe em `last_success_at`/`watermark`.
-   * `last_full_scan_on` nao e mais gravada (D-253).
+   * `catchUpOn` (`YYYY-MM-DD`, Brasilia): a rede de seguranca diaria rodou nesta data. Fica em
+   * `last_full_scan_on`, coluna que a D-253 deixou sem uso e a D-304 reaproveita.
    */
-  success: { watermark: string | null } | null;
+  success: { watermark: string | null; catchUpOn?: string | null } | null;
   error: string | null;
   /** `true` so na chave recusada (D-185 item 6). */
   disable?: boolean;
@@ -137,19 +138,23 @@ export class LisSyncSettingsRepository {
    */
   async startRun(
     tenantId: string,
-  ): Promise<{ apiKey: string; watermark: string | null } | null> {
+  ): Promise<{ apiKey: string; watermark: string | null; lastCatchUpOn: string | null } | null> {
     return this.db.withTenant(tenantId, async (tx) => {
-      const result = await tx.query<{ api_key: string | null; watermark: string | null }>(
+      const result = await tx.query<{
+        api_key: string | null;
+        watermark: string | null;
+        last_catch_up_on: string | null;
+      }>(
         `UPDATE lis_sync_settings
             SET last_run_at = NOW()
           WHERE tenant_id = $1 AND enabled AND api_key IS NOT NULL
-          RETURNING api_key, watermark`,
+          RETURNING api_key, watermark, to_char(last_full_scan_on, 'YYYY-MM-DD') AS last_catch_up_on`,
         [tenantId],
       );
       const row = result.rows[0];
       const apiKey = decryptSecret(row?.api_key ?? null);
       if (!row || !apiKey) return null;
-      return { apiKey, watermark: row.watermark };
+      return { apiKey, watermark: row.watermark, lastCatchUpOn: row.last_catch_up_on };
     });
   }
 
@@ -163,9 +168,10 @@ export class LisSyncSettingsRepository {
               SET last_success_at = NOW(),
                   last_error = NULL,
                   watermark = CASE WHEN $2::text IS NULL OR (watermark IS NOT NULL AND watermark > $2::text)
-                                   THEN watermark ELSE $2::text END
+                                   THEN watermark ELSE $2::text END,
+                  last_full_scan_on = COALESCE($3::date, last_full_scan_on)
             WHERE tenant_id = $1`,
-          [tenantId, outcome.success.watermark],
+          [tenantId, outcome.success.watermark, outcome.success.catchUpOn ?? null],
         );
       } else {
         await tx.query(
@@ -181,6 +187,38 @@ export class LisSyncSettingsRepository {
   }
 
   /** D-186: fora do contexto de tenant, SO `tenant_id`. */
+  /**
+   * O que o CRM já tem destes orçamentos: os números em `lis_budgets` e, por orçamento, a situação
+   * de cada pagamento do extrato (`payment_key` -> `status`). Serve para a janela sobreposta só
+   * gravar o que falta (D-304).
+   */
+  async knownBudgets(
+    tenantId: string,
+    numbers: string[],
+  ): Promise<{ budgets: Set<string>; payments: Map<string, Map<string, string>> }> {
+    const budgets = new Set<string>();
+    const payments = new Map<string, Map<string, string>>();
+    if (numbers.length === 0) return { budgets, payments };
+    return this.db.withTenant(tenantId, async (tx) => {
+      const b = await tx.query<{ number: string }>(
+        'SELECT number FROM lis_budgets WHERE tenant_id = $1 AND number = ANY($2::text[])',
+        [tenantId, numbers],
+      );
+      for (const r of b.rows) budgets.add(r.number);
+      const p = await tx.query<{ budget_number: string; payment_key: string; status: string }>(
+        `SELECT budget_number, payment_key, status FROM lis_budget_payments
+          WHERE tenant_id = $1 AND budget_number = ANY($2::text[])`,
+        [tenantId, numbers],
+      );
+      for (const r of p.rows) {
+        const byKey = payments.get(r.budget_number) ?? new Map<string, string>();
+        byKey.set(r.payment_key, r.status);
+        payments.set(r.budget_number, byKey);
+      }
+      return { budgets, payments };
+    });
+  }
+
   async listEnabledTenantIds(): Promise<string[]> {
     return this.db.withoutTenant(async (tx) => {
       const result = await tx.query<{ tenant_id: string }>(

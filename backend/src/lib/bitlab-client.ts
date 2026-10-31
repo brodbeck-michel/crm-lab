@@ -102,6 +102,27 @@ export function watermarkToBitlabDateTime(watermark: string): string | null {
   return parseBitlabDateTime(watermark);
 }
 
+/**
+ * Desloca uma data/hora `YYYY-MM-DD HH:mm:ss` (relogio de Brasilia, sem fuso) em `deltaMs`.
+ * A conta e feita como se fosse UTC so para nao depender do fuso do servidor (D-304).
+ */
+export function shiftBitlabDateTime(value: string, deltaMs: number): string {
+  const shifted = new Date(new Date(`${value.replace(' ', 'T')}Z`).getTime() + deltaMs);
+  return shifted.toISOString().slice(0, 19).replace('T', ' ');
+}
+
+/**
+ * Momento em que a linha entrou no filtro `alteracao` do Bitlab: a maior entre emissao,
+ * pagamento e estorno (D-187/D-253). `null` se nenhuma for data reconhecivel (D-304).
+ */
+export function changedAtOf(dates: Array<string | null>): string | null {
+  let latest: string | null = null;
+  for (const date of dates) {
+    if (date !== null && (latest === null || date > latest)) latest = date;
+  }
+  return latest;
+}
+
 /** Relogio de Brasilia no formato do Bitlab. Usado em `dataFim` e na primeira carga. */
 export function saoPauloDateTime(instant: Date): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -221,6 +242,8 @@ type BitlabBudget = z.infer<typeof budgetSchema>;
 
 /** Um orcamento da API -> a MESMA linha interna que a planilha produz (§11.10). */
 export function toLisRow(budget: BitlabBudget): LisSpreadsheetRow {
+  const paidAt = parseBitlabDateTime(budget.Data_Pagamento);
+  const reversedAt = parseBitlabDateTime(budget.DATA_ESTORNO);
   return {
     number: budget.ORCAMENTO,
     issuedOn: bitlabDateToIsoDate(budget.DATA_ORÇAMENTO),
@@ -237,10 +260,11 @@ export function toLisRow(budget: BitlabBudget): LisSpreadsheetRow {
     requisitionValue: budget.VALOR_REQUISICAO,
     paidValue: budget.Valor_Pago,
     paidOn: bitlabDateToIsoDate(budget.Data_Pagamento),
-    paidAt: parseBitlabDateTime(budget.Data_Pagamento),
+    paidAt,
     paymentId: budget.ID_PAGAMENTO,
     paymentStatus: paymentStatus(budget.SITUACAO_PAGAMENTO),
-    reversedAt: parseBitlabDateTime(budget.DATA_ESTORNO),
+    reversedAt,
+    changedAt: changedAtOf([parseBitlabDateTime(budget.DATA_ORÇAMENTO), paidAt, reversedAt]),
     paymentMethod: budget.FORMA_PAGAMENTO,
     cardBrand: budget.BANDEIRA_CARTAO,
     discountPercent1: budget.PER_DESCONTO1,

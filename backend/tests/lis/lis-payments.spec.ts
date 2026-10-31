@@ -209,7 +209,7 @@ describe('recebido = soma dos pagamentos ativos (D-188)', () => {
   });
 });
 
-describe('tique sempre incremental, sem releitura diaria (CRMLAB-80, D-253)', () => {
+describe('tique incremental com janela sobreposta e rede diaria (CRMLAB-80/133, D-253/D-304)', () => {
   class RecordingBitlab implements BitlabClient {
     calls: BitlabBudgetsQuery[] = [];
     watermark = '2026-09-28 10:00:00';
@@ -261,37 +261,46 @@ describe('tique sempre incremental, sem releitura diaria (CRMLAB-80, D-253)', ()
     return result.rows[0];
   }
 
-  it('com marca d agua, nenhum tique le 90 dias — nem depois das 03:00, nem no dia seguinte', async () => {
+  it('janela 3 h antes da marca; rede diaria (ontem 00:00) no primeiro tique depois das 03:00 (D-304)', async () => {
     await configure('2026-09-28 09:00:00');
 
-    clock = new Date('2026-09-28T05:30:00Z'); // 02:30 em Brasilia
+    clock = new Date('2026-09-28T05:30:00Z'); // 02:30 em Brasilia: ainda sem rede diaria
     await service().runScheduledTick();
-    expect(bitlab.calls.at(-1)?.dataInicio).toBe('2026-09-28 09:00:00');
+    expect(bitlab.calls.at(-1)?.dataInicio).toBe('2026-09-28 06:00:00');
+    expect((await settings())?.last_full_scan_on).toBeNull();
 
-    clock = new Date('2026-09-28T06:10:00Z'); // 03:10 — antes era a releitura (D-189)
+    clock = new Date('2026-09-28T06:10:00Z'); // 03:10: rede diaria
     await service().runScheduledTick();
-    expect(bitlab.calls.at(-1)?.dataInicio).toBe('2026-09-28 10:00:00');
+    expect(bitlab.calls.at(-1)?.dataInicio).toBe('2026-09-27 00:00:00');
+    expect((await settings())?.last_full_scan_on).toBe('2026-09-28');
+
+    clock = new Date('2026-09-28T06:11:00Z'); // ja rodou hoje: volta a janela normal
+    await service().runScheduledTick();
+    expect(bitlab.calls.at(-1)?.dataInicio).toBe('2026-09-28 07:00:00');
 
     bitlab.watermark = '2026-09-29 04:00:00';
-    clock = new Date('2026-09-29T07:00:00Z'); // 04:00 do dia seguinte
+    clock = new Date('2026-09-29T07:00:00Z'); // 04:00 do dia seguinte: rede de novo
     await service().runScheduledTick();
-    expect(bitlab.calls.at(-1)?.dataInicio).toBe('2026-09-28 10:00:00');
+    expect(bitlab.calls.at(-1)?.dataInicio).toBe('2026-09-28 00:00:00');
+    expect((await settings())?.last_full_scan_on).toBe('2026-09-29');
 
+    // A releitura de 90 dias da D-189 continua fora (D-253).
     expect(bitlab.calls.map((c) => c.dataInicio)).not.toContain('2026-06-30 00:00:00');
-    // A coluna fica no banco, mas nao e mais gravada (D-253 item 2).
-    expect((await settings())?.last_full_scan_on).toBeNull();
   });
 
-  it('sem marca d agua (primeira carga), a janela e de `initialDays`; depois segue a marca', async () => {
+  it('sem marca d agua (primeira carga), a janela e de `initialDays` e vale como a rede do dia', async () => {
     await configure(null);
 
     clock = new Date('2026-09-28T13:00:00Z'); // 10:00 em Brasilia
     await service().runScheduledTick();
     expect(bitlab.calls.at(-1)?.dataInicio).toBe('2026-06-30 00:00:00');
-    expect((await settings())?.watermark).toBe('2026-09-28 10:00:00');
+    expect(await settings()).toEqual({
+      watermark: '2026-09-28 10:00:00',
+      last_full_scan_on: '2026-09-28',
+    });
 
     clock = new Date('2026-09-28T13:01:00Z');
     await service().runScheduledTick();
-    expect(bitlab.calls.at(-1)?.dataInicio).toBe('2026-09-28 10:00:00');
+    expect(bitlab.calls.at(-1)?.dataInicio).toBe('2026-09-28 07:00:00');
   });
 });

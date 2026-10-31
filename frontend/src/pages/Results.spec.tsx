@@ -266,6 +266,17 @@ describe('Results (/results)', () => {
     expect(await screen.findByText(/13\.7%/)).toBeInTheDocument();
   });
 
+  it('data inicial vazia no filtro não derruba a tela nem dispara a consulta (CRMLAB-132)', async () => {
+    useUIStore.setState({ lisFilters: { ...defaultLisFilters(), startDate: '' } });
+    signIn('manager');
+    renderPage();
+
+    expect(await screen.findByText('Informe as duas datas.')).toBeInTheDocument();
+    for (const [, options] of useLisBudgetsSummary.mock.calls) {
+      expect(options).toEqual(expect.objectContaining({ enabled: false }));
+    }
+  });
+
   it('mostra a tabela "Detalhe por atendente" combinando orçamento e vendas', async () => {
     signIn('manager');
     renderPage();

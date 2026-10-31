@@ -16,7 +16,7 @@ import { Button, Select, useToast } from '@/components/ui';
 import { DataTable, DateDisplay, EmptyState, MoneyDisplay } from '@/components/shared';
 import type { DataTableColumn } from '@/components/shared';
 import { ResultsKpiCard } from '@/components/lis/ResultsKpiCard';
-import { PeriodFilter, previousPeriod } from '@/components/lis/PeriodFilter';
+import { isPeriodInvalid, PeriodFilter, previousPeriod } from '@/components/lis/PeriodFilter';
 import { AttendantRevenueChart } from '@/components/lis/AttendantRevenueChart';
 import { InsuranceDonutChart } from '@/components/lis/InsuranceDonutChart';
 import { MonthlySeriesChart } from '@/components/lis/MonthlySeriesChart';
@@ -120,7 +120,7 @@ export default function Results() {
   const [showPurge, setShowPurge] = useState(false);
 
   const period = { startDate: lisFilters.startDate, endDate: lisFilters.endDate };
-  const periodInvalid = period.endDate < period.startDate;
+  const periodInvalid = isPeriodInvalid(period);
   const insuranceId = lisFilters.insuranceId || undefined;
 
   const { data: filters } = useLisBudgetsFilters();

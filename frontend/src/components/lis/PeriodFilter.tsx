@@ -32,6 +32,24 @@ const SHORTCUTS: Array<{ label: string; period: () => Period }> = [
   { label: 'Mês atual', period: () => ({ startDate: firstDayOfMonthIso(), endDate: todayIso() }) },
 ];
 
+function isValidIsoDate(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
+}
+
+/**
+ * Período que não dá para consultar: data vazia/incompleta (o `<input type="date">`
+ * entrega `''` enquanto a pessoa apaga ou digita) ou final antes da inicial.
+ * Antes só o segundo caso contava — e `'' < '2026-…'` é falso, então a data
+ * inicial vazia passava como válida e derrubava `/results` (CRMLAB-132).
+ */
+export function isPeriodInvalid(period: Period): boolean {
+  return (
+    !isValidIsoDate(period.startDate) ||
+    !isValidIsoDate(period.endDate) ||
+    period.endDate < period.startDate
+  );
+}
+
 function samePeriod(a: Period, b: Period): boolean {
   return a.startDate === b.startDate && a.endDate === b.endDate;
 }
@@ -44,12 +62,13 @@ function samePeriod(a: Period, b: Period): boolean {
  * o rótulo DENTRO (`prefix`) — rótulo em cima somava uma linha inteira de
  * altura à barra de filtro de todas as telas do LIS.
  *
- * `endDate < startDate` avisa inline, sem round-trip ao servidor. Usado em
+ * Período inválido (`isPeriodInvalid`) avisa inline, sem round-trip ao servidor. Usado em
  * `/results`, `/reconciliation`, `/active-search` (valor compartilhado via
  * `useUIStore.lisFilters`, D-117) e `/sales` (período próprio da tela).
  */
 export function PeriodFilter({ value, onChange }: PeriodFilterProps) {
-  const invalid = value.endDate < value.startDate;
+  const incomplete = !isValidIsoDate(value.startDate) || !isValidIsoDate(value.endDate);
+  const invalid = isPeriodInvalid(value);
 
   return (
     <div className="flex flex-wrap items-center gap-md">
@@ -93,7 +112,7 @@ export function PeriodFilter({ value, onChange }: PeriodFilterProps) {
 
       {invalid && (
         <p role="alert" className="font-body text-caption text-accent-700">
-          Data final anterior à inicial.
+          {incomplete ? 'Informe as duas datas.' : 'Data final anterior à inicial.'}
         </p>
       )}
     </div>
@@ -105,8 +124,14 @@ export function PeriodFilter({ value, onChange }: PeriodFilterProps) {
  * cartão "Total Orçado" de `/results` (PAGES.md §14). Calculado no CLIENTE,
  * sem endpoint novo: um segundo fetch de `/lis-budgets/summary` com este
  * período resolve o "vs. período anterior".
+ *
+ * Período inválido volta como veio: a tela chama isto a cada render, antes de
+ * checar a validade, e `toISOString()` de data inválida lança e derruba a
+ * página inteira (CRMLAB-132). A query fica desligada nesse caso.
  */
 export function previousPeriod(period: Period): Period {
+  if (isPeriodInvalid(period)) return period;
+
   const start = new Date(`${period.startDate}T00:00:00Z`);
   const end = new Date(`${period.endDate}T00:00:00Z`);
   const durationDays = Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1;

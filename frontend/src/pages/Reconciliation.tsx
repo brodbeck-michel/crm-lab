@@ -6,7 +6,7 @@ import { Button, SearchInput, Select } from '@/components/ui';
 import { DataTable, MoneyDisplay, Pagination } from '@/components/shared';
 import type { DataTableColumn } from '@/components/shared';
 import type { LisBudget } from '@crm-lab/shared';
-import { PeriodFilter } from '@/components/lis/PeriodFilter';
+import { isPeriodInvalid, PeriodFilter } from '@/components/lis/PeriodFilter';
 import { ImportModal } from '@/components/lis/ImportModal';
 import { formatIsoDay } from '@/lib/format';
 
@@ -22,7 +22,7 @@ export default function Reconciliation() {
   const [search, setSearch] = useState('');
   const [showImport, setShowImport] = useState(false);
 
-  const periodInvalid = lisFilters.endDate < lisFilters.startDate;
+  const periodInvalid = isPeriodInvalid(lisFilters);
 
   const { data: filters } = useLisBudgetsFilters();
   const { data, isLoading } = useLisBudgetList(

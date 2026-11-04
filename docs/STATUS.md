@@ -3803,3 +3803,17 @@ variável nova.
   `Channels.spec.tsx` (+3), `Rules.spec.tsx` (+1), `NewConversation.spec.tsx` (+1).
 - **Pendente:** validação na hml; o Santé herda o teto ligado (8/h) no deploy.
 
+### 🚧 CRMLAB-135 — WhatsApp Cloud API (Meta direta): frente F0, contrato (2026-11-04, só docs)
+
+Branch `docs/CRMLAB-135-contrato-cloud-api`. Decisões **D-308..D-313**. Nenhum código nesta frente.
+
+- **Contrato escrito:** modo do canal e credenciais (D-308, API_CONTRACTS §6.2, SCHEMA §47);
+  templates — CRMLAB-136 (D-309); janela de 24 h — CRMLAB-137 (D-310, `WHATSAPP_WINDOW_CLOSED`);
+  webhook — CRMLAB-139 (D-311, §2b); custo e tabela de preços — CRMLAB-141 (D-312); serviço em SERVICES §35.
+- **Pedidos às frentes de código:** migração 063 (SCHEMA §47); `shared/types/` + `ApiErrorCode`
+  (`WHATSAPP_WINDOW_CLOSED`, `CHANNEL_CLOUD_API_NOT_CONFIGURED`, `CHANNEL_CLOUD_API_UNAVAILABLE`);
+  env `WHATSAPP_WEBHOOK_VERIFY_TOKEN` e `WHATSAPP_FREE_SERVICE_MONTHLY`; frente UI (PAGES §10 ainda
+  diz "sem volta para `cloud_api`", superado por D-308).
+- **Pendência — CRMLAB-140 (anexos pela Cloud API):** fora desta entrega (D-313). Upload de mídia à
+  Meta no envio e download autenticado no recebimento. Hoje: anexo em `cloud_api` recusa.
+

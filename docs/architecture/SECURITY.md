@@ -92,6 +92,13 @@ CREATE POLICY tenant_isolation ON conversations
   '1mb' })`, registrado por caminho ANTES do parser geral (`app.ts`); `/webhooks/evolution/*`
   (gateway em rede interna, mídia base64) e as demais rotas seguem no limite de `25mb`.
 
+- **Cloud API (CRMLAB-135, D-311):** o `GET /webhooks/whatsapp/:tenant` (handshake `hub.challenge`)
+  compara `hub.verify_token` em tempo constante com `WHATSAPP_WEBHOOK_VERIFY_TOKEN` e devolve `403`
+  sem corpo em qualquer falha — única exceção ao "200 sempre", sem oráculo (a resposta de falha é
+  idêntica para token errado, canal inativo e tenant inexistente). `waba_id`/`phone_number_id` são
+  identificadores públicos; o token da Cloud API é cifrado em repouso (D-076) e write-only.
+  `metadata.phone_number_id` do payload é conferido com o do tenant antes de gravar.
+
 ## Conexão WhatsApp por QR (Evolution API, Onda 7 — Bloco B)
 
 **Risco aceito, não mitigado por completo — decisão de produto consciente (lead técnico,

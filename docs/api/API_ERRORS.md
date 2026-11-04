@@ -149,6 +149,14 @@ problema é do objeto inteiro. A tela não deve comparar o texto do motivo — s
 | `CHANNEL_QR_UNAVAILABLE` | 503 | `EVOLUTION_API_URL`, `EVOLUTION_API_KEY` ou `EVOLUTION_WEBHOOK_TOKEN` ausentes, ou o gateway falhou. Nas 4 rotas de `/settings/channels/whatsapp/*` (API_CONTRACTS.md §6.1) — nunca crash, nunca 500. **Exceção:** instância ausente no gateway (404 `does not exist`) **não** é este erro — `/qr` e `/status` devolvem `disconnected` (200) para a tela conseguir reconectar |
 | `CHANNEL_SESSION_STALE` | 503 | `POST /settings/channels/whatsapp/disconnect` quando o gateway responde 500 `Connection Closed` ao logout. A sessão Baileys morreu (celular deslogou, 401) mas o Evolution ainda persiste `connectionStatus: "open"`: não há socket para deslogar e `/instance/delete` recusa com 400 enquanto o registro disser `open`. Só reiniciar o **container** do Evolution reavalia o registro — `/instance/restart` não basta. Distinto de `CHANNEL_QR_UNAVAILABLE` porque o gateway está no ar e configurado; mandar o admin conferir a configuração seria mandá-lo para o lugar errado |
 
+## Canais — WhatsApp Cloud API (CRMLAB-135, D-308..D-310)
+
+| Código | HTTP | Quando |
+|--------|------|--------|
+| `CHANNEL_CLOUD_API_NOT_CONFIGURED` | 409 | Canal WhatsApp em `connection_mode = 'cloud_api'` sem `phone_number_id`, `waba_id` ou token do laboratório (D-308): qualquer envio, `GET /whatsapp/templates` e `PUT /settings/channels/whatsapp/mode` para `cloud_api`. `details: { missing: ["phoneNumberId" \| "wabaId" \| "apiToken"] }` — nomes de campo, **nunca** valor. O driver mock de dev/CI não dispara |
+| `CHANNEL_CLOUD_API_UNAVAILABLE` | 503 | Meta fora do ar, timeout ou recusa de credencial ao listar templates (`GET /whatsapp/templates`). Nunca 500. Falha no **envio** continua `MESSAGE_SEND_FAILED` (502) |
+| `WHATSAPP_WINDOW_CLOSED` | 409 | Texto livre ou anexo em conversa WhatsApp `cloud_api` cuja última mensagem do paciente tem 24 h ou mais, ou que nunca teve mensagem do paciente (D-310). Só template sai. `details: { conversationId, lastPatientMessageAt, windowClosedAt }` (datas ISO UTC ou `null`). Nada é gravado nem enviado. A tela usa `whatsappWindow` do `GET /conversations/:id` para trocar o Composer para "só template" antes de errar |
+
 ## Mídia — anexo e áudio (Onda 8 §4)
 
 | Código | HTTP | Quando |

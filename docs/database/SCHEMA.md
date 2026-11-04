@@ -2367,6 +2367,46 @@ ALTER TABLE tenant_channels
   "Desconectar" grava `manual`; o `close` do gateway grava `logged_out` (401) ou `other`, sem
   sobrescrever `manual` nem rebaixar `logged_out` enquanto `connected_at` segue `NULL` (D-307).
 
+### 47. WhatsApp Cloud API: credenciais, template, categoria de cobrança e preços (migração 063 — CRMLAB-135, D-308..D-312)
+**Contrato; a migração ainda não existe** (frente de código). Só `ADD COLUMN` nulo + uma tabela
+nova com seed, sem backfill.
+
+```sql
+ALTER TABLE tenant_channels
+  ADD COLUMN waba_id VARCHAR(64) NULL;          -- WhatsApp Business Account id (público, em claro)
+
+ALTER TABLE messages
+  ADD COLUMN template_name VARCHAR(512) NULL,
+  ADD COLUMN template_language VARCHAR(20) NULL,
+  ADD COLUMN template_category VARCHAR(20) NULL,    -- marketing | utility (CHECK)
+  ADD COLUMN pricing_category VARCHAR(20) NULL;     -- service | utility | marketing | authentication (CHECK)
+-- CHECKs: valor nulo ou dentro da lista. `qr` nunca preenche nenhuma das quatro.
+
+CREATE TABLE whatsapp_price_table (               -- GLOBAL da instalação: sem tenant_id, sem RLS
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  category VARCHAR(20) NOT NULL,                  -- service | utility | marketing | authentication
+  price_brl NUMERIC(10,4) NOT NULL CHECK (price_brl >= 0),
+  effective_from DATE NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE (category, effective_from),
+  CHECK (category IN ('service','utility','marketing','authentication'))
+);
+INSERT INTO whatsapp_price_table (category, price_brl, effective_from) VALUES
+  ('marketing', 0.3217, '2026-10-01'), ('utility', 0.0350, '2026-10-01'),
+  ('authentication', 0.0350, '2026-10-01'), ('service', 0.0350, '2026-10-01');
+```
+- **`whatsapp_price_table` é a exceção consciente à regra "toda tabela tem `tenant_id`"**: o preço é
+  da Meta, igual para todos os laboratórios (como `tenants`/catálogo de planos). `crm_app` só tem
+  `SELECT`; reajuste = `INSERT` de linha nova com `effective_from` futuro, feito por quem opera a
+  plataforma (script/migração), nunca pela tela de laboratório. Vale a linha de maior
+  `effective_from <=` data da mensagem, por `category`.
+- Os valores acima são os **oficiais em BRL vigentes desde 01/10/2026** e vivem só no seed — nenhum
+  código lê o número fixo. A franquia de **1.000 mensagens `service`/mês/número** é parâmetro de
+  configuração do serviço (`WHATSAPP_FREE_SERVICE_MONTHLY`, default 1000), não coluna.
+- `waba_id` e `phone_number_id` ficam em claro (identificadores públicos); só `api_token` é cifrado (D-076).
+- Janela de 24 h usa o índice parcial `idx_messages_patient_conversation` (migração 062), sem índice novo.
+- Custo é **calculado na leitura** (`GET /settings/channels/whatsapp/usage`); não há coluna de custo.
+
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
 
 O isolamento multitenant não é convenção: é imposto pelo banco. O backend conecta com o papel

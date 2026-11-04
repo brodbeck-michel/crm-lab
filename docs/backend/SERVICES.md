@@ -2070,3 +2070,66 @@ Dono de `proposal_reminders` (SCHEMA §42).
 - `docs/api/API_CONTRACTS.md` - Endpoints que expõem estes serviços
 - `docs/domain/BUSINESS_RULES.md` - Regras implementadas nos serviços
 - `docs/domain/WORKFLOWS.md` - Fluxos que orquestram os serviços
+
+---
+
+## 35. WhatsApp Cloud API — modo, templates, janela, webhook e custo (CRMLAB-135 — D-308..D-313)
+
+**Contrato; código ainda não existe.** Estende `WhatsAppService` (§11) e `ChannelSettingsService` (§13/§16).
+`connection_mode = 'cloud_api'` já escolhe o driver pelo `WhatsAppCredentialsResolver` (§16); aqui entram
+as regras do driver real da Meta.
+
+```typescript
+/** Acréscimo a ChannelSettingsService (§13): troca de modo (D-308). */
+interface ChannelSettingsServiceModeExtension {
+  /** Admin. Não toca mensagens nem o gateway Evolution. Audit `update_whatsapp_mode`. */
+  setWhatsAppMode(ctx: TenantContext, mode: 'cloud_api' | 'qr'): Promise<{ connectionMode: 'cloud_api' | 'qr'; cloudApiConfigured: boolean }>;
+}
+
+/** Driver de envio `cloud_api` (Graph API) — `WhatsAppService.send` ganha a variante de template. */
+interface CloudApiWhatsAppDriver {
+  sendText(creds: CloudApiCredentials, phone: string, text: string, quotedExternalId?: string): Promise<{ externalId: string }>;
+  sendTemplate(creds: CloudApiCredentials, phone: string, t: { name: string; language: string; variables: string[] }): Promise<{ externalId: string }>;
+  listApprovedTemplates(creds: CloudApiCredentials): Promise<WhatsAppTemplate[]>; // cache 5 min por tenant
+}
+/** CloudApiCredentials = { phoneNumberId, wabaId, apiToken } — todos da linha do tenant, sem fallback de env. */
+
+interface WhatsAppWindowService {
+  /** `open` se a última mensagem do paciente (não apagada) < 24 h. Só `cloud_api`; outro modo => null. */
+  status(ctx: TenantContext, conversationId: string): Promise<{ open: boolean; expiresAt: string | null } | null>;
+  /** Lança WHATSAPP_WINDOW_CLOSED antes de gravar/enviar texto livre ou anexo. */
+  assertOpen(ctx: TenantContext, conversationId: string): Promise<void>;
+}
+
+interface WhatsAppUsageService {
+  /** Contagem por pricing_category no mês + franquia + preço vigente; tudo por tenant_id. */
+  monthly(ctx: TenantContext, month: string): Promise<WhatsAppUsageResponse>;
+}
+```
+
+**Regras:**
+- **Ordem no envio (`MessageService.createFromAgent`, `createAttachmentFromAgent`, `retryFailed`, cartão):**
+  recorte por papel → modo/credenciais (`CHANNEL_CLOUD_API_NOT_CONFIGURED`) → validação do
+  `template` → janela (`assertOpen`, só se **não** é template) → gravar `pending` → enviar. Janela
+  fechada **não grava** (nada fica `failed`), como o teto de D-306. D-306 e D-214 continuam só QR.
+- **Credenciais:** `phone_number_id`, `waba_id` e `api_token` da linha do tenant; token decifrado só
+  na hora da chamada (D-076). **Sem fallback de env no driver real** (D-308 item 5, a validar).
+  Mock de dev/CI (`WHATSAPP_API_URL` vazia) ecoa sem exigir credencial e simula `sent`.
+- **Template (D-309):** valida `name`+`language` contra a lista aprovada (mesma do `GET
+  /whatsapp/templates`), monta `components[body].parameters` na ordem das variáveis, grava
+  `content` = corpo preenchido, `template_*` e `pricing_category = template_category`.
+- **Categoria de cobrança (D-312):** texto/anexo na janela = `service`; template = categoria do
+  template. O webhook de status corrige `pricing_category` com `statuses[].pricing.category`.
+- **Webhook (D-311):** `handleWebhook`/`handleStatusCallback` (§11) ganham o handshake `GET`
+  (`verifyWebhookChallenge(query)` → `string | null`, tempo constante) e a conferência de
+  `metadata.phone_number_id`. Mapeamento e anti-regressão de status = API_CONTRACTS §2b; a mesma
+  regra de ordem usada por D-225, num ponto só (nenhum `UPDATE ... SET status` solto).
+- **Multitenant:** toda leitura/escrita (mensagens, canal, uso) com `tenant_id` do contexto; o
+  tenant do webhook sai do slug da URL e é conferido contra `phone_number_id`. Cache de templates
+  chaveado por `tenantId`. `whatsapp_price_table` é a única tabela global (SCHEMA §47).
+- **Custo (D-312):** `WhatsAppUsageService.monthly` agrupa `messages` do mês (America/Sao_Paulo) de
+  `cloud_api`, abate a franquia (`WHATSAPP_FREE_SERVICE_MONTHLY`, default 1000) das mensagens
+  `service` por ordem de `created_at`, e multiplica pela linha de preço vigente em cada data.
+- **Fora da entrega (D-313):** anexo e mídia recebida pela Cloud API (CRMLAB-140).
+- **Teste:** gateway Graph fake (servidor HTTP de teste), no padrão do gateway Evolution fake (§16);
+  o envio real contra a Meta é verificação manual com um número de teste.

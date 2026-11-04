@@ -960,6 +960,24 @@ interações com ele, com autor e data.
 
 ---
 
+## 18. WhatsApp Cloud API: janela de 24 h, template e custo (CRMLAB-135, D-308..D-313)
+
+- **Só vale com o WhatsApp do laboratório em `cloud_api`.** Em `qr` nada desta seção existe.
+- **Janela de 24 h:** texto livre e anexo só saem se o paciente escreveu há menos de 24 h. Fora
+  disso, só template aprovado da Meta (D-309). Conversa em que o paciente nunca escreveu = janela
+  fechada: o primeiro contato é sempre por template. Mensagem do paciente reabre a janela.
+- **Template** é sempre permitido (dentro ou fora da janela), tem categoria `marketing` ou
+  `utility` e todas as variáveis `{{n}}` preenchidas. A categoria fica gravada na mensagem.
+- **Custo estimado por mensagem enviada:** `service` (texto/anexo dentro da janela), `utility`,
+  `marketing`, `authentication`. As primeiras **1.000 `service` do mês por número são grátis**;
+  o resto cobra pela tabela de preços em configuração (valores BRL vigentes desde 01/10/2026:
+  marketing 0,3217; utility 0,035; autenticação 0,035; serviço 0,035). Falhou = não conta.
+- **Trocar de modo** (QR ⇄ Cloud API) não apaga nenhuma mensagem. Reengajamento, mensagens fora do
+  horário/saudação e teto de primeiros contatos seguem só no QR (D-214, D-264, D-306).
+- **Anexos pela Cloud API:** fora desta entrega (CRMLAB-140).
+
+---
+
 ## Resumo: Checklist de Implementação
 
 Antes de commitar, verifique:

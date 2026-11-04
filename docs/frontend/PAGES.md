@@ -112,7 +112,11 @@ Duas leituras registradas aqui porque o doc original não as fixava:
 - **Nova conversa (CRMLAB-50, D-175):** botão "+" no topo da coluna, com tooltip "Nova
   conversa" (padrão WhatsApp Web). Atalho **Ctrl+Alt+N**. Abre o modal `NewConversationModal`
   (local da tela): telefone (validado na hora por `normalizeBrazilianPhone` — DDD + número) e a
-  primeira mensagem. [Enviar] chama `POST /conversations/whatsapp`; no sucesso o modal fecha e a
+  primeira mensagem. Nota fixa de **primeiro contato** (CRMLAB-134, D-305,
+  `data-testid="first-contact-notice"`): pedir que o paciente escreva primeiro quando der.
+  `FIRST_CONTACT_LIMIT_REACHED` (D-306) aparece dentro do modal (`role="alert"`, com o teto e a hora
+  da próxima vaga) e o modal fica aberto; a conversa criada sem mensagem entra na lista.
+  [Enviar] chama `POST /conversations/whatsapp`; no sucesso o modal fecha e a
   conversa (nova ou reaproveitada) fica **aberta e selecionada**. Telefone já em atendimento com
   outra pessoa (`CONVERSATION_ALREADY_ASSIGNED`) → erro dentro do modal com o nome dela. Canal
   fora do ar (`MESSAGE_SEND_FAILED`) → o modal fecha, a conversa abre mesmo assim (a mensagem
@@ -649,6 +653,10 @@ nunca "sem permissão" (não vazar existência).
     `SearchInput`), com as **sugeridas** em cima (chip "Sugerida", `nameSimilarity` > 0) e a
     mensagem do modelo das Regras num `TextArea` editável. "Enviar" só liga depois de clicar
     numa conversa. Erro do envio aparece no painel (`role="alert"`) e ele fica aberto.
+    **Desde o CRMLAB-134 (D-305/D-306):** conversa com `patientHasWritten: false` leva
+    " · Nunca escreveu" na linha da lista e, escolhida no modo `send`, mostra a faixa de atenção
+    `data-testid="first-contact-warning"` (não bloqueia). `FIRST_CONTACT_LIMIT_REACHED` vira o
+    texto de `firstContactLimitMessage` (teto, hora da próxima vaga, pedir que o paciente escreva).
     **Desde o CRMLAB-95 (D-265 item 5):** com 2+ modelos nas Regras, um `Select` "Modelo da
     mensagem" acima do texto, aberto no padrão (o primeiro). Trocar re-renderiza a mensagem; se a
     atendente já tinha editado o texto, `window.confirm` antes de sobrescrever (cancelar mantém
@@ -957,6 +965,12 @@ gestor).
   primeiro erro (`qrRefetchInterval`) — não existe polling infinito
 - **QR expirado** (`pairing` → `disconnected`) mostra "gerar novamente"; `503
   CHANNEL_QR_UNAVAILABLE` (gateway não configurado) é estado de operador, com mensagem própria
+- **Motivo da última queda (CRMLAB-134, D-307):** desconectado e com `lastDisconnect` no
+  `GET .../status`. `logged_out` (401) mostra faixa de atenção (`data-testid="whatsapp-logged-out"`):
+  "O WhatsApp encerrou a sessão em <data>. O aparelho foi desvinculado no celular, removido pelo
+  WhatsApp ou a conta foi restringida. Confira o celular antes de reconectar: se aparecer 'conta
+  restringida', espere o prazo terminar." `other` mostra "Desconectado desde <data> (código N)".
+  `manual` não mostra nada. O botão "Conectar WhatsApp" continua lá.
 - **Desconectar não desativa o canal** (`is_active` intocado) — são dois controles distintos,
   e a confirmação diz isso explicitamente
 - Conectar por QR troca `connection_mode` para `qr` e **não há caminho de volta para
@@ -1569,6 +1583,12 @@ seu próprio [Salvar] (endpoint e permissão diferentes).
   (1 a 1440, desabilitado com a regra desligada). Fora da faixa: "Informe um número inteiro de 1 a
   1440" e [Salvar regras] travado. Nota: só destaca, conta só no horário de funcionamento (link
   para Canais) e não conta feriado; automática não é resposta; encerrada não entra.
+- **Primeiros contatos no WhatsApp** (`id="primeiro-contato"`, logo depois do alerta de resposta,
+  CRMLAB-134, D-306, `Settings/FirstContactLimitSection.tsx`) — no formulário (chave
+  `firstContactLimit`). `Toggle` "Limitar primeiros contatos por hora" (nasce **ligado**) e `Input`
+  "Máximo por hora" (1 a 60, padrão 8, desabilitado com a regra desligada). Fora da faixa: "Informe
+  um número inteiro de 1 a 60" e [Salvar regras] travado. Nota explica primeiro contato, que vale
+  para a conexão por QR e que conversa em que o paciente já escreveu nunca é barrada.
 - **Feriados** (`id="feriados"`, fora do formulário, antes de Comissões) — fonte
   `GET/POST/DELETE /settings/holidays` (§6d), salvo na hora. Seletor de ano (‹ 2026 ›), lista
   "Do laboratório" (com [Remover] para gestor/admin) e lista "Nacionais" (só leitura, Carnaval e

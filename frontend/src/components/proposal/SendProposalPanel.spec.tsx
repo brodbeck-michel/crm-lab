@@ -154,6 +154,46 @@ describe('SendProposalPanel', () => {
     );
   });
 
+  it('primeiro contato (CRMLAB-134, D-305): avisa quando o paciente nunca escreveu, sem bloquear', async () => {
+    vi.mocked(conversationsApi.list).mockResolvedValue(
+      listOf([
+        conversation('c-01', 'João Pereira', { patientHasWritten: true }),
+        conversation('c-03', 'Maria Souza', { patientHasWritten: false }),
+      ]),
+    );
+    renderPanel();
+    const list = await screen.findByRole('list', { name: 'Conversas' });
+    expect(within(list).getByText(/Nunca escreveu/)).toBeInTheDocument();
+    expect(screen.queryByTestId('first-contact-warning')).not.toBeInTheDocument();
+
+    fireEvent.click(within(list).getByText('Maria Souza'));
+    expect(screen.getByTestId('first-contact-warning')).toHaveTextContent(/nunca escreveu/i);
+    expect(screen.getByRole('button', { name: 'Enviar' })).toBeEnabled();
+
+    fireEvent.click(within(list).getByText('João Pereira'));
+    expect(screen.queryByTestId('first-contact-warning')).not.toBeInTheDocument();
+  });
+
+  it('limite de primeiros contatos (D-306): mostra o teto, a hora da próxima vaga e o que fazer', async () => {
+    renderPanel();
+    const list = await screen.findByRole('list', { name: 'Conversas' });
+    fireEvent.click(within(list).getByText('Maria Souza'));
+    fireEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+    const handlers = sendMutate.mock.calls[0]![1] as { onError: (err: unknown) => void };
+    act(() =>
+      handlers.onError(
+        new ApiError('FIRST_CONTACT_LIMIT_REACHED', 'Limite', 409, {
+          limit: 8,
+          retryAt: '2026-11-04T13:40:00.000Z',
+        }),
+      ),
+    );
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent(/Limite de 8 primeiros contatos por hora/);
+    expect(alert).toHaveTextContent(/Próxima vaga às \d{2}:\d{2}/);
+    expect(alert).toHaveTextContent(/mande uma mensagem primeiro/);
+  });
+
   it('mensagem vazia desliga o Enviar', async () => {
     renderPanel();
     const list = await screen.findByRole('list', { name: 'Conversas' });

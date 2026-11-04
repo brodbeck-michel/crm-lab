@@ -946,6 +946,8 @@ export function createChannelSettingsService(
       status: live.status,
       phoneNumber: live.phoneNumber ?? stored?.phoneNumber ?? null,
       connectedAt: live.status === 'connected' ? (stored?.connectedAt ?? null) : null,
+      // D-307: a ultima queda so interessa enquanto NAO esta conectado.
+      lastDisconnect: live.status === 'connected' ? null : (stored?.lastDisconnect ?? null),
     };
   };
 
@@ -967,7 +969,10 @@ export function createChannelSettingsService(
       if (!isInstanceNotFound(error)) throw gatewayFailure(error);
     });
     await db.withTenant(ctx.tenantId, (tx) =>
-      channelSettingsRepo.markWhatsAppDisconnected(tx, ctx.tenantId),
+      channelSettingsRepo.markWhatsAppDisconnected(tx, ctx.tenantId, {
+        reason: 'manual',
+        statusCode: null,
+      }),
     );
     await audit.record(ctx, {
       action: 'disconnect_whatsapp',

@@ -14,7 +14,7 @@ import {
   renderSendMessageTemplate,
 } from '@crm-lab/shared';
 import { conversationsApi } from '@/api/conversations';
-import { toHandledError } from '@/api';
+import { firstContactLimitMessage, toHandledError } from '@/api';
 import { queryKeys } from '@/api/query-keys';
 import {
   useResendProposal,
@@ -92,6 +92,7 @@ export function sendErrorMessage(err: unknown): string {
       ? 'Outra atendente está enviando este orçamento agora.'
       : 'O orçamento já foi enviado por outra atendente.';
   }
+  if (error.code === 'FIRST_CONTACT_LIMIT_REACHED') return firstContactLimitMessage(error.details);
   return error.message;
 }
 
@@ -162,6 +163,13 @@ export default function SendProposalPanel({
     [conversations.data, proposal.patientName, proposal.conversationId],
   );
 
+  // D-305: a conversa escolhida nunca recebeu mensagem do paciente. Só avisa —
+  // quem recusa é o teto da D-306, no servidor.
+  const selectedConversation = (conversations.data?.conversations ?? []).find(
+    (c) => c.id === selectedId,
+  );
+  const firstContact = mode === 'send' && selectedConversation?.patientHasWritten === false;
+
   const trimmed = message.trim();
   const canSubmit =
     !pending &&
@@ -210,6 +218,7 @@ export default function SendProposalPanel({
             <span className="block text-caption text-neutral-600">
               {conversation.patientPhone}
               {conversation.assignedToName ? ` · ${conversation.assignedToName}` : ' · Fila livre'}
+              {conversation.patientHasWritten === false ? ' · Nunca escreveu' : ''}
             </span>
           </span>
           {score > 0 && <Chip tone="positive">Sugerida</Chip>}
@@ -285,6 +294,18 @@ export default function SendProposalPanel({
           maxLength={SEND_PROPOSAL_MESSAGE_MAX}
           onChange={(e) => setMessage(e.target.value)}
         />
+      )}
+
+      {firstContact && (
+        <p
+          role="note"
+          data-testid="first-contact-warning"
+          className="m-0 rounded-md bg-accent-100 px-md py-sm font-body text-caption text-accent-800"
+        >
+          Este paciente <strong>nunca escreveu</strong> para o laboratório: enviar agora é primeiro
+          contato, e muitos primeiros contatos fazem o WhatsApp restringir o número. Se puder, peça
+          que ele mande uma mensagem primeiro.
+        </p>
       )}
 
       {error && (

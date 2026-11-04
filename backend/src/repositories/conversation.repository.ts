@@ -91,6 +91,8 @@ interface ConversationRow {
   pinned?: boolean | null;
   /** Ja em ISO UTC (`to_char`, como o reingajamento): nao depende do fuso do processo. */
   awaiting_reply_since: string | null;
+  /** Ausente nos SELECTs que nao usam `LIST_COLUMNS`. */
+  patient_has_written?: boolean | null;
   /** `json_agg` de `{ id, name }` (D-263); string no PGlite, objeto no `pg`. */
   participants: unknown;
 }
@@ -119,10 +121,20 @@ function ownedSql(userParam: string): string {
   return `(c.assigned_to = ${userParam} OR c.assigned_to IS NULL OR ${participatesSql(userParam)})`;
 }
 
+/**
+ * O paciente ja escreveu nesta conversa? (CRMLAB-134, D-305). Predicado literal
+ * de `idx_messages_patient_conversation` (062).
+ */
+const PATIENT_HAS_WRITTEN_COLUMN = `EXISTS (
+         SELECT 1 FROM messages pw
+         WHERE pw.conversation_id = c.id AND pw.sender_type = 'patient'
+       ) AS patient_has_written`;
+
 const LIST_COLUMNS = `c.id, c.patient_id, c.patient_name, c.patient_phone, c.patient_email, c.assigned_to,
        u.name AS assigned_to_name, c.channel, c.status, c.unread_count, c.last_message_at,
        c.tags, c.custom_fields, c.created_at, lm.content AS last_message_preview,
        to_char(aw.created_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS awaiting_reply_since,
+       ${PATIENT_HAS_WRITTEN_COLUMN},
        ${PARTICIPANTS_COLUMN}`;
 
 /**
@@ -256,6 +268,7 @@ export function toConversation(row: ConversationRow): Conversation {
     pinned: row.pinned === true,
     createdAt: toIso(row.created_at),
     awaitingReplySince: row.awaiting_reply_since,
+    patientHasWritten: row.patient_has_written === true,
     participants: toParticipants(row.participants),
   };
 }

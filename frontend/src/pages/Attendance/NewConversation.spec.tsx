@@ -238,6 +238,28 @@ describe('Atendimento — Nova conversa (CRMLAB-50)', () => {
     await waitFor(() => expect(getMock).toHaveBeenCalledWith('c-new', expect.anything()));
   });
 
+  it('primeiro contato (CRMLAB-134): o modal avisa sempre e o limite da hora vira erro dentro dele', async () => {
+    startWhatsAppMock.mockRejectedValue(
+      new ApiError('FIRST_CONTACT_LIMIT_REACHED', 'Limite', 409, {
+        limit: 8,
+        retryAt: '2026-11-04T13:40:00.000Z',
+        conversationId: 'c-new',
+      }),
+    );
+    renderScreen();
+    const dialog = await openModal();
+    expect(within(dialog).getByTestId('first-contact-notice')).toHaveTextContent(/primeiro contato/i);
+
+    await userEvent.type(within(dialog).getByLabelText('Telefone (WhatsApp)'), '48999991234');
+    await userEvent.type(within(dialog).getByLabelText('Mensagem'), 'Olá!');
+    await userEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      /Limite de 8 primeiros contatos por hora/,
+    );
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
   it('número em atendimento com outra pessoa: erro dentro do modal, com o nome', async () => {
     startWhatsAppMock.mockRejectedValue(
       new ApiError('CONVERSATION_ALREADY_ASSIGNED', 'Conversa ja atribuida', 409, {

@@ -20,6 +20,7 @@ import Commissions from './Commissions';
 import { HolidaysSection } from './HolidaysSection';
 import { ReengagementSection, reengagementBlocked } from './ReengagementSection';
 import { ResponseAlertSection, responseAlertBlocked } from './ResponseAlertSection';
+import { FirstContactLimitSection, firstContactLimitBlocked } from './FirstContactLimitSection';
 import { SendMessageSection, sendMessageBlocked } from './SendMessageSection';
 
 /**
@@ -230,6 +231,7 @@ export default function Rules() {
     sendMessageBlocked(draft.sendMessage) ||
     reengagementBlocked(draft.reengagement) ||
     responseAlertBlocked(draft.responseAlert) ||
+    firstContactLimitBlocked(draft.firstContactLimit) ||
     reminderVsLoss !== null;
 
   function handleSave(event: React.FormEvent) {
@@ -476,6 +478,13 @@ export default function Rules() {
         />
 
         <ResponseAlertSection
+          draft={draft}
+          canEdit={canEdit}
+          fieldErrors={fieldErrors}
+          set={set}
+        />
+
+        <FirstContactLimitSection
           draft={draft}
           canEdit={canEdit}
           fieldErrors={fieldErrors}

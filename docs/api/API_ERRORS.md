@@ -140,6 +140,7 @@ problema é do objeto inteiro. A tela não deve comparar o texto do motivo — s
 | `CONVERSATION_ALREADY_ASSIGNED` | 409 | Atribuição simultânea — segunda tentativa perde. `details: { assignedTo, assignedToName }` |
 | `CONVERSATION_ARCHIVED` | 409 | Reagir, mensagem automática ou de orçamento em conversa **encerrada** (`closed`). Mensagem/anexo do atendente **não** dá mais 409: reabre para quem envia (D-273). Nome mantido por compatibilidade (D-174); a mensagem é "Atendimento encerrado" |
 | `MESSAGE_SEND_FAILED` | 502 | Canal externo (WhatsApp) falhou após retries. `details: { messageId }`; em `POST /conversations/whatsapp` (CRMLAB-50) também `conversationId` — a conversa fica criada e a tela a abre |
+| `FIRST_CONTACT_LIMIT_REACHED` | 409 | CRMLAB-134 (D-306): mensagem de atendente que seria **primeiro contato** (conversa sem mensagem do paciente nem do laboratório) com o teto `firstContactLimit.perHour` da última hora já atingido, no WhatsApp por QR. Nada é gravado nem enviado. `details: { limit, retryAt }` (`retryAt` ISO UTC = quando abre a próxima vaga); em `POST /conversations/whatsapp` também `conversationId`. Não é 429 de propósito: o client repete 429 sozinho (D-288) |
 
 ## Canais — conexão WhatsApp por QR (Onda 7)
 

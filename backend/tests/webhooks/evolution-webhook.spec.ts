@@ -10,6 +10,7 @@
  * "Webhooks"): token invalido/ausente NUNCA toca o banco, e a resposta e
  * IDENTICA ao caminho feliz — nao vira oraculo.
  */
+import * as channelSettingsRepo from '../../src/repositories/channel-settings.repository.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeWebhookModule } from '../../src/controllers/webhook.routes.js';
 import { evolutionInstanceName } from '../../src/lib/evolution-client.js';
@@ -739,6 +740,85 @@ describe('POST /webhooks/evolution/:tenant — CONNECTION_UPDATE close com statu
       statusReason: null,
       requiresNewQr: false,
     });
+  });
+});
+
+describe('CRMLAB-134 (D-307) — motivo da ultima queda gravado em tenant_channels', () => {
+  async function connected(slug: string) {
+    const tenant = await createTenant({ slug });
+    slugToId.set(slug, tenant.id);
+    await db.withoutTenant((tx) =>
+      tx.query(
+        `INSERT INTO tenant_channels (tenant_id, channel, connection_mode, is_active, connected_at)
+         VALUES ($1, 'whatsapp', 'qr', TRUE, NOW())`,
+        [tenant.id],
+      ),
+    );
+    return tenant;
+  }
+
+  function post(slug: string, tenantId: string, data: Record<string, unknown>) {
+    return app.agent
+      .post(`${WEBHOOK}/${slug}`)
+      .set('x-evolution-webhook-token', TOKEN)
+      .send({ event: 'connection.update', instance: evolutionInstanceName(tenantId), data })
+      .expect(200);
+  }
+
+  async function stored(tenantId: string) {
+    return db.withTenant(tenantId, (tx) =>
+      channelSettingsRepo.findConnectionState(tx, tenantId, 'whatsapp'),
+    );
+  }
+
+  it('401 grava logged_out; um close seguinte sem motivo nao rebaixa', async () => {
+    const tenant = await connected('lab-d307-401');
+    await post('lab-d307-401', tenant.id, { state: 'close', statusReason: 401 });
+    const first = await stored(tenant.id);
+    expect(first?.connectedAt).toBeNull();
+    expect(first?.lastDisconnect).toMatchObject({ reason: 'logged_out', statusCode: 401 });
+    expect(first?.lastDisconnect?.at).toMatch(/Z$/);
+
+    await post('lab-d307-401', tenant.id, { state: 'close', statusReason: 408 });
+    expect((await stored(tenant.id))?.lastDisconnect).toMatchObject({
+      reason: 'logged_out',
+      statusCode: 401,
+    });
+  });
+
+  it('outro codigo grava other, e um 401 depois sobe para logged_out', async () => {
+    const tenant = await connected('lab-d307-408');
+    await post('lab-d307-408', tenant.id, { state: 'close', statusReason: 408 });
+    expect((await stored(tenant.id))?.lastDisconnect).toMatchObject({
+      reason: 'other',
+      statusCode: 408,
+    });
+    await post('lab-d307-408', tenant.id, { state: 'close', statusReason: 401 });
+    expect((await stored(tenant.id))?.lastDisconnect?.reason).toBe('logged_out');
+  });
+
+  it('desconectar pela tela grava manual e o 401 do logout nao sobrescreve', async () => {
+    const tenant = await connected('lab-d307-manual');
+    await db.withTenant(tenant.id, (tx) =>
+      channelSettingsRepo.markWhatsAppDisconnected(tx, tenant.id, {
+        reason: 'manual',
+        statusCode: null,
+      }),
+    );
+    await post('lab-d307-manual', tenant.id, { state: 'close', statusReason: 401 });
+    expect((await stored(tenant.id))?.lastDisconnect).toMatchObject({
+      reason: 'manual',
+      statusCode: null,
+    });
+  });
+
+  it('conectar de novo limpa o motivo', async () => {
+    const tenant = await connected('lab-d307-volta');
+    await post('lab-d307-volta', tenant.id, { state: 'close', statusReason: 401 });
+    await post('lab-d307-volta', tenant.id, { state: 'open', owner: '5548999990000@s.whatsapp.net' });
+    const state = await stored(tenant.id);
+    expect(state?.connectedAt).not.toBeNull();
+    expect(state?.lastDisconnect).toBeNull();
   });
 });
 

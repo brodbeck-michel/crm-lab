@@ -155,6 +155,22 @@ export interface ResponseAlertRules {
 }
 
 /**
+ * Seção 5c — teto de PRIMEIROS CONTATOS por hora no WhatsApp por QR
+ * (CRMLAB-134, D-305/D-306). Primeiro contato = mensagem de atendente para uma
+ * conversa sem nenhuma mensagem do paciente nem do laboratório (falhada não
+ * conta). Acima de `perHour` na janela móvel de 60 min, o envio é recusado com
+ * `FIRST_CONTACT_LIMIT_REACHED` antes de gravar.
+ */
+export interface FirstContactLimitRules {
+  enabled: boolean;
+  /** Inteiro 1..60 (`FIRST_CONTACT_PER_HOUR_MIN`/`_MAX`). */
+  perHour: number;
+}
+
+export const FIRST_CONTACT_PER_HOUR_MIN = 1;
+export const FIRST_CONTACT_PER_HOUR_MAX = 60;
+
+/**
  * Seção 6 — de onde vêm os orçamentos do LIS (CRMLAB-53, D-189 item 4). A carga
  * principal é a API do Bitlab; a planilha é plano B. Desligada: o botão
  * "Importar planilha" some e `POST /lis-imports` devolve
@@ -172,6 +188,7 @@ export interface FunnelRules {
   sendMessage: SendMessageRules;
   reengagement: ReengagementRules;
   responseAlert: ResponseAlertRules;
+  firstContactLimit: FirstContactLimitRules;
   lisSource: LisSourceRules;
 }
 
@@ -268,6 +285,8 @@ export const DEFAULT_FUNNEL_RULES: FunnelRules = {
   },
   // Desligado: o destaque vermelho só aparece quando o laboratório liga (D-254).
   responseAlert: { enabled: false, minutes: 15 },
+  // LIGADO (D-306): nasce para proteger o número depois da restrição de 04/11/2026.
+  firstContactLimit: { enabled: true, perHour: 8 },
   // Emenda à D-191 (D-189 item 5): a planilha nasce DESLIGADA — a API é a carga principal.
   lisSource: { spreadsheetImport: { enabled: false } },
 };

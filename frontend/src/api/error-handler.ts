@@ -48,6 +48,24 @@ function retryAfterMessage(details: Record<string, unknown> | undefined): string
 }
 
 /** Erro desconhecido (rede, parse) vira um `ApiError` de sistema. */
+/**
+ * Texto do `FIRST_CONTACT_LIMIT_REACHED` (CRMLAB-134, D-306): quantos por
+ * hora, a partir de que horas abre vaga e o que fazer no lugar.
+ */
+export function firstContactLimitMessage(details: Record<string, unknown> | undefined): string {
+  const limit = typeof details?.limit === 'number' ? details.limit : null;
+  const retryAt = typeof details?.retryAt === 'string' ? new Date(details.retryAt) : null;
+  const when =
+    retryAt && !Number.isNaN(retryAt.getTime())
+      ? ` Próxima vaga às ${retryAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.`
+      : '';
+  const head =
+    limit !== null
+      ? `Limite de ${limit} primeiros contatos por hora no WhatsApp atingido.`
+      : 'Limite de primeiros contatos por hora no WhatsApp atingido.';
+  return `${head}${when} Peça ao paciente que mande uma mensagem primeiro: aí o envio é liberado.`;
+}
+
 export function toHandledError(error: unknown): ApiError {
   if (isApiError(error)) return error;
   const message = error instanceof Error ? error.message : 'Erro inesperado';
@@ -72,6 +90,10 @@ export function createApiErrorHandler(deps: ErrorHandlerDeps) {
 
       case 'RATE_LIMIT_EXCEEDED':
         deps.toast(retryAfterMessage(error.details), { tone: 'attention' });
+        return { error, handledSilently: false };
+
+      case 'FIRST_CONTACT_LIMIT_REACHED':
+        deps.toast(firstContactLimitMessage(error.details), { tone: 'attention' });
         return { error, handledSilently: false };
 
       case 'VALIDATION_ERROR': {

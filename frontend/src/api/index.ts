@@ -21,6 +21,7 @@ export type {
 
 export {
   createApiErrorHandler,
+  firstContactLimitMessage,
   mapFieldErrors,
   toHandledError,
 } from './error-handler';

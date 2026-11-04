@@ -63,6 +63,7 @@ import { notFound } from '../http/errors.js';
 import { ConversationRepository, phoneDigits } from '../repositories/conversation.repository.js';
 import { MediaRepository } from '../repositories/media.repository.js';
 import { MessageRepository } from '../repositories/message.repository.js';
+import { createFirstContactGuard } from '../services/first-contact.service.js';
 import { createAuditService } from '../services/audit.service.js';
 import {
   ConversationService,
@@ -273,6 +274,7 @@ export function createConversationServices(
     wsHub: deps.wsHub,
     whatsapp: overrides.whatsapp ?? createWhatsAppService(deps.db),
     audit,
+    firstContact: createFirstContactGuard({ db: deps.db }),
   });
   const conversations = new ConversationService({
     db: deps.db,

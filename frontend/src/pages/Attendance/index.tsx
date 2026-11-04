@@ -467,6 +467,10 @@ export function Attendance() {
           // Outra pessoa assumiu (D-215): nada deste nem dos próximos sai.
           handleSendError(error);
           break;
+        } else if (isApiError(error) && error.code === 'FIRST_CONTACT_LIMIT_REACHED') {
+          // Teto de primeiros contatos (D-306): os próximos anexos teriam o mesmo fim.
+          handleApiError(error);
+          break;
         } else {
           const reason = error instanceof Error ? error.message : 'erro inesperado';
           toast(`Não foi possível enviar "${file.name}": ${reason}`, { tone: 'attention' });

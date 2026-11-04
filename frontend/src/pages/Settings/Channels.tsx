@@ -8,6 +8,7 @@ import type {
   UpdateChannelSettingsRequest,
   UserRole,
   WeekDay,
+  WhatsAppDisconnectInfo,
 } from '@crm-lab/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isApiError, queryKeys, settingsApi, useWhatsAppDisconnect, useWhatsAppStatus } from '@/api';
@@ -16,6 +17,7 @@ import { DataTable, EmptyState, Modal } from '@/components/shared';
 import type { DataTableColumn } from '@/components/shared';
 import { WhatsAppConnectModal } from '@/components/settings/WhatsAppConnectModal';
 import { Button, Chip, Input, TextArea, Toggle, useToast } from '@/components/ui';
+import { formatDateTime } from '@/lib/format';
 import { useAuthStore } from '@/stores';
 import {
   CHANNEL_LABEL,
@@ -87,6 +89,36 @@ function Section({ title, description, children }: SectionProps) {
   );
 }
 
+/**
+ * Por que o WhatsApp por QR caiu (CRMLAB-134, D-307). `logged_out` (401) é o
+ * caso perigoso: pode ser conta restringida, e reconectar durante a restrição
+ * arrisca o banimento — o aviso fica aqui, ao lado do botão de reconectar.
+ * `manual` foi o próprio admin: nada a explicar.
+ */
+function LastDisconnectNotice({ info }: { info: WhatsAppDisconnectInfo }) {
+  if (info.reason === 'manual') return null;
+  const when = formatDateTime(info.at);
+  if (info.reason === 'logged_out') {
+    return (
+      <p
+        role="status"
+        data-testid="whatsapp-logged-out"
+        className="m-0 rounded-md bg-accent-100 px-md py-sm font-body text-caption text-accent-800"
+      >
+        <strong>O WhatsApp encerrou a sessão em {when}.</strong> O aparelho foi desvinculado no
+        celular, removido pelo WhatsApp ou a conta foi restringida. Confira o celular antes de
+        reconectar: se aparecer “conta restringida”, espere o prazo terminar.
+      </p>
+    );
+  }
+  return (
+    <p role="status" className="m-0 font-body text-caption text-neutral-600">
+      Desconectado desde {when}
+      {info.statusCode !== null ? ` (código ${info.statusCode})` : ''}.
+    </p>
+  );
+}
+
 interface WhatsAppQrConnectionProps {
   /** `undefined` quando o laboratório ainda não tem linha `whatsapp` em `settings.channels`. */
   channel: TenantChannel | undefined;
@@ -143,6 +175,10 @@ function WhatsAppQrConnection({ channel }: WhatsAppQrConnectionProps) {
           </Button>
         )}
       </div>
+
+      {!isConnected && channel?.connectionMode === 'qr' && status?.lastDisconnect && (
+        <LastDisconnectNotice info={status.lastDisconnect} />
+      )}
 
       <WhatsAppConnectModal
         open={connectOpen}

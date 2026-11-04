@@ -60,6 +60,7 @@ describe('GET /conversations', () => {
       'lastMessageAt',
       'lastMessagePreview',
       'participants',
+      'patientHasWritten', // CRMLAB-134 (D-305)
       'patientId',
       'patientName',
       'patientPhone',

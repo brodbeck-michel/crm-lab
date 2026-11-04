@@ -78,6 +78,11 @@ export const ERROR_CATALOG = {
   },
   CONVERSATION_ARCHIVED: { statusCode: 409, message: 'Atendimento encerrado' },
   MESSAGE_SEND_FAILED: { statusCode: 502, message: 'Falha ao enviar a mensagem pelo canal' },
+  // 409, nao 429: o client repete 429 sozinho (D-288) e aqui repetir nao adianta (D-306).
+  FIRST_CONTACT_LIMIT_REACHED: {
+    statusCode: 409,
+    message: 'Limite de primeiros contatos da hora atingido no WhatsApp',
+  },
 
   // --- Canais (Onda 7 — WhatsApp QR) ---
   CHANNEL_QR_UNAVAILABLE: {

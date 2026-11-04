@@ -474,6 +474,14 @@ export class ConversationService {
         messageType: 'text',
       });
     } catch (err) {
+      // Limite de primeiros contatos (D-306 item 5): a conversa criada fica, e a
+      // tela abre ela mesmo sem a mensagem.
+      if (isBusinessError(err) && err.code === 'FIRST_CONTACT_LIMIT_REACHED') {
+        throw new BusinessError('FIRST_CONTACT_LIMIT_REACHED', {
+          ...err.details,
+          conversationId: conversation.id,
+        });
+      }
       if (isBusinessError(err) && err.code === 'MESSAGE_SEND_FAILED') {
         throw new BusinessError('MESSAGE_SEND_FAILED', {
           ...err.details,

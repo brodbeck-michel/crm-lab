@@ -6768,3 +6768,81 @@ visto (minutos); a rede diária cobre quem deixa o orçamento aberto por mais te
 `knownBudgets`), `lis-sync.service.ts`; testes `lis-sync.spec.ts`, `lis-payments.spec.ts`,
 `bitlab-client.spec.ts`; SERVICES §24, BUSINESS_RULES §11.10, SCHEMA `lis_sync_settings`,
 API_CONTRACTS §10.3. **Deploy:** sem migração e sem variável nova.
+
+### D-305: "Primeiro contato" e o aviso na tela (CRMLAB-134)
+**Contexto:** em 04/11/2026 o WhatsApp restringiu o número do Santé por ~24 h ("mensagens
+automáticas ou em massa") e encerrou a sessão (Evolution `close`, statusReason 401). O volume total
+não era de disparo (≈500 mensagens de atendente por dia), mas ≈40–50 conversas por dia começavam com
+mensagem **nossa**, para números que nunca tinham escrito, quase sempre com o mesmo texto do modelo
+de orçamento. Esse é o padrão que o WhatsApp pune no canal não oficial (QR).
+**Decisão:**
+1. **Primeiro contato** = enviar para uma conversa sem **nenhuma** mensagem do paciente
+   (`sender_type = 'patient'`) e sem nenhuma mensagem de atendente (`sender_type = 'agent'`) que não
+   tenha falhado. Mensagem de sistema não conta. Conversa já contatada antes (o paciente só não
+   respondeu) não é primeiro contato.
+2. `Conversation.patientHasWritten` (boolean, sempre presente): `EXISTS` de mensagem do paciente. Vem
+   na lista e no detalhe (`LIST_COLUMNS`). Índice parcial novo `idx_messages_patient_conversation`
+   (062).
+3. **Aviso, não bloqueio:** o painel de envio do orçamento mostra faixa de atenção quando a conversa
+   escolhida tem `patientHasWritten = false` ("Este paciente nunca escreveu para o laboratório…").
+   "Nova conversa" mostra o mesmo aviso sempre (o número ainda não foi resolvido). Quem bloqueia é o
+   limite da D-306.
+**Motivo:** a atendente não tem como saber, olhando a lista, que aquela conversa foi aberta por ela
+mesma. O aviso muda o hábito (pedir que o paciente escreva primeiro) sem travar o atendimento.
+**Impacto:** `conversation.repository.ts`, `shared/types/conversation.types.ts`,
+`SendProposalPanel.tsx`, `NewConversationModal.tsx`; migração 062; API_CONTRACTS (Conversation),
+SCHEMA (índices de `messages`), PAGES (Atendimento, painel de envio).
+
+### D-306: Limite de primeiros contatos por hora no WhatsApp por QR (CRMLAB-134)
+**Contexto:** D-305. Em 04/11 foram 14 primeiros contatos nas 2 horas antes da restrição.
+**Decisão:**
+1. Regra nova `FunnelRules.firstContactLimit = { enabled, perHour }`, padrão **`{ enabled: true,
+   perHour: 8 }`** (faixa 1–60). Vale para todo laboratório a partir do deploy, inclusive os que já
+   gravaram regras (o merge com o padrão preenche a chave ausente). Gestor e admin mudam em
+   Configurações → Regras.
+2. Só vale com o canal WhatsApp **ativo por QR** (`isQrWhatsAppActive`, D-214). A Cloud API oficial
+   tem as próprias regras da Meta.
+3. Janela **móvel de 60 min**: conta as conversas de WhatsApp do laboratório sem mensagem do paciente
+   cuja primeira mensagem de atendente não falhada é da última hora. Se a conta já é `perHour`, um
+   novo primeiro contato (D-305 item 1) é recusado **antes** de gravar a mensagem: nada vai para o
+   canal e nada fica `failed`.
+4. Vale para o Composer (texto e anexo), o envio do orçamento pelo cartão, a "Nova conversa" e o
+   "tentar de novo" de mensagem que falhou. Automações (fora do horário, reengajamento) não passam por
+   aqui: respondem a quem já escreveu ou seguem conversa já contatada.
+5. Erro **409 `FIRST_CONTACT_LIMIT_REACHED`** com `details: { limit, retryAt }` (ISO UTC: quando o
+   contato mais antigo da janela sai dela). Não é 429: o client HTTP repete 429 sozinho (D-288), e
+   aqui repetir não adianta. Na "Nova conversa", a conversa criada continua existindo e o erro leva
+   `conversationId`, como no `MESSAGE_SEND_FAILED`.
+6. Sem fila: a fila do WhatsApp é em memória e síncrona (D-011), então "segurar para enviar depois"
+   se perderia num reinício. A tela diz até quando esperar.
+7. Corrida: dois envios simultâneos podem passar do limite por 1. Aceito; o objetivo é cortar
+   rajada, não contar exato.
+**Motivo:** o aviso da D-305 depende do hábito; o limite é a trava que não depende de ninguém
+lembrar. 8 por hora cabe o ritmo normal do Santé (≈50 em 8 h) e corta rajadas.
+**Impacto:** `shared/types/funnel-rules.types.ts`, `funnel-rules.service.ts` (`leafError`),
+`first-contact.repository.ts` e `first-contact.service.ts` (novos), `message.service.ts`,
+`conversation.service.ts`, `api.types.ts` + `errors.ts`, `Rules.tsx` + `FirstContactLimitSection.tsx`,
+tratamento do erro no painel de envio, Composer e Nova conversa; API_CONTRACTS (funnel rules, erros),
+API_ERRORS, SERVICES, PAGES (Regras).
+
+### D-307: Motivo da última queda do WhatsApp por QR na tela de Canais (CRMLAB-134)
+**Contexto:** o motivo da queda (D-184) só existia no log do backend e no evento WS do momento.
+Quem abria Canais depois via só "Conectar WhatsApp", e reconectar durante uma restrição arrisca o
+banimento do número.
+**Decisão:**
+1. `tenant_channels` ganha `disconnected_at TIMESTAMPTZ` e `disconnect_reason TEXT` (`manual` |
+   `logged_out` | `other`, CHECK) e `disconnect_status_code INTEGER` (migração 062).
+2. **Gateway** (`CONNECTION_UPDATE` `close`): `logged_out` quando statusReason = 401, senão `other`.
+   Não sobrescreve um `manual` nem rebaixa um `logged_out` enquanto o canal segue desconectado (o
+   gateway repete `close`, e o logout pela tela também chega como 401).
+3. **Desconectar pela tela:** sempre `manual`. Conectar limpa as três colunas.
+4. `GET /settings/channels/whatsapp/status` ganha `lastDisconnect: { at, reason, statusCode } | null`
+   (`null` quando conectado ou sem registro).
+5. Tela de Canais, desconectado: `logged_out` mostra faixa de atenção "O WhatsApp encerrou a sessão
+   em <data>: o aparelho foi desvinculado no celular, removido pelo WhatsApp ou a conta foi
+   restringida. Confira o celular antes de reconectar: se aparecer 'conta restringida', espere o
+   prazo terminar." `other` mostra "Desconectado desde <data>". `manual` não mostra faixa.
+**Motivo:** o aviso precisa estar onde está o botão de reconectar, para quem chega horas depois.
+**Impacto:** `channel-settings.repository.ts`, `channel-settings.service.ts`, `webhook.routes.ts`,
+`shared/types/settings.types.ts`, `Channels.tsx`; SCHEMA §15, API_CONTRACTS §6.1, PAGES §10.
+**Deploy:** migração 062 (só `ADD COLUMN` nulo e índice parcial), sem variável nova.

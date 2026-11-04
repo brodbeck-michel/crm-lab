@@ -142,6 +142,12 @@ export interface Conversation {
    */
   awaitingReplySince?: IsoDateTime | null;
   /**
+   * O paciente já mandou ao menos uma mensagem nesta conversa (CRMLAB-134,
+   * D-305). `false` = enviar é primeiro contato: a tela avisa e o limite da
+   * D-306 pode recusar. Opcional no tipo (AGENTS.md); o backend sempre preenche.
+   */
+  patientHasWritten?: boolean;
+  /**
    * Colegas chamadas para dentro da conversa sem virar donas (CRMLAB-93, D-263), em ordem de
    * entrada. A dona nunca está aqui. Opcional no tipo (AGENTS.md); o backend sempre preenche.
    */

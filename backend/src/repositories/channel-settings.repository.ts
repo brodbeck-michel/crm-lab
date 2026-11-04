@@ -55,6 +55,7 @@
  * e montada aqui, apos decifrar, e o valor em claro nao escapa desta funcao.
  * A fronteira de D-064 continua sendo o repositorio; so mudou de camada.
  */
+import type { WhatsAppDisconnectInfo, WhatsAppDisconnectReason } from '@crm-lab/shared';
 import type { DbTx } from '../db/types.js';
 import { decryptSecret, encryptSecret } from '../lib/secret-box.js';
 import { toIso, toIsoOrNull, toJsonObject } from './row-mappers.js';
@@ -352,6 +353,25 @@ export interface ConnectionState {
   connectedAt: string | null;
   phoneNumber: string | null;
   acceptedTermsAt: string | null;
+  /** Ultima queda gravada (CRMLAB-134, D-307); `null` sem registro. */
+  lastDisconnect: WhatsAppDisconnectInfo | null;
+}
+
+const DISCONNECT_REASONS: readonly WhatsAppDisconnectReason[] = ['manual', 'logged_out', 'other'];
+
+function toDisconnectInfo(
+  at: unknown,
+  reason: string | null,
+  statusCode: number | string | null,
+): WhatsAppDisconnectInfo | null {
+  const iso = toIsoOrNull(at);
+  if (iso === null || !DISCONNECT_REASONS.includes(reason as WhatsAppDisconnectReason)) return null;
+  const code = statusCode === null ? null : Number(statusCode);
+  return {
+    at: iso,
+    reason: reason as WhatsAppDisconnectReason,
+    statusCode: code !== null && Number.isInteger(code) ? code : null,
+  };
 }
 
 export async function findConnectionState(
@@ -364,10 +384,15 @@ export async function findConnectionState(
     phone_number: string | null;
     connected_at: unknown;
     accepted_terms_at: unknown;
+    disconnected_at: unknown;
+    disconnect_reason: string | null;
+    disconnect_status_code: number | string | null;
   }>(
     `SELECT connection_mode, phone_number,
             to_char(connected_at, ${ISO_UTC}) AS connected_at,
-            to_char(accepted_terms_at, ${ISO_UTC}) AS accepted_terms_at
+            to_char(accepted_terms_at, ${ISO_UTC}) AS accepted_terms_at,
+            to_char(disconnected_at, ${ISO_UTC}) AS disconnected_at,
+            disconnect_reason, disconnect_status_code
        FROM tenant_channels
       WHERE tenant_id = $1 AND channel = $2`,
     [tenantId, channel],
@@ -379,6 +404,11 @@ export async function findConnectionState(
     phoneNumber: row.phone_number,
     connectedAt: toIsoOrNull(row.connected_at),
     acceptedTermsAt: toIsoOrNull(row.accepted_terms_at),
+    lastDisconnect: toDisconnectInfo(
+      row.disconnected_at,
+      row.disconnect_reason,
+      row.disconnect_status_code,
+    ),
   };
 }
 
@@ -396,7 +426,10 @@ export async function markWhatsAppConnected(
     `UPDATE tenant_channels
         SET is_active = TRUE,
             connected_at = NOW(),
-            phone_number = COALESCE($2, phone_number)
+            phone_number = COALESCE($2, phone_number),
+            disconnected_at = NULL,
+            disconnect_reason = NULL,
+            disconnect_status_code = NULL
       WHERE tenant_id = $1 AND channel = 'whatsapp'`,
     [tenantId, phoneNumber],
   );
@@ -421,11 +454,33 @@ export async function markWhatsAppConnected(
  * Quem desliga o canal de proposito e o `PATCH /settings/channels` existente
  * (`isActive: false`), um controle deliberadamente separado.
  */
-export async function markWhatsAppDisconnected(tx: DbTx, tenantId: string): Promise<void> {
+export async function markWhatsAppDisconnected(
+  tx: DbTx,
+  tenantId: string,
+  cause: { reason: WhatsAppDisconnectReason; statusCode: number | null },
+): Promise<void> {
+  // D-307 item 2: o `close` do gateway nao apaga um `manual` (o logout pedido
+  // pela tela tambem chega como 401) nem rebaixa um `logged_out` enquanto o
+  // canal segue desconectado (o gateway repete `close`). O `manual` sempre grava.
   await tx.query(
     `UPDATE tenant_channels
-        SET connected_at = NULL
-      WHERE tenant_id = $1 AND channel = 'whatsapp'`,
+        SET connected_at = NULL,
+            disconnected_at = NOW(),
+            disconnect_reason = $2,
+            disconnect_status_code = $3
+      WHERE tenant_id = $1 AND channel = 'whatsapp'
+        AND (
+          $2 = 'manual'
+          OR connected_at IS NOT NULL
+          OR disconnect_reason IS NULL
+          OR (disconnect_reason = 'other' AND $2 = 'logged_out')
+        )`,
+    [tenantId, cause.reason, cause.statusCode],
+  );
+  // Fora da condicao acima o motivo fica, mas `connected_at` continua a zerar.
+  await tx.query(
+    `UPDATE tenant_channels SET connected_at = NULL
+      WHERE tenant_id = $1 AND channel = 'whatsapp' AND connected_at IS NOT NULL`,
     [tenantId],
   );
 }

@@ -637,6 +637,22 @@ interface AuditService {
 
 ## 11. WhatsAppService (Integração Externa)
 
+**Teto de primeiros contatos (CRMLAB-134, D-305/D-306):** `services/first-contact.service.ts`
+(`createFirstContactGuard({ db })` → `assertAllowed(tenantId, conversationId)`), injetado no
+`MessageService` (`firstContact`) por `createConversationServices` e `createMessageService`.
+`createFromAgent`, `createAttachmentFromAgent` e `retryFailed` chamam antes de gravar/reenviar, só
+em conversa `whatsapp`. O guard lê `firstContactLimit` (`readFunnelRules`), confere
+`isQrWhatsAppActive`, `isFirstContact` e `countRecentFirstContacts`
+(`repositories/first-contact.repository.ts`, janela móvel de 60 min) e lança
+`FIRST_CONTACT_LIMIT_REACHED { limit, retryAt }` com log `whatsapp.first_contact_limited`.
+`ConversationService.startWhatsApp` repassa o erro com `conversationId`. Automações
+(`createAutomated`) não passam pelo guard.
+
+**Motivo da queda (D-307):** `markWhatsAppDisconnected(tx, tenantId, { reason, statusCode })`
+grava `disconnected_at/disconnect_reason/disconnect_status_code`; o webhook manda `logged_out`
+(401) ou `other`, o "Desconectar" da tela manda `manual`; `markWhatsAppConnected` zera.
+`findConnectionState` devolve `lastDisconnect`, que `getWhatsAppStatus` expõe quando não conectado.
+
 **Responsabilidade:** Adapter para WhatsApp Business API.
 
 ```typescript

@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-10-28 (CRMLAB-122 — rate limit e várias abas)
+**Última atualização:** 2026-11-04 (CRMLAB-134 — proteção contra restrição do WhatsApp)
 
 ---
 
@@ -3782,3 +3782,23 @@ sem variável nova.
   estorno atrasados), `lis-payments.spec.ts` (rede diária reescrita), `bitlab-client.spec.ts`
   (`changedAt`). Domínio LIS: 236 verdes.
 - **Pendente:** validação na hml.
+
+### 🚧 CRMLAB-134 — proteção contra nova restrição do WhatsApp por QR (2026-11-04, aguardando validação)
+
+Branch `feature/CRMLAB-134-risco-restricao-whatsapp` (de `main` v1.42.2). Decisões D-305, D-306 e
+D-307. **Migração 062** (índice parcial em `messages` + 3 colunas nulas em `tenant_channels`), sem
+variável nova.
+
+- **Causa:** em 04/11 o número do Santé foi restringido por ~24 h ("mensagens automáticas ou em
+  massa") depois de ≈40–50 primeiros contatos por dia, quase sempre com o mesmo texto de orçamento.
+- **Primeiro contato (D-305):** `Conversation.patientHasWritten`; aviso no painel de envio do
+  orçamento e nota fixa na Nova conversa (não bloqueiam).
+- **Teto por hora (D-306):** regra `firstContactLimit` (padrão ligado, 8/h, 1–60) só no QR; acima,
+  409 `FIRST_CONTACT_LIMIT_REACHED { limit, retryAt }` antes de gravar; Composer, anexo, orçamento,
+  Nova conversa e "tentar de novo". Seção nova nas Regras.
+- **Motivo da queda (D-307):** `lastDisconnect` no status; faixa em Canais quando foi 401.
+- **Testes:** backend `crmlab134-first-contact.spec.ts` (13), `evolution-webhook.spec.ts` (+4),
+  `funnel-rules.spec.ts` (+1), shape em `list.spec.ts`. Frontend `SendProposalPanel.spec.tsx` (+2),
+  `Channels.spec.tsx` (+3), `Rules.spec.tsx` (+1), `NewConversation.spec.tsx` (+1).
+- **Pendente:** validação na hml; o Santé herda o teto ligado (8/h) no deploy.
+

@@ -915,10 +915,15 @@ async function applyEvolutionConnectionUpdate(
 ): Promise<void> {
   const state = evolutionConnectionStateOf(data);
   if (!state) return;
+  const requiresNewQr = !state.connected && state.statusReason === EVOLUTION_LOGGED_OUT;
   await db.withTenant(tenantId, (tx) =>
     state.connected
       ? channelSettingsRepo.markWhatsAppConnected(tx, tenantId, state.phoneNumber)
-      : channelSettingsRepo.markWhatsAppDisconnected(tx, tenantId),
+      : // O motivo fica gravado para a tela de Canais (CRMLAB-134, D-307).
+        channelSettingsRepo.markWhatsAppDisconnected(tx, tenantId, {
+          reason: requiresNewQr ? 'logged_out' : 'other',
+          statusCode: state.statusReason,
+        }),
   );
 
   // A queda PRECISA sair do banco e chegar em alguem. Na auditoria de
@@ -940,7 +945,6 @@ async function applyEvolutionConnectionUpdate(
     });
     return;
   }
-  const requiresNewQr = state.statusReason === EVOLUTION_LOGGED_OUT;
   logger.error('channel.whatsapp_disconnected', {
     tenantId,
     statusReason: state.statusReason,

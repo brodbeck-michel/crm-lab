@@ -2351,6 +2351,22 @@ dois diferem. Idempotente. A consulta de conferência (antes/depois) está no ca
 
 ---
 
+### 46. Primeiro contato e motivo da queda do WhatsApp (migração 062 — CRMLAB-134, D-305/D-307)
+```sql
+CREATE INDEX idx_messages_patient_conversation ON messages (conversation_id)
+  WHERE sender_type = 'patient';
+
+ALTER TABLE tenant_channels
+  ADD COLUMN disconnected_at TIMESTAMP NULL,         -- quando caiu (UTC, como connected_at)
+  ADD COLUMN disconnect_reason TEXT NULL,            -- manual | logged_out | other (CHECK)
+  ADD COLUMN disconnect_status_code INTEGER NULL;    -- statusReason do gateway (401 = logout)
+```
+- O índice serve o `EXISTS` de `Conversation.patientHasWritten` e a conta de primeiros contatos
+  (D-306). O predicado é literal: consulta com outro filtro não usa o índice.
+- As três colunas só têm sentido no canal `whatsapp` por QR. `markWhatsAppConnected` zera as três;
+  "Desconectar" grava `manual`; o `close` do gateway grava `logged_out` (401) ou `other`, sem
+  sobrescrever `manual` nem rebaixar `logged_out` enquanto `connected_at` segue `NULL` (D-307).
+
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
 
 O isolamento multitenant não é convenção: é imposto pelo banco. O backend conecta com o papel

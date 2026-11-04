@@ -665,6 +665,10 @@ faz request extra por conversa). Shape completo: `Conversation` em
 `lastMessagePreview` de mensagem **apagada** pelo remetente vem `""` (D-220) — a prévia
 nunca devolve o conteúdo escondido.
 
+**`patientHasWritten` (CRMLAB-134, D-305)** — `true` quando a conversa tem ao menos uma mensagem
+do paciente (`senderType: "patient"`). Sempre presente, na lista e no detalhe. `false` = enviar
+para ela é **primeiro contato** (a tela avisa; o limite da D-306 pode recusar).
+
 **`awaitingReplySince` (CRMLAB-84, D-254)** — hora da **primeira** mensagem do paciente depois
 da última resposta de pessoa do laboratório (`senderType: "agent"` sem `automation` — CRM ou
 celular) **ou do último encerramento** ("Atendimento encerrado por X"), o que for mais recente
@@ -835,7 +839,7 @@ mensagem pelo canal WhatsApp do laboratório, pelo **mesmo** `MessageService.cre
 }
 ```
 
-**Erros:** `VALIDATION_ERROR` (400 — `details.fields.phone` / `details.fields.content`),
+**Erros:** `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — `details: { limit, retryAt, conversationId }`: a conversa fica criada, sem mensagem), `VALIDATION_ERROR` (400 — `details.fields.phone` / `details.fields.content`),
 `CONVERSATION_ALREADY_ASSIGNED` (409, `details: { assignedTo, assignedToName }`),
 `MESSAGE_SEND_FAILED` (502, `details: { messageId, conversationId }` — canal indisponível, sem
 credencial ou desligado: a conversa **fica criada** e a mensagem gravada como `failed`, como em
@@ -1120,7 +1124,7 @@ pelo cartão (`POST /proposals/:id/send`, `POST /proposals/:id/resend`), que usa
 }
 ```
 
-**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404),
+**Erros:** `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — primeiro contato acima do teto da hora; `details: { limit, retryAt }`), `VALIDATION_ERROR` (400), `NOT_FOUND` (404),
 `CONVERSATION_ALREADY_ASSIGNED` (409, conversa da fila livre assumida por outra pessoa no mesmo
 instante — D-215 — ou encerrada reaberta por outra pessoa no mesmo instante — D-273), `MESSAGE_SEND_FAILED` (502, canal externo falhou após os retries), `FORBIDDEN`
 (403, `platform_operator`)
@@ -1282,7 +1286,7 @@ original, e termina `sent` ou de novo `failed`. Anexo relê o arquivo guardado
 
 **Response (200):** a `Message` (objeto cru, D-070) com `status: "sent"`.
 
-**Erros:** `NOT_FOUND` (404 — conversa fora do recorte, mensagem de outra conversa ou de outro
+**Erros:** `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — primeiro contato acima do teto da hora; `details: { limit, retryAt }`), `NOT_FOUND` (404 — conversa fora do recorte, mensagem de outra conversa ou de outro
 tenant), `CONFLICT` (409 — a mensagem não é do atendimento, não está `failed` ou o atendimento
 está encerrado), `MESSAGE_SEND_FAILED` (502 — falhou de novo; a linha continua `failed`; também
 quando o arquivo do anexo sumiu do disco), `VALIDATION_ERROR` (400, id não-uuid), `FORBIDDEN`
@@ -2744,7 +2748,7 @@ cartão** (a mensagem fica na conversa como `failed`, como no atendimento).
 
 **Response (200):** o `ProposalDetail` atualizado.
 
-**Erros:** `VALIDATION_ERROR` (400); `NOT_FOUND` (404, proposta ou conversa de outro tenant ou
+**Erros:** `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — primeiro contato acima do teto da hora; `details: { limit, retryAt }`), `VALIDATION_ERROR` (400); `NOT_FOUND` (404, proposta ou conversa de outro tenant ou
 fora da visibilidade); `FORBIDDEN` (403, `details.reason: "move_others_not_allowed"`);
 `PROPOSAL_EDIT_NOT_ALLOWED` (409, `details.reason: "crm_origin"`); `INVALID_STATUS_TRANSITION`
 (400, cartão fora de `novo_contato`); `PROPOSAL_ALREADY_CLOSED` (409);
@@ -4565,7 +4569,13 @@ Status do canal para o card de Canais & Equipe, sem QR — não faz polling.
 }
 ```
 Shape: `WhatsAppStatusResponse`. Sem conexão: `{ "status": "disconnected", "phoneNumber": null,
-"connectedAt": null }`.
+"connectedAt": null, "lastDisconnect": { ... } | null }`.
+
+`lastDisconnect` (CRMLAB-134, D-307): a última queda gravada, só quando **não** está conectado
+(senão `null`). `{ "at": ISO UTC, "reason": "manual" | "logged_out" | "other", "statusCode":
+number | null }`. `logged_out` = o gateway fechou com 401 (desvinculado no celular, removido pelo
+WhatsApp ou conta restringida); `manual` = "Desconectar" da tela; `other` = qualquer outro `close`.
+`null` também quando o canal nunca registrou queda.
 
 **Erros:** `FORBIDDEN` (403), `CHANNEL_QR_UNAVAILABLE` (503)
 
@@ -4695,6 +4705,7 @@ completo com os padrões aplicados. Nenhum outro código lê `funnel_rules` dire
     }
   },
   "responseAlert": { "enabled": false, "minutes": 15 },
+  "firstContactLimit": { "enabled": true, "perHour": 8 },
   "lisSource": {
     "spreadsheetImport": { "enabled": false }
   }
@@ -4718,6 +4729,7 @@ completo com os padrões aplicados. Nenhum outro código lê `funnel_rules` dire
 | `reengagement.first` | Paciente sem responder há `hours` depois da última mensagem da atendente → manda `message` (D-211); `{paciente}` vira o primeiro nome, ou some sem nome (D-266) | CRMLAB-62/96 |
 | `reengagement.second` | `hours` depois do envio do 1º, se continuar sem resposta → manda `message`. Só com o 1º ligado | CRMLAB-62 |
 | `responseAlert` | Destaca na lista do Atendimento a conversa ativa cujo paciente espera resposta há `minutes` minutos **úteis** ou mais (D-254). Só visual. Padrão desligado, 15 min | CRMLAB-84 (navegador) |
+| `firstContactLimit` | Teto de **primeiros contatos** (D-305) por janela móvel de 60 min no WhatsApp **por QR** (D-306). Acima de `perHour`, enviar para conversa que nunca recebeu mensagem do paciente nem do laboratório = `FIRST_CONTACT_LIMIT_REACHED`. Padrão **ligado, 8** | CRMLAB-134 |
 | `lisSource.spreadsheetImport` | Importar a planilha do LIS (plano B; a carga principal é a API do Bitlab). Padrão **`false`**. `false` → `POST /lis-imports` = `SPREADSHEET_IMPORT_DISABLED` e o botão "Importar" some em Resultados (D-189) | CRMLAB-53 |
 
 `checkTransition`, `canTransition`, `allowedTargets`, `buildAllowedTransitions`, `canReopen`,
@@ -4745,7 +4757,8 @@ Validação (`VALIDATION_ERROR`, `details.fields` pelo caminho do campo):
 - corpo vazio (`{}`) → `fields._root`; campo desconhecido em qualquer nível → `Campo desconhecido`;
 - booleanos são `boolean`; `days` inteiro `1..365`; `hours` inteiro `1..720`; `minutes`
   (`responseAlert.minutes`) inteiro `1..1440`; `automation.staleNewBudgetAlert.minutes` inteiro
-  `5..43200` (D-267 — `hours` nessa regra é `Campo desconhecido`);
+  `5..43200` (D-267 — `hours` nessa regra é `Campo desconhecido`); `firstContactLimit.perHour`
+  inteiro `1..60` (D-306);
 - `dayCounting` ∈ `calendar | business`; `roles` ⊆ `["attendant","manager"]`, sem repetição;
 - `origin`: ao menos uma das duas ligada depois do merge → `fields.origin`;
 - `sendMessage.templates` (D-265): lista de `1..5` objetos `{ name, text }` →

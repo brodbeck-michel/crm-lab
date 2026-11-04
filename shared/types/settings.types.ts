@@ -61,6 +61,24 @@ export interface WhatsAppStatusResponse {
   status: WhatsAppConnectionStatus;
   phoneNumber: string | null;
   connectedAt: IsoDateTime | null;
+  /**
+   * Última queda gravada (CRMLAB-134, D-307). `null` quando conectado ou sem
+   * registro. Opcional no tipo (AGENTS.md); o backend sempre preenche.
+   */
+  lastDisconnect?: WhatsAppDisconnectInfo | null;
+}
+
+/**
+ * Por que o WhatsApp por QR caiu (D-307): `logged_out` = o gateway fechou com
+ * 401 (desvinculado no celular, removido pelo WhatsApp ou conta restringida);
+ * `manual` = "Desconectar" da tela; `other` = qualquer outro `close`.
+ */
+export type WhatsAppDisconnectReason = 'manual' | 'logged_out' | 'other';
+
+export interface WhatsAppDisconnectInfo {
+  at: IsoDateTime;
+  reason: WhatsAppDisconnectReason;
+  statusCode: number | null;
 }
 
 /** Como a conversa nova (fila) chega ao atendente. */

@@ -128,6 +128,48 @@ describe('ChannelsSettings', () => {
     expect(screen.getByText('Inativo')).toBeInTheDocument();
   });
 
+  describe('motivo da última queda do QR (CRMLAB-134, D-307)', () => {
+    const qrSettings: ChannelSettingsResponse = {
+      ...settings,
+      channels: settings.channels.map((c) => ({ ...c, connectionMode: 'qr' as const })),
+    };
+
+    async function withStatus(lastDisconnect: {
+      at: string;
+      reason: 'manual' | 'logged_out' | 'other';
+      statusCode: number | null;
+    }) {
+      channelsMock.mockResolvedValue(qrSettings);
+      const { useWhatsAppStatus } = await import('@/api/channels');
+      vi.mocked(useWhatsAppStatus).mockReturnValue(
+        querySuccess({ status: 'disconnected', phoneNumber: null, connectedAt: null, lastDisconnect }),
+      );
+      signIn('admin');
+      renderPage();
+      await screen.findByDisplayValue('WhatsApp do Vida');
+    }
+
+    it('logged_out avisa para conferir o celular antes de reconectar', async () => {
+      await withStatus({ at: '2026-11-04T12:15:24.000Z', reason: 'logged_out', statusCode: 401 });
+      const notice = screen.getByTestId('whatsapp-logged-out');
+      expect(notice).toHaveTextContent(/encerrou a sessão/i);
+      expect(notice).toHaveTextContent(/conta restringida/i);
+      expect(screen.getByRole('button', { name: 'Conectar WhatsApp' })).toBeInTheDocument();
+    });
+
+    it('other mostra só desde quando, com o código', async () => {
+      await withStatus({ at: '2026-11-04T12:15:24.000Z', reason: 'other', statusCode: 408 });
+      expect(screen.queryByTestId('whatsapp-logged-out')).not.toBeInTheDocument();
+      expect(screen.getByText(/Desconectado desde .*\(código 408\)/)).toBeInTheDocument();
+    });
+
+    it('manual não mostra aviso nenhum', async () => {
+      await withStatus({ at: '2026-11-04T12:15:24.000Z', reason: 'manual', statusCode: null });
+      expect(screen.queryByTestId('whatsapp-logged-out')).not.toBeInTheDocument();
+      expect(screen.queryByText(/Desconectado desde/)).not.toBeInTheDocument();
+    });
+  });
+
   it('a tela diz que o campo em branco PRESERVA o segredo', async () => {
     signIn('admin');
     renderPage();

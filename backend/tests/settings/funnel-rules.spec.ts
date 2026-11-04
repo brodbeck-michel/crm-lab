@@ -147,6 +147,25 @@ describe('PATCH /settings/funnel-rules', () => {
     expect(Object.keys(fields).sort()).toEqual(['reengagement.first.hours', 'reengagement.first.message']);
   });
 
+  it('teto de primeiros contatos (D-306): perHour 1..60, padrao ligado com 8', async () => {
+    expect(DEFAULT_FUNNEL_RULES.firstContactLimit).toEqual({ enabled: true, perHour: 8 });
+    for (const perHour of [0, 61, 2.5]) {
+      const res = await app.agent
+        .patch(BASE)
+        .set(app.auth(managerA))
+        .send({ firstContactLimit: { perHour } });
+      expect(res.status).toBe(400);
+      const fields = (res.body as ApiErrorBody).error.details?.fields as Record<string, string>;
+      expect(Object.keys(fields)).toEqual(['firstContactLimit.perHour']);
+    }
+    const ok = await app.agent
+      .patch(BASE)
+      .set(app.auth(managerA))
+      .send({ firstContactLimit: { enabled: false, perHour: 20 } });
+    expect(ok.status).toBe(200);
+    expect((ok.body as FunnelRules).firstContactLimit).toEqual({ enabled: false, perHour: 20 });
+  });
+
   it('reingajamento: aceita {paciente} nas duas mensagens (D-266)', async () => {
     const res = await app.agent
       .patch(BASE)

@@ -392,6 +392,26 @@ describe('Regras (/settings/rules)', () => {
     });
   });
 
+  it('primeiros contatos (CRMLAB-134, D-306): nasce ligado com 8; mudar envia só a regra; fora da faixa trava', async () => {
+    const user = userEvent.setup();
+    signIn('manager');
+    renderPage();
+    const secao = section(/primeiros contatos no whatsapp/i);
+    expect(within(secao).getByRole('switch', { name: /limitar primeiros contatos/i })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    const perHour = within(secao).getByLabelText('Máximo por hora');
+    expect(perHour).toHaveValue(8);
+    await user.clear(perHour);
+    await user.type(perHour, '61');
+    expect(screen.getByRole('button', { name: 'Salvar regras' })).toBeDisabled();
+    await user.clear(perHour);
+    await user.type(perHour, '5');
+    await user.click(screen.getByRole('button', { name: 'Salvar regras' }));
+    expect(mutate.mock.calls[0]?.[0]).toEqual({ firstContactLimit: { perHour: 5 } });
+  });
+
   describe('lembrete de proposta parada (CRMLAB-102, D-272)', () => {
     it('nasce desligado com 15 dias; ligar envia só a regra', async () => {
       const user = userEvent.setup();

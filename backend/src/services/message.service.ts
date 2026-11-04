@@ -78,6 +78,7 @@ import { isUniqueViolation } from '../repositories/quick-reply.repository.js';
 import { createAuditService, type AuditService } from './audit.service.js';
 import type { AutoReplyService } from './auto-reply.service.js';
 import { claimFreeConversation } from './conversation-claim.js';
+import { createFirstContactGuard, type FirstContactGuard } from './first-contact.service.js';
 import {
   createWhatsAppService,
   type OutboundPresence,
@@ -221,6 +222,11 @@ export interface MessageServiceDeps {
    * de cada mensagem NOVA do paciente. Ausente => nada e respondido sozinho.
    */
   autoReply?: AutoReplyService;
+  /**
+   * Teto de primeiros contatos por hora no WhatsApp por QR (CRMLAB-134,
+   * D-306). Ausente => sem teto (testes de unidade e o webhook).
+   */
+  firstContact?: FirstContactGuard;
 }
 
 export class MessageService {
@@ -231,6 +237,7 @@ export class MessageService {
   private readonly echoWait: EchoWaitOptions;
   private readonly audit: AuditService | undefined;
   private readonly autoReply: AutoReplyService | undefined;
+  private readonly firstContact: FirstContactGuard | undefined;
 
   constructor(deps: MessageServiceDeps) {
     this.messages = deps.messages;
@@ -240,6 +247,19 @@ export class MessageService {
     this.echoWait = { ...DEFAULT_ECHO_WAIT, ...deps.echoWait };
     this.audit = deps.audit;
     this.autoReply = deps.autoReply;
+    this.firstContact = deps.firstContact;
+  }
+
+  /**
+   * D-306: primeiro contato acima do teto da hora e recusado ANTES de gravar.
+   * So o canal WhatsApp tem o que proteger; o guard confere o modo QR.
+   */
+  private async assertFirstContactAllowed(
+    tenantId: string,
+    conversation: Conversation,
+  ): Promise<void> {
+    if (!this.firstContact || !this.whatsapp || conversation.channel !== 'whatsapp') return;
+    await this.firstContact.assertAllowed(tenantId, conversation.id);
   }
 
   async listByConversation(
@@ -322,6 +342,7 @@ export class MessageService {
       throw new BusinessError('CONVERSATION_ARCHIVED', { status: conversation.status });
     }
     const quote = await this.resolveQuote(tenantId, conversationId, dto.quotedMessageId);
+    await this.assertFirstContactAllowed(tenantId, conversation);
     // Antes do INSERT: quem perde a corrida nao grava nem envia nada (D-215).
     await this.claimIfFree(tenantId, conversation, senderId);
     const participant = participantReplyOf(conversation, senderId);
@@ -384,6 +405,7 @@ export class MessageService {
     // D-231: áudio não tem legenda no WhatsApp — descarta, senão o CRM
     // mostraria um texto que o paciente nunca recebeu.
     const caption = messageType === 'audio' ? null : dto.caption || null;
+    await this.assertFirstContactAllowed(tenantId, conversation);
     await this.claimIfFree(tenantId, conversation, senderId);
     const participant = participantReplyOf(conversation, senderId);
     // D-263 item 5: o nome vai na legenda (sem legenda, so o nome). Áudio não tem.
@@ -697,6 +719,7 @@ export class MessageService {
       return updated ?? message;
     }
 
+    await this.assertFirstContactAllowed(tenantId, conversation);
     await this.messages.setStatus(tenantId, messageId, 'pending');
     this.emitStatusUpdated(tenantId, conversationId, messageId, 'pending');
 
@@ -1283,5 +1306,6 @@ export function createMessageService(
     wsHub: deps.wsHub,
     whatsapp: overrides.whatsapp ?? createWhatsAppService(deps.db),
     audit: createAuditService(deps.db),
+    firstContact: createFirstContactGuard({ db: deps.db }),
   });
 }

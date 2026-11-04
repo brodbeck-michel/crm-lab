@@ -18,6 +18,8 @@ import {
   findUnknownReengagementVariables,
   STALE_NEW_BUDGET_MINUTES_MAX,
   STALE_NEW_BUDGET_MINUTES_MIN,
+  FIRST_CONTACT_PER_HOUR_MAX,
+  FIRST_CONTACT_PER_HOUR_MIN,
   hasReengagementTextBesidesVariables,
   sendMessageTextError,
   staleReminderVsLossError,
@@ -77,6 +79,11 @@ function leafError(path: string, template: unknown, value: unknown): string | nu
       return isIntIn(value, STALE_NEW_BUDGET_MINUTES_MIN, STALE_NEW_BUDGET_MINUTES_MAX)
         ? null
         : `Informe um número inteiro de ${STALE_NEW_BUDGET_MINUTES_MIN} a ${STALE_NEW_BUDGET_MINUTES_MAX}`;
+    // Teto de primeiros contatos por hora (CRMLAB-134, D-306).
+    if (path === 'firstContactLimit.perHour')
+      return isIntIn(value, FIRST_CONTACT_PER_HOUR_MIN, FIRST_CONTACT_PER_HOUR_MAX)
+        ? null
+        : `Informe um número inteiro de ${FIRST_CONTACT_PER_HOUR_MIN} a ${FIRST_CONTACT_PER_HOUR_MAX}`;
     // Alerta de tempo de resposta (CRMLAB-84, D-254).
     if (key === 'minutes')
       return isIntIn(value, RESPONSE_ALERT_MINUTES_MIN, RESPONSE_ALERT_MINUTES_MAX)

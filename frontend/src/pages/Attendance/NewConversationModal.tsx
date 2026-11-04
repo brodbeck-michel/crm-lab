@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { normalizeBrazilianPhone } from '@crm-lab/shared';
-import { api, isApiError, mapFieldErrors, queryScopes } from '@/api';
+import { api, firstContactLimitMessage, isApiError, mapFieldErrors, queryScopes } from '@/api';
 import { PhoneField } from '@/components/patients';
 import { Button, TextArea, useToast } from '@/components/ui';
 import { Modal } from '@/components/shared';
@@ -86,6 +86,13 @@ export function NewConversationModal({
             await finish(conversationId);
             return;
           }
+        }
+        if (error.code === 'FIRST_CONTACT_LIMIT_REACHED') {
+          // D-306: a conversa ficou criada, sem mensagem. O aviso fica no modal,
+          // para a atendente ler com calma o que fazer.
+          setFormError(firstContactLimitMessage(error.details));
+          await queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
+          return;
         }
         if (error.code === 'CONVERSATION_ALREADY_ASSIGNED') {
           const owner = error.details?.assignedToName;
@@ -188,6 +195,15 @@ export function NewConversationModal({
           onChange={(event) => setContent(event.target.value)}
           error={contentError}
         />
+        <p
+          role="note"
+          data-testid="first-contact-notice"
+          className="m-0 rounded-md bg-accent-100 px-md py-sm font-body text-caption text-accent-800"
+        >
+          Mensagem para quem nunca escreveu ao laboratório é <strong>primeiro contato</strong>: o
+          WhatsApp pode restringir o número se forem muitos. Quando der, peça ao paciente que mande
+          uma mensagem primeiro.
+        </p>
         {formError && (
           <p role="alert" className="font-body text-caption text-accent-700">
             {formError}

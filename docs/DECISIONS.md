@@ -6772,9 +6772,12 @@ API_CONTRACTS §10.3. **Deploy:** sem migração e sem variável nova.
 ### D-305: "Primeiro contato" e o aviso na tela (CRMLAB-134)
 **Contexto:** em 04/11/2026 o WhatsApp restringiu o número do Santé por ~24 h ("mensagens
 automáticas ou em massa") e encerrou a sessão (Evolution `close`, statusReason 401). O volume total
-não era de disparo (≈500 mensagens de atendente por dia), mas ≈40–50 conversas por dia começavam com
-mensagem **nossa**, para números que nunca tinham escrito, quase sempre com o mesmo texto do modelo
-de orçamento. Esse é o padrão que o WhatsApp pune no canal não oficial (QR).
+não era de disparo (≈500 mensagens de atendente por dia), e o primeiro contato também não: em 14 dias foram 64
+conversas começadas por mensagem **nossa** (≈5 por dia útil), 83% com resposta do paciente. A
+primeira leitura (≈40–50 por dia) contava errado, somando conversas que o paciente começou. O que
+pesa é o conjunto: canal não oficial (QR), número pareado em 22/10, ≈400–650 mensagens por dia útil
+com picos de 100 por hora. O primeiro contato é o único desses fatores que o CRM controla sem mudar
+de canal, e por isso entra como rede de segurança.
 **Decisão:**
 1. **Primeiro contato** = enviar para uma conversa sem **nenhuma** mensagem do paciente
    (`sender_type = 'patient'`) e sem nenhuma mensagem de atendente (`sender_type = 'agent'`) que não
@@ -6794,7 +6797,8 @@ mesma. O aviso muda o hábito (pedir que o paciente escreva primeiro) sem travar
 SCHEMA (índices de `messages`), PAGES (Atendimento, painel de envio).
 
 ### D-306: Limite de primeiros contatos por hora no WhatsApp por QR (CRMLAB-134)
-**Contexto:** D-305. Em 04/11 foram 14 primeiros contatos nas 2 horas antes da restrição.
+**Contexto:** D-305. Rede de segurança contra rajada de primeiros contatos; no ritmo medido (≈5 por
+dia útil) o teto não é atingido.
 **Decisão:**
 1. Regra nova `FunnelRules.firstContactLimit = { enabled, perHour }`, padrão **`{ enabled: true,
    perHour: 8 }`** (faixa 1–60). Vale para todo laboratório a partir do deploy, inclusive os que já
@@ -6818,7 +6822,7 @@ SCHEMA (índices de `messages`), PAGES (Atendimento, painel de envio).
 7. Corrida: dois envios simultâneos podem passar do limite por 1. Aceito; o objetivo é cortar
    rajada, não contar exato.
 **Motivo:** o aviso da D-305 depende do hábito; o limite é a trava que não depende de ninguém
-lembrar. 8 por hora cabe o ritmo normal do Santé (≈50 em 8 h) e corta rajadas.
+lembrar. 8 por hora fica bem acima do ritmo normal do Santé e corta só rajadas.
 **Impacto:** `shared/types/funnel-rules.types.ts`, `funnel-rules.service.ts` (`leafError`),
 `first-contact.repository.ts` e `first-contact.service.ts` (novos), `message.service.ts`,
 `conversation.service.ts`, `api.types.ts` + `errors.ts`, `Rules.tsx` + `FirstContactLimitSection.tsx`,

@@ -3789,8 +3789,9 @@ Branch `feature/CRMLAB-134-risco-restricao-whatsapp` (de `main` v1.42.2). Decis�
 D-307. **Migração 062** (índice parcial em `messages` + 3 colunas nulas em `tenant_channels`), sem
 variável nova.
 
-- **Causa:** em 04/11 o número do Santé foi restringido por ~24 h ("mensagens automáticas ou em
-  massa") depois de ≈40–50 primeiros contatos por dia, quase sempre com o mesmo texto de orçamento.
+- **Contexto:** em 04/11 o número do Santé foi restringido por ~24 h ("mensagens automáticas ou em
+  massa"). Primeiro contato medido: ≈5 por dia útil (83% respondidos); o volume total (≈400–650
+  mensagens por dia útil) e o canal não oficial pesam mais. O teto é rede de segurança.
 - **Primeiro contato (D-305):** `Conversation.patientHasWritten`; aviso no painel de envio do
   orçamento e nota fixa na Nova conversa (não bloqueiam).
 - **Teto por hora (D-306):** regra `firstContactLimit` (padrão ligado, 8/h, 1–60) só no QR; acima,

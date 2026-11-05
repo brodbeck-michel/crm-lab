@@ -514,6 +514,25 @@ describe('Modo do WhatsApp (CRMLAB-138, D-308)', () => {
     expect(salvar).toBeEnabled();
   });
 
+  it('cloud_api com o QR ainda pareado: aviso com o número e botão para desconectar', async () => {
+    channelsMock.mockResolvedValue({
+      ...settings,
+      channels: [{ ...settings.channels[0]!, connectionMode: 'cloud_api', cloudApiConfigured: true }],
+    });
+    renderPage();
+    const card = await modeCard();
+    const aviso = await card.findByTestId('qr-still-paired');
+    expect(aviso).toHaveTextContent('+55 48 3621-0000');
+    expect(within(aviso).getByRole('button', { name: 'Desconectar o QR' })).toBeInTheDocument();
+  });
+
+  it('em qr não mostra o aviso de QR pareado', async () => {
+    channelsMock.mockResolvedValue(qrSettings(true));
+    renderPage();
+    await modeCard();
+    expect(screen.queryByTestId('qr-still-paired')).not.toBeInTheDocument();
+  });
+
   it('servidor recusa (409 sem credencial): a mensagem aparece no cartão', async () => {
     channelsMock.mockResolvedValue(qrSettings(true));
     vi.mocked(channelsApi.setWhatsAppMode).mockRejectedValue(

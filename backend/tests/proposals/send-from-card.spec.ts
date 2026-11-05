@@ -198,6 +198,32 @@ async function messagesOf(conversationId: string) {
   return result.rows;
 }
 
+/** Mesmo banco, mas o canal em `cloud_api` real sem WABA nem token (D-308). */
+function appWithoutCloudCredentials(): Promise<TestApp> {
+  const base = testCredentialsResolver(new Map());
+  return createTestApp({
+    db,
+    modules: [
+      makeProposalModule({
+        whatsapp: new WhatsAppService({
+          credentials: {
+            forTenant: async (tenantId) => ({
+              ...(await base.forTenant(tenantId)),
+              apiUrl: 'https://graph.test',
+              wabaId: '',
+              apiToken: '',
+            }),
+            byWebhookIdentity: base.byWebhookIdentity,
+          },
+          driver,
+          queue: createInMemoryQueue({ sleep: async () => {} }),
+          attempts: 1,
+        }),
+      }),
+    ],
+  });
+}
+
 function send(user: UserRecord, id: string, conversationId: string, message = MESSAGE) {
   return app.agent
     .post(`/api/v1/proposals/${id}/send`)
@@ -327,28 +353,7 @@ describe('POST /proposals/:id/send', () => {
 
   it('cloud_api sem credencial (D-308): 409, nada gravado, cartao intacto e reserva desfeita', async () => {
     const id = await bitlabCard(tenantA, '5009');
-    const base = testCredentialsResolver(new Map());
-    const semCredencial = await createTestApp({
-      db,
-      modules: [
-        makeProposalModule({
-          whatsapp: new WhatsAppService({
-            credentials: {
-              forTenant: async (tenantId) => ({
-                ...(await base.forTenant(tenantId)),
-                apiUrl: 'https://graph.test',
-                wabaId: '',
-                apiToken: '',
-              }),
-              byWebhookIdentity: base.byWebhookIdentity,
-            },
-            driver,
-            queue: createInMemoryQueue({ sleep: async () => {} }),
-            attempts: 1,
-          }),
-        }),
-      ],
-    });
+    const semCredencial = await appWithoutCloudCredentials();
 
     const res = await semCredencial.agent
       .post(`/api/v1/proposals/${id}/send`)
@@ -547,6 +552,25 @@ describe('POST /proposals/:id/resend', () => {
       conversationId: anaConversation.id,
       messageId: (res.body as Message).id,
     });
+  });
+
+  it('cloud_api sem credencial (D-308): 409, nenhuma mensagem nova, cartao intacto', async () => {
+    const id = await sentCard('6009');
+    const before = await rawProposal(id);
+    const messagesBefore = await messagesOf(anaConversation.id);
+    const semCredencial = await appWithoutCloudCredentials();
+
+    const res = await semCredencial.agent
+      .post(`/api/v1/proposals/${id}/resend`)
+      .set(semCredencial.auth(ana))
+      .send({ message: 'Lembrete do orçamento' });
+    expect(res.status).toBe(409);
+    expect(errorOf(res)).toMatchObject({
+      code: 'CHANNEL_CLOUD_API_NOT_CONFIGURED',
+      details: { missing: ['wabaId', 'apiToken'] },
+    });
+    expect(await rawProposal(id)).toEqual(before);
+    expect(await messagesOf(anaConversation.id)).toEqual(messagesBefore);
   });
 
   it('cartao nao enviado, crm ou fechado: recusa; falha do canal nao muda nada', async () => {

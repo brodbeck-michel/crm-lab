@@ -251,6 +251,16 @@ export class MessageService {
   }
 
   /**
+   * Pre-checagem do canal para o controller, ANTES de reabrir a encerrada,
+   * assumir a fila ou guardar midia (D-273, D-308): a recusa nao deixa efeito.
+   */
+  async assertChannelReadyFor(tenantId: string, conversationId: string): Promise<void> {
+    const conversation = await this.conversations.findById(tenantId, conversationId);
+    if (!conversation) throw notFound({ resource: 'conversation', id: conversationId });
+    await this.assertChannelReady(tenantId, conversation);
+  }
+
+  /**
    * D-308: `cloud_api` sem `phone_number_id`/`waba_id`/token recusa com
    * `CHANNEL_CLOUD_API_NOT_CONFIGURED` ANTES de gravar — nada fica `failed`
    * (API_CONTRACTS §2, ordem NOT_CONFIGURED -> WINDOW_CLOSED -> SEND_FAILED).

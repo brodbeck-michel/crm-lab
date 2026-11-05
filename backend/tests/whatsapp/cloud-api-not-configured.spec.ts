@@ -15,7 +15,7 @@ import {
   type WhatsAppCredentials,
   type WhatsAppCredentialsResolver,
 } from '../../src/services/whatsapp.service.js';
-import { countMessages } from '../conversations/helpers.js';
+import { countMessages, readConversationRow } from '../conversations/helpers.js';
 import { createConversation, createTenant, createUser } from '../helpers/factories.js';
 import { createTestApp, type TestApp } from '../helpers/test-app.js';
 import { getTestDb, resetDatabase } from '../helpers/test-db.js';
@@ -124,4 +124,43 @@ describe('cloud_api sem credencial completa — recusa antes de gravar', () => {
     expect(status.rows[0]?.status).toBe('failed');
     expect(driver.sent).toHaveLength(0);
   });
+
+  it.each(['messages', 'attachments'] as const)(
+    'encerrada de outra atendente (%s): 409 e a conversa NAO reabre nem muda de dona (D-273)',
+    async (rota) => {
+      const tenant = await createTenant();
+      const ana = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Ana' });
+      const bia = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Bia' });
+      const encerrada = await createConversation({
+        tenantId: tenant.id,
+        assignedTo: bia.id,
+        channel: 'whatsapp',
+        status: 'closed',
+      });
+      const corpo =
+        rota === 'messages'
+          ? { content: 'Ola!' }
+          : {
+              fileName: 'pedido.pdf',
+              mimeType: 'application/pdf',
+              contentBase64: Buffer.from('%PDF-1.4 teste').toString('base64'),
+            };
+
+      const res = await app.agent
+        .post(`/api/v1/conversations/${encerrada.id}/${rota}`)
+        .set(app.auth(ana))
+        .send(corpo)
+        .expect(409);
+
+      expect(res.body.error.code).toBe('CHANNEL_CLOUD_API_NOT_CONFIGURED');
+      const row = await readConversationRow(encerrada.id);
+      expect(row?.status).toBe('closed');
+      expect(row?.assigned_to).toBe(bia.id);
+      expect(await countMessages(tenant.id)).toBe(0);
+      const media = await (await getTestDb()).withoutTenant((tx) =>
+        tx.query(`SELECT 1 FROM message_media WHERE tenant_id = $1`, [tenant.id]),
+      );
+      expect(media.rows).toHaveLength(0);
+    },
+  );
 });

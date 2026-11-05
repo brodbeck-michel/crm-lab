@@ -1311,7 +1311,7 @@ original, e termina `sent` ou de novo `failed`. Anexo relê o arquivo guardado
 
 **Response (200):** a `Message` (objeto cru, D-070) com `status: "sent"`.
 
-**Erros:** `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — primeiro contato acima do teto da hora; `details: { limit, retryAt }`), `NOT_FOUND` (404 — conversa fora do recorte, mensagem de outra conversa ou de outro
+**Erros:** `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — primeiro contato acima do teto da hora; `details: { limit, retryAt }`), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308 — `details: { missing }`; a linha continua `failed`, não passa a `pending`), `NOT_FOUND` (404 — conversa fora do recorte, mensagem de outra conversa ou de outro
 tenant), `CONFLICT` (409 — a mensagem não é do atendimento, não está `failed` ou o atendimento
 está encerrado), `MESSAGE_SEND_FAILED` (502 — falhou de novo; a linha continua `failed`; também
 quando o arquivo do anexo sumiu do disco), `VALIDATION_ERROR` (400, id não-uuid), `FORBIDDEN`
@@ -2832,7 +2832,8 @@ Audit `resend_proposal_message` (`newValues: { conversationId, messageId }`).
 **Erros:** `VALIDATION_ERROR`, `NOT_FOUND`, `FORBIDDEN` (`details.reason: "not_owner"`),
 `PROPOSAL_EDIT_NOT_ALLOWED` (`details.reason: "crm_origin"` ou `"not_sent"`),
 `INVALID_STATUS_TRANSITION` (fora dos três estágios), `PROPOSAL_ALREADY_CLOSED`,
-`CONVERSATION_ARCHIVED`, `MESSAGE_SEND_FAILED`.
+`CONVERSATION_ARCHIVED`, `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308 — `details: { missing }`;
+nada gravado), `MESSAGE_SEND_FAILED`.
 
 ### PATCH /proposals/:id/conversation (CRMLAB-58, D-202)
 Troca a conversa vinculada de um cartão `bitlab` já enviado e não fechado. Não envia mensagem.
@@ -4673,7 +4674,13 @@ Troca `tenant_channels.connection_mode` do WhatsApp do laboratório (D-308).
 **Request:** `{ "mode": "cloud_api" }` ou `{ "mode": "qr" }`.
 
 - Para `cloud_api`: exige `phoneNumberId`, `wabaId` e token da Meta já gravados (pelo `PATCH`),
-  senão `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, `details.missing: ["wabaId", ...]`). A apikey do
+  senão `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, `details.missing: ["wabaId", ...]`). **Exceção:**
+  instalação em mock (`WHATSAPP_API_URL` vazia ou só espaços) troca sem exigir credencial, porque
+  nada sai de verdade (decisão de 05/11/2026; é o caso da hml de treinamento).
+- **Idempotência vence:** já em `cloud_api`, `PUT {mode:"cloud_api"}` devolve 200 sem efeito mesmo
+  sem credenciais (`cloudApiConfigured` diz a verdade). A recusa só vale para quem está trocando.
+- **`connected_at` não muda no PUT:** continua sendo do provedor (QR pareado ou primeiro token da
+  Meta). A tela não usa essa coluna para decidir o modo. A apikey do
   QR não conta como token. A troca é reversível: ir para `qr` não apaga as credenciais da Meta, e
   voltar para `cloud_api` não exige digitá-las de novo.
 - Para `qr`: exige `accepted_terms_at` gravado (termo do §6.1), senão `VALIDATION_ERROR`

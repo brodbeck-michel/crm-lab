@@ -6885,6 +6885,11 @@ filhos 136–141) completa o modo. **Contrato escrito antes do código (regra ze
    no laboratório de treinamento). **Aprovado pelo Michel em 05/11/2026:** estreita D-073 (fallback
    de env campo a campo) para `phone_number_id`, `waba_id` e token da Meta; o segredo do webhook e
    a URL da API continuam vindo da env quando a linha não tem.
+   **Mock no `PUT /mode` (05/11/2026):** em mock a troca para `cloud_api` também não exige
+   credencial. **QR ainda pareado em `cloud_api` (05/11/2026, "aceita e avisa"):** a sessão do QR
+   segue viva depois da troca (item 2); mensagem do paciente para esse número continua entrando
+   pelo webhook do Evolution, para não perder contato, e a tela de Canais avisa que o QR ainda está
+   pareado e oferece desconectar. A resposta sai pela Meta.
    **`CHANNEL_CLOUD_API_NOT_CONFIGURED` é pré-checagem:** recusa antes de gravar a mensagem (texto,
    anexo, "tentar de novo" e envio do cartão, que passa pelo mesmo envio), com `details: { missing }`
    só — nada fica `failed`.

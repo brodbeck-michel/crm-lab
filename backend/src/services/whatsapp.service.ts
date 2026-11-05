@@ -118,7 +118,8 @@ export function envCredentials(): Omit<WhatsAppCredentials, 'tenantId'> {
     // Sem fallback de env para as credenciais da Meta (D-308 item 5): cada
     // laboratorio envia so com as proprias. O mock (URL vazia) nao as exige.
     phoneNumberId: '',
-    apiUrl: env.WHATSAPP_API_URL ?? '',
+    // `trim()` como em `createDefaultDriver`: URL so de espacos = mock.
+    apiUrl: (env.WHATSAPP_API_URL ?? '').trim(),
     wabaId: '',
     apiToken: '',
     webhookSecret: env.WHATSAPP_WEBHOOK_SECRET ?? '',

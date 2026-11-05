@@ -1064,8 +1064,12 @@ export function createChannelSettingsService(
       // Idempotente: mesmo modo = 200 sem efeito e sem audit (contrato §6.2).
       if (from === target) return { from, changed: false, cloudApiConfigured };
 
+      // Mock (instalacao sem `WHATSAPP_API_URL`, D-308 item 5): nada sai de
+      // verdade, entao a troca nao exige credencial — como o envio. E o que a
+      // hml usa no laboratorio de treinamento.
+      const mock = (env.WHATSAPP_API_URL ?? '').trim() === '';
       if (target === 'cloud_api') {
-        if (missing.length > 0) {
+        if (missing.length > 0 && !mock) {
           throw new BusinessError('CHANNEL_CLOUD_API_NOT_CONFIGURED', { missing });
         }
       } else if (state?.acceptedTermsAt == null) {

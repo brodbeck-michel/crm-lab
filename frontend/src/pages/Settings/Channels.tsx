@@ -266,6 +266,82 @@ const MODE_LABEL: Record<WhatsAppMode, string> = {
 };
 
 /**
+ * Em `cloud_api`, o número do QR pode continuar pareado no Evolution (trocar de
+ * modo não desloga, D-308 item 2). Mensagem do paciente para esse número ainda
+ * entra no CRM, mas a resposta sai pela Meta, de outro número. A tela avisa e
+ * oferece desconectar (decisão de 05/11/2026: aceita e avisa).
+ */
+function QrStillPairedNotice() {
+  const { toast } = useToast();
+  const statusQuery = useWhatsAppStatus();
+  const disconnect = useWhatsAppDisconnect();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const status = statusQuery.data;
+  if (status?.status !== 'connected') return null;
+
+  return (
+    <div
+      role="status"
+      data-testid="qr-still-paired"
+      className="flex flex-col gap-sm rounded-md bg-accent-100 px-md py-sm font-body text-caption text-accent-800"
+    >
+      <span>
+        O número do QR{status.phoneNumber ? ` (${status.phoneNumber})` : ''} ainda está pareado.
+        Mensagens que chegarem nele entram no CRM, mas a resposta sai pela API oficial, de outro
+        número. Desconecte quando a migração terminar.
+      </span>
+      <div>
+        <Button variant="secondary" onClick={() => setConfirmOpen(true)}>
+          Desconectar o QR
+        </Button>
+      </div>
+      <Modal
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        title="Desconectar o número do QR"
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => setConfirmOpen(false)}
+              disabled={disconnect.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              loading={disconnect.isPending}
+              onClick={() =>
+                disconnect.mutate(undefined, {
+                  onSuccess: () => {
+                    setConfirmOpen(false);
+                    toast('Número do QR desconectado.', { tone: 'neutral' });
+                  },
+                  onError: (error: unknown) => {
+                    toast(
+                      isApiError(error)
+                        ? error.message
+                        : 'Não foi possível desconectar. Tente novamente.',
+                      { tone: 'attention' },
+                    );
+                  },
+                })
+              }
+            >
+              Confirmar desconexão
+            </Button>
+          </>
+        }
+      >
+        <p className="m-0 font-body text-body text-text">
+          O celular deixa de receber mensagens pelo CRM. O envio continua pela API oficial da Meta.
+        </p>
+      </Modal>
+    </div>
+  );
+}
+
+/**
  * Modo do WhatsApp do laboratório (CRMLAB-138, D-308). Admin only (montado no
  * ramo `canEdit`). Trocar de modo NÃO apaga nem reenvia mensagens, exige
  * confirmação explícita e mostra o que muda. O token da Cloud API é write-only:
@@ -469,6 +545,7 @@ function WhatsAppModeCard({ channel }: { channel: TenantChannel | undefined }) {
         </p>
       )}
 
+      {current === 'cloud_api' && !changing && <QrStillPairedNotice />}
       {selected === 'cloud_api' && changing && cloudConfigured && (
         <p role="status" className="m-0 font-body text-caption text-neutral-600">
           As credenciais da API oficial já estão guardadas. Preencha os campos só se quiser
@@ -831,7 +908,10 @@ export default function ChannelsSettings() {
                     statusLabel={
                       draft.apiTokenMasked
                         ? `Configurado (${draft.apiTokenMasked})`
-                        : 'Não configurado'
+                        : draft.channel === 'whatsapp'
+                          ? // D-308 item 3: no WhatsApp é o token da Meta; o QR tem a própria chave.
+                            'Não configurado (token da API oficial da Meta; o QR não usa)'
+                          : 'Não configurado'
                     }
                     configured={draft.apiTokenMasked !== null}
                     canEdit={canEdit}

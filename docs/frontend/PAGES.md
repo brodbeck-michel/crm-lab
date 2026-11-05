@@ -985,6 +985,9 @@ gestor).
   sessão tiver caído, o "Conectar WhatsApp" aparece depois. Sem termo aceito, o caminho é o
   "Conectar WhatsApp" (aceita o termo e pareia). "Salvar WABA" fica desabilitado com o campo vazio
   (o campo vazio não apaga o WABA).
+  **QR ainda pareado em `cloud_api`:** aviso no cartão com o número e o botão "Desconectar o QR"
+  (com confirmação), lendo `GET .../whatsapp/status`. No WhatsApp, o campo "Token da API" é o token
+  da Meta; sem ele, mostra "Não configurado (token da API oficial da Meta; o QR não usa)".
 
 ### Gestão da Operação (`/settings/operation`) — gestor+
 - Dados: `GET /operations/overview?queueLimit&decisionsLimit` — **somente leitura**

@@ -391,6 +391,8 @@ export function createMessage(services: ConversationServices): RequestHandler {
     // (D-273) — o corpo ja passou pelo zod; falta a citacao.
     await services.conversations.getById(ctx, id);
     await services.messages.assertQuotable(ctx.tenantId, id, dto.quotedMessageId);
+    // D-308: canal sem credencial recusa aqui, antes de reabrir (nada fica para tras).
+    await services.messages.assertChannelReadyFor(ctx.tenantId, id);
     await services.conversations.openForReply(ctx, id);
 
     const message: Message = await services.messages.createFromAgent(ctx.tenantId, id, ctx.userId, {
@@ -422,6 +424,8 @@ export function createAttachment(services: ConversationServices): RequestHandler
     // reaberta e com outra dona sem mensagem.
     const prepared = await services.media.prepareOutbound(dto);
     await services.messages.assertQuotable(ctx.tenantId, id, dto.quotedMessageId);
+    // D-308: antes de reabrir, assumir e guardar a midia (nada fica para tras).
+    await services.messages.assertChannelReadyFor(ctx.tenantId, id);
     await services.conversations.openForReply(ctx, id);
     // Responder assume a fila livre (D-215) — antes da midia: quem perde a
     // corrida recebe o 409 sem deixar arquivo gravado.

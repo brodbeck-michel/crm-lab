@@ -105,6 +105,12 @@ test.describe('Fluxo 14: conexao WhatsApp por QR', () => {
     await loginAs(page, E2E_USERS.betaAdmin);
     await gotoScreen(page, '/settings/channels', 'Canais & Equipe');
 
+    // O Beta nasce em `cloud_api`: o QR aparece depois de escolher o modo e
+    // confirmar a troca no cartao "Modo do WhatsApp" (CRMLAB-138, D-308).
+    const modo = page.getByRole('radiogroup', { name: 'Modo do WhatsApp' });
+    await modo.getByRole('radio', { name: /QR/ }).check();
+    await page.getByRole('checkbox', { name: /quero trocar o modo do WhatsApp/ }).check();
+
     await page.getByRole('button', { name: 'Conectar WhatsApp' }).click();
 
     const modal = page.getByRole('dialog');

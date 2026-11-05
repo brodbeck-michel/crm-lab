@@ -7,7 +7,8 @@
  *  - Envio sem configuracao valida e erro de negocio claro, com nomes de campo.
  *  - Troca de modo gera audit log; outro tenant nao e afetado.
  */
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { env } from '../../src/config/env.js';
 import { channelSettingsModule } from '../../src/controllers/channel-settings.routes.js';
 import type { DbClient } from '../../src/db/types.js';
 import { BusinessError } from '../../src/http/errors.js';
@@ -114,7 +115,12 @@ beforeAll(async () => {
   db = await getTestDb();
 });
 
+const ORIGINAL_API_URL = env.WHATSAPP_API_URL;
+
 beforeEach(async () => {
+  // Instalacao com a API real configurada: o PUT /mode exige as credenciais.
+  // O caso do mock (URL vazia) tem teste proprio abaixo.
+  env.WHATSAPP_API_URL = 'https://graph.test';
   await resetDatabase(db);
   app = await createTestApp({ db, modules: [channelSettingsModule] });
   const tenant = await createTenant({ name: 'Lab Vida', slug: 'lab-vida', db });
@@ -211,6 +217,24 @@ describe('PUT /settings/channels/whatsapp/mode — qr -> cloud_api', () => {
     await putMode('evolution').expect(400);
   });
 
+  it('campo desconhecido no corpo: 400 VALIDATION_ERROR com o nome do campo', async () => {
+    const res = await app.agent
+      .put(MODE_URL)
+      .set(app.auth(admin))
+      .send({ mode: 'cloud_api', force: true })
+      .expect(400);
+    expect(res.body.error.details.fields).toHaveProperty('force');
+  });
+
+  it('wabaId em canal que nao e whatsapp: 400', async () => {
+    const res = await app.agent
+      .patch(URL)
+      .set(app.auth(admin))
+      .send({ channels: [{ channel: 'sms', wabaId: '123' }] })
+      .expect(400);
+    expect(res.body.error.details.fields).toHaveProperty('channels.sms.wabaId');
+  });
+
   it('mesmo modo e idempotente: 200 sem efeito e sem audit', async () => {
     await setQrRow(tenantId, 'apikey-evolution');
     await putMode('qr').expect(200);
@@ -220,6 +244,26 @@ describe('PUT /settings/channels/whatsapp/mode — qr -> cloud_api', () => {
       ]),
     );
     expect(audit.rows).toHaveLength(0);
+  });
+});
+
+afterEach(() => {
+  env.WHATSAPP_API_URL = ORIGINAL_API_URL;
+});
+
+describe('PUT /settings/channels/whatsapp/mode — mock (sem WHATSAPP_API_URL)', () => {
+  it('qr -> cloud_api sem credencial: 200, porque nada sai de verdade (hml de treinamento)', async () => {
+    env.WHATSAPP_API_URL = '';
+    await setQrRow(tenantId, 'apikey-evolution');
+    const res = await putMode('cloud_api').expect(200);
+    expect(res.body).toEqual({ connectionMode: 'cloud_api', cloudApiConfigured: false });
+    expect(await modeOf(tenantId)).toBe('cloud_api');
+  });
+
+  it('URL so de espacos tambem e mock', async () => {
+    env.WHATSAPP_API_URL = '   ';
+    await setQrRow(tenantId, 'apikey-evolution');
+    await putMode('cloud_api').expect(200);
   });
 });
 
@@ -402,6 +446,16 @@ describe('envio sem configuracao valida', () => {
       .catch((e: unknown) => e);
     expect((err as BusinessError).code).toBe('CHANNEL_CLOUD_API_NOT_CONFIGURED');
     expect((err as BusinessError).details?.missing).toEqual(['wabaId', 'apiToken']);
+  });
+
+  it('token da Meta revogado (apiToken: null): o envio recusa com missing [apiToken]', async () => {
+    await saveCloudFields().expect(200);
+    await saveCloudFields(admin, { apiToken: null } as unknown as typeof cloudFields).expect(200);
+    const err = await build({ ...ENV_FALLBACK, apiUrl: 'https://graph.test' })
+      .assertCloudApiConfigured(tenantId)
+      .catch((e: unknown) => e);
+    expect((err as BusinessError).code).toBe('CHANNEL_CLOUD_API_NOT_CONFIGURED');
+    expect((err as BusinessError).details?.missing).toEqual(['apiToken']);
   });
 
   it('driver mock (WHATSAPP_API_URL vazia) envia sem credencial, em qualquer ambiente', async () => {

@@ -94,11 +94,13 @@ export function NewConversationModal({
           // D-308: a conversa ficou criada, sem mensagem; falta credencial da
           // API oficial (ou a instalação não tem a API). Aviso no modal, como o
           // teto de D-306.
+          // `created: false` = conversa que já existia; o 409/503 não mudou nada nela.
+          const prefix = error.details?.created === false ? 'Nada foi enviado' : 'A conversa foi criada';
           setFormError(
             error.code === 'CHANNEL_CLOUD_API_NOT_CONFIGURED'
-              ? 'A conversa foi criada, mas a API oficial do WhatsApp ainda não está configurada ' +
+              ? `${prefix}, mas a API oficial do WhatsApp ainda não está configurada ` +
                   'neste laboratório. Peça ao administrador para completar em Canais.'
-              : 'A conversa foi criada, mas a API oficial do WhatsApp não está disponível nesta ' +
+              : `${prefix}, mas a API oficial do WhatsApp não está disponível nesta ` +
                   'instalação. Fale com o suporte.',
           );
           await queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
@@ -108,9 +110,14 @@ export function NewConversationModal({
           // D-310: número novo nunca escreveu, então a janela de 24 h está
           // fechada. A conversa ficou criada; o primeiro contato pela API
           // oficial só sai por template aprovado (CRMLAB-136).
+          // `created: false` = conversa que já existia (pode ter falas antigas):
+          // não é primeiro contato, a janela só expirou.
           setFormError(
-            'A conversa foi criada, mas pela API oficial do WhatsApp o primeiro contato só pode ' +
-              'sair por um modelo aprovado pela Meta. O paciente precisa escrever antes, ou use um modelo.',
+            error.details?.created === false
+              ? 'Nada foi enviado: o paciente não escreve há mais de 24 h e, pela API oficial do ' +
+                  'WhatsApp, só um modelo aprovado pela Meta pode ser enviado agora.'
+              : 'A conversa foi criada, mas pela API oficial do WhatsApp o primeiro contato só pode ' +
+                  'sair por um modelo aprovado pela Meta. O paciente precisa escrever antes, ou use um modelo.',
           );
           await queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
           return;

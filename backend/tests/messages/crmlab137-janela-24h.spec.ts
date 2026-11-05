@@ -368,6 +368,31 @@ describe('estado da janela no GET /conversations/:id', () => {
     expect(old.body.whatsappWindow).toMatchObject({ open: false, remainingSeconds: 0 });
   });
 
+  it('fronteira: fala do paciente há exatamente 24 h já fecha (contrato: "< 24 h")', async () => {
+    const { tenant, ana, conversation } = await lab('cloud_api');
+    await say(tenant.id, conversation.id, 'patient', 24);
+
+    const response = await send(conversation.id, ana).expect(409);
+    expect(response.body.error.code).toBe('WHATSAPP_WINDOW_CLOSED');
+    expect(driver.sent).toHaveLength(0);
+  });
+
+  it('cloud_api, conversa que não é WhatsApp: sem janela (null)', async () => {
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });
+    await channel(tenant.id, 'cloud_api');
+    const conversation = await createConversation({
+      tenantId: tenant.id,
+      assignedTo: ana.id,
+      channel: 'direct',
+    });
+    const response = await app.agent
+      .get(`/api/v1/conversations/${conversation.id}`)
+      .set(app.auth(ana))
+      .expect(200);
+    expect(response.body.whatsappWindow).toBeNull();
+  });
+
   it('qr: sem restrição (null)', async () => {
     const { ana, conversation } = await lab('qr');
     const response = await app.agent

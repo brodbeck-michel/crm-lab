@@ -34,7 +34,7 @@ export async function readWindow(
 ): Promise<WindowRow> {
   const result = await tx.query<{ last_at: string | null; remaining: number | string | null }>(
     `SELECT to_char(MAX(created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS last_at,
-            EXTRACT(EPOCH FROM (MAX(created_at) + make_interval(hours => $3) - now())) AS remaining
+            EXTRACT(EPOCH FROM (MAX(created_at) + make_interval(hours => $3) - (now() AT TIME ZONE 'UTC'))) AS remaining
        FROM messages
       WHERE tenant_id = $1 AND conversation_id = $2 AND sender_type = 'patient'
         AND deleted_at IS NULL`,

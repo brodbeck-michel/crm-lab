@@ -3925,6 +3925,21 @@ Branch `feature/CRMLAB-137-janela-24h-v2`, empilhada sobre o CRMLAB-138. Decisã
 - **Validação:** revisão independente por agente Opus 5.5. 1ª rodada: nenhum bloqueante; a corrigir:
   arrastar arquivo e anexos em sequência ignoravam a janela fechada pela contagem, Nova conversa
   reabria/trocava canal antes do 409, docs (erros, SERVICES §35, Composer) e testes. Tratados.
+  2ª rodada (Opus 5.5, agente novo): nenhum bloqueante; a corrigir: Nova conversa recusava a janela
+  antes do `CONVERSATION_ALREADY_ASSIGNED` (agora o dono vem primeiro, sem `conversationId`); o modal
+  dizia "a conversa foi criada / primeiro contato" também para conversa que já existia (backend manda
+  `created` no `details` da Nova conversa, documentado em API_CONTRACTS); "tentar de novo" e envio do
+  cartão mostravam o texto cru do servidor (tratado no `error-handler`); testes de outro canal com a
+  janela fechada, dono antes da janela, fronteira de 24 h e conversa não-WhatsApp em `cloud_api`.
+  Sugestões feitas: contagem do Composer sem desconto em dobro e parada quando fecha; `now()` em UTC.
+  **Aguarda decisão do Michel:** contar só falas do paciente vindas do WhatsApp depois da troca para
+  `cloud_api` (emenda ao D-310; hoje fala do `direct`/`web` ou do QR abre a janela e a Meta recusa
+  com 131047 → `failed`).
+- **Fica para depois (sugestões da 2ª revisão, sem efeito no banco):** reação e "digitando" sem
+  checar a janela (a Meta recusa → `MESSAGE_SEND_FAILED`); laboratório sem linha em
+  `tenant_channels` com o mock não passa pela janela; Nova conversa com número novo em `cloud_api`
+  sempre cria conversa vazia (resolver com o CRMLAB-136, que traz os modelos); botão "Tentar de novo"
+  e prévia de anexo ativos com a janela fechada (o servidor recusa); `aria-live` fixo no aviso.
 - **Em aberto (ambiguidades, fora do escopo):** mensagens do paciente recebidas pelo QR antes da troca
   para `cloud_api` contam para a janela (a Meta pode recusar com 131047, D-310 item 4 cobre);
   `tenant_channels.is_active = FALSE` não muda a regra da janela.

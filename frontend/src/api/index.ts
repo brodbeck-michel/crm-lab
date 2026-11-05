@@ -20,6 +20,7 @@ export type {
 } from './client';
 
 export {
+  WINDOW_CLOSED_MESSAGE,
   createApiErrorHandler,
   firstContactLimitMessage,
   mapFieldErrors,

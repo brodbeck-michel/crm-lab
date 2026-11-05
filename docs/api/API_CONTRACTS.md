@@ -848,10 +848,10 @@ mensagem pelo canal WhatsApp do laboratório, pelo **mesmo** `MessageService.cre
 }
 ```
 
-**Erros:** `WHATSAPP_WINDOW_CLOSED` (409, D-310 — `details: { conversationId, lastPatientMessageAt, windowClosedAt }`; conversa já existente: nada muda, nem reabre nem troca o canal; número novo: a conversa fica criada, sem mensagem), `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — `details: { limit, retryAt, conversationId }`: a conversa fica criada, sem mensagem), `VALIDATION_ERROR` (400 — `details.fields.phone` / `details.fields.content`),
-`CONVERSATION_ALREADY_ASSIGNED` (409, `details: { assignedTo, assignedToName }`),
-`CHANNEL_CLOUD_API_UNAVAILABLE` (503, D-308 — produção sem `WHATSAPP_API_URL`; `details: { conversationId }`, a conversa fica criada), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308 — `details: { missing, conversationId }`: a conversa
-fica criada, sem mensagem), `MESSAGE_SEND_FAILED` (502, `details: { messageId, conversationId }` — canal indisponível ou
+**Erros:** `WHATSAPP_WINDOW_CLOSED` (409, D-310 — `details: { conversationId, lastPatientMessageAt, windowClosedAt, created }`; conversa já existente (`created: false`): nada muda, nem reabre nem troca o canal; número novo: a conversa fica criada, sem mensagem), `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — `details: { limit, retryAt, conversationId, created }`: a conversa fica criada, sem mensagem), `VALIDATION_ERROR` (400 — `details.fields.phone` / `details.fields.content`),
+`CONVERSATION_ALREADY_ASSIGNED` (409, `details: { assignedTo, assignedToName }` — ativa de outro atendente: sai **antes** da credencial e da janela, sem `conversationId`),
+`CHANNEL_CLOUD_API_UNAVAILABLE` (503, D-308 — produção sem `WHATSAPP_API_URL`; `details: { conversationId, created }`), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308 — `details: { missing, conversationId, created }`). Nos quatro, `created: true` = número novo, a conversa fica
+criada, sem mensagem; `created: false` = conversa que já existia, nada muda nela, `MESSAGE_SEND_FAILED` (502, `details: { messageId, conversationId }` — canal indisponível ou
 desligado (em `cloud_api`, falta de credencial é o 409 acima, antes de gravar): a conversa **fica criada** e a mensagem gravada como `failed`, como em
 `POST /conversations/:id/messages`; `conversationId` existe para a tela abrir a conversa mesmo
 assim), `FORBIDDEN` (403, `platform_operator`).

@@ -48,6 +48,11 @@ function retryAfterMessage(details: Record<string, unknown> | undefined): string
 }
 
 /** Erro desconhecido (rede, parse) vira um `ApiError` de sistema. */
+/** Mesmo texto do `WHATSAPP_WINDOW_CLOSED` do backend (API_ERRORS.md), com acento. */
+export const WINDOW_CLOSED_MESSAGE =
+  'A janela de 24 horas do WhatsApp está fechada: o paciente não escreve há mais de 24 h. ' +
+  'Fora dela só é possível enviar template aprovado.';
+
 /**
  * Texto do `FIRST_CONTACT_LIMIT_REACHED` (CRMLAB-134, D-306): quantos por
  * hora, a partir de que horas abre vaga e o que fazer no lugar.
@@ -94,6 +99,10 @@ export function createApiErrorHandler(deps: ErrorHandlerDeps) {
 
       case 'FIRST_CONTACT_LIMIT_REACHED':
         deps.toast(firstContactLimitMessage(error.details), { tone: 'attention' });
+        return { error, handledSilently: false };
+
+      case 'WHATSAPP_WINDOW_CLOSED':
+        deps.toast(WINDOW_CLOSED_MESSAGE, { tone: 'attention' });
         return { error, handledSilently: false };
 
       case 'VALIDATION_ERROR': {

@@ -30,6 +30,14 @@ describe('error-handler', () => {
     expect(redirectToLogin).not.toHaveBeenCalled();
   });
 
+  it('WHATSAPP_WINDOW_CLOSED → toast com o texto acentuado ("tentar de novo", CRMLAB-137)', () => {
+    handle(new ApiError('WHATSAPP_WINDOW_CLOSED', 'janela esta fechada', 409, {}));
+
+    expect(toast).toHaveBeenCalledWith(expect.stringMatching(/^A janela de 24 horas do WhatsApp está fechada/), {
+      tone: 'attention',
+    });
+  });
+
   it('RATE_LIMIT_EXCEEDED → toast com o retryAfter', () => {
     handle(
       new ApiError('RATE_LIMIT_EXCEEDED', 'Limite atingido', 429, { retryAfter: 30 }),

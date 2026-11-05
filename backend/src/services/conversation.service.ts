@@ -446,12 +446,24 @@ export class ConversationService {
     // Conversa que ja existia: credencial e janela ANTES de reabrir a encerrada
     // ou trocar o canal — recusa sem efeito (D-308, D-310 item 2). Numero novo
     // nasce aqui mesmo e cai no envio abaixo (a conversa fica criada, vazia).
+    // Ativa de outro atendente: o 409 de dono vem primeiro (sem efeito) — quem
+    // nao pode trabalhar a conversa nao recebe o `conversationId` dela.
+    if (!created && conversation.status !== 'closed' && !this.canWork(ctx, conversation)) {
+      throw new BusinessError('CONVERSATION_ALREADY_ASSIGNED', {
+        assignedTo: conversation.assignedTo,
+        assignedToName: conversation.assignedToName,
+      });
+    }
     if (!created) {
       try {
         await this.messages.assertSendableAsWhatsApp(ctx.tenantId, conversation);
       } catch (err) {
         if (isBusinessError(err) && PRECHECK_CODES.has(err.code)) {
-          throw new BusinessError(err.code, { ...err.details, conversationId: conversation.id });
+          throw new BusinessError(err.code, {
+            ...err.details,
+            conversationId: conversation.id,
+            created: false,
+          });
         }
         throw err;
       }
@@ -504,6 +516,7 @@ export class ConversationService {
         throw new BusinessError(err.code, {
           ...err.details,
           conversationId: conversation.id,
+          created,
         });
       }
       // D-308: a conversa ja existe; a tela precisa do id para abri-la.
@@ -514,6 +527,7 @@ export class ConversationService {
         throw new BusinessError(err.code, {
           ...err.details,
           conversationId: conversation.id,
+          created,
         });
       }
       if (isBusinessError(err) && err.code === 'MESSAGE_SEND_FAILED') {

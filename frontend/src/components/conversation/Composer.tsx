@@ -110,10 +110,8 @@ export interface ComposerProps {
   whatsappWindow?: WhatsAppWindowStatus | null;
 }
 
-/** Mesmo texto do `WHATSAPP_WINDOW_CLOSED` do backend (API_ERRORS.md), com acento. */
-export const WINDOW_CLOSED_MESSAGE =
-  'A janela de 24 horas do WhatsApp está fechada: o paciente não escreve há mais de 24 h. ' +
-  'Fora dela só é possível enviar template aprovado.';
+export { WINDOW_CLOSED_MESSAGE } from '@/api/error-handler';
+import { WINDOW_CLOSED_MESSAGE } from '@/api/error-handler';
 
 /**
  * Segundos restantes da janela. O servidor manda o valor; aqui só se desconta o
@@ -123,16 +121,19 @@ export function useWindowRemaining(
   status: WhatsAppWindowStatus | null | undefined,
 ): number | null {
   const [now, setNow] = useState(() => Date.now());
-  const [received, setReceived] = useState(() => Date.now());
-  useEffect(() => {
-    setReceived(Date.now());
-    setNow(Date.now());
-  }, [status]);
-  const active = Boolean(status?.open);
-  const left = status?.open
-    ? Math.max(0, status.remainingSeconds - Math.floor((now - received) / 1000))
-    : 0;
-  // Tique de 30 s; no último minuto, de 1 s, para a tela fechar junto com a janela.
+  // `received` muda na MESMA renderização em que chega um `status` novo (estado
+  // derivado, não efeito): senão um quadro desconta o tempo duas vezes.
+  const [stamp, setStamp] = useState(() => ({ status, received: Date.now() }));
+  let received = stamp.received;
+  if (stamp.status !== status) {
+    received = Date.now();
+    setStamp({ status, received });
+    if (now < received) setNow(received);
+  }
+  const elapsed = Math.max(0, Math.floor((Math.max(now, received) - received) / 1000));
+  const left = status?.open ? Math.max(0, status.remainingSeconds - elapsed) : 0;
+  // Tique de 30 s; no último minuto, de 1 s; parado quando a janela fecha.
+  const active = Boolean(status?.open) && left > 0;
   const lastMinute = left <= 60;
   useEffect(() => {
     if (!active) return;

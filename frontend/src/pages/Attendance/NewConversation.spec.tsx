@@ -314,6 +314,47 @@ describe('Atendimento — Nova conversa (CRMLAB-50)', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
+  it('janela fechada em conversa que JÁ existia (created: false): não diz que criou nem que é primeiro contato', async () => {
+    startWhatsAppMock.mockRejectedValue(
+      new ApiError('WHATSAPP_WINDOW_CLOSED', 'Janela fechada', 409, {
+        conversationId: 'c-old',
+        lastPatientMessageAt: '2026-11-01T10:00:00.000Z',
+        windowClosedAt: '2026-11-02T10:00:00.000Z',
+        created: false,
+      }),
+    );
+    renderScreen();
+    const dialog = await openModal();
+
+    await userEvent.type(within(dialog).getByLabelText('Telefone (WhatsApp)'), '48999991234');
+    await userEvent.type(within(dialog).getByLabelText('Mensagem'), 'Olá!');
+    await userEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+
+    const alert = await within(dialog).findByRole('alert');
+    expect(alert).toHaveTextContent(/Nada foi enviado: o paciente não escreve há mais de 24 h/);
+    expect(alert).not.toHaveTextContent(/foi criada|primeiro contato/);
+  });
+
+  it('credencial faltando em conversa que JÁ existia (created: false): não diz que criou', async () => {
+    startWhatsAppMock.mockRejectedValue(
+      new ApiError('CHANNEL_CLOUD_API_NOT_CONFIGURED', 'Nao configurado', 409, {
+        missing: ['apiToken'],
+        conversationId: 'c-old',
+        created: false,
+      }),
+    );
+    renderScreen();
+    const dialog = await openModal();
+
+    await userEvent.type(within(dialog).getByLabelText('Telefone (WhatsApp)'), '48999991234');
+    await userEvent.type(within(dialog).getByLabelText('Mensagem'), 'Olá!');
+    await userEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+
+    const alert = await within(dialog).findByRole('alert');
+    expect(alert).toHaveTextContent(/^Nada foi enviado, mas a API oficial/);
+    expect(alert).not.toHaveTextContent(/foi criada/);
+  });
+
   it('número em atendimento com outra pessoa: erro dentro do modal, com o nome', async () => {
     startWhatsAppMock.mockRejectedValue(
       new ApiError('CONVERSATION_ALREADY_ASSIGNED', 'Conversa ja atribuida', 409, {

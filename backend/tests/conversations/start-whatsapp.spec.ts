@@ -394,4 +394,46 @@ describe('POST /conversations/whatsapp', () => {
     const failed = detail.body.messages.find((m: { id: string }) => m.id === messageId);
     expect(failed).toMatchObject({ status: 'failed', content: 'Oi' });
   });
+
+  it('cloud_api sem credencial (D-308): 409 com conversationId, conversa criada e nenhuma mensagem', async () => {
+    const db = await getTestDb();
+    const base = testCredentialsResolver(new Map());
+    const semCredencial = await createTestApp({
+      db,
+      modules: [
+        makeConversationModule({
+          whatsapp: new WhatsAppService({
+            credentials: {
+              forTenant: async (tenantId) => ({
+                ...(await base.forTenant(tenantId)),
+                apiUrl: 'https://graph.test',
+                apiToken: '',
+              }),
+              byWebhookIdentity: base.byWebhookIdentity,
+            },
+            driver,
+            queue: createInMemoryQueue({ sleep: async () => undefined }),
+            attempts: 1,
+          }),
+        }),
+      ],
+    });
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });
+
+    const response = await semCredencial.agent
+      .post(URL)
+      .set(semCredencial.auth(ana))
+      .send({ phone: '(48) 99999-1234', content: 'Oi' })
+      .expect(409);
+
+    expect(response.body.error.code).toBe('CHANNEL_CLOUD_API_NOT_CONFIGURED');
+    expect(response.body.error.details).toEqual({
+      missing: ['wabaId', 'apiToken'],
+      conversationId: expect.any(String),
+    });
+    expect(await countConversations(tenant.id)).toBe(1);
+    expect(await countMessages(tenant.id)).toBe(0);
+    expect(driver.mock.sent).toHaveLength(0);
+  });
 });

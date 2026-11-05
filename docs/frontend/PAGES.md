@@ -979,7 +979,12 @@ gestor).
   o aviso do que muda (histórico intacto, janela de 24 h, reengajamento inativo) e pede
   confirmação. Sem credenciais guardadas (`cloudApiConfigured: false`), pede ID do número, WABA e
   token, grava pelo `PATCH` e só então chama `PUT /settings/channels/whatsapp/mode`. Com elas
-  guardadas, basta confirmar. Erro do servidor aparece no cartão.
+  guardadas, basta confirmar. Erro do servidor aparece no cartão, e a tela relê a configuração.
+  **Volta para QR:** com o termo já aceito, "Voltar para QR" (com confirmação) chama só
+  `PUT .../mode` com `qr` — não chama `POST /connect`, que abriria outra sessão no Evolution. Se a
+  sessão tiver caído, o "Conectar WhatsApp" aparece depois. Sem termo aceito, o caminho é o
+  "Conectar WhatsApp" (aceita o termo e pareia). "Salvar WABA" fica desabilitado com o campo vazio
+  (o campo vazio não apaga o WABA).
 
 ### Gestão da Operação (`/settings/operation`) — gestor+
 - Dados: `GET /operations/overview?queueLimit&decisionsLimit` — **somente leitura**

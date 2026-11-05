@@ -2112,9 +2112,11 @@ interface WhatsAppUsageService {
   recorte por papel → modo/credenciais (`CHANNEL_CLOUD_API_NOT_CONFIGURED`) → validação do
   `template` → janela (`assertOpen`, só se **não** é template) → gravar `pending` → enviar. Janela
   fechada **não grava** (nada fica `failed`), como o teto de D-306. D-306 e D-214 continuam só QR.
-- **Credenciais:** `phone_number_id`, `waba_id` e `api_token` da linha do tenant; token decifrado só
-  na hora da chamada (D-076). **Sem fallback de env no driver real** (D-308 item 5, a validar).
-  Mock de dev/CI (`WHATSAPP_API_URL` vazia) ecoa sem exigir credencial e simula `sent`.
+- **Credenciais:** `phone_number_id`, `waba_id` e `cloud_api_token` (token da Meta, D-308 item 3) da
+  linha do tenant; token decifrado só na hora da chamada (D-076). `api_token` é a apikey do QR e
+  nunca vai para a Meta. **Sem fallback de env no driver real** (D-308 item 5, aprovado em
+  05/11/2026). Mock (`WHATSAPP_API_URL` vazia) ecoa sem exigir credencial, em qualquer `NODE_ENV`,
+  e simula `sent` — produção precisa de `WHATSAPP_API_URL` preenchida para enviar de verdade.
 - **Template (D-309):** valida `name`+`language` contra a lista aprovada (mesma do `GET
   /whatsapp/templates`), monta `components[body].parameters` na ordem das variáveis, grava
   `content` = corpo preenchido, `template_*` e `pricing_category = template_category`.

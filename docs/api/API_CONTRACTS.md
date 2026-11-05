@@ -846,7 +846,8 @@ mensagem pelo canal WhatsApp do laboratório, pelo **mesmo** `MessageService.cre
 
 **Erros:** `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — `details: { limit, retryAt, conversationId }`: a conversa fica criada, sem mensagem), `VALIDATION_ERROR` (400 — `details.fields.phone` / `details.fields.content`),
 `CONVERSATION_ALREADY_ASSIGNED` (409, `details: { assignedTo, assignedToName }`),
-`MESSAGE_SEND_FAILED` (502, `details: { messageId, conversationId }` — canal indisponível, sem
+`CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308 — `details: { missing, conversationId }`: a conversa
+fica criada, sem mensagem), `MESSAGE_SEND_FAILED` (502, `details: { messageId, conversationId }` — canal indisponível, sem
 credencial ou desligado: a conversa **fica criada** e a mensagem gravada como `failed`, como em
 `POST /conversations/:id/messages`; `conversationId` existe para a tela abrir a conversa mesmo
 assim), `FORBIDDEN` (403, `platform_operator`).
@@ -2809,7 +2810,7 @@ cartão** (a mensagem fica na conversa como `failed`, como no atendimento).
 
 **Response (200):** o `ProposalDetail` atualizado.
 
-**Erros:** `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — primeiro contato acima do teto da hora; `details: { limit, retryAt }`), `VALIDATION_ERROR` (400); `NOT_FOUND` (404, proposta ou conversa de outro tenant ou
+**Erros:** `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — primeiro contato acima do teto da hora; `details: { limit, retryAt }`), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308 — `details: { missing }`; nada gravado, cartão intacto), `VALIDATION_ERROR` (400); `NOT_FOUND` (404, proposta ou conversa de outro tenant ou
 fora da visibilidade); `FORBIDDEN` (403, `details.reason: "move_others_not_allowed"`);
 `PROPOSAL_EDIT_NOT_ALLOWED` (409, `details.reason: "crm_origin"`); `INVALID_STATUS_TRANSITION`
 (400, cartão fora de `novo_contato`); `PROPOSAL_ALREADY_CLOSED` (409);

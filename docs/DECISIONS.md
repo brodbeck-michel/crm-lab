@@ -6875,7 +6875,7 @@ filhos 136–141) completa o modo. **Contrato escrito antes do código (regra ze
    `qr → cloud_api` ficava impossível, o que contrariava "deixar a troca reversível". A migração
    move o token das linhas já em `cloud_api`; a apikey do Santé (em `qr`) não é tocada.
 4. **Modo não configurado é erro de negócio:** laboratório em `cloud_api` com `phone_number_id`,
-   `waba_id` ou `api_token` ausentes recebe **`CHANNEL_CLOUD_API_NOT_CONFIGURED` (409)** em
+   `waba_id` ou token da Meta (`cloud_api_token`) ausentes recebe **`CHANNEL_CLOUD_API_NOT_CONFIGURED` (409)** em
    qualquer envio, na listagem de templates e ao tentar trocar para `cloud_api`. Meta fora do ar ou
    recusando credencial na listagem de templates: `CHANNEL_CLOUD_API_UNAVAILABLE` (503). Nunca 500.
 5. **Sem fallback de env para as três credenciais no driver real** (mesma disciplina do

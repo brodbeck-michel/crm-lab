@@ -910,7 +910,8 @@ CREATE TABLE tenant_channels (
   display_name VARCHAR(255),
   phone_number_id VARCHAR(255),          -- id público do número no provedor
   phone_number VARCHAR(30),
-  api_token TEXT,                        -- SEGREDO: nunca sai do backend
+  api_token TEXT,                        -- SEGREDO: nunca sai do backend (no whatsapp: apikey do QR)
+  cloud_api_token TEXT,                  -- SEGREDO: token da Meta (whatsapp), migração 063, §47
   webhook_secret TEXT,                   -- SEGREDO: nunca sai do backend
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   connected_at TIMESTAMP,
@@ -956,8 +957,10 @@ coluna antiga também vale `cloud_api`); `qr` é o número próprio pareado via 
 Evolution, sem API oficial. `accepted_terms_at`/`accepted_terms_by` registram o aceite do termo
 de risco do QR (banimento, violação de ToS) — é dado do **canal**, não só do audit log: a UI
 precisa saber, na abertura da tela, se o termo já foi aceito, sem depender de uma consulta a
-`audit_logs`. Quando `apikey` é gravada para uma instância `qr`, ela usa o mesmo `api_token`
-desta tabela, cifrada com a mesma infra da D-076 (`CHANNEL_SECRET_KEY`).
+`audit_logs`. Quando `apikey` é gravada para uma instância `qr`, ela usa o `api_token` desta
+tabela, cifrada com a mesma infra da D-076 (`CHANNEL_SECRET_KEY`). O token da Meta do mesmo
+laboratório fica em `cloud_api_token` (migração 063, D-308 item 3): parear o QR não o apaga.
+`cloud_api_token` segue a mesma regra de write-only de `api_token`.
 
 ---
 

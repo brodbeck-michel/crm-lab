@@ -264,12 +264,22 @@ export async function upsertChannel(
     updates.push(`${column} = ${placeholder}`);
   }
 
-  // Conectar = gravar um token pela primeira vez.
-  const connecting = typeof patch.apiToken === 'string' || typeof patch.cloudApiToken === 'string';
-  if (connecting) {
+  // Conectar = gravar um token pela primeira vez. O token da Meta so "conecta"
+  // quando o canal esta em `cloud_api`: em `qr`, `connected_at` e do pareamento
+  // e nao pode mudar (D-308; a guarda de D-307 em `markWhatsAppDisconnected`
+  // e o console da plataforma leem esta coluna). Linha nova nasce `cloud_api`.
+  if (typeof patch.apiToken === 'string') {
     insertColumns.push('connected_at');
     values.push('NOW()');
     updates.push('connected_at = COALESCE(tenant_channels.connected_at, NOW())');
+  } else if (typeof patch.cloudApiToken === 'string') {
+    insertColumns.push('connected_at');
+    values.push('NOW()');
+    updates.push(
+      `connected_at = CASE WHEN tenant_channels.connection_mode = 'qr'
+                            THEN tenant_channels.connected_at
+                            ELSE COALESCE(tenant_channels.connected_at, NOW()) END`,
+    );
   }
 
   // `updated_at` tem trigger no UPDATE; o `DO UPDATE` precisa de ao menos uma

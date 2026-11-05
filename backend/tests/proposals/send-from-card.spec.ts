@@ -325,6 +325,48 @@ describe('POST /proposals/:id/send', () => {
     expect(retry.status).toBe(200);
   });
 
+  it('cloud_api sem credencial (D-308): 409, nada gravado, cartao intacto e reserva desfeita', async () => {
+    const id = await bitlabCard(tenantA, '5009');
+    const base = testCredentialsResolver(new Map());
+    const semCredencial = await createTestApp({
+      db,
+      modules: [
+        makeProposalModule({
+          whatsapp: new WhatsAppService({
+            credentials: {
+              forTenant: async (tenantId) => ({
+                ...(await base.forTenant(tenantId)),
+                apiUrl: 'https://graph.test',
+                wabaId: '',
+                apiToken: '',
+              }),
+              byWebhookIdentity: base.byWebhookIdentity,
+            },
+            driver,
+            queue: createInMemoryQueue({ sleep: async () => {} }),
+            attempts: 1,
+          }),
+        }),
+      ],
+    });
+
+    const res = await semCredencial.agent
+      .post(`/api/v1/proposals/${id}/send`)
+      .set(semCredencial.auth(ana))
+      .send({ conversationId: anaConversation.id, message: MESSAGE });
+    expect(res.status).toBe(409);
+    expect(errorOf(res).code).toBe('CHANNEL_CLOUD_API_NOT_CONFIGURED');
+    expect(await rawProposal(id)).toEqual({
+      status: 'novo_contato',
+      conversation_id: null,
+      created_by: null,
+      sent_at: null,
+      send_claim_id: null,
+    });
+    expect(await messagesOf(anaConversation.id)).toEqual([]);
+    expect(driver.sent).toHaveLength(0);
+  });
+
   it('duas atendentes ao mesmo tempo: so uma vence, o paciente recebe uma mensagem so', async () => {
     const id = await bitlabCard(tenantA, '5005');
     const biaConversation = await createConversation({ tenantId: tenantA.id, assignedTo: bia.id, db });

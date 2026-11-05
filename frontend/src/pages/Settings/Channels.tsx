@@ -314,8 +314,27 @@ function WhatsAppModeCard({ channel }: { channel: TenantChannel | undefined }) {
       setToken('');
       toast('WhatsApp passou a usar a API oficial da Meta.', { tone: 'neutral' });
     },
+    onError: (err: unknown) => {
+      // O PATCH pode ter passado antes do PUT falhar: relê para a tela não
+      // ficar com `cloudApiConfigured` velho.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.channelSettings() });
+      onError(err);
+    },
+  });
+
+  // Volta para o QR com o termo já aceito: só o PUT. Não chama o gateway nem abre
+  // sessão nova (D-308 item 2) — reconectar sem necessidade abre outro socket no
+  // Evolution. Se a sessão tiver caído, o "Conectar WhatsApp" aparece depois.
+  const switchToQr = useMutation({
+    mutationFn: () => channelsApi.setWhatsAppMode({ mode: 'qr' }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.channelSettings() });
+      setConfirmed(false);
+      toast('WhatsApp voltou para o número pareado por QR.', { tone: 'neutral' });
+    },
     onError,
   });
+  const termsAccepted = channel?.acceptedTermsAt != null;
 
   const changing = selected !== current;
   const cloudConfigured = channel?.cloudApiConfigured === true;
@@ -347,7 +366,7 @@ function WhatsAppModeCard({ channel }: { channel: TenantChannel | undefined }) {
   const saveWaba = () => {
     setError(null);
     save.mutate({
-      channels: [{ channel: 'whatsapp', wabaId: wabaId.trim() === '' ? null : wabaId.trim() }],
+      channels: [{ channel: 'whatsapp', wabaId: wabaId.trim() }],
     });
   };
 
@@ -470,7 +489,12 @@ function WhatsAppModeCard({ channel }: { channel: TenantChannel | undefined }) {
       )}
       {selected === 'cloud_api' && !changing && (
         <div>
-          <Button variant="secondary" loading={save.isPending} onClick={saveWaba}>
+          <Button
+            variant="secondary"
+            loading={save.isPending}
+            disabled={wabaId.trim() === ''}
+            onClick={saveWaba}
+          >
             Salvar WABA
           </Button>
           <span className="ml-sm font-body text-caption text-neutral-600">
@@ -478,7 +502,22 @@ function WhatsAppModeCard({ channel }: { channel: TenantChannel | undefined }) {
           </span>
         </div>
       )}
-      {selected === 'qr' && (
+      {selected === 'qr' && changing && termsAccepted && (
+        <div>
+          <Button
+            variant="primary"
+            loading={switchToQr.isPending}
+            disabled={!confirmed}
+            onClick={() => {
+              setError(null);
+              switchToQr.mutate();
+            }}
+          >
+            Voltar para QR
+          </Button>
+        </div>
+      )}
+      {selected === 'qr' && !(changing && termsAccepted) && (
         <WhatsAppQrConnection
           channel={channel}
           connectDisabled={needsConfirm && !confirmed}

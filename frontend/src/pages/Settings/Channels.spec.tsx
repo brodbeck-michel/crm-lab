@@ -466,6 +466,54 @@ describe('Modo do WhatsApp (CRMLAB-138, D-308)', () => {
     expect(updateChannelsMock).not.toHaveBeenCalled();
   });
 
+  it('cloud_api -> qr com termo aceito: "Voltar para QR" chama só o PUT, sem abrir o connect', async () => {
+    channelsMock.mockResolvedValue({
+      ...settings,
+      channels: [
+        {
+          ...settings.channels[0]!,
+          connectionMode: 'cloud_api',
+          cloudApiConfigured: true,
+          acceptedTermsAt: '2026-10-01T12:00:00.000Z',
+        },
+      ],
+    });
+    vi.mocked(channelsApi.setWhatsAppMode).mockResolvedValue({
+      connectionMode: 'qr',
+      cloudApiConfigured: true,
+    });
+    const user = userEvent.setup();
+    renderPage();
+    const card = await modeCard();
+
+    await user.click(card.getByRole('radio', { name: /QR/i }));
+    expect(card.queryByRole('button', { name: 'Conectar WhatsApp' })).not.toBeInTheDocument();
+    const voltar = card.getByRole('button', { name: 'Voltar para QR' });
+    expect(voltar).toBeDisabled();
+    await user.click(card.getByRole('checkbox'));
+    await user.click(voltar);
+
+    await waitFor(() => expect(channelsApi.setWhatsAppMode).toHaveBeenCalledWith({ mode: 'qr' }));
+    expect(channelsApi.connectWhatsAppQr).not.toHaveBeenCalled();
+  });
+
+  it('"Salvar WABA" com o campo vazio fica desabilitado (não apaga o WABA)', async () => {
+    channelsMock.mockResolvedValue({
+      ...settings,
+      channels: [
+        { ...settings.channels[0]!, connectionMode: 'cloud_api', wabaId: '208765432109876' },
+      ],
+    });
+    const user = userEvent.setup();
+    renderPage();
+    const card = await modeCard();
+
+    const salvar = card.getByRole('button', { name: 'Salvar WABA' });
+    expect(salvar).toBeDisabled();
+    await user.type(card.getByLabelText(/waba_id/), '999');
+    expect(salvar).toBeEnabled();
+  });
+
   it('servidor recusa (409 sem credencial): a mensagem aparece no cartão', async () => {
     channelsMock.mockResolvedValue(qrSettings(true));
     vi.mocked(channelsApi.setWhatsAppMode).mockRejectedValue(
@@ -484,6 +532,8 @@ describe('Modo do WhatsApp (CRMLAB-138, D-308)', () => {
     await user.click(card.getByRole('button', { name: 'Trocar para API oficial' }));
 
     expect(await card.findByRole('alert')).toBeInTheDocument();
+    // Relê a configuração: o PATCH pode ter gravado antes do PUT falhar.
+    await waitFor(() => expect(channelsMock.mock.calls.length).toBeGreaterThan(1));
   });
 });
 

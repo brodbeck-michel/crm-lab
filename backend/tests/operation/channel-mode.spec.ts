@@ -223,6 +223,42 @@ describe('PUT /settings/channels/whatsapp/mode — qr -> cloud_api', () => {
   });
 });
 
+describe('PUT /settings/channels/whatsapp/mode — guardas', () => {
+  it('platform_operator: 403 pelo guard de plataforma, modo intacto', async () => {
+    await setQrRow(tenantId, 'apikey-evolution');
+    const plataforma = await createTenant({ name: 'Plataforma', slug: 'plat', db });
+    const operador = await createUser({ tenantId: plataforma.id, role: 'platform_operator', db });
+    const res = await putMode('cloud_api', operador).expect(403);
+    expect(res.body.error.details.requiredRoles).toEqual(['attendant', 'manager', 'admin']);
+    expect(await modeOf(tenantId)).toBe('qr');
+  });
+});
+
+describe('PATCH do token da Meta em qr nao mexe no pareamento', () => {
+  it('connected_at do QR desconectado continua NULL', async () => {
+    await setQrRow(tenantId, 'apikey-evolution');
+    await saveCloudFields().expect(200);
+    const row = await db.withoutTenant((tx) =>
+      tx.query<{ connected_at: unknown }>(
+        `SELECT connected_at FROM tenant_channels WHERE tenant_id = $1 AND channel = 'whatsapp'`,
+        [tenantId],
+      ),
+    );
+    expect(row.rows[0]?.connected_at).toBeNull();
+  });
+
+  it('em cloud_api o primeiro token gravado marca connected_at', async () => {
+    await saveCloudFields().expect(200);
+    const row = await db.withoutTenant((tx) =>
+      tx.query<{ connected_at: unknown }>(
+        `SELECT connected_at FROM tenant_channels WHERE tenant_id = $1 AND channel = 'whatsapp'`,
+        [tenantId],
+      ),
+    );
+    expect(row.rows[0]?.connected_at).not.toBeNull();
+  });
+});
+
 describe('PUT /settings/channels/whatsapp/mode — cloud_api -> qr', () => {
   it('sem termo de risco aceito: 400 VALIDATION_ERROR (acceptTerms)', async () => {
     await saveCloudFields().expect(200);

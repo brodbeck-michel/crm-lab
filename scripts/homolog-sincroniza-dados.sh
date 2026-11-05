@@ -165,6 +165,15 @@ msg "Desativando canais de mensagem (nada sai de homologacao)"
 docker exec -i "$PG_HML" psql -v ON_ERROR_STOP=1 -q -U "$POSTGRES_USER" -d "$POSTGRES_DB" <<'SQL'
 UPDATE tenant_channels
    SET is_active = FALSE, api_token = NULL, webhook_secret = NULL, connected_at = NULL;
+-- CRMLAB-138 (D-308): o token da Meta mora em `cloud_api_token` desde a 063.
+-- `information_schema` porque o dump pode vir de uma producao ainda sem a 063.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_name = 'tenant_channels' AND column_name = 'cloud_api_token') THEN
+    UPDATE tenant_channels SET cloud_api_token = NULL;
+  END IF;
+END $$;
 -- CRMLAB-52 (D-185): a chave do Bitlab puxaria a base de orcamentos de
 -- producao para homologacao. `to_regclass` porque o dump pode vir de uma
 -- producao ainda sem a migracao 026.

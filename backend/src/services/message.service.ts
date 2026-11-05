@@ -142,6 +142,8 @@ export interface InboundMessageInput {
   quotedExternalId?: string | null;
   /** Duracao, paginas, miniatura, localizacao, contatos (D-234/D-235). */
   metadata?: MessageMetadata | null;
+  /** Webhook de origem (D-310, emenda de 05/11): so `cloud_api` abre a janela de 24 h. */
+  receivedVia?: 'cloud_api' | 'evolution' | null;
 }
 
 /**
@@ -612,6 +614,7 @@ export class MessageService {
         externalMessageId: dto.externalId ?? null,
         quotedExternalId: dto.quotedExternalId ?? null,
         metadata: dto.metadata ?? null,
+        receivedVia: dto.receivedVia ?? null,
       });
 
     let message: Message;

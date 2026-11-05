@@ -6932,6 +6932,12 @@ filhos 136–141) completa o modo. **Contrato escrito antes do código (regra ze
    (`agora − created_at < 24 h`, relógio do **banco**, `now()`, o mesmo que carimba `created_at`).
    Fora disso, **só template** (D-309).
    Conversa sem nenhuma mensagem do paciente = janela fechada (primeiro contato só por template).
+   **Emenda de 05/11/2026 (Michel):** só conta fala do paciente que **chegou pelo webhook da Meta**
+   (`messages.received_via = 'cloud_api'`; o webhook do QR grava `evolution`) **depois de o canal
+   entrar em `cloud_api`** (`tenant_channels.cloud_api_since`, carimbada por trigger a cada entrada
+   em `cloud_api`; as duas colunas na migração 066). Fala recebida pelo QR — antes da troca ou com a
+   instância ainda pareada — e mensagem antiga (sem origem) não abrem a janela: a Meta não as
+   reconhece e recusaria com 131047. A troca de modo reinicia a janela.
 2. **Erro:** **`WHATSAPP_WINDOW_CLOSED` (409)**, `details: { conversationId, lastPatientMessageAt |
    null, windowClosedAt | null }`. Nada é gravado nem enviado (mesma disciplina de D-306: recusa
    antes de gravar; nada fica `failed`). Vale para `POST /conversations/:id/messages` sem

@@ -35,6 +35,13 @@ async function channel(tenantId: string, mode: 'qr' | 'cloud_api'): Promise<void
      ON CONFLICT (tenant_id, channel) DO UPDATE SET connection_mode = $2`,
     [tenantId, mode],
   );
+  // O trigger da 066 carimba `cloud_api_since` = agora; os testes simulam um
+  // canal em `cloud_api` há 30 dias, para as falas "de horas atrás" contarem.
+  await exec(
+    `UPDATE tenant_channels SET cloud_api_since = NOW() - interval '30 days'
+      WHERE tenant_id = $1 AND channel = 'whatsapp'`,
+    [tenantId],
+  );
 }
 
 async function say(
@@ -43,12 +50,23 @@ async function say(
   senderType: 'agent' | 'patient',
   hoursAgo: number,
   status = 'sent',
+  /** Webhook de origem da fala (migração 066); `null` = sem webhook. */
+  via: 'cloud_api' | 'evolution' | null = 'cloud_api',
 ): Promise<void> {
   await exec(
     `INSERT INTO messages (id, tenant_id, conversation_id, sender_type, content, message_type,
-                           status, created_at)
-     VALUES ($1, $2, $3, $4, 'oi', 'text', $5, NOW() - ($6 || ' minutes')::interval)`,
-    [randomUUID(), tenantId, conversationId, senderType, status, String(Math.round(hoursAgo * 60))],
+                           status, external_message_id, received_via, created_at)
+     VALUES ($1, $2, $3, $4, 'oi', 'text', $5, $7, $8, NOW() - ($6 || ' minutes')::interval)`,
+    [
+      randomUUID(),
+      tenantId,
+      conversationId,
+      senderType,
+      status,
+      String(Math.round(hoursAgo * 60)),
+      via === null ? null : `wamid.${randomUUID()}`,
+      senderType === 'patient' ? via : null,
+    ],
   );
 }
 
@@ -252,6 +270,128 @@ describe('cloud_api: texto livre (D-310)', () => {
       .send({ content: 'oi' })
       .expect(409);
     expect(response.body.error.code).toBe('CHANNEL_CLOUD_API_NOT_CONFIGURED');
+  });
+});
+
+describe('emenda de 05/11 ao D-310: só fala do WhatsApp depois da troca para cloud_api', () => {
+  it('fala do paciente sem webhook de origem (received_via NULL, ex. mensagem antiga) não abre a janela', async () => {
+    const { tenant, ana, conversation } = await lab('cloud_api');
+    await say(tenant.id, conversation.id, 'patient', 1, 'sent', null);
+
+    const response = await send(conversation.id, ana).expect(409);
+    expect(response.body.error.code).toBe('WHATSAPP_WINDOW_CLOSED');
+    expect(response.body.error.details.lastPatientMessageAt).toBeNull();
+    expect(driver.sent).toHaveLength(0);
+  });
+
+  it('fala recebida pelo QR (Evolution) DEPOIS da troca — instância ainda pareada — não abre a janela', async () => {
+    const { tenant, ana, conversation } = await lab('cloud_api');
+    await say(tenant.id, conversation.id, 'patient', 1, 'sent', 'evolution');
+
+    const response = await send(conversation.id, ana).expect(409);
+    expect(response.body.error.code).toBe('WHATSAPP_WINDOW_CLOSED');
+    const window = await app.agent
+      .get(`/api/v1/conversations/${conversation.id}`)
+      .set(app.auth(ana))
+      .expect(200);
+    expect(window.body.whatsappWindow).toMatchObject({ open: false, lastPatientMessageAt: null });
+  });
+
+  it('fala recebida pela Cloud API ANTES da troca (canal estava em qr) não abre a janela', async () => {
+    const { tenant, ana, conversation } = await lab('qr');
+    await say(tenant.id, conversation.id, 'patient', 1);
+    await exec(
+      `UPDATE tenant_channels SET connection_mode = 'cloud_api' WHERE tenant_id = $1 AND channel = 'whatsapp'`,
+      [tenant.id],
+    );
+
+    const response = await send(conversation.id, ana).expect(409);
+    expect(response.body.error.code).toBe('WHATSAPP_WINDOW_CLOSED');
+    expect(driver.sent).toHaveLength(0);
+  });
+
+  it('fala depois da troca abre; voltar para qr e ir de novo para cloud_api recarimba', async () => {
+    const { tenant, ana, conversation } = await lab('qr');
+    await exec(
+      `UPDATE tenant_channels SET connection_mode = 'cloud_api' WHERE tenant_id = $1 AND channel = 'whatsapp'`,
+      [tenant.id],
+    );
+    await say(tenant.id, conversation.id, 'patient', 0);
+    await send(conversation.id, ana).expect(201);
+
+    await exec(
+      `UPDATE tenant_channels SET connection_mode = 'qr' WHERE tenant_id = $1 AND channel = 'whatsapp'`,
+      [tenant.id],
+    );
+    // Garante que o novo carimbo fica depois da fala acima (relógio do banco).
+    await exec(`SELECT pg_sleep(0.01)`, []);
+    await exec(
+      `UPDATE tenant_channels SET connection_mode = 'cloud_api' WHERE tenant_id = $1 AND channel = 'whatsapp'`,
+      [tenant.id],
+    );
+    const response = await send(conversation.id, ana).expect(409);
+    expect(response.body.error.code).toBe('WHATSAPP_WINDOW_CLOSED');
+  });
+
+  it('migração 066: o trigger carimba cloud_api_since ao entrar em cloud_api e não mexe ao salvar outra coluna', async () => {
+    const tenant = await createTenant();
+    await channel(tenant.id, 'qr');
+    const read = async () => {
+      const db = await getTestDb();
+      const r = await db.withoutTenant((tx) =>
+        tx.query<{ since: string | null }>(
+          `SELECT cloud_api_since::text AS since FROM tenant_channels WHERE tenant_id = $1`,
+          [tenant.id],
+        ),
+      );
+      return r.rows[0]?.since ?? null;
+    };
+    const before = await read();
+    await exec(
+      `UPDATE tenant_channels SET connection_mode = 'cloud_api' WHERE tenant_id = $1`,
+      [tenant.id],
+    );
+    const stamped = await read();
+    expect(stamped).not.toBeNull();
+    expect(stamped).not.toBe(before);
+    await exec(`UPDATE tenant_channels SET waba_id = '123' WHERE tenant_id = $1`, [tenant.id]);
+    expect(await read()).toBe(stamped);
+    // Reenviar o MESMO modo (upsert do PATCH) não recarimba.
+    await exec(`SELECT pg_sleep(0.01)`, []);
+    await exec(
+      `UPDATE tenant_channels SET connection_mode = 'cloud_api' WHERE tenant_id = $1`,
+      [tenant.id],
+    );
+    expect(await read()).toBe(stamped);
+  });
+
+  it('migração 066: linha nova sem modo (DEFAULT cloud_api) nasce carimbada; outro canal não', async () => {
+    const tenant = await createTenant();
+    await exec(`INSERT INTO tenant_channels (tenant_id, channel) VALUES ($1, 'whatsapp')`, [tenant.id]);
+    await exec(`INSERT INTO tenant_channels (tenant_id, channel) VALUES ($1, 'sms')`, [tenant.id]);
+    const db = await getTestDb();
+    const r = await db.withoutTenant((tx) =>
+      tx.query<{ channel: string; stamped: boolean }>(
+        `SELECT channel, cloud_api_since IS NOT NULL AS stamped FROM tenant_channels
+          WHERE tenant_id = $1 ORDER BY channel`,
+        [tenant.id],
+      ),
+    );
+    expect(r.rows).toEqual([
+      { channel: 'sms', stamped: false },
+      { channel: 'whatsapp', stamped: true },
+    ]);
+  });
+
+  it('migração 066: CHECK de received_via recusa valor fora da lista', async () => {
+    const { tenant, conversation } = await lab('cloud_api');
+    await expect(
+      exec(
+        `INSERT INTO messages (tenant_id, conversation_id, sender_type, content, received_via)
+         VALUES ($1, $2, 'patient', 'oi', 'sms')`,
+        [tenant.id, conversation.id],
+      ),
+    ).rejects.toThrow();
   });
 });
 

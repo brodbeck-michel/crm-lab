@@ -3932,9 +3932,25 @@ Branch `feature/CRMLAB-137-janela-24h-v2`, empilhada sobre o CRMLAB-138. Decisã
   cartão mostravam o texto cru do servidor (tratado no `error-handler`); testes de outro canal com a
   janela fechada, dono antes da janela, fronteira de 24 h e conversa não-WhatsApp em `cloud_api`.
   Sugestões feitas: contagem do Composer sem desconto em dobro e parada quando fecha; `now()` em UTC.
-  **Aguarda decisão do Michel:** contar só falas do paciente vindas do WhatsApp depois da troca para
-  `cloud_api` (emenda ao D-310; hoje fala do `direct`/`web` ou do QR abre a janela e a Meta recusa
-  com 131047 → `failed`).
+- **Emenda ao D-310 (aprovada pelo Michel em 05/11):** a janela só conta fala do paciente que chegou
+  pelo webhook da Meta (`messages.received_via = 'cloud_api'`; o do QR grava `evolution`) depois de o
+  canal entrar em `cloud_api` (`tenant_channels.cloud_api_since`). **Migração 066** com trigger;
+  linhas já em `cloud_api` ganham agora (UTC) na migração. Rollback: `DROP TRIGGER
+  trg_tenant_channels_cloud_api_since ON tenant_channels; DROP FUNCTION
+  tenant_channels_cloud_api_since(); ALTER TABLE tenant_channels DROP COLUMN cloud_api_since; ALTER
+  TABLE messages DROP COLUMN received_via; DELETE FROM schema_migrations WHERE name =
+  '066_channel_cloud_api_since.sql';` (e voltar o código junto). Revisão Opus da emenda: sem
+  bloqueante; tratados a origem pelo QR (o 1º desenho usava `external_message_id`, que o QR também
+  grava), UTC no trigger, só o canal `whatsapp` e testes do trigger.
+- **Pendências antes do PR:**
+  - **Seed e e2e:** o seed (dev e e2e) cria o WhatsApp em `cloud_api` (DEFAULT da coluna) com falas
+    do paciente de dias atrás e sem origem — com a janela (desde o 1º commit do 137), os envios do
+    e2e (ex. `flow-8-patient` `sendMessages`) devem dar 409. Não roda nesta máquina (TLS); ajustar
+    o seed (fala recente com `received_via = 'cloud_api'` e `cloud_api_since` anterior) e validar
+    no CI.
+  - **Treino na hml:** o Laboratório Teste está em `cloud_api` (mock) e o `~/treino-mensagem.sh`
+    injeta falas pelo webhook Evolution — depois deste card elas não abrem a janela. Trocar o
+    script para `POST /webhooks/whatsapp/<slug>` (formato Meta, assinado) no deploy da hml.
 - **Fica para depois (sugestões da 2ª revisão, sem efeito no banco):** reação e "digitando" sem
   checar a janela (a Meta recusa → `MESSAGE_SEND_FAILED`); laboratório sem linha em
   `tenant_channels` com o mock não passa pela janela; Nova conversa com número novo em `cloud_api`

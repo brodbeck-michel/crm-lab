@@ -965,7 +965,10 @@ interações com ele, com autor e data.
 - **Só vale com o WhatsApp do laboratório em `cloud_api`.** Em `qr` nada desta seção existe.
 - **Janela de 24 h:** texto livre e anexo só saem se o paciente escreveu há menos de 24 h. Fora
   disso, só template aprovado da Meta (D-309). Conversa em que o paciente nunca escreveu = janela
-  fechada: o primeiro contato é sempre por template. Mensagem do paciente reabre a janela.
+  fechada: o primeiro contato é sempre por template. Mensagem do paciente reabre a janela —
+  só a que chegou pela API oficial (webhook da Meta) depois de o laboratório passar para
+  `cloud_api`; falas recebidas pelo QR, antes ou depois da troca, não contam (D-310, emenda de
+  05/11/2026).
 - **Template** é sempre permitido (dentro ou fora da janela), tem categoria `marketing` ou
   `utility` e todas as variáveis `{{n}}` preenchidas. A categoria fica gravada na mensagem.
 - **Custo estimado por mensagem enviada:** `service` (texto/anexo dentro da janela), `utility`,

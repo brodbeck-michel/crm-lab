@@ -295,6 +295,7 @@ export function whatsappInbound(services: WebhookServices, cache: CacheService):
           messageType: dto.messageType,
           attachmentUrl: dto.attachmentUrl,
           externalId: dto.externalId,
+          receivedVia: 'cloud_api',
         });
         processed += 1;
       } catch (err) {
@@ -1136,6 +1137,7 @@ async function ingestEvolutionMessage(
           externalId: inbound.externalId,
           quotedExternalId: inbound.quotedExternalId,
           metadata: inbound.metadata,
+          receivedVia: 'evolution',
         });
 
   if (!inbound.media) {

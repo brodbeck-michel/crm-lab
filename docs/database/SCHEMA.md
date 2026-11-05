@@ -913,6 +913,7 @@ CREATE TABLE tenant_channels (
   api_token TEXT,                        -- SEGREDO: nunca sai do backend (no whatsapp: apikey do QR)
   cloud_api_token TEXT,                  -- SEGREDO: token da Meta (whatsapp), migração 063, §47
   waba_id VARCHAR(64),                   -- conta WhatsApp Business (Meta), público; migração 063, §47
+  cloud_api_since TIMESTAMP,             -- entrada em cloud_api (trigger); início da janela, migração 066, §47
   webhook_secret TEXT,                   -- SEGREDO: nunca sai do backend
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   connected_at TIMESTAMP,
@@ -2371,11 +2372,14 @@ ALTER TABLE tenant_channels
   "Desconectar" grava `manual`; o `close` do gateway grava `logged_out` (401) ou `other`, sem
   sobrescrever `manual` nem rebaixar `logged_out` enquanto `connected_at` segue `NULL` (D-307).
 
-### 47. WhatsApp Cloud API: credenciais, template, categoria de cobrança e preços (migrações 063–065 — CRMLAB-135, D-308..D-312)
+### 47. WhatsApp Cloud API: credenciais, template, categoria de cobrança, preços e início da janela (migrações 063–066 — CRMLAB-135, D-308..D-312)
 **Uma migração por card** (decisão de 05/11/2026), para cada card subir sozinho:
 **063** = CRMLAB-138 (credenciais, implementada); **064** = CRMLAB-136 (colunas de template);
-**065** = CRMLAB-141 (`pricing_category` + `whatsapp_price_table`). Só `ADD COLUMN` nulo + uma
-tabela nova com seed; o único backfill é o da 063 (token da Meta muda de coluna).
+**065** = CRMLAB-141 (`pricing_category` + `whatsapp_price_table`). **066** = CRMLAB-137
+(`tenant_channels.cloud_api_since` + trigger e `messages.received_via`; emenda ao D-310, 05/11/2026
+— o número fica depois das reservadas; o migrador aplica por nome o que falta). Só `ADD COLUMN`
+nulo + uma tabela nova com seed + o trigger da 066; os backfills são o da 063 (token da Meta muda de
+coluna) e o da 066 (`cloud_api_since` = agora nas linhas WhatsApp já em `cloud_api`).
 
 ```sql
 -- 063 (CRMLAB-138)
@@ -2385,6 +2389,14 @@ ALTER TABLE tenant_channels
 UPDATE tenant_channels SET cloud_api_token = api_token, api_token = NULL
  WHERE channel = 'whatsapp' AND connection_mode = 'cloud_api' AND api_token IS NOT NULL
    AND cloud_api_token IS NULL;
+
+-- 066 (CRMLAB-137): quando o canal entrou em `cloud_api` pela última vez (início da janela)
+ALTER TABLE tenant_channels ADD COLUMN cloud_api_since TIMESTAMP NULL;
+ALTER TABLE messages ADD COLUMN received_via VARCHAR(20) NULL  -- cloud_api | evolution (CHECK)
+UPDATE tenant_channels SET cloud_api_since = (now() AT TIME ZONE 'UTC')
+ WHERE channel = 'whatsapp' AND connection_mode = 'cloud_api' AND cloud_api_since IS NULL;
+-- trigger BEFORE INSERT OR UPDATE OF connection_mode: whatsapp entrou em 'cloud_api'
+--   => cloud_api_since = now() em UTC (reenviar o mesmo modo não recarimba)
 
 -- 064 (CRMLAB-136) e 065 (CRMLAB-141, só pricing_category e a tabela de preços)
 ALTER TABLE messages

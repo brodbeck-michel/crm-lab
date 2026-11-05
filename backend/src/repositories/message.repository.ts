@@ -371,6 +371,12 @@ export interface MessageInsert {
    * para o tempo de resposta (D-257). `null`/ausente para todo o resto.
    */
   attributedTo?: string | null;
+  /**
+   * Por onde a fala do PACIENTE chegou (migracao 066, D-310 emenda de 05/11):
+   * `cloud_api` = webhook da Meta; `evolution` = webhook do QR. So `cloud_api`
+   * abre a janela de 24 h. `null` = nao veio de webhook (ou mensagem antiga).
+   */
+  receivedVia?: 'cloud_api' | 'evolution' | null;
 }
 
 export interface MessagePage {
@@ -637,14 +643,14 @@ export class MessageRepository {
         `INSERT INTO messages
            (tenant_id, conversation_id, sender_type, sender_id, content, message_type,
             attachment_url, status, external_message_id, quoted_external_id, quoted_message_id,
-            automation, metadata, attributed_to)
+            automation, metadata, attributed_to, received_via)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text,
                  COALESCE($11::uuid, (SELECT q.id FROM messages q
                                        WHERE $10::text IS NOT NULL
                                          AND q.conversation_id = $2
                                          AND q.external_message_id = $10::text
                                        LIMIT 1)),
-                 $12, $13::jsonb, $14::uuid)
+                 $12, $13::jsonb, $14::uuid, $15::text)
          RETURNING id`,
         [
           tenantId,
@@ -661,6 +667,7 @@ export class MessageRepository {
           data.automation ?? null,
           data.metadata ? JSON.stringify(data.metadata) : null,
           data.attributedTo ?? null,
+          data.receivedVia ?? null,
         ],
       );
       const id = inserted.rows[0]?.id;

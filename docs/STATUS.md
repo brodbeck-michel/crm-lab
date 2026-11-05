@@ -3905,3 +3905,20 @@ Branch `feature/CRMLAB-138-canal-modo-cloud`, sobre o contrato do CRMLAB-135. De
   sem credencial devolvem `MESSAGE_SEND_FAILED` (D-308 lista texto, anexo, retry e cartão); a Nova
   conversa reabre a encerrada antes do 409, como já faz com o teto de D-306; `connected_at` é uma
   coluna só para os dois provedores quando o QR segue pareado em `cloud_api`.
+
+### 🚧 CRMLAB-137 — janela de 24 h da Cloud API (2026-11-05, em validação)
+
+Branch `feature/CRMLAB-137-janela-24h-v2`, empilhada sobre o CRMLAB-138. Decisão D-310.
+
+- **Regra:** em `cloud_api`, texto livre e anexo só saem se a última mensagem **não apagada** do
+  paciente tem menos de 24 h (relógio do banco). Fora disso, `WHATSAPP_WINDOW_CLOSED` (409,
+  `details: { conversationId, lastPatientMessageAt, windowClosedAt }`), antes de gravar: texto,
+  anexo, "tentar de novo", cartão (`/send`, `/resend`) e Nova conversa (a conversa fica criada).
+- **Ordem:** `CHANNEL_CLOUD_API_NOT_CONFIGURED`/`UNAVAILABLE` → `WHATSAPP_WINDOW_CLOSED`, na
+  pré-checagem do controller, antes de reabrir a encerrada, assumir ou guardar mídia (D-273).
+- **Tela:** `whatsappWindow` só em `GET /conversations/:id` (decisão de 05/11: não na listagem),
+  com `remainingSeconds` do servidor. O Composer bloqueia texto, anexo e áudio com a janela
+  fechada, e o rascunho fica. A Nova conversa avisa que o primeiro contato é só por modelo (CRMLAB-136).
+- **Modo `qr`:** nenhuma regra muda.
+- **Testes:** `crmlab137-janela-24h.spec.ts` (14), cartão e Nova conversa com janela fechada,
+  frontend `Composer.window.spec.tsx` e `NewConversation` (+1).

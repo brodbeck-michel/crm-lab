@@ -310,7 +310,10 @@ describe('GET /conversations/:id', () => {
       'cursors',
       'messages',
       'pagination',
+      'whatsappWindow', // CRMLAB-137 (D-310)
     ]);
+    // Sem linha de canal (nem qr nem cloud_api): sem restrição.
+    expect(response.body.whatsappWindow).toBeNull();
     expect(response.body.conversation.patientEmail).toBe('joao@email.com');
     expect(response.body.conversation.customFields).toEqual({});
     expect(response.body.pagination).toEqual({ page: 1, limit: 50, total: 2, totalPages: 1 });

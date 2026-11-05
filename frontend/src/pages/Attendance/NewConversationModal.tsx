@@ -104,6 +104,17 @@ export function NewConversationModal({
           await queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
           return;
         }
+        if (error.code === 'WHATSAPP_WINDOW_CLOSED') {
+          // D-310: número novo nunca escreveu, então a janela de 24 h está
+          // fechada. A conversa ficou criada; o primeiro contato pela API
+          // oficial só sai por template aprovado (CRMLAB-136).
+          setFormError(
+            'A conversa foi criada, mas pela API oficial do WhatsApp o primeiro contato só pode ' +
+              'sair por um modelo aprovado pela Meta. O paciente precisa escrever antes, ou use um modelo.',
+          );
+          await queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
+          return;
+        }
         if (error.code === 'FIRST_CONTACT_LIMIT_REACHED') {
           // D-306: a conversa ficou criada, sem mensagem. O aviso fica no modal,
           // para a atendente ler com calma o que fazer.

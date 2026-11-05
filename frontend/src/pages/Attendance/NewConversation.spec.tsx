@@ -295,6 +295,25 @@ describe('Atendimento — Nova conversa (CRMLAB-50)', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
+  it('janela de 24 h fechada (CRMLAB-137): erro dentro do modal, sem fechar', async () => {
+    startWhatsAppMock.mockRejectedValue(
+      new ApiError('WHATSAPP_WINDOW_CLOSED', 'Janela fechada', 409, {
+        conversationId: 'c-new',
+        lastPatientMessageAt: null,
+        windowClosedAt: null,
+      }),
+    );
+    renderScreen();
+    const dialog = await openModal();
+
+    await userEvent.type(within(dialog).getByLabelText('Telefone (WhatsApp)'), '48999991234');
+    await userEvent.type(within(dialog).getByLabelText('Mensagem'), 'Olá!');
+    await userEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(/só pode sair por um modelo aprovado/);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
   it('número em atendimento com outra pessoa: erro dentro do modal, com o nome', async () => {
     startWhatsAppMock.mockRejectedValue(
       new ApiError('CONVERSATION_ALREADY_ASSIGNED', 'Conversa ja atribuida', 409, {

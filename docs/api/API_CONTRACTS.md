@@ -4512,6 +4512,9 @@ anulável, máx. 64, em claro como `phoneNumberId`); o `GET` devolve, no item `w
 `connectionMode` (`cloud_api | qr`), `wabaId` e `cloudApiConfigured` (`true` quando
 `phoneNumberId`, `wabaId` e token existem). `connectionMode` **não** é aceito no `PATCH`: a troca é
 `PUT /settings/channels/whatsapp/mode` (§6.2). `apiToken` segue write-only e cifrado (D-076).
+No item `whatsapp`, `apiToken` (PATCH) e `apiTokenMasked` (GET) são **o token da Meta**
+(`cloud_api_token`, D-308 item 3); a apikey da instância Evolution do QR nunca aparece nem conta
+como token. Gravar o token da Meta em `qr` não mexe no pareamento do QR.
 
 **`channels[]` é upsert pela chave `channel`** (não pelo `id`): `UNIQUE (tenant_id, channel)`
 garante uma linha por canal, e a tela edita "o WhatsApp do laboratório", não uma linha por id.
@@ -4668,8 +4671,10 @@ Troca `tenant_channels.connection_mode` do WhatsApp do laboratório (D-308).
 
 **Request:** `{ "mode": "cloud_api" }` ou `{ "mode": "qr" }`.
 
-- Para `cloud_api`: exige `phoneNumberId`, `wabaId` e token já gravados, senão
-  `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, `details.missing: ["wabaId", ...]`).
+- Para `cloud_api`: exige `phoneNumberId`, `wabaId` e token da Meta já gravados (pelo `PATCH`),
+  senão `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, `details.missing: ["wabaId", ...]`). A apikey do
+  QR não conta como token. A troca é reversível: ir para `qr` não apaga as credenciais da Meta, e
+  voltar para `cloud_api` não exige digitá-las de novo.
 - Para `qr`: exige `accepted_terms_at` gravado (termo do §6.1), senão `VALIDATION_ERROR`
   (`details.fields.acceptTerms`); depois é preciso `POST .../connect` para parear (o modo muda, a
   sessão não nasce sozinha).

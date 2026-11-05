@@ -392,7 +392,11 @@ function validateChannels(raw: unknown, errors: FieldErrors): channelSettingsRep
       'wabaId',
     ] as const) {
       if (key in entry) {
-        Object.assign(patch, { [key]: entry[key] });
+        // No whatsapp o `apiToken` do corpo e o token da Meta e mora em
+        // `cloud_api_token` (D-308 item 3); `api_token` fica so para a apikey
+        // da instancia Evolution, que so o connect do QR grava.
+        const target = key === 'apiToken' && channel === 'whatsapp' ? 'cloudApiToken' : key;
+        Object.assign(patch, { [target]: entry[key] });
       }
     }
     patches.push(patch);
@@ -588,6 +592,7 @@ function toTenantChannel(row: channelSettingsRepo.ChannelRow): TenantChannel {
     updatedAt: row.updatedAt,
     connectionMode: toConnectionMode(row.connectionMode),
     wabaId: row.wabaId,
+    cloudApiConfigured: row.cloudApiConfigured,
     acceptedTermsAt: row.acceptedTermsAt,
   };
 }
@@ -1053,13 +1058,13 @@ export function createChannelSettingsService(
       const state = await channelSettingsRepo.findConnectionState(tx, ctx.tenantId, 'whatsapp');
       const creds = await channelSettingsRepo.findCredentials(tx, ctx.tenantId, 'whatsapp');
       const from = state?.connectionMode ?? 'cloud_api';
-      const cloudApiConfigured = cloudApiFieldsMissing(creds, from === 'qr').length === 0;
+      const missing = cloudApiFieldsMissing(creds);
+      const cloudApiConfigured = missing.length === 0;
 
       // Idempotente: mesmo modo = 200 sem efeito e sem audit (contrato §6.2).
       if (from === target) return { from, changed: false, cloudApiConfigured };
 
       if (target === 'cloud_api') {
-        const missing = cloudApiFieldsMissing(creds, from === 'qr');
         if (missing.length > 0) {
           throw new BusinessError('CHANNEL_CLOUD_API_NOT_CONFIGURED', { missing });
         }
@@ -1074,7 +1079,7 @@ export function createChannelSettingsService(
         channel: 'whatsapp',
         connectionMode: target,
       });
-      return { from, changed: true, cloudApiConfigured: target === 'cloud_api' ? true : cloudApiConfigured };
+      return { from, changed: true, cloudApiConfigured };
     });
 
     if (outcome.changed) {
@@ -1104,21 +1109,14 @@ export function createChannelSettingsService(
 
 /**
  * Campos da Cloud API que faltam na linha do canal (só os NOMES, nunca valores).
- *
- * Em `qr`, `api_token` guarda a apikey da instância Evolution, NÃO um token da
- * Meta (mesma coluna, D-308). Esse valor nunca conta como token da Cloud API:
- * senão a apikey do gateway iria no header de quem fala com a Meta. Por isso
- * `fromQr` marca `apiToken` como faltante. Enquanto não houver coluna separada
- * para o token da Meta, o laboratório não volta a `cloud_api` a partir de `qr`.
+ * O token é o da Meta (`cloud_api_token`); a apikey do QR em `api_token` nunca
+ * conta (D-308 item 3), então parear o QR não impede voltar para `cloud_api`.
  */
-function cloudApiFieldsMissing(
-  creds: channelSettingsRepo.ChannelCredentials | null,
-  fromQr: boolean,
-): string[] {
+function cloudApiFieldsMissing(creds: channelSettingsRepo.ChannelCredentials | null): string[] {
   const missing: string[] = [];
   if (!creds?.phoneNumberId) missing.push('phoneNumberId');
   if (!creds?.wabaId) missing.push('wabaId');
-  if (!creds?.apiToken || fromQr) missing.push('apiToken');
+  if (!creds?.cloudApiToken) missing.push('apiToken');
   return missing;
 }
 

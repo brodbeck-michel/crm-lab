@@ -302,7 +302,11 @@ export interface SeedTenantChannelInput {
   displayName: string;
   phoneNumberId: string;
   phoneNumber: string;
-  /** SEGREDO: nunca sai do backend (D-064). Aqui e valor de dev/teste. */
+  /**
+   * SEGREDO: nunca sai do backend (D-064). Aqui e valor de dev/teste. No
+   * `whatsapp` vai para `cloud_api_token` (token da Meta, D-308 item 3); nos
+   * outros canais, para `api_token`.
+   */
   apiToken: string;
   webhookSecret: string;
   isActive: boolean;
@@ -316,9 +320,9 @@ export async function insertTenantChannel(
 ): Promise<string> {
   await tx.query(
     `INSERT INTO tenant_channels (id, tenant_id, channel, display_name, phone_number_id,
-                                  phone_number, api_token, webhook_secret, is_active,
-                                  connected_at, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)`,
+                                  phone_number, api_token, cloud_api_token, webhook_secret,
+                                  is_active, connected_at, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)`,
     [
       input.id,
       input.tenantId,
@@ -326,7 +330,8 @@ export async function insertTenantChannel(
       input.displayName,
       input.phoneNumberId,
       input.phoneNumber,
-      input.apiToken,
+      input.channel === 'whatsapp' ? null : input.apiToken,
+      input.channel === 'whatsapp' ? input.apiToken : null,
       input.webhookSecret,
       input.isActive,
       iso(input.connectedAt),

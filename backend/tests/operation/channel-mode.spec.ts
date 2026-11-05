@@ -76,6 +76,19 @@ async function setQrRow(target: string, apikey: string | null, accepted = true):
   );
 }
 
+async function rawTokens(
+  target: string,
+): Promise<{ api_token: string | null; cloud_api_token: string | null }> {
+  const row = await db.withoutTenant((tx) =>
+    tx.query<{ api_token: string | null; cloud_api_token: string | null }>(
+      `SELECT api_token, cloud_api_token FROM tenant_channels
+        WHERE tenant_id = $1 AND channel = 'whatsapp'`,
+      [target],
+    ),
+  );
+  return row.rows[0] ?? { api_token: null, cloud_api_token: null };
+}
+
 async function modeOf(target: string): Promise<string | null> {
   const row = await db.withoutTenant((tx) =>
     tx.query<{ connection_mode: string }>(
@@ -120,25 +133,67 @@ describe('PUT /settings/channels/whatsapp/mode — qr -> cloud_api', () => {
     expect(await modeOf(tenantId)).toBe('qr');
   });
 
-  it('a apikey do QR nunca vale como token da Meta: 409 mesmo com phone e waba gravados, mensagens intactas', async () => {
+  it('com as tres credenciais da Meta: 200, modo cloud_api, audit so com o modo e apikey do QR preservada', async () => {
     await setQrRow(tenantId, 'apikey-evolution');
-    await app.agent
-      .patch(URL)
-      .set(app.auth(admin))
-      .send({
-        channels: [
-          { channel: 'whatsapp', phoneNumberId: cloudFields.phoneNumberId, wabaId: cloudFields.wabaId },
-        ],
-      })
-      .expect(200);
     await seedMessage(tenantId);
     const before = await countMessages(tenantId);
+    await saveCloudFields().expect(200);
+
+    const res = await putMode('cloud_api').expect(200);
+    expect(res.body).toEqual({ connectionMode: 'cloud_api', cloudApiConfigured: true });
+    expect(await modeOf(tenantId)).toBe('cloud_api');
+    expect(await countMessages(tenantId)).toBe(before);
+
+    // D-308 item 3: o token da Meta foi para a coluna propria e a apikey do QR
+    // continua onde estava — voltar para `qr` nao exige parear de novo.
+    const raw = await rawTokens(tenantId);
+    expect(raw.api_token).toBe('apikey-evolution');
+    expect(raw.cloud_api_token).toBe(TOKEN);
+
+    const audit = await db.withoutTenant((tx) =>
+      tx.query<{ old_values: unknown; new_values: unknown }>(
+        `SELECT old_values, new_values FROM audit_logs
+          WHERE tenant_id = $1 AND action = 'update_whatsapp_mode'`,
+        [tenantId],
+      ),
+    );
+    expect(audit.rows).toHaveLength(1);
+    expect(audit.rows[0]?.old_values).toEqual({ connectionMode: 'qr' });
+    expect(audit.rows[0]?.new_values).toEqual({ connectionMode: 'cloud_api' });
+    expect(JSON.stringify(audit.rows)).not.toContain(TOKEN);
+    expect(JSON.stringify(audit.rows)).not.toContain('apikey-evolution');
+  });
+
+  it('a apikey do QR nunca vale como token da Meta: so phone e waba gravados = 409 com missing [apiToken]', async () => {
+    await setQrRow(tenantId, 'apikey-evolution');
+    await saveCloudFields(admin, {
+      phoneNumberId: cloudFields.phoneNumberId,
+      wabaId: cloudFields.wabaId,
+    } as typeof cloudFields).expect(200);
 
     const res = await putMode('cloud_api').expect(409);
-    expect(res.body.error.details.missing).toEqual(['apiToken']);
+    expect(res.body.error.details).toEqual({ missing: ['apiToken'] });
     expect(JSON.stringify(res.body)).not.toContain('apikey-evolution');
     expect(await modeOf(tenantId)).toBe('qr');
-    expect(await countMessages(tenantId)).toBe(before);
+  });
+
+  it('gravar o token da Meta em qr nao sobrescreve a apikey da instancia Evolution', async () => {
+    await setQrRow(tenantId, 'apikey-evolution');
+    await saveCloudFields().expect(200);
+    const raw = await rawTokens(tenantId);
+    expect(raw.api_token).toBe('apikey-evolution');
+    expect(raw.cloud_api_token).toBe(TOKEN);
+    expect(await modeOf(tenantId)).toBe('qr');
+  });
+
+  it.each(['attendant', 'manager'] as const)('%s: 403 FORBIDDEN com requiredRoles [admin], modo intacto', async (role) => {
+    await setQrRow(tenantId, 'apikey-evolution');
+    await saveCloudFields().expect(200);
+    const user = await createUser({ tenantId, role, name: `Usuario ${role}`, db });
+    const res = await putMode('cloud_api', user).expect(403);
+    expect(res.body.error.code).toBe('FORBIDDEN');
+    expect(res.body.error.details.requiredRoles).toEqual(['admin']);
+    expect(await modeOf(tenantId)).toBe('qr');
   });
 
   it('connectionMode no PATCH e recusado (troca vai pelo PUT)', async () => {
@@ -183,9 +238,41 @@ describe('PUT /settings/channels/whatsapp/mode — cloud_api -> qr', () => {
         tenantId,
       ]),
     );
+    await seedMessage(tenantId);
+    const before = await countMessages(tenantId);
     const res = await putMode('qr').expect(200);
     expect(res.body.connectionMode).toBe('qr');
     expect(await modeOf(tenantId)).toBe('qr');
+    // Trocar de modo nao apaga nada (D-308 item 2).
+    expect(await countMessages(tenantId)).toBe(before);
+  });
+
+  it('ida e volta: cloud_api -> qr -> cloud_api sem digitar credenciais de novo', async () => {
+    await setQrRow(tenantId, 'apikey-evolution', true);
+    await saveCloudFields().expect(200);
+    await putMode('cloud_api').expect(200);
+    await putMode('qr').expect(200);
+    const res = await putMode('cloud_api').expect(200);
+    expect(res.body.cloudApiConfigured).toBe(true);
+    expect((await rawTokens(tenantId)).api_token).toBe('apikey-evolution');
+  });
+});
+
+describe('GET /settings/channels — cloudApiConfigured', () => {
+  it('false sem as tres credenciais; true com elas; apiTokenMasked e o da Meta, nunca a apikey do QR', async () => {
+    await setQrRow(tenantId, 'apikey-evolution-9z8y');
+    let res = await app.agent.get(URL).set(app.auth(admin)).expect(200);
+    let whatsapp = res.body.channels.find((c: { channel: string }) => c.channel === 'whatsapp');
+    expect(whatsapp.cloudApiConfigured).toBe(false);
+    expect(whatsapp.apiTokenMasked).toBeNull();
+
+    await saveCloudFields().expect(200);
+    res = await app.agent.get(URL).set(app.auth(admin)).expect(200);
+    whatsapp = res.body.channels.find((c: { channel: string }) => c.channel === 'whatsapp');
+    expect(whatsapp.cloudApiConfigured).toBe(true);
+    expect(whatsapp.wabaId).toBe(cloudFields.wabaId);
+    expect(whatsapp.apiTokenMasked).toBe(`••••••••${TOKEN.slice(-4)}`);
+    expect(JSON.stringify(res.body)).not.toContain('apikey-evolution');
   });
 });
 
@@ -254,5 +341,35 @@ describe('envio sem configuracao valida', () => {
     expect(err).toBeInstanceOf(BusinessError);
     expect((err as BusinessError).code).toBe('CHANNEL_CLOUD_API_NOT_CONFIGURED');
     expect((err as BusinessError).details?.missing).toEqual(expect.arrayContaining(['phoneNumberId']));
+  });
+
+  it('D-308 item 5: credencial da instalacao (env) nao completa a do laboratorio', async () => {
+    // So o WABA gravado; a env traz numero e token de outra conta.
+    await saveCloudFields(admin, { wabaId: cloudFields.wabaId } as typeof cloudFields).expect(200);
+    const err = await build({
+      ...ENV_FALLBACK,
+      apiUrl: 'https://graph.test',
+      phoneNumberId: 'numero-da-instalacao',
+      apiToken: 'token-da-instalacao',
+    })
+      .send(tenantId, '5548999990000', 'oi')
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BusinessError);
+    expect((err as BusinessError).code).toBe('CHANNEL_CLOUD_API_NOT_CONFIGURED');
+    expect((err as BusinessError).details?.missing).toEqual(['phoneNumberId', 'apiToken']);
+  });
+
+  it('cloud_api sem wabaId e sem token: missing lista os dois', async () => {
+    await saveCloudFields(admin, { phoneNumberId: cloudFields.phoneNumberId } as typeof cloudFields).expect(200);
+    const err = await build({ ...ENV_FALLBACK, apiUrl: 'https://graph.test' })
+      .send(tenantId, '5548999990000', 'oi')
+      .catch((e: unknown) => e);
+    expect((err as BusinessError).code).toBe('CHANNEL_CLOUD_API_NOT_CONFIGURED');
+    expect((err as BusinessError).details?.missing).toEqual(['wabaId', 'apiToken']);
+  });
+
+  it('driver mock (WHATSAPP_API_URL vazia) envia sem credencial, em qualquer ambiente', async () => {
+    const res = await build(ENV_FALLBACK).send(tenantId, '5548999990000', 'oi');
+    expect(res.externalId).toBeTruthy();
   });
 });

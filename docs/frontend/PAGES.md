@@ -973,8 +973,13 @@ gestor).
   `manual` não mostra nada. O botão "Conectar WhatsApp" continua lá.
 - **Desconectar não desativa o canal** (`is_active` intocado) — são dois controles distintos,
   e a confirmação diz isso explicitamente
-- Conectar por QR troca `connection_mode` para `qr` e **não há caminho de volta para
-  `cloud_api`** pela UI: a partir daí o envio sai pelo gateway Evolution
+- Conectar por QR troca `connection_mode` para `qr`: a partir daí o envio sai pelo gateway
+  Evolution. **Volta para `cloud_api` (CRMLAB-138, D-308, supera o "sem caminho de volta"):** o
+  cartão "Modo do WhatsApp" (admin) tem as opções QR e API oficial. Escolher a API oficial mostra
+  o aviso do que muda (histórico intacto, janela de 24 h, reengajamento inativo) e pede
+  confirmação. Sem credenciais guardadas (`cloudApiConfigured: false`), pede ID do número, WABA e
+  token, grava pelo `PATCH` e só então chama `PUT /settings/channels/whatsapp/mode`. Com elas
+  guardadas, basta confirmar. Erro do servidor aparece no cartão.
 
 ### Gestão da Operação (`/settings/operation`) — gestor+
 - Dados: `GET /operations/overview?queueLimit&decisionsLimit` — **somente leitura**

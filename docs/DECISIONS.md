@@ -6869,6 +6869,11 @@ filhos 136–141) completa o modo. **Contrato escrito antes do código (regra ze
    como as demais credenciais de canal (AES-256-GCM, `secret-box.ts`, `CHANNEL_SECRET_KEY`, D-076),
    write-only (nunca volta em resposta nem log). `waba_id` e `phone_number_id` são identificadores
    públicos do provedor e ficam em claro, como `phone_number_id` já é.
+   **Emenda de 05/11/2026 (revisão do CRMLAB-138, aprovada pelo Michel):** o token da Meta mora
+   numa coluna própria, `cloud_api_token` (migração 063). `api_token` fica só para a apikey da
+   instância Evolution do QR. Com uma coluna só, parear o QR apagava o token da Meta e a troca
+   `qr → cloud_api` ficava impossível, o que contrariava "deixar a troca reversível". A migração
+   move o token das linhas já em `cloud_api`; a apikey do Santé (em `qr`) não é tocada.
 4. **Modo não configurado é erro de negócio:** laboratório em `cloud_api` com `phone_number_id`,
    `waba_id` ou `api_token` ausentes recebe **`CHANNEL_CLOUD_API_NOT_CONFIGURED` (409)** em
    qualquer envio, na listagem de templates e ao tentar trocar para `cloud_api`. Meta fora do ar ou
@@ -6876,8 +6881,13 @@ filhos 136–141) completa o modo. **Contrato escrito antes do código (regra ze
 5. **Sem fallback de env para as três credenciais no driver real** (mesma disciplina do
    `qrInstanceApiKey`, SERVICES §16.1): um segredo/identificador de outro laboratório ou da
    instalação não pode enviar pelo número de quem não o configurou. O driver mock de dev/CI
-   (`WHATSAPP_API_URL` vazia) segue sem exigir credencial. **PROPOSTA a validar com o Michel:**
-   ela estreita D-073 (fallback de env campo a campo) apenas para `cloud_api` real.
+   (`WHATSAPP_API_URL` vazia) segue sem exigir credencial, em qualquer `NODE_ENV` (a hml usa o mock
+   no laboratório de treinamento). **Aprovado pelo Michel em 05/11/2026:** estreita D-073 (fallback
+   de env campo a campo) para `phone_number_id`, `waba_id` e token da Meta; o segredo do webhook e
+   a URL da API continuam vindo da env quando a linha não tem.
+   **`CHANNEL_CLOUD_API_NOT_CONFIGURED` é pré-checagem:** recusa antes de gravar a mensagem (texto,
+   anexo, "tentar de novo" e envio do cartão, que passa pelo mesmo envio), com `details: { missing }`
+   só — nada fica `failed`.
 6. Reengajamento (D-214), mensagem fora do horário/saudação (D-264) e teto de primeiros contatos
    (D-306) **continuam só QR**; D-214 permanece válido (a janela de 24 h abaixo é o motivo).
 **Motivo:** reduzir o risco de banimento sem perder histórico, e deixar a troca reversível.

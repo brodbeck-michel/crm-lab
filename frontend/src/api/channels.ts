@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
+  UpdateWhatsAppModeRequest,
+  UpdateWhatsAppModeResponse,
   WhatsAppQrConnectRequest,
   WhatsAppQrResponse,
   WhatsAppStatusResponse,
@@ -24,6 +26,10 @@ export const channelsApi = {
   whatsAppStatus: () => http.get<WhatsAppStatusResponse>('/settings/channels/whatsapp/status'),
 
   disconnectWhatsApp: () => http.post<void>('/settings/channels/whatsapp/disconnect'),
+
+  /** Troca do modo do canal (CRMLAB-138, D-308, API_CONTRACTS §6.2). Admin apenas. */
+  setWhatsAppMode: (body: UpdateWhatsAppModeRequest) =>
+    http.put<UpdateWhatsAppModeResponse>('/settings/channels/whatsapp/mode', body),
 };
 
 /* ── React Query Hooks ──────────────────────────────────────────────────── */

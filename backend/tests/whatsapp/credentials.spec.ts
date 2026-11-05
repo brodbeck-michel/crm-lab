@@ -109,7 +109,8 @@ describe('mergeCredentials — precedencia campo a campo', () => {
       {
         phoneNumberId: 'numero-do-lab',
         wabaId: 'waba-do-lab',
-        apiToken: 'token-do-lab',
+        apiToken: 'apikey-do-qr',
+        cloudApiToken: 'token-da-meta-do-lab',
         webhookSecret: TABLE_SECRET,
         isActive: true,
         connectionMode: 'cloud_api',
@@ -122,15 +123,14 @@ describe('mergeCredentials — precedencia campo a campo', () => {
       apiUrl: '',
       // WABA vem SÓ da linha do laboratório (D-308 item 5): sem fallback de env.
       wabaId: 'waba-do-lab',
-      apiToken: 'token-do-lab',
+      // O token da Meta vem de `cloud_api_token`, nunca da apikey do QR (D-308 item 3).
+      apiToken: 'token-da-meta-do-lab',
       webhookSecret: TABLE_SECRET,
       isActive: true,
       apiTokenRevoked: false,
       connectionMode: 'cloud_api',
-      // Vem da LINHA (`stored.apiToken`), nunca de `ENV_FALLBACK` (N1 da
-      // revisao, rodada 2) — mesmo valor de `apiToken` aqui porque o teste
-      // nao distingue provedor, mas o CAMINHO e diferente (sem `?? fallback`).
-      qrInstanceApiKey: 'token-do-lab',
+      // Vem da LINHA (`api_token`), nunca de `ENV_FALLBACK` (N1 da revisao, rodada 2).
+      qrInstanceApiKey: 'apikey-do-qr',
     });
 
     // Linha existe mas o laboratorio ainda nao girou o segredo do webhook.
@@ -140,6 +140,7 @@ describe('mergeCredentials — precedencia campo a campo', () => {
         phoneNumberId: 'numero-do-lab',
         wabaId: null,
         apiToken: null,
+        cloudApiToken: null,
         webhookSecret: null,
         isActive: true,
         connectionMode: 'qr',
@@ -147,7 +148,8 @@ describe('mergeCredentials — precedencia campo a campo', () => {
       ENV_FALLBACK,
     );
     expect(parcial.phoneNumberId).toBe('numero-do-lab');
-    expect(parcial.apiToken).toBe('token-da-env');
+    // D-308 item 5: o token da Meta NUNCA cai na env da instalacao.
+    expect(parcial.apiToken).toBe('');
     expect(parcial.webhookSecret).toBe(ENV_SECRET);
     expect(parcial.connectionMode).toBe('qr');
     // N1 da revisao (rodada 2): `connectionMode: 'qr'` SEM apikey gravada na
@@ -159,8 +161,16 @@ describe('mergeCredentials — precedencia campo a campo', () => {
     // este campo caisse no `?? fallback` como `apiToken` cai.
     expect(parcial.qrInstanceApiKey).toBeNull();
 
-    // Sem linha nenhuma: tudo da env var.
-    expect(mergeCredentials('t1', null, ENV_FALLBACK)).toEqual({ tenantId: 't1', ...ENV_FALLBACK });
+    // Sem linha nenhuma: a env vale para o webhook e a URL, mas as tres
+    // credenciais da Meta ficam vazias (D-308 item 5) — o envio real recusa com
+    // CHANNEL_CLOUD_API_NOT_CONFIGURED em vez de sair pelo numero da instalacao.
+    expect(mergeCredentials('t1', null, ENV_FALLBACK)).toEqual({
+      tenantId: 't1',
+      ...ENV_FALLBACK,
+      phoneNumberId: '',
+      wabaId: '',
+      apiToken: '',
+    });
   });
 });
 

@@ -3817,3 +3817,26 @@ Branch `docs/CRMLAB-135-contrato-cloud-api`. Decisões **D-308..D-313**. Nenhum 
 - **Pendência — CRMLAB-140 (anexos pela Cloud API):** fora desta entrega (D-313). Upload de mídia à
   Meta no envio e download autenticado no recebimento. Hoje: anexo em `cloud_api` recusa.
 
+
+### 🚧 CRMLAB-138 — modo do canal WhatsApp por laboratório (2026-11-05, em validação)
+
+Branch `feature/CRMLAB-138-canal-modo-cloud`, sobre o contrato do CRMLAB-135. Decisão D-308
+(emendada em 05/11: itens 3 e 5).
+
+- **Rota nova:** `PUT /settings/channels/whatsapp/mode` (admin), no inventário de isolamento (122 rotas).
+- **Token da Meta em coluna própria** (`cloud_api_token`, migração 063, que também traz o `waba_id`
+  VARCHAR(64)). `api_token` fica só para a apikey do QR. A migração move o token das linhas já em
+  `cloud_api` e não toca nas linhas em `qr` (Santé). Troca `qr ⇄ cloud_api` reversível.
+- **Sem reserva de env** para número, WABA e token da Meta no envio real (D-308 item 5, aprovado).
+  Mock (`WHATSAPP_API_URL` vazia) vale em qualquer `NODE_ENV`, como a hml usa.
+- **`CHANNEL_CLOUD_API_NOT_CONFIGURED` antes de gravar** (texto, anexo, "tentar de novo"; o cartão
+  passa pelo mesmo envio), `details: { missing }`.
+- **GET** devolve `cloudApiConfigured`; a tela troca o modo pelo PUT (PATCH das credenciais antes,
+  quando digitadas).
+- **Migrações por card:** 063 = 138, 064 = 136, 065 = 141 (SCHEMA §47 atualizado).
+- **Testes:** `channel-mode.spec.ts` (20), `cloud-api-not-configured.spec.ts` (3), `credentials.spec.ts`
+  e `route-tenant-isolation.spec.ts` ajustados; frontend `Channels.spec.tsx` (+3).
+- **Validação:** revisão independente por agente Opus 5.5 (sem as conclusões de quem desenvolveu).
+  1ª rodada: 3 bloqueantes e 6 a corrigir, todos tratados nesta entrega.
+- **Antes do deploy:** conferir se algum laboratório em `cloud_api` real dependia de
+  `WHATSAPP_API_TOKEN` da env (passa a receber `CHANNEL_CLOUD_API_NOT_CONFIGURED`).

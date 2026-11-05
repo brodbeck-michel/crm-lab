@@ -229,17 +229,6 @@ export interface MessageServiceDeps {
   firstContact?: FirstContactGuard;
 }
 
-/**
- * Falha de envio ao canal. `CHANNEL_CLOUD_API_NOT_CONFIGURED` (CRMLAB-135, D-308)
- * e erro de negocio acionavel pelo gestor e sobe como esta; o resto vira
- * `MESSAGE_SEND_FAILED`. A mensagem ja foi marcada `failed` por quem chama.
- */
-function sendFailure(err: unknown, messageId: string): BusinessError {
-  return err instanceof BusinessError && err.code === 'CHANNEL_CLOUD_API_NOT_CONFIGURED'
-    ? new BusinessError('CHANNEL_CLOUD_API_NOT_CONFIGURED', { ...err.details, messageId })
-    : new BusinessError('MESSAGE_SEND_FAILED', { messageId });
-}
-
 export class MessageService {
   private readonly messages: MessageRepository;
   private readonly conversations: ConversationRepository;
@@ -259,6 +248,16 @@ export class MessageService {
     this.audit = deps.audit;
     this.autoReply = deps.autoReply;
     this.firstContact = deps.firstContact;
+  }
+
+  /**
+   * D-308: `cloud_api` sem `phone_number_id`/`waba_id`/token recusa com
+   * `CHANNEL_CLOUD_API_NOT_CONFIGURED` ANTES de gravar — nada fica `failed`
+   * (API_CONTRACTS §2, ordem NOT_CONFIGURED -> WINDOW_CLOSED -> SEND_FAILED).
+   */
+  private async assertChannelReady(tenantId: string, conversation: Conversation): Promise<void> {
+    if (!this.whatsapp || conversation.channel !== 'whatsapp') return;
+    await this.whatsapp.assertCloudApiConfigured(tenantId);
   }
 
   /**
@@ -353,6 +352,7 @@ export class MessageService {
       throw new BusinessError('CONVERSATION_ARCHIVED', { status: conversation.status });
     }
     const quote = await this.resolveQuote(tenantId, conversationId, dto.quotedMessageId);
+    await this.assertChannelReady(tenantId, conversation);
     await this.assertFirstContactAllowed(tenantId, conversation);
     // Antes do INSERT: quem perde a corrida nao grava nem envia nada (D-215).
     await this.claimIfFree(tenantId, conversation, senderId);
@@ -392,7 +392,7 @@ export class MessageService {
         messageId: message.id,
         reason: err instanceof Error ? err.message : String(err),
       });
-      throw sendFailure(err, message.id);
+      throw new BusinessError('MESSAGE_SEND_FAILED', { messageId: message.id });
     }
   }
 
@@ -416,6 +416,7 @@ export class MessageService {
     // D-231: áudio não tem legenda no WhatsApp — descarta, senão o CRM
     // mostraria um texto que o paciente nunca recebeu.
     const caption = messageType === 'audio' ? null : dto.caption || null;
+    await this.assertChannelReady(tenantId, conversation);
     await this.assertFirstContactAllowed(tenantId, conversation);
     await this.claimIfFree(tenantId, conversation, senderId);
     const participant = participantReplyOf(conversation, senderId);
@@ -460,7 +461,7 @@ export class MessageService {
         messageId: message.id,
         reason: err instanceof Error ? err.message : String(err),
       });
-      throw sendFailure(err, message.id);
+      throw new BusinessError('MESSAGE_SEND_FAILED', { messageId: message.id });
     }
   }
 
@@ -730,6 +731,7 @@ export class MessageService {
       return updated ?? message;
     }
 
+    await this.assertChannelReady(tenantId, conversation);
     await this.assertFirstContactAllowed(tenantId, conversation);
     await this.messages.setStatus(tenantId, messageId, 'pending');
     this.emitStatusUpdated(tenantId, conversationId, messageId, 'pending');
@@ -773,7 +775,7 @@ export class MessageService {
         messageId,
         reason: err instanceof Error ? err.message : String(err),
       });
-      throw sendFailure(err, messageId);
+      throw new BusinessError('MESSAGE_SEND_FAILED', { messageId });
     }
   }
 
@@ -868,7 +870,7 @@ export class MessageService {
         automation,
         reason: err instanceof Error ? err.message : String(err),
       });
-      throw sendFailure(err, message.id);
+      throw new BusinessError('MESSAGE_SEND_FAILED', { messageId: message.id });
     }
   }
 

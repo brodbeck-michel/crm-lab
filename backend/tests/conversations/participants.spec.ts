@@ -293,6 +293,7 @@ describe('envio de participante (D-263 itens 5 e 6)', () => {
       wsHub: new FakeWsHub(),
       audit: createAuditService(db),
       whatsapp: {
+        assertCloudApiConfigured: async () => undefined,
         send: async (_tenantId: string, _phone: string, content: string) => {
           sent.push(content);
           return { externalId: `wamid.${sent.length}` };

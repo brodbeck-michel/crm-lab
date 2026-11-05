@@ -931,6 +931,15 @@ const LAB_ROUTES: readonly LabRoute[] = [
     actor: 'admin',
     addressable: false,
   },
+  // CRMLAB-138 (D-308): troca do modo do canal, so do proprio laboratorio.
+  {
+    name: 'PUT /settings/channels/whatsapp/mode',
+    method: 'put',
+    path: () => '/api/v1/settings/channels/whatsapp/mode',
+    body: () => ({ mode: 'cloud_api' }),
+    actor: 'admin',
+    addressable: false,
+  },
 
   // --- regras do funil (CRMLAB-56 — D-190) ---
   { name: 'GET /settings/funnel-rules', method: 'get', path: () => '/api/v1/settings/funnel-rules', actor: 'attendant', addressable: false },
@@ -1423,7 +1432,7 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 106 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 122 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
@@ -1468,7 +1477,8 @@ describe('inventario de rotas de laboratorio', () => {
     // CRMLAB-117/D-282 soma 2: `PATCH|DELETE /internal-chat/channels/:id/messages/:messageId`.
     // CRMLAB-120/D-286 soma 2: `GET /users/presence` e `PATCH /users/me/presence`.
     // CRMLAB-121/D-287 soma 1: `POST /patients`.
-    expect(LAB_ROUTES).toHaveLength(121);
+    // CRMLAB-138/D-308 soma 1: `PUT /settings/channels/whatsapp/mode`.
+    expect(LAB_ROUTES).toHaveLength(122);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

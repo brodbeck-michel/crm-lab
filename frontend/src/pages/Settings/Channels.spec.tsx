@@ -1,9 +1,10 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChannelSettingsResponse, UserRole } from '@crm-lab/shared';
+import { channelsApi } from '@/api/channels';
 import { settingsApi } from '@/api/settings';
 import { mutationIdle, querySuccess } from '@/test/query-mocks';
 import { ToastProvider } from '@/components/ui';
@@ -45,7 +46,8 @@ const settings: ChannelSettingsResponse = {
       connectedAt: '2026-07-02T11:20:00.000Z',
       updatedAt: '2026-08-19T08:45:00.000Z',
       connectionMode: 'cloud_api',
-    wabaId: null,
+      wabaId: null,
+      cloudApiConfigured: false,
       acceptedTermsAt: null,
     },
   ],
@@ -367,6 +369,121 @@ describe('ChannelsSettings', () => {
     const alerta = await screen.findByRole('alert');
     expect(alerta).toHaveTextContent(/Revise os dados informados/i);
     expect(alerta).toHaveTextContent('Maximo de 30 caracteres');
+  });
+});
+
+describe('Modo do WhatsApp (CRMLAB-138, D-308)', () => {
+  const qrSettings = (cloudApiConfigured: boolean): ChannelSettingsResponse => ({
+    ...settings,
+    channels: [
+      {
+        ...settings.channels[0]!,
+        connectionMode: 'qr',
+        apiTokenMasked: cloudApiConfigured ? '••••••••7c1d' : null,
+        wabaId: cloudApiConfigured ? '208765432109876' : null,
+        cloudApiConfigured,
+        acceptedTermsAt: '2026-10-01T12:00:00.000Z',
+      },
+    ],
+  });
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    updateChannelsMock.mockResolvedValue(settings);
+    vi.mocked(channelsApi.setWhatsAppMode).mockResolvedValue({
+      connectionMode: 'cloud_api',
+      cloudApiConfigured: true,
+    });
+    const { useWhatsAppConnect, useWhatsAppQr, useWhatsAppStatus, useWhatsAppDisconnect } =
+      await import('@/api/channels');
+    vi.mocked(useWhatsAppConnect).mockReturnValue(mutationIdle());
+    vi.mocked(useWhatsAppQr).mockReturnValue(
+      querySuccess({ qrcode: null, status: 'disconnected', expiresInSeconds: null }),
+    );
+    vi.mocked(useWhatsAppStatus).mockReturnValue(
+      querySuccess({ status: 'connected', phoneNumber: '+55 48 3621-0000', connectedAt: null }),
+    );
+    vi.mocked(useWhatsAppDisconnect).mockReturnValue(mutationIdle());
+    signIn('admin');
+  });
+
+  afterEach(() => {
+    useAuthStore.setState({ user: null });
+  });
+
+  async function modeCard() {
+    const group = await screen.findByRole('radiogroup', { name: 'Modo do WhatsApp' });
+    return within(group.parentElement as HTMLElement);
+  }
+
+  it('qr sem credenciais: grava as três (PATCH) e só depois troca o modo (PUT /mode)', async () => {
+    channelsMock.mockResolvedValue(qrSettings(false));
+    const user = userEvent.setup();
+    renderPage();
+    const card = await modeCard();
+
+    await user.click(card.getByRole('radio', { name: /API oficial/i }));
+    expect(card.getByTestId('whatsapp-mode-warning')).toHaveTextContent('nada é apagado');
+    const trocar = card.getByRole('button', { name: 'Trocar para API oficial' });
+    expect(trocar).toBeDisabled();
+
+    await user.type(card.getByLabelText('ID do número (phone_number_id)'), '109876543210987');
+    await user.type(card.getByLabelText(/waba_id/), '208765432109876');
+    await user.type(card.getByLabelText('Token de acesso da Cloud API'), 'EAAG-token-7c1d');
+    expect(trocar).toBeDisabled();
+    await user.click(card.getByRole('checkbox'));
+    await user.click(trocar);
+
+    await waitFor(() => expect(channelsApi.setWhatsAppMode).toHaveBeenCalledWith({ mode: 'cloud_api' }));
+    expect(updateChannelsMock).toHaveBeenCalledWith({
+      channels: [
+        {
+          channel: 'whatsapp',
+          phoneNumberId: '109876543210987',
+          wabaId: '208765432109876',
+          apiToken: 'EAAG-token-7c1d',
+        },
+      ],
+    });
+    expect(updateChannelsMock.mock.invocationCallOrder[0]!).toBeLessThan(
+      vi.mocked(channelsApi.setWhatsAppMode).mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('qr com credenciais já guardadas: troca só confirmando, sem PATCH', async () => {
+    channelsMock.mockResolvedValue(qrSettings(true));
+    const user = userEvent.setup();
+    renderPage();
+    const card = await modeCard();
+
+    await user.click(card.getByRole('radio', { name: /API oficial/i }));
+    const trocar = card.getByRole('button', { name: 'Trocar para API oficial' });
+    expect(trocar).toBeDisabled();
+    await user.click(card.getByRole('checkbox'));
+    await user.click(trocar);
+
+    await waitFor(() => expect(channelsApi.setWhatsAppMode).toHaveBeenCalledWith({ mode: 'cloud_api' }));
+    expect(updateChannelsMock).not.toHaveBeenCalled();
+  });
+
+  it('servidor recusa (409 sem credencial): a mensagem aparece no cartão', async () => {
+    channelsMock.mockResolvedValue(qrSettings(true));
+    vi.mocked(channelsApi.setWhatsAppMode).mockRejectedValue(
+      Object.assign(new Error('Configure o número, o WABA e o token da Cloud API.'), {
+        code: 'CHANNEL_CLOUD_API_NOT_CONFIGURED',
+        status: 409,
+        details: { missing: ['apiToken'] },
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    const card = await modeCard();
+
+    await user.click(card.getByRole('radio', { name: /API oficial/i }));
+    await user.click(card.getByRole('checkbox'));
+    await user.click(card.getByRole('button', { name: 'Trocar para API oficial' }));
+
+    expect(await card.findByRole('alert')).toBeInTheDocument();
   });
 });
 

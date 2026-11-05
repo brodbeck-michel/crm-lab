@@ -2367,14 +2367,22 @@ ALTER TABLE tenant_channels
   "Desconectar" grava `manual`; o `close` do gateway grava `logged_out` (401) ou `other`, sem
   sobrescrever `manual` nem rebaixar `logged_out` enquanto `connected_at` segue `NULL` (D-307).
 
-### 47. WhatsApp Cloud API: credenciais, template, categoria de cobrança e preços (migração 063 — CRMLAB-135, D-308..D-312)
-**Contrato; a migração ainda não existe** (frente de código). Só `ADD COLUMN` nulo + uma tabela
-nova com seed, sem backfill.
+### 47. WhatsApp Cloud API: credenciais, template, categoria de cobrança e preços (migrações 063–065 — CRMLAB-135, D-308..D-312)
+**Uma migração por card** (decisão de 05/11/2026), para cada card subir sozinho:
+**063** = CRMLAB-138 (credenciais, implementada); **064** = CRMLAB-136 (colunas de template);
+**065** = CRMLAB-141 (`pricing_category` + `whatsapp_price_table`). Só `ADD COLUMN` nulo + uma
+tabela nova com seed; o único backfill é o da 063 (token da Meta muda de coluna).
 
 ```sql
+-- 063 (CRMLAB-138)
 ALTER TABLE tenant_channels
-  ADD COLUMN waba_id VARCHAR(64) NULL;          -- WhatsApp Business Account id (público, em claro)
+  ADD COLUMN waba_id VARCHAR(64) NULL,          -- WhatsApp Business Account id (público, em claro)
+  ADD COLUMN cloud_api_token TEXT NULL;         -- token da Meta, cifrado (D-076), write-only
+UPDATE tenant_channels SET cloud_api_token = api_token, api_token = NULL
+ WHERE channel = 'whatsapp' AND connection_mode = 'cloud_api' AND api_token IS NOT NULL
+   AND cloud_api_token IS NULL;
 
+-- 064 (CRMLAB-136) e 065 (CRMLAB-141, só pricing_category e a tabela de preços)
 ALTER TABLE messages
   ADD COLUMN template_name VARCHAR(512) NULL,
   ADD COLUMN template_language VARCHAR(20) NULL,
@@ -2403,7 +2411,13 @@ INSERT INTO whatsapp_price_table (category, price_brl, effective_from) VALUES
 - Os valores acima são os **oficiais em BRL vigentes desde 01/10/2026** e vivem só no seed — nenhum
   código lê o número fixo. A franquia de **1.000 mensagens `service`/mês/número** é parâmetro de
   configuração do serviço (`WHATSAPP_FREE_SERVICE_MONTHLY`, default 1000), não coluna.
-- `waba_id` e `phone_number_id` ficam em claro (identificadores públicos); só `api_token` é cifrado (D-076).
+- `waba_id` e `phone_number_id` ficam em claro (identificadores públicos); `api_token` e
+  `cloud_api_token` são cifrados (D-076).
+- **Duas colunas de token no `whatsapp` (D-308 item 3, emenda de 05/11/2026):** `api_token` é a
+  apikey da instância Evolution (só o connect do QR grava); `cloud_api_token` é o token da Meta (o
+  `apiToken` do PATCH grava aqui quando `channel = 'whatsapp'`). Com uma coluna só, parear o QR
+  apagava o token da Meta e a troca `qr → cloud_api` ficava impossível. Nos outros canais nada muda:
+  o token continua em `api_token`. Mesmos três estados: `NULL` nunca configurou, `''` revogou.
 - Janela de 24 h usa o índice parcial `idx_messages_patient_conversation` (migração 062), sem índice novo.
 - Custo é **calculado na leitura** (`GET /settings/channels/whatsapp/usage`); não há coluna de custo.
 

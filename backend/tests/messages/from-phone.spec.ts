@@ -29,6 +29,7 @@ beforeEach(async () => {
 /** Gateway falso: `onSend` roda no meio do envio, antes de devolver o id. */
 function fakeWhatsApp(externalId: string, onSend: () => Promise<void>): WhatsAppService {
   const fake = {
+    assertCloudApiConfigured: async () => undefined,
     send: async () => {
       await onSend();
       return { externalId };

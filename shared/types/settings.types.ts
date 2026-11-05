@@ -38,6 +38,11 @@ export interface TenantChannel {
   connectionMode: 'cloud_api' | 'qr';
   /** Id da conta WhatsApp Business (Meta), só `cloud_api`. Não é segredo (CRMLAB-138). */
   wabaId: string | null;
+  /**
+   * `phoneNumberId`, `wabaId` e token da Meta gravados (D-308). É o que libera a troca para
+   * `cloud_api`. Sempre `false` fora do `whatsapp`.
+   */
+  cloudApiConfigured: boolean;
   /** Quando o termo de risco do QR foi aceito. `null` = nunca aceito. Só relevante para `qr`. */
   acceptedTermsAt: IsoDateTime | null;
 }

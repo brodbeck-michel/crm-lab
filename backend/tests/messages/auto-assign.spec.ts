@@ -207,6 +207,7 @@ describe('MessageService — quem assume e quem nao assume', () => {
       audit: createAuditService(db),
       // So `send` e usado; o resto do WhatsAppService nao entra nestes testes.
       whatsapp: {
+        assertCloudApiConfigured: async () => undefined,
         send: async (_tenantId: string, _phone: string, content: string) => {
           sent.push(content);
           return { externalId: `wamid.${sent.length}` };

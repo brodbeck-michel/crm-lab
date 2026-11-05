@@ -115,10 +115,12 @@ export interface WhatsAppCredentialsResolver {
 /** Credenciais das env vars — o fallback de quem ainda nao conectou o canal. */
 export function envCredentials(): Omit<WhatsAppCredentials, 'tenantId'> {
   return {
-    phoneNumberId: env.WHATSAPP_API_TOKEN ? 'default' : 'mock',
+    // Sem fallback de env para as credenciais da Meta (D-308 item 5): cada
+    // laboratorio envia so com as proprias. O mock (URL vazia) nao as exige.
+    phoneNumberId: '',
     apiUrl: env.WHATSAPP_API_URL ?? '',
     wabaId: '',
-    apiToken: env.WHATSAPP_API_TOKEN ?? '',
+    apiToken: '',
     webhookSecret: env.WHATSAPP_WEBHOOK_SECRET ?? '',
     isActive: true,
     apiTokenRevoked: false,
@@ -181,31 +183,31 @@ export function createEnvCredentialsResolver(db: DbClient): WhatsAppCredentialsR
  * pelo driver mock nem um erro genérico do provedor (CRMLAB-135, D-308).
  * `cloud_api`: exige `phone_number_id`, `waba_id` e token do laboratório; o
  * erro lista só os NOMES dos campos faltantes, nunca valores. `qr`: exige a
- * apikey da instância (só a tabela a guarda). Fora de produção, sem
- * `WHATSAPP_API_URL`, o driver mock de dev/teste continua valendo.
+ * apikey da instância (só a tabela a guarda). Sem `WHATSAPP_API_URL` o driver
+ * mock vale em qualquer ambiente (D-308 item 5) — é o que a hml usa no
+ * laboratório de treinamento.
  */
-function assertChannelConfigured(credentials: WhatsAppCredentials): void {
+export function assertChannelConfigured(credentials: WhatsAppCredentials): void {
   if (credentials.connectionMode === 'qr') {
     if (credentials.qrInstanceApiKey === null || credentials.qrInstanceApiKey === '') {
       throw new BusinessError('CHANNEL_QR_UNAVAILABLE', { reason: 'qr_not_paired' });
     }
     return;
   }
-  const mockAllowed = credentials.apiUrl === '' && env.NODE_ENV !== 'production';
-  if (mockAllowed) return;
-  // URL da API ausente em produção é problema da instalação, não do laboratório.
-  if (credentials.apiUrl === '') {
-    throw new BusinessError('CHANNEL_CLOUD_API_UNAVAILABLE');
-  }
-  const missing: string[] = [];
-  if (credentials.phoneNumberId === '' || credentials.phoneNumberId === 'mock') {
-    missing.push('phoneNumberId');
-  }
-  if (credentials.wabaId === '') missing.push('wabaId');
-  if (credentials.apiToken === '') missing.push('apiToken');
+  if (credentials.apiUrl === '') return;
+  const missing = cloudApiMissing(credentials);
   if (missing.length > 0) {
     throw new BusinessError('CHANNEL_CLOUD_API_NOT_CONFIGURED', { missing });
   }
+}
+
+/** Nomes (nunca valores) das credenciais da Cloud API que faltam. */
+function cloudApiMissing(credentials: WhatsAppCredentials): string[] {
+  const missing: string[] = [];
+  if (credentials.phoneNumberId === '') missing.push('phoneNumberId');
+  if (credentials.wabaId === '') missing.push('wabaId');
+  if (credentials.apiToken === '') missing.push('apiToken');
+  return missing;
 }
 
 /**
@@ -241,17 +243,24 @@ export function mergeCredentials(
 ): WhatsAppCredentials {
   return {
     tenantId,
-    phoneNumberId: stored?.phoneNumberId ?? fallback.phoneNumberId,
+    // D-308 item 5: as tres credenciais da Meta so vem da linha do
+    // laboratorio, nunca da instalacao. O token e o de `cloud_api_token`, nunca
+    // a apikey do QR em `api_token` (item 3).
+    phoneNumberId: stored?.phoneNumberId ?? '',
     apiUrl: fallback.apiUrl,
-    // Sem fallback de env (D-308 item 5): o WABA só vem da linha do laboratório.
     wabaId: stored?.wabaId ?? '',
-    apiToken: stored?.apiToken ?? fallback.apiToken,
+    apiToken: stored?.cloudApiToken ?? '',
     // Segredo vazio continua recusando TUDO (`verifyWebhookSignature`): nada
     // aqui transforma "nao configurado" em "autentico".
     webhookSecret: stored?.webhookSecret ?? fallback.webhookSecret,
     // Sem linha na tabela o canal esta ligado (ambiente so-env-var).
     isActive: stored?.isActive ?? fallback.isActive,
-    apiTokenRevoked: stored?.apiToken === '' ? true : fallback.apiTokenRevoked,
+    // Revogar o token da Meta so trava o envio em `cloud_api`: em `qr` o token
+    // da Meta nao e usado.
+    apiTokenRevoked:
+      stored?.connectionMode !== 'qr' && stored?.cloudApiToken === ''
+        ? true
+        : fallback.apiTokenRevoked,
     // `connectionMode` so existe na tabela (nunca em env var): sem linha, so
     // resta `cloud_api`.
     connectionMode: stored?.connectionMode ?? fallback.connectionMode,
@@ -1093,6 +1102,19 @@ export class WhatsAppService {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Pre-checagem ANTES de gravar a mensagem (API_CONTRACTS §2, ordem
+   * `CHANNEL_CLOUD_API_NOT_CONFIGURED` -> `WHATSAPP_WINDOW_CLOSED` ->
+   * `MESSAGE_SEND_FAILED`): em `cloud_api` sem credencial completa, recusa sem
+   * deixar mensagem `failed`. Em `qr` nao checa nada aqui — o QR despareado
+   * continua virando `failed` no envio, como antes.
+   */
+  async assertCloudApiConfigured(tenantId: string): Promise<void> {
+    const credentials = await this.credentials.forTenant(tenantId);
+    if (credentials.connectionMode === 'qr') return;
+    assertChannelConfigured(credentials);
   }
 
   /**

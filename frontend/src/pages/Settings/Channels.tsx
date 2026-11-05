@@ -11,7 +11,14 @@ import type {
   WhatsAppDisconnectInfo,
 } from '@crm-lab/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { isApiError, queryKeys, settingsApi, useWhatsAppDisconnect, useWhatsAppStatus } from '@/api';
+import {
+  channelsApi,
+  isApiError,
+  queryKeys,
+  settingsApi,
+  useWhatsAppDisconnect,
+  useWhatsAppStatus,
+} from '@/api';
 import { PageContainer, PageHeader } from '@/components/layout';
 import { DataTable, EmptyState, Modal } from '@/components/shared';
 import type { DataTableColumn } from '@/components/shared';
@@ -275,43 +282,66 @@ function WhatsAppModeCard({ channel }: { channel: TenantChannel | undefined }) {
   const [token, setToken] = useState('');
   const [error, setError] = useState<string | null>(null);
 
+  const onError = (err: unknown) => {
+    const fields = isApiError(err) ? readFieldErrors(err.details) : {};
+    setError(
+      Object.values(fields)[0] ??
+        (isApiError(err) ? err.message : 'Não foi possível salvar. Tente novamente.'),
+    );
+  };
+
   const save = useMutation({
     mutationFn: (body: UpdateChannelSettingsRequest) => settingsApi.updateChannels(body),
     onSuccess: (next) => {
       queryClient.setQueryData(queryKeys.channelSettings(), next);
       setConfirmed(false);
       setToken('');
-      toast('Modo do WhatsApp atualizado.', { tone: 'neutral' });
+      toast('Credenciais do WhatsApp salvas.', { tone: 'neutral' });
     },
-    onError: (err: unknown) => {
-      const fields = isApiError(err) ? readFieldErrors(err.details) : {};
-      setError(
-        Object.values(fields)[0] ??
-          (isApiError(err) ? err.message : 'Não foi possível salvar. Tente novamente.'),
-      );
+    onError,
+  });
+
+  // Troca para a API oficial: grava o que foi digitado (PATCH) e só então troca
+  // o modo (PUT /mode). O servidor recusa a troca sem as três credenciais.
+  const switchToCloud = useMutation({
+    mutationFn: async (credentials: UpdateChannelSettingsRequest | null) => {
+      if (credentials) await settingsApi.updateChannels(credentials);
+      return channelsApi.setWhatsAppMode({ mode: 'cloud_api' });
     },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.channelSettings() });
+      setConfirmed(false);
+      setToken('');
+      toast('WhatsApp passou a usar a API oficial da Meta.', { tone: 'neutral' });
+    },
+    onError,
   });
 
   const changing = selected !== current;
-  const cloudConfigured = channel?.apiTokenMasked != null && current === 'cloud_api';
-  const needsConfirm = changing && (selected === 'cloud_api' || cloudConfigured);
-  // Em `qr`, o token gravado é a apikey da Evolution, não um token da Meta. O
-  // servidor recusa `qr` -> `cloud_api` até existir coluna própria para o token
-  // da Meta (CRMLAB-135, D-308). A tela não sobrescreve a apikey do QR à toa.
-  const blockedFromQr = changing && selected === 'cloud_api' && current === 'qr';
+  const cloudConfigured = channel?.cloudApiConfigured === true;
+  const needsConfirm = changing && (selected === 'cloud_api' || current === 'cloud_api');
+  const typedAny = phoneNumberId.trim() !== '' || wabaId.trim() !== '' || token.length > 0;
+  // Já configurado: dá para trocar só confirmando. Senão, as três são obrigatórias.
+  const credentialsReady =
+    (cloudConfigured && !typedAny) ||
+    (phoneNumberId.trim() !== '' && wabaId.trim() !== '' && token.length > 0);
 
   const submitCloud = () => {
     setError(null);
-    save.mutate({
-      channels: [
-        {
-          channel: 'whatsapp',
-          phoneNumberId: phoneNumberId.trim(),
-          wabaId: wabaId.trim(),
-          apiToken: token,
-        },
-      ],
-    });
+    switchToCloud.mutate(
+      typedAny
+        ? {
+            channels: [
+              {
+                channel: 'whatsapp',
+                phoneNumberId: phoneNumberId.trim(),
+                wabaId: wabaId.trim(),
+                apiToken: token,
+              },
+            ],
+          }
+        : null,
+    );
   };
 
   const saveWaba = () => {
@@ -364,7 +394,7 @@ function WhatsAppModeCard({ channel }: { channel: TenantChannel | undefined }) {
               {selected === 'cloud_api' ? 'a API oficial da Meta' : 'o número pareado por QR'}.
               {selected === 'cloud_api'
                 ? ' Texto livre só sai até 24 h depois da última mensagem do paciente.'
-                : ' O token da API oficial guardado é substituído.'}
+                : ' As credenciais da API oficial ficam guardadas para voltar depois.'}
             </li>
             <li>
               Reengajamento: {selected === 'cloud_api' ? 'fica inativo' : 'volta a funcionar'}{' '}
@@ -420,24 +450,18 @@ function WhatsAppModeCard({ channel }: { channel: TenantChannel | undefined }) {
         </p>
       )}
 
-      {blockedFromQr && (
+      {selected === 'cloud_api' && changing && cloudConfigured && (
         <p role="status" className="m-0 font-body text-caption text-neutral-600">
-          Trocar do QR para a API oficial ainda não está disponível: o token guardado hoje é a
-          apikey do QR. Depende de uma coluna própria para o token da Meta (CRMLAB-135).
+          As credenciais da API oficial já estão guardadas. Preencha os campos só se quiser
+          trocá-las.
         </p>
       )}
       {selected === 'cloud_api' && changing && (
         <div>
           <Button
             variant="primary"
-            loading={save.isPending}
-            disabled={
-              blockedFromQr ||
-              !confirmed ||
-              !phoneNumberId.trim() ||
-              !wabaId.trim() ||
-              token.length === 0
-            }
+            loading={switchToCloud.isPending}
+            disabled={!confirmed || !credentialsReady}
             onClick={submitCloud}
           >
             Trocar para API oficial

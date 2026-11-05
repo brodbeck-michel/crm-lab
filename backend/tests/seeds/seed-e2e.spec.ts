@@ -218,7 +218,9 @@ describe('seed e2e', () => {
   it('conecta um canal por tenant, com o segredo gravado (D-064)', async () => {
     const rows = await db.withoutTenant((tx) =>
       tx.query<{ tenant_id: string; channel: string; api_token: string; webhook_secret: string }>(
-        `SELECT tenant_id, channel, api_token, webhook_secret FROM tenant_channels ORDER BY tenant_id`,
+        `SELECT tenant_id, channel, -- No whatsapp o token da Meta mora em cloud_api_token (D-308 item 3).
+             CASE WHEN channel = 'whatsapp' THEN cloud_api_token ELSE api_token END AS api_token,
+             webhook_secret FROM tenant_channels ORDER BY tenant_id`,
       ),
     );
     expect(rows.rows).toHaveLength(2);

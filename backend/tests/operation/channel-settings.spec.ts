@@ -58,7 +58,9 @@ async function rawChannel(
 ): Promise<{ api_token: string | null; webhook_secret: string | null } | undefined> {
   const result = await db.withoutTenant((tx) =>
     tx.query<{ api_token: string | null; webhook_secret: string | null }>(
-      `SELECT api_token, webhook_secret FROM tenant_channels
+      `SELECT -- No whatsapp o token da Meta mora em cloud_api_token (D-308 item 3).
+             CASE WHEN channel = 'whatsapp' THEN cloud_api_token ELSE api_token END AS api_token,
+             webhook_secret FROM tenant_channels
         WHERE tenant_id = $1 AND channel = $2`,
       [target, channel],
     ),

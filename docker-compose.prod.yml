@@ -189,6 +189,8 @@ services:
       # a mais e o erro perigoso: o cliente volta a forjar a origem (D-057).
       TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
       WHATSAPP_API_URL: ${WHATSAPP_API_URL:-}
+      # So a hml liga (`true`): Cloud API em mock no laboratorio de treinamento (CRMLAB-138).
+      WHATSAPP_CLOUD_API_MOCK: ${WHATSAPP_CLOUD_API_MOCK:-}
       WHATSAPP_API_TOKEN: ${WHATSAPP_API_TOKEN:-}
       WHATSAPP_WEBHOOK_SECRET: ${WHATSAPP_WEBHOOK_SECRET:-}
       # Gateway Evolution API (D-083, Onda 7 Bloco B) — conexao WhatsApp por QR.

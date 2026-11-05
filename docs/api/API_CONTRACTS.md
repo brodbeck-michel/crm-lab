@@ -4674,9 +4674,10 @@ Troca `tenant_channels.connection_mode` do WhatsApp do laboratório (D-308).
 **Request:** `{ "mode": "cloud_api" }` ou `{ "mode": "qr" }`.
 
 - Para `cloud_api`: exige `phoneNumberId`, `wabaId` e token da Meta já gravados (pelo `PATCH`),
-  senão `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, `details.missing: ["wabaId", ...]`). **Exceção:**
-  instalação em mock (`WHATSAPP_API_URL` vazia ou só espaços) troca sem exigir credencial, porque
-  nada sai de verdade (decisão de 05/11/2026; é o caso da hml de treinamento).
+  senão `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, `details.missing: ["wabaId", ...]`). **Sem
+  `WHATSAPP_API_URL`** (vazia ou só espaços): fora de produção, ou em produção com
+  `WHATSAPP_CLOUD_API_MOCK=true` (só a hml), é mock e troca sem exigir credencial; em produção sem
+  essa variável, `CHANNEL_CLOUD_API_UNAVAILABLE` (503) — não há para onde enviar (D-308 item 5).
 - **Idempotência vence:** já em `cloud_api`, `PUT {mode:"cloud_api"}` devolve 200 sem efeito mesmo
   sem credenciais (`cloudApiConfigured` diz a verdade). A recusa só vale para quem está trocando.
 - **`connected_at` não muda no PUT:** continua sendo do provedor (QR pareado ou primeiro token da
@@ -4688,12 +4689,14 @@ Troca `tenant_channels.connection_mode` do WhatsApp do laboratório (D-308).
   sessão não nasce sozinha).
 - **Não apaga mensagens, conversas nem mídia**, não chama o gateway Evolution e não mexe em
   `is_active`. Idempotente (mesmo modo = 200 sem efeito). Audit log `update_whatsapp_mode`
-  (`oldValues`/`newValues` com o modo; nunca segredo). Invalida o cache de templates.
+  (`oldValues`/`newValues` com o modo; nunca segredo). Invalida o cache de templates (quando o
+  cache existir — CRMLAB-136).
 
 **Response (200):** `{ "connectionMode": "cloud_api", "cloudApiConfigured": true }`
 
 **Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403, `requiredRoles: ["admin"]`),
-`CHANNEL_CLOUD_API_NOT_CONFIGURED` (409)
+`CHANNEL_CLOUD_API_NOT_CONFIGURED` (409), `CHANNEL_CLOUD_API_UNAVAILABLE` (503, produção sem
+`WHATSAPP_API_URL` e sem o mock liberado)
 
 #### GET /whatsapp/templates (CRMLAB-136, D-309)
 Templates aprovados do laboratório, para o Composer. **Papéis:** `attendant`, `manager`, `admin`.

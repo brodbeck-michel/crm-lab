@@ -38,6 +38,7 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { ConversationChannel, MessageStatus, MessageType } from '@crm-lab/shared';
 import { env } from '../config/env.js';
+import { cloudApiMockAllowed } from '../lib/cloud-api-mock.js';
 import { BusinessError } from '../http/errors.js';
 import type { DbClient } from '../db/types.js';
 import {
@@ -195,7 +196,12 @@ export function assertChannelConfigured(credentials: WhatsAppCredentials): void 
     }
     return;
   }
-  if (credentials.apiUrl === '') return;
+  if (credentials.apiUrl === '') {
+    if (cloudApiMockAllowed(credentials.apiUrl)) return;
+    // Instalacao de producao sem a URL da Meta: problema da instalacao, nao
+    // do laboratorio (D-308 item 4).
+    throw new BusinessError('CHANNEL_CLOUD_API_UNAVAILABLE');
+  }
   const missing = cloudApiMissing(credentials);
   if (missing.length > 0) {
     throw new BusinessError('CHANNEL_CLOUD_API_NOT_CONFIGURED', { missing });

@@ -56,6 +56,7 @@ import type {
   WhatsAppStatusResponse,
 } from '@crm-lab/shared';
 import { env } from '../config/env.js';
+import { cloudApiMockAllowed } from '../lib/cloud-api-mock.js';
 import type { CacheService } from '../lib/cache.js';
 import type { DbClient, DbTx } from '../db/types.js';
 import type { TenantContext } from '../http/context.js';
@@ -1064,12 +1065,16 @@ export function createChannelSettingsService(
       // Idempotente: mesmo modo = 200 sem efeito e sem audit (contrato §6.2).
       if (from === target) return { from, changed: false, cloudApiConfigured };
 
-      // Mock (instalacao sem `WHATSAPP_API_URL`, D-308 item 5): nada sai de
-      // verdade, entao a troca nao exige credencial — como o envio. E o que a
-      // hml usa no laboratorio de treinamento.
-      const mock = (env.WHATSAPP_API_URL ?? '').trim() === '';
+      // Mock (sem `WHATSAPP_API_URL`; em producao so com
+      // `WHATSAPP_CLOUD_API_MOCK=true`, a hml): nada sai de verdade, entao a
+      // troca nao exige credencial — como o envio.
+      const apiUrl = (env.WHATSAPP_API_URL ?? '').trim();
       if (target === 'cloud_api') {
-        if (missing.length > 0 && !mock) {
+        // Prod sem URL da Meta e sem o mock liberado: nao ha para onde enviar.
+        if (apiUrl === '' && !cloudApiMockAllowed(apiUrl)) {
+          throw new BusinessError('CHANNEL_CLOUD_API_UNAVAILABLE');
+        }
+        if (missing.length > 0 && apiUrl !== '') {
           throw new BusinessError('CHANNEL_CLOUD_API_NOT_CONFIGURED', { missing });
         }
       } else if (state?.acceptedTermsAt == null) {

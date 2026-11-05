@@ -116,6 +116,8 @@ beforeAll(async () => {
 });
 
 const ORIGINAL_API_URL = env.WHATSAPP_API_URL;
+const ORIGINAL_NODE_ENV = env.NODE_ENV;
+const ORIGINAL_MOCK = env.WHATSAPP_CLOUD_API_MOCK;
 
 beforeEach(async () => {
   // Instalacao com a API real configurada: o PUT /mode exige as credenciais.
@@ -249,6 +251,8 @@ describe('PUT /settings/channels/whatsapp/mode — qr -> cloud_api', () => {
 
 afterEach(() => {
   env.WHATSAPP_API_URL = ORIGINAL_API_URL;
+  env.NODE_ENV = ORIGINAL_NODE_ENV;
+  env.WHATSAPP_CLOUD_API_MOCK = ORIGINAL_MOCK;
 });
 
 describe('PUT /settings/channels/whatsapp/mode — mock (sem WHATSAPP_API_URL)', () => {
@@ -262,6 +266,25 @@ describe('PUT /settings/channels/whatsapp/mode — mock (sem WHATSAPP_API_URL)',
 
   it('URL so de espacos tambem e mock', async () => {
     env.WHATSAPP_API_URL = '   ';
+    await setQrRow(tenantId, 'apikey-evolution');
+    await putMode('cloud_api').expect(200);
+  });
+
+  it('producao sem URL e sem WHATSAPP_CLOUD_API_MOCK: 503 CHANNEL_CLOUD_API_UNAVAILABLE, modo intacto', async () => {
+    env.WHATSAPP_API_URL = '';
+    env.NODE_ENV = 'production';
+    env.WHATSAPP_CLOUD_API_MOCK = undefined;
+    await setQrRow(tenantId, 'apikey-evolution');
+    await saveCloudFields().expect(200);
+    const res = await putMode('cloud_api').expect(503);
+    expect(res.body.error.code).toBe('CHANNEL_CLOUD_API_UNAVAILABLE');
+    expect(await modeOf(tenantId)).toBe('qr');
+  });
+
+  it('producao sem URL com WHATSAPP_CLOUD_API_MOCK=true (hml): 200', async () => {
+    env.WHATSAPP_API_URL = '';
+    env.NODE_ENV = 'production';
+    env.WHATSAPP_CLOUD_API_MOCK = 'true';
     await setQrRow(tenantId, 'apikey-evolution');
     await putMode('cloud_api').expect(200);
   });
@@ -458,7 +481,23 @@ describe('envio sem configuracao valida', () => {
     expect((err as BusinessError).details?.missing).toEqual(['apiToken']);
   });
 
-  it('driver mock (WHATSAPP_API_URL vazia) envia sem credencial, em qualquer ambiente', async () => {
+  it('driver mock (WHATSAPP_API_URL vazia) envia sem credencial fora de producao', async () => {
+    const res = await build(ENV_FALLBACK).send(tenantId, '5548999990000', 'oi');
+    expect(res.externalId).toBeTruthy();
+  });
+
+  it('producao sem URL e sem o mock liberado: o envio recusa com CHANNEL_CLOUD_API_UNAVAILABLE', async () => {
+    env.NODE_ENV = 'production';
+    env.WHATSAPP_CLOUD_API_MOCK = undefined;
+    const err = await build(ENV_FALLBACK)
+      .send(tenantId, '5548999990000', 'oi')
+      .catch((e: unknown) => e);
+    expect((err as BusinessError).code).toBe('CHANNEL_CLOUD_API_UNAVAILABLE');
+  });
+
+  it('producao sem URL com WHATSAPP_CLOUD_API_MOCK=true: o mock envia (hml)', async () => {
+    env.NODE_ENV = 'production';
+    env.WHATSAPP_CLOUD_API_MOCK = 'true';
     const res = await build(ENV_FALLBACK).send(tenantId, '5548999990000', 'oi');
     expect(res.externalId).toBeTruthy();
   });

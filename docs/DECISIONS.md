@@ -6881,12 +6881,15 @@ filhos 136–141) completa o modo. **Contrato escrito antes do código (regra ze
 5. **Sem fallback de env para as três credenciais no driver real** (mesma disciplina do
    `qrInstanceApiKey`, SERVICES §16.1): um segredo/identificador de outro laboratório ou da
    instalação não pode enviar pelo número de quem não o configurou. O driver mock de dev/CI
-   (`WHATSAPP_API_URL` vazia) segue sem exigir credencial, em qualquer `NODE_ENV` (a hml usa o mock
-   no laboratório de treinamento). **Aprovado pelo Michel em 05/11/2026:** estreita D-073 (fallback
+   (`WHATSAPP_API_URL` vazia) segue sem exigir credencial fora de produção; em `NODE_ENV=production`
+   só com `WHATSAPP_CLOUD_API_MOCK=true`, ligado apenas na hml (laboratório de treinamento). Produção
+   sem a URL da Meta e sem essa variável recusa a Cloud API com **`CHANNEL_CLOUD_API_UNAVAILABLE`
+   (503)** no envio e no `PUT /mode` (decisão de 05/11/2026: prod e hml rodam com o mesmo
+   `NODE_ENV`, e o mock em prod faria a mensagem aparecer enviada sem nunca chegar ao paciente). **Aprovado pelo Michel em 05/11/2026:** estreita D-073 (fallback
    de env campo a campo) para `phone_number_id`, `waba_id` e token da Meta; o segredo do webhook e
    a URL da API continuam vindo da env quando a linha não tem.
-   **Mock no `PUT /mode` (05/11/2026):** em mock a troca para `cloud_api` também não exige
-   credencial. **QR ainda pareado em `cloud_api` (05/11/2026, "aceita e avisa"):** a sessão do QR
+   **Mock no `PUT /mode` (05/11/2026):** onde o mock vale (acima), a troca para `cloud_api` também
+   não exige credencial. **QR ainda pareado em `cloud_api` (05/11/2026, "aceita e avisa"):** a sessão do QR
    segue viva depois da troca (item 2); mensagem do paciente para esse número continua entrando
    pelo webhook do Evolution, para não perder contato, e a tela de Canais avisa que o QR ainda está
    pareado e oferece desconectar. A resposta sai pela Meta.

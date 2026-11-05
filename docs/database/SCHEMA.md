@@ -912,6 +912,7 @@ CREATE TABLE tenant_channels (
   phone_number VARCHAR(30),
   api_token TEXT,                        -- SEGREDO: nunca sai do backend (no whatsapp: apikey do QR)
   cloud_api_token TEXT,                  -- SEGREDO: token da Meta (whatsapp), migração 063, §47
+  waba_id VARCHAR(64),                   -- conta WhatsApp Business (Meta), público; migração 063, §47
   webhook_secret TEXT,                   -- SEGREDO: nunca sai do backend
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   connected_at TIMESTAMP,

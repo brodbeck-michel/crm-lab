@@ -87,6 +87,16 @@ export function NewConversationModal({
             return;
           }
         }
+        if (error.code === 'CHANNEL_CLOUD_API_NOT_CONFIGURED') {
+          // D-308: a conversa ficou criada, sem mensagem; falta credencial da
+          // API oficial, coisa do admin. Aviso no modal, como o teto de D-306.
+          setFormError(
+            'A conversa foi criada, mas a API oficial do WhatsApp ainda não está configurada ' +
+              'neste laboratório. Peça ao administrador para completar em Canais.',
+          );
+          await queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
+          return;
+        }
         if (error.code === 'FIRST_CONTACT_LIMIT_REACHED') {
           // D-306: a conversa ficou criada, sem mensagem. O aviso fica no modal,
           // para a atendente ler com calma o que fazer.

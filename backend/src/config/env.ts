@@ -81,6 +81,13 @@ const envSchema = z
     JWT_REFRESH_ABSOLUTE_TTL: numberFrom(30 * 24 * 60 * 60),
 
     WHATSAPP_API_URL: optionalString,
+    /**
+     * `true` libera o driver mock da Cloud API em `NODE_ENV=production` sem
+     * `WHATSAPP_API_URL` (CRMLAB-138, D-308 item 5, 05/11/2026). So a hml liga
+     * (laboratorio de treinamento). Em prod, sem URL e sem isto, a Cloud API
+     * recusa com CHANNEL_CLOUD_API_UNAVAILABLE em vez de "enviar" em silencio.
+     */
+    WHATSAPP_CLOUD_API_MOCK: optionalString,
     WHATSAPP_API_TOKEN: optionalString,
     WHATSAPP_WEBHOOK_SECRET: optionalString,
 

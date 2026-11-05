@@ -2116,8 +2116,10 @@ interface WhatsAppUsageService {
 - **Credenciais:** `phone_number_id`, `waba_id` e `cloud_api_token` (token da Meta, D-308 item 3) da
   linha do tenant; token decifrado só na hora da chamada (D-076). `api_token` é a apikey do QR e
   nunca vai para a Meta. **Sem fallback de env no driver real** (D-308 item 5, aprovado em
-  05/11/2026). Mock (`WHATSAPP_API_URL` vazia) ecoa sem exigir credencial, em qualquer `NODE_ENV`,
-  e simula `sent` — produção precisa de `WHATSAPP_API_URL` preenchida para enviar de verdade.
+  05/11/2026). Mock (`WHATSAPP_API_URL` vazia) ecoa sem exigir credencial e simula `sent` fora de
+  produção; em `NODE_ENV=production` só com `WHATSAPP_CLOUD_API_MOCK=true` (hml). Sem os dois, a
+  pré-checagem recusa com `CHANNEL_CLOUD_API_UNAVAILABLE` (503) antes de gravar
+  (`lib/cloud-api-mock.ts`).
 - **Template (D-309):** valida `name`+`language` contra a lista aprovada (mesma do `GET
   /whatsapp/templates`), monta `components[body].parameters` na ordem das variáveis, grava
   `content` = corpo preenchido, `template_*` e `pricing_category = template_category`.

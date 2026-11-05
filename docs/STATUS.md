@@ -3828,15 +3828,17 @@ Branch `feature/CRMLAB-138-canal-modo-cloud`, sobre o contrato do CRMLAB-135. De
   VARCHAR(64)). `api_token` fica só para a apikey do QR. A migração move o token das linhas já em
   `cloud_api` e não toca nas linhas em `qr` (Santé). Troca `qr ⇄ cloud_api` reversível.
 - **Sem reserva de env** para número, WABA e token da Meta no envio real (D-308 item 5, aprovado).
-  Mock (`WHATSAPP_API_URL` vazia) vale em qualquer `NODE_ENV`, como a hml usa.
+  Mock (`WHATSAPP_API_URL` vazia) vale fora de produção; em `NODE_ENV=production` só com
+  `WHATSAPP_CLOUD_API_MOCK=true` (hml). Prod sem URL recusa a Cloud API com 503.
 - **`CHANNEL_CLOUD_API_NOT_CONFIGURED` antes de gravar** (texto, anexo, "tentar de novo"; o cartão
   passa pelo mesmo envio), `details: { missing }`.
 - **GET** devolve `cloudApiConfigured`; a tela troca o modo pelo PUT (PATCH das credenciais antes,
   quando digitadas).
 - **Migrações por card:** 063 = 138, 064 = 136, 065 = 141 (SCHEMA §47 atualizado).
-- **Testes:** `channel-mode.spec.ts` (28), `cloud-api-not-configured.spec.ts` (5),
-  `migration-063-cloud-api-token.spec.ts` (1), `credentials.spec.ts`
-  e `route-tenant-isolation.spec.ts` ajustados; frontend `Channels.spec.tsx` (+3).
+- **Testes:** `channel-mode.spec.ts` (32), `cloud-api-not-configured.spec.ts` (5),
+  `migration-063-cloud-api-token.spec.ts` (1), +casos em `send-from-card` e `start-whatsapp`;
+  `credentials.spec.ts` e `route-tenant-isolation.spec.ts` ajustados; frontend `Channels.spec.tsx`
+  (26) e `NewConversation` (+1); e2e `flow-14` ajustado (não roda localmente).
 - **Validação:** revisão independente por agente Opus 5.5 (sem as conclusões de quem desenvolveu).
   1ª rodada: 3 bloqueantes e 6 a corrigir. 2ª rodada: 1 bloqueante (sync prod→hml não zerava
   `cloud_api_token`) e 6 a corrigir (`connected_at` mexido em `qr`, "Salvar WABA" vazio apagava,
@@ -3845,14 +3847,22 @@ Branch `feature/CRMLAB-138-canal-modo-cloud`, sobre o contrato do CRMLAB-135. De
   `cloud_api`) e 5 a corrigir (pré-checagem depois de reabrir a encerrada, SQL de rollback que
   mandaria a apikey do QR para a Meta, erros faltando no retry/resend, QR ainda pareado em
   `cloud_api`, `connected_at` na troca). Decisões do Michel: QR pareado = aceita e avisa; mock não
-  exige credencial no PUT. Todos tratados.
+  exige credencial no PUT. Todos tratados. 4ª rodada: nenhum bloqueante; a corrigir: SQL de
+  rollback incompleto, faltava o reaplique depois do rollback, e o mock em produção (prod e hml com
+  o mesmo `NODE_ENV`, mensagem "enviada" sem chegar). Decisão do Michel: mock em produção só com
+  `WHATSAPP_CLOUD_API_MOCK=true`, ligado só na hml. Tratados, mais o 409 na Nova conversa da tela.
 - **Volta para QR na tela:** com termo aceito, só `PUT /mode` (sem `POST /connect`, que abriria
   outro socket no Evolution).
 - **Antes do deploy em prod (conferir):**
   1. `SELECT tenant_id, connection_mode, api_token IS NOT NULL AS tem_token, api_token = '' AS revogado
      FROM tenant_channels WHERE channel = 'whatsapp';` e se `WHATSAPP_API_TOKEN`/`WHATSAPP_API_URL`
      estão preenchidas no `.env` de prod. Laboratório em `cloud_api` real que dependia da env passa
-     a receber `CHANNEL_CLOUD_API_NOT_CONFIGURED`. Com `WHATSAPP_API_URL` vazia, `cloud_api` é mock.
+     a receber `CHANNEL_CLOUD_API_NOT_CONFIGURED`. Com `WHATSAPP_API_URL` vazia em prod, todo envio
+     de laboratório em `cloud_api` passa a dar 503 `CHANNEL_CLOUD_API_UNAVAILABLE` (antes "saía"
+     pelo mock sem chegar). Conferir quem está em `cloud_api` com conversa WhatsApp ativa.
+  1b. **hml:** acrescentar `WHATSAPP_CLOUD_API_MOCK=true` no `/opt/crm-lab-homolog/.env` antes do
+     deploy (ENVIRONMENTS §6), senão o laboratório de treinamento (Laboratorio Teste, `cloud_api`
+     mock) passa a recusar envio.
   2. **Ordem:** o `deploy.sh` roda a migração antes do `up -d`; nos segundos entre um e outro a
      imagem antiga lê `api_token` NULL nas linhas `cloud_api` e cairia na env. Só importa se
      `WHATSAPP_API_URL` e `WHATSAPP_API_TOKEN` estiverem preenchidas em prod (conferir no item 1).
@@ -3860,12 +3870,30 @@ Branch `feature/CRMLAB-138-canal-modo-cloud`, sobre o contrato do CRMLAB-135. De
      linha `cloud_api` com token da Meta recebe esse token em `api_token`, **sobrescrevendo** a apikey
      do QR que estiver lá (senão a imagem antiga mandaria a apikey do Evolution para a Meta). Essas
      linhas perdem o pareamento QR guardado: voltar a elas para QR exige "Conectar WhatsApp" de novo.
+     Linhas `cloud_api` **sem** token da Meta mas com a apikey do QR (foram de `qr` para `cloud_api`
+     no mock) recebem `''` (revogado, e não NULL: NULL faria a imagem antiga cair no
+     `WHATSAPP_API_TOKEN` da instalação, D-308 item 5).
      ```sql
      UPDATE tenant_channels SET api_token = cloud_api_token
       WHERE channel = 'whatsapp' AND connection_mode = 'cloud_api'
         AND cloud_api_token IS NOT NULL;
+     UPDATE tenant_channels SET api_token = ''
+      WHERE channel = 'whatsapp' AND connection_mode = 'cloud_api'
+        AND cloud_api_token IS NULL AND api_token IS NOT NULL;
      ```
-     Linhas `cloud_api` sem token da Meta ficam como estão (na imagem antiga, sem credencial). As
-     linhas em `qr` (Santé) não mudam em nenhum dos sentidos.
-- **Pedido para CRMLAB-137/139:** `createAutomated` (auto-resposta D-264 e reengajamento D-214) não
-  tem guarda de modo; em `cloud_api` sem credencial gera mensagem `failed`. D-308 item 6 diz "só QR".
+     As linhas em `qr` (Santé) não mudam em nenhum dos sentidos.
+  4. **Voltar para a imagem nova depois de um rollback:** o migrador não roda a 063 de novo, e na
+     imagem antiga um token gravado pelo PATCH foi para `api_token`. Reaplicar o movimento **antes**
+     de subir a imagem nova (sem a guarda `cloud_api_token IS NULL`, para o token novo vencer):
+     ```sql
+     UPDATE tenant_channels SET cloud_api_token = api_token, api_token = NULL
+      WHERE channel = 'whatsapp' AND connection_mode = 'cloud_api' AND api_token IS NOT NULL;
+     ```
+     Sem isto, a imagem nova leria o token da Meta como apikey do QR se o laboratório voltasse
+     para `qr` só pelo `PUT`.
+- **Automações:** auto-resposta (D-264), reengajamento (D-214) e teto de primeiro contato (D-306)
+  já filtram `isQrWhatsAppActive` — continuam só QR (D-308 item 6), nada a fazer no 137/139.
+- **Em aberto (sugestões da 4ª rodada, fora do escopo):** reação e editar/apagar em `cloud_api`
+  sem credencial devolvem `MESSAGE_SEND_FAILED` (D-308 lista texto, anexo, retry e cartão); a Nova
+  conversa reabre a encerrada antes do 409, como já faz com o teto de D-306; `connected_at` é uma
+  coluna só para os dois provedores quando o QR segue pareado em `cloud_api`.

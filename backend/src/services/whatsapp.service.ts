@@ -186,8 +186,8 @@ export function createEnvCredentialsResolver(db: DbClient): WhatsAppCredentialsR
  * `cloud_api`: exige `phone_number_id`, `waba_id` e token do laboratório; o
  * erro lista só os NOMES dos campos faltantes, nunca valores. `qr`: exige a
  * apikey da instância (só a tabela a guarda). Sem `WHATSAPP_API_URL` o driver
- * mock vale em qualquer ambiente (D-308 item 5) — é o que a hml usa no
- * laboratório de treinamento.
+ * mock vale fora de produção; em produção só com `WHATSAPP_CLOUD_API_MOCK=true`
+ * (hml). Senão, `CHANNEL_CLOUD_API_UNAVAILABLE` (D-308 item 5).
  */
 export function assertChannelConfigured(credentials: WhatsAppCredentials): void {
   if (credentials.connectionMode === 'qr') {

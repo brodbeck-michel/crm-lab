@@ -846,9 +846,9 @@ mensagem pelo canal WhatsApp do laboratório, pelo **mesmo** `MessageService.cre
 
 **Erros:** `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — `details: { limit, retryAt, conversationId }`: a conversa fica criada, sem mensagem), `VALIDATION_ERROR` (400 — `details.fields.phone` / `details.fields.content`),
 `CONVERSATION_ALREADY_ASSIGNED` (409, `details: { assignedTo, assignedToName }`),
-`CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308 — `details: { missing, conversationId }`: a conversa
-fica criada, sem mensagem), `MESSAGE_SEND_FAILED` (502, `details: { messageId, conversationId }` — canal indisponível, sem
-credencial ou desligado: a conversa **fica criada** e a mensagem gravada como `failed`, como em
+`CHANNEL_CLOUD_API_UNAVAILABLE` (503, D-308 — produção sem `WHATSAPP_API_URL`; `details: { conversationId }`, a conversa fica criada), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308 — `details: { missing, conversationId }`: a conversa
+fica criada, sem mensagem), `MESSAGE_SEND_FAILED` (502, `details: { messageId, conversationId }` — canal indisponível ou
+desligado (em `cloud_api`, falta de credencial é o 409 acima, antes de gravar): a conversa **fica criada** e a mensagem gravada como `failed`, como em
 `POST /conversations/:id/messages`; `conversationId` existe para a tela abrir a conversa mesmo
 assim), `FORBIDDEN` (403, `platform_operator`).
 
@@ -1143,7 +1143,7 @@ pelo cartão (`POST /proposals/:id/send`, `POST /proposals/:id/resend`), que usa
 }
 ```
 
-**Erros:** `WHATSAPP_WINDOW_CLOSED` (409, D-310 — `cloud_api`, texto livre fora das 24 h; `details: { conversationId, lastPatientMessageAt, windowClosedAt }`), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308 — `cloud_api` sem `phone_number_id`/`waba_id`/token), `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — primeiro contato acima do teto da hora; `details: { limit, retryAt }`), `VALIDATION_ERROR` (400), `NOT_FOUND` (404),
+**Erros:** `WHATSAPP_WINDOW_CLOSED` (409, D-310 — `cloud_api`, texto livre fora das 24 h; `details: { conversationId, lastPatientMessageAt, windowClosedAt }`), `CHANNEL_CLOUD_API_UNAVAILABLE` (503, D-308 — produção sem `WHATSAPP_API_URL`; nada gravado), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308 — `cloud_api` sem `phone_number_id`/`waba_id`/token), `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — primeiro contato acima do teto da hora; `details: { limit, retryAt }`), `VALIDATION_ERROR` (400), `NOT_FOUND` (404),
 `CONVERSATION_ALREADY_ASSIGNED` (409, conversa da fila livre assumida por outra pessoa no mesmo
 instante — D-215 — ou encerrada reaberta por outra pessoa no mesmo instante — D-273), `MESSAGE_SEND_FAILED` (502, canal externo falhou após os retries), `FORBIDDEN`
 (403, `platform_operator`)
@@ -1239,7 +1239,7 @@ prévio de mídia à Meta e não é implementado agora. Ordem das checagens em `
 `CHANNEL_CLOUD_API_NOT_CONFIGURED` → `WHATSAPP_WINDOW_CLOSED` (D-310) → `MESSAGE_SEND_FAILED`
 ("anexo ainda não suportado nesta conexão"). **Pendência: CRMLAB-140** (upload/recebimento de mídia).
 
-**Erros:** `WHATSAPP_WINDOW_CLOSED` (409, D-310), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308),
+**Erros:** `WHATSAPP_WINDOW_CLOSED` (409, D-310), `CHANNEL_CLOUD_API_UNAVAILABLE` (503, D-308 — produção sem `WHATSAPP_API_URL`; nada gravado), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308),
 `VALIDATION_ERROR` (400), `NOT_FOUND` (404), `CONVERSATION_ALREADY_ASSIGNED` (409,
 D-215/D-273), `MEDIA_TOO_LARGE` (413, acima do teto de 15 MiB), `MESSAGE_SEND_FAILED` (502, canal
 externo falhou após os retries — a WhatsApp Cloud API `cloud_api` ainda não envia
@@ -1311,7 +1311,7 @@ original, e termina `sent` ou de novo `failed`. Anexo relê o arquivo guardado
 
 **Response (200):** a `Message` (objeto cru, D-070) com `status: "sent"`.
 
-**Erros:** `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — primeiro contato acima do teto da hora; `details: { limit, retryAt }`), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308 — `details: { missing }`; a linha continua `failed`, não passa a `pending`), `NOT_FOUND` (404 — conversa fora do recorte, mensagem de outra conversa ou de outro
+**Erros:** `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — primeiro contato acima do teto da hora; `details: { limit, retryAt }`), `CHANNEL_CLOUD_API_UNAVAILABLE` (503, D-308 — produção sem `WHATSAPP_API_URL`; nada gravado), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308 — `details: { missing }`; a linha continua `failed`, não passa a `pending`), `NOT_FOUND` (404 — conversa fora do recorte, mensagem de outra conversa ou de outro
 tenant), `CONFLICT` (409 — a mensagem não é do atendimento, não está `failed` ou o atendimento
 está encerrado), `MESSAGE_SEND_FAILED` (502 — falhou de novo; a linha continua `failed`; também
 quando o arquivo do anexo sumiu do disco), `VALIDATION_ERROR` (400, id não-uuid), `FORBIDDEN`
@@ -2810,7 +2810,7 @@ cartão** (a mensagem fica na conversa como `failed`, como no atendimento).
 
 **Response (200):** o `ProposalDetail` atualizado.
 
-**Erros:** `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — primeiro contato acima do teto da hora; `details: { limit, retryAt }`), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308 — `details: { missing }`; nada gravado, cartão intacto), `VALIDATION_ERROR` (400); `NOT_FOUND` (404, proposta ou conversa de outro tenant ou
+**Erros:** `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — primeiro contato acima do teto da hora; `details: { limit, retryAt }`), `CHANNEL_CLOUD_API_UNAVAILABLE` (503, D-308 — produção sem `WHATSAPP_API_URL`; nada gravado), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308 — `details: { missing }`; nada gravado, cartão intacto), `VALIDATION_ERROR` (400); `NOT_FOUND` (404, proposta ou conversa de outro tenant ou
 fora da visibilidade); `FORBIDDEN` (403, `details.reason: "move_others_not_allowed"`);
 `PROPOSAL_EDIT_NOT_ALLOWED` (409, `details.reason: "crm_origin"`); `INVALID_STATUS_TRANSITION`
 (400, cartão fora de `novo_contato`); `PROPOSAL_ALREADY_CLOSED` (409);
@@ -2832,7 +2832,7 @@ Audit `resend_proposal_message` (`newValues: { conversationId, messageId }`).
 **Erros:** `VALIDATION_ERROR`, `NOT_FOUND`, `FORBIDDEN` (`details.reason: "not_owner"`),
 `PROPOSAL_EDIT_NOT_ALLOWED` (`details.reason: "crm_origin"` ou `"not_sent"`),
 `INVALID_STATUS_TRANSITION` (fora dos três estágios), `PROPOSAL_ALREADY_CLOSED`,
-`CONVERSATION_ARCHIVED`, `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308 — `details: { missing }`;
+`CONVERSATION_ARCHIVED`, `CHANNEL_CLOUD_API_UNAVAILABLE` (503, D-308 — produção sem `WHATSAPP_API_URL`; nada gravado), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308 — `details: { missing }`;
 nada gravado), `MESSAGE_SEND_FAILED`.
 
 ### PATCH /proposals/:id/conversation (CRMLAB-58, D-202)

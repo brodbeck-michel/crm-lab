@@ -280,6 +280,21 @@ describe('Atendimento — Nova conversa (CRMLAB-50)', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
+  it('Cloud API indisponível na instalação (503): erro dentro do modal, sem fechar', async () => {
+    startWhatsAppMock.mockRejectedValue(
+      new ApiError('CHANNEL_CLOUD_API_UNAVAILABLE', 'Indisponivel', 503, { conversationId: 'c-new' }),
+    );
+    renderScreen();
+    const dialog = await openModal();
+
+    await userEvent.type(within(dialog).getByLabelText('Telefone (WhatsApp)'), '48999991234');
+    await userEvent.type(within(dialog).getByLabelText('Mensagem'), 'Olá!');
+    await userEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(/não está disponível nesta instalação/);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
   it('número em atendimento com outra pessoa: erro dentro do modal, com o nome', async () => {
     startWhatsAppMock.mockRejectedValue(
       new ApiError('CONVERSATION_ALREADY_ASSIGNED', 'Conversa ja atribuida', 409, {

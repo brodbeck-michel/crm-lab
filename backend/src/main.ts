@@ -46,6 +46,13 @@ async function bootstrap(): Promise<void> {
     apiModules: modules.map((m) => m.basePath),
   });
   logger.debug('server.config', safeEnv());
+  // CRMLAB-138: a flag e so da hml. Copiada para prod por engano, a Cloud API
+  // "enviaria" sem chegar ao paciente — o aviso aparece em todo boot.
+  if (env.NODE_ENV === 'production' && env.WHATSAPP_CLOUD_API_MOCK === 'true') {
+    logger.warn('whatsapp.cloud_api_mock_enabled', {
+      reason: 'WHATSAPP_CLOUD_API_MOCK=true: Cloud API em mock, nada sai de verdade (so hml)',
+    });
+  }
 
   let shuttingDown = false;
   // Codigo com que o processo VAI sair. Um erro fatal que chega no meio de um

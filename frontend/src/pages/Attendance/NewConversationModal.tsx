@@ -87,12 +87,19 @@ export function NewConversationModal({
             return;
           }
         }
-        if (error.code === 'CHANNEL_CLOUD_API_NOT_CONFIGURED') {
+        if (
+          error.code === 'CHANNEL_CLOUD_API_NOT_CONFIGURED' ||
+          error.code === 'CHANNEL_CLOUD_API_UNAVAILABLE'
+        ) {
           // D-308: a conversa ficou criada, sem mensagem; falta credencial da
-          // API oficial, coisa do admin. Aviso no modal, como o teto de D-306.
+          // API oficial (ou a instalação não tem a API). Aviso no modal, como o
+          // teto de D-306.
           setFormError(
-            'A conversa foi criada, mas a API oficial do WhatsApp ainda não está configurada ' +
-              'neste laboratório. Peça ao administrador para completar em Canais.',
+            error.code === 'CHANNEL_CLOUD_API_NOT_CONFIGURED'
+              ? 'A conversa foi criada, mas a API oficial do WhatsApp ainda não está configurada ' +
+                  'neste laboratório. Peça ao administrador para completar em Canais.'
+              : 'A conversa foi criada, mas a API oficial do WhatsApp não está disponível nesta ' +
+                  'instalação. Fale com o suporte.',
           );
           await queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
           return;

@@ -3851,6 +3851,9 @@ Branch `feature/CRMLAB-138-canal-modo-cloud`, sobre o contrato do CRMLAB-135. De
   rollback incompleto, faltava o reaplique depois do rollback, e o mock em produção (prod e hml com
   o mesmo `NODE_ENV`, mensagem "enviada" sem chegar). Decisão do Michel: mock em produção só com
   `WHATSAPP_CLOUD_API_MOCK=true`, ligado só na hml. Tratados, mais o 409 na Nova conversa da tela.
+  5ª rodada: nenhum bloqueante; a corrigir: 503 faltando no API_ERRORS e nas listas de erro,
+  `conversationId` no 503 da Nova conversa, e o reaplique transformando o marcador `''` em
+  "revogado". Tratados, mais aviso no boot se `WHATSAPP_CLOUD_API_MOCK=true` em produção.
 - **Volta para QR na tela:** com termo aceito, só `PUT /mode` (sem `POST /connect`, que abriria
   outro socket no Evolution).
 - **Antes do deploy em prod (conferir):**
@@ -3886,11 +3889,16 @@ Branch `feature/CRMLAB-138-canal-modo-cloud`, sobre o contrato do CRMLAB-135. De
      imagem antiga um token gravado pelo PATCH foi para `api_token`. Reaplicar o movimento **antes**
      de subir a imagem nova (sem a guarda `cloud_api_token IS NULL`, para o token novo vencer):
      ```sql
-     UPDATE tenant_channels SET cloud_api_token = api_token, api_token = NULL
+     UPDATE tenant_channels
+        SET cloud_api_token = CASE WHEN api_token = '' AND cloud_api_token IS NULL THEN NULL
+                                   ELSE api_token END,
+            api_token = NULL
       WHERE channel = 'whatsapp' AND connection_mode = 'cloud_api' AND api_token IS NOT NULL;
      ```
-     Sem isto, a imagem nova leria o token da Meta como apikey do QR se o laboratório voltasse
-     para `qr` só pelo `PUT`.
+     O `CASE` separa o `''` que o rollback pôs como marcador (linha sem token da Meta,
+     `cloud_api_token` NULL) de um token revogado de verdade: o marcador volta a NULL ("nunca
+     configurou"). Sem isto, a imagem nova leria o token da Meta como apikey do QR se o
+     laboratório voltasse para `qr` só pelo `PUT`.
 - **Automações:** auto-resposta (D-264), reengajamento (D-214) e teto de primeiro contato (D-306)
   já filtram `isQrWhatsAppActive` — continuam só QR (D-308 item 6), nada a fazer no 137/139.
 - **Em aberto (sugestões da 4ª rodada, fora do escopo):** reação e editar/apagar em `cloud_api`

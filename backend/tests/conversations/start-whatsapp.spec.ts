@@ -395,6 +395,31 @@ describe('POST /conversations/whatsapp', () => {
     expect(failed).toMatchObject({ status: 'failed', content: 'Oi' });
   });
 
+  it('producao sem WHATSAPP_API_URL (D-308): 503 com conversationId, conversa criada e nenhuma mensagem', async () => {
+    const { env } = await import('../../src/config/env.js');
+    const original = { nodeEnv: env.NODE_ENV, url: env.WHATSAPP_API_URL, mock: env.WHATSAPP_CLOUD_API_MOCK };
+    env.NODE_ENV = 'production';
+    env.WHATSAPP_API_URL = '';
+    env.WHATSAPP_CLOUD_API_MOCK = undefined;
+    try {
+      const tenant = await createTenant();
+      const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });
+      const response = await app.agent
+        .post(URL)
+        .set(app.auth(ana))
+        .send({ phone: '(48) 99999-1234', content: 'Oi' })
+        .expect(503);
+      expect(response.body.error.code).toBe('CHANNEL_CLOUD_API_UNAVAILABLE');
+      expect(response.body.error.details).toEqual({ conversationId: expect.any(String) });
+      expect(await countConversations(tenant.id)).toBe(1);
+      expect(await countMessages(tenant.id)).toBe(0);
+    } finally {
+      env.NODE_ENV = original.nodeEnv;
+      env.WHATSAPP_API_URL = original.url;
+      env.WHATSAPP_CLOUD_API_MOCK = original.mock;
+    }
+  });
+
   it('cloud_api sem credencial (D-308): 409 com conversationId, conversa criada e nenhuma mensagem', async () => {
     const db = await getTestDb();
     const base = testCredentialsResolver(new Map());

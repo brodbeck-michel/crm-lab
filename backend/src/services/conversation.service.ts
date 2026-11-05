@@ -483,8 +483,11 @@ export class ConversationService {
         });
       }
       // D-308: a conversa ja existe; a tela precisa do id para abri-la.
-      if (isBusinessError(err) && err.code === 'CHANNEL_CLOUD_API_NOT_CONFIGURED') {
-        throw new BusinessError('CHANNEL_CLOUD_API_NOT_CONFIGURED', {
+      if (
+        isBusinessError(err) &&
+        (err.code === 'CHANNEL_CLOUD_API_NOT_CONFIGURED' || err.code === 'CHANNEL_CLOUD_API_UNAVAILABLE')
+      ) {
+        throw new BusinessError(err.code, {
           ...err.details,
           conversationId: conversation.id,
         });

@@ -200,6 +200,13 @@ export interface ConversationServiceDeps {
   audit: AuditService;
 }
 
+/** Recusas da pre-checagem do envio que levam `conversationId` na Nova conversa. */
+const PRECHECK_CODES: ReadonlySet<string> = new Set([
+  'CHANNEL_CLOUD_API_NOT_CONFIGURED',
+  'CHANNEL_CLOUD_API_UNAVAILABLE',
+  'WHATSAPP_WINDOW_CLOSED',
+]);
+
 export class ConversationService {
   private readonly db: DbClient;
   private readonly repository: ConversationRepository;
@@ -435,6 +442,20 @@ export class ConversationService {
     });
     const { created } = found;
     let conversation = found.conversation;
+
+    // Conversa que ja existia: credencial e janela ANTES de reabrir a encerrada
+    // ou trocar o canal — recusa sem efeito (D-308, D-310 item 2). Numero novo
+    // nasce aqui mesmo e cai no envio abaixo (a conversa fica criada, vazia).
+    if (!created) {
+      try {
+        await this.messages.assertSendableAsWhatsApp(ctx.tenantId, conversation);
+      } catch (err) {
+        if (isBusinessError(err) && PRECHECK_CODES.has(err.code)) {
+          throw new BusinessError(err.code, { ...err.details, conversationId: conversation.id });
+        }
+        throw err;
+      }
+    }
 
     if (!created && conversation.status === 'closed') {
       conversation = await this.reopenManually(ctx, conversation);

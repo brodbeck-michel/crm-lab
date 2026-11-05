@@ -57,4 +57,14 @@ describe('Composer — janela de 24 h', () => {
     expect(screen.getByLabelText('Mensagem')).toBeDisabled();
     expect(screen.getByTestId('window-template-button')).toBeDisabled();
   });
+
+  it('no último minuto o tique é de 1 s: fecha no segundo em que a janela acaba', () => {
+    vi.useFakeTimers();
+    render(<Composer onSend={vi.fn()} whatsappWindow={{ ...OPEN, remainingSeconds: 5 }} />);
+    expect(screen.getByLabelText('Mensagem')).toBeEnabled();
+    act(() => {
+      vi.advanceTimersByTime(6_000);
+    });
+    expect(screen.getByLabelText('Mensagem')).toBeDisabled();
+  });
 });

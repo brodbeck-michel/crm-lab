@@ -6929,13 +6929,18 @@ filhos 136–141) completa o modo. **Contrato escrito antes do código (regra ze
 **Decisão:**
 1. **Regra:** no canal WhatsApp em `cloud_api`, **texto livre e anexo** só saem se a última mensagem
    do **paciente** (`sender_type = 'patient'`, não apagada) na conversa tem menos de 24 h
-   (`agora − created_at < 24 h`, relógio do servidor). Fora disso, **só template** (D-309).
+   (`agora − created_at < 24 h`, relógio do **banco**, `now()`, o mesmo que carimba `created_at`).
+   Fora disso, **só template** (D-309).
    Conversa sem nenhuma mensagem do paciente = janela fechada (primeiro contato só por template).
 2. **Erro:** **`WHATSAPP_WINDOW_CLOSED` (409)**, `details: { conversationId, lastPatientMessageAt |
    null, windowClosedAt | null }`. Nada é gravado nem enviado (mesma disciplina de D-306: recusa
    antes de gravar; nada fica `failed`). Vale para `POST /conversations/:id/messages` sem
    `template`, `POST /conversations/:id/attachments`, retry de mensagem e o envio do cartão
    (`POST /proposals/:id/send` e `/resend`). Não é `MESSAGE_SEND_FAILED`: o CRM sabe de antemão.
+   **Nova conversa (`POST /conversations/whatsapp`, 05/11/2026):** número novo nasce como conversa
+   vazia e recebe o 409 com `conversationId` (paciente nunca escreveu). Conversa que já existia é
+   checada **antes** de reabrir a encerrada ou trocar o canal: o 409 não muda nada nela. A mesma
+   pré-checagem roda no controller do Composer antes de reabrir, assumir a fila ou guardar mídia.
 3. **Tela:** `GET /conversations/:id` ganha `whatsappWindow: { open, remainingSeconds, expiresAt,
    lastPatientMessageAt } | null` (`null` fora de `cloud_api`), para o Composer trocar para "só
    template" sem tentativa e erro. Só no detalhe, não na listagem (05/11/2026).

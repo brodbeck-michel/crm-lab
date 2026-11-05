@@ -183,12 +183,75 @@ describe('cloud_api: texto livre (D-310)', () => {
     expect(driver.sent).toHaveLength(0);
   });
 
-  it('conversa de outro laboratório não abre a janela (tenant_id)', async () => {
+  it('mensagem de outro laboratório com o MESMO conversation_id não abre a janela (tenant_id)', async () => {
     const { ana, conversation } = await lab('cloud_api');
     const other = await lab('cloud_api');
-    await say(other.tenant.id, other.conversation.id, 'patient', 1);
+    // Linha forjada: outro tenant, mas apontando para a conversa deste. So o
+    // filtro por tenant_id (e o RLS) impede que ela conte.
+    await say(other.tenant.id, conversation.id, 'patient', 1);
 
     await send(conversation.id, ana).expect(409);
+  });
+
+  it('fila livre: conversa sem dona NÃO é assumida no 409', async () => {
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Ana' });
+    await channel(tenant.id, 'cloud_api');
+    const livre = await createConversation({ tenantId: tenant.id, assignedTo: null });
+    await say(tenant.id, livre.id, 'patient', 30);
+
+    await send(livre.id, ana).expect(409);
+    const db = await getTestDb();
+    const row = await db.withoutTenant((tx) =>
+      tx.query<{ assigned_to: string | null }>('SELECT assigned_to FROM conversations WHERE id = $1', [
+        livre.id,
+      ]),
+    );
+    expect(row.rows[0]?.assigned_to).toBeNull();
+  });
+
+  it('conversa direct num laboratório cloud_api não tem janela: grava sem ir ao WhatsApp', async () => {
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Ana' });
+    await channel(tenant.id, 'cloud_api');
+    const direta = await createConversation({ tenantId: tenant.id, assignedTo: ana.id, channel: 'direct' });
+
+    await send(direta.id, ana).expect(201);
+    expect(driver.sent).toHaveLength(0);
+  });
+
+  it('credencial e janela falhando juntas: sai CHANNEL_CLOUD_API_NOT_CONFIGURED (ordem do contrato)', async () => {
+    const { tenant, ana, conversation } = await lab('cloud_api');
+    await say(tenant.id, conversation.id, 'patient', 30);
+    const base = testCredentialsResolver(new Map());
+    const semCredencial = await createTestApp({
+      db: await getTestDb(),
+      modules: [
+        makeConversationModule({
+          whatsapp: new WhatsAppService({
+            credentials: {
+              forTenant: async (tenantId) => ({
+                ...(await base.forTenant(tenantId)),
+                apiUrl: 'https://graph.test',
+                wabaId: '',
+                apiToken: '',
+              }),
+              byWebhookIdentity: base.byWebhookIdentity,
+            },
+            driver,
+            queue: createInMemoryQueue({ sleep: async () => undefined }),
+            attempts: 1,
+          }),
+        }),
+      ],
+    });
+
+    const response = await semCredencial.agent
+      .post(`/api/v1/conversations/${conversation.id}/messages`)
+      .set(semCredencial.auth(ana))
+      .send({ content: 'oi' })
+      .expect(409);
+    expect(response.body.error.code).toBe('CHANNEL_CLOUD_API_NOT_CONFIGURED');
   });
 });
 
@@ -206,6 +269,12 @@ describe('cloud_api: anexo, áudio e reenvio (D-310)', () => {
     expect(response.body.error.code).toBe('WHATSAPP_WINDOW_CLOSED');
     expect(await countMessages(closed.conversation.id)).toBe(before);
     expect(driver.sent).toHaveLength(1);
+    // Nada de mídia gravada para o anexo recusado.
+    const db = await getTestDb();
+    const media = await db.withoutTenant((tx) =>
+      tx.query('SELECT 1 FROM message_media WHERE tenant_id = $1', [closed.tenant.id]),
+    );
+    expect(media.rows).toHaveLength(0);
   });
 
   it('"tentar de novo" de mensagem falhada também respeita a janela', async () => {
@@ -225,6 +294,12 @@ describe('cloud_api: anexo, áudio e reenvio (D-310)', () => {
       .expect(409);
     expect(response.body.error.code).toBe('WHATSAPP_WINDOW_CLOSED');
     expect(driver.sent).toHaveLength(0);
+    // Continua `failed`: a recusa vem antes de passar a `pending`.
+    const db = await getTestDb();
+    const status = await db.withoutTenant((tx) =>
+      tx.query<{ status: string }>('SELECT status FROM messages WHERE id = $1', [failedId]),
+    );
+    expect(status.rows[0]?.status).toBe('failed');
   });
 
   it('mensagem automática (mesmo caminho do sistema) não fura a janela', async () => {

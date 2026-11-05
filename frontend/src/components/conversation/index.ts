@@ -14,7 +14,7 @@ export { DateSeparator, dateSeparatorLabel, isSameLocalDay } from './DateSeparat
 export type { DateSeparatorProps } from './DateSeparator';
 export { AudioMessage } from './AudioMessage';
 export type { AudioMessageProps } from './AudioMessage';
-export { Composer } from './Composer';
+export { Composer, useWindowRemaining, WINDOW_CLOSED_MESSAGE } from './Composer';
 export { AttachmentPreview } from './AttachmentPreview';
 export type { AttachmentPreviewProps } from './AttachmentPreview';
 export {

@@ -3920,5 +3920,14 @@ Branch `feature/CRMLAB-137-janela-24h-v2`, empilhada sobre o CRMLAB-138. Decisã
   com `remainingSeconds` do servidor. O Composer bloqueia texto, anexo e áudio com a janela
   fechada, e o rascunho fica. A Nova conversa avisa que o primeiro contato é só por modelo (CRMLAB-136).
 - **Modo `qr`:** nenhuma regra muda.
-- **Testes:** `crmlab137-janela-24h.spec.ts` (14), cartão e Nova conversa com janela fechada,
-  frontend `Composer.window.spec.tsx` e `NewConversation` (+1).
+- **Nova conversa sobre conversa existente:** credencial e janela checadas antes de reabrir ou
+  trocar o canal (o 409 não muda nada nela); número novo fica criado, vazio.
+- **Validação:** revisão independente por agente Opus 5.5. 1ª rodada: nenhum bloqueante; a corrigir:
+  arrastar arquivo e anexos em sequência ignoravam a janela fechada pela contagem, Nova conversa
+  reabria/trocava canal antes do 409, docs (erros, SERVICES §35, Composer) e testes. Tratados.
+- **Em aberto (ambiguidades, fora do escopo):** mensagens do paciente recebidas pelo QR antes da troca
+  para `cloud_api` contam para a janela (a Meta pode recusar com 131047, D-310 item 4 cobre);
+  `tenant_channels.is_active = FALSE` não muda a regra da janela.
+- **Testes:** `crmlab137-janela-24h.spec.ts` (17), cartão (`/send`, `/resend`) e Nova conversa
+  (número novo e conversa encerrada) com janela fechada; frontend `Composer.window.spec.tsx` (5) e
+  `NewConversation` (+1).

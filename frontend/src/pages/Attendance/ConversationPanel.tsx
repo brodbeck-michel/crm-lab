@@ -22,6 +22,7 @@ import {
   bubbleTypeFor,
   isSameLocalDay,
   quotedLabel,
+  useWindowRemaining,
 } from '@/components/conversation';
 import type {
   AttachmentDraft,
@@ -657,7 +658,10 @@ export function ConversationPanel({
   const dragDepth = useRef(0);
   const [dragging, setDragging] = useState(false);
   // Janela de 24 h fechada (D-310): soltar arquivo não abre a prévia, o envio seria recusado.
-  const acceptsFiles = conversation?.status === 'active' && whatsappWindow?.open !== false;
+  // Mesma contagem do Composer: a janela pode fechar com a tela aberta.
+  const windowRemaining = useWindowRemaining(whatsappWindow);
+  const acceptsFiles =
+    conversation?.status === 'active' && (windowRemaining === null || windowRemaining > 0);
 
   function handleDragEnter(event: DragEvent<HTMLDivElement>): void {
     if (!acceptsFiles || !dragHasFiles(event.dataTransfer)) return;

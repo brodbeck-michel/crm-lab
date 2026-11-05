@@ -110,8 +110,8 @@ export interface ComposerProps {
   whatsappWindow?: WhatsAppWindowStatus | null;
 }
 
-/** Mesmo texto do `WHATSAPP_WINDOW_CLOSED` do backend (API_ERRORS.md). */
-const WINDOW_CLOSED_MESSAGE =
+/** Mesmo texto do `WHATSAPP_WINDOW_CLOSED` do backend (API_ERRORS.md), com acento. */
+export const WINDOW_CLOSED_MESSAGE =
   'A janela de 24 horas do WhatsApp está fechada: o paciente não escreve há mais de 24 h. ' +
   'Fora dela só é possível enviar template aprovado.';
 
@@ -119,7 +119,9 @@ const WINDOW_CLOSED_MESSAGE =
  * Segundos restantes da janela. O servidor manda o valor; aqui só se desconta o
  * tempo decorrido desde que ele chegou (não se usa a hora absoluta do cliente).
  */
-function useWindowRemaining(status: WhatsAppWindowStatus | null | undefined): number | null {
+export function useWindowRemaining(
+  status: WhatsAppWindowStatus | null | undefined,
+): number | null {
   const [now, setNow] = useState(() => Date.now());
   const [received, setReceived] = useState(() => Date.now());
   useEffect(() => {
@@ -127,14 +129,18 @@ function useWindowRemaining(status: WhatsAppWindowStatus | null | undefined): nu
     setNow(Date.now());
   }, [status]);
   const active = Boolean(status?.open);
+  const left = status?.open
+    ? Math.max(0, status.remainingSeconds - Math.floor((now - received) / 1000))
+    : 0;
+  // Tique de 30 s; no último minuto, de 1 s, para a tela fechar junto com a janela.
+  const lastMinute = left <= 60;
   useEffect(() => {
     if (!active) return;
-    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    const timer = setInterval(() => setNow(Date.now()), lastMinute ? 1_000 : 30_000);
     return () => clearInterval(timer);
-  }, [active, status]);
+  }, [active, status, lastMinute]);
   if (!status) return null;
-  if (!status.open) return 0;
-  return Math.max(0, status.remainingSeconds - Math.floor((now - received) / 1000));
+  return left;
 }
 
 function formatRemaining(seconds: number): string {

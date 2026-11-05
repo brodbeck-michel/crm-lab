@@ -2075,8 +2075,8 @@ Dono de `proposal_reminders` (SCHEMA §42).
 
 ## 35. WhatsApp Cloud API — modo, templates, janela, webhook e custo (CRMLAB-135 — D-308..D-313)
 
-**Contrato.** Modo do canal e credenciais implementados no CRMLAB-138; templates, janela, webhook e
-custo ainda não (CRMLAB-136/137/139/141). Estende `WhatsAppService` (§11) e `ChannelSettingsService` (§13/§16).
+**Contrato.** Modo do canal e credenciais implementados no CRMLAB-138; janela de 24 h no CRMLAB-137;
+templates, webhook e custo ainda não (CRMLAB-136/139/141). Estende `WhatsAppService` (§11) e `ChannelSettingsService` (§13/§16).
 `connection_mode = 'cloud_api'` já escolhe o driver pelo `WhatsAppCredentialsResolver` (§16); aqui entram
 as regras do driver real da Meta.
 
@@ -2095,12 +2095,14 @@ interface CloudApiWhatsAppDriver {
 }
 /** CloudApiCredentials = { phoneNumberId, wabaId, apiToken } — todos da linha do tenant, sem fallback de env. */
 
-interface WhatsAppWindowService {
+/** `services/whatsapp-window.service.ts` (CRMLAB-137, implementado). Relógio do banco (`now()`). */
+interface WhatsAppWindowGuard {
   /** `open` se a última mensagem do paciente (não apagada) < 24 h. Só `cloud_api`; outro modo => null. */
-  status(ctx: TenantContext, conversationId: string): Promise<{ open: boolean; expiresAt: string | null } | null>;
+  status(tenantId: string, conversationId: string): Promise<WhatsAppWindowStatus | null>;
   /** Lança WHATSAPP_WINDOW_CLOSED antes de gravar/enviar texto livre ou anexo. */
-  assertOpen(ctx: TenantContext, conversationId: string): Promise<void>;
+  assertOpen(tenantId: string, conversationId: string): Promise<void>;
 }
+/** WhatsAppWindowStatus = { open, remainingSeconds, expiresAt, lastPatientMessageAt } (shared/). */
 
 interface WhatsAppUsageService {
   /** Contagem por pricing_category no mês + franquia + preço vigente; tudo por tenant_id. */

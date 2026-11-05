@@ -120,7 +120,10 @@ Duas leituras registradas aqui porque o doc original não as fixava:
   conversa (nova ou reaproveitada) fica **aberta e selecionada**. Telefone já em atendimento com
   outra pessoa (`CONVERSATION_ALREADY_ASSIGNED`) → erro dentro do modal com o nome dela. Canal
   fora do ar (`MESSAGE_SEND_FAILED`) → o modal fecha, a conversa abre mesmo assim (a mensagem
-  aparece como falha) e um toast explica que o WhatsApp não enviou
+  aparece como falha) e um toast explica que o WhatsApp não enviou. Na API oficial
+  (CRMLAB-137/138): `WHATSAPP_WINDOW_CLOSED` (primeiro contato só por modelo),
+  `CHANNEL_CLOUD_API_NOT_CONFIGURED` e `CHANNEL_CLOUD_API_UNAVAILABLE` aparecem dentro do modal, que
+  fica aberto; a lista é relida
 - Filtros em chips: "Minhas N" (accent sólido), "Não atribuídas N" (cinza)
 - Chip **"Encerradas"** (CRMLAB-48, D-174), sem número: lista `?status=closed` (o atendente vê só
   as dele, pelo recorte do servidor). Ligado, os números de "Minhas"/"Não atribuídas" continuam os

@@ -230,6 +230,16 @@ Anatomia (padrão WhatsApp):
   como falha e aparece na conversa; devolver o texto convidaria a reenviar e duplicar. Já o
   `CONVERSATION_ALREADY_ASSIGNED` (409) rejeita: é assim que a tela devolve o rascunho quando
   outra pessoa assumiu a conversa no mesmo instante (CRMLAB-75, D-215)
+- **Janela de 24 h da Cloud API (CRMLAB-137, D-310)** — prop `whatsappWindow` (`null` = QR ou outro
+  canal: nada muda). Aberta: faixa `data-testid="window-banner"` com o tempo restante
+  (`window-remaining`, "3 h 12 min"). A contagem parte do `remainingSeconds` do servidor e só
+  desconta o tempo decorrido (nunca a hora do cliente); tique de 30 s, de 1 s no último minuto,
+  pelo hook `useWindowRemaining` (exportado; o `ConversationPanel` usa o mesmo para recusar o
+  arrastar de arquivo). Fechada (pelo servidor ou pela contagem): `role="alert"` com o motivo,
+  campo, Enviar, anexo e microfone desabilitados, o **rascunho fica**, e o botão
+  `window-template-button` "Enviar template (disponível em breve)" desabilitado até o CRMLAB-136.
+  `WHATSAPP_WINDOW_CLOSED` no envio rejeita (o texto volta), a tela relê a conversa e mostra um toast
+  com o texto acentuado; em anexos em sequência, para no primeiro 409.
 - **Ctrl+B / Cmd+B** (CRMLAB-51, D-183): envolve a seleção em asteriscos (`*seleção*`, que a
   bolha e o WhatsApp mostram em negrito) e mantém o texto selecionado; sem seleção, insere `**`
   com o cursor no meio. **Ctrl+I** (`_itálico_`) e **Ctrl+Shift+X** (`~tachado~`) fazem o mesmo

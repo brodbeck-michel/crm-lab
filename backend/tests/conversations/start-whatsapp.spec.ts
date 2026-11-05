@@ -420,6 +420,45 @@ describe('POST /conversations/whatsapp', () => {
     }
   });
 
+  it('cloud_api (D-310): conversa encerrada do numero com a janela fechada — 409 e NADA muda', async () => {
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });
+    const bia = await createUser({ tenantId: tenant.id, role: 'attendant' });
+    const db = await getTestDb();
+    await db.withoutTenant((tx) =>
+      tx.query(
+        `INSERT INTO tenant_channels (tenant_id, channel, connection_mode) VALUES ($1, 'whatsapp', 'cloud_api')`,
+        [tenant.id],
+      ),
+    );
+    const antiga = await createConversation({
+      tenantId: tenant.id,
+      assignedTo: bia.id,
+      status: 'closed',
+      channel: 'direct',
+      patientPhone: '+5548999991234',
+    });
+    const before = await countMessages(tenant.id);
+
+    const response = await app.agent
+      .post(URL)
+      .set(app.auth(ana))
+      .send({ phone: '(48) 99999-1234', content: 'Oi' })
+      .expect(409);
+
+    expect(response.body.error.code).toBe('WHATSAPP_WINDOW_CLOSED');
+    expect(response.body.error.details.conversationId).toBe(antiga.id);
+    const row = await db.withoutTenant((tx) =>
+      tx.query<{ status: string; assigned_to: string | null; channel: string }>(
+        'SELECT status, assigned_to, channel FROM conversations WHERE id = $1',
+        [antiga.id],
+      ),
+    );
+    // Não reabriu, não trocou de dona nem de canal, não ganhou "Atendimento reaberto".
+    expect(row.rows[0]).toEqual({ status: 'closed', assigned_to: bia.id, channel: 'direct' });
+    expect(await countMessages(tenant.id)).toBe(before);
+  });
+
   it('cloud_api (D-310): numero novo nunca escreveu, janela fechada — 409 com conversationId', async () => {
     const tenant = await createTenant();
     const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });

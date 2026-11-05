@@ -291,6 +291,17 @@ export class MessageService {
   }
 
   /**
+   * A mesma pre-checagem para uma conversa que VAI virar WhatsApp (Nova
+   * conversa sobre conversa existente de outro canal ou encerrada): roda antes
+   * de reabrir ou trocar o canal, para a recusa nao deixar efeito (D-310 item 2).
+   */
+  async assertSendableAsWhatsApp(tenantId: string, conversation: Conversation): Promise<void> {
+    const asWhatsApp: Conversation = { ...conversation, channel: 'whatsapp' };
+    await this.assertChannelReady(tenantId, asWhatsApp);
+    await this.assertWindowOpen(tenantId, asWhatsApp);
+  }
+
+  /**
    * D-308: `cloud_api` sem `phone_number_id`/`waba_id`/token recusa com
    * `CHANNEL_CLOUD_API_NOT_CONFIGURED` ANTES de gravar — nada fica `failed`
    * (API_CONTRACTS §2, ordem NOT_CONFIGURED -> WINDOW_CLOSED -> SEND_FAILED).

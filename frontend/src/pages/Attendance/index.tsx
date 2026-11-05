@@ -15,6 +15,7 @@ import { useBusinessCalendar } from '@/api/holidays';
 import { useToast } from '@/components/ui';
 import { InboxLayout } from '@/components/layout';
 import type { RecordedAudio } from '@/components/conversation';
+import { WINDOW_CLOSED_MESSAGE } from '@/components/conversation';
 import { useApiErrorHandler } from '@/hooks';
 import { useAuthStore, useMessageAlertsStore, useUIStore, selectUser } from '@/stores';
 import { ConversationList } from './ConversationList';
@@ -324,8 +325,12 @@ export function Attendance() {
         return;
       }
       // Janela de 24 h (D-310): o relógio do servidor manda; refaz o estado da tela.
-      if (isApiError(error) && error.code === 'WHATSAPP_WINDOW_CLOSED' && selectedId) {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.conversation(selectedId) });
+      if (isApiError(error) && error.code === 'WHATSAPP_WINDOW_CLOSED') {
+        if (selectedId) {
+          void queryClient.invalidateQueries({ queryKey: queryKeys.conversation(selectedId) });
+        }
+        toast(WINDOW_CLOSED_MESSAGE, { tone: 'attention' });
+        return;
       }
       handleApiError(error);
     },
@@ -469,6 +474,10 @@ export function Attendance() {
           break;
         } else if (isApiError(error) && error.code === 'CONVERSATION_ALREADY_ASSIGNED') {
           // Outra pessoa assumiu (D-215): nada deste nem dos próximos sai.
+          handleSendError(error);
+          break;
+        } else if (isApiError(error) && error.code === 'WHATSAPP_WINDOW_CLOSED') {
+          // Janela de 24 h fechou (D-310): os próximos anexos teriam o mesmo fim.
           handleSendError(error);
           break;
         } else if (isApiError(error) && error.code === 'FIRST_CONTACT_LIMIT_REACHED') {

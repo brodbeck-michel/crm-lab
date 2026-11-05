@@ -600,6 +600,29 @@ describe('POST /proposals/:id/resend', () => {
     expect(await messagesOf(anaConversation.id)).toEqual(messagesBefore);
   });
 
+  it('cloud_api com a janela fechada (D-310): resend 409, nenhuma mensagem nova, cartao intacto', async () => {
+    const id = await sentCard('6010');
+    await db.withoutTenant((tx) =>
+      tx.query(
+        `INSERT INTO tenant_channels (tenant_id, channel, connection_mode)
+         VALUES ($1, 'whatsapp', 'cloud_api')
+         ON CONFLICT (tenant_id, channel) DO UPDATE SET connection_mode = 'cloud_api'`,
+        [tenantA.id],
+      ),
+    );
+    const before = await rawProposal(id);
+    const messagesBefore = await messagesOf(anaConversation.id);
+
+    const res = await app.agent
+      .post(`/api/v1/proposals/${id}/resend`)
+      .set(app.auth(ana))
+      .send({ message: 'Lembrete do orçamento' });
+    expect(res.status).toBe(409);
+    expect(errorOf(res).code).toBe('WHATSAPP_WINDOW_CLOSED');
+    expect(await rawProposal(id)).toEqual(before);
+    expect(await messagesOf(anaConversation.id)).toEqual(messagesBefore);
+  });
+
   it('cartao nao enviado, crm ou fechado: recusa; falha do canal nao muda nada', async () => {
     const unsent = await bitlabCard(tenantA, '6002');
     const r1 = await app.agent

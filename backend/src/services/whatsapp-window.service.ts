@@ -37,7 +37,8 @@ export function createWhatsAppWindowGuard(deps: { db: DbClient }): WhatsAppWindo
       if (row.lastPatientMessageAt === null || row.remainingSeconds === null) {
         return { open: false, remainingSeconds: 0, expiresAt: null, lastPatientMessageAt: null };
       }
-      const remainingSeconds = Math.max(0, Math.floor(row.remainingSeconds));
+      // `ceil`: com menos de 1 s, ainda aberta tem que dar 1, nunca 0.
+      const remainingSeconds = Math.max(0, Math.ceil(row.remainingSeconds));
       return {
         open: row.remainingSeconds > 0,
         remainingSeconds,

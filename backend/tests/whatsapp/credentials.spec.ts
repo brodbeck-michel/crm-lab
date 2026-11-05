@@ -34,6 +34,7 @@ const WEBHOOK = '/api/v1/webhooks/whatsapp';
 const ENV_FALLBACK: Omit<WhatsAppCredentials, 'tenantId'> = {
   phoneNumberId: 'numero-da-env',
   apiUrl: '',
+  wabaId: '',
   apiToken: 'token-da-env',
   webhookSecret: ENV_SECRET,
   isActive: true,
@@ -107,6 +108,7 @@ describe('mergeCredentials — precedencia campo a campo', () => {
       't1',
       {
         phoneNumberId: 'numero-do-lab',
+        wabaId: 'waba-do-lab',
         apiToken: 'token-do-lab',
         webhookSecret: TABLE_SECRET,
         isActive: true,
@@ -118,6 +120,8 @@ describe('mergeCredentials — precedencia campo a campo', () => {
       tenantId: 't1',
       phoneNumberId: 'numero-do-lab',
       apiUrl: '',
+      // WABA vem SÓ da linha do laboratório (D-308 item 5): sem fallback de env.
+      wabaId: 'waba-do-lab',
       apiToken: 'token-do-lab',
       webhookSecret: TABLE_SECRET,
       isActive: true,
@@ -134,6 +138,7 @@ describe('mergeCredentials — precedencia campo a campo', () => {
       't1',
       {
         phoneNumberId: 'numero-do-lab',
+        wabaId: null,
         apiToken: null,
         webhookSecret: null,
         isActive: true,

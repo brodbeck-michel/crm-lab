@@ -229,6 +229,17 @@ export interface MessageServiceDeps {
   firstContact?: FirstContactGuard;
 }
 
+/**
+ * Falha de envio ao canal. `CHANNEL_CLOUD_API_NOT_CONFIGURED` (CRMLAB-135, D-308)
+ * e erro de negocio acionavel pelo gestor e sobe como esta; o resto vira
+ * `MESSAGE_SEND_FAILED`. A mensagem ja foi marcada `failed` por quem chama.
+ */
+function sendFailure(err: unknown, messageId: string): BusinessError {
+  return err instanceof BusinessError && err.code === 'CHANNEL_CLOUD_API_NOT_CONFIGURED'
+    ? new BusinessError('CHANNEL_CLOUD_API_NOT_CONFIGURED', { ...err.details, messageId })
+    : new BusinessError('MESSAGE_SEND_FAILED', { messageId });
+}
+
 export class MessageService {
   private readonly messages: MessageRepository;
   private readonly conversations: ConversationRepository;
@@ -381,7 +392,7 @@ export class MessageService {
         messageId: message.id,
         reason: err instanceof Error ? err.message : String(err),
       });
-      throw new BusinessError('MESSAGE_SEND_FAILED', { messageId: message.id });
+      throw sendFailure(err, message.id);
     }
   }
 
@@ -449,7 +460,7 @@ export class MessageService {
         messageId: message.id,
         reason: err instanceof Error ? err.message : String(err),
       });
-      throw new BusinessError('MESSAGE_SEND_FAILED', { messageId: message.id });
+      throw sendFailure(err, message.id);
     }
   }
 
@@ -762,7 +773,7 @@ export class MessageService {
         messageId,
         reason: err instanceof Error ? err.message : String(err),
       });
-      throw new BusinessError('MESSAGE_SEND_FAILED', { messageId });
+      throw sendFailure(err, messageId);
     }
   }
 
@@ -857,7 +868,7 @@ export class MessageService {
         automation,
         reason: err instanceof Error ? err.message : String(err),
       });
-      throw new BusinessError('MESSAGE_SEND_FAILED', { messageId: message.id });
+      throw sendFailure(err, message.id);
     }
   }
 

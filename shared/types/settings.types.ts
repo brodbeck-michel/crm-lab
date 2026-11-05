@@ -36,6 +36,8 @@ export interface TenantChannel {
    * interface); `qr` = número próprio pareado via QR code, sem API oficial (Onda 7, Bloco B).
    */
   connectionMode: 'cloud_api' | 'qr';
+  /** Id da conta WhatsApp Business (Meta), só `cloud_api`. Não é segredo (CRMLAB-138). */
+  wabaId: string | null;
   /** Quando o termo de risco do QR foi aceito. `null` = nunca aceito. Só relevante para `qr`. */
   acceptedTermsAt: IsoDateTime | null;
 }
@@ -146,6 +148,20 @@ export interface UpdateTenantChannelInput {
   apiToken?: string | null;
   /** Write-only. Nunca volta na resposta. 16..255 caracteres. */
   webhookSecret?: string | null;
+  /** Só `whatsapp`. Id da conta WhatsApp Business (Meta). Máx. 64 caracteres. Não é segredo. */
+  wabaId?: string | null;
+}
+
+/** Corpo de `PUT /settings/channels/whatsapp/mode` (CRMLAB-135, D-308). */
+export interface UpdateWhatsAppModeRequest {
+  mode: 'cloud_api' | 'qr';
+}
+
+/** Resposta de `PUT /settings/channels/whatsapp/mode`. */
+export interface UpdateWhatsAppModeResponse {
+  connectionMode: 'cloud_api' | 'qr';
+  /** `true` quando `phoneNumberId`, `wabaId` e token existem na linha do canal. */
+  cloudApiConfigured: boolean;
 }
 
 /** PATCH parcial (admin). Corpo vazio → VALIDATION_ERROR. */

@@ -15,7 +15,11 @@
  * guardado, que so o service conhece. O que sobra para a rota e o papel.
  */
 import { Router, type Request, type Response } from 'express';
-import type { UpdateChannelSettingsRequest, WhatsAppQrConnectRequest } from '@crm-lab/shared';
+import type {
+  UpdateChannelSettingsRequest,
+  UpdateWhatsAppModeRequest,
+  WhatsAppQrConnectRequest,
+} from '@crm-lab/shared';
 import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
 import { getContext } from '../http/context.js';
 import { denyPlatformOperator, requireAuth, requireRoles } from '../http/middleware/auth.js';
@@ -90,6 +94,19 @@ function buildChannelSettingsModule(
       const dto = (req.body ?? {}) as WhatsAppQrConnectRequest;
       settings
         .connectWhatsAppQr(getContext(req), dto)
+        .then((response) => res.status(200).json(response))
+        .catch(next);
+    },
+  );
+
+  // CRMLAB-135 (D-308): troca o modo do WhatsApp (contrato §6.2). Admin apenas.
+  router.put(
+    '/channels/whatsapp/mode',
+    requireRoles('admin'),
+    (req: Request, res: Response, next): void => {
+      const dto = (req.body ?? {}) as UpdateWhatsAppModeRequest;
+      settings
+        .setWhatsAppMode(getContext(req), dto)
         .then((response) => res.status(200).json(response))
         .catch(next);
     },

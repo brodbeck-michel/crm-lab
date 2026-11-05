@@ -44,7 +44,11 @@ function connectErrorMessage(error: unknown): string {
   return 'Não foi possível iniciar a conexão. Tente novamente.';
 }
 
-export function WhatsAppConnectModal({ open, onClose, acceptedTermsAt }: WhatsAppConnectModalProps) {
+export function WhatsAppConnectModal({
+  open,
+  onClose,
+  acceptedTermsAt,
+}: WhatsAppConnectModalProps) {
   const { toast } = useToast();
   const alreadyAccepted = acceptedTermsAt != null;
 

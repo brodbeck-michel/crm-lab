@@ -17,6 +17,7 @@ export function testCredentialsResolver(
     tenantId,
     phoneNumberId: 'numero-do-lab',
     apiUrl: '',
+    wabaId: '',
     apiToken: '',
     webhookSecret: TEST_WEBHOOK_SECRET,
     // Canal ligado e token nunca revogado: o cenario default (D-074).

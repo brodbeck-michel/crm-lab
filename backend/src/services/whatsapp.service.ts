@@ -38,6 +38,7 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { ConversationChannel, MessageStatus, MessageType } from '@crm-lab/shared';
 import { env } from '../config/env.js';
+import { BusinessError } from '../http/errors.js';
 import type { DbClient } from '../db/types.js';
 import {
   createDefaultEvolutionClient,
@@ -61,6 +62,8 @@ export interface WhatsAppCredentials {
   phoneNumberId: string;
   /** Vazia => driver mock. */
   apiUrl: string;
+  /** WABA da Meta (só `cloud_api`); vazia = não configurado. Não é segredo (CRMLAB-135). */
+  wabaId: string;
   apiToken: string;
   /** Segredo do HMAC do webhook deste tenant. */
   webhookSecret: string;
@@ -114,6 +117,7 @@ export function envCredentials(): Omit<WhatsAppCredentials, 'tenantId'> {
   return {
     phoneNumberId: env.WHATSAPP_API_TOKEN ? 'default' : 'mock',
     apiUrl: env.WHATSAPP_API_URL ?? '',
+    wabaId: '',
     apiToken: env.WHATSAPP_API_TOKEN ?? '',
     webhookSecret: env.WHATSAPP_WEBHOOK_SECRET ?? '',
     isActive: true,
@@ -173,6 +177,38 @@ export function createEnvCredentialsResolver(db: DbClient): WhatsAppCredentialsR
 }
 
 /**
+ * Envio sem configuração válida é erro de NEGÓCIO claro, nunca um envio mudo
+ * pelo driver mock nem um erro genérico do provedor (CRMLAB-135, D-308).
+ * `cloud_api`: exige `phone_number_id`, `waba_id` e token do laboratório; o
+ * erro lista só os NOMES dos campos faltantes, nunca valores. `qr`: exige a
+ * apikey da instância (só a tabela a guarda). Fora de produção, sem
+ * `WHATSAPP_API_URL`, o driver mock de dev/teste continua valendo.
+ */
+function assertChannelConfigured(credentials: WhatsAppCredentials): void {
+  if (credentials.connectionMode === 'qr') {
+    if (credentials.qrInstanceApiKey === null || credentials.qrInstanceApiKey === '') {
+      throw new BusinessError('CHANNEL_QR_UNAVAILABLE', { reason: 'qr_not_paired' });
+    }
+    return;
+  }
+  const mockAllowed = credentials.apiUrl === '' && env.NODE_ENV !== 'production';
+  if (mockAllowed) return;
+  // URL da API ausente em produção é problema da instalação, não do laboratório.
+  if (credentials.apiUrl === '') {
+    throw new BusinessError('CHANNEL_CLOUD_API_UNAVAILABLE');
+  }
+  const missing: string[] = [];
+  if (credentials.phoneNumberId === '' || credentials.phoneNumberId === 'mock') {
+    missing.push('phoneNumberId');
+  }
+  if (credentials.wabaId === '') missing.push('wabaId');
+  if (credentials.apiToken === '') missing.push('apiToken');
+  if (missing.length > 0) {
+    throw new BusinessError('CHANNEL_CLOUD_API_NOT_CONFIGURED', { missing });
+  }
+}
+
+/**
  * Aplica a precedencia de D-024, CAMPO A CAMPO: o que `tenant_channels` guarda
  * vence; o que estiver ausente (linha inexistente ou coluna nula) cai na env
  * var. Merge por campo, e nao "linha existe => ignora env", porque um
@@ -207,6 +243,8 @@ export function mergeCredentials(
     tenantId,
     phoneNumberId: stored?.phoneNumberId ?? fallback.phoneNumberId,
     apiUrl: fallback.apiUrl,
+    // Sem fallback de env (D-308 item 5): o WABA só vem da linha do laboratório.
+    wabaId: stored?.wabaId ?? '',
     apiToken: stored?.apiToken ?? fallback.apiToken,
     // Segredo vazio continua recusando TUDO (`verifyWebhookSignature`): nada
     // aqui transforma "nao configurado" em "autentico".
@@ -1070,6 +1108,7 @@ export class WhatsAppService {
     if (credentials.apiTokenRevoked) {
       throw new Error('token do canal whatsapp foi revogado por este laboratorio');
     }
+    assertChannelConfigured(credentials);
     return credentials;
   }
 

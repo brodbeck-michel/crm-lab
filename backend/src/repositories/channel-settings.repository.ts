@@ -87,6 +87,8 @@ export interface ChannelRow {
   updatedAt: string;
   /** `cloud_api` | `qr` (Onda 7, Bloco B — SCHEMA.md §15). */
   connectionMode: string;
+  /** Id da conta WhatsApp Business (Meta). Nao e segredo. */
+  wabaId: string | null;
   /** Aceite do termo de risco do QR. `null` = nunca aceito. */
   acceptedTermsAt: string | null;
 }
@@ -125,6 +127,7 @@ export async function listChannels(tx: DbTx, tenantId: string): Promise<ChannelR
     connected_at: unknown;
     updated_at: unknown;
     connection_mode: string;
+    waba_id: string | null;
     accepted_terms_at: unknown;
   }>(
     `SELECT id,
@@ -138,6 +141,7 @@ export async function listChannels(tx: DbTx, tenantId: string): Promise<ChannelR
             to_char(connected_at, ${ISO_UTC}) AS connected_at,
             to_char(updated_at, ${ISO_UTC}) AS updated_at,
             connection_mode,
+            waba_id,
             to_char(accepted_terms_at, ${ISO_UTC}) AS accepted_terms_at
        FROM tenant_channels
       WHERE tenant_id = $1
@@ -157,6 +161,7 @@ export async function listChannels(tx: DbTx, tenantId: string): Promise<ChannelR
     connectedAt: toIsoOrNull(row.connected_at),
     updatedAt: toIso(row.updated_at),
     connectionMode: row.connection_mode,
+    wabaId: row.waba_id,
     acceptedTermsAt: toIsoOrNull(row.accepted_terms_at),
   }));
 }
@@ -177,6 +182,9 @@ export interface ChannelPatch {
   isActive?: boolean;
   apiToken?: string | null;
   webhookSecret?: string | null;
+  /** `cloud_api` | `qr`. So o service grava (CRMLAB-138, D-308). */
+  connectionMode?: 'cloud_api' | 'qr';
+  wabaId?: string | null;
 }
 
 /** Colunas opcionais do patch -> coluna do banco. `channel` fica de fora (e a chave). */
@@ -187,6 +195,8 @@ const PATCH_COLUMNS: ReadonlyArray<[keyof ChannelPatch, string]> = [
   ['isActive', 'is_active'],
   ['apiToken', 'api_token'],
   ['webhookSecret', 'webhook_secret'],
+  ['connectionMode', 'connection_mode'],
+  ['wabaId', 'waba_id'],
 ];
 
 /** Chaves cujo valor e segredo: `null` vira sentinela de revogacao e string e cifrada. */
@@ -263,6 +273,8 @@ export async function upsertChannel(
 
 export interface ChannelCredentials {
   phoneNumberId: string | null;
+  /** Id da conta WhatsApp Business (Meta). Não é segredo (CRMLAB-135, D-308). */
+  wabaId: string | null;
   /** `null` = nunca configurado (pode cair na env var) · `''` = REVOGADO. */
   apiToken: string | null;
   /** `null` = nunca configurado (pode cair na env var) · `''` = REVOGADO. */
@@ -289,12 +301,13 @@ export async function findCredentials(
 ): Promise<ChannelCredentials | null> {
   const result = await tx.query<{
     phone_number_id: string | null;
+    waba_id: string | null;
     api_token: string | null;
     webhook_secret: string | null;
     is_active: boolean;
     connection_mode: string;
   }>(
-    `SELECT phone_number_id, api_token, webhook_secret, is_active, connection_mode
+    `SELECT phone_number_id, waba_id, api_token, webhook_secret, is_active, connection_mode
        FROM tenant_channels
       WHERE tenant_id = $1 AND channel = $2`,
     [tenantId, channel],
@@ -303,6 +316,7 @@ export async function findCredentials(
   if (!row) return null;
   return {
     phoneNumberId: row.phone_number_id,
+    wabaId: row.waba_id,
     apiToken: decryptSecret(row.api_token),
     webhookSecret: decryptSecret(row.webhook_secret),
     isActive: row.is_active === true,

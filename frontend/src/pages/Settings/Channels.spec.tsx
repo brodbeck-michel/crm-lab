@@ -45,6 +45,7 @@ const settings: ChannelSettingsResponse = {
       connectedAt: '2026-07-02T11:20:00.000Z',
       updatedAt: '2026-08-19T08:45:00.000Z',
       connectionMode: 'cloud_api',
+    wabaId: null,
       acceptedTermsAt: null,
     },
   ],
@@ -186,6 +187,11 @@ describe('ChannelsSettings', () => {
     renderPage();
 
     await screen.findByDisplayValue('WhatsApp do Vida');
+    // A seção de QR só aparece com o modo QR escolhido (CRMLAB-135: a troca cloud -> QR
+    // acontece no connect, com o termo aceito).
+    await user.click(screen.getByRole('radio', { name: /qr/i }));
+    // Com Cloud API gravada, a troca exige a confirmação explícita antes de conectar.
+    await user.click(screen.getByRole('checkbox', { name: /entendi e quero trocar/i }));
     await user.click(screen.getByRole('button', { name: /conectar whatsapp/i }));
 
     expect(await screen.findByRole('dialog', { name: /conectar whatsapp por qr/i })).toBeInTheDocument();
@@ -211,7 +217,7 @@ describe('ChannelsSettings', () => {
     expect(screen.getByText('Somente leitura')).toBeInTheDocument();
 
     // ...e não tem por onde escrever: nem campo, nem interruptor, nem salvar.
-    expect(screen.queryByRole('button', { name: /salvar/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Salvar alterações' })).not.toBeInTheDocument();
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
     expect(screen.queryByRole('switch')).not.toBeInTheDocument();
     expect(screen.queryByRole('radio')).not.toBeInTheDocument();
@@ -241,7 +247,7 @@ describe('ChannelsSettings', () => {
     const displayName = await screen.findByDisplayValue('WhatsApp do Vida');
     await user.clear(displayName);
     await user.type(displayName, 'WhatsApp Vida Centro');
-    await user.click(screen.getByRole('button', { name: /salvar/i }));
+    await user.click(screen.getByRole('button', { name: 'Salvar alterações' }));
 
     await waitFor(() => expect(updateChannelsMock).toHaveBeenCalledTimes(1));
 
@@ -260,7 +266,7 @@ describe('ChannelsSettings', () => {
 
     await screen.findByDisplayValue('WhatsApp do Vida');
     await user.click(screen.getByRole('checkbox', { name: /remover token da api/i }));
-    await user.click(screen.getByRole('button', { name: /salvar/i }));
+    await user.click(screen.getByRole('button', { name: 'Salvar alterações' }));
 
     await waitFor(() => expect(updateChannelsMock).toHaveBeenCalledTimes(1));
 
@@ -278,7 +284,7 @@ describe('ChannelsSettings', () => {
     const greeting = await screen.findByRole('textbox', { name: 'Texto — Saudação' });
     await user.clear(greeting);
 
-    expect(screen.getByRole('button', { name: /salvar/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Salvar alterações' })).toBeDisabled();
     expect(screen.getByText(/senão o contato recebe uma bolha em branco/i)).toBeInTheDocument();
     expect(updateChannelsMock).not.toHaveBeenCalled();
   });
@@ -296,7 +302,7 @@ describe('ChannelsSettings', () => {
 
     const displayName = await screen.findByDisplayValue('WhatsApp do Vida');
     await user.type(displayName, ' Centro');
-    await user.click(screen.getByRole('button', { name: /salvar/i }));
+    await user.click(screen.getByRole('button', { name: 'Salvar alterações' }));
 
     expect(await screen.findByText('Fuso horário inválido')).toBeInTheDocument();
   });
@@ -333,7 +339,7 @@ describe('ChannelsSettings', () => {
 
     const phone = await screen.findByDisplayValue('+55 48 3621-0000');
     await user.type(phone, '99999999999999999999');
-    await user.click(screen.getByRole('button', { name: /salvar/i }));
+    await user.click(screen.getByRole('button', { name: 'Salvar alterações' }));
 
     // A mensagem aparece ONDE o admin errou...
     expect(await screen.findByText('Maximo de 30 caracteres')).toBeInTheDocument();
@@ -356,7 +362,7 @@ describe('ChannelsSettings', () => {
 
     const displayName = await screen.findByDisplayValue('WhatsApp do Vida');
     await user.type(displayName, ' Centro');
-    await user.click(screen.getByRole('button', { name: /salvar/i }));
+    await user.click(screen.getByRole('button', { name: 'Salvar alterações' }));
 
     const alerta = await screen.findByRole('alert');
     expect(alerta).toHaveTextContent(/Revise os dados informados/i);

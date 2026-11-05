@@ -96,6 +96,17 @@ export const ERROR_CATALOG = {
       'Reinicie o servico Evolution para liberar a desconexao',
   },
 
+  CHANNEL_CLOUD_API_NOT_CONFIGURED: {
+    statusCode: 409,
+    message:
+      'A API oficial do WhatsApp deste laboratorio nao esta configurada. ' +
+      'Informe o phone_number_id, o waba_id e o token em Configuracoes > Canais',
+  },
+  CHANNEL_CLOUD_API_UNAVAILABLE: {
+    statusCode: 503,
+    message: 'A API oficial do WhatsApp (Meta) nao respondeu. Tente de novo em instantes',
+  },
+
   // --- Mídia (Onda 8 §4) ---
   MEDIA_TOO_LARGE: { statusCode: 413, message: 'Arquivo excede o tamanho maximo permitido' },
 

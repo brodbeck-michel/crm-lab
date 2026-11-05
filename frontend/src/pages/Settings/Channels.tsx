@@ -122,6 +122,8 @@ function LastDisconnectNotice({ info }: { info: WhatsAppDisconnectInfo }) {
 interface WhatsAppQrConnectionProps {
   /** `undefined` quando o laboratório ainda não tem linha `whatsapp` em `settings.channels`. */
   channel: TenantChannel | undefined;
+  /** Bloqueia o botão de conectar (troca de modo ainda sem confirmação). */
+  connectDisabled?: boolean;
 }
 
 /**
@@ -135,7 +137,7 @@ interface WhatsAppQrConnectionProps {
  * controles distintos, por isso a confirmação abaixo é explícita sobre isso
  * em vez de deixar o admin supor que "desconectar" é "desligar".
  */
-function WhatsAppQrConnection({ channel }: WhatsAppQrConnectionProps) {
+function WhatsAppQrConnection({ channel, connectDisabled }: WhatsAppQrConnectionProps) {
   const { toast } = useToast();
   const statusQuery = useWhatsAppStatus();
   const disconnect = useWhatsAppDisconnect();
@@ -170,7 +172,11 @@ function WhatsAppQrConnection({ channel }: WhatsAppQrConnectionProps) {
             </Button>
           </div>
         ) : (
-          <Button variant="secondary" onClick={() => setConnectOpen(true)}>
+          <Button
+            variant="secondary"
+            disabled={connectDisabled}
+            onClick={() => setConnectOpen(true)}
+          >
             Conectar WhatsApp
           </Button>
         )}
@@ -241,6 +247,219 @@ function WhatsAppQrConnection({ channel }: WhatsAppQrConnectionProps) {
           )}
         </div>
       </Modal>
+    </div>
+  );
+}
+
+type WhatsAppMode = 'qr' | 'cloud_api';
+
+const MODE_LABEL: Record<WhatsAppMode, string> = {
+  qr: 'QR Code (número próprio)',
+  cloud_api: 'API oficial da Meta (Cloud API)',
+};
+
+/**
+ * Modo do WhatsApp do laboratório (CRMLAB-138, D-308). Admin only (montado no
+ * ramo `canEdit`). Trocar de modo NÃO apaga nem reenvia mensagens, exige
+ * confirmação explícita e mostra o que muda. O token da Cloud API é write-only:
+ * campo mascarado, nunca preenchido pelo servidor.
+ */
+function WhatsAppModeCard({ channel }: { channel: TenantChannel | undefined }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const current: WhatsAppMode = channel?.connectionMode ?? 'cloud_api';
+  const [selected, setSelected] = useState<WhatsAppMode>(current);
+  const [confirmed, setConfirmed] = useState(false);
+  const [phoneNumberId, setPhoneNumberId] = useState('');
+  const [wabaId, setWabaId] = useState('');
+  const [token, setToken] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const save = useMutation({
+    mutationFn: (body: UpdateChannelSettingsRequest) => settingsApi.updateChannels(body),
+    onSuccess: (next) => {
+      queryClient.setQueryData(queryKeys.channelSettings(), next);
+      setConfirmed(false);
+      setToken('');
+      toast('Modo do WhatsApp atualizado.', { tone: 'neutral' });
+    },
+    onError: (err: unknown) => {
+      const fields = isApiError(err) ? readFieldErrors(err.details) : {};
+      setError(
+        Object.values(fields)[0] ??
+          (isApiError(err) ? err.message : 'Não foi possível salvar. Tente novamente.'),
+      );
+    },
+  });
+
+  const changing = selected !== current;
+  const cloudConfigured = channel?.apiTokenMasked != null && current === 'cloud_api';
+  const needsConfirm = changing && (selected === 'cloud_api' || cloudConfigured);
+  // Em `qr`, o token gravado é a apikey da Evolution, não um token da Meta. O
+  // servidor recusa `qr` -> `cloud_api` até existir coluna própria para o token
+  // da Meta (CRMLAB-135, D-308). A tela não sobrescreve a apikey do QR à toa.
+  const blockedFromQr = changing && selected === 'cloud_api' && current === 'qr';
+
+  const submitCloud = () => {
+    setError(null);
+    save.mutate({
+      channels: [
+        {
+          channel: 'whatsapp',
+          phoneNumberId: phoneNumberId.trim(),
+          wabaId: wabaId.trim(),
+          apiToken: token,
+        },
+      ],
+    });
+  };
+
+  const saveWaba = () => {
+    setError(null);
+    save.mutate({
+      channels: [{ channel: 'whatsapp', wabaId: wabaId.trim() === '' ? null : wabaId.trim() }],
+    });
+  };
+
+  return (
+    <div className="flex flex-col gap-sm rounded-md border border-neutral-200 bg-neutral-100 p-md">
+      <span className="font-body text-label font-semibold text-text">Modo do WhatsApp</span>
+      <div role="radiogroup" aria-label="Modo do WhatsApp" className="flex flex-col gap-xs">
+        {(['qr', 'cloud_api'] as const).map((mode) => (
+          <label key={mode} className="flex cursor-pointer items-center gap-sm">
+            <input
+              type="radio"
+              name="whatsappMode"
+              value={mode}
+              checked={selected === mode}
+              onChange={() => {
+                setSelected(mode);
+                setConfirmed(false);
+                setError(null);
+              }}
+              className="accent-accent"
+            />
+            <span className="font-body text-label text-text">
+              {MODE_LABEL[mode]}
+              {mode === current ? ' — atual' : ''}
+            </span>
+          </label>
+        ))}
+      </div>
+
+      {changing && (
+        <div
+          role="status"
+          data-testid="whatsapp-mode-warning"
+          className="flex flex-col gap-xs rounded-md bg-accent-100 px-md py-sm font-body text-caption text-accent-800"
+        >
+          <strong>O que muda ao trocar o modo:</strong>
+          <ul className="m-0 flex list-disc flex-col gap-xs pl-lg">
+            <li>
+              Histórico: as conversas e mensagens existentes continuam como estão — nada é
+              apagado nem reenviado.
+            </li>
+            <li>
+              Envio: as próximas mensagens passam a sair por{' '}
+              {selected === 'cloud_api' ? 'a API oficial da Meta' : 'o número pareado por QR'}.
+              {selected === 'cloud_api'
+                ? ' Texto livre só sai até 24 h depois da última mensagem do paciente.'
+                : ' O token da API oficial guardado é substituído.'}
+            </li>
+            <li>
+              Reengajamento: {selected === 'cloud_api' ? 'fica inativo' : 'volta a funcionar'}{' '}
+              (só roda com WhatsApp por QR).
+            </li>
+          </ul>
+        </div>
+      )}
+
+      {needsConfirm && (
+        <label className="flex cursor-pointer items-start gap-sm font-body text-caption text-text">
+          <input
+            type="checkbox"
+            checked={confirmed}
+            onChange={(event) => setConfirmed(event.target.checked)}
+            className="mt-xs accent-accent"
+          />
+          <span>Entendi e quero trocar o modo do WhatsApp deste laboratório.</span>
+        </label>
+      )}
+
+      {selected === 'cloud_api' && (
+        <div className="grid grid-cols-1 gap-md sm:grid-cols-2">
+          {changing && (
+            <>
+              <Input
+                label="ID do número (phone_number_id)"
+                value={phoneNumberId}
+                onChange={(event) => setPhoneNumberId(event.target.value)}
+              />
+              <Input
+                label="Token de acesso da Cloud API"
+                type="password"
+                autoComplete="off"
+                hint="Não é exibido depois de salvo."
+                value={token}
+                onChange={(event) => setToken(event.target.value)}
+              />
+            </>
+          )}
+          <Input
+            label="ID da conta WhatsApp Business (waba_id)"
+            hint={channel?.wabaId ? `Atual: ${channel.wabaId}` : 'Não configurado'}
+            value={wabaId}
+            onChange={(event) => setWabaId(event.target.value)}
+          />
+        </div>
+      )}
+
+      {error && (
+        <p role="alert" className="m-0 font-body text-caption text-accent-700">
+          {error}
+        </p>
+      )}
+
+      {blockedFromQr && (
+        <p role="status" className="m-0 font-body text-caption text-neutral-600">
+          Trocar do QR para a API oficial ainda não está disponível: o token guardado hoje é a
+          apikey do QR. Depende de uma coluna própria para o token da Meta (CRMLAB-135).
+        </p>
+      )}
+      {selected === 'cloud_api' && changing && (
+        <div>
+          <Button
+            variant="primary"
+            loading={save.isPending}
+            disabled={
+              blockedFromQr ||
+              !confirmed ||
+              !phoneNumberId.trim() ||
+              !wabaId.trim() ||
+              token.length === 0
+            }
+            onClick={submitCloud}
+          >
+            Trocar para API oficial
+          </Button>
+        </div>
+      )}
+      {selected === 'cloud_api' && !changing && (
+        <div>
+          <Button variant="secondary" loading={save.isPending} onClick={saveWaba}>
+            Salvar WABA
+          </Button>
+          <span className="ml-sm font-body text-caption text-neutral-600">
+            Token e ID do número são editados nos campos acima.
+          </span>
+        </div>
+      )}
+      {selected === 'qr' && (
+        <WhatsAppQrConnection
+          channel={channel}
+          connectDisabled={needsConfirm && !confirmed}
+        />
+      )}
     </div>
   );
 }
@@ -580,7 +799,7 @@ export default function ChannelsSettings() {
                   />
 
                   {canEdit && draft.channel === 'whatsapp' && (
-                    <WhatsAppQrConnection
+                    <WhatsAppModeCard
                       channel={settings.channels.find((channel) => channel.channel === 'whatsapp')}
                     />
                   )}

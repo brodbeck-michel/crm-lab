@@ -43,6 +43,7 @@ function resolver(): WhatsAppCredentialsResolver {
     tenantId,
     phoneNumberId: 'numero-do-lab',
     apiUrl: '',
+    wabaId: '',
     apiToken: '',
     webhookSecret: '',
     isActive: true,

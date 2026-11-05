@@ -45,6 +45,7 @@ function evolutionCredentialsResolver(
     tenantId,
     phoneNumberId: 'numero-do-lab',
     apiUrl: '',
+    wabaId: '',
     apiToken: '',
     webhookSecret: '',
     isActive: !disabled.has(tenantId),

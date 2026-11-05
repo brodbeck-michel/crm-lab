@@ -57,6 +57,7 @@ const LAB_TOKEN = 'EAAG-token-do-laboratorio-9f2a';
 const ENV_FALLBACK: Omit<WhatsAppCredentials, 'tenantId'> = {
   phoneNumberId: 'numero-da-env',
   apiUrl: '',
+  wabaId: '',
   apiToken: 'token-global-da-instalacao',
   webhookSecret: ENV_SECRET,
   isActive: true,

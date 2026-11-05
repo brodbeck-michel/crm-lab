@@ -67,6 +67,8 @@ export type ApiErrorCode =
   | 'MESSAGE_SEND_FAILED'
   /** Primeiro contato acima do teto da hora no WhatsApp por QR (CRMLAB-134, D-306). */
   | 'FIRST_CONTACT_LIMIT_REACHED'
+  /** Texto livre/anexo na Cloud API com a última mensagem do paciente há mais de 24 h (CRMLAB-137, D-310). */
+  | 'WHATSAPP_WINDOW_CLOSED'
   // Canais (Onda 7 — WhatsApp QR)
   | 'CHANNEL_QR_UNAVAILABLE'
   | 'CHANNEL_SESSION_STALE'

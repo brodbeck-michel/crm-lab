@@ -7,6 +7,7 @@ import type {
   Message,
   QuickReply,
   UserPresenceStatus,
+  WhatsAppWindowStatus,
 } from '@crm-lab/shared';
 import { Badge, Button, cn } from '@/components/ui';
 import { EmptyState, PresenceDot } from '@/components/shared';
@@ -117,6 +118,11 @@ export interface ConversationPanelProps {
    * Falso (Cloud API) ou sem `currentUserId`: "Editar"/"Apagar para todos" somem.
    */
   canEditMessages?: boolean;
+  /**
+   * Janela de 24 h da Cloud API (`whatsappWindow` do GET, D-310). `null` = sem
+   * restrição. Fechada, o Composer bloqueia o envio e mostra o motivo.
+   */
+  whatsappWindow?: WhatsAppWindowStatus | null;
   /** A autora edita (D-280). Promise: rejeitou, a caixa de edição fica aberta. */
   onEditMessage?: (messageId: string, content: string) => Promise<unknown>;
   /** A autora apaga para todos (D-280) — a confirmação é do balão. */
@@ -494,6 +500,7 @@ export function ConversationPanel({
   draftMessage,
   onRetryMessage,
   canEditMessages = false,
+  whatsappWindow = null,
   onEditMessage,
   onDeleteMessage,
   onPresence,
@@ -649,7 +656,8 @@ export function ConversationPanel({
   // Arrastar arquivo (D-232): contador porque cada filho dispara enter/leave.
   const dragDepth = useRef(0);
   const [dragging, setDragging] = useState(false);
-  const acceptsFiles = conversation?.status === 'active';
+  // Janela de 24 h fechada (D-310): soltar arquivo não abre a prévia, o envio seria recusado.
+  const acceptsFiles = conversation?.status === 'active' && whatsappWindow?.open !== false;
 
   function handleDragEnter(event: DragEvent<HTMLDivElement>): void {
     if (!acceptsFiles || !dragHasFiles(event.dataTransfer)) return;
@@ -962,6 +970,7 @@ export function ConversationPanel({
           quickReplies={quickReplies}
           initialValue={draftMessage}
           draftId={conversation.id}
+          whatsappWindow={whatsappWindow}
         />
 
         {dragging && !drafts && (

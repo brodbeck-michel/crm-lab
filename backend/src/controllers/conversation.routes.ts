@@ -64,6 +64,7 @@ import { ConversationRepository, phoneDigits } from '../repositories/conversatio
 import { MediaRepository } from '../repositories/media.repository.js';
 import { MessageRepository } from '../repositories/message.repository.js';
 import { createFirstContactGuard } from '../services/first-contact.service.js';
+import { createWhatsAppWindowGuard } from '../services/whatsapp-window.service.js';
 import { createAuditService } from '../services/audit.service.js';
 import {
   ConversationService,
@@ -275,6 +276,7 @@ export function createConversationServices(
     whatsapp: overrides.whatsapp ?? createWhatsAppService(deps.db),
     audit,
     firstContact: createFirstContactGuard({ db: deps.db }),
+    windowGuard: createWhatsAppWindowGuard({ db: deps.db }),
   });
   const conversations = new ConversationService({
     db: deps.db,
@@ -348,6 +350,7 @@ export function getConversation(services: ConversationServices): RequestHandler 
       pagination: page.pagination,
       cursors: page.cursors,
       canEditMessages: await services.messages.canEditMessages(ctx.tenantId, conversation.channel),
+      whatsappWindow: await services.messages.windowStatus(ctx.tenantId, id, conversation.channel),
     };
     res.status(200).json(body);
   });

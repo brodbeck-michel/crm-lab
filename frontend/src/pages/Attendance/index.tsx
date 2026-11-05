@@ -323,9 +323,13 @@ export function Attendance() {
         void queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
         return;
       }
+      // Janela de 24 h (D-310): o relógio do servidor manda; refaz o estado da tela.
+      if (isApiError(error) && error.code === 'WHATSAPP_WINDOW_CLOSED' && selectedId) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.conversation(selectedId) });
+      }
       handleApiError(error);
     },
-    [handleApiError, queryClient, toast],
+    [handleApiError, queryClient, selectedId, toast],
   );
 
   const sendMessage = useMutation({
@@ -660,6 +664,7 @@ export function Attendance() {
             onReact={(messageId, emoji) => react.mutate({ messageId, emoji })}
             onRetryMessage={(messageId) => retryMessage.mutate(messageId)}
             canEditMessages={detailQuery.data?.pages[0]?.canEditMessages ?? false}
+            whatsappWindow={detailQuery.data?.pages[0]?.whatsappWindow ?? null}
             onEditMessage={(messageId, content) => editMessage.mutateAsync({ messageId, content })}
             onDeleteMessage={(messageId) => deleteMessage.mutate(messageId)}
             onPresence={sendPresence}

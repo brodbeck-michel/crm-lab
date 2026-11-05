@@ -60,6 +60,7 @@ import type {
   MessageCursors,
   MessageSearchHit,
   PaginationMeta,
+  WhatsAppWindowStatus,
 } from '@crm-lab/shared';
 import type { ApiModuleDeps } from '../http/api-module.js';
 import { BusinessError, notFound } from '../http/errors.js';
@@ -79,6 +80,7 @@ import { createAuditService, type AuditService } from './audit.service.js';
 import type { AutoReplyService } from './auto-reply.service.js';
 import { claimFreeConversation } from './conversation-claim.js';
 import { createFirstContactGuard, type FirstContactGuard } from './first-contact.service.js';
+import { createWhatsAppWindowGuard, type WhatsAppWindowGuard } from './whatsapp-window.service.js';
 import {
   createWhatsAppService,
   type OutboundPresence,
@@ -227,6 +229,11 @@ export interface MessageServiceDeps {
    * D-306). Ausente => sem teto (testes de unidade e o webhook).
    */
   firstContact?: FirstContactGuard;
+  /**
+   * Janela de 24 h da Cloud API (CRMLAB-137, D-310). Ausente => sem checagem
+   * (testes de unidade e o webhook).
+   */
+  windowGuard?: WhatsAppWindowGuard;
 }
 
 export class MessageService {
@@ -238,6 +245,7 @@ export class MessageService {
   private readonly audit: AuditService | undefined;
   private readonly autoReply: AutoReplyService | undefined;
   private readonly firstContact: FirstContactGuard | undefined;
+  private readonly windowGuard: WhatsAppWindowGuard | undefined;
 
   constructor(deps: MessageServiceDeps) {
     this.messages = deps.messages;
@@ -248,16 +256,38 @@ export class MessageService {
     this.audit = deps.audit;
     this.autoReply = deps.autoReply;
     this.firstContact = deps.firstContact;
+    this.windowGuard = deps.windowGuard;
+  }
+
+  /**
+   * D-310: texto livre/anexo na Cloud API so com o paciente tendo escrito nas
+   * ultimas 24 h. Recusa ANTES de gravar; o modo QR nao passa por aqui.
+   */
+  private async assertWindowOpen(tenantId: string, conversation: Conversation): Promise<void> {
+    if (!this.windowGuard || !this.whatsapp || conversation.channel !== 'whatsapp') return;
+    await this.windowGuard.assertOpen(tenantId, conversation.id);
+  }
+
+  /** Estado da janela para a tela (D-310); `null` = sem restricao. */
+  async windowStatus(
+    tenantId: string,
+    conversationId: string,
+    channel: string,
+  ): Promise<WhatsAppWindowStatus | null> {
+    if (!this.windowGuard || !this.whatsapp || channel !== 'whatsapp') return null;
+    return this.windowGuard.status(tenantId, conversationId);
   }
 
   /**
    * Pre-checagem do canal para o controller, ANTES de reabrir a encerrada,
-   * assumir a fila ou guardar midia (D-273, D-308): a recusa nao deixa efeito.
+   * assumir a fila ou guardar midia (D-273): credencial (D-308) e janela de
+   * 24 h (D-310), nesta ordem. A recusa nao deixa efeito.
    */
   async assertChannelReadyFor(tenantId: string, conversationId: string): Promise<void> {
     const conversation = await this.conversations.findById(tenantId, conversationId);
     if (!conversation) throw notFound({ resource: 'conversation', id: conversationId });
     await this.assertChannelReady(tenantId, conversation);
+    await this.assertWindowOpen(tenantId, conversation);
   }
 
   /**
@@ -362,7 +392,9 @@ export class MessageService {
       throw new BusinessError('CONVERSATION_ARCHIVED', { status: conversation.status });
     }
     const quote = await this.resolveQuote(tenantId, conversationId, dto.quotedMessageId);
+    // Ordem do contrato (API_CONTRACTS §2): NOT_CONFIGURED -> WINDOW_CLOSED.
     await this.assertChannelReady(tenantId, conversation);
+    await this.assertWindowOpen(tenantId, conversation);
     await this.assertFirstContactAllowed(tenantId, conversation);
     // Antes do INSERT: quem perde a corrida nao grava nem envia nada (D-215).
     await this.claimIfFree(tenantId, conversation, senderId);
@@ -426,7 +458,9 @@ export class MessageService {
     // D-231: áudio não tem legenda no WhatsApp — descarta, senão o CRM
     // mostraria um texto que o paciente nunca recebeu.
     const caption = messageType === 'audio' ? null : dto.caption || null;
+    // Ordem do contrato (API_CONTRACTS §2): NOT_CONFIGURED -> WINDOW_CLOSED.
     await this.assertChannelReady(tenantId, conversation);
+    await this.assertWindowOpen(tenantId, conversation);
     await this.assertFirstContactAllowed(tenantId, conversation);
     await this.claimIfFree(tenantId, conversation, senderId);
     const participant = participantReplyOf(conversation, senderId);
@@ -741,7 +775,9 @@ export class MessageService {
       return updated ?? message;
     }
 
+    // Ordem do contrato (API_CONTRACTS §2): NOT_CONFIGURED -> WINDOW_CLOSED.
     await this.assertChannelReady(tenantId, conversation);
+    await this.assertWindowOpen(tenantId, conversation);
     await this.assertFirstContactAllowed(tenantId, conversation);
     await this.messages.setStatus(tenantId, messageId, 'pending');
     this.emitStatusUpdated(tenantId, conversationId, messageId, 'pending');
@@ -854,6 +890,8 @@ export class MessageService {
     if (conversation.status !== 'active') {
       throw new BusinessError('CONVERSATION_ARCHIVED', { status: conversation.status });
     }
+    // D-310: automacao nao fura a janela da Cloud API (nada gravado nem enviado).
+    await this.assertWindowOpen(tenantId, conversation);
 
     const message = await this.messages.insert(tenantId, {
       conversationId,
@@ -1330,5 +1368,6 @@ export function createMessageService(
     whatsapp: overrides.whatsapp ?? createWhatsAppService(deps.db),
     audit: createAuditService(deps.db),
     firstContact: createFirstContactGuard({ db: deps.db }),
+    windowGuard: createWhatsAppWindowGuard({ db: deps.db }),
   });
 }

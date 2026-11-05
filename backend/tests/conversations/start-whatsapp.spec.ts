@@ -420,6 +420,34 @@ describe('POST /conversations/whatsapp', () => {
     }
   });
 
+  it('cloud_api (D-310): numero novo nunca escreveu, janela fechada — 409 com conversationId', async () => {
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });
+    const db = await getTestDb();
+    await db.withoutTenant((tx) =>
+      tx.query(
+        `INSERT INTO tenant_channels (tenant_id, channel, connection_mode) VALUES ($1, 'whatsapp', 'cloud_api')`,
+        [tenant.id],
+      ),
+    );
+
+    const response = await app.agent
+      .post(URL)
+      .set(app.auth(ana))
+      .send({ phone: '(48) 99999-1234', content: 'Oi' })
+      .expect(409);
+
+    expect(response.body.error.code).toBe('WHATSAPP_WINDOW_CLOSED');
+    expect(response.body.error.details).toMatchObject({
+      conversationId: expect.any(String),
+      lastPatientMessageAt: null,
+      windowClosedAt: null,
+    });
+    expect(await countConversations(tenant.id)).toBe(1);
+    expect(await countMessages(tenant.id)).toBe(0);
+    expect(driver.mock.sent).toHaveLength(0);
+  });
+
   it('cloud_api sem credencial (D-308): 409 com conversationId, conversa criada e nenhuma mensagem', async () => {
     const db = await getTestDb();
     const base = testCredentialsResolver(new Map());

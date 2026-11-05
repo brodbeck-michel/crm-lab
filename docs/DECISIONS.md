@@ -6936,8 +6936,9 @@ filhos 136–141) completa o modo. **Contrato escrito antes do código (regra ze
    antes de gravar; nada fica `failed`). Vale para `POST /conversations/:id/messages` sem
    `template`, `POST /conversations/:id/attachments`, retry de mensagem e o envio do cartão
    (`POST /proposals/:id/send` e `/resend`). Não é `MESSAGE_SEND_FAILED`: o CRM sabe de antemão.
-3. **Tela:** `GET /conversations/:id` ganha `whatsappWindow: { open, expiresAt } | null` (`null` fora
-   de `cloud_api`), para o Composer trocar para "só template" sem tentativa e erro.
+3. **Tela:** `GET /conversations/:id` ganha `whatsappWindow: { open, remainingSeconds, expiresAt,
+   lastPatientMessageAt } | null` (`null` fora de `cloud_api`), para o Composer trocar para "só
+   template" sem tentativa e erro. Só no detalhe, não na listagem (05/11/2026).
 4. **Corrida com a Meta:** se o CRM achou a janela aberta e a Meta recusa por janela (erro 131047),
    o status `failed` do webhook vale e a mensagem fica `failed` (retry passa pela regra 2).
 5. **Reengajamento (D-214) fica excluído do `cloud_api`**; nada muda ali. Mensagens automáticas

@@ -372,6 +372,33 @@ describe('POST /proposals/:id/send', () => {
     expect(driver.sent).toHaveLength(0);
   });
 
+  it('cloud_api com a janela de 24 h fechada (D-310): 409, nada gravado, cartao intacto', async () => {
+    const id = await bitlabCard(tenantA, '5010');
+    await db.withoutTenant((tx) =>
+      tx.query(
+        `INSERT INTO tenant_channels (tenant_id, channel, connection_mode)
+         VALUES ($1, 'whatsapp', 'cloud_api')
+         ON CONFLICT (tenant_id, channel) DO UPDATE SET connection_mode = 'cloud_api'`,
+        [tenantA.id],
+      ),
+    );
+    const res = await send(ana, id, anaConversation.id);
+    expect(res.status).toBe(409);
+    expect(errorOf(res)).toMatchObject({
+      code: 'WHATSAPP_WINDOW_CLOSED',
+      details: { conversationId: anaConversation.id, lastPatientMessageAt: null, windowClosedAt: null },
+    });
+    expect(await rawProposal(id)).toEqual({
+      status: 'novo_contato',
+      conversation_id: null,
+      created_by: null,
+      sent_at: null,
+      send_claim_id: null,
+    });
+    expect(await messagesOf(anaConversation.id)).toEqual([]);
+    expect(driver.sent).toHaveLength(0);
+  });
+
   it('duas atendentes ao mesmo tempo: so uma vence, o paciente recebe uma mensagem so', async () => {
     const id = await bitlabCard(tenantA, '5005');
     const biaConversation = await createConversation({ tenantId: tenantA.id, assignedTo: bia.id, db });

@@ -665,10 +665,14 @@ faz request extra por conversa). Shape completo: `Conversation` em
 `lastMessagePreview` de mensagem **apagada** pelo remetente vem `""` (D-220) — a prévia
 nunca devolve o conteúdo escondido.
 
-**`whatsappWindow` (CRMLAB-137, D-310)** — em `GET /conversations/:id` (e no item da listagem):
-`{ "open": true, "expiresAt": "2026-11-05T14:35:00Z" }` quando a conversa é WhatsApp em `cloud_api`
-(`open: false` e `expiresAt: null` se a janela fechou ou o paciente nunca escreveu); `null` em
-`qr`, `direct`, `web` ou canal sem modo. Derivado da última mensagem do paciente + 24 h, nunca gravado.
+**`whatsappWindow` (CRMLAB-137, D-310)** — só em `GET /conversations/:id` (não na listagem:
+decisão de 05/11/2026, a lista fica leve; é o detalhe que troca o Composer para "só template"):
+`{ "open": true, "remainingSeconds": 5400, "expiresAt": "2026-11-05T14:35:00Z",
+"lastPatientMessageAt": "2026-11-04T14:35:00Z" }` quando a conversa é WhatsApp em `cloud_api`.
+Fechada: `open: false`, `remainingSeconds: 0`; `expiresAt`/`lastPatientMessageAt` são `null` se o
+paciente nunca escreveu. `remainingSeconds` vem do relógio do banco (o cliente só desconta o tempo
+desde a resposta, sem depender do próprio relógio). `null` em `qr`, `direct`, `web` ou laboratório
+sem linha de canal. Derivado da última mensagem **não apagada** do paciente + 24 h, nunca gravado.
 
 **`patientHasWritten` (CRMLAB-134, D-305)** — `true` quando a conversa tem ao menos uma mensagem
 do paciente (`senderType: "patient"`). Sempre presente, na lista e no detalhe. `false` = enviar

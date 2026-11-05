@@ -386,6 +386,22 @@ export interface SearchMessagesResponse {
   pagination: PaginationMeta;
 }
 
+/** Janela de atendimento da Cloud API da Meta: texto livre e anexo só até 24 h após a fala do paciente. */
+export const WHATSAPP_WINDOW_HOURS = 24;
+
+/**
+ * Estado da janela de 24 h (CRMLAB-137, D-310), calculado no servidor.
+ * `remainingSeconds` vem do relógio do banco; o cliente só desconta o tempo
+ * decorrido desde a resposta. `expiresAt`/`lastPatientMessageAt` são `null`
+ * quando o paciente nunca escreveu (janela fechada).
+ */
+export interface WhatsAppWindowStatus {
+  open: boolean;
+  remainingSeconds: number;
+  expiresAt: IsoDateTime | null;
+  lastPatientMessageAt: IsoDateTime | null;
+}
+
 export interface GetConversationResponse {
   conversation: ConversationDetail;
   messages: Message[];
@@ -397,6 +413,11 @@ export interface GetConversationResponse {
    * (os itens somem do menu). Opcional no tipo (AGENTS.md); o backend sempre manda.
    */
   canEditMessages?: boolean;
+  /**
+   * Janela de 24 h (CRMLAB-137, D-310). `null`/ausente = sem restrição (canal em
+   * QR, conversa fora do WhatsApp). Preenchido só no canal `cloud_api`.
+   */
+  whatsappWindow?: WhatsAppWindowStatus | null;
 }
 
 export interface CreateMessageRequest {

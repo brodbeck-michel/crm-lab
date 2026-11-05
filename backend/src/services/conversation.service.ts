@@ -476,8 +476,11 @@ export class ConversationService {
     } catch (err) {
       // Limite de primeiros contatos (D-306 item 5): a conversa criada fica, e a
       // tela abre ela mesmo sem a mensagem.
-      if (isBusinessError(err) && err.code === 'FIRST_CONTACT_LIMIT_REACHED') {
-        throw new BusinessError('FIRST_CONTACT_LIMIT_REACHED', {
+      if (
+        isBusinessError(err) &&
+        (err.code === 'FIRST_CONTACT_LIMIT_REACHED' || err.code === 'WHATSAPP_WINDOW_CLOSED')
+      ) {
+        throw new BusinessError(err.code, {
           ...err.details,
           conversationId: conversation.id,
         });

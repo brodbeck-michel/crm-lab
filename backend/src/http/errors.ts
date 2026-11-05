@@ -83,6 +83,13 @@ export const ERROR_CATALOG = {
     statusCode: 409,
     message: 'Limite de primeiros contatos da hora atingido no WhatsApp',
   },
+  // Regra da Meta (CRMLAB-137, D-310): fora das 24 h so template aprovado.
+  WHATSAPP_WINDOW_CLOSED: {
+    statusCode: 409,
+    message:
+      'A janela de 24 horas do WhatsApp esta fechada: o paciente nao escreve ha mais de 24 h. ' +
+      'Fora dela so e possivel enviar template aprovado',
+  },
 
   // --- Canais (Onda 7 — WhatsApp QR) ---
   CHANNEL_QR_UNAVAILABLE: {

@@ -163,8 +163,8 @@ Vazias = driver **mock** que ecoa (bom para dev, nunca para produção).
 - **Anexos pela Cloud API (CRMLAB-140, D-314):** a imagem do backend leva `ffmpeg` (Alpine
   `apk add ffmpeg`) para converter o recado de voz do navegador (WebM) em OGG/Opus. A imagem fica
   maior; sem o ffmpeg, só o envio de recado de voz pela API oficial falha (a mensagem fica com
-  "tentar de novo"). O download da mídia recebida sai do servidor para `graph.facebook.com` e
-  `*.fbsbx.com` (HTTPS).
+  "tentar de novo"). O download da mídia recebida sai do servidor para `graph.facebook.com`,
+  `*.fbsbx.com`, `*.whatsapp.net` e `*.fbcdn.net` (HTTPS) — os únicos destinos que recebem o token.
 
 ### Frontend (build-time)
 

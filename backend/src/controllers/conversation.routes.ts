@@ -503,9 +503,10 @@ export function createAttachment(services: ConversationServices): RequestHandler
     const prepared = await services.media.prepareOutbound(dto);
     await services.messages.assertQuotable(ctx.tenantId, id, dto.quotedMessageId);
     // D-308: antes de reabrir, assumir e guardar a midia (nada fica para tras).
-    await services.messages.assertChannelReadyFor(ctx.tenantId, id);
-    // D-314: formato/tamanho que a API oficial aceita, sobre o arquivo ja preparado.
+    // D-314: formato/tamanho que a API oficial aceita, sobre o arquivo ja
+    // preparado — antes da janela, para a atendente saber que o ARQUIVO e o problema.
     await services.messages.assertCloudMediaAccepted(ctx.tenantId, id, prepared);
+    await services.messages.assertChannelReadyFor(ctx.tenantId, id);
     await services.conversations.openForReply(ctx, id);
     // Responder assume a fila livre (D-215) — antes da midia: quem perde a
     // corrida recebe o 409 sem deixar arquivo gravado.

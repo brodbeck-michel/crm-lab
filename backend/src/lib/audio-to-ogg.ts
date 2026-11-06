@@ -12,13 +12,14 @@ import { spawn } from 'node:child_process';
 
 export type AudioConverter = (input: Buffer) => Promise<Buffer>;
 
-const TIMEOUT_MS = 30_000;
+/** Recado de voz de minutos converte em menos de 1 s; 15 s cabe no orcamento de 60 s do envio. */
+const TIMEOUT_MS = 15_000;
 
 export const convertAudioToOgg: AudioConverter = (input) =>
   new Promise<Buffer>((resolve, reject) => {
     const child = spawn(
       'ffmpeg',
-      ['-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-vn', '-c:a', 'libopus', '-b:a', '32k', '-f', 'ogg', 'pipe:1'],
+      ['-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-vn', '-ac', '1', '-c:a', 'libopus', '-b:a', '32k', '-f', 'ogg', 'pipe:1'],
       { stdio: ['pipe', 'pipe', 'pipe'] },
     );
     const chunks: Buffer[] = [];

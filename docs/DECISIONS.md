@@ -7076,11 +7076,14 @@ claro; o card inclui o recebimento.
    com `fields.mimeType` = mensagem com os formatos aceitos e `details.reason =
    'cloud_api_media_type'`; imagem acima de 5 MB → `MEDIA_TOO_LARGE` com `details.max` = 5 MB e
    `details.reason = 'cloud_api_image_limit'`. Recusa **antes de gravar** e antes de reabrir/assumir
-   (mesmo ponto do `prepareOutbound`, D-273).
+   (mesmo ponto do `prepareOutbound`, D-273), **antes** de credencial e janela. PNG animado (o sniff
+   o rotula `image/png`) é recusado como o GIF animado. O "tentar de novo" confere igual.
 3. **Recado de voz:** `audio/webm` (gravação do navegador) é convertido para `audio/ogg` (Opus) com
    **ffmpeg** na hora do envio à Meta; o CRM continua guardando e mostrando o original. ffmpeg entra
    na imagem de produção do backend (`apk add ffmpeg`). Sem ffmpeg ou conversão que falha → o envio
    falha como qualquer falha de canal (`MESSAGE_SEND_FAILED`, mensagem `failed`, "tentar de novo").
+   Conversão e conferência de formato rodam **uma vez, fora da fila** (não repetem); upload + envio
+   têm no máximo 2 tentativas (12 s + 10 s cada), para o pedido caber nos 60 s do proxy.
 4. **Recebimento:** mensagem da Meta com mídia (`image`, `audio`/voz, `video`, `document`, `sticker`)
    é **baixada**: `GET /{media_id}` (Bearer do laboratório) devolve `url`, `mime_type` e `file_size`;
    `GET url` (Bearer) devolve o arquivo. O token só vai para endereço `https` da própria Meta

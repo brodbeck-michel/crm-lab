@@ -3922,10 +3922,22 @@ Meta recusado com aviso; o card inclui o recebimento.
 - **Recebimento:** o webhook baixa a mídia (`GET /{media_id}` + `GET url`, Bearer só para host da
   Meta, teto de 15 MiB, 10 s por chamada) e grava como no QR; falha → aviso de texto do 139, log
   `whatsapp.inbound_media_fallback`. Reentrega não baixa de novo.
-- **Testes:** `graph-media.spec.ts` (10, Graph API falsa: upload, envio por id, WebM→OGG, recusa
-  sem chamar a Meta, download, teto, host fora da Meta, erros); `crmlab140-anexos.spec.ts` (6 + 2
+- **Testes:** `graph-media.spec.ts` (12, Graph API falsa: upload, envio por id, WebM→OGG, recusa
+  sem chamar a Meta, download, teto, host fora da Meta, erros); `crmlab140-anexos.spec.ts` (12 + 2
   com ffmpeg real, que pulam onde não há ffmpeg): CSV recusado, foto de 5 MB+, QR intacto, documento
   e foto recebidos, reentrega, fallback. Frontend `cloud-api-media.spec.ts` (3).
+- **Validação:** revisão independente por agente Opus 5.5. 1ª rodada: nenhum bloqueante; a corrigir:
+  PNG animado passava (o sniff o rotula `image/png`), ordem das checagens (janela vinha antes do
+  formato), envio de mídia podendo passar dos 60 s do proxy (3 tentativas de até 100 s, repetindo
+  erro que não muda) e "tentar de novo" sem conferir o formato. Todos tratados: formato antes da
+  janela (contrato emendado), conversão e conferência fora da fila, 2 tentativas com upload de 12 s,
+  ffmpeg de 15 s e mono, conferência no reenvio; sugestões aplicadas (leitura do download com teto,
+  código de erro da Meta no log do upload, JSDoc no lugar, hosts no DEPLOYMENT). Testes: +2 no
+  driver (sem content-length acima do teto, redirecionamento), +6 na integração (APNG e GIF animado,
+  janela fechada + CSV, reenvio de anexo do QR, figurinha e recado de voz recebidos, fila).
+- **Limitações conhecidas:** download dentro do webhook, em série (lote com muita mídia demora para
+  responder; a reentrega da Meta é idempotente); reentrega SIMULTÂNEA pode deixar um arquivo a mais
+  ligado à mesma mensagem (mesmo padrão do QR).
 - **Para validar em hml:** número de teste da Meta — enviar foto/PDF/recado de voz e receber foto e
   PDF do celular.
 

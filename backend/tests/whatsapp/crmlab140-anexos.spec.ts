@@ -11,7 +11,7 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeConversationModule } from '../../src/controllers/conversation.routes.js';
 import { makeWebhookModule } from '../../src/controllers/webhook.routes.js';
 import { convertAudioToOgg } from '../../src/lib/audio-to-ogg.js';
@@ -171,6 +171,58 @@ beforeEach(async () => {
   });
 });
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe('envio pela fila: o que não muda fica fora dela (D-314 item 3)', () => {
+  it('WebM é convertido UMA vez; upload/envio têm no máximo 2 tentativas', async () => {
+    let conversions = 0;
+    let attempts = 0;
+    const failing = new MockWhatsAppDriver();
+    failing.sendMedia = async () => {
+      attempts += 1;
+      throw new Error('Meta fora');
+    };
+    const whatsapp = new WhatsAppService({
+      credentials: resolver(),
+      driver: failing,
+      queue: createInMemoryQueue({ sleep: async () => undefined }),
+      attempts: 3,
+      convertAudio: async () => {
+        conversions += 1;
+        return Buffer.from('OggS');
+      },
+    });
+    const tenant = await createTenant();
+    modes.set(tenant.id, 'cloud_api');
+    await expect(
+      whatsapp.sendMedia(tenant.id, '5548', { buffer: Buffer.from('webm'), mimeType: 'audio/webm', fileName: 'r.webm' }),
+    ).rejects.toThrow();
+    expect(conversions).toBe(1);
+    expect(attempts).toBe(2);
+  });
+
+  it('formato recusado nem entra na fila', async () => {
+    let attempts = 0;
+    const counting = new MockWhatsAppDriver();
+    counting.sendMedia = async () => {
+      attempts += 1;
+      return { externalId: 'x' };
+    };
+    const whatsapp = new WhatsAppService({
+      credentials: resolver(),
+      driver: counting,
+      queue: createInMemoryQueue({ sleep: async () => undefined }),
+    });
+    const tenant = await createTenant();
+    await expect(
+      whatsapp.sendMedia(tenant.id, '5548', { buffer: Buffer.from('x'), mimeType: 'video/quicktime', fileName: 'a.mov' }),
+    ).rejects.toThrow(/nao aceito/);
+    expect(attempts).toBe(0);
+  });
+});
+
 describe('envio de anexo pela Cloud API (D-314 item 2)', () => {
   it('formato que a Meta não aceita: 400 com o motivo, nada gravado; PDF passa', async () => {
     const { ana, conversation } = await lab();
@@ -203,6 +255,60 @@ describe('envio de anexo pela Cloud API (D-314 item 2)', () => {
     expect(response.body.error.details).toMatchObject({ reason: 'cloud_api_image_limit', max: 5 * 1024 * 1024 });
     expect(await agentMessages(conversation.id)).toHaveLength(0);
   }, 30_000);
+
+  it('GIF e PNG animados: recusados na API oficial (a Meta só aceita imagem parada)', async () => {
+    const { ana, conversation } = await lab();
+    const frame = await sharp({
+      create: { width: 8, height: 8, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 1 } },
+    })
+      .png()
+      .toBuffer();
+    const idat = frame.indexOf('IDAT', 8, 'latin1') - 4;
+    const actl = Buffer.alloc(20);
+    actl.writeUInt32BE(8, 0);
+    actl.write('acTL', 4, 'latin1');
+    actl.writeUInt32BE(2, 8);
+    const apng = Buffer.concat([frame.subarray(0, idat), actl, frame.subarray(idat)]);
+    const png = await attach(conversation.id, ana, { name: 'anim.png', type: 'image/png', bytes: apng }).expect(400);
+    expect(png.body.error.details.reason).toBe('cloud_api_media_type');
+
+    // GIF89a 1x1 com dois quadros e laço NETSCAPE (o sharp le 2 páginas).
+    const gifFrame = '21f904000a0000002c00000000010001000002024401' + '00';
+    const animated = Buffer.from(
+      '4749463839610100010080000000' + '0000ffffff' + '21ff0b' + Buffer.from('NETSCAPE2.0').toString('hex') +
+        '0301000000' + gifFrame + gifFrame + '3b',
+      'hex',
+    );
+    const response = await attach(conversation.id, ana, { name: 'anim.gif', type: 'image/gif', bytes: animated }).expect(400);
+    expect(response.body.error.details.reason).toBe('cloud_api_media_type');
+    expect(await agentMessages(conversation.id)).toHaveLength(0);
+  });
+
+  it('janela fechada + formato recusado: o aviso é o do formato (vem antes da janela)', async () => {
+    const { tenant, ana } = await lab();
+    // Conversa sem fala do paciente: janela fechada (D-310).
+    const fechada = await createConversation({ tenantId: tenant.id, assignedTo: ana.id });
+    const response = await attach(fechada.id, ana, { name: 'lista.csv', type: 'text/csv', bytes: Buffer.from('a,b') }).expect(400);
+    expect(response.body.error.details.reason).toBe('cloud_api_media_type');
+    const pdf = await attach(fechada.id, ana, { name: 'a.pdf', type: 'application/pdf', bytes: Buffer.from('%PDF-1.4 x') });
+    expect(pdf.body.error.code).toBe('WHATSAPP_WINDOW_CLOSED');
+  });
+
+  it('"tentar de novo" de anexo gravado no QR e reenviado na API oficial: 400 com o motivo', async () => {
+    const { tenant, ana, conversation } = await lab('qr');
+    vi.spyOn(driver, 'sendMedia').mockRejectedValueOnce(new Error('gateway fora'));
+    const failed = await attach(conversation.id, ana, { name: 'lista.csv', type: 'text/csv', bytes: Buffer.from('a,b') });
+    const messageId = (failed.body.id ?? failed.body.error?.details?.messageId) as string;
+    await exec(`UPDATE messages SET status = 'failed' WHERE id = $1`, [messageId]);
+    modes.set(tenant.id, 'cloud_api');
+    const retry = await app.agent
+      .post(`/api/v1/conversations/${conversation.id}/messages/${messageId}/retry`)
+      .set(app.auth(ana))
+      .expect(400);
+    expect(retry.body.error.details.reason).toBe('cloud_api_media_type');
+    const [row] = await query<{ status: string }>('SELECT status FROM messages WHERE id = $1', [messageId]);
+    expect(row?.status).toBe('failed');
+  });
 
   it('no QR o mesmo CSV continua saindo', async () => {
     const { ana, conversation } = await lab('qr');
@@ -242,6 +348,25 @@ describe('mídia recebida pela Cloud API (D-314 itens 4 e 5)', () => {
     await mediaNotice(slug, { id: 'wamid.IMG1', type: 'image', image: { id: 'MID-IMG', mime_type: 'image/png', caption: 'Meu pedido' } });
     const [row] = await patientMessages(tenant.id);
     expect(row).toMatchObject({ content: 'Meu pedido', message_type: 'image' });
+  });
+
+  it('figurinha mantém o WebP e vira sticker; recado de voz recebido vira áudio', async () => {
+    const { tenant, slug } = await lab();
+    const webp = await sharp({ create: { width: 16, height: 16, channels: 4, background: { r: 0, g: 200, b: 0, alpha: 1 } } })
+      .webp()
+      .toBuffer();
+    driver.next = async () => ({ buffer: webp, mimeType: 'image/webp' });
+    await mediaNotice(slug, { id: 'wamid.STK1', type: 'sticker', sticker: { id: 'MID-STK', mime_type: 'image/webp' } });
+    const ogg = Buffer.concat([Buffer.from('OggS'), Buffer.alloc(24), Buffer.from('OpusHead'), Buffer.alloc(64)]);
+    driver.next = async () => ({ buffer: ogg, mimeType: 'audio/ogg; codecs=opus' });
+    await mediaNotice(slug, { id: 'wamid.VOZ1', type: 'audio', audio: { id: 'MID-VOZ', mime_type: 'audio/ogg; codecs=opus', voice: true } });
+    const rows = await patientMessages(tenant.id);
+    expect(rows.map((r) => r.message_type)).toEqual(['sticker', 'audio']);
+    const media = await query<{ mime_type: string }>(
+      `SELECT mime_type FROM message_media WHERE tenant_id = $1 ORDER BY created_at`,
+      [tenant.id],
+    );
+    expect(media[0]?.mime_type).toBe('image/webp');
   });
 
   it('download que falha: entra o aviso de texto, sem anexo', async () => {

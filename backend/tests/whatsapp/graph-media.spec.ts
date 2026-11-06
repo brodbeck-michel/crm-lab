@@ -30,7 +30,7 @@ interface Hit {
 let server: Server;
 let hits: Hit[];
 let base: string;
-let respond: (hit: Hit) => { status: number; body: unknown; headers?: Record<string, string> };
+let respond: (hit: Hit) => { status: number; body: unknown; headers?: Record<string, string>; chunked?: boolean };
 
 async function readRaw(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -50,8 +50,14 @@ beforeEach(async () => {
         raw,
       };
       hits.push(hit);
-      const { status, body, headers } = respond(hit);
-      if (Buffer.isBuffer(body)) {
+      const { status, body, headers, chunked } = respond(hit);
+      if (Buffer.isBuffer(body) && chunked) {
+        // Sem content-length: o corpo vem em pedaços (transfer-encoding chunked).
+        res.writeHead(status, { 'Content-Type': 'application/octet-stream', ...headers });
+        const piece = 1024 * 1024;
+        for (let i = 0; i < body.byteLength; i += piece) res.write(body.subarray(i, i + piece));
+        res.end();
+      } else if (Buffer.isBuffer(body)) {
         res.writeHead(status, { 'Content-Type': 'application/octet-stream', ...headers });
         res.end(body);
       } else {
@@ -217,6 +223,25 @@ describe('HttpWhatsAppDriver.downloadMedia', () => {
     expect(error).toBeInstanceOf(MediaDownloadError);
     expect((error as MediaDownloadError).reason).toBe('too_large');
     expect(hits).toHaveLength(1);
+  });
+
+  it('sem content-length e acima do teto: para de ler e recusa', async () => {
+    respond = (hit) =>
+      hit.url === '/v21.0/BIG'
+        ? { status: 200, body: { url: `${base}/file/BIG`, mime_type: 'video/mp4' } }
+        : { status: 200, body: Buffer.alloc(MAX_MEDIA_BYTES + 1024 * 1024), chunked: true };
+    const error = await new HttpWhatsAppDriver().downloadMedia(creds(), 'BIG').catch((err: unknown) => err);
+    expect((error as MediaDownloadError).reason).toBe('too_large');
+  });
+
+  it('redirecionamento no arquivo: não segue (o token não sai) e falha', async () => {
+    respond = (hit) =>
+      hit.url === '/v21.0/R'
+        ? { status: 200, body: { url: `${base}/file/R`, mime_type: 'image/jpeg', file_size: 10 } }
+        : { status: 302, body: {}, headers: { Location: 'http://evil.example/x' } };
+    const error = await new HttpWhatsAppDriver().downloadMedia(creds(), 'R').catch((err: unknown) => err);
+    expect((error as MediaDownloadError).reason).toBe('http_error');
+    expect(hits).toHaveLength(2);
   });
 
   it('URL fora da Meta: o token não sai', async () => {

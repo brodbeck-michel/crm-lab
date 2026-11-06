@@ -55,6 +55,7 @@ import {
   MAX_CAPTION_LENGTH,
   cloudApiMediaRule,
   messageAuthorActionBlock,
+  normalizeMediaMimeType,
 } from '@crm-lab/shared';
 import type {
   Conversation,
@@ -89,6 +90,7 @@ import type { AutoReplyService } from './auto-reply.service.js';
 import { claimFreeConversation } from './conversation-claim.js';
 import { createFirstContactGuard, type FirstContactGuard } from './first-contact.service.js';
 import { createWhatsAppWindowGuard, type WhatsAppWindowGuard } from './whatsapp-window.service.js';
+import { isAnimatedPng } from './image-to-jpeg.js';
 import { fillTemplate } from './whatsapp-templates.js';
 import {
   createWhatsAppService,
@@ -307,11 +309,6 @@ export class MessageService {
   }
 
   /**
-   * Pre-checagem do canal para o controller, ANTES de reabrir a encerrada,
-   * assumir a fila ou guardar midia (D-273): credencial (D-308) e janela de
-   * 24 h (D-310), nesta ordem. A recusa nao deixa efeito.
-   */
-  /**
    * Anexo pela Cloud API (CRMLAB-140, D-314 item 2): o arquivo JA preparado
    * (imagem em JPEG) tem de ser um formato que a Meta aceita. Recusa antes de
    * reabrir/assumir/gravar. Fora de `cloud_api`, nada a conferir.
@@ -326,7 +323,10 @@ export class MessageService {
     if (!conversation || conversation.channel !== 'whatsapp') return;
     if ((await this.whatsapp.connectionMode(tenantId)) !== 'cloud_api') return;
     const rule = cloudApiMediaRule(media.mimeType);
-    if (!rule) {
+    // PNG animado chega como `image/png` (o sniff junta APNG e PNG) e nao vira
+    // JPEG (D-290 mantem animacao): a Meta so aceita imagem parada.
+    const animated = normalizeMediaMimeType(media.mimeType) === 'image/png' && isAnimatedPng(media.buffer);
+    if (!rule || animated) {
       throw new BusinessError('VALIDATION_ERROR', {
         reason: 'cloud_api_media_type',
         fields: { mimeType: CLOUD_API_ACCEPTED_FORMATS },
@@ -341,6 +341,11 @@ export class MessageService {
     }
   }
 
+  /**
+   * Pre-checagem do canal para o controller, ANTES de reabrir a encerrada,
+   * assumir a fila ou guardar midia (D-273): credencial (D-308) e janela de
+   * 24 h (D-310), nesta ordem. A recusa nao deixa efeito.
+   */
   async assertChannelReadyFor(
     tenantId: string,
     conversationId: string,
@@ -732,6 +737,11 @@ export class MessageService {
     });
   }
 
+  /** A mensagem com este id externo ja foi gravada? (CRMLAB-140: nao baixa a midia de novo.) */
+  async isKnownExternalId(tenantId: string, externalId: string): Promise<boolean> {
+    return (await this.messages.findByExternalId(tenantId, externalId)) !== null;
+  }
+
   /**
    * Mensagem do paciente (webhook). Incrementa `unread_count` e sobe
    * `last_message_at` — feito na mesma transacao do INSERT pelo repositorio.
@@ -740,11 +750,6 @@ export class MessageService {
    * existente SEM inserir e SEM emitir de novo. O canal reentrega o mesmo POST
    * quando nao recebe 200 a tempo (SECURITY.md "Webhooks").
    */
-  /** A mensagem com este id externo ja foi gravada? (CRMLAB-140: nao baixa a midia de novo.) */
-  async isKnownExternalId(tenantId: string, externalId: string): Promise<boolean> {
-    return (await this.messages.findByExternalId(tenantId, externalId)) !== null;
-  }
-
   async createFromPatient(
     tenantId: string,
     conversationId: string,
@@ -958,6 +963,13 @@ export class MessageService {
       throw new BusinessError('VALIDATION_ERROR', {
         fields: { template: 'Modelo da Meta so no WhatsApp pela API oficial (cloud_api)' },
       });
+    }
+    // Anexo gravado no QR e reenviado depois da troca para a API oficial: o
+    // formato e conferido ANTES (400 com o motivo), nao na fila (D-314).
+    const retryMediaId = templateSend ? null : mediaIdOf(message.attachmentUrl);
+    if (retryMediaId) {
+      const media = await readMedia(retryMediaId);
+      if (media) await this.assertCloudMediaAccepted(tenantId, conversationId, media);
     }
     if (!templateSend) {
       await this.assertWindowOpen(tenantId, conversation);

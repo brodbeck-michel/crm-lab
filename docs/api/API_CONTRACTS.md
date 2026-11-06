@@ -1261,12 +1261,16 @@ e a mensagem sai por id de mídia. Formatos aceitos, conferidos **depois** da pr
 JPEG, D-290): imagem JPEG/PNG até 5 MB; áudio AAC, AMR, MP3, MP4, OGG até 16 MB; vídeo MP4/3GP até
 16 MB; documento PDF, Word, Excel, PowerPoint e TXT. Recado de voz `audio/webm` é convertido para
 OGG/Opus (ffmpeg) no envio; o CRM guarda e mostra o original. Ordem das checagens em `cloud_api`:
-validação do arquivo (allow-list, teto de 15 MiB) → `CHANNEL_CLOUD_API_NOT_CONFIGURED` → **formato
-da Meta** (`VALIDATION_ERROR` com `details.reason: "cloud_api_media_type"` e `fields.mimeType`
-listando os aceitos; imagem acima de 5 MB → `MEDIA_TOO_LARGE` com `details.reason:
-"cloud_api_image_limit"`, `details.max: 5242880`) → `WHATSAPP_WINDOW_CLOSED` (D-310) →
-`MESSAGE_SEND_FAILED` (upload ou envio recusado pela Meta, ou conversão do áudio que falhou). As
-recusas antes da janela não gravam nada nem reabrem a conversa.
+validação do arquivo (allow-list, teto de 15 MiB) → **formato da Meta** (`VALIDATION_ERROR` com
+`details.reason: "cloud_api_media_type"` e `fields.mimeType` listando os aceitos — inclui GIF e PNG
+**animados**; imagem acima de 5 MB → `MEDIA_TOO_LARGE` com `details.reason:
+"cloud_api_image_limit"`, `details.max: 5242880`) → `CHANNEL_CLOUD_API_NOT_CONFIGURED` →
+`WHATSAPP_WINDOW_CLOSED` (D-310) → `MESSAGE_SEND_FAILED` (upload ou envio recusado pela Meta, ou
+conversão do áudio que falhou). O formato vem antes da janela para a atendente saber que o
+problema é o arquivo. Nenhuma recusa antes do envio grava nada nem reabre a conversa. O "tentar de
+novo" de um anexo (`POST .../retry`) confere o formato da Meta do mesmo jeito (anexo gravado no QR e
+reenviado depois da troca → 400 com o motivo). Envio de anexo pela Meta: no máximo **2 tentativas**
+(upload 12 s + envio 10 s cada; conversão do áudio, 15 s, fora delas), para caber nos 60 s do proxy.
 
 **Erros:** `WHATSAPP_WINDOW_CLOSED` (409, D-310), `CHANNEL_CLOUD_API_UNAVAILABLE` (503, D-308 — produção sem `WHATSAPP_API_URL`; nada gravado), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308),
 `VALIDATION_ERROR` (400), `NOT_FOUND` (404), `CONVERSATION_ALREADY_ASSIGNED` (409,

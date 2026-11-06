@@ -705,7 +705,7 @@ export class MockWhatsAppDriver implements WhatsAppDriver {
  */
 export const META_TIMEOUT_MS = 10_000;
 /** Upload de anexo (ate 16 MB) leva mais que uma chamada de texto. */
-export const META_MEDIA_TIMEOUT_MS = 60_000;
+export const META_MEDIA_TIMEOUT_MS = 12_000;
 
 /** Teto de paginas de `message_templates` (100 por pagina): conta normal tem dezenas. */
 export const MAX_TEMPLATE_PAGES = 10;
@@ -933,11 +933,18 @@ export class HttpWhatsAppDriver implements WhatsAppDriver {
           headers: { Authorization: `Bearer ${credentials.apiToken}` },
           body: form,
         });
-        const body: unknown = response.ok ? await response.json() : null;
+        const body: unknown = response.ok ? await response.json() : await metaErrorCode(response);
         return { ok: response.ok, status: response.status, payload: body };
       },
     );
-    if (!ok) throw new Error(`WhatsApp API respondeu ${status} ao subir a midia`);
+    if (!ok) {
+      logger.warn('whatsapp.media_upload_refused', {
+        tenantId: credentials.tenantId,
+        status,
+        metaError: typeof payload === 'string' ? payload : null,
+      });
+      throw new Error(`WhatsApp API respondeu ${status} ao subir a midia`);
+    }
     const id = typeof payload === 'object' && payload !== null ? (payload as Record<string, unknown>).id : null;
     if (typeof id !== 'string' || id === '') throw new Error('WhatsApp API nao devolveu id da midia');
     return id;
@@ -973,7 +980,7 @@ export class HttpWhatsAppDriver implements WhatsAppDriver {
       if (!response.ok) throw new MediaDownloadError('http_error');
       const length = Number(response.headers.get('content-length') ?? '0');
       if (length > MAX_MEDIA_BYTES) throw new MediaDownloadError('too_large');
-      return Buffer.from(await response.arrayBuffer());
+      return readCapped(response, MAX_MEDIA_BYTES);
     });
     if (buffer.byteLength === 0) throw new MediaDownloadError('bad_response');
     if (buffer.byteLength > MAX_MEDIA_BYTES) throw new MediaDownloadError('too_large');
@@ -1257,6 +1264,41 @@ function pricingCategoryOf(record: Record<string, unknown>, externalId: string):
   return null;
 }
 
+/**
+ * Le o corpo parando no teto (CRMLAB-140): sem `content-length`, um arquivo
+ * maior que o permitido nao chega a ficar inteiro na memoria.
+ */
+async function readCapped(response: Response, max: number): Promise<Buffer> {
+  if (!response.body) return Buffer.alloc(0);
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      await reader.cancel();
+      throw new MediaDownloadError('too_large');
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks);
+}
+
+/** `error.code`/`error_subcode` da resposta de erro da Meta — sem PII, para o log. */
+async function metaErrorCode(response: Response): Promise<string | null> {
+  try {
+    const body: unknown = await response.json();
+    const error = typeof body === 'object' && body !== null ? (body as Record<string, unknown>).error : null;
+    if (typeof error !== 'object' || error === null) return null;
+    const { code, error_subcode: subcode } = error as Record<string, unknown>;
+    return [code, subcode].filter((v) => typeof v === 'number' || typeof v === 'string').join('/') || null;
+  } catch {
+    return null;
+  }
+}
+
 /** Marca por onde o envio saiu (CRMLAB-141). */
 async function withVia(credentials: WhatsAppCredentials, sending: Promise<SendResult>): Promise<SendResult> {
   const result = await sending;
@@ -1509,7 +1551,16 @@ export interface WhatsAppServiceDeps {
   attempts?: number;
   /** Relogio do cache de modelos (CRMLAB-136); o teste avanca o tempo. */
   now?: () => number;
+  /** Conversao WebM -> OGG do recado de voz na Cloud API (CRMLAB-140); injetavel no teste. */
+  convertAudio?: AudioConverter;
 }
+
+/**
+ * Tentativas do anexo pela Cloud API (CRMLAB-140): o pedido HTTP da atendente
+ * fica aberto e o nginx corta em 60 s. Orcamento: ffmpeg (15 s, fora da fila) +
+ * 2 x (upload 12 s + envio 10 s) + backoff < 60 s.
+ */
+export const CLOUD_API_MEDIA_ATTEMPTS = 2;
 
 /** Validade do cache de modelos por laboratorio (D-309 item 1). */
 export const TEMPLATE_CACHE_TTL_MS = 5 * 60_000;
@@ -1535,6 +1586,7 @@ export class WhatsAppService {
   private readonly queue: QueueService;
   private readonly credentials: WhatsAppCredentialsResolver;
   private readonly attempts: number;
+  private readonly convertAudio: AudioConverter;
   private readonly now: () => number;
 
   constructor(deps: WhatsAppServiceDeps) {
@@ -1544,6 +1596,7 @@ export class WhatsAppService {
     this.evolutionDriver = deps.evolutionDriver;
     this.queue = deps.queue ?? createQueue();
     this.attempts = deps.attempts ?? 3;
+    this.convertAudio = deps.convertAudio ?? convertAudioToOgg;
   }
 
   /**
@@ -1655,13 +1708,42 @@ export class WhatsAppService {
   ): Promise<SendResult> {
     const credentials = await this.sendableCredentials(tenantId);
     const driver = this.driverFor(credentials);
+    if (credentials.connectionMode === 'qr') {
+      return withVia(
+        credentials,
+        this.queue.run('whatsapp.send_media', () => driver.sendMedia(credentials, phone, media, options), {
+          attempts: this.attempts,
+        }),
+      );
+    }
 
+    // Cloud API (D-314): o que nunca muda entre tentativas fica FORA da fila —
+    // formato recusado e ffmpeg que falhou nao sao repetidos; o WebM e
+    // convertido uma vez so.
+    const prepared = await this.prepareCloudMedia(media);
     return withVia(
       credentials,
-      this.queue.run('whatsapp.send_media', () => driver.sendMedia(credentials, phone, media, options), {
-        attempts: this.attempts,
+      this.queue.run('whatsapp.send_media', () => driver.sendMedia(credentials, phone, prepared, options), {
+        attempts: Math.min(this.attempts, CLOUD_API_MEDIA_ATTEMPTS),
       }),
     );
+  }
+
+  /** Formato e tamanho da Meta + WebM -> OGG (CRMLAB-140). Lanca sem chamar a Meta. */
+  private async prepareCloudMedia(media: OutboundMedia): Promise<OutboundMedia> {
+    const rule = cloudApiMediaRule(media.mimeType);
+    if (!rule) throw new Error('formato de anexo nao aceito pela API oficial da Meta');
+    let prepared = media;
+    if (normalizeMediaMimeType(media.mimeType) === 'audio/webm') {
+      prepared = {
+        ...media,
+        buffer: await this.convertAudio(media.buffer),
+        mimeType: 'audio/ogg',
+        fileName: `${media.fileName.replace(/\.[^./]+$/, '')}.ogg`,
+      };
+    }
+    if (prepared.buffer.byteLength > rule.maxBytes) throw new Error('anexo acima do limite da API oficial da Meta');
+    return prepared;
   }
 
   /** Reacao (CRMLAB-66, D-222) — mesma disciplina de `send`. `emoji: ''` remove. */

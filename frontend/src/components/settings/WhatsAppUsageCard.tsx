@@ -57,7 +57,10 @@ const COLUMNS: Array<DataTableColumn<WhatsAppUsageCategory>> = [
 export function WhatsAppUsageCard() {
   const max = currentMonth();
   const [month, setMonth] = useState(max);
-  const { data, isLoading, isError } = useWhatsAppUsage(month, { enabled: month !== '' });
+  // `type="month"` vira texto livre no Firefox/Safari: confere antes de chamar.
+  const valid = /^2\d{3}-(0[1-9]|1[0-2])$/.test(month);
+  const future = valid && month > max;
+  const { data, isLoading, isError } = useWhatsAppUsage(month, { enabled: valid && !future });
 
   const service = data?.categories.find((c) => c.category === 'service');
   const freeLeft = data && service ? Math.max(data.freeServiceAllowance - service.freeCount, 0) : null;
@@ -72,19 +75,34 @@ export function WhatsAppUsageCard() {
             value={month}
             max={max}
             aria-label="Mês do relatório"
-            onChange={(event) => setMonth(event.target.value)}
+            // Campo apagado volta ao mês corrente, em vez de deixar a seção vazia.
+            onChange={(event) => setMonth(event.target.value === '' ? max : event.target.value)}
           />
         </div>
       </div>
 
-      {isLoading && <p className="m-0 font-body text-caption text-neutral-600">Carregando…</p>}
-      {isError && (
+      {!valid && (
+        <p className="m-0 font-body text-caption text-danger" role="alert">
+          Informe o mês no formato AAAA-MM.
+        </p>
+      )}
+      {future && (
+        <p className="m-0 font-body text-caption text-danger" role="alert">
+          Escolha um mês até o atual.
+        </p>
+      )}
+      {valid && !future && isLoading && (
+        <p className="m-0 font-body text-caption text-neutral-600" role="status">
+          Carregando…
+        </p>
+      )}
+      {valid && !future && isError && (
         <p className="m-0 font-body text-caption text-danger" role="alert">
           Não foi possível carregar o uso deste mês.
         </p>
       )}
 
-      {data && (
+      {valid && !future && data && (
         <>
           <DataTable
             columns={COLUMNS}

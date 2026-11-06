@@ -21,7 +21,8 @@ import { BusinessError } from '../http/errors.js';
 import { WhatsAppUsageRepository } from '../repositories/whatsapp-usage.repository.js';
 
 const TIMEZONE = 'America/Sao_Paulo';
-const MONTH_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])$/;
+/** Ano 2000+ (o Postgres nao tem o ano 0000; nao ha Cloud API antes disso). */
+const MONTH_PATTERN = /^(2\d{3})-(0[1-9]|1[0-2])$/;
 
 /** Data civil (YYYY-MM-DD) em America/Sao_Paulo. */
 function localDate(instant: Date): string {

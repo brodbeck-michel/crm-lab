@@ -4810,11 +4810,12 @@ posterior (`failed` e `pending` não contam), agrupadas por `messages.pricing_ca
 item traz `unitPrice` do último vigente — o do fim do mês, ou de hoje no mês corrente — e o custo soma
 por mensagem). `categories` traz sempre as quatro, nesta ordem; `cost` e `totalCost` com 2 casas
 (`totalCost` = soma dos `cost`). Mês civil de America/Sao_Paulo. `month` fora de `AAAA-MM`, repetido
-na query ou futuro → `VALIDATION_ERROR`.
+na query, anterior a 2000 ou futuro → `VALIDATION_ERROR`.
 
 **Quando a categoria é gravada:** na confirmação do envio que saiu **pela Cloud API** (texto, anexo,
 "tentar de novo" e cartão): `template_category` se é modelo, senão `service`. Envio que falhou não
-ganha categoria; `qr` fica `NULL`. O `pricing.category` do status da Meta corrige (§2b). É estimativa, **não** a fatura da Meta.
+ganha categoria; o que sai pelo `qr` fica `NULL` (inclusive o "tentar de novo" de uma mensagem que
+tinha saído pela Meta, depois de voltar para o QR). O `pricing.category` do status da Meta corrige (§2b). É estimativa, **não** a fatura da Meta.
 
 **Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403, `requiredRoles: ["manager","admin"]`)
 

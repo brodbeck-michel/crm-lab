@@ -7032,6 +7032,8 @@ não usa). A conferência do `phone_number_id` descarta o `value` inteiro (mensa
 - a categoria é gravada na **confirmação** do envio, só quando ele saiu pela Cloud API (o
   `WhatsAppService` devolve por onde saiu): se o modo mudar no meio, vale o caminho real;
 - "por número" = por laboratório: o laboratório tem um número da Meta só (`tenant_channels`);
+- envio confirmado pelo QR grava `pricing_category = NULL`, inclusive o reenvio de uma mensagem que
+  tinha saído pela Meta (item 6);
 - o preço exibido (`unitPrice`) é o vigente no fim do mês (ou hoje no mês corrente); o custo soma
   mensagem a mensagem pelo preço da data de cada uma;
 - a tela é um bloco "Uso e custo do WhatsApp (API oficial)" em Canais & Equipe (gestor e admin, só

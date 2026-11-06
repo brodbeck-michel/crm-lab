@@ -62,6 +62,7 @@ import type {
   PaginationMeta,
   MessageTemplateInfo,
   SendTemplateRequest,
+  WhatsAppPricingCategory,
   WhatsAppWindowStatus,
 } from '@crm-lab/shared';
 import type { ApiModuleDeps } from '../http/api-module.js';
@@ -1447,7 +1448,11 @@ export class MessageService {
   }
 
   /** `pricing.category` do status da Meta (D-312 item 1). Sem WS: nao muda nada na tela. */
-  async applyExternalPricing(tenantId: string, externalId: string, category: string): Promise<boolean> {
+  async applyExternalPricing(
+    tenantId: string,
+    externalId: string,
+    category: WhatsAppPricingCategory,
+  ): Promise<boolean> {
     return this.messages.setPricingCategoryByExternalId(tenantId, externalId, category);
   }
 

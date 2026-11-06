@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChannelSettingsResponse, UserRole, WhatsAppUsageResponse } from '@crm-lab/shared';
 import { channelsApi } from '@/api/channels';
 import { settingsApi } from '@/api/settings';
-import { mutationIdle, querySuccess } from '@/test/query-mocks';
+import { mutationIdle, queryError, queryLoading, querySuccess } from '@/test/query-mocks';
 import { ToastProvider } from '@/components/ui';
 import { useAuthStore } from '@/stores';
 import ChannelsSettings from './Channels';
@@ -157,6 +157,31 @@ describe('ChannelsSettings', () => {
       expect(within(block).getByText(/restam 0\./)).toBeInTheDocument();
       expect(within(block).getByTestId('whatsapp-usage-total')).toHaveTextContent('R$ 13,72');
       expect(within(block).getByText(/Não é a fatura/)).toBeInTheDocument();
+    });
+
+    it('carregando e erro: a seção continua lá, com o aviso', async () => {
+      const { useWhatsAppUsage } = await import('@/api/channels');
+      vi.mocked(useWhatsAppUsage).mockReturnValue(queryLoading());
+      signIn('manager');
+      const { unmount } = renderPage();
+      const loading = await screen.findByTestId('whatsapp-usage');
+      expect(within(loading).getByRole('status')).toHaveTextContent('Carregando…');
+      unmount();
+
+      vi.mocked(useWhatsAppUsage).mockReturnValue(queryError(new Error('falhou')));
+      renderPage();
+      const block = await screen.findByTestId('whatsapp-usage');
+      expect(within(block).getByRole('alert')).toHaveTextContent('Não foi possível carregar o uso deste mês.');
+    });
+
+    it('mês futuro digitado: avisa e não consulta', async () => {
+      const { useWhatsAppUsage } = await import('@/api/channels');
+      signIn('manager');
+      renderPage();
+      const input = await screen.findByLabelText('Mês do relatório');
+      fireEvent.change(input, { target: { value: '2999-01' } });
+      expect(await screen.findByText('Escolha um mês até o atual.')).toBeInTheDocument();
+      expect(vi.mocked(useWhatsAppUsage)).toHaveBeenLastCalledWith('2999-01', { enabled: false });
     });
 
     it('canal em qr: o bloco não aparece', async () => {

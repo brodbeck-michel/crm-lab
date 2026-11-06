@@ -26,6 +26,7 @@ import {
   type QuotedMessageSummary,
   type ReactorType,
   type SenderType,
+  type WhatsAppPricingCategory,
 } from '@crm-lab/shared';
 import type { DbClient, DbTx } from '../db/types.js';
 import { toIso, toIsoOrNull, toNumber } from './row-mappers.js';
@@ -798,9 +799,11 @@ export class MessageRepository {
          SET status = 'sent', external_message_id = $1,
              -- Modelo = categoria do modelo; texto/anexo na janela = service.
              -- Uma categoria ja corrigida pelo status da Meta nao e sobrescrita.
+             -- Saiu pelo QR (inclusive reenvio de uma que falhou na Meta): NULL,
+             -- o QR nao tem custo por mensagem (D-312 item 6).
              pricing_category = CASE
                WHEN $3::boolean THEN COALESCE(pricing_category, template_category, 'service')
-               ELSE pricing_category
+               ELSE NULL
              END
          WHERE id = $2
          RETURNING id`,
@@ -881,7 +884,7 @@ export class MessageRepository {
   async setPricingCategoryByExternalId(
     tenantId: string,
     externalMessageId: string,
-    category: string,
+    category: WhatsAppPricingCategory,
   ): Promise<boolean> {
     return this.db.withTenant(tenantId, async (tx) => {
       const updated = await tx.query<{ id: string }>(

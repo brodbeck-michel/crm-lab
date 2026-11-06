@@ -3925,11 +3925,19 @@ Branch `feature/CRMLAB-141-custo-cloud-api`, empilhada sobre o CRMLAB-139. Decis
   `docker-compose.prod.yml`.
 - **Tela:** seção "Uso e custo do WhatsApp (API oficial)" em Canais & Equipe, só em `cloud_api`
   (PAGES §10).
-- **Testes:** `crmlab141-custo.spec.ts` (10): categoria no envio (cloud_api texto/modelo, qr, falha),
+- **Testes:** `crmlab141-custo.spec.ts` (12): categoria no envio (cloud_api texto/modelo/anexo,
+  "tentar de novo" pela Meta e depois pelo QR, qr, falha),
   correção pelo status e categoria desconhecida, isolamento entre laboratórios, relatório (franquia,
   reajuste no meio do mês, virada de mês no fuso, `failed`/`pending`/sem categoria fora), mês
-  default, mês inválido/repetido/futuro, atendente 403, seed e permissão só de leitura. Frontend:
-  `Channels.spec.tsx` (+2).
+  default, mês inválido/repetido/futuro/ano 0000, atendente 403, seed e permissão só de leitura,
+  virada no início e no fim do mês. Frontend: `Channels.spec.tsx` (+4: bloco, qr, carga/erro, mês
+  futuro); helper `queryError` em `test/query-mocks.ts`. O reset dos testes devolve a tabela de
+  preços ao seed.
+- **Validação:** revisão independente por agente Opus 5.5. 1ª rodada: nenhum bloqueante; a corrigir:
+  reenvio pelo QR mantinha a categoria da Meta, `month=0000-01` dava 500, testes de anexo/"tentar de
+  novo"/virada do início do mês/carga e erro da tela. Todos tratados; sugestões aplicadas (tipo da
+  categoria, reset da tabela de preços, mês validado na tela, tabela mantida ao trocar de mês).
+  Ficou para decisão: regra de preço da Meta (serviço grátis e `pricing.billable`).
 
 
 ### 🚧 CRMLAB-139 — webhook da Meta (2026-11-06, em validação)

@@ -1004,7 +1004,9 @@ Seção própria logo depois de "Conexão de canal", **só quando o WhatsApp est
 (os dois leem o mesmo).
 
 - Dados: `GET /settings/channels/whatsapp/usage?month=YYYY-MM`
-- Seletor de mês (`input type="month"`), começa no mês corrente de São Paulo, sem mês futuro
+- Seletor de mês (`input type="month"`), começa no mês corrente de São Paulo. Formato inválido ou
+  mês futuro (o campo vira texto livre no Firefox/Safari) mostra o aviso e não consulta; campo
+  apagado volta ao mês corrente; trocar de mês mantém a tabela anterior até o novo chegar
 - Tabela com as quatro categorias (Atendimento (serviço), Utilidade, Marketing, Autenticação):
   mensagens, grátis (só serviço; nas outras "—"), preço unitário com até 4 casas, custo estimado
 - Rodapé: franquia de atendimento do mês e quanto resta, **total estimado** e o aviso fixo

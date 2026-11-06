@@ -176,6 +176,43 @@ describe('categoria de cobrança no envio (D-312 item 1)', () => {
     expect(await pricingOf(conversation.id)).toEqual([null]);
   });
 
+  it('anexo pela Cloud API = service', async () => {
+    const { ana, conversation } = await lab();
+    await app.agent
+      .post(`/api/v1/conversations/${conversation.id}/attachments`)
+      .set(app.auth(ana))
+      .send({
+        fileName: 'preparo.pdf',
+        mimeType: 'application/pdf',
+        contentBase64: Buffer.from('%PDF-1.4 preparo').toString('base64'),
+      })
+      .expect(201);
+    expect(await pricingOf(conversation.id)).toEqual(['service']);
+  });
+
+  it('"tentar de novo" pela Cloud API = service; reenvio pelo QR zera a categoria', async () => {
+    const { tenant, ana, conversation } = await lab();
+    vi.spyOn(driver, 'send').mockRejectedValueOnce(new Error('gateway fora'));
+    const failed = await app.agent
+      .post(`/api/v1/conversations/${conversation.id}/messages`)
+      .set(app.auth(ana))
+      .send({ content: 'Bom dia' });
+    const messageId = (failed.body.error?.details?.messageId ?? failed.body.id) as string;
+    const retry = () =>
+      app.agent
+        .post(`/api/v1/conversations/${conversation.id}/messages/${messageId}/retry`)
+        .set(app.auth(ana))
+        .expect(200);
+    await retry();
+    expect(await pricingOf(conversation.id)).toEqual(['service']);
+
+    // A Meta recusou depois (sent -> failed) e o laboratório voltou para o QR.
+    await exec(`UPDATE messages SET status = 'failed' WHERE id = $1`, [messageId]);
+    modes.set(tenant.id, 'qr');
+    await retry();
+    expect(await pricingOf(conversation.id)).toEqual([null]);
+  });
+
   it('envio que falhou não ganha categoria', async () => {
     const { ana, conversation } = await lab();
     vi.spyOn(driver, 'send').mockRejectedValueOnce(new Error('gateway fora'));
@@ -243,6 +280,8 @@ describe('GET /settings/channels/whatsapp/usage', () => {
     await sent(tenant.id, conversation.id, { at: '2026-10-10 12:00:00', category: 'marketing' });
     await sent(tenant.id, conversation.id, { at: '2026-10-20 12:00:00', category: 'marketing', status: 'read' });
     await sent(tenant.id, conversation.id, { at: '2026-10-21 12:00:00', category: 'utility', status: 'sent' });
+    // 01/10 02:00 UTC = 30/09 23:00 em São Paulo: é setembro, não conta em outubro.
+    await sent(tenant.id, conversation.id, { at: '2026-10-01 02:00:00', category: 'marketing' });
     // Não contam: falhou, pendente, de novembro (local), sem categoria (qr).
     await sent(tenant.id, conversation.id, { at: '2026-10-22 12:00:00', category: 'utility', status: 'failed' });
     await sent(tenant.id, conversation.id, { at: '2026-10-22 13:00:00', category: 'utility', status: 'pending' });
@@ -284,7 +323,7 @@ describe('GET /settings/channels/whatsapp/usage', () => {
 
   it('month inválido, repetido ou futuro: 400; atendente: 403', async () => {
     const { ana, gestor } = await lab();
-    for (const month of ['2026-13', '2026-1', 'outubro', '2999-01']) {
+    for (const month of ['2026-13', '2026-1', 'outubro', '2999-01', '0000-01', '1999-12']) {
       const response = await usage(gestor, month).expect(400);
       expect(response.body.error.code).toBe('VALIDATION_ERROR');
     }

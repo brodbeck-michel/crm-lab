@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   UpdateWhatsAppModeRequest,
   UpdateWhatsAppModeResponse,
@@ -43,6 +43,8 @@ export function useWhatsAppUsage(month: string, options?: { enabled: boolean }) 
     queryKey: queryKeys.whatsappUsage(month),
     queryFn: () => channelsApi.whatsAppUsage(month),
     enabled: options?.enabled ?? true,
+    // Trocar de mês não some com a tabela enquanto o novo carrega.
+    placeholderData: keepPreviousData,
   });
 }
 

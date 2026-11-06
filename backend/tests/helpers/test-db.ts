@@ -77,6 +77,9 @@ export async function resetDatabase(db?: DbClient): Promise<void> {
   if (tables.length === 0) return;
   const quoted = tables.map((t) => `"${t}"`).join(', ');
   await client.exec(`TRUNCATE TABLE ${quoted} RESTART IDENTITY CASCADE`);
+  // Referencia: volta ao seed da 065 (precos oficiais de 01/10/2026). Linha que
+  // um teste acrescentou nao vaza para o proximo.
+  await client.exec(`DELETE FROM whatsapp_price_table WHERE effective_from <> DATE '2026-10-01'`);
 }
 
 /** Fecha a instancia cacheada (afterAll de suites que sobem banco proprio). */

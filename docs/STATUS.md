@@ -3913,6 +3913,16 @@ Branch `docs/CRMLAB-142-runbook-sante-cloud-api` (só documentação), sobre o C
 Michel em 06/11: os dois caminhos descritos, escolha registrada no dia), ensaio em homologação com o
 número de teste da Meta, passo a passo do dia em prod, depois da troca (monitor do CRMLAB-99 deixa de
 valer), plano de volta. Itens de regra da Meta marcados "(conferir na Meta)".
+- **§4.0** (alinhamento com as gestoras em 06/11/2026: Santé contrata a API direto com a Meta,
+  mensalidade nova a partir de 25/11) escrita por outra sessão e comitada junto.
+- **Validação:** revisão independente por agente Opus 5.5. 1 bloqueante: no dia da troca o número
+  começava a falar pela Meta antes de o callback de prod e o `phone_number_id` estarem no CRM (avisos
+  descartados com 200, sem reentrega) — reordenado: callback e cadastro antes, modo por último. A
+  corrigir, todos tratados: segredo do webhook do laboratório (vence a env), app inscrito na WABA,
+  volta da hml ao mock (é a URL que liga a Meta, não o `MOCK`), volta da coexistência exige tirar o
+  callback (o webhook não olha o modo), versão pelo rodapé/tag da imagem; sugestões aplicadas (alerta
+  esperado ao desconectar o QR, sem monitor para a API oficial, PIN, nome de exibição, limites,
+  rótulos reais da tela, roteiro do ensaio).
 
 
 ### 🚧 CRMLAB-140 — anexos pela Cloud API (2026-11-06, em validação)

@@ -2374,7 +2374,7 @@ ALTER TABLE tenant_channels
 
 ### 47. WhatsApp Cloud API: credenciais, template, categoria de cobrança, preços e início da janela (migrações 063–066 — CRMLAB-135, D-308..D-312)
 **Uma migração por card** (decisão de 05/11/2026), para cada card subir sozinho:
-**063** = CRMLAB-138 (credenciais, implementada); **064** = CRMLAB-136 (colunas de template);
+**063** = CRMLAB-138 (credenciais, implementada); **064** = CRMLAB-136 (colunas de template, implementada; inclui `template_variables`);
 **065** = CRMLAB-141 (`pricing_category` + `whatsapp_price_table`). **066** = CRMLAB-137
 (`tenant_channels.cloud_api_since` + trigger e `messages.received_via`; emenda ao D-310, 05/11/2026
 — o número fica depois das reservadas; o migrador aplica por nome o que falta). Só `ADD COLUMN`
@@ -2403,6 +2403,7 @@ ALTER TABLE messages
   ADD COLUMN template_name VARCHAR(512) NULL,
   ADD COLUMN template_language VARCHAR(20) NULL,
   ADD COLUMN template_category VARCHAR(20) NULL,    -- marketing | utility (CHECK)
+  ADD COLUMN template_variables JSONB NULL,         -- 064: variáveis em ordem, para o 'tentar de novo'
   ADD COLUMN pricing_category VARCHAR(20) NULL;     -- service | utility | marketing | authentication (CHECK)
 -- CHECKs: valor nulo ou dentro da lista. `qr` nunca preenche nenhuma das quatro.
 

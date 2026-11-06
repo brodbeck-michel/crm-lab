@@ -78,6 +78,11 @@ export {
   useWhatsAppStatus,
   useWhatsAppDisconnect,
 } from './channels';
+export {
+  WHATSAPP_TEMPLATES_STALE_MS,
+  useWhatsAppTemplates,
+  whatsappTemplatesApi,
+} from './whatsapp-templates';
 
 import { analyticsApi } from './analytics';
 import { channelsApi } from './channels';
@@ -93,6 +98,7 @@ import { settingsApi } from './settings';
 import { proposalsApi } from './proposals';
 import { themesApi } from './themes';
 import { usersApi } from './users';
+import { whatsappTemplatesApi } from './whatsapp-templates';
 
 /** Fachada única: `api.proposals.list(filters)` (docs/guides/CONVENTIONS.md). */
 export const api = {
@@ -110,4 +116,5 @@ export const api = {
   operation: operationApi,
   patients: patientsApi,
   channels: channelsApi,
+  whatsappTemplates: whatsappTemplatesApi,
 } as const;

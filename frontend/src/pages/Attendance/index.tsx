@@ -7,8 +7,17 @@ import {
   type ListConversationsQuery,
   type ListPatientsQuery,
   type MessageSearchHit,
+  type SendTemplateRequest,
 } from '@crm-lab/shared';
-import { api, isApiError, queryKeys, queryScopes, staleTimes, usePresenceOf } from '@/api';
+import {
+  api,
+  isApiError,
+  queryKeys,
+  queryScopes,
+  staleTimes,
+  usePresenceOf,
+  useWhatsAppTemplates,
+} from '@/api';
 import { useQuickReplyList } from '@/api/quick-replies';
 import { useEffectiveFunnelRules } from '@/api/funnel-rules';
 import { useBusinessCalendar } from '@/api/holidays';
@@ -349,6 +358,20 @@ export function Attendance() {
   });
 
   /**
+   * Envio por modelo aprovado da Meta (CRMLAB-136, D-309). Só existe com a
+   * janela da Cloud API (`whatsappWindow` preenchido). Erro: o tratador avisa
+   * e a promessa rejeita, para o modal manter o que foi digitado.
+   */
+  const whatsappWindowNow = detailQuery.data?.pages[0]?.whatsappWindow ?? null;
+  const templatesQuery = useWhatsAppTemplates(whatsappWindowNow !== null);
+  const sendTemplate = useMutation({
+    mutationFn: (template: SendTemplateRequest) =>
+      api.conversations.sendMessage(selectedId as string, { template }),
+    onSuccess: invalidateConversation,
+    onError: handleSendError,
+  });
+
+  /**
    * Reação do laboratório (CRMLAB-66, D-222). Só invalida: o WS
    * `conversation.message_updated` faz o mesmo nas outras abas.
    */
@@ -673,7 +696,14 @@ export function Attendance() {
             onReact={(messageId, emoji) => react.mutate({ messageId, emoji })}
             onRetryMessage={(messageId) => retryMessage.mutate(messageId)}
             canEditMessages={detailQuery.data?.pages[0]?.canEditMessages ?? false}
-            whatsappWindow={detailQuery.data?.pages[0]?.whatsappWindow ?? null}
+            whatsappWindow={whatsappWindowNow}
+            {...(whatsappWindowNow !== null
+              ? {
+                  templates: templatesQuery.data?.templates ?? [],
+                  templatesLoading: templatesQuery.isLoading,
+                  onSendTemplate: (template: SendTemplateRequest) => sendTemplate.mutateAsync(template),
+                }
+              : {})}
             onEditMessage={(messageId, content) => editMessage.mutateAsync({ messageId, content })}
             onDeleteMessage={(messageId) => deleteMessage.mutate(messageId)}
             onPresence={sendPresence}

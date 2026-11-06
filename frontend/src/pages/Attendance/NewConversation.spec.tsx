@@ -42,6 +42,8 @@ const { ApiError } = await import('@/api');
 const { ToastProvider } = await import('@/components/ui');
 const { useAuthStore, useUIStore } = await import('@/stores');
 const { Attendance } = await import('./index');
+const { whatsappTemplatesApi } = await import('@/api/whatsapp-templates');
+const listTemplatesMock = vi.spyOn(whatsappTemplatesApi, 'list');
 
 /**
  * "Nova conversa" (CRMLAB-50, D-175) — PAGES.md §2, coluna 1.
@@ -135,6 +137,9 @@ async function openModal() {
 }
 
 beforeEach(() => {
+  // Laboratório em QR por padrão: lista de modelos vazia (CRMLAB-136).
+  listTemplatesMock.mockReset();
+  listTemplatesMock.mockResolvedValue({ templates: [] });
   listMock.mockReset();
   listMock.mockResolvedValue(EMPTY_LIST);
   getMock.mockReset();
@@ -353,6 +358,60 @@ describe('Atendimento — Nova conversa (CRMLAB-50)', () => {
     const alert = await within(dialog).findByRole('alert');
     expect(alert).toHaveTextContent(/^Nada foi enviado, mas a API oficial/);
     expect(alert).not.toHaveTextContent(/foi criada/);
+  });
+
+  it('Cloud API com modelos aprovados (CRMLAB-136): abre em "Modelo aprovado" e envia o modelo', async () => {
+    listTemplatesMock.mockResolvedValue({
+      templates: [
+        {
+          name: 'retomar_atendimento',
+          language: 'pt_BR',
+          category: 'utility',
+          body: 'Olá {{1}}, podemos continuar?',
+          variables: [{ index: 1, example: 'Maria' }],
+        },
+      ],
+    });
+    startWhatsAppMock.mockResolvedValue({
+      conversation: conversation({ id: 'c-new' }),
+      message: message(),
+    });
+    renderScreen();
+    const dialog = await openModal();
+
+    await userEvent.type(within(dialog).getByLabelText('Telefone (WhatsApp)'), '48999991234');
+    const picker = await within(dialog).findByLabelText('Modelo aprovado');
+    expect(within(dialog).queryByLabelText('Mensagem')).toBeNull();
+    await userEvent.selectOptions(picker, 'retomar_atendimento|pt_BR');
+    await userEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('preencha todas as variáveis');
+    expect(startWhatsAppMock).not.toHaveBeenCalled();
+
+    await userEvent.type(within(dialog).getByLabelText('Variável {{1}}'), 'Maria');
+    expect(within(dialog).getByTestId('template-preview')).toHaveTextContent('Olá Maria, podemos continuar?');
+    await userEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+
+    await waitFor(() =>
+      expect(startWhatsAppMock).toHaveBeenCalledWith({
+        phone: '+5548999991234',
+        template: { name: 'retomar_atendimento', language: 'pt_BR', variables: ['Maria'] },
+      }),
+    );
+  });
+
+  it('Cloud API: "Texto livre" avisa da janela de 24 h no lugar do aviso de primeiro contato', async () => {
+    listTemplatesMock.mockResolvedValue({
+      templates: [
+        { name: 'oi', language: 'pt_BR', category: 'utility', body: 'Oi', variables: [] },
+      ],
+    });
+    renderScreen();
+    const dialog = await openModal();
+    await within(dialog).findByLabelText('Modelo aprovado');
+    await userEvent.click(within(dialog).getByRole('tab', { name: 'Texto livre' }));
+    expect(within(dialog).getByLabelText('Mensagem')).toBeInTheDocument();
+    expect(within(dialog).getByTestId('free-text-window-notice')).toBeInTheDocument();
+    expect(within(dialog).queryByTestId('first-contact-notice')).toBeNull();
   });
 
   it('número em atendimento com outra pessoa: erro dentro do modal, com o nome', async () => {

@@ -235,6 +235,13 @@ Duas leituras registradas aqui porque o doc original não as fixava:
   `--color-bg/surface/text`
 - Composer: input pílula + anexos + **emoji** + enviar. O emoji entra na posição do cursor
   (Onda 8 §2.2), grade fixa de 48, sem dependência nova
+- **Modelo aprovado (CRMLAB-136, D-309):** na Cloud API, o aviso da janela de 24 h ganha "Enviar
+  modelo" (em destaque com a janela fechada; secundário com ela aberta; desabilitado, com o motivo,
+  sem modelo aprovado). Abre um modal: escolher o modelo, preencher cada `{{n}}` (o exemplo da Meta
+  é o placeholder) e ver a prévia exata. Recusa do servidor mantém o modal com o que foi digitado.
+  Mensagem por modelo leva o selo "Modelo" no balão. A Nova conversa, com modelos na lista, abre
+  em "Modelo aprovado" (alternativa "Texto livre", com o aviso da janela no lugar do de primeiro
+  contato)
 - **Responder assume (CRMLAB-75, D-215):** enviar numa conversa de "Não atribuídas" a torna da
   pessoa (o backend faz o claim); a lista troca de chip pelo `conversation.new_message`, sem
   clique em "Assumir". Se outra pessoa assumiu no mesmo instante, o envio volta

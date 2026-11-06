@@ -2076,7 +2076,8 @@ Dono de `proposal_reminders` (SCHEMA §42).
 ## 35. WhatsApp Cloud API — modo, templates, janela, webhook e custo (CRMLAB-135 — D-308..D-313)
 
 **Contrato.** Modo do canal e credenciais implementados no CRMLAB-138; janela de 24 h no CRMLAB-137;
-templates, webhook e custo ainda não (CRMLAB-136/139/141). Estende `WhatsAppService` (§11) e `ChannelSettingsService` (§13/§16).
+templates no CRMLAB-136 (`services/whatsapp-templates.ts` puro + `WhatsAppService.listTemplates`/
+`sendTemplate`, driver `listTemplates?`/`sendTemplate?`); webhook e custo ainda não (CRMLAB-139/141). Estende `WhatsAppService` (§11) e `ChannelSettingsService` (§13/§16).
 `connection_mode = 'cloud_api'` já escolhe o driver pelo `WhatsAppCredentialsResolver` (§16); aqui entram
 as regras do driver real da Meta.
 

@@ -6920,6 +6920,10 @@ filhos 136–141) completa o modo. **Contrato escrito antes do código (regra ze
 4. **Categoria na mensagem:** colunas novas em `messages` (migração 063): `template_name`,
    `template_language`, `template_category` (`marketing | utility`). A categoria de **cobrança**
    (D-312) é outra coluna. Template é válido dentro e fora da janela de 24 h.
+   **Complemento de 06/11/2026 (CRMLAB-136, com o OK do Michel):** a Nova conversa
+   (`POST /conversations/whatsapp`) também aceita `template` — é o primeiro contato pela Cloud API;
+   modelo conferido antes de criar a conversa. `messages.template_variables` (JSONB, 064) guarda as
+   variáveis para o "tentar de novo" reenviar o mesmo modelo. Rodapé também fica fora (só `BODY`).
 5. **Nome do conceito:** "template" aqui é o da Meta. Não confundir com os modelos de texto das
    Regras (`sendMessage.templates`, D-265), que continuam sendo texto livre do
    CRM e, no `cloud_api`, só saem dentro da janela.

@@ -820,8 +820,13 @@ mensagem pelo canal WhatsApp do laboratório, pelo **mesmo** `MessageService.cre
   `normalizeBrazilianPhone` (`@crm-lab/shared`): com ou sem máscara, com ou sem o `55`; DDD
   (dois dígitos de 1 a 9) + 9 dígitos começando por 9 (celular) ou 8 dígitos começando de 2 a 9.
   É normalizado para E.164 (`+5548999991234`) antes de procurar duplicata
-- `content`: obrigatório, 1..4000 caracteres (trim aplicado) — o mesmo limite de
-  `POST /conversations/:id/messages`
+- `content`: 1..4000 caracteres (trim aplicado) — o mesmo limite de
+  `POST /conversations/:id/messages`. **Exclusivo de `template`** (exatamente um dos dois).
+- `template` (CRMLAB-136, D-309): `{ name, language, variables: string[] }`, o mesmo de
+  `POST /conversations/:id/messages`. É o primeiro contato pela Cloud API (vale fora da janela).
+  Credencial e modelo são conferidos **antes** de criar a conversa do número novo: modelo fora da
+  lista aprovada (`NOT_FOUND`, `whatsapp_template`), variáveis erradas ou laboratório em `qr`
+  (`VALIDATION_ERROR`) não deixam conversa vazia.
 
 **Comportamento (D-175):**
 - **Número que já tem conversa no laboratório → reaproveita**, nunca duplica. O dedupe é o de
@@ -1102,10 +1107,16 @@ Enviar mensagem em uma conversa.
   `{ "name": "lembrete_coleta", "language": "pt_BR", "variables": ["Maria", "12/11"] }`, **exclusivo de
   `content`** (os dois juntos → `VALIDATION_ERROR`). `name`+`language` têm de estar na lista de
   `GET /whatsapp/templates` (senão `NOT_FOUND`, `details.resource: "whatsapp_template"`);
-  `variables` tem exatamente uma string não vazia por `{{n}}` do corpo (senão `VALIDATION_ERROR`,
-  `details.fields["template.variables"]`). A mensagem gravada tem `content` = corpo já preenchido,
-  `messageType: "text"` e `template: { name, language, category }` na resposta. Em `qr`, `template`
-  → `VALIDATION_ERROR`.
+  `variables` tem exatamente uma string não vazia por `{{n}}` do corpo, máx. 1024 cada (senão
+  `VALIDATION_ERROR`, `details.fields["template.variables"]`). A mensagem gravada tem `content` =
+  corpo já preenchido, `messageType: "text"` e `template: { name, language, category }` na resposta
+  (`Message.template`; `null` em texto livre). Em `qr`, `template` → `VALIDATION_ERROR`
+  (`fields.template`). Com `template` não vão `quotedMessageId`, `attachmentUrl` nem `messageType`
+  (`VALIDATION_ERROR`). O modelo é conferido na pré-checagem, **antes** de reabrir a encerrada ou
+  assumir a fila (D-273), e depois da credencial (ordem: `CHANNEL_CLOUD_API_NOT_CONFIGURED` →
+  modelo → janela). Resposta de participante por modelo não leva o `*Nome*` (o texto é o aprovado).
+  O **"tentar de novo"** de uma mensagem por modelo reenvia o **mesmo** modelo com as mesmas
+  variáveis (guardadas em `messages.template_variables`) e não depende da janela.
 - **Janela de 24 h (CRMLAB-137, D-310):** em `cloud_api`, sem `template`, só sai se a última mensagem
   do paciente tem menos de 24 h; senão `WHATSAPP_WINDOW_CLOSED` (409). Nada é gravado nem enviado.
   Com `template`, a janela não importa. A regra vale igual para `/attachments`, para o "tentar de
@@ -4704,8 +4715,12 @@ Troca `tenant_channels.connection_mode` do WhatsApp do laboratório (D-308).
 
 #### GET /whatsapp/templates (CRMLAB-136, D-309)
 Templates aprovados do laboratório, para o Composer. **Papéis:** `attendant`, `manager`, `admin`.
-Busca na Meta (`GET /{waba_id}/message_templates`), filtra `APPROVED` + `MARKETING|UTILITY`, só corpo
-de texto (cabeçalho/botão/mídia omitidos), cache de 5 min por laboratório.
+Busca na Meta (`GET /{waba_id}/message_templates`, todas as páginas, `paging.next` só da mesma
+origem da URL configurada), filtra `APPROVED` + `MARKETING|UTILITY`, só **um** componente `BODY` de
+texto (cabeçalho, rodapé, botão e mídia omitidos) com variáveis **posicionais** `{{1}}..{{n}}` sem
+buraco (formato nomeado omitido). `example` vem de `example.body_text[0]` (ou `null`). Cache de 5 min
+por laboratório; a chave inclui uma impressão das credenciais (modo, URL, WABA, token), então trocar
+credencial ou modo invalida sozinho.
 
 **Response (200):**
 ```json

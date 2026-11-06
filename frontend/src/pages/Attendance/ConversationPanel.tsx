@@ -6,7 +6,9 @@ import type {
   ConversationDetail,
   Message,
   QuickReply,
+  SendTemplateRequest,
   UserPresenceStatus,
+  WhatsAppTemplate,
   WhatsAppWindowStatus,
 } from '@crm-lab/shared';
 import { Badge, Button, cn } from '@/components/ui';
@@ -124,6 +126,10 @@ export interface ConversationPanelProps {
    * restrição. Fechada, o Composer bloqueia o envio e mostra o motivo.
    */
   whatsappWindow?: WhatsAppWindowStatus | null;
+  /** Modelos aprovados da Meta (CRMLAB-136): repassados ao Composer. */
+  templates?: readonly WhatsAppTemplate[];
+  templatesLoading?: boolean;
+  onSendTemplate?: (template: SendTemplateRequest) => Promise<unknown>;
   /** A autora edita (D-280). Promise: rejeitou, a caixa de edição fica aberta. */
   onEditMessage?: (messageId: string, content: string) => Promise<unknown>;
   /** A autora apaga para todos (D-280) — a confirmação é do balão. */
@@ -502,6 +508,9 @@ export function ConversationPanel({
   onRetryMessage,
   canEditMessages = false,
   whatsappWindow = null,
+  templates,
+  templatesLoading,
+  onSendTemplate,
   onEditMessage,
   onDeleteMessage,
   onPresence,
@@ -975,6 +984,7 @@ export function ConversationPanel({
           initialValue={draftMessage}
           draftId={conversation.id}
           whatsappWindow={whatsappWindow}
+          {...(onSendTemplate ? { onSendTemplate, templates: templates ?? [], templatesLoading } : {})}
         />
 
         {dragging && !drafts && (

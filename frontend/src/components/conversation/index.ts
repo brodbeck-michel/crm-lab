@@ -34,3 +34,11 @@ export { WhatsAppText } from './WhatsAppText';
 export type { EmojiPickerProps } from './EmojiPicker';
 export { QuickReplyMenu, filterQuickReplies, quickReplyOptionId } from './QuickReplyMenu';
 export type { QuickReplyMenuProps } from './QuickReplyMenu';
+export {
+  EMPTY_TEMPLATE_DRAFT,
+  TemplatePicker,
+  previewTemplate,
+  templateKey,
+  templateRequestOf,
+} from './TemplatePicker';
+export type { TemplateDraft, TemplatePickerProps } from './TemplatePicker';

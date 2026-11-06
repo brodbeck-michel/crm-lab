@@ -33,16 +33,14 @@ describe('Composer — janela de 24 h', () => {
     expect(screen.getByLabelText('Mensagem')).toBeEnabled();
   });
 
-  it('fechada: mostra o motivo, bloqueia o envio e deixa o template como "em breve"', () => {
+  it('fechada: mostra o motivo e bloqueia o envio; sem onSendTemplate não há botão de modelo', () => {
     render(<Composer onSend={vi.fn()} onPickFiles={vi.fn()} whatsappWindow={CLOSED} />);
     expect(screen.getByRole('alert')).toHaveTextContent('janela de 24 horas do WhatsApp está fechada');
     expect(screen.getByTestId('window-remaining')).toHaveTextContent('encerrada');
     expect(screen.getByLabelText('Mensagem')).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Enviar' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Anexar arquivo' })).toBeDisabled();
-    const template = screen.getByTestId('window-template-button');
-    expect(template).toBeDisabled();
-    expect(template).toHaveTextContent('disponível em breve');
+    expect(screen.queryByTestId('window-template-button')).toBeNull();
   });
 
   it('a janela fecha sozinha quando o tempo que o servidor deu acaba', () => {
@@ -55,7 +53,7 @@ describe('Composer — janela de 24 h', () => {
       vi.advanceTimersByTime(60_000);
     });
     expect(screen.getByLabelText('Mensagem')).toBeDisabled();
-    expect(screen.getByTestId('window-template-button')).toBeDisabled();
+    expect(screen.getByRole('alert')).toHaveTextContent('janela de 24 horas do WhatsApp está fechada');
   });
 
   it('no último minuto o tique é de 1 s: fecha no segundo em que a janela acaba', () => {

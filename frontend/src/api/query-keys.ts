@@ -105,6 +105,8 @@ export const queryKeys = {
 
   /** ['quick-replies'] — a lista inteira; o Composer filtra em memória (§9). */
   quickReplies: () => ['quick-replies'] as const,
+  /** ['whatsapp-templates'] — modelos aprovados da Meta do laboratório (CRMLAB-136, §6.2). */
+  whatsappTemplates: () => ['whatsapp-templates'] as const,
 
   /** ['analytics', period] */
   analytics: (period?: AnalyticsQuery) => ['analytics', period ?? {}] as const,
@@ -228,6 +230,7 @@ export const queryScopes = {
   exams: ['exams'] as const,
   insurances: ['insurances'] as const,
   quickReplies: ['quick-replies'] as const,
+  whatsappTemplates: ['whatsapp-templates'] as const,
   analytics: ['analytics'] as const,
   theme: ['theme'] as const,
   internalChat: ['internal-chat'] as const,

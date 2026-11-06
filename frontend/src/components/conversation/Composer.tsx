@@ -1,12 +1,24 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ClipboardEvent, KeyboardEvent } from 'react';
-import type { QuickReply, WhatsAppWindowStatus } from '@crm-lab/shared';
+import type {
+  QuickReply,
+  SendTemplateRequest,
+  WhatsAppTemplate,
+  WhatsAppWindowStatus,
+} from '@crm-lab/shared';
 import { Button, cn } from '@/components/ui';
+import { Modal } from '@/components/shared';
 import { readConversationDraft, saveConversationDraft } from '@/stores';
 import { DOCUMENT_ACCEPT, MEDIA_ACCEPT, filesFromDataTransfer } from './attachment-draft';
 import { EmojiPicker } from './EmojiPicker';
 import { QuickReplyMenu, filterQuickReplies, quickReplyOptionId } from './QuickReplyMenu';
 import { MicIcon, VoiceRecorder } from './VoiceRecorder';
+import {
+  EMPTY_TEMPLATE_DRAFT,
+  TemplatePicker,
+  templateRequestOf,
+  type TemplateDraft,
+} from './TemplatePicker';
 import { useVoiceRecorder } from './useVoiceRecorder';
 import type { RecordedAudio } from './useVoiceRecorder';
 
@@ -105,9 +117,18 @@ export interface ComposerProps {
    * Janela de 24 h da Cloud API (CRMLAB-137, D-310), calculada pelo servidor.
    * `null`/ausente: sem restrição (canal por QR). Aberta: mostra o tempo
    * restante. Fechada: bloqueia texto, anexo e áudio, mostra o motivo e o botão
-   * de template (placeholder desabilitado — a F2 entrega o envio).
+   * de modelo (CRMLAB-136).
    */
   whatsappWindow?: WhatsAppWindowStatus | null;
+  /**
+   * Modelos aprovados da Meta (CRMLAB-136, D-309). O botão "Enviar modelo"
+   * aparece no aviso da janela quando há `onSendTemplate`; modelo sai dentro e
+   * fora da janela. Rejeitar a promessa mantém o modal aberto com o que foi digitado.
+   */
+  templates?: readonly WhatsAppTemplate[];
+  /** `true` enquanto a lista carrega (o botão espera). */
+  templatesLoading?: boolean;
+  onSendTemplate?: (template: SendTemplateRequest) => Promise<unknown>;
 }
 
 export { WINDOW_CLOSED_MESSAGE } from '@/api/error-handler';
@@ -304,8 +325,29 @@ export function Composer({
   onTyping,
   draftId,
   whatsappWindow,
+  templates,
+  templatesLoading = false,
+  onSendTemplate,
 }: ComposerProps) {
   const windowRemaining = useWindowRemaining(whatsappWindow);
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const [templateDraft, setTemplateDraft] = useState<TemplateDraft>(EMPTY_TEMPLATE_DRAFT);
+  const [templateSending, setTemplateSending] = useState(false);
+  const templateList = templates ?? [];
+  const templateRequest = templateRequestOf(templateList, templateDraft);
+  const submitTemplate = async (): Promise<void> => {
+    if (!onSendTemplate || !templateRequest) return;
+    setTemplateSending(true);
+    try {
+      await onSendTemplate(templateRequest);
+      setTemplateOpen(false);
+      setTemplateDraft(EMPTY_TEMPLATE_DRAFT);
+    } catch {
+      // O erro já foi avisado por quem enviou; o modal fica com o que foi digitado.
+    } finally {
+      setTemplateSending(false);
+    }
+  };
   // Janela de 24 h fechada (D-310): texto, anexo e áudio bloqueados; o rascunho fica.
   const windowClosed = windowRemaining !== null && windowRemaining <= 0;
   const disabled = disabledProp || windowClosed;
@@ -560,18 +602,54 @@ export function Composer({
               Tempo restante da janela: {windowClosed ? 'encerrada' : formatRemaining(windowRemaining)}.
             </span>
           </p>
-          {windowClosed && (
+          {onSendTemplate && (
             <Button
-              variant="secondary"
+              variant={windowClosed ? 'primary' : 'secondary'}
               size="sm"
-              disabled
-              title="Disponível em breve"
+              disabled={templatesLoading || templateList.length === 0}
+              title={
+                !templatesLoading && templateList.length === 0
+                  ? 'Nenhum modelo aprovado pela Meta para este laboratório'
+                  : undefined
+              }
+              onClick={() => setTemplateOpen(true)}
               data-testid="window-template-button"
             >
-              Enviar template (disponível em breve)
+              Enviar modelo
             </Button>
           )}
         </div>
+      )}
+      {onSendTemplate && (
+        <Modal
+          open={templateOpen}
+          onClose={() => {
+            if (!templateSending) setTemplateOpen(false);
+          }}
+          title="Enviar modelo aprovado"
+          footer={
+            <>
+              <Button
+                variant="primary"
+                onClick={() => void submitTemplate()}
+                disabled={!templateRequest || templateSending}
+                loading={templateSending}
+              >
+                Enviar
+              </Button>
+              <Button variant="secondary" onClick={() => setTemplateOpen(false)} disabled={templateSending}>
+                Cancelar
+              </Button>
+            </>
+          }
+        >
+          <TemplatePicker
+            templates={templateList}
+            value={templateDraft}
+            onChange={setTemplateDraft}
+            disabled={templateSending}
+          />
+        </Modal>
       )}
       {notice && (
         <p data-testid="composer-notice" className="m-0 font-body text-caption text-neutral-700">

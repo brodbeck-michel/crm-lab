@@ -1561,7 +1561,9 @@ constante (`crypto.timingSafeEqual`).
 
 **Request (formato Meta):** `entry[].changes[].value.messages[]` /
 `entry[].changes[].value.statuses[]`. O formato simplificado
-`{ "from", "text", "externalId" }` também é aceito (é o que o driver mock produz em dev).
+`{ "from", "text", "externalId" }` (o que o driver mock produz em dev) é aceito **só com o driver
+mock** (D-308 item 5) e **só sem `entry`** no corpo: corpo com `entry[]` é sempre lido como da
+Meta, mesmo vazio ou todo descartado (ver "Conferência do número" na seção da Cloud API).
 
 **Response (sempre):**
 ```json

@@ -3930,7 +3930,7 @@ Branch `feature/CRMLAB-139-webhook-meta`, empilhada sobre o CRMLAB-136. Decisão
 - **Verificação:** `hub.challenge` restrito a `[A-Za-z0-9._-]{1,256}`; token comparado por hash
   (não vaza o tamanho).
 - **Fica para o CRMLAB-141:** `pricing.category` do status (coluna da 065).
-- **Testes:** `crmlab139-webhook-meta.spec.ts` (22): verificação (ok, token/modo/challenge errados,
+- **Testes:** `crmlab139-webhook-meta.spec.ts` (26): verificação (ok, token/modo/challenge errados,
   challenge inválido/longo/repetido, sem env, canal desligado, tenant desconhecido), status no POST
   principal sem regressão, `failed`, isolamento do mesmo id externo entre laboratórios, mensagem +
   status no mesmo aviso, reentrega byte a byte, `phone_number_id` divergente/ausente, laboratório
@@ -3942,6 +3942,12 @@ Branch `feature/CRMLAB-139-webhook-meta`, empilhada sobre o CRMLAB-136. Decisão
   único por app no DEPLOYMENT, reação virando fala e reabrindo conversa, botão/lista perdidos, texto
   do aviso, contrato contraditório sobre `pricing.category`, cabeçalho do controller) + sugestões
   (anti-replay, challenge, tamanho do token, formato plano, logs, citação). Todos tratados.
+  2ª rodada: nenhum bloqueante; a corrigir: corpo com `entry[]` vazio ou todo descartado ainda caía
+  no formato plano (mensagem gravada sem wamid, status mudado), contrato antigo dizendo que o plano
+  é sempre aceito, e testes de log/WS/conversa encerrada. Todos tratados; sugestões aplicadas (log
+  de tipo ignorado e de status fora do mapa, `trim` na conferência do número, token de verificação
+  no log do proxy no DEPLOYMENT, reação reentregue fora de ordem registrada como limitação no D-311).
+  Testes do spec: 26.
 - **Para ligar em hml/prod:** definir `WHATSAPP_WEBHOOK_VERIFY_TOKEN`; no painel da Meta, callback
   `https://<domínio>/api/v1/webhooks/whatsapp/<slug>` e o mesmo token; assinar `messages`.
 

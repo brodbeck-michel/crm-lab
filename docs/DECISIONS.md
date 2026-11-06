@@ -6998,7 +6998,12 @@ não usa). A conferência do `phone_number_id` descarta o `value` inteiro (mensa
 - `reaction` vira reação (D-222), `system`/`request_welcome` são ignorados; botão, lista,
   localização e contato viram texto legível; `context.id` vira citação (D-221);
 - um app Meta tem um callback só: com mais de um laboratório no mesmo app, cada WABA recebe na
-  própria URL por `override_callback_uri` (DEPLOYMENT).
+  própria URL por `override_callback_uri` (DEPLOYMENT);
+- corpo com `entry[]` é sempre lido como da Meta, mesmo vazio ou todo descartado: nunca cai no
+  formato plano (2ª revisão);
+- **limitação conhecida:** sem anti-replay, uma reação reentregue pela Meta **depois** da remoção
+  dela volta a aparecer (a Meta não garante ordem). Aceito por ora: só afeta o emoji, e perder
+  mensagem na reentrega seria pior.
 
 ### D-312: Custo da Cloud API — categorias, tabela de preços em configuração (CRMLAB-141)
 **Decisão:**

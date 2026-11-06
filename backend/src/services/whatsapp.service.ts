@@ -1132,7 +1132,8 @@ export function metaNoticeFor(
     const changes = asArray(entryRecord.changes).filter((change) => {
       const got = asString(asRecord(asRecord(asRecord(change)?.value)?.metadata)?.phone_number_id);
       if (got !== null) received.push(got);
-      const ok = phoneNumberId !== '' && got === phoneNumberId;
+      const expected = phoneNumberId.trim();
+      const ok = expected !== '' && got !== null && got.trim() === expected;
       if (!ok) dropped += 1;
       return ok;
     });
@@ -1151,6 +1152,11 @@ export interface InboundReactionDTO {
  * Extrai o `value` de cada `entry[].changes[]` do payload da Meta. Payload em
  * outro formato simplesmente nao produz `value` nenhum — nunca lanca.
  */
+/** Corpo no formato da Meta (`entry[]`), mesmo que vazio ou filtrado. */
+export function isMetaShaped(payload: unknown): boolean {
+  return Array.isArray(asRecord(payload)?.entry);
+}
+
 function changeValues(payload: unknown): Record<string, unknown>[] {
   const root = asRecord(payload);
   if (!root) return [];
@@ -1212,11 +1218,15 @@ function cloudApiContentOf(message: Record<string, unknown>): {
   attachmentUrl: null;
 } | null {
   const type = asString(message.type) ?? 'text';
-  if (CLOUD_IGNORED_TYPES.has(type)) return null;
+  if (CLOUD_IGNORED_TYPES.has(type)) {
+    if (type !== 'reaction') logger.info('whatsapp.inbound_ignored', { type, externalId: asString(message.id) });
+    return null;
+  }
   const text = (content: string) => ({ content, messageType: 'text' as const, attachmentUrl: null });
 
   if (type === 'text') {
     const body = asString(asRecord(message.text)?.body);
+    if (!body) logger.info('whatsapp.inbound_ignored', { type, reason: 'empty_text', externalId: asString(message.id) });
     return body ? text(body) : null;
   }
   if (type === 'button') {
@@ -1566,9 +1576,10 @@ export class WhatsAppService {
       }
     }
 
-    // Formato plano (mock/dev) so quando o aviso NAO e da Meta: um aviso da Meta
-    // descartado pela conferencia do numero nao pode "cair" no formato plano.
-    if (out.length === 0 && values.length === 0) {
+    // Formato plano (mock/dev) so quando o corpo NAO e da Meta (sem `entry[]`):
+    // um aviso da Meta vazio ou todo descartado pela conferencia do numero nao
+    // pode "cair" no formato plano (2a revisao do CRMLAB-139).
+    if (out.length === 0 && !isMetaShaped(payload)) {
       const flat = asRecord(payload);
       const from = flat ? (asString(flat.from) ?? asString(flat.phone)) : null;
       const content = flat ? (asString(flat.text) ?? asString(flat.content)) : null;
@@ -1618,13 +1629,17 @@ export class WhatsAppService {
         if (!record) continue;
         const externalId = asString(record.id);
         const status = STATUS_MAP[asString(record.status) ?? ''];
+        if (externalId && !status) {
+          // D-311 item 3: valor fora do mapa (ex.: `deleted`, `warning`) ignorado COM log.
+          logger.info('whatsapp.status_unmapped', { externalId, status: asString(record.status) });
+        }
         if (externalId && status) {
           out.push({ externalId, status, ...(status === 'failed' ? { errorCode: errorCodeOf(record) } : {}) });
         }
       }
     }
 
-    if (out.length === 0 && values.length === 0) {
+    if (out.length === 0 && !isMetaShaped(payload)) {
       const flat = asRecord(payload);
       const externalId = flat ? (asString(flat.externalId) ?? asString(flat.id)) : null;
       const status = flat ? STATUS_MAP[asString(flat.status) ?? ''] : undefined;

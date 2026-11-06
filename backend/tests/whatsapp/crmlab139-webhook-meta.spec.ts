@@ -14,9 +14,10 @@
  * - fala recebida pela Meta abre a janela de 24 h (`received_via = 'cloud_api'`).
  */
 import { randomUUID } from 'node:crypto';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { env } from '../../src/config/env.js';
 import { makeWebhookModule } from '../../src/controllers/webhook.routes.js';
+import { logger } from '../../src/lib/logger.js';
 import { createInMemoryQueue } from '../../src/lib/queue.js';
 import {
   MockWhatsAppDriver,
@@ -152,6 +153,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   env.WHATSAPP_WEBHOOK_VERIFY_TOKEN = originalVerify;
+  vi.restoreAllMocks();
 });
 
 describe('GET /webhooks/whatsapp/:tenant — verificação da URL', () => {
@@ -367,6 +369,79 @@ describe('POST /webhooks/whatsapp/:tenant — mensagens e status na mesma URL', 
     expect(await patientMessages(tenant.id)).toHaveLength(0);
     await post('lab-a', flat);
     expect((await patientMessages(tenant.id)).map((m) => m.content)).toEqual(['Plano']);
+  });
+
+  it('corpo com entry[] (vazio ou todo descartado) NÃO cai no formato plano, nem com URL real nem no mock', async () => {
+    const tenant = await lab('lab-a');
+    const id = await sentMessage(tenant.id, 'wamid.OUT-PLANO');
+    const real = await appWith({ apiUrl: 'https://graph.facebook.com/v21.0' });
+    const outroNumero = metaNotice({}, 'numero-de-OUTRO-lab');
+    for (const target of [real, app]) {
+      await post('lab-a', { entry: [], from: '5548999991234', text: 'oi' }, target);
+      await post('lab-a', { ...outroNumero, from: '5548999991234', text: 'oi' }, target);
+      await post('lab-a', { entry: [], id: 'wamid.OUT-PLANO', status: 'read' }, target);
+      const body = JSON.stringify({ ...outroNumero, id: 'wamid.OUT-PLANO', status: 'read' });
+      await target.agent
+        .post(`${WEBHOOK}/lab-a/status`)
+        .set('x-hub-signature-256', signWebhookBody(body, TEST_WEBHOOK_SECRET))
+        .set('Content-Type', 'application/json')
+        .send(body)
+        .expect(200);
+    }
+    expect(await patientMessages(tenant.id)).toHaveLength(0);
+    expect(await statusOf(id)).toBe('sent');
+  });
+
+  it('conversa encerrada: reação, system e status não reabrem; botão do paciente reabre', async () => {
+    const tenant = await lab('lab-a');
+    const conversation = await createConversation({ tenantId: tenant.id, patientPhone: '5548999991234', status: 'closed' });
+    await exec(
+      `INSERT INTO messages (id, tenant_id, conversation_id, sender_type, content, status, external_message_id)
+       VALUES ($1, $2, $3, 'agent', 'Encerrado', 'sent', 'wamid.OUT-FIM')`,
+      [randomUUID(), tenant.id, conversation.id],
+    );
+    const statusOfConversation = async () =>
+      (await query<{ status: string }>('SELECT status FROM conversations WHERE id = $1', [conversation.id]))[0]?.status;
+
+    await post('lab-a', metaNotice(typed('reaction', { reaction: { message_id: 'wamid.OUT-FIM', emoji: '👍' } })));
+    await post('lab-a', metaNotice(typed('system', { system: { body: 'trocou de número' } })));
+    await post('lab-a', metaNotice({ statuses: [{ id: 'wamid.OUT-FIM', status: 'read' }] }));
+    expect(await statusOfConversation()).toBe('closed');
+
+    await post('lab-a', metaNotice(typed('button', { button: { text: 'Confirmar' } })));
+    expect(await statusOfConversation()).toBe('active');
+  });
+
+  it('status pelo POST principal emite message.status_updated no WS', async () => {
+    const tenant = await lab('lab-a');
+    await sentMessage(tenant.id, 'wamid.OUT-WS');
+    app.wsHub.clear();
+    await post('lab-a', metaNotice({ statuses: [{ id: 'wamid.OUT-WS', status: 'delivered' }] }));
+    expect(app.wsHub.eventsFor(tenant.id, 'message.status_updated')).toHaveLength(1);
+  });
+
+  it('logs: failed só com o código; status desconhecido e fora do mapa registrados', async () => {
+    const tenant = await lab('lab-a');
+    await sentMessage(tenant.id, 'wamid.OUT-LOG');
+    const warn = vi.spyOn(logger, 'warn');
+    const info = vi.spyOn(logger, 'info');
+    await post(
+      'lab-a',
+      metaNotice({
+        statuses: [
+          { id: 'wamid.OUT-LOG', status: 'failed', recipient_id: '5548999991234', errors: [{ code: 131047, title: 'Re-engagement' }] },
+          { id: 'wamid.NAO-EXISTE', status: 'read' },
+          { id: 'wamid.OUT-LOG', status: 'deleted' },
+        ],
+      }),
+    );
+    const all = JSON.stringify([...warn.mock.calls, ...info.mock.calls]);
+    expect(all).toContain('131047');
+    expect(all).not.toContain('5548999991234');
+    expect(all).not.toContain('Re-engagement');
+    const events = [...warn.mock.calls, ...info.mock.calls].map((call) => call[0]);
+    expect(events).toContain('whatsapp.status_ignored');
+    expect(events).toContain('whatsapp.status_unmapped');
   });
 
   it('reação do paciente vira reação (D-222), não fala; tirar a reação remove', async () => {

@@ -154,6 +154,9 @@ Vazias = driver **mock** que ecoa (bom para dev, nunca para produção).
     Meta faz o `GET` de verificação nessa hora. Sem isso, os avisos dos outros laboratórios chegam
     no slug errado e são **descartados** pela conferência do número (resposta 200, só log
     `whatsapp.webhook_phone_number_mismatch`).
+  - O `hub.verify_token` vai na query do `GET` e aparece no log de acesso do proxy (Caddy): tratar
+    `WHATSAPP_WEBHOOK_VERIFY_TOKEN` como valor de baixo sigilo, trocável a qualquer momento (não é
+    o segredo do HMAC nem o token da Meta).
   - O laboratório precisa do **número (`phone_number_id`) cadastrado** na tela de canais: sem ele
     todo aviso da Meta é descartado (log `whatsapp.webhook_no_phone_number`).
 

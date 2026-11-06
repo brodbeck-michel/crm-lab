@@ -75,6 +75,7 @@ import { MediaService, messageTypeFromMime } from '../services/media.service.js'
 import { MessageService } from '../services/message.service.js';
 import {
   createWhatsAppService,
+  isMetaShaped,
   metaNoticeFor,
   safeEquals,
   verifyWebhookSignature,
@@ -251,7 +252,7 @@ async function authenticate(
     return null;
   }
 
-  const metaFormat = isMetaNotice(req.body);
+  const metaFormat = isMetaShaped(req.body);
   // D-311 item 6, falha FECHADO: aviso da Meta para laboratorio sem numero
   // configurado nao tem como provar que e dele (o segredo pode ser o da instalacao).
   if (metaFormat && credentials.phoneNumberId === '') {
@@ -273,11 +274,6 @@ async function authenticate(
     // Mesma regra do envio (D-308 item 5): em producao, so com WHATSAPP_CLOUD_API_MOCK=true.
     mock: cloudApiMockAllowed(credentials.apiUrl),
   };
-}
-
-/** Corpo no formato da Meta (`entry[]`)? */
-function isMetaNotice(body: unknown): boolean {
-  return typeof body === 'object' && body !== null && Array.isArray((body as Record<string, unknown>).entry);
 }
 
 /**

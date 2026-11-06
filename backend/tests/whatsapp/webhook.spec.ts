@@ -68,6 +68,7 @@ function statusPayload(externalId: string, status: string): Record<string, unkno
         changes: [
           {
             value: {
+              metadata: { phone_number_id: 'numero-do-lab' },
               statuses: [{ id: externalId, status, recipient_id: '5511987654321' }],
             },
           },

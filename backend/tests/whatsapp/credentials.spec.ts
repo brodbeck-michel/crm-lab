@@ -68,13 +68,15 @@ async function seedChannel(input: ChannelSeed): Promise<void> {
   );
 }
 
-function payload(phone: string, text: string): Record<string, unknown> {
+/** `phoneNumberId`: o numero que o laboratorio resolve (D-311 item 6, falha fechado). */
+function payload(phone: string, text: string, phoneNumberId = 'numero-da-env'): Record<string, unknown> {
   return {
     entry: [
       {
         changes: [
           {
             value: {
+              metadata: { phone_number_id: phoneNumberId },
               contacts: [{ wa_id: phone, profile: { name: 'Joao' } }],
               messages: [
                 { id: `wamid.${phone}.${text}`, from: phone, type: 'text', text: { body: text } },
@@ -194,41 +196,43 @@ describe('resolver de credenciais — tabela primeiro, env var depois (D-024)', 
 
   it('o segredo da tabela valida o HMAC e o da env var deixa de valer', async () => {
     const tenant = await createTenant({ slug: 'lab-vida' });
-    await seedChannel({ tenantId: tenant.id, webhookSecret: TABLE_SECRET });
+    await seedChannel({ tenantId: tenant.id, phoneNumberId: 'numero-do-lab', webhookSecret: TABLE_SECRET });
 
     // Assinado com a env var: recusado, porque a tabela tem precedencia.
-    await post('lab-vida', JSON.stringify(payload('5511987654321', 'com-env')), ENV_SECRET);
+    await post('lab-vida', JSON.stringify(payload('5511987654321', 'com-env', 'numero-do-lab')), ENV_SECRET);
     expect(await countConversations(tenant.id)).toBe(0);
     expect(await countMessages(tenant.id)).toBe(0);
 
     // Assinado com o segredo da tabela: aceito.
-    await post('lab-vida', JSON.stringify(payload('5511987654321', 'com-tabela')), TABLE_SECRET);
+    await post('lab-vida', JSON.stringify(payload('5511987654321', 'com-tabela', 'numero-do-lab')), TABLE_SECRET);
     expect(await countConversations(tenant.id)).toBe(1);
     expect(await countMessages(tenant.id)).toBe(1);
   });
 
-  it('sem linha na tabela, a env var continua valendo', async () => {
+  it('sem linha na tabela: HMAC da env var vale, mas sem numero o aviso da Meta e recusado (D-311 item 6)', async () => {
     const tenant = await createTenant({ slug: 'lab-sem-canal' });
 
+    // O numero da Meta so vem da tabela (D-308 item 5). Sem ele, falha fechado:
+    // o segredo da env var e o da instalacao inteira e nao separa laboratorios.
     await post('lab-sem-canal', JSON.stringify(payload('5511987654321', 'oi')), ENV_SECRET);
-    expect(await countMessages(tenant.id)).toBe(1);
+    expect(await countMessages(tenant.id)).toBe(0);
   });
 
   it('linha na tabela sem segredo cai na env var (fallback campo a campo)', async () => {
     const tenant = await createTenant({ slug: 'lab-so-numero' });
     await seedChannel({ tenantId: tenant.id, phoneNumberId: 'numero-do-lab', webhookSecret: null });
 
-    await post('lab-so-numero', JSON.stringify(payload('5511987654321', 'oi')), ENV_SECRET);
+    await post('lab-so-numero', JSON.stringify(payload('5511987654321', 'oi', 'numero-do-lab')), ENV_SECRET);
     expect(await countMessages(tenant.id)).toBe(1);
   });
 
   it('cada laboratorio so valida com o PROPRIO segredo', async () => {
     const alfa = await createTenant({ slug: 'lab-alfa' });
     const beta = await createTenant({ slug: 'lab-beta' });
-    await seedChannel({ tenantId: alfa.id, webhookSecret: 'segredo-do-alfa-123' });
-    await seedChannel({ tenantId: beta.id, webhookSecret: 'segredo-do-beta-123' });
+    await seedChannel({ tenantId: alfa.id, phoneNumberId: 'numero-do-alfa', webhookSecret: 'segredo-do-alfa-123' });
+    await seedChannel({ tenantId: beta.id, phoneNumberId: 'numero-do-beta', webhookSecret: 'segredo-do-beta-123' });
 
-    const body = JSON.stringify(payload('5511987654321', 'oi'));
+    const body = JSON.stringify(payload('5511987654321', 'oi', 'numero-do-alfa'));
     // O segredo do beta nao abre a porta do alfa.
     await post('lab-alfa', body, 'segredo-do-beta-123');
     expect(await countMessages(alfa.id)).toBe(0);

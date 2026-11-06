@@ -6989,6 +6989,16 @@ filhos 136–141) completa o modo. **Contrato escrito antes do código (regra ze
 **Implementado no CRMLAB-139 (06/11/2026):** a Meta manda mensagens e status para a **mesma** URL;
 o `POST /webhooks/whatsapp/:tenant` trata os dois (antes, status só pela rota `/status`, que a Meta
 não usa). A conferência do `phone_number_id` descarta o `value` inteiro (mensagens e status).
+**Complemento de 06/11/2026 (revisão do CRMLAB-139):**
+- item 6 **falha fechado**: `value` sem `metadata.phone_number_id`, ou laboratório sem número
+  configurado, é descartado — o segredo do HMAC pode ser o App Secret da instalação inteira;
+- formato plano (`{ from, text }`) só com o driver mock (regra de D-308 item 5);
+- aviso da Meta fora do anti-replay de D-149 (a Meta reentrega o mesmo corpo; idempotência vem do
+  `external_message_id` e da ordem de status);
+- `reaction` vira reação (D-222), `system`/`request_welcome` são ignorados; botão, lista,
+  localização e contato viram texto legível; `context.id` vira citação (D-221);
+- um app Meta tem um callback só: com mais de um laboratório no mesmo app, cada WABA recebe na
+  própria URL por `override_callback_uri` (DEPLOYMENT).
 
 ### D-312: Custo da Cloud API — categorias, tabela de preços em configuração (CRMLAB-141)
 **Decisão:**
@@ -7023,7 +7033,9 @@ mídia) e download autenticado de mídia recebida (hoje não existe). Vale o com
 mídia recebida pela Meta não é baixada. **Pendência registrada para o CRMLAB-140** (também em
 STATUS.md). Até lá, laboratório que precisa de anexo fica em `qr`.
 **Emenda de 06/11/2026 (CRMLAB-139):** mídia recebida pela Meta **entra** como texto com um aviso
-("[Imagem recebida pela API oficial — ainda não aparece no CRM; veja no celular]", com a legenda
-antes, quando há), `received_via = 'cloud_api'`. Descartar escondia da atendente que o paciente
+("[Recebido pela API oficial: imagem — o anexo ainda não aparece no CRM. Se precisar, peça ao
+paciente que descreva por texto.]", com a legenda antes, quando há), `received_via = 'cloud_api'`.
+Forma neutra de propósito (sem concordância de gênero) e sem "veja no celular": número na Cloud
+API não fica no app do WhatsApp. Descartar escondia da atendente que o paciente
 escreveu e deixava a janela de 24 h fechada no CRM enquanto a Meta a considera aberta.
 **Impacto:** nenhum código; API_CONTRACTS (nota em attachments), STATUS (pendência).

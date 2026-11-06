@@ -1048,6 +1048,8 @@ export interface InboundMessageDTO {
   attachmentUrl: string | null;
   /** Id do canal — usado para dedupe (SECURITY.md "Webhooks"). */
   externalId: string | null;
+  /** Mensagem citada pelo paciente (`context.id` na Meta). */
+  quotedExternalId?: string | null;
 }
 
 export interface StatusCallbackDTO {
@@ -1055,23 +1057,6 @@ export interface StatusCallbackDTO {
   status: MessageStatus;
   /** `errors[0].code` da Meta num `failed` (D-311 item 5) — so para log, sem PII. */
   errorCode?: string | null;
-}
-
-/**
- * Conferencia do numero do laboratorio (D-311 item 6): `value.metadata.phone_number_id`
- * do aviso tem de ser o `phone_number_id` do laboratorio resolvido pelo slug.
- * Divergente => o `value` inteiro e descartado (com log). Sem `phone_number_id`
- * no aviso (payload plano do mock) ou sem numero configurado: nao ha o que conferir.
- */
-function valueMatchesNumber(
-  value: Record<string, unknown>,
-  expectedPhoneNumberId: string | undefined,
-): boolean {
-  if (!expectedPhoneNumberId) return true;
-  const got = asString(asRecord(value.metadata)?.phone_number_id);
-  if (got === null || got === expectedPhoneNumberId) return true;
-  logger.warn('whatsapp.webhook_phone_number_mismatch', {});
-  return false;
 }
 
 function errorCodeOf(record: Record<string, unknown>): string | null {
@@ -1127,6 +1112,42 @@ function asArray(value: unknown): unknown[] {
 }
 
 /**
+ * Aviso da Meta (`entry[].changes[].value`) so com o que e DESTE laboratorio
+ * (CRMLAB-139, D-311 item 6). Falha FECHADO: `value` sem
+ * `metadata.phone_number_id`, ou laboratorio sem numero configurado, e
+ * descartado — o segredo do HMAC pode ser o App Secret da instalacao inteira,
+ * e o numero e o que separa um laboratorio do outro. `meta: false` = o corpo
+ * nao esta no formato da Meta (payload plano do mock).
+ */
+export function metaNoticeFor(
+  payload: unknown,
+  phoneNumberId: string,
+): { meta: boolean; payload: unknown; dropped: number; received: string[] } {
+  const root = asRecord(payload);
+  if (!root || !Array.isArray(root.entry)) return { meta: false, payload, dropped: 0, received: [] };
+  let dropped = 0;
+  const received: string[] = [];
+  const entry = asArray(root.entry).map((rawEntry) => {
+    const entryRecord = asRecord(rawEntry) ?? {};
+    const changes = asArray(entryRecord.changes).filter((change) => {
+      const got = asString(asRecord(asRecord(asRecord(change)?.value)?.metadata)?.phone_number_id);
+      if (got !== null) received.push(got);
+      const ok = phoneNumberId !== '' && got === phoneNumberId;
+      if (!ok) dropped += 1;
+      return ok;
+    });
+    return { ...entryRecord, changes };
+  });
+  return { meta: true, payload: { ...root, entry }, dropped, received };
+}
+
+/** Reacao do paciente recebida pela Meta (`type: reaction`). `emoji: ''` = tirou a reacao. */
+export interface InboundReactionDTO {
+  targetExternalId: string;
+  emoji: string;
+}
+
+/**
  * Extrai o `value` de cada `entry[].changes[]` do payload da Meta. Payload em
  * outro formato simplesmente nao produz `value` nenhum — nunca lanca.
  */
@@ -1157,41 +1178,88 @@ function contactNames(value: Record<string, unknown>): Map<string, string> {
   return names;
 }
 
-/** Rotulo do aviso de midia recebida pela Cloud API (CRMLAB-139, D-313 emendada). */
+/** Nome do anexo no aviso de midia recebida pela Cloud API (CRMLAB-139, D-313 emendada). */
 const CLOUD_MEDIA_LABEL: Record<string, string> = {
-  image: 'Imagem',
-  audio: 'Áudio',
-  voice: 'Áudio',
-  video: 'Vídeo',
-  document: 'Documento',
-  sticker: 'Figurinha',
-  location: 'Localização',
-  contacts: 'Contato',
+  image: 'imagem',
+  audio: 'áudio',
+  voice: 'áudio',
+  video: 'vídeo',
+  document: 'documento',
+  sticker: 'figurinha',
 };
 
+/** Tipos da Meta que NAO sao fala do paciente: nao viram mensagem (nem reabrem conversa). */
+const CLOUD_IGNORED_TYPES = new Set(['reaction', 'system', 'request_welcome', 'ephemeral']);
+
+function mediaNotice(label: string): string {
+  return (
+    `[Recebido pela API oficial: ${label} — o anexo ainda não aparece no CRM. ` +
+    'Se precisar, peça ao paciente que descreva por texto.]'
+  );
+}
+
 /**
- * Mensagem da Meta -> conteudo. Texto entra como texto. Midia e outros tipos
- * ainda nao sao baixados (CRMLAB-140, D-313): entram como TEXTO com um aviso
- * (e a legenda, quando ha), para a atendente saber que o paciente mandou algo
- * e para a fala abrir a janela de 24 h — a Meta abre a janela com qualquer
- * mensagem do paciente. Nada de `attachmentUrl`: a Meta manda um id de midia,
- * nao um link publico.
+ * Mensagem da Meta -> conteudo (CRMLAB-139). Texto, botao de modelo, resposta
+ * de lista/botao interativo, localizacao e contato viram texto legivel. Midia
+ * ainda nao e baixada (CRMLAB-140, D-313 emendada): entra como TEXTO com um
+ * aviso (e a legenda/nome do arquivo), para a atendente saber que o paciente
+ * mandou algo e para a fala abrir a janela de 24 h, como na Meta. `null` =
+ * nao e fala do paciente (reacao, aviso de sistema, `request_welcome`).
  */
 function cloudApiContentOf(message: Record<string, unknown>): {
   content: string;
   messageType: MessageType;
   attachmentUrl: null;
-} {
+} | null {
   const type = asString(message.type) ?? 'text';
-  const body = asString(asRecord(message.text)?.body);
-  if (type === 'text' && body) return { content: body, messageType: 'text', attachmentUrl: null };
-  const caption = asString(asRecord(message[type])?.caption);
-  const notice = `[${CLOUD_MEDIA_LABEL[type] ?? 'Mensagem'} recebida pela API oficial — ainda não aparece no CRM; veja no celular]`;
-  return {
-    content: caption ? `${caption}\n\n${notice}` : notice,
-    messageType: 'text',
-    attachmentUrl: null,
-  };
+  if (CLOUD_IGNORED_TYPES.has(type)) return null;
+  const text = (content: string) => ({ content, messageType: 'text' as const, attachmentUrl: null });
+
+  if (type === 'text') {
+    const body = asString(asRecord(message.text)?.body);
+    return body ? text(body) : null;
+  }
+  if (type === 'button') {
+    const label = asString(asRecord(message.button)?.text);
+    if (label) return text(label);
+  }
+  if (type === 'interactive') {
+    const interactive = asRecord(message.interactive);
+    const reply = asRecord(interactive?.button_reply) ?? asRecord(interactive?.list_reply);
+    const title = asString(reply?.title);
+    const description = asString(reply?.description);
+    if (title) return text(description ? `${title} — ${description}` : title);
+  }
+  if (type === 'location') {
+    const location = asRecord(message.location);
+    const name = asString(location?.name) ?? asString(location?.address);
+    const lat = location?.latitude;
+    const lng = location?.longitude;
+    const coords = typeof lat === 'number' && typeof lng === 'number' ? ` (${lat}, ${lng})` : '';
+    return text(`📍 ${name ?? 'Localização'}${coords}`);
+  }
+  if (type === 'contacts') {
+    const people = asArray(message.contacts).map((raw) => {
+      const contact = asRecord(raw);
+      const name = asString(asRecord(contact?.name)?.formatted_name) ?? 'Contato';
+      const phone = asString(asRecord(asArray(contact?.phones)[0])?.phone);
+      return phone ? `${name} (${phone})` : name;
+    });
+    return text(`👤 ${people.length > 0 ? people.join(', ') : 'Contato'}`);
+  }
+  const label = CLOUD_MEDIA_LABEL[type];
+  if (label) {
+    const media = asRecord(message[type]);
+    const caption = asString(media?.caption);
+    const filename = asString(media?.filename);
+    const notice = mediaNotice(filename ? `${label} "${filename}"` : label);
+    return text(caption ? `${caption}\n\n${notice}` : notice);
+  }
+  // `unsupported`, `order` e tipos novos: o paciente mandou ALGO.
+  return text(
+    '[Recebido pela API oficial: um tipo de mensagem que o CRM ainda não mostra. ' +
+      'Se precisar, peça ao paciente que descreva por texto.]',
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1474,23 +1542,26 @@ export class WhatsAppService {
    * mock produz em dev. NUNCA lanca: payload malformado devolve lista vazia
    * (SECURITY.md "payload invalido -> 200 vazio").
    */
-  async handleWebhook(payload: unknown, expectedPhoneNumberId?: string): Promise<InboundMessageDTO[]> {
+  async handleWebhook(payload: unknown): Promise<InboundMessageDTO[]> {
     const out: InboundMessageDTO[] = [];
     const values = changeValues(payload);
 
     for (const value of values) {
-      if (!valueMatchesNumber(value, expectedPhoneNumberId)) continue;
       const names = contactNames(value);
       for (const raw of asArray(value.messages)) {
         const message = asRecord(raw);
         if (!message) continue;
         const from = asString(message.from);
         if (!from) continue;
+        const parsed = cloudApiContentOf(message);
+        if (!parsed) continue;
         out.push({
           phone: from,
           patientName: profileName(names.get(from) ?? null),
-          ...cloudApiContentOf(message),
+          ...parsed,
           externalId: asString(message.id),
+          // Resposta citando (D-221): `context.id` e o wamid da citada.
+          quotedExternalId: asString(asRecord(message.context)?.id),
         });
       }
     }
@@ -1516,19 +1587,32 @@ export class WhatsAppService {
     return out;
   }
 
+  /** Reacoes do paciente no aviso da Meta (`type: reaction`, D-222). */
+  handleReactions(payload: unknown): InboundReactionDTO[] {
+    const out: InboundReactionDTO[] = [];
+    for (const value of changeValues(payload)) {
+      for (const raw of asArray(value.messages)) {
+        const message = asRecord(raw);
+        if (!message || message.type !== 'reaction') continue;
+        const reaction = asRecord(message.reaction);
+        const targetExternalId = asString(reaction?.message_id);
+        if (!targetExternalId) continue;
+        const emoji = typeof reaction?.emoji === 'string' ? reaction.emoji : '';
+        out.push({ targetExternalId, emoji });
+      }
+    }
+    return out;
+  }
+
   /**
    * Normaliza o callback de status. Mesma divergencia de `handleWebhook`:
    * devolve lista, porque o canal entrega lote. Nunca lanca.
    */
-  async handleStatusCallback(
-    payload: unknown,
-    expectedPhoneNumberId?: string,
-  ): Promise<StatusCallbackDTO[]> {
+  async handleStatusCallback(payload: unknown): Promise<StatusCallbackDTO[]> {
     const out: StatusCallbackDTO[] = [];
     const values = changeValues(payload);
 
     for (const value of values) {
-      if (!valueMatchesNumber(value, expectedPhoneNumberId)) continue;
       for (const raw of asArray(value.statuses)) {
         const record = asRecord(raw);
         if (!record) continue;

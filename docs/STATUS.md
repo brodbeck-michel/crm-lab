@@ -3918,16 +3918,30 @@ Branch `feature/CRMLAB-139-webhook-meta`, empilhada sobre o CRMLAB-136. Decisão
 - **Mensagens e status na mesma URL:** o `POST /webhooks/whatsapp/:tenant` agora trata os dois (a
   Meta não usa a rota `/status`, que fica por compatibilidade). Status nunca regride (D-225) e o
   `UPDATE` filtra `tenant_id` explicitamente; `failed` loga só o `errors[0].code`.
-- **Número do laboratório:** `value.metadata.phone_number_id` diferente do laboratório do slug →
-  `value` descartado com log (mensagens e status).
-- **Mídia recebida** (até o CRMLAB-140): entra como texto com aviso "[Imagem recebida pela API
-  oficial — ainda não aparece no CRM; veja no celular]" (com a legenda antes), `received_via =
-  'cloud_api'` — abre a janela de 24 h, como na Meta. Emenda ao D-313 (antes: descartar).
+- **Número do laboratório (falha fechado):** `value.metadata.phone_number_id` diferente ou ausente →
+  `value` descartado com log; laboratório sem número configurado não recebe aviso da Meta. Formato
+  plano só com o driver mock.
+- **Aviso da Meta fora do anti-replay** (a Meta reentrega o mesmo corpo; dedupe por wamid).
+- **Tipos recebidos:** texto, botão de modelo, lista/botão interativo, localização e contato viram
+  texto legível; mídia entra como texto com o aviso "[Recebido pela API oficial: imagem — o anexo
+  ainda não aparece no CRM. Se precisar, peça ao paciente que descreva por texto.]" (legenda antes;
+  documento com o nome do arquivo), `received_via = 'cloud_api'` — emenda ao D-313. Reação vira
+  reação (D-222); `system`/`request_welcome` ignorados; `context.id` vira citação.
+- **Verificação:** `hub.challenge` restrito a `[A-Za-z0-9._-]{1,256}`; token comparado por hash
+  (não vaza o tamanho).
 - **Fica para o CRMLAB-141:** `pricing.category` do status (coluna da 065).
-- **Testes:** `crmlab139-webhook-meta.spec.ts` (12): verificação (ok, token/modo/challenge errados,
-  sem env, canal desligado, tenant desconhecido), status no POST principal sem regressão, `failed`,
-  isolamento do mesmo id externo entre laboratórios, mensagem + status no mesmo aviso, reentrega,
-  `phone_number_id` divergente, mídia recebida, rota `/status` antiga.
+- **Testes:** `crmlab139-webhook-meta.spec.ts` (22): verificação (ok, token/modo/challenge errados,
+  challenge inválido/longo/repetido, sem env, canal desligado, tenant desconhecido), status no POST
+  principal sem regressão, `failed`, isolamento do mesmo id externo entre laboratórios, mensagem +
+  status no mesmo aviso, reentrega byte a byte, `phone_number_id` divergente/ausente, laboratório
+  sem número, lote com dois números, formato plano só no mock, reação, tipos ignorados, botão/lista/
+  localização/contato, citação, mídia recebida, rota `/status` antiga. `credentials.spec.ts` e
+  `channel-security.spec.ts` passam a cadastrar o número (sem ele, recusa).
+- **Validação:** revisão independente por agente Opus 5.5. 1ª rodada: 1 bloqueante (conferência do
+  número deixava passar laboratório sem número ou aviso sem `metadata`) e 6 a corrigir (callback
+  único por app no DEPLOYMENT, reação virando fala e reabrindo conversa, botão/lista perdidos, texto
+  do aviso, contrato contraditório sobre `pricing.category`, cabeçalho do controller) + sugestões
+  (anti-replay, challenge, tamanho do token, formato plano, logs, citação). Todos tratados.
 - **Para ligar em hml/prod:** definir `WHATSAPP_WEBHOOK_VERIFY_TOKEN`; no painel da Meta, callback
   `https://<domínio>/api/v1/webhooks/whatsapp/<slug>` e o mesmo token; assinar `messages`.
 

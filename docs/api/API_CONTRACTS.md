@@ -1591,14 +1591,24 @@ GET /webhooks/whatsapp/:tenant?hub.mode=subscribe&hub.verify_token=<t>&hub.chall
 ```
 `hub.verify_token` igual (tempo constante) a `WHATSAPP_WEBHOOK_VERIFY_TOKEN` → `200`, corpo
 `text/plain` = `<c>`. Qualquer outro caso (token errado, env ausente, canal `isActive: false`,
-tenant desconhecido, `hub.mode` diferente) → `403` sem corpo. **Única exceção** à regra "200 em
+tenant desconhecido, `hub.mode` diferente, `hub.challenge` fora de `[A-Za-z0-9._-]{1,256}` ou
+repetido) → `403` sem corpo. **Única exceção** à regra "200 em
 todos os caminhos" acima, e só neste `GET`: a Meta exige o eco.
 
 **Assinatura do `POST`:** inalterada — HMAC-SHA256 do corpo cru em `x-hub-signature-256`, com o
 `webhook_secret` do laboratório ou, na falta, `WHATSAPP_WEBHOOK_SECRET` (App Secret do app Meta).
 
-**Conferência do número:** `entry[].changes[].value.metadata.phone_number_id` tem de ser o
-`phone_number_id` do laboratório resolvido por `:tenant`; divergente → descartado (log), `200`.
+**Conferência do número (falha fechado):** `entry[].changes[].value.metadata.phone_number_id` tem
+de ser o `phone_number_id` do laboratório resolvido por `:tenant`; divergente ou **ausente** →
+aquele `value` é descartado (log), `200`. Laboratório **sem** `phone_number_id` configurado não
+recebe aviso no formato da Meta (`entry[]`): tudo descartado (log). Motivo: o segredo do HMAC pode
+ser o App Secret da instalação inteira, e o número é o que separa um laboratório do outro.
+**Formato plano** (`{ from, text }`, sem `entry[]`) só é aceito com o driver mock (mesma regra do
+envio, D-308 item 5); com a URL real da Meta, descartado (log).
+
+**Anti-replay:** o aviso no formato da Meta **não** passa pela guarda de corpo repetido (D-149): a
+Meta reentrega o mesmo corpo byte a byte quando não recebeu o `200`, e a idempotência vem do
+`external_message_id` (mensagens) e da ordem sem regressão (status).
 
 **Mapeamento de status** (`value.statuses[]`, casa por `id` = `messages.external_message_id` **e
 `tenant_id`**; desconhecido → ignorado com log):
@@ -1613,20 +1623,31 @@ todos os caminhos" acima, e só neste `GET`: a Meta exige o eco.
 **Nunca rebaixa** (ordem `pending < sent < delivered < read`; `failed` não sobrescreve
 `delivered`/`read`) — D-225. Cada mudança emite `message.status_updated` no WS. Se o status traz
 `pricing.category` ∈ `service | utility | marketing | authentication`, grava `messages.pricing_category`
-(D-312); outro valor é ignorado com log.
+(D-312; **CRMLAB-141, ainda não implementado**); outro valor é ignorado com log.
 
 **Mensagens e status no mesmo aviso:** a Meta manda tudo para `POST /webhooks/whatsapp/:tenant`;
 o mesmo `POST` trata `value.messages[]` e `value.statuses[]` (a rota `/status` segue aceitando
 status, por compatibilidade). `pricing.category` fica para o CRMLAB-141 (coluna da 065).
 
-**Mensagem do paciente** (`value.messages[]`): `type: "text"` → mesmo caminho de sempre
-(`findOrCreateByPhone` + `createFromPatient`, D-033, idempotente por `external_message_id`), com
-`received_via = 'cloud_api'` (abre a janela de 24 h, D-310). Outros tipos (imagem, áudio,
-documento, vídeo, figurinha, localização, contato): a mídia **não é baixada** até o CRMLAB-140
-(D-313), mas a mensagem **entra** como `messageType: "text"` com o aviso
-`[<Tipo> recebida pela API oficial — ainda não aparece no CRM; veja no celular]` (precedido da
-legenda, quando há), sem `attachmentUrl` — emenda de 06/11/2026: descartar escondia da atendente
-que o paciente escreveu e deixava a janela fechada no CRM com ela aberta na Meta.
+**Mensagem do paciente** (`value.messages[]`): mesmo caminho de sempre (`findOrCreateByPhone` +
+`createFromPatient`, D-033, idempotente por `external_message_id`), com `received_via = 'cloud_api'`
+(abre a janela de 24 h, D-310) e `context.id` → `quotedExternalId` (resposta citando, D-221). Todas
+entram como `messageType: "text"`, sem `attachmentUrl`:
+
+| `type` da Meta | `content` |
+|---|---|
+| `text` | `text.body` |
+| `button` (botão de modelo) | `button.text` |
+| `interactive` | `button_reply.title` ou `list_reply.title` (` — description`, quando há) |
+| `location` | `📍 <name ou address> (<lat>, <lng>)` |
+| `contacts` | `👤 <formatted_name> (<phone>)`, separados por vírgula |
+| `image`, `audio`, `voice`, `video`, `document`, `sticker` | legenda (quando há) + aviso `[Recebido pela API oficial: <tipo> — o anexo ainda não aparece no CRM. Se precisar, peça ao paciente que descreva por texto.]`; documento leva o nome do arquivo entre aspas |
+| `unsupported` e tipos novos | aviso de tipo que o CRM ainda não mostra |
+| `reaction` | **não é fala:** aplica/remove a reação do paciente na mensagem (D-222); alvo desconhecido → ignorado com log |
+| `system`, `request_welcome`, `ephemeral` | ignorados (não viram fala nem reabrem conversa) |
+
+A mídia **não é baixada** até o CRMLAB-140 (D-313, emenda de 06/11/2026: descartar escondia da
+atendente que o paciente escreveu e deixava a janela fechada no CRM com ela aberta na Meta).
 
 ### Webhook do gateway Evolution (WhatsApp QR, Onda 7 — Bloco B) — PÚBLICO
 

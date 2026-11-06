@@ -2078,8 +2078,9 @@ Dono de `proposal_reminders` (SCHEMA §42).
 **Contrato.** Modo do canal e credenciais implementados no CRMLAB-138; janela de 24 h no CRMLAB-137;
 templates no CRMLAB-136 (`services/whatsapp-templates.ts` puro + `WhatsAppService.listTemplates`/
 `sendTemplate`, driver `listTemplates?`/`sendTemplate?`); webhook no CRMLAB-139 (`whatsappVerify`,
-`applyMetaStatuses` no mesmo `POST`, `handleWebhook`/`handleStatusCallback` com o `phone_number_id`
-esperado); custo ainda não (CRMLAB-141). Estende `WhatsAppService` (§11) e `ChannelSettingsService` (§13/§16).
+`applyMetaStatuses`/`applyMetaReactions` no mesmo `POST`; `metaNoticeFor(payload, phoneNumberId)`
+filtra o aviso pelo número do laboratório, falhando fechado, antes de `handleWebhook`/
+`handleStatusCallback`/`handleReactions`); custo ainda não (CRMLAB-141). Estende `WhatsAppService` (§11) e `ChannelSettingsService` (§13/§16).
 `connection_mode = 'cloud_api'` já escolhe o driver pelo `WhatsAppCredentialsResolver` (§16); aqui entram
 as regras do driver real da Meta.
 

@@ -42,6 +42,7 @@ function metaPayload(options: {
             field: 'messages',
             value: {
               messaging_product: 'whatsapp',
+              metadata: { phone_number_id: 'numero-do-lab' },
               contacts,
               messages: [
                 {
@@ -323,6 +324,7 @@ describe('lote com dado que nao cabe na coluna', () => {
           changes: [
             {
               value: {
+                metadata: { phone_number_id: 'numero-do-lab' },
                 contacts: messages.map((m) => ({
                   wa_id: m.phone,
                   profile: { name: m.name ?? 'Contato' },

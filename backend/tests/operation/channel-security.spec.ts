@@ -72,13 +72,15 @@ let whatsapp: WhatsAppService;
 let admin: UserRecord;
 let tenantId: string;
 
-function inboundPayload(text: string): Record<string, unknown> {
+/** `phoneNumberId`: o numero que o laboratorio resolve (D-311 item 6, falha fechado). */
+function inboundPayload(text: string, phoneNumberId = 'numero-da-env'): Record<string, unknown> {
   return {
     entry: [
       {
         changes: [
           {
             value: {
+              metadata: { phone_number_id: phoneNumberId },
               contacts: [{ wa_id: '5511987654321', profile: { name: 'Joao' } }],
               messages: [
                 {
@@ -97,8 +99,8 @@ function inboundPayload(text: string): Record<string, unknown> {
 }
 
 /** Webhook assinado com `secret`. A resposta e SEMPRE 200 (nao e oraculo). */
-async function postWebhook(text: string, secret: string): Promise<void> {
-  const body = JSON.stringify(inboundPayload(text));
+async function postWebhook(text: string, secret: string, phoneNumberId?: string): Promise<void> {
+  const body = JSON.stringify(inboundPayload(text, phoneNumberId));
   const response = await app.agent
     .post(`${WEBHOOK}/${SLUG}`)
     .set('x-hub-signature-256', signWebhookBody(body, secret))
@@ -159,7 +161,7 @@ afterEach(() => {
 
 describe('D-074 — desligar o canal desliga a ENTRADA', () => {
   it('canal ativo aceita o webhook; `isActive: false` recusa a MESMA requisicao', async () => {
-    await patchChannel({ isActive: true, webhookSecret: LAB_SECRET });
+    await patchChannel({ isActive: true, phoneNumberId: 'numero-da-env', webhookSecret: LAB_SECRET });
 
     await postWebhook('antes', LAB_SECRET);
     expect(await countConversations(tenantId)).toBe(1);
@@ -192,7 +194,7 @@ describe('D-074 — desligar o canal desliga a ENTRADA', () => {
 
 describe('D-073 emendada — revogar nao cai no segredo global', () => {
   it('`webhookSecret: null` revoga: o segredo da env var NAO passa a valer', async () => {
-    await patchChannel({ isActive: true, webhookSecret: LAB_SECRET });
+    await patchChannel({ isActive: true, phoneNumberId: 'numero-da-env', webhookSecret: LAB_SECRET });
     await postWebhook('com-segredo-do-lab', LAB_SECRET);
     expect(await countMessages(tenantId)).toBe(1);
 
@@ -225,7 +227,7 @@ describe('D-073 emendada — revogar nao cai no segredo global', () => {
     // coluna NULL, e nao a sentinela de revogacao.
     await patchChannel({ isActive: true, phoneNumberId: 'numero-do-lab' });
 
-    await postWebhook('pela-env', ENV_SECRET);
+    await postWebhook('pela-env', ENV_SECRET, 'numero-do-lab');
     expect(await countMessages(tenantId)).toBe(1);
   });
 });
@@ -256,7 +258,7 @@ describe('D-076 — credencial cifrada em repouso', () => {
 
   it('o segredo cifrado continua validando o HMAC do webhook', async () => {
     vi.stubEnv('CHANNEL_SECRET_KEY', 'chave-de-teste-com-mais-de-32-caracteres-aqui');
-    await patchChannel({ isActive: true, webhookSecret: LAB_SECRET });
+    await patchChannel({ isActive: true, phoneNumberId: 'numero-da-env', webhookSecret: LAB_SECRET });
 
     await postWebhook('cifrado', LAB_SECRET);
     expect(await countMessages(tenantId)).toBe(1);

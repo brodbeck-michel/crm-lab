@@ -97,7 +97,8 @@ CREATE POLICY tenant_isolation ON conversations
   sem corpo em qualquer falha — única exceção ao "200 sempre", sem oráculo (a resposta de falha é
   idêntica para token errado, canal inativo e tenant inexistente). `waba_id`/`phone_number_id` são
   identificadores públicos; o token da Cloud API é cifrado em repouso (D-076) e write-only.
-  `metadata.phone_number_id` do payload é conferido com o do tenant antes de gravar.
+  `metadata.phone_number_id` do payload é conferido com o do tenant antes de gravar, **falhando
+  fechado**: ausente, divergente ou tenant sem número configurado → descartado (D-311 item 6).
 
 ## Conexão WhatsApp por QR (Evolution API, Onda 7 — Bloco B)
 

@@ -5,7 +5,12 @@
  *   texto puro com o token certo; 403 sem corpo em qualquer outro caso);
  * - a Meta manda mensagens E status para a MESMA URL: o POST trata os dois;
  * - status nunca regride, casa por `external_message_id` e `tenant_id`;
- * - `value.metadata.phone_number_id` diferente do número do laboratório: descarta;
+ * - `value.metadata.phone_number_id` diferente do número do laboratório, ausente,
+ *   ou laboratório sem número: descarta (falha fechado — o segredo do HMAC pode
+ *   ser o da instalação inteira);
+ * - formato plano (sem `entry[]`) só com o driver mock;
+ * - reação vira reação (D-222), não fala; `system`/`request_welcome` ignorados;
+ *   botão, lista, localização e contato viram texto legível; citação preservada;
  * - fala recebida pela Meta abre a janela de 24 h (`received_via = 'cloud_api'`).
  */
 import { randomUUID } from 'node:crypto';
@@ -21,6 +26,7 @@ import {
 import { createConversation, createTenant } from '../helpers/factories.js';
 import { createTestApp, type TestApp } from '../helpers/test-app.js';
 import { getTestDb, resetDatabase } from '../helpers/test-db.js';
+import type { WhatsAppCredentials } from '../../src/services/whatsapp.service.js';
 import { TEST_WEBHOOK_SECRET, testCredentialsResolver } from './fixtures.js';
 
 const WEBHOOK = '/api/v1/webhooks/whatsapp';
@@ -66,9 +72,9 @@ function textMessage(phone: string, text: string, id = `wamid.${randomUUID()}`) 
   };
 }
 
-function post(slug: string, payload: unknown) {
+function post(slug: string, payload: unknown, target: TestApp = app) {
   const body = JSON.stringify(payload);
-  return app.agent
+  return target.agent
     .post(`${WEBHOOK}/${slug}`)
     .set('x-hub-signature-256', signWebhookBody(body, TEST_WEBHOOK_SECRET))
     .set('Content-Type', 'application/json')
@@ -97,6 +103,39 @@ async function sentMessage(tenantId: string, externalId: string, status = 'sent'
 async function statusOf(id: string): Promise<string | undefined> {
   const rows = await query<{ status: string }>('SELECT status FROM messages WHERE id = $1', [id]);
   return rows[0]?.status;
+}
+
+/** App com as credenciais do laboratório alteradas (ex.: sem número, URL real). */
+async function appWith(overrides: Partial<WhatsAppCredentials>): Promise<TestApp> {
+  const base = testCredentialsResolver(slugToId);
+  const whatsapp = new WhatsAppService({
+    credentials: {
+      forTenant: async (tenantId) => ({ ...(await base.forTenant(tenantId)), ...overrides }),
+      byWebhookIdentity: async (identity) => {
+        const found = await base.byWebhookIdentity(identity);
+        return found ? { ...found, ...overrides } : null;
+      },
+    },
+    driver: new MockWhatsAppDriver(),
+    queue: createInMemoryQueue({ sleep: async () => undefined }),
+  });
+  return createTestApp({ db: await getTestDb(), modules: [makeWebhookModule({ whatsapp })] });
+}
+
+async function patientMessages(tenantId: string) {
+  return query<{ content: string; quoted_external_id: string | null; received_via: string | null }>(
+    `SELECT content, quoted_external_id, received_via FROM messages
+      WHERE tenant_id = $1 AND sender_type = 'patient' ORDER BY created_at, external_message_id`,
+    [tenantId],
+  );
+}
+
+/** Uma mensagem da Meta de `type` qualquer, do paciente. */
+function typed(type: string, fields: Record<string, unknown>, id = `wamid.${randomUUID()}`) {
+  return {
+    contacts: [{ wa_id: '5548999991234', profile: { name: 'Joao' } }],
+    messages: [{ id, from: '5548999991234', timestamp: '1730880000', type, ...fields }],
+  };
 }
 
 beforeEach(async () => {
@@ -142,6 +181,18 @@ describe('GET /webhooks/whatsapp/:tenant — verificação da URL', () => {
       const response = await verify(slug, params).expect(403);
       expect(response.text).toBe('');
     }
+  });
+
+  it('hub.challenge fora de [A-Za-z0-9._-]{1,256}, longo demais ou repetido: 403 (nada refletido)', async () => {
+    await lab('lab-a');
+    const base = { 'hub.mode': 'subscribe', 'hub.verify_token': VERIFY };
+    for (const challenge of ['<script>alert(1)</script>', 'a b', '9'.repeat(257)]) {
+      const response = await verify('lab-a', { ...base, 'hub.challenge': challenge }).expect(403);
+      expect(response.text).toBe('');
+    }
+    await app.agent
+      .get(`${WEBHOOK}/lab-a?hub.mode=subscribe&hub.verify_token=${VERIFY}&hub.challenge=1&hub.challenge=2`)
+      .expect(403);
   });
 
   it('sem WHATSAPP_WEBHOOK_VERIFY_TOKEN configurado: 403 sempre (mesmo com token vazio)', async () => {
@@ -228,6 +279,20 @@ describe('POST /webhooks/whatsapp/:tenant — mensagens e status na mesma URL', 
     expect(patient).toEqual([{ content: 'Oi', received_via: 'cloud_api' }]);
   });
 
+  it('reentrega BYTE A BYTE da Meta não cai no anti-replay (a mensagem perdida volta) e não duplica', async () => {
+    const tenant = await lab('lab-a');
+    const notice = metaNotice(textMessage('5548999991234', 'Oi', 'wamid.IN-REENTREGA'));
+    await post('lab-a', notice);
+    expect(await patientMessages(tenant.id)).toHaveLength(1);
+    // Simula o processamento perdido (restart antes do 200): a Meta reenvia o MESMO corpo.
+    await exec(`DELETE FROM messages WHERE tenant_id = $1 AND sender_type = 'patient'`, [tenant.id]);
+    await post('lab-a', notice);
+    expect(await patientMessages(tenant.id)).toHaveLength(1);
+    // E uma terceira entrega idêntica não duplica (dedupe por wamid).
+    await post('lab-a', notice);
+    expect(await patientMessages(tenant.id)).toHaveLength(1);
+  });
+
   it('reentrega da mesma mensagem (mesmo wamid) não duplica', async () => {
     const tenant = await lab('lab-a');
     const notice = metaNotice(textMessage('5548999991234', 'Oi', 'wamid.IN1'));
@@ -263,6 +328,108 @@ describe('POST /webhooks/whatsapp/:tenant — mensagens e status na mesma URL', 
     expect(Number(rows[0]?.n)).toBe(0);
   });
 
+  it('aviso sem metadata.phone_number_id: descartado (falha fechado)', async () => {
+    const tenant = await lab('lab-a');
+    const notice = metaNotice(textMessage('5548999991234', 'Oi'));
+    const value = notice.entry[0]?.changes[0]?.value as Record<string, unknown>;
+    delete value.metadata;
+    await post('lab-a', notice);
+    expect(await patientMessages(tenant.id)).toHaveLength(0);
+  });
+
+  it('laboratório SEM número da Meta: aviso com HMAC válido é recusado (D-311 item 6)', async () => {
+    const tenant = await lab('lab-a');
+    const id = await sentMessage(tenant.id, 'wamid.OUT-SEM-NUMERO');
+    const semNumero = await appWith({ phoneNumberId: '' });
+    await post(
+      'lab-a',
+      metaNotice({ ...textMessage('5548999991234', 'Oi'), statuses: [{ id: 'wamid.OUT-SEM-NUMERO', status: 'read' }] }),
+      semNumero,
+    );
+    expect(await patientMessages(tenant.id)).toHaveLength(0);
+    expect(await statusOf(id)).toBe('sent');
+  });
+
+  it('lote com dois números: só o value do laboratório entra', async () => {
+    const tenant = await lab('lab-a');
+    const notice = metaNotice(textMessage('5548999991234', 'Do lab'));
+    const outro = metaNotice(textMessage('5548999990000', 'De outro'), 'numero-de-OUTRO-lab');
+    notice.entry[0]?.changes.push(...(outro.entry[0]?.changes ?? []));
+    await post('lab-a', notice);
+    expect((await patientMessages(tenant.id)).map((m) => m.content)).toEqual(['Do lab']);
+  });
+
+  it('formato plano (sem entry[]) só com o driver mock; com URL real da Meta é recusado', async () => {
+    const tenant = await lab('lab-a');
+    const flat = { from: '5548999991234', text: 'Plano' };
+    const real = await appWith({ apiUrl: 'https://graph.facebook.com/v21.0' });
+    await post('lab-a', flat, real);
+    expect(await patientMessages(tenant.id)).toHaveLength(0);
+    await post('lab-a', flat);
+    expect((await patientMessages(tenant.id)).map((m) => m.content)).toEqual(['Plano']);
+  });
+
+  it('reação do paciente vira reação (D-222), não fala; tirar a reação remove', async () => {
+    const tenant = await lab('lab-a');
+    const id = await sentMessage(tenant.id, 'wamid.OUT-REACAO');
+    await post('lab-a', metaNotice(typed('reaction', { reaction: { message_id: 'wamid.OUT-REACAO', emoji: '👍' } })));
+    expect(await patientMessages(tenant.id)).toHaveLength(0);
+    const reactions = () =>
+      query<{ emoji: string; reactor_type: string }>(
+        'SELECT emoji, reactor_type FROM message_reactions WHERE tenant_id = $1 AND message_id = $2',
+        [tenant.id, id],
+      );
+    expect(await reactions()).toEqual([{ emoji: '👍', reactor_type: 'patient' }]);
+    await post('lab-a', metaNotice(typed('reaction', { reaction: { message_id: 'wamid.OUT-REACAO' } })));
+    expect(await reactions()).toEqual([]);
+    expect(await patientMessages(tenant.id)).toHaveLength(0);
+  });
+
+  it('system e request_welcome são ignorados; unsupported entra com aviso', async () => {
+    const tenant = await lab('lab-a');
+    await post('lab-a', metaNotice(typed('system', { system: { body: 'trocou de número' } })));
+    await post('lab-a', metaNotice(typed('request_welcome', {})));
+    expect(await patientMessages(tenant.id)).toHaveLength(0);
+    await post('lab-a', metaNotice(typed('unsupported', { errors: [{ code: 131051 }] })));
+    const rows = await patientMessages(tenant.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.content).toContain('tipo de mensagem que o CRM ainda não mostra');
+  });
+
+  it('botão de modelo, lista, botão interativo, localização e contato viram texto legível', async () => {
+    const tenant = await lab('lab-a');
+    const cases: Array<[string, Record<string, unknown>, string]> = [
+      ['button', { button: { text: 'Confirmar', payload: 'CONFIRMAR' } }, 'Confirmar'],
+      ['interactive', { interactive: { type: 'button_reply', button_reply: { id: 'b1', title: 'Sim' } } }, 'Sim'],
+      [
+        'interactive',
+        { interactive: { type: 'list_reply', list_reply: { id: 'l1', title: 'Manhã', description: '7h às 11h' } } },
+        'Manhã — 7h às 11h',
+      ],
+      ['location', { location: { latitude: -28.47, longitude: -49.01, name: 'Casa' } }, '📍 Casa (-28.47, -49.01)'],
+      [
+        'contacts',
+        { contacts: [{ name: { formatted_name: 'Maria' }, phones: [{ phone: '+55 48 99999-0000' }] }] },
+        '👤 Maria (+55 48 99999-0000)',
+      ],
+    ];
+    for (const [type, fields] of cases) await post('lab-a', metaNotice(typed(type, fields)));
+    const contents = (await patientMessages(tenant.id)).map((m) => m.content);
+    expect(contents.sort()).toEqual(cases.map(([, , expected]) => expected).sort());
+  });
+
+  it('resposta citando: context.id vira quoted_external_id', async () => {
+    const tenant = await lab('lab-a');
+    await sentMessage(tenant.id, 'wamid.OUT-CITADA');
+    await post(
+      'lab-a',
+      metaNotice(typed('text', { text: { body: 'Sobre isso' }, context: { from: 'x', id: 'wamid.OUT-CITADA' } })),
+    );
+    expect(await patientMessages(tenant.id)).toEqual([
+      { content: 'Sobre isso', quoted_external_id: 'wamid.OUT-CITADA', received_via: 'cloud_api' },
+    ]);
+  });
+
   it('mídia recebida (até o CRMLAB-140): vira texto com aviso e legenda, marcada como cloud_api', async () => {
     const tenant = await lab('lab-a');
     await post(
@@ -278,6 +445,13 @@ describe('POST /webhooks/whatsapp/:tenant — mensagens e status na mesma URL', 
             image: { id: 'MEDIA_ID', mime_type: 'image/jpeg', caption: 'Meu pedido médico' },
           },
           { id: 'wamid.AUD1', from: '5548999991234', timestamp: '1730880001', type: 'audio', audio: { id: 'A' } },
+          {
+            id: 'wamid.DOC1',
+            from: '5548999991234',
+            timestamp: '1730880002',
+            type: 'document',
+            document: { id: 'D', filename: 'pedido.pdf' },
+          },
         ],
       }),
     );
@@ -286,10 +460,14 @@ describe('POST /webhooks/whatsapp/:tenant — mensagens e status na mesma URL', 
         WHERE tenant_id = $1 AND sender_type = 'patient' ORDER BY external_message_id DESC`,
       [tenant.id],
     );
-    expect(rows).toHaveLength(2);
-    const [image, audio] = [rows.find((r) => r.content.startsWith('Meu pedido')), rows.find((r) => r.content.startsWith('[Áudio'))];
-    expect(image?.content).toContain('[Imagem recebida pela API oficial');
-    expect(audio).toBeDefined();
+    expect(rows).toHaveLength(3);
+    const contents = rows.map((r) => r.content);
+    expect(contents).toContain(
+      'Meu pedido médico\n\n[Recebido pela API oficial: imagem — o anexo ainda não aparece no CRM. ' +
+        'Se precisar, peça ao paciente que descreva por texto.]',
+    );
+    expect(contents.some((c) => c.startsWith('[Recebido pela API oficial: áudio —'))).toBe(true);
+    expect(contents.some((c) => c.startsWith('[Recebido pela API oficial: documento "pedido.pdf" —'))).toBe(true);
     for (const row of rows) {
       expect(row).toMatchObject({ message_type: 'text', attachment_url: null, received_via: 'cloud_api' });
     }

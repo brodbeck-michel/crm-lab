@@ -30,6 +30,23 @@ import { getTestDb, resetDatabase } from '../helpers/test-db.js';
 describe('POST /conversations/:id/attachments', () => {
   let app: TestApp;
 
+  /**
+   * Os testes de WebM levam um cabecalho EBML falso (nao e audio de verdade). Na API oficial o
+   * recado de voz e convertido para OGG por ffmpeg (CRMLAB-140, D-314); aqui o conversor e falso,
+   * para o teste nao depender do ffmpeg da maquina nem de um audio real.
+   */
+  async function appSemFfmpeg(): Promise<TestApp> {
+    const whatsapp = new WhatsAppService({
+      credentials: testCredentialsResolver(new Map()),
+      driver: new CapturingDriver(),
+      evolutionDriver: new CapturingDriver(),
+      queue: createInMemoryQueue({ sleep: async () => {}, defaults: { backoffMs: 1 } }),
+      attempts: 1,
+      convertAudio: async (buffer) => buffer,
+    });
+    return createTestApp({ modules: [makeConversationModule({ whatsapp }), mediaModule] });
+  }
+
   beforeAll(async () => {
     app = await createTestApp({ modules: [conversationModule, mediaModule] });
   });
@@ -75,6 +92,7 @@ describe('POST /conversations/:id/attachments', () => {
     const tenant = await createTenant();
     const ana = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Ana' });
     const conversation = await createConversation({ tenantId: tenant.id, assignedTo: ana.id });
+    const app = await appSemFfmpeg();
 
     // Cabeçalho EBML real de WebM — o `file-type` o rotula como `video/webm`.
     const webm = Buffer.concat([
@@ -253,6 +271,7 @@ describe('POST /conversations/:id/attachments', () => {
 
     it('áudio descarta a legenda (o WhatsApp não mostra legenda em áudio)', async () => {
       const { ana, conversation } = await setup();
+      const app = await appSemFfmpeg();
       const created = await app.agent
         .post(`/api/v1/conversations/${conversation.id}/attachments`)
         .set(app.auth(ana))

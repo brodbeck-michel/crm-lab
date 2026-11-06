@@ -293,8 +293,84 @@ describe('POST /conversations/:id/messages com template', () => {
       template: { ...LEMBRETE, variables: ['Maria'] },
     }).expect(400);
     expect(poucas.body.error.details.fields).toHaveProperty(['template.variables']);
-    await sendTemplate(conversation.id, ana, { template: { ...LEMBRETE, variables: ['Maria', '   '] } }).expect(400);
+    for (const variables of [['Maria', '   '], ['Maria\nSilva', 'x'], ['Maria\tSilva', 'x'], ['a     b', 'x'], ['x'.repeat(1025), 'y']]) {
+      const bad = await sendTemplate(conversation.id, ana, { template: { ...LEMBRETE, variables } }).expect(400);
+      expect(bad.body.error.details.fields).toHaveProperty(['template.variables']);
+    }
     expect(await messagesOf(conversation.id)).toHaveLength(0);
+  });
+
+  it('corpo preenchido acima de 1024 caracteres: 400 em template.variables', async () => {
+    const { ana, conversation } = await lab();
+    const longo = await sendTemplate(conversation.id, ana, {
+      template: { ...LEMBRETE, variables: ['x'.repeat(1000), 'y'.repeat(100)] },
+    }).expect(400);
+    expect(longo.body.error.details.fields).toHaveProperty(['template.variables']);
+    expect(driver.sent).toHaveLength(0);
+  });
+
+  it('Meta fora do ar ao conferir o modelo: 503 meta_unreachable, nada gravado', async () => {
+    const { ana, conversation } = await lab();
+    driver.failTemplateList = true;
+    const response = await sendTemplate(conversation.id, ana, { template: LEMBRETE }).expect(503);
+    expect(response.body.error.code).toBe('CHANNEL_CLOUD_API_UNAVAILABLE');
+    expect(response.body.error.details).toMatchObject({ reason: 'meta_unreachable' });
+    expect(await messagesOf(conversation.id)).toHaveLength(0);
+  });
+
+  it('participante envia modelo: sem *Nome*, e o tempo de resposta continua da dona (attributed_to)', async () => {
+    const { tenant, ana, conversation } = await lab();
+    const bruno = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Bruno' });
+    await exec(
+      `INSERT INTO conversation_participants (tenant_id, conversation_id, user_id) VALUES ($1, $2, $3)`,
+      [tenant.id, conversation.id, bruno.id],
+    );
+    await sendTemplate(conversation.id, bruno, { template: LEMBRETE }).expect(201);
+    expect(driver.sent[0]?.template).toEqual(LEMBRETE);
+    const db = await getTestDb();
+    const row = await db.withoutTenant((tx) =>
+      tx.query<{ attributed_to: string | null; content: string }>(
+        `SELECT attributed_to, content FROM messages WHERE conversation_id = $1 AND sender_type = 'agent'`,
+        [conversation.id],
+      ),
+    );
+    expect(row.rows[0]?.attributed_to).toBe(ana.id);
+    expect(row.rows[0]?.content.startsWith('*Bruno*')).toBe(false);
+  });
+
+  it('"tentar de novo" de modelo depois de o canal voltar para qr: 400 e a mensagem continua failed', async () => {
+    const { tenant, ana, conversation } = await lab();
+    driver.sendTemplate = async () => {
+      throw new Error('Meta recusou');
+    };
+    const first = await sendTemplate(conversation.id, ana, { template: LEMBRETE }).expect(502);
+    const messageId = first.body.error.details.messageId as string;
+    overrides.set(tenant.id, { connectionMode: 'qr', qrInstanceApiKey: 'apikey' });
+
+    const retry = await app.agent
+      .post(`/api/v1/conversations/${conversation.id}/messages/${messageId}/retry`)
+      .set(app.auth(ana))
+      .expect(400);
+    expect(retry.body.error.details.fields).toHaveProperty('template');
+    const [row] = await messagesOf(conversation.id);
+    expect(row?.status).toBe('failed');
+  });
+
+  it('a lista que a tela vê é a mesma que o envio confere (cache compartilhado entre instâncias)', async () => {
+    const { ana, conversation } = await lab();
+    // A tela carrega a lista (cache cheio)...
+    await app.agent.get('/api/v1/whatsapp/templates').set(app.auth(ana)).expect(200);
+    const calls = driver.templateListCalls;
+    // ...e o envio, por outra instância de serviço, não vai à Meta de novo.
+    const other = new WhatsAppService({
+      credentials: resolver(),
+      driver,
+      queue: createInMemoryQueue({ sleep: async () => undefined }),
+      attempts: 1,
+      now: () => clock,
+    });
+    await other.listTemplates(conversation.tenantId);
+    expect(driver.templateListCalls).toBe(calls);
   });
 
   it('laboratório em qr: 400 em template', async () => {
@@ -382,6 +458,29 @@ describe('Nova conversa por modelo (POST /conversations/whatsapp)', () => {
       ),
     );
     expect(Number(count.rows[0]?.n)).toBe(0);
+  });
+
+  it('conversa encerrada de outro canal + modelo inválido: 404 e nada muda (não reabre nem troca o canal)', async () => {
+    const { tenant, ana } = await lab();
+    const antiga = await createConversation({
+      tenantId: tenant.id,
+      assignedTo: ana.id,
+      status: 'closed',
+      channel: 'direct',
+      patientPhone: '+5548999997777',
+    });
+    await app.agent
+      .post(URL)
+      .set(app.auth(ana))
+      .send({ phone: '(48) 99999-7777', template: { name: 'nao_existe', language: 'pt_BR', variables: [] } })
+      .expect(404);
+    const db = await getTestDb();
+    const row = await db.withoutTenant((tx) =>
+      tx.query<{ status: string; channel: string }>('SELECT status, channel FROM conversations WHERE id = $1', [
+        antiga.id,
+      ]),
+    );
+    expect(row.rows[0]).toEqual({ status: 'closed', channel: 'direct' });
   });
 
   it('content e template juntos: 400', async () => {

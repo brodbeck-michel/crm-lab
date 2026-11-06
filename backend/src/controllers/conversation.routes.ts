@@ -177,9 +177,24 @@ export const sendTemplateSchema = z
   .object({
     name: z.string().trim().min(1).max(512),
     language: z.string().trim().min(1).max(20),
-    variables: z.array(z.string().trim().min(1).max(1024)).max(20),
+    variables: z.array(z.string().trim()).max(20),
   })
-  .strict();
+  .strict()
+  // Erro de variavel sai sempre em `fields["template.variables"]` (contrato §2).
+  // A Meta recusa parametro com quebra de linha, tab ou 5+ espacos (132018).
+  .superRefine((value, ctx) => {
+    const bad = value.variables.find(
+      (v) => v.length === 0 || v.length > 1024 || /[\n\t]| {5,}/.test(v),
+    );
+    if (bad !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['variables'],
+        message:
+          'Cada variavel: 1 a 1024 caracteres, sem quebra de linha, tab ou 5 espacos seguidos',
+      });
+    }
+  });
 
 /** Exatamente um de `content` e `template` (D-309 item 3). */
 function exactlyOneOfContentOrTemplate(

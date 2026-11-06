@@ -129,6 +129,8 @@ export interface ConversationPanelProps {
   /** Modelos aprovados da Meta (CRMLAB-136): repassados ao Composer. */
   templates?: readonly WhatsAppTemplate[];
   templatesLoading?: boolean;
+  templatesError?: boolean;
+  onRetryTemplates?: () => void;
   onSendTemplate?: (template: SendTemplateRequest) => Promise<unknown>;
   /** A autora edita (D-280). Promise: rejeitou, a caixa de edição fica aberta. */
   onEditMessage?: (messageId: string, content: string) => Promise<unknown>;
@@ -510,6 +512,8 @@ export function ConversationPanel({
   whatsappWindow = null,
   templates,
   templatesLoading,
+  templatesError,
+  onRetryTemplates,
   onSendTemplate,
   onEditMessage,
   onDeleteMessage,
@@ -984,7 +988,9 @@ export function ConversationPanel({
           initialValue={draftMessage}
           draftId={conversation.id}
           whatsappWindow={whatsappWindow}
-          {...(onSendTemplate ? { onSendTemplate, templates: templates ?? [], templatesLoading } : {})}
+          {...(onSendTemplate
+            ? { onSendTemplate, templates: templates ?? [], templatesLoading, templatesError, onRetryTemplates }
+            : {})}
         />
 
         {dragging && !drafts && (

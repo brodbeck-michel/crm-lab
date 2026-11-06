@@ -17,6 +17,7 @@
  * A lista `LAB_ROUTES` e a fonte unica: rota nova entra ali e passa a ser
  * varrida pelos tres invariantes de uma vez.
  */
+import { whatsappTemplateModule } from '../../src/controllers/whatsapp-template.routes.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { saoPauloToday } from '@crm-lab/shared';
 import type {
@@ -129,6 +130,7 @@ const LAB_MODULES = [
   auditModule,
   makeChannelSettingsModule({ evolutionClient: fakeEvolutionClient() }),
   conversationModule,
+  whatsappTemplateModule, // CRMLAB-136
   doctorModule,
   visitModule,
   examModule,

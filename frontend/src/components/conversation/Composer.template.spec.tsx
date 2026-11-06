@@ -103,6 +103,41 @@ describe('Composer — envio por modelo', () => {
     rerender(<Composer onSend={vi.fn()} whatsappWindow={CLOSED} templates={[]} onSendTemplate={vi.fn()} />);
     const button = screen.getByTestId('window-template-button');
     expect(button).toBeDisabled();
-    expect(button).toHaveAttribute('title', 'Nenhum modelo aprovado pela Meta para este laboratório');
+    expect(button).toHaveAccessibleDescription('Nenhum modelo aprovado pela Meta para este laboratório.');
+  });
+
+  it('lista com erro (Meta fora / sem credencial): aviso visível com "Tentar de novo", não "nenhum modelo"', async () => {
+    const onRetry = vi.fn();
+    render(
+      <Composer
+        onSend={vi.fn()}
+        whatsappWindow={CLOSED}
+        templates={[]}
+        templatesError
+        onRetryTemplates={onRetry}
+        onSendTemplate={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('templates-error')).toHaveTextContent('Não foi possível carregar os modelos');
+    expect(screen.queryByText(/Nenhum modelo aprovado/)).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Tentar de novo' }));
+    expect(onRetry).toHaveBeenCalled();
+  });
+
+  it('trocar de conversa zera o modelo escolhido', async () => {
+    const { rerender } = render(
+      <Composer onSend={vi.fn()} draftId="c1" whatsappWindow={CLOSED} templates={[LEMBRETE]} onSendTemplate={vi.fn()} />,
+    );
+    await userEvent.click(screen.getByTestId('window-template-button'));
+    await userEvent.selectOptions(
+      within(await screen.findByRole('dialog')).getByLabelText('Modelo aprovado'),
+      'lembrete_coleta|pt_BR',
+    );
+    rerender(
+      <Composer onSend={vi.fn()} draftId="c2" whatsappWindow={CLOSED} templates={[LEMBRETE]} onSendTemplate={vi.fn()} />,
+    );
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await userEvent.click(screen.getByTestId('window-template-button'));
+    expect(within(await screen.findByRole('dialog')).getByLabelText('Modelo aprovado')).toHaveValue('');
   });
 });

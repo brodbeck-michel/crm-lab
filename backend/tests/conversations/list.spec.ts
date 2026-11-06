@@ -340,6 +340,7 @@ describe('GET /conversations/:id', () => {
       'senderName',
       'senderType',
       'status',
+      'template', // CRMLAB-136 (D-309)
     ]);
     // Ordem cronologica crescente: o frontend renderiza de cima para baixo.
     expect(primeira.content).toBe('Ola');

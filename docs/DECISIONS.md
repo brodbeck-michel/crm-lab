@@ -6917,7 +6917,7 @@ filhos 136–141) completa o modo. **Contrato escrito antes do código (regra ze
    (`NOT_FOUND`, `resource: "whatsapp_template"`), exige uma variável por `{{n}}` (senão
    `VALIDATION_ERROR`, `details.fields.template.variables`) e grava `messages.content` = corpo já
    preenchido (o atendente e o paciente leem o mesmo texto).
-4. **Categoria na mensagem:** colunas novas em `messages` (migração 063): `template_name`,
+4. **Categoria na mensagem:** colunas novas em `messages` (migração 064 — uma por card, 05/11): `template_name`,
    `template_language`, `template_category` (`marketing | utility`). A categoria de **cobrança**
    (D-312) é outra coluna. Template é válido dentro e fora da janela de 24 h.
    **Complemento de 06/11/2026 (CRMLAB-136, com o OK do Michel):** a Nova conversa

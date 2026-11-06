@@ -368,7 +368,17 @@ export function Attendance() {
     mutationFn: (template: SendTemplateRequest) =>
       api.conversations.sendMessage(selectedId as string, { template }),
     onSuccess: invalidateConversation,
-    onError: handleSendError,
+    onError: (error: unknown) => {
+      if (isApiError(error) && error.code === 'NOT_FOUND' && error.details?.resource === 'whatsapp_template') {
+        // Saiu da lista aprovada depois que a tela carregou: atualiza a lista.
+        toast('Esse modelo não está mais aprovado na Meta. A lista foi atualizada; escolha outro.', {
+          tone: 'attention',
+        });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.whatsappTemplates() });
+        return;
+      }
+      handleSendError(error);
+    },
   });
 
   /**
@@ -701,6 +711,8 @@ export function Attendance() {
               ? {
                   templates: templatesQuery.data?.templates ?? [],
                   templatesLoading: templatesQuery.isLoading,
+                  templatesError: templatesQuery.isError,
+                  onRetryTemplates: () => void templatesQuery.refetch(),
                   onSendTemplate: (template: SendTemplateRequest) => sendTemplate.mutateAsync(template),
                 }
               : {})}

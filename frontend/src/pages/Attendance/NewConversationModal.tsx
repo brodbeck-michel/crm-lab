@@ -7,6 +7,7 @@ import {
   firstContactLimitMessage,
   isApiError,
   mapFieldErrors,
+  queryKeys,
   queryScopes,
   useWhatsAppTemplates,
 } from '@/api';
@@ -72,8 +73,12 @@ export function NewConversationModal({
   // sai por modelo — é o padrão. Em QR a lista vem vazia e só há texto.
   const templatesQuery = useWhatsAppTemplates();
   const templates = templatesQuery.data?.templates ?? [];
-  const [kind, setKind] = useState<'template' | 'text'>('template');
+  // `null` = a pessoa ainda não escolheu: com modelos, o padrão é "Modelo
+  // aprovado" — mas só se nada foi digitado (a lista que chega depois não
+  // esconde o texto já escrito). O campo de texto aparece logo, sem esperar a lista.
+  const [chosenKind, setChosenKind] = useState<'template' | 'text' | null>(null);
   const [templateDraft, setTemplateDraft] = useState<TemplateDraft>(EMPTY_TEMPLATE_DRAFT);
+  const kind = chosenKind ?? (content.trim() === '' ? 'template' : 'text');
   const byTemplate = templates.length > 0 && kind === 'template';
 
   const normalizedPhone = normalizeBrazilianPhone(phone);
@@ -114,16 +119,28 @@ export function NewConversationModal({
           // D-308: a conversa ficou criada, sem mensagem; falta credencial da
           // API oficial (ou a instalação não tem a API). Aviso no modal, como o
           // teto de D-306.
-          // `created: false` = conversa que já existia; o 409/503 não mudou nada nela.
-          const prefix = error.details?.created === false ? 'Nada foi enviado' : 'A conversa foi criada';
+          // Só houve criação com `conversationId` e `created !== false`; sem
+          // `conversationId` (modelo conferido antes de criar, CRMLAB-136) nada existe.
+          const createdNow =
+            typeof error.details?.conversationId === 'string' && error.details?.created !== false;
+          const prefix = createdNow ? 'A conversa foi criada' : 'Nada foi enviado';
           setFormError(
             error.code === 'CHANNEL_CLOUD_API_NOT_CONFIGURED'
               ? `${prefix}, mas a API oficial do WhatsApp ainda não está configurada ` +
                   'neste laboratório. Peça ao administrador para completar em Canais.'
-              : `${prefix}, mas a API oficial do WhatsApp não está disponível nesta ` +
-                  'instalação. Fale com o suporte.',
+              : error.details?.reason === 'meta_unreachable'
+                ? `${prefix}: a Meta não respondeu agora. Tente de novo em instantes.`
+                : `${prefix}, mas a API oficial do WhatsApp não está disponível nesta ` +
+                    'instalação. Fale com o suporte.',
           );
           await queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
+          return;
+        }
+        if (error.code === 'NOT_FOUND' && error.details?.resource === 'whatsapp_template') {
+          // O modelo saiu da lista aprovada depois que a tela carregou: atualiza a lista.
+          setFormError('Esse modelo não está mais aprovado na Meta. A lista foi atualizada; escolha outro.');
+          setTemplateDraft(EMPTY_TEMPLATE_DRAFT);
+          await queryClient.invalidateQueries({ queryKey: queryKeys.whatsappTemplates() });
           return;
         }
         if (error.code === 'WHATSAPP_WINDOW_CLOSED') {
@@ -250,12 +267,32 @@ export function NewConversationModal({
           error={phoneError}
           hint={PHONE_HINT}
         />
+        {templatesQuery.isLoading && (
+          <p data-testid="templates-loading" className="m-0 font-body text-caption text-neutral-700">
+            Carregando os modelos aprovados…
+          </p>
+        )}
+        {templatesQuery.isError && (
+          <div
+            role="alert"
+            data-testid="templates-error"
+            className="flex flex-wrap items-center gap-sm rounded-md bg-accent-100 px-md py-sm"
+          >
+            <p className="m-0 min-w-0 flex-1 font-body text-caption text-accent-800">
+              Não foi possível carregar os modelos aprovados (a Meta não respondeu ou o canal está sem
+              credencial). Para um número que ainda não escreveu, o envio precisa de um modelo.
+            </p>
+            <Button variant="secondary" size="sm" onClick={() => void templatesQuery.refetch()}>
+              Tentar de novo
+            </Button>
+          </div>
+        )}
         {templates.length > 0 && (
           <SegmentedControl
             aria-label="Tipo da primeira mensagem"
             value={kind}
             onChange={(value) => {
-              setKind(value);
+              setChosenKind(value);
               setFormError(null);
             }}
             options={[

@@ -128,6 +128,9 @@ export interface ComposerProps {
   templates?: readonly WhatsAppTemplate[];
   /** `true` enquanto a lista carrega (o botão espera). */
   templatesLoading?: boolean;
+  /** A lista falhou (Meta fora do ar, canal sem credencial): aviso com "Tentar de novo". */
+  templatesError?: boolean;
+  onRetryTemplates?: () => void;
   onSendTemplate?: (template: SendTemplateRequest) => Promise<unknown>;
 }
 
@@ -327,6 +330,8 @@ export function Composer({
   whatsappWindow,
   templates,
   templatesLoading = false,
+  templatesError = false,
+  onRetryTemplates,
   onSendTemplate,
 }: ComposerProps) {
   const windowRemaining = useWindowRemaining(whatsappWindow);
@@ -334,6 +339,14 @@ export function Composer({
   const [templateDraft, setTemplateDraft] = useState<TemplateDraft>(EMPTY_TEMPLATE_DRAFT);
   const [templateSending, setTemplateSending] = useState(false);
   const templateList = templates ?? [];
+  // Trocar de conversa zera o modal: modelo e variáveis são desta conversa.
+  const [templateDraftOwner, setTemplateDraftOwner] = useState(draftId);
+  if (templateDraftOwner !== draftId) {
+    setTemplateDraftOwner(draftId);
+    setTemplateOpen(false);
+    setTemplateDraft(EMPTY_TEMPLATE_DRAFT);
+  }
+  const noTemplates = !templatesLoading && !templatesError && templateList.length === 0;
   const templateRequest = templateRequestOf(templateList, templateDraft);
   const submitTemplate = async (): Promise<void> => {
     if (!onSendTemplate || !templateRequest) return;
@@ -602,21 +615,36 @@ export function Composer({
               Tempo restante da janela: {windowClosed ? 'encerrada' : formatRemaining(windowRemaining)}.
             </span>
           </p>
-          {onSendTemplate && (
-            <Button
-              variant={windowClosed ? 'primary' : 'secondary'}
-              size="sm"
-              disabled={templatesLoading || templateList.length === 0}
-              title={
-                !templatesLoading && templateList.length === 0
-                  ? 'Nenhum modelo aprovado pela Meta para este laboratório'
-                  : undefined
-              }
-              onClick={() => setTemplateOpen(true)}
-              data-testid="window-template-button"
-            >
-              Enviar modelo
-            </Button>
+          {onSendTemplate && templatesError && (
+            <span data-testid="templates-error" className="flex items-center gap-sm">
+              <span className="font-body text-caption text-accent-700">
+                Não foi possível carregar os modelos aprovados.
+              </span>
+              {onRetryTemplates && (
+                <Button variant="secondary" size="sm" onClick={onRetryTemplates}>
+                  Tentar de novo
+                </Button>
+              )}
+            </span>
+          )}
+          {onSendTemplate && !templatesError && (
+            <>
+              <Button
+                variant={windowClosed ? 'primary' : 'secondary'}
+                size="sm"
+                disabled={templatesLoading || templateList.length === 0}
+                aria-describedby={noTemplates ? 'composer-no-templates' : undefined}
+                onClick={() => setTemplateOpen(true)}
+                data-testid="window-template-button"
+              >
+                Enviar modelo
+              </Button>
+              {noTemplates && (
+                <span id="composer-no-templates" className="font-body text-caption text-neutral-700">
+                  Nenhum modelo aprovado pela Meta para este laboratório.
+                </span>
+              )}
+            </>
           )}
         </div>
       )}

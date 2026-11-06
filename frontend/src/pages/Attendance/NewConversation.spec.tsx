@@ -9,6 +9,7 @@ import type {
   ListConversationsResponse,
   ListPatientsResponse,
   ListProposalsResponse,
+  ListWhatsAppTemplatesResponse,
   Message,
   StartWhatsAppConversationResponse,
 } from '@crm-lab/shared';
@@ -412,6 +413,68 @@ describe('Atendimento — Nova conversa (CRMLAB-50)', () => {
     expect(within(dialog).getByLabelText('Mensagem')).toBeInTheDocument();
     expect(within(dialog).getByTestId('free-text-window-notice')).toBeInTheDocument();
     expect(within(dialog).queryByTestId('first-contact-notice')).toBeNull();
+  });
+
+  it('lista de modelos com erro: aviso com "Tentar de novo" e o texto livre continua possível', async () => {
+    listTemplatesMock.mockRejectedValue(new ApiError('CHANNEL_CLOUD_API_UNAVAILABLE', 'x', 503, {}));
+    renderScreen();
+    const dialog = await openModal();
+    expect(await within(dialog).findByTestId('templates-error')).toHaveTextContent(
+      'Não foi possível carregar os modelos aprovados',
+    );
+    expect(within(dialog).getByLabelText('Mensagem')).toBeInTheDocument();
+  });
+
+  it('modelo: Meta fora do ar antes de criar (503 sem conversationId) diz "Nada foi enviado", não "foi criada"', async () => {
+    listTemplatesMock.mockResolvedValue({
+      templates: [{ name: 'oi', language: 'pt_BR', category: 'utility', body: 'Oi', variables: [] }],
+    });
+    startWhatsAppMock.mockRejectedValue(
+      new ApiError('CHANNEL_CLOUD_API_UNAVAILABLE', 'x', 503, { reason: 'meta_unreachable' }),
+    );
+    renderScreen();
+    const dialog = await openModal();
+    await userEvent.type(within(dialog).getByLabelText('Telefone (WhatsApp)'), '48999991234');
+    await userEvent.selectOptions(await within(dialog).findByLabelText('Modelo aprovado'), 'oi|pt_BR');
+    await userEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+    const alert = await within(dialog).findByRole('alert');
+    expect(alert).toHaveTextContent('Nada foi enviado: a Meta não respondeu agora');
+    expect(alert).not.toHaveTextContent(/foi criada/);
+  });
+
+  it('modelo que saiu da lista aprovada (404 whatsapp_template): aviso e a lista é recarregada', async () => {
+    listTemplatesMock.mockResolvedValue({
+      templates: [{ name: 'oi', language: 'pt_BR', category: 'utility', body: 'Oi', variables: [] }],
+    });
+    startWhatsAppMock.mockRejectedValue(
+      new ApiError('NOT_FOUND', 'x', 404, { resource: 'whatsapp_template', id: 'oi:pt_BR' }),
+    );
+    renderScreen();
+    const dialog = await openModal();
+    await userEvent.type(within(dialog).getByLabelText('Telefone (WhatsApp)'), '48999991234');
+    await userEvent.selectOptions(await within(dialog).findByLabelText('Modelo aprovado'), 'oi|pt_BR');
+    const callsBefore = listTemplatesMock.mock.calls.length;
+    await userEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('não está mais aprovado na Meta');
+    await waitFor(() => expect(listTemplatesMock.mock.calls.length).toBeGreaterThan(callsBefore));
+  });
+
+  it('texto digitado antes de a lista de modelos chegar não some (fica em "Texto livre")', async () => {
+    let resolveList: (value: ListWhatsAppTemplatesResponse) => void = () => undefined;
+    listTemplatesMock.mockReturnValue(
+      new Promise<ListWhatsAppTemplatesResponse>((resolve) => {
+        resolveList = resolve;
+      }),
+    );
+    renderScreen();
+    const dialog = await openModal();
+    await userEvent.type(within(dialog).getByLabelText('Mensagem'), 'Olá, tudo bem?');
+    resolveList({
+      templates: [{ name: 'oi', language: 'pt_BR', category: 'utility', body: 'Oi', variables: [] }],
+    });
+    await within(dialog).findByRole('tab', { name: 'Texto livre' });
+    expect(within(dialog).getByLabelText('Mensagem')).toHaveValue('Olá, tudo bem?');
+    expect(within(dialog).getByRole('tab', { name: 'Texto livre' })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('número em atendimento com outra pessoa: erro dentro do modal, com o nome', async () => {

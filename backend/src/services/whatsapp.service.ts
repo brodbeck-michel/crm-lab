@@ -767,7 +767,13 @@ export class HttpWhatsAppDriver implements WhatsAppDriver {
         ? (record.paging as Record<string, unknown>)
         : {};
       const next = typeof paging.next === 'string' ? paging.next : null;
+      if (next !== null && !sameOrigin(next, origin)) {
+        logger.warn('whatsapp.templates_paging_other_host', { tenantId: credentials.tenantId });
+      }
       url = next !== null && sameOrigin(next, origin) ? next : null;
+      if (url !== null && page === MAX_TEMPLATE_PAGES - 1) {
+        logger.warn('whatsapp.templates_paging_truncated', { tenantId: credentials.tenantId });
+      }
     }
     return rows;
   }
@@ -1162,6 +1168,14 @@ export interface WhatsAppServiceDeps {
 /** Validade do cache de modelos por laboratorio (D-309 item 1). */
 export const TEMPLATE_CACHE_TTL_MS = 5 * 60_000;
 
+/**
+ * Cache de modelos POR LABORATORIO, compartilhado por todas as instancias de
+ * `WhatsAppService` do processo (cada modulo cria a sua): a lista que a tela
+ * mostra e a que o envio confere sao a MESMA. A chave guarda a impressao das
+ * credenciais, entao trocar credencial ou modo invalida sozinho.
+ */
+const templateCache = new Map<string, { key: string; at: number; templates: WhatsAppTemplate[] }>();
+
 /** Impressao das credenciais que decidem a lista de modelos. O token entra so como hash. */
 function credentialFingerprint(credentials: WhatsAppCredentials): string {
   return createHash('sha256')
@@ -1176,10 +1190,6 @@ export class WhatsAppService {
   private readonly credentials: WhatsAppCredentialsResolver;
   private readonly attempts: number;
   private readonly now: () => number;
-  private readonly templateCache = new Map<
-    string,
-    { key: string; at: number; templates: WhatsAppTemplate[] }
-  >();
 
   constructor(deps: WhatsAppServiceDeps) {
     this.now = deps.now ?? Date.now;
@@ -1232,7 +1242,7 @@ export class WhatsAppService {
     if (!driver.listTemplates) throw new BusinessError('CHANNEL_CLOUD_API_UNAVAILABLE');
 
     const key = credentialFingerprint(credentials);
-    const cached = this.templateCache.get(tenantId);
+    const cached = templateCache.get(tenantId);
     if (cached && cached.key === key && this.now() - cached.at < TEMPLATE_CACHE_TTL_MS) {
       return cached.templates;
     }
@@ -1244,10 +1254,11 @@ export class WhatsAppService {
         tenantId,
         reason: err instanceof Error ? err.message : String(err),
       });
-      throw new BusinessError('CHANNEL_CLOUD_API_UNAVAILABLE');
+      // `reason` separa "a Meta nao respondeu" da instalacao sem URL (D-308).
+      throw new BusinessError('CHANNEL_CLOUD_API_UNAVAILABLE', { reason: 'meta_unreachable' });
     }
     const templates = parseMetaTemplates(rows);
-    this.templateCache.set(tenantId, { key, at: this.now(), templates });
+    templateCache.set(tenantId, { key, at: this.now(), templates });
     return templates;
   }
 

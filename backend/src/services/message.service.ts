@@ -99,6 +99,9 @@ export interface ChannelPrecheckOptions {
   template?: SendTemplateRequest | null;
 }
 
+/** Teto do corpo do modelo JA preenchido: o limite de corpo da Meta (D-309). */
+export const TEMPLATE_FILLED_MAX = 1024;
+
 /** Modelo conferido contra a lista aprovada (D-309). */
 interface ResolvedTemplate {
   info: MessageTemplateInfo;
@@ -382,10 +385,18 @@ export class MessageService {
         },
       });
     }
+    const content = fillTemplate(found.body, variables);
+    if (content.length > TEMPLATE_FILLED_MAX) {
+      throw new BusinessError('VALIDATION_ERROR', {
+        fields: {
+          'template.variables': `O texto do modelo preenchido passa de ${TEMPLATE_FILLED_MAX} caracteres`,
+        },
+      });
+    }
     return {
       info: { name: found.name, language: found.language, category: found.category },
       variables,
-      content: fillTemplate(found.body, variables),
+      content,
     };
   }
 
@@ -507,8 +518,10 @@ export class MessageService {
     }
     // Antes do INSERT: quem perde a corrida nao grava nem envia nada (D-215).
     await this.claimIfFree(tenantId, conversation, senderId);
-    // Modelo nao leva o `*Nome*` do participante: o texto e o aprovado pela Meta.
-    const participant = template ? null : participantReplyOf(conversation, senderId);
+    // Resposta de participante (D-263): o tempo de resposta continua da dona
+    // (`attributedTo`) tambem por modelo; so o `*Nome*` fica de fora — o texto
+    // do modelo e o aprovado pela Meta.
+    const participant = participantReplyOf(conversation, senderId);
 
     const message = await this.messages.insert(tenantId, {
       conversationId,
@@ -897,6 +910,12 @@ export class MessageService {
     await this.assertChannelReady(tenantId, conversation);
     // Mensagem por modelo (D-309) reenvia o MESMO modelo e nao depende da janela.
     const templateSend = await this.messages.findTemplateSend(tenantId, messageId);
+    if (templateSend && (await this.whatsapp.connectionMode(tenantId)) !== 'cloud_api') {
+      // O canal voltou para QR depois da falha: modelo nao existe la (contrato §2).
+      throw new BusinessError('VALIDATION_ERROR', {
+        fields: { template: 'Modelo da Meta so no WhatsApp pela API oficial (cloud_api)' },
+      });
+    }
     if (!templateSend) {
       await this.assertWindowOpen(tenantId, conversation);
       await this.assertFirstContactAllowed(tenantId, conversation);

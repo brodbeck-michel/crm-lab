@@ -826,7 +826,10 @@ mensagem pelo canal WhatsApp do laboratório, pelo **mesmo** `MessageService.cre
   `POST /conversations/:id/messages`. É o primeiro contato pela Cloud API (vale fora da janela).
   Credencial e modelo são conferidos **antes** de criar a conversa do número novo: modelo fora da
   lista aprovada (`NOT_FOUND`, `whatsapp_template`), variáveis erradas ou laboratório em `qr`
-  (`VALIDATION_ERROR`) não deixam conversa vazia.
+  (`VALIDATION_ERROR`) não deixam conversa vazia. Com `template`, `CHANNEL_CLOUD_API_NOT_CONFIGURED`
+  (409) e `CHANNEL_CLOUD_API_UNAVAILABLE` (503) também podem vir **antes** de criar — então **sem**
+  `conversationId`/`created`: nada existe. O 503 com `details.reason: "meta_unreachable"` é a Meta
+  fora do ar ao conferir o modelo (não a instalação).
 
 **Comportamento (D-175):**
 - **Número que já tem conversa no laboratório → reaproveita**, nunca duplica. O dedupe é o de
@@ -1107,8 +1110,9 @@ Enviar mensagem em uma conversa.
   `{ "name": "lembrete_coleta", "language": "pt_BR", "variables": ["Maria", "12/11"] }`, **exclusivo de
   `content`** (os dois juntos → `VALIDATION_ERROR`). `name`+`language` têm de estar na lista de
   `GET /whatsapp/templates` (senão `NOT_FOUND`, `details.resource: "whatsapp_template"`);
-  `variables` tem exatamente uma string não vazia por `{{n}}` do corpo, máx. 1024 cada (senão
-  `VALIDATION_ERROR`, `details.fields["template.variables"]`). A mensagem gravada tem `content` =
+  `variables` tem exatamente uma string não vazia por `{{n}}` do corpo, máx. 1024 cada, sem quebra
+  de linha, tab nem 5+ espaços seguidos (a Meta recusa, 132018), e o corpo **já preenchido** cabe em
+  1024 caracteres (senão `VALIDATION_ERROR`, sempre em `details.fields["template.variables"]`). A mensagem gravada tem `content` =
   corpo já preenchido, `messageType: "text"` e `template: { name, language, category }` na resposta
   (`Message.template`; `null` em texto livre). Em `qr`, `template` → `VALIDATION_ERROR`
   (`fields.template`). Com `template` não vão `quotedMessageId`, `attachmentUrl` nem `messageType`
@@ -1116,7 +1120,10 @@ Enviar mensagem em uma conversa.
   assumir a fila (D-273), e depois da credencial (ordem: `CHANNEL_CLOUD_API_NOT_CONFIGURED` →
   modelo → janela). Resposta de participante por modelo não leva o `*Nome*` (o texto é o aprovado).
   O **"tentar de novo"** de uma mensagem por modelo reenvia o **mesmo** modelo com as mesmas
-  variáveis (guardadas em `messages.template_variables`) e não depende da janela.
+  variáveis (guardadas em `messages.template_variables`) e não depende da janela; com o canal já
+  em `qr`, `VALIDATION_ERROR` (`fields.template`) e a mensagem continua `failed`. Meta fora do ar
+  ao conferir o modelo: `CHANNEL_CLOUD_API_UNAVAILABLE` (503, `details.reason: "meta_unreachable"`),
+  nada gravado.
 - **Janela de 24 h (CRMLAB-137, D-310):** em `cloud_api`, sem `template`, só sai se a última mensagem
   do paciente tem menos de 24 h; senão `WHATSAPP_WINDOW_CLOSED` (409). Nada é gravado nem enviado.
   Com `template`, a janela não importa. A regra vale igual para `/attachments`, para o "tentar de
@@ -4719,8 +4726,10 @@ Busca na Meta (`GET /{waba_id}/message_templates`, todas as páginas, `paging.ne
 origem da URL configurada), filtra `APPROVED` + `MARKETING|UTILITY`, só **um** componente `BODY` de
 texto (cabeçalho, rodapé, botão e mídia omitidos) com variáveis **posicionais** `{{1}}..{{n}}` sem
 buraco (formato nomeado omitido). `example` vem de `example.body_text[0]` (ou `null`). Cache de 5 min
-por laboratório; a chave inclui uma impressão das credenciais (modo, URL, WABA, token), então trocar
-credencial ou modo invalida sozinho.
+por laboratório, **o mesmo** para esta lista e para a conferência do envio (a tela e o servidor
+veem a mesma lista); a chave inclui uma impressão das credenciais (modo, URL, WABA, token), então
+trocar credencial ou modo invalida sozinho. Meta fora do ar: 503 com `details.reason:
+"meta_unreachable"`.
 
 **Response (200):**
 ```json

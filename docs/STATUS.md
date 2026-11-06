@@ -3906,6 +3906,48 @@ Branch `feature/CRMLAB-138-canal-modo-cloud`, sobre o contrato do CRMLAB-135. De
   conversa reabre a encerrada antes do 409, como já faz com o teto de D-306; `connected_at` é uma
   coluna só para os dois provedores quando o QR segue pareado em `cloud_api`.
 
+### 🚧 CRMLAB-136 — modelos aprovados da Meta (2026-11-06, em validação)
+
+Branch `feature/CRMLAB-136-templates`, empilhada sobre o CRMLAB-137. Decisão D-309 (complemento de
+06/11: Nova conversa por modelo e `template_variables`).
+
+- **Lista:** `GET /whatsapp/templates` (atendente/gestor/admin; no inventário de isolamento, 123
+  rotas). Só `APPROVED` + `MARKETING|UTILITY`, um único `BODY` de texto, variáveis posicionais
+  `{{1}}..{{n}}`; ordem `name, language`. Cache de 5 min por laboratório, **compartilhado** entre a
+  lista e a conferência do envio; a chave leva uma impressão das credenciais (trocar credencial ou
+  modo invalida). Meta fora do ar → 503 `reason: meta_unreachable`. Paginação só da mesma origem
+  (o token não vai para outro host).
+- **Envio:** `template` exclusivo de `content` (sem citação, anexo nem tipo). Ordem: credencial →
+  modelo → janela; o modelo é conferido antes de reabrir/assumir (D-273) e não depende da janela.
+  Variáveis: 1..1024, sem quebra de linha/tab/5+ espaços; corpo preenchido ≤ 1024. Participante:
+  sem `*Nome*`, `attributed_to` da dona mantido.
+- **"Tentar de novo":** reenvia o mesmo modelo (`messages.template_variables`); canal já em `qr` →
+  400 e a mensagem continua `failed`.
+- **Nova conversa:** aceita `template`; credencial e modelo conferidos antes de criar (número novo
+  não fica vazio).
+- **Migração 064:** `template_name`, `template_language`, `template_category` (CHECK) e
+  `template_variables` (JSONB) em `messages`. Rollback: `ALTER TABLE messages DROP COLUMN
+  template_variables, DROP COLUMN template_category, DROP COLUMN template_language, DROP COLUMN
+  template_name; DELETE FROM schema_migrations WHERE name = '064_message_template.sql';`.
+- **Tela:** "Enviar modelo" no aviso da janela (modal com modelo, variáveis e prévia; erro mantém o
+  modal; lista com erro mostra "Tentar de novo"; sem modelo, o motivo fica visível). Nova conversa
+  abre em "Modelo aprovado" quando há modelos. Selo "Modelo" no balão.
+- **Mock:** `MockWhatsAppDriver` tem dois modelos (`retomar_atendimento`, `lembrete_coleta`) — é o
+  que a hml com `WHATSAPP_CLOUD_API_MOCK=true` mostra.
+- **Validação:** revisão independente por agente Opus 5.5 (sem as conclusões de quem desenvolveu).
+  1ª rodada: nenhum bloqueante; a corrigir: atribuição do participante, cache por instância (lista ×
+  envio divergindo), mensagem "a conversa foi criada" num 409/503 anterior à criação, erro da lista
+  aparecendo como "nenhum modelo", variável com quebra de linha/tab, corpo preenchido longo demais,
+  chave do erro de variável, "tentar de novo" com o canal já em `qr`, modelo removido continuando na
+  tela. Todos tratados, com testes.
+- **Fica para depois:** a Nova conversa confere o modelo antes do 409 de dono (com a Meta fora do ar,
+  quem pede número de outra atendente vê 503 em vez de `CONVERSATION_ALREADY_ASSIGNED`); o "tentar
+  de novo" não reconfere se o modelo ainda está aprovado (a Meta recusa e volta a `failed`).
+- **Testes:** `crmlab136-templates.spec.ts` (28), `graph-templates.spec.ts` (5, Graph API falsa);
+  frontend `Composer.template.spec.tsx` (7) e `NewConversation` (+5); specs de formato e de
+  isolamento ajustadas. Envio real contra a Meta: verificação manual com número de teste.
+
+
 ### 🚧 CRMLAB-137 — janela de 24 h da Cloud API (2026-11-05, em validação)
 
 Branch `feature/CRMLAB-137-janela-24h-v2`, empilhada sobre o CRMLAB-138. Decisão D-310.

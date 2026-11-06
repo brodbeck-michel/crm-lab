@@ -6986,6 +6986,9 @@ filhos 136–141) completa o modo. **Contrato escrito antes do código (regra ze
    `instance` do Evolution).
 **Impacto:** API_CONTRACTS §2b, SECURITY (Webhooks), SERVICES §35; env nova `WHATSAPP_WEBHOOK_VERIFY_TOKEN`
 (infra), opcional (ausente = GET sempre 403).
+**Implementado no CRMLAB-139 (06/11/2026):** a Meta manda mensagens e status para a **mesma** URL;
+o `POST /webhooks/whatsapp/:tenant` trata os dois (antes, status só pela rota `/status`, que a Meta
+não usa). A conferência do `phone_number_id` descarta o `value` inteiro (mensagens e status).
 
 ### D-312: Custo da Cloud API — categorias, tabela de preços em configuração (CRMLAB-141)
 **Decisão:**
@@ -7019,4 +7022,8 @@ mídia) e download autenticado de mídia recebida (hoje não existe). Vale o com
 (`MESSAGE_SEND_FAILED`, já documentado) — a regra da janela (D-310) **antecede** essa recusa;
 mídia recebida pela Meta não é baixada. **Pendência registrada para o CRMLAB-140** (também em
 STATUS.md). Até lá, laboratório que precisa de anexo fica em `qr`.
+**Emenda de 06/11/2026 (CRMLAB-139):** mídia recebida pela Meta **entra** como texto com um aviso
+("[Imagem recebida pela API oficial — ainda não aparece no CRM; veja no celular]", com a legenda
+antes, quando há), `received_via = 'cloud_api'`. Descartar escondia da atendente que o paciente
+escreveu e deixava a janela de 24 h fechada no CRM enquanto a Meta a considera aberta.
 **Impacto:** nenhum código; API_CONTRACTS (nota em attachments), STATUS (pendência).

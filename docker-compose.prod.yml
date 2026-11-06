@@ -193,6 +193,8 @@ services:
       WHATSAPP_CLOUD_API_MOCK: ${WHATSAPP_CLOUD_API_MOCK:-}
       WHATSAPP_API_TOKEN: ${WHATSAPP_API_TOKEN:-}
       WHATSAPP_WEBHOOK_SECRET: ${WHATSAPP_WEBHOOK_SECRET:-}
+      # Verificacao da URL do webhook no painel da Meta (CRMLAB-139, D-311).
+      WHATSAPP_WEBHOOK_VERIFY_TOKEN: ${WHATSAPP_WEBHOOK_VERIFY_TOKEN:-}
       # Gateway Evolution API (D-083, Onda 7 Bloco B) — conexao WhatsApp por QR.
       # As tres vazias = funcionalidade desligada com erro claro
       # (CHANNEL_QR_UNAVAILABLE), nunca crash de boot; WHATSAPP_API_* acima

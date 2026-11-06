@@ -3906,6 +3906,32 @@ Branch `feature/CRMLAB-138-canal-modo-cloud`, sobre o contrato do CRMLAB-135. De
   conversa reabre a encerrada antes do 409, como já faz com o teto de D-306; `connected_at` é uma
   coluna só para os dois provedores quando o QR segue pareado em `cloud_api`.
 
+### 🚧 CRMLAB-139 — webhook da Meta (2026-11-06, em validação)
+
+Branch `feature/CRMLAB-139-webhook-meta`, empilhada sobre o CRMLAB-136. Decisão D-311 (e emenda de
+06/11 ao D-313).
+
+- **Verificação da URL:** `GET /webhooks/whatsapp/:tenant` devolve o `hub.challenge` (texto puro)
+  com `hub.verify_token` = `WHATSAPP_WEBHOOK_VERIFY_TOKEN` (tempo constante), laboratório conhecido e
+  canal ligado; qualquer outro caso, 403 sem corpo. **Env nova** (prod/hml, `.env.example` e
+  `docker-compose.prod.yml`): sem ela a Meta não aceita a URL.
+- **Mensagens e status na mesma URL:** o `POST /webhooks/whatsapp/:tenant` agora trata os dois (a
+  Meta não usa a rota `/status`, que fica por compatibilidade). Status nunca regride (D-225) e o
+  `UPDATE` filtra `tenant_id` explicitamente; `failed` loga só o `errors[0].code`.
+- **Número do laboratório:** `value.metadata.phone_number_id` diferente do laboratório do slug →
+  `value` descartado com log (mensagens e status).
+- **Mídia recebida** (até o CRMLAB-140): entra como texto com aviso "[Imagem recebida pela API
+  oficial — ainda não aparece no CRM; veja no celular]" (com a legenda antes), `received_via =
+  'cloud_api'` — abre a janela de 24 h, como na Meta. Emenda ao D-313 (antes: descartar).
+- **Fica para o CRMLAB-141:** `pricing.category` do status (coluna da 065).
+- **Testes:** `crmlab139-webhook-meta.spec.ts` (12): verificação (ok, token/modo/challenge errados,
+  sem env, canal desligado, tenant desconhecido), status no POST principal sem regressão, `failed`,
+  isolamento do mesmo id externo entre laboratórios, mensagem + status no mesmo aviso, reentrega,
+  `phone_number_id` divergente, mídia recebida, rota `/status` antiga.
+- **Para ligar em hml/prod:** definir `WHATSAPP_WEBHOOK_VERIFY_TOKEN`; no painel da Meta, callback
+  `https://<domínio>/api/v1/webhooks/whatsapp/<slug>` e o mesmo token; assinar `messages`.
+
+
 ### 🚧 CRMLAB-136 — modelos aprovados da Meta (2026-11-06, em validação)
 
 Branch `feature/CRMLAB-136-templates`, empilhada sobre o CRMLAB-137. Decisão D-309 (complemento de

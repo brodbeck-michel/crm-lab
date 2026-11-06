@@ -218,7 +218,7 @@ async function authenticate(
   req: Request,
   services: WebhookServices,
   cache: CacheService,
-): Promise<{ tenantId: string } | null> {
+): Promise<{ tenantId: string; phoneNumberId: string } | null> {
   const identity = tenantIdentityOf(req);
   const credentials = await services.whatsapp.resolveWebhookTenant(identity);
   if (!credentials) {
@@ -248,7 +248,73 @@ async function authenticate(
     logger.warn('whatsapp.webhook_replay', { tenantId: credentials.tenantId });
     return null;
   }
-  return { tenantId: credentials.tenantId };
+  return { tenantId: credentials.tenantId, phoneNumberId: credentials.phoneNumberId };
+}
+
+/**
+ * `GET /webhooks/whatsapp/:tenant` — verificacao da URL pela Meta (CRMLAB-139,
+ * D-311 item 1). `hub.mode=subscribe` + `hub.verify_token` igual (tempo
+ * constante) a `WHATSAPP_WEBHOOK_VERIFY_TOKEN` + laboratorio conhecido e com o
+ * canal ligado => 200 com o `hub.challenge` em texto puro. Qualquer outra coisa
+ * => 403 sem corpo. Unica excecao ao "200 sempre" do webhook, e so no GET.
+ */
+export function whatsappVerify(services: WebhookServices): RequestHandler {
+  return (req, res) => {
+    const forbid = (reason: string): void => {
+      logger.warn('whatsapp.webhook_verify_refused', { reason });
+      res.status(403).end();
+    };
+    const query = req.query as Record<string, unknown>;
+    const mode = typeof query['hub.mode'] === 'string' ? query['hub.mode'] : '';
+    const token = typeof query['hub.verify_token'] === 'string' ? query['hub.verify_token'] : '';
+    const challenge = typeof query['hub.challenge'] === 'string' ? query['hub.challenge'] : '';
+    const expected = env.WHATSAPP_WEBHOOK_VERIFY_TOKEN ?? '';
+    if (mode !== 'subscribe' || challenge === '' || challenge.length > 256) {
+      forbid('bad_request');
+      return;
+    }
+    if (expected === '' || !safeEquals(token, expected)) {
+      forbid('token');
+      return;
+    }
+    services.whatsapp
+      .resolveWebhookTenant(tenantIdentityOf(req))
+      .then((credentials) => {
+        if (!credentials) return forbid('unknown_tenant');
+        if (!credentials.isActive) return forbid('channel_disabled');
+        res.status(200).type('text/plain').send(challenge);
+      })
+      .catch(() => forbid('error'));
+  };
+}
+
+/**
+ * Status de um aviso da Meta (D-311 itens 3 e 5). A Meta manda status e
+ * mensagens para a MESMA URL; esta funcao serve as duas rotas. Status de
+ * mensagem desconhecida (ou que nao avancaria) e ignorado — so log.
+ */
+async function applyMetaStatuses(
+  services: WebhookServices,
+  tenantId: string,
+  payload: unknown,
+  phoneNumberId: string,
+): Promise<number> {
+  const updates = await services.whatsapp.handleStatusCallback(payload, phoneNumberId);
+  let applied = 0;
+  for (const update of updates) {
+    if (update.status === 'failed') {
+      // So o codigo da Meta: sem telefone, sem texto (D-311 item 5).
+      logger.warn('whatsapp.message_failed', {
+        tenantId,
+        externalId: update.externalId,
+        errorCode: update.errorCode ?? null,
+      });
+    }
+    const changed = await services.messages.applyExternalStatus(tenantId, update.externalId, update.status);
+    if (changed) applied += 1;
+    else logger.debug('whatsapp.status_ignored', { tenantId, externalId: update.externalId });
+  }
+  return applied;
 }
 
 /** Handler async cujo erro nunca pode virar 500 vazado para o canal. */
@@ -273,9 +339,9 @@ export function whatsappInbound(services: WebhookServices, cache: CacheService):
       acknowledge(res);
       return;
     }
-    const { tenantId } = authenticated;
+    const { tenantId, phoneNumberId } = authenticated;
 
-    const inbound = await services.whatsapp.handleWebhook(req.body);
+    const inbound = await services.whatsapp.handleWebhook(req.body, phoneNumberId);
     let processed = 0;
     let rejected = 0;
     for (const dto of inbound) {
@@ -310,10 +376,14 @@ export function whatsappInbound(services: WebhookServices, cache: CacheService):
       }
     }
 
+    // A Meta manda os status na MESMA URL das mensagens (D-311).
+    const statuses = await applyMetaStatuses(services, tenantId, req.body, phoneNumberId);
+
     logger.info('whatsapp.webhook_processed', {
       tenantId,
       messages: processed,
       rejected,
+      statuses,
     });
     acknowledge(res);
   });
@@ -326,14 +396,11 @@ export function whatsappStatus(services: WebhookServices, cache: CacheService): 
       acknowledge(res);
       return;
     }
-    const { tenantId } = authenticated;
+    const { tenantId, phoneNumberId } = authenticated;
 
-    const updates = await services.whatsapp.handleStatusCallback(req.body);
-    for (const update of updates) {
-      await services.messages.applyExternalStatus(tenantId, update.externalId, update.status);
-    }
+    const updates = await applyMetaStatuses(services, tenantId, req.body, phoneNumberId);
 
-    logger.info('whatsapp.status_processed', { tenantId, updates: updates.length });
+    logger.info('whatsapp.status_processed', { tenantId, updates });
     acknowledge(res);
   });
 }
@@ -1358,6 +1425,7 @@ function buildWebhookModule(
 
   router.post('/whatsapp', whatsappInbound(services, deps.cache));
   router.post('/whatsapp/status', whatsappStatus(services, deps.cache));
+  router.get('/whatsapp/:tenant', whatsappVerify(services));
   router.post('/whatsapp/:tenant', whatsappInbound(services, deps.cache));
   router.post('/whatsapp/:tenant/status', whatsappStatus(services, deps.cache));
 

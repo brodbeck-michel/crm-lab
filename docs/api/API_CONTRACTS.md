@@ -1542,8 +1542,9 @@ Não usam JWT: **quem autentica é a assinatura HMAC**. Verificada ANTES de qual
 processamento e antes de qualquer escrita (SECURITY.md "Webhooks").
 
 ```
-POST /webhooks/whatsapp/:tenant          mensagem recebida
-POST /webhooks/whatsapp/:tenant/status   callback de status de entrega
+GET  /webhooks/whatsapp/:tenant          verificação da URL pela Meta (CRMLAB-139)
+POST /webhooks/whatsapp/:tenant          mensagem recebida E status (a Meta manda os dois aqui)
+POST /webhooks/whatsapp/:tenant/status   callback de status de entrega (compatibilidade)
 POST /webhooks/whatsapp                  idem, com `tenantSlug` no corpo
 POST /webhooks/whatsapp/status
 ```
@@ -1614,10 +1615,18 @@ todos os caminhos" acima, e só neste `GET`: a Meta exige o eco.
 `pricing.category` ∈ `service | utility | marketing | authentication`, grava `messages.pricing_category`
 (D-312); outro valor é ignorado com log.
 
+**Mensagens e status no mesmo aviso:** a Meta manda tudo para `POST /webhooks/whatsapp/:tenant`;
+o mesmo `POST` trata `value.messages[]` e `value.statuses[]` (a rota `/status` segue aceitando
+status, por compatibilidade). `pricing.category` fica para o CRMLAB-141 (coluna da 065).
+
 **Mensagem do paciente** (`value.messages[]`): `type: "text"` → mesmo caminho de sempre
-(`findOrCreateByPhone` + `createFromPatient`, D-033, idempotente por `external_message_id`).
-Outros tipos (imagem, áudio, documento…): **fora desta entrega** (CRMLAB-140, D-313) — descartados
-com log, sem erro.
+(`findOrCreateByPhone` + `createFromPatient`, D-033, idempotente por `external_message_id`), com
+`received_via = 'cloud_api'` (abre a janela de 24 h, D-310). Outros tipos (imagem, áudio,
+documento, vídeo, figurinha, localização, contato): a mídia **não é baixada** até o CRMLAB-140
+(D-313), mas a mensagem **entra** como `messageType: "text"` com o aviso
+`[<Tipo> recebida pela API oficial — ainda não aparece no CRM; veja no celular]` (precedido da
+legenda, quando há), sem `attachmentUrl` — emenda de 06/11/2026: descartar escondia da atendente
+que o paciente escreveu e deixava a janela fechada no CRM com ela aberta na Meta.
 
 ### Webhook do gateway Evolution (WhatsApp QR, Onda 7 — Bloco B) — PÚBLICO
 

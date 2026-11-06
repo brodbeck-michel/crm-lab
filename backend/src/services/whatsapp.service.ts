@@ -1053,6 +1053,31 @@ export interface InboundMessageDTO {
 export interface StatusCallbackDTO {
   externalId: string;
   status: MessageStatus;
+  /** `errors[0].code` da Meta num `failed` (D-311 item 5) — so para log, sem PII. */
+  errorCode?: string | null;
+}
+
+/**
+ * Conferencia do numero do laboratorio (D-311 item 6): `value.metadata.phone_number_id`
+ * do aviso tem de ser o `phone_number_id` do laboratorio resolvido pelo slug.
+ * Divergente => o `value` inteiro e descartado (com log). Sem `phone_number_id`
+ * no aviso (payload plano do mock) ou sem numero configurado: nao ha o que conferir.
+ */
+function valueMatchesNumber(
+  value: Record<string, unknown>,
+  expectedPhoneNumberId: string | undefined,
+): boolean {
+  if (!expectedPhoneNumberId) return true;
+  const got = asString(asRecord(value.metadata)?.phone_number_id);
+  if (got === null || got === expectedPhoneNumberId) return true;
+  logger.warn('whatsapp.webhook_phone_number_mismatch', {});
+  return false;
+}
+
+function errorCodeOf(record: Record<string, unknown>): string | null {
+  const first = asRecord(asArray(record.errors)[0]);
+  const code = first?.code;
+  return typeof code === 'number' || typeof code === 'string' ? String(code) : null;
 }
 
 /** Mapa status do canal -> `MessageStatus` do contrato. */
@@ -1132,15 +1157,41 @@ function contactNames(value: Record<string, unknown>): Map<string, string> {
   return names;
 }
 
-function contentOf(message: Record<string, unknown>): { content: string; url: string | null } {
+/** Rotulo do aviso de midia recebida pela Cloud API (CRMLAB-139, D-313 emendada). */
+const CLOUD_MEDIA_LABEL: Record<string, string> = {
+  image: 'Imagem',
+  audio: 'Áudio',
+  voice: 'Áudio',
+  video: 'Vídeo',
+  document: 'Documento',
+  sticker: 'Figurinha',
+  location: 'Localização',
+  contacts: 'Contato',
+};
+
+/**
+ * Mensagem da Meta -> conteudo. Texto entra como texto. Midia e outros tipos
+ * ainda nao sao baixados (CRMLAB-140, D-313): entram como TEXTO com um aviso
+ * (e a legenda, quando ha), para a atendente saber que o paciente mandou algo
+ * e para a fala abrir a janela de 24 h — a Meta abre a janela com qualquer
+ * mensagem do paciente. Nada de `attachmentUrl`: a Meta manda um id de midia,
+ * nao um link publico.
+ */
+function cloudApiContentOf(message: Record<string, unknown>): {
+  content: string;
+  messageType: MessageType;
+  attachmentUrl: null;
+} {
   const type = asString(message.type) ?? 'text';
   const body = asString(asRecord(message.text)?.body);
-  if (body) return { content: body, url: null };
-
-  const media = asRecord(message[type]);
-  const caption = asString(media?.caption);
-  const link = asString(media?.link);
-  return { content: caption ?? `[${type}]`, url: link };
+  if (type === 'text' && body) return { content: body, messageType: 'text', attachmentUrl: null };
+  const caption = asString(asRecord(message[type])?.caption);
+  const notice = `[${CLOUD_MEDIA_LABEL[type] ?? 'Mensagem'} recebida pela API oficial — ainda não aparece no CRM; veja no celular]`;
+  return {
+    content: caption ? `${caption}\n\n${notice}` : notice,
+    messageType: 'text',
+    attachmentUrl: null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1423,29 +1474,30 @@ export class WhatsAppService {
    * mock produz em dev. NUNCA lanca: payload malformado devolve lista vazia
    * (SECURITY.md "payload invalido -> 200 vazio").
    */
-  async handleWebhook(payload: unknown): Promise<InboundMessageDTO[]> {
+  async handleWebhook(payload: unknown, expectedPhoneNumberId?: string): Promise<InboundMessageDTO[]> {
     const out: InboundMessageDTO[] = [];
+    const values = changeValues(payload);
 
-    for (const value of changeValues(payload)) {
+    for (const value of values) {
+      if (!valueMatchesNumber(value, expectedPhoneNumberId)) continue;
       const names = contactNames(value);
       for (const raw of asArray(value.messages)) {
         const message = asRecord(raw);
         if (!message) continue;
         const from = asString(message.from);
         if (!from) continue;
-        const { content, url } = contentOf(message);
         out.push({
           phone: from,
           patientName: profileName(names.get(from) ?? null),
-          content,
-          messageType: TYPE_MAP[asString(message.type) ?? 'text'] ?? 'text',
-          attachmentUrl: url,
+          ...cloudApiContentOf(message),
           externalId: asString(message.id),
         });
       }
     }
 
-    if (out.length === 0) {
+    // Formato plano (mock/dev) so quando o aviso NAO e da Meta: um aviso da Meta
+    // descartado pela conferencia do numero nao pode "cair" no formato plano.
+    if (out.length === 0 && values.length === 0) {
       const flat = asRecord(payload);
       const from = flat ? (asString(flat.from) ?? asString(flat.phone)) : null;
       const content = flat ? (asString(flat.text) ?? asString(flat.content)) : null;
@@ -1468,20 +1520,27 @@ export class WhatsAppService {
    * Normaliza o callback de status. Mesma divergencia de `handleWebhook`:
    * devolve lista, porque o canal entrega lote. Nunca lanca.
    */
-  async handleStatusCallback(payload: unknown): Promise<StatusCallbackDTO[]> {
+  async handleStatusCallback(
+    payload: unknown,
+    expectedPhoneNumberId?: string,
+  ): Promise<StatusCallbackDTO[]> {
     const out: StatusCallbackDTO[] = [];
+    const values = changeValues(payload);
 
-    for (const value of changeValues(payload)) {
+    for (const value of values) {
+      if (!valueMatchesNumber(value, expectedPhoneNumberId)) continue;
       for (const raw of asArray(value.statuses)) {
         const record = asRecord(raw);
         if (!record) continue;
         const externalId = asString(record.id);
         const status = STATUS_MAP[asString(record.status) ?? ''];
-        if (externalId && status) out.push({ externalId, status });
+        if (externalId && status) {
+          out.push({ externalId, status, ...(status === 'failed' ? { errorCode: errorCodeOf(record) } : {}) });
+        }
       }
     }
 
-    if (out.length === 0) {
+    if (out.length === 0 && values.length === 0) {
       const flat = asRecord(payload);
       const externalId = flat ? (asString(flat.externalId) ?? asString(flat.id)) : null;
       const status = flat ? STATUS_MAP[asString(flat.status) ?? ''] : undefined;

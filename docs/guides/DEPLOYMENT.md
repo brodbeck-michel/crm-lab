@@ -141,6 +141,10 @@ Vazias = driver **mock** que ecoa (bom para dev, nunca para produção).
   laboratório**: `POST /api/v1/webhooks/whatsapp/<slug>` (e `.../status`) — D-032.
 - `WHATSAPP_WEBHOOK_SECRET` é obrigatória para o webhook aceitar qualquer coisa:
   **segredo vazio recusa tudo, de propósito**.
+- **Cloud API da Meta (CRMLAB-139, D-311):** no painel do app Meta, a URL de callback é
+  `https://<domínio>/api/v1/webhooks/whatsapp/<slug>` (a **mesma** para mensagens e status) e o
+  "Verify token" é o valor de `WHATSAPP_WEBHOOK_VERIFY_TOKEN`. Sem essa env a verificação (`GET`)
+  responde 403 e a Meta não aceita a URL. Assinar o campo `messages` do webhook.
 
 ### Frontend (build-time)
 

@@ -851,13 +851,14 @@ export class MessageRepository {
         `UPDATE messages
          SET status = $1::text,
              read_at = CASE WHEN $1::text = 'read' THEN COALESCE(read_at, NOW()) ELSE read_at END
-         WHERE external_message_id = $2
+         WHERE tenant_id = $3
+           AND external_message_id = $2
            AND CASE
                  WHEN $1::text = 'failed' THEN status IN ('pending', 'sent')
                  ELSE ${statusRankSql('$1::text')} > ${statusRankSql('status')}
                END
          RETURNING id`,
-        [status, externalMessageId],
+        [status, externalMessageId, tenantId],
       );
       const changedId = updated.rows[0]?.id;
       return changedId ? selectOne(tx, changedId) : null;

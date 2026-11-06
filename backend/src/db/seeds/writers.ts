@@ -338,6 +338,13 @@ export async function insertTenantChannel(
       iso(input.createdAt),
     ],
   );
+  // O trigger da migracao 066 carimba `cloud_api_since` com o relogio da carga; o seed volta
+  // o carimbo para a criacao do canal, senao nenhuma fala semeada abriria a janela de 24 h.
+  await tx.query(
+    `UPDATE tenant_channels SET cloud_api_since = $2
+      WHERE id = $1 AND channel = 'whatsapp' AND connection_mode = 'cloud_api'`,
+    [input.id, iso(input.createdAt)],
+  );
   return input.id;
 }
 
@@ -471,6 +478,8 @@ export interface SeedMessageInput {
   status: MessageStatus;
   readAt: Date | null;
   createdAt: Date;
+  /** Por qual webhook a fala do paciente chegou (migracao 066); omitido = NULL. */
+  receivedVia?: 'cloud_api' | 'evolution';
 }
 
 export async function insertMessage(tx: DbTx, input: SeedMessageInput): Promise<string> {
@@ -479,8 +488,8 @@ export async function insertMessage(tx: DbTx, input: SeedMessageInput): Promise<
   }
   await tx.query(
     `INSERT INTO messages (id, conversation_id, tenant_id, sender_type, sender_id, content,
-                           message_type, status, read_at, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+                           message_type, status, read_at, created_at, received_via)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
     [
       input.id,
       input.conversationId,
@@ -492,6 +501,7 @@ export async function insertMessage(tx: DbTx, input: SeedMessageInput): Promise<
       input.status,
       input.readAt ? iso(input.readAt) : null,
       iso(input.createdAt),
+      input.receivedVia ?? null,
     ],
   );
   return input.id;

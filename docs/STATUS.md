@@ -4125,6 +4125,9 @@ Branch `feature/CRMLAB-137-janela-24h-v2`, empilhada sobre o CRMLAB-138. Decisã
     e2e (ex. `flow-8-patient` `sendMessages`) devem dar 409. Não roda nesta máquina (TLS); ajustar
     o seed (fala recente com `received_via = 'cloud_api'` e `cloud_api_since` anterior) e validar
     no CI.
+    **Feito na integração `integ/cloud-api` (06/11/2026):** o seed e2e põe as falas nas últimas 3 h,
+    a do paciente com `received_via = 'cloud_api'`, e o `insertTenantChannel` volta o
+    `cloud_api_since` para a criação do canal.
   - **Treino na hml:** o Laboratório Teste está em `cloud_api` (mock) e o `~/treino-mensagem.sh`
     injeta falas pelo webhook Evolution — depois deste card elas não abrem a janela. Trocar o
     script para `POST /webhooks/whatsapp/<slug>` (formato Meta, assinado) no deploy da hml.

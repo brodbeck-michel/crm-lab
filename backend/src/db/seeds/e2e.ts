@@ -255,6 +255,9 @@ export async function seedE2e(tx: DbTx, now: Date): Promise<{ users: number; pro
   const conversations: readonly E2eConversation[] = Object.values(E2E_CONVERSATIONS);
   for (const conversation of conversations) {
     const convCreatedAt = new Date(now.getTime() - 5 * DAY_MS);
+    // As falas ficam nas ultimas 3 h: o WhatsApp do e2e esta em `cloud_api`, e a janela de 24 h
+    // (D-310, CRMLAB-137) recusaria com 409 os envios dos specs se a fala do paciente fosse antiga.
+    const messagesStartAt = new Date(now.getTime() - 3 * 60 * MIN_MS);
     await insertConversation(tx, {
       id: conversation.id,
       tenantId: conversation.tenantId,
@@ -267,7 +270,7 @@ export async function seedE2e(tx: DbTx, now: Date): Promise<{ users: number; pro
       status: 'active',
       unreadCount: conversation.unreadCount,
       tags: ['particular'],
-      lastMessageAt: new Date(convCreatedAt.getTime() + 30 * MIN_MS),
+      lastMessageAt: new Date(messagesStartAt.getTime() + 30 * MIN_MS),
       createdAt: convCreatedAt,
     });
 
@@ -302,7 +305,8 @@ export async function seedE2e(tx: DbTx, now: Date): Promise<{ users: number; pro
         messageType: 'text',
         status: 'delivered',
         readAt: null,
-        createdAt: new Date(convCreatedAt.getTime() + index * 10 * MIN_MS),
+        createdAt: new Date(messagesStartAt.getTime() + index * 10 * MIN_MS),
+        receivedVia: message.senderType === 'patient' ? 'cloud_api' : undefined,
       });
     }
   }

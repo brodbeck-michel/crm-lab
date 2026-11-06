@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChannelSettingsResponse, UserRole } from '@crm-lab/shared';
+import type { ChannelSettingsResponse, UserRole, WhatsAppUsageResponse } from '@crm-lab/shared';
 import { channelsApi } from '@/api/channels';
 import { settingsApi } from '@/api/settings';
 import { mutationIdle, querySuccess } from '@/test/query-mocks';
@@ -92,14 +92,30 @@ function renderPage() {
   );
 }
 
+/** `GET /settings/channels/whatsapp/usage` (CRMLAB-141, API_CONTRACTS §6.2). */
+const usage: WhatsAppUsageResponse = {
+  month: '2026-11',
+  currency: 'BRL',
+  freeServiceAllowance: 1000,
+  categories: [
+    { category: 'service', count: 1240, freeCount: 1000, unitPrice: 0.035, cost: 8.4 },
+    { category: 'utility', count: 60, freeCount: 0, unitPrice: 0.035, cost: 2.1 },
+    { category: 'marketing', count: 10, freeCount: 0, unitPrice: 0.3217, cost: 3.22 },
+    { category: 'authentication', count: 0, freeCount: 0, unitPrice: 0.035, cost: 0 },
+  ],
+  totalCost: 13.72,
+  isEstimate: true,
+};
+
 describe('ChannelsSettings', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     channelsMock.mockResolvedValue(settings);
     updateChannelsMock.mockResolvedValue(settings);
 
-    const { useWhatsAppConnect, useWhatsAppQr, useWhatsAppStatus, useWhatsAppDisconnect } =
+    const { useWhatsAppConnect, useWhatsAppQr, useWhatsAppStatus, useWhatsAppDisconnect, useWhatsAppUsage } =
       await import('@/api/channels');
+    vi.mocked(useWhatsAppUsage).mockReturnValue(querySuccess(usage));
     vi.mocked(useWhatsAppConnect).mockReturnValue(mutationIdle());
     vi.mocked(useWhatsAppQr).mockReturnValue(
       querySuccess({ qrcode: null, status: 'disconnected', expiresInSeconds: null }),
@@ -129,6 +145,30 @@ describe('ChannelsSettings', () => {
     // Inativo aparece marcado, não some.
     expect(screen.getByText('Pedro Inativo')).toBeInTheDocument();
     expect(screen.getByText('Inativo')).toBeInTheDocument();
+  });
+
+  describe('uso e custo da Cloud API (CRMLAB-141, D-312)', () => {
+    it('gestor vê o bloco em cloud_api: categorias, preço de 4 casas, franquia restante e total', async () => {
+      signIn('manager');
+      renderPage();
+      const block = await screen.findByTestId('whatsapp-usage');
+      expect(within(block).getByText('Atendimento (serviço)')).toBeInTheDocument();
+      expect(within(block).getByText('R$ 0,3217')).toBeInTheDocument();
+      expect(within(block).getByText(/restam 0\./)).toBeInTheDocument();
+      expect(within(block).getByTestId('whatsapp-usage-total')).toHaveTextContent('R$ 13,72');
+      expect(within(block).getByText(/Não é a fatura/)).toBeInTheDocument();
+    });
+
+    it('canal em qr: o bloco não aparece', async () => {
+      channelsMock.mockResolvedValue({
+        ...settings,
+        channels: settings.channels.map((c) => ({ ...c, connectionMode: 'qr' as const })),
+      });
+      signIn('manager');
+      renderPage();
+      await screen.findByText('Maria Souza');
+      expect(screen.queryByTestId('whatsapp-usage')).not.toBeInTheDocument();
+    });
   });
 
   describe('motivo da última queda do QR (CRMLAB-134, D-307)', () => {
@@ -394,8 +434,9 @@ describe('Modo do WhatsApp (CRMLAB-138, D-308)', () => {
       connectionMode: 'cloud_api',
       cloudApiConfigured: true,
     });
-    const { useWhatsAppConnect, useWhatsAppQr, useWhatsAppStatus, useWhatsAppDisconnect } =
+    const { useWhatsAppConnect, useWhatsAppQr, useWhatsAppStatus, useWhatsAppDisconnect, useWhatsAppUsage } =
       await import('@/api/channels');
+    vi.mocked(useWhatsAppUsage).mockReturnValue(querySuccess(usage));
     vi.mocked(useWhatsAppConnect).mockReturnValue(mutationIdle());
     vi.mocked(useWhatsAppQr).mockReturnValue(
       querySuccess({ qrcode: null, status: 'disconnected', expiresInSeconds: null }),

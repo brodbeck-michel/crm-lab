@@ -7014,7 +7014,7 @@ não usa). A conferência do `phone_number_id` descarta o `value` inteiro (mensa
 2. **Tabela de preços em configuração, não no código:** tabela `whatsapp_price_table` (SCHEMA §),
    **global da instalação** (preço é da Meta, igual para todos os laboratórios; sem `tenant_id`,
    como `tenants`), linhas `(category, price_brl, effective_from)`; vale a linha mais recente com
-   `effective_from <=` a data da mensagem. Seed da migração 063 com os valores oficiais em BRL
+   `effective_from <=` a data da mensagem. Seed da migração 065 com os valores oficiais em BRL
    vigentes desde **01/10/2026**: marketing **0,3217**, utility **0,035**, authentication
    **0,035**, service **0,035**. Reajuste = nova linha, sem deploy.
 3. **Franquia:** as **1.000 primeiras mensagens `service` do mês civil** (America/Sao_Paulo) **por
@@ -7025,9 +7025,17 @@ não usa). A conferência do `phone_number_id` descarta o `value` inteiro (mensa
    (admin/gestor) devolve, por categoria, quantidade, quantidade grátis e custo estimado em BRL.
    Só conta mensagens de atendimento (`sender_type = 'agent'`/`system` enviadas pelo CRM) com
    status `sent` ou posterior; `failed` não conta. **É estimativa**, não fatura da Meta.
-5. Coluna nova `messages.pricing_category` (migração 063), preenchida no envio e corrigida pelo status.
+5. Coluna nova `messages.pricing_category` (migração 065), preenchida no envio e corrigida pelo status.
 6. Vale só para `cloud_api`; `qr` não tem custo por mensagem (`pricing_category` fica `NULL`).
 **Impacto:** API_CONTRACTS §6.2, SCHEMA §47, SERVICES §35.
+**Implementado no CRMLAB-141 (06/11/2026):**
+- a categoria é gravada na **confirmação** do envio, só quando ele saiu pela Cloud API (o
+  `WhatsAppService` devolve por onde saiu): se o modo mudar no meio, vale o caminho real;
+- "por número" = por laboratório: o laboratório tem um número da Meta só (`tenant_channels`);
+- o preço exibido (`unitPrice`) é o vigente no fim do mês (ou hoje no mês corrente); o custo soma
+  mensagem a mensagem pelo preço da data de cada uma;
+- a tela é um bloco "Uso e custo do WhatsApp (API oficial)" em Canais & Equipe (gestor e admin, só
+  com o canal em `cloud_api`), com seletor de mês (PAGES §10).
 
 ### D-313: Anexos pela Cloud API ficam fora da entrega do CRMLAB-135 (CRMLAB-140)
 **Decisão:** **fora desta entrega**: envio de anexo (imagem, áudio, PDF, vídeo) e recebimento de

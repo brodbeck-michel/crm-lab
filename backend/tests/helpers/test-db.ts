@@ -50,11 +50,19 @@ export async function createIsolatedTestDb(): Promise<DbClient> {
   return db;
 }
 
-/** Tabelas de dados (tudo menos o controle de migracoes). */
+/**
+ * Tabelas de REFERENCIA semeadas pela migracao (nao sao dado de laboratorio):
+ * o reset nao as zera, senao o seed sumiria depois do primeiro teste.
+ * `whatsapp_price_table` = precos da Meta (065, CRMLAB-141).
+ */
+const REFERENCE_TABLES = ['whatsapp_price_table'];
+
+/** Tabelas de dados (tudo menos o controle de migracoes e as de referencia). */
 async function dataTables(db: DbClient): Promise<string[]> {
   const result = await db.query<{ tablename: string }>(
-    `SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename <> $1`,
-    [MIGRATIONS_TABLE],
+    `SELECT tablename FROM pg_tables
+      WHERE schemaname = 'public' AND tablename <> $1 AND NOT (tablename = ANY($2::text[]))`,
+    [MIGRATIONS_TABLE, REFERENCE_TABLES],
   );
   return result.rows.map((r) => r.tablename);
 }

@@ -1625,11 +1625,12 @@ Meta reentrega o mesmo corpo byte a byte quando não recebeu o `200`, e a idempo
 **Nunca rebaixa** (ordem `pending < sent < delivered < read`; `failed` não sobrescreve
 `delivered`/`read`) — D-225. Cada mudança emite `message.status_updated` no WS. Se o status traz
 `pricing.category` ∈ `service | utility | marketing | authentication`, grava `messages.pricing_category`
-(D-312; **CRMLAB-141, ainda não implementado**); outro valor é ignorado com log.
+(D-312, CRMLAB-141) — mesmo quando o status em si é repetido ou não sobe; outro valor é ignorado
+com log.
 
 **Mensagens e status no mesmo aviso:** a Meta manda tudo para `POST /webhooks/whatsapp/:tenant`;
 o mesmo `POST` trata `value.messages[]` e `value.statuses[]` (a rota `/status` segue aceitando
-status, por compatibilidade). `pricing.category` fica para o CRMLAB-141 (coluna da 065).
+status, por compatibilidade).
 
 **Mensagem do paciente** (`value.messages[]`): mesmo caminho de sempre (`findOrCreateByPhone` +
 `createFromPatient`, D-033, idempotente por `external_message_id`), com `received_via = 'cloud_api'`
@@ -4803,10 +4804,17 @@ Uso e custo **estimado** do mês (default: mês corrente, America/Sao_Paulo). **
 ```
 Conta mensagens enviadas pelo CRM (`sender_type` `agent`/`system`) em `cloud_api`, status `sent` ou
 posterior (`failed` e `pending` não contam), agrupadas por `messages.pricing_category`. A franquia
-(1.000 `service`/mês/número) é abatida por ordem de `created_at`; `unitPrice` é a linha de
+(1.000 `service`/mês/número; um número da Meta por laboratório, então é a do laboratório; valor em
+`WHATSAPP_FREE_SERVICE_MONTHLY`) é abatida por ordem de `created_at`; `unitPrice` é a linha de
 `whatsapp_price_table` vigente na data de cada mensagem (se o mês cruza uma mudança de preço, o
-item traz `unitPrice` do último vigente e o custo soma por mensagem). `month` inválido ou futuro →
-`VALIDATION_ERROR`. É estimativa, **não** a fatura da Meta.
+item traz `unitPrice` do último vigente — o do fim do mês, ou de hoje no mês corrente — e o custo soma
+por mensagem). `categories` traz sempre as quatro, nesta ordem; `cost` e `totalCost` com 2 casas
+(`totalCost` = soma dos `cost`). Mês civil de America/Sao_Paulo. `month` fora de `AAAA-MM`, repetido
+na query ou futuro → `VALIDATION_ERROR`.
+
+**Quando a categoria é gravada:** na confirmação do envio que saiu **pela Cloud API** (texto, anexo,
+"tentar de novo" e cartão): `template_category` se é modelo, senão `service`. Envio que falhou não
+ganha categoria; `qr` fica `NULL`. O `pricing.category` do status da Meta corrige (§2b). É estimativa, **não** a fatura da Meta.
 
 **Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403, `requiredRoles: ["manager","admin"]`)
 

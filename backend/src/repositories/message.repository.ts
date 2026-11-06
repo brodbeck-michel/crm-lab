@@ -779,6 +779,8 @@ export class MessageRepository {
     tenantId: string,
     id: string,
     externalMessageId: string,
+    /** Saiu pela Cloud API: grava a categoria de cobranca (D-312 item 1). */
+    viaCloudApi = false,
   ): Promise<{ message: Message | null; removedPhoneCopy: boolean }> {
     return this.db.withTenant(tenantId, async (tx) => {
       const removed = await tx.query<{ id: string }>(
@@ -793,10 +795,16 @@ export class MessageRepository {
       );
       const updated = await tx.query<{ id: string }>(
         `UPDATE messages
-         SET status = 'sent', external_message_id = $1
+         SET status = 'sent', external_message_id = $1,
+             -- Modelo = categoria do modelo; texto/anexo na janela = service.
+             -- Uma categoria ja corrigida pelo status da Meta nao e sobrescrita.
+             pricing_category = CASE
+               WHEN $3::boolean THEN COALESCE(pricing_category, template_category, 'service')
+               ELSE pricing_category
+             END
          WHERE id = $2
          RETURNING id`,
-        [externalMessageId, id],
+        [externalMessageId, id, viaCloudApi],
       );
       const changedId = updated.rows[0]?.id;
       return {
@@ -862,6 +870,31 @@ export class MessageRepository {
       );
       const changedId = updated.rows[0]?.id;
       return changedId ? selectOne(tx, changedId) : null;
+    });
+  }
+
+  /**
+   * `pricing.category` do status da Meta (D-312 item 1): vence a estimativa do
+   * envio. So mensagem que o CRM enviou (`agent`/`system`) deste tenant.
+   * `true` = mudou.
+   */
+  async setPricingCategoryByExternalId(
+    tenantId: string,
+    externalMessageId: string,
+    category: string,
+  ): Promise<boolean> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const updated = await tx.query<{ id: string }>(
+        `UPDATE messages
+         SET pricing_category = $1::text
+         WHERE tenant_id = $3
+           AND external_message_id = $2
+           AND sender_type IN ('agent', 'system')
+           AND pricing_category IS DISTINCT FROM $1::text
+         RETURNING id`,
+        [category, externalMessageId, tenantId],
+      );
+      return updated.rows.length > 0;
     });
   }
 

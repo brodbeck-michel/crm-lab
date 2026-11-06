@@ -26,6 +26,7 @@ import { denyPlatformOperator, requireAuth, requireRoles } from '../http/middlew
 import type { EvolutionClient } from '../lib/evolution-client.js';
 import { createAuditService } from '../services/audit.service.js';
 import { createChannelSettingsService } from '../services/channel-settings.service.js';
+import { createWhatsAppUsageService } from '../services/whatsapp-usage.service.js';
 
 /**
  * Mesmo padrao de `makeWebhookModule` em `webhook.routes.ts`: a fabrica plana
@@ -55,8 +56,25 @@ function buildChannelSettingsModule(
       : {}),
   });
 
+  const usage = createWhatsAppUsageService({ db: deps.db });
+
   const router = Router();
   router.use(requireAuth(), denyPlatformOperator());
+
+  // CRMLAB-141 (D-312): uso e custo ESTIMADO da Cloud API no mes. Gestor e admin.
+  router.get(
+    '/channels/whatsapp/usage',
+    requireRoles('manager', 'admin'),
+    (req: Request, res: Response, next): void => {
+      const raw = req.query.month;
+      // `?month=a&month=b` vira array: e formato invalido, nao "o primeiro".
+      const month = raw === undefined ? undefined : typeof raw === 'string' ? raw : '';
+      usage
+        .monthly(getContext(req), month)
+        .then((response) => res.status(200).json(response))
+        .catch(next);
+    },
+  );
 
   router.get(
     '/channels',

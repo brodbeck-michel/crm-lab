@@ -23,6 +23,7 @@ import { PageContainer, PageHeader } from '@/components/layout';
 import { DataTable, EmptyState, Modal } from '@/components/shared';
 import type { DataTableColumn } from '@/components/shared';
 import { WhatsAppConnectModal } from '@/components/settings/WhatsAppConnectModal';
+import { WhatsAppUsageCard } from '@/components/settings/WhatsAppUsageCard';
 import { Button, Chip, Input, TextArea, Toggle, useToast } from '@/components/ui';
 import { formatDateTime } from '@/lib/format';
 import { useAuthStore } from '@/stores';
@@ -950,6 +951,18 @@ export default function ChannelsSettings() {
               ))}
             </div>
           </Section>
+
+          {/* ── Custo da Cloud API (CRMLAB-141, D-312) — gestor e admin ─── */}
+          {settings.channels.some(
+            (channel) => channel.channel === 'whatsapp' && channel.connectionMode === 'cloud_api',
+          ) && (
+            <Section
+              title="Uso e custo do WhatsApp (API oficial)"
+              description="Mensagens enviadas pelo CRM no mês, por categoria de cobrança da Meta."
+            >
+              <WhatsAppUsageCard />
+            </Section>
+          )}
 
           {/* ── Distribuição ───────────────────────────────────────────── */}
           <Section

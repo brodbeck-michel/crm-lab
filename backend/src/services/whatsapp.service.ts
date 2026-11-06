@@ -36,11 +36,13 @@
  * a tabela resolve e a CREDENCIAL, inclusive o segredo do HMAC.
  */
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import type {
-  ConversationChannel,
-  MessageStatus,
-  MessageType,
-  WhatsAppTemplate,
+import {
+  WHATSAPP_PRICING_CATEGORIES,
+  type ConversationChannel,
+  type MessageStatus,
+  type MessageType,
+  type WhatsAppPricingCategory,
+  type WhatsAppTemplate,
 } from '@crm-lab/shared';
 import { env } from '../config/env.js';
 import { cloudApiMockAllowed } from '../lib/cloud-api-mock.js';
@@ -330,6 +332,11 @@ export function createTenantCredentialsResolver(
 
 export interface SendResult {
   externalId: string;
+  /**
+   * Por onde saiu (CRMLAB-141, D-312): `cloud_api` grava a categoria de
+   * cobranca na confirmacao. Preenchido pelo `WhatsAppService`, nao pelo driver.
+   */
+  via?: 'qr' | 'cloud_api';
 }
 
 export interface OutboundMedia {
@@ -1055,8 +1062,30 @@ export interface InboundMessageDTO {
 export interface StatusCallbackDTO {
   externalId: string;
   status: MessageStatus;
+  /** `pricing.category` da Meta, quando e uma das quatro (D-312 item 1). */
+  pricingCategory?: WhatsAppPricingCategory | null;
   /** `errors[0].code` da Meta num `failed` (D-311 item 5) — so para log, sem PII. */
   errorCode?: string | null;
+}
+
+/**
+ * `statuses[].pricing.category` (D-312 item 1): a Meta e quem cobra, entao vence
+ * a estimativa do envio. Fora das quatro (ex.: `referral_conversion`,
+ * `marketing_lite`): ignorado com log.
+ */
+function pricingCategoryOf(record: Record<string, unknown>, externalId: string): WhatsAppPricingCategory | null {
+  const raw = asString(asRecord(record.pricing)?.category);
+  if (raw === null) return null;
+  const known = WHATSAPP_PRICING_CATEGORIES.find((category) => category === raw);
+  if (known) return known;
+  logger.info('whatsapp.pricing_category_ignored', { externalId, category: raw });
+  return null;
+}
+
+/** Marca por onde o envio saiu (CRMLAB-141). */
+async function withVia(credentials: WhatsAppCredentials, sending: Promise<SendResult>): Promise<SendResult> {
+  const result = await sending;
+  return { ...result, via: credentials.connectionMode === 'qr' ? 'qr' : 'cloud_api' };
 }
 
 function errorCodeOf(record: Record<string, unknown>): string | null {
@@ -1346,10 +1375,11 @@ export class WhatsAppService {
     // laboratorio em `qr` nao pode acidentalmente sair pela API oficial de outro.
     const driver = this.driverFor(credentials);
 
-    return this.queue.run(
-      'whatsapp.send',
-      () => driver.send(credentials, phone, content, options),
-      { attempts: this.attempts },
+    return withVia(
+      credentials,
+      this.queue.run('whatsapp.send', () => driver.send(credentials, phone, content, options), {
+        attempts: this.attempts,
+      }),
     );
   }
 
@@ -1402,10 +1432,11 @@ export class WhatsAppService {
     const driver = this.driverFor(credentials);
     const sendTemplate = driver.sendTemplate?.bind(driver);
     if (!sendTemplate) throw new Error('driver do canal nao envia modelo da Meta');
-    return this.queue.run(
-      'whatsapp.send_template',
-      () => sendTemplate(credentials, phone, template),
-      { attempts: this.attempts },
+    return withVia(
+      credentials,
+      this.queue.run('whatsapp.send_template', () => sendTemplate(credentials, phone, template), {
+        attempts: this.attempts,
+      }),
     );
   }
 
@@ -1419,10 +1450,11 @@ export class WhatsAppService {
     const credentials = await this.sendableCredentials(tenantId);
     const driver = this.driverFor(credentials);
 
-    return this.queue.run(
-      'whatsapp.send_media',
-      () => driver.sendMedia(credentials, phone, media, options),
-      { attempts: this.attempts },
+    return withVia(
+      credentials,
+      this.queue.run('whatsapp.send_media', () => driver.sendMedia(credentials, phone, media, options), {
+        attempts: this.attempts,
+      }),
     );
   }
 
@@ -1634,7 +1666,12 @@ export class WhatsAppService {
           logger.info('whatsapp.status_unmapped', { externalId, status: asString(record.status) });
         }
         if (externalId && status) {
-          out.push({ externalId, status, ...(status === 'failed' ? { errorCode: errorCodeOf(record) } : {}) });
+          out.push({
+            externalId,
+            status,
+            ...(status === 'failed' ? { errorCode: errorCodeOf(record) } : {}),
+            pricingCategory: pricingCategoryOf(record, externalId),
+          });
         }
       }
     }

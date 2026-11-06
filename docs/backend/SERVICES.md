@@ -2138,9 +2138,13 @@ interface WhatsAppUsageService {
 - **Multitenant:** toda leitura/escrita (mensagens, canal, uso) com `tenant_id` do contexto; o
   tenant do webhook sai do slug da URL e é conferido contra `phone_number_id`. Cache de templates
   chaveado por `tenantId`. `whatsapp_price_table` é a única tabela global (SCHEMA §47).
-- **Custo (D-312):** `WhatsAppUsageService.monthly` agrupa `messages` do mês (America/Sao_Paulo) de
-  `cloud_api`, abate a franquia (`WHATSAPP_FREE_SERVICE_MONTHLY`, default 1000) das mensagens
+- **Custo (D-312):** `WhatsAppUsageService.monthly` (`services/whatsapp-usage.service.ts` +
+  `repositories/whatsapp-usage.repository.ts`) agrupa `messages` do mês (America/Sao_Paulo) com
+  `pricing_category`, abate a franquia (`WHATSAPP_FREE_SERVICE_MONTHLY`, default 1000) das mensagens
   `service` por ordem de `created_at`, e multiplica pela linha de preço vigente em cada data.
+  `SendResult.via` (`qr | cloud_api`) diz ao `MessageService.confirmSent` por onde o envio saiu; o
+  repositório grava `COALESCE(pricing_category, template_category, 'service')`. O status da Meta
+  corrige por `MessageService.applyExternalPricing` (sem WS).
 - **Fora da entrega (D-313):** anexo e mídia recebida pela Cloud API (CRMLAB-140).
 - **Teste:** gateway Graph fake (servidor HTTP de teste), no padrão do gateway Evolution fake (§16);
   o envio real contra a Meta é verificação manual com um número de teste.

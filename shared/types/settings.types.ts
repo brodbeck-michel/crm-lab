@@ -176,3 +176,38 @@ export interface UpdateChannelSettingsRequest {
   autoMessages?: Partial<AutoMessagesSettings>;
   businessHours?: BusinessHours;
 }
+
+/** Categoria de cobrança da Meta (CRMLAB-141, D-312). */
+export type WhatsAppPricingCategory = 'service' | 'utility' | 'marketing' | 'authentication';
+
+export const WHATSAPP_PRICING_CATEGORIES: readonly WhatsAppPricingCategory[] = [
+  'service',
+  'utility',
+  'marketing',
+  'authentication',
+];
+
+/** Uma linha do relatório de uso: quantidade, franquia e custo estimado em BRL. */
+export interface WhatsAppUsageCategory {
+  category: WhatsAppPricingCategory;
+  count: number;
+  /** Só `service`: quantas caíram na franquia do mês. */
+  freeCount: number;
+  /** Preço da linha vigente mais recente no mês (BRL por mensagem). */
+  unitPrice: number;
+  /** BRL, 2 casas. Soma mensagem a mensagem pelo preço vigente na data de cada uma. */
+  cost: number;
+}
+
+/** Resposta de `GET /settings/channels/whatsapp/usage?month=YYYY-MM` (CRMLAB-141, D-312). */
+export interface WhatsAppUsageResponse {
+  /** `YYYY-MM` (America/Sao_Paulo). */
+  month: string;
+  currency: 'BRL';
+  freeServiceAllowance: number;
+  /** Sempre as quatro categorias, nesta ordem: service, utility, marketing, authentication. */
+  categories: WhatsAppUsageCategory[];
+  totalCost: number;
+  /** Sempre `true`: estimativa, não a fatura da Meta. */
+  isEstimate: true;
+}

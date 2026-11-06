@@ -96,6 +96,15 @@ const envSchema = z
      * o `GET` de verificacao responde 403 sempre (a Meta nao valida a URL).
      */
     WHATSAPP_WEBHOOK_VERIFY_TOKEN: optionalString,
+    /**
+     * Franquia mensal de conversas de servico gratis por numero da Meta
+     * (CRMLAB-141, D-312 item 3). So entra no relatorio de custo estimado.
+     */
+    WHATSAPP_FREE_SERVICE_MONTHLY: z.preprocess((v) => {
+      if (v === undefined || v === null || v === '') return 1000;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : v;
+    }, z.number().int().min(0)),
 
     /**
      * Gateway Evolution API (self-hosted) para conexao WhatsApp por QR (Onda 7,

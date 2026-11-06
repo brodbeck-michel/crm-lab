@@ -146,6 +146,8 @@ export const queryKeys = {
   whatsappQr: () => ['settings', 'channels', 'whatsapp', 'qr'] as const,
   /** ['settings', 'channels', 'whatsapp', 'status'] — status do card, sem QR (§6.1) */
   whatsappStatus: () => ['settings', 'channels', 'whatsapp', 'status'] as const,
+  /** ['settings', 'channels', 'whatsapp', 'usage', month] — custo estimado da Cloud API (§6.2, D-312) */
+  whatsappUsage: (month: string) => ['settings', 'channels', 'whatsapp', 'usage', month] as const,
 
   /** ['operations', 'overview', query] — retrato único da operação (D-067) */
   operationOverview: (query?: OperationOverviewQuery) =>

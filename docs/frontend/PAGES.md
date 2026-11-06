@@ -999,6 +999,19 @@ gestor).
   (com confirmação), lendo `GET .../whatsapp/status`. No WhatsApp, o campo "Token da API" é o token
   da Meta; sem ele, mostra "Não configurado (token da API oficial da Meta; o QR não usa)".
 
+#### Uso e custo do WhatsApp — API oficial (CRMLAB-141, D-312 · API_CONTRACTS §6.2)
+Seção própria logo depois de "Conexão de canal", **só quando o WhatsApp está em `cloud_api`**; gestor e admin
+(os dois leem o mesmo).
+
+- Dados: `GET /settings/channels/whatsapp/usage?month=YYYY-MM`
+- Seletor de mês (`input type="month"`), começa no mês corrente de São Paulo, sem mês futuro
+- Tabela com as quatro categorias (Atendimento (serviço), Utilidade, Marketing, Autenticação):
+  mensagens, grátis (só serviço; nas outras "—"), preço unitário com até 4 casas, custo estimado
+- Rodapé: franquia de atendimento do mês e quanto resta, **total estimado** e o aviso fixo
+  "Estimativa calculada pelo CRM com a tabela de preços da Meta. Não é a fatura: confira o valor
+  cobrado no Gerenciador de Negócios da Meta."
+- Erro de carga: "Não foi possível carregar o uso deste mês." (não esconde a seção)
+
 ### Gestão da Operação (`/settings/operation`) — gestor+
 - Dados: `GET /operations/overview?queueLimit&decisionsLimit` — **somente leitura**
 - Um endpoint, um retrato (D-067): os três blocos vêm do mesmo instante. Não fazer três

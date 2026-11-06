@@ -5,6 +5,7 @@ import type {
   WhatsAppQrConnectRequest,
   WhatsAppQrResponse,
   WhatsAppStatusResponse,
+  WhatsAppUsageResponse,
 } from '@crm-lab/shared';
 import { http } from './client';
 import { queryKeys, queryScopes } from './query-keys';
@@ -30,7 +31,20 @@ export const channelsApi = {
   /** Troca do modo do canal (CRMLAB-138, D-308, API_CONTRACTS §6.2). Admin apenas. */
   setWhatsAppMode: (body: UpdateWhatsAppModeRequest) =>
     http.put<UpdateWhatsAppModeResponse>('/settings/channels/whatsapp/mode', body),
+
+  /** Uso e custo estimado do mês (CRMLAB-141, D-312, API_CONTRACTS §6.2). Gestor e admin. */
+  whatsAppUsage: (month: string) =>
+    http.get<WhatsAppUsageResponse>('/settings/channels/whatsapp/usage', { month }),
 };
+
+/** Custo estimado da Cloud API no mês `YYYY-MM`. */
+export function useWhatsAppUsage(month: string, options?: { enabled: boolean }) {
+  return useQuery({
+    queryKey: queryKeys.whatsappUsage(month),
+    queryFn: () => channelsApi.whatsAppUsage(month),
+    enabled: options?.enabled ?? true,
+  });
+}
 
 /* ── React Query Hooks ──────────────────────────────────────────────────── */
 

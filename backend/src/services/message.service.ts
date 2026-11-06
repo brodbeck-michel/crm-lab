@@ -89,6 +89,7 @@ import {
   type OutboundPresence,
   type QuotedRef,
   type SendOptions,
+  type SendResult,
   type WhatsAppService,
 } from './whatsapp.service.js';
 
@@ -542,7 +543,7 @@ export class MessageService {
     if (!this.whatsapp || conversation.channel !== 'whatsapp') return message;
 
     try {
-      const { externalId } = template
+      const sent = template
         ? await this.whatsapp.sendTemplate(tenantId, conversation.patientPhone, {
             name: template.info.name,
             language: template.info.language,
@@ -554,7 +555,7 @@ export class MessageService {
             participant ? withSenderName(participant.name, content) : content,
             sendOptionsFor(quote),
           );
-      return await this.confirmSent(tenantId, conversationId, message, externalId);
+      return await this.confirmSent(tenantId, conversationId, message, sent);
     } catch (err) {
       // Retry ja esgotado dentro do adapter (3 tentativas, backoff exponencial).
       await this.markFailed(tenantId, conversationId, message.id);
@@ -615,7 +616,7 @@ export class MessageService {
     if (!this.whatsapp || conversation.channel !== 'whatsapp') return message;
 
     try {
-      const { externalId } = await this.whatsapp.sendMedia(
+      const sent = await this.whatsapp.sendMedia(
         tenantId,
         conversation.patientPhone,
         {
@@ -626,7 +627,7 @@ export class MessageService {
         },
         sendOptionsFor(quote),
       );
-      return await this.confirmSent(tenantId, conversationId, message, externalId);
+      return await this.confirmSent(tenantId, conversationId, message, sent);
     } catch (err) {
       await this.markFailed(tenantId, conversationId, message.id);
       logger.error('whatsapp.send_media_failed', {
@@ -842,12 +843,13 @@ export class MessageService {
     tenantId: string,
     conversationId: string,
     message: Message,
-    externalId: string,
+    sent: SendResult,
   ): Promise<Message> {
     const { message: updated, removedPhoneCopy } = await this.messages.confirmSent(
       tenantId,
       message.id,
-      externalId,
+      sent.externalId,
+      sent.via === 'cloud_api',
     );
     if (removedPhoneCopy) {
       logger.warn('whatsapp.echo_copy_removed', {
@@ -929,33 +931,28 @@ export class MessageService {
     const whatsapp = this.whatsapp;
     try {
       const mediaId = mediaIdOf(message.attachmentUrl);
-      let externalId: string;
+      let sent: SendResult;
       if (templateSend) {
-        ({ externalId } = await whatsapp.sendTemplate(tenantId, conversation.patientPhone, templateSend));
+        sent = await whatsapp.sendTemplate(tenantId, conversation.patientPhone, templateSend);
       } else if (mediaId) {
         const media = await readMedia(mediaId);
         if (!media) throw new Error('midia do anexo nao encontrada para o reenvio');
-        ({ externalId } = await whatsapp.sendMedia(
-          tenantId,
-          conversation.patientPhone,
-          media,
-          sendOptionsFor(quote),
-        ));
+        sent = await whatsapp.sendMedia(tenantId, conversation.patientPhone, media, sendOptionsFor(quote));
       } else {
         // Resposta de participante sai de novo com o nome (D-263 item 5).
         const named =
           message.senderName !== null &&
           (await this.messages.isParticipantReply(tenantId, messageId));
-        ({ externalId } = await whatsapp.send(
+        sent = await whatsapp.send(
           tenantId,
           conversation.patientPhone,
           named && message.senderName !== null
             ? withSenderName(message.senderName, message.content)
             : message.content,
           sendOptionsFor(quote),
-        ));
+        );
       }
-      return await this.confirmSent(tenantId, conversationId, message, externalId);
+      return await this.confirmSent(tenantId, conversationId, message, sent);
     } catch (err) {
       await this.markFailed(tenantId, conversationId, messageId);
       logger.error('whatsapp.retry_failed', {
@@ -1050,8 +1047,8 @@ export class MessageService {
     if (!this.whatsapp || conversation.channel !== 'whatsapp') return message;
 
     try {
-      const { externalId } = await this.whatsapp.send(tenantId, conversation.patientPhone, content);
-      return await this.confirmSent(tenantId, conversationId, message, externalId);
+      const sent = await this.whatsapp.send(tenantId, conversation.patientPhone, content);
+      return await this.confirmSent(tenantId, conversationId, message, sent);
     } catch (err) {
       await this.markFailed(tenantId, conversationId, message.id);
       logger.error('whatsapp.send_failed', {
@@ -1447,6 +1444,11 @@ export class MessageService {
     const updated = await this.messages.setStatusByExternalId(tenantId, externalId, status);
     if (updated) this.emitStatusUpdated(tenantId, updated.conversationId, updated.id, updated.status);
     return updated;
+  }
+
+  /** `pricing.category` do status da Meta (D-312 item 1). Sem WS: nao muda nada na tela. */
+  async applyExternalPricing(tenantId: string, externalId: string, category: string): Promise<boolean> {
+    return this.messages.setPricingCategoryByExternalId(tenantId, externalId, category);
   }
 
   /** Tique mudou (D-225). O front invalida so a conversa — nao e mensagem nova. */

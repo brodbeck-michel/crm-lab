@@ -3906,6 +3906,32 @@ Branch `feature/CRMLAB-138-canal-modo-cloud`, sobre o contrato do CRMLAB-135. De
   conversa reabre a encerrada antes do 409, como já faz com o teto de D-306; `connected_at` é uma
   coluna só para os dois provedores quando o QR segue pareado em `cloud_api`.
 
+### 🚧 CRMLAB-141 — custo estimado da Cloud API (2026-11-06, em validação)
+
+Branch `feature/CRMLAB-141-custo-cloud-api`, empilhada sobre o CRMLAB-139. Decisão D-312 (com a nota
+"Implementado no CRMLAB-141").
+
+- **Migração 065:** `messages.pricing_category` (CHECK das quatro) e `whatsapp_price_table` global
+  com o seed oficial de 01/10/2026; `crm_app` só lê. Nos testes, a tabela é de referência (o reset
+  não a zera).
+- **Categoria no envio:** gravada na confirmação do envio que saiu pela Cloud API (`SendResult.via`):
+  modelo = categoria do modelo, texto/anexo = `service`; `qr` e envio que falhou ficam `NULL`.
+- **Status da Meta:** `pricing.category` corrige a categoria (vale mesmo com status repetido); fora
+  das quatro, ignorado com log `whatsapp.pricing_category_ignored`.
+- **Rota nova:** `GET /settings/channels/whatsapp/usage?month=` (gestor/admin; inventário de
+  isolamento passa a 124 rotas). Franquia de `service` por ordem de envio, preço vigente na data de
+  cada mensagem, mês civil de São Paulo, só `sent`+, só o que o CRM enviou.
+- **Env nova (opcional):** `WHATSAPP_FREE_SERVICE_MONTHLY` (default 1000), no `.env.example` e no
+  `docker-compose.prod.yml`.
+- **Tela:** seção "Uso e custo do WhatsApp (API oficial)" em Canais & Equipe, só em `cloud_api`
+  (PAGES §10).
+- **Testes:** `crmlab141-custo.spec.ts` (10): categoria no envio (cloud_api texto/modelo, qr, falha),
+  correção pelo status e categoria desconhecida, isolamento entre laboratórios, relatório (franquia,
+  reajuste no meio do mês, virada de mês no fuso, `failed`/`pending`/sem categoria fora), mês
+  default, mês inválido/repetido/futuro, atendente 403, seed e permissão só de leitura. Frontend:
+  `Channels.spec.tsx` (+2).
+
+
 ### 🚧 CRMLAB-139 — webhook da Meta (2026-11-06, em validação)
 
 Branch `feature/CRMLAB-139-webhook-meta`, empilhada sobre o CRMLAB-136. Decisão D-311 (e emenda de
@@ -3929,7 +3955,7 @@ Branch `feature/CRMLAB-139-webhook-meta`, empilhada sobre o CRMLAB-136. Decisão
   reação (D-222); `system`/`request_welcome` ignorados; `context.id` vira citação.
 - **Verificação:** `hub.challenge` restrito a `[A-Za-z0-9._-]{1,256}`; token comparado por hash
   (não vaza o tamanho).
-- **Fica para o CRMLAB-141:** `pricing.category` do status (coluna da 065).
+- **`pricing.category` do status:** entregue no CRMLAB-141 (coluna da 065).
 - **Testes:** `crmlab139-webhook-meta.spec.ts` (26): verificação (ok, token/modo/challenge errados,
   challenge inválido/longo/repetido, sem env, canal desligado, tenant desconhecido), status no POST
   principal sem regressão, `failed`, isolamento do mesmo id externo entre laboratórios, mensagem +

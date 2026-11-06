@@ -363,6 +363,11 @@ async function applyMetaStatuses(
         errorCode: update.errorCode ?? null,
       });
     }
+    if (update.pricingCategory) {
+      // A Meta e quem cobra: o `pricing.category` vence a estimativa (D-312 item 1),
+      // mesmo quando o status em si e repetido ou nao sobe.
+      await services.messages.applyExternalPricing(tenantId, update.externalId, update.pricingCategory);
+    }
     const changed = await services.messages.applyExternalStatus(tenantId, update.externalId, update.status);
     if (changed) applied += 1;
     // D-311 item 3: desconhecida (ou que regrediria) e ignorada COM log.

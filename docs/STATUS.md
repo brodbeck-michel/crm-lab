@@ -3906,6 +3906,15 @@ Branch `feature/CRMLAB-138-canal-modo-cloud`, sobre o contrato do CRMLAB-135. De
   conversa reabre a encerrada antes do 409, como já faz com o teto de D-306; `connected_at` é uma
   coluna só para os dois provedores quando o QR segue pareado em `cloud_api`.
 
+### 🚧 CRMLAB-142 — runbook do Santé para a API oficial (2026-11-06, em validação)
+
+Branch `docs/CRMLAB-142-runbook-sante-cloud-api` (só documentação), sobre o CRMLAB-140.
+`docs/guides/MIGRACAO_SANTE.md` §4: pré-requisitos, coexistência × migração completa (decisão do
+Michel em 06/11: os dois caminhos descritos, escolha registrada no dia), ensaio em homologação com o
+número de teste da Meta, passo a passo do dia em prod, depois da troca (monitor do CRMLAB-99 deixa de
+valer), plano de volta. Itens de regra da Meta marcados "(conferir na Meta)".
+
+
 ### 🚧 CRMLAB-140 — anexos pela Cloud API (2026-11-06, em validação)
 
 Branch `feature/CRMLAB-140-anexos-cloud-api`, empilhada sobre o CRMLAB-141. Decisão D-314 (supera

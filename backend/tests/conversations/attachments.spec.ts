@@ -131,7 +131,22 @@ describe('POST /conversations/:id/attachments', () => {
     });
   });
 
-  it('.mov do iPhone (video/quicktime) é aceito e vira mensagem de vídeo (CRMLAB-70, D-234 item 8)', async () => {
+  it('.mov do iPhone (video/quicktime) é aceito no QR e vira mensagem de vídeo (CRMLAB-70, D-234 item 8)', async () => {
+    // Na API oficial o `.mov` é recusado (CRMLAB-140, D-314: a Meta só aceita MP4/3GP);
+    // a regra do CRMLAB-70 é do QR, então o laboratório aqui está em `qr`.
+    const base = testCredentialsResolver(new Map());
+    const qr = { connectionMode: 'qr' as const, qrInstanceApiKey: 'apikey' };
+    const whatsapp = new WhatsAppService({
+      credentials: {
+        forTenant: async (id) => ({ ...(await base.forTenant(id)), ...qr }),
+        byWebhookIdentity: async () => null,
+      },
+      driver: new CapturingDriver(),
+      evolutionDriver: new CapturingDriver(),
+      queue: createInMemoryQueue({ sleep: async () => {}, defaults: { backoffMs: 1 } }),
+      attempts: 1,
+    });
+    const app = await createTestApp({ modules: [makeConversationModule({ whatsapp }), mediaModule] });
     const tenant = await createTenant();
     const ana = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Ana' });
     const conversation = await createConversation({ tenantId: tenant.id, assignedTo: ana.id });

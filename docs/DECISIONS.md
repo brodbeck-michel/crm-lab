@@ -7040,6 +7040,8 @@ não usa). A conferência do `phone_number_id` descarta o `value` inteiro (mensa
   com o canal em `cloud_api`), com seletor de mês (PAGES §10).
 
 ### D-313: Anexos pela Cloud API ficam fora da entrega do CRMLAB-135 (CRMLAB-140)
+> **Superada pelo D-314 (CRMLAB-140, 06/11/2026):** anexo pela Cloud API envia e recebe; o aviso de
+> texto abaixo vale só quando o download da mídia não dá certo.
 **Decisão:** **fora desta entrega**: envio de anexo (imagem, áudio, PDF, vídeo) e recebimento de
 mídia pela Cloud API. Exigem upload prévio de mídia à Meta (`POST /{phone_number_id}/media`, id de
 mídia) e download autenticado de mídia recebida (hoje não existe). Vale o comportamento atual:
@@ -7054,3 +7056,44 @@ Forma neutra de propósito (sem concordância de gênero) e sem "veja no celular
 API não fica no app do WhatsApp. Descartar escondia da atendente que o paciente
 escreveu e deixava a janela de 24 h fechada no CRM enquanto a Meta a considera aberta.
 **Impacto:** nenhum código; API_CONTRACTS (nota em attachments), STATUS (pendência).
+
+### D-314: Anexos pela Cloud API — envio por upload à Meta e recebimento baixado da Meta (CRMLAB-140)
+**Contexto:** D-313 deixou anexo fora da primeira entrega da Cloud API. A Meta aceita menos formatos
+que o QR e exige upload prévio da mídia; a mídia recebida chega como id, não como arquivo. Decisões
+do Michel em 06/11/2026: recado de voz convertido no servidor; formato não aceito recusado com aviso
+claro; o card inclui o recebimento.
+**Decisão:**
+1. **Envio (`cloud_api`):** o driver da Meta sobe o arquivo em `POST /{phone_number_id}/media`
+   (multipart: `file`, `type`, `messaging_product=whatsapp`) e manda `type: image|audio|video|document`
+   com `{ id }` (+ `caption`, menos em áudio; `filename` em documento; `context.message_id` ao citar).
+   Um upload por envio (o "tentar de novo" sobe de novo; id de mídia da Meta vence em 30 dias).
+2. **Formatos aceitos pela Meta** (tabela única `CLOUD_API_MEDIA_RULES` em `shared/types/media.types.ts`),
+   conferidos sobre o arquivo **já preparado** (imagem já convertida para JPEG pelo D-290):
+   imagem `image/jpeg`, `image/png` até **5 MB**; áudio `audio/aac`, `audio/amr`, `audio/mpeg`,
+   `audio/mp4`, `audio/ogg` até 16 MB; vídeo `video/mp4`, `video/3gpp` até 16 MB; documento PDF,
+   Word, Excel, PowerPoint (OOXML e legado) e `text/plain` (até o teto do CRM, 15 MiB). Fora disso
+   (GIF/PNG animado, WebP animado, `video/quicktime`, `video/webm`, `text/csv`) → `VALIDATION_ERROR`
+   com `fields.mimeType` = mensagem com os formatos aceitos e `details.reason =
+   'cloud_api_media_type'`; imagem acima de 5 MB → `MEDIA_TOO_LARGE` com `details.max` = 5 MB e
+   `details.reason = 'cloud_api_image_limit'`. Recusa **antes de gravar** e antes de reabrir/assumir
+   (mesmo ponto do `prepareOutbound`, D-273).
+3. **Recado de voz:** `audio/webm` (gravação do navegador) é convertido para `audio/ogg` (Opus) com
+   **ffmpeg** na hora do envio à Meta; o CRM continua guardando e mostrando o original. ffmpeg entra
+   na imagem de produção do backend (`apk add ffmpeg`). Sem ffmpeg ou conversão que falha → o envio
+   falha como qualquer falha de canal (`MESSAGE_SEND_FAILED`, mensagem `failed`, "tentar de novo").
+4. **Recebimento:** mensagem da Meta com mídia (`image`, `audio`/voz, `video`, `document`, `sticker`)
+   é **baixada**: `GET /{media_id}` (Bearer do laboratório) devolve `url`, `mime_type` e `file_size`;
+   `GET url` (Bearer) devolve o arquivo. O token só vai para endereço `https` da própria Meta
+   (`graph.facebook.com`, `*.fbsbx.com`, `*.whatsapp.net`, `*.fbcdn.net` ou a mesma origem de
+   `WHATSAPP_API_URL`). Arquivo gravado como no QR (`MediaService.storeInbound`: allow-list, sniff,
+   imagem vira JPEG, figurinha mantém o formato), `messageType` pelo MIME gravado, `content` =
+   legenda ou nome do arquivo, `attachmentUrl = /api/v1/media/:id`, `received_via = 'cloud_api'`.
+5. **Download que não dá certo não perde a mensagem:** sem URL da Meta (driver mock), arquivo acima de
+   15 MiB (`file_size` ou bytes), timeout (10 s por chamada), resposta de erro ou host fora da lista →
+   a mensagem entra com o **aviso de texto do D-313** (com a legenda) e log
+   `whatsapp.inbound_media_fallback` com o motivo (sem PII). O download roda dentro do webhook; a
+   reentrega da Meta é idempotente pelo `external_message_id`.
+**Supera:** D-313 (fora da entrega) e o aviso de texto do D-313 como regra — ele fica só como
+fallback (item 5).
+**Impacto:** API_CONTRACTS §4 (anexo) e §2b (tabela de tipos recebidos), BUSINESS_RULES §18,
+SERVICES §35, DEPLOYMENT (ffmpeg na imagem), `shared/types/media.types.ts`.

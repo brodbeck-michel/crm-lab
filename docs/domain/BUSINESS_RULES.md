@@ -977,7 +977,10 @@ interações com ele, com autor e data.
   marketing 0,3217; utility 0,035; autenticação 0,035; serviço 0,035). Falhou = não conta.
 - **Trocar de modo** (QR ⇄ Cloud API) não apaga nenhuma mensagem. Reengajamento, mensagens fora do
   horário/saudação e teto de primeiros contatos seguem só no QR (D-214, D-264, D-306).
-- **Anexos pela Cloud API:** fora desta entrega (CRMLAB-140).
+- **Anexos pela Cloud API (CRMLAB-140, D-314):** a atendente envia foto, áudio, vídeo e documento
+  como no QR, nos formatos que a Meta aceita (foto até 5 MB; o recado de voz é convertido sozinho).
+  Formato que a Meta não aceita é recusado com aviso antes de sair. O que o paciente manda aparece
+  na conversa; se o arquivo não puder ser baixado, aparece um aviso no lugar.
 
 ---
 

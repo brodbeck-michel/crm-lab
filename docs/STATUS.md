@@ -3814,8 +3814,8 @@ Branch `docs/CRMLAB-135-contrato-cloud-api`. Decisões **D-308..D-313**. Nenhum 
   (`WHATSAPP_WINDOW_CLOSED`, `CHANNEL_CLOUD_API_NOT_CONFIGURED`, `CHANNEL_CLOUD_API_UNAVAILABLE`);
   env `WHATSAPP_WEBHOOK_VERIFY_TOKEN` e `WHATSAPP_FREE_SERVICE_MONTHLY`; frente UI (PAGES §10 ainda
   diz "sem volta para `cloud_api`", superado por D-308).
-- **Pendência — CRMLAB-140 (anexos pela Cloud API):** fora desta entrega (D-313). Upload de mídia à
-  Meta no envio e download autenticado no recebimento. Hoje: anexo em `cloud_api` recusa.
+- **CRMLAB-140 (anexos pela Cloud API):** entregue pelo D-314 (era a pendência do D-313): upload de mídia à
+  Meta no envio e download autenticado no recebimento.
 
 
 ### 🚧 CRMLAB-138 — modo do canal WhatsApp por laboratório (2026-11-05, em validação)
@@ -3905,6 +3905,30 @@ Branch `feature/CRMLAB-138-canal-modo-cloud`, sobre o contrato do CRMLAB-135. De
   sem credencial devolvem `MESSAGE_SEND_FAILED` (D-308 lista texto, anexo, retry e cartão); a Nova
   conversa reabre a encerrada antes do 409, como já faz com o teto de D-306; `connected_at` é uma
   coluna só para os dois provedores quando o QR segue pareado em `cloud_api`.
+
+### 🚧 CRMLAB-140 — anexos pela Cloud API (2026-11-06, em validação)
+
+Branch `feature/CRMLAB-140-anexos-cloud-api`, empilhada sobre o CRMLAB-141. Decisão D-314 (supera
+D-313). Decisões do Michel em 06/11: recado de voz convertido no servidor; formato não aceito pela
+Meta recusado com aviso; o card inclui o recebimento.
+
+- **Envio:** `HttpWhatsAppDriver.sendMedia` sobe em `/{phone_number_id}/media` (multipart) e manda por
+  id (legenda menos em áudio, `filename` em documento, citação). `audio/webm` → OGG/Opus por ffmpeg
+  (`lib/audio-to-ogg.ts`); **ffmpeg entra na imagem do backend** (`apk add`).
+- **Recusa antes de gravar:** `MessageService.assertCloudMediaAccepted` na rota de anexo, sobre o
+  arquivo já em JPEG: formato fora de `CLOUD_API_MEDIA_RULES` → 400 `cloud_api_media_type`; foto
+  acima de 5 MB → 413 `cloud_api_image_limit`. A tela mostra o aviso por arquivo
+  (`lib/cloud-api-media.ts`).
+- **Recebimento:** o webhook baixa a mídia (`GET /{media_id}` + `GET url`, Bearer só para host da
+  Meta, teto de 15 MiB, 10 s por chamada) e grava como no QR; falha → aviso de texto do 139, log
+  `whatsapp.inbound_media_fallback`. Reentrega não baixa de novo.
+- **Testes:** `graph-media.spec.ts` (10, Graph API falsa: upload, envio por id, WebM→OGG, recusa
+  sem chamar a Meta, download, teto, host fora da Meta, erros); `crmlab140-anexos.spec.ts` (6 + 2
+  com ffmpeg real, que pulam onde não há ffmpeg): CSV recusado, foto de 5 MB+, QR intacto, documento
+  e foto recebidos, reentrega, fallback. Frontend `cloud-api-media.spec.ts` (3).
+- **Para validar em hml:** número de teste da Meta — enviar foto/PDF/recado de voz e receber foto e
+  PDF do celular.
+
 
 ### 🚧 CRMLAB-141 — custo estimado da Cloud API (2026-11-06, em validação)
 

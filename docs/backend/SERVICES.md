@@ -2145,6 +2145,12 @@ interface WhatsAppUsageService {
   `SendResult.via` (`qr | cloud_api`) diz ao `MessageService.confirmSent` por onde o envio saiu; o
   repositório grava `COALESCE(pricing_category, template_category, 'service')`. O status da Meta
   corrige por `MessageService.applyExternalPricing` (sem WS).
-- **Fora da entrega (D-313):** anexo e mídia recebida pela Cloud API (CRMLAB-140).
+- **Anexos (D-314, CRMLAB-140):** `MessageService.assertCloudMediaAccepted(tenantId, conversationId,
+  prepared)` (rota de anexo, depois do `prepareOutbound`) confere `CLOUD_API_MEDIA_RULES` só em
+  `cloud_api`. `HttpWhatsAppDriver.sendMedia`: converte `audio/webm` → OGG/Opus
+  (`lib/audio-to-ogg.ts`, ffmpeg por `child_process`, injetável no teste), sobe em `/media` e envia
+  por id. Recebimento: `WhatsAppService.downloadInboundMedia(credentials, mediaId)` (driver
+  `downloadMedia?`) com a lista de hosts da Meta; o webhook grava por `MediaService.storeInbound` e,
+  se falhar, usa o aviso de texto.
 - **Teste:** gateway Graph fake (servidor HTTP de teste), no padrão do gateway Evolution fake (§16);
   o envio real contra a Meta é verificação manual com um número de teste.

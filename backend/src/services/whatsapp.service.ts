@@ -37,6 +37,9 @@
  */
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import {
+  MAX_MEDIA_BYTES,
+  cloudApiMediaRule,
+  normalizeMediaMimeType,
   WHATSAPP_PRICING_CATEGORIES,
   type ConversationChannel,
   type MessageStatus,
@@ -45,6 +48,7 @@ import {
   type WhatsAppTemplate,
 } from '@crm-lab/shared';
 import { env } from '../config/env.js';
+import { convertAudioToOgg, type AudioConverter } from '../lib/audio-to-ogg.js';
 import { cloudApiMockAllowed } from '../lib/cloud-api-mock.js';
 import { BusinessError } from '../http/errors.js';
 import type { DbClient } from '../db/types.js';
@@ -53,7 +57,7 @@ import {
   evolutionInstanceName,
   type EvolutionClient,
 } from '../lib/evolution-client.js';
-import { withGatewayTimeout } from '../lib/fetch-timeout.js';
+import { GatewayTimeoutError, withGatewayTimeout } from '../lib/fetch-timeout.js';
 import { logger } from '../lib/logger.js';
 import { createQueue, type QueueService } from '../lib/queue.js';
 import type { ChannelCredentials } from '../repositories/channel-settings.repository.js';
@@ -347,6 +351,42 @@ export interface OutboundMedia {
   caption?: string | null;
 }
 
+/** Midia baixada da Meta (CRMLAB-140). */
+export interface DownloadedMedia {
+  buffer: Buffer;
+  mimeType: string;
+}
+
+/** Motivo de download que nao deu certo — vai para o log, sem PII (D-314 item 5). */
+export type MediaDownloadFailure = 'too_large' | 'http_error' | 'host_not_allowed' | 'bad_response' | 'timeout';
+
+export class MediaDownloadError extends Error {
+  constructor(readonly reason: MediaDownloadFailure) {
+    super(`download de midia da Meta falhou: ${reason}`);
+    this.name = 'MediaDownloadError';
+  }
+}
+
+/**
+ * Para onde o token da Meta pode ir no download (D-314 item 4): `https` da
+ * propria Meta ou a origem configurada de `WHATSAPP_API_URL`.
+ */
+export function isMetaMediaHost(url: string, apiUrl: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (apiUrl !== '' && sameOrigin(url, new URL(apiUrl).origin)) return true;
+  if (parsed.protocol !== 'https:') return false;
+  const host = parsed.hostname.toLowerCase();
+  return (
+    host === 'graph.facebook.com' ||
+    ['.fbsbx.com', '.whatsapp.net', '.fbcdn.net'].some((suffix) => host.endsWith(suffix))
+  );
+}
+
 /**
  * Mensagem citada no envio (CRMLAB-66, D-221): id externo da original, de que
  * lado ela esta e o texto (o Evolution usa para montar a citacao).
@@ -381,6 +421,12 @@ export interface WhatsAppDriver {
     media: OutboundMedia,
     options?: SendOptions,
   ): Promise<SendResult>;
+  /**
+   * Baixa a midia RECEBIDA pela Cloud API (CRMLAB-140, D-314 item 4). OPCIONAL:
+   * driver sem o metodo (mock) faz o webhook usar o aviso de texto. Lanca
+   * `MediaDownloadError` com o motivo.
+   */
+  downloadMedia?(credentials: WhatsAppCredentials, mediaId: string): Promise<DownloadedMedia>;
   /**
    * Reacao com emoji (D-222); `''` remove. OPCIONAL: driver sem suporte faz o
    * `WhatsAppService.sendReaction` lancar, e a API responde `MESSAGE_SEND_FAILED`.
@@ -658,6 +704,8 @@ export class MockWhatsAppDriver implements WhatsAppDriver {
  * instabilidade de rede prendia o handler ate o socket TCP morrer.
  */
 export const META_TIMEOUT_MS = 10_000;
+/** Upload de anexo (ate 16 MB) leva mais que uma chamada de texto. */
+export const META_MEDIA_TIMEOUT_MS = 60_000;
 
 /** Teto de paginas de `message_templates` (100 por pagina): conta normal tem dezenas. */
 export const MAX_TEMPLATE_PAGES = 10;
@@ -673,6 +721,12 @@ function sameOrigin(url: string, origin: string): boolean {
 /** Driver real. Falha => a fila tenta de novo (retry exponencial). */
 export class HttpWhatsAppDriver implements WhatsAppDriver {
   readonly name = 'http';
+  private readonly convertAudio: AudioConverter;
+
+  /** `convertAudio` injetavel: o teste nao depende do ffmpeg da maquina. */
+  constructor(options: { convertAudio?: AudioConverter } = {}) {
+    this.convertAudio = options.convertAudio ?? convertAudioToOgg;
+  }
 
   async send(
     credentials: WhatsAppCredentials,
@@ -819,15 +873,122 @@ export class HttpWhatsAppDriver implements WhatsAppDriver {
     return payload;
   }
 
-  // rangel: a API oficial da Meta exige upload multipart previo (endpoint
-  // `/media`) antes de referenciar o media id no envio — fluxo diferente do
-  // link-based do gateway Evolution, e nao verificado nesta onda (o ambiente
-  // de teste real e o QR/Evolution, spec Onda 8 §4). Sobe quando alguem
-  // conectar um tenant em `connectionMode: 'cloud_api'` e precisar de anexo.
-  async sendMedia(): Promise<SendResult> {
-    throw new Error(
-      'envio de mídia pela WhatsApp Cloud API (Meta) ainda nao implementado — use connectionMode "qr"',
+  /**
+   * Anexo pela Cloud API (CRMLAB-140, D-314): sobe em `/{phone_number_id}/media`
+   * e manda por id. `audio/webm` (recado de voz do navegador) vira OGG/Opus
+   * antes. A rota ja recusou o que a Meta nao aceita; a conferencia aqui e a
+   * rede de seguranca do "tentar de novo" (formato gravado no QR, por exemplo).
+   */
+  async sendMedia(
+    credentials: WhatsAppCredentials,
+    phone: string,
+    media: OutboundMedia,
+    options: SendOptions = {},
+  ): Promise<SendResult> {
+    const rule = cloudApiMediaRule(media.mimeType);
+    if (!rule) throw new Error('formato de anexo nao aceito pela API oficial da Meta');
+    let { buffer, mimeType, fileName } = media;
+    if (normalizeMediaMimeType(mimeType) === 'audio/webm') {
+      buffer = await this.convertAudio(buffer);
+      mimeType = 'audio/ogg';
+      fileName = `${fileName.replace(/\.[^./]+$/, '')}.ogg`;
+    }
+    if (buffer.byteLength > rule.maxBytes) throw new Error('anexo acima do limite da API oficial da Meta');
+
+    const mediaId = await this.upload(credentials, buffer, mimeType, fileName);
+    const caption = rule.kind !== 'audio' && media.caption ? media.caption : null;
+    const payload = await this.post(credentials, {
+      messaging_product: 'whatsapp',
+      to: phone,
+      type: rule.kind,
+      [rule.kind]: {
+        id: mediaId,
+        ...(caption ? { caption } : {}),
+        ...(rule.kind === 'document' ? { filename: fileName } : {}),
+      },
+      ...(options.quoted ? { context: { message_id: options.quoted.externalId } } : {}),
+    });
+    const externalId = firstMessageId(payload);
+    if (!externalId) throw new Error('WhatsApp API nao devolveu id da mensagem');
+    return { externalId };
+  }
+
+  /** `POST /{phone_number_id}/media` (multipart) -> id da midia na Meta. */
+  private async upload(
+    credentials: WhatsAppCredentials,
+    buffer: Buffer,
+    mimeType: string,
+    fileName: string,
+  ): Promise<string> {
+    const { ok, status, payload } = await withGatewayTimeout(
+      { gateway: 'meta', path: '/media', timeoutMs: META_MEDIA_TIMEOUT_MS },
+      async (signal) => {
+        const form = new FormData();
+        form.append('messaging_product', 'whatsapp');
+        form.append('type', mimeType);
+        form.append('file', new Blob([new Uint8Array(buffer)], { type: mimeType }), fileName);
+        const response = await fetch(`${credentials.apiUrl}/${credentials.phoneNumberId}/media`, {
+          method: 'POST',
+          signal,
+          headers: { Authorization: `Bearer ${credentials.apiToken}` },
+          body: form,
+        });
+        const body: unknown = response.ok ? await response.json() : null;
+        return { ok: response.ok, status: response.status, payload: body };
+      },
     );
+    if (!ok) throw new Error(`WhatsApp API respondeu ${status} ao subir a midia`);
+    const id = typeof payload === 'object' && payload !== null ? (payload as Record<string, unknown>).id : null;
+    if (typeof id !== 'string' || id === '') throw new Error('WhatsApp API nao devolveu id da midia');
+    return id;
+  }
+
+  /**
+   * Midia recebida (D-314 item 4): `GET /{media_id}` da a URL temporaria e o
+   * tamanho; `GET url` com o mesmo Bearer traz o arquivo. O token so vai para
+   * host da Meta (`isMetaMediaHost`). Acima de `MAX_MEDIA_BYTES` nem baixa.
+   */
+  async downloadMedia(credentials: WhatsAppCredentials, mediaId: string): Promise<DownloadedMedia> {
+    const auth = { Authorization: `Bearer ${credentials.apiToken}` };
+    const meta = await this.timed('/media-info', async (signal) => {
+      const response = await fetch(`${credentials.apiUrl}/${encodeURIComponent(mediaId)}`, {
+        method: 'GET',
+        signal,
+        headers: auth,
+      });
+      if (!response.ok) throw new MediaDownloadError('http_error');
+      return (await response.json()) as unknown;
+    });
+    const record = typeof meta === 'object' && meta !== null ? (meta as Record<string, unknown>) : {};
+    const url = typeof record.url === 'string' ? record.url : null;
+    const mimeType = typeof record.mime_type === 'string' ? record.mime_type : null;
+    const declaredSize = typeof record.file_size === 'number' ? record.file_size : null;
+    if (!url || !mimeType) throw new MediaDownloadError('bad_response');
+    if (declaredSize !== null && declaredSize > MAX_MEDIA_BYTES) throw new MediaDownloadError('too_large');
+    if (!isMetaMediaHost(url, credentials.apiUrl)) throw new MediaDownloadError('host_not_allowed');
+
+    const buffer = await this.timed('/media-file', async (signal) => {
+      // `redirect: 'manual'`: um redirecionamento para fora da Meta nao leva o token.
+      const response = await fetch(url, { method: 'GET', signal, headers: auth, redirect: 'manual' });
+      if (!response.ok) throw new MediaDownloadError('http_error');
+      const length = Number(response.headers.get('content-length') ?? '0');
+      if (length > MAX_MEDIA_BYTES) throw new MediaDownloadError('too_large');
+      return Buffer.from(await response.arrayBuffer());
+    });
+    if (buffer.byteLength === 0) throw new MediaDownloadError('bad_response');
+    if (buffer.byteLength > MAX_MEDIA_BYTES) throw new MediaDownloadError('too_large');
+    return { buffer, mimeType };
+  }
+
+  /** Chamada a Meta com timeout; estouro vira `MediaDownloadError('timeout')`. */
+  private async timed<T>(path: string, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    try {
+      return await withGatewayTimeout({ gateway: 'meta', path, timeoutMs: META_TIMEOUT_MS }, fn);
+    } catch (err) {
+      if (err instanceof MediaDownloadError) throw err;
+      if (err instanceof GatewayTimeoutError) throw new MediaDownloadError('timeout');
+      throw new MediaDownloadError('http_error');
+    }
   }
 }
 
@@ -1057,6 +1218,20 @@ export interface InboundMessageDTO {
   externalId: string | null;
   /** Mensagem citada pelo paciente (`context.id` na Meta). */
   quotedExternalId?: string | null;
+  /**
+   * Midia da Meta a baixar (CRMLAB-140, D-314). `content` ja traz o aviso de
+   * texto, usado se o download nao der certo.
+   */
+  cloudMedia?: InboundCloudMedia | null;
+}
+
+export interface InboundCloudMedia {
+  id: string;
+  mimeType: string | null;
+  fileName: string | null;
+  caption: string | null;
+  /** Figurinha fica no formato original (como no QR). */
+  sticker: boolean;
 }
 
 export interface StatusCallbackDTO {
@@ -1245,6 +1420,7 @@ function cloudApiContentOf(message: Record<string, unknown>): {
   content: string;
   messageType: MessageType;
   attachmentUrl: null;
+  cloudMedia?: InboundCloudMedia | null;
 } | null {
   const type = asString(message.type) ?? 'text';
   if (CLOUD_IGNORED_TYPES.has(type)) {
@@ -1292,7 +1468,19 @@ function cloudApiContentOf(message: Record<string, unknown>): {
     const caption = asString(media?.caption);
     const filename = asString(media?.filename);
     const notice = mediaNotice(filename ? `${label} "${filename}"` : label);
-    return text(caption ? `${caption}\n\n${notice}` : notice);
+    const mediaId = asString(media?.id);
+    return {
+      ...text(caption ? `${caption}\n\n${notice}` : notice),
+      cloudMedia: mediaId
+        ? {
+            id: mediaId,
+            mimeType: asString(media?.mime_type),
+            fileName: filename,
+            caption,
+            sticker: type === 'sticker',
+          }
+        : null,
+    };
   }
   // `unsupported`, `order` e tipos novos: o paciente mandou ALGO.
   return text(
@@ -1419,6 +1607,24 @@ export class WhatsAppService {
     const templates = parseMetaTemplates(rows);
     templateCache.set(tenantId, { key, at: this.now(), templates });
     return templates;
+  }
+
+  /**
+   * Baixa a midia recebida pela Cloud API (CRMLAB-140, D-314). `failure` =
+   * motivo para o log quando nao deu (o webhook usa o aviso de texto). Mock
+   * (sem `WHATSAPP_API_URL`) nao tem de onde baixar.
+   */
+  async downloadInboundMedia(
+    credentials: WhatsAppCredentials,
+    mediaId: string,
+  ): Promise<{ media: DownloadedMedia } | { failure: MediaDownloadFailure | 'mock' }> {
+    const driver = this.driver;
+    if (credentials.apiUrl === '' || !driver.downloadMedia) return { failure: 'mock' };
+    try {
+      return { media: await driver.downloadMedia(credentials, mediaId) };
+    } catch (err) {
+      return { failure: err instanceof MediaDownloadError ? err.reason : 'http_error' };
+    }
   }
 
   /** Modo do canal WhatsApp do laboratorio (`qr` ou `cloud_api`). */

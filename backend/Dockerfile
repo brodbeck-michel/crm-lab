@@ -78,7 +78,10 @@ WORKDIR /app
 ENV NODE_ENV=production \
     PORT=3000
 
-RUN apk add --no-cache curl tini
+# ffmpeg (CRMLAB-140, D-314): converte o recado de voz gravado no navegador
+# (WebM) para OGG/Opus antes de subir para a API oficial da Meta, que nao
+# aceita WebM.
+RUN apk add --no-cache curl tini ffmpeg
 
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/backend/dist ./dist

@@ -1256,16 +1256,23 @@ contêineres — D-234 item 8). No CRM os quatro ficam `video`.
 }
 ```
 
-**Cloud API (`cloud_api`) — FORA da entrega do CRMLAB-135 (CRMLAB-140, D-313):** anexo exige upload
-prévio de mídia à Meta e não é implementado agora. Ordem das checagens em `cloud_api`:
-`CHANNEL_CLOUD_API_NOT_CONFIGURED` → `WHATSAPP_WINDOW_CLOSED` (D-310) → `MESSAGE_SEND_FAILED`
-("anexo ainda não suportado nesta conexão"). **Pendência: CRMLAB-140** (upload/recebimento de mídia).
+**Cloud API (`cloud_api`, CRMLAB-140, D-314):** o arquivo sobe para a Meta (`POST /{phone_number_id}/media`)
+e a mensagem sai por id de mídia. Formatos aceitos, conferidos **depois** da preparação (imagem já em
+JPEG, D-290): imagem JPEG/PNG até 5 MB; áudio AAC, AMR, MP3, MP4, OGG até 16 MB; vídeo MP4/3GP até
+16 MB; documento PDF, Word, Excel, PowerPoint e TXT. Recado de voz `audio/webm` é convertido para
+OGG/Opus (ffmpeg) no envio; o CRM guarda e mostra o original. Ordem das checagens em `cloud_api`:
+validação do arquivo (allow-list, teto de 15 MiB) → `CHANNEL_CLOUD_API_NOT_CONFIGURED` → **formato
+da Meta** (`VALIDATION_ERROR` com `details.reason: "cloud_api_media_type"` e `fields.mimeType`
+listando os aceitos; imagem acima de 5 MB → `MEDIA_TOO_LARGE` com `details.reason:
+"cloud_api_image_limit"`, `details.max: 5242880`) → `WHATSAPP_WINDOW_CLOSED` (D-310) →
+`MESSAGE_SEND_FAILED` (upload ou envio recusado pela Meta, ou conversão do áudio que falhou). As
+recusas antes da janela não gravam nada nem reabrem a conversa.
 
 **Erros:** `WHATSAPP_WINDOW_CLOSED` (409, D-310), `CHANNEL_CLOUD_API_UNAVAILABLE` (503, D-308 — produção sem `WHATSAPP_API_URL`; nada gravado), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308),
 `VALIDATION_ERROR` (400), `NOT_FOUND` (404), `CONVERSATION_ALREADY_ASSIGNED` (409,
-D-215/D-273), `MEDIA_TOO_LARGE` (413, acima do teto de 15 MiB), `MESSAGE_SEND_FAILED` (502, canal
-externo falhou após os retries — a WhatsApp Cloud API `cloud_api` ainda não envia
-mídia, só o gateway Evolution `qr`), `FORBIDDEN` (403, `platform_operator`)
+D-215/D-273), `MEDIA_TOO_LARGE` (413, acima do teto de 15 MiB, ou imagem acima de 5 MB em
+`cloud_api`), `MESSAGE_SEND_FAILED` (502, canal externo falhou após os retries), `FORBIDDEN` (403,
+`platform_operator`)
 
 ### PUT /conversations/:id/messages/:messageId/reaction · DELETE (CRMLAB-66, D-222)
 Reagir a uma mensagem com um emoji (a barra rápida da tela: 👍 ❤️ 💚 😂 😮 😢 🙏). A reação é
@@ -1644,13 +1651,15 @@ entram como `messageType: "text"`, sem `attachmentUrl`:
 | `interactive` | `button_reply.title` ou `list_reply.title` (` — description`, quando há) |
 | `location` | `📍 <name ou address> (<lat>, <lng>)` |
 | `contacts` | `👤 <formatted_name> (<phone>)`, separados por vírgula |
-| `image`, `audio`, `voice`, `video`, `document`, `sticker` | legenda (quando há) + aviso `[Recebido pela API oficial: <tipo> — o anexo ainda não aparece no CRM. Se precisar, peça ao paciente que descreva por texto.]`; documento leva o nome do arquivo entre aspas |
+| `image`, `audio`, `voice`, `video`, `document`, `sticker` | **baixada da Meta** (D-314): `messageType` pelo MIME gravado, `attachmentUrl = /api/v1/media/:id`, `content` = legenda ou nome do arquivo (como no QR). Se o download não der certo (mock, acima de 15 MiB, erro, timeout): legenda + aviso `[Recebido pela API oficial: <tipo> — o anexo ainda não aparece no CRM. Se precisar, peça ao paciente que descreva por texto.]`, documento com o nome entre aspas |
 | `unsupported` e tipos novos | aviso de tipo que o CRM ainda não mostra |
 | `reaction` | **não é fala:** aplica/remove a reação do paciente na mensagem (D-222); alvo desconhecido → ignorado com log |
 | `system`, `request_welcome`, `ephemeral` | ignorados (não viram fala nem reabrem conversa) |
 
-A mídia **não é baixada** até o CRMLAB-140 (D-313, emenda de 06/11/2026: descartar escondia da
-atendente que o paciente escreveu e deixava a janela fechada no CRM com ela aberta na Meta).
+**Download da mídia (D-314):** `GET /{media_id}` e `GET url`, com o Bearer do laboratório, 10 s por
+chamada; o token só vai para `https` da Meta (`graph.facebook.com`, `*.fbsbx.com`, `*.whatsapp.net`,
+`*.fbcdn.net`) ou para a origem de `WHATSAPP_API_URL`. Falha → aviso de texto acima (nunca perde a
+mensagem), log `whatsapp.inbound_media_fallback` com o motivo.
 
 ### Webhook do gateway Evolution (WhatsApp QR, Onda 7 — Bloco B) — PÚBLICO
 

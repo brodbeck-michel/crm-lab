@@ -42,7 +42,7 @@
  * caminho deste arquivo grava com `withoutTenant()`.
  */
 import { createHash } from 'node:crypto';
-import type { MessageStatus, MessageType, PatientPresence } from '@crm-lab/shared';
+import { fileNameWithExtension, type MessageStatus, type MessageType, type PatientPresence } from '@crm-lab/shared';
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { env } from '../config/env.js';
 import type { DbClient } from '../db/types.js';
@@ -71,7 +71,7 @@ import {
 import { createAuditService } from '../services/audit.service.js';
 import { createAutoReplyService } from '../services/auto-reply.service.js';
 import { ConversationService } from '../services/conversation.service.js';
-import { MediaService, messageTypeFromMime } from '../services/media.service.js';
+import { MediaService, messageTypeFromMime, type StoredMedia } from '../services/media.service.js';
 import { MessageService } from '../services/message.service.js';
 import {
   createWhatsAppService,
@@ -79,6 +79,8 @@ import {
   metaNoticeFor,
   safeEquals,
   verifyWebhookSignature,
+  type InboundCloudMedia,
+  type WhatsAppCredentials,
   type WhatsAppService,
 } from '../services/whatsapp.service.js';
 
@@ -227,7 +229,7 @@ async function authenticate(
   req: Request,
   services: WebhookServices,
   cache: CacheService,
-): Promise<{ tenantId: string; phoneNumberId: string; mock: boolean } | null> {
+): Promise<{ tenantId: string; phoneNumberId: string; mock: boolean; credentials: WhatsAppCredentials } | null> {
   const identity = tenantIdentityOf(req);
   const credentials = await services.whatsapp.resolveWebhookTenant(identity);
   if (!credentials) {
@@ -273,7 +275,42 @@ async function authenticate(
     phoneNumberId: credentials.phoneNumberId,
     // Mesma regra do envio (D-308 item 5): em producao, so com WHATSAPP_CLOUD_API_MOCK=true.
     mock: cloudApiMockAllowed(credentials.apiUrl),
+    credentials,
   };
+}
+
+/**
+ * Midia recebida pela Cloud API (CRMLAB-140, D-314 item 4): baixa da Meta e
+ * grava como no QR. `null` = nao deu (log com o motivo); quem chama usa o
+ * aviso de texto (item 5) e a mensagem nunca se perde.
+ */
+async function storeCloudMedia(
+  services: WebhookServices,
+  credentials: WhatsAppCredentials,
+  media: InboundCloudMedia,
+  externalId: string | null,
+): Promise<StoredMedia | null> {
+  const tenantId = credentials.tenantId;
+  const downloaded = await services.whatsapp.downloadInboundMedia(credentials, media.id);
+  if ('failure' in downloaded) {
+    logger.warn('whatsapp.inbound_media_fallback', { tenantId, externalId, reason: downloaded.failure });
+    return null;
+  }
+  const mimeType = media.mimeType ?? downloaded.media.mimeType;
+  const stored = await services.media.storeInbound(
+    tenantId,
+    {
+      fileName: fileNameWithExtension(media.fileName ?? 'arquivo', mimeType),
+      mimeType,
+      base64: downloaded.media.buffer.toString('base64'),
+    },
+    { keepFormat: media.sticker },
+  );
+  if (!stored) {
+    logger.warn('whatsapp.inbound_media_fallback', { tenantId, externalId, reason: 'rejected' });
+    return null;
+  }
+  return stored;
 }
 
 /**
@@ -434,14 +471,29 @@ export function whatsappInbound(services: WebhookServices, cache: CacheService):
           dto.phone,
           dto.patientName,
         );
-        await services.messages.createFromPatient(tenantId, conversation.id, {
-          content: dto.content,
-          messageType: dto.messageType,
-          attachmentUrl: dto.attachmentUrl,
+        // Midia (D-314): reentrega de mensagem ja gravada nao baixa de novo.
+        const known = dto.externalId ? await services.messages.isKnownExternalId(tenantId, dto.externalId) : false;
+        const stored =
+          dto.cloudMedia && !known
+            ? await storeCloudMedia(services, authenticated.credentials, dto.cloudMedia, dto.externalId)
+            : null;
+        const message = await services.messages.createFromPatient(tenantId, conversation.id, {
+          ...(stored
+            ? {
+                // Como no QR: sem legenda, `content` = nome do arquivo (D-236 item 8).
+                content: dto.cloudMedia?.caption ?? stored.fileName,
+                messageType:
+                  dto.cloudMedia?.sticker && messageTypeFromMime(stored.mimeType) === 'image'
+                    ? 'sticker'
+                    : messageTypeFromMime(stored.mimeType),
+                attachmentUrl: `/api/v1/media/${stored.id}`,
+              }
+            : { content: dto.content, messageType: dto.messageType, attachmentUrl: dto.attachmentUrl }),
           externalId: dto.externalId,
           quotedExternalId: dto.quotedExternalId ?? null,
           receivedVia: 'cloud_api',
         });
+        if (stored) await services.media.attachToMessage(tenantId, stored.id, message.id);
         processed += 1;
       } catch (err) {
         rejected += 1;

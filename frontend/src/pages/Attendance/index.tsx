@@ -32,6 +32,7 @@ import type { ConversationResponseAlert, ConversationScope } from './Conversatio
 import { ConversationPanel } from './ConversationPanel';
 import { EnableNotificationsBanner } from './EnableNotificationsBanner';
 import { PatientContext } from './PatientContext';
+import { cloudApiAttachmentMessage } from '@/lib/cloud-api-media';
 import { isSearchableTerm } from '@/lib/search-snippet';
 import { effectiveSearchTerm } from '@/lib/search-term';
 import { conversationDetailOptions, flattenMessages, useMarkAsRead } from './queries';
@@ -513,6 +514,9 @@ export function Attendance() {
           // Janela de 24 h fechou (D-310): os próximos anexos teriam o mesmo fim.
           handleSendError(error);
           break;
+        } else if (isApiError(error) && cloudApiAttachmentMessage(file.name, error.details)) {
+          // API oficial (D-314): formato ou tamanho que a Meta não aceita. Os outros arquivos seguem.
+          toast(cloudApiAttachmentMessage(file.name, error.details) ?? '', { tone: 'attention' });
         } else if (isApiError(error) && error.code === 'FIRST_CONTACT_LIMIT_REACHED') {
           // Teto de primeiros contatos (D-306): os próximos anexos teriam o mesmo fim.
           handleApiError(error);

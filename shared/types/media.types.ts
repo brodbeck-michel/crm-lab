@@ -194,3 +194,53 @@ export function fileNameWithExtension(fileName: string, mimeType: string): strin
   const base = ext && REPLACEABLE_EXTENSIONS.has(ext) ? fileName.slice(0, -(ext.length + 1)) : fileName;
   return `${base.trim() || 'arquivo'}.${accepted[0]}`;
 }
+
+/**
+ * O que a API oficial da Meta aceita no ENVIO (CRMLAB-140, D-314). Conferido
+ * sobre o arquivo já preparado (imagem já em JPEG, D-290). `audio/webm` entra
+ * porque o servidor converte para OGG/Opus antes de subir (recado de voz).
+ */
+export type CloudApiMediaKind = 'image' | 'audio' | 'video' | 'document';
+
+export const CLOUD_API_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const CLOUD_API_AV_MAX_BYTES = 16 * 1024 * 1024;
+
+export const CLOUD_API_MEDIA_RULES: Readonly<Record<string, { kind: CloudApiMediaKind; maxBytes: number }>> = {
+  'image/jpeg': { kind: 'image', maxBytes: CLOUD_API_IMAGE_MAX_BYTES },
+  'image/png': { kind: 'image', maxBytes: CLOUD_API_IMAGE_MAX_BYTES },
+  'audio/aac': { kind: 'audio', maxBytes: CLOUD_API_AV_MAX_BYTES },
+  'audio/amr': { kind: 'audio', maxBytes: CLOUD_API_AV_MAX_BYTES },
+  'audio/mpeg': { kind: 'audio', maxBytes: CLOUD_API_AV_MAX_BYTES },
+  'audio/mp4': { kind: 'audio', maxBytes: CLOUD_API_AV_MAX_BYTES },
+  'audio/ogg': { kind: 'audio', maxBytes: CLOUD_API_AV_MAX_BYTES },
+  'audio/webm': { kind: 'audio', maxBytes: CLOUD_API_AV_MAX_BYTES },
+  'video/mp4': { kind: 'video', maxBytes: CLOUD_API_AV_MAX_BYTES },
+  'video/3gpp': { kind: 'video', maxBytes: CLOUD_API_AV_MAX_BYTES },
+  'application/pdf': { kind: 'document', maxBytes: MAX_MEDIA_BYTES },
+  'application/msword': { kind: 'document', maxBytes: MAX_MEDIA_BYTES },
+  'application/vnd.ms-excel': { kind: 'document', maxBytes: MAX_MEDIA_BYTES },
+  'application/vnd.ms-powerpoint': { kind: 'document', maxBytes: MAX_MEDIA_BYTES },
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': {
+    kind: 'document',
+    maxBytes: MAX_MEDIA_BYTES,
+  },
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': {
+    kind: 'document',
+    maxBytes: MAX_MEDIA_BYTES,
+  },
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': {
+    kind: 'document',
+    maxBytes: MAX_MEDIA_BYTES,
+  },
+  'text/plain': { kind: 'document', maxBytes: MAX_MEDIA_BYTES },
+};
+
+/** Texto do aviso de formato não aceito (vai em `fields.mimeType`). */
+export const CLOUD_API_ACCEPTED_FORMATS =
+  'Formato não aceito pela API oficial do WhatsApp. Aceitos: foto JPG ou PNG (até 5 MB), áudio, ' +
+  'vídeo MP4 (até 16 MB), PDF, Word, Excel, PowerPoint e TXT.';
+
+/** Regra da Meta para o MIME, ou `null` quando a Meta não aceita. */
+export function cloudApiMediaRule(mimeType: string): { kind: CloudApiMediaKind; maxBytes: number } | null {
+  return CLOUD_API_MEDIA_RULES[normalizeMediaMimeType(mimeType)] ?? null;
+}

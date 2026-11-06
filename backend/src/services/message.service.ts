@@ -50,7 +50,12 @@
  *   MESMA transacao do INSERT (ver `MessageRepository.insert`). Conversa
  *   encerrada REABRE antes, na fila livre (D-174).
  */
-import { MAX_CAPTION_LENGTH, messageAuthorActionBlock } from '@crm-lab/shared';
+import {
+  CLOUD_API_ACCEPTED_FORMATS,
+  MAX_CAPTION_LENGTH,
+  cloudApiMediaRule,
+  messageAuthorActionBlock,
+} from '@crm-lab/shared';
 import type {
   Conversation,
   CreateMessageRequest,
@@ -306,6 +311,36 @@ export class MessageService {
    * assumir a fila ou guardar midia (D-273): credencial (D-308) e janela de
    * 24 h (D-310), nesta ordem. A recusa nao deixa efeito.
    */
+  /**
+   * Anexo pela Cloud API (CRMLAB-140, D-314 item 2): o arquivo JA preparado
+   * (imagem em JPEG) tem de ser um formato que a Meta aceita. Recusa antes de
+   * reabrir/assumir/gravar. Fora de `cloud_api`, nada a conferir.
+   */
+  async assertCloudMediaAccepted(
+    tenantId: string,
+    conversationId: string,
+    media: { mimeType: string; buffer: Buffer },
+  ): Promise<void> {
+    if (!this.whatsapp) return;
+    const conversation = await this.conversations.findById(tenantId, conversationId);
+    if (!conversation || conversation.channel !== 'whatsapp') return;
+    if ((await this.whatsapp.connectionMode(tenantId)) !== 'cloud_api') return;
+    const rule = cloudApiMediaRule(media.mimeType);
+    if (!rule) {
+      throw new BusinessError('VALIDATION_ERROR', {
+        reason: 'cloud_api_media_type',
+        fields: { mimeType: CLOUD_API_ACCEPTED_FORMATS },
+      });
+    }
+    if (media.buffer.byteLength > rule.maxBytes) {
+      throw new BusinessError('MEDIA_TOO_LARGE', {
+        reason: rule.kind === 'image' ? 'cloud_api_image_limit' : 'cloud_api_media_limit',
+        byteSize: media.buffer.byteLength,
+        max: rule.maxBytes,
+      });
+    }
+  }
+
   async assertChannelReadyFor(
     tenantId: string,
     conversationId: string,
@@ -705,6 +740,11 @@ export class MessageService {
    * existente SEM inserir e SEM emitir de novo. O canal reentrega o mesmo POST
    * quando nao recebe 200 a tempo (SECURITY.md "Webhooks").
    */
+  /** A mensagem com este id externo ja foi gravada? (CRMLAB-140: nao baixa a midia de novo.) */
+  async isKnownExternalId(tenantId: string, externalId: string): Promise<boolean> {
+    return (await this.messages.findByExternalId(tenantId, externalId)) !== null;
+  }
+
   async createFromPatient(
     tenantId: string,
     conversationId: string,

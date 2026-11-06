@@ -160,6 +160,12 @@ Vazias = driver **mock** que ecoa (bom para dev, nunca para produção).
   - O laboratório precisa do **número (`phone_number_id`) cadastrado** na tela de canais: sem ele
     todo aviso da Meta é descartado (log `whatsapp.webhook_no_phone_number`).
 
+- **Anexos pela Cloud API (CRMLAB-140, D-314):** a imagem do backend leva `ffmpeg` (Alpine
+  `apk add ffmpeg`) para converter o recado de voz do navegador (WebM) em OGG/Opus. A imagem fica
+  maior; sem o ffmpeg, só o envio de recado de voz pela API oficial falha (a mensagem fica com
+  "tentar de novo"). O download da mídia recebida sai do servidor para `graph.facebook.com` e
+  `*.fbsbx.com` (HTTPS).
+
 ### Frontend (build-time)
 
 `VITE_API_URL` · `VITE_WS_URL` (`frontend/.env.example`). Passadas como `ARG` no

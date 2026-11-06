@@ -168,7 +168,37 @@ export const createConversationSchema = z.object({
  * a MESMA funcao do formulario (`normalizeBrazilianPhone`) — o que a tela
  * aceita, a API aceita. `content` tem o limite de `createMessageSchema`.
  */
-export const startWhatsAppConversationSchema = z.object({
+/**
+ * Modelo aprovado da Meta (CRMLAB-136, D-309). Nome e idioma sao conferidos
+ * contra a lista aprovada no service; aqui so formato. Variavel: texto de
+ * parametro da Meta (1..1024), aparado.
+ */
+export const sendTemplateSchema = z
+  .object({
+    name: z.string().trim().min(1).max(512),
+    language: z.string().trim().min(1).max(20),
+    variables: z.array(z.string().trim().min(1).max(1024)).max(20),
+  })
+  .strict();
+
+/** Exatamente um de `content` e `template` (D-309 item 3). */
+function exactlyOneOfContentOrTemplate(
+  value: { content?: string | undefined; template?: unknown },
+  ctx: z.RefinementCtx,
+): void {
+  const hasContent = value.content !== undefined;
+  const hasTemplate = value.template !== undefined;
+  if (hasContent === hasTemplate) {
+    ctx.addIssue({
+      code: 'custom',
+      path: [hasContent ? 'template' : 'content'],
+      message: hasContent ? 'Envie o texto OU o modelo, nao os dois' : 'Informe o texto ou um modelo',
+    });
+  }
+}
+
+export const startWhatsAppConversationSchema = z
+  .object({
   phone: z
     .string()
     .trim()
@@ -177,19 +207,47 @@ export const startWhatsAppConversationSchema = z.object({
       (value) => normalizeBrazilianPhone(value) !== null,
       'Telefone invalido: informe DDD + numero',
     ),
-  content: z.string().trim().min(1).max(4000),
+  content: z.string().trim().min(1).max(4000).optional(),
+  template: sendTemplateSchema.optional(),
+  })
+  .superRefine(exactlyOneOfContentOrTemplate);
+
+/** `POST /conversations/whatsapp/open` (CRMLAB-70, D-236) — so o telefone. */
+export const openWhatsAppConversationSchema = z.object({
+  phone: z
+    .string()
+    .trim()
+    .max(20)
+    .refine(
+      (value) => normalizeBrazilianPhone(value) !== null,
+      'Telefone invalido: informe DDD + numero',
+    ),
 });
 
-/** `POST /conversations/whatsapp/open` (CRMLAB-70, D-236) — o `phone` do schema acima. */
-export const openWhatsAppConversationSchema = startWhatsAppConversationSchema.pick({ phone: true });
-
-export const createMessageSchema = z.object({
+const messageBodyShape = {
   content: z.string().trim().min(1).max(4000),
   messageType: z.enum(['text', 'image', 'audio', 'pdf', 'doc']).optional(),
   attachmentUrl: z.string().max(500).nullish(),
   /** Responder citando (CRMLAB-66, D-221). */
   quotedMessageId: z.uuid().nullish(),
-});
+};
+
+export const createMessageSchema = z
+  .object({
+    ...messageBodyShape,
+    content: messageBodyShape.content.optional(),
+    /** CRMLAB-136 (D-309): exclusivo de `content`; sem citacao, tipo nem anexo. */
+    template: sendTemplateSchema.optional(),
+  })
+  .superRefine((value, ctx) => {
+    exactlyOneOfContentOrTemplate(value, ctx);
+    if (value.template === undefined) return;
+    for (const key of ['quotedMessageId', 'attachmentUrl', 'messageType'] as const) {
+      if (value[key] !== undefined && value[key] !== null) {
+        ctx.addIssue({ code: 'custom', path: [key], message: 'Nao combina com envio por modelo' });
+      }
+    }
+  });
 
 /** Emoji de 1..32 BYTES (a coluna e VARCHAR(32) e um emoji composto passa de 1 char) — D-222. */
 export const setReactionSchema = z.object({
@@ -201,7 +259,7 @@ export const setReactionSchema = z.object({
 });
 
 /** `PATCH /:id/messages/:messageId` (D-280): mesmo teto do envio normal. */
-export const editMessageSchema = createMessageSchema.pick({ content: true });
+export const editMessageSchema = z.object({ content: messageBodyShape.content });
 
 export const messageParamsSchema = z.object({
   id: z.uuid(),
@@ -395,11 +453,13 @@ export function createMessage(services: ConversationServices): RequestHandler {
     await services.conversations.getById(ctx, id);
     await services.messages.assertQuotable(ctx.tenantId, id, dto.quotedMessageId);
     // D-308: canal sem credencial recusa aqui, antes de reabrir (nada fica para tras).
-    await services.messages.assertChannelReadyFor(ctx.tenantId, id);
+    // D-309: o modelo tambem e conferido aqui; com modelo, a janela nao conta.
+    await services.messages.assertChannelReadyFor(ctx.tenantId, id, { template: dto.template ?? null });
     await services.conversations.openForReply(ctx, id);
 
     const message: Message = await services.messages.createFromAgent(ctx.tenantId, id, ctx.userId, {
-      content: dto.content,
+      ...(dto.content !== undefined ? { content: dto.content } : {}),
+      ...(dto.template !== undefined ? { template: dto.template } : {}),
       ...(dto.messageType !== undefined ? { messageType: dto.messageType } : {}),
       ...(dto.attachmentUrl !== undefined ? { attachmentUrl: dto.attachmentUrl } : {}),
       ...(dto.quotedMessageId ? { quotedMessageId: dto.quotedMessageId } : {}),

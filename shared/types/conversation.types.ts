@@ -244,6 +244,44 @@ export interface Message {
   location?: MessageLocation | null;
   /** So em `messageType: 'contact'`. */
   contacts?: MessageContact[];
+  /**
+   * CRMLAB-136 (D-309): mensagem enviada por modelo aprovado da Meta. `null`
+   * = texto livre. `content` ja traz o corpo com as variaveis preenchidas.
+   */
+  template?: MessageTemplateInfo | null;
+}
+
+/** Categoria de um modelo aprovado que o CRM aceita (D-309; `AUTHENTICATION` fica de fora). */
+export type WhatsAppTemplateCategory = 'marketing' | 'utility';
+
+/** Modelo aprovado da Meta, so corpo de texto (`GET /whatsapp/templates`, D-309). */
+export interface WhatsAppTemplate {
+  name: string;
+  /** Codigo da Meta, ex. `pt_BR`. */
+  language: string;
+  category: WhatsAppTemplateCategory;
+  /** Corpo com `{{1}}`, `{{2}}`... */
+  body: string;
+  /** Uma por `{{n}}`, em ordem; `example` vem da Meta (ou `null`). */
+  variables: Array<{ index: number; example: string | null }>;
+}
+
+export interface ListWhatsAppTemplatesResponse {
+  templates: WhatsAppTemplate[];
+}
+
+/** Envio por modelo (D-309): exclusivo de `content`. Uma variavel por `{{n}}`, na ordem. */
+export interface SendTemplateRequest {
+  name: string;
+  language: string;
+  variables: string[];
+}
+
+/** O que a mensagem guarda do modelo (D-309). */
+export interface MessageTemplateInfo {
+  name: string;
+  language: string;
+  category: WhatsAppTemplateCategory;
 }
 
 /**
@@ -270,7 +308,10 @@ export type CreateConversationResponse = ConversationDetail;
  */
 export interface StartWhatsAppConversationRequest {
   phone: string;
-  content: string;
+  /** Texto livre. Exclusivo de `template` (um dos dois). */
+  content?: string;
+  /** CRMLAB-136 (D-309): primeiro contato pela Cloud API sai por modelo aprovado. */
+  template?: SendTemplateRequest;
 }
 
 export interface StartWhatsAppConversationResponse {
@@ -421,7 +462,10 @@ export interface GetConversationResponse {
 }
 
 export interface CreateMessageRequest {
-  content: string;
+  /** Texto livre. Exclusivo de `template`: a API exige exatamente um dos dois. */
+  content?: string;
+  /** CRMLAB-136 (D-309): so no WhatsApp em `cloud_api`; vale dentro e fora da janela. */
+  template?: SendTemplateRequest;
   messageType?: MessageType;
   attachmentUrl?: string | null;
   /** Responder citando (CRMLAB-66, D-221): mensagem DESTA conversa, nao apagada. */

@@ -35,8 +35,13 @@
  * A IDENTIDADE do tenant continua vindo do slug/uuid da URL do webhook — o que
  * a tabela resolve e a CREDENCIAL, inclusive o segredo do HMAC.
  */
-import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import type { ConversationChannel, MessageStatus, MessageType } from '@crm-lab/shared';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import type {
+  ConversationChannel,
+  MessageStatus,
+  MessageType,
+  WhatsAppTemplate,
+} from '@crm-lab/shared';
 import { env } from '../config/env.js';
 import { cloudApiMockAllowed } from '../lib/cloud-api-mock.js';
 import { BusinessError } from '../http/errors.js';
@@ -52,6 +57,7 @@ import { createQueue, type QueueService } from '../lib/queue.js';
 import type { ChannelCredentials } from '../repositories/channel-settings.repository.js';
 import { createAuditService } from './audit.service.js';
 import { createChannelSettingsService } from './channel-settings.service.js';
+import { parseMetaTemplates } from './whatsapp-templates.js';
 
 // ---------------------------------------------------------------------------
 // Credenciais
@@ -402,6 +408,25 @@ export interface WhatsAppDriver {
   ): Promise<void>;
   /** "Apagar para todos" de mensagem NOSSA (D-280). OPCIONAL, idem. */
   deleteMessage?(credentials: WhatsAppCredentials, phone: string, externalId: string): Promise<void>;
+  /**
+   * Modelos da conta (CRMLAB-136, D-309): linhas CRUAS de
+   * `GET /{waba_id}/message_templates`, todas as paginas. Quem filtra e
+   * `parseMetaTemplates`. OPCIONAL: so a Cloud API tem modelo.
+   */
+  listTemplates?(credentials: WhatsAppCredentials): Promise<unknown[]>;
+  /** Envio por modelo aprovado (D-309). OPCIONAL, idem. */
+  sendTemplate?(
+    credentials: WhatsAppCredentials,
+    phone: string,
+    template: TemplateSend,
+  ): Promise<SendResult>;
+}
+
+/** O que o driver precisa para mandar um modelo: nome, idioma e as variaveis do corpo em ordem. */
+export interface TemplateSend {
+  name: string;
+  language: string;
+  variables: readonly string[];
 }
 
 /** O que a atendente manda ao paciente: `paused` so assina, `composing` = digitando (D-226). */
@@ -433,6 +458,8 @@ export interface MockSentMessage {
   quotedExternalId?: string;
   /** Legenda da mídia (CRMLAB-69, D-231), quando houve. */
   caption?: string;
+  /** Envio por modelo (CRMLAB-136): `content` fica vazio e o modelo vem aqui. */
+  template?: TemplateSend;
 }
 
 /** Edicao/apagamento feito pela autora (D-280) — o que o mock "mandou". */
@@ -456,9 +483,48 @@ export interface MockSentReaction {
  * — a mensagem enviada fica registrada em `sent` (e no log) e o envio devolve
  * um `externalId` sintetico, exatamente como faria a API real.
  */
+/**
+ * Modelos que o mock "tem na Meta" (CRMLAB-136): dev, testes e a hml com
+ * `WHATSAPP_CLOUD_API_MOCK=true` enxergam estes. Formato CRU da Graph API.
+ */
+export const MOCK_META_TEMPLATES: readonly unknown[] = [
+  {
+    name: 'retomar_atendimento',
+    language: 'pt_BR',
+    status: 'APPROVED',
+    category: 'UTILITY',
+    components: [
+      {
+        type: 'BODY',
+        text: 'Olá {{1}}, aqui é do laboratório. Podemos continuar o seu atendimento por aqui?',
+        example: { body_text: [['Maria']] },
+      },
+    ],
+  },
+  {
+    name: 'lembrete_coleta',
+    language: 'pt_BR',
+    status: 'APPROVED',
+    category: 'UTILITY',
+    components: [
+      {
+        type: 'BODY',
+        text: 'Olá {{1}}, sua coleta está agendada para {{2}}. Qualquer dúvida, responda esta mensagem.',
+        example: { body_text: [['Maria', '12/11 às 8h']] },
+      },
+    ],
+  },
+];
+
 export class MockWhatsAppDriver implements WhatsAppDriver {
   readonly name = 'mock';
   readonly sent: MockSentMessage[] = [];
+  /** Linhas cruas devolvidas por `listTemplates`; o teste troca para simular a conta. */
+  templates: unknown[] = [...MOCK_META_TEMPLATES];
+  /** Chamadas a `listTemplates` (o teste confere o cache). */
+  templateListCalls = 0;
+  /** `true` = `listTemplates` falha como a Meta fora do ar. */
+  failTemplateList = false;
   readonly reactions: MockSentReaction[] = [];
   readonly presences: MockSentPresence[] = [];
   readonly messageActions: MockMessageAction[] = [];
@@ -480,6 +546,30 @@ export class MockWhatsAppDriver implements WhatsAppDriver {
     });
     // Conteudo de mensagem de paciente NUNCA vai para o log (SECURITY.md).
     logger.debug('whatsapp.mock_send', { tenantId: credentials.tenantId, externalId });
+    return { externalId };
+  }
+
+  async listTemplates(): Promise<unknown[]> {
+    this.templateListCalls += 1;
+    if (this.failTemplateList) throw new Error('mock: Meta fora do ar');
+    return [...this.templates];
+  }
+
+  async sendTemplate(
+    credentials: WhatsAppCredentials,
+    phone: string,
+    template: TemplateSend,
+  ): Promise<SendResult> {
+    const externalId = `wamid.mock.${randomUUID()}`;
+    this.sent.push({
+      tenantId: credentials.tenantId,
+      phone,
+      content: '',
+      externalId,
+      at: new Date().toISOString(),
+      template: { name: template.name, language: template.language, variables: [...template.variables] },
+    });
+    logger.debug('whatsapp.mock_send_template', { tenantId: credentials.tenantId, externalId });
     return { externalId };
   }
 
@@ -562,6 +652,17 @@ export class MockWhatsAppDriver implements WhatsAppDriver {
  */
 export const META_TIMEOUT_MS = 10_000;
 
+/** Teto de paginas de `message_templates` (100 por pagina): conta normal tem dezenas. */
+export const MAX_TEMPLATE_PAGES = 10;
+
+function sameOrigin(url: string, origin: string): boolean {
+  try {
+    return new URL(url).origin === origin;
+  } catch {
+    return false;
+  }
+}
+
 /** Driver real. Falha => a fila tenta de novo (retry exponencial). */
 export class HttpWhatsAppDriver implements WhatsAppDriver {
   readonly name = 'http';
@@ -598,6 +699,77 @@ export class HttpWhatsAppDriver implements WhatsAppDriver {
       type: 'reaction',
       reaction: { message_id: target.externalId, emoji },
     });
+  }
+
+  /**
+   * Envio por modelo aprovado (CRMLAB-136, D-309): `type: template`, idioma
+   * pelo codigo e as variaveis como `parameters` de texto do corpo, em ordem.
+   */
+  async sendTemplate(
+    credentials: WhatsAppCredentials,
+    phone: string,
+    template: TemplateSend,
+  ): Promise<SendResult> {
+    const payload = await this.post(credentials, {
+      messaging_product: 'whatsapp',
+      to: phone,
+      type: 'template',
+      template: {
+        name: template.name,
+        language: { code: template.language },
+        ...(template.variables.length > 0
+          ? {
+              components: [
+                {
+                  type: 'body',
+                  parameters: template.variables.map((text) => ({ type: 'text', text })),
+                },
+              ],
+            }
+          : {}),
+      },
+    });
+    const externalId = firstMessageId(payload);
+    if (!externalId) throw new Error('WhatsApp API nao devolveu id da mensagem');
+    return { externalId };
+  }
+
+  /**
+   * `GET /{waba_id}/message_templates`, seguindo `paging.next` (D-309). So
+   * segue link da MESMA origem de `apiUrl`: o token vai no header, e um
+   * `next` apontando para outro host nao pode levar o token junto.
+   */
+  async listTemplates(credentials: WhatsAppCredentials): Promise<unknown[]> {
+    const origin = new URL(credentials.apiUrl).origin;
+    const fields = 'name,language,status,category,components,parameter_format';
+    let url: string | null =
+      `${credentials.apiUrl}/${encodeURIComponent(credentials.wabaId)}/message_templates` +
+      `?fields=${fields}&limit=100`;
+    const rows: unknown[] = [];
+    for (let page = 0; url !== null && page < MAX_TEMPLATE_PAGES; page += 1) {
+      const target: string = url;
+      const { ok, status, payload } = await withGatewayTimeout(
+        { gateway: 'meta', path: '/message_templates', timeoutMs: META_TIMEOUT_MS },
+        async (signal) => {
+          const response = await fetch(target, {
+            method: 'GET',
+            signal,
+            headers: { Authorization: `Bearer ${credentials.apiToken}` },
+          });
+          const body: unknown = response.ok ? await response.json() : null;
+          return { ok: response.ok, status: response.status, payload: body };
+        },
+      );
+      if (!ok) throw new Error(`WhatsApp API respondeu ${status} ao listar modelos`);
+      const record = typeof payload === 'object' && payload !== null ? (payload as Record<string, unknown>) : {};
+      if (Array.isArray(record.data)) rows.push(...(record.data as unknown[]));
+      const paging = typeof record.paging === 'object' && record.paging !== null
+        ? (record.paging as Record<string, unknown>)
+        : {};
+      const next = typeof paging.next === 'string' ? paging.next : null;
+      url = next !== null && sameOrigin(next, origin) ? next : null;
+    }
+    return rows;
   }
 
   private async post(
@@ -983,6 +1155,18 @@ export interface WhatsAppServiceDeps {
   queue?: QueueService;
   /** Tentativas totais do envio. SERVICES.md §11 exige 3. */
   attempts?: number;
+  /** Relogio do cache de modelos (CRMLAB-136); o teste avanca o tempo. */
+  now?: () => number;
+}
+
+/** Validade do cache de modelos por laboratorio (D-309 item 1). */
+export const TEMPLATE_CACHE_TTL_MS = 5 * 60_000;
+
+/** Impressao das credenciais que decidem a lista de modelos. O token entra so como hash. */
+function credentialFingerprint(credentials: WhatsAppCredentials): string {
+  return createHash('sha256')
+    .update([credentials.connectionMode, credentials.apiUrl, credentials.wabaId, credentials.apiToken].join('\u0000'))
+    .digest('hex');
 }
 
 export class WhatsAppService {
@@ -991,8 +1175,14 @@ export class WhatsAppService {
   private readonly queue: QueueService;
   private readonly credentials: WhatsAppCredentialsResolver;
   private readonly attempts: number;
+  private readonly now: () => number;
+  private readonly templateCache = new Map<
+    string,
+    { key: string; at: number; templates: WhatsAppTemplate[] }
+  >();
 
   constructor(deps: WhatsAppServiceDeps) {
+    this.now = deps.now ?? Date.now;
     this.credentials = deps.credentials;
     this.driver = deps.driver ?? createDefaultDriver();
     this.evolutionDriver = deps.evolutionDriver;
@@ -1020,6 +1210,61 @@ export class WhatsAppService {
     return this.queue.run(
       'whatsapp.send',
       () => driver.send(credentials, phone, content, options),
+      { attempts: this.attempts },
+    );
+  }
+
+  /**
+   * Modelos aprovados do laboratorio (CRMLAB-136, D-309), ja filtrados e em
+   * ordem. `qr` => `[]` (nao e erro). Credencial incompleta =>
+   * `CHANNEL_CLOUD_API_NOT_CONFIGURED`; Meta fora do ar ou token recusado =>
+   * `CHANNEL_CLOUD_API_UNAVAILABLE` (nunca 500).
+   *
+   * Cache de 5 min POR LABORATORIO, e a chave inclui uma impressao das
+   * credenciais (modo, URL, WABA, token): trocar credencial ou modo invalida
+   * sozinho, sem ninguem precisar lembrar de limpar (contrato §6.2).
+   */
+  async listTemplates(tenantId: string): Promise<WhatsAppTemplate[]> {
+    const credentials = await this.credentials.forTenant(tenantId);
+    if (credentials.connectionMode === 'qr') return [];
+    assertChannelConfigured(credentials);
+    const driver = this.driverFor(credentials);
+    if (!driver.listTemplates) throw new BusinessError('CHANNEL_CLOUD_API_UNAVAILABLE');
+
+    const key = credentialFingerprint(credentials);
+    const cached = this.templateCache.get(tenantId);
+    if (cached && cached.key === key && this.now() - cached.at < TEMPLATE_CACHE_TTL_MS) {
+      return cached.templates;
+    }
+    let rows: unknown[];
+    try {
+      rows = await driver.listTemplates(credentials);
+    } catch (err) {
+      logger.warn('whatsapp.templates_unavailable', {
+        tenantId,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+      throw new BusinessError('CHANNEL_CLOUD_API_UNAVAILABLE');
+    }
+    const templates = parseMetaTemplates(rows);
+    this.templateCache.set(tenantId, { key, at: this.now(), templates });
+    return templates;
+  }
+
+  /** Modo do canal WhatsApp do laboratorio (`qr` ou `cloud_api`). */
+  async connectionMode(tenantId: string): Promise<'qr' | 'cloud_api'> {
+    return (await this.credentials.forTenant(tenantId)).connectionMode;
+  }
+
+  /** Envio por modelo (D-309) — mesma disciplina de `send` (fila, retry, driver do tenant). */
+  async sendTemplate(tenantId: string, phone: string, template: TemplateSend): Promise<SendResult> {
+    const credentials = await this.sendableCredentials(tenantId);
+    const driver = this.driverFor(credentials);
+    const sendTemplate = driver.sendTemplate?.bind(driver);
+    if (!sendTemplate) throw new Error('driver do canal nao envia modelo da Meta');
+    return this.queue.run(
+      'whatsapp.send_template',
+      () => sendTemplate(credentials, phone, template),
       { attempts: this.attempts },
     );
   }

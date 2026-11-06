@@ -433,6 +433,8 @@ export class ConversationService {
         fields: { phone: 'Telefone invalido: informe DDD + numero' },
       });
     }
+    // D-309: modelo conferido antes de criar a conversa (numero novo nao fica vazio).
+    if (dto.template) await this.messages.assertTemplateSendable(ctx.tenantId, dto.template);
 
     const found = await this.repository.findOrCreateByPhone(ctx.tenantId, {
       patientPhone: phone,
@@ -456,7 +458,9 @@ export class ConversationService {
     }
     if (!created) {
       try {
-        await this.messages.assertSendableAsWhatsApp(ctx.tenantId, conversation);
+        await this.messages.assertSendableAsWhatsApp(ctx.tenantId, conversation, {
+          template: dto.template ?? null,
+        });
       } catch (err) {
         if (isBusinessError(err) && PRECHECK_CODES.has(err.code)) {
           throw new BusinessError(err.code, {
@@ -502,10 +506,12 @@ export class ConversationService {
 
     let message: Message;
     try {
-      message = await this.messages.createFromAgent(ctx.tenantId, conversation.id, ctx.userId, {
-        content: dto.content,
-        messageType: 'text',
-      });
+      message = await this.messages.createFromAgent(
+        ctx.tenantId,
+        conversation.id,
+        ctx.userId,
+        dto.template ? { template: dto.template } : { content: dto.content ?? '', messageType: 'text' },
+      );
     } catch (err) {
       // Limite de primeiros contatos (D-306 item 5): a conversa criada fica, e a
       // tela abre ela mesmo sem a mensagem.

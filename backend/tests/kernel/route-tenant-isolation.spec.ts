@@ -940,6 +940,14 @@ const LAB_ROUTES: readonly LabRoute[] = [
     actor: 'admin',
     addressable: false,
   },
+  // CRMLAB-136 (D-309): modelos aprovados do proprio laboratorio (tenant do token).
+  {
+    name: 'GET /whatsapp/templates',
+    method: 'get',
+    path: () => '/api/v1/whatsapp/templates',
+    actor: 'attendant',
+    addressable: false,
+  },
 
   // --- regras do funil (CRMLAB-56 — D-190) ---
   { name: 'GET /settings/funnel-rules', method: 'get', path: () => '/api/v1/settings/funnel-rules', actor: 'attendant', addressable: false },
@@ -1478,7 +1486,8 @@ describe('inventario de rotas de laboratorio', () => {
     // CRMLAB-120/D-286 soma 2: `GET /users/presence` e `PATCH /users/me/presence`.
     // CRMLAB-121/D-287 soma 1: `POST /patients`.
     // CRMLAB-138/D-308 soma 1: `PUT /settings/channels/whatsapp/mode`.
-    expect(LAB_ROUTES).toHaveLength(122);
+    // CRMLAB-136/D-309 soma 1: `GET /whatsapp/templates`.
+    expect(LAB_ROUTES).toHaveLength(123);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

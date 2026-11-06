@@ -60,6 +60,8 @@ import type {
   MessageCursors,
   MessageSearchHit,
   PaginationMeta,
+  MessageTemplateInfo,
+  SendTemplateRequest,
   WhatsAppWindowStatus,
 } from '@crm-lab/shared';
 import type { ApiModuleDeps } from '../http/api-module.js';
@@ -81,6 +83,7 @@ import type { AutoReplyService } from './auto-reply.service.js';
 import { claimFreeConversation } from './conversation-claim.js';
 import { createFirstContactGuard, type FirstContactGuard } from './first-contact.service.js';
 import { createWhatsAppWindowGuard, type WhatsAppWindowGuard } from './whatsapp-window.service.js';
+import { fillTemplate } from './whatsapp-templates.js';
 import {
   createWhatsAppService,
   type OutboundPresence,
@@ -91,6 +94,19 @@ import {
 
 
 /** Anexo do atendente — o mesmo DTO que `MediaService.storeOutbound` produziu. */
+/** Pre-checagem do canal (controller): `template` = envio por modelo, que nao depende da janela. */
+export interface ChannelPrecheckOptions {
+  template?: SendTemplateRequest | null;
+}
+
+/** Modelo conferido contra a lista aprovada (D-309). */
+interface ResolvedTemplate {
+  info: MessageTemplateInfo;
+  variables: string[];
+  /** Corpo com as variaveis no lugar — o que fica em `messages.content`. */
+  content: string;
+}
+
 export interface OutboundAttachmentInput {
   fileName: string;
   mimeType: string;
@@ -285,10 +301,20 @@ export class MessageService {
    * assumir a fila ou guardar midia (D-273): credencial (D-308) e janela de
    * 24 h (D-310), nesta ordem. A recusa nao deixa efeito.
    */
-  async assertChannelReadyFor(tenantId: string, conversationId: string): Promise<void> {
+  async assertChannelReadyFor(
+    tenantId: string,
+    conversationId: string,
+    options: ChannelPrecheckOptions = {},
+  ): Promise<void> {
     const conversation = await this.conversations.findById(tenantId, conversationId);
     if (!conversation) throw notFound({ resource: 'conversation', id: conversationId });
     await this.assertChannelReady(tenantId, conversation);
+    // Modelo aprovado sai dentro e fora da janela (D-309 item 4). O modelo e
+    // conferido AQUI, antes de reabrir ou assumir (D-273): recusa sem efeito.
+    if (options.template) {
+      await this.resolveTemplate(tenantId, conversation.channel, options.template);
+      return;
+    }
     await this.assertWindowOpen(tenantId, conversation);
   }
 
@@ -297,10 +323,70 @@ export class MessageService {
    * conversa sobre conversa existente de outro canal ou encerrada): roda antes
    * de reabrir ou trocar o canal, para a recusa nao deixar efeito (D-310 item 2).
    */
-  async assertSendableAsWhatsApp(tenantId: string, conversation: Conversation): Promise<void> {
+  async assertSendableAsWhatsApp(
+    tenantId: string,
+    conversation: Conversation,
+    options: ChannelPrecheckOptions = {},
+  ): Promise<void> {
     const asWhatsApp: Conversation = { ...conversation, channel: 'whatsapp' };
     await this.assertChannelReady(tenantId, asWhatsApp);
+    if (options.template) {
+      await this.resolveTemplate(tenantId, 'whatsapp', options.template);
+      return;
+    }
     await this.assertWindowOpen(tenantId, asWhatsApp);
+  }
+
+  /**
+   * Nova conversa por modelo (D-309): credencial e modelo conferidos ANTES de
+   * criar a conversa do numero novo — recusa sem deixar conversa vazia.
+   */
+  async assertTemplateSendable(tenantId: string, template: SendTemplateRequest): Promise<void> {
+    if (this.whatsapp) await this.whatsapp.assertCloudApiConfigured(tenantId);
+    await this.resolveTemplate(tenantId, 'whatsapp', template);
+  }
+
+  /**
+   * Confere o modelo pedido (D-309) e devolve o corpo preenchido. Ordem do
+   * contrato: so roda DEPOIS da credencial (NOT_CONFIGURED vem antes).
+   * - fora do WhatsApp ou em `qr` -> `VALIDATION_ERROR` (`fields.template`);
+   * - nome+idioma fora da lista aprovada -> `NOT_FOUND` (`whatsapp_template`);
+   * - variaveis != uma por `{{n}}`, ou vazia -> `VALIDATION_ERROR`
+   *   (`fields["template.variables"]`).
+   */
+  private async resolveTemplate(
+    tenantId: string,
+    channel: Conversation['channel'],
+    request: SendTemplateRequest,
+  ): Promise<ResolvedTemplate> {
+    const whatsapp = this.whatsapp;
+    if (
+      !whatsapp ||
+      channel !== 'whatsapp' ||
+      (await whatsapp.connectionMode(tenantId)) !== 'cloud_api'
+    ) {
+      throw new BusinessError('VALIDATION_ERROR', {
+        fields: { template: 'Modelo da Meta so no WhatsApp pela API oficial (cloud_api)' },
+      });
+    }
+    const approved = await whatsapp.listTemplates(tenantId);
+    const found = approved.find((t) => t.name === request.name && t.language === request.language);
+    if (!found) {
+      throw notFound({ resource: 'whatsapp_template', id: `${request.name}:${request.language}` });
+    }
+    const variables = request.variables.map((v) => v.trim());
+    if (variables.length !== found.variables.length || variables.some((v) => v.length === 0)) {
+      throw new BusinessError('VALIDATION_ERROR', {
+        fields: {
+          'template.variables': `O modelo pede ${found.variables.length} variavel(is), todas preenchidas`,
+        },
+      });
+    }
+    return {
+      info: { name: found.name, language: found.language, category: found.category },
+      variables,
+      content: fillTemplate(found.body, variables),
+    };
   }
 
   /**
@@ -405,25 +491,37 @@ export class MessageService {
       throw new BusinessError('CONVERSATION_ARCHIVED', { status: conversation.status });
     }
     const quote = await this.resolveQuote(tenantId, conversationId, dto.quotedMessageId);
-    // Ordem do contrato (API_CONTRACTS §2): NOT_CONFIGURED -> WINDOW_CLOSED.
+    // Ordem do contrato (API_CONTRACTS §2): NOT_CONFIGURED -> modelo -> WINDOW_CLOSED.
     await this.assertChannelReady(tenantId, conversation);
-    await this.assertWindowOpen(tenantId, conversation);
-    await this.assertFirstContactAllowed(tenantId, conversation);
+    const template = dto.template
+      ? await this.resolveTemplate(tenantId, conversation.channel, dto.template)
+      : null;
+    const content = template ? template.content : (dto.content ?? '');
+    if (content.trim() === '') {
+      throw new BusinessError('VALIDATION_ERROR', { fields: { content: 'Informe o texto ou um modelo' } });
+    }
+    if (!template) {
+      // Modelo sai fora da janela (D-309 item 4); o teto de D-306 e so do QR.
+      await this.assertWindowOpen(tenantId, conversation);
+      await this.assertFirstContactAllowed(tenantId, conversation);
+    }
     // Antes do INSERT: quem perde a corrida nao grava nem envia nada (D-215).
     await this.claimIfFree(tenantId, conversation, senderId);
-    const participant = participantReplyOf(conversation, senderId);
+    // Modelo nao leva o `*Nome*` do participante: o texto e o aprovado pela Meta.
+    const participant = template ? null : participantReplyOf(conversation, senderId);
 
     const message = await this.messages.insert(tenantId, {
       conversationId,
       senderType: 'agent',
       senderId,
-      content: dto.content,
+      content,
       messageType: dto.messageType ?? 'text',
       attachmentUrl: dto.attachmentUrl ?? null,
       status: this.initialStatus(conversation.channel),
       quotedMessageId: quote?.id ?? null,
       quotedExternalId: quote?.externalMessageId ?? null,
       attributedTo: participant?.ownerId ?? null,
+      template: template ? { ...template.info, variables: template.variables } : null,
     });
     this.emitNewMessage(tenantId, conversationId, message.id);
 
@@ -431,12 +529,18 @@ export class MessageService {
     if (!this.whatsapp || conversation.channel !== 'whatsapp') return message;
 
     try {
-      const { externalId } = await this.whatsapp.send(
-        tenantId,
-        conversation.patientPhone,
-        participant ? withSenderName(participant.name, dto.content) : dto.content,
-        sendOptionsFor(quote),
-      );
+      const { externalId } = template
+        ? await this.whatsapp.sendTemplate(tenantId, conversation.patientPhone, {
+            name: template.info.name,
+            language: template.info.language,
+            variables: template.variables,
+          })
+        : await this.whatsapp.send(
+            tenantId,
+            conversation.patientPhone,
+            participant ? withSenderName(participant.name, content) : content,
+            sendOptionsFor(quote),
+          );
       return await this.confirmSent(tenantId, conversationId, message, externalId);
     } catch (err) {
       // Retry ja esgotado dentro do adapter (3 tentativas, backoff exponencial).
@@ -791,8 +895,12 @@ export class MessageService {
 
     // Ordem do contrato (API_CONTRACTS §2): NOT_CONFIGURED -> WINDOW_CLOSED.
     await this.assertChannelReady(tenantId, conversation);
-    await this.assertWindowOpen(tenantId, conversation);
-    await this.assertFirstContactAllowed(tenantId, conversation);
+    // Mensagem por modelo (D-309) reenvia o MESMO modelo e nao depende da janela.
+    const templateSend = await this.messages.findTemplateSend(tenantId, messageId);
+    if (!templateSend) {
+      await this.assertWindowOpen(tenantId, conversation);
+      await this.assertFirstContactAllowed(tenantId, conversation);
+    }
     await this.messages.setStatus(tenantId, messageId, 'pending');
     this.emitStatusUpdated(tenantId, conversationId, messageId, 'pending');
 
@@ -803,7 +911,9 @@ export class MessageService {
     try {
       const mediaId = mediaIdOf(message.attachmentUrl);
       let externalId: string;
-      if (mediaId) {
+      if (templateSend) {
+        ({ externalId } = await whatsapp.sendTemplate(tenantId, conversation.patientPhone, templateSend));
+      } else if (mediaId) {
         const media = await readMedia(mediaId);
         if (!media) throw new Error('midia do anexo nao encontrada para o reenvio');
         ({ externalId } = await whatsapp.sendMedia(

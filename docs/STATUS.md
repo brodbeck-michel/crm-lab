@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-11-04 (CRMLAB-134 — proteção contra restrição do WhatsApp)
+**Última atualização:** 2026-11-07 (Cloud API da Meta CRMLAB-135..142 validada na hml)
 
 ---
 
@@ -3803,7 +3803,7 @@ variável nova.
   `Channels.spec.tsx` (+3), `Rules.spec.tsx` (+1), `NewConversation.spec.tsx` (+1).
 - **Pendente:** validação na hml; o Santé herda o teto ligado (8/h) no deploy.
 
-### 🚧 CRMLAB-135 — WhatsApp Cloud API (Meta direta): frente F0, contrato (2026-11-04, só docs)
+### ✅ CRMLAB-135 — WhatsApp Cloud API (Meta direta): frente F0, contrato (2026-11-04, só docs; épico validado na hml em 2026-11-07)
 
 Branch `docs/CRMLAB-135-contrato-cloud-api`. Decisões **D-308..D-313**. Nenhum código nesta frente.
 
@@ -3818,7 +3818,7 @@ Branch `docs/CRMLAB-135-contrato-cloud-api`. Decisões **D-308..D-313**. Nenhum 
   Meta no envio e download autenticado no recebimento.
 
 
-### 🚧 CRMLAB-138 — modo do canal WhatsApp por laboratório (2026-11-05, em validação)
+### ✅ CRMLAB-138 — modo do canal WhatsApp por laboratório (2026-11-05, validado na hml em 2026-11-07)
 
 Branch `feature/CRMLAB-138-canal-modo-cloud`, sobre o contrato do CRMLAB-135. Decisão D-308
 (emendada em 05/11: itens 3 e 5).
@@ -3906,7 +3906,7 @@ Branch `feature/CRMLAB-138-canal-modo-cloud`, sobre o contrato do CRMLAB-135. De
   conversa reabre a encerrada antes do 409, como já faz com o teto de D-306; `connected_at` é uma
   coluna só para os dois provedores quando o QR segue pareado em `cloud_api`.
 
-### 🚧 CRMLAB-142 — runbook do Santé para a API oficial (2026-11-06, em validação)
+### ✅ CRMLAB-142 — runbook do Santé para a API oficial (2026-11-06, validado na hml em 2026-11-07)
 
 Branch `docs/CRMLAB-142-runbook-sante-cloud-api` (só documentação), sobre o CRMLAB-140.
 `docs/guides/MIGRACAO_SANTE.md` §4: pré-requisitos, coexistência × migração completa (decisão do
@@ -3925,7 +3925,7 @@ valer), plano de volta. Itens de regra da Meta marcados "(conferir na Meta)".
   rótulos reais da tela, roteiro do ensaio).
 
 
-### 🚧 CRMLAB-140 — anexos pela Cloud API (2026-11-06, em validação)
+### ✅ CRMLAB-140 — anexos pela Cloud API (2026-11-06, validado na hml em 2026-11-07)
 
 Branch `feature/CRMLAB-140-anexos-cloud-api`, empilhada sobre o CRMLAB-141. Decisão D-314 (supera
 D-313). Decisões do Michel em 06/11: recado de voz convertido no servidor; formato não aceito pela
@@ -3961,7 +3961,7 @@ Meta recusado com aviso; o card inclui o recebimento.
   PDF do celular.
 
 
-### 🚧 CRMLAB-141 — custo estimado da Cloud API (2026-11-06, em validação)
+### ✅ CRMLAB-141 — custo estimado da Cloud API (2026-11-06, validado na hml em 2026-11-07)
 
 Branch `feature/CRMLAB-141-custo-cloud-api`, empilhada sobre o CRMLAB-139. Decisão D-312 (com a nota
 "Implementado no CRMLAB-141").
@@ -3995,7 +3995,7 @@ Branch `feature/CRMLAB-141-custo-cloud-api`, empilhada sobre o CRMLAB-139. Decis
   Ficou para decisão: regra de preço da Meta (serviço grátis e `pricing.billable`).
 
 
-### 🚧 CRMLAB-139 — webhook da Meta (2026-11-06, em validação)
+### ✅ CRMLAB-139 — webhook da Meta (2026-11-06, validado na hml em 2026-11-07)
 
 Branch `feature/CRMLAB-139-webhook-meta`, empilhada sobre o CRMLAB-136. Decisão D-311 (e emenda de
 06/11 ao D-313).
@@ -4041,7 +4041,7 @@ Branch `feature/CRMLAB-139-webhook-meta`, empilhada sobre o CRMLAB-136. Decisão
   `https://<domínio>/api/v1/webhooks/whatsapp/<slug>` e o mesmo token; assinar `messages`.
 
 
-### 🚧 CRMLAB-136 — modelos aprovados da Meta (2026-11-06, em validação)
+### ✅ CRMLAB-136 — modelos aprovados da Meta (2026-11-06, validado na hml em 2026-11-07)
 
 Branch `feature/CRMLAB-136-templates`, empilhada sobre o CRMLAB-137. Decisão D-309 (complemento de
 06/11: Nova conversa por modelo e `template_variables`).
@@ -4083,7 +4083,7 @@ Branch `feature/CRMLAB-136-templates`, empilhada sobre o CRMLAB-137. Decisão D-
   isolamento ajustadas. Envio real contra a Meta: verificação manual com número de teste.
 
 
-### 🚧 CRMLAB-137 — janela de 24 h da Cloud API (2026-11-05, em validação)
+### ✅ CRMLAB-137 — janela de 24 h da Cloud API (2026-11-05, validado na hml em 2026-11-07)
 
 Branch `feature/CRMLAB-137-janela-24h-v2`, empilhada sobre o CRMLAB-138. Decisão D-310.
 

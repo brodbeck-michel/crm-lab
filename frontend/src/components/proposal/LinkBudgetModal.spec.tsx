@@ -234,4 +234,10 @@ describe('sendErrorMessage', () => {
     ).toBe('Outra atendente está enviando este orçamento agora.');
     expect(sendErrorMessage(new ApiError('NOT_FOUND', 'Nao encontrado', 404))).toBe('Nao encontrado');
   });
+
+  it('janela de 24 h fechada (CRMLAB-137): texto com acento, não o cru do servidor', () => {
+    expect(sendErrorMessage(new ApiError('WHATSAPP_WINDOW_CLOSED', 'janela esta fechada', 409, {}))).toMatch(
+      /^A janela de 24 horas do WhatsApp está fechada/,
+    );
+  });
 });

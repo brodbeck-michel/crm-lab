@@ -7,14 +7,24 @@ import {
   type ListConversationsQuery,
   type ListPatientsQuery,
   type MessageSearchHit,
+  type SendTemplateRequest,
 } from '@crm-lab/shared';
-import { api, isApiError, queryKeys, queryScopes, staleTimes, usePresenceOf } from '@/api';
+import {
+  api,
+  isApiError,
+  queryKeys,
+  queryScopes,
+  staleTimes,
+  usePresenceOf,
+  useWhatsAppTemplates,
+} from '@/api';
 import { useQuickReplyList } from '@/api/quick-replies';
 import { useEffectiveFunnelRules } from '@/api/funnel-rules';
 import { useBusinessCalendar } from '@/api/holidays';
 import { useToast } from '@/components/ui';
 import { InboxLayout } from '@/components/layout';
 import type { RecordedAudio } from '@/components/conversation';
+import { WINDOW_CLOSED_MESSAGE } from '@/components/conversation';
 import { useApiErrorHandler } from '@/hooks';
 import { useAuthStore, useMessageAlertsStore, useUIStore, selectUser } from '@/stores';
 import { ConversationList } from './ConversationList';
@@ -22,6 +32,7 @@ import type { ConversationResponseAlert, ConversationScope } from './Conversatio
 import { ConversationPanel } from './ConversationPanel';
 import { EnableNotificationsBanner } from './EnableNotificationsBanner';
 import { PatientContext } from './PatientContext';
+import { cloudApiAttachmentMessage } from '@/lib/cloud-api-media';
 import { isSearchableTerm } from '@/lib/search-snippet';
 import { effectiveSearchTerm } from '@/lib/search-term';
 import { conversationDetailOptions, flattenMessages, useMarkAsRead } from './queries';
@@ -323,9 +334,17 @@ export function Attendance() {
         void queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
         return;
       }
+      // Janela de 24 h (D-310): o relógio do servidor manda; refaz o estado da tela.
+      if (isApiError(error) && error.code === 'WHATSAPP_WINDOW_CLOSED') {
+        if (selectedId) {
+          void queryClient.invalidateQueries({ queryKey: queryKeys.conversation(selectedId) });
+        }
+        toast(WINDOW_CLOSED_MESSAGE, { tone: 'attention' });
+        return;
+      }
       handleApiError(error);
     },
-    [handleApiError, queryClient, toast],
+    [handleApiError, queryClient, selectedId, toast],
   );
 
   const sendMessage = useMutation({
@@ -337,6 +356,30 @@ export function Attendance() {
       }),
     onSuccess: invalidateConversation,
     onError: handleSendError,
+  });
+
+  /**
+   * Envio por modelo aprovado da Meta (CRMLAB-136, D-309). Só existe com a
+   * janela da Cloud API (`whatsappWindow` preenchido). Erro: o tratador avisa
+   * e a promessa rejeita, para o modal manter o que foi digitado.
+   */
+  const whatsappWindowNow = detailQuery.data?.pages[0]?.whatsappWindow ?? null;
+  const templatesQuery = useWhatsAppTemplates(whatsappWindowNow !== null);
+  const sendTemplate = useMutation({
+    mutationFn: (template: SendTemplateRequest) =>
+      api.conversations.sendMessage(selectedId as string, { template }),
+    onSuccess: invalidateConversation,
+    onError: (error: unknown) => {
+      if (isApiError(error) && error.code === 'NOT_FOUND' && error.details?.resource === 'whatsapp_template') {
+        // Saiu da lista aprovada depois que a tela carregou: atualiza a lista.
+        toast('Esse modelo não está mais aprovado na Meta. A lista foi atualizada; escolha outro.', {
+          tone: 'attention',
+        });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.whatsappTemplates() });
+        return;
+      }
+      handleSendError(error);
+    },
   });
 
   /**
@@ -467,6 +510,13 @@ export function Attendance() {
           // Outra pessoa assumiu (D-215): nada deste nem dos próximos sai.
           handleSendError(error);
           break;
+        } else if (isApiError(error) && error.code === 'WHATSAPP_WINDOW_CLOSED') {
+          // Janela de 24 h fechou (D-310): os próximos anexos teriam o mesmo fim.
+          handleSendError(error);
+          break;
+        } else if (isApiError(error) && cloudApiAttachmentMessage(file.name, error.details)) {
+          // API oficial (D-314): formato ou tamanho que a Meta não aceita. Os outros arquivos seguem.
+          toast(cloudApiAttachmentMessage(file.name, error.details) ?? '', { tone: 'attention' });
         } else if (isApiError(error) && error.code === 'FIRST_CONTACT_LIMIT_REACHED') {
           // Teto de primeiros contatos (D-306): os próximos anexos teriam o mesmo fim.
           handleApiError(error);
@@ -660,6 +710,16 @@ export function Attendance() {
             onReact={(messageId, emoji) => react.mutate({ messageId, emoji })}
             onRetryMessage={(messageId) => retryMessage.mutate(messageId)}
             canEditMessages={detailQuery.data?.pages[0]?.canEditMessages ?? false}
+            whatsappWindow={whatsappWindowNow}
+            {...(whatsappWindowNow !== null
+              ? {
+                  templates: templatesQuery.data?.templates ?? [],
+                  templatesLoading: templatesQuery.isLoading,
+                  templatesError: templatesQuery.isError,
+                  onRetryTemplates: () => void templatesQuery.refetch(),
+                  onSendTemplate: (template: SendTemplateRequest) => sendTemplate.mutateAsync(template),
+                }
+              : {})}
             onEditMessage={(messageId, content) => editMessage.mutateAsync({ messageId, content })}
             onDeleteMessage={(messageId) => deleteMessage.mutate(messageId)}
             onPresence={sendPresence}

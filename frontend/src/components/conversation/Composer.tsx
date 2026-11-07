@@ -1,12 +1,24 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ClipboardEvent, KeyboardEvent } from 'react';
-import type { QuickReply } from '@crm-lab/shared';
+import type {
+  QuickReply,
+  SendTemplateRequest,
+  WhatsAppTemplate,
+  WhatsAppWindowStatus,
+} from '@crm-lab/shared';
 import { Button, cn } from '@/components/ui';
+import { Modal } from '@/components/shared';
 import { readConversationDraft, saveConversationDraft } from '@/stores';
 import { DOCUMENT_ACCEPT, MEDIA_ACCEPT, filesFromDataTransfer } from './attachment-draft';
 import { EmojiPicker } from './EmojiPicker';
 import { QuickReplyMenu, filterQuickReplies, quickReplyOptionId } from './QuickReplyMenu';
 import { MicIcon, VoiceRecorder } from './VoiceRecorder';
+import {
+  EMPTY_TEMPLATE_DRAFT,
+  TemplatePicker,
+  templateRequestOf,
+  type TemplateDraft,
+} from './TemplatePicker';
 import { useVoiceRecorder } from './useVoiceRecorder';
 import type { RecordedAudio } from './useVoiceRecorder';
 
@@ -101,6 +113,66 @@ export interface ComposerProps {
    * decide o ritmo do "digitando…" para o paciente (D-227); o Composer só avisa.
    */
   onTyping?: () => void;
+  /**
+   * Janela de 24 h da Cloud API (CRMLAB-137, D-310), calculada pelo servidor.
+   * `null`/ausente: sem restrição (canal por QR). Aberta: mostra o tempo
+   * restante. Fechada: bloqueia texto, anexo e áudio, mostra o motivo e o botão
+   * de modelo (CRMLAB-136).
+   */
+  whatsappWindow?: WhatsAppWindowStatus | null;
+  /**
+   * Modelos aprovados da Meta (CRMLAB-136, D-309). O botão "Enviar modelo"
+   * aparece no aviso da janela quando há `onSendTemplate`; modelo sai dentro e
+   * fora da janela. Rejeitar a promessa mantém o modal aberto com o que foi digitado.
+   */
+  templates?: readonly WhatsAppTemplate[];
+  /** `true` enquanto a lista carrega (o botão espera). */
+  templatesLoading?: boolean;
+  /** A lista falhou (Meta fora do ar, canal sem credencial): aviso com "Tentar de novo". */
+  templatesError?: boolean;
+  onRetryTemplates?: () => void;
+  onSendTemplate?: (template: SendTemplateRequest) => Promise<unknown>;
+}
+
+export { WINDOW_CLOSED_MESSAGE } from '@/api/error-handler';
+import { WINDOW_CLOSED_MESSAGE } from '@/api/error-handler';
+
+/**
+ * Segundos restantes da janela. O servidor manda o valor; aqui só se desconta o
+ * tempo decorrido desde que ele chegou (não se usa a hora absoluta do cliente).
+ */
+export function useWindowRemaining(
+  status: WhatsAppWindowStatus | null | undefined,
+): number | null {
+  const [now, setNow] = useState(() => Date.now());
+  // `received` muda na MESMA renderização em que chega um `status` novo (estado
+  // derivado, não efeito): senão um quadro desconta o tempo duas vezes.
+  const [stamp, setStamp] = useState(() => ({ status, received: Date.now() }));
+  let received = stamp.received;
+  if (stamp.status !== status) {
+    received = Date.now();
+    setStamp({ status, received });
+    if (now < received) setNow(received);
+  }
+  const elapsed = Math.max(0, Math.floor((Math.max(now, received) - received) / 1000));
+  const left = status?.open ? Math.max(0, status.remainingSeconds - elapsed) : 0;
+  // Tique de 30 s; no último minuto, de 1 s; parado quando a janela fecha.
+  const active = Boolean(status?.open) && left > 0;
+  const lastMinute = left <= 60;
+  useEffect(() => {
+    if (!active) return;
+    const timer = setInterval(() => setNow(Date.now()), lastMinute ? 1_000 : 30_000);
+    return () => clearInterval(timer);
+  }, [active, status, lastMinute]);
+  if (!status) return null;
+  return left;
+}
+
+function formatRemaining(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 1) return 'menos de 1 min';
+  const hours = Math.floor(minutes / 60);
+  return hours > 0 ? `${hours} h ${String(minutes % 60).padStart(2, '0')} min` : `${minutes} min`;
 }
 
 /**
@@ -245,7 +317,7 @@ export function Composer({
   onPickFiles,
   onAttachClick,
   onSendAudio,
-  disabled = false,
+  disabled: disabledProp = false,
   sending = false,
   placeholder = 'Escreva uma mensagem',
   notice,
@@ -255,7 +327,43 @@ export function Composer({
   onCancelReply,
   onTyping,
   draftId,
+  whatsappWindow,
+  templates,
+  templatesLoading = false,
+  templatesError = false,
+  onRetryTemplates,
+  onSendTemplate,
 }: ComposerProps) {
+  const windowRemaining = useWindowRemaining(whatsappWindow);
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const [templateDraft, setTemplateDraft] = useState<TemplateDraft>(EMPTY_TEMPLATE_DRAFT);
+  const [templateSending, setTemplateSending] = useState(false);
+  const templateList = templates ?? [];
+  // Trocar de conversa zera o modal: modelo e variáveis são desta conversa.
+  const [templateDraftOwner, setTemplateDraftOwner] = useState(draftId);
+  if (templateDraftOwner !== draftId) {
+    setTemplateDraftOwner(draftId);
+    setTemplateOpen(false);
+    setTemplateDraft(EMPTY_TEMPLATE_DRAFT);
+  }
+  const noTemplates = !templatesLoading && !templatesError && templateList.length === 0;
+  const templateRequest = templateRequestOf(templateList, templateDraft);
+  const submitTemplate = async (): Promise<void> => {
+    if (!onSendTemplate || !templateRequest) return;
+    setTemplateSending(true);
+    try {
+      await onSendTemplate(templateRequest);
+      setTemplateOpen(false);
+      setTemplateDraft(EMPTY_TEMPLATE_DRAFT);
+    } catch {
+      // O erro já foi avisado por quem enviou; o modal fica com o que foi digitado.
+    } finally {
+      setTemplateSending(false);
+    }
+  };
+  // Janela de 24 h fechada (D-310): texto, anexo e áudio bloqueados; o rascunho fica.
+  const windowClosed = windowRemaining !== null && windowRemaining <= 0;
+  const disabled = disabledProp || windowClosed;
   const [value, setValue] = useState(
     () => initialValue ?? (draftId ? readConversationDraft(draftId) : null) ?? '',
   );
@@ -489,6 +597,87 @@ export function Composer({
             </button>
           )}
         </div>
+      )}
+      {windowRemaining !== null && (
+        <div
+          data-testid="window-banner"
+          role={windowClosed ? 'alert' : undefined}
+          className="flex flex-wrap items-center gap-sm"
+        >
+          <p
+            className={cn(
+              'm-0 min-w-0 flex-1 font-body text-caption',
+              windowClosed ? 'text-accent-700' : 'text-neutral-700',
+            )}
+          >
+            {windowClosed ? `${WINDOW_CLOSED_MESSAGE} ` : ''}
+            <span data-testid="window-remaining">
+              Tempo restante da janela: {windowClosed ? 'encerrada' : formatRemaining(windowRemaining)}.
+            </span>
+          </p>
+          {onSendTemplate && templatesError && (
+            <span data-testid="templates-error" className="flex items-center gap-sm">
+              <span className="font-body text-caption text-accent-700">
+                Não foi possível carregar os modelos aprovados.
+              </span>
+              {onRetryTemplates && (
+                <Button variant="secondary" size="sm" onClick={onRetryTemplates}>
+                  Tentar de novo
+                </Button>
+              )}
+            </span>
+          )}
+          {onSendTemplate && !templatesError && (
+            <>
+              <Button
+                variant={windowClosed ? 'primary' : 'secondary'}
+                size="sm"
+                disabled={templatesLoading || templateList.length === 0}
+                aria-describedby={noTemplates ? 'composer-no-templates' : undefined}
+                onClick={() => setTemplateOpen(true)}
+                data-testid="window-template-button"
+              >
+                Enviar modelo
+              </Button>
+              {noTemplates && (
+                <span id="composer-no-templates" className="font-body text-caption text-neutral-700">
+                  Nenhum modelo aprovado pela Meta para este laboratório.
+                </span>
+              )}
+            </>
+          )}
+        </div>
+      )}
+      {onSendTemplate && (
+        <Modal
+          open={templateOpen}
+          onClose={() => {
+            if (!templateSending) setTemplateOpen(false);
+          }}
+          title="Enviar modelo aprovado"
+          footer={
+            <>
+              <Button
+                variant="primary"
+                onClick={() => void submitTemplate()}
+                disabled={!templateRequest || templateSending}
+                loading={templateSending}
+              >
+                Enviar
+              </Button>
+              <Button variant="secondary" onClick={() => setTemplateOpen(false)} disabled={templateSending}>
+                Cancelar
+              </Button>
+            </>
+          }
+        >
+          <TemplatePicker
+            templates={templateList}
+            value={templateDraft}
+            onChange={setTemplateDraft}
+            disabled={templateSending}
+          />
+        </Modal>
       )}
       {notice && (
         <p data-testid="composer-notice" className="m-0 font-body text-caption text-neutral-700">

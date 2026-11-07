@@ -105,6 +105,8 @@ export const queryKeys = {
 
   /** ['quick-replies'] — a lista inteira; o Composer filtra em memória (§9). */
   quickReplies: () => ['quick-replies'] as const,
+  /** ['whatsapp-templates'] — modelos aprovados da Meta do laboratório (CRMLAB-136, §6.2). */
+  whatsappTemplates: () => ['whatsapp-templates'] as const,
 
   /** ['analytics', period] */
   analytics: (period?: AnalyticsQuery) => ['analytics', period ?? {}] as const,
@@ -144,6 +146,8 @@ export const queryKeys = {
   whatsappQr: () => ['settings', 'channels', 'whatsapp', 'qr'] as const,
   /** ['settings', 'channels', 'whatsapp', 'status'] — status do card, sem QR (§6.1) */
   whatsappStatus: () => ['settings', 'channels', 'whatsapp', 'status'] as const,
+  /** ['settings', 'channels', 'whatsapp', 'usage', month] — custo estimado da Cloud API (§6.2, D-312) */
+  whatsappUsage: (month: string) => ['settings', 'channels', 'whatsapp', 'usage', month] as const,
 
   /** ['operations', 'overview', query] — retrato único da operação (D-067) */
   operationOverview: (query?: OperationOverviewQuery) =>
@@ -228,6 +232,7 @@ export const queryScopes = {
   exams: ['exams'] as const,
   insurances: ['insurances'] as const,
   quickReplies: ['quick-replies'] as const,
+  whatsappTemplates: ['whatsapp-templates'] as const,
   analytics: ['analytics'] as const,
   theme: ['theme'] as const,
   internalChat: ['internal-chat'] as const,

@@ -40,7 +40,9 @@ test.describe('Fluxo 20: vincular orçamento do Bitlab pela conversa', () => {
     page,
     request,
   }) => {
-    const number = String(Date.now()).slice(-9);
+    // Começa em 9: o corte do relógio às vezes começa em 0 (ex. 07/11/2026), a busca tira o zero
+    // (D-119 item 1) e a planilha grava o número cru — o teste falhava só nesses dias.
+    const number = `9${String(Date.now()).slice(-8)}`;
     const managerToken = await apiLogin(request, E2E_USERS.alfaManager);
 
     // A planilha é plano B e nasce desligada (D-189); "Nascer do orçamento" ligada (D-246).

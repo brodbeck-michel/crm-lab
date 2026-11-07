@@ -78,6 +78,37 @@ export function queryLoading<T>(): UseQueryResult<T, Error> {
   };
 }
 
+/** Estado de erro de `useQuery` (primeira carga falhou, sem `data`). */
+export function queryError<T>(error: Error): UseQueryResult<T, Error> {
+  return {
+    data: undefined,
+    dataUpdatedAt: 0,
+    error,
+    errorUpdatedAt: Date.now(),
+    failureCount: 1,
+    failureReason: error,
+    errorUpdateCount: 1,
+    isError: true,
+    isFetched: true,
+    isFetchedAfterMount: true,
+    isFetching: false,
+    isInitialLoading: false,
+    isLoading: false,
+    isLoadingError: true,
+    isPaused: false,
+    isPending: false,
+    isPlaceholderData: false,
+    isRefetchError: false,
+    isRefetching: false,
+    isStale: true,
+    isSuccess: false,
+    isEnabled: true,
+    status: 'error',
+    fetchStatus: 'idle',
+    refetch: vi.fn(),
+  };
+}
+
 /**
  * `useMutation` OCIOSO — o que as telas leem daqui e `mutate` / `mutateAsync`.
  */

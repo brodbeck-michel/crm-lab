@@ -120,7 +120,10 @@ Duas leituras registradas aqui porque o doc original não as fixava:
   conversa (nova ou reaproveitada) fica **aberta e selecionada**. Telefone já em atendimento com
   outra pessoa (`CONVERSATION_ALREADY_ASSIGNED`) → erro dentro do modal com o nome dela. Canal
   fora do ar (`MESSAGE_SEND_FAILED`) → o modal fecha, a conversa abre mesmo assim (a mensagem
-  aparece como falha) e um toast explica que o WhatsApp não enviou
+  aparece como falha) e um toast explica que o WhatsApp não enviou. Na API oficial
+  (CRMLAB-137/138): `WHATSAPP_WINDOW_CLOSED` (primeiro contato só por modelo),
+  `CHANNEL_CLOUD_API_NOT_CONFIGURED` e `CHANNEL_CLOUD_API_UNAVAILABLE` aparecem dentro do modal, que
+  fica aberto; a lista é relida
 - Filtros em chips: "Minhas N" (accent sólido), "Não atribuídas N" (cinza)
 - Chip **"Encerradas"** (CRMLAB-48, D-174), sem número: lista `?status=closed` (o atendente vê só
   as dele, pelo recorte do servidor). Ligado, os números de "Minhas"/"Não atribuídas" continuam os
@@ -232,6 +235,13 @@ Duas leituras registradas aqui porque o doc original não as fixava:
   `--color-bg/surface/text`
 - Composer: input pílula + anexos + **emoji** + enviar. O emoji entra na posição do cursor
   (Onda 8 §2.2), grade fixa de 48, sem dependência nova
+- **Modelo aprovado (CRMLAB-136, D-309):** na Cloud API, o aviso da janela de 24 h ganha "Enviar
+  modelo" (em destaque com a janela fechada; secundário com ela aberta; desabilitado, com o motivo,
+  sem modelo aprovado). Abre um modal: escolher o modelo, preencher cada `{{n}}` (o exemplo da Meta
+  é o placeholder) e ver a prévia exata. Recusa do servidor mantém o modal com o que foi digitado.
+  Mensagem por modelo leva o selo "Modelo" no balão. A Nova conversa, com modelos na lista, abre
+  em "Modelo aprovado" (alternativa "Texto livre", com o aviso da janela no lugar do de primeiro
+  contato)
 - **Responder assume (CRMLAB-75, D-215):** enviar numa conversa de "Não atribuídas" a torna da
   pessoa (o backend faz o claim); a lista troca de chip pelo `conversation.new_message`, sem
   clique em "Assumir". Se outra pessoa assumiu no mesmo instante, o envio volta
@@ -973,8 +983,36 @@ gestor).
   `manual` não mostra nada. O botão "Conectar WhatsApp" continua lá.
 - **Desconectar não desativa o canal** (`is_active` intocado) — são dois controles distintos,
   e a confirmação diz isso explicitamente
-- Conectar por QR troca `connection_mode` para `qr` e **não há caminho de volta para
-  `cloud_api`** pela UI: a partir daí o envio sai pelo gateway Evolution
+- Conectar por QR troca `connection_mode` para `qr`: a partir daí o envio sai pelo gateway
+  Evolution. **Volta para `cloud_api` (CRMLAB-138, D-308, supera o "sem caminho de volta"):** o
+  cartão "Modo do WhatsApp" (admin) tem as opções QR e API oficial. Escolher a API oficial mostra
+  o aviso do que muda (histórico intacto, janela de 24 h, reengajamento inativo) e pede
+  confirmação. Sem credenciais guardadas (`cloudApiConfigured: false`), pede ID do número, WABA e
+  token, grava pelo `PATCH` e só então chama `PUT /settings/channels/whatsapp/mode`. Com elas
+  guardadas, basta confirmar. Erro do servidor aparece no cartão, e a tela relê a configuração.
+  **Volta para QR:** com o termo já aceito, "Voltar para QR" (com confirmação) chama só
+  `PUT .../mode` com `qr` — não chama `POST /connect`, que abriria outra sessão no Evolution. Se a
+  sessão tiver caído, o "Conectar WhatsApp" aparece depois. Sem termo aceito, o caminho é o
+  "Conectar WhatsApp" (aceita o termo e pareia). "Salvar WABA" fica desabilitado com o campo vazio
+  (o campo vazio não apaga o WABA).
+  **QR ainda pareado em `cloud_api`:** aviso no cartão com o número e o botão "Desconectar o QR"
+  (com confirmação), lendo `GET .../whatsapp/status`. No WhatsApp, o campo "Token da API" é o token
+  da Meta; sem ele, mostra "Não configurado (token da API oficial da Meta; o QR não usa)".
+
+#### Uso e custo do WhatsApp — API oficial (CRMLAB-141, D-312 · API_CONTRACTS §6.2)
+Seção própria logo depois de "Conexão de canal", **só quando o WhatsApp está em `cloud_api`**; gestor e admin
+(os dois leem o mesmo).
+
+- Dados: `GET /settings/channels/whatsapp/usage?month=YYYY-MM`
+- Seletor de mês (`input type="month"`), começa no mês corrente de São Paulo. Formato inválido ou
+  mês futuro (o campo vira texto livre no Firefox/Safari) mostra o aviso e não consulta; campo
+  apagado volta ao mês corrente; trocar de mês mantém a tabela anterior até o novo chegar
+- Tabela com as quatro categorias (Atendimento (serviço), Utilidade, Marketing, Autenticação):
+  mensagens, grátis (só serviço; nas outras "—"), preço unitário com até 4 casas, custo estimado
+- Rodapé: franquia de atendimento do mês e quanto resta, **total estimado** e o aviso fixo
+  "Estimativa calculada pelo CRM com a tabela de preços da Meta. Não é a fatura: confira o valor
+  cobrado no Gerenciador de Negócios da Meta."
+- Erro de carga: "Não foi possível carregar o uso deste mês." (não esconde a seção)
 
 ### Gestão da Operação (`/settings/operation`) — gestor+
 - Dados: `GET /operations/overview?queueLimit&decisionsLimit` — **somente leitura**

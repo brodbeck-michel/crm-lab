@@ -14,7 +14,7 @@ import {
   renderSendMessageTemplate,
 } from '@crm-lab/shared';
 import { conversationsApi } from '@/api/conversations';
-import { firstContactLimitMessage, toHandledError } from '@/api';
+import { WINDOW_CLOSED_MESSAGE, firstContactLimitMessage, toHandledError } from '@/api';
 import { queryKeys } from '@/api/query-keys';
 import {
   useResendProposal,
@@ -93,6 +93,7 @@ export function sendErrorMessage(err: unknown): string {
       : 'O orçamento já foi enviado por outra atendente.';
   }
   if (error.code === 'FIRST_CONTACT_LIMIT_REACHED') return firstContactLimitMessage(error.details);
+  if (error.code === 'WHATSAPP_WINDOW_CLOSED') return WINDOW_CLOSED_MESSAGE;
   return error.message;
 }
 

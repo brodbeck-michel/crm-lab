@@ -49,11 +49,14 @@ import type {
   UserRole,
   WeekDay,
   WhatsAppConnectionStatus,
+  UpdateWhatsAppModeRequest,
+  UpdateWhatsAppModeResponse,
   WhatsAppQrConnectRequest,
   WhatsAppQrResponse,
   WhatsAppStatusResponse,
 } from '@crm-lab/shared';
 import { env } from '../config/env.js';
+import { cloudApiMockAllowed } from '../lib/cloud-api-mock.js';
 import type { CacheService } from '../lib/cache.js';
 import type { DbClient, DbTx } from '../db/types.js';
 import type { TenantContext } from '../http/context.js';
@@ -127,6 +130,14 @@ export interface ChannelSettingsService {
   getWhatsAppStatus(ctx: TenantContext): Promise<WhatsAppStatusResponse>;
   /** admin. Logout da instancia no gateway + marca o canal desconectado. */
   disconnectWhatsApp(ctx: TenantContext): Promise<void>;
+  /**
+   * admin. Troca o modo do WhatsApp (`PUT /settings/channels/whatsapp/mode`,
+   * CRMLAB-135, D-308). Não apaga mensagens nem chama o gateway.
+   */
+  setWhatsAppMode(
+    ctx: TenantContext,
+    dto: UpdateWhatsAppModeRequest,
+  ): Promise<UpdateWhatsAppModeResponse>;
 }
 
 export interface ChannelSettingsServiceDeps {
@@ -294,6 +305,8 @@ export function channelFieldPath(channel: string, field?: string): string {
   return field === undefined ? `channels.${channel}` : `channels.${channel}.${field}`;
 }
 
+const WABA_ID_MAX = 64;
+
 function validateChannels(raw: unknown, errors: FieldErrors): channelSettingsRepo.ChannelPatch[] {
   if (!Array.isArray(raw)) {
     errors.add('channels', 'channels deve ser uma lista');
@@ -351,6 +364,22 @@ function validateChannels(raw: unknown, errors: FieldErrors): channelSettingsRep
       errors,
     );
 
+    // CRMLAB-135 (D-308): WABA só existe no WhatsApp. O modo NÃO entra por aqui:
+    // a troca é `PUT /settings/channels/whatsapp/mode`.
+    checkNullableText(entry, 'wabaId', `${base}.wabaId`, WABA_ID_MAX, errors);
+    if ('wabaId' in entry && channel !== 'whatsapp') {
+      errors.add(`${base}.wabaId`, 'Campo valido apenas para o canal whatsapp');
+    }
+    if ('connectionMode' in entry) {
+      errors.add(
+        `${base}.connectionMode`,
+        'Troca de modo nao vai por aqui: use PUT /settings/channels/whatsapp/mode',
+      );
+    }
+    if ('confirmModeChange' in entry) {
+      errors.add(`${base}.confirmModeChange`, 'Campo desconhecido');
+    }
+
     // O patch preserva a distincao ausente x null: so copiamos as chaves
     // PRESENTES no corpo. O repositorio monta o SET a partir delas.
     const patch: channelSettingsRepo.ChannelPatch = { channel };
@@ -361,9 +390,14 @@ function validateChannels(raw: unknown, errors: FieldErrors): channelSettingsRep
       'isActive',
       'apiToken',
       'webhookSecret',
+      'wabaId',
     ] as const) {
       if (key in entry) {
-        Object.assign(patch, { [key]: entry[key] });
+        // No whatsapp o `apiToken` do corpo e o token da Meta e mora em
+        // `cloud_api_token` (D-308 item 3); `api_token` fica so para a apikey
+        // da instancia Evolution, que so o connect do QR grava.
+        const target = key === 'apiToken' && channel === 'whatsapp' ? 'cloudApiToken' : key;
+        Object.assign(patch, { [target]: entry[key] });
       }
     }
     patches.push(patch);
@@ -558,6 +592,8 @@ function toTenantChannel(row: channelSettingsRepo.ChannelRow): TenantChannel {
     connectedAt: row.connectedAt,
     updatedAt: row.updatedAt,
     connectionMode: toConnectionMode(row.connectionMode),
+    wabaId: row.wabaId,
+    cloudApiConfigured: row.cloudApiConfigured,
     acceptedTermsAt: row.acceptedTermsAt,
   };
 }
@@ -829,6 +865,8 @@ export function createChannelSettingsService(
     );
     const alreadyAccepted = priorState?.acceptedTermsAt != null;
 
+    const priorMode = priorState?.connectionMode ?? 'cloud_api';
+
     if (!acceptTermsNow && !alreadyAccepted) {
       throw new BusinessError('VALIDATION_ERROR', {
         fields: {
@@ -880,6 +918,15 @@ export function createChannelSettingsService(
       entityId: ctx.tenantId,
       newValues: { channel: 'whatsapp', connectionMode: 'qr', instanceName },
     });
+    if (priorMode !== 'qr') {
+      await audit.record(ctx, {
+        action: 'update_whatsapp_mode',
+        entityType: 'tenant_channels',
+        entityId: ctx.tenantId,
+        oldValues: { channel: 'whatsapp', connectionMode: priorMode },
+        newValues: { channel: 'whatsapp', connectionMode: 'qr' },
+      });
+    }
 
     // A UNICA chamada a `/instance/connect` do fluxo — e ela abre a conexao de
     // verdade. O polling seguinte le do cache (ver `getWhatsAppQr`).
@@ -988,6 +1035,75 @@ export function createChannelSettingsService(
     });
   };
 
+  const setWhatsAppMode = async (
+    ctx: TenantContext,
+    dto: UpdateWhatsAppModeRequest,
+  ): Promise<UpdateWhatsAppModeResponse> => {
+    assertWriteRole(ctx);
+
+    const raw: unknown = dto;
+    if (!isRecord(raw)) {
+      throw new BusinessError('VALIDATION_ERROR', { fields: { _root: 'Corpo invalido' } });
+    }
+    const errors = new FieldErrors();
+    for (const key of Object.keys(raw)) {
+      if (key !== 'mode') errors.add(key, 'Campo desconhecido');
+    }
+    if (raw.mode !== 'cloud_api' && raw.mode !== 'qr') {
+      errors.add('mode', "Deve ser 'cloud_api' ou 'qr'");
+    }
+    errors.throwIfAny();
+    const target = raw.mode as 'cloud_api' | 'qr';
+
+    const outcome = await db.withTenant(ctx.tenantId, async (tx) => {
+      const state = await channelSettingsRepo.findConnectionState(tx, ctx.tenantId, 'whatsapp');
+      const creds = await channelSettingsRepo.findCredentials(tx, ctx.tenantId, 'whatsapp');
+      const from = state?.connectionMode ?? 'cloud_api';
+      const missing = cloudApiFieldsMissing(creds);
+      const cloudApiConfigured = missing.length === 0;
+
+      // Idempotente: mesmo modo = 200 sem efeito e sem audit (contrato §6.2).
+      if (from === target) return { from, changed: false, cloudApiConfigured };
+
+      // Mock (sem `WHATSAPP_API_URL`; em producao so com
+      // `WHATSAPP_CLOUD_API_MOCK=true`, a hml): nada sai de verdade, entao a
+      // troca nao exige credencial — como o envio.
+      const apiUrl = (env.WHATSAPP_API_URL ?? '').trim();
+      if (target === 'cloud_api') {
+        // Prod sem URL da Meta e sem o mock liberado: nao ha para onde enviar.
+        if (apiUrl === '' && !cloudApiMockAllowed(apiUrl)) {
+          throw new BusinessError('CHANNEL_CLOUD_API_UNAVAILABLE');
+        }
+        if (missing.length > 0 && apiUrl !== '') {
+          throw new BusinessError('CHANNEL_CLOUD_API_NOT_CONFIGURED', { missing });
+        }
+      } else if (state?.acceptedTermsAt == null) {
+        // Para `qr`, o termo de risco precisa ter sido aceito antes (§6.1).
+        throw new BusinessError('VALIDATION_ERROR', {
+          fields: { acceptTerms: 'Aceite o termo de risco do QR antes de trocar para QR' },
+        });
+      }
+
+      await channelSettingsRepo.upsertChannel(tx, ctx.tenantId, {
+        channel: 'whatsapp',
+        connectionMode: target,
+      });
+      return { from, changed: true, cloudApiConfigured };
+    });
+
+    if (outcome.changed) {
+      await audit.record(ctx, {
+        action: 'update_whatsapp_mode',
+        entityType: 'tenant_channels',
+        entityId: ctx.tenantId,
+        oldValues: { connectionMode: outcome.from },
+        newValues: { connectionMode: target },
+      });
+    }
+
+    return { connectionMode: target, cloudApiConfigured: outcome.cloudApiConfigured };
+  };
+
   return {
     get,
     update,
@@ -996,7 +1112,21 @@ export function createChannelSettingsService(
     getWhatsAppQr,
     getWhatsAppStatus,
     disconnectWhatsApp,
+    setWhatsAppMode,
   };
+}
+
+/**
+ * Campos da Cloud API que faltam na linha do canal (só os NOMES, nunca valores).
+ * O token é o da Meta (`cloud_api_token`); a apikey do QR em `api_token` nunca
+ * conta (D-308 item 3), então parear o QR não impede voltar para `cloud_api`.
+ */
+function cloudApiFieldsMissing(creds: channelSettingsRepo.ChannelCredentials | null): string[] {
+  const missing: string[] = [];
+  if (!creds?.phoneNumberId) missing.push('phoneNumberId');
+  if (!creds?.wabaId) missing.push('wabaId');
+  if (!creds?.cloudApiToken) missing.push('apiToken');
+  return missing;
 }
 
 /**

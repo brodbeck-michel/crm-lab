@@ -81,8 +81,30 @@ const envSchema = z
     JWT_REFRESH_ABSOLUTE_TTL: numberFrom(30 * 24 * 60 * 60),
 
     WHATSAPP_API_URL: optionalString,
+    /**
+     * `true` libera o driver mock da Cloud API em `NODE_ENV=production` sem
+     * `WHATSAPP_API_URL` (CRMLAB-138, D-308 item 5, 05/11/2026). So a hml liga
+     * (laboratorio de treinamento). Em prod, sem URL e sem isto, a Cloud API
+     * recusa com CHANNEL_CLOUD_API_UNAVAILABLE em vez de "enviar" em silencio.
+     */
+    WHATSAPP_CLOUD_API_MOCK: optionalString,
     WHATSAPP_API_TOKEN: optionalString,
     WHATSAPP_WEBHOOK_SECRET: optionalString,
+    /**
+     * Token de verificacao do webhook da Meta (CRMLAB-139, D-311 item 1): o
+     * mesmo valor digitado no painel do app Meta ao cadastrar a URL. Ausente =
+     * o `GET` de verificacao responde 403 sempre (a Meta nao valida a URL).
+     */
+    WHATSAPP_WEBHOOK_VERIFY_TOKEN: optionalString,
+    /**
+     * Franquia mensal de conversas de servico gratis por numero da Meta
+     * (CRMLAB-141, D-312 item 3). So entra no relatorio de custo estimado.
+     */
+    WHATSAPP_FREE_SERVICE_MONTHLY: z.preprocess((v) => {
+      if (v === undefined || v === null || v === '') return 1000;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : v;
+    }, z.number().int().min(0)),
 
     /**
      * Gateway Evolution API (self-hosted) para conexao WhatsApp por QR (Onda 7,
@@ -347,6 +369,7 @@ export function safeEnv(source: Env = env): Record<string, unknown> {
     'REDIS_URL',
     'WHATSAPP_API_TOKEN',
     'WHATSAPP_WEBHOOK_SECRET',
+    'WHATSAPP_WEBHOOK_VERIFY_TOKEN',
     'CHANNEL_SECRET_KEY',
     'EVOLUTION_API_KEY',
     'EVOLUTION_WEBHOOK_TOKEN',

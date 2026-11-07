@@ -141,6 +141,30 @@ Vazias = driver **mock** que ecoa (bom para dev, nunca para produção).
   laboratório**: `POST /api/v1/webhooks/whatsapp/<slug>` (e `.../status`) — D-032.
 - `WHATSAPP_WEBHOOK_SECRET` é obrigatória para o webhook aceitar qualquer coisa:
   **segredo vazio recusa tudo, de propósito**.
+- **Cloud API da Meta (CRMLAB-139, D-311):** no painel do app Meta, a URL de callback é
+  `https://<domínio>/api/v1/webhooks/whatsapp/<slug>` (a **mesma** para mensagens e status) e o
+  "Verify token" é o valor de `WHATSAPP_WEBHOOK_VERIFY_TOKEN`. Sem essa env a verificação (`GET`)
+  responde 403 e a Meta não aceita a URL. Assinar o campo `messages` do webhook.
+  - **Um laboratório só no app:** basta o callback do painel do app, com o slug dele.
+  - **Mais de um laboratório no mesmo app:** o callback do painel é um só por app; cada
+    laboratório (WABA) precisa da própria URL, cadastrada por WABA com
+    `POST https://graph.facebook.com/<versão>/<waba_id>/subscribed_apps` e os campos
+    `override_callback_uri=https://<domínio>/api/v1/webhooks/whatsapp/<slug>` e
+    `verify_token=<WHATSAPP_WEBHOOK_VERIFY_TOKEN>` (o token do laboratório no `Authorization`). A
+    Meta faz o `GET` de verificação nessa hora. Sem isso, os avisos dos outros laboratórios chegam
+    no slug errado e são **descartados** pela conferência do número (resposta 200, só log
+    `whatsapp.webhook_phone_number_mismatch`).
+  - O `hub.verify_token` vai na query do `GET` e aparece no log de acesso do proxy (Caddy): tratar
+    `WHATSAPP_WEBHOOK_VERIFY_TOKEN` como valor de baixo sigilo, trocável a qualquer momento (não é
+    o segredo do HMAC nem o token da Meta).
+  - O laboratório precisa do **número (`phone_number_id`) cadastrado** na tela de canais: sem ele
+    todo aviso da Meta é descartado (log `whatsapp.webhook_no_phone_number`).
+
+- **Anexos pela Cloud API (CRMLAB-140, D-314):** a imagem do backend leva `ffmpeg` (Alpine
+  `apk add ffmpeg`) para converter o recado de voz do navegador (WebM) em OGG/Opus. A imagem fica
+  maior; sem o ffmpeg, só o envio de recado de voz pela API oficial falha (a mensagem fica com
+  "tentar de novo"). O download da mídia recebida sai do servidor para `graph.facebook.com`,
+  `*.fbsbx.com`, `*.whatsapp.net` e `*.fbcdn.net` (HTTPS) — os únicos destinos que recebem o token.
 
 ### Frontend (build-time)
 

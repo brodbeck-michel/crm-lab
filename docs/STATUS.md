@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-11-04 (CRMLAB-134 — proteção contra restrição do WhatsApp)
+**Última atualização:** 2026-11-07 (Cloud API da Meta CRMLAB-135..142 validada na hml)
 
 ---
 
@@ -3803,3 +3803,342 @@ variável nova.
   `Channels.spec.tsx` (+3), `Rules.spec.tsx` (+1), `NewConversation.spec.tsx` (+1).
 - **Pendente:** validação na hml; o Santé herda o teto ligado (8/h) no deploy.
 
+### ✅ CRMLAB-135 — WhatsApp Cloud API (Meta direta): frente F0, contrato (2026-11-04, só docs; épico validado na hml em 2026-11-07)
+
+Branch `docs/CRMLAB-135-contrato-cloud-api`. Decisões **D-308..D-313**. Nenhum código nesta frente.
+
+- **Contrato escrito:** modo do canal e credenciais (D-308, API_CONTRACTS §6.2, SCHEMA §47);
+  templates — CRMLAB-136 (D-309); janela de 24 h — CRMLAB-137 (D-310, `WHATSAPP_WINDOW_CLOSED`);
+  webhook — CRMLAB-139 (D-311, §2b); custo e tabela de preços — CRMLAB-141 (D-312); serviço em SERVICES §35.
+- **Pedidos às frentes de código:** migração 063 (SCHEMA §47); `shared/types/` + `ApiErrorCode`
+  (`WHATSAPP_WINDOW_CLOSED`, `CHANNEL_CLOUD_API_NOT_CONFIGURED`, `CHANNEL_CLOUD_API_UNAVAILABLE`);
+  env `WHATSAPP_WEBHOOK_VERIFY_TOKEN` e `WHATSAPP_FREE_SERVICE_MONTHLY`; frente UI (PAGES §10 ainda
+  diz "sem volta para `cloud_api`", superado por D-308).
+- **CRMLAB-140 (anexos pela Cloud API):** entregue pelo D-314 (era a pendência do D-313): upload de mídia à
+  Meta no envio e download autenticado no recebimento.
+
+
+### ✅ CRMLAB-138 — modo do canal WhatsApp por laboratório (2026-11-05, validado na hml em 2026-11-07)
+
+Branch `feature/CRMLAB-138-canal-modo-cloud`, sobre o contrato do CRMLAB-135. Decisão D-308
+(emendada em 05/11: itens 3 e 5).
+
+- **Rota nova:** `PUT /settings/channels/whatsapp/mode` (admin), no inventário de isolamento (122 rotas).
+- **Token da Meta em coluna própria** (`cloud_api_token`, migração 063, que também traz o `waba_id`
+  VARCHAR(64)). `api_token` fica só para a apikey do QR. A migração move o token das linhas já em
+  `cloud_api` e não toca nas linhas em `qr` (Santé). Troca `qr ⇄ cloud_api` reversível.
+- **Sem reserva de env** para número, WABA e token da Meta no envio real (D-308 item 5, aprovado).
+  Mock (`WHATSAPP_API_URL` vazia) vale fora de produção; em `NODE_ENV=production` só com
+  `WHATSAPP_CLOUD_API_MOCK=true` (hml). Prod sem URL recusa a Cloud API com 503.
+- **`CHANNEL_CLOUD_API_NOT_CONFIGURED` antes de gravar** (texto, anexo, "tentar de novo"; o cartão
+  passa pelo mesmo envio), `details: { missing }`.
+- **GET** devolve `cloudApiConfigured`; a tela troca o modo pelo PUT (PATCH das credenciais antes,
+  quando digitadas).
+- **Migrações por card:** 063 = 138, 064 = 136, 065 = 141 (SCHEMA §47 atualizado).
+- **Testes:** `channel-mode.spec.ts` (32), `cloud-api-not-configured.spec.ts` (5),
+  `migration-063-cloud-api-token.spec.ts` (1), +casos em `send-from-card` e `start-whatsapp`;
+  `credentials.spec.ts` e `route-tenant-isolation.spec.ts` ajustados; frontend `Channels.spec.tsx`
+  (26) e `NewConversation` (+1); e2e `flow-14` ajustado (não roda localmente).
+- **Validação:** revisão independente por agente Opus 5.5 (sem as conclusões de quem desenvolveu).
+  1ª rodada: 3 bloqueantes e 6 a corrigir. 2ª rodada: 1 bloqueante (sync prod→hml não zerava
+  `cloud_api_token`) e 6 a corrigir (`connected_at` mexido em `qr`, "Salvar WABA" vazio apagava,
+  volta para QR pela tela, `conversationId` no 409 da Nova conversa, testes de migração/cartão/
+  guardas, docs atrasados). Todos tratados. 3ª rodada: 1 bloqueante (e2e do fluxo 14 com o Beta em
+  `cloud_api`) e 5 a corrigir (pré-checagem depois de reabrir a encerrada, SQL de rollback que
+  mandaria a apikey do QR para a Meta, erros faltando no retry/resend, QR ainda pareado em
+  `cloud_api`, `connected_at` na troca). Decisões do Michel: QR pareado = aceita e avisa; mock não
+  exige credencial no PUT. Todos tratados. 4ª rodada: nenhum bloqueante; a corrigir: SQL de
+  rollback incompleto, faltava o reaplique depois do rollback, e o mock em produção (prod e hml com
+  o mesmo `NODE_ENV`, mensagem "enviada" sem chegar). Decisão do Michel: mock em produção só com
+  `WHATSAPP_CLOUD_API_MOCK=true`, ligado só na hml. Tratados, mais o 409 na Nova conversa da tela.
+  5ª rodada: nenhum bloqueante; a corrigir: 503 faltando no API_ERRORS e nas listas de erro,
+  `conversationId` no 503 da Nova conversa, e o reaplique transformando o marcador `''` em
+  "revogado". Tratados, mais aviso no boot se `WHATSAPP_CLOUD_API_MOCK=true` em produção.
+- **Volta para QR na tela:** com termo aceito, só `PUT /mode` (sem `POST /connect`, que abriria
+  outro socket no Evolution).
+- **Antes do deploy em prod (conferir):**
+  1. `SELECT tenant_id, connection_mode, api_token IS NOT NULL AS tem_token, api_token = '' AS revogado
+     FROM tenant_channels WHERE channel = 'whatsapp';` e se `WHATSAPP_API_TOKEN`/`WHATSAPP_API_URL`
+     estão preenchidas no `.env` de prod. Laboratório em `cloud_api` real que dependia da env passa
+     a receber `CHANNEL_CLOUD_API_NOT_CONFIGURED`. Com `WHATSAPP_API_URL` vazia em prod, todo envio
+     de laboratório em `cloud_api` passa a dar 503 `CHANNEL_CLOUD_API_UNAVAILABLE` (antes "saía"
+     pelo mock sem chegar). Conferir quem está em `cloud_api` com conversa WhatsApp ativa.
+  1b. **hml:** acrescentar `WHATSAPP_CLOUD_API_MOCK=true` no `/opt/crm-lab-homolog/.env` antes do
+     deploy (ENVIRONMENTS §6), senão o laboratório de treinamento (Laboratorio Teste, `cloud_api`
+     mock) passa a recusar envio.
+  2. **Ordem:** o `deploy.sh` roda a migração antes do `up -d`; nos segundos entre um e outro a
+     imagem antiga lê `api_token` NULL nas linhas `cloud_api` e cairia na env. Só importa se
+     `WHATSAPP_API_URL` e `WHATSAPP_API_TOKEN` estiverem preenchidas em prod (conferir no item 1).
+  3. **Rollback de imagem depois da 063** (a imagem antiga lê o token da Meta em `api_token`). Toda
+     linha `cloud_api` com token da Meta recebe esse token em `api_token`, **sobrescrevendo** a apikey
+     do QR que estiver lá (senão a imagem antiga mandaria a apikey do Evolution para a Meta). Essas
+     linhas perdem o pareamento QR guardado: voltar a elas para QR exige "Conectar WhatsApp" de novo.
+     Linhas `cloud_api` **sem** token da Meta mas com a apikey do QR (foram de `qr` para `cloud_api`
+     no mock) recebem `''` (revogado, e não NULL: NULL faria a imagem antiga cair no
+     `WHATSAPP_API_TOKEN` da instalação, D-308 item 5).
+     ```sql
+     UPDATE tenant_channels SET api_token = cloud_api_token
+      WHERE channel = 'whatsapp' AND connection_mode = 'cloud_api'
+        AND cloud_api_token IS NOT NULL;
+     UPDATE tenant_channels SET api_token = ''
+      WHERE channel = 'whatsapp' AND connection_mode = 'cloud_api'
+        AND cloud_api_token IS NULL AND api_token IS NOT NULL;
+     ```
+     As linhas em `qr` (Santé) não mudam em nenhum dos sentidos.
+  4. **Voltar para a imagem nova depois de um rollback:** o migrador não roda a 063 de novo, e na
+     imagem antiga um token gravado pelo PATCH foi para `api_token`. Reaplicar o movimento **antes**
+     de subir a imagem nova (sem a guarda `cloud_api_token IS NULL`, para o token novo vencer):
+     ```sql
+     UPDATE tenant_channels
+        SET cloud_api_token = CASE WHEN api_token = '' AND cloud_api_token IS NULL THEN NULL
+                                   ELSE api_token END,
+            api_token = NULL
+      WHERE channel = 'whatsapp' AND connection_mode = 'cloud_api' AND api_token IS NOT NULL;
+     ```
+     O `CASE` separa o `''` que o rollback pôs como marcador (linha sem token da Meta,
+     `cloud_api_token` NULL) de um token revogado de verdade: o marcador volta a NULL ("nunca
+     configurou"). Sem isto, a imagem nova leria o token da Meta como apikey do QR se o
+     laboratório voltasse para `qr` só pelo `PUT`.
+- **Automações:** auto-resposta (D-264), reengajamento (D-214) e teto de primeiro contato (D-306)
+  já filtram `isQrWhatsAppActive` — continuam só QR (D-308 item 6), nada a fazer no 137/139.
+- **Em aberto (sugestões da 4ª rodada, fora do escopo):** reação e editar/apagar em `cloud_api`
+  sem credencial devolvem `MESSAGE_SEND_FAILED` (D-308 lista texto, anexo, retry e cartão); a Nova
+  conversa reabre a encerrada antes do 409, como já faz com o teto de D-306; `connected_at` é uma
+  coluna só para os dois provedores quando o QR segue pareado em `cloud_api`.
+
+### ✅ CRMLAB-142 — runbook do Santé para a API oficial (2026-11-06, validado na hml em 2026-11-07)
+
+Branch `docs/CRMLAB-142-runbook-sante-cloud-api` (só documentação), sobre o CRMLAB-140.
+`docs/guides/MIGRACAO_SANTE.md` §4: pré-requisitos, coexistência × migração completa (decisão do
+Michel em 06/11: os dois caminhos descritos, escolha registrada no dia), ensaio em homologação com o
+número de teste da Meta, passo a passo do dia em prod, depois da troca (monitor do CRMLAB-99 deixa de
+valer), plano de volta. Itens de regra da Meta marcados "(conferir na Meta)".
+- **§4.0** (alinhamento com as gestoras em 06/11/2026: Santé contrata a API direto com a Meta,
+  mensalidade nova a partir de 25/11) escrita por outra sessão e comitada junto.
+- **Validação:** revisão independente por agente Opus 5.5. 1 bloqueante: no dia da troca o número
+  começava a falar pela Meta antes de o callback de prod e o `phone_number_id` estarem no CRM (avisos
+  descartados com 200, sem reentrega) — reordenado: callback e cadastro antes, modo por último. A
+  corrigir, todos tratados: segredo do webhook do laboratório (vence a env), app inscrito na WABA,
+  volta da hml ao mock (é a URL que liga a Meta, não o `MOCK`), volta da coexistência exige tirar o
+  callback (o webhook não olha o modo), versão pelo rodapé/tag da imagem; sugestões aplicadas (alerta
+  esperado ao desconectar o QR, sem monitor para a API oficial, PIN, nome de exibição, limites,
+  rótulos reais da tela, roteiro do ensaio).
+
+
+### ✅ CRMLAB-140 — anexos pela Cloud API (2026-11-06, validado na hml em 2026-11-07)
+
+Branch `feature/CRMLAB-140-anexos-cloud-api`, empilhada sobre o CRMLAB-141. Decisão D-314 (supera
+D-313). Decisões do Michel em 06/11: recado de voz convertido no servidor; formato não aceito pela
+Meta recusado com aviso; o card inclui o recebimento.
+
+- **Envio:** `HttpWhatsAppDriver.sendMedia` sobe em `/{phone_number_id}/media` (multipart) e manda por
+  id (legenda menos em áudio, `filename` em documento, citação). `audio/webm` → OGG/Opus por ffmpeg
+  (`lib/audio-to-ogg.ts`); **ffmpeg entra na imagem do backend** (`apk add`).
+- **Recusa antes de gravar:** `MessageService.assertCloudMediaAccepted` na rota de anexo, sobre o
+  arquivo já em JPEG: formato fora de `CLOUD_API_MEDIA_RULES` → 400 `cloud_api_media_type`; foto
+  acima de 5 MB → 413 `cloud_api_image_limit`. A tela mostra o aviso por arquivo
+  (`lib/cloud-api-media.ts`).
+- **Recebimento:** o webhook baixa a mídia (`GET /{media_id}` + `GET url`, Bearer só para host da
+  Meta, teto de 15 MiB, 10 s por chamada) e grava como no QR; falha → aviso de texto do 139, log
+  `whatsapp.inbound_media_fallback`. Reentrega não baixa de novo.
+- **Testes:** `graph-media.spec.ts` (12, Graph API falsa: upload, envio por id, WebM→OGG, recusa
+  sem chamar a Meta, download, teto, host fora da Meta, erros); `crmlab140-anexos.spec.ts` (12 + 2
+  com ffmpeg real, que pulam onde não há ffmpeg): CSV recusado, foto de 5 MB+, QR intacto, documento
+  e foto recebidos, reentrega, fallback. Frontend `cloud-api-media.spec.ts` (3).
+- **Validação:** revisão independente por agente Opus 5.5. 1ª rodada: nenhum bloqueante; a corrigir:
+  PNG animado passava (o sniff o rotula `image/png`), ordem das checagens (janela vinha antes do
+  formato), envio de mídia podendo passar dos 60 s do proxy (3 tentativas de até 100 s, repetindo
+  erro que não muda) e "tentar de novo" sem conferir o formato. Todos tratados: formato antes da
+  janela (contrato emendado), conversão e conferência fora da fila, 2 tentativas com upload de 12 s,
+  ffmpeg de 15 s e mono, conferência no reenvio; sugestões aplicadas (leitura do download com teto,
+  código de erro da Meta no log do upload, JSDoc no lugar, hosts no DEPLOYMENT). Testes: +2 no
+  driver (sem content-length acima do teto, redirecionamento), +6 na integração (APNG e GIF animado,
+  janela fechada + CSV, reenvio de anexo do QR, figurinha e recado de voz recebidos, fila).
+- **Limitações conhecidas:** download dentro do webhook, em série (lote com muita mídia demora para
+  responder; a reentrega da Meta é idempotente); reentrega SIMULTÂNEA pode deixar um arquivo a mais
+  ligado à mesma mensagem (mesmo padrão do QR).
+- **Para validar em hml:** número de teste da Meta — enviar foto/PDF/recado de voz e receber foto e
+  PDF do celular.
+
+
+### ✅ CRMLAB-141 — custo estimado da Cloud API (2026-11-06, validado na hml em 2026-11-07)
+
+Branch `feature/CRMLAB-141-custo-cloud-api`, empilhada sobre o CRMLAB-139. Decisão D-312 (com a nota
+"Implementado no CRMLAB-141").
+
+- **Migração 065:** `messages.pricing_category` (CHECK das quatro) e `whatsapp_price_table` global
+  com o seed oficial de 01/10/2026; `crm_app` só lê. Nos testes, a tabela é de referência (o reset
+  não a zera).
+- **Categoria no envio:** gravada na confirmação do envio que saiu pela Cloud API (`SendResult.via`):
+  modelo = categoria do modelo, texto/anexo = `service`; `qr` e envio que falhou ficam `NULL`.
+- **Status da Meta:** `pricing.category` corrige a categoria (vale mesmo com status repetido); fora
+  das quatro, ignorado com log `whatsapp.pricing_category_ignored`.
+- **Rota nova:** `GET /settings/channels/whatsapp/usage?month=` (gestor/admin; inventário de
+  isolamento passa a 124 rotas). Franquia de `service` por ordem de envio, preço vigente na data de
+  cada mensagem, mês civil de São Paulo, só `sent`+, só o que o CRM enviou.
+- **Env nova (opcional):** `WHATSAPP_FREE_SERVICE_MONTHLY` (default 1000), no `.env.example` e no
+  `docker-compose.prod.yml`.
+- **Tela:** seção "Uso e custo do WhatsApp (API oficial)" em Canais & Equipe, só em `cloud_api`
+  (PAGES §10).
+- **Testes:** `crmlab141-custo.spec.ts` (12): categoria no envio (cloud_api texto/modelo/anexo,
+  "tentar de novo" pela Meta e depois pelo QR, qr, falha),
+  correção pelo status e categoria desconhecida, isolamento entre laboratórios, relatório (franquia,
+  reajuste no meio do mês, virada de mês no fuso, `failed`/`pending`/sem categoria fora), mês
+  default, mês inválido/repetido/futuro/ano 0000, atendente 403, seed e permissão só de leitura,
+  virada no início e no fim do mês. Frontend: `Channels.spec.tsx` (+4: bloco, qr, carga/erro, mês
+  futuro); helper `queryError` em `test/query-mocks.ts`. O reset dos testes devolve a tabela de
+  preços ao seed.
+- **Validação:** revisão independente por agente Opus 5.5. 1ª rodada: nenhum bloqueante; a corrigir:
+  reenvio pelo QR mantinha a categoria da Meta, `month=0000-01` dava 500, testes de anexo/"tentar de
+  novo"/virada do início do mês/carga e erro da tela. Todos tratados; sugestões aplicadas (tipo da
+  categoria, reset da tabela de preços, mês validado na tela, tabela mantida ao trocar de mês).
+  Ficou para decisão: regra de preço da Meta (serviço grátis e `pricing.billable`).
+
+
+### ✅ CRMLAB-139 — webhook da Meta (2026-11-06, validado na hml em 2026-11-07)
+
+Branch `feature/CRMLAB-139-webhook-meta`, empilhada sobre o CRMLAB-136. Decisão D-311 (e emenda de
+06/11 ao D-313).
+
+- **Verificação da URL:** `GET /webhooks/whatsapp/:tenant` devolve o `hub.challenge` (texto puro)
+  com `hub.verify_token` = `WHATSAPP_WEBHOOK_VERIFY_TOKEN` (tempo constante), laboratório conhecido e
+  canal ligado; qualquer outro caso, 403 sem corpo. **Env nova** (prod/hml, `.env.example` e
+  `docker-compose.prod.yml`): sem ela a Meta não aceita a URL.
+- **Mensagens e status na mesma URL:** o `POST /webhooks/whatsapp/:tenant` agora trata os dois (a
+  Meta não usa a rota `/status`, que fica por compatibilidade). Status nunca regride (D-225) e o
+  `UPDATE` filtra `tenant_id` explicitamente; `failed` loga só o `errors[0].code`.
+- **Número do laboratório (falha fechado):** `value.metadata.phone_number_id` diferente ou ausente →
+  `value` descartado com log; laboratório sem número configurado não recebe aviso da Meta. Formato
+  plano só com o driver mock.
+- **Aviso da Meta fora do anti-replay** (a Meta reentrega o mesmo corpo; dedupe por wamid).
+- **Tipos recebidos:** texto, botão de modelo, lista/botão interativo, localização e contato viram
+  texto legível; mídia entra como texto com o aviso "[Recebido pela API oficial: imagem — o anexo
+  ainda não aparece no CRM. Se precisar, peça ao paciente que descreva por texto.]" (legenda antes;
+  documento com o nome do arquivo), `received_via = 'cloud_api'` — emenda ao D-313. Reação vira
+  reação (D-222); `system`/`request_welcome` ignorados; `context.id` vira citação.
+- **Verificação:** `hub.challenge` restrito a `[A-Za-z0-9._-]{1,256}`; token comparado por hash
+  (não vaza o tamanho).
+- **`pricing.category` do status:** entregue no CRMLAB-141 (coluna da 065).
+- **Testes:** `crmlab139-webhook-meta.spec.ts` (26): verificação (ok, token/modo/challenge errados,
+  challenge inválido/longo/repetido, sem env, canal desligado, tenant desconhecido), status no POST
+  principal sem regressão, `failed`, isolamento do mesmo id externo entre laboratórios, mensagem +
+  status no mesmo aviso, reentrega byte a byte, `phone_number_id` divergente/ausente, laboratório
+  sem número, lote com dois números, formato plano só no mock, reação, tipos ignorados, botão/lista/
+  localização/contato, citação, mídia recebida, rota `/status` antiga. `credentials.spec.ts` e
+  `channel-security.spec.ts` passam a cadastrar o número (sem ele, recusa).
+- **Validação:** revisão independente por agente Opus 5.5. 1ª rodada: 1 bloqueante (conferência do
+  número deixava passar laboratório sem número ou aviso sem `metadata`) e 6 a corrigir (callback
+  único por app no DEPLOYMENT, reação virando fala e reabrindo conversa, botão/lista perdidos, texto
+  do aviso, contrato contraditório sobre `pricing.category`, cabeçalho do controller) + sugestões
+  (anti-replay, challenge, tamanho do token, formato plano, logs, citação). Todos tratados.
+  2ª rodada: nenhum bloqueante; a corrigir: corpo com `entry[]` vazio ou todo descartado ainda caía
+  no formato plano (mensagem gravada sem wamid, status mudado), contrato antigo dizendo que o plano
+  é sempre aceito, e testes de log/WS/conversa encerrada. Todos tratados; sugestões aplicadas (log
+  de tipo ignorado e de status fora do mapa, `trim` na conferência do número, token de verificação
+  no log do proxy no DEPLOYMENT, reação reentregue fora de ordem registrada como limitação no D-311).
+  Testes do spec: 26.
+- **Para ligar em hml/prod:** definir `WHATSAPP_WEBHOOK_VERIFY_TOKEN`; no painel da Meta, callback
+  `https://<domínio>/api/v1/webhooks/whatsapp/<slug>` e o mesmo token; assinar `messages`.
+
+
+### ✅ CRMLAB-136 — modelos aprovados da Meta (2026-11-06, validado na hml em 2026-11-07)
+
+Branch `feature/CRMLAB-136-templates`, empilhada sobre o CRMLAB-137. Decisão D-309 (complemento de
+06/11: Nova conversa por modelo e `template_variables`).
+
+- **Lista:** `GET /whatsapp/templates` (atendente/gestor/admin; no inventário de isolamento, 123
+  rotas). Só `APPROVED` + `MARKETING|UTILITY`, um único `BODY` de texto, variáveis posicionais
+  `{{1}}..{{n}}`; ordem `name, language`. Cache de 5 min por laboratório, **compartilhado** entre a
+  lista e a conferência do envio; a chave leva uma impressão das credenciais (trocar credencial ou
+  modo invalida). Meta fora do ar → 503 `reason: meta_unreachable`. Paginação só da mesma origem
+  (o token não vai para outro host).
+- **Envio:** `template` exclusivo de `content` (sem citação, anexo nem tipo). Ordem: credencial →
+  modelo → janela; o modelo é conferido antes de reabrir/assumir (D-273) e não depende da janela.
+  Variáveis: 1..1024, sem quebra de linha/tab/5+ espaços; corpo preenchido ≤ 1024. Participante:
+  sem `*Nome*`, `attributed_to` da dona mantido.
+- **"Tentar de novo":** reenvia o mesmo modelo (`messages.template_variables`); canal já em `qr` →
+  400 e a mensagem continua `failed`.
+- **Nova conversa:** aceita `template`; credencial e modelo conferidos antes de criar (número novo
+  não fica vazio).
+- **Migração 064:** `template_name`, `template_language`, `template_category` (CHECK) e
+  `template_variables` (JSONB) em `messages`. Rollback: `ALTER TABLE messages DROP COLUMN
+  template_variables, DROP COLUMN template_category, DROP COLUMN template_language, DROP COLUMN
+  template_name; DELETE FROM schema_migrations WHERE name = '064_message_template.sql';`.
+- **Tela:** "Enviar modelo" no aviso da janela (modal com modelo, variáveis e prévia; erro mantém o
+  modal; lista com erro mostra "Tentar de novo"; sem modelo, o motivo fica visível). Nova conversa
+  abre em "Modelo aprovado" quando há modelos. Selo "Modelo" no balão.
+- **Mock:** `MockWhatsAppDriver` tem dois modelos (`retomar_atendimento`, `lembrete_coleta`) — é o
+  que a hml com `WHATSAPP_CLOUD_API_MOCK=true` mostra.
+- **Validação:** revisão independente por agente Opus 5.5 (sem as conclusões de quem desenvolveu).
+  1ª rodada: nenhum bloqueante; a corrigir: atribuição do participante, cache por instância (lista ×
+  envio divergindo), mensagem "a conversa foi criada" num 409/503 anterior à criação, erro da lista
+  aparecendo como "nenhum modelo", variável com quebra de linha/tab, corpo preenchido longo demais,
+  chave do erro de variável, "tentar de novo" com o canal já em `qr`, modelo removido continuando na
+  tela. Todos tratados, com testes.
+- **Fica para depois:** a Nova conversa confere o modelo antes do 409 de dono (com a Meta fora do ar,
+  quem pede número de outra atendente vê 503 em vez de `CONVERSATION_ALREADY_ASSIGNED`); o "tentar
+  de novo" não reconfere se o modelo ainda está aprovado (a Meta recusa e volta a `failed`).
+- **Testes:** `crmlab136-templates.spec.ts` (28), `graph-templates.spec.ts` (5, Graph API falsa);
+  frontend `Composer.template.spec.tsx` (7) e `NewConversation` (+5); specs de formato e de
+  isolamento ajustadas. Envio real contra a Meta: verificação manual com número de teste.
+
+
+### ✅ CRMLAB-137 — janela de 24 h da Cloud API (2026-11-05, validado na hml em 2026-11-07)
+
+Branch `feature/CRMLAB-137-janela-24h-v2`, empilhada sobre o CRMLAB-138. Decisão D-310.
+
+- **Regra:** em `cloud_api`, texto livre e anexo só saem se a última mensagem **não apagada** do
+  paciente tem menos de 24 h (relógio do banco). Fora disso, `WHATSAPP_WINDOW_CLOSED` (409,
+  `details: { conversationId, lastPatientMessageAt, windowClosedAt }`), antes de gravar: texto,
+  anexo, "tentar de novo", cartão (`/send`, `/resend`) e Nova conversa (a conversa fica criada).
+- **Ordem:** `CHANNEL_CLOUD_API_NOT_CONFIGURED`/`UNAVAILABLE` → `WHATSAPP_WINDOW_CLOSED`, na
+  pré-checagem do controller, antes de reabrir a encerrada, assumir ou guardar mídia (D-273).
+- **Tela:** `whatsappWindow` só em `GET /conversations/:id` (decisão de 05/11: não na listagem),
+  com `remainingSeconds` do servidor. O Composer bloqueia texto, anexo e áudio com a janela
+  fechada, e o rascunho fica. A Nova conversa avisa que o primeiro contato é só por modelo (CRMLAB-136).
+- **Modo `qr`:** nenhuma regra muda.
+- **Nova conversa sobre conversa existente:** credencial e janela checadas antes de reabrir ou
+  trocar o canal (o 409 não muda nada nela); número novo fica criado, vazio.
+- **Validação:** revisão independente por agente Opus 5.5. 1ª rodada: nenhum bloqueante; a corrigir:
+  arrastar arquivo e anexos em sequência ignoravam a janela fechada pela contagem, Nova conversa
+  reabria/trocava canal antes do 409, docs (erros, SERVICES §35, Composer) e testes. Tratados.
+  2ª rodada (Opus 5.5, agente novo): nenhum bloqueante; a corrigir: Nova conversa recusava a janela
+  antes do `CONVERSATION_ALREADY_ASSIGNED` (agora o dono vem primeiro, sem `conversationId`); o modal
+  dizia "a conversa foi criada / primeiro contato" também para conversa que já existia (backend manda
+  `created` no `details` da Nova conversa, documentado em API_CONTRACTS); "tentar de novo" e envio do
+  cartão mostravam o texto cru do servidor (tratado no `error-handler`); testes de outro canal com a
+  janela fechada, dono antes da janela, fronteira de 24 h e conversa não-WhatsApp em `cloud_api`.
+  Sugestões feitas: contagem do Composer sem desconto em dobro e parada quando fecha; `now()` em UTC.
+- **Emenda ao D-310 (aprovada pelo Michel em 05/11):** a janela só conta fala do paciente que chegou
+  pelo webhook da Meta (`messages.received_via = 'cloud_api'`; o do QR grava `evolution`) depois de o
+  canal entrar em `cloud_api` (`tenant_channels.cloud_api_since`). **Migração 066** com trigger;
+  linhas já em `cloud_api` ganham agora (UTC) na migração. Rollback: `DROP TRIGGER
+  trg_tenant_channels_cloud_api_since ON tenant_channels; DROP FUNCTION
+  tenant_channels_cloud_api_since(); ALTER TABLE tenant_channels DROP COLUMN cloud_api_since; ALTER
+  TABLE messages DROP COLUMN received_via; DELETE FROM schema_migrations WHERE name =
+  '066_channel_cloud_api_since.sql';` (e voltar o código junto). Revisão Opus da emenda: sem
+  bloqueante; tratados a origem pelo QR (o 1º desenho usava `external_message_id`, que o QR também
+  grava), UTC no trigger, só o canal `whatsapp` e testes do trigger.
+- **Pendências antes do PR:**
+  - **Seed e e2e:** o seed (dev e e2e) cria o WhatsApp em `cloud_api` (DEFAULT da coluna) com falas
+    do paciente de dias atrás e sem origem — com a janela (desde o 1º commit do 137), os envios do
+    e2e (ex. `flow-8-patient` `sendMessages`) devem dar 409. Não roda nesta máquina (TLS); ajustar
+    o seed (fala recente com `received_via = 'cloud_api'` e `cloud_api_since` anterior) e validar
+    no CI.
+    **Feito na integração `integ/cloud-api` (06/11/2026):** o seed e2e põe as falas nas últimas 3 h,
+    a do paciente com `received_via = 'cloud_api'`, e o `insertTenantChannel` volta o
+    `cloud_api_since` para a criação do canal.
+  - **Treino na hml:** o Laboratório Teste está em `cloud_api` (mock) e o `~/treino-mensagem.sh`
+    injeta falas pelo webhook Evolution — depois deste card elas não abrem a janela. Trocar o
+    script para `POST /webhooks/whatsapp/<slug>` (formato Meta, assinado) no deploy da hml.
+- **Fica para depois (sugestões da 2ª revisão, sem efeito no banco):** reação e "digitando" sem
+  checar a janela (a Meta recusa → `MESSAGE_SEND_FAILED`); laboratório sem linha em
+  `tenant_channels` com o mock não passa pela janela; Nova conversa com número novo em `cloud_api`
+  sempre cria conversa vazia (resolver com o CRMLAB-136, que traz os modelos); botão "Tentar de novo"
+  e prévia de anexo ativos com a janela fechada (o servidor recusa); `aria-live` fixo no aviso.
+- **Em aberto (ambiguidades, fora do escopo):** mensagens do paciente recebidas pelo QR antes da troca
+  para `cloud_api` contam para a janela (a Meta pode recusar com 131047, D-310 item 4 cobre);
+  `tenant_channels.is_active = FALSE` não muda a regra da janela.
+- **Testes:** `crmlab137-janela-24h.spec.ts` (17), cartão (`/send`, `/resend`) e Nova conversa
+  (número novo e conversa encerrada) com janela fechada; frontend `Composer.window.spec.tsx` (5) e
+  `NewConversation` (+1).

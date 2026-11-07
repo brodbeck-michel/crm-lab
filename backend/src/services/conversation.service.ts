@@ -200,6 +200,13 @@ export interface ConversationServiceDeps {
   audit: AuditService;
 }
 
+/** Recusas da pre-checagem do envio que levam `conversationId` na Nova conversa. */
+const PRECHECK_CODES: ReadonlySet<string> = new Set([
+  'CHANNEL_CLOUD_API_NOT_CONFIGURED',
+  'CHANNEL_CLOUD_API_UNAVAILABLE',
+  'WHATSAPP_WINDOW_CLOSED',
+]);
+
 export class ConversationService {
   private readonly db: DbClient;
   private readonly repository: ConversationRepository;
@@ -426,6 +433,8 @@ export class ConversationService {
         fields: { phone: 'Telefone invalido: informe DDD + numero' },
       });
     }
+    // D-309: modelo conferido antes de criar a conversa (numero novo nao fica vazio).
+    if (dto.template) await this.messages.assertTemplateSendable(ctx.tenantId, dto.template);
 
     const found = await this.repository.findOrCreateByPhone(ctx.tenantId, {
       patientPhone: phone,
@@ -435,6 +444,34 @@ export class ConversationService {
     });
     const { created } = found;
     let conversation = found.conversation;
+
+    // Conversa que ja existia: credencial e janela ANTES de reabrir a encerrada
+    // ou trocar o canal — recusa sem efeito (D-308, D-310 item 2). Numero novo
+    // nasce aqui mesmo e cai no envio abaixo (a conversa fica criada, vazia).
+    // Ativa de outro atendente: o 409 de dono vem primeiro (sem efeito) — quem
+    // nao pode trabalhar a conversa nao recebe o `conversationId` dela.
+    if (!created && conversation.status !== 'closed' && !this.canWork(ctx, conversation)) {
+      throw new BusinessError('CONVERSATION_ALREADY_ASSIGNED', {
+        assignedTo: conversation.assignedTo,
+        assignedToName: conversation.assignedToName,
+      });
+    }
+    if (!created) {
+      try {
+        await this.messages.assertSendableAsWhatsApp(ctx.tenantId, conversation, {
+          template: dto.template ?? null,
+        });
+      } catch (err) {
+        if (isBusinessError(err) && PRECHECK_CODES.has(err.code)) {
+          throw new BusinessError(err.code, {
+            ...err.details,
+            conversationId: conversation.id,
+            created: false,
+          });
+        }
+        throw err;
+      }
+    }
 
     if (!created && conversation.status === 'closed') {
       conversation = await this.reopenManually(ctx, conversation);
@@ -469,17 +506,34 @@ export class ConversationService {
 
     let message: Message;
     try {
-      message = await this.messages.createFromAgent(ctx.tenantId, conversation.id, ctx.userId, {
-        content: dto.content,
-        messageType: 'text',
-      });
+      message = await this.messages.createFromAgent(
+        ctx.tenantId,
+        conversation.id,
+        ctx.userId,
+        dto.template ? { template: dto.template } : { content: dto.content ?? '', messageType: 'text' },
+      );
     } catch (err) {
       // Limite de primeiros contatos (D-306 item 5): a conversa criada fica, e a
       // tela abre ela mesmo sem a mensagem.
-      if (isBusinessError(err) && err.code === 'FIRST_CONTACT_LIMIT_REACHED') {
-        throw new BusinessError('FIRST_CONTACT_LIMIT_REACHED', {
+      if (
+        isBusinessError(err) &&
+        (err.code === 'FIRST_CONTACT_LIMIT_REACHED' || err.code === 'WHATSAPP_WINDOW_CLOSED')
+      ) {
+        throw new BusinessError(err.code, {
           ...err.details,
           conversationId: conversation.id,
+          created,
+        });
+      }
+      // D-308: a conversa ja existe; a tela precisa do id para abri-la.
+      if (
+        isBusinessError(err) &&
+        (err.code === 'CHANNEL_CLOUD_API_NOT_CONFIGURED' || err.code === 'CHANNEL_CLOUD_API_UNAVAILABLE')
+      ) {
+        throw new BusinessError(err.code, {
+          ...err.details,
+          conversationId: conversation.id,
+          created,
         });
       }
       if (isBusinessError(err) && err.code === 'MESSAGE_SEND_FAILED') {

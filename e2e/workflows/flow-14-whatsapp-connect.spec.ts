@@ -16,8 +16,9 @@
  * falha na subida com a mensagem dizendo isso (nunca um falso-verde).
  *
  * TENANT: **Beta**, nao Alfa. Conectar por QR e uma troca de MODO do canal
- * (`connection_mode = 'qr'`, D-083) e nenhuma rota volta para `cloud_api` —
- * so o re-seed. No Alfa isso vazava para os fluxos seguintes: o envio de
+ * (`connection_mode = 'qr'`, D-083). Desde o CRMLAB-138 o `PUT .../mode` volta
+ * para `cloud_api` (o `afterAll` faz isso), mas o isolamento continua valendo.
+ * No Alfa isso vazava para os fluxos seguintes: o envio de
  * mensagem do fluxo 8 passava a falar com um gateway que so existe enquanto
  * ESTE arquivo roda, e respondia 502. O Beta e o tenant que nenhum outro
  * fluxo usa para enviar mensagem. O `afterAll` ainda devolve o token semeado.
@@ -64,14 +65,21 @@ test.afterAll(async () => {
   // o contexto de API e criado a mao aqui.
   const api = await playwrightRequest.newContext();
   try {
-    // Devolve o token semeado: `connectWhatsAppQr` grava a apikey da instancia
-    // em `api_token`, e a mascara desse campo e contrato de `E2E_TENANT_CHANNELS`.
+    // Devolve o Beta ao estado semeado. Desde o CRMLAB-138 o token da Meta mora
+    // em `cloud_api_token` e o connect do QR nao mexe nele (a apikey do QR fica
+    // em `api_token`); o PATCH so regrava o token semeado, por garantia, e o
+    // PUT volta o modo para `cloud_api` (CI roda em mock: sem credencial exigida).
     const token = await apiLogin(api, E2E_USERS.betaAdmin);
     const restaurado = await api.patch(`${API_URL}/settings/channels`, {
       headers: authHeaders(token),
       data: { channels: [{ channel: 'whatsapp', apiToken: BETA_WHATSAPP.apiToken }] },
     });
     expect(restaurado.status(), await restaurado.text()).toBe(200);
+    const modo = await api.put(`${API_URL}/settings/channels/whatsapp/mode`, {
+      headers: authHeaders(token),
+      data: { mode: 'cloud_api' },
+    });
+    expect(modo.status(), await modo.text()).toBe(200);
   } finally {
     await api.dispose();
     await gateway.close();
@@ -104,6 +112,12 @@ test.describe('Fluxo 14: conexao WhatsApp por QR', () => {
   test('admin conecta pela tela: termo -> QR -> conectado', async ({ page, request }) => {
     await loginAs(page, E2E_USERS.betaAdmin);
     await gotoScreen(page, '/settings/channels', 'Canais & Equipe');
+
+    // O Beta nasce em `cloud_api`: o QR aparece depois de escolher o modo e
+    // confirmar a troca no cartao "Modo do WhatsApp" (CRMLAB-138, D-308).
+    const modo = page.getByRole('radiogroup', { name: 'Modo do WhatsApp' });
+    await modo.getByRole('radio', { name: /QR/ }).check();
+    await page.getByRole('checkbox', { name: /quero trocar o modo do WhatsApp/ }).check();
 
     await page.getByRole('button', { name: 'Conectar WhatsApp' }).click();
 

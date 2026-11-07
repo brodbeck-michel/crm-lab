@@ -114,7 +114,7 @@ test.describe('Onda 8 §2 — transferência, emoji e fixar', () => {
 
     await expect(campo).toHaveValue('bom dia👍 tudo bem');
 
-    await page.getByRole('button', { name: 'Enviar' }).click();
+    await page.getByRole('button', { name: 'Enviar', exact: true }).click();
     // Olha só para a bolha, e para a ÚLTIMA. A prévia da conversa na coluna 1
     // mostra o MESMO texto assim que a lista refetcha, e uma retentativa do
     // Playwright reaproveita o banco, deixando a mensagem da tentativa anterior

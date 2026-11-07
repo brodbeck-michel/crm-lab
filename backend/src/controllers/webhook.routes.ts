@@ -1,8 +1,9 @@
 /**
  * Webhooks do canal externo — PUBLICOS, sem JWT.
  *
- *   POST /api/v1/webhooks/whatsapp/:tenant          mensagem recebida
- *   POST /api/v1/webhooks/whatsapp/:tenant/status   callback de status
+ *   GET  /api/v1/webhooks/whatsapp/:tenant          verificacao da URL pela Meta (CRMLAB-139)
+ *   POST /api/v1/webhooks/whatsapp/:tenant          mensagens, status e reacoes (a Meta usa so esta)
+ *   POST /api/v1/webhooks/whatsapp/:tenant/status   callback de status (compatibilidade)
  *   POST /api/v1/webhooks/whatsapp                  idem, tenant no corpo
  *
  * ============================================================================
@@ -26,6 +27,11 @@
  * enumeracao. Entao nao varia. O que aconteceu de verdade fica no log
  * estruturado, com `correlationId`.
  *
+ * Excecao: o `GET` de verificacao da Meta (D-311 item 1) devolve o
+ * `hub.challenge` em texto puro com o token certo e 403 sem corpo em qualquer
+ * outro caso — a Meta so aceita a URL assim. O 403 e igual para todos os
+ * motivos, e o token e conferido antes de buscar o laboratorio.
+ *
  * ============================================================================
  * Tenant sem sessao
  * ============================================================================
@@ -36,13 +42,14 @@
  * caminho deste arquivo grava com `withoutTenant()`.
  */
 import { createHash } from 'node:crypto';
-import type { MessageStatus, MessageType, PatientPresence } from '@crm-lab/shared';
+import { fileNameWithExtension, type MessageStatus, type MessageType, type PatientPresence } from '@crm-lab/shared';
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { env } from '../config/env.js';
 import type { DbClient } from '../db/types.js';
 import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
 import { rateLimit } from '../http/middleware/rate-limit.js';
 import type { CacheService } from '../lib/cache.js';
+import { cloudApiMockAllowed } from '../lib/cloud-api-mock.js';
 import type { WsHub } from '../lib/ws-hub.js';
 import {
   EVOLUTION_QR_TTL_SECONDS,
@@ -64,12 +71,16 @@ import {
 import { createAuditService } from '../services/audit.service.js';
 import { createAutoReplyService } from '../services/auto-reply.service.js';
 import { ConversationService } from '../services/conversation.service.js';
-import { MediaService, messageTypeFromMime } from '../services/media.service.js';
+import { MediaService, messageTypeFromMime, type StoredMedia } from '../services/media.service.js';
 import { MessageService } from '../services/message.service.js';
 import {
   createWhatsAppService,
+  isMetaShaped,
+  metaNoticeFor,
   safeEquals,
   verifyWebhookSignature,
+  type InboundCloudMedia,
+  type WhatsAppCredentials,
   type WhatsAppService,
 } from '../services/whatsapp.service.js';
 
@@ -218,7 +229,7 @@ async function authenticate(
   req: Request,
   services: WebhookServices,
   cache: CacheService,
-): Promise<{ tenantId: string } | null> {
+): Promise<{ tenantId: string; phoneNumberId: string; mock: boolean; credentials: WhatsAppCredentials } | null> {
   const identity = tenantIdentityOf(req);
   const credentials = await services.whatsapp.resolveWebhookTenant(identity);
   if (!credentials) {
@@ -243,12 +254,177 @@ async function authenticate(
     return null;
   }
 
+  const metaFormat = isMetaShaped(req.body);
+  // D-311 item 6, falha FECHADO: aviso da Meta para laboratorio sem numero
+  // configurado nao tem como provar que e dele (o segredo pode ser o da instalacao).
+  if (metaFormat && credentials.phoneNumberId === '') {
+    logger.warn('whatsapp.webhook_no_phone_number', { tenantId: credentials.tenantId });
+    return null;
+  }
+
   // Anti-replay (CRMLAB-38 item 5, D-149) — ver comentario de `isReplay` acima.
-  if (await isReplay(cache, credentials.tenantId, rawBodyOf(req))) {
+  // Aviso da Meta fica de fora: mensagem e idempotente por `external_message_id`
+  // e status nunca regride, e a Meta REENTREGA o mesmo corpo quando nao recebeu
+  // o 200 (ex.: restart no meio) — marcar como replay perderia a mensagem.
+  if (!metaFormat && (await isReplay(cache, credentials.tenantId, rawBodyOf(req)))) {
     logger.warn('whatsapp.webhook_replay', { tenantId: credentials.tenantId });
     return null;
   }
-  return { tenantId: credentials.tenantId };
+  return {
+    tenantId: credentials.tenantId,
+    phoneNumberId: credentials.phoneNumberId,
+    // Mesma regra do envio (D-308 item 5): em producao, so com WHATSAPP_CLOUD_API_MOCK=true.
+    mock: cloudApiMockAllowed(credentials.apiUrl),
+    credentials,
+  };
+}
+
+/**
+ * Midia recebida pela Cloud API (CRMLAB-140, D-314 item 4): baixa da Meta e
+ * grava como no QR. `null` = nao deu (log com o motivo); quem chama usa o
+ * aviso de texto (item 5) e a mensagem nunca se perde.
+ */
+async function storeCloudMedia(
+  services: WebhookServices,
+  credentials: WhatsAppCredentials,
+  media: InboundCloudMedia,
+  externalId: string | null,
+): Promise<StoredMedia | null> {
+  const tenantId = credentials.tenantId;
+  const downloaded = await services.whatsapp.downloadInboundMedia(credentials, media.id);
+  if ('failure' in downloaded) {
+    logger.warn('whatsapp.inbound_media_fallback', { tenantId, externalId, reason: downloaded.failure });
+    return null;
+  }
+  const mimeType = media.mimeType ?? downloaded.media.mimeType;
+  const stored = await services.media.storeInbound(
+    tenantId,
+    {
+      fileName: fileNameWithExtension(media.fileName ?? 'arquivo', mimeType),
+      mimeType,
+      base64: downloaded.media.buffer.toString('base64'),
+    },
+    { keepFormat: media.sticker },
+  );
+  if (!stored) {
+    logger.warn('whatsapp.inbound_media_fallback', { tenantId, externalId, reason: 'rejected' });
+    return null;
+  }
+  return stored;
+}
+
+/**
+ * O que do corpo vale para ESTE laboratorio (D-311 item 6): no formato da
+ * Meta, so os `value` com o `phone_number_id` dele; o formato plano so com o
+ * driver mock (dev/hml sem URL da Meta). `null` = nada a processar.
+ */
+function scopedNotice(
+  body: unknown,
+  auth: { tenantId: string; phoneNumberId: string; mock: boolean },
+): unknown | null {
+  const notice = metaNoticeFor(body, auth.phoneNumberId);
+  if (notice.dropped > 0) {
+    // `phone_number_id` nao e PII: e o id do numero na Meta.
+    logger.warn('whatsapp.webhook_phone_number_mismatch', {
+      tenantId: auth.tenantId,
+      dropped: notice.dropped,
+      received: notice.received.filter((id) => id !== auth.phoneNumberId),
+    });
+  }
+  if (!notice.meta && !auth.mock) {
+    logger.warn('whatsapp.webhook_flat_refused', { tenantId: auth.tenantId });
+    return null;
+  }
+  return notice.payload;
+}
+
+/**
+ * `GET /webhooks/whatsapp/:tenant` — verificacao da URL pela Meta (CRMLAB-139,
+ * D-311 item 1). `hub.mode=subscribe` + `hub.verify_token` igual (tempo
+ * constante) a `WHATSAPP_WEBHOOK_VERIFY_TOKEN` + laboratorio conhecido e com o
+ * canal ligado => 200 com o `hub.challenge` em texto puro. Qualquer outra coisa
+ * => 403 sem corpo. Unica excecao ao "200 sempre" do webhook, e so no GET.
+ */
+export function whatsappVerify(services: WebhookServices): RequestHandler {
+  return (req, res) => {
+    const forbid = (reason: string): void => {
+      logger.warn('whatsapp.webhook_verify_refused', { reason });
+      res.status(403).end();
+    };
+    const query = req.query as Record<string, unknown>;
+    const mode = typeof query['hub.mode'] === 'string' ? query['hub.mode'] : '';
+    const token = typeof query['hub.verify_token'] === 'string' ? query['hub.verify_token'] : '';
+    const challenge = typeof query['hub.challenge'] === 'string' ? query['hub.challenge'] : '';
+    const expected = env.WHATSAPP_WEBHOOK_VERIFY_TOKEN ?? '';
+    // A Meta manda so digitos; nada alem de [A-Za-z0-9._-] e refletido na resposta.
+    if (mode !== 'subscribe' || !/^[A-Za-z0-9._-]{1,256}$/.test(challenge)) {
+      forbid('bad_request');
+      return;
+    }
+    // Hash dos dois lados: o `safeEquals` cru sai cedo por tamanho e vazaria o
+    // comprimento do token.
+    const digest = (value: string) => createHash('sha256').update(value).digest('hex');
+    if (expected === '' || !safeEquals(digest(token), digest(expected))) {
+      forbid('token');
+      return;
+    }
+    services.whatsapp
+      .resolveWebhookTenant(tenantIdentityOf(req))
+      .then((credentials) => {
+        if (!credentials) return forbid('unknown_tenant');
+        if (!credentials.isActive) return forbid('channel_disabled');
+        res.status(200).type('text/plain').send(challenge);
+      })
+      .catch(() => forbid('error'));
+  };
+}
+
+/**
+ * Status de um aviso da Meta (D-311 itens 3 e 5). A Meta manda status e
+ * mensagens para a MESMA URL; esta funcao serve as duas rotas. Status de
+ * mensagem desconhecida (ou que nao avancaria) e ignorado — so log.
+ */
+async function applyMetaStatuses(
+  services: WebhookServices,
+  tenantId: string,
+  payload: unknown,
+): Promise<number> {
+  const updates = await services.whatsapp.handleStatusCallback(payload);
+  let applied = 0;
+  for (const update of updates) {
+    if (update.status === 'failed') {
+      // So o codigo da Meta: sem telefone, sem texto (D-311 item 5).
+      logger.warn('whatsapp.message_failed', {
+        tenantId,
+        externalId: update.externalId,
+        errorCode: update.errorCode ?? null,
+      });
+    }
+    if (update.pricingCategory) {
+      // A Meta e quem cobra: o `pricing.category` vence a estimativa (D-312 item 1),
+      // mesmo quando o status em si e repetido ou nao sobe.
+      await services.messages.applyExternalPricing(tenantId, update.externalId, update.pricingCategory);
+    }
+    const changed = await services.messages.applyExternalStatus(tenantId, update.externalId, update.status);
+    if (changed) applied += 1;
+    // D-311 item 3: desconhecida (ou que regrediria) e ignorada COM log.
+    else logger.info('whatsapp.status_ignored', { tenantId, externalId: update.externalId, status: update.status });
+  }
+  return applied;
+}
+
+/** Reacoes do paciente pela Meta (D-222): mesmo caminho das do QR. */
+async function applyMetaReactions(services: WebhookServices, tenantId: string, payload: unknown): Promise<void> {
+  for (const reaction of services.whatsapp.handleReactions(payload)) {
+    const outcome = await services.messages.applyInboundReaction(tenantId, {
+      targetExternalId: reaction.targetExternalId,
+      fromMe: false,
+      emoji: reaction.emoji,
+    });
+    if (outcome !== 'aplicado') {
+      logger.info('whatsapp.reaction_ignored', { tenantId, targetExternalId: reaction.targetExternalId, outcome });
+    }
+  }
 }
 
 /** Handler async cujo erro nunca pode virar 500 vazado para o canal. */
@@ -274,8 +450,13 @@ export function whatsappInbound(services: WebhookServices, cache: CacheService):
       return;
     }
     const { tenantId } = authenticated;
+    const body = scopedNotice(req.body, authenticated);
+    if (body === null) {
+      acknowledge(res);
+      return;
+    }
 
-    const inbound = await services.whatsapp.handleWebhook(req.body);
+    const inbound = await services.whatsapp.handleWebhook(body);
     let processed = 0;
     let rejected = 0;
     for (const dto of inbound) {
@@ -290,12 +471,29 @@ export function whatsappInbound(services: WebhookServices, cache: CacheService):
           dto.phone,
           dto.patientName,
         );
-        await services.messages.createFromPatient(tenantId, conversation.id, {
-          content: dto.content,
-          messageType: dto.messageType,
-          attachmentUrl: dto.attachmentUrl,
+        // Midia (D-314): reentrega de mensagem ja gravada nao baixa de novo.
+        const known = dto.externalId ? await services.messages.isKnownExternalId(tenantId, dto.externalId) : false;
+        const stored =
+          dto.cloudMedia && !known
+            ? await storeCloudMedia(services, authenticated.credentials, dto.cloudMedia, dto.externalId)
+            : null;
+        const message = await services.messages.createFromPatient(tenantId, conversation.id, {
+          ...(stored
+            ? {
+                // Como no QR: sem legenda, `content` = nome do arquivo (D-236 item 8).
+                content: dto.cloudMedia?.caption ?? stored.fileName,
+                messageType:
+                  dto.cloudMedia?.sticker && messageTypeFromMime(stored.mimeType) === 'image'
+                    ? 'sticker'
+                    : messageTypeFromMime(stored.mimeType),
+                attachmentUrl: `/api/v1/media/${stored.id}`,
+              }
+            : { content: dto.content, messageType: dto.messageType, attachmentUrl: dto.attachmentUrl }),
           externalId: dto.externalId,
+          quotedExternalId: dto.quotedExternalId ?? null,
+          receivedVia: 'cloud_api',
         });
+        if (stored) await services.media.attachToMessage(tenantId, stored.id, message.id);
         processed += 1;
       } catch (err) {
         rejected += 1;
@@ -309,10 +507,15 @@ export function whatsappInbound(services: WebhookServices, cache: CacheService):
       }
     }
 
+    // A Meta manda status e reacoes na MESMA URL das mensagens (D-311).
+    const statuses = await applyMetaStatuses(services, tenantId, body);
+    await applyMetaReactions(services, tenantId, body);
+
     logger.info('whatsapp.webhook_processed', {
       tenantId,
       messages: processed,
       rejected,
+      statuses,
     });
     acknowledge(res);
   });
@@ -326,13 +529,15 @@ export function whatsappStatus(services: WebhookServices, cache: CacheService): 
       return;
     }
     const { tenantId } = authenticated;
-
-    const updates = await services.whatsapp.handleStatusCallback(req.body);
-    for (const update of updates) {
-      await services.messages.applyExternalStatus(tenantId, update.externalId, update.status);
+    const body = scopedNotice(req.body, authenticated);
+    if (body === null) {
+      acknowledge(res);
+      return;
     }
 
-    logger.info('whatsapp.status_processed', { tenantId, updates: updates.length });
+    const updates = await applyMetaStatuses(services, tenantId, body);
+
+    logger.info('whatsapp.status_processed', { tenantId, updates });
     acknowledge(res);
   });
 }
@@ -1136,6 +1341,7 @@ async function ingestEvolutionMessage(
           externalId: inbound.externalId,
           quotedExternalId: inbound.quotedExternalId,
           metadata: inbound.metadata,
+          receivedVia: 'evolution',
         });
 
   if (!inbound.media) {
@@ -1356,6 +1562,7 @@ function buildWebhookModule(
 
   router.post('/whatsapp', whatsappInbound(services, deps.cache));
   router.post('/whatsapp/status', whatsappStatus(services, deps.cache));
+  router.get('/whatsapp/:tenant', whatsappVerify(services));
   router.post('/whatsapp/:tenant', whatsappInbound(services, deps.cache));
   router.post('/whatsapp/:tenant/status', whatsappStatus(services, deps.cache));
 

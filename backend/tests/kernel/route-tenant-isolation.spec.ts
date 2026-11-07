@@ -17,6 +17,7 @@
  * A lista `LAB_ROUTES` e a fonte unica: rota nova entra ali e passa a ser
  * varrida pelos tres invariantes de uma vez.
  */
+import { whatsappTemplateModule } from '../../src/controllers/whatsapp-template.routes.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { saoPauloToday } from '@crm-lab/shared';
 import type {
@@ -129,6 +130,7 @@ const LAB_MODULES = [
   auditModule,
   makeChannelSettingsModule({ evolutionClient: fakeEvolutionClient() }),
   conversationModule,
+  whatsappTemplateModule, // CRMLAB-136
   doctorModule,
   visitModule,
   examModule,
@@ -931,6 +933,31 @@ const LAB_ROUTES: readonly LabRoute[] = [
     actor: 'admin',
     addressable: false,
   },
+  // CRMLAB-138 (D-308): troca do modo do canal, so do proprio laboratorio.
+  {
+    name: 'PUT /settings/channels/whatsapp/mode',
+    method: 'put',
+    path: () => '/api/v1/settings/channels/whatsapp/mode',
+    body: () => ({ mode: 'cloud_api' }),
+    actor: 'admin',
+    addressable: false,
+  },
+  // CRMLAB-141 (D-312): uso e custo estimado do PROPRIO laboratorio (tenant do token).
+  {
+    name: 'GET /settings/channels/whatsapp/usage',
+    method: 'get',
+    path: () => '/api/v1/settings/channels/whatsapp/usage',
+    actor: 'manager',
+    addressable: false,
+  },
+  // CRMLAB-136 (D-309): modelos aprovados do proprio laboratorio (tenant do token).
+  {
+    name: 'GET /whatsapp/templates',
+    method: 'get',
+    path: () => '/api/v1/whatsapp/templates',
+    actor: 'attendant',
+    addressable: false,
+  },
 
   // --- regras do funil (CRMLAB-56 — D-190) ---
   { name: 'GET /settings/funnel-rules', method: 'get', path: () => '/api/v1/settings/funnel-rules', actor: 'attendant', addressable: false },
@@ -1423,7 +1450,7 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 106 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 124 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
@@ -1468,7 +1495,10 @@ describe('inventario de rotas de laboratorio', () => {
     // CRMLAB-117/D-282 soma 2: `PATCH|DELETE /internal-chat/channels/:id/messages/:messageId`.
     // CRMLAB-120/D-286 soma 2: `GET /users/presence` e `PATCH /users/me/presence`.
     // CRMLAB-121/D-287 soma 1: `POST /patients`.
-    expect(LAB_ROUTES).toHaveLength(121);
+    // CRMLAB-138/D-308 soma 1: `PUT /settings/channels/whatsapp/mode`.
+    // CRMLAB-136/D-309 soma 1: `GET /whatsapp/templates`.
+    // CRMLAB-141/D-312 soma 1: `GET /settings/channels/whatsapp/usage`.
+    expect(LAB_ROUTES).toHaveLength(124);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

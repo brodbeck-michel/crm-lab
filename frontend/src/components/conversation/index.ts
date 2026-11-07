@@ -14,7 +14,7 @@ export { DateSeparator, dateSeparatorLabel, isSameLocalDay } from './DateSeparat
 export type { DateSeparatorProps } from './DateSeparator';
 export { AudioMessage } from './AudioMessage';
 export type { AudioMessageProps } from './AudioMessage';
-export { Composer } from './Composer';
+export { Composer, useWindowRemaining, WINDOW_CLOSED_MESSAGE } from './Composer';
 export { AttachmentPreview } from './AttachmentPreview';
 export type { AttachmentPreviewProps } from './AttachmentPreview';
 export {
@@ -34,3 +34,11 @@ export { WhatsAppText } from './WhatsAppText';
 export type { EmojiPickerProps } from './EmojiPicker';
 export { QuickReplyMenu, filterQuickReplies, quickReplyOptionId } from './QuickReplyMenu';
 export type { QuickReplyMenuProps } from './QuickReplyMenu';
+export {
+  EMPTY_TEMPLATE_DRAFT,
+  TemplatePicker,
+  previewTemplate,
+  templateKey,
+  templateRequestOf,
+} from './TemplatePicker';
+export type { TemplateDraft, TemplatePickerProps } from './TemplatePicker';

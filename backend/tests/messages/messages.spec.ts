@@ -57,6 +57,7 @@ describe('POST /conversations/:id/messages', () => {
       'senderName',
       'senderType',
       'status',
+      'template', // CRMLAB-136 (D-309)
     ]);
     expect(response.body.conversationId).toBe(conversation.id);
     expect(response.body.senderType).toBe('agent');

@@ -378,6 +378,11 @@ TRUST_PROXY_HOPS=2
 # Vazio de propósito: gateway desligado devolve CHANNEL_QR_UNAVAILABLE, sem crash.
 EVOLUTION_API_KEY=
 
+# CRMLAB-138 (D-308): Cloud API em mock no laboratório de treinamento. SÓ na hml:
+# em prod fica ausente, e sem WHATSAPP_API_URL a Cloud API recusa (503) em vez de
+# "enviar" mensagem que nunca chega.
+WHATSAPP_CLOUD_API_MOCK=true
+
 # CRMLAB-52: agendador da sincronização com o Bitlab desligado em homologação.
 LIS_SYNC_INTERVAL_MS=0
 

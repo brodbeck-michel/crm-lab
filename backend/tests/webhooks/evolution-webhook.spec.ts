@@ -45,6 +45,7 @@ function evolutionCredentialsResolver(
     tenantId,
     phoneNumberId: 'numero-do-lab',
     apiUrl: '',
+    wabaId: '',
     apiToken: '',
     webhookSecret: '',
     isActive: !disabled.has(tenantId),
@@ -145,6 +146,14 @@ describe('POST /webhooks/evolution/:tenant — nomes de evento do gateway REAL',
 
     expect(response.status).toBe(200);
     expect(await countConversations(tenant.id)).toBe(1);
+    // D-310 (emenda de 05/11): fala do QR nunca abre a janela da Cloud API.
+    const via = await db.withoutTenant((tx) =>
+      tx.query<{ received_via: string | null }>(
+        `SELECT received_via FROM messages WHERE tenant_id = $1 AND sender_type = 'patient'`,
+        [tenant.id],
+      ),
+    );
+    expect(via.rows.map((row) => row.received_via)).toEqual(['evolution']);
   });
 
   it('connection.update (formato do gateway) grava o estado do canal', async () => {

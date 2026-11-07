@@ -67,9 +67,15 @@ export type ApiErrorCode =
   | 'MESSAGE_SEND_FAILED'
   /** Primeiro contato acima do teto da hora no WhatsApp por QR (CRMLAB-134, D-306). */
   | 'FIRST_CONTACT_LIMIT_REACHED'
+  /** Texto livre/anexo na Cloud API com a última mensagem do paciente há mais de 24 h (CRMLAB-137, D-310). */
+  | 'WHATSAPP_WINDOW_CLOSED'
   // Canais (Onda 7 — WhatsApp QR)
   | 'CHANNEL_QR_UNAVAILABLE'
   | 'CHANNEL_SESSION_STALE'
+  /** Cloud API sem phone_number_id, waba_id ou token do laboratório (CRMLAB-135, D-308). */
+  | 'CHANNEL_CLOUD_API_NOT_CONFIGURED'
+  /** Meta fora do ar ou recusa de credencial ao listar templates (CRMLAB-135, D-308). */
+  | 'CHANNEL_CLOUD_API_UNAVAILABLE'
   // Mídia (Onda 8 §4 — anexo e áudio)
   | 'MEDIA_TOO_LARGE'
   // Vendas — domínio LIS (Onda 9)

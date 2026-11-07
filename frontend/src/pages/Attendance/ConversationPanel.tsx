@@ -6,7 +6,10 @@ import type {
   ConversationDetail,
   Message,
   QuickReply,
+  SendTemplateRequest,
   UserPresenceStatus,
+  WhatsAppTemplate,
+  WhatsAppWindowStatus,
 } from '@crm-lab/shared';
 import { Badge, Button, cn } from '@/components/ui';
 import { EmptyState, PresenceDot } from '@/components/shared';
@@ -21,6 +24,7 @@ import {
   bubbleTypeFor,
   isSameLocalDay,
   quotedLabel,
+  useWindowRemaining,
 } from '@/components/conversation';
 import type {
   AttachmentDraft,
@@ -117,6 +121,17 @@ export interface ConversationPanelProps {
    * Falso (Cloud API) ou sem `currentUserId`: "Editar"/"Apagar para todos" somem.
    */
   canEditMessages?: boolean;
+  /**
+   * Janela de 24 h da Cloud API (`whatsappWindow` do GET, D-310). `null` = sem
+   * restrição. Fechada, o Composer bloqueia o envio e mostra o motivo.
+   */
+  whatsappWindow?: WhatsAppWindowStatus | null;
+  /** Modelos aprovados da Meta (CRMLAB-136): repassados ao Composer. */
+  templates?: readonly WhatsAppTemplate[];
+  templatesLoading?: boolean;
+  templatesError?: boolean;
+  onRetryTemplates?: () => void;
+  onSendTemplate?: (template: SendTemplateRequest) => Promise<unknown>;
   /** A autora edita (D-280). Promise: rejeitou, a caixa de edição fica aberta. */
   onEditMessage?: (messageId: string, content: string) => Promise<unknown>;
   /** A autora apaga para todos (D-280) — a confirmação é do balão. */
@@ -494,6 +509,12 @@ export function ConversationPanel({
   draftMessage,
   onRetryMessage,
   canEditMessages = false,
+  whatsappWindow = null,
+  templates,
+  templatesLoading,
+  templatesError,
+  onRetryTemplates,
+  onSendTemplate,
   onEditMessage,
   onDeleteMessage,
   onPresence,
@@ -649,7 +670,11 @@ export function ConversationPanel({
   // Arrastar arquivo (D-232): contador porque cada filho dispara enter/leave.
   const dragDepth = useRef(0);
   const [dragging, setDragging] = useState(false);
-  const acceptsFiles = conversation?.status === 'active';
+  // Janela de 24 h fechada (D-310): soltar arquivo não abre a prévia, o envio seria recusado.
+  // Mesma contagem do Composer: a janela pode fechar com a tela aberta.
+  const windowRemaining = useWindowRemaining(whatsappWindow);
+  const acceptsFiles =
+    conversation?.status === 'active' && (windowRemaining === null || windowRemaining > 0);
 
   function handleDragEnter(event: DragEvent<HTMLDivElement>): void {
     if (!acceptsFiles || !dragHasFiles(event.dataTransfer)) return;
@@ -962,6 +987,10 @@ export function ConversationPanel({
           quickReplies={quickReplies}
           initialValue={draftMessage}
           draftId={conversation.id}
+          whatsappWindow={whatsappWindow}
+          {...(onSendTemplate
+            ? { onSendTemplate, templates: templates ?? [], templatesLoading, templatesError, onRetryTemplates }
+            : {})}
         />
 
         {dragging && !drafts && (

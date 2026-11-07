@@ -50,7 +50,13 @@
  *   MESMA transacao do INSERT (ver `MessageRepository.insert`). Conversa
  *   encerrada REABRE antes, na fila livre (D-174).
  */
-import { MAX_CAPTION_LENGTH, messageAuthorActionBlock } from '@crm-lab/shared';
+import {
+  CLOUD_API_ACCEPTED_FORMATS,
+  MAX_CAPTION_LENGTH,
+  cloudApiMediaRule,
+  messageAuthorActionBlock,
+  normalizeMediaMimeType,
+} from '@crm-lab/shared';
 import type {
   Conversation,
   CreateMessageRequest,
@@ -60,6 +66,10 @@ import type {
   MessageCursors,
   MessageSearchHit,
   PaginationMeta,
+  MessageTemplateInfo,
+  SendTemplateRequest,
+  WhatsAppPricingCategory,
+  WhatsAppWindowStatus,
 } from '@crm-lab/shared';
 import type { ApiModuleDeps } from '../http/api-module.js';
 import { BusinessError, notFound } from '../http/errors.js';
@@ -79,16 +89,36 @@ import { createAuditService, type AuditService } from './audit.service.js';
 import type { AutoReplyService } from './auto-reply.service.js';
 import { claimFreeConversation } from './conversation-claim.js';
 import { createFirstContactGuard, type FirstContactGuard } from './first-contact.service.js';
+import { createWhatsAppWindowGuard, type WhatsAppWindowGuard } from './whatsapp-window.service.js';
+import { isAnimatedPng } from './image-to-jpeg.js';
+import { fillTemplate } from './whatsapp-templates.js';
 import {
   createWhatsAppService,
   type OutboundPresence,
   type QuotedRef,
   type SendOptions,
+  type SendResult,
   type WhatsAppService,
 } from './whatsapp.service.js';
 
 
 /** Anexo do atendente — o mesmo DTO que `MediaService.storeOutbound` produziu. */
+/** Pre-checagem do canal (controller): `template` = envio por modelo, que nao depende da janela. */
+export interface ChannelPrecheckOptions {
+  template?: SendTemplateRequest | null;
+}
+
+/** Teto do corpo do modelo JA preenchido: o limite de corpo da Meta (D-309). */
+export const TEMPLATE_FILLED_MAX = 1024;
+
+/** Modelo conferido contra a lista aprovada (D-309). */
+interface ResolvedTemplate {
+  info: MessageTemplateInfo;
+  variables: string[];
+  /** Corpo com as variaveis no lugar — o que fica em `messages.content`. */
+  content: string;
+}
+
 export interface OutboundAttachmentInput {
   fileName: string;
   mimeType: string;
@@ -140,6 +170,8 @@ export interface InboundMessageInput {
   quotedExternalId?: string | null;
   /** Duracao, paginas, miniatura, localizacao, contatos (D-234/D-235). */
   metadata?: MessageMetadata | null;
+  /** Webhook de origem (D-310, emenda de 05/11): so `cloud_api` abre a janela de 24 h. */
+  receivedVia?: 'cloud_api' | 'evolution' | null;
 }
 
 /**
@@ -227,6 +259,11 @@ export interface MessageServiceDeps {
    * D-306). Ausente => sem teto (testes de unidade e o webhook).
    */
   firstContact?: FirstContactGuard;
+  /**
+   * Janela de 24 h da Cloud API (CRMLAB-137, D-310). Ausente => sem checagem
+   * (testes de unidade e o webhook).
+   */
+  windowGuard?: WhatsAppWindowGuard;
 }
 
 export class MessageService {
@@ -238,6 +275,7 @@ export class MessageService {
   private readonly audit: AuditService | undefined;
   private readonly autoReply: AutoReplyService | undefined;
   private readonly firstContact: FirstContactGuard | undefined;
+  private readonly windowGuard: WhatsAppWindowGuard | undefined;
 
   constructor(deps: MessageServiceDeps) {
     this.messages = deps.messages;
@@ -248,6 +286,170 @@ export class MessageService {
     this.audit = deps.audit;
     this.autoReply = deps.autoReply;
     this.firstContact = deps.firstContact;
+    this.windowGuard = deps.windowGuard;
+  }
+
+  /**
+   * D-310: texto livre/anexo na Cloud API so com o paciente tendo escrito nas
+   * ultimas 24 h. Recusa ANTES de gravar; o modo QR nao passa por aqui.
+   */
+  private async assertWindowOpen(tenantId: string, conversation: Conversation): Promise<void> {
+    if (!this.windowGuard || !this.whatsapp || conversation.channel !== 'whatsapp') return;
+    await this.windowGuard.assertOpen(tenantId, conversation.id);
+  }
+
+  /** Estado da janela para a tela (D-310); `null` = sem restricao. */
+  async windowStatus(
+    tenantId: string,
+    conversationId: string,
+    channel: string,
+  ): Promise<WhatsAppWindowStatus | null> {
+    if (!this.windowGuard || !this.whatsapp || channel !== 'whatsapp') return null;
+    return this.windowGuard.status(tenantId, conversationId);
+  }
+
+  /**
+   * Anexo pela Cloud API (CRMLAB-140, D-314 item 2): o arquivo JA preparado
+   * (imagem em JPEG) tem de ser um formato que a Meta aceita. Recusa antes de
+   * reabrir/assumir/gravar. Fora de `cloud_api`, nada a conferir.
+   */
+  async assertCloudMediaAccepted(
+    tenantId: string,
+    conversationId: string,
+    media: { mimeType: string; buffer: Buffer },
+  ): Promise<void> {
+    if (!this.whatsapp) return;
+    const conversation = await this.conversations.findById(tenantId, conversationId);
+    if (!conversation || conversation.channel !== 'whatsapp') return;
+    if ((await this.whatsapp.connectionMode(tenantId)) !== 'cloud_api') return;
+    const rule = cloudApiMediaRule(media.mimeType);
+    // PNG animado chega como `image/png` (o sniff junta APNG e PNG) e nao vira
+    // JPEG (D-290 mantem animacao): a Meta so aceita imagem parada.
+    const animated = normalizeMediaMimeType(media.mimeType) === 'image/png' && isAnimatedPng(media.buffer);
+    if (!rule || animated) {
+      throw new BusinessError('VALIDATION_ERROR', {
+        reason: 'cloud_api_media_type',
+        fields: { mimeType: CLOUD_API_ACCEPTED_FORMATS },
+      });
+    }
+    if (media.buffer.byteLength > rule.maxBytes) {
+      throw new BusinessError('MEDIA_TOO_LARGE', {
+        reason: rule.kind === 'image' ? 'cloud_api_image_limit' : 'cloud_api_media_limit',
+        byteSize: media.buffer.byteLength,
+        max: rule.maxBytes,
+      });
+    }
+  }
+
+  /**
+   * Pre-checagem do canal para o controller, ANTES de reabrir a encerrada,
+   * assumir a fila ou guardar midia (D-273): credencial (D-308) e janela de
+   * 24 h (D-310), nesta ordem. A recusa nao deixa efeito.
+   */
+  async assertChannelReadyFor(
+    tenantId: string,
+    conversationId: string,
+    options: ChannelPrecheckOptions = {},
+  ): Promise<void> {
+    const conversation = await this.conversations.findById(tenantId, conversationId);
+    if (!conversation) throw notFound({ resource: 'conversation', id: conversationId });
+    await this.assertChannelReady(tenantId, conversation);
+    // Modelo aprovado sai dentro e fora da janela (D-309 item 4). O modelo e
+    // conferido AQUI, antes de reabrir ou assumir (D-273): recusa sem efeito.
+    if (options.template) {
+      await this.resolveTemplate(tenantId, conversation.channel, options.template);
+      return;
+    }
+    await this.assertWindowOpen(tenantId, conversation);
+  }
+
+  /**
+   * A mesma pre-checagem para uma conversa que VAI virar WhatsApp (Nova
+   * conversa sobre conversa existente de outro canal ou encerrada): roda antes
+   * de reabrir ou trocar o canal, para a recusa nao deixar efeito (D-310 item 2).
+   */
+  async assertSendableAsWhatsApp(
+    tenantId: string,
+    conversation: Conversation,
+    options: ChannelPrecheckOptions = {},
+  ): Promise<void> {
+    const asWhatsApp: Conversation = { ...conversation, channel: 'whatsapp' };
+    await this.assertChannelReady(tenantId, asWhatsApp);
+    if (options.template) {
+      await this.resolveTemplate(tenantId, 'whatsapp', options.template);
+      return;
+    }
+    await this.assertWindowOpen(tenantId, asWhatsApp);
+  }
+
+  /**
+   * Nova conversa por modelo (D-309): credencial e modelo conferidos ANTES de
+   * criar a conversa do numero novo — recusa sem deixar conversa vazia.
+   */
+  async assertTemplateSendable(tenantId: string, template: SendTemplateRequest): Promise<void> {
+    if (this.whatsapp) await this.whatsapp.assertCloudApiConfigured(tenantId);
+    await this.resolveTemplate(tenantId, 'whatsapp', template);
+  }
+
+  /**
+   * Confere o modelo pedido (D-309) e devolve o corpo preenchido. Ordem do
+   * contrato: so roda DEPOIS da credencial (NOT_CONFIGURED vem antes).
+   * - fora do WhatsApp ou em `qr` -> `VALIDATION_ERROR` (`fields.template`);
+   * - nome+idioma fora da lista aprovada -> `NOT_FOUND` (`whatsapp_template`);
+   * - variaveis != uma por `{{n}}`, ou vazia -> `VALIDATION_ERROR`
+   *   (`fields["template.variables"]`).
+   */
+  private async resolveTemplate(
+    tenantId: string,
+    channel: Conversation['channel'],
+    request: SendTemplateRequest,
+  ): Promise<ResolvedTemplate> {
+    const whatsapp = this.whatsapp;
+    if (
+      !whatsapp ||
+      channel !== 'whatsapp' ||
+      (await whatsapp.connectionMode(tenantId)) !== 'cloud_api'
+    ) {
+      throw new BusinessError('VALIDATION_ERROR', {
+        fields: { template: 'Modelo da Meta so no WhatsApp pela API oficial (cloud_api)' },
+      });
+    }
+    const approved = await whatsapp.listTemplates(tenantId);
+    const found = approved.find((t) => t.name === request.name && t.language === request.language);
+    if (!found) {
+      throw notFound({ resource: 'whatsapp_template', id: `${request.name}:${request.language}` });
+    }
+    const variables = request.variables.map((v) => v.trim());
+    if (variables.length !== found.variables.length || variables.some((v) => v.length === 0)) {
+      throw new BusinessError('VALIDATION_ERROR', {
+        fields: {
+          'template.variables': `O modelo pede ${found.variables.length} variavel(is), todas preenchidas`,
+        },
+      });
+    }
+    const content = fillTemplate(found.body, variables);
+    if (content.length > TEMPLATE_FILLED_MAX) {
+      throw new BusinessError('VALIDATION_ERROR', {
+        fields: {
+          'template.variables': `O texto do modelo preenchido passa de ${TEMPLATE_FILLED_MAX} caracteres`,
+        },
+      });
+    }
+    return {
+      info: { name: found.name, language: found.language, category: found.category },
+      variables,
+      content,
+    };
+  }
+
+  /**
+   * D-308: `cloud_api` sem `phone_number_id`/`waba_id`/token recusa com
+   * `CHANNEL_CLOUD_API_NOT_CONFIGURED` ANTES de gravar — nada fica `failed`
+   * (API_CONTRACTS §2, ordem NOT_CONFIGURED -> WINDOW_CLOSED -> SEND_FAILED).
+   */
+  private async assertChannelReady(tenantId: string, conversation: Conversation): Promise<void> {
+    if (!this.whatsapp || conversation.channel !== 'whatsapp') return;
+    await this.whatsapp.assertCloudApiConfigured(tenantId);
   }
 
   /**
@@ -342,22 +544,39 @@ export class MessageService {
       throw new BusinessError('CONVERSATION_ARCHIVED', { status: conversation.status });
     }
     const quote = await this.resolveQuote(tenantId, conversationId, dto.quotedMessageId);
-    await this.assertFirstContactAllowed(tenantId, conversation);
+    // Ordem do contrato (API_CONTRACTS §2): NOT_CONFIGURED -> modelo -> WINDOW_CLOSED.
+    await this.assertChannelReady(tenantId, conversation);
+    const template = dto.template
+      ? await this.resolveTemplate(tenantId, conversation.channel, dto.template)
+      : null;
+    const content = template ? template.content : (dto.content ?? '');
+    if (content.trim() === '') {
+      throw new BusinessError('VALIDATION_ERROR', { fields: { content: 'Informe o texto ou um modelo' } });
+    }
+    if (!template) {
+      // Modelo sai fora da janela (D-309 item 4); o teto de D-306 e so do QR.
+      await this.assertWindowOpen(tenantId, conversation);
+      await this.assertFirstContactAllowed(tenantId, conversation);
+    }
     // Antes do INSERT: quem perde a corrida nao grava nem envia nada (D-215).
     await this.claimIfFree(tenantId, conversation, senderId);
+    // Resposta de participante (D-263): o tempo de resposta continua da dona
+    // (`attributedTo`) tambem por modelo; so o `*Nome*` fica de fora — o texto
+    // do modelo e o aprovado pela Meta.
     const participant = participantReplyOf(conversation, senderId);
 
     const message = await this.messages.insert(tenantId, {
       conversationId,
       senderType: 'agent',
       senderId,
-      content: dto.content,
+      content,
       messageType: dto.messageType ?? 'text',
       attachmentUrl: dto.attachmentUrl ?? null,
       status: this.initialStatus(conversation.channel),
       quotedMessageId: quote?.id ?? null,
       quotedExternalId: quote?.externalMessageId ?? null,
       attributedTo: participant?.ownerId ?? null,
+      template: template ? { ...template.info, variables: template.variables } : null,
     });
     this.emitNewMessage(tenantId, conversationId, message.id);
 
@@ -365,13 +584,19 @@ export class MessageService {
     if (!this.whatsapp || conversation.channel !== 'whatsapp') return message;
 
     try {
-      const { externalId } = await this.whatsapp.send(
-        tenantId,
-        conversation.patientPhone,
-        participant ? withSenderName(participant.name, dto.content) : dto.content,
-        sendOptionsFor(quote),
-      );
-      return await this.confirmSent(tenantId, conversationId, message, externalId);
+      const sent = template
+        ? await this.whatsapp.sendTemplate(tenantId, conversation.patientPhone, {
+            name: template.info.name,
+            language: template.info.language,
+            variables: template.variables,
+          })
+        : await this.whatsapp.send(
+            tenantId,
+            conversation.patientPhone,
+            participant ? withSenderName(participant.name, content) : content,
+            sendOptionsFor(quote),
+          );
+      return await this.confirmSent(tenantId, conversationId, message, sent);
     } catch (err) {
       // Retry ja esgotado dentro do adapter (3 tentativas, backoff exponencial).
       await this.markFailed(tenantId, conversationId, message.id);
@@ -405,6 +630,9 @@ export class MessageService {
     // D-231: áudio não tem legenda no WhatsApp — descarta, senão o CRM
     // mostraria um texto que o paciente nunca recebeu.
     const caption = messageType === 'audio' ? null : dto.caption || null;
+    // Ordem do contrato (API_CONTRACTS §2): NOT_CONFIGURED -> WINDOW_CLOSED.
+    await this.assertChannelReady(tenantId, conversation);
+    await this.assertWindowOpen(tenantId, conversation);
     await this.assertFirstContactAllowed(tenantId, conversation);
     await this.claimIfFree(tenantId, conversation, senderId);
     const participant = participantReplyOf(conversation, senderId);
@@ -429,7 +657,7 @@ export class MessageService {
     if (!this.whatsapp || conversation.channel !== 'whatsapp') return message;
 
     try {
-      const { externalId } = await this.whatsapp.sendMedia(
+      const sent = await this.whatsapp.sendMedia(
         tenantId,
         conversation.patientPhone,
         {
@@ -440,7 +668,7 @@ export class MessageService {
         },
         sendOptionsFor(quote),
       );
-      return await this.confirmSent(tenantId, conversationId, message, externalId);
+      return await this.confirmSent(tenantId, conversationId, message, sent);
     } catch (err) {
       await this.markFailed(tenantId, conversationId, message.id);
       logger.error('whatsapp.send_media_failed', {
@@ -509,6 +737,11 @@ export class MessageService {
     });
   }
 
+  /** A mensagem com este id externo ja foi gravada? (CRMLAB-140: nao baixa a midia de novo.) */
+  async isKnownExternalId(tenantId: string, externalId: string): Promise<boolean> {
+    return (await this.messages.findByExternalId(tenantId, externalId)) !== null;
+  }
+
   /**
    * Mensagem do paciente (webhook). Incrementa `unread_count` e sobe
    * `last_message_at` — feito na mesma transacao do INSERT pelo repositorio.
@@ -545,6 +778,7 @@ export class MessageService {
         externalMessageId: dto.externalId ?? null,
         quotedExternalId: dto.quotedExternalId ?? null,
         metadata: dto.metadata ?? null,
+        receivedVia: dto.receivedVia ?? null,
       });
 
     let message: Message;
@@ -655,12 +889,13 @@ export class MessageService {
     tenantId: string,
     conversationId: string,
     message: Message,
-    externalId: string,
+    sent: SendResult,
   ): Promise<Message> {
     const { message: updated, removedPhoneCopy } = await this.messages.confirmSent(
       tenantId,
       message.id,
-      externalId,
+      sent.externalId,
+      sent.via === 'cloud_api',
     );
     if (removedPhoneCopy) {
       logger.warn('whatsapp.echo_copy_removed', {
@@ -719,7 +954,27 @@ export class MessageService {
       return updated ?? message;
     }
 
-    await this.assertFirstContactAllowed(tenantId, conversation);
+    // Ordem do contrato (API_CONTRACTS §2): NOT_CONFIGURED -> WINDOW_CLOSED.
+    await this.assertChannelReady(tenantId, conversation);
+    // Mensagem por modelo (D-309) reenvia o MESMO modelo e nao depende da janela.
+    const templateSend = await this.messages.findTemplateSend(tenantId, messageId);
+    if (templateSend && (await this.whatsapp.connectionMode(tenantId)) !== 'cloud_api') {
+      // O canal voltou para QR depois da falha: modelo nao existe la (contrato §2).
+      throw new BusinessError('VALIDATION_ERROR', {
+        fields: { template: 'Modelo da Meta so no WhatsApp pela API oficial (cloud_api)' },
+      });
+    }
+    // Anexo gravado no QR e reenviado depois da troca para a API oficial: o
+    // formato e conferido ANTES (400 com o motivo), nao na fila (D-314).
+    const retryMediaId = templateSend ? null : mediaIdOf(message.attachmentUrl);
+    if (retryMediaId) {
+      const media = await readMedia(retryMediaId);
+      if (media) await this.assertCloudMediaAccepted(tenantId, conversationId, media);
+    }
+    if (!templateSend) {
+      await this.assertWindowOpen(tenantId, conversation);
+      await this.assertFirstContactAllowed(tenantId, conversation);
+    }
     await this.messages.setStatus(tenantId, messageId, 'pending');
     this.emitStatusUpdated(tenantId, conversationId, messageId, 'pending');
 
@@ -729,31 +984,28 @@ export class MessageService {
     const whatsapp = this.whatsapp;
     try {
       const mediaId = mediaIdOf(message.attachmentUrl);
-      let externalId: string;
-      if (mediaId) {
+      let sent: SendResult;
+      if (templateSend) {
+        sent = await whatsapp.sendTemplate(tenantId, conversation.patientPhone, templateSend);
+      } else if (mediaId) {
         const media = await readMedia(mediaId);
         if (!media) throw new Error('midia do anexo nao encontrada para o reenvio');
-        ({ externalId } = await whatsapp.sendMedia(
-          tenantId,
-          conversation.patientPhone,
-          media,
-          sendOptionsFor(quote),
-        ));
+        sent = await whatsapp.sendMedia(tenantId, conversation.patientPhone, media, sendOptionsFor(quote));
       } else {
         // Resposta de participante sai de novo com o nome (D-263 item 5).
         const named =
           message.senderName !== null &&
           (await this.messages.isParticipantReply(tenantId, messageId));
-        ({ externalId } = await whatsapp.send(
+        sent = await whatsapp.send(
           tenantId,
           conversation.patientPhone,
           named && message.senderName !== null
             ? withSenderName(message.senderName, message.content)
             : message.content,
           sendOptionsFor(quote),
-        ));
+        );
       }
-      return await this.confirmSent(tenantId, conversationId, message, externalId);
+      return await this.confirmSent(tenantId, conversationId, message, sent);
     } catch (err) {
       await this.markFailed(tenantId, conversationId, messageId);
       logger.error('whatsapp.retry_failed', {
@@ -831,6 +1083,8 @@ export class MessageService {
     if (conversation.status !== 'active') {
       throw new BusinessError('CONVERSATION_ARCHIVED', { status: conversation.status });
     }
+    // D-310: automacao nao fura a janela da Cloud API (nada gravado nem enviado).
+    await this.assertWindowOpen(tenantId, conversation);
 
     const message = await this.messages.insert(tenantId, {
       conversationId,
@@ -846,8 +1100,8 @@ export class MessageService {
     if (!this.whatsapp || conversation.channel !== 'whatsapp') return message;
 
     try {
-      const { externalId } = await this.whatsapp.send(tenantId, conversation.patientPhone, content);
-      return await this.confirmSent(tenantId, conversationId, message, externalId);
+      const sent = await this.whatsapp.send(tenantId, conversation.patientPhone, content);
+      return await this.confirmSent(tenantId, conversationId, message, sent);
     } catch (err) {
       await this.markFailed(tenantId, conversationId, message.id);
       logger.error('whatsapp.send_failed', {
@@ -1245,6 +1499,15 @@ export class MessageService {
     return updated;
   }
 
+  /** `pricing.category` do status da Meta (D-312 item 1). Sem WS: nao muda nada na tela. */
+  async applyExternalPricing(
+    tenantId: string,
+    externalId: string,
+    category: WhatsAppPricingCategory,
+  ): Promise<boolean> {
+    return this.messages.setPricingCategoryByExternalId(tenantId, externalId, category);
+  }
+
   /** Tique mudou (D-225). O front invalida so a conversa — nao e mensagem nova. */
   private emitStatusUpdated(
     tenantId: string,
@@ -1307,5 +1570,6 @@ export function createMessageService(
     whatsapp: overrides.whatsapp ?? createWhatsAppService(deps.db),
     audit: createAuditService(deps.db),
     firstContact: createFirstContactGuard({ db: deps.db }),
+    windowGuard: createWhatsAppWindowGuard({ db: deps.db }),
   });
 }

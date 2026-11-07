@@ -21,10 +21,12 @@ import {
   type MessageSearchHit,
   type MessageReaction,
   type MessageStatus,
+  type MessageTemplateInfo,
   type MessageType,
   type QuotedMessageSummary,
   type ReactorType,
   type SenderType,
+  type WhatsAppPricingCategory,
 } from '@crm-lab/shared';
 import type { DbClient, DbTx } from '../db/types.js';
 import { toIso, toIsoOrNull, toNumber } from './row-mappers.js';
@@ -58,6 +60,10 @@ interface MessageRow {
   mm_file_name: string | null;
   mm_byte_size: number | string | null;
   mm_mime_type: string | null;
+  // CRMLAB-136 (D-309)
+  template_name?: string | null;
+  template_language?: string | null;
+  template_category?: string | null;
 }
 
 /**
@@ -153,7 +159,8 @@ const COLUMNS = `m.id, m.conversation_id, m.sender_type, m.sender_id, m.content,
           WHERE r.message_id = m.id
        ), '[]'::json) AS reactions,
        m.metadata, mm.file_name AS mm_file_name, mm.byte_size AS mm_byte_size,
-       mm.mime_type AS mm_mime_type`;
+       mm.mime_type AS mm_mime_type,
+       m.template_name, m.template_language, m.template_category`;
 
 /**
  * Arquivo da mensagem (D-234 item 2) pela id que esta em `attachment_url` —
@@ -313,7 +320,16 @@ export function toMessage(row: MessageRow): Message {
     media: hidden ? null : toMedia(row, meta),
     location: meta.location ?? null,
     contacts: meta.contacts ?? [],
+    template: toTemplateInfo(row),
   };
+}
+
+/** Modelo da Meta da mensagem (D-309); `null` = texto livre. */
+function toTemplateInfo(row: MessageRow): MessageTemplateInfo | null {
+  if (!row.template_name || !row.template_language) return null;
+  const category = row.template_category;
+  if (category !== 'marketing' && category !== 'utility') return null;
+  return { name: row.template_name, language: row.template_language, category };
 }
 
 /**
@@ -371,6 +387,14 @@ export interface MessageInsert {
    * para o tempo de resposta (D-257). `null`/ausente para todo o resto.
    */
   attributedTo?: string | null;
+  /**
+   * Por onde a fala do PACIENTE chegou (migracao 066, D-310 emenda de 05/11):
+   * `cloud_api` = webhook da Meta; `evolution` = webhook do QR. So `cloud_api`
+   * abre a janela de 24 h. `null` = nao veio de webhook (ou mensagem antiga).
+   */
+  receivedVia?: 'cloud_api' | 'evolution' | null;
+  /** Envio por modelo aprovado (CRMLAB-136, D-309); `content` ja vem preenchido. */
+  template?: (MessageTemplateInfo & { variables: readonly string[] }) | null;
 }
 
 export interface MessagePage {
@@ -614,6 +638,35 @@ export class MessageRepository {
   }
 
   /**
+   * O modelo e as variaveis de uma mensagem enviada por modelo (D-309), para o
+   * "tentar de novo" reenviar o MESMO modelo. `null` = texto livre.
+   */
+  async findTemplateSend(
+    tenantId: string,
+    id: string,
+  ): Promise<{ name: string; language: string; variables: string[] } | null> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const found = await tx.query<{
+        template_name: string | null;
+        template_language: string | null;
+        template_variables: unknown;
+      }>(
+        `SELECT template_name, template_language, template_variables
+           FROM messages WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, id],
+      );
+      const row = found.rows[0];
+      if (!row?.template_name || !row.template_language) return null;
+      const raw: unknown =
+        typeof row.template_variables === 'string'
+          ? JSON.parse(row.template_variables)
+          : row.template_variables;
+      const variables = Array.isArray(raw) ? raw.filter((v): v is string => typeof v === 'string') : [];
+      return { name: row.template_name, language: row.template_language, variables };
+    });
+  }
+
+  /**
    * Insere a mensagem e atualiza a conversa na MESMA transacao.
    *
    * - `last_message_at` sobe sempre (a lista ordena por ele);
@@ -637,14 +690,16 @@ export class MessageRepository {
         `INSERT INTO messages
            (tenant_id, conversation_id, sender_type, sender_id, content, message_type,
             attachment_url, status, external_message_id, quoted_external_id, quoted_message_id,
-            automation, metadata, attributed_to)
+            automation, metadata, attributed_to, received_via,
+            template_name, template_language, template_category, template_variables)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text,
                  COALESCE($11::uuid, (SELECT q.id FROM messages q
                                        WHERE $10::text IS NOT NULL
                                          AND q.conversation_id = $2
                                          AND q.external_message_id = $10::text
                                        LIMIT 1)),
-                 $12, $13::jsonb, $14::uuid)
+                 $12, $13::jsonb, $14::uuid, $15::text,
+                 $16::text, $17::text, $18::text, $19::jsonb)
          RETURNING id`,
         [
           tenantId,
@@ -661,6 +716,11 @@ export class MessageRepository {
           data.automation ?? null,
           data.metadata ? JSON.stringify(data.metadata) : null,
           data.attributedTo ?? null,
+          data.receivedVia ?? null,
+          data.template?.name ?? null,
+          data.template?.language ?? null,
+          data.template?.category ?? null,
+          data.template ? JSON.stringify(data.template.variables) : null,
         ],
       );
       const id = inserted.rows[0]?.id;
@@ -720,6 +780,8 @@ export class MessageRepository {
     tenantId: string,
     id: string,
     externalMessageId: string,
+    /** Saiu pela Cloud API: grava a categoria de cobranca (D-312 item 1). */
+    viaCloudApi = false,
   ): Promise<{ message: Message | null; removedPhoneCopy: boolean }> {
     return this.db.withTenant(tenantId, async (tx) => {
       const removed = await tx.query<{ id: string }>(
@@ -734,10 +796,18 @@ export class MessageRepository {
       );
       const updated = await tx.query<{ id: string }>(
         `UPDATE messages
-         SET status = 'sent', external_message_id = $1
+         SET status = 'sent', external_message_id = $1,
+             -- Modelo = categoria do modelo; texto/anexo na janela = service.
+             -- Uma categoria ja corrigida pelo status da Meta nao e sobrescrita.
+             -- Saiu pelo QR (inclusive reenvio de uma que falhou na Meta): NULL,
+             -- o QR nao tem custo por mensagem (D-312 item 6).
+             pricing_category = CASE
+               WHEN $3::boolean THEN COALESCE(pricing_category, template_category, 'service')
+               ELSE NULL
+             END
          WHERE id = $2
          RETURNING id`,
-        [externalMessageId, id],
+        [externalMessageId, id, viaCloudApi],
       );
       const changedId = updated.rows[0]?.id;
       return {
@@ -792,16 +862,42 @@ export class MessageRepository {
         `UPDATE messages
          SET status = $1::text,
              read_at = CASE WHEN $1::text = 'read' THEN COALESCE(read_at, NOW()) ELSE read_at END
-         WHERE external_message_id = $2
+         WHERE tenant_id = $3
+           AND external_message_id = $2
            AND CASE
                  WHEN $1::text = 'failed' THEN status IN ('pending', 'sent')
                  ELSE ${statusRankSql('$1::text')} > ${statusRankSql('status')}
                END
          RETURNING id`,
-        [status, externalMessageId],
+        [status, externalMessageId, tenantId],
       );
       const changedId = updated.rows[0]?.id;
       return changedId ? selectOne(tx, changedId) : null;
+    });
+  }
+
+  /**
+   * `pricing.category` do status da Meta (D-312 item 1): vence a estimativa do
+   * envio. So mensagem que o CRM enviou (`agent`/`system`) deste tenant.
+   * `true` = mudou.
+   */
+  async setPricingCategoryByExternalId(
+    tenantId: string,
+    externalMessageId: string,
+    category: WhatsAppPricingCategory,
+  ): Promise<boolean> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const updated = await tx.query<{ id: string }>(
+        `UPDATE messages
+         SET pricing_category = $1::text
+         WHERE tenant_id = $3
+           AND external_message_id = $2
+           AND sender_type IN ('agent', 'system')
+           AND pricing_category IS DISTINCT FROM $1::text
+         RETURNING id`,
+        [category, externalMessageId, tenantId],
+      );
+      return updated.rows.length > 0;
     });
   }
 

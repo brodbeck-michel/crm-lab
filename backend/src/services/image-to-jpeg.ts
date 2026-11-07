@@ -61,7 +61,7 @@ function jpegNeedsReencode(meta: Metadata): boolean {
 }
 
 /** PNG animado (APNG) tem o chunk `acTL` antes do primeiro `IDAT`. */
-function isAnimatedPng(buffer: Buffer): boolean {
+export function isAnimatedPng(buffer: Buffer): boolean {
   const idat = buffer.indexOf('IDAT', 8, 'latin1');
   const actl = buffer.indexOf('acTL', 8, 'latin1');
   return actl !== -1 && (idat === -1 || actl < idat);

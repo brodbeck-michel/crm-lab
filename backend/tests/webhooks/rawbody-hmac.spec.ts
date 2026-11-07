@@ -40,6 +40,7 @@ function credentialsResolver(tenantId: string, secret: string): WhatsAppCredenti
     tenantId,
     phoneNumberId: 'numero-do-lab',
     apiUrl: '',
+    wabaId: '',
     apiToken: '',
     webhookSecret: secret,
     isActive: true,

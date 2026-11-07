@@ -4,7 +4,8 @@
  * ============================================================================
  * Por que existe
  * ============================================================================
- * `tenant_channels.api_token` e `tenant_channels.webhook_secret` sao segredos
+ * `tenant_channels.api_token`, `tenant_channels.cloud_api_token` (token da Meta,
+ * CRMLAB-138) e `tenant_channels.webhook_secret` sao segredos
  * que precisam VOLTAR em claro (o token vai no `Authorization` do canal, o
  * segredo assina o HMAC do webhook), entao hash — o precedente de
  * `refresh_tokens` (SCHEMA.md §14) — nao serve. Sem cifra, um dump de backup

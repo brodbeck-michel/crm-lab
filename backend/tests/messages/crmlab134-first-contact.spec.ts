@@ -181,10 +181,14 @@ describe('teto de primeiros contatos (D-306)', () => {
     await send((await off.cold()).id, off.ana).expect(201);
     await send((await off.cold()).id, off.ana).expect(201);
 
+    // Na API oficial o teto não vale; o primeiro contato esbarra antes na janela
+    // de 24 h (D-310: paciente nunca escreveu = só template), nunca no teto.
     const cloud = await lab(1);
     await qrChannel(cloud.tenant.id, 'cloud_api');
-    await send((await cloud.cold()).id, cloud.ana).expect(201);
-    await send((await cloud.cold()).id, cloud.ana).expect(201);
+    for (let i = 0; i < 2; i += 1) {
+      const response = await send((await cloud.cold()).id, cloud.ana).expect(409);
+      expect(response.body.error.code).toBe('WHATSAPP_WINDOW_CLOSED');
+    }
   });
 
   it('laboratório sem regra gravada usa o padrão (ligado, 8 por hora)', async () => {

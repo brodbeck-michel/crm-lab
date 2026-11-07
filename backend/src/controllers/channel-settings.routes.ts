@@ -15,13 +15,18 @@
  * guardado, que so o service conhece. O que sobra para a rota e o papel.
  */
 import { Router, type Request, type Response } from 'express';
-import type { UpdateChannelSettingsRequest, WhatsAppQrConnectRequest } from '@crm-lab/shared';
+import type {
+  UpdateChannelSettingsRequest,
+  UpdateWhatsAppModeRequest,
+  WhatsAppQrConnectRequest,
+} from '@crm-lab/shared';
 import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
 import { getContext } from '../http/context.js';
 import { denyPlatformOperator, requireAuth, requireRoles } from '../http/middleware/auth.js';
 import type { EvolutionClient } from '../lib/evolution-client.js';
 import { createAuditService } from '../services/audit.service.js';
 import { createChannelSettingsService } from '../services/channel-settings.service.js';
+import { createWhatsAppUsageService } from '../services/whatsapp-usage.service.js';
 
 /**
  * Mesmo padrao de `makeWebhookModule` em `webhook.routes.ts`: a fabrica plana
@@ -51,8 +56,25 @@ function buildChannelSettingsModule(
       : {}),
   });
 
+  const usage = createWhatsAppUsageService({ db: deps.db });
+
   const router = Router();
   router.use(requireAuth(), denyPlatformOperator());
+
+  // CRMLAB-141 (D-312): uso e custo ESTIMADO da Cloud API no mes. Gestor e admin.
+  router.get(
+    '/channels/whatsapp/usage',
+    requireRoles('manager', 'admin'),
+    (req: Request, res: Response, next): void => {
+      const raw = req.query.month;
+      // `?month=a&month=b` vira array: e formato invalido, nao "o primeiro".
+      const month = raw === undefined ? undefined : typeof raw === 'string' ? raw : '';
+      usage
+        .monthly(getContext(req), month)
+        .then((response) => res.status(200).json(response))
+        .catch(next);
+    },
+  );
 
   router.get(
     '/channels',
@@ -90,6 +112,19 @@ function buildChannelSettingsModule(
       const dto = (req.body ?? {}) as WhatsAppQrConnectRequest;
       settings
         .connectWhatsAppQr(getContext(req), dto)
+        .then((response) => res.status(200).json(response))
+        .catch(next);
+    },
+  );
+
+  // CRMLAB-135 (D-308): troca o modo do WhatsApp (contrato §6.2). Admin apenas.
+  router.put(
+    '/channels/whatsapp/mode',
+    requireRoles('admin'),
+    (req: Request, res: Response, next): void => {
+      const dto = (req.body ?? {}) as UpdateWhatsAppModeRequest;
+      settings
+        .setWhatsAppMode(getContext(req), dto)
         .then((response) => res.status(200).json(response))
         .catch(next);
     },

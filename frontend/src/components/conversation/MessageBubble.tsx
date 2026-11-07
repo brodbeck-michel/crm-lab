@@ -593,6 +593,11 @@ export function MessageBubble({
         >
           {message.senderName && <span className="truncate">{message.senderName}</span>}
           {message.editedAt && <span data-testid="message-edited">Editada</span>}
+          {message.template && (
+            <span data-testid="message-template" title={`Modelo aprovado: ${message.template.name}`}>
+              Modelo
+            </span>
+          )}
           <DateDisplay value={message.createdAt} variant="absolute" />
           {type === 'sent' && <MessageStatusTick status={message.status} />}
         </span>

@@ -39,6 +39,7 @@ function credentialsResolver(slugToId: Map<string, string>): WhatsAppCredentials
     tenantId,
     phoneNumberId: 'numero-do-lab',
     apiUrl: '',
+    wabaId: '',
     apiToken: '',
     webhookSecret: '',
     isActive: true,

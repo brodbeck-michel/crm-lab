@@ -665,6 +665,15 @@ faz request extra por conversa). Shape completo: `Conversation` em
 `lastMessagePreview` de mensagem **apagada** pelo remetente vem `""` (D-220) — a prévia
 nunca devolve o conteúdo escondido.
 
+**`whatsappWindow` (CRMLAB-137, D-310)** — só em `GET /conversations/:id` (não na listagem:
+decisão de 05/11/2026, a lista fica leve; é o detalhe que troca o Composer para "só template"):
+`{ "open": true, "remainingSeconds": 5400, "expiresAt": "2026-11-05T14:35:00Z",
+"lastPatientMessageAt": "2026-11-04T14:35:00Z" }` quando a conversa é WhatsApp em `cloud_api`.
+Fechada: `open: false`, `remainingSeconds: 0`; `expiresAt`/`lastPatientMessageAt` são `null` se o
+paciente nunca escreveu. `remainingSeconds` vem do relógio do banco (o cliente só desconta o tempo
+desde a resposta, sem depender do próprio relógio). `null` em `qr`, `direct`, `web` ou laboratório
+sem linha de canal. Derivado da última mensagem **não apagada** do paciente + 24 h, nunca gravado.
+
 **`patientHasWritten` (CRMLAB-134, D-305)** — `true` quando a conversa tem ao menos uma mensagem
 do paciente (`senderType: "patient"`). Sempre presente, na lista e no detalhe. `false` = enviar
 para ela é **primeiro contato** (a tela avisa; o limite da D-306 pode recusar).
@@ -811,8 +820,16 @@ mensagem pelo canal WhatsApp do laboratório, pelo **mesmo** `MessageService.cre
   `normalizeBrazilianPhone` (`@crm-lab/shared`): com ou sem máscara, com ou sem o `55`; DDD
   (dois dígitos de 1 a 9) + 9 dígitos começando por 9 (celular) ou 8 dígitos começando de 2 a 9.
   É normalizado para E.164 (`+5548999991234`) antes de procurar duplicata
-- `content`: obrigatório, 1..4000 caracteres (trim aplicado) — o mesmo limite de
-  `POST /conversations/:id/messages`
+- `content`: 1..4000 caracteres (trim aplicado) — o mesmo limite de
+  `POST /conversations/:id/messages`. **Exclusivo de `template`** (exatamente um dos dois).
+- `template` (CRMLAB-136, D-309): `{ name, language, variables: string[] }`, o mesmo de
+  `POST /conversations/:id/messages`. É o primeiro contato pela Cloud API (vale fora da janela).
+  Credencial e modelo são conferidos **antes** de criar a conversa do número novo: modelo fora da
+  lista aprovada (`NOT_FOUND`, `whatsapp_template`), variáveis erradas ou laboratório em `qr`
+  (`VALIDATION_ERROR`) não deixam conversa vazia. Com `template`, `CHANNEL_CLOUD_API_NOT_CONFIGURED`
+  (409) e `CHANNEL_CLOUD_API_UNAVAILABLE` (503) também podem vir **antes** de criar — então **sem**
+  `conversationId`/`created`: nada existe. O 503 com `details.reason: "meta_unreachable"` é a Meta
+  fora do ar ao conferir o modelo (não a instalação).
 
 **Comportamento (D-175):**
 - **Número que já tem conversa no laboratório → reaproveita**, nunca duplica. O dedupe é o de
@@ -839,10 +856,11 @@ mensagem pelo canal WhatsApp do laboratório, pelo **mesmo** `MessageService.cre
 }
 ```
 
-**Erros:** `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — `details: { limit, retryAt, conversationId }`: a conversa fica criada, sem mensagem), `VALIDATION_ERROR` (400 — `details.fields.phone` / `details.fields.content`),
-`CONVERSATION_ALREADY_ASSIGNED` (409, `details: { assignedTo, assignedToName }`),
-`MESSAGE_SEND_FAILED` (502, `details: { messageId, conversationId }` — canal indisponível, sem
-credencial ou desligado: a conversa **fica criada** e a mensagem gravada como `failed`, como em
+**Erros:** `WHATSAPP_WINDOW_CLOSED` (409, D-310 — `details: { conversationId, lastPatientMessageAt, windowClosedAt, created }`; conversa já existente (`created: false`): nada muda, nem reabre nem troca o canal; número novo: a conversa fica criada, sem mensagem), `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — `details: { limit, retryAt, conversationId, created }`: a conversa fica criada, sem mensagem), `VALIDATION_ERROR` (400 — `details.fields.phone` / `details.fields.content`),
+`CONVERSATION_ALREADY_ASSIGNED` (409, `details: { assignedTo, assignedToName }` — ativa de outro atendente: sai **antes** da credencial e da janela, sem `conversationId`),
+`CHANNEL_CLOUD_API_UNAVAILABLE` (503, D-308 — produção sem `WHATSAPP_API_URL`; `details: { conversationId, created }`), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308 — `details: { missing, conversationId, created }`). Nos quatro, `created: true` = número novo, a conversa fica
+criada, sem mensagem; `created: false` = conversa que já existia, nada muda nela, `MESSAGE_SEND_FAILED` (502, `details: { messageId, conversationId }` — canal indisponível ou
+desligado (em `cloud_api`, falta de credencial é o 409 acima, antes de gravar): a conversa **fica criada** e a mensagem gravada como `failed`, como em
 `POST /conversations/:id/messages`; `conversationId` existe para a tela abrir a conversa mesmo
 assim), `FORBIDDEN` (403, `platform_operator`).
 
@@ -1088,6 +1106,29 @@ Enviar mensagem em uma conversa.
   (Evolution `quoted`, Cloud API `context.message_id`); se a original não tem id externo, sai sem
   a citação para o canal e continua citada no CRM.
 
+- `template` (opcional, objeto — CRMLAB-136, D-309): **só no canal WhatsApp em `cloud_api`**. Shape
+  `{ "name": "lembrete_coleta", "language": "pt_BR", "variables": ["Maria", "12/11"] }`, **exclusivo de
+  `content`** (os dois juntos → `VALIDATION_ERROR`). `name`+`language` têm de estar na lista de
+  `GET /whatsapp/templates` (senão `NOT_FOUND`, `details.resource: "whatsapp_template"`);
+  `variables` tem exatamente uma string não vazia por `{{n}}` do corpo, máx. 1024 cada, sem quebra
+  de linha, tab nem 5+ espaços seguidos (a Meta recusa, 132018), e o corpo **já preenchido** cabe em
+  1024 caracteres (senão `VALIDATION_ERROR`, sempre em `details.fields["template.variables"]`). A mensagem gravada tem `content` =
+  corpo já preenchido, `messageType: "text"` e `template: { name, language, category }` na resposta
+  (`Message.template`; `null` em texto livre). Em `qr`, `template` → `VALIDATION_ERROR`
+  (`fields.template`). Com `template` não vão `quotedMessageId`, `attachmentUrl` nem `messageType`
+  (`VALIDATION_ERROR`). O modelo é conferido na pré-checagem, **antes** de reabrir a encerrada ou
+  assumir a fila (D-273), e depois da credencial (ordem: `CHANNEL_CLOUD_API_NOT_CONFIGURED` →
+  modelo → janela). Resposta de participante por modelo não leva o `*Nome*` (o texto é o aprovado).
+  O **"tentar de novo"** de uma mensagem por modelo reenvia o **mesmo** modelo com as mesmas
+  variáveis (guardadas em `messages.template_variables`) e não depende da janela; com o canal já
+  em `qr`, `VALIDATION_ERROR` (`fields.template`) e a mensagem continua `failed`. Meta fora do ar
+  ao conferir o modelo: `CHANNEL_CLOUD_API_UNAVAILABLE` (503, `details.reason: "meta_unreachable"`),
+  nada gravado.
+- **Janela de 24 h (CRMLAB-137, D-310):** em `cloud_api`, sem `template`, só sai se a última mensagem
+  do paciente tem menos de 24 h; senão `WHATSAPP_WINDOW_CLOSED` (409). Nada é gravado nem enviado.
+  Com `template`, a janela não importa. A regra vale igual para `/attachments`, para o "tentar de
+  novo" e para o cartão (`/proposals/:id/send`, `/resend`). Em `qr` não existe.
+
 O recorte por papel é aplicado **antes** de escrever: conversa que o usuário não
 enxerga devolve `NOT_FOUND`.
 
@@ -1124,7 +1165,7 @@ pelo cartão (`POST /proposals/:id/send`, `POST /proposals/:id/resend`), que usa
 }
 ```
 
-**Erros:** `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — primeiro contato acima do teto da hora; `details: { limit, retryAt }`), `VALIDATION_ERROR` (400), `NOT_FOUND` (404),
+**Erros:** `WHATSAPP_WINDOW_CLOSED` (409, D-310 — `cloud_api`, texto livre fora das 24 h; `details: { conversationId, lastPatientMessageAt, windowClosedAt }`), `CHANNEL_CLOUD_API_UNAVAILABLE` (503, D-308 — produção sem `WHATSAPP_API_URL`; nada gravado), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308 — `cloud_api` sem `phone_number_id`/`waba_id`/token), `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — primeiro contato acima do teto da hora; `details: { limit, retryAt }`), `VALIDATION_ERROR` (400), `NOT_FOUND` (404),
 `CONVERSATION_ALREADY_ASSIGNED` (409, conversa da fila livre assumida por outra pessoa no mesmo
 instante — D-215 — ou encerrada reaberta por outra pessoa no mesmo instante — D-273), `MESSAGE_SEND_FAILED` (502, canal externo falhou após os retries), `FORBIDDEN`
 (403, `platform_operator`)
@@ -1215,10 +1256,27 @@ contêineres — D-234 item 8). No CRM os quatro ficam `video`.
 }
 ```
 
-**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404), `CONVERSATION_ALREADY_ASSIGNED` (409,
-D-215/D-273), `MEDIA_TOO_LARGE` (413, acima do teto de 15 MiB), `MESSAGE_SEND_FAILED` (502, canal
-externo falhou após os retries — a WhatsApp Cloud API `cloud_api` ainda não envia
-mídia, só o gateway Evolution `qr`), `FORBIDDEN` (403, `platform_operator`)
+**Cloud API (`cloud_api`, CRMLAB-140, D-314):** o arquivo sobe para a Meta (`POST /{phone_number_id}/media`)
+e a mensagem sai por id de mídia. Formatos aceitos, conferidos **depois** da preparação (imagem já em
+JPEG, D-290): imagem JPEG/PNG até 5 MB; áudio AAC, AMR, MP3, MP4, OGG até 16 MB; vídeo MP4/3GP até
+16 MB; documento PDF, Word, Excel, PowerPoint e TXT. Recado de voz `audio/webm` é convertido para
+OGG/Opus (ffmpeg) no envio; o CRM guarda e mostra o original. Ordem das checagens em `cloud_api`:
+validação do arquivo (allow-list, teto de 15 MiB) → **formato da Meta** (`VALIDATION_ERROR` com
+`details.reason: "cloud_api_media_type"` e `fields.mimeType` listando os aceitos — inclui GIF e PNG
+**animados**; imagem acima de 5 MB → `MEDIA_TOO_LARGE` com `details.reason:
+"cloud_api_image_limit"`, `details.max: 5242880`) → `CHANNEL_CLOUD_API_NOT_CONFIGURED` →
+`WHATSAPP_WINDOW_CLOSED` (D-310) → `MESSAGE_SEND_FAILED` (upload ou envio recusado pela Meta, ou
+conversão do áudio que falhou). O formato vem antes da janela para a atendente saber que o
+problema é o arquivo. Nenhuma recusa antes do envio grava nada nem reabre a conversa. O "tentar de
+novo" de um anexo (`POST .../retry`) confere o formato da Meta do mesmo jeito (anexo gravado no QR e
+reenviado depois da troca → 400 com o motivo). Envio de anexo pela Meta: no máximo **2 tentativas**
+(upload 12 s + envio 10 s cada; conversão do áudio, 15 s, fora delas), para caber nos 60 s do proxy.
+
+**Erros:** `WHATSAPP_WINDOW_CLOSED` (409, D-310), `CHANNEL_CLOUD_API_UNAVAILABLE` (503, D-308 — produção sem `WHATSAPP_API_URL`; nada gravado), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308),
+`VALIDATION_ERROR` (400), `NOT_FOUND` (404), `CONVERSATION_ALREADY_ASSIGNED` (409,
+D-215/D-273), `MEDIA_TOO_LARGE` (413, acima do teto de 15 MiB, ou imagem acima de 5 MB em
+`cloud_api`), `MESSAGE_SEND_FAILED` (502, canal externo falhou após os retries), `FORBIDDEN` (403,
+`platform_operator`)
 
 ### PUT /conversations/:id/messages/:messageId/reaction · DELETE (CRMLAB-66, D-222)
 Reagir a uma mensagem com um emoji (a barra rápida da tela: 👍 ❤️ 💚 😂 😮 😢 🙏). A reação é
@@ -1286,7 +1344,7 @@ original, e termina `sent` ou de novo `failed`. Anexo relê o arquivo guardado
 
 **Response (200):** a `Message` (objeto cru, D-070) com `status: "sent"`.
 
-**Erros:** `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — primeiro contato acima do teto da hora; `details: { limit, retryAt }`), `NOT_FOUND` (404 — conversa fora do recorte, mensagem de outra conversa ou de outro
+**Erros:** `WHATSAPP_WINDOW_CLOSED` (409, D-310 — `details: { conversationId, lastPatientMessageAt, windowClosedAt }`; a linha continua `failed`), `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — primeiro contato acima do teto da hora; `details: { limit, retryAt }`), `CHANNEL_CLOUD_API_UNAVAILABLE` (503, D-308 — produção sem `WHATSAPP_API_URL`; nada gravado), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308 — `details: { missing }`; a linha continua `failed`, não passa a `pending`), `NOT_FOUND` (404 — conversa fora do recorte, mensagem de outra conversa ou de outro
 tenant), `CONFLICT` (409 — a mensagem não é do atendimento, não está `failed` ou o atendimento
 está encerrado), `MESSAGE_SEND_FAILED` (502 — falhou de novo; a linha continua `failed`; também
 quando o arquivo do anexo sumiu do disco), `VALIDATION_ERROR` (400, id não-uuid), `FORBIDDEN`
@@ -1495,8 +1553,9 @@ Não usam JWT: **quem autentica é a assinatura HMAC**. Verificada ANTES de qual
 processamento e antes de qualquer escrita (SECURITY.md "Webhooks").
 
 ```
-POST /webhooks/whatsapp/:tenant          mensagem recebida
-POST /webhooks/whatsapp/:tenant/status   callback de status de entrega
+GET  /webhooks/whatsapp/:tenant          verificação da URL pela Meta (CRMLAB-139)
+POST /webhooks/whatsapp/:tenant          mensagem recebida E status (a Meta manda os dois aqui)
+POST /webhooks/whatsapp/:tenant/status   callback de status de entrega (compatibilidade)
 POST /webhooks/whatsapp                  idem, com `tenantSlug` no corpo
 POST /webhooks/whatsapp/status
 ```
@@ -1513,7 +1572,9 @@ constante (`crypto.timingSafeEqual`).
 
 **Request (formato Meta):** `entry[].changes[].value.messages[]` /
 `entry[].changes[].value.statuses[]`. O formato simplificado
-`{ "from", "text", "externalId" }` também é aceito (é o que o driver mock produz em dev).
+`{ "from", "text", "externalId" }` (o que o driver mock produz em dev) é aceito **só com o driver
+mock** (D-308 item 5) e **só sem `entry`** no corpo: corpo com `entry[]` é sempre lido como da
+Meta, mesmo vazio ou todo descartado (ver "Conferência do número" na seção da Cloud API).
 
 **Response (sempre):**
 ```json
@@ -1534,6 +1595,75 @@ Efeitos do caminho autenticado:
 
 **Idempotente:** reentrega com o mesmo `id` de mensagem (`external_message_id`) não
 duplica linha nem evento.
+
+#### Cloud API (Meta) — verificação, status e mensagem (CRMLAB-139, D-311)
+
+**Handshake de verificação** (configuração do webhook no painel da Meta):
+```
+GET /webhooks/whatsapp/:tenant?hub.mode=subscribe&hub.verify_token=<t>&hub.challenge=<c>
+```
+`hub.verify_token` igual (tempo constante) a `WHATSAPP_WEBHOOK_VERIFY_TOKEN` → `200`, corpo
+`text/plain` = `<c>`. Qualquer outro caso (token errado, env ausente, canal `isActive: false`,
+tenant desconhecido, `hub.mode` diferente, `hub.challenge` fora de `[A-Za-z0-9._-]{1,256}` ou
+repetido) → `403` sem corpo. **Única exceção** à regra "200 em
+todos os caminhos" acima, e só neste `GET`: a Meta exige o eco.
+
+**Assinatura do `POST`:** inalterada — HMAC-SHA256 do corpo cru em `x-hub-signature-256`, com o
+`webhook_secret` do laboratório ou, na falta, `WHATSAPP_WEBHOOK_SECRET` (App Secret do app Meta).
+
+**Conferência do número (falha fechado):** `entry[].changes[].value.metadata.phone_number_id` tem
+de ser o `phone_number_id` do laboratório resolvido por `:tenant`; divergente ou **ausente** →
+aquele `value` é descartado (log), `200`. Laboratório **sem** `phone_number_id` configurado não
+recebe aviso no formato da Meta (`entry[]`): tudo descartado (log). Motivo: o segredo do HMAC pode
+ser o App Secret da instalação inteira, e o número é o que separa um laboratório do outro.
+**Formato plano** (`{ from, text }`, sem `entry[]`) só é aceito com o driver mock (mesma regra do
+envio, D-308 item 5); com a URL real da Meta, descartado (log).
+
+**Anti-replay:** o aviso no formato da Meta **não** passa pela guarda de corpo repetido (D-149): a
+Meta reentrega o mesmo corpo byte a byte quando não recebeu o `200`, e a idempotência vem do
+`external_message_id` (mensagens) e da ordem sem regressão (status).
+
+**Mapeamento de status** (`value.statuses[]`, casa por `id` = `messages.external_message_id` **e
+`tenant_id`**; desconhecido → ignorado com log):
+
+| `status` da Meta | `messages.status` | Regra |
+|---|---|---|
+| `sent` | `sent` | só a partir de `pending` |
+| `delivered` | `delivered` | só a partir de `pending`/`sent` |
+| `read` | `read` | de qualquer anterior; grava `read_at` |
+| `failed` | `failed` | só a partir de `pending`/`sent`; `errors[0].code` vai ao log |
+
+**Nunca rebaixa** (ordem `pending < sent < delivered < read`; `failed` não sobrescreve
+`delivered`/`read`) — D-225. Cada mudança emite `message.status_updated` no WS. Se o status traz
+`pricing.category` ∈ `service | utility | marketing | authentication`, grava `messages.pricing_category`
+(D-312, CRMLAB-141) — mesmo quando o status em si é repetido ou não sobe; outro valor é ignorado
+com log.
+
+**Mensagens e status no mesmo aviso:** a Meta manda tudo para `POST /webhooks/whatsapp/:tenant`;
+o mesmo `POST` trata `value.messages[]` e `value.statuses[]` (a rota `/status` segue aceitando
+status, por compatibilidade).
+
+**Mensagem do paciente** (`value.messages[]`): mesmo caminho de sempre (`findOrCreateByPhone` +
+`createFromPatient`, D-033, idempotente por `external_message_id`), com `received_via = 'cloud_api'`
+(abre a janela de 24 h, D-310) e `context.id` → `quotedExternalId` (resposta citando, D-221). Todas
+entram como `messageType: "text"`, sem `attachmentUrl`:
+
+| `type` da Meta | `content` |
+|---|---|
+| `text` | `text.body` |
+| `button` (botão de modelo) | `button.text` |
+| `interactive` | `button_reply.title` ou `list_reply.title` (` — description`, quando há) |
+| `location` | `📍 <name ou address> (<lat>, <lng>)` |
+| `contacts` | `👤 <formatted_name> (<phone>)`, separados por vírgula |
+| `image`, `audio`, `voice`, `video`, `document`, `sticker` | **baixada da Meta** (D-314): `messageType` pelo MIME gravado, `attachmentUrl = /api/v1/media/:id`, `content` = legenda ou nome do arquivo (como no QR). Se o download não der certo (mock, acima de 15 MiB, erro, timeout): legenda + aviso `[Recebido pela API oficial: <tipo> — o anexo ainda não aparece no CRM. Se precisar, peça ao paciente que descreva por texto.]`, documento com o nome entre aspas |
+| `unsupported` e tipos novos | aviso de tipo que o CRM ainda não mostra |
+| `reaction` | **não é fala:** aplica/remove a reação do paciente na mensagem (D-222); alvo desconhecido → ignorado com log |
+| `system`, `request_welcome`, `ephemeral` | ignorados (não viram fala nem reabrem conversa) |
+
+**Download da mídia (D-314):** `GET /{media_id}` e `GET url`, com o Bearer do laboratório, 10 s por
+chamada; o token só vai para `https` da Meta (`graph.facebook.com`, `*.fbsbx.com`, `*.whatsapp.net`,
+`*.fbcdn.net`) ou para a origem de `WHATSAPP_API_URL`. Falha → aviso de texto acima (nunca perde a
+mensagem), log `whatsapp.inbound_media_fallback` com o motivo.
 
 ### Webhook do gateway Evolution (WhatsApp QR, Onda 7 — Bloco B) — PÚBLICO
 
@@ -2748,7 +2878,7 @@ cartão** (a mensagem fica na conversa como `failed`, como no atendimento).
 
 **Response (200):** o `ProposalDetail` atualizado.
 
-**Erros:** `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — primeiro contato acima do teto da hora; `details: { limit, retryAt }`), `VALIDATION_ERROR` (400); `NOT_FOUND` (404, proposta ou conversa de outro tenant ou
+**Erros:** `WHATSAPP_WINDOW_CLOSED` (409, D-310 — `details: { conversationId, lastPatientMessageAt, windowClosedAt }`; nada gravado, cartão intacto), `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — primeiro contato acima do teto da hora; `details: { limit, retryAt }`), `CHANNEL_CLOUD_API_UNAVAILABLE` (503, D-308 — produção sem `WHATSAPP_API_URL`; nada gravado), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308 — `details: { missing }`; nada gravado, cartão intacto), `VALIDATION_ERROR` (400); `NOT_FOUND` (404, proposta ou conversa de outro tenant ou
 fora da visibilidade); `FORBIDDEN` (403, `details.reason: "move_others_not_allowed"`);
 `PROPOSAL_EDIT_NOT_ALLOWED` (409, `details.reason: "crm_origin"`); `INVALID_STATUS_TRANSITION`
 (400, cartão fora de `novo_contato`); `PROPOSAL_ALREADY_CLOSED` (409);
@@ -2770,7 +2900,8 @@ Audit `resend_proposal_message` (`newValues: { conversationId, messageId }`).
 **Erros:** `VALIDATION_ERROR`, `NOT_FOUND`, `FORBIDDEN` (`details.reason: "not_owner"`),
 `PROPOSAL_EDIT_NOT_ALLOWED` (`details.reason: "crm_origin"` ou `"not_sent"`),
 `INVALID_STATUS_TRANSITION` (fora dos três estágios), `PROPOSAL_ALREADY_CLOSED`,
-`CONVERSATION_ARCHIVED`, `MESSAGE_SEND_FAILED`.
+`CONVERSATION_ARCHIVED`, `WHATSAPP_WINDOW_CLOSED` (409, D-310 — `details: { conversationId, lastPatientMessageAt, windowClosedAt }`; nada gravado), `CHANNEL_CLOUD_API_UNAVAILABLE` (503, D-308 — produção sem `WHATSAPP_API_URL`; nada gravado), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308 — `details: { missing }`;
+nada gravado), `MESSAGE_SEND_FAILED`.
 
 ### PATCH /proposals/:id/conversation (CRMLAB-58, D-202)
 Troca a conversa vinculada de um cartão `bitlab` já enviado e não fechado. Não envia mensagem.
@@ -4446,6 +4577,15 @@ PATCH parcial: chave ausente permanece. Corpo vazio (`{}`) ou campo desconhecido
 }
 ```
 
+**Campos de WhatsApp Cloud API (CRMLAB-135, D-308):** `channels[]` aceita também `wabaId` (string
+anulável, máx. 64, em claro como `phoneNumberId`); o `GET` devolve, no item `whatsapp`,
+`connectionMode` (`cloud_api | qr`), `wabaId` e `cloudApiConfigured` (`true` quando
+`phoneNumberId`, `wabaId` e token existem). `connectionMode` **não** é aceito no `PATCH`: a troca é
+`PUT /settings/channels/whatsapp/mode` (§6.2). `apiToken` segue write-only e cifrado (D-076).
+No item `whatsapp`, `apiToken` (PATCH) e `apiTokenMasked` (GET) são **o token da Meta**
+(`cloud_api_token`, D-308 item 3); a apikey da instância Evolution do QR nunca aparece nem conta
+como token. Gravar o token da Meta em `qr` não mexe no pareamento do QR.
+
 **`channels[]` é upsert pela chave `channel`** (não pelo `id`): `UNIQUE (tenant_id, channel)`
 garante uma linha por canal, e a tela edita "o WhatsApp do laboratório", não uma linha por id.
 Canal ausente do array **não** é apagado — não existe remoção de canal nesta rota; desligar é
@@ -4590,6 +4730,107 @@ emite `loggedOut` pelo webhook → o CRM marca desconectado do mesmo jeito. A UI
 desconexão voluntária de banimento — o termo de aceite avisa disso antecipadamente.
 
 **Erros:** `FORBIDDEN` (403), `CHANNEL_QR_UNAVAILABLE` (503)
+
+### 6.2 WhatsApp Cloud API — modo, templates e custo (CRMLAB-135, D-308..D-312)
+
+Todas as rotas filtram por `tenant_id` do token, entram no inventário de isolamento e rejeitam
+`platform_operator` (`denyPlatformOperator()`). Shapes em `shared/types/` (frente de código).
+
+#### PUT /settings/channels/whatsapp/mode (admin apenas)
+Troca `tenant_channels.connection_mode` do WhatsApp do laboratório (D-308).
+
+**Request:** `{ "mode": "cloud_api" }` ou `{ "mode": "qr" }`.
+
+- Para `cloud_api`: exige `phoneNumberId`, `wabaId` e token da Meta já gravados (pelo `PATCH`),
+  senão `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, `details.missing: ["wabaId", ...]`). **Sem
+  `WHATSAPP_API_URL`** (vazia ou só espaços): fora de produção, ou em produção com
+  `WHATSAPP_CLOUD_API_MOCK=true` (só a hml), é mock e troca sem exigir credencial; em produção sem
+  essa variável, `CHANNEL_CLOUD_API_UNAVAILABLE` (503) — não há para onde enviar (D-308 item 5).
+- **Idempotência vence:** já em `cloud_api`, `PUT {mode:"cloud_api"}` devolve 200 sem efeito mesmo
+  sem credenciais (`cloudApiConfigured` diz a verdade). A recusa só vale para quem está trocando.
+- **`connected_at` não muda no PUT:** continua sendo do provedor (QR pareado ou primeiro token da
+  Meta). A tela não usa essa coluna para decidir o modo. A apikey do
+  QR não conta como token. A troca é reversível: ir para `qr` não apaga as credenciais da Meta, e
+  voltar para `cloud_api` não exige digitá-las de novo.
+- Para `qr`: exige `accepted_terms_at` gravado (termo do §6.1), senão `VALIDATION_ERROR`
+  (`details.fields.acceptTerms`); depois é preciso `POST .../connect` para parear (o modo muda, a
+  sessão não nasce sozinha).
+- **Não apaga mensagens, conversas nem mídia**, não chama o gateway Evolution e não mexe em
+  `is_active`. Idempotente (mesmo modo = 200 sem efeito). Audit log `update_whatsapp_mode`
+  (`oldValues`/`newValues` com o modo; nunca segredo). Invalida o cache de templates (quando o
+  cache existir — CRMLAB-136).
+
+**Response (200):** `{ "connectionMode": "cloud_api", "cloudApiConfigured": true }`
+
+**Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403, `requiredRoles: ["admin"]`),
+`CHANNEL_CLOUD_API_NOT_CONFIGURED` (409), `CHANNEL_CLOUD_API_UNAVAILABLE` (503, produção sem
+`WHATSAPP_API_URL` e sem o mock liberado)
+
+#### GET /whatsapp/templates (CRMLAB-136, D-309)
+Templates aprovados do laboratório, para o Composer. **Papéis:** `attendant`, `manager`, `admin`.
+Busca na Meta (`GET /{waba_id}/message_templates`, todas as páginas, `paging.next` só da mesma
+origem da URL configurada), filtra `APPROVED` + `MARKETING|UTILITY`, só **um** componente `BODY` de
+texto (cabeçalho, rodapé, botão e mídia omitidos) com variáveis **posicionais** `{{1}}..{{n}}` sem
+buraco (formato nomeado omitido). `example` vem de `example.body_text[0]` (ou `null`). Cache de 5 min
+por laboratório, **o mesmo** para esta lista e para a conferência do envio (a tela e o servidor
+veem a mesma lista); a chave inclui uma impressão das credenciais (modo, URL, WABA, token), então
+trocar credencial ou modo invalida sozinho. Meta fora do ar: 503 com `details.reason:
+"meta_unreachable"`.
+
+**Response (200):**
+```json
+{
+  "templates": [
+    {
+      "name": "lembrete_coleta",
+      "language": "pt_BR",
+      "category": "utility",
+      "body": "Olá {{1}}, sua coleta está agendada para {{2}}.",
+      "variables": [{ "index": 1, "example": "Maria" }, { "index": 2, "example": "12/11" }]
+    }
+  ]
+}
+```
+Laboratório em `qr` → `{ "templates": [] }` (não é erro). Ordem `name ASC, language ASC`.
+
+**Erros:** `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409), `CHANNEL_CLOUD_API_UNAVAILABLE` (503, Meta fora
+do ar ou recusou o token), `FORBIDDEN` (403)
+
+#### GET /settings/channels/whatsapp/usage?month=YYYY-MM (CRMLAB-141, D-312)
+Uso e custo **estimado** do mês (default: mês corrente, America/Sao_Paulo). **Papéis:** `manager`, `admin`.
+
+**Response (200):**
+```json
+{
+  "month": "2026-11",
+  "currency": "BRL",
+  "freeServiceAllowance": 1000,
+  "categories": [
+    { "category": "service", "count": 1240, "freeCount": 1000, "unitPrice": 0.035, "cost": 8.40 },
+    { "category": "utility", "count": 60, "freeCount": 0, "unitPrice": 0.035, "cost": 2.10 },
+    { "category": "marketing", "count": 10, "freeCount": 0, "unitPrice": 0.3217, "cost": 3.22 },
+    { "category": "authentication", "count": 0, "freeCount": 0, "unitPrice": 0.035, "cost": 0 }
+  ],
+  "totalCost": 13.72,
+  "isEstimate": true
+}
+```
+Conta mensagens enviadas pelo CRM (`sender_type` `agent`/`system`) em `cloud_api`, status `sent` ou
+posterior (`failed` e `pending` não contam), agrupadas por `messages.pricing_category`. A franquia
+(1.000 `service`/mês/número; um número da Meta por laboratório, então é a do laboratório; valor em
+`WHATSAPP_FREE_SERVICE_MONTHLY`) é abatida por ordem de `created_at`; `unitPrice` é a linha de
+`whatsapp_price_table` vigente na data de cada mensagem (se o mês cruza uma mudança de preço, o
+item traz `unitPrice` do último vigente — o do fim do mês, ou de hoje no mês corrente — e o custo soma
+por mensagem). `categories` traz sempre as quatro, nesta ordem; `cost` e `totalCost` com 2 casas
+(`totalCost` = soma dos `cost`). Mês civil de America/Sao_Paulo. `month` fora de `AAAA-MM`, repetido
+na query, anterior a 2000 ou futuro → `VALIDATION_ERROR`.
+
+**Quando a categoria é gravada:** na confirmação do envio que saiu **pela Cloud API** (texto, anexo,
+"tentar de novo" e cartão): `template_category` se é modelo, senão `service`. Envio que falhou não
+ganha categoria; o que sai pelo `qr` fica `NULL` (inclusive o "tentar de novo" de uma mensagem que
+tinha saído pela Meta, depois de voltar para o QR). O `pricing.category` do status da Meta corrige (§2b). É estimativa, **não** a fatura da Meta.
+
+**Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403, `requiredRoles: ["manager","admin"]`)
 
 ---
 

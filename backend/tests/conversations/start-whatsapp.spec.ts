@@ -394,4 +394,213 @@ describe('POST /conversations/whatsapp', () => {
     const failed = detail.body.messages.find((m: { id: string }) => m.id === messageId);
     expect(failed).toMatchObject({ status: 'failed', content: 'Oi' });
   });
+
+  it('producao sem WHATSAPP_API_URL (D-308): 503 com conversationId, conversa criada e nenhuma mensagem', async () => {
+    const { env } = await import('../../src/config/env.js');
+    const original = { nodeEnv: env.NODE_ENV, url: env.WHATSAPP_API_URL, mock: env.WHATSAPP_CLOUD_API_MOCK };
+    env.NODE_ENV = 'production';
+    env.WHATSAPP_API_URL = '';
+    env.WHATSAPP_CLOUD_API_MOCK = undefined;
+    try {
+      const tenant = await createTenant();
+      const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });
+      const response = await app.agent
+        .post(URL)
+        .set(app.auth(ana))
+        .send({ phone: '(48) 99999-1234', content: 'Oi' })
+        .expect(503);
+      expect(response.body.error.code).toBe('CHANNEL_CLOUD_API_UNAVAILABLE');
+      expect(response.body.error.details).toEqual({ conversationId: expect.any(String), created: true });
+      expect(await countConversations(tenant.id)).toBe(1);
+      expect(await countMessages(tenant.id)).toBe(0);
+    } finally {
+      env.NODE_ENV = original.nodeEnv;
+      env.WHATSAPP_API_URL = original.url;
+      env.WHATSAPP_CLOUD_API_MOCK = original.mock;
+    }
+  });
+
+  it('cloud_api (D-310): conversa encerrada do numero com a janela fechada — 409 e NADA muda', async () => {
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });
+    const bia = await createUser({ tenantId: tenant.id, role: 'attendant' });
+    const db = await getTestDb();
+    await db.withoutTenant((tx) =>
+      tx.query(
+        `INSERT INTO tenant_channels (tenant_id, channel, connection_mode) VALUES ($1, 'whatsapp', 'cloud_api')`,
+        [tenant.id],
+      ),
+    );
+    const antiga = await createConversation({
+      tenantId: tenant.id,
+      assignedTo: bia.id,
+      status: 'closed',
+      channel: 'direct',
+      patientPhone: '+5548999991234',
+    });
+    const before = await countMessages(tenant.id);
+
+    const response = await app.agent
+      .post(URL)
+      .set(app.auth(ana))
+      .send({ phone: '(48) 99999-1234', content: 'Oi' })
+      .expect(409);
+
+    expect(response.body.error.code).toBe('WHATSAPP_WINDOW_CLOSED');
+    expect(response.body.error.details.conversationId).toBe(antiga.id);
+    expect(response.body.error.details.created).toBe(false);
+    const row = await db.withoutTenant((tx) =>
+      tx.query<{ status: string; assigned_to: string | null; channel: string }>(
+        'SELECT status, assigned_to, channel FROM conversations WHERE id = $1',
+        [antiga.id],
+      ),
+    );
+    // Não reabriu, não trocou de dona nem de canal, não ganhou "Atendimento reaberto".
+    expect(row.rows[0]).toEqual({ status: 'closed', assigned_to: bia.id, channel: 'direct' });
+    expect(await countMessages(tenant.id)).toBe(before);
+  });
+
+  it('cloud_api (D-310): conversa ATIVA de outro canal com a janela fechada — 409, canal e auditoria intactos', async () => {
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });
+    const db = await getTestDb();
+    await db.withoutTenant((tx) =>
+      tx.query(
+        `INSERT INTO tenant_channels (tenant_id, channel, connection_mode) VALUES ($1, 'whatsapp', 'cloud_api')`,
+        [tenant.id],
+      ),
+    );
+    const web = await createConversation({
+      tenantId: tenant.id,
+      assignedTo: ana.id,
+      channel: 'direct',
+      patientPhone: '+5548999991234',
+    });
+    await db.withoutTenant((tx) =>
+      tx.query(
+        `INSERT INTO messages (id, tenant_id, conversation_id, sender_type, content, message_type, status, created_at)
+         VALUES (gen_random_uuid(), $1, $2, 'patient', 'oi', 'text', 'sent', NOW() - interval '30 hours')`,
+        [tenant.id, web.id],
+      ),
+    );
+    const before = await countMessages(tenant.id);
+
+    const response = await app.agent
+      .post(URL)
+      .set(app.auth(ana))
+      .send({ phone: '(48) 99999-1234', content: 'Oi' })
+      .expect(409);
+
+    expect(response.body.error.code).toBe('WHATSAPP_WINDOW_CLOSED');
+    expect(response.body.error.details).toMatchObject({ conversationId: web.id, created: false });
+    const row = await db.withoutTenant((tx) =>
+      tx.query<{ channel: string }>('SELECT channel FROM conversations WHERE id = $1', [web.id]),
+    );
+    expect(row.rows[0]?.channel).toBe('direct');
+    expect(await auditActions(app, web.id)).not.toContain('update_conversation_channel');
+    expect(await countMessages(tenant.id)).toBe(before);
+    expect(driver.mock.sent).toHaveLength(0);
+  });
+
+  it('cloud_api (D-310): ativa de OUTRA atendente com a janela fechada — sai CONVERSATION_ALREADY_ASSIGNED, sem conversationId', async () => {
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });
+    const bia = await createUser({ tenantId: tenant.id, role: 'attendant', name: 'Bia' });
+    const db = await getTestDb();
+    await db.withoutTenant((tx) =>
+      tx.query(
+        `INSERT INTO tenant_channels (tenant_id, channel, connection_mode) VALUES ($1, 'whatsapp', 'cloud_api')`,
+        [tenant.id],
+      ),
+    );
+    await createConversation({
+      tenantId: tenant.id,
+      assignedTo: bia.id,
+      channel: 'whatsapp',
+      patientPhone: '+5548999991234',
+    });
+
+    const response = await app.agent
+      .post(URL)
+      .set(app.auth(ana))
+      .send({ phone: '(48) 99999-1234', content: 'Oi' })
+      .expect(409);
+
+    expect(response.body.error.code).toBe('CONVERSATION_ALREADY_ASSIGNED');
+    expect(response.body.error.details.assignedToName).toBe('Bia');
+    expect(response.body.error.details.conversationId).toBeUndefined();
+    expect(driver.mock.sent).toHaveLength(0);
+  });
+
+  it('cloud_api (D-310): numero novo nunca escreveu, janela fechada — 409 com conversationId', async () => {
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });
+    const db = await getTestDb();
+    await db.withoutTenant((tx) =>
+      tx.query(
+        `INSERT INTO tenant_channels (tenant_id, channel, connection_mode) VALUES ($1, 'whatsapp', 'cloud_api')`,
+        [tenant.id],
+      ),
+    );
+
+    const response = await app.agent
+      .post(URL)
+      .set(app.auth(ana))
+      .send({ phone: '(48) 99999-1234', content: 'Oi' })
+      .expect(409);
+
+    expect(response.body.error.code).toBe('WHATSAPP_WINDOW_CLOSED');
+    expect(response.body.error.details).toMatchObject({
+      conversationId: expect.any(String),
+      lastPatientMessageAt: null,
+      windowClosedAt: null,
+      created: true,
+    });
+    expect(await countConversations(tenant.id)).toBe(1);
+    expect(await countMessages(tenant.id)).toBe(0);
+    expect(driver.mock.sent).toHaveLength(0);
+  });
+
+  it('cloud_api sem credencial (D-308): 409 com conversationId, conversa criada e nenhuma mensagem', async () => {
+    const db = await getTestDb();
+    const base = testCredentialsResolver(new Map());
+    const semCredencial = await createTestApp({
+      db,
+      modules: [
+        makeConversationModule({
+          whatsapp: new WhatsAppService({
+            credentials: {
+              forTenant: async (tenantId) => ({
+                ...(await base.forTenant(tenantId)),
+                apiUrl: 'https://graph.test',
+                apiToken: '',
+              }),
+              byWebhookIdentity: base.byWebhookIdentity,
+            },
+            driver,
+            queue: createInMemoryQueue({ sleep: async () => undefined }),
+            attempts: 1,
+          }),
+        }),
+      ],
+    });
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });
+
+    const response = await semCredencial.agent
+      .post(URL)
+      .set(semCredencial.auth(ana))
+      .send({ phone: '(48) 99999-1234', content: 'Oi' })
+      .expect(409);
+
+    expect(response.body.error.code).toBe('CHANNEL_CLOUD_API_NOT_CONFIGURED');
+    expect(response.body.error.details).toEqual({
+      missing: ['wabaId', 'apiToken'],
+      conversationId: expect.any(String),
+      created: true,
+    });
+    expect(await countConversations(tenant.id)).toBe(1);
+    expect(await countMessages(tenant.id)).toBe(0);
+    expect(driver.mock.sent).toHaveLength(0);
+  });
 });

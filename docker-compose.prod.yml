@@ -189,8 +189,13 @@ services:
       # a mais e o erro perigoso: o cliente volta a forjar a origem (D-057).
       TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
       WHATSAPP_API_URL: ${WHATSAPP_API_URL:-}
+      # So a hml liga (`true`): Cloud API em mock no laboratorio de treinamento (CRMLAB-138).
+      WHATSAPP_CLOUD_API_MOCK: ${WHATSAPP_CLOUD_API_MOCK:-}
       WHATSAPP_API_TOKEN: ${WHATSAPP_API_TOKEN:-}
       WHATSAPP_WEBHOOK_SECRET: ${WHATSAPP_WEBHOOK_SECRET:-}
+      # Verificacao da URL do webhook no painel da Meta (CRMLAB-139, D-311).
+      WHATSAPP_WEBHOOK_VERIFY_TOKEN: ${WHATSAPP_WEBHOOK_VERIFY_TOKEN:-}
+      WHATSAPP_FREE_SERVICE_MONTHLY: ${WHATSAPP_FREE_SERVICE_MONTHLY:-}
       # Gateway Evolution API (D-083, Onda 7 Bloco B) — conexao WhatsApp por QR.
       # As tres vazias = funcionalidade desligada com erro claro
       # (CHANNEL_QR_UNAVAILABLE), nunca crash de boot; WHATSAPP_API_* acima

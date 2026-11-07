@@ -87,6 +87,13 @@ export interface ChannelRow {
   updatedAt: string;
   /** `cloud_api` | `qr` (Onda 7, Bloco B — SCHEMA.md §15). */
   connectionMode: string;
+  /** Id da conta WhatsApp Business (Meta). Nao e segredo. */
+  wabaId: string | null;
+  /**
+   * `phone_number_id`, `waba_id` e token da Meta gravados (D-308 item 4). So
+   * faz sentido no `whatsapp`; nos outros canais e sempre `false`.
+   */
+  cloudApiConfigured: boolean;
   /** Aceite do termo de risco do QR. `null` = nunca aceito. */
   acceptedTermsAt: string | null;
 }
@@ -125,6 +132,7 @@ export async function listChannels(tx: DbTx, tenantId: string): Promise<ChannelR
     connected_at: unknown;
     updated_at: unknown;
     connection_mode: string;
+    waba_id: string | null;
     accepted_terms_at: unknown;
   }>(
     `SELECT id,
@@ -133,11 +141,14 @@ export async function listChannels(tx: DbTx, tenantId: string): Promise<ChannelR
             phone_number_id,
             phone_number,
             is_active,
-            api_token,
+            -- No whatsapp o token da TELA e o da Meta (D-308 item 3); a apikey
+            -- da instancia Evolution em api_token nunca aparece aqui.
+            CASE WHEN channel = 'whatsapp' THEN cloud_api_token ELSE api_token END AS api_token,
             (webhook_secret IS NOT NULL AND webhook_secret <> '') AS webhook_secret_set,
             to_char(connected_at, ${ISO_UTC}) AS connected_at,
             to_char(updated_at, ${ISO_UTC}) AS updated_at,
             connection_mode,
+            waba_id,
             to_char(accepted_terms_at, ${ISO_UTC}) AS accepted_terms_at
        FROM tenant_channels
       WHERE tenant_id = $1
@@ -153,10 +164,16 @@ export async function listChannels(tx: DbTx, tenantId: string): Promise<ChannelR
     phoneNumber: row.phone_number,
     isActive: row.is_active === true,
     apiTokenMasked: maskToken(row.api_token),
+    cloudApiConfigured:
+      row.channel === 'whatsapp' &&
+      !!row.phone_number_id &&
+      !!row.waba_id &&
+      (decryptSecret(row.api_token) ?? '') !== '',
     webhookSecretSet: row.webhook_secret_set === true,
     connectedAt: toIsoOrNull(row.connected_at),
     updatedAt: toIso(row.updated_at),
     connectionMode: row.connection_mode,
+    wabaId: row.waba_id,
     acceptedTermsAt: toIsoOrNull(row.accepted_terms_at),
   }));
 }
@@ -175,8 +192,14 @@ export interface ChannelPatch {
   phoneNumberId?: string | null;
   phoneNumber?: string | null;
   isActive?: boolean;
+  /** `api_token`. No `whatsapp` e a apikey da instancia Evolution (so o connect do QR grava). */
   apiToken?: string | null;
+  /** Token da Meta (`cloud_api_token`, D-308 item 3). So `whatsapp`. */
+  cloudApiToken?: string | null;
   webhookSecret?: string | null;
+  /** `cloud_api` | `qr`. So o service grava (CRMLAB-138, D-308). */
+  connectionMode?: 'cloud_api' | 'qr';
+  wabaId?: string | null;
 }
 
 /** Colunas opcionais do patch -> coluna do banco. `channel` fica de fora (e a chave). */
@@ -186,11 +209,18 @@ const PATCH_COLUMNS: ReadonlyArray<[keyof ChannelPatch, string]> = [
   ['phoneNumber', 'phone_number'],
   ['isActive', 'is_active'],
   ['apiToken', 'api_token'],
+  ['cloudApiToken', 'cloud_api_token'],
   ['webhookSecret', 'webhook_secret'],
+  ['connectionMode', 'connection_mode'],
+  ['wabaId', 'waba_id'],
 ];
 
 /** Chaves cujo valor e segredo: `null` vira sentinela de revogacao e string e cifrada. */
-const SECRET_KEYS: ReadonlySet<keyof ChannelPatch> = new Set(['apiToken', 'webhookSecret']);
+const SECRET_KEYS: ReadonlySet<keyof ChannelPatch> = new Set([
+  'apiToken',
+  'cloudApiToken',
+  'webhookSecret',
+]);
 
 /**
  * Valor de uma chave do patch pronto para o parametro do SQL.
@@ -234,12 +264,22 @@ export async function upsertChannel(
     updates.push(`${column} = ${placeholder}`);
   }
 
-  // Conectar = gravar um token pela primeira vez.
-  const connecting = typeof patch.apiToken === 'string';
-  if (connecting) {
+  // Conectar = gravar um token pela primeira vez. O token da Meta so "conecta"
+  // quando o canal esta em `cloud_api`: em `qr`, `connected_at` e do pareamento
+  // e nao pode mudar (D-308; a guarda de D-307 em `markWhatsAppDisconnected`
+  // e o console da plataforma leem esta coluna). Linha nova nasce `cloud_api`.
+  if (typeof patch.apiToken === 'string') {
     insertColumns.push('connected_at');
     values.push('NOW()');
     updates.push('connected_at = COALESCE(tenant_channels.connected_at, NOW())');
+  } else if (typeof patch.cloudApiToken === 'string') {
+    insertColumns.push('connected_at');
+    values.push('NOW()');
+    updates.push(
+      `connected_at = CASE WHEN tenant_channels.connection_mode = 'qr'
+                            THEN tenant_channels.connected_at
+                            ELSE COALESCE(tenant_channels.connected_at, NOW()) END`,
+    );
   }
 
   // `updated_at` tem trigger no UPDATE; o `DO UPDATE` precisa de ao menos uma
@@ -263,8 +303,15 @@ export async function upsertChannel(
 
 export interface ChannelCredentials {
   phoneNumberId: string | null;
-  /** `null` = nunca configurado (pode cair na env var) · `''` = REVOGADO. */
+  /** Id da conta WhatsApp Business (Meta). Não é segredo (CRMLAB-135, D-308). */
+  wabaId: string | null;
+  /**
+   * `api_token` em claro. No `whatsapp` e a apikey da instancia Evolution (QR).
+   * `null` = nunca configurado · `''` = REVOGADO.
+   */
   apiToken: string | null;
+  /** Token da Meta em claro (`cloud_api_token`). `null` = nunca configurado · `''` = REVOGADO. */
+  cloudApiToken: string | null;
   /** `null` = nunca configurado (pode cair na env var) · `''` = REVOGADO. */
   webhookSecret: string | null;
   /**
@@ -289,12 +336,15 @@ export async function findCredentials(
 ): Promise<ChannelCredentials | null> {
   const result = await tx.query<{
     phone_number_id: string | null;
+    waba_id: string | null;
     api_token: string | null;
+    cloud_api_token: string | null;
     webhook_secret: string | null;
     is_active: boolean;
     connection_mode: string;
   }>(
-    `SELECT phone_number_id, api_token, webhook_secret, is_active, connection_mode
+    `SELECT phone_number_id, waba_id, api_token, cloud_api_token, webhook_secret, is_active,
+            connection_mode
        FROM tenant_channels
       WHERE tenant_id = $1 AND channel = $2`,
     [tenantId, channel],
@@ -303,7 +353,9 @@ export async function findCredentials(
   if (!row) return null;
   return {
     phoneNumberId: row.phone_number_id,
+    wabaId: row.waba_id,
     apiToken: decryptSecret(row.api_token),
+    cloudApiToken: decryptSecret(row.cloud_api_token),
     webhookSecret: decryptSecret(row.webhook_secret),
     isActive: row.is_active === true,
     connectionMode: row.connection_mode === 'qr' ? 'qr' : 'cloud_api',

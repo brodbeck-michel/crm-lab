@@ -36,6 +36,13 @@ export interface TenantChannel {
    * interface); `qr` = número próprio pareado via QR code, sem API oficial (Onda 7, Bloco B).
    */
   connectionMode: 'cloud_api' | 'qr';
+  /** Id da conta WhatsApp Business (Meta), só `cloud_api`. Não é segredo (CRMLAB-138). */
+  wabaId: string | null;
+  /**
+   * `phoneNumberId`, `wabaId` e token da Meta gravados (D-308). É o que libera a troca para
+   * `cloud_api`. Sempre `false` fora do `whatsapp`.
+   */
+  cloudApiConfigured: boolean;
   /** Quando o termo de risco do QR foi aceito. `null` = nunca aceito. Só relevante para `qr`. */
   acceptedTermsAt: IsoDateTime | null;
 }
@@ -146,6 +153,20 @@ export interface UpdateTenantChannelInput {
   apiToken?: string | null;
   /** Write-only. Nunca volta na resposta. 16..255 caracteres. */
   webhookSecret?: string | null;
+  /** Só `whatsapp`. Id da conta WhatsApp Business (Meta). Máx. 64 caracteres. Não é segredo. */
+  wabaId?: string | null;
+}
+
+/** Corpo de `PUT /settings/channels/whatsapp/mode` (CRMLAB-135, D-308). */
+export interface UpdateWhatsAppModeRequest {
+  mode: 'cloud_api' | 'qr';
+}
+
+/** Resposta de `PUT /settings/channels/whatsapp/mode`. */
+export interface UpdateWhatsAppModeResponse {
+  connectionMode: 'cloud_api' | 'qr';
+  /** `true` quando `phoneNumberId`, `wabaId` e token existem na linha do canal. */
+  cloudApiConfigured: boolean;
 }
 
 /** PATCH parcial (admin). Corpo vazio → VALIDATION_ERROR. */
@@ -154,4 +175,39 @@ export interface UpdateChannelSettingsRequest {
   distributionMode?: DistributionMode;
   autoMessages?: Partial<AutoMessagesSettings>;
   businessHours?: BusinessHours;
+}
+
+/** Categoria de cobrança da Meta (CRMLAB-141, D-312). */
+export type WhatsAppPricingCategory = 'service' | 'utility' | 'marketing' | 'authentication';
+
+export const WHATSAPP_PRICING_CATEGORIES: readonly WhatsAppPricingCategory[] = [
+  'service',
+  'utility',
+  'marketing',
+  'authentication',
+];
+
+/** Uma linha do relatório de uso: quantidade, franquia e custo estimado em BRL. */
+export interface WhatsAppUsageCategory {
+  category: WhatsAppPricingCategory;
+  count: number;
+  /** Só `service`: quantas caíram na franquia do mês. */
+  freeCount: number;
+  /** Preço da linha vigente mais recente no mês (BRL por mensagem). */
+  unitPrice: number;
+  /** BRL, 2 casas. Soma mensagem a mensagem pelo preço vigente na data de cada uma. */
+  cost: number;
+}
+
+/** Resposta de `GET /settings/channels/whatsapp/usage?month=YYYY-MM` (CRMLAB-141, D-312). */
+export interface WhatsAppUsageResponse {
+  /** `YYYY-MM` (America/Sao_Paulo). */
+  month: string;
+  currency: 'BRL';
+  freeServiceAllowance: number;
+  /** Sempre as quatro categorias, nesta ordem: service, utility, marketing, authentication. */
+  categories: WhatsAppUsageCategory[];
+  totalCost: number;
+  /** Sempre `true`: estimativa, não a fatura da Meta. */
+  isEstimate: true;
 }

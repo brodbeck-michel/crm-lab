@@ -1,10 +1,24 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { normalizeBrazilianPhone } from '@crm-lab/shared';
-import { api, firstContactLimitMessage, isApiError, mapFieldErrors, queryScopes } from '@/api';
+import { normalizeBrazilianPhone, type StartWhatsAppConversationRequest } from '@crm-lab/shared';
+import {
+  api,
+  firstContactLimitMessage,
+  isApiError,
+  mapFieldErrors,
+  queryKeys,
+  queryScopes,
+  useWhatsAppTemplates,
+} from '@/api';
+import {
+  EMPTY_TEMPLATE_DRAFT,
+  TemplatePicker,
+  templateRequestOf,
+  type TemplateDraft,
+} from '@/components/conversation';
 import { PhoneField } from '@/components/patients';
-import { Button, TextArea, useToast } from '@/components/ui';
+import { Button, SegmentedControl, TextArea, useToast } from '@/components/ui';
 import { Modal } from '@/components/shared';
 import { useApiErrorHandler } from '@/hooks';
 import { formatBrazilianPhone } from '@/lib/phone-suggestion';
@@ -55,11 +69,22 @@ export function NewConversationModal({
   const [phoneTouched, setPhoneTouched] = useState(false);
   const [serverErrors, setServerErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
+  // CRMLAB-136 (D-309): com modelos aprovados (Cloud API), o primeiro contato
+  // sai por modelo — é o padrão. Em QR a lista vem vazia e só há texto.
+  const templatesQuery = useWhatsAppTemplates();
+  const templates = templatesQuery.data?.templates ?? [];
+  // `null` = a pessoa ainda não escolheu: com modelos, o padrão é "Modelo
+  // aprovado" — mas só se nada foi digitado (a lista que chega depois não
+  // esconde o texto já escrito). O campo de texto aparece logo, sem esperar a lista.
+  const [chosenKind, setChosenKind] = useState<'template' | 'text' | null>(null);
+  const [templateDraft, setTemplateDraft] = useState<TemplateDraft>(EMPTY_TEMPLATE_DRAFT);
+  const kind = chosenKind ?? (content.trim() === '' ? 'template' : 'text');
+  const byTemplate = templates.length > 0 && kind === 'template';
 
   const normalizedPhone = normalizeBrazilianPhone(phone);
   const showPhoneError = (submitted || phoneTouched) && normalizedPhone === null;
   const trimmedContent = content.trim();
-  const showContentError = submitted && trimmedContent.length === 0;
+  const showContentError = !byTemplate && submitted && trimmedContent.length === 0;
 
   const finish = async (conversationId: string) => {
     await queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
@@ -68,7 +93,7 @@ export function NewConversationModal({
   };
 
   const start = useMutation({
-    mutationFn: (body: { phone: string; content: string }) => api.conversations.startWhatsApp(body),
+    mutationFn: (body: StartWhatsAppConversationRequest) => api.conversations.startWhatsApp(body),
     onSuccess: async (response) => {
       toast('Mensagem enviada.', { tone: 'positive' });
       await finish(response.conversation.id);
@@ -86,6 +111,53 @@ export function NewConversationModal({
             await finish(conversationId);
             return;
           }
+        }
+        if (
+          error.code === 'CHANNEL_CLOUD_API_NOT_CONFIGURED' ||
+          error.code === 'CHANNEL_CLOUD_API_UNAVAILABLE'
+        ) {
+          // D-308: a conversa ficou criada, sem mensagem; falta credencial da
+          // API oficial (ou a instalação não tem a API). Aviso no modal, como o
+          // teto de D-306.
+          // Só houve criação com `conversationId` e `created !== false`; sem
+          // `conversationId` (modelo conferido antes de criar, CRMLAB-136) nada existe.
+          const createdNow =
+            typeof error.details?.conversationId === 'string' && error.details?.created !== false;
+          const prefix = createdNow ? 'A conversa foi criada' : 'Nada foi enviado';
+          setFormError(
+            error.code === 'CHANNEL_CLOUD_API_NOT_CONFIGURED'
+              ? `${prefix}, mas a API oficial do WhatsApp ainda não está configurada ` +
+                  'neste laboratório. Peça ao administrador para completar em Canais.'
+              : error.details?.reason === 'meta_unreachable'
+                ? `${prefix}: a Meta não respondeu agora. Tente de novo em instantes.`
+                : `${prefix}, mas a API oficial do WhatsApp não está disponível nesta ` +
+                    'instalação. Fale com o suporte.',
+          );
+          await queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
+          return;
+        }
+        if (error.code === 'NOT_FOUND' && error.details?.resource === 'whatsapp_template') {
+          // O modelo saiu da lista aprovada depois que a tela carregou: atualiza a lista.
+          setFormError('Esse modelo não está mais aprovado na Meta. A lista foi atualizada; escolha outro.');
+          setTemplateDraft(EMPTY_TEMPLATE_DRAFT);
+          await queryClient.invalidateQueries({ queryKey: queryKeys.whatsappTemplates() });
+          return;
+        }
+        if (error.code === 'WHATSAPP_WINDOW_CLOSED') {
+          // D-310: número novo nunca escreveu, então a janela de 24 h está
+          // fechada. A conversa ficou criada; o primeiro contato pela API
+          // oficial só sai por template aprovado (CRMLAB-136).
+          // `created: false` = conversa que já existia (pode ter falas antigas):
+          // não é primeiro contato, a janela só expirou.
+          setFormError(
+            error.details?.created === false
+              ? 'Nada foi enviado: o paciente não escreve há mais de 24 h e, pela API oficial do ' +
+                  'WhatsApp, só um modelo aprovado pela Meta pode ser enviado agora.'
+              : 'A conversa foi criada, mas pela API oficial do WhatsApp o primeiro contato só pode ' +
+                  'sair por um modelo aprovado pela Meta. O paciente precisa escrever antes, ou use um modelo.',
+          );
+          await queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
+          return;
         }
         if (error.code === 'FIRST_CONTACT_LIMIT_REACHED') {
           // D-306: a conversa ficou criada, sem mensagem. O aviso fica no modal,
@@ -123,6 +195,16 @@ export function NewConversationModal({
     setSubmitted(true);
     setServerErrors({});
     setFormError(null);
+    if (byTemplate) {
+      const template = templateRequestOf(templates, templateDraft);
+      if (normalizedPhone === null) return;
+      if (!template) {
+        setFormError('Escolha o modelo e preencha todas as variáveis.');
+        return;
+      }
+      start.mutate({ phone: normalizedPhone, template });
+      return;
+    }
     if (normalizedPhone === null || trimmedContent.length === 0) return;
     start.mutate({ phone: normalizedPhone, content: trimmedContent });
   }
@@ -185,25 +267,91 @@ export function NewConversationModal({
           error={phoneError}
           hint={PHONE_HINT}
         />
-        <TextArea
-          label="Mensagem"
-          autoFocus={Boolean(initialPhone)}
-          rows={4}
-          maxLength={MAX_CONTENT}
-          placeholder="Olá! Aqui é do laboratório…"
-          value={content}
-          onChange={(event) => setContent(event.target.value)}
-          error={contentError}
-        />
-        <p
-          role="note"
-          data-testid="first-contact-notice"
-          className="m-0 rounded-md bg-accent-100 px-md py-sm font-body text-caption text-accent-800"
-        >
-          Mensagem para quem nunca escreveu ao laboratório é <strong>primeiro contato</strong>: o
-          WhatsApp pode restringir o número se forem muitos. Quando der, peça ao paciente que mande
-          uma mensagem primeiro.
-        </p>
+        {templatesQuery.isLoading && (
+          <p data-testid="templates-loading" className="m-0 font-body text-caption text-neutral-700">
+            Carregando os modelos aprovados…
+          </p>
+        )}
+        {templatesQuery.isError && (
+          <div
+            role="alert"
+            data-testid="templates-error"
+            className="flex flex-wrap items-center gap-sm rounded-md bg-accent-100 px-md py-sm"
+          >
+            <p className="m-0 min-w-0 flex-1 font-body text-caption text-accent-800">
+              Não foi possível carregar os modelos aprovados (a Meta não respondeu ou o canal está sem
+              credencial). Para um número que ainda não escreveu, o envio precisa de um modelo.
+            </p>
+            <Button variant="secondary" size="sm" onClick={() => void templatesQuery.refetch()}>
+              Tentar de novo
+            </Button>
+          </div>
+        )}
+        {templates.length > 0 && (
+          <SegmentedControl
+            aria-label="Tipo da primeira mensagem"
+            value={kind}
+            onChange={(value) => {
+              setChosenKind(value);
+              setFormError(null);
+            }}
+            options={[
+              { value: 'template', label: 'Modelo aprovado' },
+              { value: 'text', label: 'Texto livre' },
+            ]}
+          />
+        )}
+        {byTemplate ? (
+          <>
+            <TemplatePicker
+              templates={templates}
+              value={templateDraft}
+              onChange={(draft) => {
+                setTemplateDraft(draft);
+                setFormError(null);
+              }}
+              disabled={start.isPending}
+            />
+            {serverErrors['template.variables'] && (
+              <p role="alert" className="m-0 font-body text-caption text-accent-700">
+                {serverErrors['template.variables']}
+              </p>
+            )}
+          </>
+        ) : (
+          <>
+            <TextArea
+              label="Mensagem"
+              autoFocus={Boolean(initialPhone)}
+              rows={4}
+              maxLength={MAX_CONTENT}
+              placeholder="Olá! Aqui é do laboratório…"
+              value={content}
+              onChange={(event) => setContent(event.target.value)}
+              error={contentError}
+            />
+            {templates.length > 0 ? (
+              <p
+                role="note"
+                data-testid="free-text-window-notice"
+                className="m-0 rounded-md bg-accent-100 px-md py-sm font-body text-caption text-accent-800"
+              >
+                Pela API oficial, texto livre só sai se o paciente escreveu nas últimas 24 horas. Para
+                o primeiro contato, use um modelo aprovado.
+              </p>
+            ) : (
+              <p
+                role="note"
+                data-testid="first-contact-notice"
+                className="m-0 rounded-md bg-accent-100 px-md py-sm font-body text-caption text-accent-800"
+              >
+                Mensagem para quem nunca escreveu ao laboratório é <strong>primeiro contato</strong>: o
+                WhatsApp pode restringir o número se forem muitos. Quando der, peça ao paciente que mande
+                uma mensagem primeiro.
+              </p>
+            )}
+          </>
+        )}
         {formError && (
           <p role="alert" className="font-body text-caption text-accent-700">
             {formError}

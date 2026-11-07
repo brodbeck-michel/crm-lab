@@ -42,6 +42,7 @@ function metaPayload(options: {
             field: 'messages',
             value: {
               messaging_product: 'whatsapp',
+              metadata: { phone_number_id: 'numero-do-lab' },
               contacts,
               messages: [
                 {
@@ -108,6 +109,17 @@ async function patientsOf(tenantId: string): Promise<PatientRow[]> {
   return result.rows;
 }
 
+async function receivedViaOf(tenantId: string): Promise<Array<string | null>> {
+  const db = await getTestDb();
+  const result = await db.withoutTenant((tx) =>
+    tx.query<{ received_via: string | null }>(
+      `SELECT received_via FROM messages WHERE tenant_id = $1 AND sender_type = 'patient'`,
+      [tenantId],
+    ),
+  );
+  return result.rows.map((row) => row.received_via);
+}
+
 describe('webhook -> conversations.patient_id (D-059)', () => {
   let app: TestApp;
   const slugToId = new Map<string, string>();
@@ -146,6 +158,8 @@ describe('webhook -> conversations.patient_id (D-059)', () => {
     expect(pacientes[0]?.name).toBe('Joao Santos');
     // O buraco que esta suite fecha: sem a ligacao isto e `null`.
     expect(conversa?.patient_id).toBe(pacientes[0]?.id);
+    // D-310 (emenda de 05/11): a fala da Meta e marcada para abrir a janela de 24 h.
+    expect(await receivedViaOf(tenant.id)).toEqual(['cloud_api']);
   });
 
   it('segunda mensagem do mesmo telefone reusa o MESMO paciente', async () => {
@@ -310,6 +324,7 @@ describe('lote com dado que nao cabe na coluna', () => {
           changes: [
             {
               value: {
+                metadata: { phone_number_id: 'numero-do-lab' },
                 contacts: messages.map((m) => ({
                   wa_id: m.phone,
                   profile: { name: m.name ?? 'Contato' },

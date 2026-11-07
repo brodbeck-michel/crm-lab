@@ -235,7 +235,7 @@ para as gestoras (https://claude.ai/artifact/JR4cHeWruKMyNQGd7igK8m).
 | 2 | Conta empresarial (Business Manager) do Santé **verificada** | Central de Segurança do Business Manager |
 | 3 | Conta do WhatsApp Business (WABA) criada e **forma de pagamento em BRL** no Billing Hub | Gerenciador do WhatsApp › Faturamento |
 | 4 | **Nome de exibição** do número aprovado **(conferir na Meta)** | Gerenciador do WhatsApp › Números de telefone |
-| 5 | **Modelos aprovados**: no mínimo um de retomada de atendimento e o lembrete de coleta (UTILITY) | Gerenciador do WhatsApp › Modelos (status "Aprovado") |
+| 5 | **Modelos aprovados**: os três de 4.1.1 (`retomar_atendimento`, `retorno_orcamento`, `lembrete_coleta`), todos UTILITY | Gerenciador do WhatsApp › Modelos (status "Aprovado"); no CRM, aparecem no "Enviar modelo" em até 5 min |
 | 6 | App na Meta com o produto WhatsApp e **usuário do sistema** com token **que nunca expira** (`whatsapp_business_messaging` e `whatsapp_business_management`) | Business Manager › Usuários do sistema |
 | 7 | **App inscrito na WABA do Santé** (`POST /{waba_id}/subscribed_apps`) — sem isso a Meta não entrega nada ao CRM; o número de teste já vem inscrito, então o ensaio não pega essa falta **(conferir na Meta)** | `GET /{waba_id}/subscribed_apps` lista o app |
 | 8 | **PIN de duas etapas** do número definido e guardado no cofre (é pedido para registrar e para voltar) | Anotado fora do celular |
@@ -245,6 +245,30 @@ para as gestoras (https://claude.ai/artifact/JR4cHeWruKMyNQGd7igK8m).
 | 12 | **Segredo do webhook do Santé** na tela de Canais: o código usa o segredo do laboratório quando existe (e `''` = revogado, D-073) e só cai no `WHATSAPP_WEBHOOK_SECRET` quando a tela diz "Não configurado". Deixar "Não configurado" **ou** gravar o App Secret ali | Configurações › Canais › WhatsApp › "Segredo do webhook" |
 | 13 | Ensaio completo em **homologação** (4.3) feito e anotado | Este guia, 4.3 |
 | 14 | Quem está com o celular do número (Thaisy ou Tainá) avisada da janela | — |
+
+### 4.1.1 Modelos para submeter à Meta (definidos em 07/11/2026)
+
+O CRM não guarda modelos: lê os aprovados da WABA do laboratório (CRMLAB-136, D-309). Por isso o
+cadastro é feito pelas gestoras no **Gerenciador do WhatsApp › Modelos de mensagem › Criar modelo**,
+com estas regras (senão o CRM não lista o modelo):
+
+- **Categoria:** Utilidade · **Idioma:** Português (BR) · nome exatamente como abaixo.
+- **Só o "Corpo"**: sem cabeçalho, rodapé nem botões (o CRM aceita um único `BODY` de texto).
+- Variáveis posicionais `{{1}}..{{n}}` com os exemplos indicados (a Meta exige amostra).
+- Não mexer no texto para "fugir" de Marketing: nenhuma variável no início/fim nem colada em outra,
+  sem oferta ou desconto — é o que mantém a aprovação como Utilidade.
+
+| Nome | Uso | Corpo | Exemplos |
+|------|-----|-------|----------|
+| `retomar_atendimento` | Paciente parou de responder e a janela de 24 h fechou | Olá, {{1}}! Aqui é do Laboratório Santé. Estamos dando continuidade ao seu atendimento. Você pode responder a esta mensagem para seguirmos de onde paramos. | {{1}} = Maria |
+| `retorno_orcamento` | Primeiro contato depois de um orçamento pedido pelo paciente | Olá, {{1}}! Aqui é do Laboratório Santé. Estamos entrando em contato sobre o orçamento nº {{2}} que você solicitou. Para receber os detalhes ou tirar dúvidas sobre os exames, é só responder a esta mensagem. | {{1}} = Maria · {{2}} = 48213 |
+| `lembrete_coleta` | Lembrete de coleta agendada | Olá, {{1}}! Aqui é do Laboratório Santé. Lembramos que a sua coleta está agendada para {{2}}, às {{3}}. Caso precise remarcar ou tenha dúvidas sobre o preparo, responda a esta mensagem. | {{1}} = Maria · {{2}} = 12/11/2026 · {{3}} = 07:30 |
+
+- `retorno_orcamento` é o único com risco de a Meta **reclassificar como Marketing** (hoje ela
+  reclassifica em vez de recusar). Funciona igual, só fica mais caro por envio; o CRMLAB-141 já
+  registra a categoria que a Meta devolve.
+- Aprovação: de minutos a 24 h. Recusado → ler o motivo no Gerenciador e trazer para ajuste aqui.
+- Página entregue às gestoras em 07/11/2026: https://claude.ai/artifact/JfoVmjq1pbs6HHW1TfrhLV
 
 ### 4.2 Coexistência × migração completa
 

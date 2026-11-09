@@ -4158,3 +4158,13 @@ Branch `feature/CRMLAB-143-menu-lateral-cadastros`, sobre a main v1.44.0. Decis�
   `Registers.spec.tsx` (novo).
 - **Em aberto:** as telas Conversão e Decisões ficaram sem entrada no menu, mas o código continua.
   Remover de vez (rotas, telas, e2e `flow-4-analytics`) fica para decisão do Michel.
+
+### 🔄 CRMLAB-144 — Regras em abas (2026-11-09, aguardando validação)
+
+Branch `feature/CRMLAB-144-regras-em-abas`, empilhada sobre o CRMLAB-143. Decisão D-316. Só frontend.
+
+- `pages/Settings/Rules.tsx`: abas Funil, Mensagens, Comercial e Feriados (`SegmentedControl`);
+  seções sempre montadas, aba inativa escondida; um [Salvar regras] para Funil + Mensagens, com
+  aviso quando o bloqueio está na outra aba; `#secao` abre a aba da seção.
+- **Testes:** `Rules.spec.tsx` — abas por perfil, rascunho preservado na troca, bloqueio na outra
+  aba, âncora `#comissoes`; os testes antigos das seções abrem a aba pela âncora.

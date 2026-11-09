@@ -1581,9 +1581,29 @@ Onde o laboratório define as regras do funil. Grupo "Configurações" da sideba
 `requiredRoles: TENANT_ROLES`. Fonte: `GET/PATCH /settings/funnel-rules` (API_CONTRACTS.md §6c) e,
 na seção 6, `GET/PATCH /settings/commissions` (§6b).
 
-Seis seções, uma embaixo da outra, cada uma num cartão com título e descrição curta. Um único
-[Salvar regras] no fim (seções 1–4) envia **só o que mudou** (diff contra o `GET`); comissão tem o
-seu próprio [Salvar] (endpoint e permissão diferentes).
+Cada seção é um cartão com título e descrição curta. Um único [Salvar regras] envia **só o que
+mudou** (diff contra o `GET`); comissão e feriados têm endpoint e permissão próprios.
+
+**Abas (CRMLAB-144, D-316).** As seções ficam em 4 abas (`SegmentedControl` "Grupos de regras",
+logo abaixo do cabeçalho), em vez de uma rolagem só:
+
+| Aba | Seções (`id` da âncora) |
+|-----|--------------------------|
+| **Funil** (padrão) | Origem das propostas (`origem`), Automação do funil (`automacao`), Movimentação manual (`travas`), Carga do LIS (`carga-lis`) |
+| **Mensagens** | Mensagem de envio (`mensagem`), Reingajamento (`reingajamento`), Alerta de tempo de resposta (`alerta-resposta`), Primeiros contatos (`primeiro-contato`) |
+| **Comercial** | Descontos e aprovação (`descontos`, só com "Criar pelo CRM" ligado), Comissões (`comissoes`, gestor+) |
+| **Feriados** | Feriados (`feriados`) |
+
+- A aba **Comercial** some quando não há o que mostrar (atendente com "Criar pelo CRM" desligado).
+- Todas as seções continuam montadas; a aba inativa fica só escondida. Trocar de aba **não perde**
+  o que foi digitado.
+- O [Salvar regras] é **um só** para Funil + Mensagens e aparece nas duas abas. Se o que impede o
+  salvar está na outra aba, ao lado do botão aparece "Há um campo a corrigir na aba {aba}.". Erro
+  de campo devolvido pelo servidor abre a aba do campo.
+- Âncora `#secao` na URL abre a aba da seção e rola até ela — `/settings/commissions` continua
+  redirecionando para `/settings/rules#comissoes`, que agora abre a aba Comercial.
+
+A ordem das seções dentro de cada aba é a da tabela; a descrição de cada uma segue abaixo.
 
 1. **Origem das propostas** — dois `Toggle`: "Nascer do orçamento do Bitlab" e "Criar proposta
    manualmente no CRM (itens pelo catálogo)". Não dá para salvar com os dois desligados (aviso no

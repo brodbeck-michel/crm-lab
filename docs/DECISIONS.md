@@ -7122,3 +7122,19 @@ sem mudar o layout do trilho — só a disposição dos itens.
 para o cabeçalho do grupo "Comunicação".
 **Impacto:** só frontend — PAGES.md (mapa de rotas, grupos do trilho), COMPONENTS.md (Sidebar),
 `route-config.ts`, `Sidebar.tsx`, `pages/Settings/Registers.tsx`. Sem mudança de API ou de banco.
+
+### D-316: Tela de Regras em abas (CRMLAB-144)
+**Contexto:** a tela tinha cerca de 11 cartões numa rolagem só. O Michel pediu abas (09/11/2026).
+**Decisão:**
+1. Quatro abas: **Funil** (origem, automação, movimentação manual, carga do LIS), **Mensagens**
+   (mensagem de envio, reingajamento, alerta de tempo de resposta, primeiros contatos),
+   **Comercial** (descontos e aprovação, comissões) e **Feriados**. "Carga do LIS" sobe para junto
+   do funil; nenhuma regra muda de comportamento, de endpoint ou de permissão.
+2. As seções ficam todas montadas e a aba inativa só é escondida — o rascunho do formulário e o
+   estado local de comissão/feriados sobrevivem à troca de aba.
+3. O formulário e o [Salvar regras] continuam únicos para Funil + Mensagens (um `PATCH` só, com o
+   diff). Bloqueio vindo da aba que não está aberta é avisado ao lado do botão; erro de campo do
+   servidor abre a aba do campo.
+4. A aba Comercial não aparece quando estaria vazia. A âncora `#secao` abre a aba da seção
+   (mantém o redirect de `/settings/commissions`, D-194).
+**Impacto:** só frontend — PAGES.md §21, `pages/Settings/Rules.tsx` e o spec. Sem mudança de API.

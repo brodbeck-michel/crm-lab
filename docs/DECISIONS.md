@@ -7100,3 +7100,25 @@ claro; o card inclui o recebimento.
 fallback (item 5).
 **Impacto:** API_CONTRACTS §4 (anexo) e §2b (tabela de tipos recebidos), BUSINESS_RULES §18,
 SERVICES §35, DEPLOYMENT (ffmpeg na imagem), `shared/types/media.types.ts`.
+
+### D-315: Menu lateral enxuto e página "Cadastros" com abas (CRMLAB-143)
+**Contexto:** o administrador via 23 itens em 4 grupos. O Michel pediu para enxugar (09/11/2026),
+sem mudar o layout do trilho — só a disposição dos itens.
+**Decisão:**
+1. **Soltos:** Atendimento, Contatos, Propostas, Vendas e Chat Interno. O grupo "Comunicação" acaba.
+2. **Gestão:** "Conversão" e "Decisões" saem do trilho (descontinuadas no menu). As rotas, as telas
+   e os endpoints **continuam** — só não há mais entrada no menu. O contador de decisões pendentes
+   da Sidebar sai junto; a fila de decisões segue em "Gestão da Operação".
+3. **Configurações** passa de 9 para 5 itens: Cadastros, Regras, Canais & Equipe, Integração LIS,
+   Personalização.
+4. **Cadastros** (`/settings/registers`) reúne Usuários, Exames, Respostas rápidas, Atendentes e
+   Convênios em abas. Cada aba é a tela existente **no endereço de sempre** (favoritos e links
+   seguem valendo, nenhum redirect de rota antiga); a faixa de abas é um layout de rota. Os papéis
+   de cada aba são os da própria rota — nenhuma permissão muda.
+5. **Minha Conta** sai do trilho e vira o item "Minha conta" do menu do usuário (rodapé).
+6. **Grupos fechados por padrão**, exceto o da tela atual. Preferência salva do usuário
+   (`crm-lab.sidebar-groups`) continua ganhando do padrão.
+**Supera:** D-129 no que diz respeito à composição dos grupos; D-130 no trecho do contador subir
+para o cabeçalho do grupo "Comunicação".
+**Impacto:** só frontend — PAGES.md (mapa de rotas, grupos do trilho), COMPONENTS.md (Sidebar),
+`route-config.ts`, `Sidebar.tsx`, `pages/Settings/Registers.tsx`. Sem mudança de API ou de banco.

@@ -14,10 +14,10 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 /contacts/:id                 → Ficha do Contato (antiga /patients/:id redireciona)
 /budget/new?conversationId=   → Novo Orçamento
 /proposals                    → Pipeline de Propostas
-/catalog                      → Catálogo de Exames        (rótulo no trilho: "Cadastro de Exames")
+/catalog                      → Catálogo de Exames        (aba "Exames" de Cadastros — CRMLAB-143)
 /analytics                    → Conversão
 /internal-chat                → Chat Interno
-/quick-replies                → Respostas rápidas
+/quick-replies                → Respostas rápidas         (aba de Cadastros — CRMLAB-143)
 /decisions                    → Decisões (aprovações)    (gestor+)
 /results                      → Resultados (LIS)          (gestor+)
 /reconciliation               → Conferência (LIS)         (gestor+)
@@ -32,7 +32,8 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 /settings/rules               → Regras                    (todos veem; gestor/admin editam — CRMLAB-56)
 /settings/commissions         → redireciona para /settings/rules#comissoes (CRMLAB-56)
 /settings/lis-integration     → Integração LIS            (gestor lê e sincroniza; admin edita — CRMLAB-52)
-/settings/account             → Minha Conta               (todos os papéis de tenant)
+/settings/registers           → Cadastros: redireciona para a primeira aba do perfil (CRMLAB-143)
+/settings/account             → Minha Conta               (todos os papéis de tenant; menu do usuário)
 /settings/users               → Usuários & Permissões     (admin)
 /settings/theme               → Personalização            (admin)
 /platform/tenants             → Laboratórios Clientes     (operador plataforma)
@@ -43,13 +44,25 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 
 ### Papéis por rota (implementado em `src/routes/route-config.ts`)
 
-**Grupos do trilho (accordion, CRMLAB-4; revisado em D-129):** itens sem grupo ficam soltos no
-topo; os grupos aparecem depois, na ordem Comunicação → Visitação Médica → Gestão → Configurações
-("Visitação Médica" entrou no CRMLAB-86, D-255, e vai receber a Agenda). "Gestão" funde os
-antigos grupos "Comercial" e "LIS / Operação Laboratorial" (D-129: usuário achou os dois grupos
-redundantes na validação de D-128). "Cadastro de Exames" (rota `/catalog`) saiu de lá e passou a
-`/catalog` → Configurações. Grupo sem nenhum item visível para o perfil não aparece. Abertos por
-padrão; estado por grupo persiste em localStorage por usuário.
+**Grupos do trilho (accordion, CRMLAB-4; D-129; enxugado no CRMLAB-143, D-315):** itens sem grupo
+ficam soltos no topo — Atendimento, Contatos, Propostas, Vendas e Chat Interno; os grupos aparecem
+depois, na ordem Visitação Médica → Gestão → Configurações. O grupo "Comunicação" deixou de
+existir. Grupo sem nenhum item visível para o perfil não aparece. **Fechados por padrão**, exceto
+o grupo da tela atual; quando o usuário abre ou fecha um grupo, a escolha persiste em localStorage
+por usuário e passa a valer no lugar do padrão.
+
+**Cadastros (CRMLAB-143, D-315):** um item só no grupo Configurações (`/settings/registers`) para
+cinco telas, mostradas como abas (`SegmentedControl`) acima do conteúdo, nesta ordem: Usuários
+(`/settings/users`), Exames (`/catalog`), Respostas rápidas (`/quick-replies`), Atendentes
+(`/settings/attendants`) e Convênios (`/settings/insurances`). Cada aba é a tela que já existia,
+**no mesmo endereço** e com os mesmos `requiredRoles` — o perfil só vê as abas que pode abrir
+(atendente: Exames e Respostas rápidas; gestor: + Atendentes e Convênios; admin: todas).
+`/settings/registers` redireciona para a primeira aba visível. O item "Cadastros" fica ativo no
+trilho em qualquer uma das abas (`activePaths`).
+
+**Fora do trilho desde o CRMLAB-143:** "Minha Conta" (abre pelo menu do usuário, no rodapé da
+Sidebar, item "Minha conta"), "Conversão" e "Decisões" (descontinuadas no menu; as rotas e as
+telas continuam existindo e abrem pelo endereço).
 
 | Rota | `requiredRoles` | No trilho da Sidebar | Grupo |
 |------|-----------------|----------------------|-------|
@@ -60,11 +73,11 @@ padrão; estado por grupo persiste em localStorage por usuário.
 | `/contacts/:id` | attendant · manager · admin | não | — |
 | `/budget/new` | attendant · manager · admin | não | — |
 | `/proposals` | attendant · manager · admin | sim | solto |
-| `/catalog` (rótulo "Cadastro de Exames") | attendant · manager · admin | sim | Configurações |
-| `/analytics` | attendant · manager · admin | sim | Gestão |
-| `/internal-chat` | attendant · manager · admin | sim | Comunicação |
-| `/quick-replies` | attendant · manager · admin | sim | Comunicação |
-| `/decisions` | manager · admin | sim | Gestão |
+| `/catalog` (aba "Exames" de Cadastros) | attendant · manager · admin | não (aba) | — |
+| `/analytics` | attendant · manager · admin | não (CRMLAB-143) | — |
+| `/internal-chat` | attendant · manager · admin | sim | solto |
+| `/quick-replies` (aba de Cadastros) | attendant · manager · admin | não (aba) | — |
+| `/decisions` | manager · admin | não (CRMLAB-143) | — |
 | `/results` | manager · admin | sim | Gestão |
 | `/reconciliation` | manager · admin | sim | Gestão |
 | `/active-search` | manager · admin | sim | Gestão |
@@ -73,13 +86,14 @@ padrão; estado por grupo persiste em localStorage por usuário.
 | `/visitation/doctors` (rótulo "Médicos", CRMLAB-86) | attendant · manager · admin | sim | Visitação Médica |
 | `/settings/channels` | manager · admin | sim | Configurações |
 | `/settings/operation` | manager · admin | sim | Gestão |
-| `/settings/insurances` | manager · admin | sim | Configurações |
-| `/settings/attendants` | manager · admin | sim | Configurações |
+| `/settings/insurances` (aba de Cadastros) | manager · admin | não (aba) | — |
+| `/settings/attendants` (aba de Cadastros) | manager · admin | não (aba) | — |
 | `/settings/rules` (CRMLAB-56) | attendant · manager · admin | sim | Configurações |
 | `/settings/commissions` → redirect `/settings/rules#comissoes` | manager · admin | não | — |
 | `/settings/lis-integration` (CRMLAB-52) | manager · admin | sim | Configurações |
-| `/settings/account` | attendant · manager · admin | sim | Configurações |
-| `/settings/users` | admin | sim | Configurações |
+| `/settings/registers` (rótulo "Cadastros", CRMLAB-143) | attendant · manager · admin | sim | Configurações |
+| `/settings/account` | attendant · manager · admin | não (menu do usuário) | — |
+| `/settings/users` (aba de Cadastros) | admin | não (aba) | — |
 | `/settings/theme` | admin | sim | Configurações |
 | `/platform/tenants` | platform_operator | sim | solto (console) |
 | `/platform/billing` | platform_operator | sim | solto (console) |
@@ -887,16 +901,15 @@ quando a primeira mensagem chega (mesmo evento `internal_chat.new_message` de se
 
 O item "Chat Interno" da Sidebar (`COMPONENTS.md` — Sidebar) mostra um `Badge` com a soma de
 `Channel.unreadCount` de todos os canais (mesma lista de `GET /internal-chat/channels` que a
-tela usa, cache compartilhado via `queryKeys.internalChannels()` — sem endpoint novo). Se o grupo
-"Comunicação" estiver **recolhido** e esse total for maior que zero, o mesmo `Badge` (com o
-mesmo total) aparece no cabeçalho do grupo, no lugar do ponto de "item ativo dentro" (D-128);
-some ao abrir o grupo, ao entrar num canal (unread zera) ou ao chegar a zero. Som e notificação
+tela usa, cache compartilhado via `queryKeys.internalChannels()` — sem endpoint novo). Desde o
+CRMLAB-143 "Chat Interno" é item solto (o grupo "Comunicação" acabou), então o contador fica
+sempre no próprio item; some ao entrar num canal (unread zera) ou ao chegar a zero. Som e notificação
 do navegador vêm do aviso de mensagem nova (CRMLAB-116, abaixo) — o badge segue só visual.
 
 **CRMLAB-112 (D-277):** o item **"Atendimento"** ganha o mesmo contador, com a soma das
 mensagens não lidas das conversas ativas que o usuário enxerga (`GET /conversations/unread-count`).
 Com a barra **recolhida** os dois contadores continuam com o **número** ("99+" acima de 99) no
-canto do ícone — o do Chat Interno no ícone do grupo "Comunicação" — em vez do ponto de 8px.
+canto do ícone de cada item em vez do ponto de 8px.
 Atualizam em qualquer tela pelo WS (`conversation.new_message` / `internal_chat.new_message`)
 e baixam quando a atendente lê.
 
@@ -1133,7 +1146,8 @@ esta tela existe para quem só precisa DISSO, sem entrar no chat nem no resto do
   a regra (CLAUDE.md §3)
 - Vazio: "Nenhuma decisão pendente"
 
-**Notificação (sino da Sidebar):** o item "Decisões" do trilho mostra um contador (`Badge`) com
+**Notificação (sino da Sidebar) — REMOVIDA no CRMLAB-143 (D-315):** "Decisões" saiu do trilho e o
+contador saiu junto; o texto abaixo fica como histórico. O item "Decisões" do trilho mostrava um contador (`Badge`) com
 `pendingDecisions.total` para quem tem o item no menu (gestor+). Fonte: o MESMO
 `GET /operations/overview` (cache do TanStack Query compartilhado com §10 e com esta tela — não é
 uma segunda chamada). Fica live porque os eventos WS `approval.requested` e `approval.decided`

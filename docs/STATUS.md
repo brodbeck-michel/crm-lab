@@ -4142,3 +4142,19 @@ Branch `feature/CRMLAB-137-janela-24h-v2`, empilhada sobre o CRMLAB-138. Decisã
 - **Testes:** `crmlab137-janela-24h.spec.ts` (17), cartão (`/send`, `/resend`) e Nova conversa
   (número novo e conversa encerrada) com janela fechada; frontend `Composer.window.spec.tsx` (5) e
   `NewConversation` (+1).
+
+### 🔄 CRMLAB-143 — menu lateral enxuto + Cadastros em abas (2026-11-09, aguardando validação)
+
+Branch `feature/CRMLAB-143-menu-lateral-cadastros`, sobre a main v1.44.0. Decisão D-315. Só frontend.
+
+- **Trilho:** soltos = Atendimento, Contatos, Propostas, Vendas, Chat Interno; grupo "Comunicação"
+  removido; Gestão sem Conversão e Decisões (rotas e telas continuam, só saem do menu);
+  Configurações com 5 itens (Cadastros, Regras, Canais & Equipe, Integração LIS, Personalização).
+- **Cadastros:** `pages/Settings/Registers.tsx` — faixa de abas (`SegmentedControl`) como layout de
+  rota sobre Usuários, Exames, Respostas rápidas, Atendentes e Convênios, cada uma no endereço de
+  sempre; `/settings/registers` redireciona para a primeira aba do perfil.
+- **Minha conta** no menu do usuário; **grupos fechados por padrão**, exceto o da tela atual.
+- **Testes:** `route-config.spec.ts`, `Sidebar.spec.tsx`, `sidebar-groups.store.spec.ts` e
+  `Registers.spec.tsx` (novo).
+- **Em aberto:** as telas Conversão e Decisões ficaram sem entrada no menu, mas o código continua.
+  Remover de vez (rotas, telas, e2e `flow-4-analytics`) fica para decisão do Michel.

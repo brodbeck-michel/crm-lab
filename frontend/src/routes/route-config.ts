@@ -36,7 +36,6 @@ export type NavIcon =
   | 'tenants'
   | 'billing'
   | 'account'
-  | 'megaphone'
   | 'visitation'
   | 'doctors'
   | 'agenda';
@@ -48,7 +47,7 @@ export const ADMIN_ONLY: readonly UserRole[] = ['admin'] as const;
 export const PLATFORM_ONLY: readonly UserRole[] = ['platform_operator'] as const;
 
 /** Grupos (accordion) do trilho da Sidebar — CRMLAB-4/D-129; `visitacao` desde CRMLAB-86 (D-255). */
-export type NavGroupId = 'comunicacao' | 'visitacao' | 'gestao' | 'configuracoes';
+export type NavGroupId = 'visitacao' | 'gestao' | 'configuracoes';
 
 export interface NavGroup {
   id: NavGroupId;
@@ -63,7 +62,6 @@ export interface NavGroup {
  * "Gestão"). Itens sem `group` aparecem soltos, antes de todos os grupos.
  */
 export const NAV_GROUPS: readonly NavGroup[] = [
-  { id: 'comunicacao', label: 'Comunicação', icon: 'megaphone' },
   // CRMLAB-85/86/87 (D-255, D-256): épico próprio — Agenda e Médicos.
   { id: 'visitacao', label: 'Visitação Médica', icon: 'visitation' },
   { id: 'gestao', label: 'Gestão', icon: 'analytics' },
@@ -79,6 +77,37 @@ export interface AppRoute {
   icon?: NavIcon;
   /** Grupo (accordion) do trilho. Ausente = item solto, fora de qualquer grupo. */
   group?: NavGroupId;
+  /**
+   * Caminhos que também acendem este item no trilho (CRMLAB-143): "Cadastros"
+   * fica ativo em qualquer uma das suas abas, que mantêm o endereço próprio.
+   */
+  activePaths?: readonly string[];
+}
+
+/**
+ * Abas da página "Cadastros" (CRMLAB-143). Cada aba é a tela que já existia,
+ * no MESMO endereço de antes — favoritos e links salvos seguem valendo. Os
+ * papéis são os da própria tela: o perfil só vê as abas que já podia abrir.
+ */
+export interface RegisterTab {
+  path: string;
+  label: string;
+  requiredRoles: readonly UserRole[];
+}
+
+export const REGISTERS_PATH = '/settings/registers';
+
+export const REGISTER_TABS: readonly RegisterTab[] = [
+  { path: '/settings/users', label: 'Usuários', requiredRoles: ADMIN_ONLY },
+  { path: '/catalog', label: 'Exames', requiredRoles: TENANT_ROLES },
+  { path: '/quick-replies', label: 'Respostas rápidas', requiredRoles: TENANT_ROLES },
+  { path: '/settings/attendants', label: 'Atendentes', requiredRoles: MANAGER_PLUS },
+  { path: '/settings/insurances', label: 'Convênios', requiredRoles: MANAGER_PLUS },
+] as const;
+
+/** Abas de Cadastros visíveis para o perfil, na ordem de exibição. */
+export function registerTabsFor(role: UserRole | null | undefined): RegisterTab[] {
+  return REGISTER_TABS.filter((tab) => canAccess(role, tab.requiredRoles));
 }
 
 export const APP_ROUTES: readonly AppRoute[] = [
@@ -110,33 +139,19 @@ export const APP_ROUTES: readonly AppRoute[] = [
     path: '/catalog',
     label: 'Cadastro de Exames',
     requiredRoles: TENANT_ROLES,
-    inSidebar: true,
-    icon: 'catalog',
-    group: 'configuracoes',
+    inSidebar: false,
   },
   {
     path: '/analytics',
     label: 'Conversão',
     requiredRoles: TENANT_ROLES,
-    inSidebar: true,
-    icon: 'analytics',
-    group: 'gestao',
-  },
-  {
-    path: '/internal-chat',
-    label: 'Chat Interno',
-    requiredRoles: TENANT_ROLES,
-    inSidebar: true,
-    icon: 'chat',
-    group: 'comunicacao',
+    inSidebar: false,
   },
   {
     path: '/quick-replies',
     label: 'Respostas rápidas',
     requiredRoles: TENANT_ROLES,
-    inSidebar: true,
-    icon: 'quick-replies',
-    group: 'comunicacao',
+    inSidebar: false,
   },
   {
     // CRMLAB-87 (D-256): agenda de visitas — todos os papéis do laboratório veem e mexem em todas.
@@ -166,12 +181,17 @@ export const APP_ROUTES: readonly AppRoute[] = [
     icon: 'sales',
   },
   {
+    path: '/internal-chat',
+    label: 'Chat Interno',
+    requiredRoles: TENANT_ROLES,
+    inSidebar: true,
+    icon: 'chat',
+  },
+  {
     path: '/decisions',
     label: 'Decisões',
     requiredRoles: MANAGER_PLUS,
-    inSidebar: true,
-    icon: 'decisions',
-    group: 'gestao',
+    inSidebar: false,
   },
 
   // ── Domínio LIS (Onda 10) ────────────────────────────────────────────────
@@ -202,6 +222,26 @@ export const APP_ROUTES: readonly AppRoute[] = [
 
   // ── Configuração ────────────────────────────────────────────────────────
   {
+    // CRMLAB-143: uma entrada só no trilho para os cinco cadastros (abas).
+    path: REGISTERS_PATH,
+    label: 'Cadastros',
+    requiredRoles: TENANT_ROLES,
+    inSidebar: true,
+    icon: 'catalog',
+    group: 'configuracoes',
+    activePaths: REGISTER_TABS.map((tab) => tab.path),
+  },
+  {
+    // CRMLAB-56 (D-190..D-194): regras do funil + comissão (seção 6). Todos
+    // veem; gestor/admin editam. `/settings/commissions` redireciona para cá.
+    path: '/settings/rules',
+    label: 'Regras',
+    requiredRoles: TENANT_ROLES,
+    inSidebar: true,
+    icon: 'rules',
+    group: 'configuracoes',
+  },
+  {
     path: '/settings/channels',
     label: 'Canais & Equipe',
     requiredRoles: MANAGER_PLUS,
@@ -221,27 +261,13 @@ export const APP_ROUTES: readonly AppRoute[] = [
     path: '/settings/insurances',
     label: 'Convênios',
     requiredRoles: MANAGER_PLUS,
-    inSidebar: true,
-    icon: 'insurances',
-    group: 'configuracoes',
+    inSidebar: false,
   },
   {
     path: '/settings/attendants',
     label: 'Atendentes',
     requiredRoles: MANAGER_PLUS,
-    inSidebar: true,
-    icon: 'attendants',
-    group: 'configuracoes',
-  },
-  {
-    // CRMLAB-56 (D-190..D-194): regras do funil + comissão (seção 6). Todos
-    // veem; gestor/admin editam. `/settings/commissions` redireciona para cá.
-    path: '/settings/rules',
-    label: 'Regras',
-    requiredRoles: TENANT_ROLES,
-    inSidebar: true,
-    icon: 'rules',
-    group: 'configuracoes',
+    inSidebar: false,
   },
   {
     path: '/settings/lis-integration',
@@ -255,17 +281,13 @@ export const APP_ROUTES: readonly AppRoute[] = [
     path: '/settings/users',
     label: 'Usuários & Permissões',
     requiredRoles: ADMIN_ONLY,
-    inSidebar: true,
-    icon: 'users',
-    group: 'configuracoes',
+    inSidebar: false,
   },
   {
     path: '/settings/account',
     label: 'Minha Conta',
     requiredRoles: TENANT_ROLES,
-    inSidebar: true,
-    icon: 'account',
-    group: 'configuracoes',
+    inSidebar: false,
   },
   {
     path: '/settings/theme',
@@ -314,6 +336,11 @@ export function canAccess(role: UserRole | null | undefined, required: readonly 
 }
 
 /** Itens do trilho visíveis para o perfil. A ESTRUTURA é a mesma; o conteúdo muda. */
+/** O item do trilho está ativo neste caminho? (o próprio `path` ou um de `activePaths`) */
+export function isRouteActive(route: AppRoute, pathname: string): boolean {
+  return route.path === pathname || (route.activePaths?.includes(pathname) ?? false);
+}
+
 export function sidebarRoutesFor(role: UserRole | null | undefined): AppRoute[] {
   return APP_ROUTES.filter((route) => route.inSidebar && canAccess(role, route.requiredRoles));
 }

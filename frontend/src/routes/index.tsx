@@ -19,6 +19,7 @@ import LisIntegrationSettings from '@/pages/Settings/LisIntegration';
 import AccountSettings from '@/pages/Settings/Account';
 import ThemeSettings from '@/pages/Settings/Theme';
 import UsersSettings from '@/pages/Settings/Users';
+import { RegistersLayout, RegistersRedirect } from '@/pages/Settings/Registers';
 import InternalChat from '@/pages/InternalChat';
 import QuickReplies from '@/pages/QuickReplies';
 import Decisions from '@/pages/Decisions';
@@ -84,16 +85,23 @@ export const appRoutes: RouteObject[] = [
               { path: 'patients/:id', element: <LegacyPatientsRedirect /> },
               { path: 'budget/new', element: <BudgetNew /> },
               { path: 'proposals', element: <Proposals /> },
-              { path: 'catalog', element: <Catalog /> },
               { path: 'analytics', element: <Analytics /> },
               { path: 'internal-chat', element: <InternalChat /> },
-              { path: 'quick-replies', element: <QuickReplies /> },
               { path: 'sales', element: <Sales /> },
               { path: 'visitation/agenda', element: <Agenda /> },
               { path: 'visitation/doctors', element: <Doctors /> },
               { path: 'visitation/doctors/:id', element: <DoctorProfile /> },
               { path: 'settings/account', element: <AccountSettings /> },
               { path: 'settings/rules', element: <RulesSettings /> },
+              // Cadastros (CRMLAB-143): a faixa de abas envolve as telas, que mantêm o endereço.
+              { path: 'settings/registers', element: <RegistersRedirect /> },
+              {
+                element: <RegistersLayout />,
+                children: [
+                  { path: 'catalog', element: <Catalog /> },
+                  { path: 'quick-replies', element: <QuickReplies /> },
+                ],
+              },
             ],
           },
         ],
@@ -112,8 +120,13 @@ export const appRoutes: RouteObject[] = [
               { path: 'active-search', element: <ActiveSearch /> },
               { path: 'settings/channels', element: <ChannelsSettings /> },
               { path: 'settings/operation', element: <OperationSettings /> },
-              { path: 'settings/insurances', element: <Insurances /> },
-              { path: 'settings/attendants', element: <AttendantsSettings /> },
+              {
+                element: <RegistersLayout />,
+                children: [
+                  { path: 'settings/insurances', element: <Insurances /> },
+                  { path: 'settings/attendants', element: <AttendantsSettings /> },
+                ],
+              },
               // CRMLAB-56 (D-194): a comissão virou a seção 6 de Regras.
               {
                 path: 'settings/commissions',
@@ -132,7 +145,10 @@ export const appRoutes: RouteObject[] = [
           {
             element: <AppShell />,
             children: [
-              { path: 'settings/users', element: <UsersSettings /> },
+              {
+                element: <RegistersLayout />,
+                children: [{ path: 'settings/users', element: <UsersSettings /> }],
+              },
               { path: 'settings/theme', element: <ThemeSettings /> },
             ],
           },

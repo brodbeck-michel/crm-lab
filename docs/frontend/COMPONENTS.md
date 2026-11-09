@@ -400,12 +400,17 @@ Anatomia (padrão WhatsApp):
   `rounded-md` filho de grupo
 - Conteúdo do trilho muda por perfil — a ESTRUTURA não
 - Itens agrupados em accordion (CRMLAB-4): itens soltos primeiro, um único divisor
-  (`<hr>` neutral-300), depois os grupos, na ordem Comunicação → Visitação Médica → Gestão →
-  Configurações (D-129: "Comercial" + "LIS / Operação Laboratorial" fundidos em "Gestão";
-  "Visitação Médica" desde o CRMLAB-86, D-255)
+  (`<hr>` neutral-300), depois os grupos, na ordem Visitação Médica → Gestão → Configurações
+  (D-129: "Comercial" + "LIS / Operação Laboratorial" fundidos em "Gestão"; "Visitação Médica"
+  desde o CRMLAB-86, D-255; "Comunicação" removido no CRMLAB-143, D-315)
   (`sidebarSectionsFor(role)`, route-config.ts). Grupo
-  sem nenhum item visível para o perfil não aparece. Abertos por padrão; estado por grupo
-  persistido em localStorage por usuário (`sidebar-groups.store.ts`)
+  sem nenhum item visível para o perfil não aparece. **Fechados por padrão, exceto o grupo da
+  tela atual** (CRMLAB-143); a escolha do usuário, quando existe, ganha do padrão e é
+  persistida em localStorage por usuário (`sidebar-groups.store.ts`)
+- Item com `activePaths` (route-config.ts) fica ativo também nesses caminhos — é como
+  "Cadastros" acende em qualquer uma das suas abas (CRMLAB-143)
+- Menu do usuário (rodapé): status, preferências de aviso, **"Minha conta"**
+  (`/settings/account`, CRMLAB-143 — saiu do trilho) e "Sair"
 - Cabeçalho de grupo (CRMLAB-44): ícone (`NAV_GROUPS[].icon`, route-config.ts) + label
   (`font-body text-label font-bold` — mesmo tamanho do item, só o peso diferencia, D-128) +
   chevron (`chevron-right`, lucide-react, 15px) que gira 90° ao abrir. Fundo `accent-100` quando

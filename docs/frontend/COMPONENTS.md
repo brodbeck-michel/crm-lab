@@ -827,7 +827,7 @@ Barril: `@/components/layout`. Nenhum destes componentes busca dado — são cas
 | `PageHeader` | `<PageHeader title breadcrumb? actions? description? size? />` | Título `text-display` (32px) na fonte de título; `size="compact"` cai para 21px (painel); ações `flex: 0 0 auto` |
 | `InboxLayout` | `<InboxLayout list conversation context? contextOpen? />` | `336px \| flex 1 min 440px \| 316px` |
 | `BudgetLayout` | `<BudgetLayout catalog summary total />` | `flex 1 min 520px \| 372px`; `total` em rodapé `sticky bottom-0` |
-| `PageContainer` | `<PageContainer wide?>…</PageContainer>` | Página de leitura: `max-width 1180px`, `padding 30px 36px 48px` (PAGES.md §3). `wide`: 1440px e `24px 32px 48px`, só para tela de GRADE de dados (`/results`) |
+| `PageContainer` | `<PageContainer fill?>…</PageContainer>` | Contêiner ÚNICO de página (`layout/PageContainer.tsx`, CRMLAB-145): `max-width 1600px`, `padding 28px 32px 48px`, alinhado à esquerda (PAGES.md §3). `fill`: mesmas margens, sem teto de largura e `h-full` (funil) |
 | `NavGlyph` | `<NavGlyph name size? />` | `lucide-react`, 19px/`strokeWidth 1.7`, herda `currentColor` (CRMLAB-44) |
 
 Constantes exportadas para quem precisar do número exato:

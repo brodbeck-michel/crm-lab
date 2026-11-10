@@ -831,6 +831,9 @@ export default function ChannelsSettings() {
             </p>
           )}
 
+          {/* CRMLAB-145: duas colunas na tela larga — conexão e custo à esquerda, o resto à direita. */}
+          <div className="grid grid-cols-1 items-start gap-lg min-[1500px]:grid-cols-2">
+          <div className="flex min-w-0 flex-col gap-lg">
           {/* ── Conexão de canal ───────────────────────────────────────── */}
           <Section
             title="Conexão de canal"
@@ -964,6 +967,8 @@ export default function ChannelsSettings() {
             </Section>
           )}
 
+          </div>
+          <div className="flex min-w-0 flex-col gap-lg">
           {/* ── Distribuição ───────────────────────────────────────────── */}
           <Section
             title="Modo de distribuição"
@@ -1167,6 +1172,8 @@ export default function ChannelsSettings() {
               minWidth={480}
             />
           </Section>
+          </div>
+          </div>
         </>
       ) : null}
     </PageContainer>

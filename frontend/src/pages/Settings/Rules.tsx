@@ -75,6 +75,15 @@ const FIELD_TAB: Record<string, RulesTab> = {
   firstContactLimit: 'mensagens',
 };
 
+/**
+ * Painel de uma aba (CRMLAB-145): os cartões ocupam a largura do contêiner
+ * padrão em duas colunas a partir de 1500px de janela. Colunas de CSS (e não
+ * grade) para cada cartão manter a própria altura sem abrir buraco embaixo do
+ * vizinho mais curto; abaixo disso, uma coluna só.
+ */
+const PANEL_GRID =
+  'gap-lg min-[1500px]:columns-2 [&>*]:mb-lg [&>*]:break-inside-avoid [&>*:last-child]:mb-0';
+
 function tabFromHash(hash: string): RulesTab | undefined {
   return SECTION_TAB[hash.replace(/^#/, '')];
 }
@@ -360,12 +369,12 @@ export default function Rules() {
         />
       </div>
 
-      <form onSubmit={handleSave} hidden={!inForm} className="max-w-3xl space-y-lg">
+      <form onSubmit={handleSave} hidden={!inForm} className="space-y-lg">
         <div
           role="tabpanel"
           aria-label={TAB_LABELS.funil}
           hidden={activeTab !== 'funil'}
-          className="space-y-lg"
+          className={PANEL_GRID}
         >
         <Section
           id="origem"
@@ -573,7 +582,7 @@ export default function Rules() {
           role="tabpanel"
           aria-label={TAB_LABELS.mensagens}
           hidden={activeTab !== 'mensagens'}
-          className="space-y-lg"
+          className={PANEL_GRID}
         >
         <SendMessageSection
           draft={draft}
@@ -631,7 +640,7 @@ export default function Rules() {
         role="tabpanel"
         aria-label={TAB_LABELS.comercial}
         hidden={activeTab !== 'comercial'}
-        className="max-w-3xl space-y-lg"
+        className={PANEL_GRID}
       >
         {data.origin.manualInCrm && (
           <Section
@@ -668,7 +677,7 @@ export default function Rules() {
         role="tabpanel"
         aria-label={TAB_LABELS.feriados}
         hidden={activeTab !== 'feriados'}
-        className="max-w-3xl"
+        className="max-w-4xl"
       >
         <HolidaysSection canEdit={canEdit} />
       </div>

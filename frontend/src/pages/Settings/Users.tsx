@@ -3,7 +3,8 @@ import { useUserList, useAuditList, usePresenceOf } from '@/api';
 import UserTable from '@/components/users/UserTable';
 import UserModal from '@/components/users/UserModal';
 import AuditLogTable from '@/components/users/AuditLogTable';
-import { PageTabs } from '@/components/layout/PageHeader';
+import { PageContainer } from '@/components/layout/PageContainer';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { Button, SegmentedControl } from '@/components/ui';
 import type { ManagedUser, PaginationQuery } from '@crm-lab/shared';
 
@@ -38,24 +39,23 @@ export default function UsersSettings() {
   };
 
   return (
-    <div className="flex flex-col gap-lg p-lg h-full">
-      <PageTabs />
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="font-heading text-display">Usuários & Permissões</h1>
-          <p className="text-body text-neutral-600 mt-sm">
-            Gerencie usuários, funções e permissões do laboratório
-          </p>
-        </div>
-        {tab === 'users' && (
-          <Button variant="primary" onClick={() => setShowModal(true)}>
-            + Novo Usuário
-          </Button>
-        )}
-      </div>
+    <PageContainer>
+      <PageHeader
+        title="Usuários & Permissões"
+        description="Gerencie usuários, funções e permissões do laboratório."
+        actions={
+          tab === 'users' && (
+            <Button variant="primary" onClick={() => setShowModal(true)}>
+              + Novo Usuário
+            </Button>
+          )
+        }
+      />
 
       <div className="flex gap-md">
         <SegmentedControl
+          aria-label="Visão"
+          fullWidth={false}
           value={tab}
           onChange={(value) => {
             setTab(value as Tab);
@@ -104,6 +104,6 @@ export default function UsersSettings() {
           onClose={handleCloseModal}
         />
       )}
-    </div>
+    </PageContainer>
   );
 }

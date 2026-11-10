@@ -78,7 +78,9 @@ export default function Attendants() {
       />
 
       <div className="space-y-lg">
-        <SearchInput placeholder="Buscar por nome" onSearch={setSearch} aria-label="Buscar atendente" />
+        <div className="max-w-md">
+          <SearchInput placeholder="Buscar por nome" onSearch={setSearch} aria-label="Buscar atendente" />
+        </div>
 
         {isLoading ? (
           <div className="font-body text-body text-neutral-600">Carregando...</div>

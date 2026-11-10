@@ -253,10 +253,9 @@ export default function Results() {
   ];
 
   return (
-    <PageContainer wide>
+    <PageContainer>
       <PageHeader
         title="Resultados"
-        size="compact"
         description="Orçamentos do LIS no período selecionado."
         actions={
           <>

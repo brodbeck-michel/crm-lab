@@ -387,9 +387,19 @@ enxerga quem já veria por uma conversa). `platform_operator` não acessa (§11)
 
 ## 3. Ficha do Contato (`/contacts/:id`)
 
-- Página de leitura: max-width 1180px, padding 30px 36px 48px (`PageContainer`). Tela de PAINEL,
-  cujo conteúdo é uma grade de dados e não texto corrido, usa `PageContainer wide` — 1440px,
-  padding 24px 32px 48px (hoje só `/results`, §14)
+- **Padrão de página (CRMLAB-145, D-317) — vale para TODA tela:** `PageContainer` único, max-width
+  1600px, padding 28px 32px 48px, **alinhado à esquerda** (o título começa no mesmo ponto em
+  qualquer tela e em qualquer largura de janela). Não existe mais largura "de leitura" (1180px)
+  nem `wide` (1440px), nem tela com margem própria. Cabeçalho sempre pelo `PageHeader` (título
+  32px, descrição, ações à direita). Regras do conteúdo:
+  - tabela, cartões de indicador e gráficos ocupam a largura do contêiner;
+  - formulário curto e texto corrido limitam a própria largura (`max-w-md`/`max-w-lg`), à esquerda;
+  - tela de muitos cartões de configuração (Regras, Canais & Equipe) usa duas colunas a partir de
+    1500px de janela e uma coluna abaixo disso;
+  - busca tem no máximo `max-w-md`; seletor de 2–3 opções (`SegmentedControl`) e `Select` de
+    filtro não esticam (`fullWidth={false}` / largura fixa) e ficam na mesma linha da busca;
+  - telas de painel cheio (inbox, orçamento, chat interno, agenda) seguem fora do contêiner, mas
+    com a mesma margem lateral de 32px; o funil usa `PageContainer fill` (mesmas margens, sem teto).
 - `:id` é o **id do paciente** (`patients.id`, D-059), não o da conversa. O inbox chega aqui
   pelo `patientId` da conversa; conversa anterior ao backfill tem `patientId: null` e o link
   não aparece
@@ -1266,8 +1276,8 @@ as duas bases num mesmo PDF produziria números que não fecham entre si.
 
 #### Cabeçalho e barra de filtro
 
-A tela usa `PageContainer wide` (1440px): são 4 KPIs, 2 gráficos e uma tabela de 10 colunas —
-na largura de leitura de 1180px a tabela caía em rolagem horizontal em qualquer monitor.
+A tela usa o `PageContainer` padrão (1600px, CRMLAB-145 — o antigo `wide` de 1440px deixou de
+existir): são 4 KPIs, 2 gráficos e uma tabela de 10 colunas. O cabeçalho é o padrão (32px).
 
 - **Cabeçalho** (`PageHeader size="compact"`, 21px): título + a frase "Orçamentos do LIS no
   período selecionado" + os dois botões da tela, **"Importar"** e **"Exportar relatório

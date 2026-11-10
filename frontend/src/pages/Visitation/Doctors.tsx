@@ -196,6 +196,7 @@ export default function Doctors() {
         </div>
         <SegmentedControl
           aria-label="Situação do cadastro"
+          fullWidth={false}
           options={STATUS_OPTIONS}
           value={status}
           onChange={(value) => {

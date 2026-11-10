@@ -16,6 +16,7 @@ import ProposalCard from '@/components/proposal/ProposalCard';
 import ProposalsFilters from '@/components/proposal/ProposalsFilters';
 import NewAttendanceModal from '@/components/proposal/NewAttendanceModal';
 import { Pagination } from '@/components/shared';
+import { PageContainer } from '@/components/layout/PageContainer';
 import { Button, SegmentedControl, useToast } from '@/components/ui';
 import { useUIStore } from '@/stores/ui.store';
 
@@ -135,7 +136,7 @@ export default function Proposals() {
   };
 
   return (
-    <div className="flex flex-col gap-lg p-lg h-full">
+    <PageContainer fill>
       <div className="flex items-center justify-between gap-md">
         <h1 className="font-heading text-display">Pipeline de Propostas</h1>
         <div className="flex items-center gap-md">
@@ -209,6 +210,6 @@ export default function Proposals() {
           )}
         </>
       )}
-    </div>
+    </PageContainer>
   );
 }

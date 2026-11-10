@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useThemeCurrent, useThemePresets, useUpdateTheme } from '@/api/themes';
 import ColorPicker from '@/components/theme/ColorPicker';
 import ThemePreview from '@/components/theme/ThemePreview';
+import { PageContainer } from '@/components/layout/PageContainer';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { Button, Input, SegmentedControl } from '@/components/ui';
 import type { SegmentedOption } from '@/components/ui';
 import type { FontId, RadiusId, ThemePreset } from '@crm-lab/shared';
@@ -65,14 +67,11 @@ export default function ThemeSettings() {
   };
 
   return (
-    <div className="flex flex-col gap-lg p-lg h-full">
-      <div>
-        <h1 className="font-heading text-display">Personalização</h1>
-        <p className="text-body text-neutral-600 mt-sm">
-          Customize as cores do seu laboratório. O fundo das telas é sempre branco; a cor do tema
-          aparece no menu, nos cartões, nas tabelas e nos botões.
-        </p>
-      </div>
+    <PageContainer>
+      <PageHeader
+        title="Personalização"
+        description="Customize as cores do seu laboratório. O fundo das telas é sempre branco; a cor do tema aparece no menu, nos cartões, nas tabelas e nos botões."
+      />
 
       <div className="grid grid-cols-2 gap-lg flex-1 overflow-auto">
         <div className="flex flex-col gap-lg">
@@ -181,6 +180,6 @@ export default function ThemeSettings() {
           <ThemePreview theme={currentTheme} />
         </div>
       </div>
-    </div>
+    </PageContainer>
   );
 }

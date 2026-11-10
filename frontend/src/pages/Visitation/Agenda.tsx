@@ -329,7 +329,7 @@ export default function Agenda() {
 
   return (
     <div className="flex min-h-0 flex-1 md:h-screen">
-      <div className="flex min-w-0 flex-1 flex-col gap-lg px-[28px] py-xl">
+      <div className="flex min-w-0 flex-1 flex-col gap-lg px-[32px] py-[28px]">
         <PageHeader
           title="Agenda de visitas"
           description="Visitas da equipe aos médicos solicitantes."

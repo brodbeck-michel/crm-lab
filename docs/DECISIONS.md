@@ -7145,3 +7145,24 @@ para o cabeçalho do grupo "Comunicação".
 4. A aba Comercial não aparece quando estaria vazia. A âncora `#secao` abre a aba da seção
    (mantém o redirect de `/settings/commissions`, D-194).
 **Impacto:** só frontend — PAGES.md §21, `pages/Settings/Rules.tsx` e o spec. Sem mudança de API.
+
+### D-317: Padrão visual único de página — um contêiner, um cabeçalho (CRMLAB-145)
+**Contexto:** na validação dos CRMLAB-143/144 (10/11/2026) o Michel mostrou que cada tela ocupava a
+área de um jeito. Medido no navegador a 1920px: três larguras (1180px centralizado, 1440px e
+"encostado na borda") e o título começando em três pontos (292, 410 e 544px).
+**Decisão:**
+1. **Um contêiner para toda tela:** `PageContainer` com max-width 1600px, padding 28px 32px 48px,
+   alinhado à esquerda. Sai a largura de leitura (1180px), sai o `wide` (1440px) e saem as telas
+   com `p-lg` próprio (Catálogo, Usuários, Personalização, Conversão). O funil usa
+   `PageContainer fill`; a Agenda só acerta a margem lateral para 32px.
+2. **Um cabeçalho:** `PageHeader` no tamanho padrão em todas (Resultados deixa o `compact`;
+   Catálogo, Usuários e Personalização deixam o cabeçalho feito à mão). A Agenda, que é tela de
+   painel cheio, mantém o `compact`.
+3. **Conteúdo:** dados ocupam a largura; formulário curto limita a própria largura à esquerda;
+   Regras e Canais & Equipe usam duas colunas a partir de 1500px de janela; busca até `max-w-md`;
+   seletores e filtros não esticam (Usuários, Médicos, Vendas, Busca Ativa, Atendentes, Catálogo).
+4. **Validação:** capturas em navegador a 1920px e 1366px, antes e depois, das 24 telas — o título
+   começa em 308px em todas.
+**Supera:** PAGES.md §3 (1180px / `wide` 1440px) e a nota de Resultados sobre `PageContainer wide`.
+**Impacto:** só frontend — `layout/PageContainer.tsx` (novo arquivo, saiu de `AppShell.tsx`),
+PAGES.md §3 e §14, COMPONENTS.md. Sem mudança de API, de regra ou de permissão.

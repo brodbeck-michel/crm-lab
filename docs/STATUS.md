@@ -4172,3 +4172,17 @@ Branch `feature/CRMLAB-144-regras-em-abas`, empilhada sobre o CRMLAB-143. Decis�
   aviso quando o bloqueio está na outra aba; `#secao` abre a aba da seção.
 - **Testes:** `Rules.spec.tsx` — abas por perfil, rascunho preservado na troca, bloqueio na outra
   aba, âncora `#comissoes`; os testes antigos das seções abrem a aba pela âncora.
+
+### 🔄 CRMLAB-145 — padrão visual único de página (2026-11-10, aguardando validação)
+
+Branch `feature/CRMLAB-145-padrao-visual-telas`, empilhada sobre o CRMLAB-144. Decisão D-317. Só frontend.
+
+- `layout/PageContainer.tsx`: contêiner único (1600px, 28/32/48, à esquerda) + `fill` para o funil.
+- Convertidas ao padrão: Catálogo, Usuários, Personalização, Conversão, Propostas (fill),
+  Resultados (sem `wide`/`compact`), Agenda (margem lateral).
+- Conteúdo: Regras e Canais & Equipe em duas colunas ≥ 1500px; filtros e seletores contidos em
+  Usuários, Médicos, Vendas, Busca Ativa, Atendentes e Catálogo.
+- **Validação visual:** 24 telas capturadas em navegador (1920px e amostra em 1366px) com o
+  dataset de E2E; título em 308px em todas. Suíte do frontend: 157 arquivos / 2.134 testes.
+- **Sem mudança (de propósito):** Integração LIS e Minha Conta seguem como formulário estreito à
+  esquerda; inbox, orçamento, chat interno e agenda seguem em painel cheio.

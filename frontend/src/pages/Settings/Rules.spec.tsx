@@ -75,15 +75,27 @@ function signIn(role: UserRole) {
   });
 }
 
-function renderPage(rules: FunnelRules = DEFAULT_FUNNEL_RULES) {
+/**
+ * Aba aberta ao montar (CRMLAB-144): a âncora `#secao` abre a aba da seção.
+ * Vazio = aba Funil. Os `describe` de Mensagens/Feriados ajustam no `beforeEach`.
+ */
+let openAt = '';
+
+function renderPage(rules: FunnelRules = DEFAULT_FUNNEL_RULES, hash = openAt) {
   useFunnelRules.mockReturnValue(querySuccess(rules));
   return render(
     <ToastProvider>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[`/settings/rules${hash}`]}>
         <Rules />
       </MemoryRouter>
     </ToastProvider>,
   );
+}
+
+/** Rótulos da faixa de abas da página (há outros `tablist` dentro das seções). */
+function ruleTabs(): Array<string | null> {
+  const list = screen.getByRole('tablist', { name: 'Grupos de regras' });
+  return within(list).getAllByRole('tab').map((tab) => tab.textContent);
 }
 
 function section(name: RegExp): HTMLElement {
@@ -107,24 +119,87 @@ describe('Regras (/settings/rules)', () => {
   });
 
   afterEach(() => {
+    openAt = '';
     useAuthStore.setState({ user: null });
   });
 
-  it('gestor vê as 7 seções', () => {
+  it('gestor vê as 4 abas; cada uma mostra só as suas seções (CRMLAB-144)', async () => {
+    const user = userEvent.setup();
     signIn('manager');
     renderPage();
 
-    for (const name of [
-      /origem das propostas/i,
-      /automação do funil/i,
-      /movimentação manual/i,
-      /mensagem de envio/i,
-      /descontos e aprovação/i,
-      /carga do lis/i,
-      /comissões/i,
-    ]) {
-      expect(section(name)).toBeInTheDocument();
+    expect(ruleTabs()).toEqual([
+      'Funil',
+      'Mensagens',
+      'Comercial',
+      'Feriados',
+    ]);
+
+    const byTab: Array<[string, RegExp[]]> = [
+      ['Funil', [/origem das propostas/i, /automação do funil/i, /movimentação manual/i, /carga do lis/i]],
+      ['Mensagens', [/mensagem de envio/i, /reingajamento/i, /tempo de resposta/i, /primeir/i]],
+      ['Comercial', [/descontos e aprovação/i, /comissões/i]],
+      ['Feriados', [/feriados/i]],
+    ];
+    const all = byTab.flatMap(([, names]) => names);
+
+    for (const [tab, names] of byTab) {
+      await user.click(screen.getByRole('tab', { name: tab }));
+      expect(screen.getByRole('tab', { name: tab })).toHaveAttribute('aria-selected', 'true');
+      for (const name of all) {
+        const visible = screen.queryByRole('region', { name }) !== null;
+        expect([tab, name, visible]).toEqual([tab, name, names.includes(name)]);
+      }
     }
+  });
+
+  it('trocar de aba não perde o rascunho; o Salvar é um só para Funil + Mensagens', async () => {
+    const user = userEvent.setup();
+    signIn('manager');
+    renderPage();
+
+    await user.click(screen.getByRole('switch', { name: /pular etapas/i }));
+    await user.click(screen.getByRole('tab', { name: 'Mensagens' }));
+    expect(screen.getByRole('button', { name: 'Salvar regras' })).toBeEnabled();
+
+    await user.click(screen.getByRole('tab', { name: 'Feriados' }));
+    expect(screen.queryByRole('button', { name: 'Salvar regras' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: 'Funil' }));
+    await user.click(screen.getByRole('button', { name: 'Salvar regras' }));
+    expect(mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it('bloqueio na outra aba: o Salvar trava e diz em qual aba corrigir', async () => {
+    const user = userEvent.setup();
+    signIn('manager');
+    renderPage();
+
+    await user.click(screen.getByRole('switch', { name: /nascer do orçamento do bitlab/i }));
+    await user.click(screen.getByRole('switch', { name: /criar proposta manualmente/i }));
+    await user.click(screen.getByRole('tab', { name: 'Mensagens' }));
+
+    expect(screen.getByRole('button', { name: 'Salvar regras' })).toBeDisabled();
+    expect(screen.getByRole('status')).toHaveTextContent('Há um campo a corrigir na aba Funil.');
+  });
+
+  it('âncora #comissoes (rota antiga de comissão) abre a aba Comercial', () => {
+    signIn('manager');
+    renderPage(DEFAULT_FUNNEL_RULES, '#comissoes');
+
+    expect(screen.getByRole('tab', { name: 'Comercial' })).toHaveAttribute('aria-selected', 'true');
+    expect(section(/comissões/i)).toBeInTheDocument();
+  });
+
+  it('atendente com "Criar pelo CRM" desligado não tem a aba Comercial', () => {
+    signIn('attendant');
+    renderPage({ ...DEFAULT_FUNNEL_RULES, origin: { fromBitlab: true, manualInCrm: false } });
+
+    expect(ruleTabs()).toEqual([
+      'Funil',
+      'Mensagens',
+      'Feriados',
+    ]);
   });
 
   it('mostra os padrões: prazos 3/7/15 dias, 240 min, follow-up → perdido desligado', () => {
@@ -217,7 +292,7 @@ describe('Regras (/settings/rules)', () => {
   it('mensagem: pré-visualização renderiza as variáveis; variável desconhecida bloqueia', async () => {
     const user = userEvent.setup();
     signIn('manager');
-    renderPage();
+    renderPage(DEFAULT_FUNNEL_RULES, '#mensagem');
 
     expect(screen.getByTestId('preview-mensagem')).toHaveTextContent(
       'Olá, Maria Souza! Segue o orçamento nº 70034 (Particular), no valor de R$ 179,80.',
@@ -239,7 +314,7 @@ describe('Regras (/settings/rules)', () => {
     renderPage({
       ...DEFAULT_FUNNEL_RULES,
       sendMessage: { templates: [{ name: 'Padrão', text: 'Total: ' }] },
-    });
+    }, '#mensagem');
 
     const card = within(screen.getByRole('group', { name: 'Modelo 1' }));
     await user.click(card.getByRole('button', { name: '{valor}' }));
@@ -247,6 +322,10 @@ describe('Regras (/settings/rules)', () => {
   });
 
   describe('modelos da mensagem de envio (CRMLAB-95, D-265)', () => {
+    beforeEach(() => {
+      openAt = '#mensagem';
+    });
+
     const TWO: FunnelRules = {
       ...DEFAULT_FUNNEL_RULES,
       sendMessage: {
@@ -395,7 +474,7 @@ describe('Regras (/settings/rules)', () => {
   it('primeiros contatos (CRMLAB-134, D-306): nasce ligado com 8; mudar envia só a regra; fora da faixa trava', async () => {
     const user = userEvent.setup();
     signIn('manager');
-    renderPage();
+    renderPage(DEFAULT_FUNNEL_RULES, '#primeiro-contato');
     const secao = section(/primeiros contatos no whatsapp/i);
     expect(within(secao).getByRole('switch', { name: /limitar primeiros contatos/i })).toHaveAttribute(
       'aria-checked',
@@ -460,6 +539,10 @@ describe('Regras (/settings/rules)', () => {
   });
 
   describe('reingajamento (CRMLAB-62)', () => {
+    beforeEach(() => {
+      openAt = '#reingajamento';
+    });
+
     it('padrão: 1º e 2º desligados, 1 h e 24 h, 2º travado sem o 1º', () => {
       signIn('manager');
       renderPage();
@@ -575,6 +658,10 @@ describe('Regras (/settings/rules)', () => {
   });
 
   describe('alerta de tempo de resposta (CRMLAB-84)', () => {
+    beforeEach(() => {
+      openAt = '#alerta-resposta';
+    });
+
     it('padrão: desligado, 15 min, campo travado até ligar', () => {
       signIn('manager');
       renderPage();
@@ -619,6 +706,10 @@ describe('Regras (/settings/rules)', () => {
   });
 
   describe('feriados (CRMLAB-62)', () => {
+    beforeEach(() => {
+      openAt = '#feriados';
+    });
+
     it('mostra os nacionais do ano e os do laboratório', () => {
       useHolidays.mockReturnValue(
         querySuccess(holidays([{ id: 'h1', date: '2026-03-19', description: 'São José', source: 'custom' }])),

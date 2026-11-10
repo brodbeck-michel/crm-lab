@@ -400,12 +400,17 @@ Anatomia (padrão WhatsApp):
   `rounded-md` filho de grupo
 - Conteúdo do trilho muda por perfil — a ESTRUTURA não
 - Itens agrupados em accordion (CRMLAB-4): itens soltos primeiro, um único divisor
-  (`<hr>` neutral-300), depois os grupos, na ordem Comunicação → Visitação Médica → Gestão →
-  Configurações (D-129: "Comercial" + "LIS / Operação Laboratorial" fundidos em "Gestão";
-  "Visitação Médica" desde o CRMLAB-86, D-255)
+  (`<hr>` neutral-300), depois os grupos, na ordem Visitação Médica → Gestão → Configurações
+  (D-129: "Comercial" + "LIS / Operação Laboratorial" fundidos em "Gestão"; "Visitação Médica"
+  desde o CRMLAB-86, D-255; "Comunicação" removido no CRMLAB-143, D-315)
   (`sidebarSectionsFor(role)`, route-config.ts). Grupo
-  sem nenhum item visível para o perfil não aparece. Abertos por padrão; estado por grupo
-  persistido em localStorage por usuário (`sidebar-groups.store.ts`)
+  sem nenhum item visível para o perfil não aparece. **Fechados por padrão, exceto o grupo da
+  tela atual** (CRMLAB-143); a escolha do usuário, quando existe, ganha do padrão e é
+  persistida em localStorage por usuário (`sidebar-groups.store.ts`)
+- Item com `activePaths` (route-config.ts) fica ativo também nesses caminhos — é como
+  "Cadastros" acende em qualquer uma das suas abas (CRMLAB-143)
+- Menu do usuário (rodapé): status, preferências de aviso, **"Minha conta"**
+  (`/settings/account`, CRMLAB-143 — saiu do trilho) e "Sair"
 - Cabeçalho de grupo (CRMLAB-44): ícone (`NAV_GROUPS[].icon`, route-config.ts) + label
   (`font-body text-label font-bold` — mesmo tamanho do item, só o peso diferencia, D-128) +
   chevron (`chevron-right`, lucide-react, 15px) que gira 90° ao abrir. Fundo `accent-100` quando
@@ -752,7 +757,12 @@ Adições sobre a anatomia já documentada acima — nenhuma variante nova:
 - **SearchInput** — `defaultValue`, `debounceMs` (padrão 300), `disabled`.
   Não emite na montagem, só quando o usuário mexe.
 - **SegmentedControl** — genérico em `T extends string`; opção com `disabled`
-  é pulada na navegação por teclado (← → ↑ ↓, Home/End).
+  é pulada na navegação por teclado (← → ↑ ↓, Home/End). `fullWidth` (padrão `true`; `false` faz o
+  trilho abraçar o conteúdo) e `size` (`sm` padrão, filtro dentro da tela; `md`, abas que trocam o
+  conteúdo da página — trilho `neutral-100` com borda, rótulo `text-label`) — CRMLAB-143.
+- **PageTabsContext / PageTabs** (`layout/PageHeader.tsx`, CRMLAB-143) — um layout de rota fornece
+  uma faixa de abas pelo contexto; o `PageHeader` a desenha acima do título. Tela sem `PageHeader`
+  (Catálogo, Usuários) usa `<PageTabs />` no topo. Fora de um layout que forneça, não desenha nada.
 - **Select** — `options`, `placeholder`, `label`, `error`.
 - **Toggle** — `checked`, `onChange`, `label`, `disabled` (`role="switch"`).
 - **Tooltip** — `content`, `placement` (`top`/`bottom`). Abre em hover **e** em
@@ -817,7 +827,7 @@ Barril: `@/components/layout`. Nenhum destes componentes busca dado — são cas
 | `PageHeader` | `<PageHeader title breadcrumb? actions? description? size? />` | Título `text-display` (32px) na fonte de título; `size="compact"` cai para 21px (painel); ações `flex: 0 0 auto` |
 | `InboxLayout` | `<InboxLayout list conversation context? contextOpen? />` | `336px \| flex 1 min 440px \| 316px` |
 | `BudgetLayout` | `<BudgetLayout catalog summary total />` | `flex 1 min 520px \| 372px`; `total` em rodapé `sticky bottom-0` |
-| `PageContainer` | `<PageContainer wide?>…</PageContainer>` | Página de leitura: `max-width 1180px`, `padding 30px 36px 48px` (PAGES.md §3). `wide`: 1440px e `24px 32px 48px`, só para tela de GRADE de dados (`/results`) |
+| `PageContainer` | `<PageContainer fill?>…</PageContainer>` | Contêiner ÚNICO de página (`layout/PageContainer.tsx`, CRMLAB-145): `max-width 1600px`, `padding 28px 32px 48px`, alinhado à esquerda (PAGES.md §3). `fill`: mesmas margens, sem teto de largura e `h-full` (funil) |
 | `NavGlyph` | `<NavGlyph name size? />` | `lucide-react`, 19px/`strokeWidth 1.7`, herda `currentColor` (CRMLAB-44) |
 
 Constantes exportadas para quem precisar do número exato:

@@ -13,6 +13,17 @@ export interface SegmentedControlProps<T extends string = string> {
   onChange: (value: T) => void;
   /** Rótulo acessível do grupo. */
   'aria-label'?: string;
+  /**
+   * `true` (padrão): o trilho ocupa a largura toda e as opções dividem o espaço.
+   * `false`: o trilho abraça o conteúdo — para 2–5 opções curtas que não devem
+   * esticar numa tela larga (CRMLAB-143).
+   */
+  fullWidth?: boolean;
+  /**
+   * `sm` (padrão): filtro dentro de uma tela. `md`: abas que trocam o conteúdo
+   * da página (Cadastros, Regras) — trilho com fundo e borda, rótulo maior.
+   */
+  size?: 'sm' | 'md';
 }
 
 /**
@@ -26,6 +37,8 @@ export function SegmentedControl<T extends string = string>({
   value,
   onChange,
   'aria-label': ariaLabel,
+  fullWidth = true,
+  size = 'sm',
 }: SegmentedControlProps<T>) {
   const refs = useRef<Array<HTMLButtonElement | null>>([]);
 
@@ -57,7 +70,11 @@ export function SegmentedControl<T extends string = string>({
     <div
       role="tablist"
       aria-label={ariaLabel}
-      className="inline-flex w-full gap-xs rounded-pill bg-bg p-xs"
+      className={cn(
+        'inline-flex max-w-full gap-xs rounded-pill p-xs',
+        fullWidth ? 'w-full' : 'flex-wrap',
+        size === 'md' ? 'border border-neutral-200 bg-neutral-100' : 'bg-bg',
+      )}
     >
       {options.map((option, index) => {
         const active = option.value === value;
@@ -90,11 +107,15 @@ export function SegmentedControl<T extends string = string>({
               }
             }}
             className={cn(
-              'flex-1 cursor-pointer whitespace-nowrap rounded-pill border-none px-md py-[7px]',
-              'text-center font-body text-caption transition-colors',
+              'cursor-pointer whitespace-nowrap rounded-pill border-none text-center font-body transition-colors',
+              fullWidth && 'flex-1',
+              size === 'md' ? 'px-lg py-[9px] text-label' : 'px-md py-[7px] text-caption',
               active
                 ? 'bg-accent font-semibold text-bg'
-                : 'bg-transparent text-neutral-700 hover:bg-accent-100',
+                : cn(
+                    'bg-transparent hover:bg-accent-100',
+                    size === 'md' ? 'font-semibold text-text' : 'text-neutral-700',
+                  ),
               option.disabled && 'cursor-not-allowed opacity-50 hover:bg-transparent',
             )}
           >

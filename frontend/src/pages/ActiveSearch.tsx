@@ -101,7 +101,7 @@ export default function ActiveSearch() {
           ))}
         </div>
 
-        <div className="flex flex-wrap gap-md">
+        <div className="grid max-w-[560px] grid-cols-1 gap-md sm:grid-cols-2">
           <Select
             label="Atendente"
             value={attendantId}

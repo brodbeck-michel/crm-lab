@@ -4142,3 +4142,47 @@ Branch `feature/CRMLAB-137-janela-24h-v2`, empilhada sobre o CRMLAB-138. Decisã
 - **Testes:** `crmlab137-janela-24h.spec.ts` (17), cartão (`/send`, `/resend`) e Nova conversa
   (número novo e conversa encerrada) com janela fechada; frontend `Composer.window.spec.tsx` (5) e
   `NewConversation` (+1).
+
+### 🔄 CRMLAB-143 — menu lateral enxuto + Cadastros em abas (2026-11-09, aguardando validação)
+
+Branch `feature/CRMLAB-143-menu-lateral-cadastros`, sobre a main v1.44.0. Decisão D-315. Só frontend.
+
+- **Trilho:** soltos = Atendimento, Contatos, Propostas, Vendas, Chat Interno; grupo "Comunicação"
+  removido; Gestão sem Conversão e Decisões (rotas e telas continuam, só saem do menu);
+  Configurações com 5 itens (Cadastros, Regras, Canais & Equipe, Integração LIS, Personalização).
+- **Cadastros:** `pages/Settings/Registers.tsx` — faixa de abas (`SegmentedControl`) como layout de
+  rota sobre Usuários, Exames, Respostas rápidas, Atendentes e Convênios, cada uma no endereço de
+  sempre; `/settings/registers` redireciona para a primeira aba do perfil.
+- **Minha conta** no menu do usuário; **grupos fechados por padrão**, exceto o da tela atual.
+- **Testes:** `route-config.spec.ts`, `Sidebar.spec.tsx`, `sidebar-groups.store.spec.ts` e
+  `Registers.spec.tsx` (novo).
+- **Ajustes da validação (09/11, commit na branch do CRMLAB-144, que é a que sobe na hml):** ordem
+  dos soltos = Atendimento, Chat Interno, Propostas, Vendas, Contatos; Conferência também escondida;
+  abas de Cadastros/Regras com destaque (`size="md"`) e alinhadas ao título (`PageTabsContext`);
+  filtro Exames | Pacotes compacto ao lado da busca.
+- **Decidido pelo Michel (09/11):** Conversão, Decisões e Conferência ficam escondidas do menu por
+  enquanto; o código continua.
+
+### 🔄 CRMLAB-144 — Regras em abas (2026-11-09, aguardando validação)
+
+Branch `feature/CRMLAB-144-regras-em-abas`, empilhada sobre o CRMLAB-143. Decisão D-316. Só frontend.
+
+- `pages/Settings/Rules.tsx`: abas Funil, Mensagens, Comercial e Feriados (`SegmentedControl`);
+  seções sempre montadas, aba inativa escondida; um [Salvar regras] para Funil + Mensagens, com
+  aviso quando o bloqueio está na outra aba; `#secao` abre a aba da seção.
+- **Testes:** `Rules.spec.tsx` — abas por perfil, rascunho preservado na troca, bloqueio na outra
+  aba, âncora `#comissoes`; os testes antigos das seções abrem a aba pela âncora.
+
+### 🔄 CRMLAB-145 — padrão visual único de página (2026-11-10, aguardando validação)
+
+Branch `feature/CRMLAB-145-padrao-visual-telas`, empilhada sobre o CRMLAB-144. Decisão D-317. Só frontend.
+
+- `layout/PageContainer.tsx`: contêiner único (1600px, 28/32/48, à esquerda) + `fill` para o funil.
+- Convertidas ao padrão: Catálogo, Usuários, Personalização, Conversão, Propostas (fill),
+  Resultados (sem `wide`/`compact`), Agenda (margem lateral).
+- Conteúdo: Regras e Canais & Equipe em duas colunas ≥ 1500px; filtros e seletores contidos em
+  Usuários, Médicos, Vendas, Busca Ativa, Atendentes e Catálogo.
+- **Validação visual:** 24 telas capturadas em navegador (1920px e amostra em 1366px) com o
+  dataset de E2E; título em 308px em todas. Suíte do frontend: 157 arquivos / 2.134 testes.
+- **Sem mudança (de propósito):** Integração LIS e Minha Conta seguem como formulário estreito à
+  esquerda; inbox, orçamento, chat interno e agenda seguem em painel cheio.

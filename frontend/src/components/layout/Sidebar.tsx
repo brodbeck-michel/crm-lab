@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { PanelLeftClose, PanelLeftOpen, ChevronRight, LogOut, Check } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, ChevronRight, LogOut, Check, CircleUserRound } from 'lucide-react';
 import { SELECTABLE_USER_PRESENCE, type UserRole } from '@crm-lab/shared';
 import { cn, Badge } from '@/components/ui';
 import { Avatar, PresenceDot, USER_PRESENCE_LABELS } from '@/components/shared';
@@ -15,12 +15,10 @@ import {
   selectUser,
 } from '@/stores';
 import { useLogout } from '@/hooks';
-import { sidebarSectionsFor, type AppRoute } from '@/routes/route-config';
+import { isRouteActive, sidebarSectionsFor, type AppRoute } from '@/routes/route-config';
 import {
   conversationsApi,
   internalChatApi,
-  isRealtimeConnected,
-  operationApi,
   queryKeys,
   staleTimes,
   useUpdateMyPresence,
@@ -46,7 +44,7 @@ import { NavGlyph } from './NavGlyph';
  * Trilho no tom claro do tema (`bg-surface` = accent 12%, D-250). Item ativo:
  * fundo BRANCO (`bg-bg`) + texto `accent-700` + barra de 3px à esquerda
  * (`accent-500`) — único destaque do trilho. Hover: `accent-100` (20%). Grupos (accordion, CRMLAB-4):
- * abertos por padrão, estado por grupo persistido em localStorage por
+ * fechados por padrão, exceto o da tela atual (CRMLAB-143); estado por grupo persistido em localStorage por
  * usuário (`sidebar-groups.store`); grupo sem nenhum item visível para o
  * perfil não aparece. Cabeçalho de grupo com ícone + label + chevron que
  * gira 90° ao abrir; filhos indentados atrás de um trilho vertical
@@ -107,23 +105,6 @@ export function Sidebar() {
   const myPresence = presenceQuery.data?.items.find((item) => item.userId === userId)?.status;
   const myChosenPresence = presenceQuery.data?.myStatus;
 
-  // Sino de "Decisões" (PAGES.md §12): mesmo retrato de §10, cache compartilhado
-  // com Operation.tsx e Decisions.tsx — não é uma segunda chamada.
-  const hasDecisionsRoute =
-    ungrouped.some((route) => route.path === '/decisions') ||
-    groups.some((group) => group.items.some((route) => route.path === '/decisions'));
-  const overviewQuery = useQuery({
-    queryKey: queryKeys.operationOverview({}),
-    queryFn: () => operationApi.overview({}),
-    enabled: hasDecisionsRoute,
-    staleTime: staleTimes.operation,
-    // CRMLAB-122 (D-288): o sino só usa `pendingDecisions`, que o WS
-    // (`approval.*`) já invalida — com o WS aberto o polling é só rede de
-    // segurança. Aba escondida não faz polling (padrão do TanStack).
-    refetchInterval: () => (isRealtimeConnected() ? 5 * 60_000 : 60_000),
-  });
-  const pendingDecisionsCount = overviewQuery.data?.pendingDecisions.total ?? 0;
-
   // Badge de "Chat Interno" (D-130): mesma query/cache da tela de chat
   // (`queryKeys.internalChannels()`) — sem endpoint novo, já invalidada por
   // `internal_chat.new_message` e por `markRead` em `api/ws.ts`.
@@ -153,14 +134,10 @@ export function Sidebar() {
   });
   const attendanceUnreadCount = attendanceUnreadQuery.data?.unreadMessages ?? 0;
 
-  // Contadores por item. Só os de mensagem (não "Decisões") sobem para o grupo (D-130).
-  const unreadByPath: Record<string, number> = {
+  // Contadores por item (mensagens não lidas). "Decisões" saiu do trilho no CRMLAB-143.
+  const countsByPath: Record<string, number> = {
     '/attendance': attendanceUnreadCount,
     '/internal-chat': internalChatUnreadCount,
-  };
-  const countsByPath: Record<string, number> = {
-    ...unreadByPath,
-    '/decisions': pendingDecisionsCount,
   };
 
   // CRMLAB-72 (D-241 item 8): preferências do aviso de mensagem nova.
@@ -266,17 +243,19 @@ export function Sidebar() {
             route={route}
             collapsed={collapsed}
             countsByPath={countsByPath}
+            pathname={pathname}
           />
         ))}
 
         {groups.length > 0 && <hr className="my-sm border-t border-neutral-300" />}
 
         {groups.map((group) => {
-          const open = openGroupsByUser[userId]?.[group.id] ?? true;
-          const hasActiveChild = group.items.some((route) => route.path === pathname);
+          const hasActiveChild = group.items.some((route) => isRouteActive(route, pathname));
+          // CRMLAB-143: sem preferência salva, só o grupo da tela atual começa aberto.
+          const open = openGroupsByUser[userId]?.[group.id] ?? hasActiveChild;
           // D-130/D-277: o grupo herda a soma das não lidas (mensagens) dos itens dele.
           const groupUnreadCount = group.items.reduce(
-            (total, route) => total + (unreadByPath[route.path] ?? 0),
+            (total, route) => total + (countsByPath[route.path] ?? 0),
             0,
           );
           const groupBadgeLabel = `${groupUnreadCount} mensagens não lidas em ${group.label}`;
@@ -290,9 +269,9 @@ export function Sidebar() {
                 onClick={() => {
                   if (collapsed) {
                     setSidebarCollapsed(false);
-                    if (!open) toggleGroup(userId, group.id);
+                    if (!open) toggleGroup(userId, group.id, open);
                   } else {
-                    toggleGroup(userId, group.id);
+                    toggleGroup(userId, group.id, open);
                   }
                 }}
                 title={collapsed ? group.label : undefined}
@@ -347,6 +326,7 @@ export function Sidebar() {
                       route={route}
                       collapsed={collapsed}
                       countsByPath={countsByPath}
+                      pathname={pathname}
                       child
                     />
                   ))}
@@ -431,6 +411,20 @@ export function Sidebar() {
                     {pref.label}
                   </button>
                 ))}
+              {role !== 'platform_operator' && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setUserMenuOpen(false);
+                    navigate('/settings/account');
+                  }}
+                  className="flex w-full cursor-pointer items-center gap-sm border-none bg-transparent px-md py-xs text-left font-body text-label text-text hover:bg-accent-100"
+                >
+                  <CircleUserRound size={16} strokeWidth={1.7} aria-hidden="true" />
+                  Minha conta
+                </button>
+              )}
               <button
                 type="button"
                 role="menuitem"
@@ -472,10 +466,12 @@ interface SidebarNavItemProps {
   route: AppRoute;
   collapsed: boolean;
   /**
-   * Contador por rota: `/decisions` (pendências), `/internal-chat` (soma de
-   * `Channel.unreadCount`, D-130) e `/attendance` (D-277). Ausente = sem contador.
+   * Contador por rota: `/internal-chat` (soma de `Channel.unreadCount`, D-130)
+   * e `/attendance` (D-277). Ausente = sem contador.
    */
   countsByPath: Record<string, number>;
+  /** Caminho atual — acende o item também nos `activePaths` (abas de Cadastros, CRMLAB-143). */
+  pathname: string;
   /** Item filho de um grupo (raio menor: `rounded-md` × `rounded-lg`). */
   child?: boolean;
 }
@@ -490,15 +486,14 @@ function SidebarNavItem({
   route,
   collapsed,
   countsByPath,
+  pathname,
   child = false,
 }: SidebarNavItemProps) {
   const count = countsByPath[route.path] ?? 0;
   const badgeLabel =
-    route.path === '/decisions'
-      ? `${count} decisão(ões) pendente(s)`
-      : route.path === '/internal-chat' || route.path === '/attendance'
-        ? `${count} mensagens não lidas`
-        : undefined;
+    route.path === '/internal-chat' || route.path === '/attendance'
+      ? `${count} mensagens não lidas`
+      : undefined;
 
   return (
     <NavLink
@@ -511,7 +506,7 @@ function SidebarNavItem({
           'relative flex items-center gap-sm px-xs py-xs font-body text-label no-underline transition-colors',
           child ? 'rounded-md' : 'rounded-lg',
           'focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-500 focus-visible:outline-offset-2',
-          isActive
+          isActive || isRouteActive(route, pathname)
             ? cn(
                 'bg-bg font-semibold text-accent-700 shadow-sm',
                 "before:absolute before:inset-y-[9px] before:left-0 before:w-[3px] before:content-['']",

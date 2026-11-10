@@ -1,7 +1,7 @@
 export { AppShell, PlatformShell, PageContainer } from './AppShell';
 export type { PageContainerProps } from './AppShell';
 export { Sidebar } from './Sidebar';
-export { PageHeader } from './PageHeader';
+export { PageHeader, PageTabs, PageTabsContext } from './PageHeader';
 export type { PageHeaderProps, BreadcrumbItem } from './PageHeader';
 export {
   InboxLayout,

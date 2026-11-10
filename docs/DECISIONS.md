@@ -7100,3 +7100,69 @@ claro; o card inclui o recebimento.
 fallback (item 5).
 **Impacto:** API_CONTRACTS §4 (anexo) e §2b (tabela de tipos recebidos), BUSINESS_RULES §18,
 SERVICES §35, DEPLOYMENT (ffmpeg na imagem), `shared/types/media.types.ts`.
+
+### D-315: Menu lateral enxuto e página "Cadastros" com abas (CRMLAB-143)
+**Contexto:** o administrador via 23 itens em 4 grupos. O Michel pediu para enxugar (09/11/2026),
+sem mudar o layout do trilho — só a disposição dos itens.
+**Decisão:**
+1. **Soltos:** Atendimento, Chat Interno, Propostas, Vendas e Contatos, nessa ordem (ordem revista
+   na validação de 09/11). O grupo "Comunicação" acaba.
+2. **Gestão:** "Conversão", "Decisões" e "Conferência" (esta na validação de 09/11) saem do trilho —
+   ficam **escondidas por enquanto**, sem remover código. As rotas, as telas
+   e os endpoints **continuam** — só não há mais entrada no menu. O contador de decisões pendentes
+   da Sidebar sai junto; a fila de decisões segue em "Gestão da Operação".
+3. **Configurações** passa de 9 para 5 itens: Cadastros, Regras, Canais & Equipe, Integração LIS,
+   Personalização.
+4. **Cadastros** (`/settings/registers`) reúne Usuários, Exames, Respostas rápidas, Atendentes e
+   Convênios em abas. Cada aba é a tela existente **no endereço de sempre** (favoritos e links
+   seguem valendo, nenhum redirect de rota antiga); a faixa de abas é um layout de rota. Os papéis
+   de cada aba são os da própria rota — nenhuma permissão muda.
+5. **Minha Conta** sai do trilho e vira o item "Minha conta" do menu do usuário (rodapé).
+6. **Grupos fechados por padrão**, exceto o da tela atual. Preferência salva do usuário
+   (`crm-lab.sidebar-groups`) continua ganhando do padrão.
+7. **Abas com destaque (validação de 09/11):** as abas de Cadastros e de Regras usam o
+   `SegmentedControl` em `size="md"` (trilho com fundo e borda, rótulo maior) e `fullWidth={false}`
+   (não esticam). Em Cadastros a faixa é desenhada pelo `PageHeader` da tela, acima do título, e
+   por isso alinha com ele em qualquer largura. O filtro Exames | Pacotes do Catálogo fica
+   compacto, ao lado da busca.
+**Supera:** D-129 no que diz respeito à composição dos grupos; D-130 no trecho do contador subir
+para o cabeçalho do grupo "Comunicação".
+**Impacto:** só frontend — PAGES.md (mapa de rotas, grupos do trilho), COMPONENTS.md (Sidebar),
+`route-config.ts`, `Sidebar.tsx`, `pages/Settings/Registers.tsx`. Sem mudança de API ou de banco.
+
+### D-316: Tela de Regras em abas (CRMLAB-144)
+**Contexto:** a tela tinha cerca de 11 cartões numa rolagem só. O Michel pediu abas (09/11/2026).
+**Decisão:**
+1. Quatro abas: **Funil** (origem, automação, movimentação manual, carga do LIS), **Mensagens**
+   (mensagem de envio, reingajamento, alerta de tempo de resposta, primeiros contatos),
+   **Comercial** (descontos e aprovação, comissões) e **Feriados**. "Carga do LIS" sobe para junto
+   do funil; nenhuma regra muda de comportamento, de endpoint ou de permissão.
+2. As seções ficam todas montadas e a aba inativa só é escondida — o rascunho do formulário e o
+   estado local de comissão/feriados sobrevivem à troca de aba.
+3. O formulário e o [Salvar regras] continuam únicos para Funil + Mensagens (um `PATCH` só, com o
+   diff). Bloqueio vindo da aba que não está aberta é avisado ao lado do botão; erro de campo do
+   servidor abre a aba do campo.
+4. A aba Comercial não aparece quando estaria vazia. A âncora `#secao` abre a aba da seção
+   (mantém o redirect de `/settings/commissions`, D-194).
+**Impacto:** só frontend — PAGES.md §21, `pages/Settings/Rules.tsx` e o spec. Sem mudança de API.
+
+### D-317: Padrão visual único de página — um contêiner, um cabeçalho (CRMLAB-145)
+**Contexto:** na validação dos CRMLAB-143/144 (10/11/2026) o Michel mostrou que cada tela ocupava a
+área de um jeito. Medido no navegador a 1920px: três larguras (1180px centralizado, 1440px e
+"encostado na borda") e o título começando em três pontos (292, 410 e 544px).
+**Decisão:**
+1. **Um contêiner para toda tela:** `PageContainer` com max-width 1600px, padding 28px 32px 48px,
+   alinhado à esquerda. Sai a largura de leitura (1180px), sai o `wide` (1440px) e saem as telas
+   com `p-lg` próprio (Catálogo, Usuários, Personalização, Conversão). O funil usa
+   `PageContainer fill`; a Agenda só acerta a margem lateral para 32px.
+2. **Um cabeçalho:** `PageHeader` no tamanho padrão em todas (Resultados deixa o `compact`;
+   Catálogo, Usuários e Personalização deixam o cabeçalho feito à mão). A Agenda, que é tela de
+   painel cheio, mantém o `compact`.
+3. **Conteúdo:** dados ocupam a largura; formulário curto limita a própria largura à esquerda;
+   Regras e Canais & Equipe usam duas colunas a partir de 1500px de janela; busca até `max-w-md`;
+   seletores e filtros não esticam (Usuários, Médicos, Vendas, Busca Ativa, Atendentes, Catálogo).
+4. **Validação:** capturas em navegador a 1920px e 1366px, antes e depois, das 24 telas — o título
+   começa em 308px em todas.
+**Supera:** PAGES.md §3 (1180px / `wide` 1440px) e a nota de Resultados sobre `PageContainer wide`.
+**Impacto:** só frontend — `layout/PageContainer.tsx` (novo arquivo, saiu de `AppShell.tsx`),
+PAGES.md §3 e §14, COMPONENTS.md. Sem mudança de API, de regra ou de permissão.

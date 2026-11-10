@@ -32,7 +32,61 @@ import { SendMessageSection, sendMessageBlocked } from './SendMessageSection';
  * aparece com "Criar pelo CRM" ligado (valor salvo). Feriados e comissão têm
  * endpoint e permissão próprios, fora do formulário. Atendente vê tudo
  * desabilitado.
+ *
+ * CRMLAB-144 (D-316): as seções ficam em 4 abas — Funil, Mensagens, Comercial
+ * e Feriados. Todas continuam MONTADAS (a aba inativa só fica `hidden`), para
+ * o rascunho e o estado local de cada seção sobreviverem à troca de aba. O
+ * formulário e o "Salvar regras" seguem únicos para Funil + Mensagens.
  */
+
+type RulesTab = 'funil' | 'mensagens' | 'comercial' | 'feriados';
+
+const TAB_LABELS: Record<RulesTab, string> = {
+  funil: 'Funil',
+  mensagens: 'Mensagens',
+  comercial: 'Comercial',
+  feriados: 'Feriados',
+};
+
+/** Em que aba mora cada seção (`id` do `<section>`) — usado pela âncora `#secao`. */
+const SECTION_TAB: Record<string, RulesTab> = {
+  origem: 'funil',
+  automacao: 'funil',
+  travas: 'funil',
+  'carga-lis': 'funil',
+  mensagem: 'mensagens',
+  reingajamento: 'mensagens',
+  'alerta-resposta': 'mensagens',
+  'primeiro-contato': 'mensagens',
+  descontos: 'comercial',
+  comissoes: 'comercial',
+  feriados: 'feriados',
+};
+
+/** Primeiro segmento do caminho do campo (`automation.x.days`) → aba onde ele aparece. */
+const FIELD_TAB: Record<string, RulesTab> = {
+  origin: 'funil',
+  automation: 'funil',
+  manualMoves: 'funil',
+  lisSource: 'funil',
+  sendMessage: 'mensagens',
+  reengagement: 'mensagens',
+  responseAlert: 'mensagens',
+  firstContactLimit: 'mensagens',
+};
+
+/**
+ * Painel de uma aba (CRMLAB-145): os cartões ocupam a largura do contêiner
+ * padrão em duas colunas a partir de 1500px de janela. Colunas de CSS (e não
+ * grade) para cada cartão manter a própria altura sem abrir buraco embaixo do
+ * vizinho mais curto; abaixo disso, uma coluna só.
+ */
+const PANEL_GRID =
+  'gap-lg min-[1500px]:columns-2 [&>*]:mb-lg [&>*]:break-inside-avoid [&>*:last-child]:mb-0';
+
+function tabFromHash(hash: string): RulesTab | undefined {
+  return SECTION_TAB[hash.replace(/^#/, '')];
+}
 
 type Json = Record<string, unknown>;
 
@@ -173,16 +227,23 @@ export default function Rules() {
 
   const [draft, setDraft] = useState<FunnelRules | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [tab, setTab] = useState<RulesTab>(() => tabFromHash(location.hash) ?? 'funil');
 
   useEffect(() => {
     if (data) setDraft(JSON.parse(JSON.stringify(data)) as FunnelRules);
   }, [data]);
 
-  // `/settings/commissions` redireciona para `#comissoes` (D-194).
+  // `/settings/commissions` redireciona para `#comissoes` (D-194): abre a aba da seção...
+  useEffect(() => {
+    const target = tabFromHash(location.hash);
+    if (target) setTab(target);
+  }, [location.hash]);
+
+  // ...e rola até ela, já visível.
   useEffect(() => {
     if (location.hash === '' || draft === null) return;
     document.getElementById(location.hash.slice(1))?.scrollIntoView?.({ block: 'start' });
-  }, [location.hash, draft]);
+  }, [location.hash, draft, tab]);
 
   const patch = useMemo(
     () =>
@@ -226,13 +287,30 @@ export default function Rules() {
   const noOrigin = !draft.origin.fromBitlab && !draft.origin.manualInCrm;
   // CRMLAB-102/D-272 item 8: a mesma função do servidor, com o teto de dias na mensagem.
   const reminderVsLoss = staleReminderVsLossError(draft.automation);
-  const blocked =
-    noOrigin ||
+  const funnelBlocked = noOrigin || reminderVsLoss !== null;
+  const messagesBlocked =
     sendMessageBlocked(draft.sendMessage) ||
     reengagementBlocked(draft.reengagement) ||
     responseAlertBlocked(draft.responseAlert) ||
-    firstContactLimitBlocked(draft.firstContactLimit) ||
-    reminderVsLoss !== null;
+    firstContactLimitBlocked(draft.firstContactLimit);
+  const blocked = funnelBlocked || messagesBlocked;
+  // O "Salvar" é um só para Funil + Mensagens: se o que trava está na OUTRA aba, avisa qual.
+  const blockedElsewhere: RulesTab | null =
+    tab === 'funil' && !funnelBlocked && messagesBlocked
+      ? 'mensagens'
+      : tab === 'mensagens' && !messagesBlocked && funnelBlocked
+        ? 'funil'
+        : null;
+
+  // Comercial só existe se tiver o que mostrar (desconto do CRM ou comissão).
+  const tabs: RulesTab[] = [
+    'funil',
+    'mensagens',
+    ...(data.origin.manualInCrm || seesCommissions ? (['comercial'] as const) : []),
+    'feriados',
+  ];
+  const activeTab: RulesTab = tabs.includes(tab) ? tab : 'funil';
+  const inForm = activeTab === 'funil' || activeTab === 'mensagens';
 
   function handleSave(event: React.FormEvent) {
     event.preventDefault();
@@ -243,6 +321,10 @@ export default function Rules() {
       onError: (err) => {
         const fields = (err as { details?: { fields?: Record<string, string> } })?.details?.fields;
         setFieldErrors(fields ?? {});
+        // Erro de campo numa aba que não está aberta: leva o usuário até ele.
+        const firstField = fields ? Object.keys(fields)[0] : undefined;
+        const errorTab = firstField ? FIELD_TAB[firstField.split('.')[0] ?? ''] : undefined;
+        if (errorTab) setTab(errorTab);
         toast(fields ? 'Confira os campos destacados.' : 'Não foi possível salvar as regras.', {
           tone: 'attention',
         });
@@ -276,7 +358,24 @@ export default function Rules() {
         description="Como as propostas nascem, andam pelo funil e são enviadas neste laboratório."
       />
 
-      <form onSubmit={handleSave} className="max-w-3xl space-y-lg">
+      <div>
+        <SegmentedControl
+          aria-label="Grupos de regras"
+          size="md"
+          fullWidth={false}
+          options={tabs.map((value) => ({ value, label: TAB_LABELS[value] }))}
+          value={activeTab}
+          onChange={setTab}
+        />
+      </div>
+
+      <form onSubmit={handleSave} hidden={!inForm} className="space-y-lg">
+        <div
+          role="tabpanel"
+          aria-label={TAB_LABELS.funil}
+          hidden={activeTab !== 'funil'}
+          className={PANEL_GRID}
+        >
         <Section
           id="origem"
           title="Origem das propostas"
@@ -463,6 +562,28 @@ export default function Rules() {
           </div>
         </Section>
 
+        <Section
+          id="carga-lis"
+          title="Carga do LIS"
+          description="A carga principal dos orçamentos é a API do Bitlab. Ligue a importação por planilha só se a API estiver fora do ar."
+        >
+          <Toggle
+            label="Permitir importar a planilha do LIS em Resultados"
+            checked={draft.lisSource.spreadsheetImport.enabled}
+            disabled={!canEdit}
+            onChange={(checked) =>
+              set((next) => void (next.lisSource.spreadsheetImport.enabled = checked))
+            }
+          />
+        </Section>
+        </div>
+
+        <div
+          role="tabpanel"
+          aria-label={TAB_LABELS.mensagens}
+          hidden={activeTab !== 'mensagens'}
+          className={PANEL_GRID}
+        >
         <SendMessageSection
           draft={draft}
           canEdit={canEdit}
@@ -491,21 +612,36 @@ export default function Rules() {
           set={set}
         />
 
-        <Section
-          id="carga-lis"
-          title="Carga do LIS"
-          description="A carga principal dos orçamentos é a API do Bitlab. Ligue a importação por planilha só se a API estiver fora do ar."
-        >
-          <Toggle
-            label="Permitir importar a planilha do LIS em Resultados"
-            checked={draft.lisSource.spreadsheetImport.enabled}
-            disabled={!canEdit}
-            onChange={(checked) =>
-              set((next) => void (next.lisSource.spreadsheetImport.enabled = checked))
-            }
-          />
-        </Section>
+        </div>
 
+        {canEdit && (
+          <div className="flex items-center gap-md">
+            <Button
+              type="submit"
+              variant="primary"
+              loading={updateRules.isPending}
+              disabled={!patch || blocked}
+            >
+              Salvar regras
+            </Button>
+            {!patch && (
+              <span className="font-body text-caption text-neutral-600">Nenhuma alteração.</span>
+            )}
+            {patch && blockedElsewhere && (
+              <span role="status" className="font-body text-caption text-accent-700">
+                Há um campo a corrigir na aba {TAB_LABELS[blockedElsewhere]}.
+              </span>
+            )}
+          </div>
+        )}
+      </form>
+
+      <div
+        role="tabpanel"
+        aria-label={TAB_LABELS.comercial}
+        hidden={activeTab !== 'comercial'}
+        className={PANEL_GRID}
+      >
         {data.origin.manualInCrm && (
           <Section
             id="descontos"
@@ -534,33 +670,17 @@ export default function Rules() {
             </p>
           </Section>
         )}
-
-        {canEdit && (
-          <div className="flex items-center gap-md">
-            <Button
-              type="submit"
-              variant="primary"
-              loading={updateRules.isPending}
-              disabled={!patch || blocked}
-            >
-              Salvar regras
-            </Button>
-            {!patch && (
-              <span className="font-body text-caption text-neutral-600">Nenhuma alteração.</span>
-            )}
-          </div>
-        )}
-      </form>
-
-      <div className="mt-lg max-w-3xl">
-        <HolidaysSection canEdit={canEdit} />
+        {seesCommissions && <Commissions />}
       </div>
 
-      {seesCommissions && (
-        <div className="mt-lg max-w-3xl">
-          <Commissions />
-        </div>
-      )}
+      <div
+        role="tabpanel"
+        aria-label={TAB_LABELS.feriados}
+        hidden={activeTab !== 'feriados'}
+        className="max-w-4xl"
+      >
+        <HolidaysSection canEdit={canEdit} />
+      </div>
     </PageContainer>
   );
 }

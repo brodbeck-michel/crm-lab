@@ -5,6 +5,7 @@ import ConversionChart from '@/components/analytics/ConversionChart';
 import RevenueChart from '@/components/analytics/RevenueChart';
 import LossReasonsChart from '@/components/analytics/LossReasonsChart';
 import { Input } from '@/components/ui/Input';
+import { PageContainer } from '@/components/layout/PageContainer';
 import { Chip, SegmentedControl } from '@/components/ui';
 import { MoneyDisplay } from '@/components/shared';
 import ResponseTimeSection from '@/components/analytics/ResponseTimeSection';
@@ -35,7 +36,7 @@ export default function Analytics() {
   const current: AnalyticsTab = canSeeTeam ? tab : 'conversion';
 
   return (
-    <div className="p-lg space-y-xl">
+    <PageContainer>
       <h1 className="font-heading text-display">
         {TITLES[current]}
       </h1>
@@ -86,7 +87,7 @@ export default function Analytics() {
       {current === 'response-time' && <ResponseTimeSection startDate={startDate} endDate={endDate} />}
       {current === 'reminders' && <ReminderReportSection startDate={startDate} endDate={endDate} />}
       {current === 'conversion' && <ConversionSection startDate={startDate} endDate={endDate} />}
-    </div>
+    </PageContainer>
   );
 }
 

@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { APP_ROUTES, NAV_GROUPS, canAccess, sidebarRoutesFor, sidebarSectionsFor } from './route-config';
+import {
+  APP_ROUTES,
+  NAV_GROUPS,
+  REGISTERS_PATH,
+  canAccess,
+  isRouteActive,
+  registerTabsFor,
+  sidebarRoutesFor,
+  sidebarSectionsFor,
+} from './route-config';
 
 /**
  * `route-config.ts` — Onda 10 (PAGES.md "Telas do LIS").
@@ -20,15 +29,14 @@ describe('route-config — domínio LIS (Onda 10)', () => {
     expect(paths).not.toContain('/settings/lis-integration');
   });
 
-  it('gestor (manager) vê as 3 telas de leitura do LIS + Atendentes + Regras (com a comissão)', () => {
+  it('gestor (manager) vê Resultados e Busca Ativa + Regras (com a comissão); Atendentes virou aba de Cadastros e Conferência saiu do trilho', () => {
     const paths = sidebarRoutesFor('manager').map((r) => r.path);
 
     expect(paths).toEqual(
       expect.arrayContaining([
         '/results',
-        '/reconciliation',
         '/active-search',
-        '/settings/attendants',
+        REGISTERS_PATH,
         '/settings/rules',
         '/settings/lis-integration',
         '/sales',
@@ -69,65 +77,77 @@ describe('route-config — domínio LIS (Onda 10)', () => {
   });
 });
 
-describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, revisado em D-129)', () => {
-  it('admin vê todos os grupos, na ordem Comunicação → Visitação Médica → Gestão → Configurações', () => {
+describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, D-129, enxugado no CRMLAB-143)', () => {
+  it('admin vê os grupos na ordem Visitação Médica → Gestão → Configurações (Comunicação saiu)', () => {
     const { groups } = sidebarSectionsFor('admin');
 
-    expect(groups.map((g) => g.id)).toEqual(['comunicacao', 'visitacao', 'gestao', 'configuracoes']);
+    expect(groups.map((g) => g.id)).toEqual(['visitacao', 'gestao', 'configuracoes']);
     expect(groups.map((g) => g.label)).toEqual(NAV_GROUPS.map((g) => g.label));
   });
 
-  it('grupo Gestão reúne Conversão, Decisões, Resultados, Conferência, Busca Ativa e Gestão da Operação, nessa ordem (D-129: fusão de Comercial + LIS)', () => {
+  it('grupo Gestão: Resultados, Busca Ativa e Gestão da Operação (Conversão, Decisões e Conferência saíram do trilho)', () => {
     const { groups } = sidebarSectionsFor('admin');
     const gestao = groups.find((g) => g.id === 'gestao');
 
     expect(gestao?.items.map((r) => r.label)).toEqual([
-      'Conversão',
-      'Decisões',
       'Resultados',
-      'Conferência',
       'Busca Ativa',
       'Gestão da Operação',
     ]);
   });
 
-  it('grupo Configurações inclui "Cadastro de Exames" (ex-Catálogo, movido em D-129), antes de Canais & Equipe', () => {
+  it('grupo Configurações tem 5 itens, com Cadastros e Regras na frente', () => {
     const { groups } = sidebarSectionsFor('admin');
     const configuracoes = groups.find((g) => g.id === 'configuracoes');
 
     expect(configuracoes?.items.map((r) => r.label)).toEqual([
-      'Cadastro de Exames',
-      'Canais & Equipe',
-      'Convênios',
-      'Atendentes',
+      'Cadastros',
       'Regras',
+      'Canais & Equipe',
       'Integração LIS',
-      'Usuários & Permissões',
-      // CRMLAB-35: trocar a propria senha nao e privilegio de admin — e o
-      // unico item TENANT_ROLES deste grupo alem de "Cadastro de Exames".
-      'Minha Conta',
       'Personalização',
     ]);
   });
 
-  it('itens soltos (fora de qualquer grupo) ficam em `ungrouped`', () => {
+  it('itens soltos: Atendimento, Chat Interno, Propostas, Vendas e Contatos, nessa ordem', () => {
     const { ungrouped } = sidebarSectionsFor('admin');
 
-    expect(ungrouped.map((r) => r.label)).toEqual(['Atendimento', 'Contatos', 'Propostas', 'Vendas']);
+    expect(ungrouped.map((r) => r.label)).toEqual([
+      'Atendimento',
+      'Chat Interno',
+      'Propostas',
+      'Vendas',
+      'Contatos',
+    ]);
   });
 
-  it('atendente vê Gestão só com Conversão e Configurações com Cadastro de Exames + Regras + Minha Conta (únicos itens TENANT_ROLES dos grupos)', () => {
+  it('atendente não tem grupo Gestão; Configurações mostra Cadastros + Regras', () => {
     const { groups } = sidebarSectionsFor('attendant');
 
-    expect(groups.map((g) => g.id)).toEqual(['comunicacao', 'visitacao', 'gestao', 'configuracoes']);
-    expect(groups.find((g) => g.id === 'gestao')?.items.map((r) => r.label)).toEqual(['Conversão']);
+    expect(groups.map((g) => g.id)).toEqual(['visitacao', 'configuracoes']);
     expect(groups.find((g) => g.id === 'configuracoes')?.items.map((r) => r.label)).toEqual([
-      'Cadastro de Exames',
+      'Cadastros',
       // CRMLAB-56: a atendente vê as Regras do laboratório (sem editar).
       'Regras',
-      // CRMLAB-35: trocar a propria senha nao e privilegio de admin.
-      'Minha Conta',
     ]);
+  });
+
+  it('telas que saíram do trilho continuam com rota e papéis (URL direta segue abrindo)', () => {
+    const byPath = Object.fromEntries(APP_ROUTES.map((r) => [r.path, r]));
+
+    for (const path of [
+      '/analytics',
+      '/decisions',
+      '/reconciliation',
+      '/settings/account',
+      '/catalog',
+      '/quick-replies',
+    ]) {
+      expect(byPath[path]?.inSidebar).toBe(false);
+    }
+    // CRMLAB-35: trocar a própria senha não é privilégio de admin.
+    expect(canAccess('attendant', byPath['/settings/account']!.requiredRoles)).toBe(true);
+    expect(canAccess('attendant', byPath['/decisions']!.requiredRoles)).toBe(false);
   });
 
   it('grupo Visitação Médica tem Agenda e Médicos para todo papel do laboratório (CRMLAB-86/87, D-255/D-256)', () => {
@@ -148,5 +168,44 @@ describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, revisado em D-129)'
 
     expect(groups).toEqual([]);
     expect(ungrouped.map((r) => r.path)).toEqual(['/platform/tenants', '/platform/billing']);
+  });
+});
+
+describe('Cadastros — abas por perfil (CRMLAB-143)', () => {
+  it('admin vê as 5 abas, na ordem pedida', () => {
+    expect(registerTabsFor('admin').map((t) => [t.label, t.path])).toEqual([
+      ['Usuários', '/settings/users'],
+      ['Exames', '/catalog'],
+      ['Respostas rápidas', '/quick-replies'],
+      ['Atendentes', '/settings/attendants'],
+      ['Convênios', '/settings/insurances'],
+    ]);
+  });
+
+  it('gestor não vê Usuários; atendente só vê Exames e Respostas rápidas', () => {
+    expect(registerTabsFor('manager').map((t) => t.label)).toEqual([
+      'Exames',
+      'Respostas rápidas',
+      'Atendentes',
+      'Convênios',
+    ]);
+    expect(registerTabsFor('attendant').map((t) => t.label)).toEqual(['Exames', 'Respostas rápidas']);
+    expect(registerTabsFor('platform_operator')).toEqual([]);
+  });
+
+  it('cada aba exige os MESMOS papéis da rota da tela (a aba não abre o que a rota recusa)', () => {
+    const byPath = Object.fromEntries(APP_ROUTES.map((r) => [r.path, r]));
+    for (const tab of registerTabsFor('admin')) {
+      expect(byPath[tab.path]?.requiredRoles).toEqual(tab.requiredRoles);
+    }
+  });
+
+  it('o item "Cadastros" do trilho fica ativo em qualquer aba, e só nelas', () => {
+    const cadastros = APP_ROUTES.find((r) => r.path === REGISTERS_PATH)!;
+
+    expect(isRouteActive(cadastros, '/catalog')).toBe(true);
+    expect(isRouteActive(cadastros, '/settings/users')).toBe(true);
+    expect(isRouteActive(cadastros, REGISTERS_PATH)).toBe(true);
+    expect(isRouteActive(cadastros, '/settings/rules')).toBe(false);
   });
 });

@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthTenant, AuthUser, Channel, UserRole } from '@crm-lab/shared';
 import { useAuthStore, useMessageAlertsStore, useUIStore, useSidebarGroupsStore } from '@/stores';
@@ -152,7 +152,7 @@ describe('Sidebar — larguras', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Expandir menu' }));
 
     expect(screen.getByTestId('sidebar')).toHaveStyle({ width: '264px' });
-    expect(screen.getByText('Personalização')).toBeInTheDocument();
+    expect(screen.getByText('Propostas')).toBeInTheDocument();
   });
 
   it('o ícone de cada item nunca comprime (flex: 0 0 38px)', () => {
@@ -176,20 +176,38 @@ describe('Sidebar — conteúdo por perfil (a estrutura é a mesma)', () => {
     expect(screen.queryByText('Gestão da Operação')).not.toBeInTheDocument();
   });
 
-  it('gestor vê Gestão da Operação, mas não Usuários & Permissões', () => {
+  it('gestor vê Gestão da Operação, mas não Personalização (admin)', async () => {
     login('manager');
     renderSidebar();
 
+    await userEvent.click(screen.getByRole('button', { name: 'Gestão' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Configurações' }));
     expect(screen.getByText('Gestão da Operação')).toBeInTheDocument();
-    expect(screen.queryByText('Usuários & Permissões')).not.toBeInTheDocument();
+    expect(screen.getByText('Cadastros')).toBeInTheDocument();
+    expect(screen.queryByText('Personalização')).not.toBeInTheDocument();
   });
 
-  it('admin vê tudo do tenant', () => {
+  it('admin vê tudo do tenant — Configurações com 5 itens (CRMLAB-143)', async () => {
     login('admin');
     renderSidebar();
 
-    expect(screen.getByText('Usuários & Permissões')).toBeInTheDocument();
-    expect(screen.getByText('Personalização')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Configurações' }));
+    for (const label of ['Cadastros', 'Regras', 'Canais & Equipe', 'Integração LIS', 'Personalização']) {
+      expect(screen.getByRole('link', { name: label })).toBeInTheDocument();
+    }
+    // Viraram abas de Cadastros / menu do usuário / saíram do trilho.
+    for (const label of [
+      'Usuários & Permissões',
+      'Cadastro de Exames',
+      'Respostas rápidas',
+      'Atendentes',
+      'Convênios',
+      'Minha Conta',
+      'Conversão',
+      'Decisões',
+    ]) {
+      expect(screen.queryByRole('link', { name: label })).not.toBeInTheDocument();
+    }
   });
 
   it('operador da plataforma só vê o console — nada do laboratório', () => {
@@ -206,9 +224,9 @@ describe('Sidebar — conteúdo por perfil (a estrutura é a mesma)', () => {
 describe('Sidebar — item ativo', () => {
   it('marca o item da rota atual com fundo branco, texto no accent + barra de 3px à esquerda', () => {
     login('admin');
-    renderSidebar('/catalog');
+    renderSidebar('/attendance');
 
-    const active = screen.getByRole('link', { name: /Cadastro de Exames/ });
+    const active = screen.getByRole('link', { name: /Atendimento/ });
     expect(active).toHaveAttribute('aria-current', 'page');
     expect(active.className).toContain('bg-bg');
     expect(active.className).toContain('text-accent-700');
@@ -221,43 +239,110 @@ describe('Sidebar — item ativo', () => {
   });
 });
 
+describe('Sidebar — Cadastros acende em qualquer aba (CRMLAB-143)', () => {
+  it.each(['/catalog', '/quick-replies', '/settings/users', '/settings/attendants', '/settings/insurances'])(
+    'em %s o grupo Configurações abre sozinho e "Cadastros" fica ativo',
+    (path) => {
+      login('admin');
+      renderSidebar(path);
+
+      expect(screen.getByRole('button', { name: 'Configurações' })).toHaveAttribute('aria-expanded', 'true');
+      const item = screen.getByRole('link', { name: 'Cadastros' });
+      expect(item).toHaveAttribute('href', '/settings/registers');
+      expect(item.className).toContain('text-accent-700');
+      expect(screen.getByRole('link', { name: 'Regras' }).className).not.toContain('text-accent-700');
+    },
+  );
+});
+
+describe('Sidebar — Minha conta no menu do usuário (CRMLAB-143)', () => {
+  it('abre /settings/account pelo menu do rodapé', async () => {
+    login('attendant');
+    render(
+      <QueryClientProvider client={newQueryClient()}>
+        <MemoryRouter initialEntries={['/proposals']}>
+          <Sidebar />
+          <Routes>
+            <Route path="/settings/account" element={<p>tela da conta</p>} />
+            <Route path="*" element={null} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: /Marina Alves/ }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Minha conta' }));
+
+    expect(screen.getByText('tela da conta')).toBeInTheDocument();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('operador da plataforma não tem o item', async () => {
+    login('platform_operator');
+    renderSidebar('/platform/tenants');
+
+    await userEvent.click(screen.getByRole('button', { name: /Marina Alves/ }));
+    expect(screen.queryByRole('menuitem', { name: 'Minha conta' })).not.toBeInTheDocument();
+  });
+});
+
 describe('Sidebar — grupos (accordion, CRMLAB-4, revisado em D-129)', () => {
-  it('admin vê os cabeçalhos dos 3 grupos (Comercial + LIS fundidos em "Gestão"), todos abertos por padrão', () => {
+  it('admin vê os 3 grupos, todos FECHADOS por padrão fora da tela atual (CRMLAB-143)', () => {
     login('admin');
     renderSidebar();
 
-    for (const label of ['Comunicação', 'Gestão', 'Configurações']) {
+    for (const label of ['Visitação Médica', 'Gestão', 'Configurações']) {
       const header = screen.getByRole('button', { name: label });
-      expect(header).toHaveAttribute('aria-expanded', 'true');
+      expect(header).toHaveAttribute('aria-expanded', 'false');
     }
-    expect(screen.getByText('Personalização')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Comunicação' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Personalização')).not.toBeInTheDocument();
   });
 
-  it('atendente vê os 3 cabeçalhos de grupo; Configurações mostra só "Cadastro de Exames" (ex-Catálogo, D-129)', () => {
+  it('o grupo da tela atual começa aberto; os outros, fechados', () => {
+    login('admin');
+    renderSidebar('/results');
+
+    expect(screen.getByRole('button', { name: 'Gestão' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('link', { name: 'Resultados' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Configurações' })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('atendente não tem grupo Gestão; Configurações mostra só Cadastros e Regras', async () => {
     login('attendant');
     renderSidebar();
 
-    expect(screen.getByRole('button', { name: 'Comunicação' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Gestão' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Configurações' })).toBeInTheDocument();
-    expect(screen.getByText('Cadastro de Exames')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Gestão' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Configurações' }));
+    expect(screen.getByText('Cadastros')).toBeInTheDocument();
+    expect(screen.getByText('Regras')).toBeInTheDocument();
     expect(screen.queryByText('Canais & Equipe')).not.toBeInTheDocument();
   });
 
-  it('clicar no cabeçalho fecha o grupo e esconde os itens; clicar de novo reabre', async () => {
+  it('clicar no cabeçalho abre o grupo e mostra os itens; clicar de novo fecha', async () => {
     login('admin');
     renderSidebar();
 
     const header = screen.getByRole('button', { name: 'Configurações' });
-    expect(screen.getByText('Personalização')).toBeInTheDocument();
-
-    await userEvent.click(header);
-    expect(header).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByText('Personalização')).not.toBeInTheDocument();
 
     await userEvent.click(header);
     expect(header).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('Personalização')).toBeInTheDocument();
+
+    await userEvent.click(header);
+    expect(header).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Personalização')).not.toBeInTheDocument();
+  });
+
+  it('fechar o grupo da tela atual vale: a escolha do usuário ganha do default', async () => {
+    login('admin');
+    renderSidebar('/results');
+
+    const header = screen.getByRole('button', { name: 'Gestão' });
+    await userEvent.click(header);
+    expect(header).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('link', { name: 'Resultados' })).not.toBeInTheDocument();
   });
 
   it('operador da plataforma não vê nenhum cabeçalho de grupo (console fica sempre solto)', () => {
@@ -284,20 +369,6 @@ describe('Sidebar — badge de não lidas do Chat Interno (D-130, CRMLAB-8)', ()
     await waitFor(() => expect(item).toHaveTextContent('5'));
   });
 
-  it('grupo "Comunicação" fechado com não lidas mostra o badge no lugar do ponto', async () => {
-    mockChannels.mockResolvedValue({
-      channels: [fakeChannel({ id: 'c-1', name: '#aprovacoes', unreadCount: 4 })],
-    });
-    login('admin');
-    renderSidebar('/internal-chat');
-
-    const header = screen.getByRole('button', { name: 'Comunicação' });
-    await userEvent.click(header);
-    expect(header).toHaveAttribute('aria-expanded', 'false');
-
-    await waitFor(() => expect(header).toHaveTextContent('4'));
-  });
-
   it('sem mensagens não lidas, o badge não aparece', async () => {
     login('admin');
     renderSidebar();
@@ -307,7 +378,7 @@ describe('Sidebar — badge de não lidas do Chat Interno (D-130, CRMLAB-8)', ()
     expect(item).not.toHaveTextContent(/[0-9]/);
   });
 
-  it('recolhida, o cabeçalho do grupo "Comunicação" mostra o NÚMERO no canto do ícone (D-277)', async () => {
+  it('recolhida, o item solto "Chat Interno" mostra o NÚMERO no canto do ícone (D-277, CRMLAB-143)', async () => {
     mockChannels.mockResolvedValue({
       channels: [fakeChannel({ id: 'c-1', name: '#aprovacoes', unreadCount: 4 })],
     });
@@ -315,10 +386,8 @@ describe('Sidebar — badge de não lidas do Chat Interno (D-130, CRMLAB-8)', ()
     useUIStore.setState({ sidebarCollapsed: true });
     renderSidebar();
 
-    const header = await screen.findByRole('button', {
-      name: 'Comunicação — 4 mensagens não lidas em Comunicação',
-    });
-    const corner = within(header).getByTestId('sidebar-corner-badge');
+    const item = await screen.findByRole('link', { name: 'Chat Interno — 4 mensagens não lidas' });
+    const corner = within(item).getByTestId('sidebar-corner-badge');
     expect(corner).toHaveTextContent('4');
     expect(corner.querySelector('.bg-accent2')).not.toBeNull();
   });
@@ -347,11 +416,9 @@ describe('Sidebar — contador de não lidas do Atendimento (CRMLAB-112, D-277)'
       name: 'Atendimento — 3 mensagens não lidas',
     });
     expect(within(atendimento).getByTestId('sidebar-corner-badge')).toHaveTextContent('3');
-    // Chat Interno fica no grupo "Comunicação": recolhida, o número sobe para o cabeçalho.
-    const comunicacao = await screen.findByRole('button', {
-      name: 'Comunicação — 2 mensagens não lidas em Comunicação',
-    });
-    expect(within(comunicacao).getByTestId('sidebar-corner-badge')).toHaveTextContent('2');
+    // Chat Interno é item solto desde o CRMLAB-143: o número fica no próprio ícone.
+    const chat = await screen.findByRole('link', { name: 'Chat Interno — 2 mensagens não lidas' });
+    expect(within(chat).getByTestId('sidebar-corner-badge')).toHaveTextContent('2');
   });
 
   it('acima de 99 mostra "99+", expandida e recolhida', async () => {
@@ -416,8 +483,9 @@ describe('Sidebar — ícone do grupo (CRMLAB-44)', () => {
     login('admin');
     renderSidebar();
 
-    const header = screen.getByRole('button', { name: 'Comunicação' });
-    expect(header.querySelector('svg')).not.toBeNull();
+    for (const label of ['Visitação Médica', 'Gestão', 'Configurações']) {
+      expect(screen.getByRole('button', { name: label }).querySelector('svg')).not.toBeNull();
+    }
   });
 
   it('recolhida, os subitens do grupo não vazam como ícones soltos', () => {
@@ -425,7 +493,7 @@ describe('Sidebar — ícone do grupo (CRMLAB-44)', () => {
     useUIStore.setState({ sidebarCollapsed: true });
     renderSidebar();
 
-    expect(screen.queryByRole('link', { name: /Cadastro de Exames/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Cadastros/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Personalização/ })).not.toBeInTheDocument();
   });
 });

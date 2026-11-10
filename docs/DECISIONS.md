@@ -7105,8 +7105,10 @@ SERVICES §35, DEPLOYMENT (ffmpeg na imagem), `shared/types/media.types.ts`.
 **Contexto:** o administrador via 23 itens em 4 grupos. O Michel pediu para enxugar (09/11/2026),
 sem mudar o layout do trilho — só a disposição dos itens.
 **Decisão:**
-1. **Soltos:** Atendimento, Contatos, Propostas, Vendas e Chat Interno. O grupo "Comunicação" acaba.
-2. **Gestão:** "Conversão" e "Decisões" saem do trilho (descontinuadas no menu). As rotas, as telas
+1. **Soltos:** Atendimento, Chat Interno, Propostas, Vendas e Contatos, nessa ordem (ordem revista
+   na validação de 09/11). O grupo "Comunicação" acaba.
+2. **Gestão:** "Conversão", "Decisões" e "Conferência" (esta na validação de 09/11) saem do trilho —
+   ficam **escondidas por enquanto**, sem remover código. As rotas, as telas
    e os endpoints **continuam** — só não há mais entrada no menu. O contador de decisões pendentes
    da Sidebar sai junto; a fila de decisões segue em "Gestão da Operação".
 3. **Configurações** passa de 9 para 5 itens: Cadastros, Regras, Canais & Equipe, Integração LIS,
@@ -7118,6 +7120,11 @@ sem mudar o layout do trilho — só a disposição dos itens.
 5. **Minha Conta** sai do trilho e vira o item "Minha conta" do menu do usuário (rodapé).
 6. **Grupos fechados por padrão**, exceto o da tela atual. Preferência salva do usuário
    (`crm-lab.sidebar-groups`) continua ganhando do padrão.
+7. **Abas com destaque (validação de 09/11):** as abas de Cadastros e de Regras usam o
+   `SegmentedControl` em `size="md"` (trilho com fundo e borda, rótulo maior) e `fullWidth={false}`
+   (não esticam). Em Cadastros a faixa é desenhada pelo `PageHeader` da tela, acima do título, e
+   por isso alinha com ele em qualquer largura. O filtro Exames | Pacotes do Catálogo fica
+   compacto, ao lado da busca.
 **Supera:** D-129 no que diz respeito à composição dos grupos; D-130 no trecho do contador subir
 para o cabeçalho do grupo "Comunicação".
 **Impacto:** só frontend — PAGES.md (mapa de rotas, grupos do trilho), COMPONENTS.md (Sidebar),

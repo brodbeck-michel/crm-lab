@@ -45,14 +45,15 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 ### Papéis por rota (implementado em `src/routes/route-config.ts`)
 
 **Grupos do trilho (accordion, CRMLAB-4; D-129; enxugado no CRMLAB-143, D-315):** itens sem grupo
-ficam soltos no topo — Atendimento, Contatos, Propostas, Vendas e Chat Interno; os grupos aparecem
+ficam soltos no topo — Atendimento, Chat Interno, Propostas, Vendas e Contatos, nessa ordem; os grupos aparecem
 depois, na ordem Visitação Médica → Gestão → Configurações. O grupo "Comunicação" deixou de
 existir. Grupo sem nenhum item visível para o perfil não aparece. **Fechados por padrão**, exceto
 o grupo da tela atual; quando o usuário abre ou fecha um grupo, a escolha persiste em localStorage
 por usuário e passa a valer no lugar do padrão.
 
 **Cadastros (CRMLAB-143, D-315):** um item só no grupo Configurações (`/settings/registers`) para
-cinco telas, mostradas como abas (`SegmentedControl`) acima do conteúdo, nesta ordem: Usuários
+cinco telas, mostradas como abas (`SegmentedControl` `size="md"`, sem esticar) **acima do título
+da tela, dentro do contêiner dela** (`PageTabsContext` → `PageHeader`/`PageTabs`), nesta ordem: Usuários
 (`/settings/users`), Exames (`/catalog`), Respostas rápidas (`/quick-replies`), Atendentes
 (`/settings/attendants`) e Convênios (`/settings/insurances`). Cada aba é a tela que já existia,
 **no mesmo endereço** e com os mesmos `requiredRoles` — o perfil só vê as abas que pode abrir
@@ -61,8 +62,11 @@ cinco telas, mostradas como abas (`SegmentedControl`) acima do conteúdo, nesta 
 trilho em qualquer uma das abas (`activePaths`).
 
 **Fora do trilho desde o CRMLAB-143:** "Minha Conta" (abre pelo menu do usuário, no rodapé da
-Sidebar, item "Minha conta"), "Conversão" e "Decisões" (descontinuadas no menu; as rotas e as
-telas continuam existindo e abrem pelo endereço).
+Sidebar, item "Minha conta"), "Conversão", "Decisões" e "Conferência" (escondidas do menu por
+enquanto; as rotas e as telas continuam existindo e abrem pelo endereço).
+
+**Catálogo de Exames:** o filtro Exames | Pacotes é um `SegmentedControl` compacto (não estica),
+na mesma linha da busca — as abas de Cadastros, acima, são a navegação principal.
 
 | Rota | `requiredRoles` | No trilho da Sidebar | Grupo |
 |------|-----------------|----------------------|-------|
@@ -79,7 +83,7 @@ telas continuam existindo e abrem pelo endereço).
 | `/quick-replies` (aba de Cadastros) | attendant · manager · admin | não (aba) | — |
 | `/decisions` | manager · admin | não (CRMLAB-143) | — |
 | `/results` | manager · admin | sim | Gestão |
-| `/reconciliation` | manager · admin | sim | Gestão |
+| `/reconciliation` | manager · admin | não (CRMLAB-143) | — |
 | `/active-search` | manager · admin | sim | Gestão |
 | `/sales` | attendant · manager · admin | sim | solto |
 | `/visitation/agenda` (rótulo "Agenda", CRMLAB-87) | attendant · manager · admin | sim | Visitação Médica |

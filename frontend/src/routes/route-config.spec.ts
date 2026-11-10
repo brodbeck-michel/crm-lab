@@ -29,13 +29,12 @@ describe('route-config — domínio LIS (Onda 10)', () => {
     expect(paths).not.toContain('/settings/lis-integration');
   });
 
-  it('gestor (manager) vê as 3 telas de leitura do LIS + Regras (com a comissão); Atendentes virou aba de Cadastros', () => {
+  it('gestor (manager) vê Resultados e Busca Ativa + Regras (com a comissão); Atendentes virou aba de Cadastros e Conferência saiu do trilho', () => {
     const paths = sidebarRoutesFor('manager').map((r) => r.path);
 
     expect(paths).toEqual(
       expect.arrayContaining([
         '/results',
-        '/reconciliation',
         '/active-search',
         REGISTERS_PATH,
         '/settings/rules',
@@ -86,13 +85,12 @@ describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, D-129, enxugado no 
     expect(groups.map((g) => g.label)).toEqual(NAV_GROUPS.map((g) => g.label));
   });
 
-  it('grupo Gestão: Resultados, Conferência, Busca Ativa e Gestão da Operação (Conversão e Decisões saíram do trilho)', () => {
+  it('grupo Gestão: Resultados, Busca Ativa e Gestão da Operação (Conversão, Decisões e Conferência saíram do trilho)', () => {
     const { groups } = sidebarSectionsFor('admin');
     const gestao = groups.find((g) => g.id === 'gestao');
 
     expect(gestao?.items.map((r) => r.label)).toEqual([
       'Resultados',
-      'Conferência',
       'Busca Ativa',
       'Gestão da Operação',
     ]);
@@ -111,15 +109,15 @@ describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, D-129, enxugado no 
     ]);
   });
 
-  it('itens soltos: Atendimento, Contatos, Propostas, Vendas e Chat Interno', () => {
+  it('itens soltos: Atendimento, Chat Interno, Propostas, Vendas e Contatos, nessa ordem', () => {
     const { ungrouped } = sidebarSectionsFor('admin');
 
     expect(ungrouped.map((r) => r.label)).toEqual([
       'Atendimento',
-      'Contatos',
+      'Chat Interno',
       'Propostas',
       'Vendas',
-      'Chat Interno',
+      'Contatos',
     ]);
   });
 
@@ -137,7 +135,14 @@ describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, D-129, enxugado no 
   it('telas que saíram do trilho continuam com rota e papéis (URL direta segue abrindo)', () => {
     const byPath = Object.fromEntries(APP_ROUTES.map((r) => [r.path, r]));
 
-    for (const path of ['/analytics', '/decisions', '/settings/account', '/catalog', '/quick-replies']) {
+    for (const path of [
+      '/analytics',
+      '/decisions',
+      '/reconciliation',
+      '/settings/account',
+      '/catalog',
+      '/quick-replies',
+    ]) {
       expect(byPath[path]?.inSidebar).toBe(false);
     }
     // CRMLAB-35: trocar a própria senha não é privilégio de admin.

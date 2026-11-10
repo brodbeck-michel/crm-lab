@@ -8,6 +8,7 @@ import ExamModal from '@/components/catalog/ExamModal';
 import ExamImportModal from '@/components/catalog/ExamImportModal';
 import PackageTable from '@/components/catalog/PackageTable';
 import PackageModal from '@/components/catalog/PackageModal';
+import { PageTabs } from '@/components/layout/PageHeader';
 import { Button, SearchInput, SegmentedControl } from '@/components/ui';
 import { Pagination } from '@/components/shared';
 import type { Exam, ExamPackage, ListExamsQuery } from '@crm-lab/shared';
@@ -99,6 +100,7 @@ export default function Catalog() {
 
   return (
     <div className="flex flex-col gap-lg p-lg h-full">
+      <PageTabs />
       <div className="flex justify-between items-center">
         <h1 className="font-heading text-display">Catálogo de Exames</h1>
         <div className="flex gap-sm">
@@ -115,22 +117,27 @@ export default function Catalog() {
         </div>
       </div>
 
-      <SegmentedControl
-        aria-label="Aba do catálogo"
-        value={tab}
-        onChange={handleTabChange}
-        options={[
-          { value: 'exams', label: 'Exames' },
-          { value: 'packages', label: 'Pacotes' },
-        ]}
-      />
-
-      <SearchInput
-        key={tab}
-        defaultValue={search}
-        onSearch={handleSearch}
-        placeholder={tab === 'exams' ? 'Buscar exame...' : 'Buscar pacote...'}
-      />
+      {/* Filtro compacto ao lado da busca (CRMLAB-143): não disputa com as abas de Cadastros. */}
+      <div className="flex flex-wrap items-center gap-md">
+        <SegmentedControl
+          aria-label="Aba do catálogo"
+          fullWidth={false}
+          value={tab}
+          onChange={handleTabChange}
+          options={[
+            { value: 'exams', label: 'Exames' },
+            { value: 'packages', label: 'Pacotes' },
+          ]}
+        />
+        <div className="min-w-[240px] flex-1">
+          <SearchInput
+            key={tab}
+            defaultValue={search}
+            onSearch={handleSearch}
+            placeholder={tab === 'exams' ? 'Buscar exame...' : 'Buscar pacote...'}
+          />
+        </div>
+      </div>
 
       {tab === 'exams' ? (
         isLoading ? (

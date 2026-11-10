@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import type { AuthUser, UserRole } from '@crm-lab/shared';
+import { PageHeader, PageTabs } from '@/components/layout';
 import { useAuthStore } from '@/stores';
 import { RegistersLayout, RegistersRedirect } from './Registers';
 
@@ -13,8 +14,15 @@ function login(role: UserRole): void {
   useAuthStore.setState({ user, tokens: { accessToken: 'a', expiresAt: Date.now() + 60_000 } });
 }
 
+/** Tela de mentira: a faixa aparece por dentro dela, pelo `PageHeader` (ou `PageTabs`). */
 function Where() {
-  return <p data-testid="where">{useLocation().pathname}</p>;
+  const { pathname } = useLocation();
+  return (
+    <>
+      {pathname === '/catalog' ? <PageTabs /> : <PageHeader title="Tela" />}
+      <p data-testid="where">{pathname}</p>
+    </>
+  );
 }
 
 function renderAt(path: string) {
@@ -78,5 +86,18 @@ describe('Cadastros — /settings/registers abre a primeira aba do perfil', () =
     renderAt('/settings/registers');
 
     expect(screen.getByTestId('where')).toHaveTextContent(expected);
+  });
+});
+
+describe('Cadastros — a faixa só existe dentro do layout', () => {
+  it('PageHeader fora de Cadastros não desenha abas', () => {
+    login('admin');
+    render(
+      <MemoryRouter>
+        <PageHeader title="Outra tela" />
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
   });
 });

@@ -4156,8 +4156,12 @@ Branch `feature/CRMLAB-143-menu-lateral-cadastros`, sobre a main v1.44.0. Decis�
 - **Minha conta** no menu do usuário; **grupos fechados por padrão**, exceto o da tela atual.
 - **Testes:** `route-config.spec.ts`, `Sidebar.spec.tsx`, `sidebar-groups.store.spec.ts` e
   `Registers.spec.tsx` (novo).
-- **Em aberto:** as telas Conversão e Decisões ficaram sem entrada no menu, mas o código continua.
-  Remover de vez (rotas, telas, e2e `flow-4-analytics`) fica para decisão do Michel.
+- **Ajustes da validação (09/11, commit na branch do CRMLAB-144, que é a que sobe na hml):** ordem
+  dos soltos = Atendimento, Chat Interno, Propostas, Vendas, Contatos; Conferência também escondida;
+  abas de Cadastros/Regras com destaque (`size="md"`) e alinhadas ao título (`PageTabsContext`);
+  filtro Exames | Pacotes compacto ao lado da busca.
+- **Decidido pelo Michel (09/11):** Conversão, Decisões e Conferência ficam escondidas do menu por
+  enquanto; o código continua.
 
 ### 🔄 CRMLAB-144 — Regras em abas (2026-11-09, aguardando validação)
 

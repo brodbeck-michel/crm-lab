@@ -349,9 +349,11 @@ export default function Rules() {
         description="Como as propostas nascem, andam pelo funil e são enviadas neste laboratório."
       />
 
-      <div className="max-w-3xl">
+      <div>
         <SegmentedControl
           aria-label="Grupos de regras"
+          size="md"
+          fullWidth={false}
           options={tabs.map((value) => ({ value, label: TAB_LABELS[value] }))}
           value={activeTab}
           onChange={setTab}

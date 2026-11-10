@@ -757,7 +757,12 @@ Adições sobre a anatomia já documentada acima — nenhuma variante nova:
 - **SearchInput** — `defaultValue`, `debounceMs` (padrão 300), `disabled`.
   Não emite na montagem, só quando o usuário mexe.
 - **SegmentedControl** — genérico em `T extends string`; opção com `disabled`
-  é pulada na navegação por teclado (← → ↑ ↓, Home/End).
+  é pulada na navegação por teclado (← → ↑ ↓, Home/End). `fullWidth` (padrão `true`; `false` faz o
+  trilho abraçar o conteúdo) e `size` (`sm` padrão, filtro dentro da tela; `md`, abas que trocam o
+  conteúdo da página — trilho `neutral-100` com borda, rótulo `text-label`) — CRMLAB-143.
+- **PageTabsContext / PageTabs** (`layout/PageHeader.tsx`, CRMLAB-143) — um layout de rota fornece
+  uma faixa de abas pelo contexto; o `PageHeader` a desenha acima do título. Tela sem `PageHeader`
+  (Catálogo, Usuários) usa `<PageTabs />` no topo. Fora de um layout que forneça, não desenha nada.
 - **Select** — `options`, `placeholder`, `label`, `error`.
 - **Toggle** — `checked`, `onChange`, `label`, `disabled` (`role="switch"`).
 - **Tooltip** — `content`, `placement` (`top`/`bottom`). Abre em hover **e** em

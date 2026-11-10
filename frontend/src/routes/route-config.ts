@@ -21,7 +21,6 @@ export type NavIcon =
   | 'quick-replies'
   | 'decisions'
   | 'results'
-  | 'reconciliation'
   | 'active-search'
   | 'sales'
   | 'channels'
@@ -120,11 +119,11 @@ export const APP_ROUTES: readonly AppRoute[] = [
     icon: 'inbox',
   },
   {
-    path: '/contacts',
-    label: 'Contatos',
+    path: '/internal-chat',
+    label: 'Chat Interno',
     requiredRoles: TENANT_ROLES,
     inSidebar: true,
-    icon: 'patients',
+    icon: 'chat',
   },
   { path: '/contacts/:id', label: 'Ficha do Contato', requiredRoles: TENANT_ROLES, inSidebar: false },
   { path: '/budget/new', label: 'Novo Orçamento', requiredRoles: TENANT_ROLES, inSidebar: false },
@@ -181,11 +180,11 @@ export const APP_ROUTES: readonly AppRoute[] = [
     icon: 'sales',
   },
   {
-    path: '/internal-chat',
-    label: 'Chat Interno',
+    path: '/contacts',
+    label: 'Contatos',
     requiredRoles: TENANT_ROLES,
     inSidebar: true,
-    icon: 'chat',
+    icon: 'patients',
   },
   {
     path: '/decisions',
@@ -207,9 +206,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     path: '/reconciliation',
     label: 'Conferência',
     requiredRoles: MANAGER_PLUS,
-    inSidebar: true,
-    icon: 'reconciliation',
-    group: 'gestao',
+    inSidebar: false,
   },
   {
     path: '/active-search',

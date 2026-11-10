@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { createContext, useContext, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { cn } from '@/components/ui';
 
@@ -9,6 +9,20 @@ import { cn } from '@/components/ui';
  * (`text-section`): em tela de painel o maior tipo da página é o NÚMERO,
  * não a palavra que nomeia a tela.
  */
+
+/**
+ * Faixa de abas que um layout de rota quer mostrar ACIMA do título da tela
+ * (Cadastros, CRMLAB-143). O layout fornece; o `PageHeader` desenha dentro do
+ * contêiner da própria tela — assim a faixa alinha com o título em qualquer
+ * largura de página, sem cada tela saber que está dentro de uma aba.
+ */
+export const PageTabsContext = createContext<ReactNode>(null);
+
+/** A faixa de abas do layout, se houver. Para telas que não usam `PageHeader`. */
+export function PageTabs() {
+  const tabs = useContext(PageTabsContext);
+  return tabs ? <div className="min-w-0">{tabs}</div> : null;
+}
 
 export interface BreadcrumbItem {
   label: string;
@@ -44,54 +58,60 @@ export function PageHeader({
   const compact = size === 'compact';
 
   return (
-    <header
-      className={cn(
-        'flex flex-wrap justify-between gap-lg',
-        compact ? 'items-center gap-md' : 'items-start',
-        className,
-      )}
-    >
-      <div className="min-w-0 flex-1">
-        {breadcrumb && breadcrumb.length > 0 && (
-          <nav aria-label="Trilha de navegação" className="mb-xs">
-            <ol className="flex flex-wrap items-center gap-xs font-body text-caption text-neutral-600">
-              {breadcrumb.map((item, index) => (
-                <li key={`${item.label}-${index}`} className="flex items-center gap-xs">
-                  {index > 0 && <span aria-hidden="true">/</span>}
-                  {item.to ? (
-                    <Link to={item.to} className="text-neutral-700 underline-offset-2 hover:underline">
-                      {item.label}
-                    </Link>
-                  ) : (
-                    <span aria-current="page">{item.label}</span>
-                  )}
-                </li>
-              ))}
-            </ol>
-          </nav>
+    <>
+      <PageTabs />
+      <header
+        className={cn(
+          'flex flex-wrap justify-between gap-lg',
+          compact ? 'items-center gap-md' : 'items-start',
+          className,
         )}
+      >
+        <div className="min-w-0 flex-1">
+          {breadcrumb && breadcrumb.length > 0 && (
+            <nav aria-label="Trilha de navegação" className="mb-xs">
+              <ol className="flex flex-wrap items-center gap-xs font-body text-caption text-neutral-600">
+                {breadcrumb.map((item, index) => (
+                  <li key={`${item.label}-${index}`} className="flex items-center gap-xs">
+                    {index > 0 && <span aria-hidden="true">/</span>}
+                    {item.to ? (
+                      <Link
+                        to={item.to}
+                        className="text-neutral-700 underline-offset-2 hover:underline"
+                      >
+                        {item.label}
+                      </Link>
+                    ) : (
+                      <span aria-current="page">{item.label}</span>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            </nav>
+          )}
 
-        <h1 className={cn('font-heading text-text', compact ? 'text-section' : 'text-display')}>
-          {title}
-        </h1>
+          <h1 className={cn('font-heading text-text', compact ? 'text-section' : 'text-display')}>
+            {title}
+          </h1>
 
-        {description && (
-          <p
-            className={cn(
-              'font-body text-neutral-700',
-              compact ? 'text-caption' : 'mt-xs text-body',
-            )}
-          >
-            {description}
-          </p>
-        )}
-      </div>
-
-      {actions && (
-        <div style={{ flex: '0 0 auto' }} className="flex items-center gap-sm">
-          {actions}
+          {description && (
+            <p
+              className={cn(
+                'font-body text-neutral-700',
+                compact ? 'text-caption' : 'mt-xs text-body',
+              )}
+            >
+              {description}
+            </p>
+          )}
         </div>
-      )}
-    </header>
+
+        {actions && (
+          <div style={{ flex: '0 0 auto' }} className="flex items-center gap-sm">
+            {actions}
+          </div>
+        )}
+      </header>
+    </>
   );
 }

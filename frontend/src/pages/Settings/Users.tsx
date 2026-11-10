@@ -3,6 +3,7 @@ import { useUserList, useAuditList, usePresenceOf } from '@/api';
 import UserTable from '@/components/users/UserTable';
 import UserModal from '@/components/users/UserModal';
 import AuditLogTable from '@/components/users/AuditLogTable';
+import { PageTabs } from '@/components/layout/PageHeader';
 import { Button, SegmentedControl } from '@/components/ui';
 import type { ManagedUser, PaginationQuery } from '@crm-lab/shared';
 
@@ -38,6 +39,7 @@ export default function UsersSettings() {
 
   return (
     <div className="flex flex-col gap-lg p-lg h-full">
+      <PageTabs />
       <div className="flex justify-between items-center">
         <div>
           <h1 className="font-heading text-display">Usuários & Permissões</h1>

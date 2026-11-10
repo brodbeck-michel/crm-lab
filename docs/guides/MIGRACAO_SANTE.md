@@ -232,12 +232,14 @@ para as gestoras (https://claude.ai/artifact/JR4cHeWruKMyNQGd7igK8m).
 | # | Item | Como conferir |
 |---|------|---------------|
 | 1 | Restrição de 04/11/2026 encerrada e número estável há alguns dias | Celular sem aviso de restrição; nenhum alerta de sessão no Telegram |
-| 2 | Conta empresarial (Business Manager) do Santé **verificada** | Central de Segurança do Business Manager |
-| 3 | Conta do WhatsApp Business (WABA) criada e **forma de pagamento em BRL** no Billing Hub | Gerenciador do WhatsApp › Faturamento |
+| 2 | Conta empresarial (Business Manager) do Santé **verificada** — **é o item que trava tudo**: sem ela a Meta aceita o envio (devolve `wamid`) e depois marca `failed` **131031**, **inclusive resposta dentro das 24 h**. O número recebe, mas não responde. Leva de dias a ~2 semanas e pede documentos do CNPJ: **começar por ele** (ensaio de 10/11, 4.3.1) | Central de Segurança › Verificação da empresa = "Verificada"; sem banner vermelho "Esta conta ainda não pode enviar mensagens" no Gerenciador do WhatsApp |
+| 2a | **Informações da empresa completas**: nome legal (razão social), endereço com país **Brasil** e **site**. Faltando, a Meta recusa o envio com **131000** | Configurações do negócio › Informações da empresa |
+| 3 | Conta do WhatsApp Business (WABA) criada e **forma de pagamento** no Billing Hub: moeda **BRL** (não muda depois), **CNPJ** do lab, "fins comerciais" = **Sim**, cartão do lab. Sem ela: **141006**. A Meta pode segurar uma pré-autorização no cartão por até 24 h | Billing Hub › Contas de mensagens › forma de pagamento ativa |
 | 4 | **Nome de exibição** do número aprovado **(conferir na Meta)** | Gerenciador do WhatsApp › Números de telefone |
 | 5 | **Modelos aprovados**: os três de 4.1.1 (`retomar_atendimento`, `retorno_orcamento`, `lembrete_coleta`), todos UTILITY | Gerenciador do WhatsApp › Modelos (status "Aprovado"); no CRM, aparecem no "Enviar modelo" em até 5 min |
 | 6 | App na Meta com o produto WhatsApp e **usuário do sistema** com token **que nunca expira** (`whatsapp_business_messaging` e `whatsapp_business_management`) | Business Manager › Usuários do sistema |
-| 7 | **App inscrito na WABA do Santé** (`POST /{waba_id}/subscribed_apps`) — sem isso a Meta não entrega nada ao CRM; o número de teste já vem inscrito, então o ensaio não pega essa falta **(conferir na Meta)** | `GET /{waba_id}/subscribed_apps` lista o app |
+| 7 | **App inscrito na WABA do Santé** (`POST /{waba_id}/subscribed_apps`) — sem isso a Meta não entrega nada ao CRM. No ensaio de 10/11 a WABA de teste **não** veio inscrita (só tinha o app da própria Meta) e foi preciso fazer o `POST` — no Santé, conferir sempre | `GET /{waba_id}/subscribed_apps` lista o app do CRM |
+| 7a | Campo **messages** assinado no webhook do app (Painel do app › WhatsApp › Configuração) | Aparece "Assinado" na linha *messages* |
 | 8 | **PIN de duas etapas** do número definido e guardado no cofre (é pedido para registrar e para voltar) | Anotado fora do celular |
 | 9 | Limite de conversas iniciadas pela empresa para número novo conhecido (afeta o lembrete de coleta) **(conferir na Meta)** | Gerenciador do WhatsApp › Insights/limites |
 | 10 | Produção numa versão com CRMLAB-135..141 e 140 (anexos, ffmpeg na imagem) | Versão no rodapé da barra lateral do CRM e a tag da imagem em execução (`docker inspect`; o `IMAGE_TAG` do `.env` de prod pode estar velho); `docker exec <backend> ffmpeg -version` |
@@ -245,6 +247,8 @@ para as gestoras (https://claude.ai/artifact/JR4cHeWruKMyNQGd7igK8m).
 | 12 | **Segredo do webhook do Santé** na tela de Canais: o código usa o segredo do laboratório quando existe (e `''` = revogado, D-073) e só cai no `WHATSAPP_WEBHOOK_SECRET` quando a tela diz "Não configurado". Deixar "Não configurado" **ou** gravar o App Secret ali | Configurações › Canais › WhatsApp › "Segredo do webhook" |
 | 13 | Ensaio completo em **homologação** (4.3) feito e anotado | Este guia, 4.3 |
 | 14 | Quem está com o celular do número (Thaisy ou Tainá) avisada da janela | — |
+| 15 | **Conversas do celular exportadas** (as que importam, principalmente as de depois de 04/11/2026, que não estão no CRM): ⋮ › Mais › Exportar conversa › Incluir mídia › e-mail do lab. Na migração completa elas **somem do celular** | Gestora confirma por escrito |
+| 16 | **Sinal verde da Meta (go/no-go)**: `GET /{waba_id}?fields=health_status` com `can_send_message` = `AVAILABLE` para o negócio, a WABA e o app (depois de adicionar o número, também para o número). `LIMITED`/`BLOCKED` = **não apagar a conta do celular** | Michel consulta com o token permanente na véspera e de novo no dia, antes do passo 4 da 4.4 |
 
 ### 4.1.1 Modelos para submeter à Meta (definidos em 07/11/2026)
 
@@ -319,6 +323,72 @@ número de teste só manda para destinatários cadastrados no app (poucos) e, em
    `WHATSAPP_CLOUD_API_MOCK=true`, deploy; restaurar no Laboratorio Teste o que foi anotado no passo 1;
    **tirar o callback da hml do app Meta** (senão os avisos de prod irão para a hml no dia da troca).
 
+### 4.3.1 Resultado do ensaio de 10/11/2026
+
+App Meta de teste do Michel ("CRM teste lab"), número de teste da Meta (+1 555…), tenant
+`Laboratorio Teste` (slug **`teste`**), token temporário de 24 h.
+
+| Item | Resultado |
+|------|-----------|
+| Verificação do callback (`GET hub.challenge`) | ✅ 200 |
+| Assinatura HMAC com o App Secret | ✅ aceita |
+| Mensagem do celular → conversa no CRM (`whatsapp.webhook_processed messages:1`) | ✅ |
+| Envio pelo CRM → Meta aceita (`wamid`) | ✅ |
+| Status `failed` aparece na conversa com "Tentar de novo" | ✅ |
+| **Entrega no celular, tiques, anexos (ida e volta), modelo, painel de custo** | ⛔ **não validado** — a Meta devolveu **131031** até em envio direto pela API, sem o CRM: empresa de teste sem verificação (pessoa física, sem CNPJ). Fica para o teste do passo 7 da 4.4 |
+
+Bloqueios da Meta encontrados, na ordem em que apareceram (todos são do **lado da conta**, nenhum do CRM):
+app não inscrito na WABA → `POST subscribed_apps`; **131000** perfil sem nome legal/país/site →
+preenchido; **141006** sem pagamento → cartão cadastrado; **141010/131031** empresa não verificada →
+sem solução no teste. Viraram os itens 2, 2a, 3, 7 e 16 da 4.1.
+
+Lições de operação (para o próximo ensaio na hml):
+- A hml fica atrás da **porta de cookie do Caddy** (ENVIRONMENTS §5): a Meta toma 403. Precisa de uma
+  exceção temporária só para `/api/v1/webhooks/whatsapp/*` em `/etc/caddy/homolog.caddyfile` (backup antes,
+  `caddy validate`, reload) — e tirar depois.
+- O GET de verificação só passa com o canal **ligado** (`channel_disabled`) e o slug certo
+  (`unknown_tenant`). Não exige o modo `cloud_api`, então o callback de prod pode ser cadastrado com o
+  Santé ainda em QR.
+- Recriar só o backend exige `restart` do frontend (o nginx guarda o IP antigo).
+- O `IMAGE_TAG` do `.env` da hml (e o de prod) pode estar velho: exportar a tag em execução ao usar compose na mão.
+- Segredos (token, App Secret) passam só por arquivo `chmod 600` (`read -rsp`), nunca pelo chat.
+- A Meta normaliza celular antigo sem o nono dígito (`5548988…` → `wa_id 554888…`). O contato
+  que já existe no CRM desde a época do QR precisa cair **na mesma conversa**. Conferir no passo 7 da 4.4.
+- Situação de envio da conta, sem mandar mensagem: `GET /{waba_id}?fields=health_status`.
+
+### 4.4.0 Véspera e kit do dia
+
+**Véspera (D-1), com o Santé ainda em QR. Nada aqui muda o atendimento:**
+1. Pré-requisitos da 4.1 todos ✅, inclusive o 16 (`health_status`) com o token permanente.
+2. **Token permanente** gerado com a gestora em chamada: Business Manager › Usuários do sistema ›
+   criar (Admin) › atribuir o **app** e a **WABA do Santé** (controle total) › Gerar token › app do CRM ›
+   validade **Nunca** › `whatsapp_business_messaging` + `whatsapp_business_management`. Guardar em
+   arquivo `600` na máquina do Michel; conferir com `GET /{waba_id}` (200).
+3. Anotar os IDs: **WABA id**, **App id**, **App Secret** (arquivo `600`) e o slug do Santé em prod.
+4. `.env` de prod (4.1 item 11) aplicado com deploy (perguntar antes, com versão/tag), e conferir
+   `ffmpeg -version` no backend.
+5. Callback de prod no app Meta (4.4 passo 3) já cadastrado e **verificado** (a Meta precisa receber 200).
+   Pode ficar na véspera: sem número na API, nada chega.
+6. Backup do Postgres de prod do dia confirmado.
+7. Mensagem para a equipe com o horário da janela e o "como atender depois" (4.5).
+
+**Kit na mão na hora:**
+
+| O quê | Com quem |
+|-------|----------|
+| Celular com o **chip do 48 9188-9030** (recebe o SMS/ligação de verificação **depois** de apagar a conta) | Gestora |
+| **PIN de 6 dígitos** (4.1 item 8) | Gestora |
+| Login de **admin** do Business Manager e do Gerenciador do WhatsApp | Gestora |
+| Token permanente, App Secret, verify token, WABA id, slug | Michel (arquivos `600`) |
+| Terminal na VPS de prod (logs) e o CRM prod aberto em Configurações › Canais | Michel |
+| Celular da equipe **que já tem conversa no CRM**, para o teste do passo 7 | Equipe |
+| Confirmação de que as conversas importantes foram exportadas (4.1 item 15) | Gestora |
+| Chamada de vídeo aberta entre Michel e a gestora durante toda a janela | — |
+
+**Critério de parada:** se em qualquer ponto **antes** de apagar a conta do celular algo falhar
+(health_status diferente de `AVAILABLE`, callback sem 200, número sem `phone_number_id`), **parar e
+remarcar**. Até ali nada é irreversível.
+
 ### 4.4 Dia da troca em produção (fora do horário de atendimento)
 
 Confirmação explícita do Michel antes de começar (produção). Anotar horário de cada passo.
@@ -331,6 +401,7 @@ começar a falar pela Meta — aviso que chega sem destino é descartado com 200
    `https://vitrocrm.cloud/api/v1/webhooks/whatsapp/<slug-do-santé>`, verify token =
    `WHATSAPP_WEBHOOK_VERIFY_TOKEN` de prod, campo **messages** assinado. Conferir que **não** aponta
    para a hml. Com mais de um laboratório no mesmo app: callback por WABA (DEPLOYMENT).
+3a. **Go/no-go:** `health_status` de novo (4.1 item 16). Diferente de `AVAILABLE` → parar aqui.
 4. **Número na Meta e no CRM, nesta ordem:**
    - *migração completa*: no Gerenciador do WhatsApp, **adicionar o número** (isso já cria o
      `phone_number_id`) **(conferir na Meta)** → no CRM prod › Canais › WhatsApp gravar
@@ -347,8 +418,15 @@ começar a falar pela Meta — aviso que chega sem destino é descartado com 200
    "restabelecido" não vem, porque o canal deixa de ser QR no passo 6).
 6. **Trocar o modo por último:** cartão "Modo do WhatsApp" › **"Trocar para API oficial"** (confirmar
    o aviso).
-7. **Teste com um celular da equipe** (não de paciente): mandar mensagem → chega; responder → chega
-   com os tiques; mandar e receber uma foto; enviar um modelo.
+7. **Teste com um celular da equipe** (não de paciente). É aqui que se valida o que o ensaio de 10/11 não
+   conseguiu (4.3.1):
+   - mandar "oi" → chega no CRM **na conversa que já existia** desse contato (não cria outra; nono dígito);
+   - responder texto → chega no celular, tiques enviado → entregue → lido. `failed` **131031** = conta
+     não liberada (voltar à 4.1 item 2);
+   - mandar do celular foto, PDF e recado de voz → aparecem no CRM;
+   - enviar foto e PDF pelo CRM → chegam;
+   - enviar um **modelo** (`retomar_atendimento`) → chega;
+   - "Uso e custo do WhatsApp (API oficial)" mostra as mensagens.
 8. **Logs** por 15 min:
    - esperado: `whatsapp.webhook_processed`;
    - **não** pode aparecer em série: `whatsapp.webhook_invalid_signature` (segredo errado, 4.1 item
@@ -368,6 +446,10 @@ começar a falar pela Meta — aviso que chega sem destino é descartado com 200
 - **Custo:** conferir no fim do mês "Uso e custo do WhatsApp" contra a fatura da Meta (é estimativa).
 - **Instância do Evolution do Santé:** manter parada (não apagar) até decidir que não há volta.
 - Atualizar a memória/STATUS com a data da troca e o caminho escolhido.
+- Na primeira semana, mensagem `failed` em série com **131031/131000/141006** = problema na conta Meta
+  (verificação, perfil, pagamento), não no CRM. Conferir `health_status` e o banner do Gerenciador.
+- **Cartão do lab** sem limite ou vencido → a Meta para de cobrar e pode bloquear o envio. A gestora acompanha
+  pelo Billing Hub.
 
 ### 4.6 Plano de volta para o QR
 

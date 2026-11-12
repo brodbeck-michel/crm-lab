@@ -67,12 +67,12 @@ describe('/api/v1/internal-chat', () => {
     return (response.body as ListChannelsResponse).channels;
   }
 
-  it('lista os canais padrao #geral e #aprovacoes no shape do contrato', async () => {
+  it('lista os canais padrao Geral e Avisos gerais no shape do contrato', async () => {
     const tenant = await createTenant();
     const user = await createUser({ tenantId: tenant.id, role: 'attendant' });
 
     const channels = await channelsOf(user);
-    expect(channels.map((c) => c.key).sort()).toEqual(['aprovacoes', 'geral']);
+    expect(channels.map((c) => c.key).sort()).toEqual(['avisos', 'geral']);
     expect(Object.keys(channels[0] as object).sort()).toEqual(CHANNEL_KEYS);
     expect(channels.every((c) => c.kind === 'channel')).toBe(true);
   });

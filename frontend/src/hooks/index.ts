@@ -12,3 +12,4 @@ export {
   useLogout,
   useSessionBootstrap,
 } from './useSession';
+export { usePendingDecisions } from './usePendingDecisions';

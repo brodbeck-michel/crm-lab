@@ -216,8 +216,7 @@ export function applyWsEvent(
 
     case 'approval.requested': {
       const data = event.data as { proposalId: string };
-      // Badge em #aprovacoes + a lista de pendentes + o sino de Decisões (PAGES.md §12).
-      void queryClient.invalidateQueries({ queryKey: queryScopes.internalChat });
+      // A lista de pendentes + o contador de Decisões e o aviso ao gestor (CRMLAB-146).
       void queryClient.invalidateQueries({ queryKey: queryScopes.proposals });
       void queryClient.invalidateQueries({ queryKey: queryKeys.proposal(data.proposalId) });
       void queryClient.invalidateQueries({ queryKey: queryScopes.operations });

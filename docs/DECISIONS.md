@@ -7166,3 +7166,28 @@ para o cabeçalho do grupo "Comunicação".
 **Supera:** PAGES.md §3 (1180px / `wide` 1440px) e a nota de Resultados sobre `PageContainer wide`.
 **Impacto:** só frontend — `layout/PageContainer.tsx` (novo arquivo, saiu de `AppShell.tsx`),
 PAGES.md §3 e §14, COMPONENTS.md. Sem mudança de API, de regra ou de permissão.
+
+### D-318: Aprovação sai do chat interno; o canal vira `Avisos gerais` (CRMLAB-146)
+**Contexto:** em 12/11/2026 o Michel pediu para o grupo de aprovações do chat interno se chamar
+"avisos gerais" e virar um grupo de avisos importantes para todos, sem aprovação.
+**Decisão:**
+1. **Canais fixos:** `aprovacoes` vira chave `avisos`, nome `Avisos gerais`; `#geral` vira `Geral`
+   (sem `#`, a pedido). Os dois são canais comuns: todos escrevem.
+2. **A aprovação não passa pelo chat.** O ApprovalService para de postar o pedido e as decisões
+   (APROVADO/REJEITADO); continua emitindo `approval.requested` (tenant) e `approval.decided`
+   (para quem pediu) e auditando tudo. `InternalChatService.createSystemPost` saiu (sem uso).
+3. **Decisões volta ao trilho**, item solto, só gestor/admin, com o contador de pendentes (o que
+   saiu no CRMLAB-143, D-315). [Aprovar]/[Rejeitar] (`ApprovalActions`) vão do chat para baixo de
+   cada cartão da tela Decisões.
+4. **Aviso ao gestor:** o som/notificação do pedido (D-284 item 8) passa a vir de proposta nova em
+   `pendingDecisions` (mesma query do contador, `usePendingDecisions`). Título "Decisões", corpo
+   só a contagem (D-240), clique abre `/decisions`. Pedido da própria pessoa não avisa (D-046).
+5. **Histórico:** a migração 067 move os posts de sistema com proposta anexada de `aprovacoes`
+   para `internal_messages_approval_archive` (mesmas colunas + `archived_at`, RLS por tenant).
+   Saem da tela e das não lidas, ficam no banco; o audit log da proposta segue sendo o registro
+   da decisão. Mensagens de pessoas no canal ficam.
+**Supera:** D-284 item 8 (aviso pelo post de sistema), a parte "Decisões sai do trilho" da D-315,
+e o desenho de WORKFLOWS §3 com "sistema posta no chat interno".
+**Impacto:** migração 067 (dados + tabela nova), ApprovalService, seeds dev/E2E, Sidebar,
+route-config, tela Decisões, chat interno (sem botões), hook de avisos. Sem endpoint novo e sem
+mudança de permissão: aprovar continua `PATCH /proposals/:id/approve|reject`, gestor+.

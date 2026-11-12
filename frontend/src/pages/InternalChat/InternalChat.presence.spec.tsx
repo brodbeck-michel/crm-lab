@@ -78,7 +78,6 @@ describe('Chat interno — status da equipe (CRMLAB-120)', () => {
         onSend={vi.fn()}
         sending={false}
         currentUserId="u-1"
-        currentUserRole="attendant"
         hasOlderMessages={false}
         onLoadOlder={vi.fn()}
         presenceOf={presenceOf}

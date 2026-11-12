@@ -438,7 +438,7 @@ interface ApprovalService {
 ```
 
 **Regras:**
-- `requestApproval`: posta no canal interno `#aprovacoes` com proposta anexada + notifica gestores via WS
+- `requestApproval`: notifica gestores via WS (`approval.requested`) e audita. Não posta no chat interno desde o CRMLAB-146 (D-318) — o pedido aparece em Decisões
 - `approve`: só manager/admin; e só se `discount <= approver.discountLimit`
 - `reject`: motivo obrigatório; notifica criador
 - Decisões auditadas
@@ -480,7 +480,7 @@ interface InternalChatService {
 ```
 
 **Regras:**
-- Canais padrão criados no onboarding: `#geral`, `#aprovacoes`
+- Canais padrão criados no onboarding: `Geral` (chave `geral`) e `Avisos gerais` (chave `avisos`) — CRMLAB-146, D-318
 - Proposta anexada renderiza como cartão (frontend resolve via GET /proposals/:id)
 - Console de plataforma tem chat PRÓPRIO, isolado (sem acesso aos canais de labs)
 - **DM (D-101, migração `010_internal_chat_dm.sql`, SCHEMA.md §11):** `getOrCreateDirectChannel`

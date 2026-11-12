@@ -39,8 +39,6 @@ function renderItem(
     <InternalMessageItem
       message={msg}
       currentUserId={currentUserId}
-      currentUserRole="attendant"
-      isApprovalsChannel={false}
       readState={readState}
       isDirect={isDirect}
     />,

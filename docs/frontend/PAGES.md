@@ -45,7 +45,7 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 ### Papéis por rota (implementado em `src/routes/route-config.ts`)
 
 **Grupos do trilho (accordion, CRMLAB-4; D-129; enxugado no CRMLAB-143, D-315):** itens sem grupo
-ficam soltos no topo — Atendimento, Chat Interno, Propostas, Vendas e Contatos, nessa ordem; os grupos aparecem
+ficam soltos no topo — Atendimento, Chat Interno, Propostas, Vendas, Contatos e Decisões (gestor+, CRMLAB-146), nessa ordem; os grupos aparecem
 depois, na ordem Visitação Médica → Gestão → Configurações. O grupo "Comunicação" deixou de
 existir. Grupo sem nenhum item visível para o perfil não aparece. **Fechados por padrão**, exceto
 o grupo da tela atual; quando o usuário abre ou fecha um grupo, a escolha persiste em localStorage
@@ -328,7 +328,7 @@ não só aqui. O Console da Plataforma não avisa.
   conversa aberta, que o Atendimento já carrega
 - **Chat interno (CRMLAB-116, D-284):** mensagem de colega num canal/DM dá o mesmo aviso (som,
   notificação, título), com as mesmas preferências. Notificação: título = nome do canal
-  (`#geral`) ou da colega na DM, corpo só a contagem; clicar abre `/internal-chat?channelId=…`.
+  (`Geral`) ou da colega na DM, corpo só a contagem; clicar abre `/internal-chat?channelId=…`.
   Não avisa mensagem minha (nem de outra aba), de sistema, editada/apagada, nem do canal aberto
   com a aba em foco. Detalhes em §9
 
@@ -812,7 +812,7 @@ nunca "sem permissão" (não vazar existência).
 
 - Lista de canais + DMs (coluna esquerda), mensagens (direita)
 - Mensagem pode anexar proposta → renderiza `ProposalCard` clicável → modal
-- Canal `#aprovacoes`: pedidos de aprovação com botões [Aprovar] [Rejeitar] (gestor+)
+- Canais fixos `Geral` e `Avisos gerais` (chave `avisos`, subtítulo "Avisos importantes para toda a equipe"). Todos escrevem nos dois. Aprovar/Rejeitar saiu do chat no CRMLAB-146 (D-318) e fica em Decisões (§12)
 - Dados: `GET /internal-chat/*` + WS
 
 ### Anexar arquivo (CRMLAB-101, D-271)
@@ -902,14 +902,13 @@ quando a primeira mensagem chega (mesmo evento `internal_chat.new_message` de se
   do `useMarkAsRead` do inbox.
 - "Abrir" é o **clique do usuário no canal**, não a auto-seleção do primeiro item da lista.
   A ordem dos canais é fixa (`kind ASC, key ASC`), então o auto-selecionado é quase sempre
-  `#aprovacoes`: marcá-lo como lido só porque a tela montou apagaria justamente o aviso que a
+  `Avisos gerais`: marcá-lo como lido só porque a tela montou apagaria justamente o aviso que a
   pessoa entrou para ver. Entrar em `/internal-chat` não mexe em `channel_reads`.
 - Ler o histórico **não** marca como lido: `GET /internal-chat/channels/:id/messages` não tem
   efeito colateral. Rolar para trás não deve apagar o badge de uma mensagem nova.
 - `Channel.lastReadAt` (anulável) é a última leitura **deste** usuário: é o que posiciona o
   divisor "novas mensagens". `null` = nunca abriu.
-- Mensagem de sistema conta como não lida — o pedido de aprovação em `#aprovacoes` é o caso
-  que mais precisa piscar. Mensagem do próprio usuário nunca conta.
+- Mensagem de sistema conta como não lida. Mensagem do próprio usuário nunca conta.
 
 ### Badge de não lidas no menu lateral (D-132 — CRMLAB-8)
 
@@ -1147,26 +1146,34 @@ Não é item de sidebar — chega-se clicando numa linha da tabela de "Laborató
 
 ## 12. Decisões (`/decisions`) — número próprio
 
-Gestor+. Página dedicada às propostas com `approvalStatus: "pending"` — hoje esse recorte também
-aparece dentro de `#aprovacoes` (§9) e no bloco "Decisões pendentes" de Gestão da Operação (§10);
-esta tela existe para quem só precisa DISSO, sem entrar no chat nem no resto do painel.
+Gestor+. Página dedicada às propostas com `approvalStatus: "pending"` — o mesmo recorte do bloco
+"Decisões pendentes" de Gestão da Operação (§10). Desde o CRMLAB-146 (D-318) é **o** lugar onde o
+gestor aprova ou rejeita: o chat interno não tem mais pedido de aprovação. Item solto no trilho.
 
 - Mesmo dado de §10: `GET /operations/overview` (D-067), lendo só `pendingDecisions` — nenhum
   endpoint novo, nenhum cálculo novo
 - Lista de cartões (mais antiga primeiro): paciente, % de desconto, total, quem pediu, tempo de
   espera — reaproveita o cartão de §10
-- Clique no cartão abre o **Modal da Proposta** (§6), onde [Aprovar]/[Rejeitar] já existem
-  (`ApprovalActions`). Esta tela NÃO reimplementa a decisão de alçada — duplicar o botão duplicaria
-  a regra (CLAUDE.md §3)
+- Clique no cartão abre o **Modal da Proposta** (§6)
+- Abaixo de cada cartão, [Aprovar] / [Rejeitar] (`components/proposal/ApprovalActions`, que veio do
+  chat). Rejeitar exige motivo; auto-aprovação (D-046) e alçada estourada viram toast explicativo.
+  Só UX: a alçada é do backend (CLAUDE.md §3)
 - Vazio: "Nenhuma decisão pendente"
 
-**Notificação (sino da Sidebar) — REMOVIDA no CRMLAB-143 (D-315):** "Decisões" saiu do trilho e o
-contador saiu junto; o texto abaixo fica como histórico. O item "Decisões" do trilho mostrava um contador (`Badge`) com
+**Contador na Sidebar — removido no CRMLAB-143 (D-315), de volta no CRMLAB-146 (D-318).** O item
+"Decisões" do trilho mostra um contador (`Badge`) com
 `pendingDecisions.total` para quem tem o item no menu (gestor+). Fonte: o MESMO
 `GET /operations/overview` (cache do TanStack Query compartilhado com §10 e com esta tela — não é
 uma segunda chamada). Fica live porque os eventos WS `approval.requested` e `approval.decided`
 (ws.ts) agora também invalidam `queryScopes.operations`, então o contador cai assim que alguém
-decide, sem esperar o refetch de 60s.
+decide, sem esperar o refetch de 60s. A query é `usePendingDecisions` (hooks/), a mesma do aviso
+abaixo.
+
+**Aviso de pedido novo (CRMLAB-146, D-318):** quem decide recebe o aviso de mensagem nova (som +
+notificação do navegador, mesmas preferências do §9) quando aparece proposta nova em
+`pendingDecisions.items`. Título "Decisões", corpo só a contagem ("Novo pedido de aprovação"),
+clique abre `/decisions`. A primeira carga é linha de base; o pedido da própria pessoa não avisa
+(ela não pode aprovar, D-046).
 
 ---
 

@@ -10,8 +10,7 @@
  *     taxa de ganho plausivel (~18% das propostas).
  *   - propostas nos 6 estagios (Pipeline sem coluna vazia), com historico legal
  *     segundo `ALLOWED_TRANSITIONS`.
- *   - uma proposta `pending` acima da alcada do atendente + o post em
- *     `#aprovacoes` que a acompanha.
+ *   - uma proposta `pending` acima da alcada do atendente (aparece em Decisoes).
  *   - `perdido` distribuido nos 6 motivos (grafico da tela de Conversao).
  *   - `ganho` com `closed_at` espalhado nas ultimas semanas (curva de receita).
  *   - conversas nao atribuidas e com `unread_count > 0` (chips do inbox).
@@ -460,20 +459,20 @@ async function seedTenant(
 
   // ---- canais internos (onboarding, WORKFLOWS §7) ---------------------------
   const geralId = seedUuid('dev', 'channel', plan.slug, 'geral');
-  const aprovacoesId = seedUuid('dev', 'channel', plan.slug, 'aprovacoes');
+  const avisosId = seedUuid('dev', 'channel', plan.slug, 'avisos');
   await insertChannel(tx, {
     id: geralId,
     tenantId,
     key: 'geral',
-    name: '#geral',
+    name: 'Geral',
     kind: 'channel',
     createdAt: tenantCreatedAt,
   });
   await insertChannel(tx, {
-    id: aprovacoesId,
+    id: avisosId,
     tenantId,
-    key: 'aprovacoes',
-    name: '#aprovacoes',
+    key: 'avisos',
+    name: 'Avisos gerais',
     kind: 'channel',
     createdAt: tenantCreatedAt,
   });
@@ -741,9 +740,6 @@ async function seedTenant(
   let lost = 0;
   let lossIndex = 0;
   let proposalIndex = 0;
-  let pendingProposalId: string | null = null;
-  let pendingPatient = '';
-  let pendingTotal = 0;
 
   for (const status of plannedStatuses) {
     // Passo 7 (coprimo de 90 e de 24) espalha as propostas por conversas
@@ -886,12 +882,6 @@ async function seedTenant(
       });
     }
 
-    if (isPendingApproval) {
-      pendingProposalId = proposalId;
-      pendingPatient = conversation.patientName;
-      pendingTotal = result.totalPrice;
-    }
-
     proposalIndex += 1;
   }
 
@@ -900,14 +890,11 @@ async function seedTenant(
     tenantId,
     slug: plan.slug,
     geralId,
-    aprovacoesId,
+    avisosId,
     now,
     admin,
     manager,
     attendants,
-    pendingProposalId,
-    pendingPatient,
-    pendingTotal,
   });
 
   return {
@@ -958,17 +945,14 @@ async function seedInternalChat(
     tenantId: string;
     slug: string;
     geralId: string;
-    aprovacoesId: string;
+    avisosId: string;
     now: Date;
     admin: SeededUser;
     manager: SeededUser;
     attendants: SeededUser[];
-    pendingProposalId: string | null;
-    pendingPatient: string;
-    pendingTotal: number;
   },
 ): Promise<void> {
-  const { tenantId, slug, geralId, aprovacoesId, now } = input;
+  const { tenantId, slug, geralId, avisosId, now } = input;
   const firstAttendant = input.attendants[0] as SeededUser;
 
   const geral: Array<{ senderId: string | null; content: string; hoursAgo: number }> = [
@@ -1023,30 +1007,13 @@ async function seedInternalChat(
     });
   }
 
-  if (!input.pendingProposalId) return;
-
-  const total = input.pendingTotal.toLocaleString('pt-BR', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  // CRMLAB-146 (D-318): Avisos gerais e um canal comum, sem post de aprovacao.
   await insertInternalMessage(tx, {
-    id: seedUuid('dev', 'internal-msg', slug, 'aprovacoes', 0),
+    id: seedUuid('dev', 'internal-msg', slug, 'avisos', 0),
     tenantId,
-    channelId: aprovacoesId,
-    senderId: null,
-    content:
-      `@gestor Pedido de aprovação de desconto: ${input.pendingPatient} - R$ ${total} ` +
-      '(25% — acima da alçada de 15%)',
-    attachedProposalId: input.pendingProposalId,
-    isSystem: true,
-    createdAt: new Date(now.getTime() - 3 * 60 * MIN_MS),
-  });
-  await insertInternalMessage(tx, {
-    id: seedUuid('dev', 'internal-msg', slug, 'aprovacoes', 1),
-    tenantId,
-    channelId: aprovacoesId,
-    senderId: firstAttendant.id,
-    content: 'Paciente vai fazer o painel completo, por isso pedi os 25%. Consegue olhar?',
+    channelId: avisosId,
+    senderId: input.manager.id,
+    content: 'Aviso: sexta-feira o laboratório fecha às 12h.',
     attachedProposalId: null,
     isSystem: false,
     createdAt: new Date(now.getTime() - 2 * 60 * MIN_MS),

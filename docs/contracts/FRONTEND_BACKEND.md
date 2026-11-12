@@ -107,7 +107,7 @@ mais de alguns minutos, reconectando na hora quando ela volta a ficar visível.
 | `proposal.created` | `{ proposalId }` | proposta nasceu sem ninguém clicar — hoje só a origem `bitlab`, na ingestão do orçamento (CRMLAB-57, D-196), depois do commit — invalidate `['proposals']` |
 | `proposal.status_changed` | `{ proposalId, status }` | invalidate `['proposals']` + `['proposal', id]` |
 | `proposal.updated` | `{ proposalId }` | itens/desconto/médico solicitante mudaram (CRMLAB-12, D-134) — invalidate `['proposals']` + `['proposal', id]` |
-| `approval.requested` | `{ proposalId }` | badge em #aprovacoes + invalidate pendentes |
+| `approval.requested` | `{ proposalId }` | invalida pendentes (contador de Decisões + aviso ao gestor, D-318) |
 | `internal_chat.message_updated` | `{ channelId, messageId }` | a autora editou ou apagou para todos uma mensagem do chat interno (CRMLAB-117, D-282) — invalidate `['internal-chat', 'channels']` + `['internal-chat', 'messages', channelId]` (a mesma reação de `internal_chat.new_message`). **Não** conta como mensagem nova (sem aviso) |
 | `internal_chat.channel_read` | `{ channelId, userId, readUpTo, lastReadAt }` | `userId` leu o canal e passou de mensagem de outra pessoa (CRMLAB-123, D-301) — o ✓✓ de quem escreveu pode ter virado. DM: só para o outro participante; canal: tenant inteiro. **Nenhuma invalidação** (exceção, como `conversation.presence`): o payload vai para `useInternalChatReadsStore` e a tela junta ao `readState` do último GET (`mergeReadState`) — refazer o GET em todas as abas a cada leitura traria de volta os 429 do CRMLAB-122. Não é mensagem nova (sem aviso/badge) |
 | `approval.decided` | `{ proposalId, decision }` | toast + invalidate `['proposal', id]` |

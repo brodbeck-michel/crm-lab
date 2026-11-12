@@ -812,7 +812,7 @@ nunca "sem permissão" (não vazar existência).
 
 - Lista de canais + DMs (coluna esquerda), mensagens (direita)
 - Mensagem pode anexar proposta → renderiza `ProposalCard` clicável → modal
-- Canal `#aprovacoes`: pedidos de aprovação com botões [Aprovar] [Rejeitar] (gestor+)
+- Canal `#avisos-gerais` (chave `aprovacoes`; era `#aprovacoes` até CRMLAB-146): pedidos de aprovação com botões [Aprovar] [Rejeitar] (gestor+)
 - Dados: `GET /internal-chat/*` + WS
 
 ### Anexar arquivo (CRMLAB-101, D-271)

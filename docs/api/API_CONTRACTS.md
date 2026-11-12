@@ -3116,7 +3116,7 @@ conversar; `POST /internal-chat/dms` abre (ou cria, na primeira vez) a DM.
     {
       "id": "uuid",
       "key": "aprovacoes",
-      "name": "#aprovacoes",
+      "name": "#avisos-gerais",
       "kind": "channel",
       "unreadCount": 2,
       "lastReadAt": "2026-08-23T14:10:00.000Z",
@@ -4198,7 +4198,7 @@ backend e frontend importam de lá, nenhum dos dois redeclara os filtros localme
 
 ### POST /platform/tenants
 Onboarding (WORKFLOWS.md §7). Cria, em **uma única transação**: tenant + tema padrão
-(Terracota & Sálvia) + canais `#geral` e `#aprovacoes` + usuário admin inicial. Se qualquer
+(Terracota & Sálvia) + canais `#geral` e `#avisos-gerais` + usuário admin inicial. Se qualquer
 passo falhar, nada é gravado e o `slug` continua livre.
 
 **Request:**

@@ -19,7 +19,7 @@ import { toIso, toIsoOrNull } from './row-mappers.js';
 /** Canais padrao do onboarding (WORKFLOWS.md §6 e §7). */
 export const DEFAULT_CHANNELS = [
   { key: 'geral', name: '#geral' },
-  { key: 'aprovacoes', name: '#aprovacoes' },
+  { key: 'aprovacoes', name: '#avisos-gerais' },
 ] as const;
 
 export type DefaultChannelKey = (typeof DEFAULT_CHANNELS)[number]['key'];

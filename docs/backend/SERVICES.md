@@ -480,7 +480,7 @@ interface InternalChatService {
 ```
 
 **Regras:**
-- Canais padrão criados no onboarding: `#geral`, `#aprovacoes`
+- Canais padrão criados no onboarding: `#geral`, `#avisos-gerais` (chave `aprovacoes`, CRMLAB-146)
 - Proposta anexada renderiza como cartão (frontend resolve via GET /proposals/:id)
 - Console de plataforma tem chat PRÓPRIO, isolado (sem acesso aos canais de labs)
 - **DM (D-101, migração `010_internal_chat_dm.sql`, SCHEMA.md §11):** `getOrCreateDirectChannel`

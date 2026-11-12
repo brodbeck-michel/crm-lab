@@ -565,7 +565,7 @@ export const E2E_PROPOSALS = {
 /** Canais internos criados no onboarding (WORKFLOWS.md §7). */
 export const E2E_CHANNELS = {
   geral: { key: 'geral', name: '#geral' },
-  aprovacoes: { key: 'aprovacoes', name: '#aprovacoes' },
+  aprovacoes: { key: 'aprovacoes', name: '#avisos-gerais' },
 } as const;
 
 /**

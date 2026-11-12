@@ -284,7 +284,7 @@ Nova conversa → sistema busca atendente online com menos conversas ativas → 
 
 **Canais padrão criados no onboarding do tenant:**
 - `#geral`
-- `#aprovacoes` (sistema posta pedidos de aprovação aqui)
+- `#avisos-gerais` — chave `aprovacoes`; o sistema posta os pedidos de aprovação aqui (nome mudou em CRMLAB-146, D-318)
 
 **Iniciar uma conversa direta (DM), D-101:**
 ```

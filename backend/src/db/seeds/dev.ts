@@ -473,7 +473,7 @@ async function seedTenant(
     id: aprovacoesId,
     tenantId,
     key: 'aprovacoes',
-    name: '#aprovacoes',
+    name: '#avisos-gerais',
     kind: 'channel',
     createdAt: tenantCreatedAt,
   });

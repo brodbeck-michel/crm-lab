@@ -7166,3 +7166,16 @@ para o cabeçalho do grupo "Comunicação".
 **Supera:** PAGES.md §3 (1180px / `wide` 1440px) e a nota de Resultados sobre `PageContainer wide`.
 **Impacto:** só frontend — `layout/PageContainer.tsx` (novo arquivo, saiu de `AppShell.tsx`),
 PAGES.md §3 e §14, COMPONENTS.md. Sem mudança de API, de regra ou de permissão.
+
+### D-318: Canal de aprovações do chat interno vira `#avisos-gerais` (CRMLAB-146)
+**Contexto:** em 12/11/2026 o Michel pediu para o grupo de aprovações do chat interno se chamar
+"avisos gerais".
+**Decisão:**
+1. Muda só o **nome exibido**: `#aprovacoes` → `#avisos-gerais` (com `#` e hífen, no padrão de
+   `#geral`). A **chave** continua `aprovacoes` — é por ela que o ApprovalService posta os pedidos,
+   que os botões [Aprovar]/[Rejeitar] aparecem e que a lista ordena; nada disso muda.
+2. Tenant novo nasce com o nome novo (`DEFAULT_CHANNELS` do onboarding e do repositório).
+3. Tenants existentes: migração `067_channel_aprovacoes_rename.sql` troca só quem ainda tem o nome
+   padrão antigo (idempotente).
+**Impacto:** sem mudança de API, de permissão ou de regra. Docs que citam `#aprovacoes` como
+referência histórica ao canal continuam valendo — leia como "canal de chave `aprovacoes`".

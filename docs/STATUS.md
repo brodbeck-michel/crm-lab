@@ -4173,6 +4173,11 @@ Branch `feature/CRMLAB-144-regras-em-abas`, empilhada sobre o CRMLAB-143. Decis�
 - **Testes:** `Rules.spec.tsx` — abas por perfil, rascunho preservado na troca, bloqueio na outra
   aba, âncora `#comissoes`; os testes antigos das seções abrem a aba pela âncora.
 
+### 🔄 CRMLAB-146 — canal de aprovações vira `#avisos-gerais` (2026-11-12, aguardando validação)
+
+Branch `feature/CRMLAB-146-canal-avisos-gerais`. Decisão D-318. Só o nome exibido muda (chave
+`aprovacoes` fica); migração 067 renomeia os tenants existentes.
+
 ### 🔄 CRMLAB-145 — padrão visual único de página (2026-11-10, aguardando validação)
 
 Branch `feature/CRMLAB-145-padrao-visual-telas`, empilhada sobre o CRMLAB-144. Decisão D-317. Só frontend.

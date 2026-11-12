@@ -160,7 +160,7 @@ describe('createTenant — onboarding (WORKFLOWS.md §7)', () => {
     expect(estado.tema[0]?.brand_name).toBe('Laboratorio Vida');
 
     expect(estado.canais).toEqual([
-      { key: 'aprovacoes', name: '#aprovacoes', kind: 'channel' },
+      { key: 'aprovacoes', name: '#avisos-gerais', kind: 'channel' },
       { key: 'geral', name: '#geral', kind: 'channel' },
     ]);
 

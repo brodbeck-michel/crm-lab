@@ -109,14 +109,14 @@ Cobrem os fluxos de `docs/domain/WORKFLOWS.md`:
 | Login | login → tema aplicado → redirect por perfil |
 | Atendimento | nova mensagem chega (WS) → aparece na lista → responder |
 | Orçamento | conversa → novo orçamento → 2 exames → 10% → criar → enviar |
-| Aprovação | atendente cria 25% → pending → gestor aprova em #aprovacoes → atendente notificado |
+| Aprovação | atendente cria 25% → pending → aparece em Decisões (não no chat, D-318) → gestor aprova → atendente notificado |
 | Pipeline | mover estágio via modal → perdido exige motivo |
 | Personalização | admin troca tema → cores mudam em tempo real → persiste após relogin |
 | Catálogo | atendente lê · gestor cria/edita · desativar é `PATCH { isActive: false }` |
 | Ficha do Paciente | abre por `patients.id` → edita cadastro e persiste → timeline na página 2 → cartão abre o Modal da Proposta → LGPD: admin exporta, não-admin não vê a seção |
 | Canais & Equipe | admin salva e persiste · gestor em modo leitura · **campo de segredo em branco PRESERVA o token** (com o controle positivo: token novo troca a máscara) |
 | Gestão da Operação | fila, carga e decisões pendentes conferidas contra o dado semeado · atendente barrado na tela e na API |
-| Badge do chat interno | `#aprovacoes` nasce em 1 para o gestor → `POST .../read` zera → mensagem nova sobe de novo (pendência D5 da Onda 5) |
+| Badge do chat interno | `Avisos gerais` nasce em 1 para o gestor (aviso da atendente) → `POST .../read` zera → mensagem nova sobe de novo (pendência D5 da Onda 5) |
 | Paginação | `/proposals` e `/catalog`: a página 2 alcança registro que a página 1 não mostra (pendência D7 da Onda 5) |
 | Isolamento | usuário do tenant A não vê NADA do tenant B |
 

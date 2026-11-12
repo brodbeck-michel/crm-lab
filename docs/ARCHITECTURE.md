@@ -302,7 +302,7 @@ seção Segurança.
    ↓
 7. Se o desconto excede a alçada: NÃO é 403.
    - responde 201 com `approvalStatus: "pending"` (D-045)
-   - ApprovalService cria o pedido, posta em #aprovacoes (chat interno)
+   - ApprovalService cria o pedido e avisa os gestores (WS); o gestor decide na tela Decisões (D-318)
      e emite `approval.requested`
    - dentro da alçada, a proposta nasce `approvalStatus: "approved"` (D-048)
    ↓

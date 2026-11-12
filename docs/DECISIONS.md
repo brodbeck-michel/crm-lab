@@ -7167,15 +7167,27 @@ para o cabeçalho do grupo "Comunicação".
 **Impacto:** só frontend — `layout/PageContainer.tsx` (novo arquivo, saiu de `AppShell.tsx`),
 PAGES.md §3 e §14, COMPONENTS.md. Sem mudança de API, de regra ou de permissão.
 
-### D-318: Canal de aprovações do chat interno vira `#avisos-gerais` (CRMLAB-146)
+### D-318: Aprovação sai do chat interno; o canal vira `Avisos gerais` (CRMLAB-146)
 **Contexto:** em 12/11/2026 o Michel pediu para o grupo de aprovações do chat interno se chamar
-"avisos gerais".
+"avisos gerais" e virar um grupo de avisos importantes para todos, sem aprovação.
 **Decisão:**
-1. Muda só o **nome exibido**: `#aprovacoes` → `#avisos-gerais` (com `#` e hífen, no padrão de
-   `#geral`). A **chave** continua `aprovacoes` — é por ela que o ApprovalService posta os pedidos,
-   que os botões [Aprovar]/[Rejeitar] aparecem e que a lista ordena; nada disso muda.
-2. Tenant novo nasce com o nome novo (`DEFAULT_CHANNELS` do onboarding e do repositório).
-3. Tenants existentes: migração `067_channel_aprovacoes_rename.sql` troca só quem ainda tem o nome
-   padrão antigo (idempotente).
-**Impacto:** sem mudança de API, de permissão ou de regra. Docs que citam `#aprovacoes` como
-referência histórica ao canal continuam valendo — leia como "canal de chave `aprovacoes`".
+1. **Canais fixos:** `aprovacoes` vira chave `avisos`, nome `Avisos gerais`; `#geral` vira `Geral`
+   (sem `#`, a pedido). Os dois são canais comuns: todos escrevem.
+2. **A aprovação não passa pelo chat.** O ApprovalService para de postar o pedido e as decisões
+   (APROVADO/REJEITADO); continua emitindo `approval.requested` (tenant) e `approval.decided`
+   (para quem pediu) e auditando tudo. `InternalChatService.createSystemPost` saiu (sem uso).
+3. **Decisões volta ao trilho**, item solto, só gestor/admin, com o contador de pendentes (o que
+   saiu no CRMLAB-143, D-315). [Aprovar]/[Rejeitar] (`ApprovalActions`) vão do chat para baixo de
+   cada cartão da tela Decisões.
+4. **Aviso ao gestor:** o som/notificação do pedido (D-284 item 8) passa a vir de proposta nova em
+   `pendingDecisions` (mesma query do contador, `usePendingDecisions`). Título "Decisões", corpo
+   só a contagem (D-240), clique abre `/decisions`. Pedido da própria pessoa não avisa (D-046).
+5. **Histórico:** a migração 067 move os posts de sistema com proposta anexada de `aprovacoes`
+   para `internal_messages_approval_archive` (mesmas colunas + `archived_at`, RLS por tenant).
+   Saem da tela e das não lidas, ficam no banco; o audit log da proposta segue sendo o registro
+   da decisão. Mensagens de pessoas no canal ficam.
+**Supera:** D-284 item 8 (aviso pelo post de sistema), a parte "Decisões sai do trilho" da D-315,
+e o desenho de WORKFLOWS §3 com "sistema posta no chat interno".
+**Impacto:** migração 067 (dados + tabela nova), ApprovalService, seeds dev/E2E, Sidebar,
+route-config, tela Decisões, chat interno (sem botões), hook de avisos. Sem endpoint novo e sem
+mudança de permissão: aprovar continua `PATCH /proposals/:id/approve|reject`, gestor+.

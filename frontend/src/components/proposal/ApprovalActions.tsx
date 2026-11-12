@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import type { ProposalDetail } from '@crm-lab/shared';
 import { api, isApiError, queryKeys, queryScopes } from '@/api';
 import { Button, TextArea, useToast } from '@/components/ui';
 import { useApiErrorHandler } from '@/hooks';
 import { formatPercent } from '@/lib/format';
 
 /**
- * [Aprovar] / [Rejeitar] do canal `#aprovacoes` — PAGES.md §9 e WORKFLOWS.md §3.
+ * [Aprovar] / [Rejeitar] da tela Decisões — PAGES.md §12 e WORKFLOWS.md §3.
+ * Saiu do chat interno no CRMLAB-146 (D-318).
  *
  * O QUE ESTE COMPONENTE NÃO FAZ: decidir se a aprovação é permitida. A alçada
  * é do BACKEND (CLAUDE.md §3) — aqui só existe UX. Em especial a
@@ -20,7 +20,9 @@ import { formatPercent } from '@/lib/format';
  */
 
 export interface ApprovalActionsProps {
-  proposal: ProposalDetail;
+  proposalId: string;
+  /** Nome no rótulo dos botões — vários cartões na mesma tela. */
+  patientName: string | null;
 }
 
 /** Erros com UX própria, tratados por CÓDIGO (API_ERRORS.md), nunca por mensagem. */
@@ -41,7 +43,7 @@ function approvalErrorMessage(error: unknown): string | null {
   return null;
 }
 
-export function ApprovalActions({ proposal }: ApprovalActionsProps) {
+export function ApprovalActions({ proposalId, patientName }: ApprovalActionsProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const handleApiError = useApiErrorHandler();
@@ -50,12 +52,12 @@ export function ApprovalActions({ proposal }: ApprovalActionsProps) {
   const [reason, setReason] = useState('');
   const [reasonError, setReasonError] = useState<string | undefined>(undefined);
 
-  /** A decisão mexe na proposta E no canal (o serviço posta o resultado lá). */
+  /** A decisão mexe na proposta e tira o cartão das pendências (Decisões e contador). */
   const invalidateDecision = async () => {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: queryKeys.proposal(proposal.id) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.proposal(proposalId) }),
       queryClient.invalidateQueries({ queryKey: queryScopes.proposals }),
-      queryClient.invalidateQueries({ queryKey: queryScopes.internalChat }),
+      queryClient.invalidateQueries({ queryKey: queryScopes.operations }),
     ]);
   };
 
@@ -69,7 +71,7 @@ export function ApprovalActions({ proposal }: ApprovalActionsProps) {
   };
 
   const approve = useMutation({
-    mutationFn: () => api.proposals.approve(proposal.id),
+    mutationFn: () => api.proposals.approve(proposalId),
     onSuccess: async () => {
       toast('Desconto aprovado.', { tone: 'positive' });
       await invalidateDecision();
@@ -78,7 +80,7 @@ export function ApprovalActions({ proposal }: ApprovalActionsProps) {
   });
 
   const reject = useMutation({
-    mutationFn: (motivo: string) => api.proposals.reject(proposal.id, { reason: motivo }),
+    mutationFn: (motivo: string) => api.proposals.reject(proposalId, { reason: motivo }),
     onSuccess: async () => {
       toast('Desconto rejeitado.', { tone: 'positive' });
       setRejecting(false);
@@ -99,6 +101,7 @@ export function ApprovalActions({ proposal }: ApprovalActionsProps) {
   };
 
   const busy = approve.isPending || reject.isPending;
+  const who = patientName ?? 'contato sem nome';
 
   return (
     <div data-testid="approval-actions" className="flex flex-col gap-sm">
@@ -109,6 +112,7 @@ export function ApprovalActions({ proposal }: ApprovalActionsProps) {
           loading={approve.isPending}
           disabled={busy}
           onClick={() => approve.mutate()}
+          aria-label={`Aprovar desconto de ${who}`}
         >
           Aprovar
         </Button>
@@ -119,6 +123,7 @@ export function ApprovalActions({ proposal }: ApprovalActionsProps) {
           disabled={busy}
           onClick={() => setRejecting((open) => !open)}
           aria-expanded={rejecting}
+          aria-label={`Rejeitar desconto de ${who}`}
         >
           Rejeitar
         </Button>

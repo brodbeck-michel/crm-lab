@@ -47,19 +47,13 @@ function mine(overrides: Partial<InternalMessage> = {}): InternalMessage {
   };
 }
 
-function renderItem(
-  message: InternalMessage,
-  currentUserId = 'u-1',
-  role: 'attendant' | 'admin' = 'attendant',
-) {
+function renderItem(message: InternalMessage, currentUserId = 'u-1') {
   const onEdit = vi.fn().mockResolvedValue(undefined);
   const onDelete = vi.fn();
   render(
     <InternalMessageItem
       message={message}
       currentUserId={currentUserId}
-      currentUserRole={role}
-      isApprovalsChannel={false}
       onEdit={onEdit}
       onDelete={onDelete}
     />,
@@ -85,7 +79,7 @@ describe('InternalMessageItem — editar/apagar da autora (D-282)', () => {
   });
 
   it('admin não vê o menu em mensagem de colega', () => {
-    renderItem(mine({ senderId: 'u-2' }), 'u-1', 'admin');
+    renderItem(mine({ senderId: 'u-2' }), 'u-1');
     expect(screen.queryByRole('button', { name: 'Ações da mensagem' })).toBeNull();
   });
 
@@ -114,8 +108,6 @@ describe('InternalMessageItem — editar/apagar da autora (D-282)', () => {
       <InternalMessageItem
         message={mine({ content: 'Foto do pedido', attachment: attachmentOf('image/png', 'foto.png') })}
         currentUserId="u-1"
-        currentUserRole="attendant"
-        isApprovalsChannel={false}
         onEdit={vi.fn().mockResolvedValue(undefined)}
         onDelete={vi.fn()}
       />,
@@ -180,8 +172,6 @@ describe('InternalMessageItem — editar/apagar da autora (D-282)', () => {
       <InternalMessageItem
         message={mine({ editedAt: ago(1000) })}
         currentUserId="u-1"
-        currentUserRole="attendant"
-        isApprovalsChannel={false}
       />,
     );
     expect(screen.getByTestId('internal-message-edited').textContent).toBe('Editada');

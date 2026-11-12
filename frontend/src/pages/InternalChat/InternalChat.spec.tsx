@@ -58,16 +58,15 @@ const { useMessageAlertsStore } = await import('@/stores/message-alerts.store');
 /**
  * Chat Interno — PAGES.md §9 · WORKFLOWS.md §3 e §6.
  *
- * O que este teste protege: os canais aparecem, a mensagem sai pelo endpoint
- * certo, [Aprovar]/[Rejeitar] chamam os PATCH corretos (rejeição SEMPRE com
- * motivo) e a auto-aprovação (D-046) vira um toast explicativo — nunca um
- * estado otimista de "aprovado".
+ * O que este teste protege: os canais aparecem e a mensagem sai pelo endpoint
+ * certo. Aprovar/Rejeitar saiu daqui no CRMLAB-146 (D-318) e é testado em
+ * `pages/Decisions.spec.tsx`.
  */
 
 const GERAL: Channel = {
   id: '11111111-1111-4111-8111-111111111111',
   key: 'geral',
-  name: '#geral',
+  name: 'Geral',
   kind: 'channel',
   unreadCount: 0,
   lastReadAt: '2026-08-23T09:00:00Z',
@@ -76,10 +75,10 @@ const GERAL: Channel = {
   otherUserName: null,
 };
 
-const APROVACOES: Channel = {
+const AVISOS: Channel = {
   id: '22222222-2222-4222-8222-222222222222',
-  key: 'aprovacoes',
-  name: '#aprovacoes',
+  key: 'avisos',
+  name: 'Avisos gerais',
   kind: 'channel',
   unreadCount: 2,
   // Nunca lido: e o que faz `unreadCount` valer 2 (D-068).
@@ -123,14 +122,10 @@ function message(overrides: Partial<InternalMessage> = {}): InternalMessage {
   };
 }
 
-const APPROVAL_POST = message({
+const AVISO_POST = message({
   id: 'm-2',
-  channelId: APROVACOES.id,
-  senderId: null,
-  senderName: 'Sistema',
-  content: '@gestor Pedido de aprovação de desconto: Marina Alves',
-  attachedProposalId: PROPOSAL_ID,
-  isSystem: true,
+  channelId: AVISOS.id,
+  content: 'Aviso: sexta o laboratório fecha às 12h.',
   createdAt: '2026-08-23T10:00:00Z',
 });
 
@@ -184,7 +179,7 @@ function proposal(overrides: Partial<ProposalDetail> = {}): ProposalDetail {
   };
 }
 
-const CHANNELS: ListChannelsResponse = { channels: [GERAL, APROVACOES, DM] };
+const CHANNELS: ListChannelsResponse = { channels: [GERAL, AVISOS, DM] };
 
 function renderScreen(path = '/internal-chat') {
   const client = new QueryClient({
@@ -199,12 +194,6 @@ function renderScreen(path = '/internal-chat') {
       </ToastProvider>
     </QueryClientProvider>,
   );
-}
-
-/** Abre `#aprovacoes` e espera o cartão da proposta anexada. */
-async function openApprovals(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(await screen.findByRole('button', { name: /#aprovacoes/ }));
-  await screen.findByRole('button', { name: /Aprovar/ });
 }
 
 beforeEach(() => {
@@ -225,7 +214,7 @@ beforeEach(() => {
 
   channelsMock.mockResolvedValue(CHANNELS);
   messagesMock.mockImplementation((channelId: string) =>
-    Promise.resolve(messagesResponse(channelId === APROVACOES.id ? [APPROVAL_POST] : [message()])),
+    Promise.resolve(messagesResponse(channelId === AVISOS.id ? [AVISO_POST] : [message()])),
   );
   sendMock.mockResolvedValue(message({ id: 'm-3', content: 'Combinado' }));
   markReadMock.mockResolvedValue(undefined);
@@ -248,8 +237,8 @@ describe('Chat Interno', () => {
   it('lista canais e mensagens diretas e abre o primeiro canal', async () => {
     renderScreen();
 
-    expect(await screen.findByRole('button', { name: /#geral/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /#aprovacoes/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Geral/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Avisos gerais/ })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Mensagens diretas' })).toBeInTheDocument();
     // A DM já aberta com Marina mostra o nome dela (vindo de `otherUserName`, D-101).
     expect(screen.getByRole('button', { name: /Marina Alves/ })).toBeInTheDocument();
@@ -288,7 +277,7 @@ describe('Chat Interno', () => {
     // Primeira conversa com a Marina: a DM ainda não está na lista de canais e só
     // aparece quando a lista recarrega depois do get-or-create.
     channelsMock
-      .mockResolvedValueOnce({ channels: [GERAL, APROVACOES] })
+      .mockResolvedValueOnce({ channels: [GERAL, AVISOS] })
       .mockResolvedValue(CHANNELS);
     const user = userEvent.setup({ delay: null });
     renderScreen();
@@ -400,7 +389,7 @@ describe('Chat Interno', () => {
     renderScreen();
 
     // Canais continuam abrindo normalmente — a falha da busca não bloqueia o chat.
-    await screen.findByRole('button', { name: /#geral/ });
+    await screen.findByRole('button', { name: /Geral/ });
     expect(await screen.findByRole('searchbox', { name: /Buscar usuário/ })).toBeDisabled();
   });
 
@@ -417,74 +406,16 @@ describe('Chat Interno', () => {
     });
   });
 
-  it('aprova o pedido de #aprovacoes pelo PATCH /proposals/:id/approve', async () => {
+  it('Avisos gerais é canal comum: sem Aprovar/Rejeitar, com o subtítulo de avisos (CRMLAB-146)', async () => {
     const user = userEvent.setup({ delay: null });
     renderScreen();
-    await openApprovals(user);
+    await user.click(await screen.findByRole('button', { name: /Avisos gerais/ }));
 
-    await user.click(screen.getByRole('button', { name: 'Aprovar' }));
-
-    await waitFor(() => {
-      expect(approveMock).toHaveBeenCalledWith(PROPOSAL_ID);
-    });
-    expect(await screen.findByText('Desconto aprovado.')).toBeInTheDocument();
+    expect(await screen.findByText('Aviso: sexta o laboratório fecha às 12h.')).toBeInTheDocument();
+    expect(screen.getByText('Avisos importantes para toda a equipe')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Aprovar/ })).not.toBeInTheDocument();
   });
 
-  it('exige motivo para rejeitar e envia o motivo digitado', async () => {
-    const user = userEvent.setup({ delay: null });
-    renderScreen();
-    await openApprovals(user);
-
-    await user.click(screen.getByRole('button', { name: 'Rejeitar' }));
-    await user.click(screen.getByRole('button', { name: 'Confirmar rejeição' }));
-
-    expect(rejectMock).not.toHaveBeenCalled();
-    expect(await screen.findByText('Informe o motivo da rejeição.')).toBeInTheDocument();
-
-    await user.type(screen.getByLabelText('Motivo da rejeição'), 'Desconto fora da tabela');
-    await user.click(screen.getByRole('button', { name: 'Confirmar rejeição' }));
-
-    await waitFor(() => {
-      expect(rejectMock).toHaveBeenCalledWith(PROPOSAL_ID, {
-        reason: 'Desconto fora da tabela',
-      });
-    });
-  });
-
-  it('explica a recusa de auto-aprovação (D-046) em vez de fingir sucesso', async () => {
-    approveMock.mockRejectedValue(
-      new ApiError('FORBIDDEN', 'Acesso negado', 403, { reason: 'self_approval' }),
-    );
-
-    const user = userEvent.setup({ delay: null });
-    renderScreen();
-    await openApprovals(user);
-
-    await user.click(screen.getByRole('button', { name: 'Aprovar' }));
-
-    expect(await screen.findByText(/Você não pode aprovar a própria proposta/)).toBeInTheDocument();
-    // Nada de otimismo: o botão continua lá para outra tentativa.
-    expect(screen.getByRole('button', { name: 'Aprovar' })).toBeInTheDocument();
-  });
-
-  it('não oferece decisão para atendente', async () => {
-    useAuthStore.setState({
-      user: {
-        id: 'u-2',
-        email: 'atendente@lab.com',
-        name: 'Bia Atendente',
-        role: 'attendant',
-        discountLimit: 15,
-      },
-    });
-
-    const user = userEvent.setup({ delay: null });
-    renderScreen();
-    await user.click(await screen.findByRole('button', { name: /#aprovacoes/ }));
-
-    expect(await screen.findByText(/Pedido de aprovação de desconto/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Aprovar' })).not.toBeInTheDocument();
-  });
   /**
    * ─────────────────────────────────────────────────────────────────────────
    *  Estado de leitura do canal — D-068 · PAGES.md §9
@@ -496,7 +427,7 @@ describe('Chat Interno', () => {
    * nada disso acontece para canal que ninguém abriu.
    */
   describe('marcar canal como lido (D-068)', () => {
-    /** Faz `GET /channels` responder com `#aprovacoes` zerado depois do POST. */
+    /** Faz `GET /channels` responder com `Avisos gerais` zerado depois do POST. */
     function channelsThatZeroOnRead(): string[] {
       const lidos: string[] = [];
       markReadMock.mockImplementation((channelId: string) => {
@@ -504,9 +435,9 @@ describe('Chat Interno', () => {
         return Promise.resolve();
       });
       channelsMock.mockImplementation(() => {
-        const aprovacoes: Channel = lidos.includes(APROVACOES.id)
-          ? { ...APROVACOES, unreadCount: 0, lastReadAt: '2026-08-23T11:00:00Z' }
-          : APROVACOES;
+        const aprovacoes: Channel = lidos.includes(AVISOS.id)
+          ? { ...AVISOS, unreadCount: 0, lastReadAt: '2026-08-23T11:00:00Z' }
+          : AVISOS;
         const response: ListChannelsResponse = { channels: [GERAL, aprovacoes, DM] };
         return Promise.resolve(response);
       });
@@ -521,19 +452,19 @@ describe('Chat Interno', () => {
 
       // O badge existe ANTES de abrir — senão o teste provaria o nada.
       expect(
-        await screen.findByLabelText('2 mensagens não lidas em #aprovacoes'),
+        await screen.findByLabelText('2 mensagens não lidas em Avisos gerais'),
       ).toBeInTheDocument();
 
-      await user.click(screen.getByRole('button', { name: /#aprovacoes/ }));
+      await user.click(screen.getByRole('button', { name: /Avisos gerais/ }));
 
       await waitFor(() => {
-        expect(markReadMock).toHaveBeenCalledWith(APROVACOES.id);
+        expect(markReadMock).toHaveBeenCalledWith(AVISOS.id);
       });
 
       // Invalidação da lista de canais: o badge some da tela.
       await waitFor(() => {
         expect(
-          screen.queryByLabelText('2 mensagens não lidas em #aprovacoes'),
+          screen.queryByLabelText('2 mensagens não lidas em Avisos gerais'),
         ).not.toBeInTheDocument();
       });
     });
@@ -541,7 +472,7 @@ describe('Chat Interno', () => {
     /**
      * O primeiro canal da lista é selecionado pela TELA, não pelo usuário. Como
      * a ordem é fixa (`kind ASC, key ASC`), esse canal seria quase sempre
-     * `#aprovacoes` — apagar o badge dele só por entrar na tela apagaria o
+     * `Avisos gerais` — apagar o badge dele só por entrar na tela apagaria o
      * aviso que a pessoa entrou para ver. Só o clique marca.
      */
     it('não marca nada só por abrir a tela, nem canal que o usuário não clicou', async () => {
@@ -558,10 +489,10 @@ describe('Chat Interno', () => {
       renderScreen();
       await screen.findByText('Bom dia, equipe!');
 
-      await user.click(await screen.findByRole('button', { name: /#aprovacoes/ }));
+      await user.click(await screen.findByRole('button', { name: /Avisos gerais/ }));
 
       await waitFor(() => {
-        expect(markReadMock).toHaveBeenCalledWith(APROVACOES.id);
+        expect(markReadMock).toHaveBeenCalledWith(AVISOS.id);
       });
       expect(markReadMock).not.toHaveBeenCalledWith(DM.id);
     });
@@ -573,8 +504,8 @@ describe('Chat Interno', () => {
       renderScreen();
       await screen.findByText('Bom dia, equipe!');
 
-      await user.click(await screen.findByRole('button', { name: /#aprovacoes/ }));
-      await screen.findByRole('button', { name: /Aprovar/ });
+      await user.click(await screen.findByRole('button', { name: /Avisos gerais/ }));
+      await screen.findByText('Aviso: sexta o laboratório fecha às 12h.');
 
       // A revalidação disparada pelo POST já voltou do servidor: se ela
       // realimentasse o marcar-como-lido, o contador abaixo cresceria sem
@@ -583,7 +514,7 @@ describe('Chat Interno', () => {
         expect(channelsMock.mock.calls.length).toBeGreaterThan(1);
       });
 
-      expect(lidos.filter((id) => id === APROVACOES.id)).toHaveLength(1);
+      expect(lidos.filter((id) => id === AVISOS.id)).toHaveLength(1);
     });
   });
 
@@ -653,11 +584,11 @@ describe('Chat Interno', () => {
 
   describe('aviso de mensagem nova (CRMLAB-116, D-284)', () => {
     it('?channelId= da notificação abre o canal e marca como lido', async () => {
-      renderScreen(`/internal-chat?channelId=${APROVACOES.id}`);
+      renderScreen(`/internal-chat?channelId=${AVISOS.id}`);
 
-      expect(await screen.findByRole('button', { name: /Aprovar/ })).toBeInTheDocument();
-      await waitFor(() => expect(markReadMock).toHaveBeenCalledWith(APROVACOES.id));
-      expect(screen.getByRole('button', { name: /#aprovacoes/ })).toHaveAttribute(
+      expect(await screen.findByText('Aviso: sexta o laboratório fecha às 12h.')).toBeInTheDocument();
+      await waitFor(() => expect(markReadMock).toHaveBeenCalledWith(AVISOS.id));
+      expect(screen.getByRole('button', { name: /Avisos gerais/ })).toHaveAttribute(
         'aria-current',
         'true',
       );

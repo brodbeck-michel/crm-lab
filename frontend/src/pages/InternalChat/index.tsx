@@ -344,7 +344,6 @@ export function InternalChat() {
           onEditMessage={(message, content) => editMessage.mutateAsync({ message, content })}
           onDeleteMessage={(message) => deleteMessage.mutate(message)}
           currentUserId={currentUser?.id ?? null}
-          currentUserRole={currentUser?.role ?? null}
           hasOlderMessages={messagesQuery.data?.hasOlder ?? false}
           readState={readState}
           onLoadOlder={() => setPageCount((count) => count + 1)}

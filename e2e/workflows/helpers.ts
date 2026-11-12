@@ -30,7 +30,7 @@ import type {
 } from '@crm-lab/shared';
 import { formatProposalNumber } from '@crm-lab/shared';
 import {
-  E2E_APPROVAL_POST,
+  E2E_AVISO_POST,
   E2E_CHANNEL_READS,
   E2E_CHANNEL_UNREAD,
   E2E_CHANNELS,
@@ -55,7 +55,7 @@ import {
 } from '../../backend/src/db/seeds/e2e-fixtures.js';
 
 export {
-  E2E_APPROVAL_POST,
+  E2E_AVISO_POST,
   E2E_CHANNEL_READS,
   E2E_CHANNEL_UNREAD,
   E2E_CHANNELS,
@@ -358,7 +358,7 @@ export async function fetchChannels(
   return ((await response.json()) as ListChannelsResponse).channels;
 }
 
-/** Canal pela CHAVE (`geral` / `aprovacoes`). Falha se o canal nao existir. */
+/** Canal pela CHAVE (`geral` / `avisos`). Falha se o canal nao existir. */
 export async function fetchChannelByKey(
   request: APIRequestContext,
   token: string,

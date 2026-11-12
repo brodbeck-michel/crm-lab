@@ -198,7 +198,7 @@ describe('ws — evento invalida a query certa', () => {
     expect(keysPassed()).toEqual([queryScopes.proposals, queryKeys.proposal('p-1')]);
   });
 
-  it('approval.requested → chat interno (badge #aprovacoes) + pendentes', () => {
+  it('approval.requested → pendentes e Decisões, sem o chat interno (CRMLAB-146)', () => {
     const client = build();
     client.connect();
     socket(0).emitMessage({
@@ -207,7 +207,6 @@ describe('ws — evento invalida a query certa', () => {
     });
 
     expect(keysPassed()).toEqual([
-      queryScopes.internalChat,
       queryScopes.proposals,
       queryKeys.proposal('p-9'),
       queryScopes.operations,

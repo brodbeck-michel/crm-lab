@@ -3923,6 +3923,11 @@ valer), plano de volta. Itens de regra da Meta marcados "(conferir na Meta)".
   callback (o webhook não olha o modo), versão pelo rodapé/tag da imagem; sugestões aplicadas (alerta
   esperado ao desconectar o QR, sem monitor para a API oficial, PIN, nome de exibição, limites,
   rótulos reais da tela, roteiro do ensaio).
+- **2026-11-12 — ensaio em PRODUÇÃO no portfólio do Santé** (tenant `teste`, app "CRM Lab - Santé",
+  número de teste): receber, responder (tiques até lido), foto/PDF/áudio do celular e foto/PDF do CRM
+  ✅. Recado de voz do CRM não toca no iPhone → **CRMLAB-147**; mensagem do WhatsApp em conversa
+  `direct` não é respondida → **CRMLAB-148**. `.env` de prod com as envs da Meta. Registro em
+  MIGRACAO_SANTE §4.3.2; roteiro reaproveitável na skill `.claude/skills/cloud-api-meta`.
 
 
 ### ✅ CRMLAB-140 — anexos pela Cloud API (2026-11-06, validado na hml em 2026-11-07)

@@ -7191,3 +7191,39 @@ e o desenho de WORKFLOWS §3 com "sistema posta no chat interno".
 **Impacto:** migração 067 (dados + tabela nova), ApprovalService, seeds dev/E2E, Sidebar,
 route-config, tela Decisões, chat interno (sem botões), hook de avisos. Sem endpoint novo e sem
 mudança de permissão: aprovar continua `PATCH /proposals/:id/approve|reject`, gestor+.
+### D-319: Recado de voz da Cloud API em páginas OGG curtas e com `voice: true` (CRMLAB-147)
+**Contexto:** no ensaio da Cloud API em produção (12/11/2026, tenant `teste`) o recado de voz gravado no
+CRM chegava ao celular (entregue/lido), mas o WhatsApp do iPhone dava "erro ao reproduzir". Foto, PDF e
+áudio no sentido celular → CRM funcionavam. Testes diretos na API isolaram a causa: o muxer OGG do ffmpeg
+põe ~49 pacotes Opus por página; o OGG do próprio WhatsApp tem ~10, e o iPhone só toca com páginas curtas.
+`voice: true`, `audio/ogg; codecs=opus` e `-page_duration 200000` sozinhos não resolveram.
+**Decisão:**
+1. `lib/audio-to-ogg.ts` converte com `-map_metadata -1 -fflags +bitexact -ac 1 -ar 48000 -c:a libopus
+   -b:a 32k -application voip -page_duration 20000 -f ogg` (1 pacote de 20 ms por página) — a única
+   variante em OGG que tocou no iPhone no teste direto.
+2. O áudio convertido (WebM do navegador) sai com `audio.voice = true`: aparece para o paciente como
+   recado de voz. Arquivo de áudio anexado (MP3, M4A, OGG enviado pronto) não leva `voice`.
+3. A marca viaja em `OutboundMedia.voice`, preenchida por quem converte (`WhatsAppService.prepareCloudMedia`
+   e o próprio driver, no caminho direto).
+**Impacto:** só backend (`audio-to-ogg.ts`, `whatsapp.service.ts`). Modo QR não muda (o Evolution converte
+sozinho, D-182). Sem mudança de API, de tela ou de banco.
+
+### D-320: Mensagem do WhatsApp promove a conversa do telefone; resposta que não sairia é recusada (CRMLAB-148)
+**Contexto:** no mesmo ensaio, o contato tinha uma conversa `direct` (16/09). A mensagem que chegou pelo
+WhatsApp entrou nela (`selectByPhone` não filtra canal, de propósito: um telefone, uma conversa — D-072/D-176),
+e a resposta do atendente ficou `sent` com um tique, sem sair: `createFromAgent` não manda nada para o
+gateway fora do canal `whatsapp`. Nenhum aviso.
+**Decisão:**
+1. **Promover, não duplicar.** Mensagem que chega por WhatsApp (webhook da Meta ou Evolution) num telefone
+   cuja conversa é `direct`/`web`/`sms` passa essa conversa a `whatsapp`
+   (`ConversationService.findOrCreateByPhone`), com audit `update_conversation_channel` (`userId: null`).
+   É o mesmo que a "Nova conversa" já faz (D-175); criar uma segunda conversa quebraria o "um telefone,
+   uma conversa" de toda a busca por telefone.
+2. **Nunca `sent` sem ter saído.** Com o canal WhatsApp ligado, responder (texto ou anexo) numa conversa
+   de outro canal que já tem mensagem do paciente com id externo do WhatsApp é recusado **antes de gravar**:
+   `CONFLICT` (409) `details: { reason: "channel_not_whatsapp", channel }`. A tela explica e manda usar
+   "Nova conversa" (que promove a conversa). Conversa `direct` de balcão, sem nada do WhatsApp, segue
+   registrando a resposta como antes.
+**Impacto:** backend (`conversation.service.ts`, `message.service.ts`, `MessageRepository.hasInboundFromGateway`),
+frontend (`api/error-handler.ts`, Atendimento), API_CONTRACTS §2 e API_ERRORS. Sem migração: o caso de
+produção (1 conversa no `teste`) já foi corrigido à mão; o Santé não tem conversa `direct`.

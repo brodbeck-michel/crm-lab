@@ -448,7 +448,19 @@ export class MessageService {
    * (API_CONTRACTS §2, ordem NOT_CONFIGURED -> WINDOW_CLOSED -> SEND_FAILED).
    */
   private async assertChannelReady(tenantId: string, conversation: Conversation): Promise<void> {
-    if (!this.whatsapp || conversation.channel !== 'whatsapp') return;
+    if (!this.whatsapp) return;
+    if (conversation.channel !== 'whatsapp') {
+      // CRMLAB-148 (D-320): conversa de outro canal que JA recebeu mensagem do
+      // paciente pelo WhatsApp. Responder aqui gravaria `sent` sem nada sair —
+      // recusa antes de gravar, com o motivo.
+      if (await this.messages.hasInboundFromGateway(tenantId, conversation.id)) {
+        throw new BusinessError('CONFLICT', {
+          reason: 'channel_not_whatsapp',
+          channel: conversation.channel,
+        });
+      }
+      return;
+    }
     await this.whatsapp.assertCloudApiConfigured(tenantId);
   }
 

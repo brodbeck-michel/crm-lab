@@ -14,7 +14,7 @@ import sharp from 'sharp';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeConversationModule } from '../../src/controllers/conversation.routes.js';
 import { makeWebhookModule } from '../../src/controllers/webhook.routes.js';
-import { convertAudioToOgg } from '../../src/lib/audio-to-ogg.js';
+import { convertAudioToOgg, FFMPEG_OGG_ARGS } from '../../src/lib/audio-to-ogg.js';
 import { createInMemoryQueue } from '../../src/lib/queue.js';
 import {
   MediaDownloadError,
@@ -22,6 +22,7 @@ import {
   WhatsAppService,
   signWebhookBody,
   type DownloadedMedia,
+  type OutboundMedia,
   type WhatsAppCredentials,
   type WhatsAppCredentialsResolver,
 } from '../../src/services/whatsapp.service.js';
@@ -203,6 +204,29 @@ describe('envio pela fila: o que não muda fica fora dela (D-314 item 3)', () =>
     expect(attempts).toBe(2);
   });
 
+  it('WebM convertido chega ao driver como OGG marcado voice (CRMLAB-147)', async () => {
+    const seen: OutboundMedia[] = [];
+    const driver = new MockWhatsAppDriver();
+    driver.sendMedia = async (_credentials, _phone, media) => {
+      seen.push(media);
+      return { externalId: 'wamid.V' };
+    };
+    const whatsapp = new WhatsAppService({
+      credentials: resolver(),
+      driver,
+      queue: createInMemoryQueue({ sleep: async () => undefined }),
+      convertAudio: async () => Buffer.from('OggS'),
+    });
+    const tenant = await createTenant();
+    modes.set(tenant.id, 'cloud_api');
+    await whatsapp.sendMedia(tenant.id, '5548', { buffer: Buffer.from('webm'), mimeType: 'audio/webm', fileName: 'r.webm' });
+    await whatsapp.sendMedia(tenant.id, '5548', { buffer: Buffer.from('mp3'), mimeType: 'audio/mpeg', fileName: 'a.mp3' });
+    expect(seen.map((m) => [m.mimeType, m.fileName, m.voice])).toEqual([
+      ['audio/ogg', 'r.ogg', true],
+      ['audio/mpeg', 'a.mp3', undefined],
+    ]);
+  });
+
   it('formato recusado nem entra na fila', async () => {
     let attempts = 0;
     const counting = new MockWhatsAppDriver();
@@ -381,6 +405,27 @@ describe('mídia recebida pela Cloud API (D-314 itens 4 e 5)', () => {
   });
 });
 
+describe('argumentos do ffmpeg para o iPhone (CRMLAB-147, D-319)', () => {
+  it('1 pacote Opus por página, mono 48 kHz, voip, sem metadados', () => {
+    const args = FFMPEG_OGG_ARGS.join(' ');
+    expect(args).toContain('-map_metadata -1 -fflags +bitexact -ac 1 -ar 48000');
+    expect(args).toContain('-c:a libopus -b:a 32k -application voip -page_duration 20000 -f ogg pipe:1');
+  });
+});
+
+/** Pacotes por página de um OGG: segmentos < 255 do segment table fecham pacote. */
+function oggPacketsPerPage(ogg: Buffer): number[] {
+  const pages: number[] = [];
+  let pos = 0;
+  while (pos + 27 <= ogg.length && ogg.subarray(pos, pos + 4).toString('latin1') === 'OggS') {
+    const segments = ogg[pos + 26] ?? 0;
+    const table = ogg.subarray(pos + 27, pos + 27 + segments);
+    pages.push(table.filter((lace) => lace < 255).length);
+    pos += 27 + segments + table.reduce((sum, lace) => sum + lace, 0);
+  }
+  return pages;
+}
+
 const hasFfmpeg = (() => {
   try {
     execFileSync('ffmpeg', ['-version'], { stdio: 'ignore' });
@@ -398,6 +443,17 @@ describe.skipIf(!hasFfmpeg)('conversão real do recado de voz (ffmpeg)', () => {
     ]);
     const ogg = await convertAudioToOgg(webm);
     expect(ogg.subarray(0, 4).toString('latin1')).toBe('OggS');
+  });
+
+  it('páginas curtas: nenhuma página de áudio com mais de 1 pacote (iPhone, CRMLAB-147)', async () => {
+    const webm = execFileSync('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=3',
+      '-c:a', 'libopus', '-f', 'webm', 'pipe:1',
+    ]);
+    const pages = oggPacketsPerPage(await convertAudioToOgg(webm));
+    // 2 páginas de cabeçalho (OpusHead, OpusTags) + ~150 de áudio de 20 ms.
+    expect(pages.length).toBeGreaterThan(100);
+    expect(Math.max(...pages.slice(2))).toBeLessThanOrEqual(1);
   });
 
   it('arquivo inválido: lança (o envio vira falha com "tentar de novo")', async () => {

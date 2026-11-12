@@ -1165,7 +1165,7 @@ pelo cartão (`POST /proposals/:id/send`, `POST /proposals/:id/resend`), que usa
 }
 ```
 
-**Erros:** `WHATSAPP_WINDOW_CLOSED` (409, D-310 — `cloud_api`, texto livre fora das 24 h; `details: { conversationId, lastPatientMessageAt, windowClosedAt }`), `CHANNEL_CLOUD_API_UNAVAILABLE` (503, D-308 — produção sem `WHATSAPP_API_URL`; nada gravado), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308 — `cloud_api` sem `phone_number_id`/`waba_id`/token), `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — primeiro contato acima do teto da hora; `details: { limit, retryAt }`), `VALIDATION_ERROR` (400), `NOT_FOUND` (404),
+**Erros:** `CONFLICT` (409, D-320 — conversa de outro canal (`direct`/`web`/`sms`) que já recebeu mensagem do paciente pelo WhatsApp: a resposta não sairia; `details: { reason: "channel_not_whatsapp", channel }`; nada gravado), `WHATSAPP_WINDOW_CLOSED` (409, D-310 — `cloud_api`, texto livre fora das 24 h; `details: { conversationId, lastPatientMessageAt, windowClosedAt }`), `CHANNEL_CLOUD_API_UNAVAILABLE` (503, D-308 — produção sem `WHATSAPP_API_URL`; nada gravado), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308 — `cloud_api` sem `phone_number_id`/`waba_id`/token), `FIRST_CONTACT_LIMIT_REACHED` (409, D-306 — primeiro contato acima do teto da hora; `details: { limit, retryAt }`), `VALIDATION_ERROR` (400), `NOT_FOUND` (404),
 `CONVERSATION_ALREADY_ASSIGNED` (409, conversa da fila livre assumida por outra pessoa no mesmo
 instante — D-215 — ou encerrada reaberta por outra pessoa no mesmo instante — D-273), `MESSAGE_SEND_FAILED` (502, canal externo falhou após os retries), `FORBIDDEN`
 (403, `platform_operator`)
@@ -1260,7 +1260,8 @@ contêineres — D-234 item 8). No CRM os quatro ficam `video`.
 e a mensagem sai por id de mídia. Formatos aceitos, conferidos **depois** da preparação (imagem já em
 JPEG, D-290): imagem JPEG/PNG até 5 MB; áudio AAC, AMR, MP3, MP4, OGG até 16 MB; vídeo MP4/3GP até
 16 MB; documento PDF, Word, Excel, PowerPoint e TXT. Recado de voz `audio/webm` é convertido para
-OGG/Opus (ffmpeg) no envio; o CRM guarda e mostra o original. Ordem das checagens em `cloud_api`:
+OGG/Opus (ffmpeg, páginas de 20 ms para o iPhone tocar, D-319) e sai como recado de voz (`audio.voice: true`);
+o CRM guarda e mostra o original. Ordem das checagens em `cloud_api`:
 validação do arquivo (allow-list, teto de 15 MiB) → **formato da Meta** (`VALIDATION_ERROR` com
 `details.reason: "cloud_api_media_type"` e `fields.mimeType` listando os aceitos — inclui GIF e PNG
 **animados**; imagem acima de 5 MB → `MEDIA_TOO_LARGE` com `details.reason:
@@ -1272,7 +1273,7 @@ novo" de um anexo (`POST .../retry`) confere o formato da Meta do mesmo jeito (a
 reenviado depois da troca → 400 com o motivo). Envio de anexo pela Meta: no máximo **2 tentativas**
 (upload 12 s + envio 10 s cada; conversão do áudio, 15 s, fora delas), para caber nos 60 s do proxy.
 
-**Erros:** `WHATSAPP_WINDOW_CLOSED` (409, D-310), `CHANNEL_CLOUD_API_UNAVAILABLE` (503, D-308 — produção sem `WHATSAPP_API_URL`; nada gravado), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308),
+**Erros:** `CONFLICT` (409, D-320 — conversa de outro canal (`direct`/`web`/`sms`) que já recebeu mensagem do paciente pelo WhatsApp: a resposta não sairia; `details: { reason: "channel_not_whatsapp", channel }`; nada gravado), `WHATSAPP_WINDOW_CLOSED` (409, D-310), `CHANNEL_CLOUD_API_UNAVAILABLE` (503, D-308 — produção sem `WHATSAPP_API_URL`; nada gravado), `CHANNEL_CLOUD_API_NOT_CONFIGURED` (409, D-308),
 `VALIDATION_ERROR` (400), `NOT_FOUND` (404), `CONVERSATION_ALREADY_ASSIGNED` (409,
 D-215/D-273), `MEDIA_TOO_LARGE` (413, acima do teto de 15 MiB, ou imagem acima de 5 MB em
 `cloud_api`), `MESSAGE_SEND_FAILED` (502, canal externo falhou após os retries), `FORBIDDEN` (403,

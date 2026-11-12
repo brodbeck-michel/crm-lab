@@ -827,6 +827,25 @@ export class MessageRepository {
    * `evolution-client.ts`); passado disso a linha e resto de envio antigo
    * (driver sem canal, processo derrubado no meio), nao envio em voo.
    */
+  /**
+   * A conversa tem mensagem do paciente que veio por gateway (id externo do
+   * WhatsApp)? CRMLAB-148 (D-320): conversa `direct`/`web` nessa situacao nao
+   * pode receber resposta "enviada" que nunca sai.
+   */
+  async hasInboundFromGateway(tenantId: string, conversationId: string): Promise<boolean> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const found = await tx.query<{ id: string }>(
+        `SELECT id FROM messages
+         WHERE conversation_id = $1
+           AND sender_type = 'patient'
+           AND external_message_id IS NOT NULL
+         LIMIT 1`,
+        [conversationId],
+      );
+      return found.rows.length > 0;
+    });
+  }
+
   async hasPendingOutbound(tenantId: string, conversationId: string): Promise<boolean> {
     return this.db.withTenant(tenantId, async (tx) => {
       const found = await tx.query<{ id: string }>(

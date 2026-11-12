@@ -1,11 +1,11 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { DragEvent, ReactNode } from 'react';
+import { ANNOUNCEMENTS_CHANNEL_KEY } from '@crm-lab/shared';
 import type {
   Channel,
   InternalChannelReadState,
   InternalMessage,
   UserPresenceStatus,
-  UserRole,
 } from '@crm-lab/shared';
 import { Button, cn } from '@/components/ui';
 import { EmptyState, PresenceDot, USER_PRESENCE_LABELS } from '@/components/shared';
@@ -33,7 +33,6 @@ export interface MessagePanelProps {
   onSend: (content: string) => void | Promise<unknown>;
   sending: boolean;
   currentUserId: string | null;
-  currentUserRole: UserRole | null;
   /** Ainda há mensagens anteriores no servidor. */
   hasOlderMessages: boolean;
   /** Quem já leu o canal (CRMLAB-123, D-300) — ✓/✓✓ nas mensagens próprias. */
@@ -55,8 +54,6 @@ export interface MessagePanelProps {
   presenceOf?: (userId: string) => UserPresenceStatus | undefined;
 }
 
-/** Chave do canal em que o sistema posta os pedidos (WORKFLOWS.md §3 e §6). */
-export const APPROVALS_CHANNEL_KEY = 'aprovacoes';
 
 function Centered({ children }: { children: ReactNode }) {
   return <div className="flex flex-1 items-center justify-center">{children}</div>;
@@ -71,7 +68,6 @@ export function MessagePanel({
   onSend,
   sending,
   currentUserId,
-  currentUserRole,
   hasOlderMessages,
   readState = null,
   onLoadOlder,
@@ -193,7 +189,6 @@ export function MessagePanel({
     );
   }
 
-  const isApprovalsChannel = channel.key === APPROVALS_CHANNEL_KEY;
   const dmPresence =
     channel.kind === 'dm' && channel.otherUserId ? presenceOf?.(channel.otherUserId) : undefined;
 
@@ -208,8 +203,8 @@ export function MessagePanel({
             </span>
           </span>
           <span className="truncate font-body text-caption text-neutral-600">
-            {isApprovalsChannel
-              ? 'Pedidos de aprovação de desconto acima da alçada'
+            {channel.key === ANNOUNCEMENTS_CHANNEL_KEY
+              ? 'Avisos importantes para toda a equipe'
               : channel.kind === 'dm'
                 ? dmPresence
                   ? `Mensagem direta · ${USER_PRESENCE_LABELS[dmPresence]}`
@@ -264,8 +259,6 @@ export function MessagePanel({
                 key={message.id}
                 message={message}
                 currentUserId={currentUserId}
-                currentUserRole={currentUserRole}
-                isApprovalsChannel={isApprovalsChannel}
                 readState={readState}
                 isDirect={channel?.kind === 'dm'}
                 {...(onEditMessage ? { onEdit: onEditMessage } : {})}

@@ -376,7 +376,7 @@ function OnboardingModal({ open, onClose }: OnboardingModalProps) {
       >
         <p className="m-0 font-body text-caption text-neutral-600">
           O onboarding cria, em uma única transação, o laboratório, o tema padrão, os canais
-          #geral e #aprovacoes e o administrador inicial.
+          Geral e Avisos gerais e o administrador inicial.
         </p>
 
         <Input

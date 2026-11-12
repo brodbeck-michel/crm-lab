@@ -12,29 +12,20 @@
  * - Rejeicao exige motivo e notifica o criador.
  * - Toda decisao e auditada.
  *
- * O pedido vira um post de sistema em `#aprovacoes` com a proposta anexada
- * (renderizada como cartao pelo frontend) + evento `approval.requested`.
+ * O pedido vira o evento `approval.requested` (os gestores veem na tela
+ * Decisoes); a decisao vira `approval.decided` para quem pediu. Desde o
+ * CRMLAB-146 (D-318) nada disso passa pelo chat interno.
  */
 import type { Proposal, ProposalStatus } from '@crm-lab/shared';
-import { APPROVAL_REQUEST_POST_PREFIX, TERMINAL_STATUSES } from '@crm-lab/shared';
+import { TERMINAL_STATUSES } from '@crm-lab/shared';
 import type { DbClient } from '../db/types.js';
 import type { TenantContext } from '../http/context.js';
 import type { WsHub } from '../lib/ws-hub.js';
 import { BusinessError } from '../http/errors.js';
 import type { AuditService } from './audit.service.js';
-import type { InternalChatService } from './internal-chat.service.js';
-import {
-  formatMoney,
-  formatPercent,
-  loadVisibleProposal,
-  proposalRef,
-  readDiscountLimit,
-} from './proposal.service.js';
+import { loadVisibleProposal, readDiscountLimit } from './proposal.service.js';
 import * as repo from '../repositories/proposal.repository.js';
 import { REJECT_ACTION } from '../repositories/proposal.repository.js';
-
-/** Canal onde o sistema posta os pedidos (WORKFLOWS §3 e §6). */
-export const APPROVALS_CHANNEL_KEY = 'aprovacoes';
 
 export const APPROVE_ACTION = 'approve_proposal_discount';
 export const REQUEST_ACTION = 'request_proposal_approval';
@@ -52,7 +43,6 @@ export interface ApprovalServiceDeps {
   db: DbClient;
   wsHub: WsHub;
   audit: AuditService;
-  chat: InternalChatService;
 }
 
 const DECIDER_ROLES = ['manager', 'admin'] as const;
@@ -67,11 +57,11 @@ export class ApprovalService implements ApprovalRequester {
   constructor(private readonly deps: ApprovalServiceDeps) {}
 
   /**
-   * Posta o pedido em `#aprovacoes` com a proposta anexada e avisa os gestores.
+   * Avisa os gestores (`approval.requested`) e audita o pedido.
    * Idempotente do ponto de vista de dados (nao altera a proposta): so publica.
    */
   async requestApproval(ctx: TenantContext, proposalId: string): Promise<void> {
-    const { db, chat, wsHub, audit } = this.deps;
+    const { db, wsHub, audit } = this.deps;
 
     const summary = await db.withTenant(ctx.tenantId, async (tx) => {
       const row = await loadVisibleProposal(tx, ctx, proposalId);
@@ -81,22 +71,10 @@ export class ApprovalService implements ApprovalRequester {
           ? ctx.discountLimit
           : await readDiscountLimit(tx, row.created_by, ctx.discountLimit);
       return {
-        patientName: row.patient_name ?? 'Paciente',
-        totalPrice: Number(row.total_price),
         discountPercent: Number(row.discount_percent),
         creatorLimit,
       };
     });
-
-    // Mesmo formato do dataset de E2E (`E2E_APPROVAL_POST`), para que o spec do
-    // Playwright continue localizando o cartao pelo texto. O prefixo e o que o
-    // aviso de mensagem nova do gestor reconhece (D-284 item 8).
-    const content =
-      `${APPROVAL_REQUEST_POST_PREFIX} ${summary.patientName} - ` +
-      `${formatMoney(summary.totalPrice)} (${formatPercent(summary.discountPercent)} — ` +
-      `acima da alçada de ${formatPercent(summary.creatorLimit)})`;
-
-    await chat.createSystemPost(ctx.tenantId, APPROVALS_CHANNEL_KEY, content, proposalId);
 
     wsHub.emitToTenant(ctx.tenantId, 'approval.requested', { proposalId });
 
@@ -115,7 +93,7 @@ export class ApprovalService implements ApprovalRequester {
   /** manager/admin, dentro da propria alcada, e nunca a propria proposta. */
   async approve(ctx: TenantContext, proposalId: string): Promise<Proposal> {
     assertDecider(ctx);
-    const { db, wsHub, audit, chat } = this.deps;
+    const { db, wsHub, audit } = this.deps;
 
     const outcome = await db.withTenant(ctx.tenantId, async (tx) => {
       const row = await loadVisibleProposal(tx, ctx, proposalId);
@@ -149,13 +127,6 @@ export class ApprovalService implements ApprovalRequester {
       };
     });
 
-    await chat.createSystemPost(
-      ctx.tenantId,
-      APPROVALS_CHANNEL_KEY,
-      `Desconto de ${formatPercent(outcome.discount)} APROVADO na proposta #${proposalRef(proposalId)}.`,
-      proposalId,
-    );
-
     // Notifica o criador (WORKFLOWS §3: "Atendente e notificado via WebSocket").
     if (outcome.createdBy !== null) {
       wsHub.emitToUser(ctx.tenantId, outcome.createdBy, 'approval.decided', {
@@ -182,7 +153,7 @@ export class ApprovalService implements ApprovalRequester {
   /** Rejeicao exige motivo (texto livre). O criador ajusta o desconto e resubmete. */
   async reject(ctx: TenantContext, proposalId: string, reason: string): Promise<Proposal> {
     assertDecider(ctx);
-    const { db, wsHub, audit, chat } = this.deps;
+    const { db, wsHub, audit } = this.deps;
 
     const trimmed = typeof reason === 'string' ? reason.trim() : '';
     if (trimmed.length === 0 || trimmed.length > 500) {
@@ -224,14 +195,6 @@ export class ApprovalService implements ApprovalRequester {
         discountPercent: outcome.discount,
       },
     });
-
-    await chat.createSystemPost(
-      ctx.tenantId,
-      APPROVALS_CHANNEL_KEY,
-      `Desconto de ${formatPercent(outcome.discount)} REJEITADO na proposta ` +
-        `#${proposalRef(proposalId)}: ${trimmed}`,
-      proposalId,
-    );
 
     if (outcome.createdBy !== null) {
       wsHub.emitToUser(ctx.tenantId, outcome.createdBy, 'approval.decided', {

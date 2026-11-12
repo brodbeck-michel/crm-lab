@@ -13,7 +13,7 @@ import { hashPassword } from '../../lib/password.js';
 import type { DbTx } from '../types.js';
 import { EXAM_CATALOG } from './catalog.js';
 import {
-  E2E_APPROVAL_POST,
+  E2E_AVISO_POST,
   E2E_CHANNELS,
   E2E_CONVERSATIONS,
   E2E_EXAM_PRICES,
@@ -379,16 +379,16 @@ export async function seedE2e(tx: DbTx, now: Date): Promise<{ users: number; pro
     });
   }
 
-  // ---- pedido de aprovacao em #aprovacoes (cenario "Aprovação") -------------
-  const aprovacoesAlfa = channelIds.get(`${E2E_TENANTS.alfa.id}:aprovacoes`) as string;
+  // ---- aviso da atendente em Avisos gerais (CRMLAB-146) ---------------------
+  const avisosAlfa = channelIds.get(`${E2E_TENANTS.alfa.id}:avisos`) as string;
   await insertInternalMessage(tx, {
-    id: seedUuid('e2e', 'internal-msg', 'aprovacoes', 0),
+    id: seedUuid('e2e', 'internal-msg', 'avisos', 0),
     tenantId: E2E_TENANTS.alfa.id,
-    channelId: aprovacoesAlfa,
-    senderId: null,
-    content: E2E_APPROVAL_POST,
-    attachedProposalId: E2E_PROPOSALS.pendenteAprovacao.id,
-    isSystem: true,
+    channelId: avisosAlfa,
+    senderId: E2E_USERS.alfaAttendant.id,
+    content: E2E_AVISO_POST,
+    attachedProposalId: null,
+    isSystem: false,
     createdAt: new Date(now.getTime() - 3 * 60 * MIN_MS),
   });
 
@@ -405,7 +405,7 @@ export async function seedE2e(tx: DbTx, now: Date): Promise<{ users: number; pro
   });
 
   // ---- estado de leitura do chat interno (D-068) ----------------------------
-  // O GESTOR fica SEM linha em #aprovacoes de proposito: e assim que o badge
+  // O GESTOR fica SEM linha em Avisos gerais de proposito: e assim que o badge
   // nasce em 1 e o E2E consegue provar que `POST .../read` o zera.
   for (const read of E2E_CHANNEL_READS) {
     const channelId = channelIds.get(`${read.tenantId}:${read.channelKey}`);

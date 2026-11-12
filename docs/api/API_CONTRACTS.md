@@ -3100,8 +3100,9 @@ Mesma projeção parcial de `/approve`, e igualmente sem texto de UI.
 ## 3b. Internal Chat (Chat Interno)
 
 Canais internos do laboratório (SERVICES.md §7, WORKFLOWS.md §6). Canais padrão:
-`#geral` e `#aprovacoes` — o sistema posta os pedidos de aprovação no segundo, com a
-proposta anexada. O console de plataforma **não** acessa estes canais (PAGES.md §11):
+`Geral` (chave `geral`) e `Avisos gerais` (chave `avisos`), canais comuns em que todos
+escrevem. Pedido de aprovação não passa mais pelo chat (CRMLAB-146, D-318): o gestor decide
+em Decisões (`GET /operations/overview` + `PATCH /proposals/:id/approve|reject`). O console de plataforma **não** acessa estes canais (PAGES.md §11):
 `platform_operator` recebe `FORBIDDEN`.
 
 Além dos canais fixos, um laboratório tem **mensagens diretas (DM)** — conversa 1:1 entre
@@ -3116,8 +3117,8 @@ conversar; `POST /internal-chat/dms` abre (ou cria, na primeira vez) a DM.
   "channels": [
     {
       "id": "uuid",
-      "key": "aprovacoes",
-      "name": "#aprovacoes",
+      "key": "avisos",
+      "name": "Avisos gerais",
       "kind": "channel",
       "unreadCount": 2,
       "lastReadAt": "2026-08-23T14:10:00.000Z",
@@ -3150,8 +3151,7 @@ tenant não a vê nesta lista.
 **`unreadCount` agora é de verdade (D-068 — supera D-044).** É derivado a cada leitura da
 tabela `channel_reads` (SCHEMA.md §17), nunca materializado: conta as mensagens do canal com
 `created_at > lastReadAt` que **não** foram escritas pelo próprio usuário. Mensagem de sistema
-(`senderId: null`) conta — o pedido de aprovação em `#aprovacoes` é justamente o que precisa
-piscar. Usuário que nunca abriu o canal tem `lastReadAt: null` e vê todas as mensagens de
+(`senderId: null`) conta. Usuário que nunca abriu o canal tem `lastReadAt: null` e vê todas as mensagens de
 terceiros contadas.
 
 `lastReadAt` é a última leitura **deste** usuário neste canal (anulável). A tela usa para
@@ -4199,7 +4199,7 @@ backend e frontend importam de lá, nenhum dos dois redeclara os filtros localme
 
 ### POST /platform/tenants
 Onboarding (WORKFLOWS.md §7). Cria, em **uma única transação**: tenant + tema padrão
-(Terracota & Sálvia) + canais `#geral` e `#aprovacoes` + usuário admin inicial. Se qualquer
+(Terracota & Sálvia) + canais `Geral` e `Avisos gerais` + usuário admin inicial. Se qualquer
 passo falhar, nada é gravado e o `slug` continua livre.
 
 **Request:**

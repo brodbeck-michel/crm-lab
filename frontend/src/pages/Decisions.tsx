@@ -4,14 +4,16 @@ import { PageContainer, PageHeader } from '@/components/layout';
 import { EmptyState } from '@/components/shared';
 import { formatCount } from '@/lib/format';
 import { useUIStore } from '@/stores';
+import { ApprovalActions } from '@/components/proposal/ApprovalActions';
 import { PendingDecisionCard } from './Settings/Operation';
 
 /**
  * Decisões — `/decisions` (PAGES.md §12).
  *
  * Mesmo retrato de `GET /operations/overview` (D-067) usado em Gestão da
- * Operação (§10); esta tela só mostra o bloco `pendingDecisions`, para quem
- * precisa decidir sem entrar no resto do painel ou no chat interno.
+ * Operação (§10); esta tela só mostra o bloco `pendingDecisions`. Desde o
+ * CRMLAB-146 (D-318) é AQUI que o gestor aprova ou rejeita — o chat interno
+ * não tem mais pedido de aprovação.
  */
 export default function Decisions() {
   const openModal = useUIStore((state) => state.openModal);
@@ -41,11 +43,13 @@ export default function Decisions() {
         <>
           <div className="grid grid-cols-1 gap-md sm:grid-cols-2">
             {decisions.items.map((item) => (
-              <PendingDecisionCard
-                key={item.proposalId}
-                item={item}
-                onOpen={() => openModal({ kind: 'proposal', id: item.proposalId })}
-              />
+              <div key={item.proposalId} className="flex flex-col gap-sm">
+                <PendingDecisionCard
+                  item={item}
+                  onOpen={() => openModal({ kind: 'proposal', id: item.proposalId })}
+                />
+                <ApprovalActions proposalId={item.proposalId} patientName={item.patientName} />
+              </div>
             ))}
           </div>
           <p className="m-0 font-body text-caption text-neutral-600">

@@ -120,14 +120,14 @@ POST /proposals
 └─────────┬─────────────────┘
           ▼
 ┌───────────────────────────┐
-│ Sistema posta no chat     │
-│ interno (canal #aprovacoes)│
-│ com orçamento anexado     │
+│ Pedido entra em Decisões  │
+│ (/decisions) — não passa  │
+│ pelo chat (D-318)         │
 └─────────┬─────────────────┘
           ▼
 ┌───────────────────────────┐
 │ Gestor recebe notificação │
-│ (WebSocket + badge)       │
+│ (WS + contador Decisões)  │
 └─────────┬─────────────────┘
           ▼
     ┌─────┴─────┐
@@ -143,7 +143,7 @@ POST /proposals
     ▼              ▼
 ┌────────────────────────────┐
 │ Atendente é notificado     │
-│ via WebSocket + chat       │
+│ via WebSocket (toast)      │
 └───┬────────────────────────┘
     ▼
 ┌────────────────────────────┐
@@ -283,8 +283,10 @@ Nova conversa → sistema busca atendente online com menos conversas ativas → 
 ```
 
 **Canais padrão criados no onboarding do tenant:**
-- `#geral`
-- `#aprovacoes` (sistema posta pedidos de aprovação aqui)
+- `Geral` (chave `geral`)
+- `Avisos gerais` (chave `avisos`) — avisos importantes para toda a equipe; todos escrevem.
+  Até o CRMLAB-146 era `#aprovacoes`, onde o sistema postava os pedidos de aprovação; desde a
+  D-318 a aprovação acontece só na tela Decisões e nada de aprovação passa pelo chat.
 
 **Iniciar uma conversa direta (DM), D-101:**
 ```

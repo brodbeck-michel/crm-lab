@@ -11,7 +11,7 @@ import { calculateTotal } from '@crm-lab/shared';
 import { verifyPassword } from '../../src/lib/password.js';
 import { runSeeds } from '../../src/db/seeds/index.js';
 import {
-  E2E_APPROVAL_POST,
+  E2E_AVISO_POST,
   E2E_CHANNEL_READS,
   E2E_CHANNEL_UNREAD,
   E2E_CONVERSATIONS,
@@ -157,19 +157,18 @@ describe('seed e2e', () => {
     expect(row?.approval_status).toBe('pending');
   });
 
-  it('publica o pedido de aprovação em #aprovacoes com a proposta anexada', async () => {
+  it('deixa o aviso da atendente em Avisos gerais, sem post de aprovação (D-318)', async () => {
     const result = await db.withoutTenant((tx) =>
-      tx.query<{ content: string; attached_proposal_id: string; is_system: boolean }>(
+      tx.query<{ content: string; attached_proposal_id: string | null; is_system: boolean }>(
         `SELECT m.content, m.attached_proposal_id, m.is_system
            FROM internal_messages m JOIN internal_channels c ON c.id = m.channel_id
-          WHERE c.key = 'aprovacoes' AND c.tenant_id = $1`,
+          WHERE c.key = 'avisos' AND c.tenant_id = $1`,
         [E2E_TENANTS.alfa.id],
       ),
     );
-    const row = result.rows[0];
-    expect(row?.content).toBe(E2E_APPROVAL_POST);
-    expect(row?.attached_proposal_id).toBe(E2E_PROPOSALS.pendenteAprovacao.id);
-    expect(row?.is_system).toBe(true);
+    expect(result.rows).toEqual([
+      { content: E2E_AVISO_POST, attached_proposal_id: null, is_system: false },
+    ]);
   });
 
   it('tem conversa atribuída e conversa na fila livre no tenant Alfa', async () => {

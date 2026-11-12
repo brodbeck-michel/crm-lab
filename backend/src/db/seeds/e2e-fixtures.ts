@@ -564,17 +564,15 @@ export const E2E_PROPOSALS = {
 
 /** Canais internos criados no onboarding (WORKFLOWS.md §7). */
 export const E2E_CHANNELS = {
-  geral: { key: 'geral', name: '#geral' },
-  aprovacoes: { key: 'aprovacoes', name: '#aprovacoes' },
+  geral: { key: 'geral', name: 'Geral' },
+  avisos: { key: 'avisos', name: 'Avisos gerais' },
 } as const;
 
 /**
- * Texto exato do post de sistema em `#aprovacoes` referente a
- * `E2E_PROPOSALS.pendenteAprovacao` — o spec de aprovacao localiza o cartao
- * por este texto.
+ * Aviso que a atendente do Alfa deixou em `Avisos gerais` (CRMLAB-146, D-318).
+ * Nem o gestor nem o admin escreveram: os dois abrem o canal com 1 nao lida.
  */
-export const E2E_APPROVAL_POST =
-  '@gestor Pedido de aprovação de desconto: Juliana Prado - R$ 138,00 (25% — acima da alçada de 15%)';
+export const E2E_AVISO_POST = 'Aviso: amanhã a coleta domiciliar começa às 7h.';
 
 /**
  * Canal conectado por laboratorio (D-064). `apiToken` e `webhookSecret` sao
@@ -674,13 +672,13 @@ export const E2E_TENANT_WITHOUT_SETTINGS = E2E_TENANTS.beta.id;
 /**
  * Estado de leitura do chat interno (D-068).
  *
- * O canal e identificado pela CHAVE (`geral` / `aprovacoes`), nao por id: os ids
+ * O canal e identificado pela CHAVE (`geral` / `avisos`), nao por id: os ids
  * dos canais e2e sao derivados por hash no seed, e repeti-los aqui criaria uma
  * segunda fonte para o mesmo valor.
  */
 export interface E2eChannelRead {
   tenantId: string;
-  channelKey: 'geral' | 'aprovacoes';
+  channelKey: 'geral' | 'avisos';
   userId: string;
   /** Quantas horas antes de `now` o usuario abriu o canal pela ultima vez. */
   readHoursAgo: number;
@@ -695,13 +693,13 @@ export const E2E_CHANNEL_READS = [
     readHoursAgo: 1,
   },
   /**
-   * Admin abriu #aprovacoes ANTES do pedido de aprovacao (que e de 3h atras):
+   * Admin abriu Avisos gerais ANTES do aviso da atendente (que e de 3h atras):
    * a linha existe e mesmo assim o badge conta 1. Prova que o `unreadCount`
    * compara com `last_read_at`, e nao apenas "tem linha / nao tem".
    */
   {
     tenantId: E2E_TENANTS.alfa.id,
-    channelKey: 'aprovacoes',
+    channelKey: 'avisos',
     userId: E2E_USERS.alfaAdmin.id,
     readHoursAgo: 24,
   },
@@ -711,14 +709,14 @@ export const E2E_CHANNEL_READS = [
  * `unreadCount` esperado por (usuario, canal) logo apos o seed — DERIVADO das
  * mensagens e de `E2E_CHANNEL_READS`, nunca materializado (BUSINESS_RULES §5).
  *
- * O cenario do badge do chat interno e o do GESTOR em #aprovacoes: ele nao tem
- * linha de leitura, entao abre com 1 nao lida (o post de sistema conta — D-068)
+ * O cenario do badge do chat interno e o do GESTOR em Avisos gerais: ele nao tem
+ * linha de leitura, entao abre com 1 nao lida (o aviso da atendente)
  * e `POST /internal-chat/channels/:id/read` tem que zerar.
  */
 export const E2E_CHANNEL_UNREAD = {
-  managerAprovacoes: {
+  managerAvisos: {
     tenantId: E2E_TENANTS.alfa.id,
-    channelKey: 'aprovacoes',
+    channelKey: 'avisos',
     userId: E2E_USERS.alfaManager.id,
     expected: 1,
   },
@@ -728,9 +726,9 @@ export const E2E_CHANNEL_UNREAD = {
     userId: E2E_USERS.alfaManager.id,
     expected: 0,
   },
-  adminAprovacoes: {
+  adminAvisos: {
     tenantId: E2E_TENANTS.alfa.id,
-    channelKey: 'aprovacoes',
+    channelKey: 'avisos',
     userId: E2E_USERS.alfaAdmin.id,
     expected: 1,
   },

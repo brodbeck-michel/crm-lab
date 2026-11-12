@@ -6,9 +6,9 @@
  * tela nao tinha como zerar nada. A Onda 6 criou `channel_reads` e
  * `POST /internal-chat/channels/:id/read`.
  *
- * O seed monta o cenario de proposito (`E2E_CHANNEL_UNREAD.managerAprovacoes`):
- * o GESTOR nao tem linha de leitura em `#aprovacoes` e o post de sistema do
- * pedido de aprovacao conta — entao o canal abre com **1**. Em `#geral` ele ja
+ * O seed monta o cenario de proposito (`E2E_CHANNEL_UNREAD.managerAvisos`):
+ * o GESTOR nao tem linha de leitura em `Avisos gerais` e o aviso da atendente
+ * conta — entao o canal abre com **1**. Em `Geral` ele ja
  * leu (`E2E_CHANNEL_READS`), entao abre **zerado**. Os dois lados importam: sem
  * o canal zerado ao lado, "o badge sumiu" nao distinguiria "zerou" de "a lista
  * nao renderizou badge nenhum".
@@ -46,27 +46,27 @@ import {
 } from './helpers.js';
 
 const CHAT_PATH = '/internal-chat';
-const APROVACOES = E2E_CHANNELS.aprovacoes.name;
+const AVISOS = E2E_CHANNELS.avisos.name;
 const GERAL = E2E_CHANNELS.geral.name;
 
 /** Espera a coluna de canais renderizar — a tela nao tem `<h1>`. */
 async function openChat(page: Page): Promise<void> {
   await page.goto(CHAT_PATH);
-  await expect(channelButton(page, APROVACOES)).toBeVisible();
+  await expect(channelButton(page, AVISOS)).toBeVisible();
   await expect(channelButton(page, GERAL)).toBeVisible();
 }
 
 test.describe('Fluxo 11: badge de nao lidas (D5 da Onda 5)', () => {
-  test('o badge do gestor nasce em 1 em #aprovacoes e zerado em #geral', async ({
+  test('o badge do gestor nasce em 1 em Avisos gerais e zerado em Geral', async ({
     page,
     request,
   }) => {
     const token = await apiLogin(request, E2E_USERS.alfaManager);
 
-    const aprovacoes = await fetchChannelByKey(request, token, E2E_CHANNEL_UNREAD.managerAprovacoes.channelKey);
-    expect(aprovacoes.unreadCount).toBe(E2E_CHANNEL_UNREAD.managerAprovacoes.expected);
+    const avisos = await fetchChannelByKey(request, token, E2E_CHANNEL_UNREAD.managerAvisos.channelKey);
+    expect(avisos.unreadCount).toBe(E2E_CHANNEL_UNREAD.managerAvisos.expected);
     // Gestor nunca abriu este canal: sem linha em `channel_reads`.
-    expect(aprovacoes.lastReadAt).toBeNull();
+    expect(avisos.lastReadAt).toBeNull();
 
     const geral = await fetchChannelByKey(request, token, E2E_CHANNEL_UNREAD.managerGeral.channelKey);
     expect(geral.unreadCount).toBe(E2E_CHANNEL_UNREAD.managerGeral.expected);
@@ -75,8 +75,8 @@ test.describe('Fluxo 11: badge de nao lidas (D5 da Onda 5)', () => {
     await loginAs(page, E2E_USERS.alfaManager);
     await openChat(page);
 
-    await expect(channelUnreadBadge(page, APROVACOES)).toHaveText(
-      String(E2E_CHANNEL_UNREAD.managerAprovacoes.expected),
+    await expect(channelUnreadBadge(page, AVISOS)).toHaveText(
+      String(E2E_CHANNEL_UNREAD.managerAvisos.expected),
     );
     // Controle ao lado: o canal ja lido nao renderiza badge nenhum.
     await expect(channelUnreadBadge(page, GERAL)).toHaveCount(0);
@@ -84,7 +84,7 @@ test.describe('Fluxo 11: badge de nao lidas (D5 da Onda 5)', () => {
 
   test('ler o historico do canal NAO marca como lido (D-068)', async ({ request }) => {
     const token = await apiLogin(request, E2E_USERS.alfaManager);
-    const antes = await fetchChannelByKey(request, token, 'aprovacoes');
+    const antes = await fetchChannelByKey(request, token, 'avisos');
     expect(antes.unreadCount).toBe(1);
 
     const historico = await request.get(
@@ -96,7 +96,7 @@ test.describe('Fluxo 11: badge de nao lidas (D5 da Onda 5)', () => {
     expect(mensagens.length).toBeGreaterThan(0);
 
     // Ler pagina de historico nao e ter visto a mensagem nova: o badge fica.
-    const depois = await fetchChannelByKey(request, token, 'aprovacoes');
+    const depois = await fetchChannelByKey(request, token, 'avisos');
     expect(depois.unreadCount).toBe(1);
     expect(depois.lastReadAt).toBeNull();
   });
@@ -108,56 +108,56 @@ test.describe('Fluxo 11: badge de nao lidas (D5 da Onda 5)', () => {
     const gestor = await apiLogin(request, E2E_USERS.alfaManager);
     const admin = await apiLogin(request, E2E_USERS.alfaAdmin);
 
-    const canal = await fetchChannelByKey(request, gestor, 'aprovacoes');
+    const canal = await fetchChannelByKey(request, gestor, 'avisos');
     expect(canal.unreadCount).toBe(1);
     expect(canal.lastReadAt).toBeNull();
 
     await loginAs(page, E2E_USERS.alfaManager);
     await openChat(page);
-    await expect(channelUnreadBadge(page, APROVACOES)).toHaveText('1');
+    await expect(channelUnreadBadge(page, AVISOS)).toHaveText('1');
 
     /*
      * O UNICO gatilho do teste e o clique. Nao ha chamada de API aqui: se a
      * tela nao disparar `POST .../read`, nada zera e as assercoes abaixo caem.
      */
-    await channelButton(page, APROVACOES).click();
-    await expect(channelButton(page, APROVACOES)).toHaveAttribute('aria-current', 'true');
+    await channelButton(page, AVISOS).click();
+    await expect(channelButton(page, AVISOS)).toHaveAttribute('aria-current', 'true');
 
     // O badge some SEM recarregar: a mutation invalida a lista de canais.
-    await expect(channelUnreadBadge(page, APROVACOES)).toHaveCount(0);
+    await expect(channelUnreadBadge(page, AVISOS)).toHaveCount(0);
     // Controle positivo: o canal continua na lista — sumiu o badge, nao a linha.
-    await expect(channelButton(page, APROVACOES)).toBeVisible();
+    await expect(channelButton(page, AVISOS)).toBeVisible();
 
     // E o estado ficou GRAVADO, nao so escondido na tela.
     await expect
-      .poll(async () => (await fetchChannelByKey(request, gestor, 'aprovacoes')).unreadCount)
+      .poll(async () => (await fetchChannelByKey(request, gestor, 'avisos')).unreadCount)
       .toBe(0);
-    expect((await fetchChannelByKey(request, gestor, 'aprovacoes')).lastReadAt).not.toBeNull();
+    expect((await fetchChannelByKey(request, gestor, 'avisos')).lastReadAt).not.toBeNull();
 
     // O estado de leitura e POR USUARIO: o admin nao foi arrastado junto.
-    const doAdmin = await fetchChannelByKey(request, admin, 'aprovacoes');
-    expect(doAdmin.unreadCount).toBe(E2E_CHANNEL_UNREAD.adminAprovacoes.expected);
+    const doAdmin = await fetchChannelByKey(request, admin, 'avisos');
+    expect(doAdmin.unreadCount).toBe(E2E_CHANNEL_UNREAD.adminAvisos.expected);
 
     // Sobrevive ao F5: nao era so estado de memoria do cliente.
     await page.reload();
-    await expect(channelButton(page, APROVACOES)).toBeVisible();
-    await expect(channelUnreadBadge(page, APROVACOES)).toHaveCount(0);
+    await expect(channelButton(page, AVISOS)).toBeVisible();
+    await expect(channelUnreadBadge(page, AVISOS)).toHaveCount(0);
   });
 
   test('marcar como lido de novo e idempotente', async ({ request }) => {
     const token = await apiLogin(request, E2E_USERS.alfaManager);
-    const canal = await fetchChannelByKey(request, token, 'aprovacoes');
+    const canal = await fetchChannelByKey(request, token, 'avisos');
 
     await markChannelRead(request, token, canal.id);
     await markChannelRead(request, token, canal.id);
 
-    expect((await fetchChannelByKey(request, token, 'aprovacoes')).unreadCount).toBe(0);
+    expect((await fetchChannelByKey(request, token, 'avisos')).unreadCount).toBe(0);
   });
 
   test('mensagem nova de outra pessoa faz o badge SUBIR de novo', async ({ page, request }) => {
     const gestor = await apiLogin(request, E2E_USERS.alfaManager);
     const admin = await apiLogin(request, E2E_USERS.alfaAdmin);
-    const canal = await fetchChannelByKey(request, gestor, 'aprovacoes');
+    const canal = await fetchChannelByKey(request, gestor, 'avisos');
 
     /*
      * Pre-condicao MONTADA aqui, nao herdada do teste anterior: assim este
@@ -165,7 +165,7 @@ test.describe('Fluxo 11: badge de nao lidas (D5 da Onda 5)', () => {
      * inteira. `POST .../read` e idempotente, entao rodar de novo nao custa.
      */
     await markChannelRead(request, gestor, canal.id);
-    expect((await fetchChannelByKey(request, gestor, 'aprovacoes')).unreadCount).toBe(0);
+    expect((await fetchChannelByKey(request, gestor, 'avisos')).unreadCount).toBe(0);
 
     const enviada = await request.post(
       `${API_URL}/internal-chat/channels/${canal.id}/messages`,
@@ -179,17 +179,17 @@ test.describe('Fluxo 11: badge de nao lidas (D5 da Onda 5)', () => {
     expect(mensagem.senderId).toBe(E2E_USERS.alfaAdmin.id);
 
     // Para quem RECEBEU, sobe. Para quem ESCREVEU, mensagem propria nao conta.
-    expect((await fetchChannelByKey(request, gestor, 'aprovacoes')).unreadCount).toBe(1);
-    expect((await fetchChannelByKey(request, admin, 'aprovacoes')).unreadCount).toBe(
-      E2E_CHANNEL_UNREAD.adminAprovacoes.expected,
+    expect((await fetchChannelByKey(request, gestor, 'avisos')).unreadCount).toBe(1);
+    expect((await fetchChannelByKey(request, admin, 'avisos')).unreadCount).toBe(
+      E2E_CHANNEL_UNREAD.adminAvisos.expected,
     );
 
     await loginAs(page, E2E_USERS.alfaManager);
     await openChat(page);
-    await expect(channelUnreadBadge(page, APROVACOES)).toHaveText('1');
+    await expect(channelUnreadBadge(page, AVISOS)).toHaveText('1');
 
     // Deixa o canal lido de novo — o proximo arquivo nao herda um badge solto.
     await markChannelRead(request, gestor, canal.id);
-    expect((await fetchChannelByKey(request, gestor, 'aprovacoes')).unreadCount).toBe(0);
+    expect((await fetchChannelByKey(request, gestor, 'avisos')).unreadCount).toBe(0);
   });
 });

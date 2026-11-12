@@ -49,7 +49,6 @@ import { ExamRepository } from '../repositories/exam.repository.js';
 import { InsuranceRepository } from '../repositories/insurance.repository.js';
 import { ExamCatalogService } from '../services/exam-catalog.service.js';
 import { createAuditService } from '../services/audit.service.js';
-import { createInternalChatService } from '../services/internal-chat.service.js';
 import { ApprovalService } from '../services/approval.service.js';
 import { createMessageService } from '../services/message.service.js';
 import { MAX_LIMIT, ProposalService, type ProposalFilters } from '../services/proposal.service.js';
@@ -237,13 +236,11 @@ export function createProposalServices(
   overrides: ProposalModuleOverrides = {},
 ): ProposalModuleServices {
   const audit = createAuditService(deps.db);
-  const chat = createInternalChatService(deps.db, deps.wsHub);
   const examCatalog = new ExamCatalogService(new ExamRepository(deps.db), deps.cache);
   const approvals = new ApprovalService({
     db: deps.db,
     wsHub: deps.wsHub,
     audit,
-    chat,
   });
   const proposals = new ProposalService({
     db: deps.db,

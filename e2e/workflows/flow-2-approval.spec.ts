@@ -2,31 +2,28 @@
  * Fluxo 2: Aprovação de Desconto — WORKFLOWS.md §4, BUSINESS_RULES §2.
  *
  * Atendente (alçada 15%) pede 25% -> a proposta NASCE com
- * `approvalStatus: "pending"` e **201**, nao 403 (D-045) -> o pedido e postado
- * em `#aprovacoes` com o texto de `E2E_APPROVAL_POST` -> o GESTOR aprova ->
- * so entao a proposta pode ser enviada.
+ * `approvalStatus: "pending"` e **201**, nao 403 (D-045) -> o pedido aparece em
+ * Decisoes (`GET /operations/overview`), NAO no chat interno (CRMLAB-146,
+ * D-318) -> o GESTOR aprova -> so entao a proposta pode ser enviada.
  *
  * Dois usuarios distintos, sempre: aprovar a propria proposta falha por
  * projeto (D-046), entao um spec que usasse um usuario so estaria testando o
  * caminho errado.
  *
- * LIMITE DE AMBIENTE, dito com todas as letras: `/internal-chat` ainda e
- * `InternalChatPlaceholder` em `frontend/src/routes/index.tsx`. O cartao com
- * [Aprovar] / [Rejeitar] nao existe na tela, entao a metade "gestor clica em
- * Aprovar no canal" e verificada pelo CONTRATO (`PATCH /proposals/:id/approve`
- * + conteudo de `#aprovacoes` via API), nao por clique. Quando a tela existir,
- * o teste de clique entra aqui — e nao ha `test.skip` escondendo isso.
+ * A metade "gestor aprova" e verificada pelo CONTRATO (`PATCH
+ * /proposals/:id/approve`); o clique em Aprovar na tela Decisoes e coberto
+ * pelo spec de componente (`frontend/src/pages/Decisions.spec.tsx`).
  */
 import { test, expect, type APIRequestContext } from '@playwright/test';
 import type {
   Channel,
   ListChannelsResponse,
   ListInternalMessagesResponse,
+  OperationOverviewResponse,
   ProposalDetail,
 } from '@crm-lab/shared';
 import {
   API_URL,
-  E2E_APPROVAL_POST,
   E2E_CHANNELS,
   E2E_CONVERSATIONS,
   E2E_EXAMS,
@@ -150,27 +147,28 @@ test.describe('Fluxo 2: Aprovação de Desconto', () => {
     expect(((await envio.json()) as ApiErrorEnvelope).error.code).toBe('PROPOSAL_PENDING_APPROVAL');
   });
 
-  test('o pedido aparece em #aprovacoes com o texto do contrato', async ({ request }) => {
+  test('o pedido aparece em Decisoes e nao no chat interno (CRMLAB-146)', async ({ request }) => {
+    const criada = await criarPendente(request);
     const gestor = await apiLogin(request, E2E_USERS.alfaManager);
     const headers = authHeaders(gestor);
+
+    const retrato = (await (
+      await request.get(`${API_URL}/operations/overview?decisionsLimit=100`, { headers })
+    ).json()) as OperationOverviewResponse;
+    expect(retrato.pendingDecisions.items.map((i) => i.proposalId)).toContain(criada.id);
 
     const canais = ((await (
       await request.get(`${API_URL}/internal-chat/channels`, { headers })
     ).json()) as ListChannelsResponse).channels;
-
-    const aprovacoes: Channel | undefined = canais.find(
-      (c) => c.key === E2E_CHANNELS.aprovacoes.key,
-    );
-    expect(aprovacoes, `canal ${E2E_CHANNELS.aprovacoes.name} deve existir`).toBeDefined();
+    const avisos: Channel | undefined = canais.find((c) => c.key === E2E_CHANNELS.avisos.key);
+    expect(avisos, `canal ${E2E_CHANNELS.avisos.name} deve existir`).toBeDefined();
 
     const mensagens = ((await (
-      await request.get(`${API_URL}/internal-chat/channels/${aprovacoes?.id}/messages?limit=100`, {
+      await request.get(`${API_URL}/internal-chat/channels/${avisos?.id}/messages?limit=100`, {
         headers,
       })
     ).json()) as ListInternalMessagesResponse).messages;
-
-    // Texto exato acordado com o Agent-DB-Seeds (`E2E_APPROVAL_POST`).
-    expect(mensagens.map((m) => m.content)).toContain(E2E_APPROVAL_POST);
+    expect(mensagens.some((m) => m.attachedProposalId === criada.id)).toBe(false);
   });
 });
 

@@ -109,7 +109,7 @@ describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, D-129, enxugado no 
     ]);
   });
 
-  it('itens soltos: Atendimento, Chat Interno, Propostas, Vendas e Contatos, nessa ordem', () => {
+  it('itens soltos: Atendimento, Chat Interno, Propostas, Vendas, Contatos e Decisões, nessa ordem', () => {
     const { ungrouped } = sidebarSectionsFor('admin');
 
     expect(ungrouped.map((r) => r.label)).toEqual([
@@ -118,7 +118,16 @@ describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, D-129, enxugado no 
       'Propostas',
       'Vendas',
       'Contatos',
+      // CRMLAB-146 (D-318): a aprovação saiu do chat e voltou para cá.
+      'Decisões',
     ]);
+  });
+
+  it('Decisões fica só para gestor e admin (CRMLAB-146)', () => {
+    expect(sidebarSectionsFor('manager').ungrouped.map((r) => r.path)).toContain('/decisions');
+    expect(sidebarSectionsFor('attendant').ungrouped.map((r) => r.path)).not.toContain(
+      '/decisions',
+    );
   });
 
   it('atendente não tem grupo Gestão; Configurações mostra Cadastros + Regras', () => {
@@ -137,7 +146,6 @@ describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, D-129, enxugado no 
 
     for (const path of [
       '/analytics',
-      '/decisions',
       '/reconciliation',
       '/settings/account',
       '/catalog',

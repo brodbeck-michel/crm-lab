@@ -204,7 +204,6 @@ describe('Sidebar — conteúdo por perfil (a estrutura é a mesma)', () => {
       'Convênios',
       'Minha Conta',
       'Conversão',
-      'Decisões',
     ]) {
       expect(screen.queryByRole('link', { name: label })).not.toBeInTheDocument();
     }

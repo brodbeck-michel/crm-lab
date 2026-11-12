@@ -19,7 +19,6 @@ import { FakeWsHub } from '../helpers/fake-ws.js';
 import {
   auditActionsFor,
   buildHarness,
-  channelPosts,
   ctxOf,
   type Harness,
 } from '../proposals/support.js';
@@ -270,15 +269,16 @@ describe('ApprovalService', () => {
     expect(error.statusCode).toBe(404);
   });
 
-  it('o pedido e a decisao ficam registrados em #aprovacoes com a proposta anexada', async () => {
+  it('o pedido e a decisao nao passam mais pelo chat interno (CRMLAB-146, D-318)', async () => {
     const c = await cenarioPendente(25);
     await h.approvals.approve(ctxOf(c.manager), c.proposalId);
 
-    const posts = await channelPosts(db, c.tenantId, 'aprovacoes');
-    expect(posts).toHaveLength(2);
-    expect(posts.every((post) => post.isSystem)).toBe(true);
-    expect(posts.every((post) => post.attachedProposalId === c.proposalId)).toBe(true);
-    expect(posts[0]?.content).toContain('Pedido de aprovação de desconto');
-    expect(posts[1]?.content).toContain('APROVADO');
+    const posts = await db.withoutTenant((tx) =>
+      tx.query<{ n: number }>('SELECT COUNT(*)::int AS n FROM internal_messages WHERE tenant_id = $1', [
+        c.tenantId,
+      ]),
+    );
+    expect(posts.rows[0]?.n).toBe(0);
+    expect(h.wsHub.eventsForUser(c.tenantId, c.attendant.id, 'approval.decided')).toHaveLength(1);
   });
 });

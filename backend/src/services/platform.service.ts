@@ -116,8 +116,8 @@ export const EXTRA_MESSAGE_PRICE = 0.1;
 
 /** Canais internos criados no onboarding (WORKFLOWS.md §7 passo 2). */
 export const DEFAULT_CHANNELS: ReadonlyArray<{ key: string; name: string }> = [
-  { key: 'geral', name: '#geral' },
-  { key: 'aprovacoes', name: '#aprovacoes' },
+  { key: 'geral', name: 'Geral' },
+  { key: 'avisos', name: 'Avisos gerais' },
 ];
 
 /**

@@ -1,13 +1,13 @@
 import { useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { APPROVALS_CHANNEL_KEY, isApprovalRequestPost } from '@crm-lab/shared';
 import type {
   Channel,
   Conversation,
   GetConversationResponse,
   InternalMessage,
   ListConversationsQuery,
+  PendingDecisionItem,
   UserRole,
 } from '@crm-lab/shared';
 import { api, queryKeys, staleTimes } from '@/api';
@@ -15,6 +15,7 @@ import { playNewMessageSound } from '@/lib/notification-sound';
 import { sidebarRoutesFor } from '@/routes/route-config';
 import { selectUser, useAuthStore } from '@/stores';
 import { useMessageAlertsStore } from '@/stores/message-alerts.store';
+import { usePendingDecisions } from './usePendingDecisions';
 
 /**
  * Aviso de mensagem nova, padrão WhatsApp Web (CRMLAB-72, D-240/D-241).
@@ -36,6 +37,10 @@ import { useMessageAlertsStore } from '@/stores/message-alerts.store';
  * canais (mesma query/cache da Sidebar), confirmado pela página 1 de mensagens
  * do canal para deixar de fora sistema, a própria pessoa e apagada. O título da
  * aba soma conversas + canais não lidos.
+ *
+ * CRMLAB-146 (D-318): pedido de aprovação de desconto não passa mais pelo chat.
+ * Quem decide (gestor/admin) é avisado quando aparece proposta nova nas
+ * decisões pendentes, e o clique abre a tela Decisões.
  */
 
 /**
@@ -216,30 +221,42 @@ export function detectNewChannelMessages(previous: AlertsBaseline, channels: Cha
   });
 }
 
-/**
- * Mensagens de colega (nem sistema, nem minha, nem apagada) depois de `since`.
- * `withApprovalRequests` (D-284 item 8): conta também o post de sistema do PEDIDO
- * de aprovação — só para quem decide, em `#aprovacoes`.
- */
+/** Mensagens de colega (nem sistema, nem minha, nem apagada) depois de `since`. */
 export function freshFromColleagues(
   messages: InternalMessage[],
   userId: string,
   since: string | null,
-  withApprovalRequests = false,
 ): InternalMessage[] {
   return messages.filter(
     (m) =>
       !m.deletedAt &&
       (since === null || m.createdAt > since) &&
-      (withApprovalRequests && isApprovalRequestPost(m)
-        ? true
-        : !m.isSystem && m.senderId !== null && m.senderId !== userId),
+      !m.isSystem &&
+      m.senderId !== null &&
+      m.senderId !== userId,
   );
 }
 
-/** Quem decide pedido de aprovação (SERVICES.md §6) — como `canDecide` da tela do chat. */
+/** Quem decide pedido de aprovação (SERVICES.md §6) — o servidor recusa os demais. */
 export function decidesApprovals(role: UserRole | undefined): boolean {
   return role === 'manager' || role === 'admin';
+}
+
+/**
+ * Pedidos de aprovação que apareceram desde a carga anterior (CRMLAB-146,
+ * D-318). O pedido da própria pessoa não avisa: ela não pode aprová-lo (D-046).
+ */
+export function detectNewApprovalRequests(
+  previous: ReadonlySet<string>,
+  items: PendingDecisionItem[],
+  userId: string,
+): PendingDecisionItem[] {
+  return items.filter((item) => !previous.has(item.proposalId) && item.createdBy !== userId);
+}
+
+/** Corpo da notificação de pedido de aprovação — só a contagem (D-240). */
+export function approvalAlertBody(count: number): string {
+  return count > 1 ? `${count} novos pedidos de aprovação` : 'Novo pedido de aprovação';
 }
 
 /** Pode usar o Chat interno: mesmo critério da Sidebar (`hasInternalChatRoute`). */
@@ -312,15 +329,19 @@ export function useNewMessageAlerts(): void {
 
   // D-284: a MESMA query/cache de canais da Sidebar e da tela do chat.
   const chatUserId = userId !== null && hasInternalChatRoute(user?.role) ? userId : null;
-  const chatRole = user?.role;
   const channelsQuery = useQuery({
     queryKey: queryKeys.internalChannels(),
     queryFn: () => api.internalChat.channels(),
     enabled: chatUserId !== null,
   });
 
+  // CRMLAB-146 (D-318): o mesmo retrato do contador de Decisões da Sidebar.
+  const deciderId = userId !== null && decidesApprovals(user?.role) ? userId : null;
+  const decisionsQuery = usePendingDecisions(deciderId !== null);
+
   const baselineRef = useRef<AlertsBaseline | null>(null);
   const channelsBaselineRef = useRef<AlertsBaseline | null>(null);
+  const decisionsBaselineRef = useRef<Set<string> | null>(null);
   // `navigate` muda de identidade a cada navegação; a notificação já exibida
   // precisa do atual quando for clicada.
   const navigateRef = useRef(navigate);
@@ -416,18 +437,11 @@ export function useNewMessageAlerts(): void {
       // Canal aberto com a aba em foco: nem busca (D-241 item 3).
       if (fromOpen && isTabFocused()) continue;
       const since = previous.known.get(channel.id)?.lastMessageAt ?? previous.watermark;
-      // Pedido de aprovação avisa quem decide (D-284 item 8); a decisão, não.
-      const approvals = channel.key === APPROVALS_CHANNEL_KEY && decidesApprovals(chatRole);
       api.internalChat
         .messages(channel.id, { page: 1, limit: CHANNEL_ALERT_PAGE_SIZE })
         .then(({ messages }) => {
-          if (freshFromColleagues(messages, chatUserId, since, approvals).length === 0) return;
-          const count = freshFromColleagues(
-            messages,
-            chatUserId,
-            channel.lastReadAt,
-            approvals,
-          ).length;
+          if (freshFromColleagues(messages, chatUserId, since).length === 0) return;
+          const count = freshFromColleagues(messages, chatUserId, channel.lastReadAt).length;
           fireRef.current(
             [
               {
@@ -444,7 +458,29 @@ export function useNewMessageAlerts(): void {
           // Falhou a confirmação: sem aviso — o badge e o título continuam valendo.
         });
     }
-  }, [channelsQuery.data, chatUserId, chatRole]);
+  }, [channelsQuery.data, chatUserId]);
+
+  // Pedido de aprovação (CRMLAB-146, D-318): proposta nova nas decisões pendentes.
+  useEffect(() => {
+    const items = decisionsQuery.data?.pendingDecisions.items;
+    if (!items || deciderId === null) return;
+    const previous = decisionsBaselineRef.current;
+    decisionsBaselineRef.current = new Set(items.map((item) => item.proposalId));
+    if (!previous) return; // primeira carga = linha de base
+    const fresh = detectNewApprovalRequests(previous, items, deciderId);
+    if (fresh.length === 0) return;
+    fireRef.current(
+      [
+        {
+          tag: 'decisions',
+          title: 'Decisões',
+          body: approvalAlertBody(fresh.length),
+          href: '/decisions',
+        },
+      ],
+      false,
+    );
+  }, [decisionsQuery.data, deciderId]);
 
   // Conversa aberta: mensagem de paciente mais nova que a última vista no detalhe.
   useEffect(() => {

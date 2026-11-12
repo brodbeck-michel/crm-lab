@@ -11,7 +11,6 @@ import type {
   InternalChannelReader,
   InternalMessage,
   InternalMessageAttachment,
-  UserRole,
 } from '@crm-lab/shared';
 import { api, queryKeys } from '@/api';
 import { cn } from '@/components/ui';
@@ -25,28 +24,23 @@ import {
 import { DocumentCard } from '@/components/conversation/DocumentCard';
 import { useAuthenticatedMedia } from '@/hooks';
 import ProposalCard from '@/components/proposal/ProposalCard';
-import { ApprovalActions } from './ApprovalActions';
 
 /**
  * Uma mensagem do chat interno — WORKFLOWS.md §6.
  *
  * Três formas, como no inbox de atendimento: recebida · enviada (a sua) ·
- * sistema (o pedido de aprovação). A proposta anexada vira `ProposalCard`
- * clicável, que abre o Modal da Proposta (PAGES.md §6).
+ * sistema. A proposta anexada vira `ProposalCard` clicável, que abre o Modal
+ * da Proposta (PAGES.md §6). Aprovar/Rejeitar não fica aqui desde o
+ * CRMLAB-146 (D-318): o gestor decide na tela Decisões.
  *
  * A proposta anexada NÃO vem no payload da mensagem (o contrato só carrega o
- * id): ela é uma query própria em `queryKeys.proposal(id)` — a MESMA chave que
- * `approval.requested` / `approval.decided` invalidam, então o cartão e os
- * botões se atualizam sozinhos quando a decisão chega por WebSocket.
+ * id): ela é uma query própria em `queryKeys.proposal(id)`.
  */
 
 export interface InternalMessageItemProps {
   message: InternalMessage;
   /** Id do usuário logado — define se a bolha é "enviada". */
   currentUserId: string | null;
-  currentUserRole: UserRole | null;
-  /** `#aprovacoes`: só lá os botões de decisão aparecem. */
-  isApprovalsChannel: boolean;
   /**
    * Quem já leu o canal (CRMLAB-123, D-300). Com ele, a mensagem PRÓPRIA mostra
    * ✓ (gravada) ou ✓✓ azul (todos os outros membros leram) — o mesmo tique do
@@ -101,18 +95,7 @@ const SHELL: Record<BubbleKind, string> = {
     'self-center w-full bg-accent2-100 border border-accent2-300 rounded-md px-[15px] py-[11px]',
 };
 
-/** Só gestor/admin decide (SERVICES.md §6). A UI esconde, o servidor recusa. */
-function canDecide(role: UserRole | null): boolean {
-  return role === 'manager' || role === 'admin';
-}
-
-function AttachedProposal({
-  proposalId,
-  showActions,
-}: {
-  proposalId: string;
-  showActions: boolean;
-}) {
+function AttachedProposal({ proposalId }: { proposalId: string }) {
   const proposalQuery = useQuery({
     queryKey: queryKeys.proposal(proposalId),
     queryFn: () => api.proposals.get(proposalId),
@@ -139,9 +122,6 @@ function AttachedProposal({
   return (
     <div className="flex flex-col gap-sm">
       <ProposalCard proposal={proposal} />
-      {showActions && proposal.approvalStatus === 'pending' && (
-        <ApprovalActions proposal={proposal} />
-      )}
     </div>
   );
 }
@@ -310,8 +290,6 @@ function AuthorMenu({
 export function InternalMessageItem({
   message,
   currentUserId,
-  currentUserRole,
-  isApprovalsChannel,
   readState = null,
   isDirect = false,
   onEdit,
@@ -401,10 +379,7 @@ export function InternalMessageItem({
       )}
 
       {message.attachedProposalId !== null && (
-        <AttachedProposal
-          proposalId={message.attachedProposalId}
-          showActions={isApprovalsChannel && canDecide(currentUserRole)}
-        />
+        <AttachedProposal proposalId={message.attachedProposalId} />
       )}
 
       {meta}

@@ -14,7 +14,7 @@ import {
   selectRole,
   selectUser,
 } from '@/stores';
-import { useLogout } from '@/hooks';
+import { useLogout, usePendingDecisions } from '@/hooks';
 import { isRouteActive, sidebarSectionsFor, type AppRoute } from '@/routes/route-config';
 import {
   conversationsApi,
@@ -134,10 +134,23 @@ export function Sidebar() {
   });
   const attendanceUnreadCount = attendanceUnreadQuery.data?.unreadMessages ?? 0;
 
-  // Contadores por item (mensagens não lidas). "Decisões" saiu do trilho no CRMLAB-143.
-  const countsByPath: Record<string, number> = {
+  // Contador de "Decisões" (PAGES.md §12): voltou ao trilho no CRMLAB-146 (D-318),
+  // quando a aprovação saiu do chat interno. Mesmo retrato de §10, cache
+  // compartilhado com Operation.tsx, Decisions.tsx e o aviso de pedido novo.
+  const hasDecisionsRoute =
+    ungrouped.some((route) => route.path === '/decisions') ||
+    groups.some((group) => group.items.some((route) => route.path === '/decisions'));
+  const pendingDecisionsCount =
+    usePendingDecisions(hasDecisionsRoute).data?.pendingDecisions.total ?? 0;
+
+  // Contadores por item. Só os de mensagem (não "Decisões") sobem para o grupo (D-130).
+  const unreadByPath: Record<string, number> = {
     '/attendance': attendanceUnreadCount,
     '/internal-chat': internalChatUnreadCount,
+  };
+  const countsByPath: Record<string, number> = {
+    ...unreadByPath,
+    '/decisions': pendingDecisionsCount,
   };
 
   // CRMLAB-72 (D-241 item 8): preferências do aviso de mensagem nova.
@@ -255,7 +268,7 @@ export function Sidebar() {
           const open = openGroupsByUser[userId]?.[group.id] ?? hasActiveChild;
           // D-130/D-277: o grupo herda a soma das não lidas (mensagens) dos itens dele.
           const groupUnreadCount = group.items.reduce(
-            (total, route) => total + (countsByPath[route.path] ?? 0),
+            (total, route) => total + (unreadByPath[route.path] ?? 0),
             0,
           );
           const groupBadgeLabel = `${groupUnreadCount} mensagens não lidas em ${group.label}`;
@@ -466,8 +479,8 @@ interface SidebarNavItemProps {
   route: AppRoute;
   collapsed: boolean;
   /**
-   * Contador por rota: `/internal-chat` (soma de `Channel.unreadCount`, D-130)
-   * e `/attendance` (D-277). Ausente = sem contador.
+   * Contador por rota: `/decisions` (pendências), `/internal-chat` (soma de
+   * `Channel.unreadCount`, D-130) e `/attendance` (D-277). Ausente = sem contador.
    */
   countsByPath: Record<string, number>;
   /** Caminho atual — acende o item também nos `activePaths` (abas de Cadastros, CRMLAB-143). */
@@ -491,9 +504,11 @@ function SidebarNavItem({
 }: SidebarNavItemProps) {
   const count = countsByPath[route.path] ?? 0;
   const badgeLabel =
-    route.path === '/internal-chat' || route.path === '/attendance'
-      ? `${count} mensagens não lidas`
-      : undefined;
+    route.path === '/decisions'
+      ? `${count} decisão(ões) pendente(s)`
+      : route.path === '/internal-chat' || route.path === '/attendance'
+        ? `${count} mensagens não lidas`
+        : undefined;
 
   return (
     <NavLink

@@ -187,10 +187,12 @@ export const APP_ROUTES: readonly AppRoute[] = [
     icon: 'patients',
   },
   {
+    // CRMLAB-146 (D-318): de volta ao trilho, solta — é onde o gestor aprova.
     path: '/decisions',
     label: 'Decisões',
     requiredRoles: MANAGER_PLUS,
-    inSidebar: false,
+    inSidebar: true,
+    icon: 'decisions',
   },
 
   // ── Domínio LIS (Onda 10) ────────────────────────────────────────────────

@@ -696,14 +696,14 @@ O ProposalService grava uma linha a cada transição aceita (inclusive a criaç�
 
 ### 11. `internal_channels`
 Canais e DMs do chat interno do laboratório (`docs/backend/SERVICES.md` §7).
-Canais padrão criados no onboarding: `#geral` e `#aprovacoes`.
+Canais padrão criados no onboarding: `Geral` (chave `geral`) e `Avisos gerais` (chave `avisos`) — CRMLAB-146, D-318.
 
 ```sql
 CREATE TABLE internal_channels (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id UUID NOT NULL,
-  key VARCHAR(100) NOT NULL,                   -- 'geral', 'aprovacoes' ou 'dm:{menorId}:{maiorId}'
-  name VARCHAR(255) NOT NULL,                  -- '#geral'; em DM é valor interno (D-101)
+  key VARCHAR(100) NOT NULL,                   -- 'geral', 'avisos' ou 'dm:{menorId}:{maiorId}'
+  name VARCHAR(255) NOT NULL,                  -- 'Geral'; em DM é valor interno (D-101)
   kind VARCHAR(20) NOT NULL DEFAULT 'channel', -- channel | dm
   dm_user_a_id UUID,                           -- só em DM; dm_user_a_id < dm_user_b_id
   dm_user_b_id UUID,                           -- migração 010 (D-101)
@@ -1059,8 +1059,7 @@ COUNT(*) FILTER (
 )
 ```
 
-Mensagem de sistema (`sender_id IS NULL`) **conta** — o pedido de aprovação em `#aprovacoes` é
-justamente o que precisa aparecer como não lido.
+Mensagem de sistema (`sender_id IS NULL`) **conta**.
 
 ---
 
@@ -2439,6 +2438,17 @@ INSERT INTO whatsapp_price_table (category, price_brl, effective_from) VALUES
 - Janela de 24 h usa o índice parcial `idx_messages_patient_conversation` (migração 062), sem índice novo.
 - Custo é **calculado na leitura** (`GET /settings/channels/whatsapp/usage`); não há coluna de custo.
 
+### 48. Chat interno sem aprovação (migração 067 — CRMLAB-146, D-318)
+
+- `internal_channels`: `aprovacoes` vira chave `avisos`, nome `Avisos gerais`; `#geral` vira `Geral`.
+- **Nova tabela `internal_messages_approval_archive`** — mesmas colunas de `internal_messages`
+  (`LIKE ... INCLUDING DEFAULTS`) + `archived_at TIMESTAMP NOT NULL DEFAULT NOW()`; PK `id`,
+  FK `tenant_id → tenants ON DELETE CASCADE`, RLS por `tenant_id` como `internal_messages`.
+  Recebe os posts de sistema com proposta anexada que estavam em `aprovacoes` (pedido,
+  APROVADO, REJEITADO) — saem da tela e da contagem de não lidas, mas ficam no banco. Nenhum
+  código lê esta tabela; o histórico da decisão continua no audit log da proposta.
+- Idempotente: rodar de novo não move nem renomeia nada.
+
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
 
 O isolamento multitenant não é convenção: é imposto pelo banco. O backend conecta com o papel
@@ -2818,9 +2828,9 @@ limites de `DEFAULT_DISCOUNT_LIMIT` de `@crm-lab/shared`:
   Bioquímica, Hormônios, Imunologia, Sorologia, Marcadores tumorais, Vitaminas,
   Uroanálise, Parasitologia, Microbiologia) com nome, código, descrição,
   preparo, prazo e os dois preços — `price_insurance < price_private` sempre.
-- **Canais internos `#geral` e `#aprovacoes`** por laboratório (onboarding,
-  WORKFLOWS.md §7), com posts reais — incluindo o pedido de aprovação de
-  desconto com a proposta anexada (`attached_proposal_id`).
+- **Canais internos `Geral` e `Avisos gerais`** por laboratório (onboarding,
+  WORKFLOWS.md §7), com posts reais. Desde o CRMLAB-146 (D-318) não há post de
+  aprovação: a proposta pendente aparece em Decisões.
 - **114 conversas / 481 mensagens** em português, misturando os 3
   `sender_type` (`patient`, `agent`, `system`), com conversas **não atribuídas**
   (fila do chip) e `unread_count > 0`. `created_at` espalhado por ~12 semanas.

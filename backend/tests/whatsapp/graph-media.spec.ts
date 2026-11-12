@@ -169,7 +169,23 @@ describe('HttpWhatsAppDriver.sendMedia', () => {
     expect(form).toContain('filename="recado.ogg"');
     expect(form).toContain('OggS-convertido');
     expect(form).not.toContain('webm-original');
-    expect(sentBody()).toMatchObject({ type: 'audio', audio: { id: 'MEDIA1' } });
+    // CRMLAB-147: o convertido sai como recado de voz.
+    expect(sentBody()).toMatchObject({ type: 'audio', audio: { id: 'MEDIA1', voice: true } });
+  });
+
+  it('áudio anexado (MP3) não vira recado de voz; OGG já preparado pela fila mantém voice', async () => {
+    respond = metaOk;
+    const driver = new HttpWhatsAppDriver();
+    await driver.sendMedia(creds(), '5548', { buffer: Buffer.from('mp3'), mimeType: 'audio/mpeg', fileName: 'a.mp3' });
+    expect((sentBody().audio as Record<string, unknown>).voice).toBeUndefined();
+    hits = [];
+    await driver.sendMedia(creds(), '5548', {
+      buffer: Buffer.from('OggS'),
+      mimeType: 'audio/ogg',
+      fileName: 'recado.ogg',
+      voice: true,
+    });
+    expect(sentBody()).toMatchObject({ type: 'audio', audio: { id: 'MEDIA1', voice: true } });
   });
 
   it('formato que a Meta não aceita ou imagem acima de 5 MB: não chama a Meta', async () => {

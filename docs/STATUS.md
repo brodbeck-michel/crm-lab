@@ -4186,3 +4186,16 @@ Branch `feature/CRMLAB-145-padrao-visual-telas`, empilhada sobre o CRMLAB-144. D
   dataset de E2E; título em 308px em todas. Suíte do frontend: 157 arquivos / 2.134 testes.
 - **Sem mudança (de propósito):** Integração LIS e Minha Conta seguem como formulário estreito à
   esquerda; inbox, orçamento, chat interno e agenda seguem em painel cheio.
+
+### 🔄 CRMLAB-147 + CRMLAB-148 — recado de voz no iPhone e conversa `direct` (2026-11-12, aguardando validação)
+
+Branch `feature/CRMLAB-147-148-audio-iphone-conversa-direct`. Decisões D-319 e D-320.
+
+- **147:** `lib/audio-to-ogg.ts` com os argumentos que tocam no iPhone (`FFMPEG_OGG_ARGS`, 1 pacote Opus
+  por página) e `audio.voice = true` no áudio convertido (`OutboundMedia.voice`).
+- **148:** mensagem do WhatsApp promove a conversa `direct`/`web`/`sms` do telefone para `whatsapp`
+  (audit `update_conversation_channel`); resposta em conversa de outro canal com mensagem do paciente
+  vinda do WhatsApp → `CONFLICT` `channel_not_whatsapp`, nada gravado; toast explica na tela.
+- **Testes:** `graph-media.spec.ts` (+1, `voice`), `crmlab140-anexos.spec.ts` (+3: argumentos, `voice`
+  pela fila, páginas curtas com ffmpeg real — pulado sem ffmpeg na máquina), `crmlab148-conversa-direct.spec.ts`
+  (3), `error-handler.spec.ts` (+2).

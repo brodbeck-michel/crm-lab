@@ -20,8 +20,10 @@ export type {
 } from './client';
 
 export {
+  CHANNEL_NOT_WHATSAPP_MESSAGE,
   WINDOW_CLOSED_MESSAGE,
   createApiErrorHandler,
+  isChannelNotWhatsApp,
   firstContactLimitMessage,
   mapFieldErrors,
   toHandledError,

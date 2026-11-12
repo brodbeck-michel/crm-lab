@@ -15,11 +15,28 @@ export type AudioConverter = (input: Buffer) => Promise<Buffer>;
 /** Recado de voz de minutos converte em menos de 1 s; 15 s cabe no orcamento de 60 s do envio. */
 const TIMEOUT_MS = 15_000;
 
+/**
+ * Argumentos do ffmpeg (CRMLAB-147, D-319). O OGG padrao do muxer poe ~49
+ * pacotes por pagina e o WhatsApp do iPhone nao toca ("erro ao reproduzir"); o
+ * proprio WhatsApp grava ~10. Com `-page_duration 20000` (20 ms = 1 pacote
+ * Opus por pagina), mono 48 kHz, perfil `voip` e sem metadados, toca no iPhone
+ * e no Android — isolado por envio direto na API em 12/11/2026.
+ */
+export const FFMPEG_OGG_ARGS: readonly string[] = [
+  '-hide_banner', '-loglevel', 'error',
+  '-i', 'pipe:0',
+  '-vn', '-map_metadata', '-1', '-fflags', '+bitexact',
+  '-ac', '1', '-ar', '48000',
+  '-c:a', 'libopus', '-b:a', '32k', '-application', 'voip',
+  '-page_duration', '20000',
+  '-f', 'ogg', 'pipe:1',
+];
+
 export const convertAudioToOgg: AudioConverter = (input) =>
   new Promise<Buffer>((resolve, reject) => {
     const child = spawn(
       'ffmpeg',
-      ['-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-vn', '-ac', '1', '-c:a', 'libopus', '-b:a', '32k', '-f', 'ogg', 'pipe:1'],
+      [...FFMPEG_OGG_ARGS],
       { stdio: ['pipe', 'pipe', 'pipe'] },
     );
     const chunks: Buffer[] = [];

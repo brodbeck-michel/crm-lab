@@ -68,6 +68,18 @@ describe('error-handler', () => {
     expect(toast).toHaveBeenCalledWith('Requisição inválida', { tone: 'attention' });
   });
 
+  it('CONFLICT channel_not_whatsapp → toast que explica e diz o que fazer (CRMLAB-148)', () => {
+    handle(new ApiError('CONFLICT', 'Registro ja existente', 409, { reason: 'channel_not_whatsapp', channel: 'direct' }));
+    expect(toast).toHaveBeenCalledWith(expect.stringMatching(/^Esta conversa não é de WhatsApp.*Nova conversa/), {
+      tone: 'attention',
+    });
+  });
+
+  it('CONFLICT com outro motivo segue com a mensagem do servidor', () => {
+    handle(new ApiError('CONFLICT', 'Registro ja existente', 409, { reason: 'phone_already_in_use' }));
+    expect(toast).toHaveBeenCalledWith('Registro ja existente', { tone: 'attention' });
+  });
+
   it('default → toast com a mensagem do servidor', () => {
     handle(new ApiError('CONVERSATION_ALREADY_ASSIGNED', 'Conversa já atribuída', 409));
     expect(toast).toHaveBeenCalledWith('Conversa já atribuída', { tone: 'attention' });

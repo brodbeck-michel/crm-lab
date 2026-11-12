@@ -349,6 +349,11 @@ export interface OutboundMedia {
   fileName: string;
   /** Legenda (CRMLAB-69, D-231); o driver Evolution descarta em áudio. */
   caption?: string | null;
+  /**
+   * Recado de voz (CRMLAB-147): o WebM do navegador convertido para OGG/Opus
+   * sai na Cloud API com `audio.voice = true`. So quem converteu marca.
+   */
+  voice?: boolean;
 }
 
 /** Midia baixada da Meta (CRMLAB-140). */
@@ -888,10 +893,12 @@ export class HttpWhatsAppDriver implements WhatsAppDriver {
     const rule = cloudApiMediaRule(media.mimeType);
     if (!rule) throw new Error('formato de anexo nao aceito pela API oficial da Meta');
     let { buffer, mimeType, fileName } = media;
+    let voice = media.voice === true;
     if (normalizeMediaMimeType(mimeType) === 'audio/webm') {
       buffer = await this.convertAudio(buffer);
       mimeType = 'audio/ogg';
       fileName = `${fileName.replace(/\.[^./]+$/, '')}.ogg`;
+      voice = true;
     }
     if (buffer.byteLength > rule.maxBytes) throw new Error('anexo acima do limite da API oficial da Meta');
 
@@ -905,6 +912,7 @@ export class HttpWhatsAppDriver implements WhatsAppDriver {
         id: mediaId,
         ...(caption ? { caption } : {}),
         ...(rule.kind === 'document' ? { filename: fileName } : {}),
+        ...(rule.kind === 'audio' && voice ? { voice: true } : {}),
       },
       ...(options.quoted ? { context: { message_id: options.quoted.externalId } } : {}),
     });
@@ -1740,6 +1748,7 @@ export class WhatsAppService {
         buffer: await this.convertAudio(media.buffer),
         mimeType: 'audio/ogg',
         fileName: `${media.fileName.replace(/\.[^./]+$/, '')}.ogg`,
+        voice: true,
       };
     }
     if (prepared.buffer.byteLength > rule.maxBytes) throw new Error('anexo acima do limite da API oficial da Meta');

@@ -54,6 +54,18 @@ export const WINDOW_CLOSED_MESSAGE =
   'Fora dela só é possível enviar template aprovado.';
 
 /**
+ * CRMLAB-148 (D-320): conversa de balcão/site que já recebeu mensagem do
+ * paciente pelo WhatsApp. Responder nela não chegaria ao paciente.
+ */
+export const CHANNEL_NOT_WHATSAPP_MESSAGE =
+  'Esta conversa não é de WhatsApp, mas o paciente escreveu por lá: a resposta não chegaria a ele. ' +
+  'Use "Nova conversa" com o telefone do paciente para responder pelo WhatsApp.';
+
+export function isChannelNotWhatsApp(error: ApiError): boolean {
+  return error.code === 'CONFLICT' && error.details?.reason === 'channel_not_whatsapp';
+}
+
+/**
  * Texto do `FIRST_CONTACT_LIMIT_REACHED` (CRMLAB-134, D-306): quantos por
  * hora, a partir de que horas abre vaga e o que fazer no lugar.
  */
@@ -103,6 +115,12 @@ export function createApiErrorHandler(deps: ErrorHandlerDeps) {
 
       case 'WHATSAPP_WINDOW_CLOSED':
         deps.toast(WINDOW_CLOSED_MESSAGE, { tone: 'attention' });
+        return { error, handledSilently: false };
+
+      case 'CONFLICT':
+        deps.toast(isChannelNotWhatsApp(error) ? CHANNEL_NOT_WHATSAPP_MESSAGE : error.message, {
+          tone: 'attention',
+        });
         return { error, handledSilently: false };
 
       case 'VALIDATION_ERROR': {

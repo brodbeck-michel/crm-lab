@@ -302,11 +302,13 @@ export class ConversationService {
     phone: string,
     patientName?: string | null,
   ): Promise<ConversationDetail> {
-    const { conversation, created } = await this.repository.findOrCreateByPhone(tenantId, {
+    const found = await this.repository.findOrCreateByPhone(tenantId, {
       patientPhone: phone,
       patientName: patientName ?? null,
       channel: 'whatsapp',
     });
+    const { created } = found;
+    let conversation = found.conversation;
     if (created) {
       await this.audit.log({
         tenantId,
@@ -315,6 +317,23 @@ export class ConversationService {
         entityType: 'conversation',
         entityId: conversation.id,
         newValues: { patientPhone: conversation.patientPhone, channel: conversation.channel },
+      });
+    } else if (conversation.channel !== 'whatsapp') {
+      // CRMLAB-148 (D-320): o numero ja tinha conversa `direct`/`web`/`sms`.
+      // A mensagem chegou pelo WhatsApp, entao a conversa PASSA a `whatsapp`
+      // (como a Nova conversa, D-175) — senao a resposta nao sairia para o
+      // gateway. Um telefone continua com uma conversa so (D-072/D-176).
+      const previous = conversation.channel;
+      conversation =
+        (await this.repository.setChannel(tenantId, conversation.id, 'whatsapp')) ?? conversation;
+      await this.audit.log({
+        tenantId,
+        userId: null,
+        action: 'update_conversation_channel',
+        entityType: 'conversation',
+        entityId: conversation.id,
+        oldValues: { channel: previous },
+        newValues: { channel: 'whatsapp' },
       });
     }
     return conversation;

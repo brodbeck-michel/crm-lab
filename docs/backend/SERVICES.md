@@ -2148,8 +2148,9 @@ interface WhatsAppUsageService {
 - **Anexos (D-314, CRMLAB-140):** `MessageService.assertCloudMediaAccepted(tenantId, conversationId,
   prepared)` (rota de anexo, depois do `prepareOutbound`) confere `CLOUD_API_MEDIA_RULES` só em
   `cloud_api`. `HttpWhatsAppDriver.sendMedia`: converte `audio/webm` → OGG/Opus
-  (`lib/audio-to-ogg.ts`, ffmpeg por `child_process`, injetável no teste), sobe em `/media` e envia
-  por id. Recebimento: `WhatsAppService.downloadInboundMedia(credentials, mediaId)` (driver
+  (`lib/audio-to-ogg.ts`, ffmpeg por `child_process`, injetável no teste; 1 pacote por página para o
+  iPhone tocar, D-319), sobe em `/media` e envia por id — o áudio convertido sai com
+  `audio.voice = true` (`OutboundMedia.voice`, D-319). Recebimento: `WhatsAppService.downloadInboundMedia(credentials, mediaId)` (driver
   `downloadMedia?`) com a lista de hosts da Meta; o webhook grava por `MediaService.storeInbound` e,
   se falhar, usa o aviso de texto.
 - **Teste:** gateway Graph fake (servidor HTTP de teste), no padrão do gateway Evolution fake (§16);

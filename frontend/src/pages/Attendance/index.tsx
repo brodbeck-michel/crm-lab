@@ -12,6 +12,7 @@ import {
 import {
   api,
   isApiError,
+  isChannelNotWhatsApp,
   queryKeys,
   queryScopes,
   staleTimes,
@@ -517,6 +518,10 @@ export function Attendance() {
         } else if (isApiError(error) && cloudApiAttachmentMessage(file.name, error.details)) {
           // API oficial (D-314): formato ou tamanho que a Meta não aceita. Os outros arquivos seguem.
           toast(cloudApiAttachmentMessage(file.name, error.details) ?? '', { tone: 'attention' });
+        } else if (isApiError(error) && isChannelNotWhatsApp(error)) {
+          // CRMLAB-148 (D-320): nenhum anexo desta conversa chegaria ao paciente.
+          handleApiError(error);
+          break;
         } else if (isApiError(error) && error.code === 'FIRST_CONTACT_LIMIT_REACHED') {
           // Teto de primeiros contatos (D-306): os próximos anexos teriam o mesmo fim.
           handleApiError(error);

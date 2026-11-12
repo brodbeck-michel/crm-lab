@@ -39,7 +39,7 @@ Para outro laboratório: pasta própria `~/.config/crm-lab-meta-<slug>/` e um ap
    empresa"** › caso de uso "O app exige acesso a permissões no Meta for Developers" › Iniciar.
    Respostas que funcionaram: tipo **Empresa privada** (Ltda); CNPJ só dígitos; nome alternativo = nome
    fantasia; escolher no registro público a entrada **com telefones e site**; confirmar por **e-mail
-   @domínio do site** (recomendado). Leva ~2 dias úteis.
+   @domínio do site** (recomendado). Prazo dito: ~2 dias úteis (o Santé saiu no mesmo dia, 12/11).
    - ⚠️ "Verificação bem-sucedida" em *Autorizações e verificações › verificação individual ou de
      organização* é a de **anunciante** — não serve. A fonte da verdade é a API (Fase 5).
 3. **App**: developers.facebook.com › Criar app › caso de uso **"Conectar-se com clientes pelo
@@ -62,7 +62,7 @@ Para outro laboratório: pasta própria `~/.config/crm-lab-meta-<slug>/` e um ap
    32 hex). Verify token eu gero: `python3 -c 'import secrets;print(secrets.token_hex(24),end="")'`.
 6. **Pagamento** (Billing Hub › conta de mensagens): moeda **BRL** (irreversível), CNPJ, fins comerciais
    = Sim, cartão **do laboratório** (a gestora cadastra). Sem ele: **141006**. A WABA de teste vem com
-   pagamento "Índia" — não pôr cartão nela.
+   pagamento "Índia" — não pôr cartão nela. O aviso "WhatsApp needs more information" (Informações da empresa) é isso: a **conta de mensagens** (Configurações › Contas de mensagens) sem endereço/moeda/pagamento e com fuso America/Los_Angeles — corrigir para America/Sao_Paulo na conta que receber o número real.
 7. **Modelos** (Gerenciador do WhatsApp › Modelos › Criar): aba **Utilidade** › Padrão › nome exato ·
    Português (BR) · tipo de variável **Número** · só **Corpo** · amostras · validade padrão. Textos em
    MIGRACAO_SANTE 4.1.1. **Modelo é da WABA**: trocou de WABA, recria.

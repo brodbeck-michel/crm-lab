@@ -322,7 +322,7 @@ describe('ProposalService', () => {
       expect(created.approvedAt).not.toBeNull();
     });
 
-    it('acima do limite: pending + post em #aprovacoes + WS approval.requested', async () => {
+    it('acima do limite: pending + WS approval.requested, sem post no chat (D-318)', async () => {
       const c = await cenario(15);
       const created = await h.proposals.create(ctxOf(c.user), {
         conversationId: c.conversationId,
@@ -333,14 +333,7 @@ describe('ProposalService', () => {
       expect(created.approvalStatus).toBe('pending');
       expect(created.approvedBy).toBeNull();
 
-      const posts = await channelPosts(db, c.tenantId, 'aprovacoes');
-      expect(posts).toHaveLength(1);
-      expect(posts[0]?.isSystem).toBe(true);
-      expect(posts[0]?.attachedProposalId).toBe(created.id);
-      expect(posts[0]?.content).toContain('Pedido de aprovação de desconto');
-      expect(posts[0]?.content).toContain('R$ 150,00');
-      expect(posts[0]?.content).toContain('25%');
-      expect(posts[0]?.content).toContain('15%');
+      expect(await channelPosts(db, c.tenantId, 'avisos')).toHaveLength(0);
 
       const eventos = h.wsHub.eventsFor(c.tenantId, 'approval.requested');
       expect(eventos).toHaveLength(1);
@@ -375,8 +368,7 @@ describe('ProposalService', () => {
       expect(updated.approvalStatus).toBe('pending');
       expect(updated.totalPrice).toBe(140);
 
-      const posts = await channelPosts(db, c.tenantId, 'aprovacoes');
-      expect(posts).toHaveLength(1);
+      expect(h.wsHub.eventsFor(c.tenantId, 'approval.requested')).toHaveLength(1);
     });
 
     it('baixar o desconto para dentro do limite reaprova', async () => {

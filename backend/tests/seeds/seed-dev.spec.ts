@@ -145,7 +145,7 @@ describe('seed de desenvolvimento', () => {
     expect(invalid.rows[0]?.n).toBe(0);
   });
 
-  it('cria os canais #geral e #aprovacoes em cada laboratório', async () => {
+  it('cria os canais Geral e Avisos gerais em cada laboratório', async () => {
     const result = await db.withoutTenant((tx) =>
       tx.query<{ slug: string; key: string }>(
         `SELECT t.slug, c.key FROM internal_channels c
@@ -154,9 +154,9 @@ describe('seed de desenvolvimento', () => {
       ),
     );
     expect(result.rows.map((r) => `${r.slug}:${r.key}`)).toEqual([
-      'lab-central:aprovacoes',
+      'lab-central:avisos',
       'lab-central:geral',
-      'lab-vida:aprovacoes',
+      'lab-vida:avisos',
       'lab-vida:geral',
     ]);
   });
@@ -334,15 +334,14 @@ describe('seed de desenvolvimento', () => {
       expect(Number(row.discount_percent)).toBeGreaterThan(Number(row.limit));
     }
 
-    // ... e o post correspondente no canal #aprovacoes.
+    // ... e nenhum post de aprovacao no chat interno (CRMLAB-146, D-318).
     const post = await db.withoutTenant((tx) =>
       tx.query<{ n: number }>(
-        `SELECT COUNT(*)::int AS n FROM internal_messages m
-           JOIN internal_channels c ON c.id = m.channel_id
-          WHERE c.key = 'aprovacoes' AND m.attached_proposal_id IS NOT NULL AND m.is_system`,
+        `SELECT COUNT(*)::int AS n FROM internal_messages
+          WHERE attached_proposal_id IS NOT NULL AND is_system`,
       ),
     );
-    expect(post.rows[0]?.n ?? 0).toBeGreaterThan(0);
+    expect(post.rows[0]?.n).toBe(0);
   });
 
   it('audita as ações críticas que o seed simula (BR §9)', async () => {
@@ -434,11 +433,11 @@ describe('seed de desenvolvimento', () => {
     const managerGeral = rows.rows.find((r) => r.role === 'manager' && r.key === 'geral');
     expect(Number(managerGeral?.unread)).toBe(0);
 
-    // Ninguem tem linha de #aprovacoes -> badge aceso para todos (o pedido de
-    // aprovacao e mensagem de sistema, e mensagem de sistema conta).
-    const aprovacoes = rows.rows.filter((r) => r.key === 'aprovacoes');
-    expect(aprovacoes.length).toBeGreaterThan(0);
-    expect(aprovacoes.every((r) => Number(r.unread) > 0)).toBe(true);
+    // Ninguem tem linha de Avisos gerais -> badge aceso para todos, menos o
+    // gestor, que escreveu o aviso (mensagem propria nao conta).
+    const avisos = rows.rows.filter((r) => r.key === 'avisos' && r.role !== 'manager');
+    expect(avisos.length).toBeGreaterThan(0);
+    expect(avisos.every((r) => Number(r.unread) > 0)).toBe(true);
   });
 
   describe('isolamento entre tenants', () => {

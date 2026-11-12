@@ -1,18 +1,16 @@
 /**
  * InternalChatService — SERVICES.md §7, WORKFLOWS.md §6.
  *
- * Canais e mensagens internas do laboratorio. Duas coisas importam aqui:
+ * Canais e mensagens internas do laboratorio.
  *
- * 1. **O canal `#aprovacoes` e a caixa de entrada do ApprovalService.** Toda
- *    proposta que cai em `pending` vira um post de sistema com a proposta
- *    anexada (WORKFLOWS §3). O post e criado por `createSystemPost`, que nao
- *    recebe `TenantContext` porque quem escreve e o sistema, nao um usuario.
+ * **O console de plataforma NAO acessa canais de laboratorio** (PAGES.md §11
+ * e SECURITY.md): `platform_operator` e recusado no service, alem do
+ * `denyPlatformOperator()` da rota. "A UI esconde, o servidor recusa."
  *
- * 2. **O console de plataforma NAO acessa canais de laboratorio** (PAGES.md §11
- *    e SECURITY.md): `platform_operator` e recusado no service, alem do
- *    `denyPlatformOperator()` da rota. "A UI esconde, o servidor recusa."
+ * Aprovacao de desconto NAO passa mais por aqui: desde o CRMLAB-146 (D-318) o
+ * gestor decide na tela Decisoes e `Avisos gerais` e um canal comum.
  *
- * Os canais padrao (`#geral`, `#aprovacoes`) nascem no onboarding do tenant
+ * Os canais padrao (`Geral`, `Avisos gerais`) nascem no onboarding do tenant
  * (WORKFLOWS §7). Como o onboarding ainda nao existe como servico, este service
  * os cria sob demanda de forma idempotente — ver D-043.
  */
@@ -227,35 +225,6 @@ export class InternalChatService {
     this.wsHub.emitToTenant(ctx.tenantId, 'internal_chat.channel_read', payload);
   }
 
-  /**
-   * Post do SISTEMA num canal identificado pela chave (`geral`, `aprovacoes`).
-   * Sem `TenantContext` de proposito: quem escreve e o sistema (SERVICES.md §7).
-   * Cria o canal se ainda nao existir (onboarding nao implementado — D-043).
-   */
-  async createSystemPost(
-    tenantId: string,
-    channelKey: string,
-    content: string,
-    attachedProposalId?: string,
-  ): Promise<InternalMessage> {
-    const message = await this.db.withTenant(tenantId, async (tx) => {
-      const channel = await ensureChannel(tx, tenantId, channelKey);
-      return chatRepo.insertMessage(tx, {
-        tenantId,
-        channelId: channel.id,
-        senderId: null,
-        content,
-        attachedProposalId: attachedProposalId ?? null,
-        isSystem: true,
-      });
-    });
-
-    this.wsHub.emitToTenant(tenantId, 'internal_chat.new_message', {
-      channelId: message.channelId,
-      messageId: message.id,
-    });
-    return message;
-  }
 
   /**
    * Mensagem com UM arquivo (CRMLAB-101, D-271). Tipo, tamanho e magic bytes

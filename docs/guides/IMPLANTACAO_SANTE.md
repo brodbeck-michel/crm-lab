@@ -30,7 +30,7 @@ histórico de execução, que até 13/11/2026 só existia nas anotações das se
 | 04/11 | Número restringido pelo WhatsApp por ~24 h; CRMLAB-134 (v1.43.0) |
 | 06/11 | Decisão de migrar para a API oficial da Meta |
 | 12/11 | Empresa verificada na Meta; ensaio real da Cloud API em prod (tenant `teste`) — `MIGRACAO_SANTE.md` §4.3.2 |
-| 13/11 | Conta de teste da Meta vira a de produção; falta o cartão do laboratório |
+| 13/11 | Conta de teste da Meta vira a de produção; os 3 modelos aprovados. Falta só o cartão do laboratório (passo a passo enviado à Milena); a data da troca é marcada depois da confirmação |
 
 **Duração:** cerca de 6 semanas da spec (08/09) à virada (22/10), com **9 dias de atraso** sobre a
 data planejada (13/10). O motivo do atraso não foi registrado.

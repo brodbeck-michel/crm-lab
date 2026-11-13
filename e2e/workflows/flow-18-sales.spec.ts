@@ -58,6 +58,10 @@ test.describe('Fluxo 18: Vendas', () => {
     await dialog.getByRole('button', { name: 'Lançar' }).click();
 
     await expect(page.getByRole('status').filter({ hasText: 'Venda lançada.' })).toBeVisible();
+    // CRMLAB-149: o modal fica aberto e limpo para a próxima venda; fecha só no Cancelar/×.
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByLabel('Valor')).toHaveValue('');
+    await dialog.getByRole('button', { name: 'Cancelar' }).click();
     await expect(dialog).toBeHidden();
 
     const row = page.getByRole('row', { name: new RegExp(ATTENDANT_NAME) });
@@ -115,6 +119,10 @@ test.describe('Fluxo 18: Vendas', () => {
     await dialog.getByRole('button', { name: 'Lançar' }).click();
 
     await expect(page.getByRole('status').filter({ hasText: 'Venda lançada.' })).toBeVisible();
+    // CRMLAB-149: o modal fica aberto e limpo para a próxima venda; fecha só no Cancelar/×.
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByLabel('Valor')).toHaveValue('');
+    await dialog.getByRole('button', { name: 'Cancelar' }).click();
     await expect(dialog).toBeHidden();
 
     // Login de atendente NAO mostra a coluna "Atendente" (é sempre a própria

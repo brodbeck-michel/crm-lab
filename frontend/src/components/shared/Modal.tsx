@@ -4,8 +4,14 @@ import { cn } from '@/components/ui/cn';
 
 export interface ModalProps {
   open: boolean;
-  /** Chamado por ×, Esc e clique no backdrop. */
+  /** Chamado por ×, Esc e clique no backdrop (Esc/backdrop só com `dismissible`). */
   onClose: () => void;
+  /**
+   * `false`: Esc e clique fora NÃO fecham — só o × (e os botões do próprio chamador).
+   * Para formulários de lançamento em série, onde um clique errado perderia o que foi
+   * digitado (CRMLAB-149). Padrão `true`.
+   */
+  dismissible?: boolean;
   /** Título do cartão — vira o `aria-label` do diálogo. */
   title: string;
   children: ReactNode;
@@ -21,11 +27,11 @@ const FOCUSABLE =
  * Modal: backdrop translúcido escuro, cartão `--radius-lg` + `--shadow-lg`,
  * largura máxima 720px, rolagem interna.
  *
- * Fecha por ×, Esc e clique fora. O cartão faz `stopPropagation`, então
+ * Fecha por ×, Esc e clique fora (Esc e clique fora desligáveis com `dismissible={false}`). O cartão faz `stopPropagation`, então
  * clicar DENTRO nunca fecha. O foco fica preso no cartão enquanto aberto
  * e volta ao elemento anterior ao fechar.
  */
-export function Modal({ open, onClose, title, children, footer }: ModalProps) {
+export function Modal({ open, onClose, title, children, footer, dismissible = true }: ModalProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
 
@@ -39,6 +45,10 @@ export function Modal({ open, onClose, title, children, footer }: ModalProps) {
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
+  const dismissibleRef = useRef(dismissible);
+  useEffect(() => {
+    dismissibleRef.current = dismissible;
+  }, [dismissible]);
 
   const trapFocus = useCallback((event: KeyboardEvent) => {
     const card = cardRef.current;
@@ -74,7 +84,7 @@ export function Modal({ open, onClose, title, children, footer }: ModalProps) {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.stopPropagation();
-        onCloseRef.current();
+        if (dismissibleRef.current) onCloseRef.current();
       } else if (event.key === 'Tab') {
         trapFocus(event);
       }
@@ -94,7 +104,7 @@ export function Modal({ open, onClose, title, children, footer }: ModalProps) {
   return (
     <div
       data-testid="modal-backdrop"
-      onClick={onClose}
+      onClick={dismissible ? onClose : undefined}
       className={cn(
         'fixed inset-0 z-50 flex items-center justify-center bg-backdrop p-lg',
       )}

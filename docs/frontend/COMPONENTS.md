@@ -542,7 +542,9 @@ Anatomia (padrão WhatsApp):
 
 ### Modal
 - Backdrop translúcido escuro, cartão radius-lg + shadow-lg, máx 720px
-- Rolagem interna; fecha por × e clique-fora (stopPropagation no cartão)
+- Rolagem interna; fecha por ×, Esc e clique-fora (stopPropagation no cartão)
+- `dismissible={false}` (CRMLAB-149): Esc e clique-fora deixam de fechar — só o × e os botões do
+  chamador. Para formulário de lançamento em série (Vendas, PAGES §17)
 
 ### ImageLightbox (CRMLAB-15, zoom em CRMLAB-21, setas em CRMLAB-64)
 ```tsx

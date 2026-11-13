@@ -1503,6 +1503,9 @@ Lançamento de vendas avulsas de exame/check-up e o cálculo de comissão. Fonte
   percentual localmente.
 - **Lançar venda** (formulário/modal): data (não futura), código (opcional), valor (`> 0`),
   exames (opcional), tipo (`exames | check-up`). Sucesso invalida a lista e o resumo.
+  - **Lançamento em série (CRMLAB-149):** o modal só fecha pelo × ou por Cancelar (clique fora e
+    Esc não fecham — `Modal dismissible={false}`). Ao lançar, ele continua aberto e limpa tipo,
+    código, valor e exames, mantendo atendente e data para a próxima venda.
   - **Exames** é um seletor do catálogo do laboratório (D-247), não texto livre: o gatilho mostra
     "Selecione exames…" ou "N exame(s) selecionado(s)"; ao abrir, busca por nome, sinônimo ou
     código (`GET /exams?active=true&search=…`, a mesma busca server-side do catálogo) e lista os

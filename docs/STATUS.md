@@ -4224,3 +4224,11 @@ Branch `feature/CRMLAB-150-151-menu-decisoes-canal-geral`, decisão D-321. Decis
 do grupo Gestão (o cabeçalho fechado soma as pendências). O Chat Interno oculta o canal `geral` no
 `internalChatApi.channels` (lista, contador e avisos); canal e mensagens seguem no servidor. E2E flow-11
 ajustado. Typecheck e suíte do frontend verdes (160 arquivos, 2143 testes).
+
+### ✅ Registro da implantação do Santé (2026-11-13)
+
+Branch `docs/sante-registro-implantacao`. Novo `docs/guides/IMPLANTACAO_SANTE.md` com o histórico de
+execução que só existia nas anotações das sessões: linha do tempo (spec 08/09 → virada **22/10**, planejada
+para 13/10), as 4 cargas de vendas, as duas rodadas de usuários, retrabalhos e incidentes, treinamento na hml,
+perguntas em aberto e lições para o próximo laboratório. `MIGRACAO_SANTE.md` §1.3: slug corrigido de `sante`
+para `lab-sante`. Só documentação.

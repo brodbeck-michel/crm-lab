@@ -6,7 +6,8 @@ só depois grave. **Produção só com confirmação explícita do Michel.**
 
 > Referências: spec da fusão (`docs/superpowers/specs/2026-09-08-fusao-crm-fluxolab-design.md`,
 > Onda 11), `docs/database/SCHEMA.md` §24/§27, `docs/guides/ENVIRONMENTS.md` (qual diretório é
-> qual ambiente).
+> qual ambiente). O que **já foi executado** (datas, cargas, incidentes, treinamento, virada em
+> 22/10/2026) está em [`IMPLANTACAO_SANTE.md`](IMPLANTACAO_SANTE.md). Slug do tenant em prod: **`lab-sante`**.
 
 ---
 
@@ -76,7 +77,7 @@ cd /opt/crm-lab-homolog
 docker compose -p crm-lab-homolog -f docker-compose.prod.yml run --rm --no-deps \
   -v /opt/crm-lab-homolog/import:/import:ro \
   backend node dist/backend/src/db/cli/import-sales-supabase.js \
-    --tenant sante \
+    --tenant lab-sante \
     --fluxolab /import/vendas-fluxolab.csv \
     --lovable  /import/vendas-lovable.csv \
     --dry-run

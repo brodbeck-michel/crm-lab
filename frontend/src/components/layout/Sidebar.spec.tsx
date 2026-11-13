@@ -8,6 +8,7 @@ import { useAuthStore, useMessageAlertsStore, useUIStore, useSidebarGroupsStore 
 import { queryKeys, queryScopes } from '@/api/query-keys';
 import { Sidebar } from './Sidebar';
 import type * as ClientModule from '@/api/client';
+import { operationApi } from '@/api/operation';
 
 // Sidebar busca `pendingDecisions.total` para o sino de "Decisões" (PAGES.md §12).
 // Promise que nunca resolve: os testes daqui não afirmam nada sobre o contador.
@@ -350,6 +351,25 @@ describe('Sidebar — grupos (accordion, CRMLAB-4, revisado em D-129)', () => {
 
     expect(screen.queryByRole('button', { name: 'Gestão' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Comunicação' })).not.toBeInTheDocument();
+  });
+});
+
+describe('Sidebar — Decisões no grupo Gestão (CRMLAB-150, D-321)', () => {
+  it('com o grupo fechado, o cabeçalho Gestão mostra as decisões pendentes', async () => {
+    vi.mocked(operationApi.overview).mockResolvedValueOnce({
+      pendingDecisions: { total: 2 },
+    } as unknown as Awaited<ReturnType<typeof operationApi.overview>>);
+    login('admin');
+    renderSidebar();
+
+    const header = screen.getByRole('button', { name: 'Gestão' });
+    expect(header).toHaveAttribute('aria-expanded', 'false');
+    await waitFor(() =>
+      expect(screen.getByLabelText('2 decisão(ões) pendente(s) em Gestão')).toBeInTheDocument(),
+    );
+
+    await userEvent.click(header);
+    expect(screen.getByRole('link', { name: /Decisões/ })).toBeInTheDocument();
   });
 });
 

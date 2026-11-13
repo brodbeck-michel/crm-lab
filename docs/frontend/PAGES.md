@@ -45,11 +45,12 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 ### Papéis por rota (implementado em `src/routes/route-config.ts`)
 
 **Grupos do trilho (accordion, CRMLAB-4; D-129; enxugado no CRMLAB-143, D-315):** itens sem grupo
-ficam soltos no topo — Atendimento, Chat Interno, Propostas, Vendas, Contatos e Decisões (gestor+, CRMLAB-146), nessa ordem; os grupos aparecem
+ficam soltos no topo — Atendimento, Chat Interno, Propostas, Vendas e Contatos, nessa ordem (Decisões, gestor+, foi para o grupo Gestão no CRMLAB-150, D-321); os grupos aparecem
 depois, na ordem Visitação Médica → Gestão → Configurações. O grupo "Comunicação" deixou de
 existir. Grupo sem nenhum item visível para o perfil não aparece. **Fechados por padrão**, exceto
 o grupo da tela atual; quando o usuário abre ou fecha um grupo, a escolha persiste em localStorage
-por usuário e passa a valer no lugar do padrão.
+por usuário e passa a valer no lugar do padrão. Grupo **Gestão** (gestor+): Decisões, Resultados, Busca
+Ativa, Gestão da Operação; fechado, o cabeçalho dele mostra a soma das decisões pendentes (D-321).
 
 **Cadastros (CRMLAB-143, D-315):** um item só no grupo Configurações (`/settings/registers`) para
 cinco telas, mostradas como abas (`SegmentedControl` `size="md"`, sem esticar) **acima do título
@@ -328,7 +329,7 @@ não só aqui. O Console da Plataforma não avisa.
   conversa aberta, que o Atendimento já carrega
 - **Chat interno (CRMLAB-116, D-284):** mensagem de colega num canal/DM dá o mesmo aviso (som,
   notificação, título), com as mesmas preferências. Notificação: título = nome do canal
-  (`Geral`) ou da colega na DM, corpo só a contagem; clicar abre `/internal-chat?channelId=…`.
+  (`Avisos gerais`) ou da colega na DM, corpo só a contagem; clicar abre `/internal-chat?channelId=…`.
   Não avisa mensagem minha (nem de outra aba), de sistema, editada/apagada, nem do canal aberto
   com a aba em foco. Detalhes em §9
 
@@ -812,7 +813,7 @@ nunca "sem permissão" (não vazar existência).
 
 - Lista de canais + DMs (coluna esquerda), mensagens (direita)
 - Mensagem pode anexar proposta → renderiza `ProposalCard` clicável → modal
-- Canais fixos `Geral` e `Avisos gerais` (chave `avisos`, subtítulo "Avisos importantes para toda a equipe"). Todos escrevem nos dois. Aprovar/Rejeitar saiu do chat no CRMLAB-146 (D-318) e fica em Decisões (§12)
+- Canal fixo `Avisos gerais` (chave `avisos`, subtítulo "Avisos importantes para toda a equipe"). Todos escrevem nele. O canal `Geral` (chave `geral`) continua existindo no servidor, mas a tela o **oculta** desde o CRMLAB-151 (D-321): não aparece na lista, não conta no contador da Sidebar nem gera aviso. Aprovar/Rejeitar saiu do chat no CRMLAB-146 (D-318) e fica em Decisões (§12)
 - Dados: `GET /internal-chat/*` + WS
 
 ### Anexar arquivo (CRMLAB-101, D-271)
@@ -1161,7 +1162,8 @@ gestor aprova ou rejeita: o chat interno não tem mais pedido de aprovação. It
 - Vazio: "Nenhuma decisão pendente"
 
 **Contador na Sidebar — removido no CRMLAB-143 (D-315), de volta no CRMLAB-146 (D-318).** O item
-"Decisões" do trilho mostra um contador (`Badge`) com
+"Decisões" do trilho (no grupo Gestão desde o CRMLAB-150; com o grupo fechado, a soma sobe para o
+cabeçalho dele — D-321) mostra um contador (`Badge`) com
 `pendingDecisions.total` para quem tem o item no menu (gestor+). Fonte: o MESMO
 `GET /operations/overview` (cache do TanStack Query compartilhado com §10 e com esta tela — não é
 uma segunda chamada). Fica live porque os eventos WS `approval.requested` e `approval.decided`

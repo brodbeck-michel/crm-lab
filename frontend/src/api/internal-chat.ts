@@ -18,8 +18,21 @@ import type { QueryParams } from './client';
  * Mensagem pode anexar `attachedProposalId`, que a tela renderiza como
  * `ProposalCard` clicável (abre o Modal da Proposta).
  */
+/** Canais que existem no servidor mas a tela não mostra (D-321). */
+const HIDDEN_CHANNEL_KEYS = new Set(['geral']);
+
 export const internalChatApi = {
-  channels: () => http.get<ListChannelsResponse>('/internal-chat/channels'),
+  /**
+   * CRMLAB-151 (D-321): o canal `geral` fica oculto na tela — lista, contador da Sidebar e
+   * avisos usam todos esta chamada. O canal e as mensagens continuam no servidor.
+   */
+  channels: async (): Promise<ListChannelsResponse> => {
+    const response = await http.get<ListChannelsResponse>('/internal-chat/channels');
+    return {
+      ...response,
+      channels: response.channels.filter((channel) => !HIDDEN_CHANNEL_KEYS.has(channel.key)),
+    };
+  },
 
   /**
    * `POST /internal-chat/channels/:id/read` — 204, sem corpo, idempotente.

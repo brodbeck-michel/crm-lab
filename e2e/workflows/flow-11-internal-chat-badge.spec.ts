@@ -8,7 +8,7 @@
  *
  * O seed monta o cenario de proposito (`E2E_CHANNEL_UNREAD.managerAvisos`):
  * o GESTOR nao tem linha de leitura em `Avisos gerais` e o aviso da atendente
- * conta — entao o canal abre com **1**. Em `Geral` ele ja
+ * conta — entao o canal abre com **1**. Em `Geral` (oculto na tela desde o CRMLAB-151) ele ja
  * leu (`E2E_CHANNEL_READS`), entao abre **zerado**. Os dois lados importam: sem
  * o canal zerado ao lado, "o badge sumiu" nao distinguiria "zerou" de "a lista
  * nao renderizou badge nenhum".
@@ -53,7 +53,8 @@ const GERAL = E2E_CHANNELS.geral.name;
 async function openChat(page: Page): Promise<void> {
   await page.goto(CHAT_PATH);
   await expect(channelButton(page, AVISOS)).toBeVisible();
-  await expect(channelButton(page, GERAL)).toBeVisible();
+  // CRMLAB-151 (D-321): `Geral` existe no servidor, mas a tela o oculta.
+  await expect(channelButton(page, GERAL)).toHaveCount(0);
 }
 
 test.describe('Fluxo 11: badge de nao lidas (D5 da Onda 5)', () => {
@@ -78,8 +79,7 @@ test.describe('Fluxo 11: badge de nao lidas (D5 da Onda 5)', () => {
     await expect(channelUnreadBadge(page, AVISOS)).toHaveText(
       String(E2E_CHANNEL_UNREAD.managerAvisos.expected),
     );
-    // Controle ao lado: o canal ja lido nao renderiza badge nenhum.
-    await expect(channelUnreadBadge(page, GERAL)).toHaveCount(0);
+    // `Geral` (ja lido, controle pela API acima) nao aparece na tela desde o CRMLAB-151.
   });
 
   test('ler o historico do canal NAO marca como lido (D-068)', async ({ request }) => {

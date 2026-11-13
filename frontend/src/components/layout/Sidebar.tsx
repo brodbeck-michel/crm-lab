@@ -143,7 +143,7 @@ export function Sidebar() {
   const pendingDecisionsCount =
     usePendingDecisions(hasDecisionsRoute).data?.pendingDecisions.total ?? 0;
 
-  // Contadores por item. Só os de mensagem (não "Decisões") sobem para o grupo (D-130).
+  // Contadores por item. Mensagens sobem para o grupo (D-130); Decisões também, no grupo Gestão (D-321).
   const unreadByPath: Record<string, number> = {
     '/attendance': attendanceUnreadCount,
     '/internal-chat': internalChatUnreadCount,
@@ -267,11 +267,18 @@ export function Sidebar() {
           // CRMLAB-143: sem preferência salva, só o grupo da tela atual começa aberto.
           const open = openGroupsByUser[userId]?.[group.id] ?? hasActiveChild;
           // D-130/D-277: o grupo herda a soma das não lidas (mensagens) dos itens dele.
+          // D-321 (CRMLAB-150): o grupo que tem "Decisões" soma as pendências dela.
+          const groupHasDecisions = group.items.some((route) => route.path === '/decisions');
           const groupUnreadCount = group.items.reduce(
-            (total, route) => total + (unreadByPath[route.path] ?? 0),
+            (total, route) =>
+              total +
+              (unreadByPath[route.path] ??
+                (route.path === '/decisions' ? pendingDecisionsCount : 0)),
             0,
           );
-          const groupBadgeLabel = `${groupUnreadCount} mensagens não lidas em ${group.label}`;
+          const groupBadgeLabel = groupHasDecisions
+            ? `${groupUnreadCount} decisão(ões) pendente(s) em ${group.label}`
+            : `${groupUnreadCount} mensagens não lidas em ${group.label}`;
           // Recolhido com o item ativo dentro: o ícone do grupo faz o papel do item ativo.
           const showActiveBg = collapsed && hasActiveChild;
           const groupId = `sidebar-group-${group.id}`;

@@ -85,11 +85,12 @@ describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, D-129, enxugado no 
     expect(groups.map((g) => g.label)).toEqual(NAV_GROUPS.map((g) => g.label));
   });
 
-  it('grupo Gestão: Resultados, Busca Ativa e Gestão da Operação (Conversão, Decisões e Conferência saíram do trilho)', () => {
+  it('grupo Gestão: Decisões, Resultados, Busca Ativa e Gestão da Operação (CRMLAB-150, D-321)', () => {
     const { groups } = sidebarSectionsFor('admin');
     const gestao = groups.find((g) => g.id === 'gestao');
 
     expect(gestao?.items.map((r) => r.label)).toEqual([
+      'Decisões',
       'Resultados',
       'Busca Ativa',
       'Gestão da Operação',
@@ -109,7 +110,7 @@ describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, D-129, enxugado no 
     ]);
   });
 
-  it('itens soltos: Atendimento, Chat Interno, Propostas, Vendas, Contatos e Decisões, nessa ordem', () => {
+  it('itens soltos: Atendimento, Chat Interno, Propostas, Vendas e Contatos, nessa ordem', () => {
     const { ungrouped } = sidebarSectionsFor('admin');
 
     expect(ungrouped.map((r) => r.label)).toEqual([
@@ -118,16 +119,17 @@ describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, D-129, enxugado no 
       'Propostas',
       'Vendas',
       'Contatos',
-      // CRMLAB-146 (D-318): a aprovação saiu do chat e voltou para cá.
-      'Decisões',
     ]);
   });
 
-  it('Decisões fica só para gestor e admin (CRMLAB-146)', () => {
-    expect(sidebarSectionsFor('manager').ungrouped.map((r) => r.path)).toContain('/decisions');
-    expect(sidebarSectionsFor('attendant').ungrouped.map((r) => r.path)).not.toContain(
-      '/decisions',
-    );
+  it('Decisões fica só para gestor e admin, no grupo Gestão (CRMLAB-146/150)', () => {
+    const paths = (role: 'manager' | 'attendant') =>
+      sidebarSectionsFor(role).groups.flatMap((g) => g.items.map((r) => r.path));
+    expect(
+      sidebarSectionsFor('manager').groups.find((g) => g.id === 'gestao')?.items.map((r) => r.path),
+    ).toContain('/decisions');
+    expect(sidebarSectionsFor('manager').ungrouped.map((r) => r.path)).not.toContain('/decisions');
+    expect(paths('attendant')).not.toContain('/decisions');
   });
 
   it('atendente não tem grupo Gestão; Configurações mostra Cadastros + Regras', () => {

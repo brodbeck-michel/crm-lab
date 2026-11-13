@@ -232,20 +232,20 @@ para as gestoras (https://claude.ai/artifact/JR4cHeWruKMyNQGd7igK8m).
 | # | Item | Como conferir |
 |---|------|---------------|
 | 1 | Restrição de 04/11/2026 encerrada e número estável há alguns dias | Celular sem aviso de restrição; nenhum alerta de sessão no Telegram |
-| 2 | Conta empresarial (Business Manager) do Santé **verificada** — **é o item que trava tudo**: sem ela a Meta aceita o envio (devolve `wamid`) e depois marca `failed` **131031**, **inclusive resposta dentro das 24 h**. O número recebe, mas não responde. Leva de dias a ~2 semanas e pede documentos do CNPJ: **começar por ele** (ensaio de 10/11, 4.3.1) | Central de Segurança › Verificação da empresa = "Verificada"; sem banner vermelho "Esta conta ainda não pode enviar mensagens" no Gerenciador do WhatsApp |
+| 2 | Conta empresarial (Business Manager) do Santé **verificada** — **é o item que trava tudo**: sem ela a Meta aceita o envio (devolve `wamid`) e depois marca `failed` **131031**, **inclusive resposta dentro das 24 h**. O número recebe, mas não responde. Leva de dias a ~2 semanas e pede documentos do CNPJ: **começar por ele** (ensaio de 10/11, 4.3.1) | `GET /{waba_id}?fields=business_verification_status` = `verified` (a fonte que vale). **Cuidado:** "Verificação bem-sucedida" em Autorizações e verificações › *verificação individual ou de organização* é a de **anunciante** e **não** libera o WhatsApp (12/11/2026). A certa fica em Central de Segurança › card **"Verificação da empresa"** › Iniciar verificação (ver 4.3.2). ✅ **Verificada em 12/11/2026** (aprovada no mesmo dia; `health_status` BUSINESS e APP `AVAILABLE`) |
 | 2a | **Informações da empresa completas**: nome legal (razão social), endereço com país **Brasil** e **site**. Faltando, a Meta recusa o envio com **131000** | Configurações do negócio › Informações da empresa |
-| 3 | Conta do WhatsApp Business (WABA) criada e **forma de pagamento** no Billing Hub: moeda **BRL** (não muda depois), **CNPJ** do lab, "fins comerciais" = **Sim**, cartão do lab. Sem ela: **141006**. A Meta pode segurar uma pré-autorização no cartão por até 24 h | Billing Hub › Contas de mensagens › forma de pagamento ativa |
-| 4 | **Nome de exibição** do número aprovado **(conferir na Meta)** | Gerenciador do WhatsApp › Números de telefone |
-| 5 | **Modelos aprovados**: os três de 4.1.1 (`retomar_atendimento`, `retorno_orcamento`, `lembrete_coleta`), todos UTILITY | Gerenciador do WhatsApp › Modelos (status "Aprovado"); no CRM, aparecem no "Enviar modelo" em até 5 min |
+| 3 | Conta do WhatsApp Business (WABA) criada e **forma de pagamento** no Billing Hub: moeda **BRL** (não muda depois), **CNPJ** do lab, "fins comerciais" = **Sim**, cartão do lab. Sem ela: **141006**. A Meta pode segurar uma pré-autorização no cartão por até 24 h | Configurações › **Contas de mensagens** › a conta › Summary: endereço, **moeda BRL**, fuso **America/Sao_Paulo** (vem America/Los_Angeles) e forma de pagamento. É isso que gera o aviso "WhatsApp needs more information" em Informações da empresa. **Decisão de 13/11/2026: a "Test Messaging Account" (`3732004406965190`) vira a conta de produção** — o "Criar conta do WhatsApp" do Business Manager exige número e verificação, então não dá para criar uma WABA vazia antes da virada. Já feito em 13/11: nome **Laboratório Santé**, fuso **America/Sao_Paulo**, moeda **BRL** (conferido pela API) e, em Cobrança e pagamentos › Informações da empresa, Brasil/BRL, CNPJ e "fins comerciais" = Sim (a Meta puxou razão social e endereço do CNPJ). **Falta só o cartão** (Milena: Configurações de pagamento › Adicionar forma de pagamento). Nome do portfólio "Laboratório Sante" (sem acento): **não mexer**, está verificado |
+| 4 | **Nome de exibição** do número aprovado **(conferir na Meta)**. Ele é pedido **quando o número real é adicionado** — na migração completa isso só acontece no dia (4.4 passo 4), então não dá para adiantar | Gerenciador do WhatsApp › Números de telefone |
+| 5 | **Modelos aprovados**: os três de 4.1.1 (`retomar_atendimento`, `retorno_orcamento`, `lembrete_coleta`), todos UTILITY | Gerenciador do WhatsApp › Modelos (status "Aprovado"); no CRM, aparecem no "Enviar modelo" em até 5 min. **Modelo pertence à WABA**: os criados em 12/11/2026 estão na WABA **de teste** ("Test Messaging Account"); como essa WABA vira a de produção (item 3), **não precisa recriar**. Em 13/11 seguiam **PENDING** (talvez esperando a forma de pagamento) |
 | 6 | App na Meta com o produto WhatsApp e **usuário do sistema** com token **que nunca expira** (`whatsapp_business_messaging` e `whatsapp_business_management`) | Business Manager › Usuários do sistema |
 | 7 | **App inscrito na WABA do Santé** (`POST /{waba_id}/subscribed_apps`) — sem isso a Meta não entrega nada ao CRM. No ensaio de 10/11 a WABA de teste **não** veio inscrita (só tinha o app da própria Meta) e foi preciso fazer o `POST` — no Santé, conferir sempre | `GET /{waba_id}/subscribed_apps` lista o app do CRM |
 | 7a | Campo **messages** assinado no webhook do app (Painel do app › WhatsApp › Configuração) | Aparece "Assinado" na linha *messages* |
 | 8 | **PIN de duas etapas** do número definido e guardado no cofre (é pedido para registrar e para voltar) | Anotado fora do celular |
 | 9 | Limite de conversas iniciadas pela empresa para número novo conhecido (afeta o lembrete de coleta) **(conferir na Meta)** | Gerenciador do WhatsApp › Insights/limites |
-| 10 | Produção numa versão com CRMLAB-135..141 e 140 (anexos, ffmpeg na imagem) | Versão no rodapé da barra lateral do CRM e a tag da imagem em execução (`docker inspect`; o `IMAGE_TAG` do `.env` de prod pode estar velho); `docker exec <backend> ffmpeg -version` |
-| 11 | `.env` de **prod** com `WHATSAPP_API_URL=https://graph.facebook.com/v<versão>`, `WHATSAPP_WEBHOOK_SECRET=<App Secret>`, `WHATSAPP_WEBHOOK_VERIFY_TOKEN=<valor aleatório>`. **Nunca** `WHATSAPP_CLOUD_API_MOCK` em prod | `deploy.sh` com as envs; DEPLOYMENT "Cloud API" |
+| 10 | Produção numa versão com CRMLAB-135..141 e 140 (anexos, ffmpeg na imagem) **e com o CRMLAB-147** (recado de voz do CRM não tocava no iPhone — 4.3.2). Sem o 147, **não virar** | Versão no rodapé da barra lateral do CRM e a tag da imagem em execução (`docker inspect`; o `IMAGE_TAG` do `.env` de prod pode estar velho); `docker exec <backend> ffmpeg -version` |
+| 11 | `.env` de **prod** com `WHATSAPP_API_URL=https://graph.facebook.com/v<versão>`, `WHATSAPP_WEBHOOK_SECRET=<App Secret>`, `WHATSAPP_WEBHOOK_VERIFY_TOKEN=<valor aleatório>`. **Nunca** `WHATSAPP_CLOUD_API_MOCK` em prod | ✅ **Aplicado em 12/11/2026** (4.3.2). Conferir: `docker exec <backend> sh -c 'echo $WHATSAPP_API_URL'` |
 | 12 | **Segredo do webhook do Santé** na tela de Canais: o código usa o segredo do laboratório quando existe (e `''` = revogado, D-073) e só cai no `WHATSAPP_WEBHOOK_SECRET` quando a tela diz "Não configurado". Deixar "Não configurado" **ou** gravar o App Secret ali | Configurações › Canais › WhatsApp › "Segredo do webhook" |
-| 13 | Ensaio completo em **homologação** (4.3) feito e anotado | Este guia, 4.3 |
+| 13 | Ensaio completo feito e anotado — ✅ **feito em PRODUÇÃO no tenant `teste` em 12/11/2026** (4.3.2), no lugar da hml. Faltam só modelo, CSV e painel de custo | Este guia, 4.3.2 |
 | 14 | Quem está com o celular do número (Thaisy ou Tainá) avisada da janela | — |
 | 15 | **Conversas do celular exportadas** (as que importam, principalmente as de depois de 04/11/2026, que não estão no CRM): ⋮ › Mais › Exportar conversa › Incluir mídia › e-mail do lab. Na migração completa elas **somem do celular** | Gestora confirma por escrito |
 | 16 | **Sinal verde da Meta (go/no-go)**: `GET /{waba_id}?fields=health_status` com `can_send_message` = `AVAILABLE` para o negócio, a WABA e o app (depois de adicionar o número, também para o número). `LIMITED`/`BLOCKED` = **não apagar a conta do celular** | Michel consulta com o token permanente na véspera e de novo no dia, antes do passo 4 da 4.4 |
@@ -355,6 +355,62 @@ Lições de operação (para o próximo ensaio na hml):
 - A Meta normaliza celular antigo sem o nono dígito (`5548988…` → `wa_id 554888…`). O contato
   que já existe no CRM desde a época do QR precisa cair **na mesma conversa**. Conferir no passo 7 da 4.4.
 - Situação de envio da conta, sem mandar mensagem: `GET /{waba_id}?fields=health_status`.
+
+### 4.3.2 Ensaio em PRODUÇÃO no portfólio do Santé — 12/11/2026 ✅
+
+Desta vez com o **portfólio real do Santé** ("Laboratório Sante", ID 1784519782770617), num app novo e
+**em produção**, no tenant **`teste`** (o Santé seguiu em `qr`, sem ser tocado). O passo a passo para
+repetir está na skill `.claude/skills/cloud-api-meta/SKILL.md`.
+
+**O que ficou montado (e serve para a troca do Santé):**
+
+| Peça | Valor |
+|------|-------|
+| App Meta | **CRM Lab - Santé**, ID `40949966027927681`, no portfólio do Santé, não publicado (não precisa) |
+| Usuário do sistema | **CRMLabSante** (Admin), token **sem expiração**, só `whatsapp_business_messaging` + `whatsapp_business_management`; ativos: o app + a WABA + a conta de mensagens vinculada, todos com acesso total |
+| WABA de teste | "Test Messaging Account", ID `3732004406965190` (o ID que o painel chama de "conta de mensagens" serve como `waba_id`) |
+| Número de teste | +1 555 151-8021, `phone_number_id` `1508225332363199` (manda para até 5 celulares cadastrados no app) |
+| App inscrito na WABA | ✅ `POST /3732004406965190/subscribed_apps` |
+| Webhook do app | ✅ cadastrado pela API: `POST /40949966027927681/subscriptions` (token do app `APP_ID\|APP_SECRET`), callback `https://vitrocrm.cloud/api/v1/webhooks/whatsapp/teste`, campo `messages` |
+| `.env` de prod | ✅ `WHATSAPP_API_URL=https://graph.facebook.com/v25.0`, `WHATSAPP_WEBHOOK_SECRET` = App Secret, `WHATSAPP_WEBHOOK_VERIFY_TOKEN` gerado. Backup antes: `/home/deploy/crm-lab-env-backups/prod.env.bak-20261112-181020-pre-cloud-api-teste` |
+| Segredos | só na máquina do Michel, `~/.config/crm-lab-meta-sante/{token,app_secret,verify_token}` (600) |
+| Modelos | os 3 da 4.1.1 submetidos na WABA de teste (Utilidade, pt_BR) — em análise no fim do dia |
+
+**Resultado (celular iPhone do Michel ↔ CRM prod, tenant `teste`):**
+
+| Teste | Resultado |
+|-------|-----------|
+| Verificação do callback pela Meta | ✅ |
+| "oi" do celular → CRM | ✅ `whatsapp.webhook_processed`, caiu na **conversa que já existia** (nono dígito ok: a Meta manda `wa_id 554888…`, casou com `5548988…`) |
+| Resposta de texto pelo CRM → celular | ✅ entregue, tiques até **lido**; o "sent" atrasado depois do "read" é ignorado (`whatsapp.status_ignored`) |
+| Foto, PDF e recado de voz do celular → CRM | ✅ anexos baixados da Meta, sem `inbound_media_fallback` |
+| Foto e PDF do CRM → celular | ✅ (cobrança `service`, dentro das 24 h) |
+| **Recado de voz do CRM → iPhone** | ⛔ chega, mas **não toca**. Causa isolada: o OGG do ffmpeg com ~49 pacotes por página. Com `-page_duration 20000` (1 pacote por página) + `voice: true`, toca. Correção: **CRMLAB-147** — pré-requisito da troca (4.1 item 10) |
+| Modelo pelo CRM, CSV recusado, painel "Uso e custo" | ⏳ pendente (modelos ainda em análise) |
+
+**Pegadinhas que custaram tempo (já estão na skill):**
+- **A verificação de anunciante não é a da empresa.** "Verificação bem-sucedida" em Autorizações e
+  verificações enganou; a API dizia `business_verification_status: not_verified` e
+  `health_status` BUSINESS `LIMITED 141010`. O número de **teste** entrega mesmo assim — entrega com o
+  número de teste **não prova** nada sobre a verificação.
+- **Conversa `direct` engole a mensagem do WhatsApp.** A conversa do Michel no `teste` era `direct`
+  (16/09); a mensagem da Meta entrou nela e a resposta ficou `sent` sem `wamid` (não sai para canal
+  `direct`). Corrigido à mão só nessa conversa (`channel` → `whatsapp`). Card **CRMLAB-148**. O Santé não
+  tem conversa `direct` (428, todas `whatsapp`).
+- **Tela de Canais tem dois blocos que salvam separado:** "Trocar para API oficial" grava modo + número +
+  WABA + token; o bloco de cima (nome, número exibido, **Canal ativo**) só grava no **Salvar** dele. O
+  canal do `teste` estava desativado e o GET de verificação só passa com ele ativo.
+- **Nome do usuário do sistema** não aceita hífen (`crm-lab` foi recusado; `CRMLabSante` passou).
+- **Segredo pelo `!` do Claude Code:** `read -rsp` não funciona (sem terminal). O que funcionou:
+  `powershell.exe -NoProfile -Command Get-Clipboard | tr -d '\r\n ' > arquivo` (copiar o valor **depois**
+  de copiar o comando) e, para devolver ao navegador, `clip.exe < arquivo`.
+- **Aplicar `.env` sem trocar versão:** `origin/main` estava num commit só de docs, sem tag, e o
+  `deploy.sh` de prod exige tag. Foi recriado só o backend com a mesma imagem
+  (`IMAGE_TAG=3a8ff5b docker compose -p crm-lab-prod -f docker-compose.prod.yml up -d --no-deps backend` +
+  `restart frontend`). Exceção pontual: o caminho normal continua sendo o `deploy.sh` (na próxima versão
+  ele já sobe com essas envs, que ficam no `.env`).
+- **Um callback por app:** hoje o app aponta para `/teste`. No dia da troca, trocar para `/lab-sante`
+  (mesmo `POST /{app_id}/subscriptions`) — ou callback por WABA (DEPLOYMENT, "mais de um laboratório").
 
 ### 4.4.0 Véspera e kit do dia
 

@@ -186,16 +186,18 @@ export const APP_ROUTES: readonly AppRoute[] = [
     inSidebar: true,
     icon: 'patients',
   },
+
+  // ── Domínio LIS (Onda 10) ────────────────────────────────────────────────
   {
-    // CRMLAB-146 (D-318): de volta ao trilho, solta — é onde o gestor aprova.
+    // CRMLAB-146 (D-318): de volta ao trilho, é onde o gestor aprova. CRMLAB-150 (D-321):
+    // primeiro item do grupo Gestão.
     path: '/decisions',
     label: 'Decisões',
     requiredRoles: MANAGER_PLUS,
     inSidebar: true,
     icon: 'decisions',
+    group: 'gestao',
   },
-
-  // ── Domínio LIS (Onda 10) ────────────────────────────────────────────────
   {
     path: '/results',
     label: 'Resultados',

@@ -4212,3 +4212,10 @@ Branch `feature/CRMLAB-149-vendas-modal-continuo`. `Modal` ganhou `dismissible` 
 outras telas não mudam). Em `/sales` o modal usa `dismissible={false}`: só fecha pelo × ou Cancelar.
 Ao lançar, continua aberto e limpa tipo/código/valor/exames, mantendo atendente e data (PAGES §17,
 COMPONENTS › Modal). Typecheck e suíte do frontend verdes (159 arquivos, 2141 testes).
+
+### 🔄 CRMLAB-150 + CRMLAB-151 — Decisões no grupo Gestão e canal Geral oculto (2026-11-13, aguardando validação)
+
+Branch `feature/CRMLAB-150-151-menu-decisoes-canal-geral`, decisão D-321. Decisões virou o primeiro item
+do grupo Gestão (o cabeçalho fechado soma as pendências). O Chat Interno oculta o canal `geral` no
+`internalChatApi.channels` (lista, contador e avisos); canal e mensagens seguem no servidor. E2E flow-11
+ajustado. Typecheck e suíte do frontend verdes (160 arquivos, 2143 testes).

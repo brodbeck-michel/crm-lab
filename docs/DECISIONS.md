@@ -7227,3 +7227,20 @@ gateway fora do canal `whatsapp`. Nenhum aviso.
 **Impacto:** backend (`conversation.service.ts`, `message.service.ts`, `MessageRepository.hasInboundFromGateway`),
 frontend (`api/error-handler.ts`, Atendimento), API_CONTRACTS §2 e API_ERRORS. Sem migração: o caso de
 produção (1 conversa no `teste`) já foi corrigido à mão; o Santé não tem conversa `direct`.
+
+### D-321: "Decisões" dentro do grupo Gestão (CRMLAB-150) e canal `Geral` oculto no Chat Interno (CRMLAB-151)
+**Contexto:** pedido do Michel em 13/11/2026. "Decisões" estava solto no topo do trilho (D-318), longe das
+outras telas de gestor. No Chat Interno, `Geral` ficou redundante com `Avisos gerais` desde que a aprovação
+saiu do chat (D-318); no Santé o último post nele é de 22/10.
+**Decisão:**
+1. **Decisões no grupo Gestão**, como primeiro item (antes de Resultados). Sem mudança de permissão: o item e
+   o grupo já eram gestor+. Como o grupo nasce fechado fora das telas dele, o **cabeçalho do grupo passa a
+   somar as decisões pendentes** (rótulo "N decisão(ões) pendente(s) em Gestão"), para o gestor não perder
+   um pedido de aprovação com o grupo fechado. Os grupos sem Decisões seguem somando só mensagens (D-277).
+2. **`Geral` oculto, não apagado.** A tela ignora o canal de chave `geral` no retorno de
+   `GET /internal-chat/channels` (`internalChatApi.channels`, uma vez para todos os consumidores: lista do
+   chat, contador da Sidebar e avisos de mensagem nova). Canal, mensagens e endpoint ficam como estão —
+   voltar atrás é tirar o filtro. O backend continua criando o canal no onboarding (D-043) e os testes que
+   o usam como canal genérico não mudam.
+**Impacto:** só frontend (`route-config.ts`, `Sidebar.tsx`, `api/internal-chat.ts`) e PAGES §Papéis/§12/§11.
+Sem endpoint, migração ou mudança de permissão.

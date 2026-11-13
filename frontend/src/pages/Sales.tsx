@@ -176,13 +176,16 @@ function SaleForm({ canPickAttendant, attendants, onClose }: SaleFormProps) {
   const { toast } = useToast();
   const createSale = useCreateSale();
 
-  const [form, setForm] = useState({
-    attendantId: '',
-    soldOn: new Date().toISOString().slice(0, 10),
+  const emptySale = {
     code: '',
     value: '',
     exams: [] as PickedExam[],
     kind: 'exams' as SaleKind,
+  };
+  const [form, setForm] = useState({
+    attendantId: '',
+    soldOn: new Date().toISOString().slice(0, 10),
+    ...emptySale,
   });
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
@@ -203,7 +206,9 @@ function SaleForm({ canPickAttendant, attendants, onClose }: SaleFormProps) {
     createSale.mutate(body, {
       onSuccess: () => {
         toast('Venda lançada.', { tone: 'positive' });
-        onClose();
+        // CRMLAB-149: o modal fica aberto para lançar a próxima — limpa a venda, mas mantém
+        // atendente e data, que costumam se repetir no lançamento em série.
+        setForm((prev) => ({ ...prev, ...emptySale }));
       },
       onError: (err) => {
         if (isApiError(err) && err.code === 'VALIDATION_ERROR') {
@@ -227,6 +232,7 @@ function SaleForm({ canPickAttendant, attendants, onClose }: SaleFormProps) {
     <Modal
       open
       onClose={onClose}
+      dismissible={false}
       title="Lançar venda"
       footer={
         <div className="flex gap-md ml-auto">

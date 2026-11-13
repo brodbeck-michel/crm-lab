@@ -4205,3 +4205,10 @@ Branch `feature/CRMLAB-147-148-audio-iphone-conversa-direct`. Decisões D-319 e 
 - **Testes:** `graph-media.spec.ts` (+1, `voice`), `crmlab140-anexos.spec.ts` (+3: argumentos, `voice`
   pela fila, páginas curtas com ffmpeg real — pulado sem ffmpeg na máquina), `crmlab148-conversa-direct.spec.ts`
   (3), `error-handler.spec.ts` (+2).
+
+### 🔄 CRMLAB-149 — modal "Lançar venda" em série (2026-11-13, aguardando validação)
+
+Branch `feature/CRMLAB-149-vendas-modal-continuo`. `Modal` ganhou `dismissible` (padrão `true`; as
+outras telas não mudam). Em `/sales` o modal usa `dismissible={false}`: só fecha pelo × ou Cancelar.
+Ao lançar, continua aberto e limpa tipo/código/valor/exames, mantendo atendente e data (PAGES §17,
+COMPONENTS › Modal). Typecheck e suíte do frontend verdes (159 arquivos, 2141 testes).

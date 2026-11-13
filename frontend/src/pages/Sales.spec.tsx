@@ -177,6 +177,37 @@ describe('Sales (/sales)', () => {
     expect(mockCreate.mock.calls[0]?.[0]).toMatchObject({ value: 150, kind: 'exams' });
   });
 
+  it('após lançar, o modal continua aberto com a venda limpa (CRMLAB-149)', async () => {
+    const user = userEvent.setup();
+    mockCreate.mockImplementation((_body, opts?: { onSuccess?: () => void }) => opts?.onSuccess?.());
+    signIn('attendant');
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /lançar venda/i }));
+    await user.type(screen.getByLabelText('Código'), 'V-77');
+    await user.type(screen.getByLabelText('Valor'), '150');
+    await user.click(screen.getByRole('button', { name: /^lançar$/i }));
+
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('dialog', { name: 'Lançar venda' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Código')).toHaveValue('');
+    expect(screen.getByLabelText('Valor')).toHaveValue(null);
+  });
+
+  it('modal de venda só fecha pelo × ou Cancelar — clique fora e Esc não fecham (CRMLAB-149)', async () => {
+    const user = userEvent.setup();
+    signIn('attendant');
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /lançar venda/i }));
+    await user.click(screen.getByTestId('modal-backdrop'));
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('dialog', { name: 'Lançar venda' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /^cancelar$/i }));
+    expect(screen.queryByRole('dialog', { name: 'Lançar venda' })).not.toBeInTheDocument();
+  });
+
   it('grava os exames escolhidos no catálogo como texto com os nomes (D-247)', async () => {
     const user = userEvent.setup();
     signIn('attendant');

@@ -49,6 +49,20 @@ describe('Modal', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it('dismissible={false}: Esc e clique fora NÃO fecham, só o × (CRMLAB-149)', async () => {
+    const onClose = vi.fn();
+    render(
+      <Modal open onClose={onClose} title="Lançar venda" dismissible={false}>
+        <p>Conteúdo</p>
+      </Modal>,
+    );
+    await userEvent.keyboard('{Escape}');
+    await userEvent.click(screen.getByTestId('modal-backdrop'));
+    expect(onClose).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Fechar' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('NÃO fecha por clique dentro do cartão', async () => {
     const onClose = setup();
     await userEvent.click(screen.getByText('Conteúdo do modal'));

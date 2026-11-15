@@ -11,7 +11,12 @@ import { assertOutboundMimeAllowed, resolveStoredMimeType } from './media.servic
 // buffer curto demais lança `EndOfStreamError` em vez de "não reconheci".
 // 32 bytes de padding cobrem folgado o que cada formato precisa ler.
 const PAD = Buffer.alloc(32);
-const PNG_MAGIC = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), PAD]);
+// Assinatura + cabeçalho do chunk IHDR: desde o `file-type` 22 (CRMLAB-164)
+// a assinatura sozinha seguida de zeros não é mais reconhecida como PNG.
+const PNG_MAGIC = Buffer.concat([
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52]),
+  PAD,
+]);
 const JPEG_MAGIC = Buffer.concat([
   Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0]),
   PAD,

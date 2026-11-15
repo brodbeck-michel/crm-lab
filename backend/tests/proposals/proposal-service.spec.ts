@@ -644,6 +644,32 @@ describe('ProposalService', () => {
   });
 
   describe('visibilidade por papel (D-042)', () => {
+    it('criar proposta na conversa de outra atendente -> NOT_FOUND, sem vazar paciente (CRMLAB-166)', async () => {
+      const tenant = await createTenant();
+      const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });
+      const bia = await createUser({ tenantId: tenant.id, role: 'attendant' });
+      const gestor = await createUser({ tenantId: tenant.id, role: 'manager' });
+      const daBia = await createConversation({ tenantId: tenant.id, assignedTo: bia.id });
+      const exam = await createExam({ tenantId: tenant.id, pricePrivate: 50 });
+      const dto = { conversationId: daBia.id, items: [{ examId: exam.id, quantity: 1 }], discountPercent: 0 };
+
+      const error = await businessErrorOf(h.proposals.create(ctxOf(ana), dto));
+      expect(error.code).toBe('NOT_FOUND');
+      expect(error.statusCode).toBe(404);
+      const { rows } = await db.withoutTenant((tx) =>
+        tx.query<{ n: string }>('SELECT count(*)::text AS n FROM proposals WHERE conversation_id = $1', [daBia.id]),
+      );
+      expect(rows[0]?.n).toBe('0');
+
+      // A dona, a fila livre e o gestor continuam criando.
+      await expect(h.proposals.create(ctxOf(bia), dto)).resolves.toMatchObject({ status: 'novo_contato' });
+      await expect(h.proposals.create(ctxOf(gestor), dto)).resolves.toMatchObject({ status: 'novo_contato' });
+      const livre = await createConversation({ tenantId: tenant.id, assignedTo: null });
+      await expect(
+        h.proposals.create(ctxOf(ana), { ...dto, conversationId: livre.id }),
+      ).resolves.toMatchObject({ status: 'novo_contato' });
+    });
+
     it('atendente nao enxerga proposta de outro atendente do mesmo tenant', async () => {
       const tenant = await createTenant();
       const a = await createUser({ tenantId: tenant.id, role: 'attendant' });

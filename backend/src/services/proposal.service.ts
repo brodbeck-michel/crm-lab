@@ -666,11 +666,11 @@ export class ProposalService {
     const requestingDoctor = normalizeRequestingDoctor(dto.requestingDoctor);
 
     const created = await db.withTenant(ctx.tenantId, async (tx) => {
-      // Conversa de outro tenant fica invisivel pelo RLS -> NOT_FOUND.
-      const conversation = await repo.findConversation(tx, dto.conversationId);
-      if (!conversation) {
-        throw notFound({ resource: 'conversation', id: dto.conversationId });
-      }
+      // Conversa de outro tenant (RLS) OU fora da visibilidade de quem cria ->
+      // NOT_FOUND (CRMLAB-166). So o tenant nao bastava: o id de uma conversa
+      // da colega chega a todos pelo WebSocket, e a resposta devolve nome e
+      // telefone do paciente.
+      await this.loadVisibleConversation(tx, ctx, dto.conversationId);
 
       const userLimit = await readDiscountLimit(tx, ctx.userId, ctx.discountLimit);
       const withinLimit = discountPercent <= userLimit;

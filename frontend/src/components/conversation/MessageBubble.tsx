@@ -14,7 +14,7 @@ import { AudioMessage } from './AudioMessage';
 import { ContactCard } from './ContactCard';
 import { DocumentCard } from './DocumentCard';
 import { LocationCard } from './LocationCard';
-import { isProtectedMediaUrl } from './media-url';
+import { externalMediaUrl, isProtectedMediaUrl } from './media-url';
 import { showsMessageText } from './message-content';
 import { StickerMessage } from './StickerMessage';
 import { VideoMessage } from './VideoMessage';
@@ -457,7 +457,7 @@ export function MessageBubble({
   // O hook busca autenticado e devolve um object URL utilizável em <img>.
   // URL externa (`isProtected` falso) vai direto no <img>, sem token.
   const { objectUrl: fetchedImageUrl, isLoading: imageLoading } = useAuthenticatedMedia(isImage && isProtected ? attachmentUrl : null);
-  const imageUrl = isImage && !isProtected ? attachmentUrl : fetchedImageUrl;
+  const imageUrl = isImage && !isProtected ? externalMediaUrl(attachmentUrl) : fetchedImageUrl;
 
   if (isDeleted) {
     return (

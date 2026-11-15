@@ -242,7 +242,15 @@ export const openWhatsAppConversationSchema = z.object({
 const messageBodyShape = {
   content: z.string().trim().min(1).max(4000),
   messageType: z.enum(['text', 'image', 'audio', 'pdf', 'doc']).optional(),
-  attachmentUrl: z.string().max(500).nullish(),
+  /**
+   * CRMLAB-165: so a midia do proprio CRM (`/api/v1/media/<uuid>`, o formato
+   * que o upload gera). URL externa ou `javascript:` aqui virava link/imagem
+   * que o navegador de quem abre a conversa carregava sozinho.
+   */
+  attachmentUrl: z
+    .string()
+    .regex(/^\/api\/v1\/media\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, 'attachmentUrl deve ser /api/v1/media/<uuid>')
+    .nullish(),
   /** Responder citando (CRMLAB-66, D-221). */
   quotedMessageId: z.uuid().nullish(),
 };

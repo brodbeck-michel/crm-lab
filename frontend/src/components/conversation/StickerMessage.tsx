@@ -1,5 +1,5 @@
 import { useAuthenticatedMedia } from '@/hooks';
-import { isProtectedMediaUrl } from './media-url';
+import { externalMediaUrl, isProtectedMediaUrl } from './media-url';
 
 export interface StickerMessageProps {
   /** `message.attachmentUrl`. */
@@ -14,7 +14,7 @@ export interface StickerMessageProps {
 export function StickerMessage({ url }: StickerMessageProps) {
   const isProtected = isProtectedMediaUrl(url);
   const { objectUrl, isLoading } = useAuthenticatedMedia(isProtected ? url : null);
-  const src = isProtected ? objectUrl : url;
+  const src = isProtected ? objectUrl : externalMediaUrl(url);
 
   if (!src) {
     return (

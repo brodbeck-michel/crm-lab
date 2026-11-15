@@ -137,7 +137,7 @@ if [[ "$APP_ENV" == 'production' ]]; then
       || erro "tag $tag_exata != versao v$VERSAO do package.json. Um dos dois esta errado."
   else
     printf '\n\033[1;33mAVISO: HEAD (%s) nao tem tag.\033[0m\n' "$SHA"
-    info "O fluxo acordado e: bump do package.json -> commit -> tag vX.Y.Z -> push --follow-tags -> deploy."
+    info "O fluxo acordado e: PR de bump do package.json (D-322) -> merge com CI verde -> tag vX.Y.Z no merge -> push da tag -> deploy."
     info "Sem isso a tela vai mostrar v$VERSAO para um codigo que nao e a v$VERSAO."
     CONFIRMADO=0
   fi

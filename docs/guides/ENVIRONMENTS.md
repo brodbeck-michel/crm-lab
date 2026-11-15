@@ -119,6 +119,11 @@ cd /opt/crm-lab
 ./scripts/deploy.sh          # pede para digitar PRODUCAO
 ```
 
+O bump de versão também entra por PR (D-322): branch `chore/release-vX.Y.Z` só com o
+`version` do `package.json` da raiz (e o lock), merge com CI verde, tag `vX.Y.Z` no commit
+de merge e push da tag. Nada vai direto na `main` — o GitHub Free não trava isso em repo
+privado, então a regra é de disciplina.
+
 O `deploy.sh` faz, em ordem: identidade → árvore limpa → `fetch` → `checkout
 --detach` → **CI verde no SHA** (D-150) → `pull` (ou `build`, fallback sem
 `IMAGE_REGISTRY` — CRMLAB-36) → `run --rm migrate` → `up -d` → `/healthz` →

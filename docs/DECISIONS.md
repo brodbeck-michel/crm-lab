@@ -7244,3 +7244,23 @@ saiu do chat (D-318); no Santé o último post nele é de 22/10.
    o usam como canal genérico não mudam.
 **Impacto:** só frontend (`route-config.ts`, `Sidebar.tsx`, `api/internal-chat.ts`) e PAGES §Papéis/§12/§11.
 Sem endpoint, migração ou mudança de permissão.
+
+### D-322: Repositório privado e bump de versão por PR (CRMLAB-156)
+**Contexto:** auditoria de segurança de 15/11/2026, achado A1. O repositório `brodbeck-michel/crm-lab` era
+público: código, migrations, `SECURITY.md` com os riscos aceitos e guias de deploy e do Santé abertos a
+qualquer um. Varredura de segredos, Dependabot e proteção da `main` estavam desligados. O bump de versão
+(`chore: bump versao para vX.Y.Z`) ia direto na `main`.
+**Decisão (Michel, 15/11/2026):**
+1. **Privado.** Aplicado em 15/11/2026. Alertas e correções automáticas do Dependabot ligados.
+2. **Sem proteção técnica da `main`, por limite do plano.** A conta é GitHub Free: ruleset e branch
+   protection em repositório privado exigem Pro (a API responde 403). A varredura de segredos em repo
+   privado também não está disponível. Fica registrado como risco aceito; assinar o Pro reabre o assunto
+   (ruleset pronto: PR obrigatório + checks `Typecheck, lint e testes` e `Build de producao`).
+3. **Nada vai direto na `main`, nem o bump.** O bump vira um PR próprio (`chore/release-vX.Y.Z`, só o
+   `package.json` da raiz + `package-lock.json`), mergeado com CI verde; a tag `vX.Y.Z` vai no commit de
+   merge desse PR, e só então o `deploy.sh` de produção. É disciplina, não trava: sem o Pro, o GitHub
+   aceita o push direto.
+**Consequência:** o CI passa a consumir a cota de minutos do Actions (privado). Quando a cota acabar, o
+`deploy.sh` de produção aborta (D-150) até virar o mês ou liberar orçamento — não usar `--sem-ci` em prod
+(já proibido).
+**Impacto:** só processo e docs (`ENVIRONMENTS.md` §3, mensagem do `deploy.sh`). Sem código de produto.

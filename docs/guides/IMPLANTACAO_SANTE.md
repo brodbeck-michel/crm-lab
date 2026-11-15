@@ -22,7 +22,7 @@ histórico de execução, que até 13/11/2026 só existia nas anotações das se
 | 28/09 | Bitlab responde: estorno + campos novos por pagamento (D-188/D-189) |
 | 30/09 | Sincronização **religada** (releitura de 90 dias feita), modo "só gestão" (D-246), 1ª carga de vendas e catálogo |
 | 05/10 · 13/10 | 2ª e 3ª cargas incrementais de vendas |
-| 09/10 | Regras da gestora aplicadas por SQL (§3 do guia); CRMLAB-94..98 em prod (v1.36.0) |
+| 09/10 | Regras da gestora aplicadas por SQL para agilizar (§3 do guia); CRMLAB-94..98 em prod (v1.36.0) |
 | 13/10 | **Data planejada da virada** — não aconteceu |
 | 18/10 | 2ª rodada de usuários; 4ª e última carga de vendas; monitor de saúde com alerta (CRMLAB-99, v1.36.1) |
 | 19/10 | Ambiente de treinamento preparado na hml |
@@ -33,7 +33,9 @@ histórico de execução, que até 13/11/2026 só existia nas anotações das se
 | 13/11 | Conta de teste da Meta vira a de produção; os 3 modelos aprovados. Falta só o cartão do laboratório (passo a passo enviado à Milena); a data da troca é marcada depois da confirmação |
 
 **Duração:** cerca de 6 semanas da spec (08/09) à virada (22/10), com **9 dias de atraso** sobre a
-data planejada (13/10). O motivo do atraso não foi registrado.
+data planejada (13/10). O atraso foi por questões operacionais do laboratório, que preferiu mudar a
+data. A virada foi **direta**, sem operação em paralelo com o app antigo. Esforço de implantação
+**além do desenvolvimento: cerca de 8 h**.
 
 ---
 
@@ -99,16 +101,30 @@ Reaproveitável em novos treinamentos sem repetir as cargas.
 
 ---
 
-## 6. Ainda sem resposta
+## 6. Perguntas respondidas (15/11/2026) e o que segue em aberto
 
-1. Como o tenant `lab-sante` foi criado (tela da plataforma ou SQL).
-2. Se houve operação em paralelo com o app antigo e paridade assinada pelo Santé antes do D0, e
-   quem validou os números (Resultados, comissão).
-3. Se o app antigo (Lovable/FluxoLab) foi congelado e quando será desligado.
-4. Se a chave do Bitlab é por laboratório e se o Bitlab oferece a mesma API a outros clientes.
-5. O 3º percentual de comissão previsto na spec e a retenção do `patient_name` vindo do LIS.
-6. Esforço total da implantação em horas, além do desenvolvimento.
-7. Coexistência ou migração completa na troca para a API oficial da Meta.
+Respondidas pelo Michel:
+
+| Pergunta | Resposta |
+|---|---|
+| Como o tenant `lab-sante` foi criado | Por **SQL**, para agilizar. O tenant **Laboratorio Teste** da hml foi criado pela tela da plataforma |
+| Houve operação em paralelo e paridade assinada | **Não.** Virada direta em 22/10; os números foram validados por duas gestoras do laboratório |
+| Por que a virada atrasou (13/10 → 22/10) | Questões operacionais do laboratório, que preferiu mudar a data |
+| O app antigo (Lovable/FluxoLab) foi desligado | **Não.** Segue ativo, mas sem uso |
+| A chave do Bitlab é por laboratório | **Sim.** Para o Santé o Bitlab liberou a API sem custo |
+| Os percentuais de comissão | O CRM tem três: **orçamentos, exames e check-up** (`commissionBudgetPct`, `commissionExamsPct`, `commissionCheckupPct` em `shared/types/lis.types.ts`) |
+| Coexistência ou migração completa na Meta | **Migração completa**: a coexistência exige um provedor parceiro e aumenta o custo (`MIGRACAO_SANTE.md` §4.2) |
+| O treinamento foi suficiente | Sim. Apareceram poucas dúvidas, na semana seguinte à virada |
+| Esforço de implantação além do desenvolvimento | Cerca de **8 h** |
+
+Ainda em aberto:
+
+1. Retenção do `patient_name` vindo do LIS (dado pessoal sem `patient_id`).
+2. Quando desligar o app antigo, que segue ativo: o plano da spec era somente leitura → pausa em
+   30 dias → exclusão em 90.
+3. Se o Bitlab cobra a API de outros laboratórios.
+4. O percentual de comissão de orçamentos do Santé, que não está na tabela da §3.1 do
+   `MIGRACAO_SANTE.md`.
 
 ---
 
@@ -117,6 +133,8 @@ Reaproveitável em novos treinamentos sem repetir as cargas.
 - Começar pelo que depende de terceiros: chave do LIS (presa ao IP da VPS) e, se for usar a API
   oficial do WhatsApp, a **verificação da empresa na Meta**.
 - Conferir os **logins do LIS** de cada atendente antes de cadastrar usuários.
-- Ter a lista do que hoje só entra por SQL (regras, usuários, sinônimos do catálogo) e decidir se
-  falta tela ou só processo.
+- Regras e usuários do Santé foram aplicados por SQL **só para agilizar** (confirmado em
+  15/11/2026): as telas de Configurações cobrem esses campos, então no próximo laboratório dá para
+  fazer tudo por elas. O único item que ainda só entra por SQL são os **sinônimos do catálogo**,
+  porque o CSV de importação não tem coluna para eles.
 - Registrar a virada **neste formato** no mesmo dia, em vez de reconstruir depois.

@@ -18,3 +18,20 @@ export function isProtectedMediaUrl(url: string): boolean {
     return false;
   }
 }
+
+/**
+ * URL externa que pode ir crua para `<a href>`/`<img src>`/`<video src>`
+ * (CRMLAB-165): só `https:`. `javascript:`, `data:`, `http:` e lixo viram
+ * `null` — a tela mostra o anexo como indisponível em vez de abrir/carregar.
+ * O backend já recusa `attachmentUrl` fora de `/api/v1/media/<uuid>` no
+ * `POST /messages`; isto protege o que já estiver gravado ou vier de outro
+ * caminho.
+ */
+export function externalMediaUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).protocol === 'https:' ? url : null;
+  } catch {
+    return null;
+  }
+}

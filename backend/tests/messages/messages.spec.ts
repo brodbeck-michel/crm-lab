@@ -128,6 +128,36 @@ describe('POST /conversations/:id/messages', () => {
     expect(response.body.error.code).toBe('VALIDATION_ERROR');
   });
 
+  it('attachmentUrl externo ou javascript: -> VALIDATION_ERROR, nada gravado (CRMLAB-165)', async () => {
+    const tenant = await createTenant();
+    const ana = await createUser({ tenantId: tenant.id, role: 'attendant' });
+    const conversation = await createConversation({ tenantId: tenant.id, assignedTo: ana.id });
+    const antes = await countMessages(tenant.id);
+
+    for (const attachmentUrl of [
+      'https://phishing.example/laudo.pdf',
+      'javascript:alert(1)',
+      '//evil.example/x.png',
+      '/api/v1/media/../auth/logout',
+      '/api/v1/media/nao-e-uuid',
+    ]) {
+      const response = await app.agent
+        .post(`/api/v1/conversations/${conversation.id}/messages`)
+        .set(app.auth(ana))
+        .send({ content: 'Seu laudo', messageType: 'pdf', attachmentUrl })
+        .expect(400);
+      expect(response.body.error.code).toBe('VALIDATION_ERROR');
+    }
+    expect(await countMessages(tenant.id)).toBe(antes);
+
+    // O formato da midia do proprio CRM continua aceito.
+    await app.agent
+      .post(`/api/v1/conversations/${conversation.id}/messages`)
+      .set(app.auth(ana))
+      .send({ content: 'Seu laudo', attachmentUrl: '/api/v1/media/0b7e1f3a-4c2d-4e5f-8a9b-1c2d3e4f5a6b' })
+      .expect(201);
+  });
+
   it('platform_operator recebe FORBIDDEN', async () => {
     const tenant = await createTenant();
     const operador = await createUser({ tenantId: tenant.id, role: 'platform_operator' });

@@ -273,6 +273,24 @@ describe('MessageBubble', () => {
     );
   });
 
+  it('anexo com javascript:/data: não vira link nem imagem (CRMLAB-165)', () => {
+    const { unmount } = render(
+      <MessageBubble type="received" message={message({ messageType: 'pdf', attachmentUrl: 'javascript:alert(1)' })} />,
+    );
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    expect(screen.getByTestId('document-card')).toHaveAttribute('aria-label', 'Anexo indisponível');
+    unmount();
+
+    render(
+      <MessageBubble
+        type="received"
+        message={message({ messageType: 'image', attachmentUrl: 'data:image/svg+xml,<svg onload=alert(1)>' })}
+      />,
+    );
+    expect(fetchAuthenticatedBlobMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole('img', { name: 'Anexo enviado na conversa' })).not.toBeInTheDocument();
+  });
+
   it('erro ao buscar a imagem mostra mensagem em vez de thumbnail quebrada', async () => {
     fetchAuthenticatedBlobMock.mockRejectedValue(new Error('network'));
 

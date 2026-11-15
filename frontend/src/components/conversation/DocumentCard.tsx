@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { MessageMediaInfo, MessageType } from '@crm-lab/shared';
 import { fetchAuthenticatedBlob, resolveMediaUrl } from '@/api';
 import { formatBytes } from './attachment-draft';
-import { isProtectedMediaUrl } from './media-url';
+import { externalMediaUrl, isProtectedMediaUrl } from './media-url';
 
 export interface DocumentCardProps {
   /** `message.attachmentUrl`. */
@@ -108,9 +108,18 @@ export function DocumentCard({ url, messageType, media }: DocumentCardProps) {
     'flex min-w-0 items-center gap-sm self-stretch rounded-md border border-neutral-200 bg-surface px-sm py-xs text-left font-body no-underline';
 
   if (!isProtectedMediaUrl(url)) {
+    // CRMLAB-165: so `https:` vira link; `javascript:`/`data:`/lixo ficam sem.
+    const href = externalMediaUrl(url);
+    if (!href) {
+      return (
+        <span data-testid="document-card" aria-label="Anexo indisponível" className={shell}>
+          {body}
+        </span>
+      );
+    }
     return (
       <a
-        href={url}
+        href={href}
         target="_blank"
         rel="noreferrer"
         data-testid="document-card"

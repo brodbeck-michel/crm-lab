@@ -1099,7 +1099,9 @@ Enviar mensagem em uma conversa.
 
 - `content`: 1..4000 caracteres (trim aplicado)
 - `messageType` (opcional, default `text`) ∈ `text | image | audio | pdf | doc`
-- `attachmentUrl` (opcional, anulável): máx. 500 caracteres
+- `attachmentUrl` (opcional, anulável): **só** `/api/v1/media/<uuid>` (a mídia do próprio CRM, CRMLAB-165).
+  URL externa, `javascript:` ou qualquer outro formato → `VALIDATION_ERROR` (`fields.attachmentUrl`).
+  Anexo de arquivo novo sobe por `POST /conversations/:id/attachments`.
 - `quotedMessageId` (opcional, anulável, uuid — CRMLAB-66, D-221): **responder citando**. Tem de
   ser uma mensagem **desta** conversa e não apagada; de outra conversa, de outro tenant,
   inexistente ou apagada → `NOT_FOUND` (`resource: "message"`). No WhatsApp a mensagem sai citada
@@ -2735,8 +2737,9 @@ o desconto de uma proposta que **não criou**:
 ```
 
 **Outros erros:** `EXAM_NOT_FOUND_OR_INACTIVE` (400, `details.examIds[]` — exame
-inexistente, inativo ou de outro tenant), `NOT_FOUND` (404, conversa inexistente **ou de
-outro tenant**), `VALIDATION_ERROR` (400 — o DTO é estrito: `totalPrice`, `unitPrice` ou
+inexistente, inativo ou de outro tenant), `NOT_FOUND` (404, conversa inexistente, **de
+outro tenant ou fora da visibilidade de quem cria** — atendente só cria na conversa dela, na
+fila livre ou onde participa; gestor/admin, em qualquer uma — CRMLAB-166), `VALIDATION_ERROR` (400 — o DTO é estrito: `totalPrice`, `unitPrice` ou
 qualquer campo de preço vindo do cliente é recusado, nunca ignorado),
 `MANUAL_PROPOSAL_DISABLED` (409 — o laboratório desligou "Criar proposta manualmente no CRM"
 em Regras, `origin.manualInCrm: false`, §6c/D-193; recusado antes de qualquer outra validação).

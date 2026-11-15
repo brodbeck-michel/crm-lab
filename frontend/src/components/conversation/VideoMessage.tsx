@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { MessageMediaInfo } from '@crm-lab/shared';
 import { useAuthenticatedMedia } from '@/hooks';
-import { isProtectedMediaUrl } from './media-url';
+import { externalMediaUrl, isProtectedMediaUrl } from './media-url';
 import { formatClock } from './message-content';
 
 export interface VideoMessageProps {
@@ -27,7 +27,7 @@ export function VideoMessage({ url, media }: VideoMessageProps) {
   const { objectUrl, isLoading, isError } = useAuthenticatedMedia(
     requested && isProtected ? url : null,
   );
-  const src = isProtected ? objectUrl : url;
+  const src = isProtected ? objectUrl : externalMediaUrl(url);
   const duration = media?.durationSec ?? null;
 
   if (requested && src && playbackFailed) {

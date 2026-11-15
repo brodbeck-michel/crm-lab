@@ -7264,3 +7264,16 @@ qualquer um. Varredura de segredos, Dependabot e proteção da `main` estavam de
 `deploy.sh` de produção aborta (D-150) até virar o mês ou liberar orçamento — não usar `--sem-ci` em prod
 (já proibido).
 **Impacto:** só processo e docs (`ENVIRONMENTS.md` §3, mensagem do `deploy.sh`). Sem código de produto.
+
+### D-323: Troca do acesso do operador da plataforma por script (CRMLAB-157)
+**Contexto:** auditoria de 15/11/2026, achado A4. O operador de produção usava um e-mail do domínio
+corporativo do empregador: quem controla aquela caixa chega, pelo "esqueci a senha", a todos os
+laboratórios. O operador não tem tela de troca de senha (`/users/*` recusa `platform_operator`, D-118) e o
+`cria-operador-plataforma.sh` nunca altera quem já existe.
+**Decisão:** `scripts/troca-acesso-operador.sh --email-novo <e-mail>`, rodado num terminal de verdade
+(`ssh -t`) dentro do diretório do ambiente. A senha é digitada duas vezes com `read -s` (mínimo **14**
+caracteres; nunca por argumento) e vira bcrypt cost 12 pela imagem do backend. Numa transação: troca
+e-mail e hash, revoga todas as sessões do operador (`revoked_reason = 'security'`) e grava o audit log
+`update_platform_operator_credentials` (e-mail antigo e novo, sem senha). Mesma identidade de ambiente e
+confirmação `PRODUCAO` do `deploy.sh`. O e-mail do operador fica só no banco, não nos docs.
+**Fora daqui:** reset por link e TOTP para o operador são a Etapa 3 da auditoria.

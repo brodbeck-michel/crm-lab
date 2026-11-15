@@ -113,10 +113,12 @@ test.describe('Fluxo 6: Usuários & Permissões (admin)', () => {
       email,
       password: NEW_USER_PASSWORD,
     });
+    // Conversa SEM dono: a atendente recem-criada so pode propor em conversa
+    // visivel para ela (CRMLAB-166) — a `atribuida` e da Ana e daria 404.
     const proposta = await request.post(`${API_URL}/proposals`, {
       headers: authHeaders(token),
       data: {
-        conversationId: E2E_CONVERSATIONS.atribuida.id,
+        conversationId: E2E_CONVERSATIONS.naoAtribuida.id,
         items: [{ examId: E2E_EXAMS.hemograma.id, quantity: 1 }],
         discountPercent: 25,
       },

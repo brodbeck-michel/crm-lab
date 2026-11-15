@@ -22,7 +22,7 @@ histórico de execução, que até 13/11/2026 só existia nas anotações das se
 | 28/09 | Bitlab responde: estorno + campos novos por pagamento (D-188/D-189) |
 | 30/09 | Sincronização **religada** (releitura de 90 dias feita), modo "só gestão" (D-246), 1ª carga de vendas e catálogo |
 | 05/10 · 13/10 | 2ª e 3ª cargas incrementais de vendas |
-| 09/10 | Regras da gestora aplicadas por SQL (§3 do guia); CRMLAB-94..98 em prod (v1.36.0) |
+| 09/10 | Regras da gestora aplicadas por SQL para agilizar (§3 do guia); CRMLAB-94..98 em prod (v1.36.0) |
 | 13/10 | **Data planejada da virada** — não aconteceu |
 | 18/10 | 2ª rodada de usuários; 4ª e última carga de vendas; monitor de saúde com alerta (CRMLAB-99, v1.36.1) |
 | 19/10 | Ambiente de treinamento preparado na hml |
@@ -117,6 +117,8 @@ Reaproveitável em novos treinamentos sem repetir as cargas.
 - Começar pelo que depende de terceiros: chave do LIS (presa ao IP da VPS) e, se for usar a API
   oficial do WhatsApp, a **verificação da empresa na Meta**.
 - Conferir os **logins do LIS** de cada atendente antes de cadastrar usuários.
-- Ter a lista do que hoje só entra por SQL (regras, usuários, sinônimos do catálogo) e decidir se
-  falta tela ou só processo.
+- Regras e usuários do Santé foram aplicados por SQL **só para agilizar** (confirmado em
+  15/11/2026): as telas de Configurações cobrem esses campos, então no próximo laboratório dá para
+  fazer tudo por elas. O único item que ainda só entra por SQL são os **sinônimos do catálogo**,
+  porque o CSV de importação não tem coluna para eles.
 - Registrar a virada **neste formato** no mesmo dia, em vez de reconstruir depois.

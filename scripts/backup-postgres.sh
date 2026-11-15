@@ -17,6 +17,11 @@
 # conversas que ja estavam em producao. Perder o volume era perder tudo.
 set -Eeuo pipefail
 
+# CRMLAB-158 (auditoria de 15/11/2026, A2): dump em claro tem o banco inteiro,
+# senha bcrypt e conversa de paciente. Nasce so para o dono (600) e a pasta
+# fica fechada (700), mesmo que alguem a tenha aberto a mao.
+umask 077
+
 COMPOSE_FILE="${COMPOSE_FILE:-/opt/crm-lab/docker-compose.prod.yml}"
 PROJECT_DIR="${PROJECT_DIR:-/opt/crm-lab}"
 BACKUP_DIR="${BACKUP_DIR:-/opt/crm-lab/backups}"
@@ -39,6 +44,7 @@ fi
 : "${POSTGRES_USER:?POSTGRES_USER nao definido (.env de producao)}"
 
 mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
 
 stamp="$(date +%F-%H%M)"
 falhas=0

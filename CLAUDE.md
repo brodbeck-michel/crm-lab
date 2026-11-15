@@ -45,7 +45,7 @@ Tudo é ESM (`"type": "module"`). **Imports relativos no backend levam extensão
 `crm-lab-homolog`) em `/opt/crm-lab` e `/opt/crm-lab-homolog`. Deploy SEMPRE por
 `./scripts/deploy.sh` de dentro do diretório do ambiente — nunca `docker compose`
 cru, nunca `down -v`. Leia `docs/guides/ENVIRONMENTS.md` antes de tocar em
-qualquer um dos dois. Produção: só `origin/main`, com bump de versão + tag.
+qualquer um dos dois. Produção: só `origin/main`, com bump de versão (por PR, D-322) + tag.
 
 ## Comandos
 ```

@@ -91,7 +91,10 @@ if [[ "$APP_ENV" == 'production' ]]; then
 fi
 
 msg 'Gerando hash bcrypt (cost 12, o mesmo do backend)'
-HASH="$(dc run --rm --no-deps -T -e SENHA="$SENHA" backend \
+# `exec` no backend que JA esta rodando, nao `run`: o `run` usa o IMAGE_TAG do
+# .env, que pode estar velho e sem a imagem local — e ai tenta puxar do GHCR
+# (15/11/2026: tag antiga, "error from registry: denied").
+HASH="$(dc exec -T -e SENHA="$SENHA" backend \
           node -e 'process.stdout.write(require("bcryptjs").hashSync(process.env.SENHA, 12))' </dev/null)"
 unset SENHA
 [[ "$HASH" == \$2* ]] || erro 'hash bcrypt invalido'

@@ -33,7 +33,9 @@ histórico de execução, que até 13/11/2026 só existia nas anotações das se
 | 13/11 | Conta de teste da Meta vira a de produção; os 3 modelos aprovados. Falta só o cartão do laboratório (passo a passo enviado à Milena); a data da troca é marcada depois da confirmação |
 
 **Duração:** cerca de 6 semanas da spec (08/09) à virada (22/10), com **9 dias de atraso** sobre a
-data planejada (13/10). O motivo do atraso não foi registrado.
+data planejada (13/10). O atraso foi por questões operacionais do laboratório, que preferiu mudar a
+data. A virada foi **direta**, sem operação em paralelo com o app antigo. Esforço de implantação
+**além do desenvolvimento: cerca de 8 h**.
 
 ---
 
@@ -99,16 +101,30 @@ Reaproveitável em novos treinamentos sem repetir as cargas.
 
 ---
 
-## 6. Ainda sem resposta
+## 6. Perguntas respondidas (15/11/2026) e o que segue em aberto
 
-1. Como o tenant `lab-sante` foi criado (tela da plataforma ou SQL).
-2. Se houve operação em paralelo com o app antigo e paridade assinada pelo Santé antes do D0, e
-   quem validou os números (Resultados, comissão).
-3. Se o app antigo (Lovable/FluxoLab) foi congelado e quando será desligado.
-4. Se a chave do Bitlab é por laboratório e se o Bitlab oferece a mesma API a outros clientes.
-5. O 3º percentual de comissão previsto na spec e a retenção do `patient_name` vindo do LIS.
-6. Esforço total da implantação em horas, além do desenvolvimento.
-7. Coexistência ou migração completa na troca para a API oficial da Meta.
+Respondidas pelo Michel:
+
+| Pergunta | Resposta |
+|---|---|
+| Como o tenant `lab-sante` foi criado | Por **SQL**, para agilizar. O tenant **Laboratorio Teste** da hml foi criado pela tela da plataforma |
+| Houve operação em paralelo e paridade assinada | **Não.** Virada direta em 22/10; os números foram validados por duas gestoras do laboratório |
+| Por que a virada atrasou (13/10 → 22/10) | Questões operacionais do laboratório, que preferiu mudar a data |
+| O app antigo (Lovable/FluxoLab) foi desligado | **Não.** Segue ativo, mas sem uso |
+| A chave do Bitlab é por laboratório | **Sim.** Para o Santé o Bitlab liberou a API sem custo |
+| Os percentuais de comissão | O CRM tem três: **orçamentos, exames e check-up** (`commissionBudgetPct`, `commissionExamsPct`, `commissionCheckupPct` em `shared/types/lis.types.ts`) |
+| Coexistência ou migração completa na Meta | **Migração completa**: a coexistência exige um provedor parceiro e aumenta o custo (`MIGRACAO_SANTE.md` §4.2) |
+| O treinamento foi suficiente | Sim. Apareceram poucas dúvidas, na semana seguinte à virada |
+| Esforço de implantação além do desenvolvimento | Cerca de **8 h** |
+
+Ainda em aberto:
+
+1. Retenção do `patient_name` vindo do LIS (dado pessoal sem `patient_id`).
+2. Quando desligar o app antigo, que segue ativo: o plano da spec era somente leitura → pausa em
+   30 dias → exclusão em 90.
+3. Se o Bitlab cobra a API de outros laboratórios.
+4. O percentual de comissão de orçamentos do Santé, que não está na tabela da §3.1 do
+   `MIGRACAO_SANTE.md`.
 
 ---
 

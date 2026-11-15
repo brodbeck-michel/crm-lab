@@ -288,9 +288,9 @@ com estas regras (senão o CRM não lista o modelo):
 | Voltar para o QR | Rápido, **tirando o callback** da Meta (4.6) | Lento: tirar o número da API e registrar de novo no app, com nova verificação — horas **(conferir na Meta)** |
 | Risco | Configuração depende de parceiro | Sem volta rápida |
 
-**Recomendação para decidir no dia:** se o número já está no app WhatsApp Business e houver
-parceiro para o *Embedded Signup*, coexistência dá volta rápida e mantém o celular. Sem isso,
-migração completa. Registrar a escolha em DECISIONS (D-NNN) antes de executar.
+**Decidido em 15/11/2026: migração completa.** A coexistência exige um provedor parceiro para o
+*Embedded Signup* e aumenta o custo. Consequências: o histórico some do celular (exportar antes,
+4.1 item 15) e a volta para o QR é lenta (4.6). Registrar em DECISIONS (D-NNN) antes de executar.
 
 ### 4.3 Ensaio em homologação (antes de qualquer coisa em prod)
 

@@ -235,7 +235,7 @@ para as gestoras (https://claude.ai/artifact/JR4cHeWruKMyNQGd7igK8m).
 | 1 | Restrição de 04/11/2026 encerrada e número estável há alguns dias | Celular sem aviso de restrição; nenhum alerta de sessão no Telegram |
 | 2 | Conta empresarial (Business Manager) do Santé **verificada** — **é o item que trava tudo**: sem ela a Meta aceita o envio (devolve `wamid`) e depois marca `failed` **131031**, **inclusive resposta dentro das 24 h**. O número recebe, mas não responde. Leva de dias a ~2 semanas e pede documentos do CNPJ: **começar por ele** (ensaio de 10/11, 4.3.1) | `GET /{waba_id}?fields=business_verification_status` = `verified` (a fonte que vale). **Cuidado:** "Verificação bem-sucedida" em Autorizações e verificações › *verificação individual ou de organização* é a de **anunciante** e **não** libera o WhatsApp (12/11/2026). A certa fica em Central de Segurança › card **"Verificação da empresa"** › Iniciar verificação (ver 4.3.2). ✅ **Verificada em 12/11/2026** (aprovada no mesmo dia; `health_status` BUSINESS e APP `AVAILABLE`) |
 | 2a | **Informações da empresa completas**: nome legal (razão social), endereço com país **Brasil** e **site**. Faltando, a Meta recusa o envio com **131000** | Configurações do negócio › Informações da empresa |
-| 3 | Conta do WhatsApp Business (WABA) criada e **forma de pagamento** no Billing Hub: moeda **BRL** (não muda depois), **CNPJ** do lab, "fins comerciais" = **Sim**, cartão do lab. Sem ela: **141006**. A Meta pode segurar uma pré-autorização no cartão por até 24 h | Configurações › **Contas de mensagens** › a conta › Summary: endereço, **moeda BRL**, fuso **America/Sao_Paulo** (vem America/Los_Angeles) e forma de pagamento. É isso que gera o aviso "WhatsApp needs more information" em Informações da empresa. **Decisão de 13/11/2026: a "Test Messaging Account" (`3732004406965190`) vira a conta de produção** — o "Criar conta do WhatsApp" do Business Manager exige número e verificação, então não dá para criar uma WABA vazia antes da virada. Já feito em 13/11: nome **Laboratório Santé**, fuso **America/Sao_Paulo**, moeda **BRL** (conferido pela API) e, em Cobrança e pagamentos › Informações da empresa, Brasil/BRL, CNPJ e "fins comerciais" = Sim (a Meta puxou razão social e endereço do CNPJ). **Falta só o cartão** (Milena: Configurações de pagamento › Adicionar forma de pagamento). Em 13/11 o Michel mandou o passo a passo a ela; até lá a WABA segue `BLOCKED` **141006** (BUSINESS e APP `AVAILABLE`). **A data da troca (4.4) só é marcada depois que ela confirmar o cartão.** Nome do portfólio "Laboratório Sante" (sem acento): **não mexer**, está verificado |
+| 3 | Conta do WhatsApp Business (WABA) criada e **forma de pagamento** no Billing Hub: moeda **BRL** (não muda depois), **CNPJ** do lab, "fins comerciais" = **Sim**, cartão do lab. Sem ela: **141006**. A Meta pode segurar uma pré-autorização no cartão por até 24 h | Configurações › **Contas de mensagens** › a conta › Summary: endereço, **moeda BRL**, fuso **America/Sao_Paulo** (vem America/Los_Angeles) e forma de pagamento. É isso que gera o aviso "WhatsApp needs more information" em Informações da empresa. **Decisão de 13/11/2026: a "Test Messaging Account" (`3732004406965190`) vira a conta de produção** — o "Criar conta do WhatsApp" do Business Manager exige número e verificação, então não dá para criar uma WABA vazia antes da virada. Já feito em 13/11: nome **Laboratório Santé**, fuso **America/Sao_Paulo**, moeda **BRL** (conferido pela API) e, em Cobrança e pagamentos › Informações da empresa, Brasil/BRL, CNPJ e "fins comerciais" = Sim (a Meta puxou razão social e endereço do CNPJ). Cartão: em 13/11 o Michel mandou o passo a passo à Milena (Configurações de pagamento › Adicionar forma de pagamento). ✅ **Em 16/11/2026** `health_status` = `AVAILABLE` para BUSINESS, WABA e APP (antes `BLOCKED` **141006**), `business_verification_status` = `verified`: cartão aceito. Troca marcada para **17/11/2026, fim do dia**. Nome do portfólio "Laboratório Sante" (sem acento): **não mexer**, está verificado |
 | 4 | **Nome de exibição** do número aprovado **(conferir na Meta)**. Ele é pedido **quando o número real é adicionado** — na migração completa isso só acontece no dia (4.4 passo 4), então não dá para adiantar | Gerenciador do WhatsApp › Números de telefone |
 | 5 | **Modelos aprovados**: os três de 4.1.1 (`retomar_atendimento`, `retorno_orcamento`, `lembrete_coleta`), todos UTILITY | Gerenciador do WhatsApp › Modelos (status "Aprovado"); no CRM, aparecem no "Enviar modelo" em até 5 min. **Modelo pertence à WABA**: os criados em 12/11/2026 estão na WABA **de teste** ("Test Messaging Account"); como essa WABA vira a de produção (item 3), **não precisa recriar**. ✅ **Os três aprovados em 13/11/2026** (UTILITY, pt_BR; conferido pela API em `GET /{waba_id}/message_templates`) |
 | 6 | App na Meta com o produto WhatsApp e **usuário do sistema** com token **que nunca expira** (`whatsapp_business_messaging` e `whatsapp_business_management`) | Business Manager › Usuários do sistema |
@@ -290,7 +290,7 @@ com estas regras (senão o CRM não lista o modelo):
 
 **Decidido em 15/11/2026: migração completa.** A coexistência exige um provedor parceiro para o
 *Embedded Signup* e aumenta o custo. Consequências: o histórico some do celular (exportar antes,
-4.1 item 15) e a volta para o QR é lenta (4.6). Registrar em DECISIONS (D-NNN) antes de executar.
+4.1 item 15) e a volta para o QR é lenta (4.6). Registrado em **D-324**.
 
 ### 4.3 Ensaio em homologação (antes de qualquer coisa em prod)
 
@@ -410,8 +410,8 @@ repetir está na skill `.claude/skills/cloud-api-meta/SKILL.md`.
   (`IMAGE_TAG=3a8ff5b docker compose -p crm-lab-prod -f docker-compose.prod.yml up -d --no-deps backend` +
   `restart frontend`). Exceção pontual: o caminho normal continua sendo o `deploy.sh` (na próxima versão
   ele já sobe com essas envs, que ficam no `.env`).
-- **Um callback por app:** hoje o app aponta para `/teste`. No dia da troca, trocar para `/lab-sante`
-  (mesmo `POST /{app_id}/subscriptions`) — ou callback por WABA (DEPLOYMENT, "mais de um laboratório").
+- **Um callback por app:** ✅ trocado de `/teste` para `/lab-sante` em 16/11/2026 (véspera, D-324 item 3;
+  mesmo `POST /{app_id}/subscriptions`, GET de verificação 200). O tenant `teste` não recebe mais avisos da Meta — ou callback por WABA (DEPLOYMENT, "mais de um laboratório").
 
 ### 4.4.0 Véspera e kit do dia
 
@@ -425,7 +425,7 @@ repetir está na skill `.claude/skills/cloud-api-meta/SKILL.md`.
 4. `.env` de prod (4.1 item 11) aplicado com deploy (perguntar antes, com versão/tag), e conferir
    `ffmpeg -version` no backend.
 5. Callback de prod no app Meta (4.4 passo 3) já cadastrado e **verificado** (a Meta precisa receber 200).
-   Pode ficar na véspera: sem número na API, nada chega.
+   Pode ficar na véspera: sem número na API, nada chega. ✅ Feito em 16/11/2026 (`/lab-sante`, D-324).
 6. Backup do Postgres de prod do dia confirmado.
 7. Mensagem para a equipe com o horário da janela e o "como atender depois" (4.5).
 

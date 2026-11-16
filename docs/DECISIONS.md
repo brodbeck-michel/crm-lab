@@ -7277,3 +7277,28 @@ e-mail e hash, revoga todas as sessões do operador (`revoked_reason = 'security
 `update_platform_operator_credentials` (e-mail antigo e novo, sem senha). Mesma identidade de ambiente e
 confirmação `PRODUCAO` do `deploy.sh`. O e-mail do operador fica só no banco, não nos docs.
 **Fora daqui:** reset por link e TOTP para o operador são a Etapa 3 da auditoria.
+
+### D-324: Santé vai para a API oficial da Meta por migração completa, não por coexistência (CRMLAB-142)
+**Contexto:** depois da restrição de 04/11/2026 no QR (Evolution), o Santé contrata a Cloud API direto com
+a Meta (reunião de 06/11/2026, `MIGRACAO_SANTE.md` §4.0). Havia dois caminhos para levar o número
+55 48 9188-9030 (§4.2): **coexistência** (o número segue no app WhatsApp Business do celular e fala também
+pela API) ou **migração completa** (o número sai do app e fica só na API).
+**Decisão (Michel com as gestoras, 15/11/2026): migração completa.**
+1. A coexistência só se cadastra pelo *Embedded Signup* de um parceiro/Tech Provider, o que põe um
+   intermediário a mais entre o lab e a Meta e aumenta o custo mensal. A migração completa se faz direto no
+   Gerenciador do WhatsApp, com a WABA, o app e o usuário do sistema que já estão no portfólio do Santé
+   (§4.3.2).
+2. **Consequências aceitas:**
+   - o celular deixa de servir para esse número e o **histórico some do celular**: as conversas que
+     importam são exportadas antes (§4.1 item 15). No CRM nada se perde (D-308);
+   - **volta para o QR é lenta** (horas: tirar o número da API, reinstalar o app, nova verificação — §4.6).
+     Por isso o critério de parada da §4.4.0: tudo o que pode falhar é conferido **antes** de apagar a conta
+     do celular;
+   - na API oficial não há reengajamento automático, saudação/fora do horário nem teto de primeiro contato
+     (D-214, D-264, D-306 são só do QR); fora das 24 h, só modelo (D-309).
+3. **Webhook antes do número.** O callback do app "CRM Lab - Santé" passa a apontar para
+   `/api/v1/webhooks/whatsapp/lab-sante` na véspera (feito em 16/11/2026, verificado com 200). É seguro com o
+   Santé ainda em QR: aviso da Meta só é aceito para o `phone_number_id` gravado no canal (D-311 item 6), e
+   o número real só entra na WABA no dia da troca.
+**Impacto:** só operação e docs (`MIGRACAO_SANTE.md` §4.1, §4.2, §4.3.2, §4.4.0). Sem código, tela ou banco.
+O tenant `teste` deixa de receber avisos da Meta (o app tem um callback só).

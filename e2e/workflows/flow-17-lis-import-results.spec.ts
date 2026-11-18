@@ -142,7 +142,7 @@ test.describe('Fluxo 17: importação do LIS + Resultados', () => {
     await page.getByLabel('Data inicial').fill('2020-01-01');
     await page.getByLabel('Data final').fill('2030-12-31');
 
-    await page.getByRole('button', { name: 'Importar' }).click();
+    await page.getByRole('button', { name: 'Importar', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Importar planilha do LIS' });
     await expect(dialog).toBeVisible();
 
@@ -201,7 +201,7 @@ test.describe('Fluxo 17: importação do LIS + Resultados', () => {
 
     // Reimportar a MESMA planilha não duplica (BUSINESS_RULES §11.1) — upsert
     // por `number`, upsert idempotente.
-    await page.getByRole('button', { name: 'Importar' }).click();
+    await page.getByRole('button', { name: 'Importar', exact: true }).click();
     await expect(dialog).toBeVisible();
     await dialog.locator('input[type="file"]').setInputFiles({
       name: 'lis-import-e2e.xlsx',

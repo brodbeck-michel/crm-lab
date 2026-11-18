@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-11-07 (Cloud API da Meta CRMLAB-135..142 validada na hml)
+**Última atualização:** 2026-11-18 (CRMLAB-183: aviso de tipo não suportado da Cloud API rastreável)
 
 ---
 
@@ -4232,3 +4232,12 @@ execução que só existia nas anotações das sessões: linha do tempo (spec 08
 para 13/10), as 4 cargas de vendas, as duas rodadas de usuários, retrabalhos e incidentes, treinamento na hml,
 perguntas em aberto e lições para o próximo laboratório. `MIGRACAO_SANTE.md` §1.3: slug corrigido de `sante`
 para `lab-sante`. Só documentação.
+
+### 🔄 CRMLAB-183 — Cloud API: mensagem "tipo que o CRM ainda não mostra" passa a ser rastreável (2026-11-18, aguardando validação)
+
+Branch `feature/CRMLAB-183-cloud-api-tipo-nao-suportado`. Origem: aviso genérico no chat do Santé em
+produção (18/11, 13:45) sem como saber o que a paciente mandou. O fallback de `cloudApiContentOf` agora
+loga `whatsapp.inbound_unsupported` (`type`, `subtype` = `unsupported.type`, `externalId`, `errors[]` com
+`code`/`title`/`details`; sem conteúdo nem telefone). Quando a Meta informa `unsupported.type` conhecido
+(`view_once`, `poll`/`poll_creation`, `edit`, `revoke`), o aviso diz o que foi; senão segue o genérico.
+API_CONTRACTS (tabela do webhook da Meta) atualizada. Testes: `crmlab139-webhook-meta.spec.ts` (+2).

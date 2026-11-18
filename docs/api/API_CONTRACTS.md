@@ -1659,7 +1659,7 @@ entram como `messageType: "text"`, sem `attachmentUrl`:
 | `location` | `📍 <name ou address> (<lat>, <lng>)` |
 | `contacts` | `👤 <formatted_name> (<phone>)`, separados por vírgula |
 | `image`, `audio`, `voice`, `video`, `document`, `sticker` | **baixada da Meta** (D-314): `messageType` pelo MIME gravado, `attachmentUrl = /api/v1/media/:id`, `content` = legenda ou nome do arquivo (como no QR). Se o download não der certo (mock, acima de 15 MiB, erro, timeout): legenda + aviso `[Recebido pela API oficial: <tipo> — o anexo ainda não aparece no CRM. Se precisar, peça ao paciente que descreva por texto.]`, documento com o nome entre aspas |
-| `unsupported` e tipos novos | aviso de tipo que o CRM ainda não mostra |
+| `unsupported` e tipos novos | aviso `[Recebido pela API oficial: um tipo de mensagem que o CRM ainda não mostra. …]`; se a Meta informar `unsupported.type` conhecido (`view_once`, `poll`/`poll_creation`, `edit`, `revoke`), o aviso diz o que foi (CRMLAB-183). Sempre loga `whatsapp.inbound_unsupported` com `type`, `subtype`, `externalId` e `errors[]` (`code`, `title`, `details`) — sem conteúdo nem telefone |
 | `reaction` | **não é fala:** aplica/remove a reação do paciente na mensagem (D-222); alvo desconhecido → ignorado com log |
 | `system`, `request_welcome`, `ephemeral` | ignorados (não viram fala nem reabrem conversa) |
 

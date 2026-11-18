@@ -471,6 +471,38 @@ describe('POST /webhooks/whatsapp/:tenant — mensagens e status na mesma URL', 
     expect(rows[0]?.content).toContain('tipo de mensagem que o CRM ainda não mostra');
   });
 
+  it('CRMLAB-183: unsupported loga tipo e erros da Meta (sem conteúdo nem telefone)', async () => {
+    const tenant = await lab('lab-a');
+    const info = vi.spyOn(logger, 'info');
+    await post(
+      'lab-a',
+      metaNotice(
+        typed('unsupported', {
+          errors: [{ code: 131051, title: 'Message type unknown', error_data: { details: 'Message type is currently not supported.' } }],
+        }),
+      ),
+    );
+    const call = info.mock.calls.find(([msg]) => msg === 'whatsapp.inbound_unsupported');
+    expect(call?.[1]).toMatchObject({
+      type: 'unsupported',
+      subtype: null,
+      errors: [{ code: 131051, title: 'Message type unknown', details: 'Message type is currently not supported.' }],
+    });
+    expect(JSON.stringify(call?.[1])).not.toMatch(/5548/);
+    const rows = await patientMessages(tenant.id);
+    expect(rows[0]?.content).toContain('tipo de mensagem que o CRM ainda não mostra');
+    info.mockRestore();
+  });
+
+  it('CRMLAB-183: unsupported.type conhecido deixa o aviso específico; desconhecido cai no genérico', async () => {
+    const tenant = await lab('lab-a');
+    await post('lab-a', metaNotice(typed('unsupported', { id: 'wamid.VO', unsupported: { type: 'view_once' } })));
+    await post('lab-a', metaNotice(typed('unsupported', { id: 'wamid.XX', unsupported: { type: 'algo_novo' } })));
+    const contents = (await patientMessages(tenant.id)).map((row) => row.content);
+    expect(contents.some((c) => c?.includes('visualização única'))).toBe(true);
+    expect(contents.some((c) => c?.includes('tipo de mensagem que o CRM ainda não mostra'))).toBe(true);
+  });
+
   it('botão de modelo, lista, botão interativo, localização e contato viram texto legível', async () => {
     const tenant = await lab('lab-a');
     const cases: Array<[string, Record<string, unknown>, string]> = [

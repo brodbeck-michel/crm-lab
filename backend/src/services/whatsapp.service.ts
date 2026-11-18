@@ -1532,12 +1532,33 @@ function cloudApiContentOf(message: Record<string, unknown>): {
         : null,
     };
   }
-  // `unsupported`, `order` e tipos novos: o paciente mandou ALGO.
-  return text(
-    '[Recebido pela API oficial: um tipo de mensagem que o CRM ainda não mostra. ' +
-      'Se precisar, peça ao paciente que descreva por texto.]',
-  );
+  // `unsupported`, `order` e tipos novos: o paciente mandou ALGO (CRMLAB-183).
+  const errors = asArray(message.errors).map((raw) => {
+    const error = asRecord(raw);
+    return {
+      code: typeof error?.code === 'number' ? error.code : null,
+      title: asString(error?.title),
+      details: asString(asRecord(error?.error_data)?.details),
+    };
+  });
+  const subtype = asString(asRecord(message.unsupported)?.type);
+  logger.info('whatsapp.inbound_unsupported', { type, subtype, externalId: asString(message.id), errors });
+  const what = (subtype && CLOUD_UNSUPPORTED_LABEL[subtype]) ?? 'um tipo de mensagem que o CRM ainda não mostra';
+  return text(`[Recebido pela API oficial: ${what}. Se precisar, peça ao paciente que descreva por texto.]`);
 }
+
+/**
+ * `unsupported.type` que a Meta as vezes informa (CRMLAB-183): o aviso diz o
+ * que o paciente mandou. Valor fora da lista cai no aviso generico — o log
+ * `whatsapp.inbound_unsupported` mostra qual veio, para ampliar a lista.
+ */
+const CLOUD_UNSUPPORTED_LABEL: Record<string, string> = {
+  view_once: 'o paciente enviou uma mídia de visualização única, que a API oficial não entrega',
+  poll: 'o paciente enviou uma enquete, que a API oficial não entrega',
+  poll_creation: 'o paciente enviou uma enquete, que a API oficial não entrega',
+  edit: 'o paciente editou uma mensagem; a API oficial não entrega a edição',
+  revoke: 'o paciente apagou uma mensagem',
+};
 
 // ---------------------------------------------------------------------------
 // Service

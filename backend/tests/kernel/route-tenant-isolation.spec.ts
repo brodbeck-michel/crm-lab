@@ -1021,6 +1021,15 @@ const LAB_ROUTES: readonly LabRoute[] = [
     addressable: true,
     ownStatus: 200,
   },
+  {
+    // CRMLAB-186 (D-326): usuario de outro tenant → 404, nunca 403.
+    name: 'POST /users/:id/reset-password',
+    method: 'post',
+    path: (l) => `/api/v1/users/${l.attendant.id}/reset-password`,
+    actor: 'admin',
+    addressable: true,
+    ownStatus: 200,
+  },
   { name: 'GET /audit', method: 'get', path: () => '/api/v1/audit', actor: 'admin', addressable: false },
 
   // --- tema ---
@@ -1450,7 +1459,7 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 124 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 125 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
@@ -1498,7 +1507,8 @@ describe('inventario de rotas de laboratorio', () => {
     // CRMLAB-138/D-308 soma 1: `PUT /settings/channels/whatsapp/mode`.
     // CRMLAB-136/D-309 soma 1: `GET /whatsapp/templates`.
     // CRMLAB-141/D-312 soma 1: `GET /settings/channels/whatsapp/usage`.
-    expect(LAB_ROUTES).toHaveLength(124);
+    // CRMLAB-186/D-326 soma 1: `POST /users/:id/reset-password`.
+    expect(LAB_ROUTES).toHaveLength(125);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

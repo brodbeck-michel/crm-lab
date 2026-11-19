@@ -18,6 +18,8 @@
  * varrida pelos tres invariantes de uma vez.
  */
 import { whatsappTemplateModule } from '../../src/controllers/whatsapp-template.routes.js';
+import { captureDeviceModule } from '../../src/controllers/capture-device.routes.js';
+import { scanModule } from '../../src/controllers/scan.routes.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { saoPauloToday } from '@crm-lab/shared';
 import type {
@@ -75,7 +77,7 @@ import {
   type PatientRecord,
 } from '../patients/helpers.js';
 import { MemoryCache } from '../../src/lib/cache.js';
-import { writeMediaFile } from '../../src/lib/media-storage.js';
+import { writeMediaFile, writeScanFile } from '../../src/lib/media-storage.js';
 import { FakeWsHub } from '../helpers/fake-ws.js';
 import { createTestApp, type AuthenticatableUser, type TestApp } from '../helpers/test-app.js';
 import { getTestDb, resetDatabase } from '../helpers/test-db.js';
@@ -144,6 +146,11 @@ const LAB_MODULES = [
   quickReplyModule,
   themeModule,
   userModule,
+  // CRMLAB-184 (D-326). `captureModule` (`/capture/*`) fica de fora: e PUBLICO
+  // (cookie do dispositivo, sem Bearer) — o isolamento dele esta em
+  // `tests/scans/capture-devices.spec.ts` e `tests/scans/scans.spec.ts`.
+  captureDeviceModule,
+  scanModule,
 ];
 
 type Method = 'get' | 'post' | 'patch' | 'put' | 'delete';
@@ -198,6 +205,10 @@ interface Lab {
   internalAttachment: { id: string };
   /** Mensagem interna da atendente que carrega `internalAttachment` (CRMLAB-117). */
   internalMessage: { id: string };
+  /** Dispositivo de captura (CRMLAB-184, D-326). */
+  captureDevice: { id: string };
+  /** Foto na fila Digitalizacoes, com o arquivo no disco (CRMLAB-184). */
+  scan: { id: string };
 }
 
 interface LabRoute {
@@ -1122,6 +1133,49 @@ const LAB_ROUTES: readonly LabRoute[] = [
     actor: 'attendant',
     addressable: false,
   },
+  // --- Digitalizacoes (CRMLAB-184, D-326) ---
+  { name: 'GET /settings/capture-devices', method: 'get', path: () => '/api/v1/settings/capture-devices', actor: 'manager', addressable: false },
+  {
+    name: 'POST /settings/capture-devices',
+    method: 'post',
+    path: () => '/api/v1/settings/capture-devices',
+    body: () => ({ name: 'Celular sonda' }),
+    actor: 'admin',
+    addressable: false,
+  },
+  {
+    name: 'POST /settings/capture-devices/:id/pairing-code',
+    method: 'post',
+    path: (l) => `/api/v1/settings/capture-devices/${l.captureDevice.id}/pairing-code`,
+    actor: 'admin',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    name: 'DELETE /settings/capture-devices/:id',
+    method: 'delete',
+    path: (l) => `/api/v1/settings/capture-devices/${l.captureDevice.id}`,
+    actor: 'admin',
+    addressable: true,
+    ownStatus: 204,
+  },
+  { name: 'GET /scans', method: 'get', path: () => '/api/v1/scans', actor: 'attendant', addressable: false },
+  {
+    name: 'GET /scans/:id/content',
+    method: 'get',
+    path: (l) => `/api/v1/scans/${l.scan.id}/content`,
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    name: 'DELETE /scans/:id',
+    method: 'delete',
+    path: (l) => `/api/v1/scans/${l.scan.id}`,
+    actor: 'attendant',
+    addressable: true,
+    ownStatus: 204,
+  },
 ] as const;
 
 let db: DbClient;
@@ -1142,6 +1196,7 @@ const BETA_SECRETS = {
   quickReply: 'Macro Confidencial Beta',
   doctor: 'Dr. Confidencial Beta',
   visit: 'Pauta Confidencial Beta',
+  device: 'Celular Confidencial Beta',
 } as const;
 
 async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
@@ -1344,6 +1399,23 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
   const internalMessage = { id: internalAttachmentRow.messageId };
   await writeMediaFile(internalAttachment.id, Buffer.from('%PDF-1.4 sonda'));
 
+  // Digitalizacoes (CRMLAB-184): dispositivo pareado + uma foto na fila.
+  const scanRows = await db.withoutTenant(async (tx) => {
+    const dev = await tx.query<{ id: string }>(
+      `INSERT INTO capture_devices (tenant_id, name) VALUES ($1, $2) RETURNING id`,
+      [tenant.id, secret ? BETA_SECRETS.device : `Celular ${prefix}`],
+    );
+    const sc = await tx.query<{ id: string }>(
+      `INSERT INTO scans (tenant_id, device_id, mime_type, byte_size, expires_at)
+       VALUES ($1, $2, 'image/jpeg', 5, now() + interval '2 days') RETURNING id`,
+      [tenant.id, dev.rows[0]?.id],
+    );
+    return { deviceId: dev.rows[0]?.id as string, scanId: sc.rows[0]?.id as string };
+  });
+  const captureDevice = { id: scanRows.deviceId };
+  const scan = { id: scanRows.scanId };
+  await writeScanFile(scan.id, Buffer.from('sonda'));
+
   return {
     tenant,
     admin,
@@ -1369,6 +1441,8 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     message,
     internalAttachment,
     internalMessage,
+    captureDevice,
+    scan,
   };
 }
 
@@ -1450,7 +1524,7 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 124 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 131 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
@@ -1498,7 +1572,10 @@ describe('inventario de rotas de laboratorio', () => {
     // CRMLAB-138/D-308 soma 1: `PUT /settings/channels/whatsapp/mode`.
     // CRMLAB-136/D-309 soma 1: `GET /whatsapp/templates`.
     // CRMLAB-141/D-312 soma 1: `GET /settings/channels/whatsapp/usage`.
-    expect(LAB_ROUTES).toHaveLength(124);
+    // CRMLAB-184/D-326 soma 7: `GET|POST /settings/capture-devices`,
+    // `POST /settings/capture-devices/:id/pairing-code`, `DELETE /settings/capture-devices/:id`,
+    // `GET /scans`, `GET /scans/:id/content` e `DELETE /scans/:id`.
+    expect(LAB_ROUTES).toHaveLength(131);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)
@@ -1640,6 +1717,7 @@ describe('listagens e relatorios do tenant A', () => {
         BETA_SECRETS.quickReply,
         BETA_SECRETS.doctor,
         BETA_SECRETS.visit,
+        BETA_SECRETS.device,
       ]) {
         expect({ route: route.name, leaked: serialized.includes(secret) }).toMatchObject({
           route: route.name,

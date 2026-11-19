@@ -18,6 +18,7 @@ import {
   Composer,
   DateSeparator,
   createAttachmentDraft,
+  createScanDraft,
   dragHasFiles,
   filesFromDataTransfer,
   MessageBubble,
@@ -38,6 +39,7 @@ import { usePatientPresence } from './usePatientPresence';
 import { useConversationScroll } from './useConversationScroll';
 import { useConversationImages } from './useConversationImages';
 import { ConversationImageViewer } from './ConversationImageViewer';
+import { ScanPicker } from './ScanPicker';
 
 /**
  * Coluna 2 do inbox — PAGES.md §2.
@@ -90,9 +92,14 @@ export interface ConversationPanelProps {
    * a citação SÓ no primeiro (CRMLAB-66, D-233 item 4).
    */
   onSendAttachments: (
-    items: { file: File; caption: string }[],
+    items: { file: File; caption: string; scanId?: string }[],
     quotedMessageId?: string,
   ) => void;
+  /**
+   * Clipe "Digitalizações" (CRMLAB-184, D-326): abre o `ScanPicker` e leva as
+   * fotos para a mesma prévia. Ausente/`false`: o item não aparece.
+   */
+  scansEnabled?: boolean;
   /** Recado de voz gravado no composer (CRMLAB-24) — ver `Composer.onSendAudio`. */
   onSendAudio?: (audio: RecordedAudio, quotedMessageId?: string) => Promise<unknown>;
   /** Reação do laboratório (D-222); `null` tira. Sem handler, "Reagir" some do menu. */
@@ -497,6 +504,7 @@ export function ConversationPanel({
   onToggleContext,
   onClose,
   onSendAttachments,
+  scansEnabled = false,
   onSendAudio,
   onReact,
   onQuoteUnavailable,
@@ -643,8 +651,15 @@ export function ConversationPanel({
   const closePreview = (): void => setPreview(null);
 
   function openPreview(files: File[]): void {
-    if (conversationId === null || files.length === 0) return;
-    const added = files.map(createAttachmentDraft);
+    addDrafts(files.map(createAttachmentDraft));
+  }
+
+  // Digitalizações (D-326): o seletor fica preso à conversa em que abriu, como a prévia.
+  const [scanPickerFor, setScanPickerFor] = useState<string | null>(null);
+  const scanPickerOpen = scanPickerFor !== null && scanPickerFor === conversationId;
+
+  function addDrafts(added: AttachmentDraft[]): void {
+    if (conversationId === null || added.length === 0) return;
     setPreview((current) => ({
       conversationId,
       items: current && current.conversationId === conversationId ? [...current.items, ...added] : added,
@@ -660,7 +675,11 @@ export function ConversationPanel({
     if (valid.length === 0) return;
     beforeReply();
     onSendAttachments(
-      valid.map((item) => ({ file: item.file, caption: item.caption.trim() })),
+      valid.map((item) => ({
+        file: item.file,
+        caption: item.caption.trim(),
+        ...(item.scanId ? { scanId: item.scanId } : {}),
+      })),
       quotedId,
     );
     clearReply();
@@ -951,6 +970,7 @@ export function ConversationPanel({
           }}
           onPickFiles={openPreview}
           onAttachClick={beforeReply}
+          onOpenScans={scansEnabled ? () => setScanPickerFor(conversation.id) : undefined}
           onSendAudio={
             onSendAudio
               ? async (audio) => {
@@ -1017,6 +1037,16 @@ export function ConversationPanel({
           />
         )}
       </div>
+
+      {scanPickerOpen && (
+        <ScanPicker
+          onClose={() => setScanPickerFor(null)}
+          onUse={(picked) => {
+            setScanPickerFor(null);
+            addDrafts(picked.map(({ file, scanId }) => createScanDraft(file, scanId)));
+          }}
+        />
+      )}
 
       <ConversationImageViewer
         images={images}

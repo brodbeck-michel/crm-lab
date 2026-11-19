@@ -113,7 +113,23 @@ const PUBLIC_ROUTE_PATHS = [
   // CRMLAB-39: publica e sem sessao para se apoiar, mesma razao do login —
   // sem lockout com o Redis fora do ar seria convite a enumerar e-mails.
   '/api/v1/auth/forgot-password',
+  // CRMLAB-184 (D-326): pareamento do celular — publico, sem sessao; o
+  // limitador proprio (10 / 15 min por IP) tambem e fail-closed.
+  '/api/v1/capture/pair',
 ];
+
+/**
+ * Rotas do dispositivo de captura ja pareado (CRMLAB-184, D-326). O limitador
+ * GLOBAL as pula: quem as limita e o router de `/capture`, DEPOIS de
+ * autenticar o cookie, com a chave = dispositivo (sem cookie valido, cai no
+ * balde do IP). O cookie nao e verificavel aqui sem ir ao banco, e usar o
+ * valor cru como chave seria o bypass de "trocar o token a cada request".
+ */
+const CAPTURE_DEVICE_PATHS = ['/api/v1/capture/session', '/api/v1/capture/scans'];
+
+export function isCaptureDeviceRoute(req: Request): boolean {
+  return CAPTURE_DEVICE_PATHS.includes(pathOf(req));
+}
 
 export function isPublicRoute(req: Request): boolean {
   if (isChannelWebhook(req)) return true;

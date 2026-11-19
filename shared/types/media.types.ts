@@ -22,6 +22,19 @@ export interface CreateAttachmentRequest {
 }
 
 /**
+ * `POST /conversations/:id/attachments` com uma foto da fila Digitalizações
+ * (CRMLAB-184, D-326): `scanId` NO LUGAR de `fileName`/`mimeType`/`contentBase64`.
+ */
+export interface CreateScanAttachmentRequest {
+  scanId: string;
+  quotedMessageId?: string | null;
+  caption?: string | null;
+}
+
+/** Corpo aceito por `POST /conversations/:id/attachments`: arquivo OU foto da fila. */
+export type SendAttachmentBody = CreateAttachmentRequest | CreateScanAttachmentRequest;
+
+/**
  * 15 MiB — teto de um anexo (CRMLAB-31). Em `shared/` para o cliente validar
  * na prévia com o MESMO número do backend (CRMLAB-69, D-232).
  */

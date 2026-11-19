@@ -149,6 +149,17 @@ export const queryKeys = {
   /** ['settings', 'channels', 'whatsapp', 'usage', month] — custo estimado da Cloud API (§6.2, D-312) */
   whatsappUsage: (month: string) => ['settings', 'channels', 'whatsapp', 'usage', month] as const,
 
+  /**
+   * ['settings', 'capture-devices'] — "Dispositivos de captura" em Canais & Equipe
+   * (CRMLAB-184, D-326, API_CONTRACTS §15.1). Sob `settings`: cai junto com o escopo.
+   */
+  captureDevices: () => ['settings', 'capture-devices'] as const,
+  /**
+   * ['scans'] — fila Digitalizações do laboratório (CRMLAB-184, §15.3). Sem WS:
+   * o `ScanPicker` reconsulta ao abrir.
+   */
+  scans: () => ['scans'] as const,
+
   /** ['operations', 'overview', query] — retrato único da operação (D-067) */
   operationOverview: (query?: OperationOverviewQuery) =>
     ['operations', 'overview', query ?? {}] as const,
@@ -241,6 +252,7 @@ export const queryScopes = {
   platform: ['platform'] as const,
   settings: ['settings'] as const,
   operations: ['operations'] as const,
+  scans: ['scans'] as const,
   /**
    * Prefixos do domínio LIS — TRÊS escopos distintos (`invalidateQueries` faz
    * prefix-match; um array só não cobre os três). Invalidados juntos após

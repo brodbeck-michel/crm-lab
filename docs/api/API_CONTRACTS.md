@@ -6770,7 +6770,8 @@ Todos os erros seguem este formato:
 ## Rate Limiting
 
 ```
-Limite: 100 requisições por minuto por usuário (por IP quando não há Bearer)
+Limite: 100 requisições por minuto por usuário (por IP quando não há Bearer;
+        por dispositivo em /capture/session e /capture/scans — D-326)
 Janela: FIXA de 60 s, alinhada ao relógio (chave = identidade + índice da janela)
 Headers legados:  X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset  (Reset = epoch em segundos)
 Headers do draft: RateLimit-Limit,   RateLimit-Remaining,   RateLimit-Reset    (Reset = segundos ATÉ o reset)
@@ -6786,7 +6787,7 @@ cada um de propósito — é assim que `draft-ietf-httpapi-ratelimit-headers` de
 gateway, não medir precisão por segundo; a janela fixa custa um `INCR` por requisição, sem
 listas de timestamps (revisão do PR #45, D-168).
 
-**Rota pública com o Redis fora do ar** (D-139): `/auth/login`, `/auth/refresh` e os webhooks
+**Rota pública com o Redis fora do ar** (D-139): `/auth/login`, `/auth/refresh`, `/capture/pair` (D-326) e os webhooks
 respondem `503 SERVICE_UNAVAILABLE` (fail-closed); rota autenticada passa sem limite
 (fail-open). O casamento dessas rotas é feito sobre o caminho **normalizado** como o roteador do
 Express o vê — minúsculo, sem barra final, sem barras duplicadas, percent-decoding resolvido

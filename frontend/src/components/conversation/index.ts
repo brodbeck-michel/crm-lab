@@ -19,6 +19,7 @@ export { AttachmentPreview } from './AttachmentPreview';
 export type { AttachmentPreviewProps } from './AttachmentPreview';
 export {
   createAttachmentDraft,
+  createScanDraft,
   dragHasFiles,
   filesFromDataTransfer,
   formatBytes,

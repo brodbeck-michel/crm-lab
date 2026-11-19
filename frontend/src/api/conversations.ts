@@ -1,6 +1,6 @@
 import type {
   AddConversationParticipantRequest,
-  CreateAttachmentRequest,
+  SendAttachmentBody,
   CreateConversationRequest,
   CreateConversationResponse,
   CreateMessageRequest,
@@ -52,7 +52,8 @@ export const conversationsApi = {
     http.post<Message>(`/conversations/${id}/messages`, body),
 
   /** Anexo — base64 em JSON, não multipart (Onda 8 §4.3). */
-  sendAttachment: (id: string, body: CreateAttachmentRequest) =>
+  /** Arquivo em base64 OU `scanId` da fila Digitalizações (CRMLAB-184, D-326). */
+  sendAttachment: (id: string, body: SendAttachmentBody) =>
     http.post<Message>(`/conversations/${id}/attachments`, body),
 
   /** Reação do laboratório (CRMLAB-66, D-222) — substitui a anterior. */

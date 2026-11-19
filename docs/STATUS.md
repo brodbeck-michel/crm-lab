@@ -4242,13 +4242,20 @@ loga `whatsapp.inbound_unsupported` (`type`, `subtype` = `unsupported.type`, `ex
 (`view_once`, `poll`/`poll_creation`, `edit`, `revoke`), o aviso diz o que foi; senão segue o genérico.
 API_CONTRACTS (tabela do webhook da Meta) atualizada. Testes: `crmlab139-webhook-meta.spec.ts` (+2).
 
-### 🔄 CRMLAB-184 — Digitalizar pelo celular: `/digitalizar` (PWA) + fila Digitalizações (2026-11-19, contrato escrito, aguardando aprovação p/ dev)
+### 🔄 CRMLAB-184 — Digitalizar pelo celular: `/digitalizar` (PWA) + fila Digitalizações (2026-11-19, aguardando validação no iPhone)
 
 Branch `feature/CRMLAB-184-digitalizar`. Origem: depois da migração completa do Santé (D-324) a recepção
-não manda mais foto pelo app do WhatsApp. **Fase 0 (Regra Zero) feita:** D-326, SCHEMA §49 (migração 068:
-`capture_devices`, `scans` + RLS e 3 exceções de `withoutTenant()`), API_CONTRACTS §15 + `scanId` em
-`POST /conversations/:id/attachments`, API_ERRORS (`PAIRING_CODE_INVALID`, `CAPTURE_DEVICE_UNPAIRED`),
-SECURITY.md "Dispositivo de captura", PAGES.md §24 + clipe "Digitalizações" + seção em Canais & Equipe,
-SERVICES.md §36. **Falta:** `shared/types/scan.types.ts`, migração 068, services/rotas, agendador de
-expiração, telas, inventário de isolamento de rota do QA (rotas novas `/settings/capture-devices`,
-`/scans`, `/capture/*` — esta última pública), teste no iPhone da recepção.
+não manda mais foto pelo app do WhatsApp. Contrato: D-326, SCHEMA §49, API_CONTRACTS §15 + `scanId` no
+anexo, API_ERRORS, SECURITY.md "Dispositivo de captura", PAGES.md §24, SERVICES.md §36.
+- **db:** `068_scans.sql` (`capture_devices`, `scans`, RLS no mesmo arquivo), `tests/db/rls-scans.spec.ts`.
+- **api:** `CaptureDeviceService`/`ScanService` + rotas `/settings/capture-devices`, `/capture/*` (pública,
+  cookie `crm_capture`, Origin, limite por dispositivo, pareamento 10/15 min fail-closed), `/scans`;
+  `scanId` em `POST /conversations/:id/attachments`; agendador de expiração (30 min) no `main.ts`.
+  Inventário de isolamento: 124 → 131 rotas. Testes em `tests/scans/`.
+- **ui:** `/digitalizar` (3 estados, redução no aparelho, manifesto `digitalizar.webmanifest` + ícones em
+  `public/digitalizar-icons/`), clipe "Digitalizações" (`ScanPicker`), seção "Dispositivos de captura" em
+  Canais & Equipe. Cores do manifesto fixas no JSON (tema padrão).
+- **Verde em 19/11/2026:** typecheck dos 4 workspaces; backend 171 arquivos / 2666 testes; frontend 165 / 2190
+  (com `--maxWorkers=2`: em paralelo total a máquina dá timeout por CPU).
+- **Falta:** teste real no iPhone em homologação (HTTPS); conferir `Permissions-Policy: camera=()` do nginx
+  não bloqueia o `<input capture>`.

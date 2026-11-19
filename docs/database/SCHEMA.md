@@ -2469,6 +2469,7 @@ CREATE TABLE capture_devices (
 CREATE UNIQUE INDEX uq_capture_devices_token_hash ON capture_devices(token_hash) WHERE token_hash IS NOT NULL;
 CREATE UNIQUE INDEX uq_capture_devices_pairing_code_hash ON capture_devices(pairing_code_hash) WHERE pairing_code_hash IS NOT NULL;
 CREATE INDEX idx_capture_devices_tenant_id ON capture_devices(tenant_id);
+CREATE INDEX idx_capture_devices_created_by ON capture_devices(created_by);  -- índice de FK (D-146)
 
 CREATE TABLE scans (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),   -- também o nome do arquivo em disco

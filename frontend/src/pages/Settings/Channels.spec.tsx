@@ -28,6 +28,9 @@ vi.mock('@/api/settings', () => ({
  */
 vi.mock('@/api/channels');
 
+/** Seção própria com spec própria (`CaptureDevicesSection.spec.tsx`, CRMLAB-184). */
+vi.mock('./CaptureDevicesSection', () => ({ CaptureDevicesSection: () => null }));
+
 const channelsMock = vi.mocked(settingsApi.channels);
 const updateChannelsMock = vi.mocked(settingsApi.updateChannels);
 

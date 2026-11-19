@@ -41,6 +41,8 @@ export type ApiErrorCode =
   | 'USER_INACTIVE'
   | 'TENANT_INACTIVE'
   | 'RESET_TOKEN_INVALID'
+  | 'PAIRING_CODE_INVALID'
+  | 'CAPTURE_DEVICE_UNPAIRED'
   // Recursos
   | 'NOT_FOUND'
   | 'VALIDATION_ERROR'

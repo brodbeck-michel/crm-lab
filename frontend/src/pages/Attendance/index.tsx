@@ -37,6 +37,7 @@ import { cloudApiAttachmentMessage } from '@/lib/cloud-api-media';
 import { isSearchableTerm } from '@/lib/search-snippet';
 import { effectiveSearchTerm } from '@/lib/search-term';
 import { conversationDetailOptions, flattenMessages, useMarkAsRead } from './queries';
+import { SCAN_GONE_MESSAGE } from './ScanPicker';
 
 /**
  * Atendimento (`/attendance`) — TELA PRINCIPAL (PAGES.md §2).
@@ -484,26 +485,42 @@ export function Attendance() {
    * — menos sessão caída, que manda para o login e para o resto.
    */
   async function handleSendAttachments(
-    items: { file: File; caption: string }[],
+    items: { file: File; caption: string; scanId?: string }[],
     quotedMessageId?: string,
   ): Promise<void> {
     const conversationId = selectedId;
     if (!conversationId) return;
-    for (const [index, { file, caption }] of items.entries()) {
+    for (const [index, { file, caption, scanId }] of items.entries()) {
       try {
-        const contentBase64 = await readFileAsBase64(file);
-        await api.conversations.sendAttachment(conversationId, {
-          fileName: file.name,
-          mimeType: file.type || 'application/octet-stream',
-          contentBase64,
+        const extras = {
           ...(caption ? { caption } : {}),
           ...(index === 0 && quotedMessageId ? { quotedMessageId } : {}),
-        });
+        };
+        // Foto da fila Digitalizações (D-326): só o `scanId`, o arquivo já está no servidor.
+        await api.conversations.sendAttachment(
+          conversationId,
+          scanId
+            ? { scanId, ...extras }
+            : {
+                fileName: file.name,
+                mimeType: file.type || 'application/octet-stream',
+                contentBase64: await readFileAsBase64(file),
+                ...extras,
+              },
+        );
       } catch (error: unknown) {
         // MESSAGE_SEND_FAILED: gravou como falha e a bolha já mostra — mesmo
         // aviso de hoje. Sessão caída: o handler manda para o login e para.
         if (isApiError(error) && error.code === 'MESSAGE_SEND_FAILED') {
           handleApiError(error);
+        } else if (
+          scanId &&
+          isApiError(error) &&
+          error.code === 'NOT_FOUND' &&
+          error.details?.reason === 'scan_not_found'
+        ) {
+          // Outra pessoa usou antes, ou venceu (D-326): as outras fotos seguem.
+          toast(SCAN_GONE_MESSAGE, { tone: 'attention' });
         } else if (isApiError(error) && SESSION_ERRORS.has(error.code)) {
           handleApiError(error);
           break;
@@ -534,6 +551,7 @@ export function Attendance() {
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: queryKeys.conversation(conversationId) }),
           queryClient.invalidateQueries({ queryKey: queryScopes.conversations }),
+          ...(scanId ? [queryClient.invalidateQueries({ queryKey: queryScopes.scans })] : []),
         ]);
       }
     }
@@ -758,6 +776,7 @@ export function Attendance() {
             onSendAttachments={(items, quotedMessageId) =>
               void handleSendAttachments(items, quotedMessageId)
             }
+            scansEnabled
             onSendAudio={handleSendAudio}
             quickReplies={quickRepliesQuery.data?.quickReplies ?? []}
             contextOpen={contextOpen}

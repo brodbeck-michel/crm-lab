@@ -80,6 +80,18 @@ export {
   useWhatsAppStatus,
   useWhatsAppDisconnect,
 } from './channels';
+export { captureApi } from './capture';
+export {
+  captureDevicesApi,
+  scansApi,
+  useCaptureDevices,
+  useCreateCaptureDevice,
+  useDiscardScan,
+  useRenewPairingCode,
+  useRevokeCaptureDevice,
+  useScanList,
+} from './scans';
+export type { ListCaptureDevicesResponse, ListScansResponse } from '@crm-lab/shared';
 export {
   WHATSAPP_TEMPLATES_STALE_MS,
   useWhatsAppTemplates,
@@ -101,6 +113,8 @@ import { proposalsApi } from './proposals';
 import { themesApi } from './themes';
 import { usersApi } from './users';
 import { whatsappTemplatesApi } from './whatsapp-templates';
+import { captureApi } from './capture';
+import { captureDevicesApi, scansApi } from './scans';
 
 /** Fachada única: `api.proposals.list(filters)` (docs/guides/CONVENTIONS.md). */
 export const api = {
@@ -119,4 +133,7 @@ export const api = {
   patients: patientsApi,
   channels: channelsApi,
   whatsappTemplates: whatsappTemplatesApi,
+  capture: captureApi,
+  scans: scansApi,
+  captureDevices: captureDevicesApi,
 } as const;

@@ -1885,13 +1885,22 @@ usuário). Abrir o atalho → tirar a foto → enviar para a fila **Digitalizaç
 **Instalável na tela de início (PWA, sem service worker):** a rota injeta `<link rel="manifest"
 href="/digitalizar.webmanifest">` (`name` "Digitalizar", `display: standalone`, `start_url` e `scope`
 `/digitalizar`, ícones 192/512), `apple-touch-icon` e `apple-mobile-web-app-capable`. O manifesto do
-resto do CRM não muda. Cores do manifesto lidas dos tokens no build (regra 5: nada de hex em componente).
+resto do CRM não muda. Arquivos: `frontend/public/digitalizar.webmanifest` e
+`frontend/public/digitalizar-icons/` (`icon-192.png`, `icon-512.png`, `apple-touch-icon.png` — câmera branca
+sobre o accent do tema padrão). A pasta **não** se chama `digitalizar/`: o `try_files $uri $uri/` do nginx
+serviria o diretório no lugar da rota. As tags entram no `<head>` ao montar a rota (hook `usePwaHead`, que
+também põe `viewport-fit=cover` para o `env(safe-area-inset-*)` valer) e saem ao desmontar.
+**Cores do manifesto:** valores fixos do tema padrão (`theme_color` = accent, `background_color` = bg de
+`tokens.css`) escritos no `.webmanifest`, que é JSON estático servido pelo nginx, não componente (a regra
+5 continua valendo para os `.tsx`). Ler dos tokens no build exigiria um plugin no Vite só para isso; se o
+tema padrão mudar, atualizar o arquivo à mão.
 
 **Estados (decididos ao abrir, por `GET /capture/session`):**
 1. **Aberta no Safari, não instalada** (`!matchMedia('(display-mode: standalone)').matches` e
    `!navigator.standalone`): só o passo a passo "Compartilhar › Adicionar à Tela de Início" com
    ilustração. **Não pareia aqui**: no iOS o app instalado não enxerga o cookie do Safari (D-326 item 4).
-   Fora do iOS (Android/desktop), mostra o passo a passo **e** deixa seguir para o código.
+   Fora do iOS (Android/desktop), mostra o passo a passo **e** deixa seguir para o código
+   (**Continuar sem instalar**). No iOS fora da tela de início nem pergunta a sessão.
 2. **Instalada e não pareada** (`CAPTURE_DEVICE_UNPAIRED`): campo do código, 8 caracteres, teclado
    alfanumérico em maiúsculas, hífen automático depois do 4º (`K7MX-4QPR`) → `POST /capture/pair`.
    Erro: "Código inválido ou vencido. Peça um novo para quem administra o CRM." 429: "Muitas tentativas.
@@ -1905,12 +1914,15 @@ resto do CRM não muda. Cores do manifesto lidas dos tokens no build (regra 5: n
 
 **Redução no aparelho, antes de subir:** canvas → JPEG qualidade 0,8, lado maior até 2048 px (orientação
 já aplicada pelo navegador). Mesmo assim acima de 5 MB: tenta de novo com 0,6; ainda acima, avisa e não
-sobe. HEIC não chega ao servidor (o canvas sempre gera JPEG).
+sobe ("Foto grande demais mesmo reduzida (acima de 5 MB). Tire de novo, mais de perto."). A redução roda
+ao entrar a foto na faixa ("Preparando…"), então o aviso aparece antes do Enviar. HEIC não chega ao
+servidor (o canvas sempre gera JPEG).
 
 **Erros:** `CAPTURE_DEVICE_UNPAIRED` em qualquer chamada → volta ao estado 2 com "Este celular foi
 desconectado do CRM. Digite um novo código." (sem o refresh de sessão do client — não é usuário).
 `scan_queue_full`: "A fila deste celular está cheia (100 fotos). Peça para usarem ou descartarem as
-fotos no CRM." Sem rede: "Sem conexão. A foto continua aqui."
+fotos no CRM." (para o envio das seguintes — dariam o mesmo 409). Sem rede: "Sem conexão. A foto continua
+aqui." Outro erro numa foto: ela fica com "Tentar de novo" e as outras seguem.
 
 **Layout:** coluna única, alvos de toque grandes, `env(safe-area-inset-*)` respeitado; só tokens (regra 5).
 Chamadas pelo módulo `src/api/capture.ts` (credentials `include`, sem Bearer).
@@ -2037,6 +2049,8 @@ users(filters)              ['users', filters]        currentUser() ['users','me
 audit(filters)              ['audit', filters]
 platformTenants(filters)    ['platform', 'tenants', filters]
 platformBilling()           ['platform', 'billing']
+captureDevices()            ['settings', 'capture-devices']   (CRMLAB-184)
+scans()                     ['scans']                          (CRMLAB-184; recarregado ao abrir o ScanPicker)
 ```
 
 `queryScopes.*` são os prefixos para invalidar um escopo inteiro.

@@ -1,0 +1,17 @@
+{
+  "name": "Digitalizar",
+  "short_name": "Digitalizar",
+  "description": "Tire a foto e mande para a fila Digitalizações do CRM.",
+  "lang": "pt-BR",
+  "id": "/digitalizar",
+  "start_url": "/digitalizar",
+  "scope": "/digitalizar",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#c67139",
+  "icons": [
+    { "src": "/digitalizar-icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/digitalizar-icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

@@ -20,7 +20,7 @@ import { noopWsHub, type WsHub } from './lib/ws-hub.js';
 import { type ApiModule, type ApiModuleDeps, type ApiModuleFactory } from './http/api-module.js';
 import { apiModuleFactories } from './http/modules.js';
 import { errorHandler, notFoundHandler } from './http/middleware/error-handler.js';
-import { isChannelWebhook, rateLimit } from './http/middleware/rate-limit.js';
+import { isCaptureDeviceRoute, isChannelWebhook, rateLimit } from './http/middleware/rate-limit.js';
 import { requestContext } from './http/middleware/request-context.js';
 
 export const API_PREFIX = '/api/v1';
@@ -194,7 +194,12 @@ export function createApp(deps: AppDeps): BuiltApp {
   // fixo e sem Bearer, entao caia na mesma cota de 100/min de um usuario
   // humano: a auditoria de 2026-09-17 mediu 3754 respostas 429 e 462 entregas
   // abandonadas por causa disso.
-  app.use(rateLimit({ cache, skip: isChannelWebhook }));
+  // As rotas do celular pareado (`/capture/session|scans`, CRMLAB-184) tambem
+  // ficam fora: o router de `/capture` conta por DISPOSITIVO, depois de
+  // autenticar o cookie (D-326).
+  app.use(
+    rateLimit({ cache, skip: (req) => isChannelWebhook(req) || isCaptureDeviceRoute(req) }),
+  );
 
   const api = Router();
   const modules = mountApiModules(api, deps.moduleFactories ?? apiModuleFactories, {

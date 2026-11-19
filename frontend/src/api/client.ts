@@ -61,6 +61,11 @@ export interface RequestOptions {
   signal?: AbortSignal;
   /** `false` em `/auth/login` e `/auth/refresh` — sem header nem refresh. */
   auth?: boolean;
+  /**
+   * `include` na captura do celular (`/capture/*`, CRMLAB-184): a credencial do
+   * dispositivo é o cookie `crm_capture`. Ausente = padrão do `fetch` (same-origin).
+   */
+  credentials?: RequestCredentials;
 }
 
 /**
@@ -355,6 +360,7 @@ function send(
     headers,
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
     signal: options.signal,
+    ...(options.credentials ? { credentials: options.credentials } : {}),
   });
 }
 

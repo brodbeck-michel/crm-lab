@@ -2180,10 +2180,12 @@ class CaptureDeviceService {
 class ScanService {
   create(dev: CaptureDeviceContext, input: { mimeType: string; contentBase64: string }): Promise<{ id: string; createdAt: string; expiresAt: string }>;
   list(ctx: TenantContext, page: Pagination): Promise<Paginated<Scan>>;      // sem vencidas
-  readContent(ctx: TenantContext, id: string): Promise<{ stream: Readable; mimeType: string; fileName: string }>;
+  readContent(ctx: TenantContext, id: string): Promise<{ buffer: Buffer; mimeType: string; fileName: string }>;
   discard(ctx: TenantContext, id: string): Promise<void>;                    // audit discard_scan
-  /** Chamado pelo MessageService dentro da transação do anexo: DELETE ... RETURNING + lê o arquivo. */
-  consume(ctx: TenantContext, id: string, tx: Tx): Promise<{ buffer: Buffer; mimeType: string; fileName: string }>;
+  /** Anexo com scanId, fase 1: só LÊ a foto (as checagens do anexo rodam sobre ela). */
+  prepareForAttachment(ctx: TenantContext, id: string): Promise<PreparedMedia>;
+  /** Fase 2: DELETE ... RETURNING + INSERT em message_media + arquivo da mídia, numa transação só. */
+  consumeAsMedia(ctx: TenantContext, id: string, prepared: PreparedMedia): Promise<StoredMedia>;
   /** Agendador (main.ts, 30 min). Lista os tenants com vencidas (withoutTenant) e apaga um por vez. */
   expireDue(): Promise<void>;
 }
@@ -2191,10 +2193,20 @@ class ScanService {
 
 - **Mídia:** `create` reusa `MediaService.resolveStoredMimeType` + conversão JPEG (D-290) e
   `lib/media-storage.ts` (subpasta `scans/`). O arquivo nasce depois da linha, nomeado pelo `id`.
-- **Consumo:** o `MessageService.sendAttachment` com `scanId` faz as checagens que não gravam nada
-  (conversa, papel, D-320, formato, janela D-310) **antes** de `consume`; o arquivo da fila é copiado
-  para `message_media` na mesma transação do `DELETE`. O arquivo antigo da fila é apagado **depois** do
+- **Consumo:** a rota de anexo (`createAttachment` em `conversation.routes.ts`) com `scanId` troca
+  `MediaService.prepareOutbound` por `prepareForAttachment` e `storePrepared` por `consumeAsMedia`; o resto
+  do fluxo não muda. As checagens que não gravam nada (conversa, papel, citação, formato da Meta, D-320,
+  janela D-310) rodam **antes** do consumo; o arquivo da fila é copiado para `message_media` na mesma
+  transação do `DELETE` (gravação em disco dentro da transação: falhou o disco, a foto fica na fila). O arquivo antigo da fila é apagado **depois** do
   commit (falha ao apagar = log `scan.file_delete_failed`, o agendador não o acha mais; aceito).
-- **Teto:** `create` conta as pendentes do dispositivo antes de gravar (100, `CONFLICT scan_queue_full`).
+- **Teto:** `create` trava a linha do dispositivo (`FOR UPDATE`) e conta as pendentes antes de gravar
+  (100, `CONFLICT scan_queue_full`): duas fotos simultâneas não furam o teto.
+- **Sniff:** a fila exige detecção **positiva** de JPEG/PNG (`file-type`); o "inconclusivo" que no anexo
+  comum mantém o MIME declarado aqui é `VALIDATION_ERROR`.
+- **Rate limit (`/capture/session|scans`):** o limitador global do `app.ts` pula as duas; o router de
+  `/capture` autentica o cookie e conta com chave `capture-device:<id>` (sem cookie válido, o balde
+  `ip:<ip>` do global) — usar o valor cru do cookie como chave seria o bypass de trocar a credencial a
+  cada request. Fail-open sem Redis (a credencial é a defesa, como o JWT). `/capture/pair` entra na lista
+  de rotas públicas (fail-closed) e tem o limitador próprio de 10 / 15 min por IP.
 - **Multitenant:** tudo com `tenant_id` do contexto (usuário ou dispositivo); as três exceções de
   `withoutTenant()` estão em SCHEMA.md (RLS).

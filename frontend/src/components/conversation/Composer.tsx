@@ -67,6 +67,11 @@ export interface ComposerProps {
   /** Clique no clipe (a tela tira a faixa de não lidas, D-239). */
   onAttachClick?: () => void;
   /**
+   * "Digitalizações" no menu do clipe (CRMLAB-184, D-326): quem monta a tela
+   * abre o `ScanPicker`. Sem handler, o item não aparece.
+   */
+  onOpenScans?: () => void;
+  /**
    * Recado de voz gravado (D-181) — sem handler, o microfone não aparece.
    * Resolveu: o gravador volta ao normal. Rejeitou: a prévia fica para tentar
    * de novo (quem avisa do erro é quem chama).
@@ -205,13 +210,35 @@ function AttachIcon() {
  * Clipe com menu (CRMLAB-69, D-232): "Fotos e vídeos" e "Documento", os dois
  * com `multiple`. Mesmo padrão de menu do `TransferMenu` (clique fora + Esc).
  */
+function CameraIcon() {
+  return (
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      className="flex-[0_0_15px]"
+    >
+      <path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2.2l1.5-2h5.6l1.5 2h2.2A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z" />
+      <circle cx="12" cy="13" r="3.5" />
+    </svg>
+  );
+}
+
 function AttachMenu({
   onPickFiles,
   onOpen,
+  onOpenScans,
   disabled,
 }: {
   onPickFiles: (files: File[]) => void;
   onOpen?: () => void;
+  onOpenScans?: () => void;
   disabled: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -288,6 +315,20 @@ function AttachMenu({
           >
             Documento
           </button>
+          {onOpenScans && (
+            <button
+              type="button"
+              role="menuitem"
+              className={cn(itemClass, 'flex items-center gap-sm')}
+              onClick={() => {
+                setOpen(false);
+                onOpenScans();
+              }}
+            >
+              <CameraIcon />
+              Digitalizações
+            </button>
+          )}
         </div>
       )}
       <input
@@ -316,6 +357,7 @@ export function Composer({
   onSend,
   onPickFiles,
   onAttachClick,
+  onOpenScans,
   onSendAudio,
   disabled: disabledProp = false,
   sending = false,
@@ -691,7 +733,12 @@ export function Composer({
       )}
       <div className="flex items-end gap-sm">
         {onPickFiles && !recording && (
-          <AttachMenu onPickFiles={onPickFiles} onOpen={onAttachClick} disabled={blocked} />
+          <AttachMenu
+            onPickFiles={onPickFiles}
+            onOpen={onAttachClick}
+            onOpenScans={onOpenScans}
+            disabled={blocked}
+          />
         )}
 
         {recording && onSendAudio ? (

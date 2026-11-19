@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-11-18 (CRMLAB-183: aviso de tipo não suportado da Cloud API rastreável)
+**Última atualização:** 2026-11-19 (CRMLAB-185: campo de senha com olho e aviso de Caps Lock)
 
 ---
 
@@ -4241,3 +4241,12 @@ loga `whatsapp.inbound_unsupported` (`type`, `subtype` = `unsupported.type`, `ex
 `code`/`title`/`details`; sem conteúdo nem telefone). Quando a Meta informa `unsupported.type` conhecido
 (`view_once`, `poll`/`poll_creation`, `edit`, `revoke`), o aviso diz o que foi; senão segue o genérico.
 API_CONTRACTS (tabela do webhook da Meta) atualizada. Testes: `crmlab139-webhook-meta.spec.ts` (+2).
+
+### 🔄 CRMLAB-185 — Campos de senha: mostrar/ocultar (olho) e aviso de Caps Lock (2026-11-19, aguardando validação)
+
+Branch `feature/CRMLAB-185-campo-senha-olho-capslock`. Novo primitivo `PasswordInput` (`components/ui/`,
+COMPONENTS.md): o `Input` com botão olho no `suffix` (começa oculto, `aria-pressed`, `type="button"`) e
+aviso "Caps Lock está ligado" (`role="status"`) com o campo em foco. Troca dos 11 campos de senha/segredo:
+Login, Redefinir senha, Conta → Alterar senha, modal de Usuário, Plataforma → novo laboratório, Integração
+LIS (chave Bitlab), Canais (token Cloud API, token e segredo do webhook). E2E: `getByLabel('Senha')` passa a
+`exact: true` (o rótulo do olho "Mostrar senha" também casava). Testes: `PasswordInput.spec.tsx` (+4).

@@ -51,7 +51,7 @@ test.describe('Fluxo 6: Usuários & Permissões (admin)', () => {
 
     await modal.getByLabel('Email').fill(email);
     await modal.getByLabel('Nome').fill(nome);
-    await modal.getByLabel('Senha').fill(NEW_USER_PASSWORD);
+    await modal.getByLabel('Senha', { exact: true }).fill(NEW_USER_PASSWORD);
     await modal.getByLabel('Função').selectOption('manager');
     // A alçada nao tem `<label for>`; o campo e o unico numerico do modal.
     await modal.getByRole('spinbutton').fill('20');

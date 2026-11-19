@@ -21,3 +21,5 @@ export { Tooltip } from './Tooltip';
 export type { TooltipProps, TooltipPlacement } from './Tooltip';
 export { ToastProvider, useToast } from './Toast';
 export type { ToastApi, ToastItem, ToastOptions, ToastTone } from './Toast';
+export { PasswordInput } from './PasswordInput';
+export type { PasswordInputProps } from './PasswordInput';

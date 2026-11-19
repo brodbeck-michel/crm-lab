@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { isApiError } from '@/api';
-import { Button, Input } from '@/components/ui';
+import { Button, Input, PasswordInput } from '@/components/ui';
 import { useLogin } from '@/hooks';
 
 /**
@@ -106,9 +106,8 @@ export function Login() {
           placeholder="voce@laboratorio.com"
         />
 
-        <Input
+        <PasswordInput
           label="Senha"
-          type="password"
           name="password"
           autoComplete="current-password"
           value={password}

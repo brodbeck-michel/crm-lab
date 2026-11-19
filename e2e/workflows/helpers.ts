@@ -102,7 +102,7 @@ export const ACCENT_CSS_VAR = '--color-accent';
 export async function loginAs(page: Page, user: E2eUser): Promise<void> {
   await page.goto('/login');
   await page.getByLabel('E-mail').fill(user.email);
-  await page.getByLabel('Senha').fill(user.password);
+  await page.getByLabel('Senha', { exact: true }).fill(user.password);
 
   const resposta = page.waitForResponse(
     (res) => res.url().includes('/auth/login') && res.request().method() === 'POST',

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { isApiError } from '@/api';
-import { Button, Input } from '@/components/ui';
+import { Button, PasswordInput } from '@/components/ui';
 import { useResetPassword } from '@/api/auth';
 
 const MIN_PASSWORD_LENGTH = 10;
@@ -80,8 +80,7 @@ export function ResetPassword() {
           <p className="m-0 text-caption text-neutral-600">Escolha uma nova senha de acesso.</p>
         </header>
 
-        <Input
-          type="password"
+        <PasswordInput
           label="Nova senha"
           hint={`Mínimo de ${MIN_PASSWORD_LENGTH} caracteres. Evite senhas óbvias.`}
           autoComplete="new-password"
@@ -89,8 +88,7 @@ export function ResetPassword() {
           onChange={(event) => setNewPassword(event.target.value)}
           disabled={resetPassword.isPending}
         />
-        <Input
-          type="password"
+        <PasswordInput
           label="Confirmar nova senha"
           autoComplete="new-password"
           value={confirmPassword}

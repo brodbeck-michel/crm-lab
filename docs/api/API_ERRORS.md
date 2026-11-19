@@ -35,6 +35,7 @@ Formato padrão e catálogo completo de códigos. Backend emite EXATAMENTE estes
 | `FORBIDDEN` | 403 | Trava das Regras do funil em `PATCH /proposals/:id/status` (CRMLAB-56, D-192) | `{ reason: "reopen_not_allowed" \| "move_others_not_allowed" }` |
 | `USER_INACTIVE` | 403 | Usuário desativado | — |
 | `TENANT_INACTIVE` | 403 | Laboratório suspenso/inativo | — |
+| `PASSWORD_CHANGE_REQUIRED` | 403 | Access token com `mustChangePassword` (senha provisória, CRMLAB-186, D-326) chamando qualquer rota autenticada que não seja `GET /users/me` ou `PATCH /users/me/password` — inclui o handshake do `/ws`. Frontend leva o usuário para `/change-password` | — |
 | `RESET_TOKEN_INVALID` | 400 | `POST /auth/reset-password`: token inexistente, já usado ou vencido (CRMLAB-39, D-172) — os três casos respondem igual, de propósito | — |
 
 ## Recursos
@@ -218,6 +219,7 @@ Sem código novo além do acima: `/insurances` e `/exams/:id/prices` reusam o ca
 switch (error.code) {
   case 'TOKEN_EXPIRED':        return refreshAndRetry(request);
   case 'REFRESH_TOKEN_INVALID': return redirectToLogin();
+  case 'PASSWORD_CHANGE_REQUIRED': return redirectToChangePassword(); // CRMLAB-186
   case 'RATE_LIMIT_EXCEEDED':  return toastRetry(error.details.retryAfter);
   case 'VALIDATION_ERROR':     return mapFieldErrors(error.details.fields);
   //                             (+ mensagem geral para as chaves que a tela não renderiza)

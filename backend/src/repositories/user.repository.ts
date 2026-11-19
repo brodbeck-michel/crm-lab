@@ -21,6 +21,7 @@ export interface UserRow {
   is_active: boolean;
   last_login_at: unknown;
   created_at: unknown;
+  must_change_password: boolean;
 }
 
 export interface UserEntity {
@@ -34,10 +35,13 @@ export interface UserEntity {
   isActive: boolean;
   lastLoginAt: string | null;
   createdAt: string;
+  /** Senha provisória a trocar no primeiro login (CRMLAB-186, D-326). */
+  mustChangePassword: boolean;
 }
 
 const COLUMNS = `id, tenant_id, email, password_hash, name, role,
-                 discount_limit_percent, is_active, last_login_at, created_at`;
+                 discount_limit_percent, is_active, last_login_at, created_at,
+                 must_change_password`;
 
 export function mapUser(row: UserRow): UserEntity {
   return {
@@ -51,6 +55,7 @@ export function mapUser(row: UserRow): UserEntity {
     isActive: row.is_active,
     lastLoginAt: toIsoOrNull(row.last_login_at),
     createdAt: toIso(row.created_at),
+    mustChangePassword: row.must_change_password === true,
   };
 }
 
@@ -80,6 +85,7 @@ export async function findLoginCandidatesByEmail(
   }>(
     `SELECT u.id, u.tenant_id, u.email, u.password_hash, u.name, u.role,
             u.discount_limit_percent, u.is_active, u.last_login_at, u.created_at,
+            u.must_change_password,
             t.is_active AS tenant_is_active, t.name AS tenant_name, t.slug AS tenant_slug
        FROM users u
        JOIN tenants t ON t.id = u.tenant_id
@@ -227,7 +233,8 @@ export async function touchLastLogin(tx: DbTx, id: string): Promise<void> {
 }
 
 /**
- * Grava o novo hash de senha (CRMLAB-35, troca própria). Função dedicada, e
+ * Grava o novo hash de senha (CRMLAB-35, troca própria) e desliga a senha
+ * provisória (`must_change_password`, CRMLAB-186) — senha escolhida pela própria pessoa. Função dedicada, e
  * não um campo a mais em `UpdateUserPatch`: `PATCH /users/:id` é rota de
  * admin editando OUTRO usuário — misturar senha ali abriria um caminho de
  * reset de senha por admin que não existe hoje (o único reset de terceiro é
@@ -246,15 +253,33 @@ export async function updatePasswordHash(
   // sobrescrevem: a segunda nao acha linha e volta como "senha atual incorreta".
   if (expectedCurrentHash !== undefined) {
     const result = await tx.query(
-      'UPDATE users SET password_hash = $1 WHERE id = $2 AND password_hash = $3',
+      `UPDATE users SET password_hash = $1, must_change_password = FALSE
+        WHERE id = $2 AND password_hash = $3`,
       [passwordHash, id, expectedCurrentHash],
     );
     return result.rowCount > 0;
   }
-  const result = await tx.query('UPDATE users SET password_hash = $1 WHERE id = $2', [
-    passwordHash,
-    id,
-  ]);
+  const result = await tx.query(
+    'UPDATE users SET password_hash = $1, must_change_password = FALSE WHERE id = $2',
+    [passwordHash, id],
+  );
+  return result.rowCount > 0;
+}
+
+/**
+ * Senha PROVISÓRIA gerada por terceiro (CRMLAB-186, D-326): grava o hash e liga
+ * `must_change_password`. Contraparte de `updatePasswordHash`, que é a senha
+ * escolhida pela própria pessoa e por isso DESLIGA a flag.
+ */
+export async function setTemporaryPassword(
+  tx: DbTx,
+  id: string,
+  passwordHash: string,
+): Promise<boolean> {
+  const result = await tx.query(
+    'UPDATE users SET password_hash = $1, must_change_password = TRUE WHERE id = $2',
+    [passwordHash, id],
+  );
   return result.rowCount > 0;
 }
 

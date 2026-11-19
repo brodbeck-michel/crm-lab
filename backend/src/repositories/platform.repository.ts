@@ -371,7 +371,11 @@ export async function findTenantUser(
 
 /** Só o reset de senha do console da plataforma escreve `password_hash` fora de `insert`. */
 export async function setUserPassword(tx: DbTx, userId: string, passwordHash: string): Promise<void> {
-  await tx.query('UPDATE users SET password_hash = $1 WHERE id = $2', [passwordHash, userId]);
+  // Senha provisória do console: troca obrigatória no primeiro login (CRMLAB-186, D-326).
+  await tx.query('UPDATE users SET password_hash = $1, must_change_password = TRUE WHERE id = $2', [
+    passwordHash,
+    userId,
+  ]);
 }
 
 export interface UpdateTenantPatch {

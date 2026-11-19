@@ -41,6 +41,8 @@ export type ApiErrorCode =
   | 'USER_INACTIVE'
   | 'TENANT_INACTIVE'
   | 'RESET_TOKEN_INVALID'
+  /** Senha provisória: só `GET /users/me` e `PATCH /users/me/password` (CRMLAB-186, D-326). */
+  | 'PASSWORD_CHANGE_REQUIRED'
   // Recursos
   | 'NOT_FOUND'
   | 'VALIDATION_ERROR'

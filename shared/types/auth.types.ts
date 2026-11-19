@@ -18,6 +18,12 @@ export interface AuthUser {
   name: string;
   role: UserRole;
   discountLimit: number;
+  /**
+   * Senha atual é provisória (reset por admin ou console — CRMLAB-186, D-326): o usuário
+   * precisa trocá-la antes de usar o sistema. Opcional só para tolerar sessão persistida
+   * antes do campo existir; o backend sempre envia.
+   */
+  mustChangePassword?: boolean;
 }
 
 export interface AuthTenant {
@@ -119,6 +125,8 @@ export interface JwtPayload {
   tenantId: string;
   role: UserRole;
   discountLimit: number;
+  /** Só presente (e `true`) com senha provisória — CRMLAB-186, D-326. */
+  mustChangePassword?: boolean;
   iat?: number;
   exp?: number;
 }
@@ -157,6 +165,13 @@ export interface UpdateUserRequest {
   role?: UserRole;
   discountLimit?: number;
   isActive?: boolean;
+}
+
+/** `POST /users/:id/reset-password` (admin — CRMLAB-186, D-326). Senha aparece uma única vez. */
+export interface ResetUserPasswordResponse {
+  userId: string;
+  email: string;
+  temporaryPassword: string;
 }
 
 export interface ListUsersResponse {

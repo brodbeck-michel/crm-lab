@@ -6,6 +6,7 @@ import PatientProfile, { PatientsList } from '@/pages/Patients';
 import { Login } from '@/pages/Login';
 import { ForgotPassword } from '@/pages/ForgotPassword';
 import { ResetPassword } from '@/pages/ResetPassword';
+import { ChangePassword } from '@/pages/ChangePassword';
 import BudgetNew from '@/pages/Budget/New';
 import Proposals from '@/pages/Proposals';
 import Catalog from '@/pages/Catalog';
@@ -69,6 +70,10 @@ export const appRoutes: RouteObject[] = [
     children: [
       // `/` → tela inicial do perfil (atendente → /attendance)
       { index: true, element: <RoleHomeRedirect /> },
+
+      // Troca obrigatória da senha provisória (CRMLAB-186, D-326) — tela solta,
+      // sem shell; sem a flag, ela mesma redireciona para a home do papel.
+      { path: 'change-password', element: <ChangePassword /> },
 
       // ── Operação do laboratório ─────────────────────────────────────────
       {

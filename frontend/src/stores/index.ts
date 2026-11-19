@@ -3,6 +3,7 @@ export {
   selectUser,
   selectRole,
   selectIsAuthenticated,
+  selectMustChangePassword,
   SERVER_DATA_KEYS,
 } from './auth.store';
 export type { AuthState, SessionTokens } from './auth.store';

@@ -1211,6 +1211,15 @@ médico.
   legenda**: o campo é ignorado (não vai ao gateway nem ao `content`)
 - Vários arquivos = um POST por arquivo, em sequência (D-233). O `quotedMessageId` vai só no
   primeiro
+- `scanId` (opcional, uuid — CRMLAB-184, D-326): manda uma foto da fila **Digitalizações** (§15) em vez
+  de um arquivo. **Ou** `scanId` **ou** `fileName` + `mimeType` + `contentBase64` — os dois juntos, ou
+  nenhum, é `VALIDATION_ERROR`. `caption` e `quotedMessageId` valem igual. O arquivo da fila entra no
+  mesmo caminho do anexo (mesmas checagens, mesma ordem, mesma resposta) com `fileName`
+  `digitalizacao-AAAAMMDD-HHMMSS.jpg`. A foto **sai da fila quando a mídia da mensagem é gravada**: recusa
+  antes de gravar (janela fechada, 409, formato) mantém a foto na fila; `MESSAGE_SEND_FAILED` depois de
+  gravar já a consumiu (o "tentar de novo" é o da mensagem). Foto inexistente, vencida, já usada ou de
+  outro tenant → `NOT_FOUND` com `details: { reason: "scan_not_found" }`. Duas atendentes usando a mesma
+  foto ao mesmo tempo: a segunda recebe esse `NOT_FOUND` (consumo com `DELETE ... RETURNING` na transação)
 
 O recorte por papel é aplicado **antes** de gravar: conversa que o usuário não
 enxerga devolve `NOT_FOUND`. Conversa sem dona é assumida por quem envia antes de gravar a
@@ -6593,6 +6602,136 @@ Qualquer usuário do laboratório exclui (resposta 7 do épico). Apaga a linha e
 mimeType, byteSize }`).
 
 **Erros:** `VISIT_ALREADY_CLOSED` (409), `NOT_FOUND`
+
+---
+
+## 15. Digitalizações (Digitalizar pelo celular — CRMLAB-184, D-326)
+
+Três superfícies: **dispositivos de captura** (Configurações, admin), a **captura** (o celular pareado,
+sem login) e a **fila** (quem atende). A foto sai para o paciente pelo `POST /conversations/:id/attachments`
+com `scanId` (§2). Tipos em `shared/types/scan.types.ts`.
+
+```typescript
+interface CaptureDevice {
+  id: string;
+  name: string;
+  status: 'pending' | 'active' | 'revoked'; // pending = cadastrado, ainda não pareado
+  pairingCodeExpiresAt: string | null;      // ISO UTC; só quando há código válido
+  pairedAt: string | null;
+  lastUsedAt: string | null;                // último envio de foto
+  pendingScans: number;                     // fotos na fila (não vencidas)
+  createdAt: string;
+}
+
+interface CapturePairingCode {
+  code: string;      // 8 caracteres, alfabeto sem 0/O/1/I/L, ex. "K7MX-4QPR" na tela (o hífen é só visual)
+  expiresAt: string; // 15 min
+}
+
+interface Scan {
+  id: string;
+  deviceId: string;
+  deviceName: string;
+  fileName: string;   // "digitalizacao-20261119-093512.jpg" (horário de Brasília)
+  mimeType: string;   // "image/jpeg"
+  byteSize: number;
+  contentUrl: string; // "/api/v1/scans/<id>/content" — nunca URL pública
+  createdAt: string;
+  expiresAt: string;
+}
+```
+
+### 15.1 Dispositivos de captura — `manager` lê, `admin` escreve
+
+`denyPlatformOperator()`. Cadastro, novo código e revogação geram audit log (D-326: equivalem a dar e
+tirar permissão).
+
+#### GET /settings/capture-devices
+**Response (200):** `{ "devices": CaptureDevice[], "pagination": { page, limit, total } }` — revogados
+por último; padrão `limit` 50.
+
+#### POST /settings/capture-devices
+**Request:** `{ "name": "Celular recepção" }` — `name` 1..60 caracteres (trim).
+**Response (201):** `{ "device": CaptureDevice, "pairing": CapturePairingCode }`. O código em claro só
+aparece aqui (e no endpoint abaixo); o banco guarda o hash. Audit `create_capture_device`
+(`newValues: { name }`).
+
+#### POST /settings/capture-devices/:id/pairing-code
+Gera um código novo (o anterior deixa de valer). Serve para o primeiro pareamento que venceu e para
+**parear de novo** (celular trocado, iOS limpou os dados): ao parear, a credencial antiga cai.
+**Response (200):** `CapturePairingCode`. Audit `renew_capture_device_pairing_code`.
+**Erros:** `CONFLICT` (409, `{ reason: "device_revoked" }`), `NOT_FOUND`
+
+#### DELETE /settings/capture-devices/:id
+Revoga: o celular para de enviar na hora (próximo envio → `CAPTURE_DEVICE_UNPAIRED`). As fotos já na
+fila ficam até usar, descartar ou vencer. Idempotente.
+**Response:** `204`. Audit `revoke_capture_device`.
+
+**Erros da seção:** `FORBIDDEN` (403 — escrita por não-admin; leitura por `attendant`; `platform_operator`),
+`VALIDATION_ERROR` (400), `NOT_FOUND` (404)
+
+### 15.2 Captura — o celular pareado (sem login)
+
+Rotas **sem Bearer**. A credencial do dispositivo vai no cookie `crm_capture` (httpOnly, `Secure`,
+`SameSite=Strict`, `Path=/api/v1/capture`, `Max-Age` 400 dias, renovado a cada envio). Toda rota `POST`
+confere o header `Origin` contra `env.corsOrigins` antes de olhar o cookie (mesma defesa do WebSocket,
+SECURITY.md). Nada aqui lê dado de laboratório além do nome do dispositivo e do laboratório.
+
+#### POST /capture/pair
+**Request:** `{ "code": "K7MX4QPR" }` — maiúsculas/minúsculas e hífen/espaço ignorados.
+**Response (200):** `{ "deviceName": "Celular recepção", "tenantName": "Laboratório Santé" }` +
+`Set-Cookie: crm_capture=...`. Consome o código, grava `paired_at` e o hash da credencial nova (a
+anterior, se houver, cai). Audit `pair_capture_device` (autor = o dispositivo, `userId` nulo).
+**Erros:** `PAIRING_CODE_INVALID` (400 — inexistente, vencido, já usado ou dispositivo revogado: **mesma
+resposta** para os quatro), `RATE_LIMIT_EXCEEDED` (429 — 10 tentativas / 15 min por IP, contadas antes de
+conferir), `SERVICE_UNAVAILABLE` (503 — Redis fora: rota pública, fail-closed como `/auth/login`)
+
+#### GET /capture/session
+A página pergunta "estou pareado?" ao abrir.
+**Response (200):** `{ "deviceName": "...", "tenantName": "..." }`.
+**Erros:** `CAPTURE_DEVICE_UNPAIRED` (401 — sem cookie, credencial desconhecida, dispositivo revogado ou
+laboratório inativo: a página volta para a tela do código)
+
+#### POST /capture/scans
+Uma foto por requisição (várias = várias requisições em sequência, como D-233).
+**Request:** `{ "mimeType": "image/jpeg", "contentBase64": "/9j/4AAQ..." }`
+- `mimeType`: só `image/jpeg` ou `image/png` → senão `VALIDATION_ERROR` em `fields.mimeType`
+- `contentBase64`: até **5 MB** decodificado (teto de imagem da Cloud API, D-314) → acima, `MEDIA_TOO_LARGE`
+  com `details: { byteSize, max: 5242880 }`
+- Passa pelo hardening de mídia (§2d: allow-list + sniff); imagem que o sniff prova não ser imagem →
+  `VALIDATION_ERROR`. Grava já reencodada em JPEG sem EXIF/GPS (D-290)
+
+**Response (201):** `{ "id": "uuid", "createdAt": "...", "expiresAt": "..." }`. Atualiza
+`last_used_at` e renova o cookie. Sem audit (volume); log `scan.created` com `tenantId`, `deviceId`, `byteSize`.
+**Erros:** `CAPTURE_DEVICE_UNPAIRED` (401), `CONFLICT` (409, `{ reason: "scan_queue_full", max: 100 }` —
+100 fotos pendentes deste dispositivo), `VALIDATION_ERROR` (400), `MEDIA_TOO_LARGE` (413),
+`FORBIDDEN` (403 — `Origin` fora da lista), `RATE_LIMIT_EXCEEDED` (429 — limitador global, chave = dispositivo)
+
+### 15.3 Fila — quem atende (`attendant` · `manager` · `admin`)
+
+A fila é **do laboratório**, não de uma pessoa: todos os papéis de tenant veem todas as fotos.
+`denyPlatformOperator()`.
+
+#### GET /scans
+**Response (200):** `{ "scans": Scan[], "pagination": { page, limit, total } }` — mais nova primeiro,
+**sem as vencidas** (`expires_at > now()`, mesmo que o agendador ainda não tenha passado). Padrão `limit` 50.
+
+#### GET /scans/:id/content
+O arquivo, como `GET /media/:id` (§2d): `Content-Type` gravado, `X-Content-Type-Options: nosniff`,
+`Content-Disposition: inline; filename="digitalizacao-....jpg"`. Vencida → `NOT_FOUND`.
+
+#### DELETE /scans/:id
+Descartar (foto errada, tremida). Apaga linha e arquivo. **Response:** `204`. Audit `discard_scan`
+(`oldValues: { deviceName, createdAt, byteSize }`).
+
+**Erros da seção:** `NOT_FOUND` (404 — inexistente, vencida, já usada ou de outro tenant),
+`VALIDATION_ERROR` (400, `:id` não-uuid), `FORBIDDEN` (403, `platform_operator`)
+
+### 15.4 Expiração
+
+Agendador do `main.ts`, a cada 30 min: lista os `tenant_id` com `scans.expires_at <= now()`
+(`withoutTenant()`, D-326) e, por tenant com `withTenant()`, apaga linhas e arquivos. Arquivo que já não
+existe em disco não é erro. Log `scan.expired` com `tenantId` e quantidade.
 
 ---
 

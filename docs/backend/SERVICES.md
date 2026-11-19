@@ -2155,3 +2155,46 @@ interface WhatsAppUsageService {
   se falhar, usa o aviso de texto.
 - **Teste:** gateway Graph fake (servidor HTTP de teste), no padrão do gateway Evolution fake (§16);
   o envio real contra a Meta é verificação manual com um número de teste.
+
+---
+
+## 36. ScanService e CaptureDeviceService — Digitalizar pelo celular (CRMLAB-184 — D-326)
+
+**Contrato:** API_CONTRACTS §15 e `scanId` em `POST /conversations/:id/attachments` (§2). Tabelas
+`capture_devices` e `scans` (SCHEMA §49). Rotas: `controllers/capture-device.routes.ts`
+(`/settings/capture-devices`), `controllers/capture.routes.ts` (`/capture/*`, sem `requireAuth`) e
+`controllers/scan.routes.ts` (`/scans`).
+
+```typescript
+class CaptureDeviceService {
+  list(ctx: TenantContext, page: Pagination): Promise<Paginated<CaptureDevice>>;             // manager+
+  create(ctx: TenantContext, name: string): Promise<{ device: CaptureDevice; pairing: CapturePairingCode }>; // admin, audit
+  renewPairingCode(ctx: TenantContext, id: string): Promise<CapturePairingCode>;             // admin, audit
+  revoke(ctx: TenantContext, id: string): Promise<void>;                                     // admin, audit, idempotente
+  /** withoutTenant() só para achar o dispositivo pelo hash do código; grava com withTenant(). */
+  pair(code: string): Promise<{ token: string; deviceName: string; tenantName: string }>;
+  /** withoutTenant() só para achar pelo hash da credencial. Revogado/inativo → CAPTURE_DEVICE_UNPAIRED. */
+  authenticate(token: string): Promise<CaptureDeviceContext>; // { tenantId, deviceId, deviceName, tenantName }
+}
+
+class ScanService {
+  create(dev: CaptureDeviceContext, input: { mimeType: string; contentBase64: string }): Promise<{ id: string; createdAt: string; expiresAt: string }>;
+  list(ctx: TenantContext, page: Pagination): Promise<Paginated<Scan>>;      // sem vencidas
+  readContent(ctx: TenantContext, id: string): Promise<{ stream: Readable; mimeType: string; fileName: string }>;
+  discard(ctx: TenantContext, id: string): Promise<void>;                    // audit discard_scan
+  /** Chamado pelo MessageService dentro da transação do anexo: DELETE ... RETURNING + lê o arquivo. */
+  consume(ctx: TenantContext, id: string, tx: Tx): Promise<{ buffer: Buffer; mimeType: string; fileName: string }>;
+  /** Agendador (main.ts, 30 min). Lista os tenants com vencidas (withoutTenant) e apaga um por vez. */
+  expireDue(): Promise<void>;
+}
+```
+
+- **Mídia:** `create` reusa `MediaService.resolveStoredMimeType` + conversão JPEG (D-290) e
+  `lib/media-storage.ts` (subpasta `scans/`). O arquivo nasce depois da linha, nomeado pelo `id`.
+- **Consumo:** o `MessageService.sendAttachment` com `scanId` faz as checagens que não gravam nada
+  (conversa, papel, D-320, formato, janela D-310) **antes** de `consume`; o arquivo da fila é copiado
+  para `message_media` na mesma transação do `DELETE`. O arquivo antigo da fila é apagado **depois** do
+  commit (falha ao apagar = log `scan.file_delete_failed`, o agendador não o acha mais; aceito).
+- **Teto:** `create` conta as pendentes do dispositivo antes de gravar (100, `CONFLICT scan_queue_full`).
+- **Multitenant:** tudo com `tenant_id` do contexto (usuário ou dispositivo); as três exceções de
+  `withoutTenant()` estão em SCHEMA.md (RLS).

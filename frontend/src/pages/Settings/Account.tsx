@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useChangePassword } from '@/api/users';
 import { useAuthStore } from '@/stores/auth.store';
 import { PageContainer, PageHeader } from '@/components/layout';
-import { Button, Input, useToast } from '@/components/ui';
+import { Button, PasswordInput, useToast } from '@/components/ui';
 
 /**
  * Minha Conta (`/settings/account`) — CRMLAB-35. Troca da própria senha,
@@ -85,16 +85,14 @@ export default function Account() {
         <form onSubmit={handleSubmit} className="space-y-md" aria-label="Alterar senha">
           <h2 className="m-0 font-heading text-section text-text">Alterar senha</h2>
 
-          <Input
-            type="password"
+          <PasswordInput
             label="Senha atual"
             autoComplete="current-password"
             value={form.currentPassword}
             onChange={(e) => setForm({ ...form, currentPassword: e.target.value })}
             error={fieldErrors.currentPassword}
           />
-          <Input
-            type="password"
+          <PasswordInput
             label="Nova senha"
             hint={`Mínimo de ${MIN_PASSWORD_LENGTH} caracteres. Evite senhas óbvias.`}
             autoComplete="new-password"
@@ -102,8 +100,7 @@ export default function Account() {
             onChange={(e) => setForm({ ...form, newPassword: e.target.value })}
             error={fieldErrors.newPassword}
           />
-          <Input
-            type="password"
+          <PasswordInput
             label="Confirmar nova senha"
             autoComplete="new-password"
             value={form.confirmPassword}

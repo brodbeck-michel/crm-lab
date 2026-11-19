@@ -24,7 +24,7 @@ import { DataTable, EmptyState, Modal } from '@/components/shared';
 import type { DataTableColumn } from '@/components/shared';
 import { WhatsAppConnectModal } from '@/components/settings/WhatsAppConnectModal';
 import { WhatsAppUsageCard } from '@/components/settings/WhatsAppUsageCard';
-import { Button, Chip, Input, TextArea, Toggle, useToast } from '@/components/ui';
+import { Button, Chip, Input, PasswordInput, TextArea, Toggle, useToast } from '@/components/ui';
 import { formatDateTime } from '@/lib/format';
 import { useAuthStore } from '@/stores';
 import {
@@ -521,9 +521,8 @@ function WhatsAppModeCard({ channel }: { channel: TenantChannel | undefined }) {
                 value={phoneNumberId}
                 onChange={(event) => setPhoneNumberId(event.target.value)}
               />
-              <Input
+              <PasswordInput
                 label="Token de acesso da Cloud API"
-                type="password"
                 autoComplete="off"
                 hint="Não é exibido depois de salvo."
                 value={token}
@@ -1223,9 +1222,8 @@ function SecretField({
         <Chip tone={configured ? 'positive' : 'inactive'}>{statusLabel}</Chip>
       </div>
 
-      <Input
+      <PasswordInput
         id={idPrefix}
-        type="password"
         autoComplete="new-password"
         aria-label={label}
         placeholder={remove ? 'Será removido ao salvar' : 'Deixe em branco para manter o atual'}

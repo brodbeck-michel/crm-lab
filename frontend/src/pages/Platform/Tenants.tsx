@@ -11,7 +11,7 @@ import { isApiError, platformApi, queryKeys, queryScopes } from '@/api';
 import { PageContainer, PageHeader } from '@/components/layout';
 import { DataTable, EmptyState, Modal } from '@/components/shared';
 import type { DataTableColumn } from '@/components/shared';
-import { Button, Chip, Input, SearchInput, Select } from '@/components/ui';
+import { Button, Chip, Input, PasswordInput, SearchInput, Select } from '@/components/ui';
 import { useAuthStore } from '@/stores';
 import { formatIsoDay } from '@/lib/format';
 
@@ -415,9 +415,8 @@ function OnboardingModal({ open, onClose }: OnboardingModalProps) {
           error={fieldErrors.adminEmail}
           onChange={(event) => setForm((c) => ({ ...c, adminEmail: event.target.value }))}
         />
-        <Input
+        <PasswordInput
           label="Senha inicial"
-          type="password"
           hint="Mínimo de 8 caracteres."
           value={form.adminPassword}
           error={fieldErrors.adminPassword}

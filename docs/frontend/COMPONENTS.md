@@ -47,6 +47,9 @@ frontend/src/components/
 ### Input / TextArea / SearchInput
 - Uma linha = pílula (999px); multilinha = radius-md
 - SearchInput com ícone e debounce 300ms
+- **PasswordInput** (CRMLAB-185): todo campo de senha ou segredo usa este, nunca `Input type="password"`.
+  Botão olho no fim da pílula (mostrar/ocultar, começa oculto) e aviso "Caps Lock está ligado" abaixo
+  do campo enquanto ele tem foco e o Caps Lock está ativo
 
 ### SegmentedControl
 ```tsx
@@ -755,6 +758,7 @@ Adições sobre a anatomia já documentada acima — nenhuma variante nova:
 - **Badge** — `max` (padrão 99 → "99+"), `label` (rótulo acessível).
   `count <= 0` não renderiza.
 - **Input** — `label`, `error`, `hint`, `prefix`, `suffix`.
+- **PasswordInput** — as mesmas props do `Input`, menos `type` e `suffix` (o olho ocupa o `suffix`).
 - **TextArea** — `label`, `error`, `hint`.
 - **SearchInput** — `defaultValue`, `debounceMs` (padrão 300), `disabled`.
   Não emite na montagem, só quando o usuário mexe.

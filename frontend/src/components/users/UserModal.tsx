@@ -1,7 +1,7 @@
 import { useState, useEffect, useId } from 'react';
 import { useCreateUser, useUpdateUser } from '@/api';
 import { Modal } from '@/components/shared';
-import { Input, Select, Button, Toggle } from '@/components/ui';
+import { Input, PasswordInput, Select, Button, Toggle } from '@/components/ui';
 import type { CreateUserRequest, ManagedUser, UpdateUserRequest, UserRole } from '@crm-lab/shared';
 import { DEFAULT_DISCOUNT_LIMIT } from '@crm-lab/shared';
 
@@ -143,9 +143,8 @@ export default function UserModal({ user, onClose }: UserModalProps) {
 
         {/* Senha (apenas na criação) */}
         {!userId && (
-          <Input
+          <PasswordInput
             label="Senha"
-            type="password"
             value={form.password}
             onChange={(e) => setForm(prev => ({ ...prev, password: e.target.value }))}
             error={errors.password}

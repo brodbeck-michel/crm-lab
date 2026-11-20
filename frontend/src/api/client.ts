@@ -71,12 +71,19 @@ export interface SessionBridge {
   getAccessToken: () => string | null;
   setAccessToken: (accessToken: string, expiresIn: number) => void;
   clearSession: () => void;
+  /**
+   * `403 PASSWORD_CHANGE_REQUIRED` (CRMLAB-186, D-326): o servidor diz que a
+   * senha é provisória — o store liga a flag e o `RequireAuth` leva para
+   * `/change-password`. Cobre a sessão restaurada sem a flag no store.
+   */
+  markPasswordChangeRequired?: () => void;
 }
 
 const NULL_BRIDGE: SessionBridge = {
   getAccessToken: () => null,
   setAccessToken: () => undefined,
   clearSession: () => undefined,
+  markPasswordChangeRequired: () => undefined,
 };
 
 let bridge: SessionBridge = NULL_BRIDGE;
@@ -444,12 +451,19 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   );
 
   try {
-    return await parseResponse<T>(response);
+    try {
+      return await parseResponse<T>(response);
+    } catch (error) {
+      if (!useAuth || !isApiError(error) || error.code !== 'TOKEN_EXPIRED') throw error;
+      // Interceptor: renova (uma vez, compartilhado) e repete a original.
+      const accessToken = await refreshAccessToken();
+      return await parseResponse<T>(await sendWithRateLimit(path, options, accessToken));
+    }
   } catch (error) {
-    if (!useAuth || !isApiError(error) || error.code !== 'TOKEN_EXPIRED') throw error;
-    // Interceptor: renova (uma vez, compartilhado) e repete a original.
-    const accessToken = await refreshAccessToken();
-    return parseResponse<T>(await sendWithRateLimit(path, options, accessToken));
+    if (useAuth && isApiError(error) && error.code === 'PASSWORD_CHANGE_REQUIRED') {
+      bridge.markPasswordChangeRequired?.();
+    }
+    throw error;
   }
 }
 

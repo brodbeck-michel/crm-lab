@@ -321,6 +321,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       tenantId: user.tenantId,
       role: user.role,
       discountLimit: user.discountLimit,
+      mustChangePassword: user.mustChangePassword,
     });
 
     await audit.log({
@@ -343,6 +344,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         name: user.name,
         role: user.role,
         discountLimit: user.discountLimit,
+        mustChangePassword: user.mustChangePassword,
       },
       tenant: {
         id: user.tenantId,
@@ -477,6 +479,9 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
             tenantId,
             role: outcome.user.role,
             discountLimit: outcome.user.discountLimit,
+            // Relido do banco a cada rotação (CRMLAB-186): trocou a senha, o
+            // próximo refresh já sai sem o claim; resetado, sai com ele.
+            mustChangePassword: outcome.user.mustChangePassword,
           }),
           expiresIn: env.JWT_ACCESS_TTL,
           refreshToken: outcome.refreshToken,
@@ -772,6 +777,8 @@ export async function refreshSessionIsLive(db: DbClient, token: string): Promise
 
     const user = await userRepo.findById(tx, stored.userId);
     if (!user || !user.isActive) return false;
+    // Senha provisória (CRMLAB-186, D-326): /ws fechado até a troca, como o HTTP.
+    if (user.mustChangePassword) return false;
 
     const tenant = await tenantRepo.findById(tx, tenantId);
     return tenant !== null && tenant.isActive;

@@ -200,5 +200,19 @@ export function userModule(deps: ApiModuleDeps): ApiModule {
     },
   );
 
+  // CRMLAB-186 (D-326): senha provisória para outro usuário do laboratório.
+  router.post(
+    '/:id/reset-password',
+    requireRoles('admin'),
+    validate(idParamSchema, 'params'),
+    (req: Request, res: Response, next): void => {
+      const { id } = validated<z.infer<typeof idParamSchema>>(req, 'params');
+      users
+        .resetPassword(getContext(req), id)
+        .then((result) => res.status(200).json(result))
+        .catch(next);
+    },
+  );
+
   return { basePath: '/users', router, requiresAuth: true };
 }

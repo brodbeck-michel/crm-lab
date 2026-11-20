@@ -212,6 +212,7 @@ CREATE TABLE users (
   is_active BOOLEAN DEFAULT TRUE,
   last_login_at TIMESTAMP,
   presence_status VARCHAR(10) NOT NULL DEFAULT 'online', -- migração 059 (CRMLAB-120, D-286)
+  must_change_password BOOLEAN NOT NULL DEFAULT FALSE, -- migração 068 (CRMLAB-186, D-326)
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW(),
   
@@ -2899,3 +2900,18 @@ tabelas novas — com 2 tenants e controle positivo em cada asserção.
 - `docs/database/RELATIONSHIPS.md` - Relacionamentos detalhados
 - `docs/backend/MODELS.md` - Modelos TypeORM/Sequelize
 
+---
+
+### 49. `users.must_change_password` (migração 068 — CRMLAB-186, D-326)
+Senha atual é **provisória** e precisa ser trocada antes de usar o sistema.
+
+```sql
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
+```
+
+- **Liga:** `POST /users/:id/reset-password` (admin do laboratório) e
+  `POST /platform/tenants/:id/users/:userId/reset-password` (console).
+- **Desliga:** `PATCH /users/me/password` (troca própria) e `POST /auth/reset-password` (link
+  por e-mail) — qualquer senha escolhida pela própria pessoa.
+- Default `FALSE`, sem backfill: ninguém existente é obrigado a trocar.

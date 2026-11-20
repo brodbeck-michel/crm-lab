@@ -115,7 +115,8 @@ Fazer login.
     "email": "user@lab.com",
     "name": "João Silva",
     "role": "attendant",
-    "discountLimit": 15
+    "discountLimit": 15,
+    "mustChangePassword": false
   },
   "tenant": {
     "id": "uuid",
@@ -126,6 +127,14 @@ Fazer login.
 }
 ```
 `Set-Cookie: crm_refresh=<token>; HttpOnly; Secure; SameSite=Strict; Path=/` (ver nota acima).
+
+**`user.mustChangePassword` (CRMLAB-186, D-326):** `true` quando a senha atual é provisória
+(gerada por `POST /users/:id/reset-password` ou pelo reset do console de plataforma). O
+access token emitido nesse estado carrega o claim `mustChangePassword: true` (também no
+`POST /auth/refresh`, que relê o usuário do banco) e o backend recusa **toda** rota
+autenticada com `403 PASSWORD_CHANGE_REQUIRED`, menos `GET /users/me` e
+`PATCH /users/me/password` — o handshake do `/ws` também é recusado. Depois da troca, o
+cliente chama `POST /auth/refresh` para receber um access token sem o claim.
 
 ### POST /auth/refresh
 Renovar access token usando o refresh do cookie `crm_refresh` (corpo vazio `{}` no caso normal).
@@ -384,6 +393,32 @@ gera audit log: só papel, alçada e status geram — e só quando o valor de fa
 **Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403), `NOT_FOUND` (404 — inexistente
 **ou de outro tenant**; nunca 403, para não vazar existência)
 
+### POST /users/:id/reset-password (admin apenas — CRMLAB-186, D-326)
+Gera uma senha provisória para **outro** usuário do próprio laboratório (atendente, gestor
+ou admin), para quem esqueceu a senha e não tem o e-mail do "Esqueci minha senha". Sem
+corpo. Só `admin` (gestor fica de fora nesta versão); `attendant`/`manager` → `403
+FORBIDDEN` com `details.requiredRoles: ["admin"]`.
+
+`:id` igual ao do próprio admin, inexistente ou de outro tenant → `404 NOT_FOUND` (a própria
+senha se troca em `PATCH /users/me/password`; outro tenant nunca vira `403`).
+
+**Response (200):**
+```json
+{ "userId": "uuid", "email": "atendente@lab.com", "temporaryPassword": "kQ7f2m9Xp1zR-a3B" }
+```
+
+`temporaryPassword` (16 caracteres aleatórios) aparece em texto plano **só nesta resposta,
+uma única vez** — não é recuperável, não é logada. Efeitos, na mesma transação:
+- grava o hash da senha provisória e liga `users.must_change_password`: no próximo login o
+  usuário é obrigado a trocar a senha antes de usar o sistema (ver `POST /auth/login`);
+- revoga **todas** as famílias de refresh do usuário (`revoked_reason = 'security'`) — quem
+  estava logado com a senha antiga cai no próximo refresh.
+
+Gera `audit_log` `reset_user_password` (`userId` = o admin, `entityId` = o usuário
+resetado), sem `oldValues`/`newValues` — a senha nunca entra no log.
+
+**Erros:** `NOT_FOUND` (404), `VALIDATION_ERROR` (400, `:id` não-uuid), `FORBIDDEN` (403).
+
 ### PATCH /users/me/password (CRMLAB-35)
 Troca a própria senha. Qualquer papel de tenant (não é rota de admin — cada um troca a
 sua). `platform_operator` cai em `denyPlatformOperator()` como o resto do módulo.
@@ -410,6 +445,12 @@ requisição, que o `Path=/` do CRMLAB-33 já entrega a esta rota — nota acima
 cookie na requisição (cliente que ainda usa o fallback de corpo depreciado), revoga TODAS,
 sem exceção — a sessão atual desloga junto nesse caso. Gera `audit_log`
 (`change_own_password`).
+
+**Senha provisória (CRMLAB-186, D-326):** a troca desliga `users.must_change_password`. É a
+única rota (com `GET /users/me`) aceita enquanto o access token carrega
+`mustChangePassword: true`; a `currentPassword` é a senha provisória recebida do admin. O
+token da requisição continua com o claim até expirar — o cliente faz `POST /auth/refresh`
+logo depois da troca para seguir navegando.
 
 **Erros:** `VALIDATION_ERROR` (400 — `details.fields.currentPassword` quando a senha atual
 não bate, `details.fields.newPassword` quando a nova não passa na política), `NOT_FOUND`
@@ -4357,6 +4398,9 @@ recuperável depois, não é logada (`audit_logs` grava `action: "reset_admin_pa
 `oldValues`/`newValues`, mesma regra de segredo nunca no payload do log de `POST
 /platform/tenants`). Repassar a senha ao cliente é responsabilidade de quem opera o console, fora
 do sistema.
+
+**Desde o CRMLAB-186 (D-326)** a senha gerada aqui também liga `users.must_change_password`:
+o admin é obrigado a trocá-la no primeiro login, como no reset feito pelo admin do laboratório.
 
 **Erros:** `NOT_FOUND` (404), `VALIDATION_ERROR` (400, `:id`/`:userId` não-uuid), `FORBIDDEN`
 (403, `platform_operator`).

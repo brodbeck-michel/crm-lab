@@ -24,6 +24,23 @@ export function bearerToken(req: Request): string | null {
   return token.length > 0 ? token : null;
 }
 
+/**
+ * Rotas aceitas com senha provisória pendente (D-326). Comparadas pelo caminho
+ * COMPLETO (`baseUrl + path`), sem query, para não depender de onde o router
+ * foi montado nem de prefixo parecido (`/users/me/passwordX` não passa).
+ */
+const PENDING_PASSWORD_CHANGE_ALLOWLIST: ReadonlyArray<readonly [string, RegExp]> = [
+  ['GET', /^\/api\/v1\/users\/me\/?$/],
+  ['PATCH', /^\/api\/v1\/users\/me\/password\/?$/],
+];
+
+function allowedWithPendingPasswordChange(req: Request): boolean {
+  const path = `${req.baseUrl}${req.path}`;
+  return PENDING_PASSWORD_CHANGE_ALLOWLIST.some(
+    ([method, pattern]) => req.method === method && pattern.test(path),
+  );
+}
+
 export function requireAuth(): RequestHandler {
   return (req: Request, _res: Response, next: NextFunction): void => {
     const token = bearerToken(req);
@@ -36,6 +53,13 @@ export function requireAuth(): RequestHandler {
     if (!result.ok) {
       // API_ERRORS.md separa os dois: expirado dispara refresh no frontend.
       next(new BusinessError(result.reason === 'expired' ? 'TOKEN_EXPIRED' : 'TOKEN_INVALID'));
+      return;
+    }
+
+    // Senha provisória (CRMLAB-186, D-326): trava NO SERVIDOR. Só o perfil e a
+    // troca de senha passam; o redirect do frontend para /change-password é UX.
+    if (result.payload.mustChangePassword === true && !allowedWithPendingPasswordChange(req)) {
+      next(new BusinessError('PASSWORD_CHANGE_REQUIRED'));
       return;
     }
 

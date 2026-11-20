@@ -8,6 +8,7 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 
 ```
 /login                        → Login (público)
+/change-password              → Troca obrigatória de senha provisória (logado com mustChangePassword — CRMLAB-186)
 /                             → redirect por perfil (atendente → /attendance)
 /attendance                   → Atendimento (inbox 3 colunas)
 /contacts                     → Busca de Contatos (antiga /patients redireciona, D-294)
@@ -72,6 +73,7 @@ na mesma linha da busca — as abas de Cadastros, acima, são a navegação prin
 | Rota | `requiredRoles` | No trilho da Sidebar | Grupo |
 |------|-----------------|----------------------|-------|
 | `/login` | — (público) | não | — |
+| `/change-password` (CRMLAB-186) | attendant · manager · admin, **só** com `user.mustChangePassword` | não | — |
 | `/` | qualquer sessão → redirect por perfil | não | — |
 | `/attendance` | attendant · manager · admin | sim | solto |
 | `/contacts` | attendant · manager · admin | sim | solto |
@@ -1079,6 +1081,24 @@ Seção própria logo depois de "Conexão de canal", **só quando o WhatsApp est
 - Tabela de usuários: nome, email, papel, limite de desconto, status
 - Criar/editar (modal): papel + limite desconto
 - Log de auditoria (aba)
+- **Resetar senha (CRMLAB-186, D-326):** ação por linha, em **todo usuário menos o próprio admin
+  logado** (a própria senha é em Minha Conta). Confirmação → `POST /users/:id/reset-password` →
+  modal mostra a senha provisória **uma vez**, com botão copiar e o aviso de que ela não aparece
+  de novo e de que o usuário vai precisar trocá-la no primeiro acesso. Fechou o modal, a senha
+  some (não fica em cache do TanStack Query nem em store)
+
+### Troca obrigatória de senha (`/change-password`) — CRMLAB-186, D-326
+- Para quem entrou com senha provisória (`user.mustChangePassword` no login). `RequireAuth` manda
+  para cá qualquer outra rota enquanto a flag estiver ligada; sem a flag, esta rota redireciona
+  para a home do papel
+- Tela solta (sem menu lateral), mesmo visual de `/reset-password`: senha provisória + nova +
+  confirmação (`PasswordInput`) → `PATCH /users/me/password` → `POST /auth/refresh` (token sem o
+  claim) → desliga a flag no store e vai para a home do papel
+- Mesmas regras de tela de Minha Conta (mínimo 10, confirmação igual, nova ≠ atual); a política de
+  verdade é a do backend
+- Link "Sair" (logout) para quem não quer trocar agora
+- Qualquer resposta `403 PASSWORD_CHANGE_REQUIRED` de outra chamada (ex.: sessão restaurada de
+  antes do reset) liga a flag no store e cai aqui
 
 ### Minha Conta (`/settings/account`) — todos os papéis de tenant
 

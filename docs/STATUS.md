@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-11-19 (CRMLAB-185: campo de senha com olho e aviso de Caps Lock)
+**Última atualização:** 2026-11-19 (CRMLAB-186: admin reseta senha de usuário, com troca obrigatória)
 
 ---
 
@@ -4250,3 +4250,17 @@ aviso "Caps Lock está ligado" (`role="status"`) com o campo em foco. Troca dos 
 Login, Redefinir senha, Conta → Alterar senha, modal de Usuário, Plataforma → novo laboratório, Integração
 LIS (chave Bitlab), Canais (token Cloud API, token e segredo do webhook). E2E: `getByLabel('Senha')` passa a
 `exact: true` (o rótulo do olho "Mostrar senha" também casava). Testes: `PasswordInput.spec.tsx` (+4).
+
+### 🔄 CRMLAB-186 — Admin reseta a senha de usuário, com troca obrigatória no primeiro login (2026-11-19, aguardando validação)
+
+Branch `feature/CRMLAB-186-reset-senha-admin` (D-326). Origem: Diana e Camilly (Santé) esqueceram a senha e
+o reset foi feito direto no banco de prod. `POST /users/:id/reset-password` (só admin; outro usuário do
+mesmo tenant; a própria conta e outro tenant → 404) gera senha provisória de 16 caracteres mostrada uma
+vez, liga `users.must_change_password` (migração 068), revoga todas as sessões e audita
+`reset_user_password`. Com a flag, o access token leva `mustChangePassword` e o backend responde
+`403 PASSWORD_CHANGE_REQUIRED` em tudo menos `GET /users/me` e `PATCH /users/me/password`; o `/ws` também
+fecha. A troca (Minha Conta ou link por e-mail) desliga a flag; o reset do console passa a ligá-la.
+Frontend: botão "Resetar senha" em `/settings/users` (`ResetPasswordDialog`) e tela `/change-password`
+(`RequireAuth` redireciona; o cliente liga a flag ao receber o 403). Testes: backend
+`tests/users/reset-password.spec.ts` (+15); frontend `ChangePassword.spec`, `ResetPasswordDialog.spec`,
+guards e client (+9).

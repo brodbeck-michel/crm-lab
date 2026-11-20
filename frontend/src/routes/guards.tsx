@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import type { UserRole } from '@crm-lab/shared';
 import { useToast } from '@/components/ui';
-import { useAuthStore, selectIsAuthenticated, selectRole } from '@/stores';
+import { useAuthStore, selectIsAuthenticated, selectMustChangePassword, selectRole } from '@/stores';
 import { canAccess, homeFor } from './route-config';
 
 /**
@@ -14,12 +14,20 @@ import { canAccess, homeFor } from './route-config';
  */
 
 /** Sem sessão → `/login`, guardando de onde veio para voltar depois do login. */
+export const CHANGE_PASSWORD_PATH = '/change-password';
+
 export function RequireAuth() {
   const isAuthenticated = useAuthStore(selectIsAuthenticated);
+  const mustChangePassword = useAuthStore(selectMustChangePassword);
   const location = useLocation();
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
+  }
+  // Senha provisória (CRMLAB-186, D-326): nada além da troca. A trava de verdade
+  // é o 403 PASSWORD_CHANGE_REQUIRED do servidor; isto é só o caminho na tela.
+  if (mustChangePassword && location.pathname !== CHANGE_PASSWORD_PATH) {
+    return <Navigate to={CHANGE_PASSWORD_PATH} replace />;
   }
   return <Outlet />;
 }

@@ -13,13 +13,14 @@
  * - Desativa em vez de deletar. Nao existe DELETE de usuario nesta API.
  * - Toda mudanca de papel / alcada / status gera audit log (BUSINESS_RULES §9).
  */
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import type {
   CreateUserRequest,
   CurrentUserResponse,
   ListUsersResponse,
   ManagedUser,
   PaginationMeta,
+  ResetUserPasswordResponse,
   UpdateUserRequest,
   UserRole,
 } from '@crm-lab/shared';
@@ -56,6 +57,7 @@ export interface UserService {
   list(ctx: TenantContext, filters: ListUsersFilters): Promise<ListUsersResponse>;
   create(ctx: TenantContext, dto: CreateUserRequest): Promise<ManagedUser>;
   update(ctx: TenantContext, id: string, dto: UpdateUserRequest): Promise<ManagedUser>;
+  resetPassword(ctx: TenantContext, id: string): Promise<ResetUserPasswordResponse>;
 }
 
 export interface UserServiceDeps {
@@ -292,5 +294,47 @@ export function createUserService(deps: UserServiceDeps): UserService {
     return toManagedUser(updated);
   };
 
-  return { getMe, list, create, update };
+  /**
+   * Senha provisória para OUTRO usuário do laboratório (CRMLAB-186, D-326). Só
+   * admin. A própria conta, inexistente ou de outro tenant → `NOT_FOUND` (a
+   * própria senha é em `PATCH /users/me/password`; outro tenant nunca vira 403).
+   *
+   * Liga `must_change_password` e revoga TODAS as sessões do usuário. A senha
+   * volta em claro só nesta resposta e nunca entra no audit log.
+   */
+  const resetPassword = async (
+    ctx: TenantContext,
+    id: string,
+  ): Promise<ResetUserPasswordResponse> => {
+    assertAdmin(ctx);
+    if (id === ctx.userId) throw notFound({ resource: 'user' });
+
+    // 12 bytes → 16 caracteres base64url: passa na política de senha (D-153)
+    // e é o mesmo gerador do reset do console (D-102).
+    const temporaryPassword = randomBytes(12).toString('base64url');
+    // bcrypt FORA da transação (mesmo motivo de `changePassword`, revisão do PR #49).
+    const passwordHash = await hashPassword(temporaryPassword);
+
+    const email = await db.withTenant(ctx.tenantId, async (tx) => {
+      const target = await userRepo.findById(tx, id);
+      // Inexistente OU de outro tenant (o RLS esconde; a comparação explícita é
+      // defesa em profundidade) — mesma resposta.
+      if (!target || target.tenantId !== ctx.tenantId) return null;
+      await userRepo.setTemporaryPassword(tx, id, passwordHash);
+      await refreshRepo.revokeAllForUser(tx, id, 'security');
+      return target.email;
+    });
+    if (email === null) throw notFound({ resource: 'user' });
+
+    // Segredo nunca no payload do log — mesma regra de `reset_admin_password`.
+    await audit.record(ctx, {
+      action: 'reset_user_password',
+      entityType: 'user',
+      entityId: id,
+    });
+
+    return { userId: id, email, temporaryPassword };
+  };
+
+  return { getMe, list, create, update, resetPassword };
 }

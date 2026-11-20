@@ -10,6 +10,10 @@ interface UserTableProps {
   onPageChange: (page: number) => void;
   /** Status da atendente agora (CRMLAB-120, D-286). Ausente = sem bolinha. */
   presenceOf?: (userId: string) => UserPresenceStatus | undefined;
+  /** Reset de senha (CRMLAB-186). Ausente = sem o botão. */
+  onResetPassword?: (user: ManagedUser) => void;
+  /** Quem está logado: não ganha "Resetar senha" (a própria é em Minha Conta). */
+  currentUserId?: string | null;
 }
 
 const ROLE_LABELS: Record<string, string> = {
@@ -25,6 +29,8 @@ export default function UserTable({
   onEdit,
   onPageChange,
   presenceOf,
+  onResetPassword,
+  currentUserId,
 }: UserTableProps) {
   if (users.length === 0) {
     return (
@@ -87,13 +93,25 @@ export default function UserTable({
                   <DateDisplay value={user.createdAt} variant="absolute" />
                 </td>
                 <td className="px-lg py-md text-center">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => onEdit(user)}
-                  >
-                    Editar
-                  </Button>
+                  <div className="inline-flex gap-sm">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => onEdit(user)}
+                    >
+                      Editar
+                    </Button>
+                    {onResetPassword && user.id !== currentUserId && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => onResetPassword(user)}
+                        aria-label={`Resetar senha de ${user.name}`}
+                      >
+                        Resetar senha
+                      </Button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}

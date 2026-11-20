@@ -259,6 +259,33 @@ describe('client — interceptor de refresh', () => {
     expect(calls).toHaveLength(11);
   });
 
+  it('403 PASSWORD_CHANGE_REQUIRED avisa a sessão e não desloga (CRMLAB-186)', async () => {
+    const markPasswordChangeRequired = vi.fn();
+    setSessionBridge({
+      getAccessToken: () => session.accessToken,
+      setAccessToken: () => undefined,
+      clearSession: () => {
+        session.cleared = true;
+      },
+      markPasswordChangeRequired,
+    });
+    mockFetch(() =>
+      errorResponse({
+        error: {
+          code: 'PASSWORD_CHANGE_REQUIRED',
+          message: 'Troque a senha provisoria antes de continuar',
+          statusCode: 403,
+        },
+      }),
+    );
+
+    const error = (await http.get('/conversations').catch((e: unknown) => e)) as ApiError;
+
+    expect(error.code).toBe('PASSWORD_CHANGE_REQUIRED');
+    expect(markPasswordChangeRequired).toHaveBeenCalledTimes(1);
+    expect(session.cleared).toBe(false);
+  });
+
   it('REFRESH_TOKEN_INVALID limpa a sessão e avisa o app', async () => {
     const onUnauthenticated = vi.fn();
     setUnauthenticatedHandler(onUnauthenticated);

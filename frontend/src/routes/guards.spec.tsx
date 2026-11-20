@@ -117,6 +117,28 @@ describe('RequireAuth', () => {
   });
 });
 
+describe('RequireAuth — senha provisória (CRMLAB-186)', () => {
+  function loginPendingPasswordChange(role: UserRole): void {
+    login(role);
+    useAuthStore.getState().setMustChangePassword(true);
+  }
+
+  it('com a flag, qualquer rota vai para /change-password', async () => {
+    loginPendingPasswordChange('attendant');
+    renderAt('/proposals');
+    await expectPath('/change-password');
+    expect(screen.getByRole('heading', { name: 'Crie sua nova senha' })).toBeInTheDocument();
+  });
+
+  it('sem a flag, /change-password devolve para a home do papel', async () => {
+    login('manager');
+    renderAt('/change-password');
+    await waitFor(() => {
+      expect(screen.getByTestId('location')).not.toHaveTextContent('/change-password');
+    });
+  });
+});
+
 describe('RequireRoles', () => {
   it('papel errado: redireciona para a home do perfil E mostra toast', async () => {
     login('attendant');

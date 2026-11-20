@@ -6741,6 +6741,6 @@ socket.emit('proposal.update_discount', { proposalId, discount })
 ## Próximas Leituras
 
 - `docs/api/API_ERRORS.md` - Códigos de erro detalhados
-- `docs/api/AUTHENTICATION.md` - Detalhes de autenticação
+- `docs/architecture/SECURITY.md` - Autenticação e segurança em detalhes
 - `docs/contracts/FRONTEND_BACKEND.md` - Contrato frontend ↔ backend
 

@@ -2,11 +2,12 @@
 
 ## Visão Geral
 
-Este é o repositório de documentação técnica para o **CRM SaaS para Laboratórios**, um sistema de gestão de relacionamento com clientes projetado especificamente para laboratórios de análises clínicas.
+Documentação técnica do **CRM SaaS para Laboratórios**, um sistema de atendimento por WhatsApp,
+orçamentos e pipeline de propostas para laboratórios de análises clínicas.
 
-**Versão:** 1.0  
-**Status:** Em desenvolvimento (Fase 1 - MVP)  
-**Data de início:** Agosto 2024
+**Status:** em produção (laboratório Santé) — versão atual no `package.json` da raiz e nas tags `vX.Y.Z`  
+**Início:** agosto de 2026  
+**Primeiro contato com o projeto?** Comece por `QUICK_START.md`.
 
 ---
 
@@ -45,15 +46,21 @@ docs/
 │   ├── DEVELOPMENT.md           # Setup e ciclo de trabalho diário
 │   ├── CONVENTIONS.md           # Convenções de código e git
 │   ├── ENVIRONMENTS.md          # ⭐ prod × hml: o que é cada um, como subir
-│   ├── DEPLOYMENT.md            # Pipeline de CI, imagens, rollback
-│   └── TESTING.md               # Estratégia de testes + isolamento multitenant
+│   ├── DEPLOYMENT.md            # Pipeline de CI, imagens, rollback, backup
+│   ├── MONITORING.md            # Logs, sondas de saúde, alertas
+│   ├── TESTING.md               # Estratégia de testes + isolamento multitenant
+│   ├── IMPLANTACAO_SANTE.md     # Implantação do laboratório Santé
+│   └── MIGRACAO_SANTE.md        # Migração do Santé para a Cloud API da Meta
+│
 │
 ├── domain/
 │   ├── BUSINESS_RULES.md        # ⭐ 10 regras de negócio críticas (todos leem)
 │   └── WORKFLOWS.md             # 10 fluxos de trabalho + matriz de integração
 │
-└── contracts/
-    └── FRONTEND_BACKEND.md      # Regras do contrato de integração front↔back
+├── contracts/
+│   └── FRONTEND_BACKEND.md      # Regras do contrato de integração front↔back
+│
+└── superpowers/                 # Specs e planos de implementação por onda/card (histórico)
 ```
 
 > Referência visual complementar: `../Design System CRM.dc.html` (protótipo do design system).
@@ -72,27 +79,16 @@ docs/
 
 ## 🛠️ Stack Tecnológico
 
-### Frontend
-- **Framework:** React 18+
-- **Linguagem:** TypeScript
-- **Estilo:** Tailwind CSS + CSS Variables
-- **Estado:** TanStack Query + Zustand
-- **Bundler:** Vite
-- **Componentes:** shadcn/ui (customizado)
+Decidida e registrada em `DECISIONS.md` — não renegociar sem nova decisão.
 
-### Backend
-- **Runtime:** Node.js 18+
-- **Framework:** Express.js ou NestJS
-- **Banco:** PostgreSQL 14+
-- **Cache:** Redis
-- **Fila:** Bull (Redis-backed)
-- **Autenticação:** JWT + OAuth2
-
-### Infraestrutura
-- **Containerização:** Docker
-- **Orquestração:** Docker Compose (dev), Kubernetes (prod)
-- **CI/CD:** GitHub Actions
-- **Hosting:** AWS (recomendado) ou similar
+- **Monorepo:** npm workspaces — `shared/` · `backend/` · `frontend/` · `e2e/`
+- **Frontend:** React 18 + Vite + TypeScript + Tailwind 3 (cores via CSS vars) + TanStack Query + Zustand
+- **Backend:** Node.js + Express 4 + TypeScript ESM (D-007), camadas controller → service → repository
+- **Banco:** PostgreSQL 16 com RLS; testes em PGlite (D-008)
+- **Cache/rate limit:** Redis 7 (memória quando `REDIS_URL` não existe); fila in-process
+- **WhatsApp:** Cloud API oficial da Meta ou gateway Evolution (QR); MOCK em dev
+- **Testes:** Vitest (back e front) + Playwright (e2e)
+- **Infra:** Docker Compose numa VPS (prod e hml isoladas por projeto Compose), CI no GitHub Actions
 
 ---
 
@@ -100,52 +96,25 @@ docs/
 
 | Perfil | Permissões | Limite Desconto | Acesso |
 |--------|-----------|-----------------|--------|
-| **Atendente** | Chat, Orçamento, Leitura | 10-15% | Própria fila |
+| **Atendente** | Chat, Orçamento, Leitura | 15% | Própria fila |
 | **Gestor** | Supervisão, Aprovação | 30% | Equipe toda |
-| **Admin** | Completo | Ilimitado | Laboratório |
+| **Admin** | Completo | 100% | Laboratório |
 | **Operador** | Plataforma | N/A | Console isolado |
 
 ---
 
-## 🚀 Fases de Desenvolvimento
+## 🚀 Andamento
 
-### Fase 1: MVP (8-10 semanas)
-- Autenticação multitenant
-- 12 telas principais
-- Sistema de tema
-- Pipeline de propostas (6 estágios)
-
-### Fase 2: Integrações (6-8 semanas)
-- WhatsApp Business API
-- Chat interno
-- Painel de conversão
-- Auditoria
-
-### Fase 3: Plataforma (6-8 semanas)
-- Console de plataforma
-- Gestão de assinaturas
-- API pública
-
----
-
-## 📋 Checklist de Setup
-
-Para começar a trabalhar com este projeto:
-
-- [ ] Clonar repositório
-- [ ] Instalar dependências (frontend e backend)
-- [ ] Copiar `.env.example` para `.env` com variáveis locais
-- [ ] Rodar migrações do banco de dados
-- [ ] Seeding de dados iniciais
-- [ ] Rodar testes para validar setup
-- [ ] Revisar documentação de desenvolvimento
+O trabalho foi feito em ondas (Onda 1 → 8) e hoje segue por cards do Jira (projeto CRMLAB).
+Estado vivo de cada tarefa: `STATUS.md`. Setup local: `QUICK_START.md`.
 
 ---
 
 ## 🔗 Links Importantes
 
 - **Design System:** `docs/design/DESIGN_TOKENS.md`
-- **Arquitetura:** `docs/architecture/SYSTEM_DESIGN.md`
+- **Arquitetura:** `docs/ARCHITECTURE.md` + `docs/architecture/SECURITY.md`
+- **Ambientes (prod × hml):** `docs/guides/ENVIRONMENTS.md`
 - **API Reference:** `docs/api/API_CONTRACTS.md`
 - **Database Schema:** `docs/database/SCHEMA.md`
 - **Desenvolvimento:** `docs/guides/DEVELOPMENT.md`
@@ -163,11 +132,10 @@ Para começar a trabalhar com este projeto:
 
 ## 📞 Contato e Dúvidas
 
-- **Lead Técnico:** gestao.dados@unimedtubarao.com.br
-- **Issues:** GitHub Issues
+- **Lead técnico:** Michel (`brodbeck-michel` no GitHub)
+- **Tarefas:** Jira, projeto CRMLAB
 - **Documentação desatualizada?** Atualize e abra PR
 
 ---
 
-**Última atualização:** Agosto 23, 2024  
-**Versão:** 1.0.0
+**Última atualização:** 2026-11-20

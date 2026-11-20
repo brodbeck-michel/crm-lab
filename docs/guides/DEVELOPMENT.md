@@ -4,44 +4,53 @@ Setup do ambiente e ciclo de trabalho diário.
 
 ---
 
-## Estrutura do Repositório (a criar)
+## Estrutura do Repositório
 
 ```
-crm-lab/
-├── frontend/          # React + TS + Vite
-├── backend/           # NestJS + TS
-├── shared/            # Tipos compartilhados (espelham API_CONTRACTS)
-├── e2e/               # Playwright
-├── docs/              # Esta documentação
-├── docker-compose.yml # Postgres + Redis (dev)
-└── .github/workflows/ # CI
+crm-lab/                # monorepo npm workspaces
+├── shared/             # @crm-lab/shared — tipos e constantes (espelham API_CONTRACTS)
+├── backend/            # Express 4 + TypeScript ESM (D-007)
+├── frontend/           # React 18 + Vite + TS + Tailwind 3
+├── e2e/                # Playwright
+├── docs/               # Esta documentação
+├── scripts/deploy.sh   # Deploy prod/hml (ENVIRONMENTS.md)
+├── docker-compose.yml  # Dev: Postgres 16 + Redis 7 + Evolution
+└── .github/workflows/  # CI
 ```
 
 ## Setup
 
 ```bash
-# Pré-requisitos: Node 18+, Docker
-docker-compose up -d              # Postgres :5432 + Redis :6379
-cd backend && npm i && cp .env.example .env && npm run migrate && npm run seed
-cd ../frontend && npm i && cp .env.example .env
+# Pré-requisitos: Node 22 (mínimo 18), Docker
+npm install                                  # na raiz, instala todos os workspaces
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
+docker compose up -d                         # Postgres :5432 + Redis :6379 + Evolution :8080
+npm run migrate && npm run seed
 ```
 
 ## Rodando
 
 ```bash
-# Terminal 1
-cd backend && npm run dev          # http://localhost:3000
-
-# Terminal 2
-cd frontend && npm run dev         # http://localhost:5173
+npm run dev     # backend http://localhost:3000 + frontend http://localhost:5173 em paralelo
+# ou separado: npm run dev:backend / npm run dev:frontend
 ```
 
-**Usuários do seed (senha: `dev12345`):**
-| Email | Papel | Alçada |
-|---|---|---|
-| atendente@dev.local | attendant | 15% |
-| gestor@dev.local | manager | 30% |
-| admin@dev.local | admin | 100% |
+**Usuários do seed** (senha `senha123` para todos — `DEV_PASSWORD` em
+`backend/src/db/seeds/dev.ts`; o `npm run seed` imprime a lista):
+
+| Email | Laboratório | Papel | Alçada |
+|---|---|---|---|
+| admin@labvida.com.br | Laboratório Vida | admin | 100% |
+| gestor@labvida.com.br | Laboratório Vida | manager | 30% |
+| maria@labvida.com.br | Laboratório Vida | attendant | 15% |
+| joao@labvida.com.br | Laboratório Vida | attendant | 15% |
+| admin@labcentral.com.br | Laboratório Central | admin | 100% |
+| gestor@labcentral.com.br | Laboratório Central | manager | 30% |
+| carla@labcentral.com.br | Laboratório Central | attendant | 15% |
+| operador@crmlab.com.br | — (plataforma) | platform_operator | — |
+
+Dois tenants no seed de propósito: dá para testar isolamento multitenant à mão.
 
 Em dev, o WhatsAppService usa driver MOCK (env `WHATSAPP_API_URL` vazia) — mensagens "enviadas" aparecem no log e um eco simulado retorna após 2s.
 
@@ -54,36 +63,39 @@ usando o `crm`, que é superusuário do cluster) — verificado ao vivo contra u
 volume pré-existente sem o banco `evolution`. Se `crm-lab-evolution` ainda
 assim ficar reiniciando: `docker compose exec -T postgres createdb -U crm
 evolution` (sem apagar nada) ou `docker compose down -v` + subir de novo
-(apaga Postgres e Redis locais).
+(apaga Postgres e Redis locais — só no SEU ambiente de dev; em prod/hml `down -v` é proibido).
 
 ---
 
 ## Ciclo de Trabalho (por tarefa)
 
-1. Reivindicar tarefa em `docs/STATUS.md`
-2. Ler o doc do domínio + `BUSINESS_RULES.md`
-3. Branch: `<dominio>/<descricao>`
+1. Card no Jira (projeto CRMLAB) e tarefa em `docs/STATUS.md`
+2. Ler o doc do domínio + `docs/domain/BUSINESS_RULES.md`
+3. Branch a partir da `main`: `feature/CRMLAB-NNN-descricao` (ou `fix/…`, `docs/…`)
 4. Implementar com testes (ver `TESTING.md`)
-5. `npm run lint && npm run test` verdes
-6. Atualizar STATUS.md + docs afetados
-7. PR pequeno, CI verde, merge
+5. `npm run typecheck` + testes do domínio verdes
+6. Atualizar `docs/STATUS.md` + docs afetados
+7. PR pequeno para `main`, CI verde, merge (detalhes em `CONVENTIONS.md` → Git Workflow)
 
 ## Comandos Úteis
 
 ```bash
-# Backend
-npm run migrate            # aplicar migrações
-npm run migrate:create X   # criar migração
-npm run seed               # dados de dev
-npm run test:int           # integração
-
-# Frontend
-npm run test               # vitest
-npm run build              # build de produção (checa types)
-
 # Raiz
-npm run e2e                # Playwright
+npm run typecheck          # todos os workspaces
+npm run test               # backend + frontend
+npm run test:backend       # vitest backend (PGlite, sem Docker)
+npm run test:frontend      # vitest frontend
+npm run lint
+npm run migrate            # aplicar migrações (backend/migrations/NNN_*.sql)
+npm run seed               # dados de dev
+npm run e2e                # Playwright (antes: npm run seed:e2e)
+
+# Backend (npm run <x> --workspace backend)
+test:cov                   # cobertura
 ```
+
+Migração nova: crie `backend/migrations/NNN_descricao.sql` com o próximo número. Nunca edite
+uma migração já aplicada — crie outra.
 
 ## Solução de Problemas
 

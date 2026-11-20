@@ -129,6 +129,19 @@ O `deploy.sh` faz, em ordem: identidade → árvore limpa → `fetch` → `check
 `IMAGE_REGISTRY` — CRMLAB-36) → `run --rm migrate` → `up -d` → `/healthz` →
 limpeza de imagem/cache antigos.
 
+### hml roda uma branch por vez — o deploy não atropela validação
+
+Cada `deploy.sh --ref` em hml **substitui** o que estava lá. Em 2026-11-19 o CRMLAB-184
+estava no ar esperando teste e dois deploys seguidos (185, 186) o tiraram sem ninguém
+perceber. Desde então, se o que está no ar em hml é uma branch cujo PR **ainda não foi
+mergeado**, o script mostra o nome dela e pede `SUBSTITUIR` digitado (pelo stdin, como
+`SEM CI`). Não pergunta quando: é commit novo da mesma branch, o que está no ar já é
+código da `main`, ou o PR daquela branch já foi mergeado (consulta ao GitHub via `gh` —
+o repo usa squash, então o histórico do git sozinho não responde isso).
+
+Quem for subir outra coisa: combine antes com quem está validando, e no fim volte com a
+branch dela (`./scripts/deploy.sh --ref origin/<branch>`, o script imprime o comando).
+
 ### `--sem-ci`, e quando ele se justifica
 
 A checagem de CI aborta o deploy quando o run do commit não está verde — inclusive

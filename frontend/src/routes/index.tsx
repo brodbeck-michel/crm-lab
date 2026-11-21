@@ -15,6 +15,7 @@ import ChannelsSettings from '@/pages/Settings/Channels';
 import OperationSettings from '@/pages/Settings/Operation';
 import Insurances from '@/pages/Settings/Insurances';
 import AttendantsSettings from '@/pages/Settings/Attendants';
+import VisitPurposesSettings from '@/pages/Settings/VisitPurposes';
 import RulesSettings from '@/pages/Settings/Rules';
 import LisIntegrationSettings from '@/pages/Settings/LisIntegration';
 import AccountSettings from '@/pages/Settings/Account';
@@ -133,6 +134,7 @@ export const appRoutes: RouteObject[] = [
                 children: [
                   { path: 'settings/insurances', element: <Insurances /> },
                   { path: 'settings/attendants', element: <AttendantsSettings /> },
+                  { path: 'settings/visit-purposes', element: <VisitPurposesSettings /> },
                 ],
               },
               // CRMLAB-56 (D-194): a comissão virou a seção 6 de Regras.

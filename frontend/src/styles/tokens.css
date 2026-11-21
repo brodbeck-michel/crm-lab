@@ -220,6 +220,37 @@
     --color-visit-cancelada-ink: oklch(0.45 0.12 25);
     --color-visit-cancelada-dot: oklch(0.62 0.16 25);
 
+    /* ---------------------------------------------------------------
+     * Finalidade da visita (CRMLAB-190, D-330): paleta FECHADA de 8 que o
+     * laboratório escolhe no cadastro; o banco guarda só a chave. Fundo /
+     * texto (≈ 7:1 sobre o fundo) / ponto (≥ 3:1 no branco). Literais,
+     * iguais para todo tenant. Tons do tema escuro em [data-theme='dark'].
+     * --------------------------------------------------------------- */
+    --color-purpose-azul-bg: oklch(0.95 0.035 250);
+    --color-purpose-azul-ink: oklch(0.38 0.09 250);
+    --color-purpose-azul-dot: oklch(0.6 0.13 250);
+    --color-purpose-verde-bg: oklch(0.95 0.035 150);
+    --color-purpose-verde-ink: oklch(0.38 0.09 150);
+    --color-purpose-verde-dot: oklch(0.6 0.13 150);
+    --color-purpose-agua-bg: oklch(0.95 0.035 195);
+    --color-purpose-agua-ink: oklch(0.38 0.09 195);
+    --color-purpose-agua-dot: oklch(0.6 0.13 195);
+    --color-purpose-violeta-bg: oklch(0.95 0.035 300);
+    --color-purpose-violeta-ink: oklch(0.38 0.09 300);
+    --color-purpose-violeta-dot: oklch(0.6 0.13 300);
+    --color-purpose-ambar-bg: oklch(0.95 0.035 75);
+    --color-purpose-ambar-ink: oklch(0.38 0.09 75);
+    --color-purpose-ambar-dot: oklch(0.6 0.13 75);
+    --color-purpose-rosa-bg: oklch(0.95 0.035 350);
+    --color-purpose-rosa-ink: oklch(0.38 0.09 350);
+    --color-purpose-rosa-dot: oklch(0.6 0.13 350);
+    --color-purpose-terracota-bg: oklch(0.95 0.035 40);
+    --color-purpose-terracota-ink: oklch(0.38 0.09 40);
+    --color-purpose-terracota-dot: oklch(0.6 0.13 40);
+    --color-purpose-cinza-bg: oklch(0.95 0.006 160);
+    --color-purpose-cinza-ink: oklch(0.38 0.015 160);
+    --color-purpose-cinza-dot: oklch(0.6 0.02 160);
+
     /* --------------------------------------------------------------- */
     /* Tipografia                                                       */
     /* --------------------------------------------------------------- */
@@ -257,6 +288,35 @@
     --gap-md: 12px;
     --gap-lg: 16px;
     --gap-xl: 24px;
+  }
+
+  /* Finalidade da visita no tema escuro (CRMLAB-190, D-330). Inerte hoje: o
+     produto não tem tema escuro; a paleta já nasce legível nos dois. */
+  :root[data-theme='dark'] {
+    --color-purpose-azul-bg: oklch(0.33 0.06 250);
+    --color-purpose-azul-ink: oklch(0.92 0.04 250);
+    --color-purpose-azul-dot: oklch(0.72 0.13 250);
+    --color-purpose-verde-bg: oklch(0.33 0.06 150);
+    --color-purpose-verde-ink: oklch(0.92 0.04 150);
+    --color-purpose-verde-dot: oklch(0.72 0.13 150);
+    --color-purpose-agua-bg: oklch(0.33 0.06 195);
+    --color-purpose-agua-ink: oklch(0.92 0.04 195);
+    --color-purpose-agua-dot: oklch(0.72 0.13 195);
+    --color-purpose-violeta-bg: oklch(0.33 0.06 300);
+    --color-purpose-violeta-ink: oklch(0.92 0.04 300);
+    --color-purpose-violeta-dot: oklch(0.72 0.13 300);
+    --color-purpose-ambar-bg: oklch(0.33 0.06 75);
+    --color-purpose-ambar-ink: oklch(0.92 0.04 75);
+    --color-purpose-ambar-dot: oklch(0.72 0.13 75);
+    --color-purpose-rosa-bg: oklch(0.33 0.06 350);
+    --color-purpose-rosa-ink: oklch(0.92 0.04 350);
+    --color-purpose-rosa-dot: oklch(0.72 0.13 350);
+    --color-purpose-terracota-bg: oklch(0.33 0.06 40);
+    --color-purpose-terracota-ink: oklch(0.92 0.04 40);
+    --color-purpose-terracota-dot: oklch(0.72 0.13 40);
+    --color-purpose-cinza-bg: oklch(0.33 0.008 160);
+    --color-purpose-cinza-ink: oklch(0.92 0.006 160);
+    --color-purpose-cinza-dot: oklch(0.72 0.02 160);
   }
 
   /* Remapeamento de raio por radiusId (ThemeService → dataset.radius). */

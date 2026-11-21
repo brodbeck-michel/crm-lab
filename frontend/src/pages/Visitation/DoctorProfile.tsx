@@ -28,6 +28,7 @@ import { EmptyState, Modal } from '@/components/shared';
 import { Button, Chip, Input, Select, TextArea, useToast } from '@/components/ui';
 import type { ChipTone } from '@/components/ui';
 import { formatDateTime, fromDateTimeInputs, toDateInput, toTimeInput } from './agenda-dates';
+import { PurposeDot } from './agenda-ui';
 import { DoctorModal, crmLabel } from './Doctors';
 
 const PAGE_SIZE = 20;
@@ -294,7 +295,10 @@ function VisitItem({ visit }: { visit: DoctorTimelineVisit }) {
     <>
       <div className="flex flex-wrap items-center justify-between gap-sm">
         <div className="flex flex-wrap items-center gap-sm">
-          <span className="font-heading text-label font-semibold text-text">Visita</span>
+          <span className="inline-flex items-center gap-[6px] font-heading text-label font-semibold text-text">
+            <PurposeDot color={visit.purpose.color} />
+            {visit.purpose.name}
+          </span>
           <Chip tone={STATUS_TONES[visit.status]}>{VISIT_STATUS_LABELS[visit.status]}</Chip>
           <span className="text-caption tabular-nums text-neutral-600">{formatDateTime(visit.occurredAt)}</span>
         </div>

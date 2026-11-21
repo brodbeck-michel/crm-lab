@@ -53,6 +53,7 @@ function visit(overrides: Partial<VisitDetail> = {}): VisitDetail {
     responsible: { id: 'u-ana', name: 'Ana Gestora' },
     scheduledAt: new Date(2026, 9, 6, 9, 30).toISOString(),
     type: 'online',
+    purpose: { id: 'p-visita', name: 'Visita', color: 'azul' },
     agenda: null,
     status: 'agendada',
     statusReason: null,

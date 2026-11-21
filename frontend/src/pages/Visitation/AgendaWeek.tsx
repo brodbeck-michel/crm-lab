@@ -15,9 +15,8 @@ import {
   GRID_HEIGHT,
   GRID_ROWS,
   HOUR_PX,
-  PersonAvatar,
-  STATUS_STYLES,
-  StatusDot,
+  PURPOSE_STYLES,
+  StatusIcon,
   isStruck,
   placeVisits,
 } from './agenda-ui';
@@ -268,8 +267,14 @@ interface VisitBlockProps {
   onOpen: (visit: Visit) => void;
 }
 
+/**
+ * Bloco da visita (D-330 item 7, revê a D-262): cor da FINALIDADE; o status vira
+ * ícone (com texto para leitor de tela) e, em cancelada/não recebeu, nome
+ * riscado + opacidade. Linha 1 "HH:MM Médico", linha 2 a finalidade.
+ */
 function VisitBlock({ visit, top, lane, selected, onOpen }: VisitBlockProps) {
-  const style = STATUS_STYLES[visit.status];
+  const style = PURPOSE_STYLES[visit.purpose.color];
+  const struck = isStruck(visit.status);
   const inset = lane * 28;
   return (
     <button
@@ -278,13 +283,15 @@ function VisitBlock({ visit, top, lane, selected, onOpen }: VisitBlockProps) {
         event.stopPropagation();
         onOpen(visit);
       }}
-      aria-label={`${formatTime(visit.scheduledAt)} ${visit.doctor.name} — ${VISIT_STATUS_LABELS[visit.status]}`}
+      aria-label={`${formatTime(visit.scheduledAt)} ${visit.doctor.name} — ${VISIT_STATUS_LABELS[visit.status]} · ${visit.purpose.name}`}
       aria-pressed={selected}
+      title={`${visit.purpose.name} · ${VISIT_STATUS_LABELS[visit.status]}`}
       className={cn(
         'absolute z-[1] flex flex-col gap-[2px] overflow-hidden rounded-md px-[7px] py-xs text-left transition-[filter]',
         'hover:brightness-[.97] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
         style.bg,
         style.ink,
+        struck && 'opacity-60',
         lane > 0 && 'shadow-[0_0_0_1.5px_var(--color-bg),0_2px_6px_rgba(0,0,0,.12)]',
         selected && 'shadow-[0_0_0_2px_var(--color-agenda-ink)]',
       )}
@@ -296,23 +303,15 @@ function VisitBlock({ visit, top, lane, selected, onOpen }: VisitBlockProps) {
         zIndex: 1 + lane,
       }}
       data-testid="visit-block"
+      data-purpose-color={visit.purpose.color}
+      data-status={visit.status}
     >
-      <span className="flex items-center gap-[5px] text-[11px] font-semibold tabular-nums leading-tight">
-        <StatusDot status={visit.status} />
-        {formatTime(visit.scheduledAt)}
+      <span className="flex min-w-0 items-center gap-[5px] text-caption font-semibold leading-tight">
+        <StatusIcon status={visit.status} size={11} />
+        <span className="shrink-0 tabular-nums">{formatTime(visit.scheduledAt)}</span>
+        <span className={cn('truncate', struck && 'line-through')}>{visit.doctor.name}</span>
       </span>
-      <span
-        className={cn(
-          'truncate text-caption font-semibold leading-tight',
-          isStruck(visit.status) && 'line-through',
-        )}
-      >
-        {visit.doctor.name}
-      </span>
-      <span className="flex min-w-0 items-center gap-[5px] text-[11px] leading-tight opacity-[.85]">
-        <PersonAvatar person={visit.responsible} size={16} />
-        <span className="truncate">{visit.doctor.specialty ?? visit.responsible?.name ?? ''}</span>
-      </span>
+      <span className="truncate text-[11px] leading-tight opacity-[.85]">{visit.purpose.name}</span>
     </button>
   );
 }

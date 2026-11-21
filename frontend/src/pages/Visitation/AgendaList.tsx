@@ -1,7 +1,13 @@
 import { VISIT_TYPE_LABELS, type Visit } from '@crm-lab/shared';
 import { cn } from '@/components/ui';
 import { formatDayLabel, formatTime, sameDay } from './agenda-dates';
-import { PersonAvatar, StatusBadge, visitPlace } from './agenda-ui';
+import {
+  PersonAvatar,
+  PurposeDot,
+  StatusBadge,
+  isStruck,
+  visitPlace,
+} from './agenda-ui';
 
 interface AgendaListProps {
   days: Date[];
@@ -14,8 +20,9 @@ interface AgendaListProps {
 
 /**
  * Visão Lista (CRMLAB-92, D-262): um grupo por dia (cabeçalho fixo ao rolar),
- * linha em colunas Horário · Médico · Local · Responsável · Status. Dias sem
- * visita ficam de fora; a lista vazia é tratada por quem chama.
+ * linha em colunas Horário · Médico (+ finalidade) · Local · Responsável ·
+ * Status. A faixa à esquerda tem a cor da finalidade (CRMLAB-190, D-330).
+ * Dias sem visita ficam de fora; a lista vazia é tratada por quem chama.
  */
 export function AgendaList({ days, now, visits, selectedId, onOpen }: AgendaListProps) {
   return (
@@ -47,8 +54,13 @@ export function AgendaList({ days, now, visits, selectedId, onOpen }: AgendaList
                     type="button"
                     onClick={() => onOpen(visit)}
                     aria-pressed={visit.id === selectedId}
+                    data-testid="visit-row"
+                    data-purpose-color={visit.purpose.color}
+                    // Faixa da finalidade: token da paleta, nunca hex.
+                    style={{ boxShadow: `inset 4px 0 0 var(--color-purpose-${visit.purpose.color}-dot)` }}
                     className={cn(
                       'grid w-full grid-cols-1 items-center gap-xs border-b border-agenda-line-soft px-lg py-md text-left',
+                      isStruck(visit.status) && 'opacity-60',
                       'md:grid-cols-[110px_1.4fr_1fr_1fr_140px] md:gap-lg',
                       'hover:bg-agenda-hover focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent',
                       visit.id === selectedId && 'bg-agenda-selected hover:bg-agenda-selected',
@@ -58,14 +70,20 @@ export function AgendaList({ days, now, visits, selectedId, onOpen }: AgendaList
                       {formatTime(visit.scheduledAt)}
                     </span>
                     <span className="min-w-0">
-                      <span className="block truncate text-[14px] font-semibold text-agenda-ink">
+                      <span
+                        className={cn(
+                          'block truncate text-[14px] font-semibold text-agenda-ink',
+                          isStruck(visit.status) && 'line-through',
+                        )}
+                      >
                         {visit.doctor.name}
                       </span>
-                      {visit.doctor.specialty && (
-                        <span className="block truncate text-body text-agenda-muted">
-                          {visit.doctor.specialty}
+                      <span className="flex min-w-0 items-center gap-[6px] text-body text-agenda-muted">
+                        <PurposeDot color={visit.purpose.color} />
+                        <span className="truncate">
+                          {[visit.purpose.name, visit.doctor.specialty].filter(Boolean).join(' · ')}
                         </span>
-                      )}
+                      </span>
                     </span>
                     <span className="truncate text-body text-agenda-ink-2">
                       {visitPlace(visit, VISIT_TYPE_LABELS[visit.type])}

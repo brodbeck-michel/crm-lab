@@ -72,6 +72,7 @@ const visita: DoctorTimelineVisit = {
   occurredAt: '2026-09-10T13:20:00.000Z',
   status: 'realizada',
   type: 'presencial',
+  purpose: { id: 'p-visita', name: 'Visita', color: 'azul' },
   scheduledAt: '2026-09-10T13:00:00.000Z',
   checkInAt: '2026-09-10T13:20:00.000Z',
   checkOutAt: '2026-09-10T13:55:00.000Z',

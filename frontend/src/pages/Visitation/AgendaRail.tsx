@@ -16,6 +16,7 @@ import {
   AgendaButton,
   PersonAvatar,
   STATUS_ORDER,
+  PurposeDot,
   STATUS_STYLES,
   StatusBadge,
   StatusDot,
@@ -144,6 +145,10 @@ function TodayPanel({
                   <span className="truncate text-[14px] font-semibold text-agenda-ink">
                     {visit.doctor.name}
                   </span>
+                  <span className="flex min-w-0 items-center gap-[6px] text-caption text-agenda-ink-2">
+                    <PurposeDot color={visit.purpose.color} />
+                    <span className="truncate">{visit.purpose.name}</span>
+                  </span>
                   <span className="truncate text-caption text-agenda-muted">
                     {[visit.doctor.specialty, visit.responsible?.name]
                       .filter(Boolean)
@@ -228,6 +233,11 @@ function VisitDetailPanel({
                 .filter(Boolean)
                 .join(' · ')
             : formatTime(visit.scheduledAt)}
+        </dd>
+        <dt className="text-agenda-muted">Finalidade</dt>
+        <dd className="flex items-center gap-[6px] text-agenda-ink">
+          <PurposeDot color={visit.purpose.color} />
+          {visit.purpose.name}
         </dd>
         <dt className="text-agenda-muted">Tipo</dt>
         <dd className="text-agenda-ink">{VISIT_TYPE_LABELS[visit.type]}</dd>

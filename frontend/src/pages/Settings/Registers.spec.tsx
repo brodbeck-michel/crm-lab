@@ -43,7 +43,7 @@ beforeEach(() => {
 });
 
 describe('Cadastros — faixa de abas', () => {
-  it('admin vê as 5 abas e a da tela atual marcada', () => {
+  it('admin vê as 6 abas e a da tela atual marcada', () => {
     login('admin');
     renderAt('/catalog');
 
@@ -53,6 +53,7 @@ describe('Cadastros — faixa de abas', () => {
       'Respostas rápidas',
       'Atendentes',
       'Convênios',
+      'Finalidades',
     ]);
     expect(screen.getByRole('tab', { name: 'Exames' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tab', { name: 'Usuários' })).toHaveAttribute('aria-selected', 'false');

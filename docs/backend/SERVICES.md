@@ -1877,8 +1877,12 @@ atendente não lê `/settings/channels` e precisa do expediente para o alerta de
 ## 30. DoctorService — médicos solicitantes (CRMLAB-86 — D-255)
 
 **Responsabilidade:** as 6 rotas de `/doctors` (API_CONTRACTS.md §13). Dono de `doctors`
-(SCHEMA.md §35), base do épico Visitação Médica (CRMLAB-85). Todo papel de tenant escreve; o
-operador da plataforma fica na rota. Normaliza CRM (só dígitos) e UF (maiúscula, 27 UFs) com os
+(SCHEMA.md §35), base do épico Visitação Médica (CRMLAB-85). Desde D-329 a rota exige
+`representative`/`manager`/`admin` e o service recorta o **representante** à própria carteira
+(`ownerId` no repositório; fora dela → `NOT_FOUND`; cria sempre na própria carteira e não troca o
+responsável). Responsável obrigatório e de perfil elegível (`VISITATION_RESPONSIBLE_ROLES`). Também
+`portfolios(ctx)` (carteiras) e `transfer(ctx, dto)` (transferência em lote, só gestor/admin, uma
+transação; audit `transfer_doctor` e `transfer_visit`). Normaliza CRM (só dígitos) e UF (maiúscula, 27 UFs) com os
 helpers de `shared/types/doctor.types.ts`, valida o **par** depois de juntar com o que está gravado
 (PATCH), confere duplicidade de (CRM, UF) antes de gravar e converte a corrida do índice único
 (`uq_doctors_tenant_crm`) no mesmo `DOCTOR_CRM_ALREADY_EXISTS`. O responsável pela carteira é
@@ -1907,8 +1911,10 @@ Lê `users` (só `id, name, role, is_active` do próprio tenant) para validar o 
 ## 31. VisitService — agenda de visitas (CRMLAB-87 — D-256)
 
 **Responsabilidade:** as 13 rotas de `/visits` (API_CONTRACTS.md §14). Dono de `doctor_visits`,
-`doctor_visit_reschedules` (SCHEMA.md §36) e `doctor_visit_attachments` (§37). Todo papel de tenant escreve; o operador da plataforma
-fica na rota. Valida médico (ativo, do tenant) e responsável (usuário ativo do tenant, papel de
+`doctor_visit_reschedules` (SCHEMA.md §36) e `doctor_visit_attachments` (§37). Desde D-329 a rota
+exige `representative`/`manager`/`admin`; o **representante** só alcança visita de médico da carteira
+dele ou em que ele é o responsável (`ownerId` no repositório, inclusive no download de anexo), e só
+cria/edita com médico da própria carteira e ele mesmo como responsável. Valida médico (ativo, do tenant) e responsável (usuário ativo do tenant, papel de
 tenant) só quando mudam; só a visita `agendada` edita, reagenda ou encerra (`VISIT_ALREADY_CLOSED`;
 a guarda vai também no `WHERE` do repositório, e uma escrita que perde a corrida relê para
 responder 404 ou 409). Reagendar grava o histórico na mesma transação. Audit `create_visit`,
@@ -1959,7 +1965,8 @@ e para os nomes no `JOIN` — leitura de apoio, sem escrever em tabela de outro 
 juntando, na leitura, as visitas do médico (`doctor_visits`, do `VisitService`) com os registros
 manuais, do mais novo para o mais antigo, por **cursor** (`base64url("<ISO>|<id>")` do último item;
 lê `limit + 1` para saber se há próxima página). O trecho do relato (`reportExcerpt`) é cortado
-aqui, não no SQL. Registro manual: todo papel de tenant lança, edita e exclui; `occurredAt` até
+aqui, não no SQL. Registro manual: quem alcança o médico (gestor/admin; representante só na
+carteira dele, D-329) lança, edita e exclui; `occurredAt` até
 5 min no futuro (`DOCTOR_INTERACTION_FUTURE_TOLERANCE_MS`, relógio injetável no teste); descrição
 aparada, 1..2000. Médico do tenant (ativo **ou** inativo) é conferido antes; registro de outro
 médico no caminho → `NOT_FOUND` (o `WHERE` do repositório leva `doctor_id`). Audit

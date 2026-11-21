@@ -21,6 +21,14 @@ export type RuleActorRole = 'attendant' | 'manager';
 
 export const RULE_ACTOR_ROLES: readonly RuleActorRole[] = ['attendant', 'manager'] as const;
 
+/**
+ * Perfil do usuario -> perfil das regras. O representante conta como atendente
+ * (D-329 item 2): nao existe linha propria na tela de Regras.
+ */
+export function ruleActorRoleOf(role: UserRole): UserRole {
+  return role === 'representative' ? 'attendant' : role;
+}
+
 /** Como os prazos em dias são contados. */
 export type DayCounting = 'calendar' | 'business';
 
@@ -360,7 +368,7 @@ export function buildAllowedTransitions(
 export function canReopen(rules: ManualMoveRules, role: UserRole): boolean {
   if (!rules.reopenClosed.enabled) return false;
   if (role === 'admin') return true;
-  return (rules.reopenClosed.roles as readonly string[]).includes(role);
+  return (rules.reopenClosed.roles as readonly string[]).includes(ruleActorRoleOf(role));
 }
 
 /**

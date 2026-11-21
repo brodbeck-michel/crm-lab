@@ -75,33 +75,35 @@ na mesma linha da busca — as abas de Cadastros, acima, são a navegação prin
 |------|-----------------|----------------------|-------|
 | `/login` | — (público) | não | — |
 | `/digitalizar` (CRMLAB-184, D-327) | — (público; credencial do dispositivo, §24) | não | — |
-| `/change-password` (CRMLAB-186) | attendant · manager · admin, **só** com `user.mustChangePassword` | não | — |
+| `/change-password` (CRMLAB-186) | attendant · representative · manager · admin, **só** com `user.mustChangePassword` | não | — |
 | `/` | qualquer sessão → redirect por perfil | não | — |
-| `/attendance` | attendant · manager · admin | sim | solto |
-| `/contacts` | attendant · manager · admin | sim | solto |
-| `/contacts/:id` | attendant · manager · admin | não | — |
-| `/budget/new` | attendant · manager · admin | não | — |
-| `/proposals` | attendant · manager · admin | sim | solto |
-| `/catalog` (aba "Exames" de Cadastros) | attendant · manager · admin | não (aba) | — |
-| `/analytics` | attendant · manager · admin | não (CRMLAB-143) | — |
-| `/internal-chat` | attendant · manager · admin | sim | solto |
-| `/quick-replies` (aba de Cadastros) | attendant · manager · admin | não (aba) | — |
+| `/attendance` | attendant · representative · manager · admin | sim | solto |
+| `/contacts` | attendant · representative · manager · admin | sim | solto |
+| `/contacts/:id` | attendant · representative · manager · admin | não | — |
+| `/budget/new` | attendant · representative · manager · admin | não | — |
+| `/proposals` | attendant · representative · manager · admin | sim | solto |
+| `/catalog` (aba "Exames" de Cadastros) | attendant · representative · manager · admin | não (aba) | — |
+| `/analytics` | attendant · representative · manager · admin | não (CRMLAB-143) | — |
+| `/internal-chat` | attendant · representative · manager · admin | sim | solto |
+| `/quick-replies` (aba de Cadastros) | attendant · representative · manager · admin | não (aba) | — |
 | `/decisions` | manager · admin | não (CRMLAB-143) | — |
 | `/results` | manager · admin | sim | Gestão |
 | `/reconciliation` | manager · admin | não (CRMLAB-143) | — |
 | `/active-search` | manager · admin | sim | Gestão |
-| `/sales` | attendant · manager · admin | sim | solto |
-| `/visitation/agenda` (rótulo "Agenda", CRMLAB-87) | attendant · manager · admin | sim | Visitação Médica |
-| `/visitation/doctors` (rótulo "Médicos", CRMLAB-86) | attendant · manager · admin | sim | Visitação Médica |
+| `/sales` | attendant · representative · manager · admin | sim | solto |
+| `/visitation/agenda` (rótulo "Agenda", CRMLAB-87) | representative · manager · admin (D-329) | sim | Visitação Médica |
+| `/visitation/doctors` (rótulo "Médicos", CRMLAB-86) | representative · manager · admin (D-329) | sim | Visitação Médica |
+| `/visitation/doctors/:id` (ficha, CRMLAB-89) | representative · manager · admin (D-329) | não | — |
+| `/visitation/portfolios` (rótulo "Carteiras", CRMLAB-189) | manager · admin | sim | Visitação Médica |
 | `/settings/channels` | manager · admin | sim | Configurações |
 | `/settings/operation` | manager · admin | sim | Gestão |
 | `/settings/insurances` (aba de Cadastros) | manager · admin | não (aba) | — |
 | `/settings/attendants` (aba de Cadastros) | manager · admin | não (aba) | — |
-| `/settings/rules` (CRMLAB-56) | attendant · manager · admin | sim | Configurações |
+| `/settings/rules` (CRMLAB-56) | attendant · representative · manager · admin | sim | Configurações |
 | `/settings/commissions` → redirect `/settings/rules#comissoes` | manager · admin | não | — |
 | `/settings/lis-integration` (CRMLAB-52) | manager · admin | sim | Configurações |
-| `/settings/registers` (rótulo "Cadastros", CRMLAB-143) | attendant · manager · admin | sim | Configurações |
-| `/settings/account` | attendant · manager · admin | não (menu do usuário) | — |
+| `/settings/registers` (rótulo "Cadastros", CRMLAB-143) | attendant · representative · manager · admin | sim | Configurações |
+| `/settings/account` | attendant · representative · manager · admin | não (menu do usuário) | — |
 | `/settings/users` (aba de Cadastros) | admin | não (aba) | — |
 | `/settings/theme` | admin | sim | Configurações |
 | `/platform/tenants` | platform_operator | sim | solto (console) |
@@ -114,7 +116,7 @@ Duas leituras registradas aqui porque o doc original não as fixava:
    restritiva é o operador ficar restrito a `/platform/*`. Simetricamente, papel de tenant não
    entra em `/platform/*`.
 2. **Redirect de `/` por perfil:** `attendant → /attendance` (fixado no doc);
-   `manager` e `admin → /proposals`; `platform_operator → /platform/tenants`.
+   `representative → /visitation/agenda` (D-329); `manager` e `admin → /proposals`; `platform_operator → /platform/tenants`.
    Fonte única: `ROLE_HOME` em `src/routes/route-config.ts`.
 
 ---
@@ -1749,17 +1751,32 @@ caminho (`automation.sentToFollowUp.days`); chave que a tela não conhece vira t
 
 ## Visitação Médica (épico CRMLAB-85)
 
-### 22. Médicos (`/visitation/doctors`) — todos os papéis de tenant (CRMLAB-86, D-255)
+### Perfis na Visitação (CRMLAB-189, D-329)
+
+- **Atendente:** o grupo "Visitação Médica" **não aparece** e as rotas `/visitation/*` redirecionam
+  para a tela inicial dela (o servidor também responde `403`).
+- **Representante:** Agenda, Médicos e a ficha — tudo **já recortado pelo servidor** à carteira dele
+  (e às visitas em que ele é o responsável). Não vê "Carteiras". Os seletores de responsável
+  mostram **só ele** (desabilitados); o filtro por responsável não aparece (nem na Agenda, nem em
+  Médicos).
+- **Gestor/admin:** tudo, mais a tela **Carteiras** (§22c) e o filtro "Sem responsável / responsável
+  inelegível" em Médicos.
+- **Seletores de responsável** (médico e visita) listam só perfis **elegíveis** (representante,
+  gestor, admin), a partir de `GET /conversations/assignees` filtrado por `role`
+  (`VISITATION_RESPONSIBLE_ROLES`). Fonte das regras de tela: `pages/Visitation/visitation-access.ts`.
+
+### 22. Médicos (`/visitation/doctors`) — representante (carteira) · gestor · admin (CRMLAB-86, D-255 · D-329)
 
 Cadastro de médicos solicitantes. Grupo **"Visitação Médica"** da Sidebar (ícone `MapPinned`),
-item "Médicos" (ícone `Stethoscope`), `requiredRoles: TENANT_ROLES`. Fonte: `/doctors`
+item "Médicos" (ícone `Stethoscope`), `requiredRoles: VISITATION_ROLES`. Fonte: `/doctors`
 (API_CONTRACTS.md §13); responsáveis de `GET /conversations/assignees` (usuários ativos do
 laboratório, qualquer papel — `GET /users` é admin-only). A Agenda (`/visitation/agenda`, §23,
 CRMLAB-87) vem antes no mesmo grupo. Arquivo `pages/Visitation/Doctors.tsx`.
 
 - **Topo:** `PageHeader` "Médicos" + [+ Novo médico] (todo papel vê o botão).
 - **Filtros** (empilham no celular): `SearchInput` "Buscar por nome ou CRM" (debounce, vai em
-  `?search=`); `Select` "Todos os responsáveis" + usuários ativos (`?responsibleId=`);
+  `?search=`); `Select` "Todos os responsáveis" + "Sem responsável / responsável inelegível"
+  (`?unassigned=true`, D-329) + usuários elegíveis (`?responsibleId=`) — **só gestor/admin**;
   `SegmentedControl` Ativos | Inativos | Todos (abre em **Ativos**). Mudar filtro volta à página 1.
 - **Lista:** a partir de `md`, `DataTable` com Nome (+ especialidade embaixo), CRM (`12345/SC`),
   Clínica, Telefone, Responsável, Status (`Chip` Ativo/Inativo) e Ações ([Editar] [Inativar] ou
@@ -1769,9 +1786,10 @@ CRMLAB-87) vem antes no mesmo grupo. Arquivo `pages/Visitation/Doctors.tsx`.
 - **Formulário** (`Modal` "Novo médico"/"Editar médico", grade de 2 colunas que vira 1 no
   celular): Nome*, CRM (só números), UF do CRM (`Select` com as 27 UFs), Especialidade,
   Clínica/consultório, Endereço, Telefone/WhatsApp, E-mail, Secretária/contato, Melhor dia e
-  horário para visita, Responsável pela carteira ("Sem responsável" + ativos; o responsável atual
-  desativado aparece como "Nome (inativo)" para não trocar a carteira sozinho), Observações.
-  Antes de enviar, a tela barra nome vazio e CRM sem UF. Vazio vai como `null`.
+  horário para visita, Responsável pela carteira* (D-329: obrigatório, só perfis elegíveis; o
+  responsável atual desativado aparece como "Nome (inativo)" para não trocar a carteira sozinho;
+  para o representante o campo vem fixo nele mesmo), Observações.
+  Antes de enviar, a tela barra nome vazio, CRM sem UF e responsável vazio. Vazio vai como `null`.
 - **Erros:** `DOCTOR_CRM_ALREADY_EXISTS` marca o campo CRM com "CRM já cadastrado para {nome}." —
   ou, se o existente está inativo, "…(inativo). Reative o cadastro em vez de criar outro." — e o
   modal fica aberto. `VALIDATION_ERROR` com `details.fields` marca o campo; o resto vai para o
@@ -1782,10 +1800,26 @@ CRMLAB-87) vem antes no mesmo grupo. Arquivo `pages/Visitation/Doctors.tsx`.
 
 ---
 
-### 22b. Ficha do médico (`/visitation/doctors/:id`) — todos os papéis de tenant (CRMLAB-89, D-261)
+### 22c. Carteiras (`/visitation/portfolios`) — gestor · admin (CRMLAB-189, D-329)
+
+Item **"Carteiras"** (ícone `doctors`) do grupo "Visitação Médica", depois de "Médicos";
+`requiredRoles: MANAGER_PLUS`. Fonte: `GET /doctors/portfolios`, `GET /doctors?responsibleId=` /
+`?unassigned=true` e `POST /doctors/transfer` (API_CONTRACTS.md §13). Arquivo
+`pages/Visitation/Portfolios.tsx`.
+
+- **Lista de carteiras:** uma linha por responsável (nome, perfil, "N médicos · M ativos") e, no fim,
+  a linha **"Sem responsável / responsável inelegível"** com o balde `unassigned`. Quando o
+  servidor mandar `abc` (CRMLAB-188 integrado), a linha mostra "A n · B n · C n"; sem a chave, nada.
+- **Clicar numa linha** abre, ao lado (embaixo no celular), os médicos daquela carteira (até 100,
+  por nome) com **checkbox** em cada um e "Selecionar todos".
+- **[Transferir selecionados]** abre o `Modal` "Transferir médicos": `Select` "Novo responsável"
+  (perfis elegíveis, menos o dono atual), checkbox "Levar junto as visitas futuras agendadas" e
+  [Transferir]. Sucesso: toast "N médicos transferidos (M visitas)" e as listas recarregam.
+
+### 22b. Ficha do médico (`/visitation/doctors/:id`) — representante (carteira) · gestor · admin (CRMLAB-89, D-261 · D-329)
 
 Aberta pelo nome na lista de Médicos; fora da Sidebar (`inSidebar: false`), `requiredRoles:
-TENANT_ROLES`. Fonte: `GET /doctors/:id` e a linha do tempo de `GET /doctors/:id/timeline`
+VISITATION_ROLES`. Fonte: `GET /doctors/:id` e a linha do tempo de `GET /doctors/:id/timeline`
 (API_CONTRACTS.md §13). Arquivo `pages/Visitation/DoctorProfile.tsx`.
 
 - **Topo:** `PageHeader` com o nome, "CRM 12345/SC · Especialidade" embaixo, breadcrumb
@@ -1809,10 +1843,12 @@ TENANT_ROLES`. Fonte: `GET /doctors/:id` e a linha do tempo de `GET /doctors/:id
 
 ---
 
-### 23. Agenda de visitas (`/visitation/agenda`) — todos os papéis de tenant (CRMLAB-87, D-256 · repaginada no CRMLAB-92, D-262)
+### 23. Agenda de visitas (`/visitation/agenda`) — representante (escopo) · gestor · admin (CRMLAB-87, D-256 · repaginada no CRMLAB-92, D-262 · D-329)
 
 Item **"Agenda"** (ícone `CalendarDays`) do grupo "Visitação Médica", antes de "Médicos";
-`requiredRoles: TENANT_ROLES`. Fonte: `/visits` (API_CONTRACTS.md §14); médicos de
+`requiredRoles: VISITATION_ROLES`. **Representante (D-329):** a semana já vem recortada pelo
+servidor (médicos da carteira + visitas em que ele é o responsável); o filtro "Responsável" some e
+o responsável da visita nova/editada é ele mesmo (seletor fixo). Fonte: `/visits` (API_CONTRACTS.md §14); médicos de
 `GET /doctors?active=true&limit=100&sortBy=name`; responsáveis de `GET /conversations/assignees`.
 Arquivos em `pages/Visitation/`: `Agenda.tsx` (página, filtros e modais), `AgendaWeek.tsx`
 (grade), `AgendaList.tsx`, `AgendaRail.tsx` (coluna de resumo), `AgendaMobile.tsx`,

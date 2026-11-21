@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AuthUser, Doctor, ListDoctorsResponse } from '@crm-lab/shared';
+import type { Doctor, ListDoctorsResponse } from '@crm-lab/shared';
 import { ApiError } from '@/api/client';
 import { conversationsApi } from '@/api/conversations';
 import { doctorsApi } from '@/api/doctors';
@@ -51,7 +51,7 @@ const lookupCepMock = vi.mocked(lookupCep);
 /** Rótulo "Nome" do médico (não o "Nome da secretária"). */
 const NAME_LABEL = /^Nome(?! da)/;
 
-function asRole(role: 'attendant' | 'manager' | 'admin') {
+function asRole(role: 'representative' | 'manager' | 'admin') {
   useAuthStore.setState({
     user: { id: 'u-me', email: 'me@lab.test', name: 'Eu', role, discountLimit: 5 },
   });
@@ -104,9 +104,6 @@ function table() {
 describe('Doctors (/visitation/doctors)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Gestor vê tudo e escolhe o responsável (D-329); o recorte do representante tem spec própria.
-    const manager: AuthUser = { id: 'u-ana', email: 'ana@lab.com', name: 'Ana Gestora', role: 'manager', discountLimit: 30 };
-    useAuthStore.setState({ user: manager });
     listMock.mockResolvedValue(listResponse());
     assigneesMock.mockResolvedValue({
       assignees: [
@@ -122,7 +119,8 @@ describe('Doctors (/visitation/doctors)', () => {
       ],
     });
     lookupCepMock.mockResolvedValue(null);
-    asRole('attendant');
+    // Gestor vê tudo e escolhe o responsável (D-329); o recorte do representante tem spec própria.
+    asRole('manager');
   });
 
   it('lista com CRM/UF, clínica, responsável e status; cartões para o celular', async () => {
@@ -367,6 +365,7 @@ describe('Doctors (/visitation/doctors)', () => {
   });
 
   it('[Recalcular curva ABC] só para gestor/admin', async () => {
+    asRole('representative');
     renderPage();
     await waitFor(() => expect(screen.getByTestId('doctors-table')).toBeInTheDocument());
     expect(screen.queryByRole('button', { name: 'Recalcular curva ABC' })).not.toBeInTheDocument();
@@ -418,6 +417,9 @@ describe('Doctors (/visitation/doctors)', () => {
     await user.click(screen.getByRole('button', { name: '+ Novo médico' }));
     const dialog = within(screen.getByRole('dialog', { name: 'Novo médico' }));
     await user.type(dialog.getByLabelText(NAME_LABEL), 'Dr. Completo');
+    // Responsável é obrigatório no cadastro (D-329).
+    await waitFor(() => expect(dialog.getByRole('option', { name: 'Ana Gestora' })).toBeInTheDocument());
+    await user.selectOptions(dialog.getByLabelText('Responsável pela carteira'), 'u-ana');
     await user.type(dialog.getAllByLabelText('Aniversário — dia')[0] as HTMLElement, '29');
     await user.type(dialog.getAllByLabelText('Mês')[0] as HTMLElement, '2');
     await user.selectOptions(dialog.getByLabelText('Atende particular'), 'yes');
@@ -518,8 +520,9 @@ describe('Doctors (/visitation/doctors)', () => {
     await waitFor(() => expect(dialog.getByLabelText('Especialidade')).toHaveValue('sp-new'));
   });
 
-  it('atendente não vê "+ nova especialidade"', async () => {
+  it('representante não vê "+ nova especialidade"', async () => {
     const user = userEvent.setup({ delay: null });
+    asRole('representative');
     renderPage();
     await waitFor(() => expect(screen.getByTestId('doctors-table')).toBeInTheDocument());
     await user.click(screen.getByRole('button', { name: '+ Novo médico' }));

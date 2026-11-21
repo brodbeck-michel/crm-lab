@@ -28,7 +28,7 @@ let tenantA: TenantRecord;
 let tenantB: TenantRecord;
 let managerA: UserRecord;
 let adminA: UserRecord;
-let attendantA: UserRecord;
+let repA: UserRecord;
 let managerB: UserRecord;
 
 beforeAll(async () => {
@@ -42,7 +42,7 @@ beforeEach(async () => {
   tenantB = await createTenant({ name: 'Lab B', slug: 'lab-b', db });
   managerA = await createUser({ tenantId: tenantA.id, role: 'manager', db });
   adminA = await createUser({ tenantId: tenantA.id, role: 'admin', db });
-  attendantA = await createUser({ tenantId: tenantA.id, role: 'attendant', db });
+  repA = await createUser({ tenantId: tenantA.id, role: 'representative', db });
   managerB = await createUser({ tenantId: tenantB.id, role: 'manager', db });
 });
 
@@ -62,22 +62,22 @@ async function createSpecialty(user: UserRecord, name: string): Promise<DoctorSp
 
 describe('GET /doctors/specialties', () => {
   it('semeia a lista padrão no primeiro acesso, em ordem de nome, e não duplica', async () => {
-    const first = await list(attendantA);
+    const first = await list(repA);
     expect(first).toHaveLength(DEFAULT_DOCTOR_SPECIALTIES.length);
     expect(first.map((s) => s.name)).toContain('Cardiologia');
     expect(first.every((s) => s.isActive)).toBe(true);
     expect(first[0]?.name).toBe('Acupuntura');
 
-    const second = await list(attendantA);
+    const second = await list(repA);
     expect(second).toHaveLength(DEFAULT_DOCTOR_SPECIALTIES.length);
   });
 
   it('não semeia de novo quem já tem especialidade, e filtra por ativa', async () => {
     const own = await createSpecialty(managerA, 'Medicina Funcional');
     await app.agent.patch(`${BASE}/${own.id}`).set(app.auth(managerA)).send({ isActive: false }).expect(200);
-    expect(await list(attendantA)).toHaveLength(1);
-    expect(await list(attendantA, '?active=true')).toHaveLength(0);
-    expect(await list(attendantA, '?active=false')).toHaveLength(1);
+    expect(await list(repA)).toHaveLength(1);
+    expect(await list(repA, '?active=true')).toHaveLength(0);
+    expect(await list(repA, '?active=false')).toHaveLength(1);
   });
 
   it('lista de um laboratório nunca aparece no outro', async () => {
@@ -88,12 +88,12 @@ describe('GET /doctors/specialties', () => {
 });
 
 describe('POST /doctors/specialties', () => {
-  it('gestor e admin criam (nome aparado e com espaços colapsados); atendente recebe 403', async () => {
+  it('gestor e admin criam (nome aparado e com espaços colapsados); representante recebe 403', async () => {
     const created = await createSpecialty(managerA, '  Medicina   Funcional ');
     expect(created).toMatchObject({ name: 'Medicina Funcional', isActive: true });
     await createSpecialty(adminA, 'Fisiatria');
 
-    const denied = await app.agent.post(BASE).set(app.auth(attendantA)).send({ name: 'X' });
+    const denied = await app.agent.post(BASE).set(app.auth(repA)).send({ name: 'X' });
     expect(denied.status).toBe(403);
     expect(errorOf(denied).code).toBe('FORBIDDEN');
   });
@@ -133,14 +133,14 @@ describe('PATCH /doctors/specialties/:id', () => {
     const specialty = await createSpecialty(managerA, 'Cardio');
     const doctor = await app.agent
       .post('/api/v1/doctors')
-      .set(app.auth(attendantA))
+      .set(app.auth(repA))
       .send({ name: 'Dr. C', specialtyId: specialty.id })
       .expect(201);
     expect((doctor.body as Doctor).specialty).toBe('Cardio');
 
     await app.agent.patch(`${BASE}/${specialty.id}`).set(app.auth(managerA)).send({ name: 'Cardiologia' }).expect(200);
 
-    const after = await app.agent.get(`/api/v1/doctors/${(doctor.body as Doctor).id}`).set(app.auth(attendantA)).expect(200);
+    const after = await app.agent.get(`/api/v1/doctors/${(doctor.body as Doctor).id}`).set(app.auth(repA)).expect(200);
     expect((after.body as Doctor).specialty).toBe('Cardiologia');
     const legacy = await db.withoutTenant((tx) =>
       tx.query<{ specialty: string }>('SELECT specialty FROM doctors WHERE id = $1', [(doctor.body as Doctor).id]),
@@ -161,28 +161,28 @@ describe('PATCH /doctors/specialties/:id', () => {
   it('inativa: não entra em médico novo, mas quem já usa continua editável', async () => {
     const specialty = await createSpecialty(managerA, 'Homeopatia');
     const doctor = (
-      await app.agent.post('/api/v1/doctors').set(app.auth(attendantA)).send({ name: 'Dr. H', specialtyId: specialty.id })
+      await app.agent.post('/api/v1/doctors').set(app.auth(repA)).send({ name: 'Dr. H', specialtyId: specialty.id })
     ).body as Doctor;
     await app.agent.patch(`${BASE}/${specialty.id}`).set(app.auth(managerA)).send({ isActive: false }).expect(200);
 
     const novo = await app.agent
       .post('/api/v1/doctors')
-      .set(app.auth(attendantA))
+      .set(app.auth(repA))
       .send({ name: 'Dr. Novo', specialtyId: specialty.id });
     expect(novo.status).toBe(400);
     expect(errorOf(novo).details).toMatchObject({ fields: { specialtyId: expect.any(String) as unknown } });
 
     const edit = await app.agent
       .patch(`/api/v1/doctors/${doctor.id}`)
-      .set(app.auth(attendantA))
+      .set(app.auth(repA))
       .send({ specialtyId: specialty.id, clinic: 'Clínica H' })
       .expect(200);
     expect((edit.body as Doctor).specialty).toBe('Homeopatia');
   });
 
-  it('atendente -> 403; outro laboratório ou inexistente -> 404', async () => {
+  it('representante -> 403; outro laboratório ou inexistente -> 404', async () => {
     const specialty = await createSpecialty(managerA, 'Geriatria');
-    await app.agent.patch(`${BASE}/${specialty.id}`).set(app.auth(attendantA)).send({ isActive: false }).expect(403);
+    await app.agent.patch(`${BASE}/${specialty.id}`).set(app.auth(repA)).send({ isActive: false }).expect(403);
     const cross = await app.agent.patch(`${BASE}/${specialty.id}`).set(app.auth(managerB)).send({ isActive: false });
     expect(cross.status).toBe(404);
     expect(errorOf(cross).code).toBe('NOT_FOUND');
@@ -192,7 +192,7 @@ describe('PATCH /doctors/specialties/:id', () => {
     const specialtyB = await createSpecialty(managerB, 'Do B');
     const res = await app.agent
       .post('/api/v1/doctors')
-      .set(app.auth(attendantA))
+      .set(app.auth(repA))
       .send({ name: 'Dr. X', specialtyId: specialtyB.id });
     expect(res.status).toBe(400);
     expect(errorOf(res).details).toMatchObject({ fields: { specialtyId: expect.any(String) as unknown } });

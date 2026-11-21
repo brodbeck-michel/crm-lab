@@ -207,7 +207,8 @@ describe('POST /doctors/abc/recalculate', () => {
     expect(denied.status).toBe(403);
     expect((denied.body as ApiErrorBody).error.code).toBe('FORBIDDEN');
 
-    const doc = await app.agent.get(`/api/v1/doctors/${a}`).set(app.auth(attendantA)).expect(200);
+    // Atendente nao ve a ficha (D-329): quem le e o gestor.
+    const doc = await app.agent.get(`/api/v1/doctors/${a}`).set(app.auth(managerA)).expect(200);
     expect(doc.body as Doctor).toMatchObject({ abcClass: 'A', abcBaseValue: 250 });
     expect((doc.body as Doctor).abcCalculatedAt).toEqual(expect.any(String));
 

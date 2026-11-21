@@ -21,7 +21,7 @@ import type {
 import { doctorModule } from '../../src/controllers/doctor.routes.js';
 import { visitModule } from '../../src/controllers/visit.routes.js';
 import type { DbClient } from '../../src/db/types.js';
-import { createTenant, createUser, type TenantRecord, type UserRecord } from '../helpers/factories.js';
+import { createTenant, createUser, visitPurposeId, type TenantRecord, type UserRecord } from '../helpers/factories.js';
 import { createTestApp, type TestApp } from '../helpers/test-app.js';
 import { getTestDb, resetDatabase } from '../helpers/test-db.js';
 
@@ -34,6 +34,7 @@ let db: DbClient;
 let app: TestApp;
 let tenantA: TenantRecord;
 let tenantB: TenantRecord;
+let purposeA: string; // finalidade "Visita" (CRMLAB-190)
 let admin: UserRecord;
 let manager: UserRecord;
 let attendant: UserRecord;
@@ -73,8 +74,9 @@ async function insertVisit(
 ): Promise<string> {
   const result = await db.withoutTenant((tx) =>
     tx.query<{ id: string }>(
-      `INSERT INTO doctor_visits (tenant_id, doctor_id, responsible_user_id, scheduled_at, type)
-       VALUES ($1, $2, $3, $4::timestamptz, 'presencial') RETURNING id`,
+      `INSERT INTO doctor_visits (tenant_id, doctor_id, responsible_user_id, scheduled_at, type, purpose_id)
+       VALUES ($1, $2, $3, $4::timestamptz, 'presencial',
+               (SELECT id FROM visit_purposes WHERE tenant_id = $1 AND name = 'Visita')) RETURNING id`,
       [tenantId, doctorId, responsibleId, scheduledAt],
     ),
   );
@@ -104,6 +106,7 @@ beforeEach(async () => {
   await resetDatabase(db);
   app = await createTestApp({ db, modules: [doctorModule, visitModule] });
   tenantA = await createTenant({ name: 'Lab A', slug: 'lab-a', db });
+  purposeA = await visitPurposeId(tenantA.id, 'Visita', db);
   tenantB = await createTenant({ name: 'Lab B', slug: 'lab-b', db });
   admin = await createUser({ tenantId: tenantA.id, role: 'admin', name: 'Admin A', db });
   manager = await createUser({ tenantId: tenantA.id, role: 'manager', name: 'Gestora A', db });
@@ -140,7 +143,7 @@ describe('atendente fica fora da Visitação (403 por perfil)', () => {
       app.agent.get(DOCTORS).set(headers),
       app.agent.get(`${DOCTORS}/${drCarla}`).set(headers),
       app.agent.post(DOCTORS).set(headers).send({ name: 'Dr. X', responsibleId: manager.id }),
-      app.agent.patch(`${DOCTORS}/${drCarla}`).set(headers).send({ specialty: 'X' }),
+      app.agent.patch(`${DOCTORS}/${drCarla}`).set(headers).send({ clinic: 'X' }),
       app.agent.post(`${DOCTORS}/${drCarla}/inactivate`).set(headers),
       app.agent.get(`${DOCTORS}/${drCarla}/timeline`).set(headers),
       app.agent
@@ -189,7 +192,7 @@ describe('representante: médicos só da própria carteira', () => {
     const headers = app.auth(carla);
     const responses = await Promise.all([
       app.agent.get(`${DOCTORS}/${drDiego}`).set(headers),
-      app.agent.patch(`${DOCTORS}/${drDiego}`).set(headers).send({ specialty: 'X' }),
+      app.agent.patch(`${DOCTORS}/${drDiego}`).set(headers).send({ clinic: 'X' }),
       app.agent.post(`${DOCTORS}/${drDiego}/inactivate`).set(headers),
       app.agent.post(`${DOCTORS}/${drDiego}/reactivate`).set(headers),
       app.agent.get(`${DOCTORS}/${drDiego}/timeline`).set(headers),
@@ -223,8 +226,8 @@ describe('representante: médicos só da própria carteira', () => {
   it('na própria carteira: detalhe, edição e linha do tempo funcionam', async () => {
     const headers = app.auth(carla);
     await app.agent.get(`${DOCTORS}/${drCarla}`).set(headers).expect(200);
-    const patched = await app.agent.patch(`${DOCTORS}/${drCarla}`).set(headers).send({ specialty: 'Pediatria' }).expect(200);
-    expect((patched.body as Doctor).specialty).toBe('Pediatria');
+    const patched = await app.agent.patch(`${DOCTORS}/${drCarla}`).set(headers).send({ clinic: 'Pediatria' }).expect(200);
+    expect((patched.body as Doctor).clinic).toBe('Pediatria');
     await app.agent.get(`${DOCTORS}/${drCarla}/timeline`).set(headers).expect(200);
   });
 
@@ -306,7 +309,7 @@ describe('representante: visitas da carteira e de cobertura', () => {
 
   it('agenda só para médico da própria carteira e com ele como responsável', async () => {
     const headers = app.auth(carla);
-    const base = { scheduledAt: '2026-01-20T13:00:00.000Z', type: 'presencial' };
+    const base = { scheduledAt: '2026-01-20T13:00:00.000Z', type: 'presencial', purposeId: purposeA };
 
     const otherDoctor = await app.agent
       .post(VISITS)
@@ -382,12 +385,12 @@ describe('gestor e admin veem e alteram tudo', () => {
 
   it('editar médico sem responsável (ou com atendente) exige atribuir na mesma edição', async () => {
     for (const id of [drOrphan, drAttendant]) {
-      const blocked = await app.agent.patch(`${DOCTORS}/${id}`).set(app.auth(manager)).send({ specialty: 'X' }).expect(400);
+      const blocked = await app.agent.patch(`${DOCTORS}/${id}`).set(app.auth(manager)).send({ clinic: 'X' }).expect(400);
       expect(errorOf(blocked).details).toMatchObject({ fields: { responsibleId: expect.any(String) } });
       const fixed = await app.agent
         .patch(`${DOCTORS}/${id}`)
         .set(app.auth(manager))
-        .send({ specialty: 'X', responsibleId: carla.id })
+        .send({ clinic: 'X', responsibleId: carla.id })
         .expect(200);
       expect((fixed.body as Doctor).responsible?.id).toBe(carla.id);
     }
@@ -395,14 +398,14 @@ describe('gestor e admin veem e alteram tudo', () => {
 
   it('responsável inativo e inalterado continua tolerado (D-255 item 9)', async () => {
     await db.withoutTenant((tx) => tx.query('UPDATE users SET is_active = FALSE WHERE id = $1', [diego.id]));
-    await app.agent.patch(`${DOCTORS}/${drDiego}`).set(app.auth(manager)).send({ specialty: 'Y' }).expect(200);
+    await app.agent.patch(`${DOCTORS}/${drDiego}`).set(app.auth(manager)).send({ clinic: 'Y' }).expect(200);
   });
 
   it('atendente não pode ser responsável por visita', async () => {
     const response = await app.agent
       .post(VISITS)
       .set(app.auth(manager))
-      .send({ doctorId: drCarla, responsibleId: attendant.id, scheduledAt: '2026-01-20T13:00:00.000Z', type: 'presencial' })
+      .send({ doctorId: drCarla, responsibleId: attendant.id, scheduledAt: '2026-01-20T13:00:00.000Z', type: 'presencial', purposeId: purposeA })
       .expect(400);
     expect(errorOf(response).details).toMatchObject({ fields: { responsibleId: expect.any(String) } });
   });

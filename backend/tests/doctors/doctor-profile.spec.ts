@@ -17,7 +17,7 @@ const BASE = '/api/v1/doctors';
 let db: DbClient;
 let app: TestApp;
 let tenantA: TenantRecord;
-let attendantA: UserRecord;
+let repA: UserRecord;
 let managerA: UserRecord;
 
 beforeAll(async () => {
@@ -28,7 +28,7 @@ beforeEach(async () => {
   await resetDatabase(db);
   app = await createTestApp({ db, modules: [doctorModule] });
   tenantA = await createTenant({ name: 'Lab A', slug: 'lab-a', db });
-  attendantA = await createUser({ tenantId: tenantA.id, role: 'attendant', db });
+  repA = await createUser({ tenantId: tenantA.id, role: 'representative', db });
   managerA = await createUser({ tenantId: tenantA.id, role: 'manager', db });
 });
 
@@ -38,7 +38,7 @@ function fieldsOf(response: { body: unknown }): Record<string, string> {
 }
 
 async function create(body: Record<string, unknown>) {
-  return app.agent.post(BASE).set(app.auth(attendantA)).send(body);
+  return app.agent.post(BASE).set(app.auth(repA)).send(body);
 }
 
 async function createOk(body: Record<string, unknown>): Promise<Doctor> {
@@ -48,7 +48,7 @@ async function createOk(body: Record<string, unknown>): Promise<Doctor> {
 }
 
 async function patch(id: string, body: Record<string, unknown>) {
-  return app.agent.patch(`${BASE}/${id}`).set(app.auth(attendantA)).send(body);
+  return app.agent.patch(`${BASE}/${id}`).set(app.auth(repA)).send(body);
 }
 
 async function specialty(name: string): Promise<DoctorSpecialty> {
@@ -250,7 +250,7 @@ describe('audit e updated_at', () => {
         [doctor.id],
       ),
     );
-    const afterAbc = await app.agent.get(`${BASE}/${doctor.id}`).set(app.auth(attendantA)).expect(200);
+    const afterAbc = await app.agent.get(`${BASE}/${doctor.id}`).set(app.auth(repA)).expect(200);
     expect((afterAbc.body as Doctor).updatedAt).toBe('2026-01-01T00:00:00.000Z');
     expect((afterAbc.body as Doctor).abcClass).toBe('A');
 
@@ -266,12 +266,12 @@ describe('filtros novos da lista', () => {
     const b = await createOk({ name: 'Dr. B' });
     await db.withoutTenant((tx) => tx.query(`UPDATE doctors SET abc_class = 'B' WHERE id = $1`, [b.id]));
 
-    const bySpecialty = await app.agent.get(`${BASE}?specialtyId=${cardio.id}`).set(app.auth(attendantA)).expect(200);
+    const bySpecialty = await app.agent.get(`${BASE}?specialtyId=${cardio.id}`).set(app.auth(repA)).expect(200);
     expect((bySpecialty.body as ListDoctorsResponse).doctors.map((d) => d.id)).toEqual([a.id]);
 
-    const byAbc = await app.agent.get(`${BASE}?abcClass=B`).set(app.auth(attendantA)).expect(200);
+    const byAbc = await app.agent.get(`${BASE}?abcClass=B`).set(app.auth(repA)).expect(200);
     expect((byAbc.body as ListDoctorsResponse).doctors.map((d) => d.id)).toEqual([b.id]);
 
-    await app.agent.get(`${BASE}?abcClass=D`).set(app.auth(attendantA)).expect(400);
+    await app.agent.get(`${BASE}?abcClass=D`).set(app.auth(repA)).expect(400);
   });
 });

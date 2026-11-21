@@ -125,9 +125,12 @@ export async function seedVisitation(
       const scheduledAt = new Date(now.getTime() + (2 + index) * DAY_MS);
       scheduledAt.setUTCHours(13, 0, 0, 0);
       await tx.query(
+        // Finalidade "Visita": semeada pelo trigger de `tenants` (CRMLAB-190, D-330).
         `INSERT INTO doctor_visits (id, tenant_id, doctor_id, responsible_user_id, scheduled_at, type,
-                                    agenda, created_by, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, 'presencial', $6, $4, $7, $7)`,
+                                    purpose_id, agenda, created_by, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, 'presencial',
+                 (SELECT id FROM visit_purposes WHERE tenant_id = $2 AND name = 'Visita'),
+                 $6, $4, $7, $7)`,
         [
           seedUuid('dev', 'visit', slug, rep.key),
           tenantId,

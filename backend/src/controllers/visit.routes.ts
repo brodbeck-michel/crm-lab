@@ -4,7 +4,7 @@
  *   GET   /api/v1/visits                     visitas de um periodo (from/to + filtros)
  *   GET   /api/v1/visits/:id                 uma visita, com o historico de datas
  *   POST  /api/v1/visits                     agenda
- *   PATCH /api/v1/visits/:id                 edita medico/responsavel/tipo/pauta (parcial)
+ *   PATCH /api/v1/visits/:id                 edita medico/responsavel/tipo/finalidade/pauta (parcial)
  *   POST  /api/v1/visits/:id/reschedule      muda a data/hora e grava o historico
  *   POST  /api/v1/visits/:id/cancel          cancela (motivo obrigatorio)
  *   POST  /api/v1/visits/:id/not-received    "medico nao recebeu" (motivo obrigatorio)
@@ -61,6 +61,7 @@ export const listVisitsQuerySchema = z.object({
   doctorId: z.uuid().optional(),
   responsibleId: z.uuid().optional(),
   status: z.enum(VISIT_STATUSES).optional(),
+  purposeId: z.uuid().optional(),
 });
 
 export const createVisitSchema = z
@@ -69,6 +70,7 @@ export const createVisitSchema = z
     responsibleId: z.uuid(),
     scheduledAt: isoDateTime,
     type: z.enum(VISIT_TYPES),
+    purposeId: z.uuid(),
     agenda: z.string().max(VISIT_AGENDA_MAX_LENGTH).nullable().optional(),
   })
   .strict();
@@ -79,6 +81,7 @@ export const updateVisitSchema = z
     doctorId: z.uuid().optional(),
     responsibleId: z.uuid().optional(),
     type: z.enum(VISIT_TYPES).optional(),
+    purposeId: z.uuid().optional(),
     agenda: z.string().max(VISIT_AGENDA_MAX_LENGTH).nullable().optional(),
   })
   .strict();

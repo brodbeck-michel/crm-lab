@@ -14,7 +14,7 @@ import { MAX_MEDIA_BYTES, VISIT_ATTACHMENTS_MAX } from '@crm-lab/shared';
 import { visitModule } from '../../src/controllers/visit.routes.js';
 import type { DbClient } from '../../src/db/types.js';
 import { readMediaFile } from '../../src/lib/media-storage.js';
-import { createTenant, createUser, type TenantRecord, type UserRecord } from '../helpers/factories.js';
+import { createTenant, createUser, visitPurposeId, type TenantRecord, type UserRecord } from '../helpers/factories.js';
 import { createTestApp, type TestApp } from '../helpers/test-app.js';
 import { getTestDb, resetDatabase } from '../helpers/test-db.js';
 
@@ -68,6 +68,7 @@ async function createVisit(user: UserRecord, doctorId = doctorA): Promise<VisitD
       responsibleId: user.id,
       scheduledAt: '2026-10-06T13:00:00.000Z',
       type: 'presencial',
+      purposeId: await visitPurposeId(user.tenantId, 'Visita', db),
     });
   expect(response.status).toBe(201);
   return response.body as VisitDetail;

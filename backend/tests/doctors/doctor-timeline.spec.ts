@@ -64,8 +64,9 @@ async function insertVisit(doctorId: string, seed: VisitSeed): Promise<string> {
     tx.query<{ id: string }>(
       `INSERT INTO doctor_visits (tenant_id, doctor_id, responsible_user_id, scheduled_at, type,
                                   status, status_reason, check_in_at, check_out_at,
-                                  report_presented, report_feedback)
-       VALUES ($1, $2, $3, $4, 'presencial', $5, $6, $7, $8, $9, $10) RETURNING id`,
+                                  report_presented, report_feedback, purpose_id)
+       VALUES ($1, $2, $3, $4, 'presencial', $5, $6, $7, $8, $9, $10,
+               (SELECT id FROM visit_purposes WHERE tenant_id = $1 AND name = 'Visita')) RETURNING id`,
       [
         tenantA.id,
         doctorId,
@@ -202,6 +203,7 @@ describe('linha do tempo', () => {
       kind: 'visit',
       status: 'realizada',
       type: 'presencial',
+      purpose: { name: 'Visita', color: 'azul' },
       // Posicao = check-in, nao a data prevista.
       occurredAt: '2026-09-10T13:20:00.000Z',
       scheduledAt: '2026-09-10T13:00:00.000Z',

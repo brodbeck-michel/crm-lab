@@ -4284,7 +4284,7 @@ Frontend: botão "Resetar senha" em `/settings/users` (`ResetPasswordDialog`) e 
 `tests/users/reset-password.spec.ts` (+15); frontend `ChangePassword.spec`, `ResetPasswordDialog.spec`,
 guards e client (+9).
 
-### 🔄 CRMLAB-190 — Finalidade da visita: cadastro por laboratório, cor na agenda e filtro (2026-11-21, em andamento)
+### ✅ CRMLAB-190 — Finalidade da visita: cadastro por laboratório, cor na agenda e filtro (2026-11-21)
 
 Branch `feature/CRMLAB-190-finalidade-visita` (a partir da integração do épico `feature/CRMLAB-187-visitacao-v2`),
 D-330 (revê a D-262 item 6). Migração `073_visit_purposes.sql` (070/071 = CRMLAB-188, 072 = CRMLAB-189).
@@ -4294,3 +4294,14 @@ novos. `doctor_visits.purpose_id` obrigatório (as visitas antigas viraram "Visi
 `{ id, name, color }` na agenda e na linha do tempo do médico. Rotas `/settings/visit-purposes`
 (leitura todos, escrita gestor+); `GET /visits?purposeId=`. Agenda: cor do bloco/linha/cartão pela
 finalidade, status por ícone + texto, filtro de finalidade em chips. Tela "Finalidades" em Cadastros.
+
+Backend: `visit-purpose.{routes,service,repository}.ts` (módulo `/settings/visit-purposes`, audit log em
+criar/editar, nome repetido → `VALIDATION_ERROR` em `fields.name`), `purposeId` validado em `POST/PATCH
+/visits` (ativa e do mesmo tenant; inativa só bloqueia quando a visita MUDA para ela), `purpose` no
+shape da visita e da linha do tempo do médico. Frontend: `api/visit-purposes.ts`, Agenda (Semana, Lista,
+Celular) com a cor da finalidade + `StatusIcon`, chips de finalidade, campo Finalidade* no formulário,
+detalhe da visita e ficha do médico; `pages/Settings/VisitPurposes.tsx` (aba "Finalidades" de Cadastros).
+Testes: backend `tests/db/migration-073-visit-purposes.spec.ts`, `tests/visits/visit-purposes.spec.ts`,
+`visits.spec`/`visit-record.spec`/`doctor-timeline.spec`/`route-tenant-isolation.spec`; frontend
+`Agenda.spec` (cor, ícone de status, filtro, finalidade inativa), `VisitPurposes.spec`, `Registers.spec`,
+`Sidebar.spec`.

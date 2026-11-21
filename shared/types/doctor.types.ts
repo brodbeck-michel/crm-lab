@@ -407,6 +407,30 @@ export interface ListDoctorPortfoliosResponse {
 /** Teto de médicos por transferência. */
 export const DOCTOR_TRANSFER_MAX = 200;
 
+/** `GET /doctors/lookup` — busca do formulário de proposta (D-329 item 12). */
+export const DOCTOR_LOOKUP_DEFAULT_LIMIT = 8;
+export const DOCTOR_LOOKUP_MAX_LIMIT = 20;
+
+export interface DoctorLookupQuery {
+  /** Nome (sem acento/caixa) ou dígitos do CRM; 2–100 caracteres. */
+  search: string;
+  /** 1–20, padrão 8. */
+  limit?: number;
+}
+
+/** Só o mínimo para escolher o médico — nada de contato, carteira ou ABC. */
+export interface DoctorLookupItem {
+  id: string;
+  name: string;
+  crm: string | null;
+  crmUf: string | null;
+  specialty: string | null;
+}
+
+export interface DoctorLookupResponse {
+  doctors: DoctorLookupItem[];
+}
+
 /** `POST /doctors/transfer` (gestor/admin). */
 export interface TransferDoctorsRequest {
   /** 1..`DOCTOR_TRANSFER_MAX`, sem repetição. */

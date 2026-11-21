@@ -29,6 +29,7 @@
 import {
   BIRTH_YEAR_MIN,
   DOCTOR_CRM_MAX_DIGITS,
+  DOCTOR_LOOKUP_DEFAULT_LIMIT,
   isBrazilUf,
   isValidBirthday,
   normalizeCep,
@@ -40,6 +41,8 @@ import {
   type Doctor,
   type DoctorCrmConflictDetails,
   type DoctorVisitHours,
+  type DoctorLookupQuery,
+  type DoctorLookupResponse,
   type ListDoctorPortfoliosResponse,
   type ListDoctorsQuery,
   type ListDoctorsResponse,
@@ -114,6 +117,8 @@ export interface DoctorService {
   inactivate(ctx: TenantContext, id: string): Promise<Doctor>;
   reactivate(ctx: TenantContext, id: string): Promise<Doctor>;
   /** Carteiras por responsavel (gestor/admin — D-329 item 7). */
+  /** Busca do formulario de proposta: todo papel, sem carteira, so ativos (D-329 item 12). */
+  lookup(ctx: TenantContext, query: DoctorLookupQuery): Promise<DoctorLookupResponse>;
   portfolios(ctx: TenantContext): Promise<ListDoctorPortfoliosResponse>;
   /** Transferencia em lote (gestor/admin — D-329 item 8). */
   transfer(ctx: TenantContext, dto: TransferDoctorsRequest): Promise<TransferDoctorsResponse>;
@@ -677,6 +682,31 @@ export function createDoctorService(deps: DoctorServiceDeps): DoctorService {
 
     async reactivate(ctx: TenantContext, id: string): Promise<Doctor> {
       return setActive(ctx, id, true);
+    },
+
+    /**
+     * Busca do formulario de proposta (D-329 item 12). Sem `assertVisitationRole`
+     * e sem `ownerId`: a atendente vincula qualquer medico ativo do laboratorio.
+     * Devolve so o minimo (nada de contato, carteira ou ABC).
+     */
+    async lookup(ctx: TenantContext, query: DoctorLookupQuery): Promise<DoctorLookupResponse> {
+      const page = await repository.list(ctx.tenantId, {
+        search: query.search,
+        active: true,
+        page: 1,
+        limit: query.limit ?? DOCTOR_LOOKUP_DEFAULT_LIMIT,
+        sortBy: 'name',
+        order: 'asc',
+      });
+      return {
+        doctors: page.rows.map((d) => ({
+          id: d.id,
+          name: d.name,
+          crm: d.crm,
+          crmUf: d.crmUf,
+          specialty: d.specialty,
+        })),
+      };
     },
 
     /**

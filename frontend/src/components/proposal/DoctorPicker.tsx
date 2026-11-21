@@ -35,7 +35,8 @@ export function DoctorPicker({ value, onChange }: DoctorPickerProps) {
 
   const results = useQuery({
     queryKey: queryKeys.doctorPicker(term.trim()),
-    queryFn: () => doctorsApi.list({ search: term.trim(), active: true, limit: PICKER_LIMIT }),
+    // `/doctors/lookup` e não `GET /doctors`: a atendente não entra na Visitação (D-329 item 12).
+    queryFn: () => doctorsApi.lookup({ search: term.trim(), limit: PICKER_LIMIT }),
     enabled: searching && value.doctorId === null,
   });
   const doctors = results.data?.doctors ?? [];

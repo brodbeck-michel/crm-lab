@@ -6248,7 +6248,25 @@ D-255. Base do épico CRMLAB-85: a agenda de visitas vai referenciar `Doctor.id`
 `representative`, `manager` ou `admin` (`requireRoles(...VISITATION_ROLES)`). **`attendant` →
 `403 FORBIDDEN`** com `details.requiredRoles: ["representative","manager","admin"]`;
 `platform_operator` → `403` (`denyPlatformOperator()`). Entram no inventário de isolamento
-(`route-tenant-isolation.spec.ts`): médico de outro tenant → `404 NOT_FOUND`.
+(`route-tenant-isolation.spec.ts`): médico de outro tenant → `404 NOT_FOUND`. **Exceção:**
+`GET /doctors/lookup` (busca do formulário de proposta, D-329 item 12) vale para todo papel do
+laboratório, inclusive `attendant`.
+
+### GET /doctors/lookup (D-329 item 12 — todo papel do laboratório)
+
+Busca de médico para vincular à proposta (`DoctorPicker`, PAGES.md "Formulário de proposta").
+**Sem recorte de carteira**; só médicos **ativos** do tenant, ordenados por nome.
+
+**Query:** `search` (obrigatório, 2–100 caracteres; nome sem acento/caixa ou dígitos do CRM),
+`limit` (1–20, padrão 8). Shapes `DoctorLookupQuery` / `DoctorLookupResponse` em
+`shared/types/doctor.types.ts`.
+
+**Resposta 200:**
+```json
+{ "doctors": [{ "id": "uuid", "name": "Dra. Júlia Costa", "crm": "12345", "crmUf": "SC", "specialty": "Ginecologia" }] }
+```
+Só esses cinco campos. **Erros:** `VALIDATION_ERROR` (400, `search` curto/ausente, `limit` fora da
+faixa), `FORBIDDEN` (403, `platform_operator`).
 
 **Escopo por carteira (D-329 item 4):** gestor e admin veem e alteram **todos** os médicos do
 laboratório. O **representante** só alcança os médicos da **própria carteira**

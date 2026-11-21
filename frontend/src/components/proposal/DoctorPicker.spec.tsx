@@ -4,15 +4,14 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { doctorsApi } from '@/api/doctors';
-import { buildDoctor } from '@/test/doctor-fixtures';
 import { DoctorPicker, type DoctorPickerValue } from './DoctorPicker';
 
 /** Médico solicitante com busca no cadastro (CRMLAB-188, D-328). */
 vi.mock('@/api/doctors', () => ({
-  doctorsApi: { list: vi.fn() },
+  doctorsApi: { lookup: vi.fn() },
 }));
 
-const listMock = vi.mocked(doctorsApi.list);
+const lookupMock = vi.mocked(doctorsApi.lookup);
 
 function Harness({ initial, spy }: { initial: DoctorPickerValue; spy: (value: DoctorPickerValue) => void }) {
   const [value, setValue] = useState(initial);
@@ -41,9 +40,8 @@ function renderPicker(initial: DoctorPickerValue = { text: '', doctorId: null, d
 describe('DoctorPicker', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    listMock.mockResolvedValue({
-      doctors: [buildDoctor({ id: 'doc-1', name: 'Dra. Júlia Costa', crm: '12345', crmUf: 'SC' })],
-      pagination: { page: 1, limit: 8, total: 1, totalPages: 1 },
+    lookupMock.mockResolvedValue({
+      doctors: [{ id: 'doc-1', name: 'Dra. Júlia Costa', crm: '12345', crmUf: 'SC', specialty: null }],
     });
   });
 
@@ -52,7 +50,7 @@ describe('DoctorPicker', () => {
     const spy = renderPicker();
 
     await user.type(screen.getByLabelText('Buscar médico no cadastro'), 'júlia');
-    await waitFor(() => expect(listMock).toHaveBeenCalledWith({ search: 'júlia', active: true, limit: 8 }));
+    await waitFor(() => expect(lookupMock).toHaveBeenCalledWith({ search: 'júlia', limit: 8 }));
     await user.click(await screen.findByRole('button', { name: /Dra\. Júlia Costa · CRM 12345\/SC/ }));
 
     expect(spy).toHaveBeenLastCalledWith({ text: 'Dra. Júlia Costa', doctorId: 'doc-1', doctorName: 'Dra. Júlia Costa' });
@@ -74,6 +72,6 @@ describe('DoctorPicker', () => {
     const spy = renderPicker();
     await user.type(screen.getByLabelText('Médico solicitante (opcional)'), 'Dr. X');
     expect(spy).toHaveBeenLastCalledWith({ text: 'Dr. X', doctorId: null, doctorName: null });
-    expect(listMock).not.toHaveBeenCalled();
+    expect(lookupMock).not.toHaveBeenCalled();
   });
 });

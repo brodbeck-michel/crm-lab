@@ -44,7 +44,10 @@ import {
   DOCTOR_TIMELINE_MAX_LIMIT,
   DOCTOR_VISIT_HOURS_MAX,
   isValidTimeHHMM,
+  DOCTOR_LOOKUP_DEFAULT_LIMIT,
+  DOCTOR_LOOKUP_MAX_LIMIT,
   DOCTOR_TRANSFER_MAX,
+  TENANT_USER_ROLES,
   VISITATION_ROLES,
   type CreateDoctorInteractionRequest,
   type CreateDoctorRequest,
@@ -58,6 +61,8 @@ import {
   type DoctorInteraction,
   type DoctorTimelineQuery,
   type DoctorTimelineResponse,
+  type DoctorLookupQuery,
+  type DoctorLookupResponse,
   type ListDoctorPortfoliosResponse,
   type ListDoctorsQuery,
   type ListDoctorsResponse,
@@ -114,6 +119,12 @@ const optionalEmail = z
   .refine((value) => value === undefined || value === null || value.trim() === '' || z.string().email().safeParse(value.trim()).success, {
     message: 'E-mail inválido',
   });
+
+/** Busca do formulario de proposta (D-329 item 12). */
+export const doctorLookupQuerySchema = z.object({
+  search: z.string().trim().min(2).max(100),
+  limit: z.coerce.number().int().min(1).max(DOCTOR_LOOKUP_MAX_LIMIT).default(DOCTOR_LOOKUP_DEFAULT_LIMIT),
+});
 
 export const listDoctorsQuerySchema = z.object({
   search: optionalFilter(120),
@@ -304,6 +315,14 @@ export function setDoctorActive(service: DoctorService, isActive: boolean): Requ
   });
 }
 
+export function lookupDoctors(service: DoctorService): RequestHandler {
+  return handle(async (req, res) => {
+    const query = validated<DoctorLookupQuery>(req, 'query');
+    const body: DoctorLookupResponse = await service.lookup(getContext(req), query);
+    res.status(200).json(body);
+  });
+}
+
 export function listDoctorPortfolios(service: DoctorService): RequestHandler {
   return handle(async (req, res) => {
     const body: ListDoctorPortfoliosResponse = await service.portfolios(getContext(req));
@@ -422,6 +441,17 @@ export function doctorModule(deps: ApiModuleDeps): ApiModule {
     updateDoctorSpecialty(specialties),
   );
   router.post('/abc/recalculate', ...managers, recalculateDoctorAbc(abc));
+
+  // Busca do formulario de proposta (D-329 item 12): todo papel do laboratorio,
+  // inclusive a atendente; sem recorte de carteira. Antes de `/:id`.
+  router.get(
+    '/lookup',
+    requireAuth(),
+    denyPlatformOperator(),
+    requireRoles(...TENANT_USER_ROLES),
+    validate(doctorLookupQuerySchema, 'query'),
+    lookupDoctors(service),
+  );
 
   // Antes de `/:id`: senao "portfolios" cairia no validador de uuid.
   router.get('/portfolios', ...managerGuards, listDoctorPortfolios(service));

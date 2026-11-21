@@ -616,6 +616,8 @@ const LAB_ROUTES: readonly LabRoute[] = [
   // --- medicos solicitantes (CRMLAB-86, D-255): representante/gestor/admin (D-329) ---
   // Carteiras e transferencia (CRMLAB-189, D-329): gestor/admin. A transferencia
   // carrega os ids no corpo (nao no caminho); o 404 de medico alheio e de doctors.spec.
+  // Busca do formulario de proposta (D-329 item 12): todo papel, sem carteira.
+  { name: 'GET /doctors/lookup', method: 'get', path: () => '/api/v1/doctors/lookup?search=sonda', actor: 'attendant', addressable: false },
   { name: 'GET /doctors/portfolios', method: 'get', path: () => '/api/v1/doctors/portfolios', actor: 'manager', addressable: false },
   {
     name: 'POST /doctors/transfer',
@@ -1624,7 +1626,7 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 141 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 142 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
@@ -1680,8 +1682,8 @@ describe('inventario de rotas de laboratorio', () => {
     // `PATCH /doctors/specialties/:id` e `POST /doctors/abc/recalculate`.
     // CRMLAB-190/D-330 soma 3: `GET|POST /settings/visit-purposes` e
     // `PATCH /settings/visit-purposes/:id`.
-    // CRMLAB-189/D-329 soma 2: `GET /doctors/portfolios` e `POST /doctors/transfer`.
-    expect(LAB_ROUTES).toHaveLength(141);
+    // CRMLAB-189/D-329 soma 3: `GET /doctors/portfolios`, `POST /doctors/transfer` e `GET /doctors/lookup`.
+    expect(LAB_ROUTES).toHaveLength(142);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

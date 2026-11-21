@@ -7544,6 +7544,14 @@ Visitação.
     para o representante o seletor mostra só ele mesmo.
 11. **Seeds de dev:** dois representantes no Lab Vida (`carla@labvida.com.br`, `diego@labvida.com.br`),
     cada um com médicos na carteira.
+12. **Busca de médico na proposta (integração com o CRMLAB-188, 21/11/2026):** o `DoctorPicker` do
+    formulário de proposta (D-328 item 10) não pode usar `GET /doctors` — a atendente, que é quem mais
+    cria proposta, recebe 403 ali, e o representante só veria a própria carteira (a proposta pode vir de
+    qualquer médico). Rota própria **`GET /doctors/lookup?search=&limit=`** para **todo papel do
+    laboratório** (atendente, representante, gestor, admin), **sem recorte de carteira**, só médicos
+    **ativos** do laboratório e só o mínimo para escolher: `id`, `name`, `crm`, `crmUf`, `specialty`.
+    Nada de telefone, endereço, responsável ou curva ABC. A Visitação continua fechada para a atendente:
+    é uma busca de vínculo, não a lista de médicos.
 **Revoga:** D-255 item 3 ("sem perfil novo: todo papel vê, cadastra, edita e inativa") e o "qualquer papel"
 do item 5; D-256 item 9 ("todos veem e mexem em todas as visitas") e o "qualquer usuário ativo" do item 1;
 D-261 item 8 ("todo papel vê, lança, edita e exclui qualquer registro"). D-258 item 8 ("qualquer usuário

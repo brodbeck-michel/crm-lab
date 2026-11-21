@@ -1885,7 +1885,8 @@ VISITATION_ROLES`. Fonte: `GET /doctors/:id` e a linha do tempo de `GET /doctors
 #### Formulário de proposta — médico do cadastro (CRMLAB-188, D-328)
 Em Novo orçamento (`SummaryColumn`) e na edição da proposta (`ProposalModal`), o campo "Médico
 solicitante" ganha uma **busca no cadastro** (`DoctorPicker`: digita nome ou CRM, lista até 8 médicos
-ativos de `GET /doctors?search=&active=true`). Escolher vincula `doctorId` e preenche o texto com o
+ativos de `GET /doctors/lookup?search=` — rota aberta a todo papel do laboratório, sem recorte de
+carteira, D-329 item 12). Escolher vincula `doctorId` e preenche o texto com o
 nome; [desvincular] limpa só o vínculo. Texto livre continua possível sem vínculo.
 
 ---

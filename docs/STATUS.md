@@ -4350,3 +4350,8 @@ BUSINESS_RULES §12–§15, SECURITY "Autorização", PAGES §22–§23 e §22c.
   gestor/admin; seletores de responsável só com perfis elegíveis; tela nova **Carteiras**
   (`/visitation/portfolios`) com transferência em lote. Testes: `Portfolios.spec`, `route-config.spec`,
   `Doctors.spec`.
+- **integração no épico (188 + 189 + 190):** o `DoctorPicker` da proposta (188) chamava `GET /doctors`,
+  que passou a dar 403 para a atendente e a recortar pela carteira para o representante. Rota nova
+  `GET /doctors/lookup` (D-329 item 12): todo papel, sem carteira, só ativos, shape mínimo. Testes
+  `tests/doctors/doctor-lookup.spec.ts` + inventário (142 rotas). O corte A/B/C nas Carteiras ainda não
+  foi ligado (o `abc` segue opcional no shape) — fica para um card próprio.

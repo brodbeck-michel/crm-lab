@@ -12,6 +12,8 @@ import type {
   ListDoctorSpecialtiesResponse,
   UpdateDoctorInteractionRequest,
   UpdateDoctorSpecialtyRequest,
+  DoctorLookupQuery,
+  DoctorLookupResponse,
   ListDoctorPortfoliosResponse,
   ListDoctorsQuery,
   ListDoctorsResponse,
@@ -44,6 +46,8 @@ export const doctorsApi = {
 
   // Carteiras e transferência em lote (CRMLAB-189, D-329 — gestor/admin).
   portfolios: () => http.get<ListDoctorPortfoliosResponse>('/doctors/portfolios'),
+  // Busca do formulário de proposta: todo papel, sem carteira (D-329 item 12).
+  lookup: (query: DoctorLookupQuery) => http.get<DoctorLookupResponse>('/doctors/lookup', { search: query.search, limit: query.limit }),
 
   transfer: (body: TransferDoctorsRequest) => http.post<TransferDoctorsResponse>('/doctors/transfer', body),
 

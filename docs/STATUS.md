@@ -4283,3 +4283,27 @@ Frontend: botão "Resetar senha" em `/settings/users` (`ResetPasswordDialog`) e 
 (`RequireAuth` redireciona; o cliente liga a flag ao receber o 403). Testes: backend
 `tests/users/reset-password.spec.ts` (+15); frontend `ChangePassword.spec`, `ResetPasswordDialog.spec`,
 guards e client (+9).
+
+### 🔄 CRMLAB-189 — Perfil representante e escopo por carteira na Visitação (2026-11-21, aguardando validação)
+
+Branch `feature/CRMLAB-189-representante-carteira` (épico Visitação v2, CRMLAB-187). Contrato: D-329
+(revoga D-255 item 3, D-256 item 9, D-261 item 8), SCHEMA §52, API_CONTRACTS §1/§13/§14,
+BUSINESS_RULES §12–§15, SECURITY "Autorização", PAGES §22–§23 e §22c.
+- **db:** `072_representative_role.sql` (perfil `representative` no `CHECK` de `users.role`; não mexe em
+  dado — médico sem responsável ou com atendente fica como está e cai no filtro "Sem responsável").
+- **shared:** `representative` em `UserRole`, `isFrontlineRole`, `VISITATION_ROLES`,
+  `VISITATION_RESPONSIBLE_ROLES`, `ruleActorRoleOf` (representante conta como atendente nas Regras);
+  `DoctorPortfolio` (corte `abc` opcional, entra quando o CRMLAB-188 for integrado) e `TransferDoctors*`.
+- **api:** atendente recebe 403 em todo `/doctors` e `/visits`; representante recortado pela carteira
+  (`services/visitation-access.ts`) com cobertura por visita, fora do escopo → 404; responsável elegível
+  só representante/gestor/admin e obrigatório em médico novo/editado; `GET /doctors?unassigned=true`,
+  `GET /doctors/portfolios` e `POST /doctors/transfer` (gestor/admin, transação com `FOR UPDATE`, opção de
+  levar as visitas futuras, audit `transfer_doctor`/`transfer_visit`). Os serviços que comparavam
+  `role === 'attendant'` passaram a `isFrontlineRole`. Seeds: representantes Carla e Diego no Lab Vida
+  (`db/seeds/visitation.ts`). Testes: `tests/visits/representative-scope.spec.ts` + ajustes em
+  `doctors`, `visits`, `visit-record`, `doctor-timeline` e `route-tenant-isolation`.
+- **ui:** perfil Representante na gestão de usuários; Visitação some do menu e das rotas da atendente;
+  tela inicial do representante = Agenda; filtro por responsável e "Sem responsável" só para
+  gestor/admin; seletores de responsável só com perfis elegíveis; tela nova **Carteiras**
+  (`/visitation/portfolios`) com transferência em lote. Testes: `Portfolios.spec`, `route-config.spec`,
+  `Doctors.spec`.

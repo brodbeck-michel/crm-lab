@@ -18,7 +18,7 @@ import {
   type VisitStatus,
 } from '@crm-lab/shared';
 import { doctorsApi } from '@/api/doctors';
-import { conversationsApi } from '@/api/conversations';
+import { useVisitationResponsibles } from './visitation-access';
 import { isApiError } from '@/api/client';
 import { mapFieldErrors } from '@/api/error-handler';
 import { queryKeys } from '@/api/query-keys';
@@ -63,12 +63,8 @@ export default function DoctorProfile() {
     enabled: doctorId.length > 0,
   });
 
-  // Usuários ativos do laboratório, qualquer papel — o modal de edição escolhe o responsável.
-  const assigneesQuery = useQuery({
-    queryKey: queryKeys.conversationAssignees(),
-    queryFn: () => conversationsApi.assignees(),
-    enabled: editing,
-  });
+  // Responsáveis elegíveis (D-329) — o modal de edição escolhe o responsável.
+  const { responsibles } = useVisitationResponsibles();
 
   const breadcrumb = [{ label: 'Médicos', to: '/visitation/doctors' }, { label: 'Ficha do médico' }];
 
@@ -125,7 +121,7 @@ export default function DoctorProfile() {
       <DoctorTimeline doctorId={doctor.id} />
 
       {editing && (
-        <DoctorModal doctor={doctor} assignees={assigneesQuery.data?.assignees ?? []} onClose={() => setEditing(false)} />
+        <DoctorModal doctor={doctor} assignees={responsibles} onClose={() => setEditing(false)} />
       )}
     </PageContainer>
   );

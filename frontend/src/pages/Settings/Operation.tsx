@@ -50,6 +50,7 @@ const REASON_LABEL: Record<QueueReason, string> = {
 
 const ROLE_LABEL: Record<UserRole, string> = {
   attendant: 'Atendente',
+  representative: 'Representante',
   manager: 'Gestor',
   admin: 'Administrador',
   platform_operator: 'Operador da plataforma',

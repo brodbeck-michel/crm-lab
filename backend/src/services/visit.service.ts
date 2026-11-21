@@ -4,11 +4,14 @@
  * Dono de `doctor_visits` e `doctor_visit_reschedules`: a agenda de visitas a
  * medicos solicitantes (card [B] do epico CRMLAB-85, Visitacao Medica).
  *
- * Regras (D-256):
- *  - todo papel de laboratorio ve e mexe em todas as visitas (resposta 2A do
- *    epico); o `platform_operator` ja fica na rota (`denyPlatformOperator`);
+ * Regras (D-256, com o escopo de D-329):
+ *  - so representante, gestor e admin (a atendente recebe 403). Gestor/admin
+ *    veem e mexem em todas; o representante so na visita de medico da carteira
+ *    dele OU em que ele e o responsavel (fora disso, 404), e so cria/edita com
+ *    medico da propria carteira e ele mesmo como responsavel;
  *  - medico ATIVO do mesmo laboratorio e responsavel = usuario ATIVO do mesmo
- *    laboratorio, os dois validados so quando mudam (como D-255 item 9);
+ *    laboratorio com perfil elegivel (`VISITATION_RESPONSIBLE_ROLES`), os dois
+ *    validados so quando mudam (como D-255 item 9);
  *  - reagendar muda a data da MESMA visita e grava o historico; mesma data e
  *    no-op (200, sem historico nem audit);
  *  - cancelar e "medico nao recebeu" exigem motivo;
@@ -39,6 +42,7 @@ import {
   VISIT_ATTACHMENTS_MAX,
   VISIT_LIST_MAX_DAYS,
   VISIT_LIST_MAX_RESULTS,
+  isVisitationResponsibleRole,
   type CloseVisitRequest,
   type CreateVisitAttachmentRequest,
   type CreateVisitRequest,
@@ -66,9 +70,7 @@ import {
 } from '../repositories/visit.repository.js';
 import type { AuditService } from './audit.service.js';
 import { resolveStoredMimeType } from './media.service.js';
-
-/** Quem pode ser responsavel pela visita: qualquer papel de laboratorio. */
-const RESPONSIBLE_ROLES = ['attendant', 'manager', 'admin'];
+import { assertVisitationRole, portfolioOwner } from './visitation-access.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -153,22 +155,34 @@ export function createVisitService(deps: VisitServiceDeps): VisitService {
   const repository = new VisitRepository(deps.db);
   const audit = deps.audit;
 
+  /**
+   * Medico ativo do laboratorio. Para o representante, tambem da carteira dele
+   * (D-329) — com a MESMA mensagem do inexistente, para nao virar oraculo.
+   */
   async function assertDoctor(ctx: TenantContext, doctorId: string): Promise<void> {
     const doctor = await repository.findTenantDoctor(ctx.tenantId, doctorId);
-    if (!doctor || !doctor.isActive) {
+    const owner = portfolioOwner(ctx);
+    if (!doctor || !doctor.isActive || (owner !== undefined && doctor.responsibleId !== owner)) {
       throw invalid({ doctorId: 'Médico inexistente ou inativo neste laboratório' });
     }
   }
 
+  /** Responsavel elegivel e ativo; o representante so pode ser ele mesmo (D-329). */
   async function assertResponsible(ctx: TenantContext, userId: string): Promise<void> {
+    const owner = portfolioOwner(ctx);
+    if (owner !== undefined && userId !== owner) {
+      throw invalid({ responsibleId: 'O representante só agenda visitas para si mesmo' });
+    }
     const user = await repository.findTenantUser(ctx.tenantId, userId);
-    if (!user || !user.isActive || !RESPONSIBLE_ROLES.includes(user.role)) {
-      throw invalid({ responsibleId: 'Usuário inexistente ou inativo neste laboratório' });
+    if (!user || !user.isActive || !isVisitationResponsibleRole(user.role)) {
+      throw invalid({ responsibleId: 'Escolha um representante, gestor ou admin ativo deste laboratório' });
     }
   }
 
+  /** Visita do tenant e do escopo de quem pede; senao `NOT_FOUND`. */
   async function load(ctx: TenantContext, id: string): Promise<VisitDetail> {
-    const visit = await repository.findById(ctx.tenantId, id);
+    assertVisitationRole(ctx);
+    const visit = await repository.findById(ctx.tenantId, id, portfolioOwner(ctx));
     if (!visit) throw notFound({ resource: 'visit', id });
     return visit;
   }
@@ -188,6 +202,7 @@ export function createVisitService(deps: VisitServiceDeps): VisitService {
 
   return {
     async list(ctx: TenantContext, query: ListVisitsQuery): Promise<ListVisitsResponse> {
+      assertVisitationRole(ctx);
       const from = parseDate(query.from, 'from');
       const to = parseDate(query.to, 'to');
       if (to.getTime() <= from.getTime()) throw invalid({ to: 'O fim do período tem de ser depois do início' });
@@ -201,6 +216,7 @@ export function createVisitService(deps: VisitServiceDeps): VisitService {
         doctorId: query.doctorId,
         responsibleId: query.responsibleId,
         status: query.status,
+        ownerId: portfolioOwner(ctx),
         limit: VISIT_LIST_MAX_RESULTS + 1,
       });
       const truncated = rows.length > VISIT_LIST_MAX_RESULTS;
@@ -213,6 +229,7 @@ export function createVisitService(deps: VisitServiceDeps): VisitService {
     },
 
     async create(ctx: TenantContext, dto: CreateVisitRequest): Promise<VisitDetail> {
+      assertVisitationRole(ctx);
       const scheduledAt = parseDate(dto.scheduledAt, 'scheduledAt');
       await assertDoctor(ctx, dto.doctorId);
       await assertResponsible(ctx, dto.responsibleId);
@@ -510,6 +527,8 @@ export function createVisitService(deps: VisitServiceDeps): VisitService {
      * com o arquivo fora do disco -> `NOT_FOUND` (como `GET /media/:id`).
      */
     async readAttachment(ctx: TenantContext, id: string, attachmentId: string): Promise<VisitAttachmentFile> {
+      // Escopo antes do arquivo (D-329): visita fora do alcance do representante -> 404.
+      await load(ctx, id);
       const attachment = await repository.findAttachment(ctx.tenantId, id, attachmentId);
       if (!attachment) throw notFound({ resource: 'visit_attachment', id: attachmentId });
       const buffer = await readMediaFile(attachment.id);

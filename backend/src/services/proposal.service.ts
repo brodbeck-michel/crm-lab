@@ -53,6 +53,7 @@ import {
   type ProposalDetail,
   type ProposalStatus,
   type StageAutomation,
+  isFrontlineRole,
 } from '@crm-lab/shared';
 import { randomUUID } from 'node:crypto';
 import type { DbClient, DbTx } from '../db/types.js';
@@ -154,7 +155,9 @@ function isSupervisor(ctx: TenantContext): boolean {
 }
 
 /** Papeis que podem ser responsavel por uma proposta (D-202 item 3). */
-const RESPONSIBLE_ROLES: readonly string[] = ['attendant', 'manager', 'admin'];
+const RESPONSIBLE_ROLES: readonly string[] = ['attendant', 'representative', 'manager', 'admin'];
+/** Para quem a linha de frente repassa o cartao: outra atendente ou representante (D-329). */
+const FRONTLINE_ROLES: readonly string[] = ['attendant', 'representative'];
 
 // ---------------------------------------------------------------------------
 // Helpers compartilhados com o ApprovalService
@@ -758,9 +761,9 @@ export class ProposalService {
     const statuses = parseStatuses(filters.status);
 
     // Atendente so ve as proprias — o filtro e do servidor, nao da query (D-042).
-    const createdBy = ctx.role === 'attendant' ? ctx.userId : filters.createdBy;
+    const createdBy = isFrontlineRole(ctx.role) ? ctx.userId : filters.createdBy;
     if (
-      ctx.role === 'attendant' &&
+      isFrontlineRole(ctx.role) &&
       filters.createdBy !== undefined &&
       filters.createdBy !== ctx.userId
     ) {
@@ -780,7 +783,7 @@ export class ProposalService {
         ...(filters.patientId !== undefined ? { patientId: filters.patientId } : {}),
         ...(createdBy !== undefined ? { createdBy } : {}),
         // O atendente ve tambem a fila comum de cartoes `bitlab` sem responsavel (D-195 item 6).
-        ...(ctx.role === 'attendant' ? { includeUnowned: true } : {}),
+        ...(isFrontlineRole(ctx.role) ? { includeUnowned: true } : {}),
         ...(filters.startDate !== undefined ? { startDate: filters.startDate } : {}),
         ...(filters.endDate !== undefined ? { endDate: filters.endDate } : {}),
         ...(filters.search !== undefined ? { search: filters.search } : {}),
@@ -1611,7 +1614,7 @@ export class ProposalService {
         }
       }
       const target = await repo.findTenantUser(tx, ctx.tenantId, userId);
-      const allowedRoles = supervisor ? RESPONSIBLE_ROLES : ['attendant'];
+      const allowedRoles = supervisor ? RESPONSIBLE_ROLES : FRONTLINE_ROLES;
       if (!target || !target.isActive || !allowedRoles.includes(target.role)) {
         throw new BusinessError('VALIDATION_ERROR', {
           fields: {

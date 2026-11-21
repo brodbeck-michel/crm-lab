@@ -10,7 +10,6 @@ import {
   type ListDoctorsQuery,
 } from '@crm-lab/shared';
 import { doctorsApi } from '@/api/doctors';
-import { conversationsApi } from '@/api/conversations';
 import { isApiError } from '@/api/client';
 import { mapFieldErrors } from '@/api/error-handler';
 import { queryKeys, queryScopes } from '@/api/query-keys';
@@ -19,8 +18,12 @@ import { PageContainer, PageHeader } from '@/components/layout';
 import { DataTable, EmptyState, Modal, Pagination } from '@/components/shared';
 import type { DataTableColumn } from '@/components/shared';
 import { Button, Chip, Input, SearchInput, SegmentedControl, Select, TextArea, useToast } from '@/components/ui';
+import { useVisitationResponsibles, type VisitationPerson } from './visitation-access';
 
 const PAGE_SIZE = 20;
+
+/** Valor do filtro "Sem responsável / responsável inelegível" (`?unassigned=true`, D-329). */
+export const UNASSIGNED_FILTER = '__unassigned__';
 
 type StatusFilter = 'active' | 'inactive' | 'all';
 
@@ -40,8 +43,9 @@ export function crmLabel(doctor: Pick<Doctor, 'crm' | 'crmUf'>): string {
  * CRMLAB-86, D-255). Primeira tela do grupo "Visitação Médica"; a agenda
  * (`/visitation/agenda`) vem nos próximos cards do épico CRMLAB-85.
  *
- * Todo papel do laboratório vê, cadastra, edita e inativa — não há controle
- * a esconder por perfil. Responsiva: tabela a partir de `md`, cartões abaixo
+ * D-329: representante (só a própria carteira — o servidor recorta), gestor e
+ * admin. O filtro por responsável (com "Sem responsável / inelegível") é só de
+ * gestor/admin. Responsiva: tabela a partir de `md`, cartões abaixo
  * (a `DataTable` rola na horizontal, o que no celular esconde as ações).
  */
 export default function Doctors() {
@@ -62,7 +66,11 @@ export default function Doctors() {
       limit: PAGE_SIZE,
       ...(search.trim().length > 0 ? { search: search.trim() } : {}),
       ...(status !== 'all' ? { active: status === 'active' } : {}),
-      ...(responsibleId ? { responsibleId } : {}),
+      ...(responsibleId === UNASSIGNED_FILTER
+        ? { unassigned: true }
+        : responsibleId
+          ? { responsibleId }
+          : {}),
     }),
     [page, search, status, responsibleId],
   );
@@ -72,12 +80,8 @@ export default function Doctors() {
     queryFn: () => doctorsApi.list(filters),
   });
 
-  // Usuários ativos do laboratório, qualquer papel (`GET /users` é admin-only).
-  const assigneesQuery = useQuery({
-    queryKey: queryKeys.conversationAssignees(),
-    queryFn: () => conversationsApi.assignees(),
-  });
-  const assignees = assigneesQuery.data?.assignees ?? [];
+  // Responsáveis elegíveis (D-329); para o representante, só ele mesmo.
+  const { seesAll, responsibles: assignees } = useVisitationResponsibles();
 
   const toggleActive = useMutation({
     mutationFn: (doctor: Doctor) =>
@@ -180,20 +184,23 @@ export default function Doctors() {
             }}
           />
         </div>
-        <div className="w-full md:w-64">
-          <Select
-            aria-label="Filtrar por responsável"
-            value={responsibleId}
-            onChange={(event) => {
-              setResponsibleId(event.target.value);
-              setPage(1);
-            }}
-            options={[
-              { value: '', label: 'Todos os responsáveis' },
-              ...assignees.map((a) => ({ value: a.id, label: a.name })),
-            ]}
-          />
-        </div>
+        {seesAll && (
+          <div className="w-full md:w-64">
+            <Select
+              aria-label="Filtrar por responsável"
+              value={responsibleId}
+              onChange={(event) => {
+                setResponsibleId(event.target.value);
+                setPage(1);
+              }}
+              options={[
+                { value: '', label: 'Todos os responsáveis' },
+                { value: UNASSIGNED_FILTER, label: 'Sem responsável / responsável inelegível' },
+                ...assignees.map((a) => ({ value: a.id, label: a.name })),
+              ]}
+            />
+          </div>
+        )}
         <SegmentedControl
           aria-label="Situação do cadastro"
           fullWidth={false}
@@ -269,7 +276,8 @@ export default function Doctors() {
 
 export interface DoctorModalProps {
   doctor?: Doctor;
-  assignees: Array<{ id: string; name: string }>;
+  /** Responsáveis elegíveis (`useVisitationResponsibles`). */
+  assignees: VisitationPerson[];
   onClose: () => void;
 }
 
@@ -320,8 +328,14 @@ export function DoctorModal({ doctor, assignees, onClose }: DoctorModalProps) {
   const handleApiError = useApiErrorHandler();
   const { toast } = useToast();
   const isEdit = doctor !== undefined;
+  const { seesAll } = useVisitationResponsibles();
 
-  const [form, setForm] = useState<DoctorForm>(() => toForm(doctor));
+  const [form, setForm] = useState<DoctorForm>(() => {
+    const initial = toForm(doctor);
+    // Representante cadastra na própria carteira (D-329): o campo já vem com ele.
+    if (!initial.responsibleId && !seesAll && assignees[0]) initial.responsibleId = assignees[0].id;
+    return initial;
+  });
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const save = useMutation({
@@ -361,6 +375,7 @@ export function DoctorModal({ doctor, assignees, onClose }: DoctorModalProps) {
     const errors: Record<string, string> = {};
     if (form.name.trim().length === 0) errors.name = 'Informe o nome';
     if (normalizeCrm(form.crm) !== null && form.crmUf === '') errors.crmUf = 'Informe a UF do CRM';
+    if (!form.responsibleId) errors.responsibleId = 'Escolha o responsável pela carteira';
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
       return;
@@ -386,12 +401,10 @@ export function DoctorModal({ doctor, assignees, onClose }: DoctorModalProps) {
 
   // O responsável atual pode ter sido desativado e sumir da lista de ativos:
   // ele continua aparecendo para o formulário não trocar a carteira sozinho.
-  const responsibleOptions = [
-    { value: '', label: 'Sem responsável' },
-    ...assignees.map((a) => ({ value: a.id, label: a.name })),
-  ];
+  // Responsável obrigatório e só perfis elegíveis (D-329): sem "Sem responsável".
+  const responsibleOptions = assignees.map((a) => ({ value: a.id, label: a.name }));
   if (doctor?.responsible && !assignees.some((a) => a.id === doctor.responsible?.id)) {
-    responsibleOptions.push({ value: doctor.responsible.id, label: `${doctor.responsible.name} (inativo)` });
+    responsibleOptions.push({ value: doctor.responsible.id, label: `${doctor.responsible.name} (inativo ou inelegível)` });
   }
 
   return (
@@ -487,7 +500,11 @@ export function DoctorModal({ doctor, assignees, onClose }: DoctorModalProps) {
             label="Responsável pela carteira"
             value={form.responsibleId}
             onChange={(e) => set('responsibleId', e.target.value)}
+            placeholder="Selecione o responsável"
+            // Representante não troca a carteira (D-329): quem transfere é o gestor.
+            disabled={!seesAll}
             options={responsibleOptions}
+            required
             error={fieldErrors.responsibleId}
           />
         </div>

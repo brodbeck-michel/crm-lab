@@ -121,6 +121,7 @@ const ROLE_LABEL: Record<string, string> = {
   admin: 'admin',
   manager: 'gestor',
   attendant: 'atendente',
+  representative: 'representante',
   platform_operator: 'operador',
 };
 

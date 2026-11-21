@@ -1802,7 +1802,7 @@ CRMLAB-87) vem antes no mesmo grupo. Arquivo `pages/Visitation/Doctors.tsx`.
 
 ### 22c. Carteiras (`/visitation/portfolios`) — gestor · admin (CRMLAB-189, D-329)
 
-Item **"Carteiras"** (ícone `doctors`) do grupo "Visitação Médica", depois de "Médicos";
+Item **"Carteiras"** (ícone `Briefcase`) do grupo "Visitação Médica", depois de "Médicos";
 `requiredRoles: MANAGER_PLUS`. Fonte: `GET /doctors/portfolios`, `GET /doctors?responsibleId=` /
 `?unassigned=true` e `POST /doctors/transfer` (API_CONTRACTS.md §13). Arquivo
 `pages/Visitation/Portfolios.tsx`.

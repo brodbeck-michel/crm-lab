@@ -459,7 +459,7 @@ describe('papeis validados no servidor', () => {
       db,
     });
     const res = await app.agent.get(URL).set(app.auth(operador)).expect(403);
-    expect(res.body.error.details.requiredRoles).toEqual(['attendant', 'manager', 'admin']);
+    expect(res.body.error.details.requiredRoles).toEqual(['attendant', 'representative', 'manager', 'admin']);
   });
 
   it('sem token: 401', async () => {

@@ -31,12 +31,13 @@ import Sales from '@/pages/Sales';
 import Doctors from '@/pages/Visitation/Doctors';
 import DoctorProfile from '@/pages/Visitation/DoctorProfile';
 import Agenda from '@/pages/Visitation/Agenda';
+import Portfolios from '@/pages/Visitation/Portfolios';
 import PlatformTenants from '@/pages/Platform/Tenants';
 import PlatformTenantDetail from '@/pages/Platform/TenantDetail';
 import PlatformBilling from '@/pages/Platform/Billing';
 import Digitalizar from '@/pages/Digitalizar';
 import { RequireAuth, RequireRoles, RoleHomeRedirect } from './guards';
-import { ADMIN_ONLY, MANAGER_PLUS, PLATFORM_ONLY, TENANT_ROLES } from './route-config';
+import { ADMIN_ONLY, MANAGER_PLUS, PLATFORM_ONLY, TENANT_ROLES, VISITATION } from './route-config';
 
 /**
  * Árvore de rotas — docs/frontend/PAGES.md ("Mapa de Rotas").
@@ -96,9 +97,6 @@ export const appRoutes: RouteObject[] = [
               { path: 'analytics', element: <Analytics /> },
               { path: 'internal-chat', element: <InternalChat /> },
               { path: 'sales', element: <Sales /> },
-              { path: 'visitation/agenda', element: <Agenda /> },
-              { path: 'visitation/doctors', element: <Doctors /> },
-              { path: 'visitation/doctors/:id', element: <DoctorProfile /> },
               { path: 'settings/account', element: <AccountSettings /> },
               { path: 'settings/rules', element: <RulesSettings /> },
               // Cadastros (CRMLAB-143): a faixa de abas envolve as telas, que mantêm o endereço.
@@ -115,6 +113,21 @@ export const appRoutes: RouteObject[] = [
         ],
       },
 
+      // ── Visitação Médica: representante, gestor e admin (CRMLAB-189, D-329) ──
+      {
+        element: <RequireRoles requiredRoles={VISITATION} />,
+        children: [
+          {
+            element: <AppShell />,
+            children: [
+              { path: 'visitation/agenda', element: <Agenda /> },
+              { path: 'visitation/doctors', element: <Doctors /> },
+              { path: 'visitation/doctors/:id', element: <DoctorProfile /> },
+            ],
+          },
+        ],
+      },
+
       // ── Configuração: gestor+ ───────────────────────────────────────────
       {
         element: <RequireRoles requiredRoles={MANAGER_PLUS} />,
@@ -122,6 +135,7 @@ export const appRoutes: RouteObject[] = [
           {
             element: <AppShell />,
             children: [
+              { path: 'visitation/portfolios', element: <Portfolios /> },
               { path: 'decisions', element: <Decisions /> },
               { path: 'results', element: <Results /> },
               { path: 'reconciliation', element: <Reconciliation /> },
@@ -188,6 +202,7 @@ export {
   APP_ROUTES,
   ROLE_HOME,
   TENANT_ROLES,
+  VISITATION,
   MANAGER_PLUS,
   ADMIN_ONLY,
   PLATFORM_ONLY,

@@ -25,8 +25,8 @@ let tenantA: TenantRecord;
 let tenantB: TenantRecord;
 let adminA: UserRecord;
 let managerA: UserRecord;
-let attendantA: UserRecord;
-let attendantB: UserRecord;
+let repA: UserRecord;
+let repB: UserRecord;
 let doctorA: string;
 let doctorA2: string;
 let doctorB: string;
@@ -38,7 +38,7 @@ beforeAll(async () => {
 async function insertDoctor(tenantId: string, name: string, isActive = true): Promise<string> {
   const result = await db.withoutTenant((tx) =>
     tx.query<{ id: string }>(
-      'INSERT INTO doctors (tenant_id, name, is_active) VALUES ($1, $2, $3) RETURNING id',
+      "INSERT INTO doctors (tenant_id, name, is_active, responsible_user_id) VALUES ($1, $2, $3, (SELECT id FROM users WHERE tenant_id = $1 AND role = 'representative' ORDER BY created_at LIMIT 1)) RETURNING id",
       [tenantId, name, isActive],
     ),
   );
@@ -52,8 +52,8 @@ beforeEach(async () => {
   tenantB = await createTenant({ name: 'Lab B', slug: 'lab-b', db });
   adminA = await createUser({ tenantId: tenantA.id, role: 'admin', db });
   managerA = await createUser({ tenantId: tenantA.id, role: 'manager', name: 'Gestora Ana', db });
-  attendantA = await createUser({ tenantId: tenantA.id, role: 'attendant', name: 'Atendente Bia', db });
-  attendantB = await createUser({ tenantId: tenantB.id, role: 'attendant', db });
+  repA = await createUser({ tenantId: tenantA.id, role: 'representative', name: 'Representante Bia', db });
+  repB = await createUser({ tenantId: tenantB.id, role: 'representative', db });
   doctorA = await insertDoctor(tenantA.id, 'Dra. Júlia Costa');
   doctorA2 = await insertDoctor(tenantA.id, 'Dr. Paulo Lima');
   doctorB = await insertDoctor(tenantB.id, 'Dr. Confidencial Beta');
@@ -62,7 +62,7 @@ beforeEach(async () => {
 function visitBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     doctorId: doctorA,
-    responsibleId: attendantA.id,
+    responsibleId: repA.id,
     scheduledAt: '2026-10-06T13:00:00.000Z',
     type: 'presencial',
     agenda: 'Apresentar o painel de check-up',
@@ -126,10 +126,10 @@ describe('guardas de acesso', () => {
     }
   });
 
-  it('atendente, gestor e admin agendam, editam, reagendam e cancelam visitas de qualquer responsável', async () => {
-    for (const user of [attendantA, managerA, adminA]) {
-      // Responsável é outra pessoa: todo mundo mexe em todas as visitas (resposta 2A).
-      const visit = await createOk(user, { responsibleId: managerA.id });
+  it('representante (na própria carteira), gestor e admin agendam, editam, reagendam e cancelam (D-329)', async () => {
+    for (const user of [repA, managerA, adminA]) {
+      // Representante só agenda para si; gestor/admin agendam para qualquer elegível.
+      const visit = await createOk(user, { responsibleId: user === repA ? repA.id : managerA.id });
       const h = app.auth(user);
       await app.agent.patch(`${BASE}/${visit.id}`).set(h).send({ type: 'online' }).expect(200);
       await app.agent
@@ -145,15 +145,15 @@ describe('guardas de acesso', () => {
 describe('POST /visits', () => {
   it('devolve a clínica do cadastro do médico (o "Local" da agenda, CRMLAB-92)', async () => {
     await db.withoutTenant((tx) => tx.query('UPDATE doctors SET clinic = $1 WHERE id = $2', ['Clínica Vida', doctorA]));
-    const visit = await createOk(attendantA);
+    const visit = await createOk(repA);
     expect(visit.doctor.clinic).toBe('Clínica Vida');
   });
 
   it('201 com a visita agendada, médico, responsável e quem criou', async () => {
-    const visit = await createOk(attendantA, { agenda: '  Apresentar o painel  ' });
+    const visit = await createOk(repA, { agenda: '  Apresentar o painel  ' });
     expect(visit).toMatchObject({
       doctor: { id: doctorA, name: 'Dra. Júlia Costa', clinic: null, isActive: true },
-      responsible: { id: attendantA.id, name: 'Atendente Bia' },
+      responsible: { id: repA.id, name: 'Representante Bia' },
       scheduledAt: '2026-10-06T13:00:00.000Z',
       type: 'presencial',
       agenda: 'Apresentar o painel',
@@ -162,28 +162,28 @@ describe('POST /visits', () => {
       statusChangedAt: null,
       statusChangedBy: null,
       rescheduleCount: 0,
-      createdBy: { id: attendantA.id },
+      createdBy: { id: repA.id },
       reschedules: [],
     });
   });
 
   it('horário com fuso é gravado em UTC; sem fuso -> 400', async () => {
-    const visit = await createOk(attendantA, { scheduledAt: '2026-10-06T10:00:00-03:00' });
+    const visit = await createOk(repA, { scheduledAt: '2026-10-06T10:00:00-03:00' });
     expect(visit.scheduledAt).toBe('2026-10-06T13:00:00.000Z');
     const res = await app.agent
       .post(BASE)
-      .set(app.auth(attendantA))
+      .set(app.auth(repA))
       .send(visitBody({ scheduledAt: '2026-10-06T10:00:00' }));
     expect(res.status).toBe(400);
   });
 
   it('data no passado é aceita (lançar visita depois)', async () => {
-    const visit = await createOk(attendantA, { scheduledAt: '2020-01-02T12:00:00.000Z' });
+    const visit = await createOk(repA, { scheduledAt: '2020-01-02T12:00:00.000Z' });
     expect(visit.status).toBe('agendada');
   });
 
   it('campos obrigatórios, tipo fora da lista e campo desconhecido -> 400', async () => {
-    const h = app.auth(attendantA);
+    const h = app.auth(repA);
     for (const field of ['doctorId', 'responsibleId', 'scheduledAt', 'type']) {
       const body = visitBody();
       delete body[field];
@@ -196,16 +196,16 @@ describe('POST /visits', () => {
   it('médico inativo, de outro laboratório ou inexistente -> 400 em doctorId', async () => {
     const inactive = await insertDoctor(tenantA.id, 'Dr. Inativo', false);
     for (const doctorId of [inactive, doctorB, UNKNOWN_ID]) {
-      const res = await app.agent.post(BASE).set(app.auth(attendantA)).send(visitBody({ doctorId }));
+      const res = await app.agent.post(BASE).set(app.auth(repA)).send(visitBody({ doctorId }));
       expect(res.status).toBe(400);
       expect(errorOf(res).details).toMatchObject({ fields: { doctorId: expect.any(String) } });
     }
   });
 
   it('responsável inativo ou de outro laboratório -> 400 em responsibleId', async () => {
-    const inactive = await createUser({ tenantId: tenantA.id, role: 'attendant', isActive: false, db });
-    for (const responsibleId of [inactive.id, attendantB.id]) {
-      const res = await app.agent.post(BASE).set(app.auth(attendantA)).send(visitBody({ responsibleId }));
+    const inactive = await createUser({ tenantId: tenantA.id, role: 'representative', isActive: false, db });
+    for (const responsibleId of [inactive.id, repB.id]) {
+      const res = await app.agent.post(BASE).set(app.auth(repA)).send(visitBody({ responsibleId }));
       expect(res.status).toBe(400);
       expect(errorOf(res).details).toMatchObject({ fields: { responsibleId: expect.any(String) } });
     }
@@ -214,29 +214,29 @@ describe('POST /visits', () => {
 
 describe('GET /visits — período e filtros', () => {
   it('só o período [from, to), em ordem de data; filtros por médico, responsável e status', async () => {
-    const late = await createOk(attendantA, { scheduledAt: '2026-10-09T18:00:00.000Z' });
-    const early = await createOk(attendantA, { scheduledAt: '2026-10-05T12:00:00.000Z', doctorId: doctorA2 });
+    const late = await createOk(repA, { scheduledAt: '2026-10-09T18:00:00.000Z' });
+    const early = await createOk(repA, { scheduledAt: '2026-10-05T12:00:00.000Z', doctorId: doctorA2 });
     const other = await createOk(managerA, { scheduledAt: '2026-10-07T12:00:00.000Z', responsibleId: managerA.id });
-    await createOk(attendantA, { scheduledAt: '2026-10-12T03:00:00.000Z' }); // == to: fora
-    await createOk(attendantA, { scheduledAt: '2026-10-05T02:59:59.000Z' }); // antes de from: fora
+    await createOk(repA, { scheduledAt: '2026-10-12T03:00:00.000Z' }); // == to: fora
+    await createOk(repA, { scheduledAt: '2026-10-05T02:59:59.000Z' }); // antes de from: fora
     await app.agent.post(`${BASE}/${other.id}/cancel`).set(app.auth(managerA)).send({ reason: 'Férias' }).expect(200);
 
-    const all = await list(attendantA);
+    const all = await list(repA);
     expect(all.status).toBe(200);
     const body = all.body as ListVisitsResponse;
     expect(body.truncated).toBe(false);
     expect(body.visits.map((v) => v.id)).toEqual([early.id, other.id, late.id]);
 
-    const byDoctor = (await list(attendantA, { doctorId: doctorA2 })).body as ListVisitsResponse;
+    const byDoctor = (await list(repA, { doctorId: doctorA2 })).body as ListVisitsResponse;
     expect(byDoctor.visits.map((v) => v.id)).toEqual([early.id]);
-    const byResponsible = (await list(attendantA, { responsibleId: managerA.id })).body as ListVisitsResponse;
+    const byResponsible = (await list(repA, { responsibleId: managerA.id })).body as ListVisitsResponse;
     expect(byResponsible.visits.map((v) => v.id)).toEqual([other.id]);
-    const byStatus = (await list(attendantA, { status: 'cancelada' })).body as ListVisitsResponse;
+    const byStatus = (await list(repA, { status: 'cancelada' })).body as ListVisitsResponse;
     expect(byStatus.visits.map((v) => v.id)).toEqual([other.id]);
   });
 
   it('período obrigatório, fim depois do início e no máximo 62 dias', async () => {
-    const h = app.auth(attendantA);
+    const h = app.auth(repA);
     await app.agent.get(BASE).set(h).expect(400);
     await app.agent.get(BASE).set(h).query({ from: WEEK.from }).expect(400);
     const inverted = await app.agent.get(BASE).set(h).query({ from: WEEK.to, to: WEEK.from });
@@ -258,10 +258,10 @@ describe('GET /visits — período e filtros', () => {
 
 describe('PATCH /visits/:id', () => {
   it('parcial: troca médico, responsável, tipo e limpa a pauta; data não muda por aqui', async () => {
-    const visit = await createOk(attendantA);
+    const visit = await createOk(repA);
     const res = await app.agent
       .patch(`${BASE}/${visit.id}`)
-      .set(app.auth(attendantA))
+      .set(app.auth(managerA))
       .send({ doctorId: doctorA2, responsibleId: managerA.id, type: 'telefone', agenda: null });
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
@@ -273,23 +273,23 @@ describe('PATCH /visits/:id', () => {
     });
     await app.agent
       .patch(`${BASE}/${visit.id}`)
-      .set(app.auth(attendantA))
+      .set(app.auth(repA))
       .send({ scheduledAt: '2026-10-08T13:00:00.000Z' })
       .expect(400);
   });
 
   it('médico inativado depois: a visita continua editável sem trocar o médico', async () => {
-    const visit = await createOk(attendantA);
+    const visit = await createOk(repA);
     await db.withoutTenant((tx) => tx.query('UPDATE doctors SET is_active = FALSE WHERE id = $1', [doctorA]));
-    await app.agent.patch(`${BASE}/${visit.id}`).set(app.auth(attendantA)).send({ agenda: 'Nova pauta' }).expect(200);
-    const res = await app.agent.patch(`${BASE}/${visit.id}`).set(app.auth(attendantA)).send({ doctorId: doctorB });
+    await app.agent.patch(`${BASE}/${visit.id}`).set(app.auth(repA)).send({ agenda: 'Nova pauta' }).expect(200);
+    const res = await app.agent.patch(`${BASE}/${visit.id}`).set(app.auth(repA)).send({ doctorId: doctorB });
     expect(res.status).toBe(400);
   });
 });
 
 describe('reagendar', () => {
   it('muda a data da MESMA visita e grava o histórico (data antiga, nova, motivo, quem)', async () => {
-    const visit = await createOk(attendantA);
+    const visit = await createOk(repA);
     const first = await app.agent
       .post(`${BASE}/${visit.id}/reschedule`)
       .set(app.auth(managerA))
@@ -297,7 +297,7 @@ describe('reagendar', () => {
     expect(first.status).toBe(200);
     const second = await app.agent
       .post(`${BASE}/${visit.id}/reschedule`)
-      .set(app.auth(attendantA))
+      .set(app.auth(repA))
       .send({ scheduledAt: '2026-10-09T12:00:00-03:00' });
     const body = second.body as VisitDetail;
     expect(body.id).toBe(visit.id);
@@ -315,7 +315,7 @@ describe('reagendar', () => {
         previousScheduledAt: '2026-10-08T14:30:00.000Z',
         newScheduledAt: '2026-10-09T15:00:00.000Z',
         reason: null,
-        changedBy: { id: attendantA.id },
+        changedBy: { id: repA.id },
       },
     ]);
 
@@ -324,10 +324,10 @@ describe('reagendar', () => {
   });
 
   it('mesma data/hora: 200 sem histórico nem audit', async () => {
-    const visit = await createOk(attendantA);
+    const visit = await createOk(repA);
     const res = await app.agent
       .post(`${BASE}/${visit.id}/reschedule`)
-      .set(app.auth(attendantA))
+      .set(app.auth(repA))
       .send({ scheduledAt: '2026-10-06T10:00:00-03:00' });
     expect(res.status).toBe(200);
     expect((res.body as VisitDetail).reschedules).toEqual([]);
@@ -337,8 +337,8 @@ describe('reagendar', () => {
 
 describe('cancelar / médico não recebeu', () => {
   it('motivo obrigatório (ausente, vazio ou só espaço -> 400)', async () => {
-    const visit = await createOk(attendantA);
-    const h = app.auth(attendantA);
+    const visit = await createOk(repA);
+    const h = app.auth(repA);
     for (const route of ['cancel', 'not-received']) {
       await app.agent.post(`${BASE}/${visit.id}/${route}`).set(h).send({}).expect(400);
       await app.agent.post(`${BASE}/${visit.id}/${route}`).set(h).send({ reason: '   ' }).expect(400);
@@ -348,7 +348,7 @@ describe('cancelar / médico não recebeu', () => {
   });
 
   it('cancelar grava status, motivo, quando e quem', async () => {
-    const visit = await createOk(attendantA);
+    const visit = await createOk(repA);
     const res = await app.agent
       .post(`${BASE}/${visit.id}/cancel`)
       .set(app.auth(managerA))
@@ -363,8 +363,8 @@ describe('cancelar / médico não recebeu', () => {
   });
 
   it('"não recebeu" vira nao_recebeu; repetir é idempotente; o outro encerramento -> 409', async () => {
-    const visit = await createOk(attendantA);
-    const h = app.auth(attendantA);
+    const visit = await createOk(repA);
+    const h = app.auth(repA);
     const first = await app.agent.post(`${BASE}/${visit.id}/not-received`).set(h).send({ reason: 'Consultório fechado' });
     expect(first.status).toBe(200);
     expect((first.body as VisitDetail).status).toBe('nao_recebeu');
@@ -379,8 +379,8 @@ describe('cancelar / médico não recebeu', () => {
   });
 
   it('visita encerrada não edita nem reagenda -> 409 VISIT_ALREADY_CLOSED', async () => {
-    const visit = await createOk(attendantA);
-    const h = app.auth(attendantA);
+    const visit = await createOk(repA);
+    const h = app.auth(repA);
     await app.agent.post(`${BASE}/${visit.id}/cancel`).set(h).send({ reason: 'Cancelada' }).expect(200);
 
     const patch = await app.agent.patch(`${BASE}/${visit.id}`).set(h).send({ type: 'online' });
@@ -394,7 +394,7 @@ describe('cancelar / médico não recebeu', () => {
   });
 
   it('o banco recusa encerrar sem motivo mesmo fora do service', async () => {
-    const visit = await createOk(attendantA);
+    const visit = await createOk(repA);
     await expect(
       db.withoutTenant((tx) =>
         tx.query(`UPDATE doctor_visits SET status = 'cancelada', status_reason = '  ' WHERE id = $1`, [visit.id]),
@@ -407,12 +407,12 @@ describe('isolamento multitenant', () => {
   it('visita do tenant B: GET, PATCH, reagendar, cancelar e não recebeu -> 404 NOT_FOUND', async () => {
     const response = await app.agent
       .post(BASE)
-      .set(app.auth(attendantB))
-      .send(visitBody({ doctorId: doctorB, responsibleId: attendantB.id }));
+      .set(app.auth(repB))
+      .send(visitBody({ doctorId: doctorB, responsibleId: repB.id }));
     expect(response.status).toBe(201);
     const visitB = response.body as VisitDetail;
 
-    const h = app.auth(attendantA);
+    const h = app.auth(repA);
     const responses = [
       await app.agent.get(`${BASE}/${visitB.id}`).set(h),
       await app.agent.patch(`${BASE}/${visitB.id}`).set(h).send({ type: 'online' }),
@@ -424,20 +424,20 @@ describe('isolamento multitenant', () => {
       expect(res.status).toBe(404);
       expect(errorOf(res).code).toBe('NOT_FOUND');
     }
-    const untouched = await app.agent.get(`${BASE}/${visitB.id}`).set(app.auth(attendantB));
+    const untouched = await app.agent.get(`${BASE}/${visitB.id}`).set(app.auth(repB));
     expect(untouched.body).toMatchObject({ status: 'agendada', type: 'presencial', reschedules: [] });
   });
 
   it('listagem nunca cruza tenant, nem filtrando pelo médico/responsável do outro', async () => {
     await app.agent
       .post(BASE)
-      .set(app.auth(attendantB))
-      .send(visitBody({ doctorId: doctorB, responsibleId: attendantB.id }))
+      .set(app.auth(repB))
+      .send(visitBody({ doctorId: doctorB, responsibleId: repB.id }))
       .expect(201);
-    await createOk(attendantA);
-    const queries: Array<Record<string, string>> = [{}, { doctorId: doctorB }, { responsibleId: attendantB.id }];
+    await createOk(repA);
+    const queries: Array<Record<string, string>> = [{}, { doctorId: doctorB }, { responsibleId: repB.id }];
     for (const query of queries) {
-      const res = await list(attendantA, query);
+      const res = await list(repA, query);
       expect(JSON.stringify(res.body)).not.toContain('Dr. Confidencial Beta');
     }
   });
@@ -454,12 +454,12 @@ describe('isolamento multitenant', () => {
 
     const res = await app.agent
       .post(BASE)
-      .set(app.auth(attendantB))
-      .send(visitBody({ doctorId: doctorB, responsibleId: attendantB.id }));
+      .set(app.auth(repB))
+      .send(visitBody({ doctorId: doctorB, responsibleId: repB.id }));
     const visitB = res.body as VisitDetail;
     await app.agent
       .post(`${BASE}/${visitB.id}/reschedule`)
-      .set(app.auth(attendantB))
+      .set(app.auth(repB))
       .send({ scheduledAt: WEEK.from })
       .expect(200);
 
@@ -472,15 +472,15 @@ describe('isolamento multitenant', () => {
   });
 
   it('id inexistente -> 404; id não-uuid -> 400', async () => {
-    await app.agent.get(`${BASE}/${UNKNOWN_ID}`).set(app.auth(attendantA)).expect(404);
-    await app.agent.get(`${BASE}/nao-e-uuid`).set(app.auth(attendantA)).expect(400);
+    await app.agent.get(`${BASE}/${UNKNOWN_ID}`).set(app.auth(repA)).expect(404);
+    await app.agent.get(`${BASE}/nao-e-uuid`).set(app.auth(repA)).expect(400);
   });
 });
 
 describe('audit log', () => {
   it('create_visit, update_visit (só o que mudou), reschedule_visit, cancel_visit e visit_not_received', async () => {
-    const visit = await createOk(attendantA);
-    const h = app.auth(attendantA);
+    const visit = await createOk(repA);
+    const h = app.auth(repA);
     await app.agent.patch(`${BASE}/${visit.id}`).set(h).send({ type: 'online', agenda: visit.agenda }).expect(200);
     // PATCH sem mudança real não grava audit.
     await app.agent.patch(`${BASE}/${visit.id}`).set(h).send({ type: 'online' }).expect(200);
@@ -498,9 +498,9 @@ describe('audit log', () => {
     expect(logs.map((l) => l.action)).toEqual(['create_visit', 'update_visit', 'reschedule_visit', 'cancel_visit']);
     for (const log of logs) {
       expect(log.tenant_id).toBe(tenantA.id);
-      expect(log.user_id).toBe(attendantA.id);
+      expect(log.user_id).toBe(repA.id);
     }
-    expect(logs[0]?.new_values).toMatchObject({ doctorId: doctorA, responsibleId: attendantA.id, status: 'agendada' });
+    expect(logs[0]?.new_values).toMatchObject({ doctorId: doctorA, responsibleId: repA.id, status: 'agendada' });
     expect(logs[1]?.old_values).toEqual({ type: 'presencial' });
     expect(logs[1]?.new_values).toEqual({ type: 'online' });
     expect(logs[2]?.old_values).toEqual({ scheduledAt: '2026-10-06T13:00:00.000Z' });

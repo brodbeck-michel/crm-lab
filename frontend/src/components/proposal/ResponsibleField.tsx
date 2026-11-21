@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import type { ProposalDetail, UserRole } from '@crm-lab/shared';
-import { TERMINAL_STATUSES } from '@crm-lab/shared';
+import { TERMINAL_STATUSES, isFrontlineRole } from '@crm-lab/shared';
 import { conversationsApi } from '@/api/conversations';
 import { queryKeys } from '@/api/query-keys';
 import { useUpdateProposalResponsible } from '@/api/proposals';
@@ -44,7 +44,7 @@ export default function ResponsibleField({ proposal, user }: ResponsibleFieldPro
   }
 
   const options = (assignees.data?.assignees ?? [])
-    .filter((a) => supervisor || a.role === 'attendant')
+    .filter((a) => supervisor || isFrontlineRole(a.role))
     .map((a) => ({ value: a.id, label: a.name }));
 
   return (

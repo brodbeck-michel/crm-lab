@@ -37,7 +37,7 @@ export function holidayModule(deps: ApiModuleDeps): ApiModule {
 
   router.get(
     '/',
-    requireRoles('attendant', 'manager', 'admin'),
+    requireRoles('attendant', 'representative', 'manager', 'admin'),
     handle(async (req, res) => {
       const year = parseYear(req.query.year);
       res.status(200).json(await service.list(getContext(req), year));
@@ -74,7 +74,7 @@ export function businessCalendarModule(deps: ApiModuleDeps): ApiModule {
 
   router.get(
     '/',
-    requireRoles('attendant', 'manager', 'admin'),
+    requireRoles('attendant', 'representative', 'manager', 'admin'),
     handle(async (req, res) => {
       res.status(200).json(await service.calendar(getContext(req)));
     }),

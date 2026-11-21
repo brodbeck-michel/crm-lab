@@ -14,7 +14,6 @@ import {
 } from '@crm-lab/shared';
 import { visitsApi } from '@/api/visits';
 import { doctorsApi } from '@/api/doctors';
-import { conversationsApi } from '@/api/conversations';
 import { isApiError } from '@/api/client';
 import { mapFieldErrors } from '@/api/error-handler';
 import { queryKeys, queryScopes } from '@/api/query-keys';
@@ -50,6 +49,7 @@ import { AgendaWeek } from './AgendaWeek';
 import { AgendaList } from './AgendaList';
 import { AgendaRail, countByStatus, type RailAction } from './AgendaRail';
 import { AgendaMobile } from './AgendaMobile';
+import { useVisitationResponsibles } from './visitation-access';
 import {
   VisitAttachmentsSection,
   VisitCheckSection,
@@ -184,12 +184,9 @@ export default function Agenda() {
     enabled: isWide && !isMobile && !todayInWeek,
   });
 
-  // Usuários ativos do laboratório, qualquer papel (`GET /users` é admin-only).
-  const assigneesQuery = useQuery({
-    queryKey: queryKeys.conversationAssignees(),
-    queryFn: () => conversationsApi.assignees(),
-  });
-  const assignees = assigneesQuery.data?.assignees ?? [];
+  // Responsáveis elegíveis (D-329): gestor/admin escolhem entre representantes,
+  // gestores e admins; o representante só a si mesmo.
+  const { seesAll, responsibles: assignees } = useVisitationResponsibles();
 
   const doctorFilters = { active: true, limit: 100, sortBy: 'name' as const };
   const doctorsQuery = useQuery({
@@ -256,7 +253,7 @@ export default function Agenda() {
     <FilterBar
       filters={filters}
       counts={counts}
-      assignees={assignees}
+      assignees={seesAll ? assignees : []}
       doctors={doctors}
       onChange={setFilters}
       stacked={isMobile}
@@ -567,8 +564,9 @@ function FilterBar({ filters, counts, assignees, doctors, onChange, stacked }: F
           })}
         </div>
       </div>
-      {divider}
-      <div className={group}>
+      {/* Filtro por responsável só para gestor/admin (D-329): o representante já vem recortado. */}
+      {assignees.length > 0 && divider}
+      {assignees.length > 0 && <div className={group}>
         {label('Responsável')}
         {assignees.length <= MAX_RESPONSIBLE_CHIPS ? (
           <div className="flex flex-wrap gap-sm" role="group" aria-label="Filtrar por responsável">
@@ -603,7 +601,7 @@ function FilterBar({ filters, counts, assignees, doctors, onChange, stacked }: F
             onChange={(responsibleId) => onChange({ ...filters, responsibleId })}
           />
         )}
-      </div>
+      </div>}
       {divider}
       <div className={group}>
         {stacked && label('Médico')}
@@ -771,6 +769,7 @@ function VisitFormModal({
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const user = useCurrentUser();
+  const { seesAll } = useVisitationResponsibles();
   const { fieldErrors, setFieldErrors, onError } = useFieldErrors();
   const isEdit = visit !== undefined;
   const at = initialAt ?? new Date();
@@ -864,6 +863,8 @@ function VisitFormModal({
           label="Responsável"
           value={responsibleId}
           onChange={(e) => setResponsibleId(e.target.value)}
+          // D-329: o representante agenda só para si; o seletor vem fixo nele.
+          disabled={!seesAll && !isEdit}
           placeholder="Selecione o responsável"
           options={withCurrent(assignees, visit?.responsible, '(inativo)')}
           error={fieldErrors.responsibleId}

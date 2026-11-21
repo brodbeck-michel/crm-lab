@@ -38,6 +38,7 @@ const ROLE_LABELS: Record<string, string> = {
   admin: 'Administrador',
   manager: 'Gestor',
   attendant: 'Atendente',
+  representative: 'Representante',
 };
 
 export function UserSearch({ users, onSelectUser, isLoading, isError, presenceOf }: UserSearchProps) {

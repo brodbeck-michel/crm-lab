@@ -7,7 +7,7 @@
  * (SECURITY.md). Nenhum caminho aqui usa `withoutTenant()`: medico e dado de
  * laboratorio e o RLS falha fechado sem contexto de tenant.
  */
-import type { Doctor, DoctorSortBy } from '@crm-lab/shared';
+import { VISITATION_RESPONSIBLE_ROLES, type Doctor, type DoctorSortBy, type TenantRole } from '@crm-lab/shared';
 import type { DbClient, DbTx } from '../db/types.js';
 import { escapeLike, foldSearchTerm } from './insurance.repository.js';
 
@@ -94,10 +94,44 @@ export interface DoctorListCriteria {
   search?: string;
   active?: boolean;
   responsibleId?: string;
+  /** Sem responsavel, de perfil inelegivel ou inativo (D-329). */
+  unassigned?: boolean;
+  /** Escopo do representante (D-329): so a carteira dele. Ausente = sem recorte. */
+  ownerId?: string;
   page: number;
   limit: number;
   sortBy: DoctorSortBy;
   order: SortOrder;
+}
+
+/** Perfis elegiveis como literal SQL (whitelist fixa, nada vindo do cliente). */
+const ELIGIBLE_ROLES_SQL = `(${VISITATION_RESPONSIBLE_ROLES.map((role) => `'${role}'`).join(', ')})`;
+
+/**
+ * Medico "sem responsavel" para o gestor (D-329 item 6): nulo, usuario sumido,
+ * inativo ou de perfil inelegivel. Exige o `LEFT JOIN users u`.
+ */
+const UNASSIGNED_SQL = `(d.responsible_user_id IS NULL OR u.id IS NULL OR u.is_active = FALSE
+  OR u.role NOT IN ${ELIGIBLE_ROLES_SQL})`;
+
+/** Linha da carteira, como sai do SQL. */
+export interface PortfolioRow {
+  responsible: { id: string; name: string; role: TenantRole };
+  doctorCount: number;
+  activeDoctorCount: number;
+}
+
+export interface PortfolioCounts {
+  doctorCount: number;
+  activeDoctorCount: number;
+}
+
+/** Resultado da transferencia: o que mudou, para o audit do service. */
+export interface DoctorTransferResult {
+  /** Medicos que de fato mudaram de responsavel (o que ja era do destino fica fora). */
+  doctors: Array<{ id: string; previousResponsibleId: string | null; movedVisitIds: string[] }>;
+  /** Visitas levadas junto, com o responsavel anterior. */
+  visits: Array<{ id: string; doctorId: string; previousResponsibleId: string }>;
 }
 
 export interface DoctorPage {
@@ -167,6 +201,13 @@ export class DoctorRepository {
       params.push(criteria.responsibleId);
       where.push(`d.responsible_user_id = $${params.length}`);
     }
+    if (criteria.ownerId !== undefined) {
+      params.push(criteria.ownerId);
+      where.push(`d.responsible_user_id = $${params.length}`);
+    }
+    if (criteria.unassigned === true) {
+      where.push(UNASSIGNED_SQL);
+    }
     if (criteria.search !== undefined && criteria.search.length > 0) {
       params.push(`%${escapeLike(foldSearchTerm(criteria.search))}%`);
       const conditions = [`${folded('d.name')} LIKE $${params.length}::text ESCAPE '\\'`];
@@ -186,7 +227,7 @@ export class DoctorRepository {
 
     return this.db.withTenant(tenantId, async (tx) => {
       const counted = await tx.query<{ total: number | string }>(
-        `SELECT COUNT(*)::int AS total FROM doctors d ${whereSql}`,
+        `SELECT COUNT(*)::int AS total ${FROM} ${whereSql}`,
         params,
       );
       const total = Number(counted.rows[0]?.total ?? 0);
@@ -202,8 +243,106 @@ export class DoctorRepository {
     });
   }
 
-  async findById(tenantId: string, id: string): Promise<Doctor | null> {
-    return this.db.withTenant(tenantId, (tx) => selectOne(tx, id));
+  /** `ownerId` (D-329): medico de outra carteira nao existe para o representante (`null` -> 404). */
+  async findById(tenantId: string, id: string, ownerId?: string): Promise<Doctor | null> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const doctor = await selectOne(tx, id);
+      if (doctor && ownerId !== undefined && doctor.responsible?.id !== ownerId) return null;
+      return doctor;
+    });
+  }
+
+  /**
+   * Carteiras (D-329 item 7): uma linha por usuario ATIVO de perfil elegivel que
+   * e representante ou tem medico; o resto (sem responsavel, inelegivel, inativo)
+   * soma em `unassigned`. Cada medico conta uma vez.
+   */
+  async portfolios(tenantId: string): Promise<{ rows: PortfolioRow[]; unassigned: PortfolioCounts }> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const rows = await tx.query<{
+        id: string;
+        name: string;
+        role: TenantRole;
+        doctor_count: number | string;
+        active_doctor_count: number | string;
+      }>(
+        `SELECT u.id, u.name, u.role,
+                COUNT(d.id)::int AS doctor_count,
+                COUNT(d.id) FILTER (WHERE d.is_active)::int AS active_doctor_count
+           FROM users u
+           LEFT JOIN doctors d ON d.responsible_user_id = u.id
+          WHERE u.tenant_id = $1
+            AND u.is_active = TRUE
+            AND u.role IN ${ELIGIBLE_ROLES_SQL}
+          GROUP BY u.id, u.name, u.role
+         HAVING u.role = 'representative' OR COUNT(d.id) > 0
+          ORDER BY u.name ASC, u.id ASC`,
+        [tenantId],
+      );
+      const unassigned = await tx.query<{ doctor_count: number | string; active_doctor_count: number | string }>(
+        `SELECT COUNT(*)::int AS doctor_count,
+                COUNT(*) FILTER (WHERE d.is_active)::int AS active_doctor_count
+           ${FROM}
+          WHERE ${UNASSIGNED_SQL}`,
+      );
+      const counts = unassigned.rows[0];
+      return {
+        rows: rows.rows.map((row) => ({
+          responsible: { id: row.id, name: row.name, role: row.role },
+          doctorCount: Number(row.doctor_count),
+          activeDoctorCount: Number(row.active_doctor_count),
+        })),
+        unassigned: {
+          doctorCount: Number(counts?.doctor_count ?? 0),
+          activeDoctorCount: Number(counts?.active_doctor_count ?? 0),
+        },
+      };
+    });
+  }
+
+  /**
+   * Transferencia em lote (D-329 item 8), tudo numa transacao com os medicos
+   * travados. Devolve `null` se algum id nao existe NESTE tenant (nada muda).
+   * Com `includeFutureVisits`, leva as visitas `agendada` futuras de cada medico
+   * que estavam com o responsavel anterior dele (cobertura de outra pessoa fica).
+   */
+  async transfer(
+    tenantId: string,
+    doctorIds: string[],
+    toUserId: string,
+    includeFutureVisits: boolean,
+    now: Date,
+  ): Promise<DoctorTransferResult | null> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const locked = await tx.query<{ id: string; responsible_user_id: string | null }>(
+        `SELECT id, responsible_user_id FROM doctors WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE`,
+        [doctorIds],
+      );
+      if (locked.rows.length !== doctorIds.length) return null;
+
+      const result: DoctorTransferResult = { doctors: [], visits: [] };
+      for (const row of locked.rows) {
+        if (row.responsible_user_id === toUserId) continue;
+        await tx.query('UPDATE doctors SET responsible_user_id = $1 WHERE id = $2', [toUserId, row.id]);
+
+        const movedVisitIds: string[] = [];
+        if (includeFutureVisits && row.responsible_user_id !== null) {
+          const moved = await tx.query<{ id: string }>(
+            `UPDATE doctor_visits SET responsible_user_id = $1
+              WHERE doctor_id = $2 AND responsible_user_id = $3
+                AND status = 'agendada' AND scheduled_at > $4::timestamptz
+             RETURNING id`,
+            [toUserId, row.id, row.responsible_user_id, now.toISOString()],
+          );
+          for (const visit of moved.rows) {
+            movedVisitIds.push(visit.id);
+            result.visits.push({ id: visit.id, doctorId: row.id, previousResponsibleId: row.responsible_user_id });
+          }
+        }
+        result.doctors.push({ id: row.id, previousResponsibleId: row.responsible_user_id, movedVisitIds });
+      }
+      return result;
+    });
   }
 
   /** O medico que ja usa este (CRM, UF) no tenant, se houver — menos `exceptId`. */

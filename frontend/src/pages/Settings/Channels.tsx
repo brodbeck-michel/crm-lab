@@ -60,6 +60,7 @@ import { CaptureDevicesSection } from './CaptureDevicesSection';
 
 const ROLE_LABEL: Record<UserRole, string> = {
   attendant: 'Atendente',
+  representative: 'Representante',
   manager: 'Gestor',
   admin: 'Administrador',
   platform_operator: 'Operador da plataforma',

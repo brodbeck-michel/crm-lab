@@ -39,7 +39,7 @@ import type { AuditService } from './audit.service.js';
  * esta na lista: ele pertence ao console da plataforma e concede-lo aqui seria
  * escalonamento para fora do tenant (SECURITY.md "Console de Plataforma").
  */
-export const ASSIGNABLE_ROLES: readonly UserRole[] = ['attendant', 'manager', 'admin'];
+export const ASSIGNABLE_ROLES: readonly UserRole[] = ['attendant', 'representative', 'manager', 'admin'];
 
 export const MIN_PASSWORD_LENGTH = 8;
 const DEFAULT_LIMIT = 20;

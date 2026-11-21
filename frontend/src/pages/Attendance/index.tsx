@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   DEFAULT_FUNNEL_RULES,
+  isFrontlineRole,
   type CreateAttachmentRequest,
   type ListConversationsQuery,
   type ListPatientsQuery,
@@ -634,7 +635,7 @@ export function Attendance() {
       if (userId === currentUser?.id) {
         toast('Você saiu da conversa.', { tone: 'positive' });
         // Atendente que sai deixa de ver a conversa: fecha antes do refetch dar 404.
-        if (currentUser.role === 'attendant') setSelectedId(null);
+        if (isFrontlineRole(currentUser.role)) setSelectedId(null);
         await queryClient.invalidateQueries({ queryKey: queryScopes.conversations });
         return;
       }

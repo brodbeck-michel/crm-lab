@@ -58,6 +58,7 @@ import type {
   TeamMemberPerformance,
   TeamReport,
 } from '@crm-lab/shared';
+import { isFrontlineRole } from '@crm-lab/shared';
 import { LOSS_REASONS, PROPOSAL_STATUSES, TERMINAL_STATUSES } from '@crm-lab/shared';
 import type { DbClient } from '../db/types.js';
 import type { TenantContext } from '../http/context.js';
@@ -192,7 +193,7 @@ const TEAM_ROLES = ['manager', 'admin'] as const;
  */
 function assertLabUser(ctx: TenantContext): void {
   if (ctx.role === 'platform_operator') {
-    throw new BusinessError('FORBIDDEN', { requiredRoles: ['attendant', 'manager', 'admin'] });
+    throw new BusinessError('FORBIDDEN', { requiredRoles: ['attendant', 'representative', 'manager', 'admin'] });
   }
 }
 
@@ -204,7 +205,7 @@ function assertTeamRole(ctx: TenantContext): void {
 
 /** Atendente = so as proprias propostas. Gestor/admin = o time. */
 export function scopeOf(ctx: TenantContext): AnalyticsScope {
-  return ctx.role === 'attendant'
+  return isFrontlineRole(ctx.role)
     ? { tenantId: ctx.tenantId, userId: ctx.userId }
     : { tenantId: ctx.tenantId };
 }

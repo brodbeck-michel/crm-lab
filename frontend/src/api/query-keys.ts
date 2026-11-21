@@ -224,6 +224,8 @@ export const queryKeys = {
   doctor: (id: string) => ['doctors', 'detail', id] as const,
   /** ['doctors', 'timeline', id] — linha do tempo da ficha (CRMLAB-89, D-261) */
   doctorTimeline: (id: string) => ['doctors', 'timeline', id] as const,
+  /** ['doctors', 'portfolios'] — Carteiras (§22c, CRMLAB-189); cai junto com o escopo `doctors` */
+  doctorPortfolios: () => ['doctors', 'portfolios'] as const,
   /** ['visits', filters] — `/visitation/agenda` (§23, CRMLAB-87) */
   visits: (filters: ListVisitsQuery) => ['visits', filters] as const,
   /** ['visits', 'detail', id] — visita aberta no modal da Agenda (CRMLAB-87) */

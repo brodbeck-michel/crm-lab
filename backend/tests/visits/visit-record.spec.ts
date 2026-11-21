@@ -31,8 +31,8 @@ let app: TestApp;
 let tenantA: TenantRecord;
 let tenantB: TenantRecord;
 let managerA: UserRecord;
-let attendantA: UserRecord;
-let attendantB: UserRecord;
+let repA: UserRecord;
+let repB: UserRecord;
 let doctorA: string;
 let doctorB: string;
 
@@ -42,7 +42,7 @@ beforeAll(async () => {
 
 async function insertDoctor(tenantId: string, name: string): Promise<string> {
   const result = await db.withoutTenant((tx) =>
-    tx.query<{ id: string }>('INSERT INTO doctors (tenant_id, name) VALUES ($1, $2) RETURNING id', [tenantId, name]),
+    tx.query<{ id: string }>("INSERT INTO doctors (tenant_id, name, responsible_user_id) VALUES ($1, $2, (SELECT id FROM users WHERE tenant_id = $1 AND role = 'representative' ORDER BY created_at LIMIT 1)) RETURNING id", [tenantId, name]),
   );
   return result.rows[0]?.id as string;
 }
@@ -53,8 +53,8 @@ beforeEach(async () => {
   tenantA = await createTenant({ name: 'Lab A', slug: 'lab-a', db });
   tenantB = await createTenant({ name: 'Lab B', slug: 'lab-b', db });
   managerA = await createUser({ tenantId: tenantA.id, role: 'manager', name: 'Gestora Ana', db });
-  attendantA = await createUser({ tenantId: tenantA.id, role: 'attendant', name: 'Atendente Bia', db });
-  attendantB = await createUser({ tenantId: tenantB.id, role: 'attendant', db });
+  repA = await createUser({ tenantId: tenantA.id, role: 'representative', name: 'Representante Bia', db });
+  repB = await createUser({ tenantId: tenantB.id, role: 'representative', db });
   doctorA = await insertDoctor(tenantA.id, 'Dra. Júlia Costa');
   doctorB = await insertDoctor(tenantB.id, 'Dr. Confidencial Beta');
 });
@@ -125,22 +125,22 @@ function errorOf(response: { body: unknown }) {
 
 describe('check-in e check-out', () => {
   it('check-in grava a hora do servidor e quem tocou; a visita continua agendada', async () => {
-    const visit = await createVisit(attendantA);
+    const visit = await createVisit(repA);
     expect(visit).toMatchObject({ checkInAt: null, checkOutAt: null, nextVisitDate: null, attachmentCount: 0 });
 
     const before = Date.now();
-    const response = await checkIn(attendantA, visit.id);
+    const response = await checkIn(repA, visit.id);
     expect(response.status).toBe(200);
     const body = response.body as VisitDetail;
     expect(body.status).toBe('agendada');
-    expect(body.checkInBy).toEqual({ id: attendantA.id, name: 'Atendente Bia' });
+    expect(body.checkInBy).toEqual({ id: repA.id, name: 'Representante Bia' });
     expect(new Date(body.checkInAt ?? '').getTime()).toBeGreaterThanOrEqual(before - 5_000);
     expect(body.checkOutAt).toBeNull();
   });
 
   it('check-out marca realizada, com quem e quando, e a duração sai dos dois horários', async () => {
-    const visit = await createVisit(attendantA);
-    await checkIn(attendantA, visit.id).expect(200);
+    const visit = await createVisit(repA);
+    await checkIn(repA, visit.id).expect(200);
     // Simula 45 min de visita sem esperar: recua o check-in no banco.
     await db.withoutTenant((tx) =>
       tx.query(`UPDATE doctor_visits SET check_in_at = now() - interval '45 minutes' WHERE id = $1`, [visit.id]),
@@ -167,16 +167,16 @@ describe('check-in e check-out', () => {
   });
 
   it('repetir check-in e check-out é idempotente: mantém a hora original e não gera audit', async () => {
-    const visit = await createVisit(attendantA);
-    const first = (await checkIn(attendantA, visit.id).expect(200)).body as VisitDetail;
+    const visit = await createVisit(repA);
+    const first = (await checkIn(repA, visit.id).expect(200)).body as VisitDetail;
     const again = (await checkIn(managerA, visit.id).expect(200)).body as VisitDetail;
     expect(again.checkInAt).toBe(first.checkInAt);
-    expect(again.checkInBy?.id).toBe(attendantA.id);
+    expect(again.checkInBy?.id).toBe(repA.id);
 
-    const out = (await checkOut(attendantA, visit.id).expect(200)).body as VisitDetail;
+    const out = (await checkOut(repA, visit.id).expect(200)).body as VisitDetail;
     const outAgain = (await checkOut(managerA, visit.id).expect(200)).body as VisitDetail;
     expect(outAgain.checkOutAt).toBe(out.checkOutAt);
-    expect(outAgain.checkOutBy?.id).toBe(attendantA.id);
+    expect(outAgain.checkOutBy?.id).toBe(repA.id);
     // Check-in de visita já realizada também devolve 200 sem mudar.
     const late = (await checkIn(managerA, visit.id).expect(200)).body as VisitDetail;
     expect(late.checkInAt).toBe(first.checkInAt);
@@ -187,24 +187,24 @@ describe('check-in e check-out', () => {
   });
 
   it('check-out sem check-in -> 409 VISIT_NOT_CHECKED_IN', async () => {
-    const visit = await createVisit(attendantA);
-    const response = await checkOut(attendantA, visit.id);
+    const visit = await createVisit(repA);
+    const response = await checkOut(repA, visit.id);
     expect(response.status).toBe(409);
     expect(errorOf(response)).toMatchObject({ code: 'VISIT_NOT_CHECKED_IN', details: { status: 'agendada' } });
   });
 
   it('check-in e check-out em visita cancelada ou "não recebeu" -> 409 VISIT_ALREADY_CLOSED', async () => {
-    const cancelada = await createVisit(attendantA);
-    await app.agent.post(`${BASE}/${cancelada.id}/cancel`).set(app.auth(attendantA)).send({ reason: 'Férias' }).expect(200);
-    const naoRecebeu = await createVisit(attendantA);
+    const cancelada = await createVisit(repA);
+    await app.agent.post(`${BASE}/${cancelada.id}/cancel`).set(app.auth(repA)).send({ reason: 'Férias' }).expect(200);
+    const naoRecebeu = await createVisit(repA);
     await app.agent
       .post(`${BASE}/${naoRecebeu.id}/not-received`)
-      .set(app.auth(attendantA))
+      .set(app.auth(repA))
       .send({ reason: 'Agenda cheia' })
       .expect(200);
 
     for (const visit of [cancelada, naoRecebeu]) {
-      for (const response of [await checkIn(attendantA, visit.id), await checkOut(attendantA, visit.id)]) {
+      for (const response of [await checkIn(repA, visit.id), await checkOut(repA, visit.id)]) {
         expect(response.status).toBe(409);
         expect(errorOf(response).code).toBe('VISIT_ALREADY_CLOSED');
       }
@@ -212,12 +212,12 @@ describe('check-in e check-out', () => {
   });
 
   it('depois do check-in não reagenda (409), mas ainda pode ser marcada "médico não recebeu"', async () => {
-    const visit = await createVisit(attendantA);
-    const checked = (await checkIn(attendantA, visit.id).expect(200)).body as VisitDetail;
+    const visit = await createVisit(repA);
+    const checked = (await checkIn(repA, visit.id).expect(200)).body as VisitDetail;
 
     const reschedule = await app.agent
       .post(`${BASE}/${visit.id}/reschedule`)
-      .set(app.auth(attendantA))
+      .set(app.auth(repA))
       .send({ scheduledAt: '2026-10-07T13:00:00.000Z' });
     expect(reschedule.status).toBe(409);
     expect(errorOf(reschedule)).toMatchObject({
@@ -227,19 +227,19 @@ describe('check-in e check-out', () => {
 
     const notReceived = await app.agent
       .post(`${BASE}/${visit.id}/not-received`)
-      .set(app.auth(attendantA))
+      .set(app.auth(repA))
       .send({ reason: 'Cheguei e o médico estava em cirurgia' });
     expect(notReceived.status).toBe(200);
     expect(notReceived.body).toMatchObject({ status: 'nao_recebeu', checkInAt: checked.checkInAt });
   });
 
   it('check-in e check-out aparecem na listagem da agenda', async () => {
-    const visit = await createVisit(attendantA);
-    await checkIn(attendantA, visit.id).expect(200);
-    await checkOut(attendantA, visit.id).expect(200);
+    const visit = await createVisit(repA);
+    await checkIn(repA, visit.id).expect(200);
+    await checkOut(repA, visit.id).expect(200);
     const response = await app.agent
       .get(BASE)
-      .set(app.auth(attendantA))
+      .set(app.auth(repA))
       .query({ from: '2026-10-05T03:00:00.000Z', to: '2026-10-12T03:00:00.000Z' });
     const listed = (response.body as ListVisitsResponse).visits[0];
     expect(listed).toMatchObject({ id: visit.id, status: 'realizada', attachmentCount: 0 });
@@ -248,10 +248,10 @@ describe('check-in e check-out', () => {
   });
 
   it('corpo com campo desconhecido -> 400', async () => {
-    const visit = await createVisit(attendantA);
+    const visit = await createVisit(repA);
     const response = await app.agent
       .post(`${BASE}/${visit.id}/check-in`)
-      .set(app.auth(attendantA))
+      .set(app.auth(repA))
       .send({ checkInAt: '2026-10-06T13:00:00.000Z' });
     expect(response.status).toBe(400);
   });
@@ -259,10 +259,10 @@ describe('check-in e check-out', () => {
 
 describe('relato e próximo passo', () => {
   it('grava os três campos e a data de retorno; o audit leva só o que mudou', async () => {
-    const visit = await createVisit(attendantA);
+    const visit = await createVisit(repA);
     const response = await app.agent
       .patch(`${BASE}/${visit.id}/report`)
-      .set(app.auth(attendantA))
+      .set(app.auth(repA))
       .send({
         presented: '  Painel de check-up  ',
         doctorFeedback: 'Gostou do prazo',
@@ -293,35 +293,35 @@ describe('relato e próximo passo', () => {
   });
 
   it('sem mudança real -> 200 sem audit', async () => {
-    const visit = await createVisit(attendantA);
-    await app.agent.patch(`${BASE}/${visit.id}/report`).set(app.auth(attendantA)).send({ presented: null }).expect(200);
+    const visit = await createVisit(repA);
+    await app.agent.patch(`${BASE}/${visit.id}/report`).set(app.auth(repA)).send({ presented: null }).expect(200);
     expect((await auditOf(visit.id)).map((a) => a.action)).toEqual(['create_visit']);
   });
 
   it('vale em visita realizada e é bloqueado em cancelada (409)', async () => {
-    const realizada = await createVisit(attendantA);
-    await checkIn(attendantA, realizada.id).expect(200);
-    await checkOut(attendantA, realizada.id).expect(200);
+    const realizada = await createVisit(repA);
+    await checkIn(repA, realizada.id).expect(200);
+    await checkOut(repA, realizada.id).expect(200);
     await app.agent
       .patch(`${BASE}/${realizada.id}/report`)
-      .set(app.auth(attendantA))
+      .set(app.auth(repA))
       .send({ presented: 'Relato depois do Saí' })
       .expect(200);
 
-    const cancelada = await createVisit(attendantA);
-    await app.agent.post(`${BASE}/${cancelada.id}/cancel`).set(app.auth(attendantA)).send({ reason: 'x' }).expect(200);
+    const cancelada = await createVisit(repA);
+    await app.agent.post(`${BASE}/${cancelada.id}/cancel`).set(app.auth(repA)).send({ reason: 'x' }).expect(200);
     const response = await app.agent
       .patch(`${BASE}/${cancelada.id}/report`)
-      .set(app.auth(attendantA))
+      .set(app.auth(repA))
       .send({ presented: 'Tarde demais' });
     expect(response.status).toBe(409);
     expect(errorOf(response).code).toBe('VISIT_ALREADY_CLOSED');
   });
 
   it('data de retorno inválida ou campo desconhecido -> 400', async () => {
-    const visit = await createVisit(attendantA);
+    const visit = await createVisit(repA);
     for (const body of [{ nextVisitDate: '2026-02-30' }, { nextVisitDate: '03/11/2026' }, { status: 'realizada' }]) {
-      const response = await app.agent.patch(`${BASE}/${visit.id}/report`).set(app.auth(attendantA)).send(body);
+      const response = await app.agent.patch(`${BASE}/${visit.id}/report`).set(app.auth(repA)).send(body);
       expect(response.status).toBe(400);
       expect(errorOf(response).code).toBe('VALIDATION_ERROR');
     }
@@ -330,9 +330,9 @@ describe('relato e próximo passo', () => {
 
 describe('anexos', () => {
   it('foto PNG real vira JPEG ao gravar (CRMLAB-128, D-291)', async () => {
-    const visit = await createVisit(attendantA);
+    const visit = await createVisit(repA);
     const png = await sharp({ create: { width: 20, height: 10, channels: 4, background: 'red' } }).png().toBuffer();
-    const created = await attach(attendantA, visit.id, { fileName: 'receita.png', mimeType: 'image/png', content: png });
+    const created = await attach(repA, visit.id, { fileName: 'receita.png', mimeType: 'image/png', content: png });
     expect(created.status).toBe(201);
     const body = created.body as VisitAttachment;
     const onDisk = await readMediaFile(body.id);
@@ -343,15 +343,15 @@ describe('anexos', () => {
   });
 
   it('anexa PNG e PDF, lista no detalhe e baixa com os cabeçalhos de mídia', async () => {
-    const visit = await createVisit(attendantA);
-    const png = await attach(attendantA, visit.id, { fileName: 'foto consultório.png', mimeType: 'image/png', content: PNG });
+    const visit = await createVisit(repA);
+    const png = await attach(repA, visit.id, { fileName: 'foto consultório.png', mimeType: 'image/png', content: PNG });
     expect(png.status).toBe(201);
     const pngBody = png.body as VisitAttachment;
     expect(pngBody).toMatchObject({
       fileName: 'foto consultório.png',
       mimeType: 'image/png',
       byteSize: PNG.byteLength,
-      uploadedBy: { id: attendantA.id, name: 'Atendente Bia' },
+      uploadedBy: { id: repA.id, name: 'Representante Bia' },
     });
     expect(await readMediaFile(pngBody.id)).toEqual(PNG);
 
@@ -359,7 +359,7 @@ describe('anexos', () => {
     expect(pdf.status).toBe(201);
     const pdfBody = pdf.body as VisitAttachment;
 
-    const detail = (await app.agent.get(`${BASE}/${visit.id}`).set(app.auth(attendantA)).expect(200)).body as VisitDetail;
+    const detail = (await app.agent.get(`${BASE}/${visit.id}`).set(app.auth(repA)).expect(200)).body as VisitDetail;
     expect(detail.attachmentCount).toBe(2);
     expect(detail.attachments.map((a) => a.fileName)).toEqual(['foto consultório.png', 'folder.pdf']);
 
@@ -372,7 +372,7 @@ describe('anexos', () => {
     );
     expect(image.body).toEqual(PNG);
 
-    const doc = await download(attendantA, visit.id, pdfBody.id);
+    const doc = await download(repA, visit.id, pdfBody.id);
     expect(doc.status).toBe(200);
     expect(doc.headers['content-type']).toBe('application/pdf');
     expect(doc.headers['content-disposition']).toBe('attachment; filename="folder.pdf"');
@@ -388,7 +388,7 @@ describe('anexos', () => {
   });
 
   it('só imagem e PDF: áudio, Word e HTML disfarçado de PNG -> 400', async () => {
-    const visit = await createVisit(attendantA);
+    const visit = await createVisit(repA);
     const cases = [
       { fileName: 'audio.ogg', mimeType: 'audio/ogg', content: Buffer.from('OggS') },
       { fileName: 'proposta.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', content: PDF },
@@ -396,24 +396,24 @@ describe('anexos', () => {
       { fileName: 'falso.png', mimeType: 'image/png', content: PDF },
     ];
     for (const file of cases) {
-      const response = await attach(attendantA, visit.id, file);
+      const response = await attach(repA, visit.id, file);
       expect(response.status).toBe(400);
       expect(errorOf(response).code).toBe('VALIDATION_ERROR');
     }
-    const detail = (await app.agent.get(`${BASE}/${visit.id}`).set(app.auth(attendantA))).body as VisitDetail;
+    const detail = (await app.agent.get(`${BASE}/${visit.id}`).set(app.auth(repA))).body as VisitDetail;
     expect(detail.attachments).toEqual([]);
   });
 
   it('acima de 15 MiB -> 413 MEDIA_TOO_LARGE', async () => {
-    const visit = await createVisit(attendantA);
+    const visit = await createVisit(repA);
     const big = Buffer.concat([PDF, Buffer.alloc(MAX_MEDIA_BYTES)]);
-    const response = await attach(attendantA, visit.id, { fileName: 'grande.pdf', mimeType: 'application/pdf', content: big });
+    const response = await attach(repA, visit.id, { fileName: 'grande.pdf', mimeType: 'application/pdf', content: big });
     expect(response.status).toBe(413);
     expect(errorOf(response).code).toBe('MEDIA_TOO_LARGE');
   });
 
   it(`no máximo ${VISIT_ATTACHMENTS_MAX} anexos por visita`, async () => {
-    const visit = await createVisit(attendantA);
+    const visit = await createVisit(repA);
     // Enche direto no banco: 20 uploads pela API só deixariam o teste lento.
     await db.withoutTenant((tx) =>
       tx.query(
@@ -422,21 +422,21 @@ describe('anexos', () => {
         [tenantA.id, visit.id, VISIT_ATTACHMENTS_MAX],
       ),
     );
-    const response = await attach(attendantA, visit.id, { fileName: 'mais.pdf', mimeType: 'application/pdf', content: PDF });
+    const response = await attach(repA, visit.id, { fileName: 'mais.pdf', mimeType: 'application/pdf', content: PDF });
     expect(response.status).toBe(400);
     expect(errorOf(response)).toMatchObject({ code: 'VALIDATION_ERROR', details: { fields: { attachments: expect.any(String) } } });
   });
 
   it('qualquer usuário exclui: some a linha e o arquivo, com audit', async () => {
-    const visit = await createVisit(attendantA);
-    const created = (await attach(attendantA, visit.id, { fileName: 'folder.pdf', mimeType: 'application/pdf', content: PDF }))
+    const visit = await createVisit(repA);
+    const created = (await attach(repA, visit.id, { fileName: 'folder.pdf', mimeType: 'application/pdf', content: PDF }))
       .body as VisitAttachment;
 
     await app.agent.delete(`${BASE}/${visit.id}/attachments/${created.id}`).set(app.auth(managerA)).expect(204);
     expect(await readMediaFile(created.id)).toBeNull();
-    const detail = (await app.agent.get(`${BASE}/${visit.id}`).set(app.auth(attendantA))).body as VisitDetail;
+    const detail = (await app.agent.get(`${BASE}/${visit.id}`).set(app.auth(repA))).body as VisitDetail;
     expect(detail.attachments).toEqual([]);
-    await download(attendantA, visit.id, created.id).expect(404);
+    await download(repA, visit.id, created.id).expect(404);
     await app.agent.delete(`${BASE}/${visit.id}/attachments/${created.id}`).set(app.auth(managerA)).expect(404);
 
     const audit = (await auditOf(visit.id)).filter((a) => a.action === 'delete_visit_attachment');
@@ -448,51 +448,51 @@ describe('anexos', () => {
   });
 
   it('visita cancelada: anexar e excluir -> 409, baixar continua', async () => {
-    const visit = await createVisit(attendantA);
-    const created = (await attach(attendantA, visit.id, { fileName: 'folder.pdf', mimeType: 'application/pdf', content: PDF }))
+    const visit = await createVisit(repA);
+    const created = (await attach(repA, visit.id, { fileName: 'folder.pdf', mimeType: 'application/pdf', content: PDF }))
       .body as VisitAttachment;
-    await app.agent.post(`${BASE}/${visit.id}/cancel`).set(app.auth(attendantA)).send({ reason: 'x' }).expect(200);
+    await app.agent.post(`${BASE}/${visit.id}/cancel`).set(app.auth(repA)).send({ reason: 'x' }).expect(200);
 
-    const add = await attach(attendantA, visit.id, { fileName: 'outro.pdf', mimeType: 'application/pdf', content: PDF });
+    const add = await attach(repA, visit.id, { fileName: 'outro.pdf', mimeType: 'application/pdf', content: PDF });
     expect(add.status).toBe(409);
     expect(errorOf(add).code).toBe('VISIT_ALREADY_CLOSED');
-    const del = await app.agent.delete(`${BASE}/${visit.id}/attachments/${created.id}`).set(app.auth(attendantA));
+    const del = await app.agent.delete(`${BASE}/${visit.id}/attachments/${created.id}`).set(app.auth(repA));
     expect(del.status).toBe(409);
-    await download(attendantA, visit.id, created.id).expect(200);
+    await download(repA, visit.id, created.id).expect(200);
   });
 
   it('anexo de outra visita -> 404', async () => {
-    const visit = await createVisit(attendantA);
-    const other = await createVisit(attendantA);
-    const created = (await attach(attendantA, visit.id, { fileName: 'folder.pdf', mimeType: 'application/pdf', content: PDF }))
+    const visit = await createVisit(repA);
+    const other = await createVisit(repA);
+    const created = (await attach(repA, visit.id, { fileName: 'folder.pdf', mimeType: 'application/pdf', content: PDF }))
       .body as VisitAttachment;
-    await download(attendantA, other.id, created.id).expect(404);
-    await app.agent.delete(`${BASE}/${other.id}/attachments/${created.id}`).set(app.auth(attendantA)).expect(404);
+    await download(repA, other.id, created.id).expect(404);
+    await app.agent.delete(`${BASE}/${other.id}/attachments/${created.id}`).set(app.auth(repA)).expect(404);
   });
 });
 
 describe('isolamento multitenant', () => {
   it('visita e anexo de outro tenant -> 404 NOT_FOUND em todas as rotas novas', async () => {
-    const visitB = await createVisit(attendantB, doctorB);
-    const attachmentB = (await attach(attendantB, visitB.id, { fileName: 'b.pdf', mimeType: 'application/pdf', content: PDF }))
+    const visitB = await createVisit(repB, doctorB);
+    const attachmentB = (await attach(repB, visitB.id, { fileName: 'b.pdf', mimeType: 'application/pdf', content: PDF }))
       .body as VisitAttachment;
 
-    const h = app.auth(attendantA);
+    const h = app.auth(repA);
     const responses = [
-      await checkIn(attendantA, visitB.id),
-      await checkOut(attendantA, visitB.id),
+      await checkIn(repA, visitB.id),
+      await checkOut(repA, visitB.id),
       await app.agent.patch(`${BASE}/${visitB.id}/report`).set(h).send({ presented: 'x' }),
-      await attach(attendantA, visitB.id, { fileName: 'a.pdf', mimeType: 'application/pdf', content: PDF }),
-      await download(attendantA, visitB.id, attachmentB.id),
+      await attach(repA, visitB.id, { fileName: 'a.pdf', mimeType: 'application/pdf', content: PDF }),
+      await download(repA, visitB.id, attachmentB.id),
       await app.agent.delete(`${BASE}/${visitB.id}/attachments/${attachmentB.id}`).set(h),
-      await checkIn(attendantA, UNKNOWN_ID),
+      await checkIn(repA, UNKNOWN_ID),
     ];
     for (const response of responses) {
       expect(response.status).toBe(404);
       expect(errorOf(response).code).toBe('NOT_FOUND');
     }
     // Nada mudou no tenant B.
-    const detailB = (await app.agent.get(`${BASE}/${visitB.id}`).set(app.auth(attendantB))).body as VisitDetail;
+    const detailB = (await app.agent.get(`${BASE}/${visitB.id}`).set(app.auth(repB))).body as VisitDetail;
     expect(detailB).toMatchObject({ checkInAt: null, report: { presented: null }, attachmentCount: 1 });
   });
 

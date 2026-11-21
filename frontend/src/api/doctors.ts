@@ -6,8 +6,11 @@ import type {
   DoctorTimelineQuery,
   DoctorTimelineResponse,
   UpdateDoctorInteractionRequest,
+  ListDoctorPortfoliosResponse,
   ListDoctorsQuery,
   ListDoctorsResponse,
+  TransferDoctorsRequest,
+  TransferDoctorsResponse,
   UpdateDoctorRequest,
 } from '@crm-lab/shared';
 import { http } from './client';
@@ -15,8 +18,8 @@ import type { QueryParams } from './client';
 
 /**
  * `/doctors` — médicos solicitantes (docs/api/API_CONTRACTS.md §13, CRMLAB-86,
- * D-255). Todas as rotas valem para qualquer papel do laboratório: não há
- * controle de escrita a esconder por perfil.
+ * D-255). Desde D-329: representante (só a carteira dele — o servidor recorta),
+ * gestor e admin; a atendente recebe 403. Carteiras e transferência: gestor/admin.
  */
 export const doctorsApi = {
   list: (query: ListDoctorsQuery = {}) => http.get<ListDoctorsResponse>('/doctors', query as QueryParams),
@@ -30,6 +33,11 @@ export const doctorsApi = {
   inactivate: (id: string) => http.post<Doctor>(`/doctors/${id}/inactivate`),
 
   reactivate: (id: string) => http.post<Doctor>(`/doctors/${id}/reactivate`),
+
+  // Carteiras e transferência em lote (CRMLAB-189, D-329 — gestor/admin).
+  portfolios: () => http.get<ListDoctorPortfoliosResponse>('/doctors/portfolios'),
+
+  transfer: (body: TransferDoctorsRequest) => http.post<TransferDoctorsResponse>('/doctors/transfer', body),
 
   // Linha do tempo do médico (CRMLAB-89, D-261).
   timeline: (id: string, query: DoctorTimelineQuery = {}) =>

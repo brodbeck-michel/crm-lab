@@ -296,7 +296,7 @@ describe('PUT /settings/channels/whatsapp/mode — guardas', () => {
     const plataforma = await createTenant({ name: 'Plataforma', slug: 'plat', db });
     const operador = await createUser({ tenantId: plataforma.id, role: 'platform_operator', db });
     const res = await putMode('cloud_api', operador).expect(403);
-    expect(res.body.error.details.requiredRoles).toEqual(['attendant', 'manager', 'admin']);
+    expect(res.body.error.details.requiredRoles).toEqual(['attendant', 'representative', 'manager', 'admin']);
     expect(await modeOf(tenantId)).toBe('qr');
   });
 });

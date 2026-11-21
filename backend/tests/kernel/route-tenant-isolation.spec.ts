@@ -146,7 +146,7 @@ const LAB_MODULES = [
   quickReplyModule,
   themeModule,
   userModule,
-  // CRMLAB-184 (D-326). `captureModule` (`/capture/*`) fica de fora: e PUBLICO
+  // CRMLAB-184 (D-327). `captureModule` (`/capture/*`) fica de fora: e PUBLICO
   // (cookie do dispositivo, sem Bearer) — o isolamento dele esta em
   // `tests/scans/capture-devices.spec.ts` e `tests/scans/scans.spec.ts`.
   captureDeviceModule,
@@ -205,7 +205,7 @@ interface Lab {
   internalAttachment: { id: string };
   /** Mensagem interna da atendente que carrega `internalAttachment` (CRMLAB-117). */
   internalMessage: { id: string };
-  /** Dispositivo de captura (CRMLAB-184, D-326). */
+  /** Dispositivo de captura (CRMLAB-184, D-327). */
   captureDevice: { id: string };
   /** Foto na fila Digitalizacoes, com o arquivo no disco (CRMLAB-184). */
   scan: { id: string };
@@ -1032,6 +1032,15 @@ const LAB_ROUTES: readonly LabRoute[] = [
     addressable: true,
     ownStatus: 200,
   },
+  {
+    // CRMLAB-186 (D-326): usuario de outro tenant → 404, nunca 403.
+    name: 'POST /users/:id/reset-password',
+    method: 'post',
+    path: (l) => `/api/v1/users/${l.attendant.id}/reset-password`,
+    actor: 'admin',
+    addressable: true,
+    ownStatus: 200,
+  },
   { name: 'GET /audit', method: 'get', path: () => '/api/v1/audit', actor: 'admin', addressable: false },
 
   // --- tema ---
@@ -1133,7 +1142,7 @@ const LAB_ROUTES: readonly LabRoute[] = [
     actor: 'attendant',
     addressable: false,
   },
-  // --- Digitalizacoes (CRMLAB-184, D-326) ---
+  // --- Digitalizacoes (CRMLAB-184, D-327) ---
   { name: 'GET /settings/capture-devices', method: 'get', path: () => '/api/v1/settings/capture-devices', actor: 'manager', addressable: false },
   {
     name: 'POST /settings/capture-devices',
@@ -1524,7 +1533,7 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 131 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 132 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
@@ -1572,10 +1581,11 @@ describe('inventario de rotas de laboratorio', () => {
     // CRMLAB-138/D-308 soma 1: `PUT /settings/channels/whatsapp/mode`.
     // CRMLAB-136/D-309 soma 1: `GET /whatsapp/templates`.
     // CRMLAB-141/D-312 soma 1: `GET /settings/channels/whatsapp/usage`.
-    // CRMLAB-184/D-326 soma 7: `GET|POST /settings/capture-devices`,
+    // CRMLAB-184/D-327 soma 7: `GET|POST /settings/capture-devices`,
     // `POST /settings/capture-devices/:id/pairing-code`, `DELETE /settings/capture-devices/:id`,
     // `GET /scans`, `GET /scans/:id/content` e `DELETE /scans/:id`.
-    expect(LAB_ROUTES).toHaveLength(131);
+    // CRMLAB-186/D-326 soma 1: `POST /users/:id/reset-password`.
+    expect(LAB_ROUTES).toHaveLength(132);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

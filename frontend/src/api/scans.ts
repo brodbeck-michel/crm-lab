@@ -10,7 +10,7 @@ import { http } from './client';
 import { queryKeys, queryScopes } from './query-keys';
 
 /**
- * Digitalizações — fila e dispositivos de captura (CRMLAB-184, D-326,
+ * Digitalizações — fila e dispositivos de captura (CRMLAB-184, D-327,
  * API_CONTRACTS §15.1 e §15.3). A captura do celular (sem login) fica em
  * `capture.ts`.
  *

@@ -43,6 +43,8 @@ export type ApiErrorCode =
   | 'RESET_TOKEN_INVALID'
   | 'PAIRING_CODE_INVALID'
   | 'CAPTURE_DEVICE_UNPAIRED'
+  /** Senha provisória: só `GET /users/me` e `PATCH /users/me/password` (CRMLAB-186, D-326). */
+  | 'PASSWORD_CHANGE_REQUIRED'
   // Recursos
   | 'NOT_FOUND'
   | 'VALIDATION_ERROR'

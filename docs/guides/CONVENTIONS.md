@@ -26,7 +26,7 @@ Padrões obrigatórios para todos os agentes/desenvolvedores. Consistência > pr
 | Colunas | snake_case | `discount_percent` |
 | Endpoints | kebab-case, recursos no plural | `/internal-chat/channels` |
 | Eventos WS | dot.notation | `conversation.new_message` |
-| Branches | `<dominio>/<descricao>` | `api/proposal-service` |
+| Branches | `<tipo>/CRMLAB-NNN-descricao` | `feature/CRMLAB-185-campo-senha-olho` |
 
 ---
 
@@ -66,20 +66,26 @@ Front e back importam DO MESMO pacote — divergência de shape vira erro de com
 ## Git Workflow
 
 ### Commits
+Conventional Commits com a issue do Jira (projeto CRMLAB) no escopo:
 ```
-[dominio] descrição curta no imperativo
+<tipo>(CRMLAB-NNN): descrição curta
 
-[api] add ProposalService with discount validation
-[ui] implement ConversationItem component
-[db] add migration 003 for audit_logs
-[docs] update API_CONTRACTS with approval endpoints
+feat(CRMLAB-185): campo de senha com olho e aviso de Caps Lock
+fix(CRMLAB-164): visibilidade de proposta para atendente
+docs(CRMLAB-142): D-324 migração completa do Santé para a Cloud API
+chore(release): v1.48.4
 ```
+Tipos: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`.
 
 ### Branches e PRs
-- `main` protegida — só via PR com CI verde
-- 1 PR = 1 tarefa do STATUS.md (pequeno e focado)
+- Branch a partir da `main`: `feature/`, `fix/` ou `docs/` + `CRMLAB-NNN-descricao`
+- `main` só recebe via PR com CI verde — nada de push direto (o GitHub Free não trava isso em
+  repo privado; a regra é de disciplina, D-322)
+- 1 PR = 1 card CRMLAB (pequeno e focado); título no mesmo formato do commit
 - PR description: o que + por quê + link para doc relevante
 - Mudança de contrato (API/schema/tokens): doc atualizado NO MESMO PR
+- Release: PR `chore/release-vX.Y.Z` só com o bump de `version` do `package.json` raiz (+ lock),
+  depois tag `vX.Y.Z` no commit de merge. Deploy: `docs/guides/ENVIRONMENTS.md`
 
 ---
 

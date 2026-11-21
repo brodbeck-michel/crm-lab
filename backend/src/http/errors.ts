@@ -31,11 +31,15 @@ export const ERROR_CATALOG = {
   FORBIDDEN: { statusCode: 403, message: 'Voce nao tem permissao para esta acao' },
   USER_INACTIVE: { statusCode: 403, message: 'Usuario desativado' },
   TENANT_INACTIVE: { statusCode: 403, message: 'Laboratorio inativo ou suspenso' },
+  PASSWORD_CHANGE_REQUIRED: {
+    statusCode: 403,
+    message: 'Troque a senha provisoria antes de continuar',
+  },
   RESET_TOKEN_INVALID: {
     statusCode: 400,
     message: 'Link de redefinicao invalido ou expirado, solicite um novo',
   },
-  // Digitalizar pelo celular (CRMLAB-184, D-326).
+  // Digitalizar pelo celular (CRMLAB-184, D-327).
   PAIRING_CODE_INVALID: {
     statusCode: 400,
     message: 'Codigo de pareamento invalido ou vencido. Peca um codigo novo ao administrador',

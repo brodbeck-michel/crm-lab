@@ -196,7 +196,7 @@ export function createApp(deps: AppDeps): BuiltApp {
   // abandonadas por causa disso.
   // As rotas do celular pareado (`/capture/session|scans`, CRMLAB-184) tambem
   // ficam fora: o router de `/capture` conta por DISPOSITIVO, depois de
-  // autenticar o cookie (D-326).
+  // autenticar o cookie (D-327).
   app.use(
     rateLimit({ cache, skip: (req) => isChannelWebhook(req) || isCaptureDeviceRoute(req) }),
   );

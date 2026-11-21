@@ -4,7 +4,7 @@ import { ApiError } from '@/api/client';
 import { useLisIntegration, useRunLisSync, useUpdateLisIntegration } from '@/api/lis-integration';
 import { useAuthStore } from '@/stores/auth.store';
 import { PageContainer, PageHeader } from '@/components/layout';
-import { Button, Chip, Input, Toggle, useToast } from '@/components/ui';
+import { Button, Chip, PasswordInput, Toggle, useToast } from '@/components/ui';
 import { formatDateTime, formatIsoDay } from '@/lib/format';
 
 /**
@@ -104,8 +104,7 @@ export default function LisIntegration() {
 
         {canEdit && (
           <form onSubmit={saveKey} className="space-y-sm">
-            <Input
-              type="password"
+            <PasswordInput
               label="Chave de acesso do Bitlab"
               hint="A chave fica cifrada e nunca é exibida de novo."
               placeholder={data.apiKeyMasked ?? 'Cole aqui a chave enviada pelo Bitlab'}

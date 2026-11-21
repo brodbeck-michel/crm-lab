@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useUserList, useAuditList, usePresenceOf } from '@/api';
 import UserTable from '@/components/users/UserTable';
 import UserModal from '@/components/users/UserModal';
+import ResetPasswordDialog from '@/components/users/ResetPasswordDialog';
+import { useAuthStore } from '@/stores';
 import AuditLogTable from '@/components/users/AuditLogTable';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { PageHeader } from '@/components/layout/PageHeader';
@@ -14,6 +16,9 @@ export default function UsersSettings() {
   const [tab, setTab] = useState<Tab>('users');
   const [showModal, setShowModal] = useState(false);
   const [editUser, setEditUser] = useState<ManagedUser | undefined>();
+  // CRMLAB-186 (D-326): alvo do "Resetar senha".
+  const [resetUser, setResetUser] = useState<ManagedUser | null>(null);
+  const currentUserId = useAuthStore((s) => s.user?.id ?? null);
   const [filters, setFilters] = useState<PaginationQuery>({
     page: 1,
     limit: 20,
@@ -80,6 +85,8 @@ export default function UsersSettings() {
                 onEdit={handleEditClick}
                 onPageChange={handlePageChange}
                 presenceOf={presenceOf}
+                onResetPassword={setResetUser}
+                currentUserId={currentUserId}
               />
             )}
           </>
@@ -97,6 +104,10 @@ export default function UsersSettings() {
           </>
         )}
       </div>
+
+      {resetUser && (
+        <ResetPasswordDialog user={resetUser} onClose={() => setResetUser(null)} />
+      )}
 
       {showModal && (
         <UserModal

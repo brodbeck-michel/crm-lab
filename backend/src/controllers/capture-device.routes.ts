@@ -1,5 +1,5 @@
 /**
- * Dispositivos de captura — API_CONTRACTS.md §15.1 (CRMLAB-184, D-326).
+ * Dispositivos de captura — API_CONTRACTS.md §15.1 (CRMLAB-184, D-327).
  *
  *   GET    /api/v1/settings/capture-devices                   manager/admin
  *   POST   /api/v1/settings/capture-devices                   admin (201 + codigo)

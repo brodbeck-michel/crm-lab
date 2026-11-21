@@ -9,6 +9,7 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 ```
 /login                        → Login (público)
 /digitalizar                  → Digitalizar pelo celular (público; dispositivo pareado, sem login — CRMLAB-184)
+/change-password              → Troca obrigatória de senha provisória (logado com mustChangePassword — CRMLAB-186)
 /                             → redirect por perfil (atendente → /attendance)
 /attendance                   → Atendimento (inbox 3 colunas)
 /contacts                     → Busca de Contatos (antiga /patients redireciona, D-294)
@@ -73,7 +74,8 @@ na mesma linha da busca — as abas de Cadastros, acima, são a navegação prin
 | Rota | `requiredRoles` | No trilho da Sidebar | Grupo |
 |------|-----------------|----------------------|-------|
 | `/login` | — (público) | não | — |
-| `/digitalizar` (CRMLAB-184, D-326) | — (público; credencial do dispositivo, §24) | não | — |
+| `/digitalizar` (CRMLAB-184, D-327) | — (público; credencial do dispositivo, §24) | não | — |
+| `/change-password` (CRMLAB-186) | attendant · manager · admin, **só** com `user.mustChangePassword` | não | — |
 | `/` | qualquer sessão → redirect por perfil | não | — |
 | `/attendance` | attendant · manager · admin | sim | solto |
 | `/contacts` | attendant · manager · admin | sim | solto |
@@ -280,7 +282,7 @@ Duas leituras registradas aqui porque o doc original não as fixava:
     com `caption`); falha de um vira toast com o nome do arquivo e os outros seguem. Com resposta
     aberta, **só o primeiro** leva `quotedMessageId`. A conversa de destino é a do clique em Enviar
   - A faixa de não lidas sai ao clicar no clipe e ao enviar (D-239)
-  - **Digitalizações (CRMLAB-184, D-326):** o menu do clipe ganha **"Digitalizações"** (ícone de câmera),
+  - **Digitalizações (CRMLAB-184, D-327):** o menu do clipe ganha **"Digitalizações"** (ícone de câmera),
     abaixo de "Documento". Abre o seletor `ScanPicker` (modal): grade de miniaturas da fila
     (`GET /scans`, recarregado ao abrir; imagem por `contentUrl` com busca autenticada), cada uma com
     "há 12 min · Celular recepção", marcar várias, **lixeira** por foto (`DELETE /scans/:id`, com
@@ -1051,7 +1053,7 @@ Seção própria logo depois de "Conexão de canal", **só quando o WhatsApp est
   cobrado no Gerenciador de Negócios da Meta."
 - Erro de carga: "Não foi possível carregar o uso deste mês." (não esconde a seção)
 
-- **Dispositivos de captura (CRMLAB-184, D-326)** — seção própria, abaixo de Equipe. Admin edita, gestor lê
+- **Dispositivos de captura (CRMLAB-184, D-327)** — seção própria, abaixo de Equipe. Admin edita, gestor lê
   - Lista (`GET /settings/capture-devices`): nome, `Chip` do status (Aguardando pareamento / Ativo /
     Revogado), "último envio há X", fotos na fila
   - **Novo dispositivo** (admin): pede o nome → `POST` → modal com o **código grande** (`K7MX-4QPR`),
@@ -1098,6 +1100,24 @@ Seção própria logo depois de "Conexão de canal", **só quando o WhatsApp est
 - Tabela de usuários: nome, email, papel, limite de desconto, status
 - Criar/editar (modal): papel + limite desconto
 - Log de auditoria (aba)
+- **Resetar senha (CRMLAB-186, D-326):** ação por linha, em **todo usuário menos o próprio admin
+  logado** (a própria senha é em Minha Conta). Confirmação → `POST /users/:id/reset-password` →
+  modal mostra a senha provisória **uma vez**, com botão copiar e o aviso de que ela não aparece
+  de novo e de que o usuário vai precisar trocá-la no primeiro acesso. Fechou o modal, a senha
+  some (não fica em cache do TanStack Query nem em store)
+
+### Troca obrigatória de senha (`/change-password`) — CRMLAB-186, D-326
+- Para quem entrou com senha provisória (`user.mustChangePassword` no login). `RequireAuth` manda
+  para cá qualquer outra rota enquanto a flag estiver ligada; sem a flag, esta rota redireciona
+  para a home do papel
+- Tela solta (sem menu lateral), mesmo visual de `/reset-password`: senha provisória + nova +
+  confirmação (`PasswordInput`) → `PATCH /users/me/password` → `POST /auth/refresh` (token sem o
+  claim) → desliga a flag no store e vai para a home do papel
+- Mesmas regras de tela de Minha Conta (mínimo 10, confirmação igual, nova ≠ atual); a política de
+  verdade é a do backend
+- Link "Sair" (logout) para quem não quer trocar agora
+- Qualquer resposta `403 PASSWORD_CHANGE_REQUIRED` de outra chamada (ex.: sessão restaurada de
+  antes do reset) liga a flag no store e cai aqui
 
 ### Minha Conta (`/settings/account`) — todos os papéis de tenant
 
@@ -1876,7 +1896,7 @@ Tela **full-bleed** (sem `PageContainer`): conteúdo à esquerda e, a partir de 
 
 ---
 
-## 24. Digitalizar pelo celular (`/digitalizar`) — público, dispositivo pareado (CRMLAB-184, D-326)
+## 24. Digitalizar pelo celular (`/digitalizar`) — público, dispositivo pareado (CRMLAB-184, D-327)
 
 Tela única pensada para o **iPhone da recepção**, fora do `AppShell` (sem Sidebar, sem sessão de
 usuário). Abrir o atalho → tirar a foto → enviar para a fila **Digitalizações**. Quem manda ao paciente
@@ -1898,7 +1918,7 @@ tema padrão mudar, atualizar o arquivo à mão.
 **Estados (decididos ao abrir, por `GET /capture/session`):**
 1. **Aberta no Safari, não instalada** (`!matchMedia('(display-mode: standalone)').matches` e
    `!navigator.standalone`): só o passo a passo "Compartilhar › Adicionar à Tela de Início" com
-   ilustração. **Não pareia aqui**: no iOS o app instalado não enxerga o cookie do Safari (D-326 item 4).
+   ilustração. **Não pareia aqui**: no iOS o app instalado não enxerga o cookie do Safari (D-327 item 4).
    Fora do iOS (Android/desktop), mostra o passo a passo **e** deixa seguir para o código
    (**Continuar sem instalar**). No iOS fora da tela de início nem pergunta a sessão.
 2. **Instalada e não pareada** (`CAPTURE_DEVICE_UNPAIRED`): campo do código, 8 caracteres, teclado

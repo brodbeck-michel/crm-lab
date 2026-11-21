@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 
 /**
- * Cabeça de PWA só da `/digitalizar` (PAGES.md §24, D-326 item 2): manifesto
+ * Cabeça de PWA só da `/digitalizar` (PAGES.md §24, D-327 item 2): manifesto
  * próprio, ícone da tela de início do iOS e `viewport-fit=cover` (para o
  * `env(safe-area-inset-*)` valer). Sem service worker. Sai tudo ao desmontar —
  * o resto do CRM não ganha manifesto.

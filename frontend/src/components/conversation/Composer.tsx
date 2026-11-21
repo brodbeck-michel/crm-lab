@@ -67,7 +67,7 @@ export interface ComposerProps {
   /** Clique no clipe (a tela tira a faixa de não lidas, D-239). */
   onAttachClick?: () => void;
   /**
-   * "Digitalizações" no menu do clipe (CRMLAB-184, D-326): quem monta a tela
+   * "Digitalizações" no menu do clipe (CRMLAB-184, D-327): quem monta a tela
    * abre o `ScanPicker`. Sem handler, o item não aparece.
    */
   onOpenScans?: () => void;

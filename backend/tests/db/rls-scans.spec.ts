@@ -1,6 +1,6 @@
 /**
- * RLS fail-closed de `capture_devices` e `scans` (migracao 068 — CRMLAB-184,
- * D-326). Mesmo padrao de `rls-proposal-reminders.spec.ts`.
+ * RLS fail-closed de `capture_devices` e `scans` (migracao 069 — CRMLAB-184,
+ * D-327). Mesmo padrao de `rls-proposal-reminders.spec.ts`.
  */
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DbClient } from '../../src/db/types.js';

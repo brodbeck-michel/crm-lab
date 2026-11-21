@@ -1,6 +1,6 @@
 /**
  * Fila "Digitalizacoes" — API_CONTRACTS §15.2 (`POST /capture/scans`), §15.3,
- * §15.4 e `scanId` em `POST /conversations/:id/attachments` (CRMLAB-184, D-326).
+ * §15.4 e `scanId` em `POST /conversations/:id/attachments` (CRMLAB-184, D-327).
  */
 import { existsSync } from 'node:fs';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';

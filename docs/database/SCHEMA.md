@@ -212,6 +212,7 @@ CREATE TABLE users (
   is_active BOOLEAN DEFAULT TRUE,
   last_login_at TIMESTAMP,
   presence_status VARCHAR(10) NOT NULL DEFAULT 'online', -- migração 059 (CRMLAB-120, D-286)
+  must_change_password BOOLEAN NOT NULL DEFAULT FALSE, -- migração 068 (CRMLAB-186, D-326)
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW(),
   
@@ -2449,7 +2450,21 @@ INSERT INTO whatsapp_price_table (category, price_brl, effective_from) VALUES
   código lê esta tabela; o histórico da decisão continua no audit log da proposta.
 - Idempotente: rodar de novo não move nem renomeia nada.
 
-### 49. `capture_devices` e `scans` — Digitalizar pelo celular (migração 068 — CRMLAB-184, D-326)
+### 49. `users.must_change_password` (migração 068 — CRMLAB-186, D-326)
+Senha atual é **provisória** e precisa ser trocada antes de usar o sistema.
+
+```sql
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
+```
+
+- **Liga:** `POST /users/:id/reset-password` (admin do laboratório) e
+  `POST /platform/tenants/:id/users/:userId/reset-password` (console).
+- **Desliga:** `PATCH /users/me/password` (troca própria) e `POST /auth/reset-password` (link
+  por e-mail) — qualquer senha escolhida pela própria pessoa.
+- Default `FALSE`, sem backfill: ninguém existente é obrigado a trocar.
+
+### 50. `capture_devices` e `scans` — Digitalizar pelo celular (migração 069 — CRMLAB-184, D-327)
 Dono: `ScanService` (SERVICES.md §36). Migração **única** (tabelas + policies), sem backfill.
 
 ```sql
@@ -2478,7 +2493,7 @@ CREATE TABLE scans (
   mime_type VARCHAR(127) NOT NULL,                 -- já passado pela allow-list + sniff + JPEG (D-290)
   byte_size INTEGER NOT NULL CHECK (byte_size > 0),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  expires_at TIMESTAMPTZ NOT NULL                  -- created_at + 2 dias (D-326 item 6)
+  expires_at TIMESTAMPTZ NOT NULL                  -- created_at + 2 dias (D-327 item 6)
 );
 CREATE INDEX idx_scans_tenant_created ON scans(tenant_id, created_at DESC);
 CREATE INDEX idx_scans_device_id ON scans(device_id);
@@ -2499,6 +2514,7 @@ CREATE INDEX idx_scans_expires_at ON scans(expires_at);
 - **Sem `conversation_id`/`patient_id`:** a foto só ganha dono quando vira anexo; nesse momento o arquivo
   é copiado para `message_media` e a linha de `scans` + o arquivo são apagados. Anonimização de paciente
   (D-063/D-075) não precisa olhar esta tabela.
+
 
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
 
@@ -2615,9 +2631,9 @@ para ser a exceção visível e auditável, nunca o caminho normal:
 | **Console da plataforma** | opera sobre todos os tenants por definição (`platform_operator`) |
 | **Agendador da sincronização LIS** | lista **só os `tenant_id`** com sincronização ligada, antes de ter contexto (D-186). A rodada de cada tenant roda com `withTenant()` |
 | **Motor de tempo do funil** | lista **só os `tenant_id`** de tenants ativos com proposta aberta, antes de ter contexto (D-205 item 6). Leitura das regras, dos cartões e cada transição rodam com `withTenant()` |
-| **Pareamento do dispositivo de captura** | `POST /capture/pair` acha o dispositivo pelo **hash do código** antes de saber o tenant (D-326). Busca uma linha só; a gravação do pareamento roda com `withTenant()` |
-| **Autenticação do dispositivo de captura** | `/capture/*` acha o dispositivo pelo **hash da credencial** do cookie — o equivalente ao Login, para o celular (D-326). Daí em diante, `withTenant()` |
-| **Agendador de expiração das digitalizações** | lista **só os `tenant_id`** com `scans` vencidas; o `DELETE` e a remoção do arquivo de cada tenant rodam com `withTenant()` (D-326) |
+| **Pareamento do dispositivo de captura** | `POST /capture/pair` acha o dispositivo pelo **hash do código** antes de saber o tenant (D-327). Busca uma linha só; a gravação do pareamento roda com `withTenant()` |
+| **Autenticação do dispositivo de captura** | `/capture/*` acha o dispositivo pelo **hash da credencial** do cookie — o equivalente ao Login, para o celular (D-327). Daí em diante, `withTenant()` |
+| **Agendador de expiração das digitalizações** | lista **só os `tenant_id`** com `scans` vencidas; o `DELETE` e a remoção do arquivo de cada tenant rodam com `withTenant()` (D-327) |
 
 Nenhum outro caminho de código deve usar `withoutTenant()`.
 
@@ -2664,7 +2680,7 @@ Nenhum outro caminho de código deve usar `withoutTenant()`.
 | `doctor_visits` | ✅ | migração `048_doctor_visits.sql` (tabela + policy no mesmo arquivo — CRMLAB-87), testado em `tests/visits/visits.spec.ts` |
 | `doctor_visit_reschedules` | ✅ | migração `048_doctor_visits.sql` (CRMLAB-87), testado em `tests/visits/visits.spec.ts` |
 | `proposal_reminders` | ✅ | migração `056_proposal_reminders.sql` (tabela + policy no mesmo arquivo — CRMLAB-102), `tests/db/rls-proposal-reminders.spec.ts` |
-| `capture_devices` | ✅ | migração `068_scans.sql` (tabela + policy no mesmo arquivo — CRMLAB-184), `tests/db/rls-scans.spec.ts` |
+| `capture_devices` | ✅ | migração `069_scans.sql` (tabela + policy no mesmo arquivo — CRMLAB-184), `tests/db/rls-scans.spec.ts` |
 | `scans` | ✅ | idem |
 
 As **4 tabelas da migração 003** entram sob RLS na `004_rls_onda6.sql`, as **3 tabelas da
@@ -2954,4 +2970,6 @@ tabelas novas — com 2 tenants e controle positivo em cada asserção.
 - `docs/database/QUERIES.md` - Queries otimizadas
 - `docs/database/RELATIONSHIPS.md` - Relacionamentos detalhados
 - `docs/backend/MODELS.md` - Modelos TypeORM/Sequelize
+
+---
 

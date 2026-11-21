@@ -23,7 +23,7 @@ export interface CreateAttachmentRequest {
 
 /**
  * `POST /conversations/:id/attachments` com uma foto da fila Digitalizações
- * (CRMLAB-184, D-326): `scanId` NO LUGAR de `fileName`/`mimeType`/`contentBase64`.
+ * (CRMLAB-184, D-327): `scanId` NO LUGAR de `fileName`/`mimeType`/`contentBase64`.
  */
 export interface CreateScanAttachmentRequest {
   scanId: string;

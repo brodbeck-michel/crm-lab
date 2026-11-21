@@ -81,6 +81,7 @@ describe('POST /auth/login', () => {
       name: 'João Silva',
       role: 'attendant',
       discountLimit: 15,
+      mustChangePassword: false,
     });
 
     expect(body.tenant.id).toBe(tenant.id);

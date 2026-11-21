@@ -151,7 +151,7 @@ export const queryKeys = {
 
   /**
    * ['settings', 'capture-devices'] — "Dispositivos de captura" em Canais & Equipe
-   * (CRMLAB-184, D-326, API_CONTRACTS §15.1). Sob `settings`: cai junto com o escopo.
+   * (CRMLAB-184, D-327, API_CONTRACTS §15.1). Sob `settings`: cai junto com o escopo.
    */
   captureDevices: () => ['settings', 'capture-devices'] as const,
   /**

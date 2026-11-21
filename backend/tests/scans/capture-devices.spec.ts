@@ -1,6 +1,6 @@
 /**
  * Dispositivos de captura e pareamento — API_CONTRACTS §15.1/§15.2
- * (CRMLAB-184, D-326).
+ * (CRMLAB-184, D-327).
  *
  * Protege: papeis (manager le, admin escreve, platform_operator nunca);
  * audit de cadastro/codigo/revogacao/pareamento; as quatro falhas do

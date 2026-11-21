@@ -34,7 +34,7 @@ CREATE POLICY tenant_isolation ON conversations
   `phone_number`/`api_token`/`webhook_secret`) e o e-mail de usuários `role = 'admin'` (nunca
   `name`, nunca `manager`/`attendant`). `PATCH /platform/tenants/:id` (ativar/desativar tenant,
   trocar plano) e `POST /platform/tenants/:id/users/:userId/reset-password` (só contra usuário
-  `admin` do próprio tenant) são as únicas escritas do console sobre dado de laboratório, ambas
+  `admin` do próprio tenant; desde D-326 também liga a troca obrigatória) são as únicas escritas do console sobre dado de laboratório, ambas
   auditadas. Fora desta lista nomeada, o isolamento acima continua absoluto.
 
 ---
@@ -44,6 +44,10 @@ CREATE POLICY tenant_isolation ON conversations
 - Senhas: bcrypt cost 12; política mínima 8 chars
 - Access token 15 min; refresh 7 dias, armazenado HASHEADO no Redis, rotacionado a cada uso
 - Logout revoga refresh; troca de senha revoga TODOS os refresh do usuário
+- **Senha provisória (D-326):** reset por admin do laboratório (`POST /users/:id/reset-password`) ou pelo
+  console liga `users.must_change_password`; o access token carrega `mustChangePassword` e toda rota
+  autenticada (e o `/ws`) responde `403 PASSWORD_CHANGE_REQUIRED`, menos `GET /users/me` e
+  `PATCH /users/me/password`. O reset revoga todas as sessões do usuário e é auditado com o admin como autor
 - Login falho: mensagem genérica + rate limit (5 tentativas / 15 min por email+IP)
 - Refresh vive em cookie httpOnly `crm_refresh`, `Path=/` (D-142/D-151) — nunca em `localStorage`
 - **WebSocket (`/ws`, CRMLAB-33/D-151):** autentica pelo mesmo cookie httpOnly (mesmo origin, vai
@@ -53,7 +57,7 @@ CREATE POLICY tenant_isolation ON conversations
   recusa (destroi o socket, sem completar o handshake) qualquer origin fora da lista, ANTES de
   olhar o cookie.
 
-### Dispositivo de captura (CRMLAB-184, D-326)
+### Dispositivo de captura (CRMLAB-184, D-327)
 
 A **única credencial que não é de usuário**: o celular da recepção pareado para `/digitalizar`.
 - **Escopo mínimo:** só `/capture/session` e `/capture/scans` (enviar foto para a fila). Não lê conversa,

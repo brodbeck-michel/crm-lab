@@ -8,7 +8,7 @@ import { blobToBase64, isIos, isStandalone, reduceScanImage } from './capture-he
 import { usePwaHead } from './usePwaHead';
 
 /**
- * Digitalizar pelo celular — `/digitalizar` (PAGES.md §24, CRMLAB-184, D-326).
+ * Digitalizar pelo celular — `/digitalizar` (PAGES.md §24, CRMLAB-184, D-327).
  *
  * Fora do `AppShell` e sem sessão de usuário: quem fala com a API é o
  * dispositivo pareado (cookie `crm_capture`, `src/api/capture.ts`). A foto vai
@@ -337,7 +337,7 @@ export default function Digitalizar() {
   }, []);
 
   // Ao abrir: no navegador (fora da tela de início) só ensina a instalar. No
-  // iOS não deixa seguir — o app instalado não vê o cookie do Safari (D-326 item 4).
+  // iOS não deixa seguir — o app instalado não vê o cookie do Safari (D-327 item 4).
   useEffect(() => {
     if (isStandalone()) {
       void checkSession();

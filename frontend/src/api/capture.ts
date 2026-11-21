@@ -8,7 +8,7 @@ import { http } from './client';
 import type { RequestOptions } from './client';
 
 /**
- * Captura do celular pareado — `/digitalizar` (PAGES.md §24, API_CONTRACTS §15.2, D-326).
+ * Captura do celular pareado — `/digitalizar` (PAGES.md §24, API_CONTRACTS §15.2, D-327).
  *
  * Não é sessão de usuário: SEM Bearer e SEM o interceptor de refresh
  * (`auth: false`). A credencial do dispositivo é o cookie httpOnly

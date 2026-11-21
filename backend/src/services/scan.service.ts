@@ -1,5 +1,5 @@
 /**
- * ScanService — a fila "Digitalizacoes" (SERVICES.md §36, CRMLAB-184, D-326).
+ * ScanService — a fila "Digitalizacoes" (SERVICES.md §36, CRMLAB-184, D-327).
  *
  * - `create`: a foto do celular pareado. Mesmo hardening do anexo (allow-list
  *   + sniff, CRMLAB-31) e a mesma conversao JPEG sem EXIF/GPS (D-290). So
@@ -65,7 +65,7 @@ const SAO_PAULO_PARTS = new Intl.DateTimeFormat('en-GB', {
   hourCycle: 'h23',
 });
 
-/** "digitalizacao-AAAAMMDD-HHMMSS.jpg" no horario de Brasilia (D-326). */
+/** "digitalizacao-AAAAMMDD-HHMMSS.jpg" no horario de Brasilia (D-327). */
 export function scanFileName(createdAt: Date, mimeType: string): string {
   const parts: Record<string, string> = {};
   for (const p of SAO_PAULO_PARTS.formatToParts(createdAt)) parts[p.type] = p.value;
@@ -287,7 +287,7 @@ export class ScanService {
 
   /**
    * Agendador (main.ts, 30 min). Lista os tenants com vencidas
-   * (`withoutTenant`, D-326) e apaga um por vez com `withTenant`. Nunca lanca.
+   * (`withoutTenant`, D-327) e apaga um por vez com `withTenant`. Nunca lanca.
    */
   async expireDue(): Promise<{ tenantId: string; expired: number }[]> {
     if (expireInProgress) return [];

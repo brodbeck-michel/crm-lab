@@ -3,7 +3,7 @@ import { captureApi } from './capture';
 import { isApiError, resetApiClient, setSessionBridge, setUnauthenticatedHandler } from './client';
 
 /**
- * Captura do celular (CRMLAB-184, D-326): sem Bearer, cookie do dispositivo
+ * Captura do celular (CRMLAB-184, D-327): sem Bearer, cookie do dispositivo
  * (`credentials: 'include'`) e SEM refresh no 401 — não é sessão de usuário.
  */
 

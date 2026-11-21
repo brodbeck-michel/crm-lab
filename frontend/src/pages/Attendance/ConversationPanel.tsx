@@ -96,7 +96,7 @@ export interface ConversationPanelProps {
     quotedMessageId?: string,
   ) => void;
   /**
-   * Clipe "Digitalizações" (CRMLAB-184, D-326): abre o `ScanPicker` e leva as
+   * Clipe "Digitalizações" (CRMLAB-184, D-327): abre o `ScanPicker` e leva as
    * fotos para a mesma prévia. Ausente/`false`: o item não aparece.
    */
   scansEnabled?: boolean;
@@ -654,7 +654,7 @@ export function ConversationPanel({
     addDrafts(files.map(createAttachmentDraft));
   }
 
-  // Digitalizações (D-326): o seletor fica preso à conversa em que abriu, como a prévia.
+  // Digitalizações (D-327): o seletor fica preso à conversa em que abriu, como a prévia.
   const [scanPickerFor, setScanPickerFor] = useState<string | null>(null);
   const scanPickerOpen = scanPickerFor !== null && scanPickerFor === conversationId;
 

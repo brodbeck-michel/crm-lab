@@ -7278,7 +7278,29 @@ e-mail e hash, revoga todas as sessões do operador (`revoked_reason = 'security
 confirmação `PRODUCAO` do `deploy.sh`. O e-mail do operador fica só no banco, não nos docs.
 **Fora daqui:** reset por link e TOTP para o operador são a Etapa 3 da auditoria.
 
-### D-326: Digitalizar pelo celular — fila "Digitalizações" e dispositivo pareado sem login (CRMLAB-184)
+### D-326: Admin do laboratório reseta senha de outro usuário, com troca obrigatória (CRMLAB-186)
+**Contexto:** em 19/11/2026 duas atendentes do Santé esqueceram a senha. O reset do console (D-102) só
+aceita `admin`, o `PATCH /users/:id` não mexe em senha e o "Esqueci minha senha" depende de a pessoa ler o
+e-mail cadastrado. A saída foi gravar o hash direto no banco de produção, sem autor na auditoria.
+**Decisão:**
+1. `POST /users/:id/reset-password`, **só `admin`**, contra qualquer **outro** usuário do próprio tenant
+   (atendente, gestor ou admin). A própria conta e outro tenant → `NOT_FOUND`. Gestor fica de fora nesta
+   versão (não acessa `/settings/users`); pode voltar num card próprio, restrito a atendentes.
+2. A senha provisória (16 caracteres aleatórios) aparece **na tela, uma vez**, no mesmo modelo do reset do
+   console. Link por e-mail foi descartado: o caso real é justamente quem não lê o e-mail.
+3. **Troca obrigatória no primeiro login:** coluna `users.must_change_password`. O reset (do admin e do
+   console) liga; qualquer senha escolhida pela própria pessoa (troca em Minha Conta ou link por e-mail)
+   desliga. Com a flag, o access token leva o claim `mustChangePassword` e o backend recusa toda rota
+   autenticada com `403 PASSWORD_CHANGE_REQUIRED`, menos `GET /users/me` e `PATCH /users/me/password`
+   (e o `/ws`). A trava é no servidor — o redirect do frontend para `/change-password` é só UX.
+4. O reset revoga todas as sessões do usuário (`revoked_reason = 'security'`) e grava
+   `reset_user_password` com o admin como autor, sem senha no log.
+**Por que claim no token e não consulta ao banco por requisição:** `requireAuth` é stateless; o
+`POST /auth/refresh` já relê o usuário do banco a cada rotação, então o claim nunca fica mais velho que um
+access token (15 min), e o reset derruba as sessões de qualquer forma.
+**Fora daqui:** usuário criado pelo admin (`POST /users`) continua sem troca obrigatória.
+
+### D-327: Digitalizar pelo celular — fila "Digitalizações" e dispositivo pareado sem login (CRMLAB-184)
 **Contexto:** com a migração completa do Santé para a Cloud API (D-324, 17/11/2026) o número saiu do app
 do WhatsApp. A recepção tirava foto no celular do laboratório e mandava ao paciente pelo app; isso acabou.
 O envio de anexo ao paciente já existe (`POST /conversations/:id/attachments`); faltava levar a foto do
@@ -7317,7 +7339,7 @@ celular até o CRM. Quem fotografa (recepção) não é necessariamente quem con
 de tenant (`withoutTenant()`): pareamento (acha o dispositivo pelo hash do código), autenticação do
 dispositivo (pelo hash da credencial) e o agendador de expiração (lista só `tenant_id`). Cadastro,
 novo código e revogação de dispositivo são auditados (equivalem a dar/tirar permissão).
-**Impacto:** SCHEMA §49 (migração 068: `capture_devices`, `scans`), API_CONTRACTS §15 + `scanId` em
+**Impacto:** SCHEMA §50 (migração 069: `capture_devices`, `scans`), API_CONTRACTS §15 + `scanId` em
 `POST /conversations/:id/attachments`, API_ERRORS (`CAPTURE_DEVICE_UNPAIRED`, `PAIRING_CODE_INVALID`),
 SECURITY.md "Dispositivo de captura", PAGES.md (`/digitalizar`, clipe "Digitalizações", seção em Canais &
 Equipe), SERVICES.md §36.

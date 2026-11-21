@@ -20,10 +20,16 @@ export interface AccessTokenClaims {
   tenantId: string;
   role: UserRole;
   discountLimit: number;
+  /** Senha provisória (CRMLAB-186, D-326). Só vai para o token quando `true`. */
+  mustChangePassword?: boolean;
 }
 
 export function signAccessToken(claims: AccessTokenClaims, ttlSeconds = env.JWT_ACCESS_TTL): string {
-  return jwt.sign(claims, env.JWT_SECRET, { expiresIn: ttlSeconds });
+  const { mustChangePassword, ...rest } = claims;
+  // Claim só aparece quando ligado: token de quem não está em senha provisória
+  // continua byte a byte igual ao de antes do CRMLAB-186.
+  const payload = mustChangePassword === true ? { ...rest, mustChangePassword: true } : rest;
+  return jwt.sign(payload, env.JWT_SECRET, { expiresIn: ttlSeconds });
 }
 
 /** Claims minimas de um refresh token. `role` e obrigatorio porque `verifyWith` o exige. */
@@ -75,6 +81,7 @@ function verifyWith(token: string, secret: string): VerifyResult {
         tenantId: payload.tenantId,
         role: payload.role,
         discountLimit: typeof payload.discountLimit === 'number' ? payload.discountLimit : 0,
+        ...(payload.mustChangePassword === true ? { mustChangePassword: true } : {}),
         iat: payload.iat,
         exp: payload.exp,
       },

@@ -113,6 +113,47 @@ fi
 
 msg "Buscando codigo ($REF)"
 git fetch --prune --tags origin
+
+# ---------------------------------------------------------------------------
+# 2a. Homologacao: nao atropelar validacao em andamento
+#
+# hml roda UMA branch por vez. Em 2026-11-19 o CRMLAB-184 estava no ar
+# esperando teste e dois deploys seguidos (185 e 186) o substituiram sem
+# ninguem perceber. Agora, se o que esta no ar e uma branch cujo PR ainda nao
+# foi mergeado (o repo usa squash, entao ancestralidade com a main nao serve:
+# quem responde e o GitHub), o deploy para e pede SUBSTITUIR digitado.
+# Re-subir a MESMA branch (commit novo em cima do atual) nao pergunta nada.
+# ---------------------------------------------------------------------------
+if [[ "$APP_ENV" == 'homologacao' ]]; then
+  ATUAL="$(git rev-parse HEAD)"
+  NOVO="$(git rev-parse "$REF^{commit}")"
+  # Pula: mesmo commit, commit novo da mesma branch, ou o que esta no ar ja e codigo da main.
+  if [[ "$ATUAL" != "$NOVO" ]] \
+     && ! git merge-base --is-ancestor "$ATUAL" "$NOVO" \
+     && ! git merge-base --is-ancestor "$ATUAL" origin/main; then
+    pendentes=()
+    while read -r b; do
+      b="${b#origin/}"
+      if [[ -z "$b" || "$b" == 'main' || "$b" == 'HEAD' ]]; then continue; fi
+      command -v gh >/dev/null 2>&1 \
+        || erro "gh nao encontrado: sem ele nao da para saber se '$b' (no ar em hml) ja foi mergeada."
+      mergeados="$(gh pr list --head "$b" --state merged --json number --jq length 2>/dev/null)" \
+        || erro "gh falhou ao consultar o PR de '$b' (no ar em hml). Rode 'gh auth status'."
+      if [[ "$mergeados" == '0' ]]; then pendentes+=("$b"); fi
+    done < <(git branch -r --contains "$ATUAL" --format='%(refname:short)')
+
+    if (( ${#pendentes[@]} )); then
+      printf '\n\033[1;33mhml esta com uma branch AINDA NAO MERGEADA:\033[0m\n'
+      for b in "${pendentes[@]}"; do info "$b  (commit $(git rev-parse --short=7 "$ATUAL"))"; done
+      info "Se alguem esta validando isso, este deploy tira do ar. Combine antes."
+      info "Para voltar com ela depois: ./scripts/deploy.sh --ref origin/${pendentes[0]}"
+      printf 'Digite SUBSTITUIR para continuar: '
+      read -r resposta
+      [[ "$resposta" == 'SUBSTITUIR' ]] || erro "confirmacao nao digitada — hml continua com ${pendentes[*]}"
+    fi
+  fi
+fi
+
 git checkout --detach --quiet "$REF"          # detached: este clone nunca "tem branch" para divergir
 # `--short=7` FIXO (revisao do PR #46): sem o numero, `--short` alonga sozinho
 # quando ha prefixo ambiguo no clone — 8 chars aqui contra os 7 que o CI

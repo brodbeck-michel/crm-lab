@@ -62,7 +62,7 @@ function isNotFound(error: unknown): boolean {
 }
 
 /**
- * Fila "Digitalizacoes" (CRMLAB-184, D-326): `MEDIA_DIR/scans/<id>`, pasta
+ * Fila "Digitalizacoes" (CRMLAB-184, D-327): `MEDIA_DIR/scans/<id>`, pasta
  * propria para o agendador de expiracao nunca encostar em midia de mensagem.
  * Mesmo cuidado de nome: so o `id` (UUID gerado pelo Postgres).
  */
@@ -87,7 +87,7 @@ export async function readScanFile(id: string): Promise<Buffer | null> {
   }
 }
 
-/** Arquivo ja ausente nao e erro (D-326, §15.4). */
+/** Arquivo ja ausente nao e erro (D-327, §15.4). */
 export async function deleteScanFile(id: string): Promise<void> {
   try {
     await unlink(scanFilePath(id));

@@ -5,6 +5,7 @@ import type {
   ListUsersResponse,
   ManagedUser,
   PaginationQuery,
+  ResetUserPasswordResponse,
   UpdateMyPresenceRequest,
   UpdateUserRequest,
   UserPresenceResponse,
@@ -27,6 +28,9 @@ export const usersApi = {
   create: (body: CreateUserRequest) => http.post<ManagedUser>('/users', body),
 
   update: (id: string, body: UpdateUserRequest) => http.patch<ManagedUser>(`/users/${id}`, body),
+
+  /** Senha provisória para outro usuário (admin — CRMLAB-186, D-326). */
+  resetPassword: (id: string) => http.post<ResetUserPasswordResponse>(`/users/${id}/reset-password`),
 
   /** Status da equipe (CRMLAB-120, D-286) — qualquer papel de laboratório. */
   presence: () => http.get<UserPresenceResponse>('/users/presence'),
@@ -74,6 +78,21 @@ export function useUpdateUser() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryScopes.users });
       queryClient.invalidateQueries({ queryKey: queryKeys.conversationAssignees() });
+    },
+  });
+}
+
+/**
+ * Reset de senha de outro usuário (CRMLAB-186, D-326). A senha provisória fica
+ * SÓ no estado desta mutation (some ao fechar o diálogo) — nunca em query cache.
+ */
+export function useResetUserPassword() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => usersApi.resetPassword(id),
+    onSuccess: () => {
+      // O log de auditoria ganhou uma linha.
+      queryClient.invalidateQueries({ queryKey: queryScopes.audit });
     },
   });
 }

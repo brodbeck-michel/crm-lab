@@ -1,5 +1,5 @@
 /**
- * Rotas do celular pareado — API_CONTRACTS.md §15.2 (CRMLAB-184, D-326).
+ * Rotas do celular pareado — API_CONTRACTS.md §15.2 (CRMLAB-184, D-327).
  *
  *   POST /api/v1/capture/pair      codigo -> cookie `crm_capture` (200)
  *   GET  /api/v1/capture/session   "estou pareado?" (200 | 401)

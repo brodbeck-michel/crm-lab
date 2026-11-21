@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-11-19 (CRMLAB-184: contrato do Digitalizar pelo celular)
+**Última atualização:** 2026-11-21 (CRMLAB-184: Digitalizar validado em hml; merge da main, D-327 e migração 069)
 
 ---
 
@@ -4242,12 +4242,12 @@ loga `whatsapp.inbound_unsupported` (`type`, `subtype` = `unsupported.type`, `ex
 (`view_once`, `poll`/`poll_creation`, `edit`, `revoke`), o aviso diz o que foi; senão segue o genérico.
 API_CONTRACTS (tabela do webhook da Meta) atualizada. Testes: `crmlab139-webhook-meta.spec.ts` (+2).
 
-### 🔄 CRMLAB-184 — Digitalizar pelo celular: `/digitalizar` (PWA) + fila Digitalizações (2026-11-19, aguardando validação no iPhone)
+### ✅ CRMLAB-184 — Digitalizar pelo celular: `/digitalizar` (PWA) + fila Digitalizações (2026-11-21, validado em hml)
 
 Branch `feature/CRMLAB-184-digitalizar`. Origem: depois da migração completa do Santé (D-324) a recepção
-não manda mais foto pelo app do WhatsApp. Contrato: D-326, SCHEMA §49, API_CONTRACTS §15 + `scanId` no
+não manda mais foto pelo app do WhatsApp. Contrato: D-327, SCHEMA §50, API_CONTRACTS §15 + `scanId` no
 anexo, API_ERRORS, SECURITY.md "Dispositivo de captura", PAGES.md §24, SERVICES.md §36.
-- **db:** `068_scans.sql` (`capture_devices`, `scans`, RLS no mesmo arquivo), `tests/db/rls-scans.spec.ts`.
+- **db:** `069_scans.sql` (`capture_devices`, `scans`, RLS no mesmo arquivo), `tests/db/rls-scans.spec.ts`.
 - **api:** `CaptureDeviceService`/`ScanService` + rotas `/settings/capture-devices`, `/capture/*` (pública,
   cookie `crm_capture`, Origin, limite por dispositivo, pareamento 10/15 min fail-closed), `/scans`;
   `scanId` em `POST /conversations/:id/attachments`; agendador de expiração (30 min) no `main.ts`.
@@ -4257,5 +4257,29 @@ anexo, API_ERRORS, SECURITY.md "Dispositivo de captura", PAGES.md §24, SERVICES
   Canais & Equipe. Cores do manifesto fixas no JSON (tema padrão).
 - **Verde em 19/11/2026:** typecheck dos 4 workspaces; backend 171 arquivos / 2666 testes; frontend 165 / 2190
   (com `--maxWorkers=2`: em paralelo total a máquina dá timeout por CPU).
-- **Falta:** teste real no iPhone em homologação (HTTPS); conferir `Permissions-Policy: camera=()` do nginx
-  não bloqueia o `<input capture>`.
+- **Validado** pelo Michel em hml (`hml-a913405`, 2026-11-20): foto tirada no celular pareado, escolhida em
+  Clipe → Digitalizações e enviada na conversa. Antes do PR: merge da `main`, migração renumerada para
+  `069_scans` (a 068 ficou com o CRMLAB-186), decisão para D-327 e SCHEMA para §50.
+
+### 🔄 CRMLAB-185 — Campos de senha: mostrar/ocultar (olho) e aviso de Caps Lock (2026-11-19, aguardando validação)
+
+Branch `feature/CRMLAB-185-campo-senha-olho-capslock`. Novo primitivo `PasswordInput` (`components/ui/`,
+COMPONENTS.md): o `Input` com botão olho no `suffix` (começa oculto, `aria-pressed`, `type="button"`) e
+aviso "Caps Lock está ligado" (`role="status"`) com o campo em foco. Troca dos 11 campos de senha/segredo:
+Login, Redefinir senha, Conta → Alterar senha, modal de Usuário, Plataforma → novo laboratório, Integração
+LIS (chave Bitlab), Canais (token Cloud API, token e segredo do webhook). E2E: `getByLabel('Senha')` passa a
+`exact: true` (o rótulo do olho "Mostrar senha" também casava). Testes: `PasswordInput.spec.tsx` (+4).
+
+### 🔄 CRMLAB-186 — Admin reseta a senha de usuário, com troca obrigatória no primeiro login (2026-11-19, aguardando validação)
+
+Branch `feature/CRMLAB-186-reset-senha-admin` (D-326). Origem: Diana e Camilly (Santé) esqueceram a senha e
+o reset foi feito direto no banco de prod. `POST /users/:id/reset-password` (só admin; outro usuário do
+mesmo tenant; a própria conta e outro tenant → 404) gera senha provisória de 16 caracteres mostrada uma
+vez, liga `users.must_change_password` (migração 068), revoga todas as sessões e audita
+`reset_user_password`. Com a flag, o access token leva `mustChangePassword` e o backend responde
+`403 PASSWORD_CHANGE_REQUIRED` em tudo menos `GET /users/me` e `PATCH /users/me/password`; o `/ws` também
+fecha. A troca (Minha Conta ou link por e-mail) desliga a flag; o reset do console passa a ligá-la.
+Frontend: botão "Resetar senha" em `/settings/users` (`ResetPasswordDialog`) e tela `/change-password`
+(`RequireAuth` redireciona; o cliente liga a flag ao receber o 403). Testes: backend
+`tests/users/reset-password.spec.ts` (+15); frontend `ChangePassword.spec`, `ResetPasswordDialog.spec`,
+guards e client (+9).

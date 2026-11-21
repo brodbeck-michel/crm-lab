@@ -1,5 +1,5 @@
 /**
- * Fila "Digitalizacoes" — API_CONTRACTS.md §15.3 (CRMLAB-184, D-326).
+ * Fila "Digitalizacoes" — API_CONTRACTS.md §15.3 (CRMLAB-184, D-327).
  *
  *   GET    /api/v1/scans               fila do laboratorio (sem vencidas)
  *   GET    /api/v1/scans/:id/content   o arquivo (como GET /media/:id)

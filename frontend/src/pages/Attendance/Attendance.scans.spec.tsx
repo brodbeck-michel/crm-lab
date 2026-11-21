@@ -47,7 +47,7 @@ const { Attendance } = await import('./index');
 const { SCAN_GONE_MESSAGE } = await import('./ScanPicker');
 
 /**
- * Atendimento — clipe "Digitalizações" (CRMLAB-184, D-326): o `ScanPicker`
+ * Atendimento — clipe "Digitalizações" (CRMLAB-184, D-327): o `ScanPicker`
  * lista a fila (`GET /scans`, fetch mockado), "Usar" leva as fotos para a
  * mesma prévia e o envio manda `scanId` em vez do arquivo.
  */

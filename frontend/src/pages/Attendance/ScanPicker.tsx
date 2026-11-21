@@ -8,7 +8,7 @@ import { formatRelativeDate } from '@/lib/format';
 
 /**
  * Seletor da fila **Digitalizações** (PAGES.md §2 "Anexos com prévia",
- * CRMLAB-184, D-326). Montado só enquanto aberto: `GET /scans` recarrega a
+ * CRMLAB-184, D-327). Montado só enquanto aberto: `GET /scans` recarrega a
  * cada abertura (sem WS para a fila).
  *
  * "Usar" baixa as fotos escolhidas (busca autenticada, como a mídia do

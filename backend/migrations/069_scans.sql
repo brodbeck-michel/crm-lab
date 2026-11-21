@@ -1,6 +1,6 @@
 -- =============================================================================
--- 068_scans.sql
--- CRMLAB-184 (D-326): Digitalizar pelo celular. SCHEMA.md §49.
+-- 069_scans.sql
+-- CRMLAB-184 (D-327): Digitalizar pelo celular. SCHEMA.md §50.
 --
 -- `capture_devices`: o celular pareado (credencial e codigo de pareamento so
 -- em hash sha256). `scans`: a fila "Digitalizacoes" do laboratorio (foto vive
@@ -44,7 +44,7 @@ CREATE TABLE scans (
   mime_type   VARCHAR(127) NOT NULL,
   byte_size   INTEGER NOT NULL CHECK (byte_size > 0),
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  -- created_at + 2 dias (D-326 item 6).
+  -- created_at + 2 dias (D-327 item 6).
   expires_at  TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX idx_scans_tenant_created ON scans(tenant_id, created_at DESC);

@@ -1,6 +1,6 @@
 /**
- * Acesso a dados de `scans` — a fila "Digitalizacoes" (SCHEMA.md §49 —
- * CRMLAB-184, D-326). SEM regra de negocio (CONVENTIONS.md).
+ * Acesso a dados de `scans` — a fila "Digitalizacoes" (SCHEMA.md §50 —
+ * CRMLAB-184, D-327). SEM regra de negocio (CONVENTIONS.md).
  *
  * Toda funcao recebe a transacao de quem chama, aberta com `withTenant()` —
  * exceto `listTenantsWithExpired`, a unica chamada de dentro de

@@ -1,5 +1,5 @@
 /**
- * CaptureDeviceService — SERVICES.md §36 (CRMLAB-184, D-326).
+ * CaptureDeviceService — SERVICES.md §36 (CRMLAB-184, D-327).
  *
  * O celular da recepcao pareado para `/digitalizar`: a UNICA credencial que
  * nao e de usuario (SECURITY.md "Dispositivo de captura").
@@ -7,7 +7,7 @@
  * - Codigo de pareamento: 8 caracteres de `PAIRING_CODE_ALPHABET` sorteados
  *   com `crypto.randomInt`, uso unico, 15 min. O banco guarda o sha256.
  * - Credencial: 32 bytes aleatorios (base64url) no cookie `crm_capture`; o
- *   banco guarda o sha256. sha256, nao bcrypt: nao e senha (SCHEMA §49).
+ *   banco guarda o sha256. sha256, nao bcrypt: nao e senha (SCHEMA §50).
  * - `withoutTenant()` SO para achar o dispositivo pelo hash (pareamento e
  *   autenticacao). Todo o resto roda com `withTenant()`.
  * - Cadastro, novo codigo, pareamento e revogacao geram audit log.

@@ -22,7 +22,7 @@ import { formatPairingCode } from '@/lib/pairing-code';
 
 /**
  * Dispositivos de captura — seção de Canais & Equipe, abaixo de Equipe
- * (PAGES.md §10, CRMLAB-184, D-326, API_CONTRACTS §15.1).
+ * (PAGES.md §10, CRMLAB-184, D-327, API_CONTRACTS §15.1).
  *
  * Admin edita, gestor lê: para o gestor não existe botão nenhum. O código de
  * pareamento em claro só aparece no modal logo depois de criar/renovar — a

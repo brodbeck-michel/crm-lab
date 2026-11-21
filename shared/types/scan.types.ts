@@ -1,5 +1,5 @@
 /**
- * Digitalizar pelo celular — CRMLAB-184, D-326.
+ * Digitalizar pelo celular — CRMLAB-184, D-327.
  * Espelha docs/api/API_CONTRACTS.md §15.
  */
 
@@ -94,9 +94,9 @@ export const CAPTURE_DEVICE_NAME_MAX = 60;
 export const SCAN_MIME_TYPES = ['image/jpeg', 'image/png'] as const;
 /** 5 MB — teto de imagem da Cloud API (D-314). */
 export const MAX_SCAN_BYTES = 5 * 1024 * 1024;
-/** Fotos pendentes por dispositivo (D-326 item 8). */
+/** Fotos pendentes por dispositivo (D-327 item 8). */
 export const MAX_PENDING_SCANS_PER_DEVICE = 100;
-/** Vida da foto na fila (D-326 item 6). */
+/** Vida da foto na fila (D-327 item 6). */
 export const SCAN_TTL_HOURS = 48;
 
 /** Normaliza o que foi digitado: maiúsculas, sem hífen/espaço. */

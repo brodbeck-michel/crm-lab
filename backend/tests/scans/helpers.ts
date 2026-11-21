@@ -1,5 +1,5 @@
 /**
- * Apoio dos testes do Digitalizar pelo celular (CRMLAB-184, D-326).
+ * Apoio dos testes do Digitalizar pelo celular (CRMLAB-184, D-327).
  */
 import sharp from 'sharp';
 import { env } from '../../src/config/env.js';

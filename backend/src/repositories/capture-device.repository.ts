@@ -1,5 +1,5 @@
 /**
- * Acesso a dados de `capture_devices` (SCHEMA.md §49 — CRMLAB-184, D-326).
+ * Acesso a dados de `capture_devices` (SCHEMA.md §50 — CRMLAB-184, D-327).
  * SEM regra de negocio: quem decide codigo, TTL e auditoria e o
  * `CaptureDeviceService`.
  *
@@ -128,7 +128,7 @@ export async function setPairingCode(
   );
 }
 
-/** Revogar nao apaga a linha (SCHEMA §49): zera os dois hashes e grava `revoked_at`. */
+/** Revogar nao apaga a linha (SCHEMA §50): zera os dois hashes e grava `revoked_at`. */
 export async function revokeDevice(tx: DbTx, id: string): Promise<void> {
   await tx.query(
     `UPDATE capture_devices
@@ -140,7 +140,7 @@ export async function revokeDevice(tx: DbTx, id: string): Promise<void> {
 }
 
 /**
- * `withoutTenant()` — pareamento (D-326): acha o dispositivo pelo hash de um
+ * `withoutTenant()` — pareamento (D-327): acha o dispositivo pelo hash de um
  * codigo ainda valido, de dispositivo nao revogado e de laboratorio ativo.
  */
 export async function findByPairingCodeHash(
@@ -184,7 +184,7 @@ export async function completePairing(
 }
 
 /**
- * `withoutTenant()` — autenticacao do dispositivo (D-326): o equivalente ao
+ * `withoutTenant()` — autenticacao do dispositivo (D-327): o equivalente ao
  * login, para o celular. Revogado nao tem `token_hash`, entao nao casa.
  */
 export async function findByTokenHash(

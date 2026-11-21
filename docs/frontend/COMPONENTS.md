@@ -47,6 +47,9 @@ frontend/src/components/
 ### Input / TextArea / SearchInput
 - Uma linha = pílula (999px); multilinha = radius-md
 - SearchInput com ícone e debounce 300ms
+- **PasswordInput** (CRMLAB-185): todo campo de senha ou segredo usa este, nunca `Input type="password"`.
+  Botão olho no fim da pílula (mostrar/ocultar, começa oculto) e aviso "Caps Lock está ligado" abaixo
+  do campo enquanto ele tem foco e o Caps Lock está ativo
 
 ### SegmentedControl
 ```tsx
@@ -318,7 +321,7 @@ Anatomia (padrão WhatsApp):
   fecha. Remover o último arquivo fecha.
 - Object URL criado por miniatura/destaque e revogado ao desmontar (remover, fechar, enviar).
 - Componente burro: não chama API, não conhece conversa nem citação.
-- **Digitalizações (CRMLAB-184, D-326):** `AttachmentDraft.scanId` opcional. `createScanDraft(file, scanId)`
+- **Digitalizações (CRMLAB-184, D-327):** `AttachmentDraft.scanId` opcional. `createScanDraft(file, scanId)`
   monta o rascunho de uma foto da fila: `file` é a cópia baixada (só para a prévia) e quem envia manda
   `{ scanId, caption }` em vez do arquivo. A prévia não muda nada para isso.
 - O `Composer` ganha `onOpenScans?: () => void`: com handler, o menu do clipe mostra **"Digitalizações"**
@@ -761,6 +764,7 @@ Adições sobre a anatomia já documentada acima — nenhuma variante nova:
 - **Badge** — `max` (padrão 99 → "99+"), `label` (rótulo acessível).
   `count <= 0` não renderiza.
 - **Input** — `label`, `error`, `hint`, `prefix`, `suffix`.
+- **PasswordInput** — as mesmas props do `Input`, menos `type` e `suffix` (o olho ocupa o `suffix`).
 - **TextArea** — `label`, `error`, `hint`.
 - **SearchInput** — `defaultValue`, `debounceMs` (padrão 300), `disabled`.
   Não emite na montagem, só quando o usuário mexe.

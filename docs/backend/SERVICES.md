@@ -2158,10 +2158,10 @@ interface WhatsAppUsageService {
 
 ---
 
-## 36. ScanService e CaptureDeviceService — Digitalizar pelo celular (CRMLAB-184 — D-326)
+## 36. ScanService e CaptureDeviceService — Digitalizar pelo celular (CRMLAB-184 — D-327)
 
 **Contrato:** API_CONTRACTS §15 e `scanId` em `POST /conversations/:id/attachments` (§2). Tabelas
-`capture_devices` e `scans` (SCHEMA §49). Rotas: `controllers/capture-device.routes.ts`
+`capture_devices` e `scans` (SCHEMA §50). Rotas: `controllers/capture-device.routes.ts`
 (`/settings/capture-devices`), `controllers/capture.routes.ts` (`/capture/*`, sem `requireAuth`) e
 `controllers/scan.routes.ts` (`/scans`).
 

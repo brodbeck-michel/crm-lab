@@ -20,7 +20,7 @@ import { ScanService } from './services/scan.service.js';
 import { createAuditService } from './services/audit.service.js';
 
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
-/** Expiracao da fila Digitalizacoes (CRMLAB-184, D-326 — API_CONTRACTS §15.4). */
+/** Expiracao da fila Digitalizacoes (CRMLAB-184, D-327 — API_CONTRACTS §15.4). */
 const SCAN_EXPIRE_INTERVAL_MS = 30 * 60 * 1000;
 
 async function bootstrap(): Promise<void> {
@@ -170,7 +170,7 @@ async function bootstrap(): Promise<void> {
   }
 
   // =========================================================================
-  // Expiracao da fila Digitalizacoes (CRMLAB-184, D-326)
+  // Expiracao da fila Digitalizacoes (CRMLAB-184, D-327)
   // =========================================================================
   // Mesmo padrao do motor do funil: `expireDue` nao lanca (cada laboratorio
   // tem o proprio try/catch) e ignora o tique se o anterior ainda roda. Lista

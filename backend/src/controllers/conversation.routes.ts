@@ -327,7 +327,7 @@ export const createAttachmentSchema = z
     fileName: z.string().trim().min(1).max(255).optional(),
     mimeType: z.string().trim().min(1).max(127).optional(),
     contentBase64: z.string().min(1).optional(),
-    // Foto da fila Digitalizacoes (CRMLAB-184, D-326) NO LUGAR do arquivo.
+    // Foto da fila Digitalizacoes (CRMLAB-184, D-327) NO LUGAR do arquivo.
     scanId: z.uuid().optional(),
     quotedMessageId: z.uuid().nullish(),
     // Legenda (CRMLAB-69, D-231): aparada; vazia = sem legenda.
@@ -359,7 +359,7 @@ export interface ConversationServices {
   conversations: ConversationService;
   messages: MessageService;
   media: MediaService;
-  /** Fila Digitalizacoes — anexo com `scanId` (CRMLAB-184, D-326). */
+  /** Fila Digitalizacoes — anexo com `scanId` (CRMLAB-184, D-327). */
   scans: ScanService;
 }
 
@@ -538,7 +538,7 @@ export function createAttachment(services: ConversationServices): RequestHandler
     await services.conversations.getById(ctx, id);
     // Validacoes do arquivo e da citacao SEM gravar, antes de reabrir a
     // encerrada para quem envia (D-273): recusa aqui nao deixa a conversa
-    // reaberta e com outra dona sem mensagem. Com `scanId` (D-326) a foto da
+    // reaberta e com outra dona sem mensagem. Com `scanId` (D-327) a foto da
     // fila so e LIDA aqui — sai da fila quando a midia for gravada.
     const prepared =
       dto.scanId !== undefined

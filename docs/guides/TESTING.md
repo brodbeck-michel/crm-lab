@@ -134,7 +134,8 @@ Rodam contra ambiente com seeds (`npm run seed:e2e`), em CI a cada PR para main.
 ```bash
 # Backend
 npm run test           # unitários
-npm run test:int       # integração (sobe banco docker)
+# (test:int existe no package.json mas aponta para tests/integration, que não existe —
+#  os testes de integração rodam junto do npm run test, em PGlite)
 npm run test:cov       # cobertura
 
 # Frontend

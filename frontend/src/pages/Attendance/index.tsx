@@ -496,7 +496,7 @@ export function Attendance() {
           ...(caption ? { caption } : {}),
           ...(index === 0 && quotedMessageId ? { quotedMessageId } : {}),
         };
-        // Foto da fila Digitalizações (D-326): só o `scanId`, o arquivo já está no servidor.
+        // Foto da fila Digitalizações (D-327): só o `scanId`, o arquivo já está no servidor.
         await api.conversations.sendAttachment(
           conversationId,
           scanId
@@ -519,7 +519,7 @@ export function Attendance() {
           error.code === 'NOT_FOUND' &&
           error.details?.reason === 'scan_not_found'
         ) {
-          // Outra pessoa usou antes, ou venceu (D-326): as outras fotos seguem.
+          // Outra pessoa usou antes, ou venceu (D-327): as outras fotos seguem.
           toast(SCAN_GONE_MESSAGE, { tone: 'attention' });
         } else if (isApiError(error) && SESSION_ERRORS.has(error.code)) {
           handleApiError(error);

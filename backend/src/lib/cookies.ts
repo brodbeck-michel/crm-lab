@@ -63,7 +63,7 @@ export function getCookie(header: string | undefined, name: string): string | un
 }
 
 /**
- * Credencial do dispositivo de captura (CRMLAB-184, D-326). `Path` estreito:
+ * Credencial do dispositivo de captura (CRMLAB-184, D-327). `Path` estreito:
  * o cookie so vai para `/api/v1/capture/*` — nunca para a API do CRM.
  */
 export const CAPTURE_COOKIE_NAME = 'crm_capture';

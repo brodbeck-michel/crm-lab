@@ -51,6 +51,8 @@ export interface AuthState {
    * (docs/domain/WORKFLOWS.md §9).
    */
   setTheme: (theme: Theme) => void;
+  /** Liga/desliga a troca obrigatória da senha provisória (CRMLAB-186, D-326). */
+  setMustChangePassword: (value: boolean) => void;
   /** Logout / refresh inválido. Volta ao tema padrão. */
   clearSession: () => void;
   /** Reaplica o tema da sessão restaurada (chamado no bootstrap). */
@@ -116,6 +118,12 @@ export const useAuthStore = create<AuthState>()(
         applyTheme(theme);
       },
 
+      setMustChangePassword: (value) => {
+        const user = get().user;
+        if (user === null) return;
+        set({ user: { ...user, mustChangePassword: value } });
+      },
+
       clearSession: () => {
         set({ ...EMPTY });
         applyTheme(DEFAULT_THEME);
@@ -149,6 +157,9 @@ export const useAuthStore = create<AuthState>()(
 
 export const selectUser = (state: AuthState): AuthUser | null => state.user;
 export const selectRole = (state: AuthState): UserRole | null => state.user?.role ?? null;
+/** Senha provisória pendente (CRMLAB-186) — `RequireAuth` manda para `/change-password`. */
+export const selectMustChangePassword = (state: AuthState): boolean =>
+  state.user?.mustChangePassword === true;
 export const selectIsAuthenticated = (state: AuthState): boolean =>
   state.tokens !== null && state.user !== null;
 
@@ -163,4 +174,5 @@ setSessionBridge({
   setAccessToken: (accessToken, expiresIn) =>
     useAuthStore.getState().setAccessToken(accessToken, expiresIn),
   clearSession: () => useAuthStore.getState().clearSession(),
+  markPasswordChangeRequired: () => useAuthStore.getState().setMustChangePassword(true),
 });

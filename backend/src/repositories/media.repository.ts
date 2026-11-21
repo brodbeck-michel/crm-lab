@@ -53,7 +53,7 @@ export class MediaRepository {
 
 /**
  * O mesmo INSERT dentro de uma transacao ja aberta com `withTenant` — usado
- * pelo anexo com `scanId` (CRMLAB-184, D-326): a foto sai da fila na MESMA
+ * pelo anexo com `scanId` (CRMLAB-184, D-327): a foto sai da fila na MESMA
  * transacao em que a midia da mensagem e gravada.
  */
 export async function insertMediaRow(tx: DbTx, tenantId: string, data: MediaInsert): Promise<string> {

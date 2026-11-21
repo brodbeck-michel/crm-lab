@@ -52,7 +52,7 @@ export const conversationsApi = {
     http.post<Message>(`/conversations/${id}/messages`, body),
 
   /** Anexo — base64 em JSON, não multipart (Onda 8 §4.3). */
-  /** Arquivo em base64 OU `scanId` da fila Digitalizações (CRMLAB-184, D-326). */
+  /** Arquivo em base64 OU `scanId` da fila Digitalizações (CRMLAB-184, D-327). */
   sendAttachment: (id: string, body: SendAttachmentBody) =>
     http.post<Message>(`/conversations/${id}/attachments`, body),
 

@@ -39,6 +39,15 @@ export const ERROR_CATALOG = {
     statusCode: 400,
     message: 'Link de redefinicao invalido ou expirado, solicite um novo',
   },
+  // Digitalizar pelo celular (CRMLAB-184, D-327).
+  PAIRING_CODE_INVALID: {
+    statusCode: 400,
+    message: 'Codigo de pareamento invalido ou vencido. Peca um codigo novo ao administrador',
+  },
+  CAPTURE_DEVICE_UNPAIRED: {
+    statusCode: 401,
+    message: 'Este celular nao esta pareado. Digite o codigo de pareamento',
+  },
 
   // --- Recursos ---
   NOT_FOUND: { statusCode: 404, message: 'Recurso nao encontrado' },

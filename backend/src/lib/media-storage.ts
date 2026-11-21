@@ -60,3 +60,39 @@ function isNotFound(error: unknown): boolean {
     (error as { code?: unknown }).code === 'ENOENT'
   );
 }
+
+/**
+ * Fila "Digitalizacoes" (CRMLAB-184, D-327): `MEDIA_DIR/scans/<id>`, pasta
+ * propria para o agendador de expiracao nunca encostar em midia de mensagem.
+ * Mesmo cuidado de nome: so o `id` (UUID gerado pelo Postgres).
+ */
+export const SCAN_SUBDIR = 'scans';
+
+export function scanFilePath(id: string): string {
+  return path.join(env.MEDIA_DIR, SCAN_SUBDIR, id);
+}
+
+export async function writeScanFile(id: string, buffer: Buffer): Promise<void> {
+  await mkdir(path.join(env.MEDIA_DIR, SCAN_SUBDIR), { recursive: true });
+  await writeFile(scanFilePath(id), buffer);
+}
+
+/** `null` = arquivo ausente (mesma regra de `readMediaFile`). */
+export async function readScanFile(id: string): Promise<Buffer | null> {
+  try {
+    return await readFile(scanFilePath(id));
+  } catch (error) {
+    if (isNotFound(error)) return null;
+    throw error;
+  }
+}
+
+/** Arquivo ja ausente nao e erro (D-327, §15.4). */
+export async function deleteScanFile(id: string): Promise<void> {
+  try {
+    await unlink(scanFilePath(id));
+  } catch (error) {
+    if (isNotFound(error)) return;
+    throw error;
+  }
+}

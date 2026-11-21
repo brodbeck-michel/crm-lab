@@ -8,6 +8,7 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 
 ```
 /login                        → Login (público)
+/digitalizar                  → Digitalizar pelo celular (público; dispositivo pareado, sem login — CRMLAB-184)
 /change-password              → Troca obrigatória de senha provisória (logado com mustChangePassword — CRMLAB-186)
 /                             → redirect por perfil (atendente → /attendance)
 /attendance                   → Atendimento (inbox 3 colunas)
@@ -73,6 +74,7 @@ na mesma linha da busca — as abas de Cadastros, acima, são a navegação prin
 | Rota | `requiredRoles` | No trilho da Sidebar | Grupo |
 |------|-----------------|----------------------|-------|
 | `/login` | — (público) | não | — |
+| `/digitalizar` (CRMLAB-184, D-327) | — (público; credencial do dispositivo, §24) | não | — |
 | `/change-password` (CRMLAB-186) | attendant · manager · admin, **só** com `user.mustChangePassword` | não | — |
 | `/` | qualquer sessão → redirect por perfil | não | — |
 | `/attendance` | attendant · manager · admin | sim | solto |
@@ -280,6 +282,14 @@ Duas leituras registradas aqui porque o doc original não as fixava:
     com `caption`); falha de um vira toast com o nome do arquivo e os outros seguem. Com resposta
     aberta, **só o primeiro** leva `quotedMessageId`. A conversa de destino é a do clique em Enviar
   - A faixa de não lidas sai ao clicar no clipe e ao enviar (D-239)
+  - **Digitalizações (CRMLAB-184, D-327):** o menu do clipe ganha **"Digitalizações"** (ícone de câmera),
+    abaixo de "Documento". Abre o seletor `ScanPicker` (modal): grade de miniaturas da fila
+    (`GET /scans`, recarregado ao abrir; imagem por `contentUrl` com busca autenticada), cada uma com
+    "há 12 min · Celular recepção", marcar várias, **lixeira** por foto (`DELETE /scans/:id`, com
+    confirmação) e **Usar (n)**. Fila vazia: "Nenhuma foto. Tire pelo atalho Digitalizar no celular."
+    Usar leva as fotos para a mesma prévia (`AttachmentPreview`) com legenda por foto; Enviar faz o
+    `POST /conversations/:id/attachments` com `scanId` em vez do arquivo. Foto que outra pessoa usou
+    antes (`NOT_FOUND scan_not_found`): toast "Essa foto já foi usada ou venceu" e as outras seguem
   - Vídeo sai para o WhatsApp como vídeo; a bolha de vídeo é do CRMLAB-70
 - **Leitura padrão WhatsApp Web (CRMLAB-71, D-238/D-239):**
   - **Separador de data** (`DateSeparator`) entre mensagens de dias diferentes, no fuso do
@@ -1042,6 +1052,15 @@ Seção própria logo depois de "Conexão de canal", **só quando o WhatsApp est
   "Estimativa calculada pelo CRM com a tabela de preços da Meta. Não é a fatura: confira o valor
   cobrado no Gerenciador de Negócios da Meta."
 - Erro de carga: "Não foi possível carregar o uso deste mês." (não esconde a seção)
+
+- **Dispositivos de captura (CRMLAB-184, D-327)** — seção própria, abaixo de Equipe. Admin edita, gestor lê
+  - Lista (`GET /settings/capture-devices`): nome, `Chip` do status (Aguardando pareamento / Ativo /
+    Revogado), "último envio há X", fotos na fila
+  - **Novo dispositivo** (admin): pede o nome → `POST` → modal com o **código grande** (`K7MX-4QPR`),
+    contagem regressiva dos 15 min e o passo a passo para o iPhone: 1) abrir `<url>/digitalizar` no
+    Safari; 2) Compartilhar › Adicionar à Tela de Início; 3) abrir pelo ícone; 4) digitar o código
+  - **Gerar novo código** (admin; também para parear de novo) e **Revogar** (admin, `window.confirm`:
+    "O celular para de enviar na hora. As fotos que já estão na fila continuam.")
 
 ### Gestão da Operação (`/settings/operation`) — gestor+
 - Dados: `GET /operations/overview?queueLimit&decisionsLimit` — **somente leitura**
@@ -1877,6 +1896,59 @@ Tela **full-bleed** (sem `PageContainer`): conteúdo à esquerda e, a partir de 
 
 ---
 
+## 24. Digitalizar pelo celular (`/digitalizar`) — público, dispositivo pareado (CRMLAB-184, D-327)
+
+Tela única pensada para o **iPhone da recepção**, fora do `AppShell` (sem Sidebar, sem sessão de
+usuário). Abrir o atalho → tirar a foto → enviar para a fila **Digitalizações**. Quem manda ao paciente
+é o atendimento (§2, clipe "Digitalizações").
+
+**Instalável na tela de início (PWA, sem service worker):** a rota injeta `<link rel="manifest"
+href="/digitalizar.webmanifest">` (`name` "Digitalizar", `display: standalone`, `start_url` e `scope`
+`/digitalizar`, ícones 192/512), `apple-touch-icon` e `apple-mobile-web-app-capable`. O manifesto do
+resto do CRM não muda. Arquivos: `frontend/public/digitalizar.webmanifest` e
+`frontend/public/digitalizar-icons/` (`icon-192.png`, `icon-512.png`, `apple-touch-icon.png` — câmera branca
+sobre o accent do tema padrão). A pasta **não** se chama `digitalizar/`: o `try_files $uri $uri/` do nginx
+serviria o diretório no lugar da rota. As tags entram no `<head>` ao montar a rota (hook `usePwaHead`, que
+também põe `viewport-fit=cover` para o `env(safe-area-inset-*)` valer) e saem ao desmontar.
+**Cores do manifesto:** valores fixos do tema padrão (`theme_color` = accent, `background_color` = bg de
+`tokens.css`) escritos no `.webmanifest`, que é JSON estático servido pelo nginx, não componente (a regra
+5 continua valendo para os `.tsx`). Ler dos tokens no build exigiria um plugin no Vite só para isso; se o
+tema padrão mudar, atualizar o arquivo à mão.
+
+**Estados (decididos ao abrir, por `GET /capture/session`):**
+1. **Aberta no Safari, não instalada** (`!matchMedia('(display-mode: standalone)').matches` e
+   `!navigator.standalone`): só o passo a passo "Compartilhar › Adicionar à Tela de Início" com
+   ilustração. **Não pareia aqui**: no iOS o app instalado não enxerga o cookie do Safari (D-327 item 4).
+   Fora do iOS (Android/desktop), mostra o passo a passo **e** deixa seguir para o código
+   (**Continuar sem instalar**). No iOS fora da tela de início nem pergunta a sessão.
+2. **Instalada e não pareada** (`CAPTURE_DEVICE_UNPAIRED`): campo do código, 8 caracteres, teclado
+   alfanumérico em maiúsculas, hífen automático depois do 4º (`K7MX-4QPR`) → `POST /capture/pair`.
+   Erro: "Código inválido ou vencido. Peça um novo para quem administra o CRM." 429: "Muitas tentativas.
+   Espere alguns minutos."
+3. **Pareada:** cabeçalho com o nome do laboratório e do dispositivo; botão grande **Tirar foto**
+   (`<input type="file" accept="image/*" capture="environment">` — abre a câmera direto). Cada foto entra
+   numa faixa de miniaturas com **×**; **+ Outra foto** repete (o iOS ignora `multiple` com `capture`).
+   **Enviar (n)** sobe uma por vez, na ordem (`POST /capture/scans`), com progresso por foto. Tudo
+   certo: "Enviado ✓ — já está em Digitalizações no CRM" por 2 s e volta para o estado inicial.
+   Falha: a foto fica na faixa marcada com "Tentar de novo"; as outras seguem.
+
+**Redução no aparelho, antes de subir:** canvas → JPEG qualidade 0,8, lado maior até 2048 px (orientação
+já aplicada pelo navegador). Mesmo assim acima de 5 MB: tenta de novo com 0,6; ainda acima, avisa e não
+sobe ("Foto grande demais mesmo reduzida (acima de 5 MB). Tire de novo, mais de perto."). A redução roda
+ao entrar a foto na faixa ("Preparando…"), então o aviso aparece antes do Enviar. HEIC não chega ao
+servidor (o canvas sempre gera JPEG).
+
+**Erros:** `CAPTURE_DEVICE_UNPAIRED` em qualquer chamada → volta ao estado 2 com "Este celular foi
+desconectado do CRM. Digite um novo código." (sem o refresh de sessão do client — não é usuário).
+`scan_queue_full`: "A fila deste celular está cheia (100 fotos). Peça para usarem ou descartarem as
+fotos no CRM." (para o envio das seguintes — dariam o mesmo 409). Sem rede: "Sem conexão. A foto continua
+aqui." Outro erro numa foto: ela fica com "Tentar de novo" e as outras seguem.
+
+**Layout:** coluna única, alvos de toque grandes, `env(safe-area-inset-*)` respeitado; só tokens (regra 5).
+Chamadas pelo módulo `src/api/capture.ts` (credentials `include`, sem Bearer).
+
+---
+
 ## Estado Global (Zustand + TanStack Query)
 
 ```typescript
@@ -1997,6 +2069,8 @@ users(filters)              ['users', filters]        currentUser() ['users','me
 audit(filters)              ['audit', filters]
 platformTenants(filters)    ['platform', 'tenants', filters]
 platformBilling()           ['platform', 'billing']
+captureDevices()            ['settings', 'capture-devices']   (CRMLAB-184)
+scans()                     ['scans']                          (CRMLAB-184; recarregado ao abrir o ScanPicker)
 ```
 
 `queryScopes.*` são os prefixos para invalidar um escopo inteiro.

@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-11-19 (CRMLAB-186: admin reseta senha de usuário, com troca obrigatória)
+**Última atualização:** 2026-11-21 (CRMLAB-184: Digitalizar validado em hml; merge da main, D-327 e migração 069)
 
 ---
 
@@ -4241,6 +4241,25 @@ loga `whatsapp.inbound_unsupported` (`type`, `subtype` = `unsupported.type`, `ex
 `code`/`title`/`details`; sem conteúdo nem telefone). Quando a Meta informa `unsupported.type` conhecido
 (`view_once`, `poll`/`poll_creation`, `edit`, `revoke`), o aviso diz o que foi; senão segue o genérico.
 API_CONTRACTS (tabela do webhook da Meta) atualizada. Testes: `crmlab139-webhook-meta.spec.ts` (+2).
+
+### ✅ CRMLAB-184 — Digitalizar pelo celular: `/digitalizar` (PWA) + fila Digitalizações (2026-11-21, validado em hml)
+
+Branch `feature/CRMLAB-184-digitalizar`. Origem: depois da migração completa do Santé (D-324) a recepção
+não manda mais foto pelo app do WhatsApp. Contrato: D-327, SCHEMA §50, API_CONTRACTS §15 + `scanId` no
+anexo, API_ERRORS, SECURITY.md "Dispositivo de captura", PAGES.md §24, SERVICES.md §36.
+- **db:** `069_scans.sql` (`capture_devices`, `scans`, RLS no mesmo arquivo), `tests/db/rls-scans.spec.ts`.
+- **api:** `CaptureDeviceService`/`ScanService` + rotas `/settings/capture-devices`, `/capture/*` (pública,
+  cookie `crm_capture`, Origin, limite por dispositivo, pareamento 10/15 min fail-closed), `/scans`;
+  `scanId` em `POST /conversations/:id/attachments`; agendador de expiração (30 min) no `main.ts`.
+  Inventário de isolamento: 124 → 131 rotas. Testes em `tests/scans/`.
+- **ui:** `/digitalizar` (3 estados, redução no aparelho, manifesto `digitalizar.webmanifest` + ícones em
+  `public/digitalizar-icons/`), clipe "Digitalizações" (`ScanPicker`), seção "Dispositivos de captura" em
+  Canais & Equipe. Cores do manifesto fixas no JSON (tema padrão).
+- **Verde em 19/11/2026:** typecheck dos 4 workspaces; backend 171 arquivos / 2666 testes; frontend 165 / 2190
+  (com `--maxWorkers=2`: em paralelo total a máquina dá timeout por CPU).
+- **Validado** pelo Michel em hml (`hml-a913405`, 2026-11-20): foto tirada no celular pareado, escolhida em
+  Clipe → Digitalizações e enviada na conversa. Antes do PR: merge da `main`, migração renumerada para
+  `069_scans` (a 068 ficou com o CRMLAB-186), decisão para D-327 e SCHEMA para §50.
 
 ### 🔄 CRMLAB-185 — Campos de senha: mostrar/ocultar (olho) e aviso de Caps Lock (2026-11-19, aguardando validação)
 

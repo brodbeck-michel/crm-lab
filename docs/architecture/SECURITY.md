@@ -57,6 +57,24 @@ CREATE POLICY tenant_isolation ON conversations
   recusa (destroi o socket, sem completar o handshake) qualquer origin fora da lista, ANTES de
   olhar o cookie.
 
+### Dispositivo de captura (CRMLAB-184, D-327)
+
+A **única credencial que não é de usuário**: o celular da recepção pareado para `/digitalizar`.
+- **Escopo mínimo:** só `/capture/session` e `/capture/scans` (enviar foto para a fila). Não lê conversa,
+  paciente, fila nem nenhum outro dado; não abre WebSocket. Celular perdido = no máximo fotos indevidas
+  na fila (teto de 100 pendentes por dispositivo) até o admin revogar.
+- **Pareamento:** código de 8 caracteres (alfabeto de 31 símbolos, ~8×10¹¹ combinações), uso único,
+  15 min, gerado por admin e guardado só em hash (sha256). `POST /capture/pair` limitado a 10 tentativas
+  / 15 min por IP, contadas antes de conferir, fail-closed sem Redis. As quatro falhas respondem igual.
+- **Credencial:** 32 bytes aleatórios em cookie `crm_capture` (httpOnly, `Secure`, `SameSite=Strict`,
+  `Path=/api/v1/capture`, 400 dias renovados a cada envio); o banco guarda só o sha256. Revogar zera o
+  hash: vale no próximo request, sem esperar o cookie vencer.
+- **CSRF:** além do `SameSite=Strict`, os `POST` de `/capture/*` conferem `Origin` contra `env.corsOrigins`
+  antes de olhar o cookie.
+- **Fora do tenant:** achar o dispositivo pelo hash (pareamento e autenticação) é `withoutTenant()`
+  declarado em SCHEMA.md (RLS — exceções); o resto roda com `withTenant()` do tenant do dispositivo.
+- **Auditoria:** cadastrar, gerar código, parear e revogar geram audit log; descartar foto também.
+
 ## Autorização
 
 - Matriz de permissões: `docs/design` §telas + `PAGES.md` (requiredRoles)

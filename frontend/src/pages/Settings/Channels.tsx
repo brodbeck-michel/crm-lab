@@ -40,6 +40,7 @@ import {
   validateForm,
 } from './channels-form';
 import type { ChannelDraft, ChannelsForm } from './channels-form';
+import { CaptureDevicesSection } from './CaptureDevicesSection';
 
 /**
  * Canais & Equipe — `/settings/channels`
@@ -1171,6 +1172,9 @@ export default function ChannelsSettings() {
               minWidth={480}
             />
           </Section>
+
+          {/* ── Dispositivos de captura (CRMLAB-184, D-327) ─────────────── */}
+          <CaptureDevicesSection canEdit={canEdit} />
           </div>
           </div>
         </>

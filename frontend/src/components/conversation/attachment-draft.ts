@@ -14,6 +14,11 @@ export interface AttachmentDraft {
   caption: string;
   /** Preenchido = o arquivo fica na prévia com o aviso e não sobe. */
   error: string | null;
+  /**
+   * Foto da fila Digitalizações (CRMLAB-184, D-327): o envio manda `scanId` em
+   * vez do arquivo. `file` é a cópia baixada, só para a prévia.
+   */
+  scanId?: string;
 }
 
 /** `accept` do "Documento" e do **+** da prévia: a allow-list inteira, sem lista nova. */
@@ -35,6 +40,11 @@ let sequence = 0;
 export function createAttachmentDraft(file: File): AttachmentDraft {
   sequence += 1;
   return { id: `draft-${sequence}`, file, caption: '', error: validateAttachment(file) };
+}
+
+/** Foto da fila Digitalizações (D-327): `file` é a cópia baixada, o envio usa `scanId`. */
+export function createScanDraft(file: File, scanId: string): AttachmentDraft {
+  return { ...createAttachmentDraft(file), scanId };
 }
 
 /** `1,2 MB`, `340 KB`, `12 B` — o tamanho que a prévia mostra. */

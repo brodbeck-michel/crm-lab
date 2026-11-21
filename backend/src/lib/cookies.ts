@@ -61,3 +61,12 @@ export function getCookie(header: string | undefined, name: string): string | un
   }
   return undefined;
 }
+
+/**
+ * Credencial do dispositivo de captura (CRMLAB-184, D-327). `Path` estreito:
+ * o cookie so vai para `/api/v1/capture/*` — nunca para a API do CRM.
+ */
+export const CAPTURE_COOKIE_NAME = 'crm_capture';
+export const CAPTURE_COOKIE_PATH = '/api/v1/capture';
+/** 400 dias (teto dos navegadores), renovado a cada envio. */
+export const CAPTURE_COOKIE_MAX_AGE_MS = 400 * 24 * 60 * 60 * 1000;

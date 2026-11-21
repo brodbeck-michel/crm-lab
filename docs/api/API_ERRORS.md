@@ -37,6 +37,8 @@ Formato padrão e catálogo completo de códigos. Backend emite EXATAMENTE estes
 | `TENANT_INACTIVE` | 403 | Laboratório suspenso/inativo | — |
 | `PASSWORD_CHANGE_REQUIRED` | 403 | Access token com `mustChangePassword` (senha provisória, CRMLAB-186, D-326) chamando qualquer rota autenticada que não seja `GET /users/me` ou `PATCH /users/me/password` — inclui o handshake do `/ws`. Frontend leva o usuário para `/change-password` | — |
 | `RESET_TOKEN_INVALID` | 400 | `POST /auth/reset-password`: token inexistente, já usado ou vencido (CRMLAB-39, D-172) — os três casos respondem igual, de propósito | — |
+| `PAIRING_CODE_INVALID` | 400 | `POST /capture/pair` (CRMLAB-184, D-327): código inexistente, vencido, já usado ou de dispositivo revogado — os quatro respondem igual, de propósito | — |
+| `CAPTURE_DEVICE_UNPAIRED` | 401 | `/capture/session` e `/capture/scans` sem cookie `crm_capture`, com credencial desconhecida, dispositivo revogado ou laboratório inativo (D-327). A página `/digitalizar` volta para a tela do código. **Não** dispara o refresh do client (não é sessão de usuário) | — |
 
 ## Recursos
 

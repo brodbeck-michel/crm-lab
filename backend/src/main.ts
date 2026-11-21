@@ -16,8 +16,12 @@ import { createFunnelTimerService } from './services/funnel-timer.service.js';
 import { syncEvolutionWebhooks } from './services/channel-settings.service.js';
 import { createMessageService } from './services/message.service.js';
 import { createReengagementService } from './services/reengagement.service.js';
+import { ScanService } from './services/scan.service.js';
+import { createAuditService } from './services/audit.service.js';
 
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+/** Expiracao da fila Digitalizacoes (CRMLAB-184, D-327 — API_CONTRACTS §15.4). */
+const SCAN_EXPIRE_INTERVAL_MS = 30 * 60 * 1000;
 
 async function bootstrap(): Promise<void> {
   const db = await getDb();
@@ -164,6 +168,20 @@ async function bootstrap(): Promise<void> {
     }, env.FUNNEL_TIMER_INTERVAL_MS);
     funnelTimerInterval.unref();
   }
+
+  // =========================================================================
+  // Expiracao da fila Digitalizacoes (CRMLAB-184, D-327)
+  // =========================================================================
+  // Mesmo padrao do motor do funil: `expireDue` nao lanca (cada laboratorio
+  // tem o proprio try/catch) e ignora o tique se o anterior ainda roda. Lista
+  // os tenants com vencidas via `withoutTenant()` (excecao em SCHEMA.md) e
+  // apaga linha + arquivo de cada um com `withTenant()`.
+  const scanService = new ScanService({ db, audit: createAuditService(db) });
+  void scanService.expireDue();
+  const scanExpireInterval = setInterval(() => {
+    void scanService.expireDue();
+  }, SCAN_EXPIRE_INTERVAL_MS);
+  scanExpireInterval.unref();
 
   // =========================================================================
   // Webhook do Evolution reaplicado em toda instancia QR (CRMLAB-66, D-223)

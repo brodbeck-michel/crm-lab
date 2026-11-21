@@ -72,6 +72,7 @@ import {
   MAX_SEARCH_LIMIT,
 } from '../services/conversation.service.js';
 import { MediaService } from '../services/media.service.js';
+import { ScanService } from '../services/scan.service.js';
 import { MAX_MESSAGE_LIMIT, MessageService } from '../services/message.service.js';
 import { createWhatsAppService, type WhatsAppService } from '../services/whatsapp.service.js';
 
@@ -319,14 +320,32 @@ export const sendPresenceSchema = z.object({ presence: z.enum(['paused', 'compos
  * multipart sozinho, e o Evolution ja resolve mídia em base64 nos dois
  * sentidos. O teto de tamanho e do `MediaService` — o zod so garante formato.
  */
-export const createAttachmentSchema = z.object({
-  fileName: z.string().trim().min(1).max(255),
-  mimeType: z.string().trim().min(1).max(127),
-  contentBase64: z.string().min(1),
-  quotedMessageId: z.uuid().nullish(),
-  // Legenda (CRMLAB-69, D-231): aparada; vazia = sem legenda.
-  caption: z.string().trim().max(MAX_CAPTION_LENGTH).nullish(),
-});
+const ATTACHMENT_FILE_FIELDS = ['fileName', 'mimeType', 'contentBase64'] as const;
+
+export const createAttachmentSchema = z
+  .object({
+    fileName: z.string().trim().min(1).max(255).optional(),
+    mimeType: z.string().trim().min(1).max(127).optional(),
+    contentBase64: z.string().min(1).optional(),
+    // Foto da fila Digitalizacoes (CRMLAB-184, D-327) NO LUGAR do arquivo.
+    scanId: z.uuid().optional(),
+    quotedMessageId: z.uuid().nullish(),
+    // Legenda (CRMLAB-69, D-231): aparada; vazia = sem legenda.
+    caption: z.string().trim().max(MAX_CAPTION_LENGTH).nullish(),
+  })
+  .superRefine((value, ctx) => {
+    // `scanId` OU `fileName`+`mimeType`+`contentBase64`: os dois, ou nenhum, e 400.
+    for (const field of ATTACHMENT_FILE_FIELDS) {
+      if (value.scanId !== undefined && value[field] !== undefined) {
+        ctx.addIssue({ code: 'custom', path: [field], message: 'Envie scanId OU o arquivo, nao os dois' });
+      }
+      if (value.scanId === undefined && value[field] === undefined) {
+        ctx.addIssue({ code: 'custom', path: [field], message: 'Campo obrigatorio' });
+      }
+    }
+  });
+
+type CreateAttachmentBody = z.infer<typeof createAttachmentSchema>;
 
 type CreateMessageBody = z.infer<typeof createMessageSchema>;
 type GetConversationQuery = z.infer<typeof getConversationQuerySchema>;
@@ -340,6 +359,8 @@ export interface ConversationServices {
   conversations: ConversationService;
   messages: MessageService;
   media: MediaService;
+  /** Fila Digitalizacoes — anexo com `scanId` (CRMLAB-184, D-327). */
+  scans: ScanService;
 }
 
 /** Monta services + repositorios a partir das dependencias do kernel. */
@@ -366,7 +387,8 @@ export function createConversationServices(
     audit,
   });
   const media = new MediaService(new MediaRepository(deps.db));
-  return { conversations, messages, media };
+  const scans = new ScanService({ db: deps.db, audit });
+  return { conversations, messages, media, scans };
 }
 
 /** `Promise` rejeitada em handler async precisa chegar no error-handler. */
@@ -491,6 +513,15 @@ export function createMessage(services: ConversationServices): RequestHandler {
   });
 }
 
+/** O schema ja garantiu os tres campos quando nao ha `scanId`. */
+function fileOf(dto: CreateAttachmentBody): CreateAttachmentRequest {
+  const { fileName, mimeType, contentBase64 } = dto;
+  if (fileName === undefined || mimeType === undefined || contentBase64 === undefined) {
+    throw new Error('createAttachmentSchema deixou passar anexo sem arquivo');
+  }
+  return { fileName, mimeType, contentBase64 };
+}
+
 /**
  * `POST /:id/attachments` (Onda 8 §4.3). Grava a mídia ANTES da mensagem (o
  * id do arquivo em disco e da linha de `message_media` precisa existir para
@@ -501,14 +532,18 @@ export function createAttachment(services: ConversationServices): RequestHandler
   return handle(async (req, res) => {
     const ctx = getContext(req);
     const { id } = validated<{ id: string }>(req, 'params');
-    const dto = validated<CreateAttachmentRequest>(req, 'body');
+    const dto = validated<CreateAttachmentBody>(req, 'body');
 
     // Recorte por papel antes de gravar: 404 para conversa que nao e visivel.
     await services.conversations.getById(ctx, id);
     // Validacoes do arquivo e da citacao SEM gravar, antes de reabrir a
     // encerrada para quem envia (D-273): recusa aqui nao deixa a conversa
-    // reaberta e com outra dona sem mensagem.
-    const prepared = await services.media.prepareOutbound(dto);
+    // reaberta e com outra dona sem mensagem. Com `scanId` (D-327) a foto da
+    // fila so e LIDA aqui — sai da fila quando a midia for gravada.
+    const prepared =
+      dto.scanId !== undefined
+        ? await services.scans.prepareForAttachment(ctx, dto.scanId)
+        : await services.media.prepareOutbound(fileOf(dto));
     await services.messages.assertQuotable(ctx.tenantId, id, dto.quotedMessageId);
     // D-308: antes de reabrir, assumir e guardar a midia (nada fica para tras).
     // D-314: formato/tamanho que a API oficial aceita, sobre o arquivo ja
@@ -520,7 +555,10 @@ export function createAttachment(services: ConversationServices): RequestHandler
     // corrida recebe o 409 sem deixar arquivo gravado.
     await services.messages.claimForAgent(ctx.tenantId, id, ctx.userId);
 
-    const stored = await services.media.storePrepared(ctx.tenantId, prepared);
+    const stored =
+      dto.scanId !== undefined
+        ? await services.scans.consumeAsMedia(ctx, dto.scanId, prepared)
+        : await services.media.storePrepared(ctx.tenantId, prepared);
     // `stored.mimeType` (nao `dto.mimeType`): allow-list/sniff (CRMLAB-31)
     // podem rebaixar o MIME declarado — mensagem e envio pro canal externo
     // usam o que foi REALMENTE gravado.

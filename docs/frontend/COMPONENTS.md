@@ -321,6 +321,12 @@ Anatomia (padrão WhatsApp):
   fecha. Remover o último arquivo fecha.
 - Object URL criado por miniatura/destaque e revogado ao desmontar (remover, fechar, enviar).
 - Componente burro: não chama API, não conhece conversa nem citação.
+- **Digitalizações (CRMLAB-184, D-327):** `AttachmentDraft.scanId` opcional. `createScanDraft(file, scanId)`
+  monta o rascunho de uma foto da fila: `file` é a cópia baixada (só para a prévia) e quem envia manda
+  `{ scanId, caption }` em vez do arquivo. A prévia não muda nada para isso.
+- O `Composer` ganha `onOpenScans?: () => void`: com handler, o menu do clipe mostra **"Digitalizações"**
+  (ícone de câmera) abaixo de "Documento". Quem abre o seletor é a tela — no Atendimento,
+  `pages/Attendance/ScanPicker.tsx` (modal da fila; local da tela, não é componente reutilizável).
 
 #### Emoji (Onda 8 §2.2, refeito no CRMLAB-73 / D-243)
 - Popover com **busca** (campo "Buscar emoji", pt-BR, sem acento e sem caixa, por nome e

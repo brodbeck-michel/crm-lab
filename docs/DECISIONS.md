@@ -7299,3 +7299,47 @@ e-mail cadastrado. A saída foi gravar o hash direto no banco de produção, sem
 `POST /auth/refresh` já relê o usuário do banco a cada rotação, então o claim nunca fica mais velho que um
 access token (15 min), e o reset derruba as sessões de qualquer forma.
 **Fora daqui:** usuário criado pelo admin (`POST /users`) continua sem troca obrigatória.
+
+### D-327: Digitalizar pelo celular — fila "Digitalizações" e dispositivo pareado sem login (CRMLAB-184)
+**Contexto:** com a migração completa do Santé para a Cloud API (D-324, 17/11/2026) o número saiu do app
+do WhatsApp. A recepção tirava foto no celular do laboratório e mandava ao paciente pelo app; isso acabou.
+O envio de anexo ao paciente já existe (`POST /conversations/:id/attachments`); faltava levar a foto do
+celular até o CRM. Quem fotografa (recepção) não é necessariamente quem conversa com o paciente (PC).
+**Decisão (Michel, 19/11/2026):**
+1. **Fila, não envio direto do celular.** O celular manda a foto para a fila **Digitalizações** do
+   laboratório; quem está no atendimento escolhe a foto pelo clipe ("Digitalizações") e ela sai pelo
+   fluxo de anexo que já existe. Escolher o paciente fica no PC — escolher no celular é onde mora o
+   "mandei para o paciente errado". Alternativas descartadas: enviar direto do celular (risco de
+   paciente errado) e QR por conversa (pareamento em tempo real, custo alto para o ganho).
+2. **Página `/digitalizar`, instalável na tela de início (PWA), não app nativo.** Sem loja, sem APK, sem
+   atualização manual. Manifesto próprio (`start_url` e `scope` = `/digitalizar`), sem service worker:
+   não há modo offline — foto que não subiu fica na tela com "Tentar de novo".
+3. **Sem login: dispositivo pareado.** Login de usuário no celular seria pedir senha a cada 7 dias
+   (refresh, SECURITY.md) e deixar o CRM inteiro aberto num aparelho compartilhado. Em vez disso, o
+   admin cadastra um **dispositivo de captura** e recebe um **código de pareamento** (8 caracteres, uso
+   único, 15 min). O celular digita o código uma vez e recebe uma credencial de dispositivo em cookie
+   httpOnly. Essa credencial **só envia foto para a fila**: não lê conversa, paciente nem a própria
+   fila. Revogável a qualquer momento; perder o celular custa, no máximo, fotos indevidas na fila.
+4. **Código digitado, não QR lido.** O celular da recepção é **iPhone**, e no iOS o app da tela de início
+   tem armazenamento (cookies) **separado** do Safari: pareamento feito no Safari não chega ao app
+   instalado. Por isso a página só pareia **rodando instalada** (`display-mode: standalone`); aberta no
+   Safari, mostra como "Adicionar à Tela de Início". Ler QR de dentro do app instalado exigiria
+   biblioteca de leitura de QR no iOS (sem `BarcodeDetector`) — digitar 8 caracteres uma vez é mais simples.
+5. **Só fotos soltas** (sem juntar em PDF) e **identificação só pelo dispositivo** (sem nome de quem tirou).
+6. **A foto vive 2 dias na fila.** Some ao ser usada (vira mídia da mensagem), ao ser descartada ou
+   quando vence (`expires_at = created_at + 2 dias`); a listagem já esconde o vencido e um agendador
+   apaga linha e arquivo. É dado de saúde sem paciente vinculado: não fica parado.
+7. **A foto já chega pronta para a Meta.** O celular reduz a foto (lado maior 2048 px, JPEG ~0,8) antes de
+   subir; o servidor aceita só JPEG/PNG até **5 MB** (teto de imagem da Cloud API, D-314), passa pelo
+   hardening de mídia (allow-list + sniff, CRMLAB-31) e reencoda em JPEG sem EXIF/GPS (D-290). Assim
+   nada da fila é recusado pela Meta no envio.
+8. **Teto por dispositivo:** no máximo **100 fotos pendentes** por dispositivo (409 `scan_queue_full`).
+   Contém um celular perdido enchendo o disco.
+**Consequências:** primeira credencial que não é de usuário. Três caminhos novos rodam fora do contexto
+de tenant (`withoutTenant()`): pareamento (acha o dispositivo pelo hash do código), autenticação do
+dispositivo (pelo hash da credencial) e o agendador de expiração (lista só `tenant_id`). Cadastro,
+novo código e revogação de dispositivo são auditados (equivalem a dar/tirar permissão).
+**Impacto:** SCHEMA §50 (migração 069: `capture_devices`, `scans`), API_CONTRACTS §15 + `scanId` em
+`POST /conversations/:id/attachments`, API_ERRORS (`CAPTURE_DEVICE_UNPAIRED`, `PAIRING_CODE_INVALID`),
+SECURITY.md "Dispositivo de captura", PAGES.md (`/digitalizar`, clipe "Digitalizações", seção em Canais &
+Equipe), SERVICES.md §36.

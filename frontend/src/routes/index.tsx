@@ -34,6 +34,7 @@ import Agenda from '@/pages/Visitation/Agenda';
 import PlatformTenants from '@/pages/Platform/Tenants';
 import PlatformTenantDetail from '@/pages/Platform/TenantDetail';
 import PlatformBilling from '@/pages/Platform/Billing';
+import Digitalizar from '@/pages/Digitalizar';
 import { RequireAuth, RequireRoles, RoleHomeRedirect } from './guards';
 import { ADMIN_ONLY, MANAGER_PLUS, PLATFORM_ONLY, TENANT_ROLES } from './route-config';
 
@@ -64,6 +65,8 @@ export const appRoutes: RouteObject[] = [
   { path: '/login', element: <Login /> },
   { path: '/forgot-password', element: <ForgotPassword /> },
   { path: '/reset-password', element: <ResetPassword /> },
+  // Celular pareado, sem login de usuário e fora do AppShell (PAGES.md §24, D-327).
+  { path: '/digitalizar', element: <Digitalizar /> },
 
   {
     element: <RequireAuth />,

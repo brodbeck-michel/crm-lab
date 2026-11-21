@@ -50,6 +50,9 @@ import { businessCalendarModule, holidayModule } from '../controllers/holiday.ro
 import { doctorModule } from '../controllers/doctor.routes.js';
 import { visitModule } from '../controllers/visit.routes.js';
 import { whatsappTemplateModule } from '../controllers/whatsapp-template.routes.js';
+import { captureDeviceModule } from '../controllers/capture-device.routes.js';
+import { captureModule } from '../controllers/capture.routes.js';
+import { scanModule } from '../controllers/scan.routes.js';
 
 export const apiModuleFactories: ApiModuleFactory[] = [
   examModule, // GET/POST/PATCH /exams — API_CONTRACTS.md §4
@@ -83,5 +86,8 @@ export const apiModuleFactories: ApiModuleFactory[] = [
   doctorModule, // GET|POST /doctors, GET|PATCH /doctors/:id, POST /doctors/:id/inactivate|reactivate — API_CONTRACTS.md §13 (CRMLAB-86)
   visitModule, // GET|POST /visits, GET|PATCH /visits/:id, POST /visits/:id/reschedule|cancel|not-received — API_CONTRACTS.md §14 (CRMLAB-87)
   whatsappTemplateModule, // GET /whatsapp/templates — API_CONTRACTS.md §6.2 (CRMLAB-136)
+  captureDeviceModule, // GET|POST /settings/capture-devices, POST /:id/pairing-code, DELETE /:id — API_CONTRACTS.md §15.1 (CRMLAB-184)
+  captureModule, // POST /capture/pair|scans, GET /capture/session — PUBLICO, cookie do dispositivo — API_CONTRACTS.md §15.2 (CRMLAB-184)
+  scanModule, // GET /scans, GET /scans/:id/content, DELETE /scans/:id — API_CONTRACTS.md §15.3 (CRMLAB-184)
   // <- agentes de API: adicione o factory do seu modulo aqui
 ];

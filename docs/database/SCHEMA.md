@@ -2450,6 +2450,72 @@ INSERT INTO whatsapp_price_table (category, price_brl, effective_from) VALUES
   código lê esta tabela; o histórico da decisão continua no audit log da proposta.
 - Idempotente: rodar de novo não move nem renomeia nada.
 
+### 49. `users.must_change_password` (migração 068 — CRMLAB-186, D-326)
+Senha atual é **provisória** e precisa ser trocada antes de usar o sistema.
+
+```sql
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
+```
+
+- **Liga:** `POST /users/:id/reset-password` (admin do laboratório) e
+  `POST /platform/tenants/:id/users/:userId/reset-password` (console).
+- **Desliga:** `PATCH /users/me/password` (troca própria) e `POST /auth/reset-password` (link
+  por e-mail) — qualquer senha escolhida pela própria pessoa.
+- Default `FALSE`, sem backfill: ninguém existente é obrigado a trocar.
+
+### 50. `capture_devices` e `scans` — Digitalizar pelo celular (migração 069 — CRMLAB-184, D-327)
+Dono: `ScanService` (SERVICES.md §36). Migração **única** (tabelas + policies), sem backfill.
+
+```sql
+CREATE TABLE capture_devices (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  name VARCHAR(60) NOT NULL,                       -- "Celular recepção"
+  token_hash CHAR(64),                             -- sha256 hex da credencial; NULL = não pareado/revogado
+  pairing_code_hash CHAR(64),                      -- sha256 hex do código; NULL = sem código válido
+  pairing_code_expires_at TIMESTAMPTZ,
+  paired_at TIMESTAMPTZ,
+  last_used_at TIMESTAMPTZ,
+  revoked_at TIMESTAMPTZ,                          -- revogado não volta: cadastra outro
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX uq_capture_devices_token_hash ON capture_devices(token_hash) WHERE token_hash IS NOT NULL;
+CREATE UNIQUE INDEX uq_capture_devices_pairing_code_hash ON capture_devices(pairing_code_hash) WHERE pairing_code_hash IS NOT NULL;
+CREATE INDEX idx_capture_devices_tenant_id ON capture_devices(tenant_id);
+CREATE INDEX idx_capture_devices_created_by ON capture_devices(created_by);  -- índice de FK (D-146)
+
+CREATE TABLE scans (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),   -- também o nome do arquivo em disco
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  device_id UUID NOT NULL REFERENCES capture_devices(id) ON DELETE CASCADE,
+  mime_type VARCHAR(127) NOT NULL,                 -- já passado pela allow-list + sniff + JPEG (D-290)
+  byte_size INTEGER NOT NULL CHECK (byte_size > 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL                  -- created_at + 2 dias (D-327 item 6)
+);
+CREATE INDEX idx_scans_tenant_created ON scans(tenant_id, created_at DESC);
+CREATE INDEX idx_scans_device_id ON scans(device_id);
+CREATE INDEX idx_scans_expires_at ON scans(expires_at);
+-- ENABLE ROW LEVEL SECURITY + policy padrão nas duas (mesmo arquivo)
+```
+
+- **Credencial e código só em hash** (sha256 — são 32 bytes aleatórios e 8 caracteres de uso único e
+  15 min, não senha: bcrypt aqui só custaria CPU em toda foto). O valor em claro aparece **uma vez**:
+  o código na resposta ao admin, a credencial no `Set-Cookie` do pareamento.
+- **Revogar não apaga a linha:** zera `token_hash` e `pairing_code_hash` e grava `revoked_at`. O audit log
+  e as fotos ainda pendentes continuam apontando para o dispositivo (e mostram o nome dele).
+- **Parear de novo** (celular trocado, iOS limpou os dados): novo código; o pareamento troca o
+  `token_hash`, e a credencial antiga deixa de valer.
+- **`scans` não tem `file_name`:** o nome mostrado é montado pela data (`digitalizacao-AAAAMMDD-HHMMSS.jpg`,
+  horário de Brasília). O arquivo fica em `MEDIA_DIR/scans/<id>` (`lib/media-storage.ts`), nunca servido
+  como estático.
+- **Sem `conversation_id`/`patient_id`:** a foto só ganha dono quando vira anexo; nesse momento o arquivo
+  é copiado para `message_media` e a linha de `scans` + o arquivo são apagados. Anonimização de paciente
+  (D-063/D-075) não precisa olhar esta tabela.
+
+
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
 
 O isolamento multitenant não é convenção: é imposto pelo banco. O backend conecta com o papel
@@ -2565,6 +2631,9 @@ para ser a exceção visível e auditável, nunca o caminho normal:
 | **Console da plataforma** | opera sobre todos os tenants por definição (`platform_operator`) |
 | **Agendador da sincronização LIS** | lista **só os `tenant_id`** com sincronização ligada, antes de ter contexto (D-186). A rodada de cada tenant roda com `withTenant()` |
 | **Motor de tempo do funil** | lista **só os `tenant_id`** de tenants ativos com proposta aberta, antes de ter contexto (D-205 item 6). Leitura das regras, dos cartões e cada transição rodam com `withTenant()` |
+| **Pareamento do dispositivo de captura** | `POST /capture/pair` acha o dispositivo pelo **hash do código** antes de saber o tenant (D-327). Busca uma linha só; a gravação do pareamento roda com `withTenant()` |
+| **Autenticação do dispositivo de captura** | `/capture/*` acha o dispositivo pelo **hash da credencial** do cookie — o equivalente ao Login, para o celular (D-327). Daí em diante, `withTenant()` |
+| **Agendador de expiração das digitalizações** | lista **só os `tenant_id`** com `scans` vencidas; o `DELETE` e a remoção do arquivo de cada tenant rodam com `withTenant()` (D-327) |
 
 Nenhum outro caminho de código deve usar `withoutTenant()`.
 
@@ -2611,6 +2680,8 @@ Nenhum outro caminho de código deve usar `withoutTenant()`.
 | `doctor_visits` | ✅ | migração `048_doctor_visits.sql` (tabela + policy no mesmo arquivo — CRMLAB-87), testado em `tests/visits/visits.spec.ts` |
 | `doctor_visit_reschedules` | ✅ | migração `048_doctor_visits.sql` (CRMLAB-87), testado em `tests/visits/visits.spec.ts` |
 | `proposal_reminders` | ✅ | migração `056_proposal_reminders.sql` (tabela + policy no mesmo arquivo — CRMLAB-102), `tests/db/rls-proposal-reminders.spec.ts` |
+| `capture_devices` | ✅ | migração `069_scans.sql` (tabela + policy no mesmo arquivo — CRMLAB-184), `tests/db/rls-scans.spec.ts` |
+| `scans` | ✅ | idem |
 
 As **4 tabelas da migração 003** entram sob RLS na `004_rls_onda6.sql`, as **3 tabelas da
 migração 005** entram na `006_rls_onda7.sql`, e as **4 tabelas novas da migração 012**
@@ -2902,16 +2973,3 @@ tabelas novas — com 2 tenants e controle positivo em cada asserção.
 
 ---
 
-### 49. `users.must_change_password` (migração 068 — CRMLAB-186, D-326)
-Senha atual é **provisória** e precisa ser trocada antes de usar o sistema.
-
-```sql
-ALTER TABLE users
-  ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
-```
-
-- **Liga:** `POST /users/:id/reset-password` (admin do laboratório) e
-  `POST /platform/tenants/:id/users/:userId/reset-password` (console).
-- **Desliga:** `PATCH /users/me/password` (troca própria) e `POST /auth/reset-password` (link
-  por e-mail) — qualquer senha escolhida pela própria pessoa.
-- Default `FALSE`, sem backfill: ninguém existente é obrigado a trocar.

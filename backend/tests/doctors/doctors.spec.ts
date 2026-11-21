@@ -99,7 +99,7 @@ describe('guardas de acesso', () => {
   it('atendente, gestor e admin cadastram, editam e inativam (sem perfil novo)', async () => {
     for (const user of [attendantA, managerA, adminA]) {
       const doctor = await createOk(user, { name: `Dr. ${user.role}` });
-      await app.agent.patch(`${BASE}/${doctor.id}`).set(app.auth(user)).send({ specialty: 'Clínica' }).expect(200);
+      await app.agent.patch(`${BASE}/${doctor.id}`).set(app.auth(user)).send({ clinic: 'Clínica' }).expect(200);
       await app.agent.post(`${BASE}/${doctor.id}/inactivate`).set(app.auth(user)).expect(200);
       await app.agent.post(`${BASE}/${doctor.id}/reactivate`).set(app.auth(user)).expect(200);
     }
@@ -112,11 +112,10 @@ describe('POST /doctors — validação e normalização', () => {
       name: '  Dra. Júlia Costa ',
       crm: 'CRM 12.345',
       crmUf: ' sc',
-      specialty: 'Ginecologia',
       clinic: 'Clínica Vida',
       phone: '(48) 99999-0000',
       email: 'julia@clinica.com.br',
-      contactName: 'Marta (secretária)',
+      secretaryName: 'Marta (secretária)',
       visitPreference: 'Terças à tarde',
       notes: '   ',
       address: '',
@@ -125,10 +124,12 @@ describe('POST /doctors — validação e normalização', () => {
       name: 'Dra. Júlia Costa',
       crm: '12345',
       crmUf: 'SC',
-      specialty: 'Ginecologia',
+      specialty: null,
       clinic: 'Clínica Vida',
       phone: '(48) 99999-0000',
       email: 'julia@clinica.com.br',
+      secretaryName: 'Marta (secretária)',
+      // Espelho deprecado (coluna antiga, escrita dupla — D-328 item 8).
       contactName: 'Marta (secretária)',
       visitPreference: 'Terças à tarde',
       notes: null,
@@ -243,7 +244,7 @@ describe('unicidade de (tenant, CRM, UF)', () => {
 
 describe('PATCH /doctors/:id', () => {
   it('parcial: CRM com a UF que já existe; null limpa campo; CRM null limpa o par', async () => {
-    const doctor = await createOk(attendantA, { name: 'Dr. P', crm: '1', crmUf: 'SC', specialty: 'Cardio' });
+    const doctor = await createOk(attendantA, { name: 'Dr. P', crm: '1', crmUf: 'SC', clinic: 'Cardio' });
 
     const novoCrm = await app.agent.patch(`${BASE}/${doctor.id}`).set(app.auth(attendantA)).send({ crm: '2' });
     expect((novoCrm.body as Doctor).crmUf).toBe('SC');
@@ -251,9 +252,9 @@ describe('PATCH /doctors/:id', () => {
     const limpo = await app.agent
       .patch(`${BASE}/${doctor.id}`)
       .set(app.auth(attendantA))
-      .send({ specialty: null, crm: null, crmUf: null })
+      .send({ clinic: null, crm: null, crmUf: null })
       .expect(200);
-    expect(limpo.body as Doctor).toMatchObject({ specialty: null, crm: null, crmUf: null });
+    expect(limpo.body as Doctor).toMatchObject({ clinic: null, crm: null, crmUf: null });
   });
 
   it('isActive no PATCH -> 400 (inativar tem rota própria)', async () => {
@@ -411,10 +412,10 @@ describe('audit log', () => {
     await app.agent
       .patch(`${BASE}/${doctor.id}`)
       .set(app.auth(managerA))
-      .send({ name: 'Dr. Audit', specialty: 'Pediatria', responsibleId: managerA.id })
+      .send({ name: 'Dr. Audit', clinic: 'Pediatria', responsibleId: managerA.id })
       .expect(200);
     // PATCH sem mudança real não gera audit.
-    await app.agent.patch(`${BASE}/${doctor.id}`).set(app.auth(managerA)).send({ specialty: 'Pediatria' }).expect(200);
+    await app.agent.patch(`${BASE}/${doctor.id}`).set(app.auth(managerA)).send({ clinic: 'Pediatria' }).expect(200);
     await app.agent.post(`${BASE}/${doctor.id}/inactivate`).set(app.auth(adminA)).expect(200);
     await app.agent.post(`${BASE}/${doctor.id}/reactivate`).set(app.auth(adminA)).expect(200);
 
@@ -430,8 +431,8 @@ describe('audit log', () => {
 
     const updated = rows.find((r) => r.action === 'update_doctor');
     expect(updated?.user_id).toBe(managerA.id);
-    expect(updated?.old_values).toEqual({ specialty: null, responsibleId: null });
-    expect(updated?.new_values).toEqual({ specialty: 'Pediatria', responsibleId: managerA.id });
+    expect(updated?.old_values).toEqual({ clinic: null, responsibleId: null });
+    expect(updated?.new_values).toEqual({ clinic: 'Pediatria', responsibleId: managerA.id });
 
     expect(rows.find((r) => r.action === 'inactivate_doctor')?.new_values).toEqual({ isActive: false });
   });

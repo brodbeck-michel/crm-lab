@@ -16,7 +16,8 @@ import { useInsuranceList } from '@/api/insurances';
 import { useApiErrorHandler } from '@/hooks';
 import { formatIsoDay, formatMoney } from '@/lib/format';
 import { Modal, MoneyDisplay } from '@/components/shared';
-import { Button, Chip, Input } from '@/components/ui';
+import { Button, Chip } from '@/components/ui';
+import { DoctorPicker, type DoctorPickerValue } from './DoctorPicker';
 import ItemsList from './ItemsList';
 import EditableItemsList, { type EditableProposalItem } from './EditableItemsList';
 import DiscountSection from './DiscountSection';
@@ -61,7 +62,7 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
   const [isEditing, setIsEditing] = useState(false);
   const [editItems, setEditItems] = useState<EditableProposalItem[]>([]);
   const [editDiscount, setEditDiscount] = useState(0);
-  const [editDoctor, setEditDoctor] = useState('');
+  const [editDoctor, setEditDoctor] = useState<DoctorPickerValue>({ text: '', doctorId: null, doctorName: null });
   // CRMLAB-58: painel de envio/reenvio/troca de conversa do cartão do Bitlab.
   const [panel, setPanel] = useState<SendPanelMode | null>(null);
 
@@ -99,7 +100,11 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
       })),
     );
     setEditDiscount(proposal.discountPercent);
-    setEditDoctor(proposal.requestingDoctor ?? '');
+    setEditDoctor({
+      text: proposal.requestingDoctor ?? '',
+      doctorId: proposal.doctorId ?? null,
+      doctorName: proposal.doctorName ?? null,
+    });
     setIsEditing(true);
   };
 
@@ -109,7 +114,8 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
         proposalId,
         items: editItems.map((item) => ({ examId: item.examId, quantity: item.quantity })),
         discountPercent: editDiscount,
-        requestingDoctor: editDoctor || null,
+        requestingDoctor: editDoctor.text.trim() || null,
+        doctorId: editDoctor.doctorId,
       },
       {
         onSuccess: () => setIsEditing(false),
@@ -258,13 +264,7 @@ export default function ProposalModal({ proposalId, onClose }: ProposalModalProp
 
           {isEditing ? (
             <>
-              <Input
-                label="Médico solicitante (opcional)"
-                value={editDoctor}
-                onChange={(e) => setEditDoctor(e.target.value)}
-                placeholder="Nome do médico"
-                maxLength={255}
-              />
+              <DoctorPicker value={editDoctor} onChange={setEditDoctor} />
 
               <EditableItemsList
                 items={editItems}

@@ -847,7 +847,41 @@ agenda de visitas que vem depois.
 - **Auditoria:** `create_doctor`, `update_doctor` (só os campos que mudaram, com antes e depois),
   `inactivate_doctor`, `reactivate_doctor` — `entityType: "doctor"`.
 - **Proposta não muda:** `proposals.requestingDoctor` continua texto livre. Ligar a proposta ao
-  cadastro fica para outro card, se for pedido.
+  cadastro fica para outro card, se for pedido. *(Feito no CRMLAB-188 — §12b.)*
+
+## 12b. Visitação Médica — cadastro ampliado e curva ABC (CRMLAB-188, D-328)
+
+- **Especialidade** vem de uma **lista do laboratório**, semeada com as especialidades mais comuns do
+  CFM. Nome único sem acento/caixa. **Gestor e admin** criam, renomeiam e inativam (no select do
+  formulário do médico há "+ nova especialidade" para eles); atendente só escolhe. Inativa some do
+  select de cadastro novo, mas quem já a tem continua com ela. Não se apaga.
+- **Aniversário** (médico e secretária): dia e mês obrigatórios juntos, ano opcional.
+- **Clínica:** atende particular (sim / não / não informado), consultas por mês (total e
+  particulares, particulares ≤ total; se não atende particular, particulares 0 ou vazio) e valor da
+  consulta (decimal).
+- **Horário para representante:** faixas de dias da semana + início/fim (`HH:MM`, início < fim), até
+  14. O "melhor dia e horário" antigo continua como **observação de horário**.
+- **Parceria:** é parceiro (sim/não), parceiro desde (data não futura) e anotações.
+- **Endereço** estruturado (CEP, logradouro, número, complemento, bairro, cidade, UF). O CEP
+  completa o resto pelo ViaCEP, no navegador; se falhar, digita-se. O endereço em texto antigo fica
+  guardado e aparece quando os campos novos estão vazios.
+- **WhatsApp:** telefone do médico (e da secretária) vira link `wa.me` quando forma número brasileiro.
+- **Secretária:** nome, aniversário, telefone/WhatsApp e anotações (o antigo "secretária/contato"
+  virou o nome).
+- **Curva ABC — automática, ninguém edita:**
+  - Base = soma do total (`totalPrice`) das propostas **ganhas** (`ganho`) nos **últimos 12 meses**
+    (`closedAt`), por médico vinculado à proposta.
+  - Pareto por laboratório: em ordem decrescente de base, **A** enquanto o acumulado antes do médico
+    é < 80%, **B** enquanto < 95%, **C** o resto. Empate = mesma classe. Sem venda = **C**.
+    Laboratório sem venda = todos C.
+  - Recalculada **todo dia** (e no boot do servidor) e quando o **gestor/admin** pede (botão
+    "Recalcular" na lista; auditado).
+- **Proposta ↔ médico:** a proposta pode apontar o médico do cadastro (busca por nome/CRM no
+  formulário). Só médico **ativo** do mesmo laboratório. O texto "médico solicitante" continua; vazio,
+  recebe o nome do médico escolhido. Propostas antigas foram ligadas pelo nome exato (sem
+  acento/caixa) quando havia um só médico com aquele nome.
+- **Auditoria:** `create_doctor_specialty`, `update_doctor_specialty`, `recalculate_doctor_abc`; os
+  campos novos do médico entram no diff de `update_doctor`.
 
 ---
 

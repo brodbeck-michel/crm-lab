@@ -10,6 +10,7 @@ import { visitsApi } from '@/api/visits';
 import { ToastProvider } from '@/components/ui';
 import { useAuthStore } from '@/stores/auth.store';
 import Agenda from './Agenda';
+import { buildDoctor } from '@/test/doctor-fixtures';
 
 /**
  * Agenda de visitas — `/visitation/agenda` (CRMLAB-87, D-256). A API é mockada
@@ -48,7 +49,7 @@ const NOW = new Date(2026, 9, 7, 10, 0);
 const MONDAY = new Date(2026, 9, 5);
 const NEXT_MONDAY = new Date(2026, 9, 12);
 
-const julia: Doctor = {
+const julia: Doctor = buildDoctor({
   id: 'doc-1',
   name: 'Dra. Júlia Costa',
   crm: '12345',
@@ -58,6 +59,7 @@ const julia: Doctor = {
   address: null,
   phone: null,
   email: null,
+  secretaryName: null,
   contactName: null,
   visitPreference: null,
   notes: null,
@@ -65,7 +67,7 @@ const julia: Doctor = {
   isActive: true,
   createdAt: '2026-10-01T10:00:00.000Z',
   updatedAt: '2026-10-01T10:00:00.000Z',
-};
+});
 
 function visit(overrides: Partial<VisitDetail> = {}): VisitDetail {
   return {

@@ -4283,3 +4283,24 @@ Frontend: botão "Resetar senha" em `/settings/users` (`ResetPasswordDialog`) e 
 (`RequireAuth` redireciona; o cliente liga a flag ao receber o 403). Testes: backend
 `tests/users/reset-password.spec.ts` (+15); frontend `ChangePassword.spec`, `ResetPasswordDialog.spec`,
 guards e client (+9).
+
+### 🔄 CRMLAB-188 — Cadastro de médico ampliado e curva ABC automática (2026-11-21, aguardando validação)
+
+Branch `feature/CRMLAB-188-cadastro-medico-ampliado` (épico Visitação v2, CRMLAB-187). Contrato: D-328,
+SCHEMA §35/§51, API_CONTRACTS §13 e §3 (`doctorId`), API_ERRORS (`DOCTOR_SPECIALTY_ALREADY_EXISTS`),
+BUSINESS_RULES §12b, PAGES §22/§22b + formulário de proposta, SERVICES §30.
+- **db:** `070_doctor_profile_expanded.sql` (`doctor_specialties` com RLS, colunas novas em `doctors`,
+  `proposals.doctor_id`, trigger de `updated_at` ignorando as colunas da ABC) e
+  `071_doctor_profile_backfill.sql` (semeia as especialidades do CFM, migra o texto da especialidade por
+  nome normalizado, `contact_name` → `secretary_name`, vincula propostas pelo nome exato — ambíguo não
+  vincula). Colunas antigas ficam (regra das 3 migrações) com escrita dupla. Teste
+  `tests/db/migration-071-doctor-profile.spec.ts`.
+- **api:** `DoctorSpecialtyService` + `/doctors/specialties` (gestor/admin escrevem), validações novas no
+  `DoctorService`, `DoctorAbcService` (Pareto 80/95 sobre propostas `ganho` dos últimos 12 meses) com
+  agendador diário no `main.ts` e `POST /doctors/abc/recalculate` (gestor/admin, audit); `doctorId` na
+  proposta (só médico ativo do mesmo tenant). Testes em `tests/doctors/` e
+  `tests/proposals/proposal-doctor-link.spec.ts`.
+- **ui:** `DoctorModal` em seções (CEP via ViaCEP no navegador, falha em silêncio; horário em faixas;
+  "+ nova especialidade" para gestor/admin), ficha em seções com WhatsApp `wa.me` e selo ABC, lista com
+  filtros de especialidade/ABC e [Recalcular curva ABC], `DoctorPicker` em Novo orçamento e na edição
+  da proposta. Testes: `Doctors.spec`, `DoctorProfile.spec`, `DoctorPicker.spec`, `viacep.spec`.

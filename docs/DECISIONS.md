@@ -7343,3 +7343,70 @@ novo código e revogação de dispositivo são auditados (equivalem a dar/tirar 
 `POST /conversations/:id/attachments`, API_ERRORS (`CAPTURE_DEVICE_UNPAIRED`, `PAIRING_CODE_INVALID`),
 SECURITY.md "Dispositivo de captura", PAGES.md (`/digitalizar`, clipe "Digitalizações", seção em Canais &
 Equipe), SERVICES.md §36.
+
+### D-328: Cadastro de médico ampliado e curva ABC automática (CRMLAB-188)
+**Contexto:** a ficha do médico (CRMLAB-86/89) nasceu enxuta: especialidade, endereço, secretária e
+horário de visita em texto livre, e nenhuma ligação com a venda. O representante precisa de dados
+para planejar a visita (quando recebe, aniversário, quanto atende particular) e o gestor precisa
+saber quais médicos trazem receita. Escopo aprovado pelo dono do produto em 21/11/2026.
+**Decisão:**
+1. **Especialidade por lista do laboratório** (`doctor_specialties`, uma por tenant, RLS). Toda lista
+   começa com as especialidades mais comuns do CFM (`DEFAULT_DOCTOR_SPECIALTIES`): a migração 071
+   semeia os laboratórios que existem; laboratório criado depois é semeado na primeira leitura da
+   lista (`GET /doctors/specialties`, só quando o tenant não tem nenhuma). Nome único por laboratório
+   **sem acento, caixa e espaços repetidos** (`normalized_name`, `normalizeLookupName`); duplicado →
+   `409 DOCTOR_SPECIALTY_ALREADY_EXISTS`. Criar/renomear/inativar: **gestor e admin**; atendente só
+   escolhe. Sem `DELETE`: inativar (some do select de cadastro novo; quem já usa continua). O texto
+   antigo (`doctors.specialty`) foi migrado casando pelo nome normalizado; o que não casou virou
+   especialidade nova do laboratório. A coluna antiga **fica** (regra das 3 migrações) e recebe o nome
+   da especialidade a cada gravação (escrita dupla) até a migração que a remover.
+2. **Aniversário** do médico e da secretária: dia e mês andam juntos; ano opcional (≥ 1900, não
+   futuro). 29/02 sem ano vale.
+3. **Clínica:** `acceptsPrivate` é **nulável** (não informado ≠ "não atende" — médico antigo não ganha
+   um "não" que ninguém disse). Consultas/mês particulares ≤ total quando os dois existem; com
+   `acceptsPrivate = false`, particulares só pode ser vazio ou 0. Valor da consulta em decimal (≥ 0).
+4. **Horário para representante** estruturado: lista (até 14) de `{ weekdays, start, end }` em JSONB,
+   `start < end`, horário local `HH:MM`. Sem checagem de sobreposição (o representante lê, não o
+   sistema). O texto antigo `visit_preference` continua, rotulado "Observação de horário".
+5. **Parceria:** `isPartner` (padrão `false`), `partnerSince` (data, não futura) e anotações.
+6. **Endereço estruturado** (CEP, logradouro, número, complemento, bairro, cidade, UF). O CEP é
+   consultado no **ViaCEP direto do navegador** (`https://viacep.com.br/ws/{cep}/json/`) ao completar 8
+   dígitos: preenche só os campos vazios; erro, CEP inexistente ou rede fora → **silêncio**, a pessoa
+   digita. O backend não chama o ViaCEP (nada a cachear, sem dependência nova no servidor; o dado é
+   endereço de consultório, não de paciente). O endereço texto antigo é preservado e aparece na ficha
+   só quando os campos novos estão vazios.
+7. **WhatsApp clicável:** `https://wa.me/<55+DDD+número>` a partir do telefone digitado
+   (`toWhatsAppNumber`); telefone que não forma número brasileiro não vira link.
+8. **Secretária** em bloco próprio (nome, aniversário, telefone/WhatsApp, anotações). `contact_name`
+   foi copiado para `secretary_name` na 071 e segue sendo escrito junto (espelho; `contactName`
+   deprecado e só leitura na API). O contrato de escrita troca `specialty`/`contactName` por
+   `specialtyId`/`secretaryName` (o único consumidor é o próprio frontend, no mesmo commit).
+9. **Curva ABC automática**, sem edição manual:
+   - **Venda fechada = proposta `ganho`** (estágio terminal de sucesso; `closed_at` é gravado na
+     transição). Base = soma de `total_price` das propostas `ganho` com `closed_at` nos **últimos 12
+     meses**, por `doctor_id`. `total_price` e não o líquido do LIS: é o número que o CRM controla
+     (regra §1) e existe em toda proposta.
+   - **Pareto:** ordena por base desc; o médico é **A** se o acumulado *antes* dele é < 80% do total,
+     **B** se < 95%, senão **C** (assim o maior vendedor é sempre A, mesmo concentrando 90%).
+     **Empate:** quem tem a mesma base fica com a classe do primeiro do grupo. Base 0 (sem venda) é
+     **C**; laboratório sem venda nenhuma → todos C. Médico inativo também é classificado.
+   - Grava `abc_class`, `abc_base_value` e `abc_calculated_at` no médico. O trigger de `updated_at`
+     de `doctors` passa a **ignorar** essas três colunas (o recálculo diário não pode fazer todo
+     médico parecer "editado hoje").
+   - Recalcula por **agendador no `main.ts`** (mesmo padrão dos demais: roda no boot e a cada 24 h,
+     `.unref()`, nunca lança; lista só os `tenant_id` com médico via `withoutTenant()`, o cálculo de
+     cada tenant roda com `withTenant()`) e por **`POST /doctors/abc/recalculate`** (gestor/admin,
+     audit `recalculate_doctor_abc`). O agendador não gera audit (dado derivado).
+10. **Proposta ganha `doctor_id`** (FK para `doctors`, `ON DELETE SET NULL`), escolhido no formulário
+    da proposta pela busca de médicos (nome/CRM). Só médico **ativo** do mesmo laboratório (outro
+    tenant ou inexistente → `VALIDATION_ERROR` em `doctorId`, sem dizer se existe). Com `doctorId` e
+    sem texto, `requestingDoctor` recebe o nome do médico. Editável onde o médico solicitante já era
+    (criação e `PATCH /proposals/:id/items`). **Backfill (071):** proposta sem vínculo casa com o
+    médico cujo **nome normalizado é exatamente** o `requesting_doctor` normalizado, no mesmo tenant,
+    contando ativos e inativos; 2+ médicos com o mesmo nome → **não vincula** (conservador).
+**Ambiguidades resolvidas pelo dev (conservador):** `acceptsPrivate` nulável; empate no Pareto sobe o
+grupo inteiro; inativos entram no cálculo; proposta já fechada não ganha vínculo pela tela (só pelo
+backfill), porque a edição da proposta é travada fora de `novo_contato`/`orcamento_enviado`.
+**Impacto:** SCHEMA §35/§51 (migrações 070 e 071), API_CONTRACTS §13 (campos novos, 4 rotas) e §3
+(`doctorId`), API_ERRORS (`DOCTOR_SPECIALTY_ALREADY_EXISTS`), BUSINESS_RULES §12b, PAGES §22/§22b e
+formulário de proposta, SERVICES §30.

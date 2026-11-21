@@ -1,0 +1,55 @@
+import type { Doctor } from '@crm-lab/shared';
+
+/**
+ * `Doctor` completo para spec (CRMLAB-188 ampliou o shape): cada spec passa
+ * só o que importa para ela. Defaults = cadastro só com nome.
+ */
+export function buildDoctor(overrides: Partial<Doctor> = {}): Doctor {
+  return {
+    id: 'doc-1',
+    name: 'Dra. Júlia Costa',
+    crm: null,
+    crmUf: null,
+    specialtyId: null,
+    specialty: null,
+    birthDay: null,
+    birthMonth: null,
+    birthYear: null,
+    clinic: null,
+    acceptsPrivate: null,
+    monthlyConsultations: null,
+    monthlyPrivateConsultations: null,
+    consultationFee: null,
+    visitHours: [],
+    visitPreference: null,
+    isPartner: false,
+    partnerSince: null,
+    partnershipNotes: null,
+    addressZip: null,
+    addressStreet: null,
+    addressNumber: null,
+    addressComplement: null,
+    addressDistrict: null,
+    addressCity: null,
+    addressState: null,
+    address: null,
+    phone: null,
+    email: null,
+    secretaryName: null,
+    secretaryBirthDay: null,
+    secretaryBirthMonth: null,
+    secretaryBirthYear: null,
+    secretaryPhone: null,
+    secretaryNotes: null,
+    contactName: null,
+    notes: null,
+    abcClass: null,
+    abcBaseValue: null,
+    abcCalculatedAt: null,
+    responsible: null,
+    isActive: true,
+    createdAt: '2026-10-01T10:00:00.000Z',
+    updatedAt: '2026-10-01T10:00:00.000Z',
+    ...overrides,
+  };
+}

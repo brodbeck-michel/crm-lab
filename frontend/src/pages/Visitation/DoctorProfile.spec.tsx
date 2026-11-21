@@ -15,6 +15,7 @@ import { conversationsApi } from '@/api/conversations';
 import { doctorsApi } from '@/api/doctors';
 import { ToastProvider } from '@/components/ui';
 import DoctorProfile from './DoctorProfile';
+import { buildDoctor } from '@/test/doctor-fixtures';
 
 /**
  * Ficha do médico — `/visitation/doctors/:id` (CRMLAB-89, D-261). A API é
@@ -33,6 +34,8 @@ vi.mock('@/api/doctors', () => ({
     createInteraction: vi.fn(),
     updateInteraction: vi.fn(),
     deleteInteraction: vi.fn(),
+    specialties: vi.fn(),
+    createSpecialty: vi.fn(),
   },
 }));
 
@@ -46,8 +49,9 @@ const createInteractionMock = vi.mocked(doctorsApi.createInteraction);
 const updateInteractionMock = vi.mocked(doctorsApi.updateInteraction);
 const deleteInteractionMock = vi.mocked(doctorsApi.deleteInteraction);
 const assigneesMock = vi.mocked(conversationsApi.assignees);
+const specialtiesMock = vi.mocked(doctorsApi.specialties);
 
-const julia: Doctor = {
+const julia: Doctor = buildDoctor({
   id: 'doc-1',
   name: 'Dra. Júlia Costa',
   crm: '12345',
@@ -57,6 +61,7 @@ const julia: Doctor = {
   address: 'Rua das Flores, 10',
   phone: '(48) 99999-0000',
   email: 'julia@clinica.com',
+  secretaryName: 'Marta',
   contactName: 'Marta',
   visitPreference: 'Terças à tarde',
   notes: 'Prefere material impresso',
@@ -64,7 +69,7 @@ const julia: Doctor = {
   isActive: true,
   createdAt: '2026-10-01T10:00:00.000Z',
   updatedAt: '2026-10-01T10:00:00.000Z',
-};
+});
 
 const visita: DoctorTimelineVisit = {
   kind: 'visit',
@@ -125,6 +130,7 @@ describe('DoctorProfile (/visitation/doctors/:id)', () => {
     getMock.mockResolvedValue(julia);
     timelineMock.mockResolvedValue(page([ligacao, visita]));
     assigneesMock.mockResolvedValue({ assignees: [{ id: 'u-ana', name: 'Ana Gestora', role: 'manager' }] });
+    specialtiesMock.mockResolvedValue({ specialties: [] });
   });
 
   afterEach(() => {
@@ -283,5 +289,84 @@ describe('DoctorProfile (/visitation/doctors/:id)', () => {
 
     expect(await screen.findByText('Médico não encontrado')).toBeInTheDocument();
     expect(timelineMock).not.toHaveBeenCalled();
+  });
+
+  // --- CRMLAB-188 (D-328): ficha em seções ---
+
+  it('ficha em seções, com WhatsApp clicável, horário estruturado, endereço e secretária', async () => {
+    getMock.mockResolvedValue({
+      ...julia,
+      birthDay: 14,
+      birthMonth: 3,
+      birthYear: 1980,
+      acceptsPrivate: true,
+      monthlyConsultations: 120,
+      monthlyPrivateConsultations: 40,
+      consultationFee: 350,
+      visitHours: [{ weekdays: [2, 4], start: '13:30', end: '15:00' }],
+      isPartner: true,
+      partnerSince: '2025-03-01',
+      partnershipNotes: 'Indica check-up',
+      addressZip: '88701100',
+      addressStreet: 'Rua Altamiro Guimarães',
+      addressNumber: '100',
+      addressCity: 'Tubarão',
+      addressState: 'SC',
+      secretaryName: 'Marta',
+      secretaryBirthDay: 2,
+      secretaryBirthMonth: 8,
+      secretaryPhone: '(48) 98888-7777',
+      secretaryNotes: 'Gosta de chocolate',
+      abcClass: 'B',
+      abcBaseValue: 900,
+      abcCalculatedAt: '2026-11-21T09:00:00.000Z',
+    });
+    renderPage();
+    expect(await screen.findByRole('heading', { name: 'Dra. Júlia Costa' })).toBeInTheDocument();
+
+    for (const title of ['Dados do médico', 'Clínica', 'Horário para representante', 'Parceria', 'Endereço', 'Secretária']) {
+      expect(screen.getByRole('region', { name: title })).toBeInTheDocument();
+    }
+    const dados = within(screen.getByRole('region', { name: 'Dados do médico' }));
+    expect(dados.getByText('14/03/1980')).toBeInTheDocument();
+    expect(dados.getByRole('link', { name: 'Abrir WhatsApp de Dra. Júlia Costa' })).toHaveAttribute(
+      'href',
+      'https://wa.me/5548999990000',
+    );
+
+    const clinica = within(screen.getByRole('region', { name: 'Clínica' }));
+    expect(clinica.getByText('Sim')).toBeInTheDocument();
+    expect(clinica.getByText(/350,00/)).toBeInTheDocument();
+
+    const horario = within(screen.getByRole('region', { name: 'Horário para representante' }));
+    expect(horario.getByText('Ter, Qui · 13:30–15:00')).toBeInTheDocument();
+    expect(horario.getByText('Terças à tarde')).toBeInTheDocument();
+
+    expect(within(screen.getByRole('region', { name: 'Parceria' })).getByText('01/03/2025')).toBeInTheDocument();
+
+    const endereco = within(screen.getByRole('region', { name: 'Endereço' }));
+    expect(endereco.getByText(/Rua Altamiro Guimarães, 100/)).toBeInTheDocument();
+    expect(endereco.getByText(/CEP 88701-100/)).toBeInTheDocument();
+    // Com o estruturado preenchido, o texto antigo não aparece.
+    expect(endereco.queryByText('Rua das Flores, 10')).not.toBeInTheDocument();
+
+    const secretaria = within(screen.getByRole('region', { name: 'Secretária' }));
+    expect(secretaria.getByText('Marta')).toBeInTheDocument();
+    expect(secretaria.getByText('02/08')).toBeInTheDocument();
+    expect(secretaria.getByRole('link', { name: 'Abrir WhatsApp de Marta' })).toHaveAttribute(
+      'href',
+      'https://wa.me/5548988887777',
+    );
+
+    expect(screen.getByLabelText(/^Curva ABC: B\./)).toBeInTheDocument();
+  });
+
+  it('sem endereço estruturado mostra o texto antigo; seção vazia diz "Não informado"', async () => {
+    renderPage();
+    expect(await screen.findByRole('heading', { name: 'Dra. Júlia Costa' })).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Endereço' })).getByText('Rua das Flores, 10')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Parceria' })).getByText('Não informado')).toBeInTheDocument();
+    // Sem cálculo da curva ainda: sem selo.
+    expect(screen.queryByLabelText(/^Curva ABC/)).not.toBeInTheDocument();
   });
 });
